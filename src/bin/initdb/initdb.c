@@ -254,6 +254,7 @@ static void setup_dictionary(void);
 static void setup_privileges(void);
 static void set_info_version(void);
 static void setup_schema(void);
+static void setup_graph(void);
 static void load_plpgsql(void);
 static void vacuum_db(void);
 static void make_template0(void);
@@ -2227,6 +2228,55 @@ setup_schema(void)
 	check_ok();
 }
 
+
+/*
+ * set up graph object
+ */
+static void
+setup_graph(void)
+{
+	PG_CMD_DECL;
+	const char **line;
+	static const char *graph_setup[] = {
+		/*
+		 * create a graph schema and top-level vertex and edge table
+		 * in the graph schema.
+		 */
+		"CREATE SCHEMA graph;\n",
+		"SET search_path TO graph;\n",
+		"CREATE SEQUENCE seq_vid NO CYCLE;\n",
+
+		"CREATE TABLE vertex (",
+		"    vid INT8 PRIMARY KEY DEFAULT NEXTVAL('seq_vid'),",
+		"    properties JSONB",
+		");\n",
+
+		"CREATE TABLE edge (",
+		"    incoming INT8 NOT NULL,",
+		"    outgoing INT8 NOT NULL,",
+		"    properties JSONB",
+		");\n",
+		NULL
+	};
+
+	fputs(_("initializing graph object ... "), stdout);
+	fflush(stdout);
+
+	snprintf(cmd, sizeof(cmd),
+			 "\"%s\" %s template1 >%s",
+			 backend_exec, backend_options,
+			 DEVNULL);
+
+	PG_CMD_OPEN;
+
+	for (line = graph_setup; *line != NULL; line++)
+		PG_CMD_PUTS(*line);
+
+	PG_CMD_CLOSE;
+
+	check_ok();
+}
+
 /*
  * load PL/pgsql server-side language
  */
@@ -3370,6 +3420,8 @@ initialize_data_directory(void)
 	setup_privileges();
 
 	setup_schema();
+
+	setup_graph();
 
 	load_plpgsql();
 
