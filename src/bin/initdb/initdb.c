@@ -283,6 +283,9 @@ void		create_xlog_or_symlink(void);
 void		warn_on_mount_point(int error);
 void		initialize_data_directory(void);
 
+/* for agensgraph */
+static void setup_graph(FILE *cmdfd);
+
 /*
  * macros for running pipes to postgres
  */
@@ -2070,6 +2073,55 @@ setup_schema(FILE *cmdfd)
 				   escape_quotes(features_file));
 }
 
+
+/*
+ * set up graph object
+ */
+static void
+setup_graph(FILE *cmdfd)
+{
+	PG_CMD_DECL;
+	const char **line;
+	static const char *graph_setup[] = {
+		/*
+		 * create a graph schema and top-level vertex and edge table
+		 * in the graph schema.
+		 */
+		"CREATE SCHEMA graph;\n",
+		"SET search_path TO graph;\n",
+		"CREATE SEQUENCE seq_vid NO CYCLE;\n",
+
+		"CREATE TABLE vertex (",
+		"    vid INT8 PRIMARY KEY DEFAULT NEXTVAL('seq_vid'),",
+		"    properties JSONB",
+		");\n",
+
+		"CREATE TABLE edge (",
+		"    incoming INT8 NOT NULL,",
+		"    outgoing INT8 NOT NULL,",
+		"    properties JSONB",
+		");\n",
+		NULL
+	};
+
+	fputs(_("initializing graph object ... "), stdout);
+	fflush(stdout);
+
+	snprintf(cmd, sizeof(cmd),
+			 "\"%s\" %s template1 >%s",
+			 backend_exec, backend_options,
+			 DEVNULL);
+
+	PG_CMD_OPEN;
+
+	for (line = graph_setup; *line != NULL; line++)
+		PG_CMD_PUTS(*line);
+
+	PG_CMD_CLOSE;
+
+	check_ok();
+}
+
 /*
  * load PL/pgsql server-side language
  */
@@ -3164,6 +3216,8 @@ initialize_data_directory(void)
 	setup_privileges(cmdfd);
 
 	setup_schema(cmdfd);
+
+	setup_graph(cmdfd);
 
 	load_plpgsql(cmdfd);
 
