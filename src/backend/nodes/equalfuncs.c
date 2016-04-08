@@ -2563,6 +2563,23 @@ _equalRoleSpec(const RoleSpec *a, const RoleSpec *b)
 	return true;
 }
 
+static bool
+_equalCypherStmt(const CypherStmt *a, const CypherStmt *b)
+{
+	COMPARE_NODE_FIELD(clauses);
+
+	return true;
+}
+
+static bool
+_equalCypherReturnClause(const CypherReturnClause *a,
+						 const CypherReturnClause *b)
+{
+	COMPARE_NODE_FIELD(items);
+
+	return true;
+}
+
 /*
  * Stuff from pg_list.h
  */
@@ -3296,6 +3313,13 @@ equal(const void *a, const void *b)
 			break;
 		case T_RoleSpec:
 			retval = _equalRoleSpec(a, b);
+			break;
+
+		case T_CypherStmt:
+			retval = _equalCypherStmt(a, b);
+			break;
+		case T_CypherReturnClause:
+			retval = _equalCypherReturnClause(a, b);
 			break;
 
 		default:

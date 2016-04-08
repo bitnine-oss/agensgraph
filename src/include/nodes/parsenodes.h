@@ -3052,4 +3052,21 @@ typedef struct AlterTSConfigurationStmt
 	bool		missing_ok;		/* for DROP - skip error if missing? */
 } AlterTSConfigurationStmt;
 
+
+/****************************************************************************
+ * Cypher related node structures
+ ****************************************************************************/
+
+typedef struct CypherStmt
+{
+	NodeTag		type;
+	List	   *clauses;	/* clauses in the statement */
+} CypherStmt;
+
+typedef struct CypherReturnClause
+{
+	NodeTag		type;
+	List	   *items;		/* list of return items (ResTarget) */
+} CypherReturnClause;
+
 #endif   /* PARSENODES_H */

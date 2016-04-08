@@ -4081,6 +4081,26 @@ _copyAlterPolicyStmt(const AlterPolicyStmt *from)
 	return newnode;
 }
 
+static CypherStmt *
+_copyCypherStmt(const CypherStmt *from)
+{
+	CypherStmt *newnode = makeNode(CypherStmt);
+
+	COPY_NODE_FIELD(clauses);
+
+	return newnode;
+}
+
+static CypherReturnClause *
+_copyCypherReturnClause(const CypherReturnClause *from)
+{
+	CypherReturnClause *newnode = makeNode(CypherReturnClause);
+
+	COPY_NODE_FIELD(items);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *					pg_list.h copy functions
  * ****************************************************************
@@ -4814,6 +4834,9 @@ copyObject(const void *from)
 		case T_AlterPolicyStmt:
 			retval = _copyAlterPolicyStmt(from);
 			break;
+		case T_CypherStmt:
+			retval = _copyCypherStmt(from);
+			break;
 		case T_A_Expr:
 			retval = _copyAExpr(from);
 			break;
@@ -4933,6 +4956,9 @@ copyObject(const void *from)
 			break;
 		case T_RoleSpec:
 			retval = _copyRoleSpec(from);
+			break;
+		case T_CypherReturnClause:
+			retval = _copyCypherReturnClause(from);
 			break;
 
 		default:

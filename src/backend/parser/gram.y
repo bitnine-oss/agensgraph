@@ -538,6 +538,9 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <str>		opt_existing_window_name
 %type <boolean> opt_if_not_exists
 
+%type <node>	CypherStmt cypher_clause cypher_return
+%type <list>	cypher_clause_list
+
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
  * They must be listed first so that their numeric codes do not depend on
@@ -621,8 +624,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 	RANGE READ REAL REASSIGN RECHECK RECURSIVE REF REFERENCES REFRESH REINDEX
 	RELATIVE_P RELEASE RENAME REPEATABLE REPLACE REPLICA
-	RESET RESTART RESTRICT RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK ROLLUP
-	ROW ROWS RULE
+	RESET RESTART RESTRICT RETURNING RETURN RETURNS REVOKE RIGHT ROLE ROLLBACK
+	ROLLUP ROW ROWS RULE
 
 	SAVEPOINT SCHEMA SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
 	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW
@@ -816,6 +819,7 @@ stmt :
 			| CreateUserStmt
 			| CreateUserMappingStmt
 			| CreatedbStmt
+			| CypherStmt
 			| DeallocateStmt
 			| DeclareCursorStmt
 			| DefineStmt
@@ -14021,6 +14025,7 @@ reserved_keyword:
 			| PLACING
 			| PRIMARY
 			| REFERENCES
+			| RETURN
 			| RETURNING
 			| SELECT
 			| SESSION_USER
@@ -14040,6 +14045,38 @@ reserved_keyword:
 			| WHERE
 			| WINDOW
 			| WITH
+		;
+
+
+/*
+ * Cypher
+ */
+
+CypherStmt:
+			cypher_clause_list
+				{
+					CypherStmt *n = makeNode(CypherStmt);
+					n->clauses = $1;
+					$$ = (Node *)n;
+				}
+		;
+
+cypher_clause_list:
+			cypher_clause							{ $$ = list_make1($1); }
+			| cypher_clause_list cypher_clause		{ $$ = lappend($1, $2); }
+		;
+
+cypher_clause:
+			cypher_return
+		;
+
+cypher_return:
+			RETURN target_list
+				{
+					CypherReturnClause *n = makeNode(CypherReturnClause);
+					n->items = $2;
+					$$ = (Node *)n;
+				}
 		;
 
 %%

@@ -74,6 +74,7 @@ static Query *transformCreateTableAsStmt(ParseState *pstate,
 						   CreateTableAsStmt *stmt);
 static void transformLockingClause(ParseState *pstate, Query *qry,
 					   LockingClause *lc, bool pushedDown);
+static Query *transformCypherStmt(ParseState *pstate, CypherStmt *stmt);
 
 
 /*
@@ -250,6 +251,10 @@ transformStmt(ParseState *pstate, Node *parseTree)
 			}
 			break;
 
+		case T_CypherStmt:
+			result = transformCypherStmt(pstate, (CypherStmt *) parseTree);
+			break;
+
 			/*
 			 * Special cases
 			 */
@@ -308,6 +313,10 @@ analyze_requires_snapshot(Node *parseTree)
 		case T_DeleteStmt:
 		case T_UpdateStmt:
 		case T_SelectStmt:
+			result = true;
+			break;
+
+		case T_CypherStmt:
 			result = true;
 			break;
 
@@ -2712,4 +2721,33 @@ applyLockingClause(Query *qry, Index rtindex,
 	rc->waitPolicy = waitPolicy;
 	rc->pushedDown = pushedDown;
 	qry->rowMarks = lappend(qry->rowMarks, rc);
+}
+
+
+/*
+ * transformCypherStmt - transforms a Cypher statement
+ */
+static Query *
+transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
+{
+	List *clauses = stmt->clauses;
+	CypherReturnClause *cr;
+	Query *qry;
+
+	AssertArg(clauses != NULL);
+	if (list_length(clauses) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("multiple clauses are not supported")));
+	cr = (CypherReturnClause *) linitial(clauses);
+	AssertArg(cr->type == T_CypherReturnClause);
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+	qry->targetList = transformTargetList(pstate, cr->items,
+										  EXPR_KIND_SELECT_TARGET);
+	qry->jointree = makeFromExpr(NULL, NULL);
+	assign_query_collations(pstate, qry);
+
+	return qry;
 }
