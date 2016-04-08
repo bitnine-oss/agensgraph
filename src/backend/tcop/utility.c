@@ -1921,6 +1921,10 @@ CreateCommandTag(Node *parsetree)
 			tag = "SELECT";
 			break;
 
+		case T_CypherStmt:
+			tag = "CYPHER";
+			break;
+
 			/* utility statements --- same whether raw or cooked */
 		case T_TransactionStmt:
 			{
@@ -2703,6 +2707,10 @@ GetCommandLogLevel(Node *parsetree)
 				lev = LOGSTMT_DDL;		/* SELECT INTO */
 			else
 				lev = LOGSTMT_ALL;
+			break;
+
+		case T_CypherStmt:
+			lev = LOGSTMT_ALL;
 			break;
 
 			/* utility statements --- same whether raw or cooked */
