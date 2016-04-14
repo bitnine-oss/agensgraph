@@ -461,6 +461,12 @@ static const struct object_type_map
 		"table", OBJECT_TABLE
 	},
 	{
+		"vlabel", OBJECT_VLABEL
+	},
+	{
+		"elabel", OBJECT_ELABEL
+	},
+	{
 		"index", OBJECT_INDEX
 	},
 	{

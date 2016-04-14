@@ -245,7 +245,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 		CreateFdwStmt CreateForeignServerStmt CreateForeignTableStmt
 		CreateAssertStmt CreateTransformStmt CreateTrigStmt CreateEventTrigStmt
 		CreateUserStmt CreateUserMappingStmt CreateRoleStmt CreatePolicyStmt
-		CreatedbStmt DeclareCursorStmt DefineStmt DeleteStmt DiscardStmt DoStmt
+		CreatedbStmt CreateELabelStmt CreateVLabelStmt
+		DeclareCursorStmt DefineStmt DeleteStmt DiscardStmt DoStmt
 		DropGroupStmt DropOpClassStmt DropOpFamilyStmt DropPLangStmt DropStmt
 		DropAssertStmt DropTrigStmt DropRuleStmt DropCastStmt DropRoleStmt
 		DropPolicyStmt DropUserStmt DropdbStmt DropTableSpaceStmt DropFdwStmt
@@ -583,8 +584,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DESC
 	DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P DOUBLE_P DROP
 
-	EACH ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT EXCEPT
-	EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
+	EACH ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT
+	EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
 	EXTENSION EXTERNAL EXTRACT
 
 	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
@@ -641,7 +642,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	UNTIL UPDATE USER USING
 
 	VACUUM VALID VALIDATE VALIDATOR VALUE_P VALUES VARCHAR VARIADIC VARYING
-	VERBOSE VERSION_P VIEW VIEWS VOLATILE
+	VERBOSE VERSION_P VIEW VIEWS VLABEL VOLATILE
 
 	WHEN WHERE WHITESPACE_P WINDOW WITH WITHIN WITHOUT WORK WRAPPER WRITE
 
@@ -818,6 +819,8 @@ stmt :
 			| CreateRoleStmt
 			| CreateUserStmt
 			| CreateUserMappingStmt
+			| CreateVLabelStmt
+			| CreateELabelStmt
 			| CreatedbStmt
 			| CypherStmt
 			| DeallocateStmt
@@ -2785,7 +2788,53 @@ copy_generic_opt_arg_list_item:
 			opt_boolean_or_string	{ $$ = (Node *) makeString($1); }
 		;
 
+/*****************************************************************************
+ *
+ *		QUERY :
+ *				CREATE VLABEL relname
+ *
+ *****************************************************************************/
 
+CreateVLabelStmt:	CREATE VLABEL qualified_name OptInherit
+				{
+					CreateVLabelStmt *n = makeNode(CreateVLabelStmt);
+					$3->relpersistence = RELPERSISTENCE_PERMANENT;
+					n->relation = $3;
+					n->tableElts = NULL;
+					n->inhRelations = $4;
+					n->ofTypename = NULL;
+					n->constraints = NIL;
+					n->options = NULL;
+					n->oncommit = ONCOMMIT_NOOP;
+					n->tablespacename = NULL;
+					n->if_not_exists = false;
+					$$ = (Node *)n;
+				}
+		;
+
+/*****************************************************************************
+ *
+ *		QUERY :
+ *				CREATE ELABEL relname
+ *
+ *****************************************************************************/
+
+CreateELabelStmt:	CREATE ELABEL qualified_name
+				{
+					CreateELabelStmt *n = makeNode(CreateELabelStmt);
+					$3->relpersistence = RELPERSISTENCE_PERMANENT;
+					n->relation = $3;
+					n->tableElts = NULL;
+					n->inhRelations = NULL;
+					n->ofTypename = NULL;
+					n->constraints = NIL;
+					n->options = NULL;
+					n->oncommit = ONCOMMIT_NOOP;
+					n->tablespacename = NULL;
+					n->if_not_exists = false;
+					$$ = (Node *)n;
+				}
+		;
 /*****************************************************************************
  *
  *		QUERY :
@@ -5591,6 +5640,8 @@ DropStmt:	DROP drop_type IF_P EXISTS any_name_list opt_drop_behavior
 
 
 drop_type:	TABLE									{ $$ = OBJECT_TABLE; }
+			| VLABEL								{ $$ = OBJECT_VLABEL; }
+			| ELABEL								{ $$ = OBJECT_ELABEL; }
 			| SEQUENCE								{ $$ = OBJECT_SEQUENCE; }
 			| VIEW									{ $$ = OBJECT_VIEW; }
 			| MATERIALIZED VIEW						{ $$ = OBJECT_MATVIEW; }
@@ -13660,6 +13711,7 @@ unreserved_keyword:
 			| DOUBLE_P
 			| DROP
 			| EACH
+			| ELABEL
 			| ENABLE_P
 			| ENCODING
 			| ENCRYPTED
@@ -13850,6 +13902,7 @@ unreserved_keyword:
 			| VERSION_P
 			| VIEW
 			| VIEWS
+			| VLABEL
 			| VOLATILE
 			| WHITESPACE_P
 			| WITHIN

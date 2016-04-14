@@ -1387,6 +1387,7 @@ typedef enum ObjectType
 	OBJECT_DEFACL,
 	OBJECT_DOMAIN,
 	OBJECT_DOMCONSTRAINT,
+	OBJECT_ELABEL,
 	OBJECT_EVENT_TRIGGER,
 	OBJECT_EXTENSION,
 	OBJECT_FDW,
@@ -1416,7 +1417,8 @@ typedef enum ObjectType
 	OBJECT_TSTEMPLATE,
 	OBJECT_TYPE,
 	OBJECT_USER_MAPPING,
-	OBJECT_VIEW
+	OBJECT_VIEW,
+	OBJECT_VLABEL
 } ObjectType;
 
 /* ----------------------
@@ -1750,6 +1752,15 @@ typedef struct CreateStmt
 	char	   *tablespacename; /* table space to use, or NULL */
 	bool		if_not_exists;	/* just do nothing if it already exists? */
 } CreateStmt;
+
+
+/* ----------------------
+ *		Create VLabel Statement
+ * ----------------------
+ */
+typedef struct CreateStmt CreateVLabelStmt;
+typedef struct CreateStmt CreateELabelStmt;
+
 
 /* ----------
  * Definitions for constraints in CreateStmt

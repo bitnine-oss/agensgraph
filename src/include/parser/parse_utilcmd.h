@@ -16,8 +16,12 @@
 
 #include "parser/parse_node.h"
 
+#define AG_GRAPH	"graph"
+#define AG_VERTEX	"vertex"
+#define AG_EDGE		"edge"
 
 extern List *transformCreateStmt(CreateStmt *stmt, const char *queryString);
+extern List *transformCreateLabelStmt(CreateStmt *stmt, const char *queryString);
 extern List *transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 						const char *queryString);
 extern IndexStmt *transformIndexStmt(Oid relid, IndexStmt *stmt,

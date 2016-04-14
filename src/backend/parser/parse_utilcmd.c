@@ -302,6 +302,191 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 }
 
 /*
+ * transformCreateLabelStmt -
+ *	  parse analysis for CREATE VLABEL / ELABEL
+ *
+ * This function is based on transformCreateStmt.
+ * Graph Labels have default inheritance, primary key, sequence.
+ * But they are not written in statements.
+ * Thus this adds nodes for label statement.
+ */
+List *
+transformCreateLabelStmt(CreateStmt *stmt, const char *queryString)
+{
+	ParseState *pstate;
+	CreateStmtContext cxt;
+	List	   *result;
+	List	   *save_alist;
+	ListCell   *elements;
+	Oid			existing_relid;
+	ParseCallbackState pcbstate;
+
+	/*
+	 * We must not scribble on the passed-in CreateStmt, so copy it.  (This is
+	 * overkill, but easy.)
+	 */
+	stmt = (CreateStmt *) copyObject(stmt);
+
+	/* Set up pstate */
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
+	/*
+	 * Look up the creation namespace.  This also checks permissions on the
+	 * target namespace, locks it against concurrent drops, checks for a
+	 * preexisting relation in that namespace with the same name, and updates
+	 * stmt->relation->relpersistence if the selected namespace is temporary.
+	 */
+	setup_parser_errposition_callback(&pcbstate, pstate,
+									  stmt->relation->location);
+	RangeVarGetAndCheckCreationNamespace(stmt->relation, NoLock,
+										 &existing_relid);
+	cancel_parser_errposition_callback(&pcbstate);
+
+	/*
+	 * If the relation already exists and the user specified "IF NOT EXISTS",
+	 * bail out with a NOTICE.
+	 */
+	if (stmt->if_not_exists && OidIsValid(existing_relid))
+	{
+		ereport(NOTICE,
+				(errcode(ERRCODE_DUPLICATE_TABLE),
+				 errmsg("relation \"%s\" already exists, skipping",
+						stmt->relation->relname)));
+		return NIL;
+	}
+
+	/*
+	 * If the target relation name isn't schema-qualified, make it so.  This
+	 * prevents some corner cases in which added-on rewritten commands might
+	 * think they should apply to other relations that have the same name and
+	 * are earlier in the search path.  But a local temp table is effectively
+	 * specified to be in pg_temp, so no need for anything extra in that case.
+	 */
+	if (stmt->relation->schemaname == NULL
+		&& stmt->relation->relpersistence != RELPERSISTENCE_TEMP)
+	{
+		stmt->relation->schemaname = AG_GRAPH;
+	}
+	else if (stmt->relation->schemaname != NULL
+			&& strcmp(stmt->relation->schemaname, AG_GRAPH) != 0)
+	{
+		ereport(NOTICE,
+				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+				 errmsg("Graph label \"%s\" must be created in graph schema, skipping",
+						stmt->relation->relname)));
+		return NIL;
+	}
+
+	if (nodeTag(stmt) == T_CreateVLabelStmt)
+	{
+		cxt.stmtType = "CREATE VLABEL";
+
+		if (stmt->inhRelations == NULL)
+			stmt->inhRelations = list_make1(
+									makeRangeVar(AG_GRAPH, AG_VERTEX, -1));
+		else
+			stmt->inhRelations = stmt->inhRelations;
+	}
+	else if (nodeTag(stmt) == T_CreateELabelStmt)
+	{
+		cxt.stmtType = "CREATE ELABEL";
+		stmt->inhRelations = list_make1(makeRangeVar(AG_GRAPH, AG_EDGE, -1));
+	}
+	else
+	{
+		ereport(NOTICE,
+				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+				 errmsg("relation \"%s\" cannot be graph label",
+						stmt->relation->relname)));
+		return NIL;
+	}
+
+	cxt.isforeign = false;
+	cxt.relation = stmt->relation;
+	cxt.rel = NULL;
+	cxt.inhRelations = stmt->inhRelations;
+	cxt.isalter = false;
+	cxt.columns = NIL;
+	cxt.ckconstraints = NIL;
+	cxt.fkconstraints = NIL;
+	cxt.ixconstraints = NIL;
+	cxt.inh_indexes = NIL;
+	cxt.blist = NIL;
+	cxt.alist = NIL;
+	cxt.pkey = NULL;
+
+	/*
+	 * Notice that we allow OIDs here only for plain tables, even though
+	 * foreign tables also support them.  This is necessary because the
+	 * default_with_oids GUC must apply only to plain tables and not any other
+	 * relkind; doing otherwise would break existing pg_dump files.  We could
+	 * allow explicit "WITH OIDS" while not allowing default_with_oids to
+	 * affect other relkinds, but it would complicate interpretOidsOption(),
+	 * and right now there's no WITH OIDS option in CREATE FOREIGN TABLE
+	 * anyway.
+	 */
+	cxt.hasoids = interpretOidsOption(stmt->options, !cxt.isforeign);
+
+	Assert(!stmt->ofTypename || !stmt->inhRelations);	/* grammar enforces */
+
+	if (stmt->ofTypename)
+		transformOfType(&cxt, stmt->ofTypename);
+
+	/*
+	 * Run through each primary element in the table creation clause. Separate
+	 * column defs from constraints, and do preliminary analysis.
+	 */
+	foreach(elements, stmt->tableElts)
+	{
+		Node	   *element = lfirst(elements);
+
+		switch (nodeTag(element))
+		{
+			case T_ColumnDef:
+				transformColumnDefinition(&cxt, (ColumnDef *) element);
+				break;
+
+			default:
+				elog(ERROR, "unrecognized node type: %d",
+					 (int) nodeTag(element));
+				break;
+		}
+	}
+
+	/*
+	 * transformIndexConstraints wants cxt.alist to contain only index
+	 * statements, so transfer anything we already have into save_alist.
+	 */
+	save_alist = cxt.alist;
+	cxt.alist = NIL;
+
+	Assert(stmt->constraints == NIL);
+
+	/*
+	 * Postprocess constraints that give rise to index definitions.
+	 */
+	transformIndexConstraints(&cxt);
+
+	/*
+	 * Postprocess foreign-key constraints.
+	 */
+	transformFKConstraints(&cxt, true, false);
+
+	/*
+	 * Output results.
+	 */
+	stmt->tableElts = cxt.columns;
+	stmt->constraints = cxt.ckconstraints;
+
+	result = lappend(cxt.blist, stmt);
+	result = list_concat(result, cxt.alist);
+	result = list_concat(result, save_alist);
+
+	return result;
+}
+
+/*
  * transformColumnDefinition -
  *		transform a single ColumnDef within CREATE TABLE
  *		Also used in ALTER TABLE ADD COLUMN
