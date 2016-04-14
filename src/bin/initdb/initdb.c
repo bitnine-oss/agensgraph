@@ -2244,17 +2244,26 @@ setup_graph(void)
 		 */
 		"CREATE SCHEMA graph;\n",
 		"SET search_path TO graph;\n",
-		"CREATE SEQUENCE seq_vid NO CYCLE;\n",
 
 		"CREATE TABLE vertex (",
-		"    vid INT8 PRIMARY KEY DEFAULT NEXTVAL('seq_vid'),",
+		"    vid BIGSERIAL PRIMARY KEY,",
 		"    properties JSONB",
 		");\n",
 
 		"CREATE TABLE edge (",
+		"    inOID OID NOT NULL,",
 		"    incoming INT8 NOT NULL,",
+		"    outOID OID NOT NULL,",
 		"    outgoing INT8 NOT NULL,",
 		"    properties JSONB",
+		");\n",
+
+		"CREATE INDEX Vin ON edge (",
+		"    inOID, incoming",
+		");\n",
+
+		"CREATE INDEX Vout ON edge (",
+		"    outOID, outgoing",
 		");\n",
 		NULL
 	};

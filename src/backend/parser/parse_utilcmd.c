@@ -123,6 +123,7 @@ static void transformConstraintAttrs(CreateStmtContext *cxt,
 						 List *constraintList);
 static void transformColumnType(CreateStmtContext *cxt, ColumnDef *column);
 static void setSchemaName(char *context_schema, char **stmt_schema_name);
+static List *inheritLabelIndex(CreateStmt *stmt, CreateStmtContext *cxt);
 
 
 /*
@@ -302,6 +303,153 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 }
 
 /*
+ * Inherit indexes for CreateLabel.
+ * Vertex label must have vid index.
+ * Edge label must have (oid, vid) indexes.
+ *
+ * NOTE: See transformTableLikeClause()
+ */
+List *
+inheritLabelIndex(CreateStmt *stmt, CreateStmtContext *cxt)
+{
+	List	   *parent_indexes;
+	List	   *inh_indexes;
+	ListCell   *l;
+	AttrNumber *attmap;
+	TupleDesc	tupleDesc;
+	Relation	relation;
+	RangeVar   *parent;
+	int			i;
+	int			colCnt;
+	bool		isErr = false;
+
+	inh_indexes = NIL;
+
+	/* Set parent which is the default table of graph schema
+	 * to inherit default label indexes. */
+	switch(nodeTag(stmt))
+	{
+		case T_CreateVLabelStmt :
+			parent = makeRangeVar(AG_GRAPH, AG_VERTEX, -1);
+			break;
+		case T_CreateELabelStmt :
+			parent = makeRangeVar(AG_GRAPH, AG_EDGE, -1);
+			break;
+		default :
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("relation \"%s\" is not graph label",
+						stmt->relation->relname)));
+			return NIL;
+	}
+
+	relation = relation_openrv(parent, AccessShareLock);
+
+	parent_indexes = RelationGetIndexList(relation);
+
+	tupleDesc = RelationGetDescr(relation);
+
+	attmap = (AttrNumber *) palloc0(sizeof(AttrNumber) * tupleDesc->natts);
+
+	/*
+	 * Ignore dropped columns in the parent.  attmap entry is left zero.
+	 */
+	for (i = 0, colCnt = 0; i < tupleDesc->natts; i++)
+	{
+		Form_pg_attribute attribute = tupleDesc->attrs[i];
+
+		if (attribute->attisdropped)
+			attmap[i] = 0;
+		else
+			attmap[i] = ++colCnt;
+	}
+
+	foreach(l, parent_indexes)
+	{
+		Oid			parent_index_oid = lfirst_oid(l);
+		Relation	parent_index;
+		IndexStmt  *index_stmt;
+		Form_pg_index idxrec;
+		Oid			indrelid;
+
+		parent_index = index_open(parent_index_oid, AccessShareLock);
+
+		idxrec = (Form_pg_index) GETSTRUCT(parent_index->rd_indextuple);
+		indrelid = idxrec->indrelid;
+
+		if (nodeTag(stmt) == T_CreateVLabelStmt
+			&& idxrec->indisprimary == true
+			&& idxrec->indnatts == 1)
+		{
+			char	   *attname;
+			AttrNumber	attnum;
+
+			attnum  = idxrec->indkey.values[0];
+			attname = get_relid_attribute_name(indrelid, attnum);
+
+			if (strcmp(attname, AG_VID) == 0)
+			{
+				/* Build CREATE INDEX statement to recreate the parent_index */
+				index_stmt = generateClonedIndexStmt(cxt, parent_index,
+													 attmap, tupleDesc->natts);
+
+				/* Save it in the inh_indexes list for the time being */
+				inh_indexes = lappend(inh_indexes, index_stmt);
+			}
+			else
+				isErr = true;
+		}
+		else if (nodeTag(stmt) == T_CreateELabelStmt
+				&& idxrec->indnatts == 2)
+		{
+			char	   *attname1;
+			char	   *attname2;
+			AttrNumber	attnum1;
+			AttrNumber	attnum2;
+
+			attnum1  = idxrec->indkey.values[0];
+			attnum2  = idxrec->indkey.values[1];
+			attname1 = get_relid_attribute_name(indrelid, attnum1);
+			attname2 = get_relid_attribute_name(indrelid, attnum2);
+
+			if ((strcmp(attname1, AG_EIO) == 0 && strcmp(attname2, AG_EIC) == 0)
+				|| (strcmp(attname1, AG_EOO) == 0 && strcmp(attname2, AG_EOG) == 0))
+			{
+				/* Build CREATE INDEX statement to recreate the parent_index */
+				index_stmt = generateClonedIndexStmt(cxt, parent_index,
+													 attmap, tupleDesc->natts);
+
+				/* Save it in the inh_indexes list for the time being */
+				inh_indexes = lappend(inh_indexes, index_stmt);
+			}
+			else
+				isErr = true;
+		}
+		else
+			isErr = true;
+
+		index_close(parent_index, AccessShareLock);
+	}
+
+	/*
+	 * Close the parent rel, but keep our AccessShareLock on it until xact
+	 * commit.  That will prevent someone else from deleting or ALTERing the
+	 * parent before the child is committed.
+	 */
+	heap_close(relation, NoLock);
+
+	if (isErr == true)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("Default graph indexes are corrupted.")));
+		return NIL;
+	}
+	else
+		return inh_indexes;
+}
+
+/*
  * transformCreateLabelStmt -
  *	  parse analysis for CREATE VLABEL / ELABEL
  *
@@ -317,7 +465,6 @@ transformCreateLabelStmt(CreateStmt *stmt, const char *queryString)
 	CreateStmtContext cxt;
 	List	   *result;
 	List	   *save_alist;
-	ListCell   *elements;
 	Oid			existing_relid;
 	ParseCallbackState pcbstate;
 
@@ -411,10 +558,10 @@ transformCreateLabelStmt(CreateStmt *stmt, const char *queryString)
 	cxt.ckconstraints = NIL;
 	cxt.fkconstraints = NIL;
 	cxt.ixconstraints = NIL;
-	cxt.inh_indexes = NIL;
 	cxt.blist = NIL;
 	cxt.alist = NIL;
 	cxt.pkey = NULL;
+	cxt.inh_indexes = inheritLabelIndex(stmt, &cxt);
 
 	/*
 	 * Notice that we allow OIDs here only for plain tables, even though
@@ -434,24 +581,31 @@ transformCreateLabelStmt(CreateStmt *stmt, const char *queryString)
 		transformOfType(&cxt, stmt->ofTypename);
 
 	/*
-	 * Run through each primary element in the table creation clause. Separate
-	 * column defs from constraints, and do preliminary analysis.
+	 * Set CreateSeqStmt if stmt is Vertex Label.
+	 * And set default local vid value.
+	 * Vid must be independent sequence from parent.
 	 */
-	foreach(elements, stmt->tableElts)
+	if (nodeTag(stmt) == T_CreateVLabelStmt)
 	{
-		Node	   *element = lfirst(elements);
+		ColumnDef  *def;
 
-		switch (nodeTag(element))
-		{
-			case T_ColumnDef:
-				transformColumnDefinition(&cxt, (ColumnDef *) element);
-				break;
+		def = makeNode(ColumnDef);
 
-			default:
-				elog(ERROR, "unrecognized node type: %d",
-					 (int) nodeTag(element));
-				break;
-		}
+		def->colname = pstrdup(AG_VID);
+		def->typeName = makeTypeName("bigserial");
+		def->inhcount = 0;
+		def->is_local = true;
+		def->is_not_null = true;
+		def->is_from_type = false;
+		def->storage = 0;
+		def->raw_default = NULL;
+		def->cooked_default = NULL;
+		def->collClause = NULL;
+		def->collOid = InvalidOid;
+		def->constraints = NIL;
+		def->location = -1;
+
+		transformColumnDefinition(&cxt, def);
 	}
 
 	/*
