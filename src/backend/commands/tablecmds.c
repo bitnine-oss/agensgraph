@@ -834,6 +834,8 @@ RemoveRelations(DropStmt *drop)
 	switch (drop->removeType)
 	{
 		case OBJECT_TABLE:
+		case OBJECT_VLABEL:
+		case OBJECT_ELABEL:
 			relkind = RELKIND_RELATION;
 			break;
 
@@ -890,6 +892,13 @@ RemoveRelations(DropStmt *drop)
 		state.relkind = relkind;
 		state.heapOid = InvalidOid;
 		state.concurrent = drop->concurrent;
+
+		/* Every graph objects are built in graph schema */
+		if (drop->removeType == OBJECT_VLABEL ||
+			drop->removeType == OBJECT_ELABEL)
+		{
+			rel->schemaname = AG_GRAPH;
+		}
 		relOid = RangeVarGetRelidExtended(rel, lockmode, true,
 										  false,
 										  RangeVarCallbackForDropRelation,

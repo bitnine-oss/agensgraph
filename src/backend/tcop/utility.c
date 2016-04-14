@@ -174,6 +174,8 @@ check_xact_readonly(Node *parsetree)
 		case T_CreateSeqStmt:
 		case T_CreateStmt:
 		case T_CreateTableAsStmt:
+		case T_CreateVLabelStmt:
+		case T_CreateELabelStmt:
 		case T_RefreshMatViewStmt:
 		case T_CreateTableSpaceStmt:
 		case T_CreateTransformStmt:
@@ -944,20 +946,33 @@ ProcessUtilitySlow(Node *parsetree,
 
 			case T_CreateStmt:
 			case T_CreateForeignTableStmt:
+			case T_CreateVLabelStmt:
+			case T_CreateELabelStmt:
 				{
 					List	   *stmts;
 					ListCell   *l;
 
 					/* Run parse analysis ... */
-					stmts = transformCreateStmt((CreateStmt *) parsetree,
-												queryString);
+					if (IsA(parsetree, CreateVLabelStmt) ||
+						IsA(parsetree, CreateELabelStmt))
+					{
+						stmts = transformCreateLabelStmt((CreateStmt *) parsetree,
+														  queryString);
+					}
+					else
+					{
+						stmts = transformCreateStmt((CreateStmt *) parsetree,
+													queryString);
+					}
 
 					/* ... and do it */
 					foreach(l, stmts)
 					{
 						Node	   *stmt = (Node *) lfirst(l);
 
-						if (IsA(stmt, CreateStmt))
+						if (IsA(stmt, CreateStmt) ||
+							IsA(stmt, CreateVLabelStmt) ||
+							IsA(stmt, CreateELabelStmt))
 						{
 							Datum		toast_options;
 							static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
@@ -1567,6 +1582,8 @@ ExecDropStmt(DropStmt *stmt, bool isTopLevel)
 			/* fall through */
 
 		case OBJECT_TABLE:
+		case OBJECT_VLABEL:
+		case OBJECT_ELABEL:
 		case OBJECT_SEQUENCE:
 		case OBJECT_VIEW:
 		case OBJECT_MATVIEW:
@@ -2011,6 +2028,14 @@ CreateCommandTag(Node *parsetree)
 			tag = "CREATE TABLE";
 			break;
 
+		case T_CreateVLabelStmt:
+			tag = "CREATE VLABEL";
+			break;
+
+		case T_CreateELabelStmt:
+			tag = "CREATE ELABEL";
+			break;
+
 		case T_CreateTableSpaceStmt:
 			tag = "CREATE TABLESPACE";
 			break;
@@ -2076,6 +2101,12 @@ CreateCommandTag(Node *parsetree)
 			{
 				case OBJECT_TABLE:
 					tag = "DROP TABLE";
+					break;
+				case OBJECT_VLABEL:
+					tag = "DROP VLABEL";
+					break;
+				case OBJECT_ELABEL:
+					tag = "DROP ELABEL";
 					break;
 				case OBJECT_SEQUENCE:
 					tag = "DROP SEQUENCE";
@@ -2736,6 +2767,8 @@ GetCommandLogLevel(Node *parsetree)
 
 		case T_CreateStmt:
 		case T_CreateForeignTableStmt:
+		case T_CreateVLabelStmt:
+		case T_CreateELabelStmt:
 			lev = LOGSTMT_DDL;
 			break;
 
