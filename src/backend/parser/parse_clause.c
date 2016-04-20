@@ -3274,3 +3274,143 @@ transformFrameOffset(ParseState *pstate, int frameOptions, Node *clause)
 
 	return node;
 }
+
+
+static List *
+consCypherClauseSub(Node *clause, List *from)
+{
+	RangeSubselect *sub;
+
+	sub = makeNode(RangeSubselect);
+	sub->subquery = clause;
+	sub->alias = makeNode(Alias);
+	sub->alias->aliasname = "sub";	/* XXX: Is this OK? */
+
+	return lcons(sub, from);
+}
+
+Query *
+transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherMatchClause *detail = (CypherMatchClause *) clause->detail;
+	List *patterns = detail->patterns;
+	CypherPattern *p;
+	CypherNode *n;
+	List *fromClause = NIL;
+	List *targetList = NIL;
+	Query *qry;
+
+	/* TODO: support multiple patterns */
+	if (list_length(patterns) > 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("only one pattern is allowed in MATCH clause")));
+
+	p = linitial(patterns);
+
+	/* TODO: support pattern chain */
+	if (list_length(p->chain) > 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("pattern chain is not supported in MATCH clause")));
+
+	n = linitial(p->chain);
+
+	/* TODO: optimize */
+	if (n->variable == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("there must be a node variable in MATCH clause")));
+
+	if (clause->sub != NULL)
+		consCypherClauseSub(clause->sub, fromClause);
+
+	{
+		char *label;
+		RangeVar *rv;
+
+		label = n->label ? n->label : "vertex";
+		rv = makeRangeVar("graph", label, -1);
+		fromClause = lappend(fromClause, rv);
+	}
+
+	{
+		A_Const *label;
+		ColumnRef *vid;
+		ColumnRef *props;
+		FuncCall *vertex;
+		ResTarget *target;
+
+		label = makeNode(A_Const);
+		if (n->label == NULL)
+		{
+			label->val.type = T_Null;
+		}
+		else
+		{
+			label->val.type = T_String;
+			label->val.val.str = n->label;
+		}
+		label->location = -1;
+
+		vid = makeNode(ColumnRef);
+		vid->fields = list_make1(makeString("vid"));
+		vid->location = -1;
+
+		props = makeNode(ColumnRef);
+		props->fields = list_make1(makeString("properties"));
+		props->location = -1;
+
+		vertex = makeFuncCall(list_make1(makeString("vertex")),
+							  list_make3(label, vid, props), -1);
+
+		target = makeNode(ResTarget);
+		target->name = n->variable;
+		target->indirection = NIL;
+		target->val = (Node *) vertex;
+		target->location = -1;
+
+		targetList = lappend(targetList, target);
+	}
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	transformFromClause(pstate, fromClause);
+
+	qry->targetList = transformTargetList(pstate, targetList,
+										  EXPR_KIND_SELECT_TARGET);
+
+	markTargetListOrigins(pstate, qry->targetList);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+Query *
+transformCypherReturnClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherReturnClause *detail = (CypherReturnClause *) clause->detail;
+	Query *qry;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	if (clause->sub != NULL)
+		transformFromClause(pstate, consCypherClauseSub(clause->sub, NIL));
+
+	qry->targetList = transformTargetList(pstate, detail->items,
+										  EXPR_KIND_SELECT_TARGET);
+	markTargetListOrigins(pstate, qry->targetList);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}

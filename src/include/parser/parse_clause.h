@@ -53,4 +53,9 @@ extern List *addTargetToSortList(ParseState *pstate, TargetEntry *tle,
 extern Index assignSortGroupRef(TargetEntry *tle, List *tlist);
 extern bool targetIsInSortList(TargetEntry *tle, Oid sortop, List *sortList);
 
+extern Query *transformCypherMatchClause(ParseState *pstate,
+										 CypherClause *clause);
+extern Query *transformCypherReturnClause(ParseState *pstate,
+										  CypherClause *clause);
+
 #endif   /* PARSE_CLAUSE_H */

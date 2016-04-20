@@ -2951,6 +2951,56 @@ _outConstraint(StringInfo str, const Constraint *node)
 	}
 }
 
+static void
+_outCypherStmt(StringInfo str, const CypherStmt *node)
+{
+	WRITE_NODE_TYPE("CYPHER");
+
+	WRITE_NODE_FIELD(sub);
+}
+
+static void
+_outCypherClause(StringInfo str, const CypherClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERCLAUSE");
+
+	WRITE_NODE_FIELD(detail);
+	WRITE_NODE_FIELD(sub);
+}
+
+static void
+_outCypherMatchClause(StringInfo str, const CypherMatchClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERMATCHCLAUSE");
+
+	WRITE_NODE_FIELD(patterns);
+}
+
+static void
+_outCypherReturnClause(StringInfo str, const CypherReturnClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERRETURNCLAUSE");
+
+	WRITE_NODE_FIELD(items);
+}
+
+static void
+_outCypherPattern(StringInfo str, const CypherPattern *node)
+{
+	WRITE_NODE_TYPE("CYPHERPATTERN");
+
+	WRITE_NODE_FIELD(chain);
+}
+
+static void
+_outCypherNode(StringInfo str, const CypherNode *node)
+{
+	WRITE_NODE_TYPE("CYPHERNODE");
+
+	WRITE_STRING_FIELD(variable);
+	WRITE_STRING_FIELD(label);
+	WRITE_STRING_FIELD(prop_map);
+}
 
 /*
  * _outNode -
@@ -3477,6 +3527,25 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_XmlSerialize:
 				_outXmlSerialize(str, obj);
+				break;
+
+			case T_CypherStmt:
+				_outCypherStmt(str, obj);
+				break;
+			case T_CypherClause:
+				_outCypherClause(str, obj);
+				break;
+			case T_CypherMatchClause:
+				_outCypherMatchClause(str, obj);
+				break;
+			case T_CypherReturnClause:
+				_outCypherReturnClause(str, obj);
+				break;
+			case T_CypherPattern:
+				_outCypherPattern(str, obj);
+				break;
+			case T_CypherNode:
+				_outCypherNode(str, obj);
 				break;
 
 			default:

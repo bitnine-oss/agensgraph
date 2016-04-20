@@ -4108,7 +4108,28 @@ _copyCypherStmt(const CypherStmt *from)
 {
 	CypherStmt *newnode = makeNode(CypherStmt);
 
-	COPY_NODE_FIELD(clauses);
+	COPY_NODE_FIELD(sub);
+
+	return newnode;
+}
+
+static CypherClause *
+_copyCypherClause(const CypherClause *from)
+{
+	CypherClause *newnode = makeNode(CypherClause);
+
+	COPY_NODE_FIELD(detail);
+	COPY_NODE_FIELD(sub);
+
+	return newnode;
+}
+
+static CypherMatchClause *
+_copyCypherMatchClause(const CypherMatchClause *from)
+{
+	CypherMatchClause *newnode = makeNode(CypherMatchClause);
+
+	COPY_NODE_FIELD(patterns);
 
 	return newnode;
 }
@@ -4119,6 +4140,28 @@ _copyCypherReturnClause(const CypherReturnClause *from)
 	CypherReturnClause *newnode = makeNode(CypherReturnClause);
 
 	COPY_NODE_FIELD(items);
+
+	return newnode;
+}
+
+static CypherPattern *
+_copyCypherPattern(const CypherPattern *from)
+{
+	CypherPattern *newnode = makeNode(CypherPattern);
+
+	COPY_NODE_FIELD(chain);
+
+	return newnode;
+}
+
+static CypherNode *
+_copyCypherNode(const CypherNode *from)
+{
+	CypherNode *newnode = makeNode(CypherNode);
+
+	COPY_STRING_FIELD(variable);
+	COPY_STRING_FIELD(label);
+	COPY_STRING_FIELD(prop_map);
 
 	return newnode;
 }
@@ -4985,8 +5028,20 @@ copyObject(const void *from)
 		case T_RoleSpec:
 			retval = _copyRoleSpec(from);
 			break;
+		case T_CypherClause:
+			retval = _copyCypherClause(from);
+			break;
+		case T_CypherMatchClause:
+			retval = _copyCypherMatchClause(from);
+			break;
 		case T_CypherReturnClause:
 			retval = _copyCypherReturnClause(from);
+			break;
+		case T_CypherPattern:
+			retval = _copyCypherPattern(from);
+			break;
+		case T_CypherNode:
+			retval = _copyCypherNode(from);
 			break;
 
 		default:

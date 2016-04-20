@@ -3071,13 +3071,49 @@ typedef struct AlterTSConfigurationStmt
 typedef struct CypherStmt
 {
 	NodeTag		type;
-	List	   *clauses;	/* clauses in the statement */
+	Node	   *sub;		/* last Cypher clause in the statement */
 } CypherStmt;
+
+/*
+ * CypherClause - a wrapper for a Cypher clause
+ *
+ * `sub` refers a previous Cypher clause and we use it to transform the Cypher
+ * statement into a Query recursively. We nemed it `sub` since a previous
+ * Cypher clause is transformed into a subquery of the current Cypher clause.
+ */
+typedef struct CypherClause
+{
+	NodeTag		type;
+	Node	   *detail;		/* detailed information about this Cypher clause */
+	Node	   *sub;
+} CypherClause;
+
+#define cypherClauseTag(n)	nodeTag(((CypherClause *) (n))->detail)
+
+typedef struct CypherMatchClause
+{
+	NodeTag		type;
+	List	   *patterns;
+} CypherMatchClause;
 
 typedef struct CypherReturnClause
 {
 	NodeTag		type;
 	List	   *items;		/* list of return items (ResTarget) */
 } CypherReturnClause;
+
+typedef struct CypherPattern
+{
+	NodeTag		type;
+	List	   *chain;		/* node, relationship, node, ... */
+} CypherPattern;
+
+typedef struct CypherNode
+{
+	NodeTag		type;
+	char	   *variable;
+	char	   *label;
+	char	   *prop_map;	/* JSON object string */
+} CypherNode;
 
 #endif   /* PARSENODES_H */

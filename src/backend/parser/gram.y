@@ -539,8 +539,11 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <str>		opt_existing_window_name
 %type <boolean> opt_if_not_exists
 
-%type <node>	CypherStmt cypher_clause cypher_return
-%type <list>	cypher_clause_list
+%type <node>	CypherStmt cypher_clause cypher_clause_sub cypher_match
+				cypher_no_parens cypher_node cypher_pattern cypher_return
+				cypher_with_parens
+%type <list>	cypher_pattern_list
+%type <str>		cypher_label_opt cypher_prop_map_opt cypher_variable_opt
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -625,7 +628,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 	RANGE READ REAL REASSIGN RECHECK RECURSIVE REF REFERENCES REFRESH REINDEX
 	RELATIVE_P RELEASE RENAME REPEATABLE REPLACE REPLICA
-	RESET RESTART RESTRICT RETURNING RETURN RETURNS REVOKE RIGHT ROLE ROLLBACK
+	RESET RESTART RESTRICT RETURN RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK
 	ROLLUP ROW ROWS RULE
 
 	SAVEPOINT SCHEMA SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
@@ -702,9 +705,13 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  * appear to cause UNBOUNDED to be treated differently from other unreserved
  * keywords anywhere else in the grammar, but it's definitely risky.  We can
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
+ *
+ * To support Cypher statements, the precedence of leading unreserved keyword
+ * MATCH should be same as that of IDENT because of the reasons given above.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
+			MATCH
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -9398,6 +9405,7 @@ ExplainableStmt:
 			| InsertStmt
 			| UpdateStmt
 			| DeleteStmt
+			| CypherStmt
 			| DeclareCursorStmt
 			| CreateAsStmt
 			| CreateMatViewStmt
@@ -10586,6 +10594,22 @@ table_ref:	relation_expr opt_alias_clause
 									 errmsg("subquery in FROM must have an alias"),
 									 errhint("For example, FROM (SELECT ...) [AS] foo."),
 									 parser_errposition(@1)));
+					}
+					$$ = (Node *) n;
+				}
+			| cypher_with_parens opt_alias_clause
+				{
+					RangeSubselect *n = makeNode(RangeSubselect);
+					n->lateral = false;
+					n->subquery = $1;
+					n->alias = $2;
+					if ($2 == NULL)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("Cypher in FROM must have an alias"),
+								 errhint("For example, FROM (...) [AS] foo."),
+								 parser_errposition(@1)));
 					}
 					$$ = (Node *) n;
 				}
@@ -14105,22 +14129,52 @@ reserved_keyword:
  * Cypher
  */
 
-CypherStmt:
-			cypher_clause_list
+CypherStmt:	cypher_no_parens
+			| cypher_with_parens
+		;
+
+cypher_with_parens:
+			'(' cypher_no_parens ')'		{ $$ = $2; }
+			| '(' cypher_with_parens ')'	{ $$ = $2; }
+		;
+
+cypher_no_parens:
+			cypher_clause_sub
 				{
 					CypherStmt *n = makeNode(CypherStmt);
-					n->clauses = $1;
-					$$ = (Node *)n;
+					n->sub = $1;
+					$$ = (Node *) n;
 				}
 		;
 
-cypher_clause_list:
-			cypher_clause							{ $$ = list_make1($1); }
-			| cypher_clause_list cypher_clause		{ $$ = lappend($1, $2); }
+cypher_clause_sub:
+			cypher_clause
+				{
+					CypherClause *n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_clause_sub cypher_clause
+				{
+					CypherClause *n = makeNode(CypherClause);
+					n->detail = $2;
+					n->sub = $1;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_clause:
-			cypher_return
+			cypher_match
+			| cypher_return
+		;
+
+cypher_match:
+			MATCH cypher_pattern_list
+				{
+					CypherMatchClause *n = makeNode(CypherMatchClause);
+					n->patterns = $2;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_return:
@@ -14128,8 +14182,50 @@ cypher_return:
 				{
 					CypherReturnClause *n = makeNode(CypherReturnClause);
 					n->items = $2;
-					$$ = (Node *)n;
+					$$ = (Node *) n;
 				}
+		;
+
+cypher_pattern_list:
+			cypher_pattern
+					{ $$ = list_make1($1); }
+			| cypher_pattern_list ',' cypher_pattern
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_pattern:
+			cypher_node
+				{
+					CypherPattern *n = makeNode(CypherPattern);
+					n->chain = list_make1($1);
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_node:
+			'(' cypher_variable_opt cypher_label_opt cypher_prop_map_opt ')'
+				{
+					CypherNode *n = makeNode(CypherNode);
+					n->variable = $2;
+					n->label = $3;
+					n->prop_map = $4;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_variable_opt:
+			ColId
+			| /* EMPTY */	{ $$ = NULL; }
+		;
+
+cypher_label_opt:
+			':' ColId		{ $$ = $2; }
+			| /* EMPTY */	{ $$ = NULL; }
+		;
+
+cypher_prop_map_opt:
+			SCONST
+			| /* EMTPY */	{ $$ = NULL; }
 		;
 
 %%
