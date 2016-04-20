@@ -5202,6 +5202,13 @@ DESCR("get an individual replication origin's replication progress");
 DATA(insert OID = 6014 ( pg_show_replication_origin_status PGNSP PGUID 12 1 100 0 0 f f f f f t v r 0 0 2249 "" "{26,25,3220,3220}" "{o,o,o,o}" "{local_id, external_id, remote_lsn, local_lsn}" _null_ _null_ pg_show_replication_origin_status _null_ _null_ _null_ ));
 DESCR("get progress for all replication origins");
 
+/* for agensgraph */
+DATA(insert OID =  3315 ( vertex_in		PGNSP PGUID 12 1 0 0 0 f f f f f f i 1 0 3308 "2275" _null_ _null_ _null_ _null_ _null_ vertex_in _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID =  3316 ( vertex_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "3308" _null_ _null_ _null_ _null_ _null_ vertex_out _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID =  3317 ( vertex		PGNSP PGUID 12 1 0 0 0 f f f f f f i 3 0 3308 "19 20 3802" _null_ _null_ "{label, vid, prop_map}" _null_ _null_ vertex_constructor _null_ _null_ _null_ ));
+DESCR("build a vertex");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

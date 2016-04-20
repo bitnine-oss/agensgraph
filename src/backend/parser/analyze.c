@@ -75,6 +75,7 @@ static Query *transformCreateTableAsStmt(ParseState *pstate,
 static void transformLockingClause(ParseState *pstate, Query *qry,
 					   LockingClause *lc, bool pushedDown);
 static Query *transformCypherStmt(ParseState *pstate, CypherStmt *stmt);
+static Query *transformCypherClause(ParseState *pstate, CypherClause *clause);
 
 
 /*
@@ -253,6 +254,10 @@ transformStmt(ParseState *pstate, Node *parseTree)
 
 		case T_CypherStmt:
 			result = transformCypherStmt(pstate, (CypherStmt *) parseTree);
+			break;
+			/* Cypher clauses are transformed into a Query recursively */
+		case T_CypherClause:
+			result = transformCypherClause(pstate, (CypherClause *) parseTree);
 			break;
 
 			/*
@@ -2730,24 +2735,34 @@ applyLockingClause(Query *qry, Index rtindex,
 static Query *
 transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 {
-	List *clauses = stmt->clauses;
-	CypherReturnClause *cr;
+	Node *clause = stmt->sub;
+
+	/* FIXME: Current implementation does not support update clauses, so; */
+	if (cypherClauseTag(clause) != T_CypherReturnClause)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("Cypher query must end with RETURN or update clause")));
+
+	return transformStmt(pstate, clause);
+}
+
+static Query *
+transformCypherClause(ParseState *pstate, CypherClause *clause)
+{
 	Query *qry;
 
-	AssertArg(clauses != NULL);
-	if (list_length(clauses) != 1)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("multiple clauses are not supported")));
-	cr = (CypherReturnClause *) linitial(clauses);
-	AssertArg(cr->type == T_CypherReturnClause);
-
-	qry = makeNode(Query);
-	qry->commandType = CMD_SELECT;
-	qry->targetList = transformTargetList(pstate, cr->items,
-										  EXPR_KIND_SELECT_TARGET);
-	qry->jointree = makeFromExpr(NULL, NULL);
-	assign_query_collations(pstate, qry);
+	switch (cypherClauseTag(clause))
+	{
+		case T_CypherMatchClause:
+			qry = transformCypherMatchClause(pstate, clause);
+			break;
+		case T_CypherReturnClause:
+			qry = transformCypherReturnClause(pstate, clause);
+			break;
+		default:
+			elog(ERROR, "unrecognized Cypher clause type: %d",
+				 cypherClauseTag(clause));
+	}
 
 	return qry;
 }
