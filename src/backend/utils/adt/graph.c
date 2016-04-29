@@ -12,6 +12,7 @@
 
 #include "utils/builtins.h"
 #include "utils/graph.h"
+#include "utils/json.h"
 
 Datum
 vertex_in(PG_FUNCTION_ARGS)
@@ -26,7 +27,7 @@ vertex_in(PG_FUNCTION_ARGS)
 Datum
 vertex_out(PG_FUNCTION_ARGS)
 {
-	Vertex		   *v = PG_GETARG_VERTEX(0);
+	Vertex	   *v = PG_GETARG_VERTEX(0);
 	StringInfoData	si;
 
 	initStringInfo(&si);
@@ -73,4 +74,28 @@ vertex_constructor(PG_FUNCTION_ARGS)
 	memcpy(&v->prop_map, prop_map, VARSIZE(prop_map));
 
 	PG_RETURN_POINTER(v);
+}
+
+Datum
+vertex_prop(PG_FUNCTION_ARGS)
+{
+	Vertex	   *v = PG_GETARG_VERTEX(0);
+	text	   *label = PG_GETARG_TEXT_P(1);
+	FunctionCallInfoData locfcinfo;
+	Datum		result;
+
+	InitFunctionCallInfoData(locfcinfo, NULL, 2,
+							 PG_GET_COLLATION(), NULL, NULL);
+
+	locfcinfo.arg[0] = PointerGetDatum(&v->prop_map);
+	locfcinfo.arg[1] = PointerGetDatum(label);
+	locfcinfo.argnull[0] = false;
+	locfcinfo.argnull[1] = PG_ARGISNULL(1);
+
+	result = jsonb_object_field(&locfcinfo);
+
+	if (locfcinfo.isnull)
+		PG_RETURN_NULL();
+
+	return result;
 }

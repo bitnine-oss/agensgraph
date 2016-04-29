@@ -1820,4 +1820,8 @@ DESCR("delete array element");
 DATA(insert OID = 3287 (  "#-"	   PGNSP PGUID b f f 3802 1009 3802 0 0 jsonb_delete_path - - ));
 DESCR("delete path");
 
+/* operators for graph */
+DATA(insert OID = 3319 ( "->"	PGNSP PGUID b f f 3308 25 3802 0 0 vertex_prop - - ));
+DESCR("get vertex project value");
+
 #endif   /* PG_OPERATOR_H */
