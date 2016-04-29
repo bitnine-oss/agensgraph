@@ -31,5 +31,6 @@ typedef struct Vertex
 extern Datum vertex_in(PG_FUNCTION_ARGS);
 extern Datum vertex_out(PG_FUNCTION_ARGS);
 extern Datum vertex_constructor(PG_FUNCTION_ARGS);
+extern Datum vertex_prop(PG_FUNCTION_ARGS);
 
 #endif	/* GRAPH_H */
