@@ -3044,6 +3044,18 @@ _outCypherNode(StringInfo str, const CypherNode *node)
 	WRITE_STRING_FIELD(prop_map);
 }
 
+static void
+_outCypherRel(StringInfo str, const CypherRel *node)
+{
+	WRITE_NODE_TYPE("CYPHERREL");
+
+	WRITE_INT_FIELD(direction);
+	WRITE_STRING_FIELD(variable);
+	WRITE_NODE_FIELD(types);
+	WRITE_NODE_FIELD(varlen);
+	WRITE_STRING_FIELD(prop_map);
+}
+
 /*
  * _outNode -
  *	  converts a Node into ascii string and append it to 'str'
@@ -3594,6 +3606,9 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherNode:
 				_outCypherNode(str, obj);
+				break;
+			case T_CypherRel:
+				_outCypherRel(str, obj);
 				break;
 
 			default:

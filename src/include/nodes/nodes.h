@@ -436,6 +436,7 @@ typedef enum NodeTag
 	T_CypherReturnClause,
 	T_CypherPattern,
 	T_CypherNode,
+	T_CypherRel,
 
 	/*
 	 * TAGS FOR REPLICATION GRAMMAR PARSE NODES (replnodes.h)
