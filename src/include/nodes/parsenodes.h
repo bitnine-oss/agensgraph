@@ -3116,4 +3116,18 @@ typedef struct CypherNode
 	char	   *prop_map;	/* JSON object string */
 } CypherNode;
 
+#define CYPHER_REL_DIR_NONE		0
+#define CYPHER_REL_DIR_LEFT		(1 << 0)
+#define CYPHER_REL_DIR_RIGHT	(1 << 1)
+
+typedef struct CypherRel
+{
+	NodeTag		type;
+	uint32		direction;	/* bitmask of directions (see above) */
+	char	   *variable;
+	List	   *types;		/* ORed types */
+	Node	   *varlen;		/* variable length relationships (A_Indices) */
+	char	   *prop_map;	/* JSON object string */
+} CypherRel;
+
 #endif   /* PARSENODES_H */

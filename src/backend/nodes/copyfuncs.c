@@ -4166,6 +4166,20 @@ _copyCypherNode(const CypherNode *from)
 	return newnode;
 }
 
+static CypherRel *
+_copyCypherRel(const CypherRel *from)
+{
+	CypherRel *newnode = makeNode(CypherRel);
+
+	COPY_SCALAR_FIELD(direction);
+	COPY_STRING_FIELD(variable);
+	COPY_NODE_FIELD(types);
+	COPY_NODE_FIELD(varlen);
+	COPY_STRING_FIELD(prop_map);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *					pg_list.h copy functions
  * ****************************************************************
@@ -5042,6 +5056,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherNode:
 			retval = _copyCypherNode(from);
+			break;
+		case T_CypherRel:
+			retval = _copyCypherRel(from);
 			break;
 
 		default:

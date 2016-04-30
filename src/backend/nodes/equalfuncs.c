@@ -2615,6 +2615,18 @@ _equalCypherNode(const CypherNode *a, const CypherNode *b)
 	return true;
 }
 
+static bool
+_equalCypherRel(const CypherRel *a, const CypherRel *b)
+{
+	COMPARE_SCALAR_FIELD(direction);
+	COMPARE_STRING_FIELD(variable);
+	COMPARE_NODE_FIELD(types);
+	COMPARE_NODE_FIELD(varlen);
+	COMPARE_STRING_FIELD(prop_map);
+
+	return true;
+}
+
 /*
  * Stuff from pg_list.h
  */
@@ -3369,6 +3381,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherNode:
 			retval = _equalCypherNode(a, b);
+			break;
+		case T_CypherRel:
+			retval = _equalCypherRel(a, b);
 			break;
 
 		default:
