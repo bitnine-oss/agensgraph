@@ -540,10 +540,13 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <boolean> opt_if_not_exists
 
 %type <node>	CypherStmt cypher_clause cypher_clause_sub cypher_match
-				cypher_no_parens cypher_node cypher_pattern cypher_return
-				cypher_with_parens
-%type <list>	cypher_pattern_list
+				cypher_no_parens cypher_node cypher_pattern cypher_range_idx
+				cypher_range_idx_opt cypher_range_opt cypher_rel cypher_return
+				cypher_varlen_opt cypher_with_parens
+%type <list>	cypher_pattern_chain cypher_pattern_list cypher_types
+				cypher_types_opt
 %type <str>		cypher_label_opt cypher_prop_map_opt cypher_variable_opt
+%type <boolean>	cypher_rel_left cypher_rel_right
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -14194,12 +14197,19 @@ cypher_pattern_list:
 		;
 
 cypher_pattern:
-			cypher_node
+			cypher_pattern_chain
 				{
 					CypherPattern *n = makeNode(CypherPattern);
-					n->chain = list_make1($1);
+					n->chain = $1;
 					$$ = (Node *) n;
 				}
+		;
+
+cypher_pattern_chain:
+			cypher_node
+					{ $$ = list_make1($1); }
+			| cypher_pattern_chain cypher_rel cypher_node
+					{ $$ = lappend(lappend($1, $2), $3); }
 		;
 
 cypher_node:
@@ -14214,18 +14224,119 @@ cypher_node:
 		;
 
 cypher_variable_opt:
-			ColId
-			| /* EMPTY */	{ $$ = NULL; }
+			ColLabel
+			| /* EMPTY */		{ $$ = NULL; }
 		;
 
 cypher_label_opt:
-			':' ColId		{ $$ = $2; }
-			| /* EMPTY */	{ $$ = NULL; }
+			':' ColId			{ $$ = $2; }
+			| /* EMPTY */		{ $$ = NULL; }
 		;
 
 cypher_prop_map_opt:
-			SCONST
-			| /* EMTPY */	{ $$ = NULL; }
+			Sconst
+			| /* EMTPY */		{ $$ = NULL; }
+		;
+
+cypher_rel:
+			cypher_rel_left '[' cypher_variable_opt
+			cypher_types_opt cypher_varlen_opt cypher_prop_map_opt
+			']' cypher_rel_right
+				{
+					CypherRel *n = makeNode(CypherRel);
+					if ($1)
+						n->direction |= CYPHER_REL_DIR_LEFT;
+					if ($8)
+						n->direction |= CYPHER_REL_DIR_RIGHT;
+					if ($1 && $8)
+						n->direction = CYPHER_REL_DIR_NONE;
+					n->variable = $3;
+					n->types = $4;
+					n->varlen = $5;
+					n->prop_map = $6;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_rel_left:
+			'-'					{ $$ = false; }
+			| '<' '-'			{ $$ = true; }
+		;
+
+cypher_rel_right:
+			'-'
+					{ $$ = false; }
+			| Op
+				{
+					/*
+					 * This is tricky but the scanner treats -> as an operator.
+					 */
+					if (strcmp($1, "->") != 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("syntax error: -> expected"),
+								 parser_errposition(@1)));
+					$$ = true;
+				}
+		;
+
+cypher_types_opt:
+			cypher_types
+			| /* EMPTY */		{ $$ = NIL; }
+		;
+
+cypher_types:
+			':' ColId
+					{ $$ = list_make1(makeString($2)); }
+			| cypher_types Op ColId
+				{
+					/* this is also tricky */
+					if (strcmp($2, "|") != 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("syntax error: | expected"),
+								 parser_errposition(@2)));
+					$$ = lappend($1, makeString($3));
+				}
+		;
+
+cypher_varlen_opt:
+			'*' cypher_range_opt
+				{
+					if ($2 == NULL)
+						$2 = (Node *) makeNode(A_Indices);
+					$$ = $2;
+				}
+			| /* EMPTY */
+					{ $$ = NULL; }
+		;
+
+cypher_range_opt:
+			cypher_range_idx
+				{
+					A_Indices *n = makeNode(A_Indices);
+					n->lidx = copyObject($1);
+					n->uidx = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_range_idx_opt DOT_DOT cypher_range_idx_opt
+				{
+					A_Indices *n = makeNode(A_Indices);
+					n->lidx = $1;
+					n->uidx = $3;
+					$$ = (Node *) n;
+				}
+			| /* EMPTY */
+					{ $$ = NULL; }
+		;
+
+cypher_range_idx_opt:
+			cypher_range_idx
+			| /* EMPTY */		{ $$ = NULL; }
+		;
+
+cypher_range_idx:
+			Iconst				{ $$ = makeIntConst($1, @1); }
 		;
 
 %%
