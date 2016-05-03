@@ -3289,6 +3289,16 @@ consCypherClauseSub(Node *clause, List *from)
 	return lcons(sub, from);
 }
 
+static Oid
+get_graph_relid(const char *relname)
+{
+	Oid relnamespace;
+
+	relnamespace = get_namespace_oid("graph", false);
+
+	return get_relname_relid(relname, relnamespace);
+}
+
 Query *
 transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 {
@@ -3326,32 +3336,27 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 		consCypherClauseSub(clause->sub, fromClause);
 
 	{
-		char *label;
-		RangeVar *rv;
+		char	   *label;
+		RangeVar   *rv;
+		Oid			v_oid;
+		A_Const	   *oid;
+		ColumnRef  *vid;
+		ColumnRef  *props;
+		FuncCall   *vertex;
+		ResTarget  *target;
 
-		label = n->label ? n->label : "vertex";
+		label = n->label == NULL ? "vertex" : n->label;
 		rv = makeRangeVar("graph", label, -1);
 		fromClause = lappend(fromClause, rv);
-	}
 
-	{
-		A_Const *label;
-		ColumnRef *vid;
-		ColumnRef *props;
-		FuncCall *vertex;
-		ResTarget *target;
-
-		label = makeNode(A_Const);
-		if (n->label == NULL)
-		{
-			label->val.type = T_Null;
-		}
-		else
-		{
-			label->val.type = T_String;
-			label->val.val.str = n->label;
-		}
-		label->location = -1;
+		v_oid = get_graph_relid(label);
+		if (v_oid == InvalidOid)
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("there is no such label \"%s\"", label)));
+		oid = makeNode(A_Const);
+		oid->val.type = T_Integer;
+		oid->val.val.ival = v_oid;
 
 		vid = makeNode(ColumnRef);
 		vid->fields = list_make1(makeString("vid"));
@@ -3362,7 +3367,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 		props->location = -1;
 
 		vertex = makeFuncCall(list_make1(makeString("vertex")),
-							  list_make3(label, vid, props), -1);
+							  list_make3(oid, vid, props), -1);
 
 		target = makeNode(ResTarget);
 		target->name = n->variable;

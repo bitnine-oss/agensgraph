@@ -655,7 +655,9 @@ DATA(insert OID = 3927 ( _int8range		PGNSP PGUID  -1 f b A f t \054 0 3926 0 arr
 DATA(insert OID = 3308 ( vertex		PGNSP PGUID -1 f b U f t \054 0 0 0 vertex_in vertex_out - - - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
 DESCR("vertex");
 #define VERTEXOID	3308
-/* TODO: DATA(insert OID = 3309 ( edge ... */
+DATA(insert OID = 3309 ( edge		PGNSP PGUID -1 f b U f t \054 0 0 0 edge_in edge_out - - - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
+DESCR("edge");
+#define EDGEOID		3309
 
 /*
  * pseudo-types

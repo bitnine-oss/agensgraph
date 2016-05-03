@@ -1822,6 +1822,8 @@ DESCR("delete path");
 
 /* operators for graph */
 DATA(insert OID = 3319 ( "->"	PGNSP PGUID b f f 3308 25 3802 0 0 vertex_prop - - ));
-DESCR("get vertex project value");
+DESCR("get vertex property value");
+DATA(insert OID = 3324 ( "->"	PGNSP PGUID b f f 3309 25 3802 0 0 edge_prop - - ));
+DESCR("get edge property value");
 
 #endif   /* PG_OPERATOR_H */
