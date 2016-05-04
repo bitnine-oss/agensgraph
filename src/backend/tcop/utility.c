@@ -1576,9 +1576,12 @@ ExecDropStmt(DropStmt *stmt, bool isTopLevel)
 										"DROP INDEX CONCURRENTLY");
 			/* fall through */
 
-		case OBJECT_TABLE:
 		case OBJECT_VLABEL:
 		case OBJECT_ELABEL:
+			RemoveLabels(stmt);
+			/* fall through */
+
+		case OBJECT_TABLE:
 		case OBJECT_SEQUENCE:
 		case OBJECT_VIEW:
 		case OBJECT_MATVIEW:

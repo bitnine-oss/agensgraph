@@ -316,6 +316,9 @@ DECLARE_UNIQUE_INDEX(pg_replication_origin_roiident_index, 6001, on pg_replicati
 DECLARE_UNIQUE_INDEX(pg_replication_origin_roname_index, 6002, on pg_replication_origin using btree(roname text_pattern_ops));
 #define ReplicationOriginNameIndex 6002
 
+DECLARE_UNIQUE_INDEX(ag_label_oid_index, 3296, on ag_label using btree(oid oid_ops));
+#define LabelOidIndexId 3296
+
 /* last step of initialization script: build the indexes declared above */
 BUILD_INDICES
 

@@ -22,6 +22,7 @@
 #include "access/sysattr.h"
 #include "access/xact.h"
 #include "access/xlog.h"
+#include "catalog/ag_label.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
@@ -472,6 +473,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
 	Oid			ofTypeId;
 	ObjectAddress address;
+	char		labkind;
 
 	/*
 	 * Truncate relname to appropriate length (probably a waste of time, as
@@ -675,6 +677,15 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 										  allowSystemTableMods,
 										  false,
 										  typaddress);
+
+	if (nodeTag(stmt) == T_CreateVLabelStmt)
+		labkind = LABEL_KIND_VERTEX;
+	else if (nodeTag(stmt) == T_CreateELabelStmt)
+		labkind = LABEL_KIND_EDGE;
+	else
+		labkind = '\0';
+
+	InsertAgLabelTuple(relationId, relname, labkind);
 
 	/* Store inheritance information for new rel. */
 	StoreCatalogInheritance(relationId, inheritOids);
@@ -919,6 +930,42 @@ RemoveRelations(DropStmt *drop)
 	performMultipleDeletions(objects, drop->behavior, flags);
 
 	free_object_addresses(objects);
+}
+
+/*
+ * RemoveLabels
+ *		Remove labels from ag_label
+ */
+void
+RemoveLabels(DropStmt *drop)
+{
+	ListCell *cell;
+
+	foreach(cell, drop->objects)
+	{
+		RangeVar   *rel = makeRangeVarFromNameList((List *) lfirst(cell));
+		Oid			relOid;
+		struct DropRelationCallbackState state;
+
+		rel->schemaname = AG_GRAPH;
+
+		state.relkind = RELKIND_RELATION;
+		state.heapOid = InvalidOid;
+		state.concurrent = drop->concurrent;
+
+		relOid = RangeVarGetRelidExtended(rel, AccessExclusiveLock, true,
+										  false,
+										  RangeVarCallbackForDropRelation,
+										  (void *) &state);
+
+		if (!OidIsValid(relOid))
+		{
+			DropErrorMsgNonExistent(rel, RELKIND_RELATION, drop->missing_ok);
+			continue;
+		}
+
+		DeleteLabelTuple(relOid);
+	}
 }
 
 /*

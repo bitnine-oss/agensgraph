@@ -22,6 +22,7 @@
 
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "catalog/ag_label.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_amop.h"
@@ -473,6 +474,17 @@ static const struct cachedesc cacheinfo[] = {
 		1,
 		{
 			Anum_pg_index_indexrelid,
+			0,
+			0,
+			0
+		},
+		64
+	},
+	{LabelRelationId,			/* LABELOID */
+		LabelOidIndexId,
+		1,
+		{
+			ObjectIdAttributeNumber,
 			0,
 			0,
 			0
