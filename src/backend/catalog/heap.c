@@ -46,6 +46,7 @@
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_foreign_table.h"
 #include "catalog/pg_inherits.h"
+#include "catalog/ag_label.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_tablespace.h"
@@ -980,6 +981,47 @@ AddNewRelationType(const char *typeName,
 }
 
 /* --------------------------------
+ *		InsertPgLabelTuple
+ *
+ *		See InsertPgClassTuple()
+ *		this registers the new label in the catalogs by
+ *		adding a tuple to ag_label.
+ * --------------------------------
+ */
+void
+InsertPgLabelTuple(Oid relid, const char *relname, char labkind)
+{
+	Relation	ag_label_desc;
+
+	Datum		values[Natts_ag_label];
+	bool		nulls[Natts_ag_label];
+	HeapTuple	tup;
+
+	if (labkind != LABEL_KIND_VERTEX && labkind != LABEL_KIND_EDGE)
+		return;
+
+	ag_label_desc	= relation_open(LabelRelationId, RowExclusiveLock);
+
+	memset(values, 0, sizeof(values));
+	memset(nulls, false, sizeof(nulls));
+
+	values[Anum_ag_label_labname - 1] = CStringGetDatum(relname);
+	values[Anum_ag_label_labkind - 1] = CharGetDatum(labkind);
+
+	tup = heap_form_tuple(RelationGetDescr(ag_label_desc), values, nulls);
+
+	/* Set same oid with pg_class */
+	HeapTupleSetOid(tup, relid);
+
+	simple_heap_insert(ag_label_desc, tup);
+
+	CatalogUpdateIndexes(ag_label_desc, tup);
+
+	heap_freetuple(tup);
+	heap_close(ag_label_desc, RowExclusiveLock);
+}
+
+/* --------------------------------
  *		heap_create_with_catalog
  *
  *		creates a new cataloged relation.  see comments above.
@@ -1444,6 +1486,33 @@ DeleteRelationTuple(Oid relid)
 	ReleaseSysCache(tup);
 
 	heap_close(pg_class_desc, RowExclusiveLock);
+}
+
+/*
+ *		DeleteLabelTuple
+ *
+ * Remove ag_label tuple for the given relid.
+ *
+ */
+void
+DeleteLabelTuple(Oid relid)
+{
+	Relation	ag_label_desc;
+	HeapTuple	tup;
+
+	/* Grab an appropriate lock on the ag_label relation */
+	ag_label_desc = heap_open(LabelRelationId, RowExclusiveLock);
+
+	tup = SearchSysCache1(LABELCATALOG, ObjectIdGetDatum(relid));
+
+	if (!HeapTupleIsValid(tup))
+		elog(ERROR, "cache lookup failed for label %u", relid);
+
+	simple_heap_delete(ag_label_desc, &tup->t_self);
+
+	ReleaseSysCache(tup);
+
+	heap_close(ag_label_desc, RowExclusiveLock);
 }
 
 /*

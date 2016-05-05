@@ -42,6 +42,7 @@
 #include "catalog/pg_foreign_data_wrapper.h"
 #include "catalog/pg_foreign_server.h"
 #include "catalog/pg_foreign_table.h"
+#include "catalog/ag_label.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_opclass.h"
@@ -473,6 +474,17 @@ static const struct cachedesc cacheinfo[] = {
 		1,
 		{
 			Anum_pg_index_indexrelid,
+			0,
+			0,
+			0
+		},
+		64
+	},
+	{LabelRelationId,			/* LABELCATALOG */
+		LabelOidIndexId,
+		1,
+		{
+			ObjectIdAttributeNumber,
 			0,
 			0,
 			0
