@@ -3289,94 +3289,406 @@ consCypherClauseSub(Node *clause, List *from)
 	return lcons(sub, from);
 }
 
-static Oid
-get_graph_relid(const char *relname)
+static bool
+arePatternsConnected(CypherPattern *p1, CypherPattern *p2)
 {
-	Oid relnamespace;
+	ListCell   *cell1;
+	ListCell   *cell2;
+	CypherNode *n1;
+	CypherNode *n2;
 
-	relnamespace = get_namespace_oid("graph", false);
+	foreach(cell1, p1->chain)
+	{
+		n1 = lfirst(cell1);
+		if (!IsA(n1, CypherNode) || n1->variable == NULL)
+			continue;
 
-	return get_relname_relid(relname, relnamespace);
+		foreach(cell2, p2->chain)
+		{
+			n2 = lfirst(cell2);
+			if (!IsA(n2, CypherNode) || n2->variable == NULL)
+				continue;
+
+			if (strcmp(n1->variable, n2->variable) == 0)
+				return true;
+		}
+	}
+
+	return false;
+}
+
+static List *
+findComponent(CypherPattern *pattern, List *components)
+{
+	ListCell *cellc;
+
+	foreach(cellc, components)
+	{
+		List	   *c = lfirst(cellc);
+		ListCell   *cellp;
+
+		foreach(cellp, c)
+		{
+			CypherPattern *p = lfirst(cellp);
+
+			if (arePatternsConnected(p, pattern))
+				return c;
+		}
+	}
+
+	return NIL;
+}
+
+static List *
+makeComponents(List *patterns)
+{
+	List	   *components = NIL;
+	ListCell   *cellp;
+
+	foreach(cellp, patterns)
+	{
+		CypherPattern *p = lfirst(cellp);
+		List *c;
+
+		/* a component is a list of CypherPatterns */
+		c = findComponent(p, components);
+		if (c == NIL)
+		{
+			c = lappend(c, p);
+			components = lappend(components, c);
+		}
+		else
+		{
+			lappend(c, p);
+		}
+	}
+
+	return components;
+}
+
+static Alias *
+makeTableAlias(char *name)
+{
+	static uint32 seq = 0;
+
+	Alias	   *alias;
+	char		data[NAMEDATALEN];
+
+	alias = makeNode(Alias);
+	if (name == NULL)
+	{
+		snprintf(data, sizeof(data), "<%010u>", seq++);
+		name = pstrdup(data);
+	}
+	alias->aliasname = name;
+
+	return alias;
+}
+
+static ColumnRef *
+makeAliasColRef(Alias *alias, char *colname)
+{
+	ColumnRef *cr;
+
+	cr = makeNode(ColumnRef);
+	cr->fields = list_make2(makeString(alias->aliasname), makeString(colname));
+	cr->location = -1;
+
+	return cr;
+}
+
+static void
+whereClauseAndExpr(Node **whereClause, Node *expr)
+{
+	if (*whereClause == NULL)
+	{
+		*whereClause = expr;
+		return;
+	}
+
+	if (IsA(*whereClause, BoolExpr))
+	{
+		BoolExpr *bexpr = (BoolExpr *) *whereClause;
+
+		if (bexpr->boolop == AND_EXPR)
+		{
+			bexpr->args = lappend(bexpr->args, expr);
+			return;
+		}
+	}
+
+	*whereClause = (Node *) makeBoolExpr(AND_EXPR,
+										 list_make2(*whereClause, expr), -1);
+	return;
+}
+
+typedef struct VarRangeItem
+{
+	char	   *variable;
+	RangeVar   *rv;
+} VarRangeItem;
+
+static VarRangeItem *
+makeVarRangeItem(char *variable, RangeVar *rv)
+{
+	VarRangeItem *vri;
+
+	vri = palloc(sizeof(*vri));
+	vri->variable = variable;
+	vri->rv = rv;
+
+	return vri;
+}
+
+static VarRangeItem *
+findVarRangeItem(List *vars, char *variable)
+{
+	ListCell *cell;
+
+	if (variable == NULL)
+		return NULL;
+
+	foreach(cell, vars)
+	{
+		VarRangeItem *vri = lfirst(cell);
+
+		if (strcmp(vri->variable, variable) == 0)
+			return vri;
+	}
+
+	return NULL;
+}
+
+static RangeVar *
+transformCypherNode(List **fromClause, List **targetList, Node **whereClause,
+					List **vars, CypherNode *node)
+{
+	VarRangeItem *vri;
+	char	   *label;
+	RangeVar   *rv;
+
+	vri = findVarRangeItem(*vars, node->variable);
+	if (vri != NULL)
+		return vri->rv;
+
+	label = node->label == NULL ? "vertex" : node->label;
+
+	rv = makeRangeVar("graph", label, -1);
+	rv->inhOpt = INH_YES;
+	rv->alias = makeTableAlias(node->variable);
+
+	*fromClause = lappend(*fromClause, rv);
+
+	if (node->variable != NULL)
+	{
+		ColumnRef  *oid;
+		ColumnRef  *vid;
+		ColumnRef  *props;
+		FuncCall   *vertex;
+		ResTarget  *target;
+
+		oid = makeAliasColRef(rv->alias, "tableoid");
+		vid = makeAliasColRef(rv->alias, "vid");
+		props = makeAliasColRef(rv->alias, "properties");
+
+		vertex = makeFuncCall(list_make1(makeString("vertex")),
+							  list_make3(oid, vid, props), -1);
+
+		target = makeNode(ResTarget);
+		target->name = node->variable;
+		target->indirection = NIL;
+		target->val = (Node *) vertex;
+		target->location = -1;
+
+		*targetList = lappend(*targetList, target);
+
+		vri = makeVarRangeItem(node->variable, rv);
+		*vars = lappend(*vars, vri);
+	}
+
+	/* TODO: property constraints (where clause) */
+
+	return rv;
+}
+
+static Node *
+makeDirExpr(RangeVar *in, RangeVar *rel, RangeVar *out)
+{
+	Node	   *in_oid;
+	Node	   *in_vid;
+	Node	   *vin_oid;
+	Node	   *vin_vid;
+	Node	   *vout_oid;
+	Node	   *vout_vid;
+	Node	   *out_oid;
+	Node	   *out_vid;
+	List	   *args;
+
+	in_oid = (Node *) makeAliasColRef(in->alias, "tableoid");
+	in_vid = (Node *) makeAliasColRef(in->alias, "vid");
+	vin_oid = (Node *) makeAliasColRef(rel->alias, "inoid");
+	vin_vid = (Node *) makeAliasColRef(rel->alias, "incoming");
+	vout_oid = (Node *) makeAliasColRef(rel->alias, "outoid");
+	vout_vid = (Node *) makeAliasColRef(rel->alias, "outgoing");
+	out_oid = (Node *) makeAliasColRef(out->alias, "tableoid");
+	out_vid = (Node *) makeAliasColRef(out->alias, "vid");
+
+	args = list_make4(makeSimpleA_Expr(AEXPR_OP, "=", vin_oid, in_oid, -1),
+					  makeSimpleA_Expr(AEXPR_OP, "=", vin_vid, in_vid, -1),
+					  makeSimpleA_Expr(AEXPR_OP, "=", vout_oid, out_oid, -1),
+					  makeSimpleA_Expr(AEXPR_OP, "=", vout_vid, out_vid, -1));
+
+	return (Node *) makeBoolExpr(AND_EXPR, args, -1);
+}
+
+static void
+transformCypherRel(List **fromClause, List **targetList, Node **whereClause,
+				   CypherRel *rel, RangeVar *left, RangeVar *right)
+{
+	char	   *type;
+	RangeVar   *rv;
+
+	/* TODO: support multiple types */
+	type = rel->types == NULL ? "edge" : strVal(linitial(rel->types));
+
+	rv = makeRangeVar("graph", type, -1);
+	rv->inhOpt = INH_YES;
+	rv->alias = makeTableAlias(rel->variable);
+
+	*fromClause = lappend(*fromClause, rv);
+
+	if (rel->variable != NULL)
+	{
+		ColumnRef  *oid;
+		ColumnRef  *vin_oid;
+		ColumnRef  *vin_vid;
+		ColumnRef  *vout_oid;
+		ColumnRef  *vout_vid;
+		ColumnRef  *props;
+		List	   *args;
+		FuncCall   *edge;
+		ResTarget  *target;
+
+		oid = makeAliasColRef(rv->alias, "tableoid");
+		vin_oid = makeAliasColRef(rv->alias, "inoid");
+		vin_vid = makeAliasColRef(rv->alias, "incoming");
+		vout_oid = makeAliasColRef(rv->alias, "outoid");
+		vout_vid = makeAliasColRef(rv->alias, "outgoing");
+		props = makeAliasColRef(rv->alias, "properties");
+
+		args = lcons(oid,
+			   lcons(vin_oid,
+			   lcons(vin_vid,
+			   lcons(vout_oid,
+			   lcons(vout_vid,
+			   lcons(props,
+					 NIL))))));
+
+		edge = makeFuncCall(list_make1(makeString("edge")), args, -1);
+
+		target = makeNode(ResTarget);
+		target->name = rel->variable;
+		target->indirection = NIL;
+		target->val = (Node *) edge;
+		target->location = -1;
+
+		*targetList = lappend(*targetList, target);
+	}
+
+	if (rel->direction == CYPHER_REL_DIR_NONE)
+	{
+		Node	   *lexpr;
+		Node	   *rexpr;
+		Node	   *nexpr;
+
+		lexpr = makeDirExpr(right, rv, left);
+		rexpr = makeDirExpr(left, rv, right);
+		nexpr = (Node *) makeBoolExpr(OR_EXPR, list_make2(lexpr, rexpr), -1);
+		whereClauseAndExpr(whereClause, nexpr);
+	}
+	else if (rel->direction == CYPHER_REL_DIR_LEFT)
+	{
+		whereClauseAndExpr(whereClause, makeDirExpr(right, rv, left));
+	}
+	else
+	{
+		Assert(rel->direction == CYPHER_REL_DIR_RIGHT);
+		whereClauseAndExpr(whereClause, makeDirExpr(left, rv, right));
+	}
+
+	/* TODO: property constraints (where clause) */
+}
+
+static void
+transformComponents(List **fromClause, List **targetList, Node **whereClause,
+					List *components)
+{
+	ListCell *cellc;
+
+	foreach(cellc, components)
+	{
+		List	   *c = lfirst(cellc);
+		ListCell   *cellp;
+		List	   *vars = NIL;
+
+		foreach(cellp, c)
+		{
+			CypherPattern *p = lfirst(cellp);
+			ListCell   *cell;
+			CypherNode *node;
+			CypherRel  *rel;
+			RangeVar   *lrv;
+			RangeVar   *rrv;
+
+			cell = list_head(p->chain);
+			node = lfirst(cell);
+			lrv = transformCypherNode(fromClause, targetList, whereClause,
+									  &vars, node);
+
+			for (;;)
+			{
+				cell = lnext(cell);
+
+				/* no more pattern chain (<rel,node> pair) */
+				if (cell == NULL)
+					break;
+
+				rel = lfirst(cell);
+
+				cell = lnext(cell);
+				node = lfirst(cell);
+				rrv = transformCypherNode(fromClause, targetList, whereClause,
+										  &vars, node);
+
+				transformCypherRel(fromClause, targetList, whereClause,
+								   rel, lrv, rrv);
+
+				lrv = rrv;
+			}
+		}
+	}
 }
 
 Query *
 transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherMatchClause *detail = (CypherMatchClause *) clause->detail;
-	List *patterns = detail->patterns;
-	CypherPattern *p;
-	CypherNode *n;
-	List *fromClause = NIL;
-	List *targetList = NIL;
-	Query *qry;
+	List	   *patterns = detail->patterns;
+	List	   *components;
+	List	   *fromClause = NIL;
+	List	   *targetList = NIL;
+	Node	   *whereClause = NULL;
+	Node	   *qual;
+	Query	   *qry;
 
-	/* TODO: support multiple patterns */
-	if (list_length(patterns) > 1)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("only one pattern is allowed in MATCH clause")));
+	components = makeComponents(patterns);
 
-	p = linitial(patterns);
-
-	/* TODO: support pattern chain */
-	if (list_length(p->chain) > 1)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("pattern chain is not supported in MATCH clause")));
-
-	n = linitial(p->chain);
-
-	/* TODO: optimize */
-	if (n->variable == NULL)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("there must be a node variable in MATCH clause")));
+	transformComponents(&fromClause, &targetList, &whereClause, components);
 
 	if (clause->sub != NULL)
 		consCypherClauseSub(clause->sub, fromClause);
 
-	{
-		char	   *label;
-		RangeVar   *rv;
-		Oid			v_oid;
-		A_Const	   *oid;
-		ColumnRef  *vid;
-		ColumnRef  *props;
-		FuncCall   *vertex;
-		ResTarget  *target;
-
-		label = n->label == NULL ? "vertex" : n->label;
-		rv = makeRangeVar("graph", label, -1);
-		fromClause = lappend(fromClause, rv);
-
-		v_oid = get_graph_relid(label);
-		if (v_oid == InvalidOid)
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_OBJECT),
-					 errmsg("there is no such label \"%s\"", label)));
-		oid = makeNode(A_Const);
-		oid->val.type = T_Integer;
-		oid->val.val.ival = v_oid;
-
-		vid = makeNode(ColumnRef);
-		vid->fields = list_make1(makeString("vid"));
-		vid->location = -1;
-
-		props = makeNode(ColumnRef);
-		props->fields = list_make1(makeString("properties"));
-		props->location = -1;
-
-		vertex = makeFuncCall(list_make1(makeString("vertex")),
-							  list_make3(oid, vid, props), -1);
-
-		target = makeNode(ResTarget);
-		target->name = n->variable;
-		target->indirection = NIL;
-		target->val = (Node *) vertex;
-		target->location = -1;
-
-		targetList = lappend(targetList, target);
-	}
+	/* TODO: add result columns of clause->sub to `targetList` */
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
@@ -3385,11 +3697,12 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 
 	qry->targetList = transformTargetList(pstate, targetList,
 										  EXPR_KIND_SELECT_TARGET);
-
 	markTargetListOrigins(pstate, qry->targetList);
 
+	qual = transformWhereClause(pstate, whereClause, EXPR_KIND_WHERE, "WHERE");
+
 	qry->rtable = pstate->p_rtable;
-	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
 
 	assign_query_collations(pstate, qry);
 
