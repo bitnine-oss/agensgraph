@@ -2829,13 +2829,13 @@ CreateVLabelStmt:	CREATE VLABEL qualified_name OptInherit
  *
  *****************************************************************************/
 
-CreateELabelStmt:	CREATE ELABEL qualified_name
+CreateELabelStmt:	CREATE ELABEL qualified_name OptInherit
 				{
 					CreateELabelStmt *n = makeNode(CreateELabelStmt);
 					$3->relpersistence = RELPERSISTENCE_PERMANENT;
 					n->relation = $3;
 					n->tableElts = NULL;
-					n->inhRelations = NULL;
+					n->inhRelations = $4;
 					n->ofTypename = NULL;
 					n->constraints = NIL;
 					n->options = NULL;

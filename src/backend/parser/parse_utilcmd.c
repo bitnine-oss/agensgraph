@@ -532,13 +532,14 @@ transformCreateLabelStmt(CreateStmt *stmt, const char *queryString)
 		if (stmt->inhRelations == NULL)
 			stmt->inhRelations = list_make1(
 									makeRangeVar(AG_GRAPH, AG_VERTEX, -1));
-		else
-			stmt->inhRelations = stmt->inhRelations;
 	}
 	else if (nodeTag(stmt) == T_CreateELabelStmt)
 	{
 		cxt.stmtType = "CREATE ELABEL";
-		stmt->inhRelations = list_make1(makeRangeVar(AG_GRAPH, AG_EDGE, -1));
+
+		if (stmt->inhRelations == NULL)
+			stmt->inhRelations = list_make1(
+									makeRangeVar(AG_GRAPH, AG_EDGE, -1));
 	}
 	else
 	{
