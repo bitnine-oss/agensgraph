@@ -3317,26 +3317,80 @@ arePatternsConnected(CypherPattern *p1, CypherPattern *p2)
 	return false;
 }
 
-static List *
-findComponent(CypherPattern *pattern, List *components)
+static bool
+isPatternConnectedTo(CypherPattern *pattern, List *component)
 {
-	ListCell *cellc;
+	ListCell *cellp;
 
-	foreach(cellc, components)
+	foreach(cellp, component)
 	{
-		List	   *c = lfirst(cellc);
-		ListCell   *cellp;
+		CypherPattern *p = lfirst(cellp);
 
-		foreach(cellp, c)
+		if (arePatternsConnected(p, pattern))
+			return true;
+	}
+
+	return false;
+}
+
+static void
+findAndUnionComponents(CypherPattern *pattern, List *components)
+{
+	ListCell   *cellc;
+	ListCell   *prevc;
+	List	   *repr;
+
+	AssertArg(components != NIL);
+
+	/* find the first connected component */
+	repr = NIL;
+	cellc = list_head(components);
+	while (cellc != NULL)
+	{
+		List *c = lfirst(cellc);
+
+		if (isPatternConnectedTo(pattern, c))
 		{
-			CypherPattern *p = lfirst(cellp);
+			repr = c;
+			break;
+		}
 
-			if (arePatternsConnected(p, pattern))
-				return c;
+		cellc = lnext(cellc);
+	}
+
+	/* there is no matched connected component */
+	if (repr == NIL)
+	{
+		lappend(components, list_make1(pattern));
+		return;
+	}
+
+	/* find other connected components and merge them to repr */
+	prevc = cellc;
+	cellc = lnext(cellc);
+	while (cellc != NULL)
+	{
+		List *c = lfirst(cellc);
+
+		if (isPatternConnectedTo(pattern, c))
+		{
+			ListCell *nextc;
+
+			list_concat(repr, c);
+
+			nextc = lnext(cellc);
+			list_delete_cell(components, cellc, prevc);
+			cellc = nextc;
+		}
+		else
+		{
+			prevc = cellc;
+			cellc = lnext(cellc);
 		}
 	}
 
-	return NIL;
+	/* add the pattern to repr */
+	lappend(repr, pattern);
 }
 
 static List *
@@ -3348,18 +3402,16 @@ makeComponents(List *patterns)
 	foreach(cellp, patterns)
 	{
 		CypherPattern *p = lfirst(cellp);
-		List *c;
 
-		/* a component is a list of CypherPatterns */
-		c = findComponent(p, components);
-		if (c == NIL)
+		if (components == NIL)
 		{
-			c = lappend(c, p);
-			components = lappend(components, c);
+			/* a component is a list of CypherPatterns */
+			List *c = list_make1(p);
+			components = list_make1(c);
 		}
 		else
 		{
-			lappend(c, p);
+			findAndUnionComponents(p, components);
 		}
 	}
 
