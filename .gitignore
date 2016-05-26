@@ -40,3 +40,4 @@ cscope.*
 /Debug/
 /Release/
 /tmp_install/
+/doc/build
