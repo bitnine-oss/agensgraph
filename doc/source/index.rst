@@ -1,10 +1,16 @@
-.. Agens Graph documentation master file, created by
-   sphinx-quickstart on Tue May 24 13:35:40 2016.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
 
-Welcome to Agens Graph's documentation!
+Agens Graph 1.0 Manual
 =======================================
+
+Welcome! Agens Graph is an open-source multi-model database
+based-on PostgreSQL RDBMS. It provides graph data model as well as relational database.
+In Agens Graph, graph and its related objects are the first-class citizens.
+You can query Agens Graph using SQL or Cypher-like graph query language, 
+and moreover they can be combined in a single united query. 
+
+This manual provides the introduction of Agens Graph including basic concepts,
+data model, query language and presents client API and administration for server management.
+
 
 Contents:
 
@@ -21,6 +27,22 @@ Contents:
    appendix
 
 .. _Github: https://github.com/bitnine-oss/agens-graph
+
+
+Contact Us
+==========
+
+
+
+
+License
+=======
+
+
+
+
+
+
 
 Indices and tables
 ==================
