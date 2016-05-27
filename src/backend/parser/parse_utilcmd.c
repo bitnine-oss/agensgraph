@@ -305,7 +305,7 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 /*
  * Inherit indexes for CreateLabel.
  * Vertex label must have vid index.
- * Edge label must have (oid, vid) indexes.
+ * Edge label must have eid index and (oid, vid) indexes.
  *
  * NOTE: See transformTableLikeClause()
  */
@@ -399,28 +399,53 @@ inheritLabelIndex(CreateStmt *stmt, CreateStmtContext *cxt)
 			else
 				isErr = true;
 		}
-		else if (nodeTag(stmt) == T_CreateELabelStmt
-				&& idxrec->indnatts == 2)
+		else if (nodeTag(stmt) == T_CreateELabelStmt)
 		{
-			char	   *attname1;
-			char	   *attname2;
-			AttrNumber	attnum1;
-			AttrNumber	attnum2;
-
-			attnum1  = idxrec->indkey.values[0];
-			attnum2  = idxrec->indkey.values[1];
-			attname1 = get_relid_attribute_name(indrelid, attnum1);
-			attname2 = get_relid_attribute_name(indrelid, attnum2);
-
-			if ((strcmp(attname1, AG_EIO) == 0 && strcmp(attname2, AG_EIC) == 0)
-				|| (strcmp(attname1, AG_EOO) == 0 && strcmp(attname2, AG_EOG) == 0))
+			if ( idxrec->indisprimary == true
+				&& idxrec->indnatts == 1)
 			{
-				/* Build CREATE INDEX statement to recreate the parent_index */
-				index_stmt = generateClonedIndexStmt(cxt, parent_index,
-													 attmap, tupleDesc->natts);
+				char	   *attname;
+				AttrNumber	attnum;
 
-				/* Save it in the inh_indexes list for the time being */
-				inh_indexes = lappend(inh_indexes, index_stmt);
+				attnum  = idxrec->indkey.values[0];
+				attname = get_relid_attribute_name(indrelid, attnum);
+
+				if (strcmp(attname, AG_EID) == 0)
+				{
+					/* Build CREATE INDEX statement to recreate the parent_index */
+					index_stmt = generateClonedIndexStmt(cxt, parent_index,
+														 attmap, tupleDesc->natts);
+
+					/* Save it in the inh_indexes list for the time being */
+					inh_indexes = lappend(inh_indexes, index_stmt);
+				}
+				else
+					isErr = true;
+			}
+			else if ( idxrec->indnatts == 2)
+			{
+				char	   *attname1;
+				char	   *attname2;
+				AttrNumber	attnum1;
+				AttrNumber	attnum2;
+
+				attnum1  = idxrec->indkey.values[0];
+				attnum2  = idxrec->indkey.values[1];
+				attname1 = get_relid_attribute_name(indrelid, attnum1);
+				attname2 = get_relid_attribute_name(indrelid, attnum2);
+
+				if ((strcmp(attname1, AG_EIO) == 0 && strcmp(attname2, AG_EIC) == 0)
+					|| (strcmp(attname1, AG_EOO) == 0 && strcmp(attname2, AG_EOG) == 0))
+				{
+					/* Build CREATE INDEX statement to recreate the parent_index */
+					index_stmt = generateClonedIndexStmt(cxt, parent_index,
+														 attmap, tupleDesc->natts);
+
+					/* Save it in the inh_indexes list for the time being */
+					inh_indexes = lappend(inh_indexes, index_stmt);
+				}
+				else
+					isErr = true;
 			}
 			else
 				isErr = true;
@@ -467,6 +492,7 @@ transformCreateLabelStmt(CreateStmt *stmt, const char *queryString)
 	List	   *save_alist;
 	Oid			existing_relid;
 	ParseCallbackState pcbstate;
+	ColumnDef  *def;
 
 	/*
 	 * We must not scribble on the passed-in CreateStmt, so copy it.  (This is
@@ -582,32 +608,36 @@ transformCreateLabelStmt(CreateStmt *stmt, const char *queryString)
 		transformOfType(&cxt, stmt->ofTypename);
 
 	/*
-	 * Set CreateSeqStmt if stmt is Vertex Label.
-	 * And set default local vid value.
-	 * Vid must be independent sequence from parent.
+	 * Set CreateSeqStmt to set default local vid or eid value.
+	 * vid/eid must be independent sequence from its parent.
 	 */
+	def = makeNode(ColumnDef);
 	if (nodeTag(stmt) == T_CreateVLabelStmt)
-	{
-		ColumnDef  *def;
-
-		def = makeNode(ColumnDef);
-
 		def->colname = pstrdup(AG_VID);
-		def->typeName = makeTypeName("bigserial");
-		def->inhcount = 0;
-		def->is_local = true;
-		def->is_not_null = true;
-		def->is_from_type = false;
-		def->storage = 0;
-		def->raw_default = NULL;
-		def->cooked_default = NULL;
-		def->collClause = NULL;
-		def->collOid = InvalidOid;
-		def->constraints = NIL;
-		def->location = -1;
-
-		transformColumnDefinition(&cxt, def);
+	else if (nodeTag(stmt) == T_CreateELabelStmt)
+		def->colname = pstrdup(AG_EID);
+	else
+	{
+		ereport(NOTICE,
+				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+				 errmsg("relation \"%s\" cannot be graph label",
+						stmt->relation->relname)));
+		return NIL;
 	}
+	def->typeName = makeTypeName("bigserial");
+	def->inhcount = 0;
+	def->is_local = true;
+	def->is_not_null = true;
+	def->is_from_type = false;
+	def->storage = 0;
+	def->raw_default = NULL;
+	def->cooked_default = NULL;
+	def->collClause = NULL;
+	def->collOid = InvalidOid;
+	def->constraints = NIL;
+	def->location = -1;
+
+	transformColumnDefinition(&cxt, def);
 
 	/*
 	 * transformIndexConstraints wants cxt.alist to contain only index
