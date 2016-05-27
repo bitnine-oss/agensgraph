@@ -305,7 +305,7 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 /*
  * Inherit indexes for CreateLabel.
  * Vertex label must have vid index.
- * Edge label must have eid and (oid, vid) indexes.
+ * Edge label must have eid index and (oid, vid) indexes.
  *
  * NOTE: See transformTableLikeClause()
  */
@@ -392,36 +392,46 @@ inheritLabelIndex(CreateStmtContext *cxt, CreateStmt *stmt)
 		}
 		else if (nodeTag(stmt) == T_CreateELabelStmt)
 		{
-			/* eid */
-			if (idxrec->indisprimary == true && idxrec->indnatts == 1)
+			if ( idxrec->indisprimary == true
+				&& idxrec->indnatts == 1)
 			{
-				attnum = idxrec->indkey.values[0];
+				char	   *attname;
+				AttrNumber	attnum;
+
+				attnum  = idxrec->indkey.values[0];
 				attname = get_relid_attribute_name(indrelid, attnum);
 
 				if (strcmp(attname, AG_EID) == 0)
 				{
+					/* Build CREATE INDEX statement to recreate the parent_index */
 					index_stmt = generateClonedIndexStmt(cxt, parent_index,
-													attmap, tupleDesc->natts);
+														 attmap, tupleDesc->natts);
+
+					/* Save it in the inh_indexes list for the time being */
+					inh_indexes = lappend(inh_indexes, index_stmt);
 				}
 			}
-			/* (oid, vid) */
-			else if (idxrec->indnatts == 2)
+			else if ( idxrec->indnatts == 2)
 			{
-				char *attname_vid;
+				char	   *attname1;
+				char	   *attname2;
+				AttrNumber	attnum1;
+				AttrNumber	attnum2;
 
-				attnum = idxrec->indkey.values[0];
-				attname = get_relid_attribute_name(indrelid, attnum);
+				attnum1  = idxrec->indkey.values[0];
+				attnum2  = idxrec->indkey.values[1];
+				attname1 = get_relid_attribute_name(indrelid, attnum1);
+				attname2 = get_relid_attribute_name(indrelid, attnum2);
 
-				attnum = idxrec->indkey.values[1];
-				attname_vid = get_relid_attribute_name(indrelid, attnum);
-
-				if ((strcmp(attname, AG_EIO) == 0 &&
-					 strcmp(attname_vid, AG_EIC) == 0) ||
-					(strcmp(attname, AG_EOO) == 0 &&
-					 strcmp(attname_vid, AG_EOG) == 0))
+				if ((strcmp(attname1, AG_EIO) == 0 && strcmp(attname2, AG_EIC) == 0)
+					|| (strcmp(attname1, AG_EOO) == 0 && strcmp(attname2, AG_EOG) == 0))
 				{
+					/* Build CREATE INDEX statement to recreate the parent_index */
 					index_stmt = generateClonedIndexStmt(cxt, parent_index,
-													attmap, tupleDesc->natts);
+														 attmap, tupleDesc->natts);
+
+					/* Save it in the inh_indexes list for the time being */
+					inh_indexes = lappend(inh_indexes, index_stmt);
 				}
 			}
 		}
