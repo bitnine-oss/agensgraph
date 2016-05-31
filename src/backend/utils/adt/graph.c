@@ -140,7 +140,7 @@ edge_out(PG_FUNCTION_ARGS)
 		label = "?";
 
 	initStringInfo(&si);
-	appendStringInfo(&si, ":%s", label);
+	appendStringInfo(&si, ":%s[%u:" INT64_FORMAT "]", label, e->oid, e->eid);
 	JsonbToCString(&si, &e->prop_map.root, VARSIZE(&e->prop_map));
 
 	PG_RETURN_CSTRING(si.data);
@@ -150,10 +150,11 @@ Datum
 edge_constructor(PG_FUNCTION_ARGS)
 {
 	Oid			oid = PG_GETARG_OID(0);
-	Oid			vin_oid = PG_GETARG_OID(1);
-	int64		vin_vid = PG_GETARG_INT64(2);
-	Oid			vout_oid = PG_GETARG_OID(3);
-	int64		vout_vid = PG_GETARG_INT64(4);
+	int64		eid = PG_GETARG_INT64(1);
+	Oid			vin_oid = PG_GETARG_OID(2);
+	int64		vin_vid = PG_GETARG_INT64(3);
+	Oid			vout_oid = PG_GETARG_OID(4);
+	int64		vout_vid = PG_GETARG_INT64(5);
 	Jsonb	   *prop_map;
 	Size		len;
 	GraphEdge  *e;
@@ -165,24 +166,28 @@ edge_constructor(PG_FUNCTION_ARGS)
 	if (PG_ARGISNULL(1))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("vertex(in) label OID must not be null")));
+				 errmsg("edge ID must not be null")));
 	if (PG_ARGISNULL(2))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("vertex(in) ID must not be null")));
+				 errmsg("vertex(in) label OID must not be null")));
 	if (PG_ARGISNULL(3))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("vertex(out) label OID must not be null")));
+				 errmsg("vertex(in) ID must not be null")));
 	if (PG_ARGISNULL(4))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("vertex(out) label OID must not be null")));
+	if (PG_ARGISNULL(5))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("vertex(out) ID must not be null")));
 
-	if (PG_ARGISNULL(5))
+	if (PG_ARGISNULL(6))
 		prop_map = build_jsonb_empty_object();
 	else
-		prop_map = PG_GETARG_JSONB(5);
+		prop_map = PG_GETARG_JSONB(6);
 
 	/* property map should be a JSON object */
 	if (!JB_ROOT_IS_OBJECT(prop_map))
@@ -197,6 +202,7 @@ edge_constructor(PG_FUNCTION_ARGS)
 	SET_VARSIZE(e, len);
 
 	e->oid = oid;
+	e->eid = eid;
 	e->vin.oid = vin_oid;
 	e->vin.vid = vin_vid;
 	e->vout.oid = vout_oid;
