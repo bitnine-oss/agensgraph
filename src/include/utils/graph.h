@@ -46,6 +46,7 @@ typedef struct GraphEdge
 	int32		vl_len_;	/* varlena header (do not touch directly!) */
 
 	Oid			oid;		/* relationship type (relation) */
+	int64		eid;		/* int8 (or BIGINT) */
 	VertexId	vin;
 	VertexId	vout;
 	Jsonb		prop_map;	/* jsonb; type of root should be object */
