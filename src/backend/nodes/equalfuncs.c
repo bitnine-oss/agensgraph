@@ -2598,6 +2598,14 @@ _equalCypherReturnClause(const CypherReturnClause *a,
 }
 
 static bool
+_equalCypherCreateClause(const CypherCreateClause *a, const CypherCreateClause *b)
+{
+	COMPARE_NODE_FIELD(patterns);
+
+	return true;
+}
+
+static bool
 _equalCypherPattern(const CypherPattern *a, const CypherPattern *b)
 {
 	COMPARE_NODE_FIELD(chain);
@@ -3375,6 +3383,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherReturnClause:
 			retval = _equalCypherReturnClause(a, b);
+			break;
+		case T_CypherCreateClause:
+			retval = _equalCypherCreateClause(a, b);
 			break;
 		case T_CypherPattern:
 			retval = _equalCypherPattern(a, b);

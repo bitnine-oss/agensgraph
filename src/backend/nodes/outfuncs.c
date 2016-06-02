@@ -2985,6 +2985,14 @@ _outCypherReturnClause(StringInfo str, const CypherReturnClause *node)
 }
 
 static void
+_outCypherCreateClause(StringInfo str, const CypherCreateClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERCREATECLAUSE");
+
+	WRITE_NODE_FIELD(patterns);
+}
+
+static void
 _outCypherPattern(StringInfo str, const CypherPattern *node)
 {
 	WRITE_NODE_TYPE("CYPHERPATTERN");
@@ -3552,6 +3560,9 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherReturnClause:
 				_outCypherReturnClause(str, obj);
+				break;
+			case T_CypherCreateClause:
+				_outCypherCreateClause(str, obj);
 				break;
 			case T_CypherPattern:
 				_outCypherPattern(str, obj);

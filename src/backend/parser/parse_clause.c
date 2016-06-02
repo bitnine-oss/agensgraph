@@ -3784,3 +3784,77 @@ transformCypherReturnClause(ParseState *pstate, CypherClause *clause)
 
 	return qry;
 }
+
+Query *
+transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherCreateClause *detail = (CypherCreateClause *) clause->detail;
+	Query 			   *qry;
+	Relation			rel;
+	ListCell		   *pattern;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_CYPHERCREATE;
+
+	/*
+	 * check relation existence and adoptable relation for graph element
+	 */
+	foreach(pattern, detail->patterns)
+	{
+		CypherPattern  *cpattern = (CypherPattern*)lfirst(pattern);
+		ListCell	   *graphElem;
+
+		foreach(graphElem, cpattern->chain)
+		{
+			Node		   *n = (Node*)lfirst(graphElem);
+			char		   *relname;
+			RangeVar	   *relation;
+
+			switch (nodeTag(n))
+			{
+				case T_CypherNode:
+					relname = ((CypherNode*)n)->label ?
+								((CypherNode*)n)->label : "vertex";
+					break;
+				case T_CypherRel:
+				{
+					CypherRel *rel = (CypherRel*)n;
+
+					if (list_length(rel->types) != 1)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("relationship type must be one")));
+					}
+
+					relname = strVal(linitial(rel->types));
+					if (relation == NULL)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("edge type must have a relation type")));
+					}
+					break;
+				}
+				default:
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("there is unsupported type in CREATE clause")));
+			}
+
+			relation = makeRangeVar("graph", relname, -1);
+			rel = parserOpenTable(pstate, relation, AccessShareLock);
+			// TODO : should be checked relation Type later.
+			heap_close(rel, NoLock);
+		}
+	}
+
+	/*
+	 * TODO : should pass result of create clause to next clauses
+	 */
+
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);	// dummy
+	qry->graphPattern = detail->patterns;
+
+	return qry;
+}

@@ -2738,7 +2738,8 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 	Node *clause = stmt->sub;
 
 	/* FIXME: Current implementation does not support update clauses, so; */
-	if (cypherClauseTag(clause) != T_CypherReturnClause)
+	if ((cypherClauseTag(clause) != T_CypherReturnClause) &&
+	    (cypherClauseTag(clause) != T_CypherCreateClause))
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("Cypher query must end with RETURN or update clause")));
@@ -2758,6 +2759,9 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 			break;
 		case T_CypherReturnClause:
 			qry = transformCypherReturnClause(pstate, clause);
+			break;
+		case T_CypherCreateClause:
+			qry = transformCypherCreateClause(pstate, clause);
 			break;
 		default:
 			elog(ERROR, "unrecognized Cypher clause type: %d",

@@ -326,6 +326,14 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 			result = (PlanState *) ExecInitLimit((Limit *) node,
 												 estate, eflags);
 			break;
+			/*
+			 * cypher process nodes
+			 */
+		case T_CypherCreate:
+			result = ExecInitCypherCreate((CypherCreate *) node,
+										  estate, eflags);
+			break;
+
 
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
@@ -518,6 +526,13 @@ ExecProcNode(PlanState *node)
 
 		case T_LimitState:
 			result = ExecLimit((LimitState *) node);
+			break;
+
+			/*
+			 * cypher process nodes
+			 */
+		case T_CypherCreateState:
+			result = ExecCypherCreate((CypherCreateState *) node);
 			break;
 
 		default:
@@ -762,6 +777,13 @@ ExecEndNode(PlanState *node)
 
 		case T_LimitState:
 			ExecEndLimit((LimitState *) node);
+			break;
+
+			/*
+			 * cypherCreate nodes
+			 */
+		case T_CypherCreateState:
+			ExecEndCypherCreate((CypherCreateState *) node);
 			break;
 
 		default:

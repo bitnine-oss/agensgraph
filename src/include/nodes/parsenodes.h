@@ -160,6 +160,7 @@ typedef struct Query
 	List	   *withCheckOptions;	/* a list of WithCheckOption's, which are
 									 * only added during rewrite and therefore
 									 * are not written out as part of Query. */
+	List	   *graphPattern;	/* Cypher graph pattern list */
 } Query;
 
 
@@ -3101,6 +3102,14 @@ typedef struct CypherReturnClause
 	NodeTag		type;
 	List	   *items;		/* list of return items (ResTarget) */
 } CypherReturnClause;
+
+
+typedef struct CypherCreateClause
+{
+	NodeTag		type;
+	List	   *patterns;
+} CypherCreateClause;
+
 
 typedef struct CypherPattern
 {
