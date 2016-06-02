@@ -3,9 +3,7 @@
  * nodeCypherCreate.c
  *	  routines to handle CypherCreate nodes.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
- * Portions Copyright (c) 1994, Regents of the University of California
- * TODO : add portions
+ * Copyright (c) 2016 by Bitnine Global, Inc.
  *
  * IDENTIFICATION
  *	  src/backend/executor/nodeCypherCreate.c
@@ -13,29 +11,10 @@
  *-------------------------------------------------------------------------
  */
 
-// TODO : add INTERFACE ROUTINES
-
 /* INTERFACE ROUTINES
- *		ExecInitModifyTable - initialize the ModifyTable node
- *		ExecModifyTable		- retrieve the next tuple from the node
- *		ExecEndModifyTable	- shut down the ModifyTable node
- *		ExecReScanModifyTable - rescan the ModifyTable node
- *
- *	 NOTES
- *		Each ModifyTable node contains a list of one or more subplans,
- *		much like an Append node.  There is one subplan per result relation.
- *		The key reason for this is that in an inherited UPDATE command, each
- *		result relation could have a different schema (more or different
- *		columns) requiring a different plan tree to produce it.  In an
- *		inherited DELETE, all the subplans should produce the same output
- *		rowtype, but we might still find that different plans are appropriate
- *		for different child relations.
- *
- *		If the query specifies RETURNING, then the ModifyTable returns a
- *		RETURNING tuple after completing each row insert, update, or delete.
- *		It must be called again to continue the operation.  Without RETURNING,
- *		we just loop within the node until all the work is done, then
- *		return NULL.  This avoids useless call/return overhead.
+ *		ExecInitCypherCreate - initialize the CypherCreate node
+ *		ExecCypherCreate	 - create graph patterns
+ *		ExecEndCypherCreate	 - shut down the CypherCreate node
  */
 
 #include "postgres.h"
@@ -44,7 +23,7 @@
 #include "access/xact.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
-#include "executor/nodeModifyTable.h"
+#include "executor/nodeCypherCreate.h"
 #include "executor/spi.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
@@ -56,10 +35,14 @@
 #include "utils/rel.h"
 #include "utils/tqual.h"
 
-#define SQLCMD_CREATE_VERTEX "INSERT INTO graph.%s VALUES (DEFAULT, '%s')" \
-							 "RETURNING vid, tableoid"
-#define SQLCMD_CREATE_EDGE   "INSERT INTO graph.%s VALUES (%d, %lld, %d, %lld, '%s')"
 
+/* TODO : looking for limit of cmd */
+#define SQLCMD_LENGTH	200
+
+#define SQLCMD_CREATE_VERTEX "INSERT INTO graph.%s VALUES (DEFAULT, '%s')" \
+							 "RETURNING tableoid, *"
+#define SQLCMD_CREATE_EDGE   "INSERT INTO graph.%s VALUES (DEFAULT, %d, %lld, %d, %lld, '%s')" \
+							 "RETURNING tableoid, *"
 typedef struct vertexInfo {
 	long long 	vid;
 	Oid			tableoid;
@@ -67,13 +50,13 @@ typedef struct vertexInfo {
 
 
 /*
- * TODO: Add Comment
+ * get RETURING information of vertex created by SPI_execute
  */
 vertexInfo * getReturnedVertex( vertexInfo * vInfo )
 {
 	if (SPI_processed != 1)
 	{
-		elog(ERROR, "SPI_execute : must be created only a vertex");
+		elog(ERROR, "SPI_execute : must be created only a vertex per SPI_exec");
 	}
 	else
 	{
@@ -84,10 +67,13 @@ vertexInfo * getReturnedVertex( vertexInfo * vInfo )
 		/************************************************************
 		 * Get the attributes value
 		 ************************************************************/
-		Assert(SPI_fnumber(tupDesc, "vid") == 1 && SPI_fnumber(tupDesc, "tableoid") == 2);
+		Assert(SPI_fnumber(tupDesc, "tableoid") == 1 &&
+			   SPI_fnumber(tupDesc, "vid") == 2 &&
+			   SPI_fnumber(tupDesc, "properties") == 3);
 
-		vInfo->vid = (long long)SPI_getbinval(tuple, tupDesc, 1, &isnull);
-		vInfo->tableoid = (Oid)SPI_getbinval(tuple, tupDesc, 2, &isnull);
+		vInfo->tableoid = (Oid)SPI_getbinval(tuple, tupDesc, 1, &isnull);
+		vInfo->vid = (long long)SPI_getbinval(tuple, tupDesc, 2, &isnull);
+
 	}
 
 	return vInfo;
@@ -95,36 +81,35 @@ vertexInfo * getReturnedVertex( vertexInfo * vInfo )
 
 
 /*
- * create a graph pattern that is separated by comma in create clause.
- * TODO : add to process MATCHed node
- * TODO : Add comment
+ * create a graph pattern
+ * TODO : Add to process MATCHed variable
  */
-TupleTableSlot * createPattern(CypherPattern *pattern)
+void createPattern(CypherPattern *pattern)
 {
-	ListCell	   *graphElem;
+	ListCell	   *lc;
 	vertexInfo	 	curVertex;
 	vertexInfo 		prevVertex;
 	bool			NeedMakeRel = false;
 	CypherRel	   *relInfo = NULL;
 
-	foreach(graphElem, pattern->chain)
+	foreach(lc, pattern->chain)
 	{
-		Node		   *n = lfirst(graphElem);
-		char 	 		queryCmd[200];
+		Node		   *graphElem = lfirst(lc);
+		char 	 		queryCmd[SQLCMD_LENGTH];
 		HeapTuple		tuple;
 		TupleDesc		tupDesc;
 		long long       vid;
 		Oid				tableoid;
 		int				i;
 
-		switch (nodeTag(n))
+		switch (nodeTag(graphElem))
 		{
 			case T_CypherNode:
 			{
-				CypherNode *cnode = (CypherNode*)n;
+				CypherNode *cnode = (CypherNode*)graphElem;
 				char	   *vlabel= cnode->label ? cnode->label : "vertex";
 
-				snprintf(queryCmd, 200, SQLCMD_CREATE_VERTEX,
+				snprintf(queryCmd, SQLCMD_LENGTH, SQLCMD_CREATE_VERTEX,
 						 vlabel, cnode->prop_map);
 
 				if (SPI_execute(queryCmd, false, 0) != SPI_OK_INSERT_RETURNING)
@@ -140,22 +125,22 @@ TupleTableSlot * createPattern(CypherPattern *pattern)
 					if (relInfo->direction == CYPHER_REL_DIR_LEFT ||
 						relInfo->direction == CYPHER_REL_DIR_NONE )
 					{
-						snprintf(queryCmd, 200, SQLCMD_CREATE_EDGE,
+						snprintf(queryCmd, SQLCMD_LENGTH, SQLCMD_CREATE_EDGE,
 								 reltype, prevVertex.tableoid, prevVertex.vid,
 								 curVertex.tableoid, curVertex.vid, relInfo->prop_map);
 
-						if (SPI_execute(queryCmd, false, 0) != SPI_OK_INSERT)
+						if (SPI_execute(queryCmd, false, 0) != SPI_OK_INSERT_RETURNING)
 							elog(ERROR, "SPI_execute failed: %s", queryCmd);
 					}
 
 					if (relInfo->direction == CYPHER_REL_DIR_RIGHT ||
 						relInfo->direction == CYPHER_REL_DIR_NONE )
 					{
-						snprintf(queryCmd, 200, SQLCMD_CREATE_EDGE,
+						snprintf(queryCmd, SQLCMD_LENGTH, SQLCMD_CREATE_EDGE,
 								 reltype, curVertex.tableoid, curVertex.vid,
 								 prevVertex.tableoid, prevVertex.vid, relInfo->prop_map);
 
-						if (SPI_execute(queryCmd, false, 0) != SPI_OK_INSERT)
+						if (SPI_execute(queryCmd, false, 0) != SPI_OK_INSERT_RETURNING)
 							elog(ERROR, "SPI_execute failed: %s", queryCmd);
 					}
 				}
@@ -165,17 +150,16 @@ TupleTableSlot * createPattern(CypherPattern *pattern)
 				break;
 			case T_CypherRel:
 			{
-				CypherRel	   *crel = (CypherRel*)n;
+				CypherRel	   *crel = (CypherRel*)graphElem;
 				char		   *reltype = crel->types;
 
-				Assert( crel->types != NULL &&
-						list_length(crel->types) == 1);
+				Assert( crel->types != NULL && list_length(crel->types) == 1);
 
 				relInfo = crel;
 			}
 				break;
 			default:
-				elog(ERROR, "unrecognized node type: %d", nodeTag(n));
+				elog(ERROR, "unrecognized node type: %d", nodeTag(graphElem));
 				break;
 
 		}
@@ -186,9 +170,8 @@ TupleTableSlot * createPattern(CypherPattern *pattern)
 
 /* ----------------------------------------------------------------
  *		ExecInitCypherCreate
- *		TODO : Add Comment
- * ----------------------------------------------------------------
- */
+ *		Initialize the CypherCreate State
+ * ---------------------------------------------------------------- */
 CypherCreateState *
 ExecInitCypherCreate(CypherCreate *node, EState *estate, int eflags)
 {
@@ -214,6 +197,7 @@ ExecInitCypherCreate(CypherCreate *node, EState *estate, int eflags)
 	ccstate->canSetTag = node->canSetTag;
 	ccstate->cc_done = false;
 
+	/* Currently, below code is not used. */
 	ccstate->cc_plans = (PlanState **) palloc0(sizeof(PlanState *) * nplans);
 	ccstate->cc_nplans = nplans;
 
@@ -245,10 +229,7 @@ ExecInitCypherCreate(CypherCreate *node, EState *estate, int eflags)
 /* ----------------------------------------------------------------
  *	   ExecCypherCreate
  *
- *		TODO : add comments
- *		INSERT INTO vertex (properties) VALUES (?) RETURNING vid, tableoid;
- *		INSERT INTO edge (inoid, invid, outoid, outvid, properties) VALUES (?,?,?,?,?) RETURNING EID, tableoid;
- *
+ *		create graph patterns
  * ----------------------------------------------------------------
  */
 TupleTableSlot *
@@ -261,16 +242,13 @@ ExecCypherCreate(CypherCreateState *node)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
+	/* TODO : fetch MATCHed graph elements from Sub-plan */
+
 	foreach(l, plan->graphPatterns)
 	{
 		CypherPattern  *pattern = (CypherPattern *)lfirst(l);
 
 		createPattern(pattern);
-
-		/*
-		 * TODO : 생성된 graph Element들의 변수가 이 후 clause에서 사용된다면
-		 * 		  생성된 graph element 정보를 넘겨줘야 함.
-		 */
 	}
 
 	/* Close SPI context. */
@@ -305,7 +283,7 @@ ExecEndCypherCreate(CypherCreateState *node)
 	ExecClearTuple(node->ps.ps_ResultTupleSlot);
 
 	/*
-	 * shut down subplanse
+	 * shut down subplans
 	 */
 	for (i = 0; i < node->cc_nplans; i++)
 		ExecEndNode(node->cc_plans[i]);

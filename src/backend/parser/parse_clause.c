@@ -3791,49 +3791,46 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	CypherCreateClause *detail = (CypherCreateClause *) clause->detail;
 	Query 			   *qry;
 	Relation			rel;
-	ListCell		   *pattern;
+	ListCell		   *l;
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_CYPHERCREATE;
 
 	/*
-	 * check relation existence and adoptable relation for graph element
+	 * check relation existence
 	 */
-	foreach(pattern, detail->patterns)
+	foreach(l, detail->patterns)
 	{
-		CypherPattern  *cpattern = (CypherPattern*)lfirst(pattern);
-		ListCell	   *graphElem;
+		CypherPattern  *pattern = (CypherPattern*)lfirst(l);
+		ListCell	   *n;
 
-		foreach(graphElem, cpattern->chain)
+		foreach(n, pattern->chain)
 		{
-			Node		   *n = (Node*)lfirst(graphElem);
+			Node		   *graphElem = (Node*)lfirst(n);
 			char		   *relname;
 			RangeVar	   *relation;
 
-			switch (nodeTag(n))
+			switch (nodeTag(graphElem))
 			{
 				case T_CypherNode:
-					relname = ((CypherNode*)n)->label ?
-								((CypherNode*)n)->label : "vertex";
+				{
+					CypherNode *node = (CypherNode*)graphElem;
+
+					relname = node->label ? node->label : "vertex";
 					break;
+				}
 				case T_CypherRel:
 				{
-					CypherRel *rel = (CypherRel*)n;
+					CypherRel *rel = (CypherRel*)graphElem;
 
 					if (list_length(rel->types) != 1)
 					{
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
-								 errmsg("relationship type must be one")));
+								 errmsg("relationship must have only one reltype in CREATE clause")));
 					}
 
 					relname = strVal(linitial(rel->types));
-					if (relation == NULL)
-					{
-						ereport(ERROR,
-								(errcode(ERRCODE_SYNTAX_ERROR),
-								 errmsg("edge type must have a relation type")));
-					}
 					break;
 				}
 				default:
@@ -3844,16 +3841,13 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 
 			relation = makeRangeVar("graph", relname, -1);
 			rel = parserOpenTable(pstate, relation, AccessShareLock);
-			// TODO : should be checked relation Type later.
+			/* TODO : should be checked relation Type later. */
 			heap_close(rel, NoLock);
 		}
 	}
 
-	/*
-	 * TODO : should pass result of create clause to next clauses
-	 */
-
-	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);	// dummy
+	/* Dummy */
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
 	qry->graphPattern = detail->patterns;
 
 	return qry;
