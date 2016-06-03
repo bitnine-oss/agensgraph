@@ -5138,3 +5138,56 @@ is_projection_capable_plan(Plan *plan)
 	}
 	return true;
 }
+
+
+/*
+ * make_cypherCreate
+ *	  Build a CypherCreate plan node
+ *
+ * Todo : Add Comments
+ */
+CypherCreate *
+make_cypherCreate(PlannerInfo *root, CmdType operation, bool canSetTag,
+				  List *subplans, List *graphPattern)
+{
+	CypherCreate *node = makeNode(CypherCreate);
+	Plan		 *plan = &node->plan;
+	double		  total_size;
+	ListCell 	 *subnode;
+
+	/*
+	 * Compute cost as sum of subplan costs.
+	 */
+	plan->startup_cost = 0;
+	plan->total_cost = 0;
+	plan->plan_rows = 0;
+	total_size = 0;
+	foreach(subnode, subplans)
+	{
+		Plan	   *subplan = (Plan *) lfirst(subnode);
+
+		if (subnode == list_head(subplans))		/* first node? */
+			plan->startup_cost = subplan->startup_cost;
+		plan->total_cost += subplan->total_cost;
+		plan->plan_rows += subplan->plan_rows;
+		total_size += subplan->plan_width * subplan->plan_rows;
+	}
+	if (plan->plan_rows > 0)
+		plan->plan_width = rint(total_size / plan->plan_rows);
+	else
+		plan->plan_width = 0;
+
+	node->plan.lefttree = NULL;
+	node->plan.righttree = NULL;
+	node->plan.qual = NIL;
+	/* setrefs.c will fill in the targetlist, if needed */
+	node->plan.targetlist = NIL;
+
+	node->operation = operation;
+	node->canSetTag = canSetTag;
+
+	node->subplans = subplans;
+	node->graphPatterns = graphPattern;
+
+	return node;
+}

@@ -539,7 +539,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <str>		opt_existing_window_name
 %type <boolean> opt_if_not_exists
 
-%type <node>	CypherStmt cypher_clause cypher_clause_sub cypher_match
+%type <node>	CypherStmt cypher_clause cypher_clause_sub cypher_match 
+				cypher_create
 				cypher_no_parens cypher_node cypher_pattern cypher_range_idx
 				cypher_range_idx_opt cypher_range_opt cypher_rel cypher_return
 				cypher_varlen_opt cypher_with_parens
@@ -14169,6 +14170,7 @@ cypher_clause_sub:
 cypher_clause:
 			cypher_match
 			| cypher_return
+			| cypher_create
 		;
 
 cypher_match:
@@ -14188,7 +14190,14 @@ cypher_return:
 					$$ = (Node *) n;
 				}
 		;
-
+cypher_create:
+			CREATE cypher_pattern_list
+				{
+					CypherCreateClause *n = makeNode(CypherCreateClause);
+					n->patterns = $2;
+					$$ = (Node *) n;
+				}
+		;
 cypher_pattern_list:
 			cypher_pattern
 					{ $$ = list_make1($1); }

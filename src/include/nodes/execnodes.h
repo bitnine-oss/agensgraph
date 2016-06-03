@@ -1138,6 +1138,23 @@ typedef struct ModifyTableState
 										 * target */
 } ModifyTableState;
 
+
+/* ----------------
+ *	 CypherCreateState information
+ * ----------------
+ */
+typedef struct CypherCreateState
+{
+	PlanState	ps;				/* its first field is NodeTag */
+	CmdType		operation;		/* INSERT, UPDATE, or DELETE */
+	bool		canSetTag;		/* do we set the command tag/es_processed? */
+	bool		cc_done;		/* are we done? */
+	PlanState **cc_plans;		/* subplans (one per target rel) */
+	int			cc_nplans;		/* number of plans in the array */
+	int			cc_whichplan;	/* which one is being executed (0..n-1) */
+	ResultRelInfo *resultRelInfo;		/* per-subplan target relations */
+} CypherCreateState;
+
 /* ----------------
  *	 AppendState information
  *

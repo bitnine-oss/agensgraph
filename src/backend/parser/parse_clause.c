@@ -3787,3 +3787,71 @@ transformCypherReturnClause(ParseState *pstate, CypherClause *clause)
 
 	return qry;
 }
+
+Query *
+transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherCreateClause *detail = (CypherCreateClause *) clause->detail;
+	Query 			   *qry;
+	Relation			rel;
+	ListCell		   *l;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_CYPHERCREATE;
+
+	/*
+	 * check relation existence
+	 */
+	foreach(l, detail->patterns)
+	{
+		CypherPattern  *pattern = (CypherPattern*)lfirst(l);
+		ListCell	   *n;
+
+		foreach(n, pattern->chain)
+		{
+			Node		   *graphElem = (Node*)lfirst(n);
+			char		   *relname;
+			RangeVar	   *relation;
+
+			switch (nodeTag(graphElem))
+			{
+				case T_CypherNode:
+				{
+					CypherNode *node = (CypherNode*)graphElem;
+
+					relname = node->label ? node->label : "vertex";
+					break;
+				}
+				case T_CypherRel:
+				{
+					CypherRel *rel = (CypherRel*)graphElem;
+
+					if (list_length(rel->types) != 1)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("relationship must have only one reltype in CREATE clause")));
+					}
+
+					relname = strVal(linitial(rel->types));
+					break;
+				}
+				default:
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("there is unsupported type in CREATE clause")));
+			}
+
+			relation = makeRangeVar("graph", relname, -1);
+			rel = parserOpenTable(pstate, relation, AccessShareLock);
+			/* TODO : should be checked relation Type later. */
+			heap_close(rel, NoLock);
+		}
+	}
+
+	/* Dummy */
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+	qry->graphPattern = detail->patterns;
+
+	return qry;
+}

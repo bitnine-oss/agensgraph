@@ -371,7 +371,8 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	 * Check to see if any subqueries in the jointree can be merged into this
 	 * query.
 	 */
-	pull_up_subqueries(root);
+	if (parse->commandType != CMD_CYPHERCREATE)
+		pull_up_subqueries(root);
 
 	/*
 	 * If this is a simple UNION ALL query, flatten it into an appendrel. We
@@ -618,7 +619,15 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	{
 		plan = grouping_planner(root, tuple_fraction);
 		/* If it's not SELECT, we need a ModifyTable node */
-		if (parse->commandType != CMD_SELECT)
+		if ( parse->commandType == CMD_CYPHERCREATE)
+		{
+			plan = (Plan *)make_cypherCreate(root,
+											 parse->commandType,
+											 parse->canSetTag,
+											 list_make1(plan),
+											 parse->graphPattern);
+		}
+		else if (parse->commandType != CMD_SELECT)
 		{
 			List	   *withCheckOptionLists;
 			List	   *returningLists;
