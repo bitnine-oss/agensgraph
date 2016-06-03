@@ -20,6 +20,7 @@
 #define AG_VERTEX	"vertex"
 #define AG_EDGE		"edge"
 #define AG_VID		"vid"
+#define AG_EID		"eid"
 #define AG_EIO		"inoid"
 #define AG_EIC		"incoming"
 #define AG_EOO		"outoid"

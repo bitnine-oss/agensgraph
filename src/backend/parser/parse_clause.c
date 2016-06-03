@@ -3600,7 +3600,7 @@ transformCypherRel(List **fromClause, List **targetList, Node **whereClause,
 	char	   *type;
 	RangeVar   *rv;
 
-	/* TODO: support multiple types */
+	/* TODO: support multiple types (types cannot be NULL) */
 	type = rel->types == NULL ? "edge" : strVal(linitial(rel->types));
 
 	rv = makeRangeVar("graph", type, -1);
@@ -3612,6 +3612,7 @@ transformCypherRel(List **fromClause, List **targetList, Node **whereClause,
 	if (rel->variable != NULL)
 	{
 		ColumnRef  *oid;
+		ColumnRef  *eid;
 		ColumnRef  *vin_oid;
 		ColumnRef  *vin_vid;
 		ColumnRef  *vout_oid;
@@ -3622,6 +3623,7 @@ transformCypherRel(List **fromClause, List **targetList, Node **whereClause,
 		ResTarget  *target;
 
 		oid = makeAliasColRef(rv->alias, "tableoid");
+		eid = makeAliasColRef(rv->alias, "eid");
 		vin_oid = makeAliasColRef(rv->alias, "inoid");
 		vin_vid = makeAliasColRef(rv->alias, "incoming");
 		vout_oid = makeAliasColRef(rv->alias, "outoid");
@@ -3629,12 +3631,13 @@ transformCypherRel(List **fromClause, List **targetList, Node **whereClause,
 		props = makeAliasColRef(rv->alias, "properties");
 
 		args = lcons(oid,
+			   lcons(eid,
 			   lcons(vin_oid,
 			   lcons(vin_vid,
 			   lcons(vout_oid,
 			   lcons(vout_vid,
 			   lcons(props,
-					 NIL))))));
+					 NIL)))))));
 
 		edge = makeFuncCall(list_make1(makeString("edge")), args, -1);
 
