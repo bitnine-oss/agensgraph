@@ -7,7 +7,7 @@ CREATE VLABEL
 =============
 *Name*
 
-CREATE VLABEL –define a new vertex label
+CREATE VLABEL – define a new vertex label
 
 *Synopsis*
 
@@ -19,7 +19,7 @@ CREATE VLABEL –define a new vertex label
 
 CREATE VLABEL will create a new, initially empty vertex label in the current database.
 
-A schema name cannot be given when creating a vertex label. It is create in the GRAPH schema always. If a schema name is given(for example, CREATE VLABEL myschema.myvlabel ...) the the query will return a error.
+A schema name cannot be given when creating a vertex label. It is created in the GRAPH schema always. If a schema name is given(for example, CREATE VLABEL myschema.myvlabel ...) the the query will return a error.
 
 *Parameters*
 
@@ -28,9 +28,9 @@ A schema name cannot be given when creating a vertex label. It is create in the 
   The name of the vertex label to be created.
 
  INHERITS ( parent_label [, ...] )
-  The optional INHERITS clause specifies a list of vertex lables. If it is empty then the new vertex label inherits default vertex label.
+  The optional INHERITS clause specifies a list of vertex lables. If it is empty then the new vertex label inherits the default vertex label.
 
-  Use of INHERITS create a persistent relationship between the new child label and its parent label(s). The data of the child label is included in scans of the parent(s) by default.
+  Use of INHERITS creates a persistent relationship between the new child label and its parent label(s). The data of the child label is included in scans of the parent(s) by default.
 
 
 =============
@@ -38,7 +38,7 @@ CREATE ELABEL
 =============
 *Name*
 
-CREATE ELABEL –define a new edge label
+CREATE ELABEL – define a new edge label
 
 *Synopsis*
 
@@ -61,9 +61,9 @@ A schema name cannot be given when creating a edge label. It is create in the GR
   The name of the edge label to be created.
 
  INHERITS ( parent_label [, ...] )
-  The optional INHERITS clause specifies a list of edge lables. If it is empty then the new edge label inherits default edge label.
+  The optional INHERITS clause specifies a list of edge lables. If it is empty then the new edge label inherits the default edge label.
 
-  Use of INHERITS create a persistent relationship between the new child label and its parent label(s). The data of the child label is included in scans of the parent(s) by default.
+  Use of INHERITS creates a persistent relationship between the new child label and its parent label(s). The data of the child label is included in scans of the parent(s) by default.
 
 
 ===========
@@ -71,7 +71,7 @@ DROP VLABEL
 ===========
 *Name*
 
-DROP VLABEL –remove a vertex label
+DROP VLABEL – remove a vertex label
 
 *Synopsis*
 
@@ -81,9 +81,9 @@ DROP VLABEL –remove a vertex label
 
 *Description*
 
-Drop VLABEL removes labels from the database.
+DROP VLABEL removes labels from the database.
 
-Drop VLABEL removes constraints the exist for the label. To drop a label that is inherited by another label, CASCADE must be specified.
+DROP VLABEL always removes constraints that exist for the label. To drop a label that is inherited by another label, CASCADE must be specified.
 
 *Parameters*
 
@@ -92,7 +92,7 @@ Drop VLABEL removes constraints the exist for the label. To drop a label that is
   The name of the label to drop.
 
  CASCADE
-  Automatically drop labels that inheriting the table(child table).
+  Automatically drop labels that inherit the table (child table).
 
  RESTRICT
   Refuse to drop the label if any child table exist. This is the default.
@@ -103,7 +103,7 @@ DROP ELABEL
 ===========
 *Name*
 
-DROP ELABEL –remove a edge label
+DROP ELABEL – remove a edge label
 
 *Synopsis*
 
@@ -115,9 +115,9 @@ DROP ELABEL –remove a edge label
 
 .. note:: This contents are almost the same as DROP VLABEL.
 
-Drop ELABEL removes labels from the database.
+DROP ELABEL removes labels from the database.
 
-Drop ELABEL removes constraints the exist for the label. To drop a label that is inherited by another label, CASCADE must be specified.
+DROP ELABEL always removes constraints that exist for the label. To drop a label that is inherited by another label, CASCADE must be specified.
 
 *Parameters*
 
@@ -126,7 +126,7 @@ Drop ELABEL removes constraints the exist for the label. To drop a label that is
   The name of the label to drop.
 
  CASCADE
-  Automatically drop labels that inheriting the table(child table).
+  Automatically drop labels that inherit the table (child table).
 
  RESTRICT
   Refuse to drop the label if any child table exist. This is the default.
