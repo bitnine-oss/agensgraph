@@ -44,6 +44,7 @@ help:
 	@echo "  changes    to make an overview of all changed/added/deprecated items"
 	@echo "  xml        to make Docutils-native XML files"
 	@echo "  pseudoxml  to make pseudoxml-XML files for display purposes"
+	@echo "  all        same as `html man`"
 	@echo "  linkcheck  to check all external links for integrity"
 	@echo "  doctest    to run all doctests embedded in the documentation (if enabled)"
 	@echo "  coverage   to run coverage check of the documentation (if enabled)"
@@ -228,3 +229,36 @@ dummy:
 	$(SPHINXBUILD) -b dummy $(ALLSPHINXOPTS) $(BUILDDIR)/dummy
 	@echo
 	@echo "Build finished. Dummy builder generates no files."
+
+
+NO_TEMP_INSTALL = yes
+
+subdir = doc
+top_builddir = ..
+include $(top_builddir)/src/Makefile.global
+
+all: html man
+
+distprep: html man
+
+install: install-html
+ifneq ($(PORTNAME), sco)
+install: install-man
+endif
+
+installdirs:
+	$(MKDIR_P) '$(DESTDIR)$(htmldir)'/html '$(DESTDIR)$(mandir)'/man1
+
+uninstall:
+	rm -rf '$(DESTDIR)$(htmldir)/html/'* '$(DESTDIR)$(mandir)'/man1/*
+
+install-html: html installdirs
+	cp -R $(call vpathsearch,build/html) '$(DESTDIR)$(htmldir)'
+
+install-man: man installdirs
+	cp $(call vpathsearch,build/man)/* '$(DESTDIR)$(mandir)'/man1/
+
+distclean: clean
+
+maintainer-clean: distclean
+	rm -rf build/
