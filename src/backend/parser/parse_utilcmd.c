@@ -535,6 +535,9 @@ transformCreateLabelStmt(CreateStmt *stmt, const char *queryString)
 		if (stmt->inhRelations == NULL)
 			stmt->inhRelations = list_make1(
 									makeRangeVar(AG_GRAPH, AG_VERTEX, -1));
+		/* TODO : issue #10
+		 * check parents whether that they are VLABEL or not.
+		 * And set AG_GRAPH to its schema */
 	}
 	else if (nodeTag(stmt) == T_CreateELabelStmt)
 	{
@@ -543,6 +546,9 @@ transformCreateLabelStmt(CreateStmt *stmt, const char *queryString)
 		if (stmt->inhRelations == NULL)
 			stmt->inhRelations = list_make1(
 									makeRangeVar(AG_GRAPH, AG_EDGE, -1));
+		/* TODO : issue #10
+		 * check parents whether that they are ELABEL or not
+		 * And set AG_GRAPH to its schema */
 	}
 	else
 	{

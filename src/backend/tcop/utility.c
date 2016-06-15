@@ -1579,7 +1579,7 @@ ExecDropStmt(DropStmt *stmt, bool isTopLevel)
 		case OBJECT_VLABEL:
 		case OBJECT_ELABEL:
 			RemoveLabels(stmt);
-			/* fall through */
+			break;
 
 		case OBJECT_TABLE:
 		case OBJECT_SEQUENCE:

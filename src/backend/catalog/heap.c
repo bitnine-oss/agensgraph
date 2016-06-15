@@ -35,6 +35,7 @@
 #include "access/transam.h"
 #include "access/xact.h"
 #include "access/xlog.h"
+#include "catalog/ag_inherits.h"
 #include "catalog/ag_label.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
@@ -97,7 +98,6 @@ static ObjectAddress AddNewRelationType(const char *typeName,
 				   Oid ownerid,
 				   Oid new_row_type,
 				   Oid new_array_type);
-static void RelationRemoveInheritance(Oid relid);
 static Oid StoreRelCheck(Relation rel, char *ccname, Node *expr,
 			  bool is_validated, bool is_local, int inhcount,
 			  bool is_no_inherit, bool is_internal);
@@ -989,12 +989,14 @@ AddNewRelationType(const char *typeName,
  * --------------------------------
  */
 void
-InsertAgLabelTuple(Oid relid, const char *relname, char labkind)
+InsertAgLabelTuple(Oid relid, const char *relname, char labkind, List *supers)
 {
 	Relation	ag_label_desc;
 	Datum		values[Natts_ag_label];
 	bool		nulls[Natts_ag_label];
 	HeapTuple	tup;
+	ObjectAddress myself,
+				  referenced;
 
 	if (labkind != LABEL_KIND_VERTEX && labkind != LABEL_KIND_EDGE)
 		return;
@@ -1018,6 +1020,18 @@ InsertAgLabelTuple(Oid relid, const char *relname, char labkind)
 
 	heap_freetuple(tup);
 	heap_close(ag_label_desc, RowExclusiveLock);
+
+	/*
+	 * Make a dependency link to force the relation to be deleted if its
+	 * graph label is.
+	 */
+	myself.classId = RelationRelationId;
+	myself.objectId = relid;
+	myself.objectSubId = 0;
+	referenced.classId = LabelRelationId;
+	referenced.objectId = relid;
+	referenced.objectSubId = 0;
+	recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 }
 
 /* --------------------------------
@@ -1433,22 +1447,37 @@ heap_create_init_fork(Relation rel)
  * there are no children and we need only remove any pg_inherits rows
  * linking this relation to its parent(s).
  */
-static void
-RelationRemoveInheritance(Oid relid)
+void
+RelationRemoveInheritance(Oid classid, Oid relid)
 {
 	Relation	catalogRelation;
 	SysScanDesc scan;
 	ScanKeyData key;
 	HeapTuple	tuple;
+	Oid			indexId;
+	Oid			anum_inhrelid;
 
-	catalogRelation = heap_open(InheritsRelationId, RowExclusiveLock);
+	catalogRelation = heap_open(classid, RowExclusiveLock);
+
+	if (classid == InheritsRelationId)
+	{
+		indexId	= InheritsRelidSeqnoIndexId;
+		anum_inhrelid = Anum_pg_inherits_inhrelid;
+	}
+	else if (classid == InheritsLabelId)
+	{
+		indexId = InheritsLabidSeqnoIndexId;
+		anum_inhrelid = Anum_ag_inherits_inhrelid;
+	}
+	else /* shouldn't happen */
+		elog(ERROR, "Access to Inheritance catalog with invalid OID %d", classid);
 
 	ScanKeyInit(&key,
-				Anum_pg_inherits_inhrelid,
+				anum_inhrelid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(relid));
 
-	scan = systable_beginscan(catalogRelation, InheritsRelidSeqnoIndexId, true,
+	scan = systable_beginscan(catalogRelation, indexId, true,
 							  NULL, 1, &key);
 
 	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
@@ -1897,7 +1926,7 @@ heap_drop_with_catalog(Oid relid)
 	/*
 	 * remove inheritance information
 	 */
-	RelationRemoveInheritance(relid);
+	RelationRemoveInheritance(InheritsRelationId, relid);
 
 	/*
 	 * delete statistics
