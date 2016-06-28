@@ -2566,7 +2566,7 @@ _equalRoleSpec(const RoleSpec *a, const RoleSpec *b)
 static bool
 _equalCypherStmt(const CypherStmt *a, const CypherStmt *b)
 {
-	COMPARE_NODE_FIELD(sub);
+	COMPARE_NODE_FIELD(last);
 
 	return true;
 }
@@ -2575,7 +2575,7 @@ static bool
 _equalCypherClause(const CypherClause *a, const CypherClause *b)
 {
 	COMPARE_NODE_FIELD(detail);
-	COMPARE_NODE_FIELD(sub);
+	COMPARE_NODE_FIELD(prev);
 
 	return true;
 }
@@ -2608,8 +2608,8 @@ _equalCypherPattern(const CypherPattern *a, const CypherPattern *b)
 static bool
 _equalCypherNode(const CypherNode *a, const CypherNode *b)
 {
-	COMPARE_STRING_FIELD(variable);
-	COMPARE_STRING_FIELD(label);
+	COMPARE_NODE_FIELD(variable);
+	COMPARE_NODE_FIELD(label);
 	COMPARE_STRING_FIELD(prop_map);
 
 	return true;
@@ -2619,10 +2619,19 @@ static bool
 _equalCypherRel(const CypherRel *a, const CypherRel *b)
 {
 	COMPARE_SCALAR_FIELD(direction);
-	COMPARE_STRING_FIELD(variable);
+	COMPARE_NODE_FIELD(variable);
 	COMPARE_NODE_FIELD(types);
 	COMPARE_NODE_FIELD(varlen);
 	COMPARE_STRING_FIELD(prop_map);
+
+	return true;
+}
+
+static bool
+_equalCypherName(const CypherName *a, const CypherName *b)
+{
+	COMPARE_STRING_FIELD(name);
+	COMPARE_LOCATION_FIELD(location);
 
 	return true;
 }
@@ -3384,6 +3393,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherRel:
 			retval = _equalCypherRel(a, b);
+			break;
+		case T_CypherName:
+			retval = _equalCypherName(a, b);
 			break;
 
 		default:

@@ -2956,7 +2956,7 @@ _outCypherStmt(StringInfo str, const CypherStmt *node)
 {
 	WRITE_NODE_TYPE("CYPHER");
 
-	WRITE_NODE_FIELD(sub);
+	WRITE_NODE_FIELD(last);
 }
 
 static void
@@ -2965,7 +2965,7 @@ _outCypherClause(StringInfo str, const CypherClause *node)
 	WRITE_NODE_TYPE("CYPHERCLAUSE");
 
 	WRITE_NODE_FIELD(detail);
-	WRITE_NODE_FIELD(sub);
+	WRITE_NODE_FIELD(prev);
 }
 
 static void
@@ -2997,8 +2997,8 @@ _outCypherNode(StringInfo str, const CypherNode *node)
 {
 	WRITE_NODE_TYPE("CYPHERNODE");
 
-	WRITE_STRING_FIELD(variable);
-	WRITE_STRING_FIELD(label);
+	WRITE_NODE_FIELD(variable);
+	WRITE_NODE_FIELD(label);
 	WRITE_STRING_FIELD(prop_map);
 }
 
@@ -3008,10 +3008,19 @@ _outCypherRel(StringInfo str, const CypherRel *node)
 	WRITE_NODE_TYPE("CYPHERREL");
 
 	WRITE_INT_FIELD(direction);
-	WRITE_STRING_FIELD(variable);
+	WRITE_NODE_FIELD(variable);
 	WRITE_NODE_FIELD(types);
 	WRITE_NODE_FIELD(varlen);
 	WRITE_STRING_FIELD(prop_map);
+}
+
+static void
+_outCypherName(StringInfo str, const CypherName *node)
+{
+	WRITE_NODE_TYPE("CYPHERNAME");
+
+	WRITE_STRING_FIELD(name);
+	WRITE_LOCATION_FIELD(location);
 }
 
 /*
@@ -3561,6 +3570,9 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherRel:
 				_outCypherRel(str, obj);
+				break;
+			case T_CypherName:
+				_outCypherName(str, obj);
 				break;
 
 			default:

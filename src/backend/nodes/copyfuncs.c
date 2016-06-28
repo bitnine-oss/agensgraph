@@ -4108,7 +4108,7 @@ _copyCypherStmt(const CypherStmt *from)
 {
 	CypherStmt *newnode = makeNode(CypherStmt);
 
-	COPY_NODE_FIELD(sub);
+	COPY_NODE_FIELD(last);
 
 	return newnode;
 }
@@ -4119,7 +4119,7 @@ _copyCypherClause(const CypherClause *from)
 	CypherClause *newnode = makeNode(CypherClause);
 
 	COPY_NODE_FIELD(detail);
-	COPY_NODE_FIELD(sub);
+	COPY_NODE_FIELD(prev);
 
 	return newnode;
 }
@@ -4159,8 +4159,8 @@ _copyCypherNode(const CypherNode *from)
 {
 	CypherNode *newnode = makeNode(CypherNode);
 
-	COPY_STRING_FIELD(variable);
-	COPY_STRING_FIELD(label);
+	COPY_NODE_FIELD(variable);
+	COPY_NODE_FIELD(label);
 	COPY_STRING_FIELD(prop_map);
 
 	return newnode;
@@ -4172,10 +4172,21 @@ _copyCypherRel(const CypherRel *from)
 	CypherRel *newnode = makeNode(CypherRel);
 
 	COPY_SCALAR_FIELD(direction);
-	COPY_STRING_FIELD(variable);
+	COPY_NODE_FIELD(variable);
 	COPY_NODE_FIELD(types);
 	COPY_NODE_FIELD(varlen);
 	COPY_STRING_FIELD(prop_map);
+
+	return newnode;
+}
+
+static CypherName *
+_copyCypherName(const CypherName *from)
+{
+	CypherName *newnode = makeNode(CypherName);
+
+	COPY_STRING_FIELD(name);
+	COPY_LOCATION_FIELD(location);
 
 	return newnode;
 }
@@ -5059,6 +5070,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherRel:
 			retval = _copyCypherRel(from);
+			break;
+		case T_CypherName:
+			retval = _copyCypherName(from);
 			break;
 
 		default:

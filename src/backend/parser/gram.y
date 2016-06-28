@@ -539,13 +539,14 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <str>		opt_existing_window_name
 %type <boolean> opt_if_not_exists
 
-%type <node>	CypherStmt cypher_clause cypher_clause_sub cypher_match
-				cypher_no_parens cypher_node cypher_pattern cypher_range_idx
-				cypher_range_idx_opt cypher_range_opt cypher_rel cypher_return
-				cypher_varlen_opt cypher_with_parens
+%type <node>	CypherStmt cypher_clause cypher_clause_prev cypher_label_opt
+				cypher_match cypher_no_parens cypher_node cypher_pattern
+				cypher_range_idx cypher_range_idx_opt cypher_range_opt
+				cypher_rel cypher_return cypher_variable_opt cypher_varlen_opt
+				cypher_with_parens
 %type <list>	cypher_pattern_chain cypher_pattern_list cypher_types
 				cypher_types_opt
-%type <str>		cypher_label_opt cypher_prop_map_opt cypher_variable_opt
+%type <str>		cypher_prop_map_opt
 %type <boolean>	cypher_rel_left cypher_rel_right
 
 /*
@@ -14142,26 +14143,26 @@ cypher_with_parens:
 		;
 
 cypher_no_parens:
-			cypher_clause_sub
+			cypher_clause_prev
 				{
 					CypherStmt *n = makeNode(CypherStmt);
-					n->sub = $1;
+					n->last = $1;
 					$$ = (Node *) n;
 				}
 		;
 
-cypher_clause_sub:
+cypher_clause_prev:
 			cypher_clause
 				{
 					CypherClause *n = makeNode(CypherClause);
 					n->detail = $1;
 					$$ = (Node *) n;
 				}
-			| cypher_clause_sub cypher_clause
+			| cypher_clause_prev cypher_clause
 				{
 					CypherClause *n = makeNode(CypherClause);
 					n->detail = $2;
-					n->sub = $1;
+					n->prev = $1;
 					$$ = (Node *) n;
 				}
 		;
@@ -14225,12 +14226,26 @@ cypher_node:
 
 cypher_variable_opt:
 			ColLabel
-			| /* EMPTY */		{ $$ = NULL; }
+				{
+					CypherName *n = makeNode(CypherName);
+					n->name = $1;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| /* EMPTY */
+					{ $$ = NULL; }
 		;
 
 cypher_label_opt:
-			':' ColId			{ $$ = $2; }
-			| /* EMPTY */		{ $$ = NULL; }
+			':' ColId
+				{
+					CypherName *n = makeNode(CypherName);
+					n->name = $2;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| /* EMPTY */
+					{ $$ = NULL; }
 		;
 
 cypher_prop_map_opt:
@@ -14287,16 +14302,27 @@ cypher_types_opt:
 
 cypher_types:
 			':' ColId
-					{ $$ = list_make1(makeString($2)); }
+				{
+					CypherName *n = makeNode(CypherName);
+					n->name = $2;
+					n->location = @2;
+					$$ = list_make1(n);
+				}
 			| cypher_types Op ColId
 				{
+					CypherName *n;
+
 					/* this is also tricky */
 					if (strcmp($2, "|") != 0)
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
 								 errmsg("syntax error: | expected"),
 								 parser_errposition(@2)));
-					$$ = lappend($1, makeString($3));
+
+					n = makeNode(CypherName);
+					n->name = $3;
+					n->location = @3;
+					$$ = lappend($1, n);
 				}
 		;
 

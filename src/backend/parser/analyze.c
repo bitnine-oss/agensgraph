@@ -36,6 +36,7 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_cte.h"
+#include "parser/parse_graph.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_param.h"
 #include "parser/parse_relation.h"
@@ -2735,7 +2736,7 @@ applyLockingClause(Query *qry, Index rtindex,
 static Query *
 transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 {
-	Node *clause = stmt->sub;
+	Node *clause = stmt->last;
 
 	/* FIXME: Current implementation does not support update clauses, so; */
 	if (cypherClauseTag(clause) != T_CypherReturnClause)

@@ -57,4 +57,7 @@ extern Datum edge_out(PG_FUNCTION_ARGS);
 extern Datum edge_constructor(PG_FUNCTION_ARGS);
 extern Datum edge_prop(PG_FUNCTION_ARGS);
 
+extern Datum vertex_oid(PG_FUNCTION_ARGS);
+extern Datum vertex_vid(PG_FUNCTION_ARGS);
+
 #endif	/* GRAPH_H */

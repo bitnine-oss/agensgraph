@@ -5342,6 +5342,10 @@ DATA(insert OID = 3322 ( edge			PGNSP PGUID 12 1 0 0 0 f f f f f f i 7 0 3309 "2
 DESCR("build an edge");
 DATA(insert OID = 3323 ( edge_prop		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 3802 "3309 25" _null_ _null_ "{prop_key}" _null_ _null_ edge_prop _null_ _null_ _null_ ));
 DESCR("get property value from edge as jsonb with property key");
+DATA(insert OID = 3325 ( vertex_oid		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2205 "3308" _null_ _null_ "{vertex}" _null_ _null_ vertex_oid _null_ _null_ _null_ ));
+DESCR("get vertex OID");
+DATA(insert OID = 3326 ( vertex_vid		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 20 "3308" _null_ _null_ "{vertex}" _null_ _null_ vertex_vid _null_ _null_ _null_ ));
+DESCR("get vertex VID");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
