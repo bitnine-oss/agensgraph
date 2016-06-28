@@ -235,3 +235,19 @@ edge_prop(PG_FUNCTION_ARGS)
 
 	return result;
 }
+
+Datum
+vertex_oid(PG_FUNCTION_ARGS)
+{
+	Vertex *v = PG_GETARG_VERTEX(0);
+
+	PG_RETURN_OID(v->id.oid);
+}
+
+Datum
+vertex_vid(PG_FUNCTION_ARGS)
+{
+	Vertex *v = PG_GETARG_VERTEX(0);
+
+	PG_RETURN_OID(v->id.vid);
+}

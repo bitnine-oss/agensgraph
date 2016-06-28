@@ -58,4 +58,7 @@ extern Query *transformCypherMatchClause(ParseState *pstate,
 extern Query *transformCypherReturnClause(ParseState *pstate,
 										  CypherClause *clause);
 
+extern RangeTblEntry *transformRangePrevclause(ParseState *pstate,
+											   RangePrevclause *r);
+
 #endif   /* PARSE_CLAUSE_H */

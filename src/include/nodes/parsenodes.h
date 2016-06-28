@@ -3091,29 +3091,33 @@ typedef struct AlterTSConfigurationStmt
 typedef struct CypherStmt
 {
 	NodeTag		type;
-	Node	   *sub;		/* last Cypher clause in the statement */
+	Node	   *last;		/* last Cypher clause in the statement */
 } CypherStmt;
 
 /*
  * CypherClause - a wrapper for a Cypher clause
  *
- * `sub` refers a previous Cypher clause and we use it to transform the Cypher
- * statement into a Query recursively. We nemed it `sub` since a previous
- * Cypher clause is transformed into a subquery of the current Cypher clause.
+ * `prev` refers a previous Cypher clause and we use it to transform the Cypher
+ * statement into a Query recursively. A previous Cypher clause is transformed
+ * into a subquery of the current Cypher clause.
  */
 typedef struct CypherClause
 {
 	NodeTag		type;
 	Node	   *detail;		/* detailed information about this Cypher clause */
-	Node	   *sub;
+	Node	   *prev;
 } CypherClause;
 
 #define cypherClauseTag(n)	nodeTag(((CypherClause *) (n))->detail)
+
+/* previous Cypher clause is transformed to RangeSubselect */
+typedef RangeSubselect RangePrevclause;
 
 typedef struct CypherMatchClause
 {
 	NodeTag		type;
 	List	   *patterns;
+	Node	   *where;
 } CypherMatchClause;
 
 typedef struct CypherReturnClause
@@ -3131,8 +3135,8 @@ typedef struct CypherPattern
 typedef struct CypherNode
 {
 	NodeTag		type;
-	char	   *variable;
-	char	   *label;
+	Node	   *variable;	/* CypherName */
+	Node	   *label;		/* CypherName */
 	char	   *prop_map;	/* JSON object string */
 } CypherNode;
 
@@ -3144,10 +3148,35 @@ typedef struct CypherRel
 {
 	NodeTag		type;
 	uint32		direction;	/* bitmask of directions (see above) */
-	char	   *variable;
+	Node	   *variable;	/* CypherName */
 	List	   *types;		/* ORed types */
 	Node	   *varlen;		/* variable length relationships (A_Indices) */
 	char	   *prop_map;	/* JSON object string */
 } CypherRel;
+
+typedef struct CypherName
+{
+	NodeTag		type;
+	char	   *name;
+	int			location;	/* token location, or -1 if unknown */
+} CypherName;
+
+inline static char *
+getCypherName(Node *n)
+{
+	if (n == NULL)
+		return NULL;
+	AssertArg(IsA(n, CypherName));
+	return ((CypherName *) n)->name;
+}
+
+inline static int
+getCypherNameLoc(Node *n)
+{
+	if (n == NULL)
+		return -1;
+	AssertArg(IsA(n, CypherName));
+	return ((CypherName *) n)->location;
+}
 
 #endif   /* PARSENODES_H */
