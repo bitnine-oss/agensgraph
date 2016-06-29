@@ -14173,10 +14173,11 @@ cypher_clause:
 		;
 
 cypher_match:
-			MATCH cypher_pattern_list
+			MATCH cypher_pattern_list where_clause
 				{
 					CypherMatchClause *n = makeNode(CypherMatchClause);
 					n->patterns = $2;
+					n->where = $3;
 					$$ = (Node *) n;
 				}
 		;

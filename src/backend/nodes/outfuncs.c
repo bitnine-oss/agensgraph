@@ -2974,6 +2974,7 @@ _outCypherMatchClause(StringInfo str, const CypherMatchClause *node)
 	WRITE_NODE_TYPE("CYPHERMATCHCLAUSE");
 
 	WRITE_NODE_FIELD(patterns);
+	WRITE_NODE_FIELD(where);
 }
 
 static void
