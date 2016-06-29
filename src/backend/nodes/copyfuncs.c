@@ -4141,6 +4141,9 @@ _copyCypherReturnClause(const CypherReturnClause *from)
 	CypherReturnClause *newnode = makeNode(CypherReturnClause);
 
 	COPY_NODE_FIELD(items);
+	COPY_NODE_FIELD(order);
+	COPY_NODE_FIELD(skip);
+	COPY_NODE_FIELD(limit);
 
 	return newnode;
 }

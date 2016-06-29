@@ -540,10 +540,10 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <boolean> opt_if_not_exists
 
 %type <node>	CypherStmt cypher_clause cypher_clause_prev cypher_label_opt
-				cypher_match cypher_no_parens cypher_node cypher_pattern
-				cypher_range_idx cypher_range_idx_opt cypher_range_opt
-				cypher_rel cypher_return cypher_variable_opt cypher_varlen_opt
-				cypher_with_parens
+				cypher_limit_opt cypher_match cypher_no_parens cypher_node
+				cypher_pattern cypher_range_idx cypher_range_idx_opt
+				cypher_range_opt cypher_rel cypher_return cypher_skip_opt
+				cypher_variable_opt cypher_varlen_opt cypher_with_parens
 %type <list>	cypher_pattern_chain cypher_pattern_list cypher_types
 				cypher_types_opt
 %type <str>		cypher_prop_map_opt
@@ -711,11 +711,12 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
  * To support Cypher statements, the precedence of leading unreserved keyword
- * MATCH should be same as that of IDENT because of the reasons given above.
+ * MATCH and SKIP should be same as that of IDENT because of the reasons given
+ * above.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			MATCH
+			MATCH SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -14183,10 +14184,13 @@ cypher_match:
 		;
 
 cypher_return:
-			RETURN target_list
+			RETURN target_list opt_sort_clause cypher_skip_opt cypher_limit_opt
 				{
 					CypherReturnClause *n = makeNode(CypherReturnClause);
 					n->items = $2;
+					n->order = $3;
+					n->skip = $4;
+					n->limit = $5;
 					$$ = (Node *) n;
 				}
 		;
@@ -14364,6 +14368,18 @@ cypher_range_idx_opt:
 
 cypher_range_idx:
 			Iconst				{ $$ = makeIntConst($1, @1); }
+		;
+
+cypher_skip_opt:
+			SKIP select_offset_value
+					{ $$ = $2; }
+			| /* EMPTY */
+					{ $$ = NULL; }
+		;
+
+cypher_limit_opt:
+			limit_clause
+			| /* EMPTY */		{ $$ = NULL; }
 		;
 
 %%

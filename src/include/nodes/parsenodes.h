@@ -3104,6 +3104,9 @@ typedef struct CypherReturnClause
 {
 	NodeTag		type;
 	List	   *items;		/* list of return items (ResTarget) */
+	List	   *order;		/* a list of SortBy's */
+	Node	   *skip;		/* number of result tuples to skip */
+	Node	   *limit;		/* number of result tuples to return */
 } CypherReturnClause;
 
 typedef struct CypherPattern

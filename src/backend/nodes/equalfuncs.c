@@ -2594,6 +2594,9 @@ _equalCypherReturnClause(const CypherReturnClause *a,
 						 const CypherReturnClause *b)
 {
 	COMPARE_NODE_FIELD(items);
+	COMPARE_NODE_FIELD(order);
+	COMPARE_NODE_FIELD(skip);
+	COMPARE_NODE_FIELD(limit);
 
 	return true;
 }

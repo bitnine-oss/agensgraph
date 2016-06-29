@@ -2983,6 +2983,9 @@ _outCypherReturnClause(StringInfo str, const CypherReturnClause *node)
 	WRITE_NODE_TYPE("CYPHERRETURNCLAUSE");
 
 	WRITE_NODE_FIELD(items);
+	WRITE_NODE_FIELD(order);
+	WRITE_NODE_FIELD(skip);
+	WRITE_NODE_FIELD(limit);
 }
 
 static void

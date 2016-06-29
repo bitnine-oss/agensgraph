@@ -72,9 +72,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	{
 		r = makeRangePrevclause((Node *) clause);
 		fromClause = list_make1(r);
-
 		targetList = list_make1(makeStarResTarget(r->alias->aliasname));
-
 		whereClause = detail->where;
 
 		/*
@@ -130,19 +128,52 @@ transformCypherReturnClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherReturnClause *detail = (CypherReturnClause *) clause->detail;
 	List	   *fromClause = NIL;
+	List	   *targetList;
+	List	   *order = detail->order;
+	Node	   *skip = detail->skip;
+	Node	   *limit = detail->limit;
 	Query	   *qry;
 
-	if (clause->prev != NULL)
-		fromClause = list_make1(makeRangePrevclause(clause->prev));
+	if (order != NULL || skip != NULL || limit != NULL)
+	{
+		RangePrevclause *r;
+
+		r = makeRangePrevclause((Node *) clause);
+		fromClause = list_make1(r);
+		targetList = list_make1(makeStarResTarget(r->alias->aliasname));
+
+		/*
+		 * detach RETURN options so that this funcion passes through
+		 * this if statement when the function called again recursively
+		 */
+		detail->order = NULL;
+		detail->skip = NULL;
+		detail->limit = NULL;
+	}
+	else
+	{
+		if (clause->prev != NULL)
+			fromClause = list_make1(makeRangePrevclause(clause->prev));
+		targetList = detail->items;
+	}
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
 	transformFromClause(pstate, fromClause);
 
-	qry->targetList = transformTargetList(pstate, detail->items,
+	qry->targetList = transformTargetList(pstate, targetList,
 										  EXPR_KIND_SELECT_TARGET);
 	markTargetListOrigins(pstate, qry->targetList);
+
+	qry->sortClause = transformSortClause(pstate, order,
+										  &qry->targetList, EXPR_KIND_ORDER_BY,
+										  true, false);
+
+	qry->limitOffset = transformLimitClause(pstate, skip,
+											EXPR_KIND_OFFSET, "OFFSET");
+	qry->limitCount = transformLimitClause(pstate, limit,
+										   EXPR_KIND_LIMIT, "LIMIT");
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
