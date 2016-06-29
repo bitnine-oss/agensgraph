@@ -36,6 +36,7 @@ static void transformComponents(List *components, PatternCtx *ctx,
 								List **fromClause, List **targetList,
 								Node **whereClause);
 static void applyPatternCtxTo(PatternCtx *ctx, List **targetList);
+static ResTarget *makeStarResTarget(char *aliasname);
 static Node *transformCypherNode(CypherNode *node, PatternCtx *ctx,
 					List **fromClause, List **targetList, Node **whereClause,
 					List **nodeVars);
@@ -58,6 +59,7 @@ Query *
 transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherMatchClause *detail = (CypherMatchClause *) clause->detail;
+	RangePrevclause *r;
 	PatternCtx *ctx = NULL;
 	List	   *components;
 	List	   *fromClause = NIL;
@@ -66,26 +68,43 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	Node	   *qual;
 	Query	   *qry;
 
-	/*
-	 * Transform previous CypherClause as a RangeSubselect first.
-	 * It must be transformed at here because when transformComponents(),
-	 * variables in the pattern which are in the resulting variables from the
-	 * previous CypherClause must be excluded from fromClause RangeVars.
-	 */
-	if (clause->prev != NULL)
+	if (detail->where)
 	{
-		RangePrevclause *r;
-		RangeTblEntry *rte;
+		r = makeRangePrevclause((Node *) clause);
+		fromClause = list_make1(r);
 
-		r = makeRangePrevclause(clause->prev);
-		rte = transformRangePrevclause(pstate, r);
-		ctx = makePatternCtx(rte);
+		targetList = list_make1(makeStarResTarget(r->alias->aliasname));
+
+		whereClause = detail->where;
+
+		/*
+		 * detach WHERE clause so that this funcion passes through
+		 * this if statement when the function called again recursively
+		 */
+		detail->where = NULL;
 	}
+	else
+	{
+		/*
+		 * Transform previous CypherClause as a RangeSubselect first.
+		 * It must be transformed at here because when transformComponents(),
+		 * variables in the pattern which are in the resulting variables of
+		 * the previous CypherClause must be excluded from fromClause.
+		 */
+		if (clause->prev != NULL)
+		{
+			RangeTblEntry *rte;
 
-	components = makeComponents(detail->patterns);
+			r = makeRangePrevclause(clause->prev);
+			rte = transformRangePrevclause(pstate, r);
+			ctx = makePatternCtx(rte);
+		}
 
-	transformComponents(components, ctx,
-						&fromClause, &targetList, &whereClause);
+		components = makeComponents(detail->patterns);
+
+		transformComponents(components, ctx,
+							&fromClause, &targetList, &whereClause);
+	}
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
@@ -400,18 +419,27 @@ transformComponents(List *components, PatternCtx *ctx,
 static void
 applyPatternCtxTo(PatternCtx *ctx, List **targetList)
 {
-	char	   *prevname;
-	ColumnRef  *colref;
 	ResTarget  *target;
 
 	if (ctx == NULL)
 		return;
 
-	prevname = pstrdup(ctx->prevalias->aliasname);
-
 	/* add all columns in the result of previous CypherClause */
+	target = makeStarResTarget(ctx->prevalias->aliasname);
+	*targetList = lappend(*targetList, target);
+}
+
+static ResTarget *
+makeStarResTarget(char *aliasname)
+{
+	ColumnRef  *colref;
+	ResTarget  *target;
+
+	AssertArg(aliasname != NULL);
+
 	colref = makeNode(ColumnRef);
-	colref->fields = list_make2(makeString(prevname), makeNode(A_Star));
+	colref->fields = list_make2(makeString(pstrdup(aliasname)),
+								makeNode(A_Star));
 	colref->location = -1;
 
 	target = makeNode(ResTarget);
@@ -420,7 +448,7 @@ applyPatternCtxTo(PatternCtx *ctx, List **targetList)
 	target->val = (Node *) colref;
 	target->location = -1;
 
-	*targetList = lappend(*targetList, target);
+	return target;
 }
 
 static Node *
