@@ -17,16 +17,17 @@
 #include "parser/parse_collate.h"
 #include "parser/parse_graph.h"
 #include "parser/parse_target.h"
+#include "parser/parse_utilcmd.h"
 
 typedef struct PatternCtx
 {
-	Alias	   *prevalias;
-	List	   *vertices;
-	List	   *edges;
-	List	   *values;
+	Alias	   *alias;		/* alias of previous CypherClause */
+	List	   *vertices;	/* vertex columns */
+	List	   *edges;		/* edge columns */
+	List	   *values;		/* other columns */
 } PatternCtx;
 
-static RangePrevclause *makeRangePrevclause(Node *clause);
+/* trasnform */
 static PatternCtx *makePatternCtx(RangeTblEntry *rte);
 static List *makeComponents(List *patterns);
 static void findAndUnionComponents(CypherPattern *pattern, List *components);
@@ -35,8 +36,6 @@ static bool arePatternsConnected(CypherPattern *p1, CypherPattern *p2);
 static void transformComponents(List *components, PatternCtx *ctx,
 								List **fromClause, List **targetList,
 								Node **whereClause);
-static void applyPatternCtxTo(PatternCtx *ctx, List **targetList);
-static ResTarget *makeStarResTarget(char *aliasname);
 static Node *transformCypherNode(CypherNode *node, PatternCtx *ctx,
 					List **fromClause, List **targetList, Node **whereClause,
 					List **nodeVars);
@@ -46,14 +45,36 @@ static void transformCypherRel(CypherRel *rel, Node *left, Node *right,
 static Node *findNodeVar(List *nodeVars, char *varname);
 static bool isNodeInPatternCtx(PatternCtx *ctx, char *varname);
 static bool checkDupRelVar(List *relVars, char *varname);
-static Alias *makeTableAlias(char *name);
-static ColumnRef *makeAliasColRef(Alias *alias, char *colname);
-static Node *makePropsConstraint(ColumnRef *props, char *qualStr);
-static void whereClauseAndExpr(Node **whereClause, Node *expr);
-static Node *makeDirExpr(Node *in, RangeVar *rel, Node *out);
-static void setVertexId(Node *nodeVar, Node **oid, Node **vid);
-static void addNodeDupPred(Node **whereClause, List *nodeVars);
-static void addRelDupPred(Node **whereClause, List *relVars);
+static Node *makePropMapConstraint(ColumnRef *props, char *qualStr);
+static Node *makeDirQual(Node *start, RangeVar *rel, Node *end);
+static void makeVertexId(Node *nodeVar, Node **oid, Node **id);
+static Node *addNodeDupQual(Node *qual, List *nodeVars);
+static Node *addRelDupQual(Node *qual, List *relVars);
+
+/* parse tree */
+static RangePrevclause *makeRangePrevclause(Node *clause);
+static ColumnRef *makeSimpleColumnRef(char *colname, List *indirection,
+									  int location);
+static A_Indirection *makeIndirection(Node *arg, List *indirection);
+static ResTarget *makeSelectResTarget(Node *value, char *label, int location);
+static Alias *makeAliasNoDup(char *aliasname, List *colnames);
+static Node *qualAndExpr(Node *qual, Node *expr);
+
+/* shortcuts */
+static ColumnRef *makeAliasIndirection(Alias *alias, Node *indirection);
+#define makeAliasStar(alias) \
+	makeAliasIndirection(alias, (Node *) makeNode(A_Star))
+#define makeAliasColname(alias, colname) \
+	makeAliasIndirection(alias, (Node *) makeString(pstrdup(colname)))
+#define makeIndirectionColname(arg, colname) \
+	makeIndirection(arg, list_make1(makeString(pstrdup(colname))))
+#define makeAliasStarTarget(alias) \
+	makeSelectResTarget((Node *) makeAliasStar(alias), NULL, -1)
+static Alias *makePatternVarAlias(char *aliasname);
+static Node *makeTuple(List *args, TypeName *typename);
+
+/* utils */
+static char *genUniqueName(void);
 
 Query *
 transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
@@ -72,7 +93,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	{
 		r = makeRangePrevclause((Node *) clause);
 		fromClause = list_make1(r);
-		targetList = list_make1(makeStarResTarget(r->alias->aliasname));
+		targetList = list_make1(makeAliasStarTarget(r->alias));
 		whereClause = detail->where;
 
 		/*
@@ -140,7 +161,7 @@ transformCypherReturnClause(ParseState *pstate, CypherClause *clause)
 
 		r = makeRangePrevclause((Node *) clause);
 		fromClause = list_make1(r);
-		targetList = list_make1(makeStarResTarget(r->alias->aliasname));
+		targetList = list_make1(makeAliasStarTarget(r->alias));
 
 		/*
 		 * detach RETURN options so that this funcion passes through
@@ -183,22 +204,6 @@ transformCypherReturnClause(ParseState *pstate, CypherClause *clause)
 	return qry;
 }
 
-static RangePrevclause *
-makeRangePrevclause(Node *clause)
-{
-	RangePrevclause *r;
-
-	AssertArg(IsA(clause, CypherClause));
-
-	r = (RangePrevclause *) makeNode(RangeSubselect);
-	r->subquery = clause;
-
-	r->alias = makeNode(Alias);
-	r->alias->aliasname = "_";
-
-	return r;
-}
-
 static PatternCtx *
 makePatternCtx(RangeTblEntry *rte)
 {
@@ -233,13 +238,13 @@ makePatternCtx(RangeTblEntry *rte)
 				edges = lappend(edges, colname);
 				break;
 			default:
-				Assert(strcmp(te->resname, "?column?") != 0);
+				Assert(strcmp(strVal(colname), "?column?") != 0);
 				values = lappend(values, colname);
 		}
 	}
 
 	ctx = palloc(sizeof(*ctx));
-	ctx->prevalias = makeAlias(rte->alias->aliasname, colnames);
+	ctx->alias = makeAlias(rte->alias->aliasname, colnames);
 	ctx->vertices = vertices;
 	ctx->edges = edges;
 	ctx->values = values;
@@ -392,7 +397,11 @@ transformComponents(List *components, PatternCtx *ctx,
 {
 	ListCell *lc;
 
-	applyPatternCtxTo(ctx, targetList);
+	if (ctx != NULL)
+	{
+		/* add all columns in the result of previous CypherClause */
+		*targetList = lcons(makeAliasStarTarget(ctx->alias), *targetList);
+	}
 
 	foreach(lc, components)
 	{
@@ -441,45 +450,10 @@ transformComponents(List *components, PatternCtx *ctx,
 		}
 
 		/* all unique nodes are different from each other */
-		addNodeDupPred(whereClause, nodeVars);
+		*whereClause = addNodeDupQual(*whereClause, nodeVars);
 		/* all relationships are different from each other */
-		addRelDupPred(whereClause, relVars);
+		*whereClause = addRelDupQual(*whereClause, relVars);
 	}
-}
-
-static void
-applyPatternCtxTo(PatternCtx *ctx, List **targetList)
-{
-	ResTarget  *target;
-
-	if (ctx == NULL)
-		return;
-
-	/* add all columns in the result of previous CypherClause */
-	target = makeStarResTarget(ctx->prevalias->aliasname);
-	*targetList = lappend(*targetList, target);
-}
-
-static ResTarget *
-makeStarResTarget(char *aliasname)
-{
-	ColumnRef  *colref;
-	ResTarget  *target;
-
-	AssertArg(aliasname != NULL);
-
-	colref = makeNode(ColumnRef);
-	colref->fields = list_make2(makeString(pstrdup(aliasname)),
-								makeNode(A_Star));
-	colref->location = -1;
-
-	target = makeNode(ResTarget);
-	target->name = NULL;
-	target->indirection = NIL;
-	target->val = (Node *) colref;
-	target->location = -1;
-
-	return target;
 }
 
 static Node *
@@ -492,7 +466,6 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 	char	   *label;
 	int			location;
 	RangeVar   *r;
-	ColumnRef  *props;
 
 	varname = getCypherName(node->variable);
 
@@ -513,10 +486,7 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 	{
 		ColumnRef *colref;
 
-		colref = makeNode(ColumnRef);
-		colref->fields = list_make1(makeString(varname));
-		colref->location = -1;
-
+		colref = makeSimpleColumnRef(varname, NIL, -1);
 		*nodeVars = lappend(*nodeVars, colref);
 
 		return (Node *) colref;
@@ -528,35 +498,30 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 
 	label = getCypherName(node->label);
 	if (label == NULL)
-		label = "vertex";
+		label = AG_VERTEX;
 	location = getCypherNameLoc(node->label);
 
-	r = makeRangeVar("graph", label, location);
+	r = makeRangeVar(AG_GRAPH, label, location);
 	r->inhOpt = INH_YES;
-	r->alias = makeTableAlias(varname);
+	r->alias = makePatternVarAlias(varname);
 
 	*fromClause = lappend(*fromClause, r);
 
 	/* add this node to the result */
-	props = makeAliasColRef(r->alias, "properties");
 	if (varname != NULL)
 	{
 		ColumnRef  *oid;
-		ColumnRef  *vid;
-		FuncCall   *vertex;
+		ColumnRef  *star;
+		Node	   *tuple;
 		ResTarget  *target;
 
-		oid = makeAliasColRef(r->alias, "tableoid");
-		vid = makeAliasColRef(r->alias, "vid");
+		oid = makeAliasColname(r->alias, "tableoid");
+		star = makeAliasStar(r->alias);
 
-		vertex = makeFuncCall(list_make1(makeString("vertex")),
-							  list_make3(oid, vid, props), -1);
+		tuple = makeTuple(list_make2(oid, star), makeTypeName("vertex"));
 
-		target = makeNode(ResTarget);
-		target->name = varname;
-		target->indirection = NIL;
-		target->val = (Node *) vertex;
-		target->location = getCypherNameLoc(node->variable);
+		target = makeSelectResTarget(tuple, varname,
+									 getCypherNameLoc(node->variable));
 
 		*targetList = lappend(*targetList, target);
 	}
@@ -564,10 +529,12 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 	/* add property map constraint */
 	if (node->prop_map != NULL)
 	{
-		Node *constraint;
+		ColumnRef  *prop_map;
+		Node	   *constraint;
 
-		constraint = makePropsConstraint(props, node->prop_map);
-		whereClauseAndExpr(whereClause, constraint);
+		prop_map = makeAliasColname(r->alias, "prop_map");
+		constraint = makePropMapConstraint(prop_map, node->prop_map);
+		*whereClause = qualAndExpr(*whereClause, constraint);
 	}
 
 	/* mark this node "processed" */
@@ -586,7 +553,6 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 	char	   *typename;
 	int			location;
 	RangeVar   *r;
-	ColumnRef  *props;
 
 	varname = getCypherName(rel->variable);
 
@@ -595,13 +561,13 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("all relationship must be unique: "
+				 errmsg("all relationship must be unique - "
 						"\"%s\" specified more than once", varname)));
 	}
 
 	if (rel->types == NULL)
 	{
-		typename = "edge";
+		typename = AG_EDGE;
 		location = -1;
 	}
 	else
@@ -613,49 +579,27 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 		location = getCypherNameLoc(type);
 	}
 
-	r = makeRangeVar("graph", typename, location);
+	r = makeRangeVar(AG_GRAPH, typename, location);
 	r->inhOpt = INH_YES;
-	r->alias = makeTableAlias(varname);
+	r->alias = makePatternVarAlias(varname);
 
 	*fromClause = lappend(*fromClause, r);
 
 	/* add this relationship to the result */
-	props = makeAliasColRef(r->alias, "properties");
 	if (varname != NULL)
 	{
 		ColumnRef  *oid;
-		ColumnRef  *eid;
-		ColumnRef  *vin_oid;
-		ColumnRef  *vin_vid;
-		ColumnRef  *vout_oid;
-		ColumnRef  *vout_vid;
-		List	   *args;
-		FuncCall   *edge;
+		ColumnRef  *star;
+		Node	   *tuple;
 		ResTarget  *target;
 
-		oid = makeAliasColRef(r->alias, "tableoid");
-		eid = makeAliasColRef(r->alias, "eid");
-		vin_oid = makeAliasColRef(r->alias, "inoid");
-		vin_vid = makeAliasColRef(r->alias, "incoming");
-		vout_oid = makeAliasColRef(r->alias, "outoid");
-		vout_vid = makeAliasColRef(r->alias, "outgoing");
+		oid = makeAliasColname(r->alias, "tableoid");
+		star = makeAliasStar(r->alias);
 
-		args = lcons(oid,
-			   lcons(eid,
-			   lcons(vin_oid,
-			   lcons(vin_vid,
-			   lcons(vout_oid,
-			   lcons(vout_vid,
-			   lcons(props,
-					 NIL)))))));
+		tuple = makeTuple(list_make2(oid, star), makeTypeName("edge"));
 
-		edge = makeFuncCall(list_make1(makeString("edge")), args, -1);
-
-		target = makeNode(ResTarget);
-		target->name = varname;
-		target->indirection = NIL;
-		target->val = (Node *) edge;
-		target->location = getCypherNameLoc(rel->variable);
+		target = makeSelectResTarget(tuple, varname,
+									 getCypherNameLoc(rel->variable));
 
 		*targetList = lappend(*targetList, target);
 	}
@@ -663,10 +607,12 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 	/* add property map constraint */
 	if (rel->prop_map != NULL)
 	{
-		Node *constraint;
+		ColumnRef  *prop_map;
+		Node	   *constraint;
 
-		constraint = makePropsConstraint(props, rel->prop_map);
-		whereClauseAndExpr(whereClause, constraint);
+		prop_map = makeAliasColname(r->alias, "prop_map");
+		constraint = makePropMapConstraint(prop_map, rel->prop_map);
+		*whereClause = qualAndExpr(*whereClause, constraint);
 	}
 
 	/* <node,rel,node> JOIN conditions */
@@ -676,19 +622,19 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 		Node	   *rexpr;
 		Node	   *nexpr;
 
-		lexpr = makeDirExpr(right, r, left);
-		rexpr = makeDirExpr(left, r, right);
+		lexpr = makeDirQual(right, r, left);
+		rexpr = makeDirQual(left, r, right);
 		nexpr = (Node *) makeBoolExpr(OR_EXPR, list_make2(lexpr, rexpr), -1);
-		whereClauseAndExpr(whereClause, nexpr);
+		*whereClause = qualAndExpr(*whereClause, nexpr);
 	}
 	else if (rel->direction == CYPHER_REL_DIR_LEFT)
 	{
-		whereClauseAndExpr(whereClause, makeDirExpr(right, r, left));
+		*whereClause = qualAndExpr(*whereClause, makeDirQual(right, r, left));
 	}
 	else
 	{
 		Assert(rel->direction == CYPHER_REL_DIR_RIGHT);
-		whereClauseAndExpr(whereClause, makeDirExpr(left, r, right));
+		*whereClause = qualAndExpr(*whereClause, makeDirQual(left, r, right));
 	}
 
 	/* remember processed relationships */
@@ -716,7 +662,7 @@ findNodeVar(List *nodeVars, char *varname)
 		/* a node in the previous CypherClause */
 		else
 		{
-			ColumnRef * colref = (ColumnRef *) n;
+			ColumnRef *colref = (ColumnRef *) n;
 			AssertArg(IsA(colref, ColumnRef));
 
 			if (strcmp(strVal(linitial(colref->fields)), varname) == 0)
@@ -763,40 +709,8 @@ checkDupRelVar(List *relVars, char *varname)
 	return false;
 }
 
-static Alias *
-makeTableAlias(char *aliasname)
-{
-	static uint32 seq = 0;
-
-	Alias	   *alias;
-	char		data[NAMEDATALEN];
-
-	alias = makeNode(Alias);
-	if (aliasname == NULL)
-	{
-		/* generate unique variable name */
-		snprintf(data, sizeof(data), "<%010u>", seq++);
-		aliasname = pstrdup(data);
-	}
-	alias->aliasname = aliasname;
-
-	return alias;
-}
-
-static ColumnRef *
-makeAliasColRef(Alias *alias, char *colname)
-{
-	ColumnRef *cr;
-
-	cr = makeNode(ColumnRef);
-	cr->fields = list_make2(makeString(alias->aliasname), makeString(colname));
-	cr->location = -1;
-
-	return cr;
-}
-
 static Node *
-makePropsConstraint(ColumnRef *props, char *qualStr)
+makePropMapConstraint(ColumnRef *prop_map, char *qualStr)
 {
 	FuncCall   *constraint;
 	A_Const	   *qual;
@@ -807,88 +721,61 @@ makePropsConstraint(ColumnRef *props, char *qualStr)
 	qual->location = -1;
 
 	constraint = makeFuncCall(list_make1(makeString("jsonb_contains")),
-							  list_make2(props, qual), -1);
+							  list_make2(prop_map, qual), -1);
 
 	return (Node *) constraint;
 }
 
-static void
-whereClauseAndExpr(Node **whereClause, Node *expr)
-{
-	if (*whereClause == NULL)
-	{
-		*whereClause = expr;
-		return;
-	}
-
-	if (IsA(*whereClause, BoolExpr))
-	{
-		BoolExpr *bexpr = (BoolExpr *) *whereClause;
-
-		if (bexpr->boolop == AND_EXPR)
-		{
-			bexpr->args = lappend(bexpr->args, expr);
-			return;
-		}
-	}
-
-	*whereClause = (Node *) makeBoolExpr(AND_EXPR,
-										 list_make2(*whereClause, expr), -1);
-	return;
-}
-
 static Node *
-makeDirExpr(Node *in, RangeVar *rel, Node *out)
+makeDirQual(Node *start, RangeVar *rel, Node *end)
 {
-	Node	   *in_oid;
-	Node	   *in_vid;
-	Node	   *vin_oid;
-	Node	   *vin_vid;
-	Node	   *vout_oid;
-	Node	   *vout_vid;
-	Node	   *out_oid;
-	Node	   *out_vid;
+	Node	   *start_oid;
+	Node	   *start_id;
+	Node	   *s_oid;
+	Node	   *s_id;
+	Node	   *e_oid;
+	Node	   *e_id;
+	Node	   *end_oid;
+	Node	   *end_id;
 	List	   *args;
 
-	setVertexId(in, &in_oid, &in_vid);
-	vin_oid = (Node *) makeAliasColRef(rel->alias, "inoid");
-	vin_vid = (Node *) makeAliasColRef(rel->alias, "incoming");
-	vout_oid = (Node *) makeAliasColRef(rel->alias, "outoid");
-	vout_vid = (Node *) makeAliasColRef(rel->alias, "outgoing");
-	setVertexId(out, &out_oid, &out_vid);
+	makeVertexId(start, &start_oid, &start_id);
+	s_oid = (Node *) makeAliasColname(rel->alias, AG_START_OID);
+	s_id = (Node *) makeAliasColname(rel->alias, AG_START_ID);
+	e_oid = (Node *) makeAliasColname(rel->alias, AG_END_OID);
+	e_id = (Node *) makeAliasColname(rel->alias, AG_END_ID);
+	makeVertexId(end, &end_oid, &end_id);
 
-	args = list_make4(makeSimpleA_Expr(AEXPR_OP, "=", vin_oid, in_oid, -1),
-					  makeSimpleA_Expr(AEXPR_OP, "=", vin_vid, in_vid, -1),
-					  makeSimpleA_Expr(AEXPR_OP, "=", vout_oid, out_oid, -1),
-					  makeSimpleA_Expr(AEXPR_OP, "=", vout_vid, out_vid, -1));
+	args = list_make4(makeSimpleA_Expr(AEXPR_OP, "=", s_oid, start_oid, -1),
+					  makeSimpleA_Expr(AEXPR_OP, "=", s_id, start_id, -1),
+					  makeSimpleA_Expr(AEXPR_OP, "=", e_oid, end_oid, -1),
+					  makeSimpleA_Expr(AEXPR_OP, "=", e_id, end_id, -1));
 
 	return (Node *) makeBoolExpr(AND_EXPR, args, -1);
 }
 
 static void
-setVertexId(Node *nodeVar, Node **oid, Node **vid)
+makeVertexId(Node *nodeVar, Node **oid, Node **id)
 {
 	if (IsA(nodeVar, RangeVar))
 	{
 		RangeVar *r = (RangeVar *) nodeVar;
 
-		*oid = (Node *) makeAliasColRef(r->alias, "tableoid");
-		*vid = (Node *) makeAliasColRef(r->alias, "vid");
+		*oid = (Node *) makeAliasColname(r->alias, "tableoid");
+		*id = (Node *) makeAliasColname(r->alias, AG_ELEM_ID);
 	}
 	else
 	{
 		ColumnRef *colref = (ColumnRef *) nodeVar;
 		AssertArg(IsA(colref, ColumnRef));
 
-		*oid = (Node *) makeFuncCall(list_make1(makeString("vertex_oid")),
-									 list_make1(copyObject(colref)), -1);
-		*vid = (Node *) makeFuncCall(list_make1(makeString("vertex_vid")),
-									 list_make1(copyObject(colref)), -1);
+		*oid = (Node *) makeIndirectionColname((Node *) colref, "oid");
+		*id = (Node *) makeIndirectionColname((Node *) colref, "id");
 	}
 }
 
-static void
-addNodeDupPred(Node **whereClause, List *nodeVars)
+static Node *
+addNodeDupQual(Node *qual, List *nodeVars)
 {
 	ListCell *lv1;
 
@@ -901,25 +788,26 @@ addNodeDupPred(Node **whereClause, List *nodeVars)
 		{
 			Node	   *n2 = lfirst(lv2);
 			Node	   *oid1;
-			Node	   *vid1;
+			Node	   *id1;
 			Node	   *oid2;
-			Node	   *vid2;
+			Node	   *id2;
 			List	   *args;
 
-			setVertexId(n1, &oid1, &vid1);
-			setVertexId(n2, &oid2, &vid2);
+			makeVertexId(n1, &oid1, &id1);
+			makeVertexId(n2, &oid2, &id2);
 
 			args = list_make2(makeSimpleA_Expr(AEXPR_OP, "<>", oid1, oid2, -1),
-							  makeSimpleA_Expr(AEXPR_OP, "<>", vid1, vid2, -1));
+							  makeSimpleA_Expr(AEXPR_OP, "<>", id1, id2, -1));
 
-			whereClauseAndExpr(whereClause,
-							   (Node *) makeBoolExpr(OR_EXPR, args, -1));
+			qual = qualAndExpr(qual, (Node *) makeBoolExpr(OR_EXPR, args, -1));
 		}
 	}
+
+	return qual;
 }
 
-static void
-addRelDupPred(Node **whereClause, List *relVars)
+static Node *
+addRelDupQual(Node *qual, List *relVars)
 {
 	ListCell *lv1;
 
@@ -932,22 +820,159 @@ addRelDupPred(Node **whereClause, List *relVars)
 		{
 			RangeVar   *r2 = lfirst(lv2);
 			Node	   *oid1;
-			Node	   *eid1;
+			Node	   *id1;
 			Node	   *oid2;
-			Node	   *eid2;
+			Node	   *id2;
 			List	   *args;
 
-			oid1 = (Node *) makeAliasColRef(r1->alias, "tableoid");
-			eid1 = (Node *) makeAliasColRef(r1->alias, "eid");
+			oid1 = (Node *) makeAliasColname(r1->alias, "tableoid");
+			id1 = (Node *) makeAliasColname(r1->alias, AG_ELEM_ID);
 
-			oid2 = (Node *) makeAliasColRef(r2->alias, "tableoid");
-			eid2 = (Node *) makeAliasColRef(r2->alias, "eid");
+			oid2 = (Node *) makeAliasColname(r2->alias, "tableoid");
+			id2 = (Node *) makeAliasColname(r2->alias, AG_ELEM_ID);
 
 			args = list_make2(makeSimpleA_Expr(AEXPR_OP, "<>", oid1, oid2, -1),
-							  makeSimpleA_Expr(AEXPR_OP, "<>", eid1, eid2, -1));
+							  makeSimpleA_Expr(AEXPR_OP, "<>", id1, id2, -1));
 
-			whereClauseAndExpr(whereClause,
-							   (Node *) makeBoolExpr(OR_EXPR, args, -1));
+			qual = qualAndExpr(qual, (Node *) makeBoolExpr(OR_EXPR, args, -1));
 		}
 	}
+
+	return qual;
+}
+
+/* Cypher as a RangeSubselect */
+static RangePrevclause *
+makeRangePrevclause(Node *clause)
+{
+	RangePrevclause *r;
+
+	AssertArg(IsA(clause, CypherClause));
+
+	r = (RangePrevclause *) makeNode(RangeSubselect);
+	r->subquery = clause;
+
+	r->alias = makeNode(Alias);
+	r->alias->aliasname = "_";
+
+	return r;
+}
+
+/* colname.indirection[0].indirection[1]... */
+static ColumnRef *
+makeSimpleColumnRef(char *colname, List *indirection, int location)
+{
+	ColumnRef *colref;
+
+	colref = makeNode(ColumnRef);
+	colref->fields = lcons(makeString(pstrdup(colname)), indirection);
+	colref->location = location;
+
+	return colref;
+}
+
+static A_Indirection *
+makeIndirection(Node *arg, List *indirection)
+{
+	A_Indirection *ind;
+
+	ind = makeNode(A_Indirection);
+	ind->arg = arg;
+	ind->indirection = indirection;
+
+	return ind;
+}
+
+/* value AS label */
+static ResTarget *
+makeSelectResTarget(Node *value, char *label, int location)
+{
+	ResTarget *target;
+
+	target = makeNode(ResTarget);
+	target->name = (label == NULL ? NULL : pstrdup(label));
+	target->val = value;
+	target->location = location;
+
+	return target;
+}
+
+/* same as makeAlias() but no pstrdup(aliasname) */
+static Alias *
+makeAliasNoDup(char *aliasname, List *colnames)
+{
+	Alias *alias;
+
+	alias = makeNode(Alias);
+	alias->aliasname = aliasname;
+	alias->colnames = colnames;
+
+	return alias;
+}
+
+static Node *
+qualAndExpr(Node *qual, Node *expr)
+{
+	if (qual == NULL)
+		return expr;
+
+	if (IsA(qual, BoolExpr))
+	{
+		BoolExpr *bexpr = (BoolExpr *) qual;
+
+		if (bexpr->boolop == AND_EXPR)
+		{
+			bexpr->args = lappend(bexpr->args, expr);
+			return qual;
+		}
+	}
+
+	return (Node *) makeBoolExpr(AND_EXPR, list_make2(qual, expr), -1);
+}
+
+/* aliasname.indirection */
+static ColumnRef *
+makeAliasIndirection(Alias *alias, Node *indirection)
+{
+	return makeSimpleColumnRef(alias->aliasname, list_make1(indirection), -1);
+}
+
+static Alias *
+makePatternVarAlias(char *aliasname)
+{
+	aliasname = (aliasname == NULL ? genUniqueName() : pstrdup(aliasname));
+	return makeAliasNoDup(aliasname, NIL);
+}
+
+static Node *
+makeTuple(List *args, TypeName *typename)
+{
+	RowExpr	   *row;
+	TypeCast   *cast;
+
+	row = makeNode(RowExpr);
+	row->args = args;
+	row->row_format = COERCE_IMPLICIT_CAST;	/* abuse */
+	row->location = -1;
+
+	cast = makeNode(TypeCast);
+	cast->arg = (Node *) row;
+	cast->typeName = typename;
+	cast->location = -1;
+
+	return (Node *) cast;
+}
+
+/* generate unique name */
+static char *
+genUniqueName(void)
+{
+	/* NOTE: safe unless there are more than 2^32 anonymous names */
+	static uint32 seq = 0;
+
+	char data[NAMEDATALEN];
+
+	snprintf(data, sizeof(data), "<%010u>", seq++);
+
+	return pstrdup(data);
 }
