@@ -16,15 +16,14 @@
 
 #include "parser/parse_node.h"
 
-#define AG_GRAPH	"graph"
-#define AG_VERTEX	"vertex"
-#define AG_EDGE		"edge"
-#define AG_VID		"vid"
-#define AG_EID		"eid"
-#define AG_EIO		"inoid"
-#define AG_EIC		"incoming"
-#define AG_EOO		"outoid"
-#define AG_EOG		"outgoing"
+#define AG_GRAPH		"graph"
+#define AG_VERTEX		"vertex"
+#define AG_EDGE			"edge"
+#define AG_ELEM_ID		"id"
+#define AG_START_OID	"start_oid"
+#define AG_START_ID		"start_id"
+#define AG_END_OID		"end_oid"
+#define AG_END_ID		"end_id"
 
 extern List *transformCreateStmt(CreateStmt *stmt, const char *queryString);
 extern List *transformCreateLabelStmt(CreateStmt *stmt, const char *queryString);

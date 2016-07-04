@@ -383,7 +383,7 @@ inheritLabelIndex(CreateStmtContext *cxt, CreateStmt *stmt)
 			attnum = idxrec->indkey.values[0];
 			attname = get_relid_attribute_name(indrelid, attnum);
 
-			if (strcmp(attname, AG_VID) == 0)
+			if (strcmp(attname, AG_ELEM_ID) == 0)
 			{
 				/* Build CREATE INDEX statement to recreate the parent_index */
 				index_stmt = generateClonedIndexStmt(cxt, parent_index,
@@ -392,33 +392,33 @@ inheritLabelIndex(CreateStmtContext *cxt, CreateStmt *stmt)
 		}
 		else if (nodeTag(stmt) == T_CreateELabelStmt)
 		{
-			/* eid */
+			/* id */
 			if (idxrec->indisprimary == true && idxrec->indnatts == 1)
 			{
 				attnum = idxrec->indkey.values[0];
 				attname = get_relid_attribute_name(indrelid, attnum);
 
-				if (strcmp(attname, AG_EID) == 0)
+				if (strcmp(attname, AG_ELEM_ID) == 0)
 				{
 					index_stmt = generateClonedIndexStmt(cxt, parent_index,
 													attmap, tupleDesc->natts);
 				}
 			}
-			/* (oid, vid) */
+			/* vertex (oid, id) */
 			else if (idxrec->indnatts == 2)
 			{
-				char *attname_vid;
+				char *attname_id;
 
 				attnum = idxrec->indkey.values[0];
 				attname = get_relid_attribute_name(indrelid, attnum);
 
 				attnum = idxrec->indkey.values[1];
-				attname_vid = get_relid_attribute_name(indrelid, attnum);
+				attname_id = get_relid_attribute_name(indrelid, attnum);
 
-				if ((strcmp(attname, AG_EIO) == 0 &&
-					 strcmp(attname_vid, AG_EIC) == 0) ||
-					(strcmp(attname, AG_EOO) == 0 &&
-					 strcmp(attname_vid, AG_EOG) == 0))
+				if ((strcmp(attname, AG_START_OID) == 0 &&
+					 strcmp(attname_id, AG_START_ID) == 0) ||
+					(strcmp(attname, AG_END_OID) == 0 &&
+					 strcmp(attname_id, AG_END_ID) == 0))
 				{
 					index_stmt = generateClonedIndexStmt(cxt, parent_index,
 													attmap, tupleDesc->natts);
@@ -590,9 +590,9 @@ transformCreateLabelStmt(CreateStmt *stmt, const char *queryString)
 	 */
 	def = makeNode(ColumnDef);
 	if (nodeTag(stmt) == T_CreateVLabelStmt)
-		def->colname = pstrdup(AG_VID);
+		def->colname = pstrdup(AG_ELEM_ID);
 	else if (nodeTag(stmt) == T_CreateELabelStmt)
-		def->colname = pstrdup(AG_EID);
+		def->colname = pstrdup(AG_ELEM_ID);
 	else
 	{
 		ereport(NOTICE,

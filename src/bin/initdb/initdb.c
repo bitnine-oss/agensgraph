@@ -2243,28 +2243,27 @@ setup_graph(void)
 		 * in the graph schema.
 		 */
 		"CREATE SCHEMA graph;\n",
-		"SET search_path TO graph;\n",
 
-		"CREATE TABLE vertex (",
-		"    vid BIGSERIAL PRIMARY KEY,",
-		"    properties JSONB",
+		"CREATE TABLE graph.vertex (",
+		"    id BIGSERIAL PRIMARY KEY,",
+		"    prop_map JSONB",
 		");\n",
 
-		"CREATE TABLE edge (",
-		"    eid BIGSERIAL PRIMARY KEY,",
-		"    inOID OID NOT NULL,",
-		"    incoming INT8 NOT NULL,",
-		"    outOID OID NOT NULL,",
-		"    outgoing INT8 NOT NULL,",
-		"    properties JSONB",
+		"CREATE TABLE graph.edge (",
+		"    id BIGSERIAL PRIMARY KEY,",
+		"    start_oid OID NOT NULL,",
+		"    start_id INT8 NOT NULL,",
+		"    end_oid OID NOT NULL,",
+		"    end_id INT8 NOT NULL,",
+		"    prop_map JSONB",
 		");\n",
 
-		"CREATE INDEX Vin ON edge (",
-		"    inOID, incoming",
+		"CREATE INDEX edge_start ON graph.edge (",
+		"    start_oid, start_id",
 		");\n",
 
-		"CREATE INDEX Vout ON edge (",
-		"    outOID, outgoing",
+		"CREATE INDEX edge_end ON graph.edge (",
+		"    end_oid, end_id",
 		");\n",
 		NULL
 	};

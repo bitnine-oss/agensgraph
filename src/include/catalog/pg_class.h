@@ -151,6 +151,16 @@ DESCR("");
 DATA(insert OID = 1259 (  pg_class		PGNSP 83 0 PGUID 0 0 0 0 0 0 0 f f p r 31 0 t f f f f f f t n 3 1 _null_ _null_ ));
 DESCR("");
 
+/*
+ * composite types
+ */
+
+/* graph */
+DATA(insert OID = 3315 ( vertex		PGNSP 3317 0 PGUID 0 3315 0 0 0 0 0 f f p c 3 0 f f f f f f f t n 0 0 _null_ _null_ ));
+DESCR("graph vertex");
+DATA(insert OID = 3318 ( edge		PGNSP 3320 0 PGUID 0 3318 0 0 0 0 0 f f p c 7 0 f f f f f f f t n 0 0 _null_ _null_ ));
+DESCR("graph edge");
+
 
 #define		  RELKIND_RELATION		  'r'		/* ordinary table */
 #define		  RELKIND_INDEX			  'i'		/* secondary index */

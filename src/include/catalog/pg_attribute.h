@@ -220,4 +220,20 @@ typedef FormData_pg_attribute *Form_pg_attribute;
  * ----------------
  */
 
+/*
+ * composite types
+ */
+
+/* graph */
+DATA(insert ( 3315 oid 26 -1 4 1 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 3315 id 20 -1 8 2 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 3315 prop_map 3802 -1 -1 3 0 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 3318 oid 26 -1 4 1 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 3318 id 20 -1 8 2 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 3318 start_oid 26 -1 4 3 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 3318 start_id 20 -1 8 4 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 3318 end_oid 26 -1 4 5 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 3318 end_id 20 -1 8 6 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 3318 prop_map 3802 -1 -1 7 0 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
+
 #endif   /* PG_ATTRIBUTE_H */
