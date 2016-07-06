@@ -16,5 +16,6 @@
 
 extern Datum vertex_out(PG_FUNCTION_ARGS);
 extern Datum edge_out(PG_FUNCTION_ARGS);
+extern Datum graphpath_out(PG_FUNCTION_ARGS);
 
 #endif	/* GRAPH_H */

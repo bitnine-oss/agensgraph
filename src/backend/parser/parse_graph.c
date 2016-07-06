@@ -29,22 +29,25 @@ typedef struct PatternCtx
 
 /* trasnform */
 static PatternCtx *makePatternCtx(RangeTblEntry *rte);
-static List *makeComponents(List *patterns);
-static void findAndUnionComponents(CypherPattern *pattern, List *components);
-static bool isPatternConnectedTo(CypherPattern *pattern, List *component);
-static bool arePatternsConnected(CypherPattern *p1, CypherPattern *p2);
+static List *makeComponents(List *pattern);
+static void findAndUnionComponents(CypherPath *path, List *components);
+static bool isPathConnectedTo(CypherPath *path, List *component);
+static bool arePathsConnected(CypherPath *p1, CypherPath *p2);
 static void transformComponents(List *components, PatternCtx *ctx,
 								List **fromClause, List **targetList,
 								Node **whereClause);
 static Node *transformCypherNode(CypherNode *node, PatternCtx *ctx,
 					List **fromClause, List **targetList, Node **whereClause,
 					List **nodeVars);
-static void transformCypherRel(CypherRel *rel, Node *left, Node *right,
+static RangeVar *transformCypherRel(CypherRel *rel, Node *left, Node *right,
 					List **fromClause, List **targetList, Node **whereClause,
 					List **relVars);
 static Node *findNodeVar(List *nodeVars, char *varname);
 static bool isNodeInPatternCtx(PatternCtx *ctx, char *varname);
 static bool checkDupRelVar(List *relVars, char *varname);
+static Node *makePathVertex(Node *nodeVar);
+static Alias *makePatternVarAlias(char *aliasname);
+static Node *makeLabelTuple(Alias *alias, Oid type_oid);
 static Node *makePropMapConstraint(ColumnRef *props, char *qualStr);
 static Node *makeDirQual(Node *start, RangeVar *rel, Node *end);
 static void makeVertexId(Node *nodeVar, Node **oid, Node **id);
@@ -58,6 +61,9 @@ static ColumnRef *makeSimpleColumnRef(char *colname, List *indirection,
 static A_Indirection *makeIndirection(Node *arg, List *indirection);
 static ResTarget *makeSelectResTarget(Node *value, char *label, int location);
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
+static RowExpr *makeTuple(List *args, int location);
+static A_ArrayExpr *makeArray(List *elements, int location);
+static TypeCast *makeTypeCast(Node *arg, TypeName *typename, int location);
 static Node *qualAndExpr(Node *qual, Node *expr);
 
 /* shortcuts */
@@ -70,8 +76,13 @@ static ColumnRef *makeAliasIndirection(Alias *alias, Node *indirection);
 	makeIndirection(arg, list_make1(makeString(pstrdup(colname))))
 #define makeAliasStarTarget(alias) \
 	makeSelectResTarget((Node *) makeAliasStar(alias), NULL, -1)
-static Alias *makePatternVarAlias(char *aliasname);
-static Node *makeTuple(List *args, TypeName *typename);
+#define makeTypedTuple(args, type_oid) \
+	((Node *) makeTypeCast((Node *) makeTuple(args, -1), \
+						   makeTypeNameByOid(type_oid), -1))
+#define makeTypedArray(elements, type_oid) \
+	((Node *) makeTypeCast((Node *) makeArray(elements, -1), \
+						   makeTypeNameByOid(type_oid), -1))
+static TypeName *makeTypeNameByOid(Oid type_oid);
 
 /* utils */
 static char *genUniqueName(void);
@@ -119,7 +130,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 			ctx = makePatternCtx(rte);
 		}
 
-		components = makeComponents(detail->patterns);
+		components = makeComponents(detail->pattern);
 
 		transformComponents(components, ctx,
 							&fromClause, &targetList, &whereClause);
@@ -254,18 +265,18 @@ makePatternCtx(RangeTblEntry *rte)
 
 /* make connected components */
 static List *
-makeComponents(List *patterns)
+makeComponents(List *pattern)
 {
 	List	   *components = NIL;
 	ListCell   *lp;
 
-	foreach(lp, patterns)
+	foreach(lp, pattern)
 	{
-		CypherPattern *p = lfirst(lp);
+		CypherPath *p = lfirst(lp);
 
 		if (components == NIL)
 		{
-			/* a connected component is a list of CypherPatterns */
+			/* a connected component is a list of CypherPath's */
 			List *c = list_make1(p);
 			components = list_make1(c);
 		}
@@ -279,7 +290,7 @@ makeComponents(List *patterns)
 }
 
 static void
-findAndUnionComponents(CypherPattern *pattern, List *components)
+findAndUnionComponents(CypherPath *path, List *components)
 {
 	List	   *repr;
 	ListCell   *lc;
@@ -294,7 +305,7 @@ findAndUnionComponents(CypherPattern *pattern, List *components)
 	{
 		List *c = lfirst(lc);
 
-		if (isPatternConnectedTo(pattern, c))
+		if (isPathConnectedTo(path, c))
 		{
 			repr = c;
 			break;
@@ -306,7 +317,7 @@ findAndUnionComponents(CypherPattern *pattern, List *components)
 	/* there is no matched connected component */
 	if (repr == NIL)
 	{
-		lappend(components, list_make1(pattern));
+		lappend(components, list_make1(path));
 		return;
 	}
 
@@ -317,7 +328,7 @@ findAndUnionComponents(CypherPattern *pattern, List *components)
 	{
 		List *c = lfirst(lc);
 
-		if (isPatternConnectedTo(pattern, c))
+		if (isPathConnectedTo(path, c))
 		{
 			ListCell *next;
 
@@ -334,20 +345,20 @@ findAndUnionComponents(CypherPattern *pattern, List *components)
 		}
 	}
 
-	/* add the pattern to repr */
-	lappend(repr, pattern);
+	/* add the path to repr */
+	lappend(repr, path);
 }
 
 static bool
-isPatternConnectedTo(CypherPattern *pattern, List *component)
+isPathConnectedTo(CypherPath *path, List *component)
 {
 	ListCell *lp;
 
 	foreach(lp, component)
 	{
-		CypherPattern *p = lfirst(lp);
+		CypherPath *p = lfirst(lp);
 
-		if (arePatternsConnected(p, pattern))
+		if (arePathsConnected(p, path))
 			return true;
 	}
 
@@ -355,7 +366,7 @@ isPatternConnectedTo(CypherPattern *pattern, List *component)
 }
 
 static bool
-arePatternsConnected(CypherPattern *p1, CypherPattern *p2)
+arePathsConnected(CypherPath *p1, CypherPath *p2)
 {
 	ListCell *le1;
 
@@ -412,18 +423,24 @@ transformComponents(List *components, PatternCtx *ctx,
 
 		foreach(lp, c)
 		{
-			CypherPattern *p = lfirst(lp);
+			CypherPath *p = lfirst(lp);
+			bool		out = (p->variable != NULL);
+			List	   *vertices = NIL;
+			List	   *edges = NIL;
 			ListCell   *e;
 			CypherNode *node;
 			CypherRel  *rel;
 			Node	   *left;
 			Node	   *right;
+			RangeVar   *r;
 
 			e = list_head(p->chain);
 			node = lfirst(e);
 			left = transformCypherNode(node, ctx,
 									   fromClause, targetList, whereClause,
 									   &nodeVars);
+			if (out)
+				vertices = lappend(vertices, makePathVertex(left));
 
 			for (;;)
 			{
@@ -440,12 +457,36 @@ transformComponents(List *components, PatternCtx *ctx,
 				right = transformCypherNode(node, ctx,
 										fromClause, targetList, whereClause,
 										&nodeVars);
+				if (out)
+					vertices = lappend(vertices, makePathVertex(right));
 
-				transformCypherRel(rel, left, right,
-								   fromClause, targetList, whereClause,
-								   &relVars);
+				r = transformCypherRel(rel, left, right,
+									   fromClause, targetList, whereClause,
+									   &relVars);
+				if (out)
+					edges = lappend(edges, makeLabelTuple(r->alias, EDGEOID));
 
 				left = right;
+			}
+
+			/* add this path to the target list */
+			if (out)
+			{
+				Node	   *varr;
+				Node	   *earr;
+				Node	   *tuple;
+				ResTarget  *target;
+
+				varr = makeTypedArray(vertices, VERTEXARRAYOID);
+				earr = makeTypedArray(edges, EDGEARRAYOID);
+
+				tuple = makeTypedTuple(list_make2(varr, earr), GRAPHPATHOID);
+
+				target = makeSelectResTarget(tuple,
+											 getCypherName(p->variable),
+											 getCypherNameLoc(p->variable));
+
+				*targetList = lappend(*targetList, target);
 			}
 		}
 
@@ -510,15 +551,10 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 	/* add this node to the result */
 	if (varname != NULL)
 	{
-		ColumnRef  *oid;
-		ColumnRef  *star;
 		Node	   *tuple;
 		ResTarget  *target;
 
-		oid = makeAliasColname(r->alias, "tableoid");
-		star = makeAliasStar(r->alias);
-
-		tuple = makeTuple(list_make2(oid, star), makeTypeName("vertex"));
+		tuple = makeLabelTuple(r->alias, VERTEXOID);
 
 		target = makeSelectResTarget(tuple, varname,
 									 getCypherNameLoc(node->variable));
@@ -544,7 +580,7 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 }
 
 /* connect two nodes with a relationship */
-static void
+static RangeVar *
 transformCypherRel(CypherRel *rel, Node *left, Node *right,
 				   List **fromClause, List **targetList, Node **whereClause,
 				   List **relVars)
@@ -588,15 +624,10 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 	/* add this relationship to the result */
 	if (varname != NULL)
 	{
-		ColumnRef  *oid;
-		ColumnRef  *star;
 		Node	   *tuple;
 		ResTarget  *target;
 
-		oid = makeAliasColname(r->alias, "tableoid");
-		star = makeAliasStar(r->alias);
-
-		tuple = makeTuple(list_make2(oid, star), makeTypeName("edge"));
+		tuple = makeLabelTuple(r->alias, EDGEOID);
 
 		target = makeSelectResTarget(tuple, varname,
 									 getCypherNameLoc(rel->variable));
@@ -639,6 +670,8 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 
 	/* remember processed relationships */
 	*relVars = lappend(*relVars, r);
+
+	return r;
 }
 
 static Node *
@@ -663,7 +696,7 @@ findNodeVar(List *nodeVars, char *varname)
 		else
 		{
 			ColumnRef *colref = (ColumnRef *) n;
-			AssertArg(IsA(colref, ColumnRef));
+			Assert(IsA(colref, ColumnRef));
 
 			if (strcmp(strVal(linitial(colref->fields)), varname) == 0)
 				return n;
@@ -709,6 +742,47 @@ checkDupRelVar(List *relVars, char *varname)
 	return false;
 }
 
+static Node *
+makePathVertex(Node *nodeVar)
+{
+	if (IsA(nodeVar, RangeVar))
+	{
+		RangeVar *r = (RangeVar *) nodeVar;
+
+		return makeLabelTuple(r->alias, VERTEXOID);
+	}
+	else
+	{
+		ColumnRef *colref = (ColumnRef *) nodeVar;
+		Assert(IsA(colref, ColumnRef));
+
+		return copyObject(colref);
+	}
+}
+
+static Alias *
+makePatternVarAlias(char *aliasname)
+{
+	aliasname = (aliasname == NULL ? genUniqueName() : pstrdup(aliasname));
+	return makeAliasNoDup(aliasname, NIL);
+}
+
+/* ROW(alias.tableoid, alias.*)::type */
+static Node *
+makeLabelTuple(Alias *alias, Oid type_oid)
+{
+	ColumnRef  *oid;
+	ColumnRef  *star;
+	Node	   *tuple;
+
+	oid = makeAliasColname(alias, "tableoid");
+	star = makeAliasStar(alias);
+	tuple = makeTypedTuple(list_make2(oid, star), type_oid);
+
+	return tuple;
+}
+
+/* jsonb_contains(prop_map, qualStr) */
 static Node *
 makePropMapConstraint(ColumnRef *prop_map, char *qualStr)
 {
@@ -871,6 +945,7 @@ makeSimpleColumnRef(char *colname, List *indirection, int location)
 	return colref;
 }
 
+/* (arg).indirection[0].indirection[1]... */
 static A_Indirection *
 makeIndirection(Node *arg, List *indirection)
 {
@@ -910,6 +985,45 @@ makeAliasNoDup(char *aliasname, List *colnames)
 	return alias;
 }
 
+static RowExpr *
+makeTuple(List *args, int location)
+{
+	RowExpr *row;
+
+	row = makeNode(RowExpr);
+	row->args = args;
+	row->row_format = COERCE_IMPLICIT_CAST;	/* abuse */
+	row->location = location;
+
+	return row;
+}
+
+static A_ArrayExpr *
+makeArray(List *elements, int location)
+{
+	A_ArrayExpr *array;
+
+	array = makeNode(A_ArrayExpr);
+	array->elements = elements;
+	array->location = location;
+
+	return array;
+}
+
+static TypeCast *
+makeTypeCast(Node *arg, TypeName *typename, int location)
+{
+	TypeCast *cast;
+
+	cast = makeNode(TypeCast);
+	cast->arg = arg;
+	cast->typeName = typename;
+	cast->location = location;
+
+	return cast;
+}
+
+/* qual AND expr */
 static Node *
 qualAndExpr(Node *qual, Node *expr)
 {
@@ -937,30 +1051,27 @@ makeAliasIndirection(Alias *alias, Node *indirection)
 	return makeSimpleColumnRef(alias->aliasname, list_make1(indirection), -1);
 }
 
-static Alias *
-makePatternVarAlias(char *aliasname)
+static TypeName *
+makeTypeNameByOid(Oid type_oid)
 {
-	aliasname = (aliasname == NULL ? genUniqueName() : pstrdup(aliasname));
-	return makeAliasNoDup(aliasname, NIL);
-}
-
-static Node *
-makeTuple(List *args, TypeName *typename)
-{
-	RowExpr	   *row;
-	TypeCast   *cast;
-
-	row = makeNode(RowExpr);
-	row->args = args;
-	row->row_format = COERCE_IMPLICIT_CAST;	/* abuse */
-	row->location = -1;
-
-	cast = makeNode(TypeCast);
-	cast->arg = (Node *) row;
-	cast->typeName = typename;
-	cast->location = -1;
-
-	return (Node *) cast;
+	switch (type_oid)
+	{
+		case VERTEXARRAYOID:
+			return makeTypeName("_vertex");
+		case VERTEXOID:
+			return makeTypeName("vertex");
+		case EDGEARRAYOID:
+			return makeTypeName("_edge");
+		case EDGEOID:
+			return makeTypeName("edge");
+		case GRAPHPATHOID:
+			return makeTypeName("graphpath");
+		default:
+			AssertArg(type_oid == VERTEXOID ||
+					  type_oid == EDGEOID ||
+					  type_oid == GRAPHPATHOID);
+			return NULL;
+	}
 }
 
 /* generate unique name */
