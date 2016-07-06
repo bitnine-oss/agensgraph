@@ -17,5 +17,7 @@ extern Query *transformCypherMatchClause(ParseState *pstate,
 										 CypherClause *clause);
 extern Query *transformCypherReturnClause(ParseState *pstate,
 										  CypherClause *clause);
+extern Query *transformCypherWithClause(ParseState *pstate,
+										CypherClause *clause);
 
 #endif	/* PARSE_GRAPH_H */
