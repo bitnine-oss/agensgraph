@@ -541,11 +541,12 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 %type <node>	CypherStmt cypher_clause cypher_clause_prev cypher_label_opt
 				cypher_limit_opt cypher_match cypher_no_parens cypher_node
-				cypher_pattern cypher_range_idx cypher_range_idx_opt
-				cypher_range_opt cypher_rel cypher_return cypher_skip_opt
-				cypher_variable_opt cypher_varlen_opt cypher_with_parens
-%type <list>	cypher_pattern_chain cypher_pattern_list cypher_types
-				cypher_types_opt
+				cypher_path cypher_path_opt_varirable cypher_range_idx
+				cypher_range_idx_opt cypher_range_opt cypher_rel cypher_return
+				cypher_skip_opt cypher_variable cypher_variable_opt
+				cypher_varlen_opt cypher_with_parens
+%type <list>	cypher_path_chain cypher_path_chain_opt_parens cypher_pattern
+				cypher_types cypher_types_opt
 %type <str>		cypher_prop_map_opt
 %type <boolean>	cypher_rel_left cypher_rel_right
 
@@ -710,13 +711,13 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  * keywords anywhere else in the grammar, but it's definitely risky.  We can
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
- * To support Cypher statements, the precedence of leading unreserved keyword
- * MATCH and SKIP should be same as that of IDENT because of the reasons given
- * above.
+ * To support Cypher, the precedence of unreserved keyword, SKIP, must be the
+ * same as that of IDENT so that they can follow a_expr without creating
+ * postfix-operator problems.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			MATCH SKIP
+			SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -13802,7 +13803,6 @@ unreserved_keyword:
 			| LOCKED
 			| LOGGED
 			| MAPPING
-			| MATCH
 			| MATERIALIZED
 			| MAXVALUE
 			| MINUTE_P
@@ -14097,6 +14097,7 @@ reserved_keyword:
 			| LIMIT
 			| LOCALTIME
 			| LOCALTIMESTAMP
+			| MATCH
 			| NOT
 			| NULL_P
 			| OFFSET
@@ -14174,10 +14175,10 @@ cypher_clause:
 		;
 
 cypher_match:
-			MATCH cypher_pattern_list where_clause
+			MATCH cypher_pattern where_clause
 				{
 					CypherMatchClause *n = makeNode(CypherMatchClause);
-					n->patterns = $2;
+					n->pattern = $2;
 					n->where = $3;
 					$$ = (Node *) n;
 				}
@@ -14195,26 +14196,42 @@ cypher_return:
 				}
 		;
 
-cypher_pattern_list:
-			cypher_pattern
+cypher_pattern:
+			cypher_path_opt_varirable
 					{ $$ = list_make1($1); }
-			| cypher_pattern_list ',' cypher_pattern
+			| cypher_pattern ',' cypher_path_opt_varirable
 					{ $$ = lappend($1, $3); }
 		;
 
-cypher_pattern:
-			cypher_pattern_chain
+cypher_path_opt_varirable:
+			cypher_path
+			| cypher_variable '=' cypher_path
 				{
-					CypherPattern *n = makeNode(CypherPattern);
+					CypherPath *n = (CypherPath *) $3;
+					n->variable = $1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_path:
+			cypher_path_chain_opt_parens
+				{
+					CypherPath *n = makeNode(CypherPath);
 					n->chain = $1;
 					$$ = (Node *) n;
 				}
 		;
 
-cypher_pattern_chain:
+cypher_path_chain_opt_parens:
+			cypher_path_chain
+			| '(' cypher_path_chain ')'
+					{ $$ = $2; }
+		;
+
+cypher_path_chain:
 			cypher_node
 					{ $$ = list_make1($1); }
-			| cypher_pattern_chain cypher_rel cypher_node
+			| cypher_path_chain cypher_rel cypher_node
 					{ $$ = lappend(lappend($1, $2), $3); }
 		;
 
@@ -14230,6 +14247,11 @@ cypher_node:
 		;
 
 cypher_variable_opt:
+			cypher_variable
+			| /* EMPTY */		{ $$ = NULL; }
+		;
+
+cypher_variable:
 			ColLabel
 				{
 					CypherName *n = makeNode(CypherName);
@@ -14237,8 +14259,6 @@ cypher_variable_opt:
 					n->location = @1;
 					$$ = (Node *) n;
 				}
-			| /* EMPTY */
-					{ $$ = NULL; }
 		;
 
 cypher_label_opt:

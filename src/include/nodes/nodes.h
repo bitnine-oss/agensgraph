@@ -430,7 +430,7 @@ typedef enum NodeTag
 	T_CypherClause,
 	T_CypherMatchClause,
 	T_CypherReturnClause,
-	T_CypherPattern,
+	T_CypherPath,
 	T_CypherNode,
 	T_CypherRel,
 	T_CypherName,
