@@ -3097,7 +3097,7 @@ typedef struct CypherMatchClause
 {
 	NodeTag		type;
 	List	   *pattern;
-	Node	   *where;
+	Node	   *where;		/* WHERE qualification */
 } CypherMatchClause;
 
 typedef struct CypherReturnClause
@@ -3108,6 +3108,16 @@ typedef struct CypherReturnClause
 	Node	   *skip;		/* number of result tuples to skip */
 	Node	   *limit;		/* number of result tuples to return */
 } CypherReturnClause;
+
+typedef struct CypherWithClause
+{
+	NodeTag		type;
+	List	   *items;
+	List	   *order;
+	Node	   *skip;
+	Node	   *limit;
+	Node	   *where;
+} CypherWithClause;
 
 typedef struct CypherPath
 {

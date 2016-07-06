@@ -100,7 +100,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	Node	   *qual;
 	Query	   *qry;
 
-	if (detail->where)
+	if (detail->where != NULL)
 	{
 		r = makeRangePrevclause((Node *) clause);
 		fromClause = list_make1(r);
@@ -109,7 +109,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 
 		/*
 		 * detach WHERE clause so that this funcion passes through
-		 * this if statement when the function called again recursively
+		 * this if statement when the function is called again recursively
 		 */
 		detail->where = NULL;
 	}
@@ -176,7 +176,7 @@ transformCypherReturnClause(ParseState *pstate, CypherClause *clause)
 
 		/*
 		 * detach RETURN options so that this funcion passes through
-		 * this if statement when the function called again recursively
+		 * this if statement when the function is called again recursively
 		 */
 		detail->order = NULL;
 		detail->skip = NULL;
@@ -209,6 +209,73 @@ transformCypherReturnClause(ParseState *pstate, CypherClause *clause)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+Query *
+transformCypherWithClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherWithClause *detail = (CypherWithClause *) clause->detail;
+	RangePrevclause *r;
+	List	   *fromClause = NIL;
+	List	   *targetList = NIL;
+	Node	   *whereClause = detail->where;
+	List	   *order = detail->order;
+	Node	   *skip = detail->skip;
+	Node	   *limit = detail->limit;
+	Node	   *qual;
+	Query	   *qry;
+
+	if (whereClause != NULL)
+	{
+		r = makeRangePrevclause((Node *) clause);
+		fromClause = list_make1(r);
+		targetList = list_make1(makeAliasStarTarget(r->alias));
+
+		detail->where = NULL;
+	}
+	else if (order != NULL || skip != NULL || limit != NULL)
+	{
+		r = makeRangePrevclause((Node *) clause);
+		fromClause = list_make1(r);
+		targetList = list_make1(makeAliasStarTarget(r->alias));
+
+		detail->order = NULL;
+		detail->skip = NULL;
+		detail->limit = NULL;
+	}
+	else
+	{
+		if (clause->prev != NULL)
+			fromClause = list_make1(makeRangePrevclause(clause->prev));
+		targetList = detail->items;
+	}
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	transformFromClause(pstate, fromClause);
+
+	qry->targetList = transformTargetList(pstate, targetList,
+										  EXPR_KIND_SELECT_TARGET);
+	markTargetListOrigins(pstate, qry->targetList);
+
+	qual = transformWhereClause(pstate, whereClause, EXPR_KIND_WHERE, "WHERE");
+
+	qry->sortClause = transformSortClause(pstate, order,
+										  &qry->targetList, EXPR_KIND_ORDER_BY,
+										  true, false);
+
+	qry->limitOffset = transformLimitClause(pstate, skip,
+											EXPR_KIND_OFFSET, "OFFSET");
+	qry->limitCount = transformLimitClause(pstate, limit,
+										   EXPR_KIND_LIMIT, "LIMIT");
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
 
 	assign_query_collations(pstate, qry);
 
