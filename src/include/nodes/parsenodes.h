@@ -3100,24 +3100,27 @@ typedef struct CypherMatchClause
 	Node	   *where;		/* WHERE qualification */
 } CypherMatchClause;
 
-typedef struct CypherReturnClause
+/* which clause is parsed as a CypherProjection */
+typedef enum CPKind
+{
+	CP_RETURN,
+	CP_WITH
+} CPKind;
+
+/* Cypher RETURN and WITH clauses use this */
+typedef struct CypherProjection
 {
 	NodeTag		type;
+	CPKind		kind;
+	List	   *distinct;	/* DISTINCT clause */
 	List	   *items;		/* list of return items (ResTarget) */
 	List	   *order;		/* a list of SortBy's */
-	Node	   *skip;		/* number of result tuples to skip */
-	Node	   *limit;		/* number of result tuples to return */
-} CypherReturnClause;
-
-typedef struct CypherWithClause
-{
-	NodeTag		type;
-	List	   *items;
-	List	   *order;
-	Node	   *skip;
-	Node	   *limit;
+	Node	   *skip;		/* the number of result tuples to skip */
+	Node	   *limit;		/* the number of result tuples to return */
 	Node	   *where;
-} CypherWithClause;
+} CypherProjection;
+
+#define cypherProjectionKind(n)	(((CypherProjection *) (n))->kind)
 
 typedef struct CypherPath
 {

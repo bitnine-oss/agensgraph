@@ -2590,20 +2590,10 @@ _equalCypherMatchClause(const CypherMatchClause *a, const CypherMatchClause *b)
 }
 
 static bool
-_equalCypherReturnClause(const CypherReturnClause *a,
-						 const CypherReturnClause *b)
+_equalCypherProjection(const CypherProjection *a, const CypherProjection *b)
 {
-	COMPARE_NODE_FIELD(items);
-	COMPARE_NODE_FIELD(order);
-	COMPARE_NODE_FIELD(skip);
-	COMPARE_NODE_FIELD(limit);
-
-	return true;
-}
-
-static bool
-_equalCypherWithClause(const CypherWithClause *a, const CypherWithClause *b)
-{
+	COMPARE_SCALAR_FIELD(kind);
+	COMPARE_NODE_FIELD(distinct);
 	COMPARE_NODE_FIELD(items);
 	COMPARE_NODE_FIELD(order);
 	COMPARE_NODE_FIELD(skip);
@@ -3399,11 +3389,8 @@ equal(const void *a, const void *b)
 		case T_CypherMatchClause:
 			retval = _equalCypherMatchClause(a, b);
 			break;
-		case T_CypherReturnClause:
-			retval = _equalCypherReturnClause(a, b);
-			break;
-		case T_CypherWithClause:
-			retval = _equalCypherWithClause(a, b);
+		case T_CypherProjection:
+			retval = _equalCypherProjection(a, b);
 			break;
 		case T_CypherPath:
 			retval = _equalCypherPath(a, b);

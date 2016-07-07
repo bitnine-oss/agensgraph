@@ -19,6 +19,20 @@
 #include "parser/parse_target.h"
 #include "parser/parse_utilcmd.h"
 
+typedef struct SelectInfo
+{
+	List	   *distinct;	/* DISTINCT clause */
+	List	   *target;		/* the target list (of ResTarget) */
+	List	   *from;		/* the FROM clause */
+	Node	   *where;		/* WHERE qualification */
+	List	   *order;		/* a list of SortBy's */
+	Node	   *skip;		/* the number of result tuples to skip */
+	Node	   *limit;		/* the number of result tuples to return */
+} SelectInfo;
+
+#define SELECT_INFO(name) \
+	SelectInfo name = {NIL, NIL, NIL, NULL, NIL, NULL, NULL}
+
 typedef struct PatternCtx
 {
 	Alias	   *alias;		/* alias of previous CypherClause */
@@ -28,6 +42,7 @@ typedef struct PatternCtx
 } PatternCtx;
 
 /* trasnform */
+static Query *transformSelectInfo(ParseState *pstate, SelectInfo *selinfo);
 static PatternCtx *makePatternCtx(RangeTblEntry *rte);
 static List *makeComponents(List *pattern);
 static void findAndUnionComponents(CypherPath *path, List *components);
@@ -91,21 +106,16 @@ Query *
 transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherMatchClause *detail = (CypherMatchClause *) clause->detail;
+	SELECT_INFO(selinfo);
 	RangePrevclause *r;
-	PatternCtx *ctx = NULL;
-	List	   *components;
-	List	   *fromClause = NIL;
-	List	   *targetList = NIL;
-	Node	   *whereClause = NULL;
-	Node	   *qual;
-	Query	   *qry;
 
 	if (detail->where != NULL)
 	{
 		r = makeRangePrevclause((Node *) clause);
-		fromClause = list_make1(r);
-		targetList = list_make1(makeAliasStarTarget(r->alias));
-		whereClause = detail->where;
+
+		selinfo.target = list_make1(makeAliasStarTarget(r->alias));
+		selinfo.from = list_make1(r);
+		selinfo.where = detail->where;
 
 		/*
 		 * detach WHERE clause so that this funcion passes through
@@ -115,6 +125,9 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	}
 	else
 	{
+		PatternCtx *ctx = NULL;
+		List	   *components;
+
 		/*
 		 * Transform previous CypherClause as a RangeSubselect first.
 		 * It must be transformed at here because when transformComponents(),
@@ -133,145 +146,106 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 		components = makeComponents(detail->pattern);
 
 		transformComponents(components, ctx,
-							&fromClause, &targetList, &whereClause);
+							&selinfo.from, &selinfo.target, &selinfo.where);
 	}
 
-	qry = makeNode(Query);
-	qry->commandType = CMD_SELECT;
-
-	transformFromClause(pstate, fromClause);
-
-	qry->targetList = transformTargetList(pstate, targetList,
-										  EXPR_KIND_SELECT_TARGET);
-	markTargetListOrigins(pstate, qry->targetList);
-
-	qual = transformWhereClause(pstate, whereClause, EXPR_KIND_WHERE, "WHERE");
-
-	qry->rtable = pstate->p_rtable;
-	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
-
-	assign_query_collations(pstate, qry);
-
-	return qry;
+	return transformSelectInfo(pstate, &selinfo);
 }
 
 Query *
-transformCypherReturnClause(ParseState *pstate, CypherClause *clause)
+transformCypherProjection(ParseState *pstate, CypherClause *clause)
 {
-	CypherReturnClause *detail = (CypherReturnClause *) clause->detail;
-	List	   *fromClause = NIL;
-	List	   *targetList;
-	List	   *order = detail->order;
-	Node	   *skip = detail->skip;
-	Node	   *limit = detail->limit;
-	Query	   *qry;
-
-	if (order != NULL || skip != NULL || limit != NULL)
-	{
-		RangePrevclause *r;
-
-		r = makeRangePrevclause((Node *) clause);
-		fromClause = list_make1(r);
-		targetList = list_make1(makeAliasStarTarget(r->alias));
-
-		/*
-		 * detach RETURN options so that this funcion passes through
-		 * this if statement when the function is called again recursively
-		 */
-		detail->order = NULL;
-		detail->skip = NULL;
-		detail->limit = NULL;
-	}
-	else
-	{
-		if (clause->prev != NULL)
-			fromClause = list_make1(makeRangePrevclause(clause->prev));
-		targetList = detail->items;
-	}
-
-	qry = makeNode(Query);
-	qry->commandType = CMD_SELECT;
-
-	transformFromClause(pstate, fromClause);
-
-	qry->targetList = transformTargetList(pstate, targetList,
-										  EXPR_KIND_SELECT_TARGET);
-	markTargetListOrigins(pstate, qry->targetList);
-
-	qry->sortClause = transformSortClause(pstate, order,
-										  &qry->targetList, EXPR_KIND_ORDER_BY,
-										  true, false);
-
-	qry->limitOffset = transformLimitClause(pstate, skip,
-											EXPR_KIND_OFFSET, "OFFSET");
-	qry->limitCount = transformLimitClause(pstate, limit,
-										   EXPR_KIND_LIMIT, "LIMIT");
-
-	qry->rtable = pstate->p_rtable;
-	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
-
-	assign_query_collations(pstate, qry);
-
-	return qry;
-}
-
-Query *
-transformCypherWithClause(ParseState *pstate, CypherClause *clause)
-{
-	CypherWithClause *detail = (CypherWithClause *) clause->detail;
+	CypherProjection *detail = (CypherProjection *) clause->detail;
+	SELECT_INFO(selinfo);
 	RangePrevclause *r;
-	List	   *fromClause = NIL;
-	List	   *targetList = NIL;
-	Node	   *whereClause = detail->where;
-	List	   *order = detail->order;
-	Node	   *skip = detail->skip;
-	Node	   *limit = detail->limit;
-	Node	   *qual;
-	Query	   *qry;
 
-	if (whereClause != NULL)
+	if (detail->where != NULL)
 	{
+		AssertArg(detail->kind == CP_WITH);
+
 		r = makeRangePrevclause((Node *) clause);
-		fromClause = list_make1(r);
-		targetList = list_make1(makeAliasStarTarget(r->alias));
+
+		selinfo.target = list_make1(makeAliasStarTarget(r->alias));
+		selinfo.from = list_make1(r);
+		selinfo.where = detail->where;
 
 		detail->where = NULL;
 	}
-	else if (order != NULL || skip != NULL || limit != NULL)
+	else if (detail->distinct != NULL || detail->order != NULL ||
+			 detail->skip != NULL || detail->limit != NULL)
 	{
 		r = makeRangePrevclause((Node *) clause);
-		fromClause = list_make1(r);
-		targetList = list_make1(makeAliasStarTarget(r->alias));
 
-		detail->order = NULL;
+		selinfo.distinct = detail->distinct;
+		selinfo.target = list_make1(makeAliasStarTarget(r->alias));
+		selinfo.from = list_make1(r);
+		selinfo.order = detail->order;
+		selinfo.skip = detail->skip;
+		selinfo.limit = detail->limit;
+
+		/*
+		 * detach options so that this funcion passes through this if statement
+		 * when the function is called again recursively
+		 */
+		detail->distinct = NIL;
+		detail->order = NIL;
 		detail->skip = NULL;
 		detail->limit = NULL;
 	}
 	else
 	{
+		selinfo.target = detail->items;
 		if (clause->prev != NULL)
-			fromClause = list_make1(makeRangePrevclause(clause->prev));
-		targetList = detail->items;
+			selinfo.from = list_make1(makeRangePrevclause(clause->prev));
 	}
+
+	return transformSelectInfo(pstate, &selinfo);
+}
+
+/* composed of some lines from transformSelectStmt() we need */
+static Query *
+transformSelectInfo(ParseState *pstate, SelectInfo *selinfo)
+{
+	Query	   *qry;
+	Node	   *qual;
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
-	transformFromClause(pstate, fromClause);
+	transformFromClause(pstate, selinfo->from);
 
-	qry->targetList = transformTargetList(pstate, targetList,
+	qry->targetList = transformTargetList(pstate, selinfo->target,
 										  EXPR_KIND_SELECT_TARGET);
 	markTargetListOrigins(pstate, qry->targetList);
 
-	qual = transformWhereClause(pstate, whereClause, EXPR_KIND_WHERE, "WHERE");
+	qual = transformWhereClause(pstate, selinfo->where,
+								EXPR_KIND_WHERE, "WHERE");
 
-	qry->sortClause = transformSortClause(pstate, order,
+	qry->sortClause = transformSortClause(pstate, selinfo->order,
 										  &qry->targetList, EXPR_KIND_ORDER_BY,
 										  true, false);
 
-	qry->limitOffset = transformLimitClause(pstate, skip,
+	if (selinfo->distinct == NIL)
+	{
+		/* intentionally blank, do nothing */
+	}
+	else if (linitial(selinfo->distinct) == NULL)
+	{
+		qry->distinctClause = transformDistinctClause(pstate, &qry->targetList,
+													  qry->sortClause, false);
+	}
+	else
+	{
+		qry->distinctClause = transformDistinctOnClause(pstate,
+														selinfo->distinct,
+														&qry->targetList,
+														qry->sortClause);
+		qry->hasDistinctOn = true;
+	}
+
+	qry->limitOffset = transformLimitClause(pstate, selinfo->skip,
 											EXPR_KIND_OFFSET, "OFFSET");
-	qry->limitCount = transformLimitClause(pstate, limit,
+	qry->limitCount = transformLimitClause(pstate, selinfo->limit,
 										   EXPR_KIND_LIMIT, "LIMIT");
 
 	qry->rtable = pstate->p_rtable;

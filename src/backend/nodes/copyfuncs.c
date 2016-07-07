@@ -4135,24 +4135,13 @@ _copyCypherMatchClause(const CypherMatchClause *from)
 	return newnode;
 }
 
-static CypherReturnClause *
-_copyCypherReturnClause(const CypherReturnClause *from)
+static CypherProjection *
+_copyCypherProjection(const CypherProjection *from)
 {
-	CypherReturnClause *newnode = makeNode(CypherReturnClause);
+	CypherProjection *newnode = makeNode(CypherProjection);
 
-	COPY_NODE_FIELD(items);
-	COPY_NODE_FIELD(order);
-	COPY_NODE_FIELD(skip);
-	COPY_NODE_FIELD(limit);
-
-	return newnode;
-}
-
-static CypherWithClause *
-_copyCypherWithClause(const CypherWithClause *from)
-{
-	CypherWithClause *newnode = makeNode(CypherWithClause);
-
+	COPY_SCALAR_FIELD(kind);
+	COPY_NODE_FIELD(distinct);
 	COPY_NODE_FIELD(items);
 	COPY_NODE_FIELD(order);
 	COPY_NODE_FIELD(skip);
@@ -5078,11 +5067,8 @@ copyObject(const void *from)
 		case T_CypherMatchClause:
 			retval = _copyCypherMatchClause(from);
 			break;
-		case T_CypherReturnClause:
-			retval = _copyCypherReturnClause(from);
-			break;
-		case T_CypherWithClause:
-			retval = _copyCypherWithClause(from);
+		case T_CypherProjection:
+			retval = _copyCypherProjection(from);
 			break;
 		case T_CypherPath:
 			retval = _copyCypherPath(from);

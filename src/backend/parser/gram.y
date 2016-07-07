@@ -546,7 +546,8 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 				cypher_rel cypher_return cypher_skip_opt cypher_variable
 				cypher_variable_opt cypher_varlen_opt cypher_with
 				cypher_with_parens
-%type <list>	cypher_path_chain cypher_path_chain_opt_parens cypher_pattern
+%type <list>	cypher_distinct_opt cypher_path_chain
+				cypher_path_chain_opt_parens cypher_pattern
 				cypher_types cypher_types_opt
 %type <str>		cypher_prop_map_opt
 %type <boolean>	cypher_rel_left cypher_rel_right
@@ -14191,27 +14192,33 @@ cypher_match:
 		;
 
 cypher_return:
-			RETURN target_list opt_sort_clause cypher_skip_opt cypher_limit_opt
+			RETURN cypher_distinct_opt target_list
+			opt_sort_clause cypher_skip_opt cypher_limit_opt
 				{
-					CypherReturnClause *n = makeNode(CypherReturnClause);
-					n->items = $2;
-					n->order = $3;
-					n->skip = $4;
-					n->limit = $5;
+					CypherProjection *n = makeNode(CypherProjection);
+					n->kind = CP_RETURN;
+					n->distinct = $2;
+					n->items = $3;
+					n->order = $4;
+					n->skip = $5;
+					n->limit = $6;
 					$$ = (Node *) n;
 				}
 		;
 
 cypher_with:
-			WITH target_list opt_sort_clause cypher_skip_opt cypher_limit_opt
+			WITH cypher_distinct_opt target_list
+			opt_sort_clause cypher_skip_opt cypher_limit_opt
 			where_clause
 				{
-					CypherWithClause *n = makeNode(CypherWithClause);
-					n->items = $2;
-					n->order = $3;
-					n->skip = $4;
-					n->limit = $5;
-					n->where = $6;
+					CypherProjection *n = makeNode(CypherProjection);
+					n->kind = CP_WITH;
+					n->distinct = $2;
+					n->items = $3;
+					n->order = $4;
+					n->skip = $5;
+					n->limit = $6;
+					n->where = $7;
 					$$ = (Node *) n;
 				}
 		;
@@ -14408,6 +14415,11 @@ cypher_range_idx_opt:
 
 cypher_range_idx:
 			Iconst				{ $$ = makeIntConst($1, @1); }
+		;
+
+cypher_distinct_opt:
+			distinct_clause
+			| /* EMPTY */		{ $$ = NIL; }
 		;
 
 cypher_skip_opt:

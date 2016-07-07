@@ -2978,21 +2978,12 @@ _outCypherMatchClause(StringInfo str, const CypherMatchClause *node)
 }
 
 static void
-_outCypherReturnClause(StringInfo str, const CypherReturnClause *node)
+_outCypherProjection(StringInfo str, const CypherProjection *node)
 {
-	WRITE_NODE_TYPE("CYPHERRETURNCLAUSE");
+	WRITE_NODE_TYPE("CYPHERPROJECTION");
 
-	WRITE_NODE_FIELD(items);
-	WRITE_NODE_FIELD(order);
-	WRITE_NODE_FIELD(skip);
-	WRITE_NODE_FIELD(limit);
-}
-
-static void
-_outCypherWithClause(StringInfo str, const CypherWithClause *node)
-{
-	WRITE_NODE_TYPE("CYPHERWITHCLAUSE");
-
+	WRITE_ENUM_FIELD(kind, CPKind);
+	WRITE_NODE_FIELD(distinct);
 	WRITE_NODE_FIELD(items);
 	WRITE_NODE_FIELD(order);
 	WRITE_NODE_FIELD(skip);
@@ -3576,11 +3567,8 @@ _outNode(StringInfo str, const void *obj)
 			case T_CypherMatchClause:
 				_outCypherMatchClause(str, obj);
 				break;
-			case T_CypherReturnClause:
-				_outCypherReturnClause(str, obj);
-				break;
-			case T_CypherWithClause:
-				_outCypherWithClause(str, obj);
+			case T_CypherProjection:
+				_outCypherProjection(str, obj);
 				break;
 			case T_CypherPath:
 				_outCypherPath(str, obj);
