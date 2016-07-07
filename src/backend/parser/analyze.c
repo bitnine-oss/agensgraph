@@ -2736,13 +2736,20 @@ applyLockingClause(Query *qry, Index rtindex,
 static Query *
 transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 {
-	Node *clause = stmt->last;
+	Node	   *clause = stmt->last;
+	NodeTag		type = cypherClauseTag(clause);
 
-	/* FIXME: Current implementation does not support update clauses, so; */
-	if (cypherClauseTag(clause) != T_CypherReturnClause)
+	if (type == T_CypherProjection && cypherProjectionKind(clause) == CP_RETURN)
+	{
+		/* intentionally blank, do nothing */
+	}
+	/* TODO: update clauses go to here */
+	else
+	{
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("Cypher query must end with RETURN or update clause")));
+	}
 
 	return transformStmt(pstate, clause);
 }
@@ -2757,11 +2764,8 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 		case T_CypherMatchClause:
 			qry = transformCypherMatchClause(pstate, clause);
 			break;
-		case T_CypherReturnClause:
-			qry = transformCypherReturnClause(pstate, clause);
-			break;
-		case T_CypherWithClause:
-			qry = transformCypherWithClause(pstate, clause);
+		case T_CypherProjection:
+			qry = transformCypherProjection(pstate, clause);
 			break;
 		default:
 			elog(ERROR, "unrecognized Cypher clause type: %d",
