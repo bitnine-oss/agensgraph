@@ -2244,19 +2244,9 @@ setup_graph(void)
 		 */
 		"CREATE SCHEMA graph;\n",
 
-		"CREATE TABLE graph.vertex (",
-		"    id BIGSERIAL PRIMARY KEY,",
-		"    prop_map JSONB",
-		");\n",
+		"CREATE VLABEL vertex\n",
 
-		"CREATE TABLE graph.edge (",
-		"    id BIGSERIAL PRIMARY KEY,",
-		"    start_oid OID NOT NULL,",
-		"    start_id INT8 NOT NULL,",
-		"    end_oid OID NOT NULL,",
-		"    end_id INT8 NOT NULL,",
-		"    prop_map JSONB",
-		");\n",
+		"CREATE ELABEL edge\n",
 
 		"CREATE INDEX edge_start ON graph.edge (",
 		"    start_oid, start_id",

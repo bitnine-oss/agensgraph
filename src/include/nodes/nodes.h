@@ -378,8 +378,7 @@ typedef enum NodeTag
 	T_AlterPolicyStmt,
 	T_CreateTransformStmt,
 	T_CypherStmt,
-	T_CreateVLabelStmt,
-	T_CreateELabelStmt,
+	T_CreateLabelStmt,
 
 	/*
 	 * TAGS FOR PARSE TREE NODES (parsenodes.h)

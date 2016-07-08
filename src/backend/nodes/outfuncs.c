@@ -2095,6 +2095,14 @@ _outCreateStmtInfo(StringInfo str, const CreateStmt *node)
 }
 
 static void
+_outCreateLabelStmtInfo(StringInfo str, const CreateLabelStmt *node)
+{
+	WRITE_NODE_FIELD(relation);
+	WRITE_NODE_FIELD(inhRelations);
+	WRITE_CHAR_FIELD(labkind);
+}
+
+static void
 _outCreateStmt(StringInfo str, const CreateStmt *node)
 {
 	WRITE_NODE_TYPE("CREATESTMT");
@@ -2103,19 +2111,11 @@ _outCreateStmt(StringInfo str, const CreateStmt *node)
 }
 
 static void
-_outCreateVLabelStmt(StringInfo str, const CreateVLabelStmt *node)
+_outCreateLabelStmt(StringInfo str, const CreateLabelStmt *node)
 {
-	WRITE_NODE_TYPE("CREATEVLABELSTMT");
+	WRITE_NODE_TYPE("CREATELABELSTMT");
 
-	_outCreateStmtInfo(str, (const CreateStmt *) node);
-}
-
-static void
-_outCreateELabelStmt(StringInfo str, const CreateELabelStmt *node)
-{
-	WRITE_NODE_TYPE("CREATEELABELSTMT");
-
-	_outCreateStmtInfo(str, (const CreateStmt *) node);
+	_outCreateLabelStmtInfo(str, (const CreateLabelStmt *) node);
 }
 
 static void
@@ -2362,8 +2362,7 @@ _outQuery(StringInfo str, const Query *node)
 		switch (nodeTag(node->utilityStmt))
 		{
 			case T_CreateStmt:
-			case T_CreateVLabelStmt:
-			case T_CreateELabelStmt:
+			case T_CreateLabelStmt:
 			case T_IndexStmt:
 			case T_NotifyStmt:
 			case T_DeclareCursorStmt:
@@ -3419,11 +3418,8 @@ _outNode(StringInfo str, const void *obj)
 			case T_CreateStmt:
 				_outCreateStmt(str, obj);
 				break;
-			case T_CreateVLabelStmt:
-				_outCreateVLabelStmt(str, obj);
-				break;
-			case T_CreateELabelStmt:
-				_outCreateELabelStmt(str, obj);
+			case T_CreateLabelStmt:
+				_outCreateLabelStmt(str, obj);
 				break;
 			case T_CreateForeignTableStmt:
 				_outCreateForeignTableStmt(str, obj);

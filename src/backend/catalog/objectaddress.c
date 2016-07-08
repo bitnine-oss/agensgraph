@@ -17,6 +17,7 @@
 
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "catalog/ag_label.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/objectaddress.h"
@@ -461,12 +462,6 @@ static const struct object_type_map
 		"table", OBJECT_TABLE
 	},
 	{
-		"vlabel", OBJECT_VLABEL
-	},
-	{
-		"elabel", OBJECT_ELABEL
-	},
-	{
 		"index", OBJECT_INDEX
 	},
 	{
@@ -644,6 +639,10 @@ static const struct object_type_map
 	/* OCLASS_TRANSFORM */
 	{
 		"transform", OBJECT_TRANSFORM
+	},
+	/* OCLASS_LABEL */
+	{
+		"label", OBJECT_LABEL
 	}
 };
 
@@ -3132,7 +3131,29 @@ getObjectDescription(const ObjectAddress *object)
 				heap_close(policy_rel, AccessShareLock);
 				break;
 			}
+		case OCLASS_LABEL:
+			{
+				Relation		ag_label_desc;
+				HeapTuple		tuple;
+				Form_ag_label	form_label;
 
+				ag_label_desc = heap_open(LabelRelationId,AccessShareLock);
+
+				tuple = SearchSysCache1(LABELOID,
+										ObjectIdGetDatum(object->objectId));
+				if (!HeapTupleIsValid(tuple))
+					elog(ERROR, "cache lookup failed for label %u",
+						 object->objectId);
+
+				form_label = (Form_ag_label) GETSTRUCT(tuple);
+
+				appendStringInfo(&buffer, _("label %s"),
+								 NameStr(form_label->labname));
+
+				ReleaseSysCache(tuple);
+				heap_close(ag_label_desc, AccessShareLock);
+				break;
+			}
 		default:
 			appendStringInfo(&buffer, "unrecognized object %u %u %d",
 							 object->classId,

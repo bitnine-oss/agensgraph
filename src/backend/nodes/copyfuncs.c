@@ -2982,24 +2982,20 @@ _copyCreateStmt(const CreateStmt *from)
 	return newnode;
 }
 
-static CreateVLabelStmt *
-_copyCreateVLabelStmt(const CreateVLabelStmt *from)
+static void
+CopyCreateLabelStmtFields(const CreateLabelStmt *from, CreateLabelStmt *newnode)
 {
-	CreateVLabelStmt *newnode = makeNode(CreateVLabelStmt);
-
-	CopyCreateStmtFields((CreateStmt*)from,
-						 (CreateStmt*)newnode);
-
-	return newnode;
+	COPY_NODE_FIELD(relation);
+	COPY_NODE_FIELD(inhRelations);
+	COPY_SCALAR_FIELD(labkind);
 }
 
-static CreateELabelStmt *
-_copyCreateELabelStmt(const CreateELabelStmt *from)
+static CreateLabelStmt *
+_copyCreateLabelStmt(const CreateLabelStmt *from)
 {
-	CreateELabelStmt *newnode = makeNode(CreateELabelStmt);
+	CreateLabelStmt *newnode = makeNode(CreateLabelStmt);
 
-	CopyCreateStmtFields((CreateStmt*)from,
-						 (CreateStmt*)newnode);
+	CopyCreateLabelStmtFields(from, newnode);
 
 	return newnode;
 }
@@ -4671,11 +4667,8 @@ copyObject(const void *from)
 		case T_CreateStmt:
 			retval = _copyCreateStmt(from);
 			break;
-		case T_CreateVLabelStmt:
-			retval = _copyCreateVLabelStmt(from);
-			break;
-		case T_CreateELabelStmt:
-			retval = _copyCreateELabelStmt(from);
+		case T_CreateLabelStmt:
+			retval = _copyCreateLabelStmt(from);
 			break;
 		case T_TableLikeClause:
 			retval = _copyTableLikeClause(from);

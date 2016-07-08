@@ -247,7 +247,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 		CreateFdwStmt CreateForeignServerStmt CreateForeignTableStmt
 		CreateAssertStmt CreateTransformStmt CreateTrigStmt CreateEventTrigStmt
 		CreateUserStmt CreateUserMappingStmt CreateRoleStmt CreatePolicyStmt
-		CreatedbStmt CreateELabelStmt CreateVLabelStmt
+		CreatedbStmt CreateLabelStmt
 		DeclareCursorStmt DefineStmt DeleteStmt DiscardStmt DoStmt
 		DropGroupStmt DropOpClassStmt DropOpFamilyStmt DropPLangStmt DropStmt
 		DropAssertStmt DropTrigStmt DropRuleStmt DropCastStmt DropRoleStmt
@@ -836,8 +836,7 @@ stmt :
 			| CreateRoleStmt
 			| CreateUserStmt
 			| CreateUserMappingStmt
-			| CreateVLabelStmt
-			| CreateELabelStmt
+			| CreateLabelStmt
 			| CreatedbStmt
 			| CypherStmt
 			| DeallocateStmt
@@ -2809,49 +2808,30 @@ copy_generic_opt_arg_list_item:
  *
  *		QUERY :
  *				CREATE VLABEL relname
- *
- *****************************************************************************/
-
-CreateVLabelStmt:	CREATE VLABEL qualified_name OptInherit
-				{
-					CreateVLabelStmt *n = makeNode(CreateVLabelStmt);
-					$3->relpersistence = RELPERSISTENCE_PERMANENT;
-					n->relation = $3;
-					n->tableElts = NULL;
-					n->inhRelations = $4;
-					n->ofTypename = NULL;
-					n->constraints = NIL;
-					n->options = NULL;
-					n->oncommit = ONCOMMIT_NOOP;
-					n->tablespacename = NULL;
-					n->if_not_exists = false;
-					$$ = (Node *)n;
-				}
-		;
-
-/*****************************************************************************
- *
- *		QUERY :
  *				CREATE ELABEL relname
  *
  *****************************************************************************/
 
-CreateELabelStmt:	CREATE ELABEL qualified_name OptInherit
+CreateLabelStmt:	CREATE VLABEL qualified_name OptInherit
 				{
-					CreateELabelStmt *n = makeNode(CreateELabelStmt);
+					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					$3->relpersistence = RELPERSISTENCE_PERMANENT;
 					n->relation = $3;
-					n->tableElts = NULL;
 					n->inhRelations = $4;
-					n->ofTypename = NULL;
-					n->constraints = NIL;
-					n->options = NULL;
-					n->oncommit = ONCOMMIT_NOOP;
-					n->tablespacename = NULL;
-					n->if_not_exists = false;
+					n->labkind = 'v';
+					$$ = (Node *)n;
+				}
+			|	CREATE ELABEL qualified_name OptInherit
+				{
+					CreateLabelStmt *n = makeNode(CreateLabelStmt);
+					$3->relpersistence = RELPERSISTENCE_PERMANENT;
+					n->relation = $3;
+					n->inhRelations = $4;
+					n->labkind = 'e';
 					$$ = (Node *)n;
 				}
 		;
+
 /*****************************************************************************
  *
  *		QUERY :
@@ -5657,8 +5637,8 @@ DropStmt:	DROP drop_type IF_P EXISTS any_name_list opt_drop_behavior
 
 
 drop_type:	TABLE									{ $$ = OBJECT_TABLE; }
-			| VLABEL								{ $$ = OBJECT_VLABEL; }
-			| ELABEL								{ $$ = OBJECT_ELABEL; }
+			| VLABEL								{ $$ = OBJECT_LABEL; }
+			| ELABEL								{ $$ = OBJECT_LABEL; }
 			| SEQUENCE								{ $$ = OBJECT_SEQUENCE; }
 			| VIEW									{ $$ = OBJECT_VIEW; }
 			| MATERIALIZED VIEW						{ $$ = OBJECT_MATVIEW; }
