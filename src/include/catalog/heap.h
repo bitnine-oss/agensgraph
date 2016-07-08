@@ -85,6 +85,8 @@ extern void heap_truncate_check_FKs(List *relations, bool tempTables);
 
 extern List *heap_truncate_find_FKs(List *relationIds);
 
+extern void RelationRemoveInheritance(Oid classid, Oid relid);
+
 extern void InsertPgAttributeTuple(Relation pg_attribute_rel,
 					   Form_pg_attribute new_attribute,
 					   CatalogIndexState indstate);
@@ -95,7 +97,10 @@ extern void InsertPgClassTuple(Relation pg_class_desc,
 				   Datum relacl,
 				   Datum reloptions);
 
-extern void InsertAgLabelTuple(Oid relid, const char *relname, char labkind);
+extern void InsertAgLabelTuple(Oid labid,
+							   const char *labname,
+							   char labkind,
+							   Oid relid);
 
 extern List *AddRelationNewConstraints(Relation rel,
 						  List *newColDefaults,

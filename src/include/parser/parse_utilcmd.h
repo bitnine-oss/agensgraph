@@ -26,7 +26,7 @@
 #define AG_END_ID		"end_id"
 
 extern List *transformCreateStmt(CreateStmt *stmt, const char *queryString);
-extern List *transformCreateLabelStmt(CreateStmt *stmt, const char *queryString);
+extern List *transformCreateLabelStmt(CreateLabelStmt *stmt, const char *queryString);
 extern List *transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 						const char *queryString);
 extern IndexStmt *transformIndexStmt(Oid relid, IndexStmt *stmt,

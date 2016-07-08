@@ -1392,7 +1392,6 @@ typedef enum ObjectType
 	OBJECT_DEFACL,
 	OBJECT_DOMAIN,
 	OBJECT_DOMCONSTRAINT,
-	OBJECT_ELABEL,
 	OBJECT_EVENT_TRIGGER,
 	OBJECT_EXTENSION,
 	OBJECT_FDW,
@@ -1400,6 +1399,7 @@ typedef enum ObjectType
 	OBJECT_FOREIGN_TABLE,
 	OBJECT_FUNCTION,
 	OBJECT_INDEX,
+	OBJECT_LABEL,
 	OBJECT_LANGUAGE,
 	OBJECT_LARGEOBJECT,
 	OBJECT_MATVIEW,
@@ -1422,8 +1422,7 @@ typedef enum ObjectType
 	OBJECT_TSTEMPLATE,
 	OBJECT_TYPE,
 	OBJECT_USER_MAPPING,
-	OBJECT_VIEW,
-	OBJECT_VLABEL
+	OBJECT_VIEW
 } ObjectType;
 
 /* ----------------------
@@ -1761,11 +1760,17 @@ typedef struct CreateStmt
 
 
 /* ----------------------
- *		Create VLabel Statement
+ *		Create Agens Graph Label Statement
  * ----------------------
  */
-typedef struct CreateStmt CreateVLabelStmt;
-typedef struct CreateStmt CreateELabelStmt;
+typedef struct CreateLabelStmt
+{
+	NodeTag		type;
+	RangeVar   *relation;		/* relation to create */
+	List	   *inhRelations;	/* relations to inherit from (list of
+								 * inhRelation) */
+	char	    labkind;		/* vertex v or edge e */
+} CreateLabelStmt;
 
 
 /* ----------

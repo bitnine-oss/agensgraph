@@ -23,6 +23,7 @@
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "catalog/indexing.h"
+#include "catalog/ag_inherits.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_inherits_fn.h"
 #include "parser/parse_type.h"
@@ -46,7 +47,7 @@ static int	oid_cmp(const void *p1, const void *p2);
  * against possible DROPs of child relations.
  */
 List *
-find_inheritance_children(Oid parentrelId, LOCKMODE lockmode)
+find_inheritance_children(Oid classId, Oid parentrelId, LOCKMODE lockmode)
 {
 	List	   *list = NIL;
 	Relation	relation;
@@ -54,6 +55,7 @@ find_inheritance_children(Oid parentrelId, LOCKMODE lockmode)
 	ScanKeyData key[1];
 	HeapTuple	inheritsTuple;
 	Oid			inhrelid;
+	Oid			anum_inhparent;
 	Oid		   *oidarr;
 	int			maxoids,
 				numoids,
@@ -63,20 +65,27 @@ find_inheritance_children(Oid parentrelId, LOCKMODE lockmode)
 	 * Can skip the scan if pg_class shows the relation has never had a
 	 * subclass.
 	 */
-	if (!has_subclass(parentrelId))
+	if (classId != InheritsLabelId && (!has_subclass(parentrelId)))
 		return NIL;
 
 	/*
-	 * Scan pg_inherits and build a working array of subclass OIDs.
+	 * Scan pg_inherits/ag_inherits and build a working array of subclass OIDs.
 	 */
 	maxoids = 32;
 	oidarr = (Oid *) palloc(maxoids * sizeof(Oid));
 	numoids = 0;
 
-	relation = heap_open(InheritsRelationId, AccessShareLock);
+	relation = heap_open(classId, AccessShareLock);
+
+	if (classId == InheritsRelationId)
+		anum_inhparent = Anum_pg_inherits_inhparent;
+	else if (classId == InheritsLabelId)
+		anum_inhparent = Anum_ag_inherits_inhparent;
+	else /* shouldn't happen */
+		elog(ERROR, "Access to Inheritance catalog with invalid OID %d", classId);
 
 	ScanKeyInit(&key[0],
-				Anum_pg_inherits_inhparent,
+				anum_inhparent,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(parentrelId));
 
@@ -85,7 +94,13 @@ find_inheritance_children(Oid parentrelId, LOCKMODE lockmode)
 
 	while ((inheritsTuple = systable_getnext(scan)) != NULL)
 	{
-		inhrelid = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhrelid;
+		if (classId == InheritsRelationId)
+			inhrelid = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhrelid;
+		else if (classId == InheritsLabelId)
+			inhrelid = ((Form_ag_inherits) GETSTRUCT(inheritsTuple))->inhrelid;
+		else
+			inhrelid = 0;
+
 		if (numoids >= maxoids)
 		{
 			maxoids *= 2;
@@ -179,7 +194,8 @@ find_all_inheritors(Oid parentrelId, LOCKMODE lockmode, List **numparents)
 		ListCell   *lc;
 
 		/* Get the direct children of this rel */
-		currentchildren = find_inheritance_children(currentrel, lockmode);
+		currentchildren = find_inheritance_children(InheritsRelationId,
+													currentrel, lockmode);
 
 		/*
 		 * Add to the queue only those children not already seen. This avoids
