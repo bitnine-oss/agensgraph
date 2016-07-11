@@ -176,6 +176,8 @@ static void processCASbits(int cas_bits, int location, const char *constrType,
 			   bool *deferrable, bool *initdeferred, bool *not_valid,
 			   bool *no_inherit, core_yyscan_t yyscanner);
 static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
+static Node *makeCypherSetOp(SetOperation op, bool all, Node *larg, Node *rarg);
+static Node *wrapCypherWithSelect(Node *stmt);
 
 %}
 
@@ -14153,6 +14155,18 @@ cypher_no_parens:
 					n->last = $1;
 					$$ = (Node *) n;
 				}
+			| CypherStmt UNION all_or_distinct CypherStmt
+				{
+					$$ = makeCypherSetOp(SETOP_UNION, $3, $1, $4);
+				}
+			| CypherStmt INTERSECT all_or_distinct CypherStmt
+				{
+					$$ = makeCypherSetOp(SETOP_INTERSECT, $3, $1, $4);
+				}
+			| CypherStmt EXCEPT all_or_distinct CypherStmt
+				{
+					$$ = makeCypherSetOp(SETOP_EXCEPT, $3, $1, $4);
+				}
 		;
 
 cypher_clause_prev:
@@ -15231,6 +15245,46 @@ makeRecursiveViewSelect(char *relname, List *aliases, Node *query)
 	s->fromClause = list_make1(makeRangeVar(NULL, relname, -1));
 
 	return (Node *) s;
+}
+
+static Node *
+makeCypherSetOp(SetOperation op, bool all, Node *larg, Node *rarg)
+{
+	if (IsA(larg, CypherStmt))
+		larg = wrapCypherWithSelect(larg);
+	if (IsA(rarg, CypherStmt))
+		rarg = wrapCypherWithSelect(rarg);
+
+	return makeSetOp(op, all, larg, rarg);
+}
+
+static Node *
+wrapCypherWithSelect(Node *stmt)
+{
+	ColumnRef  *colref;
+	ResTarget  *target;
+	RangeSubselect *sub;
+	SelectStmt *select;
+
+	AssertArg(IsA(stmt, CypherStmt));
+
+	colref = makeNode(ColumnRef);
+	colref->fields = list_make1(makeNode(A_Star));
+	colref->location = -1;
+
+	target = makeNode(ResTarget);
+	target->val = (Node *) colref;
+	target->location = -1;
+
+	sub = makeNode(RangeSubselect);
+	sub->subquery = stmt;
+	sub->alias = makeAlias("_", NIL);
+
+	select = makeNode(SelectStmt);
+	select->targetList = list_make1(target);
+	select->fromClause = list_make1(sub);
+
+	return (Node *) select;
 }
 
 /* parser_init()
