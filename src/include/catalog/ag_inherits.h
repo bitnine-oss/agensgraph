@@ -45,6 +45,7 @@ typedef FormData_ag_inherits *Form_ag_inherits;
  *		compiler constants for ag_inherits
  * ----------------
  */
+
 #define Natts_ag_inherits				3
 #define Anum_ag_inherits_inhrelid		1
 #define Anum_ag_inherits_inhparent		2

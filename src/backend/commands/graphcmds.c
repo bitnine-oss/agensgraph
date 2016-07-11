@@ -1,15 +1,11 @@
-/*-------------------------------------------------------------------------
- *
+/*
  * graphcmds.c
  *	  Commands for creating and altering graph structures and settings
  *
  * Copyright (c) 2016 by Bitnine Global, Inc.
  *
- *
  * IDENTIFICATION
  *	  src/backend/commands/graphcmds.c
- *
- *-------------------------------------------------------------------------
  */
 
 #include "postgres.h"
@@ -22,121 +18,106 @@
 #include "catalog/catalog.h"
 #include "catalog/heap.h"
 #include "catalog/namespace.h"
+#include "catalog/objectaddress.h"
+#include "catalog/pg_class.h"
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
 #include "commands/graphcmds.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
+#include "nodes/params.h"
+#include "nodes/parsenodes.h"
 #include "parser/parse_utilcmd.h"
-#include "storage/lock.h"
 #include "tcop/utility.h"
 #include "utils/lsyscache.h"
-#include "utils/syscache.h"
+#include "utils/relcache.h"
 
-/* ----------------------------------------------------------------
- *		DefineLabel
- *				Creates a new graph label.
- *
- * ----------------------------------------------------------------
- */
+/* creates a new graph label (See ProcessUtilitySlow() case T_CreateStmt) */
 void
-DefineLabel(CreateLabelStmt *labstmt,
-			const char *queryString,
-			ParamListInfo params,
-			ObjectAddress secondaryObject)
+DefineLabel(CreateLabelStmt *labelStmt, const char *queryString,
+			ParamListInfo params, ObjectAddress secondaryObject)
 {
-	Oid			labid;
-	Oid			relid;
-	Relation    ag_label_desc;
-	Oid			tablespaceId;
+	char		labelKind;
+	Relation	ag_label_desc;
 	List	   *stmts;
 	ListCell   *l;
 
+	if (labelStmt->labelKind == LABEL_VERTEX)
+		labelKind = LABEL_KIND_VERTEX;
+	else
+		labelKind = LABEL_KIND_EDGE;
+
 	ag_label_desc = heap_open(LabelRelationId, RowExclusiveLock);
 
-	/* Run parse analysis ... */
-	stmts = transformCreateLabelStmt(labstmt, queryString);
-
-	/* ... and do it */
+	stmts = transformCreateLabelStmt(labelStmt, queryString);
 	foreach(l, stmts)
 	{
-		CreateStmt *stmt = (CreateStmt *) lfirst(l);
+		Node *stmt = (Node *) lfirst(l);
 
 		if (IsA(stmt, CreateStmt))
 		{
-			Datum		toast_options;
 			static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
+			CreateStmt *createStmt = (CreateStmt *) stmt;
 			ObjectAddress address;
-			List	   *parentOids = NIL;
-			ListCell   *entry;
-			ObjectAddress myself,
-						  referenced;
+			Datum		toast_options;
+			Oid			tablespaceId;
+			Oid			labid;
+			Oid			relid;
+			ListCell   *inhRel;
+			List	   *parents = NIL;
+			ObjectAddress myself;
+			ObjectAddress referenced;
 
 			/* Create the table itself */
-			address = DefineRelation((CreateStmt *) stmt,
-									 RELKIND_RELATION,
-									 InvalidOid, NULL);
-			EventTriggerCollectSimpleCommand(address,
-											 secondaryObject,
-											 (Node*)stmt);
+			address = DefineRelation(createStmt, RELKIND_RELATION, InvalidOid,
+									 NULL);
+			EventTriggerCollectSimpleCommand(address, secondaryObject, stmt);
+
+			CommandCounterIncrement();
+
+			/* parse and validate reloptions for the toast table */
+			toast_options = transformRelOptions((Datum) 0, createStmt->options,
+												"toast", validnsps, true,
+												false);
+			heap_reloptions(RELKIND_TOASTVALUE, toast_options, true);
 
 			/*
 			 * Let NewRelationCreateToastTable decide if this
 			 * one needs a secondary relation too.
 			 */
-			CommandCounterIncrement();
+			NewRelationCreateToastTable(address.objectId, toast_options);
 
 			/*
-			 * parse and validate reloptions for the toast
-			 * table
+			 * Create Label
 			 */
-			toast_options = transformRelOptions((Datum) 0,
-							  ((CreateStmt *) stmt)->options,
-												"toast",
-												validnsps,
-												true,
-												false);
-			(void) heap_reloptions(RELKIND_TOASTVALUE,
-								   toast_options,
-								   true);
 
-			NewRelationCreateToastTable(address.objectId,
-										toast_options);
+			/* current implementation does not get tablespace name; so */
+			tablespaceId =
+					GetDefaultTablespace(createStmt->relation->relpersistence);
 
-			/* Create Label */
-			if (stmt->tablespacename)
-				tablespaceId = get_tablespace_oid(stmt->tablespacename, false);
-			else
-				tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence);
-
-			labid = GetNewRelFileNode(tablespaceId,
-									  ag_label_desc,
-									  stmt->relation->relpersistence);
+			labid = GetNewRelFileNode(tablespaceId, ag_label_desc,
+									  createStmt->relation->relpersistence);
 			relid = address.objectId;
 
-			/* ag_label catalog */
-			InsertAgLabelTuple(labid,
-							   stmt->relation->relname,
-							   labstmt->labkind,
+			/* ag_label */
+			InsertAgLabelTuple(labid, createStmt->relation->relname, labelKind,
 							   relid);
 
-			/* ag_inherit catalog */
-			foreach(entry, stmt->inhRelations)
+			/* ag_inherit */
+			foreach(inhRel, createStmt->inhRelations)
 			{
-				RangeVar   *parent = (RangeVar *) lfirst(entry);
-				Oid			id;
+				RangeVar   *parent = (RangeVar *) lfirst(inhRel);
+				Oid			parent_labid;
 
-				id = GetSysCacheOid1(LABELNAME,
-									 PointerGetDatum(parent->relname));
+				parent_labid = get_labname_labid(parent->relname);
 
-				parentOids = lappend_oid(parentOids, id);
+				parents = lappend_oid(parents, parent_labid);
 			}
-
-			StoreCatalogInheritance(InheritsLabelId, labid, parentOids);
+			StoreCatalogInheritance(InheritsLabelId, labid, parents);
 
 			/*
-			 * Make a dependency link to force the relation to be deleted if its
+			 * Make a dependency link to force the table to be deleted if its
 			 * graph label is.
 			 */
 			myself.classId = RelationRelationId;
@@ -150,93 +131,89 @@ DefineLabel(CreateLabelStmt *labstmt,
 		else
 		{
 			/*
-			 * Recurse for anything else.  Note the recursive
-			 * call will stash the objects so created into our
-			 * event trigger context.
+			 * Recurse for anything else.  Note the recursive call will stash
+			 * the objects so created into our event trigger context.
 			 */
-			ProcessUtility((Node*)stmt,
-						   queryString,
-						   PROCESS_UTILITY_SUBCOMMAND,
-						   params,
-						   None_Receiver,
-						   NULL);
+			ProcessUtility(stmt, queryString, PROCESS_UTILITY_SUBCOMMAND,
+						   params, None_Receiver, NULL);
 		}
 
-		/* Need CCI between commands */
-		if (lnext(l) != NULL)
-			CommandCounterIncrement();
+		CommandCounterIncrement();
 	}
 
 	heap_close(ag_label_desc, RowExclusiveLock);
 }
 
-/*
- * RemoveLabels
- *		Implements DROP VLABEL, DROP ELABEL
- *		Remove catalog tuple from ag_label
- */
+/* Implements DROP VLABEL/ELABEL. Remove label from ag_label. */
 void
 RemoveLabels(DropStmt *drop)
 {
-	ListCell *cell;
-	ListCell *child;
-	List	 *children;
-	List	 *relations = NIL;
+	List	   *relations = NIL;
+	ListCell   *cell;
 
 	foreach(cell, drop->objects)
 	{
-		RangeVar   *lab = makeRangeVarFromNameList((List *) lfirst(cell));
-		Oid			labId;
-		Oid			relId;
+		RangeVar   *label = makeRangeVarFromNameList((List *) lfirst(cell));
+		Oid			labid;
+		Oid			relid;
 		List	   *namelist;
+		List	   *children;
+		ListCell   *child;
 
-		if (lab->schemaname != NULL
-			&& strcmp(lab->schemaname, AG_GRAPH) != 0)
+		if (label->schemaname != NULL &&
+			strcmp(label->schemaname, AG_GRAPH) != 0)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-					 errmsg("Graph label \"%s\" must be in the graph schema, skipping",
-						 lab->relname)));
+					 errmsg("graph label \"%s\" must be in \"" AG_GRAPH "\" schema",
+							label->relname)));
 		}
 
-		labId = get_labname_labid(lab->relname);
-		relId = get_labid_relid(labId);
-
-		if (!OidIsValid(labId))
+		labid = get_labname_labid(label->relname);
+		if (!OidIsValid(labid))
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_OBJECT),
-					 errmsg("Label \"%s\" does not exist", lab->relname)));
+					 errmsg("graph label \"%s\" does not exist",
+							label->relname)));
 		}
+		relid = get_labid_tabid(labid);
 
-		/* setup list to drop table */
+		/* setup a table list to drop */
 		namelist = list_make2(makeString(AG_GRAPH),
-							  makeString(get_rel_name(relId)));
+							  makeString(get_rel_name(relid)));
 		relations = lappend(relations, namelist);
 
-		/* remove dependancy*/
-		deleteDependencyRecordsForClass(RelationRelationId, relId,
+		/*
+		 * TODO: need improvements
+		 */
+
+		/* remove dependancy */
+		deleteDependencyRecordsForClass(RelationRelationId, relid,
 										LabelRelationId, DEPENDENCY_INTERNAL);
 
-		/* remove ag_label */
-		DeleteLabelTuple(labId);
-
-		/* delete childrens ag_label */
-		/* now it is using pg_inherit, NOT ag_inherit */
-		children = find_inheritance_children(InheritsLabelId, labId, NoLock);
-
+		/* XXX: delete tuples for child labels? */
+		children = find_inheritance_children_class(InheritsLabelId, labid,
+												   NoLock);
 		foreach(child, children)
 		{
 			Oid	childoid = lfirst_oid(child);
+
 			DeleteLabelTuple(childoid);
 		}
 
 		/* delete ag_inherit */
-		RelationRemoveInheritance(InheritsLabelId, labId);
+		RelationRemoveInheritanceClass(InheritsLabelId, labid);
+
+		/* remove ag_label */
+		DeleteLabelTuple(labid);
+
+		if (lnext(cell) != NULL)
+			CommandCounterIncrement();
 		CommandCounterIncrement();
 	}
 
-	/* replace the list from label to relations */
+	/* use the DropStmt to proceed to deletion of actual relations */
 	drop->removeType = OBJECT_TABLE;
 	drop->objects = relations;
 

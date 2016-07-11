@@ -175,7 +175,6 @@ check_xact_readonly(Node *parsetree)
 		case T_CreateSeqStmt:
 		case T_CreateStmt:
 		case T_CreateTableAsStmt:
-		case T_CreateLabelStmt:
 		case T_RefreshMatViewStmt:
 		case T_CreateTableSpaceStmt:
 		case T_CreateTransformStmt:
@@ -211,6 +210,7 @@ check_xact_readonly(Node *parsetree)
 		case T_CreateForeignTableStmt:
 		case T_ImportForeignSchemaStmt:
 		case T_SecLabelStmt:
+		case T_CreateLabelStmt:
 			PreventCommandIfReadOnly(CreateCommandTag(parsetree));
 			PreventCommandIfParallelMode(CreateCommandTag(parsetree));
 			break;
@@ -944,15 +944,6 @@ ProcessUtilitySlow(Node *parsetree,
 				commandCollected = true;
 				break;
 
-			case T_CreateLabelStmt:
-				DefineLabel((CreateLabelStmt *) parsetree,
-							queryString,
-							params,
-							secondaryObject);
-
-				commandCollected = true;
-				break;
-
 			case T_CreateStmt:
 			case T_CreateForeignTableStmt:
 				{
@@ -1531,6 +1522,13 @@ ProcessUtilitySlow(Node *parsetree,
 				address = ExecSecLabelStmt((SecLabelStmt *) parsetree);
 				break;
 
+			case T_CreateLabelStmt:
+				DefineLabel((CreateLabelStmt *) parsetree, queryString,
+							params, secondaryObject);
+				/* stashed internally */
+				commandCollected = true;
+				break;
+
 			default:
 				elog(ERROR, "unrecognized node type: %d",
 					 (int) nodeTag(parsetree));
@@ -1577,10 +1575,6 @@ ExecDropStmt(DropStmt *stmt, bool isTopLevel)
 										"DROP INDEX CONCURRENTLY");
 			/* fall through */
 
-		case OBJECT_LABEL:
-			RemoveLabels(stmt);
-			break;
-
 		case OBJECT_TABLE:
 		case OBJECT_SEQUENCE:
 		case OBJECT_VIEW:
@@ -1588,6 +1582,11 @@ ExecDropStmt(DropStmt *stmt, bool isTopLevel)
 		case OBJECT_FOREIGN_TABLE:
 			RemoveRelations(stmt);
 			break;
+
+		case OBJECT_LABEL:
+			RemoveLabels(stmt);
+			break;
+
 		default:
 			RemoveObjects(stmt);
 			break;
@@ -2756,12 +2755,12 @@ GetCommandLogLevel(Node *parsetree)
 			lev = LOGSTMT_DDL;
 			break;
 
-		case T_CreateLabelStmt:
+		case T_CreateStmt:
+		case T_CreateForeignTableStmt:
 			lev = LOGSTMT_DDL;
 			break;
 
-		case T_CreateStmt:
-		case T_CreateForeignTableStmt:
+		case T_CreateLabelStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

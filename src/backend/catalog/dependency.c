@@ -16,6 +16,7 @@
 
 #include "access/htup_details.h"
 #include "access/xact.h"
+#include "catalog/ag_label.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -55,7 +56,6 @@
 #include "catalog/pg_ts_template.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_user_mapping.h"
-#include "catalog/ag_label.h"
 #include "commands/comment.h"
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
