@@ -22,6 +22,7 @@
 #include "access/sysattr.h"
 #include "access/xact.h"
 #include "access/xlog.h"
+#include "catalog/ag_inherits.h"
 #include "catalog/ag_label.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -275,8 +276,10 @@ static List *MergeAttributes(List *schema, List *supers, char relpersistence,
 static bool MergeCheckConstraint(List *constraints, char *name, Node *expr);
 static void MergeAttributesIntoExisting(Relation child_rel, Relation parent_rel);
 static void MergeConstraintsIntoExisting(Relation child_rel, Relation parent_rel);
-static void StoreCatalogInheritance(Oid relationId, List *supers);
+static void StoreCatalogInheritance(Oid classId, Oid relationId, List *supers);
 static void StoreCatalogInheritance1(Oid relationId, Oid parentOid,
+						 int16 seqNumber, Relation inhRelation);
+static void StoreLabelInheritance1(Oid relationId, Oid parentOid,
 						 int16 seqNumber, Relation inhRelation);
 static int	findAttrByName(const char *attributeName, List *schema);
 static void AlterIndexNamespaces(Relation classRel, Relation rel,
@@ -473,7 +476,6 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
 	Oid			ofTypeId;
 	ObjectAddress address;
-	char		labkind;
 
 	/*
 	 * Truncate relname to appropriate length (probably a waste of time, as
@@ -569,6 +571,27 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	}
 	else
 		ofTypeId = InvalidOid;
+
+	/*
+	 * Check duplication in graph label
+	 */
+	if (IsA(stmt, CreateVLabelStmt) ||
+		IsA(stmt, CreateELabelStmt))
+	{
+		Oid			relOid;
+		HeapTuple	tup;
+
+		relOid = get_relname_relid(relname, namespaceId);
+
+		if (relOid != InvalidOid)
+		{
+			tup = SearchSysCache1(LABELOID, ObjectIdGetDatum(relOid));
+			if (HeapTupleIsValid(tup))
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_TABLE),
+						 errmsg("Graph label \"%s\" already exists", relname)));
+		}
+	}
 
 	/*
 	 * Look up inheritance ancestors and generate relation schema, including
@@ -679,16 +702,18 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 										  typaddress);
 
 	if (nodeTag(stmt) == T_CreateVLabelStmt)
-		labkind = LABEL_KIND_VERTEX;
+	{
+		InsertAgLabelTuple(relationId, relname, LABEL_KIND_VERTEX, inheritOids);
+		StoreCatalogInheritance(InheritsLabelId, relationId, inheritOids);
+	}
 	else if (nodeTag(stmt) == T_CreateELabelStmt)
-		labkind = LABEL_KIND_EDGE;
-	else
-		labkind = '\0';
-
-	InsertAgLabelTuple(relationId, relname, labkind);
+	{
+		InsertAgLabelTuple(relationId, relname, LABEL_KIND_EDGE, inheritOids);
+		StoreCatalogInheritance(InheritsLabelId, relationId, inheritOids);
+	}
 
 	/* Store inheritance information for new rel. */
-	StoreCatalogInheritance(relationId, inheritOids);
+	StoreCatalogInheritance(InheritsRelationId, relationId, inheritOids);
 
 	/*
 	 * We must bump the command counter to make the newly-created relation
@@ -905,12 +930,34 @@ RemoveRelations(DropStmt *drop)
 		if (drop->removeType == OBJECT_VLABEL ||
 			drop->removeType == OBJECT_ELABEL)
 		{
-			rel->schemaname = AG_GRAPH;
+			if (rel->schemaname == NULL)
+				rel->schemaname = AG_GRAPH;
+			else if (strcmp(rel->schemaname, AG_GRAPH) != 0)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+						 errmsg("Graph label \"%s\" must be created in graph schema, skipping",
+							 rel->relname)));
+			}
 		}
 		relOid = RangeVarGetRelidExtended(rel, lockmode, true,
 										  false,
 										  RangeVarCallbackForDropRelation,
 										  (void *) &state);
+
+		if (drop->removeType == OBJECT_TABLE)
+		{
+			HeapTuple	tup;
+
+			tup = SearchSysCache1(LABELOID, ObjectIdGetDatum(relOid));
+			if (HeapTupleIsValid(tup))
+				ereport(ERROR,
+						(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+						 errmsg("cannot drop %s because ag label depends on it",
+							 rel->relname),
+						 errhint("Use DROP VLABEL/ELABEL to drop the graph label.")));
+
+		}
 
 		/* Not there? */
 		if (!OidIsValid(relOid))
@@ -934,12 +981,14 @@ RemoveRelations(DropStmt *drop)
 
 /*
  * RemoveLabels
- *		Remove labels from ag_label
+ *		Implements DROP VLABEL, DROP ELABEL
+ *		Remove catalog tuple from ag_label
  */
 void
 RemoveLabels(DropStmt *drop)
 {
-	ListCell *cell;
+	ListCell *cell, *child;
+	List	 *children;
 
 	foreach(cell, drop->objects)
 	{
@@ -965,7 +1014,21 @@ RemoveLabels(DropStmt *drop)
 		}
 
 		DeleteLabelTuple(relOid);
+
+		/* delete childrens ag_label */
+		/* now it is using pg_inherit, NOT ag_inherit */
+		children = find_inheritance_children(InheritsLabelId, relOid, NoLock);
+
+		foreach(child, children)
+		{
+			Oid	childoid = lfirst_oid(child);
+			DeleteLabelTuple(childoid);
+		}
+		/* delete ag_inherit */
+		RelationRemoveInheritance(InheritsLabelId, relOid);
 	}
+
+	RemoveRelations(drop);
 }
 
 /*
@@ -2021,7 +2084,7 @@ MergeCheckConstraint(List *constraints, char *name, Node *expr)
  * supers is a list of the OIDs of the new relation's direct ancestors.
  */
 static void
-StoreCatalogInheritance(Oid relationId, List *supers)
+StoreCatalogInheritance(Oid classId, Oid relationId, List *supers)
 {
 	Relation	relation;
 	int16		seqNumber;
@@ -2044,14 +2107,17 @@ StoreCatalogInheritance(Oid relationId, List *supers)
 	 * and then entered into pg_ipl.  Since that catalog doesn't exist
 	 * anymore, there's no need to look for indirect ancestors.)
 	 */
-	relation = heap_open(InheritsRelationId, RowExclusiveLock);
+	relation = heap_open(classId, RowExclusiveLock);
 
 	seqNumber = 1;
 	foreach(entry, supers)
 	{
 		Oid			parentOid = lfirst_oid(entry);
 
-		StoreCatalogInheritance1(relationId, parentOid, seqNumber, relation);
+		if (classId == InheritsRelationId)
+			StoreCatalogInheritance1(relationId, parentOid, seqNumber, relation);
+		else if (classId == InheritsLabelId)
+			StoreLabelInheritance1(relationId, parentOid, seqNumber, relation);
 		seqNumber++;
 	}
 
@@ -2117,6 +2183,55 @@ StoreCatalogInheritance1(Oid relationId, Oid parentOid,
 	SetRelationHasSubclass(parentOid, true);
 }
 
+static void
+StoreLabelInheritance1(Oid relationId, Oid parentOid,
+					   int16 seqNumber, Relation inhRelation)
+{
+	TupleDesc	desc = RelationGetDescr(inhRelation);
+	Datum		values[Natts_ag_inherits];
+	bool		nulls[Natts_ag_inherits];
+	ObjectAddress childobject,
+				parentobject;
+	HeapTuple	tuple;
+
+	/*
+	 * Make the ag_inherits entry
+	 */
+	values[Anum_ag_inherits_inhrelid - 1] = ObjectIdGetDatum(relationId);
+	values[Anum_ag_inherits_inhparent - 1] = ObjectIdGetDatum(parentOid);
+	values[Anum_ag_inherits_inhseqno - 1] = Int16GetDatum(seqNumber);
+
+	memset(nulls, 0, sizeof(nulls));
+
+	tuple = heap_form_tuple(desc, values, nulls);
+
+	simple_heap_insert(inhRelation, tuple);
+
+	CatalogUpdateIndexes(inhRelation, tuple);
+
+	heap_freetuple(tuple);
+
+	/*
+	 * Store a dependency too
+	 */
+	parentobject.classId = RelationRelationId;
+	parentobject.objectId = parentOid;
+	parentobject.objectSubId = 0;
+	childobject.classId = RelationRelationId;
+	childobject.objectId = relationId;
+	childobject.objectSubId = 0;
+
+	recordDependencyOn(&childobject, &parentobject, DEPENDENCY_NORMAL);
+
+	/*
+	 * Post creation hook of this inheritance. Since object_access_hook
+	 * doesn't take multiple object identifiers, we relay oid of parent
+	 * relation using auxiliary_id argument.
+	 */
+	InvokeObjectPostAlterHookArg(InheritsRelationId,
+								 relationId, 0,
+								 parentOid, false);
+}
 /*
  * Look for an existing schema entry with the given name.
  *
@@ -2308,7 +2423,7 @@ renameatt_internal(Oid myrelid,
 		 * expected_parents will only be 0 if we are not already recursing.
 		 */
 		if (expected_parents == 0 &&
-			find_inheritance_children(myrelid, NoLock) != NIL)
+			find_inheritance_children(InheritsRelationId, myrelid, NoLock) != NIL)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 					 errmsg("inherited column \"%s\" must be renamed in child tables too",
@@ -2510,7 +2625,7 @@ rename_constraint_internal(Oid myrelid,
 		else
 		{
 			if (expected_parents == 0 &&
-				find_inheritance_children(myrelid, NoLock) != NIL)
+				find_inheritance_children(InheritsRelationId, myrelid, NoLock) != NIL)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 						 errmsg("inherited constraint \"%s\" must be renamed in child tables too",
@@ -5042,7 +5157,7 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	 * routines, we have to do this one level of recursion at a time; we can't
 	 * use find_all_inheritors to do it in one pass.
 	 */
-	children = find_inheritance_children(RelationGetRelid(rel), lockmode);
+	children = find_inheritance_children(InheritsRelationId, RelationGetRelid(rel), lockmode);
 
 	/*
 	 * If we are told not to recurse, there had better not be any child
@@ -5782,7 +5897,7 @@ ATExecDropColumn(List **wqueue, Relation rel, const char *colName,
 	 * routines, we have to do this one level of recursion at a time; we can't
 	 * use find_all_inheritors to do it in one pass.
 	 */
-	children = find_inheritance_children(RelationGetRelid(rel), lockmode);
+	children = find_inheritance_children(InheritsRelationId, RelationGetRelid(rel), lockmode);
 
 	if (children)
 	{
@@ -6215,7 +6330,7 @@ ATAddCheckConstraint(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	 * routines, we have to do this one level of recursion at a time; we can't
 	 * use find_all_inheritors to do it in one pass.
 	 */
-	children = find_inheritance_children(RelationGetRelid(rel), lockmode);
+	children = find_inheritance_children(InheritsRelationId, RelationGetRelid(rel), lockmode);
 
 	/*
 	 * Check if ONLY was specified with ALTER TABLE.  If so, allow the
@@ -7765,7 +7880,7 @@ ATExecDropConstraint(Relation rel, const char *constrName,
 	 * use find_all_inheritors to do it in one pass.
 	 */
 	if (!is_no_inherit_constraint)
-		children = find_inheritance_children(RelationGetRelid(rel), lockmode);
+		children = find_inheritance_children(InheritsRelationId, RelationGetRelid(rel), lockmode);
 	else
 		children = NIL;
 
@@ -8023,7 +8138,7 @@ ATPrepAlterColumnType(List **wqueue,
 	if (recurse)
 		ATSimpleRecursion(wqueue, rel, cmd, recurse, lockmode);
 	else if (!recursing &&
-			 find_inheritance_children(RelationGetRelid(rel), NoLock) != NIL)
+			 find_inheritance_children(InheritsRelationId, RelationGetRelid(rel), NoLock) != NIL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 				 errmsg("type of inherited column \"%s\" must be changed in child tables too",

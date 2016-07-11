@@ -319,6 +319,9 @@ DECLARE_UNIQUE_INDEX(pg_replication_origin_roname_index, 6002, on pg_replication
 DECLARE_UNIQUE_INDEX(ag_label_oid_index, 3296, on ag_label using btree(oid oid_ops));
 #define LabelOidIndexId 3296
 
+DECLARE_UNIQUE_INDEX(ag_inherits_relid_seqno_index, 3325, on ag_inherits using btree(inhrelid oid_ops, inhseqno int4_ops));
+#define InheritsLabidSeqnoIndexId  3325
+
 /* last step of initialization script: build the indexes declared above */
 BUILD_INDICES
 
