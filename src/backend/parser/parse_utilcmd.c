@@ -28,7 +28,6 @@
 
 #include "access/htup_details.h"
 #include "access/reloptions.h"
-#include "catalog/ag_label.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -124,9 +123,9 @@ static void transformConstraintAttrs(CreateStmtContext *cxt,
 						 List *constraintList);
 static void transformColumnType(CreateStmtContext *cxt, ColumnDef *column);
 static void setSchemaName(char *context_schema, char **stmt_schema_name);
+static List *makeVertexElements(void);
+static List *makeEdgeElements(void);
 static List *inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt);
-static List *setupVertexLabel();
-static List *setupEdgeLabel();
 
 
 /*
@@ -271,530 +270,6 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 					 (int) nodeTag(element));
 				break;
 		}
-	}
-
-	/*
-	 * transformIndexConstraints wants cxt.alist to contain only index
-	 * statements, so transfer anything we already have into save_alist.
-	 */
-	save_alist = cxt.alist;
-	cxt.alist = NIL;
-
-	Assert(stmt->constraints == NIL);
-
-	/*
-	 * Postprocess constraints that give rise to index definitions.
-	 */
-	transformIndexConstraints(&cxt);
-
-	/*
-	 * Postprocess foreign-key constraints.
-	 */
-	transformFKConstraints(&cxt, true, false);
-
-	/*
-	 * Output results.
-	 */
-	stmt->tableElts = cxt.columns;
-	stmt->constraints = cxt.ckconstraints;
-
-	result = lappend(cxt.blist, stmt);
-	result = list_concat(result, cxt.alist);
-	result = list_concat(result, save_alist);
-
-	return result;
-}
-
-/*
- * Inherit indexes for CreateLabel.
- * Vertex label must have vid index.
- * Edge label must have eid and (oid, vid) indexes.
- *
- * NOTE: See transformTableLikeClause()
- */
-List *
-inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt)
-{
-	List	   *inh_indexes = NIL;
-	RangeVar   *parent;
-	Relation	relation;
-	TupleDesc	tupleDesc;
-	List	   *parent_indexes;
-	AttrNumber *attmap;
-	int			attidx;
-	AttrNumber	attnum;
-	ListCell   *l;
-
-	/* TODO : new label should inherit parents' index.*/
-	/* Set parent which is the default table of graph schema
-	 * to inherit default label indexes. */
-	switch (stmt->labkind)
-	{
-		case LABEL_KIND_VERTEX :
-			parent = makeRangeVar(AG_GRAPH, AG_VERTEX, -1);
-			break;
-		case LABEL_KIND_EDGE :
-			parent = makeRangeVar(AG_GRAPH, AG_EDGE, -1);
-			break;
-		default:
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("relation \"%s\" is not a graph label",
-							stmt->relation->relname)));
-			return NIL;
-	}
-
-	relation = relation_openrv(parent, AccessShareLock);
-
-	tupleDesc = RelationGetDescr(relation);
-	parent_indexes = RelationGetIndexList(relation);
-
-	attmap = (AttrNumber *) palloc0(sizeof(AttrNumber) * tupleDesc->natts);
-
-	/*
-	 * Ignore dropped columns in the parent.  attmap entry is left zero.
-	 */
-	attnum = 1;
-	for (attidx = 0; attidx < tupleDesc->natts; attidx++)
-	{
-		Form_pg_attribute attribute = tupleDesc->attrs[attidx];
-
-		if (!attribute->attisdropped)
-			attmap[attidx] = attnum++;
-	}
-
-	foreach(l, parent_indexes)
-	{
-		Oid			parent_index_oid = lfirst_oid(l);
-		Relation	parent_index;
-		Form_pg_index idxrec;
-		Oid			indrelid;
-		IndexStmt  *index_stmt;
-		char	   *attname;
-
-		parent_index = index_open(parent_index_oid, AccessShareLock);
-
-		idxrec = (Form_pg_index) GETSTRUCT(parent_index->rd_indextuple);
-		indrelid = idxrec->indrelid;
-
-		index_stmt = NULL;
-
-		/* TODO */
-		/* NOTE: there must be a better way to distinguish indices */
-		if (stmt->labkind == LABEL_KIND_VERTEX &&
-			idxrec->indisprimary == true &&
-			idxrec->indnatts == 1)
-		{
-			attnum = idxrec->indkey.values[0];
-			attname = get_relid_attribute_name(indrelid, attnum);
-
-			if (strcmp(attname, AG_ELEM_ID) == 0)
-			{
-				/* Build CREATE INDEX statement to recreate the parent_index */
-				index_stmt = generateClonedIndexStmt(cxt, parent_index,
-													 attmap, tupleDesc->natts);
-			}
-		}
-		else if (stmt->labkind == LABEL_KIND_EDGE)
-		{
-			/* id */
-			if (idxrec->indisprimary == true && idxrec->indnatts == 1)
-			{
-				attnum = idxrec->indkey.values[0];
-				attname = get_relid_attribute_name(indrelid, attnum);
-
-				if (strcmp(attname, AG_ELEM_ID) == 0)
-				{
-					index_stmt = generateClonedIndexStmt(cxt, parent_index,
-													attmap, tupleDesc->natts);
-				}
-			}
-			/* vertex (oid, id) */
-			else if (idxrec->indnatts == 2)
-			{
-				char *attname_id;
-
-				attnum = idxrec->indkey.values[0];
-				attname = get_relid_attribute_name(indrelid, attnum);
-
-				attnum = idxrec->indkey.values[1];
-				attname_id = get_relid_attribute_name(indrelid, attnum);
-
-				if ((strcmp(attname, AG_START_OID) == 0 &&
-					 strcmp(attname_id, AG_START_ID) == 0) ||
-					(strcmp(attname, AG_END_OID) == 0 &&
-					 strcmp(attname_id, AG_END_ID) == 0))
-				{
-					index_stmt = generateClonedIndexStmt(cxt, parent_index,
-													attmap, tupleDesc->natts);
-				}
-			}
-		}
-
-		if (index_stmt == NULL)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("default graph indexes are corrupted")));
-		}
-		else
-		{
-			/* Save it in the inh_indexes list for the time being */
-			inh_indexes = lappend(inh_indexes, index_stmt);
-		}
-
-		index_close(parent_index, AccessShareLock);
-	}
-
-	/*
-	 * Close the parent rel, but keep our AccessShareLock on it until xact
-	 * commit.  That will prevent someone else from deleting or ALTERing the
-	 * parent before the child is committed.
-	 */
-	heap_close(relation, NoLock);
-
-	return inh_indexes;
-}
-
-/*
- * setupVertexLabel -
- *	  set Column and Constraints for graph.vertex
- *
- */
-static List *setupVertexLabel()
-{
-	ColumnDef	*vid = makeNode(ColumnDef);
-	ColumnDef	*pro = makeNode(ColumnDef);
-	Constraint	*pk = makeNode(Constraint);
-
-	pk->contype = CONSTR_PRIMARY;
-	pk->location = -1;
-	pk->keys = NULL;
-	pk->options = NIL;
-	pk->indexname = NULL;
-	pk->indexspace = NULL;
-
-	vid->colname = pstrdup(AG_ELEM_ID);
-	vid->typeName = makeTypeName("bigserial");
-	vid->inhcount = 0;
-	vid->is_local = true;
-	vid->is_not_null = false;
-	vid->is_from_type = false;
-	vid->storage = 0;
-	vid->raw_default = NULL;
-	vid->cooked_default = NULL;
-	vid->collOid = InvalidOid;
-	vid->fdwoptions = NIL;
-	vid->collClause = NULL;
-	vid->constraints = list_make1(pk);
-	vid->location = -1;
-
-	pro->colname = pstrdup("properties");
-	pro->typeName = makeTypeName("jsonb");
-	pro->inhcount = 0;
-	pro->is_local = true;
-	pro->is_not_null = false;
-	pro->is_from_type = false;
-	pro->storage = 0;
-	pro->raw_default = NULL;
-	pro->cooked_default = NULL;
-	pro->collOid = InvalidOid;
-	pro->fdwoptions = NIL;
-	pro->collClause = NULL;
-	pro->constraints = NIL;
-	pro->location = -1;
-
-	return list_make2(vid, pro);
-}
-
-/*
- * setupEdgeLabel -
- *	  set Column and Constraints for graph.edge
- *
- */
-static List *setupEdgeLabel()
-{
-	List *res;
-	ColumnDef	*eid = makeNode(ColumnDef);
-	ColumnDef	*inoid = makeNode(ColumnDef);
-	ColumnDef	*income = makeNode(ColumnDef);
-	ColumnDef	*outoid;
-	ColumnDef	*outgo;
-	ColumnDef	*pro = makeNode(ColumnDef);
-	Constraint	*pk = makeNode(Constraint);
-	Constraint	*nonull = makeNode(Constraint);
-
-	pk->contype = CONSTR_PRIMARY;
-	pk->location = -1;
-	pk->keys = NULL;
-	pk->options = NIL;
-	pk->indexname = NULL;
-	pk->indexspace = NULL;
-
-	nonull->contype = CONSTR_NOTNULL;
-	nonull->location = -1;
-	nonull->keys = NULL;
-	nonull->options = NIL;
-	nonull->indexname = NULL;
-	nonull->indexspace = NULL;
-
-	eid->colname = pstrdup(AG_ELEM_ID);
-	eid->typeName = makeTypeName("bigserial");
-	eid->inhcount = 0;
-	eid->is_local = true;
-	eid->is_not_null = false;
-	eid->is_from_type = false;
-	eid->storage = 0;
-	eid->raw_default = NULL;
-	eid->cooked_default = NULL;
-	eid->collOid = InvalidOid;
-	eid->fdwoptions = NIL;
-	eid->collClause = NULL;
-	eid->constraints = list_make1(pk);
-	eid->location = -1;
-
-	res = list_make1(eid);
-
-	inoid->colname = pstrdup(AG_START_OID);
-	inoid->typeName = makeTypeName("oid");
-	inoid->inhcount = 0;
-	inoid->is_local = true;
-	inoid->is_not_null = false;
-	inoid->is_from_type = false;
-	inoid->storage = 0;
-	inoid->raw_default = NULL;
-	inoid->cooked_default = NULL;
-	inoid->collOid = InvalidOid;
-	inoid->fdwoptions = NIL;
-	inoid->collClause = NULL;
-	inoid->constraints = list_make1(nonull);
-	inoid->location = -1;
-
-	res = lappend(res, inoid);
-
-	income = copyObject(inoid);
-	income->colname = pstrdup(AG_START_ID);
-	income->typeName = makeTypeName("int8");
-
-	res = lappend(res, income);
-
-	outoid = copyObject(inoid);
-	outoid->colname = pstrdup(AG_END_OID);
-
-	res = lappend(res, outoid);
-
-	outgo = copyObject(income);
-	outgo->colname = pstrdup(AG_END_ID);
-
-	res = lappend(res, outgo);
-
-	pro->colname = pstrdup("properties");
-	pro->typeName = makeTypeName("jsonb");
-	pro->inhcount = 0;
-	pro->is_local = true;
-	pro->is_not_null = false;
-	pro->is_from_type = false;
-	pro->storage = 0;
-	pro->raw_default = NULL;
-	pro->cooked_default = NULL;
-	pro->collOid = InvalidOid;
-	pro->fdwoptions = NIL;
-	pro->collClause = NULL;
-	pro->constraints = NIL;
-	pro->location = -1;
-
-	res = lappend(res, pro);
-
-	return res;
-}
-/*
- * transformCreateLabelStmt -
- *	  parse analysis for CREATE VLABEL / ELABEL
- *
- * This function is based on transformCreateStmt.
- * Graph Labels have default inheritance, primary key, sequence.
- * But they are not written in statements.
- * Thus this adds nodes for label statement.
- */
-List *
-transformCreateLabelStmt(CreateLabelStmt *labstmt, const char *queryString)
-{
-	ParseState *pstate;
-	CreateStmtContext cxt;
-	List	   *result;
-	List	   *save_alist;
-	Oid			existing_relid;
-	ParseCallbackState pcbstate;
-	ColumnDef  *def;
-	CreateStmt *stmt;
-	bool		isFirst = false;
-	ListCell   *elements;
-
-	stmt = makeNode(CreateStmt);
-	stmt->relation = copyObject(labstmt->relation);
-	stmt->inhRelations = copyObject(labstmt->inhRelations);
-	stmt->ofTypename = NULL;
-	stmt->oncommit = ONCOMMIT_NOOP;
-	stmt->tablespacename = NULL;
-	stmt->if_not_exists = false;
-
-	if (strcmp(labstmt->relation->relname, AG_VERTEX) == 0
-			&& labstmt->labkind == LABEL_KIND_VERTEX
-			&& labstmt->inhRelations == NIL)
-	{
-		isFirst = true;
-		stmt->tableElts = setupVertexLabel();
-	}
-	else if (strcmp(labstmt->relation->relname, AG_EDGE) == 0
-			&& labstmt->labkind == LABEL_KIND_EDGE
-			&& labstmt->inhRelations == NIL)
-	{
-		isFirst = true;
-		stmt->tableElts = setupEdgeLabel();
-	}
-	else
-		stmt->tableElts = NULL;
-
-	/* Set up pstate */
-	pstate = make_parsestate(NULL);
-	pstate->p_sourcetext = queryString;
-
-	/*
-	 * If the target relation name isn't schema-qualified, make it so.  This
-	 * prevents some corner cases in which added-on rewritten commands might
-	 * think they should apply to other relations that have the same name and
-	 * are earlier in the search path.  But a local temp table is effectively
-	 * specified to be in pg_temp, so no need for anything extra in that case.
-	 */
-	if (stmt->relation->schemaname == NULL)
-	{
-		stmt->relation->schemaname = AG_GRAPH;
-	}
-	else if (strcmp(stmt->relation->schemaname, AG_GRAPH) != 0)
-	{
-		ereport(NOTICE,
-				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-				 errmsg("Graph label \"%s\" must be created in graph schema, skipping",
-						stmt->relation->relname)));
-		return NIL;
-	}
-
-	/*
-	 * Look up the creation namespace.  This also checks permissions on the
-	 * target namespace, locks it against concurrent drops, checks for a
-	 * preexisting relation in that namespace with the same name, and updates
-	 * stmt->relation->relpersistence if the selected namespace is temporary.
-	 */
-	setup_parser_errposition_callback(&pcbstate, pstate,
-									  stmt->relation->location);
-	RangeVarGetAndCheckCreationNamespace(stmt->relation, NoLock,
-										 &existing_relid);
-	cancel_parser_errposition_callback(&pcbstate);
-
-	/*
-	 * If the relation already exists and the user specified "IF NOT EXISTS",
-	 * bail out with a NOTICE.
-	 */
-	if (OidIsValid(existing_relid))
-	{
-		ereport(NOTICE,
-				(errcode(ERRCODE_DUPLICATE_TABLE),
-				 errmsg("Graph label \"%s\" already exists, skipping",
-						stmt->relation->relname)));
-		return NIL;
-	}
-
-	if (isFirst == false
-		&& stmt->inhRelations == NULL)
-	{
-		if (labstmt->labkind == LABEL_KIND_VERTEX)
-			stmt->inhRelations = list_make1(
-									makeRangeVar(AG_GRAPH, AG_VERTEX, -1));
-		else if (labstmt->labkind == LABEL_KIND_EDGE)
-			stmt->inhRelations = list_make1(
-									makeRangeVar(AG_GRAPH, AG_EDGE, -1));
-
-		/* TODO : issue #10
-		 * check parents whether that they are VLABEL or not.
-		 * And set AG_GRAPH to its schema */
-	}
-
-	cxt.stmtType = "CREATE LABEL";
-	cxt.isforeign = false;
-	cxt.relation = stmt->relation;
-	cxt.rel = NULL;
-	cxt.inhRelations = stmt->inhRelations;
-	cxt.isalter = false;
-	cxt.columns = NIL;
-	cxt.ckconstraints = NIL;
-	cxt.fkconstraints = NIL;
-	cxt.ixconstraints = NIL;
-	cxt.blist = NIL;
-	cxt.alist = NIL;
-	cxt.pkey = NULL;
-	cxt.inh_indexes = isFirst ? NIL : inheritLabelIndex(&cxt, labstmt);
-
-	/*
-	 * Notice that we allow OIDs here only for plain tables, even though
-	 * foreign tables also support them.  This is necessary because the
-	 * default_with_oids GUC must apply only to plain tables and not any other
-	 * relkind; doing otherwise would break existing pg_dump files.  We could
-	 * allow explicit "WITH OIDS" while not allowing default_with_oids to
-	 * affect other relkinds, but it would complicate interpretOidsOption(),
-	 * and right now there's no WITH OIDS option in CREATE FOREIGN TABLE
-	 * anyway.
-	 */
-	cxt.hasoids = interpretOidsOption(stmt->options, !cxt.isforeign);
-
-	Assert(!stmt->ofTypename || !stmt->inhRelations);	/* grammar enforces */
-
-	if (stmt->ofTypename)
-		transformOfType(&cxt, stmt->ofTypename);
-
-	if (isFirst)
-	{
-		foreach(elements, stmt->tableElts)
-		{
-			Node       *element = lfirst(elements);
-			switch (nodeTag(element))
-			{
-				case T_ColumnDef:
-					transformColumnDefinition(&cxt, (ColumnDef *) element);
-					break;
-				case T_Constraint:
-				case T_TableLikeClause:
-				default:
-					elog(ERROR, "First label has columns only, err node type: %d",
-							(int) nodeTag(element));
-					break;
-			}
-		}
-	}
-	else
-	{
-		/*
-		 * Set CreateSeqStmt to set default local vid or eid value.
-		 * vid/eid must be independent sequence from its parent.
-		 */
-		def = makeNode(ColumnDef);
-		if (labstmt->labkind == LABEL_KIND_VERTEX)
-			def->colname = pstrdup(AG_ELEM_ID);
-		else if (labstmt->labkind == LABEL_KIND_EDGE)
-			def->colname = pstrdup(AG_ELEM_ID);
-		def->typeName = makeTypeName("bigserial");
-		def->inhcount = 0;
-		def->is_local = true;
-		def->is_not_null = true;
-		def->is_from_type = false;
-		def->storage = 0;
-		def->raw_default = NULL;
-		def->cooked_default = NULL;
-		def->collClause = NULL;
-		def->collOid = InvalidOid;
-		def->constraints = NIL;
-		def->location = -1;
-
-		transformColumnDefinition(&cxt, def);
 	}
 
 	/*
@@ -3410,4 +2885,431 @@ setSchemaName(char *context_schema, char **stmt_schema_name)
 				 errmsg("CREATE specifies a schema (%s) "
 						"different from the one being created (%s)",
 						*stmt_schema_name, context_schema)));
+}
+
+
+/*
+ * transformCreateLabelStmt - parse analysis for CREATE VLABEL/ELABEL
+ *
+ * This function is based on transformCreateStmt().
+ * Graph Labels have default inheritance, primary key, and sequence.
+ * But they are not written in statements.
+ * Thus this adds nodes for label statement.
+ */
+List *
+transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
+{
+	CreateStmt *stmt;
+	bool		inherit;
+	Oid			existing_relid;
+	ParseState *pstate;
+	ParseCallbackState pcbstate;
+	CreateStmtContext cxt;
+	ListCell   *elements;
+	List	   *save_alist;
+	List	   *result;
+
+	/*
+	 * create CreateStmt for label
+	 */
+
+	stmt = makeNode(CreateStmt);
+
+	stmt->relation = copyObject(labelStmt->relation);
+	/* force schema */
+	if (stmt->relation->schemaname == NULL)
+	{
+		stmt->relation->schemaname = AG_GRAPH;
+	}
+	else if (strcmp(stmt->relation->schemaname, AG_GRAPH) != 0)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+				 errmsg("graph label \"%s\" must be in \"" AG_GRAPH "\" schema",
+						stmt->relation->relname)));
+		return NIL;
+	}
+
+	/* set appropriate table elements */
+	if (labelStmt->labelKind == LABEL_VERTEX &&
+		strcmp(labelStmt->relation->relname, AG_VERTEX) == 0)
+	{
+		stmt->tableElts = makeVertexElements();
+		inherit = false;
+	}
+	else if (labelStmt->labelKind == LABEL_EDGE &&
+		strcmp(labelStmt->relation->relname, AG_EDGE) == 0)
+	{
+		stmt->tableElts = makeEdgeElements();
+		inherit = false;
+	}
+	else
+	{
+		/*
+		 * Create sequence for label which inherits other labels.
+		 * `id` must be a sequence independent from that of its parents.
+		 */
+		ColumnDef *coldef;
+
+		coldef = makeNode(ColumnDef);
+		coldef->colname = AG_ELEM_ID;
+		coldef->typeName = makeTypeName("bigserial");
+		coldef->is_local = true;
+		coldef->is_not_null = true;
+		coldef->location = -1;
+
+		stmt->tableElts = list_make1(coldef);
+
+		inherit = true;
+	}
+
+	if (inherit)
+	{
+		/* inherit base vertex/edge */
+		if (labelStmt->inhRelations == NULL)
+		{
+			char *name;
+
+			name = (labelStmt->labelKind == LABEL_VERTEX ? AG_VERTEX : AG_EDGE);
+			stmt->inhRelations = list_make1(makeRangeVar(AG_GRAPH, name, -1));
+
+		}
+		/* user requested inherit option */
+		else
+		{
+			stmt->inhRelations = copyObject(labelStmt->inhRelations);
+		}
+
+		/*
+		 * TODO: Issue #10
+		 * check inhRelations whether they are appropriate labels or not.
+		 */
+	}
+	else
+	{
+		if (labelStmt->inhRelations != NIL)
+			ereport(WARNING,
+					(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+					 errmsg("graph label \"%s\" is base label, inherit option is discarded",
+							stmt->relation->relname)));
+	}
+
+	stmt->oncommit = ONCOMMIT_NOOP;
+	stmt->if_not_exists = false;
+
+	/*
+	 * process CreateStmt (See transformCreateStmt())
+	 */
+
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
+	setup_parser_errposition_callback(&pcbstate, pstate,
+									  stmt->relation->location);
+	RangeVarGetAndCheckCreationNamespace(stmt->relation, NoLock,
+										 &existing_relid);
+	cancel_parser_errposition_callback(&pcbstate);
+
+	if (OidIsValid(existing_relid))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_TABLE),
+				 errmsg("graph label \"%s\" already exists",
+						stmt->relation->relname)));
+		return NIL;
+	}
+
+	cxt.pstate = pstate;
+	cxt.stmtType = "CREATE LABEL";
+	cxt.relation = stmt->relation;
+	cxt.rel = NULL;
+	cxt.inhRelations = stmt->inhRelations;
+	cxt.isforeign = false;
+	cxt.isalter = false;
+	cxt.hasoids = interpretOidsOption(stmt->options, !cxt.isforeign);
+	cxt.columns = NIL;
+	cxt.ckconstraints = NIL;
+	cxt.fkconstraints = NIL;
+	cxt.ixconstraints = NIL;
+	cxt.blist = NIL;
+	cxt.alist = NIL;
+	cxt.pkey = NULL;
+
+	cxt.inh_indexes = inherit ? inheritLabelIndex(&cxt, labelStmt) : NIL;
+
+	foreach(elements, stmt->tableElts)
+	{
+		Node *element = lfirst(elements);
+
+		switch (nodeTag(element))
+		{
+			case T_ColumnDef:
+				transformColumnDefinition(&cxt, (ColumnDef *) element);
+				break;
+			case T_Constraint:
+				/* fall-through */
+			case T_TableLikeClause:
+				/* fall-through */
+			default:
+				elog(ERROR, "graph base label definition has columns only, element node type: %d",
+					 (int) nodeTag(element));
+		}
+	}
+
+	save_alist = cxt.alist;
+	cxt.alist = NIL;
+
+	transformIndexConstraints(&cxt);
+	transformFKConstraints(&cxt, true, false);
+
+	stmt->tableElts = cxt.columns;
+	stmt->constraints = cxt.ckconstraints;
+
+	result = lappend(cxt.blist, stmt);
+	result = list_concat(result, cxt.alist);
+	result = list_concat(result, save_alist);
+
+	return result;
+}
+
+/* make table elements for base `vertex` table */
+static List *
+makeVertexElements(void)
+{
+	Constraint *pk = makeNode(Constraint);
+	ColumnDef  *id = makeNode(ColumnDef);
+	ColumnDef  *prop_map = makeNode(ColumnDef);
+
+	pk->contype = CONSTR_PRIMARY;
+	pk->location = -1;
+
+	id->colname = AG_ELEM_ID;
+	id->typeName = makeTypeName("bigserial");
+	id->is_local = true;
+	id->constraints = list_make1(pk);
+	id->location = -1;
+
+	prop_map->colname = AG_ELEM_PROP;
+	prop_map->typeName = makeTypeName("jsonb");
+	prop_map->is_local = true;
+	prop_map->location = -1;
+
+	return list_make2(id, prop_map);
+}
+
+/* make table elements for base `edge` table */
+static List *
+makeEdgeElements(void)
+{
+	List	   *elems = NIL;
+	Constraint *pk = makeNode(Constraint);
+	ColumnDef  *id = makeNode(ColumnDef);
+	Constraint *notnull = makeNode(Constraint);
+	List	   *constr;
+	ColumnDef  *start_oid = makeNode(ColumnDef);
+	ColumnDef  *start_id = makeNode(ColumnDef);
+	ColumnDef  *end_oid = makeNode(ColumnDef);
+	ColumnDef  *end_id = makeNode(ColumnDef);
+	ColumnDef  *prop_map = makeNode(ColumnDef);
+
+	pk->contype = CONSTR_PRIMARY;
+	pk->location = -1;
+
+	id->colname = AG_ELEM_ID;
+	id->typeName = makeTypeName("bigserial");
+	id->is_local = true;
+	id->constraints = list_make1(pk);
+	id->location = -1;
+
+	elems = lappend(elems, id);
+
+	notnull->contype = CONSTR_NOTNULL;
+	notnull->location = -1;
+	constr = list_make1(notnull);
+
+	start_oid->colname = AG_START_OID;
+	start_oid->typeName = makeTypeName("oid");
+	start_oid->is_local = true;
+	start_oid->constraints = constr;
+	start_oid->location = -1;
+
+	elems = lappend(elems, start_oid);
+
+	start_id->colname = AG_START_ID;
+	start_id->typeName = makeTypeName("int8");
+	start_id->is_local = true;
+	start_id->constraints = copyObject(constr);
+	start_oid->location = -1;
+
+	elems = lappend(elems, start_id);
+
+	end_oid->colname = AG_END_OID;
+	end_oid->typeName = makeTypeName("oid");
+	end_oid->is_local = true;
+	end_oid->constraints = copyObject(constr);
+	end_oid->location = -1;
+
+	elems = lappend(elems, end_oid);
+
+	end_id->colname = AG_END_ID;
+	end_id->typeName = makeTypeName("int8");
+	end_id->is_local = true;
+	end_id->constraints = copyObject(constr);
+	end_id->location = -1;
+
+	elems = lappend(elems, end_id);
+
+	prop_map->colname = AG_ELEM_PROP;
+	prop_map->typeName = makeTypeName("jsonb");
+	prop_map->is_local = true;
+	prop_map->location = -1;
+
+	elems = lappend(elems, prop_map);
+
+	return elems;
+}
+
+/*
+ * Inherit indexes for CreateLabel.
+ * Vertex label must have id index.
+ * Edge label must have id and start/end (oid, id) indexes.
+ *
+ * NOTE: See transformTableLikeClause()
+ */
+static List *
+inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt)
+{
+	List	   *inh_indexes = NIL;
+	RangeVar   *parent;
+	Relation	relation;
+	TupleDesc	tupleDesc;
+	List	   *parent_indexes;
+	AttrNumber *attmap;
+	AttrNumber	attnum;
+	int			attidx;
+	ListCell   *l;
+
+	/* base label as parent to inherit indexes */
+	switch (stmt->labelKind)
+	{
+		case LABEL_VERTEX:
+			parent = makeRangeVar(AG_GRAPH, AG_VERTEX, -1);
+			break;
+		case LABEL_EDGE:
+			parent = makeRangeVar(AG_GRAPH, AG_EDGE, -1);
+			break;
+		default:
+			elog(ERROR, "unrecognized label kind: %d", stmt->labelKind);
+			return NIL;
+	}
+
+	relation = relation_openrv(parent, AccessShareLock);
+
+	tupleDesc = RelationGetDescr(relation);
+	parent_indexes = RelationGetIndexList(relation);
+
+	attmap = (AttrNumber *) palloc0(sizeof(AttrNumber) * tupleDesc->natts);
+
+	/*
+	 * Ignore dropped columns in the parent.  attmap entry is left zero.
+	 */
+	attnum = 1;
+	for (attidx = 0; attidx < tupleDesc->natts; attidx++)
+	{
+		Form_pg_attribute attribute = tupleDesc->attrs[attidx];
+
+		if (!attribute->attisdropped)
+			attmap[attidx] = attnum++;
+	}
+
+	foreach(l, parent_indexes)
+	{
+		Oid			parent_index_oid = lfirst_oid(l);
+		Relation	parent_index;
+		Form_pg_index idxrec;
+		Oid			indrelid;
+		IndexStmt  *index_stmt;
+		char	   *attname;
+
+		parent_index = index_open(parent_index_oid, AccessShareLock);
+
+		idxrec = (Form_pg_index) GETSTRUCT(parent_index->rd_indextuple);
+		indrelid = idxrec->indrelid;
+
+		index_stmt = NULL;
+
+		/* NOTE: there must be a better way to distinguish indices */
+		if (stmt->labelKind == LABEL_VERTEX &&
+			idxrec->indisprimary == true &&
+			idxrec->indnatts == 1)
+		{
+			attnum = idxrec->indkey.values[0];
+			attname = get_relid_attribute_name(indrelid, attnum);
+
+			if (strcmp(attname, AG_ELEM_ID) == 0)
+			{
+				/* Build CREATE INDEX statement to recreate the parent_index */
+				index_stmt = generateClonedIndexStmt(cxt, parent_index,
+													 attmap, tupleDesc->natts);
+			}
+		}
+		else if (stmt->labelKind == LABEL_EDGE)
+		{
+			/* id */
+			if (idxrec->indisprimary == true && idxrec->indnatts == 1)
+			{
+				attnum = idxrec->indkey.values[0];
+				attname = get_relid_attribute_name(indrelid, attnum);
+
+				if (strcmp(attname, AG_ELEM_ID) == 0)
+				{
+					index_stmt = generateClonedIndexStmt(cxt, parent_index,
+													attmap, tupleDesc->natts);
+				}
+			}
+			/* vertex (oid, id) */
+			else if (idxrec->indnatts == 2)
+			{
+				char *attname_id;
+
+				attnum = idxrec->indkey.values[0];
+				attname = get_relid_attribute_name(indrelid, attnum);
+
+				attnum = idxrec->indkey.values[1];
+				attname_id = get_relid_attribute_name(indrelid, attnum);
+
+				if ((strcmp(attname, AG_START_OID) == 0 &&
+					 strcmp(attname_id, AG_START_ID) == 0) ||
+					(strcmp(attname, AG_END_OID) == 0 &&
+					 strcmp(attname_id, AG_END_ID) == 0))
+				{
+					index_stmt = generateClonedIndexStmt(cxt, parent_index,
+													attmap, tupleDesc->natts);
+				}
+			}
+		}
+
+		if (index_stmt == NULL)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("default graph indexes are corrupted")));
+		}
+		else
+		{
+			/* Save it in the inh_indexes list for the time being */
+			inh_indexes = lappend(inh_indexes, index_stmt);
+		}
+
+		index_close(parent_index, AccessShareLock);
+	}
+
+	/*
+	 * Close the parent rel, but keep our AccessShareLock on it until xact
+	 * commit.  That will prevent someone else from deleting or ALTERing the
+	 * parent before the child is committed.
+	 */
+	heap_close(relation, NoLock);
+
+	return inh_indexes;
 }

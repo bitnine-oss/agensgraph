@@ -1753,20 +1753,6 @@ typedef struct CreateStmt
 } CreateStmt;
 
 
-/* ----------------------
- *		Create Agens Graph Label Statement
- * ----------------------
- */
-typedef struct CreateLabelStmt
-{
-	NodeTag		type;
-	RangeVar   *relation;		/* relation to create */
-	List	   *inhRelations;	/* relations to inherit from (list of
-								 * inhRelation) */
-	char	    labkind;		/* vertex v or edge e */
-} CreateLabelStmt;
-
-
 /* ----------
  * Definitions for constraints in CreateStmt
  *
@@ -3067,6 +3053,25 @@ typedef struct AlterTSConfigurationStmt
 	bool		replace;		/* if true - replace dictionary by another */
 	bool		missing_ok;		/* for DROP - skip error if missing? */
 } AlterTSConfigurationStmt;
+
+
+/****************************************************************************
+ * Agens Graph related node structures
+ ****************************************************************************/
+
+typedef enum LabelKind {
+	LABEL_VERTEX,
+	LABEL_EDGE
+} LabelKind;
+
+/* CREATE VLABEL/ELABEL ... */
+typedef struct CreateLabelStmt
+{
+	NodeTag		type;
+	LabelKind	labelKind;		/* LABEL_VERTEX or LABEL_EDGE */
+	RangeVar   *relation;		/* relation to create */
+	List	   *inhRelations;	/* relations to inherit from */
+} CreateLabelStmt;
 
 
 /****************************************************************************

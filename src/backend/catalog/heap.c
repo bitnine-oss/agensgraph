@@ -98,6 +98,7 @@ static ObjectAddress AddNewRelationType(const char *typeName,
 				   Oid ownerid,
 				   Oid new_row_type,
 				   Oid new_array_type);
+static void RelationRemoveInheritance(Oid relid);
 static Oid StoreRelCheck(Relation rel, char *ccname, Node *expr,
 			  bool is_validated, bool is_local, int inhcount,
 			  bool is_no_inherit, bool is_internal);
@@ -989,10 +990,7 @@ AddNewRelationType(const char *typeName,
  * --------------------------------
  */
 void
-InsertAgLabelTuple(Oid			labid,
-				   const char  *labname,
-				   char			labkind,
-				   Oid			relid)
+InsertAgLabelTuple(Oid labid, const char *labname, char labkind, Oid relid)
 {
 	Relation	ag_label_desc;
 	Datum		values[Natts_ag_label];
@@ -1437,8 +1435,14 @@ heap_create_init_fork(Relation rel)
  * there are no children and we need only remove any pg_inherits rows
  * linking this relation to its parent(s).
  */
+static void
+RelationRemoveInheritance(Oid relid)
+{
+	RelationRemoveInheritanceClass(InheritsRelationId, relid);
+}
+
 void
-RelationRemoveInheritance(Oid classid, Oid relid)
+RelationRemoveInheritanceClass(Oid classId, Oid relid)
 {
 	Relation	catalogRelation;
 	SysScanDesc scan;
@@ -1447,20 +1451,22 @@ RelationRemoveInheritance(Oid classid, Oid relid)
 	Oid			indexId;
 	Oid			anum_inhrelid;
 
-	catalogRelation = heap_open(classid, RowExclusiveLock);
+	catalogRelation = heap_open(classId, RowExclusiveLock);
 
-	if (classid == InheritsRelationId)
+	switch (classId)
 	{
-		indexId	= InheritsRelidSeqnoIndexId;
-		anum_inhrelid = Anum_pg_inherits_inhrelid;
+		case InheritsRelationId:
+			indexId	= InheritsRelidSeqnoIndexId;
+			anum_inhrelid = Anum_pg_inherits_inhrelid;
+			break;
+		case InheritsLabelId:
+			indexId = InheritsLabidSeqnoIndexId;
+			anum_inhrelid = Anum_ag_inherits_inhrelid;
+			break;
+		default:
+			/* shouldn't happen */
+			elog(ERROR, "invalid inherits catalog OID: %d", classId);
 	}
-	else if (classid == InheritsLabelId)
-	{
-		indexId = InheritsLabidSeqnoIndexId;
-		anum_inhrelid = Anum_ag_inherits_inhrelid;
-	}
-	else /* shouldn't happen */
-		elog(ERROR, "Access to Inheritance catalog with invalid OID %d", classid);
 
 	ScanKeyInit(&key,
 				anum_inhrelid,
@@ -1916,7 +1922,7 @@ heap_drop_with_catalog(Oid relid)
 	/*
 	 * remove inheritance information
 	 */
-	RelationRemoveInheritance(InheritsRelationId, relid);
+	RelationRemoveInheritance(relid);
 
 	/*
 	 * delete statistics

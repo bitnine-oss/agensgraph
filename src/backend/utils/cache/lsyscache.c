@@ -3005,37 +3005,38 @@ get_range_subtype(Oid rangeOid)
  * get_labname_labid
  *		Given name of a label, look up the OID
  *
- * Returns InvalidOid if there is no such relation.
+ * Returns InvalidOid if there is no such label.
  */
 Oid
-get_labname_labid(const char *relname)
+get_labname_labid(const char *labname)
 {
-	return GetSysCacheOid1(LABELNAME,
-			PointerGetDatum(relname));
+	return GetSysCacheOid1(LABELNAME, PointerGetDatum(labname));
 }
 
 /*
- * get_labid_relid
- *		Returns the relation Oid in label for a given label.
+ * get_labid_tabid
+ *		Returns the table OID for a given label.
  *
- * Returns InvalidOid if there is no such relation.
+ * Returns InvalidOid if there is no such label.
  */
 Oid
-get_labid_relid(Oid labid)
+get_labid_tabid(Oid labid)
 {
-	HeapTuple	tp;
+	HeapTuple tp;
 
 	tp = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
 
 	if (HeapTupleIsValid(tp))
 	{
 		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		Oid			  result;
+		Oid tabid;
 
-		result = labtup->taboid;
+		tabid = labtup->taboid;
 		ReleaseSysCache(tp);
-		return result;
+		return tabid;
 	}
 	else
+	{
 		return InvalidOid;
+	}
 }

@@ -16,7 +16,6 @@
 
 #include "access/heapam.h"
 #include "catalog/namespace.h"
-#include "catalog/pg_inherits.h"
 #include "catalog/pg_inherits_fn.h"
 #include "commands/lockcmds.h"
 #include "miscadmin.h"
@@ -114,7 +113,7 @@ LockTableRecurse(Oid reloid, LOCKMODE lockmode, bool nowait)
 	List	   *children;
 	ListCell   *lc;
 
-	children = find_inheritance_children(InheritsRelationId, reloid, NoLock);
+	children = find_inheritance_children(reloid, NoLock);
 
 	foreach(lc, children)
 	{

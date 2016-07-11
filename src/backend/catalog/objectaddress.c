@@ -3133,11 +3133,11 @@ getObjectDescription(const ObjectAddress *object)
 			}
 		case OCLASS_LABEL:
 			{
-				Relation		ag_label_desc;
-				HeapTuple		tuple;
-				Form_ag_label	form_label;
+				Relation	ag_label_desc;
+				HeapTuple	tuple;
+				Form_ag_label labtup;
 
-				ag_label_desc = heap_open(LabelRelationId,AccessShareLock);
+				ag_label_desc = heap_open(LabelRelationId, AccessShareLock);
 
 				tuple = SearchSysCache1(LABELOID,
 										ObjectIdGetDatum(object->objectId));
@@ -3145,10 +3145,10 @@ getObjectDescription(const ObjectAddress *object)
 					elog(ERROR, "cache lookup failed for label %u",
 						 object->objectId);
 
-				form_label = (Form_ag_label) GETSTRUCT(tuple);
+				labtup = (Form_ag_label) GETSTRUCT(tuple);
 
 				appendStringInfo(&buffer, _("label %s"),
-								 NameStr(form_label->labname));
+								 NameStr(labtup->labname));
 
 				ReleaseSysCache(tuple);
 				heap_close(ag_label_desc, AccessShareLock);
@@ -3633,6 +3633,10 @@ getObjectTypeDescription(const ObjectAddress *object)
 
 		case OCLASS_TRANSFORM:
 			appendStringInfoString(&buffer, "transform");
+			break;
+
+		case OCLASS_LABEL:
+			appendStringInfoString(&buffer, "label");
 			break;
 
 		default:

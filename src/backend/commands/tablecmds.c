@@ -2002,7 +2002,8 @@ StoreCatalogInheritance(Oid classId, Oid relationId, List *supers)
 		Oid			parentOid = lfirst_oid(entry);
 
 		if (classId == InheritsRelationId)
-			StoreCatalogInheritance1(relationId, parentOid, seqNumber, relation);
+			StoreCatalogInheritance1(relationId, parentOid, seqNumber,
+									 relation);
 		else if (classId == InheritsLabelId)
 			StoreLabelInheritance(relationId, parentOid, seqNumber, relation);
 		seqNumber++;
@@ -2070,20 +2071,18 @@ StoreCatalogInheritance1(Oid relationId, Oid parentOid,
 	SetRelationHasSubclass(parentOid, true);
 }
 
+/* This function mimics StoreCatalogInheritance1() */
 static void
 StoreLabelInheritance(Oid relationId, Oid parentOid,
-					   int16 seqNumber, Relation inhRelation)
+					  int16 seqNumber, Relation inhRelation)
 {
 	TupleDesc	desc = RelationGetDescr(inhRelation);
 	Datum		values[Natts_ag_inherits];
 	bool		nulls[Natts_ag_inherits];
-	ObjectAddress childobject,
-				parentobject;
+	ObjectAddress childobject;
+	ObjectAddress parentobject;
 	HeapTuple	tuple;
 
-	/*
-	 * Make the ag_inherits entry
-	 */
 	values[Anum_ag_inherits_inhrelid - 1] = ObjectIdGetDatum(relationId);
 	values[Anum_ag_inherits_inhparent - 1] = ObjectIdGetDatum(parentOid);
 	values[Anum_ag_inherits_inhseqno - 1] = Int16GetDatum(seqNumber);
@@ -2091,34 +2090,22 @@ StoreLabelInheritance(Oid relationId, Oid parentOid,
 	memset(nulls, 0, sizeof(nulls));
 
 	tuple = heap_form_tuple(desc, values, nulls);
-
 	simple_heap_insert(inhRelation, tuple);
-
 	CatalogUpdateIndexes(inhRelation, tuple);
-
 	heap_freetuple(tuple);
 
-	/*
-	 * Store a dependency too
-	 */
 	parentobject.classId = LabelRelationId;
 	parentobject.objectId = parentOid;
 	parentobject.objectSubId = 0;
 	childobject.classId = LabelRelationId;
 	childobject.objectId = relationId;
 	childobject.objectSubId = 0;
-
 	recordDependencyOn(&childobject, &parentobject, DEPENDENCY_NORMAL);
 
-	/*
-	 * Post creation hook of this inheritance. Since object_access_hook
-	 * doesn't take multiple object identifiers, we relay oid of parent
-	 * relation using auxiliary_id argument.
-	 */
-	InvokeObjectPostAlterHookArg(InheritsLabelId,
-								 relationId, 0,
+	InvokeObjectPostAlterHookArg(InheritsLabelId, relationId, 0,
 								 parentOid, false);
 }
+
 /*
  * Look for an existing schema entry with the given name.
  *
@@ -2310,7 +2297,7 @@ renameatt_internal(Oid myrelid,
 		 * expected_parents will only be 0 if we are not already recursing.
 		 */
 		if (expected_parents == 0 &&
-			find_inheritance_children(InheritsRelationId, myrelid, NoLock) != NIL)
+			find_inheritance_children(myrelid, NoLock) != NIL)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 					 errmsg("inherited column \"%s\" must be renamed in child tables too",
@@ -2512,7 +2499,7 @@ rename_constraint_internal(Oid myrelid,
 		else
 		{
 			if (expected_parents == 0 &&
-				find_inheritance_children(InheritsRelationId, myrelid, NoLock) != NIL)
+				find_inheritance_children(myrelid, NoLock) != NIL)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 						 errmsg("inherited constraint \"%s\" must be renamed in child tables too",
@@ -5044,7 +5031,7 @@ ATExecAddColumn(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	 * routines, we have to do this one level of recursion at a time; we can't
 	 * use find_all_inheritors to do it in one pass.
 	 */
-	children = find_inheritance_children(InheritsRelationId, RelationGetRelid(rel), lockmode);
+	children = find_inheritance_children(RelationGetRelid(rel), lockmode);
 
 	/*
 	 * If we are told not to recurse, there had better not be any child
@@ -5784,7 +5771,7 @@ ATExecDropColumn(List **wqueue, Relation rel, const char *colName,
 	 * routines, we have to do this one level of recursion at a time; we can't
 	 * use find_all_inheritors to do it in one pass.
 	 */
-	children = find_inheritance_children(InheritsRelationId, RelationGetRelid(rel), lockmode);
+	children = find_inheritance_children(RelationGetRelid(rel), lockmode);
 
 	if (children)
 	{
@@ -6217,7 +6204,7 @@ ATAddCheckConstraint(List **wqueue, AlteredTableInfo *tab, Relation rel,
 	 * routines, we have to do this one level of recursion at a time; we can't
 	 * use find_all_inheritors to do it in one pass.
 	 */
-	children = find_inheritance_children(InheritsRelationId, RelationGetRelid(rel), lockmode);
+	children = find_inheritance_children(RelationGetRelid(rel), lockmode);
 
 	/*
 	 * Check if ONLY was specified with ALTER TABLE.  If so, allow the
@@ -7767,7 +7754,7 @@ ATExecDropConstraint(Relation rel, const char *constrName,
 	 * use find_all_inheritors to do it in one pass.
 	 */
 	if (!is_no_inherit_constraint)
-		children = find_inheritance_children(InheritsRelationId, RelationGetRelid(rel), lockmode);
+		children = find_inheritance_children(RelationGetRelid(rel), lockmode);
 	else
 		children = NIL;
 
@@ -8025,7 +8012,7 @@ ATPrepAlterColumnType(List **wqueue,
 	if (recurse)
 		ATSimpleRecursion(wqueue, rel, cmd, recurse, lockmode);
 	else if (!recursing &&
-			 find_inheritance_children(InheritsRelationId, RelationGetRelid(rel), NoLock) != NIL)
+			 find_inheritance_children(RelationGetRelid(rel), NoLock) != NIL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 				 errmsg("type of inherited column \"%s\" must be changed in child tables too",

@@ -89,4 +89,5 @@ extern void RangeVarCallbackOwnsRelation(const RangeVar *relation,
 							 Oid relId, Oid oldRelId, void *noCatalogs);
 
 extern void StoreCatalogInheritance(Oid classId, Oid relationId, List *supers);
+
 #endif   /* TABLECMDS_H */

@@ -480,7 +480,7 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		64
 	},
-	{LabelRelationId,		/* LABELNAME */
+	{LabelRelationId,			/* LABELNAME */
 		LabelNameIndexId,
 		1,
 		{
@@ -502,7 +502,7 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		64
 	},
-	{LabelRelationId,		/* LABELTABOID */
+	{LabelRelationId,			/* LABELTABOID */
 		LabelTabOidIndexId,
 		1,
 		{

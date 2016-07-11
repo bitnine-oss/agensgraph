@@ -47,7 +47,14 @@ static int	oid_cmp(const void *p1, const void *p2);
  * against possible DROPs of child relations.
  */
 List *
-find_inheritance_children(Oid classId, Oid parentrelId, LOCKMODE lockmode)
+find_inheritance_children(Oid parentrelId, LOCKMODE lockmode)
+{
+	return find_inheritance_children_class(InheritsRelationId, parentrelId,
+										   lockmode);
+}
+
+List *
+find_inheritance_children_class(Oid classId, Oid parentrelId, LOCKMODE lockmode)
 {
 	List	   *list = NIL;
 	Relation	relation;
@@ -65,11 +72,12 @@ find_inheritance_children(Oid classId, Oid parentrelId, LOCKMODE lockmode)
 	 * Can skip the scan if pg_class shows the relation has never had a
 	 * subclass.
 	 */
-	if (classId != InheritsLabelId && (!has_subclass(parentrelId)))
+	if (classId == InheritsRelationId && (!has_subclass(parentrelId)))
 		return NIL;
 
 	/*
-	 * Scan pg_inherits/ag_inherits and build a working array of subclass OIDs.
+	 * Scan pg_inherits and other inherits, and build a working array of
+	 * subclass OIDs.
 	 */
 	maxoids = 32;
 	oidarr = (Oid *) palloc(maxoids * sizeof(Oid));
@@ -77,12 +85,19 @@ find_inheritance_children(Oid classId, Oid parentrelId, LOCKMODE lockmode)
 
 	relation = heap_open(classId, AccessShareLock);
 
-	if (classId == InheritsRelationId)
-		anum_inhparent = Anum_pg_inherits_inhparent;
-	else if (classId == InheritsLabelId)
-		anum_inhparent = Anum_ag_inherits_inhparent;
-	else /* shouldn't happen */
-		elog(ERROR, "Access to Inheritance catalog with invalid OID %d", classId);
+	switch (classId)
+	{
+		case InheritsRelationId:
+			anum_inhparent = Anum_pg_inherits_inhparent;
+			break;
+		case InheritsLabelId:
+			anum_inhparent = Anum_ag_inherits_inhparent;
+			break;
+		default:
+			/* shouldn't happen */
+			elog(ERROR, "invalid inherits catalog OID: %d", classId);
+			return NIL;
+	}
 
 	ScanKeyInit(&key[0],
 				anum_inhparent,
@@ -194,8 +209,7 @@ find_all_inheritors(Oid parentrelId, LOCKMODE lockmode, List **numparents)
 		ListCell   *lc;
 
 		/* Get the direct children of this rel */
-		currentchildren = find_inheritance_children(InheritsRelationId,
-													currentrel, lockmode);
+		currentchildren = find_inheritance_children(currentrel, lockmode);
 
 		/*
 		 * Add to the queue only those children not already seen. This avoids
