@@ -96,7 +96,7 @@ extern void InsertPgClassTuple(Relation pg_class_desc,
 				   Datum reloptions);
 
 extern void InsertAgLabelTuple(Oid labid, const char *labname, char labkind,
-							   Oid relid);
+							   Oid relid, Oid ownerid);
 
 extern List *AddRelationNewConstraints(Relation rel,
 						  List *newColDefaults,
@@ -139,5 +139,7 @@ extern void CheckAttributeType(const char *attname,
 				   Oid atttypid, Oid attcollation,
 				   List *containing_rowtypes,
 				   bool allow_system_table_mods);
+
+extern void CheckInhLabelsValid(List *inhs, LabelKind kind);
 
 #endif   /* HEAP_H */

@@ -60,6 +60,7 @@
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
+#include "commands/graphcmds.h"
 #include "commands/policy.h"
 #include "commands/proclang.h"
 #include "commands/schemacmds.h"
@@ -1270,6 +1271,10 @@ doDeletion(const ObjectAddress *object, int flags)
 
 		case OCLASS_TRANSFORM:
 			DropTransformById(object->objectId);
+			break;
+
+		case OCLASS_LABEL:
+			RemoveLabels(object->objectId);
 			break;
 
 		default:

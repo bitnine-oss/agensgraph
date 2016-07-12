@@ -64,6 +64,7 @@
 #include "parser/parse_collate.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_relation.h"
+#include "parser/parse_utilcmd.h"
 #include "storage/predicate.h"
 #include "storage/smgr.h"
 #include "utils/acl.h"
@@ -990,7 +991,8 @@ AddNewRelationType(const char *typeName,
  * --------------------------------
  */
 void
-InsertAgLabelTuple(Oid labid, const char *labname, char labkind, Oid relid)
+InsertAgLabelTuple(Oid labid, const char *labname, char labkind, Oid relid,
+				   Oid ownerid)
 {
 	Relation	ag_label_desc;
 	Datum		values[Natts_ag_label];
@@ -1008,6 +1010,7 @@ InsertAgLabelTuple(Oid labid, const char *labname, char labkind, Oid relid)
 	values[Anum_ag_label_labname - 1] = CStringGetDatum(labname);
 	values[Anum_ag_label_labkind - 1] = CharGetDatum(labkind);
 	values[Anum_ag_label_taboid - 1] = ObjectIdGetDatum(relid);
+	values[Anum_ag_label_labowner- 1] = ObjectIdGetDatum(ownerid);
 
 	tup = heap_form_tuple(RelationGetDescr(ag_label_desc), values, nulls);
 
@@ -3080,4 +3083,59 @@ insert_ordered_unique_oid(List *list, Oid datum)
 	/* Insert datum into list after 'prev' */
 	lappend_cell_oid(list, prev, datum);
 	return list;
+}
+
+/*
+ * CheckInhLabelsValid
+ *		check label oid, schema name with label name.
+ */
+void
+CheckInhLabelsValid(List *inhs, LabelKind kind)
+{
+	char		charKind;
+	Relation	ag_label_desc;
+	ListCell   *parent;
+
+	charKind = (kind == LABEL_VERTEX ? LABEL_KIND_VERTEX : LABEL_KIND_EDGE);
+
+	ag_label_desc = heap_open(LabelRelationId, AccessShareLock);
+
+	foreach(parent, inhs)
+	{
+		RangeVar   *parent_name = (RangeVar *) lfirst(parent);
+		Oid			parent_oid;
+		HeapTuple	tuple;
+		Form_ag_label labtup;
+
+		parent_oid = get_labname_labid(parent_name->relname);
+
+		tuple = SearchSysCache1(LABELOID,
+				ObjectIdGetDatum(parent_oid));
+
+		if (!HeapTupleIsValid(tuple))
+			elog(ERROR, "cache lookup failed for parent label %u",
+					parent_oid);
+
+		labtup = (Form_ag_label) GETSTRUCT(tuple);
+
+		if (labtup->labkind != charKind)
+			elog(ERROR, "parent label has different labelkind %c",
+					charKind);
+
+		ReleaseSysCache(tuple);
+		/* force schema */
+		if (parent_name->schemaname == NULL)
+		{
+			parent_name->schemaname = AG_GRAPH;
+		}
+		else if (strcmp(parent_name->schemaname, AG_GRAPH) != 0)
+		{
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+				 errmsg("graph label \"%s\" must be in \"" AG_GRAPH "\" schema",
+						parent_name->relname)));
+		}
+	}
+
+	heap_close(ag_label_desc, AccessShareLock);
 }

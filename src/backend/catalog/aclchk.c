@@ -22,6 +22,7 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/xact.h"
+#include "catalog/ag_label.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -5173,4 +5174,30 @@ get_user_default_acl(GrantObjectType objtype, Oid ownerId, Oid nsp_oid)
 		result = NULL;
 
 	return result;
+}
+
+/*
+ * Ownership check for a label (specified by OID).
+ */
+bool
+ag_label_ownercheck(Oid labid, Oid roleid)
+{
+	HeapTuple	tuple;
+	Oid			owner;
+
+	/* Superusers bypass all permission checking. */
+	if (superuser_arg(roleid))
+		return true;
+
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_DATABASE),
+				 errmsg("graph label with OID %u does not exist", labid)));
+
+	owner = ((Form_ag_label) GETSTRUCT(tuple))->labowner;
+
+	ReleaseSysCache(tuple);
+
+	return has_privs_of_role(roleid, owner);
 }
