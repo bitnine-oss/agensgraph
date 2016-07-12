@@ -2927,7 +2927,6 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
 				 errmsg("graph label \"%s\" must be in \"" AG_GRAPH "\" schema",
 						stmt->relation->relname)));
-		return NIL;
 	}
 
 	/* set appropriate table elements */
@@ -2977,13 +2976,13 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		/* user requested inherit option */
 		else
 		{
+			/* check inhRelations whether they are appropriate labels or not. */
+			CheckInhLabelsValid(labelStmt->inhRelations, labelStmt->labelKind);
+
+			/* now it's proved that inhRelations are appropriate to inherit */
 			stmt->inhRelations = copyObject(labelStmt->inhRelations);
 		}
 
-		/*
-		 * TODO: Issue #10
-		 * check inhRelations whether they are appropriate labels or not.
-		 */
 	}
 	else
 	{

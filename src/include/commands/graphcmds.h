@@ -15,6 +15,6 @@
 
 extern void DefineLabel(CreateLabelStmt *labelStmt, const char *queryString,
 						ParamListInfo params, ObjectAddress secondaryObject);
-extern void RemoveLabels(DropStmt *drop);
+extern void RemoveLabels(Oid labid);
 
 #endif	/* GRAPHCMDS_H */

@@ -1579,8 +1579,7 @@ ExecDropStmt(DropStmt *stmt, bool isTopLevel)
 			break;
 
 		case OBJECT_LABEL:
-			RemoveLabels(stmt);
-			break;
+			/* fall through */
 
 		default:
 			RemoveObjects(stmt);

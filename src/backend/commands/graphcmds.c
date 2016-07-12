@@ -26,6 +26,7 @@
 #include "commands/graphcmds.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
+#include "miscadmin.h"
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
 #include "parser/parse_utilcmd.h"
@@ -102,7 +103,7 @@ DefineLabel(CreateLabelStmt *labelStmt, const char *queryString,
 
 			/* ag_label */
 			InsertAgLabelTuple(labid, createStmt->relation->relname, labelKind,
-							   relid);
+							   relid, GetUserId());
 
 			/* ag_inherit */
 			foreach(inhRel, createStmt->inhRelations)
@@ -146,76 +147,11 @@ DefineLabel(CreateLabelStmt *labelStmt, const char *queryString,
 
 /* Implements DROP VLABEL/ELABEL. Remove label from ag_label. */
 void
-RemoveLabels(DropStmt *drop)
+RemoveLabels(Oid labid)
 {
-	List	   *relations = NIL;
-	ListCell   *cell;
+	/* delete ag_inherit */
+	RelationRemoveInheritanceClass(InheritsLabelId, labid);
 
-	foreach(cell, drop->objects)
-	{
-		RangeVar   *label = makeRangeVarFromNameList((List *) lfirst(cell));
-		Oid			labid;
-		Oid			relid;
-		List	   *namelist;
-		List	   *children;
-		ListCell   *child;
-
-		if (label->schemaname != NULL &&
-			strcmp(label->schemaname, AG_GRAPH) != 0)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-					 errmsg("graph label \"%s\" must be in \"" AG_GRAPH "\" schema",
-							label->relname)));
-		}
-
-		labid = get_labname_labid(label->relname);
-		if (!OidIsValid(labid))
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_UNDEFINED_OBJECT),
-					 errmsg("graph label \"%s\" does not exist",
-							label->relname)));
-		}
-		relid = get_labid_tabid(labid);
-
-		/* setup a table list to drop */
-		namelist = list_make2(makeString(AG_GRAPH),
-							  makeString(get_rel_name(relid)));
-		relations = lappend(relations, namelist);
-
-		/*
-		 * TODO: need improvements
-		 */
-
-		/* remove dependancy */
-		deleteDependencyRecordsForClass(RelationRelationId, relid,
-										LabelRelationId, DEPENDENCY_INTERNAL);
-
-		/* XXX: delete tuples for child labels? */
-		children = find_inheritance_children_class(InheritsLabelId, labid,
-												   NoLock);
-		foreach(child, children)
-		{
-			Oid	childoid = lfirst_oid(child);
-
-			DeleteLabelTuple(childoid);
-		}
-
-		/* delete ag_inherit */
-		RelationRemoveInheritanceClass(InheritsLabelId, labid);
-
-		/* remove ag_label */
-		DeleteLabelTuple(labid);
-
-		if (lnext(cell) != NULL)
-			CommandCounterIncrement();
-		CommandCounterIncrement();
-	}
-
-	/* use the DropStmt to proceed to deletion of actual relations */
-	drop->removeType = OBJECT_TABLE;
-	drop->objects = relations;
-
-	RemoveRelations(drop);
+	/* remove ag_label */
+	DeleteLabelTuple(labid);
 }

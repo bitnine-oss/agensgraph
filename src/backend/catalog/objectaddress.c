@@ -437,6 +437,18 @@ static const ObjectPropertyType ObjectProperty[] =
 		Anum_pg_type_typacl,
 		ACL_KIND_TYPE,
 		true
+	},
+	{
+		LabelRelationId,
+		LabelOidIndexId,
+		LABELOID,
+		LABELNAME,
+		Anum_ag_label_labname,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		-1,
+		true,
 	}
 };
 
@@ -916,6 +928,13 @@ get_object_address(ObjectType objtype, List *objname, List *objargs,
 				address = get_object_address_defacl(objname, objargs,
 													missing_ok);
 				break;
+			case OBJECT_LABEL:
+				Assert(list_length(objname) == 1);
+				address.classId = LabelRelationId;
+				address.objectId = get_labname_labid(strVal(linitial(objname)));
+				address.objectSubId = 0;
+				break;
+
 			default:
 				elog(ERROR, "unrecognized objtype: %d", (int) objtype);
 				/* placate compiler, in case it thinks elog might return */
@@ -2187,6 +2206,11 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 				ereport(ERROR,
 						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 						 errmsg("must be superuser")));
+			break;
+		case OBJECT_LABEL:
+			if (!ag_label_ownercheck(address.objectId, roleid))
+				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_LABEL,
+							   NameListToString(objname));
 			break;
 		default:
 			elog(ERROR, "unrecognized object type: %d",
