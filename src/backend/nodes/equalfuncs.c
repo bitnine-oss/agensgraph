@@ -2649,7 +2649,6 @@ static bool
 _equalCypherName(const CypherName *a, const CypherName *b)
 {
 	COMPARE_STRING_FIELD(name);
-	COMPARE_LOCATION_FIELD(location);
 
 	return true;
 }

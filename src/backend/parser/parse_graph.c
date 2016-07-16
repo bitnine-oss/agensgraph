@@ -13,6 +13,7 @@
 #include "catalog/pg_type.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "parser/parse_agg.h"
 #include "parser/parse_clause.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_graph.h"
@@ -225,6 +226,9 @@ transformSelectInfo(ParseState *pstate, SelectInfo *selinfo)
 										  &qry->targetList, EXPR_KIND_ORDER_BY,
 										  true, false);
 
+	qry->groupClause = generateGroupClause(pstate, &qry->targetList,
+										   qry->sortClause);
+
 	if (selinfo->distinct == NIL)
 	{
 		/* intentionally blank, do nothing */
@@ -250,6 +254,10 @@ transformSelectInfo(ParseState *pstate, SelectInfo *selinfo)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
+
+	qry->hasAggs = pstate->p_hasAggs;
+	if (qry->hasAggs)
+		parseCheckAggregates(pstate, qry);
 
 	assign_query_collations(pstate, qry);
 
