@@ -61,4 +61,7 @@ extern Query *transformCypherReturnClause(ParseState *pstate,
 extern RangeTblEntry *transformRangePrevclause(ParseState *pstate,
 											   RangePrevclause *r);
 
+extern List *generateGroupClause(ParseState *pstate, List **targetlist,
+								 List *sortClause);
+
 #endif   /* PARSE_CLAUSE_H */
