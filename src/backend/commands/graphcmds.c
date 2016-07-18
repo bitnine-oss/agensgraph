@@ -11,16 +11,16 @@
 #include "postgres.h"
 
 #include "access/heapam.h"
+#include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "access/xact.h"
 #include "catalog/ag_inherits.h"
 #include "catalog/ag_label.h"
-#include "catalog/catalog.h"
-#include "catalog/heap.h"
-#include "catalog/namespace.h"
+#include "catalog/ag_label_fn.h"
+#include "catalog/indexing.h"
+#include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
 #include "catalog/pg_class.h"
-#include "catalog/pg_inherits_fn.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
 #include "commands/graphcmds.h"
@@ -32,24 +32,28 @@
 #include "parser/parse_utilcmd.h"
 #include "tcop/utility.h"
 #include "utils/lsyscache.h"
-#include "utils/relcache.h"
+#include "utils/rel.h"
+#include "utils/syscache.h"
 
-/* creates a new graph label (See ProcessUtilitySlow() case T_CreateStmt) */
+static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind);
+static void GetSuperOids(List *supers, char labkind, List **supOids);
+static void StoreCatalogAgInheritance(Oid labid, List *supers);
+static void StoreCatalogAgInheritance1(Oid labid, Oid parentOid, int16 seq,
+									   Relation inhRelation);
+
+/* See ProcessUtilitySlow() case T_CreateStmt */
 void
-DefineLabel(CreateLabelStmt *labelStmt, const char *queryString,
-			ParamListInfo params, ObjectAddress secondaryObject)
+CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
+				   ParamListInfo params)
 {
-	char		labelKind;
-	Relation	ag_label_desc;
+	char		labkind;
 	List	   *stmts;
 	ListCell   *l;
 
 	if (labelStmt->labelKind == LABEL_VERTEX)
-		labelKind = LABEL_KIND_VERTEX;
+		labkind = LABEL_KIND_VERTEX;
 	else
-		labelKind = LABEL_KIND_EDGE;
-
-	ag_label_desc = heap_open(LabelRelationId, RowExclusiveLock);
+		labkind = LABEL_KIND_EDGE;
 
 	stmts = transformCreateLabelStmt(labelStmt, queryString);
 	foreach(l, stmts)
@@ -58,76 +62,7 @@ DefineLabel(CreateLabelStmt *labelStmt, const char *queryString,
 
 		if (IsA(stmt, CreateStmt))
 		{
-			static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
-			CreateStmt *createStmt = (CreateStmt *) stmt;
-			ObjectAddress address;
-			Datum		toast_options;
-			Oid			tablespaceId;
-			Oid			labid;
-			Oid			relid;
-			ListCell   *inhRel;
-			List	   *parents = NIL;
-			ObjectAddress myself;
-			ObjectAddress referenced;
-
-			/* Create the table itself */
-			address = DefineRelation(createStmt, RELKIND_RELATION, InvalidOid,
-									 NULL);
-			EventTriggerCollectSimpleCommand(address, secondaryObject, stmt);
-
-			CommandCounterIncrement();
-
-			/* parse and validate reloptions for the toast table */
-			toast_options = transformRelOptions((Datum) 0, createStmt->options,
-												"toast", validnsps, true,
-												false);
-			heap_reloptions(RELKIND_TOASTVALUE, toast_options, true);
-
-			/*
-			 * Let NewRelationCreateToastTable decide if this
-			 * one needs a secondary relation too.
-			 */
-			NewRelationCreateToastTable(address.objectId, toast_options);
-
-			/*
-			 * Create Label
-			 */
-
-			/* current implementation does not get tablespace name; so */
-			tablespaceId =
-					GetDefaultTablespace(createStmt->relation->relpersistence);
-
-			labid = GetNewRelFileNode(tablespaceId, ag_label_desc,
-									  createStmt->relation->relpersistence);
-			relid = address.objectId;
-
-			/* ag_label */
-			InsertAgLabelTuple(labid, createStmt->relation->relname, labelKind,
-							   relid, GetUserId());
-
-			/* ag_inherit */
-			foreach(inhRel, createStmt->inhRelations)
-			{
-				RangeVar   *parent = (RangeVar *) lfirst(inhRel);
-				Oid			parent_labid;
-
-				parent_labid = get_labname_labid(parent->relname);
-
-				parents = lappend_oid(parents, parent_labid);
-			}
-			StoreCatalogInheritance(InheritsLabelId, labid, parents);
-
-			/*
-			 * Make a dependency link to force the table to be deleted if its
-			 * graph label is.
-			 */
-			myself.classId = RelationRelationId;
-			myself.objectId = relid;
-			myself.objectSubId = 0;
-			referenced.classId = LabelRelationId;
-			referenced.objectId = labid;
-			referenced.objectSubId = 0;
-			recordDependencyOn(&myself, &referenced, DEPENDENCY_INTERNAL);
+			DefineLabel((CreateStmt *) stmt, labkind);
 		}
 		else
 		{
@@ -141,17 +76,156 @@ DefineLabel(CreateLabelStmt *labelStmt, const char *queryString,
 
 		CommandCounterIncrement();
 	}
-
-	heap_close(ag_label_desc, RowExclusiveLock);
 }
 
-/* Implements DROP VLABEL/ELABEL. Remove label from ag_label. */
-void
-RemoveLabels(Oid labid)
+/* creates a new graph label */
+static ObjectAddress
+DefineLabel(CreateStmt *stmt, char labkind)
 {
-	/* delete ag_inherit */
-	RelationRemoveInheritanceClass(InheritsLabelId, labid);
+	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
+	ObjectAddress reladdr;
+	Datum		toast_options;
+	Oid			tablespaceId;
+	Oid			labid;
+	List	   *inheritOids = NIL;
+	ObjectAddress labaddr;
 
-	/* remove ag_label */
-	DeleteLabelTuple(labid);
+	/*
+	 * Create the table
+	 */
+
+	reladdr = DefineRelation(stmt, RELKIND_RELATION, InvalidOid, NULL);
+	EventTriggerCollectSimpleCommand(reladdr, InvalidObjectAddress,
+									 (Node *) stmt);
+
+	CommandCounterIncrement();
+
+	/* parse and validate reloptions for the toast table */
+	toast_options = transformRelOptions((Datum) 0, stmt->options, "toast",
+										validnsps, true, false);
+	heap_reloptions(RELKIND_TOASTVALUE, toast_options, true);
+
+	/*
+	 * Let NewRelationCreateToastTable decide if this
+	 * one needs a secondary relation too.
+	 */
+	NewRelationCreateToastTable(reladdr.objectId, toast_options);
+
+	/*
+	 * Create Label
+	 */
+
+	/* current implementation does not get tablespace name; so */
+	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence);
+
+	labid = label_create_with_catalog(stmt->relation->relname, reladdr.objectId,
+									  GetUserId(), labkind, tablespaceId,
+									  stmt->relation->relpersistence);
+
+	GetSuperOids(stmt->inhRelations, labkind, &inheritOids);
+	StoreCatalogAgInheritance(labid, inheritOids);
+
+	/*
+	 * Make a dependency link to force the table to be deleted if its
+	 * graph label is.
+	 */
+	labaddr.classId = LabelRelationId;
+	labaddr.objectId = labid;
+	labaddr.objectSubId = 0;
+	recordDependencyOn(&reladdr, &labaddr, DEPENDENCY_INTERNAL);
+
+	return labaddr;
+}
+
+static void
+GetSuperOids(List *supers, char labkind, List **supOids)
+{
+	List	   *parentOids = NIL;
+	ListCell   *entry;
+
+	foreach(entry, supers)
+	{
+		RangeVar   *parent = (RangeVar *) lfirst(entry);
+		Oid			parent_labid;
+		HeapTuple	tuple;
+		Form_ag_label labtup;
+
+		parent_labid = get_labname_labid(parent->relname);
+
+		tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(parent_labid));
+		if (!HeapTupleIsValid(tuple))
+			elog(ERROR, "cache lookup failed for parent label (OID=%u)",
+				 parent_labid);
+
+		labtup = (Form_ag_label) GETSTRUCT(tuple);
+		if (labtup->labkind != labkind)
+			elog(ERROR, "parent label has different labkind '%c'", labkind);
+
+		ReleaseSysCache(tuple);
+
+		parentOids = lappend_oid(parentOids, parent_labid);
+	}
+
+	*supOids = parentOids;
+}
+
+/* This function mimics StoreCatalogInheritance() */
+static void
+StoreCatalogAgInheritance(Oid labid, List *supers)
+{
+	Relation	rel;
+	int16		seq;
+	ListCell   *entry;
+
+	if (supers == NIL)
+		return;
+
+	rel = heap_open(AgInheritsRelationId, RowExclusiveLock);
+
+	seq = 1;
+	foreach(entry, supers)
+	{
+		Oid parentOid = lfirst_oid(entry);
+
+		StoreCatalogAgInheritance1(labid, parentOid, seq, rel);
+
+		seq++;
+	}
+
+	heap_close(rel, RowExclusiveLock);
+}
+
+/* This function mimics StoreCatalogInheritance1() */
+static void
+StoreCatalogAgInheritance1(Oid labid, Oid parentOid, int16 seqNumber,
+						   Relation inhRelation)
+{
+	TupleDesc	desc = RelationGetDescr(inhRelation);
+	Datum		values[Natts_ag_inherits];
+	bool		nulls[Natts_ag_inherits];
+	ObjectAddress childobject;
+	ObjectAddress parentobject;
+	HeapTuple	tuple;
+
+	values[Anum_ag_inherits_inhrelid - 1] = ObjectIdGetDatum(labid);
+	values[Anum_ag_inherits_inhparent - 1] = ObjectIdGetDatum(parentOid);
+	values[Anum_ag_inherits_inhseqno - 1] = Int16GetDatum(seqNumber);
+
+	memset(nulls, 0, sizeof(nulls));
+
+	tuple = heap_form_tuple(desc, values, nulls);
+	simple_heap_insert(inhRelation, tuple);
+	CatalogUpdateIndexes(inhRelation, tuple);
+	heap_freetuple(tuple);
+
+	childobject.classId = LabelRelationId;
+	childobject.objectId = labid;
+	childobject.objectSubId = 0;
+	parentobject.classId = LabelRelationId;
+	parentobject.objectId = parentOid;
+	parentobject.objectSubId = 0;
+	recordDependencyOn(&childobject, &parentobject, DEPENDENCY_NORMAL);
+
+	InvokeObjectPostAlterHookArg(AgInheritsRelationId, labid, 0,
+								 parentOid, false);
 }

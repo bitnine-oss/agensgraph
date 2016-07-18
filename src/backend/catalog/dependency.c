@@ -17,6 +17,7 @@
 #include "access/htup_details.h"
 #include "access/xact.h"
 #include "catalog/ag_label.h"
+#include "catalog/ag_label_fn.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -60,7 +61,6 @@
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
-#include "commands/graphcmds.h"
 #include "commands/policy.h"
 #include "commands/proclang.h"
 #include "commands/schemacmds.h"
@@ -1274,7 +1274,7 @@ doDeletion(const ObjectAddress *object, int flags)
 			break;
 
 		case OCLASS_LABEL:
-			RemoveLabels(object->objectId);
+			label_drop_with_catalog(object->objectId);
 			break;
 
 		default:

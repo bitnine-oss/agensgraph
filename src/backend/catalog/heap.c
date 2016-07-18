@@ -35,8 +35,6 @@
 #include "access/transam.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "catalog/ag_inherits.h"
-#include "catalog/ag_label.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -64,7 +62,6 @@
 #include "parser/parse_collate.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_relation.h"
-#include "parser/parse_utilcmd.h"
 #include "storage/predicate.h"
 #include "storage/smgr.h"
 #include "utils/acl.h"
@@ -983,49 +980,6 @@ AddNewRelationType(const char *typeName,
 }
 
 /* --------------------------------
- *		InsertAgLabelTuple
- *
- *		register the new label in ag_label
- *
- * See InsertPgClassTuple()
- * --------------------------------
- */
-void
-InsertAgLabelTuple(Oid labid, const char *labname, char labkind, Oid relid,
-				   Oid ownerid)
-{
-	Relation	ag_label_desc;
-	Datum		values[Natts_ag_label];
-	bool		nulls[Natts_ag_label];
-	HeapTuple	tup;
-
-	if (labkind != LABEL_KIND_VERTEX && labkind != LABEL_KIND_EDGE)
-		return;
-
-	ag_label_desc = relation_open(LabelRelationId, RowExclusiveLock);
-
-	memset(values, 0, sizeof(values));
-	memset(nulls, false, sizeof(nulls));
-
-	values[Anum_ag_label_labname - 1] = CStringGetDatum(labname);
-	values[Anum_ag_label_labkind - 1] = CharGetDatum(labkind);
-	values[Anum_ag_label_taboid - 1] = ObjectIdGetDatum(relid);
-	values[Anum_ag_label_labowner- 1] = ObjectIdGetDatum(ownerid);
-
-	tup = heap_form_tuple(RelationGetDescr(ag_label_desc), values, nulls);
-
-	/* set the same OID the tuple in pg_class has */
-	HeapTupleSetOid(tup, labid);
-
-	simple_heap_insert(ag_label_desc, tup);
-
-	CatalogUpdateIndexes(ag_label_desc, tup);
-
-	heap_freetuple(tup);
-	heap_close(ag_label_desc, RowExclusiveLock);
-}
-
-/* --------------------------------
  *		heap_create_with_catalog
  *
  *		creates a new cataloged relation.  see comments above.
@@ -1441,42 +1395,19 @@ heap_create_init_fork(Relation rel)
 static void
 RelationRemoveInheritance(Oid relid)
 {
-	RelationRemoveInheritanceClass(InheritsRelationId, relid);
-}
-
-void
-RelationRemoveInheritanceClass(Oid classId, Oid relid)
-{
 	Relation	catalogRelation;
 	SysScanDesc scan;
 	ScanKeyData key;
 	HeapTuple	tuple;
-	Oid			indexId;
-	Oid			anum_inhrelid;
 
-	catalogRelation = heap_open(classId, RowExclusiveLock);
-
-	switch (classId)
-	{
-		case InheritsRelationId:
-			indexId	= InheritsRelidSeqnoIndexId;
-			anum_inhrelid = Anum_pg_inherits_inhrelid;
-			break;
-		case InheritsLabelId:
-			indexId = InheritsLabidSeqnoIndexId;
-			anum_inhrelid = Anum_ag_inherits_inhrelid;
-			break;
-		default:
-			/* shouldn't happen */
-			elog(ERROR, "invalid inherits catalog OID: %d", classId);
-	}
+	catalogRelation = heap_open(InheritsRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&key,
-				anum_inhrelid,
+				Anum_pg_inherits_inhrelid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(relid));
 
-	scan = systable_beginscan(catalogRelation, indexId, true,
+	scan = systable_beginscan(catalogRelation, InheritsRelidSeqnoIndexId, true,
 							  NULL, 1, &key);
 
 	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
@@ -1513,30 +1444,6 @@ DeleteRelationTuple(Oid relid)
 	ReleaseSysCache(tup);
 
 	heap_close(pg_class_desc, RowExclusiveLock);
-}
-
-/*
- *		DeleteLabelTuple
- *
- * Remove ag_label row for the given relid.
- */
-void
-DeleteLabelTuple(Oid relid)
-{
-	Relation	ag_label_desc;
-	HeapTuple	tup;
-
-	ag_label_desc = heap_open(LabelRelationId, RowExclusiveLock);
-
-	tup = SearchSysCache1(LABELOID, ObjectIdGetDatum(relid));
-	if (!HeapTupleIsValid(tup))
-		elog(ERROR, "cache lookup failed for label %u", relid);
-
-	simple_heap_delete(ag_label_desc, &tup->t_self);
-
-	ReleaseSysCache(tup);
-
-	heap_close(ag_label_desc, RowExclusiveLock);
 }
 
 /*
@@ -3083,59 +2990,4 @@ insert_ordered_unique_oid(List *list, Oid datum)
 	/* Insert datum into list after 'prev' */
 	lappend_cell_oid(list, prev, datum);
 	return list;
-}
-
-/*
- * CheckInhLabelsValid
- *		check label oid, schema name with label name.
- */
-void
-CheckInhLabelsValid(List *inhs, LabelKind kind)
-{
-	char		charKind;
-	Relation	ag_label_desc;
-	ListCell   *parent;
-
-	charKind = (kind == LABEL_VERTEX ? LABEL_KIND_VERTEX : LABEL_KIND_EDGE);
-
-	ag_label_desc = heap_open(LabelRelationId, AccessShareLock);
-
-	foreach(parent, inhs)
-	{
-		RangeVar   *parent_name = (RangeVar *) lfirst(parent);
-		Oid			parent_oid;
-		HeapTuple	tuple;
-		Form_ag_label labtup;
-
-		parent_oid = get_labname_labid(parent_name->relname);
-
-		tuple = SearchSysCache1(LABELOID,
-				ObjectIdGetDatum(parent_oid));
-
-		if (!HeapTupleIsValid(tuple))
-			elog(ERROR, "cache lookup failed for parent label %u",
-					parent_oid);
-
-		labtup = (Form_ag_label) GETSTRUCT(tuple);
-
-		if (labtup->labkind != charKind)
-			elog(ERROR, "parent label has different labelkind %c",
-					charKind);
-
-		ReleaseSysCache(tuple);
-		/* force schema */
-		if (parent_name->schemaname == NULL)
-		{
-			parent_name->schemaname = AG_GRAPH;
-		}
-		else if (strcmp(parent_name->schemaname, AG_GRAPH) != 0)
-		{
-			ereport(ERROR,
-				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-				 errmsg("graph label \"%s\" must be in \"" AG_GRAPH "\" schema",
-						parent_name->relname)));
-		}
-	}
-
-	heap_close(ag_label_desc, AccessShareLock);
 }
