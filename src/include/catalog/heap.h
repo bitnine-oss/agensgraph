@@ -95,9 +95,6 @@ extern void InsertPgClassTuple(Relation pg_class_desc,
 				   Datum relacl,
 				   Datum reloptions);
 
-extern void InsertAgLabelTuple(Oid labid, const char *labname, char labkind,
-							   Oid relid, Oid ownerid);
-
 extern List *AddRelationNewConstraints(Relation rel,
 						  List *newColDefaults,
 						  List *newConstraints,
@@ -114,10 +111,7 @@ extern Node *cookDefault(ParseState *pstate,
 			int32 atttypmod,
 			char *attname);
 
-extern void RelationRemoveInheritanceClass(Oid classId, Oid relid);
-
 extern void DeleteRelationTuple(Oid relid);
-extern void DeleteLabelTuple(Oid relid);
 extern void DeleteAttributeTuples(Oid relid);
 extern void DeleteSystemAttributeTuples(Oid relid);
 extern void RemoveAttributeById(Oid relid, AttrNumber attnum);
@@ -139,7 +133,5 @@ extern void CheckAttributeType(const char *attname,
 				   Oid atttypid, Oid attcollation,
 				   List *containing_rowtypes,
 				   bool allow_system_table_mods);
-
-extern void CheckInhLabelsValid(List *inhs, LabelKind kind);
 
 #endif   /* HEAP_H */

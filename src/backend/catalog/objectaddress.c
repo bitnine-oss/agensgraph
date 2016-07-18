@@ -445,7 +445,7 @@ static const ObjectPropertyType ObjectProperty[] =
 		LABELNAME,
 		Anum_ag_label_labname,
 		InvalidAttrNumber,
-		InvalidAttrNumber,
+		Anum_ag_label_labowner,
 		InvalidAttrNumber,
 		-1,
 		true,

@@ -9,12 +9,10 @@
 #ifndef GRAPHCMDS_H
 #define GRAPHCMDS_H
 
-#include "catalog/objectaddress.h"
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
 
-extern void DefineLabel(CreateLabelStmt *labelStmt, const char *queryString,
-						ParamListInfo params, ObjectAddress secondaryObject);
-extern void RemoveLabels(Oid labid);
+extern void CreateLabelCommand(CreateLabelStmt *labelStmt,
+							   const char *queryString, ParamListInfo params);
 
 #endif	/* GRAPHCMDS_H */

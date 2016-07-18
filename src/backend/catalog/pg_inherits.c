@@ -23,7 +23,6 @@
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "catalog/indexing.h"
-#include "catalog/ag_inherits.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_inherits_fn.h"
 #include "parser/parse_type.h"
@@ -49,20 +48,12 @@ static int	oid_cmp(const void *p1, const void *p2);
 List *
 find_inheritance_children(Oid parentrelId, LOCKMODE lockmode)
 {
-	return find_inheritance_children_class(InheritsRelationId, parentrelId,
-										   lockmode);
-}
-
-List *
-find_inheritance_children_class(Oid classId, Oid parentrelId, LOCKMODE lockmode)
-{
 	List	   *list = NIL;
 	Relation	relation;
 	SysScanDesc scan;
 	ScanKeyData key[1];
 	HeapTuple	inheritsTuple;
 	Oid			inhrelid;
-	Oid			anum_inhparent;
 	Oid		   *oidarr;
 	int			maxoids,
 				numoids,
@@ -72,35 +63,20 @@ find_inheritance_children_class(Oid classId, Oid parentrelId, LOCKMODE lockmode)
 	 * Can skip the scan if pg_class shows the relation has never had a
 	 * subclass.
 	 */
-	if (classId == InheritsRelationId && (!has_subclass(parentrelId)))
+	if (!has_subclass(parentrelId))
 		return NIL;
 
 	/*
-	 * Scan pg_inherits and other inherits, and build a working array of
-	 * subclass OIDs.
+	 * Scan pg_inherits and build a working array of subclass OIDs.
 	 */
 	maxoids = 32;
 	oidarr = (Oid *) palloc(maxoids * sizeof(Oid));
 	numoids = 0;
 
-	relation = heap_open(classId, AccessShareLock);
-
-	switch (classId)
-	{
-		case InheritsRelationId:
-			anum_inhparent = Anum_pg_inherits_inhparent;
-			break;
-		case InheritsLabelId:
-			anum_inhparent = Anum_ag_inherits_inhparent;
-			break;
-		default:
-			/* shouldn't happen */
-			elog(ERROR, "invalid inherits catalog OID: %d", classId);
-			return NIL;
-	}
+	relation = heap_open(InheritsRelationId, AccessShareLock);
 
 	ScanKeyInit(&key[0],
-				anum_inhparent,
+				Anum_pg_inherits_inhparent,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(parentrelId));
 
@@ -109,13 +85,7 @@ find_inheritance_children_class(Oid classId, Oid parentrelId, LOCKMODE lockmode)
 
 	while ((inheritsTuple = systable_getnext(scan)) != NULL)
 	{
-		if (classId == InheritsRelationId)
-			inhrelid = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhrelid;
-		else if (classId == InheritsLabelId)
-			inhrelid = ((Form_ag_inherits) GETSTRUCT(inheritsTuple))->inhrelid;
-		else
-			inhrelid = 0;
-
+		inhrelid = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhrelid;
 		if (numoids >= maxoids)
 		{
 			maxoids *= 2;

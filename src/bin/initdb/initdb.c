@@ -2239,22 +2239,14 @@ setup_graph(void)
 	const char **line;
 	static const char *graph_setup[] = {
 		/*
-		 * create a graph schema and top-level vertex and edge table
-		 * in the graph schema.
+		 * Create the default graph schema and top-level base vertex and edge
+		 * labels in the schema.
 		 */
 		"CREATE SCHEMA graph;\n",
-
 		"CREATE VLABEL vertex\n",
-
 		"CREATE ELABEL edge\n",
-
-		"CREATE INDEX edge_start ON graph.edge (",
-		"    start_oid, start_id",
-		");\n",
-
-		"CREATE INDEX edge_end ON graph.edge (",
-		"    end_oid, end_id",
-		");\n",
+		"CREATE INDEX edge_start ON graph.edge (start_oid, start_id);\n",
+		"CREATE INDEX edge_end ON graph.edge (end_oid, end_id);\n",
 		NULL
 	};
 

@@ -25,7 +25,7 @@
  *		typedef struct FormData_ag_inherits
  * ----------------
  */
-#define InheritsLabelId 3300
+#define AgInheritsRelationId 3300
 
 CATALOG(ag_inherits,3300) BKI_WITHOUT_OIDS
 {

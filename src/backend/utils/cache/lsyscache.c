@@ -3014,13 +3014,13 @@ get_labname_labid(const char *labname)
 }
 
 /*
- * get_labid_tabid
+ * get_labid_relid
  *		Returns the table OID for a given label.
  *
  * Returns InvalidOid if there is no such label.
  */
 Oid
-get_labid_tabid(Oid labid)
+get_labid_relid(Oid labid)
 {
 	HeapTuple tp;
 
@@ -3029,11 +3029,11 @@ get_labid_tabid(Oid labid)
 	if (HeapTupleIsValid(tp))
 	{
 		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		Oid tabid;
+		Oid relid;
 
-		tabid = labtup->taboid;
+		relid = labtup->relid;
 		ReleaseSysCache(tp);
-		return tabid;
+		return relid;
 	}
 	else
 	{

@@ -2976,13 +2976,28 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		/* user requested inherit option */
 		else
 		{
-			/* check inhRelations whether they are appropriate labels or not. */
-			CheckInhLabelsValid(labelStmt->inhRelations, labelStmt->labelKind);
+			ListCell *inhRel;
 
-			/* now it's proved that inhRelations are appropriate to inherit */
 			stmt->inhRelations = copyObject(labelStmt->inhRelations);
-		}
 
+			foreach(inhRel, stmt->inhRelations)
+			{
+				RangeVar *parent = (RangeVar *) lfirst(inhRel);
+
+				/* force schema */
+				if (parent->schemaname == NULL)
+				{
+					parent->schemaname = AG_GRAPH;
+				}
+				else if (strcmp(parent->schemaname, AG_GRAPH) != 0)
+				{
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+						 errmsg("graph label \"%s\" must be in \"" AG_GRAPH "\" schema",
+								parent->relname)));
+				}
+			}
+		}
 	}
 	else
 	{

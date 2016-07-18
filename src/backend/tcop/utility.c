@@ -1518,8 +1518,8 @@ ProcessUtilitySlow(Node *parsetree,
 				break;
 
 			case T_CreateLabelStmt:
-				DefineLabel((CreateLabelStmt *) parsetree, queryString,
-							params, secondaryObject);
+				CreateLabelCommand((CreateLabelStmt *) parsetree, queryString,
+								   params);
 				/* stashed internally */
 				commandCollected = true;
 				break;

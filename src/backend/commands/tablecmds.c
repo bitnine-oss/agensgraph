@@ -22,8 +22,6 @@
 #include "access/sysattr.h"
 #include "access/xact.h"
 #include "access/xlog.h"
-#include "catalog/ag_inherits.h"
-#include "catalog/ag_label.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
@@ -276,9 +274,8 @@ static List *MergeAttributes(List *schema, List *supers, char relpersistence,
 static bool MergeCheckConstraint(List *constraints, char *name, Node *expr);
 static void MergeAttributesIntoExisting(Relation child_rel, Relation parent_rel);
 static void MergeConstraintsIntoExisting(Relation child_rel, Relation parent_rel);
+static void StoreCatalogInheritance(Oid relationId, List *supers);
 static void StoreCatalogInheritance1(Oid relationId, Oid parentOid,
-						 int16 seqNumber, Relation inhRelation);
-static void StoreLabelInheritance(Oid relationId, Oid parentOid,
 						 int16 seqNumber, Relation inhRelation);
 static int	findAttrByName(const char *attributeName, List *schema);
 static void AlterIndexNamespaces(Relation classRel, Relation rel,
@@ -427,8 +424,6 @@ static void ATExecForceNoForceRowSecurity(Relation rel, bool force_rls);
 static void copy_relation_data(SMgrRelation rel, SMgrRelation dst,
 				   ForkNumber forkNum, char relpersistence);
 static const char *storage_name(char c);
-
-static void DropErrorMsgNonExistent(RangeVar *rel, char rightkind, bool missing_ok);
 
 static void RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid,
 								Oid oldRelOid, void *arg);
@@ -682,7 +677,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 										  typaddress);
 
 	/* Store inheritance information for new rel. */
-	StoreCatalogInheritance(InheritsRelationId, relationId, inheritOids);
+	StoreCatalogInheritance(relationId, inheritOids);
 
 	/*
 	 * We must bump the command counter to make the newly-created relation
@@ -892,7 +887,6 @@ RemoveRelations(DropStmt *drop)
 		state.relkind = relkind;
 		state.heapOid = InvalidOid;
 		state.concurrent = drop->concurrent;
-
 		relOid = RangeVarGetRelidExtended(rel, lockmode, true,
 										  false,
 										  RangeVarCallbackForDropRelation,
@@ -1970,8 +1964,8 @@ MergeCheckConstraint(List *constraints, char *name, Node *expr)
  *
  * supers is a list of the OIDs of the new relation's direct ancestors.
  */
-void
-StoreCatalogInheritance(Oid classId, Oid relationId, List *supers)
+static void
+StoreCatalogInheritance(Oid relationId, List *supers)
 {
 	Relation	relation;
 	int16		seqNumber;
@@ -1994,18 +1988,14 @@ StoreCatalogInheritance(Oid classId, Oid relationId, List *supers)
 	 * and then entered into pg_ipl.  Since that catalog doesn't exist
 	 * anymore, there's no need to look for indirect ancestors.)
 	 */
-	relation = heap_open(classId, RowExclusiveLock);
+	relation = heap_open(InheritsRelationId, RowExclusiveLock);
 
 	seqNumber = 1;
 	foreach(entry, supers)
 	{
 		Oid			parentOid = lfirst_oid(entry);
 
-		if (classId == InheritsRelationId)
-			StoreCatalogInheritance1(relationId, parentOid, seqNumber,
-									 relation);
-		else if (classId == InheritsLabelId)
-			StoreLabelInheritance(relationId, parentOid, seqNumber, relation);
+		StoreCatalogInheritance1(relationId, parentOid, seqNumber, relation);
 		seqNumber++;
 	}
 
@@ -2069,41 +2059,6 @@ StoreCatalogInheritance1(Oid relationId, Oid parentOid,
 	 * Mark the parent as having subclasses.
 	 */
 	SetRelationHasSubclass(parentOid, true);
-}
-
-/* This function mimics StoreCatalogInheritance1() */
-static void
-StoreLabelInheritance(Oid relationId, Oid parentOid,
-					  int16 seqNumber, Relation inhRelation)
-{
-	TupleDesc	desc = RelationGetDescr(inhRelation);
-	Datum		values[Natts_ag_inherits];
-	bool		nulls[Natts_ag_inherits];
-	ObjectAddress childobject;
-	ObjectAddress parentobject;
-	HeapTuple	tuple;
-
-	values[Anum_ag_inherits_inhrelid - 1] = ObjectIdGetDatum(relationId);
-	values[Anum_ag_inherits_inhparent - 1] = ObjectIdGetDatum(parentOid);
-	values[Anum_ag_inherits_inhseqno - 1] = Int16GetDatum(seqNumber);
-
-	memset(nulls, 0, sizeof(nulls));
-
-	tuple = heap_form_tuple(desc, values, nulls);
-	simple_heap_insert(inhRelation, tuple);
-	CatalogUpdateIndexes(inhRelation, tuple);
-	heap_freetuple(tuple);
-
-	parentobject.classId = LabelRelationId;
-	parentobject.objectId = parentOid;
-	parentobject.objectSubId = 0;
-	childobject.classId = LabelRelationId;
-	childobject.objectId = relationId;
-	childobject.objectSubId = 0;
-	recordDependencyOn(&childobject, &parentobject, DEPENDENCY_NORMAL);
-
-	InvokeObjectPostAlterHookArg(InheritsLabelId, relationId, 0,
-								 parentOid, false);
 }
 
 /*
