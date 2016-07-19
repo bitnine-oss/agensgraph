@@ -247,7 +247,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 		CreateFdwStmt CreateForeignServerStmt CreateForeignTableStmt
 		CreateAssertStmt CreateTransformStmt CreateTrigStmt CreateEventTrigStmt
 		CreateUserStmt CreateUserMappingStmt CreateRoleStmt CreatePolicyStmt
-		CreatedbStmt CreateELabelStmt CreateVLabelStmt
+		CreatedbStmt
 		DeclareCursorStmt DefineStmt DeleteStmt DiscardStmt DoStmt
 		DropGroupStmt DropOpClassStmt DropOpFamilyStmt DropPLangStmt DropStmt
 		DropAssertStmt DropTrigStmt DropRuleStmt DropCastStmt DropRoleStmt
@@ -541,6 +541,10 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <str>		opt_existing_window_name
 %type <boolean> opt_if_not_exists
 
+/* Agens Graph */
+%type <node>	CreateLabelStmt
+
+/* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
 				cypher_label_opt cypher_limit_opt cypher_match cypher_no_parens
 				cypher_node cypher_path cypher_path_opt_varirable
@@ -820,6 +824,7 @@ stmt :
 			| CreateForeignTableStmt
 			| CreateFunctionStmt
 			| CreateGroupStmt
+			| CreateLabelStmt
 			| CreateMatViewStmt
 			| CreateOpClassStmt
 			| CreateOpFamilyStmt
@@ -836,8 +841,6 @@ stmt :
 			| CreateRoleStmt
 			| CreateUserStmt
 			| CreateUserMappingStmt
-			| CreateVLabelStmt
-			| CreateELabelStmt
 			| CreatedbStmt
 			| CypherStmt
 			| DeallocateStmt
@@ -2805,53 +2808,6 @@ copy_generic_opt_arg_list_item:
 			opt_boolean_or_string	{ $$ = (Node *) makeString($1); }
 		;
 
-/*****************************************************************************
- *
- *		QUERY :
- *				CREATE VLABEL relname
- *
- *****************************************************************************/
-
-CreateVLabelStmt:	CREATE VLABEL qualified_name OptInherit
-				{
-					CreateVLabelStmt *n = makeNode(CreateVLabelStmt);
-					$3->relpersistence = RELPERSISTENCE_PERMANENT;
-					n->relation = $3;
-					n->tableElts = NULL;
-					n->inhRelations = $4;
-					n->ofTypename = NULL;
-					n->constraints = NIL;
-					n->options = NULL;
-					n->oncommit = ONCOMMIT_NOOP;
-					n->tablespacename = NULL;
-					n->if_not_exists = false;
-					$$ = (Node *)n;
-				}
-		;
-
-/*****************************************************************************
- *
- *		QUERY :
- *				CREATE ELABEL relname
- *
- *****************************************************************************/
-
-CreateELabelStmt:	CREATE ELABEL qualified_name OptInherit
-				{
-					CreateELabelStmt *n = makeNode(CreateELabelStmt);
-					$3->relpersistence = RELPERSISTENCE_PERMANENT;
-					n->relation = $3;
-					n->tableElts = NULL;
-					n->inhRelations = $4;
-					n->ofTypename = NULL;
-					n->constraints = NIL;
-					n->options = NULL;
-					n->oncommit = ONCOMMIT_NOOP;
-					n->tablespacename = NULL;
-					n->if_not_exists = false;
-					$$ = (Node *)n;
-				}
-		;
 /*****************************************************************************
  *
  *		QUERY :
@@ -5657,8 +5613,6 @@ DropStmt:	DROP drop_type IF_P EXISTS any_name_list opt_drop_behavior
 
 
 drop_type:	TABLE									{ $$ = OBJECT_TABLE; }
-			| VLABEL								{ $$ = OBJECT_VLABEL; }
-			| ELABEL								{ $$ = OBJECT_ELABEL; }
 			| SEQUENCE								{ $$ = OBJECT_SEQUENCE; }
 			| VIEW									{ $$ = OBJECT_VIEW; }
 			| MATERIALIZED VIEW						{ $$ = OBJECT_MATVIEW; }
@@ -5673,6 +5627,8 @@ drop_type:	TABLE									{ $$ = OBJECT_TABLE; }
 			| TEXT_P SEARCH DICTIONARY				{ $$ = OBJECT_TSDICTIONARY; }
 			| TEXT_P SEARCH TEMPLATE				{ $$ = OBJECT_TSTEMPLATE; }
 			| TEXT_P SEARCH CONFIGURATION			{ $$ = OBJECT_TSCONFIGURATION; }
+			| VLABEL								{ $$ = OBJECT_LABEL; }
+			| ELABEL								{ $$ = OBJECT_LABEL; }
 		;
 
 any_name_list:
@@ -14132,6 +14088,30 @@ reserved_keyword:
 			| WHERE
 			| WINDOW
 			| WITH
+		;
+
+
+/*
+ * Agens Graph
+ */
+
+CreateLabelStmt:
+			CREATE VLABEL qualified_name OptInherit
+				{
+					CreateLabelStmt *n = makeNode(CreateLabelStmt);
+					n->labelKind = LABEL_VERTEX;
+					n->relation = $3;
+					n->inhRelations = $4;
+					$$ = (Node *)n;
+				}
+			| CREATE ELABEL qualified_name OptInherit
+				{
+					CreateLabelStmt *n = makeNode(CreateLabelStmt);
+					n->labelKind = LABEL_EDGE;
+					n->relation = $3;
+					n->inhRelations = $4;
+					$$ = (Node *)n;
+				}
 		;
 
 

@@ -17,6 +17,7 @@
 
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "catalog/ag_label.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/objectaddress.h"
@@ -436,6 +437,18 @@ static const ObjectPropertyType ObjectProperty[] =
 		Anum_pg_type_typacl,
 		ACL_KIND_TYPE,
 		true
+	},
+	{
+		LabelRelationId,
+		LabelOidIndexId,
+		LABELOID,
+		LABELNAME,
+		Anum_ag_label_labname,
+		InvalidAttrNumber,
+		Anum_ag_label_labowner,
+		InvalidAttrNumber,
+		-1,
+		true,
 	}
 };
 
@@ -459,12 +472,6 @@ static const struct object_type_map
 	/* OCLASS_CLASS, all kinds of relations */
 	{
 		"table", OBJECT_TABLE
-	},
-	{
-		"vlabel", OBJECT_VLABEL
-	},
-	{
-		"elabel", OBJECT_ELABEL
 	},
 	{
 		"index", OBJECT_INDEX
@@ -644,6 +651,10 @@ static const struct object_type_map
 	/* OCLASS_TRANSFORM */
 	{
 		"transform", OBJECT_TRANSFORM
+	},
+	/* OCLASS_LABEL */
+	{
+		"label", OBJECT_LABEL
 	}
 };
 
@@ -917,6 +928,13 @@ get_object_address(ObjectType objtype, List *objname, List *objargs,
 				address = get_object_address_defacl(objname, objargs,
 													missing_ok);
 				break;
+			case OBJECT_LABEL:
+				Assert(list_length(objname) == 1);
+				address.classId = LabelRelationId;
+				address.objectId = get_labname_labid(strVal(linitial(objname)));
+				address.objectSubId = 0;
+				break;
+
 			default:
 				elog(ERROR, "unrecognized objtype: %d", (int) objtype);
 				/* placate compiler, in case it thinks elog might return */
@@ -2189,6 +2207,11 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 						 errmsg("must be superuser")));
 			break;
+		case OBJECT_LABEL:
+			if (!ag_label_ownercheck(address.objectId, roleid))
+				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_LABEL,
+							   NameListToString(objname));
+			break;
 		default:
 			elog(ERROR, "unrecognized object type: %d",
 				 (int) objtype);
@@ -3132,7 +3155,29 @@ getObjectDescription(const ObjectAddress *object)
 				heap_close(policy_rel, AccessShareLock);
 				break;
 			}
+		case OCLASS_LABEL:
+			{
+				Relation	ag_label_desc;
+				HeapTuple	tuple;
+				Form_ag_label labtup;
 
+				ag_label_desc = heap_open(LabelRelationId, AccessShareLock);
+
+				tuple = SearchSysCache1(LABELOID,
+										ObjectIdGetDatum(object->objectId));
+				if (!HeapTupleIsValid(tuple))
+					elog(ERROR, "cache lookup failed for label %u",
+						 object->objectId);
+
+				labtup = (Form_ag_label) GETSTRUCT(tuple);
+
+				appendStringInfo(&buffer, _("label %s"),
+								 NameStr(labtup->labname));
+
+				ReleaseSysCache(tuple);
+				heap_close(ag_label_desc, AccessShareLock);
+				break;
+			}
 		default:
 			appendStringInfo(&buffer, "unrecognized object %u %u %d",
 							 object->classId,
@@ -3612,6 +3657,10 @@ getObjectTypeDescription(const ObjectAddress *object)
 
 		case OCLASS_TRANSFORM:
 			appendStringInfoString(&buffer, "transform");
+			break;
+
+		case OCLASS_LABEL:
+			appendStringInfoString(&buffer, "label");
 			break;
 
 		default:

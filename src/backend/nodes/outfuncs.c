@@ -2103,22 +2103,6 @@ _outCreateStmt(StringInfo str, const CreateStmt *node)
 }
 
 static void
-_outCreateVLabelStmt(StringInfo str, const CreateVLabelStmt *node)
-{
-	WRITE_NODE_TYPE("CREATEVLABELSTMT");
-
-	_outCreateStmtInfo(str, (const CreateStmt *) node);
-}
-
-static void
-_outCreateELabelStmt(StringInfo str, const CreateELabelStmt *node)
-{
-	WRITE_NODE_TYPE("CREATEELABELSTMT");
-
-	_outCreateStmtInfo(str, (const CreateStmt *) node);
-}
-
-static void
 _outCreateForeignTableStmt(StringInfo str, const CreateForeignTableStmt *node)
 {
 	WRITE_NODE_TYPE("CREATEFOREIGNTABLESTMT");
@@ -2362,8 +2346,7 @@ _outQuery(StringInfo str, const Query *node)
 		switch (nodeTag(node->utilityStmt))
 		{
 			case T_CreateStmt:
-			case T_CreateVLabelStmt:
-			case T_CreateELabelStmt:
+			case T_CreateLabelStmt:
 			case T_IndexStmt:
 			case T_NotifyStmt:
 			case T_DeclareCursorStmt:
@@ -2952,6 +2935,16 @@ _outConstraint(StringInfo str, const Constraint *node)
 }
 
 static void
+_outCreateLabelStmt(StringInfo str, const CreateLabelStmt *node)
+{
+	WRITE_NODE_TYPE("CREATELABELSTMT");
+
+	WRITE_NODE_FIELD(relation);
+	WRITE_NODE_FIELD(inhRelations);
+	WRITE_ENUM_FIELD(labelKind, LabelKind);
+}
+
+static void
 _outCypherStmt(StringInfo str, const CypherStmt *node)
 {
 	WRITE_NODE_TYPE("CYPHER");
@@ -3419,12 +3412,6 @@ _outNode(StringInfo str, const void *obj)
 			case T_CreateStmt:
 				_outCreateStmt(str, obj);
 				break;
-			case T_CreateVLabelStmt:
-				_outCreateVLabelStmt(str, obj);
-				break;
-			case T_CreateELabelStmt:
-				_outCreateELabelStmt(str, obj);
-				break;
 			case T_CreateForeignTableStmt:
 				_outCreateForeignTableStmt(str, obj);
 				break;
@@ -3556,6 +3543,10 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_XmlSerialize:
 				_outXmlSerialize(str, obj);
+				break;
+
+			case T_CreateLabelStmt:
+				_outCreateLabelStmt(str, obj);
 				break;
 
 			case T_CypherStmt:

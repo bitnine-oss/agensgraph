@@ -27,8 +27,6 @@ extern ObjectAddress DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 
 extern void RemoveRelations(DropStmt *drop);
 
-extern void RemoveLabels(DropStmt *drop);
-
 extern Oid	AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode);
 
 extern void AlterTable(Oid relid, LOCKMODE lockmode, AlterTableStmt *stmt);
@@ -89,4 +87,5 @@ extern void RangeVarCallbackOwnsTable(const RangeVar *relation,
 
 extern void RangeVarCallbackOwnsRelation(const RangeVar *relation,
 							 Oid relId, Oid oldRelId, void *noCatalogs);
+
 #endif   /* TABLECMDS_H */

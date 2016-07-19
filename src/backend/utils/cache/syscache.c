@@ -480,11 +480,33 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		64
 	},
+	{LabelRelationId,			/* LABELNAME */
+		LabelNameIndexId,
+		1,
+		{
+			Anum_ag_label_labname,
+			0,
+			0,
+			0
+		},
+		128
+	},
 	{LabelRelationId,			/* LABELOID */
 		LabelOidIndexId,
 		1,
 		{
 			ObjectIdAttributeNumber,
+			0,
+			0,
+			0
+		},
+		64
+	},
+	{LabelRelationId,			/* LABELRELID */
+		LabelRelidIndexId,
+		1,
+		{
+			Anum_ag_label_relid,
 			0,
 			0,
 			0

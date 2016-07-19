@@ -19,6 +19,7 @@
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "bootstrap/bootstrap.h"
+#include "catalog/ag_label.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_amop.h"
 #include "catalog/pg_amproc.h"
@@ -2995,4 +2996,47 @@ get_range_subtype(Oid rangeOid)
 	}
 	else
 		return InvalidOid;
+}
+
+
+/*				---------- AG_LABEL CACHE ----------				 */
+
+/*
+ * get_labname_labid
+ *		Given name of a label, look up the OID
+ *
+ * Returns InvalidOid if there is no such label.
+ */
+Oid
+get_labname_labid(const char *labname)
+{
+	return GetSysCacheOid1(LABELNAME, PointerGetDatum(labname));
+}
+
+/*
+ * get_labid_relid
+ *		Returns the table OID for a given label.
+ *
+ * Returns InvalidOid if there is no such label.
+ */
+Oid
+get_labid_relid(Oid labid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		Oid relid;
+
+		relid = labtup->relid;
+		ReleaseSysCache(tp);
+		return relid;
+	}
+	else
+	{
+		return InvalidOid;
+	}
 }

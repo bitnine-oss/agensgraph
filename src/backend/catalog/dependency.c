@@ -16,6 +16,8 @@
 
 #include "access/htup_details.h"
 #include "access/xact.h"
+#include "catalog/ag_label.h"
+#include "catalog/ag_label_fn.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -1271,6 +1273,10 @@ doDeletion(const ObjectAddress *object, int flags)
 			DropTransformById(object->objectId);
 			break;
 
+		case OCLASS_LABEL:
+			label_drop_with_catalog(object->objectId);
+			break;
+
 		default:
 			elog(ERROR, "unrecognized object class: %u",
 				 object->classId);
@@ -2414,6 +2420,9 @@ getObjectClass(const ObjectAddress *object)
 
 		case TransformRelationId:
 			return OCLASS_TRANSFORM;
+
+		case LabelRelationId:
+			return OCLASS_LABEL;
 	}
 
 	/* shouldn't get here */

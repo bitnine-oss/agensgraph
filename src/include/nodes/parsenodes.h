@@ -1387,7 +1387,6 @@ typedef enum ObjectType
 	OBJECT_DEFACL,
 	OBJECT_DOMAIN,
 	OBJECT_DOMCONSTRAINT,
-	OBJECT_ELABEL,
 	OBJECT_EVENT_TRIGGER,
 	OBJECT_EXTENSION,
 	OBJECT_FDW,
@@ -1395,6 +1394,7 @@ typedef enum ObjectType
 	OBJECT_FOREIGN_TABLE,
 	OBJECT_FUNCTION,
 	OBJECT_INDEX,
+	OBJECT_LABEL,
 	OBJECT_LANGUAGE,
 	OBJECT_LARGEOBJECT,
 	OBJECT_MATVIEW,
@@ -1417,8 +1417,7 @@ typedef enum ObjectType
 	OBJECT_TSTEMPLATE,
 	OBJECT_TYPE,
 	OBJECT_USER_MAPPING,
-	OBJECT_VIEW,
-	OBJECT_VLABEL
+	OBJECT_VIEW
 } ObjectType;
 
 /* ----------------------
@@ -1752,14 +1751,6 @@ typedef struct CreateStmt
 	char	   *tablespacename; /* table space to use, or NULL */
 	bool		if_not_exists;	/* just do nothing if it already exists? */
 } CreateStmt;
-
-
-/* ----------------------
- *		Create VLabel Statement
- * ----------------------
- */
-typedef struct CreateStmt CreateVLabelStmt;
-typedef struct CreateStmt CreateELabelStmt;
 
 
 /* ----------
@@ -3062,6 +3053,25 @@ typedef struct AlterTSConfigurationStmt
 	bool		replace;		/* if true - replace dictionary by another */
 	bool		missing_ok;		/* for DROP - skip error if missing? */
 } AlterTSConfigurationStmt;
+
+
+/****************************************************************************
+ * Agens Graph related node structures
+ ****************************************************************************/
+
+typedef enum LabelKind {
+	LABEL_VERTEX,
+	LABEL_EDGE
+} LabelKind;
+
+/* CREATE VLABEL/ELABEL ... */
+typedef struct CreateLabelStmt
+{
+	NodeTag		type;
+	LabelKind	labelKind;		/* LABEL_VERTEX or LABEL_EDGE */
+	RangeVar   *relation;		/* relation to create */
+	List	   *inhRelations;	/* relations to inherit from */
+} CreateLabelStmt;
 
 
 /****************************************************************************
