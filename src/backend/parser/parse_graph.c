@@ -43,6 +43,8 @@ typedef struct PatternCtx
 } PatternCtx;
 
 /* trasnform */
+static void checkItemsName(ParseState *pstate, List *items);
+static bool valueHasImplicitName(Node *val);
 static Query *transformSelectInfo(ParseState *pstate, SelectInfo *selinfo);
 static PatternCtx *makePatternCtx(RangeTblEntry *rte);
 static List *makeComponents(List *pattern);
@@ -195,12 +197,70 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	}
 	else
 	{
+		if (detail->kind == CP_WITH)
+			checkItemsName(pstate, detail->items);
+
 		selinfo.target = detail->items;
 		if (clause->prev != NULL)
 			selinfo.from = list_make1(makeRangePrevclause(clause->prev));
 	}
 
 	return transformSelectInfo(pstate, &selinfo);
+}
+
+/* check whether resulting columns have a name or not */
+static void
+checkItemsName(ParseState *pstate, List *items)
+{
+	ListCell *item;
+
+	foreach(item, items)
+	{
+		ResTarget *target = (ResTarget *) lfirst(item);
+
+		if (target->name != NULL)
+			continue;
+
+		if (!valueHasImplicitName(target->val))
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("Expression in WITH must be aliased (use AS)"),
+					 parser_errposition(pstate, exprLocation(target->val))));
+	}
+}
+
+/*
+ * All cases except those three below need an explicit name through AS.
+ *
+ * See FigureColnameInternal()
+ */
+static bool
+valueHasImplicitName(Node *val)
+{
+	if (val == NULL)
+		return false;
+
+	switch (nodeTag(val))
+	{
+		case T_ColumnRef:
+			return true;
+		case T_A_Indirection:
+			{
+				A_Indirection *ind = (A_Indirection *) val;
+
+				if (IsA(llast(ind->indirection), A_Star))
+					return true;
+			}
+			break;
+		case T_A_Expr:
+			if (((A_Expr *) val)->kind == AEXPR_PAREN)
+				return valueHasImplicitName(((A_Expr *) val)->lexpr);
+			break;
+		default:
+			break;
+	}
+
+	return false;
 }
 
 /* composed of some lines from transformSelectStmt() we need */
