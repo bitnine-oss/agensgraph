@@ -3432,6 +3432,9 @@ generateGroupClause(ParseState *pstate, List **targetlist, List *sortClause)
 	gen_group_exprs_context ctx;
 	ListCell   *gl;
 
+	if (!pstate->p_hasAggs)
+		return NIL;
+
 	ctx.group_exprs = NIL;
 	ctx.sublevels_up = 0;
 	gen_group_exprs_walker((Node *) *targetlist, &ctx);
