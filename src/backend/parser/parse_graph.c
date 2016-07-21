@@ -342,7 +342,8 @@ makePatternCtx(RangeTblEntry *rte)
 		Value	   *colname;
 		Oid			vartype;
 
-		Assert(!(te == NULL || te->resjunk));
+		if (te->resjunk)
+			continue;
 
 		colname = makeString(pstrdup(te->resname));
 
