@@ -191,6 +191,20 @@ typedef struct ModifyTable
 } ModifyTable;
 
 /* ----------------
+ *	 Cypher Create node -
+ *		TODO : CYPHER CREATE CLAUSE
+ * ----------------
+ */
+typedef struct CypherCreate
+{
+	Plan		plan;
+	CmdType		operation;		/* INSERT, UPDATE, or DELETE */
+	bool		canSetTag;		/* do we set the command tag/es_processed? */
+	Plan	   *subplan;		/* plan(s) producing source data */
+	List	   *graphPatterns;	/* graph pattern to be made */
+} CypherCreate;
+
+/* ----------------
  *	 Append node -
  *		Generate the concatenation of the results of sub-plans.
  * ----------------

@@ -5138,3 +5138,47 @@ is_projection_capable_plan(Plan *plan)
 	}
 	return true;
 }
+
+/*
+ * make_cyphercreate
+ *	  Build a CypherCreate plan node
+ */
+CypherCreate *
+make_cyphercreate(PlannerInfo *root, CmdType operation, bool canSetTag,
+				  Plan *subplan, List *graphPattern)
+{
+	CypherCreate *node = makeNode(CypherCreate);
+	Plan		 *plan = &node->plan;
+	double		  total_size;
+
+	/*
+	 * Compute cost as sum of subplan costs.
+	 */
+	plan->startup_cost = 0;
+	plan->total_cost = 0;
+	plan->plan_rows = 0;
+	total_size = 0;
+
+	plan->startup_cost += subplan->startup_cost;
+	plan->total_cost += subplan->total_cost;
+	plan->plan_rows += subplan->plan_rows;
+	total_size += subplan->plan_width * subplan->plan_rows;
+
+	if (plan->plan_rows > 0)
+		plan->plan_width = rint(total_size / plan->plan_rows);
+	else
+		plan->plan_width = 0;
+
+	node->plan.lefttree = NULL;
+	node->plan.righttree = NULL;
+	node->plan.qual = NIL;
+	node->plan.targetlist = NIL;
+
+	node->operation = operation;
+	node->canSetTag = canSetTag;
+
+	node->subplan = subplan;
+	node->graphPatterns = graphPattern;
+
+	return node;
+}

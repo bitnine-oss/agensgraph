@@ -2623,11 +2623,21 @@ _equalCypherPath(const CypherPath *a, const CypherPath *b)
 }
 
 static bool
+_equalCypherCreateClause(const CypherCreateClause *a,
+						 const CypherCreateClause *b)
+{
+	COMPARE_NODE_FIELD(pattern);
+
+	return true;
+}
+
+static bool
 _equalCypherNode(const CypherNode *a, const CypherNode *b)
 {
 	COMPARE_NODE_FIELD(variable);
 	COMPARE_NODE_FIELD(label);
 	COMPARE_STRING_FIELD(prop_map);
+	COMPARE_SCALAR_FIELD(needCreation);
 
 	return true;
 }
@@ -2648,6 +2658,7 @@ static bool
 _equalCypherName(const CypherName *a, const CypherName *b)
 {
 	COMPARE_STRING_FIELD(name);
+	COMPARE_LOCATION_FIELD(location);
 
 	return true;
 }
@@ -3402,6 +3413,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherProjection:
 			retval = _equalCypherProjection(a, b);
+			break;
+		case T_CypherCreateClause:
+			retval = _equalCypherCreateClause(a, b);
 			break;
 		case T_CypherPath:
 			retval = _equalCypherPath(a, b);

@@ -505,7 +505,7 @@ transformRangeSubselect(ParseState *pstate, RangeSubselect *r)
 	 * impossible given restrictions of the grammar, but check 'em anyway.
 	 */
 	if (!IsA(query, Query) ||
-		query->commandType != CMD_SELECT ||
+		(query->commandType != CMD_SELECT && query->commandType != CMD_CYPHERCREATE) ||
 		query->utilityStmt != NULL)
 		elog(ERROR, "unexpected non-SELECT command in subquery in FROM");
 

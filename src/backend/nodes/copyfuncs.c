@@ -2702,6 +2702,7 @@ _copyQuery(const Query *from)
 	COPY_NODE_FIELD(setOperations);
 	COPY_NODE_FIELD(constraintDeps);
 	COPY_NODE_FIELD(withCheckOptions);
+	COPY_NODE_FIELD(graphPattern);
 
 	return newnode;
 }
@@ -4141,6 +4142,17 @@ _copyCypherProjection(const CypherProjection *from)
 	return newnode;
 }
 
+
+static CypherCreateClause *
+_copyCypherCreateClause(const CypherCreateClause *from)
+{
+	CypherCreateClause *newnode = makeNode(CypherCreateClause);
+
+	COPY_NODE_FIELD(pattern);
+
+	return newnode;
+}
+
 static CypherPath *
 _copyCypherPath(const CypherPath *from)
 {
@@ -4160,6 +4172,7 @@ _copyCypherNode(const CypherNode *from)
 	COPY_NODE_FIELD(variable);
 	COPY_NODE_FIELD(label);
 	COPY_STRING_FIELD(prop_map);
+	COPY_SCALAR_FIELD(needCreation);
 
 	return newnode;
 }
@@ -5056,6 +5069,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherProjection:
 			retval = _copyCypherProjection(from);
+			break;
+		case T_CypherCreateClause:
+			retval = _copyCypherCreateClause(from);
 			break;
 		case T_CypherPath:
 			retval = _copyCypherPath(from);

@@ -2573,6 +2573,10 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 		case T_Group:
 			break;
 
+		case T_CypherCreate:
+			/* Currently, CypherCreate don't be used params */
+			break;
+
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(plan));

@@ -546,12 +546,12 @@ static Node *wrapCypherWithSelect(Node *stmt);
 
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
-				cypher_label_opt cypher_limit_opt cypher_match cypher_no_parens
-				cypher_node cypher_path cypher_path_opt_varirable
-				cypher_range_idx cypher_range_idx_opt cypher_range_opt
-				cypher_rel cypher_return cypher_skip_opt cypher_variable
-				cypher_variable_opt cypher_varlen_opt cypher_with
-				cypher_with_parens
+				cypher_create cypher_label_opt cypher_limit_opt cypher_match
+				cypher_no_parens cypher_node cypher_path
+				cypher_path_opt_varirable cypher_range_idx cypher_range_idx_opt
+				cypher_range_opt cypher_rel cypher_return cypher_skip_opt
+				cypher_variable cypher_variable_opt cypher_varlen_opt
+				cypher_with cypher_with_parens
 %type <list>	cypher_distinct_opt cypher_path_chain
 				cypher_path_chain_opt_parens cypher_pattern
 				cypher_types cypher_types_opt
@@ -14168,6 +14168,7 @@ cypher_clause_prev:
 cypher_clause_head:
 			cypher_match
 			| cypher_return
+			| cypher_create
 		;
 
 cypher_clause:
@@ -14196,6 +14197,15 @@ cypher_return:
 					n->order = $4;
 					n->skip = $5;
 					n->limit = $6;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_create:
+			CREATE cypher_pattern
+				{
+					CypherCreateClause *n = makeNode(CypherCreateClause);
+					n->pattern = $2;
 					$$ = (Node *) n;
 				}
 		;
@@ -14263,6 +14273,7 @@ cypher_node:
 					n->variable = $2;
 					n->label = $3;
 					n->prop_map = $4;
+					n->needCreation = false;
 					$$ = (Node *) n;
 				}
 		;
@@ -14273,10 +14284,24 @@ cypher_variable_opt:
 		;
 
 cypher_variable:
-			ColLabel
+			IDENT
 				{
 					CypherName *n = makeNode(CypherName);
 					n->name = $1;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| col_name_keyword
+				{
+					CypherName *n = makeNode(CypherName);
+					n->name = pstrdup($1);
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| type_func_name_keyword
+				{
+					CypherName *n = makeNode(CypherName);
+					n->name = pstrdup($1);
 					n->location = @1;
 					$$ = (Node *) n;
 				}

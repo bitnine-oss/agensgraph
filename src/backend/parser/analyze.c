@@ -2743,6 +2743,10 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 	{
 		/* intentionally blank, do nothing */
 	}
+	else if ((cypherClauseTag(clause) == T_CypherCreateClause))
+	{
+		/* intentionally blank, do nothing */
+	}
 	/* TODO: update clauses go to here */
 	else
 	{
@@ -2766,6 +2770,9 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 			break;
 		case T_CypherProjection:
 			qry = transformCypherProjection(pstate, clause);
+			break;
+		case T_CypherCreateClause:
+			qry = transformCypherCreateClause(pstate, clause);
 			break;
 		default:
 			elog(ERROR, "unrecognized Cypher clause type: %d",
