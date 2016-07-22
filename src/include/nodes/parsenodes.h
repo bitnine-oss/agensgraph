@@ -161,6 +161,9 @@ typedef struct Query
 										 * are only added during rewrite and
 										 * therefore are not written out as
 										 * part of Query. */
+
+	/* for agensgraph */
+	List	   *graphPattern;	/* Cypher graph pattern list */
 } Query;
 
 
@@ -3152,6 +3155,12 @@ typedef struct CypherProjection
 
 #define cypherProjectionKind(n)	(((CypherProjection *) (n))->kind)
 
+typedef struct CypherCreateClause
+{
+	NodeTag		type;
+	List	   *pattern;
+} CypherCreateClause;
+
 typedef struct CypherPath
 {
 	NodeTag		type;
@@ -3165,6 +3174,7 @@ typedef struct CypherNode
 	Node	   *variable;	/* CypherName */
 	Node	   *label;		/* CypherName */
 	char	   *prop_map;	/* JSON object string */
+	bool		needCreation;/* will create */
 } CypherNode;
 
 #define CYPHER_REL_DIR_NONE		0

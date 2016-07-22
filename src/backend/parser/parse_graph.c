@@ -10,6 +10,7 @@
 
 #include "postgres.h"
 
+#include "access/heapam.h"
 #include "catalog/pg_type.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -17,8 +18,10 @@
 #include "parser/parse_clause.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_graph.h"
+#include "parser/parse_relation.h"
 #include "parser/parse_target.h"
 #include "parser/parse_utilcmd.h"
+#include "storage/lock.h"
 
 typedef struct SelectInfo
 {
@@ -71,6 +74,14 @@ static Node *makeDirQual(Node *start, RangeVar *rel, Node *end);
 static void makeVertexId(Node *nodeVar, Node **oid, Node **id);
 static Node *addNodeDupQual(Node *qual, List *nodeVars);
 static Node *addRelDupQual(Node *qual, List *relVars);
+static bool isBidirectionEdge(CypherRel *patters);
+static bool isEmptyNode(CypherNode *node);
+static char *getCypherLabelName(Node *graphElem);
+static void addVarnameInStringList(List **list, char *varname);
+static bool isVarnameInStringList(List *l, char *varname);
+static void preventDropTable(ParseState *pstate, char *relname);
+static List *makePattern4Create(ParseState *pstate, List *pattern,
+								PatternCtx *prevPtnCtx, List **targetList);
 
 /* parse tree */
 static RangePrevclause *makeRangePrevclause(Node *clause);
@@ -83,6 +94,8 @@ static RowExpr *makeTuple(List *args, int location);
 static A_ArrayExpr *makeArray(List *elements, int location);
 static TypeCast *makeTypeCast(Node *arg, TypeName *typename, int location);
 static Node *qualAndExpr(Node *qual, Node *expr);
+static ResTarget *makeDummyVtx(char *varname);
+static ResTarget *makeDummyEdge(char *varname);
 
 /* shortcuts */
 static ColumnRef *makeAliasIndirection(Alias *alias, Node *indirection);
@@ -324,6 +337,68 @@ transformSelectInfo(ParseState *pstate, SelectInfo *selinfo)
 	return qry;
 }
 
+Query *
+transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherCreateClause *detail = (CypherCreateClause *) clause->detail;
+	CypherClause	   *subClause;
+	List			   *cPattern = NIL;
+	List			   *targetList = NIL;
+	PatternCtx		   *ctx = NULL;
+	Query 			   *qry;
+
+	/*
+	 * Merge sub-create clauses and current create clause
+	 */
+	subClause = (CypherClause *) clause->prev;
+	while (subClause != NULL &&
+		   cypherClauseTag(subClause) == T_CypherCreateClause)
+	{
+		CypherCreateClause *subcc = (CypherCreateClause *) subClause->detail;
+
+		detail->pattern = list_concat(subcc->pattern, detail->pattern);
+
+		subClause = (CypherClause *) subClause->prev;
+	}
+
+	/*
+	 * Transform previous CypherClause as a RangeSubselect.
+	 */
+	if (subClause != NULL)
+	{
+		RangeTblEntry *rte;
+		RangePrevclause *r;
+
+		r = makeRangePrevclause((Node *)subClause);
+		rte = transformRangePrevclause(pstate, r);
+		ctx = makePatternCtx(rte);
+
+		/* get targetList from prev-clause for variable pipe. */
+		targetList = lcons(makeAliasStarTarget(ctx->alias), targetList);
+	}
+
+	cPattern = makePattern4Create(pstate, detail->pattern, ctx, &targetList);;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_CYPHERCREATE;
+
+	/*
+	 * Create clause doesn't have from list,
+	 * but must call transformFromClause for setting lateral to namespace
+	 */
+	transformFromClause(pstate, NIL);
+
+	qry->targetList = transformTargetList(pstate, targetList,
+										  EXPR_KIND_SELECT_TARGET);
+	markTargetListOrigins(pstate, qry->targetList);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+	qry->graphPattern = cPattern;
+
+	return qry;
+}
+
 static PatternCtx *
 makePatternCtx(RangeTblEntry *rte)
 {
@@ -397,6 +472,187 @@ makeComponents(List *pattern)
 	}
 
 	return components;
+}
+
+static List *
+makePattern4Create(ParseState *pstate, List *pattern, PatternCtx *prevPtnCtx,
+				   List **targetList)
+{
+	ListCell   *l;
+	List	   *vertexVarList = NIL;
+	List	   *edgeVarList = NIL;
+	List	   *valueVarList = NIL;
+
+
+	/* get variable list from previous clause */
+	if (prevPtnCtx != NULL)
+	{
+		vertexVarList = prevPtnCtx->vertices;
+		edgeVarList = prevPtnCtx->edges;
+		valueVarList = prevPtnCtx->values;
+	}
+
+	foreach(l, pattern)
+	{
+		CypherPath *path = (CypherPath *) lfirst(l);
+		ListCell   *n;
+		Node	   *prevElem = NULL;
+		char	   *pathname;
+		bool		isNamedPath = (path->variable != NULL);
+
+		pathname = getCypherName(path->variable);
+		if (isVarnameInStringList(vertexVarList, pathname) ||
+			isVarnameInStringList(edgeVarList, pathname) ||
+			isVarnameInStringList(valueVarList, pathname))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("Variable '%s' already declared", pathname)));
+		}
+
+		foreach(n, path->chain)
+		{
+			Node	   *graphElem = (Node *) lfirst(n);
+			char	   *varname;
+
+			switch (nodeTag(graphElem))
+			{
+				case T_CypherNode:
+				{
+					CypherNode	 *node = (CypherNode *) graphElem;
+					ResTarget	 *target = NULL;
+
+					varname = getCypherName(node->variable);
+
+					/* TODO : Optimize variable check */
+					if (isVarnameInStringList(edgeVarList, varname) ||
+						isVarnameInStringList(valueVarList, varname))
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("Variable '%s' already declared", varname)));
+					}
+
+					if (isVarnameInStringList(vertexVarList, varname))
+					{
+						/*
+						 * this node reference a node in previous clause.
+						 * so, this node must be empty and have adjacency
+						 * node.
+						 */
+						if (isEmptyNode(node) != true ||
+							(prevElem == NULL && lnext(n) == NULL ))
+							ereport(ERROR,
+									(errcode(ERRCODE_SYNTAX_ERROR),
+									 errmsg("Variable '%s' already declared", varname)));
+
+						node->needCreation = false;
+					}
+					else
+					{
+						/*
+						 * this vertex has to be created.
+						 * this dummy will be replaced in ExecCypherCreate.
+						 */
+						target = makeDummyVtx(varname);
+						*targetList = lappend(*targetList, target);
+
+						if (varname != NULL)
+							addVarnameInStringList(&vertexVarList, varname);
+
+
+						node->needCreation = true;
+					}
+
+
+					break;
+				}
+				case T_CypherRel:
+				{
+					CypherRel *rel = (CypherRel *) graphElem;
+					ResTarget *target = NULL;
+
+					if (isBidirectionEdge(rel) == true)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("Only directed edges are supported in CREATE")));
+
+					if (list_length(rel->types) != 1)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("relationship must have a reltype in CREATE clause")));
+					}
+
+					varname = getCypherName(rel->variable);
+
+					if (varname != NULL)
+					{
+						/*
+						 * relationship cannot reference in CREATE clause.
+						 * relationship can be created only.
+						 */
+						if (isVarnameInStringList(vertexVarList, varname) ||
+							isVarnameInStringList(edgeVarList, varname) ||
+							isVarnameInStringList(valueVarList, varname))
+							ereport(ERROR,
+									(errcode(ERRCODE_SYNTAX_ERROR),
+									 errmsg("Variable '%s' already declared", varname)));
+						/*
+						 * this dummy will be replaced in ExecCypherCreate.
+						 */
+						target = makeDummyEdge(varname);
+						*targetList = lappend(*targetList, target);
+
+						addVarnameInStringList(&edgeVarList, varname);
+					}
+					break;
+				}
+				default:
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("there is unsupported type in CREATE clause")));
+			}
+
+			prevElem = graphElem;
+
+			/*
+			 * Drop the rel refcount,
+			 * but keep the access lock till end of transaction
+			 * so that the table can't be deleted or have its schema modified
+			 * underneath us.
+			 */
+			preventDropTable(pstate, getCypherLabelName(graphElem));
+		}
+
+		/*
+		 * Add dummy graphpath to targetlist.
+		 * This will be replaced to real path generated when execute time.
+		 * See ExecCypherCreate function
+		 */
+		if (isNamedPath)
+		{
+			Node	   *varr;
+			Node	   *earr;
+			Node	   *tuple;
+			ResTarget  *target;
+
+			Assert(pathname != NULL);
+
+			varr = makeTypedArray(NULL, VERTEXARRAYOID);
+			earr = makeTypedArray(NULL, EDGEARRAYOID);
+
+			tuple = makeTypedTuple(list_make2(varr, earr), GRAPHPATHOID);
+
+			target = makeSelectResTarget(tuple,
+										 getCypherName(path->variable),
+										 getCypherNameLoc(path->variable));
+
+			*targetList = lappend(*targetList, target);
+		}
+	}
+
+	return pattern;
 }
 
 static void
@@ -1196,4 +1452,185 @@ genUniqueName(void)
 	snprintf(data, sizeof(data), "<%010u>", seq++);
 
 	return pstrdup(data);
+}
+
+static ResTarget *
+makeDummyVtx(char *varname)
+{
+
+	ResTarget  *res = makeNode(ResTarget);
+	A_Const	   *oid = makeNode(A_Const);
+	A_Const	   *vid = makeNode(A_Const);
+	A_Const	   *prop = makeNode(A_Const);
+	Node	   *tuple;
+
+	oid->val.type = T_Integer;
+	oid->val.val.ival = 0;
+	oid->location = -1;
+
+	vid->val.type = T_Integer;
+	vid->val.val.ival = 0;
+	vid->location = -1;
+
+	prop->val.type = T_Null;
+	prop->location = -1;
+
+	tuple = makeTypedTuple(list_make3(oid, vid, prop), VERTEXOID);
+
+	res = makeSelectResTarget(tuple, varname, -1);
+
+	return res;
+}
+
+static ResTarget *
+makeDummyEdge(char *varname)
+{
+
+	ResTarget  *res = makeNode(ResTarget);
+	A_Const	   *oid = makeNode(A_Const);
+	A_Const	   *eid = makeNode(A_Const);
+	A_Const	   *inoid = makeNode(A_Const);
+	A_Const	   *invid = makeNode(A_Const);
+	A_Const	   *outoid = makeNode(A_Const);
+	A_Const	   *outvid = makeNode(A_Const);
+	A_Const	   *prop = makeNode(A_Const);
+	List	   *args;
+	Node	   *tuple;
+
+	oid->val.type = T_Integer;
+	oid->val.val.ival = 0;
+	oid->location = -1;
+
+	eid->val.type = T_Integer;
+	eid->val.val.ival = 0;
+	eid->location = -1;
+
+	inoid->val.type = T_Integer;
+	inoid->val.val.ival = 0;
+	inoid->location = -1;
+
+	invid->val.type = T_Integer;
+	invid->val.val.ival = 0;
+	invid->location = -1;
+
+	outoid->val.type = T_Integer;
+	outoid->val.val.ival = 0;
+	outoid->location = -1;
+
+	outvid->val.type = T_Integer;
+	outvid->val.val.ival = 0;
+	outvid->location = -1;
+
+	prop->val.type = T_Null;
+	prop->location = -1;
+
+	args = lcons(oid,
+				 lcons(eid,
+				 lcons(inoid,
+				 lcons(invid,
+				 lcons(outoid,
+				 lcons(outvid,
+				 lcons(prop,
+				 NIL)))))));
+
+	tuple = makeTypedTuple(args, EDGEOID);
+
+	res = makeSelectResTarget(tuple, varname, -1);
+
+	return res;
+}
+
+static bool
+isBidirectionEdge(CypherRel *rel)
+{
+	if (rel->direction != CYPHER_REL_DIR_LEFT &&
+		rel->direction != CYPHER_REL_DIR_RIGHT)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+static char *
+getCypherLabelName(Node *graphElem)
+{
+	char	*relname;
+
+	Assert(graphElem != NULL);
+
+	switch (nodeTag(graphElem))
+	{
+		case T_CypherNode:
+		{
+			CypherNode *node = (CypherNode *) graphElem;
+
+			relname = getCypherName(node->label);
+
+			if (relname == NULL)
+				relname = "vertex";
+
+			return relname;
+		}
+		break;
+		case T_CypherRel:
+		{
+			CypherRel *rel = (CypherRel *) graphElem;
+
+			Assert(list_length(rel->types) == 1);
+
+			return getCypherName(linitial(rel->types));
+		}
+		break;
+		default:
+			elog(ERROR, "unrecognized edge direction type");
+	}
+
+	return NULL;
+}
+
+static bool
+isEmptyNode(CypherNode *node)
+{
+	if (getCypherName(node->label) == NULL && node->prop_map == NULL)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+static void
+addVarnameInStringList(List **list, char *varname)
+{
+	*list = lappend(*list, makeString(pstrdup(varname)));
+}
+
+static bool
+isVarnameInStringList(List *l, char *varname)
+{
+	ListCell *lv;
+
+	if (l == NULL || varname == NULL)
+		return false;
+
+	foreach(lv, l)
+	{
+		if (strcmp(strVal(lfirst(lv)), varname) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+static void
+preventDropTable(ParseState *pstate, char *relname)
+{
+	RangeVar   *relation;
+	Relation	rel;
+
+	relation = makeRangeVar("graph", relname, -1);
+	rel = parserOpenTable(pstate, relation, AccessShareLock);
+
+	heap_close(rel, NoLock);
 }

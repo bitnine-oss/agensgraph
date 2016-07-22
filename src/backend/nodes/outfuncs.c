@@ -3027,6 +3027,14 @@ _outCypherProjection(StringInfo str, const CypherProjection *node)
 }
 
 static void
+_outCypherCreateClause(StringInfo str, const CypherCreateClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERCREATECLAUSE");
+
+	WRITE_NODE_FIELD(pattern);
+}
+
+static void
 _outCypherPath(StringInfo str, const CypherPath *node)
 {
 	WRITE_NODE_TYPE("CYPHERPATH");
@@ -3043,6 +3051,7 @@ _outCypherNode(StringInfo str, const CypherNode *node)
 	WRITE_NODE_FIELD(variable);
 	WRITE_NODE_FIELD(label);
 	WRITE_STRING_FIELD(prop_map);
+	WRITE_BOOL_FIELD(needCreation);
 }
 
 static void
@@ -3608,6 +3617,9 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherProjection:
 				_outCypherProjection(str, obj);
+				break;
+			case T_CypherCreateClause:
+				_outCypherCreateClause(str, obj);
 				break;
 			case T_CypherPath:
 				_outCypherPath(str, obj);

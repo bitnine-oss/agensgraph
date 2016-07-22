@@ -17,5 +17,7 @@ extern Query *transformCypherMatchClause(ParseState *pstate,
 										 CypherClause *clause);
 extern Query *transformCypherProjection(ParseState *pstate,
 										CypherClause *clause);
+extern Query *transformCypherCreateClause(ParseState *pstate,
+										  CypherClause *clause);
 
 #endif	/* PARSE_GRAPH_H */

@@ -79,6 +79,7 @@ typedef enum NodeTag
 	T_SetOp,
 	T_LockRows,
 	T_Limit,
+	T_CypherCreate,
 	/* these aren't subclasses of Plan: */
 	T_NestLoopParam,
 	T_PlanRowMark,
@@ -127,6 +128,7 @@ typedef enum NodeTag
 	T_SetOpState,
 	T_LockRowsState,
 	T_LimitState,
+	T_CypherCreateState,
 
 	/*
 	 * TAGS FOR PRIMITIVE NODES (primnodes.h)
@@ -433,6 +435,7 @@ typedef enum NodeTag
 	T_CypherClause,
 	T_CypherMatchClause,
 	T_CypherProjection,
+	T_CypherCreateClause,
 	T_CypherPath,
 	T_CypherNode,
 	T_CypherRel,
@@ -579,6 +582,7 @@ typedef enum CmdType
 	CMD_DELETE,
 	CMD_UTILITY,				/* cmds like create, destroy, copy, vacuum,
 								 * etc. */
+	CMD_CYPHERCREATE,			/* cypher stmt */
 	CMD_NOTHING					/* dummy command for instead nothing rules
 								 * with qual */
 } CmdType;
