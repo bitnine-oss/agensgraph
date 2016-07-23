@@ -893,6 +893,7 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 		case T_CypherCreate:
 			{
 				CypherCreate *splan = (CypherCreate *) plan;
+
 				splan->subplan = set_plan_refs(root,
 											   splan->subplan,
 											   rtoffset);

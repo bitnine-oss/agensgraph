@@ -555,7 +555,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <list>	cypher_distinct_opt cypher_path_chain
 				cypher_path_chain_opt_parens cypher_pattern
 				cypher_types cypher_types_opt
-%type <str>		cypher_prop_map_opt
+%type <str>		cypher_prop_map_opt cypher_varname
 %type <boolean>	cypher_rel_left cypher_rel_right
 
 /*
@@ -14273,7 +14273,7 @@ cypher_node:
 					n->variable = $2;
 					n->label = $3;
 					n->prop_map = $4;
-					n->needCreation = false;
+					n->create = false;
 					$$ = (Node *) n;
 				}
 		;
@@ -14284,27 +14284,19 @@ cypher_variable_opt:
 		;
 
 cypher_variable:
-			IDENT
+			cypher_varname
 				{
 					CypherName *n = makeNode(CypherName);
 					n->name = $1;
 					n->location = @1;
 					$$ = (Node *) n;
 				}
-			| col_name_keyword
-				{
-					CypherName *n = makeNode(CypherName);
-					n->name = pstrdup($1);
-					n->location = @1;
-					$$ = (Node *) n;
-				}
-			| type_func_name_keyword
-				{
-					CypherName *n = makeNode(CypherName);
-					n->name = pstrdup($1);
-					n->location = @1;
-					$$ = (Node *) n;
-				}
+		;
+
+cypher_varname:
+			IDENT						{ $$ = $1; }
+			| col_name_keyword			{ $$ = pstrdup($1); }
+			| type_func_name_keyword	{ $$ = pstrdup($1); }
 		;
 
 cypher_label_opt:

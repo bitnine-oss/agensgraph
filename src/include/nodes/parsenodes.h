@@ -160,7 +160,7 @@ typedef struct Query
 	List	   *withCheckOptions;	/* a list of WithCheckOption's, which are
 									 * only added during rewrite and therefore
 									 * are not written out as part of Query. */
-	List	   *graphPattern;	/* Cypher graph pattern list */
+	List	   *graphPattern;	/* graph pattern */
 } Query;
 
 
@@ -3152,7 +3152,7 @@ typedef struct CypherNode
 	Node	   *variable;	/* CypherName */
 	Node	   *label;		/* CypherName */
 	char	   *prop_map;	/* JSON object string */
-	bool		needCreation;/* will create */
+	bool		create;		/* this node will be created */
 } CypherNode;
 
 #define CYPHER_REL_DIR_NONE		0

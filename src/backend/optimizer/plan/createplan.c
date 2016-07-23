@@ -5148,22 +5148,16 @@ make_cyphercreate(PlannerInfo *root, CmdType operation, bool canSetTag,
 				  Plan *subplan, List *graphPattern)
 {
 	CypherCreate *node = makeNode(CypherCreate);
-	Plan		 *plan = &node->plan;
-	double		  total_size;
+	Plan	   *plan = &node->plan;
+	double		total_size;
 
 	/*
 	 * Compute cost as sum of subplan costs.
 	 */
-	plan->startup_cost = 0;
-	plan->total_cost = 0;
-	plan->plan_rows = 0;
-	total_size = 0;
-
-	plan->startup_cost += subplan->startup_cost;
-	plan->total_cost += subplan->total_cost;
-	plan->plan_rows += subplan->plan_rows;
-	total_size += subplan->plan_width * subplan->plan_rows;
-
+	plan->startup_cost = subplan->startup_cost;
+	plan->total_cost = subplan->total_cost;
+	plan->plan_rows = subplan->plan_rows;
+	total_size = subplan->plan_width * subplan->plan_rows;
 	if (plan->plan_rows > 0)
 		plan->plan_width = rint(total_size / plan->plan_rows);
 	else
@@ -5176,9 +5170,8 @@ make_cyphercreate(PlannerInfo *root, CmdType operation, bool canSetTag,
 
 	node->operation = operation;
 	node->canSetTag = canSetTag;
-
 	node->subplan = subplan;
-	node->graphPatterns = graphPattern;
+	node->graphPattern = graphPattern;
 
 	return node;
 }

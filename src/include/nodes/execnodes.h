@@ -1145,8 +1145,8 @@ typedef struct ModifyTableState
 typedef struct CypherCreateState
 {
 	PlanState	ps;				/* its first field is NodeTag */
-	CmdType		operation;		/* CypherCreate */
-	PlanState  *cc_plan;		/* subplans (one per target rel) */
+	CmdType		operation;		/* CYPHERCREATE */
+	PlanState  *cc_plan;		/* subplan */
 } CypherCreateState;
 
 /* ----------------

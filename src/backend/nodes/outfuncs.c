@@ -3009,7 +3009,7 @@ _outCypherNode(StringInfo str, const CypherNode *node)
 	WRITE_NODE_FIELD(variable);
 	WRITE_NODE_FIELD(label);
 	WRITE_STRING_FIELD(prop_map);
-	WRITE_BOOL_FIELD(needCreation);
+	WRITE_BOOL_FIELD(create);
 }
 
 static void

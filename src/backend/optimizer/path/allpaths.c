@@ -2398,9 +2398,9 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 		return;
 
 	/*
-	 * Do not remove target if subquery is CypherCreate.
-	 * CypherCreate's every target entry needs to create graph elements.
-	 * Either creation or reference for createing another graph element.
+	 * Do nothing if subquery is CypherCreate. We need all the target entries
+	 * in CypherCreate to get the result of subquery in CypherCreate.
+	 * Those entries are used to create a graph pattern.
 	 */
 	if (subquery->commandType == CMD_CYPHERCREATE)
 		return;
