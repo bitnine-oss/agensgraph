@@ -163,7 +163,7 @@ typedef struct Query
 										 * part of Query. */
 
 	/* for agensgraph */
-	List	   *graphPattern;	/* Cypher graph pattern list */
+	List	   *graphPattern;	/* graph pattern */
 } Query;
 
 
@@ -3174,7 +3174,7 @@ typedef struct CypherNode
 	Node	   *variable;	/* CypherName */
 	Node	   *label;		/* CypherName */
 	char	   *prop_map;	/* JSON object string */
-	bool		needCreation;/* will create */
+	bool		create;		/* this node will be created */
 } CypherNode;
 
 #define CYPHER_REL_DIR_NONE		0
