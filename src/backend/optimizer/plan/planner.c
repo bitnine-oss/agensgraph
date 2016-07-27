@@ -618,7 +618,15 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	{
 		plan = grouping_planner(root, tuple_fraction);
 		/* If it's not SELECT, we need a ModifyTable node */
-		if (parse->commandType != CMD_SELECT)
+		if (parse->commandType == CMD_CYPHERCREATE)
+		{
+			plan = (Plan *) make_cyphercreate(root,
+											  parse->commandType,
+											  parse->canSetTag,
+											  plan,
+											  parse->graphPattern);
+		}
+		else if (parse->commandType != CMD_SELECT)
 		{
 			List	   *withCheckOptionLists;
 			List	   *returningLists;

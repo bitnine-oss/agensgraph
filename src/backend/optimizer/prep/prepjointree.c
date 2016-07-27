@@ -1387,9 +1387,13 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 	 * Let's just make sure it's a valid subselect ...
 	 */
 	if (!IsA(subquery, Query) ||
-		subquery->commandType != CMD_SELECT ||
+		((subquery->commandType != CMD_SELECT) &&
+		 (subquery->commandType != CMD_CYPHERCREATE)) ||
 		subquery->utilityStmt != NULL)
 		elog(ERROR, "subquery is bogus");
+
+	if (subquery->commandType == CMD_CYPHERCREATE)
+		return false;
 
 	/*
 	 * Can't currently pull up a query with setops (unless it's simple UNION
@@ -1719,7 +1723,8 @@ is_simple_union_all(Query *subquery)
 
 	/* Let's just make sure it's a valid subselect ... */
 	if (!IsA(subquery, Query) ||
-		subquery->commandType != CMD_SELECT ||
+		((subquery->commandType != CMD_SELECT) &&
+		 (subquery->commandType != CMD_CYPHERCREATE)) ||
 		subquery->utilityStmt != NULL)
 		elog(ERROR, "subquery is bogus");
 

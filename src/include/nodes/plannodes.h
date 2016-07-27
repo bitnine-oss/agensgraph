@@ -191,6 +191,20 @@ typedef struct ModifyTable
 } ModifyTable;
 
 /* ----------------
+ *	 CypherCreate node -
+ *		Use rows produced by subplan to create pattern.
+ * ----------------
+ */
+typedef struct CypherCreate
+{
+	Plan		plan;
+	CmdType		operation;		/* CYPHERCREATE */
+	bool		canSetTag;		/* do we set the command tag/es_processed? */
+	Plan	   *subplan;		/* plan producing source data */
+	List	   *graphPattern;	/* graph pattern to be made */
+} CypherCreate;
+
+/* ----------------
  *	 Append node -
  *		Generate the concatenation of the results of sub-plans.
  * ----------------

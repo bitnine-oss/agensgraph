@@ -2398,6 +2398,14 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 		return;
 
 	/*
+	 * Do nothing if subquery is CypherCreate. We need all the target entries
+	 * in CypherCreate to get the result of subquery in CypherCreate.
+	 * Those entries are used to create a graph pattern.
+	 */
+	if (subquery->commandType == CMD_CYPHERCREATE)
+		return;
+
+	/*
 	 * Collect a bitmap of all the output column numbers used by the upper
 	 * query.
 	 *
