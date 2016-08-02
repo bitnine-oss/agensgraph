@@ -99,6 +99,7 @@
 #include "executor/nodeMaterial.h"
 #include "executor/nodeMergeAppend.h"
 #include "executor/nodeMergejoin.h"
+#include "executor/nodeModifyGraph.h"
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNestloop.h"
 #include "executor/nodeGather.h"
@@ -184,6 +185,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 		case T_BitmapOr:
 			result = (PlanState *) ExecInitBitmapOr((BitmapOr *) node,
 													estate, eflags);
+			break;
+
+		case T_ModifyGraph:
+			result = (PlanState *) ExecInitModifyGraph((ModifyGraph *) node,
+													   estate, eflags);
 			break;
 
 			/*
@@ -420,6 +426,10 @@ ExecProcNode(PlanState *node)
 			/* BitmapAndState does not yield tuples */
 
 			/* BitmapOrState does not yield tuples */
+
+		case T_ModifyGraphState:
+			result = ExecModifyGraph((ModifyGraphState *) node);
+			break;
 
 			/*
 			 * scan nodes
@@ -672,6 +682,10 @@ ExecEndNode(PlanState *node)
 
 		case T_BitmapOrState:
 			ExecEndBitmapOr((BitmapOrState *) node);
+			break;
+
+		case T_ModifyGraphState:
+			ExecEndModifyGraph((ModifyGraphState *) node);
 			break;
 
 			/*

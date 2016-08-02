@@ -163,7 +163,13 @@ typedef struct Query
 										 * part of Query. */
 
 	/* for agensgraph */
-	List	   *graphPattern;	/* graph pattern */
+	List	   *graphPattern;	/* graph pattern (list of paths) for CREATE */
+	struct {
+		GraphWriteOp writeOp;
+		bool		last;		/* is this for the last clause? */
+		bool		detach;		/* DETACH DELETE */
+		List	   *exprs;		/* expression list for DELETE */
+	}			graph;
 } Query;
 
 
@@ -3160,6 +3166,13 @@ typedef struct CypherCreateClause
 	NodeTag		type;
 	List	   *pattern;
 } CypherCreateClause;
+
+typedef struct CypherDeleteClause
+{
+	NodeTag		type;
+	bool		detach;
+	List	   *exprs;
+} CypherDeleteClause;
 
 typedef struct CypherPath
 {

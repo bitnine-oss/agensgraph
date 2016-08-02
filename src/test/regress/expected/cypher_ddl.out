@@ -10,7 +10,7 @@ SELECT labname, labkind FROM ag_label;
 (2 rows)
 
 --
--- CREATE/DROP LABEL
+-- CREATE/DROP labels
 --
 CREATE VLABEL vlabel_p1;
 NOTICE:  merging column "id" with inherited definition
@@ -151,7 +151,7 @@ ERROR:  proper error message
 DROP ELABEL edge CASCADE;
 ERROR:  proper error message
 --
--- DROP ALL LABELS
+-- DROP all labels
 --
 DROP VLABEL vlabel_p1 CASCADE;
 NOTICE:  drop cascades to 3 other objects

@@ -388,8 +388,7 @@ MATCH (a) RETURN (a).id, (a).prop_map;
   1 | {"age": 123, "name": "test2"}
 (6 rows)
 
-DELETE FROM graph.vertex;
-DELETE FROM graph.edge;
+MATCH (n) DETACH DELETE n;
 -- refer previous variable
 CREATE (a:regvlabel1 '{"name": "elem1"}'),
 	   (a)-[d:regelabel1 '{"rel": 1}']->(b:regvlabel2 '{"name": "elem2"}'),
@@ -410,8 +409,7 @@ RETURN (a).prop_map, (b).prop_map, (c).prop_map;
  {"name": "elem3"} | {"rel": 2} | {"name": "elem2"}
 (4 rows)
 
-DELETE FROM graph.vertex;
-DELETE FROM graph.edge;
+MATCH (n) DETACH DELETE n;
 -- relationship
 CREATE (a:regvlabel1 '{"name": "insert v1-1"}')-[b:regelabel1]->(c:regvlabel2 '{"name": "insert v2-1"}');
 CREATE (a:regvlabel1 '{"name": "insert v1-2"}')<-[b:regelabel1]-(c:regvlabel2 '{"name": "insert v2-2"}');

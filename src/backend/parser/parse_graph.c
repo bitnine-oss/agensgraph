@@ -23,6 +23,8 @@
 #include "parser/parse_utilcmd.h"
 #include "storage/lock.h"
 
+#define CYPHER_SUBQUERY_ALIAS	"_"
+
 typedef struct SelectInfo
 {
 	List	   *distinct;	/* DISTINCT clause */
@@ -331,6 +333,7 @@ transformSelectInfo(ParseState *pstate, SelectInfo *selinfo)
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
 
+	qry->hasSubLinks = pstate->p_hasSubLinks;
 	qry->hasAggs = pstate->p_hasAggs;
 	if (qry->hasAggs)
 		parseCheckAggregates(pstate, qry);
@@ -400,7 +403,72 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
 
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+
 	qry->graphPattern = queryPattern;
+
+	return qry;
+}
+
+Query *
+transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherDeleteClause *detail = (CypherDeleteClause *) clause->detail;
+	Query	   *qry;
+	List	   *fromClause;
+	RangeTblEntry *rte;
+	int			rtindex;
+	List	   *exprs;
+	ListCell   *le;
+
+	/* DELETE cannot be the first clause */
+	AssertArg(clause->prev != NULL);
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_GRAPHWRITE;
+	qry->graph.writeOp = GWROP_DELETE;
+	qry->graph.last = (pstate->parentParseState == NULL);
+	qry->graph.detach = detail->detach;
+
+	/*
+	 * Instead of `resultRelation`, use FROM list because there might be
+	 * multiple labels to access.
+	 */
+	fromClause = list_make1(makeRangePrevclause(clause->prev));
+	transformFromClause(pstate, fromClause);
+
+	/* select all from previous clause */
+	rte = refnameRangeTblEntry(pstate, NULL, CYPHER_SUBQUERY_ALIAS, -1, NULL);
+	rtindex = RTERangeTablePosn(pstate, rte, NULL);
+	qry->targetList = expandRelAttrs(pstate, rte, rtindex, 0, -1);
+
+	exprs = transformExpressionList(pstate, detail->exprs, EXPR_KIND_OTHER);
+	foreach(le, exprs)
+	{
+		Node	   *expr = lfirst(le);
+		Oid			vartype;
+
+		vartype = exprType(expr);
+		if (vartype != VERTEXOID && vartype != EDGEOID &&
+			vartype != GRAPHPATHOID)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("expected node, relationship, or path"),
+					 parser_errposition(pstate, exprLocation(expr))));
+
+		/*
+		 * TODO: expr must contain one of the target variables
+		 *		 and it mustn't contain aggregate and SubLink's.
+		 */
+	}
+	qry->graph.exprs = exprs;
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+
+	assign_query_collations(pstate, qry);
 
 	return qry;
 }
@@ -1409,7 +1477,7 @@ makeRangePrevclause(Node *clause)
 	r->subquery = clause;
 
 	r->alias = makeNode(Alias);
-	r->alias->aliasname = "_";
+	r->alias->aliasname = CYPHER_SUBQUERY_ALIAS;
 
 	return r;
 }

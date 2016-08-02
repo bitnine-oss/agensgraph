@@ -217,6 +217,9 @@ ProcessQuery(PlannedStmt *plan,
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 						 "CYPHER CREATE COMPLETE");
 				break;
+			case CMD_GRAPHWRITE:
+				snprintf(completionTag, COMPLETION_TAG_BUFSIZE, "GRAPH WRITE");
+				break;
 			default:
 				strcpy(completionTag, "???");
 				break;
