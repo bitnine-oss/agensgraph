@@ -1002,6 +1002,23 @@ _copyLimit(const Limit *from)
 	return newnode;
 }
 
+static ModifyGraph *
+_copyModifyGraph(const ModifyGraph *from)
+{
+	ModifyGraph *newnode = makeNode(ModifyGraph);
+
+	CopyPlanFields((const Plan *) from, (Plan *) newnode);
+
+	COPY_SCALAR_FIELD(canSetTag);
+	COPY_SCALAR_FIELD(operation);
+	COPY_SCALAR_FIELD(last);
+	COPY_SCALAR_FIELD(detach);
+	COPY_NODE_FIELD(subplan);
+	COPY_NODE_FIELD(exprs);
+
+	return newnode;
+}
+
 /*
  * _copyNestLoopParam
  */
@@ -2702,7 +2719,12 @@ _copyQuery(const Query *from)
 	COPY_NODE_FIELD(setOperations);
 	COPY_NODE_FIELD(constraintDeps);
 	COPY_NODE_FIELD(withCheckOptions);
+
 	COPY_NODE_FIELD(graphPattern);
+	COPY_SCALAR_FIELD(graph.writeOp);
+	COPY_SCALAR_FIELD(graph.last);
+	COPY_SCALAR_FIELD(graph.detach);
+	COPY_NODE_FIELD(graph.exprs);
 
 	return newnode;
 }
@@ -4152,6 +4174,17 @@ _copyCypherCreateClause(const CypherCreateClause *from)
 	return newnode;
 }
 
+static CypherDeleteClause *
+_copyCypherDeleteClause(const CypherDeleteClause *from)
+{
+	CypherDeleteClause *newnode = makeNode(CypherDeleteClause);
+
+	COPY_SCALAR_FIELD(detach);
+	COPY_NODE_FIELD(exprs);
+
+	return newnode;
+}
+
 static CypherPath *
 _copyCypherPath(const CypherPath *from)
 {
@@ -4426,6 +4459,9 @@ copyObject(const void *from)
 			break;
 		case T_Limit:
 			retval = _copyLimit(from);
+			break;
+		case T_ModifyGraph:
+			retval = _copyModifyGraph(from);
 			break;
 		case T_NestLoopParam:
 			retval = _copyNestLoopParam(from);
@@ -5086,6 +5122,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherCreateClause:
 			retval = _copyCypherCreateClause(from);
+			break;
+		case T_CypherDeleteClause:
+			retval = _copyCypherDeleteClause(from);
 			break;
 		case T_CypherPath:
 			retval = _copyCypherPath(from);

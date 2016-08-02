@@ -963,4 +963,20 @@ typedef struct PlanInvalItem
 	uint32		hashValue;		/* hash value of object's cache lookup key */
 } PlanInvalItem;
 
+
+/*
+ * Graph nodes
+ */
+
+typedef struct ModifyGraph
+{
+	Plan		plan;
+	bool		canSetTag;
+	GraphWriteOp operation;
+	bool		last;			/* is this for the last clause? */
+	bool		detach;			/* DETACH DELETE */
+	Plan	   *subplan;		/* plan producing source data */
+	List	   *exprs;			/* expression list for DELETE */
+} ModifyGraph;
+
 #endif   /* PLANNODES_H */

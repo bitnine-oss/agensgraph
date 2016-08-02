@@ -755,6 +755,8 @@ pg_rewrite_query(Query *query)
 	}
 	else if (query->commandType == CMD_CYPHERCREATE)
 	{
+		/* FIXME: consider all QueryRewrite() calls */
+
 		/*
 		 * currently, don't rewrite graph query,
 		 * just dump 'em into result list

@@ -6,7 +6,7 @@
 SELECT labname, labkind FROM ag_label;
 
 --
--- CREATE/DROP LABEL
+-- CREATE/DROP labels
 --
 
 CREATE VLABEL vlabel_p1;
@@ -58,7 +58,7 @@ DROP VLABEL vertex CASCADE;
 DROP ELABEL edge CASCADE;
 
 --
--- DROP ALL LABELS
+-- DROP all labels
 --
 
 DROP VLABEL vlabel_p1 CASCADE;

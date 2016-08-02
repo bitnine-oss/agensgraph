@@ -5175,3 +5175,25 @@ make_cyphercreate(PlannerInfo *root, CmdType operation, bool canSetTag,
 
 	return node;
 }
+
+/*
+ * make_modifygraph
+ *	  Build a ModifyGraph plan node
+ */
+ModifyGraph *
+make_modifygraph(PlannerInfo *root, bool canSetTag, GraphWriteOp operation,
+				 bool last, bool detach, Plan *subplan, List *exprs)
+{
+	ModifyGraph *node = makeNode(ModifyGraph);
+
+	copy_plan_costsize(&node->plan, subplan);
+
+	node->canSetTag = canSetTag;
+	node->operation = operation;
+	node->last = last;
+	node->detach = detach;
+	node->subplan = subplan;
+	node->exprs = exprs;
+
+	return node;
+}

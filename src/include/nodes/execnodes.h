@@ -2053,4 +2053,17 @@ typedef struct LimitState
 	TupleTableSlot *subSlot;	/* tuple last obtained from subplan */
 } LimitState;
 
+
+/*
+ * Graph nodes
+ */
+
+typedef struct ModifyGraphState
+{
+	PlanState	ps;
+	bool		done;
+	PlanState  *subplan;
+	List	   *exprs;			/* expression state list for DELETE */
+} ModifyGraphState;
+
 #endif   /* EXECNODES_H */

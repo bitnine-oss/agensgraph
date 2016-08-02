@@ -538,6 +538,10 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		}
 	}
 
+	parse->graph.exprs = (List *)
+		preprocess_expression(root, (Node *) parse->graph.exprs,
+							  EXPRKIND_TARGET);
+
 	/*
 	 * In some cases we may want to transfer a HAVING clause into WHERE. We
 	 * cannot do so if the HAVING clause contains aggregates (obviously) or
@@ -617,7 +621,6 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	else
 	{
 		plan = grouping_planner(root, tuple_fraction);
-		/* If it's not SELECT, we need a ModifyTable node */
 		if (parse->commandType == CMD_CYPHERCREATE)
 		{
 			plan = (Plan *) make_cyphercreate(root,
@@ -626,6 +629,15 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 											  plan,
 											  parse->graphPattern);
 		}
+		else if (parse->commandType == CMD_GRAPHWRITE)
+		{
+			plan = (Plan *) make_modifygraph(root, parse->canSetTag,
+											 parse->graph.writeOp,
+											 parse->graph.last,
+											 parse->graph.detach,
+											 plan, parse->graph.exprs);
+		}
+		/* If it's not SELECT, we need a ModifyTable node */
 		else if (parse->commandType != CMD_SELECT)
 		{
 			List	   *withCheckOptionLists;

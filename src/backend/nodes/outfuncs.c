@@ -862,6 +862,21 @@ _outLimit(StringInfo str, const Limit *node)
 }
 
 static void
+_outModifyGraph(StringInfo str, const ModifyGraph *node)
+{
+	WRITE_NODE_TYPE("MODIFYGRAPH");
+
+	_outPlanInfo(str, (const Plan *) node);
+
+	WRITE_BOOL_FIELD(canSetTag);
+	WRITE_ENUM_FIELD(operation, GraphWriteOp);
+	WRITE_BOOL_FIELD(last);
+	WRITE_BOOL_FIELD(detach);
+	WRITE_NODE_FIELD(subplan);
+	WRITE_NODE_FIELD(exprs);
+}
+
+static void
 _outNestLoopParam(StringInfo str, const NestLoopParam *node)
 {
 	WRITE_NODE_TYPE("NESTLOOPPARAM");
@@ -2386,6 +2401,12 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_NODE_FIELD(rowMarks);
 	WRITE_NODE_FIELD(setOperations);
 	WRITE_NODE_FIELD(constraintDeps);
+
+	WRITE_NODE_FIELD(graphPattern);
+	WRITE_ENUM_FIELD(graph.writeOp, GraphWriteOp);
+	WRITE_BOOL_FIELD(graph.last);
+	WRITE_BOOL_FIELD(graph.detach);
+	WRITE_NODE_FIELD(graph.exprs);
 }
 
 static void
@@ -2993,6 +3014,15 @@ _outCypherCreateClause(StringInfo str, const CypherCreateClause *node)
 }
 
 static void
+_outCypherDeleteClause(StringInfo str, const CypherDeleteClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERDELETECLAUSE");
+
+	WRITE_BOOL_FIELD(detach);
+	WRITE_NODE_FIELD(exprs);
+}
+
+static void
 _outCypherPath(StringInfo str, const CypherPath *node)
 {
 	WRITE_NODE_TYPE("CYPHERPATH");
@@ -3170,6 +3200,9 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_Limit:
 				_outLimit(str, obj);
+				break;
+			case T_ModifyGraph:
+				_outModifyGraph(str, obj);
 				break;
 			case T_NestLoopParam:
 				_outNestLoopParam(str, obj);
@@ -3572,6 +3605,9 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherCreateClause:
 				_outCypherCreateClause(str, obj);
+				break;
+			case T_CypherDeleteClause:
+				_outCypherDeleteClause(str, obj);
 				break;
 			case T_CypherPath:
 				_outCypherPath(str, obj);

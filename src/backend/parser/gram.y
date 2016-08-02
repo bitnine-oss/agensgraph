@@ -546,17 +546,17 @@ static Node *wrapCypherWithSelect(Node *stmt);
 
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
-				cypher_create cypher_label_opt cypher_limit_opt cypher_match
-				cypher_no_parens cypher_node cypher_path
+				cypher_create cypher_delete cypher_label_opt cypher_limit_opt
+				cypher_match cypher_no_parens cypher_node cypher_path
 				cypher_path_opt_varirable cypher_range_idx cypher_range_idx_opt
 				cypher_range_opt cypher_rel cypher_return cypher_skip_opt
 				cypher_variable cypher_variable_opt cypher_varlen_opt
 				cypher_with cypher_with_parens
-%type <list>	cypher_distinct_opt cypher_path_chain
+%type <list>	cypher_distinct_opt cypher_expr_list cypher_path_chain
 				cypher_path_chain_opt_parens cypher_pattern
 				cypher_types cypher_types_opt
 %type <str>		cypher_prop_map_opt cypher_varname
-%type <boolean>	cypher_rel_left cypher_rel_right
+%type <boolean>	cypher_detach_opt cypher_rel_left cypher_rel_right
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -597,7 +597,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR CYCLE
 
 	DATA_P DATABASE DAY_P DEALLOCATE DEC DECIMAL_P DECLARE DEFAULT DEFAULTS
-	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DESC
+	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DESC DETACH
 	DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P DOUBLE_P DROP
 
 	EACH ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT
@@ -719,13 +719,13 @@ static Node *wrapCypherWithSelect(Node *stmt);
  * keywords anywhere else in the grammar, but it's definitely risky.  We can
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
- * To support Cypher, the precedence of unreserved keyword, SKIP, must be the
- * same as that of IDENT so that they can follow a_expr without creating
- * postfix-operator problems.
+ * To support Cypher, the precedence of unreserved keywords,
+ * SKIP, DELETE_P, and DETACH, must be the same as that of IDENT so that they
+ * can follow a_expr without creating postfix-operator problems.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			SKIP
+			SKIP DELETE_P DETACH
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -13693,6 +13693,7 @@ unreserved_keyword:
 			| DELETE_P
 			| DELIMITER
 			| DELIMITERS
+			| DETACH
 			| DICTIONARY
 			| DISABLE_P
 			| DISCARD
@@ -14174,6 +14175,7 @@ cypher_clause_head:
 cypher_clause:
 			cypher_clause_head
 			| cypher_with
+			| cypher_delete
 		;
 
 cypher_match:
@@ -14225,6 +14227,21 @@ cypher_with:
 					n->where = $7;
 					$$ = (Node *) n;
 				}
+		;
+
+cypher_delete:
+			cypher_detach_opt DELETE_P cypher_expr_list
+				{
+					CypherDeleteClause *n = makeNode(CypherDeleteClause);
+					n->detach = $1;
+					n->exprs = $3;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_detach_opt:
+			DETACH				{ $$ = true; }
+			| /* EMPTY */		{ $$ = false; }
 		;
 
 cypher_pattern:
@@ -14443,6 +14460,13 @@ cypher_skip_opt:
 cypher_limit_opt:
 			limit_clause
 			| /* EMPTY */		{ $$ = NULL; }
+		;
+
+cypher_expr_list:
+			a_expr
+					{ $$ = list_make1($1); }
+			| cypher_expr_list ',' a_expr
+					{ $$ = lappend($1, $3); }
 		;
 
 %%

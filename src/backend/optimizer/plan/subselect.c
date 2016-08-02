@@ -2574,7 +2574,8 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 			break;
 
 		case T_CypherCreate:
-			/* currently, CypherCreate does not consider params */
+		case T_ModifyGraph:
+			/* currently, these nodes do not consider params */
 			break;
 
 		default:

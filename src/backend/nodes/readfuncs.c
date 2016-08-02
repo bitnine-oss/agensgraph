@@ -227,6 +227,12 @@ _readQuery(void)
 	READ_NODE_FIELD(setOperations);
 	READ_NODE_FIELD(constraintDeps);
 
+	READ_NODE_FIELD(graphPattern);
+	READ_ENUM_FIELD(graph.writeOp, GraphWriteOp);
+	READ_BOOL_FIELD(graph.last);
+	READ_BOOL_FIELD(graph.detach);
+	READ_NODE_FIELD(graph.exprs);
+
 	READ_DONE();
 }
 

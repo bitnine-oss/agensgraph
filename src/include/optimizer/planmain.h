@@ -92,6 +92,9 @@ extern ModifyTable *make_modifytable(PlannerInfo *root,
 extern bool is_projection_capable_plan(Plan *plan);
 extern CypherCreate *make_cyphercreate(PlannerInfo *root, CmdType operation,
 							bool canSetTag, Plan *subplan, List *graphPattern);
+extern ModifyGraph *make_modifygraph(PlannerInfo *root, bool canSetTag,
+									 GraphWriteOp operation, bool last,
+									 bool detach, Plan *subplan, List *exprs);
 
 /*
  * prototypes for plan/initsplan.c

@@ -200,8 +200,7 @@ CREATE (),
 
 MATCH (a) RETURN (a).id, (a).prop_map;
 
-DELETE FROM graph.vertex;
-DELETE FROM graph.edge;
+MATCH (n) DETACH DELETE n;
 
 -- refer previous variable
 
@@ -213,8 +212,7 @@ RETURN (a).prop_map, (d).prop_map, (b).prop_map, (e).prop_map, (c).prop_map;
 MATCH (a)-[b]-(c)
 RETURN (a).prop_map, (b).prop_map, (c).prop_map;
 
-DELETE FROM graph.vertex;
-DELETE FROM graph.edge;
+MATCH (n) DETACH DELETE n;
 
 -- relationship
 

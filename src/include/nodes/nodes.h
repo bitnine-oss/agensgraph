@@ -79,6 +79,7 @@ typedef enum NodeTag
 	T_LockRows,
 	T_Limit,
 	T_CypherCreate,
+	T_ModifyGraph,
 	/* these aren't subclasses of Plan: */
 	T_NestLoopParam,
 	T_PlanRowMark,
@@ -127,6 +128,7 @@ typedef enum NodeTag
 	T_LockRowsState,
 	T_LimitState,
 	T_CypherCreateState,
+	T_ModifyGraphState,
 
 	/*
 	 * TAGS FOR PRIMITIVE NODES (primnodes.h)
@@ -432,6 +434,7 @@ typedef enum NodeTag
 	T_CypherMatchClause,
 	T_CypherProjection,
 	T_CypherCreateClause,
+	T_CypherDeleteClause,
 	T_CypherPath,
 	T_CypherNode,
 	T_CypherRel,
@@ -575,6 +578,7 @@ typedef enum CmdType
 	CMD_UPDATE,					/* update stmt */
 	CMD_INSERT,					/* insert stmt */
 	CMD_DELETE,
+	CMD_GRAPHWRITE,				/* graph write query */
 	CMD_UTILITY,				/* cmds like create, destroy, copy, vacuum,
 								 * etc. */
 	CMD_CYPHERCREATE,			/* cypher stmt */
@@ -661,5 +665,17 @@ typedef enum OnConflictAction
 	ONCONFLICT_NOTHING,			/* ON CONFLICT ... DO NOTHING */
 	ONCONFLICT_UPDATE			/* ON CONFLICT ... DO UPDATE */
 } OnConflictAction;
+
+
+/*
+ * GraphWriteOp - enums for type of operation when CMD_GRAPHWRITE
+ *
+ * This is needed in both parsenodes.h and plannodes.h.
+ */
+typedef enum GraphWriteOp
+{
+	GWROP_NONE = 0,
+	GWROP_DELETE
+} GraphWriteOp;
 
 #endif   /* NODES_H */

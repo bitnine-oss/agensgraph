@@ -912,6 +912,12 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_NODE_FIELD(constraintDeps);
 	COMPARE_NODE_FIELD(withCheckOptions);
 
+	COMPARE_NODE_FIELD(graphPattern);
+	COMPARE_SCALAR_FIELD(graph.writeOp);
+	COMPARE_SCALAR_FIELD(graph.last);
+	COMPARE_SCALAR_FIELD(graph.detach);
+	COMPARE_NODE_FIELD(graph.exprs);
+
 	return true;
 }
 
@@ -2632,6 +2638,16 @@ _equalCypherCreateClause(const CypherCreateClause *a,
 }
 
 static bool
+_equalCypherDeleteClause(const CypherDeleteClause *a,
+						 const CypherDeleteClause *b)
+{
+	COMPARE_SCALAR_FIELD(detach);
+	COMPARE_NODE_FIELD(exprs);
+
+	return true;
+}
+
+static bool
 _equalCypherNode(const CypherNode *a, const CypherNode *b)
 {
 	COMPARE_NODE_FIELD(variable);
@@ -3415,6 +3431,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherCreateClause:
 			retval = _equalCypherCreateClause(a, b);
+			break;
+		case T_CypherDeleteClause:
+			retval = _equalCypherDeleteClause(a, b);
 			break;
 		case T_CypherPath:
 			retval = _equalCypherPath(a, b);
