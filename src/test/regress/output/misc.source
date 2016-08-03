@@ -616,6 +616,8 @@ SELECT user_relns() AS user_relns
  dept
  dupindexcols
  e_star
+ edge
+ edge_id_seq
  emp
  equipment_r
  f_star
@@ -709,8 +711,10 @@ SELECT user_relns() AS user_relns
  tvvm
  tvvmv
  varchar_tbl
+ vertex
+ vertex_id_seq
  xacttest
-(132 rows)
+(136 rows)
 
 SELECT name(equipment(hobby_construct(text 'skywalking', text 'mer')));
  name 

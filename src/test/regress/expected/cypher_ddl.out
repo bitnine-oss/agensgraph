@@ -1,17 +1,17 @@
--------------------------------------------------------------------------------
--- Cypher Query Language - DDL test
--------------------------------------------------------------------------------
+--
+-- Cypher Query Language - DDL
+--
 -- check default graph objects
-SELECT labname, labowner,labkind FROM ag_label;
- labname | labowner | labkind 
----------+----------+---------
- vertex  |       10 | v
- edge    |       10 | e
+SELECT labname, labkind FROM ag_label;
+ labname | labkind 
+---------+---------
+ vertex  | v
+ edge    | e
 (2 rows)
 
--------------------------------------------------------------------------------
--- CREATE AND DROP LABEL
--------------------------------------------------------------------------------
+--
+-- CREATE/DROP LABEL
+--
 CREATE VLABEL vlabel_p1;
 NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL vlabel_p2;
@@ -103,7 +103,7 @@ SELECT labname, labkind FROM ag_label;
 (12 rows)
 
 SELECT childlab.labname AS child, parentlab.labname AS parent 
-FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh 
+FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh
 WHERE childlab.oid = inh.inhrelid AND parentlab.oid = inh.inhparent;
    child   |  parent   
 -----------+-----------
@@ -120,18 +120,21 @@ WHERE childlab.oid = inh.inhrelid AND parentlab.oid = inh.inhparent;
  elabel_c3 | elabel_c2
 (11 rows)
 
--- wrong case
-CREATE VLABEL wrong_parent inherits(elabel_p1);
+-- wrong cases
+CREATE VLABEL wrong_parent inherits (elabel_p1);
 NOTICE:  merging column "id" with inherited definition
 ERROR:  parent label has different labkind 'v'
-CREATE ELABEL wrong_parent inherits(vlabel_p1);
+CREATE ELABEL wrong_parent inherits (vlabel_p1);
 NOTICE:  merging column "id" with inherited definition
 ERROR:  parent label has different labkind 'e'
 DROP TABLE vlabel_c7;
 ERROR:  table "vlabel_c7" does not exist
 DROP TABLE elabel_c3;
 ERROR:  table "elabel_c3" does not exist
+DROP VLABEL nothing;
+ERROR:  graph label "nothing" does not exist
 DROP ELABEL vlabel_c7;
+ERROR:  proper error message
 DROP VLABEL vlabel_p1;
 ERROR:  cannot drop label vlabel_p1 because other objects depend on it
 DETAIL:  label vlabel_c1 depends on label vlabel_p1
@@ -143,15 +146,13 @@ ERROR:  cannot drop label vlabel_c1 because other objects depend on it
 DETAIL:  label vlabel_c2 depends on label vlabel_c1
 label vlabel_c3 depends on label vlabel_c2
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
-DROP VLABEL nothing; 
-ERROR:  graph label "nothing" does not exist
 DROP VLABEL vertex CASCADE;
-TODO : add fail commend
+ERROR:  proper error message
 DROP ELABEL edge CASCADE;
-TODO : add fail commend
--------------------------------------------------------------------------------
+ERROR:  proper error message
+--
 -- DROP ALL LABELS
--------------------------------------------------------------------------------
+--
 DROP VLABEL vlabel_p1 CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to label vlabel_c1
@@ -171,7 +172,7 @@ SELECT labname, labkind FROM ag_label;
 (2 rows)
 
 SELECT childlab.labname AS child, parentlab.labname AS parent 
-FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh 
+FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh
 WHERE childlab.oid = inh.inhrelid AND parentlab.oid = inh.inhparent;
  child | parent 
 -------+--------
