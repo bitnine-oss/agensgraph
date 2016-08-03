@@ -322,9 +322,9 @@ ERROR:  syntax error at or near "xxx"
 LINE 1: xxx;
         ^
 CREATE foo;
-ERROR:  syntax error at or near "foo"
+ERROR:  syntax error at or near ";"
 LINE 1: CREATE foo;
-               ^
+                  ^
 CREATE TABLE ;
 ERROR:  syntax error at or near ";"
 LINE 1: CREATE TABLE ;

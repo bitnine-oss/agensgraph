@@ -4069,17 +4069,6 @@ $$ language plpgsql;
 
 select unreserved_test();
 
-create or replace function unreserved_test() returns int as $$
-declare
-  return int := 42;
-begin
-  return := return + 1;
-  return return;
-end
-$$ language plpgsql;
-
-select unreserved_test();
-
 drop function unreserved_test();
 
 --

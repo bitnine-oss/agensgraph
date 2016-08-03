@@ -14,6 +14,8 @@ SELECT relname, relhasindex
 a|f
 a_star|f
 abstime_tbl|f
+ag_inherits|t
+ag_label|t
 aggtest|f
 array_index_op_test|t
 array_op_test|f
@@ -41,6 +43,7 @@ defaultexpr_tbl|f
 dept|f
 dupindexcols|t
 e_star|f
+edge|t
 emp|f
 equipment_r|f
 f_star|f
@@ -171,6 +174,7 @@ timestamptz_tbl|f
 timetz_tbl|f
 tinterval_tbl|f
 varchar_tbl|f
+vertex|t
 -- restore normal output mode
 \a\t
 --
