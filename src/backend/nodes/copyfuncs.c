@@ -4201,6 +4201,21 @@ _copyCypherName(const CypherName *from)
 	return newnode;
 }
 
+static CypherCreate *
+_copyCypherCreate(const CypherCreate *from)
+{
+	CypherCreate *newnode = makeNode(CypherCreate);
+
+	CopyPlanFields((const Plan *) from, (Plan *) newnode);
+
+	COPY_SCALAR_FIELD(operation);
+	COPY_SCALAR_FIELD(canSetTag);
+	COPY_NODE_FIELD(subplan);
+	COPY_NODE_FIELD(graphPattern);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *					pg_list.h copy functions
  * ****************************************************************
@@ -5083,6 +5098,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherName:
 			retval = _copyCypherName(from);
+			break;
+		case T_CypherCreate:
+			retval = _copyCypherCreate(from);
 			break;
 
 		default:
