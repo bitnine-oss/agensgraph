@@ -689,6 +689,7 @@ static ObjectAddress get_object_address_usermapping(List *objname,
 							   List *objargs, bool missing_ok);
 static ObjectAddress get_object_address_defacl(List *objname, List *objargs,
 						  bool missing_ok);
+static ObjectAddress get_object_address_label(List *objname, bool missing_ok);
 static const ObjectPropertyType *get_object_property_data(Oid class_id);
 
 static void getRelationDescription(StringInfo buffer, Oid relid);
@@ -929,10 +930,7 @@ get_object_address(ObjectType objtype, List *objname, List *objargs,
 													missing_ok);
 				break;
 			case OBJECT_LABEL:
-				Assert(list_length(objname) == 1);
-				address.classId = LabelRelationId;
-				address.objectId = get_labname_labid(strVal(linitial(objname)));
-				address.objectSubId = 0;
+				address = get_object_address_label(objname, missing_ok);
 				break;
 
 			default:
@@ -1818,6 +1816,32 @@ not_found:
 				   errmsg("default ACL for user \"%s\" on %s does not exist",
 						  username, objtype_str)));
 	}
+	return address;
+}
+
+/*
+ * Find the ObjectAddress for a graph label
+ */
+static ObjectAddress get_object_address_label(List *objname, bool missing_ok)
+{
+	ObjectAddress address;
+	char	*labname;
+
+	Assert(list_length(objname) == 1);
+
+	labname = strVal(linitial(objname));
+
+	address.classId = LabelRelationId;
+	address.objectId = get_labname_labid(labname);
+	address.objectSubId = 0;
+
+	if (!OidIsValid(address.objectId) && !missing_ok)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("graph label \"%s\" does not exist", labname)));
+	}
+
 	return address;
 }
 
