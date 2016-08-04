@@ -1,0 +1,475 @@
+-------------------------------------------------------------------------------
+-- Initialize
+-------------------------------------------------------------------------------
+DROP vlabel regvlabel1;
+ERROR:  graph label "regvlabel1" does not exist
+DROP vlabel regvlabel2;
+ERROR:  graph label "regvlabel2" does not exist
+DROP vlabel regvlabel3;
+ERROR:  graph label "regvlabel3" does not exist
+DROP elabel regelabel1;
+ERROR:  graph label "regelabel1" does not exist
+DROP elabel regelabel2;
+ERROR:  graph label "regelabel2" does not exist
+CREATE vlabel regvlabel1;
+NOTICE:  merging column "id" with inherited definition
+CREATE vlabel regvlabel2;
+NOTICE:  merging column "id" with inherited definition
+CREATE vlabel regvlabel3;
+NOTICE:  merging column "id" with inherited definition
+CREATE elabel regelabel1;
+NOTICE:  merging column "id" with inherited definition
+CREATE elabel regelabel2;
+NOTICE:  merging column "id" with inherited definition
+CREATE (v1:regvlabel1 '{"name":"regv1-1", "ID":1}'),
+	   (v2:regvlabel1 '{"name":"regv1-2", "ID":2}'),
+	   (v3:regvlabel1 '{"name":"regv1-3", "ID":3}'),
+	   (v4:regvlabel2 '{"name":"regv2-1", "ID":4}'),
+	   (v5:regvlabel2 '{"name":"regv2-2", "ID":5}'),
+	   (v6:regvlabel2 '{"name":"regv2-3", "ID":6}'),
+	   (v7:regvlabel2 '{"name":"regv2-4", "ID":7}'),
+	   (v8:regvlabel2 '{"name":"regv2-5", "ID":8}'),
+	   (v1)-[:regelabel1 '{"name":"rege1-1", "ID":1}']->(v4),
+	   (v2)-[:regelabel1 '{"name":"rege1-2", "ID":2}']->(v5),
+	   (v3)-[:regelabel1 '{"name":"rege1-3", "ID":3}']->(v6),
+	   (v1)<-[:regelabel2 '{"name":"rege2-1", "ID":4}']-(v8),
+	   (v2)<-[:regelabel2 '{"name":"rege2-2", "ID":5}']-(v7),
+	   (v3)<-[:regelabel2 '{"name":"rege2-3", "ID":6}']-(v6);
+-------------------------------------------------------------------------------
+-- MATCH & RETURN clause Test
+-------------------------------------------------------------------------------
+-- Simple match & wrong cases.
+MATCH (a);
+ERROR:  Cypher query must end with RETURN or update clause
+MATCH (a) RETURN (a).prop_map AS a;
+              a               
+------------------------------
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 3, "name": "regv1-3"}
+ {"ID": 4, "name": "regv2-1"}
+ {"ID": 5, "name": "regv2-2"}
+ {"ID": 6, "name": "regv2-3"}
+ {"ID": 7, "name": "regv2-4"}
+ {"ID": 8, "name": "regv2-5"}
+(8 rows)
+
+MATCH (a)-[]-(b) RETURN (a).prop_map AS a, (b).prop_map AS b;
+              a               |              b               
+------------------------------+------------------------------
+ {"ID": 1, "name": "regv1-1"} | {"ID": 4, "name": "regv2-1"}
+ {"ID": 1, "name": "regv1-1"} | {"ID": 8, "name": "regv2-5"}
+ {"ID": 2, "name": "regv1-2"} | {"ID": 5, "name": "regv2-2"}
+ {"ID": 2, "name": "regv1-2"} | {"ID": 7, "name": "regv2-4"}
+ {"ID": 3, "name": "regv1-3"} | {"ID": 6, "name": "regv2-3"}
+ {"ID": 3, "name": "regv1-3"} | {"ID": 6, "name": "regv2-3"}
+ {"ID": 4, "name": "regv2-1"} | {"ID": 1, "name": "regv1-1"}
+ {"ID": 5, "name": "regv2-2"} | {"ID": 2, "name": "regv1-2"}
+ {"ID": 6, "name": "regv2-3"} | {"ID": 3, "name": "regv1-3"}
+ {"ID": 6, "name": "regv2-3"} | {"ID": 3, "name": "regv1-3"}
+ {"ID": 7, "name": "regv2-4"} | {"ID": 2, "name": "regv1-2"}
+ {"ID": 8, "name": "regv2-5"} | {"ID": 1, "name": "regv1-1"}
+(12 rows)
+
+MATCH (a)<-[]->(b) RETURN (a).prop_map AS a, (b).prop_map AS b;
+              a               |              b               
+------------------------------+------------------------------
+ {"ID": 1, "name": "regv1-1"} | {"ID": 4, "name": "regv2-1"}
+ {"ID": 1, "name": "regv1-1"} | {"ID": 8, "name": "regv2-5"}
+ {"ID": 2, "name": "regv1-2"} | {"ID": 5, "name": "regv2-2"}
+ {"ID": 2, "name": "regv1-2"} | {"ID": 7, "name": "regv2-4"}
+ {"ID": 3, "name": "regv1-3"} | {"ID": 6, "name": "regv2-3"}
+ {"ID": 3, "name": "regv1-3"} | {"ID": 6, "name": "regv2-3"}
+ {"ID": 4, "name": "regv2-1"} | {"ID": 1, "name": "regv1-1"}
+ {"ID": 5, "name": "regv2-2"} | {"ID": 2, "name": "regv1-2"}
+ {"ID": 6, "name": "regv2-3"} | {"ID": 3, "name": "regv1-3"}
+ {"ID": 6, "name": "regv2-3"} | {"ID": 3, "name": "regv1-3"}
+ {"ID": 7, "name": "regv2-4"} | {"ID": 2, "name": "regv1-2"}
+ {"ID": 8, "name": "regv2-5"} | {"ID": 1, "name": "regv1-1"}
+(12 rows)
+
+-- MATCH & WHERE
+MATCH (a:regvlabel1)
+WHERE (a).prop_map->>'name'='regv1-1'
+RETURN (a).prop_map;
+           prop_map           
+------------------------------
+ {"ID": 1, "name": "regv1-1"}
+(1 row)
+
+-- TODO : label filtering by WHERE clause
+-- TODO : relationship filtering by WHERE clause
+-- Column alias
+MATCH (a:regvlabel1)
+RETURN (a).id AS vid;
+ vid 
+-----
+   1
+   2
+   3
+(3 rows)
+
+MATCH (a:regvlabel1)
+RETURN (a).prop_map->>'ID' AS empid;
+ empid 
+-------
+ 1
+ 2
+ 3
+(3 rows)
+
+MATCH (a:regvlabel1)
+RETURN (a).prop_map->>'ID' AS empid
+ORDER BY empid DESC;
+ empid 
+-------
+ 3
+ 2
+ 1
+(3 rows)
+
+-- wrong case(alias)
+MATCH (a:regvlabel1)
+RETURN (a).prop_map->>'ID' AS empid
+ORDER BY a;
+ERROR:  column "a" does not exist
+LINE 3: ORDER BY a;
+                 ^
+-- ORDER BY
+MATCH (a:regvlabel1)
+RETURN (a).prop_map AS a
+ORDER BY a->>'ID';
+              a               
+------------------------------
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 3, "name": "regv1-3"}
+(3 rows)
+
+MATCH (a:regvlabel1)
+RETURN (a).prop_map AS a
+ORDER BY a->>'ID' ASC;
+              a               
+------------------------------
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 3, "name": "regv1-3"}
+(3 rows)
+
+MATCH (a:regvlabel1)
+RETURN (a).prop_map AS a
+ORDER BY a->>'ID' DESC;
+              a               
+------------------------------
+ {"ID": 3, "name": "regv1-3"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 1, "name": "regv1-1"}
+(3 rows)
+
+-- LIMIT
+MATCH (a:regvlabel1)
+RETURN (a).prop_map AS a
+ORDER BY a->>'ID'
+LIMIT 1;
+              a               
+------------------------------
+ {"ID": 1, "name": "regv1-1"}
+(1 row)
+
+MATCH (a:regvlabel1)
+RETURN (a).prop_map AS a
+ORDER BY a->>'ID' DESC
+LIMIT 1;
+              a               
+------------------------------
+ {"ID": 3, "name": "regv1-3"}
+(1 row)
+
+-- SKIP
+MATCH (a:regvlabel2)
+RETURN (a).prop_map AS a
+ORDER BY a->>'ID'
+SKIP 3;
+              a               
+------------------------------
+ {"ID": 7, "name": "regv2-4"}
+ {"ID": 8, "name": "regv2-5"}
+(2 rows)
+
+MATCH (a:regvlabel2)
+RETURN (a).prop_map AS a
+ORDER BY a->>'ID'
+SKIP 1
+LIMIT 1;
+              a               
+------------------------------
+ {"ID": 5, "name": "regv2-2"}
+(1 row)
+
+MATCH (a:regvlabel2)
+RETURN (a).prop_map AS a
+ORDER BY a->>'ID' DESC
+SKIP 1
+LIMIT 1;
+              a               
+------------------------------
+ {"ID": 7, "name": "regv2-4"}
+(1 row)
+
+-- wrong case (SKIP)
+MATCH (a:regvlabel2)
+RETURN (a).prop_map AS a
+ORDER BY a->>'ID'
+LIMIT 1
+SKIP 1;
+ERROR:  syntax error at or near "SKIP"
+LINE 5: SKIP 1;
+        ^
+-- WITH
+MATCH (a:regvlabel1)-[]-(b:regvlabel2)
+WITH a, count(b) AS rel_count
+RETURN (a).prop_map AS a, rel_count;
+              a               | rel_count 
+------------------------------+-----------
+ {"ID": 1, "name": "regv1-1"} |         2
+ {"ID": 2, "name": "regv1-2"} |         2
+ {"ID": 3, "name": "regv1-3"} |         2
+(3 rows)
+
+-- wrong case (WITH)
+MATCH (a:regvlabel1), (b:regvlabel2)
+WITH a
+RETURN b;
+ERROR:  column "b" does not exist
+LINE 3: RETURN b;
+               ^
+-- DISTINCT vertex
+MATCH (a:regvlabel1), (b:regvlabel2)
+RETURN (a).prop_map AS a;
+              a               
+------------------------------
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 3, "name": "regv1-3"}
+ {"ID": 3, "name": "regv1-3"}
+ {"ID": 3, "name": "regv1-3"}
+ {"ID": 3, "name": "regv1-3"}
+ {"ID": 3, "name": "regv1-3"}
+(15 rows)
+
+MATCH (a:regvlabel1), (b:regvlabel2)
+WITH DISTINCT a
+RETURN (a).prop_map AS a;
+              a               
+------------------------------
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 3, "name": "regv1-3"}
+(3 rows)
+
+-- DISTINCT path
+MATCH (a:regvlabel1)-[]-(b:regvlabel2)
+RETURN (a).prop_map AS a, (b).prop_map AS b;
+              a               |              b               
+------------------------------+------------------------------
+ {"ID": 1, "name": "regv1-1"} | {"ID": 4, "name": "regv2-1"}
+ {"ID": 1, "name": "regv1-1"} | {"ID": 8, "name": "regv2-5"}
+ {"ID": 2, "name": "regv1-2"} | {"ID": 5, "name": "regv2-2"}
+ {"ID": 2, "name": "regv1-2"} | {"ID": 7, "name": "regv2-4"}
+ {"ID": 3, "name": "regv1-3"} | {"ID": 6, "name": "regv2-3"}
+ {"ID": 3, "name": "regv1-3"} | {"ID": 6, "name": "regv2-3"}
+(6 rows)
+
+MATCH (a:regvlabel1)-[]-(b:regvlabel2)
+WITH DISTINCT *
+RETURN (a).prop_map AS a, (b).prop_map AS b;
+              a               |              b               
+------------------------------+------------------------------
+ {"ID": 1, "name": "regv1-1"} | {"ID": 4, "name": "regv2-1"}
+ {"ID": 1, "name": "regv1-1"} | {"ID": 8, "name": "regv2-5"}
+ {"ID": 2, "name": "regv1-2"} | {"ID": 5, "name": "regv2-2"}
+ {"ID": 2, "name": "regv1-2"} | {"ID": 7, "name": "regv2-4"}
+ {"ID": 3, "name": "regv1-3"} | {"ID": 6, "name": "regv2-3"}
+(5 rows)
+
+-- UNION 
+MATCH (a:regvlabel1)
+RETURN (a).prop_map AS all_vertex
+UNION ALL MATCH (b:regvlabel2)
+RETURN (b).prop_map AS all_vertex;
+          all_vertex          
+------------------------------
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 3, "name": "regv1-3"}
+ {"ID": 4, "name": "regv2-1"}
+ {"ID": 5, "name": "regv2-2"}
+ {"ID": 6, "name": "regv2-3"}
+ {"ID": 7, "name": "regv2-4"}
+ {"ID": 8, "name": "regv2-5"}
+(8 rows)
+
+-- wrong case
+MATCH (a:regvlabel1)
+RETURN (a).prop_map AS a
+UNION ALL MATCH (b:regvlabel2)
+RETURN b;
+ERROR:  UNION types jsonb and vertex cannot be matched
+MATCH (a:regvlabel1)
+RETURN (a).prop_map AS all_vertex
+UNION ALL MATCH (b:regvlabel2)
+RETURN (b).prop_map AS akk_vertex;
+          all_vertex          
+------------------------------
+ {"ID": 1, "name": "regv1-1"}
+ {"ID": 2, "name": "regv1-2"}
+ {"ID": 3, "name": "regv1-3"}
+ {"ID": 4, "name": "regv2-1"}
+ {"ID": 5, "name": "regv2-2"}
+ {"ID": 6, "name": "regv2-3"}
+ {"ID": 7, "name": "regv2-4"}
+ {"ID": 8, "name": "regv2-5"}
+(8 rows)
+
+-------------------------------------------------------------------------------
+-- Re-Initialize
+-------------------------------------------------------------------------------
+DROP vlabel regvlabel1;
+DROP vlabel regvlabel2;
+DROP vlabel regvlabel3;
+DROP elabel regelabel1;
+DROP elabel regelabel2;
+CREATE vlabel regvlabel1;
+NOTICE:  merging column "id" with inherited definition
+CREATE vlabel regvlabel2;
+NOTICE:  merging column "id" with inherited definition
+CREATE vlabel regvlabel3;
+NOTICE:  merging column "id" with inherited definition
+CREATE elabel regelabel1;
+NOTICE:  merging column "id" with inherited definition
+CREATE elabel regelabel2;
+NOTICE:  merging column "id" with inherited definition
+-------------------------------------------------------------------------------
+-- CREATE clause Test
+-------------------------------------------------------------------------------
+-- normal creating
+CREATE (),
+	   (a),
+	   (b:regvlabel1),
+	   (c:regvlabel2 '{"name":"test1"}'),
+	   p=(d:regvlabel3 '{"name":"test2", "age":123}')-[:regelabel1]->();
+MATCH (a) RETURN (a).id, (a).prop_map;
+ id |           prop_map            
+----+-------------------------------
+  1 | {}
+  2 | {}
+  3 | {}
+  1 | {}
+  1 | {"name": "test1"}
+  1 | {"age": 123, "name": "test2"}
+(6 rows)
+
+DELETE FROM graph.vertex;
+-- CREATE pattern chain
+CREATE (a:regvlabel1 '{"name":"elem1"}'),
+	   (a)-[d:regelabel1 '{"rel":1}']->(b:regvlabel2 '{"name":"elem2"}'),
+	   (b)<-[e:regelabel2 '{"rel":2}']-(c:regvlabel2 '{"name":"elem3"}')
+RETURN (a).prop_map, (d).prop_map, (b).prop_map, (e).prop_map, (c).prop_map;
+     prop_map      |  prop_map  |     prop_map      |  prop_map  |     prop_map      
+-------------------+------------+-------------------+------------+-------------------
+ {"name": "elem1"} | {"rel": 1} | {"name": "elem2"} | {"rel": 2} | {"name": "elem3"}
+(1 row)
+
+MATCH (a)-[b]-(c)
+RETURN (a).prop_map, (b).prop_map, (c).prop_map;
+     prop_map      |  prop_map  |     prop_map      
+-------------------+------------+-------------------
+ {"name": "elem1"} | {"rel": 1} | {"name": "elem2"}
+ {"name": "elem2"} | {"rel": 1} | {"name": "elem1"}
+ {"name": "elem2"} | {"rel": 2} | {"name": "elem3"}
+ {"name": "elem3"} | {"rel": 2} | {"name": "elem2"}
+(4 rows)
+
+DELETE FROM graph.vertex;
+DELETE FROM graph.edge;
+-- insert relationships
+CREATE (a:regvlabel1 '{"name":"insert v1-1"}')-[b:regelabel1]->(c:regvlabel2 '{"name":"insert v2-1"}');
+CREATE (a:regvlabel1 '{"name":"insert v1-2"}')<-[b:regelabel1]-(c:regvlabel2 '{"name":"insert v2-2"}');
+MATCH (a)<-[b]->(c)
+RETURN (a).prop_map, (b).prop_map, (c).prop_map;
+        prop_map         | prop_map |        prop_map         
+-------------------------+----------+-------------------------
+ {"name": "insert v1-1"} | {}       | {"name": "insert v2-1"}
+ {"name": "insert v1-2"} | {}       | {"name": "insert v2-2"}
+ {"name": "insert v2-1"} | {}       | {"name": "insert v1-1"}
+ {"name": "insert v2-2"} | {}       | {"name": "insert v1-2"}
+(4 rows)
+
+DELETE FROM graph.vertex;
+-- bi-directional relationship
+CREATE (:regvlabel2 '{"name":"regvlabel2-1"}'),
+	   (:regvlabel2 '{"name":"regvlabel2-2"}'),
+	   (:regvlabel2 '{"name":"regvlabel2-3"}');
+CREATE (a:regvlabel1 '{"name":"regvlabel1"}')
+MATCH (b:regvlabel2)
+CREATE (a)-[c:regelabel1 '{"name":"e1"}']->(b), (b)-[d:regelabel1 '{"name":"e2"}']->(a)
+RETURN (a).id = (c).start_id AND (c).end_id = (b).id AS atob,
+	   (b).id = (d).start_id AND (d).end_id = (a).id AS btoa;
+ atob | btoa 
+------+------
+ t    | t
+ t    | t
+ t    | t
+(3 rows)
+
+-- wrong case (duplicated variable)
+CREATE (a), (a);
+ERROR:  variable "a" already exists
+CREATE (a:regvlabel1), (b:regvlabel2), (a:regvlabel);
+ERROR:  variable "a" already exists
+-- wrongly used label
+CREATE (a:regvlabel1:regvlabel2);
+ERROR:  syntax error at or near ":"
+LINE 1: CREATE (a:regvlabel1:regvlabel2);
+                            ^
+CREATE (:regvlabel1)-[ ]->regvlabel2);
+ERROR:  syntax error at or near "regvlabel2"
+LINE 1: CREATE (:regvlabel1)-[ ]->regvlabel2);
+                                  ^
+CREATE (:regvlabel1)-[ '{"reltype":"empty"}']->(:regvlabel2);
+ERROR:  a single relationship type must be specified for CREATE
+-- wrong case (bi-directional relationships)
+CREATE (:regvlabel1 '{"name":"insert v1-3"}')-[:regelabel1]-(:regvlabel2 '{"name":"insert v2-3"}');
+ERROR:  only directed relationships are supported in CREATE
+CREATE (:regvlabel1 '{"name":"insert v1-4"}')<-[:regelabel1]->(:regvlabel2 '{"name":"insert v2-4"}');
+ERROR:  only directed relationships are supported in CREATE
+-- subquery processing
+MATCH (a:regvlabel1), (b:regvlabel2)
+CREATE p=(a)-[:regelabel1 '{"name":"edge1"}']->(b)
+CREATE (b)<-[:regelabel2 '{"name":"edge2"}']-(c:regvlabel3 '{"name":"v3"}')
+RETURN (c).prop_map;
+    prop_map    
+----------------
+ {"name": "v3"}
+ {"name": "v3"}
+ {"name": "v3"}
+(3 rows)
+
+DELETE FROM graph.vertex;
+DELETE FROM graph.edge;
+-------------------------------------------------------------------------------
+-- drop labels
+-------------------------------------------------------------------------------
+DROP vlabel regvlabel1;
+DROP vlabel regvlabel2;
+DROP vlabel regvlabel3;
+DROP elabel regelabel1;
+DROP elabel regelabel2;
