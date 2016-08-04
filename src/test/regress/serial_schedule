@@ -104,7 +104,6 @@ test: gin
 test: gist
 test: spgist
 test: privileges
-test: security_label
 test: collate
 test: matview
 test: lock
@@ -158,3 +157,5 @@ test: with
 test: xml
 test: event_trigger
 test: stats
+test: cypher_ddl
+test: cypher_dml
