@@ -22,6 +22,7 @@
 #include "catalog/pg_class.h"
 #include "catalog/pg_proc.h"
 #include "commands/defrem.h"
+#include "commands/graphcmds.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
@@ -114,6 +115,17 @@ RemoveObjects(DropStmt *stmt)
 				errhint("Use DROP AGGREGATE to drop aggregate functions.")));
 
 			ReleaseSysCache(tup);
+		}
+
+		/*
+		 * Restriction.
+		 * DROP VLABEL cannot drop elabel.
+		 * DROP ELABEL cannot drop vlabel.
+		 */
+		if (stmt->removeType == OBJECT_ELABEL ||
+			stmt->removeType == OBJECT_VLABEL)
+		{
+			CheckDropLabel(stmt->removeType, address.objectId);
 		}
 
 		/* Check permissions. */

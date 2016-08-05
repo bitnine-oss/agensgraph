@@ -1091,13 +1091,13 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_DEFAULT:
 		case OBJECT_DOMAIN:
 		case OBJECT_DOMCONSTRAINT:
+		case OBJECT_ELABEL:
 		case OBJECT_EXTENSION:
 		case OBJECT_FDW:
 		case OBJECT_FOREIGN_SERVER:
 		case OBJECT_FOREIGN_TABLE:
 		case OBJECT_FUNCTION:
 		case OBJECT_INDEX:
-		case OBJECT_LABEL:
 		case OBJECT_LANGUAGE:
 		case OBJECT_LARGEOBJECT:
 		case OBJECT_MATVIEW:
@@ -1119,6 +1119,7 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_TYPE:
 		case OBJECT_USER_MAPPING:
 		case OBJECT_VIEW:
+		case OBJECT_VLABEL:
 			return true;
 	}
 	return true;

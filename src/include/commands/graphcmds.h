@@ -14,5 +14,6 @@
 
 extern void CreateLabelCommand(CreateLabelStmt *labelStmt,
 							   const char *queryString, ParamListInfo params);
+extern void CheckDropLabel(ObjectType removeType, Oid labid);
 
 #endif	/* GRAPHCMDS_H */

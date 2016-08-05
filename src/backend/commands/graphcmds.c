@@ -31,6 +31,7 @@
 #include "nodes/parsenodes.h"
 #include "parser/parse_utilcmd.h"
 #include "tcop/utility.h"
+#include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -228,4 +229,37 @@ StoreCatalogAgInheritance1(Oid labid, Oid parentOid, int16 seqNumber,
 
 	InvokeObjectPostAlterHookArg(AgInheritsRelationId, labid, 0,
 								 parentOid, false);
+}
+
+
+/*
+ * Restriction.
+ * DROP VLABEL cannot drop elabel.
+ * DROP ELABEL cannot drop vlabel.
+ */
+void
+CheckDropLabel(ObjectType removeType, Oid labid)
+{
+	HeapTuple		tuple;
+	Form_ag_label	labtup;
+
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for label (OID=%u)", labid);
+
+	labtup = (Form_ag_label) GETSTRUCT(tuple);
+
+	if (removeType == OBJECT_VLABEL &&
+		labtup->labkind != LABEL_KIND_VERTEX)
+		elog(ERROR, "DROP VLABEL cannot drop elabel");
+	else if (removeType == OBJECT_ELABEL &&
+			labtup->labkind != LABEL_KIND_EDGE)
+		elog(ERROR, "DROP ELABEL cannot drop vlabel");
+
+	if (namestrcmp(&(labtup->labname), AG_VERTEX) == 0)
+		elog(ERROR, "DROP VLABEL cannot drop base vertex label");
+	else if (namestrcmp(&(labtup->labname), AG_EDGE) == 0)
+		elog(ERROR, "DROP ELABEL cannot drop base edge label");
+
+	ReleaseSysCache(tuple);
 }

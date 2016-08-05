@@ -654,7 +654,10 @@ static const struct object_type_map
 	},
 	/* OCLASS_LABEL */
 	{
-		"label", OBJECT_LABEL
+		"elabel", OBJECT_ELABEL
+	},
+	{
+		"vlabel", OBJECT_VLABEL
 	}
 };
 
@@ -698,6 +701,7 @@ static void getRelationTypeDescription(StringInfo buffer, Oid relid,
 						   int32 objectSubId);
 static void getProcedureTypeDescription(StringInfo buffer, Oid procid);
 static void getConstraintTypeDescription(StringInfo buffer, Oid constroid);
+static void getLabelDescription(StringInfo buffer, Oid labid);
 static void getOpFamilyIdentity(StringInfo buffer, Oid opfid, List **objname);
 static void getRelationIdentity(StringInfo buffer, Oid relid, List **objname);
 
@@ -929,7 +933,8 @@ get_object_address(ObjectType objtype, List *objname, List *objargs,
 				address = get_object_address_defacl(objname, objargs,
 													missing_ok);
 				break;
-			case OBJECT_LABEL:
+			case OBJECT_ELABEL:
+			case OBJECT_VLABEL:
 				address = get_object_address_label(objname, missing_ok);
 				break;
 
@@ -2231,7 +2236,8 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 						 errmsg("must be superuser")));
 			break;
-		case OBJECT_LABEL:
+		case OBJECT_VLABEL:
+		case OBJECT_ELABEL:
 			if (!ag_label_ownercheck(address.objectId, roleid))
 				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_LABEL,
 							   NameListToString(objname));
@@ -3181,11 +3187,8 @@ getObjectDescription(const ObjectAddress *object)
 			}
 		case OCLASS_LABEL:
 			{
-				Relation	ag_label_desc;
 				HeapTuple	tuple;
 				Form_ag_label labtup;
-
-				ag_label_desc = heap_open(LabelRelationId, AccessShareLock);
 
 				tuple = SearchSysCache1(LABELOID,
 										ObjectIdGetDatum(object->objectId));
@@ -3199,7 +3202,6 @@ getObjectDescription(const ObjectAddress *object)
 								 NameStr(labtup->labname));
 
 				ReleaseSysCache(tuple);
-				heap_close(ag_label_desc, AccessShareLock);
 				break;
 			}
 		default:
@@ -3684,7 +3686,7 @@ getObjectTypeDescription(const ObjectAddress *object)
 			break;
 
 		case OCLASS_LABEL:
-			appendStringInfoString(&buffer, "label");
+			getLabelDescription(&buffer, object->objectId);
 			break;
 
 		default:
@@ -4760,4 +4762,28 @@ strlist_to_textarray(List *list)
 	MemoryContextDelete(memcxt);
 
 	return arr;
+}
+
+/*
+ * subroutine for getObjectTypeDescription: describe a graph label
+ */
+static void getLabelDescription(StringInfo buffer, Oid labid)
+{
+	HeapTuple   tuple;
+	Form_ag_label labtup;
+
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for label %u", labid);
+
+	labtup = (Form_ag_label) GETSTRUCT(tuple);
+
+	if (labtup->labkind == LABEL_KIND_VERTEX)
+		appendStringInfo(buffer, "vlabel");
+	else if (labtup->labkind == LABEL_KIND_EDGE)
+		appendStringInfo(buffer, "elabel");
+	else
+		elog(ERROR, "invalid label %u",labid);
+
+	ReleaseSysCache(tuple);
 }

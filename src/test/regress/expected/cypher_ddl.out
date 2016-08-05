@@ -134,30 +134,33 @@ ERROR:  table "elabel_c3" does not exist
 DROP VLABEL nothing;
 ERROR:  graph label "nothing" does not exist
 DROP ELABEL vlabel_c7;
-ERROR:  proper error message
+ERROR:  DROP ELABEL cannot drop vlabel
 DROP VLABEL vlabel_p1;
 ERROR:  cannot drop label vlabel_p1 because other objects depend on it
 DETAIL:  label vlabel_c1 depends on label vlabel_p1
 label vlabel_c2 depends on label vlabel_c1
 label vlabel_c3 depends on label vlabel_c2
+label vlabel_c7 depends on label vlabel_c1
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 DROP VLABEL vlabel_c1;
 ERROR:  cannot drop label vlabel_c1 because other objects depend on it
 DETAIL:  label vlabel_c2 depends on label vlabel_c1
 label vlabel_c3 depends on label vlabel_c2
+label vlabel_c7 depends on label vlabel_c1
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 DROP VLABEL vertex CASCADE;
-ERROR:  proper error message
+ERROR:  DROP VLABEL cannot drop base vertex label
 DROP ELABEL edge CASCADE;
-ERROR:  proper error message
+ERROR:  DROP ELABEL cannot drop base edge label
 --
 -- DROP all labels
 --
 DROP VLABEL vlabel_p1 CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to label vlabel_c1
 drop cascades to label vlabel_c2
 drop cascades to label vlabel_c3
+drop cascades to label vlabel_c7
 DROP VLABEL vlabel_p2 CASCADE;
 DROP ELABEL elabel_p1 CASCADE;
 NOTICE:  drop cascades to 3 other objects
