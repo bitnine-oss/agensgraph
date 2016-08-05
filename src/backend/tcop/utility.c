@@ -1583,7 +1583,8 @@ ExecDropStmt(DropStmt *stmt, bool isTopLevel)
 			RemoveRelations(stmt);
 			break;
 
-		case OBJECT_LABEL:
+		case OBJECT_ELABEL:
+		case OBJECT_VLABEL:
 			/* fall through */
 
 		default:
@@ -2094,9 +2095,6 @@ CreateCommandTag(Node *parsetree)
 				case OBJECT_TABLE:
 					tag = "DROP TABLE";
 					break;
-				case OBJECT_LABEL:
-					tag = "DROP LABEL";
-					break;
 				case OBJECT_SEQUENCE:
 					tag = "DROP SEQUENCE";
 					break;
@@ -2183,6 +2181,12 @@ CreateCommandTag(Node *parsetree)
 					break;
 				case OBJECT_TRANSFORM:
 					tag = "DROP TRANSFORM";
+					break;
+				case OBJECT_ELABEL:
+					tag = "DROP ELABEL";
+					break;
+				case OBJECT_VLABEL:
+					tag = "DROP VLABEL";
 					break;
 				default:
 					tag = "???";
