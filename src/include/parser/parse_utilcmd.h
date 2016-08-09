@@ -19,6 +19,7 @@
 #define AG_GRAPH		"graph"
 #define AG_VERTEX		"vertex"
 #define AG_EDGE			"edge"
+#define AG_ELEM_OID		"oid"
 #define AG_ELEM_ID		"id"
 #define AG_ELEM_PROP	"prop_map"
 #define AG_START_OID	"start_oid"
