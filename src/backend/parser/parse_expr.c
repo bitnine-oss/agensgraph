@@ -15,6 +15,7 @@
 
 #include "postgres.h"
 
+#include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "commands/dbcommands.h"
 #include "miscadmin.h"
@@ -33,6 +34,7 @@
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
 #include "parser/parse_agg.h"
+#include "parser/parse_utilcmd.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/xml.h"
@@ -118,6 +120,9 @@ static Node *transformIndirection(ParseState *pstate, Node *basenode,
 					 List *indirection);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCollateClause(ParseState *pstate, CollateClause *c);
+static Node *transformJsonIndirection(ParseState *pstate, Node *json,
+									  List *indirection);
+static Node *indirect_prop_map(ParseState *pstate, Node *elem);
 static Node *make_row_comparison_op(ParseState *pstate, List *opname,
 					   List *largs, List *rargs, int location);
 static Node *make_row_distinct_op(ParseState *pstate, List *opname,
@@ -190,8 +195,21 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 				A_Indirection *ind = (A_Indirection *) expr;
 
 				result = transformExprRecurse(pstate, ind->arg);
-				result = transformIndirection(pstate, result,
-											  ind->indirection);
+
+				if (exprType(result) == VERTEXOID ||
+					exprType(result) == EDGEOID)
+					result = indirect_prop_map(pstate, result);
+
+				if (exprType(result) == JSONOID || exprType(result) == JSONBOID)
+				{
+					result = transformJsonIndirection(pstate, result,
+													  ind->indirection);
+				}
+				else
+				{
+					result = transformIndirection(pstate, result,
+												  ind->indirection);
+				}
 				break;
 			}
 
@@ -2564,6 +2582,94 @@ transformCollateClause(ParseState *pstate, CollateClause *c)
 	newc->location = c->location;
 
 	return (Node *) newc;
+}
+
+static Node *
+transformJsonIndirection(ParseState *pstate, Node *json, List *indirection)
+{
+	List	   *pathelems = NIL;
+	ArrayExpr  *patharr;
+	ListCell   *li;
+	Node	   *result;
+
+	foreach(li, indirection)
+	{
+		Node	   *ind = lfirst(li);
+		Node	   *pathelem;
+
+		if (IsA(ind, String))
+		{
+			pathelem = (Node *) makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID,
+										  -1, CStringGetTextDatum(strVal(ind)),
+										  false, false);
+		}
+		else if (IsA(ind, A_Indices))
+		{
+			A_Indices  *indices = (A_Indices *) ind;
+			Node	   *idx;
+			Oid			idxtype;
+
+			if (indices->lidx != NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("slicing on json(b) is not supported"),
+						 parser_errposition(pstate,
+											exprLocation(indices->lidx))));
+
+			idx = transformExpr(pstate, indices->uidx, pstate->p_expr_kind);
+			idxtype = exprType(idx);
+
+			idx = coerce_to_target_type(pstate, idx, idxtype, TEXTOID, -1,
+										COERCION_ASSIGNMENT,
+										COERCE_IMPLICIT_CAST, -1);
+			if (idx == NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("path elements for json(b) must be type text"),
+						 parser_errposition(pstate,
+											exprLocation(indices->uidx))));
+
+			pathelem = idx;
+		}
+		else
+		{
+			Assert(IsA(ind, A_Star));
+
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("\"*\" cannot be applied to vertex or edge"),
+					 parser_errposition(pstate, exprLocation(json))));
+		}
+
+		pathelems = lappend(pathelems, pathelem);
+	}
+
+	patharr = makeNode(ArrayExpr);
+	patharr->array_typeid = TEXTARRAYOID;
+	patharr->element_typeid = TEXTOID;
+	patharr->elements = pathelems;
+	patharr->multidims = false;
+	patharr->location = -1;
+
+	result = (Node *) make_op(pstate, list_make1(makeString("#>")), json,
+							  (Node *) patharr, -1);
+
+	return result;
+}
+
+static Node *
+indirect_prop_map(ParseState *pstate, Node *elem)
+{
+	Node *result;
+
+	AssertArg(exprType(elem) == VERTEXOID || exprType(elem) == EDGEOID);
+
+	result = ParseFuncOrColumn(pstate,
+							   list_make1(makeString(pstrdup(AG_ELEM_PROP))),
+							   list_make1(elem), NULL, -1);
+	Assert(result != NULL);
+
+	return result;
 }
 
 /*

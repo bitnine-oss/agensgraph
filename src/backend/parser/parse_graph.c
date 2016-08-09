@@ -88,7 +88,6 @@ static void preventDropLabel(ParseState *pstate, char *labname);
 static RangePrevclause *makeRangePrevclause(Node *clause);
 static ColumnRef *makeSimpleColumnRef(char *colname, List *indirection,
 									  int location);
-static A_Indirection *makeIndirection(Node *arg, List *indirection);
 static ResTarget *makeSelectResTarget(Node *value, char *label, int location);
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
 static RowExpr *makeTuple(List *args, int location);
@@ -104,8 +103,7 @@ static ColumnRef *makeAliasIndirection(Alias *alias, Node *indirection);
 	makeAliasIndirection(alias, (Node *) makeNode(A_Star))
 #define makeAliasColname(alias, colname) \
 	makeAliasIndirection(alias, (Node *) makeString(pstrdup(colname)))
-#define makeIndirectionColname(arg, colname) \
-	makeIndirection(arg, list_make1(makeString(pstrdup(colname))))
+static Node *makeColumnProjection(ColumnRef *colref, char *attname);
 #define makeAliasStarTarget(alias) \
 	makeSelectResTarget((Node *) makeAliasStar(alias), NULL, -1)
 #define makeTypedTuple(args, type_oid) \
@@ -814,7 +812,7 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 		ColumnRef  *prop_map;
 		Node	   *constraint;
 
-		prop_map = makeAliasColname(r->alias, "prop_map");
+		prop_map = makeAliasColname(r->alias, AG_ELEM_PROP);
 		constraint = makePropMapConstraint(prop_map, node->prop_map);
 		*whereClause = qualAndExpr(*whereClause, constraint);
 	}
@@ -887,7 +885,7 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 		ColumnRef  *prop_map;
 		Node	   *constraint;
 
-		prop_map = makeAliasColname(r->alias, "prop_map");
+		prop_map = makeAliasColname(r->alias, AG_ELEM_PROP);
 		constraint = makePropMapConstraint(prop_map, rel->prop_map);
 		*whereClause = qualAndExpr(*whereClause, constraint);
 	}
@@ -1087,8 +1085,8 @@ makeVertexId(Node *nodeVar, Node **oid, Node **id)
 		ColumnRef *colref = (ColumnRef *) nodeVar;
 		AssertArg(IsA(colref, ColumnRef));
 
-		*oid = (Node *) makeIndirectionColname((Node *) colref, "oid");
-		*id = (Node *) makeIndirectionColname((Node *) colref, "id");
+		*oid = makeColumnProjection(colref, AG_ELEM_OID);
+		*id = makeColumnProjection(colref, AG_ELEM_ID);
 	}
 }
 
@@ -1454,7 +1452,7 @@ preventDropLabel(ParseState *pstate, char *labname)
 	RangeVar   *r;
 	Relation	rel;
 
-	r = makeRangeVar("graph", labname, -1);
+	r = makeRangeVar(AG_GRAPH, labname, -1);
 	rel = parserOpenTable(pstate, r, AccessShareLock);
 
 	/*
@@ -1493,19 +1491,6 @@ makeSimpleColumnRef(char *colname, List *indirection, int location)
 	colref->location = location;
 
 	return colref;
-}
-
-/* (arg).indirection[0].indirection[1]... */
-static A_Indirection *
-makeIndirection(Node *arg, List *indirection)
-{
-	A_Indirection *ind;
-
-	ind = makeNode(A_Indirection);
-	ind->arg = arg;
-	ind->indirection = indirection;
-
-	return ind;
 }
 
 /* value AS label */
@@ -1619,6 +1604,14 @@ static ColumnRef *
 makeAliasIndirection(Alias *alias, Node *indirection)
 {
 	return makeSimpleColumnRef(alias->aliasname, list_make1(indirection), -1);
+}
+
+/* attname(colref) - assume colref is record or composite type */
+static Node *
+makeColumnProjection(ColumnRef *colref, char *attname)
+{
+	return (Node *) makeFuncCall(list_make1(makeString(attname)),
+								 list_make1(colref), -1);
 }
 
 static TypeName *

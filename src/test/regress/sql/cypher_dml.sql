@@ -43,24 +43,24 @@ CREATE (v1:regvlabel1 '{"name": "regv1-1", "id": 1}'),
 -- simple matches
 
 MATCH (a)
-RETURN (a).prop_map AS a;
+RETURN prop_map(a) AS a;
 
 MATCH (a)-[]->(b)
-RETURN (a).prop_map AS a, (b).prop_map AS b;
+RETURN prop_map(a) AS a, prop_map(b) AS b;
 
 MATCH (a)-[]-(b)
-RETURN (a).prop_map AS a, (b).prop_map AS b;
+RETURN prop_map(a) AS a, prop_map(b) AS b;
 
 MATCH (a)<-[]->(b)
-RETURN (a).prop_map AS a, (b).prop_map AS b;
+RETURN prop_map(a) AS a, prop_map(b) AS b;
 
 -- wrong case (last clause)
 MATCH (a);
 
 -- WHERE in MATCH
 MATCH (a:regvlabel1)
-WHERE (a).prop_map->>'name' = 'regv1-1'
-RETURN (a).prop_map;
+WHERE (a).name = to_jsonb('regv1-1'::text)
+RETURN prop_map(a);
 
 -- TODO: label filtering by WHERE clause
 
@@ -69,52 +69,52 @@ RETURN (a).prop_map;
 -- aliasing
 
 MATCH (a:regvlabel1)
-RETURN (a).prop_map AS props;
+RETURN prop_map(a) AS props;
 
 MATCH (a:regvlabel1)
-RETURN (a).prop_map->>'id' AS empid;
+RETURN (a).id AS empid;
 
 MATCH (a:regvlabel1)
-RETURN (a).id + 1;
+RETURN id(a);
 
 -- ORDER BY
 
 MATCH (a:regvlabel1)
-RETURN (a).prop_map AS a ORDER BY a->>'id';
+RETURN prop_map(a) AS a ORDER BY (a).id;
 
 MATCH (a:regvlabel1)
-RETURN (a).prop_map AS a ORDER BY a->>'id' ASC;
+RETURN prop_map(a) AS a ORDER BY (a).id ASC;
 
 MATCH (a:regvlabel1)
-RETURN (a).prop_map AS a ORDER BY a->>'id' DESC;
+RETURN prop_map(a) AS a ORDER BY (a).id DESC;
 
 MATCH (a:regvlabel1)
-RETURN (a).prop_map->>'id' AS empid ORDER BY empid;
+RETURN (a).id AS empid ORDER BY empid;
 
 -- wrong case (refer alias)
 MATCH (a:regvlabel1)
-RETURN (a).prop_map->>'id' AS empid ORDER BY a;
+RETURN (a).id AS empid ORDER BY a;
 
 -- LIMIT & LIMIT
 
 MATCH (a:regvlabel1)
-RETURN (a).prop_map AS a ORDER BY a->>'id' LIMIT 1;
+RETURN prop_map(a) AS a ORDER BY (a).id LIMIT 1;
 
 MATCH (a:regvlabel1)
-RETURN (a).prop_map AS a ORDER BY a->>'id' DESC LIMIT 1;
+RETURN prop_map(a) AS a ORDER BY (a).id DESC LIMIT 1;
 
 MATCH (a:regvlabel2)
-RETURN (a).prop_map AS a ORDER BY a->>'id' SKIP 3;
+RETURN prop_map(a) AS a ORDER BY (a).id SKIP 3;
 
 MATCH (a:regvlabel2)
-RETURN (a).prop_map AS a ORDER BY a->>'id' SKIP 1 LIMIT 1;
+RETURN prop_map(a) AS a ORDER BY (a).id SKIP 1 LIMIT 1;
 
 MATCH (a:regvlabel2)
-RETURN (a).prop_map AS a ORDER BY a->>'id' DESC SKIP 1 LIMIT 1;
+RETURN prop_map(a) AS a ORDER BY (a).id DESC SKIP 1 LIMIT 1;
 
 -- wrong case (syntax)
 MATCH (a:regvlabel2)
-RETURN (a).prop_map AS a ORDER BY a->>'id' LIMIT 1 SKIP 1;
+RETURN prop_map(a) AS a ORDER BY (a).id LIMIT 1 SKIP 1;
 
 --
 -- WITH clause
@@ -122,7 +122,7 @@ RETURN (a).prop_map AS a ORDER BY a->>'id' LIMIT 1 SKIP 1;
 
 MATCH (a:regvlabel1)-[]-(b:regvlabel2)
 WITH a, count(b) AS rel_count
-RETURN (a).prop_map AS a, rel_count;
+RETURN prop_map(a) AS a, rel_count;
 
 -- wrong case
 MATCH (a:regvlabel1), (b:regvlabel2)
@@ -132,38 +132,38 @@ RETURN b;
 -- DISTINCT
 
 MATCH (a:regvlabel1), (b:regvlabel2)
-RETURN (a).prop_map AS a;
+RETURN prop_map(a) AS a;
 
 MATCH (a:regvlabel1), (b:regvlabel2)
 WITH DISTINCT a
-RETURN (a).prop_map AS a;
+RETURN prop_map(a) AS a;
 
 MATCH (a:regvlabel1)-[]-(b:regvlabel2)
-RETURN (a).prop_map AS a, (b).prop_map AS b;
+RETURN prop_map(a) AS a, prop_map(b) AS b;
 
 MATCH (a:regvlabel1)-[]-(b:regvlabel2)
 WITH DISTINCT *
-RETURN (a).prop_map AS a, (b).prop_map AS b;
+RETURN prop_map(a) AS a, prop_map(b) AS b;
 
 --
 -- UNION
 --
 
 MATCH (a:regvlabel1)
-RETURN (a).prop_map AS all_vertex
+RETURN prop_map(a) AS all_vertex
 UNION ALL
 MATCH (b:regvlabel2)
-RETURN (b).prop_map AS all_vertex;
+RETURN prop_map(b) AS all_vertex;
 
 MATCH (a:regvlabel1)
-RETURN (a).prop_map AS all_vertex
+RETURN prop_map(a) AS all_vertex
 UNION ALL
 MATCH (b:regvlabel2)
-RETURN (b).prop_map AS akk_vertex;
+RETURN prop_map(b) AS akk_vertex;
 
 -- wrong case (type mismatch)
 MATCH (a:regvlabel1)
-RETURN (a).prop_map AS a
+RETURN prop_map(a) AS a
 UNION ALL
 MATCH (b:regvlabel2)
 RETURN b;
@@ -198,7 +198,7 @@ CREATE (),
 	   (c:regvlabel2 '{"name": "test1"}'),
 	   p=(d:regvlabel3 '{"name": "test2", "age": 123}')-[:regelabel1]->();
 
-MATCH (a) RETURN (a).id, (a).prop_map;
+MATCH (a) RETURN id(a), prop_map(a);
 
 MATCH (n) DETACH DELETE n;
 
@@ -207,10 +207,10 @@ MATCH (n) DETACH DELETE n;
 CREATE (a:regvlabel1 '{"name": "elem1"}'),
 	   (a)-[d:regelabel1 '{"rel": 1}']->(b:regvlabel2 '{"name": "elem2"}'),
 	   (b)<-[e:regelabel2 '{"rel": 2}']-(c:regvlabel2 '{"name": "elem3"}')
-RETURN (a).prop_map, (d).prop_map, (b).prop_map, (e).prop_map, (c).prop_map;
+RETURN prop_map(a), prop_map(d), prop_map(b), prop_map(e), prop_map(c);
 
 MATCH (a)-[b]-(c)
-RETURN (a).prop_map, (b).prop_map, (c).prop_map;
+RETURN prop_map(a), prop_map(b), prop_map(c);
 
 MATCH (n) DETACH DELETE n;
 
@@ -220,7 +220,7 @@ CREATE (a:regvlabel1 '{"name": "insert v1-1"}')-[b:regelabel1]->(c:regvlabel2 '{
 CREATE (a:regvlabel1 '{"name": "insert v1-2"}')<-[b:regelabel1]-(c:regvlabel2 '{"name": "insert v2-2"}');
 
 MATCH (a)<-[b]->(c)
-RETURN (a).prop_map, (b).prop_map, (c).prop_map;
+RETURN prop_map(a), prop_map(b), prop_map(c);
 
 -- bi-directional relationship
 
@@ -231,8 +231,8 @@ CREATE (:regvlabel2 '{"name": "regvlabel2-1"}'),
 CREATE (a:regvlabel1 '{"name": "regvlabel1"}')
 MATCH (b:regvlabel2)
 CREATE (a)-[c:regelabel1 '{"name": "e1"}']->(b), (b)-[d:regelabel1 '{"name": "e2"}']->(a)
-RETURN (a).id = (c).start_id AND (c).end_id = (b).id AS atob,
-	   (b).id = (d).start_id AND (d).end_id = (a).id AS btoa;
+RETURN id(a) = start_id(c) AND end_id(c) = id(b) AS atob,
+	   id(b) = start_id(d) AND end_id(d) = id(a) AS btoa;
 
 -- wrong cases (duplicated variable)
 CREATE (a), (a);
@@ -250,7 +250,7 @@ CREATE (:regvlabel1 '{"name": "insert v1-4"}')<-[:regelabel1]->(:regvlabel2 '{"n
 MATCH (a:regvlabel1), (b:regvlabel2)
 CREATE p=(a)-[:regelabel1 '{"name": "edge1"}']->(b)
 CREATE (b)<-[:regelabel2 '{"name": "edge2"}']-(c:regvlabel3 '{"name": "v3"}')
-RETURN (c).prop_map;
+RETURN prop_map(c);
 
 -- cleanup
 
