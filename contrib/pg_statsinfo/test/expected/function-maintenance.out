@@ -1,0 +1,23 @@
+/*---- Initialize repository DB ----*/
+/*---- Initialize monitored instance ----*/
+/*---- Automatic maintenance function ----*/
+/**--- Delete the snapshot for a certain period of time has elapsed ---**/
+ snapid |  comment   
+--------+------------
+      1 | 2 days ago
+      2 | 1 days ago
+      3 | today
+(3 rows)
+
+UPDATE 1
+UPDATE 1
+server signaled
+ snapid |  comment   
+--------+------------
+      2 | 1 days ago
+      3 | today
+(2 rows)
+
+/**--- Server log maintenance ---**/
+server signaled
+log maintenance command called
