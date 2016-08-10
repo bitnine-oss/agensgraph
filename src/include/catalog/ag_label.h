@@ -25,9 +25,9 @@
  *		typedef struct FormData_ag_label
  * ----------------
  */
-#define LabelRelationId	3294
+#define LabelRelationId	7045
 
-CATALOG(ag_label,3294) BKI_SCHEMA_MACRO
+CATALOG(ag_label,7045) BKI_SCHEMA_MACRO
 {
 	NameData	labname;		/* label name */
 	Oid			relid;			/* table oid under the label */

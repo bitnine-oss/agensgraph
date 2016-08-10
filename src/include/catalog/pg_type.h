@@ -652,17 +652,17 @@ DESCR("range of bigints");
 DATA(insert OID = 3927 ( _int8range		PGNSP PGUID  -1 f b A f t \054 0 3926 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
 
 /* types for graphs */
-DATA(insert OID = 3316 ( _vertex	PGNSP PGUID -1 f b A f t \054 0 3317 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
-#define VERTEXARRAYOID	3316
-DATA(insert OID = 3317 ( vertex		PGNSP PGUID -1 f c C f t \054 3315 0 3316 record_in vertex_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
-#define VERTEXOID		3317
-DATA(insert OID = 3319 ( _edge		PGNSP PGUID -1 f b A f t \054 0 3320 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
-#define EDGEARRAYOID	3319
-DATA(insert OID = 3320 ( edge		PGNSP PGUID -1 f c C f t \054 3318 0 3319 record_in edge_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
-#define EDGEOID			3320
-DATA(insert OID = 3322 ( _graphpath	PGNSP PGUID -1 f b A f t \054 0 3323 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
-DATA(insert OID = 3323 ( graphpath	PGNSP PGUID -1 f c C f t \054 3321 0 3322 record_in graphpath_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
-#define GRAPHPATHOID	3323
+DATA(insert OID = 7011 ( _vertex	PGNSP PGUID -1 f b A f t \054 0 7012 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
+#define VERTEXARRAYOID	7011
+DATA(insert OID = 7012 ( vertex		PGNSP PGUID -1 f c C f t \054 7010 0 7011 record_in vertex_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
+#define VERTEXOID		7012
+DATA(insert OID = 7021 ( _edge		PGNSP PGUID -1 f b A f t \054 0 7022 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
+#define EDGEARRAYOID	7021
+DATA(insert OID = 7022 ( edge		PGNSP PGUID -1 f c C f t \054 7020 0 7021 record_in edge_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
+#define EDGEOID			7022
+DATA(insert OID = 7031 ( _graphpath	PGNSP PGUID -1 f b A f t \054 0 7032 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
+DATA(insert OID = 7032 ( graphpath	PGNSP PGUID -1 f c C f t \054 7030 0 7031 record_in graphpath_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
+#define GRAPHPATHOID	7032
 
 /*
  * pseudo-types

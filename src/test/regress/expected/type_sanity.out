@@ -215,10 +215,10 @@ WHERE p1.typtype not in ('b', 'd', 'p')
 ORDER BY 1;
  typtype |   typoutput   
 ---------+---------------
- c       | vertex_out
  c       | record_out
- c       | edge_out
+ c       | vertex_out
  c       | graphpath_out
+ c       | edge_out
  e       | enum_out
  r       | range_out
 (6 rows)
@@ -523,8 +523,8 @@ WHERE p1.atttypid = p2.oid AND
      (p1.attstorage != p2.typstorage AND p1.attstorage != 'p'));
  attrelid | attname  | oid  | typname 
 ----------+----------+------+---------
-     3321 | vertices | 3316 | _vertex
-     3321 | edges    | 3319 | _edge
+     7030 | vertices | 7011 | _vertex
+     7030 | edges    | 7021 | _edge
 (2 rows)
 
 -- **************** pg_range ****************
