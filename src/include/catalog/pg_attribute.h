@@ -225,6 +225,8 @@ typedef FormData_pg_attribute *Form_pg_attribute;
  */
 
 /* graph */
+DATA(insert ( 7000 oid 26 -1 4 1 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7000 lid 20 -1 8 2 0 -1 -1 t p d f f f t 0 0 _null_ _null_ _null_ ));
 DATA(insert ( 7010 oid 26 -1 4 1 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
 DATA(insert ( 7010 id 20 -1 8 2 0 -1 -1 t p d f f f t 0 0 _null_ _null_ _null_ ));
 DATA(insert ( 7010 properties 3802 -1 -1 3 0 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
