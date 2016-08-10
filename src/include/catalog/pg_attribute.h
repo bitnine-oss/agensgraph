@@ -225,17 +225,17 @@ typedef FormData_pg_attribute *Form_pg_attribute;
  */
 
 /* graph */
-DATA(insert ( 3315 oid 26 -1 4 1 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3315 id 20 -1 8 2 0 -1 -1 t p d f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3315 prop_map 3802 -1 -1 3 0 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3318 oid 26 -1 4 1 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3318 id 20 -1 8 2 0 -1 -1 t p d f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3318 start_oid 26 -1 4 3 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3318 start_id 20 -1 8 4 0 -1 -1 t p d f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3318 end_oid 26 -1 4 5 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3318 end_id 20 -1 8 6 0 -1 -1 t p d f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3318 prop_map 3802 -1 -1 7 0 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3321 vertices 3316 -1 -1 1 1 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 3321 edges 3319 -1 -1 2 1 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7010 oid 26 -1 4 1 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7010 id 20 -1 8 2 0 -1 -1 t p d f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7010 prop_map 3802 -1 -1 3 0 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7020 oid 26 -1 4 1 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7020 id 20 -1 8 2 0 -1 -1 t p d f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7020 start_oid 26 -1 4 3 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7020 start_id 20 -1 8 4 0 -1 -1 t p d f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7020 end_oid 26 -1 4 5 0 -1 -1 t p i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7020 end_id 20 -1 8 6 0 -1 -1 t p d f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7020 prop_map 3802 -1 -1 7 0 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7030 vertices 7011 -1 -1 1 1 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7030 edges 7021 -1 -1 2 1 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
 
 #endif   /* PG_ATTRIBUTE_H */

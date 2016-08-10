@@ -156,11 +156,11 @@ DESCR("");
  */
 
 /* graph */
-DATA(insert OID = 3315 ( vertex		PGNSP 3317 0 PGUID 0 3315 0 0 0 0 0 f f p c 3 0 f f f f f f f t n 0 0 _null_ _null_ ));
+DATA(insert OID = 7010 ( vertex		PGNSP 7012 0 PGUID 0 7010 0 0 0 0 0 f f p c 3 0 f f f f f f f t n 0 0 _null_ _null_ ));
 DESCR("graph vertex");
-DATA(insert OID = 3318 ( edge		PGNSP 3320 0 PGUID 0 3318 0 0 0 0 0 f f p c 7 0 f f f f f f f t n 0 0 _null_ _null_ ));
+DATA(insert OID = 7020 ( edge		PGNSP 7022 0 PGUID 0 7020 0 0 0 0 0 f f p c 7 0 f f f f f f f t n 0 0 _null_ _null_ ));
 DESCR("graph edge");
-DATA(insert OID = 3321 ( graphpath	PGNSP 3323 0 PGUID 0 3321 0 0 0 0 0 f f p c 2 0 f f f f f f f t n 0 0 _null_ _null_ ));
+DATA(insert OID = 7030 ( graphpath	PGNSP 7032 0 PGUID 0 7030 0 0 0 0 0 f f p c 2 0 f f f f f f f t n 0 0 _null_ _null_ ));
 DESCR("graph path");
 
 
