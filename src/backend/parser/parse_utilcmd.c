@@ -3106,7 +3106,7 @@ makeVertexElements(void)
 	id->constraints = list_make1(pk);
 	id->location = -1;
 
-	prop_map->colname = AG_ELEM_PROP;
+	prop_map->colname = AG_ELEM_PROP_MAP;
 	prop_map->typeName = makeTypeName("jsonb");
 	prop_map->is_local = true;
 	prop_map->location = -1;
@@ -3176,7 +3176,7 @@ makeEdgeElements(void)
 
 	elems = lappend(elems, end_id);
 
-	prop_map->colname = AG_ELEM_PROP;
+	prop_map->colname = AG_ELEM_PROP_MAP;
 	prop_map->typeName = makeTypeName("jsonb");
 	prop_map->is_local = true;
 	prop_map->location = -1;
