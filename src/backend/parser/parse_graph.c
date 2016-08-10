@@ -812,7 +812,7 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 		ColumnRef  *prop_map;
 		Node	   *constraint;
 
-		prop_map = makeAliasColname(r->alias, AG_ELEM_PROP);
+		prop_map = makeAliasColname(r->alias, AG_ELEM_PROP_MAP);
 		constraint = makePropMapConstraint(prop_map, node->prop_map);
 		*whereClause = qualAndExpr(*whereClause, constraint);
 	}
@@ -885,7 +885,7 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 		ColumnRef  *prop_map;
 		Node	   *constraint;
 
-		prop_map = makeAliasColname(r->alias, AG_ELEM_PROP);
+		prop_map = makeAliasColname(r->alias, AG_ELEM_PROP_MAP);
 		constraint = makePropMapConstraint(prop_map, rel->prop_map);
 		*whereClause = qualAndExpr(*whereClause, constraint);
 	}

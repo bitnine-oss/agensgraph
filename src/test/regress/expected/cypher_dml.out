@@ -41,7 +41,7 @@ CREATE (v1:regvlabel1 '{"name": "regv1-1", "id": 1}'),
 --
 -- simple matches
 MATCH (a)
-RETURN prop_map(a) AS a;
+RETURN properties(a) AS a;
               a               
 ------------------------------
  {"id": 1, "name": "regv1-1"}
@@ -55,7 +55,7 @@ RETURN prop_map(a) AS a;
 (8 rows)
 
 MATCH (a)-[]->(b)
-RETURN prop_map(a) AS a, prop_map(b) AS b;
+RETURN properties(a) AS a, properties(b) AS b;
               a               |              b               
 ------------------------------+------------------------------
  {"id": 1, "name": "regv1-1"} | {"id": 4, "name": "regv2-1"}
@@ -67,7 +67,7 @@ RETURN prop_map(a) AS a, prop_map(b) AS b;
 (6 rows)
 
 MATCH (a)-[]-(b)
-RETURN prop_map(a) AS a, prop_map(b) AS b;
+RETURN properties(a) AS a, properties(b) AS b;
               a               |              b               
 ------------------------------+------------------------------
  {"id": 1, "name": "regv1-1"} | {"id": 4, "name": "regv2-1"}
@@ -85,7 +85,7 @@ RETURN prop_map(a) AS a, prop_map(b) AS b;
 (12 rows)
 
 MATCH (a)<-[]->(b)
-RETURN prop_map(a) AS a, prop_map(b) AS b;
+RETURN properties(a) AS a, properties(b) AS b;
               a               |              b               
 ------------------------------+------------------------------
  {"id": 1, "name": "regv1-1"} | {"id": 4, "name": "regv2-1"}
@@ -108,8 +108,8 @@ ERROR:  Cypher query must end with RETURN or update clause
 -- WHERE in MATCH
 MATCH (a:regvlabel1)
 WHERE (a).name = to_jsonb('regv1-1'::text)
-RETURN prop_map(a);
-           prop_map           
+RETURN properties(a);
+          properties          
 ------------------------------
  {"id": 1, "name": "regv1-1"}
 (1 row)
@@ -118,7 +118,7 @@ RETURN prop_map(a);
 -- TODO: relationship filtering by WHERE clause
 -- aliasing
 MATCH (a:regvlabel1)
-RETURN prop_map(a) AS props;
+RETURN properties(a) AS props;
             props             
 ------------------------------
  {"id": 1, "name": "regv1-1"}
@@ -146,7 +146,7 @@ RETURN id(a);
 
 -- ORDER BY
 MATCH (a:regvlabel1)
-RETURN prop_map(a) AS a ORDER BY (a).id;
+RETURN properties(a) AS a ORDER BY (a).id;
               a               
 ------------------------------
  {"id": 1, "name": "regv1-1"}
@@ -155,7 +155,7 @@ RETURN prop_map(a) AS a ORDER BY (a).id;
 (3 rows)
 
 MATCH (a:regvlabel1)
-RETURN prop_map(a) AS a ORDER BY (a).id ASC;
+RETURN properties(a) AS a ORDER BY (a).id ASC;
               a               
 ------------------------------
  {"id": 1, "name": "regv1-1"}
@@ -164,7 +164,7 @@ RETURN prop_map(a) AS a ORDER BY (a).id ASC;
 (3 rows)
 
 MATCH (a:regvlabel1)
-RETURN prop_map(a) AS a ORDER BY (a).id DESC;
+RETURN properties(a) AS a ORDER BY (a).id DESC;
               a               
 ------------------------------
  {"id": 3, "name": "regv1-3"}
@@ -189,21 +189,21 @@ LINE 2: RETURN (a).id AS empid ORDER BY a;
                                         ^
 -- LIMIT & LIMIT
 MATCH (a:regvlabel1)
-RETURN prop_map(a) AS a ORDER BY (a).id LIMIT 1;
+RETURN properties(a) AS a ORDER BY (a).id LIMIT 1;
               a               
 ------------------------------
  {"id": 1, "name": "regv1-1"}
 (1 row)
 
 MATCH (a:regvlabel1)
-RETURN prop_map(a) AS a ORDER BY (a).id DESC LIMIT 1;
+RETURN properties(a) AS a ORDER BY (a).id DESC LIMIT 1;
               a               
 ------------------------------
  {"id": 3, "name": "regv1-3"}
 (1 row)
 
 MATCH (a:regvlabel2)
-RETURN prop_map(a) AS a ORDER BY (a).id SKIP 3;
+RETURN properties(a) AS a ORDER BY (a).id SKIP 3;
               a               
 ------------------------------
  {"id": 7, "name": "regv2-4"}
@@ -211,14 +211,14 @@ RETURN prop_map(a) AS a ORDER BY (a).id SKIP 3;
 (2 rows)
 
 MATCH (a:regvlabel2)
-RETURN prop_map(a) AS a ORDER BY (a).id SKIP 1 LIMIT 1;
+RETURN properties(a) AS a ORDER BY (a).id SKIP 1 LIMIT 1;
               a               
 ------------------------------
  {"id": 5, "name": "regv2-2"}
 (1 row)
 
 MATCH (a:regvlabel2)
-RETURN prop_map(a) AS a ORDER BY (a).id DESC SKIP 1 LIMIT 1;
+RETURN properties(a) AS a ORDER BY (a).id DESC SKIP 1 LIMIT 1;
               a               
 ------------------------------
  {"id": 7, "name": "regv2-4"}
@@ -226,16 +226,16 @@ RETURN prop_map(a) AS a ORDER BY (a).id DESC SKIP 1 LIMIT 1;
 
 -- wrong case (syntax)
 MATCH (a:regvlabel2)
-RETURN prop_map(a) AS a ORDER BY (a).id LIMIT 1 SKIP 1;
+RETURN properties(a) AS a ORDER BY (a).id LIMIT 1 SKIP 1;
 ERROR:  syntax error at or near "SKIP"
-LINE 2: RETURN prop_map(a) AS a ORDER BY (a).id LIMIT 1 SKIP 1;
-                                                        ^
+LINE 2: RETURN properties(a) AS a ORDER BY (a).id LIMIT 1 SKIP 1;
+                                                          ^
 --
 -- WITH clause
 --
 MATCH (a:regvlabel1)-[]-(b:regvlabel2)
 WITH a, count(b) AS rel_count
-RETURN prop_map(a) AS a, rel_count;
+RETURN properties(a) AS a, rel_count;
               a               | rel_count 
 ------------------------------+-----------
  {"id": 1, "name": "regv1-1"} |         2
@@ -252,7 +252,7 @@ LINE 3: RETURN b;
                ^
 -- DISTINCT
 MATCH (a:regvlabel1), (b:regvlabel2)
-RETURN prop_map(a) AS a;
+RETURN properties(a) AS a;
               a               
 ------------------------------
  {"id": 1, "name": "regv1-1"}
@@ -274,7 +274,7 @@ RETURN prop_map(a) AS a;
 
 MATCH (a:regvlabel1), (b:regvlabel2)
 WITH DISTINCT a
-RETURN prop_map(a) AS a;
+RETURN properties(a) AS a;
               a               
 ------------------------------
  {"id": 1, "name": "regv1-1"}
@@ -283,7 +283,7 @@ RETURN prop_map(a) AS a;
 (3 rows)
 
 MATCH (a:regvlabel1)-[]-(b:regvlabel2)
-RETURN prop_map(a) AS a, prop_map(b) AS b;
+RETURN properties(a) AS a, properties(b) AS b;
               a               |              b               
 ------------------------------+------------------------------
  {"id": 1, "name": "regv1-1"} | {"id": 4, "name": "regv2-1"}
@@ -296,7 +296,7 @@ RETURN prop_map(a) AS a, prop_map(b) AS b;
 
 MATCH (a:regvlabel1)-[]-(b:regvlabel2)
 WITH DISTINCT *
-RETURN prop_map(a) AS a, prop_map(b) AS b;
+RETURN properties(a) AS a, properties(b) AS b;
               a               |              b               
 ------------------------------+------------------------------
  {"id": 1, "name": "regv1-1"} | {"id": 4, "name": "regv2-1"}
@@ -310,10 +310,10 @@ RETURN prop_map(a) AS a, prop_map(b) AS b;
 -- UNION
 --
 MATCH (a:regvlabel1)
-RETURN prop_map(a) AS all_vertex
+RETURN properties(a) AS all_vertex
 UNION ALL
 MATCH (b:regvlabel2)
-RETURN prop_map(b) AS all_vertex;
+RETURN properties(b) AS all_vertex;
           all_vertex          
 ------------------------------
  {"id": 1, "name": "regv1-1"}
@@ -327,10 +327,10 @@ RETURN prop_map(b) AS all_vertex;
 (8 rows)
 
 MATCH (a:regvlabel1)
-RETURN prop_map(a) AS all_vertex
+RETURN properties(a) AS all_vertex
 UNION ALL
 MATCH (b:regvlabel2)
-RETURN prop_map(b) AS akk_vertex;
+RETURN properties(b) AS akk_vertex;
           all_vertex          
 ------------------------------
  {"id": 1, "name": "regv1-1"}
@@ -345,7 +345,7 @@ RETURN prop_map(b) AS akk_vertex;
 
 -- wrong case (type mismatch)
 MATCH (a:regvlabel1)
-RETURN prop_map(a) AS a
+RETURN properties(a) AS a
 UNION ALL
 MATCH (b:regvlabel2)
 RETURN b;
@@ -377,8 +377,8 @@ CREATE (),
 	   (b:regvlabel1),
 	   (c:regvlabel2 '{"name": "test1"}'),
 	   p=(d:regvlabel3 '{"name": "test2", "age": 123}')-[:regelabel1]->();
-MATCH (a) RETURN id(a), prop_map(a);
- id |           prop_map            
+MATCH (a) RETURN id(a), properties(a);
+ id |          properties           
 ----+-------------------------------
   1 | {}
   2 | {}
@@ -393,15 +393,15 @@ MATCH (n) DETACH DELETE n;
 CREATE (a:regvlabel1 '{"name": "elem1"}'),
 	   (a)-[d:regelabel1 '{"rel": 1}']->(b:regvlabel2 '{"name": "elem2"}'),
 	   (b)<-[e:regelabel2 '{"rel": 2}']-(c:regvlabel2 '{"name": "elem3"}')
-RETURN prop_map(a), prop_map(d), prop_map(b), prop_map(e), prop_map(c);
-     prop_map      |  prop_map  |     prop_map      |  prop_map  |     prop_map      
+RETURN properties(a), properties(d), properties(b), properties(e), properties(c);
+    properties     | properties |    properties     | properties |    properties     
 -------------------+------------+-------------------+------------+-------------------
  {"name": "elem1"} | {"rel": 1} | {"name": "elem2"} | {"rel": 2} | {"name": "elem3"}
 (1 row)
 
 MATCH (a)-[b]-(c)
-RETURN prop_map(a), prop_map(b), prop_map(c);
-     prop_map      |  prop_map  |     prop_map      
+RETURN properties(a), properties(b), properties(c);
+    properties     | properties |    properties     
 -------------------+------------+-------------------
  {"name": "elem1"} | {"rel": 1} | {"name": "elem2"}
  {"name": "elem2"} | {"rel": 1} | {"name": "elem1"}
@@ -414,13 +414,13 @@ MATCH (n) DETACH DELETE n;
 CREATE (a:regvlabel1 '{"name": "insert v1-1"}')-[b:regelabel1]->(c:regvlabel2 '{"name": "insert v2-1"}');
 CREATE (a:regvlabel1 '{"name": "insert v1-2"}')<-[b:regelabel1]-(c:regvlabel2 '{"name": "insert v2-2"}');
 MATCH (a)<-[b]->(c)
-RETURN prop_map(a), prop_map(b), prop_map(c);
-        prop_map         | prop_map |        prop_map         
--------------------------+----------+-------------------------
- {"name": "insert v1-1"} | {}       | {"name": "insert v2-1"}
- {"name": "insert v1-2"} | {}       | {"name": "insert v2-2"}
- {"name": "insert v2-1"} | {}       | {"name": "insert v1-1"}
- {"name": "insert v2-2"} | {}       | {"name": "insert v1-2"}
+RETURN properties(a), properties(b), properties(c);
+       properties        | properties |       properties        
+-------------------------+------------+-------------------------
+ {"name": "insert v1-1"} | {}         | {"name": "insert v2-1"}
+ {"name": "insert v1-2"} | {}         | {"name": "insert v2-2"}
+ {"name": "insert v2-1"} | {}         | {"name": "insert v1-1"}
+ {"name": "insert v2-2"} | {}         | {"name": "insert v1-2"}
 (4 rows)
 
 -- bi-directional relationship
@@ -462,8 +462,8 @@ ERROR:  only directed relationships are supported in CREATE
 MATCH (a:regvlabel1), (b:regvlabel2)
 CREATE p=(a)-[:regelabel1 '{"name": "edge1"}']->(b)
 CREATE (b)<-[:regelabel2 '{"name": "edge2"}']-(c:regvlabel3 '{"name": "v3"}')
-RETURN prop_map(c);
-    prop_map    
+RETURN properties(c);
+   properties   
 ----------------
  {"name": "v3"}
  {"name": "v3"}
