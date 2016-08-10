@@ -652,6 +652,10 @@ DESCR("range of bigints");
 DATA(insert OID = 3927 ( _int8range		PGNSP PGUID  -1 f b A f t \054 0 3926 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
 
 /* types for graphs */
+DATA(insert OID = 7001 ( _graphid	PGNSP PGUID -1 f b A f t \054 0 7002 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
+DATA(insert OID = 7002 ( graphid	PGNSP PGUID -1 f c C f t \054 7000 0 7001 record_in record_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
+DESCR("(oid, lid), unique ID of vertex/edge");
+#define GRAPHIDOID		7002
 DATA(insert OID = 7011 ( _vertex	PGNSP PGUID -1 f b A f t \054 0 7012 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
 #define VERTEXARRAYOID	7011
 DATA(insert OID = 7012 ( vertex		PGNSP PGUID -1 f c C f t \054 7010 0 7011 record_in vertex_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
