@@ -75,7 +75,7 @@ MATCH (a:regvlabel1)
 RETURN (a).id AS empid;
 
 MATCH (a:regvlabel1)
-RETURN id(a);
+RETURN (id(a)).lid;
 
 -- ORDER BY
 
@@ -198,7 +198,7 @@ CREATE (),
 	   (c:regvlabel2 '{"name": "test1"}'),
 	   p=(d:regvlabel3 '{"name": "test2", "age": 123}')-[:regelabel1]->();
 
-MATCH (a) RETURN id(a), properties(a);
+MATCH (a) RETURN (id(a)).lid, properties(a);
 
 MATCH (n) DETACH DELETE n;
 
@@ -231,8 +231,8 @@ CREATE (:regvlabel2 '{"name": "regvlabel2-1"}'),
 CREATE (a:regvlabel1 '{"name": "regvlabel1"}')
 MATCH (b:regvlabel2)
 CREATE (a)-[c:regelabel1 '{"name": "e1"}']->(b), (b)-[d:regelabel1 '{"name": "e2"}']->(a)
-RETURN id(a) = start_id(c) AND end_id(c) = id(b) AS atob,
-	   id(b) = start_id(d) AND end_id(d) = id(a) AS btoa;
+RETURN id(a) = start(c) AND "end"(c) = id(b) AS atob,
+	   id(b) = start(d) AND "end"(d) = id(a) AS btoa;
 
 -- wrong cases (duplicated variable)
 CREATE (a), (a);

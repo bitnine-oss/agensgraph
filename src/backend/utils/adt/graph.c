@@ -13,6 +13,7 @@
 #include "access/htup_details.h"
 #include "access/tupdesc.h"
 #include "catalog/pg_type.h"
+#include "funcapi.h"
 #include "utils/array.h"
 #include "utils/arrayaccess.h"
 #include "utils/graph.h"
@@ -20,19 +21,19 @@
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
-#define Natts_vertex			3
-#define Anum_vertex_oid			1
-#define Anum_vertex_id			2
-#define Anum_vertex_prop_map	3
+#define Natts_graphid			2
+#define Anum_graphid_oid		1
+#define Anum_graphid_lid		2
 
-#define Natts_edge				7
-#define Anum_edge_oid			1
-#define Anum_edge_id			2
-#define Anum_edge_start_oid		3
-#define Anum_edge_start_id		4
-#define Anum_edge_end_oid		5
-#define Anum_edge_end_id		6
-#define Anum_edge_prop_map		7
+#define Natts_vertex			2
+#define Anum_vertex_id			1
+#define Anum_vertex_properties	2
+
+#define Natts_edge				4
+#define Anum_edge_id			1
+#define Anum_edge_start			2
+#define Anum_edge_end			3
+#define Anum_edge_properties	4
 
 #define Natts_graphpath			2
 #define Anum_graphpath_vertices	1
@@ -62,7 +63,7 @@ vertex_out(PG_FUNCTION_ARGS)
 	HeapTupleData tuple;
 	Datum		values[Natts_vertex];
 	bool		isnull[Natts_vertex];
-	Oid			oid;
+	Graphid		id;
 	Jsonb	   *prop_map;
 	LabelOutData *my_extra;
 	StringInfoData si;
@@ -80,19 +81,17 @@ vertex_out(PG_FUNCTION_ARGS)
 
 	heap_deform_tuple(&tuple, tupDesc, values, isnull);
 	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull[Anum_vertex_oid - 1]);
 	Assert(!isnull[Anum_vertex_id - 1]);
-	Assert(!isnull[Anum_vertex_prop_map - 1]);
+	Assert(!isnull[Anum_vertex_properties - 1]);
 
-	oid = DatumGetObjectId(values[Anum_vertex_oid - 1]);
-	prop_map = DatumGetJsonb(values[Anum_vertex_prop_map - 1]);
+	id = getGraphidStruct(values[Anum_vertex_id - 1]);
+	prop_map = DatumGetJsonb(values[Anum_vertex_properties - 1]);
 
-	my_extra = cache_label(fcinfo->flinfo, oid);
+	my_extra = cache_label(fcinfo->flinfo, id.oid);
 
 	initStringInfo(&si);
 	appendStringInfo(&si, "%s[%u:" INT64_FORMAT "]",
-					 NameStr(my_extra->label),
-					 oid, DatumGetInt64(values[Anum_vertex_id - 1]));
+					 NameStr(my_extra->label), id.oid, id.lid);
 	JsonbToCString(&si, &prop_map->root, VARSIZE(prop_map));
 
 	PG_RETURN_CSTRING(si.data);
@@ -107,7 +106,7 @@ edge_out(PG_FUNCTION_ARGS)
 	HeapTupleData tuple;
 	Datum		values[Natts_edge];
 	bool		isnull[Natts_edge];
-	Oid			oid;
+	Graphid		id;
 	Jsonb	   *prop_map;
 	LabelOutData *my_extra;
 	StringInfoData si;
@@ -125,23 +124,19 @@ edge_out(PG_FUNCTION_ARGS)
 
 	heap_deform_tuple(&tuple, tupDesc, values, isnull);
 	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull[Anum_edge_oid - 1]);
 	Assert(!isnull[Anum_edge_id - 1]);
-	Assert(!isnull[Anum_edge_start_oid - 1]);
-	Assert(!isnull[Anum_edge_start_id - 1]);
-	Assert(!isnull[Anum_edge_end_oid - 1]);
-	Assert(!isnull[Anum_edge_end_id - 1]);
-	Assert(!isnull[Anum_edge_prop_map - 1]);
+	Assert(!isnull[Anum_edge_start - 1]);
+	Assert(!isnull[Anum_edge_end - 1]);
+	Assert(!isnull[Anum_edge_properties - 1]);
 
-	oid = DatumGetObjectId(values[Anum_edge_oid - 1]);
-	prop_map = DatumGetJsonb(values[Anum_edge_prop_map - 1]);
+	id = getGraphidStruct(values[Anum_edge_id - 1]);
+	prop_map = DatumGetJsonb(values[Anum_edge_properties - 1]);
 
-	my_extra = cache_label(fcinfo->flinfo, oid);
+	my_extra = cache_label(fcinfo->flinfo, id.oid);
 
 	initStringInfo(&si);
 	appendStringInfo(&si, ":%s[%u:" INT64_FORMAT "]",
-					 NameStr(my_extra->label),
-					 oid, DatumGetInt64(values[Anum_edge_id - 1]));
+					 NameStr(my_extra->label), id.oid, id.lid);
 	JsonbToCString(&si, &prop_map->root, VARSIZE(prop_map));
 
 	PG_RETURN_CSTRING(si.data);
@@ -289,4 +284,60 @@ array_iter_next_(array_iter *it, int idx, ArrayMetaState *state)
 	Assert(!isnull);
 
 	return value;
+}
+
+Graphid
+getGraphidStruct(Datum datum)
+{
+	HeapTupleHeader tuphdr;
+	Oid			tupType;
+	TupleDesc	tupDesc;
+	HeapTupleData tuple;
+	Datum		values[Natts_graphid];
+	bool		isnull[Natts_graphid];
+	Graphid		id;
+
+	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	tupType = HeapTupleHeaderGetTypeId(tuphdr);
+	Assert(tupType == GRAPHIDOID);
+
+	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
+	Assert(tupDesc->natts == Natts_graphid);
+
+	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
+	ItemPointerSetInvalid(&tuple.t_self);
+	tuple.t_tableOid = InvalidOid;
+	tuple.t_data = tuphdr;
+
+	heap_deform_tuple(&tuple, tupDesc, values, isnull);
+	ReleaseTupleDesc(tupDesc);
+	Assert(!isnull[Anum_graphid_oid - 1]);
+	Assert(!isnull[Anum_graphid_lid - 1]);
+
+	id.oid = DatumGetObjectId(values[Anum_graphid_oid - 1]);
+	id.lid = DatumGetInt64(values[Anum_graphid_lid - 1]);
+
+	return id;
+}
+
+Datum
+getGraphidDatum(Graphid id)
+{
+	Datum		values[2];
+	bool		isnull[2] = {false, false};
+	TupleDesc	tupDesc;
+	HeapTuple	tuple;
+
+	values[0] = ObjectIdGetDatum(id.oid);
+	values[1] = Int64GetDatum(id.lid);
+
+	tupDesc = lookup_rowtype_tupdesc(GRAPHIDOID, -1);
+	Assert(tupDesc->natts == Natts_graphid);
+
+	tuple = heap_form_tuple(tupDesc, values, isnull);
+
+	ReleaseTupleDesc(tupDesc);
+
+	return HeapTupleGetDatum(tuple);
 }

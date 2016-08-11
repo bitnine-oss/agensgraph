@@ -29,35 +29,34 @@
 #include "funcapi.h"
 #include "parser/parse_utilcmd.h"
 #include "utils/builtins.h"
+#include "utils/graph.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
 #define SQLCMD_BUFLEN			(NAMEDATALEN + 192)
-#define SQLCMD_CREAT_VERTEX		"INSERT INTO graph.%s VALUES (DEFAULT, $1)" \
-								"RETURNING tableoid, *"
+#define SQLCMD_CREAT_VERTEX \
+	"INSERT INTO " AG_GRAPH ".%s VALUES (DEFAULT, $1) RETURNING " \
+	"(tableoid, " AG_ELEM_LOCAL_ID ")::graphid AS " AG_ELEM_ID ", " \
+	AG_ELEM_PROP_MAP
 #define SQLCMD_VERTEX_NPARAMS	1
-#define SQLCMD_CREAT_EDGE		"INSERT INTO graph.%s VALUES " \
-								"(DEFAULT, $1, $2, $3, $4, $5) " \
-								"RETURNING tableoid, *"
-#define SQLCMD_EDGE_NPARAMS		5
+#define SQLCMD_CREAT_EDGE \
+	"INSERT INTO " AG_GRAPH ".%s VALUES (DEFAULT, $1, $2, $3) RETURNING " \
+	"(tableoid, " AG_ELEM_LOCAL_ID ")::graphid AS " AG_ELEM_ID ", " \
+	AG_START_ID ", \"" AG_END_ID "\", " AG_ELEM_PROP_MAP
+#define SQLCMD_EDGE_NPARAMS		3
 
 static Datum CStringGetJsonbDatum(char *str);
 
-typedef struct ElemId {
-	Oid			oid;
-	int64		id;
-} ElemId;
-
-static Datum createVertex(EState *estate, CypherNode *node, ElemId *vid,
+static Datum createVertex(EState *estate, CypherNode *node, Graphid *vid,
 						  TupleTableSlot *slot, bool inPath);
-static Datum createEdge(EState *estate, CypherRel *crel, ElemId start,
-						ElemId end, TupleTableSlot *slot, bool inPath);
+static Datum createEdge(EState *estate, CypherRel *crel, Graphid start,
+						Graphid end, TupleTableSlot *slot, bool inPath);
 static TupleTableSlot *createPath(EState *estate, CypherPath *path,
 								  TupleTableSlot *slot);
-static Datum findVertex(TupleTableSlot *slot, CypherNode *node, ElemId *vid);
+static Datum findVertex(TupleTableSlot *slot, CypherNode *node, Graphid *vid);
 static AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
-static ElemId DatumGetVid(Datum vertex);
+static Graphid DatumGetVid(Datum vertex);
 static Datum copyTupleAsDatum(EState *estate, HeapTuple tuple, Oid tupType);
 static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 static Datum *makeDatumArray(EState *estate, int len);
@@ -154,8 +153,8 @@ createPath(EState *estate, CypherPath *path, TupleTableSlot *slot)
 	int			nvertices;
 	int			nedges;
 	ListCell   *le;
-	ElemId		vid;
-	ElemId		prevvid;
+	Graphid		vid;
+	Graphid		prevvid;
 	CypherRel  *crel = NULL;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -244,7 +243,7 @@ createPath(EState *estate, CypherPath *path, TupleTableSlot *slot)
  * NOTE: This function returns a vertex if it must be in the result(`slot`).
  */
 static Datum
-createVertex(EState *estate, CypherNode *node, ElemId *vid,
+createVertex(EState *estate, CypherNode *node, Graphid *vid,
 			 TupleTableSlot *slot, bool inPath)
 {
 	char		sqlcmd[SQLCMD_BUFLEN];
@@ -277,22 +276,10 @@ createVertex(EState *estate, CypherNode *node, ElemId *vid,
 
 	if (vid != NULL)
 	{
-		int			oid_attno;
-		int			id_attno;
-		bool		isnull = false;
+		bool isnull;
 
-		oid_attno = SPI_fnumber(tupDesc, "tableoid");
-		Assert(oid_attno != SPI_ERROR_NOATTRIBUTE);
-
-		id_attno = SPI_fnumber(tupDesc, AG_ELEM_ID);
-		Assert(id_attno != SPI_ERROR_NOATTRIBUTE);
-
-		vid->oid = DatumGetObjectId(SPI_getbinval(tuple, tupDesc, oid_attno,
-												  &isnull));
-		Assert(!isnull);
-
-		vid->id = DatumGetInt64(SPI_getbinval(tuple, tupDesc, id_attno,
-											  &isnull));
+		Assert(SPI_fnumber(tupDesc, AG_ELEM_ID) == 1);
+		*vid = getGraphidStruct(SPI_getbinval(tuple, tupDesc, 1, &isnull));
 		Assert(!isnull);
 	}
 
@@ -309,14 +296,13 @@ createVertex(EState *estate, CypherNode *node, ElemId *vid,
 }
 
 static Datum
-createEdge(EState *estate, CypherRel *crel, ElemId start, ElemId end,
+createEdge(EState *estate, CypherRel *crel, Graphid start, Graphid end,
 		   TupleTableSlot *slot, bool inPath)
 {
 	char		sqlcmd[SQLCMD_BUFLEN];
 	char	   *reltype;
 	Datum		values[SQLCMD_EDGE_NPARAMS];
-	Oid			argTypes[SQLCMD_EDGE_NPARAMS] = {OIDOID, INT8OID,
-												 OIDOID, INT8OID,
+	Oid			argTypes[SQLCMD_EDGE_NPARAMS] = {GRAPHIDOID, GRAPHIDOID,
 												 JSONBOID};
 	int			ret;
 	char	   *varname;
@@ -325,11 +311,9 @@ createEdge(EState *estate, CypherRel *crel, ElemId start, ElemId end,
 	reltype = getCypherName(linitial(crel->types));
 	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_EDGE, reltype);
 
-	values[0] = ObjectIdGetDatum(start.oid);
-	values[1] = Int64GetDatum(start.id);
-	values[2] = ObjectIdGetDatum(end.oid);
-	values[3] = Int64GetDatum(end.id);
-	values[4] = CStringGetJsonbDatum(crel->prop_map);
+	values[0] = getGraphidDatum(start);
+	values[1] = getGraphidDatum(end);
+	values[2] = CStringGetJsonbDatum(crel->prop_map);
 
 	ret = SPI_execute_with_args(sqlcmd, SQLCMD_EDGE_NPARAMS, argTypes, values,
 								NULL, false, 0);
@@ -353,7 +337,7 @@ createEdge(EState *estate, CypherRel *crel, ElemId start, ElemId end,
 	return edge;
 }
 
-static ElemId
+static Graphid
 DatumGetVid(Datum vertex)
 {
 	HeapTupleHeader	tuphdr;
@@ -361,7 +345,7 @@ DatumGetVid(Datum vertex)
 	TupleDesc	tupDesc;
 	HeapTupleData tuple;
 	bool		isnull = false;
-	ElemId		vid;
+	Datum		id;
 
 	tuphdr = DatumGetHeapTupleHeader(vertex);
 
@@ -369,26 +353,23 @@ DatumGetVid(Datum vertex)
 	Assert(tupType == VERTEXOID);
 
 	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == 3);	// TODO: use Natts_vertex
+	Assert(tupDesc->natts == 2);	// TODO: use Natts_vertex
 
 	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
 	ItemPointerSetInvalid(&tuple.t_self);
 	tuple.t_tableOid = InvalidOid;
 	tuple.t_data = tuphdr;
 
-	// TODO: use Anum_vertex_...
-	vid.oid = DatumGetObjectId(heap_getattr(&tuple, 1, tupDesc, &isnull));
-	Assert(!isnull);
-	vid.id = DatumGetInt64(heap_getattr(&tuple, 2, tupDesc, &isnull));
-	Assert(!isnull);
-
+	// TODO: use Anum_vertex_id
+	id = heap_getattr(&tuple, 1, tupDesc, &isnull);
 	ReleaseTupleDesc(tupDesc);
+	Assert(!isnull);
 
-	return vid;
+	return getGraphidStruct(id);
 }
 
 static Datum
-findVertex(TupleTableSlot *slot, CypherNode *node, ElemId *vid)
+findVertex(TupleTableSlot *slot, CypherNode *node, Graphid *vid)
 {
 	char	   *varname;
 	AttrNumber	attno;
