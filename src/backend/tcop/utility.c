@@ -2026,7 +2026,22 @@ CreateCommandTag(Node *parsetree)
 			break;
 
 		case T_CreateLabelStmt:
-			tag = "CREATE LABEL";
+			{
+				CreateLabelStmt *stmt = (CreateLabelStmt *) parsetree;
+
+				switch (stmt->labelKind)
+				{
+					case LABEL_VERTEX:
+						tag = "CREATE VLABEL";
+						break;
+					case LABEL_EDGE:
+						tag = "CREATE ELABEL";
+						break;
+					default:
+						tag = "???";
+						break;
+				}
+			}
 			break;
 
 		case T_CreateTableSpaceStmt:

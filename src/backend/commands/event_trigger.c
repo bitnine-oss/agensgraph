@@ -94,12 +94,12 @@ static event_trigger_support_data event_trigger_support[] = {
 	{"DATABASE", false},
 	{"DOMAIN", true},
 	{"EXTENSION", true},
+	{"ELABEL", true},
 	{"EVENT TRIGGER", false},
 	{"FOREIGN DATA WRAPPER", true},
 	{"FOREIGN TABLE", true},
 	{"FUNCTION", true},
 	{"INDEX", true},
-	{"LABEL", true},
 	{"LANGUAGE", true},
 	{"MATERIALIZED VIEW", true},
 	{"OPERATOR", true},
@@ -122,6 +122,7 @@ static event_trigger_support_data event_trigger_support[] = {
 	{"TYPE", true},
 	{"USER MAPPING", true},
 	{"VIEW", true},
+	{"VLABEL", true},
 	{NULL, false}
 };
 

@@ -5647,8 +5647,8 @@ drop_type:	TABLE									{ $$ = OBJECT_TABLE; }
 			| TEXT_P SEARCH DICTIONARY				{ $$ = OBJECT_TSDICTIONARY; }
 			| TEXT_P SEARCH TEMPLATE				{ $$ = OBJECT_TSTEMPLATE; }
 			| TEXT_P SEARCH CONFIGURATION			{ $$ = OBJECT_TSCONFIGURATION; }
-			| VLABEL								{ $$ = OBJECT_VLABEL; }
 			| ELABEL								{ $$ = OBJECT_ELABEL; }
+			| VLABEL								{ $$ = OBJECT_VLABEL; }
 		;
 
 any_name_list:

@@ -117,16 +117,9 @@ RemoveObjects(DropStmt *stmt)
 			ReleaseSysCache(tup);
 		}
 
-		/*
-		 * Restriction.
-		 * DROP VLABEL cannot drop elabel.
-		 * DROP ELABEL cannot drop vlabel.
-		 */
 		if (stmt->removeType == OBJECT_ELABEL ||
 			stmt->removeType == OBJECT_VLABEL)
-		{
 			CheckDropLabel(stmt->removeType, address.objectId);
-		}
 
 		/* Check permissions. */
 		namespaceId = get_object_namespace(&address);
