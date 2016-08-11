@@ -3034,7 +3034,10 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	}
 
 	cxt.pstate = pstate;
-	cxt.stmtType = "CREATE LABEL";
+	if (labelStmt->labelKind == LABEL_VERTEX)
+		cxt.stmtType = "CREATE VLABEL";
+	else
+		cxt.stmtType = "CREATE ELABEL";
 	cxt.relation = stmt->relation;
 	cxt.rel = NULL;
 	cxt.inhRelations = stmt->inhRelations;
