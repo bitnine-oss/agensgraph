@@ -22,6 +22,7 @@
 #include "catalog/pg_class.h"
 #include "catalog/pg_proc.h"
 #include "commands/defrem.h"
+#include "commands/graphcmds.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
@@ -115,6 +116,10 @@ RemoveObjects(DropStmt *stmt)
 
 			ReleaseSysCache(tup);
 		}
+
+		if (stmt->removeType == OBJECT_ELABEL ||
+			stmt->removeType == OBJECT_VLABEL)
+			CheckDropLabel(stmt->removeType, address.objectId);
 
 		/* Check permissions. */
 		namespaceId = get_object_namespace(&address);

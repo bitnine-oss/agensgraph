@@ -31,6 +31,7 @@
 #include "nodes/parsenodes.h"
 #include "parser/parse_utilcmd.h"
 #include "tcop/utility.h"
+#include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -228,4 +229,41 @@ StoreCatalogAgInheritance1(Oid labid, Oid parentOid, int16 seqNumber,
 
 	InvokeObjectPostAlterHookArg(AgInheritsRelationId, labid, 0,
 								 parentOid, false);
+}
+
+/*
+ * DROP VLABEL cannot drop edge and base vertex label.
+ * DROP ELABEL cannot drop vertex and base edge label.
+ */
+void
+CheckDropLabel(ObjectType removeType, Oid labid)
+{
+	HeapTuple	tuple;
+	Form_ag_label labtup;
+
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for label (OID=%u)", labid);
+
+	labtup = (Form_ag_label) GETSTRUCT(tuple);
+
+	if (removeType == OBJECT_VLABEL && labtup->labkind != LABEL_KIND_VERTEX)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("DROP VLABEL cannot drop edge label")));
+	if (removeType == OBJECT_ELABEL && labtup->labkind != LABEL_KIND_EDGE)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("DROP ELABEL cannot drop vertex label")));
+
+	if (namestrcmp(&(labtup->labname), AG_VERTEX) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("cannot drop base vertex label")));
+	if (namestrcmp(&(labtup->labname), AG_EDGE) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("cannot drop base edge label")));
+
+	ReleaseSysCache(tuple);
 }

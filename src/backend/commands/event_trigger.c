@@ -94,12 +94,12 @@ static event_trigger_support_data event_trigger_support[] = {
 	{"DATABASE", false},
 	{"DOMAIN", true},
 	{"EXTENSION", true},
+	{"ELABEL", true},
 	{"EVENT TRIGGER", false},
 	{"FOREIGN DATA WRAPPER", true},
 	{"FOREIGN TABLE", true},
 	{"FUNCTION", true},
 	{"INDEX", true},
-	{"LABEL", true},
 	{"LANGUAGE", true},
 	{"MATERIALIZED VIEW", true},
 	{"OPERATOR", true},
@@ -122,6 +122,7 @@ static event_trigger_support_data event_trigger_support[] = {
 	{"TYPE", true},
 	{"USER MAPPING", true},
 	{"VIEW", true},
+	{"VLABEL", true},
 	{NULL, false}
 };
 
@@ -1091,13 +1092,13 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_DEFAULT:
 		case OBJECT_DOMAIN:
 		case OBJECT_DOMCONSTRAINT:
+		case OBJECT_ELABEL:
 		case OBJECT_EXTENSION:
 		case OBJECT_FDW:
 		case OBJECT_FOREIGN_SERVER:
 		case OBJECT_FOREIGN_TABLE:
 		case OBJECT_FUNCTION:
 		case OBJECT_INDEX:
-		case OBJECT_LABEL:
 		case OBJECT_LANGUAGE:
 		case OBJECT_LARGEOBJECT:
 		case OBJECT_MATVIEW:
@@ -1119,6 +1120,7 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_TYPE:
 		case OBJECT_USER_MAPPING:
 		case OBJECT_VIEW:
+		case OBJECT_VLABEL:
 			return true;
 	}
 	return true;
