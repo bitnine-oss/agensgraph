@@ -58,12 +58,12 @@ MATCH (a)-[]->(b)
 RETURN properties(a) AS a, properties(b) AS b;
               a               |              b               
 ------------------------------+------------------------------
+ {"id": 8, "name": "regv2-5"} | {"id": 1, "name": "regv1-1"}
+ {"id": 7, "name": "regv2-4"} | {"id": 2, "name": "regv1-2"}
+ {"id": 6, "name": "regv2-3"} | {"id": 3, "name": "regv1-3"}
  {"id": 1, "name": "regv1-1"} | {"id": 4, "name": "regv2-1"}
  {"id": 2, "name": "regv1-2"} | {"id": 5, "name": "regv2-2"}
  {"id": 3, "name": "regv1-3"} | {"id": 6, "name": "regv2-3"}
- {"id": 6, "name": "regv2-3"} | {"id": 3, "name": "regv1-3"}
- {"id": 7, "name": "regv2-4"} | {"id": 2, "name": "regv1-2"}
- {"id": 8, "name": "regv2-5"} | {"id": 1, "name": "regv1-1"}
 (6 rows)
 
 MATCH (a)-[]-(b)
@@ -136,12 +136,12 @@ RETURN (a).id AS empid;
 (3 rows)
 
 MATCH (a:regvlabel1)
-RETURN id(a);
- id 
-----
-  1
-  2
-  3
+RETURN (id(a)).lid;
+ lid 
+-----
+   1
+   2
+   3
 (3 rows)
 
 -- ORDER BY
@@ -377,15 +377,15 @@ CREATE (),
 	   (b:regvlabel1),
 	   (c:regvlabel2 '{"name": "test1"}'),
 	   p=(d:regvlabel3 '{"name": "test2", "age": 123}')-[:regelabel1]->();
-MATCH (a) RETURN id(a), properties(a);
- id |          properties           
-----+-------------------------------
-  1 | {}
-  2 | {}
-  3 | {}
-  1 | {}
-  1 | {"name": "test1"}
-  1 | {"age": 123, "name": "test2"}
+MATCH (a) RETURN (id(a)).lid, properties(a);
+ lid |          properties           
+-----+-------------------------------
+   1 | {}
+   2 | {}
+   3 | {}
+   1 | {}
+   1 | {"name": "test1"}
+   1 | {"age": 123, "name": "test2"}
 (6 rows)
 
 MATCH (n) DETACH DELETE n;
@@ -430,8 +430,8 @@ CREATE (:regvlabel2 '{"name": "regvlabel2-1"}'),
 CREATE (a:regvlabel1 '{"name": "regvlabel1"}')
 MATCH (b:regvlabel2)
 CREATE (a)-[c:regelabel1 '{"name": "e1"}']->(b), (b)-[d:regelabel1 '{"name": "e2"}']->(a)
-RETURN id(a) = start_id(c) AND end_id(c) = id(b) AS atob,
-	   id(b) = start_id(d) AND end_id(d) = id(a) AS btoa;
+RETURN id(a) = start(c) AND "end"(c) = id(b) AS atob,
+	   id(b) = start(d) AND "end"(d) = id(a) AS btoa;
  atob | btoa 
 ------+------
  t    | t

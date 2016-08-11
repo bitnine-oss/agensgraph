@@ -19,13 +19,11 @@
 #define AG_GRAPH			"graph"
 #define AG_VERTEX			"vertex"
 #define AG_EDGE				"edge"
-#define AG_ELEM_OID			"oid"
+#define AG_ELEM_LOCAL_ID	"id"
 #define AG_ELEM_ID			"id"
+#define AG_START_ID			"start"
+#define AG_END_ID			"end"
 #define AG_ELEM_PROP_MAP	"properties"
-#define AG_START_OID		"start_oid"
-#define AG_START_ID			"start_id"
-#define AG_END_OID			"end_oid"
-#define AG_END_ID			"end_id"
 
 extern List *transformCreateStmt(CreateStmt *stmt, const char *queryString);
 extern List *transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,

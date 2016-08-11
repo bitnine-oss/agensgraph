@@ -2243,10 +2243,10 @@ setup_graph(void)
 		 * labels in the schema.
 		 */
 		"CREATE SCHEMA graph;\n",
-		"CREATE VLABEL vertex\n",
-		"CREATE ELABEL edge\n",
-		"CREATE INDEX edge_start ON graph.edge (start_oid, start_id);\n",
-		"CREATE INDEX edge_end ON graph.edge (end_oid, end_id);\n",
+		"CREATE VLABEL vertex;\n",
+		"CREATE ELABEL edge;\n",
+		"CREATE INDEX edge_start ON graph.edge (start);\n",
+		"CREATE INDEX edge_end ON graph.edge (\"end\");\n",
 		NULL
 	};
 

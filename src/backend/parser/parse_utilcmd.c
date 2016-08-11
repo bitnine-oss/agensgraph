@@ -2951,7 +2951,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		ColumnDef *coldef;
 
 		coldef = makeNode(ColumnDef);
-		coldef->colname = AG_ELEM_ID;
+		coldef->colname = AG_ELEM_LOCAL_ID;
 		coldef->typeName = makeTypeName("bigserial");
 		coldef->is_local = true;
 		coldef->is_not_null = true;
@@ -3100,7 +3100,7 @@ makeVertexElements(void)
 	pk->contype = CONSTR_PRIMARY;
 	pk->location = -1;
 
-	id->colname = AG_ELEM_ID;
+	id->colname = AG_ELEM_LOCAL_ID;
 	id->typeName = makeTypeName("bigserial");
 	id->is_local = true;
 	id->constraints = list_make1(pk);
@@ -3118,72 +3118,45 @@ makeVertexElements(void)
 static List *
 makeEdgeElements(void)
 {
-	List	   *elems = NIL;
 	Constraint *pk = makeNode(Constraint);
 	ColumnDef  *id = makeNode(ColumnDef);
 	Constraint *notnull = makeNode(Constraint);
 	List	   *constr;
-	ColumnDef  *start_oid = makeNode(ColumnDef);
-	ColumnDef  *start_id = makeNode(ColumnDef);
-	ColumnDef  *end_oid = makeNode(ColumnDef);
-	ColumnDef  *end_id = makeNode(ColumnDef);
+	ColumnDef  *start = makeNode(ColumnDef);
+	ColumnDef  *end = makeNode(ColumnDef);
 	ColumnDef  *prop_map = makeNode(ColumnDef);
 
 	pk->contype = CONSTR_PRIMARY;
 	pk->location = -1;
 
-	id->colname = AG_ELEM_ID;
+	id->colname = AG_ELEM_LOCAL_ID;
 	id->typeName = makeTypeName("bigserial");
 	id->is_local = true;
 	id->constraints = list_make1(pk);
 	id->location = -1;
 
-	elems = lappend(elems, id);
-
 	notnull->contype = CONSTR_NOTNULL;
 	notnull->location = -1;
 	constr = list_make1(notnull);
 
-	start_oid->colname = AG_START_OID;
-	start_oid->typeName = makeTypeName("oid");
-	start_oid->is_local = true;
-	start_oid->constraints = constr;
-	start_oid->location = -1;
+	start->colname = AG_START_ID;
+	start->typeName = makeTypeName("graphid");
+	start->is_local = true;
+	start->constraints = constr;
+	start->location = -1;
 
-	elems = lappend(elems, start_oid);
-
-	start_id->colname = AG_START_ID;
-	start_id->typeName = makeTypeName("int8");
-	start_id->is_local = true;
-	start_id->constraints = copyObject(constr);
-	start_oid->location = -1;
-
-	elems = lappend(elems, start_id);
-
-	end_oid->colname = AG_END_OID;
-	end_oid->typeName = makeTypeName("oid");
-	end_oid->is_local = true;
-	end_oid->constraints = copyObject(constr);
-	end_oid->location = -1;
-
-	elems = lappend(elems, end_oid);
-
-	end_id->colname = AG_END_ID;
-	end_id->typeName = makeTypeName("int8");
-	end_id->is_local = true;
-	end_id->constraints = copyObject(constr);
-	end_id->location = -1;
-
-	elems = lappend(elems, end_id);
+	end->colname = AG_END_ID;
+	end->typeName = makeTypeName("graphid");
+	end->is_local = true;
+	end->constraints = copyObject(constr);
+	end->location = -1;
 
 	prop_map->colname = AG_ELEM_PROP_MAP;
 	prop_map->typeName = makeTypeName("jsonb");
 	prop_map->is_local = true;
 	prop_map->location = -1;
 
-	elems = lappend(elems, prop_map);
-
-	return elems;
+	return list_make4(id, start, end, prop_map);
 }
 
 /*
@@ -3257,48 +3230,37 @@ inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt)
 
 		/* NOTE: there must be a better way to distinguish indices */
 		if (stmt->labelKind == LABEL_VERTEX &&
-			idxrec->indisprimary == true &&
-			idxrec->indnatts == 1)
+			idxrec->indisprimary == true)
 		{
+			Assert(idxrec->indnatts == 1);
+
 			attnum = idxrec->indkey.values[0];
 			attname = get_relid_attribute_name(indrelid, attnum);
 
-			if (strcmp(attname, AG_ELEM_ID) == 0)
-			{
-				/* Build CREATE INDEX statement to recreate the parent_index */
-				index_stmt = generateClonedIndexStmt(cxt, parent_index,
-													 attmap, tupleDesc->natts);
-			}
+			Assert(strcmp(attname, AG_ELEM_LOCAL_ID) == 0);
+
+			/* Build CREATE INDEX statement to recreate the parent_index */
+			index_stmt = generateClonedIndexStmt(cxt, parent_index,
+												 attmap, tupleDesc->natts);
 		}
 		else if (stmt->labelKind == LABEL_EDGE)
 		{
-			/* id */
-			if (idxrec->indisprimary == true && idxrec->indnatts == 1)
-			{
-				attnum = idxrec->indkey.values[0];
-				attname = get_relid_attribute_name(indrelid, attnum);
+			Assert(idxrec->indnatts == 1);
 
-				if (strcmp(attname, AG_ELEM_ID) == 0)
-				{
-					index_stmt = generateClonedIndexStmt(cxt, parent_index,
-													attmap, tupleDesc->natts);
-				}
+			attnum = idxrec->indkey.values[0];
+			attname = get_relid_attribute_name(indrelid, attnum);
+
+			if (idxrec->indisprimary == true)
+			{
+				Assert(strcmp(attname, AG_ELEM_LOCAL_ID) == 0);
+
+				index_stmt = generateClonedIndexStmt(cxt, parent_index,
+													 attmap, tupleDesc->natts);
 			}
-			/* vertex (oid, id) */
-			else if (idxrec->indnatts == 2)
+			else
 			{
-				char *attname_id;
-
-				attnum = idxrec->indkey.values[0];
-				attname = get_relid_attribute_name(indrelid, attnum);
-
-				attnum = idxrec->indkey.values[1];
-				attname_id = get_relid_attribute_name(indrelid, attnum);
-
-				if ((strcmp(attname, AG_START_OID) == 0 &&
-					 strcmp(attname_id, AG_START_ID) == 0) ||
-					(strcmp(attname, AG_END_OID) == 0 &&
-					 strcmp(attname_id, AG_END_ID) == 0))
+				if (strcmp(attname, AG_START_ID) == 0 ||
+					strcmp(attname, AG_END_ID) == 0)
 				{
 					index_stmt = generateClonedIndexStmt(cxt, parent_index,
 													attmap, tupleDesc->natts);

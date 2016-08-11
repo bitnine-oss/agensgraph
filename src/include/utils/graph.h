@@ -14,8 +14,17 @@
 
 #include "fmgr.h"
 
+typedef struct Graphid
+{
+	Oid			oid;
+	int64		lid;
+} Graphid;
+
 extern Datum vertex_out(PG_FUNCTION_ARGS);
 extern Datum edge_out(PG_FUNCTION_ARGS);
 extern Datum graphpath_out(PG_FUNCTION_ARGS);
+
+extern Graphid getGraphidStruct(Datum datum);
+extern Datum getGraphidDatum(Graphid id);
 
 #endif	/* GRAPH_H */

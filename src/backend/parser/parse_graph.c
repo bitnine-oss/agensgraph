@@ -70,10 +70,12 @@ static bool checkDupRelVar(List *relVars, char *varname);
 static Node *makePathVertex(Node *nodeVar);
 static Node *makeGraphpath(List *vertices, List *edges);
 static Alias *makePatternVarAlias(char *aliasname);
-static Node *makeLabelTuple(Alias *alias, Oid type_oid);
+static Node *makeGraphidTuple(Alias *alias);
+static Node *makeVertexTuple(Alias *alias);
+static Node *makeEdgeTuple(Alias *alias);
 static Node *makePropMapConstraint(ColumnRef *props, char *qualStr);
 static Node *makeDirQual(Node *start, RangeVar *rel, Node *end);
-static void makeVertexId(Node *nodeVar, Node **oid, Node **id);
+static Node *makeVertexId(Node *nodeVar);
 static Node *addNodeDupQual(Node *qual, List *nodeVars);
 static Node *addRelDupQual(Node *qual, List *relVars);
 static List *transformCreatePattern(ParseState *pstate, List *pattern,
@@ -716,7 +718,7 @@ transformComponents(List *components, PatternCtx *ctx,
 									   fromClause, targetList, whereClause,
 									   &relVars);
 				if (out)
-					edges = lappend(edges, makeLabelTuple(r->alias, EDGEOID));
+					edges = lappend(edges, makeEdgeTuple(r->alias));
 
 				left = right;
 			}
@@ -798,7 +800,7 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 		Node	   *tuple;
 		ResTarget  *target;
 
-		tuple = makeLabelTuple(r->alias, VERTEXOID);
+		tuple = makeVertexTuple(r->alias);
 
 		target = makeSelectResTarget(tuple, varname,
 									 getCypherNameLoc(node->variable));
@@ -871,7 +873,7 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 		Node	   *tuple;
 		ResTarget  *target;
 
-		tuple = makeLabelTuple(r->alias, EDGEOID);
+		tuple = makeEdgeTuple(r->alias);
 
 		target = makeSelectResTarget(tuple, varname,
 									 getCypherNameLoc(rel->variable));
@@ -976,7 +978,7 @@ makePathVertex(Node *nodeVar)
 	{
 		RangeVar *r = (RangeVar *) nodeVar;
 
-		return makeLabelTuple(r->alias, VERTEXOID);
+		return makeVertexTuple(r->alias);
 	}
 	else
 	{
@@ -1009,19 +1011,45 @@ makePatternVarAlias(char *aliasname)
 	return makeAliasNoDup(aliasname, NIL);
 }
 
-/* ROW(alias.tableoid, alias.*)::type */
+/* ROW(alias.tableoid, alias.AG_ELEM_LOCAL_ID)::graphid */
 static Node *
-makeLabelTuple(Alias *alias, Oid type_oid)
+makeGraphidTuple(Alias *alias)
 {
 	ColumnRef  *oid;
-	ColumnRef  *star;
-	Node	   *tuple;
+	ColumnRef  *lid;
 
 	oid = makeAliasColname(alias, "tableoid");
-	star = makeAliasStar(alias);
-	tuple = makeTypedTuple(list_make2(oid, star), type_oid);
+	lid = makeAliasColname(alias, AG_ELEM_LOCAL_ID);
 
-	return tuple;
+	return makeTypedTuple(list_make2(oid, lid), GRAPHIDOID);
+}
+
+static Node *
+makeVertexTuple(Alias *alias)
+{
+	Node	   *id;
+	ColumnRef  *prop_map;
+
+	id = makeGraphidTuple(alias);
+	prop_map = makeAliasColname(alias, AG_ELEM_PROP_MAP);
+
+	return makeTypedTuple(list_make2(id, prop_map), VERTEXOID);
+}
+
+static Node *
+makeEdgeTuple(Alias *alias)
+{
+	Node	   *id;
+	ColumnRef  *start;
+	ColumnRef  *end;
+	ColumnRef  *prop_map;
+
+	id = makeGraphidTuple(alias);
+	start = makeAliasColname(alias, AG_START_ID);
+	end = makeAliasColname(alias, AG_END_ID);
+	prop_map = makeAliasColname(alias, AG_ELEM_PROP_MAP);
+
+	return makeTypedTuple(list_make4(id, start, end, prop_map), EDGEOID);
 }
 
 /* jsonb_contains(prop_map, qualStr) */
@@ -1045,48 +1073,38 @@ makePropMapConstraint(ColumnRef *prop_map, char *qualStr)
 static Node *
 makeDirQual(Node *start, RangeVar *rel, Node *end)
 {
-	Node	   *start_oid;
+	Node	   *vid_start;
 	Node	   *start_id;
-	Node	   *s_oid;
-	Node	   *s_id;
-	Node	   *e_oid;
-	Node	   *e_id;
-	Node	   *end_oid;
 	Node	   *end_id;
+	Node	   *vid_end;
 	List	   *args;
 
-	makeVertexId(start, &start_oid, &start_id);
-	s_oid = (Node *) makeAliasColname(rel->alias, AG_START_OID);
-	s_id = (Node *) makeAliasColname(rel->alias, AG_START_ID);
-	e_oid = (Node *) makeAliasColname(rel->alias, AG_END_OID);
-	e_id = (Node *) makeAliasColname(rel->alias, AG_END_ID);
-	makeVertexId(end, &end_oid, &end_id);
+	vid_start = makeVertexId(start);
+	start_id = (Node *) makeAliasColname(rel->alias, AG_START_ID);
+	end_id = (Node *) makeAliasColname(rel->alias, AG_END_ID);
+	vid_end = makeVertexId(end);
 
-	args = list_make4(makeSimpleA_Expr(AEXPR_OP, "=", s_oid, start_oid, -1),
-					  makeSimpleA_Expr(AEXPR_OP, "=", s_id, start_id, -1),
-					  makeSimpleA_Expr(AEXPR_OP, "=", e_oid, end_oid, -1),
-					  makeSimpleA_Expr(AEXPR_OP, "=", e_id, end_id, -1));
+	args = list_make2(makeSimpleA_Expr(AEXPR_OP, "=", start_id, vid_start, -1),
+					  makeSimpleA_Expr(AEXPR_OP, "=", end_id, vid_end, -1));
 
 	return (Node *) makeBoolExpr(AND_EXPR, args, -1);
 }
 
-static void
-makeVertexId(Node *nodeVar, Node **oid, Node **id)
+static Node *
+makeVertexId(Node *nodeVar)
 {
 	if (IsA(nodeVar, RangeVar))
 	{
 		RangeVar *r = (RangeVar *) nodeVar;
 
-		*oid = (Node *) makeAliasColname(r->alias, "tableoid");
-		*id = (Node *) makeAliasColname(r->alias, AG_ELEM_ID);
+		return makeGraphidTuple(r->alias);
 	}
 	else
 	{
 		ColumnRef *colref = (ColumnRef *) nodeVar;
 		AssertArg(IsA(colref, ColumnRef));
 
-		*oid = makeColumnProjection(colref, AG_ELEM_OID);
-		*id = makeColumnProjection(colref, AG_ELEM_ID);
+		return makeColumnProjection(colref, AG_ELEM_ID);
 	}
 }
 
@@ -1103,17 +1121,14 @@ addNodeDupQual(Node *qual, List *nodeVars)
 		for_each_cell(lv2, lnext(lv1))
 		{
 			Node	   *n2 = lfirst(lv2);
-			Node	   *oid1;
 			Node	   *id1;
-			Node	   *oid2;
 			Node	   *id2;
 			List	   *args;
 
-			makeVertexId(n1, &oid1, &id1);
-			makeVertexId(n2, &oid2, &id2);
+			id1 = makeVertexId(n1);
+			id2 = makeVertexId(n2);
 
-			args = list_make2(makeSimpleA_Expr(AEXPR_OP, "<>", oid1, oid2, -1),
-							  makeSimpleA_Expr(AEXPR_OP, "<>", id1, id2, -1));
+			args = list_make1(makeSimpleA_Expr(AEXPR_OP, "<>", id1, id2, -1));
 
 			qual = qualAndExpr(qual, (Node *) makeBoolExpr(OR_EXPR, args, -1));
 		}
@@ -1135,20 +1150,14 @@ addRelDupQual(Node *qual, List *relVars)
 		for_each_cell(lv2, lnext(lv1))
 		{
 			RangeVar   *r2 = lfirst(lv2);
-			Node	   *oid1;
 			Node	   *id1;
-			Node	   *oid2;
 			Node	   *id2;
 			List	   *args;
 
-			oid1 = (Node *) makeAliasColname(r1->alias, "tableoid");
-			id1 = (Node *) makeAliasColname(r1->alias, AG_ELEM_ID);
+			id1 = makeGraphidTuple(r1->alias);
+			id2 = makeGraphidTuple(r2->alias);
 
-			oid2 = (Node *) makeAliasColname(r2->alias, "tableoid");
-			id2 = (Node *) makeAliasColname(r2->alias, AG_ELEM_ID);
-
-			args = list_make2(makeSimpleA_Expr(AEXPR_OP, "<>", oid1, oid2, -1),
-							  makeSimpleA_Expr(AEXPR_OP, "<>", id1, id2, -1));
+			args = list_make1(makeSimpleA_Expr(AEXPR_OP, "<>", id1, id2, -1));
 
 			qual = qualAndExpr(qual, (Node *) makeBoolExpr(OR_EXPR, args, -1));
 		}
@@ -1324,26 +1333,19 @@ isNodeForReference(CypherNode *node)
 static ResTarget *
 makeDummyVertex(char *varname)
 {
-	A_Const	   *oid;
-	A_Const	   *vid;
+	A_Const	   *id;
 	A_Const	   *prop_map;
 	Node	   *tuple;
 
-	oid = makeNode(A_Const);
-	oid->val.type = T_Integer;
-	oid->val.val.ival = InvalidOid;
-	oid->location = -1;
-
-	vid = makeNode(A_Const);
-	vid->val.type = T_Integer;
-	vid->val.val.ival = 0;
-	vid->location = -1;
+	id = makeNode(A_Const);
+	id->val.type = T_Null;
+	id->location = -1;
 
 	prop_map = makeNode(A_Const);
 	prop_map->val.type = T_Null;
 	prop_map->location = -1;
 
-	tuple = makeTypedTuple(list_make3(oid, vid, prop_map), VERTEXOID);
+	tuple = makeTypedTuple(list_make2(id, prop_map), VERTEXOID);
 
 	return makeSelectResTarget(tuple, varname, -1);
 }
@@ -1351,60 +1353,24 @@ makeDummyVertex(char *varname)
 static ResTarget *
 makeDummyEdge(char *varname)
 {
-	A_Const	   *oid;
-	A_Const	   *eid;
-	A_Const	   *start_oid;
-	A_Const	   *start_id;
-	A_Const	   *end_oid;
-	A_Const	   *end_id;
+	A_Const	   *id;
+	A_Const	   *start;
+	A_Const	   *end;
 	A_Const	   *prop_map;
-	List	   *args;
 	Node	   *tuple;
 
-	oid = makeNode(A_Const);
-	oid->val.type = T_Integer;
-	oid->val.val.ival = InvalidOid;
-	oid->location = -1;
+	id = makeNode(A_Const);
+	id->val.type = T_Null;
+	id->location = -1;
 
-	eid = makeNode(A_Const);
-	eid->val.type = T_Integer;
-	eid->val.val.ival = 0;
-	eid->location = -1;
-
-	start_oid = makeNode(A_Const);
-	start_oid->val.type = T_Integer;
-	start_oid->val.val.ival = InvalidOid;
-	start_oid->location = -1;
-
-	start_id = makeNode(A_Const);
-	start_id->val.type = T_Integer;
-	start_id->val.val.ival = 0;
-	start_id->location = -1;
-
-	end_oid = makeNode(A_Const);
-	end_oid->val.type = T_Integer;
-	end_oid->val.val.ival = InvalidOid;
-	end_oid->location = -1;
-
-	end_id = makeNode(A_Const);
-	end_id->val.type = T_Integer;
-	end_id->val.val.ival = 0;
-	end_id->location = -1;
+	start = copyObject(id);
+	end = copyObject(id);
 
 	prop_map = makeNode(A_Const);
 	prop_map->val.type = T_Null;
 	prop_map->location = -1;
 
-	args = lcons(oid,
-		   lcons(eid,
-		   lcons(start_oid,
-		   lcons(start_id,
-		   lcons(end_oid,
-		   lcons(end_id,
-		   lcons(prop_map,
-				 NIL)))))));
-
-	tuple = makeTypedTuple(args, EDGEOID);
+	tuple = makeTypedTuple(list_make4(id, start, end, prop_map), EDGEOID);
 
 	return makeSelectResTarget(tuple, varname, -1);
 }
@@ -1619,6 +1585,8 @@ makeTypeNameByOid(Oid type_oid)
 {
 	switch (type_oid)
 	{
+		case GRAPHIDOID:
+			return makeTypeName("graphid");
 		case VERTEXARRAYOID:
 			return makeTypeName("_vertex");
 		case VERTEXOID:
@@ -1630,7 +1598,8 @@ makeTypeNameByOid(Oid type_oid)
 		case GRAPHPATHOID:
 			return makeTypeName("graphpath");
 		default:
-			AssertArg(type_oid == VERTEXOID ||
+			AssertArg(type_oid == GRAPHIDOID ||
+					  type_oid == VERTEXOID ||
 					  type_oid == EDGEOID ||
 					  type_oid == GRAPHPATHOID);
 			return NULL;

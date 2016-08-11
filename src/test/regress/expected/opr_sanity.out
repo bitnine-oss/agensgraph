@@ -2051,9 +2051,11 @@ FROM (SELECT indexrelid, indrelid, unnest(indkey) as ikey,
       pg_opclass opc
 WHERE a.attrelid = indrelid AND a.attnum = ikey AND opc.oid = iclass AND
       (NOT binary_coercible(atttypid, opcintype) OR icoll != attcollation);
- indexrelid | indrelid | attname | atttypid | opcname 
-------------+----------+---------+----------+---------
-(0 rows)
+    indexrelid    |  indrelid  | attname | atttypid |  opcname   
+------------------+------------+---------+----------+------------
+ graph.edge_start | graph.edge | start   | graphid  | record_ops
+ graph.edge_end   | graph.edge | end     | graphid  | record_ops
+(2 rows)
 
 -- For system catalogs, be even tighter: nearly all indexes should be
 -- exact type matches not binary-coercible matches.  At this writing
@@ -2068,10 +2070,12 @@ FROM (SELECT indexrelid, indrelid, unnest(indkey) as ikey,
 WHERE a.attrelid = indrelid AND a.attnum = ikey AND opc.oid = iclass AND
       (opcintype != atttypid OR icoll != attcollation)
 ORDER BY 1;
-        indexrelid        |   indrelid   | attname  | atttypid | opcname 
---------------------------+--------------+----------+----------+---------
+        indexrelid        |   indrelid   | attname  | atttypid |  opcname   
+--------------------------+--------------+----------+----------+------------
  pg_aggregate_fnoid_index | pg_aggregate | aggfnoid | regproc  | oid_ops
-(1 row)
+ graph.edge_start         | graph.edge   | start    | graphid  | record_ops
+ graph.edge_end           | graph.edge   | end      | graphid  | record_ops
+(3 rows)
 
 -- Check for system catalogs with collation-sensitive ordering.  This is not
 -- a representational error in pg_index, but simply wrong catalog design.
