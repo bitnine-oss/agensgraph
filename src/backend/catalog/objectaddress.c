@@ -701,9 +701,9 @@ static void getRelationTypeDescription(StringInfo buffer, Oid relid,
 						   int32 objectSubId);
 static void getProcedureTypeDescription(StringInfo buffer, Oid procid);
 static void getConstraintTypeDescription(StringInfo buffer, Oid constroid);
-static void getLabelDescription(StringInfo buffer, Oid labid);
 static void getOpFamilyIdentity(StringInfo buffer, Oid opfid, List **objname);
 static void getRelationIdentity(StringInfo buffer, Oid relid, List **objname);
+static void getLabelDescription(StringInfo buffer, Oid labid);
 
 /*
  * Translate an object name and arguments (as passed by the parser) to an
@@ -4774,7 +4774,7 @@ static void getLabelDescription(StringInfo buffer, Oid labid)
 
 	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
 	if (!HeapTupleIsValid(tuple))
-		elog(ERROR, "cache lookup failed for label %u", labid);
+		elog(ERROR, "cache lookup failed for label (OID=%u)", labid);
 
 	labtup = (Form_ag_label) GETSTRUCT(tuple);
 
@@ -4783,7 +4783,7 @@ static void getLabelDescription(StringInfo buffer, Oid labid)
 	else if (labtup->labkind == LABEL_KIND_EDGE)
 		appendStringInfo(buffer, "elabel");
 	else
-		elog(ERROR, "invalid label %u",labid);
+		elog(ERROR, "invalid label (OID=%u)",labid);
 
 	ReleaseSysCache(tuple);
 }

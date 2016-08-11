@@ -48,7 +48,9 @@ DROP TABLE vlabel_c7;
 DROP TABLE elabel_c3;
 
 DROP VLABEL nothing;
+DROP ELABEL nothing;
 
+DROP VLABEL elabel_c3;
 DROP ELABEL vlabel_c7;
 
 DROP VLABEL vlabel_p1;
