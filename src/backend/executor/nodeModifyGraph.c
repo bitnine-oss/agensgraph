@@ -15,22 +15,40 @@
 #include "executor/executor.h"
 #include "executor/nodeModifyGraph.h"
 #include "executor/spi.h"
+#include "funcapi.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_utilcmd.h"
 #include "utils/arrayaccess.h"
+#include "utils/builtins.h"
 #include "utils/graph.h"
+#include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/typcache.h"
 
 #define SQLCMD_BUFLEN				(NAMEDATALEN + 192)
+
+#define SQLCMD_CREAT_VERTEX \
+	"INSERT INTO " AG_GRAPH ".%s VALUES (DEFAULT, $1) RETURNING " \
+	"(tableoid, " AG_ELEM_LOCAL_ID ")::graphid AS " AG_ELEM_ID ", " \
+	AG_ELEM_PROP_MAP
+#define SQLCMD_VERTEX_NPARAMS		1
+
+#define SQLCMD_CREAT_EDGE \
+	"INSERT INTO " AG_GRAPH ".%s VALUES (DEFAULT, $1, $2, $3) RETURNING " \
+	"(tableoid, " AG_ELEM_LOCAL_ID ")::graphid AS " AG_ELEM_ID ", " \
+	AG_START_ID ", \"" AG_END_ID "\", " AG_ELEM_PROP_MAP
+#define SQLCMD_EDGE_NPARAMS			3
+
 #define SQLCMD_DEL_ELEM \
 	"DELETE FROM ONLY " AG_GRAPH ".%s WHERE " AG_ELEM_LOCAL_ID " = $1"
 #define SQLCMD_DEL_ELEM_NPARAMS		1
+
 #define SQLCMD_DETACH \
 	"SELECT " AG_ELEM_LOCAL_ID " FROM " AG_GRAPH "." AG_EDGE \
 	" WHERE " AG_START_ID " = $1 OR \"" AG_END_ID "\" = $1"
 #define SQLCMD_DETACH_NPARAMS		1
+
 #define SQLCMD_DEL_EDGES \
 	"DELETE FROM " AG_GRAPH "." AG_EDGE \
 	" WHERE " AG_START_ID " = $1 OR \"" AG_END_ID "\" = $1"
@@ -42,13 +60,25 @@ typedef struct ArrayAccessTypeInfo {
 	char		typalign;
 } ArrayAccessTypeInfo;
 
+static TupleTableSlot *ExecCreateGraph(ModifyGraphState *mgstate,
+									   TupleTableSlot *slot);
+static Datum createVertex(EState *estate, CypherNode *node, Graphid *vid,
+						  TupleTableSlot *slot, bool inPath);
+static Datum createEdge(EState *estate, CypherRel *crel, Graphid start,
+						Graphid end, TupleTableSlot *slot, bool inPath);
+static TupleTableSlot *createPath(EState *estate, CypherPath *path,
+								  TupleTableSlot *slot);
+static Datum findVertex(TupleTableSlot *slot, CypherNode *node, Graphid *vid);
+static AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
+static Datum copyTupleAsDatum(EState *estate, HeapTuple tuple, Oid tupType);
+static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
+static Datum *makeDatumArray(EState *estate, int len);
+static Datum CStringGetJsonbDatum(char *str);
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
 static void deleteVertex(Datum vertex, bool detach);
-static Datum vertexGetIdAttr(Datum vertex);
 static bool vertexHasEdge(Datum vid);
 static void deleteVertexEdges(Datum vid);
-static Graphid DatumGetEid(Datum edge);
 static void deleteElem(char *relname, int64 id);
 static void deletePath(Datum graphpath, bool detach);
 
@@ -94,6 +124,9 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 
 		switch (plan->operation)
 		{
+			case GWROP_CREATE:
+				slot = ExecCreateGraph(mgstate, slot);
+				break;
 			case GWROP_DELETE:
 				slot = ExecDeleteGraph(mgstate, slot);
 				break;
@@ -116,6 +149,320 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 {
 	ExecFreeExprContext(&mgstate->ps);
 	ExecEndNode(mgstate->subplan);
+}
+
+static TupleTableSlot *
+ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
+{
+	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+	EState	   *estate = mgstate->ps.state;
+	ListCell   *lp;
+
+	/* create a pattern, accumulated paths `slot` has */
+	foreach(lp, plan->pattern)
+	{
+		CypherPath *path = (CypherPath *) lfirst(lp);
+
+		slot = createPath(estate, path, slot);
+	}
+
+	return (plan->last ? NULL : slot);
+}
+
+/* create a path and accumulate it to the given slot */
+static TupleTableSlot *
+createPath(EState *estate, CypherPath *path, TupleTableSlot *slot)
+{
+	char	   *pathname = getCypherName(path->variable);
+	bool		out = (pathname != NULL);
+	int			pathlen;
+	Datum	   *vertices = NULL;
+	Datum	   *edges = NULL;
+	int			nvertices;
+	int			nedges;
+	ListCell   *le;
+	Graphid		vid;
+	Graphid		prevvid;
+	CypherRel  *crel = NULL;
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	if (out)
+	{
+		pathlen = list_length(path->chain);
+		Assert(pathlen % 2 == 1);
+
+		vertices = makeDatumArray(estate, (pathlen / 2) + 1);
+		edges = makeDatumArray(estate, pathlen / 2);
+
+		nvertices = 0;
+		nedges = 0;
+	}
+
+	foreach(le, path->chain)
+	{
+		Node *elem = (Node *) lfirst(le);
+
+		if (nodeTag(elem) == T_CypherNode)
+		{
+			CypherNode *node = (CypherNode *) elem;
+			Datum		vertex;
+
+			if (node->create)
+				vertex = createVertex(estate, node, &vid, slot, out);
+			else
+				vertex = findVertex(slot, node, &vid);
+
+			if (out)
+				vertices[nvertices++] = vertex;
+
+			if (crel != NULL)
+			{
+				Datum edge;
+
+				if (crel->direction == CYPHER_REL_DIR_LEFT)
+				{
+					edge = createEdge(estate, crel, vid, prevvid, slot, out);
+				}
+				else
+				{
+					Assert(crel->direction == CYPHER_REL_DIR_RIGHT);
+
+					edge = createEdge(estate, crel, prevvid, vid, slot, out);
+				}
+
+				if (out)
+					edges[nedges++] = edge;
+			}
+
+			prevvid = vid;
+		}
+		else
+		{
+			Assert(nodeTag(elem) == T_CypherRel);
+
+			crel = (CypherRel *) elem;
+		}
+	}
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
+
+	/* make a graphpath and set it to the slot */
+	if (out)
+	{
+		MemoryContext oldMemoryContext;
+		Datum graphpath;
+
+		Assert(nvertices == nedges + 1);
+		Assert(pathlen == nvertices + nedges);
+
+		oldMemoryContext = MemoryContextSwitchTo(estate->es_query_cxt);
+
+		graphpath = makeGraphpathDatum(vertices, nvertices, edges, nedges);
+
+		MemoryContextSwitchTo(oldMemoryContext);
+
+		setSlotValueByName(slot, graphpath, pathname);
+	}
+
+	return slot;
+}
+
+/*
+ * createVertex - creates a vertex of a given node
+ *
+ * NOTE: This function returns a vertex if it must be in the result(`slot`).
+ */
+static Datum
+createVertex(EState *estate, CypherNode *node, Graphid *vid,
+			 TupleTableSlot *slot, bool inPath)
+{
+	char		sqlcmd[SQLCMD_BUFLEN];
+	char	   *label;
+	Datum		values[SQLCMD_VERTEX_NPARAMS];
+	Oid			argTypes[SQLCMD_VERTEX_NPARAMS] = {JSONBOID};
+	int			ret;
+	TupleDesc	tupDesc;
+	HeapTuple	tuple;
+	char	   *varname;
+	Datum		vertex = (Datum) NULL;
+
+	label = getCypherName(node->label);
+	if (label == NULL)
+		label = AG_VERTEX;
+
+	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_VERTEX, label);
+
+	values[0] = CStringGetJsonbDatum(node->prop_map);
+
+	ret = SPI_execute_with_args(sqlcmd, SQLCMD_VERTEX_NPARAMS, argTypes,
+								values, NULL, false, 0);
+	if (ret != SPI_OK_INSERT_RETURNING)
+		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
+	if (SPI_processed != 1)
+		elog(ERROR, "SPI_execute: only one vertex per execution must be created");
+
+	tupDesc = SPI_tuptable->tupdesc;
+	tuple = SPI_tuptable->vals[0];
+
+	if (vid != NULL)
+	{
+		bool isnull;
+
+		Assert(SPI_fnumber(tupDesc, AG_ELEM_ID) == 1);
+		*vid = getGraphidStruct(SPI_getbinval(tuple, tupDesc, 1, &isnull));
+		Assert(!isnull);
+	}
+
+	varname = getCypherName(node->variable);
+
+	/* if this vertex is in the result solely or in some paths, */
+	if (varname != NULL || inPath)
+		vertex = copyTupleAsDatum(estate, tuple, VERTEXOID);
+
+	if (varname != NULL)
+		setSlotValueByName(slot, vertex, varname);
+
+	return vertex;
+}
+
+static Datum
+createEdge(EState *estate, CypherRel *crel, Graphid start, Graphid end,
+		   TupleTableSlot *slot, bool inPath)
+{
+	char		sqlcmd[SQLCMD_BUFLEN];
+	char	   *reltype;
+	Datum		values[SQLCMD_EDGE_NPARAMS];
+	Oid			argTypes[SQLCMD_EDGE_NPARAMS] = {GRAPHIDOID, GRAPHIDOID,
+												 JSONBOID};
+	int			ret;
+	char	   *varname;
+	Datum		edge = (Datum) NULL;
+
+	reltype = getCypherName(linitial(crel->types));
+	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_EDGE, reltype);
+
+	values[0] = getGraphidDatum(start);
+	values[1] = getGraphidDatum(end);
+	values[2] = CStringGetJsonbDatum(crel->prop_map);
+
+	ret = SPI_execute_with_args(sqlcmd, SQLCMD_EDGE_NPARAMS, argTypes, values,
+								NULL, false, 0);
+	if (ret != SPI_OK_INSERT_RETURNING)
+		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
+	if (SPI_processed != 1)
+		elog(ERROR, "SPI_execute: only one edge per execution must be created");
+
+	varname = getCypherName(crel->variable);
+
+	if (varname != NULL || inPath)
+	{
+		HeapTuple tuple = SPI_tuptable->vals[0];
+
+		edge = copyTupleAsDatum(estate, tuple, EDGEOID);
+	}
+
+	if (varname != NULL)
+		setSlotValueByName(slot, edge, varname);
+
+	return edge;
+}
+
+static Datum
+findVertex(TupleTableSlot *slot, CypherNode *node, Graphid *vid)
+{
+	char	   *varname;
+	AttrNumber	attno;
+	Datum		vertex;
+
+	varname = getCypherName(node->variable);
+
+	attno = findAttrInSlotByName(slot, varname);
+
+	vertex = slot->tts_values[attno - 1];
+
+	if (vid != NULL)
+		*vid = getGraphidStruct(getVertexIdDatum(vertex));
+
+	return vertex;
+}
+
+static AttrNumber
+findAttrInSlotByName(TupleTableSlot *slot, char *name)
+{
+	TupleDesc	tupDesc = slot->tts_tupleDescriptor;
+	int			i;
+
+	for (i = 0; i < tupDesc->natts; i++)
+	{
+		if (namestrcmp(&(tupDesc->attrs[i]->attname), name) == 0 &&
+			!tupDesc->attrs[i]->attisdropped)
+			return tupDesc->attrs[i]->attnum;
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_NAME),
+			 errmsg("variable \"%s\" does not exist", name)));
+	return InvalidAttrNumber;
+}
+
+static Datum
+copyTupleAsDatum(EState *estate, HeapTuple tuple, Oid tupType)
+{
+	TupleDesc		tupDesc;
+	MemoryContext	oldMemoryContext;
+	Datum			value;
+
+	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
+
+	oldMemoryContext = MemoryContextSwitchTo(estate->es_query_cxt);
+
+	value = heap_copy_tuple_as_datum(tuple, tupDesc);
+
+	MemoryContextSwitchTo(oldMemoryContext);
+
+	ReleaseTupleDesc(tupDesc);
+
+	return value;
+}
+
+static void
+setSlotValueByName(TupleTableSlot *slot, Datum value, char *name)
+{
+	AttrNumber attno;
+
+	attno = findAttrInSlotByName(slot, name);
+
+	slot->tts_values[attno - 1] = value;
+}
+
+static Datum *
+makeDatumArray(EState *estate, int len)
+{
+	MemoryContext oldMemoryContext;
+	Datum *result;
+
+	if (len == 0)
+		return NULL;
+
+	oldMemoryContext = MemoryContextSwitchTo(estate->es_query_cxt);
+
+	result = palloc(len * sizeof(Datum));
+
+	MemoryContextSwitchTo(oldMemoryContext);
+
+	return result;
+}
+
+static Datum
+CStringGetJsonbDatum(char *str)
+{
+	if (str == NULL)
+		return jsonb_build_object_noargs(NULL);
+	else
+		return DirectFunctionCall1(jsonb_in, CStringGetDatum(str));
 }
 
 static TupleTableSlot *
@@ -164,7 +511,7 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 				{
 					Graphid eid;
 
-					eid = DatumGetEid(datum);
+					eid = getGraphidStruct(getEdgeIdDatum(datum));
 					deleteElem(get_rel_name(eid.oid), eid.lid);
 				}
 				break;
@@ -185,18 +532,18 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 static void
 deleteVertex(Datum vertex, bool detach)
 {
-	Datum		id_attr;
+	Datum		id_datum;
 	Graphid		id;
 	char	   *labname;
 
-	id_attr = vertexGetIdAttr(vertex);
-	id = getGraphidStruct(id_attr);
+	id_datum = getVertexIdDatum(vertex);
+	id = getGraphidStruct(id_datum);
 
-	if (vertexHasEdge(id_attr))
+	if (vertexHasEdge(id_datum))
 	{
 		if (detach)
 		{
-			deleteVertexEdges(id_attr);
+			deleteVertexEdges(id_datum);
 		}
 		else
 		{
@@ -211,37 +558,6 @@ deleteVertex(Datum vertex, bool detach)
 
 	labname = get_rel_name(id.oid);
 	deleteElem(labname, id.lid);
-}
-
-static Datum
-vertexGetIdAttr(Datum vertex)
-{
-	HeapTupleHeader	tuphdr;
-	Oid			tupType;
-	TupleDesc	tupDesc;
-	HeapTupleData tuple;
-	bool		isnull = false;
-	Datum		id;
-
-	tuphdr = DatumGetHeapTupleHeader(vertex);
-
-	tupType = HeapTupleHeaderGetTypeId(tuphdr);
-	Assert(tupType == VERTEXOID);
-
-	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == 2);	// TODO: use Natts_vertex
-
-	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
-	ItemPointerSetInvalid(&tuple.t_self);
-	tuple.t_tableOid = InvalidOid;
-	tuple.t_data = tuphdr;
-
-	// TODO: use Anum_vertex_id
-	id = heap_getattr(&tuple, 1, tupDesc, &isnull);
-	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull);
-
-	return id;
 }
 
 static bool
@@ -278,37 +594,6 @@ deleteVertexEdges(Datum vid)
 		elog(ERROR, "SPI_execute failed: %s", SQLCMD_DEL_EDGES);
 }
 
-static Graphid
-DatumGetEid(Datum edge)
-{
-	HeapTupleHeader	tuphdr;
-	Oid			tupType;
-	TupleDesc	tupDesc;
-	HeapTupleData tuple;
-	bool		isnull = false;
-	Datum		id;
-
-	tuphdr = DatumGetHeapTupleHeader(edge);
-
-	tupType = HeapTupleHeaderGetTypeId(tuphdr);
-	Assert(tupType == EDGEOID);
-
-	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == 4);	// TODO: use Natts_edge
-
-	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
-	ItemPointerSetInvalid(&tuple.t_self);
-	tuple.t_tableOid = InvalidOid;
-	tuple.t_data = tuphdr;
-
-	// TODO: use Anum_edge_id
-	id = heap_getattr(&tuple, 1, tupDesc, &isnull);
-	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull);
-
-	return getGraphidStruct(id);
-}
-
 static void
 deleteElem(char *relname, int64 id)
 {
@@ -332,12 +617,8 @@ deleteElem(char *relname, int64 id)
 static void
 deletePath(Datum graphpath, bool detach)
 {
-	HeapTupleHeader	tuphdr;
-	Oid			tupType;
-	TupleDesc	tupDesc;
-	HeapTupleData tuple;
-	Datum		values[2];	// TODO: use Natts_graphpath
-	bool		isnull[2];
+	Datum		vertices_datum;
+	Datum		edges_datum;
 	AnyArrayType *vertices;
 	AnyArrayType *edges;
 	int			nvertices;
@@ -349,26 +630,10 @@ deletePath(Datum graphpath, bool detach)
 	bool		null;
 	int			i;
 
-	tuphdr = DatumGetHeapTupleHeader(graphpath);
+	getGraphpathArrays(graphpath, &vertices_datum, &edges_datum);
 
-	tupType = HeapTupleHeaderGetTypeId(tuphdr);
-	Assert(tupType == GRAPHPATHOID);
-
-	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == 2);
-
-	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
-	ItemPointerSetInvalid(&tuple.t_self);
-	tuple.t_tableOid = InvalidOid;
-	tuple.t_data = tuphdr;
-
-	heap_deform_tuple(&tuple, tupDesc, values, isnull);
-	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull[0]);	// TODO: use Anum_graphpath_...
-	Assert(!isnull[1]);
-
-	vertices = DatumGetAnyArray(values[0]);
-	edges = DatumGetAnyArray(values[1]);
+	vertices = DatumGetAnyArray(vertices_datum);
+	edges = DatumGetAnyArray(edges_datum);
 
 	nvertices = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices));
 	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
@@ -389,7 +654,7 @@ deletePath(Datum graphpath, bool detach)
 								edgeInfo.typbyval, edgeInfo.typalign);
 		Assert(!null);
 
-		eid = DatumGetEid(value);
+		eid = getGraphidStruct(getEdgeIdDatum(value));
 		deleteElem(get_rel_name(eid.oid), eid.lid);
 	}
 

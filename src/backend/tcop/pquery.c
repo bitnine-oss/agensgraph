@@ -213,10 +213,6 @@ ProcessQuery(PlannedStmt *plan,
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 						 "DELETE %u", queryDesc->estate->es_processed);
 				break;
-			case CMD_CYPHERCREATE:
-				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-						 "CYPHER CREATE COMPLETE");
-				break;
 			case CMD_GRAPHWRITE:
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE, "GRAPH WRITE");
 				break;

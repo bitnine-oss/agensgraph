@@ -163,11 +163,11 @@ typedef struct Query
 										 * part of Query. */
 
 	/* for agensgraph */
-	List	   *graphPattern;	/* graph pattern (list of paths) for CREATE */
 	struct {
 		GraphWriteOp writeOp;
 		bool		last;		/* is this for the last clause? */
 		bool		detach;		/* DETACH DELETE */
+		List	   *pattern;	/* graph pattern (list of paths) for CREATE */
 		List	   *exprs;		/* expression list for DELETE */
 	}			graph;
 } Query;

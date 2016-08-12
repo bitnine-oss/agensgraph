@@ -53,6 +53,7 @@ static LabelOutData *cache_label(FmgrInfo *flinfo, Oid relid);
 static void get_elem_type_output(ArrayMetaState *state, Oid elem_type,
 								 MemoryContext mctx);
 static Datum array_iter_next_(array_iter *it, int idx, ArrayMetaState *state);
+static Datum makeArrayTypeDatum(Datum *elems, int nelem, Oid type);
 
 Datum
 vertex_out(PG_FUNCTION_ARGS)
@@ -178,12 +179,8 @@ Datum
 graphpath_out(PG_FUNCTION_ARGS)
 {
 	const char	delim = ',';
-	HeapTupleHeader path = PG_GETARG_HEAPTUPLEHEADER(0);
-	Oid			tupType;
-	TupleDesc	tupDesc;
-	HeapTupleData tuple;
-	Datum		values[Natts_graphpath];
-	bool		isnull[Natts_graphpath];
+	Datum vertices_datum;
+	Datum edges_datum;
 	AnyArrayType *vertices;
 	AnyArrayType *edges;
 	GraphpathOutData *my_extra;
@@ -195,24 +192,10 @@ graphpath_out(PG_FUNCTION_ARGS)
 	Datum		value;
 	int			i;
 
-	tupType = HeapTupleHeaderGetTypeId(path);
-	Assert(tupType == GRAPHPATHOID);
+	getGraphpathArrays(PG_GETARG_DATUM(0), &vertices_datum, &edges_datum);
 
-	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == Natts_graphpath);
-
-	tuple.t_len = HeapTupleHeaderGetDatumLength(path);
-	ItemPointerSetInvalid(&tuple.t_self);
-	tuple.t_tableOid = InvalidOid;
-	tuple.t_data = path;
-
-	heap_deform_tuple(&tuple, tupDesc, values, isnull);
-	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull[Anum_graphpath_vertices - 1]);
-	Assert(!isnull[Anum_graphpath_edges - 1]);
-
-	vertices = DatumGetAnyArray(values[Anum_graphpath_vertices - 1]);
-	edges = DatumGetAnyArray(values[Anum_graphpath_edges - 1]);
+	vertices = DatumGetAnyArray(vertices_datum);
+	edges = DatumGetAnyArray(edges_datum);
 
 	/* cache vertex/edge output information */
 	my_extra = (GraphpathOutData *) fcinfo->flinfo->fn_extra;
@@ -324,13 +307,13 @@ getGraphidStruct(Datum datum)
 Datum
 getGraphidDatum(Graphid id)
 {
-	Datum		values[2];
-	bool		isnull[2] = {false, false};
+	Datum		values[Natts_graphid];
+	bool		isnull[Natts_graphid] = {false, false};
 	TupleDesc	tupDesc;
 	HeapTuple	tuple;
 
-	values[0] = ObjectIdGetDatum(id.oid);
-	values[1] = Int64GetDatum(id.lid);
+	values[Anum_graphid_oid - 1] = ObjectIdGetDatum(id.oid);
+	values[Anum_graphid_lid - 1] = Int64GetDatum(id.lid);
 
 	tupDesc = lookup_rowtype_tupdesc(GRAPHIDOID, -1);
 	Assert(tupDesc->natts == Natts_graphid);
@@ -340,4 +323,134 @@ getGraphidDatum(Graphid id)
 	ReleaseTupleDesc(tupDesc);
 
 	return HeapTupleGetDatum(tuple);
+}
+
+Datum
+getVertexIdDatum(Datum datum)
+{
+	HeapTupleHeader	tuphdr;
+	Oid			tupType;
+	TupleDesc	tupDesc;
+	HeapTupleData tuple;
+	bool		isnull = false;
+	Datum		id;
+
+	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	tupType = HeapTupleHeaderGetTypeId(tuphdr);
+	Assert(tupType == VERTEXOID);
+
+	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
+	Assert(tupDesc->natts == Natts_vertex);
+
+	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
+	ItemPointerSetInvalid(&tuple.t_self);
+	tuple.t_tableOid = InvalidOid;
+	tuple.t_data = tuphdr;
+
+	id = heap_getattr(&tuple, Anum_vertex_id, tupDesc, &isnull);
+	ReleaseTupleDesc(tupDesc);
+	Assert(!isnull);
+
+	return id;
+}
+
+Datum
+getEdgeIdDatum(Datum datum)
+{
+	HeapTupleHeader	tuphdr;
+	Oid			tupType;
+	TupleDesc	tupDesc;
+	HeapTupleData tuple;
+	bool		isnull = false;
+	Datum		id;
+
+	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	tupType = HeapTupleHeaderGetTypeId(tuphdr);
+	Assert(tupType == EDGEOID);
+
+	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
+	Assert(tupDesc->natts == Natts_edge);
+
+	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
+	ItemPointerSetInvalid(&tuple.t_self);
+	tuple.t_tableOid = InvalidOid;
+	tuple.t_data = tuphdr;
+
+	id = heap_getattr(&tuple, Anum_edge_id, tupDesc, &isnull);
+	ReleaseTupleDesc(tupDesc);
+	Assert(!isnull);
+
+	return id;
+}
+
+void
+getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges)
+{
+	HeapTupleHeader	tuphdr;
+	Oid			tupType;
+	TupleDesc	tupDesc;
+	HeapTupleData tuple;
+	Datum		values[Natts_graphpath];
+	bool		isnull[Natts_graphpath];
+
+	tuphdr = DatumGetHeapTupleHeader(graphpath);
+
+	tupType = HeapTupleHeaderGetTypeId(tuphdr);
+	Assert(tupType == GRAPHPATHOID);
+
+	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
+	Assert(tupDesc->natts == Natts_graphpath);
+
+	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
+	ItemPointerSetInvalid(&tuple.t_self);
+	tuple.t_tableOid = InvalidOid;
+	tuple.t_data = tuphdr;
+
+	heap_deform_tuple(&tuple, tupDesc, values, isnull);
+	ReleaseTupleDesc(tupDesc);
+	Assert(!isnull[Anum_graphpath_vertices - 1]);
+	Assert(!isnull[Anum_graphpath_edges - 1]);
+
+	*vertices = values[Anum_graphpath_vertices - 1];
+	*edges = values[Anum_graphpath_edges - 1];
+}
+
+Datum
+makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges, int nedges)
+{
+	Datum		values[Natts_graphpath];
+	bool		isnull[Natts_graphpath] = {false, false};
+	TupleDesc	tupDesc;
+	HeapTuple	graphpath;
+
+	values[Anum_graphpath_vertices - 1]
+					= makeArrayTypeDatum(vertices, nvertices, VERTEXOID);
+	values[Anum_graphpath_edges - 1]
+					= makeArrayTypeDatum(edges, nedges, EDGEOID);
+
+	tupDesc = lookup_rowtype_tupdesc(GRAPHPATHOID, -1);
+	Assert(tupDesc->natts == Natts_graphpath);
+
+	graphpath = heap_form_tuple(tupDesc, values, isnull);
+
+	ReleaseTupleDesc(tupDesc);
+
+	return HeapTupleGetDatum(graphpath);
+}
+
+static Datum
+makeArrayTypeDatum(Datum *elems, int nelem, Oid type)
+{
+	int16		typlen;
+	bool		typbyval;
+	char		typalign;
+	ArrayType  *arr;
+
+	get_typlenbyvalalign(type, &typlen, &typbyval, &typalign);
+
+	arr = construct_array(elems, nelem, type, typlen, typbyval, typalign);
+
+	return PointerGetDatum(arr);
 }
