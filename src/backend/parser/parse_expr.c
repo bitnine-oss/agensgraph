@@ -2665,8 +2665,8 @@ indirect_prop_map(ParseState *pstate, Node *elem)
 	AssertArg(exprType(elem) == VERTEXOID || exprType(elem) == EDGEOID);
 
 	result = ParseFuncOrColumn(pstate,
-							   list_make1(makeString(pstrdup(AG_ELEM_PROP))),
-							   list_make1(elem), NULL, -1);
+							list_make1(makeString(pstrdup(AG_ELEM_PROP_MAP))),
+							list_make1(elem), NULL, -1);
 	Assert(result != NULL);
 
 	return result;

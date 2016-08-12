@@ -30,7 +30,7 @@ CREATE VLABEL vlabel_c6 inherits (vlabel_c4);
 NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL vlabel_c7 inherits (vlabel_c1, vlabel_p2);
 NOTICE:  merging multiple inherited definitions of column "id"
-NOTICE:  merging multiple inherited definitions of column "prop_map"
+NOTICE:  merging multiple inherited definitions of column "properties"
 NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL elabel_p1;
 NOTICE:  merging column "id" with inherited definition

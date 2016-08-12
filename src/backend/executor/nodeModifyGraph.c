@@ -16,27 +16,25 @@
 #include "executor/nodeModifyGraph.h"
 #include "executor/spi.h"
 #include "nodes/nodeFuncs.h"
+#include "parser/parse_utilcmd.h"
 #include "utils/arrayaccess.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/typcache.h"
 
 #define SQLCMD_BUFLEN				(NAMEDATALEN + 192)
-#define SQLCMD_DEL_ELEM				"DELETE FROM ONLY graph.%s WHERE id = $1"
-#define SQLCMD_DEL_ELEM_NPARAMS		2
-#define SQLCMD_DETACH				"SELECT id FROM graph.edge WHERE " \
-									"start_oid = $1 AND start_id = $2 OR " \
-									"end_oid = $1 AND end_id = $2"
-#define SQLCMD_DETACH_NPARAMS		2
-#define SQLCMD_DEL_EDGES			"DELETE FROM graph.edge WHERE " \
-									"start_oid = $1 AND start_id = $2 OR " \
-									"end_oid = $1 AND end_id = $2"
-#define SQLCMD_DEL_EDGES_NPARAMS	2
-
-typedef struct ElemId {
-	Oid			oid;
-	int64		id;
-} ElemId;
+#define SQLCMD_DEL_ELEM \
+	"DELETE FROM ONLY " AG_GRAPH ".%s WHERE " AG_ELEM_LOCAL_ID " = $1"
+#define SQLCMD_DEL_ELEM_NPARAMS		1
+#define SQLCMD_DETACH \
+	"SELECT " AG_ELEM_LOCAL_ID " FROM " AG_GRAPH "." AG_EDGE \
+	" WHERE " AG_START_ID " = $1 OR \"" AG_END_ID "\" = $1"
+#define SQLCMD_DETACH_NPARAMS		1
+#define SQLCMD_DEL_EDGES \
+	"DELETE FROM " AG_GRAPH "." AG_EDGE \
+	" WHERE " AG_START_ID " = $1 OR \"" AG_END_ID "\" = $1"
+#define SQLCMD_DEL_EDGES_NPARAMS	1
 
 typedef struct ArrayAccessTypeInfo {
 	int16		typlen;
@@ -47,10 +45,10 @@ typedef struct ArrayAccessTypeInfo {
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
 static void deleteVertex(Datum vertex, bool detach);
-static ElemId DatumGetVid(Datum vertex);
-static bool vertexHasEdge(ElemId vid);
-static void deleteVertexEdges(ElemId vid);
-static ElemId DatumGetEid(Datum edge);
+static Datum vertexGetIdAttr(Datum vertex);
+static bool vertexHasEdge(Datum vid);
+static void deleteVertexEdges(Datum vid);
+static Graphid DatumGetEid(Datum edge);
 static void deleteElem(char *relname, int64 id);
 static void deletePath(Datum graphpath, bool detach);
 
@@ -136,10 +134,9 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	{
 		ExprState  *e = (ExprState *) lfirst(le);
 		Oid			type;
-		Datum		dat;
+		Datum		datum;
 		bool		isNull;
 		ExprDoneCond isDone;
-		ElemId		elemid;
 
 		type = exprType((Node *) e->expr);
 		if (!(type == VERTEXOID || type == EDGEOID || type == GRAPHPATHOID))
@@ -148,7 +145,7 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 					 errmsg("expected node, relationship, or path")));
 
 		econtext->ecxt_scantuple = slot;
-		dat = ExecEvalExpr(e, econtext, &isNull, &isDone);
+		datum = ExecEvalExpr(e, econtext, &isNull, &isDone);
 		if (isNull)
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
@@ -161,14 +158,18 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		switch (type)
 		{
 			case VERTEXOID:
-				deleteVertex(dat, plan->detach);
+				deleteVertex(datum, plan->detach);
 				break;
 			case EDGEOID:
-				elemid = DatumGetEid(dat);
-				deleteElem(get_rel_name(elemid.oid), elemid.id);
+				{
+					Graphid eid;
+
+					eid = DatumGetEid(datum);
+					deleteElem(get_rel_name(eid.oid), eid.lid);
+				}
 				break;
 			case GRAPHPATHOID:
-				deletePath(dat, plan->detach);
+				deletePath(datum, plan->detach);
 				break;
 			default:
 				elog(ERROR, "expected node, relationship, or path");
@@ -184,41 +185,43 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 static void
 deleteVertex(Datum vertex, bool detach)
 {
-	ElemId		elemid;
+	Datum		id_attr;
+	Graphid		id;
 	char	   *labname;
 
-	elemid = DatumGetVid(vertex);
+	id_attr = vertexGetIdAttr(vertex);
+	id = getGraphidStruct(id_attr);
 
-	if (vertexHasEdge(elemid))
+	if (vertexHasEdge(id_attr))
 	{
 		if (detach)
 		{
-			deleteVertexEdges(elemid);
+			deleteVertexEdges(id_attr);
 		}
 		else
 		{
-			labname = get_rel_name(elemid.oid);
+			labname = get_rel_name(id.oid);
 
 			ereport(ERROR,
 					(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
 					 errmsg("vertex :%s[%d:" INT64_FORMAT "] has edge(s)",
-							labname, elemid.oid, elemid.id)));
+							labname, id.oid, id.lid)));
 		}
 	}
 
-	labname = get_rel_name(elemid.oid);
-	deleteElem(labname, elemid.id);
+	labname = get_rel_name(id.oid);
+	deleteElem(labname, id.lid);
 }
 
-static ElemId
-DatumGetVid(Datum vertex)
+static Datum
+vertexGetIdAttr(Datum vertex)
 {
 	HeapTupleHeader	tuphdr;
 	Oid			tupType;
 	TupleDesc	tupDesc;
 	HeapTupleData tuple;
 	bool		isnull = false;
-	ElemId		vid;
+	Datum		id;
 
 	tuphdr = DatumGetHeapTupleHeader(vertex);
 
@@ -226,35 +229,30 @@ DatumGetVid(Datum vertex)
 	Assert(tupType == VERTEXOID);
 
 	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == 3);	// TODO: use Natts_vertex
+	Assert(tupDesc->natts == 2);	// TODO: use Natts_vertex
 
 	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
 	ItemPointerSetInvalid(&tuple.t_self);
 	tuple.t_tableOid = InvalidOid;
 	tuple.t_data = tuphdr;
 
-	// TODO: use Anum_vertex_...
-	vid.oid = DatumGetObjectId(heap_getattr(&tuple, 1, tupDesc, &isnull));
-	Assert(!isnull);
-	vid.id = DatumGetInt64(heap_getattr(&tuple, 2, tupDesc, &isnull));
-	Assert(!isnull);
-
+	// TODO: use Anum_vertex_id
+	id = heap_getattr(&tuple, 1, tupDesc, &isnull);
 	ReleaseTupleDesc(tupDesc);
+	Assert(!isnull);
 
-	return vid;
+	return id;
 }
 
 static bool
-vertexHasEdge(ElemId vid)
+vertexHasEdge(Datum vid)
 {
 	Datum		values[SQLCMD_DETACH_NPARAMS];
 	Oid			argTypes[SQLCMD_DETACH_NPARAMS];
 	int			ret;
 
-	values[0] = ObjectIdGetDatum(vid.oid);
-	values[1] = Int64GetDatum(vid.id);
-	argTypes[0] = OIDOID;
-	argTypes[1] = INT8OID;
+	values[0] = vid;
+	argTypes[0] = GRAPHIDOID;
 
 	ret = SPI_execute_with_args(SQLCMD_DETACH, SQLCMD_DETACH_NPARAMS, argTypes,
 								values, NULL, false, 1);
@@ -265,16 +263,14 @@ vertexHasEdge(ElemId vid)
 }
 
 static void
-deleteVertexEdges(ElemId vid)
+deleteVertexEdges(Datum vid)
 {
 	Datum		values[SQLCMD_DEL_EDGES_NPARAMS];
 	Oid			argTypes[SQLCMD_DEL_EDGES_NPARAMS];
 	int			ret;
 
-	values[0] = ObjectIdGetDatum(vid.oid);
-	values[1] = Int64GetDatum(vid.id);
-	argTypes[0] = OIDOID;
-	argTypes[1] = INT8OID;
+	values[0] = vid;
+	argTypes[0] = GRAPHIDOID;
 
 	ret = SPI_execute_with_args(SQLCMD_DEL_EDGES, SQLCMD_DEL_EDGES_NPARAMS,
 								argTypes, values, NULL, false, 0);
@@ -282,7 +278,7 @@ deleteVertexEdges(ElemId vid)
 		elog(ERROR, "SPI_execute failed: %s", SQLCMD_DEL_EDGES);
 }
 
-static ElemId
+static Graphid
 DatumGetEid(Datum edge)
 {
 	HeapTupleHeader	tuphdr;
@@ -290,7 +286,7 @@ DatumGetEid(Datum edge)
 	TupleDesc	tupDesc;
 	HeapTupleData tuple;
 	bool		isnull = false;
-	ElemId		eid;
+	Datum		id;
 
 	tuphdr = DatumGetHeapTupleHeader(edge);
 
@@ -298,22 +294,19 @@ DatumGetEid(Datum edge)
 	Assert(tupType == EDGEOID);
 
 	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == 7);	// TODO: use Natts_edge
+	Assert(tupDesc->natts == 4);	// TODO: use Natts_edge
 
 	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
 	ItemPointerSetInvalid(&tuple.t_self);
 	tuple.t_tableOid = InvalidOid;
 	tuple.t_data = tuphdr;
 
-	// TODO: use Anum_edge_...
-	eid.oid = DatumGetObjectId(heap_getattr(&tuple, 1, tupDesc, &isnull));
-	Assert(!isnull);
-	eid.id = DatumGetInt64(heap_getattr(&tuple, 2, tupDesc, &isnull));
-	Assert(!isnull);
-
+	// TODO: use Anum_edge_id
+	id = heap_getattr(&tuple, 1, tupDesc, &isnull);
 	ReleaseTupleDesc(tupDesc);
+	Assert(!isnull);
 
-	return eid;
+	return getGraphidStruct(id);
 }
 
 static void
@@ -354,7 +347,6 @@ deletePath(Datum graphpath, bool detach)
 	array_iter	it;
 	Datum		value;
 	bool		null;
-	ElemId		elemid;
 	int			i;
 
 	tuphdr = DatumGetHeapTupleHeader(graphpath);
@@ -391,12 +383,14 @@ deletePath(Datum graphpath, bool detach)
 	array_iter_setup(&it, edges);
 	for (i = 0; i < nedges; i++)
 	{
+		Graphid eid;
+
 		value = array_iter_next(&it, &null, i, edgeInfo.typlen,
 								edgeInfo.typbyval, edgeInfo.typalign);
 		Assert(!null);
 
-		elemid = DatumGetEid(value);
-		deleteElem(get_rel_name(elemid.oid), elemid.id);
+		eid = DatumGetEid(value);
+		deleteElem(get_rel_name(eid.oid), eid.lid);
 	}
 
 	array_iter_setup(&it, vertices);
