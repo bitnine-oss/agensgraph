@@ -890,15 +890,6 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				}
 			}
 			break;
-		case T_CypherCreate:
-			{
-				CypherCreate *splan = (CypherCreate *) plan;
-
-				splan->subplan = set_plan_refs(root,
-											   splan->subplan,
-											   rtoffset);
-			}
-			break;
 		case T_ModifyGraph:
 			{
 				ModifyGraph *splan = (ModifyGraph *) plan;

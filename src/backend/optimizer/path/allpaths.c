@@ -2402,7 +2402,8 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 	 * in CypherCreate to get the result of subquery in CypherCreate.
 	 * Those entries are used to create a graph pattern.
 	 */
-	if (subquery->commandType == CMD_CYPHERCREATE)
+	if (subquery->commandType == CMD_GRAPHWRITE &&
+		subquery->graph.writeOp == GWROP_CREATE)
 		return;
 
 	/*

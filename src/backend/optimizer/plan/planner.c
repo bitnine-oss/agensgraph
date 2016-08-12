@@ -621,21 +621,14 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	else
 	{
 		plan = grouping_planner(root, tuple_fraction);
-		if (parse->commandType == CMD_CYPHERCREATE)
-		{
-			plan = (Plan *) make_cyphercreate(root,
-											  parse->commandType,
-											  parse->canSetTag,
-											  plan,
-											  parse->graphPattern);
-		}
-		else if (parse->commandType == CMD_GRAPHWRITE)
+		if (parse->commandType == CMD_GRAPHWRITE)
 		{
 			plan = (Plan *) make_modifygraph(root, parse->canSetTag,
 											 parse->graph.writeOp,
 											 parse->graph.last,
 											 parse->graph.detach,
-											 plan, parse->graph.exprs);
+											 plan, parse->graph.pattern,
+											 parse->graph.exprs);
 		}
 		/* If it's not SELECT, we need a ModifyTable node */
 		else if (parse->commandType != CMD_SELECT)

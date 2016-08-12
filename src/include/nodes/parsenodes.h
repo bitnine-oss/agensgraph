@@ -161,11 +161,11 @@ typedef struct Query
 									 * only added during rewrite and therefore
 									 * are not written out as part of Query. */
 
-	List	   *graphPattern;	/* graph pattern (list of paths) for CREATE */
 	struct {
 		GraphWriteOp writeOp;
 		bool		last;		/* is this for the last clause? */
 		bool		detach;		/* DETACH DELETE */
+		List	   *pattern;	/* graph pattern (list of paths) for CREATE */
 		List	   *exprs;		/* expression list for DELETE */
 	}			graph;
 } Query;

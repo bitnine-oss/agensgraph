@@ -753,16 +753,6 @@ pg_rewrite_query(Query *query)
 		/* don't rewrite utilities, just dump 'em into result list */
 		querytree_list = list_make1(query);
 	}
-	else if (query->commandType == CMD_CYPHERCREATE)
-	{
-		/* FIXME: consider all QueryRewrite() calls */
-
-		/*
-		 * currently, don't rewrite graph query,
-		 * just dump 'em into result list
-		 */
-		querytree_list = list_make1(query);
-	}
 	else
 	{
 		/* rewrite regular queries */

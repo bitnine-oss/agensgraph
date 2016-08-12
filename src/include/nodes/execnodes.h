@@ -1139,17 +1139,6 @@ typedef struct ModifyTableState
 } ModifyTableState;
 
 /* ----------------
- *	 CypherCreateState information
- * ----------------
- */
-typedef struct CypherCreateState
-{
-	PlanState	ps;				/* its first field is NodeTag */
-	CmdType		operation;		/* CYPHERCREATE */
-	PlanState  *cc_plan;		/* subplan */
-} CypherCreateState;
-
-/* ----------------
  *	 AppendState information
  *
  *		nplans			how many plans are in the array

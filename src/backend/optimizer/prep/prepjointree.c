@@ -1388,15 +1388,10 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 	 */
 	if (!IsA(subquery, Query) ||
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_CYPHERCREATE &&
 		 subquery->commandType != CMD_GRAPHWRITE) ||
 		subquery->utilityStmt != NULL)
 		elog(ERROR, "subquery is bogus");
 
-	if (subquery->commandType == CMD_CYPHERCREATE)
-		return false;
-
-	// TODO: merge CMD_CYPHERCREATE into this
 	if (subquery->commandType == CMD_GRAPHWRITE)
 		return false;
 
@@ -1729,7 +1724,6 @@ is_simple_union_all(Query *subquery)
 	/* Let's just make sure it's a valid subselect ... */
 	if (!IsA(subquery, Query) ||
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_CYPHERCREATE &&
 		 subquery->commandType != CMD_GRAPHWRITE) ||
 		subquery->utilityStmt != NULL)
 		elog(ERROR, "subquery is bogus");

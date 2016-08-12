@@ -1014,6 +1014,7 @@ _copyModifyGraph(const ModifyGraph *from)
 	COPY_SCALAR_FIELD(last);
 	COPY_SCALAR_FIELD(detach);
 	COPY_NODE_FIELD(subplan);
+	COPY_NODE_FIELD(pattern);
 	COPY_NODE_FIELD(exprs);
 
 	return newnode;
@@ -2720,10 +2721,10 @@ _copyQuery(const Query *from)
 	COPY_NODE_FIELD(constraintDeps);
 	COPY_NODE_FIELD(withCheckOptions);
 
-	COPY_NODE_FIELD(graphPattern);
 	COPY_SCALAR_FIELD(graph.writeOp);
 	COPY_SCALAR_FIELD(graph.last);
 	COPY_SCALAR_FIELD(graph.detach);
+	COPY_NODE_FIELD(graph.pattern);
 	COPY_NODE_FIELD(graph.exprs);
 
 	return newnode;
@@ -4234,21 +4235,6 @@ _copyCypherName(const CypherName *from)
 	return newnode;
 }
 
-static CypherCreate *
-_copyCypherCreate(const CypherCreate *from)
-{
-	CypherCreate *newnode = makeNode(CypherCreate);
-
-	CopyPlanFields((const Plan *) from, (Plan *) newnode);
-
-	COPY_SCALAR_FIELD(operation);
-	COPY_SCALAR_FIELD(canSetTag);
-	COPY_NODE_FIELD(subplan);
-	COPY_NODE_FIELD(graphPattern);
-
-	return newnode;
-}
-
 /* ****************************************************************
  *					pg_list.h copy functions
  * ****************************************************************
@@ -5137,9 +5123,6 @@ copyObject(const void *from)
 			break;
 		case T_CypherName:
 			retval = _copyCypherName(from);
-			break;
-		case T_CypherCreate:
-			retval = _copyCypherCreate(from);
 			break;
 
 		default:

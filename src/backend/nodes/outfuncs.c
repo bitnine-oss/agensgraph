@@ -873,6 +873,7 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 	WRITE_BOOL_FIELD(last);
 	WRITE_BOOL_FIELD(detach);
 	WRITE_NODE_FIELD(subplan);
+	WRITE_NODE_FIELD(pattern);
 	WRITE_NODE_FIELD(exprs);
 }
 
@@ -2402,10 +2403,10 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_NODE_FIELD(setOperations);
 	WRITE_NODE_FIELD(constraintDeps);
 
-	WRITE_NODE_FIELD(graphPattern);
 	WRITE_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	WRITE_BOOL_FIELD(graph.last);
 	WRITE_BOOL_FIELD(graph.detach);
+	WRITE_NODE_FIELD(graph.pattern);
 	WRITE_NODE_FIELD(graph.exprs);
 }
 

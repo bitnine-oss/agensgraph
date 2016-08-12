@@ -5140,49 +5140,13 @@ is_projection_capable_plan(Plan *plan)
 }
 
 /*
- * make_cyphercreate
- *	  Build a CypherCreate plan node
- */
-CypherCreate *
-make_cyphercreate(PlannerInfo *root, CmdType operation, bool canSetTag,
-				  Plan *subplan, List *graphPattern)
-{
-	CypherCreate *node = makeNode(CypherCreate);
-	Plan	   *plan = &node->plan;
-	double		total_size;
-
-	/*
-	 * Compute cost as sum of subplan costs.
-	 */
-	plan->startup_cost = subplan->startup_cost;
-	plan->total_cost = subplan->total_cost;
-	plan->plan_rows = subplan->plan_rows;
-	total_size = subplan->plan_width * subplan->plan_rows;
-	if (plan->plan_rows > 0)
-		plan->plan_width = rint(total_size / plan->plan_rows);
-	else
-		plan->plan_width = 0;
-
-	node->plan.lefttree = NULL;
-	node->plan.righttree = NULL;
-	node->plan.qual = NIL;
-	node->plan.targetlist = NIL;
-
-	node->operation = operation;
-	node->canSetTag = canSetTag;
-	node->subplan = subplan;
-	node->graphPattern = graphPattern;
-
-	return node;
-}
-
-/*
  * make_modifygraph
  *	  Build a ModifyGraph plan node
  */
 ModifyGraph *
 make_modifygraph(PlannerInfo *root, bool canSetTag, GraphWriteOp operation,
-				 bool last, bool detach, Plan *subplan, List *exprs)
+				 bool last, bool detach, Plan *subplan, List *pattern,
+				 List *exprs)
 {
 	ModifyGraph *node = makeNode(ModifyGraph);
 
@@ -5193,6 +5157,7 @@ make_modifygraph(PlannerInfo *root, bool canSetTag, GraphWriteOp operation,
 	node->last = last;
 	node->detach = detach;
 	node->subplan = subplan;
+	node->pattern = pattern;
 	node->exprs = exprs;
 
 	return node;

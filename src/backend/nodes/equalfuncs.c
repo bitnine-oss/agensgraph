@@ -912,10 +912,10 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_NODE_FIELD(constraintDeps);
 	COMPARE_NODE_FIELD(withCheckOptions);
 
-	COMPARE_NODE_FIELD(graphPattern);
 	COMPARE_SCALAR_FIELD(graph.writeOp);
 	COMPARE_SCALAR_FIELD(graph.last);
 	COMPARE_SCALAR_FIELD(graph.detach);
+	COMPARE_NODE_FIELD(graph.pattern);
 	COMPARE_NODE_FIELD(graph.exprs);
 
 	return true;

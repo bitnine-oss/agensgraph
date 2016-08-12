@@ -388,7 +388,9 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	queryPattern = transformCreatePattern(pstate, pattern, ctx, &targetList);
 
 	qry = makeNode(Query);
-	qry->commandType = CMD_CYPHERCREATE;
+	qry->commandType = CMD_GRAPHWRITE;
+	qry->graph.writeOp = GWROP_CREATE;
+	qry->graph.last = (pstate->parentParseState == NULL);
 
 	/*
 	 * Although CREATE clause doesn't have FROM list, we must call
@@ -400,12 +402,14 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 										  EXPR_KIND_SELECT_TARGET);
 	markTargetListOrigins(pstate, qry->targetList);
 
+	qry->graph.pattern = queryPattern;
+
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
-	qry->graphPattern = queryPattern;
+	assign_query_collations(pstate, qry);
 
 	return qry;
 }
