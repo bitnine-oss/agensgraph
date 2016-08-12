@@ -10,6 +10,7 @@
 
 #include "postgres.h"
 
+#include "ag_const.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/reloptions.h"

@@ -15,6 +15,7 @@
 
 #include "postgres.h"
 
+#include "ag_const.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "commands/dbcommands.h"
@@ -34,7 +35,6 @@
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
 #include "parser/parse_agg.h"
-#include "parser/parse_utilcmd.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/xml.h"

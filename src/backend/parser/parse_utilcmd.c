@@ -26,6 +26,7 @@
 
 #include "postgres.h"
 
+#include "ag_const.h"
 #include "access/amapi.h"
 #include "access/htup_details.h"
 #include "access/reloptions.h"
