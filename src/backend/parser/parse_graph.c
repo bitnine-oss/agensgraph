@@ -10,6 +10,7 @@
 
 #include "postgres.h"
 
+#include "ag_const.h"
 #include "access/heapam.h"
 #include "catalog/pg_type.h"
 #include "nodes/makefuncs.h"
@@ -20,7 +21,6 @@
 #include "parser/parse_graph.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
-#include "parser/parse_utilcmd.h"
 #include "storage/lock.h"
 
 #define CYPHER_SUBQUERY_ALIAS	"_"

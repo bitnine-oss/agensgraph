@@ -10,6 +10,7 @@
 
 #include "postgres.h"
 
+#include "ag_const.h"
 #include "access/htup_details.h"
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
@@ -17,7 +18,6 @@
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "nodes/nodeFuncs.h"
-#include "parser/parse_utilcmd.h"
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
 #include "utils/graph.h"
