@@ -168,13 +168,14 @@ SELECT DISTINCT typtype, typinput
 FROM pg_type AS p1
 WHERE p1.typtype not in ('b', 'p')
 ORDER BY 1;
- typtype | typinput  
----------+-----------
+ typtype |  typinput  
+---------+------------
+ c       | graphid_in
  c       | record_in
  d       | domain_in
  e       | enum_in
  r       | range_in
-(4 rows)
+(5 rows)
 
 -- Check for bogus typoutput routines
 -- As of 8.0, this check finds refcursor, which is borrowing
@@ -215,13 +216,14 @@ WHERE p1.typtype not in ('b', 'd', 'p')
 ORDER BY 1;
  typtype |   typoutput   
 ---------+---------------
- c       | record_out
+ c       | graphid_out
  c       | vertex_out
  c       | graphpath_out
+ c       | record_out
  c       | edge_out
  e       | enum_out
  r       | range_out
-(6 rows)
+(7 rows)
 
 -- Domains should have same typoutput as their base types
 SELECT p1.oid, p1.typname, p2.oid, p2.typname
@@ -277,9 +279,10 @@ SELECT p1.oid, p1.typname, p2.oid, p2.proname, p3.oid, p3.proname
 FROM pg_type AS p1, pg_proc AS p2, pg_proc AS p3
 WHERE p1.typinput = p2.oid AND p1.typreceive = p3.oid AND
     p2.pronargs != p3.pronargs;
- oid | typname | oid | proname | oid | proname 
------+---------+-----+---------+-----+---------
-(0 rows)
+ oid  | typname | oid  |  proname   | oid  |   proname   
+------+---------+------+------------+------+-------------
+ 7002 | graphid | 7003 | graphid_in | 2402 | record_recv
+(1 row)
 
 -- typreceive routines should not be volatile
 SELECT p1.oid, p1.typname, p2.oid, p2.proname

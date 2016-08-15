@@ -20,6 +20,8 @@ typedef struct Graphid
 	int64		lid;
 } Graphid;
 
+extern Datum graphid_in(PG_FUNCTION_ARGS);
+extern Datum graphid_out(PG_FUNCTION_ARGS);
 extern Datum vertex_out(PG_FUNCTION_ARGS);
 extern Datum edge_out(PG_FUNCTION_ARGS);
 extern Datum graphpath_out(PG_FUNCTION_ARGS);

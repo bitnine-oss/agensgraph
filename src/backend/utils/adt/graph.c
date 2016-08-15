@@ -39,6 +39,9 @@
 #define Anum_graphpath_vertices	1
 #define Anum_graphpath_edges	2
 
+#define GRAPHID_FMTSTR			"%u." INT64_FORMAT
+#define GRAPHID_BUFLEN			32	/* "4294967295.18446744073709551615" */
+
 typedef struct LabelOutData {
 	Oid			label_relid;
 	NameData	label;
@@ -49,19 +52,70 @@ typedef struct GraphpathOutData {
 	ArrayMetaState edge;
 } GraphpathOutData;
 
+static void graphid_out_si(StringInfo si, Datum graphid);
 static LabelOutData *cache_label(FmgrInfo *flinfo, Oid relid);
 static void get_elem_type_output(ArrayMetaState *state, Oid elem_type,
 								 MemoryContext mctx);
 static Datum array_iter_next_(array_iter *it, int idx, ArrayMetaState *state);
+static void deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull);
 static Datum makeArrayTypeDatum(Datum *elems, int nelem, Oid type);
+
+Datum
+graphid_in(PG_FUNCTION_ARGS)
+{
+	const char	GRAPHID_DELIM = '.';
+	char	   *str = PG_GETARG_CSTRING(0);
+	char	   *next;
+	char	   *endptr;
+	Graphid		id;
+
+	errno = 0;
+	id.oid = strtoul(str, &endptr, 10);
+	if (errno != 0 || endptr == str || *endptr != GRAPHID_DELIM)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("invalid input syntax for type graphid: \"%s\"", str)));
+
+	next = endptr + 1;
+#ifdef HAVE_STRTOLL
+	id.lid = strtoll(next, &endptr, 10);
+	if (endptr == next || *endptr != '\0')
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("invalid input syntax for type graphid: \"%s\"", str)));
+#else
+	id.lid = DatumGetInt64(DirectFunctionCall1(int8in, CStringGetDatum(next)));
+#endif
+
+	PG_RETURN_DATUM(getGraphidDatum(id));
+}
+
+Datum
+graphid_out(PG_FUNCTION_ARGS)
+{
+	Graphid		id;
+	char	   *buf;
+
+	id = getGraphidStruct(PG_GETARG_DATUM(0));
+	buf = palloc(GRAPHID_BUFLEN);
+	snprintf(buf, GRAPHID_BUFLEN, GRAPHID_FMTSTR, id.oid, id.lid);
+
+	PG_RETURN_CSTRING(buf);
+}
+
+static void
+graphid_out_si(StringInfo si, Datum graphid)
+{
+	Graphid id;
+
+	id = getGraphidStruct(graphid);
+	appendStringInfo(si, GRAPHID_FMTSTR, id.oid, id.lid);
+}
 
 Datum
 vertex_out(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
-	Oid			tupType;
-	TupleDesc	tupDesc;
-	HeapTupleData tuple;
 	Datum		values[Natts_vertex];
 	bool		isnull[Natts_vertex];
 	Graphid		id;
@@ -69,21 +123,16 @@ vertex_out(PG_FUNCTION_ARGS)
 	LabelOutData *my_extra;
 	StringInfoData si;
 
-	tupType = HeapTupleHeaderGetTypeId(vertex);
-	Assert(tupType == VERTEXOID);
+	deform_tuple(vertex, values, isnull);
 
-	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == Natts_vertex);
-
-	tuple.t_len = HeapTupleHeaderGetDatumLength(vertex);
-	ItemPointerSetInvalid(&tuple.t_self);
-	tuple.t_tableOid = InvalidOid;
-	tuple.t_data = vertex;
-
-	heap_deform_tuple(&tuple, tupDesc, values, isnull);
-	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull[Anum_vertex_id - 1]);
-	Assert(!isnull[Anum_vertex_properties - 1]);
+	if (isnull[Anum_vertex_id - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("id in vertex cannot be NULL")));
+	if (isnull[Anum_vertex_properties - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("properties in vertex cannot be NULL")));
 
 	id = getGraphidStruct(values[Anum_vertex_id - 1]);
 	prop_map = DatumGetJsonb(values[Anum_vertex_properties - 1]);
@@ -91,7 +140,7 @@ vertex_out(PG_FUNCTION_ARGS)
 	my_extra = cache_label(fcinfo->flinfo, id.oid);
 
 	initStringInfo(&si);
-	appendStringInfo(&si, "%s[%u:" INT64_FORMAT "]",
+	appendStringInfo(&si, "%s[" GRAPHID_FMTSTR "]",
 					 NameStr(my_extra->label), id.oid, id.lid);
 	JsonbToCString(&si, &prop_map->root, VARSIZE(prop_map));
 
@@ -102,9 +151,6 @@ Datum
 edge_out(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
-	Oid			tupType;
-	TupleDesc	tupDesc;
-	HeapTupleData tuple;
 	Datum		values[Natts_edge];
 	bool		isnull[Natts_edge];
 	Graphid		id;
@@ -112,23 +158,24 @@ edge_out(PG_FUNCTION_ARGS)
 	LabelOutData *my_extra;
 	StringInfoData si;
 
-	tupType = HeapTupleHeaderGetTypeId(edge);
-	Assert(tupType == EDGEOID);
+	deform_tuple(edge, values, isnull);
 
-	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == Natts_edge);
-
-	tuple.t_len = HeapTupleHeaderGetDatumLength(edge);
-	ItemPointerSetInvalid(&tuple.t_self);
-	tuple.t_tableOid = InvalidOid;
-	tuple.t_data = edge;
-
-	heap_deform_tuple(&tuple, tupDesc, values, isnull);
-	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull[Anum_edge_id - 1]);
-	Assert(!isnull[Anum_edge_start - 1]);
-	Assert(!isnull[Anum_edge_end - 1]);
-	Assert(!isnull[Anum_edge_properties - 1]);
+	if (isnull[Anum_edge_id - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("id in edge cannot be NULL")));
+	if (isnull[Anum_edge_start - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("start in edge cannot be NULL")));
+	if (isnull[Anum_edge_end - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("end in edge cannot be NULL")));
+	if (isnull[Anum_edge_properties - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("properties in edge cannot be NULL")));
 
 	id = getGraphidStruct(values[Anum_edge_id - 1]);
 	prop_map = DatumGetJsonb(values[Anum_edge_properties - 1]);
@@ -136,7 +183,7 @@ edge_out(PG_FUNCTION_ARGS)
 	my_extra = cache_label(fcinfo->flinfo, id.oid);
 
 	initStringInfo(&si);
-	appendStringInfo(&si, ":%s[%u:" INT64_FORMAT "]",
+	appendStringInfo(&si, ":%s[" GRAPHID_FMTSTR "]",
 					 NameStr(my_extra->label), id.oid, id.lid);
 	JsonbToCString(&si, &prop_map->root, VARSIZE(prop_map));
 
@@ -146,15 +193,17 @@ edge_out(PG_FUNCTION_ARGS)
 static LabelOutData *
 cache_label(FmgrInfo *flinfo, Oid relid)
 {
+	MemoryContext oldMemoryContext;
 	LabelOutData *my_extra;
 
 	AssertArg(flinfo != NULL);
 
+	oldMemoryContext = MemoryContextSwitchTo(flinfo->fn_mcxt);
+
 	my_extra = (LabelOutData *) flinfo->fn_extra;
 	if (my_extra == NULL)
 	{
-		flinfo->fn_extra = MemoryContextAlloc(flinfo->fn_mcxt,
-											  sizeof(*my_extra));
+		flinfo->fn_extra = palloc(sizeof(*my_extra));
 		my_extra = (LabelOutData *) flinfo->fn_extra;
 		my_extra->label_relid = InvalidOid;
 		MemSetLoop(NameStr(my_extra->label), '\0', sizeof(my_extra->label));
@@ -171,6 +220,8 @@ cache_label(FmgrInfo *flinfo, Oid relid)
 		my_extra->label_relid = relid;
 		strncpy(NameStr(my_extra->label), label, sizeof(my_extra->label));
 	}
+
+	MemoryContextSwitchTo(oldMemoryContext);
 
 	return my_extra;
 }
@@ -233,13 +284,13 @@ graphpath_out(PG_FUNCTION_ARGS)
 
 		value = array_iter_next_(&it_e, i, &my_extra->edge);
 		appendStringInfoString(&si,
-			   OutputFunctionCall(&my_extra->edge.proc, value));
+				OutputFunctionCall(&my_extra->edge.proc, value));
 
 		appendStringInfoChar(&si, delim);
 
 		value = array_iter_next_(&it_v, i + 1, &my_extra->vertex);
 		appendStringInfoString(&si,
-			   OutputFunctionCall(&my_extra->vertex.proc, value));
+				OutputFunctionCall(&my_extra->vertex.proc, value));
 	}
 
 	appendStringInfoChar(&si, ']');
@@ -269,24 +320,15 @@ array_iter_next_(array_iter *it, int idx, ArrayMetaState *state)
 	return value;
 }
 
-Graphid
-getGraphidStruct(Datum datum)
+static void
+deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull)
 {
-	HeapTupleHeader tuphdr;
 	Oid			tupType;
 	TupleDesc	tupDesc;
 	HeapTupleData tuple;
-	Datum		values[Natts_graphid];
-	bool		isnull[Natts_graphid];
-	Graphid		id;
-
-	tuphdr = DatumGetHeapTupleHeader(datum);
 
 	tupType = HeapTupleHeaderGetTypeId(tuphdr);
-	Assert(tupType == GRAPHIDOID);
-
 	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == Natts_graphid);
 
 	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
 	ItemPointerSetInvalid(&tuple.t_self);
@@ -295,8 +337,28 @@ getGraphidStruct(Datum datum)
 
 	heap_deform_tuple(&tuple, tupDesc, values, isnull);
 	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull[Anum_graphid_oid - 1]);
-	Assert(!isnull[Anum_graphid_lid - 1]);
+}
+
+Graphid
+getGraphidStruct(Datum datum)
+{
+	HeapTupleHeader tuphdr;
+	Datum		values[Natts_graphid];
+	bool		isnull[Natts_graphid];
+	Graphid		id;
+
+	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	deform_tuple(tuphdr, values, isnull);
+
+	if (isnull[Anum_graphid_oid - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("oid in graphid cannot be NULL")));
+	if (isnull[Anum_graphid_lid - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("lid in graphid cannot be NULL")));
 
 	id.oid = DatumGetObjectId(values[Anum_graphid_oid - 1]);
 	id.lid = DatumGetInt64(values[Anum_graphid_lid - 1]);
