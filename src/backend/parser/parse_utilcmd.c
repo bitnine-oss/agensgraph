@@ -3155,6 +3155,7 @@ makeEdgeElements(void)
 	prop_map->colname = AG_ELEM_PROP_MAP;
 	prop_map->typeName = makeTypeName("jsonb");
 	prop_map->is_local = true;
+	prop_map->constraints = constr;
 	prop_map->location = -1;
 
 	return list_make4(id, start, end, prop_map);

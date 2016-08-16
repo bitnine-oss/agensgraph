@@ -5326,6 +5326,10 @@ DATA(insert OID = 6014 ( pg_show_replication_origin_status PGNSP PGUID 12 1 100 
 DESCR("get progress for all replication origins");
 
 /* graph */
+DATA(insert OID = 7003 ( graphid_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7002 "2275" _null_ _null_ _null_ _null_ _null_ graphid_in _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7004 ( graphid_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7002" _null_ _null_ _null_ _null_ _null_ graphid_out _null_ _null_ _null_ ));
+DESCR("I/O");
 DATA(insert OID = 7014 ( vertex_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7012" _null_ _null_ _null_ _null_ _null_ vertex_out _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7024 ( edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_out _null_ _null_ _null_ ));
