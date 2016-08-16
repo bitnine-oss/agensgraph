@@ -28,6 +28,7 @@ extern Datum vertex_labels(PG_FUNCTION_ARGS);
 extern Datum edge_out(PG_FUNCTION_ARGS);
 extern Datum edge_label(PG_FUNCTION_ARGS);
 extern Datum graphpath_out(PG_FUNCTION_ARGS);
+extern Datum graphpath_length(PG_FUNCTION_ARGS);
 
 extern Graphid getGraphidStruct(Datum datum);
 extern Datum getGraphidDatum(Graphid id);

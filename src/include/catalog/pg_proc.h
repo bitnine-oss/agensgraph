@@ -5340,6 +5340,8 @@ DATA(insert OID = 7027 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "
 DESCR("get edge's label");
 DATA(insert OID = 7034 ( graphpath_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_out _null_ _null_ _null_ ));
 DESCR("I/O");
+DATA(insert OID = 7037 ( length			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 23 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_length _null_ _null_ _null_ ));
+DESCR("get the length of graphpath");
 DATA(insert OID = 7070 ( labels			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 1263 "7012" _null_ _null_ _null_ _null_ _null_ vertex_labels _null_ _null_ _null_ ));
 DESCR("get vertex's labels");
 DATA(insert OID = 7071 ( type			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));

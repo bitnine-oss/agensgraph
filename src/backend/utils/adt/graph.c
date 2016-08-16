@@ -370,6 +370,20 @@ array_iter_next_(array_iter *it, int idx, ArrayMetaState *state)
 	return value;
 }
 
+Datum
+graphpath_length(PG_FUNCTION_ARGS)
+{
+	Datum		edges_datum;
+	AnyArrayType *edges;
+	int			nedges;
+
+	getGraphpathArrays(PG_GETARG_DATUM(0), NULL, &edges_datum);
+	edges = DatumGetAnyArray(edges_datum);
+	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
+
+	PG_RETURN_INT32(nedges);
+}
+
 static void
 deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull)
 {
@@ -549,8 +563,10 @@ getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges)
 	Assert(!isnull[Anum_graphpath_vertices - 1]);
 	Assert(!isnull[Anum_graphpath_edges - 1]);
 
-	*vertices = values[Anum_graphpath_vertices - 1];
-	*edges = values[Anum_graphpath_edges - 1];
+	if (vertices != NULL)
+		*vertices = values[Anum_graphpath_vertices - 1];
+	if (edges != NULL)
+		*edges = values[Anum_graphpath_edges - 1];
 }
 
 Datum
