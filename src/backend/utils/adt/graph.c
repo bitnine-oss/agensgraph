@@ -689,3 +689,19 @@ makeArrayTypeDatum(Datum *elems, int nelem, Oid type)
 
 	return PointerGetDatum(arr);
 }
+
+Datum
+vtojb(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
+
+	PG_RETURN_DATUM(tuple_getattr(vertex, Anum_vertex_properties));
+}
+
+Datum
+etojb(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
+
+	PG_RETURN_DATUM(tuple_getattr(edge, Anum_edge_properties));
+}

@@ -44,4 +44,7 @@ extern void getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges);
 extern Datum makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges,
 								int nedges);
 
+extern Datum vtojb(PG_FUNCTION_ARGS);
+extern Datum etojb(PG_FUNCTION_ARGS);
+
 #endif	/* GRAPH_H */

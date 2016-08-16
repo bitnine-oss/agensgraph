@@ -123,7 +123,6 @@ static Node *transformCollateClause(ParseState *pstate, CollateClause *c);
 static Node *transformJsonIndirection(ParseState *pstate, Node *json,
 									  List *indirection);
 static Node *transformJsonObject(ParseState *pstate, JsonObject *jo);
-static Node *indirect_prop_map(ParseState *pstate, Node *elem);
 static Node *make_row_comparison_op(ParseState *pstate, List *opname,
 					   List *largs, List *rargs, int location);
 static Node *make_row_distinct_op(ParseState *pstate, List *opname,
@@ -194,15 +193,15 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 		case T_A_Indirection:
 			{
 				A_Indirection *ind = (A_Indirection *) expr;
+				Oid restype;
 
 				result = transformExprRecurse(pstate, ind->arg);
+				restype = exprType(result);
 
-				if (exprType(result) == VERTEXOID ||
-					exprType(result) == EDGEOID)
-					result = indirect_prop_map(pstate, result);
-
-				if (exprType(result) == JSONOID || exprType(result) == JSONBOID)
+				if (restype == VERTEXOID || restype == EDGEOID ||
+					restype == JSONOID || restype == JSONBOID)
 				{
+					/* vertex and edge will be type-casted to jsonb */
 					result = transformJsonIndirection(pstate, result,
 													  ind->indirection);
 				}
@@ -2681,21 +2680,6 @@ transformJsonObject(ParseState *pstate, JsonObject *jo)
 						 -1);
 
 	return transformFuncCall(pstate, build);
-}
-
-static Node *
-indirect_prop_map(ParseState *pstate, Node *elem)
-{
-	Node *result;
-
-	AssertArg(exprType(elem) == VERTEXOID || exprType(elem) == EDGEOID);
-
-	result = ParseFuncOrColumn(pstate,
-							list_make1(makeString(pstrdup(AG_ELEM_PROP_MAP))),
-							list_make1(elem), NULL, -1);
-	Assert(result != NULL);
-
-	return result;
 }
 
 /*
