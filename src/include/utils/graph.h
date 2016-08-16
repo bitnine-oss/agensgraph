@@ -23,12 +23,16 @@ typedef struct Graphid
 extern Datum graphid_in(PG_FUNCTION_ARGS);
 extern Datum graphid_out(PG_FUNCTION_ARGS);
 extern Datum vertex_out(PG_FUNCTION_ARGS);
+extern Datum _vertex_out(PG_FUNCTION_ARGS);
 extern Datum vertex_label(PG_FUNCTION_ARGS);
 extern Datum vertex_labels(PG_FUNCTION_ARGS);
 extern Datum edge_out(PG_FUNCTION_ARGS);
+extern Datum _edge_out(PG_FUNCTION_ARGS);
 extern Datum edge_label(PG_FUNCTION_ARGS);
 extern Datum graphpath_out(PG_FUNCTION_ARGS);
 extern Datum graphpath_length(PG_FUNCTION_ARGS);
+extern Datum graphpath_vertices(PG_FUNCTION_ARGS);
+extern Datum graphpath_edges(PG_FUNCTION_ARGS);
 
 extern Graphid getGraphidStruct(Datum datum);
 extern Datum getGraphidDatum(Graphid id);
