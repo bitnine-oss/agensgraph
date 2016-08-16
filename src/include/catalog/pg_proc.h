@@ -5332,10 +5332,18 @@ DATA(insert OID = 7004 ( graphid_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 22
 DESCR("I/O");
 DATA(insert OID = 7014 ( vertex_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7012" _null_ _null_ _null_ _null_ _null_ vertex_out _null_ _null_ _null_ ));
 DESCR("I/O");
+DATA(insert OID = 7017 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7012" _null_ _null_ _null_ _null_ _null_ vertex_label _null_ _null_ _null_ ));
+DESCR("get vertex's label");
 DATA(insert OID = 7024 ( edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_out _null_ _null_ _null_ ));
 DESCR("I/O");
+DATA(insert OID = 7027 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
+DESCR("get edge's label");
 DATA(insert OID = 7034 ( graphpath_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_out _null_ _null_ _null_ ));
 DESCR("I/O");
+DATA(insert OID = 7070 ( labels			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 1263 "7012" _null_ _null_ _null_ _null_ _null_ vertex_labels _null_ _null_ _null_ ));
+DESCR("get vertex's labels");
+DATA(insert OID = 7071 ( type			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
+DESCR("get edge's label");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
