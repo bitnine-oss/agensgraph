@@ -54,6 +54,7 @@ typedef struct GraphpathOutData {
 
 static void graphid_out_si(StringInfo si, Datum graphid);
 static LabelOutData *cache_label(FmgrInfo *flinfo, Oid relid);
+static void elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo);
 static void get_elem_type_output(ArrayMetaState *state, Oid elem_type,
 								 MemoryContext mctx);
 static Datum array_iter_next_(array_iter *it, int idx, ArrayMetaState *state);
@@ -149,6 +150,18 @@ vertex_out(PG_FUNCTION_ARGS)
 }
 
 Datum
+_vertex_out(PG_FUNCTION_ARGS)
+{
+	AnyArrayType *vertices = PG_GETARG_ANY_ARRAY(0);
+	StringInfoData si;
+
+	initStringInfo(&si);
+	elems_out_si(&si, vertices, fcinfo->flinfo);
+
+	PG_RETURN_CSTRING(si.data);
+}
+
+Datum
 vertex_label(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
@@ -227,6 +240,18 @@ edge_out(PG_FUNCTION_ARGS)
 }
 
 Datum
+_edge_out(PG_FUNCTION_ARGS)
+{
+	AnyArrayType *edges = PG_GETARG_ANY_ARRAY(0);
+	StringInfoData si;
+
+	initStringInfo(&si);
+	elems_out_si(&si, edges, fcinfo->flinfo);
+
+	PG_RETURN_CSTRING(si.data);
+}
+
+Datum
 edge_label(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
@@ -276,12 +301,50 @@ cache_label(FmgrInfo *flinfo, Oid relid)
 	return my_extra;
 }
 
+static void
+elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo)
+{
+	const char	delim = ',';
+	ArrayMetaState *my_extra;
+	int			nelems;
+	array_iter	it;
+	Datum		value;
+	int			i;
+
+	my_extra = (ArrayMetaState *) flinfo->fn_extra;
+	if (my_extra == NULL)
+	{
+		flinfo->fn_extra = MemoryContextAlloc(flinfo->fn_mcxt,
+											  sizeof(*my_extra));
+		my_extra = (ArrayMetaState *) flinfo->fn_extra;
+		get_elem_type_output(my_extra, AARR_ELEMTYPE(elems), flinfo->fn_mcxt);
+	}
+
+	nelems = ArrayGetNItems(AARR_NDIM(elems), AARR_DIMS(elems));
+
+	appendStringInfoChar(si, '[');
+	array_iter_setup(&it, elems);
+	if (nelems > 0)
+	{
+		value = array_iter_next_(&it, 0, my_extra);
+		appendStringInfoString(si, OutputFunctionCall(&my_extra->proc, value));
+	}
+	for (i = 1; i < nelems; i++)
+	{
+		appendStringInfoChar(si, delim);
+
+		value = array_iter_next_(&it, i, my_extra);
+		appendStringInfoString(si, OutputFunctionCall(&my_extra->proc, value));
+	}
+	appendStringInfoChar(si, ']');
+}
+
 Datum
 graphpath_out(PG_FUNCTION_ARGS)
 {
 	const char	delim = ',';
-	Datum vertices_datum;
-	Datum edges_datum;
+	Datum		vertices_datum;
+	Datum		edges_datum;
 	AnyArrayType *vertices;
 	AnyArrayType *edges;
 	GraphpathOutData *my_extra;
@@ -303,7 +366,7 @@ graphpath_out(PG_FUNCTION_ARGS)
 	if (my_extra == NULL)
 	{
 		fcinfo->flinfo->fn_extra = MemoryContextAlloc(fcinfo->flinfo->fn_mcxt,
-													  sizeof(GraphpathOutData));
+													  sizeof(*my_extra));
 		my_extra = (GraphpathOutData *) fcinfo->flinfo->fn_extra;
 		get_elem_type_output(&my_extra->vertex, AARR_ELEMTYPE(vertices),
 							 fcinfo->flinfo->fn_mcxt);
@@ -377,11 +440,31 @@ graphpath_length(PG_FUNCTION_ARGS)
 	AnyArrayType *edges;
 	int			nedges;
 
-	getGraphpathArrays(PG_GETARG_DATUM(0), NULL, &edges_datum);
+	edges_datum = DirectFunctionCall1(graphpath_edges, PG_GETARG_DATUM(0));
 	edges = DatumGetAnyArray(edges_datum);
 	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
 
 	PG_RETURN_INT32(nedges);
+}
+
+Datum
+graphpath_vertices(PG_FUNCTION_ARGS)
+{
+	Datum vertices_datum;
+
+	getGraphpathArrays(PG_GETARG_DATUM(0), &vertices_datum, NULL);
+
+	PG_RETURN_DATUM(vertices_datum);
+}
+
+Datum
+graphpath_edges(PG_FUNCTION_ARGS)
+{
+	Datum edges_datum;
+
+	getGraphpathArrays(PG_GETARG_DATUM(0), NULL, &edges_datum);
+
+	PG_RETURN_DATUM(edges_datum);
 }
 
 static void
