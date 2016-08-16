@@ -58,6 +58,7 @@ static void get_elem_type_output(ArrayMetaState *state, Oid elem_type,
 								 MemoryContext mctx);
 static Datum array_iter_next_(array_iter *it, int idx, ArrayMetaState *state);
 static void deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull);
+static Datum tuple_getattr(HeapTupleHeader tuphdr, int attnum);
 static Datum makeArrayTypeDatum(Datum *elems, int nelem, Oid type);
 
 Datum
@@ -148,6 +149,37 @@ vertex_out(PG_FUNCTION_ARGS)
 }
 
 Datum
+vertex_label(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
+	Graphid id;
+	LabelOutData *my_extra;
+
+	id = getGraphidStruct(tuple_getattr(vertex, Anum_vertex_id));
+
+	my_extra = cache_label(fcinfo->flinfo, id.oid);
+
+	PG_RETURN_CSTRING(pstrdup(NameStr(my_extra->label)));
+}
+
+Datum
+vertex_labels(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
+	Graphid		id;
+	LabelOutData *my_extra;
+	Datum		label;
+
+	id = getGraphidStruct(tuple_getattr(vertex, Anum_vertex_id));
+
+	my_extra = cache_label(fcinfo->flinfo, id.oid);
+
+	label = CStringGetDatum(pstrdup(NameStr(my_extra->label)));
+
+	PG_RETURN_ARRAYTYPE_P(makeArrayTypeDatum(&label, 1, CSTRINGOID));
+}
+
+Datum
 edge_out(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
@@ -192,6 +224,20 @@ edge_out(PG_FUNCTION_ARGS)
 	JsonbToCString(&si, &prop_map->root, VARSIZE(prop_map));
 
 	PG_RETURN_CSTRING(si.data);
+}
+
+Datum
+edge_label(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
+	Graphid id;
+	LabelOutData *my_extra;
+
+	id = getGraphidStruct(tuple_getattr(edge, Anum_edge_id));
+
+	my_extra = cache_label(fcinfo->flinfo, id.oid);
+
+	PG_RETURN_CSTRING(pstrdup(NameStr(my_extra->label)));
 }
 
 static LabelOutData *
@@ -341,6 +387,30 @@ deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull)
 
 	heap_deform_tuple(&tuple, tupDesc, values, isnull);
 	ReleaseTupleDesc(tupDesc);
+}
+
+static Datum
+tuple_getattr(HeapTupleHeader tuphdr, int attnum)
+{
+	Oid			tupType;
+	TupleDesc	tupDesc;
+	HeapTupleData tuple;
+	bool		isnull = false;
+	Datum		attdat;
+
+	tupType = HeapTupleHeaderGetTypeId(tuphdr);
+	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
+
+	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
+	ItemPointerSetInvalid(&tuple.t_self);
+	tuple.t_tableOid = InvalidOid;
+	tuple.t_data = tuphdr;
+
+	attdat = heap_getattr(&tuple, attnum, tupDesc, &isnull);
+	ReleaseTupleDesc(tupDesc);
+	Assert(!isnull);
+
+	return attdat;
 }
 
 Graphid
