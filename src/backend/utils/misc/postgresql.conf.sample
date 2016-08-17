@@ -629,6 +629,19 @@
 
 # Add settings for extensions here
 
+#pg_stat_statements.max = 5000
+					# Sets the maximum number of statements tracked by
+					# pg_stat_statements.
+#pg_stat_statements.track = top
+					# Selects which statements are tracked by
+					# pg_stat_statements. (none, top, all)
+#pg_stat_statements.track_utility = on
+					# Selects whether utility commands are tracked by
+					# pg_stat_statements.
+#pg_stat_statements.save = on
+					# Save pg_stat_statements statistics across server
+					# shutdowns.
+
 # - pg_statsinfo settings -
 #
 # See http://pgstatsinfo.sourceforge.net/pg_statsinfo.html#configuration

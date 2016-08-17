@@ -1286,7 +1286,16 @@ setup_config(void)
 	/* set shared preload libraries */
 	conflines = replace_token(conflines,
 							"#shared_preload_libraries = ''",
-							"shared_preload_libraries = 'pg_statsinfo'");
+							"shared_preload_libraries = "
+									"'pg_stat_statements,pg_statsinfo'");
+
+	/* pg_stat_statements */
+	conflines = replace_token(conflines,
+							"#pg_stat_statements.max = 5000",
+							"pg_stat_statements.max = 10000");
+	conflines = replace_token(conflines,
+							"#pg_stat_statements.track = top",
+							"pg_stat_statements.track = all");
 
 	/*
 	 * recommanded configuration for pg_statsinfo
