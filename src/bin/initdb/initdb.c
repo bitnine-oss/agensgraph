@@ -1283,6 +1283,59 @@ setup_config(void)
 							  "#effective_io_concurrency = 0");
 #endif
 
+	/* set shared preload libraries */
+	conflines = replace_token(conflines,
+							"#shared_preload_libraries = ''",
+							"shared_preload_libraries = 'pg_statsinfo'");
+
+	/*
+	 * recommanded configuration for pg_statsinfo
+	 */
+
+	/* system parameters */
+	conflines = replace_token(conflines,
+							"#log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'",
+							"log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'");
+	conflines = replace_token(conflines,
+							"#log_min_messages = warning",
+							"log_min_messages = log");
+	conflines = replace_token(conflines,
+							"#log_checkpoints = off",
+							"log_checkpoints = on");
+	conflines = replace_token(conflines,
+							"#track_functions = none",
+							"track_functions = all");
+	conflines = replace_token(conflines,
+							"#log_autovacuum_min_duration = -1",
+							"log_autovacuum_min_duration = 0");
+	/* pg_statsinfo parameters */
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.enable_maintenance = 'on'",
+							"pg_statsinfo.enable_maintenance = 'on'");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.maintenance_time = '00:02:00'",
+							"pg_statsinfo.maintenance_time = '00:02:00'");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.repolog_keepday = 7",
+							"pg_statsinfo.repolog_keepday = 7");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.repository_keepday = 7",
+							"pg_statsinfo.repository_keepday = 7");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.snapshot_interval = 10min",
+							"pg_statsinfo.snapshot_interval = 30min");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.syslog_line_prefix = '%t %p '",
+							"pg_statsinfo.syslog_line_prefix = "
+									"'%t %p %c-%l %x %q(%u, %d, %r, %a) '");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.syslog_min_messages = disable",
+							"pg_statsinfo.syslog_min_messages = error");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.textlog_line_prefix = '%t %p '",
+							"pg_statsinfo.textlog_line_prefix = "
+									"'%t %p %c-%l %x %q(%u, %d, %r, %a) '");
+
 	snprintf(path, sizeof(path), "%s/postgresql.conf", pg_data);
 
 	writefile(path, conflines);
