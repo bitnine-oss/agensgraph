@@ -628,3 +628,111 @@
 #------------------------------------------------------------------------------
 
 # Add settings for extensions here
+
+#pg_stat_statements.max = 5000
+					# Sets the maximum number of statements tracked by
+					# pg_stat_statements.
+#pg_stat_statements.track = top
+					# Selects which statements are tracked by
+					# pg_stat_statements. (none, top, all)
+#pg_stat_statements.track_utility = on
+					# Selects whether utility commands are tracked by
+					# pg_stat_statements.
+#pg_stat_statements.save = on
+					# Save pg_stat_statements statistics across server
+					# shutdowns.
+
+# - pg_statsinfo settings -
+#
+# See http://pgstatsinfo.sourceforge.net/pg_statsinfo.html#configuration
+# for more detailed information.
+
+#pg_statsinfo.adjust_log_level = off
+					# Enables or disables log level altering feature.
+#pg_statsinfo.adjust_log_log = ''
+#pg_statsinfo.adjust_log_info = ''
+#pg_statsinfo.adjust_log_notice = ''
+#pg_statsinfo.adjust_log_warning = ''
+#pg_statsinfo.adjust_log_error = ''
+#pg_statsinfo.adjust_log_fatal = ''
+					# Change loglevel into LOG/INFO/NOTICE/WARNING/ERROR/FATAL
+					# for logged entries with SQLSTATEs listed here. (*5)
+#pg_statsinfo.controlfile_fsync_interval = 1min
+					# Interval to sync pg_statsinfo's control file.
+#pg_statsinfo.enable_maintenance = 'on'
+					# Enable or disable auto maintenance features. Multiple
+					# items should be comma separated.
+					#   'snapshot': Enables only snapshot maintenance.
+					#   'repolog': Enables only repository log maintenance.
+					#   'log': Enables only log file maintenance.
+					#   'snapshot, log': Enables both snapshot and log file
+					#                    maintenance.
+					#   'on': Enables all maintenance features.
+					#   'off': Disables everything.
+#pg_statsinfo.excluded_dbnames = 'template0,template1'
+					# Exclude databases listed here from monitoring.
+#pg_statsinfo.excluded_schemas = 'pg_catalog,pg_toast,information_schema'
+					# Exclude schemas listed here from monitoring.
+#pg_statsinfo.log_maintenance_command = 'archive_pglog.sh %l'
+					# Command path to be executed to do log file maintenance.
+					# Default value is a ready-made shell script which archives
+					# old log files into compressed files then removes them.
+#pg_statsinfo.long_lock_threshold = 30s
+					# Time to wait before record prolonged locks.
+#pg_statsinfo.long_transaction_max = 10s
+					# Sets the max collection size of long transaction.
+#pg_statsinfo.maintenance_time = '00:02:00'
+					# Time to do automatic maintenance.
+#pg_statsinfo.repolog_buffer = 10000
+					# Since repository logs are sent to repository every 10
+					# seconds by default, pg_statsinfo needs to buffer logs for
+					# the intervals. Additionaly, this buffer is expected to
+					# absorb a transient burst of log entries which might
+					# retard storing them. Log entries which are run over this
+					# buffer are simply dropped off.
+#pg_statsinfo.repolog_interval = 10s
+					# Repository logs are written at intervals of this value.
+#pg_statsinfo.repolog_keepday = 7
+					# Repository logs are preserved for this period.
+#pg_statsinfo.repolog_min_messages = warning
+					# Minimum message levels for repository log. (*1)
+#pg_statsinfo.repolog_nologging_users = ''
+					# Exclude log lines of these users separated by commas from
+					# repository log.
+#pg_statsinfo.repository_keepday = 7
+					# Snapshots are preserved for this period.
+#pg_statsinfo.repository_server = 'dbname=postgres port=5432'
+					# Connection string to connect the repository. (*4)
+					# Password prompt must be avoided.
+#pg_statsinfo.sampling_interval = 5s
+					# Sampling is a process collecting some additional
+					# informations such like session states several times for
+					# a snapshot interval. This value should be a fraction of
+					# snapshot interval. (*3)
+#pg_statsinfo.snapshot_interval = 10min			# snapshot interval (*3)
+#pg_statsinfo.stat_statements_max = 30
+					# Maximum number of entries of pg_stat_statements to be
+					# recorded for every snapshot.
+#pg_statsinfo.stat_statements_exclude_users = ''
+					# Exclude queries of these users separated by commas from
+					# snapshots.
+#pg_statsinfo.syslog_line_prefix = '%t %p '
+					# A printf-style string that is output at the beginning of
+					# each syslog line. (*2) Note that timestamp and process ID
+					# in syslog are them of pg_statsinfo daemon, not of
+					# original ones. You need to add %t and %p to preserve the
+					# original values.
+#pg_statsinfo.syslog_min_messages = disable
+					# Minimum message level for syslog. (*1)
+#pg_statsinfo.textlog_filename = 'pg_statsinfo.log'
+					# Textlog filename. Should not be empty.
+#pg_statsinfo.textlog_line_prefix = '%t %p '
+					# A printf-style string that is output at the beginning of
+					# each textlog line. (*2)
+#pg_statsinfo.textlog_min_messages = warning
+					# Minimum message level for textlog. (*1)
+#pg_statsinfo.textlog_nologging_users = ''
+					# Exclude log lines of these users separated by commas from
+					# text log.
+#pg_statsinfo.textlog_permission = 0600
+					# Permission mode for textlog file.
