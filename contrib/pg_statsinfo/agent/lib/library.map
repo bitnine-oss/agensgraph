@@ -1,0 +1,24 @@
+{
+  global:
+    Pg_magic_func;
+    pg_finfo_*;
+    _PG_fini;
+    _PG_init;
+    statsinfo_activity;
+    statsinfo_cpustats;
+    statsinfo_cpustats_noarg;
+    statsinfo_devicestats;
+    statsinfo_last_xact_activity;
+    statsinfo_loadavg;
+    statsinfo_long_xact;
+    statsinfo_maintenance;
+    statsinfo_memory;
+    statsinfo_profile;
+    statsinfo_restart;
+    statsinfo_sample;
+    statsinfo_snapshot;
+    statsinfo_start;
+    statsinfo_stop;
+    statsinfo_tablespaces;
+  local: *;
+};

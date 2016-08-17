@@ -1,0 +1,244 @@
+/*
+ * lib/pg_statsinfo.sql.in
+ *
+ * Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ */
+
+-- Adjust this setting to control where the objects get created.
+SET search_path = public;
+
+BEGIN;
+
+SET LOCAL client_min_messages = WARNING;
+
+CREATE SCHEMA statsinfo;
+REVOKE ALL ON SCHEMA statsinfo FROM PUBLIC;
+
+--
+-- statsinfo.array_agg()
+--
+CREATE AGGREGATE statsinfo.array_agg(anyelement)
+(
+	SFUNC=array_append,
+	STYPE=anyarray,
+	INITCOND='{}'
+);
+
+--
+-- statsinfo.sample()
+--
+CREATE FUNCTION statsinfo.sample() RETURNS void
+AS 'MODULE_PATHNAME', 'statsinfo_sample'
+LANGUAGE C STRICT;
+
+--
+-- statsinfo.activity()
+--
+CREATE FUNCTION statsinfo.activity(
+	OUT idle			float8,
+	OUT idle_in_xact	float8,
+	OUT waiting			float8,
+	OUT running			float8,
+	OUT backends		integer)
+AS 'MODULE_PATHNAME', 'statsinfo_activity'
+LANGUAGE C STRICT;
+
+--
+-- statsinfo.long_xact()
+--
+CREATE FUNCTION statsinfo.long_xact(
+	OUT client			text,
+	OUT pid				integer,
+	OUT start			timestamptz,
+	OUT duration		float8,
+	OUT query			text)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'statsinfo_long_xact'
+LANGUAGE C STRICT;
+
+--
+-- statsinfo.snapshot()
+--
+CREATE FUNCTION statsinfo.snapshot(comment text) RETURNS void
+AS 'MODULE_PATHNAME', 'statsinfo_snapshot'
+LANGUAGE C;
+
+CREATE FUNCTION statsinfo.snapshot() RETURNS void
+AS 'MODULE_PATHNAME', 'statsinfo_snapshot'
+LANGUAGE C;
+
+--
+-- statsinfo.maintenance()
+--
+CREATE FUNCTION statsinfo.maintenance(repository_keep_period timestamptz) RETURNS void
+AS 'MODULE_PATHNAME', 'statsinfo_maintenance'
+LANGUAGE C;
+
+--
+-- statsinfo.tablespaces()
+--
+CREATE FUNCTION statsinfo.tablespaces(
+	OUT oid oid,
+	OUT name text,
+	OUT location text,
+	OUT device text,
+	OUT avail bigint,
+	OUT total bigint,
+	OUT spcoptions text[])
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'statsinfo_tablespaces'
+LANGUAGE C STRICT;
+
+CREATE VIEW statsinfo.tablespaces AS
+	SELECT * FROM statsinfo.tablespaces();
+
+--
+-- statsinfo.start()
+--
+CREATE FUNCTION statsinfo.start(timeout integer) RETURNS void
+AS 'MODULE_PATHNAME', 'statsinfo_start'
+LANGUAGE C;
+
+--
+-- statsinfo.stop()
+--
+CREATE FUNCTION statsinfo.stop(timeout integer) RETURNS void
+AS 'MODULE_PATHNAME', 'statsinfo_stop'
+LANGUAGE C;
+
+--
+-- statsinfo.restart()
+--
+/*
+CREATE FUNCTION statsinfo.restart() RETURNS text
+AS 'MODULE_PATHNAME', 'statsinfo_restart'
+LANGUAGE C;
+*/
+
+--
+-- statsinfo.cpustats()
+--
+CREATE TYPE statsinfo.cpustats_type AS
+(
+	cpu_user	bigint,
+	cpu_system	bigint,
+	cpu_idle	bigint,
+	cpu_iowait	bigint
+);
+
+CREATE FUNCTION statsinfo.cpustats
+(
+	IN  prev_cpustats	statsinfo.cpustats_type,
+	OUT cpu_id			text,
+	OUT cpu_user		bigint,
+	OUT cpu_system		bigint,
+	OUT cpu_idle		bigint,
+	OUT cpu_iowait		bigint,
+	OUT overflow_user	smallint,
+	OUT overflow_system	smallint,
+	OUT overflow_idle	smallint,
+	OUT overflow_iowait	smallint
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'statsinfo_cpustats'
+LANGUAGE C STRICT;
+
+CREATE FUNCTION statsinfo.cpustats
+(
+	OUT cpu_id			text,
+	OUT cpu_user		bigint,
+	OUT cpu_system		bigint,
+	OUT cpu_idle		bigint,
+	OUT cpu_iowait		bigint,
+	OUT overflow_user	smallint,
+	OUT overflow_system	smallint,
+	OUT overflow_idle	smallint,
+	OUT overflow_iowait	smallint
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'statsinfo_cpustats_noarg'
+LANGUAGE C STRICT;
+
+--
+-- statsinfo.devicestats()
+--
+CREATE FUNCTION statsinfo.devicestats
+(
+	OUT device_major		text,
+	OUT device_minor		text,
+	OUT device_name			text,
+	OUT device_readsector	bigint,
+	OUT device_readtime		bigint,
+	OUT device_writesector	bigint,
+	OUT device_writetime	bigint,
+	OUT device_ioqueue		bigint,
+	OUT device_iototaltime	bigint,	
+	OUT device_rsps_max		float8,
+	OUT device_wsps_max		float8,
+	OUT overflow_drs		smallint,
+	OUT overflow_drt		smallint,
+	OUT overflow_dws		smallint,
+	OUT overflow_dwt		smallint,
+	OUT overflow_dit		smallint,
+	OUT device_tblspaces	name[]
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'statsinfo_devicestats'
+LANGUAGE C;
+
+--
+-- statsinfo.loadavg()
+--
+CREATE FUNCTION statsinfo.loadavg
+(
+	OUT loadavg1	real,
+	OUT loadavg5	real,
+	OUT loadavg15	real
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'statsinfo_loadavg'
+LANGUAGE C;
+
+--
+-- statsinfo.memory()
+--
+CREATE FUNCTION statsinfo.memory
+(
+	OUT memfree		bigint,
+	OUT buffers		bigint,
+	OUT cached		bigint,
+	OUT swap		bigint,
+	OUT dirty		bigint
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'statsinfo_memory'
+LANGUAGE C;
+
+--
+-- statsinfo.profile()
+--
+CREATE FUNCTION statsinfo.profile
+(
+	OUT processing			text,
+	OUT execute				bigint,
+	OUT total_exec_time		double precision
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'statsinfo_profile'
+LANGUAGE C STRICT;
+
+--
+-- statsinfo.last_xact_activity()
+--
+CREATE FUNCTION statsinfo.last_xact_activity
+(
+	OUT pid		int,
+	OUT xid		xid,
+	OUT in_xact	bool,
+	OUT queries	text
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME', 'statsinfo_last_xact_activity'
+LANGUAGE C STRICT;
+
+COMMIT;
