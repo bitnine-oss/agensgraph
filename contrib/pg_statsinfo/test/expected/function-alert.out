@@ -1,0 +1,92 @@
+/*---- Initialize repository DB ----*/
+/*---- Initialize monitored instance ----*/
+/*---- Alert Function ----*/
+/**--- Alert the number of rollbacks per second ---**/
+UPDATE 1
+BEGIN
+CREATE TABLE
+ROLLBACK
+ANALYZE
+ALERT:  pg_statsinfo: too many rollbacks in snapshots between 'xxx' and 'xxx' --- xxx Rollbacks/sec (threshold = 0 Rollbacks/sec)
+/**--- Alert the number of commits per second ---**/
+UPDATE 1
+BEGIN
+CREATE TABLE
+COMMIT
+ANALYZE
+ALERT:  pg_statsinfo: too many transactions in snapshots between 'xxx' and 'xxx' --- xxx Transactions/sec (threshold = 0 Transactions/sec)
+/**--- Alert the response time average of query ---**/
+UPDATE 1
+ALERT:  pg_statsinfo: Query average response exceeds threshold in snapshots between 'xxx' and 'xxx' --- xxx sec (threshold = 0 sec)
+/**--- Alert the response time max of query ---**/
+UPDATE 1
+ALERT:  pg_statsinfo: Query worst response exceeds threshold in snapshots between 'xxx' and 'xxx' --- xxx sec (threshold = 0 sec)
+/**--- Alert the dead tuple size and ratio ---**/
+UPDATE 1
+UPDATE 1
+UPDATE 1
+CREATE TABLE
+CREATE TABLE
+INSERT 0 500000
+INSERT 0 500000
+DELETE 400000
+DELETE 300000
+ANALYZE
+ALERT:  pg_statsinfo: dead tuple size exceeds threshold in snapshot 'xxx' --- xxx MiB (threshold = 0 MiB)
+ALERT:  pg_statsinfo: dead tuple ratio exceeds threshold in snapshot 'xxx' --- xxx % (threshold = 30 %)
+ALERT:  pg_statsinfo: dead tuple ratio in 'postgres.public.tbl02' exceeds threshold in snapshot 'xxx' --- xxx % (threshold = 60 %)
+/**--- Alert the fragmentation table ---**/
+UPDATE 1
+SET
+CREATE TABLE
+ALTER TABLE
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+ANALYZE
+ALERT:  pg_statsinfo: correlation of the clustered table fell below threshold in snapshot 'xxx' --- 'postgres.public.tbl04', 70 % (threshold = 100 %)
+/**--- Alert the number of backend processes ---**/
+UPDATE 1
+ALERT:  pg_statsinfo: too many backends in snapshot 'xxx' --- 1 (threshold = 0)
+/**--- Alert the condition of the OS resource ---**/
+UPDATE 1
+UPDATE 1
+UPDATE 1
+UPDATE 1
+UPDATE 1
+UPDATE 1
+                                                          alert                                                           
+--------------------------------------------------------------------------------------------------------------------------
+ free disk space ratio at 'pg_default' fell below threshold in snapshot 'xxx' --- 19 % (threshold = 20 %)
+ load average 1min exceeds threshold in snapshot 'xxx' --- 7.1 (threshold = 7)
+ load average 5min exceeds threshold in snapshot 'xxx' --- 6.1 (threshold = 6)
+ load average 15min exceeds threshold in snapshot 'xxx' --- 5.1 (threshold = 5)
+ memory swap size exceeds threshold in snapshot 'xxx' --- 1000001 KiB (threshold = 1000000 KiB)
+(5 rows)
+
+/**--- Alert the replication delay ---**/
+UPDATE 1
+UPDATE 1
+INSERT 0 1
+                                                           alert                                                            
+----------------------------------------------------------------------------------------------------------------------------
+ WAL flush-delay in '127.0.0.1:56442' exceeds threshold in snapshot 'xxx' --- 101 MiB (threshold = 100 MiB)
+ replay-delay in '127.0.0.1:56442' exceeds threshold in snapshot 'xxx' --- 201 MiB (threshold = 200 MiB)
+(2 rows)
+
+/**--- Collect alert messages ---**/
+ snapid |              message              
+--------+-----------------------------------
+      2 | too many rollbacks in snapshot...
+      3 | too many transactions in snaps...
+      4 | Query average response exceeds...
+      5 | Query worst response exceeds t...
+      6 | dead tuple size exceeds thresh...
+      6 | dead tuple ratio exceeds thres...
+      6 | dead tuple ratio in 'postgres....
+      7 | correlation of the clustered t...
+      8 | too many backends in snapshot ...
+(9 rows)
+

@@ -225,6 +225,7 @@ static char **filter_lines_with_token(char **lines, const char *token);
 #endif
 static char **readfile(const char *path);
 static void writefile(char *path, char **lines);
+static void appendfile(char *path, char **lines);
 static void walkdir(const char *path,
 		void (*action) (const char *fname, bool isdir),
 		bool process_symlinks);
@@ -1190,6 +1191,8 @@ setup_config(void)
 	char		path[MAXPGPATH];
 	const char *default_timezone;
 	char	   *autoconflines[3];
+	char	   *pg_stat_statements[3];
+	char	   *pg_statsinfo[9];
 
 	fputs(_("creating configuration files ... "), stdout);
 	fflush(stdout);
@@ -1283,9 +1286,46 @@ setup_config(void)
 							  "#effective_io_concurrency = 0");
 #endif
 
+	/* set default preload libraries */
+	snprintf(repltok, sizeof(repltok), "shared_preload_libraries = '%s'",
+			 "pg_stat_statements, pg_statsinfo");
+	conflines = replace_token(conflines, "#shared_preload_libraries = ''",
+							  repltok);
+
+	conflines = replace_token(conflines,
+							"#log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'",
+							"log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'");
+	conflines = replace_token(conflines,
+							"#log_min_messages = warning",
+							"log_min_messages = 'log'");
+	conflines = replace_token(conflines,
+							"#track_functions = none",
+							"track_functions = 'all'");
+	conflines = replace_token(conflines,
+							"#log_checkpoints = off",
+							"log_checkpoints = on");
+	conflines = replace_token(conflines,
+							"#log_autovacuum_min_duration = -1",
+							"log_autovacuum_min_duration = 0");
+	pg_stat_statements[0] = pg_strdup("pg_stat_statements.max = 10000\n");
+	pg_stat_statements[1] = pg_strdup("pg_stat_statements.track = all\n\n");
+	pg_stat_statements[2] = NULL;
+
+	pg_statsinfo[0] = pg_strdup("pg_statsinfo.snapshot_interval = 30min\n");
+	pg_statsinfo[1] = pg_strdup("pg_statsinfo.enable_maintenance = 'on'\n");
+	pg_statsinfo[2] = pg_strdup("pg_statsinfo.maintenance_time = '00:02:00'\n");
+	pg_statsinfo[3] = pg_strdup("pg_statsinfo.repository_keepday = 7\n");
+	pg_statsinfo[4] = pg_strdup("pg_statsinfo.repolog_keepday = 7\n");
+	pg_statsinfo[5] = pg_strdup("pg_statsinfo.syslog_min_messages = 'error'\n");
+	pg_statsinfo[6] = pg_strdup("pg_statsinfo.textlog_line_prefix = '%t %p %c-%l %x %q(%u, %d, %r, %a) '\n");
+	pg_statsinfo[7] = pg_strdup("pg_statsinfo.syslog_line_prefix = '%t %p %c-%l %x %q(%u, %d, %r, %a) '\n");
+	pg_statsinfo[8] = NULL;
+
 	snprintf(path, sizeof(path), "%s/postgresql.conf", pg_data);
 
 	writefile(path, conflines);
+	appendfile(path, pg_stat_statements);
+	appendfile(path, pg_statsinfo);
 	if (chmod(path, S_IRUSR | S_IWUSR) != 0)
 	{
 		fprintf(stderr, _("%s: could not change permissions of \"%s\": %s\n"),
@@ -3696,4 +3736,40 @@ main(int argc, char *argv[])
 		   QUOTE_PATH, pgdata_native, QUOTE_PATH);
 
 	return 0;
+}
+
+/*
+ * append an array of lines to a file
+ *
+ * This is only used to append text files.  Use fopen "a+" not PG_BINARY_W
+ * so that the resulting configuration files are nicely editable on Windows.
+ */
+static void
+appendfile(char *path, char **lines)
+{
+	FILE	   *out_file;
+	char	  **line;
+
+	if ((out_file = fopen(path, "a+")) == NULL)
+	{
+		fprintf(stderr, _("%s: could not open file \"%s\" for appending: %s\n"),
+				progname, path, strerror(errno));
+		exit_nicely();
+	}
+	for (line = lines; *line != NULL; line++)
+	{
+		if (fputs(*line, out_file) < 0)
+		{
+			fprintf(stderr, _("%s: could not append file \"%s\": %s\n"),
+					progname, path, strerror(errno));
+			exit_nicely();
+		}
+		free(*line);
+	}
+	if (fclose(out_file))
+	{
+		fprintf(stderr, _("%s: could not append file \"%s\": %s\n"),
+				progname, path, strerror(errno));
+		exit_nicely();
+	}
 }
