@@ -1,0 +1,180 @@
+/*---- Initialize repository DB ----*/
+/*---- Initialize monitored instance ----*/
+/*---- Show snapshot list / Show snapshot size ----*/
+/**--- Number of snapshots (0) ---**/
+----------------------------------------
+Snapshot List
+----------------------------------------
+SnapshotID  InstanceID  Host                                  Port             Timestamp  Comment               Execute Time      Size
+-----------------------------------------------------------------------------------------------------------------------------------------
+exit: 0
+
+----------------------------------------
+Snapshot Size Information
+----------------------------------------
+Total Snapshot Size  : 0 bytes
+
+exit: 0
+
+/**--- Number of snapshots (1) ---**/
+----------------------------------------
+Snapshot List
+----------------------------------------
+SnapshotID  InstanceID  Host                                  Port             Timestamp  Comment               Execute Time      Size
+-----------------------------------------------------------------------------------------------------------------------------------------
+         1           1  statsinfo                             5432   2012-11-01 00:00:00  1st                       00:00:01   256 KiB
+exit: 0
+
+----------------------------------------
+Snapshot Size Information
+----------------------------------------
+Instance ID                : 1
+Database System ID         : 5807946214009601530
+Host                       : statsinfo
+Port                       : 5432
+Number Of Snapshots        : 1
+Snapshot Size              : 256 KiB
+Latest Snapshot ID         : 1
+Latest Snapshot Timestamp  : 2012-11-01 00:00:00
+
+Total Snapshot Size  : 256 KiB
+
+exit: 0
+
+/**--- Number of snapshots (2) ---**/
+----------------------------------------
+Snapshot List
+----------------------------------------
+SnapshotID  InstanceID  Host                                  Port             Timestamp  Comment               Execute Time      Size
+-----------------------------------------------------------------------------------------------------------------------------------------
+         1           1  statsinfo                             5432   2012-11-01 00:00:00  1st                       00:00:01   256 KiB
+         2           1  statsinfo                             5432   2012-11-01 00:01:00  2nd                       00:00:02   512 KiB
+exit: 0
+
+----------------------------------------
+Snapshot Size Information
+----------------------------------------
+Instance ID                : 1
+Database System ID         : 5807946214009601530
+Host                       : statsinfo
+Port                       : 5432
+Number Of Snapshots        : 2
+Snapshot Size              : 768 KiB
+Latest Snapshot ID         : 2
+Latest Snapshot Timestamp  : 2012-11-01 00:01:00
+
+Total Snapshot Size  : 768 KiB
+
+exit: 0
+
+/**--- Specify the INSTANCEID that exists in data (list) ---**/
+----------------------------------------
+Snapshot List
+----------------------------------------
+SnapshotID  InstanceID  Host                                  Port             Timestamp  Comment               Execute Time      Size
+-----------------------------------------------------------------------------------------------------------------------------------------
+         3           2  statsinfo                             5433   2012-11-01 00:03:00  3rd                       00:00:01   256 KiB
+exit: 0
+
+/**--- Specify the INSTANCEID that not exists in data (list) ---**/
+----------------------------------------
+Snapshot List
+----------------------------------------
+SnapshotID  InstanceID  Host                                  Port             Timestamp  Comment               Execute Time      Size
+-----------------------------------------------------------------------------------------------------------------------------------------
+exit: 0
+
+/**--- There are multiple instances data (list) ---**/
+----------------------------------------
+Snapshot Size Information
+----------------------------------------
+Instance ID                : 1
+Database System ID         : 5807946214009601530
+Host                       : statsinfo
+Port                       : 5432
+Number Of Snapshots        : 2
+Snapshot Size              : 768 KiB
+Latest Snapshot ID         : 2
+Latest Snapshot Timestamp  : 2012-11-01 00:01:00
+
+Instance ID                : 2
+Database System ID         : 5807946214009601531
+Host                       : statsinfo
+Port                       : 5433
+Number Of Snapshots        : 1
+Snapshot Size              : 256 KiB
+Latest Snapshot ID         : 3
+Latest Snapshot Timestamp  : 2012-11-01 00:03:00
+
+Total Snapshot Size  : 1024 KiB
+
+exit: 0
+
+/*---- Get a snapshot ----*/
+/**--- Specify the ASCII character as a comment of the snapshot ---**/
+exit: 0
+
+/**--- Specify the UTF-8 character as a comment of the snapshot ---**/
+exit: 0
+
+/**--- Specify the blank character as a comment of the snapshot ---**/
+exit: 0
+
+/**--- Specify the empty character as a comment of the snapshot ---**/
+exit: 0
+
+/*---- Delete a snapshot ----*/
+/**--- Specify the INSTANCEID that exists in data ---**/
+exit: 0
+
+/**--- Specify the INSTANCEID that not exists in data ---**/
+exit: 0
+
+ snapid | instid |          comment           
+--------+--------+----------------------------
+      1 |      1 | "1st"
+      2 |      1 | "2nd"
+      4 |      3 | "COMMENT"
+      5 |      3 | "マルチバイト文字"
+      6 |      3 | " "
+      7 |      3 | ""
+(6 rows)
+
+/*---- pg_statsinfo's agent start / stop ----*/
+/**--- Stop pg_statsinfo's agent ---**/
+LOG:  waiting for pg_statsinfod to shut down
+LOG:  pg_statsinfod stopped
+exit: 0
+
+/**--- Start pg_statsinfo's agent ---**/
+LOG:  waiting for pg_statsinfod to start
+LOG:  pg_statsinfod started
+exit: 0
+
+/*---- Quasi-normal pattern ----*/
+/**--- Contain the snapshot that is same acquisition date ---**/
+----------------------------------------
+Snapshot List
+----------------------------------------
+SnapshotID  InstanceID  Host                                  Port             Timestamp  Comment               Execute Time      Size
+-----------------------------------------------------------------------------------------------------------------------------------------
+         1           1  statsinfo                             5432   2012-11-01 00:00:00  1st                       00:00:01   256 KiB
+         2           1  statsinfo                             5432   2012-11-01 00:00:00  2nd                       00:00:02   512 KiB
+exit: 0
+
+----------------------------------------
+Snapshot Size Information
+----------------------------------------
+Instance ID                : 1
+Database System ID         : 5807946214009601530
+Host                       : statsinfo
+Port                       : 5432
+Number Of Snapshots        : 2
+Snapshot Size              : 768 KiB
+Latest Snapshot ID         : 2
+Latest Snapshot Timestamp  : 2012-11-01 00:00:00
+
+Total Snapshot Size  : 768 KiB
+
+exit: 0
+

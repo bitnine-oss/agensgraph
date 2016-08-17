@@ -1,0 +1,1927 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD html 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+
+<html lang="ja"><head>
+
+<title>pg_statsinfo</title>
+<link rel="home" title="pg_statsinfo" href="http://pgstatsinfo.sourceforge.net/index_ja.html">
+<link rel="stylesheet" type="text/css" href="style.css">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+</head><body>
+<div class="index">
+<ol>
+  <li><a href="#name">pg_statsinfoとは？</a></li>
+  <li><a href="#description">機能概要</a>
+    <ol>
+      <li><a href="#features-snapshot">統計情報の取得機能</a></li>
+      <li><a href="#features-log-route">サーバログ分配機能</a></li>
+      <li><a href="#features-log-store">サーバログ蓄積機能</a></li>
+      <li><a href="#features-alert">アラート機能</a></li>
+      <li><a href="#features-cmdline">コマンドライン機能</a></li>
+      <li><a href="#features-maintenance">自動メンテナンス機能</a></li>
+    </ol>
+  </li>
+  <li><a href="#install">インストール</a>
+    <ol>
+      <li><a href="#requirement">動作環境</a></li>
+      <li><a href="#procedure">インストール手順</a></li>
+    </ol>
+  </li>
+  <li><a href="#usage">使い方</a>
+    <ol>
+      <li><a href="#start_or_stop">起動と終了</a></li>
+      <li><a href="#snapshot">スナップショットの取得・削除</a></li>
+      <li><a href="#log-route">サーバログの分配</a></li>
+      <li><a href="#log-store">サーバログの蓄積</a></li>
+      <li><a href="#usage-alert">アラート機能の使い方</a></li>
+      <li><a href="#usage-cmdline">コマンドライン機能の使い方</a></li>
+      <li><a href="#usage-maintenance">自動メンテナンス機能の使い方</a></li>
+      <li><a href="#configuration">設定ファイル</a></li>
+      <li><a href="#user-operations">運用上必要となる作業</a></li>
+    </ol>
+  </li>
+  <li><a href="#uninstall">アンインストール</a></li>
+  <li><a href="#restrictions">使用上の注意と制約</a></li>
+  <li><a href="#QA">よくあるQ&A</a></li>
+  <li><a href="#change">pg_statsinfo 3.1 からの変更点</a></li>
+  <li><a href="#details">詳細情報</a>
+    <ol>
+      <li><a href="#many-instances">複数の監視対象インスタンス</a></li>
+      <li><a href="#warm-standby">ウォームスタンバイ</a></li>
+      <li><a href="#fallback-mode">フォールバックモード</a></li>
+      <li><a href="#internal">内部構成</a></li>
+      <li><a href="#internal-log-route">サーバログ分配機能</a></li>
+    </ol>
+  </li>
+  <li><a href="#seealso">関連項目</a></li>
+</ol>
+</div>
+<h1 id="pg_statsinfo">pg_statsinfo 3.2</h1>
+<h2 id="name">pg_statsinfoとは？</h2>
+<p>
+PostgreSQL サーバの利用統計情報を定期的に収集・蓄積することで、DB設計やPostgreSQLの運用(日々の処理傾向の把握、
+性能劣化などの兆候や問題発生時の原因の把握等)に役立つツールです。<br>
+起動や終了、パラメータの設定は PostgreSQL と密に連携しており、手間をかけずに導入可能です。
+</p>
+<p>pg_statsinfo 3.1 からの変更点は<a href="#change">こちら</a>をご覧ください。</p>
+
+<h2 id="description">機能概要</h2>
+<p>pg_statsinfo は、PostgreSQL サーバの統計情報や活動状況を一定の時間間隔毎に定期的に収集し蓄積する機能と、
+PostgreSQL の出力するサーバログを解析することでSQLの性能情報を取得する機能やログ出力を加工する機能があります。
+また、蓄積した情報を元にテキスト形式のレポートを出力するコマンドを提供します。
+</p>
+
+<p>
+また、pg_statsinfo で収集した情報は <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter-ja.html">pg_stats_reporter</a> 
+を用いることでグラフィカルな形で解析・出力することがきます。
+</p>
+
+<p>pg_statsinfo のシステム構成例と動作概要のイメージ図を以下に示します。</p>
+
+<div class="imagebox">
+  <p class="image"><img src="image/system_structure-ja.png"></p>
+  <p class="caption">図1: システム構成例</p>
+</div>
+<div class="imagebox">
+  <p class="image"><img src="image/pg_statsinfo-ja.png"></p>
+  <p class="caption">図2: 動作概要イメージ</p>
+</div>
+<p class="clear"/>
+
+<h3 id="features-snapshot">統計情報の取得機能</h3>
+<p>
+統計情報は一定の時間間隔で取得され、リポジトリ・データベース (以下 リポジトリDB) に保存されます。
+統計情報は各インスタンスのデータベースクラスタ単位で取得できます。
+リポジトリDBは、監視対象インスタンスと同一インスタンスのデータベースでも、別インスタンスでも設定可能です。
+また、1つのリポジトリDBに対して複数の監視対象インスタンスの統計情報を格納することもできます。
+なお 以降では pg_statsinfo で取得した統計情報を、スナップショットと定義します。
+</p>
+
+<h4>スナップショットの取得</h4>
+スナップショットの取得方法は以下のとおりです。
+<ul>
+  <li>ユーザが指定した時間間隔で定期的にスナップショットを取得することができます。デフォルト設定では10分間隔で取得します。</li>
+  <li>任意のタイミングで手動でスナップショットを取得することもできます。</li>
+</ul>
+
+<h4>取得できる統計情報一覧</h4>
+<p>スナップショットとして以下の統計情報を収集します。</p>
+<ul>
+  <li><a href="http://www.postgresql.jp/document/current/html/monitoring-stats.html">統計情報コレクタ</a>が収集する全ての情報。挿入 / 更新 / 削除行数やバッファアクセス回数。</li>
+  <li>テーブルスペース、pg_xlog 領域、アーカイブログ領域のディスク使用量。</li>
+  <li>ロングトランザクション化しているクエリ。</li>
+  <li>バックエンドプロセスの状況。処理中、ロック待ち、トランザクション中の待機、アイドルのそれぞれで集計します。</li>
+  <li>トランザクションログ(WAL)の出力量</li>
+  <li>チェックポイントや自動バキュームの経過時間やバッファアクセス回数。</li>
+  <li>実行回数、累積実行時間の多いSQLと関数および実行計画。</li>
+  <li>PostgreSQLの設定パラメータ。</li>
+  <li>OS リソース情報 (CPU使用量、メモリ使用量、ディスクI/O、ロードアベレージ)。</li>
+  <li>ロック競合情報</li>
+  <li>リカバリとの競合によるクエリのキャンセル数</li>
+  <li>レプリケーション情報 (walsenderの活動状況)</li>
+  <li>アラート機能で検出したアラートの内容</li>
+  <li>SystemTap を使用したプロファイリング情報 (実験的扱いの機能)。</li>
+</ul>
+
+<p>
+スナップショットのサイズは、DB内のオブジェクト数に依存しますが、概ね1回のスナップショットで1DBあたり600 - 800KBを消費します。
+デフォルトの取得間隔(10分間隔)の場合、監視対象インスタンス一つあたり1日で90 - 120MBを消費します。
+</p>
+
+<h4>リポジトリDBのテーブル構成</h4>
+<p>リポジトリDBのテーブル構成に関しては、「<a href="files/pg_statsinfo_v3.2_repository_infomation.xls">pg_statsinfo v3.2 リポジトリDB構成</a>」を参照してください。</p>
+
+<h3 id="features-log-route">サーバログ分配機能</h3>
+<p>PostgreSQL が出力するサーバログをCSVログ、テキストログ、syslog に分配して出力します。</p>
+<ul>
+  <li>メッセージレベル (エラー種別) に応じたサーバログの分配。CSVログ、テキストログ、syslog に個別で出力閾値を設定できます。</li>
+  <li>テキストログのファイル名を固定。常に同じ名前 (デフォルト $PGDATA/pg_log/pg_statsinfo.log) で最新のサーバログを閲覧でき、ログ監視ソフトウェアとの連携が容易になります。</li>
+  <li>テキストログファイルのアクセス権の設定。テキストログのファイル権限を 600 以外にも設定できるため、運用が柔軟になります。</li>
+  <li>テキストログ、syslog に出力されるサーバログのメッセージレベルを任意のレベルに変更可能。例えば、オペレーションミスなどで発生する ERROR レベルのログを INFO レベルに変更して出力できます。</li>
+  <li>テキストログのフィルタリング設定。特定のユーザのサーバログをテキストログに出力しないようにすることができます。</li>
+</ul>
+
+<h3 id="features-log-store">サーバログ蓄積機能</h3>
+<p>PostgreSQL が出力するサーバログを収集し、リポジトリDBに蓄積します。</p>
+<ul>
+  <li>リポジトリDBに蓄積するサーバログを任意のメッセージレベル (エラー種別) 以上に制限することができます。</li>
+  <li>特定ユーザのサーバログをリポジトリDBへ蓄積しないようにすることができます。</li>
+  <li>サーバログのメッセージレベルを任意のレベルに変更してリポジトリDBに蓄積することができます。</li>
+</ul>
+
+<h3 id="features-alert">アラート機能</h3>
+<p>
+監視対象インスタンスの状態を定期的 (スナップショット取得時) にチェックし、問題を検知した場合にアラートメッセージをテキストログに出力します。
+アラートメッセージは、メッセージレベル "ALERT" で出力されます。なお、アラート機能で検出したアラートの内容は、リポジトリDBにも蓄積されます。
+</p>
+
+<p>
+アラート機能で判定する項目は以下のとおりです。<br>
+監視対象インスタンス毎に、アラート機能の有効／無効とアラート条件(閾値)を設定することができます。<br>
+</p>
+
+<ul>
+  <li>秒間のロールバック数</li>
+  <li>秒間のコミット数</li>
+  <li>監視インスタンス中の不要領域のサイズ (MB)</li>
+  <li>監視インスタンス中の不要領域の割合 (%)</li>
+  <li>各テーブルに占める不要領域の割合 (%)</li>
+  <li>クエリの平均レスポンス時間 (秒)</li>
+  <li>クエリの最長レスポンス時間 (秒)</li>
+  <li>各テーブルの断片化率(correlation) (%)</li>
+  <li>バックエンドの最大数</li>
+  <li>テーブルスペースのディスク空き容量 (%)</li>
+  <li>ロードアベレージ</li>
+  <li>スワップ使用量 (KB)</li>
+  <li>レプリケーションの遅延量 (MB)</li>
+</ul>
+
+<p>
+(注1) テーブルの断片化率は、クラスタ化テーブル(クラスタインデックスが存在するテーブル)を対象に判定が行われます。
+</p>
+
+<p>
+アラート機能の設定方法は<a href="#usage-alert">こちら</a>をご覧ください。
+</p>
+
+<h3 id="features-cmdline">コマンドライン機能</h3>
+<p>
+コマンドライン機能はレポート生成および運用管理を行うためのコマンドを提供します。<br>
+※コマンドライン機能の使用方法は<a href="#usage-cmdline">こちら</a>をご覧ください。
+</p>
+
+<h4>簡易レポート機能</h4>
+<p>
+リポジトリDBに保存されたスナップショットから任意の期間のレポートをテキスト形式で出力するコマンドを提供します。<br>
+また、レポートの出力以外に以下の操作を行うことができます。
+</p>
+
+<ul>
+  <li>スナップショットの一覧の表示</li>
+  <li>スナップショットの合計サイズの表示</li>
+</ul>
+
+<p>
+簡易レポート機能が出力するレポートの項目については「<a href="files/pg_statsinfo_v3.2_report_infomation.xls">pg_statsinfo v3.2 レポート項目一覧</a>」をご覧ください。<br>
+なお、簡易レポート機能が出力するレポートの項目は <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter-ja.html">pg_stats_reporter</a> と同等です。<br>
+グラフを用いたグラフィカルなレポートを出力したい場合は <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter-ja.html">pg_stats_reporter</a> を使用してください。
+</p>
+
+<h4>運用管理機能</h4>
+<p>
+pg_statsinfo の運用管理向けの操作を行うコマンドを提供します。<br>
+運用管理機能で行うことができる操作は以下のとおりです。
+</p>
+
+<ul>
+  <li>スナップショットの取得</li>
+  <li>スナップショットの削除</li>
+  <li>エージェントの停止</li>
+  <li>エージェントの起動</li>
+</ul>
+<br>
+
+<h3 id="features-maintenance">自動メンテナンス機能</h3>
+<p>1日1回、任意の時刻に下記のメンテナンス操作を行うことができます。
+<ul>
+  <li>保持期間を経過した古いスナップショットの削除</li>
+  <li>保持期間を経過した蓄積ログの削除</li>
+  <li>サーバログのログファイルの整理</li>
+</ul>
+
+<p>本機能はデフォルトは ON であり、上記の操作を自動メンテナンス実行時刻に実行します。</p>
+<p>
+(注1) スナップショットの自動削除が停止している場合、古いスナップショットは自動的に削除されません。必要に応じてユーザ操作で定期的に削除してください。<br>
+(注2) 蓄積ログの自動削除が停止している場合、古いログは自動的に削除されません。必要に応じてユーザ操作で定期的に削除してください。<br>
+(注3) ログファイルの自動整理が停止している場合、古いログファイルは自動的には削除されません。必要に応じてユーザ操作で定期的に削除してください。
+</p>
+
+<p>
+自動メンテナンス機能の使用方法は<a href="#usage-maintenance">こちら</a>をご覧ください。
+</p>
+
+<h2 id="install">インストール</h2>
+<p>pg_statsinfo のインストール方法について説明します。各インストールパッケージは<a href="http://sourceforge.net/projects/pgstatsinfo/files/pg_statsinfo">こちら</a>からダウンロードして下さい。</p>
+
+<h3 id="requirement">動作環境</h3>
+<dl>
+  <dt>PostgreSQL</dt>
+  <dd>バージョン 9.1, 9.2, 9.3, 9.4, 9.5</dd>
+  <dt>動作検証済みOS</dt>
+  <dd>RHEL 6.x (x86_64), CentOS 6.x (x86_64), RHEL 7.x (x86_64), CentOS 7.x (x86_64)</dd>
+</dl>
+<p><b>(注1) リポジトリDBの PostgreSQL は、configureオプションに --with-libxml が指定されたビルドである必要があります。 (RPM版の PostgreSQL には --with-libxml が指定されています)</b></p>
+
+<h3 id="procedure">インストール手順</h3>
+
+<h4>RPM</h4>
+以下はPostgreSQL9.4のRHEL6のx86_64用のrpmをインストールする例です。
+<pre>
+$ su
+# rpm -ivh pg_statsinfo-3.2.0-1.pg94.rhel6.x86_64.rpm
+</pre>
+
+<h4>source</h4>
+<p>ソースコードからビルドするには、pgxs を使用します。
+なお、pg_statsinfo の登録スクリプト (sql) を手動でインストールする必要はありません。
+監視対象インスタンス、リポジトリDB共に、初回起動時に必要に応じて エージェントがスキーマを自動的にインストールします。</p>
+<pre>
+$ tar xzvf pg_statsinfo-3.2.0.tar.gz
+$ cd pg_statsinfo-3.2.0
+$ make USE_PGXS=1
+$ su
+# make USE_PGXS=1 install
+</pre>
+pgxsを使用しない場合、contrib配下にpg_statsinfoのフォルダを配置し、make, make installを実施してください。
+
+<p>contrib/pg_statsinfo.sql、contrib/pg_statsrepo.sqlは自動的にインストールされるため、手動での実行は不要です。</p>
+
+<h3 id="install">設定ファイル</h3>
+
+<h4 id="install">postgresql.confの設定</h4>
+
+<p>監視対象の PostgreSQL インスタンスを停止した状態で、postgresql.conf に以下の設定を行います。
+この設定では、スナップショットの保存先は同一インスタンスの postgres データベースになります。
+これら以外の設定については、<a href="#configuration">設定ファイル</a>を参照して下さい。</p>
+
+<pre>
+#最小設定
+shared_preload_libraries = 'pg_statsinfo'       # 事前ロードを行う
+log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log' # ログファイル名を指定する
+</pre>
+
+<pre>
+#推奨設定
+shared_preload_libraries = 'pg_statsinfo'       # 事前ロードを行う
+custom_variable_classes = 'pg_statsinfo'        # 独自変数クラス名を使用するための設定 (PostgreSQL 9.2以降では不要です)
+
+pg_statsinfo.snapshot_interval = 30min          # スナップショットの取得間隔
+pg_statsinfo.enable_maintenance = 'on'          # 自動メンテナンス設定
+pg_statsinfo.maintenance_time = '00:02:00'      # 自動メンテナンス実行時刻設定
+pg_statsinfo.repolog_min_messages = disable     # ログ蓄積機能の設定
+
+log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log' # ログファイル名を指定する
+log_min_messages = 'log'                        # ログへ出力するメッセージレベル。 
+pg_statsinfo.syslog_min_messages = 'error'      # syslogに出力するログレベルを指定する。
+pg_statsinfo.textlog_line_prefix = '%t %p %c-%l %x %q(%u, %d, %r, %a) '
+   # pg_statsinfoがテキストログに出力する際、各行の先頭に追加される書式を指定する。log_line_prefixと同じ形式で指定する。
+pg_statsinfo.syslog_line_prefix = '%t %p %c-%l %x %q(%u, %d, %r, %a) '
+   # pg_statsinfoがsyslog経由でログを出力する際、各行の先頭に追加される書式を指定する。
+
+track_functions = 'all'                         # ストアドプロシージャの呼び出しに関する統計情報を収集する
+log_checkpoints = on                            # チェックポイントを記録
+log_autovacuum_min_duration = 0                 # 自動バキュームを記録
+#pg_statsinfo.long_lock_threshold = 30s         # ロック競合情報に記録する対象の条件(閾値)を指定する
+</pre>
+
+<p>pg_statsinfo は以下の設定を強制的に上書きすることに注意してください。</p>
+
+<dl>
+  <dt>log_destination</dt>
+  <dd>'csvlog'が追加され、'stderr'は除去されます。</dd>
+  <dt>logging_collector</dt>
+  <dd>'on' に設定されます。</dd>
+</dl>
+
+<br>
+
+<h4>pg_hba.confの設定</h4>
+<p>
+PostgreSQL 起動ユーザでの localhost からのアクセスではパスワードの入力が不要になるよう設定します。
+この際の認証には ident 方式を推奨します。
+一般的によく利用される「OSユーザ名 = DB管理者名 = postgres」の場合には、<a href="http://www.postgresql.jp/document/current/html/auth-pg-hba-conf.html">pg_hba.conf</a> に以下を追加します。
+他の認証方式よりも優先するため、ファイルの最初のほうに書く必要があることに注意してください。
+UNIX 環境では TYPE=local の ident 認証を使うのが手軽です。
+</p>
+
+<pre>
+# TYPE  DATABASE        USER            CIDR-ADDRESS            METHOD [for UNIX]
+local   all             postgres                                ident
+</pre>
+
+<h4 id="pg_stat_statements">クエリの統計情報の取得設定</h4>
+<p>
+監視対象インスタンスの postgres データベースに <a href="http://www.postgresql.jp/document/current/html/pgstatstatements.html">pg_stat_statements</a> をインストールすることで、クエリの統計情報もスナップショットとして収集できるようになります。<br>
+利用する場合には、postgresql.conf の shared_preload_libraries に pg_stat_statements を追加し、初回起動時に以下の手順で登録してください。 
+</p>
+<pre>
+$ psql -d postgres -c "CREATE EXTENSION pg_stat_statements"
+</pre>
+
+<p>また、必要に応じて設定ファイルに下記のパラメータを設定してください。</p>
+<ul>
+  <li>pg_statsinfo.stat_statements_max</li>
+  <li>pg_statsinfo.stat_statements_exclude_users</li>
+</ul>
+<p>上記のパラメータの説明は<a href="#configuration">設定ファイル</a>をご覧ください。</p>
+
+<h4 id="pg_store_plans">クエリの実行計画の取得設定</h4>
+<p>
+PostgreSQL のバージョン 9.3 以上を使っている場合、監視対象インスタンスの postgres データベースに pg_store_plans をインストールすることで、クエリの実行計画もスナップショットとして収集できるようになります。<br>
+利用する場合には、postgresql.conf の shared_preload_libraries に pg_store_plans を追加し、初回起動時に以下の手順で登録してください。 
+</p>
+<pre>
+$ psql -d postgres -c "CREATE EXTENSION pg_store_plans"
+</pre>
+
+<p>また、必要に応じて設定ファイルに下記のパラメータを設定してください。</p>
+<ul>
+  <li>pg_statsinfo.stat_statements_max</li>
+  <li>pg_statsinfo.stat_statements_exclude_users</li>
+</ul>
+<p>上記のパラメータの説明は<a href="#configuration">設定ファイル</a>をご覧ください。</p>
+
+<p>
+(注1) pg_stats_reporter を利用する場合は、リポジトリDBにも pg_store_plans をインストールする必要があります。<br>
+なお、リポジトリDBへのインストールの際は上記の shared_preload_libraries の設定は不要です。
+</p>
+
+<p>以上でインストールは終了です。</p>
+
+<h2 id="usage">使い方</h2>
+<p>pg_statsinfo の操作方法と各種設定について説明します。</p>
+
+<h3 id="start_or_stop">起動と終了</h3>
+
+<p>起動は、通常どおりPostgreSQLを起動するだけです。
+PostgreSQL の起動と連動して エージェントが自動的に起動します。
+エージェント単体で起動することはできません。</p>
+<pre>$ pg_ctl start [OPTIONS]</pre>
+
+<p>終了も同様に、PostgresSQL サーバの終了に連動します。
+smart 以外の終了モード (fast, immediate) ではサーバログにエラーが出力される場合がありますが、正常な動作です。
+なお、PostgreSQL 9.5以降では終了モードのデフォルトが "fast" であることに注意してください。</p>
+<pre>$ pg_ctl stop -m smart [OPTIONS]</pre>
+
+<p>また、PostgreSQL サーバを終了せずに エージェントのみを停止するには以下のコマンドを実行します。</p>
+<pre>$ pg_statsinfo --stop [OPTIONS]</pre>
+
+<p>停止中のエージェントを起動するには以下のコマンドを実行します。</p>
+<pre>$ pg_statsinfo --start [OPTIONS]</pre>
+
+<p><b>(注1) PostgreSQLの設定パラメータに「shared_preload_libraries = 'pg_statsinfo'」が設定されていない場合は、エージェントの停止／起動が実行できません。</b></p>
+
+<h3 id="snapshot">スナップショットの取得・削除</h3>
+<h4>自動取得</h4>
+<p>スナップショットを一定の時間間隔で定期的に取得します。postgresql.confに以下の設定を記述することで自動取得を実行できます。</p>
+<p>例: スナップショットの取得間隔を30分に設定する。</p>
+<pre>pg_statsinfo.snapshot_interval = 30min </pre>
+
+<h4>手動取得</h4>
+<p>任意のタイミングでスナップショットを取得する場合は、監視対象のインスタンスが存在するDBクラスタのpostgresデータベースに対し、関数 statsinfo.snapshot(text DEFAULT NULL) を実行して下さい。<br>
+引数でスナップショット取得理由をコメントとして記録できます。</p>
+<p>例: 手動でスナップショットを取得します。コメントとして文字列 'comment' を付与します。</p>
+<pre>$ psql -d postgres -c "SELECT statsinfo.snapshot('comment')"</pre>
+<p>なお、手動取得は非同期で行われます。上記のコマンド完了時にスナップショット取得が完了していない場合があります。</p>
+
+<h4>自動削除</h4>
+<p>自動メンテナンス機能を使用することで保持期間を経過したスナップショット削除を自動的に削除することができます。<br>
+自動メンテナンスのスナップショット削除はデフォルトが ON となっています。</p>
+<p>自動メンテナンス機能の使い方は<a href="#usage-maintenance">こちら</a>をご覧ください。</p>
+
+<h4>手動削除</h4>
+<p>スナップショットの手動削除は監視対象インスタンスに対して、関数 statsinfo.maintenance(timestamptz) を実行して下さい。
+引数で指定した時刻より古いスナップショットが削除されます。</p>
+
+<p>例: 取得日時が 2011-02-01 07:00:00 より古いスナップショットを削除します。</p>
+<pre>$ psql -d postgres -c "SELECT statsinfo.maintenance('2010-02-01 07:00:00'::timestamptz);"</pre>
+<p>なお、手動削除は非同期で行われます。上記のコマンド完了時にスナップショット削除が完了していない場合があります。</p>
+
+<h3 id="log-route">サーバログの分配</h3>
+<p>
+pg_statsinfo には PostgreSQL のサーバログをフィルタリングにより加工する機能があります。<br>
+以下では、出力されるログファイルの種類とフィルタリングの種類を説明します。
+</p>
+
+<h4>ログファイルの種類</h4>
+<dl>
+  <dt>CSVログ (*.csv) (例: postgresql-2013-10-01_000000.csv)</dt>
+  <dd>CSVログとは、PostgreSQL が出力する生のログとなります。(CSVログの詳細は<a href="http://www.postgresql.jp/document/current/html/runtime-config-logging.html#RUNTIME-CONFIG-LOGGING-CSVLOG"> こちら </a>をご覧ください)</dd>
+  <dd>pg_statsinfo は本ログの情報を元に加工したログの出力を行いますが、本ログに関しては全く加工を行いません。</dd>
+  <dt>テキストログ (pg_statsinfo.log)</dt>
+  <dd>テキストログとは、PostgreSQL が出力したログ(CSVログ)の情報を元に pg_statsinfo が加工を行ったログです。</dd>
+  <dd>テキストログには以下の特徴があります。
+    <ul>
+      <li>テキストログの書式を任意の形式に設定することができます。</li>
+      <li>テキストログのファイルアクセス権限を設定することができます。</li>
+      <li>テキストログのファイル名を設定することができます。</li>
+      <li>特定のユーザのログを除外した内容で出力することができます。</li>
+      <li>特定のSQLSTATEを持つログのメッセージレベルを変更した内容で出力することができます。</li>
+    </ul>
+  <dd>テキストログの書式、ファイル名およびファイルアクセス権限は、設定ファイルの下記のパラメータで指定します。(詳細は<a href="#configuration"> こちら </a>をご覧ください)
+    <ul>
+      <li>pg_statsinfo.textlog_line_prefix</li>
+      <li>pg_statsinfo.textlog_permission</li>
+      <li>pg_statsinfo.textlog_filename</li>      
+    </ul>
+  </dd>
+<dt>保存用テキストログ (例: postgresql-2013-10-01_000000.log)</dt>
+<dd>
+上記のテキストログをlog_filenameで定義された名前にリネームしたファイルです。ログローテート等の際に生成されます。
+</dd>
+</dl>
+
+<p>
+(注1) ログローテート前に将来リネーム予定のパスに既にファイルが存在する場合がありますが、これは正常な状態です。<br/>
+(注2) 拡張子が「.copy」、「.err.<i>n</i>」のファイルが作成される場合があります。当該ファイルの詳細は<a href="#internal-log-route">こちら</a>を参照してください。
+</p>
+
+<p>ログファイルの出力例を以下に示します。</p>
+<pre>
+$ ls -l $PGDATA/pg_log
+-rw------- 1 postgres postgres 433644 Oct  1 23:59 postgresql-2013-10-01_000000.csv
+-rw------- 1 postgres postgres 322167 Oct  1 23:59 postgresql-2013-10-01_000000.log
+-rw------- 1 postgres postgres 425449 Oct  2 23:59 postgresql-2013-10-02_000000.csv
+-rw------- 1 postgres postgres 321695 Oct  2 23:59 postgresql-2013-10-02_000000.log
+-rw------- 1 postgres postgres 255424 Oct  3 13:40 postgresql-2013-10-03_000000.csv
+-rw------- 1 postgres postgres      0 Oct  3 00:00 postgresql-2013-10-03_000000.log
+-rw------- 1 postgres postgres 190786 Oct  3 13:40 pg_statsinfo.log
+
+postgresql-2013-10-01_000000.csv ... ログローテート済みのCSVログ
+postgresql-2013-10-01_000000.log ... ログローテート済みのテキストログ (上記のCSVログの情報を元に加工したログ)
+postgresql-2013-10-02_000000.csv ... ログローテート済みのCSVログ
+postgresql-2013-10-02_000000.log ... ログローテート済みのテキストログ (上記のCSVログの情報を元に加工したログ)
+postgresql-2013-10-03_000000.csv ... 最新のCSVログ
+postgresql-2013-10-03_000000.log ... コンソールログ
+pg_statsinfo.log ................... テキストログ (最新のCSVログの情報を元に加工したログ)
+</pre>
+
+<h4>フィルタリングの種類</h4>
+<dl>
+  <dt>メッセージレベルによる出力制御</dt>
+  <dd>特定のメッセージレベルより低いレベルのログをテキストログに出力しないようにフィルタリングします。</dd>
+  <dd>特定のメッセージレベルは、設定ファイル(postgresql.conf)の下記のパラメータで指定します。</dd>
+  <dd>設定の詳細については、<a href="#configuration">設定ファイル</a>をご覧ください。</dd>
+  <dd>
+    <ul>
+      <li>pg_statsinfo.textlog_min_messages</li>
+    </ul>
+  </dd>
+  <dd>設定例: warning 以上のメッセージレベルのログをテキストログに出力する</dd>
+  <dd>
+    <pre>pg_statsinfo.textlog_min_messages = warning</pre>
+  </dd>
+  <dt>特定ユーザのセッションのログの出力制御</dt>
+  <dd>特定ユーザのセッションのログをテキストログに出力しないようにフィルタリングします。</dd>
+  <dd>特定ユーザは、設定ファイル(postgresql.conf)の下記のパラメータで指定します。</dd>
+  <dd>設定の詳細については、<a href="#configuration">設定ファイル</a>をご覧ください。</dd>
+  <dd>
+    <ul>
+      <li>pg_statsinfo.textlog_nologging_users</li>
+    </ul>
+  </dd>
+  <dd>設定例: postgres ユーザのセッションのログをテキストログに出力しない</dd>
+  <dd>
+    <pre>pg_statsinfo.textlog_nologging_users = 'postgres'</pre>
+  </dd>
+  <dt id="adjust-log-level">メッセージレベルの変更</dt>
+  <dd>特定のSQLSTATEを持つログのメッセージレベルを任意のメッセージレベルに変更します。</dd>
+  <dd>メッセージレベルの変更対象のSQLSTATEおよび変更後のメッセージレベルは、設定ファイル(postgresql.conf)の下記のパラメータで指定します。</dd>
+  <dd>設定の詳細については、<a href="#configuration">設定ファイル</a>をご覧ください。</dd>
+  <dd>
+    <ul>
+      <li>pg_statsinfo.adjust_log_level</li>
+      <li>pg_statsinfo.adjust_log_info</li>
+      <li>pg_statsinfo.adjust_log_notice</li>
+      <li>pg_statsinfo.adjust_log_warning</li>
+      <li>pg_statsinfo.adjust_log_error</li>
+      <li>pg_statsinfo.adjust_log_log</li>
+      <li>pg_statsinfo.adjust_log_fatal</li>
+    </ul>
+  </dd>
+  <dd>設定例: SQLSTATEが '42P01' のログのメッセージレベルを 'INFO' に変更する</dd>
+  <dd>
+    <pre>pg_statsinfo.adjust_log_level = on
+pg_statsinfo.adjust_log_info = '42P01'</pre>
+  </dd>
+</dl>
+<p>
+(注1) メッセージレベルの変更は、サーバログ分配とサーバログ蓄積で共通です。<br>
+(注2) メッセージレベルの変更をサーバログ分配とサーバログ蓄積で個別に設定することはできません。
+</p>
+
+<h4>自動メンテナンス機能によるログファイル整理</h4>
+<p>自動メンテナンス機能を使用することでログファイルの整理を行うことができます。<br>
+自動メンテナンスのログファイル整理はデフォルトが ON となっています。</p>
+<p>自動メンテナンス機能の使い方は<a href="#usage-maintenance">こちら</a>をご覧ください。</p>
+
+<h3 id="log-store">サーバログの蓄積</h3>
+<p>
+サーバログ蓄積機能を使用することで PostgreSQL のサーバログをリポジトリDBに蓄積することができます。<br>
+また、リポジトリDBに蓄積するサーバログをフィルタリングすることが可能です。
+</p>
+<p><b>監視対象DBとリポジトリDBが同一インスタンスの場合にはサーバログ蓄積機能を無効にすることを推奨します。</b><br>
+有効とした場合、サーバログ蓄積が発行するクエリ(INSERT)に起因してサーバログ出力が発生し、サーバログ蓄積を再帰的に繰り返すことがあります。このような挙動となるのは、log_statementがallまたはmodの設定で、一般ユーザとしてリポジトリDBに接続している場合です。</p>
+
+<h4>フィルタリングの種類</h4>
+<dl>
+  <dt>メッセージレベルによる蓄積制限</dt>
+  <dd>特定のメッセージレベルより低いレベルのログを蓄積しないように制限します。</dd>
+  <dd>制限するメッセージレベルは、設定ファイル(postgresql.conf)の下記のパラメータで指定します。</dd>
+  <dd>設定の詳細については、<a href="#configuration">設定ファイル</a>をご覧ください。</dd>
+  <dd>
+    <ul>
+      <li>pg_statsinfo.repolog_min_messages</li>
+    </ul>
+  </dd>
+  <dd>設定例: warning 以上のメッセージレベルのログを蓄積する</dd>
+  <dd>
+    <pre>pg_statsinfo.repolog_min_messages = warning</pre>
+  </dd>
+  <dd>なお、当該パラメータに "disable" を指定することでサーバログの蓄積を無効化することができます。</dd>
+  <dd>設定例: サーバログの蓄積を無効化する</dd>
+  <dd>
+    <pre>pg_statsinfo.repolog_min_messages = disable</pre>
+  </dd>
+  <dt>特定ユーザのログの蓄積制限</dt>
+  <dd>特定ユーザのセッションのログを蓄積しないように制限します。</dd>
+  <dd>特定ユーザは、設定ファイル(postgresql.conf)の下記のパラメータで指定します。</dd>
+  <dd>設定の詳細については、<a href="#configuration">設定ファイル</a>をご覧ください。</dd>
+  <dd>
+    <ul>
+      <li>pg_statsinfo.repolog_nologging_users</li>
+    </ul>
+  </dd>
+  <dd>設定例: postgres ユーザのセッションのログを蓄積しない</dd>
+  <dd>
+    <pre>pg_statsinfo.repolog_nologging_users = 'postgres'</pre>
+  </dd>
+  <dt>メッセージレベルの変更</dt>
+  <dd>特定のSQLSTATEを持つログのメッセージレベルを任意のメッセージレベルに変更します。</dd>
+  <dd>メッセージレベルの変更の設定手順は <a href="#adjust-log-level">こちら</a> をご覧ください。</dd>
+</dl>
+<p>
+(注1) メッセージレベルの変更は、サーバログ分配とサーバログ蓄積で共通です。<br>
+(注2) メッセージレベルの変更をサーバログ分配とサーバログ蓄積で個別に設定することはできません。
+</p>
+
+<h4>自動メンテナンス機能による蓄積ログの削除</h4>
+<p>自動メンテナンス機能を使用することでリポジトリDBに蓄積されたログを定期的に削除することができます。<br>
+自動メンテナンスの蓄積ログの削除はデフォルトが ON となっています。</p>
+<p>自動メンテナンス機能の使い方は<a href="#usage-maintenance">こちら</a>をご覧ください。</p>
+
+<h3 id="usage-alert">アラート機能の使い方</h3>
+<p>
+アラート機能は初回スナップショットが完了した監視対象インスタンスに対して自動的に有効になります。<br>
+初期状態のアラート条件(閾値)は、アラート設定テーブルのデフォルト値が適用されます。
+<p>
+
+<h4>アラート設定の変更</h4>
+<p>監視対象インスタンス毎に、アラート機能の有効／無効およびアラート条件(閾値)を変更することができます。<br>
+また、アラート条件(閾値)を「-1」に設定することで一部のアラート項目のみ無効とすることができます。<br><p>
+
+<p>アラート設定を変更するには、アラート設定テーブルから変更したいアラート項目のカラムの値を変更してください。<br>
+なお、アラート設定の変更を行うには、アラート設定を変更する監視対象インスタンスの初回スナップショットが完了している必要があることに注意してください。</p>
+
+<p>アラート設定を変更する際、監視対象インスタンスを選択するためにカラム「instid」を使用します。<br>
+当該カラムには監視対象インスタンス毎に割り当てられた識別子 (監視対象インスタンスID) を指定します。<br>
+監視対象インスタンスIDは、簡易レポート機能でスナップショットサイズ表示を実行することで確認できます。</p>
+
+設定例: 秒間ロールバック数の閾値を「3000」に変更する場合
+<pre>
+# UPDATE statsrepo.alert SET rollback_tps = 3000 WHERE instid = <変更対象の監視対象インスタンスID>
+</pre>
+
+設定例: 秒間ロールバック数のアラートを無効にする場合
+<pre>
+# UPDATE statsrepo.alert SET rollback_tps = -1 WHERE instid = <変更対象の監視対象インスタンスID>
+</pre>
+
+設定例: アラート機能を無効にする場合
+<pre>
+# UPDATE statsrepo.alert SET enable_alert = false WHERE instid = <変更対象の監視対象インスタンスID>
+</pre>
+
+<h4>アラート設定テーブル</h4>
+<p>
+アラート設定テーブルとはアラート機能の有効／無効および各種アラート条件(閾値)の設定を保存するテーブルです。<br>
+アラート設定テーブルは、リポジトリDBの「statsrepo.alert」テーブルです。<br>
+アラート設定テーブルのスキーマ構成は以下のとおりです。<br>
+</p>
+
+<table>
+<thead>
+  <tr>
+    <th>カラム名</th>
+    <th>データ型</th>
+    <th>デフォルト値</th>
+    <th>説明</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td>instid</td>
+    <td>bigint</td>
+    <td>－</td>
+    <td>監視対象インスタンスID</td>
+  </tr>
+  <tr>
+    <td>rollback_tps</td>
+    <td>bigint</td>
+    <td>100</td>
+    <td>秒間のロールバック数</td>
+  </tr>
+  <tr>
+    <td>commit_tps</td>
+    <td>bigint</td>
+    <td>1000</td>
+    <td>秒間のコミット数</td>
+  </tr>
+  <tr>
+    <td>garbage_size</td>
+    <td>bigint</td>
+    <td>20000</td>
+    <td>監視インスタンス中の不要領域のサイズ(MB)</td>
+  </tr>
+  <tr>
+    <td>garbage_percent</td>
+    <td>integer</td>
+    <td>30</td>
+    <td>監視インスタンスに占める不要領域の割合(%)</td>
+  </tr>
+  <tr>
+    <td>garbage_percent_table</td>
+    <td>integer</td>
+    <td>30</td>
+    <td>各テーブルに占める不要領域の割合(%)</td>
+  </tr>
+  <tr>
+    <td>response_avg</td>
+    <td>bigint</td>
+    <td>10</td>
+    <td>クエリの平均レスポンス時間(秒)</td>
+  </tr>
+  <tr>
+    <td>response_worst</td>
+    <td>bigint</td>
+    <td>60</td>
+    <td>クエリの最長レスポンス時間(秒)</td>
+  </tr>
+  <tr>
+    <td>fragment_percent</td>
+    <td>integer</td>
+    <td>70</td>
+    <td>各テーブルの断片化率(correlation)(%)</td>
+  </tr>
+  <tr>
+    <td>backend_max</td>
+    <td>integer</td>
+    <td>100</td>
+    <td>バックエンドの最大数</td>
+  </tr>
+  <tr>
+    <td>disk_remain_percent</td>
+    <td>integer</td>
+    <td>20</td>
+    <td>テーブルスペースのディスク空き容量の割合(%)</td>
+  </tr>
+  <tr>
+    <td>loadavg_1min</td>
+    <td>real</td>
+    <td>7.0</td>
+    <td>過去1分間のロードアベレージ</td>
+  </tr>
+  <tr>
+    <td>loadavg_5min</td>
+    <td>real</td>
+    <td>6.0</td>
+    <td>過去5分間のロードアベレージ</td>
+  </tr>
+  <tr>
+    <td>loadavg_15min</td>
+    <td>real</td>
+    <td>5.0</td>
+    <td>過去15分間のロードアベレージ</td>
+  </tr>
+  <tr>
+    <td>swap_size</td>
+    <td>integer</td>
+    <td>1000000</td>
+    <td>スワップ使用量(KB)</td>
+  </tr>
+  <tr>
+    <td>rep_flush_delay</td>
+    <td>integer</td>
+    <td>100</td>
+    <td>マスタとスタンバイ間のWAL書き込み遅延量(MB)</td>
+  </tr>
+  <tr>
+    <td>rep_replay_delay</td>
+    <td>integer</td>
+    <td>200</td>
+    <td>スタンバイのリカバリ遅延量(MB)</td>
+  </tr>
+  <tr>
+    <td>enable_alert</td>
+    <td>boolean</td>
+    <td>true</td>
+    <td>アラート対象判定フラグ(TRUE: 有効、FALSE: 無効)
+</td>
+  </tr>
+</tbody>
+</table>
+
+<p>
+アラート設定テーブルのタプルを削除しないでください。<br>
+タプルを削除した場合、削除したタプルに該当する監視対象インスタンスの設定ができなくなります。
+</p>
+
+<h3 id="usage-cmdline">コマンドライン機能の使い方</h3>
+
+<h4>レポート生成</h4>
+<pre>
+$ pg_statsinfo -r REPORTID [-i INSTANCEID] [-b SNAPID] [-e SNAPID] [-B DATE] [-E DATE] [-o FILENAME] [connection-options]
+</pre>
+
+<p>
+以下にコマンド例を示します。<br>
+以下のコマンド例では、ホスト名 localhost 上のポート 5432 で稼動しているリポジトリDBに対して、postgres データベースに、postgres ユーザで接続し、以下の条件のレポートを出力します。
+</p>
+<ul>
+  <li>レポート種別IDが All のレポート</li>
+  <li>レポート範囲は最初のスナップショットから最後のスナップショット</li>
+  <li>レポート対象は全ての監視対象インスタンス</li>
+  <li>レポートの出力先は標準出力</li>
+</ul>
+
+<pre>
+$ pg_statsinfo  -r All -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>-r, --report=REPORTID</dt>
+  <dd>レポート種別IDを指定します。</dd>
+  <dd>レポート種別IDに指定できる値は以下のとおりです。</dd>
+  <dd>レポート種別IDとレポートの内容についての対応は「<a href="files/pg_statsinfo_v3.2_report_infomation.xls">pg_statsinfo v3.2 レポート項目一覧</a>」をご覧ください。</dd>
+  <dd>
+    <ul>
+      <li>Summary</li>
+      <li>Alert</li>
+      <li>DatabaseStatistics</li>
+      <li>InstanceActivity</li>
+      <li>OSResourceUsage</li>
+      <li>DiskUsage</li>
+      <li>LongTransactions</li>
+      <li>NotableTables</li>
+      <li>CheckpointActivity</li>
+      <li>AutovacuumActivity</li>
+      <li>QueryActivity</li>
+      <li>LockConflicts</li>
+      <li>ReplicationActivity</li>
+      <li>SettingParameters</li>
+      <li>SchemaInformation</li>
+      <li>Profiles</li>
+      <li>All</li>
+    </ul>
+  </dd>
+  <dd>レポート種別IDは、頭文字からの最短一致での指定を許容し、大文字と小文字を区別しません。</dd>
+  
+  <dt>-i, --instid=INSTANCEID</dt>
+  <dd>レポート対象とする監視対象インスタンスの識別子を指定します。</dd>
+  <dd>本オプションは省略可能です。省略時は全ての監視対象インスタンスがレポート対象です。</dd>
+  
+  <dt>-b, --beginid=SNAPID</dt>
+  <dd>レポート範囲の開始点とするスナップショットをスナップショットIDで指定します。</dd>
+  <dd>本オプションは省略可能です。省略時は最初のスナップショットを開始点とします。</dd>
+  <dd>本オプションと「--B, --begindate」または「-E, --enddate」を同時に指定することはできません。</dd>
+  
+  <dt>-e, --endid=SNAPID</dt>
+  <dd>レポート範囲の終了点とするスナップショットをスナップショットIDで指定します。</dd>
+  <dd>本オプションは省略可能です。省略時は最後のスナップショットを終了点とします。</dd>
+  <dd>本オプションと「--B, --begindate」または「-E, --enddate」を同時に指定することはできません。</dd>
+  
+  <dt>-B, --begindate=DATE</dt>
+  <dd>レポート範囲の開始点とするスナップショットを日時 (YYYY-MM-DD HH:MI:SS形式) で指定します。</dd>
+  <dd>本オプションは省略可能です。省略時は最初のスナップショットを開始点とします。</dd>
+  <dd>本オプションと「--b, --beginid」または「-e, --endid」を同時に指定することはできません。</dd>
+  
+  <dt>-E, --enddate=DATE</dt>
+  <dd>レポート範囲の終了点とするスナップショットを日時 (YYYY-MM-DD HH:MI:SS形式) で指定します。</dd>
+  <dd>本オプションは省略可能です。省略時は最後のスナップショットを終了点とします。</dd>
+  <dd>本オプションと「--b, --beginid」または「-e, --endid」を同時に指定することはできません。</dd>
+  
+  <dt>-o, --output=FILENAME</dt>
+  <dd>レポートの出力先ファイル名を指定します。</dd>
+  <dd>本オプションは省略可能です。省略時はレポートを標準出力に出力します。</dd>
+  <dd>指定したファイルが既に存在する場合は上書きします。</dd>
+</dl>
+
+<br>
+
+<h4>スナップショット一覧表示</h4>
+<pre>
+$ pg_statsinfo -l [-i INSTANCEID] [connection-options]
+</pre>
+
+<p>
+以下にコマンド例を示します。<br>
+以下のコマンド例では、ホスト名 localhost 上のポート 5432 で稼動しているリポジトリDBに対して、postgres データベースに、postgres ユーザで接続し、当該リポジトリDBに蓄積されているスナップショットの一覧を表示します。
+</p>
+
+<pre>
+$ pg_statsinfo -l -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>-l, --list</dt>
+  <dd>本オプションが指定された場合はスナップショット一覧の表示を行います。</dd>
+  
+  <dt>-i, --instid=INSTANCEID</dt>
+  <dd>スナップショット一覧を表示する監視対象インスタンスの識別子を指定します。</dd>
+  <dd>本オプションは省略可能です。省略時は全ての監視対象インスタンスのスナップショット一覧を表示します。</dd>
+</dl>
+
+<br>
+
+<h4>スナップショットサイズ表示</h4>
+<pre>
+$ pg_statsinfo -s [connection-options]
+</pre>
+
+<p>
+以下にコマンド例を示します。<br>
+以下のコマンド例では、ホスト名 localhost 上のポート 5432 で稼動しているリポジトリDBに対して、postgres データベースに、postgres ユーザで接続し、当該リポジトリDBに蓄積されているスナップショットのサイズを表示します。
+</p>
+
+<pre>
+$ pg_statsinfo -s -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>-s, --size</dt>
+  <dd>本オプションが指定された場合はスナップショットサイズの表示を行います。</dd>
+</dl>
+
+<br>
+
+<h4>スナップショット取得</h4>
+<pre>
+$ pg_statsinfo -S COMMENT [connection-options]
+</pre>
+
+<p>
+以下にコマンド例を示します。<br>
+以下のコマンド例では、ホスト名 localhost 上のポート 5432 で稼動している監視対象インスタンスに対して、postgres データベースに、postgres ユーザで接続し、'COMMENT'をコメントとして付与したスナップショットを取得します。
+</p>
+
+<pre>
+$ pg_statsinfo -S 'COMMENT' -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>-S, --snapshot=COMMENT</dt>
+  <dd>本オプションが指定された場合はスナップショットの取得を行います。</dd>
+  <dd>オプション引数にはスナップショットに付与するコメントを指定します。</dd>
+</dl>
+
+<br>
+
+<h4>スナップショット削除</h4>
+<pre>
+$ pg_statsinfo -D SNAPID [connection-options]
+</pre>
+
+<p>
+以下にコマンド例を示します。<br>
+以下のコマンド例では、ホスト名 localhost 上のポート 5432 で稼動しているリポジトリDBに対して、postgres データベースに、postgres ユーザで接続し、当該リポジトリDBに蓄積されているスナップショットIDが 123 のスナップショットを削除します。
+</p>
+
+<pre>
+$ pg_statsinfo -D 123 -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>-D, --delete=SNAPID</dt>
+  <dd>本オプションが指定された場合はスナップショットの削除を行います。</dd>
+  <dd>オプション引数には削除対象のスナップショットのスナップショットIDを指定します。</dd>
+</dl>
+
+<br>
+
+<h4>エージェント停止</h4>
+<pre>
+$ pg_statsinfo --stop [connection-options]
+</pre>
+
+<p>
+以下にコマンド例を示します。<br>
+以下のコマンド例では、ホスト名 localhost 上のポート 5432 で稼動している監視対象インスタンスに対して、postgres データベースに、postgres ユーザで接続し、エージェントを停止します。
+</p>
+
+<pre>
+$ pg_statsinfo --stop -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>--stop</dt>
+  <dd>本オプションが指定された場合は エージェントを停止します。</dd>
+</dl>
+
+<br>
+
+<h4>エージェント起動</h4>
+<pre>
+$ pg_statsinfo --start [connection-options]
+</pre>
+
+<p>
+以下にコマンド例を示します。<br>
+以下のコマンド例では、ホスト名 localhost 上のポート 5432 で稼動している監視対象インスタンスに対して、postgres データベースに、postgres ユーザで接続し、エージェントを起動します。
+</p>
+
+<pre>
+$ pg_statsinfo --start -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>--start</dt>
+  <dd>本オプションが指定された場合は エージェントを起動します。</dd>
+</dl>
+
+<br>
+
+<h4>共通オプション (connection-options)</h4>
+<p>
+データベース接続に関するオプションです。<br>
+スナップショット取得を実行する場合は監視対象インスタンス、それ以外はリポジトリDBへの接続情報を指定します。
+</p>
+
+<dl>
+  <dt>-d, --dbname=DBNAME</dt>
+  <dd>接続するデータベース名を指定します。</dd>
+  <dd>本オプションが指定されていない場合は環境変数「PGDATABASE」の値が使用されます。<dd>
+  <dd>環境変数も設定されていない場合は、接続時に指定したユーザ名が使用されます。</dd>
+  
+  <dt>-h, --host=HOSTNAME</dt>
+  <dd>サーバが稼働しているマシンのホスト名を指定します。</dd>
+  <dd>ホスト名がスラッシュから始まる場合、Unixドメインソケット用のディレクトリとして使用されます。</dd>
+  
+  <dt>-p, --port=PORT</dt>
+  <dd>サーバが接続を監視するTCPポートもしくはUnixドメインソケットファイルの拡張子を指定します。</dd>
+  
+  <dt>-U, --username=USERNAME</dt>
+  <dd>接続するユーザ名を指定します。</dd>
+  
+  <dt>-w, --no-password</dt>
+  <dd>パスワードの入力を促しません。サーバがパスワード認証を必要とし、かつ、.pgpassファイルなどの他の方法が利用できない場合、接続試行は失敗します。</dd>
+  
+  <dt>-W, --password</dt>
+  <dd>データベースに接続する前に、強制的にパスワード入力を促します。</dd>
+</dl>
+
+<br>
+
+<h3 id="usage-maintenance">自動メンテナンス機能の使い方</h3>
+
+<p>自動メンテナンス機能を使用することで以下の操作を1日1回任意の時刻に行うことができます。</p>
+<ul>
+  <li>保持期間を経過した古いスナップショットの削除</li>
+  <li>保持期間を経過した蓄積ログの削除</li>
+  <li>サーバログのログファイルの整理</li>
+</ul>
+
+<p>
+自動メンテナンス機能を使用するには、設定ファイル(postgresql.conf)に以下のパラメータを指定します。<br>
+設定の詳細については、<a href="#configuration">設定ファイル</a>をご覧ください。
+</p>
+<ul>
+  <li>pg_statsinfo.enable_maintenance</li>
+  <li>pg_statsinfo.maintenance_time</li>
+  <li>pg_statsinfo.repository_keepday</li>
+  <li>pg_statsinfo.repolog_keepday</li>
+  <li>pg_statsinfo.log_maintenance_command</li>
+</ul>
+
+<p>設定例1: 毎日0時2分に7日間の保持期間を過ぎたスナップショットを自動削除する</p>
+<pre>
+pg_statsinfo.enable_maintenance = 'snapshot' # 自動メンテナンス設定
+pg_statsinfo.maintenance_time = '00:02:00'   # 自動メンテナンス実行時刻設定
+pg_statsinfo.repository_keepday = 7          # スナップショットの保持期間設定
+</pre>
+<p>設定例2: 毎日0時2分に7日間の保持期間を過ぎた蓄積ログを自動削除する</p>
+<pre>
+pg_statsinfo.enable_maintenance = 'repolog' # 自動メンテナンス設定
+pg_statsinfo.maintenance_time = '00:02:00'  # 自動メンテナンス実行時刻設定
+pg_statsinfo.repolog_keepday = 7            # 蓄積ログの保持期間設定
+</pre>
+<p>設定例3: 毎日0時2分に前日以前のCSVログファイルを圧縮アーカイブする</p>
+<pre>
+pg_statsinfo.enable_maintenance = 'log'    # 自動メンテナンス設定
+pg_statsinfo.maintenance_time = '00:02:00' # 自動メンテナンス実行時刻設定
+pg_statsinfo.log_maintenance_command = '&ltPGHOME&gt/bin/archive_pglog.sh %l' # ログファイル整理コマンド設定 (*1)
+※&ltPGHOME&gt: PostgreSQL インストールディレクトリ
+
+(*1) archive_pglog.sh
+archive_pglog.sh は同梱されるシェルスクリプトです。
+前日以前のCSVログファイルを圧縮アーカイブし、ログファイル格納ディレクトリ配下にアーカイブファイル(TGZ)を作成します。
+また、アーカイブしたCSVログファイルをログファイル格納ディレクトリから削除します。
+</pre>
+
+<p>設定例4: 毎日0時2分に7日間の保持期間を過ぎたスナップショットと蓄積ログを自動削除、かつ前日以前のCSVログファイルを圧縮アーカイブする</p>
+<pre>
+pg_statsinfo.enable_maintenance = 'on'     # 自動メンテナンス設定
+pg_statsinfo.maintenance_time = '00:02:00' # 自動メンテナンス実行時刻設定
+pg_statsinfo.repository_keepday = 7        # スナップショットの保持期間設定
+pg_statsinfo.repolog_keepday = 7           # 蓄積ログの保持期間設定
+pg_statsinfo.log_maintenance_command = '&ltPGHOME&gt/bin/archive_pglog.sh %l' # ログファイル整理コマンド設定
+</pre>
+
+<p>(注1) 自動メンテナンス設定のデフォルトは、全ての操作を実行する設定('on')です。</p>
+<p>(注2) 自動メンテナンスでスナップショット削除や蓄積ログ削除を行わない場合、手動で削除しない限りリポジトリDBに残り続けます。
+不要となった古いスナップショットおよび蓄積ログは定期的に削除して下さい。</p>
+<p>(注3) ログファイル整理コマンドの設定を省略した場合、上記の例と同じコマンドが適用されます。</p>
+<p>(注4) 複数監視対象インスタンス－単一リポジトリDBの構成で、各監視対象インスタンスのスナップショットの保持期間を
+互いに異なる期間に設定した場合、自動メンテナンス実行時には最も短く設定した期間のスナップショットが保持されます。
+例えば、各監視対象インスタンスの設定ファイル(postgresql.conf)を以下のように設定した場合は、
+過去3日間のスナップショットが保持されることになります。(蓄積ログに関しても同様)</p>
+<pre>&lt;監視対象インスタンス1&gt;
+pg_statsinfo.enable_maintenance = 'on'
+pg_statsinfo.repository_keepday = 7
+&lt;監視対象インスタンス2&gt;
+pg_statsinfo.enable_maintenance = 'on'
+pg_statsinfo.repository_keepday = 5
+&lt;監視対象インスタンス3&gt;
+pg_statsinfo.enable_maintenance = 'on'
+pg_statsinfo.repository_keepday = 3
+</pre>
+<br>
+
+<h3 id="configuration">設定ファイル</h3>
+
+<p>pg_statsinfo は設定ファイルとして監視対象インスタンスの postgresql.conf を使用します。
+設定ファイルに記載した内容は、インスタンス起動時とリロード時 (pg_ctl reload) に読み込まれ、動作に反映されます。</p>
+
+
+<h4>必須設定項目</h4>
+<p>
+pg_statsinfo を利用するために必須のパラメータは以下です。
+パラメータを後から変更するためには PostgreSQL インスタンスの再起動が必要な設定もあります。
+</p>
+
+<table>
+<thead>
+  <tr>
+    <th>設定項目</th>
+    <th>設定値</th>
+    <th>説明</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td>shared_preload_libraries</td>
+    <td>'pg_statsinfo'</td>
+    <td>事前読込み用のライブラリの指定。
+        pg_stat_statements、pg_store_plans を併用する場合は 'pg_statsinfo, pg_stat_statements, pg_store_plans' のようにカンマ区切りで指定します。</td>
+  </tr>
+  <tr>
+    <td>log_filename</td>
+    <td>'postgresql-%Y-%m-%d_%H%M%S.log'</td>
+    <td>CSVログおよびテキストログのファイル名。デフォルトから変更する場合でも、%Y, %m, %d, %H, %M, %S がこの順に全て表れる形式でなければなりません。</td>
+  </tr>
+  <tr>
+    <td>track_counts</td>
+    <td>on</td>
+    <td>データベースの活動に関する統計情報の収集設定。</td>
+  </tr>
+  <tr>
+    <td>track_activities</td>
+    <td>on</td>
+    <td>セッションで実行中のコマンドに関する情報の収集設定。</td>
+  </tr>
+  <tr>
+    <td>log_min_messages</td>
+    <td>debug5 ~ log</td>
+    <td>ログへ出力するメッセージレベル。
+        'log', pg_statsinfo.syslog_min_messages, pg_statsinfo.textlog_min_messages のいずれの設定よりも、より多くを出力するレベルを設定する必要があります。</td>
+  </tr>
+  <tr>
+    <td>log_destination</td>
+    <td>'csvlog' 必須 / 'syslog', 'eventlog' を追加可能</td>
+    <td>他の値であっても、エージェント起動時に強制的に 'csvlog' が追加され、'stderr' は除去されます。</td>
+  </tr>
+  <tr>
+    <td>logging_collector</td>
+    <td>on</td>
+    <td>他の値であっても、エージェント起動時に強制的にこの値に設定されます。</td>
+  </tr>
+</tbody>
+</table>
+
+<br>
+
+<h4>追加設定項目</h4>
+<p>
+pg_statsinfo を利用するために確認が推奨されるパラメータは以下です。
+パラメータを後から変更するためには、設定値のリロード (pg_ctl reload) が必要です。
+</p>
+
+<table>
+<thead>
+  <tr>
+    <th>設定項目</th>
+    <th>デフォルト値</th>
+    <th>説明</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td>track_functions</td>
+    <td>none</td>
+    <td>関数の呼び出しに関する統計情報の収集設定。
+        統計情報を収集するためには pl または all を設定します。</td>
+  </tr>
+  <tr>
+    <td>track_io_timing</td>
+    <td>off</td>
+    <td>ブロックの読み込みと書き込み時間に関する統計情報の収集設定。 
+        ブロックの読み書きに関する統計情報を収集する場合は on を設定します。<br>
+        本パラメータを on に設定した場合、現時点の時刻をオペレーティングシステムに繰り返し問い合わせるので、プラットフォームによっては深刻な負荷の原因になる可能性がある点を留意してください。<br>
+        (本パラメータはPostgreSQL 9.2以降から指定可能です)</td>
+  </tr>
+  <tr>
+    <td>log_checkpoints</td>
+    <td>off</td>
+    <td>チェックポイント状況のサーバログ出力。on を推奨します。</td>
+  </tr>
+  <tr>
+    <td>log_autovacuum_min_duration</td>
+    <td>-1</td>
+    <td>自動バキューム状況のサーバログ出力。0 ~ 1min を推奨します。</td>
+  </tr>
+  <tr>
+    <td>log_directory</td>
+    <td>'pg_log'</td>
+    <td>CSVログおよびテキストログの出力先ディレクトリ。</td>
+  </tr>
+  <tr>
+    <td>log_rotation_age</td>
+    <td>1d</td>
+    <td>ログローテート設定 (期間によるログファイル切替)。</td>
+  </tr><tr>
+  </tr>
+    <tr><td>log_rotation_size</td>
+    <td>10MB</td>
+    <td>ログローテート設定 (容量によるログファイル切替)。</td>
+  </tr><tr>
+  </tr>
+  <tr>
+    <td>syslog_facility</td>
+    <td>'LOCAL0'</td>
+    <td>syslog の facility 指定。</td>
+  </tr>
+  <tr>
+    <td>syslog_ident</td>
+    <td>'postgres'</td>
+    <td>syslog の indent文字列指定。</td>
+  </tr>
+  <tr>
+    <td>custom_variable_classes</td>
+    <td>(空文字)</td>
+    <td>独自変数クラス名の設定。<br>
+        PostgreSQL 9.1以前で利用する場合には 'pg_statsinfo' を指定してください。<br>
+        PostgreSQL 9.2以降で利用する場合は当パラメータの設定は不要です。<br>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.textlog_min_messages</td>
+    <td>warning</td>
+    <td>テキストログへ出力する最小メッセージレベル <a href="#configuration-a1">(*1)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.syslog_min_messages</td>
+    <td>disable</td>
+    <td>syslog へ出力する最小メッセージレベル <a href="#configuration-a1">(*1)</a>。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.textlog_filename</td>
+    <td>'pg_statsinfo.log'</td>
+    <td>テキストログファイル名。空文字はエラー。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.textlog_line_prefix</td>
+    <td>'%t %p '</td>
+    <td>テキストログの各行の先頭に追加される書式 <a href="#configuration-a2">(*2)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.syslog_line_prefix</td>
+    <td>'%t %p '</td>
+    <td>syslog の各行の先頭に追加される書式 <a href="#configuration-a2">(*2)</a>.
+        syslog がデフォルトで付与する時刻とプロセスIDは、エージェントのものに置き換わってしまうため、元の値を記録するために %t や %p が必要なことに注意してください。
+    </td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.textlog_permission</td>
+    <td>0600</td>
+    <td>テキストログファイルのパーミッション指定。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.textlog_nologging_users</td>
+    <td>-</td>
+    <td>テキストログのフィルタリング設定。テキストログへの出力を除外するユーザを設定します。複数のユーザを設定する場合はカンマ区切りで指定します。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repolog_min_messages</td>
+    <td>warning</td>
+    <td>リポジトリDBに蓄積するサーバログの最小メッセージレベル。<a href="#configuration-a1">(*1)</a><br>
+        監視対象DBとリポジトリDBが同一インスタンスの場合には disable (無効)にすることを推奨します。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repolog_nologging_users</td>
+    <td>-</td>
+    <td>サーバログ蓄積のフィルタリング設定。リポジトリDBへの蓄積を除外するユーザを設定します。複数のユーザを設定する場合はカンマ区切りで指定します。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repolog_buffer</td>
+    <td>10000</td>
+    <td>サーバログ蓄積機能のチューニング設定。バッファリングするログレコード数を指定します。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repolog_interval</td>
+    <td>10s</td>
+    <td>サーバログ蓄積機能のチューニング設定。バッファ内のログをリポジトリDBへ格納する間隔を指定します。<a href="#configuration-a3">(*3)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.sampling_interval</td>
+    <td>5s</td>
+    <td>サンプリングの実行間隔 <a href="#configuration-a3">(*3)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.snapshot_interval</td>
+    <td>10min</td>
+    <td>スナップショットの取得間隔 <a href="#configuration-a3">(*3)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.excluded_dbnames</td>
+    <td>'template0, template1'</td>
+    <td>監視対象から除外するデータベース名。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.excluded_schemas</td>
+    <td>'pg_catalog, pg_toast, information_schema'</td>
+    <td>監視対象から除外するスキーマ名。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repository_server</td>
+    <td>'dbname=postgres'</td>
+    <td>リポジトリDBへの接続文字列 <a href="#configuration-a4">(*4)</a>。パスワードの入力待ちは避ける。一般ユーザを使用して接続する場合は、<a href="#restrictions-dbuser"> こちら </a>の注意点をご覧ください。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_level</td>
+    <td>off</td>
+    <td>サーバログのメッセージレベル変更設定。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_info</td>
+    <td>-</td>
+    <td>メッセージレベルを INFO に変更したい SQLSTATE 指定 <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_notice</td>
+    <td>-</td>
+    <td>メッセージレベルを NOTICE に変更したい SQLSTATE を指定 <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_warning</td>
+    <td>-</td>
+    <td>メッセージレベルを WARNING に変更したい SQLSTATE を指定 <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_error</td>
+    <td>-</td>
+    <td>メッセージレベルを ERROR に変更したい SQLSTATE を指定 <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_log</td>
+    <td>-</td>
+    <td>メッセージレベルを LOG に変更したい SQLSTATE を指定 <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_fatal</td>
+    <td>-</td>
+    <td>メッセージレベルを FATAL に変更したい SQLSTATE を指定 <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.enable_maintenance</td>
+    <td>'on'</td>
+    <td>自動メンテナンス設定。自動メンテナンスで実行する操作を以下より選択します。複数の操作を行う場合は 'snapshot, repolog' のようにカンマ区切りで指定します。
+      <ul>
+        <li>'snapshot': スナップショット削除を実行します</li>
+        <li>'repolog': 蓄積ログ削除を実行します</li>
+        <li>'log': ログファイル整理コマンドを実行します</li>
+        <li>'on': スナップショット削除と蓄積ログ削除およびログファイル整理コマンドを実行します</li>
+        <li>'off': 何もしない</li>
+      </ul>
+    </td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.maintenance_time</td>
+    <td>'00:02:00'</td>
+    <td>自動メンテナンス実行時刻設定。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repository_keepday</td>
+    <td>7</td>
+    <td>スナップショットの保持期間設定。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repolog_keepday</td>
+    <td>7</td>
+    <td>蓄積ログの保持期間設定。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.log_maintenance_command</td>
+    <td>&ltPGHOME&gt/bin/archive_pglog.sh %l</td>
+    <td>サーバログのログファイルの整理を実行するシェルコマンドを指定します。文字列内に'%l'を記述した場合は'%l'がログファイル格納ディレクトリの絶対パスに置き換わります。シェルコマンドは正常にコマンドが終了した場合にのみ正常終了値(0)を返してください。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.long_lock_threshold</td>
+    <td>30s</td>
+    <td>ロック競合情報の収集対象とする条件(閾値)。スナップショットの時点で発生しているロック競合の内、ロック待ちの経過時間(秒)が閾値を越えているものが収集対象となります。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.stat_statements_max</td>
+    <td>30</td>
+    <td>pg_stat_statements、pg_store_plansで収集する情報数の上限。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.stat_statements_exclude_users</td>
+    <td>-</td>
+    <td>pg_stat_statements、pg_store_plansで収集する情報のフィルタリング設定。収集対象から除外するユーザを設定します。複数のユーザを設定する場合はカンマ区切りで指定します。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.long_transaction_max</td>
+    <td>10</td>
+    <td>ロングトランザクション情報の最大収集件数。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.controlfile_fsync_interval</td>
+    <td>1min</td>
+    <td>pg_statsinfoの制御ファイルの更新をストレージデバイスに同期書き出し(fsync)する間隔を設定します。</td>
+  </tr>
+</tbody>
+</table>
+
+<dl>
+<dt id="configuration-a1">*1 : メッセージレベル</dt>
+<dd>以下の値が指定でき、そのレベルと、それより上位のレベルのメッセージが記録されます。
+全く記録しない場合には disable を指定します。
+独自に disable, alert レベルが追加されていることと、debug を区別しないことを除き、<a href="http://www.postgresql.jp/document/current/html/runtime-config-logging.html#RUNTIME-CONFIG-LOGGING-WHEN">log_min_messages</a> と同じ優先順位です。
+</dd>
+<dd>disable &gt; alert &gt; panic &gt; fatal &gt; log &gt; error &gt; warning &gt; notice &gt; info &gt; debug</dd>
+
+<dt id="configuration-a2">*2 : 書式指定</dt>
+<dd>設定パラメータ <a href="http://www.postgresql.jp/document/current/html/runtime-config-logging.html#GUC-LOG-LINE-PREFIX">log_line_prefix</a> と同じ形式で指定します。
+log_line_prefix の値そのものは無視されることに注意して下さい。
+</dd>
+
+<dt id="configuration-a3">*3 : 時間指定</dt>
+<dd>単位として d(日)、h(時)、min(分)、s(秒) を指定できます。指定無しの場合は秒単位とみなします。</dd>
+
+<dt id="configuration-a4">*4 : 接続文字列</dt>
+<dd>
+例えば 'host=127.0.0.1 port=5432 dbname=mydb user=postgres' といったlibpq形式の接続情報文字列です。
+詳細は<a href="http://www.postgresql.jp/document/current/html/libpq-connect.html">データベース接続制御関数</a>のPQconnectdbを参照して下さい。
+この他、libpq が使用する環境変数の影響を受けますので、「<a href="http://www.postgresql.jp/document/current/html/libpq-envars.html">環境変数</a>」も参照して下さい。
+</dd>
+<dd>
+リポジトリDBに接続する際にパスワードの入力待ちにならないようにする必要があります。
+パスワード認証が必要な場合には、PostgreSQL インスタンス起動ユーザに <a href="http://www.postgresql.jp/document/current/html/libpq-pgpass.html">.pgpass</a> を設定し、パスワードの入力を自動化してください。
+なお、.pgpassを用いる場合、リポジトリDBへの接続文字列のホスト指定にhostaddrは使用しないで下さい。
+</dd>
+
+<dt id="configuration-a5">*5 : SQLSTATE 指定</dt>
+<dd>
+複数のログのメッセージレベルを変更したい場合には、SQLSTATE をカンマ区切りで指定します。
+</dd>
+<dd>
+例えば、SQLSTATE が '42P01' と '42P02' のメッセージレベルを INFO に変更したい場合、pg_statsinfo.adjust_log_info = '42P01,42P02' と指定します。
+</dd>
+</dl>
+
+<h4>設定値のリロード</h4>
+<p>PostgreSQLサーバを終了させることなく postgresql.conf の設定を反映させたい場合は、PostgresSQLのリロードコマンドを実行します。</p>
+<pre>$ pg_ctl reload</pre>
+
+
+
+<h3 id="user-operations">運用上必要となる作業</h3>
+<p>ユーザが行う必要のある操作と運用上必要となる作業について説明します。</p>
+
+<h4>サーバログの削除</h4>
+<p>不要となった古いログファイル(CSVログ、テキストログ)は定期的に削除して下さい。<br>
+不要となったログファイルの削除は手動で行うか、自動メンテナンスのログファイル整理を利用して下さい。</p>
+
+<h4>インスタンス情報の削除</h4>
+<p>未使用となった監視対象インスタンスを削除する場合は、リポジトリDBを直接操作してください。<br>
+なお、インスタンス情報を削除すると関連するスナップショットが全て削除されます。<br></p>
+インスタンス情報の削除手順を以下に示します。
+<pre>$ psql -d postgres -c "DELETE FROM statsrepo.instance WHERE instid = <削除対象の監視対象インスタンスID>"</pre>
+
+<h4>ログローテート</h4>
+<p>任意のタイミングでログをローテートさせたい場合は、監視対象インスタンスにて以下を実行して下さい。</p>
+<pre>$ psql -d postgres -c "SELECT pg_rotate_logfile()"</pre>
+
+<h4 id="on-abort">異常終了時の対処</h4>
+<p>エージェントのみが異常終了しても、PostgreSQL インスタンスには影響はありませんが、エージェントの機能は停止したままになってしまいます。<br>
+エージェントを再起動するには PostgreSQL インスタンスを再起動してください。<br>
+なお、エージェントが異常終了してから再起動するまでの間に出力されたサーバログは、再起動時に解析(サーバログの分配のみ)されます。
+</p>
+
+<h2 id="uninstall">アンインストール</h2>
+<p>pg_statsinfo をアンインストールするには、PostgreSQL インスタンスの再起動が必要です。
+postgresql.conf の <code>shared_preload_libraries</code> から pg_statsinfo を取り除き、全ての <code>pg_statsinfo.*</code> パラメータを削除した後に、PostgreSQL を再起動して下さい。</p>
+
+<p>その後、監視対象インスタンスにインストールされた pg_statsinfo が使用するオブジェクトを削除します。監視対象インスタンスの 
+postgres データベースに対し $PGSHARE/contrib/uninstall_pg_statsinfo.sql を実行して下さい。
+</p><pre>$ psql -d postgres -f $PGSHARE/contrib/uninstall_pg_statsinfo.sql </pre>
+
+<p>取得済みのスナップショットも不要な場合には、リポジトリDBに接続し、$PGSHARE/contrib/uninstall_pg_statsrepo.sql を実行して下さい。
+この操作ではリポジトリDBに蓄積した全てのスナップショットを削除しますので、リポジトリDBを共有している場合には特に注意して下さい。</p>
+
+<pre>$ psql -d &lt;repository&gt; -f $PGSHARE/contrib/uninstall_pg_statsrepo.sql </pre>
+
+
+<h2 id="restrictions">使用上の注意と制約</h2>
+<p>pg_statsinfo を使用する際には、以下の使用上の注意と制約があります。</p>
+
+<dl>
+<dt>監視対象インスタンスではエンコーディングと lc_messages の統一が必要</dt>
+<dd>
+pg_statsinfo は PostgreSQL がサポートするエンコーディングやメッセージ・ロケールに対応していますが、混在させることはできません。
+PostgreSQL が出力するサーバログにログが混在してしまうため、解析に失敗します。
+</dd>
+
+<dt>log_filename の制限</dt>
+<dd>pg_statsinfo では、以下を満たす設定値を期待しています。
+<ul>
+  <li>サーバが再起動するたびに、新しいサーバログに切り替わる。(秒精度など、十分高い時間精度のファイル名が利用されている)</li>
+  <li>サーバログの名前は新旧に応じて昇順の名前になる。</li>
+</ul>
+そのため、設定値を変更する場合には、変更前の全てのログファイルを削除してください。
+ログファイルの新旧を名前に基づいて判断しているため、ソート順が変化するような設定変更時に動作不良を起こす可能性があります。
+</dd>
+
+<dt>pg_statsinfo.textlog_filename の制限</dt>
+<dd>固定ファイル名のテキストログは必須です。使わない設定にはできません。</dd>
+
+<dt>fast 及び immediate シャットダウン時のエラーメッセージ</dt>
+<dd>PostgreSQL サーバのシャットダウンの際、停止モードの指定が smart モード以外の場合は接続エラーが発生する場合があります。
+これは エージェントのデータベース切断を待たずにサーバがシャットダウンされるためです。
+終了時にエラーメッセージが出力されても問題はありません。
+また、smart シャットダウンであればエラーは発生しません。</dd>
+
+<dt>シャットダウン・チェックポイントは収集できない</dt>
+<dd>シャットダウン時のチェックポイントログはリポジトリDBに保存されません。
+同居構成の場合には既にリポジトリDBが終了してしまっているためです。</dd>
+
+<dt>スナップショット取得とテーブル削除の同時実行</dt>
+<dd>スナップショット取得とテーブル削除が同時に要求されると、タイミングによってはスナップショット取得でエラーが発生する可能性があります。
+エラーが発生した場合、スナップショット取得はリトライされます。</dd>
+
+<dt>複数の監視インスタンスの設定について</dt>
+<dd>各インスタンス毎に、データベースシステム識別子 or OSホスト名 or Port番号のいずれかが異なっていない場合、複数インスタンスとして認識できません。</dd>
+
+<dt>自動メンテナンス(スナップショット削除)の注意点</dt>
+<dd>複数の監視対象インスタンスのスナップショットを同一のリポジトリDBに蓄積する構成では、
+自動メンテナンス設定のスナップショット保持期間の設定に注意してください。<br>
+複数の監視対象インスタンスで自動メンテナンスのスナップショット削除を有効とする場合、
+それぞれの監視対象インスタンスのスナップショット保持期間の設定でスナップショット削除が実行されます。<br>
+そのため、結果的に監視対象インスタンスの中で最も期間の短いスナップショット保持期間が有効となります。</dd>
+
+<dt>トランザクションログ(WAL)の出力量の統計情報収集に関する制限</dt>
+<dd>監視対象インスタンスがレプリケーション構成のスタンバイの場合は、トランザクションログ(WAL)の出力量の統計情報が収集されません。</dd>
+
+<dt>レポート全般に関する注意点</dt>
+<dd>データサイズなどを示す一部の項目の値は、単位換算での数値の切り捨てにより微小な値が存在するにもかかわらずゼロと表示される可能性がある。</dd>
+
+<dt>サーバログ蓄積機能に関する注意点</dt>
+<dd>監視対象インスタンスが大量のサーバログを出力する場合は、リポジトリDBへのサーバログの蓄積が遅延する可能性があります。
+遅延が発生している場合は入力元のCSVログファイルを移動／削除しないようにしてください。
+または、サーバログ蓄積機能のフィルタリング設定を使用して遅延が発生しないようにログの蓄積量を調整してください。
+</dd>
+
+<dt id="restrictions-dbuser">リポジトリDBへの接続に一般ユーザを使用する際の注意点</dt>
+<dd>リポジトリDBへの接続に一般ユーザを使用する場合は、当該ユーザにリポジトリDBのデータベースへのアクセス権限が必要です。
+そのため、一般ユーザで接続を行う場合は、その接続ユーザが所有者となるようにリポジトリデータベースを作成することを推奨します。<br>
+接続用の一般ユーザの作成およびそのユーザが所有者となるデータベースの作成のためには、以下のコマンドを実行します。
+<pre>
+$ createuser -DRSl -U &lt;DB管理者ユーザ名&gt; &lt;接続ユーザ名&gt;
+$ createdb -U &lt;DB管理者ユーザ名&gt; -O &lt;接続ユーザ名&gt; &lt;データベース名&gt;
+</pre></dd>
+
+<dt>log_timezone の設定に関する注意点</dt>
+<dd>pg_statsinfo のログはシステム(OS)のタイムゾーンを使用してタイムスタンプを生成します。
+そのため、log_timezone にシステム(OS)と異なるタイムゾーンを設定する場合、pg_statsinfo のログのタイムスタンプが、
+これらのタイムゾーン間の時差分がずれた日時で出力されます。</dd>
+
+<dt>log_timezone の変更や夏時間の切り替え時の注意点</dt>
+<dd>log_timezone の変更や夏時間の切り替えの影響により、CSVログファイルが最新のファイルより古い日時のファイル名で作成されることがあります。
+これらのCSVログファイルは pg_statsinfo で処理されないことに注意してください。</dd>
+
+<dt>一部のタイムゾーンでのログのリポジトリ格納における注意点</dt>
+<dd>ログのタイムスタンプにはタイムゾーンの省略形が付けられていますが、この省略形の中には複数のタイムゾーンに関連付けられているものがあります。リポジトリDBにおいてこの関連付けが想定と異なっていると、ログのタイムスタンプが間違って解釈されてリポジトリに格納されます。例えば CST は3つの時間帯に関連付けられておりデフォルトではUS/Central(CST-6) となっているため、この関連付けの設定を変更せずに運用するとlog_timezone を 中国(PRC=CST+8)に設定したサーバーからのログの時刻がリポジトリDBでは14時間進んで解釈されることになります。リポジトリDBで以下のように入力と異なる時刻が表示された場合には設定が必要です。設定方法は<a href="http://www.postgresql.jp/document/current/html/datetime-config-files.html">こちら</a>を参照してください。
+<pre>
+repository=$ SET TIME ZONE '<u>PRC</u>'; select '2014/1/1 0:0:0 <u>CST</u>'::timestamptz;
+      timestamptz       
+------------------------
+ 2014-01-01 <u>14:00:00</u>+08
+(1 row)
+</pre>
+
+<dt>AUTOVACUUM/AUTOANALYZEのキャンセル原因クエリの収集に関する制限</dt>
+<dd>監視対象DBのPostgreSQLが以下のバージョン以降のマイナーリリースの場合、AUTOVACUUM/AUTOANALYZEのキャンセル原因クエリは収集されません。
+<ul>
+  <li>PostgreSQL 9.1.19</li>
+  <li>PostgreSQL 9.2.14</li>
+  <li>PostgreSQL 9.3.10</li>
+  <li>PostgreSQL 9.4.5</li>
+  <li>PostgreSQL 9.5.0</li>
+</ul>
+</dd>
+</dl>
+<br>
+
+<h2 id="QA">よくあるQ&A</h2>
+<h4>Q1. pg_statsinfo が正常に動作しているかの確認方法を教えてください。</h4>
+<p>pg_statsinfo が取得した情報は、statsrepo スキーマに格納されています。
+コマンドライン上で以下の SQL を実行し、確認することができます。</p>
+<pre>
+$psql -d postgres -c "SELECT statsinfo.snapshot('test')"
+$psql -d postgres -c "SELECT * FROM statsrepo.snapshot WHERE COMMENT = 'test'"
+</pre>
+<p>2回目のコマンドで、テスト実行した snapshot の情報が確認されれば、正常に動作しています。</p>
+
+<h4>Q2. 取得したスナップショットはどのように使えばいいの？</h4>
+<p>
+pg_statsinfo の統計情報の取得機能は、その時点の統計情報をスナップショットとして定期的に取得する機能のみになります。
+取得した統計情報から、有益な情報を見たい場合は <a href="#features-cmdline">簡易レポート機能</a> を利用するか、<a href='http://pgstatsinfo.sourceforge.net/pg_stats_reporter-ja.html'>pg_stats_reporter</a> をお使いください。
+</p>
+
+<h4>Q3. 自動メンテナンス機能のスナップショット削除が動作しません。</h4>
+<p>
+自動メンテナンスの設定が有効になっていないことが考えられます。
+以下の事項を点検してください。
+</p>
+
+<dl>
+  <dt>自動メンテナンスの設定が、postgresql.conf に適切に記述されているか</dt>
+  <dd>postgresql.conf の自動メンテナンス設定が 'on' または 'snapshot' が含まれているか確認してください。
+    <ul>
+      <li>pg_statsinfo.enable_maintenance = 'on'</li>
+      <li>pg_statsinfo.enable_maintenance = 'snapshot'</li>
+      <li>pg_statsinfo.enable_maintenance = 'snapshot, log'</li>
+    </ul>
+  </dd>
+</dl>
+
+<h4>Q4. アラート機能が正常に動作しているかの確認方法を教えてください。</h4>
+<p>
+アラート機能を有効に設定、かつ秒間コミット数のアラート条件(閾値)を「0」に設定した状態でスナップショットを取得してください。<br>
+スナップショットの取得時に、サーバログにアラートメッセージが出力されていればアラート機能が正常に動作しています。
+</p>
+
+<p>
+アラート機能を有効、かつ秒間のコミット数のアラート条件(閾値)を「0」に設定するには以下の SQL をリポジトリDBに対して実行します。
+</p>
+<pre>
+# UPDATE statsrepo.alert SET enable_alert = true, commit_tps = 0;
+</pre>
+
+<p>
+アラート機能が正常に動作したことを確認した後は、秒間のコミット数のアラート条件(閾値)を元に戻してください。
+</p>
+
+<h4>Q5. 古いバージョン(3.1以前)からアップグレードする方法を教えてください。</h4>
+<p>
+古いバージョンをアンインストールした後、新しいバージョンをインストールしてください。<br>
+また、古いバージョンで取得済みのスナップショットは新しいバージョンでは利用できません。<br>
+<a href="#uninstall">アンインストール</a> の手順に従い、リポジトリDBのスナップショットを全て削除してください。<br><br>
+上記の操作を行った後、監視対象インスタンスを再起動してください。
+</p>
+
+<h4>Q6. 簡易レポート機能でレポート生成を実行したところ、レポートが表示されません。</h4>
+<p>
+リポジトリDBに格納されているスナップショットの件数が2件未満である可能性があります。<br>
+レポートの作成には2件以上のスナップショットが必要となりますので、スナップショットの取得が2回実行されるのを待ってからレポート生成を実行してください。
+</p>
+
+
+<h4>Q7. 簡易レポート機能でレポート生成を実行したところ、一部のレポート項目が表示されません。</h4>
+<dl>
+  <dt>Query Activity (Functions)</dt>
+  <dd>設定ファイルの「track_functions」が「none」に設定されている可能性があります。</dd>
+  <dd>この場合、当該レポート項目に必要な情報がスナップショットに含まれません。</dd>
+  <dd>当該レポート項目を表示するには「track_functions」を「none」以外に設定してください。</dd>
+  
+  <dt>Query Activity (Statements)</dt>
+  <dd>pg_stat_statements がインストールされていない可能性があります。</dd>
+  <dd>この場合、当該レポート項目に必要な情報がスナップショットに含まれません。</dd>
+  <dd>当該レポート項目を表示するには pg_stat_statements をインストールしてください。</dd>
+  
+  <dt>Query Activity (Plans)</dt>
+  <dd>pg_store_plans がインストールされていない可能性があります。</dd>
+  <dd>この場合、当該レポート項目に必要な情報がスナップショットに含まれません。</dd>
+  <dd>当該レポート項目を表示するには pg_store_plans をインストールしてください。</dd>
+  
+  <dt>Autovacuum Activity</dt>
+  <dd>設定ファイルの「log_autovacuum_min_duration」が「-1」に設定されている可能性があります。</dd>
+  <dd>この場合、当該レポート項目に必要な情報がスナップショットに含まれません。</dd>
+  <dd>当該レポート項目を表示するには「log_autovacuum_min_duration」を「-1」以外に設定してください。</dd>
+  
+  <dt>Checkpoint Activity</dt>
+  <dd>設定ファイルの「log_checkpoints」が「off」に設定されている可能性があります。</dd>
+  <dd>この場合、当該レポート項目に必要な情報がスナップショットに含まれません。</dd>
+  <dd>当該レポート項目を表示するには「log_checkpoints」を「on」に設定してください。</dd>
+  
+  <dt>OS Resource Usage (IO Usage)</dt>
+  <dd>OS管理外の記憶デバイスまたは分散ファイルシステム(NFSなど)を利用した環境では、OSリソースのディスクI/O情報が収集されません。</dd>
+  <dd>そのため、当該レポート項目に必要な情報がスナップショットに存在しない可能性があります。</dd>
+  
+  <dt>Long Transactions</dt>
+  <dd>レポート対象となる情報がスナップショットに存在しない可能性があります。</dd>
+  
+  <dt>Notable Tables</dt>
+  <dd>レポート対象となる情報がスナップショットに存在しない可能性があります。</dd>
+  
+  <dt>Lock Conflicts</dt>
+  <dd>レポート対象となる情報がスナップショットに存在しない可能性があります。</dd>
+  
+  <dt>Replication Activity</dt>
+  <dd>レポート対象となる情報がスナップショットに存在しない可能性があります。</dd>
+  
+  <dt>Schema Information</dt>
+  <dd>一部のデータベースのスキーマ情報が含まれてない場合は、該当のデータベースに接続できる設定になっているか <a href="http://www.postgresql.jp/document/current/html/client-authentication.html">クライアント認証</a> などを確認してください。</dd>
+</dl>
+
+<h4>Q8. pg_store_plans をインストールしているのにレポートでプランの統計情報が出てきません。</h4>
+<p>
+pg_store_plans が public 以外のスキーマにインストールされている可能性があります。<br>
+この場合はログを確認すると繰り返し以下の様なエラーが記録されているはずです。
+<pre>ERROR: pg_statsinfo: query failed: ERROR:  relation "pg_store_plans" does not exist</pre>
+この場合は一旦 DROP EXTENSION したのち、明示的にスキーマを public と指定して CREATE EXTENSION を実行しなおしてください。
+<pre>CREATE EXTENSION pg_store_plans SCHEMA public;</pre>
+</p>
+
+<h4>Q9. スナップショットが取得できていないことがあります。</h4>
+<p>
+前回のスナップショット取得が未完了の状態で次のスナップショット取得が行われた場合、今回分のスナップショット取得はスキップされます。<br>
+なお、スナップショット取得ではテーブルおよびインデックスに対してAccessShareLockを獲得するため、AccessExclusiveLockが獲得されているとスナップショット取得が遅延することがあります。
+</p>
+
+<h4>Q10. PostgreSQLのページサイズをデフォルト以外に変更した場合に使用できますか？</h4>
+<p>
+使用できます。ただし、変更したページサイズで計算された正しいレポートを作成するために、以下のSQLをリポジトリDBに対して実行する必要があります。
+</p>
+<pre>
+# CREATE OR REPLACE FUNCTION statsrepo.page_size() RETURNS integer AS 'SELECT <i><ページサイズ></i>' LANGUAGE sql IMMUTABLE;
+</pre>
+
+<h4>Q11. HA構成においてフェイルオーバが発生した場合に、フェイルオーバ前後でマスタのインスタンスIDが変わってしまいます。</h4>
+<p>
+pg_statsinfo は「インスタンスID」でインスタンスを識別します。インスタンスIDは監視対象サーバのホスト名、ポート番号とpg_controldata が表示するデータベースシステム識別子から生成されます。この中でマスタのホスト名はフェイルオーバーの際に変わることが普通なためこのようになります。
+</p>
+<br>
+
+<h2 id="change">pg_statsinfo 3.1 からの変更点</h2>
+<p>pg_statsinfo 3.1 からの変更点は以下の通りです。</p>
+<ul>
+  <li>PostgreSQL 9.5に対応</li>
+  <li>PostgreSQL 9.0がサポート対象外になりました</li>
+</ul>
+<br>
+
+<h2 id="details">詳細情報</h2>
+<p>より高度な利用方法や、内部構成について説明します。</p>
+
+<h3 id="many-instances">複数の監視対象インスタンス</h3>
+<p>
+複数の監視対象インスタンスが存在する場合の構成として、監視対象インスタンス毎にリポジトリDBを用意して各個にスナップショットを蓄積する構成と、各監視対象インスタンスで共通のリポジトリDBを用意してスナップショットを蓄積する構成があります。<br>
+ここでは、後者の単一リポジトリに複数の監視対象インスタンスのスナップショットを蓄積する構成について説明します。
+</p>
+
+<h4>設定手順</h4>
+<p>
+各監視対象インスタンスの設定ファイルに、同一のリポジトリDBを参照する内容で「pg_statsinfo.repository_server」を設定します。<br>
+以下に設定例を示します。
+<p>
+<pre>pg_statsinfo.repository_server = 'host=192.168.0.32 port=5432 user=postgres dbname=postgres'</pre>
+
+<p>
+リポジトリDBは各監視対象インスタンスから上記で設定したデータベースにパスワード入力なしに接続できる必要があります。<br>
+各監視対象インスタンスからリポジトリDBにパスワード入力なしに接続できるよう <a href="http://www.postgresql.jp/document/current/html/client-authentication.html">クライアント認証</a> を設定してください。
+</p>
+
+<h4>注意事項</h4>
+<ul>
+  <li>複数の監視対象インスタンスで自動メンテナンスのスナップショット削除が設定されている場合、監視対象インスタンスの中で最も期間の短いスナップショット保持期間が有効となります。</li>
+</ul>
+
+<h3 id="warm-standby">ウォームスタンバイ</h3>
+<p>構成例として、<a href="http://www.postgresql.jp/document/current/html/warm-standby.html">ウォームスタンバイ</a>での構成を説明します。
+ウォームスタンバイ構成で pg_statsinfo を利用する場合、大きく分けて2つの構成があります。
+詳細は "<a href="http://pgstatsinfo.sourceforge.net/pg_statsinfo-warm-standby-ja.html">pg_statsinfo: warm-standby</a>" を参照してください。
+</p>
+
+<ol>
+  <li>稼動系、待機系と独立したインスタンスにリポジトリDBを配置</li>
+  <li>稼動系、待機系それぞれのインスタンスにリポジトリDBを配置</li>
+</ol>
+
+<h3 id="fallback-mode">フォールバックモード</h3>
+<p>エージェント起動時および設定リロード時にリポジトリDBの正当性チェックを行います。<br>
+正当性チェックを実施した結果、不備が検出された場合は一部の機能を無効化した状態で動作するモード(フォールバックモード)に移行します。</p>
+
+<p>リポジトリDBの正当性チェックの内容およびフォールバックモードで無効化される機能を以下に示します。</p>
+<h4>リポジトリDBの正当性チェックの内容</h4>
+<ul>
+  <li>リポジトリDBに接続できるか</li>
+  <li>リポジトリDBに登録されている statsrepo スキーマのバージョンが正しいか</li>
+  <li>リポジトリDBの PostgreSQL が XML をサポートしているか (configure オプションに --with-libxml が指定されたビルドであるか)</li>
+</ul>
+
+<h4>フォールバックモードで無効化される機能</h4>
+<ul>
+  <li>統計情報の取得機能</li>
+  <li>サーバログ蓄積機能</li>
+  <li>アラート機能</li>
+  <li>コマンドライン機能でのスナップショット取得</li>
+  <li>自動メンテナンス機能でのスナップショット削除</li>
+</ul>
+
+<p>
+フォールバックモードから復旧すると各種機能が再開されます。<br>
+この際、フォールバックモードで動作していた期間のスナップショット取得、アラート、自動メンテナンスは補完されません。<br>
+また、サーバログの蓄積はフォールバックモードに移行した時点のログから補完が行われます。
+</p>
+
+<h4>復旧手順</h4>
+<p>リポジトリDBに接続できないことが原因でフォールバックモードの移行した場合は、リポジトリDBを復旧した時点で自動的に通常モードに復旧します。<br/>
+他の原因によりフォールバックモードに移行した場合は、リポジトリDBを復旧した後で設定リロードを実行してください。</p>
+
+<p>フォールバックモードに移行した原因はログ(テキストログ or syslog)に出力された内容から判断できます。<br/>
+フォールバックモードに移行した時のログの出力例を以下に示します。</p>
+<pre>
+# リポジトリDBに接続できない
+ERROR:  pg_statsinfo: could not connect to database with "host=192.168.0.1 user=postgres": timeout expired
+LOG:  pg_statsinfo: pg_statsinfo is starting in fallback mode
+
+# statsrepo スキーマのバージョンが合わない
+ERROR:  pg_statsinfo: incompatible statsrepo schema: version mismatch
+LOG:  pg_statsinfo: pg_statsinfo is starting in fallback mode
+
+# リポジトリDBの PostgreSQL が XML をサポートしていない
+ERROR:  pg_statsinfo: repository server must support XML feature. you need to rebuild PostgreSQL using "./configure --with-libxml"
+LOG:  pg_statsinfo: pg_statsinfo is starting in fallback mode
+</pre>
+
+<p>リポジトリDBの復旧に関する点検事項と対処方法を以下に示します。</p>
+<dl>
+  <dt>リポジトリDBに接続できない場合</dt>
+  <ul>
+    <li>リポジトリDBの稼動状態を確認し、リポジトリDBが停止している場合はリポジトリDBを起動してください。</li>
+    <li>設定ファイルのリポジトリDBへの接続文字列(pg_statsinfo.repository_server)を確認し、設定が誤っている場合は修正してください。(要設定リロード)</li>
+  </ul>
+  <dt>statsrepo スキーマのバージョンが合わない場合</dt>
+  <ul>
+    <li>statsrepo スキーマを削除するか、リポジトリDBのデータベースを別に作成してください。</li>
+  </ul>
+  <dd>(正しいバージョンの statsrepo スキーマは設定リロード時に自動的に登録されます)</dd>
+  <dt>PostgreSQL が XML をサポートしていない場合</dt>
+  <ul>
+    <li>configure オプションに --with-libxml が指定されたビルドの PostgreSQL をインストールした後、リポジトリDBを再起動してください。</li>
+  </ul>
+</dl>
+
+<h3 id="systemtap">SystemTap 連携</h3>
+<p>Linux 系 OS には、様々なトレーシング／プロファイリングツールが備わっています。
+その内の1つである SystemTap は、Solaris や FreeBSD などで利用可能な Dtrace に類似したプロダクトであり、カーネル内部のトレーシングやプロファイリングのほかに、
+ユーザアプリケーションの情報取得 (プローブ定義) も可能なツールです。
+PostgreSQL には、多くの標準的なプローブがソースコード内で提供されており、SystemTap を利用してこれらのプローブから収集されるプロファイリング情報を取得することができます。
+pg_statsinfo は、この SystemTap が収集するプロファイリング情報をスナップショットとしてリポジトリDBに蓄積します。
+</p>
+<h4>前提環境</h4>
+<ol>
+<li>OS は、RHEL6、Fedora13 以降が必要になります。<br>これらは、PostgreSQL のプロファイリングが実施可能な SystemTap のバージョンをデフォルトで持つディストリビューションです。</li>
+<li>systemtap、systemtap-runtime、systemtap-sdt-devel パッケージ(RPM) がインストール済みである必要があります。</li>
+<li>PostgreSQL は、--enable-debug、--enable-dtrace の configure オプションを有効にしてビルドされている必要があります。</li>
+</ol>
+
+<h4>実行手順</h4>
+<p>SystemTap を実行するユーザは、postgres を起動するユーザ(典型的には postgres ユーザ)である必要があります。
+まず、このユーザを stapdev グループに所属させる必要があります。</p>
+<pre>$ usermod -g stapdev &lt;username&gt;</pre>
+<p>PostgreSQL のプロファイリング情報収集を行うには、専用のスクリプトを使用します。スクリプトを <a href="http://pgstatsinfo.sourceforge.net/pg_statsinfo_profile.stp">pg_statsinfo_profile.stp</a> に示します。
+スクリプトを監視対象インスタンスの任意の場所に配置し、SystemTap で実行して下さい。</p>
+<pre>$ stap -m statsinfo_prof pg_statsinfo_profile.stp</pre>
+<p>SystemTap が収集するプロファイリング情報は、スナップショット取得と同じタイミングで取得され、リポジトリDBに蓄積されます。</p>
+
+<h4>制約</h4>
+<p>本機能は、性能への影響、プロダクトの成熟度合いなどを加味し、Experimental (実験的扱いの機能) の位置づけとなります。
+つまり、商用などでは使用をまだ推奨せず、あくまで検証環境などでの使用を前提としています。</p>
+
+<h3 id="internal">内部構成</h3>
+<p>pg_statsinfo はPostgreSQLのサーバサイドで動作する pg_statsinfo ライブラリと、エージェントとして動作する実行プログラムの2つのモジュールで構成されています。
+ライブラリはロード直後に呼ばれるフック関数からエージェントを起動するため、ユーザがエージェントを明示的に起動することはありません。
+詳細は "<a href="http://pgstatsinfo.sourceforge.net/pg_statsinfo-internal-ja.html">pg_statsinfo: internal</a>" を参照してください。
+</p>
+
+<h3 id="internal-log-route">サーバログ分配機能</h3>
+<p>
+ここでは、pg_statsinfoのサーバログ分配機能のログローテート時の動作を説明します。拡張子に「.copy」が付くファイルが出来るケース、拡張子に「.err.<i>n</i>」が付くファイルが出来るケースを説明します。
+</p>
+
+<h4>ログローテート発生時の挙動 (拡張子「.copy」のファイルが作成されるケース)</h4>
+<p>保存用テキストログ生成の際に、同名のファイルが存在して既に内容が書かれている場合、そのファイルの名前の拡張子に「.copy」を付加します。 これはコンソールログの内容の消失を回避するための処置です。</p>
+
+<h4>拡張子「.err.<i>n</i>」のファイルについて</h4>
+<p>サーバクラッシュまたはエージェント停止コマンドによる停止後に、エージェントを再開するとこのファイルが生成されることがあります。エージェント再開時には、最後に処理していたCSVファイルが存在しないと、対応する「.log」ファイルの拡張子を「.err.<i>n</i>」にリネームします。
+この場合、エージェント停止より後の部分のCSVファイルの内容は処理されません。</p>
+<p>また、ベースバックアップからの起動の際にも「.err.<i>n</i>」ファイルが作成される場合があります。これを防ぐためには、サーバ起動前にDBクラスタディレクトリの中のpg_statsinfo.controlファイルを削除してください。</p>
+
+<h2 id="seealso">関連項目</h2>
+<h3 id="postgresql_document">外部サイト</h3>
+<a href="http://www.pgcon.org/2010/schedule/events/216.en.html">PGcon 2010: pg_statsinfo</a>
+<br><br>
+<h3 id="postgresql_document">PostgreSQLドキュメント</h3>
+<a href="http://www.postgresql.jp/document/current/html/app-pg-ctl.html">pg_ctl</a>,
+<a href="http://www.postgresql.jp/document/current/html/app-psql.html">psql</a>,
+<a href="http://www.postgresql.jp/document/current/html/runtime-config.html">サーバの構成</a>,
+<a href="http://www.postgresql.jp/document/current/html/monitoring-stats.html">統計情報コレクタ</a>,
+<a href="http://www.postgresql.jp/document/current/html/catalogs.html">システムカタログ</a>,
+<a href="http://www.postgresql.jp/document/current/html/pgstatstatements.html">pg_stat_statements</a>,
+<a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter-ja.html">pg_stats_reporter</a>
+<hr>
+<div class="navigation">
+  <a href="http://pgstatsinfo.sourceforge.net/index_ja.html">Top</a> &gt;
+  <a href="http://pgstatsinfo.sourceforge.net/pg_statsinfo-ja.html">pg_statsinfo</a>
+<div>
+<p class="footer">Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION</p>
+
+<script type="text/javascript">
+var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+</script><script src="pg_statsinfo-ja_files/ga.js" type="text/javascript"></script>
+<script type="text/javascript">
+try{
+var pageTracker = _gat._getTracker("UA-10244036-6");
+pageTracker._trackPageview();
+} catch(err) {}
+</script>
+</div></div></div></div></body></html>
+
+<style type="text/css">
+div.imagebox {
+float: left;
+text-align: center;
+margin: 0.5em 3px 1em 3px;
+}
+p.image, p.caption {
+text-align: center;
+margin: 5px;
+}
+p.caption {
+font-size: 16px;
+color: #000000;
+}
+p.clear {
+clear: both;
+}
+</style>

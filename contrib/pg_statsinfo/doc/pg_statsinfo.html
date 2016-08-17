@@ -1,0 +1,1760 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD html 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+
+<html lang="en"><head>
+
+<title>pg_statsinfo</title>
+<link rel="home" title="pg_statsinfo" href="index.html">
+<link rel="stylesheet" TYPE="text/css"href="style.css">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+</head>
+
+<body>
+<div class="index">
+<ol>
+  <li><a href="#name">What is pg_statsinfo?</a></li>
+  <li><a href="#description">Description</a>
+    <ol>
+      <li><a href="#features-snapshot">Statistics Snapshot</a></li>
+      <li><a href="#features-log-route">Server Log Filter</a></li>
+      <li><a href="#features-log-store">Server Log Accumulation</a></li>
+      <li><a href="#features-alert">Alert Function</a></li>
+      <li><a href="#features-cmdline">Command Line Operations</a></li>
+      <li><a href="#features-maintenance">Automatic Repository Maintenance</a></li>
+    </ol>
+  <li><a href="#install">Installation</a>
+    <ol>
+      <li><a href="#requirement">Requirement</a></li>
+      <li><a href="#procedure">Installation</a></li>
+    </ol>
+  </li>
+  <li><a href="#usage">Administrative Operations and Settings Detailed</a>
+    <ol>
+      <li><a href="#start-or-stop">Starting and Stopping pg_statsinfo</a></li>
+      <li><a href="#snapshot">Taking Snapshots and Deleting Old Snapshots</a></li>
+      <li><a href="#log-route">Distributing Server Log</a></li>
+      <li><a href="#log-store">Server Log Accumulation Into Repository</a></li>
+      <li><a href="#usage-alert">Alert Function</a></li>
+      <li><a href="#usage-cmdline">Getting Reports by Command Line Operation</a></li>
+      <li><a href="#usage-maintenance">Automatic Maintenance</a></li>
+      <li><a href="#configuration">Configuration File</a></li>
+    </ol>
+  <li><a href="#uninstall">Uninstallation</a></li>
+  <li><a href="#restrictions">Restrictions</a></li>
+  <li><a href="#QA">Q&A</a></li>
+  <li><a href="#change">Changes From pg_statsinfo 3.1</a></li>
+  <li><a href="#details">Detailed Information</a>
+    <ol>
+      <li><a href="#many-instances">Sharing Repository Database</a></li>
+      <li><a href="#warm-standby">Warm Standby</a></li>
+      <li><a href="#fallback-mode">Fall-Back Mode</a></li>
+      <li><a href="#internal">Internals</a></li>
+      <li><a href="#internal-log-route">Distibuting server log</a></li>
+    </ol>
+  <li><a href="#seealso">See Also</a></li>
+</ol>
+</div>
+<h1 id="pg_statsinfo">pg_statsinfo 3.2</h1>
+<h2 id="name">What is pg_statsinfo ?</h2>
+<p>pg_statsinfo is a monitoring tool to record activities and
+statistics of PostgreSQL server in the form of time series of
+snapshots. You can examine the snapshots on graphical representations
+by
+using <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>.
+</p>
+
+
+<h2 id="description">Description</h2>
+<p>pg_statsinfo periodically gathers activities and statistics of one or more PostgreSQL servers and packing them as a snapshot. Snapshots are stored into <i>repository</i> database on another or same PostgreSQL server. Besides, it picks up some activities from PostgreSQL's CSV format log files and generates corresponding plain logfiles including its distinctive messages.</p>
+
+<p>Two or more PostgreSQL <i>instances</i> can share single repository database.
+
+<p>You can check for server health and activities in easy-to-grasp graphical representation by using  <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>. It shows various information as interactive tables and graphs.</p>
+
+<p>Components of pg_statsinfo are typically placed as the picture
+below. Each pg_statsinfo collects the information of the <i>Database
+Server</i> where it resides on and sends snapshots to
+the <i>Repository
+Server</i>. <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>
+runs behind web server so that the Users can get graphical reports on
+web browser on the <i>Client</i>.</p>
+
+<div class="imagebox">
+  <p class="image"><img src="image/system_structure.png"></p>
+  <p class="caption">pic 1: Example system configuration with pg_statsinfo</p>
+</div>
+<div class="imagebox">
+  <p class="image"><img src="image/pg_statsinfo.png"></p>
+  <p class="caption">pic 2: Functional components in pg_statsinfo</p>
+</div>
+<p class="clear"/>
+
+<h3 id="features-snapshot">Statistics Snapshot</h3>
+<p>
+pg_statsinfo periodically gathers various information and stores them
+as snapshots into a repository database. The repository database may
+reside on one of the monitored PostgreSQL server (DB cluster) and one
+repository server can store snapshots from multiple servers. Snapshots
+are generated for every 10 minutes as default and when commanded
+manually.
+</p>
+
+<p>Every snapshots holds the following information:</p>
+<ul>
+  <li>All of the information collected by <a href="http://www.postgresql.org/docs/current/static/monitoring-stats.html">the statistics collector</a>.
+      For example, numbers of INSERT/UPDATE/DELETEs and buffer access counters.</li>
+  <li>Disk usage per tablespace, pg_xlog, and archive log directory.</li>
+  <li>Long transactions and their query strings.</li>
+  <li>Session state statistics.</li>
+  <li>WAL write rate.</li>
+  <li>Number of CHECKPOINTs ,VACUUMs, and their execution time and buffer access statistics.</li>
+  <li>Long queries and execution statitics on queries, functions and plans.</li>
+  <li>PostgreSQL configuration parameters.</li>
+  <li>OS resource information. (CPU usage, memory usage, disk I/O, load average)</li>
+  <li>Long lock conflicts.</li>
+  <li>Number of query cancellations caused by conflict with recovery.</li>
+  <li>Replication status.</li>
+  <li>Alert messages emitted by user-defined alert function.</li>
+  <li>Profiling information using SystemTap (experimental).</li>
+</ul>
+
+<p>
+The required storage for every snapshot depends on the numbers of objects in the monitored database. It occupies about 600 - 800kB in typical cases. pg_statsinfo takes snapshots for every 10 minutes by default, so the required storage for all snapshots in a day from every monitored database is roughly estimated to be  90 - 120MB.
+</p>
+<p>
+You can see the structure of the tables in pg_statsinfo's repository database in <a href="files/pg_statsinfo_v3.2_repository_infomation.xls">this</a> document. (MS Excel document in Japanese).
+</p>
+
+<h3 id="features-log-route">Server Log Filter</h3>
+<p> pg_statsinfo distributes server log entries according to message levels.
+  CSV log, plain text log, and syslog can have their own threshold levels.</p>
+<ul>
+  <li>The file for text plain logs that pg_statsinfo writes have its unique and static name defaulted to  $PGDATA/pg_log/pg_statsinfo.log.
+      Fixed file name let log monitoring tools read the latest log file with easy setup.</li>
+  <li>The text plain log file can have permissions other than 0600, it might allow more flexible operations.</li>
+  <li>Log levels of each log entry can be altered in the plain the text log file. Changing ERROR messages which have no harm to operations into INFO would silence monitoring system.</li>
+  <li>Log entries can be kept from appearing in the plain text logs. For example, log entries for some user can be filtered out.</li>
+</ul>
+
+<h3 id="features-log-store">Server Log Accumulation</h3>
+<p>pg_statsinfo can store server logs into repository database besides log files.</p>
+<ul>
+  <li>Log entries to be stored can be limited by error levels.</li>
+  <li>Also can be limited by user names</li>
+  <li>Error levels can be altered in repository in similar way to log files.</li>
+</ul>
+
+<h3 id="features-alert">Alert Function</h3>
+<p>
+pg_statsinfo has an alert function which checks for some properties being out of acceptable range. It writes alert logs into text log file and repository if set up to do so, but not to CSV log file.
+</p>
+
+<p>
+The default alert function checks for the following properties:
+</p>
+<ul>
+  <li>Rollbacks per seconds</li>
+  <li>Commits per seconds</li>
+  <li>Dead space size (MB)</li>
+  <li>Dead space ratio in whole instance (%)</li>
+  <li>Dead space ratio of each table (%)</li>
+  <li>Average query response time (sec)</li>
+  <li>Longest query response time (sec)</li>
+  <li>Correlations of each table<sup>(*1)</sup> (%)</li>
+  <li>Maximum number of backends</li>
+  <li>Empty disk space in table space (%)</li>
+  <li>Load average</li>
+  <li>Swap usage (KB)</li>
+  <li>Replication delay (MB)</li>
+</ul>
+
+<p>
+(*1) Table correlation is monitored only for <i>clustered</i> tables, which are the tables having clustering index.
+</p>
+
+<p>
+You can see setup instructions <a href="#usage-alert">here</a>.
+</p>
+
+<h3 id="features-cmdline">Command line operations</h3>
+<p>
+pg_statsinfo has some functions which could be done in command line. Besides, you can get text formatted reports by command line operations.<br>
+* You can see the reference in <a href="#usage-cmdline">this section</a>.
+</p>
+
+<h4>Reporting in command line</h4>
+<p>You can get a report for the snapshots within the specified period in text format. Following informations also can be shown.<p>
+
+<ul>
+  <li>Snapshot list</li>
+  <li>Total disk usage for snapshots</li>
+</ul>
+
+<p>
+The comprehensive list of report items is shown in <a href="files/pg_statsinfo_v3.2_report_infomation.xls">"report item list of pg_statsinfo v3.2".</a> (.xls in Japanese)<br>
+Report items are equivalent with <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>.<br>
+If you would like to see graphical reports, please try <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>.
+</p>
+
+<h4>Administrative operations</h4>
+<p>
+pg_statsinfo also provide administrative operations on command-line interface. Command descriptions are below.<br>
+</p>
+
+<ul>
+  <li>Taking a snapshot manually</li>
+  <li>Deleting snapshots from repository</li>
+  <li>Stopping pg_statsinfo agent</li>
+  <li>Starting pg_statsinfo agent</li>
+</ul>
+<br>
+
+<h3 id="features-maintenance">Automatic repository maintenance</h3>
+<p>pg_statsinfo accumulates snapshots in repository database as it
+works, so it is necessary to delete stale snapshots. pg_statsinfo has a feature
+to do that once a day automatically. This feature does following jobs.
+<ul>
+  <li>Deleting snapshots older than the period specified.</li>
+  <li>Deleting old logs in repository.</li>
+  <li>Cleaning up log files</li>
+</ul>
+
+<p>It is defaulted to be turned on and will be executed on preset settings.</p>
+<p>
+The snapshots, stored logs and server logs are keeping to increase while this feature is turned off. Manual maintenance should be done properly in the case.<br>
+</p>
+
+<p>
+Setup reference of this feature is <a href="#usage-maintenance">here</a>.
+</p>
+
+<h2 id="install">Installation</h2>
+
+<h3 id="requirement">Requirement</h3>
+<dl>
+<dt>PostgreSQL versions</dt>
+<dd>PostgreSQL 9.1, 9.2, 9.3, 9.4, 9.5 (--with-libxml is required. Standard RPM's are built with this option.)</dd>
+<dt>OS</dt>
+<dd>RHEL 7.x (x86_64), CentOS 7.x (x86_64)</dd>
+</dl>
+
+<h3 id="procedure">Installation</h3>
+
+<h4>Installing using RPM</h4>
+Example steps to installing pg_statsinfo using rpm follow.
+<pre>
+$ su
+# rpm -ivh pg_statsinfo-3.2.0-1.pg94.rhel6.x86_64.rpm
+</pre>
+
+<h4>Installing from source</h4>
+
+<p>You can build and install pg_statsinfo by following steps using PGXS. Setting up of repository database will be done automatically at first run.</p>
+
+<pre>
+$ cd pg_statsinfo
+$ tar xzvf pg_statsinfo-3.2.0.tar.gz 
+$ cd pg_statsinfo-3.2.0
+$ make USE_PGXS=1
+$ su
+# make USE_PGXS=1 install
+</pre>
+
+<h3 id="install">Configuration</h3>
+<p>This section describes the configuration of pg_statsinfo.</p>
+
+<h4 id="install">Configuration in postgresql.conf</h4>
+
+<p>This section shows the minimal setting to run pg_statsinfo and
+setting for ordinary case. In these configurations, pg_statsinfo
+stores snapshots into the 'postgres' database on the same instance to
+monitored instance. Detailed explanation for all setting parameters is
+shown in <a href="#configuration">this section</a>.
+
+<pre>
+# minimal configuration
+shared_preload_libraries = 'pg_statsinfo'       # preload pg_statsinfo libraries
+log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log' # pg_statsinfo requires this log_filename setting
+</pre>
+
+<pre>
+# recommended configuration
+shared_preload_libraries = 'pg_statsinfo'       # preload pg_statsinfo libraries
+custom_variable_classes = 'pg_statsinfo'        # not required for PostgreSQL 9.2 or later
+
+pg_statsinfo.snapshot_interval = 30min          # snapshot interval 
+pg_statsinfo.enable_maintenance = 'on'          # enable automatic maintenance ('on' or 'off')
+pg_statsinfo.maintenance_time = '00:02:00'      # delete old snapshots every day at this time.
+pg_statsinfo.repolog_min_messages = disable     # disable log accumulation
+log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log' # pg_statsinfo requires this log_filename setting
+log_min_messages = 'log'
+pg_statsinfo.syslog_min_messages = 'error'
+pg_statsinfo.textlog_line_prefix = '%t %p %c-%l %x %q(%u, %d, %r, %a) '
+pg_statsinfo.syslog_line_prefix = '%t %p %c-%l %x %q(%u, %d, %r, %a) '
+
+track_functions = 'all'
+log_checkpoints = on
+log_autovacuum_min_duration = 0
+#pg_statsinfo.long_lock_threshold = 30s        # threshold for getting long lock information
+</pre>
+
+<h5>Notice for tacitly changed parameters.</h5>
+<dl>
+  <dt>log_destination</dt>
+  <dd>Forcibly set to 'csvlog' and stderr is omitted.</dd>
+  <dt>logging_collector</dt> 
+  <dd>Forcibly set to on.</dd>
+</dl>
+
+<h4>Configuration of pg_hba.conf</h4>
+<p>Setup to allow the owner of the PostgreSQL process to log in the PostgreSQL server from localhost without password.
+"ident" is recommended method for authentication. In order to do that, add the following line to <a href="http://www.postgresql.org/docs/current/static/auth-pg-hba-conf.html">pg_hba.conf</a> when "OS-user = DB-superuser = postgres" which is the most common case.
+Note that only the first line that matches the condition will be in effect.
+The "ident" authentication method with TYPE=local would be convenient on linux.
+</p>
+
+<pre>
+# TYPE  DATABASE        USER            CIDR-ADDRESS            METHOD [for UNIX]
+local   all             postgres                                ident
+</pre>
+
+<h4>Configuration for involving query statistics</h4>
+<p>
+You can have snapshots involving query statistics using <a href="http://www.postgresql.org/docs/current/static/pgstatstatements.html">pg_stat_statements</a>. pg_statsinfo automatically detects pg_stat_statements and use it. Installation of pg_stat_statements would be done in the following steps after adding it to shared_preload_libraries in postgresql.conf.
+</p>
+
+<pre>
+$ psql -d postgres -c "CREATE EXTENSION pg_stat_statements"
+</pre>
+
+<p>You can set the following parameters in postgresql.conf as needed.</p>
+<ul>
+  <li>pg_statsinfo.stat_statements_max</li>
+  <li>pg_statsinfo.stat_statements_exclude_users</li>
+</ul>
+<p>Explanation for these parameters is seen in the <a href="#configuration">Configuration</a> section.</p>
+
+<h4 id="pg_store_plans">Collection execution plan statistics</h4>
+<p>Execution statistics itemized by execution plans are available for PostgreSQL 9.3 or later. By installing pg_store_plans on the monitored system, pg_statsinfo collects the execution plan statistics and stores as snapshots.<br>
+<p>The parameters below affect the behavior of this feature.</p>
+<ul>
+  <li>pg_statsinfo.stat_statements_max</li>
+  <li>pg_statsinfo.stat_statements_exclude_users</li>
+</ul>
+<p>You can see the details in <a href="#configuration">Configuraion File</a>.</p>
+
+<p>pg_stats_reporter requires a SQL function provided by
+pg_store_plans so it is required to be installed also on repository
+server to show the plan statistics perperly in reports. There's no
+need to load the library so shared_preload_libraries may be left
+untouched.
+</p>
+
+<p>That's all. Have fun.</p>
+
+<h2 id='usage'>Administrative operations and settings detailed</h2>
+<p>This section explains about maintenance operations and detailed description of configuration parameters for pg_statsinfo.</p>
+
+<h3 id="start-or-stop">Starting and Stopping  pg_statsinfo</h3>
+
+<p>No specific operation is required to run pg_statsinfo on PostgreSQL startup. Just start the server.
+</p>
+<pre>$ pg_ctl start [OPTIONS]</pre>
+
+<p>Likewise, pg_statsinfo stops gracefully along with PostgreSQL's
+shutdown. Shutting down in other than smart mode might cause some
+error messages, but they do no harm. Just ignore them.
+Note that the default shutdown mode has been changed to "fast" from "smart" since PostgreSQL 9.5.</p>
+<pre>$ pg_ctl stop -m smart [OPTIONS]</pre>
+
+<p>pg_statsinfo can stop individually on running PostgreSQL server by the following command.</p>
+<pre>$ pg_statsinfo --stop [OPTIONS]</pre>
+
+<p>Then it starts by the following command.</p>
+<pre>$ pg_statsinfo --start [OPTIONS]</pre>
+
+<p><b>Note: pg_statsinfo should be preloaded or it won't start by any means.</b></p>
+
+<h3 id="snapshot">Taking snapshots and deleting old snapshots</h3>
+<h4>Automatic snapshots</h4>
+<p>
+Pg_statsinfo takes snapshots periodically with the interval determined by pg_statsinfo.snapshot_interval in postgresql.conf.
+</p>
+
+<p>example: setting snapshot interval time to 30 minutes</p>
+<pre>pg_statsinfo.snapshot_interval = 30min </pre>
+
+<h4>Manual snapshots</h4>
+<p>Alongside the automatic snapshots, manual snapshots can be taken any time by the following command. The function statsinfo.snapshot takes the label for the snapshot as parameter (text DEFAULT NULL).
+</p>
+<pre>$ psql -d postgres -c "SELECT statsinfo.snapshot('comment')"</pre>
+<p>Manual snapshot is an asynchronous operation so you may find
+the result of an operation after a while.</p>
+<h4>Deleting snapshots automatically</h4>
+<p>Old snapshots are automatically deleted by the automatic repository maintenance function if tuned on. </p>
+<p>Detailed explanation for setting up of the function is shown <a href="#usage-maintenance">here</a>.</p>
+
+<h4>Deleting snapshots manually</h4>
+<p>Snapshots deletion can be executed at any time by the function
+statsinfo.maintenance(timestamptz). This function deletes all snapshots older than the specified timestamp.</p>
+
+<p>Example: Deleting snapshots older than 2014-02-01 07:00:00.</p>
+<pre>$ psql -d postgres -c "SELECT statsinfo.maintenance('2014-02-01 07:00:00'::timestamptz);"</pre>
+
+<h4>Cleaning up log files automatically</h4>
+<p>Log files are cleaned up along with automatic snapshot deletion.</p>
+<p>Detailed explanation for setting up of the function is shown <a href="#usage-maintenance">here</a>.</p>
+
+<h3 id="log-route">Distributing server log</h3>
+<p>
+pg_statsinfo has the function to capture, manipulate, filter and distribute the server logs from PostgreSQL CSV log files.<br>
+The types of log files that pg_statsinfo handles and methods of filtering is described below.
+</p>
+
+<h4>Types of log files</h4>
+<dl>
+  <dt>CSV log files (*.csv) (named like postgresql-2013-10-01_000000.csv)</dt>
+  <dd>CSV log file is the source of the PostgreSQL log messages pg_statsinfo processes. (Detailed explanation for CSV log file is seen <a href="http://www.postgresql.org/docs/current/static/runtime-config-logging.html#RUNTIME-CONFIG-LOGGING-CSVLOG">Here</a>)</dd>
+  <dt>Text log files (specifically that with the name of "pg_statsinfo.log")</dt>
+  <dd>The log file written by pg_statsinfo is called text log file.</dd>
+  <dd>This has the following characteristics.
+    <ul>
+      <li>Written in arbitrary format specified in configuration.</li>
+      <li>Has any permission specified in configuration. (owner write
+      is necessary, of course)</li>
+      <li>Named freely by configuration.</li>
+      <li>Log entries for specific user can be filtered out, by configuration.</li>
+      <li>Log levels can be altered for the entries with specified SQLSTATE.</li>
+    </ul>
+  <dd>Following parameters determine the first three characteristics above. (details are <a href="#configuration">Here</a>)
+    <ul>
+      <li>pg_statsinfo.textlog_line_prefix</li>
+      <li>pg_statsinfo.textlog_permission</li>
+      <li>pg_statsinfo.textlog_filename</li>      
+    </ul>
+  </dd>
+
+  <dt>Preserved text log file (e.g. postgresql-2013-10-01_000000.log)</dt>
+  <dd>Text log files mentioned above is renamed for preservation. The renamed file is created by log rotation.<br/>
+<p>Note 1: PostgreSQL may create a file with the new name mentioned above, which possibly containes stderr messages originate outside PostgreSQL processes. The existing and non-empty "console log" file will be renamed before the rotation.</p>
+<p>Note 2: Files with extension ".copy" or ".err.<i>n</i>" may be created at log rotaion. In detail <a href="#internal-log-route">see below</a>.</p>
+
+<br/>
+Following is an example how the rotation looks like.<br/>
+<pre>
+$ ls -l $PGDATA/pg_log
+-rw------- 1 postgres postgres 433644 Oct  1 23:59 postgresql-2013-10-01_000000.csv
+-rw------- 1 postgres postgres 322167 Oct  1 23:59 postgresql-2013-10-01_000000.log
+-rw------- 1 postgres postgres 425449 Oct  2 23:59 postgresql-2013-10-02_000000.csv
+-rw------- 1 postgres postgres 321695 Oct  2 23:59 postgresql-2013-10-02_000000.log
+-rw------- 1 postgres postgres 255424 Oct  3 13:40 postgresql-2013-10-03_000000.csv
+-rw------- 1 postgres postgres      0 Oct  3 00:00 postgresql-2013-10-03_000000.log
+-rw------- 1 postgres postgres 190786 Oct  3 13:40 pg_statsinfo.log
+
+postgresql-2013-10-01_000000.csv ... CSV log that has been rotated
+postgresql-2013-10-01_000000.log ... Text log that has been rotated (processed log based on the CSV log above)
+postgresql-2013-10-02_000000.csv ... CSV log that has been rotated
+postgresql-2013-10-02_000000.log ... Text log that has been rotated (processed log based on the CSV log above)
+postgresql-2013-10-03_000000.csv ... Latest CSV log
+postgresql-2013-10-03_000000.log ... Console log
+pg_statsinfo.log ................... Latest Text log (processed log based on the latest CSV log)
+</pre>
+</dd>
+</dl>
+
+<h4>Filtering types</h4>
+<dl>
+  <dt>Filter by message level</dt>
+  <dd>Log messages are filtered out if its log level is lower than a threshold which is defined by the following configuration parameter in postgresql.conf.</dd>
+  <dd>
+    <ul>
+      <li>pg_statsinfo.textlog_min_messages</li>
+    </ul>
+  </dd>
+  <dd>For more information about configuration, refer the <a href="#configuration">Configuration File</a> section.</dd>
+  <dd>e.g. Following setup let only log messages whose level is greater than or equal to "warning" be emitted.</dd>
+  <dd>
+    <pre>pg_statsinfo.textlog_min_messages = warning</pre>
+  </dd>
+  <dt>Filter by user name</dt>
+  <dd>Log messages with particular user names can be filtered out.</dd>
+  <dd>The excluding user names are specified by the following configuration parameter in postgresql.conf.</dd>
+  <dd>
+    <ul>
+      <li>pg_statsinfo.textlog_nologging_users</li>
+    </ul>
+  </dd>
+  <dd>For more information about configuration, refer the <a href="#configuration">Configuration File</a> section.</dd>
+  <dd>e.g. Output only log messages with the user name other than 'postgres'.</dd>
+  <dd>
+    <pre>pg_statsinfo.textlog_nologging_users = 'postgres'</pre>
+  </dd>
+  <dt id="adjust-log-level">Change message level</dt>
+  <dd>Error level can be reassigned in the log messages with particular sql states.</dd>
+  <dd>The replacement rule is defined by the following parameters in postgresql.conf. The value for each parameter, if any, should be a list of the sqlcodes which determines the log messages whose error level should be changed to be the level that the parameter name suggests.
+  <dd>
+    <ul>
+      <li>pg_statsinfo.adjust_log_level</li>
+      <li>pg_statsinfo.adjust_log_info</li>
+      <li>pg_statsinfo.adjust_log_notice</li>
+      <li>pg_statsinfo.adjust_log_warning</li>
+      <li>pg_statsinfo.adjust_log_error</li>
+      <li>pg_statsinfo.adjust_log_log</li>
+      <li>pg_statsinfo.adjust_log_fatal</li>
+    </ul>
+  </dd>
+  <dd>For more information about configuration, refer the <a href="#configuration">Configuration File</a> section.</dd>
+  <dd>e.g. Changing the message level to 'INFO' for logs with the sqlstate of '42P01'.</dd>
+  <dd>
+    <pre>pg_statsinfo.adjust_log_level = on
+pg_statsinfo.adjust_log_info = '42P01'</pre>
+  </dd>
+  <dd>Note: This configuration is shared between log file and repository-accumulated logs. They cannot have individual settings.</dd>
+</dl>
+
+<h4>Automatic cleanup of log files</h4>
+<dl>
+	<dd>pg_statsinfo automatically moves or removes old log files.<br>
+This feature is enabled by default.<br/>
+Click <a href="#usage-maintenance">here</a> for more of the automatic maintenance feature.
+</dd></dl>
+
+<h3 id="log-store">Server log accumulation into repository</h3>
+<p>pg_statsinfo also can accumulate logs into repository database.<br>
+The same types of filtering to text log file can be used with partially different settings.
+</p>
+<p><b>Log accumulation is recommended to be disabled when the
+repository is located on the same instance as observed database.</b>
+Log accumulation inserts records into a repository database so with
+log_statements set to "all" or "dml", an insertion of an issued log
+message in turn issues another log message. This self-recursive log
+emitting will be prevented by setting the user-id for the repository
+connection to superusers or setting log_statements to other than "all"
+or "dml" in the configuration file.
+</p>
+
+<h4>Types of filtering</h4>
+<dl>
+  <dt>Filter by message level</dt>
+  <dd>Log messages can be filtered out in the same manner to text log file.</dd>
+  <dd>The threshold is specified by the following parameter in postgresql.conf.</dd>
+  <dd>
+    <ul>
+      <li>pg_statsinfo.repolog_min_messages</li>
+    </ul>
+  </dd>
+  <dt>Filter by user name</dt>
+  <dd>User name filtering of log messages is also available.</dd>
+  <dd>The excluding user names are specified by the following parameter in postgresql.conf.</dd>
+  <dd>
+    <ul>
+      <li>pg_statsinfo.repolog_nologging_users</li>
+    </ul>
+  </dd>
+
+  <dt>Change the message level</dt>
+  <dd>Error level reassignment is also available <a href="#adjust-log-level">as text log file.</a>  As mentioned in the section, this feature shares the settings with text log files. </dd>
+  <dd>
+</dl>
+
+<h4>Deleting old log entries in the repository database</h4>
+<p>Old log entries in the repository database is deleted by the automatic maintenance feature.<br>
+This feature is enabled by default.</p>
+<p>Click <a href="#usage-maintenance">here</a> to see how to set up the automatic maintenance.</p>
+
+<h3 id="usage-alert">Alert Function</h3>
+<p>
+Alert function is always turned on and provided with a ready-made
+alert function.
+<br>
+</p>
+
+<h4>Alert settings using default alert function</h4>
+<p>
+The default alert function checks some properties against the thresholds defined in statsrepo.alert table described below. "-1" for the value indicates to turn of the alert for the property.
+</p>
+
+<p>
+The alert function is executed just after every snapshot after the first one.
+</p>
+
+Example: Set ROLLBACKs threshold to 3000 times per second for a snapshot interval.
+<pre>
+# UPDATE statsrepo.alert SET commit_tps = 3000 WHERE instid = &lt;instance ID\&gt;
+</pre>
+
+Example: Disabling alert for number of rollbacks per second.
+<pre>
+# UPDATE statsrepo.alert SET rollback_tps = -1 WHERE instid = &lt;instance ID\&gt;
+</pre>
+
+Examples: Disabling all alerts. Note that the alert function itself is kept being called periodically.
+<pre>
+# UPDATE statsrepo.alert SET enable_alert = false WHERE instid = &lt;instance ID&gt;
+</pre>
+
+<h4>Definition of alert settings table</h4>
+<p>
+Alert settings table stores various settings for the defaultly-provided alert function.
+<br>
+Its name is "statsrepo.alert" and columns are defined as following.
+<br>
+</p>
+
+<table>
+<thead>
+  <tr>
+    <th>column name</th>
+    <th>data type</th>
+    <th>default value</th>
+    <th>description</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td>instid</td>
+    <td>bigint</td>
+    <td> (no default) </td>
+    <td>Instance ID of the instance to be monitored</td>
+  </tr>
+  <tr>
+    <td>rollback_tps</td>
+    <td>bigint</td>
+    <td>100</td>
+    <td>Alert threshold: ROLLBACK per second during a snapshot interval</td>
+  </tr>
+  <tr>
+    <td>commit_tps</td>
+    <td>bigint</td>
+    <td>1000</td>
+    <td>Alert threshold: COMMIT per second during a snapshot interval</td>
+  </tr>
+  <tr>
+    <td>garbage_size</td>
+    <td>bigint</td>
+    <td>20000</td>
+    <td>Alert threshold: Table dead space size in megabytes in a snapshot</td>
+  </tr>
+  <tr>
+    <td>garbage_percent</td>
+    <td>integer</td>
+    <td>30</td>
+    <td>Alert threshold: Table dead space ratio in %</td>
+  </tr>
+  <tr>
+    <td>response_avg</td>
+    <td>bigint</td>
+    <td>10</td>
+    <td>Alert threshold: Query average response time in seconds for a snapshot interval</td>
+  </tr>
+  <tr>
+    <td>response_worst</td>
+    <td>bigint</td>
+    <td>60</td>
+    <td>Alert threshold: Query longest response in seconds for a snapshot interval</td>
+  </tr>
+  <tr>
+    <td>fragment_percent</td>
+    <td>integer</td>
+    <td>70</td>
+    <td>Alert threshold: The absolute value of pg_stats.correlation</td>
+  </tr>
+  <tr>
+    <td>backend_max</td>
+    <td>integer</td>
+    <td>100</td>
+    <td>Alert threshold: Maximum number of backend for a snapshot interval</td>
+  </tr>
+  <tr>
+    <td>disk_remain_percent</td>
+    <td>integer</td>
+    <td>20</td>
+    <td>Alert threshold: Available disk space for tablespaces in percent(%)</td>
+  </tr>
+  <tr>
+    <td>loadavg_1min</td>
+    <td>real</td>
+    <td>7.0</td>
+    <td>Alert threshold: Load average for 1 minutes</td>
+  </tr>
+  <tr>
+    <td>loadavg_5min</td>
+    <td>real</td>
+    <td>6.0</td>
+    <td>Alert threshold: Load average for 5 minutes</td>
+  </tr>
+  <tr>
+    <td>loadavg_15min</td>
+    <td>real</td>
+    <td>5.0</td>
+    <td>Alert threshold: Load average for 15 minutes</td>
+  </tr>
+  <tr>
+    <td>swap_size</td>
+    <td>integer</td>
+    <td>1000000</td>
+    <td>Alert threshold: Disk swap usage in kilobytes</td>
+  </tr>
+  <tr>
+    <td>rep_flush_delay</td>
+    <td>integer</td>
+    <td>100</td>
+    <td>Alert threshold: Replication delay in megabytes of WAL amount</td>
+  </tr>
+  <tr>
+    <td>rep_replay_delay</td>
+    <td>integer</td>
+    <td>200</td>
+    <td>Alert threshold: Replication replay delay in megabytes of WAL amount</td>
+  </tr>
+  <tr>
+    <td>enable_alert</td>
+    <td>boolean</td>
+    <td>true</td>
+    <td>Enables or disables all alerts
+</td>
+  </tr>
+</tbody>
+</table>
+
+<p>
+Don't delete the existing tuples in order to temporarily disable alerts. 
+</p>
+
+<h3 id="usage-cmdline">Getting reports by command line operation</h3>
+
+<h4>Generating a report</h4>
+<pre>
+$ pg_statsinfo -r REPORTID [-i INSTANCEID] [-b SNAPID] [-e SNAPID] [-B DATE] [-E DATE] [-o FILENAME] [connection-options]
+</pre>
+
+<p>
+The following example shows a basic usage using the repository database 'postgres' at localhost:5432 accessing as the user 'postgres', which generates the report that is,
+</p>
+<ul>
+  <li>All available report items,</li>
+  <li>For the period  from the first snapshot to the last snapshot,</li>
+  <li>Of the all monitoring instances,
+  <li>Written to the standard output.</li>
+</ul>
+
+<pre>
+$ pg_statsinfo  -r All -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+Available options are described below,
+
+<dl>
+  <dt>-r, --report=REPORTID</dt>
+  <dd>Generates a report of the type specified by REPORTID.</dd>
+  <dd>The following REPORTID are available.</dd>
+  <dd>More details are shown in  <a href="files/pg_statsinfo_v3.2_report_infomation.xls">Items of a report in pg_statsinfo v3.2</a>(Both filename and contents are only in Japanese).</dd>
+  <dd>
+    <ul>
+      <li>Summary</li>
+      <li>Alert</li>
+      <li>DatabaseStatistics</li>
+      <li>InstanceActivity</li>
+      <li>OSResourceUsage</li>
+      <li>DiskUsage</li>
+      <li>LongTransactions</li>
+      <li>NotableTables</li>
+      <li>CheckpointActivity</li>
+      <li>AutovacuumActivity</li>
+      <li>QueryActivity</li>
+      <li>LockConflicts</li>
+      <li>ReplicationActivity</li>
+      <li>SettingParameters</li>
+      <li>SchemaInformation</li>
+      <li>Profiles</li>
+      <li>All</li>
+    </ul>
+  </dd>
+  <dd>REPORTID will be completed if it matches only one ID by case insensitive suffix comparison.</dd>
+  
+  <dt>-i, --instid=INSTANCEID</dt>
+  <dd>Generates a report for the instance specified by INSTANCEID, which defaults to all monitoring instances.</dd>
+  
+  <dt>-b, --beginid=SNAPID</dt>
+  <dd>Generates a report for the range begins with SNAPID, which defaults to the oldest snapshot for the instance. This option is not allowed to be used with -B or -E.</dd>
+
+  <dt>-e, --endid=SNAPID</dt>
+  <dd>Generates a report for the range ends with SNAPID, which defaults to the latest snapshot for the instance. This option is not allowed to be used with -B or -E.</dd>
+  
+  <dt>-B, --begindate=DATE</dt>
+  <dd>Generates a report for the period starts at DATE in the format of 'YYYY-MM-DD HH:MI:SS', which defaults to the timestamp of the oldest snapshot for the instance. This option is not allowed to be used with -b or -e.</dd>
+  
+  <dt>-E, --enddate=DATE</dt>
+  <dd>Generates a report for the period ends at DATE in the format of
+  'YYYY-MM-DD HH:MI:SS', which defaults to the timestamp of the latest snapshot for the instance. This option is not allowed to be used with -b or -e.</dd>
+
+  <dt>-o, --output=FILENAME</dt>
+  <dd>Writes the generated report to FILENAME instead of stdout. This will overwrites existing file.</dd>
+</dl>
+<br>
+
+<h4>Listing snapshots</h4>
+<pre>
+$ pg_statsinfo -l [-i INSTANCEID] [connection-options]
+</pre>
+
+<p>The following example shows the command to list the all snapshots stored in the repository database 'postgres' at localhost:5432 accessing as the user 'postgres'.
+</p>
+
+<pre>
+$ pg_statsinfo -l -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>-l, --list</dt>
+  <dd>Shows the list of snapshots.</dd>
+  
+  <dt>-i, --instid=INSTANCEID</dt>
+  <dd>Shows the snapshot list for the instance INSTANCEID, defaults to all instances stored.</dd>
+</dl>
+
+<br>
+
+<h4>Showing repository database size</h4>
+<pre>
+$ pg_statsinfo -s [connection-options]
+</pre>
+
+<p>The following example is the command to show the size of the repository database 'postgres' at localhost:5432 accessing as the user 'postgres'.</p>
+
+<pre>
+$ pg_statsinfo -s -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>-s, --size</dt>
+  <dd>Shows the repository database size.</dd>
+</dl>
+
+<br>
+
+<h4>Taking a snapshot manually</h4>
+<pre>
+$ pg_statsinfo -S COMMENT [connection-options]
+</pre>
+
+<p>The following example is the command to tell to take a snapshot of the monitored instance into the repository database 'postgres' at localhost:5432 accessing as the user 'postgres', providing it with the comment 'COMMENT'.
+</p>
+
+<pre>
+$ pg_statsinfo -S 'COMMENT' -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>-S, --snapshot=COMMENT</dt>
+  <dd>Taking a snapshot manually with the comment 'COMMENT'.</dd>
+</dl>
+
+<br>
+
+<h4>Deleting snapshot manually</h4>
+<pre>
+$ pg_statsinfo -D SNAPID [connection-options]
+</pre>
+
+<p>The following example is the command to tell to delete a snapshot specified by SNAPID in the repository database 'postgres' at localhost:5432 accessing as the user 'postgres'.</p>
+
+<pre>
+$ pg_statsinfo -D 123 -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>-D, --delete=SNAPID</dt>
+  <dd>Deletes a snapshot designated by SNAPID.</dd>
+</dl>
+
+<br>
+
+<h4>Stopping pg_statsinfo agent</h4>
+<pre>
+$ pg_statsinfo --stop [connection-options]
+</pre>
+
+<p>The following example is the command to tell pg_statsinfo agent to stop by connecting the monitored instance via the database 'postgres' of the user 'postgres' at localhost:5432.
+</p>
+
+<pre>
+$ pg_statsinfo --stop -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>--stop</dt>
+  <dd>Stops pg_statsinfo agent.</dd>
+</dl>
+
+<br>
+
+<h4>Starting pg_statsinfo agent.</h4>
+<pre>
+$ pg_statsinfo --start [connection-options]
+</pre>
+
+<p>The following example is the command to tell pg_statsinfo agent to start by connecting the monitored instance via the database 'postgres' of the user 'postgres' at localhost:5432.</p>
+
+<pre>
+$ pg_statsinfo --start -h localhost -d postgres -p 5432 -U postgres
+</pre>
+
+<dl>
+  <dt>--start</dt>
+  <dd>Starts pg_statsinfo agent.</dd>
+</dl>
+
+<br>
+
+<h4>Common connection options</h4>
+<p>This section describes about the connection options of pg_statsinfo
+which are common among all subcommands. These options are shared with PostgreSQL and has the same meanings. The connection target will be a repository database when the command manipulates snapshots or the monitored database when the command tells to do something to the agent.
+</p>
+
+<dl>
+  <dt>-d, --dbname=DBNAME</dt>
+  <dd>Name of database to connect to. The default is $PGDATABASE or the same name as the connection user name if it is not set.</dd>
+  
+  <dt>-h, --host=HOSTNAME</dt>
+  <dd>Name of the host to connect to. If this begins with a slash, it specifies Unix-domain communication rather than TCP/IP communication. The default behavior when the host is not specified is to connect to a Unix-domain socket in /tmp.</dd>
+  
+  <dt>-p, --port=PORT</dt>
+  <dd>Port number to connect to at the server host.</dd>
+  
+  <dt>-U, --username=USERNAME</dt>
+  <dd>PostgreSQL user name to connect as.</dd>
+  
+  <dt>-w, --no-password</dt>
+  <dd>Never prompt for password.</dd>
+  
+  <dt>-W, --password</dt>
+  <dd>Force password prompt (should happen automatically) </dd>
+</dl>
+
+<br>
+
+<h3 id="usage-maintenance">Automatic maintenance</h3>
+<p>
+Repository database will piled high with snapshots and log directory
+will face the same situation if older data were left being
+there. pg_statsinfo deletes them by itself so as not to fill up
+storage space. This maintenance is executed once every day and it is
+set up in postgresql.conf as follows,</p>
+
+<p>ex 1: Removing snapshots aged more than 7 days at every 0:02 am.</p>
+<pre>
+pg_statsinfo.enable_maintenance = 'snapshot'
+pg_statsinfo.maintenance_time = '00:02:00'
+pg_statsinfo.repository_keepday = 7
+</pre>
+
+<p>ex 2: Removing logs on the repository aged more than 7 days at every 0:02 am.</p>
+<pre>
+pg_statsinfo.enable_maintenance = 'repolog'
+pg_statsinfo.maintenance_time = '00:02:00'
+pg_statsinfo.repository_keepday = 7
+</pre>
+
+<p>ex 3: Archiving and remove CSV logs before the day before at every 0:02 am.</p>
+<pre>
+pg_statsinfo.enable_maintenance = 'log'
+pg_statsinfo.maintenance_time = '00:02:00'
+pg_statsinfo.log_maintenance_command = '<somewhere>/archive_remove_pglog.sh %l'
+</pre>
+<p>Where archive_remove_pglog.sh does, as the name suggests, will archive and remove a log file.</p>
+
+<p>ex 4: Removing both snapshots and logs on the repository aged more than 7 days and archiving and deleting CSV logs before 7 days before.</p>
+<pre>
+pg_statsinfo.enable_maintenance = 'on'
+pg_statsinfo.maintenance_time = '00:02:00'
+pg_statsinfo.repository_keepday = 7
+pg_statsinfo.repolog_keepday = 7
+pg_statsinfo.log_maintenance_command = '<somewhere>/archive_pglog.sh %l'
+</pre>
+
+Note: All monitored instance sharing one repository database execute
+this maintenance for the same repository so the following setting
+results in that snapshots aged more than 3 days won't survive after
+maintenance process of all instance is finished.</p>
+
+<pre>
+&lt;Monitoring instance1&gt;
+pg_statsinfo.enable_maintenance = 'snapshot' 
+pg_statsinfo.repository_keepday = 7
+&lt;Monitoring instance2&gt;
+pg_statsinfo.enable_maintenance = 'snapshot' 
+pg_statsinfo.repository_keepday = 5
+&lt;Monitoring instance3&gt;
+pg_statsinfo.enable_maintenance = 'snapshot' 
+pg_statsinfo.repository_keepday = 3
+</pre>
+
+<h3 id="configuration">Configuration File</h3>
+<p>Configuration parameters and their meanings are described below.</p>
+<p>pg_statsinfo reads configuration parameters written in
+postgresql.conf for the monitored instance. Reloading configuration file of PostgreSQL also affects pg_statsinfo.</p>
+
+<table>
+<caption>Required parameters</caption>
+<thead>
+  <tr>
+    <th>Name</th>
+    <th>Setting</th>
+    <th>Description</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td>shared_preload_libraries</td>
+    <td>'pg_statsinfo'</td>
+    <td>Preloading libraries. This is a parameter not of pg_statsinfo's own but needed in order to run pg_statsinfo.</td>
+  </tr>
+  <tr>
+    <td>log_filename</td>
+    <td>'postgresql-%Y-%m-%d_%H%M%S.log'</td>
+    <td>This is also a PostgreSQL's parameter and must be set for pg_statsinfo so that it runs properly. Log files must be ordered by creation time using alphabetical comparison of file names, so the variable parts "%Y", "%m", "%d", "%H", "%M" and "%S" are all should occur in this order in this format string.</td>
+  </tr>
+  <tr>
+    <td>track_counts</td>
+    <td>on</td>
+    <td>Enables collection of statistics on database activity. pg_statsinfo depends on the statistics enabled by this parameter.</td>
+  </tr>
+  <tr>
+    <td>track_activities</td>
+    <td>on</td>
+    <td>Enables the collection of information on the currently executing command of each session. pg_statsinfo depends on the information enabled by this parameter.</td>
+  </tr>
+  <tr>
+    <td>log_min_messages</td>
+    <td>debug5 &sim; log</td>
+    <td>Message level threshold for CSV logs. pg_statsinfo uses this
+     as the source of log distribution, so it must be below or equal
+     to the value of both pg_statsinfo.syslog_min_messages and
+     pg_statsinfo.textlog_min_messages.</td>
+  </tr>
+  <tr>
+    <td>log_destination</td>
+    <td>must have 'csvlog' and can have 'syslog' or 'eventlog' optionally</td>
+    <td>pg_statsinfo needs server logs to be emitted to CSV logs, 'stderr' will be silently removed by pg_statsinfo even if it is occurred.</td>
+  </tr>
+  <tr>
+    <td>logging_collector</td>
+    <td>on</td>
+    <td>pg_statsinfo always forces this tuned on on startup.</td>
+  </tr>
+</tbody>
+</table>
+
+<p>Following are PostgreSQL parameters affect the behavior of pg_statsinfo and pg_statsinfo's dedicated parameters. Changes will be in effect after reloading configuration file.</p>
+
+<table>
+<caption>optional parameters</caption>
+<thead>
+  <tr>
+    <th>Name</th>
+    <th>Default Setting</th>
+    <th>Description</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td>track_functions</td>
+    <td>none</td>
+    <td>Enables tracking of function call counts and time used.
+        Setting this to 'pl' or 'all' let pg_statsinfo collect call
+        statistics of functions.</td>
+  </tr>
+  <tr>
+    <td>track_io_timing</td>
+    <td>off</td>
+    <td>Enable timing of database I/O calls. Enabling this let
+        pg_statsinfo collect I/O statistics. Note that enabling this
+        may cause significant overhead on some platforms.<br>  (This
+        parameter is available for PostgreSQL 9.2 or later.)</td>
+  </tr>
+  <tr>
+    <td>log_checkpoints</td>
+    <td>off</td>
+    <td>Causes checkpoints to be logged in the server log.
+      Enabling this let pg_statsinfo collect checkpoint activities.</td>
+  </tr>
+  <tr>
+    <td>log_autovacuum_min_duration</td>
+    <td>-1</td>
+    <td>Causes autovacuums to be logged in the server log.  Enabling
+        this let pg_statsinfo collect autovacuum activities. Setting to 0 &sim;
+        1min is recommended.</td>
+  </tr>
+  <tr>
+    <td>log_directory</td>
+    <td>'pg_log'</td>
+    <td>Directory location for csvlog and textlog files. pg_statsinfo
+    reads this to know the location of log files.</td>
+  </tr>
+  <tr>
+    <td>log_rotation_age</td>
+    <td>1d</td>
+    <td>Rotates logs in this duration.</td>
+  <tr>
+  </tr>
+    <td>log_rotation_size</td>
+    <td>10MB</td>
+    <td>Rotates logs if the size of the current CSV log file exceeds this size.</td>
+  <tr>
+  </tr>
+  <tr>
+    <td>syslog_facility</td>
+    <td>'LOCAL0'</td>
+    <td>syslog facility when syslog is enabled.</td>
+  </tr>
+  <tr>
+    <td>syslog_ident</td>
+    <td>'postgres'</td>
+    <td>syslog indent when syslog is enabled</td>
+  </tr>
+  <tr>
+    <td>custom_variable_classes</td>
+    <td>-</td>
+    <td>Required for PostgreSQL 9.1 or earlier. The value must be
+    "pg_statsinfo." if required.<br></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.textlog_min_messages</td>
+    <td>warning</td>
+    <td>Minimum message level for textlog <a href="#configuration-a1">(*1)</a>.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.syslog_min_messages</td>
+    <td>disable</td>
+    <td>Minimum message level for syslog <a href="#configuration-a1">(*1)</a>.
+    </td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.textlog_filename</td>
+    <td>'pg_statsinfo.log'</td>
+    <td>Textlog filename. Should not be empty.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.textlog_line_prefix</td>
+    <td>'%t %p '</td>
+    <td>A printf-style string that is output at the beginning of each textlog line. <a href="#configuration-a2">(*2)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.syslog_line_prefix</td>
+    <td>'%t %p '</td>
+    <td>A printf-style string that is output at the beginning of each syslog line. <a href="#configuration-a2">(*2)</a>
+        Note that timestamp and process ID in syslog are them of pg_statsinfo daemon, not of original ones. You need to add %t and %p to preserve the original values.
+    </td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.textlog_permission</td>
+    <td>0600</td>
+    <td>Permission mode for textlog file.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.textlog_nologging_users</td>
+    <td>-</td>
+    <td>Exclude log lines of these users separated by commas from text log .</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repolog_min_messages</td>
+    <td>warning</td>
+    <td>Minimum message levels for repository
+    log <a href="#configuration-a1">(*1)</a>.<br>Log accumulation is
+    recommended to be disabled when the repository is located on the
+    same instance as observed database.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repolog_nologging_users</td>
+    <td>-</td>
+    <td>Exclude log lines of these users separated by commas from repository log.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repolog_buffer</td>
+    <td>10000</td>
+    <td>Since repository logs are sent to repository every 10 seconds by default, pg_statsinfo needs to buffer logs for the intervals. Additionally, this buffer is expected to absorb a transient burst of log entries which might retard storing them. Log entries which are run over this buffer are simply dropped off.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repolog_interval</td>
+    <td>10s</td>
+    <td>Repository logs are written at intervals of this value.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.sampling_interval</td>
+    <td>5s</td>
+    <td>Sampling is a process collecting some additional informations such like session states several times for a snapshot interval. This value should be a fraction of snapshot interval <a href="#configuration-a3">(*3)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.snapshot_interval</td>
+    <td>10min</td>
+    <td>snapshot interval <a href="#configuration-a3">(*3)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.excluded_dbnames</td>
+    <td>'template0, template1'</td>
+    <td>Exclude databases listed here from monitoring.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.excluded_schemas</td>
+    <td>'pg_catalog, pg_toast, information_schema'</td>
+    <td>Exclude schemas listed here from monitoring.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repository_server</td>
+    <td>'dbname=postgres'</td>
+    <td>Connection string to connect the repository <a href="#configuration-a4">(*4)</a>. Password prompt must be avoided.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_level</td>
+    <td>off</td>
+    <td>Enables or disables log level altering feature.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_info</td>
+    <td>-</td>
+    <td>Change loglevel into INFO for logged entries with SQLSTATEs listed here. <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_notice</td>
+    <td>-</td>
+    <td>Change loglevel into NOTICE for logged entries with SQLSTATEs listed here. <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_warning</td>
+    <td>-</td>
+    <td>Change loglevel into WARNING for logged entries with SQLSTATEs listed here. <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_error</td>
+    <td>-</td>
+    <td>Change loglevel into ERROR for logged entries with SQLSTATEs listed here. <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_log</td>
+    <td>-</td>
+    <td>Change loglevel into LOG for logged entries with SQLSTATEs listed here. <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.adjust_log_fatal</td>
+    <td>-</td>
+    <td>Change loglevel into FATAL for logged entries with SQLSTATEs listed here. <a href="#configuration-a5">(*5)</a></td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.enable_maintenance</td>
+    <td>'on'</td>
+    <td>Enable or disable auto maintenance features. Multiple items should be comma separated.
+      <ul>
+        <li>'snapshot': Enables only snapshot maintenance.</li>
+        <li>'repolog': Enables only repository log maintenance.</li>
+        <li>'log': Enables only log file maintenance.</li>
+        <li>'snapshot, log': Enables both snapshot and log file maintenance.</li>
+        <li>'on': Enables all maintenance features.</li>
+        <li>'off': Disables everything.</li>
+      </ul>
+    </td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.maintenance_time</td>
+    <td>'00:02:00'</td>
+    <td>Time to do automatic maintenance. </td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repository_keepday</td>
+    <td>7</td>
+    <td>Snapshots are preserved for this period.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.repolog_keepday</td>
+    <td>7</td>
+    <td>Repository logs are preserved for this period.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.log_maintenance_command</td>
+    <td>&ltPGHOME&gt/bin/archive_pglog.sh %l</td>
+    <td>Command path to be executed to do log file
+    maintenance. Default value is a ready-made shell script which
+    archives old log files into compressed files then removes them.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.long_lock_threshold</td>
+     <td>30s</td>
+     <td>Time to wait before record prolonged locks.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.stat_statements_max</td>
+    <td>30</td>
+    <td>Maximum number of entries for both of pg_stat_statements and pg_store_plans to be recorded on every snapshot.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.stat_statements_exclude_users</td>
+    <td>-</td>
+    <td>Name of users in comma-separated list whose queries in pg_stat_statements and pg_store_plans are not recorded.</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.controlfile_fsync_interval</td>
+    <td>1min</td>
+    <td>Interval to sync pg_statsinfo's control file.</td>
+  </tr>
+</tbody>
+</table>
+
+<dl>
+<dt id="configuration-a1">*1 : Message Levels</dt>
+<dd>
+
+The following values are available for a message level.
+Messages with the specified level or more severe level are recorded in the logs.
+"disable" discards all log entries.
+Severity order is the same as <a href="http://www.postgresql.org/docs/current/static/runtime-config-logging.html#RUNTIME-CONFIG-LOGGING-WHEN">log_min_messages</a> except additional levels "disable", "alert"  and "debug". That is,
+</dd>
+<dd>disable &gt; alert &gt; panic &gt; fatal &gt; log &gt; error &gt; warning &gt; notice &gt; info &gt; debug</p></dd>
+
+<dt id="configuration-a2">*2 : Prefix Format</dt>
+<dd>Same format with configuration parameter <a href="http://www.postgresql.org/docs/current/static/runtime-config-logging.html#GUC-LOG-LINE-PREFIX">log_line_prefix</a>.
+Note that log_line_prefix itself is ignored when pg_statsinfo is enabled.
+</dd>
+
+<dt id="configuration-a3">*3 : Time Format</dt>
+<dd>
+Available units are d (day), h (hour), min (minute), and s (second).
+If not suffixed by any unit, the value will be interpreted in seconds.</dd>
+
+<dt id="configuration-a4">*4 : Connection String</dt>
+<dd>
+It is a libpq-style connection string.
+For example, 'hostaddr=127.0.0.1 port=5432 dbname=mydb user=postgres'.
+See also PQconnectdb in "<a href="http://www.postgresql.org/docs/current/static/libpq-connect.html">Database Connection Control Functions</a>" for details.
+In addition, <a href="http://www.postgresql.org/docs/current/static/libpq-envars.html">environment variables</a> used by libpq will be in effect.
+</dd>
+<dd>
+Password prompt should be avoided during connection to the repository.
+Use  <a href="http://www.postgresql.org/docs/current/static/libpq-pgpass.html">.pgpass</a> file for providing passwords if needed.
+</dd>
+<dt id="configuration-a5">*5 : SQLSTATE</dt>
+<dd>
+An SQLSTATE is an ID looks like '42P01' and '42P02' included in every log entries.
+If you want to change log levels corresponding to the SQLSTATEs of 42P01 or 42P02 into INFO, set pg_statsinfo.adjust_log_info to '42P01,42P02'.
+</dd>
+</dl>
+
+<h4>Reloading configuration for pg_statsinfo</h4>
+<p>pg_statsinfo shares the PostgreSQL's postgresql.conf as its configuration file. Simply reloading configuration on PostgreSQL where pg_statsinfo resides on also reloads its configurations.
+</p>
+<pre>$ pg_ctl reload</pre>
+
+<h4 id="on-abort">Abnormal termination of pg_statsinfo</h4>
+<p>pg_statsinfo doesn't involve PostgreSQL in its crash but it won't restart automatically. Manually start the agent will help.
+</p>
+
+<h4 id="instance-deletion">Removing specific instances from repository</h4>
+<p>pg_statsinfo doesn't remove the data of no-longer-monitored instance automatically. Manually deleting corresponding records in statsrepo.instance removes all the data of the instance from repository. </p>
+<pre>$ psql -d postgres -c "DELETE FROM statsrepo.instance WHERE instid = &lt;instance ID to delete&gt;"</pre>
+
+<h3 id="uninstall">Uninstallation</h3>
+<p>When you uninstall pg_statsinfo, you have to restart PostgreSQL server after removing 'pg_statsinfo' from <code>shared_preload_libraries</code> and all of <code>pg_statsinfo.*</code> parameters in postgresql.conf.
+</p>
+
+<p>After that, drop all objects created for pg_statsinfo in the monitored instance. $PGSHARE/contrib/uninstall_pg_statsinfo.sql will do it. The following command will remove such objects for 'postgres' database.</li>
+<pre>$ psql -d postgres -f $PGSHARE/contrib/uninstall_pg_statsinfo.sql </pre>
+
+<p>Repository database is uninstalled by running the script uninstall_pg_statsrepo.sql. Make sure that no other monitored instances are using the same repository database.</p>
+
+<pre>$ psql -d &lt;repository&gt; -f $PGSHARE/contrib/uninstall_pg_statsrepo.sql </pre>
+
+<h2 id="restrictions">Restrictions</h2>
+<p>There are still some restrictions and limitations in pg_statsinfo.</p>
+
+<dl>
+<dt>Character encoding and lc_messages have to be the same among all databases on one monitored instance.</dt>
+<dd>
+pg_statsinfo supports encodings and message locales that PostgreSQL supports, but all databases in an instance must use the same encoding and locale because pg_statsinfo would fail in parsing logs with mixed-encodings.
+</dd>
+
+<dt>Restrictions for log_filename</dt>
+<dd>pg_statsinfo expects log_filename that alphabetical sort makes them ordered in creation time.
+</dd>
+
+<dt>Restrictions for pg_statsinfo.textlog_filename</dt>
+<dd>This is mandatory and cannot have variable part.</dd>
+
+<dt>Unavoidable error messages might occur in fast or immediate shutdown</dt>
+<dd>Fast or immediate shutdown breaks pg_statsinfo's own connection
+unexpectedly. It does no harm in spite of some error messages.</dd>
+
+<dt>Shutdown checkpoint cannot be recorded in repository if it shares monitored instance.</dt>
+<dd>Shutdown checkpoint cannot be recorded in this configuration because the repository database has been shutdown before pg_statsinfo detects it.</dd>
+
+<dt>Snapshots taken during repository maintenance would fail once.</dt>
+<dd>Repository maintenance takes exclusive locks which prevents
+snapshots from being recorded. The snapshots failed to be stored will
+be retried soon.</dd>
+
+<dt>Limitation on multi-instance configuration</dt>
+<dd>Monitored instance are distinguished by the combination of database system identifier, host name and waiting port number, so pg_statsinfo get confused if any two instances share the same values for them.</dd>
+
+<dt>Note about auto maintenance of shared repository.</dt>
+<dd>As described above, the shortest setting will be in effect finally if multiple monitored instances sharing one repository database have different preserving periods for auto maintenance.</dd>
+
+<dt>Limitation for WAL statistics.</dt>
+<dd>WAL amount is not available on standby server so you will see WAL
+statistics only on master side.</dd>
+
+<dt>Rounding off of sub-integer values</dt>
+<dd>Values represented in integer format may be rounded off to be zero
+for sub-integer values.</dd>
+
+<dt>Logs accumulated in repository might be retarded.</dt>
+<dd>Manually deletion of CSV log when repository log accumulation is
+heavily retarded by some reason could cause loss of unstored log
+entries in deleted CSV log file.</dd>
+
+<dt>Connection to repository as a non-superuser.</dt>
+<dd>If you want to connect to repository database as a non-superuser,
+make sure that the user has required privileges.  The recommended way
+to accomplish this is creating repository database specifying its
+owner to be that user. Following steps would do that.
+<pre>
+$ createuser -DRSl -U &lt;superuser&gt; &lt;connection user&gt;
+$ createdb -U &lt;superuser&gt; -O &lt;connection user&gt; &lt;repository database&gt;
+</pre>
+</dd>
+
+<dt>log_timezone that differs from system timezone</dt>
+<dd>pg_statsinfo uses system timezone which is specified by LC_TIME or
+other means as its working timezone. If it is different from
+log_timezone, log entries that pg_statsinfo generates have seemingly
+shifted timestamp in text log file, and log entries in repository will
+be shown in wrong order.
+</dd>
+
+<dt>Summertime and switching timezone</dt>
+<dd>Switching of summertime and switching timezone to another one possibly rewinds the time representation, that is, a part of the name of new log file. Note that pg_statsinfo always processes the CSV log file with the 'largest' name so the new log file with the 'older' name will be skipped and its contents will disappear.
+</dd>
+
+<dt>Storing logs under some timezones</dt>
+<dd>Each log entry has a timestamp followed by an abbreviated timezone names. This abbreviation may represent two or more timezones so the log entries will be stored with unexpected timestamp if the abbreviation represents a different timezone from your assumption. For example, CST is an abbreviation for timezones with three different offsets, which defaultly represents US/Central(CST-6), so timestamps of log entries sent from a server where log_timezone is China(PRC = CST+8) are wrongly advanced by 14 hours on a repository where no additional setup is made about timezone abbreviations. You need <a href="http://www.postgresql.org/docs/current/static/datetime-config-files.html">additional setup</a> if you get a wrong result as follows on repository database for the time zone on your system.
+<pre>
+repository=$ SET TIME ZONE '<u>PRC</u>'; select '2014/1/1 0:0:0 <u>CST</u>'::timestamptz;
+      timestamptz       
+------------------------
+ 2014-01-01 <u>14:00:00</u>+08
+(1 row)
+</pre>
+
+<dt>Limitation about AUTOVACUUM/AUTOANALYZE information</dt>
+<dd>Because the log level of a required message has been changed in
+the following minor versions, canceler process information of
+AUTOVACUUM/AUTOANALYZE is not collected and not shown in reports for
+these minor versions and later. <ul>
+  <li>PostgreSQL 9.1.19</li>
+  <li>PostgreSQL 9.2.14</li>
+  <li>PostgreSQL 9.3.10</li>
+  <li>PostgreSQL 9.4.5</li>
+  <li>PostgreSQL 9.5.0</li>
+</ul>
+</dd>
+</dl>
+<br/>
+
+<h2 id="QA">Q&A</h2>
+<h4>Q1. How can I check if pg_statsinfo is working fine?</h4>
+<p>Take manual snapshot, then confirm that the snapshot is stored in repository.
+The following steps will do.
+</p>
+<pre>
+$psql -d postgres -c "SELECT statsinfo.snapshot('test')"
+$psql -d postgres -c "SELECT * FROM statsrepo.snapshot WHERE COMMENT = 'test'"
+</pre>
+<h4>Q2. How to utilize snapshots in repository?</h4>
+<p>The snapshots in repository can be of course inspected using sql queries but it needs too much labor for most cases.
+You can use pg_statsinfo's command line reporting feature to see them as simple reports in text format. For those who wants to see them in graphically interface, <a href='http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html'>pg_stats_reporter</a> provides sortable tables with pager and manipulative graphs. 
+An operable sample is available <a href='files/details.html'>here</a>.
+</p>
+
+<h4>Q3. Auto maintenance seems not cleaning up snapshots. </h4>
+<p>
+Perhaps it might be misconfigured.  Make sure your configuration is
+correct. Above all, enable_maintenance should be 'on' or includes 'snapshot'.
+</p>
+
+<ul>
+      <li>pg_statsinfo.enable_maintenance = 'on'</li>
+      <li>pg_statsinfo.enable_maintenance = 'snapshot'</li>
+      <li>pg_statsinfo.enable_maintenance = 'snapshot, log'</li>
+</ul>
+
+<h4>Q4. How can I confirm that alert function is working?</h4>
+<p>
+Set commit alert threshold to 0, then taking a snapshot manually should give you a commit count alert message in server log.<br>
+</p>
+<pre>
+# UPDATE statsrepo.alert SET enable_alert = true, commit_tps = 0;
+</pre>
+
+<p>
+Don't forget to restore the setting as before.
+</p>
+
+<h4>Q5. How can I upgrade statsinfo from older versions in place?</h4>
+<p>
+Sorry but you can't. You should uninstall the older version first, then install new one. Furthermore, the repository database schema of 3.2 is not compatible with the older versions.
+Please <a href="#uninstall">uninstall</a> the old repository, and drop its schema before running new version. Then restart all the monitored instances.<br><br>
+</p>
+
+<h4>Q6. Command line reporting won't give me anything.</h4>
+<p>
+Two or more snapshots in repository are needed to generate a report. If there wasn't sufficient snapshot for the time, you will get a report after some waiting.<br>
+</p>
+
+<h4>Q7. Some report items seem to be missing in command line reporting.</h4>
+<p>Some kinds of report needs additional settings and others have some restrictions.</p>
+<dl>
+  <dt>Query Activity (Functions)</dt>
+  <dd>Needs track_functions to be set properly in postgresql.conf.</dd>
+  <dd>Make sure it is set to other than 'none'.</dd>
+  
+  <dt>Query Activity (Statements)</dt>
+  <dd>Needs pg_stat_statement to be installed.</dd>
+
+  <dt>Query Activity (Plans)</dt>
+  <dd>Needs pg_store_plans to be installed.</dd>
+  
+  <dt>Autovacuum Activity</dt>
+  <dd>Needs log_autovacuum_min_duration to be non-negative value in postgresql.conf.</dd>
+  
+  <dt>Checkpoint Activity</dt>
+  <dd>Needs log_checkpoints to be 'on' in postgresql.conf.</dd>
+  
+  <dt>OS Resource Usage (IO Usage)</dt>
+  <dd>pg_statsinfo reads /proc/diskstats to get the information for device informations so this item doesn't contain the information of NFS mounted devices.</dd>
+  
+  <dt>Long Transactions</dt>
+  <dd>Skipped if no long transaction information found in the snapshots for the period.</dd>
+  
+  <dt>Notable Tables</dt>
+  <dd>Skipped if no information for such tables found in the snapshots for the period.</dd>
+  
+  <dt>Lock Conflicts</dt>
+  <dd>Skipped if no lock conflict information found in the snapshots for the period.</dd>
+  
+  <dt>Replication Activity</dt>
+  <dd>Skipped if no replication activity information found in the snapshots for the period.</dd>
+  
+  <dt>Schema Information</dt>
+  <dd>Make sure the settings so that all target instances can be connected without prompting for password. See <a href="http://www.postgresql.org/docs/current/static/client-authentication.html">here</a> for details.</dd>
+</dl>
+
+<h4>Q8. There's no plan statistics in report although pg_store_plans has been installed.</h4>
+<p>
+pg_store_plans may be installed in the schema other than "public". You will find the following lines in server log for the case.
+<pre>ERROR: pg_statsinfo: query failed: ERROR: relation "pg_store_plans" does not exist</pre>
+Do DROP EXTENSION, then CREATE EXTENSION again explicitly specifying public as installation schema in order to fix this.
+<pre>CREATE EXTENSION pg_store_plans SCHEMA public;</pre>
+</p>
+
+<h4>Q9. What is the gaps among snapshots?</h4>
+<p>An attempt of taking snapshot will be canceled if the previous snapshot has not completed. The completion of a snapshot could be prolonged by Access Exclusive Locks on tables or indexes since it acquires Access Share Lock on them.
+</p>
+
+<h4>Q10. My PostgreSQL is compiled with non-default page size.</h4>
+<p>
+pg_statsinfo defaultly assumes the page size as 8192 bytes on
+generating reports. You can change the page size by defining the
+following function.
+</p>
+<pre>
+# CREATE OR REPLACE FUNCTION statsrepo.page_size() RETURNS integer AS 'SELECT <i>&ltpage_size&gt</i>' LANGUAGE sql IMMUTABLE;
+</pre>
+
+<h4>Q11. The master server in a HA cluster is shown as a different
+instance in reporter after a fail-over.</h4>
+<p>pg_statsinfo identifies an "instance" by instance-id, which is
+generated from hostname, port number and database system ID, which
+pg_controldata shows. Among the triplet, the host name of the master
+will generally be changed by a failover so this situation happens.
+Currently there is no available means of preventing this to occur.
+</p>
+<br>
+
+<h2 id="change">Changes from pg_statsinfo 3.1</h2>
+<p>Following changes have been made after pg_statsinfo 3.1.</p>
+<ul>
+  <li>Supports PostgreSQL 9.5. No functional changes have been made.</li>
+  <li>Dropped support for PostgreSQL 9.0.</li>
+</ul>
+<br>
+
+<h2 id="details">Detailed information</h2>
+<p>More advanced usages and internal structures are explained in the section.</p>
+
+<h3 id="many-instances">Sharing one repository database among more than one monitored system.</h3>
+<p>
+As described above, multiple monitored instances can share single repository database. In order to build such configuration, the repository server should accept connections from the monitored instances without password prompts and the combination of PostgreSQL's system identifier, node name given by uname(2) and PostgreSQL's listen port number should be different from any other monitored instance.
+
+<h3 id="warm-standby">Going good along with warm standby</h3>
+pg_statsinfo can work good with <a href="http://www.postgresql.org/docs/current/static/warm-standby.html">warm standby</a>.
+There are two typical configuration that can work with warm standby mode.
+See "<a href="pg_statsinfo-warm-standby.html">pg_statsinfo: warm-standby</a>" for details for each configuration.
+</p>
+
+<ol>
+  <li>Two servers having common repositories outside the cluster.</li>
+  <li>Two servers having their own repositories.</li>
+</ol>
+
+<h3 id="fallback-mode">Fall-Back Mode</h3>
+<p>pg_statsinfo checks for the validity of repository database at startup and reloading configuration file and  it enters fall-back mode if any problem found in the repository. Fall-back mode of pg_statsinfo is a running state that enables only the functions available without repository access. <br></p>
+
+<p>Followings are the lists of what is checked for in repository sanity check, and what is disabled on fall-back mode. </p>
+<h4>Check items for repository sanity check</h4>
+<ul>
+  <li>Connectivity</li>
+  <li>Repository schema version</li>
+  <li>XML feature availability of PostgreSQL where the repository resides on (--with-libxml is required on build)</li>
+</ul>
+
+<h4>Turned-off functions in fallback mode</h4>
+<ul>
+  <li>Statistics snapshots including manual one</li>
+  <li>Server log accumulation</li>
+  <li>Alert function</li>
+  <li>Repository maintenances including manual one</li>
+</ul>
+
+<p>
+These functions disabled in fallback mode resume working after restoration. All snapshots, alerts during fallback mode are lost forever. On the contrary, log accumulation will be continued at the point of fallback.</p>
+
+<h4>Recovering from fallback mode</h4>
+<p>pg_statsinfo recovers automatically from fallback mode due to connection error.
+Otherwise, reloading configuration after removing the cause is needed to recover from fallback.</p>
+
+<p>Usually you can see the cause in log file.<br/>
+Followings are the common error messages for fallback.</p>
+<pre>
+# Connection failure
+ERROR:  pg_statsinfo: could not connect to database with "host=192.168.0.1 user=postgres": timeout expired
+LOG:  pg_statsinfo: pg_statsinfo is starting in fallback mode
+
+# Wrong version number of repository database schema
+ERROR:  pg_statsinfo: incompatible statsrepo schema: version mismatch
+LOG:  pg_statsinfo: pg_statsinfo is starting in fallback mode
+
+# XML feature unavailable
+ERROR:  pg_statsinfo: repository server must support XML feature. you need to rebuild PostgreSQL using "./configure --with-libxml"
+LOG:  pg_statsinfo: pg_statsinfo is starting in fallback mode
+</pre>
+
+<p>The ways to recover from common issues are shown below.</p>
+<dl>
+  <dt>Connection failure to repository database</dt>
+  <ul>
+    <li>Check if the repository database server is running first and start it if stopped.</li>
+    <li>Make sure that 'pg_statsinfo.repository_server' is correct and fix it if needed then reload.</li>
+  </ul>
+  <dt>Version number mismatch of repository schema</dt>
+  <ul>
+    <li>Just remove the statsrepo schema and run pg_statsinfo then repository schema will be automatically built. Otherwise create another database and use it as repository database.</li>
+  </ul>
+  <dt>Missing XML feature</dt>
+  <ul>
+    <li>Rebuild PostgreSQL with --with-libxml option and install it.</li>
+  </ul>
+</dl>
+
+<h3 id="systemtaps">Monitoring with SystemTap (Experimental)</h3>
+<p>Systemtap is available to monitor PostgreSQL on RHEL6, Fedora13 and later.</p>
+<h4>Prerequisites</h4>
+<ul>
+<li>RHEL6, Fedora13 and later.</li>
+<li>systemtap, systemtap-runtime and systemtap-sdt-devel packages are installed using RPM.</li>
+<li>PostgreSQL is built with --enable-debug and --enable-dtrace configure options.</li>
+</ul>
+<h4>Preparation</h4>
+<ul>
+<li>Systemtap should run as the user postgresql (or the user to run PostgreSQL if different from that), and the user should be a member of the group stapdev.
+<pre>$ usermod -g stapdev postgres</pre>
+</li>
+<li>Prepare a systemtap script. pg_statsinfo provides that. Place it anywhere appropriate and deploy it using stap command.
+<pre>$ stap -m statsinfo_prof pg_statsinfo_profile.stp</pre>
+</li>
+</ul>
+<p>After the above steps done, pg_statsinfo takes snapshots including Systemtap information.</p>
+<h4>Note</h4>
+<p>This is an experimental feature requires --enable-debug and puts some burden on running server so please refrain from using this on commercial systems.
+<h3 id="internal">Internals</h3>
+<p>pg_statsinfo consists of a library loaded on PostgreSQL and a daemon process.
+Since the daemon is executed implicitly by the library at server startup, users don't have to execute the daemon explicitly.</p>
+See also "<a href="pg_statsinfo-internal.html">pg_statsinfo: internal</a>" for details.
+
+<h3 id="internal-log-route">Distributing server log</h3>
+<p>
+We will explain how to rotate log when pg_statsinfo distribute server log. At first, the case files with ".copy" extension is created. After, the case files with ".err.<i>n</i>"is created.
+</p>
+<h4>The "*.copy" files in pg_log directory</h4>
+<p>
+This file is created to prevent overwriting existing files on a log
+rotation. The files of the name are storing some server logs that
+doesn't fit csv format such like error messages from restore_command.
+</p>
+<h4>The "*.err.<i>n</i>" files in pg_log directory</h4>
+<p>
+Restarting after a server crash or stopping agent may leave a file of
+the name. This occurs when pg_statsinfo could not resume reading the
+last *.csv log file it had processed on stopping, and then
+pg_statsinfo renames existing *.log file corresponding to the CSV log
+file with that extension. The content of the CSV file might not be fully
+processed for the case.
+</p>
+<p>
+This file also can be created on starting from a base backup. Removing
+the file $PGDATA/pg_statsinfo.control before starting a server
+prevents this from occurring for this case.
+</p>
+
+<h2 id="seealso">See Also</h2>
+<a href="http://www.postgresql.org/docs/current/static/app-pg-ctl.html">pg_ctl</a>,
+<a href="http://www.postgresql.org/docs/current/static/app-psql.html">psql</a>,
+<a href="http://www.postgresql.org/docs/current/static/runtime-config.html">Server Configuration</a>,
+<a href="http://www.postgresql.org/docs/current/static/monitoring-stats.html">The Statistics Collector</a>,
+<a href="http://www.postgresql.org/docs/current/static/catalogs.html">System Catalogs</a>,
+<a href="http://www.postgresql.org/docs/current/static/pgstatstatements.html">pg_stat_statements</a>,
+<a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>
+
+<hr />
+<div class="navigation">
+  <a href="index.html">Top</a> &gt;
+  <a href="pg_statsinfo.html">pg_statsinfo</a>
+<div>
+<p class="footer">Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION</p>
+
+<script type="text/javascript">
+var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+</script>
+<script type="text/javascript">
+try{
+var pageTracker = _gat._getTracker("UA-10244036-6");
+pageTracker._trackPageview();
+} catch(err) {}
+</script>
+</body>
+</html>
+
+<style type="text/css">
+div.imagebox {
+float: left;
+text-align: center;
+margin: 0.5em 3px 1em 3px;
+}
+p.image, p.caption {
+text-align: center;
+margin: 5px;
+}
+p.caption {
+font-size: 16px;
+color: #000000;
+}
+p.clear {
+clear: both;
+}
+</style>

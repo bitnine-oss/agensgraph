@@ -1,0 +1,83 @@
+/*---- Initialize repository DB ----*/
+/*---- Initialize monitored instance ----*/
+CREATE TABLE
+CREATE FUNCTION
+/*---- Server Log Accumulation ----*/
+/**--- Log Storing (repolog_min_messages = disable) ---**/
+server signaled
+INFO:  log storing test (disable)
+NOTICE:  log storing test (disable)
+WARNING:  log storing test (disable)
+ERROR:  log storing test (disable)
+ elevel | message 
+--------+---------
+(0 rows)
+
+/**--- Log Storing (repolog_min_messages = error) ---**/
+server signaled
+INFO:  log storing test (error)
+NOTICE:  log storing test (error)
+WARNING:  log storing test (error)
+ERROR:  log storing test (error)
+ elevel |         message          
+--------+--------------------------
+ LOG    | log storing test (error)
+ ERROR  | log storing test (error)
+(2 rows)
+
+/**--- Sets the nologging filter (repolog_nologging_users = 'user01') ---**/
+server signaled
+ elevel | username |       message       
+--------+----------+---------------------
+ LOG    | user02   | statement: SELECT 1
+(1 row)
+
+/**--- Adjust log level (adjust_log_level = off) ---**/
+server signaled
+ elevel | sqlstate |            message            
+--------+----------+-------------------------------
+ ERROR  | 42P01    | relation "xxx" does not exist
+(1 row)
+
+/**--- Adjust log level (adjust_log_info = '42P01') ---**/
+server signaled
+ elevel | sqlstate |            message            
+--------+----------+-------------------------------
+ INFO   | 42P01    | relation "xxx" does not exist
+(1 row)
+
+/**--- Adjust log level (adjust_log_notice = '42P01') ---**/
+server signaled
+ elevel | sqlstate |            message            
+--------+----------+-------------------------------
+ NOTICE | 42P01    | relation "xxx" does not exist
+(1 row)
+
+/**--- Adjust log level (adjust_log_warning = '42P01') ---**/
+server signaled
+ elevel  | sqlstate |            message            
+---------+----------+-------------------------------
+ WARNING | 42P01    | relation "xxx" does not exist
+(1 row)
+
+/**--- Adjust log level (adjust_log_error = '00000') ---**/
+server signaled
+ elevel | sqlstate |       message       
+--------+----------+---------------------
+ ERROR  | 00000    | statement: SELECT 1
+(1 row)
+
+/**--- Adjust log level (adjust_log_log = '42P01') ---**/
+server signaled
+ elevel | sqlstate |            message            
+--------+----------+-------------------------------
+ LOG    | 42P01    | relation "xxx" does not exist
+(1 row)
+
+/**--- Adjust log level (adjust_log_fatal = '42P01') ---**/
+server signaled
+ elevel | sqlstate |            message            
+--------+----------+-------------------------------
+ FATAL  | 42P01    | relation "xxx" does not exist
+(1 row)
+

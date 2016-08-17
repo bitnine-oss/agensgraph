@@ -1,0 +1,1 @@
+PostgreSQL older than 9.1 does not collect statistics about replication
