@@ -183,7 +183,7 @@ edge_out(PG_FUNCTION_ARGS)
 	my_extra = cache_label(fcinfo->flinfo, id.oid);
 
 	initStringInfo(&si);
-	appendStringInfo(&si, ":%s[" GRAPHID_FMTSTR "][",
+	appendStringInfo(&si, "%s[" GRAPHID_FMTSTR "][",
 					 NameStr(my_extra->label), id.oid, id.lid);
 	graphid_out_si(&si, values[Anum_edge_start - 1]);
 	appendStringInfoChar(&si, ',');
