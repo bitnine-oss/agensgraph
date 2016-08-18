@@ -9,7 +9,8 @@ BUILDDIR      = build
 
 # User-friendly check for sphinx-build
 ifeq ($(shell which $(SPHINXBUILD) >/dev/null 2>&1; echo $$?), 1)
-	$(error The '$(SPHINXBUILD)' command was not found. Make sure you have Sphinx installed, then set the SPHINXBUILD environment variable to point to the full path of the '$(SPHINXBUILD)' executable. Alternatively you can add the directory with the executable to your PATH. If you don\'t have Sphinx installed, grab it from http://sphinx-doc.org/)
+$(if $(filter all distprep html man install installdirs, $(MAKECMDGOALS)), $(warning '$(SPHINXBUILD)' not found; skip...))
+undefine SPHINXBUILD
 endif
 
 # Internal variables.
@@ -55,10 +56,14 @@ clean:
 	rm -rf $(BUILDDIR)/*
 
 .PHONY: html
+ifdef SPHINXBUILD
 html:
 	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) $(BUILDDIR)/html
 	@echo
 	@echo "Build finished. The HTML pages are in $(BUILDDIR)/html."
+else
+html: ;
+endif
 
 .PHONY: dirhtml
 dirhtml:
@@ -161,10 +166,14 @@ text:
 	@echo "Build finished. The text files are in $(BUILDDIR)/text."
 
 .PHONY: man
+ifdef SPHINXBUILD
 man:
 	$(SPHINXBUILD) -b man $(ALLSPHINXOPTS) $(BUILDDIR)/man
 	@echo
 	@echo "Build finished. The manual pages are in $(BUILDDIR)/man."
+else
+man: ;
+endif
 
 .PHONY: texinfo
 texinfo:
@@ -237,6 +246,7 @@ subdir = doc
 top_builddir = ..
 include $(top_builddir)/src/Makefile.global
 
+ifdef SPHINXBUILD
 all: html man
 
 distprep: html man
@@ -248,6 +258,9 @@ endif
 
 installdirs:
 	$(MKDIR_P) '$(DESTDIR)$(htmldir)'/html '$(DESTDIR)$(mandir)'/man1
+else
+all distprep install installdirs: ;
+endif
 
 uninstall:
 	rm -rf '$(DESTDIR)$(htmldir)/html/'* '$(DESTDIR)$(mandir)'/man1/*
