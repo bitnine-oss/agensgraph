@@ -41,3 +41,10 @@ cscope.*
 /Release/
 /tmp_install/
 /doc/build/
+
+# Local excludes of install directories
+/bin/
+/data/
+/include/
+/lib/
+/share/
