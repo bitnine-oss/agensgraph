@@ -10,9 +10,11 @@
 
 #include "postgres.h"
 
+#include "ag_const.h"
 #include "access/htup_details.h"
 #include "access/tupdesc.h"
 #include "catalog/pg_type.h"
+#include "executor/spi.h"
 #include "funcapi.h"
 #include "utils/array.h"
 #include "utils/arrayaccess.h"
@@ -52,6 +54,11 @@ typedef struct GraphpathOutData {
 	ArrayMetaState edge;
 } GraphpathOutData;
 
+typedef enum EdgeVertexKind {
+	EVK_START,
+	EVK_END
+} EdgeVertexKind;
+
 static void graphid_out_si(StringInfo si, Datum graphid);
 static LabelOutData *cache_label(FmgrInfo *flinfo, Oid relid);
 static void elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo);
@@ -60,6 +67,7 @@ static void get_elem_type_output(ArrayMetaState *state, Oid elem_type,
 static Datum array_iter_next_(array_iter *it, int idx, ArrayMetaState *state);
 static void deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull);
 static Datum tuple_getattr(HeapTupleHeader tuphdr, int attnum);
+static Datum getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk);
 static Datum makeArrayTypeDatum(Datum *elems, int nelem, Oid type);
 
 Datum
@@ -164,11 +172,10 @@ _vertex_out(PG_FUNCTION_ARGS)
 Datum
 vertex_label(PG_FUNCTION_ARGS)
 {
-	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
 	Graphid id;
 	LabelOutData *my_extra;
 
-	id = getGraphidStruct(tuple_getattr(vertex, Anum_vertex_id));
+	id = getGraphidStruct(getVertexIdDatum(PG_GETARG_DATUM(0)));
 
 	my_extra = cache_label(fcinfo->flinfo, id.oid);
 
@@ -176,20 +183,11 @@ vertex_label(PG_FUNCTION_ARGS)
 }
 
 Datum
-vertex_labels(PG_FUNCTION_ARGS)
+vtojb(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
-	Graphid		id;
-	LabelOutData *my_extra;
-	Datum		label;
 
-	id = getGraphidStruct(tuple_getattr(vertex, Anum_vertex_id));
-
-	my_extra = cache_label(fcinfo->flinfo, id.oid);
-
-	label = CStringGetDatum(pstrdup(NameStr(my_extra->label)));
-
-	PG_RETURN_ARRAYTYPE_P(makeArrayTypeDatum(&label, 1, CSTRINGOID));
+	PG_RETURN_DATUM(tuple_getattr(vertex, Anum_vertex_properties));
 }
 
 Datum
@@ -254,15 +252,22 @@ _edge_out(PG_FUNCTION_ARGS)
 Datum
 edge_label(PG_FUNCTION_ARGS)
 {
-	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
 	Graphid id;
 	LabelOutData *my_extra;
 
-	id = getGraphidStruct(tuple_getattr(edge, Anum_edge_id));
+	id = getGraphidStruct(getEdgeIdDatum(PG_GETARG_DATUM(0)));
 
 	my_extra = cache_label(fcinfo->flinfo, id.oid);
 
 	PG_RETURN_CSTRING(pstrdup(NameStr(my_extra->label)));
+}
+
+Datum
+etojb(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
+
+	PG_RETURN_DATUM(tuple_getattr(edge, Anum_edge_properties));
 }
 
 static LabelOutData *
@@ -510,6 +515,82 @@ tuple_getattr(HeapTupleHeader tuphdr, int attnum)
 	return attdat;
 }
 
+Datum
+edge_start_vertex(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
+
+	return getEdgeVertex(edge, EVK_START);
+}
+
+Datum
+edge_end_vertex(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
+
+	return getEdgeVertex(edge, EVK_END);
+}
+
+static Datum
+getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
+{
+	const char *querystr =
+			"SELECT ((tableoid, id)::graphid, properties)::vertex "
+			"FROM " AG_GRAPH "." AG_VERTEX " WHERE tableoid = $1 AND id = $2";
+	int			attnum = (evk == EVK_START ? Anum_edge_start : Anum_edge_end);
+	Graphid		id;
+	Datum		values[2];
+	Oid			argTypes[2] = {OIDOID, INT8OID};
+	int			ret;
+	Datum		vertex;
+	bool		isnull;
+
+	id = getGraphidStruct(tuple_getattr(edge, attnum));
+
+	values[0] = ObjectIdGetDatum(id.oid);
+	values[1] = Int64GetDatum(id.lid);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	ret = SPI_execute_with_args(querystr, 2, argTypes, values, NULL, false, 0);
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "SPI_execute failed: %s", querystr);
+
+	if (SPI_processed != 1)
+		elog(ERROR, (evk == EVK_START
+					 ? "SPI_execute: only one start vertex of edge exists"
+					 : "SPI_execute: only one end vertex of edge exists"));
+
+	vertex = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc,
+						   1, &isnull);
+	Assert(!isnull);
+
+	vertex = SPI_datumTransfer(vertex, false, -1);
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
+
+	return vertex;
+}
+
+Datum
+vertex_labels(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
+	Graphid		id;
+	LabelOutData *my_extra;
+	Datum		label;
+
+	id = getGraphidStruct(tuple_getattr(vertex, Anum_vertex_id));
+
+	my_extra = cache_label(fcinfo->flinfo, id.oid);
+
+	label = CStringGetDatum(pstrdup(NameStr(my_extra->label)));
+
+	PG_RETURN_ARRAYTYPE_P(makeArrayTypeDatum(&label, 1, CSTRINGOID));
+}
+
 Graphid
 getGraphidStruct(Datum datum)
 {
@@ -561,61 +642,17 @@ getGraphidDatum(Graphid id)
 Datum
 getVertexIdDatum(Datum datum)
 {
-	HeapTupleHeader	tuphdr;
-	Oid			tupType;
-	TupleDesc	tupDesc;
-	HeapTupleData tuple;
-	bool		isnull = false;
-	Datum		id;
+	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
-	tuphdr = DatumGetHeapTupleHeader(datum);
-
-	tupType = HeapTupleHeaderGetTypeId(tuphdr);
-	Assert(tupType == VERTEXOID);
-
-	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == Natts_vertex);
-
-	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
-	ItemPointerSetInvalid(&tuple.t_self);
-	tuple.t_tableOid = InvalidOid;
-	tuple.t_data = tuphdr;
-
-	id = heap_getattr(&tuple, Anum_vertex_id, tupDesc, &isnull);
-	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull);
-
-	return id;
+	return tuple_getattr(tuphdr, Anum_vertex_id);
 }
 
 Datum
 getEdgeIdDatum(Datum datum)
 {
-	HeapTupleHeader	tuphdr;
-	Oid			tupType;
-	TupleDesc	tupDesc;
-	HeapTupleData tuple;
-	bool		isnull = false;
-	Datum		id;
+	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
-	tuphdr = DatumGetHeapTupleHeader(datum);
-
-	tupType = HeapTupleHeaderGetTypeId(tuphdr);
-	Assert(tupType == EDGEOID);
-
-	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-	Assert(tupDesc->natts == Natts_edge);
-
-	tuple.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
-	ItemPointerSetInvalid(&tuple.t_self);
-	tuple.t_tableOid = InvalidOid;
-	tuple.t_data = tuphdr;
-
-	id = heap_getattr(&tuple, Anum_edge_id, tupDesc, &isnull);
-	ReleaseTupleDesc(tupDesc);
-	Assert(!isnull);
-
-	return id;
+	return tuple_getattr(tuphdr, Anum_edge_id);
 }
 
 void
@@ -688,20 +725,4 @@ makeArrayTypeDatum(Datum *elems, int nelem, Oid type)
 	arr = construct_array(elems, nelem, type, typlen, typbyval, typalign);
 
 	return PointerGetDatum(arr);
-}
-
-Datum
-vtojb(PG_FUNCTION_ARGS)
-{
-	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
-
-	PG_RETURN_DATUM(tuple_getattr(vertex, Anum_vertex_properties));
-}
-
-Datum
-etojb(PG_FUNCTION_ARGS)
-{
-	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
-
-	PG_RETURN_DATUM(tuple_getattr(edge, Anum_edge_properties));
 }
