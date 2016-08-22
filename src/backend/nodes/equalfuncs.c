@@ -2582,6 +2582,23 @@ _equalRoleSpec(const RoleSpec *a, const RoleSpec *b)
 }
 
 static bool
+_equalJsonObject(const JsonObject *a, const JsonObject *b)
+{
+	COMPARE_NODE_FIELD(keyvals);
+
+	return true;
+}
+
+static bool
+_equalJsonKeyVal(const JsonKeyVal *a, const JsonKeyVal *b)
+{
+	COMPARE_NODE_FIELD(key);
+	COMPARE_NODE_FIELD(val);
+
+	return true;
+}
+
+static bool
 _equalCreateLabelStmt(const CreateLabelStmt *a, const CreateLabelStmt *b)
 {
 	COMPARE_NODE_FIELD(relation);
@@ -2664,7 +2681,7 @@ _equalCypherNode(const CypherNode *a, const CypherNode *b)
 {
 	COMPARE_NODE_FIELD(variable);
 	COMPARE_NODE_FIELD(label);
-	COMPARE_STRING_FIELD(prop_map);
+	COMPARE_NODE_FIELD(prop_map);
 
 	return true;
 }
@@ -2676,7 +2693,7 @@ _equalCypherRel(const CypherRel *a, const CypherRel *b)
 	COMPARE_NODE_FIELD(variable);
 	COMPARE_NODE_FIELD(types);
 	COMPARE_NODE_FIELD(varlen);
-	COMPARE_STRING_FIELD(prop_map);
+	COMPARE_NODE_FIELD(prop_map);
 
 	return true;
 }
@@ -2703,7 +2720,8 @@ _equalGraphVertex(const GraphVertex *a, const GraphVertex *b)
 {
 	COMPARE_STRING_FIELD(variable);
 	COMPARE_STRING_FIELD(label);
-	COMPARE_STRING_FIELD(prop_map);
+	COMPARE_NODE_FIELD(prop_map);
+	COMPARE_NODE_FIELD(es_prop_map);
 	COMPARE_SCALAR_FIELD(create);
 
 	return true;
@@ -2715,7 +2733,8 @@ _equalGraphEdge(const GraphEdge *a, const GraphEdge *b)
 	COMPARE_SCALAR_FIELD(direction);
 	COMPARE_STRING_FIELD(variable);
 	COMPARE_STRING_FIELD(label);
-	COMPARE_STRING_FIELD(prop_map);
+	COMPARE_NODE_FIELD(prop_map);
+	COMPARE_NODE_FIELD(es_prop_map);
 
 	return true;
 }
@@ -3456,6 +3475,13 @@ equal(const void *a, const void *b)
 			break;
 		case T_RoleSpec:
 			retval = _equalRoleSpec(a, b);
+			break;
+
+		case T_JsonObject:
+			retval = _equalJsonObject(a, b);
+			break;
+		case T_JsonKeyVal:
+			retval = _equalJsonKeyVal(a, b);
 			break;
 
 		case T_CreateLabelStmt:

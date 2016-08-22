@@ -19,6 +19,7 @@
 #include "parser/parse_agg.h"
 #include "parser/parse_clause.h"
 #include "parser/parse_collate.h"
+#include "parser/parse_expr.h"
 #include "parser/parse_graph.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
@@ -74,7 +75,8 @@ static Alias *makePatternVarAlias(char *aliasname);
 static Node *makeGraphidTuple(Alias *alias);
 static Node *makeVertexTuple(Alias *alias);
 static Node *makeEdgeTuple(Alias *alias);
-static Node *makePropMapConstraint(ColumnRef *props, char *qualStr);
+static Node *makePropMapConstraint(ColumnRef *props, Node *qualJson);
+static Node *postprocessPropMapExpr(Node *prop_map_expr);
 static Node *makeDirQual(Node *start, RangeVar *rel, Node *end);
 static Node *makeVertexId(Node *nodeVar);
 static Node *addNodeDupQual(Node *qual, List *nodeVars);
@@ -1063,20 +1065,39 @@ makeEdgeTuple(Alias *alias)
 
 /* jsonb_contains(prop_map, qualStr) */
 static Node *
-makePropMapConstraint(ColumnRef *prop_map, char *qualStr)
+makePropMapConstraint(ColumnRef *prop_map, Node *qualJson)
 {
+	Node	   *processed;
 	FuncCall   *constraint;
-	A_Const	   *qual;
 
-	qual = makeNode(A_Const);
-	qual->val.type = T_String;
-	qual->val.val.str = qualStr;
-	qual->location = -1;
-
+	processed = postprocessPropMapExpr(qualJson);
 	constraint = makeFuncCall(list_make1(makeString("jsonb_contains")),
-							  list_make2(prop_map, qual), -1);
+							  list_make2(prop_map, processed), -1);
 
 	return (Node *) constraint;
+}
+
+static Node *
+postprocessPropMapExpr(Node *prop_map_expr)
+{
+	NodeTag		tag = nodeTag(prop_map_expr);
+	Node	   *result;
+
+	if (tag == T_JsonObject)
+	{
+		result = prop_map_expr;
+	}
+	else
+	{
+		A_Const *c = (A_Const *) prop_map_expr;
+
+		AssertArg(tag == T_A_Const && nodeTag(&c->val) == T_String);
+
+		result = (Node *) makeFuncCall(list_make1(makeString("jsonb_in")),
+									   list_make1(prop_map_expr), -1);
+	}
+
+	return result;
 }
 
 static Node *
@@ -1275,6 +1296,7 @@ transformCreateVertex(ParseState *pstate, CypherNode *cnode, PatternCtx *ctx,
 {
 	char	   *varname;
 	bool		create;
+	Node	   *prop_map_expr = NULL;
 	GraphVertex *gvertex;
 
 	varname = getCypherName(cnode->variable);
@@ -1321,6 +1343,10 @@ transformCreateVertex(ParseState *pstate, CypherNode *cnode, PatternCtx *ctx,
 									makeString(pstrdup(varname)));
 		}
 
+		if (cnode->prop_map != NULL)
+			prop_map_expr = transformExpr(pstate,
+									postprocessPropMapExpr(cnode->prop_map),
+									EXPR_KIND_INSERT_TARGET);
 		create = true;
 	}
 
@@ -1329,8 +1355,7 @@ transformCreateVertex(ParseState *pstate, CypherNode *cnode, PatternCtx *ctx,
 		gvertex->variable = pstrdup(varname);
 	if (cnode->label != NULL)
 		gvertex->label = pstrdup(getCypherName(cnode->label));
-	if (cnode->prop_map != NULL)
-		gvertex->prop_map = pstrdup(cnode->prop_map);
+	gvertex->prop_map = prop_map_expr;
 	gvertex->create = create;
 
 	return gvertex;
@@ -1395,7 +1420,9 @@ transformCreateEdge(ParseState *pstate, CypherRel *crel, PatternCtx *ctx,
 		gedge->variable = pstrdup(varname);
 	gedge->label = pstrdup(getCypherName(linitial(crel->types)));
 	if (crel->prop_map != NULL)
-		gedge->prop_map = pstrdup(crel->prop_map);
+		gedge->prop_map = transformExpr(pstate,
+										postprocessPropMapExpr(crel->prop_map),
+										EXPR_KIND_INSERT_TARGET);
 
 	return gedge;
 }

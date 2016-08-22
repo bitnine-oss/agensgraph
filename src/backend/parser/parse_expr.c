@@ -122,6 +122,7 @@ static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCollateClause(ParseState *pstate, CollateClause *c);
 static Node *transformJsonIndirection(ParseState *pstate, Node *json,
 									  List *indirection);
+static Node *transformJsonObject(ParseState *pstate, JsonObject *jo);
 static Node *indirect_prop_map(ParseState *pstate, Node *elem);
 static Node *make_row_comparison_op(ParseState *pstate, List *opname,
 					   List *largs, List *rargs, int location);
@@ -370,6 +371,10 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 				result = (Node *) expr;
 				break;
 			}
+
+		case T_JsonObject:
+			result = transformJsonObject(pstate, (JsonObject *) expr);
+			break;
 
 		default:
 			/* should not reach here */
@@ -2655,6 +2660,27 @@ transformJsonIndirection(ParseState *pstate, Node *json, List *indirection)
 							  (Node *) patharr, -1);
 
 	return result;
+}
+
+static Node *
+transformJsonObject(ParseState *pstate, JsonObject *jo)
+{
+	ListCell   *lp;
+	List	   *args = NIL;
+	FuncCall   *build;
+
+	foreach (lp, jo->keyvals)
+	{
+		JsonKeyVal *keyval = (JsonKeyVal *) lfirst(lp);
+
+		args = lappend(args, keyval->key);
+		args = lappend(args, keyval->val);
+	}
+
+	build = makeFuncCall(list_make1(makeString("jsonb_build_object")), args,
+						 -1);
+
+	return transformFuncCall(pstate, build);
 }
 
 static Node *

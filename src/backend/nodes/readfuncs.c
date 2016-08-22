@@ -29,6 +29,7 @@
 #include <math.h>
 
 #include "fmgr.h"
+#include "nodes/graphnodes.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
 #include "nodes/readfuncs.h"
@@ -2224,6 +2225,45 @@ _readAlternativeSubPlan(void)
 
 	READ_DONE();
 }
+static GraphPath *
+_readGraphPath(void)
+{
+	READ_LOCALS(GraphPath);
+
+	READ_STRING_FIELD(variable);
+	READ_NODE_FIELD(chain);
+
+	READ_DONE();
+}
+
+static GraphVertex *
+_readGraphVertex(void)
+{
+	READ_LOCALS(GraphVertex);
+
+	READ_STRING_FIELD(variable);
+	READ_STRING_FIELD(label);
+	READ_NODE_FIELD(prop_map);
+	READ_NODE_FIELD(es_prop_map);
+	READ_BOOL_FIELD(create);
+
+	READ_DONE();
+}
+
+static GraphEdge *
+_readGraphEdge(void)
+{
+	READ_LOCALS(GraphEdge);
+
+	READ_INT_FIELD(direction);
+	READ_STRING_FIELD(variable);
+	READ_STRING_FIELD(label);
+	READ_NODE_FIELD(prop_map);
+	READ_NODE_FIELD(es_prop_map);
+
+	READ_DONE();
+}
+
 
 /*
  * parseNodeString
@@ -2453,6 +2493,12 @@ parseNodeString(void)
 		return_value = _readSubPlan();
 	else if (MATCH("ALTERNATIVESUBPLAN", 18))
 		return_value = _readAlternativeSubPlan();
+	else if (MATCH("GRAPHPATH", 9))
+		return_value = _readGraphPath();
+	else if (MATCH("GRAPHVERTEX", 11))
+		return_value = _readGraphVertex();
+	else if (MATCH("GRAPHEDGE", 9))
+		return_value = _readGraphEdge();
 	else
 	{
 		elog(ERROR, "badly formatted node string \"%.32s\"...", token);

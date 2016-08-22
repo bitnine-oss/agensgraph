@@ -18,23 +18,23 @@ CREATE vlabel regvlabel3;
 CREATE elabel regelabel1;
 CREATE elabel regelabel2;
 
-CREATE (v1:regvlabel1 '{"name": "regv1-1", "id": 1}'),
-	   (v2:regvlabel1 '{"name": "regv1-2", "id": 2}'),
-	   (v3:regvlabel1 '{"name": "regv1-3", "id": 3}'),
+CREATE (v1:regvlabel1 {'name': 'regv1-1', 'id': 1}),
+	   (v2:regvlabel1 {'name': 'regv1-2', 'id': 2}),
+	   (v3:regvlabel1 {'name': 'regv1-3', 'id': 3}),
 
-	   (v4:regvlabel2 '{"name": "regv2-1", "id": 4}'),
-	   (v5:regvlabel2 '{"name": "regv2-2", "id": 5}'),
-	   (v6:regvlabel2 '{"name": "regv2-3", "id": 6}'),
-	   (v7:regvlabel2 '{"name": "regv2-4", "id": 7}'),
-	   (v8:regvlabel2 '{"name": "regv2-5", "id": 8}'),
+	   (v4:regvlabel2 {'name': 'regv2-1', 'id': 4}),
+	   (v5:regvlabel2 {'name': 'regv2-2', 'id': 5}),
+	   (v6:regvlabel2 {'name': 'regv2-3', 'id': 6}),
+	   (v7:regvlabel2 {'name': 'regv2-4', 'id': 7}),
+	   (v8:regvlabel2 {'name': 'regv2-5', 'id': 8}),
 
-	   (v1)-[:regelabel1 '{"name": "rege1-1", "id": 1}']->(v4),
-	   (v2)-[:regelabel1 '{"name": "rege1-2", "id": 2}']->(v5),
-	   (v3)-[:regelabel1 '{"name": "rege1-3", "id": 3}']->(v6),
+	   (v1)-[:regelabel1 {'name': 'rege1-1', 'id': 1}]->(v4),
+	   (v2)-[:regelabel1 {'name': 'rege1-2', 'id': 2}]->(v5),
+	   (v3)-[:regelabel1 {'name': 'rege1-3', 'id': 3}]->(v6),
 
-	   (v1)<-[:regelabel2 '{"name": "rege2-1", "id": 4}']-(v8),
-	   (v2)<-[:regelabel2 '{"name": "rege2-2", "id": 5}']-(v7),
-	   (v3)<-[:regelabel2 '{"name": "rege2-3", "id": 6}']-(v6);
+	   (v1)<-[:regelabel2 {'name': 'rege2-1', 'id': 4}]-(v8),
+	   (v2)<-[:regelabel2 {'name': 'rege2-2', 'id': 5}]-(v7),
+	   (v3)<-[:regelabel2 {'name': 'rege2-3', 'id': 6}]-(v6);
 
 --
 -- MATCH & RETURN clause
@@ -195,8 +195,8 @@ CREATE elabel regelabel2;
 CREATE (),
 	   (a),
 	   (b:regvlabel1),
-	   (c:regvlabel2 '{"name": "test1"}'),
-	   p=(d:regvlabel3 '{"name": "test2", "age": 123}')-[:regelabel1]->();
+	   (c:regvlabel2 {'name': 'test1'}),
+	   p=(d:regvlabel3 {'name': 'test2', 'age': 123})-[:regelabel1]->();
 
 MATCH (a) RETURN (id(a)).lid, properties(a);
 
@@ -204,9 +204,9 @@ MATCH (n) DETACH DELETE n;
 
 -- refer previous variable
 
-CREATE (a:regvlabel1 '{"name": "elem1"}'),
-	   (a)-[d:regelabel1 '{"rel": 1}']->(b:regvlabel2 '{"name": "elem2"}'),
-	   (b)<-[e:regelabel2 '{"rel": 2}']-(c:regvlabel2 '{"name": "elem3"}')
+CREATE (a:regvlabel1 {'name': 'elem1'}),
+	   (a)-[d:regelabel1 {'rel': 1}]->(b:regvlabel2 {'name': 'elem2'}),
+	   (b)<-[e:regelabel2 {'rel': 2}]-(c:regvlabel2 {'name': 'elem3'})
 RETURN properties(a), properties(d), properties(b), properties(e), properties(c);
 
 MATCH (a)-[b]-(c)
@@ -216,21 +216,21 @@ MATCH (n) DETACH DELETE n;
 
 -- relationship
 
-CREATE (a:regvlabel1 '{"name": "insert v1-1"}')-[b:regelabel1]->(c:regvlabel2 '{"name": "insert v2-1"}');
-CREATE (a:regvlabel1 '{"name": "insert v1-2"}')<-[b:regelabel1]-(c:regvlabel2 '{"name": "insert v2-2"}');
+CREATE (a:regvlabel1 {'name': 'insert v1-1'})-[b:regelabel1]->(c:regvlabel2 {'name': 'insert v2-1'});
+CREATE (a:regvlabel1 {'name': 'insert v1-2'})<-[b:regelabel1]-(c:regvlabel2 {'name': 'insert v2-2'});
 
 MATCH (a)<-[b]->(c)
 RETURN properties(a), properties(b), properties(c);
 
 -- bi-directional relationship
 
-CREATE (:regvlabel2 '{"name": "regvlabel2-1"}'),
-	   (:regvlabel2 '{"name": "regvlabel2-2"}'),
-	   (:regvlabel2 '{"name": "regvlabel2-3"}');
+CREATE (:regvlabel2 {'name': 'regvlabel2-1'}),
+	   (:regvlabel2 {'name': 'regvlabel2-2'}),
+	   (:regvlabel2 {'name': 'regvlabel2-3'});
 
-CREATE (a:regvlabel1 '{"name": "regvlabel1"}')
+CREATE (a:regvlabel1 {'name': 'regvlabel1'})
 MATCH (b:regvlabel2)
-CREATE (a)-[c:regelabel1 '{"name": "e1"}']->(b), (b)-[d:regelabel1 '{"name": "e2"}']->(a)
+CREATE (a)-[c:regelabel1 {'name': 'e1'}]->(b), (b)-[d:regelabel1 {'name': 'e2'}]->(a)
 RETURN id(a) = start(c) AND "end"(c) = id(b) AS atob,
 	   id(b) = start(d) AND "end"(d) = id(a) AS btoa;
 
@@ -240,16 +240,16 @@ CREATE (a:regvlabel1), (b:regvlabel2), (a:regvlabel);
 
 -- wrong cases (label)
 CREATE (a:regvlabel1:regvlabel2);
-CREATE (:regvlabel1)-['{"reltype": "empty"}']->(:regvlabel2);
+CREATE (:regvlabel1)-[{'reltype': 'empty'}]->(:regvlabel2);
 
 -- wrong cases (bi-directional relationship)
-CREATE (:regvlabel1 '{"name": "insert v1-3"}')-[:regelabel1]-(:regvlabel2 '{"name": "insert v2-3"}');
-CREATE (:regvlabel1 '{"name": "insert v1-4"}')<-[:regelabel1]->(:regvlabel2 '{"name": "insert v2-4"}');
+CREATE (:regvlabel1 {'name': 'insert v1-3'})-[:regelabel1]-(:regvlabel2 {'name': 'insert v2-3'});
+CREATE (:regvlabel1 {'name': 'insert v1-4'})<-[:regelabel1]->(:regvlabel2 {'name': 'insert v2-4'});
 
 -- multiple CREATE's
 MATCH (a:regvlabel1), (b:regvlabel2)
-CREATE p=(a)-[:regelabel1 '{"name": "edge1"}']->(b)
-CREATE (b)<-[:regelabel2 '{"name": "edge2"}']-(c:regvlabel3 '{"name": "v3"}')
+CREATE p=(a)-[:regelabel1 {'name': 'edge1'}]->(b)
+CREATE (b)<-[:regelabel2 {'name': 'edge2'}]-(c:regvlabel3 {'name': 'v3'})
 RETURN properties(c);
 
 -- cleanup

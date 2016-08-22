@@ -2092,6 +2092,8 @@ typedef struct ModifyGraphState
 	PlanState	ps;
 	bool		done;
 	PlanState  *subplan;
+	List	   *pattern;		/* graph pattern (list of paths) for CREATE
+								   with `es_prop_map` */
 	List	   *exprs;			/* expression state list for DELETE */
 } ModifyGraphState;
 

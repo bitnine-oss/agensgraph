@@ -10,14 +10,13 @@
 #ifndef GRAPHNODES_H
 #define GRAPHNODES_H
 
-#include "c.h"
-#include "nodes/pg_list.h"
+#include "nodes/execnodes.h"
 
 typedef struct GraphPath
 {
 	NodeTag		type;
 	char	   *variable;
-	List	   *chain;		/* vertex, edge, vertex, ... */
+	List	   *chain;			/* vertex, edge, vertex, ... */
 } GraphPath;
 
 typedef struct GraphVertex
@@ -25,8 +24,9 @@ typedef struct GraphVertex
 	NodeTag		type;
 	char	   *variable;
 	char	   *label;
-	char	   *prop_map;	/* JSON object string */
-	bool		create;		/* whether this vertex will be created or not */
+	Node	   *prop_map;		/* expression of type jsonb */
+	ExprState  *es_prop_map;	/* expression state of `prop_map` */
+	bool		create;			/* whether this vertex will be created or not */
 } GraphVertex;
 
 #define GRAPH_EDGE_DIR_NONE		0
@@ -39,7 +39,8 @@ typedef struct GraphEdge
 	uint32		direction;	/* bitmask of directions (see above) */
 	char	   *variable;
 	char	   *label;
-	char	   *prop_map;	/* JSON object string */
+	Node	   *prop_map;		/* expression of type jsonb */
+	ExprState  *es_prop_map;	/* expression state of `prop_map` */
 } GraphEdge;
 
 #endif	/* GRAPHNODES_H */
