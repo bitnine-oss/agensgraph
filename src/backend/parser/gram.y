@@ -541,6 +541,10 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <str>		opt_existing_window_name
 %type <boolean> opt_if_not_exists
 
+/* JSON object */
+%type <node>	json_key_value json_object_expr
+%type <list>	json_key_value_list
+
 /* Agens Graph */
 %type <node>	CreateLabelStmt
 
@@ -548,14 +552,14 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
 				cypher_create cypher_delete cypher_label_opt cypher_limit_opt
 				cypher_match cypher_no_parens cypher_node cypher_path
-				cypher_path_opt_varirable cypher_range_idx cypher_range_idx_opt
-				cypher_range_opt cypher_rel cypher_return cypher_skip_opt
-				cypher_variable cypher_variable_opt cypher_varlen_opt
-				cypher_with cypher_with_parens
+				cypher_path_opt_varirable cypher_prop_map_opt cypher_range_idx
+				cypher_range_idx_opt cypher_range_opt cypher_rel cypher_return
+				cypher_skip_opt cypher_variable cypher_variable_opt
+				cypher_varlen_opt cypher_with cypher_with_parens
 %type <list>	cypher_distinct_opt cypher_expr_list cypher_path_chain
 				cypher_path_chain_opt_parens cypher_pattern
 				cypher_types cypher_types_opt
-%type <str>		cypher_prop_map_opt cypher_varname
+%type <str>		cypher_varname
 %type <boolean>	cypher_detach_opt cypher_rel_left cypher_rel_right
 
 /*
@@ -12113,6 +12117,33 @@ c_expr:		columnref								{ $$ = $1; }
 				  g->location = @1;
 				  $$ = (Node *)g;
 			  }
+			| json_object_expr
+		;
+
+json_object_expr:
+			'{' json_key_value_list '}'
+				{
+					JsonObject *n = (JsonObject *) makeNode(JsonObject);
+					n->keyvals = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+json_key_value_list:
+			json_key_value
+					{ $$ = list_make1($1); }
+			| json_key_value_list ',' json_key_value
+					{ $$ = lappend($1, $3); }
+		;
+
+json_key_value:
+			a_expr ':' a_expr
+				{
+					JsonKeyVal *n = (JsonKeyVal *) makeNode(JsonKeyVal);
+					n->key = $1;
+					n->val = $3;
+					$$ = (Node *) n;
+				}
 		;
 
 func_application: func_name '(' ')'
@@ -14328,8 +14359,9 @@ cypher_label_opt:
 		;
 
 cypher_prop_map_opt:
-			Sconst
-			| /* EMTPY */		{ $$ = NULL; }
+			json_object_expr
+			| Sconst			{ $$ = makeStringConst($1, @1); }
+			| /* EMPTY */		{ $$ = NULL; }
 		;
 
 cypher_rel:

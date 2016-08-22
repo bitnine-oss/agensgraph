@@ -61,20 +61,23 @@ typedef struct ArrayAccessTypeInfo {
 	char		typalign;
 } ArrayAccessTypeInfo;
 
+static List *ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate);
 static TupleTableSlot *ExecCreateGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
-static Datum createVertex(EState *estate, GraphVertex *gvertex, Graphid *vid,
-						  TupleTableSlot *slot, bool inPath);
-static Datum createEdge(EState *estate, GraphEdge *gedge, Graphid start,
-						Graphid end, TupleTableSlot *slot, bool inPath);
-static TupleTableSlot *createPath(EState *estate, GraphPath *path,
+static Datum createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
+						  Graphid *vid, TupleTableSlot *slot, bool inPath);
+static Datum createEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
+						Graphid start, Graphid end, TupleTableSlot *slot,
+						bool inPath);
+static TupleTableSlot *createPath(ModifyGraphState *mgstate, GraphPath *path,
 								  TupleTableSlot *slot);
 static Datum findVertex(TupleTableSlot *slot, GraphVertex *node, Graphid *vid);
 static AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
+static Datum evalPropMap(ExprState *prop_map, ExprContext *econtext,
+						 TupleTableSlot *slot);
 static Datum copyTupleAsDatum(EState *estate, HeapTuple tuple, Oid tupType);
 static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 static Datum *makeDatumArray(EState *estate, int len);
-static Datum CStringGetJsonbDatum(char *str);
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
 static void deleteVertex(Datum vertex, bool detach);
@@ -101,6 +104,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	mgstate->done = false;
 	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
+
+	mgstate->pattern = ExecInitGraphPattern(mgplan->pattern, mgstate);
 	mgstate->exprs = (List *) ExecInitExpr((Expr *) mgplan->exprs,
 										   (PlanState *) mgstate);
 
@@ -152,11 +157,51 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 	ExecEndNode(mgstate->subplan);
 }
 
+static List *
+ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate)
+{
+	ListCell *lp;
+
+	foreach(lp, pattern)
+	{
+		GraphPath  *p = (GraphPath *) lfirst(lp);
+		ListCell   *le;
+
+		foreach(le, p->chain)
+		{
+			Node *elem = (Node *) lfirst(le);
+
+			if (nodeTag(elem) == T_GraphVertex)
+			{
+				GraphVertex *gvertex = (GraphVertex *) elem;
+
+				if (gvertex->create)
+				{
+					gvertex->es_prop_map
+							= ExecInitExpr((Expr *) gvertex->prop_map,
+										   (PlanState *) mgstate);
+				}
+			}
+			else
+			{
+				GraphEdge *gedge = (GraphEdge *) elem;
+
+				Assert(nodeTag(elem) == T_GraphEdge);
+
+				gedge->es_prop_map = ExecInitExpr((Expr *) gedge->prop_map,
+												  (PlanState *) mgstate);
+			}
+		}
+	}
+
+	return pattern;
+}
+
 static TupleTableSlot *
 ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 {
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
-	EState	   *estate = mgstate->ps.state;
+	ExprContext *econtext = mgstate->ps.ps_ExprContext;
 	ListCell   *lp;
 
 	/* create a pattern, accumulated paths `slot` has */
@@ -164,7 +209,9 @@ ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	{
 		GraphPath *path = (GraphPath *) lfirst(lp);
 
-		slot = createPath(estate, path, slot);
+		ResetExprContext(econtext);
+
+		slot = createPath(mgstate, path, slot);
 	}
 
 	return (plan->last ? NULL : slot);
@@ -172,8 +219,9 @@ ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 
 /* create a path and accumulate it to the given slot */
 static TupleTableSlot *
-createPath(EState *estate, GraphPath *path, TupleTableSlot *slot)
+createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 {
+	EState	   *estate = mgstate->ps.state;
 	bool		out = (path->variable != NULL);
 	int			pathlen;
 	Datum	   *vertices = NULL;
@@ -210,7 +258,7 @@ createPath(EState *estate, GraphPath *path, TupleTableSlot *slot)
 			Datum		vertex;
 
 			if (gvertex->create)
-				vertex = createVertex(estate, gvertex, &vid, slot, out);
+				vertex = createVertex(mgstate, gvertex, &vid, slot, out);
 			else
 				vertex = findVertex(slot, gvertex, &vid);
 
@@ -223,13 +271,13 @@ createPath(EState *estate, GraphPath *path, TupleTableSlot *slot)
 
 				if (gedge->direction == GRAPH_EDGE_DIR_LEFT)
 				{
-					edge = createEdge(estate, gedge, vid, prevvid, slot, out);
+					edge = createEdge(mgstate, gedge, vid, prevvid, slot, out);
 				}
 				else
 				{
 					Assert(gedge->direction == GRAPH_EDGE_DIR_RIGHT);
 
-					edge = createEdge(estate, gedge, prevvid, vid, slot, out);
+					edge = createEdge(mgstate, gedge, prevvid, vid, slot, out);
 				}
 
 				if (out)
@@ -276,9 +324,10 @@ createPath(EState *estate, GraphPath *path, TupleTableSlot *slot)
  * NOTE: This function returns a vertex if it must be in the result(`slot`).
  */
 static Datum
-createVertex(EState *estate, GraphVertex *gvertex, Graphid *vid,
+createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 			 TupleTableSlot *slot, bool inPath)
 {
+	EState	   *estate = mgstate->ps.state;
 	char		sqlcmd[SQLCMD_BUFLEN];
 	char	   *label;
 	Datum		values[SQLCMD_VERTEX_NPARAMS];
@@ -294,7 +343,8 @@ createVertex(EState *estate, GraphVertex *gvertex, Graphid *vid,
 
 	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_VERTEX, label);
 
-	values[0] = CStringGetJsonbDatum(gvertex->prop_map);
+	values[0] = evalPropMap(gvertex->es_prop_map, mgstate->ps.ps_ExprContext,
+							slot);
 
 	ret = SPI_execute_with_args(sqlcmd, SQLCMD_VERTEX_NPARAMS, argTypes,
 								values, NULL, false, 0);
@@ -326,9 +376,10 @@ createVertex(EState *estate, GraphVertex *gvertex, Graphid *vid,
 }
 
 static Datum
-createEdge(EState *estate, GraphEdge *gedge, Graphid start, Graphid end,
-		   TupleTableSlot *slot, bool inPath)
+createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
+		   Graphid end, TupleTableSlot *slot, bool inPath)
 {
+	EState	   *estate = mgstate->ps.state;
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_EDGE_NPARAMS];
 	Oid			argTypes[SQLCMD_EDGE_NPARAMS] = {GRAPHIDOID, GRAPHIDOID,
@@ -340,7 +391,8 @@ createEdge(EState *estate, GraphEdge *gedge, Graphid start, Graphid end,
 
 	values[0] = getGraphidDatum(start);
 	values[1] = getGraphidDatum(end);
-	values[2] = CStringGetJsonbDatum(gedge->prop_map);
+	values[2] = evalPropMap(gedge->es_prop_map, mgstate->ps.ps_ExprContext,
+							slot);
 
 	ret = SPI_execute_with_args(sqlcmd, SQLCMD_EDGE_NPARAMS, argTypes, values,
 								NULL, false, 0);
@@ -398,6 +450,35 @@ findAttrInSlotByName(TupleTableSlot *slot, char *name)
 }
 
 static Datum
+evalPropMap(ExprState *prop_map, ExprContext *econtext, TupleTableSlot *slot)
+{
+	Datum		datum;
+	bool		isNull;
+	ExprDoneCond isDone;
+
+	if (prop_map == NULL)
+		return jsonb_build_object_noargs(NULL);
+
+	if (!(exprType((Node *) prop_map->expr) == JSONBOID))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("jsonb is expected for property map")));
+
+	econtext->ecxt_scantuple = slot;
+	datum = ExecEvalExpr(prop_map, econtext, &isNull, &isDone);
+	if (isNull)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("property map cannot be NULL")));
+	if (isDone != ExprSingleResult)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("single result is expected for property map")));
+
+	return datum;
+}
+
+static Datum
 copyTupleAsDatum(EState *estate, HeapTuple tuple, Oid tupType)
 {
 	TupleDesc		tupDesc;
@@ -443,15 +524,6 @@ makeDatumArray(EState *estate, int len)
 	MemoryContextSwitchTo(oldMemoryContext);
 
 	return result;
-}
-
-static Datum
-CStringGetJsonbDatum(char *str)
-{
-	if (str == NULL)
-		return jsonb_build_object_noargs(NULL);
-	else
-		return DirectFunctionCall1(jsonb_in, CStringGetDatum(str));
 }
 
 static TupleTableSlot *

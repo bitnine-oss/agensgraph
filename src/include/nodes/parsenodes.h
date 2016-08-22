@@ -3065,6 +3065,24 @@ typedef struct AlterTSConfigurationStmt
 
 
 /****************************************************************************
+ * JSON object expression
+ ****************************************************************************/
+
+typedef struct JsonObject
+{
+	NodeTag		type;
+	List	   *keyvals;
+} JsonObject;
+
+typedef struct JsonKeyVal
+{
+	NodeTag		type;
+	Node	   *key;
+	Node	   *val;
+} JsonKeyVal;
+
+
+/****************************************************************************
  * Agens Graph related node structures
  ****************************************************************************/
 
@@ -3166,7 +3184,7 @@ typedef struct CypherNode
 	NodeTag		type;
 	Node	   *variable;	/* CypherName */
 	Node	   *label;		/* CypherName */
-	char	   *prop_map;	/* JSON object string */
+	Node	   *prop_map;	/* JSON object expression or string constant */
 } CypherNode;
 
 #define CYPHER_REL_DIR_NONE		0
@@ -3180,7 +3198,7 @@ typedef struct CypherRel
 	Node	   *variable;	/* CypherName */
 	List	   *types;		/* ORed types */
 	Node	   *varlen;		/* variable length relationships (A_Indices) */
-	char	   *prop_map;	/* JSON object string */
+	Node	   *prop_map;	/* JSON object expression or string constant */
 } CypherRel;
 
 typedef struct CypherName

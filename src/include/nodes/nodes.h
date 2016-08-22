@@ -428,6 +428,8 @@ typedef enum NodeTag
 	T_OnConflictClause,
 	T_CommonTableExpr,
 	T_RoleSpec,
+	T_JsonObject,
+	T_JsonKeyVal,
 	T_CypherClause,
 	T_CypherMatchClause,
 	T_CypherProjection,

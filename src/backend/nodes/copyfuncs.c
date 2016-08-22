@@ -4128,6 +4128,27 @@ _copyCypherStmt(const CypherStmt *from)
 	return newnode;
 }
 
+static JsonObject *
+_copyJsonObject(const JsonObject *from)
+{
+	JsonObject *newnode = makeNode(JsonObject);
+
+	COPY_NODE_FIELD(keyvals);
+
+	return newnode;
+}
+
+static JsonKeyVal *
+_copyJsonKeyVal(const JsonKeyVal *from)
+{
+	JsonKeyVal *newnode = makeNode(JsonKeyVal);
+
+	COPY_NODE_FIELD(key);
+	COPY_NODE_FIELD(val);
+
+	return newnode;
+}
+
 static CypherClause *
 _copyCypherClause(const CypherClause *from)
 {
@@ -4205,7 +4226,7 @@ _copyCypherNode(const CypherNode *from)
 
 	COPY_NODE_FIELD(variable);
 	COPY_NODE_FIELD(label);
-	COPY_STRING_FIELD(prop_map);
+	COPY_NODE_FIELD(prop_map);
 
 	return newnode;
 }
@@ -4219,7 +4240,7 @@ _copyCypherRel(const CypherRel *from)
 	COPY_NODE_FIELD(variable);
 	COPY_NODE_FIELD(types);
 	COPY_NODE_FIELD(varlen);
-	COPY_STRING_FIELD(prop_map);
+	COPY_NODE_FIELD(prop_map);
 
 	return newnode;
 }
@@ -4253,7 +4274,8 @@ _copyGraphVertex(const GraphVertex *from)
 
 	COPY_STRING_FIELD(variable);
 	COPY_STRING_FIELD(label);
-	COPY_STRING_FIELD(prop_map);
+	COPY_NODE_FIELD(prop_map);
+	COPY_NODE_FIELD(es_prop_map);
 	COPY_SCALAR_FIELD(create);
 
 	return newnode;
@@ -4267,7 +4289,8 @@ _copyGraphEdge(const GraphEdge *from)
 	COPY_SCALAR_FIELD(direction);
 	COPY_STRING_FIELD(variable);
 	COPY_STRING_FIELD(label);
-	COPY_STRING_FIELD(prop_map);
+	COPY_NODE_FIELD(prop_map);
+	COPY_NODE_FIELD(es_prop_map);
 
 	return newnode;
 }
@@ -5133,6 +5156,12 @@ copyObject(const void *from)
 			break;
 		case T_RoleSpec:
 			retval = _copyRoleSpec(from);
+			break;
+		case T_JsonObject:
+			retval = _copyJsonObject(from);
+			break;
+		case T_JsonKeyVal:
+			retval = _copyJsonKeyVal(from);
 			break;
 		case T_CypherClause:
 			retval = _copyCypherClause(from);
