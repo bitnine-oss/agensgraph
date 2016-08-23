@@ -443,9 +443,13 @@ RETURN id(a) = start(c) AND "end"(c) = id(b) AS atob,
 
 -- wrong cases (duplicated variable)
 CREATE (a), (a);
-ERROR:  variable "a" already exists
+ERROR:  there must be at least one relationship
+LINE 1: CREATE (a), (a);
+                     ^
 CREATE (a:regvlabel1), (b:regvlabel2), (a:regvlabel);
 ERROR:  variable "a" already exists
+LINE 1: CREATE (a:regvlabel1), (b:regvlabel2), (a:regvlabel);
+                                                ^
 -- wrong cases (label)
 CREATE (a:regvlabel1:regvlabel2);
 ERROR:  syntax error at or near ":"
@@ -455,9 +459,9 @@ CREATE (:regvlabel1)-['{"reltype": "empty"}']->(:regvlabel2);
 ERROR:  a single relationship type must be specified for CREATE
 -- wrong cases (bi-directional relationship)
 CREATE (:regvlabel1 '{"name": "insert v1-3"}')-[:regelabel1]-(:regvlabel2 '{"name": "insert v2-3"}');
-ERROR:  only directed relationships are supported in CREATE
+ERROR:  only directed relationships are allowed in CREATE
 CREATE (:regvlabel1 '{"name": "insert v1-4"}')<-[:regelabel1]->(:regvlabel2 '{"name": "insert v2-4"}');
-ERROR:  only directed relationships are supported in CREATE
+ERROR:  only directed relationships are allowed in CREATE
 -- multiple CREATE's
 MATCH (a:regvlabel1), (b:regvlabel2)
 CREATE p=(a)-[:regelabel1 '{"name": "edge1"}']->(b)

@@ -29,6 +29,7 @@
 
 #include "postgres.h"
 
+#include "nodes/graphnodes.h"
 #include "nodes/relation.h"
 #include "utils/datum.h"
 
@@ -2620,15 +2621,6 @@ _equalCypherProjection(const CypherProjection *a, const CypherProjection *b)
 }
 
 static bool
-_equalCypherPath(const CypherPath *a, const CypherPath *b)
-{
-	COMPARE_NODE_FIELD(variable);
-	COMPARE_NODE_FIELD(chain);
-
-	return true;
-}
-
-static bool
 _equalCypherCreateClause(const CypherCreateClause *a,
 						 const CypherCreateClause *b)
 {
@@ -2648,12 +2640,20 @@ _equalCypherDeleteClause(const CypherDeleteClause *a,
 }
 
 static bool
+_equalCypherPath(const CypherPath *a, const CypherPath *b)
+{
+	COMPARE_NODE_FIELD(variable);
+	COMPARE_NODE_FIELD(chain);
+
+	return true;
+}
+
+static bool
 _equalCypherNode(const CypherNode *a, const CypherNode *b)
 {
 	COMPARE_NODE_FIELD(variable);
 	COMPARE_NODE_FIELD(label);
 	COMPARE_STRING_FIELD(prop_map);
-	COMPARE_SCALAR_FIELD(create);
 
 	return true;
 }
@@ -2674,6 +2674,37 @@ static bool
 _equalCypherName(const CypherName *a, const CypherName *b)
 {
 	COMPARE_STRING_FIELD(name);
+
+	return true;
+}
+
+static bool
+_equalGraphPath(const GraphPath *a, const GraphPath *b)
+{
+	COMPARE_STRING_FIELD(variable);
+	COMPARE_NODE_FIELD(chain);
+
+	return true;
+}
+
+static bool
+_equalGraphVertex(const GraphVertex *a, const GraphVertex *b)
+{
+	COMPARE_STRING_FIELD(variable);
+	COMPARE_STRING_FIELD(label);
+	COMPARE_STRING_FIELD(prop_map);
+	COMPARE_SCALAR_FIELD(create);
+
+	return true;
+}
+
+static bool
+_equalGraphEdge(const GraphEdge *a, const GraphEdge *b)
+{
+	COMPARE_SCALAR_FIELD(direction);
+	COMPARE_STRING_FIELD(variable);
+	COMPARE_STRING_FIELD(label);
+	COMPARE_STRING_FIELD(prop_map);
 
 	return true;
 }
@@ -3446,6 +3477,19 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherName:
 			retval = _equalCypherName(a, b);
+			break;
+
+			/*
+			 * GRAPH NODES
+			 */
+		case T_GraphPath:
+			retval = _equalGraphPath(a, b);
+			break;
+		case T_GraphVertex:
+			retval = _equalGraphVertex(a, b);
+			break;
+		case T_GraphEdge:
+			retval = _equalGraphEdge(a, b);
 			break;
 
 		default:
