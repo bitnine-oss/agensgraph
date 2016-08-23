@@ -13,6 +13,7 @@
 #include "ag_const.h"
 #include "access/heapam.h"
 #include "catalog/pg_type.h"
+#include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_agg.h"
@@ -59,10 +60,10 @@ static bool arePathsConnected(CypherPath *p1, CypherPath *p2);
 static void transformComponents(List *components, PatternCtx *ctx,
 								List **fromClause, List **targetList,
 								Node **whereClause);
-static Node *transformCypherNode(CypherNode *node, PatternCtx *ctx,
+static Node *transformCypherNode(CypherNode *cnode, PatternCtx *ctx,
 					List **fromClause, List **targetList, Node **whereClause,
 					List **nodeVars);
-static RangeVar *transformCypherRel(CypherRel *rel, Node *left, Node *right,
+static RangeVar *transformCypherRel(CypherRel *crel, Node *left, Node *right,
 					List **fromClause, List **targetList, Node **whereClause,
 					List **relVars);
 static Node *findNodeVar(List *nodeVars, char *varname);
@@ -80,7 +81,11 @@ static Node *addNodeDupQual(Node *qual, List *nodeVars);
 static Node *addRelDupQual(Node *qual, List *relVars);
 static List *transformCreatePattern(ParseState *pstate, List *pattern,
 									PatternCtx *ctx, List **targetList);
-static bool isNodeForReference(CypherNode *node);
+static GraphVertex *transformCreateVertex(ParseState *pstate, CypherNode *cnode,
+										  PatternCtx *ctx, List **targetList);
+static GraphEdge *transformCreateEdge(ParseState *pstate, CypherRel *crel,
+									  PatternCtx *ctx, List **targetList);
+static bool isNodeForReference(CypherNode *cnode);
 static ResTarget *makeDummyVertex(char *varname);
 static ResTarget *makeDummyEdge(char *varname);
 static char *getLabelFromElem(Node *elem);
@@ -685,16 +690,16 @@ transformComponents(List *components, PatternCtx *ctx,
 			bool		out = (pathname != NULL);
 			List	   *vertices = NIL;
 			List	   *edges = NIL;
-			ListCell   *e;
-			CypherNode *node;
-			CypherRel  *rel;
+			ListCell   *le;
+			CypherNode *cnode;
+			CypherRel  *crel;
 			Node	   *left;
 			Node	   *right;
 			RangeVar   *r;
 
-			e = list_head(p->chain);
-			node = lfirst(e);
-			left = transformCypherNode(node, ctx,
+			le = list_head(p->chain);
+			cnode = lfirst(le);
+			left = transformCypherNode(cnode, ctx,
 									   fromClause, targetList, whereClause,
 									   &nodeVars);
 			if (out)
@@ -702,23 +707,23 @@ transformComponents(List *components, PatternCtx *ctx,
 
 			for (;;)
 			{
-				e = lnext(e);
+				le = lnext(le);
 
 				/* no more pattern chain (<rel,node> pair) */
-				if (e == NULL)
+				if (le == NULL)
 					break;
 
-				rel = lfirst(e);
+				crel = lfirst(le);
 
-				e = lnext(e);
-				node = lfirst(e);
-				right = transformCypherNode(node, ctx,
+				le = lnext(le);
+				cnode = lfirst(le);
+				right = transformCypherNode(cnode, ctx,
 										fromClause, targetList, whereClause,
 										&nodeVars);
 				if (out)
 					vertices = lappend(vertices, makePathVertex(right));
 
-				r = transformCypherRel(rel, left, right,
+				r = transformCypherRel(crel, left, right,
 									   fromClause, targetList, whereClause,
 									   &relVars);
 				if (out)
@@ -748,7 +753,7 @@ transformComponents(List *components, PatternCtx *ctx,
 }
 
 static Node *
-transformCypherNode(CypherNode *node, PatternCtx *ctx,
+transformCypherNode(CypherNode *cnode, PatternCtx *ctx,
 					List **fromClause, List **targetList, Node **whereClause,
 					List **nodeVars)
 {
@@ -758,7 +763,7 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 	int			location;
 	RangeVar   *r;
 
-	varname = getCypherName(node->variable);
+	varname = getCypherName(cnode->variable);
 
 	/*
 	 * If a node with the same variable was already processed, skip this node.
@@ -787,10 +792,10 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 	 * process the newly introduced node
 	 */
 
-	label = getCypherName(node->label);
+	label = getCypherName(cnode->label);
 	if (label == NULL)
 		label = AG_VERTEX;
-	location = getCypherNameLoc(node->label);
+	location = getCypherNameLoc(cnode->label);
 
 	r = makeRangeVar(AG_GRAPH, label, location);
 	r->inhOpt = INH_YES;
@@ -807,19 +812,19 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 		tuple = makeVertexTuple(r->alias);
 
 		target = makeSelectResTarget(tuple, varname,
-									 getCypherNameLoc(node->variable));
+									 getCypherNameLoc(cnode->variable));
 
 		*targetList = lappend(*targetList, target);
 	}
 
 	/* add property map constraint */
-	if (node->prop_map != NULL)
+	if (cnode->prop_map != NULL)
 	{
 		ColumnRef  *prop_map;
 		Node	   *constraint;
 
 		prop_map = makeAliasColname(r->alias, AG_ELEM_PROP_MAP);
-		constraint = makePropMapConstraint(prop_map, node->prop_map);
+		constraint = makePropMapConstraint(prop_map, cnode->prop_map);
 		*whereClause = qualAndExpr(*whereClause, constraint);
 	}
 
@@ -831,7 +836,7 @@ transformCypherNode(CypherNode *node, PatternCtx *ctx,
 
 /* connect two nodes with a relationship */
 static RangeVar *
-transformCypherRel(CypherRel *rel, Node *left, Node *right,
+transformCypherRel(CypherRel *crel, Node *left, Node *right,
 				   List **fromClause, List **targetList, Node **whereClause,
 				   List **relVars)
 {
@@ -840,7 +845,7 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 	int			location;
 	RangeVar   *r;
 
-	varname = getCypherName(rel->variable);
+	varname = getCypherName(crel->variable);
 
 	/* all relationships are unique */
 	if (checkDupRelVar(*relVars, varname))
@@ -851,14 +856,14 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 						"\"%s\" specified more than once", varname)));
 	}
 
-	if (rel->types == NULL)
+	if (crel->types == NULL)
 	{
 		typename = AG_EDGE;
 		location = -1;
 	}
 	else
 	{
-		Node *type = linitial(rel->types);
+		Node *type = linitial(crel->types);
 
 		/* TODO: support multiple types */
 		typename = getCypherName(type);
@@ -880,24 +885,24 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 		tuple = makeEdgeTuple(r->alias);
 
 		target = makeSelectResTarget(tuple, varname,
-									 getCypherNameLoc(rel->variable));
+									 getCypherNameLoc(crel->variable));
 
 		*targetList = lappend(*targetList, target);
 	}
 
 	/* add property map constraint */
-	if (rel->prop_map != NULL)
+	if (crel->prop_map != NULL)
 	{
 		ColumnRef  *prop_map;
 		Node	   *constraint;
 
 		prop_map = makeAliasColname(r->alias, AG_ELEM_PROP_MAP);
-		constraint = makePropMapConstraint(prop_map, rel->prop_map);
+		constraint = makePropMapConstraint(prop_map, crel->prop_map);
 		*whereClause = qualAndExpr(*whereClause, constraint);
 	}
 
 	/* <node,rel,node> JOIN conditions */
-	if (rel->direction == CYPHER_REL_DIR_NONE)
+	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
 		Node	   *lexpr;
 		Node	   *rexpr;
@@ -908,13 +913,13 @@ transformCypherRel(CypherRel *rel, Node *left, Node *right,
 		nexpr = (Node *) makeBoolExpr(OR_EXPR, list_make2(lexpr, rexpr), -1);
 		*whereClause = qualAndExpr(*whereClause, nexpr);
 	}
-	else if (rel->direction == CYPHER_REL_DIR_LEFT)
+	else if (crel->direction == CYPHER_REL_DIR_LEFT)
 	{
 		*whereClause = qualAndExpr(*whereClause, makeDirQual(right, r, left));
 	}
 	else
 	{
-		Assert(rel->direction == CYPHER_REL_DIR_RIGHT);
+		Assert(crel->direction == CYPHER_REL_DIR_RIGHT);
 		*whereClause = qualAndExpr(*whereClause, makeDirQual(left, r, right));
 	}
 
@@ -1170,138 +1175,68 @@ addRelDupQual(Node *qual, List *relVars)
 	return qual;
 }
 
-/* NOTE: This function modifies `pattern` and `ctx`. */
+/* NOTE: This function modifies `ctx` and `targetList`. */
 static List *
 transformCreatePattern(ParseState *pstate, List *pattern, PatternCtx *ctx,
 					   List **targetList)
 {
-	List	   *vertexVars = NIL;
-	List	   *edgeVars = NIL;
-	List	   *valueVars = NIL;
+	PatternCtx	_ctx = {NULL, NIL, NIL, NIL};
+	List	   *queryPattern = NIL;
 	ListCell   *lp;
 
-	/* get variables come from previous clause */
-	if (ctx != NULL)
-	{
-		vertexVars = ctx->vertices;
-		edgeVars = ctx->edges;
-		valueVars = ctx->values;
-	}
+	if (ctx == NULL)
+		ctx = &_ctx;
 
 	foreach(lp, pattern)
 	{
 		CypherPath *p = (CypherPath *) lfirst(lp);
 		char	   *pathname = getCypherName(p->variable);
 		bool		out = (pathname != NULL);
-		ListCell   *e;
+		List	   *gchain = NIL;
+		GraphPath  *gpath;
+		ListCell   *le;
 
 		if (out)
 		{
 			/* check variable name duplication */
-			if (isStringValueIn(vertexVars, pathname) ||
-				isStringValueIn(edgeVars, pathname) ||
-				isStringValueIn(valueVars, pathname))
+			if (isStringValueIn(ctx->vertices, pathname) ||
+				isStringValueIn(ctx->edges, pathname) ||
+				isStringValueIn(ctx->values, pathname))
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
 						 errmsg("variable \"%s\" already exists", pathname)));
 		}
 
-		foreach(e, p->chain)
+		foreach(le, p->chain)
 		{
-			Node	   *elem = (Node *) lfirst(e);
-			char	   *varname;
-			ResTarget  *target;
+			Node *elem = (Node *) lfirst(le);
 
 			if (nodeTag(elem) == T_CypherNode)
 			{
-				CypherNode *node = (CypherNode *) elem;
+				CypherNode *cnode = (CypherNode *) elem;
+				GraphVertex *gvertex;
 
-				varname = getCypherName(node->variable);
+				gvertex = transformCreateVertex(pstate, cnode, ctx, targetList);
 
-				if (isStringValueIn(edgeVars, varname) ||
-					isStringValueIn(valueVars, varname))
+				if (!gvertex->create && list_length(p->chain) <= 1)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("variable \"%s\" already exists",
-									varname)));
+							 errmsg("there must be at least one relationship"),
+							 parser_errposition(pstate,
+										getCypherNameLoc(cnode->variable))));
 
-				if (isStringValueIn(vertexVars, varname))
-				{
-					node->create = false;
-
-					/*
-					 * This node references a vertex in the previous clause.
-					 * So, it can only have a variable and it must have
-					 * at least one relationship.
-					 */
-					if (!isNodeForReference(node) || list_length(p->chain) <= 1)
-						ereport(ERROR,
-								(errcode(ERRCODE_SYNTAX_ERROR),
-								 errmsg("variable \"%s\" already exists",
-										varname)));
-				}
-				else
-				{
-					node->create = true;
-
-					if (varname != NULL)
-					{
-						/*
-						 * Create a room for a newly created vertex.
-						 * This dummy value will be replaced with the vertex
-						 * in ExecCypherCreate().
-						 */
-						target = makeDummyVertex(varname);
-						*targetList = lappend(*targetList, target);
-
-						/* to check variable name duplication */
-						vertexVars = lappend(vertexVars,
-											 makeString(pstrdup(varname)));
-					}
-				}
+				gchain = lappend(gchain, gvertex);
 			}
 			else
 			{
-				CypherRel *rel = (CypherRel *) elem;
+				CypherRel  *crel = (CypherRel *) elem;
+				GraphEdge  *gedge;
 
 				Assert(nodeTag(elem) == T_CypherRel);
 
-				if (rel->direction == CYPHER_REL_DIR_NONE)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("only directed relationships are supported in CREATE")));
+				gedge = transformCreateEdge(pstate, crel, ctx, targetList);
 
-				if (list_length(rel->types) != 1)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("a single relationship type must be specified for CREATE")));
-
-				varname = getCypherName(rel->variable);
-
-				/*
-				 * We cannot reference an edge from the previous clause in
-				 * CREATE clause.
-				 */
-				if (isStringValueIn(vertexVars, varname) ||
-					isStringValueIn(edgeVars, varname) ||
-					isStringValueIn(valueVars, varname))
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("variable \"%s\" already exists",
-									varname)));
-
-				if (varname != NULL)
-				{
-					/*
-					 * Create a room for a newly created edge.
-					 * This dummy value will be replaced with the edge
-					 * in ExecCypherCreate().
-					 */
-					target = makeDummyEdge(varname);
-					*targetList = lappend(*targetList, target);
-
-					edgeVars = lappend(edgeVars, makeString(pstrdup(varname)));
-				}
+				gchain = lappend(gchain, gedge);
 			}
 
 			preventDropLabel(pstate, getLabelFromElem(elem));
@@ -1322,16 +1257,154 @@ transformCreatePattern(ParseState *pstate, List *pattern, PatternCtx *ctx,
 
 			*targetList = lappend(*targetList, target);
 		}
+
+		gpath = (GraphPath *) makeNode(GraphPath);
+		if (pathname != NULL)
+			gpath->variable = pstrdup(pathname);
+		gpath->chain = gchain;
+
+		queryPattern = lappend(queryPattern, gpath);
 	}
 
-	return pattern;
+	return queryPattern;
+}
+
+static GraphVertex *
+transformCreateVertex(ParseState *pstate, CypherNode *cnode, PatternCtx *ctx,
+					  List **targetList)
+{
+	char	   *varname;
+	bool		create;
+	GraphVertex *gvertex;
+
+	varname = getCypherName(cnode->variable);
+
+	if (isStringValueIn(ctx->edges, varname) ||
+		isStringValueIn(ctx->values, varname))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("variable \"%s\" already exists", varname),
+				 parser_errposition(pstate,
+									getCypherNameLoc(cnode->variable))));
+
+	if (isStringValueIn(ctx->vertices, varname))
+	{
+		/*
+		 * This node references a vertex in the previous clause.
+		 * So, it can only have a variable.
+		 */
+		if (!isNodeForReference(cnode))
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("variable \"%s\" already exists", varname),
+					 parser_errposition(pstate,
+										getCypherNameLoc(cnode->variable))));
+
+		create = false;
+	}
+	else
+	{
+		if (varname != NULL)
+		{
+			ResTarget *target;
+
+			/*
+			 * Create a room for a newly created vertex.
+			 * This dummy value will be replaced with the vertex
+			 * in ExecCypherCreate().
+			 */
+			target = makeDummyVertex(varname);
+			*targetList = lappend(*targetList, target);
+
+			/* to check variable name duplication */
+			ctx->vertices = lappend(ctx->vertices,
+									makeString(pstrdup(varname)));
+		}
+
+		create = true;
+	}
+
+	gvertex = (GraphVertex *) makeNode(GraphVertex);
+	if (varname != NULL)
+		gvertex->variable = pstrdup(varname);
+	if (cnode->label != NULL)
+		gvertex->label = pstrdup(getCypherName(cnode->label));
+	if (cnode->prop_map != NULL)
+		gvertex->prop_map = pstrdup(cnode->prop_map);
+	gvertex->create = create;
+
+	return gvertex;
+}
+
+static GraphEdge *
+transformCreateEdge(ParseState *pstate, CypherRel *crel, PatternCtx *ctx,
+					List **targetList)
+{
+	char	   *varname;
+	GraphEdge  *gedge;
+
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("only directed relationships are allowed in CREATE")));
+
+	if (list_length(crel->types) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("a single relationship type must be specified for CREATE")));
+
+	varname = getCypherName(crel->variable);
+
+	/* We cannot reference an edge from the previous clause in CREATE clause. */
+	if (isStringValueIn(ctx->vertices, varname) ||
+		isStringValueIn(ctx->edges, varname) ||
+		isStringValueIn(ctx->values, varname))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("variable \"%s\" already exists", varname),
+				 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
+
+	if (varname != NULL)
+	{
+		ResTarget *target;
+		/*
+		 * Create a room for a newly created edge.
+		 * This dummy value will be replaced with the edge
+		 * in ExecCypherCreate().
+		 */
+		target = makeDummyEdge(varname);
+		*targetList = lappend(*targetList, target);
+
+		ctx->edges = lappend(ctx->edges, makeString(pstrdup(varname)));
+	}
+
+	gedge = (GraphEdge *) makeNode(GraphEdge);
+	switch (crel->direction)
+	{
+		case CYPHER_REL_DIR_LEFT:
+			gedge->direction = GRAPH_EDGE_DIR_LEFT;
+			break;
+		case CYPHER_REL_DIR_RIGHT:
+			gedge->direction = GRAPH_EDGE_DIR_RIGHT;
+			break;
+		case CYPHER_REL_DIR_NONE:
+		default:
+			elog(ERROR, "invalid direction");
+	}
+	if (varname != NULL)
+		gedge->variable = pstrdup(varname);
+	gedge->label = pstrdup(getCypherName(linitial(crel->types)));
+	if (crel->prop_map != NULL)
+		gedge->prop_map = pstrdup(crel->prop_map);
+
+	return gedge;
 }
 
 static bool
-isNodeForReference(CypherNode *node)
+isNodeForReference(CypherNode *cnode)
 {
-	return (getCypherName(node->variable) != NULL &&
-			getCypherName(node->label) == NULL && node->prop_map == NULL);
+	return (getCypherName(cnode->variable) != NULL &&
+			getCypherName(cnode->label) == NULL && cnode->prop_map == NULL);
 }
 
 static ResTarget *
@@ -1390,9 +1463,9 @@ getLabelFromElem(Node *elem)
 	{
 		case T_CypherNode:
 			{
-				CypherNode *node = (CypherNode *) elem;
+				CypherNode *cnode = (CypherNode *) elem;
 
-				labname = getCypherName(node->label);
+				labname = getCypherName(cnode->label);
 				if (labname == NULL)
 					labname = AG_VERTEX;
 
@@ -1401,11 +1474,11 @@ getLabelFromElem(Node *elem)
 			break;
 		case T_CypherRel:
 			{
-				CypherRel *rel = (CypherRel *) elem;
+				CypherRel *crel = (CypherRel *) elem;
 
-				Assert(list_length(rel->types) == 1);
+				Assert(list_length(crel->types) == 1);
 
-				return getCypherName(linitial(rel->types));
+				return getCypherName(linitial(crel->types));
 			}
 			break;
 		default:

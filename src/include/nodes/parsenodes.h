@@ -3188,7 +3188,6 @@ typedef struct CypherNode
 	Node	   *variable;	/* CypherName */
 	Node	   *label;		/* CypherName */
 	char	   *prop_map;	/* JSON object string */
-	bool		create;		/* this node will be created */
 } CypherNode;
 
 #define CYPHER_REL_DIR_NONE		0

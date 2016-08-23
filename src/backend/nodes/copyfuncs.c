@@ -23,6 +23,7 @@
 #include "postgres.h"
 
 #include "miscadmin.h"
+#include "nodes/graphnodes.h"
 #include "nodes/plannodes.h"
 #include "nodes/relation.h"
 #include "utils/datum.h"
@@ -4247,7 +4248,6 @@ _copyCypherNode(const CypherNode *from)
 	COPY_NODE_FIELD(variable);
 	COPY_NODE_FIELD(label);
 	COPY_STRING_FIELD(prop_map);
-	COPY_SCALAR_FIELD(create);
 
 	return newnode;
 }
@@ -4273,6 +4273,43 @@ _copyCypherName(const CypherName *from)
 
 	COPY_STRING_FIELD(name);
 	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+static GraphPath *
+_copyGraphPath(const GraphPath *from)
+{
+	GraphPath *newnode = makeNode(GraphPath);
+
+	COPY_STRING_FIELD(variable);
+	COPY_NODE_FIELD(chain);
+
+	return newnode;
+}
+
+static GraphVertex *
+_copyGraphVertex(const GraphVertex *from)
+{
+	GraphVertex *newnode = makeNode(GraphVertex);
+
+	COPY_STRING_FIELD(variable);
+	COPY_STRING_FIELD(label);
+	COPY_STRING_FIELD(prop_map);
+	COPY_SCALAR_FIELD(create);
+
+	return newnode;
+}
+
+static GraphEdge *
+_copyGraphEdge(const GraphEdge *from)
+{
+	GraphEdge *newnode = makeNode(GraphEdge);
+
+	COPY_SCALAR_FIELD(direction);
+	COPY_STRING_FIELD(variable);
+	COPY_STRING_FIELD(label);
+	COPY_STRING_FIELD(prop_map);
 
 	return newnode;
 }
@@ -5171,6 +5208,19 @@ copyObject(const void *from)
 			break;
 		case T_CypherName:
 			retval = _copyCypherName(from);
+			break;
+
+			/*
+			 * GRAPH NODES
+			 */
+		case T_GraphPath:
+			retval = _copyGraphPath(from);
+			break;
+		case T_GraphVertex:
+			retval = _copyGraphVertex(from);
+			break;
+		case T_GraphEdge:
+			retval = _copyGraphEdge(from);
 			break;
 
 		default:

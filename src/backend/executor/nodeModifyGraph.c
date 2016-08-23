@@ -17,6 +17,7 @@
 #include "executor/nodeModifyGraph.h"
 #include "executor/spi.h"
 #include "funcapi.h"
+#include "nodes/graphnodes.h"
 #include "nodes/nodeFuncs.h"
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
@@ -62,13 +63,13 @@ typedef struct ArrayAccessTypeInfo {
 
 static TupleTableSlot *ExecCreateGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
-static Datum createVertex(EState *estate, CypherNode *node, Graphid *vid,
+static Datum createVertex(EState *estate, GraphVertex *gvertex, Graphid *vid,
 						  TupleTableSlot *slot, bool inPath);
-static Datum createEdge(EState *estate, CypherRel *crel, Graphid start,
+static Datum createEdge(EState *estate, GraphEdge *gedge, Graphid start,
 						Graphid end, TupleTableSlot *slot, bool inPath);
-static TupleTableSlot *createPath(EState *estate, CypherPath *path,
+static TupleTableSlot *createPath(EState *estate, GraphPath *path,
 								  TupleTableSlot *slot);
-static Datum findVertex(TupleTableSlot *slot, CypherNode *node, Graphid *vid);
+static Datum findVertex(TupleTableSlot *slot, GraphVertex *node, Graphid *vid);
 static AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
 static Datum copyTupleAsDatum(EState *estate, HeapTuple tuple, Oid tupType);
 static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
@@ -161,7 +162,7 @@ ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	/* create a pattern, accumulated paths `slot` has */
 	foreach(lp, plan->pattern)
 	{
-		CypherPath *path = (CypherPath *) lfirst(lp);
+		GraphPath *path = (GraphPath *) lfirst(lp);
 
 		slot = createPath(estate, path, slot);
 	}
@@ -171,10 +172,9 @@ ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 
 /* create a path and accumulate it to the given slot */
 static TupleTableSlot *
-createPath(EState *estate, CypherPath *path, TupleTableSlot *slot)
+createPath(EState *estate, GraphPath *path, TupleTableSlot *slot)
 {
-	char	   *pathname = getCypherName(path->variable);
-	bool		out = (pathname != NULL);
+	bool		out = (path->variable != NULL);
 	int			pathlen;
 	Datum	   *vertices = NULL;
 	Datum	   *edges = NULL;
@@ -183,7 +183,7 @@ createPath(EState *estate, CypherPath *path, TupleTableSlot *slot)
 	ListCell   *le;
 	Graphid		vid;
 	Graphid		prevvid;
-	CypherRel  *crel = NULL;
+	GraphEdge  *gedge = NULL;
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -204,32 +204,32 @@ createPath(EState *estate, CypherPath *path, TupleTableSlot *slot)
 	{
 		Node *elem = (Node *) lfirst(le);
 
-		if (nodeTag(elem) == T_CypherNode)
+		if (nodeTag(elem) == T_GraphVertex)
 		{
-			CypherNode *node = (CypherNode *) elem;
+			GraphVertex *gvertex = (GraphVertex *) elem;
 			Datum		vertex;
 
-			if (node->create)
-				vertex = createVertex(estate, node, &vid, slot, out);
+			if (gvertex->create)
+				vertex = createVertex(estate, gvertex, &vid, slot, out);
 			else
-				vertex = findVertex(slot, node, &vid);
+				vertex = findVertex(slot, gvertex, &vid);
 
 			if (out)
 				vertices[nvertices++] = vertex;
 
-			if (crel != NULL)
+			if (gedge != NULL)
 			{
 				Datum edge;
 
-				if (crel->direction == CYPHER_REL_DIR_LEFT)
+				if (gedge->direction == GRAPH_EDGE_DIR_LEFT)
 				{
-					edge = createEdge(estate, crel, vid, prevvid, slot, out);
+					edge = createEdge(estate, gedge, vid, prevvid, slot, out);
 				}
 				else
 				{
-					Assert(crel->direction == CYPHER_REL_DIR_RIGHT);
+					Assert(gedge->direction == GRAPH_EDGE_DIR_RIGHT);
 
-					edge = createEdge(estate, crel, prevvid, vid, slot, out);
+					edge = createEdge(estate, gedge, prevvid, vid, slot, out);
 				}
 
 				if (out)
@@ -240,9 +240,9 @@ createPath(EState *estate, CypherPath *path, TupleTableSlot *slot)
 		}
 		else
 		{
-			Assert(nodeTag(elem) == T_CypherRel);
+			Assert(nodeTag(elem) == T_GraphEdge);
 
-			crel = (CypherRel *) elem;
+			gedge = (GraphEdge *) elem;
 		}
 	}
 
@@ -264,7 +264,7 @@ createPath(EState *estate, CypherPath *path, TupleTableSlot *slot)
 
 		MemoryContextSwitchTo(oldMemoryContext);
 
-		setSlotValueByName(slot, graphpath, pathname);
+		setSlotValueByName(slot, graphpath, path->variable);
 	}
 
 	return slot;
@@ -276,7 +276,7 @@ createPath(EState *estate, CypherPath *path, TupleTableSlot *slot)
  * NOTE: This function returns a vertex if it must be in the result(`slot`).
  */
 static Datum
-createVertex(EState *estate, CypherNode *node, Graphid *vid,
+createVertex(EState *estate, GraphVertex *gvertex, Graphid *vid,
 			 TupleTableSlot *slot, bool inPath)
 {
 	char		sqlcmd[SQLCMD_BUFLEN];
@@ -286,16 +286,15 @@ createVertex(EState *estate, CypherNode *node, Graphid *vid,
 	int			ret;
 	TupleDesc	tupDesc;
 	HeapTuple	tuple;
-	char	   *varname;
 	Datum		vertex = (Datum) NULL;
 
-	label = getCypherName(node->label);
+	label = gvertex->label;
 	if (label == NULL)
 		label = AG_VERTEX;
 
 	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_VERTEX, label);
 
-	values[0] = CStringGetJsonbDatum(node->prop_map);
+	values[0] = CStringGetJsonbDatum(gvertex->prop_map);
 
 	ret = SPI_execute_with_args(sqlcmd, SQLCMD_VERTEX_NPARAMS, argTypes,
 								values, NULL, false, 0);
@@ -316,37 +315,32 @@ createVertex(EState *estate, CypherNode *node, Graphid *vid,
 		Assert(!isnull);
 	}
 
-	varname = getCypherName(node->variable);
-
 	/* if this vertex is in the result solely or in some paths, */
-	if (varname != NULL || inPath)
+	if (gvertex->variable != NULL || inPath)
 		vertex = copyTupleAsDatum(estate, tuple, VERTEXOID);
 
-	if (varname != NULL)
-		setSlotValueByName(slot, vertex, varname);
+	if (gvertex->variable != NULL)
+		setSlotValueByName(slot, vertex, gvertex->variable);
 
 	return vertex;
 }
 
 static Datum
-createEdge(EState *estate, CypherRel *crel, Graphid start, Graphid end,
+createEdge(EState *estate, GraphEdge *gedge, Graphid start, Graphid end,
 		   TupleTableSlot *slot, bool inPath)
 {
 	char		sqlcmd[SQLCMD_BUFLEN];
-	char	   *reltype;
 	Datum		values[SQLCMD_EDGE_NPARAMS];
 	Oid			argTypes[SQLCMD_EDGE_NPARAMS] = {GRAPHIDOID, GRAPHIDOID,
 												 JSONBOID};
 	int			ret;
-	char	   *varname;
 	Datum		edge = (Datum) NULL;
 
-	reltype = getCypherName(linitial(crel->types));
-	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_EDGE, reltype);
+	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_EDGE, gedge->label);
 
 	values[0] = getGraphidDatum(start);
 	values[1] = getGraphidDatum(end);
-	values[2] = CStringGetJsonbDatum(crel->prop_map);
+	values[2] = CStringGetJsonbDatum(gedge->prop_map);
 
 	ret = SPI_execute_with_args(sqlcmd, SQLCMD_EDGE_NPARAMS, argTypes, values,
 								NULL, false, 0);
@@ -355,31 +349,26 @@ createEdge(EState *estate, CypherRel *crel, Graphid start, Graphid end,
 	if (SPI_processed != 1)
 		elog(ERROR, "SPI_execute: only one edge per execution must be created");
 
-	varname = getCypherName(crel->variable);
-
-	if (varname != NULL || inPath)
+	if (gedge->variable != NULL || inPath)
 	{
 		HeapTuple tuple = SPI_tuptable->vals[0];
 
 		edge = copyTupleAsDatum(estate, tuple, EDGEOID);
 	}
 
-	if (varname != NULL)
-		setSlotValueByName(slot, edge, varname);
+	if (gedge->variable != NULL)
+		setSlotValueByName(slot, edge, gedge->variable);
 
 	return edge;
 }
 
 static Datum
-findVertex(TupleTableSlot *slot, CypherNode *node, Graphid *vid)
+findVertex(TupleTableSlot *slot, GraphVertex *gvertex, Graphid *vid)
 {
-	char	   *varname;
 	AttrNumber	attno;
 	Datum		vertex;
 
-	varname = getCypherName(node->variable);
-
-	attno = findAttrInSlotByName(slot, varname);
+	attno = findAttrInSlotByName(slot, gvertex->variable);
 
 	vertex = slot->tts_values[attno - 1];
 

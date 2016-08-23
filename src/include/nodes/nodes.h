@@ -468,7 +468,14 @@ typedef enum NodeTag
 	T_InlineCodeBlock,			/* in nodes/parsenodes.h */
 	T_FdwRoutine,				/* in foreign/fdwapi.h */
 	T_IndexAmRoutine,			/* in access/amapi.h */
-	T_TsmRoutine				/* in access/tsmapi.h */
+	T_TsmRoutine,				/* in access/tsmapi.h */
+
+	/*
+	 * TAGS FOR GRAPH NODES (graphnodes.h)
+	 */
+	T_GraphPath = 1050,
+	T_GraphVertex,
+	T_GraphEdge
 } NodeTag;
 
 /*

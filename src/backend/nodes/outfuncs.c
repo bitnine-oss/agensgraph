@@ -26,6 +26,7 @@
 #include <ctype.h>
 
 #include "lib/stringinfo.h"
+#include "nodes/graphnodes.h"
 #include "nodes/plannodes.h"
 #include "nodes/relation.h"
 #include "utils/datum.h"
@@ -3082,7 +3083,6 @@ _outCypherNode(StringInfo str, const CypherNode *node)
 	WRITE_NODE_FIELD(variable);
 	WRITE_NODE_FIELD(label);
 	WRITE_STRING_FIELD(prop_map);
-	WRITE_BOOL_FIELD(create);
 }
 
 static void
@@ -3104,6 +3104,37 @@ _outCypherName(StringInfo str, const CypherName *node)
 
 	WRITE_STRING_FIELD(name);
 	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outGraphPath(StringInfo str, const GraphPath *node)
+{
+	WRITE_NODE_TYPE("GRAPHPATH");
+
+	WRITE_STRING_FIELD(variable);
+	WRITE_NODE_FIELD(chain);
+}
+
+static void
+_outGraphVertex(StringInfo str, const GraphVertex *node)
+{
+	WRITE_NODE_TYPE("GRAPHVERTEX");
+
+	WRITE_STRING_FIELD(variable);
+	WRITE_STRING_FIELD(label);
+	WRITE_STRING_FIELD(prop_map);
+	WRITE_BOOL_FIELD(create);
+}
+
+static void
+_outGraphEdge(StringInfo str, const GraphEdge *node)
+{
+	WRITE_NODE_TYPE("GRAPHEDGE");
+
+	WRITE_INT_FIELD(direction);
+	WRITE_STRING_FIELD(variable);
+	WRITE_STRING_FIELD(label);
+	WRITE_STRING_FIELD(prop_map);
 }
 
 /*
@@ -3669,6 +3700,16 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherName:
 				_outCypherName(str, obj);
+				break;
+
+			case T_GraphPath:
+				_outGraphPath(str, obj);
+				break;
+			case T_GraphVertex:
+				_outGraphVertex(str, obj);
+				break;
+			case T_GraphEdge:
+				_outGraphEdge(str, obj);
 				break;
 
 			default:
