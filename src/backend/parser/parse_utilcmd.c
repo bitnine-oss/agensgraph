@@ -3096,35 +3096,9 @@ makeVertexElements(void)
 {
 	Constraint *pk = makeNode(Constraint);
 	ColumnDef  *id = makeNode(ColumnDef);
-	ColumnDef  *prop_map = makeNode(ColumnDef);
-
-	pk->contype = CONSTR_PRIMARY;
-	pk->location = -1;
-
-	id->colname = AG_ELEM_LOCAL_ID;
-	id->typeName = makeTypeName("bigserial");
-	id->is_local = true;
-	id->constraints = list_make1(pk);
-	id->location = -1;
-
-	prop_map->colname = AG_ELEM_PROP_MAP;
-	prop_map->typeName = makeTypeName("jsonb");
-	prop_map->is_local = true;
-	prop_map->location = -1;
-
-	return list_make2(id, prop_map);
-}
-
-/* make table elements for base `edge` table */
-static List *
-makeEdgeElements(void)
-{
-	Constraint *pk = makeNode(Constraint);
-	ColumnDef  *id = makeNode(ColumnDef);
 	Constraint *notnull = makeNode(Constraint);
-	List	   *constr;
-	ColumnDef  *start = makeNode(ColumnDef);
-	ColumnDef  *end = makeNode(ColumnDef);
+	Constraint *jsonb_empty_obj = makeNode(Constraint);
+	List	   *constrs;
 	ColumnDef  *prop_map = makeNode(ColumnDef);
 
 	pk->contype = CONSTR_PRIMARY;
@@ -3138,24 +3112,73 @@ makeEdgeElements(void)
 
 	notnull->contype = CONSTR_NOTNULL;
 	notnull->location = -1;
-	constr = list_make1(notnull);
+
+	jsonb_empty_obj->contype = CONSTR_DEFAULT;
+	jsonb_empty_obj->raw_expr = (Node *)
+			makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL, -1);
+	jsonb_empty_obj->location = -1;
+
+	constrs = list_make2(notnull, jsonb_empty_obj);
+
+	prop_map->colname = AG_ELEM_PROP_MAP;
+	prop_map->typeName = makeTypeName("jsonb");
+	prop_map->is_local = true;
+	prop_map->constraints = constrs;
+	prop_map->location = -1;
+
+	return list_make2(id, prop_map);
+}
+
+/* make table elements for base `edge` table */
+static List *
+makeEdgeElements(void)
+{
+	Constraint *pk = makeNode(Constraint);
+	ColumnDef  *id = makeNode(ColumnDef);
+	Constraint *notnull = makeNode(Constraint);
+	List	   *constrs;
+	ColumnDef  *start = makeNode(ColumnDef);
+	ColumnDef  *end = makeNode(ColumnDef);
+	Constraint *jsonb_empty_obj = makeNode(Constraint);
+	ColumnDef  *prop_map = makeNode(ColumnDef);
+
+	pk->contype = CONSTR_PRIMARY;
+	pk->location = -1;
+
+	id->colname = AG_ELEM_LOCAL_ID;
+	id->typeName = makeTypeName("bigserial");
+	id->is_local = true;
+	id->constraints = list_make1(pk);
+	id->location = -1;
+
+	notnull->contype = CONSTR_NOTNULL;
+	notnull->location = -1;
+
+	constrs = list_make1(notnull);
 
 	start->colname = AG_START_ID;
 	start->typeName = makeTypeName("graphid");
 	start->is_local = true;
-	start->constraints = constr;
+	start->constraints = copyObject(constrs);
 	start->location = -1;
 
 	end->colname = AG_END_ID;
 	end->typeName = makeTypeName("graphid");
 	end->is_local = true;
-	end->constraints = copyObject(constr);
+	end->constraints = copyObject(constrs);
 	end->location = -1;
+
+	jsonb_empty_obj->contype = CONSTR_DEFAULT;
+	jsonb_empty_obj->raw_expr = (Node *)
+			makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL, -1);
+	jsonb_empty_obj->location = -1;
+
+	constrs = lappend(constrs, jsonb_empty_obj);
 
 	prop_map->colname = AG_ELEM_PROP_MAP;
 	prop_map->typeName = makeTypeName("jsonb");
 	prop_map->is_local = true;
-	prop_map->constraints = constr;
+	prop_map->constraints = constrs;
 	prop_map->location = -1;
 
 	return list_make4(id, start, end, prop_map);
