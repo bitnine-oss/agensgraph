@@ -455,6 +455,7 @@ evalPropMap(ExprState *prop_map, ExprContext *econtext, TupleTableSlot *slot)
 	Datum		datum;
 	bool		isNull;
 	ExprDoneCond isDone;
+	Jsonb	   *jsonb;
 
 	if (prop_map == NULL)
 		return jsonb_build_object_noargs(NULL);
@@ -474,6 +475,12 @@ evalPropMap(ExprState *prop_map, ExprContext *econtext, TupleTableSlot *slot)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("single result is expected for property map")));
+
+	jsonb = DatumGetJsonb(datum);
+	if (!JB_ROOT_IS_OBJECT(jsonb))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("jsonb object is expected for property map")));
 
 	return datum;
 }

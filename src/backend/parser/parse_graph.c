@@ -1080,21 +1080,15 @@ makePropMapConstraint(ColumnRef *prop_map, Node *qualJson)
 static Node *
 postprocessPropMapExpr(Node *prop_map_expr)
 {
-	NodeTag		tag = nodeTag(prop_map_expr);
-	Node	   *result;
+	Node *result = prop_map_expr;
 
-	if (tag == T_JsonObject)
-	{
-		result = prop_map_expr;
-	}
-	else
+	if (nodeTag(prop_map_expr) == T_A_Const)
 	{
 		A_Const *c = (A_Const *) prop_map_expr;
 
-		AssertArg(tag == T_A_Const && nodeTag(&c->val) == T_String);
-
-		result = (Node *) makeFuncCall(list_make1(makeString("jsonb_in")),
-									   list_make1(prop_map_expr), -1);
+		if (nodeTag(&c->val) == T_String)
+			result = (Node *) makeFuncCall(list_make1(makeString("jsonb_in")),
+										   list_make1(prop_map_expr), -1);
 	}
 
 	return result;
@@ -1344,9 +1338,17 @@ transformCreateVertex(ParseState *pstate, CypherNode *cnode, PatternCtx *ctx,
 		}
 
 		if (cnode->prop_map != NULL)
+		{
 			prop_map_expr = transformExpr(pstate,
 									postprocessPropMapExpr(cnode->prop_map),
 									EXPR_KIND_INSERT_TARGET);
+			if (exprType(prop_map_expr) != JSONBOID)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("property map must be jsonb type"),
+						 parser_errposition(pstate,
+											exprLocation(prop_map_expr))));
+		}
 		create = true;
 	}
 
