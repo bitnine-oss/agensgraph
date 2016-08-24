@@ -16,6 +16,8 @@
 #include "access/reloptions.h"
 #include "access/xact.h"
 #include "catalog/ag_inherits.h"
+#include "catalog/ag_graph.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
 #include "catalog/indexing.h"
@@ -42,6 +44,51 @@ static void GetSuperOids(List *supers, char labkind, List **supOids);
 static void StoreCatalogAgInheritance(Oid labid, List *supers);
 static void StoreCatalogAgInheritance1(Oid labid, Oid parentOid, int16 seq,
 									   Relation inhRelation);
+
+/* See ProcessUtilitySlow() case T_CreateSchemaStmt */
+void
+CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString)
+{
+	List	   *parsetree_list;
+	ListCell   *parsetree_item;
+
+	GraphCreate(stmt, queryString);
+
+	parsetree_list = transformCreateGraphStmt(stmt);
+
+	foreach(parsetree_item, parsetree_list)
+	{
+		Node *stmt = lfirst(parsetree_item);
+
+		ProcessUtility(stmt,
+					   queryString,
+					   PROCESS_UTILITY_SUBCOMMAND,
+					   NULL,
+					   None_Receiver,
+					   NULL);
+
+		CommandCounterIncrement();
+	}
+}
+
+void
+RemoveGraphById(Oid graphid)
+{
+	Relation	ag_graph_desc;
+	HeapTuple	tup;
+
+	ag_graph_desc = heap_open(GraphRelationId, RowExclusiveLock);
+
+	tup = SearchSysCache1(GRAPHOID, ObjectIdGetDatum(graphid));
+	if (!HeapTupleIsValid(tup))
+		elog(ERROR, "cache lookup failed for graph %u", graphid);
+
+	simple_heap_delete(ag_graph_desc, &tup->t_self);
+
+	ReleaseSysCache(tup);
+
+	heap_close(ag_graph_desc, RowExclusiveLock);
+}
 
 /* See ProcessUtilitySlow() case T_CreateStmt */
 void

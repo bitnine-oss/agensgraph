@@ -2890,6 +2890,53 @@ setSchemaName(char *context_schema, char **stmt_schema_name)
 
 
 /*
+ * transformCreateGraphStmt - analyzes the CREATE GRAPH statement
+ *
+ * See transformCreateSchemaStmt
+ */
+List *
+transformCreateGraphStmt(CreateGraphStmt *stmt)
+{
+	CreateLabelStmt	*vertex;
+	CreateLabelStmt	*edge;
+	IndexStmt  *start_idx;
+	IndexStmt  *end_idx;
+	IndexElem  *start_col;
+	IndexElem  *end_col;
+
+	vertex = makeNode(CreateLabelStmt);
+	vertex->labelKind = LABEL_VERTEX;
+	vertex->relation = makeRangeVar(stmt->graphname, AG_VERTEX, -1);
+	vertex->inhRelations = NIL;
+
+	edge = makeNode(CreateLabelStmt);
+	edge->labelKind = LABEL_EDGE;
+	edge->relation = makeRangeVar(stmt->graphname, AG_EDGE, -1);
+	edge->inhRelations = NIL;
+
+	start_col = makeNode(IndexElem);
+	start_col->name = AG_START_ID;
+
+	start_idx = makeNode(IndexStmt);
+	start_idx->idxname = "edge_start";
+	start_idx->relation = copyObject(edge->relation);
+	start_idx->accessMethod = DEFAULT_INDEX_TYPE;
+	start_idx->indexParams = list_make1(start_col);
+
+	end_col = makeNode(IndexElem);
+	end_col->name = AG_END_ID;
+
+	end_idx = makeNode(IndexStmt);
+	end_idx->idxname = "edge_end";
+	end_idx->relation = copyObject(edge->relation);
+	end_idx->accessMethod = DEFAULT_INDEX_TYPE;
+	end_idx->indexParams = list_make1(end_col);
+
+	return list_make4(vertex, edge, start_idx, end_idx);
+}
+
+
+/*
  * transformCreateLabelStmt - parse analysis for CREATE VLABEL/ELABEL
  *
  * This function is based on transformCreateStmt().

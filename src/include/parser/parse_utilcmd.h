@@ -26,6 +26,7 @@ extern void transformRuleStmt(RuleStmt *stmt, const char *queryString,
 				  List **actions, Node **whereClause);
 extern List *transformCreateSchemaStmt(CreateSchemaStmt *stmt);
 
+extern List *transformCreateGraphStmt(CreateGraphStmt *stmt);
 extern List *transformCreateLabelStmt(CreateLabelStmt *labelStmt,
 									  const char *queryString);
 

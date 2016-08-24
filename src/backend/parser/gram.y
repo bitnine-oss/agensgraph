@@ -546,7 +546,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <list>	json_key_value_list
 
 /* Agens Graph */
-%type <node>	CreateLabelStmt
+%type <node>	CreateGraphStmt CreateLabelStmt
 
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
@@ -612,7 +612,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
 	FORCE FOREIGN FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
 
-	GLOBAL GRANT GRANTED GREATEST GROUP_P GROUPING
+	GLOBAL GRANT GRANTED GRAPH GREATEST GROUP_P GROUPING
 
 	HANDLER HAVING HEADER_P HOLD HOUR_P
 
@@ -829,6 +829,7 @@ stmt :
 			| CreateForeignTableStmt
 			| CreateFunctionStmt
 			| CreateGroupStmt
+			| CreateGraphStmt
 			| CreateLabelStmt
 			| CreateMatViewStmt
 			| CreateOpClassStmt
@@ -5632,6 +5633,7 @@ drop_type:	TABLE									{ $$ = OBJECT_TABLE; }
 			| TEXT_P SEARCH DICTIONARY				{ $$ = OBJECT_TSDICTIONARY; }
 			| TEXT_P SEARCH TEMPLATE				{ $$ = OBJECT_TSTEMPLATE; }
 			| TEXT_P SEARCH CONFIGURATION			{ $$ = OBJECT_TSCONFIGURATION; }
+			| GRAPH									{ $$ = OBJECT_GRAPH; }
 			| ELABEL								{ $$ = OBJECT_ELABEL; }
 			| VLABEL								{ $$ = OBJECT_VLABEL; }
 		;
@@ -13788,6 +13790,7 @@ unreserved_keyword:
 			| FUNCTIONS
 			| GLOBAL
 			| GRANTED
+			| GRAPH
 			| HANDLER
 			| HEADER_P
 			| HOLD
@@ -14158,6 +14161,41 @@ reserved_keyword:
 /*
  * Agens Graph
  */
+
+CreateGraphStmt:
+			CREATE GRAPH ColId AUTHORIZATION RoleSpec
+				{
+					CreateGraphStmt *n = makeNode(CreateGraphStmt);
+					n->graphname = $3;
+					n->authrole = $5;
+					n->if_not_exists = false;
+					$$ = (Node *) n;
+				}
+			| CREATE GRAPH ColId
+				{
+					CreateGraphStmt *n = makeNode(CreateGraphStmt);
+					n->graphname = $3;
+					n->authrole = NULL;
+					n->if_not_exists = false;
+					$$ = (Node *) n;
+				}
+			| CREATE GRAPH IF_P NOT EXISTS ColId AUTHORIZATION RoleSpec
+				{
+					CreateGraphStmt *n = makeNode(CreateGraphStmt);
+					n->graphname = $6;
+					n->authrole = $8;
+					n->if_not_exists = true;
+					$$ = (Node *) n;
+				}
+			| CREATE GRAPH IF_P NOT EXISTS ColId
+				{
+					CreateGraphStmt *n = makeNode(CreateGraphStmt);
+					n->graphname = $6;
+					n->authrole = NULL;
+					n->if_not_exists = true;
+					$$ = (Node *) n;
+				}
+		;
 
 CreateLabelStmt:
 			CREATE VLABEL qualified_name OptInherit
