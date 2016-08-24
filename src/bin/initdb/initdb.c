@@ -254,7 +254,6 @@ static void setup_dictionary(void);
 static void setup_privileges(void);
 static void set_info_version(void);
 static void setup_schema(void);
-static void setup_graph(void);
 static void load_plpgsql(void);
 static void vacuum_db(void);
 static void make_template0(void);
@@ -2290,46 +2289,6 @@ setup_schema(void)
 	check_ok();
 }
 
-
-/*
- * set up graph object
- */
-static void
-setup_graph(void)
-{
-	PG_CMD_DECL;
-	const char **line;
-	static const char *graph_setup[] = {
-		/*
-		 * Create the default graph schema and top-level base vertex and edge
-		 * labels in the schema.
-		 */
-		"CREATE SCHEMA graph;\n",
-		"CREATE VLABEL vertex;\n",
-		"CREATE ELABEL edge;\n",
-		"CREATE INDEX edge_start ON graph.edge (start);\n",
-		"CREATE INDEX edge_end ON graph.edge (\"end\");\n",
-		NULL
-	};
-
-	fputs(_("initializing graph object ... "), stdout);
-	fflush(stdout);
-
-	snprintf(cmd, sizeof(cmd),
-			 "\"%s\" %s template1 >%s",
-			 backend_exec, backend_options,
-			 DEVNULL);
-
-	PG_CMD_OPEN;
-
-	for (line = graph_setup; *line != NULL; line++)
-		PG_CMD_PUTS(*line);
-
-	PG_CMD_CLOSE;
-
-	check_ok();
-}
-
 /*
  * load PL/pgsql server-side language
  */
@@ -3473,8 +3432,6 @@ initialize_data_directory(void)
 	setup_privileges();
 
 	setup_schema();
-
-	setup_graph();
 
 	load_plpgsql();
 
