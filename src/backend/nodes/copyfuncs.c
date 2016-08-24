@@ -4295,6 +4295,16 @@ _copyGraphEdge(const GraphEdge *from)
 	return newnode;
 }
 
+static CypherLoadFdwClause *
+_copyCypherLoadFdwClause(const CypherLoadFdwClause *from)
+{
+	CypherLoadFdwClause   *newnode = makeNode(CypherLoadFdwClause);
+
+	COPY_NODE_FIELD(relation);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *					pg_list.h copy functions
  * ****************************************************************
@@ -5189,6 +5199,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherName:
 			retval = _copyCypherName(from);
+			break;
+		case T_CypherLoadFdwClause:
+			retval = _copyCypherLoadFdwClause(from);
 			break;
 
 			/*

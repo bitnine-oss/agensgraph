@@ -115,6 +115,9 @@ static ColumnRef *makeAliasIndirection(Alias *alias, Node *indirection);
 static Node *makeColumnProjection(ColumnRef *colref, char *attname);
 #define makeAliasStarTarget(alias) \
 	makeSelectResTarget((Node *) makeAliasStar(alias), NULL, -1)
+#define makeAliasSelfTarget(alias) \
+	makeSelectResTarget((Node *) makeSimpleColumnRef(alias, NULL, -1), \
+						NULL, -1)
 #define makeTypedTuple(args, type_oid) \
 	((Node *) makeTypeCast((Node *) makeTuple(args, -1), \
 						   makeTypeNameByOid(type_oid), -1))
@@ -392,18 +395,18 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 		targetList = lcons(makeAliasStarTarget(ctx->alias), targetList);
 	}
 
+	/*
+	 * Although CREATE clause doesn't have FROM list, we must call
+	 * transformFromClause() to clean up `lateral_only`.
+	 */
+	transformFromClause(pstate, NIL);
+
 	queryPattern = transformCreatePattern(pstate, pattern, ctx, &targetList);
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_GRAPHWRITE;
 	qry->graph.writeOp = GWROP_CREATE;
 	qry->graph.last = (pstate->parentParseState == NULL);
-
-	/*
-	 * Although CREATE clause doesn't have FROM list, we must call
-	 * transformFromClause() to clean up `lateral_only`.
-	 */
-	transformFromClause(pstate, NIL);
 
 	qry->targetList = transformTargetList(pstate, targetList,
 										  EXPR_KIND_SELECT_TARGET);
@@ -482,6 +485,43 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	assign_query_collations(pstate, qry);
 
 	return qry;
+}
+
+Query *
+transformCypherLoadFdwClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherLoadFdwClause *detail = (CypherLoadFdwClause *) clause->detail;
+	RangeVar *relation = detail->relation;
+	SELECT_INFO(selinfo);
+
+
+	selinfo.from = lappend(selinfo.from, relation);
+
+	selinfo.target = lcons(makeAliasSelfTarget(relation->alias->aliasname),
+						   selinfo.target);
+
+	/*
+	 * Transform previous CypherClause as a RangeSubselect first.
+	 * It must be transformed at here because when transformComponents(),
+	 * variables in the pattern which are in the resulting variables of
+	 * the previous CypherClause must be excluded from fromClause.
+	 */
+	if (clause->prev != NULL)
+	{
+		RangeTblEntry	*rte;
+		RangePrevclause *r;
+		PatternCtx		*ctx = NULL;
+
+		r = makeRangePrevclause(clause->prev);
+		rte = transformRangePrevclause(pstate, r);
+		ctx = makePatternCtx(rte);
+
+		/* add all columns in the result of previous CypherClause */
+		selinfo.target = lcons(makeAliasStarTarget(ctx->alias),
+							   selinfo.target);
+	}
+
+	return transformSelectInfo(pstate, &selinfo);
 }
 
 static PatternCtx *
@@ -1072,7 +1112,7 @@ makePropMapConstraint(ColumnRef *prop_map, Node *qualJson)
 
 	processed = postprocessPropMapExpr(qualJson);
 	constraint = makeA_Expr(AEXPR_OP, list_make1(makeString("@>")),
-							prop_map, processed, -1);
+							(Node *) prop_map, processed, -1);
 
 	return (Node *) constraint;
 }

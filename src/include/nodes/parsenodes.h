@@ -3226,4 +3226,15 @@ getCypherNameLoc(Node *n)
 	return ((CypherName *) n)->location;
 }
 
+
+/* ----------------------
+ *		LOAD FDW Statement
+ * ----------------------
+ */
+typedef struct CypherLoadFdwClause
+{
+	NodeTag		type;
+	RangeVar   *relation;		/* the relation to load */
+} CypherLoadFdwClause;
+
 #endif   /* PARSENODES_H */
