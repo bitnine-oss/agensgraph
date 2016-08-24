@@ -28,5 +28,6 @@ extern List *transformCreateSchemaStmt(CreateSchemaStmt *stmt);
 
 extern List *transformCreateLabelStmt(CreateLabelStmt *labelStmt,
 									  const char *queryString);
+extern List *transformCreateGraphStmt(CreateGraphStmt *stmt);
 
 #endif   /* PARSE_UTILCMD_H */

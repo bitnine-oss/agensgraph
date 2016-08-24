@@ -16,6 +16,7 @@
 #include "access/reloptions.h"
 #include "access/xact.h"
 #include "catalog/ag_inherits.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
 #include "catalog/indexing.h"
@@ -267,4 +268,31 @@ CheckDropLabel(ObjectType removeType, Oid labid)
 				 errmsg("cannot drop base edge label")));
 
 	ReleaseSysCache(tuple);
+}
+
+/* See ProcessUtilitySlow() case T_CreateSchemaStmt */
+void
+CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString)
+{
+	List	   *parsetree_list;
+	ListCell   *parsetree_item;
+
+	/* insert tuple to graph catalog ag_graph and create schema */
+	GraphCreate(stmt, queryString);
+
+	parsetree_list = transformCreateGraphStmt(stmt);
+
+	foreach(parsetree_item, parsetree_list)
+	{
+		Node	   *stmt = (Node *) lfirst(parsetree_item);
+
+		ProcessUtility(stmt,
+					   queryString,
+					   PROCESS_UTILITY_SUBCOMMAND,
+					   NULL,
+					   None_Receiver,
+					   NULL);
+
+		CommandCounterIncrement();
+	}
 }

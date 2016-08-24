@@ -16,6 +16,8 @@
 
 #include "access/htup_details.h"
 #include "access/xact.h"
+#include "catalog/ag_graph.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
 #include "catalog/dependency.h"
@@ -1273,6 +1275,10 @@ doDeletion(const ObjectAddress *object, int flags)
 			DropTransformById(object->objectId);
 			break;
 
+		case OCLASS_GRAPH:
+			graph_drop_with_catalog(object->objectId);
+			break;
+
 		case OCLASS_LABEL:
 			label_drop_with_catalog(object->objectId);
 			break;
@@ -2420,6 +2426,9 @@ getObjectClass(const ObjectAddress *object)
 
 		case TransformRelationId:
 			return OCLASS_TRANSFORM;
+
+		case GraphRelationId:
+			return OCLASS_GRAPH;
 
 		case LabelRelationId:
 			return OCLASS_LABEL;

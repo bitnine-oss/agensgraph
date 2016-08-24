@@ -2998,6 +2998,12 @@ get_range_subtype(Oid rangeOid)
 		return InvalidOid;
 }
 
+/*				---------- AG_GRAPH CACHE ----------				 */
+Oid
+get_graphname_graphid(const char *graphname)
+{
+	return GetSysCacheOid1(GRAPHNAME, PointerGetDatum(graphname));
+}
 
 /*				---------- AG_LABEL CACHE ----------				 */
 

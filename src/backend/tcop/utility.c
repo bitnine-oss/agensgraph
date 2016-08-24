@@ -209,6 +209,7 @@ check_xact_readonly(Node *parsetree)
 		case T_CreateForeignTableStmt:
 		case T_ImportForeignSchemaStmt:
 		case T_SecLabelStmt:
+		case T_CreateGraphStmt:
 		case T_CreateLabelStmt:
 			PreventCommandIfReadOnly(CreateCommandTag(parsetree));
 			PreventCommandIfParallelMode(CreateCommandTag(parsetree));
@@ -1517,6 +1518,11 @@ ProcessUtilitySlow(Node *parsetree,
 				address = ExecSecLabelStmt((SecLabelStmt *) parsetree);
 				break;
 
+			case T_CreateGraphStmt:
+				CreateGraphCommand((CreateGraphStmt *) parsetree, queryString);
+				commandCollected = true;
+				break;
+
 			case T_CreateLabelStmt:
 				CreateLabelCommand((CreateLabelStmt *) parsetree, queryString,
 								   params);
@@ -1577,10 +1583,6 @@ ExecDropStmt(DropStmt *stmt, bool isTopLevel)
 		case OBJECT_FOREIGN_TABLE:
 			RemoveRelations(stmt);
 			break;
-
-		case OBJECT_ELABEL:
-		case OBJECT_VLABEL:
-			/* fall through */
 
 		default:
 			RemoveObjects(stmt);
@@ -2020,6 +2022,10 @@ CreateCommandTag(Node *parsetree)
 			tag = "CREATE TABLE";
 			break;
 
+		case T_CreateGraphStmt:
+			tag = "CREATE GRAPH";
+			break;
+
 		case T_CreateLabelStmt:
 			{
 				CreateLabelStmt *stmt = (CreateLabelStmt *) parsetree;
@@ -2191,6 +2197,9 @@ CreateCommandTag(Node *parsetree)
 					break;
 				case OBJECT_TRANSFORM:
 					tag = "DROP TRANSFORM";
+					break;
+				case OBJECT_GRAPH:
+					tag = "DROP GRAPH";
 					break;
 				case OBJECT_ELABEL:
 					tag = "DROP ELABEL";
@@ -2766,6 +2775,10 @@ GetCommandLogLevel(Node *parsetree)
 
 		case T_CreateStmt:
 		case T_CreateForeignTableStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_CreateGraphStmt:
 			lev = LOGSTMT_DDL;
 			break;
 
