@@ -551,11 +551,12 @@ static Node *wrapCypherWithSelect(Node *stmt);
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
 				cypher_create cypher_delete cypher_label_opt cypher_limit_opt
-				cypher_match cypher_no_parens cypher_node cypher_path
-				cypher_path_opt_varirable cypher_prop_map_opt cypher_range_idx
-				cypher_range_idx_opt cypher_range_opt cypher_rel cypher_return
-				cypher_skip_opt cypher_variable cypher_variable_opt
-				cypher_varlen_opt cypher_with cypher_with_parens
+				cypher_load_fdw cypher_match cypher_no_parens cypher_node
+				cypher_path cypher_path_opt_varirable cypher_prop_map_opt
+				cypher_range_idx cypher_range_idx_opt cypher_range_opt
+				cypher_rel cypher_return cypher_skip_opt cypher_variable
+				cypher_variable_opt cypher_varlen_opt cypher_with
+				cypher_with_parens
 %type <list>	cypher_distinct_opt cypher_expr_list cypher_path_chain
 				cypher_path_chain_opt_parens cypher_pattern
 				cypher_types cypher_types_opt
@@ -608,7 +609,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
 	EXTENSION EXTERNAL EXTRACT
 
-	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
+	FALSE_P FAMILY FDW FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
 	FORCE FOREIGN FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
 
 	GLOBAL GRANT GRANTED GREATEST GROUP_P GROUPING
@@ -8796,7 +8797,6 @@ LoadStmt:	LOAD file_name
 				}
 		;
 
-
 /*****************************************************************************
  *
  *		CREATE DATABASE
@@ -13748,6 +13748,7 @@ unreserved_keyword:
 			| EXTENSION
 			| EXTERNAL
 			| FAMILY
+			| FDW
 			| FILTER
 			| FIRST_P
 			| FOLLOWING
@@ -13788,7 +13789,6 @@ unreserved_keyword:
 			| LEAKPROOF
 			| LEVEL
 			| LISTEN
-			| LOAD
 			| LOCAL
 			| LOCATION
 			| LOCK_P
@@ -14087,6 +14087,7 @@ reserved_keyword:
 			| LATERAL_P
 			| LEADING
 			| LIMIT
+			| LOAD
 			| LOCALTIME
 			| LOCALTIMESTAMP
 			| MATCH
@@ -14201,6 +14202,7 @@ cypher_clause_head:
 			cypher_match
 			| cypher_return
 			| cypher_create
+			| cypher_load_fdw
 		;
 
 cypher_clause:
@@ -14273,6 +14275,17 @@ cypher_delete:
 cypher_detach_opt:
 			DETACH				{ $$ = true; }
 			| /* EMPTY */		{ $$ = false; }
+		;
+
+cypher_load_fdw:
+			LOAD FDW qualified_name AS ColId
+				{
+					CypherLoadFdwClause *n = makeNode(CypherLoadFdwClause);
+					n->relation = $3;
+					n->relation->alias = makeNode(Alias);
+					n->relation->alias->aliasname = $5;
+					$$ = (Node *)n;
+				}
 		;
 
 cypher_pattern:
