@@ -283,9 +283,6 @@ void		create_xlog_or_symlink(void);
 void		warn_on_mount_point(int error);
 void		initialize_data_directory(void);
 
-/* for agensgraph */
-static void setup_graph(FILE *cmdfd);
-
 /*
  * macros for running pipes to postgres
  */
@@ -2073,46 +2070,6 @@ setup_schema(FILE *cmdfd)
 				   escape_quotes(features_file));
 }
 
-
-/*
- * set up graph object
- */
-static void
-setup_graph(FILE *cmdfd)
-{
-	PG_CMD_DECL;
-	const char **line;
-	static const char *graph_setup[] = {
-		/*
-		 * Create the default graph schema and top-level base vertex and edge
-		 * labels in the schema.
-		 */
-		"CREATE SCHEMA graph;\n",
-		"CREATE VLABEL vertex;\n",
-		"CREATE ELABEL edge;\n",
-		"CREATE INDEX edge_start ON graph.edge (start);\n",
-		"CREATE INDEX edge_end ON graph.edge (\"end\");\n",
-		NULL
-	};
-
-	fputs(_("initializing graph object ... "), stdout);
-	fflush(stdout);
-
-	snprintf(cmd, sizeof(cmd),
-			 "\"%s\" %s template1 >%s",
-			 backend_exec, backend_options,
-			 DEVNULL);
-
-	PG_CMD_OPEN;
-
-	for (line = graph_setup; *line != NULL; line++)
-		PG_CMD_PUTS(*line);
-
-	PG_CMD_CLOSE;
-
-	check_ok();
-}
-
 /*
  * load PL/pgsql server-side language
  */
@@ -3210,9 +3167,7 @@ initialize_data_directory(void)
 
 	setup_graph(cmdfd);
 
-	load_plpgsql(cmdfd);
-
-	vacuum_db(cmdfd);
+	load_plpgsql();
 
 	make_template0(cmdfd);
 

@@ -316,6 +316,12 @@ DECLARE_UNIQUE_INDEX(pg_replication_origin_roiident_index, 6001, on pg_replicati
 DECLARE_UNIQUE_INDEX(pg_replication_origin_roname_index, 6002, on pg_replication_origin using btree(roname text_pattern_ops));
 #define ReplicationOriginNameIndex 6002
 
+DECLARE_UNIQUE_INDEX(ag_graph_oid_index, 7041, on ag_graph using btree(oid oid_ops));
+#define GraphOidIndexId 7041
+
+DECLARE_UNIQUE_INDEX(ag_graph_graphname_index, 7042, on ag_graph using btree(graphname name_ops));
+#define GraphNameIndexId 7042
+
 DECLARE_UNIQUE_INDEX(ag_label_oid_index, 7046, on ag_label using btree(oid oid_ops));
 #define LabelOidIndexId 7046
 

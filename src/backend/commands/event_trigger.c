@@ -99,6 +99,7 @@ static event_trigger_support_data event_trigger_support[] = {
 	{"FOREIGN DATA WRAPPER", true},
 	{"FOREIGN TABLE", true},
 	{"FUNCTION", true},
+	{"GRAPH", true},
 	{"INDEX", true},
 	{"LANGUAGE", true},
 	{"MATERIALIZED VIEW", true},
@@ -1098,6 +1099,7 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_FOREIGN_SERVER:
 		case OBJECT_FOREIGN_TABLE:
 		case OBJECT_FUNCTION:
+		case OBJECT_GRAPH:
 		case OBJECT_INDEX:
 		case OBJECT_LANGUAGE:
 		case OBJECT_LARGEOBJECT:
@@ -1171,6 +1173,7 @@ EventTriggerSupportsObjectClass(ObjectClass objclass)
 		case OCLASS_DEFACL:
 		case OCLASS_EXTENSION:
 		case OCLASS_POLICY:
+		case OCLASS_GRAPH:
 		case OCLASS_LABEL:
 			return true;
 	}

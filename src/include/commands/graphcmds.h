@@ -12,6 +12,10 @@
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
 
+extern void CreateGraphCommand(CreateGraphStmt *graphStmt,
+							   const char *queryString);
+extern void RemoveGraphById(Oid graphid);
+
 extern void CreateLabelCommand(CreateLabelStmt *labelStmt,
 							   const char *queryString, ParamListInfo params);
 extern void CheckDropLabel(ObjectType removeType, Oid labid);

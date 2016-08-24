@@ -383,6 +383,7 @@ typedef enum NodeTag
 	T_CreatePolicyStmt,
 	T_AlterPolicyStmt,
 	T_CreateTransformStmt,
+	T_CreateGraphStmt,
 	T_CreateLabelStmt,
 	T_CypherStmt,
 

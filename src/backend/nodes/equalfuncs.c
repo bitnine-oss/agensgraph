@@ -2599,6 +2599,16 @@ _equalJsonKeyVal(const JsonKeyVal *a, const JsonKeyVal *b)
 }
 
 static bool
+_equalCreateGraphStmt(const CreateGraphStmt *a, const CreateGraphStmt *b)
+{
+	COMPARE_STRING_FIELD(graphname);
+	COMPARE_NODE_FIELD(authrole);
+	COMPARE_SCALAR_FIELD(if_not_exists);
+
+	return true;
+}
+
+static bool
 _equalCreateLabelStmt(const CreateLabelStmt *a, const CreateLabelStmt *b)
 {
 	COMPARE_NODE_FIELD(relation);
@@ -3501,6 +3511,9 @@ equal(const void *a, const void *b)
 			retval = _equalJsonKeyVal(a, b);
 			break;
 
+		case T_CreateGraphStmt:
+			retval = _equalCreateGraphStmt(a, b);
+			break;
 		case T_CreateLabelStmt:
 			retval = _equalCreateLabelStmt(a, b);
 			break;
