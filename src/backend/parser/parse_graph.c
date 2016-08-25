@@ -12,6 +12,7 @@
 
 #include "ag_const.h"
 #include "access/sysattr.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
 #include "nodes/graphnodes.h"
@@ -816,7 +817,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 		labname = AG_VERTEX;
 	labloc = getCypherNameLoc(cnode->label);
 
-	r = makeRangeVar(AG_GRAPH, labname, labloc);
+	r = makeRangeVar(get_graph_path(), labname, labloc);
 	alias = makeAliasOptUnique(varname);
 
 	/* always set `ihn` to true because we should scan all derived tables */
@@ -874,7 +875,7 @@ transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList)
 		typloc = getCypherNameLoc(type);
 	}
 
-	r = makeRangeVar(AG_GRAPH, typname, typloc);
+	r = makeRangeVar(get_graph_path(), typname, typloc);
 	alias = makeAliasOptUnique(varname);
 
 	rte = addRangeTableEntry(pstate, r, alias, true, true);

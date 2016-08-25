@@ -13,6 +13,7 @@
 #include "ag_const.h"
 #include "access/htup_details.h"
 #include "access/tupdesc.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "funcapi.h"
@@ -537,7 +538,8 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 {
 	const char *querystr =
 			"SELECT ((tableoid, id)::graphid, properties)::vertex "
-			"FROM " AG_GRAPH "." AG_VERTEX " WHERE tableoid = $1 AND id = $2";
+			"FROM \"%s\"." AG_VERTEX " WHERE tableoid = $1 AND id = $2";
+	char		sqlcmd[256];
 	int			attnum = (evk == EVK_START ? Anum_edge_start : Anum_edge_end);
 	Graphid		id;
 	Datum		values[2];
@@ -546,6 +548,8 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 	int			ret;
 	Datum		vertex;
 	bool		isnull;
+
+	snprintf(sqlcmd, sizeof(sqlcmd), querystr, get_graph_path());
 
 	id = getGraphidStruct(tuple_getattr(edge, attnum));
 

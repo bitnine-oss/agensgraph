@@ -12,6 +12,10 @@
 
 #include "nodes/parsenodes.h"
 
+extern char *graph_path;
+
+extern char *get_graph_path(void);
+
 extern Oid GraphCreate(CreateGraphStmt *stmt, const char *queryString);
 
 #endif	/* AG_GRAPH_FN_H */

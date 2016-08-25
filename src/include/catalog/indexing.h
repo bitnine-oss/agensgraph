@@ -325,8 +325,8 @@ DECLARE_UNIQUE_INDEX(ag_graph_graphname_index, 7042, on ag_graph using btree(gra
 DECLARE_UNIQUE_INDEX(ag_label_oid_index, 7046, on ag_label using btree(oid oid_ops));
 #define LabelOidIndexId 7046
 
-DECLARE_UNIQUE_INDEX(ag_label_labname_index, 7047, on ag_label using btree(labname name_ops));
-#define LabelNameIndexId 7047
+DECLARE_UNIQUE_INDEX(ag_label_labname_graph_index, 7047, on ag_label using btree(labname name_ops, graphname name_ops));
+#define LabelNameGraphIndexId 7047
 
 DECLARE_UNIQUE_INDEX(ag_label_relid_index, 7048, on ag_label using btree(relid oid_ops));
 #define LabelRelidIndexId 7048

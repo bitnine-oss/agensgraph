@@ -24,23 +24,24 @@
 #include "utils/syscache.h"
 
 static void InsertAgLabelTuple(Relation ag_label_desc, Oid labid,
-							   const char *labname, Oid relid, Oid ownerid,
+							   RangeVar *label, Oid relid, Oid ownerid,
 							   char labkind);
 static void LabelRemoveInheritance(Oid labid);
 static void DeleteLabelTuple(Oid labid);
 
 Oid
-label_create_with_catalog(const char *labname, Oid relid, Oid ownerid,
-						  char labkind, Oid labtablespace, char labpersistence)
+label_create_with_catalog(RangeVar *label, Oid relid, Oid ownerid,
+						  char labkind, Oid labtablespace)
 {
 	Relation	ag_label_desc;
 	Oid			labid;
 
 	ag_label_desc = heap_open(LabelRelationId, RowExclusiveLock);
 
-	labid = GetNewRelFileNode(labtablespace, ag_label_desc, labpersistence);
+	labid = GetNewRelFileNode(labtablespace, ag_label_desc,
+							  label->relpersistence);
 
-	InsertAgLabelTuple(ag_label_desc, labid, labname, relid, ownerid, labkind);
+	InsertAgLabelTuple(ag_label_desc, labid, label, relid, ownerid, labkind);
 
 	heap_close(ag_label_desc, RowExclusiveLock);
 
@@ -61,9 +62,11 @@ label_drop_with_catalog(Oid labid)
  * See InsertPgClassTuple()
  */
 static void
-InsertAgLabelTuple(Relation ag_label_desc, Oid labid, const char *labname,
+InsertAgLabelTuple(Relation ag_label_desc, Oid labid, RangeVar *label,
 				   Oid relid, Oid ownerid, char labkind)
 {
+	char	   *graphname = label->schemaname;
+	char	   *labname = label->relname;
 	Datum		values[Natts_ag_label];
 	bool		nulls[Natts_ag_label];
 	HeapTuple	tup;
@@ -71,6 +74,7 @@ InsertAgLabelTuple(Relation ag_label_desc, Oid labid, const char *labname,
 	AssertArg(labkind == LABEL_KIND_VERTEX || labkind == LABEL_KIND_EDGE);
 
 	values[Anum_ag_label_labname - 1] = CStringGetDatum(labname);
+	values[Anum_ag_label_graphname - 1] = CStringGetDatum(graphname);
 	values[Anum_ag_label_relid - 1] = ObjectIdGetDatum(relid);
 	values[Anum_ag_label_labowner- 1] = ObjectIdGetDatum(ownerid);
 	values[Anum_ag_label_labkind - 1] = CharGetDatum(labkind);
