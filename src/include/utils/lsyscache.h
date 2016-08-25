@@ -158,7 +158,7 @@ extern char *get_namespace_name_or_temp(Oid nspid);
 extern Oid	get_range_subtype(Oid rangeOid);
 
 extern Oid	get_graphname_graphid(const char *graphname);
-extern Oid	get_labname_labid(const char *labname);
+extern Oid	get_labname_labid(const char *labname, const char *graphname);
 extern Oid	get_labid_relid(Oid labid);
 
 #define type_is_array(typid)  (get_element_type(typid) != InvalidOid)

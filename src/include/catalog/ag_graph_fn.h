@@ -14,5 +14,6 @@
 
 extern Oid GraphCreate(CreateGraphStmt *stmt, const char *queryString);
 extern void graph_drop_with_catalog(Oid graphid);
+extern char *get_graph_path(void);
 
 #endif	/* AG_GRAPH_FN_H */

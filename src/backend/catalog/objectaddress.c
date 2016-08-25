@@ -1873,14 +1873,16 @@ static ObjectAddress get_object_address_graph(List *objname, bool missing_ok)
 static ObjectAddress get_object_address_label(List *objname, bool missing_ok)
 {
 	ObjectAddress address;
+	char	*graphname;
 	char	*labname;
 
 	Assert(list_length(objname) == 1);
 
-	labname = strVal(linitial(objname));
+	graphname = strVal(linitial(objname));
+	labname = strVal(lsecond(objname));
 
 	address.classId = LabelRelationId;
-	address.objectId = get_labname_labid(labname);
+	address.objectId = get_labname_labid(labname, graphname);
 	address.objectSubId = 0;
 
 	if (!OidIsValid(address.objectId) && !missing_ok)

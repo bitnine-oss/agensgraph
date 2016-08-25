@@ -432,4 +432,7 @@ extern void assign_search_path(const char *newval, void *extra);
 extern bool check_wal_buffers(int *newval, void **extra, GucSource source);
 extern void assign_xlog_sync_method(int new_sync_method, void *extra);
 
+/* in catalog/ag_graph.c */
+extern bool check_graph_path(char **newval, void **extra, GucSource source);
+
 #endif   /* GUC_H */

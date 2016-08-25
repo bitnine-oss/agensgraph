@@ -546,7 +546,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <list>	json_key_value_list
 
 /* Agens Graph */
-%type <node>	CreateLabelStmt CreateGraphStmt
+%type <node>	CreateGraphStmt CreateLabelStmt
 
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
@@ -14205,19 +14205,19 @@ CreateGraphStmt:
 	;
 
 CreateLabelStmt:
-			CREATE VLABEL qualified_name OptInherit
+			CREATE VLABEL ColId OptInherit
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = LABEL_VERTEX;
-					n->relation = $3;
+					n->relation = makeRangeVar(NULL, $3, -1);
 					n->inhRelations = $4;
 					$$ = (Node *)n;
 				}
-			| CREATE ELABEL qualified_name OptInherit
+			| CREATE ELABEL ColId OptInherit
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = LABEL_EDGE;
-					n->relation = $3;
+					n->relation = makeRangeVar(NULL, $3, -1);
 					n->inhRelations = $4;
 					$$ = (Node *)n;
 				}
