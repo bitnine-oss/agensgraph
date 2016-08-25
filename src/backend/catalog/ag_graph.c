@@ -12,6 +12,7 @@
 
 #include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/xact.h"
 #include "catalog/ag_graph.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/dependency.h"
@@ -21,8 +22,41 @@
 #include "commands/schemacmds.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
+#include "utils/guc.h"
+#include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+
+/* a global variable for the GUC variable */
+char *graph_path = NULL;
+
+/* check_hook: validate new graph_path value */
+bool
+check_graph_path(char **newval, void **extra, GucSource source)
+{
+	if (IsTransactionState())
+	{
+		if (!OidIsValid(get_graphname_graphid(*newval)))
+		{
+			GUC_check_errdetail("Graph \"%s\" does not exist.", *newval);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+char *
+get_graph_path(void)
+{
+	if (graph_path == NULL || strlen(graph_path) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+				 errmsg("the graph_path is NULL"),
+				 errhint("Use SET graph_path")));
+
+	return graph_path;
+}
 
 /* Create a graph (schema) with the name and owner OID. */
 Oid

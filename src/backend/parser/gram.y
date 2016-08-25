@@ -14198,19 +14198,19 @@ CreateGraphStmt:
 		;
 
 CreateLabelStmt:
-			CREATE VLABEL qualified_name OptInherit
+			CREATE VLABEL ColId OptInherit
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = LABEL_VERTEX;
-					n->relation = $3;
+					n->relation = makeRangeVar(NULL, $3, -1);
 					n->inhRelations = $4;
 					$$ = (Node *)n;
 				}
-			| CREATE ELABEL qualified_name OptInherit
+			| CREATE ELABEL ColId OptInherit
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = LABEL_EDGE;
-					n->relation = $3;
+					n->relation = makeRangeVar(NULL, $3, -1);
 					n->inhRelations = $4;
 					$$ = (Node *)n;
 				}

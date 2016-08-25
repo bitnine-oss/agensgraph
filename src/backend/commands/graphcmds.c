@@ -167,9 +167,8 @@ DefineLabel(CreateStmt *stmt, char labkind)
 	/* current implementation does not get tablespace name; so */
 	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence);
 
-	labid = label_create_with_catalog(stmt->relation->relname, reladdr.objectId,
-									  GetUserId(), labkind, tablespaceId,
-									  stmt->relation->relpersistence);
+	labid = label_create_with_catalog(stmt->relation, reladdr.objectId,
+									  GetUserId(), labkind, tablespaceId);
 
 	GetSuperOids(stmt->inhRelations, labkind, &inheritOids);
 	StoreCatalogAgInheritance(labid, inheritOids);
@@ -199,7 +198,7 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 		HeapTuple	tuple;
 		Form_ag_label labtup;
 
-		parent_labid = get_labname_labid(parent->relname);
+		parent_labid = get_labname_labid(parent->relname, parent->schemaname);
 
 		tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(parent_labid));
 		if (!HeapTupleIsValid(tuple))
