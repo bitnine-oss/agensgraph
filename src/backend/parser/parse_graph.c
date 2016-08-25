@@ -12,6 +12,7 @@
 
 #include "ag_const.h"
 #include "access/heapam.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/pg_type.h"
 #include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
@@ -826,7 +827,7 @@ transformCypherNode(CypherNode *cnode, PatternCtx *ctx,
 		label = AG_VERTEX;
 	location = getCypherNameLoc(cnode->label);
 
-	r = makeRangeVar(AG_GRAPH, label, location);
+	r = makeRangeVar(get_graph_path(), label, location);
 	r->inhOpt = INH_YES;
 	r->alias = makePatternVarAlias(varname);
 
@@ -899,7 +900,7 @@ transformCypherRel(CypherRel *crel, Node *left, Node *right,
 		location = getCypherNameLoc(type);
 	}
 
-	r = makeRangeVar(AG_GRAPH, typename, location);
+	r = makeRangeVar(get_graph_path(), typename, location);
 	r->inhOpt = INH_YES;
 	r->alias = makePatternVarAlias(varname);
 
@@ -1551,7 +1552,7 @@ preventDropLabel(ParseState *pstate, char *labname)
 	RangeVar   *r;
 	Relation	rel;
 
-	r = makeRangeVar(AG_GRAPH, labname, -1);
+	r = makeRangeVar(get_graph_path(), labname, -1);
 	rel = parserOpenTable(pstate, r, AccessShareLock);
 
 	/*

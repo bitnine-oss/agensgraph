@@ -55,4 +55,6 @@ typedef FormData_ag_graph *Form_ag_graph;
  * ----------------
  */
 
+extern char *graph_path;
+
 #endif   /* AG_GRAPH_H */

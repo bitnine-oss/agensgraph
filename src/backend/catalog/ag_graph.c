@@ -30,6 +30,7 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
+char	*graph_path = NULL;
 
 /* ----------------
  * GraphCreate
@@ -142,4 +143,36 @@ graph_drop_with_catalog(Oid graphid)
 	ReleaseSysCache(tup);
 
 	heap_close(ag_graph_desc, RowExclusiveLock);
+}
+
+/*
+ * Routines for handling the GUC variable 'graph_path'.
+ */
+
+/* check_hook: validate new graph_path value */
+bool
+check_graph_path(char **newval, void **extra, GucSource source)
+{
+	/* Only allow clean ASCII chars in the graph name */
+	char	   *p;
+
+	for (p = *newval; *p; p++)
+	{
+		if (*p < 32 || *p > 126)
+			*p = '?';
+	}
+
+	return true;
+}
+
+char *
+get_graph_path(void)
+{
+	if (strlen(graph_path) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+				 errmsg("The graph_path is NULL"),
+				 errhint("Use SET graph_path")));
+
+	return graph_path;
 }
