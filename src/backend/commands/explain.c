@@ -1045,6 +1045,24 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		case T_Hash:
 			pname = sname = "Hash";
 			break;
+		case T_ModifyGraph:
+			sname = "ModifyGraph";
+			switch (((ModifyGraph *) plan)->operation)
+			{
+				case GWROP_CREATE:
+					pname = "Graph Create";
+					operation = "Create";
+					break;
+				case GWROP_DELETE:
+					pname = "Graph Delete";
+					operation = "Delete";
+					break;
+				default:
+					pname = "Graph ???";
+					operation = "???";
+					break;
+			}
+			break;
 		default:
 			pname = sname = "???";
 			break;
@@ -1617,6 +1635,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		IsA(plan, SubqueryScan) ||
 		(IsA(planstate, CustomScanState) &&
 		 ((CustomScanState *) planstate)->custom_ps != NIL) ||
+		IsA(plan, ModifyGraph) ||
 		planstate->subPlan;
 	if (haschildren)
 	{
@@ -1674,6 +1693,10 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		case T_CustomScan:
 			ExplainCustomChildren((CustomScanState *) planstate,
 								  ancestors, es);
+			break;
+		case T_ModifyGraph:
+			ExplainNode(((ModifyGraphState *) planstate)->subplan, ancestors,
+						"Subquery", NULL, es);
 			break;
 		default:
 			break;
