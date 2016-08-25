@@ -1063,16 +1063,16 @@ makeEdgeTuple(Alias *alias)
 	return makeTypedTuple(list_make4(id, start, end, prop_map), EDGEOID);
 }
 
-/* jsonb_contains(prop_map, qualStr) */
+/* prop_map #> qualJson */
 static Node *
 makePropMapConstraint(ColumnRef *prop_map, Node *qualJson)
 {
 	Node	   *processed;
-	FuncCall   *constraint;
+	A_Expr	   *constraint;
 
 	processed = postprocessPropMapExpr(qualJson);
-	constraint = makeFuncCall(list_make1(makeString("jsonb_contains")),
-							  list_make2(prop_map, processed), -1);
+	constraint = makeA_Expr(AEXPR_OP, list_make1(makeString("@>")),
+							prop_map, processed, -1);
 
 	return (Node *) constraint;
 }
