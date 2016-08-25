@@ -378,4 +378,8 @@ DATA(insert ( 1700 1700 1703 i f ));
 DATA(insert (  114 3802    0 a i ));
 DATA(insert ( 3802	114    0 a i ));
 
+/* vertex/edge to jsonb */
+DATA(insert ( 7012 3802 7019 i f ));
+DATA(insert ( 7022 3802 7029 i f ));
+
 #endif   /* PG_CAST_H */
