@@ -3084,6 +3084,14 @@ _outCypherDeleteClause(StringInfo str, const CypherDeleteClause *node)
 }
 
 static void
+_outCypherLoadClause(StringInfo str, const CypherLoadClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERLOADCLAUSE");
+
+	WRITE_NODE_FIELD(relation);
+}
+
+static void
 _outCypherPath(StringInfo str, const CypherPath *node)
 {
 	WRITE_NODE_TYPE("CYPHERPATH");
@@ -3714,6 +3722,9 @@ _outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherDeleteClause:
 				_outCypherDeleteClause(str, obj);
+				break;
+			case T_CypherLoadClause:
+				_outCypherLoadClause(str, obj);
 				break;
 			case T_CypherPath:
 				_outCypherPath(str, obj);
