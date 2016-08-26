@@ -2,6 +2,9 @@
 -- Cypher Query Language - DML
 --
 -- prepare
+DROP GRAPH mygraph;
+ERROR:  graph "mygraph" does not exist
+set graph_path=mygraph;
 DROP TABLE IF EXISTS history;
 NOTICE:  table "history" does not exist, skipping
 CREATE TABLE history (year, event) AS VALUES
@@ -534,3 +537,7 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP TABLE history;
+DROP GRAPH mygraph CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to label vertex
+drop cascades to label edge

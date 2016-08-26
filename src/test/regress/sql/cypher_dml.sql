@@ -4,6 +4,9 @@
 
 -- prepare
 
+DROP GRAPH mygraph;
+set graph_path=mygraph;
+
 DROP TABLE IF EXISTS history;
 
 CREATE TABLE history (year, event) AS VALUES
@@ -235,3 +238,5 @@ DROP ELABEL lib;
 DROP ELABEL doc;
 
 DROP TABLE history;
+
+DROP GRAPH mygraph CASCADE;
