@@ -3,6 +3,8 @@
 --
 
 -- initialize
+DROP GRAPH mygraph;
+set graph_path=mygraph;
 
 DROP vlabel regvlabel1;
 DROP vlabel regvlabel2;
@@ -10,6 +12,8 @@ DROP vlabel regvlabel3;
 
 DROP elabel regelabel1;
 DROP elabel regelabel2;
+
+CREATE GRAPH mygraph;
 
 CREATE vlabel regvlabel1;
 CREATE vlabel regvlabel2;
@@ -260,3 +264,5 @@ DROP elabel regelabel2;
 DROP vlabel regvlabel1;
 DROP vlabel regvlabel2;
 DROP vlabel regvlabel3;
+
+DROP GRAPH mygraph CASCADE;

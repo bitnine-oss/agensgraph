@@ -2,6 +2,9 @@
 -- Cypher Query Language - DML
 --
 -- initialize
+DROP GRAPH mygraph;
+ERROR:  graph "mygraph" does not exist
+set graph_path=mygraph;
 DROP vlabel regvlabel1;
 ERROR:  graph label "regvlabel1" does not exist
 DROP vlabel regvlabel2;
@@ -12,6 +15,7 @@ DROP elabel regelabel1;
 ERROR:  graph label "regelabel1" does not exist
 DROP elabel regelabel2;
 ERROR:  graph label "regelabel2" does not exist
+CREATE GRAPH mygraph;
 CREATE vlabel regvlabel1;
 NOTICE:  merging column "id" with inherited definition
 CREATE vlabel regvlabel2;
@@ -492,3 +496,7 @@ DROP elabel regelabel2;
 DROP vlabel regvlabel1;
 DROP vlabel regvlabel2;
 DROP vlabel regvlabel3;
+DROP GRAPH mygraph CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to label vertex
+drop cascades to label edge
