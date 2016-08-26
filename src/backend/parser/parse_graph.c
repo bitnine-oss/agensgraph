@@ -1112,7 +1112,7 @@ makePropMapConstraint(ColumnRef *prop_map, Node *qualJson)
 
 	processed = postprocessPropMapExpr(qualJson);
 	constraint = makeA_Expr(AEXPR_OP, list_make1(makeString("@>")),
-							prop_map, processed, -1);
+							(Node *) prop_map, processed, -1);
 
 	return (Node *) constraint;
 }

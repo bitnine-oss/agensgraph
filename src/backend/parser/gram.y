@@ -551,7 +551,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
 				cypher_create cypher_delete cypher_label_opt cypher_limit_opt
-				cypher_load_fdw cypher_match cypher_no_parens cypher_node
+				cypher_load_from cypher_match cypher_no_parens cypher_node
 				cypher_path cypher_path_opt_varirable cypher_prop_map_opt
 				cypher_range_idx cypher_range_idx_opt cypher_range_opt
 				cypher_rel cypher_return cypher_skip_opt cypher_variable
@@ -609,7 +609,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
 	EXTENSION EXTERNAL EXTRACT
 
-	FALSE_P FAMILY FDW FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
+	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
 	FORCE FOREIGN FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
 
 	GLOBAL GRANT GRANTED GREATEST GROUP_P GROUPING
@@ -730,7 +730,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			SKIP DELETE_P DETACH
+			SKIP DELETE_P DETACH LOAD
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -13748,7 +13748,6 @@ unreserved_keyword:
 			| EXTENSION
 			| EXTERNAL
 			| FAMILY
-			| FDW
 			| FILTER
 			| FIRST_P
 			| FOLLOWING
@@ -13789,6 +13788,7 @@ unreserved_keyword:
 			| LEAKPROOF
 			| LEVEL
 			| LISTEN
+			| LOAD
 			| LOCAL
 			| LOCATION
 			| LOCK_P
@@ -14087,7 +14087,6 @@ reserved_keyword:
 			| LATERAL_P
 			| LEADING
 			| LIMIT
-			| LOAD
 			| LOCALTIME
 			| LOCALTIMESTAMP
 			| MATCH
@@ -14202,7 +14201,7 @@ cypher_clause_head:
 			cypher_match
 			| cypher_return
 			| cypher_create
-			| cypher_load_fdw
+			| cypher_load_from
 		;
 
 cypher_clause:
@@ -14277,8 +14276,8 @@ cypher_detach_opt:
 			| /* EMPTY */		{ $$ = false; }
 		;
 
-cypher_load_fdw:
-			LOAD FDW qualified_name AS ColId
+cypher_load_from:
+			LOAD FROM qualified_name AS ColId
 				{
 					CypherLoadFdwClause *n = makeNode(CypherLoadFdwClause);
 					n->relation = $3;
