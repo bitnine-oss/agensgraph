@@ -113,11 +113,11 @@ static ColumnRef *makeAliasIndirection(Alias *alias, Node *indirection);
 #define makeAliasColname(alias, colname) \
 	makeAliasIndirection(alias, (Node *) makeString(pstrdup(colname)))
 static Node *makeColumnProjection(ColumnRef *colref, char *attname);
+#define makeAliasTarget(alias) \
+	makeSelectResTarget( \
+		(Node *) makeSimpleColumnRef((alias)->aliasname, NULL, -1), NULL, -1)
 #define makeAliasStarTarget(alias) \
 	makeSelectResTarget((Node *) makeAliasStar(alias), NULL, -1)
-#define makeAliasSelfTarget(alias) \
-	makeSelectResTarget((Node *) makeSimpleColumnRef(alias, NULL, -1), \
-						NULL, -1)
 #define makeTypedTuple(args, type_oid) \
 	((Node *) makeTypeCast((Node *) makeTuple(args, -1), \
 						   makeTypeNameByOid(type_oid), -1))
@@ -488,38 +488,25 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 }
 
 Query *
-transformCypherLoadFdwClause(ParseState *pstate, CypherClause *clause)
+transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 {
-	CypherLoadFdwClause *detail = (CypherLoadFdwClause *) clause->detail;
-	RangeVar *relation = detail->relation;
+	CypherLoadClause *detail = (CypherLoadClause *) clause->detail;
+	RangeVar *rv = detail->relation;
 	SELECT_INFO(selinfo);
 
-
-	selinfo.from = lappend(selinfo.from, relation);
-
-	selinfo.target = lcons(makeAliasSelfTarget(relation->alias->aliasname),
-						   selinfo.target);
-
-	/*
-	 * Transform previous CypherClause as a RangeSubselect first.
-	 * It must be transformed at here because when transformComponents(),
-	 * variables in the pattern which are in the resulting variables of
-	 * the previous CypherClause must be excluded from fromClause.
-	 */
 	if (clause->prev != NULL)
 	{
-		RangeTblEntry	*rte;
+		RangeTblEntry *rte;
 		RangePrevclause *r;
-		PatternCtx		*ctx = NULL;
 
 		r = makeRangePrevclause(clause->prev);
 		rte = transformRangePrevclause(pstate, r);
-		ctx = makePatternCtx(rte);
 
-		/* add all columns in the result of previous CypherClause */
-		selinfo.target = lcons(makeAliasStarTarget(ctx->alias),
-							   selinfo.target);
+		selinfo.target = lcons(makeAliasStarTarget(rte->alias), selinfo.target);
 	}
+
+	selinfo.target = lappend(selinfo.target, makeAliasTarget(rv->alias));
+	selinfo.from = lappend(selinfo.from, rv);
 
 	return transformSelectInfo(pstate, &selinfo);
 }

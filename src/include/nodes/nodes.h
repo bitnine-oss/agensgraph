@@ -435,7 +435,7 @@ typedef enum NodeTag
 	T_CypherProjection,
 	T_CypherCreateClause,
 	T_CypherDeleteClause,
-	T_CypherLoadFdwClause,
+	T_CypherLoadClause,
 	T_CypherPath,
 	T_CypherNode,
 	T_CypherRel,

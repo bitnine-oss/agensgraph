@@ -3172,6 +3172,12 @@ typedef struct CypherDeleteClause
 	List	   *exprs;
 } CypherDeleteClause;
 
+typedef struct CypherLoadClause
+{
+	NodeTag		type;
+	RangeVar   *relation;	/* a relation to load */
+} CypherLoadClause;
+
 typedef struct CypherPath
 {
 	NodeTag		type;
@@ -3225,16 +3231,5 @@ getCypherNameLoc(Node *n)
 	AssertArg(IsA(n, CypherName));
 	return ((CypherName *) n)->location;
 }
-
-
-/* ----------------------
- *		LOAD FDW Statement
- * ----------------------
- */
-typedef struct CypherLoadFdwClause
-{
-	NodeTag		type;
-	RangeVar   *relation;		/* the relation to load */
-} CypherLoadFdwClause;
 
 #endif   /* PARSENODES_H */

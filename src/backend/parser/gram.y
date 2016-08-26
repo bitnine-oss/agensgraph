@@ -551,7 +551,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
 				cypher_create cypher_delete cypher_label_opt cypher_limit_opt
-				cypher_load_from cypher_match cypher_no_parens cypher_node
+				cypher_load cypher_match cypher_no_parens cypher_node
 				cypher_path cypher_path_opt_varirable cypher_prop_map_opt
 				cypher_range_idx cypher_range_idx_opt cypher_range_opt
 				cypher_rel cypher_return cypher_skip_opt cypher_variable
@@ -725,8 +725,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
  * To support Cypher, the precedence of unreserved keywords,
- * SKIP, DELETE_P, and DETACH, must be the same as that of IDENT so that they
- * can follow a_expr without creating postfix-operator problems.
+ * SKIP, DELETE_P, DETACH, and LOAD, must be the same as that of IDENT so that
+ * they can follow a_expr without creating postfix-operator problems.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
@@ -8797,6 +8797,7 @@ LoadStmt:	LOAD file_name
 				}
 		;
 
+
 /*****************************************************************************
  *
  *		CREATE DATABASE
@@ -14201,7 +14202,7 @@ cypher_clause_head:
 			cypher_match
 			| cypher_return
 			| cypher_create
-			| cypher_load_from
+			| cypher_load
 		;
 
 cypher_clause:
@@ -14276,14 +14277,15 @@ cypher_detach_opt:
 			| /* EMPTY */		{ $$ = false; }
 		;
 
-cypher_load_from:
-			LOAD FROM qualified_name AS ColId
+cypher_load:
+			LOAD FROM qualified_name AS cypher_varname
 				{
-					CypherLoadFdwClause *n = makeNode(CypherLoadFdwClause);
+					Alias *alias = makeNode(Alias);
+					CypherLoadClause *n = makeNode(CypherLoadClause);
+					alias->aliasname = $5;
 					n->relation = $3;
-					n->relation->alias = makeNode(Alias);
-					n->relation->alias->aliasname = $5;
-					$$ = (Node *)n;
+					n->relation->alias = alias;
+					$$ = (Node *) n;
 				}
 		;
 

@@ -4208,6 +4208,16 @@ _copyCypherDeleteClause(const CypherDeleteClause *from)
 	return newnode;
 }
 
+static CypherLoadClause *
+_copyCypherLoadClause(const CypherLoadClause *from)
+{
+	CypherLoadClause *newnode = makeNode(CypherLoadClause);
+
+	COPY_NODE_FIELD(relation);
+
+	return newnode;
+}
+
 static CypherPath *
 _copyCypherPath(const CypherPath *from)
 {
@@ -4291,16 +4301,6 @@ _copyGraphEdge(const GraphEdge *from)
 	COPY_STRING_FIELD(label);
 	COPY_NODE_FIELD(prop_map);
 	COPY_NODE_FIELD(es_prop_map);
-
-	return newnode;
-}
-
-static CypherLoadFdwClause *
-_copyCypherLoadFdwClause(const CypherLoadFdwClause *from)
-{
-	CypherLoadFdwClause   *newnode = makeNode(CypherLoadFdwClause);
-
-	COPY_NODE_FIELD(relation);
 
 	return newnode;
 }
@@ -5188,6 +5188,9 @@ copyObject(const void *from)
 		case T_CypherDeleteClause:
 			retval = _copyCypherDeleteClause(from);
 			break;
+		case T_CypherLoadClause:
+			retval = _copyCypherLoadClause(from);
+			break;
 		case T_CypherPath:
 			retval = _copyCypherPath(from);
 			break;
@@ -5199,9 +5202,6 @@ copyObject(const void *from)
 			break;
 		case T_CypherName:
 			retval = _copyCypherName(from);
-			break;
-		case T_CypherLoadFdwClause:
-			retval = _copyCypherLoadFdwClause(from);
 			break;
 
 			/*
