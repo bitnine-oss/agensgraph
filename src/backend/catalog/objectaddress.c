@@ -18,6 +18,7 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "catalog/ag_graph.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
@@ -1882,10 +1883,22 @@ get_object_address_label(List *objname, bool missing_ok)
 	char	   *graphname;
 	char	   *labname;
 
-	Assert(list_length(objname) == 1);
-
-	graphname = strVal(linitial(objname));
-	labname = strVal(lsecond(objname));
+	switch (list_length(objname))
+	{
+		case 1:
+			graphname = get_graph_path();
+			labname = strVal(linitial(objname));
+			break;
+		case 2:
+			graphname = strVal(linitial(objname));
+			labname = strVal(lsecond(objname));
+			break;
+		default:
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("improper qualified name (too many dotted names): %s",
+							NameListToString(objname))));
+	}
 
 	address.classId = LabelRelationId;
 	address.objectId = get_labname_labid(labname, graphname);
