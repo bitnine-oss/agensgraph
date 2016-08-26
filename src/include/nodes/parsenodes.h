@@ -3172,6 +3172,12 @@ typedef struct CypherDeleteClause
 	List	   *exprs;
 } CypherDeleteClause;
 
+typedef struct CypherLoadClause
+{
+	NodeTag		type;
+	RangeVar   *relation;	/* a relation to load */
+} CypherLoadClause;
+
 typedef struct CypherPath
 {
 	NodeTag		type;

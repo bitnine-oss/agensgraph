@@ -21,5 +21,7 @@ extern Query *transformCypherCreateClause(ParseState *pstate,
 										  CypherClause *clause);
 extern Query *transformCypherDeleteClause(ParseState *pstate,
 										  CypherClause *clause);
+extern Query *transformCypherLoadClause(ParseState *pstate,
+										CypherClause *clause);
 
 #endif	/* PARSE_GRAPH_H */

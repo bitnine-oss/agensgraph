@@ -551,11 +551,12 @@ static Node *wrapCypherWithSelect(Node *stmt);
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
 				cypher_create cypher_delete cypher_label_opt cypher_limit_opt
-				cypher_match cypher_no_parens cypher_node cypher_path
-				cypher_path_opt_varirable cypher_prop_map_opt cypher_range_idx
-				cypher_range_idx_opt cypher_range_opt cypher_rel cypher_return
-				cypher_skip_opt cypher_variable cypher_variable_opt
-				cypher_varlen_opt cypher_with cypher_with_parens
+				cypher_load cypher_match cypher_no_parens cypher_node
+				cypher_path cypher_path_opt_varirable cypher_prop_map_opt
+				cypher_range_idx cypher_range_idx_opt cypher_range_opt
+				cypher_rel cypher_return cypher_skip_opt cypher_variable
+				cypher_variable_opt cypher_varlen_opt cypher_with
+				cypher_with_parens
 %type <list>	cypher_distinct_opt cypher_expr_list cypher_path_chain
 				cypher_path_chain_opt_parens cypher_pattern
 				cypher_types cypher_types_opt
@@ -724,12 +725,12 @@ static Node *wrapCypherWithSelect(Node *stmt);
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
  * To support Cypher, the precedence of unreserved keywords,
- * SKIP, DELETE_P, and DETACH, must be the same as that of IDENT so that they
- * can follow a_expr without creating postfix-operator problems.
+ * SKIP, DELETE_P, DETACH, and LOAD, must be the same as that of IDENT so that
+ * they can follow a_expr without creating postfix-operator problems.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			SKIP DELETE_P DETACH
+			SKIP DELETE_P DETACH LOAD
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -14201,6 +14202,7 @@ cypher_clause_head:
 			cypher_match
 			| cypher_return
 			| cypher_create
+			| cypher_load
 		;
 
 cypher_clause:
@@ -14273,6 +14275,18 @@ cypher_delete:
 cypher_detach_opt:
 			DETACH				{ $$ = true; }
 			| /* EMPTY */		{ $$ = false; }
+		;
+
+cypher_load:
+			LOAD FROM qualified_name AS cypher_varname
+				{
+					Alias *alias = makeNode(Alias);
+					CypherLoadClause *n = makeNode(CypherLoadClause);
+					alias->aliasname = $5;
+					n->relation = $3;
+					n->relation->alias = alias;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_pattern:

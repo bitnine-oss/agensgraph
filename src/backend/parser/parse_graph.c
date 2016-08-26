@@ -113,6 +113,9 @@ static ColumnRef *makeAliasIndirection(Alias *alias, Node *indirection);
 #define makeAliasColname(alias, colname) \
 	makeAliasIndirection(alias, (Node *) makeString(pstrdup(colname)))
 static Node *makeColumnProjection(ColumnRef *colref, char *attname);
+#define makeAliasTarget(alias) \
+	makeSelectResTarget( \
+		(Node *) makeSimpleColumnRef((alias)->aliasname, NULL, -1), NULL, -1)
 #define makeAliasStarTarget(alias) \
 	makeSelectResTarget((Node *) makeAliasStar(alias), NULL, -1)
 #define makeTypedTuple(args, type_oid) \
@@ -392,18 +395,18 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 		targetList = lcons(makeAliasStarTarget(ctx->alias), targetList);
 	}
 
+	/*
+	 * Although CREATE clause doesn't have FROM list, we must call
+	 * transformFromClause() to clean up `lateral_only`.
+	 */
+	transformFromClause(pstate, NIL);
+
 	queryPattern = transformCreatePattern(pstate, pattern, ctx, &targetList);
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_GRAPHWRITE;
 	qry->graph.writeOp = GWROP_CREATE;
 	qry->graph.last = (pstate->parentParseState == NULL);
-
-	/*
-	 * Although CREATE clause doesn't have FROM list, we must call
-	 * transformFromClause() to clean up `lateral_only`.
-	 */
-	transformFromClause(pstate, NIL);
 
 	qry->targetList = transformTargetList(pstate, targetList,
 										  EXPR_KIND_SELECT_TARGET);
@@ -482,6 +485,30 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	assign_query_collations(pstate, qry);
 
 	return qry;
+}
+
+Query *
+transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherLoadClause *detail = (CypherLoadClause *) clause->detail;
+	RangeVar *rv = detail->relation;
+	SELECT_INFO(selinfo);
+
+	if (clause->prev != NULL)
+	{
+		RangeTblEntry *rte;
+		RangePrevclause *r;
+
+		r = makeRangePrevclause(clause->prev);
+		rte = transformRangePrevclause(pstate, r);
+
+		selinfo.target = lcons(makeAliasStarTarget(rte->alias), selinfo.target);
+	}
+
+	selinfo.target = lappend(selinfo.target, makeAliasTarget(rv->alias));
+	selinfo.from = lappend(selinfo.from, rv);
+
+	return transformSelectInfo(pstate, &selinfo);
 }
 
 static PatternCtx *
@@ -1072,7 +1099,7 @@ makePropMapConstraint(ColumnRef *prop_map, Node *qualJson)
 
 	processed = postprocessPropMapExpr(qualJson);
 	constraint = makeA_Expr(AEXPR_OP, list_make1(makeString("@>")),
-							prop_map, processed, -1);
+							(Node *) prop_map, processed, -1);
 
 	return (Node *) constraint;
 }

@@ -4208,6 +4208,16 @@ _copyCypherDeleteClause(const CypherDeleteClause *from)
 	return newnode;
 }
 
+static CypherLoadClause *
+_copyCypherLoadClause(const CypherLoadClause *from)
+{
+	CypherLoadClause *newnode = makeNode(CypherLoadClause);
+
+	COPY_NODE_FIELD(relation);
+
+	return newnode;
+}
+
 static CypherPath *
 _copyCypherPath(const CypherPath *from)
 {
@@ -5177,6 +5187,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherDeleteClause:
 			retval = _copyCypherDeleteClause(from);
+			break;
+		case T_CypherLoadClause:
+			retval = _copyCypherLoadClause(from);
 			break;
 		case T_CypherPath:
 			retval = _copyCypherPath(from);

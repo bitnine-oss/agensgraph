@@ -2781,6 +2781,9 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 		case T_CypherDeleteClause:
 			qry = transformCypherDeleteClause(pstate, clause);
 			break;
+		case T_CypherLoadClause:
+			qry = transformCypherLoadClause(pstate, clause);
+			break;
 		default:
 			elog(ERROR, "unrecognized Cypher clause type: %d",
 				 cypherClauseTag(clause));

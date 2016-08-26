@@ -2657,6 +2657,14 @@ _equalCypherDeleteClause(const CypherDeleteClause *a,
 }
 
 static bool
+_equalCypherLoadClause(const CypherLoadClause *a, const CypherLoadClause *b)
+{
+	COMPARE_NODE_FIELD(relation);
+
+	return true;
+}
+
+static bool
 _equalCypherPath(const CypherPath *a, const CypherPath *b)
 {
 	COMPARE_NODE_FIELD(variable);
@@ -3491,6 +3499,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherDeleteClause:
 			retval = _equalCypherDeleteClause(a, b);
+			break;
+		case T_CypherLoadClause:
+			retval = _equalCypherLoadClause(a, b);
 			break;
 		case T_CypherPath:
 			retval = _equalCypherPath(a, b);
