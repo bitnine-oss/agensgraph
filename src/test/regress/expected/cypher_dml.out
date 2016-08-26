@@ -7,6 +7,10 @@ NOTICE:  table "history" does not exist, skipping
 CREATE TABLE history (year, event) AS VALUES
 (1996, 'PostgreSQL'),
 (2016, 'Graph');
+DROP GRAPH agens;
+ERROR:  graph "agens" does not exist
+CREATE GRAPH agens;
+set graph_path=agens;
 --
 -- RETURN
 --
@@ -521,7 +525,7 @@ MATCH (a) RETURN a;
 ---
 (0 rows)
 
-SELECT count(*) FROM graph.edge;
+SELECT count(*) FROM agens.edge;
  count 
 -------
      0
@@ -534,3 +538,7 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP TABLE history;
+DROP GRAPH agens CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to label vertex
+drop cascades to label edge

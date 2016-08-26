@@ -561,9 +561,9 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
-	ret = SPI_execute_with_args(querystr, 2, argTypes, values, NULL, false, 0);
+	ret = SPI_execute_with_args(sqlcmd, 2, argTypes, values, NULL, false, 0);
 	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "SPI_execute failed: %s", querystr);
+		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 
 	if (SPI_processed != 1)
 		elog(ERROR, (evk == EVK_START

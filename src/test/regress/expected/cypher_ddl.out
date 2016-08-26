@@ -1,12 +1,28 @@
 --
 -- Cypher Query Language - DDL
 --
+--
+-- CREATE graph
+--
+CREATE GRAPH mygraph;
+-- before set graph_path
+CREATE VLABEL nopath;
+ERROR:  the graph_path is NULL
+HINT:  Use SET graph_path
+-- after set graph_path
+set graph_path=mygraph;
+CREATE VLABEL yespath;
+NOTICE:  merging column "id" with inherited definition
+DROP VLABEL yespath;
+-- cannot set multi path
+set graph_path=mygraph,urgraph;
+ERROR:  SET graph_path takes only one argument
 -- check default graph objects
-SELECT labname, labkind FROM ag_label;
- labname | labkind 
----------+---------
- vertex  | v
- edge    | e
+SELECT graphname, labname, labkind FROM ag_label;
+ graphname | labname | labkind 
+-----------+---------+---------
+ mygraph   | vertex  | v
+ mygraph   | edge    | e
 (2 rows)
 
 --
@@ -177,6 +193,24 @@ SELECT labname, labkind FROM ag_label;
  vertex  | v
  edge    | e
 (2 rows)
+
+--
+-- DROP graph
+--
+DROP GRAPH mygraph;
+ERROR:  cannot drop graph mygraph because other objects depend on it
+DETAIL:  label vertex depends on schema mygraph
+label edge depends on schema mygraph
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+-- DROP GRAPH must set CASCADE
+DROP GRAPH mygraph CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to label vertex
+drop cascades to label edge
+SELECT labname, labkind FROM ag_label;
+ labname | labkind 
+---------+---------
+(0 rows)
 
 SELECT childlab.labname AS child, parentlab.labname AS parent 
 FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh

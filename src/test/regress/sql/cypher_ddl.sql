@@ -2,8 +2,29 @@
 -- Cypher Query Language - DDL
 --
 
+--
+-- CREATE graph
+--
+
+CREATE GRAPH mygraph;
+
+-- before set graph_path
+
+CREATE VLABEL nopath;
+
+-- after set graph_path
+
+set graph_path=mygraph;
+
+CREATE VLABEL yespath;
+DROP VLABEL yespath;
+
+-- cannot set multi path
+
+set graph_path=mygraph,urgraph;
+
 -- check default graph objects
-SELECT labname, labkind FROM ag_label;
+SELECT graphname, labname, labkind FROM ag_label;
 
 --
 -- CREATE/DROP labels
@@ -66,6 +87,18 @@ DROP ELABEL edge CASCADE;
 DROP VLABEL vlabel_p1 CASCADE;
 DROP VLABEL vlabel_p2 CASCADE;
 DROP ELABEL elabel_p1 CASCADE;
+
+SELECT labname, labkind FROM ag_label;
+
+--
+-- DROP graph
+--
+
+DROP GRAPH mygraph;
+
+-- DROP GRAPH must set CASCADE
+
+DROP GRAPH mygraph CASCADE;
 
 SELECT labname, labkind FROM ag_label;
 

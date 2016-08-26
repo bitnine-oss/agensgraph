@@ -10,6 +10,10 @@ CREATE TABLE history (year, event) AS VALUES
 (1996, 'PostgreSQL'),
 (2016, 'Graph');
 
+DROP GRAPH agens;
+CREATE GRAPH agens;
+set graph_path=agens;
+
 --
 -- RETURN
 --
@@ -223,7 +227,7 @@ MATCH (a:repo) RETURN (a).name AS a;
 MATCH (a) DETACH DELETE a;
 MATCH (a) RETURN a;
 
-SELECT count(*) FROM graph.edge;
+SELECT count(*) FROM agens.edge;
 
 -- cleanup
 
@@ -235,3 +239,5 @@ DROP ELABEL lib;
 DROP ELABEL doc;
 
 DROP TABLE history;
+
+DROP GRAPH agens CASCADE;
