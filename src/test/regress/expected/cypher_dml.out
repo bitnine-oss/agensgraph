@@ -17,15 +17,10 @@ DROP elabel regelabel2;
 ERROR:  graph label "regelabel2" does not exist
 CREATE GRAPH mygraph;
 CREATE vlabel regvlabel1;
-NOTICE:  merging column "id" with inherited definition
 CREATE vlabel regvlabel2;
-NOTICE:  merging column "id" with inherited definition
 CREATE vlabel regvlabel3;
-NOTICE:  merging column "id" with inherited definition
 CREATE elabel regelabel1;
-NOTICE:  merging column "id" with inherited definition
 CREATE elabel regelabel2;
-NOTICE:  merging column "id" with inherited definition
 CREATE (v1:regvlabel1 {'name': 'regv1-1', 'id': 1}),
 	   (v2:regvlabel1 {'name': 'regv1-2', 'id': 2}),
 	   (v3:regvlabel1 {'name': 'regv1-3', 'id': 3}),
@@ -363,15 +358,10 @@ DROP vlabel regvlabel3;
 DROP elabel regelabel1;
 DROP elabel regelabel2;
 CREATE vlabel regvlabel1;
-NOTICE:  merging column "id" with inherited definition
 CREATE vlabel regvlabel2;
-NOTICE:  merging column "id" with inherited definition
 CREATE vlabel regvlabel3;
-NOTICE:  merging column "id" with inherited definition
 CREATE elabel regelabel1;
-NOTICE:  merging column "id" with inherited definition
 CREATE elabel regelabel2;
-NOTICE:  merging column "id" with inherited definition
 --
 -- CREATE clause
 --

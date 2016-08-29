@@ -20,9 +20,11 @@
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
 #include "catalog/indexing.h"
+#include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_namespace.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
 #include "commands/graphcmds.h"
@@ -294,4 +296,38 @@ CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString)
 
 		CommandCounterIncrement();
 	}
+}
+
+bool
+isLabel(RangeVar *rel)
+{
+	HeapTuple	nsptuple;
+	HeapTuple	graphtuple;
+	char	   *nspname;
+	Oid			nspid;
+	bool		result = false;
+	Form_pg_namespace nspdata;
+
+	nspid = RangeVarGetCreationNamespace(rel);
+
+	nsptuple = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(nspid));
+
+	if (!HeapTupleIsValid(nsptuple))
+		elog(ERROR, "cache lookup failed for label (OID=%u)", nspid);
+
+	nspdata = (Form_pg_namespace) GETSTRUCT(nsptuple);
+
+	ReleaseSysCache(nsptuple);
+
+	nspname = NameStr(nspdata->nspname);
+
+	graphtuple = SearchSysCache1(GRAPHNAME, CStringGetDatum(nspname));
+
+	if (HeapTupleIsValid(graphtuple))
+	{
+		ReleaseSysCache(graphtuple);
+		result = true;
+	}
+
+	return result;
 }
