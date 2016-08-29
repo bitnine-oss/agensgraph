@@ -12,9 +12,9 @@
 
 #include "nodes/parsenodes.h"
 
-extern Oid label_create_with_catalog(const char *labname, Oid relid,
+extern Oid label_create_with_catalog(RangeVar *label, Oid relid,
 									 Oid ownerid, char labkind,
-									 Oid labtablespace, char labpersistence);
+									 Oid labtablespace);
 extern void label_drop_with_catalog(Oid labid);
 
 #endif	/* AG_LABEL_FN_H */

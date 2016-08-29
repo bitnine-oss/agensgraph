@@ -16,12 +16,15 @@
 #include "access/reloptions.h"
 #include "access/xact.h"
 #include "catalog/ag_inherits.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
 #include "catalog/indexing.h"
+#include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_namespace.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
 #include "commands/graphcmds.h"
@@ -120,9 +123,8 @@ DefineLabel(CreateStmt *stmt, char labkind)
 	/* current implementation does not get tablespace name; so */
 	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence);
 
-	labid = label_create_with_catalog(stmt->relation->relname, reladdr.objectId,
-									  GetUserId(), labkind, tablespaceId,
-									  stmt->relation->relpersistence);
+	labid = label_create_with_catalog(stmt->relation, reladdr.objectId,
+									  GetUserId(), labkind, tablespaceId);
 
 	GetSuperOids(stmt->inhRelations, labkind, &inheritOids);
 	StoreCatalogAgInheritance(labid, inheritOids);
@@ -152,7 +154,7 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 		HeapTuple	tuple;
 		Form_ag_label labtup;
 
-		parent_labid = get_labname_labid(parent->relname);
+		parent_labid = get_labname_labid(parent->relname, parent->schemaname);
 
 		tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(parent_labid));
 		if (!HeapTupleIsValid(tuple))
@@ -267,4 +269,65 @@ CheckDropLabel(ObjectType removeType, Oid labid)
 				 errmsg("cannot drop base edge label")));
 
 	ReleaseSysCache(tuple);
+}
+
+/* See ProcessUtilitySlow() case T_CreateSchemaStmt */
+void
+CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString)
+{
+	List	   *parsetree_list;
+	ListCell   *parsetree_item;
+
+	/* insert tuple to graph catalog ag_graph and create schema */
+	GraphCreate(stmt, queryString);
+
+	parsetree_list = transformCreateGraphStmt(stmt);
+
+	foreach(parsetree_item, parsetree_list)
+	{
+		Node	   *stmt = (Node *) lfirst(parsetree_item);
+
+		ProcessUtility(stmt,
+					   queryString,
+					   PROCESS_UTILITY_SUBCOMMAND,
+					   NULL,
+					   None_Receiver,
+					   NULL);
+
+		CommandCounterIncrement();
+	}
+}
+
+bool
+isLabel(RangeVar *rel)
+{
+	HeapTuple	nsptuple;
+	HeapTuple	graphtuple;
+	char	   *nspname;
+	Oid			nspid;
+	bool		result = false;
+	Form_pg_namespace nspdata;
+
+	nspid = RangeVarGetCreationNamespace(rel);
+
+	nsptuple = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(nspid));
+
+	if (!HeapTupleIsValid(nsptuple))
+		elog(ERROR, "cache lookup failed for label (OID=%u)", nspid);
+
+	nspdata = (Form_pg_namespace) GETSTRUCT(nsptuple);
+
+	ReleaseSysCache(nsptuple);
+
+	nspname = NameStr(nspdata->nspname);
+
+	graphtuple = SearchSysCache1(GRAPHNAME, CStringGetDatum(nspname));
+
+	if (HeapTupleIsValid(graphtuple))
+	{
+		ReleaseSysCache(graphtuple);
+		result = true;
+	}
+
+	return result;
 }

@@ -12,8 +12,11 @@
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
 
+extern void CreateGraphCommand(CreateGraphStmt *graphStmt,
+							   const char *queryString);
 extern void CreateLabelCommand(CreateLabelStmt *labelStmt,
 							   const char *queryString, ParamListInfo params);
 extern void CheckDropLabel(ObjectType removeType, Oid labid);
+extern bool isLabel(RangeVar *rel);
 
 #endif	/* GRAPHCMDS_H */

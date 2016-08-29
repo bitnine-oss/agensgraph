@@ -12,6 +12,7 @@
 
 #include "ag_const.h"
 #include "access/htup_details.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
 #include "executor/nodeModifyGraph.h"
@@ -30,28 +31,28 @@
 #define SQLCMD_BUFLEN				(NAMEDATALEN + 192)
 
 #define SQLCMD_CREAT_VERTEX \
-	"INSERT INTO " AG_GRAPH ".%s VALUES (DEFAULT, $1) RETURNING " \
+	"INSERT INTO %s.%s VALUES (DEFAULT, $1) RETURNING " \
 	"(tableoid, " AG_ELEM_LOCAL_ID ")::graphid AS " AG_ELEM_ID ", " \
 	AG_ELEM_PROP_MAP
 #define SQLCMD_VERTEX_NPARAMS		1
 
 #define SQLCMD_CREAT_EDGE \
-	"INSERT INTO " AG_GRAPH ".%s VALUES (DEFAULT, $1, $2, $3) RETURNING " \
+	"INSERT INTO %s.%s VALUES (DEFAULT, $1, $2, $3) RETURNING " \
 	"(tableoid, " AG_ELEM_LOCAL_ID ")::graphid AS " AG_ELEM_ID ", " \
 	AG_START_ID ", \"" AG_END_ID "\", " AG_ELEM_PROP_MAP
 #define SQLCMD_EDGE_NPARAMS			3
 
 #define SQLCMD_DEL_ELEM \
-	"DELETE FROM ONLY " AG_GRAPH ".%s WHERE " AG_ELEM_LOCAL_ID " = $1"
+	"DELETE FROM ONLY %s.%s WHERE " AG_ELEM_LOCAL_ID " = $1"
 #define SQLCMD_DEL_ELEM_NPARAMS		1
 
 #define SQLCMD_DETACH \
-	"SELECT " AG_ELEM_LOCAL_ID " FROM " AG_GRAPH "." AG_EDGE \
+	"SELECT " AG_ELEM_LOCAL_ID " FROM %s." AG_EDGE \
 	" WHERE " AG_START_ID " = $1 OR \"" AG_END_ID "\" = $1"
 #define SQLCMD_DETACH_NPARAMS		1
 
 #define SQLCMD_DEL_EDGES \
-	"DELETE FROM " AG_GRAPH "." AG_EDGE \
+	"DELETE FROM %s." AG_EDGE \
 	" WHERE " AG_START_ID " = $1 OR \"" AG_END_ID "\" = $1"
 #define SQLCMD_DEL_EDGES_NPARAMS	1
 
@@ -329,6 +330,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 {
 	EState	   *estate = mgstate->ps.state;
 	char		sqlcmd[SQLCMD_BUFLEN];
+	char	   *graph;
 	char	   *label;
 	Datum		values[SQLCMD_VERTEX_NPARAMS];
 	Oid			argTypes[SQLCMD_VERTEX_NPARAMS] = {JSONBOID};
@@ -337,11 +339,12 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	HeapTuple	tuple;
 	Datum		vertex = (Datum) NULL;
 
+	graph = get_graph_path();
 	label = gvertex->label;
 	if (label == NULL)
 		label = AG_VERTEX;
 
-	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_VERTEX, label);
+	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_VERTEX, graph, label);
 
 	values[0] = evalPropMap(gvertex->es_prop_map, mgstate->ps.ps_ExprContext,
 							slot);
@@ -385,9 +388,10 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Oid			argTypes[SQLCMD_EDGE_NPARAMS] = {GRAPHIDOID, GRAPHIDOID,
 												 JSONBOID};
 	int			ret;
+	char	   *graph = get_graph_path();
 	Datum		edge = (Datum) NULL;
 
-	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_EDGE, gedge->label);
+	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_EDGE, graph, gedge->label);
 
 	values[0] = getGraphidDatum(start);
 	values[1] = getGraphidDatum(end);
@@ -631,17 +635,21 @@ deleteVertex(Datum vertex, bool detach)
 static bool
 vertexHasEdge(Datum vid)
 {
+	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_DETACH_NPARAMS];
 	Oid			argTypes[SQLCMD_DETACH_NPARAMS];
 	int			ret;
+	char	   *graph = get_graph_path();
+
+	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DETACH, graph);
 
 	values[0] = vid;
 	argTypes[0] = GRAPHIDOID;
 
-	ret = SPI_execute_with_args(SQLCMD_DETACH, SQLCMD_DETACH_NPARAMS, argTypes,
+	ret = SPI_execute_with_args(sqlcmd, SQLCMD_DETACH_NPARAMS, argTypes,
 								values, NULL, false, 1);
 	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "SPI_execute failed: %s", SQLCMD_DETACH);
+		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 
 	return (SPI_processed > 0);
 }
@@ -649,17 +657,21 @@ vertexHasEdge(Datum vid)
 static void
 deleteVertexEdges(Datum vid)
 {
+	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_DEL_EDGES_NPARAMS];
 	Oid			argTypes[SQLCMD_DEL_EDGES_NPARAMS];
 	int			ret;
+	char	   *graph = get_graph_path();
+
+	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DEL_EDGES, graph);
 
 	values[0] = vid;
 	argTypes[0] = GRAPHIDOID;
 
-	ret = SPI_execute_with_args(SQLCMD_DEL_EDGES, SQLCMD_DEL_EDGES_NPARAMS,
+	ret = SPI_execute_with_args(sqlcmd, SQLCMD_DEL_EDGES_NPARAMS,
 								argTypes, values, NULL, false, 0);
 	if (ret != SPI_OK_DELETE)
-		elog(ERROR, "SPI_execute failed: %s", SQLCMD_DEL_EDGES);
+		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 }
 
 static void
@@ -669,8 +681,10 @@ deleteElem(char *relname, int64 id)
 	Datum		values[SQLCMD_DEL_ELEM_NPARAMS];
 	Oid			argTypes[SQLCMD_DEL_ELEM_NPARAMS];
 	int			ret;
+	char	   *graph = get_graph_path();
 
-	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DEL_ELEM, relname);
+	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DEL_ELEM, graph, relname);
+
 	values[0] = Int64GetDatum(id);
 	argTypes[0] = INT8OID;
 
