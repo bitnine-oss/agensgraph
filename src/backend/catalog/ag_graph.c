@@ -83,6 +83,15 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString)
 				(errcode(ERRCODE_DUPLICATE_SCHEMA),
 				 errmsg("graph \"%s\" already exists", graphName)));
 
+	/* Create Schema as a graph */
+	schema = makeNode(CreateSchemaStmt);
+	schema->schemaname = stmt->graphname;
+	schema->authrole = stmt->authrole;
+	schema->if_not_exists = stmt->if_not_exists;
+	schema->schemaElts = NIL;
+
+	schemaoid = CreateSchemaCommand(schema, queryString);
+
 	/* initialize nulls and values */
 	for (i = 0; i < Natts_ag_graph ; i++)
 	{
@@ -91,7 +100,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString)
 	}
 	namestrcpy(&gname, graphName);
 	values[Anum_ag_graph_graphname - 1] = NameGetDatum(&gname);
-	values[Anum_ag_graph_graphowner - 1] = ObjectIdGetDatum(owner_uid);
+	values[Anum_ag_graph_nspid - 1] = ObjectIdGetDatum(schemaoid);
 
 	graphdesc = heap_open(GraphRelationId, RowExclusiveLock);
 	tupDesc = graphdesc->rd_att;
@@ -104,15 +113,6 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString)
 	CatalogUpdateIndexes(graphdesc, tup);
 
 	heap_close(graphdesc, RowExclusiveLock);
-
-	schema = makeNode(CreateSchemaStmt);
-	schema->schemaname = stmt->graphname;
-	schema->authrole = stmt->authrole;
-	schema->if_not_exists = stmt->if_not_exists;
-	schema->schemaElts = NIL;
-
-	/* Create Schema as a graph */
-	schemaoid = CreateSchemaCommand(schema, queryString);
 
 	addr_graph.classId = GraphRelationId;
 	addr_graph.objectId = graphoid;

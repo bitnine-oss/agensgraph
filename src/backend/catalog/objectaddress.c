@@ -18,6 +18,7 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "catalog/ag_graph.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
@@ -445,10 +446,10 @@ static const ObjectPropertyType ObjectProperty[] =
 		GRAPHOID,
 		GRAPHNAME,
 		Anum_ag_graph_graphname,
+		Anum_ag_graph_nspid,
 		InvalidAttrNumber,
-		Anum_ag_label_labowner,
 		InvalidAttrNumber,
-		-1,
+		ACL_KIND_GRAPH,
 		true,
 	},
 	{
@@ -458,9 +459,9 @@ static const ObjectPropertyType ObjectProperty[] =
 		LABELNAME,
 		Anum_ag_label_labname,
 		InvalidAttrNumber,
-		Anum_ag_label_labowner,
 		InvalidAttrNumber,
-		-1,
+		InvalidAttrNumber,
+		ACL_KIND_LABEL,
 		true,
 	}
 };
@@ -2166,7 +2167,6 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 							   NameListToString(objname));
 			break;
 		case OBJECT_SCHEMA:
-		case OBJECT_GRAPH:
 			if (!pg_namespace_ownercheck(address.objectId, roleid))
 				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_NAMESPACE,
 							   NameListToString(objname));
@@ -2293,6 +2293,11 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 				ereport(ERROR,
 						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 						 errmsg("must be superuser")));
+			break;
+		case OBJECT_GRAPH:
+			if (!ag_graph_ownercheck(address.objectId, roleid))
+				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_GRAPH,
+							   NameListToString(objname));
 			break;
 		case OBJECT_VLABEL:
 		case OBJECT_ELABEL:

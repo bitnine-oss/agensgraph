@@ -13,6 +13,7 @@
 #include "ag_const.h"
 #include "access/htup_details.h"
 #include "access/tupdesc.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "funcapi.h"
@@ -537,10 +538,10 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 {
 	const char *querystr =
 			"SELECT ((tableoid, id)::graphid, properties)::vertex "
-			"FROM " AG_GRAPH "." AG_VERTEX " WHERE tableoid = $1 AND id = $2";
+			"FROM $1." AG_VERTEX " WHERE tableoid = $2 AND id = $3";
 	int			attnum = (evk == EVK_START ? Anum_edge_start : Anum_edge_end);
 	Graphid		id;
-	Datum		values[2];
+	Datum		values[3];
 	Oid			argTypes[2] = {OIDOID, INT8OID};
 	bool		spi_pushed;
 	int			ret;
@@ -549,15 +550,16 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 
 	id = getGraphidStruct(tuple_getattr(edge, attnum));
 
-	values[0] = ObjectIdGetDatum(id.oid);
-	values[1] = Int64GetDatum(id.lid);
+	values[0] = CStringGetDatum(get_graph_path());
+	values[1] = ObjectIdGetDatum(id.oid);
+	values[2] = Int64GetDatum(id.lid);
 
 	spi_pushed = SPI_push_conditional();
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
-	ret = SPI_execute_with_args(querystr, 2, argTypes, values, NULL, false, 0);
+	ret = SPI_execute_with_args(querystr, 3, argTypes, values, NULL, false, 0);
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "SPI_execute failed: %s", querystr);
 
