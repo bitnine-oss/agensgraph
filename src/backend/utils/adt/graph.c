@@ -18,6 +18,7 @@
 #include "funcapi.h"
 #include "utils/array.h"
 #include "utils/arrayaccess.h"
+#include "utils/builtins.h"
 #include "utils/graph.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
@@ -179,7 +180,7 @@ vertex_label(PG_FUNCTION_ARGS)
 
 	my_extra = cache_label(fcinfo->flinfo, id.oid);
 
-	PG_RETURN_CSTRING(pstrdup(NameStr(my_extra->label)));
+	PG_RETURN_TEXT_P(cstring_to_text(NameStr(my_extra->label)));
 }
 
 Datum
@@ -259,7 +260,7 @@ edge_label(PG_FUNCTION_ARGS)
 
 	my_extra = cache_label(fcinfo->flinfo, id.oid);
 
-	PG_RETURN_CSTRING(pstrdup(NameStr(my_extra->label)));
+	PG_RETURN_TEXT_P(cstring_to_text(NameStr(my_extra->label)));
 }
 
 Datum
@@ -586,7 +587,7 @@ vertex_labels(PG_FUNCTION_ARGS)
 
 	my_extra = cache_label(fcinfo->flinfo, id.oid);
 
-	label = CStringGetDatum(pstrdup(NameStr(my_extra->label)));
+	label = CStringGetTextDatum(NameStr(my_extra->label));
 
 	PG_RETURN_ARRAYTYPE_P(makeArrayTypeDatum(&label, 1, CSTRINGOID));
 }

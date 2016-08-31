@@ -5334,7 +5334,7 @@ DATA(insert OID = 7014 ( vertex_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 22
 DESCR("I/O");
 DATA(insert OID = 7016 ( _vertex_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7011" _null_ _null_ _null_ _null_ _null_ _vertex_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 7017 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7012" _null_ _null_ _null_ _null_ _null_ vertex_label _null_ _null_ _null_ ));
+DATA(insert OID = 7017 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 25 "7012" _null_ _null_ _null_ _null_ _null_ vertex_label _null_ _null_ _null_ ));
 DESCR("get vertex's label");
 DATA(insert OID = 7019 ( to_jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 3802 "7012" _null_ _null_ _null_ _null_ _null_ vtojb _null_ _null_ _null_ ));
 DESCR("convert vertex to jsonb");
@@ -5342,7 +5342,7 @@ DATA(insert OID = 7024 ( edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275
 DESCR("I/O");
 DATA(insert OID = 7026 ( _edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7021" _null_ _null_ _null_ _null_ _null_ _edge_out _null_ _null_ _null_ ));
 DESCR("I/O");
-DATA(insert OID = 7027 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
+DATA(insert OID = 7027 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 25 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
 DESCR("get edge's label");
 DATA(insert OID = 7029 ( to_jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 3802 "7022" _null_ _null_ _null_ _null_ _null_ etojb _null_ _null_ _null_ ));
 DESCR("convert edge to jsonb");
@@ -5358,9 +5358,9 @@ DATA(insert OID = 7070 ( start_vertex	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7
 DESCR("get the start vertex of edge");
 DATA(insert OID = 7071 ( end_vertex		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_end_vertex _null_ _null_ _null_ ));
 DESCR("get the end vertex of edge");
-DATA(insert OID = 7075 ( labels			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 1263 "7012" _null_ _null_ _null_ _null_ _null_ vertex_labels _null_ _null_ _null_ ));
+DATA(insert OID = 7075 ( labels			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 1009 "7012" _null_ _null_ _null_ _null_ _null_ vertex_labels _null_ _null_ _null_ ));
 DESCR("get vertex's labels");
-DATA(insert OID = 7076 ( type			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
+DATA(insert OID = 7076 ( type			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 25 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
 DESCR("get edge's label");
 DATA(insert OID = 7077 ( startnode		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_start_vertex _null_ _null_ _null_ ));
 DESCR("get the start vertex of edge");
