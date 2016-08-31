@@ -63,7 +63,8 @@ Oid
 GraphCreate(CreateGraphStmt *stmt, const char *queryString)
 {
 	const char *graphName = stmt->graphname;
-	Oid			owner_uid;
+	CreateSchemaStmt *schemaStmt;
+	Oid			schemaoid;
 	Datum		values[Natts_ag_graph];
 	bool		isnull[Natts_ag_graph];
 	NameData	gname;
@@ -71,18 +72,11 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString)
 	TupleDesc	tupDesc;
 	HeapTuple	tup;
 	Oid			graphoid;
-	CreateSchemaStmt *schemaStmt;
-	Oid			schemaoid;
 	ObjectAddress graphobj;
 	ObjectAddress schemaobj;
 	int			i;
 
 	AssertArg(graphName != NULL);
-
-	if (stmt->authrole)
-		owner_uid = get_rolespec_oid(stmt->authrole, false);
-	else
-		owner_uid = GetUserId();
 
 	if (SearchSysCacheExists1(GRAPHNAME, PointerGetDatum(graphName)))
 	{
@@ -103,6 +97,16 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString)
 		}
 	}
 
+	/* create a schema as a graph */
+
+	schemaStmt = makeNode(CreateSchemaStmt);
+	schemaStmt->schemaname = stmt->graphname;
+	schemaStmt->authrole = stmt->authrole;
+	schemaStmt->if_not_exists = stmt->if_not_exists;
+	schemaStmt->schemaElts = NIL;
+
+	schemaoid = CreateSchemaCommand(schemaStmt, queryString);
+
 	/* initialize nulls and values */
 	for (i = 0; i < Natts_ag_graph; i++)
 	{
@@ -111,7 +115,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString)
 	}
 	namestrcpy(&gname, graphName);
 	values[Anum_ag_graph_graphname - 1] = NameGetDatum(&gname);
-	values[Anum_ag_graph_graphowner - 1] = ObjectIdGetDatum(owner_uid);
+	values[Anum_ag_graph_nspid - 1] = ObjectIdGetDatum(schemaoid);
 
 	graphdesc = heap_open(GraphRelationId, RowExclusiveLock);
 	tupDesc = graphdesc->rd_att;
@@ -124,15 +128,6 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString)
 	CatalogUpdateIndexes(graphdesc, tup);
 
 	heap_close(graphdesc, RowExclusiveLock);
-
-	schemaStmt = makeNode(CreateSchemaStmt);
-	schemaStmt->schemaname = stmt->graphname;
-	schemaStmt->authrole = stmt->authrole;
-	schemaStmt->if_not_exists = stmt->if_not_exists;
-	schemaStmt->schemaElts = NIL;
-
-	/* create a schema as a graph */
-	schemaoid = CreateSchemaCommand(schemaStmt, queryString);
 
 	graphobj.classId = GraphRelationId;
 	graphobj.objectId = graphoid;

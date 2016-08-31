@@ -27,11 +27,10 @@
  */
 #define GraphRelationId	7040
 
-
-CATALOG(ag_graph ,7040) BKI_SCHEMA_MACRO
+CATALOG(ag_graph,7040) BKI_SCHEMA_MACRO
 {
 	NameData	graphname;
-	Oid			graphowner;
+	Oid			nspid;
 } FormData_ag_graph;
 
 /* ----------------
@@ -48,11 +47,6 @@ typedef FormData_ag_graph *Form_ag_graph;
 
 #define Natts_ag_graph					2
 #define Anum_ag_graph_graphname			1
-#define Anum_ag_graph_graphowner		2
-
-/* ----------------
- *		ag_graph has no initial contents
- * ----------------
- */
+#define Anum_ag_graph_nspid				2
 
 #endif   /* AG_GRAPH_H */

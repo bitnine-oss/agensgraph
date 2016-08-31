@@ -198,6 +198,7 @@ typedef enum AclObjectKind
 	ACL_KIND_FOREIGN_SERVER,	/* pg_foreign_server */
 	ACL_KIND_EVENT_TRIGGER,		/* pg_event_trigger */
 	ACL_KIND_EXTENSION,			/* pg_extension */
+	ACL_KIND_GRAPH,				/* ag_graph */
 	ACL_KIND_LABEL,				/* ag_label */
 	MAX_ACL_KIND				/* MUST BE LAST */
 } AclObjectKind;
@@ -333,6 +334,7 @@ extern bool pg_event_trigger_ownercheck(Oid et_oid, Oid roleid);
 extern bool pg_extension_ownercheck(Oid ext_oid, Oid roleid);
 extern bool has_createrole_privilege(Oid roleid);
 extern bool has_bypassrls_privilege(Oid roleid);
+extern bool ag_graph_ownercheck(Oid graphid, Oid roleid);
 extern bool ag_label_ownercheck(Oid labid, Oid roleid);
 
 #endif   /* ACL_H */
