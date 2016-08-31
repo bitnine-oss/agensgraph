@@ -22,6 +22,7 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/xact.h"
+#include "catalog/ag_graph.h"
 #include "catalog/ag_label.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -3299,6 +3300,10 @@ static const char *const no_priv_msg[MAX_ACL_KIND] =
 	gettext_noop("permission denied for event trigger %s"),
 	/* ACL_KIND_EXTENSION */
 	gettext_noop("permission denied for extension %s"),
+	/* ACL_KIND_GRAPH */
+	gettext_noop("permission denied for graph %s"),
+	/* ACL_KIND_LABEL */
+	gettext_noop("permission denied for label %s"),
 };
 
 static const char *const not_owner_msg[MAX_ACL_KIND] =
@@ -3345,6 +3350,10 @@ static const char *const not_owner_msg[MAX_ACL_KIND] =
 	gettext_noop("must be owner of event trigger %s"),
 	/* ACL_KIND_EXTENSION */
 	gettext_noop("must be owner of extension %s"),
+	/* ACL_KIND_GRAPH */
+	gettext_noop("must be owner of graph %s"),
+	/* ACL_KIND_LABEL */
+	gettext_noop("must be owner of label %s"),
 };
 
 
@@ -5177,13 +5186,39 @@ get_user_default_acl(GrantObjectType objtype, Oid ownerId, Oid nsp_oid)
 }
 
 /*
+ * Ownership check for a graph (specified by OID).
+ */
+bool
+ag_graph_ownercheck(Oid graphid, Oid roleid)
+{
+	HeapTuple	tuple;
+	Oid			nspid;
+
+	/* Superusers bypass all permission checking. */
+	if (superuser_arg(roleid))
+		return true;
+
+	tuple = SearchSysCache1(GRAPHOID, ObjectIdGetDatum(graphid));
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_DATABASE),
+				 errmsg("graph with OID %u does not exist", graphid)));
+
+	nspid = ((Form_ag_graph) GETSTRUCT(tuple))->nspid;
+
+	ReleaseSysCache(tuple);
+
+	return pg_namespace_ownercheck(nspid, roleid);
+}
+
+/*
  * Ownership check for a label (specified by OID).
  */
 bool
 ag_label_ownercheck(Oid labid, Oid roleid)
 {
 	HeapTuple	tuple;
-	Oid			owner;
+	Oid			relid;
 
 	/* Superusers bypass all permission checking. */
 	if (superuser_arg(roleid))
@@ -5195,9 +5230,9 @@ ag_label_ownercheck(Oid labid, Oid roleid)
 				(errcode(ERRCODE_UNDEFINED_DATABASE),
 				 errmsg("graph label with OID %u does not exist", labid)));
 
-	owner = ((Form_ag_label) GETSTRUCT(tuple))->labowner;
+	relid = ((Form_ag_label) GETSTRUCT(tuple))->relid;
 
 	ReleaseSysCache(tuple);
 
-	return has_privs_of_role(roleid, owner);
+	return pg_class_ownercheck(relid, roleid);
 }

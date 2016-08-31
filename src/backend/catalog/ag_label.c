@@ -24,14 +24,13 @@
 #include "utils/syscache.h"
 
 static void InsertAgLabelTuple(Relation ag_label_desc, Oid labid,
-							   RangeVar *label, Oid relid, Oid ownerid,
-							   char labkind);
+							   RangeVar *label, Oid relid, char labkind);
 static void LabelRemoveInheritance(Oid labid);
 static void DeleteLabelTuple(Oid labid);
 
 Oid
-label_create_with_catalog(RangeVar *label, Oid relid, Oid ownerid,
-						  char labkind, Oid labtablespace)
+label_create_with_catalog(RangeVar *label, Oid relid, char labkind,
+						  Oid labtablespace)
 {
 	Relation	ag_label_desc;
 	Oid			labid;
@@ -41,7 +40,7 @@ label_create_with_catalog(RangeVar *label, Oid relid, Oid ownerid,
 	labid = GetNewRelFileNode(labtablespace, ag_label_desc,
 							  label->relpersistence);
 
-	InsertAgLabelTuple(ag_label_desc, labid, label, relid, ownerid, labkind);
+	InsertAgLabelTuple(ag_label_desc, labid, label, relid, labkind);
 
 	heap_close(ag_label_desc, RowExclusiveLock);
 
@@ -63,7 +62,7 @@ label_drop_with_catalog(Oid labid)
  */
 static void
 InsertAgLabelTuple(Relation ag_label_desc, Oid labid, RangeVar *label,
-				   Oid relid, Oid ownerid, char labkind)
+				   Oid relid, char labkind)
 {
 	char	   *graphname = label->schemaname;
 	char	   *labname = label->relname;
@@ -76,7 +75,6 @@ InsertAgLabelTuple(Relation ag_label_desc, Oid labid, RangeVar *label,
 	values[Anum_ag_label_labname - 1] = CStringGetDatum(labname);
 	values[Anum_ag_label_graphname - 1] = CStringGetDatum(graphname);
 	values[Anum_ag_label_relid - 1] = ObjectIdGetDatum(relid);
-	values[Anum_ag_label_labowner- 1] = ObjectIdGetDatum(ownerid);
 	values[Anum_ag_label_labkind - 1] = CharGetDatum(labkind);
 
 	memset(nulls, false, sizeof(nulls));

@@ -448,9 +448,9 @@ static const ObjectPropertyType ObjectProperty[] =
 		GRAPHNAME,
 		Anum_ag_graph_graphname,
 		InvalidAttrNumber,
-		Anum_ag_graph_graphowner,
 		InvalidAttrNumber,
-		-1,
+		InvalidAttrNumber,
+		ACL_KIND_GRAPH,
 		true,
 	},
 	{
@@ -460,9 +460,9 @@ static const ObjectPropertyType ObjectProperty[] =
 		LABELNAME,
 		Anum_ag_label_labname,
 		InvalidAttrNumber,
-		Anum_ag_label_labowner,
 		InvalidAttrNumber,
-		-1,
+		InvalidAttrNumber,
+		ACL_KIND_LABEL,
 		true,
 	}
 };
@@ -2174,7 +2174,6 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 							   NameListToString(objname));
 			break;
 		case OBJECT_SCHEMA:
-		case OBJECT_GRAPH:
 			if (!pg_namespace_ownercheck(address.objectId, roleid))
 				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_NAMESPACE,
 							   NameListToString(objname));
@@ -2301,6 +2300,11 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 				ereport(ERROR,
 						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 						 errmsg("must be superuser")));
+			break;
+		case OBJECT_GRAPH:
+			if (!ag_graph_ownercheck(address.objectId, roleid))
+				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_GRAPH,
+							   NameListToString(objname));
 			break;
 		case OBJECT_VLABEL:
 		case OBJECT_ELABEL:

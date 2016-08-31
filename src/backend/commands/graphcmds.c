@@ -29,7 +29,6 @@
 #include "commands/graphcmds.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
-#include "miscadmin.h"
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
 #include "parser/parse_utilcmd.h"
@@ -168,7 +167,7 @@ DefineLabel(CreateStmt *stmt, char labkind)
 	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence);
 
 	labid = label_create_with_catalog(stmt->relation, reladdr.objectId,
-									  GetUserId(), labkind, tablespaceId);
+									  labkind, tablespaceId);
 
 	GetSuperOids(stmt->inhRelations, labkind, &inheritOids);
 	StoreCatalogAgInheritance(labid, inheritOids);
