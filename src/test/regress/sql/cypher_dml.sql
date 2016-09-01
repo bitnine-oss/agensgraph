@@ -182,6 +182,18 @@ RETURN (b).name;
 MATCH (a)-[]-(b) RETURN count(a) AS a, (b).name AS b ORDER BY a;
 
 --
+-- EXISTS
+--
+
+MATCH (a:repo) WHERE exists((a)-[]->()) RETURN (a).name AS a;
+
+--
+-- SIZE
+--
+
+MATCH (a:repo) RETURN (a).name AS a, size((a)-[]->()) AS s;
+
+--
 -- LOAD
 --
 

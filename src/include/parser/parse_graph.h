@@ -13,6 +13,8 @@
 
 #include "parser/parse_node.h"
 
+extern Query *transformCypherSubPattern(ParseState *pstate,
+										CypherSubPattern *subpat);
 extern Query *transformCypherProjection(ParseState *pstate,
 										CypherClause *clause);
 extern Query *transformCypherMatchClause(ParseState *pstate,

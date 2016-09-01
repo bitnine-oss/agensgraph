@@ -434,6 +434,7 @@ typedef enum NodeTag
 	T_RoleSpec,
 	T_JsonObject,
 	T_JsonKeyVal,
+	T_CypherSubPattern,
 	T_CypherClause,
 	T_CypherMatchClause,
 	T_CypherProjection,
