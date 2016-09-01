@@ -62,11 +62,11 @@ static List *transformCreatePattern(ParseState *pstate, List *pattern,
 									List **targetList);
 static GraphVertex *transformCreateNode(ParseState *pstate, CypherNode *cnode,
 										List **targetList);
-static bool isNodeForRef(CypherNode *cnode);
 static GraphEdge *transformCreateRel(ParseState *pstate, CypherRel *crel,
 									 List **targetList);
 
 /* common */
+static bool isNodeForRef(CypherNode *cnode);
 static Node *transformPropMap(ParseState *pstate, Node *expr,
 							  ParseExprKind exprKind);
 static Node *preprocessPropMap(Node *expr);
@@ -79,7 +79,7 @@ static void addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte,
 static RangeTblEntry *findRTEfromNamespace(ParseState *pstate, char *refname);
 static List *makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte);
 static TargetEntry *makeWholeRowTarget(ParseState *pstate, RangeTblEntry *rte);
-static TargetEntry *findTarget(List *targetList, char *varname);
+static TargetEntry *findTarget(List *targetList, char *resname);
 
 /* expression - type */
 static Node *makeGraphidExpr(ParseState *pstate, RangeTblEntry *rte);
@@ -101,6 +101,48 @@ static Node *qualAndExpr(ParseState *pstate, Node *qual, Node *expr);
 
 /* utils */
 static char *genUniqueName(void);
+
+Query *
+transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
+{
+	List	   *components;
+	Query	   *qry;
+	Node	   *qual;
+
+	components = makeComponents(subpat->pattern);
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	qual = transformComponents(pstate, components, &qry->targetList);
+	if (subpat->kind == CSP_SIZE)
+	{
+		FuncCall *fc;
+		TargetEntry *te;
+
+		fc = makeFuncCall(list_make1(makeString("count")), NIL, -1);
+		fc->agg_star = true;
+
+		pstate->p_next_resno = 1;
+		te = transformTargetEntry(pstate, (Node *) fc, NULL,
+								  EXPR_KIND_SELECT_TARGET, NULL, false);
+
+		qry->targetList = list_make1(te);
+	}
+	markTargetListOrigins(pstate, qry->targetList);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
+
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasAggs = pstate->p_hasAggs;
+	if (qry->hasAggs)
+		parseCheckAggregates(pstate, qry);
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
 
 Query *
 transformCypherProjection(ParseState *pstate, CypherClause *clause)
@@ -708,7 +750,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 {
 	char	   *varname = getCypherName(cnode->variable);
 	int			varloc = getCypherNameLoc(cnode->variable);
-	TargetEntry *vertex;
+	TargetEntry *te;
 	char	   *labname;
 	int			labloc;
 	RangeVar   *r;
@@ -723,10 +765,11 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 	 * `cnode` without variable is considered as if it has a unique variable,
 	 * so process it.
 	 */
-	vertex = findTarget(*targetList, varname);
-	if (vertex != NULL)
+	te = findTarget(*targetList, varname);
+	if (te != NULL)
 	{
-		if (exprType((Node *) vertex->expr) != VERTEXOID)
+
+		if (exprType((Node *) te->expr) != VERTEXOID)
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_ALIAS),
 					 errmsg("duplicate variable \"%s\"", varname),
@@ -734,9 +777,34 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 
 		rte = findRTEfromNamespace(pstate, varname);
 		if (rte == NULL)
-			return (Node *) vertex;		/* from the previous clause */
+			return (Node *) te;		/* from the previous clause */
 		else
-			return (Node *) rte;		/* in the pattern */
+			return (Node *) rte;	/* in the pattern */
+	}
+
+	if (isNodeForRef(cnode))
+	{
+		Node *col;
+
+		/* subquery or sublink */
+		col = colNameToVar(pstate, varname, false, varloc);
+		if (col != NULL)
+		{
+			if (exprType(col) != VERTEXOID)
+				ereport(ERROR,
+						(errcode(ERRCODE_DUPLICATE_ALIAS),
+						 errmsg("duplicate variable \"%s\"", varname),
+						 parser_errposition(pstate, varloc)));
+
+			te = makeTargetEntry((Expr *) col,
+								 (AttrNumber) pstate->p_next_resno++,
+								 pstrdup(varname),
+								 false);
+
+			*targetList = lappend(*targetList, te);
+
+			return (Node *) te;
+		}
 	}
 
 	/*
@@ -757,8 +825,6 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 
 	if (varname != NULL)
 	{
-		TargetEntry *te;
-
 		te = makeTargetEntry((Expr *) makeVertexExpr(pstate, rte, varloc),
 							 (AttrNumber) pstate->p_next_resno++,
 							 pstrdup(varname),
@@ -1074,14 +1140,6 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 	return gvertex;
 }
 
-static bool
-isNodeForRef(CypherNode *cnode)
-{
-	return (getCypherName(cnode->variable) != NULL &&
-			getCypherName(cnode->label) == NULL &&
-			cnode->prop_map == NULL);
-}
-
 static GraphEdge *
 transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 {
@@ -1143,6 +1201,14 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 										   EXPR_KIND_INSERT_TARGET);
 
 	return gedge;
+}
+
+static bool
+isNodeForRef(CypherNode *cnode)
+{
+	return (getCypherName(cnode->variable) != NULL &&
+			getCypherName(cnode->label) == NULL &&
+			cnode->prop_map == NULL);
 }
 
 static Node *
@@ -1345,12 +1411,12 @@ makeWholeRowTarget(ParseState *pstate, RangeTblEntry *rte)
 }
 
 static TargetEntry *
-findTarget(List *targetList, char *varname)
+findTarget(List *targetList, char *resname)
 {
 	ListCell *lt;
 	TargetEntry *te = NULL;
 
-	if (varname == NULL)
+	if (resname == NULL)
 		return NULL;
 
 	foreach(lt, targetList)
@@ -1360,7 +1426,7 @@ findTarget(List *targetList, char *varname)
 		if (te->resjunk)
 			continue;
 
-		if (strcmp(te->resname, varname) == 0)
+		if (strcmp(te->resname, resname) == 0)
 			return te;
 	}
 

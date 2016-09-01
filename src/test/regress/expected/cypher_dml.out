@@ -456,6 +456,27 @@ MATCH (a)-[]-(b) RETURN count(a) AS a, (b).name AS b ORDER BY a;
 (4 rows)
 
 --
+-- EXISTS
+--
+MATCH (a:repo) WHERE exists((a)-[]->()) RETURN (a).name AS a;
+       a       
+---------------
+ "agens-graph"
+(1 row)
+
+--
+-- SIZE
+--
+MATCH (a:repo) RETURN (a).name AS a, size((a)-[]->()) AS s;
+         a          | s 
+--------------------+---
+ "agens-graph"      | 3
+ "agens-graph-jdbc" | 0
+ "agens-graph-docs" | 0
+ "agens-graph-odbc" | 0
+(4 rows)
+
+--
 -- LOAD
 --
 MATCH (a) LOAD FROM history AS a RETURN *;

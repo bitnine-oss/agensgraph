@@ -3111,6 +3111,19 @@ typedef struct CypherStmt
 	Node	   *last;		/* last Cypher clause in the statement */
 } CypherStmt;
 
+typedef enum CSPKind
+{
+	CSP_EXISTS,
+	CSP_SIZE
+} CSPKind;
+
+typedef struct CypherSubPattern
+{
+	NodeTag		type;
+	CSPKind		kind;
+	List	   *pattern;
+} CypherSubPattern;
+
 /*
  * CypherClause - a wrapper for a Cypher clause
  *

@@ -2993,6 +2993,15 @@ _outCypherStmt(StringInfo str, const CypherStmt *node)
 }
 
 static void
+_outCypherSubPattern(StringInfo str, const CypherSubPattern *node)
+{
+	WRITE_NODE_TYPE("CYPHERSUBPATTERN");
+
+	WRITE_ENUM_FIELD(kind, CSPKind);
+	WRITE_NODE_FIELD(pattern);
+}
+
+static void
 _outCypherClause(StringInfo str, const CypherClause *node)
 {
 	WRITE_NODE_TYPE("CYPHERCLAUSE");
@@ -3659,6 +3668,9 @@ _outNode(StringInfo str, const void *obj)
 
 			case T_CypherStmt:
 				_outCypherStmt(str, obj);
+				break;
+			case T_CypherSubPattern:
+				_outCypherSubPattern(str, obj);
 				break;
 			case T_CypherClause:
 				_outCypherClause(str, obj);

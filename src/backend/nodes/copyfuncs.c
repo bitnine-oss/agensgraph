@@ -4118,16 +4118,6 @@ _copyCreateLabelStmt(const CreateLabelStmt *from)
 	return newnode;
 }
 
-static CypherStmt *
-_copyCypherStmt(const CypherStmt *from)
-{
-	CypherStmt *newnode = makeNode(CypherStmt);
-
-	COPY_NODE_FIELD(last);
-
-	return newnode;
-}
-
 static JsonObject *
 _copyJsonObject(const JsonObject *from)
 {
@@ -4145,6 +4135,27 @@ _copyJsonKeyVal(const JsonKeyVal *from)
 
 	COPY_NODE_FIELD(key);
 	COPY_NODE_FIELD(val);
+
+	return newnode;
+}
+
+static CypherStmt *
+_copyCypherStmt(const CypherStmt *from)
+{
+	CypherStmt *newnode = makeNode(CypherStmt);
+
+	COPY_NODE_FIELD(last);
+
+	return newnode;
+}
+
+static CypherSubPattern *
+_copyCypherSubPattern(const CypherSubPattern *from)
+{
+	CypherSubPattern *newnode = makeNode(CypherSubPattern);
+
+	COPY_SCALAR_FIELD(kind);
+	COPY_NODE_FIELD(pattern);
 
 	return newnode;
 }
@@ -5046,6 +5057,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherStmt:
 			retval = _copyCypherStmt(from);
+			break;
+		case T_CypherSubPattern:
+			retval = _copyCypherSubPattern(from);
 			break;
 		case T_A_Expr:
 			retval = _copyAExpr(from);

@@ -650,8 +650,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	ROLLUP ROW ROWS RULE
 
 	SAVEPOINT SCHEMA SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
-	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW
-	SIMILAR SIMPLE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P START
+	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW SIMILAR
+	SIMPLE SIZE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P START
 	STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P SUBSTRING
 	SYMMETRIC SYSID SYSTEM_P
 
@@ -725,12 +725,12 @@ static Node *wrapCypherWithSelect(Node *stmt);
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
  * To support Cypher, the precedence of unreserved keywords,
- * SKIP, DELETE_P, DETACH, and LOAD, must be the same as that of IDENT so that
- * they can follow a_expr without creating postfix-operator problems.
+ * DELETE_P, DETACH, LOAD, SIZE and SKIP must be the same as that of IDENT so
+ * that they can follow a_expr without creating postfix-operator problems.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			SKIP DELETE_P DETACH LOAD
+			DELETE_P DETACH LOAD SIZE SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -12026,6 +12026,7 @@ c_expr:		columnref								{ $$ = $1; }
 				{ $$ = $1; }
 			| func_expr
 				{ $$ = $1; }
+			| json_object_expr
 			| select_with_parens			%prec UMINUS
 				{
 					SubLink *n = makeNode(SubLink);
@@ -12069,6 +12070,34 @@ c_expr:		columnref								{ $$ = $1; }
 					n->testexpr = NULL;
 					n->operName = NIL;
 					n->subselect = $2;
+					n->location = @1;
+					$$ = (Node *)n;
+				}
+			| EXISTS '(' cypher_pattern ')'
+				{
+					CypherSubPattern *sub = makeNode(CypherSubPattern);
+					SubLink *n = makeNode(SubLink);
+					sub->kind = CSP_EXISTS;
+					sub->pattern = $3;
+					n->subLinkType = EXISTS_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *)n;
+				}
+			| SIZE '(' cypher_pattern ')'
+				{
+					CypherSubPattern *sub = makeNode(CypherSubPattern);
+					SubLink *n = makeNode(SubLink);
+					sub->kind = CSP_SIZE;
+					sub->pattern = $3;
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
 					n->location = @1;
 					$$ = (Node *)n;
 				}
@@ -12118,35 +12147,6 @@ c_expr:		columnref								{ $$ = $1; }
 				  g->location = @1;
 				  $$ = (Node *)g;
 			  }
-			| json_object_expr
-		;
-
-json_object_expr:
-			'{' json_key_value_list '}'
-				{
-					JsonObject *n = (JsonObject *) makeNode(JsonObject);
-					n->keyvals = $2;
-					$$ = (Node *) n;
-				}
-		;
-
-json_key_value_list:
-			json_key_value
-					{ $$ = list_make1($1); }
-			| json_key_value_list ',' json_key_value
-					{ $$ = lappend($1, $3); }
-			| /* EMPTY */
-					{ $$ = NIL; }
-		;
-
-json_key_value:
-			a_expr ':' a_expr
-				{
-					JsonKeyVal *n = (JsonKeyVal *) makeNode(JsonKeyVal);
-					n->key = $1;
-					n->val = $3;
-					$$ = (Node *) n;
-				}
 		;
 
 func_application: func_name '(' ')'
@@ -12566,6 +12566,34 @@ func_expr_common_subexpr:
 					n->typeName = $6;
 					n->location = @1;
 					$$ = (Node *)n;
+				}
+		;
+
+json_object_expr:
+			'{' json_key_value_list '}'
+				{
+					JsonObject *n = (JsonObject *) makeNode(JsonObject);
+					n->keyvals = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+json_key_value_list:
+			json_key_value
+					{ $$ = list_make1($1); }
+			| json_key_value_list ',' json_key_value
+					{ $$ = lappend($1, $3); }
+			| /* EMPTY */
+					{ $$ = NIL; }
+		;
+
+json_key_value:
+			a_expr ':' a_expr
+				{
+					JsonKeyVal *n = (JsonKeyVal *) makeNode(JsonKeyVal);
+					n->key = $1;
+					n->val = $3;
+					$$ = (Node *) n;
 				}
 		;
 
@@ -13881,6 +13909,7 @@ unreserved_keyword:
 			| SHARE
 			| SHOW
 			| SIMPLE
+			| SIZE
 			| SKIP
 			| SNAPSHOT
 			| SQL_P

@@ -256,8 +256,12 @@ transformStmt(ParseState *pstate, Node *parseTree)
 		case T_CypherStmt:
 			result = transformCypherStmt(pstate, (CypherStmt *) parseTree);
 			break;
-			/* Cypher clauses are transformed into a Query recursively */
+		case T_CypherSubPattern:
+			result = transformCypherSubPattern(pstate,
+											   (CypherSubPattern *) parseTree);
+			break;
 		case T_CypherClause:
+			/* Cypher clauses are transformed into a Query recursively */
 			result = transformCypherClause(pstate, (CypherClause *) parseTree);
 			break;
 
