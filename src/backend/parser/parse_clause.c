@@ -505,8 +505,7 @@ transformRangeSubselect(ParseState *pstate, RangeSubselect *r)
 	 * impossible given restrictions of the grammar, but check 'em anyway.
 	 */
 	if (!IsA(query, Query) ||
-		(query->commandType != CMD_SELECT &&
-		 query->commandType != CMD_GRAPHWRITE) ||
+		query->commandType != CMD_SELECT ||
 		query->utilityStmt != NULL)
 		elog(ERROR, "unexpected non-SELECT command in subquery in FROM");
 
@@ -3274,32 +3273,6 @@ transformFrameOffset(ParseState *pstate, int frameOptions, Node *clause)
 	checkExprIsVarFree(pstate, node, constructName);
 
 	return node;
-}
-
-
-/* This function mimics the first loop in transformFromClause() */
-RangeTblEntry *
-transformRangePrevclause(ParseState *pstate, RangePrevclause *r)
-{
-	RangeTblEntry *rte;
-
-	/* must call this function before transformFromClause() */
-	AssertState(pstate->p_joinlist == NIL);
-	AssertState(pstate->p_namespace == NIL);
-
-	rte = transformRangeSubselect(pstate, r);
-
-	/*
-	 * skip namespace checking because
-	 * `r` is the first transformed range variable
-	 */
-
-	addRTEtoQuery(pstate, rte, true, true, true);
-
-	/* to continue transformFromClause() later */
-	setNamespaceLateralState(pstate->p_namespace, true, true);
-
-	return rte;
 }
 
 

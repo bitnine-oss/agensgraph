@@ -463,7 +463,7 @@ evalPropMap(ExprState *prop_map, ExprContext *econtext, TupleTableSlot *slot)
 	if (!(exprType((Node *) prop_map->expr) == JSONBOID))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("jsonb is expected for property map")));
+				 errmsg("property map must be jsonb type")));
 
 	econtext->ecxt_scantuple = slot;
 	datum = ExecEvalExpr(prop_map, econtext, &isNull, &isDone);
@@ -513,6 +513,7 @@ setSlotValueByName(TupleTableSlot *slot, Datum value, char *name)
 	attno = findAttrInSlotByName(slot, name);
 
 	slot->tts_values[attno - 1] = value;
+	slot->tts_isnull[attno - 1] = false;
 }
 
 static Datum *
@@ -619,8 +620,8 @@ deleteVertex(Datum vertex, bool detach)
 
 			ereport(ERROR,
 					(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
-					 errmsg("vertex :%s[%d:" INT64_FORMAT "] has edge(s)",
-							labname, id.oid, id.lid)));
+					 errmsg("vertex " INT64_FORMAT " in \"%s\" has edge(s)",
+							id.lid, labname)));
 		}
 	}
 
