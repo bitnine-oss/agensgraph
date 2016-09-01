@@ -2739,27 +2739,24 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 	Node	   *clause = stmt->last;
 	NodeTag		type = cypherClauseTag(clause);
 
-	if (type == T_CypherProjection && cypherProjectionKind(clause) == CP_RETURN)
+	switch (type)
 	{
-		/* intentionally blank, do nothing */
-	}
-	else if (type == T_CypherCreateClause)
-	{
-		/* intentionally blank, do nothing */
-	}
-	else if (type == T_CypherDeleteClause)
-	{
-		/* intentionally blank, do nothing */
-	}
-	/* TODO: update clauses go to here */
-	else
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("Cypher query must end with RETURN or update clause")));
+		case T_CypherProjection:
+			if (cypherProjectionKind(clause) != CP_RETURN)
+				break;
+			/* fall-through */
+		case T_CypherCreateClause:
+		case T_CypherDeleteClause:
+			return transformStmt(pstate, clause);
+		default:
+			break;
 	}
 
-	return transformStmt(pstate, clause);
+	ereport(ERROR,
+			(errcode(ERRCODE_SYNTAX_ERROR),
+			 errmsg("Cypher query must end with RETURN or update clause")));
+
+	return NULL;
 }
 
 static Query *
@@ -2769,11 +2766,11 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 
 	switch (cypherClauseTag(clause))
 	{
-		case T_CypherMatchClause:
-			qry = transformCypherMatchClause(pstate, clause);
-			break;
 		case T_CypherProjection:
 			qry = transformCypherProjection(pstate, clause);
+			break;
+		case T_CypherMatchClause:
+			qry = transformCypherMatchClause(pstate, clause);
 			break;
 		case T_CypherCreateClause:
 			qry = transformCypherCreateClause(pstate, clause);

@@ -542,6 +542,7 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 	Graphid		id;
 	Datum		values[2];
 	Oid			argTypes[2] = {OIDOID, INT8OID};
+	bool		spi_pushed;
 	int			ret;
 	Datum		vertex;
 	bool		isnull;
@@ -550,6 +551,8 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 
 	values[0] = ObjectIdGetDatum(id.oid);
 	values[1] = Int64GetDatum(id.lid);
+
+	spi_pushed = SPI_push_conditional();
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -571,6 +574,8 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 
 	if (SPI_finish() != SPI_OK_FINISH)
 		elog(ERROR, "SPI_finish failed");
+
+	SPI_pop_conditional(spi_pushed);
 
 	return vertex;
 }

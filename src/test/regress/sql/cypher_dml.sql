@@ -2,261 +2,224 @@
 -- Cypher Query Language - DML
 --
 
--- initialize
+-- prepare
 
-DROP vlabel regvlabel1;
-DROP vlabel regvlabel2;
-DROP vlabel regvlabel3;
+DROP TABLE IF EXISTS history;
 
-DROP elabel regelabel1;
-DROP elabel regelabel2;
-
-CREATE vlabel regvlabel1;
-CREATE vlabel regvlabel2;
-CREATE vlabel regvlabel3;
-
-CREATE elabel regelabel1;
-CREATE elabel regelabel2;
-
-CREATE (v1:regvlabel1 {'name': 'regv1-1', 'id': 1}),
-	   (v2:regvlabel1 {'name': 'regv1-2', 'id': 2}),
-	   (v3:regvlabel1 {'name': 'regv1-3', 'id': 3}),
-
-	   (v4:regvlabel2 {'name': 'regv2-1', 'id': 4}),
-	   (v5:regvlabel2 {'name': 'regv2-2', 'id': 5}),
-	   (v6:regvlabel2 {'name': 'regv2-3', 'id': 6}),
-	   (v7:regvlabel2 {'name': 'regv2-4', 'id': 7}),
-	   (v8:regvlabel2 {'name': 'regv2-5', 'id': 8}),
-
-	   (v1)-[:regelabel1 {'name': 'rege1-1', 'id': 1}]->(v4),
-	   (v2)-[:regelabel1 {'name': 'rege1-2', 'id': 2}]->(v5),
-	   (v3)-[:regelabel1 {'name': 'rege1-3', 'id': 3}]->(v6),
-
-	   (v1)<-[:regelabel2 {'name': 'rege2-1', 'id': 4}]-(v8),
-	   (v2)<-[:regelabel2 {'name': 'rege2-2', 'id': 5}]-(v7),
-	   (v3)<-[:regelabel2 {'name': 'rege2-3', 'id': 6}]-(v6);
+CREATE TABLE history (year, event) AS VALUES
+(1996, 'PostgreSQL'),
+(2016, 'Graph');
 
 --
--- MATCH & RETURN clause
+-- RETURN
 --
 
--- simple matches
+RETURN 3 + 4, 'hello' || ' agens';
+
+RETURN 3 + 4 AS lucky, 'hello' || ' agens' AS greeting;
+
+RETURN (SELECT event FROM history WHERE year = 2016);
+
+SELECT * FROM (RETURN 3 + 4, 'hello' || ' agens') AS _(lucky, greeting);
+
+--
+-- CREATE
+--
+
+CREATE VLABEL repo;
+CREATE ELABEL lib;
+CREATE ELABEL doc;
+
+CREATE (g:repo {'name': 'agens-graph',
+                'year': (SELECT year FROM history WHERE event = 'Graph')})
+RETURN properties(g) AS g;
+
+MATCH (g:repo)
+CREATE (j:repo '{"name": "agens-graph-jdbc", "year": 2016}'),
+       (d:repo =jsonb_build_object('name', 'agens-graph-docs', 'year', 2016))
+CREATE (g)-[l:lib {'lang': 'Java'}]->(j),
+       p=(g)
+         -[:lib {'lang': 'C'}]->
+         (:repo {'name': 'agens-graph-odbc', 'year': 2016}),
+       (g)-[e:doc {'lang': 'en'}]->(d)
+RETURN properties(l) AS lj, properties(j) AS j,
+       properties((edges(p))[1]) AS lc, properties((vertices(p))[2]) AS c,
+       properties(e) AS e, properties(d) AS d;
+
+CREATE ()-[a:r]->(a);
+CREATE a=(), (a);
+CREATE (a), (a {});
+CREATE (a), (a);
+CREATE (=0);
+CREATE ()-[]-();
+CREATE ()-[]->();
+CREATE ()-[:r|z]->();
+CREATE (a)-[a:r]->();
+CREATE ()-[a:r]->()-[a:z]->();
+CREATE a=(), ()-[a:z]->();
+CREATE ()-[:r =0]->();
+CREATE (a), a=();
+CREATE ()-[a:r]->(), a=();
+CREATE a=(), a=();
+
+--
+-- MATCH
+--
+
+MATCH (a) RETURN (a).name AS a;
+MATCH (a), (a) RETURN (a).name AS a;
+
+CREATE ();
+MATCH (a:repo) RETURN (a).name AS name, (a)['year'] AS year;
+
+MATCH p=(a)-[b]-(c)
+RETURN (a).name AS a, (b).lang AS b, (c).name AS c;
+
+MATCH (a)<-[b]-(c)-[d]->(e)
+RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
+       (d).lang AS d, (e).name AS e;
+
+MATCH (a)<-[b]-(c), (c)-[d]->(e)
+RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
+       (d).lang AS d, (e).name AS e;
+
+MATCH (a)<-[b]-(c) MATCH (c)-[d]->(e)
+RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
+       (d).lang AS d, (e).name AS e;
+
+MATCH (a)<-[b]-(c), (f)-[g]->(h), (c)-[d]->(e)
+RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
+       (d).lang AS d, (e).name AS e,
+       (f).name AS f, (g).lang AS g, (h).name AS h;
+
+MATCH (a {'name': 'agens-graph'}), (a {'year': 2016}) RETURN properties(a) AS a;
+MATCH p=(a)-[]->({'name': 'agens-graph-jdbc'}) RETURN (a).name AS a;
+MATCH p=()-[:lib]->(a) RETURN (a).name AS a;
+MATCH p=()-[{'lang': 'en'}]->(a) RETURN (a).name AS a;
+
+MATCH (a {'year': (SELECT year FROM history WHERE event = 'Graph')})
+WHERE (a).name = '"agens-graph"'
+RETURN (a).name AS a;
+
+MATCH ();
+MATCH (a), (a:repo) RETURN *;
+MATCH ()-[a]-(), (a) RETURN *;
+MATCH a=(), (a) RETURN *;
+MATCH (a =0) RETURN *;
+MATCH ()-[a]-(a) RETURN *;
+MATCH ()-[a]-()-[a]-() RETURN *;
+MATCH a=(), ()-[a]-() RETURN *;
+MATCH p=()-[:lib|doc]->() RETURN *;
+MATCH ()-[a =0]-() RETURN *;
+MATCH (a), a=() RETURN *;
+MATCH ()-[a]->(), a=() RETURN *;
+MATCH a=(), a=() RETURN *;
+
+MATCH (a {'name': properties->'name'}) RETURN *;
+MATCH (a {'name': a.properties->'name'}) RETURN *;
+
+--
+-- DISTINCT
+--
+
+MATCH (a:repo)-[]-() RETURN DISTINCT (a).name AS a;
+
+MATCH (a:repo)-[b]-(c)
+RETURN DISTINCT ON (a) (a).name AS a, (b).lang AS b, (c).name AS c;
+
+--
+-- ORDER BY
+--
+
+MATCH (a:repo) RETURN (a).name AS a ORDER BY a;
+MATCH (a:repo) RETURN (a).name AS a ORDER BY a ASC;
+MATCH (a:repo) RETURN (a).name AS a ORDER BY a DESC;
+
+--
+-- SKIP and LIMIT
+--
+
+MATCH (a:repo) RETURN (a).name AS a ORDER BY a SKIP 1 LIMIT 1;
+
+--
+-- WITH
+--
+
+MATCH (a:repo) WITH (a).name AS name RETURN name;
 
 MATCH (a)
-RETURN properties(a) AS a;
+WITH a WHERE label(a) = 'repo'
+MATCH p=(a)-[]->(b)
+RETURN (b).name AS b;
 
-MATCH (a)-[]->(b)
-RETURN properties(a) AS a, properties(b) AS b;
-
-MATCH (a)-[]-(b)
-RETURN properties(a) AS a, properties(b) AS b;
-
-MATCH (a)<-[]->(b)
-RETURN properties(a) AS a, properties(b) AS b;
-
--- wrong case (last clause)
-MATCH (a);
-
--- WHERE in MATCH
-MATCH (a:regvlabel1)
-WHERE (a).name = to_jsonb('regv1-1'::text)
-RETURN properties(a);
-
--- TODO: label filtering by WHERE clause
-
--- TODO: relationship filtering by WHERE clause
-
--- aliasing
-
-MATCH (a:regvlabel1)
-RETURN properties(a) AS props;
-
-MATCH (a:regvlabel1)
-RETURN (a).id AS empid;
-
-MATCH (a:regvlabel1)
-RETURN (id(a)).lid;
-
--- ORDER BY
-
-MATCH (a:regvlabel1)
-RETURN properties(a) AS a ORDER BY (a).id;
-
-MATCH (a:regvlabel1)
-RETURN properties(a) AS a ORDER BY (a).id ASC;
-
-MATCH (a:regvlabel1)
-RETURN properties(a) AS a ORDER BY (a).id DESC;
-
-MATCH (a:regvlabel1)
-RETURN (a).id AS empid ORDER BY empid;
-
--- wrong case (refer alias)
-MATCH (a:regvlabel1)
-RETURN (a).id AS empid ORDER BY a;
-
--- LIMIT & LIMIT
-
-MATCH (a:regvlabel1)
-RETURN properties(a) AS a ORDER BY (a).id LIMIT 1;
-
-MATCH (a:regvlabel1)
-RETURN properties(a) AS a ORDER BY (a).id DESC LIMIT 1;
-
-MATCH (a:regvlabel2)
-RETURN properties(a) AS a ORDER BY (a).id SKIP 3;
-
-MATCH (a:regvlabel2)
-RETURN properties(a) AS a ORDER BY (a).id SKIP 1 LIMIT 1;
-
-MATCH (a:regvlabel2)
-RETURN properties(a) AS a ORDER BY (a).id DESC SKIP 1 LIMIT 1;
-
--- wrong case (syntax)
-MATCH (a:regvlabel2)
-RETURN properties(a) AS a ORDER BY (a).id LIMIT 1 SKIP 1;
-
---
--- WITH clause
---
-
-MATCH (a:regvlabel1)-[]-(b:regvlabel2)
-WITH a, count(b) AS rel_count
-RETURN properties(a) AS a, rel_count;
-
--- wrong case
-MATCH (a:regvlabel1), (b:regvlabel2)
-WITH a
-RETURN b;
-
--- DISTINCT
-
-MATCH (a:regvlabel1), (b:regvlabel2)
-RETURN properties(a) AS a;
-
-MATCH (a:regvlabel1), (b:regvlabel2)
-WITH DISTINCT a
-RETURN properties(a) AS a;
-
-MATCH (a:regvlabel1)-[]-(b:regvlabel2)
-RETURN properties(a) AS a, properties(b) AS b;
-
-MATCH (a:regvlabel1)-[]-(b:regvlabel2)
-WITH DISTINCT *
-RETURN properties(a) AS a, properties(b) AS b;
+MATCH (a) WITH a RETURN b;
+MATCH (a) WITH (a).name RETURN *;
+MATCH () WITH a AS z RETURN a;
 
 --
 -- UNION
 --
 
-MATCH (a:regvlabel1)
-RETURN properties(a) AS all_vertex
+MATCH (a:repo)
+RETURN (a).name AS a
 UNION ALL
-MATCH (b:regvlabel2)
-RETURN properties(b) AS all_vertex;
-
-MATCH (a:regvlabel1)
-RETURN properties(a) AS all_vertex
+MATCH (b:lib)
+RETURN (b).lang AS b
 UNION ALL
-MATCH (b:regvlabel2)
-RETURN properties(b) AS akk_vertex;
+MATCH (c:doc)
+RETURN (c).lang AS c;
 
--- wrong case (type mismatch)
-MATCH (a:regvlabel1)
-RETURN properties(a) AS a
-UNION ALL
-MATCH (b:regvlabel2)
-RETURN b;
-
---
--- re-initialize
---
-
-DROP vlabel regvlabel1;
-DROP vlabel regvlabel2;
-DROP vlabel regvlabel3;
-
-DROP elabel regelabel1;
-DROP elabel regelabel2;
-
-CREATE vlabel regvlabel1;
-CREATE vlabel regvlabel2;
-CREATE vlabel regvlabel3;
-
-CREATE elabel regelabel1;
-CREATE elabel regelabel2;
+MATCH (a)
+RETURN a
+UNION
+MATCH (b)
+RETURN (b).name;
 
 --
--- CREATE clause
+-- aggregates
 --
 
--- normal case
+MATCH (a)-[]-(b) RETURN count(a) AS a, (b).name AS b ORDER BY a;
 
-CREATE (),
-	   (a),
-	   (b:regvlabel1),
-	   (c:regvlabel2 {'name': 'test1'}),
-	   p=(d:regvlabel3 {'name': 'test2', 'age': 123})-[:regelabel1]->();
+--
+-- LOAD
+--
 
-MATCH (a) RETURN (id(a)).lid, properties(a);
+MATCH (a) LOAD FROM history AS a RETURN *;
 
-MATCH (n) DETACH DELETE n;
+CREATE VLABEL feature;
+CREATE ELABEL supported;
 
--- refer previous variable
+MATCH (a:repo {'name': 'agens-graph'})
+LOAD FROM history AS h
+CREATE (:feature {'name': (h).event})-[:supported]->(a);
 
-CREATE (a:regvlabel1 {'name': 'elem1'}),
-	   (a)-[d:regelabel1 {'rel': 1}]->(b:regvlabel2 {'name': 'elem2'}),
-	   (b)<-[e:regelabel2 {'rel': 2}]-(c:regvlabel2 {'name': 'elem3'})
-RETURN properties(a), properties(d), properties(b), properties(e), properties(c);
+MATCH p=(a)-[:supported]->() RETURN properties(a) AS a;
 
-MATCH (a)-[b]-(c)
-RETURN properties(a), properties(b), properties(c);
+--
+-- DELETE
+--
 
-MATCH (n) DETACH DELETE n;
+MATCH (a) DELETE a;
 
--- relationship
+MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[2];
+MATCH (a:repo) RETURN (a).name AS a;
 
-CREATE (a:regvlabel1 {'name': 'insert v1-1'})-[b:regelabel1]->(c:regvlabel2 {'name': 'insert v2-1'});
-CREATE (a:regvlabel1 {'name': 'insert v1-2'})<-[b:regelabel1]-(c:regvlabel2 {'name': 'insert v2-2'});
+MATCH ()-[a:doc]->() DETACH DELETE end_vertex(a);
+MATCH (a:repo) RETURN (a).name AS a;
 
-MATCH (a)<-[b]->(c)
-RETURN properties(a), properties(b), properties(c);
+MATCH (a) DETACH DELETE a;
+MATCH (a) RETURN a;
 
--- bi-directional relationship
-
-CREATE (:regvlabel2 {'name': 'regvlabel2-1'}),
-	   (:regvlabel2 {'name': 'regvlabel2-2'}),
-	   (:regvlabel2 {'name': 'regvlabel2-3'});
-
-CREATE (a:regvlabel1 {'name': 'regvlabel1'})
-MATCH (b:regvlabel2)
-CREATE (a)-[c:regelabel1 {'name': 'e1'}]->(b), (b)-[d:regelabel1 {'name': 'e2'}]->(a)
-RETURN id(a) = start(c) AND "end"(c) = id(b) AS atob,
-	   id(b) = start(d) AND "end"(d) = id(a) AS btoa;
-
--- wrong cases (duplicated variable)
-CREATE (a), (a);
-CREATE (a:regvlabel1), (b:regvlabel2), (a:regvlabel);
-
--- wrong cases (label)
-CREATE (a:regvlabel1:regvlabel2);
-CREATE (:regvlabel1)-[{'reltype': 'empty'}]->(:regvlabel2);
-
--- wrong cases (bi-directional relationship)
-CREATE (:regvlabel1 {'name': 'insert v1-3'})-[:regelabel1]-(:regvlabel2 {'name': 'insert v2-3'});
-CREATE (:regvlabel1 {'name': 'insert v1-4'})<-[:regelabel1]->(:regvlabel2 {'name': 'insert v2-4'});
-
--- multiple CREATE's
-MATCH (a:regvlabel1), (b:regvlabel2)
-CREATE p=(a)-[:regelabel1 {'name': 'edge1'}]->(b)
-CREATE (b)<-[:regelabel2 {'name': 'edge2'}]-(c:regvlabel3 {'name': 'v3'})
-RETURN properties(c);
+SELECT count(*) FROM graph.edge;
 
 -- cleanup
 
-DROP elabel regelabel1;
-DROP elabel regelabel2;
+DROP VLABEL feature;
+DROP ELABEL supported;
 
-DROP vlabel regvlabel1;
-DROP vlabel regvlabel2;
-DROP vlabel regvlabel3;
+DROP VLABEL repo;
+DROP ELABEL lib;
+DROP ELABEL doc;
+
+DROP TABLE history;
