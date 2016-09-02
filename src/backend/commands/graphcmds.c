@@ -15,7 +15,6 @@
 #include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "access/xact.h"
-#include "catalog/ag_inherits.h"
 #include "catalog/ag_graph.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
@@ -40,9 +39,7 @@
 
 static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
-static void StoreCatalogAgInheritance(Oid labid, List *supers);
-static void StoreCatalogAgInheritance1(Oid labid, Oid parentOid, int16 seq,
-									   Relation inhRelation);
+static void AgInheritanceDependancy(Oid labid, List *supers);
 
 /* See ProcessUtilitySlow() case T_CreateSchemaStmt */
 void
@@ -170,7 +167,7 @@ DefineLabel(CreateStmt *stmt, char labkind)
 									  labkind, tablespaceId);
 
 	GetSuperOids(stmt->inhRelations, labkind, &inheritOids);
-	StoreCatalogAgInheritance(labid, inheritOids);
+	AgInheritanceDependancy(labid, inheritOids);
 
 	/*
 	 * Make a dependency link to force the table to be deleted if its
@@ -218,63 +215,31 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 
 /* This function mimics StoreCatalogInheritance() */
 static void
-StoreCatalogAgInheritance(Oid labid, List *supers)
+AgInheritanceDependancy(Oid labid, List *supers)
 {
-	Relation	rel;
 	int16		seq;
 	ListCell   *entry;
 
 	if (supers == NIL)
 		return;
 
-	rel = heap_open(AgInheritsRelationId, RowExclusiveLock);
-
 	seq = 1;
 	foreach(entry, supers)
 	{
 		Oid parentOid = lfirst_oid(entry);
+		ObjectAddress childobject;
+		ObjectAddress parentobject;
 
-		StoreCatalogAgInheritance1(labid, parentOid, seq, rel);
+		childobject.classId = LabelRelationId;
+		childobject.objectId = labid;
+		childobject.objectSubId = 0;
+		parentobject.classId = LabelRelationId;
+		parentobject.objectId = parentOid;
+		parentobject.objectSubId = 0;
+		recordDependencyOn(&childobject, &parentobject, DEPENDENCY_NORMAL);
 
 		seq++;
 	}
-
-	heap_close(rel, RowExclusiveLock);
-}
-
-/* This function mimics StoreCatalogInheritance1() */
-static void
-StoreCatalogAgInheritance1(Oid labid, Oid parentOid, int16 seqNumber,
-						   Relation inhRelation)
-{
-	TupleDesc	desc = RelationGetDescr(inhRelation);
-	Datum		values[Natts_ag_inherits];
-	bool		nulls[Natts_ag_inherits];
-	ObjectAddress childobject;
-	ObjectAddress parentobject;
-	HeapTuple	tuple;
-
-	values[Anum_ag_inherits_inhrelid - 1] = ObjectIdGetDatum(labid);
-	values[Anum_ag_inherits_inhparent - 1] = ObjectIdGetDatum(parentOid);
-	values[Anum_ag_inherits_inhseqno - 1] = Int16GetDatum(seqNumber);
-
-	memset(nulls, 0, sizeof(nulls));
-
-	tuple = heap_form_tuple(desc, values, nulls);
-	simple_heap_insert(inhRelation, tuple);
-	CatalogUpdateIndexes(inhRelation, tuple);
-	heap_freetuple(tuple);
-
-	childobject.classId = LabelRelationId;
-	childobject.objectId = labid;
-	childobject.objectSubId = 0;
-	parentobject.classId = LabelRelationId;
-	parentobject.objectId = parentOid;
-	parentobject.objectSubId = 0;
-	recordDependencyOn(&childobject, &parentobject, DEPENDENCY_NORMAL);
-
-	InvokeObjectPostAlterHookArg(AgInheritsRelationId, labid, 0,
-								 parentOid, false);
 }
 
 /*
