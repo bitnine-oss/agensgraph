@@ -49,16 +49,16 @@ CREATE ELABEL elabel_c3 inherits (elabel_c2);
 SELECT labname, labkind FROM ag_label;
 
 SELECT childlab.labname AS child, parentlab.labname AS parent
-FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh
-WHERE childlab.oid = inh.inhrelid AND parentlab.oid = inh.inhparent;
+FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
+WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
 
 DROP VLABEL vlabel_c4 CASCADE;
 
 SELECT labname, labkind FROM ag_label;
 
 SELECT childlab.labname AS child, parentlab.labname AS parent 
-FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh
-WHERE childlab.oid = inh.inhrelid AND parentlab.oid = inh.inhparent;
+FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
+WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
 
 -- wrong cases
 
@@ -103,5 +103,5 @@ DROP GRAPH mygraph CASCADE;
 SELECT labname, labkind FROM ag_label;
 
 SELECT childlab.labname AS child, parentlab.labname AS parent 
-FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh
-WHERE childlab.oid = inh.inhrelid AND parentlab.oid = inh.inhparent;
+FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
+WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;

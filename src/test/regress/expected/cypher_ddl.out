@@ -77,8 +77,8 @@ SELECT labname, labkind FROM ag_label;
 (15 rows)
 
 SELECT childlab.labname AS child, parentlab.labname AS parent
-FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh
-WHERE childlab.oid = inh.inhrelid AND parentlab.oid = inh.inhparent;
+FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
+WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
    child   |  parent   
 -----------+-----------
  vlabel_p1 | vertex
@@ -119,8 +119,8 @@ SELECT labname, labkind FROM ag_label;
 (12 rows)
 
 SELECT childlab.labname AS child, parentlab.labname AS parent 
-FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh
-WHERE childlab.oid = inh.inhrelid AND parentlab.oid = inh.inhparent;
+FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
+WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
    child   |  parent   
 -----------+-----------
  vlabel_p1 | vertex
@@ -213,8 +213,8 @@ SELECT labname, labkind FROM ag_label;
 (0 rows)
 
 SELECT childlab.labname AS child, parentlab.labname AS parent 
-FROM ag_label AS parentlab, ag_label AS childlab, ag_inherits AS inh
-WHERE childlab.oid = inh.inhrelid AND parentlab.oid = inh.inhparent;
+FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
+WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
  child | parent 
 -------+--------
 (0 rows)

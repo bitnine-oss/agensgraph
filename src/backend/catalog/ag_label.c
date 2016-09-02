@@ -10,23 +10,17 @@
 
 #include "postgres.h"
 
-#include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
-#include "catalog/ag_inherits.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
-#include "utils/fmgroids.h"
-#include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
 static void InsertAgLabelTuple(Relation ag_label_desc, Oid labid,
 							   RangeVar *label, Oid relid, char labkind);
-static void LabelRemoveInheritance(Oid labid);
-static void DeleteLabelTuple(Oid labid);
 
 Oid
 label_create_with_catalog(RangeVar *label, Oid relid, char labkind,
@@ -47,12 +41,28 @@ label_create_with_catalog(RangeVar *label, Oid relid, char labkind,
 	return labid;
 }
 
+/*
+ * Remove ag_label row for the given labid
+ *
+ * See DeleteRelationTuple()
+ */
 void
 label_drop_with_catalog(Oid labid)
 {
-	LabelRemoveInheritance(labid);
+	Relation	ag_label_desc;
+	HeapTuple	tup;
 
-	DeleteLabelTuple(labid);
+	ag_label_desc = heap_open(LabelRelationId, RowExclusiveLock);
+
+	tup = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	if (!HeapTupleIsValid(tup))
+		elog(ERROR, "cache lookup failed for label %u", labid);
+
+	simple_heap_delete(ag_label_desc, &tup->t_self);
+
+	ReleaseSysCache(tup);
+
+	heap_close(ag_label_desc, RowExclusiveLock);
 }
 
 /*
@@ -88,52 +98,4 @@ InsertAgLabelTuple(Relation ag_label_desc, Oid labid, RangeVar *label,
 	CatalogUpdateIndexes(ag_label_desc, tup);
 
 	heap_freetuple(tup);
-}
-
-/* See RelationRemoveInheritance() */
-static void
-LabelRemoveInheritance(Oid labid)
-{
-	Relation	catalogRelation;
-	ScanKeyData key;
-	SysScanDesc scan;
-	HeapTuple	tuple;
-
-	catalogRelation = heap_open(AgInheritsRelationId, RowExclusiveLock);
-
-	ScanKeyInit(&key, Anum_ag_inherits_inhrelid, BTEqualStrategyNumber,
-				F_OIDEQ, ObjectIdGetDatum(labid));
-
-	scan = systable_beginscan(catalogRelation, AgInheritsRelidSeqnoIndexId,
-							  true, NULL, 1, &key);
-
-	while (HeapTupleIsValid(tuple = systable_getnext(scan)))
-		simple_heap_delete(catalogRelation, &tuple->t_self);
-
-	systable_endscan(scan);
-	heap_close(catalogRelation, RowExclusiveLock);
-}
-
-/*
- * DeleteLabelTuple - remove ag_label row for the given labid
- *
- * See DeleteRelationTuple()
- */
-static void
-DeleteLabelTuple(Oid labid)
-{
-	Relation	ag_label_desc;
-	HeapTuple	tup;
-
-	ag_label_desc = heap_open(LabelRelationId, RowExclusiveLock);
-
-	tup = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
-	if (!HeapTupleIsValid(tup))
-		elog(ERROR, "cache lookup failed for label %u", labid);
-
-	simple_heap_delete(ag_label_desc, &tup->t_self);
-
-	ReleaseSysCache(tup);
-
-	heap_close(ag_label_desc, RowExclusiveLock);
 }
