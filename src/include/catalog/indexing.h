@@ -331,9 +331,6 @@ DECLARE_UNIQUE_INDEX(ag_label_labname_graph_index, 7047, on ag_label using btree
 DECLARE_UNIQUE_INDEX(ag_label_relid_index, 7048, on ag_label using btree(relid oid_ops));
 #define LabelRelidIndexId 7048
 
-DECLARE_UNIQUE_INDEX(ag_inherits_relid_seqno_index, 7051, on ag_inherits using btree(inhrelid oid_ops, inhseqno int4_ops));
-#define AgInheritsRelidSeqnoIndexId 7051
-
 /* last step of initialization script: build the indexes declared above */
 BUILD_INDICES
 
