@@ -46,6 +46,8 @@
 #define GRAPHID_FMTSTR			"%u." INT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "4294967295.18446744073709551615" */
 
+#define SQLCMD_BUFLEN			(NAMEDATALEN + 192)
+
 typedef struct LabelOutData {
 	Oid			label_relid;
 	NameData	label;
@@ -536,30 +538,34 @@ edge_end_vertex(PG_FUNCTION_ARGS)
 static Datum
 getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 {
-	const char *querystr =
-			"SELECT ((tableoid, id)::graphid, properties)::vertex "
-			"FROM $1." AG_VERTEX " WHERE tableoid = $2 AND id = $3";
+	char querystr[SQLCMD_BUFLEN];
 	int			attnum = (evk == EVK_START ? Anum_edge_start : Anum_edge_end);
 	Graphid		id;
-	Datum		values[3];
+	Datum		values[2];
 	Oid			argTypes[2] = {OIDOID, INT8OID};
 	bool		spi_pushed;
 	int			ret;
 	Datum		vertex;
 	bool		isnull;
 
+	querystr[0] = '\0';
+	strcat(querystr, "SELECT ((tableoid, id)::graphid, properties)::vertex FROM ");
+	strcat(querystr, get_graph_path());
+	strcat(querystr, ".");
+	strcat(querystr, AG_VERTEX);
+	strcat(querystr, " WHERE tableoid = $1 AND id = $2");
+
 	id = getGraphidStruct(tuple_getattr(edge, attnum));
 
-	values[0] = CStringGetDatum(get_graph_path());
-	values[1] = ObjectIdGetDatum(id.oid);
-	values[2] = Int64GetDatum(id.lid);
+	values[0] = ObjectIdGetDatum(id.oid);
+	values[1] = Int64GetDatum(id.lid);
 
 	spi_pushed = SPI_push_conditional();
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
-	ret = SPI_execute_with_args(querystr, 3, argTypes, values, NULL, false, 0);
+	ret = SPI_execute_with_args(querystr, 2, argTypes, values, NULL, false, 0);
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "SPI_execute failed: %s", querystr);
 

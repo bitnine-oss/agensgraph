@@ -817,7 +817,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 		labname = AG_VERTEX;
 	labloc = getCypherNameLoc(cnode->label);
 
-	r = makeRangeVar(get_graph_path(), label, location);
+	r = makeRangeVar(get_graph_path(), labname, labloc);
 	alias = makeAliasOptUnique(varname);
 
 	/* always set `ihn` to true because we should scan all derived tables */

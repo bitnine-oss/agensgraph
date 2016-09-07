@@ -2,8 +2,7 @@
 -- Cypher Query Language - DML
 --
 -- prepare
-DROP GRAPH mygraph;
-ERROR:  graph "mygraph" does not exist
+CREATE GRAPH mygraph;
 set graph_path=mygraph;
 DROP TABLE IF EXISTS history;
 NOTICE:  table "history" does not exist, skipping
@@ -524,7 +523,7 @@ MATCH (a) RETURN a;
 ---
 (0 rows)
 
-SELECT count(*) FROM graph.edge;
+SELECT count(*) FROM mygraph.edge;
  count 
 -------
      0

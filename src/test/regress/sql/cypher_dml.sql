@@ -4,7 +4,7 @@
 
 -- prepare
 
-DROP GRAPH mygraph;
+CREATE GRAPH mygraph;
 set graph_path=mygraph;
 
 DROP TABLE IF EXISTS history;
@@ -226,7 +226,7 @@ MATCH (a:repo) RETURN (a).name AS a;
 MATCH (a) DETACH DELETE a;
 MATCH (a) RETURN a;
 
-SELECT count(*) FROM graph.edge;
+SELECT count(*) FROM mygraph.edge;
 
 -- cleanup
 
