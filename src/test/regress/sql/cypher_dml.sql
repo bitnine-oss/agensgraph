@@ -4,6 +4,9 @@
 
 -- prepare
 
+CREATE GRAPH mygraph;
+set graph_path=mygraph;
+
 DROP TABLE IF EXISTS history;
 
 CREATE TABLE history (year, event) AS VALUES
@@ -223,7 +226,7 @@ MATCH (a:repo) RETURN (a).name AS a;
 MATCH (a) DETACH DELETE a;
 MATCH (a) RETURN a;
 
-SELECT count(*) FROM graph.edge;
+SELECT count(*) FROM mygraph.edge;
 
 -- cleanup
 
@@ -235,3 +238,5 @@ DROP ELABEL lib;
 DROP ELABEL doc;
 
 DROP TABLE history;
+
+DROP GRAPH mygraph CASCADE;

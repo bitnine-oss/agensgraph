@@ -22,6 +22,7 @@
 
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "catalog/ag_graph.h"
 #include "catalog/ag_label.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_aggregate.h"
@@ -469,6 +470,28 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		4
 	},
+	{GraphRelationId,			/* GRAPHNAME */
+		GraphNameIndexId,
+		1,
+		{
+			Anum_ag_graph_graphname,
+			0,
+			0,
+			0
+		},
+		64
+	},
+	{GraphRelationId,			/* GRAPHOID */
+		GraphOidIndexId,
+		1,
+		{
+			ObjectIdAttributeNumber,
+			0,
+			0,
+			0
+		},
+		64
+	},
 	{IndexRelationId,			/* INDEXRELID */
 		IndexRelidIndexId,
 		1,
@@ -481,11 +504,11 @@ static const struct cachedesc cacheinfo[] = {
 		64
 	},
 	{LabelRelationId,			/* LABELNAME */
-		LabelNameIndexId,
-		1,
+		LabelGraphNameIndexId,
+		2,
 		{
 			Anum_ag_label_labname,
-			0,
+			Anum_ag_label_graphname,
 			0,
 			0
 		},

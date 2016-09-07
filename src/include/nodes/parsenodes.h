@@ -1402,6 +1402,7 @@ typedef enum ObjectType
 	OBJECT_FOREIGN_SERVER,
 	OBJECT_FOREIGN_TABLE,
 	OBJECT_FUNCTION,
+	OBJECT_GRAPH,
 	OBJECT_INDEX,
 	OBJECT_LANGUAGE,
 	OBJECT_LARGEOBJECT,
@@ -3085,6 +3086,15 @@ typedef struct JsonKeyVal
 /****************************************************************************
  * Agens Graph related node structures
  ****************************************************************************/
+
+/* CREATE GRAPH ... */
+typedef struct CreateGraphStmt
+{
+   NodeTag     type;
+   char       *graphname;      /* the name of the graph to create */
+   Node       *authrole;       /* the owner of the created graph */
+   bool        if_not_exists;  /* just do nothing if graph already exists? */
+} CreateGraphStmt;
 
 typedef enum LabelKind {
 	LABEL_VERTEX,

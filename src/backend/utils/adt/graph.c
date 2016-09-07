@@ -13,6 +13,7 @@
 #include "ag_const.h"
 #include "access/htup_details.h"
 #include "access/tupdesc.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "funcapi.h"
@@ -44,6 +45,8 @@
 
 #define GRAPHID_FMTSTR			"%u." INT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "4294967295.18446744073709551615" */
+
+#define SQLCMD_BUFLEN			(NAMEDATALEN + 192)
 
 typedef struct LabelOutData {
 	Oid			label_relid;
@@ -535,9 +538,7 @@ edge_end_vertex(PG_FUNCTION_ARGS)
 static Datum
 getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 {
-	const char *querystr =
-			"SELECT ((tableoid, id)::graphid, properties)::vertex "
-			"FROM " AG_GRAPH "." AG_VERTEX " WHERE tableoid = $1 AND id = $2";
+	char querystr[SQLCMD_BUFLEN];
 	int			attnum = (evk == EVK_START ? Anum_edge_start : Anum_edge_end);
 	Graphid		id;
 	Datum		values[2];
@@ -546,6 +547,13 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 	int			ret;
 	Datum		vertex;
 	bool		isnull;
+
+	querystr[0] = '\0';
+	strcat(querystr, "SELECT ((tableoid, id)::graphid, properties)::vertex FROM ");
+	strcat(querystr, get_graph_path());
+	strcat(querystr, ".");
+	strcat(querystr, AG_VERTEX);
+	strcat(querystr, " WHERE tableoid = $1 AND id = $2");
 
 	id = getGraphidStruct(tuple_getattr(edge, attnum));
 

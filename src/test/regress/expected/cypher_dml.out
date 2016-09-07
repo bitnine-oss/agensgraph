@@ -2,6 +2,8 @@
 -- Cypher Query Language - DML
 --
 -- prepare
+CREATE GRAPH mygraph;
+set graph_path=mygraph;
 DROP TABLE IF EXISTS history;
 NOTICE:  table "history" does not exist, skipping
 CREATE TABLE history (year, event) AS VALUES
@@ -521,7 +523,7 @@ MATCH (a) RETURN a;
 ---
 (0 rows)
 
-SELECT count(*) FROM graph.edge;
+SELECT count(*) FROM mygraph.edge;
  count 
 -------
      0
@@ -534,3 +536,7 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP TABLE history;
+DROP GRAPH mygraph CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to label vertex
+drop cascades to label edge

@@ -2998,6 +2998,12 @@ get_range_subtype(Oid rangeOid)
 		return InvalidOid;
 }
 
+/*				---------- AG_GRAPH CACHE ----------				 */
+Oid
+get_graphname_graphid(const char *graphname)
+{
+	return GetSysCacheOid1(GRAPHNAME, PointerGetDatum(graphname));
+}
 
 /*				---------- AG_LABEL CACHE ----------				 */
 
@@ -3008,9 +3014,11 @@ get_range_subtype(Oid rangeOid)
  * Returns InvalidOid if there is no such label.
  */
 Oid
-get_labname_labid(const char *labname)
+get_labname_labid(const char *labname, const char *graphname)
 {
-	return GetSysCacheOid1(LABELNAME, PointerGetDatum(labname));
+	return GetSysCacheOid2(LABELNAME,
+						   PointerGetDatum(labname),
+						   PointerGetDatum(graphname));
 }
 
 /*
