@@ -14407,6 +14407,13 @@ cypher_prop_map_opt:
 			json_object_expr
 			| Sconst			{ $$ = makeStringConst($1, @1); }
 			| '=' a_expr		{ $$ = $2; }
+			| PARAM 
+				{
+					ParamRef *p = makeNode(ParamRef);
+					p->number = $1;
+					p->location = @1;
+					$$ = makeTypeCast((Node *)p, SystemTypeName("jsonb"), @1);
+				}
 			| /* EMPTY */		{ $$ = NULL; }
 		;
 
