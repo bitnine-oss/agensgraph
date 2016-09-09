@@ -31,6 +31,7 @@
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/namespace.h"
 #include "commands/async.h"
 #include "commands/prepare.h"
@@ -3395,6 +3396,17 @@ static struct config_string ConfigureNamesString[] =
 		&cluster_name,
 		"",
 		check_cluster_name, NULL, NULL
+	},
+
+	{
+		{"graph_path", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Sets the graph search path for all names."),
+			NULL,
+			GUC_IS_NAME
+		},
+		&graph_path,
+		"",
+		check_graph_path, NULL, NULL
 	},
 
 	/* End-of-list marker */

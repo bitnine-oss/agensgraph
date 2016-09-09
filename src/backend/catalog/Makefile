@@ -15,7 +15,7 @@ OBJS = catalog.o dependency.o heap.o index.o indexing.o namespace.o aclchk.o \
        pg_constraint.o pg_conversion.o \
        pg_depend.o pg_enum.o pg_inherits.o pg_largeobject.o pg_namespace.o \
        pg_operator.o pg_proc.o pg_range.o pg_db_role_setting.o pg_shdepend.o \
-       pg_type.o storage.o toasting.o ag_label.o
+       pg_type.o storage.o toasting.o ag_graph.o ag_label.o
 
 BKIFILES = postgres.bki postgres.description postgres.shdescription
 
@@ -42,7 +42,7 @@ POSTGRES_BKI_SRCS = $(addprefix $(top_srcdir)/src/include/catalog/,\
 	pg_foreign_table.h pg_policy.h pg_replication_origin.h \
 	pg_default_acl.h pg_seclabel.h pg_shseclabel.h \
 	pg_collation.h pg_range.h pg_transform.h \
-	toasting.h indexing.h ag_label.h ag_inherits.h \
+	toasting.h indexing.h ag_label.h ag_graph.h ag_inherits.h \
     )
 
 # location of Catalog.pm

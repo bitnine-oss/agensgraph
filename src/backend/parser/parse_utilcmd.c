@@ -29,6 +29,7 @@
 #include "ag_const.h"
 #include "access/htup_details.h"
 #include "access/reloptions.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -2890,6 +2891,53 @@ setSchemaName(char *context_schema, char **stmt_schema_name)
 
 
 /*
+ * transformCreateGraphStmt - analyzes the CREATE GRAPH statement
+ *
+ * See transformCreateSchemaStmt
+ */
+List *
+transformCreateGraphStmt(CreateGraphStmt *stmt)
+{
+	CreateLabelStmt	*vertex;
+	CreateLabelStmt	*edge;
+	IndexStmt  *start_idx;
+	IndexStmt  *end_idx;
+	IndexElem  *start_col;
+	IndexElem  *end_col;
+
+	vertex = makeNode(CreateLabelStmt);
+	vertex->labelKind = LABEL_VERTEX;
+	vertex->relation = makeRangeVar(stmt->graphname, AG_VERTEX, -1);
+	vertex->inhRelations = NIL;
+
+	edge = makeNode(CreateLabelStmt);
+	edge->labelKind = LABEL_EDGE;
+	edge->relation = makeRangeVar(stmt->graphname, AG_EDGE, -1);
+	edge->inhRelations = NIL;
+
+	start_col = makeNode(IndexElem);
+	start_col->name = AG_START_ID;
+
+	start_idx = makeNode(IndexStmt);
+	start_idx->idxname = "edge_start";
+	start_idx->relation = copyObject(edge->relation);
+	start_idx->accessMethod = DEFAULT_INDEX_TYPE;
+	start_idx->indexParams = list_make1(start_col);
+
+	end_col = makeNode(IndexElem);
+	end_col->name = AG_END_ID;
+
+	end_idx = makeNode(IndexStmt);
+	end_idx->idxname = "edge_end";
+	end_idx->relation = copyObject(edge->relation);
+	end_idx->accessMethod = DEFAULT_INDEX_TYPE;
+	end_idx->indexParams = list_make1(end_col);
+
+	return list_make4(vertex, edge, start_idx, end_idx);
+}
+
+
+/*
  * transformCreateLabelStmt - parse analysis for CREATE VLABEL/ELABEL
  *
  * This function is based on transformCreateStmt().
@@ -2901,6 +2949,7 @@ List *
 transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 {
 	CreateStmt *stmt;
+	char	   *graphname;
 	bool		inherit;
 	Oid			existing_relid;
 	ParseState *pstate;
@@ -2917,18 +2966,10 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	stmt = makeNode(CreateStmt);
 
 	stmt->relation = copyObject(labelStmt->relation);
-	/* force schema */
+
 	if (stmt->relation->schemaname == NULL)
-	{
-		stmt->relation->schemaname = AG_GRAPH;
-	}
-	else if (strcmp(stmt->relation->schemaname, AG_GRAPH) != 0)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-				 errmsg("graph label \"%s\" must be in \"" AG_GRAPH "\" schema",
-						stmt->relation->relname)));
-	}
+		stmt->relation->schemaname = get_graph_path();
+	graphname = stmt->relation->schemaname;
 
 	/* set appropriate table elements */
 	if (labelStmt->labelKind == LABEL_VERTEX &&
@@ -2971,8 +3012,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 			char *name;
 
 			name = (labelStmt->labelKind == LABEL_VERTEX ? AG_VERTEX : AG_EDGE);
-			stmt->inhRelations = list_make1(makeRangeVar(AG_GRAPH, name, -1));
-
+			stmt->inhRelations = list_make1(makeRangeVar(graphname, name, -1));
 		}
 		/* user requested inherit option */
 		else
@@ -2988,14 +3028,14 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 				/* force schema */
 				if (parent->schemaname == NULL)
 				{
-					parent->schemaname = AG_GRAPH;
+					parent->schemaname = graphname;
 				}
-				else if (strcmp(parent->schemaname, AG_GRAPH) != 0)
+				else if (strcmp(parent->schemaname, graphname) != 0)
 				{
 					ereport(ERROR,
 						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-						 errmsg("graph label \"%s\" must be in \"" AG_GRAPH "\" schema",
-								parent->relname)));
+						 errmsg("parent graph label \"%s\" must be in the same graph path \"%s\"",
+								parent->relname, graphname)));
 				}
 			}
 		}
@@ -3195,6 +3235,7 @@ static List *
 inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt)
 {
 	List	   *inh_indexes = NIL;
+	char	   *graphname;
 	RangeVar   *parent;
 	Relation	relation;
 	TupleDesc	tupleDesc;
@@ -3204,14 +3245,20 @@ inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt)
 	int			attidx;
 	ListCell   *l;
 
+	/* force schema */
+	if (stmt->relation->schemaname == NULL)
+		graphname = get_graph_path();
+	else
+		graphname = stmt->relation->schemaname;
+
 	/* base label as parent to inherit indexes */
 	switch (stmt->labelKind)
 	{
 		case LABEL_VERTEX:
-			parent = makeRangeVar(AG_GRAPH, AG_VERTEX, -1);
+			parent = makeRangeVar(graphname, AG_VERTEX, -1);
 			break;
 		case LABEL_EDGE:
-			parent = makeRangeVar(AG_GRAPH, AG_EDGE, -1);
+			parent = makeRangeVar(graphname, AG_EDGE, -1);
 			break;
 		default:
 			elog(ERROR, "unrecognized label kind: %d", stmt->labelKind);

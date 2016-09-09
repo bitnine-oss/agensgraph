@@ -4106,6 +4106,18 @@ _copyAlterPolicyStmt(const AlterPolicyStmt *from)
 	return newnode;
 }
 
+static CreateGraphStmt *
+_copyCreateGraphStmt(const CreateGraphStmt *from)
+{
+	CreateGraphStmt *newnode = makeNode(CreateGraphStmt);
+
+	COPY_STRING_FIELD(graphname);
+	COPY_NODE_FIELD(authrole);
+	COPY_SCALAR_FIELD(if_not_exists);
+
+	return newnode;
+}
+
 static CreateLabelStmt *
 _copyCreateLabelStmt(const CreateLabelStmt *from)
 {
@@ -5051,6 +5063,9 @@ copyObject(const void *from)
 			break;
 		case T_AlterPolicyStmt:
 			retval = _copyAlterPolicyStmt(from);
+			break;
+		case T_CreateGraphStmt:
+			retval = _copyCreateGraphStmt(from);
 			break;
 		case T_CreateLabelStmt:
 			retval = _copyCreateLabelStmt(from);
