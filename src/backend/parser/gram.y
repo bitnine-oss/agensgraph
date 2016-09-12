@@ -14198,24 +14198,63 @@ CreateGraphStmt:
 		;
 
 CreateLabelStmt:
-			CREATE VLABEL ColId OptInherit
+			CREATE OptNoLog VLABEL ColId OptInherit OptWith OnCommitOption
+			OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = LABEL_VERTEX;
-					n->relation = makeRangeVar(NULL, $3, -1);
-					n->inhRelations = $4;
+					n->relation = makeRangeVar(NULL, $4, -1);
+					n->relation->relpersistence = $2;
+					n->inhRelations = $5;
+					n->options = $6;
+					n->oncommit = $7;
+					n->tablespacename = $8;
+					n->if_not_exists = false;
 					$$ = (Node *)n;
 				}
-			| CREATE ELABEL ColId OptInherit
+			| CREATE OptNoLog VLABEL IF_P NOT EXISTS ColId OptInherit OptWith
+			OnCommitOption OptTableSpace
+				{
+					CreateLabelStmt *n = makeNode(CreateLabelStmt);
+					n->labelKind = LABEL_VERTEX;
+					n->relation = makeRangeVar(NULL, $7, -1);
+					n->relation->relpersistence = $2;
+					n->inhRelations = $8;
+					n->options = $9;
+					n->oncommit = $10;
+					n->tablespacename = $11;
+					n->if_not_exists = true;
+					$$ = (Node *)n;
+				}
+			| CREATE OptNoLog ELABEL ColId OptInherit OptWith OnCommitOption
+			OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = LABEL_EDGE;
-					n->relation = makeRangeVar(NULL, $3, -1);
-					n->inhRelations = $4;
+					n->relation = makeRangeVar(NULL, $4, -1);
+					n->relation->relpersistence = $2;
+					n->inhRelations = $5;
+					n->options = $6;
+					n->oncommit = $7;
+					n->tablespacename = $8;
+					n->if_not_exists = false;
+					$$ = (Node *)n;
+				}
+			| CREATE OptNoLog ELABEL IF_P NOT EXISTS ColId OptInherit OptWith
+			OnCommitOption OptTableSpace
+				{
+					CreateLabelStmt *n = makeNode(CreateLabelStmt);
+					n->labelKind = LABEL_EDGE;
+					n->relation = makeRangeVar(NULL, $7, -1);
+					n->relation->relpersistence = $2;
+					n->inhRelations = $8;
+					n->options = $9;
+					n->oncommit = $10;
+					n->tablespacename = $11;
+					n->if_not_exists = true;
 					$$ = (Node *)n;
 				}
 		;
-
 
 /*
  * Cypher
