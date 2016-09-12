@@ -41,11 +41,8 @@ SELECT * FROM (RETURN 3 + 4, 'hello' || ' agens') AS _(lucky, greeting);
 -- CREATE
 --
 CREATE VLABEL repo;
-NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL lib;
-NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL doc;
-NOTICE:  merging column "id" with inherited definition
 CREATE (g:repo {'name': 'agens-graph',
                 'year': (SELECT year FROM history WHERE event = 'Graph')})
 RETURN properties(g) AS g;
@@ -490,9 +487,7 @@ MATCH (a:repo) RETURN (a).name AS a, size((a)-[]->()) AS s;
 MATCH (a) LOAD FROM history AS a RETURN *;
 ERROR:  duplicate variable "a"
 CREATE VLABEL feature;
-NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL supported;
-NOTICE:  merging column "id" with inherited definition
 MATCH (a:repo {'name': 'agens-graph'})
 LOAD FROM history AS h
 CREATE (:feature {'name': (h).event})-[:supported]->(a);
