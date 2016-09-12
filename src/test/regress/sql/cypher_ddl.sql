@@ -15,6 +15,30 @@ set graph_path=mygraph,urgraph;
 -- check default graph objects
 SELECT graphname, labname, labkind FROM ag_label;
 
+-- CREATE unlogged label
+CREATE UNLOGGED VLABEL unlogv;
+DROP VLABEL unlogv;
+
+-- IF NOT EXISTS
+CREATE VLABEL duple;
+CREATE VLABEL duple;
+CREATE VLABEL IF NOT EXISTS duple;
+DROP VLABEL duple;
+
+-- enable set tablespace
+CREATE VLABEL setspace tablespace pg_default;
+DROP VLABEL setspace;
+
+-- WITH
+CREATE VLABEL storagev with (fillfactor=90, autovacuum_enabled, autovacuum_vacuum_threshold=100);
+
+SELECT t.relname as name, t.reloptions as options
+FROM pg_class t, ag_label l
+WHERE t.oid = l.relid
+ORDER BY 1;
+
+DROP VLABEL storagev;
+
 --
 -- CREATE/DROP labels
 --

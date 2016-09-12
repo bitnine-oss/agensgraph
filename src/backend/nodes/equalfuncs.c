@@ -2614,6 +2614,9 @@ _equalCreateLabelStmt(const CreateLabelStmt *a, const CreateLabelStmt *b)
 	COMPARE_NODE_FIELD(relation);
 	COMPARE_NODE_FIELD(inhRelations);
 	COMPARE_SCALAR_FIELD(labelKind);
+	COMPARE_NODE_FIELD(options);
+	COMPARE_STRING_FIELD(tablespacename);
+	COMPARE_SCALAR_FIELD(if_not_exists);
 
 	return true;
 }
