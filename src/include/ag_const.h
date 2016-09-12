@@ -10,8 +10,8 @@
 #ifndef AG_CONST_H
 #define AG_CONST_H
 
-#define AG_VERTEX			"vertex"
-#define AG_EDGE				"edge"
+#define AG_VERTEX			"ag_vertex"
+#define AG_EDGE				"ag_edge"
 #define AG_ELEM_LOCAL_ID	"id"
 #define AG_ELEM_ID			"id"
 #define AG_START_ID			"start"

@@ -99,4 +99,10 @@ extern bool listExtensionContents(const char *pattern);
 /* \dy */
 extern bool listEventTriggers(const char *pattern, bool verbose);
 
+/* \dG */
+extern bool listGraphs(const char *pattern, bool verbose);
+
+/* \dGl, \dGv, \dGe */
+extern bool listLabels(const char *pattern, bool verbose, const char labkind);
+
 #endif   /* DESCRIBE_H */

@@ -2,119 +2,132 @@
 -- Cypher Query Language - DDL
 --
 
+-- setup
+
+DROP ROLE IF EXISTS graph_role;
+CREATE ROLE graph_role SUPERUSER;
+SET ROLE graph_role;
+
 --
--- CREATE graph
+-- CREATE GRAPH
 --
 
-CREATE GRAPH mygraph;
-
--- cannot set multi path
-
-set graph_path=mygraph,urgraph;
+SHOW graph_path;
+CREATE GRAPH g;
+SHOW graph_path;
 
 -- check default graph objects
-SELECT graphname, labname, labkind FROM ag_label;
-
--- CREATE unlogged label
-CREATE UNLOGGED VLABEL unlogv;
-DROP VLABEL unlogv;
-
--- IF NOT EXISTS
-CREATE VLABEL duple;
-CREATE VLABEL duple;
-CREATE VLABEL IF NOT EXISTS duple;
-DROP VLABEL duple;
-
--- enable set tablespace
-CREATE VLABEL setspace tablespace pg_default;
-DROP VLABEL setspace;
-
--- WITH
-CREATE VLABEL storagev with (fillfactor=90, autovacuum_enabled, autovacuum_vacuum_threshold=100);
-
-SELECT t.relname as name, t.reloptions as options
-FROM pg_class t, ag_label l
-WHERE t.oid = l.relid
-ORDER BY 1;
-
-DROP VLABEL storagev;
+SELECT graphname, labname, labkind FROM pg_catalog.ag_label;
 
 --
--- CREATE/DROP labels
+-- SET graph_path
 --
 
-CREATE VLABEL vlabel_p1;
-CREATE VLABEL vlabel_p2;
+SET graph_path = n;
+SET graph_path = n, m;
 
-CREATE VLABEL vlabel_c1 inherits (vlabel_p1);
-CREATE VLABEL vlabel_c2 inherits (vlabel_c1);
-CREATE VLABEL vlabel_c3 inherits (vlabel_c2);
-CREATE VLABEL vlabel_c4 inherits (vlabel_c3);
-CREATE VLABEL vlabel_c5 inherits (vlabel_c4);
-CREATE VLABEL vlabel_c6 inherits (vlabel_c4);
-CREATE VLABEL vlabel_c7 inherits (vlabel_c1, vlabel_p2);
+--
+-- CREATE label
+--
 
-CREATE ELABEL elabel_p1;
-CREATE ELABEL elabel_c1 inherits (elabel_p1);
-CREATE ELABEL elabel_c2 inherits (elabel_c1);
-CREATE ELABEL elabel_c3 inherits (elabel_c2);
+CREATE VLABEL v0;
 
-SELECT labname, labkind FROM ag_label;
+CREATE VLABEL v00 INHERITS (v0);
+CREATE VLABEL v01 INHERITS (v0);
+CREATE VLABEL v1 INHERITS (v00, v01);
 
-SELECT childlab.labname AS child, parentlab.labname AS parent
-FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
-WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
+CREATE ELABEL e0;
+CREATE ELABEL e01 INHERITS (e0);
+CREATE ELABEL e1;
 
-DROP VLABEL vlabel_c4 CASCADE;
+SELECT labname, labkind FROM pg_catalog.ag_label;
 
-SELECT labname, labkind FROM ag_label;
-
-SELECT childlab.labname AS child, parentlab.labname AS parent 
-FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
-WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
+SELECT child.labname AS child, parent.labname AS parent
+FROM pg_catalog.ag_label AS parent,
+     pg_catalog.ag_label AS child,
+     pg_catalog.pg_inherits AS inh
+WHERE child.relid = inh.inhrelid AND parent.relid = inh.inhparent
+ORDER BY 1, 2;
 
 -- wrong cases
 
-CREATE VLABEL wrong_parent inherits (elabel_p1);
-CREATE ELABEL wrong_parent inherits (vlabel_p1);
+CREATE VLABEL wrong_parent INHERITS (e1);
+CREATE ELABEL wrong_parent INHERITS (v1);
 
-DROP TABLE vlabel_c7;
-DROP TABLE elabel_c3;
+-- CREATE UNLOGGED
+CREATE UNLOGGED VLABEL unlog;
+SELECT l.labname as name, c.relpersistence as persistence
+FROM pg_catalog.ag_label l
+     LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid
+ORDER BY 1;
 
-DROP VLABEL nothing;
-DROP ELABEL nothing;
+-- IF NOT EXISTS
+CREATE VLABEL dup;
+CREATE VLABEL dup;
+CREATE VLABEL IF NOT EXISTS dup;
 
-DROP VLABEL elabel_c3;
-DROP ELABEL vlabel_c7;
+-- WITH
+CREATE VLABEL stor
+WITH (fillfactor=90, autovacuum_enabled, autovacuum_vacuum_threshold=100);
+SELECT l.labname as name, c.reloptions as options
+FROM pg_catalog.ag_label l
+     LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid
+ORDER BY 1;
 
-DROP VLABEL vlabel_p1;
-DROP VLABEL vlabel_c1;
-
-DROP VLABEL vertex CASCADE;
-DROP ELABEL edge CASCADE;
+-- TABLESPACE
+CREATE VLABEL tblspc TABLESPACE pg_default;
 
 --
--- DROP all labels
+-- COMMENT and \dG commands
 --
 
-DROP VLABEL vlabel_p1 CASCADE;
-DROP VLABEL vlabel_p2 CASCADE;
-DROP ELABEL elabel_p1 CASCADE;
+COMMENT ON GRAPH g IS 'a graph for regression tests';
+COMMENT ON VLABEL v1 IS 'multiple inheritance test';
 
+\dG+
+\dGv+
+\dGe+
+
+--
+-- DROP LABEL
+--
+
+-- wrong cases
+
+DROP TABLE g.v1;
+DROP TABLE g.e1;
+
+DROP VLABEL unknown;
+DROP ELABEL unknown;
+
+DROP VLABEL e1;
+DROP ELABEL v1;
+
+DROP VLABEL v0;
+DROP VLABEL v00;
+DROP ELABEL e0;
+
+DROP VLABEL ag_vertex CASCADE;
+DROP ELABEL ag_edge CASCADE;
+
+-- drop all
+
+DROP VLABEL v01 CASCADE;
+SELECT labname, labkind FROM pg_catalog.ag_label;
+DROP VLABEL v0 CASCADE;
+DROP ELABEL e0 CASCADE;
+DROP ELABEL e1;
+SELECT labname, labkind FROM pg_catalog.ag_label;
+
+--
+-- DROP GRAPH
+--
+
+DROP GRAPH g;
+DROP GRAPH g CASCADE;
 SELECT labname, labkind FROM ag_label;
 
---
--- DROP graph
---
+-- teardown
 
-DROP GRAPH mygraph;
-
--- DROP GRAPH must set CASCADE
-
-DROP GRAPH mygraph CASCADE;
-
-SELECT labname, labkind FROM ag_label;
-
-SELECT childlab.labname AS child, parentlab.labname AS parent 
-FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
-WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
+RESET ROLE;
+DROP ROLE graph_role;
