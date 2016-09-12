@@ -20,33 +20,18 @@ SELECT graphname, labname, labkind FROM ag_label;
 -- CREATE/DROP labels
 --
 CREATE VLABEL vlabel_p1;
-NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL vlabel_p2;
-NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL vlabel_c1 inherits (vlabel_p1);
-NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL vlabel_c2 inherits (vlabel_c1);
-NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL vlabel_c3 inherits (vlabel_c2);
-NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL vlabel_c4 inherits (vlabel_c3);
-NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL vlabel_c5 inherits (vlabel_c4);
-NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL vlabel_c6 inherits (vlabel_c4);
-NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL vlabel_c7 inherits (vlabel_c1, vlabel_p2);
-NOTICE:  merging multiple inherited definitions of column "id"
-NOTICE:  merging multiple inherited definitions of column "properties"
-NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL elabel_p1;
-NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL elabel_c1 inherits (elabel_p1);
-NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL elabel_c2 inherits (elabel_c1);
-NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL elabel_c3 inherits (elabel_c2);
-NOTICE:  merging column "id" with inherited definition
 SELECT labname, labkind FROM ag_label;
   labname  | labkind 
 -----------+---------
@@ -129,10 +114,8 @@ WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
 
 -- wrong cases
 CREATE VLABEL wrong_parent inherits (elabel_p1);
-NOTICE:  merging column "id" with inherited definition
 ERROR:  parent label has different labkind 'v'
 CREATE ELABEL wrong_parent inherits (vlabel_p1);
-NOTICE:  merging column "id" with inherited definition
 ERROR:  parent label has different labkind 'e'
 DROP TABLE vlabel_c7;
 ERROR:  table "vlabel_c7" does not exist

@@ -41,11 +41,8 @@ SELECT * FROM (RETURN 3 + 4, 'hello' || ' agens') AS _(lucky, greeting);
 -- CREATE
 --
 CREATE VLABEL repo;
-NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL lib;
-NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL doc;
-NOTICE:  merging column "id" with inherited definition
 CREATE (g:repo {'name': 'agens-graph',
                 'year': (SELECT year FROM history WHERE event = 'Graph')})
 RETURN properties(g) AS g;
@@ -490,9 +487,7 @@ MATCH (a:repo) RETURN (a).name AS a, size((a)-[]->()) AS s;
 MATCH (a) LOAD FROM history AS a RETURN *;
 ERROR:  duplicate variable "a"
 CREATE VLABEL feature;
-NOTICE:  merging column "id" with inherited definition
 CREATE ELABEL supported;
-NOTICE:  merging column "id" with inherited definition
 MATCH (a:repo {'name': 'agens-graph'})
 LOAD FROM history AS h
 CREATE (:feature {'name': (h).event})-[:supported]->(a);
@@ -541,7 +536,6 @@ SELECT count(*) FROM agens.edge;
 CREATE GRAPH u;
 SET graph_path = u;
 CREATE ELABEL rel;
-NOTICE:  merging column "id" with inherited definition
 CREATE (s {'id': 1})-[:rel {'p': 'a'}]->({'id': 2})-[:rel {'p': 'b'}]->(s);
 MATCH (s)-[r1]-(m)-[r2]-(x)
 RETURN (s).id AS s, (r1).p AS r1, (m).id AS m, (r2).p AS r2, (x).id AS x
