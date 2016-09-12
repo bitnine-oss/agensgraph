@@ -131,7 +131,7 @@ WHERE p1.typinput = p2.oid AND p2.provolatile NOT IN ('i', 's');
 SELECT DISTINCT typtype, typinput
 FROM pg_type AS p1
 WHERE p1.typtype not in ('b', 'p')
-ORDER BY 1;
+ORDER BY 1, 2;
 
 -- Check for bogus typoutput routines
 
@@ -160,7 +160,7 @@ WHERE p1.typoutput = p2.oid AND p2.provolatile NOT IN ('i', 's');
 SELECT DISTINCT typtype, typoutput
 FROM pg_type AS p1
 WHERE p1.typtype not in ('b', 'd', 'p')
-ORDER BY 1;
+ORDER BY 1, 2;
 
 -- Domains should have same typoutput as their base types
 SELECT p1.oid, p1.typname, p2.oid, p2.typname

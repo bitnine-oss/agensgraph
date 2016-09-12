@@ -235,6 +235,8 @@ DATA(insert (	403		jsonb_ops			PGNSP PGUID 4033  3802 t 0 ));
 DATA(insert (	405		jsonb_ops			PGNSP PGUID 4034  3802 t 0 ));
 DATA(insert (	2742	jsonb_ops			PGNSP PGUID 4036  3802 t 25 ));
 DATA(insert (	2742	jsonb_path_ops		PGNSP PGUID 4037  3802 f 23 ));
+/* operator classes for graphid */
+DATA(insert (	2742	graphid_ops			PGNSP PGUID 7096  7002 t 0 ));
 
 /* BRIN operator classes */
 /* no brin opclass for bool */

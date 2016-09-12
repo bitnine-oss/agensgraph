@@ -23,6 +23,13 @@ typedef struct Graphid
 /* graphid */
 extern Datum graphid_in(PG_FUNCTION_ARGS);
 extern Datum graphid_out(PG_FUNCTION_ARGS);
+/* graphid - comparison */
+extern Datum graphid_eq(PG_FUNCTION_ARGS);
+extern Datum graphid_ne(PG_FUNCTION_ARGS);
+extern Datum graphid_lt(PG_FUNCTION_ARGS);
+extern Datum graphid_gt(PG_FUNCTION_ARGS);
+extern Datum graphid_le(PG_FUNCTION_ARGS);
+extern Datum graphid_ge(PG_FUNCTION_ARGS);
 
 /* vertex */
 extern Datum vertex_out(PG_FUNCTION_ARGS);
@@ -55,5 +62,13 @@ extern Datum getEdgeIdDatum(Datum datum);
 extern void getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges);
 extern Datum makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges,
 								int nedges);
+
+/* index support - BTree */
+extern Datum btgraphidcmp(PG_FUNCTION_ARGS);
+/* index support - GIN (as BTree) */
+extern Datum gin_extract_value_graphid(PG_FUNCTION_ARGS);
+extern Datum gin_extract_query_graphid(PG_FUNCTION_ARGS);
+extern Datum gin_consistent_graphid(PG_FUNCTION_ARGS);
+extern Datum gin_compare_partial_graphid(PG_FUNCTION_ARGS);
 
 #endif	/* GRAPH_H */

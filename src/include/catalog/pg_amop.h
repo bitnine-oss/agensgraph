@@ -1116,4 +1116,13 @@ DATA(insert (	4104	603  603 12 s	  2572	  3580 0 ));
 /* we could, but choose not to, supply entries for strategies 13 and 14 */
 DATA(insert (	4104	603  600  7 s	   433	  3580 0 ));
 
+/*
+ * GIN (as BTree) graphid_ops
+ */
+DATA(insert (	7096   7002 7002 1 s	  7089	  2742 0 ));
+DATA(insert (	7096   7002 7002 2 s	  7091	  2742 0 ));
+DATA(insert (	7096   7002 7002 3 s	  7087	  2742 0 ));
+DATA(insert (	7096   7002 7002 4 s	  7092	  2742 0 ));
+DATA(insert (	7096   7002 7002 5 s	  7090	  2742 0 ));
+
 #endif   /* PG_AMOP_H */
