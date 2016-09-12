@@ -15,5 +15,7 @@
 extern Oid label_create_with_catalog(RangeVar *label, Oid relid, char labkind,
 									 Oid labtablespace);
 extern void label_drop_with_catalog(Oid labid);
+extern char get_labkind_with_labid(Oid labid);
+extern char *get_labname_with_labid(Oid labid);
 
 #endif	/* AG_LABEL_FN_H */

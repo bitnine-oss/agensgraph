@@ -5902,6 +5902,9 @@ comment_type:
 			| TEXT_P SEARCH DICTIONARY			{ $$ = OBJECT_TSDICTIONARY; }
 			| TEXT_P SEARCH PARSER				{ $$ = OBJECT_TSPARSER; }
 			| TEXT_P SEARCH TEMPLATE			{ $$ = OBJECT_TSTEMPLATE; }
+			| GRAPH								{ $$ = OBJECT_GRAPH; }
+			| VLABEL							{ $$ = OBJECT_VLABEL; }
+			| ELABEL							{ $$ = OBJECT_ELABEL; }
 		;
 
 comment_text:
