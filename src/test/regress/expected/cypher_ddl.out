@@ -16,6 +16,33 @@ SELECT graphname, labname, labkind FROM ag_label;
  mygraph   | edge    | e
 (2 rows)
 
+-- CREATE unlogged label
+CREATE UNLOGGED VLABEL unlogv;
+DROP VLABEL unlogv;
+-- IF NOT EXISTS
+CREATE VLABEL duple;
+CREATE VLABEL duple;
+ERROR:  label "duple" already exists
+CREATE VLABEL IF NOT EXISTS duple;
+NOTICE:  label "duple" already exists, skipping
+DROP VLABEL duple;
+-- enable set tablespace
+CREATE VLABEL setspace tablespace pg_default;
+DROP VLABEL setspace;
+-- WITH
+CREATE VLABEL storagev with (fillfactor=90, autovacuum_enabled, autovacuum_vacuum_threshold=100);
+SELECT t.relname as name, t.reloptions as options
+FROM pg_class t, ag_label l
+WHERE t.oid = l.relid
+ORDER BY 1;
+   name   |                                 options                                 
+----------+-------------------------------------------------------------------------
+ edge     | 
+ storagev | {fillfactor=90,autovacuum_enabled=true,autovacuum_vacuum_threshold=100}
+ vertex   | 
+(3 rows)
+
+DROP VLABEL storagev;
 --
 -- CREATE/DROP labels
 --

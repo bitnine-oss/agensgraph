@@ -2978,6 +2978,10 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	stmt = makeNode(CreateStmt);
 
 	stmt->relation = copyObject(labelStmt->relation);
+	stmt->options = copyObject(labelStmt->options);
+	stmt->oncommit = ONCOMMIT_NOOP;
+	stmt->tablespacename = labelStmt->tablespacename;
+	stmt->if_not_exists = labelStmt->if_not_exists;
 
 	if (stmt->relation->schemaname == NULL)
 		stmt->relation->schemaname = get_graph_path();
@@ -3020,7 +3024,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	if (inherit)
 	{
 		/* inherit base vertex/edge */
-		if (labelStmt->inhRelations == NULL)
+		if (labelStmt->inhRelations == NIL)
 		{
 			char *name;
 
@@ -3062,9 +3066,6 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 							stmt->relation->relname)));
 	}
 
-	stmt->oncommit = ONCOMMIT_NOOP;
-	stmt->if_not_exists = false;
-
 	/*
 	 * process CreateStmt (See transformCreateStmt())
 	 */
@@ -3078,13 +3079,26 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 										 &existing_relid);
 	cancel_parser_errposition_callback(&pcbstate);
 
+	/*
+	 * If the label already exists and the user specified "IF NOT EXISTS",
+	 * bail out with a NOTICE.
+	 */
 	if (OidIsValid(existing_relid))
 	{
-		ereport(ERROR,
-				(errcode(ERRCODE_DUPLICATE_TABLE),
-				 errmsg("graph label \"%s\" already exists",
-						stmt->relation->relname)));
-		return NIL;
+		if (stmt->if_not_exists)
+		{
+			ereport(NOTICE,
+					(errcode(ERRCODE_DUPLICATE_TABLE),
+					 errmsg("label \"%s\" already exists, skipping",
+							stmt->relation->relname)));
+			return NIL;
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_TABLE),
+					 errmsg("label \"%s\" already exists",
+							stmt->relation->relname)));
+
 	}
 
 	cxt.pstate = pstate;
@@ -3097,7 +3111,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	cxt.inhRelations = stmt->inhRelations;
 	cxt.isforeign = false;
 	cxt.isalter = false;
-	cxt.hasoids = interpretOidsOption(stmt->options, !cxt.isforeign);
+	cxt.hasoids = false;
 	cxt.columns = NIL;
 	cxt.ckconstraints = NIL;
 	cxt.fkconstraints = NIL;
