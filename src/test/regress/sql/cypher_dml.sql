@@ -231,7 +231,7 @@ MATCH (a:repo) RETURN (a).name AS a;
 MATCH (a) DETACH DELETE a;
 MATCH (a) RETURN a;
 
-SELECT count(*) FROM agens.edge;
+SELECT count(*) FROM agens.ag_edge;
 
 --
 -- Uniqueness

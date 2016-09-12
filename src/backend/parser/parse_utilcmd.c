@@ -129,6 +129,7 @@ static List *makeVertexElements(void);
 static List *makeEdgeElements(void);
 static List *inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
+static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
 
 
 /*
@@ -2963,11 +2964,16 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	CreateStmt *stmt;
 	char	   *graphname;
 	bool		inherit;
+	char		descbuf[256];
+	char	   *tabdesc;
+	char	   *labdesc;
 	Oid			existing_relid;
 	ParseState *pstate;
 	ParseCallbackState pcbstate;
 	CreateStmtContext cxt;
+	ObjectType	objtype;
 	ListCell   *elements;
+	CommentStmt *comment;
 	List	   *save_alist;
 	List	   *result;
 
@@ -2992,13 +2998,23 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		strcmp(labelStmt->relation->relname, AG_VERTEX) == 0)
 	{
 		stmt->tableElts = makeVertexElements();
+
 		inherit = false;
+
+		tabdesc = pstrdup("base table of graph label " AG_VERTEX);
+		snprintf(descbuf, sizeof(descbuf), "base label of graph %s", graphname);
+		labdesc = pstrdup(descbuf);
 	}
 	else if (labelStmt->labelKind == LABEL_EDGE &&
 		strcmp(labelStmt->relation->relname, AG_EDGE) == 0)
 	{
 		stmt->tableElts = makeEdgeElements();
+
 		inherit = false;
+
+		tabdesc = pstrdup("base table of graph label " AG_EDGE);
+		snprintf(descbuf, sizeof(descbuf), "base label of graph %s", graphname);
+		labdesc = pstrdup(descbuf);
 	}
 	else
 	{
@@ -3007,7 +3023,8 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		 * conflicts. Create `id` column here and set it later in
 		 * transformLabelIdDefinition().
 		 */
-		ColumnDef *coldef;
+		ColumnDef  *coldef;
+		char	   *qname;
 
 		coldef = makeNode(ColumnDef);
 		coldef->colname = AG_ELEM_LOCAL_ID;
@@ -3019,6 +3036,11 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		stmt->tableElts = list_make1(coldef);
 
 		inherit = true;
+
+		qname = quote_qualified_identifier(graphname, stmt->relation->relname);
+		snprintf(descbuf, sizeof(descbuf), "table for graph label %s", qname);
+		tabdesc = pstrdup(descbuf);
+		labdesc = NULL;
 	}
 
 	if (inherit)
@@ -3103,9 +3125,15 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 
 	cxt.pstate = pstate;
 	if (labelStmt->labelKind == LABEL_VERTEX)
+	{
 		cxt.stmtType = "CREATE VLABEL";
+		objtype = OBJECT_VLABEL;
+	}
 	else
+	{
 		cxt.stmtType = "CREATE ELABEL";
+		objtype = OBJECT_ELABEL;
+	}
 	cxt.relation = stmt->relation;
 	cxt.rel = NULL;
 	cxt.inhRelations = stmt->inhRelations;
@@ -3140,6 +3168,14 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 				elog(ERROR, "graph base label definition has columns only, element node type: %d",
 					 (int) nodeTag(element));
 		}
+	}
+
+	comment = makeComment(OBJECT_TABLE, stmt->relation, tabdesc);
+	cxt.alist = lappend(cxt.alist, comment);
+	if (labdesc != NULL)
+	{
+		comment = makeComment(objtype, stmt->relation, labdesc);
+		cxt.alist = lappend(cxt.alist, comment);
 	}
 
 	save_alist = cxt.alist;
@@ -3462,4 +3498,19 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	defid->raw_expr = (Node *) fcgraphid;
 
 	col->constraints = lappend(col->constraints, defid);
+}
+
+CommentStmt *
+makeComment(ObjectType type, RangeVar *name, char *desc)
+{
+	CommentStmt *c;
+
+	c = makeNode(CommentStmt);
+	c->objtype = type;
+	c->objname = list_make2(makeString(name->schemaname),
+							makeString(name->relname));
+	c->objargs = NIL;
+	c->comment = pstrdup(desc);
+
+	return c;
 }

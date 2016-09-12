@@ -4612,3 +4612,140 @@ printACLColumn(PQExpBuffer buf, const char *colname)
 						  "pg_catalog.array_to_string(%s, '\\n') AS \"%s\"",
 						  colname, gettext_noop("Access privileges"));
 }
+
+/*
+ * \dG
+ *
+ * Describes graphs (Agens)
+ */
+bool
+listGraphs(const char *pattern, bool verbose)
+{
+	PQExpBufferData buf;
+	PGresult *res;
+	printQueryOpt myopt = pset.popt;
+
+	initPQExpBuffer(&buf);
+	printfPQExpBuffer(&buf,
+		"SELECT g.graphname AS \"%s\",\n"
+		"  pg_catalog.pg_get_userbyid(n.nspowner) AS \"%s\"",
+		gettext_noop("Name"), gettext_noop("Owner"));
+
+	if (verbose)
+	{
+		appendPQExpBufferStr(&buf, ",\n  ");
+		printACLColumn(&buf, "n.nspacl");
+		appendPQExpBuffer(&buf,
+			",\n  pg_catalog.obj_description(g.oid, 'ag_graph') AS \"%s\"",
+			gettext_noop("Description"));
+	}
+
+	appendPQExpBuffer(&buf,
+		"\nFROM pg_catalog.ag_graph g\n"
+		"  LEFT JOIN pg_catalog.pg_namespace n ON n.oid = g.nspid\n");
+
+	processSQLNamePattern(pset.db, &buf, pattern, false, false,
+						  NULL, "g.graphname", NULL, NULL);
+
+	appendPQExpBufferStr(&buf, "ORDER BY 1;");
+
+	res = PSQLexec(buf.data);
+	termPQExpBuffer(&buf);
+	if (!res)
+		return false;
+
+	if (PQntuples(res) == 0 && !pset.quiet)
+	{
+		if (pattern == NULL)
+			fprintf(pset.queryFout, _("No graphs found.\n"));
+		else
+			fprintf(pset.queryFout, _("No matching graphs found.\n"));
+	}
+	else
+	{
+		myopt.nullPrint = NULL;
+		myopt.title = _("List of graphs");
+		myopt.translate_header = true;
+
+		printQuery(res, &myopt, pset.queryFout, false, pset.logfile);
+	}
+
+	PQclear(res);
+	return true;
+}
+
+/*
+ * \dGl, \dGv, \dGe
+ *
+ * Describes graph labels (Agens)
+ */
+bool
+listLabels(const char *pattern, bool verbose, const char labkind)
+{
+	bool		showVertices = (labkind == 'v' || labkind == '\0');
+	bool		showEdges = (labkind == 'e' || labkind == '\0');
+	PQExpBufferData buf;
+	PGresult   *res;
+	printQueryOpt myopt = pset.popt;
+
+	initPQExpBuffer(&buf);
+	printfPQExpBuffer(&buf,
+		"SELECT l.graphname AS \"%s\",\n"
+		"  l.labname AS \"%s\",\n"
+		"  CASE l.labkind\n"
+		"    WHEN 'v' THEN '%s'\n"
+		"    WHEN 'e' THEN '%s'\n"
+		"  END AS \"%s\",\n"
+		"  pg_catalog.pg_get_userbyid(c.relowner) AS \"%s\"",
+		gettext_noop("Graph"), gettext_noop("Name"),
+		gettext_noop("vertex"), gettext_noop("edge"), gettext_noop("Type"),
+		gettext_noop("Owner"));
+
+	if (verbose)
+	{
+		appendPQExpBuffer(&buf,
+			",\n  pg_catalog.pg_size_pretty(pg_catalog.pg_table_size(c.oid)) AS \"%s\""
+			",\n  pg_catalog.obj_description(l.oid, 'ag_label') AS \"%s\"",
+			gettext_noop("Size"), gettext_noop("Description"));
+	}
+
+	appendPQExpBuffer(&buf,
+		"\nFROM pg_catalog.ag_label l\n"
+		"  LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid\n");
+
+	appendPQExpBufferStr(&buf, "WHERE l.labkind IN (");
+	if (showVertices)
+		appendPQExpBufferStr(&buf, "'v', ");
+	if (showEdges)
+		appendPQExpBufferStr(&buf, "'e', ");
+	appendPQExpBufferStr(&buf, "'')\n");	/* dummy */
+
+	processSQLNamePattern(pset.db, &buf, pattern, true, false,
+						  "l.graphname", "l.labname", NULL, NULL);
+
+	appendPQExpBufferStr(&buf, "ORDER BY 1, 3, 2;");
+
+	res = PSQLexec(buf.data);
+	termPQExpBuffer(&buf);
+	if (!res)
+		return false;
+
+	if (PQntuples(res) == 0 && !pset.quiet)
+	{
+		if (pattern == NULL)
+			fprintf(pset.queryFout, _("No labels found.\n"));
+		else
+			fprintf(pset.queryFout, _("No matching labels found.\n"));
+	}
+	else
+	{
+		myopt.nullPrint = NULL;
+		myopt.title = _("List of labels");
+		myopt.translate_header = true;
+
+		printQuery(res, &myopt, pset.queryFout, false, pset.logfile);
+	}
+
+	PQclear(res);
+	return true;
+}

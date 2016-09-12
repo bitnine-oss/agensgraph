@@ -524,7 +524,7 @@ MATCH (a) RETURN a;
 ---
 (0 rows)
 
-SELECT count(*) FROM agens.edge;
+SELECT count(*) FROM agens.ag_edge;
  count 
 -------
      0
@@ -551,8 +551,8 @@ RETURN (s).id AS s, (r1).p AS r1, (m).id AS m, (r2).p AS r2, (x).id AS x
 -- cleanup
 DROP GRAPH u CASCADE;
 NOTICE:  drop cascades to 3 other objects
-DETAIL:  drop cascades to label vertex
-drop cascades to label edge
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge
 drop cascades to label rel
 SET graph_path = agens;
 DROP VLABEL feature;
@@ -562,6 +562,6 @@ DROP ELABEL lib;
 DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
 NOTICE:  drop cascades to 2 other objects
-DETAIL:  drop cascades to label vertex
-drop cascades to label edge
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge
 DROP TABLE history;

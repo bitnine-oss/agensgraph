@@ -217,7 +217,10 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 
 		labtup = (Form_ag_label) GETSTRUCT(tuple);
 		if (labtup->labkind != labkind)
-			elog(ERROR, "parent label has different labkind '%c'", labkind);
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("invalid parent label with labkind '%c'",
+							labtup->labkind)));
 
 		ReleaseSysCache(tuple);
 

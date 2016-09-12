@@ -959,7 +959,6 @@ get_object_address(ObjectType objtype, List *objname, List *objargs,
 			case OBJECT_VLABEL:
 				address = get_object_address_label(objname, missing_ok);
 				break;
-
 			default:
 				elog(ERROR, "unrecognized objtype: %d", (int) objtype);
 				/* placate compiler, in case it thinks elog might return */
