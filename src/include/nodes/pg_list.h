@@ -143,6 +143,7 @@ list_length(const List *l)
 #define list_make2(x1,x2)			lcons(x1, list_make1(x2))
 #define list_make3(x1,x2,x3)		lcons(x1, list_make2(x2, x3))
 #define list_make4(x1,x2,x3,x4)		lcons(x1, list_make3(x2, x3, x4))
+#define list_make5(x1,x2,x3,x4,x5)	lcons(x1, list_make4(x2, x3, x4, x5))
 
 #define list_make1_int(x1)			lcons_int(x1, NIL)
 #define list_make2_int(x1,x2)		lcons_int(x1, list_make1_int(x2))

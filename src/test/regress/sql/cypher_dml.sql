@@ -81,20 +81,24 @@ RETURN (a).name AS a, (b).lang AS b, (c).name AS c;
 
 MATCH (a)<-[b]-(c)-[d]->(e)
 RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
-       (d).lang AS d, (e).name AS e;
+       (d).lang AS d, (e).name AS e
+ORDER BY a, b, d, e;
 
 MATCH (a)<-[b]-(c), (c)-[d]->(e)
 RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
-       (d).lang AS d, (e).name AS e;
+       (d).lang AS d, (e).name AS e
+ORDER BY a, b, d, e;
 
 MATCH (a)<-[b]-(c) MATCH (c)-[d]->(e)
 RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
-       (d).lang AS d, (e).name AS e;
+       (d).lang AS d, (e).name AS e
+ORDER BY a, b, d, e;
 
 MATCH (a)<-[b]-(c), (f)-[g]->(h), (c)-[d]->(e)
 RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
        (d).lang AS d, (e).name AS e,
-       (f).name AS f, (g).lang AS g, (h).name AS h;
+       (f).name AS f, (g).lang AS g, (h).name AS h
+ORDER BY a, b, d, e, g, h;
 
 MATCH (a {'name': 'agens-graph'}), (a {'year': 2016}) RETURN properties(a) AS a;
 MATCH p=(a)-[]->({'name': 'agens-graph-jdbc'}) RETURN (a).name AS a;

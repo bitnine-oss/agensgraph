@@ -1116,4 +1116,11 @@ DATA(insert (	4104	603  603 12 s	  2572	  3580 0 ));
 /* we could, but choose not to, supply entries for strategies 13 and 14 */
 DATA(insert (	4104	603  600  7 s	   433	  3580 0 ));
 
+/* graphid gin */
+DATA(insert (	4109   7002 7002 1 s	  3317	  2742 0 ));
+DATA(insert (	4109   7002 7002 2 s	  3319	  2742 0 ));
+DATA(insert (	4109   7002 7002 3 s	  3315	  2742 0 ));
+DATA(insert (	4109   7002 7002 4 s	  3320	  2742 0 ));
+DATA(insert (	4109   7002 7002 5 s	  3318	  2742 0 ));
+
 #endif   /* PG_AMOP_H */

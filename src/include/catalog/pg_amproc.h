@@ -660,4 +660,11 @@ DATA(insert (	4104   603	 603  4  4108 ));
 DATA(insert (	4104   603	 603  11 4067 ));
 DATA(insert (	4104   603	 603  13  187 ));
 
+/* graphid proc */
+DATA(insert (	4109  7002	7002  1  7091 ));
+DATA(insert (	4109  7002	7002  2  7081 ));
+DATA(insert (	4109  7002	7002  3  7082 ));
+DATA(insert (	4109  7002	7002  4  7083 ));
+DATA(insert (	4109  7002	7002  5  7084 ));
+
 #endif   /* PG_AMPROC_H */

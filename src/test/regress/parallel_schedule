@@ -112,7 +112,7 @@ test: event_trigger
 test: stats
 
 # run cypher dml test
-test: cypher_dml
+test: cypher_dml graphid
 
 # run cypher ddl test
 test: cypher_ddl

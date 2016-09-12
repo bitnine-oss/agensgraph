@@ -167,11 +167,11 @@ WHERE p1.typinput = p2.oid AND p2.provolatile NOT IN ('i', 's');
 SELECT DISTINCT typtype, typinput
 FROM pg_type AS p1
 WHERE p1.typtype not in ('b', 'p')
-ORDER BY 1;
+ORDER BY 1, 2;
  typtype |  typinput  
 ---------+------------
- c       | graphid_in
  c       | record_in
+ c       | graphid_in
  d       | domain_in
  e       | enum_in
  r       | range_in
@@ -213,14 +213,14 @@ WHERE p1.typoutput = p2.oid AND p2.provolatile NOT IN ('i', 's');
 SELECT DISTINCT typtype, typoutput
 FROM pg_type AS p1
 WHERE p1.typtype not in ('b', 'd', 'p')
-ORDER BY 1;
+ORDER BY 1, 2;
  typtype |   typoutput   
 ---------+---------------
+ c       | record_out
  c       | graphid_out
  c       | vertex_out
- c       | graphpath_out
- c       | record_out
  c       | edge_out
+ c       | graphpath_out
  e       | enum_out
  r       | range_out
 (7 rows)

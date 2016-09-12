@@ -736,3 +736,213 @@ makeArrayTypeDatum(Datum *elems, int nelem, Oid type)
 
 	return PointerGetDatum(arr);
 }
+
+/*** GIN support functions for graphid type***/
+
+/* For partial compare function in gin index */
+typedef struct QueryInfo
+{
+	StrategyNumber strategy;
+	Datum		datum;		/* original key */
+	FmgrInfo   *cmpFnInfo;
+} QueryInfo;
+
+static Datum
+leftmostvalue_graphid(void)
+{
+	Graphid   gid = {InvalidOid, (int64)0};
+
+	return getGraphidDatum(gid);
+}
+
+Datum
+gin_extract_value_graphid(FunctionCallInfo fcinfo)
+{
+	Datum		datum = PG_GETARG_DATUM(0);
+	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
+	Datum	   *entries = (Datum *) palloc(sizeof(Datum));
+
+	entries[0] = datum;
+	*nentries = 1;
+
+	PG_RETURN_POINTER(entries);
+}
+
+/*
+ * For BTGreaterEqualStrategyNumber, BTGreaterStrategyNumber, and
+ * BTEqualStrategyNumber we want to start the index scan at the
+ * supplied query datum, and work forward. For BTLessStrategyNumber
+ * and BTLessEqualStrategyNumber, we need to start at the leftmost
+ * key, and work forward until the supplied query datum (which must be
+ * sent along inside the QueryInfo structure).
+ */
+Datum
+gin_extract_query_graphid(FunctionCallInfo fcinfo)
+{
+	Datum		datum = PG_GETARG_DATUM(0);
+	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
+	StrategyNumber strategy = PG_GETARG_UINT16(2);
+	bool	  **partialmatch = (bool **) PG_GETARG_POINTER(3);
+	Pointer   **extra_data = (Pointer **) PG_GETARG_POINTER(4);
+	Datum	   *entries = (Datum *) palloc(sizeof(Datum));
+	QueryInfo  *data = (QueryInfo *) palloc(sizeof(QueryInfo));
+	bool	   *ptr_partialmatch;
+	FmgrInfo   *cmpFnInfo = (FmgrInfo *) palloc(sizeof(FmgrInfo));
+
+	*nentries = 1;
+	ptr_partialmatch = *partialmatch = (bool *) palloc(sizeof(bool));
+	*ptr_partialmatch = false;
+
+	fmgr_info(fmgr_internal_function("btgraphidcmp"), cmpFnInfo);
+	data->strategy = strategy;
+	data->datum = datum;
+	data->cmpFnInfo = cmpFnInfo;
+
+	*extra_data = (Pointer *) palloc(sizeof(Pointer));
+	**extra_data = (Pointer) data;
+
+	switch (strategy)
+	{
+		case BTLessStrategyNumber:
+		case BTLessEqualStrategyNumber:
+			entries[0] = leftmostvalue_graphid();
+			*ptr_partialmatch = true;
+			break;
+		case BTGreaterEqualStrategyNumber:
+		case BTGreaterStrategyNumber:
+			*ptr_partialmatch = true;
+		case BTEqualStrategyNumber:
+			entries[0] = datum;
+			break;
+		default:
+			elog(ERROR, "unrecognized strategy number: %d", strategy);
+	}
+
+	PG_RETURN_POINTER(entries);
+}
+
+Datum
+gin_consistent_graphid(PG_FUNCTION_ARGS)
+{
+	bool	   *recheck = (bool *) PG_GETARG_POINTER(5);
+
+	*recheck = false;
+	PG_RETURN_BOOL(true);
+}
+
+/*
+ * Datum a is a value from extract_query method and for BTLess*
+ * strategy it is a left-most value.  So, use original datum from QueryInfo
+ * to decide to stop scanning or not.  Datum b is always from index.
+ */
+Datum
+gin_partial_compare_graphid(FunctionCallInfo fcinfo)
+{
+	Datum		a = PG_GETARG_DATUM(0);
+	Datum		b = PG_GETARG_DATUM(1);
+	QueryInfo  *data = (QueryInfo *) PG_GETARG_POINTER(3);
+	int32		res,
+				cmp;
+
+	cmp = DatumGetInt32(FunctionCall2Coll(data->cmpFnInfo,
+										  PG_GET_COLLATION(),
+								   (data->strategy == BTLessStrategyNumber ||
+								 data->strategy == BTLessEqualStrategyNumber)
+										  ? data->datum : a,
+										  b));
+
+	switch (data->strategy)
+	{
+		case BTLessStrategyNumber:
+			/* If original datum > indexed one then return match */
+			if (cmp > 0)
+				res = 0;
+			else
+				res = 1;
+			break;
+		case BTLessEqualStrategyNumber:
+			/* The same except equality */
+			if (cmp >= 0)
+				res = 0;
+			else
+				res = 1;
+			break;
+		case BTEqualStrategyNumber:
+			if (cmp != 0)
+				res = 1;
+			else
+				res = 0;
+			break;
+		case BTGreaterEqualStrategyNumber:
+			/* If original datum <= indexed one then return match */
+			if (cmp <= 0)
+				res = 0;
+			else
+				res = 1;
+			break;
+		case BTGreaterStrategyNumber:
+			/* If original datum <= indexed one then return match */
+			/* If original datum == indexed one then continue scan */
+			if (cmp < 0)
+				res = 0;
+			else if (cmp == 0)
+				res = -1;
+			else
+				res = 1;
+			break;
+		default:
+			elog(ERROR, "unrecognized strategy number: %d",
+				 data->strategy);
+			res = 0;
+	}
+
+	PG_RETURN_INT32(res);
+}
+
+static int
+graphidcmp(PG_FUNCTION_ARGS)
+{
+	return (int)btrecordcmp(fcinfo);
+}
+
+Datum
+btgraphidcmp(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_INT32(graphidcmp(fcinfo));
+}
+
+Datum
+graphid_eq(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphidcmp(fcinfo) == 0);
+}
+
+Datum
+graphid_ne(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphidcmp(fcinfo) != 0);
+}
+
+Datum
+graphid_lt(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphidcmp(fcinfo) < 0);
+}
+
+Datum
+graphid_gt(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphidcmp(fcinfo) > 0);
+}
+
+Datum
+graphid_le(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphidcmp(fcinfo) <= 0);
+}
+
+Datum
+graphid_ge(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphidcmp(fcinfo) >= 0);
+}
