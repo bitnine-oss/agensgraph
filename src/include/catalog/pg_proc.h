@@ -5370,6 +5370,24 @@ DATA(insert OID = 7079 ( nodes			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7011 "
 DESCR("get vertices in graphpath");
 DATA(insert OID = 7080 ( relationships	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7021 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_edges _null_ _null_ _null_ ));
 DESCR("get edges in graphpath");
+DATA(insert OID = 7081 ( graphid_eq		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_eq _null_ _null_ _null_ ));
+DATA(insert OID = 7082 ( graphid_ne		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_ne _null_ _null_ _null_ ));
+DATA(insert OID = 7083 ( graphid_lt		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_lt _null_ _null_ _null_ ));
+DATA(insert OID = 7084 ( graphid_gt		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_gt _null_ _null_ _null_ ));
+DATA(insert OID = 7085 ( graphid_le		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_le _null_ _null_ _null_ ));
+DATA(insert OID = 7086 ( graphid_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_ge _null_ _null_ _null_ ));
+/* BTree for graphid */
+DATA(insert OID = 7094 ( btgraphidcmp	PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 23 "7002 7002" _null_ _null_ _null_ _null_ _null_ btgraphidcmp _null_ _null_ _null_ ));
+DESCR("less-equal-greater");
+/* GIN (as BTree) for graphid */
+DATA(insert OID = 7098 ( gin_extract_value_graphid	 PGNSP PGUID 12 1 0 0 0 f f f f t f i 3 0 2281 "7002 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_value_graphid _null_ _null_ _null_ ));
+DESCR("GIN graphid support");
+DATA(insert OID = 7099 ( gin_extract_query_graphid	 PGNSP PGUID 12 1 0 0 0 f f f f t f i 7 0 2281 "7002 2281 21 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_query_graphid _null_ _null_ _null_ ));
+DESCR("GIN graphid support");
+DATA(insert OID = 7100 ( gin_consistent_graphid		 PGNSP PGUID 12 1 0 0 0 f f f f t f i 8 0 16 "2281 21 7002 23 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_consistent_graphid _null_ _null_ _null_ ));
+DESCR("GIN graphid support");
+DATA(insert OID = 7101 ( gin_compare_partial_graphid PGNSP PGUID 12 1 0 0 0 f f f f t f i 4 0 23 "7002 7002 21 2281" _null_ _null_ _null_ _null_ _null_ gin_compare_partial_graphid _null_ _null_ _null_ ));
+DESCR("GIN graphid support");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

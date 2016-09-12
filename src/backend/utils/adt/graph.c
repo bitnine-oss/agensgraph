@@ -62,6 +62,7 @@ typedef enum EdgeVertexKind {
 } EdgeVertexKind;
 
 static void graphid_out_si(StringInfo si, Datum graphid);
+static int graphid_cmp(FunctionCallInfo fcinfo);
 static LabelOutData *cache_label(FmgrInfo *flinfo, Oid relid);
 static void elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo);
 static void get_elem_type_output(ArrayMetaState *state, Oid elem_type,
@@ -70,7 +71,9 @@ static Datum array_iter_next_(array_iter *it, int idx, ArrayMetaState *state);
 static void deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull);
 static Datum tuple_getattr(HeapTupleHeader tuphdr, int attnum);
 static Datum getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk);
+static Graphid getGraphidStruct_internal(Datum datum, bool free);
 static Datum makeArrayTypeDatum(Datum *elems, int nelem, Oid type);
+static Datum graphid_minval(void);
 
 Datum
 graphid_in(PG_FUNCTION_ARGS)
@@ -122,6 +125,61 @@ graphid_out_si(StringInfo si, Datum graphid)
 
 	id = getGraphidStruct(graphid);
 	appendStringInfo(si, GRAPHID_FMTSTR, id.oid, id.lid);
+}
+
+static int
+graphid_cmp(FunctionCallInfo fcinfo)
+{
+	Graphid id1 = getGraphidStruct_internal(PG_GETARG_DATUM(0), true);
+	Graphid id2 = getGraphidStruct_internal(PG_GETARG_DATUM(1), true);
+
+	if (id1.oid < id2.oid)
+		return -1;
+	if (id1.oid > id2.oid)
+		return 1;
+	if (id1.lid < id2.lid)
+		return -1;
+	if (id1.lid > id2.lid)
+		return 1;
+
+	return 0;
+}
+
+Datum
+graphid_eq(PG_FUNCTION_ARGS)
+{
+	/* use graphid_cmp() here, since graphid have a total ordering */
+	PG_RETURN_BOOL(graphid_cmp(fcinfo) == 0);
+}
+
+Datum
+graphid_ne(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphid_cmp(fcinfo) != 0);
+}
+
+Datum
+graphid_lt(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphid_cmp(fcinfo) < 0);
+}
+
+Datum
+graphid_gt(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphid_cmp(fcinfo) > 0);
+}
+
+Datum
+graphid_le(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphid_cmp(fcinfo) <= 0);
+}
+
+Datum
+graphid_ge(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_BOOL(graphid_cmp(fcinfo) >= 0);
 }
 
 Datum
@@ -604,6 +662,12 @@ vertex_labels(PG_FUNCTION_ARGS)
 Graphid
 getGraphidStruct(Datum datum)
 {
+	return getGraphidStruct_internal(datum, false);
+}
+
+static Graphid
+getGraphidStruct_internal(Datum datum, bool free)
+{
 	HeapTupleHeader tuphdr;
 	Datum		values[Natts_graphid];
 	bool		isnull[Natts_graphid];
@@ -624,6 +688,13 @@ getGraphidStruct(Datum datum)
 
 	id.oid = DatumGetObjectId(values[Anum_graphid_oid - 1]);
 	id.lid = DatumGetInt64(values[Anum_graphid_lid - 1]);
+
+	if (free)
+	{
+		/* PG_FREE_IF_COPY() like routine */
+		if ((Pointer) tuphdr != DatumGetPointer(datum))
+			pfree(tuphdr);
+	}
 
 	return id;
 }
@@ -735,4 +806,175 @@ makeArrayTypeDatum(Datum *elems, int nelem, Oid type)
 	arr = construct_array(elems, nelem, type, typlen, typbyval, typalign);
 
 	return PointerGetDatum(arr);
+}
+
+/*
+ * BTree support functions
+ */
+
+/* BTORDER_PROC (1) */
+Datum
+btgraphidcmp(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_INT32(graphid_cmp(fcinfo));
+}
+
+/*
+ * GIN (as BTree) support functions
+ */
+
+/* Note: GIN_COMPARE_PROC (1) is btgraphidcmp() */
+
+/* GIN_EXTRACTVALUE_PROC (2) - called by ginExtractEntries() */
+Datum
+gin_extract_value_graphid(PG_FUNCTION_ARGS)
+{
+	const int32	_nentries = 1;
+	HeapTupleHeader graphid = PG_GETARG_HEAPTUPLEHEADER(0);
+	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
+	Datum	   *entries = palloc(sizeof(*entries) * _nentries);
+
+	*nentries = _nentries;
+	entries[0] = HeapTupleHeaderGetDatum(graphid);
+
+	PG_RETURN_POINTER(entries);
+}
+
+/*
+ * GIN_EXTRACTQUERY_PROC (3) - called by ginNewScanKey()
+ *
+ * GIN does not have a fixed set of strategies. Instead, the support routines
+ * of each operator class interpret the strategy numbers.
+ * We use strategy numbers of BTree.
+ *
+ * nullFlags and searchMode will be set by the caller.
+ */
+Datum
+gin_extract_query_graphid(PG_FUNCTION_ARGS)
+{
+	const int32	_nentries = 1;
+	Datum		graphid = PG_GETARG_DATUM(0);
+	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
+	StrategyNumber strategy = PG_GETARG_UINT16(2);
+	bool	  **partial_matches = (bool **) PG_GETARG_POINTER(3);
+	Pointer   **extra_data = (Pointer **) PG_GETARG_POINTER(4);
+	Datum	   *entries;
+
+	*nentries = _nentries;
+	*partial_matches = palloc(sizeof(**partial_matches) * _nentries);
+	entries = palloc(sizeof(*entries) * _nentries);
+
+	switch (strategy)
+	{
+		case BTLessStrategyNumber:
+		case BTLessEqualStrategyNumber:
+			/*
+			 * We should start scan from the smallest indexed key until the
+			 * scan meets the given graphid. To do this, we set the
+			 * entry(query value) to the minimum value of graphid (to make GIN
+			 * to find the smallest indexed key), enable partial match, and
+			 * store the original graphid into the extra_data for later use in
+			 * partial match.
+			 */
+			{
+				(*partial_matches)[0] = true;
+
+				*extra_data = palloc(sizeof(**extra_data) * _nentries);
+				(*extra_data)[0] = DatumGetPointer(graphid);
+
+				entries[0] = graphid_minval();
+			}
+			break;
+		case BTEqualStrategyNumber:
+			/* exact match */
+			(*partial_matches)[0] = false;
+			entries[0] = graphid;
+			break;
+		case BTGreaterEqualStrategyNumber:
+		case BTGreaterStrategyNumber:
+			(*partial_matches)[0] = true;
+			entries[0] = graphid;
+			break;
+		default:
+			elog(ERROR, "unrecognized strategy number: %d", strategy);
+	}
+
+	PG_RETURN_POINTER(entries);
+}
+
+static Datum
+graphid_minval(void)
+{
+	Graphid id = {InvalidOid, 0};
+
+	return getGraphidDatum(id);
+}
+
+/* GIN_CONSISTENT_PROC (4) - same as trueConsistentFn() */
+Datum
+gin_consistent_graphid(PG_FUNCTION_ARGS)
+{
+	bool *recheck = (bool *) PG_GETARG_POINTER(5);
+
+	*recheck = false;
+	PG_RETURN_BOOL(true);
+}
+
+/*
+ * GIN_COMPARE_PARTIAL_PROC (5)
+ *
+ * See collectMatchBitmap() for the caller's context
+ */
+Datum
+gin_compare_partial_graphid(FunctionCallInfo fcinfo)
+{
+	Datum		qrykey = PG_GETARG_DATUM(0);
+	Datum		idxkey = PG_GETARG_DATUM(1);
+	StrategyNumber strategy = PG_GETARG_UINT16(2);
+	Datum		graphid = PG_GETARG_DATUM(3);
+	int32		cmp;
+	int32		res;
+
+	/*
+	 * In these cases, qrykey is the minimum value of graphid. To compare
+	 * qrykey with idxkey properly, restore the original graphid from the
+	 * extra_data, and set it to qrykey.
+	 */
+	if (strategy == BTLessStrategyNumber ||
+		strategy == BTLessEqualStrategyNumber)
+		qrykey = graphid;
+
+	cmp = DatumGetInt32(DirectFunctionCall2Coll(btgraphidcmp,
+												PG_GET_COLLATION(),
+												idxkey, qrykey));
+
+	switch (strategy)
+	{
+		case BTLessStrategyNumber:
+			/* idxkey < qrykey ? still match : finish scan */
+			res = (cmp < 0 ? 0 : 1);
+			break;
+		case BTLessEqualStrategyNumber:
+			res = (cmp <= 0 ? 0 : 1);
+			break;
+		case BTEqualStrategyNumber:
+			res = (cmp == 0 ? 0 : 1);
+			break;
+		case BTGreaterEqualStrategyNumber:
+			res = (cmp >= 0 ? 0 : 1);
+			break;
+		case BTGreaterStrategyNumber:
+			if (cmp > 0)
+				res = 0;
+			else if (cmp == 0)
+				res = -1;		/* not match, continue scan */
+			else
+				res = 1;
+			break;
+		default:
+			elog(ERROR, "unrecognized strategy number: %d", strategy);
+			res = 0;
+	}
+
+	PG_RETURN_INT32(res);
 }

@@ -2900,8 +2900,10 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 {
 	CreateLabelStmt	*vertex;
 	CreateLabelStmt	*edge;
+	IndexStmt  *edge_id_idx;
 	IndexStmt  *start_idx;
 	IndexStmt  *end_idx;
+	IndexElem  *id_col;
 	IndexElem  *start_col;
 	IndexElem  *end_col;
 
@@ -2915,13 +2917,22 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 	edge->relation = makeRangeVar(stmt->graphname, AG_EDGE, -1);
 	edge->inhRelations = NIL;
 
+	id_col = makeNode(IndexElem);
+	id_col->name = AG_ELEM_LOCAL_ID;
+
+	edge_id_idx = makeNode(IndexStmt);
+	edge_id_idx->idxname = "edge_id";
+	edge_id_idx->relation = copyObject(edge->relation);
+	edge_id_idx->accessMethod = "brin";
+	edge_id_idx->indexParams = list_make1(id_col);
+
 	start_col = makeNode(IndexElem);
 	start_col->name = AG_START_ID;
 
 	start_idx = makeNode(IndexStmt);
 	start_idx->idxname = "edge_start";
 	start_idx->relation = copyObject(edge->relation);
-	start_idx->accessMethod = DEFAULT_INDEX_TYPE;
+	start_idx->accessMethod = "gin";
 	start_idx->indexParams = list_make1(start_col);
 
 	end_col = makeNode(IndexElem);
@@ -2930,10 +2941,10 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 	end_idx = makeNode(IndexStmt);
 	end_idx->idxname = "edge_end";
 	end_idx->relation = copyObject(edge->relation);
-	end_idx->accessMethod = DEFAULT_INDEX_TYPE;
+	end_idx->accessMethod = "gin";
 	end_idx->indexParams = list_make1(end_col);
 
-	return list_make4(vertex, edge, start_idx, end_idx);
+	return lappend(list_make4(vertex, edge, edge_id_idx, start_idx), end_idx);
 }
 
 
@@ -3173,28 +3184,24 @@ makeVertexElements(void)
 static List *
 makeEdgeElements(void)
 {
-	Constraint *pk = makeNode(Constraint);
-	ColumnDef  *id = makeNode(ColumnDef);
 	Constraint *notnull = makeNode(Constraint);
 	List	   *constrs;
+	ColumnDef  *id = makeNode(ColumnDef);
 	ColumnDef  *start = makeNode(ColumnDef);
 	ColumnDef  *end = makeNode(ColumnDef);
 	Constraint *jsonb_empty_obj = makeNode(Constraint);
 	ColumnDef  *prop_map = makeNode(ColumnDef);
 
-	pk->contype = CONSTR_PRIMARY;
-	pk->location = -1;
-
-	id->colname = AG_ELEM_LOCAL_ID;
-	id->typeName = makeTypeName("bigserial");
-	id->is_local = true;
-	id->constraints = list_make1(pk);
-	id->location = -1;
-
 	notnull->contype = CONSTR_NOTNULL;
 	notnull->location = -1;
 
 	constrs = list_make1(notnull);
+
+	id->colname = AG_ELEM_LOCAL_ID;
+	id->typeName = makeTypeName("bigserial");
+	id->is_local = true;
+	id->constraints = copyObject(constrs);
+	id->location = -1;
 
 	start->colname = AG_START_ID;
 	start->typeName = makeTypeName("graphid");
@@ -3322,22 +3329,11 @@ inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt)
 			attnum = idxrec->indkey.values[0];
 			attname = get_relid_attribute_name(indrelid, attnum);
 
-			if (idxrec->indisprimary == true)
-			{
-				Assert(strcmp(attname, AG_ELEM_LOCAL_ID) == 0);
-
+			if (strcmp(attname, AG_ELEM_LOCAL_ID) == 0 ||
+				strcmp(attname, AG_START_ID) == 0 ||
+				strcmp(attname, AG_END_ID) == 0)
 				index_stmt = generateClonedIndexStmt(cxt, parent_index,
 													 attmap, tupleDesc->natts);
-			}
-			else
-			{
-				if (strcmp(attname, AG_START_ID) == 0 ||
-					strcmp(attname, AG_END_ID) == 0)
-				{
-					index_stmt = generateClonedIndexStmt(cxt, parent_index,
-													attmap, tupleDesc->natts);
-				}
-			}
 		}
 
 		if (index_stmt == NULL)

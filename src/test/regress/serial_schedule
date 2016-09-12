@@ -157,5 +157,6 @@ test: with
 test: xml
 test: event_trigger
 test: stats
+test: graphid
 test: cypher_ddl
 test: cypher_dml

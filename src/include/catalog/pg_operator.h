@@ -1820,4 +1820,18 @@ DESCR("delete array element");
 DATA(insert OID = 3287 (  "#-"	   PGNSP PGUID b f f 3802 1009 3802 0 0 jsonb_delete_path - - ));
 DESCR("delete path");
 
+/* graphid operators */
+DATA(insert OID = 7087 (  "="	   PGNSP PGUID b f f 7002 7002 16 7087 7088 graphid_eq eqsel eqjoinsel ));
+DESCR("equal");
+DATA(insert OID = 7088 (  "<>"	   PGNSP PGUID b f f 7002 7002 16 7088 7087 graphid_ne neqsel neqjoinsel ));
+DESCR("not equal");
+DATA(insert OID = 7089 (  "<"	   PGNSP PGUID b f f 7002 7002 16 7090 7092 graphid_lt scalarltsel scalarltjoinsel ));
+DESCR("less than");
+DATA(insert OID = 7090 (  ">"	   PGNSP PGUID b f f 7002 7002 16 7089 7091 graphid_gt scalargtsel scalargtjoinsel ));
+DESCR("greater than");
+DATA(insert OID = 7091 (  "<="	   PGNSP PGUID b f f 7002 7002 16 7092 7090 graphid_le scalarltsel scalarltjoinsel ));
+DESCR("less than or equal");
+DATA(insert OID = 7092 (  ">="	   PGNSP PGUID b f f 7002 7002 16 7091 7089 graphid_ge scalargtsel scalargtjoinsel ));
+DESCR("greater than or equal");
+
 #endif   /* PG_OPERATOR_H */

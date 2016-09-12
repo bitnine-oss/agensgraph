@@ -416,6 +416,12 @@ DATA(insert (	4037   3802 3802 2 3485 ));
 DATA(insert (	4037   3802 3802 3 3486 ));
 DATA(insert (	4037   3802 3802 4 3487 ));
 DATA(insert (	4037   3802 3802 6 3489 ));
+/* gin (as BTree) - graphid */
+DATA(insert (	7096   7002 7002 1 7094 ));
+DATA(insert (	7096   7002 7002 2 7098 ));
+DATA(insert (	7096   7002 7002 3 7099 ));
+DATA(insert (	7096   7002 7002 4 7100 ));
+DATA(insert (	7096   7002 7002 5 7101 ));
 
 /* sp-gist */
 DATA(insert (	3474   3831 3831 1 3469 ));
