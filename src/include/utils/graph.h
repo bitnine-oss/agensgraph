@@ -56,4 +56,18 @@ extern void getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges);
 extern Datum makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges,
 								int nedges);
 
+/* support operator function */
+extern Datum btgraphidcmp(PG_FUNCTION_ARGS);
+extern Datum graphid_eq(PG_FUNCTION_ARGS);
+extern Datum graphid_ne(PG_FUNCTION_ARGS);
+extern Datum graphid_lt(PG_FUNCTION_ARGS);
+extern Datum graphid_gt(PG_FUNCTION_ARGS);
+extern Datum graphid_le(PG_FUNCTION_ARGS);
+extern Datum graphid_ge(PG_FUNCTION_ARGS);
+
+extern Datum gin_extract_value_graphid(FunctionCallInfo fcinfo);
+extern Datum gin_extract_query_graphid(FunctionCallInfo fcinfo);
+extern Datum gin_consistent_graphid(PG_FUNCTION_ARGS);
+extern Datum gin_partial_compare_graphid(FunctionCallInfo fcinfo);
+
 #endif	/* GRAPH_H */

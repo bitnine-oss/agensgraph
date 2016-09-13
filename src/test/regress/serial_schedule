@@ -159,3 +159,4 @@ test: event_trigger
 test: stats
 test: cypher_ddl
 test: cypher_dml
+test: graphid
