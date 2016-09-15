@@ -12,7 +12,6 @@ CREATE TABLE history (year, event) AS VALUES
 
 DROP GRAPH agens;
 CREATE GRAPH agens;
-set graph_path=agens;
 
 --
 -- RETURN

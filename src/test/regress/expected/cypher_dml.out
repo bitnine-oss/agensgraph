@@ -10,7 +10,6 @@ CREATE TABLE history (year, event) AS VALUES
 DROP GRAPH agens;
 ERROR:  graph "agens" does not exist
 CREATE GRAPH agens;
-set graph_path=agens;
 --
 -- RETURN
 --
