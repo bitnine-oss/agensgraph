@@ -5,15 +5,6 @@
 -- CREATE graph
 --
 CREATE GRAPH mygraph;
--- before set graph_path
-CREATE VLABEL nopath;
-ERROR:  the graph_path is NULL
-HINT:  Use SET graph_path
--- after set graph_path
-set graph_path=mygraph;
-CREATE VLABEL yespath;
-NOTICE:  merging column "id" with inherited definition
-DROP VLABEL yespath;
 -- cannot set multi path
 set graph_path=mygraph,urgraph;
 ERROR:  SET graph_path takes only one argument

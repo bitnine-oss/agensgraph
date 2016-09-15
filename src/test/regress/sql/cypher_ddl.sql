@@ -8,17 +8,6 @@
 
 CREATE GRAPH mygraph;
 
--- before set graph_path
-
-CREATE VLABEL nopath;
-
--- after set graph_path
-
-set graph_path=mygraph;
-
-CREATE VLABEL yespath;
-DROP VLABEL yespath;
-
 -- cannot set multi path
 
 set graph_path=mygraph,urgraph;
