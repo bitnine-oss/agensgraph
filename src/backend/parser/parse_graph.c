@@ -94,7 +94,6 @@ static TargetEntry *makeWholeRowTarget(ParseState *pstate, RangeTblEntry *rte);
 static TargetEntry *findTarget(List *targetList, char *resname);
 
 /* expression - type */
-static Node *makeGraphidExpr(ParseState *pstate, RangeTblEntry *rte);
 static Node *makeVertexExpr(ParseState *pstate, RangeTblEntry *rte,
 							int location);
 static Node *makeEdgeExpr(ParseState *pstate, RangeTblEntry *rte, int location);
@@ -102,7 +101,6 @@ static Node *makePathVertexExpr(ParseState *pstate, Node *obj);
 static Node *makeGraphpath(List *vertices, List *edges, int location);
 static Node *getElemField(ParseState *pstate, Node *elem, char *fname);
 /* expression - common */
-static Node *getTableoidVar(ParseState *pstate, RangeTblEntry *rte);
 static Node *getColumnVar(ParseState *pstate, RangeTblEntry *rte,
 						  char *colname);
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
@@ -730,7 +728,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 
 				/* unique vertex */
 				if (vertex == NULL)
-					vid = getElemField(pstate, (Node *) edge,
+					vid = getColumnVar(pstate, edge,
 									   getEdgeColname(crel, false));
 				else
 					vid = getElemField(pstate, vertex, AG_ELEM_ID);
@@ -756,7 +754,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			if (prev_edge != NULL)
 			{
 				if (vertex == NULL)
-					vid = getElemField(pstate, (Node *) prev_edge,
+					vid = getColumnVar(pstate, prev_edge,
 									   getEdgeColname(prev_crel, true));
 				else
 					vid = getElemField(pstate, vertex, AG_ELEM_ID);
@@ -976,18 +974,17 @@ addEdgeUnion(ParseState *pstate, char *edge_label, int location, Alias *alias)
 }
 
 /*
- * SELECT tableoid, id, start, "end", properties,
+ * SELECT id, start, "end", properties,
  *        start as _start, "end" as _end
  * FROM `get_graph_path()`.`typname`
  * UNION
- * SELECT tableoid, id, start, "end", properties,
+ * SELECT id, start, "end", properties,
  *        "end" as _start, start as _end
  * FROM `get_graph_path()`.`typname`
  */
 static Node *
 genEdgeUnion(char *edge_label, int location)
 {
-	ResTarget  *oid;
 	ResTarget  *id;
 	ResTarget  *start;
 	ResTarget  *end;
@@ -997,7 +994,6 @@ genEdgeUnion(char *edge_label, int location)
 	SelectStmt *rsel;
 	SelectStmt *u;
 
-	oid = makeSimpleResTarget("tableoid", NULL);
 	id = makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL);
 	start = makeSimpleResTarget(AG_START_ID, NULL);
 	end = makeSimpleResTarget(AG_END_ID, NULL);
@@ -1007,7 +1003,7 @@ genEdgeUnion(char *edge_label, int location)
 	r->inhOpt = INH_YES;
 
 	lsel = makeNode(SelectStmt);
-	lsel->targetList = lappend(list_make4(oid, id, start, end), prop_map);
+	lsel->targetList = list_make4(id, start, end, prop_map);
 	lsel->fromClause = list_make1(r);
 
 	rsel = copyObject(lsel);
@@ -1618,28 +1614,12 @@ findTarget(List *targetList, char *resname)
 }
 
 static Node *
-makeGraphidExpr(ParseState *pstate, RangeTblEntry *rte)
-{
-	Node	   *oid;
-	Node	   *lid;
-
-	if (rte->rtekind == RTE_RELATION)
-		oid = getTableoidVar(pstate, rte);
-	else
-		oid = getColumnVar(pstate, rte, "tableoid");
-
-	lid = getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
-
-	return makeTypedRowExpr(list_make2(oid, lid), GRAPHIDOID, -1);
-}
-
-static Node *
 makeVertexExpr(ParseState *pstate, RangeTblEntry *rte, int location)
 {
 	Node	   *id;
 	Node	   *prop_map;
 
-	id = makeGraphidExpr(pstate, rte);
+	id = getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
 	prop_map = getColumnVar(pstate, rte, AG_ELEM_PROP_MAP);
 
 	return makeTypedRowExpr(list_make2(id, prop_map), VERTEXOID, location);
@@ -1653,7 +1633,7 @@ makeEdgeExpr(ParseState *pstate, RangeTblEntry *rte, int location)
 	Node	   *end;
 	Node	   *prop_map;
 
-	id = makeGraphidExpr(pstate, rte);
+	id = getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
 	start = getColumnVar(pstate, rte, AG_START_ID);
 	end = getColumnVar(pstate, rte, AG_END_ID);
 	prop_map = getColumnVar(pstate, rte, AG_ELEM_PROP_MAP);
@@ -1700,7 +1680,7 @@ getElemField(ParseState *pstate, Node *elem, char *fname)
 		RangeTblEntry *rte = (RangeTblEntry *) elem;
 
 		if (strcmp(fname, AG_ELEM_ID) == 0)
-			return makeGraphidExpr(pstate, rte);
+			return getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
 		else
 			return getColumnVar(pstate, rte, fname);
 	}
@@ -1739,24 +1719,6 @@ getElemField(ParseState *pstate, Node *elem, char *fname)
 
 		return (Node *) fselect;
 	}
-}
-
-static Node *
-getTableoidVar(ParseState *pstate, RangeTblEntry *rte)
-{
-	Var *var;
-
-	AssertArg(rte->rtekind == RTE_RELATION);
-	AssertArg(rte->relkind != RELKIND_COMPOSITE_TYPE);
-
-	Assert(SearchSysCacheExists2(ATTNUM,
-								 ObjectIdGetDatum(rte->relid),
-								 Int16GetDatum(TableOidAttributeNumber)));
-
-	var = make_var(pstate, rte, TableOidAttributeNumber, -1);
-	markVarForSelectPriv(pstate, var, rte);
-
-	return (Node *) var;
 }
 
 static Node *

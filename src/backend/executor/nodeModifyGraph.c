@@ -32,13 +32,12 @@
 
 #define SQLCMD_CREAT_VERTEX \
 	"INSERT INTO \"%s\".\"%s\" VALUES (DEFAULT, $1) RETURNING " \
-	"(tableoid, " AG_ELEM_LOCAL_ID ")::graphid AS " AG_ELEM_ID ", " \
-	AG_ELEM_PROP_MAP
+	AG_ELEM_LOCAL_ID " AS " AG_ELEM_ID ", " AG_ELEM_PROP_MAP
 #define SQLCMD_VERTEX_NPARAMS		1
 
 #define SQLCMD_CREAT_EDGE \
 	"INSERT INTO \"%s\".\"%s\" VALUES (DEFAULT, $1, $2, $3) RETURNING " \
-	"(tableoid, " AG_ELEM_LOCAL_ID ")::graphid AS " AG_ELEM_ID ", " \
+	AG_ELEM_LOCAL_ID " AS " AG_ELEM_ID ", " \
 	AG_START_ID ", \"" AG_END_ID "\", " AG_ELEM_PROP_MAP
 #define SQLCMD_EDGE_NPARAMS			3
 
@@ -68,7 +67,7 @@ static TupleTableSlot *ExecCreateGraph(ModifyGraphState *mgstate,
 static Datum createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 						  Graphid *vid, TupleTableSlot *slot, bool inPath);
 static Datum createEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
-						Graphid start, Graphid end, TupleTableSlot *slot,
+						Graphid *start, Graphid *end, TupleTableSlot *slot,
 						bool inPath);
 static TupleTableSlot *createPath(ModifyGraphState *mgstate, GraphPath *path,
 								  TupleTableSlot *slot);
@@ -84,7 +83,7 @@ static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 static void deleteVertex(Datum vertex, bool detach);
 static bool vertexHasEdge(Datum vid);
 static void deleteVertexEdges(Datum vid);
-static void deleteElem(char *relname, int64 id);
+static void deleteElem(Datum id);
 static void deletePath(Datum graphpath, bool detach);
 
 ModifyGraphState *
@@ -230,7 +229,6 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 	int			nvertices;
 	int			nedges;
 	ListCell   *le;
-	Graphid		vid;
 	Graphid		prevvid;
 	GraphEdge  *gedge = NULL;
 
@@ -256,6 +254,7 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 		if (nodeTag(elem) == T_GraphVertex)
 		{
 			GraphVertex *gvertex = (GraphVertex *) elem;
+			Graphid		vid;
 			Datum		vertex;
 
 			if (gvertex->create)
@@ -272,13 +271,15 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 
 				if (gedge->direction == GRAPH_EDGE_DIR_LEFT)
 				{
-					edge = createEdge(mgstate, gedge, vid, prevvid, slot, out);
+					edge = createEdge(mgstate, gedge, &vid, &prevvid, slot,
+									  out);
 				}
 				else
 				{
 					Assert(gedge->direction == GRAPH_EDGE_DIR_RIGHT);
 
-					edge = createEdge(mgstate, gedge, prevvid, vid, slot, out);
+					edge = createEdge(mgstate, gedge, &prevvid, &vid, slot,
+									  out);
 				}
 
 				if (out)
@@ -360,11 +361,14 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 
 	if (vid != NULL)
 	{
-		bool isnull;
+		bool		isnull;
+		Graphid	   *id;
 
 		Assert(SPI_fnumber(tupDesc, AG_ELEM_ID) == 1);
-		*vid = getGraphidStruct(SPI_getbinval(tuple, tupDesc, 1, &isnull));
+		id = DatumGetGraphidP(SPI_getbinval(tuple, tupDesc, 1, &isnull));
 		Assert(!isnull);
+
+		GraphidSet(vid, id->oid, id->lid);
 	}
 
 	/* if this vertex is in the result solely or in some paths, */
@@ -378,8 +382,8 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 }
 
 static Datum
-createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
-		   Graphid end, TupleTableSlot *slot, bool inPath)
+createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid *start,
+		   Graphid *end, TupleTableSlot *slot, bool inPath)
 {
 	EState	   *estate = mgstate->ps.state;
 	char		sqlcmd[SQLCMD_BUFLEN];
@@ -392,8 +396,8 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_EDGE,
 			 get_graph_path(), gedge->label);
 
-	values[0] = getGraphidDatum(start);
-	values[1] = getGraphidDatum(end);
+	values[0] = GraphidPGetDatum(start);
+	values[1] = GraphidPGetDatum(end);
 	values[2] = evalPropMap(gedge->es_prop_map, mgstate->ps.ps_ExprContext,
 							slot);
 
@@ -428,7 +432,13 @@ findVertex(TupleTableSlot *slot, GraphVertex *gvertex, Graphid *vid)
 	vertex = slot->tts_values[attno - 1];
 
 	if (vid != NULL)
-		*vid = getGraphidStruct(getVertexIdDatum(vertex));
+	{
+		Graphid *id;
+
+		id = DatumGetGraphidP(getVertexIdDatum(vertex));
+
+		GraphidSet(vid, id->oid, id->lid);
+	}
 
 	return vertex;
 }
@@ -580,12 +590,7 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 				deleteVertex(datum, plan->detach);
 				break;
 			case EDGEOID:
-				{
-					Graphid eid;
-
-					eid = getGraphidStruct(getEdgeIdDatum(datum));
-					deleteElem(get_rel_name(eid.oid), eid.lid);
-				}
+				deleteElem(getEdgeIdDatum(datum));
 				break;
 			case GRAPHPATHOID:
 				deletePath(datum, plan->detach);
@@ -605,11 +610,10 @@ static void
 deleteVertex(Datum vertex, bool detach)
 {
 	Datum		id_datum;
-	Graphid		id;
-	char	   *labname;
+	Graphid	   *id;
 
 	id_datum = getVertexIdDatum(vertex);
-	id = getGraphidStruct(id_datum);
+	id = DatumGetGraphidP(id_datum);
 
 	if (vertexHasEdge(id_datum))
 	{
@@ -619,17 +623,14 @@ deleteVertex(Datum vertex, bool detach)
 		}
 		else
 		{
-			labname = get_rel_name(id.oid);
-
 			ereport(ERROR,
 					(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
 					 errmsg("vertex " INT64_FORMAT " in \"%s\" has edge(s)",
-							id.lid, labname)));
+							id->lid, get_rel_name(id->oid))));
 		}
 	}
 
-	labname = get_rel_name(id.oid);
-	deleteElem(labname, id.lid);
+	deleteElem(id_datum);
 }
 
 static bool
@@ -673,17 +674,20 @@ deleteVertexEdges(Datum vid)
 }
 
 static void
-deleteElem(char *relname, int64 id)
+deleteElem(Datum id)
 {
+	char	   *relname;
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_DEL_ELEM_NPARAMS];
 	Oid			argTypes[SQLCMD_DEL_ELEM_NPARAMS];
 	int			ret;
 
+	relname = get_rel_name(DatumGetGraphidP(id)->oid);
+
 	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DEL_ELEM, get_graph_path(), relname);
 
-	values[0] = Int64GetDatum(id);
-	argTypes[0] = INT8OID;
+	values[0] = id;
+	argTypes[0] = GRAPHIDOID;
 
 	ret = SPI_execute_with_args(sqlcmd, SQLCMD_DEL_ELEM_NPARAMS, argTypes,
 								values, NULL, false, 0);
@@ -727,14 +731,11 @@ deletePath(Datum graphpath, bool detach)
 	array_iter_setup(&it, edges);
 	for (i = 0; i < nedges; i++)
 	{
-		Graphid eid;
-
 		value = array_iter_next(&it, &null, i, edgeInfo.typlen,
 								edgeInfo.typbyval, edgeInfo.typalign);
 		Assert(!null);
 
-		eid = getGraphidStruct(getEdgeIdDatum(value));
-		deleteElem(get_rel_name(eid.oid), eid.lid);
+		deleteElem(getEdgeIdDatum(value));
 	}
 
 	array_iter_setup(&it, vertices);

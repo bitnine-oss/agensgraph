@@ -3,13 +3,13 @@
 --
 -- Insert and Operator
 CREATE TABLE GRAPHID_TBL(f1 graphid);
-INSERT INTO GRAPHID_TBL(f1) VALUES ((0,0)::graphid);
-INSERT INTO GRAPHID_TBL(f1) VALUES ((12345,1)::graphid);
-INSERT INTO GRAPHID_TBL(f1) VALUES ((12345,12)::graphid);
-INSERT INTO GRAPHID_TBL(f1) VALUES ((12345,123)::graphid);
-INSERT INTO GRAPHID_TBL(f1) VALUES ((12345,1234)::graphid);
-INSERT INTO GRAPHID_TBL(f1) VALUES ((12346,123)::graphid);
-INSERT INTO GRAPHID_TBL(f1) VALUES ((4294967295,9223372036854775807)::graphid);
+INSERT INTO GRAPHID_TBL(f1) VALUES ('0.0'::graphid);
+INSERT INTO GRAPHID_TBL(f1) VALUES ('12345.1'::graphid);
+INSERT INTO GRAPHID_TBL(f1) VALUES ('12345.12'::graphid);
+INSERT INTO GRAPHID_TBL(f1) VALUES ('12345.123'::graphid);
+INSERT INTO GRAPHID_TBL(f1) VALUES ('12345.1234'::graphid);
+INSERT INTO GRAPHID_TBL(f1) VALUES ('12346.123'::graphid);
+INSERT INTO GRAPHID_TBL(f1) VALUES ('4294967295.9223372036854775807'::graphid);
 SELECT * FROM GRAPHID_TBL;
                f1               
 --------------------------------
@@ -22,13 +22,13 @@ SELECT * FROM GRAPHID_TBL;
  4294967295.9223372036854775807
 (7 rows)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 =  (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 =  '12345.123'::graphid;
     f1     
 -----------
  12345.123
 (1 row)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <> (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <> '12345.123'::graphid;
                f1               
 --------------------------------
  0.0
@@ -39,7 +39,7 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <> (12345,123)::graphid;
  4294967295.9223372036854775807
 (6 rows)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >  (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >  '12345.123'::graphid;
                f1               
 --------------------------------
  12345.1234
@@ -47,7 +47,7 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >  (12345,123)::graphid;
  4294967295.9223372036854775807
 (3 rows)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >= (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >= '12345.123'::graphid;
                f1               
 --------------------------------
  12345.123
@@ -56,7 +56,7 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >= (12345,123)::graphid;
  4294967295.9223372036854775807
 (4 rows)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <  (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <  '12345.123'::graphid;
     f1    
 ----------
  0.0
@@ -64,7 +64,7 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <  (12345,123)::graphid;
  12345.12
 (3 rows)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <= (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <= '12345.123'::graphid;
     f1     
 -----------
  0.0
@@ -74,15 +74,15 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <= (12345,123)::graphid;
 (4 rows)
 
 -- Index
-SET enable_seqscan = off;
 CREATE INDEX GRAPHID_TBL_IDX ON GRAPHID_TBL USING GIN (f1);
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 =  (12345,123)::graphid;
+SET enable_seqscan = off;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 =  '12345.123'::graphid;
     f1     
 -----------
  12345.123
 (1 row)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <> (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <> '12345.123'::graphid;
                f1               
 --------------------------------
  0.0
@@ -93,7 +93,7 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <> (12345,123)::graphid;
  4294967295.9223372036854775807
 (6 rows)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >  (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >  '12345.123'::graphid;
                f1               
 --------------------------------
  12345.1234
@@ -101,7 +101,7 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >  (12345,123)::graphid;
  4294967295.9223372036854775807
 (3 rows)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >= (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >= '12345.123'::graphid;
                f1               
 --------------------------------
  12345.123
@@ -110,7 +110,7 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >= (12345,123)::graphid;
  4294967295.9223372036854775807
 (4 rows)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <  (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <  '12345.123'::graphid;
     f1    
 ----------
  0.0
@@ -118,7 +118,7 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <  (12345,123)::graphid;
  12345.12
 (3 rows)
 
-SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <= (12345,123)::graphid;
+SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <= '12345.123'::graphid;
     f1     
 -----------
  0.0
@@ -127,4 +127,5 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <= (12345,123)::graphid;
  12345.123
 (4 rows)
 
+SET enable_seqscan = on;
 DROP TABLE GRAPHID_TBL;

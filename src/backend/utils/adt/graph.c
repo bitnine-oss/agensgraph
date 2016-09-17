@@ -11,6 +11,7 @@
 #include "postgres.h"
 
 #include "ag_const.h"
+#include "access/hash.h"
 #include "access/htup_details.h"
 #include "access/tupdesc.h"
 #include "catalog/ag_graph_fn.h"
@@ -24,10 +25,6 @@
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
-
-#define Natts_graphid			2
-#define Anum_graphid_oid		1
-#define Anum_graphid_lid		2
 
 #define Natts_vertex			2
 #define Anum_vertex_id			1
@@ -71,9 +68,22 @@ static Datum array_iter_next_(array_iter *it, int idx, ArrayMetaState *state);
 static void deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull);
 static Datum tuple_getattr(HeapTupleHeader tuphdr, int attnum);
 static Datum getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk);
-static Graphid getGraphidStruct_internal(Datum datum, bool free);
 static Datum makeArrayTypeDatum(Datum *elems, int nelem, Oid type);
 static Datum graphid_minval(void);
+
+Datum
+graphid(PG_FUNCTION_ARGS)
+{
+	Oid			oid = PG_GETARG_OID(0);
+	int64		lid = PG_GETARG_INT64(1);
+	Graphid	   *id;
+
+	id = palloc0fast(sizeof(*id));
+	id->oid = oid;
+	id->lid = lid;
+
+	PG_RETURN_GRAPHID_P(id);
+}
 
 Datum
 graphid_in(PG_FUNCTION_ARGS)
@@ -82,10 +92,11 @@ graphid_in(PG_FUNCTION_ARGS)
 	char	   *str = PG_GETARG_CSTRING(0);
 	char	   *next;
 	char	   *endptr;
-	Graphid		id;
+	Graphid		_id;
+	Graphid	   *id;
 
 	errno = 0;
-	id.oid = strtoul(str, &endptr, 10);
+	_id.oid = strtoul(str, &endptr, 10);
 	if (errno != 0 || endptr == str || *endptr != GRAPHID_DELIM)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
@@ -93,27 +104,30 @@ graphid_in(PG_FUNCTION_ARGS)
 
 	next = endptr + 1;
 #ifdef HAVE_STRTOLL
-	id.lid = strtoll(next, &endptr, 10);
+	_id.lid = strtoll(next, &endptr, 10);
 	if (endptr == next || *endptr != '\0')
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 				 errmsg("invalid input syntax for type graphid: \"%s\"", str)));
 #else
-	id.lid = DatumGetInt64(DirectFunctionCall1(int8in, CStringGetDatum(next)));
+	_id.lid = DatumGetInt64(DirectFunctionCall1(int8in, CStringGetDatum(next)));
 #endif
 
-	PG_RETURN_DATUM(getGraphidDatum(id));
+	id = palloc0fast(sizeof(*id));
+	id->oid = _id.oid;
+	id->lid = _id.lid;
+
+	PG_RETURN_GRAPHID_P(id);
 }
 
 Datum
 graphid_out(PG_FUNCTION_ARGS)
 {
-	Graphid		id;
+	Graphid	   *id = PG_GETARG_GRAPHID_P(0);
 	char	   *buf;
 
-	id = getGraphidStruct(PG_GETARG_DATUM(0));
 	buf = palloc(GRAPHID_BUFLEN);
-	snprintf(buf, GRAPHID_BUFLEN, GRAPHID_FMTSTR, id.oid, id.lid);
+	snprintf(buf, GRAPHID_BUFLEN, GRAPHID_FMTSTR, id->oid, id->lid);
 
 	PG_RETURN_CSTRING(buf);
 }
@@ -121,25 +135,40 @@ graphid_out(PG_FUNCTION_ARGS)
 static void
 graphid_out_si(StringInfo si, Datum graphid)
 {
-	Graphid id;
+	Graphid *id = DatumGetGraphidP(graphid);
 
-	id = getGraphidStruct(graphid);
-	appendStringInfo(si, GRAPHID_FMTSTR, id.oid, id.lid);
+	appendStringInfo(si, GRAPHID_FMTSTR, id->oid, id->lid);
+}
+
+Datum
+graphid_oid(PG_FUNCTION_ARGS)
+{
+	Graphid *id = PG_GETARG_GRAPHID_P(0);
+
+	PG_RETURN_OID(id->oid);
+}
+
+Datum
+graphid_lid(PG_FUNCTION_ARGS)
+{
+	Graphid *id = PG_GETARG_GRAPHID_P(0);
+
+	PG_RETURN_INT64(id->lid);
 }
 
 static int
 graphid_cmp(FunctionCallInfo fcinfo)
 {
-	Graphid id1 = getGraphidStruct_internal(PG_GETARG_DATUM(0), true);
-	Graphid id2 = getGraphidStruct_internal(PG_GETARG_DATUM(1), true);
+	Graphid	   *id1 = PG_GETARG_GRAPHID_P(0);
+	Graphid	   *id2 = PG_GETARG_GRAPHID_P(1);
 
-	if (id1.oid < id2.oid)
+	if (id1->oid < id2->oid)
 		return -1;
-	if (id1.oid > id2.oid)
+	if (id1->oid > id2->oid)
 		return 1;
-	if (id1.lid < id2.lid)
+	if (id1->lid < id2->lid)
 		return -1;
-	if (id1.lid > id2.lid)
+	if (id1->lid > id2->lid)
 		return 1;
 
 	return 0;
@@ -188,7 +217,7 @@ vertex_out(PG_FUNCTION_ARGS)
 	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
 	Datum		values[Natts_vertex];
 	bool		isnull[Natts_vertex];
-	Graphid		id;
+	Graphid	   *id;
 	Jsonb	   *prop_map;
 	LabelOutData *my_extra;
 	StringInfoData si;
@@ -204,14 +233,14 @@ vertex_out(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("properties in vertex cannot be NULL")));
 
-	id = getGraphidStruct(values[Anum_vertex_id - 1]);
+	id = DatumGetGraphidP(values[Anum_vertex_id - 1]);
 	prop_map = DatumGetJsonb(values[Anum_vertex_properties - 1]);
 
-	my_extra = cache_label(fcinfo->flinfo, id.oid);
+	my_extra = cache_label(fcinfo->flinfo, id->oid);
 
 	initStringInfo(&si);
 	appendStringInfo(&si, "%s[" GRAPHID_FMTSTR "]",
-					 NameStr(my_extra->label), id.oid, id.lid);
+					 NameStr(my_extra->label), id->oid, id->lid);
 	JsonbToCString(&si, &prop_map->root, VARSIZE(prop_map));
 
 	PG_RETURN_CSTRING(si.data);
@@ -232,12 +261,12 @@ _vertex_out(PG_FUNCTION_ARGS)
 Datum
 vertex_label(PG_FUNCTION_ARGS)
 {
-	Graphid id;
+	Graphid *id;
 	LabelOutData *my_extra;
 
-	id = getGraphidStruct(getVertexIdDatum(PG_GETARG_DATUM(0)));
+	id = DatumGetGraphidP(getVertexIdDatum(PG_GETARG_DATUM(0)));
 
-	my_extra = cache_label(fcinfo->flinfo, id.oid);
+	my_extra = cache_label(fcinfo->flinfo, id->oid);
 
 	PG_RETURN_TEXT_P(cstring_to_text(NameStr(my_extra->label)));
 }
@@ -256,7 +285,7 @@ edge_out(PG_FUNCTION_ARGS)
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
 	Datum		values[Natts_edge];
 	bool		isnull[Natts_edge];
-	Graphid		id;
+	Graphid	   *id;
 	Jsonb	   *prop_map;
 	LabelOutData *my_extra;
 	StringInfoData si;
@@ -280,14 +309,14 @@ edge_out(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("properties in edge cannot be NULL")));
 
-	id = getGraphidStruct(values[Anum_edge_id - 1]);
+	id = DatumGetGraphidP(values[Anum_edge_id - 1]);
 	prop_map = DatumGetJsonb(values[Anum_edge_properties - 1]);
 
-	my_extra = cache_label(fcinfo->flinfo, id.oid);
+	my_extra = cache_label(fcinfo->flinfo, id->oid);
 
 	initStringInfo(&si);
 	appendStringInfo(&si, "%s[" GRAPHID_FMTSTR "][",
-					 NameStr(my_extra->label), id.oid, id.lid);
+					 NameStr(my_extra->label), id->oid, id->lid);
 	graphid_out_si(&si, values[Anum_edge_start - 1]);
 	appendStringInfoChar(&si, ',');
 	graphid_out_si(&si, values[Anum_edge_end - 1]);
@@ -312,12 +341,12 @@ _edge_out(PG_FUNCTION_ARGS)
 Datum
 edge_label(PG_FUNCTION_ARGS)
 {
-	Graphid id;
+	Graphid *id;
 	LabelOutData *my_extra;
 
-	id = getGraphidStruct(getEdgeIdDatum(PG_GETARG_DATUM(0)));
+	id = DatumGetGraphidP(getEdgeIdDatum(PG_GETARG_DATUM(0)));
 
-	my_extra = cache_label(fcinfo->flinfo, id.oid);
+	my_extra = cache_label(fcinfo->flinfo, id->oid);
 
 	PG_RETURN_TEXT_P(cstring_to_text(NameStr(my_extra->label)));
 }
@@ -595,13 +624,12 @@ static Datum
 getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 {
 	const char *querystr =
-			"SELECT ((tableoid, id)::graphid, properties)::vertex "
-			"FROM \"%s\"." AG_VERTEX " WHERE tableoid = $1 AND id = $2";
+			"SELECT (" AG_ELEM_LOCAL_ID ", " AG_ELEM_PROP_MAP ")::vertex "
+			"FROM \"%s\"." AG_VERTEX " WHERE " AG_ELEM_LOCAL_ID " = $1";
 	char		sqlcmd[256];
 	int			attnum = (evk == EVK_START ? Anum_edge_start : Anum_edge_end);
-	Graphid		id;
-	Datum		values[2];
-	Oid			argTypes[2] = {OIDOID, INT8OID};
+	Datum		values[1];
+	Oid			argTypes[1] = {GRAPHIDOID};
 	bool		spi_pushed;
 	int			ret;
 	Datum		vertex;
@@ -609,10 +637,7 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 
 	snprintf(sqlcmd, sizeof(sqlcmd), querystr, get_graph_path());
 
-	id = getGraphidStruct(tuple_getattr(edge, attnum));
-
-	values[0] = ObjectIdGetDatum(id.oid);
-	values[1] = Int64GetDatum(id.lid);
+	values[0] = tuple_getattr(edge, attnum);
 
 	spi_pushed = SPI_push_conditional();
 
@@ -645,79 +670,17 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 Datum
 vertex_labels(PG_FUNCTION_ARGS)
 {
-	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
-	Graphid		id;
+	Graphid	   *id;
 	LabelOutData *my_extra;
 	Datum		label;
 
-	id = getGraphidStruct(tuple_getattr(vertex, Anum_vertex_id));
+	id = DatumGetGraphidP(getVertexIdDatum(PG_GETARG_DATUM(0)));
 
-	my_extra = cache_label(fcinfo->flinfo, id.oid);
+	my_extra = cache_label(fcinfo->flinfo, id->oid);
 
 	label = CStringGetTextDatum(NameStr(my_extra->label));
 
-	PG_RETURN_ARRAYTYPE_P(makeArrayTypeDatum(&label, 1, CSTRINGOID));
-}
-
-Graphid
-getGraphidStruct(Datum datum)
-{
-	return getGraphidStruct_internal(datum, false);
-}
-
-static Graphid
-getGraphidStruct_internal(Datum datum, bool free)
-{
-	HeapTupleHeader tuphdr;
-	Datum		values[Natts_graphid];
-	bool		isnull[Natts_graphid];
-	Graphid		id;
-
-	tuphdr = DatumGetHeapTupleHeader(datum);
-
-	deform_tuple(tuphdr, values, isnull);
-
-	if (isnull[Anum_graphid_oid - 1])
-		ereport(ERROR,
-				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				 errmsg("oid in graphid cannot be NULL")));
-	if (isnull[Anum_graphid_lid - 1])
-		ereport(ERROR,
-				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				 errmsg("lid in graphid cannot be NULL")));
-
-	id.oid = DatumGetObjectId(values[Anum_graphid_oid - 1]);
-	id.lid = DatumGetInt64(values[Anum_graphid_lid - 1]);
-
-	if (free)
-	{
-		/* PG_FREE_IF_COPY() like routine */
-		if ((Pointer) tuphdr != DatumGetPointer(datum))
-			pfree(tuphdr);
-	}
-
-	return id;
-}
-
-Datum
-getGraphidDatum(Graphid id)
-{
-	Datum		values[Natts_graphid];
-	bool		isnull[Natts_graphid] = {false, false};
-	TupleDesc	tupDesc;
-	HeapTuple	tuple;
-
-	values[Anum_graphid_oid - 1] = ObjectIdGetDatum(id.oid);
-	values[Anum_graphid_lid - 1] = Int64GetDatum(id.lid);
-
-	tupDesc = lookup_rowtype_tupdesc(GRAPHIDOID, -1);
-	Assert(tupDesc->natts == Natts_graphid);
-
-	tuple = heap_form_tuple(tupDesc, values, isnull);
-
-	ReleaseTupleDesc(tupDesc);
-
-	return HeapTupleGetDatum(tuple);
+	PG_RETURN_ARRAYTYPE_P(makeArrayTypeDatum(&label, 1, TEXTOID));
 }
 
 Datum
@@ -820,6 +783,21 @@ btgraphidcmp(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Hash support functions
+ */
+
+/* HASHPROC (1) */
+Datum
+graphid_hash(PG_FUNCTION_ARGS)
+{
+	Graphid *id = PG_GETARG_GRAPHID_P(0);
+
+	StaticAssertStmt(sizeof(*id) == 16, "the size of graphid must be 16");
+
+	return hash_any((unsigned char *) id, sizeof(*id));
+}
+
+/*
  * GIN (as BTree) support functions
  */
 
@@ -830,12 +808,12 @@ Datum
 gin_extract_value_graphid(PG_FUNCTION_ARGS)
 {
 	const int32	_nentries = 1;
-	HeapTupleHeader graphid = PG_GETARG_HEAPTUPLEHEADER(0);
+	Graphid	   *graphid = PG_GETARG_GRAPHID_P(0);
 	int32	   *nentries = (int32 *) PG_GETARG_POINTER(1);
 	Datum	   *entries = palloc(sizeof(*entries) * _nentries);
 
 	*nentries = _nentries;
-	entries[0] = HeapTupleHeaderGetDatum(graphid);
+	entries[0] = GraphidPGetDatum(graphid);
 
 	PG_RETURN_POINTER(entries);
 }
@@ -905,9 +883,13 @@ gin_extract_query_graphid(PG_FUNCTION_ARGS)
 static Datum
 graphid_minval(void)
 {
-	Graphid id = {InvalidOid, 0};
+	Graphid *id;
 
-	return getGraphidDatum(id);
+	id = palloc0fast(sizeof(*id));
+	id->oid = InvalidOid;
+	id->lid = 0;
+
+	return GraphidPGetDatum(id);
 }
 
 /* GIN_CONSISTENT_PROC (4) - same as trueConsistentFn() */
