@@ -57,9 +57,9 @@ RETURN properties(g) AS g;
 MATCH (g:repo)
 CREATE (j:repo '{"name": "agens-graph-jdbc", "year": 2016}'),
        (d:repo =jsonb_build_object('name', 'agens-graph-docs', 'year', 2016))
-CREATE (g)-[l:lib {'lang': 'Java'}]->(j),
+CREATE (g)-[l:lib {'lang': 'java'}]->(j),
        p=(g)
-         -[:lib {'lang': 'C'}]->
+         -[:lib {'lang': 'c'}]->
          (:repo {'name': 'agens-graph-odbc', 'year': 2016}),
        (g)-[e:doc {'lang': 'en'}]->(d)
 RETURN properties(l) AS lj, properties(j) AS j,
@@ -67,7 +67,7 @@ RETURN properties(l) AS lj, properties(j) AS j,
        properties(e) AS e, properties(d) AS d;
         lj        |                     j                      |      lc       |                     c                      |       e        |                     d                      
 ------------------+--------------------------------------------+---------------+--------------------------------------------+----------------+--------------------------------------------
- {"lang": "Java"} | {"name": "agens-graph-jdbc", "year": 2016} | {"lang": "C"} | {"name": "agens-graph-odbc", "year": 2016} | {"lang": "en"} | {"name": "agens-graph-docs", "year": 2016}
+ {"lang": "java"} | {"name": "agens-graph-jdbc", "year": 2016} | {"lang": "c"} | {"name": "agens-graph-odbc", "year": 2016} | {"lang": "en"} | {"name": "agens-graph-docs", "year": 2016}
 (1 row)
 
 CREATE ()-[a:r]->(a);
@@ -160,12 +160,12 @@ RETURN (a).name AS a, (b).lang AS b, (c).name AS c
        ORDER BY a, b, c;
          a          |   b    |         c          
 --------------------+--------+--------------------
- "agens-graph"      | "C"    | "agens-graph-odbc"
+ "agens-graph"      | "c"    | "agens-graph-odbc"
  "agens-graph"      | "en"   | "agens-graph-docs"
- "agens-graph"      | "Java" | "agens-graph-jdbc"
+ "agens-graph"      | "java" | "agens-graph-jdbc"
  "agens-graph-docs" | "en"   | "agens-graph"
- "agens-graph-jdbc" | "Java" | "agens-graph"
- "agens-graph-odbc" | "C"    | "agens-graph"
+ "agens-graph-jdbc" | "java" | "agens-graph"
+ "agens-graph-odbc" | "c"    | "agens-graph"
 (6 rows)
 
 MATCH (a)<-[b]-(c)-[d]->(e)
@@ -174,12 +174,12 @@ RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
        ORDER BY a, b, c, d, e;
          a          |   b    |       c       |   d    |         e          
 --------------------+--------+---------------+--------+--------------------
- "agens-graph-docs" | "en"   | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-docs" | "en"   | "agens-graph" | "Java" | "agens-graph-jdbc"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-odbc" | "C"    | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-odbc" | "C"    | "agens-graph" | "Java" | "agens-graph-jdbc"
+ "agens-graph-docs" | "en"   | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-docs" | "en"   | "agens-graph" | "java" | "agens-graph-jdbc"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "java" | "agens-graph-jdbc"
 (6 rows)
 
 MATCH (a)<-[b]-(c), (c)-[d]->(e)
@@ -188,12 +188,12 @@ RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
        ORDER BY a, b, c, d, e;
          a          |   b    |       c       |   d    |         e          
 --------------------+--------+---------------+--------+--------------------
- "agens-graph-docs" | "en"   | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-docs" | "en"   | "agens-graph" | "Java" | "agens-graph-jdbc"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-odbc" | "C"    | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-odbc" | "C"    | "agens-graph" | "Java" | "agens-graph-jdbc"
+ "agens-graph-docs" | "en"   | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-docs" | "en"   | "agens-graph" | "java" | "agens-graph-jdbc"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "java" | "agens-graph-jdbc"
 (6 rows)
 
 MATCH (a)<-[b]-(c) MATCH (c)-[d]->(e)
@@ -202,15 +202,15 @@ RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
        ORDER BY a, b, c, d, e;
          a          |   b    |       c       |   d    |         e          
 --------------------+--------+---------------+--------+--------------------
- "agens-graph-docs" | "en"   | "agens-graph" | "C"    | "agens-graph-odbc"
+ "agens-graph-docs" | "en"   | "agens-graph" | "c"    | "agens-graph-odbc"
  "agens-graph-docs" | "en"   | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-docs" | "en"   | "agens-graph" | "Java" | "agens-graph-jdbc"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "Java" | "agens-graph-jdbc"
- "agens-graph-odbc" | "C"    | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-odbc" | "C"    | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-odbc" | "C"    | "agens-graph" | "Java" | "agens-graph-jdbc"
+ "agens-graph-docs" | "en"   | "agens-graph" | "java" | "agens-graph-jdbc"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "java" | "agens-graph-jdbc"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "java" | "agens-graph-jdbc"
 (9 rows)
 
 MATCH (a)<-[b]-(c), (f)-[g]->(h), (c)-[d]->(e)
@@ -220,24 +220,24 @@ RETURN (a).name AS a, (b).lang AS b, (c).name AS c,
        ORDER BY a, b, c, d, e, f, g, h;
          a          |   b    |       c       |   d    |         e          |       f       |   g    |         h          
 --------------------+--------+---------------+--------+--------------------+---------------+--------+--------------------
- "agens-graph-docs" | "en"   | "agens-graph" | "C"    | "agens-graph-odbc" | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-docs" | "en"   | "agens-graph" | "C"    | "agens-graph-odbc" | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-docs" | "en"   | "agens-graph" | "C"    | "agens-graph-odbc" | "agens-graph" | "Java" | "agens-graph-jdbc"
- "agens-graph-docs" | "en"   | "agens-graph" | "Java" | "agens-graph-jdbc" | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-docs" | "en"   | "agens-graph" | "Java" | "agens-graph-jdbc" | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-docs" | "en"   | "agens-graph" | "Java" | "agens-graph-jdbc" | "agens-graph" | "Java" | "agens-graph-jdbc"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "C"    | "agens-graph-odbc" | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "C"    | "agens-graph-odbc" | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "C"    | "agens-graph-odbc" | "agens-graph" | "Java" | "agens-graph-jdbc"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-jdbc" | "Java" | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "Java" | "agens-graph-jdbc"
- "agens-graph-odbc" | "C"    | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-odbc" | "C"    | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-odbc" | "C"    | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "Java" | "agens-graph-jdbc"
- "agens-graph-odbc" | "C"    | "agens-graph" | "Java" | "agens-graph-jdbc" | "agens-graph" | "C"    | "agens-graph-odbc"
- "agens-graph-odbc" | "C"    | "agens-graph" | "Java" | "agens-graph-jdbc" | "agens-graph" | "en"   | "agens-graph-docs"
- "agens-graph-odbc" | "C"    | "agens-graph" | "Java" | "agens-graph-jdbc" | "agens-graph" | "Java" | "agens-graph-jdbc"
+ "agens-graph-docs" | "en"   | "agens-graph" | "c"    | "agens-graph-odbc" | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-docs" | "en"   | "agens-graph" | "c"    | "agens-graph-odbc" | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-docs" | "en"   | "agens-graph" | "c"    | "agens-graph-odbc" | "agens-graph" | "java" | "agens-graph-jdbc"
+ "agens-graph-docs" | "en"   | "agens-graph" | "java" | "agens-graph-jdbc" | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-docs" | "en"   | "agens-graph" | "java" | "agens-graph-jdbc" | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-docs" | "en"   | "agens-graph" | "java" | "agens-graph-jdbc" | "agens-graph" | "java" | "agens-graph-jdbc"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "c"    | "agens-graph-odbc" | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "c"    | "agens-graph-odbc" | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "c"    | "agens-graph-odbc" | "agens-graph" | "java" | "agens-graph-jdbc"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-jdbc" | "java" | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "java" | "agens-graph-jdbc"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "en"   | "agens-graph-docs" | "agens-graph" | "java" | "agens-graph-jdbc"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "java" | "agens-graph-jdbc" | "agens-graph" | "c"    | "agens-graph-odbc"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "java" | "agens-graph-jdbc" | "agens-graph" | "en"   | "agens-graph-docs"
+ "agens-graph-odbc" | "c"    | "agens-graph" | "java" | "agens-graph-jdbc" | "agens-graph" | "java" | "agens-graph-jdbc"
 (18 rows)
 
 MATCH (a {'name': 'agens-graph'}), (a {'year': 2016}) RETURN properties(a) AS a;
@@ -345,10 +345,10 @@ MATCH (a:repo)-[b]-(c)
 RETURN DISTINCT ON (a) (a).name AS a, (b).lang AS b, (c).name AS c;
          a          |   b    |         c          
 --------------------+--------+--------------------
- "agens-graph"      | "Java" | "agens-graph-jdbc"
+ "agens-graph"      | "java" | "agens-graph-jdbc"
  "agens-graph-docs" | "en"   | "agens-graph"
- "agens-graph-jdbc" | "Java" | "agens-graph"
- "agens-graph-odbc" | "C"    | "agens-graph"
+ "agens-graph-jdbc" | "java" | "agens-graph"
+ "agens-graph-odbc" | "c"    | "agens-graph"
 (4 rows)
 
 --
@@ -405,11 +405,11 @@ MATCH (a:repo) WITH (a).name AS name RETURN name;
 MATCH (a)
 WITH a WHERE label(a) = 'repo'
 MATCH p=(a)-[]->(b)
-RETURN (b).name AS b;
+RETURN (b).name AS b ORDER BY b;
          b          
 --------------------
- "agens-graph-jdbc"
  "agens-graph-docs"
+ "agens-graph-jdbc"
  "agens-graph-odbc"
 (3 rows)
 
@@ -440,8 +440,8 @@ RETURN (c).lang AS c;
  "agens-graph-jdbc"
  "agens-graph-docs"
  "agens-graph-odbc"
- "Java"
- "C"
+ "java"
+ "c"
  "en"
 (7 rows)
 

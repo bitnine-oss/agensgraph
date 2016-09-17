@@ -128,6 +128,7 @@ static void setSchemaName(char *context_schema, char **stmt_schema_name);
 static List *makeVertexElements(void);
 static List *makeEdgeElements(void);
 static List *inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt);
+static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
 
 
 /*
@@ -2921,7 +2922,7 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 	id_col->name = AG_ELEM_LOCAL_ID;
 
 	edge_id_idx = makeNode(IndexStmt);
-	edge_id_idx->idxname = "edge_id";
+	edge_id_idx->idxname = "edge_id_idx";
 	edge_id_idx->relation = copyObject(edge->relation);
 	edge_id_idx->accessMethod = "brin";
 	edge_id_idx->indexParams = list_make1(id_col);
@@ -2930,7 +2931,7 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 	start_col->name = AG_START_ID;
 
 	start_idx = makeNode(IndexStmt);
-	start_idx->idxname = "edge_start";
+	start_idx->idxname = "edge_start_idx";
 	start_idx->relation = copyObject(edge->relation);
 	start_idx->accessMethod = "gin";
 	start_idx->indexParams = list_make1(start_col);
@@ -2939,7 +2940,7 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 	end_col->name = AG_END_ID;
 
 	end_idx = makeNode(IndexStmt);
-	end_idx->idxname = "edge_end";
+	end_idx->idxname = "edge_end_idx";
 	end_idx->relation = copyObject(edge->relation);
 	end_idx->accessMethod = "gin";
 	end_idx->indexParams = list_make1(end_col);
@@ -2998,14 +2999,15 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	else
 	{
 		/*
-		 * Create sequence for label which inherits other labels.
-		 * `id` must be a sequence independent from that of its parents.
+		 * When inheriting multiple labels, the default value of `id` column
+		 * conflicts. Create `id` column here and set it later in
+		 * transformLabelIdDefinition().
 		 */
 		ColumnDef *coldef;
 
 		coldef = makeNode(ColumnDef);
 		coldef->colname = AG_ELEM_LOCAL_ID;
-		coldef->typeName = makeTypeName("bigserial");
+		coldef->typeName = makeTypeName("graphid");
 		coldef->is_local = true;
 		coldef->is_not_null = true;
 		coldef->location = -1;
@@ -3113,6 +3115,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		switch (nodeTag(element))
 		{
 			case T_ColumnDef:
+				transformLabelIdDefinition(&cxt, (ColumnDef *) element);
 				transformColumnDefinition(&cxt, (ColumnDef *) element);
 				break;
 			case T_Constraint:
@@ -3156,7 +3159,7 @@ makeVertexElements(void)
 	pk->location = -1;
 
 	id->colname = AG_ELEM_LOCAL_ID;
-	id->typeName = makeTypeName("bigserial");
+	id->typeName = makeTypeName("graphid");
 	id->is_local = true;
 	id->constraints = list_make1(pk);
 	id->location = -1;
@@ -3198,7 +3201,7 @@ makeEdgeElements(void)
 	constrs = list_make1(notnull);
 
 	id->colname = AG_ELEM_LOCAL_ID;
-	id->typeName = makeTypeName("bigserial");
+	id->typeName = makeTypeName("graphid");
 	id->is_local = true;
 	id->constraints = copyObject(constrs);
 	id->location = -1;
@@ -3359,4 +3362,90 @@ inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt)
 	heap_close(relation, NoLock);
 
 	return inh_indexes;
+}
+
+/* See transformColumnDefinition() */
+static void
+transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
+{
+	Oid			snamespaceid;
+	char	   *snamespace;
+	char	   *sname;
+	CreateSeqStmt *seqstmt;
+	List	   *attnamelist;
+	AlterSeqStmt *altseqstmt;
+	char	   *qname;
+	A_Const    *relname;
+	TypeCast   *castrel;
+	A_Const    *seqname;
+	TypeCast   *castseq;
+	FuncCall   *fcnextval;
+	FuncCall   *fcgraphid;
+	Constraint *defid;
+
+	if (strcmp(col->colname, AG_ELEM_LOCAL_ID) != 0)
+		return;
+
+	snamespaceid = RangeVarGetCreationNamespace(cxt->relation);
+	RangeVarAdjustRelationPersistence(cxt->relation, snamespaceid);
+
+	snamespace = get_namespace_name(snamespaceid);
+	sname = ChooseRelationName(cxt->relation->relname, AG_ELEM_LOCAL_ID,
+							   "seq", snamespaceid);
+
+	/* CREATE SEQUENCE before CREATE TABLE */
+
+	seqstmt = makeNode(CreateSeqStmt);
+	seqstmt->sequence = makeRangeVar(snamespace, sname, -1);
+	seqstmt->options = NIL;
+	seqstmt->ownerId = InvalidOid;
+
+	cxt->blist = lappend(cxt->blist, seqstmt);
+
+	/* ALTER SEQUENCE OWNED BY after CREATE TABLE */
+
+	attnamelist = list_make3(makeString(snamespace),
+							 makeString(cxt->relation->relname),
+							 makeString(AG_ELEM_LOCAL_ID));
+	altseqstmt = makeNode(AlterSeqStmt);
+	altseqstmt->sequence = makeRangeVar(snamespace, sname, -1);
+	altseqstmt->options = list_make1(makeDefElem("owned_by",
+												 (Node *) attnamelist));
+
+	cxt->alist = lappend(cxt->alist, altseqstmt);
+
+	/*
+	 * add DEFAULT constraint to the column
+	 *
+	 * graphid(`relname`::regclass, nextval(`seqname`::regclass))
+	 */
+
+	qname = quote_qualified_identifier(snamespace, cxt->relation->relname);
+	relname = makeNode(A_Const);
+	relname->val.type = T_String;
+	relname->val.val.str = qname;
+	relname->location = -1;
+	castrel = makeNode(TypeCast);
+	castrel->typeName = SystemTypeName("regclass");
+	castrel->arg = (Node *) relname;
+	castrel->location = -1;
+	qname = quote_qualified_identifier(snamespace, sname);
+	seqname = makeNode(A_Const);
+	seqname->val.type = T_String;
+	seqname->val.val.str = qname;
+	seqname->location = -1;
+	castseq = makeNode(TypeCast);
+	castseq->typeName = SystemTypeName("regclass");
+	castseq->arg = (Node *) seqname;
+	castseq->location = -1;
+	fcnextval = makeFuncCall(SystemFuncName("nextval"),
+							 list_make1(castseq), -1);
+	fcgraphid = makeFuncCall(SystemFuncName("graphid"),
+							 list_make2(castrel, fcnextval), -1);
+	defid = makeNode(Constraint);
+	defid->contype = CONSTR_DEFAULT;
+	defid->location = -1;
+	defid->raw_expr = (Node *) fcgraphid;
+
+	col->constraints = lappend(col->constraints, defid);
 }

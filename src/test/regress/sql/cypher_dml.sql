@@ -40,9 +40,9 @@ RETURN properties(g) AS g;
 MATCH (g:repo)
 CREATE (j:repo '{"name": "agens-graph-jdbc", "year": 2016}'),
        (d:repo =jsonb_build_object('name', 'agens-graph-docs', 'year', 2016))
-CREATE (g)-[l:lib {'lang': 'Java'}]->(j),
+CREATE (g)-[l:lib {'lang': 'java'}]->(j),
        p=(g)
-         -[:lib {'lang': 'C'}]->
+         -[:lib {'lang': 'c'}]->
          (:repo {'name': 'agens-graph-odbc', 'year': 2016}),
        (g)-[e:doc {'lang': 'en'}]->(d)
 RETURN properties(l) AS lj, properties(j) AS j,
@@ -158,7 +158,7 @@ MATCH (a:repo) WITH (a).name AS name RETURN name;
 MATCH (a)
 WITH a WHERE label(a) = 'repo'
 MATCH p=(a)-[]->(b)
-RETURN (b).name AS b;
+RETURN (b).name AS b ORDER BY b;
 
 MATCH (a) WITH a RETURN b;
 MATCH (a) WITH (a).name RETURN *;

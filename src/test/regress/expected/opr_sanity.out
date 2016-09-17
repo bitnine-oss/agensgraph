@@ -395,9 +395,13 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1 LEFT JOIN pg_description as d
      ON p1.tableoid = d.classoid and p1.oid = d.objoid and d.objsubid = 0
 WHERE d.classoid IS NULL AND p1.oid <= 9999;
- oid | proname 
------+---------
-(0 rows)
+ oid  |   proname    
+------+--------------
+ 7000 | graphid
+ 7007 | graphid_oid
+ 7008 | graphid_lid
+ 7097 | graphid_hash
+(4 rows)
 
 -- List of built-in leakproof functions
 --
@@ -954,9 +958,10 @@ WHERE amopopr = p1.oid
   AND amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree')
   AND amopstrategy = 3
   AND NOT p1.oprcanmerge;
- oid | oprname | amopfamily 
------+---------+------------
-(0 rows)
+ oid  | oprname | amopfamily 
+------+---------+------------
+ 7087 | =       |       7093
+(1 row)
 
 -- Hashable operators should appear as members of hash index opfamilies.
 SELECT p1.oid, p1.oprname
@@ -975,9 +980,10 @@ FROM pg_operator AS p1, pg_amop p
 WHERE amopopr = p1.oid
   AND amopmethod = (SELECT oid FROM pg_am WHERE amname = 'hash')
   AND NOT p1.oprcanhash;
- oid | oprname | amopfamily 
------+---------+------------
-(0 rows)
+ oid  | oprname | amopfamily 
+------+---------+------------
+ 7087 | =       |       7096
+(1 row)
 
 -- Check that each operator defined in pg_operator matches its oprcode entry
 -- in pg_proc.  Easiest to do this separately for each oprkind.

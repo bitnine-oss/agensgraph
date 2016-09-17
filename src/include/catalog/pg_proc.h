@@ -5326,10 +5326,13 @@ DATA(insert OID = 6014 ( pg_show_replication_origin_status PGNSP PGUID 12 1 100 
 DESCR("get progress for all replication origins");
 
 /* graph */
+DATA(insert OID = 7000 ( graphid		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 7002 "26 20" _null_ _null_ _null_ _null_ _null_ graphid _null_ _null_ _null_ ));
 DATA(insert OID = 7003 ( graphid_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7002 "2275" _null_ _null_ _null_ _null_ _null_ graphid_in _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7004 ( graphid_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7002" _null_ _null_ _null_ _null_ _null_ graphid_out _null_ _null_ _null_ ));
 DESCR("I/O");
+DATA(insert OID = 7007 ( graphid_oid	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 26 "7002" _null_ _null_ _null_ _null_ _null_ graphid_oid _null_ _null_ _null_ ));
+DATA(insert OID = 7008 ( graphid_lid	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 20 "7002" _null_ _null_ _null_ _null_ _null_ graphid_lid _null_ _null_ _null_ ));
 DATA(insert OID = 7014 ( vertex_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7012" _null_ _null_ _null_ _null_ _null_ vertex_out _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7016 ( _vertex_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7011" _null_ _null_ _null_ _null_ _null_ _vertex_out _null_ _null_ _null_ ));
@@ -5379,14 +5382,16 @@ DATA(insert OID = 7086 ( graphid_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16
 /* BTree for graphid */
 DATA(insert OID = 7094 ( btgraphidcmp	PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 23 "7002 7002" _null_ _null_ _null_ _null_ _null_ btgraphidcmp _null_ _null_ _null_ ));
 DESCR("less-equal-greater");
+/* Hash for graphid */
+DATA(insert OID = 7097 ( graphid_hash	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 23 "7002" _null_ _null_ _null_ _null_ _null_ graphid_hash _null_ _null_ _null_ ));
 /* GIN (as BTree) for graphid */
-DATA(insert OID = 7098 ( gin_extract_value_graphid	 PGNSP PGUID 12 1 0 0 0 f f f f t f i 3 0 2281 "7002 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_value_graphid _null_ _null_ _null_ ));
+DATA(insert OID = 7100 ( gin_extract_value_graphid	 PGNSP PGUID 12 1 0 0 0 f f f f t f i 3 0 2281 "7002 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_value_graphid _null_ _null_ _null_ ));
 DESCR("GIN graphid support");
-DATA(insert OID = 7099 ( gin_extract_query_graphid	 PGNSP PGUID 12 1 0 0 0 f f f f t f i 7 0 2281 "7002 2281 21 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_query_graphid _null_ _null_ _null_ ));
+DATA(insert OID = 7101 ( gin_extract_query_graphid	 PGNSP PGUID 12 1 0 0 0 f f f f t f i 7 0 2281 "7002 2281 21 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_query_graphid _null_ _null_ _null_ ));
 DESCR("GIN graphid support");
-DATA(insert OID = 7100 ( gin_consistent_graphid		 PGNSP PGUID 12 1 0 0 0 f f f f t f i 8 0 16 "2281 21 7002 23 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_consistent_graphid _null_ _null_ _null_ ));
+DATA(insert OID = 7102 ( gin_consistent_graphid		 PGNSP PGUID 12 1 0 0 0 f f f f t f i 8 0 16 "2281 21 7002 23 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_consistent_graphid _null_ _null_ _null_ ));
 DESCR("GIN graphid support");
-DATA(insert OID = 7101 ( gin_compare_partial_graphid PGNSP PGUID 12 1 0 0 0 f f f f t f i 4 0 23 "7002 7002 21 2281" _null_ _null_ _null_ _null_ _null_ gin_compare_partial_graphid _null_ _null_ _null_ ));
+DATA(insert OID = 7103 ( gin_compare_partial_graphid PGNSP PGUID 12 1 0 0 0 f f f f t f i 4 0 23 "7002 7002 21 2281" _null_ _null_ _null_ _null_ _null_ gin_compare_partial_graphid _null_ _null_ _null_ ));
 DESCR("GIN graphid support");
 
 /*
