@@ -36,7 +36,7 @@ check_graph_path(char **newval, void **extra, GucSource source)
 {
 	if (IsTransactionState())
 	{
-		if (!OidIsValid(get_graphname_graphid(*newval)))
+		if (!OidIsValid(get_graphname_oid(*newval)))
 		{
 			GUC_check_errdetail("Graph \"%s\" does not exist.", *newval);
 			return false;

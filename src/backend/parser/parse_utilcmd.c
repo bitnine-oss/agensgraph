@@ -213,6 +213,10 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 		&& stmt->relation->relpersistence != RELPERSISTENCE_TEMP)
 		stmt->relation->schemaname = get_namespace_name(namespaceid);
 
+	if (stmt->relation->schemaname != NULL &&
+		OidIsValid(get_graphname_oid(stmt->relation->schemaname)))
+		elog(ERROR, "cannot create table in graph schema");
+
 	/* Set up CreateStmtContext */
 	cxt.pstate = pstate;
 	if (IsA(stmt, CreateForeignTableStmt))
@@ -2478,6 +2482,9 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	bool		skipValidation = true;
 	AlterTableCmd *newcmd;
 	RangeTblEntry *rte;
+
+	if (OidIsValid(get_relid_labid(relid)))
+		elog(ERROR, "cannot ALTER TABLE on graph label");
 
 	/*
 	 * We must not scribble on the passed-in AlterTableStmt, so copy it. (This
