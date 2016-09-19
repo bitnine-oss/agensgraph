@@ -250,3 +250,15 @@ ERROR:  relation "as_select1" already exists
 CREATE TABLE IF NOT EXISTS as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
 NOTICE:  relation "as_select1" already exists, skipping
 DROP TABLE as_select1;
+--
+-- CREATE TABLE restriction with graph objects
+--
+CREATE GRAPH g;
+CREATE TABLE g.t (i int);
+ERROR:  cannot create table in graph schema
+CREATE TABLE t (i int) INHERITS (g.ag_vertex);
+ERROR:  invalid parent, table cannot inherit label
+DROP GRAPH g CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge

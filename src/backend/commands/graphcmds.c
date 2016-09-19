@@ -296,34 +296,45 @@ CheckDropLabel(ObjectType removeType, Oid labid)
 	ReleaseSysCache(tuple);
 }
 
-bool
-isLabel(RangeVar *rel)
+void
+CheckInheritLabel(CreateStmt *stmt)
 {
-	HeapTuple	nsptuple;
-	HeapTuple	graphtuple;
+	ListCell   *entry;
+
+	foreach(entry, stmt->inhRelations)
+	{
+		RangeVar   *parent = lfirst(entry);
+
+		if (RangeVarIsLabel(parent))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+					 errmsg("invalid parent, table cannot inherit label")));
+	}
+}
+
+bool
+RangeVarIsLabel(RangeVar *rel)
+{
 	Oid			nspid;
-	bool		result = false;
+	HeapTuple	nsptuple;
 	Form_pg_namespace nspdata;
+	HeapTuple	graphtuple;
+	bool		result = false;
 
 	nspid = RangeVarGetCreationNamespace(rel);
-
 	nsptuple = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(nspid));
-
 	if (!HeapTupleIsValid(nsptuple))
 		elog(ERROR, "cache lookup failed for label (OID=%u)", nspid);
 
 	nspdata = (Form_pg_namespace) GETSTRUCT(nsptuple);
-
-	graphtuple = SearchSysCache1(GRAPHNAME,
-								 CStringGetDatum(NameStr(nspdata->nspname)));
-
-	ReleaseSysCache(nsptuple);
-
+	graphtuple = SearchSysCache1(GRAPHNAME, NameGetDatum(&nspdata->nspname));
 	if (HeapTupleIsValid(graphtuple))
 	{
 		ReleaseSysCache(graphtuple);
 		result = true;
 	}
+
+	ReleaseSysCache(nsptuple);
 
 	return result;
 }

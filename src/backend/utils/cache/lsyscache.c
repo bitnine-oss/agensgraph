@@ -3001,7 +3001,7 @@ get_range_subtype(Oid rangeOid)
 /*				---------- AG_GRAPH CACHE ----------				 */
 
 Oid
-get_graphname_graphid(const char *graphname)
+get_graphname_oid(const char *graphname)
 {
 	return GetSysCacheOid1(GRAPHNAME, PointerGetDatum(graphname));
 }
@@ -3048,4 +3048,16 @@ get_labid_relid(Oid labid)
 	{
 		return InvalidOid;
 	}
+}
+
+/*
+ * get_relid_labid
+ *		Returns the label OID for a given relation.
+ *
+ * Returns InvalidOid if there is no such a label.
+ */
+Oid
+get_relid_labid(Oid relid)
+{
+	return GetSysCacheOid1(LABELRELID, ObjectIdGetDatum(relid));
 }

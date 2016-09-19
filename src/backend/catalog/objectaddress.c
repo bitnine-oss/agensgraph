@@ -1859,7 +1859,7 @@ get_object_address_graph(List *objname, bool missing_ok)
 	graphname = strVal(linitial(objname));
 
 	address.classId = GraphRelationId;
-	address.objectId = get_graphname_graphid(graphname);
+	address.objectId = get_graphname_oid(graphname);
 	address.objectSubId = 0;
 
 	if (!OidIsValid(address.objectId) && !missing_ok)

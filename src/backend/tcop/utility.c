@@ -964,6 +964,8 @@ ProcessUtilitySlow(Node *parsetree,
 							Datum		toast_options;
 							static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
 
+							CheckInheritLabel((CreateStmt *) stmt);
+
 							/* Create the table itself */
 							address = DefineRelation((CreateStmt *) stmt,
 													 RELKIND_RELATION,
