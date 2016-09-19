@@ -19,6 +19,7 @@
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "bootstrap/bootstrap.h"
+#include "catalog/ag_graph.h"
 #include "catalog/ag_label.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_amop.h"
@@ -3048,4 +3049,50 @@ get_labid_relid(Oid labid)
 	{
 		return InvalidOid;
 	}
+}
+
+bool
+isLabelOid(Oid relid)
+{
+	HeapTuple rel;
+	HeapTuple nsp;
+	HeapTuple graph;
+	Form_pg_class reltup;
+	Form_pg_namespace nsptup;
+	Form_ag_graph graphtup;
+
+	rel = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+
+	if (!HeapTupleIsValid(rel))
+		elog(ERROR, "cache lookup failed for relation %u", relid);
+
+	reltup = (Form_pg_class) GETSTRUCT(rel);
+
+	nsp = SearchSysCache1(NAMESPACEOID,
+						  ObjectIdGetDatum(reltup->relnamespace));
+
+	ReleaseSysCache(rel);
+
+	if (!HeapTupleIsValid(nsp))
+		elog(ERROR, "cache lookup failed for namespace %u",
+				reltup->relnamespace);
+
+	nsptup = (Form_pg_namespace) GETSTRUCT(nsp);
+
+	graph = SearchSysCache1(GRAPHNAME,
+							CStringGetDatum(NameStr(nsptup->nspname)));
+
+	ReleaseSysCache(nsp);
+
+	if (!HeapTupleIsValid(graph))
+		return false;
+
+	graphtup = (Form_ag_graph) GETSTRUCT(graph);
+
+	if (reltup->relnamespace != graphtup->nspid)
+		return false;
+
+	ReleaseSysCache(graph);
+
+	return true;
 }

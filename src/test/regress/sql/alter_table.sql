@@ -1757,3 +1757,14 @@ ALTER TABLE logged1 SET UNLOGGED; -- silently do nothing
 DROP TABLE logged3;
 DROP TABLE logged2;
 DROP TABLE logged1;
+
+--
+-- ALTER TABLE restriction with AgensGraph
+--
+CREATE GRAPH mygraph;
+
+CREATE VLABEL v1;
+
+ALTER TABLE mygraph.v1 ADD COLUMN newid int;
+
+DROP GRAPH mygraph cascade;

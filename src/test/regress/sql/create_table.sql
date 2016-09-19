@@ -265,3 +265,13 @@ CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
 CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
 CREATE TABLE IF NOT EXISTS as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
 DROP TABLE as_select1;
+
+--
+-- CREATE TABLE restriction with AgensGraph
+--
+CREATE GRAPH mygraph;
+
+CREATE TABLE mygraph.t1 (i1 int);
+CREATE TABLE t1 (i1 int) inherits(mygraph.ag_vertex);
+
+DROP GRAPH mygraph cascade;
