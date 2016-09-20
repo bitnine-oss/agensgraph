@@ -535,14 +535,39 @@ SELECT count(*) FROM agens.edge;
      0
 (1 row)
 
+--
+-- Uniqueness
+--
+CREATE GRAPH u;
+SET graph_path = u;
+CREATE ELABEL rel;
+NOTICE:  merging column "id" with inherited definition
+CREATE (s {'id': 1})-[:rel {'p': 'a'}]->({'id': 2})-[:rel {'p': 'b'}]->(s);
+MATCH (s)-[r1]-(m)-[r2]-(x)
+RETURN (s).id AS s, (r1).p AS r1, (m).id AS m, (r2).p AS r2, (x).id AS x
+       ORDER BY s, r1, m, r2, x;
+ s | r1  | m | r2  | x 
+---+-----+---+-----+---
+ 1 | "a" | 2 | "b" | 1
+ 1 | "b" | 2 | "a" | 1
+ 2 | "a" | 1 | "b" | 2
+ 2 | "b" | 1 | "a" | 2
+(4 rows)
+
 -- cleanup
+DROP GRAPH u CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to label vertex
+drop cascades to label edge
+drop cascades to label rel
+SET graph_path = agens;
 DROP VLABEL feature;
 DROP ELABEL supported;
 DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
-DROP TABLE history;
 DROP GRAPH agens CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DETAIL:  drop cascades to label vertex
 drop cascades to label edge
+DROP TABLE history;

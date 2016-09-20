@@ -66,7 +66,7 @@ static Node *addQualForNode(ParseState *pstate, Node *qual, CypherNode *cnode,
 							Node *vertex);
 static char *getEdgeColname(CypherRel *crel, bool last);
 static Node *makePropMapQual(ParseState *pstate, Node *elem, Node *expr);
-static Node *addQualElemUnique(ParseState *pstate, Node *qual, List *elems);
+static Node *addQualUnique(ParseState *pstate, Node *qual, List *exprs);
 
 /* CREATE */
 static List *transformCreatePattern(ParseState *pstate, List *pattern,
@@ -677,7 +677,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 	{
 		List	   *c = lfirst(lc);
 		ListCell   *lp;
-		List	   *uvs = NIL;
+		List	   *ues = NIL;
 
 		foreach(lp, c)
 		{
@@ -690,7 +690,6 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			Node	   *vertex;
 			CypherRel  *prev_crel = NULL;
 			RangeTblEntry *prev_edge = NULL;
-			Node	   *vid;
 			List	   *pvs = NIL;
 			List	   *pes = NIL;
 
@@ -703,8 +702,9 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			le = list_head(p->chain);
 			for (;;)
 			{
-				CypherRel *crel;
+				CypherRel  *crel;
 				RangeTblEntry *edge;
+				Node	   *eid;
 
 				cnode = lfirst(le);
 				vertex = transformMatchNode(pstate, cnode, targetList, out);
@@ -726,13 +726,9 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				qual = addQualForRel(pstate, qual, crel, edge);
 				qual = addQualForNode(pstate, qual, cnode, vertex);
 
-				/* unique vertex */
-				if (vertex == NULL)
-					vid = getColumnVar(pstate, edge,
-									   getEdgeColname(crel, false));
-				else
-					vid = getElemField(pstate, vertex, AG_ELEM_ID);
-				uvs = list_append_unique(uvs, vid);
+				/* uniqueness */
+				eid = getColumnVar(pstate, edge, AG_ELEM_LOCAL_ID);
+				ues = list_append_unique(ues, eid);
 
 				if (out)
 				{
@@ -750,16 +746,6 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			qual = addQualNodeIn(pstate, qual, vertex, prev_crel, prev_edge,
 								 true);
 			qual = addQualForNode(pstate, qual, cnode, vertex);
-
-			if (prev_edge != NULL)
-			{
-				if (vertex == NULL)
-					vid = getColumnVar(pstate, prev_edge,
-									   getEdgeColname(prev_crel, true));
-				else
-					vid = getElemField(pstate, vertex, AG_ELEM_ID);
-				uvs = list_append_unique(uvs, vid);
-			}
 
 			if (out)
 			{
@@ -779,7 +765,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			}
 		}
 
-		qual = addQualElemUnique(pstate, qual, uvs);
+		qual = addQualUnique(pstate, qual, ues);
 	}
 
 	return qual;
@@ -1152,22 +1138,21 @@ makePropMapQual(ParseState *pstate, Node *elem, Node *expr)
 }
 
 static Node *
-addQualElemUnique(ParseState *pstate, Node *qual, List *elems)
+addQualUnique(ParseState *pstate, Node *qual, List *exprs)
 {
 	ListCell *le1;
 
-	foreach(le1, elems)
+	foreach(le1, exprs)
 	{
-		Node	   *elem1 = lfirst(le1);
+		Node	   *e1 = lfirst(le1);
 		ListCell   *le2;
 
 		for_each_cell(le2, lnext(le1))
 		{
-			Node	   *elem2 = lfirst(le2);
+			Node	   *e2 = lfirst(le2);
 			Expr	   *ne;
 
-			ne = make_op(pstate, list_make1(makeString("<>")),
-						 elem1, elem2, -1);
+			ne = make_op(pstate, list_make1(makeString("<>")), e1, e2, -1);
 
 			qual = qualAndExpr(pstate, qual, (Node *) ne);
 		}
