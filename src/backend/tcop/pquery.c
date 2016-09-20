@@ -54,6 +54,10 @@ static long DoPortalRunFetch(Portal portal,
 				 DestReceiver *dest);
 static void DoPortalRewind(Portal portal);
 
+static void appendGraphWriteTag(char *tagbuf, GraphWriteStats *graphwrstats);
+static int appendAnyTag(char *tagbuf, int pos, const char *tag,
+						uint32 nprocessed, bool delim);
+
 
 /*
  * CreateQueryDesc
@@ -196,6 +200,8 @@ ProcessQuery(PlannedStmt *plan,
 			case CMD_SELECT:
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 						 "SELECT %u", queryDesc->estate->es_processed);
+				appendGraphWriteTag(completionTag,
+									&queryDesc->estate->es_graphwrstats);
 				break;
 			case CMD_INSERT:
 				if (queryDesc->estate->es_processed == 1)
@@ -214,7 +220,8 @@ ProcessQuery(PlannedStmt *plan,
 						 "DELETE %u", queryDesc->estate->es_processed);
 				break;
 			case CMD_GRAPHWRITE:
-				snprintf(completionTag, COMPLETION_TAG_BUFSIZE, "GRAPH WRITE");
+				appendGraphWriteTag(completionTag,
+									&queryDesc->estate->es_graphwrstats);
 				break;
 			default:
 				strcpy(completionTag, "???");
@@ -796,10 +803,23 @@ PortalRun(Portal portal, long count, bool isTopLevel,
 				if (completionTag && portal->commandTag)
 				{
 					if (strcmp(portal->commandTag, "SELECT") == 0)
+					{
 						snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 								 "SELECT %u", nprocessed);
+					}
+					else if (strcmp(portal->commandTag, "CYPHER") == 0)
+					{
+						QueryDesc *qd = PortalGetQueryDesc(portal);
+
+						snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+								 "SELECT %u", nprocessed);
+						appendGraphWriteTag(completionTag,
+											&qd->estate->es_graphwrstats);
+					}
 					else
+					{
 						strcpy(completionTag, portal->commandTag);
+					}
 				}
 
 				/* Mark portal not active */
@@ -1681,4 +1701,56 @@ DoPortalRewind(Portal portal)
 	portal->atEnd = false;
 	portal->portalPos = 0;
 	portal->posOverflow = false;
+}
+
+static void
+appendGraphWriteTag(char *tagbuf, GraphWriteStats *graphwrstats)
+{
+	int			pos = strlen(tagbuf);
+	int			opn;
+
+	if (graphwrstats->insertVertex == 0 &&
+		graphwrstats->insertEdge == 0 &&
+		graphwrstats->deleteVertex == 0 &&
+		graphwrstats->deleteEdge == 0)
+		return;
+
+	if (pos < COMPLETION_TAG_BUFSIZE)
+		pos += snprintf(tagbuf + pos, COMPLETION_TAG_BUFSIZE - pos,
+						(pos > 0) ? ", GRAPH WRITE (" : "GRAPH WRITE (");
+	opn = pos;
+
+	pos = appendAnyTag(tagbuf, pos, "INSERT VERTEX",
+					   graphwrstats->insertVertex, pos > opn);
+	pos = appendAnyTag(tagbuf, pos, "INSERT EDGE",
+					   graphwrstats->insertEdge, pos > opn);
+	pos = appendAnyTag(tagbuf, pos, "DELETE VERTEX",
+					   graphwrstats->deleteVertex, pos > opn);
+	pos = appendAnyTag(tagbuf, pos, "DELETE EDGE",
+					   graphwrstats->deleteEdge, pos > opn);
+
+	if (pos < COMPLETION_TAG_BUFSIZE - 1)
+	{
+		tagbuf[pos] = ')';
+		tagbuf[pos + 1] = '\0';
+	}
+}
+
+static int
+appendAnyTag(char *tagbuf, int pos, const char *tag, uint32 nprocessed,
+			 bool delim)
+{
+	const char *fmt = delim ? ", %s %u" : "%s %u";
+	int			len;
+
+	if (pos >= COMPLETION_TAG_BUFSIZE)
+		return pos;
+
+	if (nprocessed == 0)
+		return pos;
+
+	len = snprintf(tagbuf + pos, COMPLETION_TAG_BUFSIZE - pos, fmt,
+				   tag, nprocessed);
+
+	return pos + len;
 }
