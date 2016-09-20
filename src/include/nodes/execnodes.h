@@ -343,6 +343,14 @@ typedef struct ResultRelInfo
 	List	   *ri_onConflictSetWhere;
 } ResultRelInfo;
 
+typedef struct GraphResultInfo
+{
+	uint32		nCreateVtx;
+	uint32		nCreateEdge;
+	uint32		nDeleteVtx;
+	uint32		nDeleteEdge;
+} GraphResultInfo;
+
 /* ----------------
  *	  EState information
  *
@@ -399,6 +407,8 @@ typedef struct EState
 	List	   *es_subplanstates;		/* List of PlanState for SubPlans */
 
 	List	   *es_auxmodifytables;		/* List of secondary ModifyTableStates */
+
+	GraphResultInfo *es_graph_processed;	/* processed graph elements info */
 
 	/*
 	 * this ExprContext is for per-output-tuple operations, such as constraint
@@ -2051,6 +2061,7 @@ typedef struct ModifyGraphState
 {
 	PlanState	ps;
 	bool		done;
+	bool		canSetTag;
 	PlanState  *subplan;
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE
 								   with `es_prop_map` */

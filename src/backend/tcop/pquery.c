@@ -54,7 +54,9 @@ static long DoPortalRunFetch(Portal portal,
 				 DestReceiver *dest);
 static void DoPortalRewind(Portal portal);
 
-
+static char *makeGraphWriteCompletionTag(EState *estate, char *completionTag);
+static int combineCompletionMsg(int curPos, int oprType, int elemType,
+				uint32 elemCnt, char *completionTag);
 /*
  * CreateQueryDesc
  */
@@ -214,7 +216,7 @@ ProcessQuery(PlannedStmt *plan,
 						 "DELETE %u", queryDesc->estate->es_processed);
 				break;
 			case CMD_GRAPHWRITE:
-				snprintf(completionTag, COMPLETION_TAG_BUFSIZE, "GRAPH WRITE");
+				makeGraphWriteCompletionTag(queryDesc->estate, completionTag);
 				break;
 			default:
 				strcpy(completionTag, "???");
@@ -229,6 +231,97 @@ ProcessQuery(PlannedStmt *plan,
 	ExecutorEnd(queryDesc);
 
 	FreeQueryDesc(queryDesc);
+}
+
+#define AG_ELEMENT_TYPE_VERTEX		0
+#define AG_ELEMENT_TYPE_EDGE		1
+
+#define AG_OPERATION_TYPE_CREATE	0
+#define AG_OPERATION_TYPE_DELETE	1
+
+
+static char *
+makeGraphWriteCompletionTag(EState *estate, char *completionTag)
+{
+	GraphResultInfo	*resInfo = estate->es_graph_processed;
+	int				 curPos = 0;
+
+	if (resInfo == NULL)
+	{
+		elog(ERROR, "Graph write failed.");
+	}
+
+	if (resInfo->nCreateVtx != 0)
+	{
+		curPos += combineCompletionMsg(curPos, AG_OPERATION_TYPE_CREATE,
+									   AG_ELEMENT_TYPE_VERTEX,
+									   resInfo->nCreateVtx, completionTag );
+	}
+	if (resInfo->nCreateEdge != 0)
+	{
+		curPos += combineCompletionMsg(curPos, AG_OPERATION_TYPE_CREATE,
+									   AG_ELEMENT_TYPE_EDGE,
+									   resInfo->nCreateEdge, completionTag );
+	}
+	if (resInfo->nDeleteVtx != 0)
+	{
+		curPos += combineCompletionMsg(curPos, AG_OPERATION_TYPE_DELETE,
+									   AG_ELEMENT_TYPE_VERTEX,
+									   resInfo->nDeleteVtx, completionTag );
+	}
+	if (resInfo->nDeleteEdge != 0)
+	{
+		curPos += combineCompletionMsg(curPos, AG_OPERATION_TYPE_DELETE,
+									   AG_ELEMENT_TYPE_EDGE,
+									   resInfo->nDeleteEdge, completionTag );
+	}
+
+	if (curPos != 0)
+		completionTag[0] = pg_toupper((unsigned char) completionTag[0]);
+
+	return completionTag;
+}
+
+static int
+combineCompletionMsg(int curPos, int oprType, int elemType, uint32 elemCnt,
+					 char *completionTag)
+{
+	char	*strElem;
+	char	*strOpr;
+	char	*separate;
+	int		 resLen;
+
+	separate = (curPos == 0) ? "" : ", ";
+
+	if (oprType == AG_OPERATION_TYPE_CREATE)
+	{
+		strOpr = "created";
+	}
+	else if (oprType == AG_OPERATION_TYPE_DELETE)
+	{
+		strOpr = "deleted";
+	}
+	else
+		elog(ERROR, "unrecognized operation type: %d", oprType);
+
+	if (elemType == AG_ELEMENT_TYPE_VERTEX)
+	{
+		strElem = ngettext("vertex", "vertexes", elemCnt);
+	}
+	else if (elemType == AG_ELEMENT_TYPE_EDGE)
+	{
+		strElem = ngettext("edge", "edges", elemCnt);
+	}
+	else
+		elog(ERROR, "unrecognized graph element type: %d", elemType);
+
+	resLen = snprintf(completionTag + curPos, COMPLETION_TAG_BUFSIZE - curPos,
+					  "%s%s %u %s", separate, strOpr, elemCnt, strElem);
+
+	if (curPos + resLen >= COMPLETION_TAG_BUFSIZE)
+		elog(ERROR, "Not enough space to make completion tag.");
+
+	return resLen;
 }
 
 /*
