@@ -343,6 +343,14 @@ typedef struct ResultRelInfo
 	List	   *ri_onConflictSetWhere;
 } ResultRelInfo;
 
+typedef struct GraphWriteStats
+{
+	uint32		insertVertex;
+	uint32		insertEdge;
+	uint32		deleteVertex;
+	uint32		deleteEdge;
+} GraphWriteStats;
+
 /* ----------------
  *	  EState information
  *
@@ -389,6 +397,7 @@ typedef struct EState
 
 	uint32		es_processed;	/* # of tuples processed */
 	Oid			es_lastoid;		/* last oid processed (by INSERT) */
+	GraphWriteStats es_graphwrstats;	/* # of graph writes */
 
 	int			es_top_eflags;	/* eflags passed to ExecutorStart */
 	int			es_instrument;	/* OR of InstrumentOption flags */
@@ -2050,6 +2059,7 @@ typedef struct LimitState
 typedef struct ModifyGraphState
 {
 	PlanState	ps;
+	bool		canSetTag;
 	bool		done;
 	PlanState  *subplan;
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE

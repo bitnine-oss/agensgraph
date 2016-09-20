@@ -61,6 +61,11 @@ typedef struct ArrayAccessTypeInfo {
 	char		typalign;
 } ArrayAccessTypeInfo;
 
+typedef enum DelElemKind {
+	DEL_ELEM_VERTEX,
+	DEL_ELEM_EDGE
+} DelElemKind;
+
 static List *ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate);
 static TupleTableSlot *ExecCreateGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
@@ -80,11 +85,11 @@ static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 static Datum *makeDatumArray(EState *estate, int len);
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
-static void deleteVertex(Datum vertex, bool detach);
+static void deleteVertex(ModifyGraphState *mgstate, Datum vertex, bool detach);
 static bool vertexHasEdge(Datum vid);
-static void deleteVertexEdges(Datum vid);
-static void deleteElem(Datum id);
-static void deletePath(Datum graphpath, bool detach);
+static void deleteVertexEdges(ModifyGraphState *mgstate, Datum vid);
+static void deleteElem(ModifyGraphState *mgstate, Datum id, DelElemKind kind);
+static void deletePath(ModifyGraphState *mgstate, Datum graphpath, bool detach);
 
 ModifyGraphState *
 ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
@@ -102,6 +107,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	ExecAssignExprContext(estate, &mgstate->ps);
 
+	mgstate->canSetTag = mgplan->canSetTag;
 	mgstate->done = false;
 	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
 
@@ -378,6 +384,9 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	if (gvertex->variable != NULL)
 		setSlotValueByName(slot, vertex, gvertex->variable);
 
+	if (mgstate->canSetTag)
+		estate->es_graphwrstats.insertVertex += SPI_processed;
+
 	return vertex;
 }
 
@@ -417,6 +426,9 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid *start,
 
 	if (gedge->variable != NULL)
 		setSlotValueByName(slot, edge, gedge->variable);
+
+	if (mgstate->canSetTag)
+		estate->es_graphwrstats.insertEdge += SPI_processed;
 
 	return edge;
 }
@@ -587,13 +599,13 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		switch (type)
 		{
 			case VERTEXOID:
-				deleteVertex(datum, plan->detach);
+				deleteVertex(mgstate, datum, plan->detach);
 				break;
 			case EDGEOID:
-				deleteElem(getEdgeIdDatum(datum));
+				deleteElem(mgstate, getEdgeIdDatum(datum), DEL_ELEM_EDGE);
 				break;
 			case GRAPHPATHOID:
-				deletePath(datum, plan->detach);
+				deletePath(mgstate, datum, plan->detach);
 				break;
 			default:
 				elog(ERROR, "expected node, relationship, or path");
@@ -607,7 +619,7 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 }
 
 static void
-deleteVertex(Datum vertex, bool detach)
+deleteVertex(ModifyGraphState *mgstate, Datum vertex, bool detach)
 {
 	Datum		id_datum;
 	Graphid	   *id;
@@ -619,7 +631,7 @@ deleteVertex(Datum vertex, bool detach)
 	{
 		if (detach)
 		{
-			deleteVertexEdges(id_datum);
+			deleteVertexEdges(mgstate, id_datum);
 		}
 		else
 		{
@@ -630,7 +642,7 @@ deleteVertex(Datum vertex, bool detach)
 		}
 	}
 
-	deleteElem(id_datum);
+	deleteElem(mgstate, id_datum, DEL_ELEM_VERTEX);
 }
 
 static bool
@@ -655,8 +667,9 @@ vertexHasEdge(Datum vid)
 }
 
 static void
-deleteVertexEdges(Datum vid)
+deleteVertexEdges(ModifyGraphState *mgstate, Datum vid)
 {
+	EState	   *estate = mgstate->ps.state;
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_DEL_EDGES_NPARAMS];
 	Oid			argTypes[SQLCMD_DEL_EDGES_NPARAMS];
@@ -671,11 +684,15 @@ deleteVertexEdges(Datum vid)
 								argTypes, values, NULL, false, 0);
 	if (ret != SPI_OK_DELETE)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
+
+	if (mgstate->canSetTag)
+		estate->es_graphwrstats.deleteEdge += SPI_processed;
 }
 
 static void
-deleteElem(Datum id)
+deleteElem(ModifyGraphState *mgstate, Datum id, DelElemKind kind)
 {
+	EState	   *estate = mgstate->ps.state;
 	char	   *relname;
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_DEL_ELEM_NPARAMS];
@@ -695,10 +712,18 @@ deleteElem(Datum id)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 	if (SPI_processed > 1)
 		elog(ERROR, "SPI_execute: only one or no element per execution must be deleted");
+
+	if (mgstate->canSetTag)
+	{
+		if (kind == DEL_ELEM_VERTEX)
+			estate->es_graphwrstats.deleteVertex += SPI_processed;
+		else
+			estate->es_graphwrstats.deleteEdge += SPI_processed;
+	}
 }
 
 static void
-deletePath(Datum graphpath, bool detach)
+deletePath(ModifyGraphState *mgstate, Datum graphpath, bool detach)
 {
 	Datum		vertices_datum;
 	Datum		edges_datum;
@@ -735,7 +760,7 @@ deletePath(Datum graphpath, bool detach)
 								edgeInfo.typbyval, edgeInfo.typalign);
 		Assert(!null);
 
-		deleteElem(getEdgeIdDatum(value));
+		deleteElem(mgstate, getEdgeIdDatum(value), DEL_ELEM_EDGE);
 	}
 
 	array_iter_setup(&it, vertices);
@@ -745,6 +770,6 @@ deletePath(Datum graphpath, bool detach)
 								vertexInfo.typbyval, vertexInfo.typalign);
 		Assert(!null);
 
-		deleteVertex(value, detach);
+		deleteVertex(mgstate, value, detach);
 	}
 }
