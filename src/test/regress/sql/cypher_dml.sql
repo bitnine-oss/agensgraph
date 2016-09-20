@@ -233,7 +233,26 @@ MATCH (a) RETURN a;
 
 SELECT count(*) FROM agens.edge;
 
+--
+-- Uniqueness
+--
+
+CREATE GRAPH u;
+SET graph_path = u;
+
+CREATE ELABEL rel;
+
+CREATE (s {'id': 1})-[:rel {'p': 'a'}]->({'id': 2})-[:rel {'p': 'b'}]->(s);
+
+MATCH (s)-[r1]-(m)-[r2]-(x)
+RETURN (s).id AS s, (r1).p AS r1, (m).id AS m, (r2).p AS r2, (x).id AS x
+       ORDER BY s, r1, m, r2, x;
+
 -- cleanup
+
+DROP GRAPH u CASCADE;
+
+SET graph_path = agens;
 
 DROP VLABEL feature;
 DROP ELABEL supported;
@@ -242,6 +261,6 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 
-DROP TABLE history;
-
 DROP GRAPH agens CASCADE;
+
+DROP TABLE history;
