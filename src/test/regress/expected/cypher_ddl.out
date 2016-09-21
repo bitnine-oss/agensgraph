@@ -16,6 +16,36 @@ SELECT graphname, labname, labkind FROM ag_label;
  mygraph   | edge    | e
 (2 rows)
 
+-- CREATE unlogged label
+CREATE UNLOGGED VLABEL unlogv;
+NOTICE:  merging column "id" with inherited definition
+DROP VLABEL unlogv;
+-- IF NOT EXISTS
+CREATE VLABEL duple;
+NOTICE:  merging column "id" with inherited definition
+CREATE VLABEL duple;
+ERROR:  label "duple" already exists
+CREATE VLABEL IF NOT EXISTS duple;
+NOTICE:  label "duple" already exists, skipping
+DROP VLABEL duple;
+-- enable set tablespace
+CREATE VLABEL setspace tablespace pg_default;
+NOTICE:  merging column "id" with inherited definition
+DROP VLABEL setspace;
+-- WITH
+CREATE VLABEL storagev with (fillfactor=90, autovacuum_enabled, autovacuum_vacuum_threshold=100);
+NOTICE:  merging column "id" with inherited definition
+SELECT t.relname as name, t.reloptions as options
+FROM pg_class t, ag_label l
+WHERE t.oid=l.relid ;
+   name   |                                 options                                 
+----------+-------------------------------------------------------------------------
+ vertex   | 
+ edge     | 
+ storagev | {fillfactor=90,autovacuum_enabled=true,autovacuum_vacuum_threshold=100}
+(3 rows)
+
+DROP VLABEL storagev;
 --
 -- CREATE/DROP labels
 --
