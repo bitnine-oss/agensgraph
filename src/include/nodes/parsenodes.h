@@ -3110,7 +3110,6 @@ typedef struct CreateLabelStmt
 	RangeVar   *relation;		/* relation to create */
 	List	   *inhRelations;	/* relations to inherit from */
 	List	   *options;		/* options from WITH clause */
-	OnCommitAction oncommit;	/* what do we do at COMMIT? */
 	char	   *tablespacename; /* table space to use, or NULL */
 	bool		if_not_exists;	/* just do nothing if it already exists? */
 } CreateLabelStmt;

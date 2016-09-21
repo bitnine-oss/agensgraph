@@ -4127,7 +4127,6 @@ _copyCreateLabelStmt(const CreateLabelStmt *from)
 	COPY_NODE_FIELD(inhRelations);
 	COPY_SCALAR_FIELD(labelKind);
 	COPY_NODE_FIELD(options);
-	COPY_SCALAR_FIELD(oncommit);
 	COPY_STRING_FIELD(tablespacename);
 	COPY_SCALAR_FIELD(if_not_exists);
 

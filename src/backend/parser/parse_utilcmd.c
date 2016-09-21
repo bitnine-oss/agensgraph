@@ -2979,9 +2979,9 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 
 	stmt->relation = copyObject(labelStmt->relation);
 	stmt->options = copyObject(labelStmt->options);
-	stmt->oncommit = labelStmt->oncommit;
 	stmt->tablespacename = labelStmt->tablespacename;
 	stmt->if_not_exists = labelStmt->if_not_exists;
+	stmt->oncommit = ONCOMMIT_NOOP;
 
 	if (stmt->relation->schemaname == NULL)
 		stmt->relation->schemaname = get_graph_path();
@@ -3111,7 +3111,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	cxt.inhRelations = stmt->inhRelations;
 	cxt.isforeign = false;
 	cxt.isalter = false;
-	cxt.hasoids = interpretOidsOption(stmt->options, !cxt.isforeign);
+	cxt.hasoids = false;
 	cxt.columns = NIL;
 	cxt.ckconstraints = NIL;
 	cxt.fkconstraints = NIL;

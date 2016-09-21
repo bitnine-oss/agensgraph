@@ -33,25 +33,19 @@ CREATE VLABEL setspace tablespace pg_default;
 NOTICE:  merging column "id" with inherited definition
 DROP VLABEL setspace;
 -- WITH
-CREATE VLABEL withv with oids;
-NOTICE:  merging column "id" with inherited definition
-CREATE VLABEL withoutv without oids;
-NOTICE:  merging column "id" with inherited definition
 CREATE VLABEL storagev with (fillfactor=90, autovacuum_enabled, autovacuum_vacuum_threshold=100);
 NOTICE:  merging column "id" with inherited definition
-SELECT t.relname as name, t.reloptions as options 
+SELECT t.relname as name, t.reloptions as options
 FROM pg_class t, ag_label l
 WHERE t.oid=l.relid ;
    name   |                                 options                                 
 ----------+-------------------------------------------------------------------------
  vertex   | 
  edge     | 
- withv    | 
- withoutv | 
  storagev | {fillfactor=90,autovacuum_enabled=true,autovacuum_vacuum_threshold=100}
-(5 rows)
+(3 rows)
 
-DROP VLABEL withv, withoutv, storagev;
+DROP VLABEL storagev;
 --
 -- CREATE/DROP labels
 --

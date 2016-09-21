@@ -30,15 +30,13 @@ CREATE VLABEL setspace tablespace pg_default;
 DROP VLABEL setspace;
 
 -- WITH
-CREATE VLABEL withv with oids;
-CREATE VLABEL withoutv without oids;
 CREATE VLABEL storagev with (fillfactor=90, autovacuum_enabled, autovacuum_vacuum_threshold=100);
 
 SELECT t.relname as name, t.reloptions as options
 FROM pg_class t, ag_label l
 WHERE t.oid=l.relid ;
 
-DROP VLABEL withv, withoutv, storagev;
+DROP VLABEL storagev;
 
 --
 -- CREATE/DROP labels
