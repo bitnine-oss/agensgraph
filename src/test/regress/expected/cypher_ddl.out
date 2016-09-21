@@ -10,10 +10,10 @@ set graph_path=mygraph,urgraph;
 ERROR:  SET graph_path takes only one argument
 -- check default graph objects
 SELECT graphname, labname, labkind FROM ag_label;
- graphname | labname | labkind 
------------+---------+---------
- mygraph   | vertex  | v
- mygraph   | edge    | e
+ graphname |  labname  | labkind 
+-----------+-----------+---------
+ mygraph   | ag_vertex | v
+ mygraph   | ag_edge   | e
 (2 rows)
 
 -- CREATE unlogged label
@@ -62,8 +62,8 @@ CREATE ELABEL elabel_c3 inherits (elabel_c2);
 SELECT labname, labkind FROM ag_label;
   labname  | labkind 
 -----------+---------
- vertex    | v
- edge      | e
+ ag_vertex | v
+ ag_edge   | e
  vlabel_p1 | v
  vlabel_p2 | v
  vlabel_c1 | v
@@ -84,8 +84,8 @@ FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
 WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
    child   |  parent   
 -----------+-----------
- vlabel_p1 | vertex
- vlabel_p2 | vertex
+ vlabel_p1 | ag_vertex
+ vlabel_p2 | ag_vertex
  vlabel_c1 | vlabel_p1
  vlabel_c2 | vlabel_c1
  vlabel_c3 | vlabel_c2
@@ -94,7 +94,7 @@ WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
  vlabel_c6 | vlabel_c4
  vlabel_c7 | vlabel_c1
  vlabel_c7 | vlabel_p2
- elabel_p1 | edge
+ elabel_p1 | ag_edge
  elabel_c1 | elabel_p1
  elabel_c2 | elabel_c1
  elabel_c3 | elabel_c2
@@ -107,8 +107,8 @@ drop cascades to label vlabel_c6
 SELECT labname, labkind FROM ag_label;
   labname  | labkind 
 -----------+---------
- vertex    | v
- edge      | e
+ ag_vertex | v
+ ag_edge   | e
  vlabel_p1 | v
  vlabel_p2 | v
  vlabel_c1 | v
@@ -126,18 +126,52 @@ FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
 WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
    child   |  parent   
 -----------+-----------
- vlabel_p1 | vertex
- vlabel_p2 | vertex
+ vlabel_p1 | ag_vertex
+ vlabel_p2 | ag_vertex
  vlabel_c1 | vlabel_p1
  vlabel_c2 | vlabel_c1
  vlabel_c3 | vlabel_c2
  vlabel_c7 | vlabel_c1
  vlabel_c7 | vlabel_p2
- elabel_p1 | edge
+ elabel_p1 | ag_edge
  elabel_c1 | elabel_p1
  elabel_c2 | elabel_c1
  elabel_c3 | elabel_c2
 (11 rows)
+
+-- COMMENT & \d commands
+COMMENT ON GRAPH mygraph is 'graph for regression test';
+COMMENT ON VLABEL vlabel_c7 is 'multiple inheritance test';
+\dG+
+                         List of graphs
+  Name   | Owner | Access privileges |        Description        
+---------+-------+-------------------+---------------------------
+ mygraph | ygt   |                   | graph for regression test
+(1 row)
+
+\dGE+
+                                List of labels
+  Graph  |   Name    | Type | Owner |    Size    |         Description         
+---------+-----------+------+-------+------------+-----------------------------
+ mygraph | ag_edge   | edge | ygt   | 8192 bytes | base label of graph mygraph
+ mygraph | elabel_c1 | edge | ygt   | 8192 bytes | 
+ mygraph | elabel_c2 | edge | ygt   | 8192 bytes | 
+ mygraph | elabel_c3 | edge | ygt   | 8192 bytes | 
+ mygraph | elabel_p1 | edge | ygt   | 8192 bytes | 
+(5 rows)
+
+\dGV+
+                                 List of labels
+  Graph  |   Name    |  Type  | Owner |    Size    |         Description         
+---------+-----------+--------+-------+------------+-----------------------------
+ mygraph | ag_vertex | vertex | ygt   | 8192 bytes | base label of graph mygraph
+ mygraph | vlabel_c1 | vertex | ygt   | 8192 bytes | 
+ mygraph | vlabel_c2 | vertex | ygt   | 8192 bytes | 
+ mygraph | vlabel_c3 | vertex | ygt   | 8192 bytes | 
+ mygraph | vlabel_c7 | vertex | ygt   | 8192 bytes | multiple inheritance test
+ mygraph | vlabel_p1 | vertex | ygt   | 8192 bytes | 
+ mygraph | vlabel_p2 | vertex | ygt   | 8192 bytes | 
+(7 rows)
 
 -- wrong cases
 CREATE VLABEL wrong_parent inherits (elabel_p1);
@@ -169,9 +203,9 @@ DETAIL:  label vlabel_c2 depends on label vlabel_c1
 label vlabel_c3 depends on label vlabel_c2
 label vlabel_c7 depends on label vlabel_c1
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
-DROP VLABEL vertex CASCADE;
+DROP VLABEL ag_vertex CASCADE;
 ERROR:  cannot drop base vertex label
-DROP ELABEL edge CASCADE;
+DROP ELABEL ag_edge CASCADE;
 ERROR:  cannot drop base edge label
 --
 -- DROP all labels
@@ -189,10 +223,10 @@ DETAIL:  drop cascades to label elabel_c1
 drop cascades to label elabel_c2
 drop cascades to label elabel_c3
 SELECT labname, labkind FROM ag_label;
- labname | labkind 
----------+---------
- vertex  | v
- edge    | e
+  labname  | labkind 
+-----------+---------
+ ag_vertex | v
+ ag_edge   | e
 (2 rows)
 
 --
@@ -200,14 +234,14 @@ SELECT labname, labkind FROM ag_label;
 --
 DROP GRAPH mygraph;
 ERROR:  cannot drop graph mygraph because other objects depend on it
-DETAIL:  label vertex depends on schema mygraph
-label edge depends on schema mygraph
+DETAIL:  label ag_vertex depends on schema mygraph
+label ag_edge depends on schema mygraph
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 -- DROP GRAPH must set CASCADE
 DROP GRAPH mygraph CASCADE;
 NOTICE:  drop cascades to 2 other objects
-DETAIL:  drop cascades to label vertex
-drop cascades to label edge
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge
 SELECT labname, labkind FROM ag_label;
  labname | labkind 
 ---------+---------

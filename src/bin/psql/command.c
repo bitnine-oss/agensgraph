@@ -515,6 +515,27 @@ exec_command(const char *cmd,
 			case 'y':			/* Event Triggers */
 				success = listEventTriggers(pattern, show_verbose);
 				break;
+			case 'G':
+				switch (cmd[2])
+				{
+					case '\0':
+					case '+':
+						success = listGraphs(pattern, show_verbose);
+						break;
+					case 'L':
+						success = listLabels(pattern, show_verbose, '\0');
+						break;
+					case 'E':
+						success = listLabels(pattern, show_verbose, 'e');
+						break;
+					case 'V':
+						success = listLabels(pattern, show_verbose, 'v');
+						break;
+					default:
+						status = PSQL_CMD_UNKNOWN;
+						break;
+				}
+				break;
 			default:
 				status = PSQL_CMD_UNKNOWN;
 		}

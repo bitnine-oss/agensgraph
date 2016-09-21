@@ -73,6 +73,15 @@ SELECT childlab.labname AS child, parentlab.labname AS parent
 FROM ag_label AS parentlab, ag_label AS childlab, pg_inherits AS inh
 WHERE childlab.relid = inh.inhrelid AND parentlab.relid = inh.inhparent;
 
+-- COMMENT & \d commands
+
+COMMENT ON GRAPH mygraph is 'graph for regression test';
+COMMENT ON VLABEL vlabel_c7 is 'multiple inheritance test';
+
+\dG+
+\dGE+
+\dGV+
+
 -- wrong cases
 
 CREATE VLABEL wrong_parent inherits (elabel_p1);
@@ -90,8 +99,8 @@ DROP ELABEL vlabel_c7;
 DROP VLABEL vlabel_p1;
 DROP VLABEL vlabel_c1;
 
-DROP VLABEL vertex CASCADE;
-DROP ELABEL edge CASCADE;
+DROP VLABEL ag_vertex CASCADE;
+DROP ELABEL ag_edge CASCADE;
 
 --
 -- DROP all labels

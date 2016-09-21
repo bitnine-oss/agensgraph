@@ -129,6 +129,7 @@ static List *makeVertexElements(void);
 static List *makeEdgeElements(void);
 static List *inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
+static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
 
 
 /*
@@ -2970,6 +2971,11 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	ListCell   *elements;
 	List	   *save_alist;
 	List	   *result;
+	char	   *tabdesc;
+	char	   *labdesc;
+	char		descbuf[256];
+	ObjectType	type;
+	CommentStmt *comment;
 
 	/*
 	 * create CreateStmt for label
@@ -2992,12 +2998,18 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		strcmp(labelStmt->relation->relname, AG_VERTEX) == 0)
 	{
 		stmt->tableElts = makeVertexElements();
+		tabdesc = pstrdup("base table of graph label " AG_VERTEX);
+		snprintf(descbuf, sizeof(descbuf), "base label of graph %s", graphname);
+		labdesc = pstrdup(descbuf);
 		inherit = false;
 	}
 	else if (labelStmt->labelKind == LABEL_EDGE &&
 		strcmp(labelStmt->relation->relname, AG_EDGE) == 0)
 	{
 		stmt->tableElts = makeEdgeElements();
+		tabdesc = pstrdup("base table of graph label " AG_EDGE);
+		snprintf(descbuf, sizeof(descbuf), "base label of graph %s", graphname);
+		labdesc = pstrdup(descbuf);
 		inherit = false;
 	}
 	else
@@ -3019,6 +3031,8 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		stmt->tableElts = list_make1(coldef);
 
 		inherit = true;
+		tabdesc = pstrdup("table for graph label");
+		labdesc = NULL;
 	}
 
 	if (inherit)
@@ -3103,9 +3117,15 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 
 	cxt.pstate = pstate;
 	if (labelStmt->labelKind == LABEL_VERTEX)
+	{
 		cxt.stmtType = "CREATE VLABEL";
+		type = OBJECT_VLABEL;
+	}
 	else
+	{
 		cxt.stmtType = "CREATE ELABEL";
+		type = OBJECT_ELABEL;
+	}
 	cxt.relation = stmt->relation;
 	cxt.rel = NULL;
 	cxt.inhRelations = stmt->inhRelations;
@@ -3121,6 +3141,15 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	cxt.pkey = NULL;
 
 	cxt.inh_indexes = inherit ? inheritLabelIndex(&cxt, labelStmt) : NIL;
+
+	comment = makeComment(OBJECT_TABLE, stmt->relation, tabdesc);
+	cxt.alist = lappend(cxt.alist, comment);
+
+	if (labdesc != NULL)
+	{
+		comment = makeComment(type, stmt->relation, labdesc);
+		cxt.alist = lappend(cxt.alist, comment);
+	}
 
 	foreach(elements, stmt->tableElts)
 	{
@@ -3462,4 +3491,17 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	defid->raw_expr = (Node *) fcgraphid;
 
 	col->constraints = lappend(col->constraints, defid);
+}
+
+CommentStmt *
+makeComment(ObjectType type, RangeVar *name, char *desc)
+{
+	CommentStmt *c = makeNode(CommentStmt);
+	c->objtype = type;
+	c->objname = list_make1(makeString(name->schemaname));
+	c->objname = lappend(c->objname, makeString(name->relname));
+	c->objargs = NIL;
+	c->comment = pstrdup(desc);
+
+	return c;
 }
