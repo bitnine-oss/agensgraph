@@ -1920,6 +1920,9 @@ AlterObjectTypeCommandTag(ObjectType objtype)
 		case OBJECT_MATVIEW:
 			tag = "ALTER MATERIALIZED VIEW";
 			break;
+		case OBJECT_GRAPH:
+			tag = "ALTER GRAPH";
+			break;
 		default:
 			tag = "???";
 			break;
