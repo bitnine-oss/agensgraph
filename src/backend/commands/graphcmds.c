@@ -100,6 +100,41 @@ RemoveGraphById(Oid graphid)
 		SetConfigOption("graph_path", NULL, PGC_USERSET, PGC_S_SESSION);
 }
 
+ObjectAddress
+RenameGraph(const char *oldname, const char *newname)
+{
+	Oid			graphOid;
+	HeapTuple	tup;
+	Relation	rel;
+	ObjectAddress address;
+
+	rel = heap_open(GraphRelationId, RowExclusiveLock);
+
+	tup = SearchSysCacheCopy1(GRAPHNAME, CStringGetDatum(oldname));
+	if (!HeapTupleIsValid(tup))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_SCHEMA),
+				 errmsg("graph \"%s\" does not exist", oldname)));
+
+	graphOid = HeapTupleGetOid(tup);
+
+	/* Skip privilege and error check. It was already done in RenameSchema() */
+
+	/* rename */
+	namestrcpy(&(((Form_ag_graph) GETSTRUCT(tup))->graphname), newname);
+	simple_heap_update(rel, &tup->t_self, tup);
+	CatalogUpdateIndexes(rel, tup);
+
+	InvokeObjectPostAlterHook(GraphRelationId, HeapTupleGetOid(tup), 0);
+
+	ObjectAddressSet(address, GraphRelationId, graphOid);
+
+	heap_close(rel, NoLock);
+	heap_freetuple(tup);
+
+	return address;
+}
+
 /* See ProcessUtilitySlow() case T_CreateStmt */
 void
 CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,

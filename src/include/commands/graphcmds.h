@@ -15,6 +15,7 @@
 extern void CreateGraphCommand(CreateGraphStmt *graphStmt,
 							   const char *queryString);
 extern void RemoveGraphById(Oid graphid);
+extern ObjectAddress RenameGraph(const char *oldname, const char *newname);
 
 extern void CreateLabelCommand(CreateLabelStmt *labelStmt,
 							   const char *queryString, ParamListInfo params);

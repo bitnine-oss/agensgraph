@@ -43,6 +43,7 @@
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
+#include "commands/graphcmds.h"
 #include "commands/policy.h"
 #include "commands/proclang.h"
 #include "commands/schemacmds.h"
@@ -382,6 +383,10 @@ ExecRenameStmt(RenameStmt *stmt)
 
 				return address;
 			}
+
+		case OBJECT_GRAPH:
+			RenameSchema(stmt->subname, stmt->newname);
+			return RenameGraph(stmt->subname, stmt->newname);
 
 		default:
 			elog(ERROR, "unrecognized rename stmt type: %d",
@@ -751,6 +756,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 		case OBJECT_DATABASE:
 			return AlterDatabaseOwner(strVal(linitial(stmt->object)), newowner);
 
+		case OBJECT_GRAPH:
 		case OBJECT_SCHEMA:
 			return AlterSchemaOwner(strVal(linitial(stmt->object)), newowner);
 
