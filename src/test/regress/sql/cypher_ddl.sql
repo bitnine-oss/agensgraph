@@ -180,6 +180,142 @@ DROP ELABEL e1;
 SELECT labname, labkind FROM pg_catalog.ag_label;
 
 --
+-- CONSTRAINT
+--
+\set VERBOSITY terse
+
+-- simple unique constraint
+CREATE VLABEL regv1;
+
+CREATE CONSTRAINT ON regv1 ASSERT a.b IS UNIQUE;
+
+CREATE (:regv1 {'a':{'b':'agens', 'c':'graph'}});
+CREATE (:regv1 {'a':{'b':'agens', 'c':'graph'}});
+CREATE (:regv1 {'a':{'b':'agens'}});
+CREATE (:regv1 {'a':{'b':'c'}});
+CREATE (:regv1 {'a':'b'});
+CREATE (:regv1 {'a':'agens-graph'});
+
+DROP VLABEL regv1;
+
+-- expr unique constraint
+CREATE ELABEL rege1;
+
+CREATE CONSTRAINT ON rege1 ASSERT c || d IS UNIQUE;
+
+CREATE ()-[:rege1 {'c':'agens', 'd':'graph'}]->();
+CREATE ()-[:rege1 {'c':'agens', 'd':'graph'}]->();
+CREATE ()-[:rege1 {'c':'agens', 'd':'rdb'}]->();
+CREATE ()-[:rege1 {'c':'agen', 'd':'sgraph'}]->();
+
+DROP ELABEL rege1;
+
+-- simple not null constraint
+CREATE VLABEL regv2;
+
+CREATE CONSTRAINT ON regv2 ASSERT name IS NOT NULL;
+
+CREATE (:regv2 {'name':'agens'});
+CREATE (:regv2 {'age':'0'});
+CREATE (:regv2 {'age':'0', 'name':'graph'});
+CREATE (:regv2 {'name':NULL});
+
+DROP VLABEL regv2;
+
+-- multi not null constraint
+CREATE VLABEL regv3;
+
+CREATE CONSTRAINT ON regv3 ASSERT (name.first, name.last) IS NOT NULL;
+
+CREATE (:regv3 {'name':'agens'});
+CREATE (:regv3 {'name':{'first':'agens', 'last':'graph'}});
+CREATE (:regv3 {'name':{'first':'agens'}});
+CREATE (:regv3 {'name':{'last':'graph'}});
+CREATE (:regv3 {'name':{'first':NULL, 'last':NULL}});
+
+DROP VLABEL regv3;
+
+-- simple check constraint
+CREATE ELABEL rege2;
+
+CREATE CONSTRAINT ON rege2 ASSERT a != b;
+
+CREATE ()-[:rege2 {'a':'agens', 'b':'graph'}]->();
+CREATE ()-[:rege2 {'a':'agens', 'b':'agens'}]->();
+CREATE ()-[:rege2 {'a':'agens', 'b':'AGENS'}]->();
+CREATE ()-[:rege2 {'a':'agens', 'd':'graph'}]->();
+
+DROP ELABEL rege2;
+
+-- expression check constraint
+CREATE VLABEL regv4;
+
+CREATE CONSTRAINT ON regv4 ASSERT (length(password) > 8 AND length(password) < 16);
+
+CREATE (:regv4 {'password':'12345678'});
+CREATE (:regv4 {'password':'123456789'});
+CREATE (:regv4 {'password':'123456789012345'});
+CREATE (:regv4 {'password':'1234567890123456'});
+
+DROP VLABEL regv4;
+
+-- IN check constraint
+CREATE ELABEL rege3;
+
+CREATE CONSTRAINT ON rege3 ASSERT type IN ('friend','lover','parent');
+
+CREATE ()-[:rege3 {'type':'friend', 'name':'agens'}]->();
+CREATE ()-[:rege3 {'type':'love', 'name':'graph'}]->();
+CREATE ()-[:rege3 {'type':'parents', 'name':'AGENS'}]->();
+CREATE ()-[:rege3 {'type':'lover', 'name':'GRAPH'}]->();
+
+DROP ELABEL rege3;
+
+-- case check constraint
+CREATE VLABEL regv5;
+
+CREATE CONSTRAINT ON regv5 ASSERT lower(btrim(id)) IS UNIQUE;
+
+CREATE (:regv5 {'id':'agens'});
+CREATE (:regv5 {'id':' agens'});
+CREATE (:regv5 {'id':'agens '});
+CREATE (:regv5 {'id':'AGENS'});
+CREATE (:regv5 {'id':' AGENS '});
+CREATE (:regv5 {'id':'GRAPH'});
+CREATE (:regv5 {'id':' graph '});
+
+DROP VLABEL regv5;
+
+-- typecast check constraint
+CREATE VLABEL regv6;
+
+CREATE CONSTRAINT ON regv6 ASSERT age::int > 0 AND age::int < 128;
+
+CREATE (:regv6 {'age':'0'});
+CREATE (:regv6 {'age':'1'});
+CREATE (:regv6 {'age':'127'});
+CREATE (:regv6 {'age':'128'});
+CREATE (:regv6 {'age':'-10'});
+CREATE (:regv6 {'age':1 + 1});
+CREATE (:regv6 {'age':1 + 127});
+
+DROP VLABEL regv6;
+
+-- IS NULL constraint
+CREATE ELABEL rege4;
+
+CREATE CONSTRAINT rege4_name_isnull_constraint ON rege4 ASSERT id IS NULL;
+
+CREATE ()-[:rege4 {'id':NULL, 'name':'agens'}]->();
+CREATE ()-[:rege4 {'id':10, 'name':'agens'}]->();
+CREATE ()-[:rege4 {'name':'graph'}]->();
+
+DROP CONSTRAINT rege4_name_isnull_constraint ON ag_edge;
+DROP CONSTRAINT ON rege4;
+DROP CONSTRAINT rege4_name_isnull_constraint ON rege4;
+DROP ELABEL rege4;
+
+--
 -- DROP GRAPH
 --
 

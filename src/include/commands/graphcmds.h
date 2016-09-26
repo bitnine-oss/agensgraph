@@ -25,4 +25,10 @@ extern void CheckInheritLabel(CreateStmt *stmt);
 
 extern bool RangeVarIsLabel(RangeVar *rel);
 
+extern void CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
+									const char *queryString,
+									ParamListInfo params);
+extern void DropConstraintCommand(DropConstraintStmt *constraintStmt,
+								  const char *queryString,
+								  ParamListInfo params);
 #endif	/* GRAPHCMDS_H */

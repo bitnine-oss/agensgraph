@@ -411,25 +411,134 @@ SELECT labname, labkind FROM pg_catalog.ag_label;
 (6 rows)
 
 --
+-- CONSTRAINT
+--
+\set VERBOSITY terse
+-- simple unique constraint
+CREATE VLABEL regv1;
+CREATE CONSTRAINT ON regv1 ASSERT a.b IS UNIQUE;
+CREATE (:regv1 {'a':{'b':'agens', 'c':'graph'}});
+CREATE (:regv1 {'a':{'b':'agens', 'c':'graph'}});
+ERROR:  conflicting key value violates exclusion constraint "regv1_unique_constraint"
+CREATE (:regv1 {'a':{'b':'agens'}});
+ERROR:  conflicting key value violates exclusion constraint "regv1_unique_constraint"
+CREATE (:regv1 {'a':{'b':'c'}});
+CREATE (:regv1 {'a':'b'});
+CREATE (:regv1 {'a':'agens-graph'});
+DROP VLABEL regv1;
+-- expr unique constraint
+CREATE ELABEL rege1;
+CREATE CONSTRAINT ON rege1 ASSERT c || d IS UNIQUE;
+CREATE ()-[:rege1 {'c':'agens', 'd':'graph'}]->();
+CREATE ()-[:rege1 {'c':'agens', 'd':'graph'}]->();
+ERROR:  conflicting key value violates exclusion constraint "rege1_unique_constraint"
+CREATE ()-[:rege1 {'c':'agens', 'd':'rdb'}]->();
+CREATE ()-[:rege1 {'c':'agen', 'd':'sgraph'}]->();
+ERROR:  conflicting key value violates exclusion constraint "rege1_unique_constraint"
+DROP ELABEL rege1;
+-- simple not null constraint
+CREATE VLABEL regv2;
+CREATE CONSTRAINT ON regv2 ASSERT name IS NOT NULL;
+CREATE (:regv2 {'name':'agens'});
+CREATE (:regv2 {'age':'0'});
+ERROR:  new row for relation "regv2" violates check constraint "regv2_properties_check"
+CREATE (:regv2 {'age':'0', 'name':'graph'});
+CREATE (:regv2 {'name':NULL});
+ERROR:  new row for relation "regv2" violates check constraint "regv2_properties_check"
+DROP VLABEL regv2;
+-- multi not null constraint
+CREATE VLABEL regv3;
+CREATE CONSTRAINT ON regv3 ASSERT (name.first, name.last) IS NOT NULL;
+CREATE (:regv3 {'name':'agens'});
+ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
+CREATE (:regv3 {'name':{'first':'agens', 'last':'graph'}});
+CREATE (:regv3 {'name':{'first':'agens'}});
+ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
+CREATE (:regv3 {'name':{'last':'graph'}});
+ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
+CREATE (:regv3 {'name':{'first':NULL, 'last':NULL}});
+ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
+DROP VLABEL regv3;
+-- simple check constraint
+CREATE ELABEL rege2;
+CREATE CONSTRAINT ON rege2 ASSERT a != b;
+CREATE ()-[:rege2 {'a':'agens', 'b':'graph'}]->();
+CREATE ()-[:rege2 {'a':'agens', 'b':'agens'}]->();
+ERROR:  new row for relation "rege2" violates check constraint "rege2_properties_check"
+CREATE ()-[:rege2 {'a':'agens', 'b':'AGENS'}]->();
+CREATE ()-[:rege2 {'a':'agens', 'd':'graph'}]->();
+DROP ELABEL rege2;
+-- expression check constraint
+CREATE VLABEL regv4;
+CREATE CONSTRAINT ON regv4 ASSERT (length(password) > 8 AND length(password) < 16);
+CREATE (:regv4 {'password':'12345678'});
+ERROR:  new row for relation "regv4" violates check constraint "regv4_properties_check"
+CREATE (:regv4 {'password':'123456789'});
+CREATE (:regv4 {'password':'123456789012345'});
+CREATE (:regv4 {'password':'1234567890123456'});
+ERROR:  new row for relation "regv4" violates check constraint "regv4_properties_check"
+DROP VLABEL regv4;
+-- IN check constraint
+CREATE ELABEL rege3;
+CREATE CONSTRAINT ON rege3 ASSERT type IN ('friend','lover','parent');
+CREATE ()-[:rege3 {'type':'friend', 'name':'agens'}]->();
+CREATE ()-[:rege3 {'type':'love', 'name':'graph'}]->();
+ERROR:  new row for relation "rege3" violates check constraint "rege3_properties_check"
+CREATE ()-[:rege3 {'type':'parents', 'name':'AGENS'}]->();
+ERROR:  new row for relation "rege3" violates check constraint "rege3_properties_check"
+CREATE ()-[:rege3 {'type':'lover', 'name':'GRAPH'}]->();
+DROP ELABEL rege3;
+-- case check constraint
+CREATE VLABEL regv5;
+CREATE CONSTRAINT ON regv5 ASSERT lower(btrim(id)) IS UNIQUE;
+CREATE (:regv5 {'id':'agens'});
+CREATE (:regv5 {'id':' agens'});
+ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
+CREATE (:regv5 {'id':'agens '});
+ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
+CREATE (:regv5 {'id':'AGENS'});
+ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
+CREATE (:regv5 {'id':' AGENS '});
+ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
+CREATE (:regv5 {'id':'GRAPH'});
+CREATE (:regv5 {'id':' graph '});
+ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
+DROP VLABEL regv5;
+-- typecast check constraint
+CREATE VLABEL regv6;
+CREATE CONSTRAINT ON regv6 ASSERT age::int > 0 AND age::int < 128;
+CREATE (:regv6 {'age':'0'});
+ERROR:  new row for relation "regv6" violates check constraint "regv6_properties_check"
+CREATE (:regv6 {'age':'1'});
+CREATE (:regv6 {'age':'127'});
+CREATE (:regv6 {'age':'128'});
+ERROR:  new row for relation "regv6" violates check constraint "regv6_properties_check"
+CREATE (:regv6 {'age':'-10'});
+ERROR:  new row for relation "regv6" violates check constraint "regv6_properties_check"
+CREATE (:regv6 {'age':1 + 1});
+CREATE (:regv6 {'age':1 + 127});
+ERROR:  new row for relation "regv6" violates check constraint "regv6_properties_check"
+DROP VLABEL regv6;
+-- IS NULL constraint
+CREATE ELABEL rege4;
+CREATE CONSTRAINT rege4_name_isnull_constraint ON rege4 ASSERT id IS NULL;
+CREATE ()-[:rege4 {'id':NULL, 'name':'agens'}]->();
+CREATE ()-[:rege4 {'id':10, 'name':'agens'}]->();
+ERROR:  new row for relation "rege4" violates check constraint "rege4_name_isnull_constraint"
+CREATE ()-[:rege4 {'name':'graph'}]->();
+DROP CONSTRAINT rege4_name_isnull_constraint ON ag_edge;
+ERROR:  constraint "rege4_name_isnull_constraint" of relation "ag_edge" does not exist
+DROP CONSTRAINT ON rege4;
+ERROR:  syntax error at or near "ON" at character 17
+DROP CONSTRAINT rege4_name_isnull_constraint ON rege4;
+DROP ELABEL rege4;
+--
 -- DROP GRAPH
 --
 DROP GRAPH g;
 ERROR:  cannot drop graph g because other objects depend on it
-DETAIL:  label ag_vertex depends on schema g
-label ag_edge depends on schema g
-label unlog depends on schema g
-label dup depends on schema g
-label stor depends on schema g
-label tblspc depends on schema g
-HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 DROP GRAPH g CASCADE;
 NOTICE:  drop cascades to 6 other objects
-DETAIL:  drop cascades to label ag_vertex
-drop cascades to label ag_edge
-drop cascades to label unlog
-drop cascades to label dup
-drop cascades to label stor
-drop cascades to label tblspc
 SELECT labname, labkind FROM ag_label;
  labname | labkind 
 ---------+---------
