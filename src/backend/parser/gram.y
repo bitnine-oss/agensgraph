@@ -6,7 +6,8 @@
  * gram.y
  *	  POSTGRESQL BISON rules/actions
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2014-2016, Bitnine Inc.
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -549,7 +550,9 @@ static Node *wrapCypherWithSelect(Node *stmt);
 
 /* Agens Graph */
 %type <node>	CreateGraphStmt CreateLabelStmt AlterLabelStmt alter_label_cmd
+				CreateConstraintStmt DropConstraintStmt
 %type <list>	alter_label_cmds
+%type <str>		opt_constraint_name
 
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
@@ -592,7 +595,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 /* ordinary key words in alphabetical order */
 %token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
 	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
-	ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUTHORIZATION
+	ASSERT ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
 	BOOLEAN_P BOTH BY
@@ -831,6 +834,7 @@ stmt :
 			| CreateAsStmt
 			| CreateAssertStmt
 			| CreateCastStmt
+			| CreateConstraintStmt
 			| CreateConversionStmt
 			| CreateDomainStmt
 			| CreateExtensionStmt
@@ -867,6 +871,7 @@ stmt :
 			| DoStmt
 			| DropAssertStmt
 			| DropCastStmt
+			| DropConstraintStmt
 			| DropFdwStmt
 			| DropForeignServerStmt
 			| DropGroupStmt
@@ -13890,6 +13895,7 @@ unreserved_keyword:
 			| ALSO
 			| ALTER
 			| ALWAYS
+			| ASSERT
 			| ASSERTION
 			| ASSIGNMENT
 			| AT
@@ -14561,6 +14567,42 @@ alter_label_cmd:
 					n->def = $3;
 					$$ = (Node *)n;
 				}
+		;
+
+CreateConstraintStmt:
+			CREATE CONSTRAINT opt_constraint_name ON ColId ASSERT a_expr IS UNIQUE
+				{
+					CreateConstraintStmt *n = makeNode(CreateConstraintStmt);
+					n->graphlabel = makeRangeVar(NULL, $5, @5);
+					n->conname = $3;
+					n->contype = CONSTR_UNIQUE;
+					n->expr = (Node *)$7;
+					$$ = (Node *)n;
+				}
+			| CREATE CONSTRAINT opt_constraint_name ON ColId ASSERT a_expr
+				{
+					CreateConstraintStmt *n = makeNode(CreateConstraintStmt);
+					n->graphlabel = makeRangeVar(NULL, $5, @5);
+					n->conname = $3;
+					n->contype = CONSTR_CHECK;
+					n->expr = (Node *)$7;
+					$$ = (Node *)n;
+				}
+		;
+
+DropConstraintStmt:
+			DROP CONSTRAINT name ON ColId
+				{
+					DropConstraintStmt *n = makeNode(DropConstraintStmt);
+					n->graphlabel = makeRangeVar(NULL, $5, @5);
+					n->conname = $3;
+					$$ = (Node *)n;
+				}
+		;
+
+opt_constraint_name:
+			name									{ $$ = $1; }
+			| /*EMPTY*/								{ $$ = NULL; }
 		;
 
 /*

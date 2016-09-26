@@ -5,7 +5,8 @@
  *	  commands.  At one time acted as an interface between the Lisp and C
  *	  systems.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2014-2016, Bitnine Inc.
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -214,6 +215,8 @@ check_xact_readonly(Node *parsetree)
 		case T_CreateGraphStmt:
 		case T_CreateLabelStmt:
 		case T_AlterLabelStmt:
+		case T_CreateConstraintStmt:
+		case T_DropConstraintStmt:
 			PreventCommandIfReadOnly(CreateCommandTag(parsetree));
 			PreventCommandIfParallelMode(CreateCommandTag(parsetree));
 			break;
@@ -1566,6 +1569,18 @@ ProcessUtilitySlow(Node *parsetree,
 				commandCollected = true;
 				break;
 
+			case T_CreateConstraintStmt:
+				CreateConstraintCommand((CreateConstraintStmt *) parsetree,
+										queryString, params);
+				commandCollected = true;
+				break;
+
+			case T_DropConstraintStmt:
+				DropConstraintCommand((DropConstraintStmt *) parsetree,
+									  queryString, params);
+				commandCollected = true;
+				break;
+
 			default:
 				elog(ERROR, "unrecognized node type: %d",
 					 (int) nodeTag(parsetree));
@@ -2088,6 +2103,12 @@ CreateCommandTag(Node *parsetree)
 						break;
 				}
 			}
+			break;
+		case T_CreateConstraintStmt:
+			tag = "CREATE CONSTRAINT";
+			break;
+		case T_DropConstraintStmt:
+			tag = "DROP CONSTRAINT";
 			break;
 
 		case T_AlterLabelStmt:
@@ -2864,6 +2885,8 @@ GetCommandLogLevel(Node *parsetree)
 
 		case T_CreateLabelStmt:
 		case T_AlterLabelStmt:
+		case T_CreateConstraintStmt:
+		case T_DropConstraintStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

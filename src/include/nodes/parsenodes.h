@@ -3167,6 +3167,24 @@ typedef struct CreateLabelStmt
 /* ALTER VLABEL/ELABEL ... */
 typedef struct AlterTableStmt AlterLabelStmt;
 
+/* CREATE CONSTRAINT ON ... */
+typedef struct CreateConstraintStmt
+{
+	NodeTag		type;
+	ConstrType	contype;		/* types of constraints */
+	RangeVar   *graphlabel;		/* label to constrain */
+	char	   *conname;		/* constraint name */
+	Node	   *expr;			/* JSON object or function expression */
+
+} CreateConstraintStmt;
+
+typedef struct DropConstraintStmt
+{
+	NodeTag		type;
+	RangeVar   *graphlabel;		/* label to constrain */
+	char	   *conname;
+} DropConstraintStmt;
+
 /****************************************************************************
  * Cypher related node structures
  ****************************************************************************/

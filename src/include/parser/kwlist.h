@@ -7,7 +7,8 @@
  * by the PG_KEYWORD macro, which is not defined in this file; it can
  * be defined by the caller for special purposes.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2014-2016, Bitnine Inc.
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -45,6 +46,7 @@ PG_KEYWORD("any", ANY, RESERVED_KEYWORD)
 PG_KEYWORD("array", ARRAY, RESERVED_KEYWORD)
 PG_KEYWORD("as", AS, RESERVED_KEYWORD)
 PG_KEYWORD("asc", ASC, RESERVED_KEYWORD)
+PG_KEYWORD("assert", ASSERT, UNRESERVED_KEYWORD)
 PG_KEYWORD("assertion", ASSERTION, UNRESERVED_KEYWORD)
 PG_KEYWORD("assignment", ASSIGNMENT, UNRESERVED_KEYWORD)
 PG_KEYWORD("asymmetric", ASYMMETRIC, RESERVED_KEYWORD)
