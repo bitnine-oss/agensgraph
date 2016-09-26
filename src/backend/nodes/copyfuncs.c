@@ -11,7 +11,8 @@
  * be handled easily in a simple depth-first traversal.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2014-2016, Bitnine Inc.
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -4221,6 +4222,30 @@ _copyAlterLabelStmt(const AlterLabelStmt *from)
 	return newnode;
 }
 
+static CreateConstraintStmt *
+_copyCreateConstraintStmt(const CreateConstraintStmt *from)
+{
+	CreateConstraintStmt *newnode = makeNode(CreateConstraintStmt);
+
+	COPY_SCALAR_FIELD(contype);
+	COPY_NODE_FIELD(graphlabel);
+	COPY_STRING_FIELD(conname);
+	COPY_NODE_FIELD(expr);
+
+	return newnode;
+}
+
+static DropConstraintStmt *
+_copyDropConstraintStmt(const DropConstraintStmt *from)
+{
+	DropConstraintStmt *newnode = makeNode(DropConstraintStmt);
+
+	COPY_NODE_FIELD(graphlabel);
+	COPY_STRING_FIELD(conname);
+
+	return newnode;
+}
+
 static JsonObject *
 _copyJsonObject(const JsonObject *from)
 {
@@ -5253,6 +5278,12 @@ copyObject(const void *from)
 			break;
 		case T_AlterLabelStmt:
 			retval = _copyAlterLabelStmt(from);
+			break;
+		case T_CreateConstraintStmt:
+			retval = _copyCreateConstraintStmt(from);
+			break;
+		case T_DropConstraintStmt:
+			retval = _copyDropConstraintStmt(from);
 			break;
 		case T_CypherStmt:
 			retval = _copyCypherStmt(from);

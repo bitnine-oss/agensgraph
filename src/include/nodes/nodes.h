@@ -4,7 +4,8 @@
  *	  Definitions for tagged nodes.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2014-2016, Bitnine Inc.
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/nodes.h
@@ -411,6 +412,8 @@ typedef enum NodeTag
 	T_CreateGraphStmt,
 	T_CreateLabelStmt,
 	T_AlterLabelStmt,
+	T_CreateConstraintStmt,
+	T_DropConstraintStmt,
 	T_CypherStmt,
 
 	/*
