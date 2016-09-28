@@ -360,6 +360,8 @@ extern void UnregisterExprContextCallback(ExprContext *econtext,
 							  ExprContextCallbackFunction function,
 							  Datum arg);
 
+extern void InitScanLabelInfo(ScanState *node);
+
 /*
  * prototypes from functions in execIndexing.c
  */

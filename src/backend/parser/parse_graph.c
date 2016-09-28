@@ -28,6 +28,7 @@
 #include "parser/parse_oper.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
+#include "utils/builtins.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
@@ -1678,7 +1679,7 @@ getElemField(ParseState *pstate, Node *elem, char *fname)
 		Form_pg_attribute attr = NULL;
 		FieldSelect *fselect;
 
-		Assert(IsA(elem, TargetEntry));
+		AssertArg(IsA(elem, TargetEntry));
 
 		typoid = exprType((Node *) te->expr);
 		Assert(typoid == VERTEXOID || typoid == EDGEOID);
@@ -1686,11 +1687,9 @@ getElemField(ParseState *pstate, Node *elem, char *fname)
 		tupdesc = lookup_rowtype_tupdesc_copy(typoid, -1);
 		for (idx = 0; idx < tupdesc->natts; idx++)
 		{
-			char *attname;
-
 			attr = tupdesc->attrs[idx];
-			attname = NameStr(attr->attname);
-			if (strncmp(attname, fname, NAMEDATALEN) == 0)
+
+			if (namestrcmp(&attr->attname, fname) == 0)
 				break;
 		}
 		Assert(idx < tupdesc->natts);

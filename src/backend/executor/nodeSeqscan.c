@@ -23,12 +23,20 @@
 #include "postgres.h"
 
 #include "access/relscan.h"
+#include "catalog/pg_operator.h"
 #include "executor/execdebug.h"
 #include "executor/nodeSeqscan.h"
+#include "optimizer/clauses.h"
+#include "utils/graph.h"
+#include "utils/memutils.h"
 #include "utils/rel.h"
 
 static void InitScanRelation(SeqScanState *node, EState *estate, int eflags);
 static TupleTableSlot *SeqNext(SeqScanState *node);
+
+static void InitScanLabelSkipExpr(SeqScanState *node);
+static ExprState *GetScanLabelSkipExpr(SeqScanState *node, Expr *opexpr);
+static bool IsGraphidColumn(SeqScanState *node, Node *expr);
 
 /* ----------------------------------------------------------------
  *						Scan Support
@@ -108,6 +116,12 @@ SeqRecheck(SeqScanState *node, TupleTableSlot *slot)
 TupleTableSlot *
 ExecSeqScan(SeqScanState *node)
 {
+	if (node->ss_skipLabelScan)
+	{
+		node->ss_skipLabelScan = false;
+		return NULL;
+	}
+
 	return ExecScan((ScanState *) node,
 					(ExecScanAccessMtd) SeqNext,
 					(ExecScanRecheckMtd) SeqRecheck);
@@ -144,6 +158,72 @@ InitScanRelation(SeqScanState *node, EState *estate, int eflags)
 
 	/* and report the scan tuple slot's rowtype */
 	ExecAssignScanType(node, RelationGetDescr(currentRelation));
+}
+
+static void
+InitScanLabelSkipExpr(SeqScanState *node)
+{
+	List	   *qual = node->ps.plan->qual;
+	ListCell   *la;
+
+	AssertArg(node->ss_isLabel);
+
+	if (qual == NIL)
+		return;
+
+	/* qual was implicitly-ANDed, so; */
+	foreach(la, qual)
+	{
+		Expr	   *expr = lfirst(la);
+		ExprState  *xstate;
+
+		if (!is_opclause(expr))
+			continue;
+
+		if (((OpExpr *) expr)->opno != GraphidEqualOperator)
+			continue;
+
+		/* expr is of the form `graphid = graphid` */
+
+		xstate = GetScanLabelSkipExpr(node, expr);
+		if (xstate == NULL)
+			continue;
+
+		node->ss_labelSkipExpr = xstate;
+		break;
+	}
+}
+
+static ExprState *
+GetScanLabelSkipExpr(SeqScanState *node, Expr *opexpr)
+{
+	Node	   *left = get_leftop(opexpr);
+	Node	   *right = get_rightop(opexpr);
+	Node	   *expr;
+
+	if (IsGraphidColumn(node, left))
+		expr = right;
+	else if (IsGraphidColumn(node, right))
+		expr = left;
+	else
+		return NULL;
+
+	/* Const or Param expected */
+	if (IsA(expr, Const) || IsA(expr, Param))
+		return ExecInitExpr((Expr *) expr, (PlanState *) node);
+
+	return NULL;
+}
+
+static bool
+IsGraphidColumn(SeqScanState *node, Node *expr)
+{
+	Var *var = (Var *) expr;
+
+	/* TODO: use Anum_vertex_id */
+	return (IsA(expr, Var) &&
+			var->varno == ((SeqScan *) node->ps.plan)->scanrelid &&
+			var->varattno == 1);
 }
 
 
@@ -197,6 +277,10 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	 * initialize scan relation
 	 */
 	InitScanRelation(scanstate, estate, eflags);
+
+	InitScanLabelInfo((ScanState *) scanstate);
+	if (scanstate->ss_isLabel)
+		InitScanLabelSkipExpr(scanstate);
 
 	scanstate->ps.ps_TupFromTlist = false;
 
@@ -264,6 +348,37 @@ void
 ExecReScanSeqScan(SeqScanState *node)
 {
 	HeapScanDesc scan;
+
+	/* determine whether we can skip this label scan or not */
+	if (node->ss_isLabel && node->ss_labelSkipExpr != NULL)
+	{
+		ExprContext *econtext = node->ps.ps_ExprContext;
+		MemoryContext oldmctx;
+		bool		isnull;
+		ExprDoneCond isdone;
+		Datum		graphid;
+
+		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+
+		graphid = ExecEvalExpr(node->ss_labelSkipExpr, econtext,
+							   &isnull, &isdone);
+		if (isnull)
+		{
+			node->ss_skipLabelScan = true;
+		}
+		else if (isdone == ExprSingleResult)
+		{
+			Oid oid;
+
+			oid = DatumGetObjectId(DirectFunctionCall1(graphid_oid, graphid));
+			if (node->ss_currentRelation->rd_id != oid)
+				node->ss_skipLabelScan = true;
+		}
+
+		ResetExprContext(econtext);
+
+		MemoryContextSwitchTo(oldmctx);
+	}
 
 	scan = node->ss_currentScanDesc;
 

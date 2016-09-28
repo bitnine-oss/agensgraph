@@ -1258,6 +1258,12 @@ typedef struct ScanState
 	Relation	ss_currentRelation;
 	HeapScanDesc ss_currentScanDesc;
 	TupleTableSlot *ss_ScanTupleSlot;
+
+	/* to skip unneccessary graph label scan */
+	bool		ss_isLabel;			/* vertex? */
+	ExprState  *ss_labelSkipExpr;	/* SeqScan */
+	int			ss_labelSkipIdx;	/* IndexScan */
+	bool		ss_skipLabelScan;
 } ScanState;
 
 /*

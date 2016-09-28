@@ -1823,6 +1823,7 @@ DESCR("delete path");
 /* graphid operators */
 DATA(insert OID = 7087 (  "="	   PGNSP PGUID b t t 7002 7002 16 7087 7088 graphid_eq eqsel eqjoinsel ));
 DESCR("equal");
+#define GraphidEqualOperator	7087
 DATA(insert OID = 7088 (  "<>"	   PGNSP PGUID b f f 7002 7002 16 7088 7087 graphid_ne neqsel neqjoinsel ));
 DESCR("not equal");
 DATA(insert OID = 7089 (  "<"	   PGNSP PGUID b f f 7002 7002 16 7090 7092 graphid_lt scalarltsel scalarltjoinsel ));

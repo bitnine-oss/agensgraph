@@ -40,11 +40,13 @@
 
 #include "access/relscan.h"
 #include "access/transam.h"
+#include "catalog/ag_label.h"
 #include "executor/executor.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parsetree.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
+#include "utils/syscache.h"
 
 
 static bool get_last_attnums(Node *node, ProjectionInfo *projInfo);
@@ -979,4 +981,31 @@ ShutdownExprContext(ExprContext *econtext, bool isCommit)
 	}
 
 	MemoryContextSwitchTo(oldcontext);
+}
+
+
+/* set up to process the scan label */
+void
+InitScanLabelInfo(ScanState *node)
+{
+	Oid			relid;
+	HeapTuple	labtup;
+
+	AssertArg(node != NULL);
+
+	if (node->ss_currentRelation == NULL)
+		return;
+
+	relid = node->ss_currentRelation->rd_id;
+	labtup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(relid));
+	if (HeapTupleIsValid(labtup))
+	{
+		char labkind;
+
+		labkind = ((Form_ag_label) GETSTRUCT(labtup))->labkind;
+		if (labkind == LABEL_KIND_VERTEX)
+			node->ss_isLabel = true;
+
+		ReleaseSysCache(labtup);
+	}
 }

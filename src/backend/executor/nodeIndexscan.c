@@ -27,6 +27,7 @@
 
 #include "access/nbtree.h"
 #include "access/relscan.h"
+#include "catalog/pg_opfamily.h"
 #include "executor/execdebug.h"
 #include "executor/nodeIndexscan.h"
 #include "lib/pairingheap.h"
@@ -34,6 +35,7 @@
 #include "optimizer/clauses.h"
 #include "utils/array.h"
 #include "utils/datum.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
@@ -62,6 +64,8 @@ static int reorderqueue_cmp(const pairingheap_node *a,
 static void reorderqueue_push(IndexScanState *node, HeapTuple tuple,
 				  Datum *orderbyvals, bool *orderbynulls);
 static HeapTuple reorderqueue_pop(IndexScanState *node);
+
+static void InitScanLabelSkipIdx(IndexScanState *node);
 
 
 /* ----------------------------------------------------------------
@@ -484,6 +488,12 @@ reorderqueue_pop(IndexScanState *node)
 TupleTableSlot *
 ExecIndexScan(IndexScanState *node)
 {
+	if (node->ss.ss_skipLabelScan)
+	{
+		node->ss.ss_skipLabelScan = false;
+		return NULL;
+	}
+
 	/*
 	 * If we have runtime keys and they've not already been set up, do it now.
 	 */
@@ -531,6 +541,26 @@ ExecReScanIndexScan(IndexScanState *node)
 								 node->iss_NumRuntimeKeys);
 	}
 	node->iss_RuntimeKeysReady = true;
+
+	/* determine whether we can skip this label scan or not */
+	if (node->ss.ss_isLabel && node->ss.ss_labelSkipIdx >= 0)
+	{
+		ScanKey skey = &node->iss_ScanKeys[node->ss.ss_labelSkipIdx];
+
+		if (skey->sk_flags & SK_ISNULL)
+		{
+			node->ss.ss_skipLabelScan = true;
+		}
+		else
+		{
+			Oid oid;
+
+			oid = DatumGetObjectId(DirectFunctionCall1(graphid_oid,
+													   skey->sk_argument));
+			if (node->ss.ss_currentRelation->rd_id != oid)
+				node->ss.ss_skipLabelScan = true;
+		}
+	}
 
 	/* flush the reorder queue */
 	if (node->iss_ReorderQueue)
@@ -804,6 +834,39 @@ ExecIndexRestrPos(IndexScanState *node)
 	index_restrpos(node->iss_ScanDesc);
 }
 
+static void
+InitScanLabelSkipIdx(IndexScanState *node)
+{
+	Relation	index = node->iss_RelationDesc;
+	int			i;
+
+	AssertArg(node->ss.ss_isLabel);
+
+	node->ss.ss_labelSkipIdx = -1;
+
+	for (i = 0; i < node->iss_NumScanKeys; i++)
+	{
+		ScanKey		skey = &node->iss_ScanKeys[i];
+		Oid			opfamily;
+
+		/* TODO: use Anum_vertex_id */
+		if (skey->sk_attno != 1)
+			continue;
+
+		/* assume `id` column of graph vertex label is indexed by BTree */
+		opfamily = index->rd_opfamily[skey->sk_attno - 1];
+		if (opfamily != GRAPHID_BTREE_FAM_OID)
+			continue;
+
+		/* `=` operator is our only concern */
+		if (skey->sk_strategy != BTEqualStrategyNumber)
+			continue;
+
+		node->ss.ss_labelSkipIdx = i;
+		break;
+	}
+}
+
 /* ----------------------------------------------------------------
  *		ExecInitIndexScan
  *
@@ -875,6 +938,8 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 	indexstate->ss.ss_currentRelation = currentRelation;
 	indexstate->ss.ss_currentScanDesc = NULL;	/* no heap scan here */
 
+	InitScanLabelInfo((ScanState *) indexstate);
+
 	/*
 	 * get the scan type from the relation descriptor.
 	 */
@@ -925,6 +990,9 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 						   &indexstate->iss_NumRuntimeKeys,
 						   NULL,	/* no ArrayKeys */
 						   NULL);
+
+	if (indexstate->ss.ss_isLabel)
+		InitScanLabelSkipIdx(indexstate);
 
 	/*
 	 * any ORDER BY exprs have to be turned into scankeys in the same way
