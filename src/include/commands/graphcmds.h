@@ -20,5 +20,6 @@ extern void CreateLabelCommand(CreateLabelStmt *labelStmt,
 							   const char *queryString, ParamListInfo params);
 extern void CheckDropLabel(ObjectType removeType, Oid labid);
 extern bool isLabel(RangeVar *rel);
+extern void CheckInheritLabel(CreateStmt *stmt);
 
 #endif	/* GRAPHCMDS_H */

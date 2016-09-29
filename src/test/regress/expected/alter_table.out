@@ -2743,3 +2743,15 @@ ALTER TABLE logged1 SET UNLOGGED; -- silently do nothing
 DROP TABLE logged3;
 DROP TABLE logged2;
 DROP TABLE logged1;
+--
+-- ALTER TABLE restriction with AgensGraph
+--
+CREATE GRAPH mygraph;
+CREATE VLABEL v1;
+ALTER TABLE mygraph.v1 ADD COLUMN newid int;
+ERROR:  cannot ALTER TABLE of graph label
+DROP GRAPH mygraph cascade;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label v1

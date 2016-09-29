@@ -327,3 +327,18 @@ isLabel(RangeVar *rel)
 
 	return result;
 }
+
+void
+CheckInheritLabel(CreateStmt *stmt)
+{
+	ListCell   *entry;
+	foreach(entry, stmt->inhRelations)
+	{
+		RangeVar   *parent = (RangeVar *) lfirst(entry);
+
+		if (isLabel(parent))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+					 errmsg("invalid parent, table cannot inherit label")));
+	}
+}

@@ -160,6 +160,7 @@ extern Oid	get_range_subtype(Oid rangeOid);
 extern Oid	get_graphname_graphid(const char *graphname);
 extern Oid	get_labname_labid(const char *labname, const char *graphname);
 extern Oid	get_labid_relid(Oid labid);
+extern bool	isLabelOid(Oid relid);
 
 #define type_is_array(typid)  (get_element_type(typid) != InvalidOid)
 /* type_is_array_domain accepts both plain arrays and domains over arrays */
