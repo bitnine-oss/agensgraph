@@ -213,6 +213,7 @@ check_xact_readonly(Node *parsetree)
 		case T_SecLabelStmt:
 		case T_CreateGraphStmt:
 		case T_CreateLabelStmt:
+		case T_AlterLabelStmt:
 			PreventCommandIfReadOnly(CreateCommandTag(parsetree));
 			PreventCommandIfParallelMode(CreateCommandTag(parsetree));
 			break;
@@ -1052,6 +1053,7 @@ ProcessUtilitySlow(Node *parsetree,
 				}
 				break;
 
+			case T_AlterLabelStmt:
 			case T_AlterTableStmt:
 				{
 					AlterTableStmt *atstmt = (AlterTableStmt *) parsetree;
@@ -1060,6 +1062,9 @@ ProcessUtilitySlow(Node *parsetree,
 					ListCell   *l;
 					LOCKMODE	lockmode;
 
+					if (nodeTag(parsetree) == T_AlterLabelStmt)
+						atstmt = transformAlterLabelStmt(
+													(AlterLabelStmt *) atstmt);
 					/*
 					 * Figure out lock mode, and acquire lock.  This also does
 					 * basic permissions checks, so that we won't wait for a
@@ -1922,6 +1927,12 @@ AlterObjectTypeCommandTag(ObjectType objtype)
 		case OBJECT_GRAPH:
 			tag = "ALTER GRAPH";
 			break;
+		case OBJECT_VLABEL:
+			tag = "ALTER VLABEL";
+			break;
+		case OBJECT_ELABEL:
+			tag = "ALTER ELABEL";
+			break;
 		default:
 			tag = "???";
 			break;
@@ -2070,6 +2081,23 @@ CreateCommandTag(Node *parsetree)
 						break;
 					case LABEL_EDGE:
 						tag = "CREATE ELABEL";
+						break;
+					default:
+						tag = "???";
+						break;
+				}
+			}
+			break;
+
+		case T_AlterLabelStmt:
+			{
+				switch (((AlterLabelStmt*) parsetree)->relkind)
+				{
+					case OBJECT_VLABEL:
+						tag = "ALTER VLABEL";
+						break;
+					case OBJECT_ELABEL:
+						tag = "ALTER ELABEL";
 						break;
 					default:
 						tag = "???";
@@ -2834,6 +2862,7 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_CreateLabelStmt:
+		case T_AlterLabelStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

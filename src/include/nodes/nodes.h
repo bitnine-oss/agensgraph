@@ -410,6 +410,7 @@ typedef enum NodeTag
 	T_CreateAmStmt,
 	T_CreateGraphStmt,
 	T_CreateLabelStmt,
+	T_AlterLabelStmt,
 	T_CypherStmt,
 
 	/*

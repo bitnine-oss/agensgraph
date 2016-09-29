@@ -350,7 +350,9 @@ static event_trigger_command_tag_check_result
 check_table_rewrite_ddl_tag(const char *tag)
 {
 	if (pg_strcasecmp(tag, "ALTER TABLE") == 0 ||
-		pg_strcasecmp(tag, "ALTER TYPE") == 0)
+		pg_strcasecmp(tag, "ALTER TYPE") == 0 ||
+		pg_strcasecmp(tag, "ALTER VLABEL") == 0 ||
+		pg_strcasecmp(tag, "ALTER ELABEL") == 0)
 		return EVENT_TRIGGER_COMMAND_TAG_OK;
 
 	return EVENT_TRIGGER_COMMAND_TAG_NOT_SUPPORTED;

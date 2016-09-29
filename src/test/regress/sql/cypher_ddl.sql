@@ -20,6 +20,19 @@ SHOW graph_path;
 SELECT graphname, labname, labkind FROM pg_catalog.ag_label;
 
 --
+-- ALTER GRAPH
+--
+
+CREATE ROLE temp;
+ALTER GRAPH g RENAME TO p;
+\dG
+ALTER GRAPH p RENAME TO g;
+
+ALTER GRAPH g OWNER TO temp;
+\dG
+ALTER GRAPH g OWNER TO graph_role;
+
+--
 -- SET graph_path
 --
 
@@ -89,6 +102,53 @@ COMMENT ON VLABEL v1 IS 'multiple inheritance test';
 \dGe+
 
 --
+-- ALTER LABEL
+--
+
+-- skip alter tablespace test, tablespace location must be an absolute path
+
+ALTER VLABEL v0 SET STORAGE external;
+\d+ g.v0
+
+ALTER VLABEL v0 RENAME TO vv;
+\dGv
+ALTER VLABEL vv RENAME TO v0;
+
+SELECT relname, rolname FROM pg_class c, pg_roles r
+WHERE relname='v0' AND c.relowner = r.oid;
+ALTER VLABEL v0 owner TO temp;
+
+SELECT relname, rolname FROM pg_class c, pg_roles r
+WHERE relname='v0' AND c.relowner = r.oid;
+ALTER VLABEL v0 owner TO graph_role;
+DROP ROLE temp;
+
+SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
+ALTER VLABEL v0 CLUSTER ON v0_pkey;
+SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
+ALTER VLABEL v0 SET WITHOUT CLUSTER;
+SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
+
+SELECT relpersistence FROM pg_class WHERE relname = 'v0';
+ALTER VLABEL v0 SET UNLOGGED;
+SELECT relpersistence FROM pg_class WHERE relname = 'v0';
+ALTER VLABEL v0 SET LOGGED;
+SELECT relpersistence FROM pg_class WHERE relname = 'v0';
+
+\d g.v1
+ALTER VLABEL v1 NO INHERIT v00;
+\d g.v1
+ALTER VLABEL v1 INHERIT v00;
+\d g.v1
+ALTER VLABEL v1 INHERIT ag_vertex;		--should fail
+ALTER VLABEL v1 NO INHERIT ag_vertex;	--should fail
+
+SELECT relreplident FROM pg_class WHERE relname = 'v0';
+ALTER VLABEL v0 REPLICA IDENTITY full;
+SELECT relreplident FROM pg_class WHERE relname = 'v0';
+ALTER VLABEL v0 REPLICA IDENTITY default;
+
+--
 -- DROP LABEL
 --
 
@@ -113,7 +173,7 @@ DROP ELABEL ag_edge CASCADE;
 -- drop all
 
 DROP VLABEL v01 CASCADE;
-SELECT labname, labkind FROM pg_catalog.ag_label;
+SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY 2, 1;
 DROP VLABEL v0 CASCADE;
 DROP ELABEL e0 CASCADE;
 DROP ELABEL e1;
