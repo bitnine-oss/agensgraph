@@ -548,7 +548,9 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <list>	json_key_value_list
 
 /* Agens Graph */
-%type <node>	CreateGraphStmt CreateLabelStmt
+%type <node>	CreateGraphStmt CreateLabelStmt AlterLabelStmt
+%type <list>	alter_label_cmds
+%type <node>	alter_label_cmd
 
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
@@ -798,6 +800,7 @@ stmt :
 			| AlterForeignTableStmt
 			| AlterFunctionStmt
 			| AlterGroupStmt
+			| AlterLabelStmt
 			| AlterObjectDependsStmt
 			| AlterObjectSchemaStmt
 			| AlterOwnerStmt
@@ -8065,6 +8068,26 @@ RenameStmt: ALTER AGGREGATE func_name aggr_args RENAME TO name
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
+			| ALTER VLABEL name RENAME TO name
+				{
+					RenameStmt *n = makeNode(RenameStmt);
+					n->renameType = OBJECT_VLABEL;
+					n->relation = makeRangeVar(NULL, $3, -1);
+					n->subname = NULL;
+					n->newname = $6;
+					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER ELABEL name RENAME TO name
+				{
+					RenameStmt *n = makeNode(RenameStmt);
+					n->renameType = OBJECT_ELABEL;
+					n->relation = makeRangeVar(NULL, $3, -1);
+					n->subname = NULL;
+					n->newname = $6;
+					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
 		;
 
 opt_column: COLUMN									{ $$ = COLUMN; }
@@ -14410,6 +14433,131 @@ CreateLabelStmt:
 				}
 		;
 
+AlterLabelStmt:
+			ALTER VLABEL ColId alter_label_cmds
+				{
+					AlterLabelStmt *n = makeNode(AlterLabelStmt);
+					n->relation = makeRangeVar(NULL, $3, -1);
+					n->cmds = $4;
+					n->relkind = OBJECT_VLABEL;
+					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER VLABEL IF_P EXISTS ColId alter_label_cmds
+				{
+					AlterLabelStmt *n = makeNode(AlterLabelStmt);
+					n->relation = makeRangeVar(NULL, $5, -1);
+					n->cmds = $6;
+					n->relkind = OBJECT_VLABEL;
+					n->missing_ok = true;
+					$$ = (Node *)n;
+				}
+			| ALTER ELABEL ColId alter_label_cmds
+				{
+					AlterLabelStmt *n = makeNode(AlterLabelStmt);
+					n->relation = makeRangeVar(NULL, $3, -1);
+					n->cmds = $4;
+					n->relkind = OBJECT_ELABEL;
+					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER ELABEL IF_P EXISTS ColId alter_label_cmds
+				{
+					AlterLabelStmt *n = makeNode(AlterLabelStmt);
+					n->relation = makeRangeVar(NULL, $5, -1);
+					n->cmds = $6;
+					n->relkind = OBJECT_ELABEL;
+					n->missing_ok = true;
+					$$ = (Node *)n;
+				}
+		;
+
+alter_label_cmds:
+			alter_label_cmd							{ $$ = list_make1($1); }
+			| alter_label_cmds ',' alter_label_cmd	{ $$ = lappend($1, $3); }
+		;
+
+alter_label_cmd:
+			/* ALTER VLABEL <name> SET STORAGE <storagemode> */
+			SET STORAGE ColId
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetStorage;
+					n->name = NULL;
+					n->def = (Node *) makeString($3);
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> OWNER TO RoleSpec */
+			| OWNER TO RoleSpec
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_ChangeOwner;
+					n->newowner = $3;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> SET TABLESPACE <tablespacename> */
+			| SET TABLESPACE name
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetTableSpace;
+					n->name = $3;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> CLUSTER ON <indexname> */
+			| CLUSTER ON name
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_ClusterOn;
+					n->name = $3;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> SET WITHOUT CLUSTER */
+			| SET WITHOUT CLUSTER
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_DropCluster;
+					n->name = NULL;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> SET LOGGED  */
+			| SET LOGGED
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetLogged;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> SET UNLOGGED  */
+			| SET UNLOGGED
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetUnLogged;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> INHERIT <parent> */
+			| INHERIT qualified_name
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_AddInherit;
+					n->def = (Node *) $2;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> NO INHERIT <parent> */
+			| NO INHERIT qualified_name
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_DropInherit;
+					n->def = (Node *) $3;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> REPLICA IDENTITY  */
+			| REPLICA IDENTITY_P replica_identity
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_ReplicaIdentity;
+					n->def = $3;
+					$$ = (Node *)n;
+				}
+		;
 
 /*
  * Cypher

@@ -4207,6 +4207,19 @@ _copyCreateLabelStmt(const CreateLabelStmt *from)
 	return newnode;
 }
 
+static AlterLabelStmt *
+_copyAlterLabelStmt(const AlterLabelStmt *from)
+{
+	AlterLabelStmt *newnode = makeNode(AlterLabelStmt);
+
+	COPY_NODE_FIELD(relation);
+	COPY_NODE_FIELD(cmds);
+	COPY_SCALAR_FIELD(relkind);
+	COPY_SCALAR_FIELD(missing_ok);
+
+	return newnode;
+}
+
 static JsonObject *
 _copyJsonObject(const JsonObject *from)
 {
@@ -5204,6 +5217,9 @@ copyObject(const void *from)
 			break;
 		case T_CreateLabelStmt:
 			retval = _copyCreateLabelStmt(from);
+			break;
+		case T_AlterLabelStmt:
+			retval = _copyAlterLabelStmt(from);
 			break;
 		case T_CypherStmt:
 			retval = _copyCypherStmt(from);
