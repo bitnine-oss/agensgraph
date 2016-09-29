@@ -2484,7 +2484,9 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	AlterTableCmd *newcmd;
 	RangeTblEntry *rte;
 
-	if (OidIsValid(get_relid_labid(relid)))
+	if (OidIsValid(get_relid_labid(relid))
+		&& stmt->relkind != OBJECT_VLABEL
+		&& stmt->relkind != OBJECT_ELABEL)
 		elog(ERROR, "cannot ALTER TABLE on graph label");
 
 	/*
@@ -3593,7 +3595,7 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	col->constraints = lappend(col->constraints, defid);
 }
 
-CommentStmt *
+static CommentStmt *
 makeComment(ObjectType type, RangeVar *name, char *desc)
 {
 	CommentStmt *c;
@@ -3606,4 +3608,58 @@ makeComment(ObjectType type, RangeVar *name, char *desc)
 	c->comment = pstrdup(desc);
 
 	return c;
+}
+
+AlterTableStmt *
+transformAlterLabelStmt(AlterTableStmt *stmt)
+{
+	AlterTableStmt	*result;
+	List			*newcmds = NIL;
+	ListCell		*lcmd;
+
+	result = makeNode(AlterTableStmt);
+	result->relation = makeRangeVar(get_graph_path(),
+									stmt->relation->relname, 0);
+	result->relkind = stmt->relkind;
+	result->missing_ok = stmt->missing_ok;
+
+	foreach(lcmd, stmt->cmds)
+	{
+		AlterTableCmd *cmd = (AlterTableCmd *) lfirst(lcmd);
+
+		switch (cmd->subtype)
+		{
+			case AT_SetStorage:
+				{
+					/* storage option is meaningless for graph id
+					 * so forced to graph property */
+					cmd->name = AG_ELEM_PROP_MAP;
+
+					newcmds = lappend(newcmds, cmd);
+					break;
+				}
+			case AT_AddInherit:
+			case AT_DropInherit:
+				{
+					RangeVar *par = (RangeVar *) cmd->def;
+
+					if (strcmp(par->relname, AG_VERTEX) == 0
+						|| strcmp(par->relname, AG_EDGE) == 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+								 errmsg("cannot ALTER inheritance with base label")));
+
+					par->schemaname = get_graph_path();
+
+					newcmds = lappend(newcmds, cmd);
+					break;
+				}
+			default:
+				newcmds = lappend(newcmds, cmd);
+				break;
+		}
+	}
+	result->cmds = newcmds;
+
+	return result;
 }

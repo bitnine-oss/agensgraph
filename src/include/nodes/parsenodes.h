@@ -3164,6 +3164,8 @@ typedef struct CreateLabelStmt
 	bool		if_not_exists;	/* just do nothing if it already exists? */
 } CreateLabelStmt;
 
+/* ALTER VLABEL/ELABEL ... */
+typedef struct AlterTableStmt AlterLabelStmt;
 
 /****************************************************************************
  * Cypher related node structures

@@ -385,8 +385,10 @@ ExecRenameStmt(RenameStmt *stmt)
 			}
 
 		case OBJECT_GRAPH:
-			RenameSchema(stmt->subname, stmt->newname);
 			return RenameGraph(stmt->subname, stmt->newname);
+		case OBJECT_VLABEL:
+		case OBJECT_ELABEL:
+			return RenameLabel(stmt);
 
 		default:
 			elog(ERROR, "unrecognized rename stmt type: %d",

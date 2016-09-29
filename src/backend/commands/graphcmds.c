@@ -28,6 +28,7 @@
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
 #include "commands/graphcmds.h"
+#include "commands/schemacmds.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
 #include "nodes/params.h"
@@ -42,6 +43,7 @@
 static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
 static void AgInheritanceDependancy(Oid labid, List *supers);
+static void CheckAlterLabel(ObjectType alterType, Oid labid);
 
 /* See ProcessUtilitySlow() case T_CreateSchemaStmt */
 void
@@ -112,9 +114,15 @@ RenameGraph(const char *oldname, const char *newname)
 
 	tup = SearchSysCacheCopy1(GRAPHNAME, CStringGetDatum(oldname));
 	if (!HeapTupleIsValid(tup))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_SCHEMA),
-				 errmsg("graph \"%s\" does not exist", oldname)));
+	{
+		ereport(NOTICE,
+				(errmsg("graph \"%s\" does not exist, skipping",
+						oldname)));
+		return InvalidObjectAddress;
+	}
+
+	/* renamimg schema and graph should be processed in one lock */
+	RenameSchema(oldname, newname);
 
 	graphOid = HeapTupleGetOid(tup);
 
@@ -292,6 +300,88 @@ AgInheritanceDependancy(Oid labid, List *supers)
 
 		seq++;
 	}
+}
+
+ObjectAddress
+RenameLabel(RenameStmt *stmt)
+{
+	Oid			labid;
+	HeapTuple	tup;
+	Relation	rel;
+	ObjectAddress address;
+
+	/* schemaname is NULL always */
+	stmt->relation->schemaname = get_graph_path();
+
+	rel = heap_open(LabelRelationId, RowExclusiveLock);
+
+	tup = SearchSysCacheCopy2(LABELNAME,
+							  CStringGetDatum(stmt->relation->relname),
+							  CStringGetDatum(stmt->relation->schemaname));
+
+	if (!HeapTupleIsValid(tup))
+	{
+		ereport(NOTICE,
+				(errmsg("label \"%s\" does not exist, skipping",
+						stmt->relation->relname)));
+		return InvalidObjectAddress;
+	}
+
+	labid = HeapTupleGetOid(tup);
+
+	CheckAlterLabel(stmt->renameType, labid);
+
+	/* renamimg label and table should be processed in one lock */
+	RenameRelation(stmt);
+
+	/* Skip privilege and error check. It was already done in RenameRelation */
+
+	/* rename */
+	namestrcpy(&(((Form_ag_label) GETSTRUCT(tup))->labname), stmt->newname);
+	simple_heap_update(rel, &tup->t_self, tup);
+	CatalogUpdateIndexes(rel, tup);
+
+	InvokeObjectPostAlterHook(LabelRelationId, HeapTupleGetOid(tup), 0);
+
+	ObjectAddressSet(address, LabelRelationId, labid);
+
+	heap_close(rel, NoLock);
+	heap_freetuple(tup);
+
+	return address;
+}
+
+static void
+CheckAlterLabel(ObjectType removeType, Oid labid)
+{
+	HeapTuple	tuple;
+	Form_ag_label labtup;
+
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for label (OID=%u)", labid);
+
+	labtup = (Form_ag_label) GETSTRUCT(tuple);
+
+	if (removeType == OBJECT_VLABEL && labtup->labkind != LABEL_KIND_VERTEX)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("ALTER VLABEL cannot alter edge label")));
+	if (removeType == OBJECT_ELABEL && labtup->labkind != LABEL_KIND_EDGE)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("ALTER ELABEL cannot alter vertex label")));
+
+	if (namestrcmp(&(labtup->labname), AG_VERTEX) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("cannot alter base vertex label")));
+	if (namestrcmp(&(labtup->labname), AG_EDGE) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("cannot alter base edge label")));
+
+	ReleaseSysCache(tuple);
 }
 
 /*

@@ -31,6 +31,28 @@ SELECT graphname, labname, labkind FROM pg_catalog.ag_label;
 (2 rows)
 
 --
+-- ALTER GRAPH
+--
+CREATE ROLE temp;
+ALTER GRAPH g RENAME TO p;
+\dG
+  List of graphs
+ Name |   Owner    
+------+------------
+ p    | graph_role
+(1 row)
+
+ALTER GRAPH p RENAME TO g;
+ALTER GRAPH g OWNER TO temp;
+\dG
+List of graphs
+ Name | Owner 
+------+-------
+ g    | temp
+(1 row)
+
+ALTER GRAPH g OWNER TO graph_role;
+--
 -- SET graph_path
 --
 SET graph_path = n;
@@ -174,6 +196,149 @@ COMMENT ON VLABEL v1 IS 'multiple inheritance test';
 (4 rows)
 
 --
+-- ALTER LABEL
+--
+-- skip alter tablespace test, tablespace location must be an absolute path
+ALTER VLABEL v0 SET STORAGE external;
+\d+ g.v0
+                                                                    Table "g.v0"
+   Column   |  Type   |                                      Modifiers                                      | Storage  | Stats target | Description 
+------------+---------+-------------------------------------------------------------------------------------+----------+--------------+-------------
+ id         | graphid | not null default graphid(('g.v0'::regclass)::oid, nextval('g.v0_id_seq'::regclass)) | plain    |              | 
+ properties | jsonb   | not null default jsonb_build_object()                                               | external |              | 
+Indexes:
+    "v0_pkey" PRIMARY KEY, btree (id)
+Inherits: g.ag_vertex
+Child tables: g.v00,
+              g.v01
+
+ALTER VLABEL v0 RENAME TO vv;
+\dGv
+             List of labels
+ Graph |   Name    |  Type  |   Owner    
+-------+-----------+--------+------------
+ g     | ag_vertex | vertex | graph_role
+ g     | dup       | vertex | graph_role
+ g     | stor      | vertex | graph_role
+ g     | tblspc    | vertex | graph_role
+ g     | unlog     | vertex | graph_role
+ g     | v00       | vertex | graph_role
+ g     | v01       | vertex | graph_role
+ g     | v1        | vertex | graph_role
+ g     | vv        | vertex | graph_role
+(9 rows)
+
+ALTER VLABEL vv RENAME TO v0;
+SELECT relname, rolname FROM pg_class c, pg_roles r
+WHERE relname='v0' AND c.relowner = r.oid;
+ relname |  rolname   
+---------+------------
+ v0      | graph_role
+(1 row)
+
+ALTER VLABEL v0 owner TO temp;
+SELECT relname, rolname FROM pg_class c, pg_roles r
+WHERE relname='v0' AND c.relowner = r.oid;
+ relname | rolname 
+---------+---------
+ v0      | temp
+(1 row)
+
+ALTER VLABEL v0 owner TO graph_role;
+DROP ROLE temp;
+SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
+ indisclustered 
+----------------
+ f
+(1 row)
+
+ALTER VLABEL v0 CLUSTER ON v0_pkey;
+SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
+ indisclustered 
+----------------
+ t
+(1 row)
+
+ALTER VLABEL v0 SET WITHOUT CLUSTER;
+SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
+ indisclustered 
+----------------
+ f
+(1 row)
+
+SELECT relpersistence FROM pg_class WHERE relname = 'v0';
+ relpersistence 
+----------------
+ p
+(1 row)
+
+ALTER VLABEL v0 SET UNLOGGED;
+SELECT relpersistence FROM pg_class WHERE relname = 'v0';
+ relpersistence 
+----------------
+ u
+(1 row)
+
+ALTER VLABEL v0 SET LOGGED;
+SELECT relpersistence FROM pg_class WHERE relname = 'v0';
+ relpersistence 
+----------------
+ p
+(1 row)
+
+\d g.v1
+                                                Table "g.v1"
+   Column   |  Type   |                                      Modifiers                                      
+------------+---------+-------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(('g.v1'::regclass)::oid, nextval('g.v1_id_seq'::regclass))
+ properties | jsonb   | not null default jsonb_build_object()
+Indexes:
+    "v1_pkey" PRIMARY KEY, btree (id)
+Inherits: g.v00,
+          g.v01
+
+ALTER VLABEL v1 NO INHERIT v00;
+\d g.v1
+                                                Table "g.v1"
+   Column   |  Type   |                                      Modifiers                                      
+------------+---------+-------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(('g.v1'::regclass)::oid, nextval('g.v1_id_seq'::regclass))
+ properties | jsonb   | not null default jsonb_build_object()
+Indexes:
+    "v1_pkey" PRIMARY KEY, btree (id)
+Inherits: g.v01
+
+ALTER VLABEL v1 INHERIT v00;
+\d g.v1
+                                                Table "g.v1"
+   Column   |  Type   |                                      Modifiers                                      
+------------+---------+-------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(('g.v1'::regclass)::oid, nextval('g.v1_id_seq'::regclass))
+ properties | jsonb   | not null default jsonb_build_object()
+Indexes:
+    "v1_pkey" PRIMARY KEY, btree (id)
+Inherits: g.v01,
+          g.v00
+
+ALTER VLABEL v1 INHERIT ag_vertex;		--should fail
+ERROR:  cannot ALTER inheritance with base label
+ALTER VLABEL v1 NO INHERIT ag_vertex;	--should fail
+ERROR:  cannot ALTER inheritance with base label
+SELECT relreplident FROM pg_class WHERE relname = 'v0';
+ relreplident 
+--------------
+ d
+(1 row)
+
+ALTER VLABEL v0 REPLICA IDENTITY full;
+SELECT relreplident FROM pg_class WHERE relname = 'v0';
+ relreplident 
+--------------
+ f
+(1 row)
+
+ALTER VLABEL v0 REPLICA IDENTITY default;
+--
 -- DROP LABEL
 --
 -- wrong cases
@@ -212,20 +377,20 @@ ERROR:  cannot drop base edge label
 -- drop all
 DROP VLABEL v01 CASCADE;
 NOTICE:  drop cascades to label v1
-SELECT labname, labkind FROM pg_catalog.ag_label;
+SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY 2, 1;
   labname  | labkind 
 -----------+---------
- ag_vertex | v
  ag_edge   | e
- v0        | v
- v00       | v
  e0        | e
  e01       | e
  e1        | e
- unlog     | v
+ ag_vertex | v
  dup       | v
  stor      | v
  tblspc    | v
+ unlog     | v
+ v0        | v
+ v00       | v
 (11 rows)
 
 DROP VLABEL v0 CASCADE;
