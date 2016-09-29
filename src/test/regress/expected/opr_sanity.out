@@ -958,10 +958,9 @@ WHERE amopopr = p1.oid
   AND amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree')
   AND amopstrategy = 3
   AND NOT p1.oprcanmerge;
- oid  | oprname | amopfamily 
-------+---------+------------
- 7087 | =       |       7093
-(1 row)
+ oid | oprname | amopfamily 
+-----+---------+------------
+(0 rows)
 
 -- Hashable operators should appear as members of hash index opfamilies.
 SELECT p1.oid, p1.oprname
@@ -980,10 +979,9 @@ FROM pg_operator AS p1, pg_amop p
 WHERE amopopr = p1.oid
   AND amopmethod = (SELECT oid FROM pg_am WHERE amname = 'hash')
   AND NOT p1.oprcanhash;
- oid  | oprname | amopfamily 
-------+---------+------------
- 7087 | =       |       7096
-(1 row)
+ oid | oprname | amopfamily 
+-----+---------+------------
+(0 rows)
 
 -- Check that each operator defined in pg_operator matches its oprcode entry
 -- in pg_proc.  Easiest to do this separately for each oprkind.
