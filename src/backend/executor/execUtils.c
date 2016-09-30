@@ -125,6 +125,7 @@ CreateExecutorState(void)
 
 	estate->es_processed = 0;
 	estate->es_lastoid = InvalidOid;
+	estate->es_graph_processed = NULL;
 
 	estate->es_top_eflags = 0;
 	estate->es_instrument = 0;
