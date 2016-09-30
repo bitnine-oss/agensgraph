@@ -2655,7 +2655,7 @@ transformJsonIndirection(ParseState *pstate, Node *json, List *indirection)
 	patharr->multidims = false;
 	patharr->location = -1;
 
-	result = (Node *) make_op(pstate, list_make1(makeString("#>")), json,
+	result = (Node *) make_op(pstate, list_make1(makeString("#>>")), json,
 							  (Node *) patharr, -1);
 
 	return result;

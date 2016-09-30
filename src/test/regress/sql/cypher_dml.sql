@@ -106,7 +106,7 @@ MATCH p=()-[:lib]->(a) RETURN (a).name AS a;
 MATCH p=()-[{'lang': 'en'}]->(a) RETURN (a).name AS a;
 
 MATCH (a {'year': (SELECT year FROM history WHERE event = 'Graph')})
-WHERE (a).name = '"agens-graph"'
+WHERE (a).name = 'agens-graph'
 RETURN (a).name AS a;
 
 MATCH ();
