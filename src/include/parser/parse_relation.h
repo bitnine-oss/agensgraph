@@ -118,4 +118,7 @@ extern Oid	attnumTypeId(Relation rd, int attid);
 extern Oid	attnumCollationId(Relation rd, int attid);
 extern bool isQueryUsingTempRelation(Query *query);
 
+extern void check_lateral_ref_ok(ParseState *pstate, ParseNamespaceItem *nsitem,
+								 int location);
+
 #endif   /* PARSE_RELATION_H */

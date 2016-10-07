@@ -35,6 +35,7 @@
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
 #include "parser/parse_agg.h"
+#include "parser/parsetree.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/xml.h"
@@ -134,6 +135,21 @@ static void emit_precedence_warnings(ParseState *pstate,
 						 int opgroup, const char *opname,
 						 Node *lchild, Node *rchild,
 						 int location);
+static List *append_json_indirection(ParseState *pstate, List *pathelems,
+									 List *indirection, int location);
+
+static Node *resolveAsElem(ParseState *pstate, ColumnRef *cref);
+static Node *colRefToVar(ParseState *orig_pstate, ParseState *pstate,
+						 char *nspname, char *relname, char *colname,
+						 int location);
+static Node *colNameToElem(ParseState *orig_pstate, ParseState *pstate,
+						   ColumnRef *cref);
+static Node *colRefToElem(ParseState *orig_pstate, ParseState *pstate,
+						  ColumnRef *cref);
+static Node *scanRTEForElem(ParseState *pstate, RangeTblEntry *rte,
+							char *colname, int location);
+static Node *appendElemIndirection(ParseState *pstate, Node *basenode,
+								   List *indirection);
 
 
 /*
@@ -193,23 +209,10 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 		case T_A_Indirection:
 			{
 				A_Indirection *ind = (A_Indirection *) expr;
-				Oid restype;
 
 				result = transformExprRecurse(pstate, ind->arg);
-				restype = exprType(result);
-
-				if (restype == VERTEXOID || restype == EDGEOID ||
-					restype == JSONOID || restype == JSONBOID)
-				{
-					/* vertex and edge will be type-casted to jsonb */
-					result = transformJsonIndirection(pstate, result,
-													  ind->indirection);
-				}
-				else
-				{
-					result = transformIndirection(pstate, result,
-												  ind->indirection);
-				}
+				result = transformIndirection(pstate, result,
+											  ind->indirection);
 				break;
 			}
 
@@ -441,9 +444,21 @@ static Node *
 transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 {
 	Node	   *result = basenode;
+	Oid			restype;
 	List	   *subscripts = NIL;
 	int			location = exprLocation(basenode);
 	ListCell   *i;
+
+	if (basenode == pstate->p_last_colref_elem)
+		return appendElemIndirection(pstate, basenode, indirection);
+
+	restype = exprType(result);
+	if (restype == VERTEXOID || restype == EDGEOID ||
+		restype == JSONOID || restype == JSONBOID)
+	{
+		/* vertex and edge will be type-casted to jsonb */
+		return transformJsonIndirection(pstate, basenode, indirection);
+	}
 
 	/*
 	 * We have to split any field-selection operations apart from
@@ -535,6 +550,10 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 		if (node != NULL)
 			return node;
 	}
+
+	node = resolveAsElem(pstate, cref);
+	if (node != NULL)
+		return node;
 
 	/*----------
 	 * The allowed syntaxes are:
@@ -2591,62 +2610,12 @@ transformCollateClause(ParseState *pstate, CollateClause *c)
 static Node *
 transformJsonIndirection(ParseState *pstate, Node *json, List *indirection)
 {
-	List	   *pathelems = NIL;
+	List	   *pathelems;
 	ArrayExpr  *patharr;
-	ListCell   *li;
 	Node	   *result;
 
-	foreach(li, indirection)
-	{
-		Node	   *ind = lfirst(li);
-		Node	   *pathelem;
-
-		if (IsA(ind, String))
-		{
-			pathelem = (Node *) makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID,
-										  -1, CStringGetTextDatum(strVal(ind)),
-										  false, false);
-		}
-		else if (IsA(ind, A_Indices))
-		{
-			A_Indices  *indices = (A_Indices *) ind;
-			Node	   *idx;
-			Oid			idxtype;
-
-			if (indices->lidx != NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("slicing on json(b) is not supported"),
-						 parser_errposition(pstate,
-											exprLocation(indices->lidx))));
-
-			idx = transformExpr(pstate, indices->uidx, pstate->p_expr_kind);
-			idxtype = exprType(idx);
-
-			idx = coerce_to_target_type(pstate, idx, idxtype, TEXTOID, -1,
-										COERCION_ASSIGNMENT,
-										COERCE_IMPLICIT_CAST, -1);
-			if (idx == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("path elements for json(b) must be type text"),
-						 parser_errposition(pstate,
-											exprLocation(indices->uidx))));
-
-			pathelem = idx;
-		}
-		else
-		{
-			Assert(IsA(ind, A_Star));
-
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("\"*\" cannot be applied to vertex or edge"),
-					 parser_errposition(pstate, exprLocation(json))));
-		}
-
-		pathelems = lappend(pathelems, pathelem);
-	}
+	pathelems = append_json_indirection(pstate, NIL, indirection,
+										exprLocation(json));
 
 	patharr = makeNode(ArrayExpr);
 	patharr->array_typeid = TEXTARRAYOID;
@@ -3350,4 +3319,346 @@ ParseExprKindName(ParseExprKind exprKind)
 			 */
 	}
 	return "unrecognized expression kind";
+}
+
+static List *
+append_json_indirection(ParseState *pstate, List *pathelems, List *indirection,
+						int location)
+{
+	ListCell *li;
+
+	foreach(li, indirection)
+	{
+		Node	   *ind = lfirst(li);
+		Node	   *pathelem;
+
+		if (IsA(ind, String))
+		{
+			pathelem = (Node *) makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID,
+										  -1, CStringGetTextDatum(strVal(ind)),
+										  false, false);
+		}
+		else if (IsA(ind, A_Indices))
+		{
+			A_Indices  *indices = (A_Indices *) ind;
+			Node	   *idx;
+			Oid			idxtype;
+
+			if (indices->lidx != NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("slicing on json(b) is not supported"),
+						 parser_errposition(pstate,
+											exprLocation(indices->lidx))));
+
+			idx = transformExpr(pstate, indices->uidx, pstate->p_expr_kind);
+			idxtype = exprType(idx);
+
+			idx = coerce_to_target_type(pstate, idx, idxtype, TEXTOID, -1,
+										COERCION_ASSIGNMENT,
+										COERCE_IMPLICIT_CAST, -1);
+			if (idx == NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("path elements for json(b) must be type text"),
+						 parser_errposition(pstate,
+											exprLocation(indices->uidx))));
+
+			pathelem = idx;
+		}
+		else
+		{
+			Assert(IsA(ind, A_Star));
+
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("\"*\" cannot be applied to vertex or edge"),
+					 parser_errposition(pstate, location)));
+		}
+
+		pathelems = lappend(pathelems, pathelem);
+	}
+
+	return pathelems;
+}
+
+static Node *
+resolveAsElem(ParseState *pstate, ColumnRef *cref)
+{
+	int			nfields = list_length(cref->fields);
+	char	   *nspname = NULL;
+	char	   *relname = NULL;
+	char	   *colname = NULL;
+	bool		sql = true;
+	ParseState *pstate_up;
+	Node	   *res = NULL;
+	int			indidx;
+
+	if (nfields < 2)
+		return NULL;
+
+	if (IsA(llast(cref->fields), A_Star))
+		return NULL;
+
+	switch (nfields)
+	{
+		case 2:
+			relname = strVal(linitial(cref->fields));
+			colname = strVal(lsecond(cref->fields));
+			break;
+		case 3:
+			nspname = strVal(linitial(cref->fields));
+			relname = strVal(lsecond(cref->fields));
+			colname = strVal(lthird(cref->fields));
+			break;
+		case 4:
+			{
+				char *catname = strVal(linitial(cref->fields));
+
+				if (strcmp(catname, get_database_name(MyDatabaseId)) == 0)
+				{
+					nspname = strVal(lsecond(cref->fields));
+					relname = strVal(lthird(cref->fields));
+					colname = strVal(lfourth(cref->fields));
+				}
+				else
+				{
+					sql = false;
+				}
+			}
+			break;
+		default:
+			sql = false;
+	}
+
+	pstate_up = pstate;
+	while (pstate_up != NULL)
+	{
+		Node *tmp;
+
+		if (sql)
+		{
+			res = colRefToVar(pstate, pstate_up,
+							  nspname, relname, colname, cref->location);
+			if (res != NULL)
+				return res;
+		}
+
+		res = colNameToElem(pstate, pstate_up, cref);
+		indidx = 1;
+
+		tmp = colRefToElem(pstate, pstate_up, cref);
+		if (tmp != NULL)
+		{
+			if (res != NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_AMBIGUOUS_COLUMN),
+						 errmsg("variable reference \"%s\".\"%s\" is ambiguous",
+								strVal(linitial(cref->fields)),
+								strVal(lsecond(cref->fields))),
+						 parser_errposition(pstate, cref->location)));
+
+			res = tmp;
+			indidx = 2;
+		}
+
+		if (res != NULL)
+			break;
+
+		pstate_up = pstate_up->parentParseState;
+	}
+
+	if (res != NULL)
+	{
+		List	   *pathelems = NIL;
+		ListCell   *lf;
+		ArrayExpr  *patharr;
+
+		for_each_cell(lf, list_nth_cell(cref->fields, indidx))
+		{
+			char	   *ind = strVal(lfirst(lf));
+			Node	   *pathelem;
+
+			pathelem = (Node *) makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID,
+										  -1, CStringGetTextDatum(ind),
+										  false, false);
+
+			pathelems = lappend(pathelems, pathelem);
+		}
+
+		patharr = makeNode(ArrayExpr);
+		patharr->array_typeid = TEXTARRAYOID;
+		patharr->element_typeid = TEXTOID;
+		patharr->elements = pathelems;
+		patharr->multidims = false;
+		patharr->location = -1;
+
+		res = (Node *) make_op(pstate, list_make1(makeString("#>>")), res,
+							   (Node *) patharr, cref->location);
+	}
+
+	pstate->p_last_colref_elem = res;
+	return res;
+}
+
+static Node *
+colRefToVar(ParseState *orig_pstate, ParseState *pstate, char *nspname,
+			char *relname, char *colname, int location)
+{
+	RangeTblEntry *rte;
+	Node *res;
+
+	rte = refnameRangeTblEntry(pstate, nspname, relname, location, NULL);
+	if (rte == NULL)
+		return NULL;
+
+	res = scanRTEForColumn(orig_pstate, rte, colname, location, 0, NULL);
+	if (res == NULL)
+	{
+		res = transformWholeRowRef(orig_pstate, rte, location);
+		res = ParseFuncOrColumn(orig_pstate, list_make1(makeString(colname)),
+								list_make1(res), NULL, location);
+	}
+
+	return res;
+}
+
+static Node *
+colNameToElem(ParseState *orig_pstate, ParseState *pstate, ColumnRef *cref)
+{
+	char	   *colname = strVal(linitial(cref->fields));
+	Node	   *res = NULL;
+	ListCell   *lni;
+
+	foreach(lni, pstate->p_namespace)
+	{
+		ParseNamespaceItem *nsitem = lfirst(lni);
+		RangeTblEntry *rte = nsitem->p_rte;
+		Node *var;
+
+		if (!nsitem->p_cols_visible)
+			continue;
+		if (nsitem->p_lateral_only && !pstate->p_lateral_active)
+			continue;
+
+		var = scanRTEForElem(orig_pstate, rte, colname, cref->location);
+		if (var == NULL)
+			continue;
+
+		if (res != NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_AMBIGUOUS_COLUMN),
+					 errmsg("variable reference \"%s\" is ambiguous", colname),
+					 parser_errposition(pstate, cref->location)));
+
+		check_lateral_ref_ok(pstate, nsitem, cref->location);
+		res = var;
+	}
+
+	return res;
+}
+
+static Node *
+colRefToElem(ParseState *orig_pstate, ParseState *pstate, ColumnRef *cref)
+{
+	char	   *relname = strVal(linitial(cref->fields));
+	char	   *colname = strVal(lsecond(cref->fields));
+	Node	   *res = NULL;
+	ListCell   *lni;
+
+	foreach(lni, pstate->p_namespace)
+	{
+		ParseNamespaceItem *nsitem = lfirst(lni);
+		RangeTblEntry *rte = nsitem->p_rte;
+		Node *var;
+
+		if (!nsitem->p_rel_visible)
+			continue;
+		if (nsitem->p_lateral_only && !pstate->p_lateral_active)
+			continue;
+
+		if (strcmp(rte->eref->aliasname, relname) != 0)
+			continue;
+
+		var = scanRTEForElem(orig_pstate, rte, colname, cref->location);
+		if (var == NULL)
+			continue;
+
+		if (res != NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_AMBIGUOUS_COLUMN),
+					 errmsg("variable reference \"%s\".\"%s\" is ambiguous",
+							relname, colname),
+					 parser_errposition(pstate, cref->location)));
+
+		check_lateral_ref_ok(pstate, nsitem, cref->location);
+		res = var;
+	}
+
+	return res;
+}
+
+static Node *
+scanRTEForElem(ParseState *pstate, RangeTblEntry *rte, char *colname,
+			   int location)
+{
+	Var		   *res = NULL;
+	ListCell   *lcn;
+	int			attrno;
+
+	attrno = 0;
+	foreach(lcn, rte->eref->colnames)
+	{
+		const char *tmp = strVal(lfirst(lcn));
+		Oid			vartypid;
+		int			vartypmod;
+		Oid			varcollid;
+		int			sublevels_up;
+		int			varno;
+
+		attrno++;
+
+		if (strcmp(tmp, colname) != 0)
+			continue;
+
+		get_rte_attribute_type(rte, attrno, &vartypid, &vartypmod, &varcollid);
+		if (vartypid != VERTEXOID && vartypid != EDGEOID)
+			continue;
+
+		if (res != NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_AMBIGUOUS_COLUMN),
+					 errmsg("variable reference \"%s\" is ambiguous", colname),
+					 parser_errposition(pstate, location)));
+
+		varno = RTERangeTablePosn(pstate, rte, &sublevels_up);
+		res = makeVar(varno, attrno, vartypid, vartypmod, varcollid,
+					  sublevels_up);
+		res->location = location;
+
+		markVarForSelectPriv(pstate, res, rte);
+	}
+
+	return (Node *) res;
+}
+
+static Node *
+appendElemIndirection(ParseState *pstate, Node *basenode, List *indirection)
+{
+	OpExpr	   *opexpr;
+	ArrayExpr  *arrexpr;
+
+	Assert(pstate->p_last_colref_elem == basenode);
+
+	opexpr = (OpExpr *) basenode;
+
+	arrexpr = list_nth(opexpr->args, 1);
+	Assert(IsA(arrexpr, ArrayExpr));
+
+	arrexpr->elements = append_json_indirection(pstate, arrexpr->elements,
+												indirection,
+												exprLocation(basenode));
+
+	pstate->p_last_colref_elem = NULL;
+	return basenode;
 }

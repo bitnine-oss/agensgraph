@@ -166,6 +166,8 @@ struct ParseState
 	ParseParamRefHook p_paramref_hook;
 	CoerceParamHook p_coerce_param_hook;
 	void	   *p_ref_hook_state;		/* common passthrough link for above */
+
+	Node	   *p_last_colref_elem;
 };
 
 /*

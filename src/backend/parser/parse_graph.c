@@ -38,8 +38,7 @@
 #define EDGE_UNION_END_ID		"_end"
 
 /* projection (RETURN and WITH) */
-static void checkNameInItems(ParseState *pstate, List *items);
-static bool valueHasImplicitName(Node *val);
+static void checkNameInItems(ParseState *pstate, List *items, List *targets);
 
 /* MATCH - connected components */
 static List *makeComponents(List *pattern);
@@ -238,14 +237,15 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	}
 	else
 	{
-		if (detail->kind == CP_WITH)
-			checkNameInItems(pstate, detail->items);
-
 		if (clause->prev != NULL)
 			transformClause(pstate, clause->prev, NULL);
 
 		qry->targetList = transformTargetList(pstate, detail->items,
 											  EXPR_KIND_SELECT_TARGET);
+
+		if (detail->kind == CP_WITH)
+			checkNameInItems(pstate, detail->items, qry->targetList);
+
 		markTargetListOrigins(pstate, qry->targetList);
 
 		qry->groupClause = generateGroupClause(pstate, &qry->targetList,
@@ -475,52 +475,25 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 
 /* check whether resulting columns have a name or not */
 static void
-checkNameInItems(ParseState *pstate, List *items)
+checkNameInItems(ParseState *pstate, List *items, List *targets)
 {
-	ListCell *li;
+	ListCell   *li;
+	ListCell   *lt;
 
-	foreach(li, items)
+	forboth(li, items, lt, targets)
 	{
 		ResTarget *res = lfirst(li);
+		TargetEntry *target = lfirst(lt);
 
 		if (res->name != NULL)
 			continue;
 
-		if (!valueHasImplicitName(res->val))
+		if (!IsA(target->expr, Var))
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("expression in WITH must be aliased (use AS)"),
 					 parser_errposition(pstate, exprLocation(res->val))));
 	}
-}
-
-/*
- * All cases except `ColumnRef` need an explicit name through AS.
- *
- * See FigureColnameInternal()
- */
-static bool
-valueHasImplicitName(Node *val)
-{
-	if (val == NULL)
-		return false;
-
-	switch (nodeTag(val))
-	{
-		case T_ColumnRef:
-			return true;
-		case T_A_Expr:
-			{
-				A_Expr *expr = (A_Expr *) val;
-				if (expr->kind == AEXPR_PAREN)
-					return valueHasImplicitName(expr->lexpr);
-			}
-			break;
-		default:
-			break;
-	}
-
-	return false;
 }
 
 /* make connected components */
