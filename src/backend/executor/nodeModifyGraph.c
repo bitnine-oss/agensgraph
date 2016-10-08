@@ -80,9 +80,10 @@ static Datum findVertex(TupleTableSlot *slot, GraphVertex *node, Graphid *vid);
 static AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
 static Datum evalPropMap(ExprState *prop_map, ExprContext *econtext,
 						 TupleTableSlot *slot);
-static Datum copyTupleAsDatum(EState *estate, HeapTuple tuple, Oid tupType);
+static Datum copyTupleAsDatum(ExprContext *econtext, HeapTuple tuple,
+							  Oid tupType);
 static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
-static Datum *makeDatumArray(EState *estate, int len);
+static Datum *makeDatumArray(ExprContext *econtext, int len);
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
 static void deleteVertex(ModifyGraphState *mgstate, Datum vertex, bool detach);
@@ -210,12 +211,12 @@ ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	ExprContext *econtext = mgstate->ps.ps_ExprContext;
 	ListCell   *lp;
 
+	ResetExprContext(econtext);
+
 	/* create a pattern, accumulated paths `slot` has */
 	foreach(lp, plan->pattern)
 	{
 		GraphPath *path = (GraphPath *) lfirst(lp);
-
-		ResetExprContext(econtext);
 
 		slot = createPath(mgstate, path, slot);
 	}
@@ -227,7 +228,7 @@ ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 static TupleTableSlot *
 createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 {
-	EState	   *estate = mgstate->ps.state;
+	ExprContext *econtext = mgstate->ps.ps_ExprContext;
 	bool		out = (path->variable != NULL);
 	int			pathlen;
 	Datum	   *vertices = NULL;
@@ -246,8 +247,8 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 		pathlen = list_length(path->chain);
 		Assert(pathlen % 2 == 1);
 
-		vertices = makeDatumArray(estate, (pathlen / 2) + 1);
-		edges = makeDatumArray(estate, pathlen / 2);
+		vertices = makeDatumArray(econtext, (pathlen / 2) + 1);
+		edges = makeDatumArray(econtext, pathlen / 2);
 
 		nvertices = 0;
 		nedges = 0;
@@ -308,17 +309,17 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 	/* make a graphpath and set it to the slot */
 	if (out)
 	{
-		MemoryContext oldMemoryContext;
+		MemoryContext oldmctx;
 		Datum graphpath;
 
 		Assert(nvertices == nedges + 1);
 		Assert(pathlen == nvertices + nedges);
 
-		oldMemoryContext = MemoryContextSwitchTo(estate->es_query_cxt);
+		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 		graphpath = makeGraphpathDatum(vertices, nvertices, edges, nedges);
 
-		MemoryContextSwitchTo(oldMemoryContext);
+		MemoryContextSwitchTo(oldmctx);
 
 		setSlotValueByName(slot, graphpath, path->variable);
 	}
@@ -336,6 +337,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 			 TupleTableSlot *slot, bool inPath)
 {
 	EState	   *estate = mgstate->ps.state;
+	ExprContext *econtext = mgstate->ps.ps_ExprContext;
 	char		sqlcmd[SQLCMD_BUFLEN];
 	char	   *label;
 	Datum		values[SQLCMD_VERTEX_NPARAMS];
@@ -379,7 +381,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 
 	/* if this vertex is in the result solely or in some paths, */
 	if (gvertex->variable != NULL || inPath)
-		vertex = copyTupleAsDatum(estate, tuple, VERTEXOID);
+		vertex = copyTupleAsDatum(econtext, tuple, VERTEXOID);
 
 	if (gvertex->variable != NULL)
 		setSlotValueByName(slot, vertex, gvertex->variable);
@@ -395,6 +397,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid *start,
 		   Graphid *end, TupleTableSlot *slot, bool inPath)
 {
 	EState	   *estate = mgstate->ps.state;
+	ExprContext *econtext = mgstate->ps.ps_ExprContext;
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_EDGE_NPARAMS];
 	Oid			argTypes[SQLCMD_EDGE_NPARAMS] = {GRAPHIDOID, GRAPHIDOID,
@@ -421,7 +424,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid *start,
 	{
 		HeapTuple tuple = SPI_tuptable->vals[0];
 
-		edge = copyTupleAsDatum(estate, tuple, EDGEOID);
+		edge = copyTupleAsDatum(econtext, tuple, EDGEOID);
 	}
 
 	if (gedge->variable != NULL)
@@ -511,19 +514,19 @@ evalPropMap(ExprState *prop_map, ExprContext *econtext, TupleTableSlot *slot)
 }
 
 static Datum
-copyTupleAsDatum(EState *estate, HeapTuple tuple, Oid tupType)
+copyTupleAsDatum(ExprContext *econtext, HeapTuple tuple, Oid tupType)
 {
 	TupleDesc		tupDesc;
-	MemoryContext	oldMemoryContext;
+	MemoryContext	oldmctx;
 	Datum			value;
 
 	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
 
-	oldMemoryContext = MemoryContextSwitchTo(estate->es_query_cxt);
+	oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 	value = heap_copy_tuple_as_datum(tuple, tupDesc);
 
-	MemoryContextSwitchTo(oldMemoryContext);
+	MemoryContextSwitchTo(oldmctx);
 
 	ReleaseTupleDesc(tupDesc);
 
@@ -542,19 +545,19 @@ setSlotValueByName(TupleTableSlot *slot, Datum value, char *name)
 }
 
 static Datum *
-makeDatumArray(EState *estate, int len)
+makeDatumArray(ExprContext *econtext, int len)
 {
-	MemoryContext oldMemoryContext;
+	MemoryContext oldmctx;
 	Datum *result;
 
 	if (len == 0)
 		return NULL;
 
-	oldMemoryContext = MemoryContextSwitchTo(estate->es_query_cxt);
+	oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 	result = palloc(len * sizeof(Datum));
 
-	MemoryContextSwitchTo(oldMemoryContext);
+	MemoryContextSwitchTo(oldmctx);
 
 	return result;
 }
