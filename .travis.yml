@@ -1,0 +1,2 @@
+language: c
+script: ./configure --prefix=`pwd` && make world && make install-world && bin/initdb -D `pwd`/data && PGPORT=54333 bin/pg_ctl start -D `pwd`/data && PGPORT=54333 make installcheck
