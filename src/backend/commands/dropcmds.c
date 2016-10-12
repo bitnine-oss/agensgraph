@@ -3,7 +3,7 @@
  * dropcmds.c
  *	  handle various "DROP" operations
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -262,6 +262,10 @@ does_not_exist_skipping(ObjectType objtype, List *objname, List *objargs)
 
 	switch (objtype)
 	{
+		case OBJECT_ACCESS_METHOD:
+			msg = gettext_noop("access method \"%s\" does not exist, skipping");
+			name = NameListToString(objname);
+			break;
 		case OBJECT_TYPE:
 		case OBJECT_DOMAIN:
 			{
@@ -438,7 +442,7 @@ does_not_exist_skipping(ObjectType objtype, List *objname, List *objargs)
 			}
 			break;
 		default:
-			elog(ERROR, "unexpected object type (%d)", (int) objtype);
+			elog(ERROR, "unrecognized object type: %d", (int) objtype);
 			break;
 	}
 

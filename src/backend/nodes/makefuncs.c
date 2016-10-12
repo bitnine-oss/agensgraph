@@ -4,7 +4,7 @@
  *	  creator functions for primitive nodes. The functions here are for
  *	  the most frequently created nodes.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -473,6 +473,36 @@ makeTypeNameFromOid(Oid typeOid, int32 typmod)
 	n->typeOid = typeOid;
 	n->typemod = typmod;
 	n->location = -1;
+	return n;
+}
+
+/*
+ * makeColumnDef -
+ *	build a ColumnDef node to represent a simple column definition.
+ *
+ * Type and collation are specified by OID.
+ * Other properties are all basic to start with.
+ */
+ColumnDef *
+makeColumnDef(const char *colname, Oid typeOid, int32 typmod, Oid collOid)
+{
+	ColumnDef  *n = makeNode(ColumnDef);
+
+	n->colname = pstrdup(colname);
+	n->typeName = makeTypeNameFromOid(typeOid, typmod);
+	n->inhcount = 0;
+	n->is_local = true;
+	n->is_not_null = false;
+	n->is_from_type = false;
+	n->storage = 0;
+	n->raw_default = NULL;
+	n->cooked_default = NULL;
+	n->collClause = NULL;
+	n->collOid = collOid;
+	n->constraints = NIL;
+	n->fdwoptions = NIL;
+	n->location = -1;
+
 	return n;
 }
 

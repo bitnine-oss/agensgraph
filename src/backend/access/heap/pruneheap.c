@@ -3,7 +3,7 @@
  * pruneheap.c
  *	  heap page pruning and HOT-chain management code
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -92,12 +92,21 @@ heap_page_prune_opt(Relation relation, Buffer buffer)
 	 * need to use the horizon that includes slots, otherwise the data-only
 	 * horizon can be used. Note that the toast relation of user defined
 	 * relations are *not* considered catalog relations.
+	 *
+	 * It is OK to apply the old snapshot limit before acquiring the cleanup
+	 * lock because the worst that can happen is that we are not quite as
+	 * aggressive about the cleanup (by however many transaction IDs are
+	 * consumed between this point and acquiring the lock).  This allows us to
+	 * save significant overhead in the case where the page is found not to be
+	 * prunable.
 	 */
 	if (IsCatalogRelation(relation) ||
 		RelationIsAccessibleInLogicalDecoding(relation))
 		OldestXmin = RecentGlobalXmin;
 	else
-		OldestXmin = RecentGlobalDataXmin;
+		OldestXmin =
+			TransactionIdLimitedForOldSnapshots(RecentGlobalDataXmin,
+												relation);
 
 	Assert(TransactionIdIsValid(OldestXmin));
 

@@ -18,7 +18,7 @@
  * "x" to be considered equal() to another reference to "x" in the query.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -29,6 +29,7 @@
 
 #include "postgres.h"
 
+#include "nodes/extensible.h"
 #include "nodes/relation.h"
 #include "utils/datum.h"
 
@@ -193,6 +194,8 @@ _equalAggref(const Aggref *a, const Aggref *b)
 	COMPARE_SCALAR_FIELD(aggtype);
 	COMPARE_SCALAR_FIELD(aggcollid);
 	COMPARE_SCALAR_FIELD(inputcollid);
+	/* ignore aggtranstype since it might not be set yet */
+	COMPARE_NODE_FIELD(aggargtypes);
 	COMPARE_NODE_FIELD(aggdirectargs);
 	COMPARE_NODE_FIELD(args);
 	COMPARE_NODE_FIELD(aggorder);
@@ -202,6 +205,7 @@ _equalAggref(const Aggref *a, const Aggref *b)
 	COMPARE_SCALAR_FIELD(aggvariadic);
 	COMPARE_SCALAR_FIELD(aggkind);
 	COMPARE_SCALAR_FIELD(agglevelsup);
+	COMPARE_SCALAR_FIELD(aggsplit);
 	COMPARE_LOCATION_FIELD(location);
 
 	return true;
@@ -871,6 +875,25 @@ _equalPlaceHolderInfo(const PlaceHolderInfo *a, const PlaceHolderInfo *b)
 	return true;
 }
 
+/*
+ * Stuff from extensible.h
+ */
+static bool
+_equalExtensibleNode(const ExtensibleNode *a, const ExtensibleNode *b)
+{
+	const ExtensibleNodeMethods *methods;
+
+	COMPARE_STRING_FIELD(extnodename);
+
+	/* At this point, we know extnodename is the same for both nodes. */
+	methods = GetExtensibleNodeMethods(a->extnodename, false);
+
+	/* compare the private fields */
+	if (!methods->nodeEqual(a, b))
+		return false;
+
+	return true;
+}
 
 /*
  * Stuff from parsenodes.h
@@ -1305,6 +1328,18 @@ _equalRenameStmt(const RenameStmt *a, const RenameStmt *b)
 }
 
 static bool
+_equalAlterObjectDependsStmt(const AlterObjectDependsStmt *a, const AlterObjectDependsStmt *b)
+{
+	COMPARE_SCALAR_FIELD(objectType);
+	COMPARE_NODE_FIELD(relation);
+	COMPARE_NODE_FIELD(objname);
+	COMPARE_NODE_FIELD(objargs);
+	COMPARE_NODE_FIELD(extname);
+
+	return true;
+}
+
+static bool
 _equalAlterObjectSchemaStmt(const AlterObjectSchemaStmt *a, const AlterObjectSchemaStmt *b)
 {
 	COMPARE_SCALAR_FIELD(objectType);
@@ -1325,6 +1360,16 @@ _equalAlterOwnerStmt(const AlterOwnerStmt *a, const AlterOwnerStmt *b)
 	COMPARE_NODE_FIELD(object);
 	COMPARE_NODE_FIELD(objarg);
 	COMPARE_NODE_FIELD(newowner);
+
+	return true;
+}
+
+static bool
+_equalAlterOperatorStmt(const AlterOperatorStmt *a, const AlterOperatorStmt *b)
+{
+	COMPARE_NODE_FIELD(opername);
+	COMPARE_NODE_FIELD(operargs);
+	COMPARE_NODE_FIELD(options);
 
 	return true;
 }
@@ -1825,6 +1870,16 @@ _equalCreateTransformStmt(const CreateTransformStmt *a, const CreateTransformStm
 }
 
 static bool
+_equalCreateAmStmt(const CreateAmStmt *a, const CreateAmStmt *b)
+{
+	COMPARE_STRING_FIELD(amname);
+	COMPARE_NODE_FIELD(handler_name);
+	COMPARE_SCALAR_FIELD(amtype);
+
+	return true;
+}
+
+static bool
 _equalCreateTrigStmt(const CreateTrigStmt *a, const CreateTrigStmt *b)
 {
 	COMPARE_STRING_FIELD(trigname);
@@ -2141,6 +2196,7 @@ _equalAStar(const A_Star *a, const A_Star *b)
 static bool
 _equalAIndices(const A_Indices *a, const A_Indices *b)
 {
+	COMPARE_SCALAR_FIELD(is_slice);
 	COMPARE_NODE_FIELD(lidx);
 	COMPARE_NODE_FIELD(uidx);
 
@@ -2863,6 +2919,13 @@ equal(const void *a, const void *b)
 			break;
 
 			/*
+			 * EXTENSIBLE NODES
+			 */
+		case T_ExtensibleNode:
+			retval = _equalExtensibleNode(a, b);
+			break;
+
+			/*
 			 * PARSE NODES
 			 */
 		case T_Query:
@@ -2955,11 +3018,17 @@ equal(const void *a, const void *b)
 		case T_RenameStmt:
 			retval = _equalRenameStmt(a, b);
 			break;
+		case T_AlterObjectDependsStmt:
+			retval = _equalAlterObjectDependsStmt(a, b);
+			break;
 		case T_AlterObjectSchemaStmt:
 			retval = _equalAlterObjectSchemaStmt(a, b);
 			break;
 		case T_AlterOwnerStmt:
 			retval = _equalAlterOwnerStmt(a, b);
+			break;
+		case T_AlterOperatorStmt:
+			retval = _equalAlterOperatorStmt(a, b);
 			break;
 		case T_RuleStmt:
 			retval = _equalRuleStmt(a, b);
@@ -3104,6 +3173,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CreateTransformStmt:
 			retval = _equalCreateTransformStmt(a, b);
+			break;
+		case T_CreateAmStmt:
+			retval = _equalCreateAmStmt(a, b);
 			break;
 		case T_CreateTrigStmt:
 			retval = _equalCreateTrigStmt(a, b);

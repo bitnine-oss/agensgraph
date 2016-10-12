@@ -6,13 +6,12 @@
   </indexterm>
   <para>
    PostgreSQL provides infrastructure to stream the modifications performed
-   via SQL to external consumers.  This functionality can be used to for a
+   via SQL to external consumers.  This functionality can be used for a
    variety of purposes, including replication solutions and auditing.
   </para>
 
   <para>
    Changes are sent out in streams identified by logical replication slots.
-   Each stream outputs each change exactly once.
   </para>
 
   <para>
@@ -62,10 +61,10 @@ postgres=# SELECT * FROM pg_create_logical_replication_slot('regression_slot', '
  regression_slot | 0/16B1970
 (1 row)
 
-postgres=# SELECT slot_name, plugin, slot_type, database, active, restart_lsn FROM pg_replication_slots;
-    slot_name    |    plugin     | slot_type | database | active | restart_lsn
------------------+---------------+-----------+----------+--------+-------------
- regression_slot | test_decoding | logical   | postgres | f      | 0/16A4408
+postgres=# SELECT slot_name, plugin, slot_type, database, active, restart_lsn, confirmed_flush_lsn FROM pg_replication_slots;
+    slot_name    |    plugin     | slot_type | database | active | restart_lsn | confirmed_flush_lsn
+-----------------+---------------+-----------+----------+--------+-------------+-----------------
+ regression_slot | test_decoding | logical   | postgres | f      | 0/16A4408   | 0/16A4440
 (1 row)
 
 postgres=# -- There are no changes to see yet
@@ -151,8 +150,8 @@ postgres=# SELECT pg_drop_replication_slot('regression_slot');
     distribution.  This requires that client authentication is set up to allow
     replication connections
     (see <xref linkend="streaming-replication-authentication">) and
-    that <varname>max_wal_senders</varname> is set sufficiently high to an
-    additional connection.
+    that <varname>max_wal_senders</varname> is set sufficiently high to allow
+    an additional connection.
    </para>
 <programlisting>
 $ pg_recvlogical -d postgres --slot test --create-slot
@@ -192,7 +191,7 @@ $ pg_recvlogical -d postgres --slot test --drop-slot
     </para>
    </sect2>
 
-   <sect2>
+   <sect2 id="logicaldecoding-replication-slots">
     <title>Replication Slots</title>
 
     <indexterm>
@@ -204,8 +203,7 @@ $ pg_recvlogical -d postgres --slot test --drop-slot
      In the context of logical replication, a slot represents a stream of
      changes that can be replayed to a client in the order they were made on
      the origin server. Each slot streams a sequence of changes from a single
-     database, sending each change exactly once (except when peeking forward
-     in the stream).
+     database.
     </para>
 
     <note>
@@ -219,6 +217,20 @@ $ pg_recvlogical -d postgres --slot test --drop-slot
      A replication slot has an identifier that is unique across all databases
      in a <productname>PostgreSQL</productname> cluster. Slots persist
      independently of the connection using them and are crash-safe.
+    </para>
+
+    <para>
+     A logical slot will emit each change just once in normal operation.
+     The current position of each slot is persisted only at checkpoint, so in
+     the case of a crash the slot may return to an earlier LSN, which will
+     then cause recent changes to be resent when the server restarts.
+     Logical decoding clients are responsible for avoiding ill effects from
+     handling the same message more than once.  Clients may wish to record
+     the last LSN they saw when decoding and skip over any repeated data or
+     (when using the replication protocol) request that decoding start from
+     that LSN rather than letting the server determine the start point.
+     The Replication Progress Tracking feature is designed for this purpose,
+     refer to <link linkend="replication-origins">replication origins</link>.
     </para>
 
     <para>
@@ -324,7 +336,7 @@ $ pg_recvlogical -d postgres --slot test --drop-slot
    <title>System Catalogs Related to Logical Decoding</title>
 
    <para>
-    The <link linkend="catalog-pg-replication-slots"><structname>pg_replication_slots</structname></link>
+    The <link linkend="view-pg-replication-slots"><structname>pg_replication_slots</structname></link>
     view and the
     <link linkend="monitoring-stats-views-table"><structname>pg_stat_replication</structname></link>
     view provide information about the current state of replication slots and
@@ -363,6 +375,7 @@ typedef struct OutputPluginCallbacks
     LogicalDecodeBeginCB begin_cb;
     LogicalDecodeChangeCB change_cb;
     LogicalDecodeCommitCB commit_cb;
+    LogicalDecodeMessageCB message_cb;
     LogicalDecodeFilterByOriginCB filter_by_origin_cb;
     LogicalDecodeShutdownCB shutdown_cb;
 } OutputPluginCallbacks;
@@ -602,6 +615,43 @@ typedef bool (*LogicalDecodeFilterByOriginCB) (
        more efficient.
      </para>
      </sect3>
+
+    <sect3 id="logicaldecoding-output-plugin-message">
+     <title>Generic Message Callback</title>
+
+     <para>
+      The optional <function>message_cb</function> callback is called whenever
+      a logical decoding message has been decoded.
+<programlisting>
+typedef void (*LogicalDecodeMessageCB) (
+    struct LogicalDecodingContext *,
+    ReorderBufferTXN *txn,
+    XLogRecPtr message_lsn,
+    bool transactional,
+    const char *prefix,
+    Size message_size,
+    const char *message
+);
+</programlisting>
+      The <parameter>txn</parameter> parameter contains meta information about
+      the transaction, like the time stamp at which it has been committed and
+      its XID. Note however that it can be NULL when the message is
+      non-transactional and the XID was not assigned yet in the transaction
+      which logged the message. The <parameter>lsn</parameter> has WAL
+      position of the message. The <parameter>transactional</parameter> says
+      if the message was sent as transactional or not.
+      The <parameter>prefix</parameter> is arbitrary null-terminated prefix
+      which can be used for identifying interesting messages for the current
+      plugin. And finally the <parameter>message</parameter> parameter holds
+      the actual message of <parameter>message_size</parameter> size.
+     </para>
+     <para>
+      Extra care should be taken to ensure that the prefix the output plugin
+      considers interesting is unique. Using name of the extension or the
+      output plugin itself is often a good choice.
+     </para>
+    </sect3>
+
    </sect2>
 
    <sect2 id="logicaldecoding-output-plugin-output">

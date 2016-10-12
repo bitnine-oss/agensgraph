@@ -1227,8 +1227,8 @@ include_dir 'conf.d'
        </para>
 
        <para>
-        If this is on, you should create users as <literal>username@dbname</>.
-        When <literal>username</> is passed by a connecting client,
+        If this is on, you should create users as <replaceable>username@dbname</>.
+        When <replaceable>username</> is passed by a connecting client,
         <literal>@</> and the database name are appended to the user
         name and that database-specific user name is looked up by the
         server. Note that when you create users with names containing
@@ -1472,6 +1472,45 @@ include_dir 'conf.d'
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-replacement-sort-tuples" xreflabel="replacement_sort_tuples">
+      <term><varname>replacement_sort_tuples</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>replacement_sort_tuples</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        When the number of tuples to be sorted is smaller than this number,
+        a sort will produce its first output run using replacement selection
+        rather than quicksort.  This may be useful in memory-constrained
+        environments where tuples that are input into larger sort operations
+        have a strong physical-to-logical correlation.  Note that this does
+        not include input tuples with an <emphasis>inverse</emphasis>
+        correlation.  It is possible for the replacement selection algorithm
+        to generate one long run that requires no merging, where use of the
+        default strategy would result in many runs that must be merged
+        to produce a final sorted output.  This may allow sort
+        operations to complete sooner.
+       </para>
+       <para>
+        The default is 150,000 tuples.  Note that higher values are typically
+        not much more effective, and may be counter-productive, since the
+        priority queue is sensitive to the size of available CPU cache, whereas
+        the default strategy sorts runs using a <firstterm>cache
+        oblivious</firstterm> algorithm.  This property allows the default sort
+        strategy to automatically and transparently make effective use
+        of available CPU cache.
+       </para>
+       <para>
+        Setting <varname>maintenance_work_mem</varname> to its default
+        value usually prevents utility command external sorts (e.g.,
+        sorts used by <command>CREATE INDEX</> to build B-Tree
+        indexes) from ever using replacement selection sort, unless the
+        input tuples are quite wide.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-autovacuum-work-mem" xreflabel="autovacuum_work_mem">
       <term><varname>autovacuum_work_mem</varname> (<type>integer</type>)
       <indexterm>
@@ -1564,7 +1603,7 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies the maximum amount of disk space that a session can use
+        Specifies the maximum amount of disk space that a process can use
         for temporary files, such as sort and hash temporary files, or the
         storage file for a held cursor.  A transaction attempting to exceed
         this limit will be canceled.
@@ -1574,7 +1613,7 @@ include_dir 'conf.d'
        </para>
        <para>
         This setting constrains the total space used at any instant by all
-        temporary files used by a given <productname>PostgreSQL</> session.
+        temporary files used by a given <productname>PostgreSQL</> process.
         It should be noted that disk space used for explicit temporary
         tables, as opposed to temporary files used behind-the-scenes in query
         execution, does <emphasis>not</emphasis> count against this limit.
@@ -1843,6 +1882,35 @@ include_dir 'conf.d'
         </para>
        </listitem>
       </varlistentry>
+
+      <varlistentry id="guc-bgwriter-flush-after" xreflabel="bgwriter_flush_after">
+       <term><varname>bgwriter_flush_after</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>bgwriter_flush_after</> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Whenever more than <varname>bgwriter_flush_after</varname> bytes have
+         been written by the bgwriter, attempt to force the OS to issue these
+         writes to the underlying storage.  Doing so will limit the amount of
+         dirty data in the kernel's page cache, reducing the likelihood of
+         stalls when an fsync is issued at the end of a checkpoint, or when
+         the OS writes data back in larger batches in the background.  Often
+         that will result in greatly reduced transaction latency, but there
+         also are some cases, especially with workloads that are bigger than
+         <xref linkend="guc-shared-buffers">, but smaller than the OS's page
+         cache, where performance might degrade.  This setting may have no
+         effect on some platforms.  The valid range is between
+         <literal>0</literal>, which disables controlled writeback, and
+         <literal>2MB</literal>.  The default is <literal>512kB</> on Linux,
+         <literal>0</> elsewhere.  (Non-default values of
+         <symbol>BLCKSZ</symbol> change the default and maximum.)
+         This parameter can only be set in the <filename>postgresql.conf</>
+         file or on the server command line.
+        </para>
+       </listitem>
+      </varlistentry>
      </variablelist>
 
      <para>
@@ -1876,20 +1944,16 @@ include_dir 'conf.d'
         </para>
 
         <para>
-         A good starting point for this setting is the number of separate
+         For magnetic drives, a good starting point for this setting is the
+         number of separate
          drives comprising a RAID 0 stripe or RAID 1 mirror being used for the
          database.  (For RAID 5 the parity drive should not be counted.)
          However, if the database is often busy with multiple queries issued in
          concurrent sessions, lower values may be sufficient to keep the disk
          array busy.  A value higher than needed to keep the disks busy will
          only result in extra CPU overhead.
-        </para>
-
-        <para>
-         For more exotic systems, such as memory-based storage or a RAID array
-         that is limited by bus bandwidth, the correct value might be the
-         number of I/O paths available.  Some experimentation may be needed
-         to find the best value.
+         SSDs and other memory-based storage can often process many
+         concurrent requests, so the best value might be in the hundreds.
         </para>
 
         <para>
@@ -1901,7 +1965,10 @@ include_dir 'conf.d'
         </para>
 
         <para>
-         The default is 1 on supported systems, otherwise 0.
+         The default is 1 on supported systems, otherwise 0.  This value can
+         be overridden for tables in a particular tablespace by setting the
+         tablespace parameter of the same name (see
+         <xref linkend="sql-altertablespace">).
         </para>
        </listitem>
       </varlistentry>
@@ -1915,13 +1982,140 @@ include_dir 'conf.d'
        <listitem>
         <para>
          Sets the maximum number of background processes that the system
-         can support.  This parameter can only be set at server start.
+         can support.  This parameter can only be set at server start.  The
+         default is 8.
         </para>
 
         <para>
          When running a standby server, you must set this parameter to the
          same or higher value than on the master server. Otherwise, queries
          will not be allowed in the standby server.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-max-parallel-workers-per-gather" xreflabel="max_parallel_workers_per_gather">
+       <term><varname>max_parallel_workers_per_gather</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>max_parallel_workers_per_gather</> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Sets the maximum number of workers that can be started by a single
+         <literal>Gather</literal> node.  Parallel workers are taken from the
+         pool of processes established by
+         <xref linkend="guc-max-worker-processes">.  Note that the requested
+         number of workers may not actually be available at run time.  If this
+         occurs, the plan will run with fewer workers than expected, which may
+         be inefficient.  Setting this value to 0, which is the default,
+         disables parallel query execution.
+        </para>
+
+        <para>
+         Note that parallel queries may consume very substantially more
+         resources than non-parallel queries, because each worker process is
+         a completely separate process which has roughly the same impact on the
+         system as an additional user session.  This should be taken into
+         account when choosing a value for this setting, as well as when
+         configuring other settings that control resource utilization, such
+         as <xref linkend="guc-work-mem">.  Resource limits such as
+         <varname>work_mem</> are applied individually to each worker,
+         which means the total utilization may be much higher across all
+         processes than it would normally be for any single process.
+         For example, a parallel query using 4 workers may use up to 5 times
+         as much CPU time, memory, I/O bandwidth, and so forth as a query which
+         uses no workers at all.
+        </para>
+
+        <para>
+         For more information on parallel query, see
+         <xref linkend="parallel-query">.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-backend-flush-after" xreflabel="backend_flush_after">
+       <term><varname>backend_flush_after</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>backend_flush_after</> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Whenever more than <varname>backend_flush_after</varname> bytes have
+         been written by a single backend, attempt to force the OS to issue
+         these writes to the underlying storage.  Doing so will limit the
+         amount of dirty data in the kernel's page cache, reducing the
+         likelihood of stalls when an fsync is issued at the end of a
+         checkpoint, or when the OS writes data back in larger batches in the
+         background.  Often that will result in greatly reduced transaction
+         latency, but there also are some cases, especially with workloads
+         that are bigger than <xref linkend="guc-shared-buffers">, but smaller
+         than the OS's page cache, where performance might degrade.  This
+         setting may have no effect on some platforms.  The valid range is
+         between <literal>0</literal>, which disables controlled writeback,
+         and <literal>2MB</literal>.  The default is <literal>0</> (i.e. no
+         flush control).  (Non-default values of <symbol>BLCKSZ</symbol>
+         change the maximum.)
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry id="guc-old-snapshot-threshold" xreflabel="old_snapshot_threshold">
+       <term><varname>old_snapshot_threshold</varname> (<type>integer</type>)
+       <indexterm>
+        <primary><varname>old_snapshot_threshold</> configuration parameter</primary>
+       </indexterm>
+       </term>
+       <listitem>
+        <para>
+         Sets the minimum time that a snapshot can be used without risk of a
+         <literal>snapshot too old</> error occurring when using the snapshot.
+         This parameter can only be set at server start.
+        </para>
+
+        <para>
+         Beyond the threshold, old data may be vacuumed away.  This can help
+         prevent bloat in the face of snapshots which remain in use for a
+         long time.  To prevent incorrect results due to cleanup of data which
+         would otherwise be visible to the snapshot, an error is generated
+         when the snapshot is older than this threshold and the snapshot is
+         used to read a page which has been modified since the snapshot was
+         built.
+        </para>
+
+        <para>
+         A value of <literal>-1</> disables this feature, and is the default.
+         Useful values for production work probably range from a small number
+         of hours to a few days.  The setting will be coerced to a granularity
+         of minutes, and small numbers (such as <literal>0</> or
+         <literal>1min</>) are only allowed because they may sometimes be
+         useful for testing.  While a setting as high as <literal>60d</> is
+         allowed, please note that in many workloads extreme bloat or
+         transaction ID wraparound may occur in much shorter time frames.
+        </para>
+
+        <para>
+         When this feature is enabled, freed space at the end of a relation
+         cannot be released to the operating system, since that could remove
+         information needed to detect the <literal>snapshot too old</>
+         condition.  All space allocated to a relation remains associated with
+         that relation for reuse only within that relation unless explicitly
+         freed (for example, with <command>VACUUM FULL</>).
+        </para>
+
+        <para>
+         This setting does not attempt to guarantee that an error will be
+         generated under any particular circumstances.  In fact, if the
+         correct results can be generated from (for example) a cursor which
+         has materialized a result set, no error will be generated even if the
+         underlying rows in the referenced table have been vacuumed away.
+         Some tables cannot safely be vacuumed early, and so will not be
+         affected by this setting.  Examples include system catalogs and any
+         table which has a hash index.  For such tables this setting will
+         neither reduce bloat nor create a possibility of a <literal>snapshot
+         too old</> error on scanning.
         </para>
        </listitem>
       </varlistentry>
@@ -1952,9 +2146,9 @@ include_dir 'conf.d'
         <varname>wal_level</> determines how much information is written
         to the WAL. The default value is <literal>minimal</>, which writes
         only the information needed to recover from a crash or immediate
-        shutdown. <literal>archive</> adds logging required for WAL archiving;
-        <literal>hot_standby</> further adds information required to run
-        read-only queries on a standby server; and, finally
+        shutdown. <literal>replica</> adds logging required for WAL
+        archiving as well as information required to run
+        read-only queries on a standby server.  Finally,
         <literal>logical</> adds information necessary to support logical
         decoding.  Each level includes the information logged at all lower
         levels.  This parameter can only be set at server start.
@@ -1972,29 +2166,23 @@ include_dir 'conf.d'
          transaction</member>
         </simplelist>
         But minimal WAL does not contain enough information to reconstruct the
-        data from a base backup and the WAL logs, so <literal>archive</> or
+        data from a base backup and the WAL logs, so <literal>replica</> or
         higher must be used to enable WAL archiving
         (<xref linkend="guc-archive-mode">) and streaming replication.
        </para>
        <para>
-        In <literal>hot_standby</> level, the same information is logged as
-        with <literal>archive</>, plus information needed to reconstruct
-        the status of running transactions from the WAL. To enable read-only
-        queries on a standby server, <varname>wal_level</> must be set to
-        <literal>hot_standby</> or higher on the primary, and
-        <xref linkend="guc-hot-standby"> must be enabled in the standby. It is
-        thought that there is little measurable difference in performance
-        between using <literal>hot_standby</> and <literal>archive</> levels,
-        so feedback is welcome if any production impacts are noticeable.
-       </para>
-       <para>
         In <literal>logical</> level, the same information is logged as
-        with <literal>hot_standby</>, plus information needed to allow
+        with <literal>replica</>, plus information needed to allow
         extracting logical change sets from the WAL. Using a level of
         <literal>logical</> will increase the WAL volume, particularly if many
         tables are configured for <literal>REPLICA IDENTITY FULL</literal> and
         many <command>UPDATE</> and <command>DELETE</> statements are
         executed.
+       </para>
+       <para>
+        In releases prior to 9.6, this parameter also allowed the
+        values <literal>archive</literal> and <literal>hot_standby</literal>.
+        These are still accepted but mapped to <literal>replica</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -2072,8 +2260,8 @@ include_dir 'conf.d'
         Specifies whether transaction commit will wait for WAL records
         to be written to disk before the command returns a <quote>success</>
         indication to the client.  Valid values are <literal>on</>,
-        <literal>remote_write</>, <literal>local</>, and <literal>off</>.
-        The default, and safe, setting
+        <literal>remote_apply</>, <literal>remote_write</>, <literal>local</>,
+        and <literal>off</>.  The default, and safe, setting
         is <literal>on</>.  When <literal>off</>, there can be a delay between
         when success is reported to the client and when the transaction is
         really guaranteed to be safe against a server crash.  (The maximum
@@ -2089,35 +2277,36 @@ include_dir 'conf.d'
         discussion see <xref linkend="wal-async-commit">.
        </para>
        <para>
-        If <xref linkend="guc-synchronous-standby-names"> is set, this
+        If <xref linkend="guc-synchronous-standby-names"> is non-empty, this
         parameter also controls whether or not transaction commits will wait
-        for the transaction's WAL records to be replicated to the standby
-        server.
-        When set to <literal>on</>, commits will wait until a reply
-        from the current synchronous standby indicates it has received
+        for their WAL records to be replicated to the standby server(s).
+        When set to <literal>on</>, commits will wait until replies
+        from the current synchronous standby(s) indicate they have received
         the commit record of the transaction and flushed it to disk.  This
-        ensures the transaction will not be lost unless both primary and
-        standby suffer corruption of their database storage.
-        When set to <literal>remote_write</>, commits will wait
-        until a reply from the current synchronous standby indicates it has
+        ensures the transaction will not be lost unless both the primary and
+        all synchronous standbys suffer corruption of their database storage.
+        When set to <literal>remote_apply</>, commits will wait until replies
+        from the current synchronous standby(s) indicate they have received the
+        commit record of the transaction and applied it, so that it has become
+        visible to queries on the standby(s).
+        When set to <literal>remote_write</>, commits will wait until replies
+        from the current synchronous standby(s) indicate they have
         received the commit record of the transaction and written it out to
-        the standby's operating system, but the data has not necessarily
-        reached stable storage on the standby. This setting is sufficient to
-        ensure data preservation even if the standby instance of
+        their operating system. This setting is sufficient to
+        ensure data preservation even if a standby instance of
         <productname>PostgreSQL</> were to crash, but not if the standby
-        suffers an operating-system-level crash.
+        suffers an operating-system-level crash, since the data has not
+        necessarily reached stable storage on the standby.
+        Finally, the setting <literal>local</> causes commits to wait for
+        local flush to disk, but not for replication.  This is not usually
+        desirable when synchronous replication is in use, but is provided for
+        completeness.
        </para>
        <para>
-        When synchronous
-        replication is in use, it will normally be sensible either to wait
-        for both local flush to disk and replication of WAL records, or
-        to allow the transaction to commit asynchronously.  However, the
-        setting <literal>local</> is available for transactions that
-        wish to wait for local flush to disk, but not synchronous replication.
-        If <varname>synchronous_standby_names</> is not set, the settings
-        <literal>on</>, <literal>remote_write</> and <literal>local</> all
-        provide the same synchronization level: transaction commits only wait
-        for local flush to disk.
+        If <varname>synchronous_standby_names</> is empty, the settings
+        <literal>on</>, <literal>remote_apply</>, <literal>remote_write</>
+        and <literal>local</> all provide the same synchronization level:
+        transaction commits only wait for local flush to disk.
        </para>
        <para>
         This parameter can be changed at any time; the behavior for any
@@ -2325,15 +2514,38 @@ include_dir 'conf.d'
       </indexterm>
       </term>
       <listitem>
-       <para>
-        Specifies the delay between activity rounds for the WAL writer.
-        In each round the writer will flush WAL to disk. It then sleeps for
-        <varname>wal_writer_delay</> milliseconds, and repeats.  The default
-        value is 200 milliseconds (<literal>200ms</>).  Note that on many
-        systems, the effective resolution of sleep delays is 10 milliseconds;
-        setting <varname>wal_writer_delay</> to a value that is not a multiple
-        of 10 might have the same results as setting it to the next higher
-        multiple of 10. This parameter can only be set in the
+      <para>
+        Specifies how often the WAL writer flushes WAL. After flushing WAL it
+        sleeps for <varname>wal_writer_delay</> milliseconds, unless woken up
+        by an asynchronously committing transaction. In case the last flush
+        happened less than <varname>wal_writer_delay</> milliseconds ago and
+        less than <varname>wal_writer_flush_after</> bytes of WAL have been
+        produced since, WAL is only written to the OS, not flushed to disk.
+        The default value is 200 milliseconds (<literal>200ms</>).  Note that
+        on many systems, the effective resolution of sleep delays is 10
+        milliseconds; setting <varname>wal_writer_delay</> to a value that is
+        not a multiple of 10 might have the same results as setting it to the
+        next higher multiple of 10. This parameter can only be set in the
+        <filename>postgresql.conf</> file or on the server command line.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-wal-writer-flush-after" xreflabel="wal_writer_flush_after">
+      <term><varname>wal_writer_flush_after</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>wal_writer_flush_after</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+      <para>
+        Specifies how often the WAL writer flushes WAL. In case the last flush
+        happened less than <varname>wal_writer_delay</> milliseconds ago and
+        less than <varname>wal_writer_flush_after</> bytes of WAL have been
+        produced since, WAL is only written to the OS, not flushed to disk.
+        If <varname>wal_writer_flush_after</> is set to <literal>0</> WAL is
+        flushed every time the WAL writer has written WAL.  The default is
+        <literal>1MB</literal>. This parameter can only be set in the
         <filename>postgresql.conf</> file or on the server command line.
        </para>
       </listitem>
@@ -2407,7 +2619,7 @@ include_dir 'conf.d'
       <listitem>
        <para>
         Maximum time between automatic WAL checkpoints, in seconds.
-        The valid range is between 30 seconds and one hour.
+        The valid range is between 30 seconds and one day.
         The default is five minutes (<literal>5min</>).
         Increasing this parameter can increase the amount of time needed
         for crash recovery.
@@ -2427,6 +2639,35 @@ include_dir 'conf.d'
        <para>
         Specifies the target of checkpoint completion, as a fraction of
         total time between checkpoints. The default is 0.5.
+        This parameter can only be set in the <filename>postgresql.conf</>
+        file or on the server command line.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-checkpoint-flush-after" xreflabel="checkpoint_flush_after">
+      <term><varname>checkpoint_flush_after</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>checkpoint_flush_after</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Whenever more than <varname>checkpoint_flush_after</varname> bytes
+        have been written while performing a checkpoint, attempt to force the
+        OS to issue these writes to the underlying storage.  Doing so will
+        limit the amount of dirty data in the kernel's page cache, reducing
+        the likelihood of stalls when an fsync is issued at the end of the
+        checkpoint, or when the OS writes data back in larger batches in the
+        background.  Often that will result in greatly reduced transaction
+        latency, but there also are some cases, especially with workloads
+        that are bigger than <xref linkend="guc-shared-buffers">, but smaller
+        than the OS's page cache, where performance might degrade.  This
+        setting may have no effect on some platforms.  The valid range is
+        between <literal>0</literal>, which disables controlled writeback,
+        and <literal>2MB</literal>.  The default is <literal>256kB</> on
+        Linux, <literal>0</> elsewhere.  (Non-default values of
+        <symbol>BLCKSZ</symbol> change the default and maximum.)
         This parameter can only be set in the <filename>postgresql.conf</>
         file or on the server command line.
        </para>
@@ -2655,7 +2896,7 @@ include_dir 'conf.d'
         higher than the maximum number of expected clients so disconnected
         clients can immediately reconnect.  This parameter can only
         be set at server start. <varname>wal_level</> must be set to
-        <literal>archive</> or higher to allow connections from standby
+        <literal>replica</> or higher to allow connections from standby
         servers.
        </para>
        </listitem>
@@ -2674,7 +2915,7 @@ include_dir 'conf.d'
          can support. The default is zero.  This parameter can only be set at
          server start.
          <varname>wal_level</varname> must be set
-         to <literal>archive</literal> or higher to allow replication slots to
+         to <literal>replica</literal> or higher to allow replication slots to
          be used. Setting it to a lower value than the number of currently
          existing replication slots will prevent the server from starting.
         </para>
@@ -2779,34 +3020,70 @@ include_dir 'conf.d'
       </term>
       <listitem>
        <para>
-        Specifies a comma-separated list of standby names that can support
+        Specifies a list of standby servers that can support
         <firstterm>synchronous replication</>, as described in
         <xref linkend="synchronous-replication">.
-        At any one time there will be at most one active synchronous standby;
+        There will be one or more active synchronous standbys;
         transactions waiting for commit will be allowed to proceed after
-        this standby server confirms receipt of their data.
-        The synchronous standby will be the first standby named in this list
-        that is both currently connected and streaming data in real-time
+        these standby servers confirm receipt of their data.
+        The synchronous standbys will be those whose names appear
+        earlier in this list, and
+        that are both currently connected and streaming data in real-time
         (as shown by a state of <literal>streaming</literal> in the
         <link linkend="monitoring-stats-views-table">
         <literal>pg_stat_replication</></link> view).
         Other standby servers appearing later in this list represent potential
-        synchronous standbys.
-        If the current synchronous standby disconnects for whatever reason,
+        synchronous standbys. If any of the current synchronous
+        standbys disconnects for whatever reason,
         it will be replaced immediately with the next-highest-priority standby.
         Specifying more than one standby name can allow very high availability.
+       </para>
+       <para>
+        This parameter specifies a list of standby servers using
+        either of the following syntaxes:
+<synopsis>
+<replaceable class="parameter">num_sync</replaceable> ( <replaceable class="parameter">standby_name</replaceable> [, ...] )
+<replaceable class="parameter">standby_name</replaceable> [, ...]
+</synopsis>
+        where <replaceable class="parameter">num_sync</replaceable> is
+        the number of synchronous standbys that transactions need to
+        wait for replies from,
+        and <replaceable class="parameter">standby_name</replaceable>
+        is the name of a standby server. For example, a setting of
+        <literal>3 (s1, s2, s3, s4)</> makes transaction commits wait
+        until their WAL records are received by three higher-priority standbys
+        chosen from standby servers <literal>s1</>, <literal>s2</>,
+        <literal>s3</> and <literal>s4</>.
+        </para>
+        <para>
+        The second syntax was used before <productname>PostgreSQL</>
+        version 9.6 and is still supported. It's the same as the first syntax
+        with <replaceable class="parameter">num_sync</replaceable> equal to 1.
+        For example, <literal>1 (s1, s2)</> and
+        <literal>s1, s2</> have the same meaning: either <literal>s1</>
+        or <literal>s2</> is chosen as a synchronous standby.
        </para>
        <para>
         The name of a standby server for this purpose is the
         <varname>application_name</> setting of the standby, as set in the
         <varname>primary_conninfo</> of the standby's WAL receiver.  There is
         no mechanism to enforce uniqueness. In case of duplicates one of the
-        matching standbys will be chosen to be the synchronous standby, though
+        matching standbys will be considered as higher priority, though
         exactly which one is indeterminate.
         The special entry <literal>*</> matches any
         <varname>application_name</>, including the default application name
         of <literal>walreceiver</>.
        </para>
+       <note>
+        <para>
+         Each <replaceable class="parameter">standby_name</replaceable>
+         should have the form of a valid SQL identifier, unless it
+         is <literal>*</>.  You can use double-quoting if necessary.  But note
+         that <replaceable class="parameter">standby_name</replaceable>s are
+         compared to standby application names case-insensitively, whether
+         double-quoted or not.
+        </para>
+       </note>
        <para>
         If no synchronous standby names are specified here, then synchronous
         replication is not enabled and transaction commits will not wait for
@@ -2849,6 +3126,10 @@ include_dir 'conf.d'
        <para>
         You should also consider setting <varname>hot_standby_feedback</>
         on standby server(s) as an alternative to using this parameter.
+       </para>
+       <para>
+        This does not prevent cleanup of dead rows which have reached the age
+        specified by <varname>old_snapshot_threshold</>.
        </para>
       </listitem>
      </varlistentry>
@@ -2997,6 +3278,16 @@ include_dir 'conf.d'
         until it eventually reaches the primary.  Standbys make no other use
         of feedback they receive other than to pass upstream.
        </para>
+       <para>
+        This setting does not override the behavior of
+        <varname>old_snapshot_threshold</> on the primary; a snapshot on the
+        standby which exceeds the primary's age threshold can become invalid,
+        resulting in cancellation of transactions on the standby.  This is
+        because <varname>old_snapshot_threshold</> is intended to provide an
+        absolute limit on the time which dead rows can contribute to bloat,
+        which would otherwise be violated because of the configuration of a
+        standby.
+       </para>
       </listitem>
      </varlistentry>
 
@@ -3143,16 +3434,14 @@ include_dir 'conf.d'
      <varlistentry id="guc-enable-indexonlyscan" xreflabel="enable_indexonlyscan">
       <term><varname>enable_indexonlyscan</varname> (<type>boolean</type>)
       <indexterm>
-       <primary>index-only scan</primary>
-      </indexterm>
-      <indexterm>
        <primary><varname>enable_indexonlyscan</> configuration parameter</primary>
       </indexterm>
       </term>
       <listitem>
        <para>
         Enables or disables the query planner's use of index-only-scan plan
-        types. The default is <literal>on</>.
+        types (see <xref linkend="indexes-index-only-scans">).
+        The default is <literal>on</>.
        </para>
       </listitem>
      </varlistentry>
@@ -3402,6 +3691,50 @@ include_dir 'conf.d'
         Sets the planner's estimate of the cost of processing each
         operator or function executed during a query.
         The default is 0.0025.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-parallel-setup-cost" xreflabel="parallel_setup_cost">
+      <term><varname>parallel_setup_cost</varname> (<type>floating point</type>)
+      <indexterm>
+       <primary><varname>parallel_setup_cost</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets the planner's estimate of the cost of launching parallel worker
+        processes.
+        The default is 1000.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-parallel-tuple-cost" xreflabel="parallel_tuple_cost">
+      <term><varname>parallel_tuple_cost</varname> (<type>floating point</type>)
+      <indexterm>
+       <primary><varname>parallel_tuple_cost</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets the planner's estimate of the cost of transferring one tuple
+        from a parallel worker process to another process.
+        The default is 0.1.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-min-parallel-relation-size" xreflabel="min_parallel_relation_size">
+      <term><varname>min_parallel_relation_size</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>min_parallel_relation_size</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Sets the minimum size of relations to be considered for parallel scan.
+        The default is 8 megabytes (<literal>8MB</>).
        </para>
       </listitem>
      </varlistentry>
@@ -3753,6 +4086,51 @@ SELECT * FROM parent WHERE key = 2400;
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-force-parallel-mode" xreflabel="force_parallel_mode">
+      <term><varname>force_parallel_mode</varname> (<type>enum</type>)
+      <indexterm>
+       <primary><varname>force_parallel_mode</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        Allows the use of parallel queries for testing purposes even in cases
+        where no performance benefit is expected.
+        The allowed values of <varname>force_parallel_mode</> are
+        <literal>off</> (use parallel mode only when it is expected to improve
+        performance), <literal>on</> (force parallel query for all queries
+        for which it is thought to be safe), and <literal>regress</> (like
+        <literal>on</>, but with additional behavior changes as explained
+        below).
+       </para>
+
+       <para>
+        More specifically, setting this value to <literal>on</> will add
+        a <literal>Gather</> node to the top of any query plan for which this
+        appears to be safe, so that the query runs inside of a parallel worker.
+        Even when a parallel worker is not available or cannot be used,
+        operations such as starting a subtransaction that would be prohibited
+        in a parallel query context will be prohibited unless the planner
+        believes that this will cause the query to fail.  If failures or
+        unexpected results occur when this option is set, some functions used
+        by the query may need to be marked <literal>PARALLEL UNSAFE</literal>
+        (or, possibly, <literal>PARALLEL RESTRICTED</literal>).
+       </para>
+
+       <para>
+        Setting this value to <literal>regress</> has all of the same effects
+        as setting it to <literal>on</> plus some additional effects that are
+        intended to facilitate automated regression testing.  Normally,
+        messages from a parallel worker include a context line indicating that,
+        but a setting of <literal>regress</> suppresses this line so that the
+        output is the same as in non-parallel execution.  Also,
+        the <literal>Gather</> nodes added to plans by this setting are hidden
+        in <literal>EXPLAIN</> output so that the output matches what
+        would be obtained if this setting were turned <literal>off</>.
+       </para>
+      </listitem>
+     </varlistentry>
+
      </variablelist>
     </sect2>
    </sect1>
@@ -4100,6 +4478,67 @@ local0.*    /var/log/postgresql
         </para>
        </listitem>
       </varlistentry>
+
+      <varlistentry id="guc-syslog-sequence-numbers" xreflabel="syslog_sequence_numbers">
+       <term><varname>syslog_sequence_numbers</varname> (<type>boolean</type>)
+        <indexterm>
+         <primary><varname>syslog_sequence_numbers</> configuration parameter</primary>
+        </indexterm>
+       </term>
+
+       <listitem>
+        <para>
+         When logging to <application>syslog</application> and this is on (the
+         default), then each message will be prefixed by an increasing
+         sequence number (such as <literal>[2]</literal>).  This circumvents
+         the <quote>--- last message repeated N times ---</quote> suppression
+         that many syslog implementations perform by default.  In more modern
+         syslog implementations, repeated message suppression can be configured
+         (for example, <literal>$RepeatedMsgReduction</literal>
+         in <productname>rsyslog</productname>), so this might not be
+         necessary.  Also, you could turn this off if you actually want to
+         suppress repeated messages.
+        </para>
+
+        <para>
+         This parameter can only be set in the <filename>postgresql.conf</>
+         file or on the server command line.
+        </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="guc-syslog-split-messages" xreflabel="syslog_split_messages">
+      <term><varname>syslog_split_messages</varname> (<type>boolean</type>)
+      <indexterm>
+       <primary><varname>syslog_split_messages</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+        When logging to <application>syslog</> is enabled, this parameter
+        determines how messages are delivered to syslog.  When on (the
+        default), messages are split by lines, and long lines are split so
+        that they will fit into 1024 bytes, which is a typical size limit for
+        traditional syslog implementations.  When off, PostgreSQL server log
+        messages are delivered to the syslog service as is, and it is up to
+        the syslog service to cope with the potentially bulky messages.
+       </para>
+
+       <para>
+        If syslog is ultimately logging to a text file, then the effect will
+        be the same either way, and it is best to leave the setting on, since
+        most syslog implementations either cannot handle large messages or
+        would need to be specially configured to handle them.  But if syslog
+        is ultimately writing into some other medium, it might be necessary or
+        more useful to keep messages logically together.
+       </para>
+
+       <para>
+        This parameter can only be set in the <filename>postgresql.conf</>
+        file or on the server command line.
+       </para>
+      </listitem>
+     </varlistentry>
 
      <varlistentry id="guc-event-source" xreflabel="event_source">
       <term><varname>event_source</varname> (<type>string</type>)
@@ -4617,6 +5056,11 @@ local0.*    /var/log/postgresql
              <entry>no</entry>
             </row>
             <row>
+             <entry><literal>%n</literal></entry>
+             <entry>Time stamp with milliseconds (as a Unix epoch)</entry>
+             <entry>no</entry>
+            </row>
+            <row>
              <entry><literal>%i</literal></entry>
              <entry>Command tag: type of session's current command</entry>
              <entry>yes</entry>
@@ -4949,9 +5393,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
     <title>Process Title</title>
 
     <para>
-     These settings control how the process title as seen
-     by <command>ps</command> is modified.  See <xref linkend="monitoring-ps">
-     for details.
+     These settings control how process titles of server processes are
+     modified.  Process titles are typically viewed using programs like
+     <application>ps</> or, on Windows, <application>Process Explorer</>.
+     See <xref linkend="monitoring-ps"> for details.
     </para>
 
     <variablelist>
@@ -4964,17 +5409,13 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       <listitem>
        <para>
         Sets the cluster name that appears in the process title for all
-        processes in this cluster. The name can be any string of less than
-        <symbol>NAMEDATALEN</> characters (64 characters in a standard
+        server processes in this cluster. The name can be any string of less
+        than <symbol>NAMEDATALEN</> characters (64 characters in a standard
         build). Only printable ASCII characters may be used in the
         <varname>cluster_name</varname> value. Other characters will be
         replaced with question marks (<literal>?</literal>).  No name is shown
         if this parameter is set to the empty string <literal>''</> (which is
         the default). This parameter can only be set at server start.
-       </para>
-       <para>
-        The process title is typically viewed using programs like
-        <application>ps</> or, on Windows, <application>Process Explorer</>.
        </para>
       </listitem>
      </varlistentry>
@@ -4988,9 +5429,10 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       <listitem>
        <para>
         Enables updating of the process title every time a new SQL command
-        is received by the server.  The process title is typically viewed
-        by the <command>ps</> command,
-        or in Windows by using the <application>Process Explorer</>.
+        is received by the server.
+        This setting defaults to <literal>on</> on most platforms, but it
+        defaults to <literal>off</> on Windows due to that platform's larger
+        overhead for updating the process title.
         Only superusers can change this setting.
        </para>
       </listitem>
@@ -5854,6 +6296,26 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-idle-in-transaction-session-timeout" xreflabel="idle_in_transaction_session_timeout">
+      <term><varname>idle_in_transaction_session_timeout</varname> (<type>integer</type>)
+      <indexterm>
+       <primary><varname>idle_in_transaction_session_timeout</> configuration parameter</primary>
+      </indexterm>
+      </term>
+      <listitem>
+       <para>
+       Terminate any session with an open transaction that has been idle for
+       longer than the specified duration in milliseconds. This allows any
+       locks held by that session to be released and the connection slot to be reused;
+       it also allows tuples visible only to this transaction to be vacuumed.  See
+       <xref linkend="routine-vacuuming"> for more details about this.
+       </para>
+       <para>
+       The default value of 0 disables this feature.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-vacuum-freeze-table-age" xreflabel="vacuum_freeze_table_age">
       <term><varname>vacuum_freeze_table_age</varname> (<type>integer</type>)
       <indexterm>
@@ -5862,12 +6324,15 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-        <command>VACUUM</> performs a whole-table scan if the table's
+        <command>VACUUM</> performs an aggressive scan if the table's
         <structname>pg_class</>.<structfield>relfrozenxid</> field has reached
-        the age specified by this setting.  The default is 150 million
-        transactions.  Although users can set this value anywhere from zero to
-        two billions, <command>VACUUM</> will silently limit the effective value
-        to 95% of <xref linkend="guc-autovacuum-freeze-max-age">, so that a
+        the age specified by this setting.  An aggressive scan differs from
+        a regular <command>VACUUM</> in that it visits every page that might
+        contain unfrozen XIDs or MXIDs, not just those that might contain dead
+        tuples.  The default is 150 million transactions.  Although users can
+        set this value anywhere from zero to two billions, <command>VACUUM</>
+        will silently limit the effective value to 95% of
+        <xref linkend="guc-autovacuum-freeze-max-age">, so that a
         periodical manual <command>VACUUM</> has a chance to run before an
         anti-wraparound autovacuum is launched for the table. For more
         information see
@@ -5906,9 +6371,12 @@ COPY postgres_log FROM '/full/path/to/logfile.csv' WITH csv;
       </term>
       <listitem>
        <para>
-        <command>VACUUM</> performs a whole-table scan if the table's
+        <command>VACUUM</> performs an aggressive scan if the table's
         <structname>pg_class</>.<structfield>relminmxid</> field has reached
-        the age specified by this setting.  The default is 150 million multixacts.
+        the age specified by this setting.  An aggressive scan differs from
+        a regular <command>VACUUM</> in that it visits every page that might
+        contain unfrozen XIDs or MXIDs, not just those that might contain dead
+        tuples.  The default is 150 million multixacts.
         Although users can set this value anywhere from zero to two billions,
         <command>VACUUM</> will silently limit the effective value to 95% of
         <xref linkend="guc-autovacuum-multixact-freeze-max-age">, so that a

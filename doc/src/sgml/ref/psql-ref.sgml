@@ -38,7 +38,8 @@ PostgreSQL documentation
      <productname>PostgreSQL</productname>. It enables you to type in
      queries interactively, issue them to
      <productname>PostgreSQL</productname>, and see the query results.
-     Alternatively, input can be from a file. In addition, it provides a
+     Alternatively, input can be from a file or from command line
+     arguments. In addition, <application>psql</application> provides a
      number of meta-commands and various shell-like features to
      facilitate writing scripts and automating a wide variety of tasks.
     </para>
@@ -89,38 +90,54 @@ PostgreSQL documentation
       <term><option>--command=<replaceable class="parameter">command</replaceable></></term>
       <listitem>
       <para>
-      Specifies that <application>psql</application> is to execute one
-      command string, <replaceable class="parameter">command</replaceable>,
-      and then exit. This is useful in shell scripts. Start-up files
-      (<filename>psqlrc</filename> and <filename>~/.psqlrc</filename>) are
-      ignored with this option.
+       Specifies that <application>psql</application> is to execute the given
+       command string, <replaceable class="parameter">command</replaceable>.
+       This option can be repeated and combined in any order with
+       the <option>-f</option> option.  When either <option>-c</option>
+       or <option>-f</option> is specified, <application>psql</application>
+       does not read commands from standard input; instead it terminates
+       after processing all the <option>-c</option> and <option>-f</option>
+       options in sequence.
       </para>
       <para>
-      <replaceable class="parameter">command</replaceable> must be either
-      a command string that is completely parsable by the server (i.e.,
-      it contains no <application>psql</application>-specific features),
-      or a single backslash command. Thus you cannot mix
-      <acronym>SQL</acronym> and <application>psql</application>
-      meta-commands with this option. To achieve that, you could
-      pipe the string into <application>psql</application>, for example:
-      <literal>echo '\x \\ SELECT * FROM foo;' | psql</literal>.
-      (<literal>\\</> is the separator meta-command.)
+       <replaceable class="parameter">command</replaceable> must be either
+       a command string that is completely parsable by the server (i.e.,
+       it contains no <application>psql</application>-specific features),
+       or a single backslash command. Thus you cannot mix
+       <acronym>SQL</acronym> and <application>psql</application>
+       meta-commands within a <option>-c</option> option. To achieve that,
+       you could use repeated <option>-c</option> options or pipe the string
+       into <application>psql</application>, for example:
+<programlisting>
+psql -c '\x' -c 'SELECT * FROM foo;'
+</programlisting>
+       or
+<programlisting>
+echo '\x \\ SELECT * FROM foo;' | psql
+</programlisting>
+       (<literal>\\</> is the separator meta-command.)
       </para>
       <para>
-       If the command string contains multiple SQL commands, they are
-       processed in a single transaction, unless there are explicit
-       <command>BEGIN</>/<command>COMMIT</> commands included in the
-       string to divide it into multiple transactions.  This is
-       different from the behavior when the same string is fed to
-       <application>psql</application>'s standard input.  Also, only
-       the result of the last SQL command is returned.
+       Each <acronym>SQL</acronym> command string passed
+       to <option>-c</option> is sent to the server as a single query.
+       Because of this, the server executes it as a single transaction even
+       if the string contains multiple <acronym>SQL</acronym> commands,
+       unless there are explicit <command>BEGIN</>/<command>COMMIT</>
+       commands included in the string to divide it into multiple
+       transactions.  Also, <application>psql</application> only prints the
+       result of the last <acronym>SQL</acronym> command in the string.
+       This is different from the behavior when the same string is read from
+       a file or fed to <application>psql</application>'s standard input,
+       because then <application>psql</application> sends
+       each <acronym>SQL</acronym> command separately.
       </para>
       <para>
-       Because of these legacy behaviors, putting more than one command in
-       the <option>-c</option> string often has unexpected results.  It's
-       better to feed multiple commands to <application>psql</application>'s
-       standard input, either using <application>echo</application> as
-       illustrated above, or via a shell here-document, for example:
+       Because of this behavior, putting more than one command in a
+       single <option>-c</option> string often has unexpected results.
+       It's better to use repeated <option>-c</option> commands or feed
+       multiple commands to <application>psql</application>'s standard input,
+       either using <application>echo</application> as illustrated above, or
+       via a shell here-document, for example:
 <programlisting>
 psql &lt;&lt;EOF
 \x
@@ -183,17 +200,24 @@ EOF
       <term><option>--file=<replaceable class="parameter">filename</replaceable></></term>
       <listitem>
       <para>
-      Use the file <replaceable class="parameter">filename</replaceable>
-      as the source of commands instead of reading commands interactively.
-      After the file is processed, <application>psql</application>
-      terminates. This is in many ways equivalent to the meta-command
-      <command>\i</command>.
+       Read commands from the
+       file <replaceable class="parameter">filename</replaceable>,
+       rather than standard input.
+       This option can be repeated and combined in any order with
+       the <option>-c</option> option.  When either <option>-c</option>
+       or <option>-f</option> is specified, <application>psql</application>
+       does not read commands from standard input; instead it terminates
+       after processing all the <option>-c</option> and <option>-f</option>
+       options in sequence.
+       Except for that, this option is largely equivalent to the
+       meta-command <command>\i</command>.
       </para>
 
       <para>
        If <replaceable>filename</replaceable> is <literal>-</literal>
        (hyphen), then standard input is read until an EOF indication
-       or <command>\q</> meta-command.  Note however that Readline
+       or <command>\q</> meta-command.  This can be used to intersperse
+       interactive input with input from files.  Note however that Readline
        is not used in this case (much as if <option>-n</option> had been
        specified).
       </para>
@@ -542,20 +566,22 @@ EOF
       <term><option>--single-transaction</option></term>
       <listitem>
        <para>
-        When <application>psql</application> executes a script, adding
-        this option wraps <command>BEGIN</>/<command>COMMIT</> around the
-        script to execute it as a single transaction.  This ensures that
-        either all the commands complete successfully, or no changes are
-        applied.
+        This option can only be used in combination with one or more
+        <option>-c</option> and/or <option>-f</option> options.  It causes
+        <application>psql</application> to issue a <command>BEGIN</> command
+        before the first such option and a <command>COMMIT</> command after
+        the last one, thereby wrapping all the commands into a single
+        transaction.  This ensures that either all the commands complete
+        successfully, or no changes are applied.
        </para>
 
        <para>
-        If the script itself uses <command>BEGIN</>, <command>COMMIT</>,
+        If the commands themselves
+        contain <command>BEGIN</>, <command>COMMIT</>,
         or <command>ROLLBACK</>, this option will not have the desired
-        effects.
-        Also, if the script contains any command that cannot be executed
-        inside a transaction block, specifying this option will cause that
-        command (and hence the whole transaction) to fail.
+        effects.  Also, if an individual command cannot be executed inside a
+        transaction block, specifying this option will cause the whole
+        transaction to fail.
        </para>
       </listitem>
      </varlistentry>
@@ -571,7 +597,7 @@ EOF
       explained: <literal>commands</> describes <application>psql</>'s
       backslash commands; <literal>options</> describes the command-line
       options that can be passed to <application>psql</>;
-      and <literal>variables</> shows help about about <application>psql</application> configuration
+      and <literal>variables</> shows help about <application>psql</application> configuration
       variables.
       </para>
       </listitem>
@@ -799,26 +825,29 @@ testdb=&gt;
       </varlistentry>
 
       <varlistentry>
-        <term><literal>\c</literal> or <literal>\connect</literal> <literal>[ <replaceable class="parameter">dbname</replaceable> [ <replaceable class="parameter">username</replaceable> ] [ <replaceable class="parameter">host</replaceable> ] [ <replaceable class="parameter">port</replaceable> ] ] | <replaceable class="parameter">conninfo</replaceable> </literal></term>
+        <term><literal>\c</literal> or <literal>\connect [ -reuse-previous=<replaceable class="parameter">on|off</replaceable> ] [ <replaceable class="parameter">dbname</replaceable> [ <replaceable class="parameter">username</replaceable> ] [ <replaceable class="parameter">host</replaceable> ] [ <replaceable class="parameter">port</replaceable> ] | <replaceable class="parameter">conninfo</replaceable> ]</literal></term>
         <listitem>
         <para>
         Establishes a new connection to a <productname>PostgreSQL</>
         server.  The connection parameters to use can be specified either
-        using a positional syntax, or using <literal>conninfo</> connection
+        using a positional syntax, or using <replaceable>conninfo</> connection
         strings as detailed in <xref linkend="libpq-connstring">.
         </para>
 
         <para>
-        When using positional parameters, if any of
-        <replaceable class="parameter">dbname</replaceable>,
+        Where the command omits database name, user, host, or port, the new
+        connection can reuse values from the previous connection.  By default,
+        values from the previous connection are reused except when processing
+        a <replaceable>conninfo</> string.  Passing a first argument
+        of <literal>-reuse-previous=on</>
+        or <literal>-reuse-previous=off</literal> overrides that default.
+        When the command neither specifies nor reuses a particular parameter,
+        the <application>libpq</application> default is used.  Specifying any
+        of <replaceable class="parameter">dbname</replaceable>,
         <replaceable class="parameter">username</replaceable>,
         <replaceable class="parameter">host</replaceable> or
-        <replaceable class="parameter">port</replaceable> are omitted or
-        specified as <literal>-</literal>, the value of that parameter from
-        the previous connection is used; if there is no previous connection,
-        the <application>libpq</application> default for the parameter's value
-        is used.  When using <literal>conninfo</> strings, no values from the
-        previous connection are used for the new connection.
+        <replaceable class="parameter">port</replaceable>
+        as <literal>-</literal> is equivalent to omitting that parameter.
         </para>
 
         <para>
@@ -963,6 +992,80 @@ testdb=&gt;
         </listitem>
       </varlistentry>
 
+
+      <varlistentry id="APP-PSQL-meta-commands-crosstabview">
+        <term><literal>\crosstabview [
+            <replaceable class="parameter">colV</replaceable>
+            [ <replaceable class="parameter">colH</replaceable>
+            [ <replaceable class="parameter">colD</replaceable>
+            [ <replaceable class="parameter">sortcolH</replaceable>
+            ] ] ] ] </literal></term>
+        <listitem>
+        <para>
+        Executes the current query buffer (like <literal>\g</literal>) and
+        shows the results in a crosstab grid.
+        The query must return at least three columns.
+        The output column identified by <replaceable class="parameter">colV</>
+        becomes a vertical header and the output column identified by
+        <replaceable class="parameter">colH</replaceable>
+        becomes a horizontal header.
+        <replaceable class="parameter">colD</replaceable> identifies
+        the output column to display within the grid.
+        <replaceable class="parameter">sortcolH</replaceable> identifies
+        an optional sort column for the horizontal header.
+        </para>
+
+        <para>
+        Each column specification can be a column number (starting at 1) or
+        a column name.  The usual SQL case folding and quoting rules apply to
+        column names.  If omitted,
+        <replaceable class="parameter">colV</replaceable> is taken as column 1
+        and <replaceable class="parameter">colH</replaceable> as column 2.
+        <replaceable class="parameter">colH</replaceable> must differ from
+        <replaceable class="parameter">colV</replaceable>.
+        If <replaceable class="parameter">colD</replaceable> is not
+        specified, then there must be exactly three columns in the query
+        result, and the column that is neither
+        <replaceable class="parameter">colV</replaceable> nor
+        <replaceable class="parameter">colH</replaceable>
+        is taken to be <replaceable class="parameter">colD</replaceable>.
+        </para>
+
+        <para>
+        The vertical header, displayed as the leftmost column, contains the
+        values found in column <replaceable class="parameter">colV</>, in the
+        same order as in the query results, but with duplicates removed.
+        </para>
+
+        <para>
+        The horizontal header, displayed as the first row, contains the values
+        found in column <replaceable class="parameter">colH</replaceable>,
+        with duplicates removed.  By default, these appear in the same order
+        as in the query results.  But if the
+        optional <replaceable class="parameter">sortcolH</> argument is given,
+        it identifies a column whose values must be integer numbers, and the
+        values from <replaceable class="parameter">colH</replaceable> will
+        appear in the horizontal header sorted according to the
+        corresponding <replaceable class="parameter">sortcolH</> values.
+        </para>
+
+        <para>
+        Inside the crosstab grid, for each distinct value <literal>x</literal>
+        of <replaceable class="parameter">colH</replaceable> and each distinct
+        value <literal>y</literal>
+        of <replaceable class="parameter">colV</replaceable>, the cell located
+        at the intersection <literal>(x,y)</literal> contains the value of
+        the <literal>colD</literal> column in the query result row for which
+        the value of <replaceable class="parameter">colH</replaceable>
+        is <literal>x</literal> and the value
+        of <replaceable class="parameter">colV</replaceable>
+        is <literal>y</>.  If there is no such row, the cell is empty.  If
+        there are multiple such rows, an error is reported.
+        </para>
+        </listitem>
+      </varlistentry>
+
+
       <varlistentry>
         <term><literal>\d[S+] [ <link linkend="APP-PSQL-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
 
@@ -1030,6 +1133,19 @@ testdb=&gt;
         </listitem>
       </varlistentry>
 
+      <varlistentry>
+        <term><literal>\dA[+] [ <link linkend="APP-PSQL-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
+
+        <listitem>
+        <para>
+        Lists access methods. If <replaceable
+        class="parameter">pattern</replaceable> is specified, only access
+        methods whose names match the pattern are shown. If
+        <literal>+</literal> is appended to the command name, each access
+        method is listed with its associated handler function and description.
+        </para>
+        </listitem>
+      </varlistentry>
 
       <varlistentry>
         <term><literal>\db[+] [ <link linkend="APP-PSQL-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
@@ -1254,9 +1370,9 @@ testdb=&gt;
 
         <listitem>
         <para>
-        Lists functions, together with their arguments, return types, and
-        function types, which are classified as <quote>agg</> (aggregate),
-        <quote>normal</>, <quote>trigger</>, or <quote>window</>.
+        Lists functions, together with their result data types, argument data
+        types, and function types, which are classified as <quote>agg</>
+        (aggregate), <quote>normal</>, <quote>trigger</>, or <quote>window</>.
         To display only functions
         of specific type(s), add the corresponding letters <literal>a</>,
         <literal>n</>, <literal>t</>, or <literal>w</> to the command.
@@ -1267,14 +1383,15 @@ testdb=&gt;
         objects are shown; supply a pattern or the <literal>S</literal>
         modifier to include system objects.
         If the form <literal>\df+</literal> is used, additional information
-        about each function is shown, including security classification,
-        volatility, owner, language, source code and description.
+        about each function is shown, including volatility,
+        parallel safety, owner, security classification, access privileges,
+        language, source code and description.
         </para>
 
         <tip>
         <para>
         To look up functions taking arguments or returning values of a specific
-        type, use your pager's search capability to scroll through the
+        data type, use your pager's search capability to scroll through the
         <literal>\df</> output.
         </para>
         </tip>
@@ -1339,13 +1456,15 @@ testdb=&gt;
 
 
       <varlistentry>
-        <term><literal>\dg[+] [ <link linkend="APP-PSQL-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
+        <term><literal>\dg[S+] [ <link linkend="APP-PSQL-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
         <listitem>
         <para>
         Lists database roles.
         (Since the concepts of <quote>users</> and <quote>groups</> have been
         unified into <quote>roles</>, this command is now equivalent to
         <literal>\du</literal>.)
+        By default, only user-created roles are shown; supply the
+        <literal>S</literal> modifier to include system roles.
         If <replaceable class="parameter">pattern</replaceable> is specified,
         only those roles whose names match the pattern are listed.
         If the form <literal>\dg+</literal> is used, additional information
@@ -1499,13 +1618,15 @@ testdb=&gt;
       </varlistentry>
 
       <varlistentry>
-        <term><literal>\du[+] [ <link linkend="APP-PSQL-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
+        <term><literal>\du[S+] [ <link linkend="APP-PSQL-patterns"><replaceable class="parameter">pattern</replaceable></link> ]</literal></term>
         <listitem>
         <para>
         Lists database roles.
         (Since the concepts of <quote>users</> and <quote>groups</> have been
         unified into <quote>roles</>, this command is now equivalent to
         <literal>\dg</literal>.)
+        By default, only user-created roles are shown; supply the
+        <literal>S</literal> modifier to include system roles.
         If <replaceable class="parameter">pattern</replaceable> is specified,
         only those roles whose names match the pattern are listed.
         If the form <literal>\du+</literal> is used, additional information
@@ -1666,6 +1787,46 @@ Tue Oct 26 21:40:57 CEST 1999
 
 
       <varlistentry>
+        <term><literal>\errverbose</literal></term>
+
+        <listitem>
+        <para>
+        Repeats the most recent server error message at maximum
+        verbosity, as though <varname>VERBOSITY</varname> were set
+        to <literal>verbose</> and <varname>SHOW_CONTEXT</varname> were
+        set to <literal>always</>.
+        </para>
+        </listitem>
+      </varlistentry>
+
+
+      <varlistentry>
+        <term><literal>\ev <optional> <replaceable class="parameter">view_name</> <optional>  <replaceable class="parameter">line_number</> </optional> </optional> </literal></term>
+
+        <listitem>
+        <para>
+         This command fetches and edits the definition of the named view,
+         in the form of a <command>CREATE OR REPLACE VIEW</> command.
+         Editing is done in the same way as for <literal>\edit</>.
+         After the editor exits, the updated command waits in the query buffer;
+         type semicolon or <literal>\g</> to send it, or <literal>\r</>
+         to cancel.
+        </para>
+
+        <para>
+         If no view is specified, a blank <command>CREATE VIEW</>
+         template is presented for editing.
+        </para>
+
+        <para>
+         If a line number is specified, <application>psql</application> will
+         position the cursor on the specified line of the view definition.
+        </para>
+        </listitem>
+      </varlistentry>
+
+
+      <varlistentry>
         <term><literal>\f [ <replaceable class="parameter">string</replaceable> ]</literal></term>
 
         <listitem>
@@ -1699,6 +1860,49 @@ Tue Oct 26 21:40:57 CEST 1999
         </para>
         </listitem>
       </varlistentry>
+
+
+      <varlistentry>
+        <term><literal>\gexec</literal></term>
+
+        <listitem>
+        <para>
+         Sends the current query input buffer to the server, then treats
+         each column of each row of the query's output (if any) as a SQL
+         statement to be executed.  For example, to create an index on each
+         column of <structname>my_table</>:
+<programlisting>
+=&gt; <userinput>SELECT format('create index on my_table(%I)', attname)</>
+-&gt; <userinput>FROM pg_attribute</>
+-&gt; <userinput>WHERE attrelid = 'my_table'::regclass AND attnum &gt; 0</>
+-&gt; <userinput>ORDER BY attnum</>
+-&gt; <userinput>\gexec</>
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+CREATE INDEX
+</programlisting>
+        </para>
+
+        <para>
+         The generated queries are executed in the order in which the rows
+         are returned, and left-to-right within each row if there is more
+         than one column.  NULL fields are ignored.  The generated queries
+         are sent literally to the server for processing, so they cannot be
+         <application>psql</> meta-commands nor contain <application>psql</>
+         variable references.  If any individual query fails, execution of
+         the remaining queries continues
+         unless <varname>ON_ERROR_STOP</varname> is set.  Execution of each
+         query is subject to <varname>ECHO</varname> processing.
+         (Setting <varname>ECHO</varname> to <literal>all</literal>
+         or <literal>queries</literal> is often advisable when
+         using <command>\gexec</>.)  Query logging, single-step mode,
+         timing, and other query execution features apply to each generated
+         query as well.
+        </para>
+        </listitem>
+      </varlistentry>
+
 
       <varlistentry>
         <term><literal>\gset [ <replaceable class="parameter">prefix</replaceable> ]</literal></term>
@@ -2067,8 +2271,9 @@ lo_import 152801
           column name on the left and the data on the right. This mode is
           useful if the data wouldn't fit on the screen in the
           normal <quote>horizontal</quote> mode.  In the auto setting, the
-          expanded mode is used whenever the query output is wider than the
-          screen, otherwise the regular mode is used.  The auto setting is only
+          expanded mode is used whenever the query output has more than one
+          column and is wider than the screen; otherwise, the regular mode is
+          used.  The auto setting is only
           effective in the aligned and wrapped formats.  In other formats, it
           always behaves as if the expanded mode is off.
           </para>
@@ -2167,7 +2372,7 @@ lo_import 152801
           <listitem>
           <para>
           Sets the border line drawing style to one
-          of <literal>ascii</literal>, <literal>old-ascii</literal>
+          of <literal>ascii</literal>, <literal>old-ascii</literal>,
           or <literal>unicode</literal>.
           Unique abbreviations are allowed.  (That would mean one
           letter is enough.)
@@ -2321,7 +2526,7 @@ lo_import 152801
           </varlistentry>
 
           <varlistentry>
-          <term><literal>title</literal></term>
+          <term><literal>title</literal> (or <literal>C</literal>)</term>
           <listitem>
           <para>
           Sets the table title for any subsequently printed tables. This
@@ -2536,6 +2741,25 @@ testdb=&gt; <userinput>\setenv LESS -imx4F</userinput>
 
 
       <varlistentry>
+        <term><literal>\sv[+] <replaceable class="parameter">view_name</> </literal></term>
+
+        <listitem>
+         <para>
+          This command fetches and shows the definition of the named view,
+          in the form of a <command>CREATE OR REPLACE VIEW</> command.
+          The definition is printed to the current query output channel,
+          as set by <command>\o</command>.
+         </para>
+
+         <para>
+          If <literal>+</literal> is appended to the command name, then the
+          output lines are numbered from 1.
+         </para>
+        </listitem>
+      </varlistentry>
+
+
+      <varlistentry>
         <term><literal>\t</literal></term>
         <listitem>
         <para>
@@ -2601,9 +2825,11 @@ testdb=&gt; <userinput>\setenv LESS -imx4F</userinput>
         <term><literal>\watch [ <replaceable class="parameter">seconds</replaceable> ]</literal></term>
         <listitem>
         <para>
-        Repeatedly execute the current query buffer (like <literal>\g</>)
+        Repeatedly execute the current query buffer (as <literal>\g</> does)
         until interrupted or the query fails.  Wait the specified number of
-        seconds (default 2) between executions.
+        seconds (default 2) between executions.  Each query result is
+        displayed with a header that includes the <literal>\pset title</>
+        string (if any), the time as of query start, and the delay interval.
         </para>
         </listitem>
       </varlistentry>
@@ -2663,7 +2889,7 @@ testdb=&gt; <userinput>\setenv LESS -imx4F</userinput>
         explained: <literal>commands</> describes <application>psql</>'s
         backslash commands; <literal>options</> describes the command-line
         options that can be passed to <application>psql</>;
-        and <literal>variables</> shows help about about <application>psql</application> configuration
+        and <literal>variables</> shows help about <application>psql</application> configuration
         variables.
         </para>
         </listitem>
@@ -3160,6 +3386,23 @@ bar
       </varlistentry>
 
       <varlistentry>
+        <term><varname>SHOW_CONTEXT</varname></term>
+        <listitem>
+        <para>
+        This variable can be set to the
+        values <literal>never</>, <literal>errors</>, or <literal>always</>
+        to control whether <literal>CONTEXT</> fields are displayed in
+        messages from the server. The default is <literal>errors</> (meaning
+        that context will be shown in error messages, but not in notice or
+        warning messages).  This setting has no effect
+        when <varname>VERBOSITY</> is set to <literal>terse</>.
+        (See also <command>\errverbose</>, for use when you want a verbose
+        version of the error you just got.)
+        </para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
         <term><varname>SINGLELINE</varname></term>
         <listitem>
         <para>
@@ -3197,6 +3440,8 @@ bar
         This variable can be set to the values <literal>default</>,
         <literal>verbose</>, or <literal>terse</> to control the verbosity
         of error reports.
+        (See also <command>\errverbose</>, for use when you want a verbose
+        version of the error you just got.)
         </para>
         </listitem>
       </varlistentry>
@@ -3294,11 +3539,12 @@ testdb=&gt; <userinput>INSERT INTO my_table VALUES (:'content');</userinput>
     and special escape sequences that describe the appearance of the
     prompt. Prompt 1 is the normal prompt that is issued when
     <application>psql</application> requests a new command. Prompt 2 is
-    issued when more input is expected during command input because the
-    command was not terminated with a semicolon or a quote was not closed.
-    Prompt 3 is issued when you run an <acronym>SQL</acronym>
-    <command>COPY</command> command and you are expected to type in the
-    row values on the terminal.
+    issued when more input is expected during command entry, for example
+    because the command was not terminated with a semicolon or a quote
+    was not closed.
+    Prompt 3 is issued when you are running an <acronym>SQL</acronym>
+    <command>COPY FROM STDIN</command> command and you need to type in
+    a row value on the terminal.
     </para>
 
     <para>
@@ -3375,20 +3621,30 @@ testdb=&gt; <userinput>INSERT INTO my_table VALUES (:'content');</userinput>
       </varlistentry>
 
       <varlistentry>
+        <term><literal>%p</literal></term>
+        <listitem>
+         <para>The process ID of the backend currently connected to.</para>
+        </listitem>
+      </varlistentry>
+
+      <varlistentry>
         <term><literal>%R</literal></term>
         <listitem>
         <para>
-        In prompt 1 normally <literal>=</literal>, but <literal>^</literal> if
-        in single-line mode, and <literal>!</literal> if the session is
-        disconnected from the database (which can happen if
-        <command>\connect</command> fails). In prompt 2 the sequence is
-        replaced by <literal>-</literal>, <literal>*</literal>, a single quote,
-        a double quote, or a dollar sign, depending on whether
-        <application>psql</application> expects more input because the
-        command wasn't terminated yet, because you are inside a
-        <literal>/* ... */</literal> comment, or because you are inside
-        a quoted or dollar-escaped string. In prompt 3 the sequence doesn't
-        produce anything.
+        In prompt 1 normally <literal>=</literal>,
+        but <literal>^</literal> if in single-line mode,
+        or <literal>!</literal> if the session is disconnected from the
+        database (which can happen if <command>\connect</command> fails).
+        In prompt 2 <literal>%R</literal> is replaced by a character that
+        depends on why <application>psql</application> expects more input:
+        <literal>-</literal> if the command simply wasn't terminated yet,
+        but <literal>*</literal> if there is an unfinished
+        <literal>/* ... */</literal> comment,
+        a single quote if there is an unfinished quoted string,
+        a double quote if there is an unfinished quoted identifier,
+        a dollar sign if there is an unfinished dollar-quoted string,
+        or <literal>(</literal> if there is an unmatched left parenthesis.
+        In prompt 3 <literal>%R</literal> doesn't produce anything.
         </para>
         </listitem>
       </varlistentry>
@@ -3568,9 +3824,10 @@ $endif
 
     <listitem>
      <para>
-      Editor used by the <command>\e</command> and
-      <command>\ef</command> commands.  The variables are examined in
-      the order listed; the first that is set is used.
+      Editor used by the <command>\e</command>, <command>\ef</command>,
+      and <command>\ev</command> commands.
+      These variables are examined in the order listed;
+      the first that is set is used.
      </para>
 
      <para>
@@ -3585,7 +3842,8 @@ $endif
 
     <listitem>
      <para>
-      When <command>\e</command> or <command>\ef</command> is used
+      When <command>\e</command>, <command>\ef</command>, or
+      <command>\ev</command> is used
       with a line number argument, this variable specifies the
       command-line argument used to pass the starting line number to
       the user's editor.  For editors such as <productname>Emacs</> or
@@ -3666,7 +3924,7 @@ PSQL_EDITOR_LINENUMBER_ARG='--line '
    <term><filename>psqlrc</filename> and <filename>~/.psqlrc</filename></term>
    <listitem>
     <para>
-     Unless it is passed an <option>-X</option> or <option>-c</option> option,
+     Unless it is passed an <option>-X</option> option,
      <application>psql</application> attempts to read and execute commands
      from the system-wide startup file (<filename>psqlrc</filename>) and then
      the user's personal startup file (<filename>~/.psqlrc</filename>), after
@@ -3729,16 +3987,6 @@ PSQL_EDITOR_LINENUMBER_ARG='--line '
 
     <itemizedlist>
       <listitem>
-      <para>
-       In an earlier life <application>psql</application> allowed the
-       first argument of a single-letter backslash command to start
-       directly after the command, without intervening whitespace.
-       As of <productname>PostgreSQL</productname> 8.4 this is no
-       longer allowed.
-      </para>
-      </listitem>
-
-      <listitem>
       <para><application>psql</application> works best with servers of the same
        or an older major version.  Backslash commands are particularly likely
        to fail if the server is of a newer version than <application>psql</>
@@ -3753,13 +4001,30 @@ PSQL_EDITOR_LINENUMBER_ARG='--line '
        If you want to use <application>psql</application> to connect to several
        servers of different major versions, it is recommended that you use the
        newest version of <application>psql</application>.  Alternatively, you
-       can keep a copy of <application>psql</application> from each major
-       version around and be sure to use the version that matches the
+       can keep around a copy of <application>psql</application> from each
+       major version and be sure to use the version that matches the
        respective server.  But in practice, this additional complication should
        not be necessary.
       </para>
       </listitem>
 
+      <listitem>
+      <para>
+       Before <productname>PostgreSQL</productname> 9.6,
+       the <option>-c</option> option implied <option>-X</option>
+       (<option>--no-psqlrc</>); this is no longer the case.
+      </para>
+      </listitem>
+
+      <listitem>
+      <para>
+       Before <productname>PostgreSQL</productname> 8.4,
+       <application>psql</application> allowed the
+       first argument of a single-letter backslash command to start
+       directly after the command, without intervening whitespace.
+       Now, some whitespace is required.
+      </para>
+      </listitem>
     </itemizedlist>
  </refsect1>
 
@@ -3899,6 +4164,47 @@ second | three
 first  | 4
 second | four
 </programlisting></para>
+
+<para>
+  When suitable, query results can be shown in a crosstab representation
+  with the <command>\crosstabview</command> command:
+<programlisting>
+testdb=&gt; <userinput>SELECT first, second, first &gt; 2 AS gt2 FROM my_table;</userinput>
+ first | second | ge2 
+-------+--------+-----
+     1 | one    | f
+     2 | two    | f
+     3 | three  | t
+     4 | four   | t
+(4 rows)
+
+testdb=&gt; <userinput>\crosstabview first second</userinput>
+ first | one | two | three | four 
+-------+-----+-----+-------+------
+     1 | f   |     |       | 
+     2 |     | f   |       | 
+     3 |     |     | t     | 
+     4 |     |     |       | t
+(4 rows)
+</programlisting>
+
+This second example shows a multiplication table with rows sorted in reverse
+numerical order and columns with an independent, ascending numerical order.
+<programlisting>
+testdb=&gt; <userinput>SELECT t1.first as "A", t2.first+100 AS "B", t1.first*(t2.first+100) as "AxB",</userinput>
+testdb(&gt; <userinput>row_number() over(order by t2.first) AS ord</userinput>
+testdb(&gt; <userinput>FROM my_table t1 CROSS JOIN my_table t2 ORDER BY 1 DESC</userinput>
+testdb(&gt; <userinput>\crosstabview "A" "B" "AxB" ord</userinput>
+ A | 101 | 102 | 103 | 104 
+---+-----+-----+-----+-----
+ 4 | 404 | 408 | 412 | 416
+ 3 | 303 | 306 | 309 | 312
+ 2 | 202 | 204 | 206 | 208
+ 1 | 101 | 102 | 103 | 104
+(4 rows)
+</programlisting>
+
+</para>
 
  </refsect1>
 

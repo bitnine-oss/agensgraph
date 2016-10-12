@@ -17,7 +17,7 @@
  *	sync.
  *
  *
- *	Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ *	Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  *	Portions Copyright (c) 1994, Regents of the University of California
  *	Portions Copyright (c) 2000, Philip Warner
  *
@@ -356,9 +356,6 @@ _WriteData(ArchiveHandle *AH, const void *data, size_t dLen)
 {
 	lclContext *ctx = (lclContext *) AH->formatData;
 
-	/* Are we aborting? */
-	checkAborting(AH);
-
 	if (dLen > 0 && cfwrite(data, dLen, ctx->dataFH) != dLen)
 		WRITE_ERROR_EXIT;
 
@@ -406,7 +403,9 @@ _PrintFileData(ArchiveHandle *AH, char *filename)
 	buflen = ZLIB_OUT_SIZE;
 
 	while ((cnt = cfread(buf, buflen, cfp)))
+	{
 		ahwrite(buf, 1, cnt, AH);
+	}
 
 	free(buf);
 	if (cfclose(cfp) !=0)
@@ -523,9 +522,6 @@ static void
 _WriteBuf(ArchiveHandle *AH, const void *buf, size_t len)
 {
 	lclContext *ctx = (lclContext *) AH->formatData;
-
-	/* Are we aborting? */
-	checkAborting(AH);
 
 	if (cfwrite(buf, len, ctx->dataFH) != len)
 		WRITE_ERROR_EXIT;
@@ -859,14 +855,14 @@ _MasterEndParallelItem(ArchiveHandle *AH, TocEntry *te, const char *str, T_Actio
 
 	if (act == ACT_DUMP)
 	{
-		sscanf(str, "%u%n", &dumpId, &nBytes);
+		sscanf(str, "%d%n", &dumpId, &nBytes);
 
 		Assert(dumpId == te->dumpId);
 		Assert(nBytes == strlen(str));
 	}
 	else if (act == ACT_RESTORE)
 	{
-		sscanf(str, "%u %u %u%n", &dumpId, &status, &n_errors, &nBytes);
+		sscanf(str, "%d %d %d%n", &dumpId, &status, &n_errors, &nBytes);
 
 		Assert(dumpId == te->dumpId);
 		Assert(nBytes == strlen(str));

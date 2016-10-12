@@ -4,7 +4,7 @@
  *	  Extract a common prefix, if any, from a compiled regex.
  *
  *
- * Portions Copyright (c) 2012-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1998, 1999 Henry Spencer
  *
  * IDENTIFICATION
@@ -36,7 +36,7 @@ static int findprefix(struct cnfa * cnfa, struct colormap * cm,
  * the common prefix or exact value, of length *slength (measured in chrs
  * not bytes!).
  *
- * This function does not analyze all complex cases (such as lookahead
+ * This function does not analyze all complex cases (such as lookaround
  * constraints) exactly.  Therefore it is possible that some strings matching
  * the reported prefix or exact-match string do not satisfy the regex.  But
  * it should never be the case that a string satisfying the regex does not

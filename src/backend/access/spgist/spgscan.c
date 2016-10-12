@@ -4,7 +4,7 @@
  *	  routines for scanning SP-GiST indexes
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -30,6 +30,7 @@ typedef void (*storeRes_func) (SpGistScanOpaque so, ItemPointer heapPtr,
 typedef struct ScanStackEntry
 {
 	Datum		reconstructedValue;		/* value reconstructed from parent */
+	void	   *traversalValue; /* opclass-specific traverse value */
 	int			level;			/* level of items on this page */
 	ItemPointerData ptr;		/* block and offset to scan from */
 } ScanStackEntry;
@@ -42,6 +43,9 @@ freeScanStackEntry(SpGistScanOpaque so, ScanStackEntry *stackEntry)
 	if (!so->state.attType.attbyval &&
 		DatumGetPointer(stackEntry->reconstructedValue) != NULL)
 		pfree(DatumGetPointer(stackEntry->reconstructedValue));
+	if (stackEntry->traversalValue)
+		pfree(stackEntry->traversalValue);
+
 	pfree(stackEntry);
 }
 
@@ -173,13 +177,9 @@ spgPrepareScanKeys(IndexScanDesc scan)
 	}
 }
 
-Datum
-spgbeginscan(PG_FUNCTION_ARGS)
+IndexScanDesc
+spgbeginscan(Relation rel, int keysz, int orderbysz)
 {
-	Relation	rel = (Relation) PG_GETARG_POINTER(0);
-	int			keysz = PG_GETARG_INT32(1);
-
-	/* ScanKey			scankey = (ScanKey) PG_GETARG_POINTER(2); */
 	IndexScanDesc scan;
 	SpGistScanOpaque so;
 
@@ -193,24 +193,21 @@ spgbeginscan(PG_FUNCTION_ARGS)
 	initSpGistState(&so->state, scan->indexRelation);
 	so->tempCxt = AllocSetContextCreate(CurrentMemoryContext,
 										"SP-GiST search temporary context",
-										ALLOCSET_DEFAULT_MINSIZE,
-										ALLOCSET_DEFAULT_INITSIZE,
-										ALLOCSET_DEFAULT_MAXSIZE);
+										ALLOCSET_DEFAULT_SIZES);
 
 	/* Set up indexTupDesc and xs_itupdesc in case it's an index-only scan */
 	so->indexTupDesc = scan->xs_itupdesc = RelationGetDescr(rel);
 
 	scan->opaque = so;
 
-	PG_RETURN_POINTER(scan);
+	return scan;
 }
 
-Datum
-spgrescan(PG_FUNCTION_ARGS)
+void
+spgrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
+		  ScanKey orderbys, int norderbys)
 {
-	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
 	SpGistScanOpaque so = (SpGistScanOpaque) scan->opaque;
-	ScanKey		scankey = (ScanKey) PG_GETARG_POINTER(1);
 
 	/* copy scankeys into local storage */
 	if (scankey && scan->numberOfKeys > 0)
@@ -224,33 +221,14 @@ spgrescan(PG_FUNCTION_ARGS)
 
 	/* set up starting stack entries */
 	resetSpGistScanOpaque(so);
-
-	PG_RETURN_VOID();
 }
 
-Datum
-spgendscan(PG_FUNCTION_ARGS)
+void
+spgendscan(IndexScanDesc scan)
 {
-	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
 	SpGistScanOpaque so = (SpGistScanOpaque) scan->opaque;
 
 	MemoryContextDelete(so->tempCxt);
-
-	PG_RETURN_VOID();
-}
-
-Datum
-spgmarkpos(PG_FUNCTION_ARGS)
-{
-	elog(ERROR, "SPGiST does not support mark/restore");
-	PG_RETURN_VOID();
-}
-
-Datum
-spgrestrpos(PG_FUNCTION_ARGS)
-{
-	elog(ERROR, "SPGiST does not support mark/restore");
-	PG_RETURN_VOID();
 }
 
 /*
@@ -263,6 +241,7 @@ static bool
 spgLeafTest(Relation index, SpGistScanOpaque so,
 			SpGistLeafTuple leafTuple, bool isnull,
 			int level, Datum reconstructedValue,
+			void *traversalValue,
 			Datum *leafValue, bool *recheck)
 {
 	bool		result;
@@ -289,6 +268,7 @@ spgLeafTest(Relation index, SpGistScanOpaque so,
 	in.scankeys = so->keyData;
 	in.nkeys = so->numberOfKeys;
 	in.reconstructedValue = reconstructedValue;
+	in.traversalValue = traversalValue;
 	in.level = level;
 	in.returnData = so->want_itup;
 	in.leafDatum = leafDatum;
@@ -319,7 +299,7 @@ spgLeafTest(Relation index, SpGistScanOpaque so,
  */
 static void
 spgWalk(Relation index, SpGistScanOpaque so, bool scanWholeIndex,
-		storeRes_func storeRes)
+		storeRes_func storeRes, Snapshot snapshot)
 {
 	Buffer		buffer = InvalidBuffer;
 	bool		reportedSome = false;
@@ -360,6 +340,7 @@ redirect:
 		/* else new pointer points to the same page, no work needed */
 
 		page = BufferGetPage(buffer);
+		TestForOldSnapshot(snapshot, index, page);
 
 		isnull = SpGistPageStoresNulls(page) ? true : false;
 
@@ -389,6 +370,7 @@ redirect:
 									leafTuple, isnull,
 									stackEntry->level,
 									stackEntry->reconstructedValue,
+									stackEntry->traversalValue,
 									&leafValue,
 									&recheck))
 					{
@@ -435,6 +417,7 @@ redirect:
 									leafTuple, isnull,
 									stackEntry->level,
 									stackEntry->reconstructedValue,
+									stackEntry->traversalValue,
 									&leafValue,
 									&recheck))
 					{
@@ -480,6 +463,8 @@ redirect:
 			in.scankeys = so->keyData;
 			in.nkeys = so->numberOfKeys;
 			in.reconstructedValue = stackEntry->reconstructedValue;
+			in.traversalMemoryContext = oldCtx;
+			in.traversalValue = stackEntry->traversalValue;
 			in.level = stackEntry->level;
 			in.returnData = so->want_itup;
 			in.allTheSame = innerTuple->allTheSame;
@@ -547,6 +532,14 @@ redirect:
 					else
 						newEntry->reconstructedValue = (Datum) 0;
 
+					/*
+					 * Elements of out.traversalValues should be allocated in
+					 * in.traversalMemoryContext, which is actually a long
+					 * lived context of index scan.
+					 */
+					newEntry->traversalValue = (out.traversalValues) ?
+						out.traversalValues[i] : NULL;
+
 					so->scanStack = lcons(newEntry, so->scanStack);
 				}
 			}
@@ -571,11 +564,9 @@ storeBitmap(SpGistScanOpaque so, ItemPointer heapPtr,
 	so->ntids++;
 }
 
-Datum
-spggetbitmap(PG_FUNCTION_ARGS)
+int64
+spggetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 {
-	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
-	TIDBitmap  *tbm = (TIDBitmap *) PG_GETARG_POINTER(1);
 	SpGistScanOpaque so = (SpGistScanOpaque) scan->opaque;
 
 	/* Copy want_itup to *so so we don't need to pass it around separately */
@@ -584,9 +575,9 @@ spggetbitmap(PG_FUNCTION_ARGS)
 	so->tbm = tbm;
 	so->ntids = 0;
 
-	spgWalk(scan->indexRelation, so, true, storeBitmap);
+	spgWalk(scan->indexRelation, so, true, storeBitmap, scan->xs_snapshot);
 
-	PG_RETURN_INT64(so->ntids);
+	return so->ntids;
 }
 
 /* storeRes subroutine for gettuple case */
@@ -610,11 +601,9 @@ storeGettuple(SpGistScanOpaque so, ItemPointer heapPtr,
 	so->nPtrs++;
 }
 
-Datum
-spggettuple(PG_FUNCTION_ARGS)
+bool
+spggettuple(IndexScanDesc scan, ScanDirection dir)
 {
-	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
-	ScanDirection dir = (ScanDirection) PG_GETARG_INT32(1);
 	SpGistScanOpaque so = (SpGistScanOpaque) scan->opaque;
 
 	if (dir != ForwardScanDirection)
@@ -632,7 +621,7 @@ spggettuple(PG_FUNCTION_ARGS)
 			scan->xs_recheck = so->recheck[so->iPtr];
 			scan->xs_itup = so->indexTups[so->iPtr];
 			so->iPtr++;
-			PG_RETURN_BOOL(true);
+			return true;
 		}
 
 		if (so->want_itup)
@@ -645,25 +634,23 @@ spggettuple(PG_FUNCTION_ARGS)
 		}
 		so->iPtr = so->nPtrs = 0;
 
-		spgWalk(scan->indexRelation, so, false, storeGettuple);
+		spgWalk(scan->indexRelation, so, false, storeGettuple,
+				scan->xs_snapshot);
 
 		if (so->nPtrs == 0)
 			break;				/* must have completed scan */
 	}
 
-	PG_RETURN_BOOL(false);
+	return false;
 }
 
-Datum
-spgcanreturn(PG_FUNCTION_ARGS)
+bool
+spgcanreturn(Relation index, int attno)
 {
-	Relation	index = (Relation) PG_GETARG_POINTER(0);
-
-	/* int			i = PG_GETARG_INT32(1); */
 	SpGistCache *cache;
 
 	/* We can do it if the opclass config function says so */
 	cache = spgGetCache(index);
 
-	PG_RETURN_BOOL(cache->config.canReturnData);
+	return cache->config.canReturnData;
 }

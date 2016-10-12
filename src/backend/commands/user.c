@@ -3,7 +3,7 @@
  * user.c
  *	  Commands for manipulating roles (formerly called users).
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/user.c
@@ -17,6 +17,7 @@
 #include "access/htup_details.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
+#include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/objectaccess.h"
@@ -301,7 +302,7 @@ CreateRole(CreateRoleStmt *stmt)
 		if (!superuser())
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				errmsg("must be superuser to change bypassrls attribute")));
+				 errmsg("must be superuser to change bypassrls attribute")));
 	}
 	else
 	{
@@ -310,6 +311,17 @@ CreateRole(CreateRoleStmt *stmt)
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 					 errmsg("permission denied to create role")));
 	}
+
+	/*
+	 * Check that the user is not trying to create a role in the reserved
+	 * "pg_" namespace.
+	 */
+	if (IsReservedName(stmt->role))
+		ereport(ERROR,
+				(errcode(ERRCODE_RESERVED_NAME),
+				 errmsg("role name \"%s\" is reserved",
+						stmt->role),
+			   errdetail("Role names starting with \"pg_\" are reserved.")));
 
 	/*
 	 * Check the pg_authid relation to be certain the role doesn't already
@@ -506,6 +518,9 @@ AlterRole(AlterRoleStmt *stmt)
 	DefElem    *dvalidUntil = NULL;
 	DefElem    *dbypassRLS = NULL;
 	Oid			roleid;
+
+	check_rolespec_name(stmt->role,
+						"Cannot alter reserved roles.");
 
 	/* Extract options from the statement node tree */
 	foreach(option, stmt->options)
@@ -857,6 +872,9 @@ AlterRoleSet(AlterRoleSetStmt *stmt)
 
 	if (stmt->role)
 	{
+		check_rolespec_name(stmt->role,
+							"Cannot alter reserved roles.");
+
 		roletuple = get_rolespec_tuple(stmt->role);
 		roleid = HeapTupleGetOid(roletuple);
 
@@ -959,7 +977,7 @@ DropRole(DropRoleStmt *stmt)
 		if (rolspec->roletype != ROLESPEC_CSTRING)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("cannot use special role specifier in DROP ROLE")));
+				  errmsg("cannot use special role specifier in DROP ROLE")));
 		role = rolspec->rolename;
 
 		tuple = SearchSysCache1(AUTHNAME, PointerGetDatum(role));
@@ -1117,6 +1135,7 @@ RenameRole(const char *oldname, const char *newname)
 	int			i;
 	Oid			roleid;
 	ObjectAddress address;
+	Form_pg_authid authform;
 
 	rel = heap_open(AuthIdRelationId, RowExclusiveLock);
 	dsc = RelationGetDescr(rel);
@@ -1136,6 +1155,7 @@ RenameRole(const char *oldname, const char *newname)
 	 */
 
 	roleid = HeapTupleGetOid(oldtuple);
+	authform = (Form_pg_authid) GETSTRUCT(oldtuple);
 
 	if (roleid == GetSessionUserId())
 		ereport(ERROR,
@@ -1145,6 +1165,24 @@ RenameRole(const char *oldname, const char *newname)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("current user cannot be renamed")));
+
+	/*
+	 * Check that the user is not trying to rename a system role and not
+	 * trying to rename a role into the reserved "pg_" namespace.
+	 */
+	if (IsReservedName(NameStr(authform->rolname)))
+		ereport(ERROR,
+				(errcode(ERRCODE_RESERVED_NAME),
+				 errmsg("role name \"%s\" is reserved",
+						NameStr(authform->rolname)),
+			   errdetail("Role names starting with \"pg_\" are reserved.")));
+
+	if (IsReservedName(newname))
+		ereport(ERROR,
+				(errcode(ERRCODE_RESERVED_NAME),
+				 errmsg("role name \"%s\" is reserved",
+						newname),
+			   errdetail("Role names starting with \"pg_\" are reserved.")));
 
 	/* make sure the new name doesn't exist */
 	if (SearchSysCacheExists1(AUTHNAME, CStringGetDatum(newname)))

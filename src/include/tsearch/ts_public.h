@@ -4,7 +4,7 @@
  *	  Public interface to various tsearch modules, such as
  *	  parsers and dictionaries.
  *
- * Copyright (c) 1998-2015, PostgreSQL Global Development Group
+ * Copyright (c) 1998-2016, PostgreSQL Global Development Group
  *
  * src/include/tsearch/ts_public.h
  *
@@ -42,6 +42,7 @@ typedef struct
 				unused:3,
 				type:8,
 				len:16;
+	WordEntryPos pos;
 	char	   *word;
 	QueryOperand *item;
 } HeadlineWordEntry;
@@ -51,6 +52,7 @@ typedef struct
 	HeadlineWordEntry *words;
 	int32		lenwords;
 	int32		curwords;
+	int32		vectorpos;		/* positions a-la tsvector */
 	char	   *startsel;
 	char	   *stopsel;
 	char	   *fragdelim;

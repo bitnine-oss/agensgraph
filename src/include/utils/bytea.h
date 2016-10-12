@@ -4,7 +4,7 @@
  *	  Declarations for BYTEA data type support.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/bytea.h
@@ -42,6 +42,7 @@ extern Datum byteale(PG_FUNCTION_ARGS);
 extern Datum byteagt(PG_FUNCTION_ARGS);
 extern Datum byteage(PG_FUNCTION_ARGS);
 extern Datum byteacmp(PG_FUNCTION_ARGS);
+extern Datum bytea_sortsupport(PG_FUNCTION_ARGS);
 extern Datum byteacat(PG_FUNCTION_ARGS);
 extern Datum byteapos(PG_FUNCTION_ARGS);
 extern Datum bytea_substr(PG_FUNCTION_ARGS);

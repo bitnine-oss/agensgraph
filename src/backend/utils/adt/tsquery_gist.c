@@ -3,7 +3,7 @@
  * tsquery_gist.c
  *	  GiST index support for tsquery
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -261,4 +261,17 @@ gtsquery_picksplit(PG_FUNCTION_ARGS)
 	v->spl_rdatum = TSQuerySignGetDatum(datum_r);
 
 	PG_RETURN_POINTER(v);
+}
+
+/*
+ * Formerly, gtsquery_consistent was declared in pg_proc.h with arguments
+ * that did not match the documented conventions for GiST support functions.
+ * We fixed that, but we still need a pg_proc entry with the old signature
+ * to support reloading pre-9.6 contrib/tsearch2 opclass declarations.
+ * This compatibility function should go away eventually.
+ */
+Datum
+gtsquery_consistent_oldsig(PG_FUNCTION_ARGS)
+{
+	return gtsquery_consistent(fcinfo);
 }

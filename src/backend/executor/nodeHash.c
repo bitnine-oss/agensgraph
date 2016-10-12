@@ -3,7 +3,7 @@
  * nodeHash.c
  *	  Routines to hash relations for hashjoin
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -344,15 +344,11 @@ ExecHashTableCreate(Hash *node, List *hashOperators, bool keepNulls)
 	 */
 	hashtable->hashCxt = AllocSetContextCreate(CurrentMemoryContext,
 											   "HashTableContext",
-											   ALLOCSET_DEFAULT_MINSIZE,
-											   ALLOCSET_DEFAULT_INITSIZE,
-											   ALLOCSET_DEFAULT_MAXSIZE);
+											   ALLOCSET_DEFAULT_SIZES);
 
 	hashtable->batchCxt = AllocSetContextCreate(hashtable->hashCxt,
 												"HashBatchContext",
-												ALLOCSET_DEFAULT_MINSIZE,
-												ALLOCSET_DEFAULT_INITSIZE,
-												ALLOCSET_DEFAULT_MAXSIZE);
+												ALLOCSET_DEFAULT_SIZES);
 
 	/* Allocate data that will live for the life of the hashjoin */
 
@@ -1121,12 +1117,13 @@ ExecScanHashBucket(HashJoinState *hjstate,
 void
 ExecPrepHashTableForUnmatched(HashJoinState *hjstate)
 {
-	/*
-	 * ---------- During this scan we use the HashJoinState fields as follows:
+	/*----------
+	 * During this scan we use the HashJoinState fields as follows:
 	 *
-	 * hj_CurBucketNo: next regular bucket to scan hj_CurSkewBucketNo: next
-	 * skew bucket (an index into skewBucketNums) hj_CurTuple: last tuple
-	 * returned, or NULL to start next bucket ----------
+	 * hj_CurBucketNo: next regular bucket to scan
+	 * hj_CurSkewBucketNo: next skew bucket (an index into skewBucketNums)
+	 * hj_CurTuple: last tuple returned, or NULL to start next bucket
+	 *----------
 	 */
 	hjstate->hj_CurBucketNo = 0;
 	hjstate->hj_CurSkewBucketNo = 0;

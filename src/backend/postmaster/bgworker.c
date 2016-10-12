@@ -2,7 +2,7 @@
  * bgworker.c
  *		POSTGRES pluggable background workers implementation
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/postmaster/bgworker.c
@@ -955,45 +955,31 @@ WaitForBackgroundWorkerStartup(BackgroundWorkerHandle *handle, pid_t *pidp)
 {
 	BgwHandleStatus status;
 	int			rc;
-	bool		save_set_latch_on_sigusr1;
 
-	save_set_latch_on_sigusr1 = set_latch_on_sigusr1;
-	set_latch_on_sigusr1 = true;
-
-	PG_TRY();
+	for (;;)
 	{
-		for (;;)
+		pid_t		pid;
+
+		CHECK_FOR_INTERRUPTS();
+
+		status = GetBackgroundWorkerPid(handle, &pid);
+		if (status == BGWH_STARTED)
+			*pidp = pid;
+		if (status != BGWH_NOT_YET_STARTED)
+			break;
+
+		rc = WaitLatch(MyLatch,
+					   WL_LATCH_SET | WL_POSTMASTER_DEATH, 0);
+
+		if (rc & WL_POSTMASTER_DEATH)
 		{
-			pid_t		pid;
-
-			CHECK_FOR_INTERRUPTS();
-
-			status = GetBackgroundWorkerPid(handle, &pid);
-			if (status == BGWH_STARTED)
-				*pidp = pid;
-			if (status != BGWH_NOT_YET_STARTED)
-				break;
-
-			rc = WaitLatch(MyLatch,
-						   WL_LATCH_SET | WL_POSTMASTER_DEATH, 0);
-
-			if (rc & WL_POSTMASTER_DEATH)
-			{
-				status = BGWH_POSTMASTER_DIED;
-				break;
-			}
-
-			ResetLatch(MyLatch);
+			status = BGWH_POSTMASTER_DIED;
+			break;
 		}
-	}
-	PG_CATCH();
-	{
-		set_latch_on_sigusr1 = save_set_latch_on_sigusr1;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
 
-	set_latch_on_sigusr1 = save_set_latch_on_sigusr1;
+		ResetLatch(MyLatch);
+	}
+
 	return status;
 }
 
@@ -1010,40 +996,29 @@ WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle)
 {
 	BgwHandleStatus status;
 	int			rc;
-	bool		save_set_latch_on_sigusr1;
 
-	save_set_latch_on_sigusr1 = set_latch_on_sigusr1;
-	set_latch_on_sigusr1 = true;
-
-	PG_TRY();
+	for (;;)
 	{
-		for (;;)
+		pid_t		pid;
+
+		CHECK_FOR_INTERRUPTS();
+
+		status = GetBackgroundWorkerPid(handle, &pid);
+		if (status == BGWH_STOPPED)
+			break;
+
+		rc = WaitLatch(&MyProc->procLatch,
+					   WL_LATCH_SET | WL_POSTMASTER_DEATH, 0);
+
+		if (rc & WL_POSTMASTER_DEATH)
 		{
-			pid_t		pid;
-
-			CHECK_FOR_INTERRUPTS();
-
-			status = GetBackgroundWorkerPid(handle, &pid);
-			if (status == BGWH_STOPPED)
-				return status;
-
-			rc = WaitLatch(&MyProc->procLatch,
-						   WL_LATCH_SET | WL_POSTMASTER_DEATH, 0);
-
-			if (rc & WL_POSTMASTER_DEATH)
-				return BGWH_POSTMASTER_DIED;
-
-			ResetLatch(&MyProc->procLatch);
+			status = BGWH_POSTMASTER_DIED;
+			break;
 		}
-	}
-	PG_CATCH();
-	{
-		set_latch_on_sigusr1 = save_set_latch_on_sigusr1;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
 
-	set_latch_on_sigusr1 = save_set_latch_on_sigusr1;
+		ResetLatch(&MyProc->procLatch);
+	}
+
 	return status;
 }
 

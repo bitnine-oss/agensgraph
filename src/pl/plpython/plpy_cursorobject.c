@@ -6,8 +6,11 @@
 
 #include "postgres.h"
 
+#include <limits.h>
+
 #include "access/xact.h"
 #include "mb/pg_wchar.h"
+#include "utils/memutils.h"
 
 #include "plpython.h"
 
@@ -111,7 +114,10 @@ PLy_cursor_query(const char *query)
 		return NULL;
 	cursor->portalname = NULL;
 	cursor->closed = false;
-	PLy_typeinfo_init(&cursor->result);
+	cursor->mcxt = AllocSetContextCreate(TopMemoryContext,
+										 "PL/Python cursor context",
+										 ALLOCSET_DEFAULT_SIZES);
+	PLy_typeinfo_init(&cursor->result, cursor->mcxt);
 
 	oldcontext = CurrentMemoryContext;
 	oldowner = CurrentResourceOwner;
@@ -139,7 +145,7 @@ PLy_cursor_query(const char *query)
 			elog(ERROR, "SPI_cursor_open() failed: %s",
 				 SPI_result_code_string(SPI_result));
 
-		cursor->portalname = PLy_strdup(portal->name);
+		cursor->portalname = MemoryContextStrdup(cursor->mcxt, portal->name);
 
 		PLy_spi_subtransaction_commit(oldcontext, oldowner);
 	}
@@ -200,7 +206,10 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 		return NULL;
 	cursor->portalname = NULL;
 	cursor->closed = false;
-	PLy_typeinfo_init(&cursor->result);
+	cursor->mcxt = AllocSetContextCreate(TopMemoryContext,
+										 "PL/Python cursor context",
+										 ALLOCSET_DEFAULT_SIZES);
+	PLy_typeinfo_init(&cursor->result, cursor->mcxt);
 
 	oldcontext = CurrentMemoryContext;
 	oldowner = CurrentResourceOwner;
@@ -261,7 +270,7 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 			elog(ERROR, "SPI_cursor_open() failed: %s",
 				 SPI_result_code_string(SPI_result));
 
-		cursor->portalname = PLy_strdup(portal->name);
+		cursor->portalname = MemoryContextStrdup(cursor->mcxt, portal->name);
 
 		PLy_spi_subtransaction_commit(oldcontext, oldowner);
 	}
@@ -315,12 +324,13 @@ PLy_cursor_dealloc(PyObject *arg)
 
 		if (PortalIsValid(portal))
 			SPI_cursor_close(portal);
+		cursor->closed = true;
 	}
-
-	PLy_free(cursor->portalname);
-	cursor->portalname = NULL;
-
-	PLy_typeinfo_dealloc(&cursor->result);
+	if (cursor->mcxt)
+	{
+		MemoryContextDelete(cursor->mcxt);
+		cursor->mcxt = NULL;
+	}
 	arg->ob_type->tp_free(arg);
 }
 
@@ -434,11 +444,23 @@ PLy_cursor_fetch(PyObject *self, PyObject *args)
 		ret->status = PyInt_FromLong(SPI_OK_FETCH);
 
 		Py_DECREF(ret->nrows);
-		ret->nrows = PyInt_FromLong(SPI_processed);
+		ret->nrows = (SPI_processed > (uint64) LONG_MAX) ?
+			PyFloat_FromDouble((double) SPI_processed) :
+			PyInt_FromLong((long) SPI_processed);
 
 		if (SPI_processed != 0)
 		{
-			int			i;
+			uint64		i;
+
+			/*
+			 * PyList_New() and PyList_SetItem() use Py_ssize_t for list size
+			 * and list indices; so we cannot support a result larger than
+			 * PY_SSIZE_T_MAX.
+			 */
+			if (SPI_processed > (uint64) PY_SSIZE_T_MAX)
+				ereport(ERROR,
+						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+						 errmsg("query result has too many rows to fit in a Python list")));
 
 			Py_DECREF(ret->rows);
 			ret->rows = PyList_New(SPI_processed);

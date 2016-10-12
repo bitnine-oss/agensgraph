@@ -3,7 +3,7 @@
  * dirmod.c
  *	  directory handling functions
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	This includes replacement versions of functions that work on
@@ -206,7 +206,9 @@ pgsymlink(const char *oldpath, const char *newpath)
 		LPSTR		msg;
 
 		errno = 0;
-		FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+		FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+					  FORMAT_MESSAGE_IGNORE_INSERTS |
+					  FORMAT_MESSAGE_FROM_SYSTEM,
 					  NULL, GetLastError(),
 					  MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT),
 					  (LPSTR) &msg, 0, NULL);
@@ -281,7 +283,9 @@ pgreadlink(const char *path, char *buf, size_t size)
 		LPSTR		msg;
 
 		errno = 0;
-		FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+		FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+					  FORMAT_MESSAGE_IGNORE_INSERTS |
+					  FORMAT_MESSAGE_FROM_SYSTEM,
 					  NULL, GetLastError(),
 					  MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT),
 					  (LPSTR) &msg, 0, NULL);

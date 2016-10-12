@@ -2,7 +2,7 @@
 #
 # Makefile for src/interfaces/ecpg/preproc
 #
-# Copyright (c) 1998-2015, PostgreSQL Global Development Group
+# Copyright (c) 1998-2016, PostgreSQL Global Development Group
 #
 # src/interfaces/ecpg/preproc/Makefile
 #
@@ -16,7 +16,7 @@ top_builddir = ../../../..
 include $(top_builddir)/src/Makefile.global
 
 MAJOR_VERSION= 4
-MINOR_VERSION= 11
+MINOR_VERSION= 12
 PATCHLEVEL=0
 
 override CPPFLAGS := -I../include -I$(top_srcdir)/src/interfaces/ecpg/include \
@@ -26,8 +26,8 @@ override CPPFLAGS := -I../include -I$(top_srcdir)/src/interfaces/ecpg/include \
 
 override CFLAGS += $(PTHREAD_CFLAGS) -DECPG_COMPILE
 
-OBJS=	preproc.o type.o ecpg.o output.o parser.o \
-	keywords.o c_keywords.o ecpg_keywords.o kwlookup.o ../ecpglib/typename.o descriptor.o variable.o \
+OBJS=	preproc.o pgc.o type.o ecpg.o output.o parser.o \
+	keywords.o c_keywords.o ecpg_keywords.o ../ecpglib/typename.o descriptor.o variable.o \
 	$(WIN32RES)
 
 # Suppress parallel build to avoid a bug in GNU make 3.82
@@ -44,9 +44,6 @@ ecpg: $(OBJS) | submake-libpgport
 ../ecpglib/typename.o: ../ecpglib/typename.c
 	$(MAKE) -C $(dir $@) $(notdir $@)
 
-# pgc is compiled as part of preproc
-preproc.o: pgc.c
-
 preproc.h: preproc.c ;
 preproc.c: BISONFLAGS += -d
 
@@ -54,10 +51,7 @@ preproc.y: ../../../backend/parser/gram.y parse.pl ecpg.addons ecpg.header ecpg.
 	$(PERL) $(srcdir)/parse.pl $(srcdir) < $< > $@
 	$(PERL) $(srcdir)/check_rules.pl $(srcdir) $<
 
-ecpg_keywords.o c_keywords.o keywords.o preproc.o parser.o: preproc.h
-
-kwlookup.c: % : $(top_srcdir)/src/backend/parser/%
-	rm -f $@ && $(LN_S) $< .
+ecpg_keywords.o c_keywords.o keywords.o preproc.o pgc.o parser.o: preproc.h
 
 distprep: preproc.y preproc.c preproc.h pgc.c
 
@@ -71,7 +65,7 @@ uninstall:
 	rm -f '$(DESTDIR)$(bindir)/ecpg$(X)'
 
 clean distclean:
-	rm -f kwlookup.c *.o ecpg$(X)
+	rm -f *.o ecpg$(X)
 # garbage from development
 	@rm -f core a.out
 

@@ -75,7 +75,8 @@ if exist src\pl\plperl\spi.c del /q src\pl\plperl\spi.c
 if %DIST%==1 if exist src\pl\plpgsql\src\pl_gram.c del /q src\pl\plpgsql\src\pl_gram.c
 if %DIST%==1 if exist src\pl\plpgsql\src\pl_gram.h del /q src\pl\plpgsql\src\pl_gram.h
 
-if %DIST%==1 if exist src\bin\psql\psqlscan.c del /q src\bin\psql\psqlscan.c
+if %DIST%==1 if exist src\fe_utils\psqlscan.c del /q src\fe_utils\psqlscan.c
+if %DIST%==1 if exist src\bin\psql\psqlscanslash.c del /q src\bin\psql\psqlscanslash.c
 
 if %DIST%==1 if exist contrib\cube\cubescan.c del /q contrib\cube\cubescan.c
 if %DIST%==1 if exist contrib\cube\cubeparse.c del /q contrib\cube\cubeparse.c
@@ -92,9 +93,12 @@ if exist src\test\regress\autoinc.dll del /q src\test\regress\autoinc.dll
 if exist src\bin\initdb\tmp_check rd /s /q src\bin\initdb\tmp_check
 if exist src\bin\pg_basebackup\tmp_check rd /s /q src\bin\pg_basebackup\tmp_check
 if exist src\bin\pg_config\tmp_check rd /s /q src\bin\pg_config\tmp_check
+if exist src\bin\pg_controldata\tmp_check rd /s /q src\bin\pg_controldata\tmp_check
 if exist src\bin\pg_ctl\tmp_check rd /s /q src\bin\pg_ctl\tmp_check
 if exist src\bin\pg_rewind\tmp_check rd /s /q src\bin\pg_rewind\tmp_check
+if exist src\bin\pgbench\tmp_check rd /s /q src\bin\pgbench\tmp_check
 if exist src\bin\scripts\tmp_check rd /s /q src\bin\scripts\tmp_check
+if exist src\test\recovery\tmp_check rd /s /q src\test\recovery\tmp_check
 
 REM Clean up datafiles built with contrib
 REM cd contrib

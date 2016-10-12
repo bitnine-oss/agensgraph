@@ -66,7 +66,6 @@ static void PLy_pop_execution_context(void);
 /* static state for Python library conflict detection */
 static int *plpython_version_bitmask_ptr = NULL;
 static int	plpython_version_bitmask = 0;
-static const int plpython_python_version = PY_MAJOR_VERSION;
 
 /* initialize global variables */
 PyObject   *PLy_interp_globals = NULL;
@@ -79,7 +78,6 @@ void
 _PG_init(void)
 {
 	int		  **bitmask_ptr;
-	const int **version_ptr;
 
 	/*
 	 * Set up a shared bitmask variable telling which Python version(s) are
@@ -99,33 +97,10 @@ _PG_init(void)
 
 	/*
 	 * This should be safe even in the presence of conflicting plpythons, and
-	 * it's necessary to do it here for the next error to be localized.
+	 * it's necessary to do it before possibly throwing a conflict error, or
+	 * the error message won't get localized.
 	 */
 	pg_bindtextdomain(TEXTDOMAIN);
-
-	/*
-	 * We used to have a scheme whereby PL/Python would fail immediately if
-	 * loaded into a session in which a conflicting libpython is already
-	 * present.  We don't like to do that anymore, but it seems possible that
-	 * a plpython library adhering to the old convention is present in the
-	 * session, in which case we have to fail.  We detect an old library if
-	 * plpython_python_version is already defined but the indicated version
-	 * isn't reflected in plpython_version_bitmask.  Otherwise, set the
-	 * variable so that the right thing happens if an old library is loaded
-	 * later.
-	 */
-	version_ptr = (const int **) find_rendezvous_variable("plpython_python_version");
-	if (!(*version_ptr))
-		*version_ptr = &plpython_python_version;
-	else
-	{
-		if ((*plpython_version_bitmask_ptr & (1 << **version_ptr)) == 0)
-			ereport(FATAL,
-					(errmsg("Python major version mismatch in session"),
-					 errdetail("This session has previously used Python major version %d, and it is now attempting to use Python major version %d.",
-							   **version_ptr, plpython_python_version),
-					 errhint("Start a new session to use a different Python major version.")));
-	}
 }
 
 /*
@@ -338,7 +313,10 @@ plpython_inline_handler(PG_FUNCTION_ARGS)
 	flinfo.fn_mcxt = CurrentMemoryContext;
 
 	MemSet(&proc, 0, sizeof(PLyProcedure));
-	proc.pyname = PLy_strdup("__plpython_inline_block");
+	proc.mcxt = AllocSetContextCreate(TopMemoryContext,
+									  "__plpython_inline_block",
+									  ALLOCSET_DEFAULT_SIZES);
+	proc.pyname = MemoryContextStrdup(proc.mcxt, "__plpython_inline_block");
 	proc.langid = codeblock->langOid;
 	proc.result.out.d.typoid = VOIDOID;
 
@@ -425,17 +403,30 @@ PLy_current_execution_context(void)
 	return PLy_execution_contexts;
 }
 
+MemoryContext
+PLy_get_scratch_context(PLyExecutionContext *context)
+{
+	/*
+	 * A scratch context might never be needed in a given plpython procedure,
+	 * so allocate it on first request.
+	 */
+	if (context->scratch_ctx == NULL)
+		context->scratch_ctx =
+			AllocSetContextCreate(TopTransactionContext,
+								  "PL/Python scratch context",
+								  ALLOCSET_DEFAULT_SIZES);
+	return context->scratch_ctx;
+}
+
 static PLyExecutionContext *
 PLy_push_execution_context(void)
 {
-	PLyExecutionContext *context = PLy_malloc(sizeof(PLyExecutionContext));
+	PLyExecutionContext *context;
 
+	context = (PLyExecutionContext *)
+		MemoryContextAlloc(TopTransactionContext, sizeof(PLyExecutionContext));
 	context->curr_proc = NULL;
-	context->scratch_ctx = AllocSetContextCreate(TopTransactionContext,
-												 "PL/Python scratch context",
-												 ALLOCSET_DEFAULT_MINSIZE,
-												 ALLOCSET_DEFAULT_INITSIZE,
-												 ALLOCSET_DEFAULT_MAXSIZE);
+	context->scratch_ctx = NULL;
 	context->next = PLy_execution_contexts;
 	PLy_execution_contexts = context;
 	return context;
@@ -451,6 +442,7 @@ PLy_pop_execution_context(void)
 
 	PLy_execution_contexts = context->next;
 
-	MemoryContextDelete(context->scratch_ctx);
-	PLy_free(context);
+	if (context->scratch_ctx)
+		MemoryContextDelete(context->scratch_ctx);
+	pfree(context);
 }

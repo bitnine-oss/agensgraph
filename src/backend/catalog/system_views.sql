@@ -1,9 +1,17 @@
 /*
  * PostgreSQL System Views
  *
- * Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2016, PostgreSQL Global Development Group
  *
  * src/backend/catalog/system_views.sql
+ *
+ * Note: this file is read in single-user -j mode, which means that the
+ * command terminator is semicolon-newline-newline; whenever the backend
+ * sees that, it stops and executes what it's got.  If you write a lot of
+ * statements without empty lines between, they'll all get quoted to you
+ * in any error message about one of them, so don't do that.  Also, you
+ * cannot write a semicolon immediately followed by an empty line in a
+ * string literal (including a function body!) or a multiline comment.
  */
 
 CREATE VIEW pg_roles AS
@@ -425,6 +433,12 @@ CREATE VIEW pg_timezone_abbrevs AS
 CREATE VIEW pg_timezone_names AS
     SELECT * FROM pg_timezone_names();
 
+CREATE VIEW pg_config AS
+    SELECT * FROM pg_config();
+
+REVOKE ALL on pg_config FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION pg_config() FROM PUBLIC;
+
 -- Statistics views
 
 CREATE VIEW pg_stat_all_tables AS
@@ -622,7 +636,8 @@ CREATE VIEW pg_stat_activity AS
             S.xact_start,
             S.query_start,
             S.state_change,
-            S.waiting,
+            S.wait_event_type,
+            S.wait_event,
             S.state,
             S.backend_xid,
             s.backend_xmin,
@@ -654,6 +669,23 @@ CREATE VIEW pg_stat_replication AS
     WHERE S.usesysid = U.oid AND
             S.pid = W.pid;
 
+CREATE VIEW pg_stat_wal_receiver AS
+    SELECT
+            s.pid,
+            s.status,
+            s.receive_start_lsn,
+            s.receive_start_tli,
+            s.received_lsn,
+            s.received_tli,
+            s.last_msg_send_time,
+            s.last_msg_receipt_time,
+            s.latest_end_lsn,
+            s.latest_end_time,
+            s.slot_name,
+            s.conninfo
+    FROM pg_stat_get_wal_receiver() s
+    WHERE s.pid IS NOT NULL;
+
 CREATE VIEW pg_stat_ssl AS
     SELECT
             S.pid,
@@ -676,7 +708,8 @@ CREATE VIEW pg_replication_slots AS
             L.active_pid,
             L.xmin,
             L.catalog_xmin,
-            L.restart_lsn
+            L.restart_lsn,
+            L.confirmed_flush_lsn
     FROM pg_get_replication_slots() AS L
             LEFT JOIN pg_database D ON (L.datoid = D.oid);
 
@@ -764,6 +797,24 @@ CREATE VIEW pg_stat_bgwriter AS
         pg_stat_get_buf_alloc() AS buffers_alloc,
         pg_stat_get_bgwriter_stat_reset_time() AS stats_reset;
 
+CREATE VIEW pg_stat_progress_vacuum AS
+	SELECT
+		S.pid AS pid, S.datid AS datid, D.datname AS datname,
+		S.relid AS relid,
+		CASE S.param1 WHEN 0 THEN 'initializing'
+					  WHEN 1 THEN 'scanning heap'
+					  WHEN 2 THEN 'vacuuming indexes'
+					  WHEN 3 THEN 'vacuuming heap'
+					  WHEN 4 THEN 'cleaning up indexes'
+					  WHEN 5 THEN 'truncating heap'
+					  WHEN 6 THEN 'performing final cleanup'
+					  END AS phase,
+		S.param2 AS heap_blks_total, S.param3 AS heap_blks_scanned,
+		S.param4 AS heap_blks_vacuumed, S.param5 AS index_vacuum_count,
+		S.param6 AS max_dead_tuples, S.param7 AS num_dead_tuples
+    FROM pg_stat_get_progress_info('VACUUM') AS S
+		 JOIN pg_database D ON S.datid = D.oid;
+
 CREATE VIEW pg_user_mappings AS
     SELECT
         U.oid       AS umid,
@@ -840,7 +891,7 @@ FROM pg_catalog.ts_parse(
     ) AS tt
 WHERE tt.tokid = parse.tokid
 $$
-LANGUAGE SQL STRICT STABLE;
+LANGUAGE SQL STRICT STABLE PARALLEL SAFE;
 
 COMMENT ON FUNCTION ts_debug(regconfig,text) IS
     'debug function for text search configuration';
@@ -856,7 +907,7 @@ RETURNS SETOF record AS
 $$
     SELECT * FROM pg_catalog.ts_debug( pg_catalog.get_current_ts_config(), $1);
 $$
-LANGUAGE SQL STRICT STABLE;
+LANGUAGE SQL STRICT STABLE PARALLEL SAFE;
 
 COMMENT ON FUNCTION ts_debug(text) IS
     'debug function for current text search configuration';
@@ -871,18 +922,19 @@ COMMENT ON FUNCTION ts_debug(text) IS
 --
 
 CREATE OR REPLACE FUNCTION
-  pg_start_backup(label text, fast boolean DEFAULT false)
-  RETURNS pg_lsn STRICT VOLATILE LANGUAGE internal AS 'pg_start_backup';
+  pg_start_backup(label text, fast boolean DEFAULT false, exclusive boolean DEFAULT true)
+  RETURNS pg_lsn STRICT VOLATILE LANGUAGE internal AS 'pg_start_backup'
+  PARALLEL RESTRICTED;
 
 -- legacy definition for compatibility with 9.3
 CREATE OR REPLACE FUNCTION
   json_populate_record(base anyelement, from_json json, use_json_as_text boolean DEFAULT false)
-  RETURNS anyelement LANGUAGE internal STABLE AS 'json_populate_record';
+  RETURNS anyelement LANGUAGE internal STABLE AS 'json_populate_record' PARALLEL SAFE;
 
 -- legacy definition for compatibility with 9.3
 CREATE OR REPLACE FUNCTION
   json_populate_recordset(base anyelement, from_json json, use_json_as_text boolean DEFAULT false)
-  RETURNS SETOF anyelement LANGUAGE internal STABLE ROWS 100  AS 'json_populate_recordset';
+  RETURNS SETOF anyelement LANGUAGE internal STABLE ROWS 100  AS 'json_populate_recordset' PARALLEL SAFE;
 
 CREATE OR REPLACE FUNCTION pg_logical_slot_get_changes(
     IN slot_name name, IN upto_lsn pg_lsn, IN upto_nchanges int, VARIADIC options text[] DEFAULT '{}',
@@ -916,13 +968,21 @@ LANGUAGE INTERNAL
 VOLATILE ROWS 1000 COST 1000
 AS 'pg_logical_slot_peek_binary_changes';
 
+CREATE OR REPLACE FUNCTION pg_create_physical_replication_slot(
+    IN slot_name name, IN immediately_reserve boolean DEFAULT false,
+    OUT slot_name name, OUT xlog_position pg_lsn)
+RETURNS RECORD
+LANGUAGE INTERNAL
+STRICT VOLATILE
+AS 'pg_create_physical_replication_slot';
+
 CREATE OR REPLACE FUNCTION
   make_interval(years int4 DEFAULT 0, months int4 DEFAULT 0, weeks int4 DEFAULT 0,
                 days int4 DEFAULT 0, hours int4 DEFAULT 0, mins int4 DEFAULT 0,
                 secs double precision DEFAULT 0.0)
 RETURNS interval
 LANGUAGE INTERNAL
-STRICT IMMUTABLE
+STRICT IMMUTABLE PARALLEL SAFE
 AS 'make_interval';
 
 CREATE OR REPLACE FUNCTION
@@ -930,5 +990,41 @@ CREATE OR REPLACE FUNCTION
             create_if_missing boolean DEFAULT true)
 RETURNS jsonb
 LANGUAGE INTERNAL
-STRICT IMMUTABLE
+STRICT IMMUTABLE PARALLEL SAFE
 AS 'jsonb_set';
+
+CREATE OR REPLACE FUNCTION
+  parse_ident(str text, strict boolean DEFAULT true)
+RETURNS text[]
+LANGUAGE INTERNAL
+STRICT IMMUTABLE PARALLEL SAFE
+AS 'parse_ident';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_insert(jsonb_in jsonb, path text[] , replacement jsonb,
+            insert_after boolean DEFAULT false)
+RETURNS jsonb
+LANGUAGE INTERNAL
+STRICT IMMUTABLE PARALLEL SAFE
+AS 'jsonb_insert';
+
+-- The default permissions for functions mean that anyone can execute them.
+-- A number of functions shouldn't be executable by just anyone, but rather
+-- than use explicit 'superuser()' checks in those functions, we use the GRANT
+-- system to REVOKE access to those functions at initdb time.  Administrators
+-- can later change who can access these functions, or leave them as only
+-- available to superuser / cluster owner, if they choose.
+REVOKE EXECUTE ON FUNCTION pg_start_backup(text, boolean, boolean) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stop_backup() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stop_backup(boolean) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_create_restore_point(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_switch_xlog() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_xlog_replay_pause() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_xlog_replay_resume() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_rotate_logfile() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_reload_conf() FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_stat_reset() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stat_reset_shared(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_table_counters(oid) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_function_counters(oid) FROM public;

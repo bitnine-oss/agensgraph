@@ -522,6 +522,16 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
          </para>
         </listitem>
        </varlistentry>
+
+       <varlistentry>
+        <term><literal>bsd</></term>
+        <listitem>
+         <para>
+          Authenticate using the BSD Authentication service provided by the
+          operating system. See <xref linkend="auth-bsd"> for details.
+         </para>
+        </listitem>
+       </varlistentry>
       </variablelist>
 
       </para>
@@ -536,6 +546,15 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
        the form <replaceable>name</><literal>=</><replaceable>value</> that
        specify options for the authentication method. Details about which
        options are available for which authentication methods appear below.
+      </para>
+
+      <para>
+       In addition to the method-specific options listed below, there is one
+       method-independent authentication option <literal>clientcert</>, which
+       can be specified in any <literal>hostssl</> record.  When set
+       to <literal>1</>, this option requires the client to present a valid
+       (trusted) SSL certificate, in addition to the other requirements of the
+       authentication method.
       </para>
      </listitem>
     </varlistentry>
@@ -690,9 +709,9 @@ local   db1,db2,@demodbs  all                                   md5
   </indexterm>
 
   <para>
-   When using an external authentication system like Ident or GSSAPI,
+   When using an external authentication system such as Ident or GSSAPI,
    the name of the operating system user that initiated the connection
-   might not be the same as the database user he needs to connect as.
+   might not be the same as the database user that is to be connect as.
    In this case, a user name map can be applied to map the operating system
    user name to a database user.  To use user name mapping, specify
    <literal>map</literal>=<replaceable>map-name</replaceable>
@@ -960,17 +979,18 @@ omicron         bryanh                  guest1
     strongly discouraged as it is then impossible to distinguish different users
     with the same user name but coming from different realms.  To enable this,
     set <literal>include_realm</> to 0.  For simple single-realm
-    installations, <literal>include_realm</> combined with the
-    <literal>krb_realm</> parameter (which checks that the realm provided
-    matches exactly what is in the <literal>krb_realm</literal> parameter) would be a secure but
-    less capable option compared to specifying an explicit mapping in
+    installations, doing that combined with setting the
+    <literal>krb_realm</> parameter (which checks that the principal's realm
+    matches exactly what is in the <literal>krb_realm</literal> parameter)
+    is still secure; but this is a
+    less capable approach compared to specifying an explicit mapping in
     <filename>pg_ident.conf</>.
    </para>
 
    <para>
     Make sure that your server keytab file is readable (and preferably
-    only readable) by the <productname>PostgreSQL</productname> server
-    account.  (See also <xref linkend="postgres-user">.) The location
+    only readable, not writable) by the <productname>PostgreSQL</productname>
+    server account.  (See also <xref linkend="postgres-user">.) The location
     of the key file is specified by the <xref
     linkend="guc-krb-server-keyfile"> configuration
     parameter. The default is
@@ -1009,10 +1029,12 @@ omicron         bryanh                  guest1
         If set to 0, the realm name from the authenticated user principal is
         stripped off before being passed through the user name mapping
         (<xref linkend="auth-username-maps">). This is discouraged and is
-        primarily available for backwards compatibility as it is not secure
-        in multi-realm environments unless <literal>krb_realm</literal> is also used.  Users
-        are recommended to leave include_realm set to the default (1) and to
-        provide an explicit mapping in <filename>pg_ident.conf</>.
+        primarily available for backwards compatibility, as it is not secure
+        in multi-realm environments unless <literal>krb_realm</literal> is
+        also used.  It is recommended to
+        leave <literal>include_realm</literal> set to the default (1) and to
+        provide an explicit mapping in <filename>pg_ident.conf</> to convert
+        principal names to <productname>PostgreSQL</> user names.
        </para>
       </listitem>
      </varlistentry>
@@ -1088,10 +1110,49 @@ omicron         bryanh                  guest1
         If set to 0, the realm name from the authenticated user principal is
         stripped off before being passed through the user name mapping
         (<xref linkend="auth-username-maps">). This is discouraged and is
-        primarily available for backwards compatibility as it is not secure
-        in multi-realm environments unless <literal>krb_realm</literal> is also used.  Users
-        are recommended to leave include_realm set to the default (1) and to
-        provide an explicit mapping in <filename>pg_ident.conf</>.
+        primarily available for backwards compatibility, as it is not secure
+        in multi-realm environments unless <literal>krb_realm</literal> is
+        also used.  It is recommended to
+        leave <literal>include_realm</literal> set to the default (1) and to
+        provide an explicit mapping in <filename>pg_ident.conf</> to convert
+        principal names to <productname>PostgreSQL</> user names.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><literal>compat_realm</literal></term>
+      <listitem>
+       <para>
+        If set to 1, the domain's SAM-compatible name (also known as the
+        NetBIOS name) is used for the <literal>include_realm</literal>
+        option. This is the default. If set to 0, the true realm name from
+        the Kerberos user principal name is used.
+       </para>
+       <para>
+        Do not disable this option unless your server runs under a domain
+        account (this includes virtual service accounts on a domain member
+        system) and all clients authenticating through SSPI are also using
+        domain accounts, or authentication will fail.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><literal>upn_username</literal></term>
+      <listitem>
+       <para>
+        If this option is enabled along with <literal>compat_realm</literal>,
+        the user name from the Kerberos UPN is used for authentication. If
+        it is disabled (the default), the SAM-compatible user name is used.
+        By default, these two names are identical for new user accounts.
+       </para>
+       <para>
+        Note that <application>libpq</> uses the SAM-compatible name if no
+        explicit user name is specified. If you use
+        <application>libpq</> or a driver based on it, you should
+        leave this option disabled or explicitly specify user name in the
+        connection string.
        </para>
       </listitem>
      </varlistentry>
@@ -1185,7 +1246,7 @@ omicron         bryanh                  guest1
     The drawback of this procedure is that it depends on the integrity
     of the client: if the client machine is untrusted or compromised,
     an attacker could run just about any program on port 113 and
-    return any user name he chooses. This authentication method is
+    return any user name they choose. This authentication method is
     therefore only appropriate for closed networks where each client
     machine is under tight control and where the database and system
     administrators operate in close contact. In other words, you must
@@ -1580,9 +1641,9 @@ host ... ldap ldapurl="ldap://ldap.example.net/dc=example,dc=net?uid?sub"
     This authentication method uses SSL client certificates to perform
     authentication. It is therefore only available for SSL connections.
     When using this authentication method, the server will require that
-    the client provide a valid certificate. No password prompt will be sent
-    to the client. The <literal>cn</literal> (Common Name) attribute of the
-    certificate
+    the client provide a valid, trusted certificate.  No password prompt
+    will be sent to the client.  The <literal>cn</literal> (Common Name)
+    attribute of the certificate
     will be compared to the requested database user name, and if they match
     the login will be allowed.  User name mapping can be used to allow
     <literal>cn</literal> to be different from the database user name.
@@ -1603,6 +1664,16 @@ host ... ldap ldapurl="ldap://ldap.example.net/dc=example,dc=net?uid?sub"
      </varlistentry>
     </variablelist>
    </para>
+
+   <para>
+    In a <filename>pg_hba.conf</> record specifying certificate
+    authentication, the authentication option <literal>clientcert</> is
+    assumed to be <literal>1</>, and it cannot be turned off since a client
+    certificate is necessary for this method.  What the <literal>cert</>
+    method adds to the basic <literal>clientcert</> certificate validity test
+    is a check that the <literal>cn</literal> attribute matches the database
+    user name.
+   </para>
   </sect2>
 
   <sect2 id="auth-pam">
@@ -1617,10 +1688,11 @@ host ... ldap ldapurl="ldap://ldap.example.net/dc=example,dc=net?uid?sub"
     <literal>password</literal> except that it uses PAM (Pluggable
     Authentication Modules) as the authentication mechanism. The
     default PAM service name is <literal>postgresql</literal>.
-    PAM is used only to validate user name/password pairs.
-    Therefore the user must already exist in the database before PAM
-    can be used for authentication.  For more information about
-    PAM, please read the <ulink url="http://www.kernel.org/pub/linux/libs/pam/">
+    PAM is used only to validate user name/password pairs and optionally the
+    connected remote host name or IP address. Therefore the user must already
+    exist in the database before PAM can be used for authentication.  For more
+    information about PAM, please read the
+    <ulink url="http://www.kernel.org/pub/linux/libs/pam/">
     <productname>Linux-PAM</> Page</ulink>.
    </para>
 
@@ -1635,6 +1707,20 @@ host ... ldap ldapurl="ldap://ldap.example.net/dc=example,dc=net?uid?sub"
        </para>
       </listitem>
      </varlistentry>
+     <varlistentry>
+      <term><literal>pam_use_hostname</literal></term>
+      <listitem>
+       <para>
+        Determines whether the remote IP address or the host name is provided
+        to PAM modules through the <symbol>PAM_RHOST</symbol> item.  By
+        default, the IP address is used.  Set this option to 1 to use the
+        resolved host name instead.  Host name resolution can lead to login
+        delays.  (Most PAM configurations don't use this information, so it is
+        only necessary to consider this setting if a PAM configuration was
+        specifically created to make use of it.)
+       </para>
+      </listitem>
+     </varlistentry>
     </variablelist>
    </para>
 
@@ -1644,6 +1730,41 @@ host ... ldap ldapurl="ldap://ldap.example.net/dc=example,dc=net?uid?sub"
      will fail because the PostgreSQL server is started by a non-root
      user.  However, this is not an issue when PAM is configured to use
      LDAP or other authentication methods.
+    </para>
+   </note>
+  </sect2>
+
+  <sect2 id="auth-bsd">
+   <title>BSD Authentication</title>
+
+   <indexterm zone="auth-bsd">
+    <primary>BSD Authentication</primary>
+   </indexterm>
+
+   <para>
+    This authentication method operates similarly to
+    <literal>password</literal> except that it uses BSD Authentication
+    to verify the password. BSD Authentication is used only
+    to validate user name/password pairs. Therefore the user's role must
+    already exist in the database before BSD Authentication can be used
+    for authentication. The BSD Authentication framework is currently
+    only available on OpenBSD.
+   </para>
+
+   <para>
+    BSD Authentication in <productname>PostgreSQL</> uses
+    the <literal>auth-postgresql</literal> login type and authenticates with
+    the <literal>postgresql</literal> login class if that's defined
+    in <filename>login.conf</filename>. By default that login class does not
+    exist, and <productname>PostgreSQL</> will use the default login class.
+   </para>
+
+   <note>
+    <para>
+     To use BSD Authentication, the PostgreSQL user account (that is, the
+     operating system user running the server) must first be added to
+     the <literal>auth</literal> group.  The <literal>auth</literal> group
+     exists by default on OpenBSD systems.
     </para>
    </note>
   </sect2>

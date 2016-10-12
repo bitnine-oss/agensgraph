@@ -7,7 +7,7 @@
  * the nature and use of path keys.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -28,9 +28,6 @@
 #include "utils/lsyscache.h"
 
 
-static PathKey *make_canonical_pathkey(PlannerInfo *root,
-					   EquivalenceClass *eclass, Oid opfamily,
-					   int strategy, bool nulls_first);
 static bool pathkey_is_redundant(PathKey *new_pathkey, List *pathkeys);
 static bool right_merge_direction(PlannerInfo *root, PathKey *pathkey);
 
@@ -50,7 +47,7 @@ static bool right_merge_direction(PlannerInfo *root, PathKey *pathkey);
  * equivclass.c will complain if a merge occurs after root->canon_pathkeys
  * has become nonempty.)
  */
-static PathKey *
+PathKey *
 make_canonical_pathkey(PlannerInfo *root,
 					   EquivalenceClass *eclass, Oid opfamily,
 					   int strategy, bool nulls_first)
@@ -560,6 +557,7 @@ build_expression_pathkey(PlannerInfo *root,
  *
  * 'rel': outer query's RelOptInfo for the subquery relation.
  * 'subquery_pathkeys': the subquery's output pathkeys, in its terms.
+ * 'subquery_tlist': the subquery's output targetlist, in its terms.
  *
  * It is not necessary for caller to do truncate_useless_pathkeys(),
  * because we select keys in a way that takes usefulness of the keys into
@@ -567,12 +565,12 @@ build_expression_pathkey(PlannerInfo *root,
  */
 List *
 convert_subquery_pathkeys(PlannerInfo *root, RelOptInfo *rel,
-						  List *subquery_pathkeys)
+						  List *subquery_pathkeys,
+						  List *subquery_tlist)
 {
 	List	   *retval = NIL;
 	int			retvallen = 0;
 	int			outer_query_keys = list_length(root->query_pathkeys);
-	List	   *sub_tlist = rel->subplan->targetlist;
 	ListCell   *i;
 
 	foreach(i, subquery_pathkeys)
@@ -592,7 +590,7 @@ convert_subquery_pathkeys(PlannerInfo *root, RelOptInfo *rel,
 
 			if (sub_eclass->ec_sortref == 0)	/* can't happen */
 				elog(ERROR, "volatile EquivalenceClass has no sortref");
-			tle = get_sortgroupref_tle(sub_eclass->ec_sortref, sub_tlist);
+			tle = get_sortgroupref_tle(sub_eclass->ec_sortref, subquery_tlist);
 			Assert(tle);
 			/* resjunk items aren't visible to outer query */
 			if (!tle->resjunk)
@@ -672,7 +670,7 @@ convert_subquery_pathkeys(PlannerInfo *root, RelOptInfo *rel,
 				if (sub_member->em_is_child)
 					continue;	/* ignore children here */
 
-				foreach(k, sub_tlist)
+				foreach(k, subquery_tlist)
 				{
 					TargetEntry *tle = (TargetEntry *) lfirst(k);
 					Expr	   *tle_expr;

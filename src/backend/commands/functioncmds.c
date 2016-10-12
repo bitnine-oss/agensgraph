@@ -5,7 +5,7 @@
  *	  Routines for CREATE and DROP FUNCTION commands and CREATE and DROP
  *	  CAST commands.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -465,7 +465,8 @@ compute_common_attribute(DefElem *defel,
 						 DefElem **leakproof_item,
 						 List **set_items,
 						 DefElem **cost_item,
-						 DefElem **rows_item)
+						 DefElem **rows_item,
+						 DefElem **parallel_item)
 {
 	if (strcmp(defel->defname, "volatility") == 0)
 	{
@@ -513,6 +514,13 @@ compute_common_attribute(DefElem *defel,
 
 		*rows_item = defel;
 	}
+	else if (strcmp(defel->defname, "parallel") == 0)
+	{
+		if (*parallel_item)
+			goto duplicate_error;
+
+		*parallel_item = defel;
+	}
 	else
 		return false;
 
@@ -541,6 +549,26 @@ interpret_func_volatility(DefElem *defel)
 	{
 		elog(ERROR, "invalid volatility \"%s\"", str);
 		return 0;				/* keep compiler quiet */
+	}
+}
+
+static char
+interpret_func_parallel(DefElem *defel)
+{
+	char	   *str = strVal(defel->arg);
+
+	if (strcmp(str, "safe") == 0)
+		return PROPARALLEL_SAFE;
+	else if (strcmp(str, "unsafe") == 0)
+		return PROPARALLEL_UNSAFE;
+	else if (strcmp(str, "restricted") == 0)
+		return PROPARALLEL_RESTRICTED;
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("parameter \"parallel\" must be SAFE, RESTRICTED, or UNSAFE")));
+		return PROPARALLEL_UNSAFE;		/* keep compiler quiet */
 	}
 }
 
@@ -592,7 +620,8 @@ compute_attributes_sql_style(List *options,
 							 bool *leakproof_p,
 							 ArrayType **proconfig,
 							 float4 *procost,
-							 float4 *prorows)
+							 float4 *prorows,
+							 char *parallel_p)
 {
 	ListCell   *option;
 	DefElem    *as_item = NULL;
@@ -606,6 +635,7 @@ compute_attributes_sql_style(List *options,
 	List	   *set_items = NIL;
 	DefElem    *cost_item = NULL;
 	DefElem    *rows_item = NULL;
+	DefElem    *parallel_item = NULL;
 
 	foreach(option, options)
 	{
@@ -650,7 +680,8 @@ compute_attributes_sql_style(List *options,
 										  &leakproof_item,
 										  &set_items,
 										  &cost_item,
-										  &rows_item))
+										  &rows_item,
+										  &parallel_item))
 		{
 			/* recognized common option */
 			continue;
@@ -712,6 +743,8 @@ compute_attributes_sql_style(List *options,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("ROWS must be positive")));
 	}
+	if (parallel_item)
+		*parallel_p = interpret_func_parallel(parallel_item);
 }
 
 
@@ -858,6 +891,7 @@ CreateFunction(CreateFunctionStmt *stmt, const char *queryString)
 	HeapTuple	languageTuple;
 	Form_pg_language languageStruct;
 	List	   *as_clause;
+	char		parallel;
 
 	/* Convert list of names to a name and namespace */
 	namespaceId = QualifiedNameGetCreationNamespace(stmt->funcname,
@@ -878,13 +912,14 @@ CreateFunction(CreateFunctionStmt *stmt, const char *queryString)
 	proconfig = NULL;
 	procost = -1;				/* indicates not set */
 	prorows = -1;				/* indicates not set */
+	parallel = PROPARALLEL_UNSAFE;
 
 	/* override attributes from explicit list */
 	compute_attributes_sql_style(stmt->options,
 								 &as_clause, &language, &transformDefElem,
 								 &isWindowFunc, &volatility,
 								 &isStrict, &security, &isLeakProof,
-								 &proconfig, &procost, &prorows);
+								 &proconfig, &procost, &prorows, &parallel);
 
 	/* Look up the language and validate permissions */
 	languageTuple = SearchSysCache1(LANGNAME, PointerGetDatum(language));
@@ -1061,6 +1096,7 @@ CreateFunction(CreateFunctionStmt *stmt, const char *queryString)
 						   isLeakProof,
 						   isStrict,
 						   volatility,
+						   parallel,
 						   parameterTypes,
 						   PointerGetDatum(allParameterTypes),
 						   PointerGetDatum(parameterModes),
@@ -1141,6 +1177,7 @@ AlterFunction(AlterFunctionStmt *stmt)
 	List	   *set_items = NIL;
 	DefElem    *cost_item = NULL;
 	DefElem    *rows_item = NULL;
+	DefElem    *parallel_item = NULL;
 	ObjectAddress address;
 
 	rel = heap_open(ProcedureRelationId, RowExclusiveLock);
@@ -1178,7 +1215,8 @@ AlterFunction(AlterFunctionStmt *stmt)
 									 &leakproof_item,
 									 &set_items,
 									 &cost_item,
-									 &rows_item) == false)
+									 &rows_item,
+									 &parallel_item) == false)
 			elog(ERROR, "option \"%s\" not recognized", defel->defname);
 	}
 
@@ -1250,6 +1288,8 @@ AlterFunction(AlterFunctionStmt *stmt)
 		tup = heap_modify_tuple(tup, RelationGetDescr(rel),
 								repl_val, repl_null, repl_repl);
 	}
+	if (parallel_item)
+		procForm->proparallel = interpret_func_parallel(parallel_item);
 
 	/* Do the update */
 	simple_heap_update(rel, &tup->t_self, tup);

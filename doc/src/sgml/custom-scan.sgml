@@ -82,8 +82,10 @@ typedef struct CustomPath
     by <literal>nodeToString</>, so that debugging routines that attempt to
     print the custom path will work as designed.  <structfield>methods</> must
     point to a (usually statically allocated) object implementing the required
-    custom path methods, of which there are currently only two, as further
-    detailed below.
+    custom path methods, of which there is currently only one.  The
+    <structfield>LibraryName</> and <structfield>SymbolName</> fields must also
+    be initialized so that the dynamic loader can resolve them to locate the
+    method table.
   </para>
 
   <para>
@@ -122,19 +124,6 @@ Plan *(*PlanCustomPath) (PlannerInfo *root,
     Convert a custom path to a finished plan.  The return value will generally
     be a <literal>CustomScan</> object, which the callback must allocate and
     initialize.  See <xref linkend="custom-scan-plan"> for more details.
-   </para>
-
-   <para>
-<programlisting>
-void (*TextOutCustomPath) (StringInfo str,
-                           const CustomPath *node);
-</programlisting>
-    Generate additional output when <function>nodeToString</> is invoked on
-    this custom path.  This callback is optional.  Since
-    <function>nodeToString</> will automatically dump all fields in the
-    structure that it can see, including <structfield>custom_private</>, this
-    is only useful if the <structname>CustomPath</> is actually embedded in a
-    larger struct containing additional fields.
    </para>
   </sect2>
  </sect1>
@@ -217,18 +206,6 @@ Node *(*CreateCustomScanState) (CustomScan *cscan);
     stage; after <function>ExecInitCustomScan</> performs basic initialization,
     the <function>BeginCustomScan</> callback will be invoked to give the
     custom scan provider a chance to do whatever else is needed.
-   </para>
-
-   <para>
-<programlisting>
-void (*TextOutCustomScan) (StringInfo str,
-                           const CustomScan *node);
-</programlisting>
-    Generate additional output when <function>nodeToString</> is invoked on
-    this custom plan node.  This callback is optional.  Since
-    <function>nodeToString</> will automatically dump all fields in the
-    structure, including the substructure of the <quote>custom</> fields,
-    there is usually not much need for this callback.
    </para>
   </sect2>
  </sect1>
@@ -322,6 +299,43 @@ void (*RestrPosCustomScan) (CustomScanState *node);
     <function>MarkPosCustomScan</> callback.  This callback is optional,
     and need only be supplied if the
     <literal>CUSTOMPATH_SUPPORT_MARK_RESTORE</> flag is set.
+   </para>
+
+   <para>
+<programlisting>
+Size (*EstimateDSMCustomScan) (CustomScanState *node,
+                               ParallelContext *pcxt);
+</programlisting>
+    Estimate the amount of dynamic shared memory that will be required
+    for parallel operation.  This may be higher than the amount that will
+    actually be used, but it must not be lower.  The return value is in bytes.
+    This callback is optional, and need only be supplied if this custom
+    scan provider supports parallel execution.
+   </para>
+
+   <para>
+<programlisting>
+void (*InitializeDSMCustomScan) (CustomScanState *node,
+                                 ParallelContext *pcxt,
+                                 void *coordinate);
+</programlisting>
+    Initialize the dynamic shared memory that will be required for parallel
+    operation; <literal>coordinate</> points to an amount of allocated space
+    equal to the return value of <function>EstimateDSMCustomScan</>.
+    This callback is optional, and need only be supplied if this custom
+    scan provider supports parallel execution.
+   </para>
+
+   <para>
+<programlisting>
+void (*InitializeWorkerCustomScan) (CustomScanState *node,
+                                    shm_toc *toc,
+                                    void *coordinate);
+</programlisting>
+    Initialize a parallel worker's custom state based on the shared state
+    set up in the leader by <literal>InitializeDSMCustomScan</>.
+    This callback is optional, and needs only be supplied if this
+    custom path supports parallel execution.
    </para>
 
    <para>

@@ -4,7 +4,7 @@
  *	  interface routines for the postgres GiST index access method.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -14,16 +14,14 @@
  */
 #include "postgres.h"
 
-#include "access/genam.h"
 #include "access/gist_private.h"
-#include "access/xloginsert.h"
-#include "catalog/index.h"
+#include "access/gistscan.h"
 #include "catalog/pg_collation.h"
 #include "miscadmin.h"
-#include "storage/bufmgr.h"
-#include "storage/indexfsm.h"
+#include "utils/index_selfuncs.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
+
 
 /* non-export function prototypes */
 static void gistfixsplit(GISTInsertState *state, GISTSTATE *giststate);
@@ -36,6 +34,7 @@ static bool gistinserttuples(GISTInsertState *state, GISTInsertStack *stack,
 				 bool unlockbuf, bool unlockleftchild);
 static void gistfinishsplit(GISTInsertState *state, GISTInsertStack *stack,
 				GISTSTATE *giststate, List *splitinfo, bool releasebuf);
+static void gistvacuumpage(Relation rel, Page page, Buffer buffer);
 
 
 #define ROTATEDIST(d) do { \
@@ -47,6 +46,51 @@ static void gistfinishsplit(GISTInsertState *state, GISTInsertStack *stack,
 	(d)=tmp; \
 } while(0)
 
+
+/*
+ * GiST handler function: return IndexAmRoutine with access method parameters
+ * and callbacks.
+ */
+Datum
+gisthandler(PG_FUNCTION_ARGS)
+{
+	IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
+
+	amroutine->amstrategies = 0;
+	amroutine->amsupport = GISTNProcs;
+	amroutine->amcanorder = false;
+	amroutine->amcanorderbyop = true;
+	amroutine->amcanbackward = false;
+	amroutine->amcanunique = false;
+	amroutine->amcanmulticol = true;
+	amroutine->amoptionalkey = true;
+	amroutine->amsearcharray = false;
+	amroutine->amsearchnulls = true;
+	amroutine->amstorage = true;
+	amroutine->amclusterable = true;
+	amroutine->ampredlocks = false;
+	amroutine->amkeytype = InvalidOid;
+
+	amroutine->ambuild = gistbuild;
+	amroutine->ambuildempty = gistbuildempty;
+	amroutine->aminsert = gistinsert;
+	amroutine->ambulkdelete = gistbulkdelete;
+	amroutine->amvacuumcleanup = gistvacuumcleanup;
+	amroutine->amcanreturn = gistcanreturn;
+	amroutine->amcostestimate = gistcostestimate;
+	amroutine->amoptions = gistoptions;
+	amroutine->amproperty = gistproperty;
+	amroutine->amvalidate = gistvalidate;
+	amroutine->ambeginscan = gistbeginscan;
+	amroutine->amrescan = gistrescan;
+	amroutine->amgettuple = gistgettuple;
+	amroutine->amgetbitmap = gistgetbitmap;
+	amroutine->amendscan = gistendscan;
+	amroutine->ammarkpos = NULL;
+	amroutine->amrestrpos = NULL;
+
+	PG_RETURN_POINTER(amroutine);
+}
 
 /*
  * Create and return a temporary memory context for use by GiST. We
@@ -61,18 +105,15 @@ createTempGistContext(void)
 {
 	return AllocSetContextCreate(CurrentMemoryContext,
 								 "GiST temporary context",
-								 ALLOCSET_DEFAULT_MINSIZE,
-								 ALLOCSET_DEFAULT_INITSIZE,
-								 ALLOCSET_DEFAULT_MAXSIZE);
+								 ALLOCSET_DEFAULT_SIZES);
 }
 
 /*
  *	gistbuildempty() -- build an empty gist index in the initialization fork
  */
-Datum
-gistbuildempty(PG_FUNCTION_ARGS)
+void
+gistbuildempty(Relation index)
 {
-	Relation	index = (Relation) PG_GETARG_POINTER(0);
 	Buffer		buffer;
 
 	/* Initialize the root page */
@@ -88,8 +129,6 @@ gistbuildempty(PG_FUNCTION_ARGS)
 
 	/* Unlock and release the buffer */
 	UnlockReleaseBuffer(buffer);
-
-	PG_RETURN_VOID();
 }
 
 /*
@@ -98,18 +137,11 @@ gistbuildempty(PG_FUNCTION_ARGS)
  *	  This is the public interface routine for tuple insertion in GiSTs.
  *	  It doesn't do any work; just locks the relation and passes the buck.
  */
-Datum
-gistinsert(PG_FUNCTION_ARGS)
+bool
+gistinsert(Relation r, Datum *values, bool *isnull,
+		   ItemPointer ht_ctid, Relation heapRel,
+		   IndexUniqueCheck checkUnique)
 {
-	Relation	r = (Relation) PG_GETARG_POINTER(0);
-	Datum	   *values = (Datum *) PG_GETARG_POINTER(1);
-	bool	   *isnull = (bool *) PG_GETARG_POINTER(2);
-	ItemPointer ht_ctid = (ItemPointer) PG_GETARG_POINTER(3);
-
-#ifdef NOT_USED
-	Relation	heapRel = (Relation) PG_GETARG_POINTER(4);
-	IndexUniqueCheck checkUnique = (IndexUniqueCheck) PG_GETARG_INT32(5);
-#endif
 	IndexTuple	itup;
 	GISTSTATE  *giststate;
 	MemoryContext oldCxt;
@@ -135,7 +167,7 @@ gistinsert(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(oldCxt);
 	freeGISTstate(giststate);
 
-	PG_RETURN_BOOL(false);
+	return false;
 }
 
 
@@ -209,6 +241,17 @@ gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 	 * because the tuple vector passed to gistSplit won't include this tuple.
 	 */
 	is_split = gistnospace(page, itup, ntup, oldoffnum, freespace);
+
+	/*
+	 * If leaf page is full, try at first to delete dead tuples. And then
+	 * check again.
+	 */
+	if (is_split && GistPageIsLeaf(page) && GistPageHasGarbage(page))
+	{
+		gistvacuumpage(rel, page, buffer);
+		is_split = gistnospace(page, itup, ntup, oldoffnum, freespace);
+	}
+
 	if (is_split)
 	{
 		/* no space for insertion */
@@ -423,7 +466,7 @@ gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 
 		/* Write the WAL record */
 		if (RelationNeedsWAL(rel))
-			recptr = gistXLogSplit(rel->rd_node, blkno, is_leaf,
+			recptr = gistXLogSplit(is_leaf,
 								   dist, oldrlink, oldnsn, leftchildbuf,
 								   markfollowright);
 		else
@@ -454,6 +497,11 @@ gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 		 */
 		START_CRIT_SECTION();
 
+		/*
+		 * While we delete only one tuple at once we could mix calls
+		 * PageIndexTupleDelete() here and PageIndexMultiDelete() in
+		 * gistRedoPageUpdateRecord()
+		 */
 		if (OffsetNumberIsValid(oldoffnum))
 			PageIndexTupleDelete(page, oldoffnum);
 		gistfillbuffer(page, itup, ntup, InvalidOffsetNumber);
@@ -474,7 +522,7 @@ gistplacetopage(Relation rel, Size freespace, GISTSTATE *giststate,
 				ndeloffs = 1;
 			}
 
-			recptr = gistXLogUpdate(rel->rd_node, buffer,
+			recptr = gistXLogUpdate(buffer,
 									deloffs, ndeloffs, itup, ntup,
 									leftchildbuf);
 
@@ -1361,9 +1409,7 @@ initGISTstate(Relation index)
 	/* Create the memory context that will hold the GISTSTATE */
 	scanCxt = AllocSetContextCreate(CurrentMemoryContext,
 									"GiST scan context",
-									ALLOCSET_DEFAULT_MINSIZE,
-									ALLOCSET_DEFAULT_INITSIZE,
-									ALLOCSET_DEFAULT_MAXSIZE);
+									ALLOCSET_DEFAULT_SIZES);
 	oldCxt = MemoryContextSwitchTo(scanCxt);
 
 	/* Create and fill in the GISTSTATE */
@@ -1439,4 +1485,75 @@ freeGISTstate(GISTSTATE *giststate)
 {
 	/* It's sufficient to delete the scanCxt */
 	MemoryContextDelete(giststate->scanCxt);
+}
+
+/*
+ * gistvacuumpage() -- try to remove LP_DEAD items from the given page.
+ * Function assumes that buffer is exclusively locked.
+ */
+static void
+gistvacuumpage(Relation rel, Page page, Buffer buffer)
+{
+	OffsetNumber deletable[MaxIndexTuplesPerPage];
+	int			ndeletable = 0;
+	OffsetNumber offnum,
+				maxoff;
+
+	Assert(GistPageIsLeaf(page));
+
+	/*
+	 * Scan over all items to see which ones need to be deleted according to
+	 * LP_DEAD flags.
+	 */
+	maxoff = PageGetMaxOffsetNumber(page);
+	for (offnum = FirstOffsetNumber;
+		 offnum <= maxoff;
+		 offnum = OffsetNumberNext(offnum))
+	{
+		ItemId		itemId = PageGetItemId(page, offnum);
+
+		if (ItemIdIsDead(itemId))
+			deletable[ndeletable++] = offnum;
+	}
+
+	if (ndeletable > 0)
+	{
+		START_CRIT_SECTION();
+
+		PageIndexMultiDelete(page, deletable, ndeletable);
+
+		/*
+		 * Mark the page as not containing any LP_DEAD items.  This is not
+		 * certainly true (there might be some that have recently been marked,
+		 * but weren't included in our target-item list), but it will almost
+		 * always be true and it doesn't seem worth an additional page scan to
+		 * check it. Remember that F_HAS_GARBAGE is only a hint anyway.
+		 */
+		GistClearPageHasGarbage(page);
+
+		MarkBufferDirty(buffer);
+
+		/* XLOG stuff */
+		if (RelationNeedsWAL(rel))
+		{
+			XLogRecPtr	recptr;
+
+			recptr = gistXLogUpdate(buffer,
+									deletable, ndeletable,
+									NULL, 0, InvalidBuffer);
+
+			PageSetLSN(page, recptr);
+		}
+		else
+			PageSetLSN(page, gistGetFakeLSN(rel));
+
+		END_CRIT_SECTION();
+	}
+
+	/*
+	 * Note: if we didn't find any LP_DEAD items, then the page's
+	 * F_HAS_GARBAGE hint bit is falsely set.  We do not bother expending a
+	 * separate write to clear it, however.  We will clear it when we split
+	 * the page.
+	 */
 }

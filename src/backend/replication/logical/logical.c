@@ -2,7 +2,7 @@
  * logical.c
  *	   PostgreSQL logical decoding coordination
  *
- * Copyright (c) 2012-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/logical.c
@@ -62,6 +62,9 @@ static void commit_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 				  XLogRecPtr commit_lsn);
 static void change_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 				  Relation relation, ReorderBufferChange *change);
+static void message_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
+				   XLogRecPtr message_lsn, bool transactional,
+				 const char *prefix, Size message_size, const char *message);
 
 static void LoadOutputPlugin(OutputPluginCallbacks *callbacks, char *plugin);
 
@@ -124,10 +127,8 @@ StartupDecodingContext(List *output_plugin_options,
 	slot = MyReplicationSlot;
 
 	context = AllocSetContextCreate(CurrentMemoryContext,
-									"Logical Decoding Context",
-									ALLOCSET_DEFAULT_MINSIZE,
-									ALLOCSET_DEFAULT_INITSIZE,
-									ALLOCSET_DEFAULT_MAXSIZE);
+									"Logical decoding context",
+									ALLOCSET_DEFAULT_SIZES);
 	old_context = MemoryContextSwitchTo(context);
 	ctx = palloc0(sizeof(LogicalDecodingContext));
 
@@ -178,6 +179,7 @@ StartupDecodingContext(List *output_plugin_options,
 	ctx->reorder->begin = begin_cb_wrapper;
 	ctx->reorder->apply_change = change_cb_wrapper;
 	ctx->reorder->commit = commit_cb_wrapper;
+	ctx->reorder->message = message_cb_wrapper;
 
 	ctx->out = makeStringInfo();
 	ctx->prepare_write = prepare_write;
@@ -228,7 +230,7 @@ CreateInitDecodingContext(char *plugin,
 		elog(ERROR, "cannot initialize logical decoding without a specified plugin");
 
 	/* Make sure the passed slot is suitable. These are user facing errors. */
-	if (slot->data.database == InvalidOid)
+	if (SlotIsPhysical(slot))
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 		errmsg("cannot use physical replication slot for logical decoding")));
@@ -250,52 +252,7 @@ CreateInitDecodingContext(char *plugin,
 	StrNCpy(NameStr(slot->data.plugin), plugin, NAMEDATALEN);
 	SpinLockRelease(&slot->mutex);
 
-	/*
-	 * The replication slot mechanism is used to prevent removal of required
-	 * WAL. As there is no interlock between this and checkpoints required WAL
-	 * could be removed before ReplicationSlotsComputeRequiredLSN() has been
-	 * called to prevent that. In the very unlikely case that this happens
-	 * we'll just retry.
-	 */
-	while (true)
-	{
-		XLogSegNo	segno;
-
-		/*
-		 * Let's start with enough information if we can, so log a standby
-		 * snapshot and start decoding at exactly that position.
-		 */
-		if (!RecoveryInProgress())
-		{
-			XLogRecPtr	flushptr;
-
-			/* start at current insert position */
-			slot->data.restart_lsn = GetXLogInsertRecPtr();
-
-			/* make sure we have enough information to start */
-			flushptr = LogStandbySnapshot();
-
-			/* and make sure it's fsynced to disk */
-			XLogFlush(flushptr);
-		}
-		else
-			slot->data.restart_lsn = GetRedoRecPtr();
-
-		/* prevent WAL removal as fast as possible */
-		ReplicationSlotsComputeRequiredLSN();
-
-		/*
-		 * If all required WAL is still there, great, otherwise retry. The
-		 * slot should prevent further removal of WAL, unless there's a
-		 * concurrent ReplicationSlotsComputeRequiredLSN() after we've written
-		 * the new restart_lsn above, so normally we should never need to loop
-		 * more than twice.
-		 */
-		XLByteToSeg(slot->data.restart_lsn, segno);
-		if (XLogGetLastRemovedSegno() < segno)
-			break;
-	}
-
+	ReplicationSlotReserveWal();
 
 	/* ----
 	 * This is a bit tricky: We need to determine a safe xmin horizon to start
@@ -322,7 +279,7 @@ CreateInitDecodingContext(char *plugin,
 	LWLockRelease(ProcArrayLock);
 
 	/*
-	 * tell the snapshot builder to only assemble snapshot once reaching the a
+	 * tell the snapshot builder to only assemble snapshot once reaching the
 	 * running_xact's record with the respective xmin.
 	 */
 	xmin_horizon = slot->data.catalog_xmin;
@@ -346,10 +303,18 @@ CreateInitDecodingContext(char *plugin,
  * Create a new decoding context, for a logical slot that has previously been
  * used already.
  *
- * start_lsn contains the LSN of the last received data or InvalidXLogRecPtr
- * output_plugin_options contains options passed to the output plugin
- * read_page, prepare_write, do_write are callbacks that have to be filled to
- *		perform the use-case dependent, actual, work.
+ * start_lsn
+ *		The LSN at which to start decoding.  If InvalidXLogRecPtr, restart
+ *		from the slot's confirmed_flush; otherwise, start from the specified
+ *		location (but move it forwards to confirmed_flush if it's older than
+ *		that, see below).
+ *
+ * output_plugin_options
+ *		contains options passed to the output plugin.
+ *
+ * read_page, prepare_write, do_write
+ *		callbacks that have to be filled to perform the use-case dependent,
+ *		actual work.
  *
  * Needs to be called while in a memory context that's at least as long lived
  * as the decoding context because further memory contexts will be created
@@ -377,7 +342,7 @@ CreateDecodingContext(XLogRecPtr start_lsn,
 		elog(ERROR, "cannot perform logical decoding without an acquired slot");
 
 	/* make sure the passed slot is suitable, these are user facing errors */
-	if (slot->data.database == InvalidOid)
+	if (SlotIsPhysical(slot))
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 (errmsg("cannot use physical replication slot for logical decoding"))));
@@ -747,12 +712,46 @@ filter_by_origin_cb_wrapper(LogicalDecodingContext *ctx, RepOriginId origin_id)
 	return ret;
 }
 
+static void
+message_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
+				   XLogRecPtr message_lsn, bool transactional,
+				   const char *prefix, Size message_size, const char *message)
+{
+	LogicalDecodingContext *ctx = cache->private_data;
+	LogicalErrorCallbackState state;
+	ErrorContextCallback errcallback;
+
+	if (ctx->callbacks.message_cb == NULL)
+		return;
+
+	/* Push callback + info on the error context stack */
+	state.ctx = ctx;
+	state.callback_name = "message";
+	state.report_location = message_lsn;
+	errcallback.callback = output_plugin_error_callback;
+	errcallback.arg = (void *) &state;
+	errcallback.previous = error_context_stack;
+	error_context_stack = &errcallback;
+
+	/* set output state */
+	ctx->accept_writes = true;
+	ctx->write_xid = txn != NULL ? txn->xid : InvalidTransactionId;
+	ctx->write_location = message_lsn;
+
+	/* do the actual work: call callback */
+	ctx->callbacks.message_cb(ctx, txn, message_lsn, transactional, prefix,
+							  message_size, message);
+
+	/* Pop the error context stack */
+	error_context_stack = errcallback.previous;
+}
+
 /*
  * Set the required catalog xmin horizon for historic snapshots in the current
  * replication slot.
  *
  * Note that in the most cases, we won't be able to immediately use the xmin
- * to increase the xmin horizon, we need to wait till the client has confirmed
+ * to increase the xmin horizon: we need to wait till the client has confirmed
  * receiving current_lsn with LogicalConfirmReceivedLocation().
  */
 void
@@ -879,7 +878,7 @@ LogicalIncreaseRestartDecodingForSlot(XLogRecPtr current_lsn, XLogRecPtr restart
 }
 
 /*
- * Handle a consumer's conformation having received all changes up to lsn.
+ * Handle a consumer's confirmation having received all changes up to lsn.
  */
 void
 LogicalConfirmReceivedLocation(XLogRecPtr lsn)
@@ -893,16 +892,13 @@ LogicalConfirmReceivedLocation(XLogRecPtr lsn)
 		bool		updated_xmin = false;
 		bool		updated_restart = false;
 
-		/* use volatile pointer to prevent code rearrangement */
-		volatile ReplicationSlot *slot = MyReplicationSlot;
+		SpinLockAcquire(&MyReplicationSlot->mutex);
 
-		SpinLockAcquire(&slot->mutex);
+		MyReplicationSlot->data.confirmed_flush = lsn;
 
-		slot->data.confirmed_flush = lsn;
-
-		/* if were past the location required for bumping xmin, do so */
-		if (slot->candidate_xmin_lsn != InvalidXLogRecPtr &&
-			slot->candidate_xmin_lsn <= lsn)
+		/* if we're past the location required for bumping xmin, do so */
+		if (MyReplicationSlot->candidate_xmin_lsn != InvalidXLogRecPtr &&
+			MyReplicationSlot->candidate_xmin_lsn <= lsn)
 		{
 			/*
 			 * We have to write the changed xmin to disk *before* we change
@@ -913,30 +909,30 @@ LogicalConfirmReceivedLocation(XLogRecPtr lsn)
 			 * ->effective_xmin once the new state is synced to disk. After a
 			 * crash ->effective_xmin is set to ->xmin.
 			 */
-			if (TransactionIdIsValid(slot->candidate_catalog_xmin) &&
-				slot->data.catalog_xmin != slot->candidate_catalog_xmin)
+			if (TransactionIdIsValid(MyReplicationSlot->candidate_catalog_xmin) &&
+				MyReplicationSlot->data.catalog_xmin != MyReplicationSlot->candidate_catalog_xmin)
 			{
-				slot->data.catalog_xmin = slot->candidate_catalog_xmin;
-				slot->candidate_catalog_xmin = InvalidTransactionId;
-				slot->candidate_xmin_lsn = InvalidXLogRecPtr;
+				MyReplicationSlot->data.catalog_xmin = MyReplicationSlot->candidate_catalog_xmin;
+				MyReplicationSlot->candidate_catalog_xmin = InvalidTransactionId;
+				MyReplicationSlot->candidate_xmin_lsn = InvalidXLogRecPtr;
 				updated_xmin = true;
 			}
 		}
 
-		if (slot->candidate_restart_valid != InvalidXLogRecPtr &&
-			slot->candidate_restart_valid <= lsn)
+		if (MyReplicationSlot->candidate_restart_valid != InvalidXLogRecPtr &&
+			MyReplicationSlot->candidate_restart_valid <= lsn)
 		{
-			Assert(slot->candidate_restart_lsn != InvalidXLogRecPtr);
+			Assert(MyReplicationSlot->candidate_restart_lsn != InvalidXLogRecPtr);
 
-			slot->data.restart_lsn = slot->candidate_restart_lsn;
-			slot->candidate_restart_lsn = InvalidXLogRecPtr;
-			slot->candidate_restart_valid = InvalidXLogRecPtr;
+			MyReplicationSlot->data.restart_lsn = MyReplicationSlot->candidate_restart_lsn;
+			MyReplicationSlot->candidate_restart_lsn = InvalidXLogRecPtr;
+			MyReplicationSlot->candidate_restart_valid = InvalidXLogRecPtr;
 			updated_restart = true;
 		}
 
-		SpinLockRelease(&slot->mutex);
+		SpinLockRelease(&MyReplicationSlot->mutex);
 
-		/* first write new xmin to disk, so we know whats up after a crash */
+		/* first write new xmin to disk, so we know what's up after a crash */
 		if (updated_xmin || updated_restart)
 		{
 			ReplicationSlotMarkDirty();
@@ -952,9 +948,9 @@ LogicalConfirmReceivedLocation(XLogRecPtr lsn)
 		 */
 		if (updated_xmin)
 		{
-			SpinLockAcquire(&slot->mutex);
-			slot->effective_catalog_xmin = slot->data.catalog_xmin;
-			SpinLockRelease(&slot->mutex);
+			SpinLockAcquire(&MyReplicationSlot->mutex);
+			MyReplicationSlot->effective_catalog_xmin = MyReplicationSlot->data.catalog_xmin;
+			SpinLockRelease(&MyReplicationSlot->mutex);
 
 			ReplicationSlotsComputeRequiredXmin(false);
 			ReplicationSlotsComputeRequiredLSN();
@@ -962,10 +958,8 @@ LogicalConfirmReceivedLocation(XLogRecPtr lsn)
 	}
 	else
 	{
-		volatile ReplicationSlot *slot = MyReplicationSlot;
-
-		SpinLockAcquire(&slot->mutex);
-		slot->data.confirmed_flush = lsn;
-		SpinLockRelease(&slot->mutex);
+		SpinLockAcquire(&MyReplicationSlot->mutex);
+		MyReplicationSlot->data.confirmed_flush = lsn;
+		SpinLockRelease(&MyReplicationSlot->mutex);
 	}
 }

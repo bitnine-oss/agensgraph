@@ -261,6 +261,28 @@ insert into syscolconflicttest values (1) on conflict (key) do update set data =
 insert into syscolconflicttest values (1) on conflict (key) do update set data = excluded.oid::text;
 drop table syscolconflicttest;
 
+--
+-- Previous tests all managed to not test any expressions requiring
+-- planner preprocessing ...
+--
+create table insertconflict (a bigint, b bigint);
+
+create unique index insertconflicti1 on insertconflict(coalesce(a, 0));
+
+create unique index insertconflicti2 on insertconflict(b)
+  where coalesce(a, 1) > 0;
+
+insert into insertconflict values (1, 2)
+on conflict (coalesce(a, 0)) do nothing;
+
+insert into insertconflict values (1, 2)
+on conflict (b) where coalesce(a, 1) > 0 do nothing;
+
+insert into insertconflict values (1, 2)
+on conflict (b) where coalesce(a, 1) > 1 do nothing;
+
+drop table insertconflict;
+
 
 -- ******************************************************************
 -- *                                                                *
@@ -385,3 +407,17 @@ insert into dropcol(key, keep1, keep2) values(1, '5', 5) on conflict(key)
 ;
 
 DROP TABLE dropcol;
+
+-- check handling of regular btree constraint along with gist constraint
+
+create table twoconstraints (f1 int unique, f2 box,
+                             exclude using gist(f2 with &&));
+insert into twoconstraints values(1, '((0,0),(1,1))');
+insert into twoconstraints values(1, '((2,2),(3,3))');  -- fail on f1
+insert into twoconstraints values(2, '((0,0),(1,2))');  -- fail on f2
+insert into twoconstraints values(2, '((0,0),(1,2))')
+  on conflict on constraint twoconstraints_f1_key do nothing;  -- fail on f2
+insert into twoconstraints values(2, '((0,0),(1,2))')
+  on conflict on constraint twoconstraints_f2_excl do nothing;  -- do nothing
+select * from twoconstraints;
+drop table twoconstraints;

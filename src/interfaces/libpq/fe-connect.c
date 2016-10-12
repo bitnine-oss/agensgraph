@@ -3,7 +3,7 @@
  * fe-connect.c
  *	  functions related to setting up a connection to the backend
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -2788,6 +2788,7 @@ makeEmptyPGconn(void)
 	conn->client_encoding = PG_SQL_ASCII;
 	conn->std_strings = false;	/* unless server says differently */
 	conn->verbosity = PQERRORS_DEFAULT;
+	conn->show_context = PQSHOW_CONTEXT_ERRORS;
 	conn->sock = PGINVALID_SOCKET;
 	conn->auth_req_received = false;
 	conn->password_needed = false;
@@ -3160,7 +3161,7 @@ PQresetPoll(PGconn *conn)
 }
 
 /*
- * PQcancelGet: get a PGcancel structure corresponding to a connection.
+ * PQgetCancel: get a PGcancel structure corresponding to a connection.
  *
  * A copy is needed to be able to cancel a running query from a different
  * thread. If the same structure is used all structure members would have
@@ -4422,7 +4423,11 @@ conninfo_parse(const char *conninfo, PQExpBuffer errorMessage,
  * of "dbname" keyword is a connection string (as indicated by
  * recognized_connection_string) then parse and process it, overriding any
  * previously processed conflicting keywords. Subsequent keywords will take
- * precedence, however.
+ * precedence, however. In-tree programs generally specify expand_dbname=true,
+ * so command-line arguments naming a database can use a connection string.
+ * Some code acquires arbitrary database names from known-literal sources like
+ * PQdb(), PQconninfoParse() and pg_database.datname.  When connecting to such
+ * a database, in-tree code first wraps the name in a connection string.
  */
 static PQconninfoOption *
 conninfo_array_parse(const char *const * keywords, const char *const * values,
@@ -5352,7 +5357,10 @@ PQhost(const PGconn *conn)
 	else
 	{
 #ifdef HAVE_UNIX_SOCKETS
-		return conn->pgunixsocket;
+		if (conn->pgunixsocket != NULL && conn->pgunixsocket[0] != '\0')
+			return conn->pgunixsocket;
+		else
+			return DEFAULT_PGSOCKET_DIR;
 #else
 		return DefaultHost;
 #endif
@@ -5556,6 +5564,18 @@ PQsetErrorVerbosity(PGconn *conn, PGVerbosity verbosity)
 		return PQERRORS_DEFAULT;
 	old = conn->verbosity;
 	conn->verbosity = verbosity;
+	return old;
+}
+
+PGContextVisibility
+PQsetErrorContextVisibility(PGconn *conn, PGContextVisibility show_context)
+{
+	PGContextVisibility old;
+
+	if (!conn)
+		return PQSHOW_CONTEXT_ERRORS;
+	old = conn->show_context;
+	conn->show_context = show_context;
 	return old;
 }
 

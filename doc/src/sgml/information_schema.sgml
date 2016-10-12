@@ -2898,18 +2898,6 @@ ORDER BY c.ordinal_position;
      </row>
 
      <row>
-      <entry><literal>foreign_server_catalog</literal></entry>
-      <entry><type>sql_identifier</type></entry>
-      <entry>Name of the database that the foreign server is defined in (always the current database)</entry>
-     </row>
-
-     <row>
-      <entry><literal>foreign_server_name</literal></entry>
-      <entry><type>sql_identifier</type></entry>
-      <entry>Name of the foreign server</entry>
-     </row>
-
-     <row>
       <entry><literal>option_name</literal></entry>
       <entry><type>sql_identifier</type></entry>
       <entry>Name of an option</entry>
@@ -5881,7 +5869,7 @@ ORDER BY c.ordinal_position;
    The view <literal>udt_privileges</literal> identifies
    <literal>USAGE</literal> privileges granted on user-defined types to a
    currently enabled role or by a currently enabled role.  There is one row for
-   each combination of column, grantor, and grantee.  This view shows only
+   each combination of type, grantor, and grantee.  This view shows only
    composite types (see under <xref linkend="infoschema-user-defined-types">
    for why); see
    <xref linkend="infoschema-usage-privileges"> for domain privileges.

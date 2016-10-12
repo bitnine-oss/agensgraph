@@ -36,7 +36,7 @@
  *
  * The OIDVECTOR and INT2VECTOR datatypes are storage-compatible with
  * generic arrays, but they support only one-dimensional arrays with no
- * nulls (and no null bitmap).
+ * nulls (and no null bitmap).  They don't support being toasted, either.
  *
  * There are also some "fixed-length array" datatypes, such as NAME and
  * POINT.  These are simply a sequence of a fixed number of items each
@@ -51,7 +51,7 @@
  * arrays holding the elements.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/array.h
@@ -377,9 +377,11 @@ extern Datum array_set_element(Datum arraydatum, int nSubscripts, int *indx,
 				  int arraytyplen, int elmlen, bool elmbyval, char elmalign);
 extern Datum array_get_slice(Datum arraydatum, int nSubscripts,
 				int *upperIndx, int *lowerIndx,
+				bool *upperProvided, bool *lowerProvided,
 				int arraytyplen, int elmlen, bool elmbyval, char elmalign);
 extern Datum array_set_slice(Datum arraydatum, int nSubscripts,
 				int *upperIndx, int *lowerIndx,
+				bool *upperProvided, bool *lowerProvided,
 				Datum srcArrayDatum, bool isNull,
 				int arraytyplen, int elmlen, bool elmbyval, char elmalign);
 

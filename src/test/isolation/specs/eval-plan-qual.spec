@@ -16,12 +16,18 @@ setup
  INSERT INTO c1 SELECT 0, a / 3, a % 3 FROM generate_series(0, 9) a;
  INSERT INTO c2 SELECT 1, a / 3, a % 3 FROM generate_series(0, 9) a;
  INSERT INTO c3 SELECT 2, a / 3, a % 3 FROM generate_series(0, 9) a;
+
+ CREATE TABLE table_a (id integer, value text);
+ CREATE TABLE table_b (id integer, value text);
+ INSERT INTO table_a VALUES (1, 'tableAValue');
+ INSERT INTO table_b VALUES (1, 'tableBValue');
 }
 
 teardown
 {
  DROP TABLE accounts;
  DROP TABLE p CASCADE;
+ DROP TABLE table_a, table_b;
 }
 
 session "s1"
@@ -64,6 +70,15 @@ step "lockwithvalues"	{
 	  FOR UPDATE OF a1;
 }
 
+# these tests exercise EvalPlanQual with a SubLink sub-select (which should be
+# unaffected by any EPQ recheck behavior in the outer query); cf bug #14034
+
+step "updateforss"	{
+	UPDATE table_a SET value = 'newTableAValue' WHERE id = 1;
+	UPDATE table_b SET value = 'newTableBValue' WHERE id = 1;
+}
+
+
 session "s2"
 setup		{ BEGIN ISOLATION LEVEL READ COMMITTED; }
 step "wx2"	{ UPDATE accounts SET balance = balance + 450 WHERE accountid = 'checking'; }
@@ -81,11 +96,34 @@ step "returningp1" {
 	WITH u AS ( UPDATE p SET b = b WHERE a > 0 RETURNING * )
 	  SELECT * FROM u;
 }
+step "readforss"	{
+	SELECT ta.id AS ta_id, ta.value AS ta_value,
+		(SELECT ROW(tb.id, tb.value)
+		 FROM table_b tb WHERE ta.id = tb.id) AS tb_row
+	FROM table_a ta
+	WHERE ta.id = 1 FOR UPDATE OF ta;
+}
+step "wrtwcte"	{ UPDATE table_a SET value = 'tableAValue2' WHERE id = 1; }
 step "c2"	{ COMMIT; }
 
 session "s3"
 setup		{ BEGIN ISOLATION LEVEL READ COMMITTED; }
 step "read"	{ SELECT * FROM accounts ORDER BY accountid; }
+
+# this test exercises EvalPlanQual with a CTE, cf bug #14328
+step "readwcte"	{
+	WITH
+	    cte1 AS (
+	      SELECT id FROM table_b WHERE value = 'tableBValue'
+	    ),
+	    cte2 AS (
+	      SELECT * FROM table_a
+	      WHERE id = (SELECT id FROM cte1)
+	      FOR UPDATE
+	    )
+	SELECT * FROM cte2;
+}
+
 teardown	{ COMMIT; }
 
 permutation "wx1" "wx2" "c1" "c2" "read"
@@ -95,3 +133,5 @@ permutation "readp1" "writep1" "readp2" "c1" "c2"
 permutation "writep2" "returningp1" "c1" "c2"
 permutation "wx2" "partiallock" "c2" "c1" "read"
 permutation "wx2" "lockwithvalues" "c2" "c1" "read"
+permutation "updateforss" "readforss" "c1" "c2"
+permutation "wrtwcte" "readwcte" "c1" "c2"

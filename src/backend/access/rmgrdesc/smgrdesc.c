@@ -3,7 +3,7 @@
  * smgrdesc.c
  *	  rmgr descriptor routines for catalog/storage.c
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -37,7 +37,8 @@ smgr_desc(StringInfo buf, XLogReaderState *record)
 		xl_smgr_truncate *xlrec = (xl_smgr_truncate *) rec;
 		char	   *path = relpathperm(xlrec->rnode, MAIN_FORKNUM);
 
-		appendStringInfo(buf, "%s to %u blocks", path, xlrec->blkno);
+		appendStringInfo(buf, "%s to %u blocks flags %d", path,
+						 xlrec->blkno, xlrec->flags);
 		pfree(path);
 	}
 }

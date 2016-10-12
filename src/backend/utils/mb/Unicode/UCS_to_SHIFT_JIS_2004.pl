@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2007-2015, PostgreSQL Global Development Group
+# Copyright (c) 2007-2016, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_SHIFT_JIS_2004.pl
 #
@@ -168,9 +168,9 @@ while ($line = <FILE>)
 	if ($array{$code} ne "")
 	{
 		printf STDERR
-		  "Warning: duplicate UTF-8: %08x UCS: %04x Shift JIS: %04x\n", $utf,
+		  "Warning: duplicate UTF8: %08x UCS: %04x Shift JIS: %04x\n", $utf,
 		  $ucs, $code;
-		printf STDERR "Previous value: UTF-8: %08x\n", $array{$utf};
+		printf STDERR "Previous value: UTF8: %08x\n", $array{$utf};
 		next;
 	}
 	$count++;

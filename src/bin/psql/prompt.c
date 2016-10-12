@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2016, PostgreSQL Global Development Group
  *
  * src/bin/psql/prompt.c
  */
@@ -34,6 +34,7 @@
  * %M - database server "hostname.domainname", "[local]" for AF_UNIX
  *		sockets, "[local:/dir/name]" if not default
  * %m - like %M, but hostname only (before first dot), or always "[local]"
+ * %p - backend pid
  * %> - database server port number
  * %n - database user name
  * %/ - current database
@@ -160,6 +161,16 @@ get_prompt(promptStatus_t status)
 				case 'n':
 					if (pset.db)
 						strlcpy(buf, session_username(), sizeof(buf));
+					break;
+					/* backend pid */
+				case 'p':
+					if (pset.db)
+					{
+						int			pid = PQbackendPID(pset.db);
+
+						if (pid)
+							snprintf(buf, sizeof(buf), "%d", pid);
+					}
 					break;
 
 				case '0':

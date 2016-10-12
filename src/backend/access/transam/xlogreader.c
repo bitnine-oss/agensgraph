@@ -3,16 +3,18 @@
  * xlogreader.c
  *		Generic XLog reading facility
  *
- * Portions Copyright (c) 2013-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2013-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/backend/access/transam/xlogreader.c
  *
  * NOTES
  *		See xlogreader.h for more notes on this facility.
+ *
+ *		This file is compiled as both front-end and backend code, so it
+ *		may not use ereport, server-defined static variables, etc.
  *-------------------------------------------------------------------------
  */
-
 #include "postgres.h"
 
 #include "access/transam.h"
@@ -192,13 +194,20 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 {
 	XLogRecord *record;
 	XLogRecPtr	targetPagePtr;
-	bool		randAccess = false;
+	bool		randAccess;
 	uint32		len,
 				total_len;
 	uint32		targetRecOff;
 	uint32		pageHeaderSize;
 	bool		gotheader;
 	int			readOff;
+
+	/*
+	 * randAccess indicates whether to verify the previous-record pointer of
+	 * the record we're reading.  We only do this if we're reading
+	 * sequentially, which is what we initially assume.
+	 */
+	randAccess = false;
 
 	/* reset error state */
 	*errormsg = NULL;
@@ -208,6 +217,7 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 
 	if (RecPtr == InvalidXLogRecPtr)
 	{
+		/* No explicit start point; read the record after the one we just read */
 		RecPtr = state->EndRecPtr;
 
 		if (state->ReadRecPtr == InvalidXLogRecPtr)
@@ -223,11 +233,13 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 	else
 	{
 		/*
+		 * Caller supplied a position to start at.
+		 *
 		 * In this case, the passed-in record pointer should already be
 		 * pointing to a valid record starting position.
 		 */
 		Assert(XRecOffIsValid(RecPtr));
-		randAccess = true;		/* allow readPageTLI to go backwards too */
+		randAccess = true;
 	}
 
 	state->currRecPtr = RecPtr;
@@ -309,8 +321,10 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 		/* XXX: more validation should be done here */
 		if (total_len < SizeOfXLogRecord)
 		{
-			report_invalid_record(state, "invalid record length at %X/%X",
-								  (uint32) (RecPtr >> 32), (uint32) RecPtr);
+			report_invalid_record(state,
+						 "invalid record length at %X/%X: wanted %u, got %u",
+								  (uint32) (RecPtr >> 32), (uint32) RecPtr,
+								  (uint32) SizeOfXLogRecord, total_len);
 			goto err;
 		}
 		gotheader = false;
@@ -463,12 +477,10 @@ XLogReadRecord(XLogReaderState *state, XLogRecPtr RecPtr, char **errormsg)
 err:
 
 	/*
-	 * Invalidate the xlog page we've cached. We might read from a different
-	 * source after failure.
+	 * Invalidate the read state. We might read from a different source after
+	 * failure.
 	 */
-	state->readSegNo = 0;
-	state->readOff = 0;
-	state->readLen = 0;
+	XLogReaderInvalReadState(state);
 
 	if (state->errormsg_buf[0] != '\0')
 		*errormsg = state->errormsg_buf;
@@ -572,7 +584,7 @@ ReadPageInternal(XLogReaderState *state, XLogRecPtr pageptr, int reqLen)
 	if (!ValidXLogPageHeader(state, pageptr, hdr))
 		goto err;
 
-	/* update cache information */
+	/* update read state information */
 	state->readSegNo = targetSegNo;
 	state->readOff = targetPageOff;
 	state->readLen = readLen;
@@ -580,10 +592,19 @@ ReadPageInternal(XLogReaderState *state, XLogRecPtr pageptr, int reqLen)
 	return readLen;
 
 err:
+	XLogReaderInvalReadState(state);
+	return -1;
+}
+
+/*
+ * Invalidate the xlogreader's read state to force a re-read.
+ */
+void
+XLogReaderInvalReadState(XLogReaderState *state)
+{
 	state->readSegNo = 0;
 	state->readOff = 0;
 	state->readLen = 0;
-	return -1;
 }
 
 /*
@@ -600,8 +621,9 @@ ValidXLogRecordHeader(XLogReaderState *state, XLogRecPtr RecPtr,
 	if (record->xl_tot_len < SizeOfXLogRecord)
 	{
 		report_invalid_record(state,
-							  "invalid record length at %X/%X",
-							  (uint32) (RecPtr >> 32), (uint32) RecPtr);
+						 "invalid record length at %X/%X: wanted %u, got %u",
+							  (uint32) (RecPtr >> 32), (uint32) RecPtr,
+							  (uint32) SizeOfXLogRecord, record->xl_tot_len);
 		return false;
 	}
 	if (record->xl_rmid > RM_MAX_ID)
@@ -844,46 +866,83 @@ XLogRecPtr
 XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr)
 {
 	XLogReaderState saved_state = *state;
-	XLogRecPtr	targetPagePtr;
 	XLogRecPtr	tmpRecPtr;
-	int			targetRecOff;
 	XLogRecPtr	found = InvalidXLogRecPtr;
-	uint32		pageHeaderSize;
 	XLogPageHeader header;
-	int			readLen;
 	char	   *errormsg;
 
 	Assert(!XLogRecPtrIsInvalid(RecPtr));
 
-	targetRecOff = RecPtr % XLOG_BLCKSZ;
-
-	/* scroll back to page boundary */
-	targetPagePtr = RecPtr - targetRecOff;
-
-	/* Read the page containing the record */
-	readLen = ReadPageInternal(state, targetPagePtr, targetRecOff);
-	if (readLen < 0)
-		goto err;
-
-	header = (XLogPageHeader) state->readBuf;
-
-	pageHeaderSize = XLogPageHeaderSize(header);
-
-	/* make sure we have enough data for the page header */
-	readLen = ReadPageInternal(state, targetPagePtr, pageHeaderSize);
-	if (readLen < 0)
-		goto err;
-
-	/* skip over potential continuation data */
-	if (header->xlp_info & XLP_FIRST_IS_CONTRECORD)
+	/*
+	 * skip over potential continuation data, keeping in mind that it may span
+	 * multiple pages
+	 */
+	tmpRecPtr = RecPtr;
+	while (true)
 	{
-		/* record headers are MAXALIGN'ed */
-		tmpRecPtr = targetPagePtr + pageHeaderSize
-			+ MAXALIGN(header->xlp_rem_len);
-	}
-	else
-	{
-		tmpRecPtr = targetPagePtr + pageHeaderSize;
+		XLogRecPtr	targetPagePtr;
+		int			targetRecOff;
+		uint32		pageHeaderSize;
+		int			readLen;
+
+		/*
+		 * Compute targetRecOff. It should typically be equal or greater than
+		 * short page-header since a valid record can't start anywhere before
+		 * that, except when caller has explicitly specified the offset that
+		 * falls somewhere there or when we are skipping multi-page
+		 * continuation record. It doesn't matter though because
+		 * ReadPageInternal() is prepared to handle that and will read at least
+		 * short page-header worth of data
+		 */
+		targetRecOff = tmpRecPtr % XLOG_BLCKSZ;
+
+		/* scroll back to page boundary */
+		targetPagePtr = tmpRecPtr - targetRecOff;
+
+		/* Read the page containing the record */
+		readLen = ReadPageInternal(state, targetPagePtr, targetRecOff);
+		if (readLen < 0)
+			goto err;
+
+		header = (XLogPageHeader) state->readBuf;
+
+		pageHeaderSize = XLogPageHeaderSize(header);
+
+		/* make sure we have enough data for the page header */
+		readLen = ReadPageInternal(state, targetPagePtr, pageHeaderSize);
+		if (readLen < 0)
+			goto err;
+
+		/* skip over potential continuation data */
+		if (header->xlp_info & XLP_FIRST_IS_CONTRECORD)
+		{
+			/*
+			 * If the length of the remaining continuation data is more than
+			 * what can fit in this page, the continuation record crosses over
+			 * this page. Read the next page and try again. xlp_rem_len in the
+			 * next page header will contain the remaining length of the
+			 * continuation data
+			 *
+			 * Note that record headers are MAXALIGN'ed
+			 */
+			if (MAXALIGN(header->xlp_rem_len) > (XLOG_BLCKSZ - pageHeaderSize))
+				tmpRecPtr = targetPagePtr + XLOG_BLCKSZ;
+			else
+			{
+				/*
+				 * The previous continuation record ends in this page. Set
+				 * tmpRecPtr to point to the first valid record
+				 */
+				tmpRecPtr = targetPagePtr + pageHeaderSize
+					+ MAXALIGN(header->xlp_rem_len);
+				break;
+			}
+		}
+		else
+		{
+			tmpRecPtr = targetPagePtr + pageHeaderSize;
+			break;
+		}
 	}
 
 	/*
@@ -907,11 +966,9 @@ XLogFindNextRecord(XLogReaderState *state, XLogRecPtr RecPtr)
 err:
 out:
 	/* Reset state to what we had before finding the record */
-	state->readSegNo = 0;
-	state->readOff = 0;
-	state->readLen = 0;
 	state->ReadRecPtr = saved_state.ReadRecPtr;
 	state->EndRecPtr = saved_state.EndRecPtr;
+	XLogReaderInvalReadState(state);
 
 	return found;
 }

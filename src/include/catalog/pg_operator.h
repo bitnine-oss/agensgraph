@@ -5,7 +5,7 @@
  *	  along with the relation's initial contents.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_operator.h
@@ -142,10 +142,14 @@ DESCR("prepend element onto front of array");
 DATA(insert OID = 375 (  "||"	   PGNSP PGUID b f f 2277 2277 2277 0 0 array_cat	   -	   -	 ));
 DESCR("concatenate");
 
-DATA(insert OID = 352 (  "="	   PGNSP PGUID b f t	28	28	16 352	 0 xideq eqsel eqjoinsel ));
+DATA(insert OID = 352 (  "="	   PGNSP PGUID b f t	28	28	16	352   3315 xideq eqsel eqjoinsel ));
 DESCR("equal");
-DATA(insert OID = 353 (  "="	   PGNSP PGUID b f f	28	23	16	 0	 0 xideqint4 eqsel eqjoinsel ));
+DATA(insert OID = 353 (  "="	   PGNSP PGUID b f f	28	23	16	0	  3316 xideqint4 eqsel eqjoinsel ));
 DESCR("equal");
+DATA(insert OID = 3315 (  "<>"	   PGNSP PGUID b f f	28	28	16	3315   352 xidneq neqsel neqjoinsel ));
+DESCR("not equal");
+DATA(insert OID = 3316 (  "<>"	   PGNSP PGUID b f f	28	23	16	0	   353 xidneqint4 neqsel neqjoinsel ));
+DESCR("not equal");
 DATA(insert OID = 388 (  "!"	   PGNSP PGUID r f f	20	 0	1700  0  0 numeric_fac - - ));
 DESCR("factorial");
 DATA(insert OID = 389 (  "!!"	   PGNSP PGUID l f f	 0	20	1700  0  0 numeric_fac - - ));
@@ -1671,6 +1675,9 @@ DATA(insert OID = 3680 (  "&&"	   PGNSP PGUID b f f 3615	 3615	 3615  0	0	 tsque
 DESCR("AND-concatenate");
 DATA(insert OID = 3681 (  "||"	   PGNSP PGUID b f f 3615	 3615	 3615  0	0	 tsquery_or   -		-	  ));
 DESCR("OR-concatenate");
+/* <-> operation calls tsquery_phrase, but function is polymorphic. So, point to OID of the tsquery_phrase */
+DATA(insert OID = 5005 (  "<->"    PGNSP PGUID b f f 3615	 3615	 3615  0	0	 5003	-		-	  ));
+DESCR("phrase-concatenate");
 DATA(insert OID = 3682 (  "!!"	   PGNSP PGUID l f f 0		 3615	 3615  0	0	 tsquery_not   -	-	  ));
 DESCR("NOT tsquery");
 DATA(insert OID = 3693 (  "@>"	   PGNSP PGUID b f f 3615	 3615	 16 3694	0	 tsq_mcontains	contsel    contjoinsel	 ));

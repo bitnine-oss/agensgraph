@@ -106,6 +106,7 @@
   &textsearch;
   &mvcc;
   &perform;
+  &parallel;
 
  </part>
 
@@ -247,6 +248,7 @@
   &custom-scan;
   &geqo;
   &indexam;
+  &generic-wal;
   &gist;
   &spgist;
   &gin;

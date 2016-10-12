@@ -3,7 +3,7 @@
  * nodeIndexscan.c
  *	  Routines to support indexed scans of relations
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -27,6 +27,7 @@
 
 #include "access/nbtree.h"
 #include "access/relscan.h"
+#include "catalog/pg_am.h"
 #include "executor/execdebug.h"
 #include "executor/nodeIndexscan.h"
 #include "lib/pairingheap.h"
@@ -966,9 +967,20 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 			Oid			orderbyop = lfirst_oid(lco);
 			Node	   *orderbyexpr = (Node *) lfirst(lcx);
 			Oid			orderbyType = exprType(orderbyexpr);
+			Oid			orderbyColl = exprCollation(orderbyexpr);
+			SortSupport orderbysort = &indexstate->iss_SortSupport[i];
 
-			PrepareSortSupportFromOrderingOp(orderbyop,
-											 &indexstate->iss_SortSupport[i]);
+			/* Initialize sort support */
+			orderbysort->ssup_cxt = CurrentMemoryContext;
+			orderbysort->ssup_collation = orderbyColl;
+			/* See cmp_orderbyvals() comments on NULLS LAST */
+			orderbysort->ssup_nulls_first = false;
+			/* ssup_attno is unused here and elsewhere */
+			orderbysort->ssup_attno = 0;
+			/* No abbreviation */
+			orderbysort->abbreviate = false;
+			PrepareSortSupportFromOrderingOp(orderbyop, orderbysort);
+
 			get_typlenbyval(orderbyType,
 							&indexstate->iss_OrderByTypLens[i],
 							&indexstate->iss_OrderByTypByVals[i]);
@@ -1053,7 +1065,7 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
  * can have either constant or non-constant comparison values.
  *
  * 4. ScalarArrayOpExpr ("indexkey op ANY (array-expression)").  If the index
- * has rd_am->amsearcharray, we handle these the same as simple operators,
+ * supports amsearcharray, we handle these the same as simple operators,
  * setting the SK_SEARCHARRAY flag to tell the AM to handle them.  Otherwise,
  * we create a ScanKey with everything filled in except the comparison value,
  * and set up an IndexArrayKeyInfo struct to drive processing of the qual.
@@ -1436,7 +1448,7 @@ ExecIndexBuildScanKeys(PlanState *planstate, Relation index,
 
 			Assert(rightop != NULL);
 
-			if (index->rd_am->amsearcharray)
+			if (index->rd_amroutine->amsearcharray)
 			{
 				/* Index AM will handle this like a simple operator */
 				flags |= SK_SEARCHARRAY;

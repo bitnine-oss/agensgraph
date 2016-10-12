@@ -4,7 +4,7 @@
  *	  Utility and convenience functions for fmgr functions that return
  *	  sets and/or composite types.
  *
- * Copyright (c) 2002-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/fmgr/funcapi.c
@@ -73,9 +73,7 @@ init_MultiFuncCall(PG_FUNCTION_ARGS)
 		 */
 		multi_call_ctx = AllocSetContextCreate(fcinfo->flinfo->fn_mcxt,
 											   "SRF multi-call context",
-											   ALLOCSET_SMALL_MINSIZE,
-											   ALLOCSET_SMALL_INITSIZE,
-											   ALLOCSET_SMALL_MAXSIZE);
+											   ALLOCSET_SMALL_SIZES);
 
 		/*
 		 * Allocate suitably long-lived space and zero it

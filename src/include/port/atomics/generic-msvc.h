@@ -3,7 +3,7 @@
  * generic-msvc.h
  *	  Atomic operations support when using MSVC
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES:
@@ -46,12 +46,6 @@ typedef struct __declspec(align(8)) pg_atomic_uint64
 	volatile uint64 value;
 } pg_atomic_uint64;
 
-#endif /* defined(HAVE_ATOMICS) */
-
-
-#if defined(PG_USE_INLINE) || defined(ATOMICS_INCLUDE_DEFINITIONS)
-
-#if defined(HAVE_ATOMICS)
 
 #define PG_HAVE_ATOMIC_COMPARE_EXCHANGE_U32
 static inline bool
@@ -107,5 +101,3 @@ pg_atomic_fetch_add_u64_impl(volatile pg_atomic_uint64 *ptr, int64 add_)
 #endif /* _WIN64 */
 
 #endif /* HAVE_ATOMICS */
-
-#endif /* defined(PG_USE_INLINE) || defined(ATOMICS_INCLUDE_DEFINITIONS) */

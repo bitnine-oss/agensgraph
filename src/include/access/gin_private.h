@@ -2,7 +2,7 @@
  * gin_private.h
  *	  header file for postgres inverted index access method implementation.
  *
- *	Copyright (c) 2006-2015, PostgreSQL Global Development Group
+ *	Copyright (c) 2006-2016, PostgreSQL Global Development Group
  *
  *	src/include/access/gin_private.h
  *--------------------------------------------------------------------------
@@ -10,7 +10,7 @@
 #ifndef GIN_PRIVATE_H
 #define GIN_PRIVATE_H
 
-#include "access/genam.h"
+#include "access/amapi.h"
 #include "access/gin.h"
 #include "access/itup.h"
 #include "fmgr.h"
@@ -112,22 +112,22 @@ typedef struct GinMetaPageData
  */
 #define GinPageGetOpaque(page) ( (GinPageOpaque) PageGetSpecialPointer(page) )
 
-#define GinPageIsLeaf(page)    ( GinPageGetOpaque(page)->flags & GIN_LEAF )
+#define GinPageIsLeaf(page)    ( (GinPageGetOpaque(page)->flags & GIN_LEAF) != 0 )
 #define GinPageSetLeaf(page)   ( GinPageGetOpaque(page)->flags |= GIN_LEAF )
 #define GinPageSetNonLeaf(page)    ( GinPageGetOpaque(page)->flags &= ~GIN_LEAF )
-#define GinPageIsData(page)    ( GinPageGetOpaque(page)->flags & GIN_DATA )
+#define GinPageIsData(page)    ( (GinPageGetOpaque(page)->flags & GIN_DATA) != 0 )
 #define GinPageSetData(page)   ( GinPageGetOpaque(page)->flags |= GIN_DATA )
-#define GinPageIsList(page)    ( GinPageGetOpaque(page)->flags & GIN_LIST )
+#define GinPageIsList(page)    ( (GinPageGetOpaque(page)->flags & GIN_LIST) != 0 )
 #define GinPageSetList(page)   ( GinPageGetOpaque(page)->flags |= GIN_LIST )
-#define GinPageHasFullRow(page)    ( GinPageGetOpaque(page)->flags & GIN_LIST_FULLROW )
+#define GinPageHasFullRow(page)    ( (GinPageGetOpaque(page)->flags & GIN_LIST_FULLROW) != 0 )
 #define GinPageSetFullRow(page)   ( GinPageGetOpaque(page)->flags |= GIN_LIST_FULLROW )
-#define GinPageIsCompressed(page)	 ( GinPageGetOpaque(page)->flags & GIN_COMPRESSED )
+#define GinPageIsCompressed(page)	 ( (GinPageGetOpaque(page)->flags & GIN_COMPRESSED) != 0 )
 #define GinPageSetCompressed(page)	 ( GinPageGetOpaque(page)->flags |= GIN_COMPRESSED )
 
-#define GinPageIsDeleted(page) ( GinPageGetOpaque(page)->flags & GIN_DELETED)
+#define GinPageIsDeleted(page) ( (GinPageGetOpaque(page)->flags & GIN_DELETED) != 0 )
 #define GinPageSetDeleted(page)    ( GinPageGetOpaque(page)->flags |= GIN_DELETED)
 #define GinPageSetNonDeleted(page) ( GinPageGetOpaque(page)->flags &= ~GIN_DELETED)
-#define GinPageIsIncompleteSplit(page) ( GinPageGetOpaque(page)->flags & GIN_INCOMPLETE_SPLIT)
+#define GinPageIsIncompleteSplit(page) ( (GinPageGetOpaque(page)->flags & GIN_INCOMPLETE_SPLIT) != 0 )
 
 #define GinPageRightMost(page) ( GinPageGetOpaque(page)->rightlink == InvalidBlockNumber)
 
@@ -224,7 +224,7 @@ typedef signed char GinNullCategory;
 #define GinGetPostingOffset(itup)	(GinItemPointerGetBlockNumber(&(itup)->t_tid) & (~GIN_ITUP_COMPRESSED))
 #define GinSetPostingOffset(itup,n) ItemPointerSetBlockNumber(&(itup)->t_tid,(n)|GIN_ITUP_COMPRESSED)
 #define GinGetPosting(itup)			((Pointer) ((char*)(itup) + GinGetPostingOffset(itup)))
-#define GinItupIsCompressed(itup)	(GinItemPointerGetBlockNumber(&(itup)->t_tid) & GIN_ITUP_COMPRESSED)
+#define GinItupIsCompressed(itup)	((GinItemPointerGetBlockNumber(&(itup)->t_tid) & GIN_ITUP_COMPRESSED) != 0)
 
 /*
  * Maximum size of an item on entry tree page. Make sure that we fit at least
@@ -420,14 +420,14 @@ typedef struct ginxlogCreatePostingTree
 
 typedef struct
 {
-	uint16		flags;			/* GIN_SPLIT_ISLEAF and/or GIN_SPLIT_ISDATA */
+	uint16		flags;			/* GIN_INSERT_ISLEAF and/or GIN_INSERT_ISDATA */
 
 	/*
 	 * FOLLOWS:
 	 *
 	 * 1. if not leaf page, block numbers of the left and right child pages
-	 * whose split this insertion finishes. As BlockIdData[2] (beware of
-	 * adding fields before this that would make them not 16-bit aligned)
+	 * whose split this insertion finishes, as BlockIdData[2] (beware of
+	 * adding fields in this struct that would make them not 16-bit aligned)
 	 *
 	 * 2. a ginxlogInsertEntry or ginxlogRecompressDataLeaf struct, depending
 	 * on tree type.
@@ -499,21 +499,19 @@ typedef struct ginxlogSplit
 								 * split */
 	BlockNumber leftChildBlkno; /* valid on a non-leaf split */
 	BlockNumber rightChildBlkno;
-	uint16		flags;
-
-	/* follows: one of the following structs */
+	uint16		flags;			/* see below */
 } ginxlogSplit;
 
 /*
  * Flags used in ginxlogInsert and ginxlogSplit records
  */
 #define GIN_INSERT_ISDATA	0x01	/* for both insert and split records */
-#define GIN_INSERT_ISLEAF	0x02	/* .. */
+#define GIN_INSERT_ISLEAF	0x02	/* ditto */
 #define GIN_SPLIT_ROOT		0x04	/* only for split records */
 
 /*
  * Vacuum simply WAL-logs the whole page, when anything is modified. This
- * functionally identical heap_newpage records, but is kept separate for
+ * is functionally identical to heap_newpage records, but is kept separate for
  * debugging purposes. (When inspecting the WAL stream, it's easier to see
  * what's going on when GIN vacuum records are marked as such, not as heap
  * records.) This is currently only used for entry tree leaf pages.
@@ -593,7 +591,8 @@ typedef struct ginxlogDeleteListPages
 
 
 /* ginutil.c */
-extern Datum ginoptions(PG_FUNCTION_ARGS);
+extern Datum ginhandler(PG_FUNCTION_ARGS);
+extern bytea *ginoptions(Datum reloptions, bool validate);
 extern void initGinState(GinState *state, Relation index);
 extern Buffer GinNewBuffer(Relation index);
 extern void GinInitBuffer(Buffer b, uint32 f);
@@ -614,9 +613,12 @@ extern Datum gintuple_get_key(GinState *ginstate, IndexTuple tuple,
 				 GinNullCategory *category);
 
 /* gininsert.c */
-extern Datum ginbuild(PG_FUNCTION_ARGS);
-extern Datum ginbuildempty(PG_FUNCTION_ARGS);
-extern Datum gininsert(PG_FUNCTION_ARGS);
+extern IndexBuildResult *ginbuild(Relation heap, Relation index,
+		 struct IndexInfo *indexInfo);
+extern void ginbuildempty(Relation index);
+extern bool gininsert(Relation index, Datum *values, bool *isnull,
+		  ItemPointer ht_ctid, Relation heapRel,
+		  IndexUniqueCheck checkUnique);
 extern void ginEntryInsert(GinState *ginstate,
 			   OffsetNumber attnum, Datum key, GinNullCategory category,
 			   ItemPointerData *items, uint32 nitem,
@@ -637,12 +639,12 @@ typedef struct GinBtreeStack
 
 typedef struct GinBtreeData *GinBtree;
 
-/* Return codes for GinBtreeData.placeToPage method */
+/* Return codes for GinBtreeData.beginPlaceToPage method */
 typedef enum
 {
-	UNMODIFIED,
-	INSERTED,
-	SPLIT
+	GPTP_NO_WORK,
+	GPTP_INSERT,
+	GPTP_SPLIT
 } GinPlaceToPageRC;
 
 typedef struct GinBtreeData
@@ -655,7 +657,8 @@ typedef struct GinBtreeData
 
 	/* insert methods */
 	OffsetNumber (*findChildPtr) (GinBtree, Page, BlockNumber, OffsetNumber);
-	GinPlaceToPageRC (*placeToPage) (GinBtree, Buffer, GinBtreeStack *, void *, BlockNumber, Page *, Page *);
+	GinPlaceToPageRC (*beginPlaceToPage) (GinBtree, Buffer, GinBtreeStack *, void *, BlockNumber, void **, Page *, Page *);
+	void		(*execPlaceToPage) (GinBtree, Buffer, GinBtreeStack *, void *, BlockNumber, void *);
 	void	   *(*prepareDownlink) (GinBtree, Buffer);
 	void		(*fillRoot) (GinBtree, Page, BlockNumber, Page, BlockNumber, Page);
 
@@ -699,7 +702,7 @@ typedef struct
  * PostingItem
  */
 
-extern GinBtreeStack *ginFindLeafPage(GinBtree btree, bool searchMode);
+extern GinBtreeStack *ginFindLeafPage(GinBtree btree, bool searchMode, Snapshot snapshot);
 extern Buffer ginStepRight(Buffer buffer, Relation index, int lockmode);
 extern void freeGinBtreeStack(GinBtreeStack *stack);
 extern void ginInsertValue(GinBtree btree, GinBtreeStack *stack,
@@ -727,7 +730,7 @@ extern void GinPageDeletePostingItem(Page page, OffsetNumber offset);
 extern void ginInsertItemPointers(Relation index, BlockNumber rootBlkno,
 					  ItemPointerData *items, uint32 nitem,
 					  GinStatsData *buildStats);
-extern GinBtreeStack *ginScanBeginPostingTree(GinBtree btree, Relation index, BlockNumber rootBlkno);
+extern GinBtreeStack *ginScanBeginPostingTree(GinBtree btree, Relation index, BlockNumber rootBlkno, Snapshot snapshot);
 extern void ginDataFillRoot(GinBtree btree, Page root, BlockNumber lblkno, Page lpage, BlockNumber rblkno, Page rpage);
 extern void ginPrepareDataScan(GinBtree btree, Relation index, BlockNumber rootBlkno);
 
@@ -867,25 +870,34 @@ typedef struct GinScanOpaqueData
 
 typedef GinScanOpaqueData *GinScanOpaque;
 
-extern Datum ginbeginscan(PG_FUNCTION_ARGS);
-extern Datum ginendscan(PG_FUNCTION_ARGS);
-extern Datum ginrescan(PG_FUNCTION_ARGS);
-extern Datum ginmarkpos(PG_FUNCTION_ARGS);
-extern Datum ginrestrpos(PG_FUNCTION_ARGS);
+extern IndexScanDesc ginbeginscan(Relation rel, int nkeys, int norderbys);
+extern void ginendscan(IndexScanDesc scan);
+extern void ginrescan(IndexScanDesc scan, ScanKey key, int nscankeys,
+		  ScanKey orderbys, int norderbys);
 extern void ginNewScanKey(IndexScanDesc scan);
 extern void ginFreeScanKeys(GinScanOpaque so);
 
 /* ginget.c */
-extern Datum gingetbitmap(PG_FUNCTION_ARGS);
+extern int64 gingetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
+
+/* ginfast.c */
+extern Datum gin_clean_pending_list(PG_FUNCTION_ARGS);
 
 /* ginlogic.c */
 extern void ginInitConsistentFunction(GinState *ginstate, GinScanKey key);
 
 /* ginvacuum.c */
-extern Datum ginbulkdelete(PG_FUNCTION_ARGS);
-extern Datum ginvacuumcleanup(PG_FUNCTION_ARGS);
+extern IndexBulkDeleteResult *ginbulkdelete(IndexVacuumInfo *info,
+			  IndexBulkDeleteResult *stats,
+			  IndexBulkDeleteCallback callback,
+			  void *callback_state);
+extern IndexBulkDeleteResult *ginvacuumcleanup(IndexVacuumInfo *info,
+				 IndexBulkDeleteResult *stats);
 extern ItemPointer ginVacuumItemPointers(GinVacuumState *gvs,
 					  ItemPointerData *items, int nitem, int *nremaining);
+
+/* ginvalidate.c */
+extern bool ginvalidate(Oid opclassoid);
 
 /* ginbulk.c */
 typedef struct GinEntryAccumulator
@@ -903,7 +915,7 @@ typedef struct GinEntryAccumulator
 typedef struct
 {
 	GinState   *ginstate;
-	long		allocatedMemory;
+	Size		allocatedMemory;
 	GinEntryAccumulator *entryallocator;
 	uint32		eas_used;
 	RBTree	   *tree;
@@ -935,8 +947,8 @@ extern void ginHeapTupleFastCollect(GinState *ginstate,
 						GinTupleCollector *collector,
 						OffsetNumber attnum, Datum value, bool isNull,
 						ItemPointer ht_ctid);
-extern void ginInsertCleanup(GinState *ginstate,
-				 bool vac_delay, IndexBulkDeleteResult *stats);
+extern void ginInsertCleanup(GinState *ginstate, bool full_clean,
+				 bool fill_fsm, IndexBulkDeleteResult *stats);
 
 /* ginpostinglist.c */
 
@@ -952,11 +964,8 @@ extern ItemPointer ginMergeItemPointers(ItemPointerData *a, uint32 na,
 
 /*
  * Merging the results of several gin scans compares item pointers a lot,
- * so we want this to be inlined. But if the compiler doesn't support that,
- * fall back on the non-inline version from itemptr.c. See STATIC_IF_INLINE in
- * c.h.
+ * so we want this to be inlined.
  */
-#ifdef PG_USE_INLINE
 static inline int
 ginCompareItemPointers(ItemPointer a, ItemPointer b)
 {
@@ -970,8 +979,5 @@ ginCompareItemPointers(ItemPointer a, ItemPointer b)
 	else
 		return -1;
 }
-#else
-#define ginCompareItemPointers(a, b) ItemPointerCompare(a, b)
-#endif   /* PG_USE_INLINE */
 
 #endif   /* GIN_PRIVATE_H */

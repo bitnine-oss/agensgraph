@@ -4,7 +4,7 @@
  *	  POSTGRES heap tuple header definitions.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/htup_details.h
@@ -216,6 +216,31 @@ struct HeapTupleHeaderData
 #define HEAP_XMAX_IS_LOCKED_ONLY(infomask) \
 	(((infomask) & HEAP_XMAX_LOCK_ONLY) || \
 	 (((infomask) & (HEAP_XMAX_IS_MULTI | HEAP_LOCK_MASK)) == HEAP_XMAX_EXCL_LOCK))
+
+/*
+ * A tuple that has HEAP_XMAX_IS_MULTI and HEAP_XMAX_LOCK_ONLY but neither of
+ * XMAX_EXCL_LOCK and XMAX_KEYSHR_LOCK must come from a tuple that was
+ * share-locked in 9.2 or earlier and then pg_upgrade'd.
+ *
+ * In 9.2 and prior, HEAP_XMAX_IS_MULTI was only set when there were multiple
+ * FOR SHARE lockers of that tuple.  That set HEAP_XMAX_LOCK_ONLY (with a
+ * different name back then) but neither of HEAP_XMAX_EXCL_LOCK and
+ * HEAP_XMAX_KEYSHR_LOCK.  That combination is no longer possible in 9.3 and
+ * up, so if we see that combination we know for certain that the tuple was
+ * locked in an earlier release; since all such lockers are gone (they cannot
+ * survive through pg_upgrade), such tuples can safely be considered not
+ * locked.
+ *
+ * We must not resolve such multixacts locally, because the result would be
+ * bogus, regardless of where they stand with respect to the current valid
+ * multixact range.
+ */
+#define HEAP_LOCKED_UPGRADED(infomask) \
+( \
+	 ((infomask) & HEAP_XMAX_IS_MULTI) && \
+	 ((infomask) & HEAP_XMAX_LOCK_ONLY) && \
+	 (((infomask) & (HEAP_XMAX_EXCL_LOCK | HEAP_XMAX_KEYSHR_LOCK)) == 0) \
+)
 
 /*
  * Use these to test whether a particular lock is applied to a tuple
@@ -782,17 +807,6 @@ extern HeapTuple heap_modify_tuple(HeapTuple tuple,
 				  bool *doReplace);
 extern void heap_deform_tuple(HeapTuple tuple, TupleDesc tupleDesc,
 				  Datum *values, bool *isnull);
-
-/* these three are deprecated versions of the three above: */
-extern HeapTuple heap_formtuple(TupleDesc tupleDescriptor,
-			   Datum *values, char *nulls);
-extern HeapTuple heap_modifytuple(HeapTuple tuple,
-				 TupleDesc tupleDesc,
-				 Datum *replValues,
-				 char *replNulls,
-				 char *replActions);
-extern void heap_deformtuple(HeapTuple tuple, TupleDesc tupleDesc,
-				 Datum *values, char *nulls);
 extern void heap_freetuple(HeapTuple htup);
 extern MinimalTuple heap_form_minimal_tuple(TupleDesc tupleDescriptor,
 						Datum *values, bool *isnull);

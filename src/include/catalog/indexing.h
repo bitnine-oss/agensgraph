@@ -5,7 +5,7 @@
  *	  on system catalogs
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/indexing.h
@@ -161,6 +161,9 @@ DECLARE_UNIQUE_INDEX(pg_inherits_relid_seqno_index, 2680, on pg_inherits using b
 #define InheritsRelidSeqnoIndexId  2680
 DECLARE_INDEX(pg_inherits_parent_index, 2187, on pg_inherits using btree(inhparent oid_ops));
 #define InheritsParentIndexId  2187
+
+DECLARE_UNIQUE_INDEX(pg_init_privs_o_c_o_index, 3395, on pg_init_privs using btree(objoid oid_ops, classoid oid_ops, objsubid int4_ops));
+#define InitPrivsObjIndexId  3395
 
 DECLARE_UNIQUE_INDEX(pg_language_name_index, 2681, on pg_language using btree(lanname name_ops));
 #define LanguageNameIndexId  2681

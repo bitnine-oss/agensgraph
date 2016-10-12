@@ -4,7 +4,7 @@
  *	  header file for postgres hash access method implementation
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/hash.h
@@ -17,14 +17,14 @@
 #ifndef HASH_H
 #define HASH_H
 
-#include "access/genam.h"
+#include "access/amapi.h"
 #include "access/itup.h"
 #include "access/sdir.h"
 #include "access/xlogreader.h"
 #include "fmgr.h"
 #include "lib/stringinfo.h"
 #include "storage/bufmgr.h"
-#include "storage/lock.h"
+#include "storage/lockdefs.h"
 #include "utils/relcache.h"
 
 /*
@@ -239,23 +239,32 @@ typedef HashMetaPageData *HashMetaPage;
  *	Since we only have one such proc in amproc, it's number 1.
  */
 #define HASHPROC		1
+#define HASHNProcs		1
 
 
 /* public routines */
 
-extern Datum hashbuild(PG_FUNCTION_ARGS);
-extern Datum hashbuildempty(PG_FUNCTION_ARGS);
-extern Datum hashinsert(PG_FUNCTION_ARGS);
-extern Datum hashbeginscan(PG_FUNCTION_ARGS);
-extern Datum hashgettuple(PG_FUNCTION_ARGS);
-extern Datum hashgetbitmap(PG_FUNCTION_ARGS);
-extern Datum hashrescan(PG_FUNCTION_ARGS);
-extern Datum hashendscan(PG_FUNCTION_ARGS);
-extern Datum hashmarkpos(PG_FUNCTION_ARGS);
-extern Datum hashrestrpos(PG_FUNCTION_ARGS);
-extern Datum hashbulkdelete(PG_FUNCTION_ARGS);
-extern Datum hashvacuumcleanup(PG_FUNCTION_ARGS);
-extern Datum hashoptions(PG_FUNCTION_ARGS);
+extern Datum hashhandler(PG_FUNCTION_ARGS);
+extern IndexBuildResult *hashbuild(Relation heap, Relation index,
+		  struct IndexInfo *indexInfo);
+extern void hashbuildempty(Relation index);
+extern bool hashinsert(Relation rel, Datum *values, bool *isnull,
+		   ItemPointer ht_ctid, Relation heapRel,
+		   IndexUniqueCheck checkUnique);
+extern bool hashgettuple(IndexScanDesc scan, ScanDirection dir);
+extern int64 hashgetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
+extern IndexScanDesc hashbeginscan(Relation rel, int nkeys, int norderbys);
+extern void hashrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
+		   ScanKey orderbys, int norderbys);
+extern void hashendscan(IndexScanDesc scan);
+extern IndexBulkDeleteResult *hashbulkdelete(IndexVacuumInfo *info,
+			   IndexBulkDeleteResult *stats,
+			   IndexBulkDeleteCallback callback,
+			   void *callback_state);
+extern IndexBulkDeleteResult *hashvacuumcleanup(IndexVacuumInfo *info,
+				  IndexBulkDeleteResult *stats);
+extern bytea *hashoptions(Datum reloptions, bool validate);
+extern bool hashvalidate(Oid opclassoid);
 
 /*
  * Datatype-specific hash functions in hashfunc.c.
@@ -350,8 +359,9 @@ extern Bucket _hash_hashkey2bucket(uint32 hashkey, uint32 maxbucket,
 extern uint32 _hash_log2(uint32 num);
 extern void _hash_checkpage(Relation rel, Buffer buf, int flags);
 extern uint32 _hash_get_indextuple_hashkey(IndexTuple itup);
-extern IndexTuple _hash_form_tuple(Relation index,
-				 Datum *values, bool *isnull);
+extern bool _hash_convert_tuple(Relation index,
+					Datum *user_values, bool *user_isnull,
+					Datum *index_values, bool *index_isnull);
 extern OffsetNumber _hash_binsearch(Page page, uint32 hash_value);
 extern OffsetNumber _hash_binsearch_last(Page page, uint32 hash_value);
 

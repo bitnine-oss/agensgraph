@@ -3,7 +3,7 @@
  * pg_aggregate.c
  *	  routines to support manipulation of the pg_aggregate relation
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -57,6 +57,9 @@ AggregateCreate(const char *aggName,
 				Oid variadicArgType,
 				List *aggtransfnName,
 				List *aggfinalfnName,
+				List *aggcombinefnName,
+				List *aggserialfnName,
+				List *aggdeserialfnName,
 				List *aggmtransfnName,
 				List *aggminvtransfnName,
 				List *aggmfinalfnName,
@@ -68,7 +71,8 @@ AggregateCreate(const char *aggName,
 				Oid aggmTransType,
 				int32 aggmTransSpace,
 				const char *agginitval,
-				const char *aggminitval)
+				const char *aggminitval,
+				char proparallel)
 {
 	Relation	aggdesc;
 	HeapTuple	tup;
@@ -77,6 +81,9 @@ AggregateCreate(const char *aggName,
 	Form_pg_proc proc;
 	Oid			transfn;
 	Oid			finalfn = InvalidOid;	/* can be omitted */
+	Oid			combinefn = InvalidOid; /* can be omitted */
+	Oid			serialfn = InvalidOid;	/* can be omitted */
+	Oid			deserialfn = InvalidOid;		/* can be omitted */
 	Oid			mtransfn = InvalidOid;	/* can be omitted */
 	Oid			minvtransfn = InvalidOid;		/* can be omitted */
 	Oid			mfinalfn = InvalidOid;	/* can be omitted */
@@ -396,6 +403,80 @@ AggregateCreate(const char *aggName,
 	}
 	Assert(OidIsValid(finaltype));
 
+	/* handle the combinefn, if supplied */
+	if (aggcombinefnName)
+	{
+		Oid			combineType;
+
+		/*
+		 * Combine function must have 2 argument, each of which is the trans
+		 * type
+		 */
+		fnArgs[0] = aggTransType;
+		fnArgs[1] = aggTransType;
+
+		combinefn = lookup_agg_function(aggcombinefnName, 2, fnArgs,
+										variadicArgType, &combineType);
+
+		/* Ensure the return type matches the aggregates trans type */
+		if (combineType != aggTransType)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("return type of combine function %s is not %s",
+							NameListToString(aggcombinefnName),
+							format_type_be(aggTransType))));
+
+		/*
+		 * A combine function to combine INTERNAL states must accept nulls and
+		 * ensure that the returned state is in the correct memory context.
+		 */
+		if (aggTransType == INTERNALOID && func_strict(combinefn))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
+					 errmsg("combine function with \"%s\" transition type must not be declared STRICT",
+							format_type_be(aggTransType))));
+
+	}
+
+	/*
+	 * Validate the serialization function, if present.
+	 */
+	if (aggserialfnName)
+	{
+		fnArgs[0] = INTERNALOID;
+
+		serialfn = lookup_agg_function(aggserialfnName, 1,
+									   fnArgs, variadicArgType,
+									   &rettype);
+
+		if (rettype != BYTEAOID)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("return type of serialization function %s is not %s",
+						NameListToString(aggserialfnName),
+						format_type_be(BYTEAOID))));
+	}
+
+	/*
+	 * Validate the deserialization function, if present.
+	 */
+	if (aggdeserialfnName)
+	{
+		fnArgs[0] = BYTEAOID;
+		fnArgs[1] = INTERNALOID;	/* dummy argument for type safety */
+
+		deserialfn = lookup_agg_function(aggdeserialfnName, 2,
+										 fnArgs, variadicArgType,
+										 &rettype);
+
+		if (rettype != INTERNALOID)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+			   errmsg("return type of deserialization function %s is not %s",
+					  NameListToString(aggdeserialfnName),
+					  format_type_be(INTERNALOID))));
+	}
+
 	/*
 	 * If finaltype (i.e. aggregate return type) is polymorphic, inputs must
 	 * be polymorphic also, else parser will fail to deduce result type.
@@ -540,6 +621,7 @@ AggregateCreate(const char *aggName,
 							 false,		/* isStrict (not needed for agg) */
 							 PROVOLATILE_IMMUTABLE,		/* volatility (not
 														 * needed for agg) */
+							 proparallel,
 							 parameterTypes,	/* paramTypes */
 							 allParameterTypes, /* allParamTypes */
 							 parameterModes,	/* parameterModes */
@@ -566,6 +648,9 @@ AggregateCreate(const char *aggName,
 	values[Anum_pg_aggregate_aggnumdirectargs - 1] = Int16GetDatum(numDirectArgs);
 	values[Anum_pg_aggregate_aggtransfn - 1] = ObjectIdGetDatum(transfn);
 	values[Anum_pg_aggregate_aggfinalfn - 1] = ObjectIdGetDatum(finalfn);
+	values[Anum_pg_aggregate_aggcombinefn - 1] = ObjectIdGetDatum(combinefn);
+	values[Anum_pg_aggregate_aggserialfn - 1] = ObjectIdGetDatum(serialfn);
+	values[Anum_pg_aggregate_aggdeserialfn - 1] = ObjectIdGetDatum(deserialfn);
 	values[Anum_pg_aggregate_aggmtransfn - 1] = ObjectIdGetDatum(mtransfn);
 	values[Anum_pg_aggregate_aggminvtransfn - 1] = ObjectIdGetDatum(minvtransfn);
 	values[Anum_pg_aggregate_aggmfinalfn - 1] = ObjectIdGetDatum(mfinalfn);
@@ -599,7 +684,7 @@ AggregateCreate(const char *aggName,
 	 * Create dependencies for the aggregate (above and beyond those already
 	 * made by ProcedureCreate).  Note: we don't need an explicit dependency
 	 * on aggTransType since we depend on it indirectly through transfn.
-	 * Likewise for aggmTransType if any.
+	 * Likewise for aggmTransType using the mtransfunc, if it exists.
 	 */
 
 	/* Depends on transition function */
@@ -613,6 +698,33 @@ AggregateCreate(const char *aggName,
 	{
 		referenced.classId = ProcedureRelationId;
 		referenced.objectId = finalfn;
+		referenced.objectSubId = 0;
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+	}
+
+	/* Depends on combine function, if any */
+	if (OidIsValid(combinefn))
+	{
+		referenced.classId = ProcedureRelationId;
+		referenced.objectId = combinefn;
+		referenced.objectSubId = 0;
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+	}
+
+	/* Depends on serialization function, if any */
+	if (OidIsValid(serialfn))
+	{
+		referenced.classId = ProcedureRelationId;
+		referenced.objectId = serialfn;
+		referenced.objectSubId = 0;
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+	}
+
+	/* Depends on deserialization function, if any */
+	if (OidIsValid(deserialfn))
+	{
+		referenced.classId = ProcedureRelationId;
+		referenced.objectId = deserialfn;
 		referenced.objectSubId = 0;
 		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 	}
@@ -658,7 +770,7 @@ AggregateCreate(const char *aggName,
 
 /*
  * lookup_agg_function
- * common code for finding transfn, invtransfn and finalfn
+ * common code for finding transfn, invtransfn, finalfn, and combinefn
  *
  * Returns OID of function, and stores its return type into *rettype
  *

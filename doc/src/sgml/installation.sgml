@@ -226,9 +226,8 @@ su - postgres
      <para>
       To build the <application>PL/Tcl</application>
       procedural language, you of course need a <productname>Tcl</>
-      installation.  If you are using a pre-8.4 release of
-      <productname>Tcl</>, ensure that it was built without multithreading
-      support.
+      installation.  The minimum required version is
+      <productname>Tcl</productname> 8.4.
      </para>
     </listitem>
 
@@ -794,6 +793,17 @@ su - postgres
       </varlistentry>
 
       <varlistentry>
+       <term><option>--with-bsd-auth</option></term>
+       <listitem>
+        <para>
+         Build with BSD Authentication support.
+         (The BSD Authentication framework is
+         currently only available on OpenBSD.)
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
        <term><option>--with-ldap</option></term>
        <listitem>
         <para>
@@ -808,6 +818,22 @@ su - postgres
          header files and libraries to make sure that your
          <productname>OpenLDAP</> installation is sufficient before
          proceeding.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--with-systemd</option></term>
+       <listitem>
+        <para>
+         Build with support
+         for <application>systemd</application><indexterm><primary>systemd</primary></indexterm>
+         service notifications.  This improves integration if the server binary
+         is started under <application>systemd</application> but has no impact
+         otherwise<![%standalone-ignore[; see <xref linkend="server-start"> for more
+         information]]>.  <application>libsystemd</application> and the
+         associated header files need to be installed to be able to use this
+         option.
         </para>
        </listitem>
       </varlistentry>
@@ -1477,7 +1503,7 @@ su - postgres
     will take a few minutes depending on your
     hardware. The last line displayed should be:
 <screen>
-All of PostgreSQL is successfully made. Ready to install.
+All of PostgreSQL successfully made. Ready to install.
 </screen>
    </para>
 
@@ -1490,7 +1516,7 @@ All of PostgreSQL is successfully made. Ready to install.
 </screen>
    The last line displayed should be:
 <screen>
-PostgreSQL, contrib and HTML documentation successfully made. Ready to install.
+PostgreSQL, contrib, and documentation successfully made. Ready to install.
 </screen>
    </para>
   </step>
@@ -1769,7 +1795,7 @@ set path = ( /usr/local/pgsql/bin $path )
     shell start-up file unless you installed into a location that is
     searched by default:
 <programlisting>
-MANPATH=/usr/local/pgsql/man:$MANPATH
+MANPATH=/usr/local/pgsql/share/man:$MANPATH
 export MANPATH
 </programlisting>
    </para>
@@ -2714,13 +2740,13 @@ PHSS_30849  s700_800 u2comp/be/plugin library Patch
 
     <para>
      By default, the PostgreSQL man pages are installed into
-     <filename>/usr/local/pgsql/man</filename>.  By default, UnixWare
+     <filename>/usr/local/pgsql/share/man</filename>.  By default, UnixWare
      does not look there for man pages.  To be able to read them you
      need to modify the
      <varname>MANPATH</varname> variable
      in <filename>/etc/default/man</filename>, for example:
 <programlisting>
-MANPATH=/usr/lib/scohelp/%L/man:/usr/dt/man:/usr/man:/usr/share/man:scohelp:/usr/local/man:/usr/local/pgsql/man
+MANPATH=/usr/lib/scohelp/%L/man:/usr/dt/man:/usr/man:/usr/share/man:scohelp:/usr/local/man:/usr/local/pgsql/share/man
 </programlisting>
     </para>
 

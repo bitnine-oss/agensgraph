@@ -9,7 +9,7 @@
  *	  more likely to break across PostgreSQL releases than code that uses
  *	  only the official API.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/interfaces/libpq/libpq-int.h
@@ -77,7 +77,7 @@ typedef struct
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-#if (SSLEAY_VERSION_NUMBER >= 0x00907000L) && !defined(OPENSSL_NO_ENGINE)
+#if (OPENSSL_VERSION_NUMBER >= 0x00907000L) && !defined(OPENSSL_NO_ENGINE)
 #define USE_SSL_ENGINE
 #endif
 #endif   /* USE_OPENSSL */
@@ -197,6 +197,7 @@ struct pg_result
 	 */
 	char	   *errMsg;			/* error message, or NULL if no error */
 	PGMessageField *errFields;	/* message broken into fields */
+	char	   *errQuery;		/* text of triggering query, if available */
 
 	/* All NULL attributes in the query result point to this null string */
 	char		null_field[1];
@@ -302,10 +303,9 @@ struct pg_conn
 	char	   *pghostaddr;		/* the numeric IP address of the machine on
 								 * which the server is running.  Takes
 								 * precedence over above. */
-	char	   *pgport;			/* the server's communication port */
-	char	   *pgunixsocket;	/* the Unix-domain socket that the server is
-								 * listening on; if NULL, uses a default
-								 * constructed from pgport */
+	char	   *pgport;			/* the server's communication port number */
+	char	   *pgunixsocket;	/* the directory of the server's Unix-domain
+								 * socket; if NULL, use DEFAULT_PGSOCKET_DIR */
 	char	   *pgtty;			/* tty on which the backend messages is
 								 * displayed (OBSOLETE, NOT USED) */
 	char	   *connect_timeout;	/* connection timeout (numeric string) */
@@ -394,6 +394,7 @@ struct pg_conn
 	int			client_encoding;	/* encoding id */
 	bool		std_strings;	/* standard_conforming_strings */
 	PGVerbosity verbosity;		/* error/notice message verbosity */
+	PGContextVisibility show_context;	/* whether to show CONTEXT field */
 	PGlobjfuncs *lobjfuncs;		/* private state for large-object access fns */
 
 	/* Buffer for data received from backend and not yet processed */
@@ -575,6 +576,8 @@ extern char *pqBuildStartupPacket3(PGconn *conn, int *packetlen,
 					  const PQEnvironmentOption *options);
 extern void pqParseInput3(PGconn *conn);
 extern int	pqGetErrorNotice3(PGconn *conn, bool isError);
+extern void pqBuildErrorMessage3(PQExpBuffer msg, const PGresult *res,
+					 PGVerbosity verbosity, PGContextVisibility show_context);
 extern int	pqGetCopyData3(PGconn *conn, char **buffer, int async);
 extern int	pqGetline3(PGconn *conn, char *s, int maxlen);
 extern int	pqGetlineAsync3(PGconn *conn, char *buffer, int bufsize);

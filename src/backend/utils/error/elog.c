@@ -43,7 +43,7 @@
  * overflow.)
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -79,11 +79,10 @@
 #include "utils/ps_status.h"
 
 
+/* In this module, access gettext() via err_gettext() */
 #undef _
 #define _(x) err_gettext(x)
 
-static const char *err_gettext(const char *str) pg_attribute_format_arg(1);
-static void set_errdata_field(MemoryContextData *cxt, char **ptr, const char *str);
 
 /* Global variables */
 ErrorContextCallback *error_context_stack = NULL;
@@ -106,6 +105,8 @@ int			Log_error_verbosity = PGERROR_VERBOSE;
 char	   *Log_line_prefix = NULL;		/* format for extra log line info */
 int			Log_destination = LOG_DESTINATION_STDERR;
 char	   *Log_destination_string = NULL;
+bool		syslog_sequence_numbers = true;
+bool		syslog_split_messages = true;
 
 #ifdef HAVE_SYSLOG
 
@@ -127,10 +128,9 @@ static int	syslog_facility = LOG_LOCAL0;
 static void write_syslog(int level, const char *line);
 #endif
 
-static void write_console(const char *line, int len);
-
 #ifdef WIN32
 extern char *event_source;
+
 static void write_eventlog(int level, const char *line, int len);
 #endif
 
@@ -143,9 +143,12 @@ static int	errordata_stack_depth = -1; /* index of topmost active frame */
 
 static int	recursion_depth = 0;	/* to detect actual recursion */
 
-/* buffers for formatted timestamps that might be used by both
- * log_line_prefix and csv logs.
+/*
+ * Saved timeval and buffers for formatted timestamps that might be used by
+ * both log_line_prefix and csv logs.
  */
+static struct timeval saved_timeval;
+static bool saved_timeval_set = false;
 
 #define FORMATTED_TS_LEN 128
 static char formatted_start_time[FORMATTED_TS_LEN];
@@ -163,9 +166,16 @@ static char formatted_log_time[FORMATTED_TS_LEN];
 	} while (0)
 
 
+static const char *err_gettext(const char *str) pg_attribute_format_arg(1);
+static void set_errdata_field(MemoryContextData *cxt, char **ptr, const char *str);
+static void write_console(const char *line, int len);
+static void setup_formatted_log_time(void);
+static void setup_formatted_start_time(void);
 static const char *process_log_prefix_padding(const char *p, int *padding);
 static void log_line_prefix(StringInfo buf, ErrorData *edata);
+static void write_csvlog(ErrorData *edata);
 static void send_message_to_server_log(ErrorData *edata);
+static void write_pipe_chunks(char *data, int len, int dest);
 static void send_message_to_frontend(ErrorData *edata);
 static char *expand_fmt_string(const char *fmt, ErrorData *edata);
 static const char *useful_strerror(int errnum);
@@ -173,10 +183,6 @@ static const char *get_errno_symbol(int errnum);
 static const char *error_severity(int elevel);
 static void append_with_tabs(StringInfo buf, const char *str);
 static bool is_log_level_output(int elevel, int log_min_level);
-static void write_pipe_chunks(char *data, int len, int dest);
-static void write_csvlog(ErrorData *edata);
-static void setup_formatted_log_time(void);
-static void setup_formatted_start_time(void);
 
 
 /*
@@ -287,7 +293,7 @@ errstart(int elevel, const char *filename, int lineno,
 	output_to_server = is_log_level_output(elevel, log_min_messages);
 
 	/* Determine whether message is enabled for client output */
-	if (whereToSendOutput == DestRemote && elevel != COMMERROR)
+	if (whereToSendOutput == DestRemote && elevel != LOG_SERVER_ONLY)
 	{
 		/*
 		 * client_min_messages is honored only after we complete the
@@ -797,6 +803,7 @@ errmsg(const char *fmt,...)
 	CHECK_STACK_DEPTH();
 	oldcontext = MemoryContextSwitchTo(edata->assoc_context);
 
+	edata->message_id = fmt;
 	EVALUATE_MESSAGE(edata->domain, message, false, true);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -826,6 +833,7 @@ errmsg_internal(const char *fmt,...)
 	CHECK_STACK_DEPTH();
 	oldcontext = MemoryContextSwitchTo(edata->assoc_context);
 
+	edata->message_id = fmt;
 	EVALUATE_MESSAGE(edata->domain, message, false, false);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -849,6 +857,7 @@ errmsg_plural(const char *fmt_singular, const char *fmt_plural,
 	CHECK_STACK_DEPTH();
 	oldcontext = MemoryContextSwitchTo(edata->assoc_context);
 
+	edata->message_id = fmt_singular;
 	EVALUATE_MESSAGE_PLURAL(edata->domain, message, false);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -1072,7 +1081,7 @@ errhidestmt(bool hide_stmt)
  * errhidecontext --- optionally suppress CONTEXT: field of log entry
  *
  * This should only be used for verbose debugging messages where the repeated
- * inclusion of CONTEXT: bloats the log volume too much.
+ * inclusion of context would bloat the log volume too much.
  */
 int
 errhidecontext(bool hide_ctx)
@@ -1357,6 +1366,7 @@ elog_finish(int elevel, const char *fmt,...)
 	recursion_depth++;
 	oldcontext = MemoryContextSwitchTo(edata->assoc_context);
 
+	edata->message_id = fmt;
 	EVALUATE_MESSAGE(edata->domain, message, false, false);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -1416,6 +1426,7 @@ format_elog_string(const char *fmt,...)
 
 	oldcontext = MemoryContextSwitchTo(ErrorContext);
 
+	edata->message_id = fmt;
 	EVALUATE_MESSAGE(edata->domain, message, false, true);
 
 	MemoryContextSwitchTo(oldcontext);
@@ -1454,6 +1465,11 @@ EmitErrorReport(void)
 	 * where it would have much less information available.  emit_log_hook is
 	 * intended for custom log filtering and custom log message transmission
 	 * mechanisms.
+	 *
+	 * The log hook has access to both the translated and original English
+	 * error message text, which is passed through to allow it to be used as a
+	 * message identifier. Note that the original text is not available for
+	 * detail, detail_log, hint and context text elements.
 	 */
 	if (edata->output_to_server && emit_log_hook)
 		(*emit_log_hook) (edata);
@@ -1585,7 +1601,10 @@ FlushErrorState(void)
 /*
  * ThrowErrorData --- report an error described by an ErrorData structure
  *
- * This is intended to be used to re-report errors originally thrown by
+ * This is somewhat like ReThrowError, but it allows elevels besides ERROR,
+ * and the boolean flags such as output_to_server are computed via the
+ * default rules rather than being copied from the given ErrorData.
+ * This is primarily used to re-report errors originally reported by
  * background worker processes and then propagated (with or without
  * modification) to the backend responsible for them.
  */
@@ -1597,13 +1616,14 @@ ThrowErrorData(ErrorData *edata)
 
 	if (!errstart(edata->elevel, edata->filename, edata->lineno,
 				  edata->funcname, NULL))
-		return;
+		return;					/* error is not to be reported at all */
 
 	newedata = &errordata[errordata_stack_depth];
-	oldcontext = MemoryContextSwitchTo(edata->assoc_context);
+	recursion_depth++;
+	oldcontext = MemoryContextSwitchTo(newedata->assoc_context);
 
-	/* Copy the supplied fields to the error stack. */
-	if (edata->sqlerrcode > 0)
+	/* Copy the supplied fields to the error stack entry. */
+	if (edata->sqlerrcode != 0)
 		newedata->sqlerrcode = edata->sqlerrcode;
 	if (edata->message)
 		newedata->message = pstrdup(edata->message);
@@ -1615,6 +1635,7 @@ ThrowErrorData(ErrorData *edata)
 		newedata->hint = pstrdup(edata->hint);
 	if (edata->context)
 		newedata->context = pstrdup(edata->context);
+	/* assume message_id is not available */
 	if (edata->schema_name)
 		newedata->schema_name = pstrdup(edata->schema_name);
 	if (edata->table_name)
@@ -1625,11 +1646,15 @@ ThrowErrorData(ErrorData *edata)
 		newedata->datatype_name = pstrdup(edata->datatype_name);
 	if (edata->constraint_name)
 		newedata->constraint_name = pstrdup(edata->constraint_name);
+	newedata->cursorpos = edata->cursorpos;
+	newedata->internalpos = edata->internalpos;
 	if (edata->internalquery)
 		newedata->internalquery = pstrdup(edata->internalquery);
 
 	MemoryContextSwitchTo(oldcontext);
+	recursion_depth--;
 
+	/* Process the error. */
 	errfinish(0);
 }
 
@@ -1951,7 +1976,7 @@ write_syslog(int level, const char *line)
 	 */
 	len = strlen(line);
 	nlpos = strchr(line, '\n');
-	if (len > PG_SYSLOG_LIMIT || nlpos != NULL)
+	if (syslog_split_messages && (len > PG_SYSLOG_LIMIT || nlpos != NULL))
 	{
 		int			chunk_nr = 0;
 
@@ -2004,7 +2029,11 @@ write_syslog(int level, const char *line)
 
 			chunk_nr++;
 
-			syslog(level, "[%lu-%d] %s", seq, chunk_nr, buf);
+			if (syslog_sequence_numbers)
+				syslog(level, "[%lu-%d] %s", seq, chunk_nr, buf);
+			else
+				syslog(level, "[%d] %s", chunk_nr, buf);
+
 			line += buflen;
 			len -= buflen;
 		}
@@ -2012,7 +2041,10 @@ write_syslog(int level, const char *line)
 	else
 	{
 		/* message short enough */
-		syslog(level, "[%lu] %s", seq, line);
+		if (syslog_sequence_numbers)
+			syslog(level, "[%lu] %s", seq, line);
+		else
+			syslog(level, "%s", line);
 	}
 }
 #endif   /* HAVE_SYSLOG */
@@ -2063,7 +2095,7 @@ write_eventlog(int level, const char *line, int len)
 		case DEBUG2:
 		case DEBUG1:
 		case LOG:
-		case COMMERROR:
+		case LOG_SERVER_ONLY:
 		case INFO:
 		case NOTICE:
 			eventlevel = EVENTLOG_INFORMATION_TYPE;
@@ -2195,12 +2227,16 @@ write_console(const char *line, int len)
 static void
 setup_formatted_log_time(void)
 {
-	struct timeval tv;
 	pg_time_t	stamp_time;
 	char		msbuf[8];
 
-	gettimeofday(&tv, NULL);
-	stamp_time = (pg_time_t) tv.tv_sec;
+	if (!saved_timeval_set)
+	{
+		gettimeofday(&saved_timeval, NULL);
+		saved_timeval_set = true;
+	}
+
+	stamp_time = (pg_time_t) saved_timeval.tv_sec;
 
 	/*
 	 * Note: we expect that guc.c will ensure that log_timezone is set up (at
@@ -2213,7 +2249,7 @@ setup_formatted_log_time(void)
 				pg_localtime(&stamp_time, log_timezone));
 
 	/* 'paste' milliseconds into place... */
-	sprintf(msbuf, ".%03d", (int) (tv.tv_usec / 1000));
+	sprintf(msbuf, ".%03d", (int) (saved_timeval.tv_usec / 1000));
 	memcpy(formatted_log_time + 19, msbuf, 4);
 }
 
@@ -2432,6 +2468,25 @@ log_line_prefix(StringInfo buf, ErrorData *edata)
 					pg_strftime(strfbuf, sizeof(strfbuf),
 								"%Y-%m-%d %H:%M:%S %Z",
 								pg_localtime(&stamp_time, log_timezone));
+					if (padding != 0)
+						appendStringInfo(buf, "%*s", padding, strfbuf);
+					else
+						appendStringInfoString(buf, strfbuf);
+				}
+				break;
+			case 'n':
+				{
+					char		strfbuf[128];
+
+					if (!saved_timeval_set)
+					{
+						gettimeofday(&saved_timeval, NULL);
+						saved_timeval_set = true;
+					}
+
+					sprintf(strfbuf, "%ld.%03d", saved_timeval.tv_sec,
+							(int) (saved_timeval.tv_usec / 1000));
+
 					if (padding != 0)
 						appendStringInfo(buf, "%*s", padding, strfbuf);
 					else
@@ -2698,7 +2753,7 @@ write_csvlog(ErrorData *edata)
 	appendStringInfoChar(&buf, ',');
 
 	/* Error severity */
-	appendStringInfoString(&buf, error_severity(edata->elevel));
+	appendStringInfoString(&buf, _(error_severity(edata->elevel)));
 	appendStringInfoChar(&buf, ',');
 
 	/* SQL state code */
@@ -2811,10 +2866,11 @@ send_message_to_server_log(ErrorData *edata)
 
 	initStringInfo(&buf);
 
+	saved_timeval_set = false;
 	formatted_log_time[0] = '\0';
 
 	log_line_prefix(&buf, edata);
-	appendStringInfo(&buf, "%s:  ", error_severity(edata->elevel));
+	appendStringInfo(&buf, "%s:  ", _(error_severity(edata->elevel)));
 
 	if (Log_error_verbosity >= PGERROR_VERBOSE)
 		appendStringInfo(&buf, "%s: ", unpack_sql_state(edata->sqlerrcode));
@@ -2918,7 +2974,7 @@ send_message_to_server_log(ErrorData *edata)
 				syslog_level = LOG_DEBUG;
 				break;
 			case LOG:
-			case COMMERROR:
+			case LOG_SERVER_ONLY:
 			case INFO:
 				syslog_level = LOG_INFO;
 				break;
@@ -3097,12 +3153,16 @@ send_message_to_frontend(ErrorData *edata)
 	if (PG_PROTOCOL_MAJOR(FrontendProtocol) >= 3)
 	{
 		/* New style with separate fields */
+		const char *sev;
 		char		tbuf[12];
 		int			ssval;
 		int			i;
 
+		sev = error_severity(edata->elevel);
 		pq_sendbyte(&msgbuf, PG_DIAG_SEVERITY);
-		err_sendstring(&msgbuf, error_severity(edata->elevel));
+		err_sendstring(&msgbuf, _(sev));
+		pq_sendbyte(&msgbuf, PG_DIAG_SEVERITY_NONLOCALIZED);
+		err_sendstring(&msgbuf, sev);
 
 		/* unpack MAKE_SQLSTATE code */
 		ssval = edata->sqlerrcode;
@@ -3221,7 +3281,7 @@ send_message_to_frontend(ErrorData *edata)
 
 		initStringInfo(&buf);
 
-		appendStringInfo(&buf, "%s:  ", error_severity(edata->elevel));
+		appendStringInfo(&buf, "%s:  ", _(error_severity(edata->elevel)));
 
 		if (edata->show_funcname && edata->funcname)
 			appendStringInfo(&buf, "%s: ", edata->funcname);
@@ -3531,7 +3591,10 @@ get_errno_symbol(int errnum)
 
 
 /*
- * error_severity --- get localized string representing elevel
+ * error_severity --- get string representing elevel
+ *
+ * The string is not localized here, but we mark the strings for translation
+ * so that callers can invoke _() on the result.
  */
 static const char *
 error_severity(int elevel)
@@ -3545,29 +3608,29 @@ error_severity(int elevel)
 		case DEBUG3:
 		case DEBUG4:
 		case DEBUG5:
-			prefix = _("DEBUG");
+			prefix = gettext_noop("DEBUG");
 			break;
 		case LOG:
-		case COMMERROR:
-			prefix = _("LOG");
+		case LOG_SERVER_ONLY:
+			prefix = gettext_noop("LOG");
 			break;
 		case INFO:
-			prefix = _("INFO");
+			prefix = gettext_noop("INFO");
 			break;
 		case NOTICE:
-			prefix = _("NOTICE");
+			prefix = gettext_noop("NOTICE");
 			break;
 		case WARNING:
-			prefix = _("WARNING");
+			prefix = gettext_noop("WARNING");
 			break;
 		case ERROR:
-			prefix = _("ERROR");
+			prefix = gettext_noop("ERROR");
 			break;
 		case FATAL:
-			prefix = _("FATAL");
+			prefix = gettext_noop("FATAL");
 			break;
 		case PANIC:
-			prefix = _("PANIC");
+			prefix = gettext_noop("PANIC");
 			break;
 		default:
 			prefix = "???";
@@ -3652,7 +3715,7 @@ write_stderr(const char *fmt,...)
 static bool
 is_log_level_output(int elevel, int log_min_level)
 {
-	if (elevel == LOG || elevel == COMMERROR)
+	if (elevel == LOG || elevel == LOG_SERVER_ONLY)
 	{
 		if (log_min_level == LOG || log_min_level <= ERROR)
 			return true;

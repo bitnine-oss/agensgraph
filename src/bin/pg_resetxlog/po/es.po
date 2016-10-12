@@ -10,17 +10,17 @@
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: pg_resetxlog (PostgreSQL 9.4)\n"
+"Project-Id-Version: pg_resetxlog (PostgreSQL 9.6)\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@postgresql.org\n"
-"POT-Creation-Date: 2015-10-04 00:43+0000\n"
-"PO-Revision-Date: 2015-09-30 12:34-0300\n"
-"Last-Translator: Martín Marqués <martin@2ndquadrant.com>\n"
+"POT-Creation-Date: 2016-05-02 20:14+0000\n"
+"PO-Revision-Date: 2016-05-24 10:56-0500\n"
+"Last-Translator: Carlos Chapi <carlos.chapi@2ndquadrant.com>\n"
 "Language-Team: Español <pgsql-es-ayuda@postgresql.org>\n"
 "Language: es\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"X-Generator: Poedit 1.5.4\n"
+"X-Generator: Poedit 1.8.7\n"
 
 #: ../../common/restricted_token.c:68
 #, c-format
@@ -250,8 +250,8 @@ msgstr "activado"
 
 #: pg_resetxlog.c:649
 #, c-format
-msgid "Latest checkpoint's NextXID:          %u/%u\n"
-msgstr "NextXID del checkpoint más reciente:             %u/%u\n"
+msgid "Latest checkpoint's NextXID:          %u:%u\n"
+msgstr "NextXID del checkpoint más reciente:             %u:%u\n"
 
 #: pg_resetxlog.c:652
 #, c-format
@@ -295,13 +295,13 @@ msgstr "BD del oldestMultiXid del checkpt. más reciente: %u\n"
 
 #: pg_resetxlog.c:668
 #, c-format
-msgid "Latest checkpoint's oldestCommitTs:   %u\n"
-msgstr "oldestCommitTs del último checkpoint:            %u\n"
+msgid "Latest checkpoint's oldestCommitTsXid:%u\n"
+msgstr "oldestCommitTsXid del último checkpoint:         %u\n"
 
 #: pg_resetxlog.c:670
 #, c-format
-msgid "Latest checkpoint's newestCommitTs:   %u\n"
-msgstr "newestCommitTs del último checkpoint:            %u\n"
+msgid "Latest checkpoint's newestCommitTsXid:%u\n"
+msgstr "newestCommitTsXid del último checkpoint:         %u\n"
 
 #: pg_resetxlog.c:672
 #, c-format
@@ -449,13 +449,13 @@ msgstr "Epoch del NextXID:                    %u\n"
 
 #: pg_resetxlog.c:756
 #, c-format
-msgid "oldestCommitTs:                       %u\n"
-msgstr "OldestCommitTs:                       %u\n"
+msgid "oldestCommitTsXid:                    %u\n"
+msgstr "oldestCommitTsXid:                    %u\n"
 
 #: pg_resetxlog.c:761
 #, c-format
-msgid "newestCommitTs:                       %u\n"
-msgstr "newestCommitTs:                       %u\n"
+msgid "newestCommitTsXid:                    %u\n"
+msgstr "newestCommitTsXid:                    %u\n"
 
 #: pg_resetxlog.c:827
 #, c-format

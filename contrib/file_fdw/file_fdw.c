@@ -3,7 +3,7 @@
  * file_fdw.c
  *		  foreign-data wrapper for server-side flat files.
  *
- * Copyright (c) 2010-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/file_fdw/file_fdw.c
@@ -131,6 +131,8 @@ static void fileEndForeignScan(ForeignScanState *node);
 static bool fileAnalyzeForeignTable(Relation relation,
 						AcquireSampleRowsFunc *func,
 						BlockNumber *totalpages);
+static bool fileIsForeignScanParallelSafe(PlannerInfo *root, RelOptInfo *rel,
+							  RangeTblEntry *rte);
 
 /*
  * Helper functions
@@ -170,6 +172,7 @@ file_fdw_handler(PG_FUNCTION_ARGS)
 	fdwroutine->ReScanForeignScan = fileReScanForeignScan;
 	fdwroutine->EndForeignScan = fileEndForeignScan;
 	fdwroutine->AnalyzeForeignTable = fileAnalyzeForeignTable;
+	fdwroutine->IsForeignScanParallelSafe = fileIsForeignScanParallelSafe;
 
 	PG_RETURN_POINTER(fdwroutine);
 }
@@ -521,6 +524,7 @@ fileGetForeignPaths(PlannerInfo *root,
 	 */
 	add_path(baserel, (Path *)
 			 create_foreignscan_path(root, baserel,
+									 NULL,		/* default pathtarget */
 									 baserel->rows,
 									 startup_cost,
 									 total_cost,
@@ -762,6 +766,18 @@ fileAnalyzeForeignTable(Relation relation,
 }
 
 /*
+ * fileIsForeignScanParallelSafe
+ *		Reading a file in a parallel worker should work just the same as
+ *		reading it in the leader, so mark scans safe.
+ */
+static bool
+fileIsForeignScanParallelSafe(PlannerInfo *root, RelOptInfo *rel,
+							  RangeTblEntry *rte)
+{
+	return true;
+}
+
+/*
  * check_selective_binary_conversion
  *
  * Check to see if it's useful to convert only a subset of the file's columns
@@ -806,7 +822,7 @@ check_selective_binary_conversion(RelOptInfo *baserel,
 	}
 
 	/* Collect all the attributes needed for joins or final output. */
-	pull_varattnos((Node *) baserel->reltargetlist, baserel->relid,
+	pull_varattnos((Node *) baserel->reltarget->exprs, baserel->relid,
 				   &attrs_used);
 
 	/* Add all the attributes used by restriction clauses. */
@@ -938,7 +954,7 @@ estimate_size(PlannerInfo *root, RelOptInfo *baserel,
 		 */
 		int			tuple_width;
 
-		tuple_width = MAXALIGN(baserel->width) +
+		tuple_width = MAXALIGN(baserel->reltarget->width) +
 			MAXALIGN(SizeofHeapTupleHeader);
 		ntuples = clamp_row_est((double) stat_buf.st_size /
 								(double) tuple_width);
@@ -1045,9 +1061,7 @@ file_acquire_sample_rows(Relation onerel, int elevel,
 	 */
 	tupcontext = AllocSetContextCreate(CurrentMemoryContext,
 									   "file_fdw temporary context",
-									   ALLOCSET_DEFAULT_MINSIZE,
-									   ALLOCSET_DEFAULT_INITSIZE,
-									   ALLOCSET_DEFAULT_MAXSIZE);
+									   ALLOCSET_DEFAULT_SIZES);
 
 	/* Prepare for sampling rows */
 	reservoir_init_selection_state(&rstate, targrows);

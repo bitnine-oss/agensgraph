@@ -3,7 +3,7 @@
  * port.h
  *	  Header for src/port/ compatibility functions.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/port.h
@@ -42,6 +42,7 @@ extern void join_path_components(char *ret_path,
 					 const char *head, const char *tail);
 extern void canonicalize_path(char *path);
 extern void make_native_path(char *path);
+extern void cleanup_path(char *path);
 extern bool path_contains_parent_reference(const char *path);
 extern bool path_is_relative_and_below_cwd(const char *path);
 extern bool path_is_prefix_of_path(const char *path1, const char *path2);
@@ -213,12 +214,12 @@ extern int	pgkill(int pid, int sig);
 extern int	pclose_check(FILE *stream);
 
 /* Global variable holding time zone information. */
-#ifndef __CYGWIN__
-#define TIMEZONE_GLOBAL timezone
-#define TZNAME_GLOBAL tzname
-#else
+#if defined(WIN32) || defined(__CYGWIN__)
 #define TIMEZONE_GLOBAL _timezone
 #define TZNAME_GLOBAL _tzname
+#else
+#define TIMEZONE_GLOBAL timezone
+#define TZNAME_GLOBAL tzname
 #endif
 
 #if defined(WIN32) || defined(__CYGWIN__)

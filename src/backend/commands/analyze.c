@@ -3,7 +3,7 @@
  * analyze.c
  *	  the Postgres statistics generator
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -332,9 +332,7 @@ do_analyze_rel(Relation onerel, int options, VacuumParams *params,
 	 */
 	anl_context = AllocSetContextCreate(CurrentMemoryContext,
 										"Analyze",
-										ALLOCSET_DEFAULT_MINSIZE,
-										ALLOCSET_DEFAULT_INITSIZE,
-										ALLOCSET_DEFAULT_MAXSIZE);
+										ALLOCSET_DEFAULT_SIZES);
 	caller_context = MemoryContextSwitchTo(anl_context);
 
 	/*
@@ -504,9 +502,7 @@ do_analyze_rel(Relation onerel, int options, VacuumParams *params,
 
 		col_context = AllocSetContextCreate(anl_context,
 											"Analyze Column",
-											ALLOCSET_DEFAULT_MINSIZE,
-											ALLOCSET_DEFAULT_INITSIZE,
-											ALLOCSET_DEFAULT_MAXSIZE);
+											ALLOCSET_DEFAULT_SIZES);
 		old_context = MemoryContextSwitchTo(col_context);
 
 		for (i = 0; i < attr_cnt; i++)
@@ -569,14 +565,20 @@ do_analyze_rel(Relation onerel, int options, VacuumParams *params,
 	 * inherited stats.
 	 */
 	if (!inh)
+	{
+		BlockNumber relallvisible;
+
+		visibilitymap_count(onerel, &relallvisible, NULL);
+
 		vac_update_relstats(onerel,
 							relpages,
 							totalrows,
-							visibilitymap_count(onerel),
+							relallvisible,
 							hasindex,
 							InvalidTransactionId,
 							InvalidMultiXactId,
 							in_outer_xact);
+	}
 
 	/*
 	 * Same for indexes. Vacuum always scans all indexes, so if we're part of
@@ -605,10 +607,13 @@ do_analyze_rel(Relation onerel, int options, VacuumParams *params,
 	/*
 	 * Report ANALYZE to the stats collector, too.  However, if doing
 	 * inherited stats we shouldn't report, because the stats collector only
-	 * tracks per-table stats.
+	 * tracks per-table stats.  Reset the changes_since_analyze counter only
+	 * if we analyzed all columns; otherwise, there is still work for
+	 * auto-analyze to do.
 	 */
 	if (!inh)
-		pgstat_report_analyze(onerel, totalrows, totaldeadrows);
+		pgstat_report_analyze(onerel, totalrows, totaldeadrows,
+							  (va_cols == NIL));
 
 	/* If this isn't part of VACUUM ANALYZE, let index AMs do cleanup */
 	if (!(options & VACOPT_VACUUM))
@@ -679,9 +684,7 @@ compute_index_stats(Relation onerel, double totalrows,
 
 	ind_context = AllocSetContextCreate(anl_context,
 										"Analyze Index",
-										ALLOCSET_DEFAULT_MINSIZE,
-										ALLOCSET_DEFAULT_INITSIZE,
-										ALLOCSET_DEFAULT_MAXSIZE);
+										ALLOCSET_DEFAULT_SIZES);
 	old_context = MemoryContextSwitchTo(ind_context);
 
 	for (ind = 0; ind < nindexes; ind++)
@@ -2040,8 +2043,11 @@ compute_distinct_stats(VacAttrStatsP stats,
 
 		if (nmultiple == 0)
 		{
-			/* If we found no repeated values, assume it's a unique column */
-			stats->stadistinct = -1.0;
+			/*
+			 * If we found no repeated non-null values, assume it's a unique
+			 * column; but be sure to discount for any nulls we found.
+			 */
+			stats->stadistinct = -1.0 * (1.0 - stats->stanullfrac);
 		}
 		else if (track_cnt < track_max && toowide_cnt == 0 &&
 				 nmultiple == track_cnt)
@@ -2049,7 +2055,11 @@ compute_distinct_stats(VacAttrStatsP stats,
 			/*
 			 * Our track list includes every value in the sample, and every
 			 * value appeared more than once.  Assume the column has just
-			 * these values.
+			 * these values.  (This case is meant to address columns with
+			 * small, fixed sets of possible values, such as boolean or enum
+			 * columns.  If there are any values that appear just once in the
+			 * sample, including too-wide values, we should assume that that's
+			 * not what we're dealing with.)
 			 */
 			stats->stadistinct = track_cnt;
 		}
@@ -2066,6 +2076,12 @@ compute_distinct_stats(VacAttrStatsP stats,
 			 * recommend are considerably more complex, and are numerically
 			 * very unstable when n is much smaller than N.
 			 *
+			 * In this calculation, we consider only non-nulls.  We used to
+			 * include rows with null values in the n and N counts, but that
+			 * leads to inaccurate answers in columns with many nulls, and
+			 * it's intuitively bogus anyway considering the desired result is
+			 * the number of distinct non-null values.
+			 *
 			 * We assume (not very reliably!) that all the multiply-occurring
 			 * values are reflected in the final track[] list, and the other
 			 * nonnull values all appeared but once.  (XXX this usually
@@ -2075,21 +2091,22 @@ compute_distinct_stats(VacAttrStatsP stats,
 			 */
 			int			f1 = nonnull_cnt - summultiple;
 			int			d = f1 + nmultiple;
-			double		numer,
-						denom,
-						stadistinct;
+			double		n = samplerows - null_cnt;
+			double		N = totalrows * (1.0 - stats->stanullfrac);
+			double		stadistinct;
 
-			numer = (double) samplerows *(double) d;
+			/* N == 0 shouldn't happen, but just in case ... */
+			if (N > 0)
+				stadistinct = (n * d) / ((n - f1) + f1 * n / N);
+			else
+				stadistinct = 0;
 
-			denom = (double) (samplerows - f1) +
-				(double) f1 *(double) samplerows / totalrows;
-
-			stadistinct = numer / denom;
 			/* Clamp to sane range in case of roundoff error */
-			if (stadistinct < (double) d)
-				stadistinct = (double) d;
-			if (stadistinct > totalrows)
-				stadistinct = totalrows;
+			if (stadistinct < d)
+				stadistinct = d;
+			if (stadistinct > N)
+				stadistinct = N;
+			/* And round to integer */
 			stats->stadistinct = floor(stadistinct + 0.5);
 		}
 
@@ -2110,6 +2127,16 @@ compute_distinct_stats(VacAttrStatsP stats,
 		 * significantly more common than the (estimated) average. We set the
 		 * threshold rather arbitrarily at 25% more than average, with at
 		 * least 2 instances in the sample.
+		 *
+		 * Note: the first of these cases is meant to address columns with
+		 * small, fixed sets of possible values, such as boolean or enum
+		 * columns.  If we can *completely* represent the column population by
+		 * an MCV list that will fit into the stats target, then we should do
+		 * so and thus provide the planner with complete information.  But if
+		 * the MCV list is not complete, it's generally worth being more
+		 * selective, and not just filling it all the way up to the stats
+		 * target.  So for an incomplete list, we try to take only MCVs that
+		 * are significantly more common than average.
 		 */
 		if (track_cnt < track_max && toowide_cnt == 0 &&
 			stats->stadistinct > 0 &&
@@ -2120,14 +2147,15 @@ compute_distinct_stats(VacAttrStatsP stats,
 		}
 		else
 		{
-			double		ndistinct = stats->stadistinct;
+			double		ndistinct_table = stats->stadistinct;
 			double		avgcount,
 						mincount;
 
-			if (ndistinct < 0)
-				ndistinct = -ndistinct * totalrows;
-			/* estimate # of occurrences in sample of a typical value */
-			avgcount = (double) samplerows / ndistinct;
+			/* Re-extract estimate of # distinct nonnull values in table */
+			if (ndistinct_table < 0)
+				ndistinct_table = -ndistinct_table * totalrows;
+			/* estimate # occurrences in sample of a typical nonnull value */
+			avgcount = (double) nonnull_cnt / ndistinct_table;
 			/* set minimum threshold count to store a value */
 			mincount = avgcount * 1.25;
 			if (mincount < 2)
@@ -2395,14 +2423,21 @@ compute_scalar_stats(VacAttrStatsP stats,
 
 		if (nmultiple == 0)
 		{
-			/* If we found no repeated values, assume it's a unique column */
-			stats->stadistinct = -1.0;
+			/*
+			 * If we found no repeated non-null values, assume it's a unique
+			 * column; but be sure to discount for any nulls we found.
+			 */
+			stats->stadistinct = -1.0 * (1.0 - stats->stanullfrac);
 		}
 		else if (toowide_cnt == 0 && nmultiple == ndistinct)
 		{
 			/*
 			 * Every value in the sample appeared more than once.  Assume the
-			 * column has just these values.
+			 * column has just these values.  (This case is meant to address
+			 * columns with small, fixed sets of possible values, such as
+			 * boolean or enum columns.  If there are any values that appear
+			 * just once in the sample, including too-wide values, we should
+			 * assume that that's not what we're dealing with.)
 			 */
 			stats->stadistinct = ndistinct;
 		}
@@ -2419,26 +2454,33 @@ compute_scalar_stats(VacAttrStatsP stats,
 			 * recommend are considerably more complex, and are numerically
 			 * very unstable when n is much smaller than N.
 			 *
+			 * In this calculation, we consider only non-nulls.  We used to
+			 * include rows with null values in the n and N counts, but that
+			 * leads to inaccurate answers in columns with many nulls, and
+			 * it's intuitively bogus anyway considering the desired result is
+			 * the number of distinct non-null values.
+			 *
 			 * Overwidth values are assumed to have been distinct.
 			 *----------
 			 */
 			int			f1 = ndistinct - nmultiple + toowide_cnt;
 			int			d = f1 + nmultiple;
-			double		numer,
-						denom,
-						stadistinct;
+			double		n = samplerows - null_cnt;
+			double		N = totalrows * (1.0 - stats->stanullfrac);
+			double		stadistinct;
 
-			numer = (double) samplerows *(double) d;
+			/* N == 0 shouldn't happen, but just in case ... */
+			if (N > 0)
+				stadistinct = (n * d) / ((n - f1) + f1 * n / N);
+			else
+				stadistinct = 0;
 
-			denom = (double) (samplerows - f1) +
-				(double) f1 *(double) samplerows / totalrows;
-
-			stadistinct = numer / denom;
 			/* Clamp to sane range in case of roundoff error */
-			if (stadistinct < (double) d)
-				stadistinct = (double) d;
-			if (stadistinct > totalrows)
-				stadistinct = totalrows;
+			if (stadistinct < d)
+				stadistinct = d;
+			if (stadistinct > N)
+				stadistinct = N;
+			/* And round to integer */
 			stats->stadistinct = floor(stadistinct + 0.5);
 		}
 
@@ -2464,6 +2506,16 @@ compute_scalar_stats(VacAttrStatsP stats,
 		 * emit duplicate histogram bin boundaries.  (We might end up with
 		 * duplicate histogram entries anyway, if the distribution is skewed;
 		 * but we prefer to treat such values as MCVs if at all possible.)
+		 *
+		 * Note: the first of these cases is meant to address columns with
+		 * small, fixed sets of possible values, such as boolean or enum
+		 * columns.  If we can *completely* represent the column population by
+		 * an MCV list that will fit into the stats target, then we should do
+		 * so and thus provide the planner with complete information.  But if
+		 * the MCV list is not complete, it's generally worth being more
+		 * selective, and not just filling it all the way up to the stats
+		 * target.  So for an incomplete list, we try to take only MCVs that
+		 * are significantly more common than average.
 		 */
 		if (track_cnt == ndistinct && toowide_cnt == 0 &&
 			stats->stadistinct > 0 &&
@@ -2474,21 +2526,22 @@ compute_scalar_stats(VacAttrStatsP stats,
 		}
 		else
 		{
-			double		ndistinct = stats->stadistinct;
+			double		ndistinct_table = stats->stadistinct;
 			double		avgcount,
 						mincount,
 						maxmincount;
 
-			if (ndistinct < 0)
-				ndistinct = -ndistinct * totalrows;
-			/* estimate # of occurrences in sample of a typical value */
-			avgcount = (double) samplerows / ndistinct;
+			/* Re-extract estimate of # distinct nonnull values in table */
+			if (ndistinct_table < 0)
+				ndistinct_table = -ndistinct_table * totalrows;
+			/* estimate # occurrences in sample of a typical nonnull value */
+			avgcount = (double) nonnull_cnt / ndistinct_table;
 			/* set minimum threshold count to store a value */
 			mincount = avgcount * 1.25;
 			if (mincount < 2)
 				mincount = 2;
 			/* don't let threshold exceed 1/K, however */
-			maxmincount = (double) samplerows / (double) num_bins;
+			maxmincount = (double) values_cnt / (double) num_bins;
 			if (mincount > maxmincount)
 				mincount = maxmincount;
 			if (num_mcv > track_cnt)
@@ -2700,7 +2753,7 @@ compute_scalar_stats(VacAttrStatsP stats,
 		else
 			stats->stawidth = stats->attrtype->typlen;
 		/* Assume all too-wide values are distinct, so it's a unique column */
-		stats->stadistinct = -1.0;
+		stats->stadistinct = -1.0 * (1.0 - stats->stanullfrac);
 	}
 	else if (null_cnt > 0)
 	{

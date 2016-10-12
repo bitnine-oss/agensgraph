@@ -5,7 +5,7 @@
  *	  However, we define it here so that the format is documented.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_control.h
@@ -21,7 +21,7 @@
 
 
 /* Version identifier for this pg_control format */
-#define PG_CONTROL_VERSION	942
+#define PG_CONTROL_VERSION	960
 
 /*
  * Body of CheckPoint XLOG records.  This is declared here because we keep
@@ -54,8 +54,8 @@ typedef struct CheckPoint
 	/*
 	 * Oldest XID still running. This is only needed to initialize hot standby
 	 * mode from an online checkpoint, so we only bother calculating this for
-	 * online checkpoints and only when wal_level is hot_standby. Otherwise
-	 * it's set to InvalidTransactionId.
+	 * online checkpoints and only when wal_level is replica. Otherwise it's
+	 * set to InvalidTransactionId.
 	 */
 	TransactionId oldestActiveXid;
 } CheckPoint;

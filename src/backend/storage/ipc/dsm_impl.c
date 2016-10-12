@@ -34,14 +34,14 @@
  * substantially, but there should be few systems where we must make do
  * with such poor tools.
  *
- * As ever, Windows requires its own implemetation.
+ * As ever, Windows requires its own implementation.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
  * IDENTIFICATION
- *	  src/backend/storage/ipc/dsm.c
+ *	  src/backend/storage/ipc/dsm_impl.c
  *
  *-------------------------------------------------------------------------
  */
@@ -671,6 +671,7 @@ dsm_impl_windows(dsm_op op, dsm_handle handle, Size request_size,
 	{
 		DWORD		size_high;
 		DWORD		size_low;
+		DWORD		errcode;
 
 		/* Shifts >= the width of the type are undefined. */
 #ifdef _WIN64
@@ -680,31 +681,38 @@ dsm_impl_windows(dsm_op op, dsm_handle handle, Size request_size,
 #endif
 		size_low = (DWORD) request_size;
 
+		/* CreateFileMapping might not clear the error code on success */
+		SetLastError(0);
+
 		hmap = CreateFileMapping(INVALID_HANDLE_VALUE,	/* Use the pagefile */
 								 NULL,	/* Default security attrs */
 								 PAGE_READWRITE,		/* Memory is read/write */
 								 size_high,		/* Upper 32 bits of size */
 								 size_low,		/* Lower 32 bits of size */
 								 name);
-		if (!hmap)
-		{
-			_dosmaperr(GetLastError());
-			ereport(elevel,
-					(errcode_for_dynamic_shared_memory(),
-				  errmsg("could not create shared memory segment \"%s\": %m",
-						 name)));
-			return false;
-		}
-		_dosmaperr(GetLastError());
-		if (errno == EEXIST)
+
+		errcode = GetLastError();
+		if (errcode == ERROR_ALREADY_EXISTS || errcode == ERROR_ACCESS_DENIED)
 		{
 			/*
 			 * On Windows, when the segment already exists, a handle for the
 			 * existing segment is returned.  We must close it before
-			 * returning.  We don't do _dosmaperr here, so errno won't be
-			 * modified.
+			 * returning.  However, if the existing segment is created by a
+			 * service, then it returns ERROR_ACCESS_DENIED. We don't do
+			 * _dosmaperr here, so errno won't be modified.
 			 */
-			CloseHandle(hmap);
+			if (hmap)
+				CloseHandle(hmap);
+			return false;
+		}
+
+		if (!hmap)
+		{
+			_dosmaperr(errcode);
+			ereport(elevel,
+					(errcode_for_dynamic_shared_memory(),
+				  errmsg("could not create shared memory segment \"%s\": %m",
+						 name)));
 			return false;
 		}
 	}
@@ -1027,7 +1035,7 @@ dsm_impl_pin_segment(dsm_handle handle, void *impl_private)
 }
 
 static int
-errcode_for_dynamic_shared_memory()
+errcode_for_dynamic_shared_memory(void)
 {
 	if (errno == EFBIG || errno == ENOMEM)
 		return errcode(ERRCODE_OUT_OF_MEMORY);

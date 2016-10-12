@@ -3,7 +3,7 @@
  * globals.c
  *	  global variable declarations
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -30,6 +30,7 @@ volatile bool InterruptPending = false;
 volatile bool QueryCancelPending = false;
 volatile bool ProcDiePending = false;
 volatile bool ClientConnectionLost = false;
+volatile bool IdleInTransactionSessionTimeoutPending = false;
 volatile uint32 InterruptHoldoffCount = 0;
 volatile uint32 QueryCancelHoldoffCount = 0;
 volatile uint32 CritSectionCount = 0;
@@ -70,6 +71,8 @@ char		postgres_exec_path[MAXPGPATH];		/* full path to backend */
 
 BackendId	MyBackendId = InvalidBackendId;
 
+BackendId	ParallelMasterBackendId = InvalidBackendId;
+
 Oid			MyDatabaseId = InvalidOid;
 
 Oid			MyDatabaseTableSpace = InvalidOid;
@@ -108,6 +111,7 @@ bool		enableFsync = true;
 bool		allowSystemTableMods = false;
 int			work_mem = 1024;
 int			maintenance_work_mem = 16384;
+int			replacement_sort_tuples = 150000;
 
 /*
  * Primary determinants of sizes of shared-memory structures.

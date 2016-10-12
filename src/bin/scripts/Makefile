@@ -2,7 +2,7 @@
 #
 # Makefile for src/bin/scripts
 #
-# Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/scripts/Makefile
@@ -18,32 +18,24 @@ include $(top_builddir)/src/Makefile.global
 
 PROGRAMS = createdb createlang createuser dropdb droplang dropuser clusterdb vacuumdb reindexdb pg_isready
 
-override CPPFLAGS := -I$(top_srcdir)/src/bin/pg_dump -I$(top_srcdir)/src/bin/psql -I$(libpq_srcdir) $(CPPFLAGS)
+override CPPFLAGS := -I$(libpq_srcdir) $(CPPFLAGS)
+LDFLAGS += -L$(top_builddir)/src/fe_utils -lpgfeutils -lpq
 
 all: $(PROGRAMS)
 
 %: %.o $(WIN32RES)
 	$(CC) $(CFLAGS) $^ $(libpq_pgport) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
-createdb: createdb.o common.o dumputils.o kwlookup.o keywords.o | submake-libpq submake-libpgport
-createlang: createlang.o common.o print.o mbprint.o | submake-libpq submake-libpgport
-createuser: createuser.o common.o dumputils.o kwlookup.o keywords.o | submake-libpq submake-libpgport
-dropdb: dropdb.o common.o dumputils.o kwlookup.o keywords.o | submake-libpq submake-libpgport
-droplang: droplang.o common.o print.o mbprint.o | submake-libpq submake-libpgport
-dropuser: dropuser.o common.o dumputils.o kwlookup.o keywords.o | submake-libpq submake-libpgport
-clusterdb: clusterdb.o common.o dumputils.o kwlookup.o keywords.o | submake-libpq submake-libpgport
-vacuumdb: vacuumdb.o common.o dumputils.o kwlookup.o keywords.o | submake-libpq submake-libpgport
-reindexdb: reindexdb.o common.o dumputils.o kwlookup.o keywords.o | submake-libpq submake-libpgport
-pg_isready: pg_isready.o common.o | submake-libpq submake-libpgport
-
-dumputils.c keywords.c: % : $(top_srcdir)/src/bin/pg_dump/%
-	rm -f $@ && $(LN_S) $< .
-
-print.c mbprint.c : % : $(top_srcdir)/src/bin/psql/%
-	rm -f $@ && $(LN_S) $< .
-
-kwlookup.c: % : $(top_srcdir)/src/backend/parser/%
-	rm -f $@ && $(LN_S) $< .
+createdb: createdb.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
+createlang: createlang.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
+createuser: createuser.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
+dropdb: dropdb.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
+droplang: droplang.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
+dropuser: dropuser.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
+clusterdb: clusterdb.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
+vacuumdb: vacuumdb.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
+reindexdb: reindexdb.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
+pg_isready: pg_isready.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
 
 install: all installdirs
 	$(INSTALL_PROGRAM) createdb$(X)   '$(DESTDIR)$(bindir)'/createdb$(X)
@@ -65,8 +57,7 @@ uninstall:
 
 clean distclean maintainer-clean:
 	rm -f $(addsuffix $(X), $(PROGRAMS)) $(addsuffix .o, $(PROGRAMS))
-	rm -f common.o dumputils.o kwlookup.o keywords.o print.o mbprint.o $(WIN32RES)
-	rm -f dumputils.c print.c mbprint.c kwlookup.c keywords.c
+	rm -f common.o $(WIN32RES)
 	rm -rf tmp_check
 
 check:

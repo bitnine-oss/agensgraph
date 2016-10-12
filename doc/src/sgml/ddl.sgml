@@ -1466,7 +1466,7 @@ ALTER TABLE products RENAME TO items;
 
   <para>
    To assign privileges, the <command>GRANT</command> command is
-   used. For example, if <literal>joe</literal> is an existing user, and
+   used. For example, if <literal>joe</literal> is an existing role, and
    <literal>accounts</literal> is an existing table, the privilege to
    update the table can be granted with:
 <programlisting>
@@ -1477,8 +1477,8 @@ GRANT UPDATE ON accounts TO joe;
   </para>
 
   <para>
-   The special <quote>user</quote> name <literal>PUBLIC</literal> can
-   be used to grant a privilege to every user on the system.  Also,
+   The special <quote>role</quote> name <literal>PUBLIC</literal> can
+   be used to grant a privilege to every role on the system.  Also,
    <quote>group</> roles can be set up to help manage privileges when
    there are many users of a database &mdash; for details see
    <xref linkend="user-manag">.
@@ -1494,8 +1494,8 @@ REVOKE ALL ON accounts FROM PUBLIC;
    <command>DROP</>, <command>GRANT</>, <command>REVOKE</>, etc.)
    are always implicit in being the owner,
    and cannot be granted or revoked.  But the object owner can choose
-   to revoke his own ordinary privileges, for example to make a
-   table read-only for himself as well as others.
+   to revoke their own ordinary privileges, for example to make a
+   table read-only for themselves as well as others.
   </para>
 
   <para>
@@ -1629,7 +1629,7 @@ CREATE POLICY account_managers ON accounts TO managers
 
 <programlisting>
 CREATE POLICY user_policy ON users
-    USING (user = current_user);
+    USING (user_name = current_user);
 </programlisting>
 
   <para>
@@ -1642,7 +1642,7 @@ CREATE POLICY user_policy ON users
 <programlisting>
 CREATE POLICY user_policy ON users
     USING (true)
-    WITH CHECK (user = current_user);
+    WITH CHECK (user_name = current_user);
 </programlisting>
 
   <para>
@@ -1662,7 +1662,7 @@ CREATE POLICY user_policy ON users
 <programlisting>
 -- Simple passwd-file based example
 CREATE TABLE passwd (
-  username              text UNIQUE NOT NULL,
+  user_name             text UNIQUE NOT NULL,
   pwhash                text,
   uid                   int  PRIMARY KEY,
   gid                   int  NOT NULL,
@@ -1696,9 +1696,9 @@ CREATE POLICY all_view ON passwd FOR SELECT USING (true);
 -- Normal users can update their own records, but
 -- limit which shells a normal user is allowed to set
 CREATE POLICY user_mod ON passwd FOR UPDATE
-  USING (current_user = username)
+  USING (current_user = user_name)
   WITH CHECK (
-    current_user = username AND
+    current_user = user_name AND
     shell IN ('/bin/bash','/bin/sh','/bin/dash','/bin/zsh','/bin/tcsh')
   );
 
@@ -1706,7 +1706,7 @@ CREATE POLICY user_mod ON passwd FOR UPDATE
 GRANT SELECT, INSERT, UPDATE, DELETE ON passwd TO admin;
 -- Users only get select access on public columns
 GRANT SELECT
-  (username, uid, gid, real_name, home_phone, extra_info, home_dir, shell)
+  (user_name, uid, gid, real_name, home_phone, extra_info, home_dir, shell)
   ON passwd TO public;
 -- Allow users to update certain columns
 GRANT UPDATE
@@ -1725,11 +1725,11 @@ GRANT UPDATE
 postgres=&gt; set role admin;
 SET
 postgres=&gt; table passwd;
- username | pwhash | uid | gid | real_name |  home_phone  | extra_info | home_dir    |   shell
-----------+--------+-----+-----+-----------+--------------+------------+-------------+-----------
- admin    | xxx    |   0 |   0 | Admin     | 111-222-3333 |            | /root       | /bin/dash
- bob      | xxx    |   1 |   1 | Bob       | 123-456-7890 |            | /home/bob   | /bin/zsh
- alice    | xxx    |   2 |   1 | Alice     | 098-765-4321 |            | /home/alice | /bin/zsh
+ user_name | pwhash | uid | gid | real_name |  home_phone  | extra_info | home_dir    |   shell
+-----------+--------+-----+-----+-----------+--------------+------------+-------------+-----------
+ admin     | xxx    |   0 |   0 | Admin     | 111-222-3333 |            | /root       | /bin/dash
+ bob       | xxx    |   1 |   1 | Bob       | 123-456-7890 |            | /home/bob   | /bin/zsh
+ alice     | xxx    |   2 |   1 | Alice     | 098-765-4321 |            | /home/alice | /bin/zsh
 (3 rows)
 
 -- Test what Alice is able to do
@@ -1737,26 +1737,26 @@ postgres=&gt; set role alice;
 SET
 postgres=&gt; table passwd;
 ERROR:  permission denied for relation passwd
-postgres=&gt; select username,real_name,home_phone,extra_info,home_dir,shell from passwd;
- username | real_name |  home_phone  | extra_info | home_dir    |   shell
-----------+-----------+--------------+------------+-------------+-----------
- admin    | Admin     | 111-222-3333 |            | /root       | /bin/dash
- bob      | Bob       | 123-456-7890 |            | /home/bob   | /bin/zsh
- alice    | Alice     | 098-765-4321 |            | /home/alice | /bin/zsh
+postgres=&gt; select user_name,real_name,home_phone,extra_info,home_dir,shell from passwd;
+ user_name | real_name |  home_phone  | extra_info | home_dir    |   shell
+-----------+-----------+--------------+------------+-------------+-----------
+ admin     | Admin     | 111-222-3333 |            | /root       | /bin/dash
+ bob       | Bob       | 123-456-7890 |            | /home/bob   | /bin/zsh
+ alice     | Alice     | 098-765-4321 |            | /home/alice | /bin/zsh
 (3 rows)
 
-postgres=&gt; update passwd set username = 'joe';
+postgres=&gt; update passwd set user_name = 'joe';
 ERROR:  permission denied for relation passwd
 -- Alice is allowed to change her own real_name, but no others
 postgres=&gt; update passwd set real_name = 'Alice Doe';
 UPDATE 1
-postgres=&gt; update passwd set real_name = 'John Doe' where username = 'admin';
+postgres=&gt; update passwd set real_name = 'John Doe' where user_name = 'admin';
 UPDATE 0
 postgres=&gt; update passwd set shell = '/bin/xx';
 ERROR:  new row violates WITH CHECK OPTION for "passwd"
 postgres=&gt; delete from passwd;
 ERROR:  permission denied for relation passwd
-postgres=&gt; insert into passwd (username) values ('xxx');
+postgres=&gt; insert into passwd (user_name) values ('xxx');
 ERROR:  permission denied for relation passwd
 -- Alice can change her own password; RLS silently prevents updating other rows
 postgres=&gt; update passwd set pwhash = 'abc';
@@ -1938,7 +1938,7 @@ SELECT * FROM information WHERE group_id = 2 FOR UPDATE;
    example, both <literal>schema1</> and <literal>myschema</> can
    contain tables named <literal>mytable</>.  Unlike databases,
    schemas are not rigidly separated: a user can access objects in any
-   of the schemas in the database he is connected to, if he has
+   of the schemas in the database they are connected to, if they have
    privileges to do so.
   </para>
 
@@ -2055,7 +2055,7 @@ DROP SCHEMA myschema CASCADE;
     (since this is one of the ways to restrict the activities of your
     users to well-defined namespaces).  The syntax for that is:
 <programlisting>
-CREATE SCHEMA <replaceable>schemaname</replaceable> AUTHORIZATION <replaceable>username</replaceable>;
+CREATE SCHEMA <replaceable>schema_name</replaceable> AUTHORIZATION <replaceable>user_name</replaceable>;
 </programlisting>
     You can even omit the schema name, in which case the schema name
     will be the same as the user name.  See <xref
@@ -2344,7 +2344,7 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
     implements only the basic schema support specified in the
     standard.  Therefore, many users consider qualified names to
     really consist of
-    <literal><replaceable>username</>.<replaceable>tablename</></literal>.
+    <literal><replaceable>user_name</>.<replaceable>table_name</></literal>.
     This is how <productname>PostgreSQL</productname> will effectively
     behave if you create a per-user schema for every user.
    </para>
@@ -2611,7 +2611,7 @@ VALUES ('Albany', NULL, NULL, 'NY');
    if they are inherited
    from any parent tables. If you wish to remove a table and all of its
    descendants, one easy way is to drop the parent table with the
-   <literal>CASCADE</literal> option.
+   <literal>CASCADE</literal> option (see <xref linkend="ddl-depend">).
   </para>
 
   <para>
@@ -3571,14 +3571,14 @@ ANALYZE measurement;
    To ensure the integrity of the entire database structure,
    <productname>PostgreSQL</productname> makes sure that you cannot
    drop objects that other objects still depend on.  For example,
-   attempting to drop the products table we had considered in <xref
+   attempting to drop the products table we considered in <xref
    linkend="ddl-constraints-fk">, with the orders table depending on
-   it, would result in an error message such as this:
+   it, would result in an error message like this:
 <screen>
 DROP TABLE products;
 
-NOTICE:  constraint orders_product_no_fkey on table orders depends on table products
 ERROR:  cannot drop table products because other objects depend on it
+DETAIL:  constraint orders_product_no_fkey on table orders depends on table products
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 </screen>
    The error message contains a useful hint: if you do not want to
@@ -3586,40 +3586,74 @@ HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 <screen>
 DROP TABLE products CASCADE;
 </screen>
-   and all the dependent objects will be removed.  In this case, it
-   doesn't remove the orders table, it only removes the foreign key
-   constraint.  (If you want to check what <command>DROP ... CASCADE</> will do,
-   run <command>DROP</> without <literal>CASCADE</> and read the <literal>NOTICE</> messages.)
+   and all the dependent objects will be removed, as will any objects
+   that depend on them, recursively.  In this case, it doesn't remove
+   the orders table, it only removes the foreign key constraint.
+   It stops there because nothing depends on the foreign key constraint.
+   (If you want to check what <command>DROP ... CASCADE</> will do,
+   run <command>DROP</> without <literal>CASCADE</> and read the
+   <literal>DETAIL</> output.)
   </para>
 
   <para>
-   All drop commands in <productname>PostgreSQL</productname> support
+   Almost all <command>DROP</> commands in <productname>PostgreSQL</> support
    specifying <literal>CASCADE</literal>.  Of course, the nature of
    the possible dependencies varies with the type of the object.  You
    can also write <literal>RESTRICT</literal> instead of
    <literal>CASCADE</literal> to get the default behavior, which is to
-   prevent the dropping of objects that other objects depend on.
+   prevent dropping objects that any other objects depend on.
   </para>
 
   <note>
    <para>
     According to the SQL standard, specifying either
     <literal>RESTRICT</literal> or <literal>CASCADE</literal> is
-    required.  No database system actually enforces that rule, but
-    whether the default behavior is <literal>RESTRICT</literal> or
-    <literal>CASCADE</literal> varies across systems.
+    required in a <command>DROP</> command.  No database system actually
+    enforces that rule, but whether the default behavior
+    is <literal>RESTRICT</literal> or <literal>CASCADE</literal> varies
+    across systems.
    </para>
   </note>
 
-  <note>
-   <para>
-    Foreign key constraint dependencies and serial column dependencies
-    from <productname>PostgreSQL</productname> versions prior to 7.3
-    are <emphasis>not</emphasis> maintained or created during the
-    upgrade process.  All other dependency types will be properly
-    created during an upgrade from a pre-7.3 database.
-   </para>
-  </note>
+  <para>
+   If a <command>DROP</> command lists multiple
+   objects, <literal>CASCADE</literal> is only required when there are
+   dependencies outside the specified group.  For example, when saying
+   <literal>DROP TABLE tab1, tab2</literal> the existence of a foreign
+   key referencing <literal>tab1</> from <literal>tab2</> would not mean
+   that <literal>CASCADE</literal> is needed to succeed.
+  </para>
+
+  <para>
+   For user-defined functions, <productname>PostgreSQL</productname> tracks
+   dependencies associated with a function's externally-visible properties,
+   such as its argument and result types, but <emphasis>not</> dependencies
+   that could only be known by examining the function body.  As an example,
+   consider this situation:
+
+<programlisting>
+CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow',
+                             'green', 'blue', 'purple');
+
+CREATE TABLE my_colors (color rainbow, note text);
+
+CREATE FUNCTION get_color_note (rainbow) RETURNS text AS
+  'SELECT note FROM my_colors WHERE color = $1'
+  LANGUAGE SQL;
+</programlisting>
+
+   (See <xref linkend="xfunc-sql"> for an explanation of SQL-language
+   functions.)  <productname>PostgreSQL</productname> will be aware that
+   the <function>get_color_note</> function depends on the <type>rainbow</>
+   type: dropping the type would force dropping the function, because its
+   argument type would no longer be defined.  But <productname>PostgreSQL</>
+   will not consider <function>get_color_note</> to depend on
+   the <structname>my_colors</> table, and so will not drop the function if
+   the table is dropped.  While there are disadvantages to this approach,
+   there are also benefits.  The function is still valid in some sense if the
+   table is missing, though executing it would cause an error; creating a new
+   table of the same name would allow the function to work again.
+  </para>
  </sect1>
 
 </chapter>

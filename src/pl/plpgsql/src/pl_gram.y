@@ -3,7 +3,7 @@
  *
  * pl_gram.y			- Parser for the PL/pgSQL procedural language
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -186,7 +186,8 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %type <forvariable>	for_variable
 %type <stmt>	for_control
 
-%type <str>		any_identifier opt_block_label opt_label option_value
+%type <str>		any_identifier opt_block_label opt_loop_label opt_label
+%type <str>		option_value
 
 %type <list>	proc_sect stmt_elsifs stmt_else
 %type <loop_body>	loop_body
@@ -286,6 +287,7 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %token <keyword>	K_GET
 %token <keyword>	K_HINT
 %token <keyword>	K_IF
+%token <keyword>	K_IMPORT
 %token <keyword>	K_IN
 %token <keyword>	K_INFO
 %token <keyword>	K_INSERT
@@ -535,7 +537,7 @@ decl_statement	: decl_varname decl_const decl_datatype decl_collate decl_notnull
 										   $4->itemno, $1.name);
 					}
 				| decl_varname opt_scrollable K_CURSOR
-					{ plpgsql_ns_push($1.name); }
+					{ plpgsql_ns_push($1.name, PLPGSQL_LABEL_OTHER); }
 				  decl_cursor_args decl_is_for decl_cursor_query
 					{
 						PLpgSQL_var *new;
@@ -1218,7 +1220,7 @@ opt_case_else	:
 					}
 				;
 
-stmt_loop		: opt_block_label K_LOOP loop_body
+stmt_loop		: opt_loop_label K_LOOP loop_body
 					{
 						PLpgSQL_stmt_loop *new;
 
@@ -1235,7 +1237,7 @@ stmt_loop		: opt_block_label K_LOOP loop_body
 					}
 				;
 
-stmt_while		: opt_block_label K_WHILE expr_until_loop loop_body
+stmt_while		: opt_loop_label K_WHILE expr_until_loop loop_body
 					{
 						PLpgSQL_stmt_while *new;
 
@@ -1253,7 +1255,7 @@ stmt_while		: opt_block_label K_WHILE expr_until_loop loop_body
 					}
 				;
 
-stmt_for		: opt_block_label K_FOR for_control loop_body
+stmt_for		: opt_loop_label K_FOR for_control loop_body
 					{
 						/* This runs after we've scanned the loop body */
 						if ($3->cmd_type == PLPGSQL_STMT_FORI)
@@ -1282,7 +1284,7 @@ stmt_for		: opt_block_label K_FOR for_control loop_body
 						}
 
 						check_labels($1, $4.end_label, $4.end_label_location);
-						/* close namespace started in opt_block_label */
+						/* close namespace started in opt_loop_label */
 						plpgsql_ns_pop();
 					}
 				;
@@ -1603,7 +1605,7 @@ for_variable	: T_DATUM
 					}
 				;
 
-stmt_foreach_a	: opt_block_label K_FOREACH for_variable foreach_slice K_IN K_ARRAY expr_until_loop loop_body
+stmt_foreach_a	: opt_loop_label K_FOREACH for_variable foreach_slice K_IN K_ARRAY expr_until_loop loop_body
 					{
 						PLpgSQL_stmt_foreach_a *new;
 
@@ -1665,6 +1667,43 @@ stmt_exit		: exit_type opt_label opt_exitcond
 						new->lineno	  = plpgsql_location_to_lineno(@1);
 						new->label	  = $2;
 						new->cond	  = $3;
+
+						if ($2)
+						{
+							/* We have a label, so verify it exists */
+							PLpgSQL_nsitem *label;
+
+							label = plpgsql_ns_lookup_label(plpgsql_ns_top(), $2);
+							if (label == NULL)
+								ereport(ERROR,
+										(errcode(ERRCODE_SYNTAX_ERROR),
+										 errmsg("there is no label \"%s\" "
+												"attached to any block or loop enclosing this statement",
+												$2),
+										 parser_errposition(@2)));
+							/* CONTINUE only allows loop labels */
+							if (label->itemno != PLPGSQL_LABEL_LOOP && !new->is_exit)
+								ereport(ERROR,
+										(errcode(ERRCODE_SYNTAX_ERROR),
+										 errmsg("block label \"%s\" cannot be used in CONTINUE",
+												$2),
+										 parser_errposition(@2)));
+						}
+						else
+						{
+							/*
+							 * No label, so make sure there is some loop (an
+							 * unlabelled EXIT does not match a block, so this
+							 * is the same test for both EXIT and CONTINUE)
+							 */
+							if (plpgsql_ns_find_nearest_loop(plpgsql_ns_top()) == NULL)
+								ereport(ERROR,
+										(errcode(ERRCODE_SYNTAX_ERROR),
+										 new->is_exit ?
+										 errmsg("EXIT cannot be used outside a loop, unless it has a label") :
+										 errmsg("CONTINUE cannot be used outside a loop"),
+										 parser_errposition(@1)));
+						}
 
 						$$ = (PLpgSQL_stmt *)new;
 					}
@@ -1891,7 +1930,11 @@ loop_body		: proc_sect K_END K_LOOP opt_label ';'
  * assignment.  Give an appropriate complaint for that, instead of letting
  * the core parser throw an unhelpful "syntax error".
  */
-stmt_execsql	: K_INSERT
+stmt_execsql	: K_IMPORT
+					{
+						$$ = make_execsql_stmt(K_IMPORT, @1);
+					}
+				| K_INSERT
 					{
 						$$ = make_execsql_stmt(K_INSERT, @1);
 					}
@@ -2290,12 +2333,24 @@ expr_until_loop :
 
 opt_block_label	:
 					{
-						plpgsql_ns_push(NULL);
+						plpgsql_ns_push(NULL, PLPGSQL_LABEL_BLOCK);
 						$$ = NULL;
 					}
 				| LESS_LESS any_identifier GREATER_GREATER
 					{
-						plpgsql_ns_push($2);
+						plpgsql_ns_push($2, PLPGSQL_LABEL_BLOCK);
+						$$ = $2;
+					}
+				;
+
+opt_loop_label	:
+					{
+						plpgsql_ns_push(NULL, PLPGSQL_LABEL_LOOP);
+						$$ = NULL;
+					}
+				| LESS_LESS any_identifier GREATER_GREATER
+					{
+						plpgsql_ns_push($2, PLPGSQL_LABEL_LOOP);
 						$$ = $2;
 					}
 				;
@@ -2306,8 +2361,7 @@ opt_label	:
 					}
 				| any_identifier
 					{
-						if (plpgsql_ns_lookup_label(plpgsql_ns_top(), $1) == NULL)
-							yyerror("label does not exist");
+						/* label validity will be checked by outer production */
 						$$ = $1;
 					}
 				;
@@ -2369,6 +2423,7 @@ unreserved_keyword	:
 				| K_FORWARD
 				| K_GET
 				| K_HINT
+				| K_IMPORT
 				| K_INFO
 				| K_INSERT
 				| K_IS
@@ -2794,12 +2849,32 @@ make_execsql_stmt(int firsttoken, int location)
 	plpgsql_IdentifierLookup = IDENTIFIER_LOOKUP_EXPR;
 
 	/*
-	 * We have to special-case the sequence INSERT INTO, because we don't want
-	 * that to be taken as an INTO-variables clause.  Fortunately, this is the
-	 * only valid use of INTO in a pl/pgsql SQL command, and INTO is already a
-	 * fully reserved word in the main grammar.  We have to treat it that way
-	 * anywhere in the string, not only at the start; consider CREATE RULE
-	 * containing an INSERT statement.
+	 * Scan to the end of the SQL command.  Identify any INTO-variables
+	 * clause lurking within it, and parse that via read_into_target().
+	 *
+	 * Because INTO is sometimes used in the main SQL grammar, we have to be
+	 * careful not to take any such usage of INTO as a pl/pgsql INTO clause.
+	 * There are currently three such cases:
+	 *
+	 * 1. SELECT ... INTO.  We don't care, we just override that with the
+	 * pl/pgsql definition.
+	 *
+	 * 2. INSERT INTO.  This is relatively easy to recognize since the words
+	 * must appear adjacently; but we can't assume INSERT starts the command,
+	 * because it can appear in CREATE RULE or WITH.  Unfortunately, INSERT is
+	 * *not* fully reserved, so that means there is a chance of a false match;
+	 * but it's not very likely.
+	 *
+	 * 3. IMPORT FOREIGN SCHEMA ... INTO.  This is not allowed in CREATE RULE
+	 * or WITH, so we just check for IMPORT as the command's first token.
+	 * (If IMPORT FOREIGN SCHEMA returned data someone might wish to capture
+	 * with an INTO-variables clause, we'd have to work much harder here.)
+	 *
+	 * Fortunately, INTO is a fully reserved word in the main grammar, so
+	 * at least we need not worry about it appearing as an identifier.
+	 *
+	 * Any future additional uses of INTO in the main grammar will doubtless
+	 * break this logic again ... beware!
 	 */
 	tok = firsttoken;
 	for (;;)
@@ -2812,9 +2887,12 @@ make_execsql_stmt(int firsttoken, int location)
 			break;
 		if (tok == 0)
 			yyerror("unexpected end of function definition");
-
-		if (tok == K_INTO && prev_tok != K_INSERT)
+		if (tok == K_INTO)
 		{
+			if (prev_tok == K_INSERT)
+				continue;		/* INSERT INTO is not an INTO-target */
+			if (firsttoken == K_IMPORT)
+				continue;		/* IMPORT ... INTO is not an INTO-target */
 			if (have_into)
 				yyerror("INTO specified more than once");
 			have_into = true;
@@ -3469,7 +3547,7 @@ check_sql_expr(const char *stmt, int location, int leaderlen)
 	syntax_errcontext.previous = error_context_stack;
 	error_context_stack = &syntax_errcontext;
 
-	oldCxt = MemoryContextSwitchTo(compile_tmp_cxt);
+	oldCxt = MemoryContextSwitchTo(plpgsql_compile_tmp_cxt);
 	(void) raw_parser(stmt);
 	MemoryContextSwitchTo(oldCxt);
 

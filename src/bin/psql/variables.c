@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2016, PostgreSQL Global Development Group
  *
  * src/bin/psql/variables.c
  */
@@ -16,7 +16,7 @@
  *
  * We allow any non-ASCII character, as well as ASCII letters, digits, and
  * underscore.  Keep this in sync with the definition of variable_char in
- * psqlscan.l.
+ * psqlscan.l and psqlscanslash.l.
  */
 static bool
 valid_variable_name(const char *name)

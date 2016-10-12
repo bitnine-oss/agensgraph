@@ -129,7 +129,7 @@ SELECT rolname FROM pg_roles;
    <xref linkend="client-authentication">. (Thus, a client is not
    limited to connect as the role matching
    its operating system user, just as a person's login name
-   need not match her real name.)  Since the role
+   need not match his or her real name.)  Since the role
    identity determines the set of privileges available to a connected
    client, it is important to carefully configure privileges when setting up
    a multiuser environment.
@@ -481,6 +481,57 @@ DROP ROLE doomed_role;
    remain, it will issue messages identifying which objects need to be
    reassigned or dropped.
   </para>
+ </sect1>
+
+ <sect1 id="default-roles">
+  <title>Default Roles</title>
+
+  <indexterm zone="default-roles">
+   <primary>role</>
+  </indexterm>
+
+  <para>
+   <productname>PostgreSQL</productname> provides a set of default roles
+   which provide access to certain, commonly needed, privileged capabilities
+   and information.  Administrators can GRANT these roles to users and/or
+   other roles in their environment, providing those users with access to
+   the specified capabilities and information.
+  </para>
+
+  <para>
+   The default roles are described in <xref linkend="default-roles-table">.
+   Note that the specific permissions for each of the default roles may
+   change in the future as additional capabilities are added.  Administrators
+   should monitor the release notes for changes.
+  </para>
+
+   <table tocentry="1" id="default-roles-table">
+    <title>Default Roles</title>
+    <tgroup cols="2">
+     <thead>
+      <row>
+       <entry>Role</entry>
+       <entry>Allowed Access</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry>pg_signal_backend</entry>
+       <entry>Send signals to other backends (eg: cancel query, terminate).</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+  <para>
+   Administrators can grant access to these roles to users using the GRANT
+   command:
+
+<programlisting>
+GRANT pg_signal_backend TO admin_user;
+</programlisting>
+  </para>
+
  </sect1>
 
  <sect1 id="perm-functions">

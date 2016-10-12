@@ -113,6 +113,24 @@
       </entry>
      </row>
      <row>
+      <entry><literal>box_ops</></entry>
+      <entry><type>box</></entry>
+      <entry>
+       <literal>&lt;&lt;</>
+       <literal>&amp;&lt;</>
+       <literal>&amp;&amp;</>
+       <literal>&amp;&gt;</>
+       <literal>&gt;&gt;</>
+       <literal>~=</>
+       <literal>@&gt;</>
+       <literal>&lt;@</>
+       <literal>&amp;&lt;|</>
+       <literal>&lt;&lt;|</>
+       <literal>|&gt;&gt;</literal>
+       <literal>|&amp;&gt;</>
+      </entry>
+     </row>
+     <row>
       <entry><literal>text_ops</></entry>
       <entry><type>text</></entry>
       <entry>
@@ -165,11 +183,14 @@
   Inner tuples are more complex, since they are branching points in the
   search tree.  Each inner tuple contains a set of one or more
   <firstterm>nodes</>, which represent groups of similar leaf values.
-  A node contains a downlink that leads to either another, lower-level inner
-  tuple, or a short list of leaf tuples that all lie on the same index page.
-  Each node has a <firstterm>label</> that describes it; for example,
+  A node contains a downlink that leads either to another, lower-level inner
+  tuple, or to a short list of leaf tuples that all lie on the same index page.
+  Each node normally has a <firstterm>label</> that describes it; for example,
   in a radix tree the node label could be the next character of the string
-  value.  Optionally, an inner tuple can have a <firstterm>prefix</> value
+  value.  (Alternatively, an operator class can omit the node labels, if it
+  works with a fixed set of nodes for all inner tuples;
+  see <xref linkend="spgist-null-labels">.)
+  Optionally, an inner tuple can have a <firstterm>prefix</> value
   that describes all its members.  In a radix tree this could be the common
   prefix of the represented strings.  The prefix value is not necessarily
   really a prefix, but can be any data needed by the operator class;
@@ -184,7 +205,8 @@
   tuple, so the <acronym>SP-GiST</acronym> core provides the possibility for
   operator classes to manage level counting while descending the tree.
   There is also support for incrementally reconstructing the represented
-  value when that is needed.
+  value when that is needed, and for passing down additional data (called
+  <firstterm>traverse values</>) during a tree descent.
  </para>
 
  <note>
@@ -474,9 +496,8 @@ typedef struct spgPickSplitOut
        <structfield>prefixDatum</> to the prefix value.
        Set <structfield>nNodes</> to indicate the number of nodes that
        the new inner tuple will contain, and
-       set <structfield>nodeLabels</> to an array of their label values.
-       (If the nodes do not require labels, set <structfield>nodeLabels</>
-       to NULL; see <xref linkend="spgist-null-labels"> for details.)
+       set <structfield>nodeLabels</> to an array of their label values,
+       or to NULL if node labels are not required.
        Set <structfield>mapTuplesToNodes</> to an array that gives the index
        (from zero) of the node that each leaf tuple should be assigned to.
        Set <structfield>leafTupleDatums</> to an array of the values to
@@ -542,6 +563,8 @@ typedef struct spgInnerConsistentIn
     int         nkeys;          /* length of array */
 
     Datum       reconstructedValue;     /* value reconstructed at parent */
+    void       *traversalValue; /* opclass-specific traverse value */
+    MemoryContext traversalMemoryContext;   /* put new traverse values here */
     int         level;          /* current level (counting from zero) */
     bool        returnData;     /* original data must be returned? */
 
@@ -559,6 +582,7 @@ typedef struct spgInnerConsistentOut
     int        *nodeNumbers;    /* their indexes in the node array */
     int        *levelAdds;      /* increment level by this much for each */
     Datum      *reconstructedValues;    /* associated reconstructed values */
+    void      **traversalValues;        /* opclass-specific traverse values */
 } spgInnerConsistentOut;
 </programlisting>
 
@@ -577,6 +601,11 @@ typedef struct spgInnerConsistentOut
        parent tuple; it is <literal>(Datum) 0</> at the root level or if the
        <function>inner_consistent</> function did not provide a value at the
        parent level.
+       <structfield>traversalValue</> is a pointer to any traverse data
+       passed down from the previous call of <function>inner_consistent</>
+       on the parent index tuple, or NULL at the root level.
+       <structfield>traversalMemoryContext</> is the memory context in which
+       to store output traverse values (see below).
        <structfield>level</> is the current inner tuple's level, starting at
        zero for the root level.
        <structfield>returnData</> is <literal>true</> if reconstructed data is
@@ -608,10 +637,20 @@ typedef struct spgInnerConsistentOut
        <structfield>reconstructedValues</> to an array of the values
        reconstructed for each child node to be visited; otherwise, leave
        <structfield>reconstructedValues</> as NULL.
+       If it is desired to pass down additional out-of-band information
+       (<quote>traverse values</>) to lower levels of the tree search,
+       set <structfield>traversalValues</> to an array of the appropriate
+       traverse values, one for each child node to be visited; otherwise,
+       leave <structfield>traversalValues</> as NULL.
        Note that the <function>inner_consistent</> function is
        responsible for palloc'ing the
-       <structfield>nodeNumbers</>, <structfield>levelAdds</> and
-       <structfield>reconstructedValues</> arrays.
+       <structfield>nodeNumbers</>, <structfield>levelAdds</>,
+       <structfield>reconstructedValues</>, and
+       <structfield>traversalValues</> arrays in the current memory context.
+       However, any output traverse values pointed to by
+       the <structfield>traversalValues</> array should be allocated
+       in <structfield>traversalMemoryContext</>.
+       Each traverse value must be a single palloc'd chunk.
       </para>
      </listitem>
     </varlistentry>
@@ -638,6 +677,7 @@ typedef struct spgLeafConsistentIn
     ScanKey     scankeys;       /* array of operators and comparison values */
     int         nkeys;          /* length of array */
 
+    void       *traversalValue; /* opclass-specific traverse value */
     Datum       reconstructedValue;     /* value reconstructed at parent */
     int         level;          /* current level (counting from zero) */
     bool        returnData;     /* original data must be returned? */
@@ -667,6 +707,9 @@ typedef struct spgLeafConsistentOut
        parent tuple; it is <literal>(Datum) 0</> at the root level or if the
        <function>inner_consistent</> function did not provide a value at the
        parent level.
+       <structfield>traversalValue</> is a pointer to any traverse data
+       passed down from the previous call of <function>inner_consistent</>
+       on the parent index tuple, or NULL at the root level.
        <structfield>level</> is the current leaf tuple's level, starting at
        zero for the root level.
        <structfield>returnData</> is <literal>true</> if reconstructed data is
@@ -722,7 +765,7 @@ typedef struct spgLeafConsistentOut
 
   <para>
    Individual leaf tuples and inner tuples must fit on a single index page
-   (8KB by default).  Therefore, when indexing values of variable-length
+   (8kB by default).  Therefore, when indexing values of variable-length
    data types, long values can only be supported by methods such as radix
    trees, in which each level of the tree includes a prefix that is short
    enough to fit on a page, and the final leaf level includes a suffix also
@@ -826,11 +869,10 @@ typedef struct spgLeafConsistentOut
 
  <para>
   The <productname>PostgreSQL</productname> source distribution includes
-  several examples of index operator classes for
-  <acronym>SP-GiST</acronym>.  The core system currently provides radix
-  trees over text columns and two types of trees over points: quad-tree and
-  k-d tree.  Look into <filename>src/backend/access/spgist/</> to see the
-  code.
+  several examples of index operator classes for <acronym>SP-GiST</acronym>,
+  as described in <xref linkend="spgist-builtin-opclasses-table">.  Look
+  into <filename>src/backend/access/spgist/</>
+  and <filename>src/backend/utils/adt/</> to see the code.
  </para>
 
 </sect1>

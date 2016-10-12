@@ -170,6 +170,8 @@ EXPORTS
     _PQsslStruct               @ 167
     _PQsslAttributeNames       @ 168
     _PQsslAttribute            @ 169
+    _PQsetErrorContextVisibility @ 170
+    _PQresultVerboseErrorMessage @ 171
 
 ; Aliases for MS compatible names
     PQconnectdb               = _PQconnectdb
@@ -341,3 +343,5 @@ EXPORTS
     PQsslStruct               = _PQsslStruct
     PQsslAttributeNames       = _PQsslAttributeNames
     PQsslAttribute            = _PQsslAttribute
+    PQsetErrorContextVisibility = _PQsetErrorContextVisibility
+    PQresultVerboseErrorMessage = _PQresultVerboseErrorMessage

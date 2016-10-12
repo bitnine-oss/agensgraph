@@ -3,7 +3,7 @@
  * async.c
  *	  Asynchronous notification: NOTIFY, LISTEN, UNLISTEN
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -117,6 +117,7 @@
 #include <unistd.h>
 #include <signal.h>
 
+#include "access/parallel.h"
 #include "access/slru.h"
 #include "access/transam.h"
 #include "access/xact.h"
@@ -380,6 +381,7 @@ static bool asyncQueueIsFull(void);
 static bool asyncQueueAdvance(volatile QueuePosition *position, int entryLength);
 static void asyncQueueNotificationToEntry(Notification *n, AsyncQueueEntry *qe);
 static ListCell *asyncQueueAddEntries(ListCell *nextNotify);
+static double asyncQueueUsage(void);
 static void asyncQueueFillWarning(void);
 static bool SignalBackends(void);
 static void asyncQueueReadAllNotifications(void);
@@ -388,9 +390,6 @@ static bool asyncQueueProcessPageEntries(volatile QueuePosition *current,
 							 char *page_buffer);
 static void asyncQueueAdvanceTail(void);
 static void ProcessIncomingNotify(void);
-static void NotifyMyFrontEnd(const char *channel,
-				 const char *payload,
-				 int32 srcPid);
 static bool AsyncExistsPendingNotify(const char *channel, const char *payload);
 static void ClearPendingActionsAndNotifies(void);
 
@@ -477,8 +476,8 @@ AsyncShmemInit(void)
 	 * Set up SLRU management of the pg_notify data.
 	 */
 	AsyncCtl->PagePrecedes = asyncQueuePagePrecedes;
-	SimpleLruInit(AsyncCtl, "Async Ctl", NUM_ASYNC_BUFFERS, 0,
-				  AsyncCtlLock, "pg_notify");
+	SimpleLruInit(AsyncCtl, "async", NUM_ASYNC_BUFFERS, 0,
+				  AsyncCtlLock, "pg_notify", LWTRANCHE_ASYNC_BUFFERS);
 	/* Override default assumption that writes should be fsync'd */
 	AsyncCtl->do_fsync = false;
 
@@ -542,6 +541,9 @@ Async_Notify(const char *channel, const char *payload)
 {
 	Notification *n;
 	MemoryContext oldcontext;
+
+	if (IsParallelWorker())
+		elog(ERROR, "cannot send notifications from a parallel worker");
 
 	if (Trace_notify)
 		elog(DEBUG1, "Async_Notify(%s)", channel);
@@ -1402,6 +1404,48 @@ asyncQueueAddEntries(ListCell *nextNotify)
 }
 
 /*
+ * SQL function to return the fraction of the notification queue currently
+ * occupied.
+ */
+Datum
+pg_notification_queue_usage(PG_FUNCTION_ARGS)
+{
+	double		usage;
+
+	LWLockAcquire(AsyncQueueLock, LW_SHARED);
+	usage = asyncQueueUsage();
+	LWLockRelease(AsyncQueueLock);
+
+	PG_RETURN_FLOAT8(usage);
+}
+
+/*
+ * Return the fraction of the queue that is currently occupied.
+ *
+ * The caller must hold AsyncQueueLock in (at least) shared mode.
+ */
+static double
+asyncQueueUsage(void)
+{
+	int			headPage = QUEUE_POS_PAGE(QUEUE_HEAD);
+	int			tailPage = QUEUE_POS_PAGE(QUEUE_TAIL);
+	int			occupied;
+
+	occupied = headPage - tailPage;
+
+	if (occupied == 0)
+		return (double) 0;		/* fast exit for common case */
+
+	if (occupied < 0)
+	{
+		/* head has wrapped around, tail not yet */
+		occupied += QUEUE_MAX_PAGE + 1;
+	}
+
+	return (double) occupied / (double) ((QUEUE_MAX_PAGE + 1) / 2);
+}
+
+/*
  * Check whether the queue is at least half full, and emit a warning if so.
  *
  * This is unlikely given the size of the queue, but possible.
@@ -1412,25 +1456,10 @@ asyncQueueAddEntries(ListCell *nextNotify)
 static void
 asyncQueueFillWarning(void)
 {
-	int			headPage = QUEUE_POS_PAGE(QUEUE_HEAD);
-	int			tailPage = QUEUE_POS_PAGE(QUEUE_TAIL);
-	int			occupied;
 	double		fillDegree;
 	TimestampTz t;
 
-	occupied = headPage - tailPage;
-
-	if (occupied == 0)
-		return;					/* fast exit for common case */
-
-	if (occupied < 0)
-	{
-		/* head has wrapped around, tail not yet */
-		occupied += QUEUE_MAX_PAGE + 1;
-	}
-
-	fillDegree = (double) occupied / (double) ((QUEUE_MAX_PAGE + 1) / 2);
-
+	fillDegree = asyncQueueUsage();
 	if (fillDegree < 0.5)
 		return;
 
@@ -2044,7 +2073,7 @@ ProcessIncomingNotify(void)
 /*
  * Send NOTIFY message to my front end.
  */
-static void
+void
 NotifyMyFrontEnd(const char *channel, const char *payload, int32 srcPid)
 {
 	if (whereToSendOutput == DestRemote)

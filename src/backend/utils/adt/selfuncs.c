@@ -7,10 +7,10 @@
  *	  Selectivity routines are registered in the pg_operator catalog
  *	  in the "oprrest" and "oprjoin" attributes.
  *
- *	  Index cost functions are registered in the pg_am catalog
- *	  in the "amcostestimate" attribute.
+ *	  Index cost functions are located via the index AM's API struct,
+ *	  which is obtained from the handler function registered in pg_am.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -104,6 +104,7 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "catalog/index.h"
+#include "catalog/pg_am.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
@@ -129,6 +130,7 @@
 #include "utils/date.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
+#include "utils/index_selfuncs.h"
 #include "utils/lsyscache.h"
 #include "utils/nabstime.h"
 #include "utils/pg_locale.h"
@@ -3235,15 +3237,15 @@ add_unique_group_var(PlannerInfo *root, List *varinfos,
  *		restriction selectivity of the equality in the next step.
  *	4.  For Vars within a single source rel, we multiply together the numbers
  *		of values, clamp to the number of rows in the rel (divided by 10 if
- *		more than one Var), and then multiply by the selectivity of the
- *		restriction clauses for that rel.  When there's more than one Var,
- *		the initial product is probably too high (it's the worst case) but
- *		clamping to a fraction of the rel's rows seems to be a helpful
- *		heuristic for not letting the estimate get out of hand.  (The factor
- *		of 10 is derived from pre-Postgres-7.4 practice.)  Multiplying
- *		by the restriction selectivity is effectively assuming that the
- *		restriction clauses are independent of the grouping, which is a crummy
- *		assumption, but it's hard to do better.
+ *		more than one Var), and then multiply by a factor based on the
+ *		selectivity of the restriction clauses for that rel.  When there's
+ *		more than one Var, the initial product is probably too high (it's the
+ *		worst case) but clamping to a fraction of the rel's rows seems to be a
+ *		helpful heuristic for not letting the estimate get out of hand.  (The
+ *		factor of 10 is derived from pre-Postgres-7.4 practice.)  The factor
+ *		we multiply by to adjust for the restriction selectivity assumes that
+ *		the restriction clauses are independent of the grouping, which may not
+ *		be a valid assumption, but it's hard to do better.
  *	5.  If there are Vars from multiple rels, we repeat step 4 for each such
  *		rel, and multiply the results together.
  * Note that rels not containing grouped Vars are ignored completely, as are
@@ -3326,7 +3328,8 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 		 * down to ignoring the possible addition of nulls to the result set).
 		 */
 		varshere = pull_var_clause(groupexpr,
-								   PVC_RECURSE_AGGREGATES,
+								   PVC_RECURSE_AGGREGATES |
+								   PVC_RECURSE_WINDOWFUNCS |
 								   PVC_RECURSE_PLACEHOLDERS);
 
 		/*
@@ -3436,9 +3439,51 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows,
 				reldistinct = clamp;
 
 			/*
-			 * Multiply by restriction selectivity.
+			 * Update the estimate based on the restriction selectivity,
+			 * guarding against division by zero when reldistinct is zero.
+			 * Also skip this if we know that we are returning all rows.
 			 */
-			reldistinct *= rel->rows / rel->tuples;
+			if (reldistinct > 0 && rel->rows < rel->tuples)
+			{
+				/*
+				 * Given a table containing N rows with n distinct values in a
+				 * uniform distribution, if we select p rows at random then
+				 * the expected number of distinct values selected is
+				 *
+				 * n * (1 - product((N-N/n-i)/(N-i), i=0..p-1))
+				 *
+				 * = n * (1 - (N-N/n)! / (N-N/n-p)! * (N-p)! / N!)
+				 *
+				 * See "Approximating block accesses in database
+				 * organizations", S. B. Yao, Communications of the ACM,
+				 * Volume 20 Issue 4, April 1977 Pages 260-261.
+				 *
+				 * Alternatively, re-arranging the terms from the factorials,
+				 * this may be written as
+				 *
+				 * n * (1 - product((N-p-i)/(N-i), i=0..N/n-1))
+				 *
+				 * This form of the formula is more efficient to compute in
+				 * the common case where p is larger than N/n.  Additionally,
+				 * as pointed out by Dell'Era, if i << N for all terms in the
+				 * product, it can be approximated by
+				 *
+				 * n * (1 - ((N-p)/N)^(N/n))
+				 *
+				 * See "Expected distinct values when selecting from a bag
+				 * without replacement", Alberto Dell'Era,
+				 * http://www.adellera.it/investigations/distinct_balls/.
+				 *
+				 * The condition i << N is equivalent to n >> 1, so this is a
+				 * good approximation when the number of distinct values in
+				 * the table is large.  It turns out that this formula also
+				 * works well even when n is small.
+				 */
+				reldistinct *=
+					(1 - pow((rel->tuples - rel->rows) / rel->tuples,
+							 rel->tuples / reldistinct));
+			}
+			reldistinct = clamp_row_est(reldistinct);
 
 			/*
 			 * Update estimate of total distinct groups.
@@ -3537,8 +3582,11 @@ estimate_hash_bucketsize(PlannerInfo *root, Node *hashkey, double nbuckets)
 	 * XXX Possibly better way, but much more expensive: multiply by
 	 * selectivity of rel's restriction clauses that mention the target Var.
 	 */
-	if (vardata.rel)
+	if (vardata.rel && vardata.rel->tuples > 0)
+	{
 		ndistinct *= vardata.rel->rows / vardata.rel->tuples;
+		ndistinct = clamp_row_est(ndistinct);
+	}
 
 	/*
 	 * Initial estimate of bucketsize fraction is 1/nbuckets as long as the
@@ -3906,10 +3954,16 @@ convert_one_string_to_scalar(char *value, int rangelo, int rangehi)
 		return 0.0;				/* empty string has scalar value 0 */
 
 	/*
-	 * Since base is at least 10, need not consider more than about 20 chars
+	 * There seems little point in considering more than a dozen bytes from
+	 * the string.  Since base is at least 10, that will give us nominal
+	 * resolution of at least 12 decimal digits, which is surely far more
+	 * precision than this estimation technique has got anyway (especially in
+	 * non-C locales).  Also, even with the maximum possible base of 256, this
+	 * ensures denom cannot grow larger than 256^13 = 2.03e31, which will not
+	 * overflow on any known machine.
 	 */
-	if (slen > 20)
-		slen = 20;
+	if (slen > 12)
+		slen = 12;
 
 	/* Convert initial characters to fraction */
 	base = rangehi - rangelo + 1;
@@ -4684,6 +4738,7 @@ double
 get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 {
 	double		stadistinct;
+	double		stanullfrac = 0.0;
 	double		ntuples;
 
 	*isdefault = false;
@@ -4691,7 +4746,8 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 	/*
 	 * Determine the stadistinct value to use.  There are cases where we can
 	 * get an estimate even without a pg_statistic entry, or can get a better
-	 * value than is in pg_statistic.
+	 * value than is in pg_statistic.  Grab stanullfrac too if we can find it
+	 * (otherwise, assume no nulls, for lack of any better idea).
 	 */
 	if (HeapTupleIsValid(vardata->statsTuple))
 	{
@@ -4700,6 +4756,7 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 
 		stats = (Form_pg_statistic) GETSTRUCT(vardata->statsTuple);
 		stadistinct = stats->stadistinct;
+		stanullfrac = stats->stanullfrac;
 	}
 	else if (vardata->vartype == BOOLOID)
 	{
@@ -4723,7 +4780,7 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 			{
 				case ObjectIdAttributeNumber:
 				case SelfItemPointerAttributeNumber:
-					stadistinct = -1.0; /* unique */
+					stadistinct = -1.0; /* unique (and all non null) */
 					break;
 				case TableOidAttributeNumber:
 					stadistinct = 1.0;	/* only 1 value */
@@ -4745,10 +4802,11 @@ get_variable_numdistinct(VariableStatData *vardata, bool *isdefault)
 	 * If there is a unique index or DISTINCT clause for the variable, assume
 	 * it is unique no matter what pg_statistic says; the statistics could be
 	 * out of date, or we might have found a partial unique index that proves
-	 * the var is unique for this query.
+	 * the var is unique for this query.  However, we'd better still believe
+	 * the null-fraction statistic.
 	 */
 	if (vardata->isunique)
-		stadistinct = -1.0;
+		stadistinct = -1.0 * (1.0 - stanullfrac);
 
 	/*
 	 * If we had an absolute estimate, use that.
@@ -6004,21 +6062,7 @@ string_to_bytea_const(const char *str, size_t str_len)
  *-------------------------------------------------------------------------
  */
 
-/*
- * deconstruct_indexquals is a simple function to examine the indexquals
- * attached to a proposed IndexPath.  It returns a list of IndexQualInfo
- * structs, one per qual expression.
- */
-typedef struct
-{
-	RestrictInfo *rinfo;		/* the indexqual itself */
-	int			indexcol;		/* zero-based index column number */
-	bool		varonleft;		/* true if index column is on left of qual */
-	Oid			clause_op;		/* qual's operator OID, if relevant */
-	Node	   *other_operand;	/* non-index operand of qual's operator */
-} IndexQualInfo;
-
-static List *
+List *
 deconstruct_indexquals(IndexPath *path)
 {
 	List	   *result = NIL;
@@ -6168,35 +6212,7 @@ orderby_operands_eval_cost(PlannerInfo *root, IndexPath *path)
 	return qual_arg_cost;
 }
 
-/*
- * genericcostestimate is a general-purpose estimator that can be used for
- * most index types.  In some cases we use genericcostestimate as the base
- * code and then incorporate additional index-type-specific knowledge in
- * the type-specific calling function.  To avoid code duplication, we make
- * genericcostestimate return a number of intermediate values as well as
- * its preliminary estimates of the output cost values.  The GenericCosts
- * struct includes all these values.
- *
- * Callers should initialize all fields of GenericCosts to zero.  In addition,
- * they can set numIndexTuples to some positive value if they have a better
- * than default way of estimating the number of leaf index tuples visited.
- */
-typedef struct
-{
-	/* These are the values the cost estimator must return to the planner */
-	Cost		indexStartupCost;		/* index-related startup cost */
-	Cost		indexTotalCost; /* total index-related scan cost */
-	Selectivity indexSelectivity;		/* selectivity of index */
-	double		indexCorrelation;		/* order correlation of index */
-
-	/* Intermediate values we obtain along the way */
-	double		numIndexPages;	/* number of leaf pages visited */
-	double		numIndexTuples; /* number of leaf tuples visited */
-	double		spc_random_page_cost;	/* relevant random_page_cost value */
-	double		num_sa_scans;	/* # indexscans from ScalarArrayOps */
-} GenericCosts;
-
-static void
+void
 genericcostestimate(PlannerInfo *root,
 					IndexPath *path,
 					double loop_count,
@@ -6437,16 +6453,11 @@ add_predicate_to_quals(IndexOptInfo *index, List *indexQuals)
 }
 
 
-Datum
-btcostestimate(PG_FUNCTION_ARGS)
+void
+btcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
+			   Cost *indexStartupCost, Cost *indexTotalCost,
+			   Selectivity *indexSelectivity, double *indexCorrelation)
 {
-	PlannerInfo *root = (PlannerInfo *) PG_GETARG_POINTER(0);
-	IndexPath  *path = (IndexPath *) PG_GETARG_POINTER(1);
-	double		loop_count = PG_GETARG_FLOAT8(2);
-	Cost	   *indexStartupCost = (Cost *) PG_GETARG_POINTER(3);
-	Cost	   *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
-	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
-	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
 	IndexOptInfo *index = path->indexinfo;
 	List	   *qinfos;
 	GenericCosts costs;
@@ -6735,20 +6746,13 @@ btcostestimate(PG_FUNCTION_ARGS)
 	*indexTotalCost = costs.indexTotalCost;
 	*indexSelectivity = costs.indexSelectivity;
 	*indexCorrelation = costs.indexCorrelation;
-
-	PG_RETURN_VOID();
 }
 
-Datum
-hashcostestimate(PG_FUNCTION_ARGS)
+void
+hashcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
+				 Cost *indexStartupCost, Cost *indexTotalCost,
+				 Selectivity *indexSelectivity, double *indexCorrelation)
 {
-	PlannerInfo *root = (PlannerInfo *) PG_GETARG_POINTER(0);
-	IndexPath  *path = (IndexPath *) PG_GETARG_POINTER(1);
-	double		loop_count = PG_GETARG_FLOAT8(2);
-	Cost	   *indexStartupCost = (Cost *) PG_GETARG_POINTER(3);
-	Cost	   *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
-	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
-	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
 	List	   *qinfos;
 	GenericCosts costs;
 
@@ -6788,20 +6792,13 @@ hashcostestimate(PG_FUNCTION_ARGS)
 	*indexTotalCost = costs.indexTotalCost;
 	*indexSelectivity = costs.indexSelectivity;
 	*indexCorrelation = costs.indexCorrelation;
-
-	PG_RETURN_VOID();
 }
 
-Datum
-gistcostestimate(PG_FUNCTION_ARGS)
+void
+gistcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
+				 Cost *indexStartupCost, Cost *indexTotalCost,
+				 Selectivity *indexSelectivity, double *indexCorrelation)
 {
-	PlannerInfo *root = (PlannerInfo *) PG_GETARG_POINTER(0);
-	IndexPath  *path = (IndexPath *) PG_GETARG_POINTER(1);
-	double		loop_count = PG_GETARG_FLOAT8(2);
-	Cost	   *indexStartupCost = (Cost *) PG_GETARG_POINTER(3);
-	Cost	   *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
-	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
-	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
 	IndexOptInfo *index = path->indexinfo;
 	List	   *qinfos;
 	GenericCosts costs;
@@ -6854,20 +6851,13 @@ gistcostestimate(PG_FUNCTION_ARGS)
 	*indexTotalCost = costs.indexTotalCost;
 	*indexSelectivity = costs.indexSelectivity;
 	*indexCorrelation = costs.indexCorrelation;
-
-	PG_RETURN_VOID();
 }
 
-Datum
-spgcostestimate(PG_FUNCTION_ARGS)
+void
+spgcostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
+				Cost *indexStartupCost, Cost *indexTotalCost,
+				Selectivity *indexSelectivity, double *indexCorrelation)
 {
-	PlannerInfo *root = (PlannerInfo *) PG_GETARG_POINTER(0);
-	IndexPath  *path = (IndexPath *) PG_GETARG_POINTER(1);
-	double		loop_count = PG_GETARG_FLOAT8(2);
-	Cost	   *indexStartupCost = (Cost *) PG_GETARG_POINTER(3);
-	Cost	   *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
-	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
-	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
 	IndexOptInfo *index = path->indexinfo;
 	List	   *qinfos;
 	GenericCosts costs;
@@ -6920,8 +6910,6 @@ spgcostestimate(PG_FUNCTION_ARGS)
 	*indexTotalCost = costs.indexTotalCost;
 	*indexSelectivity = costs.indexSelectivity;
 	*indexCorrelation = costs.indexCorrelation;
-
-	PG_RETURN_VOID();
 }
 
 
@@ -7216,16 +7204,11 @@ gincost_scalararrayopexpr(PlannerInfo *root,
 /*
  * GIN has search behavior completely different from other index types
  */
-Datum
-gincostestimate(PG_FUNCTION_ARGS)
+void
+gincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
+				Cost *indexStartupCost, Cost *indexTotalCost,
+				Selectivity *indexSelectivity, double *indexCorrelation)
 {
-	PlannerInfo *root = (PlannerInfo *) PG_GETARG_POINTER(0);
-	IndexPath  *path = (IndexPath *) PG_GETARG_POINTER(1);
-	double		loop_count = PG_GETARG_FLOAT8(2);
-	Cost	   *indexStartupCost = (Cost *) PG_GETARG_POINTER(3);
-	Cost	   *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
-	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
-	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
 	IndexOptInfo *index = path->indexinfo;
 	List	   *indexQuals = path->indexquals;
 	List	   *indexOrderBys = path->indexorderbys;
@@ -7412,7 +7395,7 @@ gincostestimate(PG_FUNCTION_ARGS)
 		*indexStartupCost = 0;
 		*indexTotalCost = 0;
 		*indexSelectivity = 0;
-		PG_RETURN_VOID();
+		return;
 	}
 
 	if (counts.haveFullScan || indexQuals == NIL)
@@ -7539,23 +7522,16 @@ gincostestimate(PG_FUNCTION_ARGS)
 	*indexStartupCost += qual_arg_cost;
 	*indexTotalCost += qual_arg_cost;
 	*indexTotalCost += (numTuples * *indexSelectivity) * (cpu_index_tuple_cost + qual_op_cost);
-
-	PG_RETURN_VOID();
 }
 
 /*
  * BRIN has search behavior completely different from other index types
  */
-Datum
-brincostestimate(PG_FUNCTION_ARGS)
+void
+brincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
+				 Cost *indexStartupCost, Cost *indexTotalCost,
+				 Selectivity *indexSelectivity, double *indexCorrelation)
 {
-	PlannerInfo *root = (PlannerInfo *) PG_GETARG_POINTER(0);
-	IndexPath  *path = (IndexPath *) PG_GETARG_POINTER(1);
-	double		loop_count = PG_GETARG_FLOAT8(2);
-	Cost	   *indexStartupCost = (Cost *) PG_GETARG_POINTER(3);
-	Cost	   *indexTotalCost = (Cost *) PG_GETARG_POINTER(4);
-	Selectivity *indexSelectivity = (Selectivity *) PG_GETARG_POINTER(5);
-	double	   *indexCorrelation = (double *) PG_GETARG_POINTER(6);
 	IndexOptInfo *index = path->indexinfo;
 	List	   *indexQuals = path->indexquals;
 	List	   *indexOrderBys = path->indexorderbys;
@@ -7608,6 +7584,4 @@ brincostestimate(PG_FUNCTION_ARGS)
 	*indexTotalCost += (numTuples * *indexSelectivity) * (cpu_index_tuple_cost + qual_op_cost);
 
 	/* XXX what about pages_per_range? */
-
-	PG_RETURN_VOID();
 }

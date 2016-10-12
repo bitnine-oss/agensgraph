@@ -48,7 +48,7 @@ test: create_function_2
 # execute two copy tests parallel, to check that copy itself
 # is concurrent safe.
 # ----------
-test: copy copyselect
+test: copy copyselect copydml
 
 # ----------
 # More groups of parallel tests
@@ -60,7 +60,7 @@ test: create_index create_view
 # ----------
 # Another group of parallel tests
 # ----------
-test: create_aggregate create_function_3 create_cast constraints triggers inherit create_table_like typed_table vacuum drop_if_exists updatable_views rolenames roleattributes
+test: create_aggregate create_function_3 create_cast constraints triggers inherit create_table_like typed_table vacuum drop_if_exists updatable_views rolenames roleattributes create_am
 
 # ----------
 # sanity_check does a vacuum, affecting the sort order of SELECT *
@@ -84,15 +84,15 @@ test: select_into select_distinct select_distinct_on select_implicit select_havi
 # ----------
 # Another group of parallel tests
 # ----------
-test: brin gin gist spgist privileges security_label collate matview lock replica_identity rowsecurity object_address tablesample groupingsets
+test: brin gin gist spgist privileges init_privs security_label collate matview lock replica_identity rowsecurity object_address tablesample groupingsets drop_operator
 
 # ----------
 # Another group of parallel tests
 # ----------
-test: alter_generic misc psql async
+test: alter_generic alter_operator misc psql async dbsize misc_functions
 
 # rules cannot run concurrently with any test that creates a view
-test: rules
+test: rules psql_crosstab select_parallel amutils
 
 # ----------
 # Another group of parallel tests

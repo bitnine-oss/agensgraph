@@ -3,7 +3,7 @@
  * prepsecurity.c
  *	  Routines for preprocessing security barrier quals.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -446,6 +446,7 @@ security_barrier_replace_vars_walker(Node *node,
 			/* New variable for subquery targetlist */
 			newvar = copyObject(var);
 			newvar->varno = newvar->varnoold = 1;
+			newvar->varlevelsup = 0;
 
 			attno = list_length(context->targetlist) + 1;
 			tle = makeTargetEntry((Expr *) newvar,

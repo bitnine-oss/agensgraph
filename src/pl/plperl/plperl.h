@@ -5,7 +5,7 @@
  *
  * This should be included _AFTER_ postgres.h and system include files
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1995, Regents of the University of California
  *
  * src/pl/plperl/plperl.h
@@ -86,6 +86,13 @@
 /* supply GvCV_set if it's missing - ppport.h doesn't supply it, unfortunately */
 #ifndef GvCV_set
 #define GvCV_set(gv, cv)		(GvCV(gv) = cv)
+#endif
+
+/* Perl 5.19.4 changed array indices from I32 to SSize_t */
+#if PERL_BCDVERSION >= 0x5019004
+#define AV_SIZE_MAX SSize_t_MAX
+#else
+#define AV_SIZE_MAX I32_MAX
 #endif
 
 /* declare routines from plperl.c for access by .xs files */

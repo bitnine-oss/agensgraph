@@ -612,6 +612,31 @@ NUMERIC
      equivalent.  Both types are part of the <acronym>SQL</acronym>
      standard.
     </para>
+
+    <para>
+     When rounding values, the <type>numeric</type> type rounds ties away
+     from zero, while (on most machines) the <type>real</type>
+     and <type>double precision</type> types round ties to the nearest even
+     number.  For example:
+
+<programlisting>
+SELECT x,
+  round(x::numeric) AS num_round,
+  round(x::double precision) AS dbl_round
+FROM generate_series(-3.5, 3.5, 1) as x;
+  x   | num_round | dbl_round
+------+-----------+-----------
+ -3.5 |        -4 |        -4
+ -2.5 |        -3 |        -2
+ -1.5 |        -2 |        -2
+ -0.5 |        -1 |        -0
+  0.5 |         1 |         0
+  1.5 |         2 |         2
+  2.5 |         3 |         2
+  3.5 |         4 |         4
+(8 rows)
+</programlisting>
+    </para>
    </sect2>
 
 
@@ -1115,8 +1140,7 @@ SELECT '52093.89'::money::numeric::float8;
      advantages in some other database systems, there is no such advantage in
      <productname>PostgreSQL</productname>; in fact
      <type>character(<replaceable>n</>)</type> is usually the slowest of
-     the three because of its additional storage costs and slower
-     sorting.  In most situations
+     the three because of its additional storage costs.  In most situations
      <type>text</type> or <type>character varying</type> should be used
      instead.
     </para>
@@ -3861,12 +3885,12 @@ SELECT 'a:1A fat:2B,4C cat:5D'::tsvector;
 
     <para>
      It is important to understand that the
-     <type>tsvector</type> type itself does not perform any normalization;
-     it assumes the words it is given are normalized appropriately
-     for the application.  For example,
+     <type>tsvector</type> type itself does not perform any word
+     normalization; it assumes the words it is given are normalized
+     appropriately for the application.  For example,
 
 <programlisting>
-select 'The Fat Rats'::tsvector;
+SELECT 'The Fat Rats'::tsvector;
       tsvector      
 --------------------
  'Fat' 'Rats' 'The'
@@ -3899,10 +3923,26 @@ SELECT to_tsvector('english', 'The Fat Rats');
 
     <para>
      A <type>tsquery</type> value stores lexemes that are to be
-     searched for, and combines them honoring the Boolean operators
+     searched for, and can combine them using the Boolean operators
      <literal>&amp;</literal> (AND), <literal>|</literal> (OR), and
-     <literal>!</> (NOT).  Parentheses can be used to enforce grouping
-     of the operators:
+     <literal>!</> (NOT), as well as the phrase search operator
+     <literal>&lt;-&gt;</> (FOLLOWED BY).  There is also a variant
+     <literal>&lt;<replaceable>N</>&gt;</literal> of the FOLLOWED BY
+     operator, where <replaceable>N</> is an integer constant that
+     specifies the distance between the two lexemes being searched
+     for.  <literal>&lt;-&gt;</> is equivalent to <literal>&lt;1&gt;</>.
+    </para>
+
+    <para>
+     Parentheses can be used to enforce grouping of these operators.
+     In the absence of parentheses, <literal>!</> (NOT) binds most tightly,
+     <literal>&lt;-&gt;</literal> (FOLLOWED BY) next most tightly, then
+     <literal>&amp;</literal> (AND), with <literal>|</literal> (OR) binding
+     the least tightly.
+    </para>
+
+    <para>
+     Here are some examples:
 
 <programlisting>
 SELECT 'fat &amp; rat'::tsquery;
@@ -3919,17 +3959,21 @@ SELECT 'fat &amp; rat &amp; ! cat'::tsquery;
         tsquery         
 ------------------------
  'fat' &amp; 'rat' &amp; !'cat'
+
+SELECT '(fat | rat) &lt;-&gt; cat'::tsquery;
+              tsquery
+-----------------------------------
+ 'fat' &lt;-&gt; 'cat' | 'rat' &lt;-&gt; 'cat'
 </programlisting>
 
-     In the absence of parentheses, <literal>!</> (NOT) binds most tightly,
-     and <literal>&amp;</literal> (AND) binds more tightly than
-     <literal>|</literal> (OR).
+     The last example demonstrates that <type>tsquery</type> sometimes
+     rearranges nested operators into a logically equivalent formulation.
     </para>
 
     <para>
      Optionally, lexemes in a <type>tsquery</type> can be labeled with
      one or more weight letters, which restricts them to match only
-     <type>tsvector</> lexemes with matching weights:
+     <type>tsvector</> lexemes with one of those weights:
 
 <programlisting>
 SELECT 'fat:ab &amp; cat'::tsquery;
@@ -3949,25 +3993,7 @@ SELECT 'super:*'::tsquery;
  'super':*
 </programlisting>
      This query will match any word in a <type>tsvector</> that begins
-     with <quote>super</>.  Note that prefixes are first processed by
-     text search configurations, which means this comparison returns
-     true:
-<programlisting>
-SELECT to_tsvector( 'postgraduate' ) @@ to_tsquery( 'postgres:*' );
- ?column? 
-----------
- t
-(1 row)
-</programlisting>
-     because <literal>postgres</> gets stemmed to <literal>postgr</>:
-<programlisting>
-SELECT to_tsquery('postgres:*');
- to_tsquery 
-------------
- 'postgr':*
-(1 row)
-</programlisting>
-     which then matches <literal>postgraduate</>.
+     with <quote>super</>.
     </para>
 
     <para>
@@ -3983,6 +4009,24 @@ SELECT to_tsquery('Fat:ab &amp; Cats');
 ------------------
  'fat':AB &amp; 'cat'
 </programlisting>
+
+     Note that <function>to_tsquery</> will process prefixes in the same way
+     as other words, which means this comparison returns true:
+
+<programlisting>
+SELECT to_tsvector( 'postgraduate' ) @@ to_tsquery( 'postgres:*' );
+ ?column?
+----------
+ t
+</programlisting>
+     because <literal>postgres</> gets stemmed to <literal>postgr</>:
+<programlisting>
+SELECT to_tsvector( 'postgraduate' ), to_tsquery( 'postgres:*' );
+  to_tsvector  | to_tsquery
+---------------+------------
+ 'postgradu':1 | 'postgr':*
+</programlisting>
+     which will match the stemmed form of <literal>postgraduate</>.
     </para>
 
    </sect2>
@@ -4187,7 +4231,7 @@ SET xmloption TO { DOCUMENT | CONTENT };
 
    <para>
     When using binary mode to pass query parameters to the server
-    and query results back to the client, no character set conversion
+    and query results back to the client, no encoding conversion
     is performed, so the situation is different.  In this case, an
     encoding declaration in the XML data will be observed, and if it
     is absent, the data will be assumed to be in UTF-8 (as required by
@@ -4608,6 +4652,10 @@ SELECT * FROM pg_attribute
    </indexterm>
 
    <indexterm zone="datatype-pseudo">
+    <primary>index_am_handler</primary>
+   </indexterm>
+
+   <indexterm zone="datatype-pseudo">
     <primary>tsm_handler</primary>
    </indexterm>
 
@@ -4703,6 +4751,11 @@ SELECT * FROM pg_attribute
        <row>
         <entry><type>fdw_handler</></entry>
         <entry>A foreign-data wrapper handler is declared to return <type>fdw_handler</>.</entry>
+       </row>
+
+       <row>
+        <entry><type>index_am_handler</></entry>
+        <entry>An index access method handler is declared to return <type>index_am_handler</>.</entry>
        </row>
 
        <row>
