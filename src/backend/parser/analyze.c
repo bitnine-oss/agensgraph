@@ -76,14 +76,11 @@ static Query *transformCreateTableAsStmt(ParseState *pstate,
 						   CreateTableAsStmt *stmt);
 static void transformLockingClause(ParseState *pstate, Query *qry,
 					   LockingClause *lc, bool pushedDown);
-<<<<<<< HEAD
-static Query *transformCypherStmt(ParseState *pstate, CypherStmt *stmt);
-static Query *transformCypherClause(ParseState *pstate, CypherClause *clause);
-=======
 #ifdef RAW_EXPRESSION_COVERAGE_TEST
 static bool test_raw_expression_coverage(Node *node, void *context);
 #endif
->>>>>>> postgres
+static Query *transformCypherStmt(ParseState *pstate, CypherStmt *stmt);
+static Query *transformCypherClause(ParseState *pstate, CypherClause *clause);
 
 
 /*
@@ -2807,7 +2804,28 @@ applyLockingClause(Query *qry, Index rtindex,
 	qry->rowMarks = lappend(qry->rowMarks, rc);
 }
 
-<<<<<<< HEAD
+/*
+ * Coverage testing for raw_expression_tree_walker().
+ *
+ * When enabled, we run raw_expression_tree_walker() over every DML statement
+ * submitted to parse analysis.  Without this provision, that function is only
+ * applied in limited cases involving CTEs, and we don't really want to have
+ * to test everything inside as well as outside a CTE.
+ */
+#ifdef RAW_EXPRESSION_COVERAGE_TEST
+
+static bool
+test_raw_expression_coverage(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
+	return raw_expression_tree_walker(node,
+									  test_raw_expression_coverage,
+									  context);
+}
+
+#endif   /* RAW_EXPRESSION_COVERAGE_TEST */
+
 
 /*
  * transformCypherStmt - transforms a Cypher statement
@@ -2867,26 +2885,3 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 
 	return qry;
 }
-=======
-/*
- * Coverage testing for raw_expression_tree_walker().
- *
- * When enabled, we run raw_expression_tree_walker() over every DML statement
- * submitted to parse analysis.  Without this provision, that function is only
- * applied in limited cases involving CTEs, and we don't really want to have
- * to test everything inside as well as outside a CTE.
- */
-#ifdef RAW_EXPRESSION_COVERAGE_TEST
-
-static bool
-test_raw_expression_coverage(Node *node, void *context)
-{
-	if (node == NULL)
-		return false;
-	return raw_expression_tree_walker(node,
-									  test_raw_expression_coverage,
-									  context);
-}
-
-#endif   /* RAW_EXPRESSION_COVERAGE_TEST */
->>>>>>> postgres

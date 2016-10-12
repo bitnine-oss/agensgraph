@@ -1812,16 +1812,6 @@ DROP TABLE logged3;
 DROP TABLE logged2;
 DROP TABLE logged1;
 
-<<<<<<< HEAD
---
--- ALTER TABLE restriction with graph objects
---
-
-CREATE GRAPH g;
-CREATE VLABEL v;
-ALTER TABLE g.v ADD COLUMN tmp int;
-DROP GRAPH g CASCADE;
-=======
 -- test ADD COLUMN IF NOT EXISTS
 CREATE TABLE test_add_column(c1 integer);
 \d test_add_column
@@ -1852,4 +1842,12 @@ ALTER TABLE test_add_column
 	ADD COLUMN c4 integer;
 \d test_add_column
 DROP TABLE test_add_column;
->>>>>>> postgres
+
+--
+-- ALTER TABLE restriction with graph objects
+--
+
+CREATE GRAPH g;
+CREATE VLABEL v;
+ALTER TABLE g.v ADD COLUMN tmp int;
+DROP GRAPH g CASCADE;

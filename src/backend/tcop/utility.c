@@ -1545,7 +1545,10 @@ ProcessUtilitySlow(Node *parsetree,
 				address = ExecSecLabelStmt((SecLabelStmt *) parsetree);
 				break;
 
-<<<<<<< HEAD
+			case T_CreateAmStmt:
+				address = CreateAccessMethod((CreateAmStmt *) parsetree);
+				break;
+
 			case T_CreateGraphStmt:
 				CreateGraphCommand((CreateGraphStmt *) parsetree, queryString);
 				commandCollected = true;
@@ -1556,10 +1559,6 @@ ProcessUtilitySlow(Node *parsetree,
 								   params);
 				/* stashed internally */
 				commandCollected = true;
-=======
-			case T_CreateAmStmt:
-				address = CreateAccessMethod((CreateAmStmt *) parsetree);
->>>>>>> postgres
 				break;
 
 			default:
@@ -2230,7 +2229,9 @@ CreateCommandTag(Node *parsetree)
 				case OBJECT_TRANSFORM:
 					tag = "DROP TRANSFORM";
 					break;
-<<<<<<< HEAD
+				case OBJECT_ACCESS_METHOD:
+					tag = "DROP ACCESS METHOD";
+					break;
 				case OBJECT_GRAPH:
 					tag = "DROP GRAPH";
 					break;
@@ -2239,10 +2240,6 @@ CreateCommandTag(Node *parsetree)
 					break;
 				case OBJECT_VLABEL:
 					tag = "DROP VLABEL";
-=======
-				case OBJECT_ACCESS_METHOD:
-					tag = "DROP ACCESS METHOD";
->>>>>>> postgres
 					break;
 				default:
 					tag = "???";

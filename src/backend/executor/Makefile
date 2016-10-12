@@ -17,17 +17,10 @@ OBJS = execAmi.o execCurrent.o execGrouping.o execIndexing.o execJunk.o \
        execScan.o execTuples.o \
        execUtils.o functions.o instrument.o nodeAppend.o nodeAgg.o \
        nodeBitmapAnd.o nodeBitmapOr.o \
-<<<<<<< HEAD
-       nodeBitmapHeapscan.o nodeBitmapIndexscan.o nodeCustom.o nodeHash.o \
-       nodeHashjoin.o nodeIndexscan.o nodeIndexonlyscan.o \
-       nodeLimit.o nodeLockRows.o nodeMaterial.o nodeMergeAppend.o \
-       nodeMergejoin.o nodeModifyGraph.o nodeModifyTable.o \
-=======
        nodeBitmapHeapscan.o nodeBitmapIndexscan.o nodeCustom.o nodeGather.o \
        nodeHash.o nodeHashjoin.o nodeIndexscan.o nodeIndexonlyscan.o \
-       nodeLimit.o nodeLockRows.o \
-       nodeMaterial.o nodeMergeAppend.o nodeMergejoin.o nodeModifyTable.o \
->>>>>>> postgres
+       nodeLimit.o nodeLockRows.o nodeMaterial.o nodeMergeAppend.o \
+       nodeMergejoin.o nodeModifyGraph.o nodeModifyTable.o \
        nodeNestloop.o nodeFunctionscan.o nodeRecursiveunion.o nodeResult.o \
        nodeSamplescan.o nodeSeqscan.o nodeSetOp.o nodeSort.o nodeUnique.o \
        nodeValuesscan.o nodeCtescan.o nodeWorktablescan.o \

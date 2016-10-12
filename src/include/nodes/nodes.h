@@ -258,6 +258,7 @@ typedef enum NodeTag
 	T_LockRowsPath,
 	T_ModifyTablePath,
 	T_LimitPath,
+	T_ModifyGraphPath,
 	/* these aren't subclasses of Path: */
 	T_EquivalenceClass,
 	T_EquivalenceMember,
@@ -406,13 +407,10 @@ typedef enum NodeTag
 	T_CreatePolicyStmt,
 	T_AlterPolicyStmt,
 	T_CreateTransformStmt,
-<<<<<<< HEAD
+	T_CreateAmStmt,
 	T_CreateGraphStmt,
 	T_CreateLabelStmt,
 	T_CypherStmt,
-=======
-	T_CreateAmStmt,
->>>>>>> postgres
 
 	/*
 	 * TAGS FOR PARSE TREE NODES (parsenodes.h)
@@ -499,8 +497,9 @@ typedef enum NodeTag
 	T_TIDBitmap,				/* in nodes/tidbitmap.h */
 	T_InlineCodeBlock,			/* in nodes/parsenodes.h */
 	T_FdwRoutine,				/* in foreign/fdwapi.h */
-<<<<<<< HEAD
+	T_IndexAmRoutine,			/* in access/amapi.h */
 	T_TsmRoutine,				/* in access/tsmapi.h */
+	T_ForeignKeyCacheInfo,		/* in utils/rel.h */
 
 	/*
 	 * TAGS FOR GRAPH NODES (graphnodes.h)
@@ -508,11 +507,6 @@ typedef enum NodeTag
 	T_GraphPath = 1050,
 	T_GraphVertex,
 	T_GraphEdge
-=======
-	T_IndexAmRoutine,			/* in access/amapi.h */
-	T_TsmRoutine,				/* in access/tsmapi.h */
-	T_ForeignKeyCacheInfo		/* in utils/rel.h */
->>>>>>> postgres
 } NodeTag;
 
 /*

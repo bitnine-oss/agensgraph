@@ -2825,20 +2825,6 @@ ALTER TABLE logged1 SET UNLOGGED; -- silently do nothing
 DROP TABLE logged3;
 DROP TABLE logged2;
 DROP TABLE logged1;
-<<<<<<< HEAD
---
--- ALTER TABLE restriction with graph objects
---
-CREATE GRAPH g;
-CREATE VLABEL v;
-ALTER TABLE g.v ADD COLUMN tmp int;
-ERROR:  cannot ALTER TABLE on graph label
-DROP GRAPH g CASCADE;
-NOTICE:  drop cascades to 3 other objects
-DETAIL:  drop cascades to label ag_vertex
-drop cascades to label ag_edge
-drop cascades to label v
-=======
 -- test ADD COLUMN IF NOT EXISTS
 CREATE TABLE test_add_column(c1 integer);
 \d test_add_column
@@ -2928,4 +2914,15 @@ Table "public.test_add_column"
  c4     | integer | 
 
 DROP TABLE test_add_column;
->>>>>>> postgres
+--
+-- ALTER TABLE restriction with graph objects
+--
+CREATE GRAPH g;
+CREATE VLABEL v;
+ALTER TABLE g.v ADD COLUMN tmp int;
+ERROR:  cannot ALTER TABLE on graph label
+DROP GRAPH g CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label v

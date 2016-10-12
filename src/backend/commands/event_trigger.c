@@ -1173,12 +1173,9 @@ EventTriggerSupportsObjectClass(ObjectClass objclass)
 		case OCLASS_DEFACL:
 		case OCLASS_EXTENSION:
 		case OCLASS_POLICY:
-<<<<<<< HEAD
+		case OCLASS_AM:
 		case OCLASS_GRAPH:
 		case OCLASS_LABEL:
-=======
-		case OCLASS_AM:
->>>>>>> postgres
 			return true;
 	}
 

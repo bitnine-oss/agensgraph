@@ -105,11 +105,8 @@ test: gin
 test: gist
 test: spgist
 test: privileges
-<<<<<<< HEAD
-=======
 test: init_privs
 test: security_label
->>>>>>> postgres
 test: collate
 test: matview
 test: lock

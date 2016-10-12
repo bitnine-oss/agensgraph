@@ -27,11 +27,8 @@
 
 #include "access/nbtree.h"
 #include "access/relscan.h"
-<<<<<<< HEAD
-#include "catalog/pg_opfamily.h"
-=======
 #include "catalog/pg_am.h"
->>>>>>> postgres
+#include "catalog/pg_opfamily.h"
 #include "executor/execdebug.h"
 #include "executor/nodeIndexscan.h"
 #include "lib/pairingheap.h"

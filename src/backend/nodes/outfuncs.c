@@ -26,11 +26,8 @@
 #include <ctype.h>
 
 #include "lib/stringinfo.h"
-<<<<<<< HEAD
-#include "nodes/graphnodes.h"
-=======
 #include "nodes/extensible.h"
->>>>>>> postgres
+#include "nodes/graphnodes.h"
 #include "nodes/plannodes.h"
 #include "nodes/relation.h"
 #include "utils/datum.h"
@@ -3274,7 +3271,27 @@ _outConstraint(StringInfo str, const Constraint *node)
 }
 
 static void
-<<<<<<< HEAD
+_outForeignKeyCacheInfo(StringInfo str, const ForeignKeyCacheInfo *node)
+{
+	int			i;
+
+	WRITE_NODE_TYPE("FOREIGNKEYCACHEINFO");
+
+	WRITE_OID_FIELD(conrelid);
+	WRITE_OID_FIELD(confrelid);
+	WRITE_INT_FIELD(nkeys);
+	appendStringInfoString(str, " :conkey");
+	for (i = 0; i < node->nkeys; i++)
+		appendStringInfo(str, " %d", node->conkey[i]);
+	appendStringInfoString(str, " :confkey");
+	for (i = 0; i < node->nkeys; i++)
+		appendStringInfo(str, " %d", node->confkey[i]);
+	appendStringInfoString(str, " :conpfeqop");
+	for (i = 0; i < node->nkeys; i++)
+		appendStringInfo(str, " %u", node->conpfeqop[i]);
+}
+
+static void
 _outJsonObject(StringInfo str, const JsonObject *node)
 {
 	WRITE_NODE_TYPE("JSONOBJECT");
@@ -3450,28 +3467,7 @@ _outGraphEdge(StringInfo str, const GraphEdge *node)
 	WRITE_NODE_FIELD(prop_map);
 	WRITE_NODE_FIELD(es_prop_map);
 }
-=======
-_outForeignKeyCacheInfo(StringInfo str, const ForeignKeyCacheInfo *node)
-{
-	int			i;
 
-	WRITE_NODE_TYPE("FOREIGNKEYCACHEINFO");
-
-	WRITE_OID_FIELD(conrelid);
-	WRITE_OID_FIELD(confrelid);
-	WRITE_INT_FIELD(nkeys);
-	appendStringInfoString(str, " :conkey");
-	for (i = 0; i < node->nkeys; i++)
-		appendStringInfo(str, " %d", node->conkey[i]);
-	appendStringInfoString(str, " :confkey");
-	for (i = 0; i < node->nkeys; i++)
-		appendStringInfo(str, " %d", node->confkey[i]);
-	appendStringInfoString(str, " :conpfeqop");
-	for (i = 0; i < node->nkeys; i++)
-		appendStringInfo(str, " %u", node->conpfeqop[i]);
-}
-
->>>>>>> postgres
 
 /*
  * outNode -

@@ -157,10 +157,10 @@ typedef struct Query
 	List	   *constraintDeps; /* a list of pg_constraint OIDs that the query
 								 * depends on to be semantically valid */
 
-<<<<<<< HEAD
-	List	   *withCheckOptions;	/* a list of WithCheckOption's, which are
-									 * only added during rewrite and therefore
-									 * are not written out as part of Query. */
+	List	   *withCheckOptions;		/* a list of WithCheckOption's, which
+										 * are only added during rewrite and
+										 * therefore are not written out as
+										 * part of Query. */
 
 	struct {
 		GraphWriteOp writeOp;
@@ -169,12 +169,6 @@ typedef struct Query
 		List	   *pattern;	/* graph pattern (list of paths) for CREATE */
 		List	   *exprs;		/* expression list for DELETE */
 	}			graph;
-=======
-	List	   *withCheckOptions;		/* a list of WithCheckOption's, which
-										 * are only added during rewrite and
-										 * therefore are not written out as
-										 * part of Query. */
->>>>>>> postgres
 } Query;
 
 

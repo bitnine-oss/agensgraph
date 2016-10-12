@@ -3131,6 +3131,36 @@ create_limit_path(PlannerInfo *root, RelOptInfo *rel,
 	return pathnode;
 }
 
+ModifyGraphPath *
+create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
+						GraphWriteOp operation, bool last, bool detach,
+						Path *subpath, List *pattern, List *exprs)
+{
+	ModifyGraphPath *pathnode = makeNode(ModifyGraphPath);
+
+	pathnode->path.pathtype = T_ModifyGraph;
+	pathnode->path.parent = rel;
+	pathnode->path.pathtarget = rel->reltarget;
+	pathnode->path.param_info = NULL;
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = false;
+	pathnode->path.parallel_workers = 0;
+	pathnode->path.rows = subpath->rows;
+	pathnode->path.startup_cost = subpath->startup_cost;
+	pathnode->path.total_cost = subpath->total_cost;
+	pathnode->path.pathkeys = NIL;
+
+	pathnode->canSetTag = canSetTag;
+	pathnode->operation = operation;
+	pathnode->last = last;
+	pathnode->detach = detach;
+	pathnode->subpath = subpath;
+	pathnode->pattern = pattern;
+	pathnode->exprs = exprs;
+
+	return pathnode;
+}
+
 
 /*
  * reparameterize_path

@@ -23,11 +23,8 @@
 #include "postgres.h"
 
 #include "miscadmin.h"
-<<<<<<< HEAD
-#include "nodes/graphnodes.h"
-=======
 #include "nodes/extensible.h"
->>>>>>> postgres
+#include "nodes/graphnodes.h"
 #include "nodes/plannodes.h"
 #include "nodes/relation.h"
 #include "utils/datum.h"

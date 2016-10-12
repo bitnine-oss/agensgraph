@@ -5303,76 +5303,6 @@ DESCR("get an individual replication origin's replication progress");
 DATA(insert OID = 6014 ( pg_show_replication_origin_status PGNSP PGUID 12 1 100 0 0 f f f f f t v r 0 0 2249 "" "{26,25,3220,3220}" "{o,o,o,o}" "{local_id, external_id, remote_lsn, local_lsn}" _null_ _null_ pg_show_replication_origin_status _null_ _null_ _null_ ));
 DESCR("get progress for all replication origins");
 
-<<<<<<< HEAD
-/* graph */
-DATA(insert OID = 7000 ( graphid		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 7002 "26 20" _null_ _null_ _null_ _null_ _null_ graphid _null_ _null_ _null_ ));
-DATA(insert OID = 7003 ( graphid_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7002 "2275" _null_ _null_ _null_ _null_ _null_ graphid_in _null_ _null_ _null_ ));
-DESCR("I/O");
-DATA(insert OID = 7004 ( graphid_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7002" _null_ _null_ _null_ _null_ _null_ graphid_out _null_ _null_ _null_ ));
-DESCR("I/O");
-DATA(insert OID = 7007 ( graphid_oid	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 26 "7002" _null_ _null_ _null_ _null_ _null_ graphid_oid _null_ _null_ _null_ ));
-DATA(insert OID = 7008 ( graphid_lid	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 20 "7002" _null_ _null_ _null_ _null_ _null_ graphid_lid _null_ _null_ _null_ ));
-DATA(insert OID = 7014 ( vertex_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7012" _null_ _null_ _null_ _null_ _null_ vertex_out _null_ _null_ _null_ ));
-DESCR("I/O");
-DATA(insert OID = 7016 ( _vertex_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7011" _null_ _null_ _null_ _null_ _null_ _vertex_out _null_ _null_ _null_ ));
-DESCR("I/O");
-DATA(insert OID = 7017 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 25 "7012" _null_ _null_ _null_ _null_ _null_ vertex_label _null_ _null_ _null_ ));
-DESCR("get vertex's label");
-DATA(insert OID = 7019 ( to_jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 3802 "7012" _null_ _null_ _null_ _null_ _null_ vtojb _null_ _null_ _null_ ));
-DESCR("convert vertex to jsonb");
-DATA(insert OID = 7024 ( edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_out _null_ _null_ _null_ ));
-DESCR("I/O");
-DATA(insert OID = 7026 ( _edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7021" _null_ _null_ _null_ _null_ _null_ _edge_out _null_ _null_ _null_ ));
-DESCR("I/O");
-DATA(insert OID = 7027 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 25 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
-DESCR("get edge's label");
-DATA(insert OID = 7029 ( to_jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 3802 "7022" _null_ _null_ _null_ _null_ _null_ etojb _null_ _null_ _null_ ));
-DESCR("convert edge to jsonb");
-DATA(insert OID = 7034 ( graphpath_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 2275 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_out _null_ _null_ _null_ ));
-DESCR("I/O");
-DATA(insert OID = 7037 ( length			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 23 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_length _null_ _null_ _null_ ));
-DESCR("get the length of graphpath");
-DATA(insert OID = 7038 ( vertices		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7011 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_vertices _null_ _null_ _null_ ));
-DESCR("get vertices in graphpath");
-DATA(insert OID = 7039 ( edges			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7021 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_edges _null_ _null_ _null_ ));
-DESCR("get edges in graphpath");
-DATA(insert OID = 7070 ( start_vertex	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_start_vertex _null_ _null_ _null_ ));
-DESCR("get the start vertex of edge");
-DATA(insert OID = 7071 ( end_vertex		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_end_vertex _null_ _null_ _null_ ));
-DESCR("get the end vertex of edge");
-DATA(insert OID = 7075 ( labels			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 1009 "7012" _null_ _null_ _null_ _null_ _null_ vertex_labels _null_ _null_ _null_ ));
-DESCR("get vertex's labels");
-DATA(insert OID = 7076 ( type			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 25 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
-DESCR("get edge's label");
-DATA(insert OID = 7077 ( startnode		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_start_vertex _null_ _null_ _null_ ));
-DESCR("get the start vertex of edge");
-DATA(insert OID = 7078 ( endnode		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_end_vertex _null_ _null_ _null_ ));
-DESCR("get the end vertex of edge");
-DATA(insert OID = 7079 ( nodes			PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7011 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_vertices _null_ _null_ _null_ ));
-DESCR("get vertices in graphpath");
-DATA(insert OID = 7080 ( relationships	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7021 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_edges _null_ _null_ _null_ ));
-DESCR("get edges in graphpath");
-DATA(insert OID = 7081 ( graphid_eq		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_eq _null_ _null_ _null_ ));
-DATA(insert OID = 7082 ( graphid_ne		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_ne _null_ _null_ _null_ ));
-DATA(insert OID = 7083 ( graphid_lt		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_lt _null_ _null_ _null_ ));
-DATA(insert OID = 7084 ( graphid_gt		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_gt _null_ _null_ _null_ ));
-DATA(insert OID = 7085 ( graphid_le		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_le _null_ _null_ _null_ ));
-DATA(insert OID = 7086 ( graphid_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_ge _null_ _null_ _null_ ));
-/* BTree for graphid */
-DATA(insert OID = 7094 ( btgraphidcmp	PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 23 "7002 7002" _null_ _null_ _null_ _null_ _null_ btgraphidcmp _null_ _null_ _null_ ));
-DESCR("less-equal-greater");
-/* Hash for graphid */
-DATA(insert OID = 7097 ( graphid_hash	PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 23 "7002" _null_ _null_ _null_ _null_ _null_ graphid_hash _null_ _null_ _null_ ));
-/* GIN (as BTree) for graphid */
-DATA(insert OID = 7100 ( gin_extract_value_graphid	 PGNSP PGUID 12 1 0 0 0 f f f f t f i 3 0 2281 "7002 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_value_graphid _null_ _null_ _null_ ));
-DESCR("GIN graphid support");
-DATA(insert OID = 7101 ( gin_extract_query_graphid	 PGNSP PGUID 12 1 0 0 0 f f f f t f i 7 0 2281 "7002 2281 21 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_query_graphid _null_ _null_ _null_ ));
-DESCR("GIN graphid support");
-DATA(insert OID = 7102 ( gin_consistent_graphid		 PGNSP PGUID 12 1 0 0 0 f f f f t f i 8 0 16 "2281 21 7002 23 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_consistent_graphid _null_ _null_ _null_ ));
-DESCR("GIN graphid support");
-DATA(insert OID = 7103 ( gin_compare_partial_graphid PGNSP PGUID 12 1 0 0 0 f f f f t f i 4 0 23 "7002 7002 21 2281" _null_ _null_ _null_ _null_ _null_ gin_compare_partial_graphid _null_ _null_ _null_ ));
-DESCR("GIN graphid support");
-=======
 /* rls */
 DATA(insert OID = 3298 (  row_security_active	   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 16 "26" _null_ _null_ _null_ _null_ _null_	row_security_active _null_ _null_ _null_ ));
 DESCR("row security for current context active on table by table oid");
@@ -5395,7 +5325,75 @@ DESCR("pg_controldata recovery state information as a function");
 
 DATA(insert OID = 3444 ( pg_control_init PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 2249 "" "{23,23,23,23,23,23,23,23,23,16,16,16,23}" "{o,o,o,o,o,o,o,o,o,o,o,o,o}" "{max_data_alignment,database_block_size,blocks_per_segment,wal_block_size,bytes_per_wal_segment,max_identifier_length,max_index_columns,max_toast_chunk_size,large_object_chunk_size,bigint_timestamps,float4_pass_by_value,float8_pass_by_value,data_page_checksum_version}" _null_ _null_ pg_control_init _null_ _null_ _null_ ));
 DESCR("pg_controldata init state information as a function");
->>>>>>> postgres
+
+/* graph */
+DATA(insert OID = 7000 ( graphid		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 7002 "26 20" _null_ _null_ _null_ _null_ _null_ graphid _null_ _null_ _null_ ));
+DATA(insert OID = 7003 ( graphid_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7002 "2275" _null_ _null_ _null_ _null_ _null_ graphid_in _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7004 ( graphid_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7002" _null_ _null_ _null_ _null_ _null_ graphid_out _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7007 ( graphid_oid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 26 "7002" _null_ _null_ _null_ _null_ _null_ graphid_oid _null_ _null_ _null_ ));
+DATA(insert OID = 7008 ( graphid_lid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 20 "7002" _null_ _null_ _null_ _null_ _null_ graphid_lid _null_ _null_ _null_ ));
+DATA(insert OID = 7014 ( vertex_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7012" _null_ _null_ _null_ _null_ _null_ vertex_out _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7016 ( _vertex_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7011" _null_ _null_ _null_ _null_ _null_ _vertex_out _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7017 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 25 "7012" _null_ _null_ _null_ _null_ _null_ vertex_label _null_ _null_ _null_ ));
+DESCR("get vertex's label");
+DATA(insert OID = 7019 ( to_jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "7012" _null_ _null_ _null_ _null_ _null_ vtojb _null_ _null_ _null_ ));
+DESCR("convert vertex to jsonb");
+DATA(insert OID = 7024 ( edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_out _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7026 ( _edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7021" _null_ _null_ _null_ _null_ _null_ _edge_out _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7027 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 25 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
+DESCR("get edge's label");
+DATA(insert OID = 7029 ( to_jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "7022" _null_ _null_ _null_ _null_ _null_ etojb _null_ _null_ _null_ ));
+DESCR("convert edge to jsonb");
+DATA(insert OID = 7034 ( graphpath_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_out _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7037 ( length			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_length _null_ _null_ _null_ ));
+DESCR("get the length of graphpath");
+DATA(insert OID = 7038 ( vertices		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7011 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_vertices _null_ _null_ _null_ ));
+DESCR("get vertices in graphpath");
+DATA(insert OID = 7039 ( edges			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7021 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_edges _null_ _null_ _null_ ));
+DESCR("get edges in graphpath");
+DATA(insert OID = 7070 ( start_vertex	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_start_vertex _null_ _null_ _null_ ));
+DESCR("get the start vertex of edge");
+DATA(insert OID = 7071 ( end_vertex		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_end_vertex _null_ _null_ _null_ ));
+DESCR("get the end vertex of edge");
+DATA(insert OID = 7075 ( labels			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 1009 "7012" _null_ _null_ _null_ _null_ _null_ vertex_labels _null_ _null_ _null_ ));
+DESCR("get vertex's labels");
+DATA(insert OID = 7076 ( type			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 25 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
+DESCR("get edge's label");
+DATA(insert OID = 7077 ( startnode		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_start_vertex _null_ _null_ _null_ ));
+DESCR("get the start vertex of edge");
+DATA(insert OID = 7078 ( endnode		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_end_vertex _null_ _null_ _null_ ));
+DESCR("get the end vertex of edge");
+DATA(insert OID = 7079 ( nodes			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7011 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_vertices _null_ _null_ _null_ ));
+DESCR("get vertices in graphpath");
+DATA(insert OID = 7080 ( relationships	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7021 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_edges _null_ _null_ _null_ ));
+DESCR("get edges in graphpath");
+DATA(insert OID = 7081 ( graphid_eq		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_eq _null_ _null_ _null_ ));
+DATA(insert OID = 7082 ( graphid_ne		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_ne _null_ _null_ _null_ ));
+DATA(insert OID = 7083 ( graphid_lt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_lt _null_ _null_ _null_ ));
+DATA(insert OID = 7084 ( graphid_gt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_gt _null_ _null_ _null_ ));
+DATA(insert OID = 7085 ( graphid_le		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_le _null_ _null_ _null_ ));
+DATA(insert OID = 7086 ( graphid_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_ge _null_ _null_ _null_ ));
+/* BTree for graphid */
+DATA(insert OID = 7094 ( btgraphidcmp	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 23 "7002 7002" _null_ _null_ _null_ _null_ _null_ btgraphidcmp _null_ _null_ _null_ ));
+DESCR("less-equal-greater");
+/* Hash for graphid */
+DATA(insert OID = 7097 ( graphid_hash	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "7002" _null_ _null_ _null_ _null_ _null_ graphid_hash _null_ _null_ _null_ ));
+/* GIN (as BTree) for graphid */
+DATA(insert OID = 7100 ( gin_extract_value_graphid	 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 2281 "7002 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_value_graphid _null_ _null_ _null_ ));
+DESCR("GIN graphid support");
+DATA(insert OID = 7101 ( gin_extract_query_graphid	 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 7 0 2281 "7002 2281 21 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_query_graphid _null_ _null_ _null_ ));
+DESCR("GIN graphid support");
+DATA(insert OID = 7102 ( gin_consistent_graphid		 PGNSP PGUID 12 1 0 0 0 f f f f t f i s 8 0 16 "2281 21 7002 23 2281 2281 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_consistent_graphid _null_ _null_ _null_ ));
+DESCR("GIN graphid support");
+DATA(insert OID = 7103 ( gin_compare_partial_graphid PGNSP PGUID 12 1 0 0 0 f f f f t f i s 4 0 23 "7002 7002 21 2281" _null_ _null_ _null_ _null_ _null_ gin_compare_partial_graphid _null_ _null_ _null_ ));
+DESCR("GIN graphid support");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

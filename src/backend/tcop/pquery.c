@@ -201,14 +201,10 @@ ProcessQuery(PlannedStmt *plan,
 		{
 			case CMD_SELECT:
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-<<<<<<< HEAD
-						 "SELECT %u", queryDesc->estate->es_processed);
-				appendGraphWriteTag(completionTag,
-									&queryDesc->estate->es_graphwrstats);
-=======
 						 "SELECT " UINT64_FORMAT,
 						 queryDesc->estate->es_processed);
->>>>>>> postgres
+				appendGraphWriteTag(completionTag,
+									&queryDesc->estate->es_graphwrstats);
 				break;
 			case CMD_INSERT:
 				if (queryDesc->estate->es_processed == 1)
@@ -812,21 +808,17 @@ PortalRun(Portal portal, long count, bool isTopLevel,
 					if (strcmp(portal->commandTag, "SELECT") == 0)
 					{
 						snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-								 "SELECT %u", nprocessed);
+								 "SELECT " UINT64_FORMAT, nprocessed);
 					}
 					else if (strcmp(portal->commandTag, "CYPHER") == 0)
 					{
 						QueryDesc *qd = PortalGetQueryDesc(portal);
 
 						snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-<<<<<<< HEAD
-								 "SELECT %u", nprocessed);
+								 "SELECT " UINT64_FORMAT, nprocessed);
 						appendGraphWriteTag(completionTag,
 											&qd->estate->es_graphwrstats);
 					}
-=======
-								 "SELECT " UINT64_FORMAT, nprocessed);
->>>>>>> postgres
 					else
 					{
 						strcpy(completionTag, portal->commandTag);

@@ -145,6 +145,8 @@ static CustomScan *create_customscan_plan(PlannerInfo *root,
 static NestLoop *create_nestloop_plan(PlannerInfo *root, NestPath *best_path);
 static MergeJoin *create_mergejoin_plan(PlannerInfo *root, MergePath *best_path);
 static HashJoin *create_hashjoin_plan(PlannerInfo *root, HashPath *best_path);
+static ModifyGraph *create_modifygraph_plan(PlannerInfo *root,
+											ModifyGraphPath *best_path);
 static Node *replace_nestloop_params(PlannerInfo *root, Node *expr);
 static Node *replace_nestloop_params_mutator(Node *node, PlannerInfo *root);
 static void process_subquery_nestloop_params(PlannerInfo *root,
@@ -309,7 +311,7 @@ create_plan(PlannerInfo *root, Path *best_path)
 	 * top-level tlist seen at execution time.  However, ModifyTable plan
 	 * nodes don't have a tlist matching the querytree targetlist.
 	 */
-	if (!IsA(plan, ModifyTable))
+	if (!IsA(plan, ModifyTable) && !IsA(plan, ModifyGraph))
 		apply_tlist_labeling(plan->targetlist, root->processed_tlist);
 
 	/*
@@ -462,6 +464,10 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 			plan = (Plan *) create_limit_plan(root,
 											  (LimitPath *) best_path,
 											  flags);
+			break;
+		case T_ModifyGraph:
+			plan = (Plan *) create_modifygraph_plan(root,
+												(ModifyGraphPath *) best_path);
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
@@ -3944,6 +3950,25 @@ create_hashjoin_plan(PlannerInfo *root,
 	return join_plan;
 }
 
+static ModifyGraph *
+create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
+{
+	ModifyGraph *plan;
+	Plan *subplan;
+
+	subplan = create_plan_recurse(root, best_path->subpath, CP_EXACT_TLIST);
+
+	apply_tlist_labeling(subplan->targetlist, root->processed_tlist);
+
+	plan = make_modifygraph(root, best_path->canSetTag, best_path->operation,
+							best_path->last, best_path->detach, subplan,
+							best_path->pattern, best_path->exprs);
+
+	copy_generic_path_info(&plan->plan, &best_path->path);
+
+	return plan;
+}
+
 
 /*****************************************************************************
  *
@@ -6229,8 +6254,6 @@ make_modifygraph(PlannerInfo *root, bool canSetTag, GraphWriteOp operation,
 				 List *exprs)
 {
 	ModifyGraph *node = makeNode(ModifyGraph);
-
-	copy_plan_costsize(&node->plan, subplan);
 
 	node->canSetTag = canSetTag;
 	node->operation = operation;

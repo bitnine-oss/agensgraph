@@ -22,12 +22,9 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "access/xact.h"
-<<<<<<< HEAD
 #include "catalog/ag_graph.h"
 #include "catalog/ag_label.h"
-=======
 #include "catalog/binary_upgrade.h"
->>>>>>> postgres
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -5235,57 +5232,6 @@ get_user_default_acl(GrantObjectType objtype, Oid ownerId, Oid nsp_oid)
 }
 
 /*
-<<<<<<< HEAD
- * Ownership check for a graph (specified by OID).
- */
-bool
-ag_graph_ownercheck(Oid graphid, Oid roleid)
-{
-	HeapTuple	tuple;
-	Oid			nspid;
-
-	/* Superusers bypass all permission checking. */
-	if (superuser_arg(roleid))
-		return true;
-
-	tuple = SearchSysCache1(GRAPHOID, ObjectIdGetDatum(graphid));
-	if (!HeapTupleIsValid(tuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_DATABASE),
-				 errmsg("graph with OID %u does not exist", graphid)));
-
-	nspid = ((Form_ag_graph) GETSTRUCT(tuple))->nspid;
-
-	ReleaseSysCache(tuple);
-
-	return pg_namespace_ownercheck(nspid, roleid);
-}
-
-/*
- * Ownership check for a label (specified by OID).
- */
-bool
-ag_label_ownercheck(Oid labid, Oid roleid)
-{
-	HeapTuple	tuple;
-	Oid			relid;
-
-	/* Superusers bypass all permission checking. */
-	if (superuser_arg(roleid))
-		return true;
-
-	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
-	if (!HeapTupleIsValid(tuple))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_DATABASE),
-				 errmsg("graph label with OID %u does not exist", labid)));
-
-	relid = ((Form_ag_label) GETSTRUCT(tuple))->relid;
-
-	ReleaseSysCache(tuple);
-
-	return pg_class_ownercheck(relid, roleid);
-=======
  * Record initial ACL for an extension object
  *
  * This will perform a wholesale replacement of the entire ACL for the object
@@ -5407,5 +5353,56 @@ recordExtensionInitPriv(Oid objoid, Oid classoid, int objsubid, Acl *new_acl)
 	CommandCounterIncrement();
 
 	heap_close(relation, RowExclusiveLock);
->>>>>>> postgres
+}
+
+/*
+ * Ownership check for a graph (specified by OID).
+ */
+bool
+ag_graph_ownercheck(Oid graphid, Oid roleid)
+{
+	HeapTuple	tuple;
+	Oid			nspid;
+
+	/* Superusers bypass all permission checking. */
+	if (superuser_arg(roleid))
+		return true;
+
+	tuple = SearchSysCache1(GRAPHOID, ObjectIdGetDatum(graphid));
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_DATABASE),
+				 errmsg("graph with OID %u does not exist", graphid)));
+
+	nspid = ((Form_ag_graph) GETSTRUCT(tuple))->nspid;
+
+	ReleaseSysCache(tuple);
+
+	return pg_namespace_ownercheck(nspid, roleid);
+}
+
+/*
+ * Ownership check for a label (specified by OID).
+ */
+bool
+ag_label_ownercheck(Oid labid, Oid roleid)
+{
+	HeapTuple	tuple;
+	Oid			relid;
+
+	/* Superusers bypass all permission checking. */
+	if (superuser_arg(roleid))
+		return true;
+
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_DATABASE),
+				 errmsg("graph label with OID %u does not exist", labid)));
+
+	relid = ((Form_ag_label) GETSTRUCT(tuple))->relid;
+
+	ReleaseSysCache(tuple);
+
+	return pg_class_ownercheck(relid, roleid);
 }

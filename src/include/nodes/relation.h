@@ -1467,6 +1467,21 @@ typedef struct LimitPath
 	Node	   *limitCount;		/* COUNT parameter, or NULL if none */
 } LimitPath;
 
+/*
+ * ModifyGraphPath
+ */
+typedef struct ModifyGraphPath
+{
+	Path		path;
+	bool		canSetTag;		/* do we set the command tag/es_processed? */
+	GraphWriteOp operation;		/* CREATE or DELETE */
+	bool		last;			/* is this for the last clause? */
+	bool		detach;			/* DETACH DELETE */
+	Path	   *subpath;		/* Path producing source data */
+	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
+	List	   *exprs;			/* expression list for DELETE */
+} ModifyGraphPath;
+
 
 /*
  * Restriction clause info.

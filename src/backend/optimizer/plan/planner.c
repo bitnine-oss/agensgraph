@@ -92,15 +92,10 @@ typedef struct
 /* Local functions */
 static Node *preprocess_expression(PlannerInfo *root, Node *expr, int kind);
 static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
-<<<<<<< HEAD
 static void preprocess_graph_pattern(PlannerInfo *root, List *pattern);
-static Plan *inheritance_planner(PlannerInfo *root);
-static Plan *grouping_planner(PlannerInfo *root, double tuple_fraction);
-=======
 static void inheritance_planner(PlannerInfo *root);
 static void grouping_planner(PlannerInfo *root, bool inheritance_update,
 				 double tuple_fraction);
->>>>>>> postgres
 static void preprocess_rowmarks(PlannerInfo *root);
 static double preprocess_limit(PlannerInfo *root,
 				 double tuple_fraction,
@@ -786,41 +781,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		rt_fetch(parse->resultRelation, parse->rtable)->inh)
 		inheritance_planner(root);
 	else
-<<<<<<< HEAD
-	{
-		plan = grouping_planner(root, tuple_fraction);
-		if (parse->commandType == CMD_GRAPHWRITE)
-		{
-			plan = (Plan *) make_modifygraph(root, parse->canSetTag,
-											 parse->graph.writeOp,
-											 parse->graph.last,
-											 parse->graph.detach,
-											 plan, parse->graph.pattern,
-											 parse->graph.exprs);
-		}
-		/* If it's not SELECT, we need a ModifyTable node */
-		else if (parse->commandType != CMD_SELECT)
-		{
-			List	   *withCheckOptionLists;
-			List	   *returningLists;
-			List	   *rowMarks;
-
-			/*
-			 * Set up the WITH CHECK OPTION and RETURNING lists-of-lists, if
-			 * needed.
-			 */
-			if (parse->withCheckOptions)
-				withCheckOptionLists = list_make1(parse->withCheckOptions);
-			else
-				withCheckOptionLists = NIL;
-
-			if (parse->returningList)
-				returningLists = list_make1(parse->returningList);
-			else
-				returningLists = NIL;
-=======
 		grouping_planner(root, false, tuple_fraction);
->>>>>>> postgres
 
 	/*
 	 * Capture the set of outer-level param IDs we have access to, for use in
@@ -2077,11 +2038,22 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 											  offset_est, count_est);
 		}
 
+		if (parse->commandType == CMD_GRAPHWRITE && !inheritance_update)
+		{
+			path = (Path *) create_modifygraph_path(root, final_rel,
+													parse->canSetTag,
+													parse->graph.writeOp,
+													parse->graph.last,
+													parse->graph.detach,
+													path,
+													parse->graph.pattern,
+													parse->graph.exprs);
+		}
 		/*
 		 * If this is an INSERT/UPDATE/DELETE, and we're not being called from
 		 * inheritance_planner, add the ModifyTable node.
 		 */
-		if (parse->commandType != CMD_SELECT && !inheritance_update)
+		else if (parse->commandType != CMD_SELECT && !inheritance_update)
 		{
 			List	   *withCheckOptionLists;
 			List	   *returningLists;

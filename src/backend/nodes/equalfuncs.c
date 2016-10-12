@@ -29,11 +29,8 @@
 
 #include "postgres.h"
 
-<<<<<<< HEAD
-#include "nodes/graphnodes.h"
-=======
 #include "nodes/extensible.h"
->>>>>>> postgres
+#include "nodes/graphnodes.h"
 #include "nodes/relation.h"
 #include "utils/datum.h"
 

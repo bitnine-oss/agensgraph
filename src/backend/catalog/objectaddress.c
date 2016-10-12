@@ -3306,6 +3306,22 @@ getObjectDescription(const ObjectAddress *object)
 				heap_close(policy_rel, AccessShareLock);
 				break;
 			}
+
+		case OCLASS_AM:
+			{
+				HeapTuple	tup;
+
+				tup = SearchSysCache1(AMOID,
+									  ObjectIdGetDatum(object->objectId));
+				if (!HeapTupleIsValid(tup))
+					elog(ERROR, "cache lookup failed for access method %u",
+						 object->objectId);
+				appendStringInfo(&buffer, _("access method %s"),
+							 NameStr(((Form_pg_am) GETSTRUCT(tup))->amname));
+				ReleaseSysCache(tup);
+				break;
+			}
+
 		case OCLASS_GRAPH:
 			{
 				HeapTuple	tuple;
@@ -3317,7 +3333,6 @@ getObjectDescription(const ObjectAddress *object)
 					elog(ERROR, "cache lookup failed for graph %u",
 						 object->objectId);
 
-<<<<<<< HEAD
 				graphtup = (Form_ag_graph) GETSTRUCT(tuple);
 
 				appendStringInfo(&buffer, _("graph %s"),
@@ -3326,6 +3341,7 @@ getObjectDescription(const ObjectAddress *object)
 				ReleaseSysCache(tuple);
 				break;
 			}
+
 		case OCLASS_LABEL:
 			{
 				HeapTuple	tuple;
@@ -3345,23 +3361,7 @@ getObjectDescription(const ObjectAddress *object)
 				ReleaseSysCache(tuple);
 				break;
 			}
-=======
-		case OCLASS_AM:
-			{
-				HeapTuple	tup;
 
-				tup = SearchSysCache1(AMOID,
-									  ObjectIdGetDatum(object->objectId));
-				if (!HeapTupleIsValid(tup))
-					elog(ERROR, "cache lookup failed for access method %u",
-						 object->objectId);
-				appendStringInfo(&buffer, _("access method %s"),
-							 NameStr(((Form_pg_am) GETSTRUCT(tup))->amname));
-				ReleaseSysCache(tup);
-				break;
-			}
-
->>>>>>> postgres
 		default:
 			appendStringInfo(&buffer, "unrecognized object %u %u %d",
 							 object->classId,
@@ -3843,17 +3843,16 @@ getObjectTypeDescription(const ObjectAddress *object)
 			appendStringInfoString(&buffer, "transform");
 			break;
 
-<<<<<<< HEAD
+		case OCLASS_AM:
+			appendStringInfoString(&buffer, "access method");
+			break;
+
 		case OCLASS_GRAPH:
 			appendStringInfoString(&buffer, "graph");
 			break;
 
 		case OCLASS_LABEL:
 			getLabelDescription(&buffer, object->objectId);
-=======
-		case OCLASS_AM:
-			appendStringInfoString(&buffer, "access method");
->>>>>>> postgres
 			break;
 
 		default:

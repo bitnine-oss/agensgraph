@@ -1293,7 +1293,12 @@ setup_config(void)
 							  "#effective_io_concurrency = 0");
 #endif
 
-<<<<<<< HEAD
+#ifdef WIN32
+	conflines = replace_token(conflines,
+							  "#update_process_title = on",
+							  "#update_process_title = off");
+#endif
+
 	/* set shared preload libraries */
 	conflines = replace_token(conflines,
 							"#shared_preload_libraries = ''",
@@ -1355,13 +1360,6 @@ setup_config(void)
 							"#pg_statsinfo.textlog_line_prefix = '%t %p '",
 							"pg_statsinfo.textlog_line_prefix = "
 									"'%t %p %c-%l %x %q(%u, %d, %r, %a) '");
-=======
-#ifdef WIN32
-	conflines = replace_token(conflines,
-							  "#update_process_title = on",
-							  "#update_process_title = off");
-#endif
->>>>>>> postgres
 
 	snprintf(path, sizeof(path), "%s/postgresql.conf", pg_data);
 

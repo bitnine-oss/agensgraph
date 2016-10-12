@@ -26,11 +26,8 @@
 
 #include "postgres.h"
 
-<<<<<<< HEAD
 #include "ag_const.h"
-=======
 #include "access/amapi.h"
->>>>>>> postgres
 #include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "catalog/ag_graph_fn.h"

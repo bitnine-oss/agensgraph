@@ -28,12 +28,9 @@
 
 #include <math.h>
 
-<<<<<<< HEAD
-#include "nodes/graphnodes.h"
-=======
 #include "fmgr.h"
 #include "nodes/extensible.h"
->>>>>>> postgres
+#include "nodes/graphnodes.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
 #include "nodes/readfuncs.h"
@@ -1370,47 +1367,6 @@ _readTableSampleClause(void)
 	READ_DONE();
 }
 
-<<<<<<< HEAD
-static GraphPath *
-_readGraphPath(void)
-{
-	READ_LOCALS(GraphPath);
-
-	READ_STRING_FIELD(variable);
-	READ_NODE_FIELD(chain);
-
-	READ_DONE();
-}
-
-static GraphVertex *
-_readGraphVertex(void)
-{
-	READ_LOCALS(GraphVertex);
-
-	READ_STRING_FIELD(variable);
-	READ_STRING_FIELD(label);
-	READ_NODE_FIELD(prop_map);
-	READ_NODE_FIELD(es_prop_map);
-	READ_BOOL_FIELD(create);
-
-	READ_DONE();
-}
-
-static GraphEdge *
-_readGraphEdge(void)
-{
-	READ_LOCALS(GraphEdge);
-
-	READ_INT_FIELD(direction);
-	READ_STRING_FIELD(variable);
-	READ_STRING_FIELD(label);
-	READ_NODE_FIELD(prop_map);
-	READ_NODE_FIELD(es_prop_map);
-
-	READ_DONE();
-}
-
-=======
 /*
  * _readDefElem
  */
@@ -1426,7 +1382,6 @@ _readDefElem(void)
 
 	READ_DONE();
 }
->>>>>>> postgres
 
 /*
  * _readPlannedStmt
@@ -1490,139 +1445,7 @@ _readPlan(void)
 {
 	READ_LOCALS_NO_FIELDS(Plan);
 
-<<<<<<< HEAD
-	if (MATCH("QUERY", 5))
-		return_value = _readQuery();
-	else if (MATCH("WITHCHECKOPTION", 15))
-		return_value = _readWithCheckOption();
-	else if (MATCH("SORTGROUPCLAUSE", 15))
-		return_value = _readSortGroupClause();
-	else if (MATCH("GROUPINGSET", 11))
-		return_value = _readGroupingSet();
-	else if (MATCH("WINDOWCLAUSE", 12))
-		return_value = _readWindowClause();
-	else if (MATCH("ROWMARKCLAUSE", 13))
-		return_value = _readRowMarkClause();
-	else if (MATCH("COMMONTABLEEXPR", 15))
-		return_value = _readCommonTableExpr();
-	else if (MATCH("SETOPERATIONSTMT", 16))
-		return_value = _readSetOperationStmt();
-	else if (MATCH("ALIAS", 5))
-		return_value = _readAlias();
-	else if (MATCH("RANGEVAR", 8))
-		return_value = _readRangeVar();
-	else if (MATCH("INTOCLAUSE", 10))
-		return_value = _readIntoClause();
-	else if (MATCH("VAR", 3))
-		return_value = _readVar();
-	else if (MATCH("CONST", 5))
-		return_value = _readConst();
-	else if (MATCH("PARAM", 5))
-		return_value = _readParam();
-	else if (MATCH("AGGREF", 6))
-		return_value = _readAggref();
-	else if (MATCH("GROUPINGFUNC", 12))
-		return_value = _readGroupingFunc();
-	else if (MATCH("WINDOWFUNC", 10))
-		return_value = _readWindowFunc();
-	else if (MATCH("ARRAYREF", 8))
-		return_value = _readArrayRef();
-	else if (MATCH("FUNCEXPR", 8))
-		return_value = _readFuncExpr();
-	else if (MATCH("NAMEDARGEXPR", 12))
-		return_value = _readNamedArgExpr();
-	else if (MATCH("OPEXPR", 6))
-		return_value = _readOpExpr();
-	else if (MATCH("DISTINCTEXPR", 12))
-		return_value = _readDistinctExpr();
-	else if (MATCH("NULLIFEXPR", 10))
-		return_value = _readNullIfExpr();
-	else if (MATCH("SCALARARRAYOPEXPR", 17))
-		return_value = _readScalarArrayOpExpr();
-	else if (MATCH("BOOLEXPR", 8))
-		return_value = _readBoolExpr();
-	else if (MATCH("SUBLINK", 7))
-		return_value = _readSubLink();
-	else if (MATCH("FIELDSELECT", 11))
-		return_value = _readFieldSelect();
-	else if (MATCH("FIELDSTORE", 10))
-		return_value = _readFieldStore();
-	else if (MATCH("RELABELTYPE", 11))
-		return_value = _readRelabelType();
-	else if (MATCH("COERCEVIAIO", 11))
-		return_value = _readCoerceViaIO();
-	else if (MATCH("ARRAYCOERCEEXPR", 15))
-		return_value = _readArrayCoerceExpr();
-	else if (MATCH("CONVERTROWTYPEEXPR", 18))
-		return_value = _readConvertRowtypeExpr();
-	else if (MATCH("COLLATE", 7))
-		return_value = _readCollateExpr();
-	else if (MATCH("CASE", 4))
-		return_value = _readCaseExpr();
-	else if (MATCH("WHEN", 4))
-		return_value = _readCaseWhen();
-	else if (MATCH("CASETESTEXPR", 12))
-		return_value = _readCaseTestExpr();
-	else if (MATCH("ARRAY", 5))
-		return_value = _readArrayExpr();
-	else if (MATCH("ROW", 3))
-		return_value = _readRowExpr();
-	else if (MATCH("ROWCOMPARE", 10))
-		return_value = _readRowCompareExpr();
-	else if (MATCH("COALESCE", 8))
-		return_value = _readCoalesceExpr();
-	else if (MATCH("MINMAX", 6))
-		return_value = _readMinMaxExpr();
-	else if (MATCH("XMLEXPR", 7))
-		return_value = _readXmlExpr();
-	else if (MATCH("NULLTEST", 8))
-		return_value = _readNullTest();
-	else if (MATCH("BOOLEANTEST", 11))
-		return_value = _readBooleanTest();
-	else if (MATCH("COERCETODOMAIN", 14))
-		return_value = _readCoerceToDomain();
-	else if (MATCH("COERCETODOMAINVALUE", 19))
-		return_value = _readCoerceToDomainValue();
-	else if (MATCH("SETTODEFAULT", 12))
-		return_value = _readSetToDefault();
-	else if (MATCH("CURRENTOFEXPR", 13))
-		return_value = _readCurrentOfExpr();
-	else if (MATCH("INFERENCEELEM", 13))
-		return_value = _readInferenceElem();
-	else if (MATCH("TARGETENTRY", 11))
-		return_value = _readTargetEntry();
-	else if (MATCH("RANGETBLREF", 11))
-		return_value = _readRangeTblRef();
-	else if (MATCH("JOINEXPR", 8))
-		return_value = _readJoinExpr();
-	else if (MATCH("FROMEXPR", 8))
-		return_value = _readFromExpr();
-	else if (MATCH("ONCONFLICTEXPR", 14))
-		return_value = _readOnConflictExpr();
-	else if (MATCH("RTE", 3))
-		return_value = _readRangeTblEntry();
-	else if (MATCH("RANGETBLFUNCTION", 16))
-		return_value = _readRangeTblFunction();
-	else if (MATCH("TABLESAMPLECLAUSE", 17))
-		return_value = _readTableSampleClause();
-	else if (MATCH("NOTIFY", 6))
-		return_value = _readNotifyStmt();
-	else if (MATCH("DECLARECURSOR", 13))
-		return_value = _readDeclareCursorStmt();
-	else if (MATCH("GRAPHPATH", 9))
-		return_value = _readGraphPath();
-	else if (MATCH("GRAPHVERTEX", 11))
-		return_value = _readGraphVertex();
-	else if (MATCH("GRAPHEDGE", 9))
-		return_value = _readGraphEdge();
-	else
-	{
-		elog(ERROR, "badly formatted node string \"%.32s\"...", token);
-		return_value = NULL;	/* keep compiler quiet */
-	}
-=======
 	ReadCommonPlan(local_node);
->>>>>>> postgres
 
 	READ_DONE();
 }
@@ -2431,6 +2254,45 @@ _readExtensibleNode(void)
 	READ_DONE();
 }
 
+static GraphPath *
+_readGraphPath(void)
+{
+	READ_LOCALS(GraphPath);
+
+	READ_STRING_FIELD(variable);
+	READ_NODE_FIELD(chain);
+
+	READ_DONE();
+}
+
+static GraphVertex *
+_readGraphVertex(void)
+{
+	READ_LOCALS(GraphVertex);
+
+	READ_STRING_FIELD(variable);
+	READ_STRING_FIELD(label);
+	READ_NODE_FIELD(prop_map);
+	READ_NODE_FIELD(es_prop_map);
+	READ_BOOL_FIELD(create);
+
+	READ_DONE();
+}
+
+static GraphEdge *
+_readGraphEdge(void)
+{
+	READ_LOCALS(GraphEdge);
+
+	READ_INT_FIELD(direction);
+	READ_STRING_FIELD(variable);
+	READ_STRING_FIELD(label);
+	READ_NODE_FIELD(prop_map);
+	READ_NODE_FIELD(es_prop_map);
+
+	READ_DONE();
+}
+
 /*
  * parseNodeString
  *
@@ -2661,6 +2523,12 @@ parseNodeString(void)
 		return_value = _readAlternativeSubPlan();
 	else if (MATCH("EXTENSIBLENODE", 14))
 		return_value = _readExtensibleNode();
+	else if (MATCH("GRAPHPATH", 9))
+		return_value = _readGraphPath();
+	else if (MATCH("GRAPHVERTEX", 11))
+		return_value = _readGraphVertex();
+	else if (MATCH("GRAPHEDGE", 9))
+		return_value = _readGraphEdge();
 	else
 	{
 		elog(ERROR, "badly formatted node string \"%.32s\"...", token);
