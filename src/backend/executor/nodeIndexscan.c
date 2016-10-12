@@ -28,6 +28,7 @@
 #include "access/nbtree.h"
 #include "access/relscan.h"
 #include "catalog/pg_am.h"
+#include "catalog/pg_opfamily.h"
 #include "executor/execdebug.h"
 #include "executor/nodeIndexscan.h"
 #include "lib/pairingheap.h"

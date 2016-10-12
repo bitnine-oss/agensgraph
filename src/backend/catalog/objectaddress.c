@@ -3341,6 +3341,7 @@ getObjectDescription(const ObjectAddress *object)
 				ReleaseSysCache(tuple);
 				break;
 			}
+
 		case OCLASS_LABEL:
 			{
 				HeapTuple	tuple;

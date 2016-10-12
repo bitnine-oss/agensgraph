@@ -815,7 +815,7 @@ PortalRun(Portal portal, long count, bool isTopLevel,
 						QueryDesc *qd = PortalGetQueryDesc(portal);
 
 						snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
-								 "SELECT %u", nprocessed);
+								 "SELECT " UINT64_FORMAT, nprocessed);
 						appendGraphWriteTag(completionTag,
 											&qd->estate->es_graphwrstats);
 					}
