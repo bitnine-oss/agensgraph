@@ -5,7 +5,7 @@
  *
  * This is a fairly simple bitmap.
  *
- * Copyright (c) 2013-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2016, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -13,6 +13,7 @@
 #include "postgres_fe.h"
 
 #include "datapagemap.h"
+#include "logging.h"
 
 struct datapagemap_iterator
 {
@@ -120,7 +121,7 @@ datapagemap_print(datapagemap_t *map)
 
 	iter = datapagemap_iterate(map);
 	while (datapagemap_next(iter, &blocknum))
-		printf("  blk %u\n", blocknum);
+		pg_log(PG_DEBUG, "  block %u\n", blocknum);
 
 	pg_free(iter);
 }

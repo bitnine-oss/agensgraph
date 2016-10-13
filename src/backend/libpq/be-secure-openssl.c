@@ -4,7 +4,7 @@
  *	  functions for OpenSSL support in the backend.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -53,7 +53,7 @@
 
 #include <openssl/ssl.h>
 #include <openssl/dh.h>
-#if SSLEAY_VERSION_NUMBER >= 0x0907000L
+#if OPENSSL_VERSION_NUMBER >= 0x0907000L
 #include <openssl/conf.h>
 #endif
 #if (OPENSSL_VERSION_NUMBER >= 0x0090800fL) && !defined(OPENSSL_NO_ECDH)
@@ -74,11 +74,12 @@ static int	my_SSL_set_fd(Port *port, int fd);
 
 static DH  *load_dh_file(int keylength);
 static DH  *load_dh_buffer(const char *, size_t);
+static DH  *generate_dh_parameters(int prime_len, int generator);
 static DH  *tmp_dh_cb(SSL *s, int is_export, int keylength);
 static int	verify_cb(int, X509_STORE_CTX *);
 static void info_cb(const SSL *ssl, int type, int args);
 static void initialize_ecdh(void);
-static const char *SSLerrmessage(void);
+static const char *SSLerrmessage(unsigned long ecode);
 
 static char *X509_NAME_to_cstring(X509_NAME *name);
 
@@ -166,11 +167,15 @@ be_tls_init(void)
 
 	if (!SSL_context)
 	{
-#if SSLEAY_VERSION_NUMBER >= 0x0907000L
+#ifdef HAVE_OPENSSL_INIT_SSL
+		OPENSSL_init_ssl(OPENSSL_INIT_LOAD_CONFIG, NULL);
+#else
+#if OPENSSL_VERSION_NUMBER >= 0x0907000L
 		OPENSSL_config(NULL);
 #endif
 		SSL_library_init();
 		SSL_load_error_strings();
+#endif
 
 		/*
 		 * We use SSLv23_method() because it can negotiate use of the highest
@@ -182,7 +187,7 @@ be_tls_init(void)
 		if (!SSL_context)
 			ereport(FATAL,
 					(errmsg("could not create SSL context: %s",
-							SSLerrmessage())));
+							SSLerrmessage(ERR_get_error()))));
 
 		/*
 		 * Disable OpenSSL's moving-write-buffer sanity check, because it
@@ -198,7 +203,7 @@ be_tls_init(void)
 			ereport(FATAL,
 					(errcode(ERRCODE_CONFIG_FILE_ERROR),
 				  errmsg("could not load server certificate file \"%s\": %s",
-						 ssl_cert_file, SSLerrmessage())));
+						 ssl_cert_file, SSLerrmessage(ERR_get_error()))));
 
 		if (stat(ssl_key_file, &buf) != 0)
 			ereport(FATAL,
@@ -206,8 +211,30 @@ be_tls_init(void)
 					 errmsg("could not access private key file \"%s\": %m",
 							ssl_key_file)));
 
+		if (!S_ISREG(buf.st_mode))
+			ereport(FATAL,
+					(errcode(ERRCODE_CONFIG_FILE_ERROR),
+					 errmsg("private key file \"%s\" is not a regular file",
+							ssl_key_file)));
+
 		/*
-		 * Require no public access to key file.
+		 * Refuse to load files owned by users other than us or root.
+		 *
+		 * XXX surely we can check this on Windows somehow, too.
+		 */
+#if !defined(WIN32) && !defined(__CYGWIN__)
+		if (buf.st_uid != geteuid() && buf.st_uid != 0)
+			ereport(FATAL,
+					(errcode(ERRCODE_CONFIG_FILE_ERROR),
+					 errmsg("private key file \"%s\" must be owned by the database user or root",
+							ssl_key_file)));
+#endif
+
+		/*
+		 * Require no public access to key file. If the file is owned by us,
+		 * require mode 0600 or less. If owned by root, require 0640 or less
+		 * to allow read access through our gid, or a supplementary gid that
+		 * allows to read system-wide certificates.
 		 *
 		 * XXX temporarily suppress check when on Windows, because there may
 		 * not be proper support for Unix-y file permissions.  Need to think
@@ -215,12 +242,13 @@ be_tls_init(void)
 		 * directory permission check in postmaster.c)
 		 */
 #if !defined(WIN32) && !defined(__CYGWIN__)
-		if (!S_ISREG(buf.st_mode) || buf.st_mode & (S_IRWXG | S_IRWXO))
+		if ((buf.st_uid == geteuid() && buf.st_mode & (S_IRWXG | S_IRWXO)) ||
+			(buf.st_uid == 0 && buf.st_mode & (S_IWGRP | S_IXGRP | S_IRWXO)))
 			ereport(FATAL,
 					(errcode(ERRCODE_CONFIG_FILE_ERROR),
 				  errmsg("private key file \"%s\" has group or world access",
 						 ssl_key_file),
-				   errdetail("Permissions should be u=rw (0600) or less.")));
+					 errdetail("File must have permissions u=rw (0600) or less if owned by the database user, or permissions u=rw,g=r (0640) or less if owned by root.")));
 #endif
 
 		if (SSL_CTX_use_PrivateKey_file(SSL_context,
@@ -228,12 +256,12 @@ be_tls_init(void)
 										SSL_FILETYPE_PEM) != 1)
 			ereport(FATAL,
 					(errmsg("could not load private key file \"%s\": %s",
-							ssl_key_file, SSLerrmessage())));
+							ssl_key_file, SSLerrmessage(ERR_get_error()))));
 
 		if (SSL_CTX_check_private_key(SSL_context) != 1)
 			ereport(FATAL,
 					(errmsg("check of private key failed: %s",
-							SSLerrmessage())));
+							SSLerrmessage(ERR_get_error()))));
 	}
 
 	/* set up ephemeral DH keys, and disallow SSL v2/v3 while at it */
@@ -262,7 +290,7 @@ be_tls_init(void)
 			(root_cert_list = SSL_load_client_CA_file(ssl_ca_file)) == NULL)
 			ereport(FATAL,
 					(errmsg("could not load root certificate file \"%s\": %s",
-							ssl_ca_file, SSLerrmessage())));
+							ssl_ca_file, SSLerrmessage(ERR_get_error()))));
 	}
 
 	/*----------
@@ -293,7 +321,7 @@ be_tls_init(void)
 			else
 				ereport(FATAL,
 						(errmsg("could not load SSL certificate revocation list file \"%s\": %s",
-								ssl_crl_file, SSLerrmessage())));
+							 ssl_crl_file, SSLerrmessage(ERR_get_error()))));
 		}
 	}
 
@@ -330,6 +358,7 @@ be_tls_open_server(Port *port)
 	int			r;
 	int			err;
 	int			waitfor;
+	unsigned long ecode;
 
 	Assert(!port->ssl);
 	Assert(!port->peer);
@@ -339,7 +368,7 @@ be_tls_open_server(Port *port)
 		ereport(COMMERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
 				 errmsg("could not initialize SSL connection: %s",
-						SSLerrmessage())));
+						SSLerrmessage(ERR_get_error()))));
 		return -1;
 	}
 	if (!my_SSL_set_fd(port, port->sock))
@@ -347,16 +376,36 @@ be_tls_open_server(Port *port)
 		ereport(COMMERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
 				 errmsg("could not set SSL socket: %s",
-						SSLerrmessage())));
+						SSLerrmessage(ERR_get_error()))));
 		return -1;
 	}
 	port->ssl_in_use = true;
 
 aloop:
+
+	/*
+	 * Prepare to call SSL_get_error() by clearing thread's OpenSSL error
+	 * queue.  In general, the current thread's error queue must be empty
+	 * before the TLS/SSL I/O operation is attempted, or SSL_get_error() will
+	 * not work reliably.  An extension may have failed to clear the
+	 * per-thread error queue following another call to an OpenSSL I/O
+	 * routine.
+	 */
+	ERR_clear_error();
 	r = SSL_accept(port->ssl);
 	if (r <= 0)
 	{
 		err = SSL_get_error(port->ssl, r);
+
+		/*
+		 * Other clients of OpenSSL in the backend may fail to call
+		 * ERR_get_error(), but we always do, so as to not cause problems for
+		 * OpenSSL clients that don't call ERR_clear_error() defensively.  Be
+		 * sure that this happens by calling now. SSL_get_error() relies on
+		 * the OpenSSL per-thread error queue being intact, so this is the
+		 * earliest possible point ERR_get_error() may be called.
+		 */
+		ecode = ERR_get_error();
 		switch (err)
 		{
 			case SSL_ERROR_WANT_READ:
@@ -390,7 +439,7 @@ aloop:
 				ereport(COMMERROR,
 						(errcode(ERRCODE_PROTOCOL_VIOLATION),
 						 errmsg("could not accept SSL connection: %s",
-								SSLerrmessage())));
+								SSLerrmessage(ecode))));
 				break;
 			case SSL_ERROR_ZERO_RETURN:
 				ereport(COMMERROR,
@@ -499,10 +548,13 @@ be_tls_read(Port *port, void *ptr, size_t len, int *waitfor)
 {
 	ssize_t		n;
 	int			err;
+	unsigned long ecode;
 
 	errno = 0;
+	ERR_clear_error();
 	n = SSL_read(port->ssl, ptr, len);
 	err = SSL_get_error(port->ssl, n);
+	ecode = (err != SSL_ERROR_NONE || n < 0) ? ERR_get_error() : 0;
 	switch (err)
 	{
 		case SSL_ERROR_NONE:
@@ -529,7 +581,7 @@ be_tls_read(Port *port, void *ptr, size_t len, int *waitfor)
 		case SSL_ERROR_SSL:
 			ereport(COMMERROR,
 					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("SSL error: %s", SSLerrmessage())));
+					 errmsg("SSL error: %s", SSLerrmessage(ecode))));
 			/* fall through */
 		case SSL_ERROR_ZERO_RETURN:
 			errno = ECONNRESET;
@@ -556,10 +608,13 @@ be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
 {
 	ssize_t		n;
 	int			err;
+	unsigned long ecode;
 
 	errno = 0;
+	ERR_clear_error();
 	n = SSL_write(port->ssl, ptr, len);
 	err = SSL_get_error(port->ssl, n);
+	ecode = (err != SSL_ERROR_NONE || n < 0) ? ERR_get_error() : 0;
 	switch (err)
 	{
 		case SSL_ERROR_NONE:
@@ -586,7 +641,7 @@ be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
 		case SSL_ERROR_SSL:
 			ereport(COMMERROR,
 					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("SSL error: %s", SSLerrmessage())));
+					 errmsg("SSL error: %s", SSLerrmessage(ecode))));
 			/* fall through */
 		case SSL_ERROR_ZERO_RETURN:
 			errno = ECONNRESET;
@@ -623,8 +678,12 @@ be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
  * to retry; do we need to adopt their logic for that?
  */
 
-static bool my_bio_initialized = false;
-static BIO_METHOD my_bio_methods;
+#ifndef HAVE_BIO_GET_DATA
+#define BIO_get_data(bio) (bio->ptr)
+#define BIO_set_data(bio, data) (bio->ptr = data)
+#endif
+
+static BIO_METHOD *my_bio_methods = NULL;
 
 static int
 my_sock_read(BIO *h, char *buf, int size)
@@ -633,7 +692,7 @@ my_sock_read(BIO *h, char *buf, int size)
 
 	if (buf != NULL)
 	{
-		res = secure_raw_read(((Port *) h->ptr), buf, size);
+		res = secure_raw_read(((Port *) BIO_get_data(h)), buf, size);
 		BIO_clear_retry_flags(h);
 		if (res <= 0)
 		{
@@ -653,7 +712,7 @@ my_sock_write(BIO *h, const char *buf, int size)
 {
 	int			res = 0;
 
-	res = secure_raw_write(((Port *) h->ptr), buf, size);
+	res = secure_raw_write(((Port *) BIO_get_data(h)), buf, size);
 	BIO_clear_retry_flags(h);
 	if (res <= 0)
 	{
@@ -670,14 +729,41 @@ my_sock_write(BIO *h, const char *buf, int size)
 static BIO_METHOD *
 my_BIO_s_socket(void)
 {
-	if (!my_bio_initialized)
+	if (!my_bio_methods)
 	{
-		memcpy(&my_bio_methods, BIO_s_socket(), sizeof(BIO_METHOD));
-		my_bio_methods.bread = my_sock_read;
-		my_bio_methods.bwrite = my_sock_write;
-		my_bio_initialized = true;
+		BIO_METHOD *biom = (BIO_METHOD *) BIO_s_socket();
+#ifdef HAVE_BIO_METH_NEW
+		int			my_bio_index;
+
+		my_bio_index = BIO_get_new_index();
+		if (my_bio_index == -1)
+			return NULL;
+		my_bio_methods = BIO_meth_new(my_bio_index, "PostgreSQL backend socket");
+		if (!my_bio_methods)
+			return NULL;
+		if (!BIO_meth_set_write(my_bio_methods, my_sock_write) ||
+			!BIO_meth_set_read(my_bio_methods, my_sock_read) ||
+			!BIO_meth_set_gets(my_bio_methods, BIO_meth_get_gets(biom)) ||
+			!BIO_meth_set_puts(my_bio_methods, BIO_meth_get_puts(biom)) ||
+			!BIO_meth_set_ctrl(my_bio_methods, BIO_meth_get_ctrl(biom)) ||
+			!BIO_meth_set_create(my_bio_methods, BIO_meth_get_create(biom)) ||
+			!BIO_meth_set_destroy(my_bio_methods, BIO_meth_get_destroy(biom)) ||
+			!BIO_meth_set_callback_ctrl(my_bio_methods, BIO_meth_get_callback_ctrl(biom)))
+		{
+			BIO_meth_free(my_bio_methods);
+			my_bio_methods = NULL;
+			return NULL;
+		}
+#else
+		my_bio_methods = malloc(sizeof(BIO_METHOD));
+		if (!my_bio_methods)
+			return NULL;
+		memcpy(my_bio_methods, biom, sizeof(BIO_METHOD));
+		my_bio_methods->bread = my_sock_read;
+		my_bio_methods->bwrite = my_sock_write;
+#endif
 	}
-	return &my_bio_methods;
+	return my_bio_methods;
 }
 
 /* This should exactly match openssl's SSL_set_fd except for using my BIO */
@@ -685,17 +771,23 @@ static int
 my_SSL_set_fd(Port *port, int fd)
 {
 	int			ret = 0;
-	BIO		   *bio = NULL;
+	BIO		   *bio;
+	BIO_METHOD *bio_method;
 
-	bio = BIO_new(my_BIO_s_socket());
+	bio_method = my_BIO_s_socket();
+	if (bio_method == NULL)
+	{
+		SSLerr(SSL_F_SSL_SET_FD, ERR_R_BUF_LIB);
+		goto err;
+	}
+	bio = BIO_new(bio_method);
 
 	if (bio == NULL)
 	{
 		SSLerr(SSL_F_SSL_SET_FD, ERR_R_BUF_LIB);
 		goto err;
 	}
-	/* Use 'ptr' to store pointer to PGconn */
-	bio->ptr = port;
+	BIO_set_data(bio, port);
 
 	BIO_set_fd(bio, fd, BIO_NOCLOSE);
 	SSL_set_bio(port->ssl, bio, bio);
@@ -742,7 +834,8 @@ load_dh_file(int keylength)
 	{
 		if (DH_check(dh, &codes) == 0)
 		{
-			elog(LOG, "DH_check error (%s): %s", fnbuf, SSLerrmessage());
+			elog(LOG, "DH_check error (%s): %s", fnbuf,
+				 SSLerrmessage(ERR_get_error()));
 			return NULL;
 		}
 		if (codes & DH_CHECK_P_NOT_PRIME)
@@ -782,10 +875,35 @@ load_dh_buffer(const char *buffer, size_t len)
 	if (dh == NULL)
 		ereport(DEBUG2,
 				(errmsg_internal("DH load buffer: %s",
-								 SSLerrmessage())));
+								 SSLerrmessage(ERR_get_error()))));
 	BIO_free(bio);
 
 	return dh;
+}
+
+/*
+ *	Generate DH parameters.
+ *
+ *	Last resort if we can't load precomputed nor hardcoded
+ *	parameters.
+ */
+static DH  *
+generate_dh_parameters(int prime_len, int generator)
+{
+#if (OPENSSL_VERSION_NUMBER >= 0x0090800fL)
+	DH		   *dh;
+
+	if ((dh = DH_new()) == NULL)
+		return NULL;
+
+	if (DH_generate_parameters_ex(dh, prime_len, generator, NULL))
+		return dh;
+
+	DH_free(dh);
+	return NULL;
+#else
+	return DH_generate_parameters(prime_len, generator, NULL, NULL);
+#endif
 }
 
 /*
@@ -857,7 +975,7 @@ tmp_dh_cb(SSL *s, int is_export, int keylength)
 		ereport(DEBUG2,
 				(errmsg_internal("DH: generating parameters (%d bits)",
 								 keylength)));
-		r = DH_generate_parameters(keylength, DH_GENERATOR_2, NULL, NULL);
+		r = generate_dh_parameters(keylength, DH_GENERATOR_2);
 	}
 
 	return r;
@@ -948,26 +1066,26 @@ initialize_ecdh(void)
 }
 
 /*
- * Obtain reason string for last SSL error
+ * Obtain reason string for passed SSL errcode
+ *
+ * ERR_get_error() is used by caller to get errcode to pass here.
  *
  * Some caution is needed here since ERR_reason_error_string will
  * return NULL if it doesn't recognize the error code.  We don't
  * want to return NULL ever.
  */
 static const char *
-SSLerrmessage(void)
+SSLerrmessage(unsigned long ecode)
 {
-	unsigned long errcode;
 	const char *errreason;
 	static char errbuf[32];
 
-	errcode = ERR_get_error();
-	if (errcode == 0)
+	if (ecode == 0)
 		return _("no SSL error reported");
-	errreason = ERR_reason_error_string(errcode);
+	errreason = ERR_reason_error_string(ecode);
 	if (errreason != NULL)
 		return errreason;
-	snprintf(errbuf, sizeof(errbuf), _("SSL error code %lu"), errcode);
+	snprintf(errbuf, sizeof(errbuf), _("SSL error code %lu"), ecode);
 	return errbuf;
 }
 

@@ -3,7 +3,7 @@
  * nodeFuncs.h
  *		Various general-purpose manipulations of Node trees
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/nodeFuncs.h
@@ -25,6 +25,9 @@
 #define QTW_EXAMINE_RTES			0x10		/* examine RTEs */
 #define QTW_DONT_COPY_QUERY			0x20		/* do not copy top Query */
 
+/* callback function for check_functions_in_node */
+typedef bool (*check_function_callback) (Oid func_id, void *context);
+
 
 extern Oid	exprType(const Node *expr);
 extern int32 exprTypmod(const Node *expr);
@@ -39,6 +42,13 @@ extern void exprSetCollation(Node *expr, Oid collation);
 extern void exprSetInputCollation(Node *expr, Oid inputcollation);
 
 extern int	exprLocation(const Node *expr);
+
+extern void fix_opfuncids(Node *node);
+extern void set_opfuncid(OpExpr *opexpr);
+extern void set_sa_opfuncid(ScalarArrayOpExpr *opexpr);
+
+extern bool check_functions_in_node(Node *node, check_function_callback checker,
+						void *context);
 
 extern bool expression_tree_walker(Node *node, bool (*walker) (),
 											   void *context);
@@ -62,5 +72,9 @@ extern Node *query_or_expression_tree_mutator(Node *node, Node *(*mutator) (),
 
 extern bool raw_expression_tree_walker(Node *node, bool (*walker) (),
 												   void *context);
+
+struct PlanState;
+extern bool planstate_tree_walker(struct PlanState *planstate, bool (*walker) (),
+											  void *context);
 
 #endif   /* NODEFUNCS_H */

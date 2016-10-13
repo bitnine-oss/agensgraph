@@ -3,7 +3,7 @@
  * policy.c
  *	  Commands for manipulating policies.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/policy.c
@@ -201,9 +201,7 @@ RelationBuildRowSecurity(Relation relation)
 	 */
 	rscxt = AllocSetContextCreate(CacheMemoryContext,
 								  "row security descriptor",
-								  ALLOCSET_SMALL_MINSIZE,
-								  ALLOCSET_SMALL_INITSIZE,
-								  ALLOCSET_SMALL_MAXSIZE);
+								  ALLOCSET_SMALL_SIZES);
 
 	/*
 	 * Since rscxt lives under CacheMemoryContext, it is long-lived.  Use a
@@ -496,7 +494,7 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 
 	/* Must own relation. */
 	if (pg_class_ownercheck(relid, GetUserId()))
-		noperm = false; /* user is allowed to modify this policy */
+		noperm = false;			/* user is allowed to modify this policy */
 	else
 		ereport(WARNING,
 				(errcode(ERRCODE_WARNING_PRIVILEGE_NOT_REVOKED),
@@ -511,15 +509,16 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 	 */
 	if (!noperm && num_roles > 0)
 	{
-		int			i, j;
+		int			i,
+					j;
 		Oid		   *roles = (Oid *) ARR_DATA_PTR(policy_roles);
 		Datum	   *role_oids;
 		char	   *qual_value;
 		Node	   *qual_expr;
-		List       *qual_parse_rtable = NIL;
+		List	   *qual_parse_rtable = NIL;
 		char	   *with_check_value;
 		Node	   *with_check_qual;
-		List       *with_check_parse_rtable = NIL;
+		List	   *with_check_parse_rtable = NIL;
 		Datum		values[Natts_pg_policy];
 		bool		isnull[Natts_pg_policy];
 		bool		replaces[Natts_pg_policy];
@@ -536,15 +535,14 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 
 		/*
 		 * All of the dependencies will be removed from the policy and then
-		 * re-added.  In order to get them correct, we need to extract out
-		 * the expressions in the policy and construct a parsestate just
-		 * enough to build the range table(s) to then pass to
-		 * recordDependencyOnExpr().
+		 * re-added.  In order to get them correct, we need to extract out the
+		 * expressions in the policy and construct a parsestate just enough to
+		 * build the range table(s) to then pass to recordDependencyOnExpr().
 		 */
 
 		/* Get policy qual, to update dependencies */
 		value_datum = heap_getattr(tuple, Anum_pg_policy_polqual,
-								   RelationGetDescr(pg_policy_rel), &attr_isnull);
+							  RelationGetDescr(pg_policy_rel), &attr_isnull);
 		if (!attr_isnull)
 		{
 			ParseState *qual_pstate;
@@ -566,7 +564,7 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 
 		/* Get WITH CHECK qual, to update dependencies */
 		value_datum = heap_getattr(tuple, Anum_pg_policy_polwithcheck,
-								   RelationGetDescr(pg_policy_rel), &attr_isnull);
+							  RelationGetDescr(pg_policy_rel), &attr_isnull);
 		if (!attr_isnull)
 		{
 			ParseState *with_check_pstate;
@@ -665,7 +663,7 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 
 	heap_close(pg_policy_rel, RowExclusiveLock);
 
-	return(noperm || num_roles > 0);
+	return (noperm || num_roles > 0);
 }
 
 /*
@@ -996,8 +994,8 @@ AlterPolicy(AlterPolicyStmt *stmt)
 
 	/* Get policy command */
 	polcmd_datum = heap_getattr(policy_tuple, Anum_pg_policy_polcmd,
-							 RelationGetDescr(pg_policy_rel),
-							 &polcmd_isnull);
+								RelationGetDescr(pg_policy_rel),
+								&polcmd_isnull);
 	Assert(!polcmd_isnull);
 	polcmd = DatumGetChar(polcmd_datum);
 
@@ -1029,15 +1027,15 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	}
 	else
 	{
-		Oid        *roles;
+		Oid		   *roles;
 		Datum		roles_datum;
 		bool		attr_isnull;
 		ArrayType  *policy_roles;
 
 		/*
-		 * We need to pull the set of roles this policy applies to from
-		 * what's in the catalog, so that we can recreate the dependencies
-		 * correctly for the policy.
+		 * We need to pull the set of roles this policy applies to from what's
+		 * in the catalog, so that we can recreate the dependencies correctly
+		 * for the policy.
 		 */
 
 		roles_datum = heap_getattr(policy_tuple, Anum_pg_policy_polroles,
@@ -1065,13 +1063,13 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	}
 	else
 	{
-		Datum	value_datum;
-		bool	attr_isnull;
+		Datum		value_datum;
+		bool		attr_isnull;
 
 		/*
 		 * We need to pull the USING expression and build the range table for
-		 * the policy from what's in the catalog, so that we can recreate
-		 * the dependencies correctly for the policy.
+		 * the policy from what's in the catalog, so that we can recreate the
+		 * dependencies correctly for the policy.
 		 */
 
 		/* Check if the policy has a USING expr */
@@ -1081,7 +1079,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 		if (!attr_isnull)
 		{
 			char	   *qual_value;
-			ParseState *qual_pstate = make_parsestate(NULL);
+			ParseState *qual_pstate;
 
 			/* parsestate is built just to build the range table */
 			qual_pstate = make_parsestate(NULL);
@@ -1106,8 +1104,8 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	}
 	else
 	{
-		Datum	value_datum;
-		bool	attr_isnull;
+		Datum		value_datum;
+		bool		attr_isnull;
 
 		/*
 		 * We need to pull the WITH CHECK expression and build the range table
@@ -1122,7 +1120,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 		if (!attr_isnull)
 		{
 			char	   *with_check_value;
-			ParseState *with_check_pstate = make_parsestate(NULL);
+			ParseState *with_check_pstate;
 
 			/* parsestate is built just to build the range table */
 			with_check_pstate = make_parsestate(NULL);

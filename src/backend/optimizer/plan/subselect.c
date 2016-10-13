@@ -3,7 +3,7 @@
  * subselect.c
  *	  Planning routines for subselects and parameters.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -22,6 +22,7 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
+#include "optimizer/pathnode.h"
 #include "optimizer/planmain.h"
 #include "optimizer/planner.h"
 #include "optimizer/prep.h"
@@ -81,6 +82,7 @@ static Bitmapset *finalize_plan(PlannerInfo *root,
 			  Bitmapset *valid_params,
 			  Bitmapset *scan_params);
 static bool finalize_primnode(Node *node, finalize_primnode_context *context);
+static bool finalize_agg_primnode(Node *node, finalize_primnode_context *context);
 
 
 /*
@@ -477,8 +479,10 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 	Query	   *subquery;
 	bool		simple_exists = false;
 	double		tuple_fraction;
-	Plan	   *plan;
 	PlannerInfo *subroot;
+	RelOptInfo *final_rel;
+	Path	   *best_path;
+	Plan	   *plan;
 	List	   *plan_params;
 	Node	   *result;
 
@@ -526,17 +530,23 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 	/* plan_params should not be in use in current query level */
 	Assert(root->plan_params == NIL);
 
-	/*
-	 * Generate the plan for the subquery.
-	 */
-	plan = subquery_planner(root->glob, subquery,
-							root,
-							false, tuple_fraction,
-							&subroot);
+	/* Generate Paths for the subquery */
+	subroot = subquery_planner(root->glob, subquery,
+							   root,
+							   false, tuple_fraction);
 
 	/* Isolate the params needed by this specific subplan */
 	plan_params = root->plan_params;
 	root->plan_params = NIL;
+
+	/*
+	 * Select best Path and turn it into a Plan.  At least for now, there
+	 * seems no reason to postpone doing that.
+	 */
+	final_rel = fetch_upper_rel(subroot, UPPERREL_FINAL, NULL);
+	best_path = get_cheapest_fractional_path(final_rel, tuple_fraction);
+
+	plan = create_plan(subroot, best_path);
 
 	/* And convert to SubPlan or InitPlan format. */
 	result = build_subplan(root, plan, subroot, plan_params,
@@ -567,17 +577,23 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 										 &newtestexpr, &paramIds);
 		if (subquery)
 		{
-			/* Generate the plan for the ANY subquery; we'll need all rows */
-			plan = subquery_planner(root->glob, subquery,
-									root,
-									false, 0.0,
-									&subroot);
+			/* Generate Paths for the ANY subquery; we'll need all rows */
+			subroot = subquery_planner(root->glob, subquery,
+									   root,
+									   false, 0.0);
 
 			/* Isolate the params needed by this specific subplan */
 			plan_params = root->plan_params;
 			root->plan_params = NIL;
 
+			/* Select best Path and turn it into a Plan */
+			final_rel = fetch_upper_rel(subroot, UPPERREL_FINAL, NULL);
+			best_path = final_rel->cheapest_total_path;
+
+			plan = create_plan(subroot, best_path);
+
 			/* Now we can check if it'll fit in work_mem */
+			/* XXX can we check this at the Path stage? */
 			if (subplan_is_hashable(plan))
 			{
 				SubPlan    *hashplan;
@@ -1132,8 +1148,10 @@ SS_process_ctes(PlannerInfo *root)
 		CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
 		CmdType		cmdType = ((Query *) cte->ctequery)->commandType;
 		Query	   *subquery;
-		Plan	   *plan;
 		PlannerInfo *subroot;
+		RelOptInfo *final_rel;
+		Path	   *best_path;
+		Plan	   *plan;
 		SubPlan    *splan;
 		int			paramid;
 
@@ -1157,13 +1175,12 @@ SS_process_ctes(PlannerInfo *root)
 		Assert(root->plan_params == NIL);
 
 		/*
-		 * Generate the plan for the CTE query.  Always plan for full
-		 * retrieval --- we don't have enough info to predict otherwise.
+		 * Generate Paths for the CTE query.  Always plan for full retrieval
+		 * --- we don't have enough info to predict otherwise.
 		 */
-		plan = subquery_planner(root->glob, subquery,
-								root,
-								cte->cterecursive, 0.0,
-								&subroot);
+		subroot = subquery_planner(root->glob, subquery,
+								   root,
+								   cte->cterecursive, 0.0);
 
 		/*
 		 * Since the current query level doesn't yet contain any RTEs, it
@@ -1172,6 +1189,15 @@ SS_process_ctes(PlannerInfo *root)
 		 */
 		if (root->plan_params)
 			elog(ERROR, "unexpected outer reference in CTE query");
+
+		/*
+		 * Select best Path and turn it into a Plan.  At least for now, there
+		 * seems no reason to postpone doing that.
+		 */
+		final_rel = fetch_upper_rel(subroot, UPPERREL_FINAL, NULL);
+		best_path = final_rel->cheapest_total_path;
+
+		plan = create_plan(subroot, best_path);
 
 		/*
 		 * Make a SubPlan node for it.  This is just enough unlike
@@ -2048,37 +2074,203 @@ process_sublinks_mutator(Node *node, process_sublinks_context *context)
 }
 
 /*
- * SS_finalize_plan - do final sublink and parameter processing for a
- * completed Plan.
+ * SS_identify_outer_params - identify the Params available from outer levels
  *
- * This recursively computes the extParam and allParam sets for every Plan
- * node in the given plan tree.  It also optionally attaches any previously
- * generated InitPlans to the top plan node.  (Any InitPlans should already
- * have been put through SS_finalize_plan.)
+ * This must be run after SS_replace_correlation_vars and SS_process_sublinks
+ * processing is complete in a given query level as well as all of its
+ * descendant levels (which means it's most practical to do it at the end of
+ * processing the query level).  We compute the set of paramIds that outer
+ * levels will make available to this level+descendants, and record it in
+ * root->outer_params for use while computing extParam/allParam sets in final
+ * plan cleanup.  (We can't just compute it then, because the upper levels'
+ * plan_params lists are transient and will be gone by then.)
  */
 void
-SS_finalize_plan(PlannerInfo *root, Plan *plan, bool attach_initplans)
+SS_identify_outer_params(PlannerInfo *root)
 {
-	Bitmapset  *valid_params,
-			   *initExtParam,
-			   *initSetParam;
-	Cost		initplan_cost;
+	Bitmapset  *outer_params;
 	PlannerInfo *proot;
 	ListCell   *l;
 
 	/*
+	 * If no parameters have been assigned anywhere in the tree, we certainly
+	 * don't need to do anything here.
+	 */
+	if (root->glob->nParamExec == 0)
+		return;
+
+	/*
+	 * Scan all query levels above this one to see which parameters are due to
+	 * be available from them, either because lower query levels have
+	 * requested them (via plan_params) or because they will be available from
+	 * initPlans of those levels.
+	 */
+	outer_params = NULL;
+	for (proot = root->parent_root; proot != NULL; proot = proot->parent_root)
+	{
+		/* Include ordinary Var/PHV/Aggref params */
+		foreach(l, proot->plan_params)
+		{
+			PlannerParamItem *pitem = (PlannerParamItem *) lfirst(l);
+
+			outer_params = bms_add_member(outer_params, pitem->paramId);
+		}
+		/* Include any outputs of outer-level initPlans */
+		foreach(l, proot->init_plans)
+		{
+			SubPlan    *initsubplan = (SubPlan *) lfirst(l);
+			ListCell   *l2;
+
+			foreach(l2, initsubplan->setParam)
+			{
+				outer_params = bms_add_member(outer_params, lfirst_int(l2));
+			}
+		}
+		/* Include worktable ID, if a recursive query is being planned */
+		if (proot->wt_param_id >= 0)
+			outer_params = bms_add_member(outer_params, proot->wt_param_id);
+	}
+	root->outer_params = outer_params;
+}
+
+/*
+ * SS_charge_for_initplans - account for cost of initplans in Path costs
+ *
+ * If any initPlans have been created in the current query level, they will
+ * get attached to the Plan tree created from whichever Path we select from
+ * the given rel; so increment all the rel's Paths' costs to account for them.
+ *
+ * This is separate from SS_attach_initplans because we might conditionally
+ * create more initPlans during create_plan(), depending on which Path we
+ * select.  However, Paths that would generate such initPlans are expected
+ * to have included their cost already.
+ */
+void
+SS_charge_for_initplans(PlannerInfo *root, RelOptInfo *final_rel)
+{
+	Cost		initplan_cost;
+	ListCell   *lc;
+
+	/* Nothing to do if no initPlans */
+	if (root->init_plans == NIL)
+		return;
+
+	/*
+	 * Compute the cost increment just once, since it will be the same for all
+	 * Paths.  We assume each initPlan gets run once during top plan startup.
+	 * This is a conservative overestimate, since in fact an initPlan might be
+	 * executed later than plan startup, or even not at all.
+	 */
+	initplan_cost = 0;
+	foreach(lc, root->init_plans)
+	{
+		SubPlan    *initsubplan = (SubPlan *) lfirst(lc);
+
+		initplan_cost += initsubplan->startup_cost + initsubplan->per_call_cost;
+	}
+
+	/*
+	 * Now adjust the costs.
+	 */
+	foreach(lc, final_rel->pathlist)
+	{
+		Path	   *path = (Path *) lfirst(lc);
+
+		path->startup_cost += initplan_cost;
+		path->total_cost += initplan_cost;
+	}
+
+	/* We needn't do set_cheapest() here, caller will do it */
+}
+
+/*
+ * SS_attach_initplans - attach initplans to topmost plan node
+ *
+ * Attach any initplans created in the current query level to the specified
+ * plan node, which should normally be the topmost node for the query level.
+ * (In principle the initPlans could go in any node at or above where they're
+ * referenced; but there seems no reason to put them any lower than the
+ * topmost node, so we don't bother to track exactly where they came from.)
+ * We do not touch the plan node's cost; the initplans should have been
+ * accounted for in path costing.
+ */
+void
+SS_attach_initplans(PlannerInfo *root, Plan *plan)
+{
+	plan->initPlan = root->init_plans;
+}
+
+/*
+ * SS_finalize_plan - do final parameter processing for a completed Plan.
+ *
+ * This recursively computes the extParam and allParam sets for every Plan
+ * node in the given plan tree.  (Oh, and RangeTblFunction.funcparams too.)
+ *
+ * We assume that SS_finalize_plan has already been run on any initplans or
+ * subplans the plan tree could reference.
+ */
+void
+SS_finalize_plan(PlannerInfo *root, Plan *plan)
+{
+	/* No setup needed, just recurse through plan tree. */
+	(void) finalize_plan(root, plan, root->outer_params, NULL);
+}
+
+/*
+ * Recursive processing of all nodes in the plan tree
+ *
+ * valid_params is the set of param IDs supplied by outer plan levels
+ * that are valid to reference in this plan node or its children.
+ *
+ * scan_params is a set of param IDs to force scan plan nodes to reference.
+ * This is for EvalPlanQual support, and is always NULL at the top of the
+ * recursion.
+ *
+ * The return value is the computed allParam set for the given Plan node.
+ * This is just an internal notational convenience: we can add a child
+ * plan's allParams to the set of param IDs of interest to this level
+ * in the same statement that recurses to that child.
+ *
+ * Do not scribble on caller's values of valid_params or scan_params!
+ *
+ * Note: although we attempt to deal with initPlans anywhere in the tree, the
+ * logic is not really right.  The problem is that a plan node might return an
+ * output Param of its initPlan as a targetlist item, in which case it's valid
+ * for the parent plan level to reference that same Param; the parent's usage
+ * will be converted into a Var referencing the child plan node by setrefs.c.
+ * But this function would see the parent's reference as out of scope and
+ * complain about it.  For now, this does not matter because the planner only
+ * attaches initPlans to the topmost plan node in a query level, so the case
+ * doesn't arise.  If we ever merge this processing into setrefs.c, maybe it
+ * can be handled more cleanly.
+ */
+static Bitmapset *
+finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
+			  Bitmapset *scan_params)
+{
+	finalize_primnode_context context;
+	int			locally_added_param;
+	Bitmapset  *nestloop_params;
+	Bitmapset  *initExtParam;
+	Bitmapset  *initSetParam;
+	Bitmapset  *child_params;
+	ListCell   *l;
+
+	if (plan == NULL)
+		return NULL;
+
+	context.root = root;
+	context.paramids = NULL;	/* initialize set to empty */
+	locally_added_param = -1;	/* there isn't one */
+	nestloop_params = NULL;		/* there aren't any */
+
+	/*
 	 * Examine any initPlans to determine the set of external params they
-	 * reference, the set of output params they supply, and their total cost.
-	 * We'll use at least some of this info below.  (Note we are assuming that
-	 * finalize_plan doesn't touch the initPlans.)
-	 *
-	 * In the case where attach_initplans is false, we are assuming that the
-	 * existing initPlans are siblings that might supply params needed by the
-	 * current plan.
+	 * reference and the set of output params they supply.  (We assume
+	 * SS_finalize_plan was run on them already.)
 	 */
 	initExtParam = initSetParam = NULL;
-	initplan_cost = 0;
-	foreach(l, root->init_plans)
+	foreach(l, plan->initPlan)
 	{
 		SubPlan    *initsubplan = (SubPlan *) lfirst(l);
 		Plan	   *initplan = planner_subplan_get_plan(root, initsubplan);
@@ -2089,112 +2281,11 @@ SS_finalize_plan(PlannerInfo *root, Plan *plan, bool attach_initplans)
 		{
 			initSetParam = bms_add_member(initSetParam, lfirst_int(l2));
 		}
-		initplan_cost += initsubplan->startup_cost + initsubplan->per_call_cost;
 	}
 
-	/*
-	 * Now determine the set of params that are validly referenceable in this
-	 * query level; to wit, those available from outer query levels plus the
-	 * output parameters of any local initPlans.  (We do not include output
-	 * parameters of regular subplans.  Those should only appear within the
-	 * testexpr of SubPlan nodes, and are taken care of locally within
-	 * finalize_primnode.  Likewise, special parameters that are generated by
-	 * nodes such as ModifyTable are handled within finalize_plan.)
-	 */
-	valid_params = bms_copy(initSetParam);
-	for (proot = root->parent_root; proot != NULL; proot = proot->parent_root)
-	{
-		/* Include ordinary Var/PHV/Aggref params */
-		foreach(l, proot->plan_params)
-		{
-			PlannerParamItem *pitem = (PlannerParamItem *) lfirst(l);
-
-			valid_params = bms_add_member(valid_params, pitem->paramId);
-		}
-		/* Include any outputs of outer-level initPlans */
-		foreach(l, proot->init_plans)
-		{
-			SubPlan    *initsubplan = (SubPlan *) lfirst(l);
-			ListCell   *l2;
-
-			foreach(l2, initsubplan->setParam)
-			{
-				valid_params = bms_add_member(valid_params, lfirst_int(l2));
-			}
-		}
-		/* Include worktable ID, if a recursive query is being planned */
-		if (proot->wt_param_id >= 0)
-			valid_params = bms_add_member(valid_params, proot->wt_param_id);
-	}
-
-	/*
-	 * Now recurse through plan tree.
-	 */
-	(void) finalize_plan(root, plan, valid_params, NULL);
-
-	bms_free(valid_params);
-
-	/*
-	 * Finally, attach any initPlans to the topmost plan node, and add their
-	 * extParams to the topmost node's, too.  However, any setParams of the
-	 * initPlans should not be present in the topmost node's extParams, only
-	 * in its allParams.  (As of PG 8.1, it's possible that some initPlans
-	 * have extParams that are setParams of other initPlans, so we have to
-	 * take care of this situation explicitly.)
-	 *
-	 * We also add the eval cost of each initPlan to the startup cost of the
-	 * top node.  This is a conservative overestimate, since in fact each
-	 * initPlan might be executed later than plan startup, or even not at all.
-	 */
-	if (attach_initplans)
-	{
-		plan->initPlan = root->init_plans;
-		root->init_plans = NIL; /* make sure they're not attached twice */
-
-		/* allParam must include all these params */
-		plan->allParam = bms_add_members(plan->allParam, initExtParam);
-		plan->allParam = bms_add_members(plan->allParam, initSetParam);
-		/* extParam must include any child extParam */
-		plan->extParam = bms_add_members(plan->extParam, initExtParam);
-		/* but extParam shouldn't include any setParams */
-		plan->extParam = bms_del_members(plan->extParam, initSetParam);
-		/* ensure extParam is exactly NULL if it's empty */
-		if (bms_is_empty(plan->extParam))
-			plan->extParam = NULL;
-
-		plan->startup_cost += initplan_cost;
-		plan->total_cost += initplan_cost;
-	}
-}
-
-/*
- * Recursive processing of all nodes in the plan tree
- *
- * valid_params is the set of param IDs considered valid to reference in
- * this plan node or its children.
- * scan_params is a set of param IDs to force scan plan nodes to reference.
- * This is for EvalPlanQual support, and is always NULL at the top of the
- * recursion.
- *
- * The return value is the computed allParam set for the given Plan node.
- * This is just an internal notational convenience.
- */
-static Bitmapset *
-finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
-			  Bitmapset *scan_params)
-{
-	finalize_primnode_context context;
-	int			locally_added_param;
-	Bitmapset  *nestloop_params;
-	Bitmapset  *child_params;
-
-	if (plan == NULL)
-		return NULL;
-
-	context.root = root;
-	context.paramids = NULL;	/* initialize set to empty */
-	locally_added_param = -1;	/* there isn't one */
-	nestloop_params = NULL;		/* there aren't any */
+	/* Any setParams are validly referenceable in this node and children */
+	if (initSetParam)
+		valid_params = bms_union(valid_params, initSetParam);
 
 	/*
 	 * When we call finalize_primnode, context.paramids sets are automatically
@@ -2274,18 +2365,21 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 			break;
 
 		case T_SubqueryScan:
+			{
+				SubqueryScan *sscan = (SubqueryScan *) plan;
+				RelOptInfo *rel;
 
-			/*
-			 * In a SubqueryScan, SS_finalize_plan has already been run on the
-			 * subplan by the inner invocation of subquery_planner, so there's
-			 * no need to do it again.  Instead, just pull out the subplan's
-			 * extParams list, which represents the params it needs from my
-			 * level and higher levels.
-			 */
-			context.paramids = bms_add_members(context.paramids,
-								 ((SubqueryScan *) plan)->subplan->extParam);
-			/* We need scan_params too, though */
-			context.paramids = bms_add_members(context.paramids, scan_params);
+				/* We must run SS_finalize_plan on the subquery */
+				rel = find_base_rel(root, sscan->scan.scanrelid);
+				SS_finalize_plan(rel->subroot, sscan->subplan);
+
+				/* Now we can add its extParams to the parent's params */
+				context.paramids = bms_add_members(context.paramids,
+												   sscan->subplan->extParam);
+				/* We need scan_params too, though */
+				context.paramids = bms_add_members(context.paramids,
+												   scan_params);
+			}
 			break;
 
 		case T_FunctionScan:
@@ -2338,7 +2432,8 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 				 * have to do instead is to find the referenced CTE plan and
 				 * incorporate its external paramids, so that the correct
 				 * things will happen if the CTE references outer-level
-				 * variables.  See test cases for bug #4902.
+				 * variables.  See test cases for bug #4902.  (We assume
+				 * SS_finalize_plan was run on the CTE plan already.)
 				 */
 				int			plan_id = ((CteScan *) plan)->ctePlanId;
 				Plan	   *cteplan;
@@ -2426,6 +2521,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 								  &context);
 				finalize_primnode((Node *) mtplan->onConflictWhere,
 								  &context);
+				/* exclRelTlist contains only Vars, doesn't need examination */
 				foreach(l, mtplan->plans)
 				{
 					context.paramids =
@@ -2557,6 +2653,29 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 										 locally_added_param);
 			break;
 
+		case T_Agg:
+			{
+				Agg		   *agg = (Agg *) plan;
+
+				/*
+				 * AGG_HASHED plans need to know which Params are referenced
+				 * in aggregate calls.  Do a separate scan to identify them.
+				 */
+				if (agg->aggstrategy == AGG_HASHED)
+				{
+					finalize_primnode_context aggcontext;
+
+					aggcontext.root = root;
+					aggcontext.paramids = NULL;
+					finalize_agg_primnode((Node *) agg->plan.targetlist,
+										  &aggcontext);
+					finalize_agg_primnode((Node *) agg->plan.qual,
+										  &aggcontext);
+					agg->aggParams = aggcontext.paramids;
+				}
+			}
+			break;
+
 		case T_WindowAgg:
 			finalize_primnode(((WindowAgg *) plan)->startOffset,
 							  &context);
@@ -2565,10 +2684,10 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 			break;
 
 		case T_Hash:
-		case T_Agg:
 		case T_Material:
 		case T_Sort:
 		case T_Unique:
+		case T_Gather:
 		case T_SetOp:
 		case T_Group:
 			break;
@@ -2622,30 +2741,35 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 										  locally_added_param);
 	}
 
-	/* Now we have all the paramids */
+	/* Now we have all the paramids referenced in this node and children */
 
 	if (!bms_is_subset(context.paramids, valid_params))
 		elog(ERROR, "plan should not reference subplan's variable");
 
 	/*
-	 * Note: by definition, extParam and allParam should have the same value
-	 * in any plan node that doesn't have child initPlans.  We set them equal
-	 * here, and later SS_finalize_plan will update them properly in node(s)
-	 * that it attaches initPlans to.
-	 *
+	 * The plan node's allParam and extParam fields should include all its
+	 * referenced paramids, plus contributions from any child initPlans.
+	 * However, any setParams of the initPlans should not be present in the
+	 * parent node's extParams, only in its allParams.  (It's possible that
+	 * some initPlans have extParams that are setParams of other initPlans.)
+	 */
+
+	/* allParam must include initplans' extParams and setParams */
+	plan->allParam = bms_union(context.paramids, initExtParam);
+	plan->allParam = bms_add_members(plan->allParam, initSetParam);
+	/* extParam must include any initplan extParams */
+	plan->extParam = bms_union(context.paramids, initExtParam);
+	/* but not any initplan setParams */
+	plan->extParam = bms_del_members(plan->extParam, initSetParam);
+
+	/*
 	 * For speed at execution time, make sure extParam/allParam are actually
 	 * NULL if they are empty sets.
 	 */
-	if (bms_is_empty(context.paramids))
-	{
+	if (bms_is_empty(plan->extParam))
 		plan->extParam = NULL;
+	if (bms_is_empty(plan->allParam))
 		plan->allParam = NULL;
-	}
-	else
-	{
-		plan->extParam = context.paramids;
-		plan->allParam = bms_copy(context.paramids);
-	}
 
 	return plan->allParam;
 }
@@ -2698,7 +2822,8 @@ finalize_primnode(Node *node, finalize_primnode_context *context)
 
 		/*
 		 * Add params needed by the subplan to paramids, but excluding those
-		 * we will pass down to it.
+		 * we will pass down to it.  (We assume SS_finalize_plan was run on
+		 * the subplan already.)
 		 */
 		subparamids = bms_copy(plan->extParam);
 		foreach(lc, subplan->parParam)
@@ -2714,42 +2839,64 @@ finalize_primnode(Node *node, finalize_primnode_context *context)
 }
 
 /*
- * SS_make_initplan_from_plan - given a plan tree, make it an InitPlan
+ * finalize_agg_primnode: find all Aggref nodes in the given expression tree,
+ * and add IDs of all PARAM_EXEC params appearing within their aggregated
+ * arguments to the result set.
+ */
+static bool
+finalize_agg_primnode(Node *node, finalize_primnode_context *context)
+{
+	if (node == NULL)
+		return false;
+	if (IsA(node, Aggref))
+	{
+		Aggref	   *agg = (Aggref *) node;
+
+		/* we should not consider the direct arguments, if any */
+		finalize_primnode((Node *) agg->args, context);
+		finalize_primnode((Node *) agg->aggfilter, context);
+		return false;			/* there can't be any Aggrefs below here */
+	}
+	return expression_tree_walker(node, finalize_agg_primnode,
+								  (void *) context);
+}
+
+/*
+ * SS_make_initplan_output_param - make a Param for an initPlan's output
  *
  * The plan is expected to return a scalar value of the given type/collation.
- * We build an EXPR_SUBLINK SubPlan node and put it into the initplan
- * list for the current query level.  A Param that represents the initplan's
- * output is returned.
  *
- * We assume the plan hasn't been put through SS_finalize_plan.
+ * Note that in some cases the initplan may not ever appear in the finished
+ * plan tree.  If that happens, we'll have wasted a PARAM_EXEC slot, which
+ * is no big deal.
  */
 Param *
-SS_make_initplan_from_plan(PlannerInfo *root, Plan *plan,
-						   Oid resulttype, int32 resulttypmod,
-						   Oid resultcollation)
+SS_make_initplan_output_param(PlannerInfo *root,
+							  Oid resulttype, int32 resulttypmod,
+							  Oid resultcollation)
+{
+	return generate_new_param(root, resulttype, resulttypmod, resultcollation);
+}
+
+/*
+ * SS_make_initplan_from_plan - given a plan tree, make it an InitPlan
+ *
+ * We build an EXPR_SUBLINK SubPlan node and put it into the initplan
+ * list for the outer query level.  A Param that represents the initplan's
+ * output has already been assigned using SS_make_initplan_output_param.
+ */
+void
+SS_make_initplan_from_plan(PlannerInfo *root,
+						   PlannerInfo *subroot, Plan *plan,
+						   Param *prm)
 {
 	SubPlan    *node;
-	Param	   *prm;
-
-	/*
-	 * We must run SS_finalize_plan(), since that's normally done before a
-	 * subplan gets put into the initplan list.  Tell it not to attach any
-	 * pre-existing initplans to this one, since they are siblings not
-	 * children of this initplan.  (This is something else that could perhaps
-	 * be cleaner if we did extParam/allParam processing in setrefs.c instead
-	 * of here?  See notes for materialize_finished_plan.)
-	 */
-
-	/*
-	 * Build extParam/allParam sets for plan nodes.
-	 */
-	SS_finalize_plan(root, plan, false);
 
 	/*
 	 * Add the subplan and its PlannerInfo to the global lists.
 	 */
 	root->glob->subplans = lappend(root->glob->subplans, plan);
-	root->glob->subroots = lappend(root->glob->subroots, root);
+	root->glob->subroots = lappend(root->glob->subroots, subroot);
 
 	/*
 	 * Create a SubPlan node and add it to the outer list of InitPlans. Note
@@ -2758,9 +2905,12 @@ SS_make_initplan_from_plan(PlannerInfo *root, Plan *plan,
 	 */
 	node = makeNode(SubPlan);
 	node->subLinkType = EXPR_SUBLINK;
+	node->plan_id = list_length(root->glob->subplans);
+	node->plan_name = psprintf("InitPlan %d (returns $%d)",
+							   node->plan_id, prm->paramid);
 	get_first_col_type(plan, &node->firstColType, &node->firstColTypmod,
 					   &node->firstColCollation);
-	node->plan_id = list_length(root->glob->subplans);
+	node->setParam = list_make1_int(prm->paramid);
 
 	root->init_plans = lappend(root->init_plans, node);
 
@@ -2769,17 +2919,6 @@ SS_make_initplan_from_plan(PlannerInfo *root, Plan *plan,
 	 * parParam and args lists remain empty.
 	 */
 
-	cost_subplan(root, node, plan);
-
-	/*
-	 * Make a Param that will be the subplan's output.
-	 */
-	prm = generate_new_param(root, resulttype, resulttypmod, resultcollation);
-	node->setParam = list_make1_int(prm->paramid);
-
-	/* Label the subplan for EXPLAIN purposes */
-	node->plan_name = psprintf("InitPlan %d (returns $%d)",
-							   node->plan_id, prm->paramid);
-
-	return prm;
+	/* Set costs of SubPlan using info from the plan tree */
+	cost_subplan(subroot, node, plan);
 }

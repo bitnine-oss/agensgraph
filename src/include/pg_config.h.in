@@ -84,11 +84,20 @@
 /* Define to 1 if you have the `append_history' function. */
 #undef HAVE_APPEND_HISTORY
 
+/* Define to 1 if you have the `ASN1_STRING_get0_data' function. */
+#undef HAVE_ASN1_STRING_GET0_DATA
+
 /* Define to 1 if you want to use atomics if available. */
 #undef HAVE_ATOMICS
 
 /* Define to 1 if you have the <atomic.h> header file. */
 #undef HAVE_ATOMIC_H
+
+/* Define to 1 if you have the `BIO_get_data' function. */
+#undef HAVE_BIO_GET_DATA
+
+/* Define to 1 if you have the `BIO_meth_new' function. */
+#undef HAVE_BIO_METH_NEW
 
 /* Define to 1 if you have the `cbrt' function. */
 #undef HAVE_CBRT
@@ -101,6 +110,9 @@
 
 /* Define to 1 if you have the `crypt' function. */
 #undef HAVE_CRYPT
+
+/* Define to 1 if you have the `CRYPTO_lock' function. */
+#undef HAVE_CRYPTO_LOCK
 
 /* Define to 1 if you have the <crypt.h> header file. */
 #undef HAVE_CRYPT_H
@@ -364,6 +376,9 @@
 /* Define to 1 if you have the <net/if.h> header file. */
 #undef HAVE_NET_IF_H
 
+/* Define to 1 if you have the `OPENSSL_init_ssl' function. */
+#undef HAVE_OPENSSL_INIT_SSL
+
 /* Define to 1 if you have the <ossp/uuid.h> header file. */
 #undef HAVE_OSSP_UUID_H
 
@@ -379,9 +394,6 @@
 /* Define to 1 if you have the `posix_fadvise' function. */
 #undef HAVE_POSIX_FADVISE
 
-/* Define to 1 if you have the POSIX signal interface. */
-#undef HAVE_POSIX_SIGNALS
-
 /* Define to 1 if the assembler supports PPC's LWARX mutex hint bit. */
 #undef HAVE_PPC_LWARX_MUTEX_HINT
 
@@ -391,14 +403,23 @@
 /* Define to 1 if the PS_STRINGS thing exists. */
 #undef HAVE_PS_STRINGS
 
+/* Define if you have POSIX threads libraries and header files. */
+#undef HAVE_PTHREAD
+
 /* Define to 1 if you have the `pthread_is_threaded_np' function. */
 #undef HAVE_PTHREAD_IS_THREADED_NP
+
+/* Have PTHREAD_PRIO_INHERIT. */
+#undef HAVE_PTHREAD_PRIO_INHERIT
 
 /* Define to 1 if you have the <pwd.h> header file. */
 #undef HAVE_PWD_H
 
 /* Define to 1 if you have the `random' function. */
 #undef HAVE_RANDOM
+
+/* Define to 1 if you have the `RAND_OpenSSL' function. */
+#undef HAVE_RAND_OPENSSL
 
 /* Define to 1 if you have the <readline.h> header file. */
 #undef HAVE_READLINE_H
@@ -439,15 +460,6 @@
 
 /* Define to 1 if you have the `shm_open' function. */
 #undef HAVE_SHM_OPEN
-
-/* Define to 1 if you have the `sigprocmask' function. */
-#undef HAVE_SIGPROCMASK
-
-/* Define to 1 if you have sigsetjmp(). */
-#undef HAVE_SIGSETJMP
-
-/* Define to 1 if the system has the type `sig_atomic_t'. */
-#undef HAVE_SIG_ATOMIC_T
 
 /* Define to 1 if you have the `snprintf' function. */
 #undef HAVE_SNPRINTF
@@ -535,6 +547,9 @@
 
 /* Define to 1 if you have the syslog interface. */
 #undef HAVE_SYSLOG
+
+/* Define to 1 if you have the <sys/epoll.h> header file. */
+#undef HAVE_SYS_EPOLL_H
 
 /* Define to 1 if you have the <sys/ioctl.h> header file. */
 #undef HAVE_SYS_IOCTL_H
@@ -669,6 +684,9 @@
 /* Define to 1 if your compiler understands __builtin_bswap32. */
 #undef HAVE__BUILTIN_BSWAP32
 
+/* Define to 1 if your compiler understands __builtin_bswap64. */
+#undef HAVE__BUILTIN_BSWAP64
+
 /* Define to 1 if your compiler understands __builtin_constant_p. */
 #undef HAVE__BUILTIN_CONSTANT_P
 
@@ -736,10 +754,6 @@
 /* Define to gnu_printf if compiler supports it, else printf. */
 #undef PG_PRINTF_ATTRIBUTE
 
-/* Define to 1 if "static inline" works without unwanted warnings from
-   compilations where static inline functions are defined but not called. */
-#undef PG_USE_INLINE
-
 /* PostgreSQL version as a string */
 #undef PG_VERSION
 
@@ -752,6 +766,10 @@
 /* Define to 1 to allow profiling output to be saved separately for each
    process. */
 #undef PROFILE_PID_DIR
+
+/* Define to necessary symbol if this constant uses a non-standard name on
+   your system. */
+#undef PTHREAD_CREATE_JOINABLE
 
 /* RELSEG_SIZE is the maximum number of blocks allowed in one disk file. Thus,
    the maximum size of a single file is RELSEG_SIZE * BLCKSZ; relations bigger
@@ -792,6 +810,9 @@
 
 /* Define to 1 to build with Bonjour support. (--with-bonjour) */
 #undef USE_BONJOUR
+
+/* Define to 1 to build with BSD Authentication support. (--with-bsd-auth) */
+#undef USE_BSD_AUTH
 
 /* Define to 1 if you want float4 values to be passed by value.
    (--enable-float4-byval) */
@@ -836,6 +857,9 @@
 /* Define to 1 to use Intel SSSE 4.2 CRC instructions with a runtime check. */
 #undef USE_SSE42_CRC32C_WITH_RUNTIME_CHECK
 
+/* Define to build with systemd support. (--with-systemd) */
+#undef USE_SYSTEMD
+
 /* Define to select SysV-style semaphores. */
 #undef USE_SYSV_SEMAPHORES
 
@@ -850,6 +874,9 @@
 
 /* Define to select Win32-style shared memory. */
 #undef USE_WIN32_SHARED_MEMORY
+
+/* Define to 1 if `wcstombs_l' requires <xlocale.h>. */
+#undef WCSTOMBS_L_IN_XLOCALE
 
 /* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
    significant byte first (like Motorola and SPARC, unlike Intel). */

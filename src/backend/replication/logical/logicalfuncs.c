@@ -6,7 +6,7 @@
  *	   logical replication slots via SQL.
  *
  *
- * Copyright (c) 2012-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logicalfuncs.c
@@ -22,6 +22,9 @@
 #include "miscadmin.h"
 
 #include "access/xlog_internal.h"
+#include "access/xlogutils.h"
+
+#include "access/xact.h"
 
 #include "catalog/pg_type.h"
 
@@ -40,6 +43,7 @@
 #include "replication/decode.h"
 #include "replication/logical.h"
 #include "replication/logicalfuncs.h"
+#include "replication/message.h"
 
 #include "storage/fd.h"
 
@@ -100,108 +104,6 @@ LogicalOutputWrite(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xi
 	p->returned_rows++;
 }
 
-/*
- * TODO: This is duplicate code with pg_xlogdump, similar to walsender.c, but
- * we currently don't have the infrastructure (elog!) to share it.
- */
-static void
-XLogRead(char *buf, TimeLineID tli, XLogRecPtr startptr, Size count)
-{
-	char	   *p;
-	XLogRecPtr	recptr;
-	Size		nbytes;
-
-	static int	sendFile = -1;
-	static XLogSegNo sendSegNo = 0;
-	static uint32 sendOff = 0;
-
-	p = buf;
-	recptr = startptr;
-	nbytes = count;
-
-	while (nbytes > 0)
-	{
-		uint32		startoff;
-		int			segbytes;
-		int			readbytes;
-
-		startoff = recptr % XLogSegSize;
-
-		if (sendFile < 0 || !XLByteInSeg(recptr, sendSegNo))
-		{
-			char		path[MAXPGPATH];
-
-			/* Switch to another logfile segment */
-			if (sendFile >= 0)
-				close(sendFile);
-
-			XLByteToSeg(recptr, sendSegNo);
-
-			XLogFilePath(path, tli, sendSegNo);
-
-			sendFile = BasicOpenFile(path, O_RDONLY | PG_BINARY, 0);
-
-			if (sendFile < 0)
-			{
-				if (errno == ENOENT)
-					ereport(ERROR,
-							(errcode_for_file_access(),
-							 errmsg("requested WAL segment %s has already been removed",
-									path)));
-				else
-					ereport(ERROR,
-							(errcode_for_file_access(),
-							 errmsg("could not open file \"%s\": %m",
-									path)));
-			}
-			sendOff = 0;
-		}
-
-		/* Need to seek in the file? */
-		if (sendOff != startoff)
-		{
-			if (lseek(sendFile, (off_t) startoff, SEEK_SET) < 0)
-			{
-				char		path[MAXPGPATH];
-
-				XLogFilePath(path, tli, sendSegNo);
-
-				ereport(ERROR,
-						(errcode_for_file_access(),
-				  errmsg("could not seek in log segment %s to offset %u: %m",
-						 path, startoff)));
-			}
-			sendOff = startoff;
-		}
-
-		/* How many bytes are within this segment? */
-		if (nbytes > (XLogSegSize - startoff))
-			segbytes = XLogSegSize - startoff;
-		else
-			segbytes = nbytes;
-
-		readbytes = read(sendFile, p, segbytes);
-		if (readbytes <= 0)
-		{
-			char		path[MAXPGPATH];
-
-			XLogFilePath(path, tli, sendSegNo);
-
-			ereport(ERROR,
-					(errcode_for_file_access(),
-					 errmsg("could not read from log segment %s, offset %u, length %lu: %m",
-							path, sendOff, (unsigned long) segbytes)));
-		}
-
-		/* Update state for read */
-		recptr += readbytes;
-
-		sendOff += readbytes;
-		nbytes -= readbytes;
-		p += readbytes;
-	}
-}
-
 static void
 check_permissions(void)
 {
@@ -211,63 +113,12 @@ check_permissions(void)
 				 (errmsg("must be superuser or replication role to use replication slots"))));
 }
 
-/*
- * read_page callback for logical decoding contexts.
- *
- * Public because it would likely be very helpful for someone writing another
- * output method outside walsender, e.g. in a bgworker.
- *
- * TODO: The walsender has it's own version of this, but it relies on the
- * walsender's latch being set whenever WAL is flushed. No such infrastructure
- * exists for normal backends, so we have to do a check/sleep/repeat style of
- * loop for now.
- */
 int
 logical_read_local_xlog_page(XLogReaderState *state, XLogRecPtr targetPagePtr,
 	int reqLen, XLogRecPtr targetRecPtr, char *cur_page, TimeLineID *pageTLI)
 {
-	XLogRecPtr	flushptr,
-				loc;
-	int			count;
-
-	loc = targetPagePtr + reqLen;
-	while (1)
-	{
-		/*
-		 * TODO: we're going to have to do something more intelligent about
-		 * timelines on standbys. Use readTimeLineHistory() and
-		 * tliOfPointInHistory() to get the proper LSN? For now we'll catch
-		 * that case earlier, but the code and TODO is left in here for when
-		 * that changes.
-		 */
-		if (!RecoveryInProgress())
-		{
-			*pageTLI = ThisTimeLineID;
-			flushptr = GetFlushRecPtr();
-		}
-		else
-			flushptr = GetXLogReplayRecPtr(pageTLI);
-
-		if (loc <= flushptr)
-			break;
-
-		CHECK_FOR_INTERRUPTS();
-		pg_usleep(1000L);
-	}
-
-	/* more than one block available */
-	if (targetPagePtr + XLOG_BLCKSZ <= flushptr)
-		count = XLOG_BLCKSZ;
-	/* not enough data there */
-	else if (targetPagePtr + reqLen > flushptr)
-		return -1;
-	/* part of the page available */
-	else
-		count = flushptr - targetPagePtr;
-
-	XLogRead(cur_page, *pageTLI, targetPagePtr, XLOG_BLCKSZ);
-
-	return count;
+	return read_local_xlog_page(state, targetPagePtr, reqLen,
+								targetRecPtr, cur_page, pageTLI);
 }
 
 /*
@@ -393,6 +244,7 @@ pg_logical_slot_get_changes_guts(FunctionCallInfo fcinfo, bool confirm, bool bin
 
 	PG_TRY();
 	{
+		/* restart at slot's confirmed_flush */
 		ctx = CreateDecodingContext(InvalidXLogRecPtr,
 									options,
 									logical_read_local_xlog_page,
@@ -415,6 +267,11 @@ pg_logical_slot_get_changes_guts(FunctionCallInfo fcinfo, bool confirm, bool bin
 
 		ctx->output_writer_private = p;
 
+		/*
+		 * Decoding of WAL must start at restart_lsn so that the entirety of
+		 * xacts that committed after the slot's confirmed_flush can be
+		 * accumulated into reorder buffers.
+		 */
 		startptr = MyReplicationSlot->data.restart_lsn;
 
 		CurrentResourceOwner = ResourceOwnerCreate(CurrentResourceOwner, "logical decoding");
@@ -423,7 +280,7 @@ pg_logical_slot_get_changes_guts(FunctionCallInfo fcinfo, bool confirm, bool bin
 		InvalidateSystemCaches();
 
 		while ((startptr != InvalidXLogRecPtr && startptr < end_of_wal) ||
-			 (ctx->reader->EndRecPtr && ctx->reader->EndRecPtr < end_of_wal))
+			   (ctx->reader->EndRecPtr != InvalidXLogRecPtr && ctx->reader->EndRecPtr < end_of_wal))
 		{
 			XLogRecord *record;
 			char	   *errm = NULL;
@@ -432,6 +289,10 @@ pg_logical_slot_get_changes_guts(FunctionCallInfo fcinfo, bool confirm, bool bin
 			if (errm)
 				elog(ERROR, "%s", errm);
 
+			/*
+			 * Now that we've set up the xlog reader state, subsequent calls
+			 * pass InvalidXLogRecPtr to say "continue from last record"
+			 */
 			startptr = InvalidXLogRecPtr;
 
 			/*
@@ -514,4 +375,28 @@ Datum
 pg_logical_slot_peek_binary_changes(PG_FUNCTION_ARGS)
 {
 	return pg_logical_slot_get_changes_guts(fcinfo, false, true);
+}
+
+
+/*
+ * SQL function for writing logical decoding message into WAL.
+ */
+Datum
+pg_logical_emit_message_bytea(PG_FUNCTION_ARGS)
+{
+	bool		transactional = PG_GETARG_BOOL(0);
+	char	   *prefix = text_to_cstring(PG_GETARG_TEXT_PP(1));
+	bytea	   *data = PG_GETARG_BYTEA_PP(2);
+	XLogRecPtr	lsn;
+
+	lsn = LogLogicalMessage(prefix, VARDATA_ANY(data), VARSIZE_ANY_EXHDR(data),
+							transactional);
+	PG_RETURN_LSN(lsn);
+}
+
+Datum
+pg_logical_emit_message_text(PG_FUNCTION_ARGS)
+{
+	/* bytea and text are compatible */
+	return pg_logical_emit_message_bytea(fcinfo);
 }

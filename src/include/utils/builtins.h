@@ -4,7 +4,7 @@
  *	  Declarations for operations on built-in types.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/builtins.h
@@ -16,6 +16,7 @@
 
 #include "fmgr.h"
 #include "nodes/parsenodes.h"
+#include "utils/sortsupport.h"
 
 /*
  *		Defined in adt/
@@ -106,6 +107,11 @@ extern Datum pg_has_role_id_name(PG_FUNCTION_ARGS);
 extern Datum pg_has_role_id_id(PG_FUNCTION_ARGS);
 extern Datum pg_has_role_name(PG_FUNCTION_ARGS);
 extern Datum pg_has_role_id(PG_FUNCTION_ARGS);
+
+/* amutils.c */
+extern Datum pg_indexam_has_property(PG_FUNCTION_ARGS);
+extern Datum pg_index_has_property(PG_FUNCTION_ARGS);
+extern Datum pg_index_column_has_property(PG_FUNCTION_ARGS);
 
 /* bool.c */
 extern Datum boolin(PG_FUNCTION_ARGS);
@@ -289,6 +295,9 @@ extern int32 pg_atoi(const char *s, int size, int c);
 extern void pg_itoa(int16 i, char *a);
 extern void pg_ltoa(int32 l, char *a);
 extern void pg_lltoa(int64 ll, char *a);
+extern char *pg_ltostr_zeropad(char *str, int32 value, int32 minwidth);
+extern char *pg_ltostr(char *str, int32 value);
+extern uint64 pg_strtouint64(const char *str, char **endptr, int base);
 
 /*
  *		Per-opclass comparison functions for new btrees.  These are
@@ -339,6 +348,11 @@ extern float get_float4_infinity(void);
 extern double get_float8_nan(void);
 extern float get_float4_nan(void);
 extern int	is_infinite(double val);
+extern double float8in_internal(char *num, char **endptr_p,
+				  const char *type_name, const char *orig_string);
+extern char *float8out_internal(double num);
+extern int	float4_cmp_internal(float4 a, float4 b);
+extern int	float8_cmp_internal(float8 a, float8 b);
 
 extern Datum float4in(PG_FUNCTION_ARGS);
 extern Datum float4out(PG_FUNCTION_ARGS);
@@ -407,11 +421,20 @@ extern Datum dcos(PG_FUNCTION_ARGS);
 extern Datum dcot(PG_FUNCTION_ARGS);
 extern Datum dsin(PG_FUNCTION_ARGS);
 extern Datum dtan(PG_FUNCTION_ARGS);
+extern Datum dacosd(PG_FUNCTION_ARGS);
+extern Datum dasind(PG_FUNCTION_ARGS);
+extern Datum datand(PG_FUNCTION_ARGS);
+extern Datum datan2d(PG_FUNCTION_ARGS);
+extern Datum dcosd(PG_FUNCTION_ARGS);
+extern Datum dcotd(PG_FUNCTION_ARGS);
+extern Datum dsind(PG_FUNCTION_ARGS);
+extern Datum dtand(PG_FUNCTION_ARGS);
 extern Datum degrees(PG_FUNCTION_ARGS);
 extern Datum dpi(PG_FUNCTION_ARGS);
 extern Datum radians(PG_FUNCTION_ARGS);
 extern Datum drandom(PG_FUNCTION_ARGS);
 extern Datum setseed(PG_FUNCTION_ARGS);
+extern Datum float8_combine(PG_FUNCTION_ARGS);
 extern Datum float8_accum(PG_FUNCTION_ARGS);
 extern Datum float4_accum(PG_FUNCTION_ARGS);
 extern Datum float8_avg(PG_FUNCTION_ARGS);
@@ -420,6 +443,7 @@ extern Datum float8_var_samp(PG_FUNCTION_ARGS);
 extern Datum float8_stddev_pop(PG_FUNCTION_ARGS);
 extern Datum float8_stddev_samp(PG_FUNCTION_ARGS);
 extern Datum float8_regr_accum(PG_FUNCTION_ARGS);
+extern Datum float8_regr_combine(PG_FUNCTION_ARGS);
 extern Datum float8_regr_sxx(PG_FUNCTION_ARGS);
 extern Datum float8_regr_syy(PG_FUNCTION_ARGS);
 extern Datum float8_regr_sxy(PG_FUNCTION_ARGS);
@@ -462,6 +486,7 @@ extern Datum pg_relation_size(PG_FUNCTION_ARGS);
 extern Datum pg_total_relation_size(PG_FUNCTION_ARGS);
 extern Datum pg_size_pretty(PG_FUNCTION_ARGS);
 extern Datum pg_size_pretty_numeric(PG_FUNCTION_ARGS);
+extern Datum pg_size_bytes(PG_FUNCTION_ARGS);
 extern Datum pg_table_size(PG_FUNCTION_ARGS);
 extern Datum pg_indexes_size(PG_FUNCTION_ARGS);
 extern Datum pg_relation_filenode(PG_FUNCTION_ARGS);
@@ -481,6 +506,8 @@ extern Datum pg_ls_dir(PG_FUNCTION_ARGS);
 extern Datum pg_ls_dir_1arg(PG_FUNCTION_ARGS);
 
 /* misc.c */
+extern Datum pg_num_nulls(PG_FUNCTION_ARGS);
+extern Datum pg_num_nonnulls(PG_FUNCTION_ARGS);
 extern Datum current_database(PG_FUNCTION_ARGS);
 extern Datum current_query(PG_FUNCTION_ARGS);
 extern Datum pg_cancel_backend(PG_FUNCTION_ARGS);
@@ -495,6 +522,7 @@ extern Datum pg_typeof(PG_FUNCTION_ARGS);
 extern Datum pg_collation_for(PG_FUNCTION_ARGS);
 extern Datum pg_relation_is_updatable(PG_FUNCTION_ARGS);
 extern Datum pg_column_is_updatable(PG_FUNCTION_ARGS);
+extern Datum parse_ident(PG_FUNCTION_ARGS);
 
 /* oid.c */
 extern Datum oidin(PG_FUNCTION_ARGS);
@@ -566,6 +594,8 @@ extern Datum language_handler_in(PG_FUNCTION_ARGS);
 extern Datum language_handler_out(PG_FUNCTION_ARGS);
 extern Datum fdw_handler_in(PG_FUNCTION_ARGS);
 extern Datum fdw_handler_out(PG_FUNCTION_ARGS);
+extern Datum index_am_handler_in(PG_FUNCTION_ARGS);
+extern Datum index_am_handler_out(PG_FUNCTION_ARGS);
 extern Datum tsm_handler_in(PG_FUNCTION_ARGS);
 extern Datum tsm_handler_out(PG_FUNCTION_ARGS);
 extern Datum internal_in(PG_FUNCTION_ARGS);
@@ -751,8 +781,10 @@ extern Datum bpcharle(PG_FUNCTION_ARGS);
 extern Datum bpchargt(PG_FUNCTION_ARGS);
 extern Datum bpcharge(PG_FUNCTION_ARGS);
 extern Datum bpcharcmp(PG_FUNCTION_ARGS);
+extern Datum bpchar_sortsupport(PG_FUNCTION_ARGS);
 extern Datum bpchar_larger(PG_FUNCTION_ARGS);
 extern Datum bpchar_smaller(PG_FUNCTION_ARGS);
+extern int	bpchartruelen(char *s, int len);
 extern Datum bpcharlen(PG_FUNCTION_ARGS);
 extern Datum bpcharoctetlen(PG_FUNCTION_ARGS);
 extern Datum hashbpchar(PG_FUNCTION_ARGS);
@@ -761,6 +793,7 @@ extern Datum bpchar_pattern_le(PG_FUNCTION_ARGS);
 extern Datum bpchar_pattern_gt(PG_FUNCTION_ARGS);
 extern Datum bpchar_pattern_ge(PG_FUNCTION_ARGS);
 extern Datum btbpchar_pattern_cmp(PG_FUNCTION_ARGS);
+extern Datum btbpchar_pattern_sortsupport(PG_FUNCTION_ARGS);
 
 extern Datum varcharin(PG_FUNCTION_ARGS);
 extern Datum varcharout(PG_FUNCTION_ARGS);
@@ -798,6 +831,7 @@ extern Datum text_pattern_le(PG_FUNCTION_ARGS);
 extern Datum text_pattern_gt(PG_FUNCTION_ARGS);
 extern Datum text_pattern_ge(PG_FUNCTION_ARGS);
 extern Datum bttext_pattern_cmp(PG_FUNCTION_ARGS);
+extern Datum bttext_pattern_sortsupport(PG_FUNCTION_ARGS);
 extern Datum textlen(PG_FUNCTION_ARGS);
 extern Datum textoctetlen(PG_FUNCTION_ARGS);
 extern Datum textpos(PG_FUNCTION_ARGS);
@@ -808,6 +842,7 @@ extern Datum textoverlay_no_len(PG_FUNCTION_ARGS);
 extern Datum name_text(PG_FUNCTION_ARGS);
 extern Datum text_name(PG_FUNCTION_ARGS);
 extern int	varstr_cmp(char *arg1, int len1, char *arg2, int len2, Oid collid);
+extern void varstr_sortsupport(SortSupport ssup, Oid collid, bool bpchar);
 extern int varstr_levenshtein(const char *source, int slen,
 				   const char *target, int tlen,
 				   int ins_c, int del_c, int sub_c,
@@ -863,6 +898,7 @@ extern Datum xidout(PG_FUNCTION_ARGS);
 extern Datum xidrecv(PG_FUNCTION_ARGS);
 extern Datum xidsend(PG_FUNCTION_ARGS);
 extern Datum xideq(PG_FUNCTION_ARGS);
+extern Datum xidneq(PG_FUNCTION_ARGS);
 extern Datum xid_age(PG_FUNCTION_ARGS);
 extern Datum mxid_age(PG_FUNCTION_ARGS);
 extern int	xidComparator(const void *arg1, const void *arg2);
@@ -1024,6 +1060,7 @@ extern Datum numeric_exp(PG_FUNCTION_ARGS);
 extern Datum numeric_ln(PG_FUNCTION_ARGS);
 extern Datum numeric_log(PG_FUNCTION_ARGS);
 extern Datum numeric_power(PG_FUNCTION_ARGS);
+extern Datum numeric_scale(PG_FUNCTION_ARGS);
 extern Datum int4_numeric(PG_FUNCTION_ARGS);
 extern Datum numeric_int4(PG_FUNCTION_ARGS);
 extern Datum int8_numeric(PG_FUNCTION_ARGS);
@@ -1036,15 +1073,27 @@ extern Datum numeric_float8_no_overflow(PG_FUNCTION_ARGS);
 extern Datum float4_numeric(PG_FUNCTION_ARGS);
 extern Datum numeric_float4(PG_FUNCTION_ARGS);
 extern Datum numeric_accum(PG_FUNCTION_ARGS);
+extern Datum numeric_combine(PG_FUNCTION_ARGS);
 extern Datum numeric_avg_accum(PG_FUNCTION_ARGS);
+extern Datum numeric_avg_combine(PG_FUNCTION_ARGS);
+extern Datum numeric_avg_serialize(PG_FUNCTION_ARGS);
+extern Datum numeric_avg_deserialize(PG_FUNCTION_ARGS);
+extern Datum numeric_serialize(PG_FUNCTION_ARGS);
+extern Datum numeric_deserialize(PG_FUNCTION_ARGS);
 extern Datum numeric_accum_inv(PG_FUNCTION_ARGS);
 extern Datum int2_accum(PG_FUNCTION_ARGS);
 extern Datum int4_accum(PG_FUNCTION_ARGS);
 extern Datum int8_accum(PG_FUNCTION_ARGS);
+extern Datum numeric_poly_combine(PG_FUNCTION_ARGS);
+extern Datum numeric_poly_serialize(PG_FUNCTION_ARGS);
+extern Datum numeric_poly_deserialize(PG_FUNCTION_ARGS);
 extern Datum int2_accum_inv(PG_FUNCTION_ARGS);
 extern Datum int4_accum_inv(PG_FUNCTION_ARGS);
 extern Datum int8_accum_inv(PG_FUNCTION_ARGS);
 extern Datum int8_avg_accum(PG_FUNCTION_ARGS);
+extern Datum int8_avg_combine(PG_FUNCTION_ARGS);
+extern Datum int8_avg_serialize(PG_FUNCTION_ARGS);
+extern Datum int8_avg_deserialize(PG_FUNCTION_ARGS);
 extern Datum numeric_avg(PG_FUNCTION_ARGS);
 extern Datum numeric_sum(PG_FUNCTION_ARGS);
 extern Datum numeric_var_pop(PG_FUNCTION_ARGS);
@@ -1062,6 +1111,7 @@ extern Datum int4_sum(PG_FUNCTION_ARGS);
 extern Datum int8_sum(PG_FUNCTION_ARGS);
 extern Datum int2_avg_accum(PG_FUNCTION_ARGS);
 extern Datum int4_avg_accum(PG_FUNCTION_ARGS);
+extern Datum int4_avg_combine(PG_FUNCTION_ARGS);
 extern Datum int2_avg_accum_inv(PG_FUNCTION_ARGS);
 extern Datum int4_avg_accum_inv(PG_FUNCTION_ARGS);
 extern Datum int8_avg_accum_inv(PG_FUNCTION_ARGS);
@@ -1108,6 +1158,7 @@ extern Datum format_type(PG_FUNCTION_ARGS);
 extern char *format_type_be(Oid type_oid);
 extern char *format_type_be_qualified(Oid type_oid);
 extern char *format_type_with_typemod(Oid type_oid, int32 typemod);
+extern char *format_type_with_typemod_qualified(Oid type_oid, int32 typemod);
 extern Datum oidvectortypes(PG_FUNCTION_ARGS);
 extern int32 type_maximum_size(Oid type_oid, int32 typemod);
 
@@ -1119,9 +1170,19 @@ extern Datum quote_nullable(PG_FUNCTION_ARGS);
 
 /* guc.c */
 extern Datum show_config_by_name(PG_FUNCTION_ARGS);
+extern Datum show_config_by_name_missing_ok(PG_FUNCTION_ARGS);
 extern Datum set_config_by_name(PG_FUNCTION_ARGS);
 extern Datum show_all_settings(PG_FUNCTION_ARGS);
 extern Datum show_all_file_settings(PG_FUNCTION_ARGS);
+
+/* pg_config.c */
+extern Datum pg_config(PG_FUNCTION_ARGS);
+
+/* pg_controldata.c */
+extern Datum pg_control_checkpoint(PG_FUNCTION_ARGS);
+extern Datum pg_control_system(PG_FUNCTION_ARGS);
+extern Datum pg_control_init(PG_FUNCTION_ARGS);
+extern Datum pg_control_recovery(PG_FUNCTION_ARGS);
 
 /* rls.c */
 extern Datum row_security_active(PG_FUNCTION_ARGS);
@@ -1129,6 +1190,7 @@ extern Datum row_security_active_name(PG_FUNCTION_ARGS);
 
 /* lockfuncs.c */
 extern Datum pg_lock_status(PG_FUNCTION_ARGS);
+extern Datum pg_blocking_pids(PG_FUNCTION_ARGS);
 extern Datum pg_advisory_lock_int8(PG_FUNCTION_ARGS);
 extern Datum pg_advisory_xact_lock_int8(PG_FUNCTION_ARGS);
 extern Datum pg_advisory_lock_shared_int8(PG_FUNCTION_ARGS);
@@ -1175,6 +1237,7 @@ extern Datum uuid_ge(PG_FUNCTION_ARGS);
 extern Datum uuid_gt(PG_FUNCTION_ARGS);
 extern Datum uuid_ne(PG_FUNCTION_ARGS);
 extern Datum uuid_cmp(PG_FUNCTION_ARGS);
+extern Datum uuid_sortsupport(PG_FUNCTION_ARGS);
 extern Datum uuid_hash(PG_FUNCTION_ARGS);
 
 /* windowfuncs.c */

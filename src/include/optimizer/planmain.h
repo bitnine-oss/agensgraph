@@ -4,7 +4,7 @@
  *	  prototypes for various files in optimizer/plan
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/planmain.h
@@ -17,9 +17,18 @@
 #include "nodes/plannodes.h"
 #include "nodes/relation.h"
 
+/* possible values for force_parallel_mode */
+typedef enum
+{
+	FORCE_PARALLEL_OFF,
+	FORCE_PARALLEL_ON,
+	FORCE_PARALLEL_REGRESS
+}	ForceParallelMode;
+
 /* GUC parameters */
 #define DEFAULT_CURSOR_TUPLE_FRACTION 0.1
 extern double cursor_tuple_fraction;
+extern int	force_parallel_mode;
 
 /* query_planner callback to compute query_pathkeys */
 typedef void (*query_pathkeys_callback) (PlannerInfo *root, void *extra);
@@ -34,66 +43,31 @@ extern RelOptInfo *query_planner(PlannerInfo *root, List *tlist,
  * prototypes for plan/planagg.c
  */
 extern void preprocess_minmax_aggregates(PlannerInfo *root, List *tlist);
-extern Plan *optimize_minmax_aggregates(PlannerInfo *root, List *tlist,
-						   const AggClauseCosts *aggcosts, Path *best_path);
 
 /*
  * prototypes for plan/createplan.c
  */
 extern Plan *create_plan(PlannerInfo *root, Path *best_path);
-extern SubqueryScan *make_subqueryscan(List *qptlist, List *qpqual,
-				  Index scanrelid, Plan *subplan);
 extern ForeignScan *make_foreignscan(List *qptlist, List *qpqual,
 				 Index scanrelid, List *fdw_exprs, List *fdw_private,
 				 List *fdw_scan_tlist, List *fdw_recheck_quals,
 				 Plan *outer_plan);
-extern Append *make_append(List *appendplans, List *tlist);
-extern RecursiveUnion *make_recursive_union(List *tlist,
-					 Plan *lefttree, Plan *righttree, int wtParam,
-					 List *distinctList, long numGroups);
-extern Sort *make_sort_from_pathkeys(PlannerInfo *root, Plan *lefttree,
-						List *pathkeys, double limit_tuples);
-extern Sort *make_sort_from_sortclauses(PlannerInfo *root, List *sortcls,
-						   Plan *lefttree);
-extern Sort *make_sort_from_groupcols(PlannerInfo *root, List *groupcls,
-						 AttrNumber *grpColIdx, Plan *lefttree);
-extern Agg *make_agg(PlannerInfo *root, List *tlist, List *qual,
-		 AggStrategy aggstrategy, const AggClauseCosts *aggcosts,
-		 int numGroupCols, AttrNumber *grpColIdx, Oid *grpOperators,
-		 List *groupingSets,
-		 long numGroups,
-		 Plan *lefttree);
-extern WindowAgg *make_windowagg(PlannerInfo *root, List *tlist,
-			   List *windowFuncs, Index winref,
-			   int partNumCols, AttrNumber *partColIdx, Oid *partOperators,
-			   int ordNumCols, AttrNumber *ordColIdx, Oid *ordOperators,
-			   int frameOptions, Node *startOffset, Node *endOffset,
-			   Plan *lefttree);
-extern Group *make_group(PlannerInfo *root, List *tlist, List *qual,
-		   int numGroupCols, AttrNumber *grpColIdx, Oid *grpOperators,
-		   double numGroups,
-		   Plan *lefttree);
 extern Plan *materialize_finished_plan(Plan *subplan);
-extern Unique *make_unique(Plan *lefttree, List *distinctList);
-extern LockRows *make_lockrows(Plan *lefttree, List *rowMarks, int epqParam);
-extern Limit *make_limit(Plan *lefttree, Node *limitOffset, Node *limitCount,
-		   int64 offset_est, int64 count_est);
-extern SetOp *make_setop(SetOpCmd cmd, SetOpStrategy strategy, Plan *lefttree,
-		   List *distinctList, AttrNumber flagColIdx, int firstFlag,
-		   long numGroups, double outputRows);
-extern Result *make_result(PlannerInfo *root, List *tlist,
-			Node *resconstantqual, Plan *subplan);
-extern ModifyTable *make_modifytable(PlannerInfo *root,
-				 CmdType operation, bool canSetTag,
-				 Index nominalRelation,
-				 List *resultRelations, List *subplans,
-				 List *withCheckOptionLists, List *returningLists,
-				 List *rowMarks, OnConflictExpr *onconflict, int epqParam);
+extern bool is_projection_capable_path(Path *path);
 extern bool is_projection_capable_plan(Plan *plan);
 extern ModifyGraph *make_modifygraph(PlannerInfo *root, bool canSetTag,
 									 GraphWriteOp operation, bool last,
 									 bool detach, Plan *subplan, List *pattern,
 									 List *exprs);
+
+/* External use of these functions is deprecated: */
+extern Sort *make_sort_from_sortclauses(List *sortcls, Plan *lefttree);
+extern Agg *make_agg(List *tlist, List *qual,
+		 AggStrategy aggstrategy, AggSplit aggsplit,
+		 int numGroupCols, AttrNumber *grpColIdx, Oid *grpOperators,
+		 List *groupingSets, List *chain,
+		 double dNumGroups, Plan *lefttree);
+extern Limit *make_limit(Plan *lefttree, Node *limitOffset, Node *limitCount);
 
 /*
  * prototypes for plan/initsplan.c
@@ -125,6 +99,7 @@ extern RestrictInfo *build_implied_join_equality(Oid opno,
 							Expr *item2,
 							Relids qualscope,
 							Relids nullable_relids);
+extern void match_foreign_keys_to_quals(PlannerInfo *root);
 
 /*
  * prototypes for plan/analyzejoins.c
@@ -137,9 +112,6 @@ extern bool query_is_distinct_for(Query *query, List *colnos, List *opids);
  * prototypes for plan/setrefs.c
  */
 extern Plan *set_plan_references(PlannerInfo *root, Plan *plan);
-extern void fix_opfuncids(Node *node);
-extern void set_opfuncid(OpExpr *opexpr);
-extern void set_sa_opfuncid(ScalarArrayOpExpr *opexpr);
 extern void record_plan_function_dependency(PlannerInfo *root, Oid funcid);
 extern void extract_query_dependencies(Node *query,
 						   List **relationOids,

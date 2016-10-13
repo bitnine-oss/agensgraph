@@ -96,7 +96,7 @@
  * is a convenient point to initialize replication from, which is why we
  * export a snapshot at that point, which *can* be used to read normal data.
  *
- * Copyright (c) 2012-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/snapbuild.c
@@ -289,9 +289,7 @@ AllocateSnapshotBuilder(ReorderBuffer *reorder,
 	/* allocate memory in own context, to have better accountability */
 	context = AllocSetContextCreate(CurrentMemoryContext,
 									"snapshot builder context",
-									ALLOCSET_DEFAULT_MINSIZE,
-									ALLOCSET_DEFAULT_INITSIZE,
-									ALLOCSET_DEFAULT_MAXSIZE);
+									ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(context);
 
 	builder = palloc0(sizeof(SnapBuild));
@@ -605,14 +603,33 @@ SnapBuildExportSnapshot(SnapBuild *builder)
 }
 
 /*
+ * Ensure there is a snapshot and if not build one for current transaction.
+ */
+Snapshot
+SnapBuildGetOrBuildSnapshot(SnapBuild *builder, TransactionId xid)
+{
+	Assert(builder->state == SNAPBUILD_CONSISTENT);
+
+	/* only build a new snapshot if we don't have a prebuilt one */
+	if (builder->snapshot == NULL)
+	{
+		builder->snapshot = SnapBuildBuildSnapshot(builder, xid);
+		/* inrease refcount for the snapshot builder */
+		SnapBuildSnapIncRefcount(builder->snapshot);
+	}
+
+	return builder->snapshot;
+}
+
+/*
  * Reset a previously SnapBuildExportSnapshot()'ed snapshot if there is
  * any. Aborts the previously started transaction and resets the resource
  * owner back to its original value.
  */
 void
-SnapBuildClearExportedSnapshot()
+SnapBuildClearExportedSnapshot(void)
 {
-	/* nothing exported, thats the usual case */
+	/* nothing exported, that is the usual case */
 	if (!ExportInProgress)
 		return;
 
@@ -635,8 +652,6 @@ SnapBuildClearExportedSnapshot()
 bool
 SnapBuildProcessChange(SnapBuild *builder, TransactionId xid, XLogRecPtr lsn)
 {
-	bool		is_old_tx;
-
 	/*
 	 * We can't handle data in transactions if we haven't built a snapshot
 	 * yet, so don't store them.
@@ -657,9 +672,7 @@ SnapBuildProcessChange(SnapBuild *builder, TransactionId xid, XLogRecPtr lsn)
 	 * If the reorderbuffer doesn't yet have a snapshot, add one now, it will
 	 * be needed to decode the change we're currently processing.
 	 */
-	is_old_tx = ReorderBufferIsXidKnown(builder->reorder, xid);
-
-	if (!is_old_tx || !ReorderBufferXidHasBaseSnapshot(builder->reorder, xid))
+	if (!ReorderBufferXidHasBaseSnapshot(builder->reorder, xid))
 	{
 		/* only build a new snapshot if we don't have a prebuilt one */
 		if (builder->snapshot == NULL)
@@ -886,7 +899,7 @@ SnapBuildEndTxn(SnapBuild *builder, XLogRecPtr lsn, TransactionId xid)
 	/*
 	 * NB: This handles subtransactions correctly even if we started from
 	 * suboverflowed xl_running_xacts because we only keep track of toplevel
-	 * transactions. Since the latter are always are allocated before their
+	 * transactions. Since the latter are always allocated before their
 	 * subxids and since they end at the same time it's sufficient to deal
 	 * with them here.
 	 */
@@ -966,7 +979,7 @@ SnapBuildCommitTxn(SnapBuild *builder, XLogRecPtr lsn, TransactionId xid,
 		 * we reached consistency.
 		 */
 		forced_timetravel = true;
-		elog(DEBUG1, "forced to assume catalog changes for xid %u because it was running to early", xid);
+		elog(DEBUG1, "forced to assume catalog changes for xid %u because it was running too early", xid);
 	}
 
 	for (nxact = 0; nxact < nsubxacts; nxact++)

@@ -510,12 +510,18 @@ sample_activity(void)
 		if (!be)
 			continue;
 
+		proc = BackendPidGetProc(be->st_procpid);
+
 		/*
 		 * sample idle transactions
 		 */
 		if (be->st_procpid == MyProcPid)
 			;	/* exclude myself */
+#if PG_VERSION_NUM >= 90600
+		else if (proc != NULL && proc->wait_event_info != 0)
+#else
 		else if (be->st_waiting)
+#endif
 			waiting++;
 #if PG_VERSION_NUM >= 90200
 		else if (be->st_state == STATE_IDLE)
@@ -549,11 +555,11 @@ sample_activity(void)
 
 		/* XXX: needs lock? */
 #if PG_VERSION_NUM >= 90200
-		if ((proc = BackendPidGetProc(be->st_procpid)) == NULL ||
+		if (proc == NULL ||
 			(ProcGlobal->allPgXact[proc->pgprocno].vacuumFlags & PROC_IN_VACUUM))
 			continue;
 #else
-		if ((proc = BackendPidGetProc(be->st_procpid)) == NULL ||
+		if (proc == NULL ||
 			(proc->vacuumFlags & PROC_IN_VACUUM))
 			continue;
 #endif
@@ -3052,9 +3058,20 @@ check_enable_maintenance(char **newval, void **extra, GucSource source)
 	char		*rawstring;
 	List		*elemlist;
 	ListCell	*cell;
+	int			 mode_val;
 	bool		 bool_val;
 	int			 mode = 0x00;
 	char		 mode_string[32];
+
+	/* XXX: parse_int() tests 0 and 1 before parse_bool() */
+	if (parse_int(*newval, &mode_val, 0, NULL))
+	{
+		if (mode_val < 0x00 || mode_val > 0x07)
+			GUC_check_errdetail(GUC_PREFIX ".enable_maintenance out-of-range mode: %d", mode_val);
+		snprintf(mode_string, sizeof(mode_string), "%d", mode_val);
+		*newval = strdup(mode_string);
+		return true;
+	}
 
 	if (parse_bool(*newval, &bool_val))
 	{

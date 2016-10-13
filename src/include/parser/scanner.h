@@ -8,7 +8,7 @@
  * higher-level API provided by parser.h.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/scanner.h
@@ -19,7 +19,7 @@
 #ifndef SCANNER_H
 #define SCANNER_H
 
-#include "parser/keywords.h"
+#include "common/keywords.h"
 
 /*
  * The scanner returns extra data about scanned tokens in this union type.

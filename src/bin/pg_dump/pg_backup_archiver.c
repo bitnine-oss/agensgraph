@@ -25,6 +25,8 @@
 #include "pg_backup_archiver.h"
 #include "pg_backup_db.h"
 #include "pg_backup_utils.h"
+#include "dumputils.h"
+#include "fe_utils/string_utils.h"
 
 #include <ctype.h>
 #include <fcntl.h>
@@ -106,6 +108,9 @@ static void reduce_dependencies(ArchiveHandle *AH, TocEntry *te,
 					TocEntry *ready_list);
 static void mark_create_done(ArchiveHandle *AH, TocEntry *te);
 static void inhibit_data_for_failed_table(ArchiveHandle *AH, TocEntry *te);
+
+static void StrictNamesCheck(RestoreOptions *ropt);
+
 
 /*
  * Allocate a new DumpOptions block containing all default values.
@@ -294,6 +299,10 @@ ProcessArchiveRestoreOptions(Archive *AHX)
 
 		te->reqs = _tocEntryRequired(te, curSection, ropt);
 	}
+
+	/* Enforce strict names checking */
+	if (ropt->strict_names)
+		StrictNamesCheck(ropt);
 }
 
 /* Public */
@@ -762,9 +771,16 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 		/* If we created a DB, connect to it... */
 		if (strcmp(te->desc, "DATABASE") == 0)
 		{
+			PQExpBufferData connstr;
+
+			initPQExpBuffer(&connstr);
+			appendPQExpBufferStr(&connstr, "dbname=");
+			appendConnStrVal(&connstr, te->tag);
+			/* Abandon struct, but keep its buffer until process exit. */
+
 			ahlog(AH, 1, "connecting to new database \"%s\"\n", te->tag);
 			_reconnectToDB(AH, te->tag);
-			ropt->dbname = pg_strdup(te->tag);
+			ropt->dbname = connstr.data;
 		}
 	}
 
@@ -1118,6 +1134,10 @@ PrintTOCSummary(Archive *AHX)
 			ahprintf(AH, "\n");
 		}
 	}
+
+	/* Enforce strict names checking */
+	if (ropt->strict_names)
+		StrictNamesCheck(ropt);
 
 	if (ropt->filename)
 		RestoreOutput(AH, sav);
@@ -2313,6 +2333,9 @@ _allocAH(const char *FileSpec, const ArchiveFormat fmt,
 	return AH;
 }
 
+/*
+ * Write out all data (tables & blobs)
+ */
 void
 WriteDataChunks(ArchiveHandle *AH, ParallelState *pstate)
 {
@@ -2330,15 +2353,18 @@ WriteDataChunks(ArchiveHandle *AH, ParallelState *pstate)
 		{
 			/*
 			 * If we are in a parallel backup, then we are always the master
-			 * process.
+			 * process.  Dispatch each data-transfer job to a worker.
 			 */
 			EnsureIdleWorker(AH, pstate);
-			Assert(GetIdleWorker(pstate) != NO_SLOT);
 			DispatchJobForTocEntry(AH, pstate, te, ACT_DUMP);
 		}
 		else
 			WriteDataChunksForTocEntry(AH, te);
 	}
+
+	/*
+	 * If parallel, wait for workers to finish.
+	 */
 	EnsureWorkersFinished(AH, pstate);
 }
 
@@ -2634,6 +2660,49 @@ processStdStringsEntry(ArchiveHandle *AH, TocEntry *te)
 					  te->defn);
 }
 
+static void
+StrictNamesCheck(RestoreOptions *ropt)
+{
+	const char *missing_name;
+
+	Assert(ropt->strict_names);
+
+	if (ropt->schemaNames.head != NULL)
+	{
+		missing_name = simple_string_list_not_touched(&ropt->schemaNames);
+		if (missing_name != NULL)
+			exit_horribly(modulename, "schema \"%s\" not found\n", missing_name);
+	}
+
+	if (ropt->tableNames.head != NULL)
+	{
+		missing_name = simple_string_list_not_touched(&ropt->tableNames);
+		if (missing_name != NULL)
+			exit_horribly(modulename, "table \"%s\" not found\n", missing_name);
+	}
+
+	if (ropt->indexNames.head != NULL)
+	{
+		missing_name = simple_string_list_not_touched(&ropt->indexNames);
+		if (missing_name != NULL)
+			exit_horribly(modulename, "index \"%s\" not found\n", missing_name);
+	}
+
+	if (ropt->functionNames.head != NULL)
+	{
+		missing_name = simple_string_list_not_touched(&ropt->functionNames);
+		if (missing_name != NULL)
+			exit_horribly(modulename, "function \"%s\" not found\n", missing_name);
+	}
+
+	if (ropt->triggerNames.head != NULL)
+	{
+		missing_name = simple_string_list_not_touched(&ropt->triggerNames);
+		if (missing_name != NULL)
+			exit_horribly(modulename, "trigger \"%s\" not found\n", missing_name);
+	}
+}
+
 static teReqs
 _tocEntryRequired(TocEntry *te, teSection curSection, RestoreOptions *ropt)
 {
@@ -2685,7 +2754,13 @@ _tocEntryRequired(TocEntry *te, teSection curSection, RestoreOptions *ropt)
 	if (ropt->selTypes)
 	{
 		if (strcmp(te->desc, "TABLE") == 0 ||
-			strcmp(te->desc, "TABLE DATA") == 0)
+			strcmp(te->desc, "TABLE DATA") == 0 ||
+			strcmp(te->desc, "VIEW") == 0 ||
+			strcmp(te->desc, "FOREIGN TABLE") == 0 ||
+			strcmp(te->desc, "MATERIALIZED VIEW") == 0 ||
+			strcmp(te->desc, "MATERIALIZED VIEW DATA") == 0 ||
+			strcmp(te->desc, "SEQUENCE") == 0 ||
+			strcmp(te->desc, "SEQUENCE SET") == 0)
 		{
 			if (!ropt->selTable)
 				return 0;
@@ -2791,11 +2866,12 @@ _doSetFixedOutputState(ArchiveHandle *AH)
 {
 	RestoreOptions *ropt = AH->public.ropt;
 
-	/* Disable statement_timeout since restore is probably slow */
+	/*
+	 * Disable timeouts to allow for slow commands, idle parallel workers, etc
+	 */
 	ahprintf(AH, "SET statement_timeout = 0;\n");
-
-	/* Likewise for lock_timeout */
 	ahprintf(AH, "SET lock_timeout = 0;\n");
+	ahprintf(AH, "SET idle_in_transaction_session_timeout = 0;\n");
 
 	/* Select the correct character set encoding */
 	ahprintf(AH, "SET client_encoding = '%s';\n",
@@ -2915,12 +2991,17 @@ _reconnectToDB(ArchiveHandle *AH, const char *dbname)
 		ReconnectToServer(AH, dbname, NULL);
 	else
 	{
-		PQExpBuffer qry = createPQExpBuffer();
+		if (dbname)
+		{
+			PQExpBufferData connectbuf;
 
-		appendPQExpBuffer(qry, "\\connect %s\n\n",
-						  dbname ? fmtId(dbname) : "-");
-		ahprintf(AH, "%s", qry->data);
-		destroyPQExpBuffer(qry);
+			initPQExpBuffer(&connectbuf);
+			appendPsqlMetaConnect(&connectbuf, dbname);
+			ahprintf(AH, "%s\n", connectbuf.data);
+			termPQExpBuffer(&connectbuf);
+		}
+		else
+			ahprintf(AH, "%s\n", "\\connect -\n");
 	}
 
 	/*
@@ -3199,15 +3280,22 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData, bool acl_pass)
 
 	/*
 	 * Avoid dumping the public schema, as it will already be created ...
-	 * unless we are using --clean mode, in which case it's been deleted and
-	 * we'd better recreate it.  Likewise for its comment, if any.
+	 * unless we are using --clean mode (and *not* --create mode), in which
+	 * case we've previously issued a DROP for it so we'd better recreate it.
+	 *
+	 * Likewise for its comment, if any.  (We could try issuing the COMMENT
+	 * command anyway; but it'd fail if the restore is done as non-super-user,
+	 * so let's not.)
+	 *
+	 * XXX it looks pretty ugly to hard-wire the public schema like this, but
+	 * it sits in a sort of no-mans-land between being a system object and a
+	 * user object, so it really is special in a way.
 	 */
-	if (!ropt->dropSchema)
+	if (!(ropt->dropSchema && !ropt->createDB))
 	{
 		if (strcmp(te->desc, "SCHEMA") == 0 &&
 			strcmp(te->tag, "public") == 0)
 			return;
-		/* The comment restore would require super-user privs, so avoid it. */
 		if (strcmp(te->desc, "COMMENT") == 0 &&
 			strcmp(te->tag, "SCHEMA public") == 0)
 			return;
@@ -3413,17 +3501,7 @@ WriteHead(ArchiveHandle *AH)
 	(*AH->WriteBytePtr) (AH, AH->intSize);
 	(*AH->WriteBytePtr) (AH, AH->offSize);
 	(*AH->WriteBytePtr) (AH, AH->format);
-
-#ifndef HAVE_LIBZ
-	if (AH->compression != 0)
-		write_msg(modulename, "WARNING: requested compression not available in this "
-				  "installation -- archive will be uncompressed\n");
-
-	AH->compression = 0;
-#endif
-
 	WriteInt(AH, AH->compression);
-
 	crtm = *localtime(&AH->createDate);
 	WriteInt(AH, crtm.tm_sec);
 	WriteInt(AH, crtm.tm_min);
@@ -3767,13 +3845,11 @@ restore_toc_entries_parallel(ArchiveHandle *AH, ParallelState *pstate,
 
 			par_list_remove(next_work_item);
 
-			Assert(GetIdleWorker(pstate) != NO_SLOT);
 			DispatchJobForTocEntry(AH, pstate, next_work_item, ACT_RESTORE);
 		}
 		else
 		{
 			/* at least one child is working and we have nothing ready. */
-			Assert(!IsEveryWorkerIdle(pstate));
 		}
 
 		for (;;)
@@ -3837,6 +3913,7 @@ restore_toc_entries_postfork(ArchiveHandle *AH, TocEntry *pending_list)
 					ropt->pghost, ropt->pgport, ropt->username,
 					ropt->promptPassword);
 
+	/* re-establish fixed state */
 	_doSetFixedOutputState(AH);
 
 	/*
@@ -4015,10 +4092,9 @@ parallel_restore(ParallelArgs *args)
 	TocEntry   *te = args->te;
 	int			status;
 
-	_doSetFixedOutputState(AH);
-
 	Assert(AH->connection != NULL);
 
+	/* Count only errors associated with this TOC entry */
 	AH->public.n_errors = 0;
 
 	/* Restore the TOC item */
@@ -4364,6 +4440,7 @@ CloneArchive(ArchiveHandle *AH)
 
 	/* The clone will have its own connection, so disregard connection state */
 	clone->connection = NULL;
+	clone->connCancel = NULL;
 	clone->currUser = NULL;
 	clone->currSchema = NULL;
 	clone->currTablespace = NULL;
@@ -4387,18 +4464,21 @@ CloneArchive(ArchiveHandle *AH)
 		RestoreOptions *ropt = AH->public.ropt;
 
 		Assert(AH->connection == NULL);
+
 		/* this also sets clone->connection */
 		ConnectDatabase((Archive *) clone, ropt->dbname,
 						ropt->pghost, ropt->pgport, ropt->username,
 						ropt->promptPassword);
+
+		/* re-establish fixed state */
+		_doSetFixedOutputState(clone);
 	}
 	else
 	{
-		char	   *dbname;
+		PQExpBufferData connstr;
 		char	   *pghost;
 		char	   *pgport;
 		char	   *username;
-		const char *encname;
 
 		Assert(AH->connection != NULL);
 
@@ -4408,22 +4488,19 @@ CloneArchive(ArchiveHandle *AH)
 		 * because all just return a pointer and do not actually send/receive
 		 * any data to/from the database.
 		 */
-		dbname = PQdb(AH->connection);
+		initPQExpBuffer(&connstr);
+		appendPQExpBuffer(&connstr, "dbname=");
+		appendConnStrVal(&connstr, PQdb(AH->connection));
 		pghost = PQhost(AH->connection);
 		pgport = PQport(AH->connection);
 		username = PQuser(AH->connection);
-		encname = pg_encoding_to_char(AH->public.encoding);
 
 		/* this also sets clone->connection */
-		ConnectDatabase((Archive *) clone, dbname, pghost, pgport, username, TRI_NO);
+		ConnectDatabase((Archive *) clone, connstr.data,
+						pghost, pgport, username, TRI_NO);
 
-		/*
-		 * Set the same encoding, whatever we set here is what we got from
-		 * pg_encoding_to_char(), so we really shouldn't run into an error
-		 * setting that very same value. Also see the comment in
-		 * SetupConnection().
-		 */
-		PQsetClientEncoding(clone->connection, encname);
+		termPQExpBuffer(&connstr);
+		/* setupDumpWorker will fix up connection state */
 	}
 
 	/* Let the format-specific code have a chance too */
@@ -4441,6 +4518,9 @@ CloneArchive(ArchiveHandle *AH)
 void
 DeCloneArchive(ArchiveHandle *AH)
 {
+	/* Should not have an open database connection */
+	Assert(AH->connection == NULL);
+
 	/* Clear format-specific state */
 	(AH->DeClonePtr) (AH);
 

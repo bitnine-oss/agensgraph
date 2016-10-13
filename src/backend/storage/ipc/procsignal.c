@@ -4,7 +4,7 @@
  *	  Routines for interprocess signalling
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -58,14 +58,6 @@ typedef struct
  * more than one of any auxiliary process type at a time.)
  */
 #define NumProcSignalSlots	(MaxBackends + NUM_AUXPROCTYPES)
-
-/*
- * If this flag is set, the process latch will be set whenever SIGUSR1
- * is received.  This is useful when waiting for a signal from the postmaster.
- * Spurious wakeups must be expected.  Make sure that the flag is cleared
- * in the error path.
- */
-bool		set_latch_on_sigusr1;
 
 static ProcSignalSlot *ProcSignalSlots = NULL;
 static volatile ProcSignalSlot *MyProcSignalSlot = NULL;
@@ -296,8 +288,7 @@ procsignal_sigusr1_handler(SIGNAL_ARGS)
 	if (CheckProcSignal(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN))
 		RecoveryConflictInterrupt(PROCSIG_RECOVERY_CONFLICT_BUFFERPIN);
 
-	if (set_latch_on_sigusr1)
-		SetLatch(MyLatch);
+	SetLatch(MyLatch);
 
 	latch_sigusr1_handler();
 

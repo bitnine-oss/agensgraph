@@ -3,7 +3,7 @@
  * test.c
  *		Test harness code for shared memory message queues.
  *
- * Copyright (C) 2013-2014, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_shm_mq/test.c
@@ -231,8 +231,8 @@ test_shm_mq_pipelined(PG_FUNCTION_ARGS)
 			 * for us to do.
 			 */
 			WaitLatch(MyLatch, WL_LATCH_SET, 0);
-			CHECK_FOR_INTERRUPTS();
 			ResetLatch(MyLatch);
+			CHECK_FOR_INTERRUPTS();
 		}
 	}
 

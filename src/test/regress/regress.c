@@ -6,7 +6,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/test/regress/regress.c
@@ -362,7 +362,7 @@ funny_dup17(PG_FUNCTION_ARGS)
 			   *fieldval,
 			   *fieldtype;
 	char	   *when;
-	int			inserted;
+	uint64		inserted;
 	int			selected = 0;
 	int			ret;
 
@@ -443,7 +443,7 @@ funny_dup17(PG_FUNCTION_ARGS)
 																		))));
 	}
 
-	elog(DEBUG4, "funny_dup17 (fired %s) on level %3d: %d/%d tuples inserted/selected",
+	elog(DEBUG4, "funny_dup17 (fired %s) on level %3d: " UINT64_FORMAT "/%d tuples inserted/selected",
 		 when, *level, inserted, selected);
 
 	SPI_finish();

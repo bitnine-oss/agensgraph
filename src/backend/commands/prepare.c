@@ -7,7 +7,7 @@
  * accessed via the extended FE/BE query protocol.
  *
  *
- * Copyright (c) 2002-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/commands/prepare.c
@@ -392,6 +392,7 @@ EvaluateParams(PreparedStatement *pstmt, List *params,
 	paramLI->parserSetup = NULL;
 	paramLI->parserSetupArg = NULL;
 	paramLI->numParams = num_params;
+	paramLI->paramMask = NULL;
 
 	i = 0;
 	foreach(l, exprstates)

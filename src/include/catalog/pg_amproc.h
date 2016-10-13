@@ -19,7 +19,7 @@
  * some don't pay attention to non-default functions at all.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_amproc.h
@@ -80,7 +80,9 @@ DATA(insert (	421   702 702 1 357 ));
 DATA(insert (	423   1560 1560 1 1596 ));
 DATA(insert (	424   16 16 1 1693 ));
 DATA(insert (	426   1042 1042 1 1078 ));
+DATA(insert (	426   1042 1042 2 3328 ));
 DATA(insert (	428   17 17 1 1954 ));
+DATA(insert (	428   17 17 2 3331 ));
 DATA(insert (	429   18 18 1 358 ));
 DATA(insert (	434   1082 1082 1 1092 ));
 DATA(insert (	434   1082 1082 2 3136 ));
@@ -128,12 +130,15 @@ DATA(insert (	1996   1083 1083 1 1107 ));
 DATA(insert (	2000   1266 1266 1 1358 ));
 DATA(insert (	2002   1562 1562 1 1672 ));
 DATA(insert (	2095   25 25 1 2166 ));
+DATA(insert (	2095   25 25 2 3332 ));
 DATA(insert (	2097   1042 1042 1 2180 ));
+DATA(insert (	2097   1042 1042 2 3333 ));
 DATA(insert (	2099   790 790 1  377 ));
 DATA(insert (	2233   703 703 1  380 ));
 DATA(insert (	2234   704 704 1  381 ));
 DATA(insert (	2789   27 27 1 2794 ));
 DATA(insert (	2968   2950 2950 1 2960 ));
+DATA(insert (	2968   2950 2950 2 3300 ));
 DATA(insert (	2994   2249 2249 1 2987 ));
 DATA(insert (	3194   2249 2249 1 3187 ));
 DATA(insert (	3253   3220 3220 1 3251 ));
@@ -216,7 +221,7 @@ DATA(insert (	2595   718 718 4 2580 ));
 DATA(insert (	2595   718 718 5 2581 ));
 DATA(insert (	2595   718 718 6 2582 ));
 DATA(insert (	2595   718 718 7 2584 ));
-DATA(insert (	2595   718 718 8 3288 ));
+DATA(insert (	2595   718 718 8 3280 ));
 DATA(insert (	3655   3614 3614 1 3654 ));
 DATA(insert (	3655   3614 3614 2 3651 ));
 DATA(insert (	3655   3614 3614 3 3648 ));
@@ -438,6 +443,11 @@ DATA(insert (	4017   25 25 2 4028 ));
 DATA(insert (	4017   25 25 3 4029 ));
 DATA(insert (	4017   25 25 4 4030 ));
 DATA(insert (	4017   25 25 5 4031 ));
+DATA(insert (	5000   603 603 1 5012 ));
+DATA(insert (	5000   603 603 2 5013 ));
+DATA(insert (	5000   603 603 3 5014 ));
+DATA(insert (	5000   603 603 4 5015 ));
+DATA(insert (	5000   603 603 5 5016 ));
 
 /* BRIN opclasses */
 /* minmax bytea */

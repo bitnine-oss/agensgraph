@@ -4,7 +4,7 @@
  *
  * Routines to support SELinux labels (security context)
  *
- * Copyright (c) 2010-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2016, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
@@ -161,7 +161,7 @@ sepgsql_set_client_label(const char *new_label)
 /*
  * sepgsql_xact_callback
  *
- * A callback routine of transaction commit/abort/prepare.  Commmit or abort
+ * A callback routine of transaction commit/abort/prepare.  Commit or abort
  * changes in the client_label_pending list.
  */
 static void

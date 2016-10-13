@@ -4,7 +4,7 @@
  *	  Lightweight lock manager
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/lwlock.h
@@ -14,6 +14,10 @@
 #ifndef LWLOCK_H
 #define LWLOCK_H
 
+#ifdef FRONTEND
+#error "lwlock.h may not be included from frontend code"
+#endif
+
 #include "lib/ilist.h"
 #include "storage/s_lock.h"
 #include "port/atomics.h"
@@ -21,6 +25,12 @@
 struct PGPROC;
 
 /*
+ * Prior to PostgreSQL 9.4, every lightweight lock in the system was stored
+ * in a single array.  For convenience and for compatibility with past
+ * releases, we still have a main array, but it's now also permissible to
+ * store LWLocks elsewhere in the main shared memory segment or in a dynamic
+ * shared memory segment.  Each array of lwlocks forms a separate "tranche".
+ *
  * It's occasionally necessary to identify a particular LWLock "by name"; e.g.
  * because we wish to report the lock to dtrace.  We could store a name or
  * other identifying information in the lock itself, but since it's common
@@ -47,96 +57,76 @@ typedef struct LWLockTranche
  */
 typedef struct LWLock
 {
-	slock_t		mutex;			/* Protects LWLock and queue of PGPROCs */
 	uint16		tranche;		/* tranche ID */
-
 	pg_atomic_uint32 state;		/* state of exclusive/nonexclusive lockers */
-#ifdef LOCK_DEBUG
-	pg_atomic_uint32 nwaiters;	/* number of waiters */
-#endif
 	dlist_head	waiters;		/* list of waiting PGPROCs */
 #ifdef LOCK_DEBUG
+	pg_atomic_uint32 nwaiters;	/* number of waiters */
 	struct PGPROC *owner;		/* last exclusive owner of the lock */
 #endif
 } LWLock;
 
 /*
- * Prior to PostgreSQL 9.4, every lightweight lock in the system was stored
- * in a single array.  For convenience and for compatibility with past
- * releases, we still have a main array, but it's now also permissible to
- * store LWLocks elsewhere in the main shared memory segment or in a dynamic
- * shared memory segment.  In the main array, we force the array stride to
- * be a power of 2, which saves a few cycles in indexing, but more importantly
- * also ensures that individual LWLocks don't cross cache line boundaries.
- * This reduces cache contention problems, especially on AMD Opterons.
- * (Of course, we have to also ensure that the array start address is suitably
- * aligned.)
+ * In most cases, it's desirable to force each tranche of LWLocks to be aligned
+ * on a cache line boundary and make the array stride a power of 2.  This saves
+ * a few cycles in indexing, but more importantly ensures that individual
+ * LWLocks don't cross cache line boundaries.  This reduces cache contention
+ * problems, especially on AMD Opterons.  In some cases, it's useful to add
+ * even more padding so that each LWLock takes up an entire cache line; this is
+ * useful, for example, in the main LWLock array, where the overall number of
+ * locks is small but some are heavily contended.
  *
- * On a 32-bit platforms a LWLock will these days fit into 16 bytes, but since
- * that didn't use to be the case and cramming more lwlocks into a cacheline
- * might be detrimental performancewise we still use 32 byte alignment
- * there. So, both on 32 and 64 bit platforms, it should fit into 32 bytes
- * unless slock_t is really big.  We allow for that just in case.
+ * When allocating a tranche that contains data other than LWLocks, it is
+ * probably best to include a bare LWLock and then pad the resulting structure
+ * as necessary for performance.  For an array that contains only LWLocks,
+ * LWLockMinimallyPadded can be used for cases where we just want to ensure
+ * that we don't cross cache line boundaries within a single lock, while
+ * LWLockPadded can be used for cases where we want each lock to be an entire
+ * cache line.
+ *
+ * On 32-bit platforms, an LWLockMinimallyPadded might actually contain more
+ * than the absolute minimum amount of padding required to keep a lock from
+ * crossing a cache line boundary, because an unpadded LWLock might fit into
+ * 16 bytes.  We ignore that possibility when determining the minimal amount
+ * of padding.  Older releases had larger LWLocks, so 32 really was the
+ * minimum, and packing them in tighter might hurt performance.
+ *
+ * LWLOCK_MINIMAL_SIZE should be 32 on basically all common platforms, but
+ * because slock_t is more than 2 bytes on some obscure platforms, we allow
+ * for the possibility that it might be 64.
  */
-#define LWLOCK_PADDED_SIZE	(sizeof(LWLock) <= 32 ? 32 : 64)
+#define LWLOCK_PADDED_SIZE	PG_CACHE_LINE_SIZE
+#define LWLOCK_MINIMAL_SIZE (sizeof(LWLock) <= 32 ? 32 : 64)
 
+/* LWLock, padded to a full cache line size */
 typedef union LWLockPadded
 {
 	LWLock		lock;
 	char		pad[LWLOCK_PADDED_SIZE];
 } LWLockPadded;
-extern PGDLLIMPORT LWLockPadded *MainLWLockArray;
 
-/*
- * Some commonly-used locks have predefined positions within MainLWLockArray;
- * defining macros here makes it much easier to keep track of these.  If you
- * add a lock, add it to the end to avoid renumbering the existing locks;
- * if you remove a lock, consider leaving a gap in the numbering sequence for
- * the benefit of DTrace and other external debugging scripts.
- */
-/* 0 is available; was formerly BufFreelistLock */
-#define ShmemIndexLock				(&MainLWLockArray[1].lock)
-#define OidGenLock					(&MainLWLockArray[2].lock)
-#define XidGenLock					(&MainLWLockArray[3].lock)
-#define ProcArrayLock				(&MainLWLockArray[4].lock)
-#define SInvalReadLock				(&MainLWLockArray[5].lock)
-#define SInvalWriteLock				(&MainLWLockArray[6].lock)
-#define WALBufMappingLock			(&MainLWLockArray[7].lock)
-#define WALWriteLock				(&MainLWLockArray[8].lock)
-#define ControlFileLock				(&MainLWLockArray[9].lock)
-#define CheckpointLock				(&MainLWLockArray[10].lock)
-#define CLogControlLock				(&MainLWLockArray[11].lock)
-#define SubtransControlLock			(&MainLWLockArray[12].lock)
-#define MultiXactGenLock			(&MainLWLockArray[13].lock)
-#define MultiXactOffsetControlLock	(&MainLWLockArray[14].lock)
-#define MultiXactMemberControlLock	(&MainLWLockArray[15].lock)
-#define RelCacheInitLock			(&MainLWLockArray[16].lock)
-#define CheckpointerCommLock		(&MainLWLockArray[17].lock)
-#define TwoPhaseStateLock			(&MainLWLockArray[18].lock)
-#define TablespaceCreateLock		(&MainLWLockArray[19].lock)
-#define BtreeVacuumLock				(&MainLWLockArray[20].lock)
-#define AddinShmemInitLock			(&MainLWLockArray[21].lock)
-#define AutovacuumLock				(&MainLWLockArray[22].lock)
-#define AutovacuumScheduleLock		(&MainLWLockArray[23].lock)
-#define SyncScanLock				(&MainLWLockArray[24].lock)
-#define RelationMappingLock			(&MainLWLockArray[25].lock)
-#define AsyncCtlLock				(&MainLWLockArray[26].lock)
-#define AsyncQueueLock				(&MainLWLockArray[27].lock)
-#define SerializableXactHashLock	(&MainLWLockArray[28].lock)
-#define SerializableFinishedListLock		(&MainLWLockArray[29].lock)
-#define SerializablePredicateLockListLock	(&MainLWLockArray[30].lock)
-#define OldSerXidLock				(&MainLWLockArray[31].lock)
-#define SyncRepLock					(&MainLWLockArray[32].lock)
-#define BackgroundWorkerLock		(&MainLWLockArray[33].lock)
-#define DynamicSharedMemoryControlLock		(&MainLWLockArray[34].lock)
-#define AutoFileLock				(&MainLWLockArray[35].lock)
-#define ReplicationSlotAllocationLock	(&MainLWLockArray[36].lock)
-#define ReplicationSlotControlLock		(&MainLWLockArray[37].lock)
-#define CommitTsControlLock			(&MainLWLockArray[38].lock)
-#define CommitTsLock				(&MainLWLockArray[39].lock)
-#define ReplicationOriginLock		(&MainLWLockArray[40].lock)
-#define MultiXactTruncationLock		(&MainLWLockArray[41].lock)
-#define NUM_INDIVIDUAL_LWLOCKS		42
+/* LWLock, minimally padded */
+typedef union LWLockMinimallyPadded
+{
+	LWLock		lock;
+	char		pad[LWLOCK_MINIMAL_SIZE];
+} LWLockMinimallyPadded;
+
+extern PGDLLIMPORT LWLockPadded *MainLWLockArray;
+extern char *MainLWLockNames[];
+
+/* struct for storing named tranche information */
+typedef struct NamedLWLockTranche
+{
+	LWLockTranche lwLockTranche;
+	int			trancheId;
+} NamedLWLockTranche;
+
+extern PGDLLIMPORT NamedLWLockTranche *NamedLWLockTrancheArray;
+extern PGDLLIMPORT int NamedLWLockTrancheRequests;
+
+/* Names for fixed lwlocks */
+#include "storage/lwlocknames.h"
 
 /*
  * It's a bit odd to declare NUM_BUFFER_PARTITIONS and NUM_LOCK_PARTITIONS
@@ -193,14 +183,16 @@ extern Size LWLockShmemSize(void);
 extern void CreateLWLocks(void);
 extern void InitLWLockAccess(void);
 
+extern const char *GetLWLockIdentifier(uint8 classId, uint16 eventId);
+
 /*
- * The traditional method for obtaining an lwlock for use by an extension is
- * to call RequestAddinLWLocks() during postmaster startup; this will reserve
- * space for the indicated number of locks in MainLWLockArray.  Subsequently,
- * a lock can be allocated using LWLockAssign.
+ * Extensions (or core code) can obtain an LWLocks by calling
+ * RequestNamedLWLockTranche() during postmaster startup.  Subsequently,
+ * call GetNamedLWLockTranche() to obtain a pointer to an array containing
+ * the number of LWLocks requested.
  */
-extern void RequestAddinLWLocks(int n);
-extern LWLock *LWLockAssign(void);
+extern void RequestNamedLWLockTranche(const char *tranche_name, int num_lwlocks);
+extern LWLockPadded *GetNamedLWLockTranche(const char *tranche_name);
 
 /*
  * There is another, more flexible method of obtaining lwlocks. First, call
@@ -218,6 +210,32 @@ extern LWLock *LWLockAssign(void);
 extern int	LWLockNewTrancheId(void);
 extern void LWLockRegisterTranche(int tranche_id, LWLockTranche *tranche);
 extern void LWLockInitialize(LWLock *lock, int tranche_id);
+
+/*
+ * We reserve a few predefined tranche IDs.  A call to LWLockNewTrancheId
+ * will never return a value less than LWTRANCHE_FIRST_USER_DEFINED.
+ */
+typedef enum BuiltinTrancheIds
+{
+	LWTRANCHE_MAIN,
+	LWTRANCHE_CLOG_BUFFERS,
+	LWTRANCHE_COMMITTS_BUFFERS,
+	LWTRANCHE_SUBTRANS_BUFFERS,
+	LWTRANCHE_MXACTOFFSET_BUFFERS,
+	LWTRANCHE_MXACTMEMBER_BUFFERS,
+	LWTRANCHE_ASYNC_BUFFERS,
+	LWTRANCHE_OLDSERXID_BUFFERS,
+	LWTRANCHE_WAL_INSERT,
+	LWTRANCHE_BUFFER_CONTENT,
+	LWTRANCHE_BUFFER_IO_IN_PROGRESS,
+	LWTRANCHE_REPLICATION_ORIGIN,
+	LWTRANCHE_REPLICATION_SLOT_IO_IN_PROGRESS,
+	LWTRANCHE_PROC,
+	LWTRANCHE_BUFFER_MAPPING,
+	LWTRANCHE_LOCK_MANAGER,
+	LWTRANCHE_PREDICATE_LOCK_MANAGER,
+	LWTRANCHE_FIRST_USER_DEFINED
+}	BuiltinTrancheIds;
 
 /*
  * Prior to PostgreSQL 9.4, we used an enum type called LWLockId to refer

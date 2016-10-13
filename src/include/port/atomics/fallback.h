@@ -4,7 +4,7 @@
  *    Fallback for platforms without spinlock and/or atomics support. Slower
  *    than native atomics support, but not unusably slow.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/port/atomics/fallback.h
@@ -102,8 +102,6 @@ typedef struct pg_atomic_uint32
 
 #endif /* PG_HAVE_ATOMIC_U32_SUPPORT */
 
-#if defined(PG_USE_INLINE) || defined(ATOMICS_INCLUDE_DEFINITIONS)
-
 #ifdef PG_HAVE_ATOMIC_FLAG_SIMULATION
 
 #define PG_HAVE_ATOMIC_INIT_FLAG
@@ -143,6 +141,3 @@ extern bool pg_atomic_compare_exchange_u32_impl(volatile pg_atomic_uint32 *ptr,
 extern uint32 pg_atomic_fetch_add_u32_impl(volatile pg_atomic_uint32 *ptr, int32 add_);
 
 #endif /* PG_HAVE_ATOMIC_U32_SIMULATION */
-
-
-#endif /* defined(PG_USE_INLINE) || defined(ATOMICS_INCLUDE_DEFINITIONS) */

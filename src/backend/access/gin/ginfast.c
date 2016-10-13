@@ -7,7 +7,7 @@
  *	  transfer pending entries into the regular index structure.  This
  *	  wins because bulk insertion is much more efficient than retail.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -20,10 +20,16 @@
 
 #include "access/gin_private.h"
 #include "access/xloginsert.h"
+#include "access/xlog.h"
 #include "commands/vacuum.h"
+#include "catalog/pg_am.h"
 #include "miscadmin.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
+#include "utils/acl.h"
+#include "postmaster/autovacuum.h"
+#include "storage/indexfsm.h"
+#include "storage/lmgr.h"
 
 /* GUC parameter */
 int			gin_pending_list_limit = 0;
@@ -433,7 +439,7 @@ ginHeapTupleFastInsert(GinState *ginstate, GinTupleCollector *collector)
 	END_CRIT_SECTION();
 
 	if (needCleanup)
-		ginInsertCleanup(ginstate, false, NULL);
+		ginInsertCleanup(ginstate, false, true, NULL);
 }
 
 /*
@@ -498,13 +504,10 @@ ginHeapTupleFastCollect(GinState *ginstate,
  * If newHead == InvalidBlockNumber then function drops the whole list.
  *
  * metapage is pinned and exclusive-locked throughout this function.
- *
- * Returns true if another cleanup process is running concurrently
- * (if so, we can just abandon our own efforts)
  */
-static bool
+static void
 shiftList(Relation index, Buffer metabuffer, BlockNumber newHead,
-		  IndexBulkDeleteResult *stats)
+		  bool fill_fsm, IndexBulkDeleteResult *stats)
 {
 	Page		metapage;
 	GinMetaPageData *metadata;
@@ -521,24 +524,19 @@ shiftList(Relation index, Buffer metabuffer, BlockNumber newHead,
 		int64		nDeletedHeapTuples = 0;
 		ginxlogDeleteListPages data;
 		Buffer		buffers[GIN_NDELETE_AT_ONCE];
+		BlockNumber freespace[GIN_NDELETE_AT_ONCE];
 
 		data.ndeleted = 0;
 		while (data.ndeleted < GIN_NDELETE_AT_ONCE && blknoToDelete != newHead)
 		{
+			freespace[data.ndeleted] = blknoToDelete;
 			buffers[data.ndeleted] = ReadBuffer(index, blknoToDelete);
 			LockBuffer(buffers[data.ndeleted], GIN_EXCLUSIVE);
 			page = BufferGetPage(buffers[data.ndeleted]);
 
 			data.ndeleted++;
 
-			if (GinPageIsDeleted(page))
-			{
-				/* concurrent cleanup process is detected */
-				for (i = 0; i < data.ndeleted; i++)
-					UnlockReleaseBuffer(buffers[i]);
-
-				return true;
-			}
+			Assert(!GinPageIsDeleted(page));
 
 			nDeletedHeapTuples += GinPageGetOpaque(page)->maxoff;
 			blknoToDelete = GinPageGetOpaque(page)->rightlink;
@@ -609,9 +607,11 @@ shiftList(Relation index, Buffer metabuffer, BlockNumber newHead,
 			UnlockReleaseBuffer(buffers[i]);
 
 		END_CRIT_SECTION();
-	} while (blknoToDelete != newHead);
 
-	return false;
+		for (i = 0; fill_fsm && i < data.ndeleted; i++)
+			RecordFreeIndexPage(index, freespace[i]);
+
+	} while (blknoToDelete != newHead);
 }
 
 /* Initialize empty KeyArray */
@@ -712,26 +712,20 @@ processPendingPage(BuildAccumulator *accum, KeyArray *ka,
 /*
  * Move tuples from pending pages into regular GIN structure.
  *
- * This can be called concurrently by multiple backends, so it must cope.
- * On first glance it looks completely not concurrent-safe and not crash-safe
- * either.  The reason it's okay is that multiple insertion of the same entry
- * is detected and treated as a no-op by gininsert.c.  If we crash after
- * posting entries to the main index and before removing them from the
+ * On first glance it looks completely not crash-safe. But if we crash
+ * after posting entries to the main index and before removing them from the
  * pending list, it's okay because when we redo the posting later on, nothing
- * bad will happen.  Likewise, if two backends simultaneously try to post
- * a pending entry into the main index, one will succeed and one will do
- * nothing.  We try to notice when someone else is a little bit ahead of
- * us in the process, but that's just to avoid wasting cycles.  Only the
- * action of removing a page from the pending list really needs exclusive
- * lock.
+ * bad will happen.
  *
- * vac_delay indicates that ginInsertCleanup is called from vacuum process,
- * so call vacuum_delay_point() periodically.
+ * fill_fsm indicates that ginInsertCleanup should add deleted pages
+ * to FSM otherwise caller is responsible to put deleted pages into
+ * FSM.
+ *
  * If stats isn't null, we count deleted pending pages into the counts.
  */
 void
-ginInsertCleanup(GinState *ginstate,
-				 bool vac_delay, IndexBulkDeleteResult *stats)
+ginInsertCleanup(GinState *ginstate, bool full_clean,
+				 bool fill_fsm, IndexBulkDeleteResult *stats)
 {
 	Relation	index = ginstate->index;
 	Buffer		metabuffer,
@@ -743,7 +737,42 @@ ginInsertCleanup(GinState *ginstate,
 				oldCtx;
 	BuildAccumulator accum;
 	KeyArray	datums;
-	BlockNumber blkno;
+	BlockNumber blkno,
+				blknoFinish;
+	bool		cleanupFinish = false;
+	bool		fsm_vac = false;
+	Size		workMemory;
+	bool		inVacuum = (stats == NULL);
+
+	/*
+	 * We would like to prevent concurrent cleanup process. For that we will
+	 * lock metapage in exclusive mode using LockPage() call. Nobody other
+	 * will use that lock for metapage, so we keep possibility of concurrent
+	 * insertion into pending list
+	 */
+
+	if (inVacuum)
+	{
+		/*
+		 * We are called from [auto]vacuum/analyze or gin_clean_pending_list()
+		 * and we would like to wait concurrent cleanup to finish.
+		 */
+		LockPage(index, GIN_METAPAGE_BLKNO, ExclusiveLock);
+		workMemory =
+			(IsAutoVacuumWorkerProcess() && autovacuum_work_mem != -1) ?
+			autovacuum_work_mem : maintenance_work_mem;
+	}
+	else
+	{
+		/*
+		 * We are called from regular insert and if we see concurrent cleanup
+		 * just exit in hope that concurrent process will clean up pending
+		 * list.
+		 */
+		if (!ConditionalLockPage(index, GIN_METAPAGE_BLKNO, ExclusiveLock))
+			return;
+		workMemory = work_mem;
+	}
 
 	metabuffer = ReadBuffer(index, GIN_METAPAGE_BLKNO);
 	LockBuffer(metabuffer, GIN_SHARE);
@@ -754,8 +783,15 @@ ginInsertCleanup(GinState *ginstate,
 	{
 		/* Nothing to do */
 		UnlockReleaseBuffer(metabuffer);
+		UnlockPage(index, GIN_METAPAGE_BLKNO, ExclusiveLock);
 		return;
 	}
+
+	/*
+	 * Remember a tail page to prevent infinite cleanup if other backends add
+	 * new tuples faster than we can cleanup.
+	 */
+	blknoFinish = metadata->tail;
 
 	/*
 	 * Read and lock head of pending list
@@ -772,9 +808,7 @@ ginInsertCleanup(GinState *ginstate,
 	 */
 	opCtx = AllocSetContextCreate(CurrentMemoryContext,
 								  "GIN insert cleanup temporary context",
-								  ALLOCSET_DEFAULT_MINSIZE,
-								  ALLOCSET_DEFAULT_INITSIZE,
-								  ALLOCSET_DEFAULT_MAXSIZE);
+								  ALLOCSET_DEFAULT_SIZES);
 
 	oldCtx = MemoryContextSwitchTo(opCtx);
 
@@ -789,12 +823,16 @@ ginInsertCleanup(GinState *ginstate,
 	 */
 	for (;;)
 	{
-		if (GinPageIsDeleted(page))
-		{
-			/* another cleanup process is running concurrently */
-			UnlockReleaseBuffer(buffer);
-			break;
-		}
+		Assert(!GinPageIsDeleted(page));
+
+		/*
+		 * Are we walk through the page which as we remember was a tail when
+		 * we start our cleanup?  But if caller asks us to clean up whole
+		 * pending list then ignore old tail, we will work until list becomes
+		 * empty.
+		 */
+		if (blkno == blknoFinish && full_clean == false)
+			cleanupFinish = true;
 
 		/*
 		 * read page's datums into accum
@@ -807,13 +845,10 @@ ginInsertCleanup(GinState *ginstate,
 		 * Is it time to flush memory to disk?	Flush if we are at the end of
 		 * the pending list, or if we have a full row and memory is getting
 		 * full.
-		 *
-		 * XXX using up maintenance_work_mem here is probably unreasonably
-		 * much, since vacuum might already be using that much.
 		 */
 		if (GinPageGetOpaque(page)->rightlink == InvalidBlockNumber ||
 			(GinPageHasFullRow(page) &&
-			 (accum.allocatedMemory >= maintenance_work_mem * 1024L)))
+			 (accum.allocatedMemory >= workMemory * 1024L)))
 		{
 			ItemPointerData *list;
 			uint32		nlist;
@@ -850,13 +885,7 @@ ginInsertCleanup(GinState *ginstate,
 			LockBuffer(metabuffer, GIN_EXCLUSIVE);
 			LockBuffer(buffer, GIN_SHARE);
 
-			if (GinPageIsDeleted(page))
-			{
-				/* another cleanup process is running concurrently */
-				UnlockReleaseBuffer(buffer);
-				LockBuffer(metabuffer, GIN_UNLOCK);
-				break;
-			}
+			Assert(!GinPageIsDeleted(page));
 
 			/*
 			 * While we left the page unlocked, more stuff might have gotten
@@ -886,23 +915,22 @@ ginInsertCleanup(GinState *ginstate,
 												 * locking */
 
 			/*
-			 * remove read pages from pending list, at this point all
-			 * content of read pages is in regular structure
+			 * remove read pages from pending list, at this point all content
+			 * of read pages is in regular structure
 			 */
-			if (shiftList(index, metabuffer, blkno, stats))
-			{
-				/* another cleanup process is running concurrently */
-				LockBuffer(metabuffer, GIN_UNLOCK);
-				break;
-			}
+			shiftList(index, metabuffer, blkno, fill_fsm, stats);
+
+			/* At this point, some pending pages have been freed up */
+			fsm_vac = true;
 
 			Assert(blkno == metadata->head);
 			LockBuffer(metabuffer, GIN_UNLOCK);
 
 			/*
-			 * if we removed the whole pending list just exit
+			 * if we removed the whole pending list or we cleanup tail (which
+			 * we remembered on start our cleanup process) then just exit
 			 */
-			if (blkno == InvalidBlockNumber)
+			if (blkno == InvalidBlockNumber || cleanupFinish)
 				break;
 
 			/*
@@ -927,9 +955,68 @@ ginInsertCleanup(GinState *ginstate,
 		page = BufferGetPage(buffer);
 	}
 
+	UnlockPage(index, GIN_METAPAGE_BLKNO, ExclusiveLock);
 	ReleaseBuffer(metabuffer);
+
+	/*
+	 * As pending list pages can have a high churn rate, it is desirable to
+	 * recycle them immediately to the FreeSpace Map when ordinary backends
+	 * clean the list.
+	 */
+	if (fsm_vac && fill_fsm)
+		IndexFreeSpaceMapVacuum(index);
+
 
 	/* Clean up temporary space */
 	MemoryContextSwitchTo(oldCtx);
 	MemoryContextDelete(opCtx);
+}
+
+/*
+ * SQL-callable function to clean the insert pending list
+ */
+Datum
+gin_clean_pending_list(PG_FUNCTION_ARGS)
+{
+	Oid			indexoid = PG_GETARG_OID(0);
+	Relation	indexRel = index_open(indexoid, AccessShareLock);
+	IndexBulkDeleteResult stats;
+	GinState	ginstate;
+
+	if (RecoveryInProgress())
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("recovery is in progress"),
+		 errhint("GIN pending list cannot be cleaned up during recovery.")));
+
+	/* Must be a GIN index */
+	if (indexRel->rd_rel->relkind != RELKIND_INDEX ||
+		indexRel->rd_rel->relam != GIN_AM_OID)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is not a GIN index",
+						RelationGetRelationName(indexRel))));
+
+	/*
+	 * Reject attempts to read non-local temporary relations; we would be
+	 * likely to get wrong data since we have no visibility into the owning
+	 * session's local buffers.
+	 */
+	if (RELATION_IS_OTHER_TEMP(indexRel))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			   errmsg("cannot access temporary indexes of other sessions")));
+
+	/* User must own the index (comparable to privileges needed for VACUUM) */
+	if (!pg_class_ownercheck(indexoid, GetUserId()))
+		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_CLASS,
+					   RelationGetRelationName(indexRel));
+
+	memset(&stats, 0, sizeof(stats));
+	initGinState(&ginstate, indexRel);
+	ginInsertCleanup(&ginstate, true, true, &stats);
+
+	index_close(indexRel, AccessShareLock);
+
+	PG_RETURN_INT64((int64) stats.pages_deleted);
 }

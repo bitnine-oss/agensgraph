@@ -2,7 +2,7 @@
 #
 # Makefile for src/test/ssl
 #
-# Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/test/ssl/Makefile
@@ -41,15 +41,16 @@ ssl/%.key:
 # Root CA certificate
 ssl/root_ca.crt: ssl/root_ca.key cas.config
 	touch ssl/root_ca-certindex
-	openssl req -new -out ssl/root_ca.crt -x509 -config cas.config -config root_ca.config -key ssl/root_ca.key -days 10000
+	openssl req -new -out ssl/root_ca.crt -x509 -config cas.config -config root_ca.config -key ssl/root_ca.key -days 10000 -extensions v3_ca
 	echo "01" > ssl/root_ca.srl
 
 # Client and server CAs
 ssl/%_ca.crt: ssl/%_ca.key %_ca.config ssl/root_ca.crt ssl/new_certs_dir
 	touch ssl/$*_ca-certindex
+	echo "unique_subject=no" > ssl/$*_ca-certindex.attr
 	openssl req -new -out ssl/temp_ca.crt -config cas.config -config $*_ca.config -key ssl/$*_ca.key
 # Sign the certificate with the root CA
-	openssl ca -name root_ca -batch -config cas.config -in ssl/temp_ca.crt -out ssl/temp_ca_signed.crt
+	openssl ca -name root_ca -batch -config cas.config -in ssl/temp_ca.crt -out ssl/temp_ca_signed.crt -extensions v3_ca
 	openssl x509 -in ssl/temp_ca_signed.crt -out ssl/$*_ca.crt # to keep just the PEM cert
 	rm ssl/temp_ca.crt ssl/temp_ca_signed.crt
 	echo "01" > ssl/$*_ca.srl
@@ -121,6 +122,9 @@ ssl/root+client.crl: ssl/root.crl ssl/client.crl
 .PHONY: sslfiles-clean
 sslfiles-clean:
 	rm -f $(SSLFILES) ssl/client_ca.srl ssl/server_ca.srl ssl/client_ca-certindex* ssl/server_ca-certindex* ssl/root_ca-certindex* ssl/root_ca.srl ssl/temp_ca.crt ssl/temp_ca_signed.crt
+
+clean distclean maintainer-clean:
+	rm -rf tmp_check
 
 check:
 	$(prove_check)

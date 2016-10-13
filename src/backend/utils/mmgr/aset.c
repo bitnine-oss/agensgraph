@@ -7,7 +7,7 @@
  * type.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -253,7 +253,8 @@ static void AllocSetReset(MemoryContext context);
 static void AllocSetDelete(MemoryContext context);
 static Size AllocSetGetChunkSpace(MemoryContext context, void *pointer);
 static bool AllocSetIsEmpty(MemoryContext context);
-static void AllocSetStats(MemoryContext context, int level);
+static void AllocSetStats(MemoryContext context, int level, bool print,
+			  MemoryContextCounters *totals);
 
 #ifdef MEMORY_CONTEXT_CHECKING
 static void AllocSetCheck(MemoryContext context);
@@ -426,10 +427,14 @@ randomize_mem(char *ptr, size_t size)
  *		Create a new AllocSet context.
  *
  * parent: parent context, or NULL if top-level context
- * name: name of context (for debugging --- string will be copied)
+ * name: name of context (for debugging only, need not be unique)
  * minContextSize: minimum context size
  * initBlockSize: initial allocation block size
  * maxBlockSize: maximum allocation block size
+ *
+ * Notes: the name string will be copied into context-lifespan storage.
+ * Most callers should abstract the context size parameters using a macro
+ * such as ALLOCSET_DEFAULT_SIZES.
  */
 MemoryContext
 AllocSetContextCreate(MemoryContext parent,
@@ -1228,20 +1233,23 @@ AllocSetIsEmpty(MemoryContext context)
 
 /*
  * AllocSetStats
- *		Displays stats about memory consumption of an allocset.
+ *		Compute stats about memory consumption of an allocset.
+ *
+ * level: recursion level (0 at top level); used for print indentation.
+ * print: true to print stats to stderr.
+ * totals: if not NULL, add stats about this allocset into *totals.
  */
 static void
-AllocSetStats(MemoryContext context, int level)
+AllocSetStats(MemoryContext context, int level, bool print,
+			  MemoryContextCounters *totals)
 {
 	AllocSet	set = (AllocSet) context;
 	Size		nblocks = 0;
-	Size		nchunks = 0;
+	Size		freechunks = 0;
 	Size		totalspace = 0;
 	Size		freespace = 0;
 	AllocBlock	block;
-	AllocChunk	chunk;
 	int			fidx;
-	int			i;
 
 	for (block = set->blocks; block != NULL; block = block->next)
 	{
@@ -1251,21 +1259,35 @@ AllocSetStats(MemoryContext context, int level)
 	}
 	for (fidx = 0; fidx < ALLOCSET_NUM_FREELISTS; fidx++)
 	{
+		AllocChunk	chunk;
+
 		for (chunk = set->freelist[fidx]; chunk != NULL;
 			 chunk = (AllocChunk) chunk->aset)
 		{
-			nchunks++;
+			freechunks++;
 			freespace += chunk->size + ALLOC_CHUNKHDRSZ;
 		}
 	}
 
-	for (i = 0; i < level; i++)
-		fprintf(stderr, "  ");
+	if (print)
+	{
+		int			i;
 
-	fprintf(stderr,
+		for (i = 0; i < level; i++)
+			fprintf(stderr, "  ");
+		fprintf(stderr,
 			"%s: %zu total in %zd blocks; %zu free (%zd chunks); %zu used\n",
-			set->header.name, totalspace, nblocks, freespace, nchunks,
-			totalspace - freespace);
+				set->header.name, totalspace, nblocks, freespace, freechunks,
+				totalspace - freespace);
+	}
+
+	if (totals)
+	{
+		totals->nblocks += nblocks;
+		totals->freechunks += freechunks;
+		totals->totalspace += totalspace;
+		totals->freespace += freespace;
+	}
 }
 
 

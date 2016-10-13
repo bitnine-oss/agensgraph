@@ -9,7 +9,7 @@
  * Shridhar Daithankar <shridhar_daithankar@persistent.co.in>
  *
  * contrib/dblink/dblink.c
- * Copyright (c) 2001-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2016, PostgreSQL Global Development Group
  * ALL RIGHTS RESERVED;
  *
  * Permission to use, copy, modify, and distribute this software and its
@@ -980,9 +980,7 @@ materializeQueryResult(FunctionCallInfo fcinfo,
 		/* Create short-lived memory context for data conversions */
 		sinfo.tmpcontext = AllocSetContextCreate(CurrentMemoryContext,
 												 "dblink temporary context",
-												 ALLOCSET_DEFAULT_MINSIZE,
-												 ALLOCSET_DEFAULT_INITSIZE,
-												 ALLOCSET_DEFAULT_MAXSIZE);
+												 ALLOCSET_DEFAULT_SIZES);
 
 		/* execute query, collecting any tuples into the tuplestore */
 		res = storeQueryResult(&sinfo, conn, sql);

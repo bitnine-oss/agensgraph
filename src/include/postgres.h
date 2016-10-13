@@ -7,7 +7,7 @@
  * Client-side code should include postgres_fe.h instead.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1995, Regents of the University of California
  *
  * src/include/postgres.h
@@ -398,7 +398,7 @@ typedef Datum *DatumPtr;
  * the left of the width of bool, per comment above.
  */
 
-#define DatumGetBool(X) ((bool) (((bool) (X)) != 0))
+#define DatumGetBool(X) ((bool) (GET_1_BYTE(X) != 0))
 
 /*
  * BoolGetDatum
@@ -627,6 +627,33 @@ typedef Datum *DatumPtr;
 #define Int64GetDatum(X) ((Datum) SET_8_BYTES(X))
 #else
 extern Datum Int64GetDatum(int64 X);
+#endif
+
+/*
+ * DatumGetUInt64
+ *		Returns 64-bit unsigned integer value of a datum.
+ *
+ * Note: this macro hides whether int64 is pass by value or by reference.
+ */
+
+#ifdef USE_FLOAT8_BYVAL
+#define DatumGetUInt64(X) ((uint64) GET_8_BYTES(X))
+#else
+#define DatumGetUInt64(X) (* ((uint64 *) DatumGetPointer(X)))
+#endif
+
+/*
+ * UInt64GetDatum
+ *		Returns datum representation for a 64-bit unsigned integer.
+ *
+ * Note: if int64 is pass by reference, this function returns a reference
+ * to palloc'd space.
+ */
+
+#ifdef USE_FLOAT8_BYVAL
+#define UInt64GetDatum(X) ((Datum) SET_8_BYTES(X))
+#else
+#define UInt64GetDatum(X) Int64GetDatum((int64) (X))
 #endif
 
 /*

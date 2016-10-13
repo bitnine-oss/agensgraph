@@ -4,7 +4,7 @@
  *	  prototypes for costsize.c and clausesel.c.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/cost.h
@@ -26,6 +26,8 @@
 #define DEFAULT_CPU_TUPLE_COST	0.01
 #define DEFAULT_CPU_INDEX_TUPLE_COST 0.005
 #define DEFAULT_CPU_OPERATOR_COST  0.0025
+#define DEFAULT_PARALLEL_TUPLE_COST 0.1
+#define DEFAULT_PARALLEL_SETUP_COST  1000.0
 
 #define DEFAULT_EFFECTIVE_CACHE_SIZE  524288	/* measured in pages */
 
@@ -48,8 +50,11 @@ extern PGDLLIMPORT double random_page_cost;
 extern PGDLLIMPORT double cpu_tuple_cost;
 extern PGDLLIMPORT double cpu_index_tuple_cost;
 extern PGDLLIMPORT double cpu_operator_cost;
+extern PGDLLIMPORT double parallel_tuple_cost;
+extern PGDLLIMPORT double parallel_setup_cost;
 extern PGDLLIMPORT int effective_cache_size;
 extern Cost disable_cost;
+extern int	max_parallel_workers_per_gather;
 extern bool enable_seqscan;
 extern bool enable_indexscan;
 extern bool enable_indexonlyscan;
@@ -80,7 +85,7 @@ extern void cost_bitmap_or_node(BitmapOrPath *path, PlannerInfo *root);
 extern void cost_bitmap_tree_node(Path *path, Cost *cost, Selectivity *selec);
 extern void cost_tidscan(Path *path, PlannerInfo *root,
 			 RelOptInfo *baserel, List *tidquals, ParamPathInfo *param_info);
-extern void cost_subqueryscan(Path *path, PlannerInfo *root,
+extern void cost_subqueryscan(SubqueryScanPath *path, PlannerInfo *root,
 				  RelOptInfo *baserel, ParamPathInfo *param_info);
 extern void cost_functionscan(Path *path, PlannerInfo *root,
 				  RelOptInfo *baserel, ParamPathInfo *param_info);
@@ -88,7 +93,7 @@ extern void cost_valuesscan(Path *path, PlannerInfo *root,
 				RelOptInfo *baserel, ParamPathInfo *param_info);
 extern void cost_ctescan(Path *path, PlannerInfo *root,
 			 RelOptInfo *baserel, ParamPathInfo *param_info);
-extern void cost_recursive_union(Plan *runion, Plan *nrterm, Plan *rterm);
+extern void cost_recursive_union(Path *runion, Path *nrterm, Path *rterm);
 extern void cost_sort(Path *path, PlannerInfo *root,
 		  List *pathkeys, Cost input_cost, double tuples, int width,
 		  Cost comparison_cost, int sort_mem,
@@ -144,6 +149,8 @@ extern void final_cost_hashjoin(PlannerInfo *root, HashPath *path,
 					JoinCostWorkspace *workspace,
 					SpecialJoinInfo *sjinfo,
 					SemiAntiJoinFactors *semifactors);
+extern void cost_gather(GatherPath *path, PlannerInfo *root,
+			RelOptInfo *baserel, ParamPathInfo *param_info, double *rows);
 extern void cost_subplan(PlannerInfo *root, SubPlan *subplan, Plan *plan);
 extern void cost_qual_eval(QualCost *cost, List *quals, PlannerInfo *root);
 extern void cost_qual_eval_node(QualCost *cost, Node *qual, PlannerInfo *root);
@@ -160,8 +167,8 @@ extern double get_parameterized_baserel_size(PlannerInfo *root,
 							   List *param_clauses);
 extern double get_parameterized_joinrel_size(PlannerInfo *root,
 							   RelOptInfo *rel,
-							   double outer_rows,
-							   double inner_rows,
+							   Path *outer_path,
+							   Path *inner_path,
 							   SpecialJoinInfo *sjinfo,
 							   List *restrict_clauses);
 extern void set_joinrel_size_estimates(PlannerInfo *root, RelOptInfo *rel,
@@ -173,8 +180,9 @@ extern void set_subquery_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_function_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_values_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel,
-					   Plan *cteplan);
+					   double cte_rows);
 extern void set_foreign_size_estimates(PlannerInfo *root, RelOptInfo *rel);
+extern PathTarget *set_pathtarget_cost_width(PlannerInfo *root, PathTarget *target);
 
 /*
  * prototypes for clausesel.c

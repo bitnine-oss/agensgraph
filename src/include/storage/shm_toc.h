@@ -5,14 +5,14 @@
  *
  * This is intended to provide a simple way to divide a chunk of shared
  * memory (probably dynamic shared memory allocated via dsm_create) into
- * a number of regions and keep track of the addreses of those regions or
+ * a number of regions and keep track of the addresses of those regions or
  * key data structures within those regions.  This is not intended to
  * scale to a large number of keys and will perform poorly if used that
  * way; if you need a large number of pointers, store them within some
  * other data structure within the segment and only put the pointer to
  * the data structure itself in the table of contents.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/shm_toc.h

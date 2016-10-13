@@ -29,6 +29,7 @@
 
 #include "access/nbtree.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_am.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
@@ -41,11 +42,6 @@ PG_FUNCTION_INFO_V1(bt_page_stats);
 
 #define IS_INDEX(r) ((r)->rd_rel->relkind == RELKIND_INDEX)
 #define IS_BTREE(r) ((r)->rd_rel->relam == BTREE_AM_OID)
-
-#define CHECK_PAGE_OFFSET_RANGE(pg, offnum) { \
-		if ( !(FirstOffsetNumber <= (offnum) && \
-						(offnum) <= PageGetMaxOffsetNumber(pg)) ) \
-			 elog(ERROR, "page offset number out of range"); }
 
 /* note: BlockNumber is unsigned, hence can't be negative */
 #define CHECK_RELATION_BLOCK_RANGE(rel, blkno) { \

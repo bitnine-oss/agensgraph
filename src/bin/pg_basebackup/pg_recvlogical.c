@@ -3,7 +3,7 @@
  * pg_recvlogical.c - receive data from a logical decoding slot in a streaming
  *					  fashion and write it to a local file.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/pg_recvlogical.c
@@ -359,6 +359,14 @@ StreamLogicalLog(void)
 			int64		fsync_target = 0;
 			struct timeval timeout;
 			struct timeval *timeoutptr = NULL;
+
+			if (PQsocket(conn) < 0)
+			{
+				fprintf(stderr,
+						_("%s: invalid socket: %s"),
+						progname, PQerrorMessage(conn));
+				goto error;
+			}
 
 			FD_ZERO(&input_mask);
 			FD_SET(PQsocket(conn), &input_mask);
@@ -853,8 +861,8 @@ main(int argc, char **argv)
 
 	/*
 	 * Obtain a connection to server. This is not really necessary but it
-	 * helps to get more precise error messages about authentication,
-	 * required GUC parameters and such.
+	 * helps to get more precise error messages about authentication, required
+	 * GUC parameters and such.
 	 */
 	conn = GetConnection();
 	if (!conn)

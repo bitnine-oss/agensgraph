@@ -4,7 +4,7 @@
  *	  Standard POSTGRES buffer page definitions.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/bufpage.h
@@ -298,14 +298,31 @@ typedef PageHeaderData *PageHeader;
 	((uint16) (PageGetPageSize(page) - ((PageHeader)(page))->pd_special))
 
 /*
+ * Using assertions, validate that the page special pointer is OK.
+ *
+ * This is intended to catch use of the pointer before page initialization.
+ * It is implemented as a function due to the limitations of the MSVC
+ * compiler, which choked on doing all these tests within another macro.  We
+ * return true so that MacroAssert() can be used while still getting the
+ * specifics from the macro failure within this function.
+ */
+static inline bool
+PageValidateSpecialPointer(Page page)
+{
+	Assert(PageIsValid(page));
+	Assert(((PageHeader) (page))->pd_special <= BLCKSZ);
+	Assert(((PageHeader) (page))->pd_special >= SizeOfPageHeaderData);
+
+	return true;
+}
+
+/*
  * PageGetSpecialPointer
  *		Returns pointer to special space on a page.
  */
 #define PageGetSpecialPointer(page) \
 ( \
-	AssertMacro(PageIsValid(page)), \
-	AssertMacro(((PageHeader) (page))->pd_special <= BLCKSZ), \
-	AssertMacro(((PageHeader) (page))->pd_special >= SizeOfPageHeaderData), \
+	AssertMacro(PageValidateSpecialPointer(page)), \
 	(char *) ((char *) (page) + ((PageHeader) (page))->pd_special) \
 )
 
@@ -390,11 +407,16 @@ do { \
  *		extern declarations
  * ----------------------------------------------------------------
  */
+#define PAI_OVERWRITE			(1 << 0)
+#define PAI_IS_HEAP				(1 << 1)
+#define PAI_ALLOW_FAR_OFFSET	(1 << 2)
 
 extern void PageInit(Page page, Size pageSize, Size specialSize);
 extern bool PageIsVerified(Page page, BlockNumber blkno);
 extern OffsetNumber PageAddItem(Page page, Item item, Size size,
 			OffsetNumber offsetNumber, bool overwrite, bool is_heap);
+extern OffsetNumber PageAddItemExtended(Page page, Item item, Size size,
+					OffsetNumber offsetNumber, int flags);
 extern Page PageGetTempPage(Page page);
 extern Page PageGetTempPageCopy(Page page);
 extern Page PageGetTempPageCopySpecial(Page page);

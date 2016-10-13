@@ -20,7 +20,7 @@
  * step 2 ...
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_resetxlog/pg_resetxlog.c
@@ -646,7 +646,7 @@ PrintControlValues(bool guessed)
 		   ControlFile.checkPointCopy.ThisTimeLineID);
 	printf(_("Latest checkpoint's full_page_writes: %s\n"),
 		   ControlFile.checkPointCopy.fullPageWrites ? _("on") : _("off"));
-	printf(_("Latest checkpoint's NextXID:          %u/%u\n"),
+	printf(_("Latest checkpoint's NextXID:          %u:%u\n"),
 		   ControlFile.checkPointCopy.nextXidEpoch,
 		   ControlFile.checkPointCopy.nextXid);
 	printf(_("Latest checkpoint's NextOID:          %u\n"),
@@ -703,7 +703,7 @@ PrintControlValues(bool guessed)
  * Print the values to be changed.
  */
 static void
-PrintNewControlValues()
+PrintNewControlValues(void)
 {
 	char		fname[MAXFNAMELEN];
 

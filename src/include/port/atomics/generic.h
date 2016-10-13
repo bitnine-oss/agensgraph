@@ -1,10 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * generic.h
- *	  Implement higher level operations based on some lower level tomic
+ *	  Implement higher level operations based on some lower level atomic
  *	  operations.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/port/atomics/generic.h
@@ -39,8 +39,6 @@
 #define PG_HAVE_ATOMIC_FLAG_SUPPORT
 typedef pg_atomic_uint32 pg_atomic_flag;
 #endif
-
-#if defined(PG_USE_INLINE) || defined(ATOMICS_INCLUDE_DEFINITIONS)
 
 #ifndef PG_HAVE_ATOMIC_READ_U32
 #define PG_HAVE_ATOMIC_READ_U32
@@ -383,5 +381,3 @@ pg_atomic_sub_fetch_u64_impl(volatile pg_atomic_uint64 *ptr, int64 sub_)
 #endif
 
 #endif /* PG_HAVE_ATOMIC_COMPARE_EXCHANGE_U64 */
-
-#endif /* defined(PG_USE_INLINE) || defined(ATOMICS_INCLUDE_DEFINITIONS) */

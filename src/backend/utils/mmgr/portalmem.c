@@ -8,7 +8,7 @@
  * doesn't actually run the executor for them.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -24,6 +24,7 @@
 #include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
+#include "utils/snapmgr.h"
 #include "utils/timestamp.h"
 
 /*
@@ -107,9 +108,7 @@ EnablePortalManager(void)
 
 	PortalMemory = AllocSetContextCreate(TopMemoryContext,
 										 "PortalMemory",
-										 ALLOCSET_DEFAULT_MINSIZE,
-										 ALLOCSET_DEFAULT_INITSIZE,
-										 ALLOCSET_DEFAULT_MAXSIZE);
+										 ALLOCSET_DEFAULT_SIZES);
 
 	ctl.keysize = MAX_PORTALNAME_LEN;
 	ctl.entrysize = sizeof(PortalHashEnt);
@@ -220,9 +219,7 @@ CreatePortal(const char *name, bool allowDup, bool dupSilent)
 	/* initialize portal heap context; typically it won't store much */
 	portal->heap = AllocSetContextCreate(PortalMemory,
 										 "PortalHeapMemory",
-										 ALLOCSET_SMALL_MINSIZE,
-										 ALLOCSET_SMALL_INITSIZE,
-										 ALLOCSET_SMALL_MAXSIZE);
+										 ALLOCSET_SMALL_SIZES);
 
 	/* create a resource owner for the portal */
 	portal->resowner = ResourceOwnerCreate(CurTransactionResourceOwner,
@@ -351,6 +348,7 @@ PortalCreateHoldStore(Portal portal)
 
 	Assert(portal->holdContext == NULL);
 	Assert(portal->holdStore == NULL);
+	Assert(portal->holdSnapshot == NULL);
 
 	/*
 	 * Create the memory context that is used for storage of the tuple set.
@@ -359,9 +357,7 @@ PortalCreateHoldStore(Portal portal)
 	portal->holdContext =
 		AllocSetContextCreate(PortalMemory,
 							  "PortalHoldContext",
-							  ALLOCSET_DEFAULT_MINSIZE,
-							  ALLOCSET_DEFAULT_INITSIZE,
-							  ALLOCSET_DEFAULT_MAXSIZE);
+							  ALLOCSET_DEFAULT_SIZES);
 
 	/*
 	 * Create the tuple store, selecting cross-transaction temp files, and
@@ -525,6 +521,20 @@ PortalDrop(Portal portal, bool isTopCommit)
 
 	/* drop cached plan reference, if any */
 	PortalReleaseCachedPlan(portal);
+
+	/*
+	 * If portal has a snapshot protecting its data, release that.  This needs
+	 * a little care since the registration will be attached to the portal's
+	 * resowner; if the portal failed, we will already have released the
+	 * resowner (and the snapshot) during transaction abort.
+	 */
+	if (portal->holdSnapshot)
+	{
+		if (portal->resowner)
+			UnregisterSnapshotFromOwner(portal->holdSnapshot,
+										portal->resowner);
+		portal->holdSnapshot = NULL;
+	}
 
 	/*
 	 * Release any resources still attached to the portal.  There are several
@@ -765,7 +775,14 @@ AtAbort_Portals(void)
 	{
 		Portal		portal = hentry->portal;
 
-		/* Any portal that was actually running has to be considered broken */
+		/*
+		 * See similar code in AtSubAbort_Portals().  This would fire if code
+		 * orchestrating multiple top-level transactions within a portal, such
+		 * as VACUUM, caught errors and continued under the same portal with a
+		 * fresh transaction.  No part of core PostgreSQL functions that way.
+		 * XXX Such code would wish the portal to remain ACTIVE, as in
+		 * PreCommit_Portals().
+		 */
 		if (portal->status == PORTAL_ACTIVE)
 			MarkPortalFailed(portal);
 
@@ -919,9 +936,10 @@ AtSubAbort_Portals(SubTransactionId mySubid,
 				portal->activeSubid = parentSubid;
 
 				/*
-				 * Upper-level portals that failed while running in this
-				 * subtransaction must be forced into FAILED state, for the
-				 * same reasons discussed below.
+				 * A MarkPortalActive() caller ran an upper-level portal in
+				 * this subtransaction and left the portal ACTIVE.  This can't
+				 * happen, but force the portal into FAILED state for the same
+				 * reasons discussed below.
 				 *
 				 * We assume we can get away without forcing upper-level READY
 				 * portals to fail, even if they were run and then suspended.
@@ -961,6 +979,10 @@ AtSubAbort_Portals(SubTransactionId mySubid,
 		 * We have to do this because they might refer to objects created or
 		 * changed in the failed subtransaction, leading to crashes within
 		 * ExecutorEnd when portalcmds.c tries to close down the portal.
+		 * Currently, every MarkPortalActive() caller ensures it updates the
+		 * portal status again before relinquishing control, so ACTIVE can't
+		 * happen here.  If it does happen, dispose the portal like existing
+		 * MarkPortalActive() callers would.
 		 */
 		if (portal->status == PORTAL_READY ||
 			portal->status == PORTAL_ACTIVE)

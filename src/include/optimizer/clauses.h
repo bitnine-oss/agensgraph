@@ -4,7 +4,7 @@
  *	  prototypes for clauses.c.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/clauses.h
@@ -27,7 +27,6 @@ typedef struct
 	List	  **windowFuncs;	/* lists of WindowFuncs for each winref */
 } WindowFuncLists;
 
-
 extern Expr *make_opclause(Oid opno, Oid opresulttype, bool opretset,
 			  Expr *leftop, Expr *rightop,
 			  Oid opcollid, Oid inputcollid);
@@ -48,8 +47,8 @@ extern Expr *make_ands_explicit(List *andclauses);
 extern List *make_ands_implicit(Expr *clause);
 
 extern bool contain_agg_clause(Node *clause);
-extern void count_agg_clauses(PlannerInfo *root, Node *clause,
-				  AggClauseCosts *costs);
+extern void get_agg_clause_costs(PlannerInfo *root, Node *clause,
+					 AggSplit aggsplit, AggClauseCosts *costs);
 
 extern bool contain_window_function(Node *clause);
 extern WindowFuncLists *find_window_functions(Node *clause, Index maxWinRef);
@@ -62,6 +61,7 @@ extern bool contain_subplans(Node *clause);
 extern bool contain_mutable_functions(Node *clause);
 extern bool contain_volatile_functions(Node *clause);
 extern bool contain_volatile_functions_not_nextval(Node *clause);
+extern bool has_parallel_hazard(Node *node, bool allow_restricted);
 extern bool contain_nonstrict_functions(Node *clause);
 extern bool contain_leaked_vars(Node *clause);
 

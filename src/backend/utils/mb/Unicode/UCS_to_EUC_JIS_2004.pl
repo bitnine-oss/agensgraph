@@ -1,6 +1,6 @@
 #! /usr/bin/perl
 #
-# Copyright (c) 2007-2015, PostgreSQL Global Development Group
+# Copyright (c) 2007-2016, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/UCS_to_EUC_JIS_2004.pl
 #
@@ -9,7 +9,7 @@
 
 require "ucs2utf.pl";
 
-$TEST = 1;
+$TEST = 0;
 
 # first generate UTF-8 --> EUC_JIS_2004 table
 

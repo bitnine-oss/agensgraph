@@ -3,7 +3,7 @@
  * ts_typanalyze.c
  *	  functions for gathering statistics from tsvector columns
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -295,7 +295,7 @@ compute_tsvector_stats(VacAttrStats *stats,
 		stats->stawidth = total_width / (double) nonnull_cnt;
 
 		/* Assume it's a unique column (see notes above) */
-		stats->stadistinct = -1.0;
+		stats->stadistinct = -1.0 * (1.0 - stats->stanullfrac);
 
 		/*
 		 * Construct an array of the interesting hashtable items, that is,

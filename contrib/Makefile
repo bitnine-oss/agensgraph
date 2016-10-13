@@ -8,6 +8,7 @@ SUBDIRS = \
 		adminpack	\
 		auth_delay	\
 		auto_explain	\
+		bloom		\
 		btree_gin	\
 		btree_gist	\
 		chkpass		\
@@ -38,6 +39,7 @@ SUBDIRS = \
 		pgcrypto	\
 		pgrowlocks	\
 		pgstattuple	\
+		pg_visibility	\
 		postgres_fdw	\
 		seg		\
 		spi		\

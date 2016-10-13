@@ -4,7 +4,7 @@
  *	  Routines for interprocess signalling
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/procsignal.h
@@ -55,6 +55,5 @@ extern int SendProcSignal(pid_t pid, ProcSignalReason reason,
 			   BackendId backendId);
 
 extern void procsignal_sigusr1_handler(SIGNAL_ARGS);
-extern PGDLLIMPORT bool set_latch_on_sigusr1;
 
 #endif   /* PROCSIGNAL_H */

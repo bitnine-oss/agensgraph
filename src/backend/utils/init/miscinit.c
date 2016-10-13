@@ -3,7 +3,7 @@
  * miscinit.c
  *	  miscellaneous initialization support stuff
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -33,6 +33,7 @@
 
 #include "access/htup_details.h"
 #include "catalog/pg_authid.h"
+#include "libpq/libpq.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "postmaster/autovacuum.h"
@@ -247,6 +248,9 @@ SwitchToSharedLatch(void)
 
 	MyLatch = &MyProc->procLatch;
 
+	if (FeBeWaitSet)
+		ModifyWaitEvent(FeBeWaitSet, 1, WL_LATCH_SET, MyLatch);
+
 	/*
 	 * Set the shared latch as the local one might have been set. This
 	 * shouldn't normally be necessary as code is supposed to check the
@@ -262,6 +266,10 @@ SwitchBackToLocalLatch(void)
 	Assert(MyProc != NULL && MyLatch == &MyProc->procLatch);
 
 	MyLatch = &LocalLatchData;
+
+	if (FeBeWaitSet)
+		ModifyWaitEvent(FeBeWaitSet, 1, WL_LATCH_SET, MyLatch);
+
 	SetLatch(MyLatch);
 }
 
@@ -474,6 +482,7 @@ InitializeSessionUserId(const char *rolename, Oid roleid)
 {
 	HeapTuple	roleTup;
 	Form_pg_authid rform;
+	char	   *rname;
 
 	/*
 	 * Don't do scans if we're bootstrapping, none of the system catalogs
@@ -485,16 +494,25 @@ InitializeSessionUserId(const char *rolename, Oid roleid)
 	AssertState(!OidIsValid(AuthenticatedUserId));
 
 	if (rolename != NULL)
+	{
 		roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(rolename));
+		if (!HeapTupleIsValid(roleTup))
+			ereport(FATAL,
+					(errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+					 errmsg("role \"%s\" does not exist", rolename)));
+	}
 	else
+	{
 		roleTup = SearchSysCache1(AUTHOID, ObjectIdGetDatum(roleid));
-	if (!HeapTupleIsValid(roleTup))
-		ereport(FATAL,
-				(errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-				 errmsg("role \"%s\" does not exist", rolename)));
+		if (!HeapTupleIsValid(roleTup))
+			ereport(FATAL,
+					(errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+					 errmsg("role with OID %u does not exist", roleid)));
+	}
 
 	rform = (Form_pg_authid) GETSTRUCT(roleTup);
 	roleid = HeapTupleGetOid(roleTup);
+	rname = NameStr(rform->rolname);
 
 	AuthenticatedUserId = roleid;
 	AuthenticatedUserIsSuperuser = rform->rolsuper;
@@ -520,7 +538,7 @@ InitializeSessionUserId(const char *rolename, Oid roleid)
 			ereport(FATAL,
 					(errcode(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
 					 errmsg("role \"%s\" is not permitted to log in",
-							rolename)));
+							rname)));
 
 		/*
 		 * Check connection limit for this role.
@@ -538,11 +556,11 @@ InitializeSessionUserId(const char *rolename, Oid roleid)
 			ereport(FATAL,
 					(errcode(ERRCODE_TOO_MANY_CONNECTIONS),
 					 errmsg("too many connections for role \"%s\"",
-							rolename)));
+							rname)));
 	}
 
 	/* Record username and superuser status as GUC settings too */
-	SetConfigOption("session_authorization", rolename,
+	SetConfigOption("session_authorization", rname,
 					PGC_BACKEND, PGC_S_OVERRIDE);
 	SetConfigOption("is_superuser",
 					AuthenticatedUserIsSuperuser ? "on" : "off",
@@ -724,6 +742,17 @@ UnlinkLockFiles(int status, Datum arg)
 	}
 	/* Since we're about to exit, no need to reclaim storage */
 	lock_files = NIL;
+
+	/*
+	 * Lock file removal should always be the last externally visible action
+	 * of a postmaster or standalone backend, while we won't come here at all
+	 * when exiting postmaster child processes.  Therefore, this is a good
+	 * place to log completion of shutdown.  We could alternatively teach
+	 * proc_exit() to do it, but that seems uglier.  In a standalone backend,
+	 * use NOTICE elevel to be less chatty.
+	 */
+	ereport(IsPostmasterEnvironment ? LOG : NOTICE,
+			(errmsg("database system is shut down")));
 }
 
 /*

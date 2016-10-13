@@ -4,7 +4,7 @@
  *	  routines to manage scans on GiST index relations
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -54,12 +54,9 @@ pairingheap_GISTSearchItem_cmp(const pairingheap_node *a, const pairingheap_node
  * Index AM API functions for scanning GiST indexes
  */
 
-Datum
-gistbeginscan(PG_FUNCTION_ARGS)
+IndexScanDesc
+gistbeginscan(Relation r, int nkeys, int norderbys)
 {
-	Relation	r = (Relation) PG_GETARG_POINTER(0);
-	int			nkeys = PG_GETARG_INT32(1);
-	int			norderbys = PG_GETARG_INT32(2);
 	IndexScanDesc scan;
 	GISTSTATE  *giststate;
 	GISTScanOpaque so;
@@ -93,6 +90,11 @@ gistbeginscan(PG_FUNCTION_ARGS)
 		memset(scan->xs_orderbynulls, true, sizeof(bool) * scan->numberOfOrderBys);
 	}
 
+	so->killedItems = NULL;		/* until needed */
+	so->numKilled = 0;
+	so->curBlkno = InvalidBlockNumber;
+	so->curPageLSN = InvalidXLogRecPtr;
+
 	scan->opaque = so;
 
 	/*
@@ -102,16 +104,13 @@ gistbeginscan(PG_FUNCTION_ARGS)
 
 	MemoryContextSwitchTo(oldCxt);
 
-	PG_RETURN_POINTER(scan);
+	return scan;
 }
 
-Datum
-gistrescan(PG_FUNCTION_ARGS)
+void
+gistrescan(IndexScanDesc scan, ScanKey key, int nkeys,
+		   ScanKey orderbys, int norderbys)
 {
-	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
-	ScanKey		key = (ScanKey) PG_GETARG_POINTER(1);
-	ScanKey		orderbys = (ScanKey) PG_GETARG_POINTER(3);
-
 	/* nkeys and norderbys arguments are ignored */
 	GISTScanOpaque so = (GISTScanOpaque) scan->opaque;
 	bool		first_time;
@@ -126,7 +125,7 @@ gistrescan(PG_FUNCTION_ARGS)
 	 * which is created on the second call and reset on later calls.  Thus, in
 	 * the common case where a scan is only rescan'd once, we just put the
 	 * queue in scanCxt and don't pay the overhead of making a second memory
-	 * context.  If we do rescan more than once, the first RBTree is just left
+	 * context.  If we do rescan more than once, the first queue is just left
 	 * for dead until end of scan; this small wastage seems worth the savings
 	 * in the common case.
 	 */
@@ -141,9 +140,7 @@ gistrescan(PG_FUNCTION_ARGS)
 		/* second time through */
 		so->queueCxt = AllocSetContextCreate(so->giststate->scanCxt,
 											 "GiST queue context",
-											 ALLOCSET_DEFAULT_MINSIZE,
-											 ALLOCSET_DEFAULT_INITSIZE,
-											 ALLOCSET_DEFAULT_MAXSIZE);
+											 ALLOCSET_DEFAULT_SIZES);
 		first_time = false;
 	}
 	else
@@ -181,12 +178,10 @@ gistrescan(PG_FUNCTION_ARGS)
 
 		so->pageDataCxt = AllocSetContextCreate(so->giststate->scanCxt,
 												"GiST page data context",
-												ALLOCSET_DEFAULT_MINSIZE,
-												ALLOCSET_DEFAULT_INITSIZE,
-												ALLOCSET_DEFAULT_MAXSIZE);
+												ALLOCSET_DEFAULT_SIZES);
 	}
 
-	/* create new, empty RBTree for search queue */
+	/* create new, empty pairing heap for search queue */
 	oldCxt = MemoryContextSwitchTo(so->queueCxt);
 	so->queue = pairingheap_allocate(pairingheap_GISTSearchItem_cmp, scan);
 	MemoryContextSwitchTo(oldCxt);
@@ -231,8 +226,8 @@ gistrescan(PG_FUNCTION_ARGS)
 			ScanKey		skey = scan->keyData + i;
 
 			/*
-			 * Copy consistent support function to ScanKey structure
-			 * instead of function implementing filtering operator.
+			 * Copy consistent support function to ScanKey structure instead
+			 * of function implementing filtering operator.
 			 */
 			fmgr_info_copy(&(skey->sk_func),
 						   &(so->giststate->consistentFn[skey->sk_attno - 1]),
@@ -304,8 +299,8 @@ gistrescan(PG_FUNCTION_ARGS)
 			so->orderByTypes[i] = get_func_rettype(skey->sk_func.fn_oid);
 
 			/*
-			 * Copy distance support function to ScanKey structure
-			 * instead of function implementing ordering operator.
+			 * Copy distance support function to ScanKey structure instead of
+			 * function implementing ordering operator.
 			 */
 			fmgr_info_copy(&(skey->sk_func), finfo, so->giststate->scanCxt);
 
@@ -317,28 +312,11 @@ gistrescan(PG_FUNCTION_ARGS)
 		if (!first_time)
 			pfree(fn_extras);
 	}
-
-	PG_RETURN_VOID();
 }
 
-Datum
-gistmarkpos(PG_FUNCTION_ARGS)
+void
+gistendscan(IndexScanDesc scan)
 {
-	elog(ERROR, "GiST does not support mark/restore");
-	PG_RETURN_VOID();
-}
-
-Datum
-gistrestrpos(PG_FUNCTION_ARGS)
-{
-	elog(ERROR, "GiST does not support mark/restore");
-	PG_RETURN_VOID();
-}
-
-Datum
-gistendscan(PG_FUNCTION_ARGS)
-{
-	IndexScanDesc scan = (IndexScanDesc) PG_GETARG_POINTER(0);
 	GISTScanOpaque so = (GISTScanOpaque) scan->opaque;
 
 	/*
@@ -346,6 +324,4 @@ gistendscan(PG_FUNCTION_ARGS)
 	 * as well as the queueCxt if there is a separate context for it.
 	 */
 	freeGISTstate(so->giststate);
-
-	PG_RETURN_VOID();
 }

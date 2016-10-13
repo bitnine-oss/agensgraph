@@ -3,7 +3,7 @@
  * execUtils.c
  *	  miscellaneous executor utility routines
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -82,9 +82,7 @@ CreateExecutorState(void)
 	 */
 	qcontext = AllocSetContextCreate(CurrentMemoryContext,
 									 "ExecutorState",
-									 ALLOCSET_DEFAULT_MINSIZE,
-									 ALLOCSET_DEFAULT_INITSIZE,
-									 ALLOCSET_DEFAULT_MAXSIZE);
+									 ALLOCSET_DEFAULT_SIZES);
 
 	/*
 	 * Make the EState node within the per-query context.  This way, we don't
@@ -235,9 +233,7 @@ CreateExprContext(EState *estate)
 	econtext->ecxt_per_tuple_memory =
 		AllocSetContextCreate(estate->es_query_cxt,
 							  "ExprContext",
-							  ALLOCSET_DEFAULT_MINSIZE,
-							  ALLOCSET_DEFAULT_INITSIZE,
-							  ALLOCSET_DEFAULT_MAXSIZE);
+							  ALLOCSET_DEFAULT_SIZES);
 
 	econtext->ecxt_param_exec_vals = estate->es_param_exec_vals;
 	econtext->ecxt_param_list_info = estate->es_param_list_info;
@@ -306,9 +302,7 @@ CreateStandaloneExprContext(void)
 	econtext->ecxt_per_tuple_memory =
 		AllocSetContextCreate(CurrentMemoryContext,
 							  "ExprContext",
-							  ALLOCSET_DEFAULT_MINSIZE,
-							  ALLOCSET_DEFAULT_INITSIZE,
-							  ALLOCSET_DEFAULT_MAXSIZE);
+							  ALLOCSET_DEFAULT_SIZES);
 
 	econtext->ecxt_param_exec_vals = NULL;
 	econtext->ecxt_param_list_info = NULL;
@@ -717,18 +711,6 @@ ExecFreeExprContext(PlanState *planstate)
  *		right for them...  -cim 6/3/91
  * ----------------------------------------------------------------
  */
-
-/* ----------------
- *		ExecGetScanType
- * ----------------
- */
-TupleDesc
-ExecGetScanType(ScanState *scanstate)
-{
-	TupleTableSlot *slot = scanstate->ss_ScanTupleSlot;
-
-	return slot->tts_tupleDescriptor;
-}
 
 /* ----------------
  *		ExecAssignScanType
