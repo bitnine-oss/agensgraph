@@ -4,7 +4,7 @@
  *	  POSTGRES definitions for external and compressed storage
  *	  of variable size attributes.
  *
- * Copyright (c) 2000-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2016, PostgreSQL Global Development Group
  *
  * src/include/access/tuptoaster.h
  *
@@ -14,8 +14,8 @@
 #define TUPTOASTER_H
 
 #include "access/htup_details.h"
+#include "storage/lockdefs.h"
 #include "utils/relcache.h"
-#include "storage/lock.h"
 
 /*
  * This enables de-toasting of index entries.  Needed until VACUUM is
@@ -142,7 +142,7 @@ extern HeapTuple toast_insert_or_update(Relation rel,
  *	Called by heap_delete().
  * ----------
  */
-extern void toast_delete(Relation rel, HeapTuple oldtup);
+extern void toast_delete(Relation rel, HeapTuple oldtup, bool is_speculative);
 
 /* ----------
  * heap_tuple_fetch_attr() -

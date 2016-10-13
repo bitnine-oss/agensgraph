@@ -9,7 +9,7 @@
  * shorn of features like subselects, inheritance, aggregates, grouping,
  * and so on.  (Those are the things planner.c deals with.)
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,6 +20,7 @@
  */
 #include "postgres.h"
 
+#include "optimizer/clauses.h"
 #include "optimizer/orclauses.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
@@ -35,9 +36,7 @@
  * Since query_planner does not handle the toplevel processing (grouping,
  * sorting, etc) it cannot select the best path by itself.  Instead, it
  * returns the RelOptInfo for the top level of joining, and the caller
- * (grouping_planner) can choose one of the surviving paths for the rel.
- * Normally it would choose either the rel's cheapest path, or the cheapest
- * path for the desired sort order.
+ * (grouping_planner) can choose among the surviving paths for the rel.
  *
  * root describes the query to plan
  * tlist is the target list the query should produce
@@ -70,9 +69,22 @@ query_planner(PlannerInfo *root, List *tlist,
 		/* We need a dummy joinrel to describe the empty set of baserels */
 		final_rel = build_empty_join_rel(root);
 
+		/*
+		 * If query allows parallelism in general, check whether the quals are
+		 * parallel-restricted.  There's currently no real benefit to setting
+		 * this flag correctly because we can't yet reference subplans from
+		 * parallel workers.  But that might change someday, so set this
+		 * correctly anyway.
+		 */
+		if (root->glob->parallelModeOK)
+			final_rel->consider_parallel =
+				!has_parallel_hazard(parse->jointree->quals, false);
+
 		/* The only path for it is a trivial Result path */
 		add_path(final_rel, (Path *)
-				 create_result_path((List *) parse->jointree->quals));
+				 create_result_path(root, final_rel,
+									final_rel->reltarget,
+									(List *) parse->jointree->quals));
 
 		/* Select cheapest path (pretty easy in this case...) */
 		set_cheapest(final_rel);
@@ -91,7 +103,7 @@ query_planner(PlannerInfo *root, List *tlist,
 	 * Init planner lists to empty.
 	 *
 	 * NOTE: append_rel_list was set up by subquery_planner, so do not touch
-	 * here; eq_classes and minmax_aggs may contain data already, too.
+	 * here.
 	 */
 	root->join_rel_list = NIL;
 	root->join_rel_hash = NULL;
@@ -103,6 +115,7 @@ query_planner(PlannerInfo *root, List *tlist,
 	root->full_join_clauses = NIL;
 	root->join_info_list = NIL;
 	root->placeholder_list = NIL;
+	root->fkey_list = NIL;
 	root->initial_rels = NIL;
 
 	/*
@@ -192,6 +205,14 @@ query_planner(PlannerInfo *root, List *tlist,
 	 * PlaceHolderVar eval levels.
 	 */
 	create_lateral_join_info(root);
+
+	/*
+	 * Match foreign keys to equivalence classes and join quals.  This must be
+	 * done after finalizing equivalence classes, and it's useful to wait till
+	 * after join removal so that we can skip processing foreign keys
+	 * involving removed relations.
+	 */
+	match_foreign_keys_to_quals(root);
 
 	/*
 	 * Look for join OR clauses that we can extract single-relation

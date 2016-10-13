@@ -62,8 +62,6 @@
 					# (change requires restart)
 #port = 5432				# (change requires restart)
 #max_connections = 100			# (change requires restart)
-# Note:  Increasing max_connections costs ~400 bytes of shared memory per
-# connection slot, plus lock space (see max_locks_per_transaction).
 #superuser_reserved_connections = 3	# (change requires restart)
 #unix_socket_directories = '/tmp'	# comma-separated list of directories
 					# (change requires restart)
@@ -119,12 +117,11 @@
 #temp_buffers = 8MB			# min 800kB
 #max_prepared_transactions = 0		# zero disables the feature
 					# (change requires restart)
-# Note:  Increasing max_prepared_transactions costs ~600 bytes of shared memory
-# per transaction slot, plus lock space (see max_locks_per_transaction).
-# It is not advisable to set max_prepared_transactions nonzero unless you
-# actively intend to use prepared transactions.
+# Caution: it is not advisable to set max_prepared_transactions nonzero unless
+# you actively intend to use prepared transactions.
 #work_mem = 4MB				# min 64kB
 #maintenance_work_mem = 64MB		# min 1MB
+#replacement_sort_tuples = 150000	# limits use of replacement selection sort
 #autovacuum_work_mem = -1		# min 1MB, or -1 to use maintenance_work_mem
 #max_stack_depth = 2MB			# min 100kB
 #dynamic_shared_memory_type = posix	# the default is the first option
@@ -137,7 +134,7 @@
 
 # - Disk -
 
-#temp_file_limit = -1			# limits per-session temp file space
+#temp_file_limit = -1			# limits per-process temp file space
 					# in kB, or -1 for no limit
 
 # - Kernel Resource Usage -
@@ -158,12 +155,18 @@
 
 #bgwriter_delay = 200ms			# 10-10000ms between rounds
 #bgwriter_lru_maxpages = 100		# 0-1000 max buffers written/round
-#bgwriter_lru_multiplier = 2.0		# 0-10.0 multipler on buffers scanned/round
+#bgwriter_lru_multiplier = 2.0		# 0-10.0 multiplier on buffers scanned/round
+#bgwriter_flush_after = 0		# 0 disables,
+					# default is 512kB on linux, 0 otherwise
 
 # - Asynchronous Behavior -
 
 #effective_io_concurrency = 1		# 1-1000; 0 disables prefetching
-#max_worker_processes = 8
+#max_worker_processes = 8		# (change requires restart)
+#max_parallel_workers_per_gather = 0	# taken from max_worker_processes
+#old_snapshot_threshold = -1		# 1min-60d; -1 disables; 0 is immediate
+									# (change requires restart)
+#backend_flush_after = 0		# 0 disables, default is 0
 
 
 #------------------------------------------------------------------------------
@@ -172,11 +175,13 @@
 
 # - Settings -
 
-#wal_level = minimal			# minimal, archive, hot_standby, or logical
+#wal_level = minimal			# minimal, replica, or logical
 					# (change requires restart)
-#fsync = on				# turns forced synchronization on or off
+#fsync = on				# flush data to disk for crash safety
+						# (turning this off can cause
+						# unrecoverable data corruption)
 #synchronous_commit = on		# synchronization level;
-					# off, local, remote_write, or on
+					# off, local, remote_write, remote_apply, or on
 #wal_sync_method = fsync		# the default is the first option
 					# supported by the operating system:
 					#   open_datasync
@@ -191,16 +196,19 @@
 #wal_buffers = -1			# min 32kB, -1 sets based on shared_buffers
 					# (change requires restart)
 #wal_writer_delay = 200ms		# 1-10000 milliseconds
+#wal_writer_flush_after = 1MB		# 0 disables
 
 #commit_delay = 0			# range 0-100000, in microseconds
 #commit_siblings = 5			# range 1-1000
 
 # - Checkpoints -
 
-#checkpoint_timeout = 5min		# range 30s-1h
+#checkpoint_timeout = 5min		# range 30s-1d
 #max_wal_size = 1GB
 #min_wal_size = 80MB
 #checkpoint_completion_target = 0.5	# checkpoint target duration, 0.0 - 1.0
+#checkpoint_flush_after = 0		# 0 disables,
+					# default is 256kB on linux, 0 otherwise
 #checkpoint_warning = 30s		# 0 disables
 
 # - Archiving -
@@ -238,7 +246,7 @@
 # These settings are ignored on a standby server.
 
 #synchronous_standby_names = ''	# standby servers that provide sync rep
-				# comma-separated list of application_name
+				# number of sync standbys and comma-separated list of application_name
 				# from standby(s); '*' = all
 #vacuum_defer_cleanup_age = 0	# number of xacts by which cleanup is delayed
 
@@ -290,6 +298,9 @@
 #cpu_tuple_cost = 0.01			# same scale as above
 #cpu_index_tuple_cost = 0.005		# same scale as above
 #cpu_operator_cost = 0.0025		# same scale as above
+#parallel_tuple_cost = 0.1		# same scale as above
+#parallel_setup_cost = 1000.0	# same scale as above
+#min_parallel_relation_size = 8MB
 #effective_cache_size = 4GB
 
 # - Genetic Query Optimizer -
@@ -310,6 +321,7 @@
 #from_collapse_limit = 8
 #join_collapse_limit = 8		# 1 disables collapsing of explicit
 					# JOIN clauses
+#force_parallel_mode = off
 
 
 #------------------------------------------------------------------------------
@@ -353,6 +365,8 @@
 # These are relevant when logging to syslog:
 #syslog_facility = 'LOCAL0'
 #syslog_ident = 'postgres'
+#syslog_sequence_numbers = on
+#syslog_split_messages = on
 
 # This is only relevant when logging to eventlog (win32):
 #event_source = 'PostgreSQL'
@@ -425,6 +439,7 @@
 					#   %p = process ID
 					#   %t = timestamp without milliseconds
 					#   %m = timestamp with milliseconds
+					#   %n = timestamp with milliseconds (as a Unix epoch)
 					#   %i = command tag
 					#   %e = SQL state
 					#   %c = session ID
@@ -523,6 +538,7 @@
 #session_replication_role = 'origin'
 #statement_timeout = 0			# in milliseconds, 0 is disabled
 #lock_timeout = 0			# in milliseconds, 0 is disabled
+#idle_in_transaction_session_timeout = 0		# in milliseconds, 0 is disabled
 #vacuum_freeze_min_age = 50000000
 #vacuum_freeze_table_age = 150000000
 #vacuum_multixact_freeze_min_age = 5000000
@@ -573,9 +589,6 @@
 #deadlock_timeout = 1s
 #max_locks_per_transaction = 64		# min 10
 					# (change requires restart)
-# Note:  Each lock table slot uses ~270 bytes of shared memory, and there are
-# max_locks_per_transaction * (max_connections + max_prepared_transactions)
-# lock table slots.
 #max_pred_locks_per_transaction = 64	# min 10
 					# (change requires restart)
 

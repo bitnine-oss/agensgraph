@@ -4,7 +4,7 @@
  *	  POSTGRES define and remove utility definitions.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/defrem.h
@@ -73,6 +73,7 @@ extern void interpret_function_parameter_list(List *parameters,
 /* commands/operatorcmds.c */
 extern ObjectAddress DefineOperator(List *names, List *parameters);
 extern void RemoveOperatorById(Oid operOid);
+extern ObjectAddress AlterOperator(AlterOperatorStmt *stmt);
 
 /* commands/aggregatecmds.c */
 extern ObjectAddress DefineAggregate(List *name, List *args, bool oldstyle,
@@ -90,8 +91,6 @@ extern void IsThereOpClassInNamespace(const char *opcname, Oid opcmethod,
 						  Oid opcnamespace);
 extern void IsThereOpFamilyInNamespace(const char *opfname, Oid opfmethod,
 						   Oid opfnamespace);
-extern Oid	get_am_oid(const char *amname, bool missing_ok);
-extern char *get_am_name(Oid amOid);
 extern Oid	get_opclass_oid(Oid amID, List *opclassname, bool missing_ok);
 extern Oid	get_opfamily_oid(Oid amID, List *opfamilyname, bool missing_ok);
 
@@ -135,6 +134,13 @@ extern Datum transformGenericOptions(Oid catalogId,
 						Datum oldOptions,
 						List *options,
 						Oid fdwvalidator);
+
+/* commands/amcmds.c */
+extern ObjectAddress CreateAccessMethod(CreateAmStmt *stmt);
+extern void RemoveAccessMethodById(Oid amOid);
+extern Oid	get_index_am_oid(const char *amname, bool missing_ok);
+extern Oid	get_am_oid(const char *amname, bool missing_ok);
+extern char *get_am_name(Oid amOid);
 
 /* support routines in commands/define.c */
 

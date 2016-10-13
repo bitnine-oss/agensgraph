@@ -3,7 +3,7 @@
  * option.c
  *		  FDW option handling for postgres_fdw
  *
- * Portions Copyright (c) 2012-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/option.c
@@ -19,6 +19,8 @@
 #include "catalog/pg_foreign_table.h"
 #include "catalog/pg_user_mapping.h"
 #include "commands/defrem.h"
+#include "commands/extension.h"
+#include "utils/builtins.h"
 
 
 /*
@@ -124,6 +126,22 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 						 errmsg("%s requires a non-negative numeric value",
 								def->defname)));
 		}
+		else if (strcmp(def->defname, "extensions") == 0)
+		{
+			/* check list syntax, warn about uninstalled extensions */
+			(void) ExtractExtensionList(defGetString(def), true);
+		}
+		else if (strcmp(def->defname, "fetch_size") == 0)
+		{
+			int			fetch_size;
+
+			fetch_size = strtol(defGetString(def), NULL, 10);
+			if (fetch_size <= 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("%s requires a non-negative integer value",
+								def->defname)));
+		}
 	}
 
 	PG_RETURN_VOID();
@@ -150,9 +168,14 @@ InitPgFdwOptions(void)
 		/* cost factors */
 		{"fdw_startup_cost", ForeignServerRelationId, false},
 		{"fdw_tuple_cost", ForeignServerRelationId, false},
+		/* shippable extensions */
+		{"extensions", ForeignServerRelationId, false},
 		/* updatable is available on both server and table */
 		{"updatable", ForeignServerRelationId, false},
 		{"updatable", ForeignTableRelationId, false},
+		/* fetch_size is available on both server and table */
+		{"fetch_size", ForeignServerRelationId, false},
+		{"fetch_size", ForeignTableRelationId, false},
 		{NULL, InvalidOid, false}
 	};
 
@@ -292,4 +315,49 @@ ExtractConnectionOptions(List *defelems, const char **keywords,
 		}
 	}
 	return i;
+}
+
+/*
+ * Parse a comma-separated string and return a List of the OIDs of the
+ * extensions named in the string.  If any names in the list cannot be
+ * found, report a warning if warnOnMissing is true, else just silently
+ * ignore them.
+ */
+List *
+ExtractExtensionList(const char *extensionsString, bool warnOnMissing)
+{
+	List	   *extensionOids = NIL;
+	List	   *extlist;
+	ListCell   *lc;
+
+	/* SplitIdentifierString scribbles on its input, so pstrdup first */
+	if (!SplitIdentifierString(pstrdup(extensionsString), ',', &extlist))
+	{
+		/* syntax error in name list */
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("parameter \"%s\" must be a list of extension names",
+						"extensions")));
+	}
+
+	foreach(lc, extlist)
+	{
+		const char *extension_name = (const char *) lfirst(lc);
+		Oid			extension_oid = get_extension_oid(extension_name, true);
+
+		if (OidIsValid(extension_oid))
+		{
+			extensionOids = lappend_oid(extensionOids, extension_oid);
+		}
+		else if (warnOnMissing)
+		{
+			ereport(WARNING,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("extension \"%s\" is not installed",
+							extension_name)));
+		}
+	}
+
+	list_free(extlist);
+	return extensionOids;
 }

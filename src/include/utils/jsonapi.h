@@ -3,7 +3,7 @@
  * jsonapi.h
  *	  Declarations for JSON API support.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/jsonapi.h
@@ -108,7 +108,7 @@ extern void pg_parse_json(JsonLexContext *lex, JsonSemAction *sem);
  * number of elements in passed array lex context. It should be called from an
  * array_start action.
  */
-extern int json_count_array_elements(JsonLexContext *lex);
+extern int	json_count_array_elements(JsonLexContext *lex);
 
 /*
  * constructors for JsonLexContext, with or without strval element.

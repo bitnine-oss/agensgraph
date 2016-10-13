@@ -125,7 +125,7 @@
  *		- Protects both PredXact and SerializableXidHash.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -496,8 +496,8 @@ SerializationNeededForRead(Relation relation, Snapshot snapshot)
 	 * Don't acquire locks or conflict when scanning with a special snapshot.
 	 * This excludes things like CLUSTER and REINDEX. They use the wholesale
 	 * functions TransferPredicateLocksToHeapRelation() and
-	 * CheckTableForSerializableConflictIn() to participate serialization, but
-	 * the scans involved don't need serialization.
+	 * CheckTableForSerializableConflictIn() to participate in serialization,
+	 * but the scans involved don't need serialization.
 	 */
 	if (!IsMVCCSnapshot(snapshot))
 		return false;
@@ -794,8 +794,9 @@ OldSerXidInit(void)
 	 * Set up SLRU management of the pg_serial data.
 	 */
 	OldSerXidSlruCtl->PagePrecedes = OldSerXidPagePrecedesLogically;
-	SimpleLruInit(OldSerXidSlruCtl, "OldSerXid SLRU Ctl",
-				  NUM_OLDSERXID_BUFFERS, 0, OldSerXidLock, "pg_serial");
+	SimpleLruInit(OldSerXidSlruCtl, "oldserxid",
+				  NUM_OLDSERXID_BUFFERS, 0, OldSerXidLock, "pg_serial",
+				  LWTRANCHE_OLDSERXID_BUFFERS);
 	/* Override default assumption that writes should be fsync'd */
 	OldSerXidSlruCtl->do_fsync = false;
 

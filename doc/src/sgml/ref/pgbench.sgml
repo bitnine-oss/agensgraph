@@ -48,7 +48,7 @@
   Typical output from <application>pgbench</application> looks like:
 
 <screen>
-transaction type: TPC-B (sort of)
+transaction type: &lt;builtin: TPC-B (sort of)&gt;
 scaling factor: 10
 query mode: simple
 number of clients: 10
@@ -261,6 +261,23 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
     benchmarking arguments:
 
     <variablelist>
+     <varlistentry>
+      <term><option>-b</> <replaceable>scriptname[@weight]</></term>
+      <term><option>--builtin</>=<replaceable>scriptname[@weight]</></term>
+      <listitem>
+       <para>
+        Add the specified built-in script to the list of executed scripts.
+        An optional integer weight after <literal>@</> allows to adjust the
+        probability of drawing the script.  If not specified, it is set to 1.
+        Available built-in scripts are: <literal>tpcb-like</>,
+        <literal>simple-update</> and <literal>select-only</>.
+        Unambiguous prefixes of built-in names are accepted.
+        With special name <literal>list</>, show the list of built-in scripts
+        and exit immediately.
+       </para>
+      </listitem>
+     </varlistentry>
+
 
      <varlistentry>
       <term><option>-c</option> <replaceable>clients</></term>
@@ -307,14 +324,15 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
      </varlistentry>
 
      <varlistentry>
-      <term><option>-f</option> <replaceable>filename</></term>
-      <term><option>--file=</option><replaceable>filename</></term>
+      <term><option>-f</> <replaceable>filename[@weight]</></term>
+      <term><option>--file=</><replaceable>filename[@weight]</></term>
       <listitem>
        <para>
-        Read transaction script from <replaceable>filename</>.
+        Add a transaction script read from <replaceable>filename</> to
+        the list of executed scripts.
+        An optional integer weight after <literal>@</> allows to adjust the
+        probability of drawing the test.
         See below for details.
-        <option>-N</option>, <option>-S</option>, and <option>-f</option>
-        are mutually exclusive.
        </para>
       </listitem>
      </varlistentry>
@@ -326,8 +344,7 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
        <para>
         Number of worker threads within <application>pgbench</application>.
         Using more than one thread can be helpful on multi-CPU machines.
-        The number of clients must be a multiple of the number of threads,
-        since each thread is given the same number of client sessions to manage.
+        Clients are distributed as evenly as possible among available threads.
         Default is 1.
        </para>
       </listitem>
@@ -405,10 +422,8 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
       <term><option>--skip-some-updates</option></term>
       <listitem>
        <para>
-        Do not update <structname>pgbench_tellers</> and
-        <structname>pgbench_branches</>.
-        This will avoid update contention on these tables, but
-        it makes the test case even less like TPC-B.
+        Run built-in simple-update script.
+        Shorthand for <option>-b simple-update</>.
        </para>
       </listitem>
      </varlistentry>
@@ -418,7 +433,7 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
       <term><option>--progress=</option><replaceable>sec</></term>
       <listitem>
        <para>
-        Show progress report every <literal>sec</> seconds.  The report
+        Show progress report every <replaceable>sec</> seconds.  The report
         includes the time since the beginning of the run, the tps since the
         last report, and the transaction latency average and standard
         deviation since the last report.  Under throttling (<option>-R</>),
@@ -500,9 +515,9 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
         Report the specified scale factor in <application>pgbench</>'s
         output.  With the built-in tests, this is not necessary; the
         correct scale factor will be detected by counting the number of
-        rows in the <structname>pgbench_branches</> table.  However, when testing
-        custom benchmarks (<option>-f</> option), the scale factor
-        will be reported as 1 unless this option is used.
+        rows in the <structname>pgbench_branches</> table.
+        However, when testing only custom benchmarks (<option>-f</> option),
+        the scale factor will be reported as 1 unless this option is used.
        </para>
       </listitem>
      </varlistentry>
@@ -512,7 +527,8 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
       <term><option>--select-only</option></term>
       <listitem>
        <para>
-        Perform select-only transactions instead of TPC-B-like test.
+        Run built-in select-only script.
+        Shorthand for <option>-b select-only</>.
        </para>
       </listitem>
      </varlistentry>
@@ -563,6 +579,19 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
        </para>
        <para>
         This option is not currently supported on Windows.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--progress-timestamp</option></term>
+      <listitem>
+       <para>
+        When showing progress (option <option>-P</>), use a timestamp
+        (Unix epoch) instead of the number of seconds since the
+        beginning of the run.  The unit is in seconds, with millisecond
+        precision after the dot.
+        This helps compare logs generated by various tools.
        </para>
       </listitem>
      </varlistentry>
@@ -662,7 +691,22 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
   <title>What is the <quote>Transaction</> Actually Performed in <application>pgbench</application>?</title>
 
   <para>
-   The default transaction script issues seven commands per transaction:
+   <application>pgbench</> executes test scripts chosen randomly
+   from a specified list.
+   They include built-in scripts with <option>-b</> and
+   user-provided custom scripts with <option>-f</>.
+   Each script may be given a relative weight specified after a
+   <literal>@</> so as to change its drawing probability.
+   The default weight is <literal>1</>.
+   Scripts with a weight of <literal>0</> are ignored.
+ </para>
+
+  <para>
+   The default built-in transaction script (also invoked with <option>-b tpcb-like</>)
+   issues seven commands per transaction over randomly chosen <literal>aid</>,
+   <literal>tid</>, <literal>bid</> and <literal>balance</>.
+   The scenario is inspired by the TPC-B benchmark, but is not actually TPC-B,
+   hence the name.
   </para>
 
   <orderedlist>
@@ -676,9 +720,15 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
   </orderedlist>
 
   <para>
-   If you specify <option>-N</>, steps 4 and 5 aren't included in the
-   transaction.  If you specify <option>-S</>, only the <command>SELECT</> is
-   issued.
+   If you select the <literal>simple-update</> built-in (also <option>-N</>),
+   steps 4 and 5 aren't included in the transaction.
+   This will avoid update contention on these tables, but
+   it makes the test case even less like TPC-B.
+  </para>
+
+  <para>
+   If you select the <literal>select-only</> built-in (also <option>-S</>),
+   only the <command>SELECT</> is issued.
   </para>
  </refsect2>
 
@@ -690,19 +740,28 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
    benchmark scenarios by replacing the default transaction script
    (described above) with a transaction script read from a file
    (<option>-f</option> option).  In this case a <quote>transaction</>
-   counts as one execution of a script file.  You can even specify
-   multiple scripts (multiple <option>-f</option> options), in which
-   case a random one of the scripts is chosen each time a client session
-   starts a new transaction.
+   counts as one execution of a script file.
   </para>
 
   <para>
-   The format of a script file is one SQL command per line; multiline
-   SQL commands are not supported.  Empty lines and lines beginning with
-   <literal>--</> are ignored.  Script file lines can also be
+   A script file contains one or more SQL commands terminated by
+   semicolons.  Empty lines and lines beginning with
+   <literal>--</> are ignored.  Script files can also contain
    <quote>meta commands</>, which are interpreted by <application>pgbench</>
    itself, as described below.
   </para>
+
+  <note>
+   <para>
+    Before <productname>PostgreSQL</> 9.6, SQL commands in script files
+    were terminated by newlines, and so they could not be continued across
+    lines.  Now a semicolon is <emphasis>required</> to separate consecutive
+    SQL commands (though a SQL command does not need one if it is followed
+    by a meta command).  If you need to create a script file that works with
+    both old and new versions of <application>pgbench</>, be sure to write
+    each SQL command on a single line ending with a semicolon.
+   </para>
+  </note>
 
   <para>
    There is a simple variable-substitution facility for script files.
@@ -719,7 +778,7 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
   </para>
 
    <table id="pgbench-automatic-variables">
-    <title>Automatic variables</title>
+    <title>Automatic Variables</title>
     <tgroup cols="2">
      <thead>
       <row>
@@ -743,118 +802,37 @@ pgbench <optional> <replaceable>options</> </optional> <replaceable>dbname</>
    </table>
 
   <para>
-   Script file meta commands begin with a backslash (<literal>\</>).
+   Script file meta commands begin with a backslash (<literal>\</>) and
+   extend to the end of the line.
    Arguments to a meta command are separated by white space.
    These meta commands are supported:
   </para>
 
   <variablelist>
-   <varlistentry>
+   <varlistentry id='pgbench-metacommand-set'>
     <term>
      <literal>\set <replaceable>varname</> <replaceable>expression</></literal>
     </term>
 
     <listitem>
      <para>
-      Sets variable <replaceable>varname</> to an integer value calculated
+      Sets variable <replaceable>varname</> to a value calculated
       from <replaceable>expression</>.
       The expression may contain integer constants such as <literal>5432</>,
+      double constants such as <literal>3.14159</>,
       references to variables <literal>:</><replaceable>variablename</>,
-      and expressions composed of unary (<literal>-</>) or binary operators
-      (<literal>+</>, <literal>-</>, <literal>*</>, <literal>/</>, <literal>%</>)
-      with their usual associativity, and parentheses.
+      unary operators (<literal>+</>, <literal>-</>) and binary operators
+      (<literal>+</>, <literal>-</>, <literal>*</>, <literal>/</>,
+      <literal>%</>) with their usual precedence and associativity,
+      <link linkend="pgbench-builtin-functions">function calls</>, and
+      parentheses.
      </para>
 
      <para>
       Examples:
 <programlisting>
 \set ntellers 10 * :scale
-\set aid (1021 * :aid) % (100000 * :scale) + 1
-</programlisting></para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term>
-     <literal>\setrandom <replaceable>varname</> <replaceable>min</> <replaceable>max</> [ uniform | { gaussian | exponential } <replaceable>parameter</> ]</literal>
-     </term>
-
-    <listitem>
-     <para>
-      Sets variable <replaceable>varname</> to a random integer value
-      between the limits <replaceable>min</> and <replaceable>max</> inclusive.
-      Each limit can be either an integer constant or a
-      <literal>:</><replaceable>variablename</> reference to a variable
-      having an integer value.
-     </para>
-
-     <para>
-      By default, or when <literal>uniform</> is specified, all values in the
-      range are drawn with equal probability.  Specifying <literal>gaussian</>
-      or  <literal>exponential</> options modifies this behavior; each
-      requires a mandatory parameter which determines the precise shape of the
-      distribution.
-     </para>
-
-     <para>
-      For a Gaussian distribution, the interval is mapped onto a standard
-      normal distribution (the classical bell-shaped Gaussian curve) truncated
-      at <literal>-parameter</> on the left and <literal>+parameter</>
-      on the right.
-      Values in the middle of the interval are more likely to be drawn.
-      To be precise, if <literal>PHI(x)</> is the cumulative distribution
-      function of the standard normal distribution, with mean <literal>mu</>
-      defined as <literal>(max + min) / 2.0</>, with
-<literallayout>
- f(x) = PHI(2.0 * parameter * (x - mu) / (max - min + 1)) /
-        (2.0 * PHI(parameter) - 1.0)
-</literallayout>
-      then value <replaceable>i</> between <replaceable>min</> and
-      <replaceable>max</> inclusive is drawn with probability:
-      <literal>f(i + 0.5) - f(i - 0.5)</>.
-      Intuitively, the larger <replaceable>parameter</>, the more
-      frequently values close to the middle of the interval are drawn, and the
-      less frequently values close to the <replaceable>min</> and
-      <replaceable>max</> bounds. About 67% of values are drawn from the
-      middle <literal>1.0 / parameter</>, that is a relative
-      <literal>0.5 / parameter</> around the mean, and 95% in the middle
-      <literal>2.0 / parameter</>, that is a relative
-      <literal>1.0 / parameter</> around the mean; for instance, if
-      <replaceable>parameter</> is 4.0, 67% of values are drawn from the
-      middle quarter (1.0 / 4.0) of the interval (i.e. from
-      <literal>3.0 / 8.0</> to <literal>5.0 / 8.0</>) and 95% from
-      the middle half (<literal>2.0 / 4.0</>) of the interval (second and
-      third quartiles). The minimum <replaceable>parameter</> is 2.0 for
-      performance of the Box-Muller transform.
-     </para>
-
-     <para>
-      For an exponential distribution, <replaceable>parameter</>
-      controls the distribution by truncating a quickly-decreasing
-      exponential distribution at <replaceable>parameter</>, and then
-      projecting onto integers between the bounds.
-      To be precise, with
-<literallayout>
-f(x) = exp(-parameter * (x - min) / (max - min + 1)) / (1.0 - exp(-parameter))
-</literallayout>
-      Then value <replaceable>i</> between <replaceable>min</> and
-      <replaceable>max</> inclusive is drawn with probability:
-      <literal>f(x) - f(x + 1)</>.
-      Intuitively, the larger <replaceable>parameter</>, the more
-      frequently values close to <replaceable>min</> are accessed, and the
-      less frequently values close to <replaceable>max</> are accessed.
-      The closer to 0 <replaceable>parameter</>, the flatter (more uniform)
-      the access distribution.
-      A crude approximation of the distribution is that the most frequent 1%
-      values in the range, close to <replaceable>min</>, are drawn
-      <replaceable>parameter</>% of the time.
-      <replaceable>parameter</> value must be strictly positive.
-     </para>
-
-     <para>
-      Example:
-<programlisting>
-\setrandom aid 1 :naccounts gaussian 5.0
+\set aid (1021 * random(1, 100000 * :scale)) % (100000 * :scale) + 1
 </programlisting></para>
     </listitem>
    </varlistentry>
@@ -890,14 +868,15 @@ f(x) = exp(-parameter * (x - min) / (max - min + 1)) / (1.0 - exp(-parameter))
     <listitem>
      <para>
       Sets variable <replaceable>varname</> to the result of the shell command
-      <replaceable>command</>. The command must return an integer value
-      through its standard output.
+      <replaceable>command</> with the given <replaceable>argument</>(s).
+      The command must return an integer value through its standard output.
      </para>
 
-     <para><replaceable>argument</> can be either a text constant or a
-      <literal>:</><replaceable>variablename</> reference to a variable of
-      any types. If you want to use <replaceable>argument</> starting with
-      colons, you need to add an additional colon at the beginning of
+     <para>
+      <replaceable>command</> and each <replaceable>argument</> can be either
+      a text constant or a <literal>:</><replaceable>variablename</> reference
+      to a variable. If you want to use an <replaceable>argument</> starting
+      with a colon, write an additional colon at the beginning of
       <replaceable>argument</>.
      </para>
 
@@ -916,7 +895,8 @@ f(x) = exp(-parameter * (x - min) / (max - min + 1)) / (1.0 - exp(-parameter))
 
     <listitem>
      <para>
-      Same as <literal>\setshell</literal>, but the result is ignored.
+      Same as <literal>\setshell</literal>, but the result of the command
+      is discarded.
      </para>
 
      <para>
@@ -927,19 +907,196 @@ f(x) = exp(-parameter * (x - min) / (max - min + 1)) / (1.0 - exp(-parameter))
     </listitem>
    </varlistentry>
   </variablelist>
+ </refsect2>
+
+ <refsect2 id="pgbench-builtin-functions">
+  <title>Built-In Functions</title>
+
+  <para>
+   The functions listed in <xref linkend="pgbench-functions"> are built
+   into <application>pgbench</> and may be used in expressions appearing in
+   <link linkend="pgbench-metacommand-set"><literal>\set</literal></link>.
+  </para>
+
+   <!-- list pgbench functions in alphabetical order -->
+   <table id="pgbench-functions">
+    <title>pgbench Functions</title>
+    <tgroup cols="5">
+     <thead>
+      <row>
+       <entry>Function</entry>
+       <entry>Return Type</entry>
+       <entry>Description</entry>
+       <entry>Example</entry>
+       <entry>Result</entry>
+      </row>
+     </thead>
+     <tbody>
+      <row>
+       <entry><literal><function>abs(<replaceable>a</>)</></></>
+       <entry>same as <replaceable>a</></>
+       <entry>absolute value</>
+       <entry><literal>abs(-17)</></>
+       <entry><literal>17</></>
+      </row>
+      <row>
+       <entry><literal><function>debug(<replaceable>a</>)</></></>
+       <entry>same as <replaceable>a</> </>
+       <entry>print <replaceable>a</> to <systemitem>stderr</systemitem>,
+        and return <replaceable>a</></>
+       <entry><literal>debug(5432.1)</></>
+       <entry><literal>5432.1</></>
+      </row>
+      <row>
+       <entry><literal><function>double(<replaceable>i</>)</></></>
+       <entry>double</>
+       <entry>cast to double</>
+       <entry><literal>double(5432)</></>
+       <entry><literal>5432.0</></>
+      </row>
+      <row>
+       <entry><literal><function>greatest(<replaceable>a</> [, <replaceable>...</> ] )</></></>
+       <entry>double if any <replaceable>a</> is double, else integer</>
+       <entry>largest value among arguments</>
+       <entry><literal>greatest(5, 4, 3, 2)</></>
+       <entry><literal>5</></>
+      </row>
+      <row>
+       <entry><literal><function>int(<replaceable>x</>)</></></>
+       <entry>integer</>
+       <entry>cast to int</>
+       <entry><literal>int(5.4 + 3.8)</></>
+       <entry><literal>9</></>
+      </row>
+      <row>
+       <entry><literal><function>least(<replaceable>a</> [, <replaceable>...</> ] )</></></>
+       <entry>double if any <replaceable>a</> is double, else integer</>
+       <entry>smallest value among arguments</>
+       <entry><literal>least(5, 4, 3, 2.1)</></>
+       <entry><literal>2.1</></>
+      </row>
+      <row>
+       <entry><literal><function>pi()</></></>
+       <entry>double</>
+       <entry>value of the constant PI</>
+       <entry><literal>pi()</></>
+       <entry><literal>3.14159265358979323846</></>
+      </row>
+      <row>
+       <entry><literal><function>random(<replaceable>lb</>, <replaceable>ub</>)</></></>
+       <entry>integer</>
+       <entry>uniformly-distributed random integer in <literal>[lb, ub]</></>
+       <entry><literal>random(1, 10)</></>
+       <entry>an integer between <literal>1</> and <literal>10</></>
+      </row>
+      <row>
+       <entry><literal><function>random_exponential(<replaceable>lb</>, <replaceable>ub</>, <replaceable>parameter</>)</></></>
+       <entry>integer</>
+       <entry>exponentially-distributed random integer in <literal>[lb, ub]</>,
+              see below</>
+       <entry><literal>random_exponential(1, 10, 3.0)</></>
+       <entry>an integer between <literal>1</> and <literal>10</></>
+      </row>
+      <row>
+       <entry><literal><function>random_gaussian(<replaceable>lb</>, <replaceable>ub</>, <replaceable>parameter</>)</></></>
+       <entry>integer</>
+       <entry>Gaussian-distributed random integer in <literal>[lb, ub]</>,
+              see below</>
+       <entry><literal>random_gaussian(1, 10, 2.5)</></>
+       <entry>an integer between <literal>1</> and <literal>10</></>
+      </row>
+      <row>
+       <entry><literal><function>sqrt(<replaceable>x</>)</></></>
+       <entry>double</>
+       <entry>square root</>
+       <entry><literal>sqrt(2.0)</></>
+       <entry><literal>1.414213562</></>
+      </row>
+     </tbody>
+     </tgroup>
+   </table>
+
+   <para>
+    The <literal>random</> function generates values using a uniform
+    distribution, that is all the values are drawn within the specified
+    range with equal probability. The <literal>random_exponential</> and
+    <literal>random_gaussian</> functions require an additional double
+    parameter which determines the precise shape of the distribution.
+   </para>
+
+   <itemizedlist>
+    <listitem>
+     <para>
+      For an exponential distribution, <replaceable>parameter</>
+      controls the distribution by truncating a quickly-decreasing
+      exponential distribution at <replaceable>parameter</>, and then
+      projecting onto integers between the bounds.
+      To be precise, with
+<literallayout>
+f(x) = exp(-parameter * (x - min) / (max - min + 1)) / (1 - exp(-parameter))
+</literallayout>
+      Then value <replaceable>i</> between <replaceable>min</> and
+      <replaceable>max</> inclusive is drawn with probability:
+      <literal>f(x) - f(x + 1)</>.
+     </para>
+
+     <para>
+      Intuitively, the larger the <replaceable>parameter</>, the more
+      frequently values close to <replaceable>min</> are accessed, and the
+      less frequently values close to <replaceable>max</> are accessed.
+      The closer to 0 <replaceable>parameter</> is, the flatter (more
+      uniform) the access distribution.
+      A crude approximation of the distribution is that the most frequent 1%
+      values in the range, close to <replaceable>min</>, are drawn
+      <replaceable>parameter</>% of the time.
+      The <replaceable>parameter</> value must be strictly positive.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      For a Gaussian distribution, the interval is mapped onto a standard
+      normal distribution (the classical bell-shaped Gaussian curve) truncated
+      at <literal>-parameter</> on the left and <literal>+parameter</>
+      on the right.
+      Values in the middle of the interval are more likely to be drawn.
+      To be precise, if <literal>PHI(x)</> is the cumulative distribution
+      function of the standard normal distribution, with mean <literal>mu</>
+      defined as <literal>(max + min) / 2.0</>, with
+<literallayout>
+f(x) = PHI(2.0 * parameter * (x - mu) / (max - min + 1)) /
+       (2.0 * PHI(parameter) - 1)
+</literallayout>
+      then value <replaceable>i</> between <replaceable>min</> and
+      <replaceable>max</> inclusive is drawn with probability:
+      <literal>f(i + 0.5) - f(i - 0.5)</>.
+      Intuitively, the larger the <replaceable>parameter</>, the more
+      frequently values close to the middle of the interval are drawn, and the
+      less frequently values close to the <replaceable>min</> and
+      <replaceable>max</> bounds. About 67% of values are drawn from the
+      middle <literal>1.0 / parameter</>, that is a relative
+      <literal>0.5 / parameter</> around the mean, and 95% in the middle
+      <literal>2.0 / parameter</>, that is a relative
+      <literal>1.0 / parameter</> around the mean; for instance, if
+      <replaceable>parameter</> is 4.0, 67% of values are drawn from the
+      middle quarter (1.0 / 4.0) of the interval (i.e. from
+      <literal>3.0 / 8.0</> to <literal>5.0 / 8.0</>) and 95% from
+      the middle half (<literal>2.0 / 4.0</>) of the interval (second and third
+      quartiles). The minimum <replaceable>parameter</> is 2.0 for performance
+      of the Box-Muller transform.
+     </para>
+    </listitem>
+   </itemizedlist>
 
   <para>
    As an example, the full definition of the built-in TPC-B-like
    transaction is:
 
 <programlisting>
-\set nbranches :scale
-\set ntellers 10 * :scale
-\set naccounts 100000 * :scale
-\setrandom aid 1 :naccounts
-\setrandom bid 1 :nbranches
-\setrandom tid 1 :ntellers
-\setrandom delta -5000 5000
+\set aid random(1, 100000 * :scale)
+\set bid random(1, 1 * :scale)
+\set tid random(1, 10 * :scale)
+\set delta random(-5000, 5000)
 BEGIN;
 UPDATE pgbench_accounts SET abalance = abalance + :delta WHERE aid = :aid;
 SELECT abalance FROM pgbench_accounts WHERE aid = :aid;
@@ -979,12 +1136,12 @@ END;
    The format of the log is:
 
 <synopsis>
-<replaceable>client_id</> <replaceable>transaction_no</> <replaceable>time</> <replaceable>file_no</> <replaceable>time_epoch</> <replaceable>time_us</> <optional><replaceable>schedule_lag</replaceable></optional>
+<replaceable>client_id</> <replaceable>transaction_no</> <replaceable>time</> <replaceable>script_no</> <replaceable>time_epoch</> <replaceable>time_us</> <optional><replaceable>schedule_lag</replaceable></optional>
 </synopsis>
 
    where <replaceable>time</> is the total elapsed transaction time in microseconds,
-   <replaceable>file_no</> identifies which script file was used
-   (useful when multiple scripts were specified with <option>-f</>),
+   <replaceable>script_no</> identifies which script file was used (useful when
+   multiple scripts were specified with <option>-f</> or <option>-b</>),
    and <replaceable>time_epoch</>/<replaceable>time_us</> are a
    Unix epoch format time stamp and an offset
    in microseconds (suitable for creating an ISO 8601
@@ -993,33 +1150,32 @@ END;
    Field <replaceable>schedule_lag</> is the difference between the
    transaction's scheduled start time, and the time it actually started, in
    microseconds. It is only present when the <option>--rate</> option is used.
-   The last field <replaceable>skipped_transactions</> reports the number of
-   transactions skipped because they were too far behind schedule. It is only
-   present when both options <option>--rate</> and <option>--latency-limit</>
-   are used.
+   When both <option>--rate</> and <option>--latency-limit</> are used,
+   the <replaceable>time</> for a skipped transaction will be reported as
+   <literal>skipped</>.
   </para>
 
   <para>
    Here is a snippet of the log file generated:
 <screen>
- 0 199 2241 0 1175850568 995598
- 0 200 2465 0 1175850568 998079
- 0 201 2513 0 1175850569 608
- 0 202 2038 0 1175850569 2663
+0 199 2241 0 1175850568 995598
+0 200 2465 0 1175850568 998079
+0 201 2513 0 1175850569 608
+0 202 2038 0 1175850569 2663
 </screen>
 
    Another example with --rate=100 and --latency-limit=5 (note the additional
    <replaceable>schedule_lag</> column):
 <screen>
- 0 81 4621 0 1412881037 912698 3005
- 0 82 6173 0 1412881037 914578 4304
- 0 83 skipped 0 1412881037 914578 5217
- 0 83 skipped 0 1412881037 914578 5099
- 0 83 4722 0 1412881037 916203 3108
- 0 84 4142 0 1412881037 918023 2333
- 0 85 2465 0 1412881037 919759 740
+0 81 4621 0 1412881037 912698 3005
+0 82 6173 0 1412881037 914578 4304
+0 83 skipped 0 1412881037 914578 5217
+0 83 skipped 0 1412881037 914578 5099
+0 83 4722 0 1412881037 916203 3108
+0 84 4142 0 1412881037 918023 2333
+0 85 2465 0 1412881037 919759 740
 </screen>
-   In this example, transaction 82 was late, because it's latency (6.173 ms) was
+   In this example, transaction 82 was late, because its latency (6.173 ms) was
    over the 5 ms limit. The next two transactions were skipped, because they
    were already late before they were even started.
   </para>
@@ -1046,7 +1202,7 @@ END;
    within the interval, <replaceable>latency_sum</replaceable> is a sum of latencies
    (so you can compute average latency easily). The following two fields are useful
    for variance estimation - <replaceable>latency_sum</> is a sum of latencies and
-   <replaceable>latency_2_sum</> is a sum of 2nd powers of latencies. The last two
+   <replaceable>latency_2_sum</> is a sum of 2nd powers of latencies. The next two
    fields are <replaceable>min_latency</> - a minimum latency within the interval, and
    <replaceable>max_latency</> - maximum latency within the interval. A transaction is
    counted into the interval when it was committed. The fields in the end,
@@ -1060,7 +1216,7 @@ END;
   </para>
 
   <para>
-   Here is example outputs:
+   Here is example output:
 <screen>
 1345828501 5601 1542744 483552416 61 2573
 1345828503 7884 1979812 565806736 60 1479
@@ -1070,8 +1226,8 @@ END;
 </screen></para>
 
   <para>
-   Notice that while the plain (unaggregated) log file contains index
-   of the custom script files, the aggregated log does not. Therefore if
+   Notice that while the plain (unaggregated) log file contains a reference
+   to the custom script files, the aggregated log does not. Therefore if
    you need per script data, you need to aggregate the data on your own.
   </para>
 
@@ -1091,30 +1247,30 @@ END;
    For the default script, the output will look similar to this:
 <screen>
 starting vacuum...end.
-transaction type: TPC-B (sort of)
+transaction type: &lt;builtin: TPC-B (sort of)&gt;
 scaling factor: 1
 query mode: simple
 number of clients: 10
 number of threads: 1
 number of transactions per client: 1000
 number of transactions actually processed: 10000/10000
+latency average = 15.844 ms
+latency stddev = 2.715 ms
 tps = 618.764555 (including connections establishing)
 tps = 622.977698 (excluding connections establishing)
-statement latencies in milliseconds:
-        0.004386        \set nbranches 1 * :scale
-        0.001343        \set ntellers 10 * :scale
-        0.001212        \set naccounts 100000 * :scale
-        0.001310        \setrandom aid 1 :naccounts
-        0.001073        \setrandom bid 1 :nbranches
-        0.001005        \setrandom tid 1 :ntellers
-        0.001078        \setrandom delta -5000 5000
-        0.326152        BEGIN;
-        0.603376        UPDATE pgbench_accounts SET abalance = abalance + :delta WHERE aid = :aid;
-        0.454643        SELECT abalance FROM pgbench_accounts WHERE aid = :aid;
-        5.528491        UPDATE pgbench_tellers SET tbalance = tbalance + :delta WHERE tid = :tid;
-        7.335435        UPDATE pgbench_branches SET bbalance = bbalance + :delta WHERE bid = :bid;
-        0.371851        INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (:tid, :bid, :aid, :delta, CURRENT_TIMESTAMP);
-        1.212976        END;
+script statistics:
+ - statement latencies in milliseconds:
+        0.002  \set aid random(1, 100000 * :scale)
+        0.005  \set bid random(1, 1 * :scale)
+        0.002  \set tid random(1, 10 * :scale)
+        0.001  \set delta random(-5000, 5000)
+        0.326  BEGIN;
+        0.603  UPDATE pgbench_accounts SET abalance = abalance + :delta WHERE aid = :aid;
+        0.454  SELECT abalance FROM pgbench_accounts WHERE aid = :aid;
+        5.528  UPDATE pgbench_tellers SET tbalance = tbalance + :delta WHERE tid = :tid;
+        7.335  UPDATE pgbench_branches SET bbalance = bbalance + :delta WHERE bid = :bid;
+        0.371  INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (:tid, :bid, :aid, :delta, CURRENT_TIMESTAMP);
+        1.212  END;
 </screen>
   </para>
 

@@ -3,7 +3,7 @@
  * origin.c
  *	  Logical replication progress tracking support.
  *
- * Copyright (c) 2013-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2016, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/origin.c
@@ -120,9 +120,9 @@ typedef struct ReplicationState
 	XLogRecPtr	local_lsn;
 
 	/*
-	 * Slot is setup in backend?
+	 * PID of backend that's acquired slot, or 0 if none.
 	 */
-	pid_t		acquired_by;
+	int			acquired_by;
 
 	/*
 	 * Lock protecting remote_lsn and local_lsn.
@@ -148,7 +148,7 @@ typedef struct ReplicationStateCtl
 } ReplicationStateCtl;
 
 /* external variables */
-RepOriginId replorigin_session_origin = InvalidRepOriginId;	/* assumed identity */
+RepOriginId replorigin_session_origin = InvalidRepOriginId;		/* assumed identity */
 XLogRecPtr	replorigin_session_origin_lsn = InvalidXLogRecPtr;
 TimestampTz replorigin_session_origin_timestamp = 0;
 
@@ -473,8 +473,8 @@ ReplicationOriginShmemInit(void)
 	{
 		int			i;
 
-		replication_states_ctl->tranche_id = LWLockNewTrancheId();
-		replication_states_ctl->tranche.name = "ReplicationOrigins";
+		replication_states_ctl->tranche_id = LWTRANCHE_REPLICATION_ORIGIN;
+		replication_states_ctl->tranche.name = "replication_origin";
 		replication_states_ctl->tranche.array_base =
 			&replication_states[0].lock;
 		replication_states_ctl->tranche.array_stride =
@@ -604,29 +604,10 @@ CheckPointReplicationOrigin(void)
 						tmppath)));
 	}
 
-	/* fsync the temporary file */
-	if (pg_fsync(tmpfd) != 0)
-	{
-		CloseTransientFile(tmpfd);
-		ereport(PANIC,
-				(errcode_for_file_access(),
-				 errmsg("could not fsync file \"%s\": %m",
-						tmppath)));
-	}
-
 	CloseTransientFile(tmpfd);
 
-	/* rename to permanent file, fsync file and directory */
-	if (rename(tmppath, path) != 0)
-	{
-		ereport(PANIC,
-				(errcode_for_file_access(),
-				 errmsg("could not rename file \"%s\" to \"%s\": %m",
-						tmppath, path)));
-	}
-
-	fsync_fname((char *) path, false);
-	fsync_fname("pg_logical", true);
+	/* fsync, rename to permanent file, fsync file and directory */
+	durable_rename(tmppath, path, PANIC);
 }
 
 /*
@@ -677,7 +658,7 @@ StartupReplicationOrigin(void)
 				 errmsg("could not open file \"%s\": %m",
 						path)));
 
-	/* verify magic, thats written even if nothing was active */
+	/* verify magic, that is written even if nothing was active */
 	readBytes = read(fd, &magic, sizeof(magic));
 	if (readBytes != sizeof(magic))
 		ereport(PANIC,

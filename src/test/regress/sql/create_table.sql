@@ -266,6 +266,7 @@ CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
 CREATE TABLE IF NOT EXISTS as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
 DROP TABLE as_select1;
 
+<<<<<<< HEAD
 --
 -- CREATE TABLE restriction with graph objects
 --
@@ -274,3 +275,8 @@ CREATE GRAPH g;
 CREATE TABLE g.t (i int);
 CREATE TABLE t (i int) INHERITS (g.ag_vertex);
 DROP GRAPH g CASCADE;
+=======
+-- check that the oid column is added before the primary key is checked
+CREATE TABLE oid_pk (f1 INT, PRIMARY KEY(oid)) WITH OIDS;
+DROP TABLE oid_pk;
+>>>>>>> postgres

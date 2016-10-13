@@ -14,7 +14,7 @@
  * contain optimizable statements, which we should transform.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/parser/analyze.c
@@ -52,7 +52,8 @@ post_parse_analyze_hook_type post_parse_analyze_hook = NULL;
 static Query *transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt);
 static Query *transformInsertStmt(ParseState *pstate, InsertStmt *stmt);
 static List *transformInsertRow(ParseState *pstate, List *exprlist,
-				   List *stmtcols, List *icolumns, List *attrnos);
+				   List *stmtcols, List *icolumns, List *attrnos,
+				   bool strip_indirection);
 static OnConflictExpr *transformOnConflictClause(ParseState *pstate,
 						  OnConflictClause *onConflictClause);
 static int	count_rowexpr_columns(ParseState *pstate, Node *expr);
@@ -75,8 +76,14 @@ static Query *transformCreateTableAsStmt(ParseState *pstate,
 						   CreateTableAsStmt *stmt);
 static void transformLockingClause(ParseState *pstate, Query *qry,
 					   LockingClause *lc, bool pushedDown);
+<<<<<<< HEAD
 static Query *transformCypherStmt(ParseState *pstate, CypherStmt *stmt);
 static Query *transformCypherClause(ParseState *pstate, CypherClause *clause);
+=======
+#ifdef RAW_EXPRESSION_COVERAGE_TEST
+static bool test_raw_expression_coverage(Node *node, void *context);
+#endif
+>>>>>>> postgres
 
 
 /*
@@ -222,6 +229,25 @@ Query *
 transformStmt(ParseState *pstate, Node *parseTree)
 {
 	Query	   *result;
+
+	/*
+	 * We apply RAW_EXPRESSION_COVERAGE_TEST testing to basic DML statements;
+	 * we can't just run it on everything because raw_expression_tree_walker()
+	 * doesn't claim to handle utility statements.
+	 */
+#ifdef RAW_EXPRESSION_COVERAGE_TEST
+	switch (nodeTag(parseTree))
+	{
+		case T_SelectStmt:
+		case T_InsertStmt:
+		case T_UpdateStmt:
+		case T_DeleteStmt:
+			(void) test_raw_expression_coverage(parseTree, NULL);
+			break;
+		default:
+			break;
+	}
+#endif   /* RAW_EXPRESSION_COVERAGE_TEST */
 
 	switch (nodeTag(parseTree))
 	{
@@ -616,7 +642,8 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 		/* Prepare row for assignment to target table */
 		exprList = transformInsertRow(pstate, exprList,
 									  stmt->cols,
-									  icolumns, attrnos);
+									  icolumns, attrnos,
+									  false);
 	}
 	else if (list_length(selectStmt->valuesLists) > 1)
 	{
@@ -660,10 +687,20 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 											exprLocation((Node *) sublist))));
 			}
 
-			/* Prepare row for assignment to target table */
+			/*
+			 * Prepare row for assignment to target table.  We process any
+			 * indirection on the target column specs normally but then strip
+			 * off the resulting field/array assignment nodes, since we don't
+			 * want the parsed statement to contain copies of those in each
+			 * VALUES row.  (It's annoying to have to transform the
+			 * indirection specs over and over like this, but avoiding it
+			 * would take some really messy refactoring of
+			 * transformAssignmentIndirection.)
+			 */
 			sublist = transformInsertRow(pstate, sublist,
 										 stmt->cols,
-										 icolumns, attrnos);
+										 icolumns, attrnos,
+										 true);
 
 			/*
 			 * We must assign collations now because assign_query_collations
@@ -714,6 +751,14 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 		 * Generate list of Vars referencing the RTE
 		 */
 		expandRTE(rte, rtr->rtindex, 0, -1, false, NULL, &exprList);
+
+		/*
+		 * Re-apply any indirection on the target column specs to the Vars
+		 */
+		exprList = transformInsertRow(pstate, exprList,
+									  stmt->cols,
+									  icolumns, attrnos,
+									  false);
 	}
 	else
 	{
@@ -736,7 +781,8 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 		/* Prepare row for assignment to target table */
 		exprList = transformInsertRow(pstate, exprList,
 									  stmt->cols,
-									  icolumns, attrnos);
+									  icolumns, attrnos,
+									  false);
 	}
 
 	/*
@@ -805,12 +851,17 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 /*
  * Prepare an INSERT row for assignment to the target table.
  *
- * The row might be either a VALUES row, or variables referencing a
- * sub-SELECT output.
+ * exprlist: transformed expressions for source values; these might come from
+ * a VALUES row, or be Vars referencing a sub-SELECT or VALUES RTE output.
+ * stmtcols: original target-columns spec for INSERT (we just test for NIL)
+ * icolumns: effective target-columns spec (list of ResTarget)
+ * attrnos: integer column numbers (must be same length as icolumns)
+ * strip_indirection: if true, remove any field/array assignment nodes
  */
 static List *
 transformInsertRow(ParseState *pstate, List *exprlist,
-				   List *stmtcols, List *icolumns, List *attrnos)
+				   List *stmtcols, List *icolumns, List *attrnos,
+				   bool strip_indirection)
 {
 	List	   *result;
 	ListCell   *lc;
@@ -875,6 +926,29 @@ transformInsertRow(ParseState *pstate, List *exprlist,
 									 lfirst_int(attnos),
 									 col->indirection,
 									 col->location);
+
+		if (strip_indirection)
+		{
+			while (expr)
+			{
+				if (IsA(expr, FieldStore))
+				{
+					FieldStore *fstore = (FieldStore *) expr;
+
+					expr = (Expr *) linitial(fstore->newvals);
+				}
+				else if (IsA(expr, ArrayRef))
+				{
+					ArrayRef   *aref = (ArrayRef *) expr;
+
+					if (aref->refassgnexpr == NULL)
+						break;
+					expr = aref->refassgnexpr;
+				}
+				else
+					break;
+			}
+		}
 
 		result = lappend(result, expr);
 
@@ -2733,6 +2807,7 @@ applyLockingClause(Query *qry, Index rtindex,
 	qry->rowMarks = lappend(qry->rowMarks, rc);
 }
 
+<<<<<<< HEAD
 
 /*
  * transformCypherStmt - transforms a Cypher statement
@@ -2792,3 +2867,26 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 
 	return qry;
 }
+=======
+/*
+ * Coverage testing for raw_expression_tree_walker().
+ *
+ * When enabled, we run raw_expression_tree_walker() over every DML statement
+ * submitted to parse analysis.  Without this provision, that function is only
+ * applied in limited cases involving CTEs, and we don't really want to have
+ * to test everything inside as well as outside a CTE.
+ */
+#ifdef RAW_EXPRESSION_COVERAGE_TEST
+
+static bool
+test_raw_expression_coverage(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
+	return raw_expression_tree_walker(node,
+									  test_raw_expression_coverage,
+									  context);
+}
+
+#endif   /* RAW_EXPRESSION_COVERAGE_TEST */
+>>>>>>> postgres

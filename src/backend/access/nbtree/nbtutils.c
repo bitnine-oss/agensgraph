@@ -3,7 +3,7 @@
  * nbtutils.c
  *	  Utility code for Postgres btree implementation.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -232,10 +232,8 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 	 */
 	if (so->arrayContext == NULL)
 		so->arrayContext = AllocSetContextCreate(CurrentMemoryContext,
-												 "BTree Array Context",
-												 ALLOCSET_SMALL_MINSIZE,
-												 ALLOCSET_SMALL_INITSIZE,
-												 ALLOCSET_SMALL_MAXSIZE);
+												 "BTree array context",
+												 ALLOCSET_SMALL_SIZES);
 	else
 		MemoryContextReset(so->arrayContext);
 
@@ -1285,12 +1283,9 @@ _bt_fix_scankey_strategy(ScanKey skey, int16 *indoption)
  *
  * Depending on the operator type, the key may be required for both scan
  * directions or just one.  Also, if the key is a row comparison header,
- * we have to mark the appropriate subsidiary ScanKeys as required.  In
- * such cases, the first subsidiary key is required, but subsequent ones
- * are required only as long as they correspond to successive index columns
- * and match the leading column as to sort direction.
- * Otherwise the row comparison ordering is different from the index ordering
- * and so we can't stop the scan on the basis of those lower-order columns.
+ * we have to mark its first subsidiary ScanKey as required.  (Subsequent
+ * subsidiary ScanKeys are normally for lower-order columns, and thus
+ * cannot be required, since they're after the first non-equality scankey.)
  *
  * Note: when we set required-key flag bits in a subsidiary scankey, we are
  * scribbling on a data structure belonging to the index AM's caller, not on
@@ -1328,24 +1323,12 @@ _bt_mark_scankey_required(ScanKey skey)
 	if (skey->sk_flags & SK_ROW_HEADER)
 	{
 		ScanKey		subkey = (ScanKey) DatumGetPointer(skey->sk_argument);
-		AttrNumber	attno = skey->sk_attno;
 
-		/* First subkey should be same as the header says */
-		Assert(subkey->sk_attno == attno);
-
-		for (;;)
-		{
-			Assert(subkey->sk_flags & SK_ROW_MEMBER);
-			if (subkey->sk_attno != attno)
-				break;			/* non-adjacent key, so not required */
-			if (subkey->sk_strategy != skey->sk_strategy)
-				break;			/* wrong direction, so not required */
-			subkey->sk_flags |= addflags;
-			if (subkey->sk_flags & SK_ROW_END)
-				break;
-			subkey++;
-			attno++;
-		}
+		/* First subkey should be same column/operator as the header */
+		Assert(subkey->sk_flags & SK_ROW_MEMBER);
+		Assert(subkey->sk_attno == skey->sk_attno);
+		Assert(subkey->sk_strategy == skey->sk_strategy);
+		subkey->sk_flags |= addflags;
 	}
 }
 
@@ -1428,13 +1411,6 @@ _bt_checkkeys(IndexScanDesc scan,
 		Datum		datum;
 		bool		isNull;
 		Datum		test;
-
-		/*
-		 * If the scan key has already matched we can skip this key, as long
-		 * as the index tuple does not contain NULL values.
-		 */
-		if (key->sk_flags & SK_BT_MATCHED && !IndexTupleHasNulls(tuple))
-			continue;
 
 		/* row-comparison keys need special processing */
 		if (key->sk_flags & SK_ROW_HEADER)
@@ -2058,15 +2034,34 @@ BTreeShmemInit(void)
 		Assert(found);
 }
 
-Datum
-btoptions(PG_FUNCTION_ARGS)
+bytea *
+btoptions(Datum reloptions, bool validate)
 {
-	Datum		reloptions = PG_GETARG_DATUM(0);
-	bool		validate = PG_GETARG_BOOL(1);
-	bytea	   *result;
+	return default_reloptions(reloptions, validate, RELOPT_KIND_BTREE);
+}
 
-	result = default_reloptions(reloptions, validate, RELOPT_KIND_BTREE);
-	if (result)
-		PG_RETURN_BYTEA_P(result);
-	PG_RETURN_NULL();
+/*
+ *	btproperty() -- Check boolean properties of indexes.
+ *
+ * This is optional, but handling AMPROP_RETURNABLE here saves opening the rel
+ * to call btcanreturn.
+ */
+bool
+btproperty(Oid index_oid, int attno,
+		   IndexAMProperty prop, const char *propname,
+		   bool *res, bool *isnull)
+{
+	switch (prop)
+	{
+		case AMPROP_RETURNABLE:
+			/* answer only for columns, not AM or whole index */
+			if (attno == 0)
+				return false;
+			/* otherwise, btree can always return data */
+			*res = true;
+			return true;
+
+		default:
+			return false;		/* punt to generic code */
+	}
 }

@@ -3,7 +3,7 @@
  * be-fsstubs.c
  *	  Builtin functions for open/close/read/write operations on large objects
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -79,9 +79,7 @@ static MemoryContext fscxt = NULL;
 		if (fscxt == NULL) \
 			fscxt = AllocSetContextCreate(TopMemoryContext, \
 										  "Filesystem", \
-										  ALLOCSET_DEFAULT_MINSIZE, \
-										  ALLOCSET_DEFAULT_INITSIZE, \
-										  ALLOCSET_DEFAULT_MAXSIZE); \
+										  ALLOCSET_DEFAULT_SIZES); \
 	} while (0)
 
 

@@ -3,7 +3,7 @@
  * explain.h
  *	  prototypes for explain.c
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  * src/include/commands/explain.h
@@ -35,13 +35,15 @@ typedef struct ExplainState
 	bool		timing;			/* print detailed node timing */
 	bool		summary;		/* print total planning and execution timing */
 	ExplainFormat format;		/* output format */
-	/* other states */
+	/* state for output formatting --- not reset for each new plan tree */
+	int			indent;			/* current indentation level */
+	List	   *grouping_stack; /* format-specific grouping state */
+	/* state related to the current plan tree (filled by ExplainPrintPlan) */
 	PlannedStmt *pstmt;			/* top of plan */
 	List	   *rtable;			/* range table */
 	List	   *rtable_names;	/* alias names for RTEs */
-	int			indent;			/* current indentation level */
-	List	   *grouping_stack; /* format-specific grouping state */
 	List	   *deparse_cxt;	/* context list for deparsing expressions */
+	Bitmapset  *printed_subplans;		/* ids of SubPlans we've printed */
 } ExplainState;
 
 /* Hook for plugins to get control in ExplainOneQuery() */
@@ -93,5 +95,7 @@ extern void ExplainPropertyLong(const char *qlabel, long value,
 					ExplainState *es);
 extern void ExplainPropertyFloat(const char *qlabel, double value, int ndigits,
 					 ExplainState *es);
+extern void ExplainPropertyBool(const char *qlabel, bool value,
+					ExplainState *es);
 
 #endif   /* EXPLAIN_H */

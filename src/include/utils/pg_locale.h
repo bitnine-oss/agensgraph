@@ -4,7 +4,7 @@
  *
  * src/include/utils/pg_locale.h
  *
- * Copyright (c) 2002-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2016, PostgreSQL Global Development Group
  *
  *-----------------------------------------------------------------------
  */
@@ -13,7 +13,7 @@
 #define _PG_LOCALE_
 
 #include <locale.h>
-#ifdef LOCALE_T_IN_XLOCALE
+#if defined(LOCALE_T_IN_XLOCALE) || defined(WCSTOMBS_L_IN_XLOCALE)
 #include <xlocale.h>
 #endif
 

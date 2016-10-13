@@ -68,7 +68,7 @@ NOTIFY <replaceable class="PARAMETER">channel</replaceable> [ , <replaceable cla
   <para>
    When <command>NOTIFY</command> is used to signal the occurrence of changes
    to a particular table, a useful programming technique is to put the
-   <command>NOTIFY</command> in a rule that is triggered by table updates.
+   <command>NOTIFY</command> in a statement trigger that is triggered by table updates.
    In this way, notification happens automatically when the table is changed,
    and the application programmer cannot accidentally forget to do it.
   </para>
@@ -164,6 +164,11 @@ NOTIFY <replaceable class="PARAMETER">channel</replaceable> [ , <replaceable cla
    warnings in the log file pointing you to the session that is preventing
    cleanup. In this case you should make sure that this session ends its
    current transaction so that cleanup can proceed.
+  </para>
+  <para>
+   The function <function>pg_notification_queue_usage</function> returns the
+   fraction of the queue that is currently occupied by pending notifications.
+   See <xref linkend="functions-info"> for more information.
   </para>
   <para>
    A transaction that has executed <command>NOTIFY</command> cannot be

@@ -14,6 +14,7 @@ PG_FUNCTION_INFO_V1(gin_extract_trgm);
 PG_FUNCTION_INFO_V1(gin_extract_value_trgm);
 PG_FUNCTION_INFO_V1(gin_extract_query_trgm);
 PG_FUNCTION_INFO_V1(gin_trgm_consistent);
+PG_FUNCTION_INFO_V1(gin_trgm_triconsistent);
 
 /*
  * This function can only be called if a pre-9.1 version of the GIN operator
@@ -88,6 +89,7 @@ gin_extract_query_trgm(PG_FUNCTION_ARGS)
 	switch (strategy)
 	{
 		case SimilarityStrategyNumber:
+		case WordSimilarityStrategyNumber:
 			trg = generate_trgm(VARDATA(val), VARSIZE(val) - VARHDRSZ);
 			break;
 		case ILikeStrategyNumber:
@@ -175,6 +177,7 @@ gin_trgm_consistent(PG_FUNCTION_ARGS)
 	bool		res;
 	int32		i,
 				ntrue;
+	double		nlimit;
 
 	/* All cases served by this function are inexact */
 	*recheck = true;
@@ -182,6 +185,10 @@ gin_trgm_consistent(PG_FUNCTION_ARGS)
 	switch (strategy)
 	{
 		case SimilarityStrategyNumber:
+		case WordSimilarityStrategyNumber:
+			nlimit = (strategy == SimilarityStrategyNumber) ?
+				similarity_threshold : word_similarity_threshold;
+
 			/* Count the matches */
 			ntrue = 0;
 			for (i = 0; i < nkeys; i++)
@@ -189,11 +196,24 @@ gin_trgm_consistent(PG_FUNCTION_ARGS)
 				if (check[i])
 					ntrue++;
 			}
-#ifdef DIVUNION
-			res = (nkeys == ntrue) ? true : ((((((float4) ntrue) / ((float4) (nkeys - ntrue)))) >= trgm_limit) ? true : false);
-#else
-			res = (nkeys == 0) ? false : ((((((float4) ntrue) / ((float4) nkeys))) >= trgm_limit) ? true : false);
-#endif
+
+			/*--------------------
+			 * If DIVUNION is defined then similarity formula is:
+			 * c / (len1 + len2 - c)
+			 * where c is number of common trigrams and it stands as ntrue in
+			 * this code.  Here we don't know value of len2 but we can assume
+			 * that c (ntrue) is a lower bound of len2, so upper bound of
+			 * similarity is:
+			 * c / (len1 + c - c)  => c / len1
+			 * If DIVUNION is not defined then similarity formula is:
+			 * c / max(len1, len2)
+			 * And again, c (ntrue) is a lower bound of len2, but c <= len1
+			 * just by definition and, consequently, upper bound of
+			 * similarity is just c / len1.
+			 * So, independently on DIVUNION the upper bound formula is the same.
+			 */
+			res = (nkeys == 0) ? false :
+				(((((float4) ntrue) / ((float4) nkeys))) >= nlimit);
 			break;
 		case ILikeStrategyNumber:
 #ifndef IGNORECASE
@@ -234,4 +254,103 @@ gin_trgm_consistent(PG_FUNCTION_ARGS)
 	}
 
 	PG_RETURN_BOOL(res);
+}
+
+/*
+ * In all cases, GIN_TRUE is at least as favorable to inclusion as
+ * GIN_MAYBE. If no better option is available, simply treat
+ * GIN_MAYBE as if it were GIN_TRUE and apply the same test as the binary
+ * consistent function.
+ */
+Datum
+gin_trgm_triconsistent(PG_FUNCTION_ARGS)
+{
+	GinTernaryValue *check = (GinTernaryValue *) PG_GETARG_POINTER(0);
+	StrategyNumber strategy = PG_GETARG_UINT16(1);
+
+	/* text    *query = PG_GETARG_TEXT_P(2); */
+	int32		nkeys = PG_GETARG_INT32(3);
+	Pointer    *extra_data = (Pointer *) PG_GETARG_POINTER(4);
+	GinTernaryValue res = GIN_MAYBE;
+	int32		i,
+				ntrue;
+	bool	   *boolcheck;
+	double		nlimit;
+
+	switch (strategy)
+	{
+		case SimilarityStrategyNumber:
+		case WordSimilarityStrategyNumber:
+			nlimit = (strategy == SimilarityStrategyNumber) ?
+				similarity_threshold : word_similarity_threshold;
+
+			/* Count the matches */
+			ntrue = 0;
+			for (i = 0; i < nkeys; i++)
+			{
+				if (check[i] != GIN_FALSE)
+					ntrue++;
+			}
+
+			/*
+			 * See comment in gin_trgm_consistent() about * upper bound
+			 * formula
+			 */
+			res = (nkeys == 0)
+				? GIN_FALSE : (((((float4) ntrue) / ((float4) nkeys)) >= nlimit)
+							   ? GIN_MAYBE : GIN_FALSE);
+			break;
+		case ILikeStrategyNumber:
+#ifndef IGNORECASE
+			elog(ERROR, "cannot handle ~~* with case-sensitive trigrams");
+#endif
+			/* FALL THRU */
+		case LikeStrategyNumber:
+			/* Check if all extracted trigrams are presented. */
+			res = GIN_MAYBE;
+			for (i = 0; i < nkeys; i++)
+			{
+				if (check[i] == GIN_FALSE)
+				{
+					res = GIN_FALSE;
+					break;
+				}
+			}
+			break;
+		case RegExpICaseStrategyNumber:
+#ifndef IGNORECASE
+			elog(ERROR, "cannot handle ~* with case-sensitive trigrams");
+#endif
+			/* FALL THRU */
+		case RegExpStrategyNumber:
+			if (nkeys < 1)
+			{
+				/* Regex processing gave no result: do full index scan */
+				res = GIN_MAYBE;
+			}
+			else
+			{
+				/*
+				 * As trigramsMatchGraph implements a monotonic boolean
+				 * function, promoting all GIN_MAYBE keys to GIN_TRUE will
+				 * give a conservative result.
+				 */
+				boolcheck = (bool *) palloc(sizeof(bool) * nkeys);
+				for (i = 0; i < nkeys; i++)
+					boolcheck[i] = (check[i] != GIN_FALSE);
+				if (!trigramsMatchGraph((TrgmPackedGraph *) extra_data[0],
+										boolcheck))
+					res = GIN_FALSE;
+				pfree(boolcheck);
+			}
+			break;
+		default:
+			elog(ERROR, "unrecognized strategy number: %d", strategy);
+			res = GIN_FALSE;	/* keep compiler quiet */
+			break;
+	}
+
+	/* All cases served by this function are inexact */
+	Assert(res != GIN_TRUE);
+	PG_RETURN_GIN_TERNARY_VALUE(res);
 }

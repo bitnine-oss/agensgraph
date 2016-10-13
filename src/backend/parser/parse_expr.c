@@ -3,7 +3,7 @@
  * parse_expr.c
  *	  handle expressions in parser
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -130,6 +130,8 @@ static Node *make_row_distinct_op(ParseState *pstate, List *opname,
 					 RowExpr *lrow, RowExpr *rrow, int location);
 static Expr *make_distinct_op(ParseState *pstate, List *opname,
 				 Node *ltree, Node *rtree, int location);
+static Node *make_nulltest_from_distinct(ParseState *pstate,
+							A_Expr *distincta, Node *arg);
 static int	operator_precedence_group(Node *node, const char **nodename);
 static void emit_precedence_warnings(ParseState *pstate,
 						 int opgroup, const char *opname,
@@ -245,6 +247,7 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 						result = transformAExprOpAll(pstate, a);
 						break;
 					case AEXPR_DISTINCT:
+					case AEXPR_NOT_DISTINCT:
 						result = transformAExprDistinct(pstate, a);
 						break;
 					case AEXPR_NULLIF:
@@ -898,6 +901,14 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 			emit_precedence_warnings(pstate, opgroup, opname,
 									 lexpr, rexpr,
 									 a->location);
+
+		/* Look through AEXPR_PAREN nodes so they don't affect tests below */
+		while (lexpr && IsA(lexpr, A_Expr) &&
+			   ((A_Expr *) lexpr)->kind == AEXPR_PAREN)
+			lexpr = ((A_Expr *) lexpr)->lexpr;
+		while (rexpr && IsA(rexpr, A_Expr) &&
+			   ((A_Expr *) rexpr)->kind == AEXPR_PAREN)
+			rexpr = ((A_Expr *) rexpr)->lexpr;
 	}
 
 	/*
@@ -1024,11 +1035,22 @@ transformAExprDistinct(ParseState *pstate, A_Expr *a)
 {
 	Node	   *lexpr = a->lexpr;
 	Node	   *rexpr = a->rexpr;
+	Node	   *result;
 
 	if (operator_precedence_warning)
 		emit_precedence_warnings(pstate, PREC_GROUP_INFIX_IS, "IS",
 								 lexpr, rexpr,
 								 a->location);
+
+	/*
+	 * If either input is an undecorated NULL literal, transform to a NullTest
+	 * on the other input. That's simpler to process than a full DistinctExpr,
+	 * and it avoids needing to require that the datatype have an = operator.
+	 */
+	if (exprIsNullConstant(rexpr))
+		return make_nulltest_from_distinct(pstate, a, lexpr);
+	if (exprIsNullConstant(lexpr))
+		return make_nulltest_from_distinct(pstate, a, rexpr);
 
 	lexpr = transformExprRecurse(pstate, lexpr);
 	rexpr = transformExprRecurse(pstate, rexpr);
@@ -1037,20 +1059,31 @@ transformAExprDistinct(ParseState *pstate, A_Expr *a)
 		rexpr && IsA(rexpr, RowExpr))
 	{
 		/* ROW() op ROW() is handled specially */
-		return make_row_distinct_op(pstate, a->name,
-									(RowExpr *) lexpr,
-									(RowExpr *) rexpr,
-									a->location);
+		result = make_row_distinct_op(pstate, a->name,
+									  (RowExpr *) lexpr,
+									  (RowExpr *) rexpr,
+									  a->location);
 	}
 	else
 	{
 		/* Ordinary scalar operator */
-		return (Node *) make_distinct_op(pstate,
-										 a->name,
-										 lexpr,
-										 rexpr,
-										 a->location);
+		result = (Node *) make_distinct_op(pstate,
+										   a->name,
+										   lexpr,
+										   rexpr,
+										   a->location);
 	}
+
+	/*
+	 * If it's NOT DISTINCT, we first build a DistinctExpr and then stick a
+	 * NOT on top.
+	 */
+	if (a->kind == AEXPR_NOT_DISTINCT)
+		result = (Node *) makeBoolExpr(NOT_EXPR,
+									   list_make1(result),
+									   a->location);
+
+	return result;
 }
 
 static Node *
@@ -1944,6 +1977,11 @@ transformArrayExpr(ParseState *pstate, A_ArrayExpr *a,
 		Node	   *e = (Node *) lfirst(element);
 		Node	   *newe;
 
+		/* Look through AEXPR_PAREN nodes so they don't affect test below */
+		while (e && IsA(e, A_Expr) &&
+			   ((A_Expr *) e)->kind == AEXPR_PAREN)
+			e = ((A_Expr *) e)->lexpr;
+
 		/*
 		 * If an element is itself an A_ArrayExpr, recurse directly so that we
 		 * can pass down any target type we were given.
@@ -2494,20 +2532,31 @@ transformWholeRowRef(ParseState *pstate, RangeTblEntry *rte, int location)
 /*
  * Handle an explicit CAST construct.
  *
- * Transform the argument, then look up the type name and apply any necessary
+ * Transform the argument, look up the type name, and apply any necessary
  * coercion function(s).
  */
 static Node *
 transformTypeCast(ParseState *pstate, TypeCast *tc)
 {
 	Node	   *result;
+	Node	   *arg = tc->arg;
 	Node	   *expr;
 	Oid			inputType;
 	Oid			targetType;
 	int32		targetTypmod;
 	int			location;
 
+	/* Look up the type name first */
 	typenameTypeIdAndMod(pstate, tc->typeName, &targetType, &targetTypmod);
+
+	/*
+	 * Look through any AEXPR_PAREN nodes that may have been inserted thanks
+	 * to operator_precedence_warning.  Otherwise, ARRAY[]::foo[] behaves
+	 * differently from (ARRAY[])::foo[].
+	 */
+	while (arg && IsA(arg, A_Expr) &&
+		   ((A_Expr *) arg)->kind == AEXPR_PAREN)
+		arg = ((A_Expr *) arg)->lexpr;
 
 	/*
 	 * If the subject of the typecast is an ARRAY[] construct and the target
@@ -2516,7 +2565,7 @@ transformTypeCast(ParseState *pstate, TypeCast *tc)
 	 * transformArrayExpr() might not infer the correct type.  Otherwise, just
 	 * transform the argument normally.
 	 */
-	if (IsA(tc->arg, A_ArrayExpr))
+	if (IsA(arg, A_ArrayExpr))
 	{
 		Oid			targetBaseType;
 		int32		targetBaseTypmod;
@@ -2534,16 +2583,16 @@ transformTypeCast(ParseState *pstate, TypeCast *tc)
 		if (OidIsValid(elementType))
 		{
 			expr = transformArrayExpr(pstate,
-									  (A_ArrayExpr *) tc->arg,
+									  (A_ArrayExpr *) arg,
 									  targetBaseType,
 									  elementType,
 									  targetBaseTypmod);
 		}
 		else
-			expr = transformExprRecurse(pstate, tc->arg);
+			expr = transformExprRecurse(pstate, arg);
 	}
 	else
-		expr = transformExprRecurse(pstate, tc->arg);
+		expr = transformExprRecurse(pstate, arg);
 
 	inputType = exprType(expr);
 	if (inputType == InvalidOid)
@@ -2931,6 +2980,28 @@ make_distinct_op(ParseState *pstate, List *opname, Node *ltree, Node *rtree,
 }
 
 /*
+ * Produce a NullTest node from an IS [NOT] DISTINCT FROM NULL construct
+ *
+ * "arg" is the untransformed other argument
+ */
+static Node *
+make_nulltest_from_distinct(ParseState *pstate, A_Expr *distincta, Node *arg)
+{
+	NullTest   *nt = makeNode(NullTest);
+
+	nt->arg = (Expr *) transformExprRecurse(pstate, arg);
+	/* the argument can be any type, so don't coerce it */
+	if (distincta->kind == AEXPR_NOT_DISTINCT)
+		nt->nulltesttype = IS_NULL;
+	else
+		nt->nulltesttype = IS_NOT_NULL;
+	/* argisrow = false is correct whether or not arg is composite */
+	nt->argisrow = false;
+	nt->location = distincta->location;
+	return (Node *) nt;
+}
+
+/*
  * Identify node's group for operator precedence warnings
  *
  * For items in nonzero groups, also return a suitable node name into *nodename
@@ -3032,7 +3103,8 @@ operator_precedence_group(Node *node, const char **nodename)
 			*nodename = strVal(llast(aexpr->name));
 			group = PREC_GROUP_POSTFIX_OP;
 		}
-		else if (aexpr->kind == AEXPR_DISTINCT)
+		else if (aexpr->kind == AEXPR_DISTINCT ||
+				 aexpr->kind == AEXPR_NOT_DISTINCT)
 		{
 			*nodename = "IS";
 			group = PREC_GROUP_INFIX_IS;

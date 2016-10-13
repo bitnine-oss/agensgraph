@@ -4,7 +4,7 @@
  *	  utilities routines for the postgres GiST index access method.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -16,10 +16,13 @@
 #include <math.h>
 
 #include "access/gist_private.h"
+#include "access/htup_details.h"
 #include "access/reloptions.h"
+#include "catalog/pg_opclass.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
+#include "utils/syscache.h"
 
 
 /*
@@ -808,11 +811,9 @@ gistNewBuffer(Relation r)
 	return buffer;
 }
 
-Datum
-gistoptions(PG_FUNCTION_ARGS)
+bytea *
+gistoptions(Datum reloptions, bool validate)
 {
-	Datum		reloptions = PG_GETARG_DATUM(0);
-	bool		validate = PG_GETARG_BOOL(1);
 	relopt_value *options;
 	GiSTOptions *rdopts;
 	int			numoptions;
@@ -826,7 +827,7 @@ gistoptions(PG_FUNCTION_ARGS)
 
 	/* if none set, we're done */
 	if (numoptions == 0)
-		PG_RETURN_NULL();
+		return NULL;
 
 	rdopts = allocateReloptStruct(sizeof(GiSTOptions), options, numoptions);
 
@@ -835,8 +836,104 @@ gistoptions(PG_FUNCTION_ARGS)
 
 	pfree(options);
 
-	PG_RETURN_BYTEA_P(rdopts);
+	return (bytea *) rdopts;
+}
 
+/*
+ *	gistproperty() -- Check boolean properties of indexes.
+ *
+ * This is optional for most AMs, but is required for GiST because the core
+ * property code doesn't support AMPROP_DISTANCE_ORDERABLE.  We also handle
+ * AMPROP_RETURNABLE here to save opening the rel to call gistcanreturn.
+ */
+bool
+gistproperty(Oid index_oid, int attno,
+			 IndexAMProperty prop, const char *propname,
+			 bool *res, bool *isnull)
+{
+	HeapTuple	tuple;
+	Form_pg_index rd_index PG_USED_FOR_ASSERTS_ONLY;
+	Form_pg_opclass rd_opclass;
+	Datum		datum;
+	bool		disnull;
+	oidvector  *indclass;
+	Oid			opclass,
+				opfamily,
+				opcintype;
+	int16		procno;
+
+	/* Only answer column-level inquiries */
+	if (attno == 0)
+		return false;
+
+	/*
+	 * Currently, GiST distance-ordered scans require that there be a distance
+	 * function in the opclass with the default types (i.e. the one loaded
+	 * into the relcache entry, see initGISTstate).  So we assume that if such
+	 * a function exists, then there's a reason for it (rather than grubbing
+	 * through all the opfamily's operators to find an ordered one).
+	 *
+	 * Essentially the same code can test whether we support returning the
+	 * column data, since that's true if the opclass provides a fetch proc.
+	 */
+
+	switch (prop)
+	{
+		case AMPROP_DISTANCE_ORDERABLE:
+			procno = GIST_DISTANCE_PROC;
+			break;
+		case AMPROP_RETURNABLE:
+			procno = GIST_FETCH_PROC;
+			break;
+		default:
+			return false;
+	}
+
+	/* First we need to know the column's opclass. */
+
+	tuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(index_oid));
+	if (!HeapTupleIsValid(tuple))
+	{
+		*isnull = true;
+		return true;
+	}
+	rd_index = (Form_pg_index) GETSTRUCT(tuple);
+
+	/* caller is supposed to guarantee this */
+	Assert(attno > 0 && attno <= rd_index->indnatts);
+
+	datum = SysCacheGetAttr(INDEXRELID, tuple,
+							Anum_pg_index_indclass, &disnull);
+	Assert(!disnull);
+
+	indclass = ((oidvector *) DatumGetPointer(datum));
+	opclass = indclass->values[attno - 1];
+
+	ReleaseSysCache(tuple);
+
+	/* Now look up the opclass family and input datatype. */
+
+	tuple = SearchSysCache1(CLAOID, ObjectIdGetDatum(opclass));
+	if (!HeapTupleIsValid(tuple))
+	{
+		*isnull = true;
+		return true;
+	}
+	rd_opclass = (Form_pg_opclass) GETSTRUCT(tuple);
+
+	opfamily = rd_opclass->opcfamily;
+	opcintype = rd_opclass->opcintype;
+
+	ReleaseSysCache(tuple);
+
+	/* And now we can check whether the function is provided. */
+
+	*res = SearchSysCacheExists4(AMPROCNUM,
+								 ObjectIdGetDatum(opfamily),
+								 ObjectIdGetDatum(opcintype),
+								 ObjectIdGetDatum(opcintype),
+								 Int16GetDatum(procno));
+	return true;
 }
 
 /*

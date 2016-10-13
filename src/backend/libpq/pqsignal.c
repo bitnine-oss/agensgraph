@@ -3,7 +3,7 @@
  * pqsignal.c
  *	  Backend signal(2) support (see also src/port/pqsignal.c)
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,15 +18,10 @@
 #include "libpq/pqsignal.h"
 
 
-#ifdef HAVE_SIGPROCMASK
+/* Global variables */
 sigset_t	UnBlockSig,
 			BlockSig,
 			StartupBlockSig;
-#else
-int			UnBlockSig,
-			BlockSig,
-			StartupBlockSig;
-#endif
 
 
 /*
@@ -45,8 +40,6 @@ int			UnBlockSig,
 void
 pqinitmask(void)
 {
-#ifdef HAVE_SIGPROCMASK
-
 	sigemptyset(&UnBlockSig);
 
 	/* First set all signals, then clear some. */
@@ -100,20 +93,5 @@ pqinitmask(void)
 #endif
 #ifdef SIGALRM
 	sigdelset(&StartupBlockSig, SIGALRM);
-#endif
-#else
-	/* Set the signals we want. */
-	UnBlockSig = 0;
-	BlockSig = sigmask(SIGQUIT) |
-		sigmask(SIGTERM) | sigmask(SIGALRM) |
-	/* common signals between two */
-		sigmask(SIGHUP) |
-		sigmask(SIGINT) | sigmask(SIGUSR1) |
-		sigmask(SIGUSR2) | sigmask(SIGCHLD) |
-		sigmask(SIGWINCH) | sigmask(SIGFPE);
-	StartupBlockSig = sigmask(SIGHUP) |
-		sigmask(SIGINT) | sigmask(SIGUSR1) |
-		sigmask(SIGUSR2) | sigmask(SIGCHLD) |
-		sigmask(SIGWINCH) | sigmask(SIGFPE);
 #endif
 }

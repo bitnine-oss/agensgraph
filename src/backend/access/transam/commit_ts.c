@@ -15,7 +15,7 @@
  * re-perform the status update on redo; so we need make no additional XLOG
  * entry here.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/commit_ts.c
@@ -92,7 +92,7 @@ typedef struct CommitTimestampShared
 {
 	TransactionId xidLastCommit;
 	CommitTimestampEntry dataLastCommit;
-	bool	commitTsActive;
+	bool		commitTsActive;
 } CommitTimestampShared;
 
 CommitTimestampShared *commitTsShared;
@@ -153,9 +153,9 @@ TransactionTreeSetCommitTsData(TransactionId xid, int nsubxids,
 	 * No-op if the module is not active.
 	 *
 	 * An unlocked read here is fine, because in a standby (the only place
-	 * where the flag can change in flight) this routine is only called by
-	 * the recovery process, which is also the only process which can change
-	 * the flag.
+	 * where the flag can change in flight) this routine is only called by the
+	 * recovery process, which is also the only process which can change the
+	 * flag.
 	 */
 	if (!commitTsShared->commitTsActive)
 		return;
@@ -484,8 +484,9 @@ CommitTsShmemInit(void)
 	bool		found;
 
 	CommitTsCtl->PagePrecedes = CommitTsPagePrecedes;
-	SimpleLruInit(CommitTsCtl, "CommitTs Ctl", CommitTsShmemBuffers(), 0,
-				  CommitTsControlLock, "pg_commit_ts");
+	SimpleLruInit(CommitTsCtl, "commit_timestamp", CommitTsShmemBuffers(), 0,
+				  CommitTsControlLock, "pg_commit_ts",
+				  LWTRANCHE_COMMITTS_BUFFERS);
 
 	commitTsShared = ShmemInitStruct("CommitTs shared",
 									 sizeof(CommitTimestampShared),
@@ -766,8 +767,8 @@ ExtendCommitTs(TransactionId newestXact)
 	int			pageno;
 
 	/*
-	 * Nothing to do if module not enabled.  Note we do an unlocked read of the
-	 * flag here, which is okay because this routine is only called from
+	 * Nothing to do if module not enabled.  Note we do an unlocked read of
+	 * the flag here, which is okay because this routine is only called from
 	 * GetNewTransactionId, which is never called in a standby.
 	 */
 	Assert(!InRecovery);
@@ -854,7 +855,7 @@ AdvanceOldestCommitTsXid(TransactionId oldestXact)
 {
 	LWLockAcquire(CommitTsLock, LW_EXCLUSIVE);
 	if (ShmemVariableCache->oldestCommitTsXid != InvalidTransactionId &&
-		TransactionIdPrecedes(ShmemVariableCache->oldestCommitTsXid, oldestXact))
+	TransactionIdPrecedes(ShmemVariableCache->oldestCommitTsXid, oldestXact))
 		ShmemVariableCache->oldestCommitTsXid = oldestXact;
 	LWLockRelease(CommitTsLock);
 }

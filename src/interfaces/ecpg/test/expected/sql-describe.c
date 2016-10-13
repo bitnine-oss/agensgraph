@@ -83,7 +83,7 @@ main (void)
 	ECPGdebug(1, stderr);
 
 	strcpy(msg, "connect");
-	{ ECPGconnect(__LINE__, 0, "regress1" , NULL, NULL , NULL, 0); 
+	{ ECPGconnect(__LINE__, 0, "ecpg1_regression" , NULL, NULL , NULL, 0); 
 #line 27 "describe.pgc"
 
 if (sqlca.sqlcode < 0) exit (1);}
@@ -360,7 +360,7 @@ if (sqlca.sqlcode < 0) exit (1);}
 #line 151 "describe.pgc"
 
 
-	if (sqlda1 == NULL || sqlda1 == NULL || sqlda2 == NULL)
+	if (sqlda1 == NULL || sqlda2 == NULL || sqlda3 == NULL)
 		exit(1);
 
 	strcpy(msg, "get descriptor");

@@ -5,7 +5,7 @@
  *
  * All the actual insertion logic is in spgdoinsert.c.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -65,12 +65,9 @@ spgistBuildCallback(Relation index, HeapTuple htup, Datum *values,
 /*
  * Build an SP-GiST index.
  */
-Datum
-spgbuild(PG_FUNCTION_ARGS)
+IndexBuildResult *
+spgbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 {
-	Relation	heap = (Relation) PG_GETARG_POINTER(0);
-	Relation	index = (Relation) PG_GETARG_POINTER(1);
-	IndexInfo  *indexInfo = (IndexInfo *) PG_GETARG_POINTER(2);
 	IndexBuildResult *result;
 	double		reltuples;
 	SpGistBuildState buildstate;
@@ -137,9 +134,7 @@ spgbuild(PG_FUNCTION_ARGS)
 
 	buildstate.tmpCtx = AllocSetContextCreate(CurrentMemoryContext,
 										   "SP-GiST build temporary context",
-											  ALLOCSET_DEFAULT_MINSIZE,
-											  ALLOCSET_DEFAULT_INITSIZE,
-											  ALLOCSET_DEFAULT_MAXSIZE);
+											  ALLOCSET_DEFAULT_SIZES);
 
 	reltuples = IndexBuildHeapScan(heap, index, indexInfo, true,
 								   spgistBuildCallback, (void *) &buildstate);
@@ -151,16 +146,15 @@ spgbuild(PG_FUNCTION_ARGS)
 	result = (IndexBuildResult *) palloc0(sizeof(IndexBuildResult));
 	result->heap_tuples = result->index_tuples = reltuples;
 
-	PG_RETURN_POINTER(result);
+	return result;
 }
 
 /*
  * Build an empty SPGiST index in the initialization fork
  */
-Datum
-spgbuildempty(PG_FUNCTION_ARGS)
+void
+spgbuildempty(Relation index)
 {
-	Relation	index = (Relation) PG_GETARG_POINTER(0);
 	Page		page;
 
 	/* Construct metapage. */
@@ -201,34 +195,23 @@ spgbuildempty(PG_FUNCTION_ARGS)
 	 * checkpoint may have moved the redo pointer past our xlog record.
 	 */
 	smgrimmedsync(index->rd_smgr, INIT_FORKNUM);
-
-	PG_RETURN_VOID();
 }
 
 /*
  * Insert one new tuple into an SPGiST index.
  */
-Datum
-spginsert(PG_FUNCTION_ARGS)
+bool
+spginsert(Relation index, Datum *values, bool *isnull,
+		  ItemPointer ht_ctid, Relation heapRel,
+		  IndexUniqueCheck checkUnique)
 {
-	Relation	index = (Relation) PG_GETARG_POINTER(0);
-	Datum	   *values = (Datum *) PG_GETARG_POINTER(1);
-	bool	   *isnull = (bool *) PG_GETARG_POINTER(2);
-	ItemPointer ht_ctid = (ItemPointer) PG_GETARG_POINTER(3);
-
-#ifdef NOT_USED
-	Relation	heapRel = (Relation) PG_GETARG_POINTER(4);
-	IndexUniqueCheck checkUnique = (IndexUniqueCheck) PG_GETARG_INT32(5);
-#endif
 	SpGistState spgstate;
 	MemoryContext oldCtx;
 	MemoryContext insertCtx;
 
 	insertCtx = AllocSetContextCreate(CurrentMemoryContext,
 									  "SP-GiST insert temporary context",
-									  ALLOCSET_DEFAULT_MINSIZE,
-									  ALLOCSET_DEFAULT_INITSIZE,
-									  ALLOCSET_DEFAULT_MAXSIZE);
+									  ALLOCSET_DEFAULT_SIZES);
 	oldCtx = MemoryContextSwitchTo(insertCtx);
 
 	initSpGistState(&spgstate, index);
@@ -251,5 +234,5 @@ spginsert(PG_FUNCTION_ARGS)
 	MemoryContextDelete(insertCtx);
 
 	/* return false since we've not done any unique check */
-	PG_RETURN_BOOL(false);
+	return false;
 }

@@ -3,7 +3,7 @@
  * alter.c
  *	  Drivers for generic alter commands
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -391,6 +391,42 @@ ExecRenameStmt(RenameStmt *stmt)
 }
 
 /*
+ * Executes an ALTER OBJECT / DEPENDS ON [EXTENSION] statement.
+ *
+ * Return value is the address of the altered object.  refAddress is an output
+ * argument which, if not null, receives the address of the object that the
+ * altered object now depends on.
+ */
+ObjectAddress
+ExecAlterObjectDependsStmt(AlterObjectDependsStmt *stmt, ObjectAddress *refAddress)
+{
+	ObjectAddress address;
+	ObjectAddress refAddr;
+	Relation	rel;
+
+	address =
+		get_object_address_rv(stmt->objectType, stmt->relation, stmt->objname,
+							stmt->objargs, &rel, AccessExclusiveLock, false);
+
+	/*
+	 * If a relation was involved, it would have been opened and locked. We
+	 * don't need the relation here, but we'll retain the lock until commit.
+	 */
+	if (rel)
+		heap_close(rel, NoLock);
+
+	refAddr = get_object_address(OBJECT_EXTENSION, list_make1(stmt->extname),
+								 NULL, &rel, AccessExclusiveLock, false);
+	Assert(rel == NULL);
+	if (refAddress)
+		*refAddress = refAddr;
+
+	recordDependencyOn(&address, &refAddr, DEPENDENCY_AUTO_EXTENSION);
+
+	return address;
+}
+
+/*
  * Executes an ALTER OBJECT / SET SCHEMA statement.  Based on the object
  * type, the function appropriate to that type is executed.
  *
@@ -592,8 +628,18 @@ AlterObjectNamespace_internal(Relation rel, Oid objid, Oid nspOid)
 	Assert(!isnull);
 	oldNspOid = DatumGetObjectId(namespace);
 
+	/*
+	 * If the object is already in the correct namespace, we don't need to do
+	 * anything except fire the object access hook.
+	 */
+	if (oldNspOid == nspOid)
+	{
+		InvokeObjectPostAlterHook(classId, objid, 0);
+		return oldNspOid;
+	}
+
 	/* Check basic namespace related issues */
-	CheckSetNamespace(oldNspOid, nspOid, classId, objid);
+	CheckSetNamespace(oldNspOid, nspOid);
 
 	/* Permission checks ... superusers can always do it */
 	if (!superuser())

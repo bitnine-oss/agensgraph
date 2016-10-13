@@ -162,15 +162,15 @@ PREPARE foo AS SELECT 1;
 LISTEN foo_event;
 SET vacuum_cost_delay = 13;
 CREATE TEMP TABLE tmp_foo (data text) ON COMMIT DELETE ROWS;
-CREATE ROLE temp_reset_user;
-SET SESSION AUTHORIZATION temp_reset_user;
+CREATE ROLE regress_guc_user;
+SET SESSION AUTHORIZATION regress_guc_user;
 -- look changes
 SELECT pg_listening_channels();
 SELECT name FROM pg_prepared_statements;
 SELECT name FROM pg_cursors;
 SHOW vacuum_cost_delay;
 SELECT relname from pg_class where relname = 'tmp_foo';
-SELECT current_user = 'temp_reset_user';
+SELECT current_user = 'regress_guc_user';
 -- discard everything
 DISCARD ALL;
 -- look again
@@ -179,8 +179,8 @@ SELECT name FROM pg_prepared_statements;
 SELECT name FROM pg_cursors;
 SHOW vacuum_cost_delay;
 SELECT relname from pg_class where relname = 'tmp_foo';
-SELECT current_user = 'temp_reset_user';
-DROP ROLE temp_reset_user;
+SELECT current_user = 'regress_guc_user';
+DROP ROLE regress_guc_user;
 
 --
 -- search_path should react to changes in pg_namespace
@@ -257,6 +257,19 @@ set work_mem = '1MB';
 select myfunc(0);
 select current_setting('work_mem');
 select myfunc(1), current_setting('work_mem');
+
+-- check current_setting()'s behavior with invalid setting name
+
+select current_setting('nosuch.setting');  -- FAIL
+select current_setting('nosuch.setting', false);  -- FAIL
+select current_setting('nosuch.setting', true) is null;
+
+-- after this, all three cases should yield 'nada'
+set nosuch.setting = 'nada';
+
+select current_setting('nosuch.setting');
+select current_setting('nosuch.setting', false);
+select current_setting('nosuch.setting', true);
 
 -- Normally, CREATE FUNCTION should complain about invalid values in
 -- function SET options; but not if check_function_bodies is off,

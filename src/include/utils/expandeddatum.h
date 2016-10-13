@@ -34,7 +34,7 @@
  * value if they fail partway through.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/expandeddatum.h
@@ -136,6 +136,15 @@ struct ExpandedObjectHeader
 #define EOHPGetRWDatum(eohptr)	PointerGetDatum((eohptr)->eoh_rw_ptr)
 #define EOHPGetRODatum(eohptr)	PointerGetDatum((eohptr)->eoh_ro_ptr)
 
+/* Does the Datum represent a writable expanded object? */
+#define DatumIsReadWriteExpandedObject(d, isnull, typlen) \
+	(((isnull) || (typlen) != -1) ? false : \
+	 VARATT_IS_EXTERNAL_EXPANDED_RW(DatumGetPointer(d)))
+
+#define MakeExpandedObjectReadOnly(d, isnull, typlen) \
+	(((isnull) || (typlen) != -1) ? (d) : \
+	 MakeExpandedObjectReadOnlyInternal(d))
+
 extern ExpandedObjectHeader *DatumGetEOHP(Datum d);
 extern void EOH_init_header(ExpandedObjectHeader *eohptr,
 				const ExpandedObjectMethods *methods,
@@ -143,8 +152,7 @@ extern void EOH_init_header(ExpandedObjectHeader *eohptr,
 extern Size EOH_get_flat_size(ExpandedObjectHeader *eohptr);
 extern void EOH_flatten_into(ExpandedObjectHeader *eohptr,
 				 void *result, Size allocated_size);
-extern bool DatumIsReadWriteExpandedObject(Datum d, bool isnull, int16 typlen);
-extern Datum MakeExpandedObjectReadOnly(Datum d, bool isnull, int16 typlen);
+extern Datum MakeExpandedObjectReadOnlyInternal(Datum d);
 extern Datum TransferExpandedObject(Datum d, MemoryContext new_parent);
 extern void DeleteExpandedObject(Datum d);
 

@@ -163,7 +163,7 @@ select 100 @< 4;
  f
 (1 row)
 
-select * from T_pkey1 order by key1 using @<, key2;
+select * from T_pkey1 order by key1 using @<, key2 collate "C";
  key1 |         key2         |                   txt                    
 ------+----------------------+------------------------------------------
     1 | KEY1-3               | should work                             
@@ -174,7 +174,7 @@ select * from T_pkey1 order by key1 using @<, key2;
     2 | key2-9               | test key                                
 (6 rows)
 
-select * from T_pkey2 order by key1 using @<, key2;
+select * from T_pkey2 order by key1 using @<, key2 collate "C";
  key1 |         key2         |                   txt                    
 ------+----------------------+------------------------------------------
     1 | KEY1-3               | test key                                
@@ -256,3 +256,50 @@ NOTICE:  TG_table_name: trigger_test
 NOTICE:  TG_table_schema: public
 NOTICE:  TG_when: BEFORE
 NOTICE:  args: {23 skidoo}
+-- Test composite-type arguments
+select tcl_composite_arg_ref1(row('tkey', 42, 'ref2'));
+ tcl_composite_arg_ref1 
+------------------------
+                     42
+(1 row)
+
+select tcl_composite_arg_ref2(row('tkey', 42, 'ref2'));
+ tcl_composite_arg_ref2 
+------------------------
+ ref2                
+(1 row)
+
+-- Test argisnull primitive
+select tcl_argisnull('foo');
+ tcl_argisnull 
+---------------
+ f
+(1 row)
+
+select tcl_argisnull('');
+ tcl_argisnull 
+---------------
+ f
+(1 row)
+
+select tcl_argisnull(null);
+ tcl_argisnull 
+---------------
+ t
+(1 row)
+
+-- Test spi_lastoid primitive
+create temp table t1 (f1 int);
+select tcl_lastoid('t1');
+ tcl_lastoid 
+-------------
+           0
+(1 row)
+
+create temp table t2 (f1 int) with oids;
+select tcl_lastoid('t2') > 0;
+ ?column? 
+----------
+ t
+(1 row)
+

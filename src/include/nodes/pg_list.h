@@ -27,7 +27,7 @@
  * always be so; try to be careful to maintain the distinction.)
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/pg_list.h
@@ -71,34 +71,25 @@ struct ListCell
 /*
  * These routines are used frequently. However, we can't implement
  * them as macros, since we want to avoid double-evaluation of macro
- * arguments. Therefore, we implement them using static inline functions
- * if supported by the compiler, or as regular functions otherwise.
- * See STATIC_IF_INLINE in c.h.
+ * arguments.
  */
-#ifndef PG_USE_INLINE
-extern ListCell *list_head(const List *l);
-extern ListCell *list_tail(List *l);
-extern int	list_length(const List *l);
-#endif   /* PG_USE_INLINE */
-#if defined(PG_USE_INLINE) || defined(PG_LIST_INCLUDE_DEFINITIONS)
-STATIC_IF_INLINE ListCell *
+static inline ListCell *
 list_head(const List *l)
 {
 	return l ? l->head : NULL;
 }
 
-STATIC_IF_INLINE ListCell *
+static inline ListCell *
 list_tail(List *l)
 {
 	return l ? l->tail : NULL;
 }
 
-STATIC_IF_INLINE int
+static inline int
 list_length(const List *l)
 {
 	return l ? l->length : 0;
 }
-#endif   /*-- PG_USE_INLINE || PG_LIST_INCLUDE_DEFINITIONS */
 
 /*
  * NB: There is an unfortunate legacy from a previous incarnation of
@@ -143,16 +134,19 @@ list_length(const List *l)
 #define list_make2(x1,x2)			lcons(x1, list_make1(x2))
 #define list_make3(x1,x2,x3)		lcons(x1, list_make2(x2, x3))
 #define list_make4(x1,x2,x3,x4)		lcons(x1, list_make3(x2, x3, x4))
+#define list_make5(x1,x2,x3,x4,x5)	lcons(x1, list_make4(x2, x3, x4, x5))
 
 #define list_make1_int(x1)			lcons_int(x1, NIL)
 #define list_make2_int(x1,x2)		lcons_int(x1, list_make1_int(x2))
 #define list_make3_int(x1,x2,x3)	lcons_int(x1, list_make2_int(x2, x3))
 #define list_make4_int(x1,x2,x3,x4) lcons_int(x1, list_make3_int(x2, x3, x4))
+#define list_make5_int(x1,x2,x3,x4,x5)	lcons_int(x1, list_make4_int(x2, x3, x4, x5))
 
 #define list_make1_oid(x1)			lcons_oid(x1, NIL)
 #define list_make2_oid(x1,x2)		lcons_oid(x1, list_make1_oid(x2))
 #define list_make3_oid(x1,x2,x3)	lcons_oid(x1, list_make2_oid(x2, x3))
 #define list_make4_oid(x1,x2,x3,x4) lcons_oid(x1, list_make3_oid(x2, x3, x4))
+#define list_make5_oid(x1,x2,x3,x4,x5)	lcons_oid(x1, list_make4_oid(x2, x3, x4, x5))
 
 /*
  * foreach -

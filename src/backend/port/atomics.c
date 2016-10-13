@@ -3,7 +3,7 @@
  * atomics.c
  *	   Non-Inline parts of the atomics implementation
  *
- * Portions Copyright (c) 2013-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2013-2016, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -12,13 +12,6 @@
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
-
-/*
- * We want the functions below to be inline; but if the compiler doesn't
- * support that, fall back on providing them as regular functions.  See
- * STATIC_IF_INLINE in c.h.
- */
-#define ATOMICS_INCLUDE_DEFINITIONS
 
 #include "miscadmin.h"
 #include "port/atomics.h"
@@ -42,8 +35,7 @@ pg_spinlock_barrier(void)
 	 *
 	 * We use kill(0) for the fallback barrier as we assume that kernels on
 	 * systems old enough to require fallback barrier support will include an
-	 * appropriate barrier while checking the existence of the postmaster
-	 * pid.
+	 * appropriate barrier while checking the existence of the postmaster pid.
 	 */
 	(void) kill(PostmasterPid, 0);
 }

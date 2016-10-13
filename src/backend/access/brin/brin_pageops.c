@@ -2,7 +2,7 @@
  * brin_pageops.c
  *		Page-handling routines for BRIN indexes
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -179,8 +179,8 @@ brin_doupdate(Relation idxrel, BlockNumber pagesPerRange,
 
 		START_CRIT_SECTION();
 		PageIndexDeleteNoCompact(oldpage, &oldoff, 1);
-		if (PageAddItem(oldpage, (Item) newtup, newsz, oldoff, true,
-						false) == InvalidOffsetNumber)
+		if (PageAddItemExtended(oldpage, (Item) newtup, newsz, oldoff,
+				PAI_OVERWRITE | PAI_ALLOW_FAR_OFFSET) == InvalidOffsetNumber)
 			elog(ERROR, "failed to add BRIN tuple");
 		MarkBufferDirty(oldbuf);
 

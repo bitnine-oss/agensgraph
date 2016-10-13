@@ -6,7 +6,7 @@
  * access control decisions recently used, and reduce number of kernel
  * invocations to avoid unnecessary performance hit.
  *
- * Copyright (c) 2011-2015, PostgreSQL Global Development Group
+ * Copyright (c) 2011-2016, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
@@ -407,7 +407,7 @@ sepgsql_avc_check_perms_label(const char *tcontext,
 		audit_name != SEPGSQL_AVC_NOAUDIT &&
 		sepgsql_get_mode() != SEPGSQL_MODE_INTERNAL)
 	{
-		sepgsql_audit_log(!!denied,
+		sepgsql_audit_log(denied != 0,
 						  cache->scontext,
 						  cache->tcontext_is_valid ?
 						  cache->tcontext : sepgsql_avc_unlabeled(),
@@ -498,13 +498,11 @@ sepgsql_avc_init(void)
 	int			rc;
 
 	/*
-	 * All the avc stuff shall be allocated on avc_mem_cxt
+	 * All the avc stuff shall be allocated in avc_mem_cxt
 	 */
 	avc_mem_cxt = AllocSetContextCreate(TopMemoryContext,
 										"userspace access vector cache",
-										ALLOCSET_DEFAULT_MINSIZE,
-										ALLOCSET_DEFAULT_INITSIZE,
-										ALLOCSET_DEFAULT_MAXSIZE);
+										ALLOCSET_DEFAULT_SIZES);
 	memset(avc_slots, 0, sizeof(avc_slots));
 	avc_num_caches = 0;
 	avc_lru_hint = 0;

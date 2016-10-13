@@ -4,7 +4,7 @@
  *	  prototypes for commands/alter.c
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/alter.h
@@ -21,6 +21,8 @@
 
 extern ObjectAddress ExecRenameStmt(RenameStmt *stmt);
 
+extern ObjectAddress ExecAlterObjectDependsStmt(AlterObjectDependsStmt *stmt,
+						   ObjectAddress *refAddress);
 extern ObjectAddress ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt,
 						  ObjectAddress *oldSchemaAddr);
 extern Oid AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,

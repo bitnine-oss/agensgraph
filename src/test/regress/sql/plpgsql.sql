@@ -2372,21 +2372,51 @@ end; $$ language plpgsql;
 
 select continue_test1();
 
--- CONTINUE is only legal inside a loop
-create function continue_test2() returns void as $$
+drop function continue_test1();
+drop table conttesttbl;
+
+-- should fail: CONTINUE is only legal inside a loop
+create function continue_error1() returns void as $$
 begin
     begin
         continue;
     end;
-    return;
 end;
 $$ language plpgsql;
 
--- should fail
-select continue_test2();
+-- should fail: unlabeled EXIT is only legal inside a loop
+create function exit_error1() returns void as $$
+begin
+    begin
+        exit;
+    end;
+end;
+$$ language plpgsql;
 
--- CONTINUE can't reference the label of a named block
-create function continue_test3() returns void as $$
+-- should fail: no such label
+create function continue_error2() returns void as $$
+begin
+    begin
+        loop
+            continue no_such_label;
+        end loop;
+    end;
+end;
+$$ language plpgsql;
+
+-- should fail: no such label
+create function exit_error2() returns void as $$
+begin
+    begin
+        loop
+            exit no_such_label;
+        end loop;
+    end;
+end;
+$$ language plpgsql;
+
+-- should fail: CONTINUE can't reference the label of a named block
+create function continue_error3() returns void as $$
 begin
     <<begin_block1>>
     begin
@@ -2397,13 +2427,21 @@ begin
 end;
 $$ language plpgsql;
 
--- should fail
-select continue_test3();
+-- On the other hand, EXIT *can* reference the label of a named block
+create function exit_block1() returns void as $$
+begin
+    <<begin_block1>>
+    begin
+        loop
+            exit begin_block1;
+            raise exception 'should not get here';
+        end loop;
+    end;
+end;
+$$ language plpgsql;
 
-drop function continue_test1();
-drop function continue_test2();
-drop function continue_test3();
-drop table conttesttbl;
+select exit_block1();
+drop function exit_block1();
 
 -- verbose end block and end loop
 create function end_label1() returns void as $$
@@ -4188,7 +4226,49 @@ select testoa(1,2,1); -- fail at update
 drop function arrayassign1();
 drop function testoa(x1 int, x2 int, x3 int);
 
--- access to call stack
+
+--
+-- Test handling of expanded arrays
+--
+
+create function returns_rw_array(int) returns int[]
+language plpgsql as $$
+  declare r int[];
+  begin r := array[$1, $1]; return r; end;
+$$ stable;
+
+create function consumes_rw_array(int[]) returns int
+language plpgsql as $$
+  begin return $1[1]; end;
+$$ stable;
+
+-- bug #14174
+explain (verbose, costs off)
+select i, a from
+  (select returns_rw_array(1) as a offset 0) ss,
+  lateral consumes_rw_array(a) i;
+
+select i, a from
+  (select returns_rw_array(1) as a offset 0) ss,
+  lateral consumes_rw_array(a) i;
+
+explain (verbose, costs off)
+select consumes_rw_array(a), a from returns_rw_array(1) a;
+
+select consumes_rw_array(a), a from returns_rw_array(1) a;
+
+explain (verbose, costs off)
+select consumes_rw_array(a), a from
+  (values (returns_rw_array(1)), (returns_rw_array(2))) v(a);
+
+select consumes_rw_array(a), a from
+  (values (returns_rw_array(1)), (returns_rw_array(2))) v(a);
+
+
+--
+-- Test access to call stack
+--
+
 create function inner_func(int)
 returns int as $$
 declare _context text;

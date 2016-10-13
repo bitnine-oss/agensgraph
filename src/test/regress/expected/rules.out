@@ -1289,6 +1289,14 @@ iexit| SELECT ih.name,
    FROM ihighway ih,
     ramp r
   WHERE (ih.thepath ## r.thepath);
+mvtest_tv| SELECT mvtest_t.type,
+    sum(mvtest_t.amt) AS totamt
+   FROM mvtest_t
+  GROUP BY mvtest_t.type;
+mvtest_tvv| SELECT sum(mvtest_tv.totamt) AS grandtot
+   FROM mvtest_tv;
+mvtest_tvvmv| SELECT mvtest_tvvm.grandtot
+   FROM mvtest_tvvm;
 pg_available_extension_versions| SELECT e.name,
     e.version,
     (x.extname IS NOT NULL) AS installed,
@@ -1305,6 +1313,9 @@ pg_available_extensions| SELECT e.name,
     e.comment
    FROM (pg_available_extensions() e(name, default_version, comment)
      LEFT JOIN pg_extension x ON ((e.name = x.extname)));
+pg_config| SELECT pg_config.name,
+    pg_config.setting
+   FROM pg_config() pg_config(name, setting);
 pg_cursors| SELECT c.name,
     c.statement,
     c.is_holdable,
@@ -1416,8 +1427,9 @@ pg_replication_slots| SELECT l.slot_name,
     l.active_pid,
     l.xmin,
     l.catalog_xmin,
-    l.restart_lsn
-   FROM (pg_get_replication_slots() l(slot_name, plugin, slot_type, datoid, active, active_pid, xmin, catalog_xmin, restart_lsn)
+    l.restart_lsn,
+    l.confirmed_flush_lsn
+   FROM (pg_get_replication_slots() l(slot_name, plugin, slot_type, datoid, active, active_pid, xmin, catalog_xmin, restart_lsn, confirmed_flush_lsn)
      LEFT JOIN pg_database d ON ((l.datoid = d.oid)));
 pg_roles| SELECT pg_authid.rolname,
     pg_authid.rolsuper,
@@ -1646,13 +1658,14 @@ pg_stat_activity| SELECT s.datid,
     s.xact_start,
     s.query_start,
     s.state_change,
-    s.waiting,
+    s.wait_event_type,
+    s.wait_event,
     s.state,
     s.backend_xid,
     s.backend_xmin,
     s.query
    FROM pg_database d,
-    pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, waiting, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn),
+    pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn),
     pg_authid u
   WHERE ((s.datid = d.oid) AND (s.usesysid = u.oid));
 pg_stat_all_indexes| SELECT c.oid AS relid,
@@ -1742,6 +1755,28 @@ pg_stat_database_conflicts| SELECT d.oid AS datid,
     pg_stat_get_db_conflict_bufferpin(d.oid) AS confl_bufferpin,
     pg_stat_get_db_conflict_startup_deadlock(d.oid) AS confl_deadlock
    FROM pg_database d;
+pg_stat_progress_vacuum| SELECT s.pid,
+    s.datid,
+    d.datname,
+    s.relid,
+        CASE s.param1
+            WHEN 0 THEN 'initializing'::text
+            WHEN 1 THEN 'scanning heap'::text
+            WHEN 2 THEN 'vacuuming indexes'::text
+            WHEN 3 THEN 'vacuuming heap'::text
+            WHEN 4 THEN 'cleaning up indexes'::text
+            WHEN 5 THEN 'truncating heap'::text
+            WHEN 6 THEN 'performing final cleanup'::text
+            ELSE NULL::text
+        END AS phase,
+    s.param2 AS heap_blks_total,
+    s.param3 AS heap_blks_scanned,
+    s.param4 AS heap_blks_vacuumed,
+    s.param5 AS index_vacuum_count,
+    s.param6 AS max_dead_tuples,
+    s.param7 AS num_dead_tuples
+   FROM (pg_stat_get_progress_info('VACUUM'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10)
+     JOIN pg_database d ON ((s.datid = d.oid)));
 pg_stat_replication| SELECT s.pid,
     s.usesysid,
     u.rolname AS usename,
@@ -1758,7 +1793,7 @@ pg_stat_replication| SELECT s.pid,
     w.replay_location,
     w.sync_priority,
     w.sync_state
-   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, waiting, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn),
+   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn),
     pg_authid u,
     pg_stat_get_wal_senders() w(pid, state, sent_location, write_location, flush_location, replay_location, sync_priority, sync_state)
   WHERE ((s.usesysid = u.oid) AND (s.pid = w.pid));
@@ -1769,7 +1804,7 @@ pg_stat_ssl| SELECT s.pid,
     s.sslbits AS bits,
     s.sslcompression AS compression,
     s.sslclientdn AS clientdn
-   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, waiting, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn);
+   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn);
 pg_stat_sys_indexes| SELECT pg_stat_all_indexes.relid,
     pg_stat_all_indexes.indexrelid,
     pg_stat_all_indexes.schemaname,
@@ -1847,6 +1882,20 @@ pg_stat_user_tables| SELECT pg_stat_all_tables.relid,
     pg_stat_all_tables.autoanalyze_count
    FROM pg_stat_all_tables
   WHERE ((pg_stat_all_tables.schemaname <> ALL (ARRAY['pg_catalog'::name, 'information_schema'::name])) AND (pg_stat_all_tables.schemaname !~ '^pg_toast'::text));
+pg_stat_wal_receiver| SELECT s.pid,
+    s.status,
+    s.receive_start_lsn,
+    s.receive_start_tli,
+    s.received_lsn,
+    s.received_tli,
+    s.last_msg_send_time,
+    s.last_msg_receipt_time,
+    s.latest_end_lsn,
+    s.latest_end_time,
+    s.slot_name,
+    s.conninfo
+   FROM pg_stat_get_wal_receiver() s(pid, status, receive_start_lsn, receive_start_tli, received_lsn, received_tli, last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time, slot_name, conninfo)
+  WHERE (s.pid IS NOT NULL);
 pg_stat_xact_all_tables| SELECT c.oid AS relid,
     n.nspname AS schemaname,
     c.relname,
@@ -2211,14 +2260,6 @@ toyemp| SELECT emp.name,
     emp.location,
     (12 * emp.salary) AS annualsal
    FROM emp;
-tv| SELECT t.type,
-    sum(t.amt) AS totamt
-   FROM t
-  GROUP BY t.type;
-tvv| SELECT sum(tv.totamt) AS grandtot
-   FROM tv;
-tvvmv| SELECT tvvm.grandtot
-   FROM tvvm;
 SELECT tablename, rulename, definition FROM pg_rules
 	ORDER BY tablename, rulename;
 pg_settings|pg_settings_n|CREATE RULE pg_settings_n AS
@@ -3016,3 +3057,70 @@ SELECT * FROM hat_data WHERE hat_name IN ('h8', 'h9', 'h7') ORDER BY hat_name;
 DROP RULE hat_upsert ON hats;
 drop table hats;
 drop table hat_data;
+-- tests for pg_get_*def with invalid objects
+SELECT pg_get_constraintdef(0);
+ pg_get_constraintdef 
+----------------------
+ 
+(1 row)
+
+SELECT pg_get_functiondef(0);
+ pg_get_functiondef 
+--------------------
+ 
+(1 row)
+
+SELECT pg_get_indexdef(0);
+ pg_get_indexdef 
+-----------------
+ 
+(1 row)
+
+SELECT pg_get_ruledef(0);
+ pg_get_ruledef 
+----------------
+ 
+(1 row)
+
+SELECT pg_get_triggerdef(0);
+ pg_get_triggerdef 
+-------------------
+ 
+(1 row)
+
+SELECT pg_get_viewdef(0);
+ pg_get_viewdef 
+----------------
+ 
+(1 row)
+
+SELECT pg_get_function_arguments(0);
+ pg_get_function_arguments 
+---------------------------
+ 
+(1 row)
+
+SELECT pg_get_function_identity_arguments(0);
+ pg_get_function_identity_arguments 
+------------------------------------
+ 
+(1 row)
+
+SELECT pg_get_function_result(0);
+ pg_get_function_result 
+------------------------
+ 
+(1 row)
+
+SELECT pg_get_function_arg_default(0, 0);
+ pg_get_function_arg_default 
+-----------------------------
+ 
+(1 row)
+
+SELECT pg_get_function_arg_default('pg_class'::regclass, 0);
+ pg_get_function_arg_default 
+-----------------------------
+ 
+(1 row)
+

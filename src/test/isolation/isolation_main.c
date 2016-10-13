@@ -2,7 +2,7 @@
  *
  * isolation_main --- pg_regress test launcher for isolation tests
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/test/isolation/isolation_main.c
@@ -112,13 +112,13 @@ isolation_init(int argc, char **argv)
 	argv0_len = strlcpy(saved_argv0, argv[0], MAXPGPATH);
 	if (argv0_len >= MAXPGPATH)
 	{
-		fprintf(stderr, _("path for isolationtester executable is longer than %i bytes\n"),
+		fprintf(stderr, _("path for isolationtester executable is longer than %d bytes\n"),
 				(int) (MAXPGPATH - 1));
 		exit(2);
 	}
 
 	/* set default regression database name */
-	add_stringlist_item(&dblist, "isolationtest");
+	add_stringlist_item(&dblist, "isolation_regression");
 }
 
 int

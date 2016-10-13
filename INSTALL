@@ -99,8 +99,7 @@ make --version
        Python installation to provide this shared library. When building
        from source, run Python's configure with the --enable-shared flag.
      * To build the PL/Tcl procedural language, you of course need a Tcl
-       installation. If you are using a pre-8.4 release of Tcl, ensure
-       that it was built without multithreading support.
+       installation. The minimum required version is Tcl 8.4.
      * To enable Native Language Support (NLS), that is, the ability to
        display a program's messages in a language other than English, you
        need an implementation of the Gettext API. Some operating systems
@@ -355,6 +354,11 @@ make
         --with-pam
                 Build with PAM (Pluggable Authentication Modules) support.
 
+        --with-bsd-auth
+                Build with BSD Authentication support. (The BSD
+                Authentication framework is currently only available on
+                OpenBSD.)
+
         --with-ldap
                 Build with LDAP support for authentication and connection
                 parameter lookup (see the documentation about client
@@ -364,6 +368,13 @@ make
                 will check for the required header files and libraries to
                 make sure that your OpenLDAP installation is sufficient
                 before proceeding.
+
+        --with-systemd
+                Build with support for systemd service notifications. This
+                improves integration if the server binary is started under
+                systemd but has no impact otherwise. libsystemd and the
+                associated header files need to be installed to be able to
+                use this option.
 
         --without-readline
                 Prevents use of the Readline library (and libedit as
@@ -699,13 +710,13 @@ AGS='-64' ...
 make
        (Remember to use GNU make.) The build will take a few minutes
        depending on your hardware. The last line displayed should be:
-All of PostgreSQL is successfully made. Ready to install.
+All of PostgreSQL successfully made. Ready to install.
        If you want to build everything that can be built, including the
        documentation (HTML and man pages), and the additional modules
        ("contrib"), type instead:
 make world
        The last line displayed should be:
-PostgreSQL, contrib and HTML documentation successfully made. Ready to install.
+PostgreSQL, contrib, and documentation successfully made. Ready to install.
     3. Regression Tests
        If you want to test the newly built server before you install it,
        you can run the regression tests at this point. The regression
@@ -848,7 +859,7 @@ set path = ( /usr/local/pgsql/bin $path )
    To enable your system to find the man documentation, you need to add
    lines like the following to a shell start-up file unless you installed
    into a location that is searched by default:
-MANPATH=/usr/local/pgsql/man:$MANPATH
+MANPATH=/usr/local/pgsql/share/man:$MANPATH
 export MANPATH
 
    The environment variables PGHOST and PGPORT specify to client
@@ -1373,11 +1384,11 @@ Using the UDK on OpenServer
 Reading the PostgreSQL Man Pages
 
    By default, the PostgreSQL man pages are installed into
-   "/usr/local/pgsql/man". By default, UnixWare does not look there for
-   man pages. To be able to read them you need to modify the MANPATH
+   "/usr/local/pgsql/share/man". By default, UnixWare does not look there
+   for man pages. To be able to read them you need to modify the MANPATH
    variable in "/etc/default/man", for example:
 MANPATH=/usr/lib/scohelp/%L/man:/usr/dt/man:/usr/man:/usr/share/man:scohelp:/usr
-/local/man:/usr/local/pgsql/man
+/local/man:/usr/local/pgsql/share/man
 
    On OpenServer, some extra research needs to be invested to make the man
    pages usable, because the man system is a bit different from other

@@ -3,7 +3,7 @@
  * plpgsql.h		- Definitions for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -44,6 +44,17 @@ enum
 	PLPGSQL_NSTYPE_VAR,
 	PLPGSQL_NSTYPE_ROW,
 	PLPGSQL_NSTYPE_REC
+};
+
+/* ----------
+ * A PLPGSQL_NSTYPE_LABEL stack entry must be one of these types
+ * ----------
+ */
+enum PLpgSQL_label_types
+{
+	PLPGSQL_LABEL_BLOCK,		/* DECLARE/BEGIN block */
+	PLPGSQL_LABEL_LOOP,			/* looping construct */
+	PLPGSQL_LABEL_OTHER			/* anything else */
 };
 
 /* ----------
@@ -331,6 +342,8 @@ typedef struct PLpgSQL_nsitem
 {								/* Item in the compilers namespace tree */
 	int			itemtype;
 	int			itemno;
+	/* For labels, itemno is a value of enum PLpgSQL_label_types. */
+	/* For other itemtypes, itemno is the associated PLpgSQL_datum's dno. */
 	struct PLpgSQL_nsitem *prev;
 	char		name[FLEXIBLE_ARRAY_MEMBER];	/* nul-terminated string */
 } PLpgSQL_nsitem;
@@ -751,8 +764,12 @@ typedef struct PLpgSQL_function
 	int			extra_warnings;
 	int			extra_errors;
 
+	/* the datums representing the function's local variables */
 	int			ndatums;
 	PLpgSQL_datum **datums;
+	Bitmapset  *resettable_datums;		/* dnos of non-simple vars */
+
+	/* function body parsetree */
 	PLpgSQL_stmt_block *action;
 
 	/* these fields change when the function is used */
@@ -792,6 +809,7 @@ typedef struct PLpgSQL_execstate
 
 	/* we pass datums[i] to the executor, when needed, in paramLI->params[i] */
 	ParamListInfo paramLI;
+	bool		params_dirty;	/* T if any resettable datum has been passed */
 
 	/* EState to use for "simple" expression evaluation */
 	EState	   *simple_eval_estate;
@@ -802,7 +820,7 @@ typedef struct PLpgSQL_execstate
 
 	/* temporary state for results from evaluation of query or expr */
 	SPITupleTable *eval_tuptable;
-	uint32		eval_processed;
+	uint64		eval_processed;
 	Oid			eval_lastoid;
 	ExprContext *eval_econtext; /* for executing simple expressions */
 
@@ -920,9 +938,9 @@ extern PLpgSQL_datum **plpgsql_Datums;
 extern char *plpgsql_error_funcname;
 
 extern PLpgSQL_function *plpgsql_curr_compile;
-extern MemoryContext compile_tmp_cxt;
+extern MemoryContext plpgsql_compile_tmp_cxt;
 
-extern PLpgSQL_plugin **plugin_ptr;
+extern PLpgSQL_plugin **plpgsql_plugin_ptr;
 
 /**********************************************************************
  * Function declarations
@@ -981,18 +999,19 @@ extern void plpgsql_exec_event_trigger(PLpgSQL_function *func,
 extern void plpgsql_xact_cb(XactEvent event, void *arg);
 extern void plpgsql_subxact_cb(SubXactEvent event, SubTransactionId mySubid,
 				   SubTransactionId parentSubid, void *arg);
-extern Oid exec_get_datum_type(PLpgSQL_execstate *estate,
-					PLpgSQL_datum *datum);
-extern void exec_get_datum_type_info(PLpgSQL_execstate *estate,
-						 PLpgSQL_datum *datum,
-						 Oid *typeid, int32 *typmod, Oid *collation);
+extern Oid plpgsql_exec_get_datum_type(PLpgSQL_execstate *estate,
+							PLpgSQL_datum *datum);
+extern void plpgsql_exec_get_datum_type_info(PLpgSQL_execstate *estate,
+								 PLpgSQL_datum *datum,
+								 Oid *typeid, int32 *typmod, Oid *collation);
 
 /* ----------
  * Functions for namespace handling in pl_funcs.c
  * ----------
  */
 extern void plpgsql_ns_init(void);
-extern void plpgsql_ns_push(const char *label);
+extern void plpgsql_ns_push(const char *label,
+				enum PLpgSQL_label_types label_type);
 extern void plpgsql_ns_pop(void);
 extern PLpgSQL_nsitem *plpgsql_ns_top(void);
 extern void plpgsql_ns_additem(int itemtype, int itemno, const char *name);
@@ -1001,6 +1020,7 @@ extern PLpgSQL_nsitem *plpgsql_ns_lookup(PLpgSQL_nsitem *ns_cur, bool localmode,
 				  const char *name3, int *names_used);
 extern PLpgSQL_nsitem *plpgsql_ns_lookup_label(PLpgSQL_nsitem *ns_cur,
 						const char *name);
+extern PLpgSQL_nsitem *plpgsql_ns_find_nearest_loop(PLpgSQL_nsitem *ns_cur);
 
 /* ----------
  * Other functions in pl_funcs.c

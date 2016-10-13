@@ -4,7 +4,7 @@
  *	  insert routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -192,7 +192,7 @@ ginEntryInsert(GinState *ginstate,
 
 	ginPrepareEntryScan(&btree, attnum, key, category, ginstate);
 
-	stack = ginFindLeafPage(&btree, false);
+	stack = ginFindLeafPage(&btree, false, NULL);
 	page = BufferGetPage(stack->buffer);
 
 	if (btree.findItem(&btree, stack))
@@ -281,7 +281,7 @@ ginBuildCallback(Relation index, HeapTuple htup, Datum *values,
 							   &htup->t_self);
 
 	/* If we've maxed out our available memory, dump everything to the index */
-	if (buildstate->accum.allocatedMemory >= maintenance_work_mem * 1024L)
+	if (buildstate->accum.allocatedMemory >= (Size) maintenance_work_mem * 1024L)
 	{
 		ItemPointerData *list;
 		Datum		key;
@@ -306,12 +306,9 @@ ginBuildCallback(Relation index, HeapTuple htup, Datum *values,
 	MemoryContextSwitchTo(oldCtx);
 }
 
-Datum
-ginbuild(PG_FUNCTION_ARGS)
+IndexBuildResult *
+ginbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 {
-	Relation	heap = (Relation) PG_GETARG_POINTER(0);
-	Relation	index = (Relation) PG_GETARG_POINTER(1);
-	IndexInfo  *indexInfo = (IndexInfo *) PG_GETARG_POINTER(2);
 	IndexBuildResult *result;
 	double		reltuples;
 	GinBuildState buildstate;
@@ -375,9 +372,7 @@ ginbuild(PG_FUNCTION_ARGS)
 	 */
 	buildstate.tmpCtx = AllocSetContextCreate(CurrentMemoryContext,
 											  "Gin build temporary context",
-											  ALLOCSET_DEFAULT_MINSIZE,
-											  ALLOCSET_DEFAULT_INITSIZE,
-											  ALLOCSET_DEFAULT_MAXSIZE);
+											  ALLOCSET_DEFAULT_SIZES);
 
 	/*
 	 * create a temporary memory context that is used for calling
@@ -385,9 +380,7 @@ ginbuild(PG_FUNCTION_ARGS)
 	 */
 	buildstate.funcCtx = AllocSetContextCreate(CurrentMemoryContext,
 					 "Gin build temporary context for user-defined function",
-											   ALLOCSET_DEFAULT_MINSIZE,
-											   ALLOCSET_DEFAULT_INITSIZE,
-											   ALLOCSET_DEFAULT_MAXSIZE);
+											   ALLOCSET_DEFAULT_SIZES);
 
 	buildstate.accum.ginstate = &buildstate.ginstate;
 	ginInitBA(&buildstate.accum);
@@ -429,16 +422,15 @@ ginbuild(PG_FUNCTION_ARGS)
 	result->heap_tuples = reltuples;
 	result->index_tuples = buildstate.indtuples;
 
-	PG_RETURN_POINTER(result);
+	return result;
 }
 
 /*
  *	ginbuildempty() -- build an empty gin index in the initialization fork
  */
-Datum
-ginbuildempty(PG_FUNCTION_ARGS)
+void
+ginbuildempty(Relation index)
 {
-	Relation	index = (Relation) PG_GETARG_POINTER(0);
 	Buffer		RootBuffer,
 				MetaBuffer;
 
@@ -463,8 +455,6 @@ ginbuildempty(PG_FUNCTION_ARGS)
 	/* Unlock and release the buffers. */
 	UnlockReleaseBuffer(MetaBuffer);
 	UnlockReleaseBuffer(RootBuffer);
-
-	PG_RETURN_VOID();
 }
 
 /*
@@ -489,18 +479,11 @@ ginHeapTupleInsert(GinState *ginstate, OffsetNumber attnum,
 					   item, 1, NULL);
 }
 
-Datum
-gininsert(PG_FUNCTION_ARGS)
+bool
+gininsert(Relation index, Datum *values, bool *isnull,
+		  ItemPointer ht_ctid, Relation heapRel,
+		  IndexUniqueCheck checkUnique)
 {
-	Relation	index = (Relation) PG_GETARG_POINTER(0);
-	Datum	   *values = (Datum *) PG_GETARG_POINTER(1);
-	bool	   *isnull = (bool *) PG_GETARG_POINTER(2);
-	ItemPointer ht_ctid = (ItemPointer) PG_GETARG_POINTER(3);
-
-#ifdef NOT_USED
-	Relation	heapRel = (Relation) PG_GETARG_POINTER(4);
-	IndexUniqueCheck checkUnique = (IndexUniqueCheck) PG_GETARG_INT32(5);
-#endif
 	GinState	ginstate;
 	MemoryContext oldCtx;
 	MemoryContext insertCtx;
@@ -508,9 +491,7 @@ gininsert(PG_FUNCTION_ARGS)
 
 	insertCtx = AllocSetContextCreate(CurrentMemoryContext,
 									  "Gin insert temporary context",
-									  ALLOCSET_DEFAULT_MINSIZE,
-									  ALLOCSET_DEFAULT_INITSIZE,
-									  ALLOCSET_DEFAULT_MAXSIZE);
+									  ALLOCSET_DEFAULT_SIZES);
 
 	oldCtx = MemoryContextSwitchTo(insertCtx);
 
@@ -541,5 +522,5 @@ gininsert(PG_FUNCTION_ARGS)
 	MemoryContextSwitchTo(oldCtx);
 	MemoryContextDelete(insertCtx);
 
-	PG_RETURN_BOOL(false);
+	return false;
 }

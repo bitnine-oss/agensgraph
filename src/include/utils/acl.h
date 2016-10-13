@@ -4,7 +4,7 @@
  *	  Definition of (and support for) access control list data structures.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/acl.h
@@ -233,6 +233,7 @@ extern void check_is_member_of_role(Oid member, Oid role);
 extern Oid	get_role_oid(const char *rolename, bool missing_ok);
 extern Oid	get_role_oid_or_public(const char *rolename);
 extern Oid	get_rolespec_oid(const Node *node, bool missing_ok);
+extern void check_rolespec_name(const Node *node, const char *detail_msg);
 extern HeapTuple get_rolespec_tuple(const Node *node);
 extern char *get_rolespec_name(const Node *node);
 

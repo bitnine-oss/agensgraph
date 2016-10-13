@@ -25,6 +25,7 @@ our (@ISA, @EXPORT_OK);
 my $solution;
 my $libpgport;
 my $libpgcommon;
+my $libpgfeutils;
 my $postgres;
 my $libpq;
 
@@ -40,8 +41,12 @@ my $contrib_extrasource = {
 	'cube' => [ 'contrib/cube/cubescan.l', 'contrib/cube/cubeparse.y' ],
 	'seg'  => [ 'contrib/seg/segscan.l',   'contrib/seg/segparse.y' ], };
 my @contrib_excludes = (
-	'commit_ts',      'hstore_plperl', 'hstore_plpython', 'intagg',
-	'ltree_plpython', 'pgcrypto',      'sepgsql',         'brin');
+	'commit_ts',       'hstore_plperl',
+	'hstore_plpython', 'intagg',
+	'ltree_plpython',  'pgcrypto',
+	'sepgsql',         'brin',
+	'test_extensions', 'test_pg_dump',
+	'snapshot_too_old');
 
 # Set of variables for frontend modules
 my $frontend_defines = { 'initdb' => 'FRONTEND' };
@@ -61,11 +66,11 @@ my $frontend_extralibs = {
 	'psql'       => ['ws2_32.lib'] };
 my $frontend_extraincludes = {
 	'initdb' => ['src/timezone'],
-	'psql'   => [ 'src/bin/pg_dump', 'src/backend' ] };
+	'psql'   => ['src/backend'] };
 my $frontend_extrasource = {
-	'psql' => ['src/bin/psql/psqlscan.l'],
+	'psql' => ['src/bin/psql/psqlscanslash.l'],
 	'pgbench' =>
-	  [ 'src/bin/pgbench/exprscan.l', 'src/bin/pgbench/exprparse.y' ], };
+	  [ 'src/bin/pgbench/exprscan.l', 'src/bin/pgbench/exprparse.y' ] };
 my @frontend_excludes = (
 	'pgevent',     'pg_basebackup', 'pg_rewind', 'pg_dump',
 	'pg_xlogdump', 'scripts');
@@ -89,7 +94,7 @@ sub mkvcbuild
 	  pgcheckdir.c pgmkdirp.c pgsleep.c pgstrcasecmp.c pqsignal.c
 	  mkdtemp.c qsort.c qsort_arg.c quotes.c system.c
 	  sprompt.c tar.c thread.c getopt.c getopt_long.c dirent.c
-	  win32env.c win32error.c win32setlocale.c);
+	  win32env.c win32error.c win32security.c win32setlocale.c);
 
 	push(@pgportfiles, 'rint.c') if ($vsVersion < '12.00');
 
@@ -105,7 +110,8 @@ sub mkvcbuild
 	}
 
 	our @pgcommonallfiles = qw(
-	  exec.c pg_lzcompress.c pgfnames.c psprintf.c relpath.c rmtree.c
+	  config_info.c controldata_utils.c exec.c keywords.c
+	  pg_lzcompress.c pgfnames.c psprintf.c relpath.c rmtree.c
 	  string.c username.c wait_error.c);
 
 	our @pgcommonfrontendfiles = (
@@ -114,6 +120,9 @@ sub mkvcbuild
 
 	our @pgcommonbkndfiles = @pgcommonallfiles;
 
+	our @pgfeutilsfiles = qw(
+	  mbprint.c print.c psqlscan.l psqlscan.c simple_list.c string_utils.c);
+
 	$libpgport = $solution->AddProject('libpgport', 'lib', 'misc');
 	$libpgport->AddDefine('FRONTEND');
 	$libpgport->AddFiles('src/port', @pgportfiles);
@@ -121,6 +130,11 @@ sub mkvcbuild
 	$libpgcommon = $solution->AddProject('libpgcommon', 'lib', 'misc');
 	$libpgcommon->AddDefine('FRONTEND');
 	$libpgcommon->AddFiles('src/common', @pgcommonfrontendfiles);
+
+	$libpgfeutils = $solution->AddProject('libpgfeutils', 'lib', 'misc');
+	$libpgfeutils->AddDefine('FRONTEND');
+	$libpgfeutils->AddIncludeDir('src/interfaces/libpq');
+	$libpgfeutils->AddFiles('src/fe_utils', @pgfeutilsfiles);
 
 	$postgres = $solution->AddProject('postgres', 'exe', '', 'src/backend');
 	$postgres->AddIncludeDir('src/backend');
@@ -133,8 +147,6 @@ sub mkvcbuild
 		'src/backend/port/win32_sema.c');
 	$postgres->ReplaceFile('src/backend/port/pg_shmem.c',
 		'src/backend/port/win32_shmem.c');
-	$postgres->ReplaceFile('src/backend/port/pg_latch.c',
-		'src/backend/port/win32_latch.c');
 	$postgres->AddFiles('src/port',   @pgportfiles);
 	$postgres->AddFiles('src/common', @pgcommonbkndfiles);
 	$postgres->AddDir('src/timezone');
@@ -146,8 +158,10 @@ sub mkvcbuild
 	$postgres->AddFiles('src/backend/bootstrap', 'bootscanner.l',
 		'bootparse.y');
 	$postgres->AddFiles('src/backend/utils/misc', 'guc-file.l');
-	$postgres->AddFiles('src/backend/replication', 'repl_scanner.l',
-		'repl_gram.y');
+	$postgres->AddFiles(
+		'src/backend/replication', 'repl_scanner.l',
+		'repl_gram.y',             'syncrep_scanner.l',
+		'syncrep_gram.y');
 	$postgres->AddDefine('BUILDING_DLL');
 	$postgres->AddLibrary('secur32.lib');
 	$postgres->AddLibrary('ws2_32.lib');
@@ -256,7 +270,7 @@ sub mkvcbuild
 	$ecpg->AddPrefixInclude('src/interfaces/ecpg/preproc');
 	$ecpg->AddFiles('src/interfaces/ecpg/preproc', 'pgc.l', 'preproc.y');
 	$ecpg->AddDefine('MAJOR_VERSION=4');
-	$ecpg->AddDefine('MINOR_VERSION=11');
+	$ecpg->AddDefine('MINOR_VERSION=12');
 	$ecpg->AddDefine('PATCHLEVEL=0');
 	$ecpg->AddDefine('ECPG_COMPILE');
 	$ecpg->AddReference($libpgcommon, $libpgport);
@@ -342,8 +356,6 @@ sub mkvcbuild
 	$pgdump->AddFile('src/bin/pg_dump/pg_dump.c');
 	$pgdump->AddFile('src/bin/pg_dump/common.c');
 	$pgdump->AddFile('src/bin/pg_dump/pg_dump_sort.c');
-	$pgdump->AddFile('src/bin/pg_dump/keywords.c');
-	$pgdump->AddFile('src/backend/parser/kwlookup.c');
 	$pgdump->AddLibrary('ws2_32.lib');
 
 	my $pgdumpall = AddSimpleFrontend('pg_dump', 1);
@@ -359,21 +371,16 @@ sub mkvcbuild
 	$pgdumpall->AddIncludeDir('src/backend');
 	$pgdumpall->AddFile('src/bin/pg_dump/pg_dumpall.c');
 	$pgdumpall->AddFile('src/bin/pg_dump/dumputils.c');
-	$pgdumpall->AddFile('src/bin/pg_dump/keywords.c');
-	$pgdumpall->AddFile('src/backend/parser/kwlookup.c');
 	$pgdumpall->AddLibrary('ws2_32.lib');
 
 	my $pgrestore = AddSimpleFrontend('pg_dump', 1);
 	$pgrestore->{name} = 'pg_restore';
 	$pgrestore->AddIncludeDir('src/backend');
 	$pgrestore->AddFile('src/bin/pg_dump/pg_restore.c');
-	$pgrestore->AddFile('src/bin/pg_dump/keywords.c');
-	$pgrestore->AddFile('src/backend/parser/kwlookup.c');
 	$pgrestore->AddLibrary('ws2_32.lib');
 
 	my $zic = $solution->AddProject('zic', 'exe', 'utils');
-	$zic->AddFiles('src/timezone', 'zic.c', 'ialloc.c', 'scheck.c',
-		'localtime.c');
+	$zic->AddFiles('src/timezone', 'zic.c');
 	$zic->AddDirResourceFile('src/timezone');
 	$zic->AddReference($libpgcommon, $libpgport);
 
@@ -617,31 +624,13 @@ sub mkvcbuild
 		foreach my $f (@files)
 		{
 			$f =~ s/\.o$/\.c/;
-			if ($f eq 'keywords.c')
-			{
-				$proj->AddFile('src/bin/pg_dump/keywords.c');
-			}
-			elsif ($f eq 'kwlookup.c')
-			{
-				$proj->AddFile('src/backend/parser/kwlookup.c');
-			}
-			elsif ($f eq 'dumputils.c')
-			{
-				$proj->AddFile('src/bin/pg_dump/dumputils.c');
-			}
-			elsif ($f =~ /print\.c$/)
-			{    # Also catches mbprint.c
-				$proj->AddFile('src/bin/psql/' . $f);
-			}
-			elsif ($f =~ /\.c$/)
+			if ($f =~ /\.c$/)
 			{
 				$proj->AddFile('src/bin/scripts/' . $f);
 			}
 		}
 		$proj->AddIncludeDir('src/interfaces/libpq');
-		$proj->AddIncludeDir('src/bin/pg_dump');
-		$proj->AddIncludeDir('src/bin/psql');
-		$proj->AddReference($libpq, $libpgcommon, $libpgport);
+		$proj->AddReference($libpq, $libpgfeutils, $libpgcommon, $libpgport);
 		$proj->AddDirResourceFile('src/bin/scripts');
 		$proj->AddLibrary('ws2_32.lib');
 	}
@@ -687,7 +676,7 @@ sub AddSimpleFrontend
 
 	my $p = $solution->AddProject($n, 'exe', 'bin');
 	$p->AddDir('src/bin/' . $n);
-	$p->AddReference($libpgcommon, $libpgport);
+	$p->AddReference($libpgfeutils, $libpgcommon, $libpgport);
 	if ($uselibpq)
 	{
 		$p->AddIncludeDir('src/interfaces/libpq');

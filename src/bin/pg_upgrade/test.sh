@@ -6,7 +6,7 @@
 # runs the regression tests (to put in some data), runs pg_dumpall,
 # runs pg_upgrade, runs pg_dumpall again, compares the dumps.
 #
-# Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 
 set -e
@@ -153,10 +153,24 @@ set -x
 
 standard_initdb "$oldbindir"/initdb
 "$oldbindir"/pg_ctl start -l "$logdir/postmaster1.log" -o "$POSTMASTER_OPTS" -w
+
+# Create databases with names covering the ASCII bytes other than NUL, BEL,
+# LF, or CR.  BEL would ring the terminal bell in the course of this test, and
+# it is not otherwise a special case.  PostgreSQL doesn't support the rest.
+dbname1=`awk 'BEGIN { for (i= 1; i < 46; i++)
+	if (i != 7 && i != 10 && i != 13) printf "%c", i }' </dev/null`
+# Exercise backslashes adjacent to double quotes, a Windows special case.
+dbname1='\"\'$dbname1'\\"\\\'
+dbname2=`awk 'BEGIN { for (i = 46; i <  91; i++) printf "%c", i }' </dev/null`
+dbname3=`awk 'BEGIN { for (i = 91; i < 128; i++) printf "%c", i }' </dev/null`
+createdb "$dbname1" || createdb_status=$?
+createdb "$dbname2" || createdb_status=$?
+createdb "$dbname3" || createdb_status=$?
+
 if "$MAKE" -C "$oldsrc" installcheck; then
 	pg_dumpall -f "$temp_root"/dump1.sql || pg_dumpall1_status=$?
 	if [ "$newsrc" != "$oldsrc" ]; then
-		oldpgversion=`psql -A -t -d regression -c "SHOW server_version_num"`
+		oldpgversion=`psql -X -A -t -d regression -c "SHOW server_version_num"`
 		fix_sql=""
 		case $oldpgversion in
 			804??)
@@ -169,7 +183,7 @@ if "$MAKE" -C "$oldsrc" installcheck; then
 				fix_sql="UPDATE pg_proc SET probin = replace(probin, '$oldsrc', '$newsrc') WHERE probin LIKE '$oldsrc%';"
 				;;
 		esac
-		psql -d regression -c "$fix_sql;" || psql_fix_sql_status=$?
+		psql -X -d regression -c "$fix_sql;" || psql_fix_sql_status=$?
 
 		mv "$temp_root"/dump1.sql "$temp_root"/dump1.sql.orig
 		sed "s;$oldsrc;$newsrc;g" "$temp_root"/dump1.sql.orig >"$temp_root"/dump1.sql
@@ -178,6 +192,9 @@ else
 	make_installcheck_status=$?
 fi
 "$oldbindir"/pg_ctl -m fast stop
+if [ -n "$createdb_status" ]; then
+	exit 1
+fi
 if [ -n "$make_installcheck_status" ]; then
 	exit 1
 fi

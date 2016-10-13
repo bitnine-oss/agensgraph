@@ -4,7 +4,7 @@
  *	  WAL replay logic for GiST.
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -83,13 +83,11 @@ gistRedoPageUpdateRecord(XLogReaderState *record)
 		/* Delete old tuples */
 		if (xldata->ntodelete > 0)
 		{
-			int			i;
 			OffsetNumber *todelete = (OffsetNumber *) data;
 
 			data += sizeof(OffsetNumber) * xldata->ntodelete;
 
-			for (i = 0; i < xldata->ntodelete; i++)
-				PageIndexTupleDelete(page, todelete[i]);
+			PageIndexMultiDelete(page, todelete, xldata->ntodelete);
 			if (GistPageIsLeaf(page))
 				GistMarkTuplesDeleted(page);
 		}
@@ -325,7 +323,7 @@ gist_xlog_cleanup(void)
  * Write WAL record of a page split.
  */
 XLogRecPtr
-gistXLogSplit(RelFileNode node, BlockNumber blkno, bool page_is_leaf,
+gistXLogSplit(bool page_is_leaf,
 			  SplitedPageLayout *dist,
 			  BlockNumber origrlink, GistNSN orignsn,
 			  Buffer leftchildbuf, bool markfollowright)
@@ -389,7 +387,7 @@ gistXLogSplit(RelFileNode node, BlockNumber blkno, bool page_is_leaf,
  * to log the whole buffer contents instead.
  */
 XLogRecPtr
-gistXLogUpdate(RelFileNode node, Buffer buffer,
+gistXLogUpdate(Buffer buffer,
 			   OffsetNumber *todelete, int ntodelete,
 			   IndexTuple *itup, int ituplen,
 			   Buffer leftchildbuf)

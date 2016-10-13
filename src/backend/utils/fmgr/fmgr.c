@@ -3,7 +3,7 @@
  * fmgr.c
  *	  The Postgres function manager.
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1306,10 +1306,6 @@ FunctionCall1Coll(FmgrInfo *flinfo, Oid collation, Datum arg1)
 Datum
 FunctionCall2Coll(FmgrInfo *flinfo, Oid collation, Datum arg1, Datum arg2)
 {
-	/*
-	 * XXX if you change this routine, see also the inlined version in
-	 * utils/sort/tuplesort.c!
-	 */
 	FunctionCallInfoData fcinfo;
 	Datum		result;
 

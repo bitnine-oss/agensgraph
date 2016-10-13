@@ -1,12 +1,11 @@
 # src/makefiles/Makefile.win32
 
-# Use replacement include files for those missing on Win32
-override CPPFLAGS+="-I$(top_srcdir)/src/include/port/win32"
-
 ifdef PGXS
 BE_DLLLIBS= -L$(libdir) -lpostgres
+override CPPFLAGS+= -I$(includedir_server)/port/win32
 else
 BE_DLLLIBS= -L$(top_builddir)/src/backend -lpostgres
+override CPPFLAGS+="-I$(top_srcdir)/src/include/port/win32"
 endif
 
 AROPT = crs
@@ -44,13 +43,8 @@ ifneq (,$(findstring src/pl/plpython,$(subdir)))
 override CPPFLAGS+= -DUSE_DL_IMPORT
 endif
 
-# special win32 headers are provided here
-ifdef PGXS
-override CPPFLAGS+= -I$(includedir_server)/port/win32
-endif
-
 # it is better to install shared-libraries anyway?
-# may be overriden with make MAKE_DLL=false install
+# may be overridden with make MAKE_DLL=false install
 ifndef MAKE_DLL
 MAKE_DLL	= true
 endif

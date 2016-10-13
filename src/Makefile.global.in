@@ -184,6 +184,7 @@ with_python	= @with_python@
 with_tcl	= @with_tcl@
 with_openssl	= @with_openssl@
 with_selinux	= @with_selinux@
+with_systemd	= @with_systemd@
 with_libxml	= @with_libxml@
 with_libxslt	= @with_libxslt@
 with_system_tzdata = @with_system_tzdata@
@@ -435,9 +436,6 @@ host_cpu = @host_cpu@
 # Make HAVE_IPV6 available for initdb script creation
 HAVE_IPV6= @HAVE_IPV6@
 
-# The HP-UX port makefile, for one, needs access to this symbol
-HAVE_POSIX_SIGNALS= @HAVE_POSIX_SIGNALS@
-
 # This is mainly for use on FreeBSD, where we have both a.out and elf
 # systems now.  May be applicable to other systems to?
 ELF_SYSTEM= @ELF_SYS@
@@ -496,6 +494,10 @@ libpq_pgport += $(LDAP_LIBS_FE)
 endif
 
 
+##########################################################################
+#
+# Commonly used submake targets
+
 submake-libpq:
 	$(MAKE) -C $(libpq_builddir) all
 
@@ -503,7 +505,15 @@ submake-libpgport:
 	$(MAKE) -C $(top_builddir)/src/port all
 	$(MAKE) -C $(top_builddir)/src/common all
 
-.PHONY: submake-libpq submake-libpgport
+submake-libpgfeutils:
+	$(MAKE) -C $(top_builddir)/src/port all
+	$(MAKE) -C $(top_builddir)/src/common all
+	$(MAKE) -C $(top_builddir)/src/fe_utils all
+
+submake-generated-headers:
+	$(MAKE) -C $(top_builddir)/src/backend generated-headers
+
+.PHONY: submake-libpq submake-libpgport submake-libpgfeutils submake-generated-headers
 
 
 ##########################################################################
@@ -526,14 +536,20 @@ ifdef NO_LOCALE
 NOLOCALE += --no-locale
 endif
 
+# file with extra config for temp build
+TEMP_CONF =
+ifdef TEMP_CONFIG
+TEMP_CONF += --temp-config=$(TEMP_CONFIG)
+endif
+
 pg_regress_locale_flags = $(if $(ENCODING),--encoding=$(ENCODING)) $(NOLOCALE)
 
-pg_regress_check = $(with_temp_install) $(top_builddir)/src/test/regress/pg_regress --inputdir=$(srcdir) --temp-instance=./tmp_check --bindir= $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
+pg_regress_check = $(with_temp_install) $(top_builddir)/src/test/regress/pg_regress --inputdir=$(srcdir) --temp-instance=./tmp_check $(TEMP_CONF) --bindir= $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
 pg_regress_installcheck = $(top_builddir)/src/test/regress/pg_regress --inputdir=$(srcdir) --bindir='$(bindir)' $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
 
 pg_regress_clean_files = results/ regression.diffs regression.out tmp_check/ log/
 
-pg_isolation_regress_check = $(with_temp_install) $(top_builddir)/src/test/isolation/pg_isolation_regress --inputdir=$(srcdir) --temp-instance=./tmp_check --bindir= $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
+pg_isolation_regress_check = $(with_temp_install) $(top_builddir)/src/test/isolation/pg_isolation_regress --inputdir=$(srcdir) --temp-instance=./tmp_check $(TEMP_CONF) --bindir= $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
 pg_isolation_regress_installcheck = $(top_builddir)/src/test/isolation/pg_isolation_regress --inputdir=$(srcdir) $(pg_regress_locale_flags) $(EXTRA_REGRESS_OPTS)
 
 ##########################################################################

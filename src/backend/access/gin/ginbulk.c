@@ -4,7 +4,7 @@
  *	  routines for fast build of inverted index
  *
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -13,6 +13,8 @@
  */
 
 #include "postgres.h"
+
+#include <limits.h>
 
 #include "access/gin_private.h"
 #include "utils/datum.h"
@@ -36,10 +38,16 @@ ginCombineData(RBNode *existing, const RBNode *newdata, void *arg)
 	 */
 	if (eo->count >= eo->maxcount)
 	{
+		if (eo->maxcount > INT_MAX)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("posting list is too long"),
+					 errhint("Reduce maintenance_work_mem.")));
+
 		accum->allocatedMemory -= GetMemoryChunkSpace(eo->list);
 		eo->maxcount *= 2;
 		eo->list = (ItemPointerData *)
-			repalloc(eo->list, sizeof(ItemPointerData) * eo->maxcount);
+			repalloc_huge(eo->list, sizeof(ItemPointerData) * eo->maxcount);
 		accum->allocatedMemory += GetMemoryChunkSpace(eo->list);
 	}
 

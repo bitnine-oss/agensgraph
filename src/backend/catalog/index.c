@@ -3,7 +3,7 @@
  * index.c
  *	  code to create and destroy POSTGRES index relations
  *
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,6 +23,7 @@
 
 #include <unistd.h>
 
+#include "access/amapi.h"
 #include "access/multixact.h"
 #include "access/relscan.h"
 #include "access/sysattr.h"
@@ -36,8 +37,10 @@
 #include "catalog/heap.h"
 #include "catalog/index.h"
 #include "catalog/objectaccess.h"
+#include "catalog/pg_am.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_tablespace.h"
@@ -109,6 +112,8 @@ static void index_update_stats(Relation rel,
 static void IndexCheckExclusion(Relation heapRelation,
 					Relation indexRelation,
 					IndexInfo *indexInfo);
+static inline int64 itemptr_encode(ItemPointer itemptr);
+static inline void itemptr_decode(ItemPointer itemptr, int64 encoded);
 static bool validate_index_callback(ItemPointer itemptr, void *opaque);
 static void validate_index_heapscan(Relation heapRelation,
 						Relation indexRelation,
@@ -277,20 +282,14 @@ ConstructTupleDescriptor(Relation heapRelation,
 	int			numatts = indexInfo->ii_NumIndexAttrs;
 	ListCell   *colnames_item = list_head(indexColNames);
 	ListCell   *indexpr_item = list_head(indexInfo->ii_Expressions);
-	HeapTuple	amtuple;
-	Form_pg_am	amform;
+	IndexAmRoutine *amroutine;
 	TupleDesc	heapTupDesc;
 	TupleDesc	indexTupDesc;
 	int			natts;			/* #atts in heap rel --- for error checks */
 	int			i;
 
-	/* We need access to the index AM's pg_am tuple */
-	amtuple = SearchSysCache1(AMOID,
-							  ObjectIdGetDatum(accessMethodObjectId));
-	if (!HeapTupleIsValid(amtuple))
-		elog(ERROR, "cache lookup failed for access method %u",
-			 accessMethodObjectId);
-	amform = (Form_pg_am) GETSTRUCT(amtuple);
+	/* We need access to the index AM's API struct */
+	amroutine = GetIndexAmRoutineByAmId(accessMethodObjectId, false);
 
 	/* ... and to the table's tuple descriptor */
 	heapTupDesc = RelationGetDescr(heapRelation);
@@ -437,7 +436,7 @@ ConstructTupleDescriptor(Relation heapRelation,
 		if (OidIsValid(opclassTup->opckeytype))
 			keyType = opclassTup->opckeytype;
 		else
-			keyType = amform->amkeytype;
+			keyType = amroutine->amkeytype;
 		ReleaseSysCache(tuple);
 
 		if (OidIsValid(keyType) && keyType != to->atttypid)
@@ -459,7 +458,7 @@ ConstructTupleDescriptor(Relation heapRelation,
 		}
 	}
 
-	ReleaseSysCache(amtuple);
+	pfree(amroutine);
 
 	return indexTupDesc;
 }
@@ -1921,7 +1920,7 @@ index_update_stats(Relation rel,
 		BlockNumber relallvisible;
 
 		if (rd_rel->relkind != RELKIND_INDEX)
-			relallvisible = visibilitymap_count(rel);
+			visibilitymap_count(rel, &relallvisible, NULL);
 		else	/* don't bother for indexes */
 			relallvisible = 0;
 
@@ -1988,7 +1987,6 @@ index_build(Relation heapRelation,
 			bool isprimary,
 			bool isreindex)
 {
-	RegProcedure procedure;
 	IndexBuildResult *stats;
 	Oid			save_userid;
 	int			save_sec_context;
@@ -1998,10 +1996,9 @@ index_build(Relation heapRelation,
 	 * sanity checks
 	 */
 	Assert(RelationIsValid(indexRelation));
-	Assert(PointerIsValid(indexRelation->rd_am));
-
-	procedure = indexRelation->rd_am->ambuild;
-	Assert(RegProcedureIsValid(procedure));
+	Assert(PointerIsValid(indexRelation->rd_amroutine));
+	Assert(PointerIsValid(indexRelation->rd_amroutine->ambuild));
+	Assert(PointerIsValid(indexRelation->rd_amroutine->ambuildempty));
 
 	ereport(DEBUG1,
 			(errmsg("building index \"%s\" on table \"%s\"",
@@ -2021,11 +2018,8 @@ index_build(Relation heapRelation,
 	/*
 	 * Call the access method's build procedure
 	 */
-	stats = (IndexBuildResult *)
-		DatumGetPointer(OidFunctionCall3(procedure,
-										 PointerGetDatum(heapRelation),
-										 PointerGetDatum(indexRelation),
-										 PointerGetDatum(indexInfo)));
+	stats = indexRelation->rd_amroutine->ambuild(heapRelation, indexRelation,
+												 indexInfo);
 	Assert(PointerIsValid(stats));
 
 	/*
@@ -2038,28 +2032,32 @@ index_build(Relation heapRelation,
 	if (indexRelation->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED &&
 		!smgrexists(indexRelation->rd_smgr, INIT_FORKNUM))
 	{
-		RegProcedure ambuildempty = indexRelation->rd_am->ambuildempty;
-
 		RelationOpenSmgr(indexRelation);
 		smgrcreate(indexRelation->rd_smgr, INIT_FORKNUM, false);
-		OidFunctionCall1(ambuildempty, PointerGetDatum(indexRelation));
+		indexRelation->rd_amroutine->ambuildempty(indexRelation);
 	}
 
 	/*
 	 * If we found any potentially broken HOT chains, mark the index as not
 	 * being usable until the current transaction is below the event horizon.
-	 * See src/backend/access/heap/README.HOT for discussion.
+	 * See src/backend/access/heap/README.HOT for discussion.  Also set this
+	 * if early pruning/vacuuming is enabled for the heap relation.  While it
+	 * might become safe to use the index earlier based on actual cleanup
+	 * activity and other active transactions, the test for that would be much
+	 * more complex and would require some form of blocking, so keep it simple
+	 * and fast by just using the current transaction.
 	 *
 	 * However, when reindexing an existing index, we should do nothing here.
 	 * Any HOT chains that are broken with respect to the index must predate
 	 * the index's original creation, so there is no need to change the
 	 * index's usability horizon.  Moreover, we *must not* try to change the
 	 * index's pg_index entry while reindexing pg_index itself, and this
-	 * optimization nicely prevents that.
+	 * optimization nicely prevents that.  The more complex rules needed for a
+	 * reindex are handled separately after this function returns.
 	 *
 	 * We also need not set indcheckxmin during a concurrent index build,
 	 * because we won't set indisvalid true until all transactions that care
-	 * about the broken HOT chains are gone.
+	 * about the broken HOT chains or early pruning/vacuuming are gone.
 	 *
 	 * Therefore, this code path can only be taken during non-concurrent
 	 * CREATE INDEX.  Thus the fact that heap_update will set the pg_index
@@ -2068,7 +2066,8 @@ index_build(Relation heapRelation,
 	 * about any concurrent readers of the tuple; no other transaction can see
 	 * it yet.
 	 */
-	if (indexInfo->ii_BrokenHotChain && !isreindex &&
+	if ((indexInfo->ii_BrokenHotChain || EarlyPruningEnabled(heapRelation)) &&
+		!isreindex &&
 		!indexInfo->ii_Concurrent)
 	{
 		Oid			indexId = RelationGetRelid(indexRelation);
@@ -2379,8 +2378,8 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 				case HEAPTUPLE_INSERT_IN_PROGRESS:
 
 					/*
-					 * In "anyvisible" mode, this tuple is visible and we don't
-					 * need any further checks.
+					 * In "anyvisible" mode, this tuple is visible and we
+					 * don't need any further checks.
 					 */
 					if (anyvisible)
 					{
@@ -2435,8 +2434,8 @@ IndexBuildHeapRangeScan(Relation heapRelation,
 
 					/*
 					 * As with INSERT_IN_PROGRESS case, this is unexpected
-					 * unless it's our own deletion or a system catalog;
-					 * but in anyvisible mode, this tuple is visible.
+					 * unless it's our own deletion or a system catalog; but
+					 * in anyvisible mode, this tuple is visible.
 					 */
 					if (anyvisible)
 					{
@@ -2832,7 +2831,13 @@ validate_index(Oid heapId, Oid indexId, Snapshot snapshot)
 	ivinfo.num_heap_tuples = heapRelation->rd_rel->reltuples;
 	ivinfo.strategy = NULL;
 
-	state.tuplesort = tuplesort_begin_datum(TIDOID, TIDLessOperator,
+	/*
+	 * Encode TIDs as int8 values for the sort, rather than directly sorting
+	 * item pointers.  This can be significantly faster, primarily because TID
+	 * is a pass-by-reference type on all platforms, whereas int8 is
+	 * pass-by-value on most platforms.
+	 */
+	state.tuplesort = tuplesort_begin_datum(INT8OID, Int8LessOperator,
 											InvalidOid, false,
 											maintenance_work_mem,
 											false);
@@ -2872,14 +2877,55 @@ validate_index(Oid heapId, Oid indexId, Snapshot snapshot)
 }
 
 /*
+ * itemptr_encode - Encode ItemPointer as int64/int8
+ *
+ * This representation must produce values encoded as int64 that sort in the
+ * same order as their corresponding original TID values would (using the
+ * default int8 opclass to produce a result equivalent to the default TID
+ * opclass).
+ *
+ * As noted in validate_index(), this can be significantly faster.
+ */
+static inline int64
+itemptr_encode(ItemPointer itemptr)
+{
+	BlockNumber block = ItemPointerGetBlockNumber(itemptr);
+	OffsetNumber offset = ItemPointerGetOffsetNumber(itemptr);
+	int64		encoded;
+
+	/*
+	 * Use the 16 least significant bits for the offset.  32 adjacent bits are
+	 * used for the block number.  Since remaining bits are unused, there
+	 * cannot be negative encoded values (We assume a two's complement
+	 * representation).
+	 */
+	encoded = ((uint64) block << 16) | (uint16) offset;
+
+	return encoded;
+}
+
+/*
+ * itemptr_decode - Decode int64/int8 representation back to ItemPointer
+ */
+static inline void
+itemptr_decode(ItemPointer itemptr, int64 encoded)
+{
+	BlockNumber block = (BlockNumber) (encoded >> 16);
+	OffsetNumber offset = (OffsetNumber) (encoded & 0xFFFF);
+
+	ItemPointerSet(itemptr, block, offset);
+}
+
+/*
  * validate_index_callback - bulkdelete callback to collect the index TIDs
  */
 static bool
 validate_index_callback(ItemPointer itemptr, void *opaque)
 {
 	v_i_state  *state = (v_i_state *) opaque;
+	int64		encoded = itemptr_encode(itemptr);
 
-	tuplesort_putdatum(state->tuplesort, PointerGetDatum(itemptr), false);
+	tuplesort_putdatum(state->tuplesort, Int64GetDatum(encoded), false);
 	state->itups += 1;
 	return false;				/* never actually delete anything */
 }
@@ -2911,6 +2957,7 @@ validate_index_heapscan(Relation heapRelation,
 
 	/* state variables for the merge */
 	ItemPointer indexcursor = NULL;
+	ItemPointerData decoded;
 	bool		tuplesort_empty = false;
 
 	/*
@@ -3020,13 +3067,26 @@ validate_index_heapscan(Relation heapRelation,
 				 */
 				if (ItemPointerGetBlockNumber(indexcursor) == root_blkno)
 					in_index[ItemPointerGetOffsetNumber(indexcursor) - 1] = true;
-				pfree(indexcursor);
 			}
 
 			tuplesort_empty = !tuplesort_getdatum(state->tuplesort, true,
-												  &ts_val, &ts_isnull);
+												  &ts_val, &ts_isnull, NULL);
 			Assert(tuplesort_empty || !ts_isnull);
-			indexcursor = (ItemPointer) DatumGetPointer(ts_val);
+			if (!tuplesort_empty)
+			{
+				itemptr_decode(&decoded, DatumGetInt64(ts_val));
+				indexcursor = &decoded;
+
+				/* If int8 is pass-by-ref, free (encoded) TID Datum memory */
+#ifndef USE_FLOAT8_BYVAL
+				pfree(DatumGetPointer(ts_val));
+#endif
+			}
+			else
+			{
+				/* Be tidy */
+				indexcursor = NULL;
+			}
 		}
 
 		/*
@@ -3336,6 +3396,11 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 	 * reindexing pg_index itself, we must not try to update tuples in it.
 	 * pg_index's indexes should always have these flags in their clean state,
 	 * so that won't happen.
+	 *
+	 * If early pruning/vacuuming is enabled for the heap relation, the
+	 * usability horizon must be advanced to the current transaction on every
+	 * build or rebuild.  pg_index is OK in this regard because catalog tables
+	 * are not subject to early cleanup.
 	 */
 	if (!skipped_constraint)
 	{
@@ -3343,6 +3408,7 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 		HeapTuple	indexTuple;
 		Form_pg_index indexForm;
 		bool		index_bad;
+		bool		early_pruning_enabled = EarlyPruningEnabled(heapRelation);
 
 		pg_index = heap_open(IndexRelationId, RowExclusiveLock);
 
@@ -3356,11 +3422,12 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 					 !indexForm->indisready ||
 					 !indexForm->indislive);
 		if (index_bad ||
-			(indexForm->indcheckxmin && !indexInfo->ii_BrokenHotChain))
+			(indexForm->indcheckxmin && !indexInfo->ii_BrokenHotChain) ||
+			early_pruning_enabled)
 		{
-			if (!indexInfo->ii_BrokenHotChain)
+			if (!indexInfo->ii_BrokenHotChain && !early_pruning_enabled)
 				indexForm->indcheckxmin = false;
-			else if (index_bad)
+			else if (index_bad || early_pruning_enabled)
 				indexForm->indcheckxmin = true;
 			indexForm->indisvalid = true;
 			indexForm->indisready = true;
