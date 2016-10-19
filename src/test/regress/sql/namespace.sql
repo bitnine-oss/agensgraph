@@ -42,3 +42,16 @@ DROP SCHEMA test_schema_renamed CASCADE;
 -- verify that the objects were dropped
 SELECT COUNT(*) FROM pg_class WHERE relnamespace =
     (SELECT oid FROM pg_namespace WHERE nspname = 'test_schema_renamed');
+
+--
+-- ALTER SCHEMA restriction with graph objects
+--
+
+CREATE GRAPH g;
+CREATE ROLE tmp;
+
+ALTER SCHEMA g RENAME TO s;
+ALTER SCHEMA g OWNER TO tmp;
+
+DROP GRAPH g CASCADE;
+DROP ROLE tmp;

@@ -140,6 +140,10 @@ RenameGraph(const char *oldname, const char *newname)
 	heap_close(rel, NoLock);
 	heap_freetuple(tup);
 
+	CommandCounterIncrement();
+	if (strcmp(graph_path, oldname) == 0)
+		SetConfigOption("graph_path", newname, PGC_USERSET, PGC_S_SESSION);
+
 	return address;
 }
 

@@ -69,3 +69,19 @@ SELECT COUNT(*) FROM pg_class WHERE relnamespace =
      0
 (1 row)
 
+--
+-- ALTER SCHEMA restriction with graph objects
+--
+CREATE GRAPH g;
+CREATE ROLE tmp;
+ALTER SCHEMA g RENAME TO s;
+ERROR:  cannot rename schema "g"
+HINT:  Use RENAME GRAPH instead
+ALTER SCHEMA g OWNER TO tmp;
+ERROR:  cannot alter schema "g"
+HINT:  Use ALTER GRAPH instead
+DROP GRAPH g CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge
+DROP ROLE tmp;

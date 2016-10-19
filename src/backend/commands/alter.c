@@ -319,12 +319,28 @@ ExecRenameStmt(RenameStmt *stmt)
 			return RenameRole(stmt->subname, stmt->newname);
 
 		case OBJECT_SCHEMA:
-			return RenameSchema(stmt->subname, stmt->newname);
+			{
+				if (OidIsValid(get_graphname_oid(stmt->subname)))
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+							 errmsg("cannot rename schema \"%s\"",
+									stmt->subname),
+							 errhint("Use RENAME GRAPH instead")));
+
+				return RenameSchema(stmt->subname, stmt->newname);
+			}
 
 		case OBJECT_TABLESPACE:
 			return RenameTableSpace(stmt->subname, stmt->newname);
 
 		case OBJECT_TABLE:
+			if (RangeVarIsLabel(stmt->relation))
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+						 errmsg("cannot rename table \"%s\"",
+								stmt->relation->relname),
+						 errhint("Use rename label instead")));
+			/* fall through */
 		case OBJECT_SEQUENCE:
 		case OBJECT_VIEW:
 		case OBJECT_MATVIEW:
@@ -758,9 +774,19 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 		case OBJECT_DATABASE:
 			return AlterDatabaseOwner(strVal(linitial(stmt->object)), newowner);
 
-		case OBJECT_GRAPH:
 		case OBJECT_SCHEMA:
-			return AlterSchemaOwner(strVal(linitial(stmt->object)), newowner);
+			{
+				char *name = strVal(linitial(stmt->object));
+
+				if (OidIsValid(get_graphname_oid(name)))
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+							 errmsg("cannot alter schema \"%s\"", name),
+							 errhint("Use ALTER GRAPH instead")));
+
+				return AlterSchemaOwner(strVal(linitial(stmt->object)),
+										newowner);
+			}
 
 		case OBJECT_TYPE:
 		case OBJECT_DOMAIN:		/* same as TYPE */
@@ -823,6 +849,19 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 				return address;
 			}
 			break;
+
+		case OBJECT_GRAPH:
+			{
+				char *name = strVal(linitial(stmt->object));
+
+				if (!OidIsValid(get_graphname_oid(name)))
+					ereport(ERROR,
+							(errcode(ERRCODE_UNDEFINED_SCHEMA),
+							 errmsg("graph \"%s\" does not exist", name)));
+
+				return AlterSchemaOwner(strVal(linitial(stmt->object)),
+										newowner);
+			}
 
 		default:
 			elog(ERROR, "unrecognized AlterOwnerStmt type: %d",
