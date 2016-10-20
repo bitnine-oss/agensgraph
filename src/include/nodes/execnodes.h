@@ -351,6 +351,7 @@ typedef struct GraphWriteStats
 	uint32		insertEdge;
 	uint32		deleteVertex;
 	uint32		deleteEdge;
+	uint32		updateProperty;
 } GraphWriteStats;
 
 /* ----------------
@@ -2083,6 +2084,7 @@ typedef struct ModifyGraphState
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE
 								   with `es_prop_map` */
 	List	   *exprs;			/* expression state list for DELETE */
+	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 } ModifyGraphState;
 
 #endif   /* EXECNODES_H */

@@ -1754,7 +1754,8 @@ appendGraphWriteTag(char *tagbuf, GraphWriteStats *graphwrstats)
 	if (graphwrstats->insertVertex == 0 &&
 		graphwrstats->insertEdge == 0 &&
 		graphwrstats->deleteVertex == 0 &&
-		graphwrstats->deleteEdge == 0)
+		graphwrstats->deleteEdge == 0 &&
+		graphwrstats->updateProperty == 0)
 		return;
 
 	if (pos < COMPLETION_TAG_BUFSIZE)
@@ -1770,6 +1771,8 @@ appendGraphWriteTag(char *tagbuf, GraphWriteStats *graphwrstats)
 					   graphwrstats->deleteVertex, pos > opn);
 	pos = appendAnyTag(tagbuf, pos, "DELETE EDGE",
 					   graphwrstats->deleteEdge, pos > opn);
+	pos = appendAnyTag(tagbuf, pos, "UPDATE PROPERTY",
+					   graphwrstats->updateProperty, pos > opn);
 
 	if (pos < COMPLETION_TAG_BUFSIZE - 1)
 	{

@@ -556,12 +556,13 @@ static Node *wrapCypherWithSelect(Node *stmt);
 				cypher_load cypher_match cypher_no_parens cypher_node
 				cypher_path cypher_path_opt_varirable cypher_prop_map_opt
 				cypher_range_idx cypher_range_idx_opt cypher_range_opt
-				cypher_rel cypher_return cypher_skip_opt cypher_variable
+				cypher_rel cypher_remove cypher_return cypher_rmitem cypher_set
+				cypher_setitem cypher_skip_opt cypher_variable
 				cypher_variable_opt cypher_varlen_opt cypher_with
 				cypher_with_parens
-%type <list>	cypher_distinct_opt cypher_expr_list cypher_path_chain
-				cypher_path_chain_opt_parens cypher_pattern
-				cypher_types cypher_types_opt
+%type <list>	cypher_distinct_opt cypher_expr_list cypher_rmitem_list
+				cypher_path_chain cypher_path_chain_opt_parens cypher_pattern
+				cypher_setitem_list cypher_types cypher_types_opt
 %type <str>		cypher_varname
 %type <boolean>	cypher_detach_opt cypher_rel_left cypher_rel_right
 
@@ -647,7 +648,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	QUOTE
 
 	RANGE READ REAL REASSIGN RECHECK RECURSIVE REF REFERENCES REFRESH REINDEX
-	RELATIVE_P RELEASE RENAME REPEATABLE REPLACE REPLICA
+	RELATIVE_P RELEASE REMOVE RENAME REPEATABLE REPLACE REPLICA
 	RESET RESTART RESTRICT RETURN RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK
 	ROLLUP ROW ROWS RULE
 
@@ -727,12 +728,13 @@ static Node *wrapCypherWithSelect(Node *stmt);
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
  * To support Cypher, the precedence of unreserved keywords,
- * DELETE_P, DETACH, LOAD, SIZE and SKIP must be the same as that of IDENT so
- * that they can follow a_expr without creating postfix-operator problems.
+ * DELETE_P, DETACH, LOAD, REMOVE, SIZE and SKIP must be the same as that of
+ * IDENT so that they can follow a_expr without creating postfix-operator
+ * problems.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			DELETE_P DETACH LOAD SIZE SKIP
+			DELETE_P DETACH LOAD REMOVE SIZE SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -14024,6 +14026,7 @@ unreserved_keyword:
 			| REINDEX
 			| RELATIVE_P
 			| RELEASE
+			| REMOVE
 			| RENAME
 			| REPEATABLE
 			| REPLACE
@@ -14455,6 +14458,8 @@ cypher_clause:
 			cypher_clause_head
 			| cypher_with
 			| cypher_delete
+			| cypher_set
+			| cypher_remove
 		;
 
 cypher_match:
@@ -14521,6 +14526,23 @@ cypher_delete:
 cypher_detach_opt:
 			DETACH				{ $$ = true; }
 			| /* EMPTY */		{ $$ = false; }
+		;
+
+cypher_set:	SET cypher_setitem_list
+			{
+				CypherSetClause *n = makeNode(CypherSetClause);
+				n->items = $2;
+				$$ = (Node *) n;
+			}
+		;
+
+cypher_remove:
+			REMOVE cypher_rmitem_list
+			{
+				CypherSetClause *n = makeNode(CypherSetClause);
+				n->items = $2;
+				$$ = (Node *) n;
+			}
 		;
 
 cypher_load:
@@ -14769,6 +14791,40 @@ cypher_expr_list:
 					{ $$ = list_make1($1); }
 			| cypher_expr_list ',' a_expr
 					{ $$ = lappend($1, $3); }
+		;
+
+cypher_setitem_list:
+			cypher_setitem
+					{ $$ = list_make1($1); }
+			| cypher_setitem_list ',' cypher_setitem
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_setitem:
+			a_expr '=' a_expr
+				{
+					CypherSetProp *n = makeNode(CypherSetProp);
+					n->prop = $1;
+					n->expr = $3;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_rmitem_list:
+			cypher_rmitem
+					{ $$ = list_make1($1); }
+			| cypher_rmitem_list ',' cypher_rmitem
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_rmitem:
+			a_expr
+				{
+					CypherSetProp *n = makeNode(CypherSetProp);
+					n->prop = $1;
+					n->expr = makeNullAConst(-1);
+					$$ = (Node *) n;
+				}
 		;
 
 %%

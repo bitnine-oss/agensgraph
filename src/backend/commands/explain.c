@@ -1035,6 +1035,10 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					pname = "Graph Delete";
 					operation = "Delete";
 					break;
+				case GWROP_SET:
+					pname = "Graph Set";
+					operation = "Set";
+					break;
 				default:
 					pname = "Graph ???";
 					operation = "???";

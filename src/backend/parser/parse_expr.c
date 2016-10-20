@@ -3401,54 +3401,9 @@ append_json_indirection(ParseState *pstate, List *pathelems, List *indirection,
 
 	foreach(li, indirection)
 	{
-		Node	   *ind = lfirst(li);
-		Node	   *pathelem;
+		Node *ind = lfirst(li);
 
-		if (IsA(ind, String))
-		{
-			pathelem = (Node *) makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID,
-										  -1, CStringGetTextDatum(strVal(ind)),
-										  false, false);
-		}
-		else if (IsA(ind, A_Indices))
-		{
-			A_Indices  *indices = (A_Indices *) ind;
-			Node	   *idx;
-			Oid			idxtype;
-
-			if (indices->lidx != NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("slicing on json(b) is not supported"),
-						 parser_errposition(pstate,
-											exprLocation(indices->lidx))));
-
-			idx = transformExpr(pstate, indices->uidx, pstate->p_expr_kind);
-			idxtype = exprType(idx);
-
-			idx = coerce_to_target_type(pstate, idx, idxtype, TEXTOID, -1,
-										COERCION_ASSIGNMENT,
-										COERCE_IMPLICIT_CAST, -1);
-			if (idx == NULL)
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("path elements for json(b) must be type text"),
-						 parser_errposition(pstate,
-											exprLocation(indices->uidx))));
-
-			pathelem = idx;
-		}
-		else
-		{
-			Assert(IsA(ind, A_Star));
-
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("\"*\" cannot be applied to vertex or edge"),
-					 parser_errposition(pstate, location)));
-		}
-
-		pathelems = lappend(pathelems, pathelem);
+		pathelems = lappend(pathelems, transformJsonKey(pstate, ind));
 	}
 
 	return pathelems;
@@ -3733,4 +3688,53 @@ appendElemIndirection(ParseState *pstate, Node *basenode, List *indirection)
 
 	pstate->p_last_colref_elem = NULL;
 	return basenode;
+}
+
+Node *
+transformJsonKey(ParseState *pstate, Node *node)
+{
+	if (IsA(node, String))
+	{
+		return (Node *) makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
+								  CStringGetTextDatum(strVal(node)),
+								  false, false);
+	}
+	else if (IsA(node, A_Indices))
+	{
+		A_Indices  *indices = (A_Indices *) node;
+		Node	   *idx;
+		Oid			idxtype;
+
+		if (indices->lidx != NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("slicing on json(b) is not supported"),
+					 parser_errposition(pstate,
+										exprLocation(indices->lidx))));
+
+		idx = transformExpr(pstate, indices->uidx, pstate->p_expr_kind);
+		idxtype = exprType(idx);
+
+		idx = coerce_to_target_type(pstate, idx, idxtype, TEXTOID, -1,
+									COERCION_ASSIGNMENT,
+									COERCE_IMPLICIT_CAST, -1);
+		if (idx == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("path elements for json(b) must be type text"),
+					 parser_errposition(pstate,
+										exprLocation(indices->uidx))));
+
+		return idx;
+	}
+	else
+	{
+		Assert(IsA(node, A_Star));
+
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("\"*\" cannot be applied to vertex or edge")));
+	}
+
+	return NULL;
 }

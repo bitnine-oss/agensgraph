@@ -1049,6 +1049,7 @@ _copyModifyGraph(const ModifyGraph *from)
 	COPY_NODE_FIELD(subplan);
 	COPY_NODE_FIELD(pattern);
 	COPY_NODE_FIELD(exprs);
+	COPY_NODE_FIELD(sets);
 
 	return newnode;
 }
@@ -4308,6 +4309,16 @@ _copyCypherDeleteClause(const CypherDeleteClause *from)
 	return newnode;
 }
 
+static CypherSetClause *
+_copyCypherSetClause(const CypherSetClause *from)
+{
+	CypherSetClause *newnode = makeNode(CypherSetClause);
+
+	COPY_NODE_FIELD(items);
+
+	return newnode;
+}
+
 static CypherLoadClause *
 _copyCypherLoadClause(const CypherLoadClause *from)
 {
@@ -4366,6 +4377,17 @@ _copyCypherName(const CypherName *from)
 	return newnode;
 }
 
+static CypherSetProp *
+_copyCypherSetProp(const CypherSetProp *from)
+{
+	CypherSetProp *newnode = makeNode(CypherSetProp);
+
+	COPY_NODE_FIELD(prop);
+	COPY_NODE_FIELD(expr);
+
+	return newnode;
+}
+
 static GraphPath *
 _copyGraphPath(const GraphPath *from)
 {
@@ -4385,7 +4407,6 @@ _copyGraphVertex(const GraphVertex *from)
 	COPY_STRING_FIELD(variable);
 	COPY_STRING_FIELD(label);
 	COPY_NODE_FIELD(prop_map);
-	COPY_NODE_FIELD(es_prop_map);
 	COPY_SCALAR_FIELD(create);
 
 	return newnode;
@@ -4400,7 +4421,18 @@ _copyGraphEdge(const GraphEdge *from)
 	COPY_STRING_FIELD(variable);
 	COPY_STRING_FIELD(label);
 	COPY_NODE_FIELD(prop_map);
-	COPY_NODE_FIELD(es_prop_map);
+
+	return newnode;
+}
+
+static GraphSetProp *
+_copyGraphSetProp(const GraphSetProp *from)
+{
+	GraphSetProp *newnode = makeNode(GraphSetProp);
+
+	COPY_NODE_FIELD(elem);
+	COPY_NODE_FIELD(path);
+	COPY_NODE_FIELD(expr);
 
 	return newnode;
 }
@@ -5352,6 +5384,9 @@ copyObject(const void *from)
 		case T_CypherDeleteClause:
 			retval = _copyCypherDeleteClause(from);
 			break;
+		case T_CypherSetClause:
+			retval = _copyCypherSetClause(from);
+			break;
 		case T_CypherLoadClause:
 			retval = _copyCypherLoadClause(from);
 			break;
@@ -5367,6 +5402,9 @@ copyObject(const void *from)
 		case T_CypherName:
 			retval = _copyCypherName(from);
 			break;
+		case T_CypherSetProp:
+			retval = _copyCypherSetProp(from);
+			break;
 
 			/*
 			 * GRAPH NODES
@@ -5379,6 +5417,9 @@ copyObject(const void *from)
 			break;
 		case T_GraphEdge:
 			retval = _copyGraphEdge(from);
+			break;
+		case T_GraphSetProp:
+			retval = _copyGraphSetProp(from);
 			break;
 
 			/*
