@@ -909,6 +909,7 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 	WRITE_NODE_FIELD(subplan);
 	WRITE_NODE_FIELD(pattern);
 	WRITE_NODE_FIELD(exprs);
+	WRITE_NODE_FIELD(sets);
 }
 
 static void
@@ -2717,6 +2718,7 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_BOOL_FIELD(graph.detach);
 	WRITE_NODE_FIELD(graph.pattern);
 	WRITE_NODE_FIELD(graph.exprs);
+	WRITE_NODE_FIELD(graph.sets);
 }
 
 static void
@@ -3388,6 +3390,14 @@ _outCypherDeleteClause(StringInfo str, const CypherDeleteClause *node)
 }
 
 static void
+_outCypherSetClause(StringInfo str, const CypherSetClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERSETCLAUSE");
+
+	WRITE_NODE_FIELD(items);
+}
+
+static void
 _outCypherLoadClause(StringInfo str, const CypherLoadClause *node)
 {
 	WRITE_NODE_TYPE("CYPHERLOADCLAUSE");
@@ -3436,6 +3446,15 @@ _outCypherName(StringInfo str, const CypherName *node)
 }
 
 static void
+_outCypherSetProp(StringInfo str, const CypherSetProp *node)
+{
+	WRITE_NODE_TYPE("CYPHERSETPROP");
+
+	WRITE_NODE_FIELD(prop);
+	WRITE_NODE_FIELD(expr);
+}
+
+static void
 _outGraphPath(StringInfo str, const GraphPath *node)
 {
 	WRITE_NODE_TYPE("GRAPHPATH");
@@ -3452,7 +3471,6 @@ _outGraphVertex(StringInfo str, const GraphVertex *node)
 	WRITE_STRING_FIELD(variable);
 	WRITE_STRING_FIELD(label);
 	WRITE_NODE_FIELD(prop_map);
-	WRITE_NODE_FIELD(es_prop_map);
 	WRITE_BOOL_FIELD(create);
 }
 
@@ -3465,7 +3483,16 @@ _outGraphEdge(StringInfo str, const GraphEdge *node)
 	WRITE_STRING_FIELD(variable);
 	WRITE_STRING_FIELD(label);
 	WRITE_NODE_FIELD(prop_map);
-	WRITE_NODE_FIELD(es_prop_map);
+}
+
+static void
+_outGraphSetProp(StringInfo str, const GraphSetProp *node)
+{
+	WRITE_NODE_TYPE("GRAPHSETPROP");
+
+	WRITE_NODE_FIELD(elem);
+	WRITE_NODE_FIELD(path);
+	WRITE_NODE_FIELD(expr);
 }
 
 /*
@@ -4085,6 +4112,9 @@ outNode(StringInfo str, const void *obj)
 			case T_CypherDeleteClause:
 				_outCypherDeleteClause(str, obj);
 				break;
+			case T_CypherSetClause:
+				_outCypherSetClause(str, obj);
+				break;
 			case T_CypherLoadClause:
 				_outCypherLoadClause(str, obj);
 				break;
@@ -4100,6 +4130,9 @@ outNode(StringInfo str, const void *obj)
 			case T_CypherName:
 				_outCypherName(str, obj);
 				break;
+			case T_CypherSetProp:
+				_outCypherSetProp(str, obj);
+				break;
 
 			case T_GraphPath:
 				_outGraphPath(str, obj);
@@ -4109,6 +4142,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_GraphEdge:
 				_outGraphEdge(str, obj);
+				break;
+			case T_GraphSetProp:
+				_outGraphSetProp(str, obj);
 				break;
 
 			default:

@@ -248,8 +248,26 @@ MATCH (s)-[r1]-(m)-[r2]-(x)
 RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
        ORDER BY s, r1, m, r2, x;
 
+--
+-- SET/REMOVE
+--
+
+CREATE GRAPH p;
+SET graph_path = p;
+
+CREATE ELABEL rel;
+
+CREATE ({'name': 'someone'})-[:rel {'k': 'v'}]->({'name': 'somebody'});
+
+MATCH (n)-[r]->(m) SET r.l = '"w"', n = m, r.k = NULL;
+MATCH (n)-[r]->(m) REMOVE m.name;
+
+MATCH (n)-[r]->(m)
+RETURN properties(n) as n, properties(r) as r, properties(m) as m;
+
 -- cleanup
 
+DROP GRAPH p CASCADE;
 DROP GRAPH u CASCADE;
 
 SET graph_path = agens;

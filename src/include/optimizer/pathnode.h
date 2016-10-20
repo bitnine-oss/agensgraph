@@ -228,7 +228,7 @@ extern LimitPath *create_limit_path(PlannerInfo *root, RelOptInfo *rel,
 extern ModifyGraphPath *create_modifygraph_path(PlannerInfo *root,
 						RelOptInfo *rel, bool canSetTag, GraphWriteOp operation,
 						bool last, bool detach, Path *subpath, List *pattern,
-						List *exprs);
+						List *exprs, List *sets);
 
 extern Path *reparameterize_path(PlannerInfo *root, Path *path,
 					Relids required_outer,

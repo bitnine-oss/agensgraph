@@ -14,6 +14,7 @@
 #include "access/sysattr.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
@@ -75,6 +76,12 @@ static GraphVertex *transformCreateNode(ParseState *pstate, CypherNode *cnode,
 										List **targetList);
 static GraphEdge *transformCreateRel(ParseState *pstate, CypherRel *crel,
 									 List **targetList);
+
+/* SET/REMOVE */
+static List *transformSetPropList(ParseState *pstate, RangeTblEntry *rte,
+								  List *items);
+static GraphSetProp *transformSetProp(ParseState *pstate, RangeTblEntry *rte,
+									  CypherSetProp *sp);
 
 /* common */
 static bool isNodeEmpty(CypherNode *cnode);
@@ -423,6 +430,37 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 		 */
 	}
 	qry->graph.exprs = exprs;
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+Query *
+transformCypherSetClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherSetClause *detail = (CypherSetClause *) clause->detail;
+	Query	   *qry;
+	RangeTblEntry *rte;
+
+	/* SET/REMOVE cannot be the first clause */
+	AssertArg(clause->prev != NULL);
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_GRAPHWRITE;
+	qry->graph.writeOp = GWROP_SET;
+	qry->graph.last = (pstate->parentParseState == NULL);
+
+	rte = transformClause(pstate, clause->prev, NULL);
+
+	qry->targetList = makeTargetListFromRTE(pstate, rte);
+
+	qry->graph.sets = transformSetPropList(pstate, rte, detail->items);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
@@ -1332,6 +1370,124 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 										   EXPR_KIND_INSERT_TARGET);
 
 	return gedge;
+}
+
+static List *
+transformSetPropList(ParseState *pstate, RangeTblEntry *rte, List *items)
+{
+	List	   *sps = NIL;
+	ListCell   *li;
+
+	foreach(li, items)
+	{
+		CypherSetProp *sp = lfirst(li);
+
+		sps = lappend(sps, transformSetProp(pstate, rte, sp));
+	}
+
+	return sps;
+}
+
+static GraphSetProp *
+transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp)
+{
+	Node	   *node;
+	List	   *inds;
+	Node	   *elem;
+	List	   *pathelems = NIL;
+	ListCell   *lf;
+	Node	   *expr;
+	Oid			exprtype;
+	Node	   *cexpr;
+	GraphSetProp *gsp;
+
+	if (!IsA(sp->prop, ColumnRef) && !IsA(sp->prop, A_Indirection))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("only variable or property is valid for SET target")));
+
+	if (IsA(sp->prop, A_Indirection))
+	{
+		A_Indirection *ind = (A_Indirection *) sp->prop;
+
+		node = ind->arg;
+		inds = ind->indirection;
+	}
+	else
+	{
+		node = sp->prop;
+		inds = NIL;
+	}
+
+	if (IsA(node, ColumnRef))
+	{
+		ColumnRef  *cref = (ColumnRef *) node;
+		char	   *varname = strVal(linitial(cref->fields));
+
+		elem = getColumnVar(pstate, rte, varname);
+
+		if (list_length(cref->fields) > 1)
+		{
+			for_each_cell(lf, lnext(list_head(cref->fields)))
+			{
+				pathelems = lappend(pathelems,
+									transformJsonKey(pstate, lfirst(lf)));
+			}
+		}
+	}
+	else
+	{
+		Oid elemtype;
+
+		elem = transformExpr(pstate, node, EXPR_KIND_UPDATE_TARGET);
+
+		elemtype = exprType(elem);
+		if (elemtype != VERTEXOID && elemtype != EDGEOID)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("expected node or relationship"),
+					 parser_errposition(pstate, exprLocation(elem))));
+	}
+
+	if (inds != NIL)
+	{
+		foreach(lf, inds)
+		{
+			pathelems = lappend(pathelems,
+								transformJsonKey(pstate, lfirst(lf)));
+		}
+	}
+
+	expr = transformExpr(pstate, sp->expr, EXPR_KIND_UPDATE_SOURCE);
+	exprtype = exprType(expr);
+	cexpr = coerce_to_target_type(pstate, expr, exprtype, JSONBOID, -1,
+								  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST,
+								  -1);
+	if (cexpr == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("expression must be of type jsonb but %s",
+						format_type_be(exprtype)),
+				 parser_errposition(pstate, exprLocation(expr))));
+
+	gsp = makeNode(GraphSetProp);
+	gsp->elem = elem;
+	if (pathelems != NIL)
+	{
+		ArrayExpr *patharr;
+
+		patharr = makeNode(ArrayExpr);
+		patharr->array_typeid = TEXTARRAYOID;
+		patharr->element_typeid = TEXTOID;
+		patharr->elements = pathelems;
+		patharr->multidims = false;
+		patharr->location = -1;
+
+		gsp->path = (Node *) patharr;
+	}
+	gsp->expr = cexpr;
+
+	return gsp;
 }
 
 static bool

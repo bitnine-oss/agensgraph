@@ -169,6 +169,7 @@ typedef struct Query
 		bool		detach;		/* DETACH DELETE */
 		List	   *pattern;	/* graph pattern (list of paths) for CREATE */
 		List	   *exprs;		/* expression list for DELETE */
+		List	   *sets;		/* expression list for SET/REMOVE */
 	}			graph;
 } Query;
 
@@ -3249,6 +3250,12 @@ typedef struct CypherDeleteClause
 	List	   *exprs;
 } CypherDeleteClause;
 
+typedef struct CypherSetClause
+{
+	NodeTag		type;
+	List	   *items;
+} CypherSetClause;
+
 typedef struct CypherLoadClause
 {
 	NodeTag		type;
@@ -3308,5 +3315,12 @@ getCypherNameLoc(Node *n)
 	AssertArg(IsA(n, CypherName));
 	return ((CypherName *) n)->location;
 }
+
+typedef struct CypherSetProp
+{
+	NodeTag		type;
+	Node	   *prop;
+	Node	   *expr;
+} CypherSetProp;
 
 #endif   /* PARSENODES_H */

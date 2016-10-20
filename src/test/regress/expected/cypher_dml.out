@@ -550,7 +550,28 @@ RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
  2 | b  | 1 | a  | 2
 (4 rows)
 
+--
+-- SET/REMOVE
+--
+CREATE GRAPH p;
+SET graph_path = p;
+CREATE ELABEL rel;
+CREATE ({'name': 'someone'})-[:rel {'k': 'v'}]->({'name': 'somebody'});
+MATCH (n)-[r]->(m) SET r.l = '"w"', n = m, r.k = NULL;
+MATCH (n)-[r]->(m) REMOVE m.name;
+MATCH (n)-[r]->(m)
+RETURN properties(n) as n, properties(r) as r, properties(m) as m;
+          n           |     r      | m  
+----------------------+------------+----
+ {"name": "somebody"} | {"l": "w"} | {}
+(1 row)
+
 -- cleanup
+DROP GRAPH p CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label rel
 DROP GRAPH u CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to label ag_vertex

@@ -466,11 +466,13 @@ typedef enum NodeTag
 	T_CypherProjection,
 	T_CypherCreateClause,
 	T_CypherDeleteClause,
+	T_CypherSetClause,
 	T_CypherLoadClause,
 	T_CypherPath,
 	T_CypherNode,
 	T_CypherRel,
 	T_CypherName,
+	T_CypherSetProp,
 
 	/*
 	 * TAGS FOR REPLICATION GRAMMAR PARSE NODES (replnodes.h)
@@ -506,7 +508,8 @@ typedef enum NodeTag
 	 */
 	T_GraphPath = 1050,
 	T_GraphVertex,
-	T_GraphEdge
+	T_GraphEdge,
+	T_GraphSetProp
 } NodeTag;
 
 /*
@@ -794,7 +797,8 @@ typedef enum GraphWriteOp
 {
 	GWROP_NONE = 0,
 	GWROP_CREATE,
-	GWROP_DELETE
+	GWROP_DELETE,
+	GWROP_SET
 } GraphWriteOp;
 
 #endif   /* NODES_H */

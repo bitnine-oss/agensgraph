@@ -2844,6 +2844,7 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 			/* fall-through */
 		case T_CypherCreateClause:
 		case T_CypherDeleteClause:
+		case T_CypherSetClause:
 			return transformStmt(pstate, clause);
 		default:
 			break;
@@ -2874,6 +2875,9 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 			break;
 		case T_CypherDeleteClause:
 			qry = transformCypherDeleteClause(pstate, clause);
+			break;
+		case T_CypherSetClause:
+			qry = transformCypherSetClause(pstate, clause);
 			break;
 		case T_CypherLoadClause:
 			qry = transformCypherLoadClause(pstate, clause);
