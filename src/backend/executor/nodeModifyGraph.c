@@ -158,6 +158,7 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 		if (TupIsNull(slot))
 			break;
 
+		DisableGraphDML = false;
 		switch (plan->operation)
 		{
 			case GWROP_CREATE:
@@ -173,6 +174,7 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 				elog(ERROR, "unknown operation");
 				break;
 		}
+		DisableGraphDML = true;
 
 		if (slot != NULL)
 			return slot;
