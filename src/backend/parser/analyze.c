@@ -25,7 +25,10 @@
 #include "postgres.h"
 
 #include "access/sysattr.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/pg_type.h"
+#include "catalog/objectaddress.h"
+#include "commands/graphcmds.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -389,6 +392,9 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 
 	qry->commandType = CMD_DELETE;
 
+	if (RangeVarIsLabel(stmt->relation) && DisableGraphDML)
+		elog(ERROR, "DML query to graph objcts is not allowed");
+
 	/* process the WITH clause independently of all else */
 	if (stmt->withClause)
 	{
@@ -467,6 +473,9 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 	ListCell   *lc;
 	bool		isOnConflictUpdate;
 	AclMode		targetPerms;
+
+	if (RangeVarIsLabel(stmt->relation) && DisableGraphDML)
+		elog(ERROR, "DML query to graph objcts is not allowed");
 
 	/* There can't be any outer WITH to worry about */
 	Assert(pstate->p_ctenamespace == NIL);
@@ -2141,6 +2150,9 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 	Query	   *qry = makeNode(Query);
 	ParseNamespaceItem *nsitem;
 	Node	   *qual;
+
+	if (RangeVarIsLabel(stmt->relation) && DisableGraphDML)
+		elog(ERROR, "DML query to graph objcts is not allowed");
 
 	qry->commandType = CMD_UPDATE;
 	pstate->p_is_insert = false;

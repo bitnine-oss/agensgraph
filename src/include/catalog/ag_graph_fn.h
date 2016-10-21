@@ -13,6 +13,7 @@
 #include "nodes/parsenodes.h"
 
 extern char *graph_path;
+extern bool DisableGraphDML;
 
 extern char *get_graph_path(void);
 

@@ -170,6 +170,8 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 	else
 		rel = heap_openrv(stmt->relation, ShareRowExclusiveLock);
 
+	if (OidIsValid(get_relid_labid(rel->rd_id)))
+		elog(ERROR, "cannot create trigger on graph label");
 	/*
 	 * Triggers must be on tables or views, and there are additional
 	 * relation-type-specific restrictions.
@@ -308,6 +310,9 @@ CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("INSTEAD OF triggers cannot have column lists")));
 	}
+
+	if (OidIsValid(get_relid_labid(rel->rd_id)))
+		elog(ERROR, "cannot create trigger on graph label");
 
 	/*
 	 * Parse the WHEN clause, if any
