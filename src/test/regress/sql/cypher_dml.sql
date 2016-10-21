@@ -130,7 +130,7 @@ MATCH (a {'name': a.properties->'name'}) RETURN *;
 -- DISTINCT
 --
 
-MATCH (a:repo)-[]-() RETURN DISTINCT a.name AS a;
+MATCH (a:repo)-[]-() RETURN DISTINCT a.name AS a ORDER BY a;
 
 MATCH (a:repo)-[b]-(c)
 RETURN DISTINCT ON (a) a.name AS a, b.lang AS b, c.name AS c;
@@ -187,7 +187,7 @@ RETURN b.name;
 -- aggregates
 --
 
-MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a;
+MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a, b;
 
 --
 -- EXISTS

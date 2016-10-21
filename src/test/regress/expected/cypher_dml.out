@@ -329,13 +329,13 @@ HINT:  There is an entry for table "a", but it cannot be referenced from this pa
 --
 -- DISTINCT
 --
-MATCH (a:repo)-[]-() RETURN DISTINCT a.name AS a;
+MATCH (a:repo)-[]-() RETURN DISTINCT a.name AS a ORDER BY a;
         a         
 ------------------
- agens-graph-odbc
  agens-graph
  agens-graph-docs
  agens-graph-jdbc
+ agens-graph-odbc
 (4 rows)
 
 MATCH (a:repo)-[b]-(c)
@@ -453,11 +453,11 @@ ERROR:  UNION types vertex and text cannot be matched
 --
 -- aggregates
 --
-MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a;
+MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a, b;
  a |        b         
 ---+------------------
- 1 | agens-graph-jdbc
  1 | agens-graph-docs
+ 1 | agens-graph-jdbc
  1 | agens-graph-odbc
  3 | agens-graph
 (4 rows)

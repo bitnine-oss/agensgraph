@@ -447,7 +447,6 @@ static Node *
 transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 {
 	Node	   *result = basenode;
-	Oid			restype;
 	List	   *subscripts = NIL;
 	int			location = exprLocation(basenode);
 	ListCell   *i;
@@ -455,12 +454,19 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 	if (basenode == pstate->p_last_colref_elem)
 		return appendElemIndirection(pstate, basenode, indirection);
 
-	restype = exprType(result);
-	if (restype == VERTEXOID || restype == EDGEOID ||
-		restype == JSONOID || restype == JSONBOID)
+	switch (exprType(result))
 	{
-		/* vertex and edge will be type-casted to jsonb */
-		return transformJsonIndirection(pstate, basenode, indirection);
+		case VERTEXOID:
+		case EDGEOID:
+			result = ParseFuncOrColumn(pstate,
+									   list_make1(makeString(AG_ELEM_PROP_MAP)),
+									   list_make1(result), NULL, -1);
+			/* fall-through */
+		case JSONOID:
+		case JSONBOID:
+			return transformJsonIndirection(pstate, result, indirection);
+		default:
+			break;
 	}
 
 	/*
@@ -3500,6 +3506,11 @@ resolveAsElem(ParseState *pstate, ColumnRef *cref)
 		List	   *pathelems = NIL;
 		ListCell   *lf;
 		ArrayExpr  *patharr;
+
+		/* get properties */
+		res = ParseFuncOrColumn(pstate,
+								list_make1(makeString(AG_ELEM_PROP_MAP)),
+								list_make1(res), NULL, -1);
 
 		for_each_cell(lf, list_nth_cell(cref->fields, indidx))
 		{
