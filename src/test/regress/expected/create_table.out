@@ -253,15 +253,3 @@ DROP TABLE as_select1;
 -- check that the oid column is added before the primary key is checked
 CREATE TABLE oid_pk (f1 INT, PRIMARY KEY(oid)) WITH OIDS;
 DROP TABLE oid_pk;
---
--- CREATE TABLE restriction with graph objects
---
-CREATE GRAPH g;
-CREATE TABLE g.t (i int);
-ERROR:  cannot create table in graph schema
-CREATE TABLE t (i int) INHERITS (g.ag_vertex);
-ERROR:  invalid parent, table cannot inherit label
-DROP GRAPH g CASCADE;
-NOTICE:  drop cascades to 2 other objects
-DETAIL:  drop cascades to label ag_vertex
-drop cascades to label ag_edge

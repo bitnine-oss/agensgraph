@@ -10,7 +10,7 @@ CREATE TABLE history (year, event) AS VALUES
 (1996, 'PostgreSQL'),
 (2016, 'Graph');
 
-DROP GRAPH agens;
+DROP GRAPH agens CASCADE;
 CREATE GRAPH agens;
 
 --

@@ -7,7 +7,7 @@ NOTICE:  table "history" does not exist, skipping
 CREATE TABLE history (year, event) AS VALUES
 (1996, 'PostgreSQL'),
 (2016, 'Graph');
-DROP GRAPH agens;
+DROP GRAPH agens CASCADE;
 ERROR:  graph "agens" does not exist
 CREATE GRAPH agens;
 --
