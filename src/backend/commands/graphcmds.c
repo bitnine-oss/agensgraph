@@ -252,10 +252,12 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 	{
 		RangeVar   *parent = (RangeVar *) lfirst(entry);
 		Oid			parent_labid;
+		Oid			graphid;
 		HeapTuple	tuple;
 		Form_ag_label labtup;
 
-		parent_labid = get_labname_labid(parent->relname, parent->schemaname);
+		graphid = get_graphname_oid(parent->schemaname);
+		parent_labid = get_labname_labid(parent->relname, graphid);
 
 		tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(parent_labid));
 		if (!HeapTupleIsValid(tuple))
@@ -310,6 +312,7 @@ ObjectAddress
 RenameLabel(RenameStmt *stmt)
 {
 	Oid			labid;
+	Oid			graphid;
 	HeapTuple	tup;
 	Relation	rel;
 	ObjectAddress address;
@@ -319,12 +322,16 @@ RenameLabel(RenameStmt *stmt)
 
 	rel = heap_open(LabelRelationId, RowExclusiveLock);
 
+	graphid = get_graphname_oid(stmt->relation->schemaname);
+
 	tup = SearchSysCacheCopy2(LABELNAME,
 							  CStringGetDatum(stmt->relation->relname),
-							  CStringGetDatum(stmt->relation->schemaname));
+							  ObjectIdGetDatum(graphid));
 
 	if (!HeapTupleIsValid(tup))
 	{
+		heap_close(rel, NoLock);
+
 		ereport(NOTICE,
 				(errmsg("label \"%s\" does not exist, skipping",
 						stmt->relation->relname)));

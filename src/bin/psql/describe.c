@@ -4830,7 +4830,7 @@ listLabels(const char *pattern, bool verbose, const char labkind)
 
 	initPQExpBuffer(&buf);
 	printfPQExpBuffer(&buf,
-		"SELECT l.graphname AS \"%s\",\n"
+		"SELECT g.graphname AS \"%s\",\n"
 		"  l.labname AS \"%s\",\n"
 		"  CASE l.labkind\n"
 		"    WHEN 'v' THEN '%s'\n"
@@ -4851,7 +4851,8 @@ listLabels(const char *pattern, bool verbose, const char labkind)
 
 	appendPQExpBuffer(&buf,
 		"\nFROM pg_catalog.ag_label l\n"
-		"  LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid\n");
+		"  LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid\n"
+		"  LEFT JOIN pg_catalog.ag_graph g ON g.oid = l.graphid\n");
 
 	appendPQExpBufferStr(&buf, "WHERE l.labkind IN (");
 	if (showVertices)
@@ -4861,7 +4862,7 @@ listLabels(const char *pattern, bool verbose, const char labkind)
 	appendPQExpBufferStr(&buf, "'')\n");	/* dummy */
 
 	processSQLNamePattern(pset.db, &buf, pattern, true, false,
-						  "l.graphname", "l.labname", NULL, NULL);
+						  "g.graphname", "l.labname", NULL, NULL);
 
 	appendPQExpBufferStr(&buf, "ORDER BY 1, 3, 2;");
 
