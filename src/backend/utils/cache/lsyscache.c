@@ -3080,11 +3080,11 @@ get_graphname_oid(const char *graphname)
  * Returns InvalidOid if there is no such label.
  */
 Oid
-get_labname_labid(const char *labname, const char *graphname)
+get_labname_labid(const char *labname, Oid graphid)
 {
 	return GetSysCacheOid2(LABELNAME,
 						   PointerGetDatum(labname),
-						   PointerGetDatum(graphname));
+						   ObjectIdGetDatum(graphid));
 }
 
 /*
