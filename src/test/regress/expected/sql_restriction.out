@@ -1,0 +1,63 @@
+--
+-- SQL Restriction with Graph objects
+--
+-- prepare
+CREATE GRAPH g;
+CREATE ROLE tmp;
+--
+-- ALTER SCHEMA
+--
+ALTER SCHEMA g RENAME TO s;
+ERROR:  cannot rename schema "g"
+HINT:  Use RENAME GRAPH instead
+ALTER SCHEMA g OWNER TO tmp;
+ERROR:  cannot alter schema "g"
+HINT:  Use ALTER GRAPH instead
+--
+-- CREATE TABLE
+--
+CREATE TABLE g.t (i int);
+ERROR:  cannot create table in graph schema
+CREATE TABLE t (i int) INHERITS (g.ag_vertex);
+ERROR:  invalid parent, table cannot inherit label
+--
+-- ALTER TABLE
+--
+CREATE VLABEL v;
+ALTER TABLE g.v ADD COLUMN tmp int;
+ERROR:  cannot ALTER TABLE on graph label
+ALTER TABLE g.v RENAME TO e;
+ERROR:  cannot rename table "v"
+HINT:  Use rename label instead
+ALTER TABLE g.v OWNER TO tmp;
+ERROR:  cannot ALTER TABLE on graph label
+--
+-- TRIGGER
+--
+CREATE TRIGGER tt AFTER INSERT ON g.v 
+FOR EACH STATEMENT EXECUTE PROCEDURE ff();
+ERROR:  cannot create trigger on graph label
+--
+-- RULE
+--
+CREATE VLABEL v2;
+CREATE RULE rr AS ON INSERT TO g.v DO INSTEAD
+	INSERT INTO g.v2 VALUES (new.id, new.properties);
+ERROR:  cannot create rule on graph label
+--
+-- DML
+--
+INSERT INTO g.v VALUES ('1234.56', NULL);
+ERROR:  DML query to graph objcts is not allowed
+UPDATE g.v SET properties='{"update":"impossible"}' WHERE id = '1234.56';
+ERROR:  DML query to graph objcts is not allowed
+DELETE FROM g.v;
+ERROR:  DML query to graph objcts is not allowed
+-- cleanup
+DROP ROLE tmp;
+DROP GRAPH g CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label v
+drop cascades to label v2

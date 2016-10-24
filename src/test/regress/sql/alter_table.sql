@@ -1842,18 +1842,3 @@ ALTER TABLE test_add_column
 	ADD COLUMN c4 integer;
 \d test_add_column
 DROP TABLE test_add_column;
-
---
--- ALTER TABLE restriction with graph objects
---
-
-CREATE GRAPH g;
-CREATE VLABEL v;
-CREATE ROLE tmp;
-
-ALTER TABLE g.v ADD COLUMN tmp int;
-ALTER TABLE g.v RENAME TO e;
-ALTER TABLE g.v OWNER TO tmp;
-
-DROP GRAPH g CASCADE;
-DROP ROLE tmp;
