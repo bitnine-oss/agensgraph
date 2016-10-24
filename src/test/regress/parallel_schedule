@@ -117,5 +117,8 @@ test: cypher_dml graphid
 # run cypher ddl test
 test: cypher_ddl
 
+# run sql restriction test
+test: sql_restriction
+
 # run property index
 test: propertyindex
