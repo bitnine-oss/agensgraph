@@ -23,11 +23,12 @@ SHOW graph_path;
 (1 row)
 
 -- check default graph objects
-SELECT graphname, labname, labkind FROM pg_catalog.ag_label;
- graphname |  labname  | labkind 
------------+-----------+---------
- g         | ag_vertex | v
- g         | ag_edge   | e
+\dGl
+             List of labels
+ Graph |   Name    |  Type  |   Owner    
+-------+-----------+--------+------------
+ g     | ag_edge   | edge   | graph_role
+ g     | ag_vertex | vertex | graph_role
 (2 rows)
 
 --

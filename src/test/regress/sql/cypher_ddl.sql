@@ -17,7 +17,7 @@ CREATE GRAPH g;
 SHOW graph_path;
 
 -- check default graph objects
-SELECT graphname, labname, labkind FROM pg_catalog.ag_label;
+\dGl
 
 --
 -- ALTER GRAPH
