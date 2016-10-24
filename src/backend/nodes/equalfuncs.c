@@ -2667,6 +2667,17 @@ _equalCreateLabelStmt(const CreateLabelStmt *a, const CreateLabelStmt *b)
 }
 
 static bool
+_equalAlterLabelStmt(const AlterLabelStmt *a, const AlterLabelStmt *b)
+{
+	COMPARE_NODE_FIELD(relation);
+	COMPARE_NODE_FIELD(cmds);
+	COMPARE_SCALAR_FIELD(relkind);
+	COMPARE_SCALAR_FIELD(missing_ok);
+
+	return true;
+}
+
+static bool
 _equalCypherStmt(const CypherStmt *a, const CypherStmt *b)
 {
 	COMPARE_NODE_FIELD(last);
@@ -3594,6 +3605,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CreateLabelStmt:
 			retval = _equalCreateLabelStmt(a, b);
+			break;
+		case T_AlterLabelStmt:
+			retval = _equalAlterLabelStmt(a, b);
 			break;
 
 		case T_CypherStmt:

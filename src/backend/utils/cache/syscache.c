@@ -509,7 +509,7 @@ static const struct cachedesc cacheinfo[] = {
 		2,
 		{
 			Anum_ag_label_labname,
-			Anum_ag_label_graphname,
+			Anum_ag_label_graphid,
 			0,
 			0
 		},

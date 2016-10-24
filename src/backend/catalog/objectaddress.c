@@ -1931,6 +1931,7 @@ static ObjectAddress
 get_object_address_label(List *objname, bool missing_ok)
 {
 	ObjectAddress address;
+	Oid			graphid;
 	char	   *graphname;
 	char	   *labname;
 
@@ -1951,8 +1952,9 @@ get_object_address_label(List *objname, bool missing_ok)
 							NameListToString(objname))));
 	}
 
+	graphid = get_graphname_oid(graphname);
 	address.classId = LabelRelationId;
-	address.objectId = get_labname_labid(labname, graphname);
+	address.objectId = get_labname_labid(labname, graphid);
 	address.objectSubId = 0;
 
 	if (!OidIsValid(address.objectId) && !missing_ok)
