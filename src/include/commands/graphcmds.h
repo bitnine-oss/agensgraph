@@ -22,5 +22,7 @@ extern void CheckDropLabel(ObjectType removeType, Oid labid);
 extern void CheckInheritLabel(CreateStmt *stmt);
 
 extern bool RangeVarIsLabel(RangeVar *rel);
+extern ObjectAddress RenameGraph(const char *oldname, const char *newname);
+extern ObjectAddress RenameLabel(RenameStmt *stmt);
 
 #endif	/* GRAPHCMDS_H */

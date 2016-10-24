@@ -17,6 +17,7 @@
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "utils/rel.h"
+#include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
 static void InsertAgLabelTuple(Relation ag_label_desc, Oid labid,
@@ -74,7 +75,7 @@ static void
 InsertAgLabelTuple(Relation ag_label_desc, Oid labid, RangeVar *label,
 				   Oid relid, char labkind)
 {
-	char	   *graphname = label->schemaname;
+	Oid			graphid = get_graphname_oid(label->schemaname);
 	char	   *labname = label->relname;
 	Datum		values[Natts_ag_label];
 	bool		nulls[Natts_ag_label];
@@ -83,7 +84,7 @@ InsertAgLabelTuple(Relation ag_label_desc, Oid labid, RangeVar *label,
 	AssertArg(labkind == LABEL_KIND_VERTEX || labkind == LABEL_KIND_EDGE);
 
 	values[Anum_ag_label_labname - 1] = CStringGetDatum(labname);
-	values[Anum_ag_label_graphname - 1] = CStringGetDatum(graphname);
+	values[Anum_ag_label_graphid - 1] = CStringGetDatum(graphid);
 	values[Anum_ag_label_relid - 1] = ObjectIdGetDatum(relid);
 	values[Anum_ag_label_labkind - 1] = CharGetDatum(labkind);
 
