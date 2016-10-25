@@ -3326,4 +3326,15 @@ typedef struct CypherSetProp
 	Node	   *expr;
 } CypherSetProp;
 
+typedef struct CypherVLR
+{
+	NodeTag		type;
+	CypherNode *larg;
+	Node	   *largVar;
+	CypherNode *rarg;
+	Node	   *rargVar;
+	CypherRel  *rel;
+	char       *name;
+} CypherVLR;
+
 #endif   /* PARSENODES_H */
