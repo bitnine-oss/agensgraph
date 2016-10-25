@@ -474,6 +474,7 @@ typedef enum NodeTag
 	T_CypherRel,
 	T_CypherName,
 	T_CypherSetProp,
+	T_CypherVLR,
 
 	/*
 	 * TAGS FOR REPLICATION GRAMMAR PARSE NODES (replnodes.h)
