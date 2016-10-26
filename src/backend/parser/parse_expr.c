@@ -2696,7 +2696,30 @@ transformJsonObject(ParseState *pstate, JsonObject *jo)
 	{
 		JsonKeyVal *keyval = (JsonKeyVal *) lfirst(lp);
 
-		args = lappend(args, keyval->key);
+		if (IsA(keyval->key, ColumnRef))
+		{
+			ColumnRef *cref = (ColumnRef *) keyval->key;
+
+			if (list_length(cref->fields) < 2)
+			{
+				A_Const *c = makeNode(A_Const);
+
+				c->val.type = T_String;
+				c->val.val.str = strVal(linitial(cref->fields));
+				c->location = cref->location;
+
+				args = lappend(args, c);
+			}
+			else
+			{
+				args = lappend(args, keyval->key);
+			}
+		}
+		else
+		{
+			args = lappend(args, keyval->key);
+		}
+
 		args = lappend(args, keyval->val);
 	}
 
