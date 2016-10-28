@@ -34,6 +34,8 @@
 #include "utils/typcache.h"
 
 #define CYPHER_SUBQUERY_ALIAS	"_"
+#define CYPHER_OPTLEFT_ALIAS	"_l"
+#define CYPHER_OPTRIGHT_ALIAS	"_r"
 
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
@@ -68,6 +70,11 @@ static Node *addQualForNode(ParseState *pstate, Node *qual, CypherNode *cnode,
 static char *getEdgeColname(CypherRel *crel, bool last);
 static Node *makePropMapQual(ParseState *pstate, Node *elem, Node *expr);
 static Node *addQualUnique(ParseState *pstate, Node *qual, List *exprs);
+static RangeTblEntry *transformOptionalClause(ParseState *pstate,
+											  CypherClause *clause);
+static Node *getQualForJoin(ParseState *pstate,
+							RangeTblEntry *l_rte, RangeTblEntry *r_rte,
+							List **res_colnames, List **res_colvars);
 
 /* CREATE */
 static List *transformCreatePattern(ParseState *pstate, List *pattern,
@@ -92,11 +99,15 @@ static Node *preprocessPropMap(Node *expr);
 
 /* transform */
 static RangeTblEntry *transformClause(ParseState *pstate, Node *clause,
-									  Alias *alias);
+									  Alias *alias, bool add);
 static void addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte,
 							 bool visible);
+static Node *transformClauseJoin(ParseState *pstate, Node *clause,
+								 Alias *alias, RangeTblEntry **rte,
+								 ParseNamespaceItem **nsitem);
 static RangeTblEntry *findRTEfromNamespace(ParseState *pstate, char *refname);
 static List *makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte);
+static List *makeTargetListFromJoin(ParseState *pstate, RangeTblEntry *rte);
 static TargetEntry *makeWholeRowTarget(ParseState *pstate, RangeTblEntry *rte);
 static TargetEntry *findTarget(List *targetList, char *resname);
 
@@ -110,6 +121,7 @@ static Node *getElemField(ParseState *pstate, Node *elem, char *fname);
 /* expression - common */
 static Node *getColumnVar(ParseState *pstate, RangeTblEntry *rte,
 						  char *colname);
+static Node *getExprField(Expr *expr, char *fname);
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
 static Alias *makeAliasOptUnique(char *aliasname);
 static Node *makeArrayExpr(Oid typarray, Oid typoid, List *elems);
@@ -182,7 +194,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		AssertArg(detail->kind == CP_WITH);
 
 		detail->where = NULL;
-		rte = transformClause(pstate, (Node *) clause, NULL);
+		rte = transformClause(pstate, (Node *) clause, NULL, true);
 		detail->where = where;
 
 		qry->targetList = makeTargetListFromRTE(pstate, rte);
@@ -206,7 +218,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		detail->order = NIL;
 		detail->skip = NULL;
 		detail->limit = NULL;
-		rte = transformClause(pstate, (Node *) clause, NULL);
+		rte = transformClause(pstate, (Node *) clause, NULL, true);
 		detail->distinct = distinct;
 		detail->order = order;
 		detail->skip = skip;
@@ -245,7 +257,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	else
 	{
 		if (clause->prev != NULL)
-			transformClause(pstate, clause->prev, NULL);
+			transformClause(pstate, clause->prev, NULL, true);
 
 		qry->targetList = transformTargetList(pstate, detail->items,
 											  EXPR_KIND_SELECT_TARGET);
@@ -278,43 +290,53 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	CypherMatchClause *detail = (CypherMatchClause *) clause->detail;
 	Query	   *qry;
 	RangeTblEntry *rte;
-	Node	   *qual;
+	Node	   *qual = NULL;
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
-	if (detail->where != NULL)
+	if (detail->optional && clause->prev != NULL)
 	{
-		Node *where = detail->where;
+		rte = transformOptionalClause(pstate, clause);
 
-		/*
-		 * detach WHERE clause so that this funcion passes through
-		 * this if statement when the function is called again recursively
-		 */
-		detail->where = NULL;
-		rte = transformClause(pstate, (Node *) clause, NULL);
-		detail->where = where;
-
-		qry->targetList = makeTargetListFromRTE(pstate, rte);
-
-		qual = transformWhereClause(pstate, where, EXPR_KIND_WHERE, "WHERE");
+		qry->targetList = makeTargetListFromJoin(pstate, rte);
 	}
 	else
 	{
-		List *components = makeComponents(detail->pattern);
-
-		if (clause->prev != NULL)
+		if (detail->where != NULL)
 		{
-			rte = transformClause(pstate, clause->prev, NULL);
+			Node *where = detail->where;
 
 			/*
-			 * To do this at here is safe since it just uses transformed
-			 * expression and does not look over the ancestors of `pstate`.
+			 * detach WHERE clause so that this funcion passes through
+			 * this if statement when the function is called again recursively
 			 */
-			qry->targetList = makeTargetListFromRTE(pstate, rte);
-		}
+			detail->where = NULL;
+			rte = transformClause(pstate, (Node *) clause, NULL, true);
+			detail->where = where;
 
-		qual = transformComponents(pstate, components, &qry->targetList);
+			qry->targetList = makeTargetListFromRTE(pstate, rte);
+
+			qual = transformWhereClause(pstate, where, EXPR_KIND_WHERE,
+										"WHERE");
+		}
+		else
+		{
+			List *components = makeComponents(detail->pattern);
+
+			if (clause->prev != NULL)
+			{
+				rte = transformClause(pstate, clause->prev, NULL, true);
+
+				/*
+				 * To do this at here is safe since it just uses transformed
+				 * expression and does not look over the ancestors of `pstate`.
+				 */
+				qry->targetList = makeTargetListFromRTE(pstate, rte);
+			}
+
+			qual = transformComponents(pstate, components, &qry->targetList);
+		}
 	}
 
 	markTargetListOrigins(pstate, qry->targetList);
@@ -327,6 +349,160 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	assign_query_collations(pstate, qry);
 
 	return qry;
+}
+
+/* See transformFromClauseItem() */
+static RangeTblEntry *
+transformOptionalClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherMatchClause *detail = (CypherMatchClause *) clause->detail;
+	JoinExpr   *j = makeNode(JoinExpr);
+	Alias	   *l_alias;
+	RangeTblEntry *l_rte;
+	ParseNamespaceItem *l_nsitem;
+	Node	   *prevclause;
+	Alias	   *r_alias;
+	RangeTblEntry *r_rte;
+	ParseNamespaceItem *r_nsitem;
+	List	   *res_colnames = NIL;
+	List	   *res_colvars = NIL;
+	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
+	int			i;
+
+	j->jointype = JOIN_LEFT;
+
+	/* transform LEFT */
+	l_alias = makeAliasNoDup(CYPHER_OPTLEFT_ALIAS, NIL);
+	j->larg = transformClauseJoin(pstate, clause->prev, l_alias, &l_rte,
+								  &l_nsitem);
+
+	/* temporal namespace for RIGHT */
+	Assert(pstate->p_namespace == NIL);
+	pstate->p_namespace = lappend(pstate->p_namespace, l_nsitem);
+
+	/* Transform RIGHT. Prevent `clause` from being transformed infinitely. */
+
+	prevclause = clause->prev;
+	clause->prev = NULL;
+	detail->optional = false;
+
+	r_alias = makeAliasNoDup(CYPHER_OPTRIGHT_ALIAS, NIL);
+	j->rarg = transformClauseJoin(pstate, (Node *) clause, r_alias,
+								  &r_rte, &r_nsitem);
+
+	detail->optional = true;
+	clause->prev = prevclause;
+
+	pstate->p_namespace = NIL;
+
+	j->quals = getQualForJoin(pstate, l_rte, r_rte,
+							  &res_colnames, &res_colvars);
+
+	j->alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
+
+	rte = addRangeTableEntryForJoin(pstate, res_colnames, j->jointype,
+									res_colvars, j->alias, true);
+	j->rtindex = RTERangeTablePosn(pstate, rte, NULL);
+
+	for (i = list_length(pstate->p_joinexprs) + 1; i < j->rtindex; i++)
+		pstate->p_joinexprs = lappend(pstate->p_joinexprs, NULL);
+	pstate->p_joinexprs = lappend(pstate->p_joinexprs, j);
+	Assert(list_length(pstate->p_joinexprs) == j->rtindex);
+
+	pstate->p_joinlist = lappend(pstate->p_joinlist, j);
+
+	nsitem = palloc(sizeof(*nsitem));
+	nsitem->p_rte = rte;
+	nsitem->p_rel_visible = true;
+	nsitem->p_cols_visible = true;
+	nsitem->p_lateral_only = false;
+	nsitem->p_lateral_ok = true;
+	pstate->p_namespace = lappend(pstate->p_namespace, nsitem);
+
+	return rte;
+}
+
+static Node *
+getQualForJoin(ParseState *pstate,RangeTblEntry *l_rte, RangeTblEntry *r_rte,
+			   List **res_colnames, List **res_colvars)
+{
+	List	   *l_colnames;
+	List	   *l_colvars;
+	List	   *r_colnames;
+	List	   *r_colvars;
+	ListCell   *r_lname;
+	ListCell   *r_lvar;
+	List	   *colnames = NIL;
+	List	   *colvars = NIL;
+	Node	   *qual = NULL;
+
+	expandRTE(l_rte, RTERangeTablePosn(pstate, l_rte, NULL), 0, -1, false,
+			  &l_colnames, &l_colvars);
+	expandRTE(r_rte, RTERangeTablePosn(pstate, r_rte, NULL), 0, -1, false,
+			  &r_colnames, &r_colvars);
+
+	*res_colnames = list_concat(*res_colnames, l_colnames);
+	*res_colvars = list_concat(*res_colvars, l_colvars);
+
+	forboth(r_lname, r_colnames, r_lvar, r_colvars)
+	{
+		char	   *r_colname = strVal(lfirst(r_lname));
+		ListCell   *lname;
+		ListCell   *lvar;
+		Var		   *var = NULL;
+
+		forboth(lname, *res_colnames, lvar, *res_colvars)
+		{
+			char *colname = strVal(lfirst(lname));
+
+			if (strcmp(r_colname, colname) == 0)
+			{
+				var = lfirst(lvar);
+				break;
+			}
+		}
+
+		if (var == NULL)
+		{
+			colnames = lappend(colnames, lfirst(r_lname));
+			colvars = lappend(colvars, lfirst(r_lvar));
+		}
+		else
+		{
+			Var		   *r_var = lfirst(r_lvar);
+			Oid			vartype;
+			Oid			r_vartype;
+			Expr	   *eq_expr;
+
+			vartype = exprType((Node *) var);
+			r_vartype = exprType((Node *) r_var);
+			if (vartype != r_vartype)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("variable type mismatch")));
+			}
+			if (vartype != VERTEXOID && vartype != EDGEOID)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("expected node or relationship")));
+			}
+
+			eq_expr = make_op(pstate, list_make1(makeString("=")),
+							  getExprField((Expr *) var, AG_ELEM_LOCAL_ID),
+							  getExprField((Expr *) r_var, AG_ELEM_LOCAL_ID),
+							  -1);
+
+			qual = qualAndExpr(pstate, qual, (Node *) eq_expr);
+		}
+	}
+
+	*res_colnames = list_concat(*res_colnames, colnames);
+	*res_colvars = list_concat(*res_colvars, colvars);
+
+	return qual;
 }
 
 Query *
@@ -364,7 +540,7 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	{
 		RangeTblEntry *rte;
 
-		rte = transformClause(pstate, (Node *) prevclause, NULL);
+		rte = transformClause(pstate, (Node *) prevclause, NULL, true);
 
 		qry->targetList = makeTargetListFromRTE(pstate, rte);
 	}
@@ -405,7 +581,7 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	 * Instead of `resultRelation`, use FROM list because there might be
 	 * multiple labels to access.
 	 */
-	rte = transformClause(pstate, clause->prev, NULL);
+	rte = transformClause(pstate, clause->prev, NULL, true);
 
 	/* select all from previous clause */
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
@@ -456,7 +632,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.writeOp = GWROP_SET;
 	qry->graph.last = (pstate->parentParseState == NULL);
 
-	rte = transformClause(pstate, clause->prev, NULL);
+	rte = transformClause(pstate, clause->prev, NULL, true);
 
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
 
@@ -486,7 +662,7 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 
 	if (clause->prev != NULL)
 	{
-		rte = transformClause(pstate, clause->prev, NULL);
+		rte = transformClause(pstate, clause->prev, NULL, true);
 
 		qry->targetList = makeTargetListFromRTE(pstate, rte);
 	}
@@ -1539,7 +1715,7 @@ preprocessPropMap(Node *expr)
 }
 
 static RangeTblEntry *
-transformClause(ParseState *pstate, Node *clause, Alias *alias)
+transformClause(ParseState *pstate, Node *clause, Alias *alias, bool add)
 {
 	Query *qry;
 	RangeTblEntry *rte;
@@ -1566,7 +1742,8 @@ transformClause(ParseState *pstate, Node *clause, Alias *alias)
 		elog(ERROR, "unexpected command in previous clause");
 
 	rte = addRangeTableEntryForSubquery(pstate, qry, alias, false, true);
-	addRTEtoJoinlist(pstate, rte, true);
+	if (add)
+		addRTEtoJoinlist(pstate, rte, true);
 
 	return rte;
 }
@@ -1612,6 +1789,29 @@ addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte, bool visible)
 	rtr->rtindex = RTERangeTablePosn(pstate, rte, NULL);
 
 	pstate->p_joinlist = lappend(pstate->p_joinlist, rtr);
+}
+
+static Node *
+transformClauseJoin(ParseState *pstate, Node *clause, Alias *alias,
+					RangeTblEntry **rte, ParseNamespaceItem **nsitem)
+{
+	ParseNamespaceItem *tmp;
+	RangeTblRef *rtr;
+
+	*rte = transformClause(pstate, clause, alias, false);
+
+	tmp = (ParseNamespaceItem *) palloc(sizeof(ParseNamespaceItem));
+	tmp->p_rte = *rte;
+	tmp->p_rel_visible = true;
+	tmp->p_cols_visible = true;
+	tmp->p_lateral_only = true;	/* JOIN_LEFT */
+	tmp->p_lateral_ok = true;
+	*nsitem = tmp;
+
+	rtr = makeNode(RangeTblRef);
+	rtr->rtindex = RTERangeTablePosn(pstate, *rte, NULL);
+
+	return (Node *) rtr;
 }
 
 /* just find RTE of `refname` in the current namespace */
@@ -1681,6 +1881,31 @@ makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte)
 
 		varattno++;
 		ln = lnext(ln);
+	}
+
+	return targetlist;
+}
+
+static List *
+makeTargetListFromJoin(ParseState *pstate, RangeTblEntry *rte)
+{
+	List	   *targetlist = NIL;
+	ListCell   *lt;
+	ListCell   *ln;
+
+	AssertArg(rte->rtekind == RTE_JOIN);
+
+	forboth(lt, rte->joinaliasvars, ln, rte->eref->colnames)
+	{
+		Var		   *varnode = lfirst(lt);
+		char	   *resname = strVal(lfirst(ln));
+		TargetEntry *tmp;
+
+		tmp = makeTargetEntry((Expr *) varnode,
+							  (AttrNumber) pstate->p_next_resno++,
+							  pstrdup(resname),
+							  false);
+		targetlist = lappend(targetlist, tmp);
 	}
 
 	return targetlist;
@@ -1802,35 +2027,10 @@ getElemField(ParseState *pstate, Node *elem, char *fname)
 	else
 	{
 		TargetEntry *te = (TargetEntry *) elem;
-		Oid			typoid;
-		TupleDesc	tupdesc;
-		int			idx;
-		Form_pg_attribute attr = NULL;
-		FieldSelect *fselect;
 
 		AssertArg(IsA(elem, TargetEntry));
 
-		typoid = exprType((Node *) te->expr);
-		Assert(typoid == VERTEXOID || typoid == EDGEOID);
-
-		tupdesc = lookup_rowtype_tupdesc_copy(typoid, -1);
-		for (idx = 0; idx < tupdesc->natts; idx++)
-		{
-			attr = tupdesc->attrs[idx];
-
-			if (namestrcmp(&attr->attname, fname) == 0)
-				break;
-		}
-		Assert(idx < tupdesc->natts);
-
-		fselect = makeNode(FieldSelect);
-		fselect->arg = te->expr;
-		fselect->fieldnum = idx + 1;
-		fselect->resulttype = attr->atttypid;
-		fselect->resulttypmod = attr->atttypmod;
-		fselect->resultcollid = attr->attcollation;
-
-		return (Node *) fselect;
+		return getExprField(te->expr, fname);
 	}
 }
 
@@ -1866,6 +2066,37 @@ getColumnVar(ParseState *pstate, RangeTblEntry *rte, char *colname)
 
 	elog(ERROR, "column \"%s\" not found (internal error)", colname);
 	return NULL;
+}
+
+static Node *
+getExprField(Expr *expr, char *fname)
+{
+	Oid			typoid;
+	TupleDesc	tupdesc;
+	int			idx;
+	Form_pg_attribute attr = NULL;
+	FieldSelect *fselect;
+
+	typoid = exprType((Node *) expr);
+
+	tupdesc = lookup_rowtype_tupdesc_copy(typoid, -1);
+	for (idx = 0; idx < tupdesc->natts; idx++)
+	{
+		attr = tupdesc->attrs[idx];
+
+		if (namestrcmp(&attr->attname, AG_ELEM_LOCAL_ID) == 0)
+			break;
+	}
+	Assert(idx < tupdesc->natts);
+
+	fselect = makeNode(FieldSelect);
+	fselect->arg = expr;
+	fselect->fieldnum = idx + 1;
+	fselect->resulttype = attr->atttypid;
+	fselect->resulttypmod = attr->atttypmod;
+	fselect->resultcollid = attr->attcollation;
+
+	return (Node *) fselect;
 }
 
 /* same as makeAlias() but no pstrdup(aliasname) */

@@ -565,7 +565,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 				cypher_path_chain cypher_path_chain_opt_parens cypher_pattern
 				cypher_setitem_list cypher_types cypher_types_opt
 %type <str>		cypher_varname
-%type <boolean>	cypher_detach_opt cypher_rel_left cypher_rel_right
+%type <boolean>	cypher_detach_opt cypher_optional_opt cypher_rel_left
+				cypher_rel_right
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -639,7 +640,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	NOT NOTHING NOTIFY NOTNULL NOWAIT NULL_P NULLIF
 	NULLS_P NUMERIC
 
-	OBJECT_P OF OFF OFFSET OIDS ON ONLY OPERATOR OPTION OPTIONS OR
+	OBJECT_P OF OFF OFFSET OIDS ON ONLY OPERATOR OPTION OPTIONAL OPTIONS OR
 	ORDER ORDINALITY OUT_P OUTER_P OVER OVERLAPS OVERLAY OWNED OWNER
 
 	PARALLEL PARSER PARTIAL PARTITION PASSING PASSWORD PLACING PLANS POLICY
@@ -729,13 +730,13 @@ static Node *wrapCypherWithSelect(Node *stmt);
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
  * To support Cypher, the precedence of unreserved keywords,
- * DELETE_P, DETACH, LOAD, REMOVE, SIZE and SKIP must be the same as that of
- * IDENT so that they can follow a_expr without creating postfix-operator
- * problems.
+ * DELETE_P, DETACH, LOAD, OPTIONAL, REMOVE, SIZE and SKIP must be the same as
+ * that of IDENT so that they can follow a_expr without creating
+ * postfix-operator problems.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			DELETE_P DETACH LOAD REMOVE SIZE SKIP
+			DELETE_P DETACH LOAD OPTIONAL REMOVE SIZE SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -14032,6 +14033,7 @@ unreserved_keyword:
 			| OIDS
 			| OPERATOR
 			| OPTION
+			| OPTIONAL
 			| OPTIONS
 			| ORDINALITY
 			| OVER
@@ -14627,13 +14629,19 @@ cypher_clause:
 		;
 
 cypher_match:
-			MATCH cypher_pattern where_clause
+			cypher_optional_opt MATCH cypher_pattern where_clause
 				{
 					CypherMatchClause *n = makeNode(CypherMatchClause);
-					n->pattern = $2;
-					n->where = $3;
+					n->pattern = $3;
+					n->where = $4;
+					n->optional = $1;
 					$$ = (Node *) n;
 				}
+		;
+
+cypher_optional_opt:
+			OPTIONAL			{ $$ = true; }
+			| /* EMPTY */		{ $$ = false; }
 		;
 
 cypher_return:

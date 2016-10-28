@@ -326,6 +326,68 @@ ERROR:  invalid reference to FROM-clause entry for table "a"
 LINE 1: MATCH (a {'name': a.properties->'name'}) RETURN *;
                           ^
 HINT:  There is an entry for table "a", but it cannot be referenced from this part of the query.
+-- OPTIONAL MATCH
+CREATE GRAPH o;
+SET graph_path = o;
+CREATE VLABEL person;
+CREATE ELABEL knows;
+CREATE (:person {name: 'someone'})-[:knows]->(:person {name: 'somebody'}),
+       (:person {name: 'anybody'})-[:knows]->(:person {name: 'nobody'});
+OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q)
+RETURN n.name AS n, type(r) AS r, p.name AS p,
+       m.name AS m, type(s) AS s, q.name AS q
+ORDER BY n, p, m, s;
+    n    |   r   |    p     |    m    |   s   |    q     
+---------+-------+----------+---------+-------+----------
+ anybody | knows | nobody   | anybody | knows | nobody
+ anybody | knows | nobody   | someone | knows | somebody
+ someone | knows | somebody | anybody | knows | nobody
+ someone | knows | somebody | someone | knows | somebody
+(4 rows)
+
+MATCH (n:person), (m:person) WHERE id(n) <> id(m)
+OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q)
+RETURN n.name AS n, type(r) AS r, p.name AS p,
+       m.name AS m, type(s) AS s, q.name AS q
+ORDER BY n, p, m, s;
+    n     |   r   |    p     |    m     |   s   |    q     
+----------+-------+----------+----------+-------+----------
+ anybody  | knows | nobody   | someone  | knows | somebody
+ anybody  |       |          | nobody   |       | 
+ anybody  |       |          | somebody |       | 
+ nobody   |       |          | anybody  |       | 
+ nobody   |       |          | somebody |       | 
+ nobody   |       |          | someone  |       | 
+ somebody |       |          | anybody  |       | 
+ somebody |       |          | nobody   |       | 
+ somebody |       |          | someone  |       | 
+ someone  | knows | somebody | anybody  | knows | nobody
+ someone  |       |          | nobody   |       | 
+ someone  |       |          | somebody |       | 
+(12 rows)
+
+MATCH (n:person), (m:person) WHERE id(n) <> id(m)
+OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q) WHERE m.name = 'someone'
+RETURN n.name AS n, type(r) AS r, p.name AS p,
+       m.name AS m, type(s) AS s, q.name AS q
+ORDER BY n, p, m, s;
+    n     |   r   |   p    |    m     |   s   |    q     
+----------+-------+--------+----------+-------+----------
+ anybody  | knows | nobody | someone  | knows | somebody
+ anybody  |       |        | nobody   |       | 
+ anybody  |       |        | somebody |       | 
+ nobody   |       |        | anybody  |       | 
+ nobody   |       |        | somebody |       | 
+ nobody   |       |        | someone  |       | 
+ somebody |       |        | anybody  |       | 
+ somebody |       |        | nobody   |       | 
+ somebody |       |        | someone  |       | 
+ someone  |       |        | anybody  |       | 
+ someone  |       |        | nobody   |       | 
+ someone  |       |        | somebody |       | 
+(12 rows)
+
+SET graph_path = agens;
 --
 -- DISTINCT
 --
@@ -577,6 +639,12 @@ NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label rel
+DROP GRAPH o CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label person
+drop cascades to label knows
 SET graph_path = agens;
 DROP VLABEL feature;
 DROP ELABEL supported;
