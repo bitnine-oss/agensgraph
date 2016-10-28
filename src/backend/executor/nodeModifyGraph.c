@@ -142,7 +142,8 @@ static void overwiteElemProp(ModifyGraphState *mgstate, Datum id,
 static void removeElemProp(ModifyGraphState *mgstate, Datum id, Datum path);
 static SPIPlanPtr getPreparedplan(Oid labelid, SqlcmdType cmdtype,
 								  char *sqlcmd, int nargs, Oid *argtypes);
-static void InitMGPlanHashTables(void);
+static void InitMGPlanHashTable(MemoryContext mcxt);
+static void EndMGPlanHashTable(void);
 static MGPlan *findPreparedPlan(MGPlanKey *key);
 static MGPlan *savePreparedPlan(MGPlanKey *key, SPIPlanPtr plan);
 
@@ -170,6 +171,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->exprs = (List *) ExecInitExpr((Expr *) mgplan->exprs,
 										   (PlanState *) mgstate);
 	mgstate->sets = ExecInitGraphSets(mgplan->sets, mgstate);
+
+	InitMGPlanHashTable(estate->es_query_cxt);
 
 	return mgstate;
 }
@@ -218,6 +221,7 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 void
 ExecEndModifyGraph(ModifyGraphState *mgstate)
 {
+	EndMGPlanHashTable();
 	ExecFreeExprContext(&mgstate->ps);
 	ExecEndNode(mgstate->subplan);
 }
@@ -1113,15 +1117,39 @@ getPreparedplan(Oid labelid, SqlcmdType cmdtype, char *sqlcmd,
  * ----------
  */
 static void
-InitMGPlanHashTables(void)
+InitMGPlanHashTable(MemoryContext mcxt)
 {
 	HASHCTL		ctl;
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(MGPlanKey);
 	ctl.entrysize = sizeof(MGPlan);
+	ctl.hcxt = mcxt;
+
 	MGPlanCache = hash_create("ModifyGraph plan cache",
-							  128, &ctl, HASH_ELEM | HASH_BLOBS);
+							  128,	/* maximum number of elements expected */
+							  &ctl, HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+}
+
+/* ----------
+ * EndMGPlanHashTable -
+ *
+ *	remove all saved plan and destroy plan hash table for modifyGraphPlan
+ * ----------
+ */
+static void
+EndMGPlanHashTable()
+{
+	HASH_SEQ_STATUS seqStatus;
+	MGPlan	   *mgplan;
+
+	hash_seq_init(&seqStatus, MGPlanCache);
+	while ((mgplan = (MGPlan *) hash_seq_search(&seqStatus)) != NULL)
+	{
+		SPI_freeplan(mgplan->plan);
+	}
+
+	hash_destroy(MGPlanCache);
 }
 
 /* ----------
@@ -1137,11 +1165,7 @@ findPreparedPlan(MGPlanKey *key)
 	MGPlan *entry;
 	SPIPlanPtr	plan;
 
-	/*
-	 * On the first call initialize the hashtable
-	 */
-	if (!MGPlanCache)
-		InitMGPlanHashTables();
+	Assert(MGPlanCache);
 
 	/*
 	 * Lookup for the key
