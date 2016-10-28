@@ -126,6 +126,36 @@ MATCH a=(), a=() RETURN *;
 MATCH (a {'name': properties->'name'}) RETURN *;
 MATCH (a {'name': a.properties->'name'}) RETURN *;
 
+-- OPTIONAL MATCH
+
+CREATE GRAPH o;
+SET graph_path = o;
+
+CREATE VLABEL person;
+CREATE ELABEL knows;
+
+CREATE (:person {name: 'someone'})-[:knows]->(:person {name: 'somebody'}),
+       (:person {name: 'anybody'})-[:knows]->(:person {name: 'nobody'});
+
+OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q)
+RETURN n.name AS n, type(r) AS r, p.name AS p,
+       m.name AS m, type(s) AS s, q.name AS q
+ORDER BY n, p, m, s;
+
+MATCH (n:person), (m:person) WHERE id(n) <> id(m)
+OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q)
+RETURN n.name AS n, type(r) AS r, p.name AS p,
+       m.name AS m, type(s) AS s, q.name AS q
+ORDER BY n, p, m, s;
+
+MATCH (n:person), (m:person) WHERE id(n) <> id(m)
+OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q) WHERE m.name = 'someone'
+RETURN n.name AS n, type(r) AS r, p.name AS p,
+       m.name AS m, type(s) AS s, q.name AS q
+ORDER BY n, p, m, s;
+
+SET graph_path = agens;
+
 --
 -- DISTINCT
 --
@@ -269,6 +299,7 @@ RETURN properties(n) as n, properties(r) as r, properties(m) as m;
 
 DROP GRAPH p CASCADE;
 DROP GRAPH u CASCADE;
+DROP GRAPH o CASCADE;
 
 SET graph_path = agens;
 

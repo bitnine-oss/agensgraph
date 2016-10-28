@@ -4280,6 +4280,7 @@ _copyCypherMatchClause(const CypherMatchClause *from)
 
 	COPY_NODE_FIELD(pattern);
 	COPY_NODE_FIELD(where);
+	COPY_SCALAR_FIELD(optional);
 
 	return newnode;
 }
