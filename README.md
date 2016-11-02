@@ -7,27 +7,41 @@ Agens Graph is a new generation multi-model graph database for the modern comple
 
 Builing from Source
 -------------------
+1. Getting the source
+    ```bash
+    git clone git@github.com:bitnine-oss/agens-graph.git /path/
+    ```
 
-In Linux, you need to run ``configure``
+2. Install libraries
+    * CENTOS
+        ```bash
+        yum install gcc glibc glib-common perl-ExtUtils-Embed readline readline-devel zlib zlib-devel openssl openssl-devel  pam pam-devel libxml2 libxml2-devel libxslt libxslt-devel ldap libldap-devel libpam0g-dev openldap-devel tcl tcl-devel python-devel
+        ```
+    * Fedora
+        ```bash
+        dnf install gcc glibc bison flex perl-ExtUtils-Embed readline readline-devel zlib zlib-devel openssl openssl-devel  pam pam-devel libxml2 libxml2-devel libxslt libxslt-devel openldap-devel tcl tcl-devel python-devel
+        ```
+    * Ubuntu
+        ```bash
+        sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison libxml2-dev libxslt-dev libssl-dev openssl libgnutls-openssl27 libcrypto++-dev libldap2-dev libpam0g-dev tcl-dev python-dev
+        ```
+    * Mac OS X(If you didn't install xcode.)
+        ```bash
+        xcode-select --install
+        ```
 
-`` ./configure ``
+3. Configure the source tree
+    ```bash
+    ag-config.sh
+    ```
+    >If you want to install to a specific folder, you can use ``--prefix=[INSTALL_PATH]`` option.
+    >If ``ag-config.sh`` doesn't find any header with an error message, you can use '--with-includes=/path/' option.
 
-If you want to install to a specific foler, you can do
-
-`` ./configure --prefix=[INSTALL_PATH] ``
-
-then,
- 
-`` make ``
-
-If you want to include various contrib modules, you can do
-
-`` make world ``
-
-* Install
-
-`` make install ``
-
+4. Building & install
+    ```bash
+    make world
+    make install-world
+    ```
 
 License
 -------
