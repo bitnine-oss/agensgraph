@@ -315,6 +315,27 @@ DROP CONSTRAINT ON rege4;
 DROP CONSTRAINT rege4_name_isnull_constraint ON rege4;
 DROP ELABEL rege4;
 
+-- Indirection constraint
+
+CREATE VLABEL regv7;
+
+CREATE CONSTRAINT ON regv7 ASSERT a.b[0].c IS NOT NULL;
+
+CREATE (:regv7 {'a':{'b':ARRAY[{'c':'d'},{'c':'e'}]}});
+CREATE (:regv7 {'a':{'b':ARRAY[{'c':'d'},{'e':'e'}]}});
+CREATE (:regv7 {'a':{'b':ARRAY[{'d':'d'},{'e':'e'}]}});
+
+DROP VLABEL regv7;
+
+-- wrong case
+
+CREATE VLABEL regv8;
+
+CREATE CONSTRAINT ON regv8 ASSERT (select * from graph.regv8).c IS NOT NULL;
+CREATE CONSTRAINT ON regv8 ASSERT (1).c IS NOT NULL;
+CREATE CONSTRAINT ON regv8 ASSERT ($1).c IS NOT NULL;
+
+DROP VLABEL regv8;
 --
 -- DROP GRAPH
 --
