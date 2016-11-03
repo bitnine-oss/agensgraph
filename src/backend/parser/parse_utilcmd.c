@@ -139,11 +139,11 @@ static List *makeEdgeElements(void);
 static List *inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
 static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
+static Node *makePropertiesIndirectionMutator(Node *node, ParseState *pstate);
 static Node *makeColumnRefToPropertiesExpr(ParseState *pstate,
 										   ColumnRef *columnref);
-static Node *makePropertiesColumnRefMutator(Node *node, ParseState *pstate);
-static Node *_makeStringConst(char *str);
-
+static Node *makeIndirectionToPropertiesExpr(ParseState *pstate,
+											 A_Indirection *indirection);
 
 
 /*
@@ -3715,7 +3715,7 @@ transformCreateConstraintStmt(ParseState *pstate,
 			 constraintStmt->graphlabel->relname);
 	}
 
-	propExpr = makePropertiesColumnRefMutator(constraintStmt->expr, pstate);
+	propExpr = makePropertiesIndirectionMutator(constraintStmt->expr, pstate);
 
 	switch (constraintStmt->contype)
 	{
@@ -3821,10 +3821,11 @@ transformDropConstraintStmt(ParseState *pstate,
 }
 
 static Node *
-makePropertiesColumnRefMutator(Node *node, ParseState *pstate)
+makePropertiesIndirectionMutator(Node *node, ParseState *pstate)
 {
 	if (node == NULL)
 		return NULL;
+
 	if (IsA(node, ColumnRef))
 	{
 		Node *newnode;
@@ -3832,20 +3833,25 @@ makePropertiesColumnRefMutator(Node *node, ParseState *pstate)
 
 		return newnode;
 	}
+	if (IsA(node, A_Indirection))
+	{
+		Node *newnode;
+		newnode = makeIndirectionToPropertiesExpr(pstate,
+												  (A_Indirection *) node);
+
+		return newnode;
+	}
 
 	return raw_expression_tree_mutator(node,
-									   makePropertiesColumnRefMutator,
+									   makePropertiesIndirectionMutator,
 									   (void *) pstate);
 }
 
 static Node *
 makeColumnRefToPropertiesExpr(ParseState *pstate, ColumnRef *columnref)
 {
+	A_Indirection *indirection;
 	ColumnRef *properties;
-	ListCell  *lc;
-	Node	  *lexpr;
-	Node	  *rexpr = NULL;
-	StringInfo buf = makeStringInfo();
 
 	if (!IsA(columnref, ColumnRef))
 	{
@@ -3853,50 +3859,51 @@ makeColumnRefToPropertiesExpr(ParseState *pstate, ColumnRef *columnref)
 			 (int) columnref->type);
 	}
 
-	/* make columnref to json get object expr for AG_ELEM_PROP_MAP */
+	/* make a indirection node for AG_ELEM_PROP_MAP */
 	properties = makeNode(ColumnRef);
 	properties->fields = list_make1(makeString(AG_ELEM_PROP_MAP));
 	properties->location = columnref->location;
 
-	/* make jsonb expression getting jsonb object field */
-	lexpr = (Node *) properties;
+	indirection = makeNode(A_Indirection);
+	indirection->arg = (Node *) properties;
+	indirection->indirection = columnref->fields;
 
-	foreach(lc, columnref->fields)
-	{
-		Value *temp = (Value *) lfirst(lc);
-
-		if (!IsA(temp, String))
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("Unrecognized expression type for properties : %d",
-							 (int) columnref->type),
-					 parser_errposition(pstate, columnref->location)));
-		}
-
-		if (list_head(columnref->fields) == lc)
-		{
-			appendStringInfo(buf, "{%s", strVal(temp));
-		}
-		else
-		{
-			appendStringInfo(buf, ",%s", strVal(temp));
-		}
-	}
-	appendStringInfo(buf, "}");
-
-	rexpr = _makeStringConst(buf->data);
-
-	return (Node *) makeSimpleA_Expr(AEXPR_OP, "#>>", lexpr, rexpr, -1);
+	return (Node *) indirection;
 }
 
-static Node *_makeStringConst(char *str)
+static Node *
+makeIndirectionToPropertiesExpr(ParseState *pstate, A_Indirection *indirection)
 {
-	A_Const *aconst = makeNode(A_Const);
+	A_Indirection *result;
+	ColumnRef *properties;
+	ColumnRef *arg;
 
-	aconst->val.type = T_String;
-	aconst->val.val.str = str;
-	aconst->location = -1;
+	if (!IsA(indirection, A_Indirection))
+	{
+		elog(ERROR, "unrecognized expression node for properties : %d",
+			 (int) indirection->type);
+	}
+	if (!IsA(indirection->arg, ColumnRef))
+	{
+		elog(ERROR, "unrecognized field expression type: %d",
+			 (int) indirection->arg->type);
+	}
 
-	return (Node *) aconst;
+	/*
+	 * make a indirection node for AG_ELEM_PROP_MAP.
+	 * indirection of result indirection node is a list that
+	 * fields of ColumnRef node + indirection of A_Indirection node.
+	 */
+	properties = makeNode(ColumnRef);
+	properties->fields = list_make1(makeString(AG_ELEM_PROP_MAP));
+	properties->location = -1;
+
+	arg = (ColumnRef *) indirection->arg;
+
+	result = makeNode(A_Indirection);
+	result->arg = (Node *) properties;
+	result->indirection = list_concat(arg->fields,
+									  indirection->indirection);
+
+	return (Node *) result;
 }
