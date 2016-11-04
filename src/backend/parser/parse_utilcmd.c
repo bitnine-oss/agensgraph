@@ -16,7 +16,8 @@
  * a quick copyObject() call before manipulating the query tree.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2014-2016, Bitnine Inc.
+ * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/parser/parse_utilcmd.c
@@ -31,6 +32,7 @@
 #include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "catalog/ag_graph_fn.h"
+#include "catalog/ag_label.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -44,6 +46,7 @@
 #include "catalog/pg_type.h"
 #include "commands/comment.h"
 #include "commands/defrem.h"
+#include "commands/graphcmds.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
 #include "miscadmin.h"
@@ -136,6 +139,11 @@ static List *makeEdgeElements(void);
 static List *inheritLabelIndex(CreateStmtContext *cxt, CreateLabelStmt *stmt);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
 static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
+static Node *makePropertiesIndirectionMutator(Node *node, ParseState *pstate);
+static Node *makeColumnRefToPropertiesExpr(ParseState *pstate,
+										   ColumnRef *columnref);
+static Node *makeIndirectionToPropertiesExpr(ParseState *pstate,
+											 A_Indirection *indirection);
 
 
 /*
@@ -3662,4 +3670,240 @@ transformAlterLabelStmt(AlterTableStmt *stmt)
 	result->cmds = newcmds;
 
 	return result;
+}
+
+/*
+ * transformCreateConstraintStmt - parse analysis for CREATE CONSTRAINT
+ *
+ * this function will transform a CreateConstraintStmt to a AlterTableStmt,
+ * and Returns a AlterTableStmt to be created.
+ */
+Node *
+transformCreateConstraintStmt(ParseState *pstate,
+							  CreateConstraintStmt *constraintStmt)
+{
+	AlterTableStmt *atstmt = makeNode(AlterTableStmt);
+	AlterTableCmd  *atcmd = makeNode(AlterTableCmd);
+	Constraint *constr = makeNode(Constraint);
+	RangeVar   *label;
+	ObjectType	objtype;
+	char	labkind;
+	Oid		labid;
+	Oid		graphid;
+	Node   *propExpr;
+
+	label = constraintStmt->graphlabel;
+	label->schemaname = (label->schemaname) ? label->schemaname :
+											  get_graph_path();
+
+	graphid = get_graphname_oid(label->schemaname);
+	if (graphid == InvalidOid)
+		elog(ERROR, "Invalid graph path \'%s\'", label->schemaname);
+
+	labid = get_labname_labid(label->relname, graphid);
+	labkind = get_labid_labkind(labid);
+
+	if (labkind == LABEL_KIND_VERTEX)
+		objtype = OBJECT_VLABEL;
+	else if (labkind == LABEL_KIND_EDGE)
+		objtype = OBJECT_ELABEL;
+	else
+	{
+		Assert(labkind == '\0');
+
+		elog(ERROR, "label \"%s\" does not exist",
+			 constraintStmt->graphlabel->relname);
+	}
+
+	propExpr = makePropertiesIndirectionMutator(constraintStmt->expr, pstate);
+
+	switch (constraintStmt->contype)
+	{
+		case CONSTR_CHECK:
+		{
+			constr->contype = constraintStmt->contype;
+			constr->conname = constraintStmt->conname;
+			constr->raw_expr = propExpr;
+			constr->initially_valid = true;
+		}
+			break;
+		case CONSTR_UNIQUE:
+		{
+			IndexElem *uniqueElem = makeNode(IndexElem);
+			List *equalOp = list_make1(makeString("="));
+			Node *excludeExpr;
+
+			uniqueElem->expr = propExpr;
+
+			/* Postgres cannot make unique constraint with expression index.
+			 * But, Using EXCLUDE can implement same functionality. */
+			excludeExpr = (Node *)list_make2(uniqueElem, equalOp);
+
+			constr->contype = CONSTR_EXCLUSION;
+			constr->access_method = DEFAULT_INDEX_TYPE;
+			constr->exclusions = list_make1(excludeExpr);
+			constr->conname = constraintStmt->conname;
+			if (constr->conname == NULL)
+			{
+				constr->conname = ChooseRelationName(
+									label->relname,
+									"unique",
+									"constraint",
+									LookupNamespaceNoError(label->schemaname));
+			}
+		}
+			break;
+		default:
+			elog(ERROR, "unrecognized constraint type: %d",
+				 (int) constraintStmt->contype);
+	}
+
+	atcmd->def = (Node *) constr;
+	atcmd->subtype = AT_AddConstraint;
+
+	atstmt->cmds = list_make1(atcmd);
+	atstmt->relkind = objtype;
+	atstmt->relation = label;
+
+	return (Node *) atstmt;
+}
+
+/*
+ * transformDropConstraintStmt - parse analysis for DROP CONSTRAINT
+ *
+ * this function will transform a DropConstraintStmt to a AlterTableStmt,
+ * and Returns a AlterTableStmt to be dropped.
+ */
+Node *
+transformDropConstraintStmt(ParseState *pstate,
+							DropConstraintStmt *constraintStmt)
+{
+	AlterTableStmt *atstmt = makeNode(AlterTableStmt);
+	AlterTableCmd  *atcmd = makeNode(AlterTableCmd);
+	RangeVar *label;
+	ObjectType	objtype;
+	char	labkind;
+	Oid		graphid;
+	Oid		labid;
+
+	label = constraintStmt->graphlabel;
+	label->schemaname = (label->schemaname) ? label->schemaname :
+											  get_graph_path();
+
+	graphid = get_graphname_oid(label->schemaname);
+	if (graphid == InvalidOid)
+		elog(ERROR, "Invalid graph path \'%s\'", label->schemaname);
+
+	labid = get_labname_labid(label->relname, graphid);
+	labkind = get_labid_labkind(labid);
+
+	if (labkind == LABEL_KIND_VERTEX)
+		objtype = OBJECT_VLABEL;
+	else if (labkind == LABEL_KIND_EDGE)
+		objtype = OBJECT_ELABEL;
+	else
+	{
+		Assert(labkind == '\0');
+
+		elog(ERROR, "label \"%s\" does not exist",
+			 constraintStmt->graphlabel->relname);
+	}
+
+	atcmd->subtype = AT_DropConstraint;
+	atcmd->name = constraintStmt->conname;
+	atcmd->behavior = DROP_RESTRICT;
+
+	atstmt->relation = label;
+	atstmt->cmds = list_make1(atcmd);
+	atstmt->relkind = objtype;
+
+	return (Node *) atstmt;
+}
+
+static Node *
+makePropertiesIndirectionMutator(Node *node, ParseState *pstate)
+{
+	if (node == NULL)
+		return NULL;
+
+	if (IsA(node, ColumnRef))
+	{
+		Node *newnode;
+		newnode = makeColumnRefToPropertiesExpr(pstate, (ColumnRef *) node);
+
+		return newnode;
+	}
+	if (IsA(node, A_Indirection))
+	{
+		Node *newnode;
+		newnode = makeIndirectionToPropertiesExpr(pstate,
+												  (A_Indirection *) node);
+
+		return newnode;
+	}
+
+	return raw_expression_tree_mutator(node,
+									   makePropertiesIndirectionMutator,
+									   (void *) pstate);
+}
+
+static Node *
+makeColumnRefToPropertiesExpr(ParseState *pstate, ColumnRef *columnref)
+{
+	A_Indirection *indirection;
+	ColumnRef *properties;
+
+	if (!IsA(columnref, ColumnRef))
+	{
+		elog(ERROR, "unrecognized expression type for properties : %d",
+			 (int) columnref->type);
+	}
+
+	/* make a indirection node for AG_ELEM_PROP_MAP */
+	properties = makeNode(ColumnRef);
+	properties->fields = list_make1(makeString(AG_ELEM_PROP_MAP));
+	properties->location = columnref->location;
+
+	indirection = makeNode(A_Indirection);
+	indirection->arg = (Node *) properties;
+	indirection->indirection = columnref->fields;
+
+	return (Node *) indirection;
+}
+
+static Node *
+makeIndirectionToPropertiesExpr(ParseState *pstate, A_Indirection *indirection)
+{
+	A_Indirection *result;
+	ColumnRef *properties;
+	ColumnRef *arg;
+
+	if (!IsA(indirection, A_Indirection))
+	{
+		elog(ERROR, "unrecognized expression node for properties : %d",
+			 (int) indirection->type);
+	}
+	if (!IsA(indirection->arg, ColumnRef))
+	{
+		elog(ERROR, "unrecognized field expression type: %d",
+			 (int) indirection->arg->type);
+	}
+
+	/*
+	 * make a indirection node for AG_ELEM_PROP_MAP.
+	 * indirection of result indirection node is a list that
+	 * fields of ColumnRef node + indirection of A_Indirection node.
+	 */
+	properties = makeNode(ColumnRef);
+	properties->fields = list_make1(makeString(AG_ELEM_PROP_MAP));
+	properties->location = -1;
+
+	arg = (ColumnRef *) indirection->arg;
+
+	result = makeNode(A_Indirection);
+	result->arg = (Node *) properties;
+	result->indirection = list_concat(arg->fields,
+									  indirection->indirection);
+
+	return (Node *) result;
 }
