@@ -253,6 +253,7 @@ static void write_version_file(char *extrapath);
 static void set_null_conf(void);
 static void test_config_settings(void);
 static void setup_config(void);
+static void setup_config_checkpoint(void);
 static void bootstrap_template1(void);
 static void setup_auth(FILE *cmdfd);
 static void get_su_pwd(void);
@@ -1325,9 +1326,6 @@ setup_config(void)
 							"#log_min_messages = warning",
 							"log_min_messages = log");
 	conflines = replace_token(conflines,
-							"#log_checkpoints = off",
-							"log_checkpoints = on");
-	conflines = replace_token(conflines,
 							"#track_functions = none",
 							"track_functions = all");
 	conflines = replace_token(conflines,
@@ -1496,7 +1494,27 @@ setup_config(void)
 	check_ok();
 }
 
+/*
+ * Set log_checkpoints after create db.
+ */
+static void
+setup_config_checkpoint(void)
+{
+	char	  **conflines;
+	char		path[MAXPGPATH];
 
+	conflines = readfile(conf_file);
+	conflines = replace_token(conflines,
+							"#log_checkpoints = off",
+							"log_checkpoints = on");
+
+	sprintf(path, "%s/postgresql.auto.conf", pg_data);
+
+	writefile(path, conflines);
+
+	free(conflines);
+
+}
 /*
  * run the BKI script in bootstrap mode to create template1
  */
@@ -3378,6 +3396,8 @@ initialize_data_directory(void)
 	make_postgres(cmdfd);
 
 	PG_CMD_CLOSE;
+
+	setup_config_checkpoint();
 
 	check_ok();
 }
