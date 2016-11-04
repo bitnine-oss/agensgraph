@@ -59,8 +59,6 @@ static Node *transformJoinUsingClause(ParseState *pstate,
 static Node *transformJoinOnClause(ParseState *pstate, JoinExpr *j,
 					  List *namespace);
 static RangeTblEntry *transformTableEntry(ParseState *pstate, RangeVar *r);
-static RangeTblEntry *transformCTEReference(ParseState *pstate, RangeVar *r,
-					  CommonTableExpr *cte, Index levelsup);
 static RangeTblEntry *transformRangeSubselect(ParseState *pstate,
 						RangeSubselect *r);
 static RangeTblEntry *transformRangeFunction(ParseState *pstate,
@@ -446,7 +444,7 @@ transformTableEntry(ParseState *pstate, RangeVar *r)
  * transformCTEReference --- transform a RangeVar that references a common
  * table expression (ie, a sub-SELECT defined in a WITH clause)
  */
-static RangeTblEntry *
+RangeTblEntry *
 transformCTEReference(ParseState *pstate, RangeVar *r,
 					  CommonTableExpr *cte, Index levelsup)
 {

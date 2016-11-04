@@ -17,6 +17,8 @@
 #include "parser/parse_node.h"
 
 extern void transformFromClause(ParseState *pstate, List *frmList);
+extern RangeTblEntry *transformCTEReference(ParseState *pstate, RangeVar *r,
+					CommonTableExpr *cte, Index levelsup);
 extern int setTargetTable(ParseState *pstate, RangeVar *relation,
 			   bool inh, bool alsoSource, AclMode requiredPerms);
 extern bool interpretInhOption(InhOption inhOpt);
