@@ -3126,3 +3126,31 @@ get_relid_labid(Oid relid)
 {
 	return GetSysCacheOid1(LABELRELID, ObjectIdGetDatum(relid));
 }
+
+/*
+ * get_labid_labkind
+ *		Returns the labkind associated with a given relation.
+ *
+ * Returns '\0' if there is no such label.
+ */
+char
+get_labid_labkind(Oid labid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		char labkind;
+
+		labkind = labtup->labkind;
+		ReleaseSysCache(tp);
+		return labkind;
+	}
+	else
+	{
+		return '\0';
+	}
+}
