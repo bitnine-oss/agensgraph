@@ -3210,17 +3210,6 @@ raw_expression_tree_walker(Node *node,
 		case T_Alias:
 			/* we assume the colnames list isn't interesting */
 			break;
-		case T_JsonObject:
-			{
-				JsonObject *jsonobj = (JsonObject *)node;
-				foreach(temp, jsonobj->keyvals)
-				{
-					JsonKeyVal *n = (JsonKeyVal*)lfirst(temp);
-					if (walker(n->val, context))
-						return true;
-				}
-			}
-			break;
 		case T_RangeVar:
 			return walker(((RangeVar *) node)->alias, context);
 		case T_GroupingFunc:
@@ -3612,6 +3601,21 @@ raw_expression_tree_walker(Node *node,
 			break;
 		case T_CommonTableExpr:
 			return walker(((CommonTableExpr *) node)->ctequery, context);
+		case T_JsonObject:
+			{
+				JsonObject *jsonobj = (JsonObject *) node;
+
+				foreach(temp, jsonobj->keyvals)
+				{
+					JsonKeyVal *keyval = lfirst(temp);
+
+					if (walker(keyval->key, context))
+						return true;
+					if (walker(keyval->val, context))
+						return true;
+				}
+			}
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));
