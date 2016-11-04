@@ -31,4 +31,5 @@ extern void CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
 extern void DropConstraintCommand(DropConstraintStmt *constraintStmt,
 								  const char *queryString,
 								  ParamListInfo params);
+
 #endif	/* GRAPHCMDS_H */

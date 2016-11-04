@@ -4,8 +4,8 @@
  *		parse analysis for utility commands
  *
  *
- * Portions Copyright (c) 2014-2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016, Bitnine Inc.
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_utilcmd.h
