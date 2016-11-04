@@ -11,8 +11,8 @@
  * be handled easily in a simple depth-first traversal.
  *
  *
- * Portions Copyright (c) 2014-2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2015, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016, Bitnine Inc.
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -4182,6 +4182,27 @@ _copyAlterPolicyStmt(const AlterPolicyStmt *from)
 	return newnode;
 }
 
+static JsonObject *
+_copyJsonObject(const JsonObject *from)
+{
+	JsonObject *newnode = makeNode(JsonObject);
+
+	COPY_NODE_FIELD(keyvals);
+
+	return newnode;
+}
+
+static JsonKeyVal *
+_copyJsonKeyVal(const JsonKeyVal *from)
+{
+	JsonKeyVal *newnode = makeNode(JsonKeyVal);
+
+	COPY_NODE_FIELD(key);
+	COPY_NODE_FIELD(val);
+
+	return newnode;
+}
+
 static CreateGraphStmt *
 _copyCreateGraphStmt(const CreateGraphStmt *from)
 {
@@ -4242,27 +4263,6 @@ _copyDropConstraintStmt(const DropConstraintStmt *from)
 
 	COPY_NODE_FIELD(graphlabel);
 	COPY_STRING_FIELD(conname);
-
-	return newnode;
-}
-
-static JsonObject *
-_copyJsonObject(const JsonObject *from)
-{
-	JsonObject *newnode = makeNode(JsonObject);
-
-	COPY_NODE_FIELD(keyvals);
-
-	return newnode;
-}
-
-static JsonKeyVal *
-_copyJsonKeyVal(const JsonKeyVal *from)
-{
-	JsonKeyVal *newnode = makeNode(JsonKeyVal);
-
-	COPY_NODE_FIELD(key);
-	COPY_NODE_FIELD(val);
 
 	return newnode;
 }
