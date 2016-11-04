@@ -543,11 +543,11 @@ DROP VLABEL regv7;
 -- wrong case
 CREATE VLABEL regv8;
 CREATE CONSTRAINT ON regv8 ASSERT (select * from graph.regv8).c IS NOT NULL;
-ERROR:  unrecognized field expression type: 317
+ERROR:  cannot use subquery in check constraint
 CREATE CONSTRAINT ON regv8 ASSERT (1).c IS NOT NULL;
-ERROR:  unrecognized field expression type: 903
+ERROR:  column notation .c applied to type integer, which is not a composite type
 CREATE CONSTRAINT ON regv8 ASSERT ($1).c IS NOT NULL;
-ERROR:  unrecognized field expression type: 902
+ERROR:  there is no parameter $1
 DROP VLABEL regv8;
 --
 -- DROP GRAPH
