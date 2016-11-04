@@ -3130,7 +3130,7 @@ get_relid_labid(Oid relid)
 
 /*
  * get_labid_labkind
- *		Returns label kind for a given label.
+ *		Returns the labkind associated with a given relation.
  *
  * Returns '\0' if there is no such label.
  */
