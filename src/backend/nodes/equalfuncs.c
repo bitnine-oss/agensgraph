@@ -18,6 +18,7 @@
  * "x" to be considered equal() to another reference to "x" in the query.
  *
  *
+ * Portions Copyright (c) 2016, Bitnine Inc.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -2678,6 +2679,28 @@ _equalAlterLabelStmt(const AlterLabelStmt *a, const AlterLabelStmt *b)
 }
 
 static bool
+_equalCreateConstraintStmt(const CreateConstraintStmt *a,
+						   const CreateConstraintStmt *b)
+{
+	COMPARE_SCALAR_FIELD(contype);
+	COMPARE_NODE_FIELD(graphlabel);
+	COMPARE_STRING_FIELD(conname);
+	COMPARE_NODE_FIELD(expr);
+
+	return true;
+}
+
+static bool
+_equalDropConstraintStmt(const DropConstraintStmt *a,
+						 const DropConstraintStmt *b)
+{
+	COMPARE_NODE_FIELD(graphlabel);
+	COMPARE_STRING_FIELD(conname);
+
+	return true;
+}
+
+static bool
 _equalCypherStmt(const CypherStmt *a, const CypherStmt *b)
 {
 	COMPARE_NODE_FIELD(last);
@@ -3609,6 +3632,13 @@ equal(const void *a, const void *b)
 			break;
 		case T_AlterLabelStmt:
 			retval = _equalAlterLabelStmt(a, b);
+			break;
+
+		case T_CreateConstraintStmt:
+			retval = _equalCreateConstraintStmt(a, b);
+			break;
+		case T_DropConstraintStmt:
+			retval = _equalDropConstraintStmt(a, b);
 			break;
 
 		case T_CypherStmt:

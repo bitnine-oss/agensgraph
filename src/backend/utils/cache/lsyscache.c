@@ -3,6 +3,7 @@
  * lsyscache.c
  *	  Convenience routines for common queries in the system catalog cache.
  *
+ * Portions Copyright (c) 2016, Bitnine Inc.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -3125,4 +3126,32 @@ Oid
 get_relid_labid(Oid relid)
 {
 	return GetSysCacheOid1(LABELRELID, ObjectIdGetDatum(relid));
+}
+
+/*
+ * get_labid_labkind
+ *		Returns label kind for a given label.
+ *
+ * Returns '\0' if there is no such label.
+ */
+char
+get_labid_labkind(Oid labid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		char labkind;
+
+		labkind = labtup->labkind;
+		ReleaseSysCache(tp);
+		return labkind;
+	}
+	else
+	{
+		return '\0';
+	}
 }

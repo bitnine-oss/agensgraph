@@ -474,3 +474,43 @@ RangeVarIsLabel(RangeVar *rel)
 
 	return result;
 }
+
+void
+CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
+						const char *queryString, ParamListInfo params)
+{
+	Node	   *stmt;
+	ParseState *pstate;
+
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
+	stmt = transformCreateConstraintStmt(pstate, constraintStmt);
+
+	ProcessUtility(stmt, queryString, PROCESS_UTILITY_SUBCOMMAND,
+				   params, None_Receiver, NULL);
+
+	CommandCounterIncrement();
+
+	free_parsestate(pstate);
+}
+
+void
+DropConstraintCommand(DropConstraintStmt *constraintStmt,
+					  const char *queryString, ParamListInfo params)
+{
+	Node	   *stmt;
+	ParseState *pstate;
+
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
+	stmt = transformDropConstraintStmt(pstate, constraintStmt);
+
+	ProcessUtility(stmt, queryString, PROCESS_UTILITY_SUBCOMMAND,
+				   params, None_Receiver, NULL);
+
+	CommandCounterIncrement();
+
+	free_parsestate(pstate);
+}

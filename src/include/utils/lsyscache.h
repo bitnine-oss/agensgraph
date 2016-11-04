@@ -3,6 +3,7 @@
  * lsyscache.h
  *	  Convenience routines for common queries in the system catalog cache.
  *
+ * Portions Copyright (c) 2016, Bitnine Inc.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -164,6 +165,7 @@ extern Oid	get_graphname_oid(const char *graphname);
 extern Oid	get_labname_labid(const char *labname, Oid graphid);
 extern Oid	get_labid_relid(Oid labid);
 extern Oid	get_relid_labid(Oid relid);
+extern char	get_labid_labkind(Oid labid);
 
 #define type_is_array(typid)  (get_element_type(typid) != InvalidOid)
 /* type_is_array_domain accepts both plain arrays and domains over arrays */

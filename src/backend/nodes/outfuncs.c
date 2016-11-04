@@ -3,6 +3,7 @@
  * outfuncs.c
  *	  Output functions for Postgres tree nodes.
  *
+ * Portions Copyright (c) 2016, Bitnine Inc.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -3324,6 +3325,26 @@ _outCreateLabelStmt(StringInfo str, const CreateLabelStmt *node)
 }
 
 static void
+_outCreateConstraintStmt(StringInfo str, const CreateConstraintStmt *node)
+{
+	WRITE_NODE_TYPE("CREATECONSTRAINTSTMT");
+
+	WRITE_ENUM_FIELD(contype, ConstrType);
+	WRITE_NODE_FIELD(graphlabel);
+	WRITE_STRING_FIELD(conname);
+	WRITE_NODE_FIELD(expr);
+}
+
+static void
+_outDropConstraintStmt(StringInfo str, const DropConstraintStmt *node)
+{
+	WRITE_NODE_TYPE("DROPCONSTRAINTSTMT");
+
+	WRITE_NODE_FIELD(graphlabel);
+	WRITE_STRING_FIELD(conname);
+}
+
+static void
 _outCypherStmt(StringInfo str, const CypherStmt *node)
 {
 	WRITE_NODE_TYPE("CYPHER");
@@ -4092,7 +4113,12 @@ outNode(StringInfo str, const void *obj)
 			case T_CreateLabelStmt:
 				_outCreateLabelStmt(str, obj);
 				break;
-
+			case T_CreateConstraintStmt:
+				_outCreateConstraintStmt(str, obj);
+				break;
+			case T_DropConstraintStmt:
+				_outDropConstraintStmt(str, obj);
+				break;
 			case T_CypherStmt:
 				_outCypherStmt(str, obj);
 				break;
