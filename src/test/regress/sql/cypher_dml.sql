@@ -154,6 +154,76 @@ RETURN n.name AS n, type(r) AS r, p.name AS p,
        m.name AS m, type(s) AS s, q.name AS q
 ORDER BY n, p, m, s;
 
+-- Variable Length Relationship
+
+CREATE GRAPH t;
+SET graph_path = t;
+
+CREATE VLABEL time;
+CREATE ELABEL goes;
+
+CREATE (:time {sec: 1})-[:goes]->
+       (:time {sec: 2})-[:goes]->
+       (:time {sec: 3})-[:goes]->
+       (:time {sec: 4})-[:goes]->
+       (:time {sec: 5})-[:goes]->
+       (:time {sec: 6})-[:goes]->
+       (:time {sec: 7})-[:goes]->
+       (:time {sec: 8})-[:goes]->
+       (:time {sec: 9});
+
+MATCH (a:time)-[x:goes*3]->(b:time)
+RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
+
+MATCH (a:time)-[x:goes*0]->(b:time)
+RETURN a.sec AS a, x, b.sec AS b;
+
+MATCH (a:time)-[x:goes*0..1]->(b:time)
+RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
+
+MATCH (a:time)-[x:goes*..1]->(b:time)
+RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
+
+MATCH (a:time)-[x:goes*0..]->(b:time)
+RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
+
+MATCH (a:time)-[x:goes*3..6]->(b:time)
+RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
+
+MATCH (a:time)-[x:goes*2]->(b:time)-[y:goes]->(c:time)-[z:goes*2]->(d:time)
+RETURN a.sec AS a, array_length(x, 1) AS x,
+       b.sec AS b, type(y) AS y,
+       c.sec AS c, array_length(z, 1) AS z, d.sec AS d;
+
+MATCH (a:time)-[x:goes*2]->(b:time)
+MATCH (b)-[y:goes]->(c:time)
+MATCH (c)-[z:goes*2]->(d:time)
+RETURN a.sec AS a, array_length(x, 1) AS x,
+       b.sec AS b, type(y) AS y,
+       c.sec AS c, array_length(z, 1) AS z, d.sec AS d;
+
+MATCH (d:time)<-[z:goes*2]-(c:time)<-[y:goes]-(b:time)<-[x:goes*2]-(a:time)
+RETURN d.sec AS d, array_length(z, 1) AS z,
+       c.sec AS c, type(y) AS y,
+       b.sec AS b, array_length(x, 1) AS x, a.sec AS a;
+
+MATCH (d:time)<-[z:goes*2]-(c:time)
+MATCH (c)<-[y:goes]-(b:time)
+MATCH (b)<-[x:goes*2]-(a:time)
+RETURN d.sec AS d, array_length(z, 1) AS z,
+       c.sec AS c, type(y) AS y,
+       b.sec AS b, array_length(x, 1) AS x, a.sec AS a;
+
+CREATE (:time {sec: 11})-[:goes {int: 1}]->
+       (:time {sec: 12})-[:goes {int: 1}]->
+       (:time {sec: 13})-[:goes {int: 2}]->
+       (:time {sec: 15})-[:goes {int: 1}]->
+       (:time {sec: 16})-[:goes {int: 1}]->
+       (:time {sec: 17});
+
+MATCH (a:time)-[x:goes*1..2 {int: 1}]->(b:time)
+RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
+
 SET graph_path = agens;
 
 --
@@ -299,6 +369,7 @@ RETURN properties(n) as n, properties(r) as r, properties(m) as m;
 
 DROP GRAPH p CASCADE;
 DROP GRAPH u CASCADE;
+DROP GRAPH t CASCADE;
 DROP GRAPH o CASCADE;
 
 SET graph_path = agens;

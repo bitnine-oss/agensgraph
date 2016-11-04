@@ -167,7 +167,9 @@ struct ParseState
 	CoerceParamHook p_coerce_param_hook;
 	void	   *p_ref_hook_state;		/* common passthrough link for above */
 
-	Node	   *p_last_colref_elem;
+	/* graph */
+	Node	   *p_last_colref_elem;		/* for property access */
+	Node	   *p_last_vertex;			/* for VLR */
 };
 
 /*
