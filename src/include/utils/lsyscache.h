@@ -164,6 +164,7 @@ extern Oid	get_graphname_oid(const char *graphname);
 extern Oid	get_labname_labid(const char *labname, Oid graphid);
 extern Oid	get_labid_relid(Oid labid);
 extern Oid	get_relid_labid(Oid relid);
+extern char get_labid_labkind(Oid labid);
 
 #define type_is_array(typid)  (get_element_type(typid) != InvalidOid)
 /* type_is_array_domain accepts both plain arrays and domains over arrays */

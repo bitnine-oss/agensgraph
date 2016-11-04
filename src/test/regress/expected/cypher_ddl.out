@@ -105,9 +105,9 @@ ORDER BY 1, 2;
 
 -- wrong cases
 CREATE VLABEL wrong_parent INHERITS (e1);
-ERROR:  invalid parent label with labkind 'e'
+ERROR:  parent graph label "e1" is not vertex label.
 CREATE ELABEL wrong_parent INHERITS (v1);
-ERROR:  invalid parent label with labkind 'v'
+ERROR:  parent graph label "v1" is not edge label.
 -- CREATE UNLOGGED
 CREATE UNLOGGED VLABEL unlog;
 SELECT l.labname as name, c.relpersistence as persistence
@@ -172,10 +172,10 @@ COMMENT ON VLABEL v1 IS 'multiple inheritance test';
 (1 row)
 
 \dGv+
-                                  List of labels
- Graph |   Name    |  Type  |   Owner    |    Size    |        Description        
--------+-----------+--------+------------+------------+---------------------------
- g     | ag_vertex | vertex | graph_role | 8192 bytes | base label of graph g
+                                   List of labels
+ Graph |   Name    |  Type  |   Owner    |    Size    |         Description          
+-------+-----------+--------+------------+------------+------------------------------
+ g     | ag_vertex | vertex | graph_role | 8192 bytes | base vertex label of graph g
  g     | dup       | vertex | graph_role | 8192 bytes | 
  g     | stor      | vertex | graph_role | 8192 bytes | 
  g     | tblspc    | vertex | graph_role | 8192 bytes | 
@@ -187,10 +187,10 @@ COMMENT ON VLABEL v1 IS 'multiple inheritance test';
 (9 rows)
 
 \dGe+
-                              List of labels
- Graph |  Name   | Type |   Owner    |    Size    |      Description      
--------+---------+------+------------+------------+-----------------------
- g     | ag_edge | edge | graph_role | 8192 bytes | base label of graph g
+                                List of labels
+ Graph |  Name   | Type |   Owner    |    Size    |        Description         
+-------+---------+------+------------+------------+----------------------------
+ g     | ag_edge | edge | graph_role | 8192 bytes | base edge label of graph g
  g     | e0      | edge | graph_role | 8192 bytes | 
  g     | e01     | edge | graph_role | 8192 bytes | 
  g     | e1      | edge | graph_role | 8192 bytes | 
@@ -209,6 +209,7 @@ ALTER VLABEL v0 SET STORAGE external;
  properties | jsonb   | not null default jsonb_build_object()                                               | external |              | 
 Indexes:
     "v0_pkey" PRIMARY KEY, btree (id)
+    "v0_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.ag_vertex
 Child tables: g.v00,
               g.v01
@@ -251,21 +252,24 @@ SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
  indisclustered 
 ----------------
  f
-(1 row)
+ f
+(2 rows)
 
 ALTER VLABEL v0 CLUSTER ON v0_pkey;
 SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
  indisclustered 
 ----------------
  t
-(1 row)
+ f
+(2 rows)
 
 ALTER VLABEL v0 SET WITHOUT CLUSTER;
 SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
  indisclustered 
 ----------------
  f
-(1 row)
+ f
+(2 rows)
 
 SELECT relpersistence FROM pg_class WHERE relname = 'v0';
  relpersistence 
@@ -295,6 +299,7 @@ SELECT relpersistence FROM pg_class WHERE relname = 'v0';
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
+    "v1_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.v00,
           g.v01
 
@@ -307,6 +312,7 @@ ALTER VLABEL v1 NO INHERIT v00;
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
+    "v1_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.v01
 
 ALTER VLABEL v1 INHERIT v00;
@@ -318,6 +324,7 @@ ALTER VLABEL v1 INHERIT v00;
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
+    "v1_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.v01,
           g.v00
 
