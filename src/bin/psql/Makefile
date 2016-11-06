@@ -52,6 +52,7 @@ distprep: sql_help.h psqlscanslash.c
 install: all installdirs
 	$(INSTALL_PROGRAM) psql$(X) '$(DESTDIR)$(bindir)/psql$(X)'
 	$(INSTALL_DATA) $(srcdir)/psqlrc.sample '$(DESTDIR)$(datadir)/psqlrc.sample'
+	$(INSTALL_PROGRAM) psql$(X) '$(DESTDIR)$(bindir)/ag-shell$(X)'
 
 installdirs:
 	$(MKDIR_P) '$(DESTDIR)$(bindir)' '$(DESTDIR)$(datadir)'
