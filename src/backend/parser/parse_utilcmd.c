@@ -136,11 +136,12 @@ static void transformColumnType(CreateStmtContext *cxt, ColumnDef *column);
 static void setSchemaName(char *context_schema, char **stmt_schema_name);
 static List *makeVertexElements(void);
 static List *makeEdgeElements(void);
+static List *makeVertexIndex(RangeVar *label);
+static List *makeEdgeIndex(RangeVar *label);
+static bool isLabelKind(RangeVar *label, char labkind);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
 static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
 static Node *makePropertiesIndirectionMutator(Node *node);
-static bool isVertexLabel(RangeVar *label);
-static bool isEdgeLabel(RangeVar *label);
 
 
 /*
@@ -3017,97 +3018,6 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 }
 
 /*
- * Index for id column is made in makeVertexElements function.
- */
-static List *
-makeVertexIndex(CreateLabelStmt *labstmt)
-{
-	IndexStmt  *prop_idx;
-	IndexElem  *prop_col;
-	char   *labname;
-	Oid		graphid;
-
-	labname = labstmt->relation->relname;
-	graphid = RangeVarGetCreationNamespace(labstmt->relation);
-
-	prop_col = makeNode(IndexElem);
-	prop_col->name = AG_ELEM_PROP_MAP;
-	prop_col->opclass = list_make1(makeString("jsonb_path_ops"));
-
-	prop_idx = makeNode(IndexStmt);
-	prop_idx->idxname = ChooseRelationName(labname, AG_ELEM_PROP_MAP,
-										   "idx", graphid);
-	prop_idx->relation = copyObject(labstmt->relation);
-	prop_idx->accessMethod = "gin";
-	prop_idx->indexParams = list_make1(prop_col);
-
-	return list_make1(prop_idx);
-}
-
-static List *
-makeEdgeIndex(CreateLabelStmt *labstmt)
-{
-	IndexStmt  *edge_id_idx;
-	IndexStmt  *start_idx;
-	IndexStmt  *end_idx;
-	IndexStmt  *prop_idx;
-	IndexElem  *id_col;
-	IndexElem  *start_col;
-	IndexElem  *end_col;
-	IndexElem  *prop_col;
-	char   *labname;
-	Oid		graphid;
-
-	labname = labstmt->relation->relname;
-	graphid = RangeVarGetCreationNamespace(labstmt->relation);
-
-	/* make index elements */
-	id_col = makeNode(IndexElem);
-	id_col->name = AG_ELEM_LOCAL_ID;
-
-	start_col = makeNode(IndexElem);
-	start_col->name = AG_START_ID;
-
-	end_col = makeNode(IndexElem);
-	end_col->name = AG_END_ID;
-
-	prop_col = makeNode(IndexElem);
-	prop_col->name = AG_ELEM_PROP_MAP;
-	prop_col->opclass = list_make1(makeString("jsonb_path_ops"));
-
-	/* make indexes */
-	edge_id_idx = makeNode(IndexStmt);
-	edge_id_idx->idxname = ChooseRelationName(labname, AG_ELEM_LOCAL_ID,
-											  "idx", graphid);
-	edge_id_idx->relation = copyObject(labstmt->relation);
-	edge_id_idx->accessMethod = "brin";
-	edge_id_idx->indexParams = list_make1(id_col);
-
-	start_idx = makeNode(IndexStmt);
-	start_idx->idxname = ChooseRelationName(labname, AG_START_ID,
-											"idx", graphid);
-	start_idx->relation = copyObject(labstmt->relation);
-	start_idx->accessMethod = "btree";
-	start_idx->indexParams = list_make3(start_col, end_col, id_col);
-
-	end_idx = makeNode(IndexStmt);
-	end_idx->idxname = ChooseRelationName(labname, AG_END_ID,
-										  "idx", graphid);
-	end_idx->relation = copyObject(labstmt->relation);
-	end_idx->accessMethod = "btree";
-	end_idx->indexParams = list_make3(end_col, start_col, id_col);
-
-	prop_idx = makeNode(IndexStmt);
-	prop_idx->idxname = ChooseRelationName(labname, AG_ELEM_PROP_MAP,
-										   "idx", graphid);
-	prop_idx->relation = copyObject(labstmt->relation);
-	prop_idx->accessMethod = "gin";
-	prop_idx->indexParams = list_make1(prop_col);
-
-	return list_make4(edge_id_idx, start_idx, end_idx, prop_idx);
-}
-
-/*
  * transformCreateLabelStmt - parse analysis for CREATE VLABEL/ELABEL
  *
  * This function is based on transformCreateStmt().
@@ -3118,32 +3028,22 @@ makeEdgeIndex(CreateLabelStmt *labstmt)
 List *
 transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 {
-	CreateStmt *stmt;
-	char	   *graphname;
-	char		descbuf[256];
-	char	   *tabdesc;
-	char	   *labdesc;
-	char	   *qname;
-	Oid			existing_relid;
 	ParseState *pstate;
 	ParseCallbackState pcbstate;
+	Oid			existing_relid;
+	CreateStmt *stmt;
+	char	   *graphname;
+	List	   *indexlist;
 	CreateStmtContext cxt;
 	ListCell   *elements;
+	char		descbuf[256];
+	char	   *labdesc;
+	char	   *tabdesc;
+	char	   *qname;
 	CommentStmt *comment;
 	List	   *save_alist;
 	List	   *result;
 
-	/*
-	 * Set graph schema name, if not specified.
-	 */
-	if (labelStmt->relation->schemaname == NULL)
-		labelStmt->relation->schemaname = get_graph_path();
-	graphname = labelStmt->relation->schemaname;
-
-	/*
-	 * If the label already exists and the user specified "IF NOT EXISTS",
-	 * bail out with a NOTICE.
-	 */
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
 
@@ -3153,6 +3053,10 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 										 &existing_relid);
 	cancel_parser_errposition_callback(&pcbstate);
 
+	/*
+	 * If the label already exists and the user specified "IF NOT EXISTS",
+	 * bail out with a NOTICE.
+	 */
 	if (OidIsValid(existing_relid))
 	{
 		if (labelStmt->if_not_exists)
@@ -3164,15 +3068,18 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 			return NIL;
 		}
 		else
+		{
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
 					 errmsg("label \"%s\" already exists",
 							labelStmt->relation->relname)));
+		}
 	}
 
 	/*
 	 * create CreateStmt for label
 	 */
+
 	stmt = makeNode(CreateStmt);
 
 	stmt->relation = copyObject(labelStmt->relation);
@@ -3181,21 +3088,28 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	stmt->tablespacename = labelStmt->tablespacename;
 	stmt->if_not_exists = labelStmt->if_not_exists;
 
+	/* set graph schema name, if not specified */
+	if (stmt->relation->schemaname == NULL)
+		stmt->relation->schemaname = get_graph_path();
+	graphname = stmt->relation->schemaname;
+
 	/* set appropriate table elements and indexes */
 	if (labelStmt->labelKind == LABEL_VERTEX)
 	{
 		stmt->tableElts = makeVertexElements();
 
-		save_alist = makeVertexIndex(labelStmt);
+		indexlist = makeVertexIndex(stmt->relation);
 	}
 	else if (labelStmt->labelKind == LABEL_EDGE)
 	{
 		stmt->tableElts = makeEdgeElements();
 
-		save_alist = makeEdgeIndex(labelStmt);
+		indexlist = makeEdgeIndex(stmt->relation);
 	}
 	else
-		elog(ERROR, "unknown label type %d", labelStmt->labelKind);
+	{
+		elog(ERROR, "unknown label type: %d", labelStmt->labelKind);
+	}
 
 	if (strcmp(labelStmt->relation->relname, AG_VERTEX) != 0 &&
 		strcmp(labelStmt->relation->relname, AG_EDGE) != 0)
@@ -3219,7 +3133,6 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 			{
 				RangeVar *parent = (RangeVar *) lfirst(inhRel);
 
-
 				/* force schema */
 				if (parent->schemaname == NULL)
 				{
@@ -3234,7 +3147,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 				}
 
 				if (labelStmt->labelKind == LABEL_VERTEX &&
-					!isVertexLabel(parent))
+					!isLabelKind(parent, LABEL_KIND_VERTEX))
 				{
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_SCHEMA_NAME),
@@ -3243,7 +3156,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 				}
 
 				if (labelStmt->labelKind == LABEL_EDGE &&
-					!isEdgeLabel(parent))
+					!isLabelKind(parent, LABEL_KIND_EDGE))
 				{
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_SCHEMA_NAME),
@@ -3253,7 +3166,6 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 			}
 		}
 	}
-	/* base label must have not inherits option.*/
 	else
 	{
 		if (labelStmt->inhRelations != NIL)
@@ -3266,8 +3178,9 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	}
 
 	/*
-	 * init CreateStmtContext for this graph label
+	 * process CreateStmt
 	 */
+
 	cxt.pstate = pstate;
 	cxt.stmtType = (labelStmt->labelKind == LABEL_VERTEX) ? "CREATE VLABEL"
 														  : "CREATE ELABEL";
@@ -3281,9 +3194,9 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	cxt.ckconstraints = NIL;
 	cxt.fkconstraints = NIL;
 	cxt.ixconstraints = NIL;
+	cxt.inh_indexes = NIL;
 	cxt.blist = NIL;
 	cxt.alist = NIL;
-	cxt.inh_indexes = NIL;
 	cxt.pkey = NULL;
 
 	foreach(elements, stmt->tableElts)
@@ -3306,40 +3219,33 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		}
 	}
 
-	/*
-	 * make descriptions for label and table
-	 */
-	if (strcmp(labelStmt->relation->relname, AG_VERTEX) == 0)
+	/* make descriptions for label and table */
+	if (strcmp(stmt->relation->relname, AG_VERTEX) == 0)
 	{
 		snprintf(descbuf, sizeof(descbuf), "base vertex label of graph %s",
 				 graphname);
 		labdesc = pstrdup(descbuf);
-
 		comment = makeComment(OBJECT_VLABEL, stmt->relation, labdesc);
-		save_alist = lappend(save_alist, comment);
+		cxt.alist = lappend(cxt.alist, comment);
 	}
 	else if(strcmp(labelStmt->relation->relname, AG_EDGE) == 0)
 	{
 		snprintf(descbuf, sizeof(descbuf), "base edge label of graph %s",
 				 graphname);
 		labdesc = pstrdup(descbuf);
-
 		comment = makeComment(OBJECT_ELABEL, stmt->relation, labdesc);
-		save_alist = lappend(save_alist, comment);
+		cxt.alist = lappend(cxt.alist, comment);
 	}
-
 	qname = quote_qualified_identifier(graphname, stmt->relation->relname);
 	snprintf(descbuf, sizeof(descbuf), "base table for graph label %s", qname);
 	tabdesc = pstrdup(descbuf);
-
 	comment = makeComment(OBJECT_TABLE, stmt->relation, tabdesc);
-	save_alist = lappend(save_alist, comment);
+	cxt.alist = lappend(cxt.alist, comment);
 
-	/* save original alist for transforming index and constraint. */
-	save_alist = list_concat(save_alist, cxt.alist);
-	cxt.alist = NIL;
+	/* save original alist for indexes and constraints */
+	save_alist = cxt.alist;
 
-	transformIndexConstraints(&cxt);
+	cxt.alist = indexlist;
 	transformFKConstraints(&cxt, true, false);
 
 	stmt->tableElts = cxt.columns;
@@ -3440,6 +3346,109 @@ makeEdgeElements(void)
 	prop_map->location = -1;
 
 	return list_make4(id, start, end, prop_map);
+}
+
+/* NOTE: index for id column is made in makeVertexElements() */
+static List *
+makeVertexIndex(RangeVar *label)
+{
+	char	   *labname;
+	Oid			graphid;
+	IndexElem  *prop_col;
+	IndexStmt  *prop_idx;
+
+	labname = label->relname;
+	graphid = RangeVarGetCreationNamespace(label);
+
+	prop_col = makeNode(IndexElem);
+	prop_col->name = AG_ELEM_PROP_MAP;
+	prop_col->opclass = list_make1(makeString("jsonb_path_ops"));
+
+	prop_idx = makeNode(IndexStmt);
+	prop_idx->idxname = ChooseRelationName(labname, AG_ELEM_PROP_MAP,
+										   "idx", graphid);
+	prop_idx->relation = copyObject(label);
+	prop_idx->accessMethod = "gin";
+	prop_idx->indexParams = list_make1(prop_col);
+
+	return list_make1(prop_idx);
+}
+
+static List *
+makeEdgeIndex(RangeVar *label)
+{
+	char	   *labname;
+	Oid			graphid;
+	IndexElem  *id_col;
+	IndexElem  *start_col;
+	IndexElem  *end_col;
+	IndexElem  *prop_col;
+	IndexStmt  *edge_id_idx;
+	IndexStmt  *start_idx;
+	IndexStmt  *end_idx;
+	IndexStmt  *prop_idx;
+
+	labname = label->relname;
+	graphid = RangeVarGetCreationNamespace(label);
+
+	/* make index elements */
+
+	id_col = makeNode(IndexElem);
+	id_col->name = AG_ELEM_LOCAL_ID;
+
+	start_col = makeNode(IndexElem);
+	start_col->name = AG_START_ID;
+
+	end_col = makeNode(IndexElem);
+	end_col->name = AG_END_ID;
+
+	prop_col = makeNode(IndexElem);
+	prop_col->name = AG_ELEM_PROP_MAP;
+	prop_col->opclass = list_make1(makeString("jsonb_path_ops"));
+
+	/* make indexes */
+
+	edge_id_idx = makeNode(IndexStmt);
+	edge_id_idx->idxname = ChooseRelationName(labname, AG_ELEM_LOCAL_ID,
+											  "idx", graphid);
+	edge_id_idx->relation = copyObject(label);
+	edge_id_idx->accessMethod = "brin";
+	edge_id_idx->indexParams = list_make1(id_col);
+
+	start_idx = makeNode(IndexStmt);
+	start_idx->idxname = ChooseRelationName(labname, AG_START_ID,
+											"idx", graphid);
+	start_idx->relation = copyObject(label);
+	start_idx->accessMethod = "btree";
+	start_idx->indexParams = list_make3(start_col, end_col, id_col);
+
+	end_idx = makeNode(IndexStmt);
+	end_idx->idxname = ChooseRelationName(labname, AG_END_ID,
+										  "idx", graphid);
+	end_idx->relation = copyObject(label);
+	end_idx->accessMethod = "btree";
+	end_idx->indexParams = list_make3(end_col, start_col, id_col);
+
+	prop_idx = makeNode(IndexStmt);
+	prop_idx->idxname = ChooseRelationName(labname, AG_ELEM_PROP_MAP,
+										   "idx", graphid);
+	prop_idx->relation = copyObject(label);
+	prop_idx->accessMethod = "gin";
+	prop_idx->indexParams = list_make1(prop_col);
+
+	return list_make4(edge_id_idx, start_idx, end_idx, prop_idx);
+}
+
+static bool
+isLabelKind(RangeVar *label, char labkind)
+{
+	Oid			graphid;
+	Oid			labelid;
+
+	graphid = get_graphname_oid(label->schemaname);
+	labelid = get_labname_labid(label->relname, graphid);
+
+	return (labelid != InvalidOid && get_labid_labkind(labelid) == labkind);
 }
 
 /* See transformColumnDefinition() */
@@ -3813,36 +3822,4 @@ makePropertiesIndirectionMutator(Node *node)
 
 	return raw_expression_tree_mutator(node, makePropertiesIndirectionMutator,
 									   NULL);
-}
-
-static bool
-isVertexLabel(RangeVar *label)
-{
-	Oid	graphid;
-	Oid	labelid;
-
-	graphid = get_graphname_oid(label->schemaname);
-	labelid = get_labname_labid(label->relname, graphid);
-
-	if (labelid != InvalidOid &&
-		get_labid_labkind(labelid) == LABEL_KIND_VERTEX)
-		return true;
-
-	return false;
-}
-
-static bool
-isEdgeLabel(RangeVar *label)
-{
-	Oid	graphid;
-	Oid	labelid;
-
-	graphid = get_graphname_oid(label->schemaname);
-	labelid = get_labname_labid(label->relname, graphid);
-
-	if (labelid != InvalidOid &&
-		get_labid_labkind(labelid) == LABEL_KIND_EDGE)
-		return true;
-
-	return false;
 }
