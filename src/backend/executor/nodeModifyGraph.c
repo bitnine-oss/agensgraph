@@ -30,6 +30,10 @@
 
 #define SQLCMD_BUFLEN				(NAMEDATALEN + 192)
 
+/*
+ * NOTE: If you add SQLCMD, you should add SqlcmdType for it and use
+ *       sqlcmd_cache to run the SQLCMD.
+ */
 #define SQLCMD_CREAT_VERTEX \
 	"INSERT INTO \"%s\".\"%s\" VALUES (DEFAULT, $1) RETURNING " \
 	AG_ELEM_LOCAL_ID " AS " AG_ELEM_ID ", " AG_ELEM_PROP_MAP
@@ -69,16 +73,46 @@
 	" WHERE " AG_ELEM_LOCAL_ID " = $2"
 #define SQLCMD_RM_PROP_NPARAMS		2
 
-typedef struct ArrayAccessTypeInfo {
+typedef enum SqlcmdType
+{
+	SQLCMD_TYPE_CREAT_VERTEX,
+	SQLCMD_TYPE_CREAT_EDGE,
+	SQLCMD_TYPE_DEL_ELEM,
+	SQLCMD_TYPE_DETACH,
+	SQLCMD_TYPE_DEL_EDGES,
+	SQLCMD_TYPE_SET_PROP,
+	SQLCMD_TYPE_OVERWR_PROP,
+	SQLCMD_TYPE_RM_PROP
+} SqlcmdType;
+
+typedef struct ArrayAccessTypeInfo
+{
 	int16		typlen;
 	bool		typbyval;
 	char		typalign;
 } ArrayAccessTypeInfo;
 
-typedef enum DelElemKind {
+typedef enum DelElemKind
+{
 	DEL_ELEM_VERTEX,
 	DEL_ELEM_EDGE
 } DelElemKind;
+
+/* hash key */
+typedef struct SqlcmdKey
+{
+	SqlcmdType	cmdtype;
+	Oid			labelid;
+} SqlcmdKey;
+
+/* hash entry */
+typedef struct SqlcmdEntry
+{
+	SqlcmdKey	key;
+	SPIPlanPtr	plan;
+} SqlcmdEntry;
+
+static HTAB *sqlcmd_cache = NULL;
 
 static List *ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate);
 static List *ExecInitGraphSets(List *sets, ModifyGraphState *mgstate);
@@ -113,6 +147,14 @@ static void setElemProp(ModifyGraphState *mgstate, Datum id, Datum path,
 static void overwiteElemProp(ModifyGraphState *mgstate, Datum id,
 							 Datum prop_map);
 static void removeElemProp(ModifyGraphState *mgstate, Datum id, Datum path);
+static SPIPlanPtr getPreparedplan(char *sqlcmd, int nargs, Oid *argtypes,
+								  SqlcmdType cmdtype, Oid labelid);
+
+/* caching SPIPlan's (See ri_triggers.c) */
+static void InitSqlcmdHashTable(MemoryContext mcxt);
+static void EndSqlcmdHashTable(void);
+static SPIPlanPtr findPreparedPlan(SqlcmdKey *key);
+static void savePreparedPlan(SqlcmdKey *key, SPIPlanPtr plan);
 
 ModifyGraphState *
 ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
@@ -138,6 +180,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->exprs = (List *) ExecInitExpr((Expr *) mgplan->exprs,
 										   (PlanState *) mgstate);
 	mgstate->sets = ExecInitGraphSets(mgplan->sets, mgstate);
+
+	InitSqlcmdHashTable(estate->es_query_cxt);
 
 	return mgstate;
 }
@@ -186,6 +230,7 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 void
 ExecEndModifyGraph(ModifyGraphState *mgstate)
 {
+	EndSqlcmdHashTable();
 	ExecFreeExprContext(&mgstate->ps);
 	ExecEndNode(mgstate->subplan);
 }
@@ -381,10 +426,12 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 {
 	EState	   *estate = mgstate->ps.state;
 	ExprContext *econtext = mgstate->ps.ps_ExprContext;
-	char		sqlcmd[SQLCMD_BUFLEN];
 	char	   *label;
+	Oid			labid;
+	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_VERTEX_NPARAMS];
 	Oid			argTypes[SQLCMD_VERTEX_NPARAMS] = {JSONBOID};
+	SPIPlanPtr	plan;
 	int			ret;
 	TupleDesc	tupDesc;
 	HeapTuple	tuple;
@@ -394,14 +441,17 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	if (label == NULL)
 		label = AG_VERTEX;
 
+	labid = get_labname_labid(label, get_graphname_oid(get_graph_path()));
+
 	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_VERTEX,
 			 get_graph_path(), label);
 
 	values[0] = evalPropMap(gvertex->es_prop_map, mgstate->ps.ps_ExprContext,
 							slot);
 
-	ret = SPI_execute_with_args(sqlcmd, SQLCMD_VERTEX_NPARAMS, argTypes,
-								values, NULL, false, 0);
+	plan = getPreparedplan(sqlcmd, SQLCMD_VERTEX_NPARAMS, argTypes,
+						   SQLCMD_TYPE_CREAT_VERTEX, labid);
+	ret = SPI_execp(plan, values, NULL, 0);
 	if (ret != SPI_OK_INSERT_RETURNING)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 	if (SPI_processed != 1)
@@ -441,12 +491,17 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid *start,
 {
 	EState	   *estate = mgstate->ps.state;
 	ExprContext *econtext = mgstate->ps.ps_ExprContext;
+	Oid			labid;
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_EDGE_NPARAMS];
 	Oid			argTypes[SQLCMD_EDGE_NPARAMS] = {GRAPHIDOID, GRAPHIDOID,
 												 JSONBOID};
+	SPIPlanPtr	plan;
 	int			ret;
 	Datum		edge = (Datum) NULL;
+
+	labid = get_labname_labid(gedge->label,
+							  get_graphname_oid(get_graph_path()));
 
 	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_EDGE,
 			 get_graph_path(), gedge->label);
@@ -456,8 +511,9 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid *start,
 	values[2] = evalPropMap(gedge->es_prop_map, mgstate->ps.ps_ExprContext,
 							slot);
 
-	ret = SPI_execute_with_args(sqlcmd, SQLCMD_EDGE_NPARAMS, argTypes, values,
-								NULL, false, 0);
+	plan = getPreparedplan(sqlcmd, SQLCMD_EDGE_NPARAMS, argTypes,
+						   SQLCMD_TYPE_CREAT_EDGE, labid);
+	ret = SPI_execp(plan, values, NULL, 0);
 	if (ret != SPI_OK_INSERT_RETURNING)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 	if (SPI_processed != 1)
@@ -694,18 +750,23 @@ deleteVertex(ModifyGraphState *mgstate, Datum vertex, bool detach)
 static bool
 vertexHasEdge(Datum vid)
 {
+	Oid			labid;
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_DETACH_NPARAMS];
 	Oid			argTypes[SQLCMD_DETACH_NPARAMS];
+	SPIPlanPtr	plan;
 	int			ret;
+
+	labid = get_labname_labid(AG_EDGE, get_graphname_oid(get_graph_path()));
 
 	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DETACH, get_graph_path());
 
 	values[0] = vid;
 	argTypes[0] = GRAPHIDOID;
 
-	ret = SPI_execute_with_args(sqlcmd, SQLCMD_DETACH_NPARAMS,
-								argTypes, values, NULL, false, 1);
+	plan = getPreparedplan(sqlcmd, SQLCMD_DETACH_NPARAMS, argTypes,
+						   SQLCMD_TYPE_DETACH, labid);
+	ret = SPI_execp(plan, values, NULL, 0);
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 
@@ -716,18 +777,23 @@ static void
 deleteVertexEdges(ModifyGraphState *mgstate, Datum vid)
 {
 	EState	   *estate = mgstate->ps.state;
+	Oid			labid;
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_DEL_EDGES_NPARAMS];
 	Oid			argTypes[SQLCMD_DEL_EDGES_NPARAMS];
+	SPIPlanPtr	plan;
 	int			ret;
+
+	labid = get_labname_labid(AG_EDGE, get_graphname_oid(get_graph_path()));
 
 	snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DEL_EDGES, get_graph_path());
 
 	values[0] = vid;
 	argTypes[0] = GRAPHIDOID;
 
-	ret = SPI_execute_with_args(sqlcmd, SQLCMD_DEL_EDGES_NPARAMS,
-								argTypes, values, NULL, false, 0);
+	plan = getPreparedplan(sqlcmd, SQLCMD_DEL_EDGES_NPARAMS, argTypes,
+						   SQLCMD_TYPE_DEL_EDGES, labid);
+	ret = SPI_execp(plan, values, NULL, 0);
 	if (ret != SPI_OK_DELETE)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 
@@ -743,6 +809,7 @@ deleteElem(ModifyGraphState *mgstate, Datum id, DelElemKind kind)
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_DEL_ELEM_NPARAMS];
 	Oid			argTypes[SQLCMD_DEL_ELEM_NPARAMS];
+	SPIPlanPtr	plan;
 	int			ret;
 
 	relname = get_rel_name(DatumGetGraphidP(id)->oid);
@@ -752,8 +819,9 @@ deleteElem(ModifyGraphState *mgstate, Datum id, DelElemKind kind)
 	values[0] = id;
 	argTypes[0] = GRAPHIDOID;
 
-	ret = SPI_execute_with_args(sqlcmd, SQLCMD_DEL_ELEM_NPARAMS, argTypes,
-								values, NULL, false, 0);
+	plan = getPreparedplan(sqlcmd, SQLCMD_DEL_ELEM_NPARAMS, argTypes,
+						   SQLCMD_TYPE_DEL_ELEM, DatumGetGraphidP(id)->oid);
+	ret = SPI_execp(plan, values, NULL, 0);
 	if (ret != SPI_OK_DELETE)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 	if (SPI_processed > 1)
@@ -917,6 +985,7 @@ setElemProp(ModifyGraphState *mgstate, Datum id, Datum path, Datum expr)
 	Datum		values[SQLCMD_SET_PROP_NPARAMS];
 	Oid			argTypes[SQLCMD_SET_PROP_NPARAMS] = {TEXTARRAYOID, JSONBOID,
 													 GRAPHIDOID};
+	SPIPlanPtr	plan;
 	int			ret;
 
 	relname = get_rel_name(DatumGetGraphidP(id)->oid);
@@ -927,8 +996,9 @@ setElemProp(ModifyGraphState *mgstate, Datum id, Datum path, Datum expr)
 	values[1] = expr;
 	values[2] = id;
 
-	ret = SPI_execute_with_args(sqlcmd, SQLCMD_SET_PROP_NPARAMS, argTypes,
-								values, NULL, false, 0);
+	plan = getPreparedplan(sqlcmd, SQLCMD_SET_PROP_NPARAMS, argTypes,
+						   SQLCMD_TYPE_SET_PROP, DatumGetGraphidP(id)->oid);
+	ret = SPI_execp(plan, values, NULL, 0);
 	if (ret != SPI_OK_UPDATE)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 	if (SPI_processed > 1)
@@ -946,6 +1016,7 @@ overwiteElemProp(ModifyGraphState *mgstate, Datum id, Datum prop_map)
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_OVERWR_PROP_NPARAMS];
 	Oid			argTypes[SQLCMD_OVERWR_PROP_NPARAMS] = {JSONBOID, GRAPHIDOID};
+	SPIPlanPtr	plan;
 	int			ret;
 
 	relname = get_rel_name(DatumGetGraphidP(id)->oid);
@@ -956,8 +1027,9 @@ overwiteElemProp(ModifyGraphState *mgstate, Datum id, Datum prop_map)
 	values[0] = prop_map;
 	values[1] = id;
 
-	ret = SPI_execute_with_args(sqlcmd, SQLCMD_OVERWR_PROP_NPARAMS, argTypes,
-								values, NULL, false, 0);
+	plan = getPreparedplan(sqlcmd, SQLCMD_OVERWR_PROP_NPARAMS, argTypes,
+						   SQLCMD_TYPE_OVERWR_PROP, DatumGetGraphidP(id)->oid);
+	ret = SPI_execp(plan, values, NULL, 0);
 	if (ret != SPI_OK_UPDATE)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 	if (SPI_processed > 1)
@@ -975,6 +1047,7 @@ removeElemProp(ModifyGraphState *mgstate, Datum id, Datum path)
 	char		sqlcmd[SQLCMD_BUFLEN];
 	Datum		values[SQLCMD_RM_PROP_NPARAMS];
 	Oid			argTypes[SQLCMD_RM_PROP_NPARAMS] = {TEXTARRAYOID, GRAPHIDOID};
+	SPIPlanPtr	plan;
 	int			ret;
 
 	relname = get_rel_name(DatumGetGraphidP(id)->oid);
@@ -984,8 +1057,9 @@ removeElemProp(ModifyGraphState *mgstate, Datum id, Datum path)
 	values[0] = path;
 	values[1] = id;
 
-	ret = SPI_execute_with_args(sqlcmd, SQLCMD_RM_PROP_NPARAMS, argTypes,
-								values, NULL, false, 0);
+	plan = getPreparedplan(sqlcmd, SQLCMD_RM_PROP_NPARAMS, argTypes,
+						   SQLCMD_TYPE_RM_PROP, DatumGetGraphidP(id)->oid);
+	ret = SPI_execp(plan, values, NULL, 0);
 	if (ret != SPI_OK_UPDATE)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 	if (SPI_processed > 1)
@@ -993,4 +1067,101 @@ removeElemProp(ModifyGraphState *mgstate, Datum id, Datum path)
 
 	if (mgstate->canSetTag)
 		estate->es_graphwrstats.updateProperty += SPI_processed;
+}
+
+static SPIPlanPtr
+getPreparedplan(char *sqlcmd, int nargs, Oid *argtypes,
+				SqlcmdType cmdtype, Oid labelid)
+{
+	SqlcmdKey	key;
+	SPIPlanPtr	plan;
+
+	key.cmdtype = cmdtype;
+	key.labelid = labelid;
+
+	plan = findPreparedPlan(&key);
+	if (plan == NULL)
+	{
+		plan = SPI_prepare(sqlcmd, nargs, argtypes);
+		if (plan == NULL)
+			elog(ERROR, "failed to SPI_prepare(): %d", SPI_result);
+
+		savePreparedPlan(&key, plan);
+	}
+
+	return plan;
+}
+
+/* 
+ * NOTE: What happens if there is a multiple execution of ModifyGraph?
+ */
+static void
+InitSqlcmdHashTable(MemoryContext mcxt)
+{
+	HASHCTL ctl;
+
+	memset(&ctl, 0, sizeof(ctl));
+	ctl.keysize = sizeof(SqlcmdKey);
+	ctl.entrysize = sizeof(SqlcmdEntry);
+	ctl.hcxt = mcxt;
+
+	sqlcmd_cache = hash_create("ModifyGraph SPIPlan cache", 128, &ctl,
+							   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+}
+
+/*
+ * NOTE: If an error occurs during the execution of ModifyGraph,
+ *       there is no way to remove saved plans.
+ */
+static void
+EndSqlcmdHashTable(void)
+{
+	HASH_SEQ_STATUS seqStatus;
+	SqlcmdEntry *entry;
+
+	hash_seq_init(&seqStatus, sqlcmd_cache);
+	while ((entry = hash_seq_search(&seqStatus)) != NULL)
+		SPI_freeplan(entry->plan);
+
+	hash_destroy(sqlcmd_cache);
+}
+
+static SPIPlanPtr
+findPreparedPlan(SqlcmdKey *key)
+{
+	SqlcmdEntry *entry;
+	SPIPlanPtr plan;
+
+	Assert(sqlcmd_cache != NULL);
+
+	entry = hash_search(sqlcmd_cache, (void *) key, HASH_FIND, NULL);
+	if (entry == NULL)
+		return NULL;
+
+	plan = entry->plan;
+	if (plan && SPI_plan_is_valid(plan))
+		return plan;
+
+	entry->plan = NULL;
+	if (plan != NULL)
+		SPI_freeplan(plan);
+
+	return NULL;
+}
+
+static void
+savePreparedPlan(SqlcmdKey *key, SPIPlanPtr plan)
+{
+	SqlcmdEntry *entry;
+	int			ret;
+	bool		found;
+
+	Assert(sqlcmd_cache != NULL);
+
+	ret = SPI_keepplan(plan);
+	Assert(ret == 0);
+
+	entry = hash_search(sqlcmd_cache, (void *) key, HASH_ENTER, &found);
+	Assert(!found || entry->plan == NULL);
+	entry->plan = plan;
 }
