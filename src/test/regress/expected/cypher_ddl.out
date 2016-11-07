@@ -259,8 +259,8 @@ ALTER VLABEL v0 CLUSTER ON v0_pkey;
 SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
  indisclustered 
 ----------------
- t
  f
+ t
 (2 rows)
 
 ALTER VLABEL v0 SET WITHOUT CLUSTER;

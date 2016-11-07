@@ -3028,11 +3028,12 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 List *
 transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 {
+	RangeVar   *label;
+	char	   *graphname;
 	ParseState *pstate;
 	ParseCallbackState pcbstate;
 	Oid			existing_relid;
 	CreateStmt *stmt;
-	char	   *graphname;
 	List	   *indexlist;
 	CreateStmtContext cxt;
 	ListCell   *elements;
@@ -3044,13 +3045,18 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	List	   *save_alist;
 	List	   *result;
 
+	label = copyObject(labelStmt->relation);
+	/* set graph schema name, if not specified */
+	if (label->schemaname == NULL)
+		label->schemaname = get_graph_path();
+	graphname = label->schemaname;
+
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
 
 	setup_parser_errposition_callback(&pcbstate, pstate,
-									  labelStmt->relation->location);
-	RangeVarGetAndCheckCreationNamespace(labelStmt->relation, NoLock,
-										 &existing_relid);
+									  label->location);
+	RangeVarGetAndCheckCreationNamespace(label, NoLock, &existing_relid);
 	cancel_parser_errposition_callback(&pcbstate);
 
 	/*
@@ -3064,15 +3070,14 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 			ereport(NOTICE,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
 					 errmsg("label \"%s\" already exists, skipping",
-							labelStmt->relation->relname)));
+							label->relname)));
 			return NIL;
 		}
 		else
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
-					 errmsg("label \"%s\" already exists",
-							labelStmt->relation->relname)));
+					 errmsg("label \"%s\" already exists", label->relname)));
 		}
 	}
 
@@ -3082,16 +3087,12 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 
 	stmt = makeNode(CreateStmt);
 
-	stmt->relation = copyObject(labelStmt->relation);
+	stmt->relation = label;
 	stmt->options = copyObject(labelStmt->options);
 	stmt->oncommit = ONCOMMIT_NOOP;
 	stmt->tablespacename = labelStmt->tablespacename;
 	stmt->if_not_exists = labelStmt->if_not_exists;
 
-	/* set graph schema name, if not specified */
-	if (stmt->relation->schemaname == NULL)
-		stmt->relation->schemaname = get_graph_path();
-	graphname = stmt->relation->schemaname;
 
 	/* set appropriate table elements and indexes */
 	if (labelStmt->labelKind == LABEL_VERTEX)
@@ -3244,8 +3245,10 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 
 	/* save original alist for indexes and constraints */
 	save_alist = cxt.alist;
+	cxt.alist = NULL;
 
-	cxt.alist = indexlist;
+	transformIndexConstraints(&cxt);
+	cxt.alist = list_concat(cxt.alist, indexlist);
 	transformFKConstraints(&cxt, true, false);
 
 	stmt->tableElts = cxt.columns;
