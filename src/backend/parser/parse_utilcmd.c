@@ -3033,7 +3033,6 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	Oid			existing_relid;
 	CreateStmt *stmt;
 	char	   *graphname;
-	List	   *indexlist;
 	CreateStmtContext cxt;
 	ListCell   *elements;
 	char		descbuf[256];
@@ -3043,6 +3042,14 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	CommentStmt *comment;
 	List	   *save_alist;
 	List	   *result;
+
+	/*
+	 * Set graph schema name, if not specified.
+	 * This is required before calling RangeVarGetAndCheckCreationNamespace().
+	 */
+	if (labelStmt->relation->schemaname == NULL)
+		labelStmt->relation->schemaname = get_graph_path();
+	graphname = labelStmt->relation->schemaname;
 
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
@@ -3088,23 +3095,18 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	stmt->tablespacename = labelStmt->tablespacename;
 	stmt->if_not_exists = labelStmt->if_not_exists;
 
-	/* set graph schema name, if not specified */
-	if (stmt->relation->schemaname == NULL)
-		stmt->relation->schemaname = get_graph_path();
-	graphname = stmt->relation->schemaname;
-
 	/* set appropriate table elements and indexes */
 	if (labelStmt->labelKind == LABEL_VERTEX)
 	{
 		stmt->tableElts = makeVertexElements();
 
-		indexlist = makeVertexIndex(stmt->relation);
+		save_alist = makeVertexIndex(stmt->relation);
 	}
 	else if (labelStmt->labelKind == LABEL_EDGE)
 	{
 		stmt->tableElts = makeEdgeElements();
 
-		indexlist = makeEdgeIndex(stmt->relation);
+		save_alist = makeEdgeIndex(stmt->relation);
 	}
 	else
 	{
@@ -3226,7 +3228,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 				 graphname);
 		labdesc = pstrdup(descbuf);
 		comment = makeComment(OBJECT_VLABEL, stmt->relation, labdesc);
-		cxt.alist = lappend(cxt.alist, comment);
+		save_alist = lappend(save_alist, comment);
 	}
 	else if(strcmp(labelStmt->relation->relname, AG_EDGE) == 0)
 	{
@@ -3234,18 +3236,22 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 				 graphname);
 		labdesc = pstrdup(descbuf);
 		comment = makeComment(OBJECT_ELABEL, stmt->relation, labdesc);
-		cxt.alist = lappend(cxt.alist, comment);
+		save_alist = lappend(save_alist, comment);
 	}
 	qname = quote_qualified_identifier(graphname, stmt->relation->relname);
 	snprintf(descbuf, sizeof(descbuf), "base table for graph label %s", qname);
 	tabdesc = pstrdup(descbuf);
 	comment = makeComment(OBJECT_TABLE, stmt->relation, tabdesc);
-	cxt.alist = lappend(cxt.alist, comment);
+	save_alist = lappend(save_alist, comment);
 
-	/* save original alist for indexes and constraints */
-	save_alist = cxt.alist;
+	/*
+	 * save original alist for indexes and constraints. and we must clean up
+	 * the after list(alist) for transformIndexConstraint.
+	 */
+	save_alist = list_concat(save_alist, cxt.alist);
+	cxt.alist = NIL;
 
-	cxt.alist = indexlist;
+	transformIndexConstraints(&cxt);
 	transformFKConstraints(&cxt, true, false);
 
 	stmt->tableElts = cxt.columns;
