@@ -25,10 +25,10 @@ extern void CheckInheritLabel(CreateStmt *stmt);
 
 extern bool RangeVarIsLabel(RangeVar *rel);
 
-extern void CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
+extern void CreateConstraintCommand(CreateConstraintStmt *createconstraintStmt,
 									const char *queryString,
 									ParamListInfo params);
-extern void DropConstraintCommand(DropConstraintStmt *constraintStmt,
+extern void DropConstraintCommand(DropConstraintStmt *dropconstraintStmt,
 								  const char *queryString,
 								  ParamListInfo params);
 

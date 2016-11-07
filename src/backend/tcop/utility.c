@@ -16,12 +16,14 @@
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
+#include "ag_const.h"
 
 #include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "access/twophase.h"
 #include "access/xact.h"
 #include "access/xlog.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/catalog.h"
 #include "catalog/namespace.h"
 #include "catalog/toasting.h"
@@ -217,6 +219,8 @@ check_xact_readonly(Node *parsetree)
 		case T_AlterLabelStmt:
 		case T_CreateConstraintStmt:
 		case T_DropConstraintStmt:
+		case T_CreatePropertyIndexStmt:
+		case T_DropPropertyIndexStmt:
 			PreventCommandIfReadOnly(CreateCommandTag(parsetree));
 			PreventCommandIfParallelMode(CreateCommandTag(parsetree));
 			break;
@@ -1581,6 +1585,92 @@ ProcessUtilitySlow(Node *parsetree,
 				commandCollected = true;
 				break;
 
+			/* see above case T_CREATE INDEX */
+			case T_CreatePropertyIndexStmt:
+				{
+					CreatePropertyIndexStmt *stmt =
+											(CreatePropertyIndexStmt *) parsetree;
+					IndexStmt  *idxstmt;
+					Oid			relid;
+					LOCKMODE	lockmode;
+
+					if (stmt->concurrent)
+						PreventTransactionChain(isTopLevel,
+												"CREATE PROPERTY INDEX CONCURRENTLY");
+
+					/* Parser prevent to input graph name for label. */
+					Assert(stmt->relation->schemaname == NULL);
+					stmt->relation->schemaname = get_graph_path();
+
+					if (!RangeVarIsLabel(stmt->relation))
+					{
+						elog(ERROR, "label \"%s\" does not exist",
+							 stmt->relation->relname);
+					}
+
+					/*
+					 * Look up the relation OID just once, right here at the
+					 * beginning, so that we don't end up repeating the name
+					 * lookup later and latching onto a different relation
+					 * partway through.  To avoid lock upgrade hazards, it's
+					 * important that we take the strongest lock that will
+					 * eventually be needed here, so the lockmode calculation
+					 * needs to match what DefineIndex() does.
+					 */
+					lockmode = stmt->concurrent ? ShareUpdateExclusiveLock
+						: ShareLock;
+					relid =
+						RangeVarGetRelidExtended(stmt->relation, lockmode,
+												 false, false,
+												 RangeVarCallbackOwnsRelation,
+												 NULL);
+
+					/* Run parse analysis ... */
+					idxstmt = transformCreatePropertyIndexStmt(relid, stmt,
+															   queryString);
+
+					/* ... and do it */
+					EventTriggerAlterTableStart(parsetree);
+					address =
+						DefineIndex(relid,		/* OID of heap relation */
+									idxstmt,
+									InvalidOid, /* no predefined OID */
+									false,		/* is_alter_table */
+									true,		/* check_rights */
+									false,		/* skip_build */
+									false);		/* quiet */
+
+					/*
+					 * Add the CREATE INDEX node itself to stash right away;
+					 * if there were any commands stashed in the ALTER TABLE
+					 * code, we need them to appear after this one.
+					 */
+					EventTriggerCollectSimpleCommand(address, secondaryObject,
+													 parsetree);
+					commandCollected = true;
+					EventTriggerAlterTableEnd();
+				}
+				break;
+			case T_DropPropertyIndexStmt:
+				{
+					Node *stmt;
+
+					/*
+					 * Check to possible to drop the property index and
+					 * make DropStmt from DropPropertyIndexStmt
+					 */
+					stmt = (Node *) transformDropPropertyIndex(
+										(DropPropertyIndexStmt *) parsetree);
+
+					ProcessUtility(stmt,
+								   queryString,
+								   PROCESS_UTILITY_SUBCOMMAND,
+								   params,
+								   None_Receiver,
+								   NULL);
+				}
+				break;
+
 			default:
 				elog(ERROR, "unrecognized node type: %d",
 					 (int) nodeTag(parsetree));
@@ -2128,6 +2218,14 @@ CreateCommandTag(Node *parsetree)
 						break;
 				}
 			}
+			break;
+
+		case T_CreatePropertyIndexStmt:
+			tag = "CREATE PROPERTY INDEX";
+			break;
+
+		case T_DropPropertyIndexStmt:
+			tag = "DROP PROPERTY INDEX";
 			break;
 
 		case T_CreateTableSpaceStmt:
@@ -2889,6 +2987,8 @@ GetCommandLogLevel(Node *parsetree)
 		case T_AlterLabelStmt:
 		case T_CreateConstraintStmt:
 		case T_DropConstraintStmt:
+		case T_CreatePropertyIndexStmt:
+		case T_DropPropertyIndexStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

@@ -142,6 +142,7 @@ static bool isLabelKind(RangeVar *label, char labkind);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
 static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
 static Node *makePropertiesIndirectionMutator(Node *node);
+static bool isPropertyIndex(Oid indexoid);
 
 
 /*
@@ -3825,4 +3826,218 @@ makePropertiesIndirectionMutator(Node *node)
 
 	return raw_expression_tree_mutator(node, makePropertiesIndirectionMutator,
 									   NULL);
+}
+
+/*
+ * transformIndexStmt - parse analysis for CREATE PROPERTY INDEX
+ *
+ * This function is based on transformIndexStmt().
+ *
+ * Return an IndexStmt node using information from an PropertyIndexStmt.
+ */
+IndexStmt *
+transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
+								 const char *queryString)
+{
+	IndexStmt  *idxstmt;
+	ParseState *pstate;
+	ListCell   *l;
+	Relation	rel;
+	RangeTblEntry *rte;
+
+
+	/* Never come in here statement already transformed. */
+	Assert(!stmt->transformed);
+
+	idxstmt = (IndexStmt *) copyObject(stmt);
+	NodeSetTag(idxstmt, T_IndexStmt);
+
+	/* Set up pstate */
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
+	if (idxstmt->idxname == NULL)
+	{
+		Oid			namespaceId;
+
+		namespaceId = get_namespace_oid(idxstmt->relation->schemaname,
+										false);	/* missing_ok */
+
+		idxstmt->idxname = ChooseRelationName(idxstmt->relation->relname,
+											  "property",
+											  "idx",
+											  namespaceId);
+	}
+
+	/*
+	 * Put the parent table into the rtable so that the expressions can refer
+	 * to its fields without qualification.  Caller is responsible for locking
+	 * relation, but we still need to open it.
+	 */
+	rel = relation_open(relid, NoLock);
+	rte = addRangeTableEntryForRelation(pstate, rel, NULL, false, true);
+
+	/* no to join list, yes to namespaces */
+	addRTEtoQuery(pstate, rte, false, true, true);
+
+	/* take care of the where clause */
+	if (idxstmt->whereClause)
+	{
+		/* Makes column reference in where clause to expression that
+		 * get jsonb object from AG_ELEM_PROP. */
+		idxstmt->whereClause =
+						makePropertiesIndirectionMutator(idxstmt->whereClause);
+
+		idxstmt->whereClause = transformWhereClause(pstate,
+													idxstmt->whereClause,
+													EXPR_KIND_INDEX_PREDICATE,
+													"WHERE");
+		/* we have to fix its collations too */
+		assign_expr_collations(pstate, idxstmt->whereClause);
+	}
+
+	/* take care of any index expressions */
+	foreach(l, idxstmt->indexParams)
+	{
+		IndexElem  *ielem = (IndexElem *) lfirst(l);
+
+		if (ielem->expr == NULL || ielem->name != NULL)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("property index must have expressions.")));
+		}
+
+		/* makes column reference in expression to expression that
+		 * get jsonb object from AG_ELEM_PROP */
+		ielem->expr = makePropertiesIndirectionMutator(ielem->expr);
+
+		/* Extract preliminary index col name before transforming expr */
+		if (ielem->indexcolname == NULL)
+			ielem->indexcolname = FigureIndexColname(ielem->expr);
+
+		/* Now do parse transformation of the expression */
+		ielem->expr = transformExpr(pstate, ielem->expr,
+									EXPR_KIND_INDEX_EXPRESSION);
+
+		/* We have to fix its collations too */
+		assign_expr_collations(pstate, ielem->expr);
+
+		/*
+		 * transformExpr() should have already rejected subqueries,
+		 * aggregates, and window functions, based on the EXPR_KIND_ for
+		 * an index expression.
+		 *
+		 * Also reject expressions returning sets; this is for consistency
+		 * with what transformWhereClause() checks for the predicate.
+		 * DefineIndex() will make more checks.
+		 */
+		if (expression_returns_set(ielem->expr))
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("property index expression cannot return a set")));
+	}
+
+	/*
+	 * Check that only the base rel is mentioned.  (This should be dead code
+	 * now that add_missing_from is history.)
+	 */
+	if (list_length(pstate->p_rtable) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+				 errmsg("index expressions and predicates can refer only to the table being indexed")));
+
+	free_parsestate(pstate);
+
+	/* Close relation */
+	heap_close(rel, NoLock);
+
+	/* Mark statement as successfully transformed */
+	idxstmt->transformed = true;
+
+	return idxstmt;
+}
+
+DropStmt *
+transformDropPropertyIndex(DropPropertyIndexStmt *stmt)
+{
+	DropStmt *dropstmt = makeNode(DropStmt);
+	Oid		indexoid;
+	Oid		graphoid;
+	Oid		schemaoid;
+	char   *graphname;
+
+	graphname = get_graph_path();
+	graphoid = get_graphname_oid(graphname);
+	if (!OidIsValid(graphoid))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("graph \"%s\" does not exist", graphname)));
+	}
+
+	/* get schema that exists target index */
+	schemaoid = get_namespace_oid(graphname, false);
+
+	indexoid = get_relname_relid(stmt->idxname, schemaoid);
+	if (!OidIsValid(indexoid) && !stmt->missing_ok)
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("index \"%s\" does not exist",
+						stmt->idxname)));
+
+	if (OidIsValid(indexoid) && !isPropertyIndex(indexoid))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("\"%s\" is not property index",
+						stmt->idxname)));
+	}
+
+	dropstmt->objects = list_make1(list_make2(makeString(graphname),
+											  makeString(stmt->idxname)));
+
+	dropstmt->arguments = NIL;
+	dropstmt->removeType = OBJECT_INDEX;
+	dropstmt->behavior = stmt->behavior;
+	dropstmt->missing_ok = stmt->missing_ok;
+	dropstmt->concurrent = false;
+
+	return dropstmt;
+}
+
+static bool
+isPropertyIndex(Oid indexoid)
+{
+	Form_pg_index index;
+	HeapTuple	  indexTuple;
+	bool	retval = true;
+	int		i;
+
+	/* Fetch pg_index tuple of source index. */
+	indexTuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexoid));
+	if (!HeapTupleIsValid(indexTuple))		/* should not happen */
+		elog(ERROR, "cache lookup failed for index %u", indexoid);
+	index = (Form_pg_index) GETSTRUCT(indexTuple);
+
+	/*
+	 * If this index is a table for graph label and is an expressional index,
+	 * decide this is property index.
+	 */
+	if (!OidIsValid(get_relid_labid(index->indrelid)))
+		retval = false;
+	else
+	{
+		for (i = 0; i < index->indnatts; i++)
+		{
+			if (index->indkey.values[i] != 0)
+			{
+				retval = false;
+				break;
+			}
+		}
+	}
+
+	ReleaseSysCache(indexTuple);
+	return retval;
 }

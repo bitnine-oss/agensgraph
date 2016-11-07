@@ -111,6 +111,7 @@ static event_trigger_support_data event_trigger_support[] = {
 	{"POLICY", true},
 	{"ROLE", false},
 	{"RULE", true},
+	{"PROPERTY INDEX", true},
 	{"SCHEMA", true},
 	{"SEQUENCE", true},
 	{"SERVER", true},
