@@ -2186,6 +2186,9 @@ transformRuleStmt(RuleStmt *stmt, const char *queryString,
 	 */
 	rel = heap_openrv(stmt->relation, AccessExclusiveLock);
 
+	if (OidIsValid(get_relid_labid(rel->rd_id)))
+		elog(ERROR, "cannot create rule on graph label");
+
 	if (rel->rd_rel->relkind == RELKIND_MATVIEW)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
