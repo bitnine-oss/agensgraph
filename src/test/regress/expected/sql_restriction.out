@@ -34,7 +34,7 @@ ERROR:  cannot ALTER TABLE on graph label
 --
 -- TRIGGER
 --
-CREATE TRIGGER tt AFTER INSERT ON g.v 
+CREATE TRIGGER tt AFTER INSERT ON g.v
 FOR EACH STATEMENT EXECUTE PROCEDURE ff();
 ERROR:  cannot create trigger on graph label
 --

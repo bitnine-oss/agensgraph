@@ -2845,28 +2845,91 @@ test_raw_expression_coverage(Node *node, void *context)
 static Query *
 transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 {
-	Node	   *clause = stmt->last;
-	NodeTag		type = cypherClauseTag(clause);
+	CypherClause *clause;
+	NodeTag		type;
+	bool		valid = false;
 
+	clause = (CypherClause *) stmt->last;
+	type = cypherClauseTag(clause);
 	switch (type)
 	{
 		case T_CypherProjection:
-			if (cypherProjectionKind(clause) != CP_RETURN)
-				break;
-			/* fall-through */
+			if (cypherProjectionKind(clause->detail) == CP_RETURN)
+				valid = true;
+			break;
 		case T_CypherCreateClause:
 		case T_CypherDeleteClause:
 		case T_CypherSetClause:
-			return transformStmt(pstate, clause);
+			valid = true;
+			break;
 		default:
 			break;
 	}
 
-	ereport(ERROR,
-			(errcode(ERRCODE_SYNTAX_ERROR),
-			 errmsg("Cypher query must end with RETURN or update clause")));
+	if (!valid)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("Cypher query must end with RETURN or update clause")));
 
-	return NULL;
+	if (type == T_CypherProjection)
+	{
+		clause = (CypherClause *) clause->prev;
+		if (clause == NULL)
+			return transformStmt(pstate, stmt->last);
+
+		type = cypherClauseTag(clause);
+		if (type == T_CypherDeleteClause)
+			ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("Cypher DELETE clause cannot end with RETURN clause")));
+		if (type == T_CypherSetClause)
+			ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("Cypher SET/REMOVE clause cannot end with RETURN clause")));
+
+		if (type != T_CypherCreateClause)
+		{
+			clause = (CypherClause *) clause->prev;
+			while (clause != NULL)
+			{
+				type = cypherClauseTag(clause);
+				if (type == T_CypherCreateClause ||
+					type == T_CypherDeleteClause ||
+					type == T_CypherSetClause)
+					ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("Cypher query must end with RETURN or update clause")));
+
+				clause = (CypherClause *) clause->prev;
+			}
+		}
+
+		return transformStmt(pstate, stmt->last);
+	}
+
+	clause = (CypherClause *) clause->prev;
+	while (clause != NULL)
+	{
+		if (cypherClauseTag(clause) != type)
+			break;
+
+		clause = (CypherClause *) clause->prev;
+	}
+
+	while (clause != NULL)
+	{
+		type = cypherClauseTag(clause);
+		if (type == T_CypherCreateClause ||
+			type == T_CypherDeleteClause ||
+			type == T_CypherSetClause)
+			ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("There must be one type of consecutive update clauses")));
+
+		clause = (CypherClause *) clause->prev;
+	}
+
+	return transformStmt(pstate, stmt->last);
 }
 
 static Query *
