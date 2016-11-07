@@ -3165,6 +3165,46 @@ _copyIndexStmt(const IndexStmt *from)
 	return newnode;
 }
 
+static CreatePropertyIndexStmt *
+_copyCreatePropertyIndexStmt(const CreatePropertyIndexStmt *from)
+{
+	CreatePropertyIndexStmt  *newnode = makeNode(CreatePropertyIndexStmt);
+
+	COPY_STRING_FIELD(idxname);
+	COPY_NODE_FIELD(relation);
+	COPY_STRING_FIELD(accessMethod);
+	COPY_STRING_FIELD(tableSpace);
+	COPY_NODE_FIELD(indexParams);
+	COPY_NODE_FIELD(options);
+	COPY_NODE_FIELD(whereClause);
+	COPY_NODE_FIELD(excludeOpNames);
+	COPY_STRING_FIELD(idxcomment);
+	COPY_SCALAR_FIELD(indexOid);
+	COPY_SCALAR_FIELD(oldNode);
+	COPY_SCALAR_FIELD(unique);
+	COPY_SCALAR_FIELD(primary);
+	COPY_SCALAR_FIELD(isconstraint);
+	COPY_SCALAR_FIELD(deferrable);
+	COPY_SCALAR_FIELD(initdeferred);
+	COPY_SCALAR_FIELD(transformed);
+	COPY_SCALAR_FIELD(concurrent);
+	COPY_SCALAR_FIELD(if_not_exists);
+
+	return newnode;
+}
+
+static DropPropertyIndexStmt *
+_copyDropPropertyIndexStmt(const DropPropertyIndexStmt *from)
+{
+	DropPropertyIndexStmt  *newnode = makeNode(DropPropertyIndexStmt);
+
+	COPY_STRING_FIELD(idxname);
+	COPY_SCALAR_FIELD(behavior);
+	COPY_SCALAR_FIELD(missing_ok);
+
+	return newnode;
+}
+
 static CreateFunctionStmt *
 _copyCreateFunctionStmt(const CreateFunctionStmt *from)
 {
@@ -5284,6 +5324,12 @@ copyObject(const void *from)
 			break;
 		case T_DropConstraintStmt:
 			retval = _copyDropConstraintStmt(from);
+			break;
+		case T_CreatePropertyIndexStmt:
+			retval = _copyCreatePropertyIndexStmt(from);
+			break;
+		case T_DropPropertyIndexStmt:
+			retval = _copyDropPropertyIndexStmt(from);
 			break;
 		case T_CypherStmt:
 			retval = _copyCypherStmt(from);

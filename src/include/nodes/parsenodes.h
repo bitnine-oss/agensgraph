@@ -2469,6 +2469,16 @@ typedef struct IndexStmt
 	bool		if_not_exists;	/* just do nothing if index already exists? */
 } IndexStmt;
 
+typedef struct IndexStmt CreatePropertyIndexStmt;
+
+typedef struct DropPropertyIndexStmt
+{
+	NodeTag		 type;
+	char	    *idxname;
+	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
+	bool		 missing_ok;	/* skip error if object is missing? */
+} DropPropertyIndexStmt;
+
 /* ----------------------
  *		Create Function Statement
  * ----------------------
