@@ -784,8 +784,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 							 errmsg("cannot alter schema \"%s\"", name),
 							 errhint("Use ALTER GRAPH instead")));
 
-				return AlterSchemaOwner(strVal(linitial(stmt->object)),
-										newowner);
+				return AlterSchemaOwner(name, newowner);
 			}
 
 		case OBJECT_TYPE:
@@ -859,8 +858,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 							(errcode(ERRCODE_UNDEFINED_SCHEMA),
 							 errmsg("graph \"%s\" does not exist", name)));
 
-				return AlterSchemaOwner(strVal(linitial(stmt->object)),
-										newowner);
+				return AlterSchemaOwner(name, newowner);
 			}
 
 		default:
