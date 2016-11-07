@@ -365,6 +365,15 @@ MATCH (n)-[r]->(m) REMOVE m.name;
 MATCH (n)-[r]->(m)
 RETURN properties(n) as n, properties(r) as r, properties(m) as m;
 
+--
+-- SET/CREATE
+--
+MATCH (a)
+CREATE (a)-[:rel]->(b)
+SET b.name = '"agens"';
+
+MATCH (a) RETURN a.name;
+
 -- cleanup
 
 DROP GRAPH p CASCADE;
