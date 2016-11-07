@@ -851,6 +851,21 @@ RETURN properties(n) as n, properties(r) as r, properties(m) as m;
  {"name": "somebody"} | {"l": "w"} | {}
 (1 row)
 
+--
+-- SET/CREATE
+--
+MATCH (a)
+CREATE (a)-[:rel]->(b)
+SET b.name = '"agens"';
+MATCH (a) RETURN a.name;
+   name   
+----------
+ somebody
+ 
+ agens
+ agens
+(4 rows)
+
 -- cleanup
 DROP GRAPH p CASCADE;
 NOTICE:  drop cascades to 3 other objects
