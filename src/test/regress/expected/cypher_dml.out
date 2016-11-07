@@ -851,6 +851,15 @@ RETURN properties(n) as n, properties(r) as r, properties(m) as m;
  {"name": "somebody"} | {"l": "w"} | {}
 (1 row)
 
+-- multiple SET
+MATCH (n)-[r]->(m) SET r.l = '"x"' SET r.l = '"y"';
+MATCH (n)-[r]->(m)
+RETURN properties(r) as r;
+     r      
+------------
+ {"l": "y"}
+(1 row)
+
 -- cleanup
 DROP GRAPH p CASCADE;
 NOTICE:  drop cascades to 3 other objects

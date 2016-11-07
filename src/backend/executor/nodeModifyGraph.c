@@ -232,7 +232,9 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 void
 ExecEndModifyGraph(ModifyGraphState *mgstate)
 {
-	EndSqlcmdHashTable();
+	if (sqlcmd_cache != NULL)
+		EndSqlcmdHashTable();
+
 	ExecFreeExprContext(&mgstate->ps);
 	ExecEndNode(mgstate->subplan);
 }
@@ -1126,6 +1128,8 @@ EndSqlcmdHashTable(void)
 		SPI_freeplan(entry->plan);
 
 	hash_destroy(sqlcmd_cache);
+
+	sqlcmd_cache = NULL;
 }
 
 static SPIPlanPtr
