@@ -2674,6 +2674,7 @@ _outQuery(StringInfo str, const Query *node)
 		{
 			case T_CreateStmt:
 			case T_CreateLabelStmt:
+			case T_CreatePropertyIndexStmt:
 			case T_IndexStmt:
 			case T_NotifyStmt:
 			case T_DeclareCursorStmt:
@@ -3342,6 +3343,42 @@ _outDropConstraintStmt(StringInfo str, const DropConstraintStmt *node)
 
 	WRITE_NODE_FIELD(graphlabel);
 	WRITE_STRING_FIELD(conname);
+}
+
+static void
+_outCreatePropertyIndexStmt(StringInfo str, const CreatePropertyIndexStmt *node)
+{
+	WRITE_NODE_TYPE("CREATEPROPERTYINDEXSTMT");
+
+	WRITE_STRING_FIELD(idxname);
+	WRITE_NODE_FIELD(relation);
+	WRITE_STRING_FIELD(accessMethod);
+	WRITE_STRING_FIELD(tableSpace);
+	WRITE_NODE_FIELD(indexParams);
+	WRITE_NODE_FIELD(options);
+	WRITE_NODE_FIELD(whereClause);
+	WRITE_NODE_FIELD(excludeOpNames);
+	WRITE_STRING_FIELD(idxcomment);
+	WRITE_OID_FIELD(indexOid);
+	WRITE_OID_FIELD(oldNode);
+	WRITE_BOOL_FIELD(unique);
+	WRITE_BOOL_FIELD(primary);
+	WRITE_BOOL_FIELD(isconstraint);
+	WRITE_BOOL_FIELD(deferrable);
+	WRITE_BOOL_FIELD(initdeferred);
+	WRITE_BOOL_FIELD(transformed);
+	WRITE_BOOL_FIELD(concurrent);
+	WRITE_BOOL_FIELD(if_not_exists);
+}
+
+static void
+_outDropPropertyIndexStmt(StringInfo str, const DropPropertyIndexStmt *node)
+{
+	WRITE_NODE_TYPE("DROPPROPERTYINDEXSTMT");
+
+	WRITE_STRING_FIELD(idxname);
+	WRITE_ENUM_FIELD(behavior, DropBehavior);
+	WRITE_BOOL_FIELD(missing_ok);
 }
 
 static void
@@ -4118,6 +4155,12 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_DropConstraintStmt:
 				_outDropConstraintStmt(str, obj);
+				break;
+			case T_CreatePropertyIndexStmt:
+				_outCreatePropertyIndexStmt(str, obj);
+				break;
+			case T_DropPropertyIndexStmt:
+				_outDropPropertyIndexStmt(str, obj);
 				break;
 			case T_CypherStmt:
 				_outCypherStmt(str, obj);

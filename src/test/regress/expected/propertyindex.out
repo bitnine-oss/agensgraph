@@ -1,0 +1,138 @@
+--
+-- Cypher Query Language - Property Index
+--
+--
+-- CREATE GRAPH
+--
+SHOW graph_path;
+ graph_path 
+------------
+ 
+(1 row)
+
+CREATE GRAPH g;
+SHOW graph_path;
+ graph_path 
+------------
+ g
+(1 row)
+
+CREATE VLABEL regv1;
+CREATE PROPERTY INDEX ON regv1 (name);
+CREATE PROPERTY INDEX ON regv1 (name.first, name.last);
+CREATE PROPERTY INDEX ON regv1 ((name.first || name.last));
+CREATE PROPERTY INDEX ON regv1 ((age::integer));
+CREATE PROPERTY INDEX ON regv1 ((body.weight::integer / body.height::integer));
+\d g.regv1
+                                                 Table "g.regv1"
+   Column   |  Type   |                                         Modifiers                                         
+------------+---------+-------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(('g.regv1'::regclass)::oid, nextval('g.regv1_id_seq'::regclass))
+ properties | jsonb   | not null default jsonb_build_object()
+Indexes:
+    "regv1_pkey" PRIMARY KEY, btree (id)
+    "regv1_properties_idx" gin (properties jsonb_path_ops)
+    "regv1_property_idx" btree ((properties #>> ARRAY['name'::text]))
+    "regv1_property_idx1" btree ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))
+    "regv1_property_idx2" btree (((properties #>> ARRAY['name'::text, 'first'::text]) || (properties #>> ARRAY['name'::text, 'last'::text])))
+    "regv1_property_idx3" btree (((properties #>> ARRAY['age'::text])::integer))
+    "regv1_property_idx4" btree ((((properties #>> ARRAY['body'::text, 'weight'::text])::integer) / ((properties #>> ARRAY['body'::text, 'height'::text])::integer)))
+Inherits: g.ag_vertex
+
+DROP VLABEL regv1;
+-- Check property name & access method type
+CREATE VLABEL regv1;
+CREATE PROPERTY INDEX ON regv1 (name);
+CREATE PROPERTY INDEX ON regv1 USING btree (name.first);
+CREATE PROPERTY INDEX ON regv1 USING hash (name.first);
+WARNING:  hash indexes are not WAL-logged and their use is discouraged
+CREATE PROPERTY INDEX ON regv1 USING brin (name.first);
+CREATE PROPERTY INDEX ON regv1 USING gin (name);
+ERROR:  data type text has no default operator class for access method "gin"
+HINT:  You must specify an operator class for the index or define a default operator class for the data type.
+CREATE PROPERTY INDEX ON regv1 USING gist (name);
+ERROR:  data type text has no default operator class for access method "gist"
+HINT:  You must specify an operator class for the index or define a default operator class for the data type.
+CREATE PROPERTY INDEX ON regv1 USING gin ((self_intro::tsvector));
+CREATE PROPERTY INDEX ON regv1 USING gist ((hobby::tsvector));
+\d g.regv1
+                                                 Table "g.regv1"
+   Column   |  Type   |                                         Modifiers                                         
+------------+---------+-------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(('g.regv1'::regclass)::oid, nextval('g.regv1_id_seq'::regclass))
+ properties | jsonb   | not null default jsonb_build_object()
+Indexes:
+    "regv1_pkey" PRIMARY KEY, btree (id)
+    "regv1_properties_idx" gin (properties jsonb_path_ops)
+    "regv1_property_idx" btree ((properties #>> ARRAY['name'::text]))
+    "regv1_property_idx1" btree ((properties #>> ARRAY['name'::text, 'first'::text]))
+    "regv1_property_idx2" hash ((properties #>> ARRAY['name'::text, 'first'::text]))
+    "regv1_property_idx3" brin ((properties #>> ARRAY['name'::text, 'first'::text]))
+    "regv1_property_idx4" gin (((properties #>> ARRAY['self_intro'::text])::tsvector))
+    "regv1_property_idx5" gist (((properties #>> ARRAY['hobby'::text])::tsvector))
+Inherits: g.ag_vertex
+
+DROP VLABEL regv1;
+-- Concurrently build & if not exist
+CREATE VLABEL regv1;
+CREATE PROPERTY INDEX CONCURRENTLY ON regv1 (name.first);
+CREATE PROPERTY INDEX IF NOT EXISTS regv1_property_idx ON regv1 (name.first);
+NOTICE:  relation "regv1_property_idx" already exists, skipping
+-- Collation & Sort & NULL order
+CREATE PROPERTY INDEX ON regv1 (name.first COLLATE "C" ASC NULLS FIRST);
+-- Tablespace
+CREATE PROPERTY INDEX ON regv1 (name) TABLESPACE pg_default;
+-- Storage parameter & partial index
+CREATE PROPERTY INDEX ON regv1 (name.first) WITH (fillfactor = 80);
+CREATE PROPERTY INDEX ON regv1 (name.first) WHERE (name IS NOT NULL);
+\d g.regv1
+                                                 Table "g.regv1"
+   Column   |  Type   |                                         Modifiers                                         
+------------+---------+-------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(('g.regv1'::regclass)::oid, nextval('g.regv1_id_seq'::regclass))
+ properties | jsonb   | not null default jsonb_build_object()
+Indexes:
+    "regv1_pkey" PRIMARY KEY, btree (id)
+    "regv1_properties_idx" gin (properties jsonb_path_ops)
+    "regv1_property_idx" btree ((properties #>> ARRAY['name'::text, 'first'::text]))
+    "regv1_property_idx1" btree ((properties #>> ARRAY['name'::text, 'first'::text]) COLLATE "C" NULLS FIRST)
+    "regv1_property_idx2" btree ((properties #>> ARRAY['name'::text]))
+    "regv1_property_idx3" btree ((properties #>> ARRAY['name'::text, 'first'::text])) WITH (fillfactor='80')
+    "regv1_property_idx4" btree ((properties #>> ARRAY['name'::text, 'first'::text])) WHERE (properties #>> ARRAY['name'::text]) IS NOT NULL
+Inherits: g.ag_vertex
+
+DROP VLABEL regv1;
+-- DROP PROPERTY INDEX
+CREATE VLABEL regv1;
+CREATE PROPERTY INDEX regv1_idx ON regv1 (name);
+DROP PROPERTY INDEX regv1_idx;
+DROP PROPERTY INDEX IF EXISTS regv1_idx;
+NOTICE:  index "regv1_idx" does not exist, skipping
+DROP PROPERTY INDEX regv1_pkey;
+ERROR:  "regv1_pkey" is not property index
+DROP VLABEL regv1;
+CREATE ELABEL rege1;
+CREATE PROPERTY INDEX rege1_idx ON rege1 (reltype);
+DROP PROPERTY INDEX rege1_idx;
+DROP PROPERTY INDEX IF EXISTS rege1_idx;
+NOTICE:  index "rege1_idx" does not exist, skipping
+DROP PROPERTY INDEX rege1_id_idx;
+ERROR:  "rege1_id_idx" is not property index
+DROP PROPERTY INDEX rege1_start_idx;
+ERROR:  "rege1_start_idx" is not property index
+DROP PROPERTY INDEX rege1_end_idx;
+ERROR:  "rege1_end_idx" is not property index
+DROP ELABEL rege1;
+CREATE VLABEL regv1;
+CREATE PROPERTY INDEX regv1_multi_col ON regv1 (name.first, name.middle, name.last);
+DROP PROPERTY INDEX regv1_multi_col;
+CREATE PROPERTY INDEX regv1_multi_expr ON regv1 ((name.first || name.last), (age::integer));
+DROP PROPERTY INDEX regv1_multi_expr;
+DROP VLABEL regv1;
+--
+-- DROP GRAPH
+--
+DROP GRAPH g CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to label ag_vertex
+drop cascades to label ag_edge

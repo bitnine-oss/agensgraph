@@ -414,6 +414,8 @@ typedef enum NodeTag
 	T_AlterLabelStmt,
 	T_CreateConstraintStmt,
 	T_DropConstraintStmt,
+	T_CreatePropertyIndexStmt,
+	T_DropPropertyIndexStmt,
 	T_CypherStmt,
 
 	/*

@@ -551,8 +551,10 @@ static Node *wrapCypherWithSelect(Node *stmt);
 /* Agens Graph */
 %type <node>	CreateGraphStmt CreateLabelStmt AlterLabelStmt alter_label_cmd
 				CreateConstraintStmt DropConstraintStmt
-%type <list>	alter_label_cmds
+				CreatePropertyIndexStmt DropPropertyIndexStmt
+%type <list>	alter_label_cmds prop_idx_params
 %type <str>		opt_constraint_name
+%type <ielem>	prop_idx_elem
 
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
@@ -648,7 +650,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 
 	PARALLEL PARSER PARTIAL PARTITION PASSING PASSWORD PLACING PLANS POLICY
 	POSITION PRECEDING PRECISION PRESERVE PREPARE PREPARED PRIMARY
-	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROGRAM
+	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROGRAM PROPERTY
 
 	QUOTE
 
@@ -850,6 +852,7 @@ stmt :
 			| CreateOpFamilyStmt
 			| AlterOpFamilyStmt
 			| CreatePolicyStmt
+			| CreatePropertyIndexStmt
 			| CreatePLangStmt
 			| CreateSchemaStmt
 			| CreateSeqStmt
@@ -879,6 +882,7 @@ stmt :
 			| DropOpFamilyStmt
 			| DropOwnedStmt
 			| DropPolicyStmt
+			| DropPropertyIndexStmt
 			| DropPLangStmt
 			| DropRuleStmt
 			| DropStmt
@@ -14062,6 +14066,7 @@ unreserved_keyword:
 			| PROCEDURAL
 			| PROCEDURE
 			| PROGRAM
+			| PROPERTY
 			| QUOTE
 			| RANGE
 			| READ
@@ -14603,6 +14608,120 @@ DropConstraintStmt:
 opt_constraint_name:
 			name									{ $$ = $1; }
 			| /*EMPTY*/								{ $$ = NULL; }
+		;
+
+/*
+ * Note: We cannot put TABLESPACE clause after WHERE clause unless we are
+ *       willing to make TABLESPACE a fully reserved word.
+ */
+CreatePropertyIndexStmt:
+			CREATE PROPERTY INDEX opt_concurrently opt_index_name
+			ON ColId access_method_clause '(' prop_idx_params ')'
+			opt_reloptions OptTableSpace where_clause
+				{
+					CreatePropertyIndexStmt *n =
+											makeNode(CreatePropertyIndexStmt);
+					n->unique = false;
+					n->concurrent = $4;
+					n->idxname = $5;
+					n->relation = makeRangeVar(NULL, $7, @7);
+					n->accessMethod = $8;
+					n->indexParams = $10;
+					n->options = $12;
+					n->tableSpace = $13;
+					n->whereClause = $14;
+					n->excludeOpNames = NIL;
+					n->idxcomment = NULL;
+					n->indexOid = InvalidOid;
+					n->oldNode = InvalidOid;
+					n->primary = false;
+					n->isconstraint = false;
+					n->deferrable = false;
+					n->initdeferred = false;
+					n->transformed = false;
+					n->if_not_exists = false;
+					$$ = (Node *)n;
+				}
+			| CREATE PROPERTY INDEX opt_concurrently IF_P NOT EXISTS index_name
+			ON ColId access_method_clause '(' prop_idx_params ')'
+			opt_reloptions OptTableSpace where_clause
+				{
+					CreatePropertyIndexStmt *n =
+											makeNode(CreatePropertyIndexStmt);
+					n->unique = false;
+					n->concurrent = $4;
+					n->idxname = $8;
+					n->relation = makeRangeVar(NULL, $10, @10);
+					n->accessMethod = $11;
+					n->indexParams = $13;
+					n->options = $15;
+					n->tableSpace = $16;
+					n->whereClause = $17;
+					n->excludeOpNames = NIL;
+					n->idxcomment = NULL;
+					n->indexOid = InvalidOid;
+					n->oldNode = InvalidOid;
+					n->primary = false;
+					n->isconstraint = false;
+					n->deferrable = false;
+					n->initdeferred = false;
+					n->transformed = false;
+					n->if_not_exists = true;
+					$$ = (Node *)n;
+				}
+		;
+
+prop_idx_params:
+			prop_idx_elem							{ $$ = list_make1($1); }
+			| prop_idx_params ',' prop_idx_elem		{ $$ = lappend($1, $3); }
+		;
+
+/*
+ * Property index attributes can be either simple column references,
+ * or arbitrary expressions in parens.
+ */
+prop_idx_elem:
+			columnref opt_collate opt_class opt_asc_desc opt_nulls_order
+				{
+					$$ = makeNode(IndexElem);
+					$$->name = NULL;
+					$$->expr = $1;
+					$$->indexcolname = NULL;
+					$$->collation = $2;
+					$$->opclass = $3;
+					$$->ordering = $4;
+					$$->nulls_ordering = $5;
+				}
+			| '(' a_expr ')' opt_collate opt_class opt_asc_desc opt_nulls_order
+				{
+					$$ = makeNode(IndexElem);
+					$$->name = NULL;
+					$$->expr = $2;
+					$$->indexcolname = NULL;
+					$$->collation = $4;
+					$$->opclass = $5;
+					$$->ordering = $6;
+					$$->nulls_ordering = $7;
+				}
+		;
+
+DropPropertyIndexStmt:
+			DROP PROPERTY INDEX name opt_drop_behavior
+				{
+					DropPropertyIndexStmt *n = makeNode(DropPropertyIndexStmt);
+					n->idxname = $4;
+					n->behavior = $5;
+					n->missing_ok = FALSE;
+					$$ = (Node *)n;
+				}
+			| DROP PROPERTY INDEX IF_P EXISTS name opt_drop_behavior
+				{
+					DropPropertyIndexStmt *n = makeNode(DropPropertyIndexStmt);
+					n->idxname = $6;
+					n->behavior = $7;
+					n->missing_ok = TRUE;
+					$$ = (Node *)n;
+				}
 		;
 
 /*

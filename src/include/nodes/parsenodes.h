@@ -3185,6 +3185,16 @@ typedef struct DropConstraintStmt
 	char	   *conname;
 } DropConstraintStmt;
 
+typedef struct IndexStmt CreatePropertyIndexStmt;
+
+typedef struct DropPropertyIndexStmt
+{
+	NodeTag		 type;
+	char	    *idxname;
+	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
+	bool		 missing_ok;	/* skip error if object is missing? */
+} DropPropertyIndexStmt;
+
 /****************************************************************************
  * Cypher related node structures
  ****************************************************************************/
