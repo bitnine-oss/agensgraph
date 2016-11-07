@@ -171,3 +171,4 @@ test: stats
 test: graphid
 test: cypher_ddl
 test: cypher_dml
+test: propertyindex

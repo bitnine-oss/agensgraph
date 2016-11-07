@@ -125,7 +125,7 @@ DROP ROLE temp;
 
 SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
 ALTER VLABEL v0 CLUSTER ON v0_pkey;
-SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
+SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass ORDER BY indexrelid;
 ALTER VLABEL v0 SET WITHOUT CLUSTER;
 SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
 

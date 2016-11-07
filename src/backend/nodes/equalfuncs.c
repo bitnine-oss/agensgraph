@@ -2701,6 +2701,44 @@ _equalDropConstraintStmt(const DropConstraintStmt *a,
 }
 
 static bool
+_equalCreatePropertyIndexStmt(const CreatePropertyIndexStmt *a,
+							  const CreatePropertyIndexStmt *b)
+{
+	COMPARE_STRING_FIELD(idxname);
+	COMPARE_NODE_FIELD(relation);
+	COMPARE_STRING_FIELD(accessMethod);
+	COMPARE_STRING_FIELD(tableSpace);
+	COMPARE_NODE_FIELD(indexParams);
+	COMPARE_NODE_FIELD(options);
+	COMPARE_NODE_FIELD(whereClause);
+	COMPARE_NODE_FIELD(excludeOpNames);
+	COMPARE_STRING_FIELD(idxcomment);
+	COMPARE_SCALAR_FIELD(indexOid);
+	COMPARE_SCALAR_FIELD(oldNode);
+	COMPARE_SCALAR_FIELD(unique);
+	COMPARE_SCALAR_FIELD(primary);
+	COMPARE_SCALAR_FIELD(isconstraint);
+	COMPARE_SCALAR_FIELD(deferrable);
+	COMPARE_SCALAR_FIELD(initdeferred);
+	COMPARE_SCALAR_FIELD(transformed);
+	COMPARE_SCALAR_FIELD(concurrent);
+	COMPARE_SCALAR_FIELD(if_not_exists);
+
+	return true;
+}
+
+static bool
+_equalDropPropertyIndexStmt(const DropPropertyIndexStmt *a,
+							const DropPropertyIndexStmt *b)
+{
+	COMPARE_STRING_FIELD(idxname);
+	COMPARE_SCALAR_FIELD(behavior);
+	COMPARE_SCALAR_FIELD(missing_ok);
+
+	return true;
+}
+
+static bool
 _equalCypherStmt(const CypherStmt *a, const CypherStmt *b)
 {
 	COMPARE_NODE_FIELD(last);
@@ -3639,6 +3677,13 @@ equal(const void *a, const void *b)
 			break;
 		case T_DropConstraintStmt:
 			retval = _equalDropConstraintStmt(a, b);
+			break;
+
+		case T_CreatePropertyIndexStmt:
+			retval = _equalCreatePropertyIndexStmt(a, b);
+			break;
+		case T_DropPropertyIndexStmt:
+			retval = _equalDropPropertyIndexStmt(a, b);
 			break;
 
 		case T_CypherStmt:

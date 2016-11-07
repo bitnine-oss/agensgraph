@@ -116,3 +116,6 @@ test: cypher_dml graphid
 
 # run cypher ddl test
 test: cypher_ddl
+
+# run property index
+test: propertyindex
