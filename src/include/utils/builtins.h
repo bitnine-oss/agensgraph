@@ -744,6 +744,8 @@ extern Datum pg_get_function_arg_default(PG_FUNCTION_ARGS);
 extern const char *quote_identifier(const char *ident);
 extern char *quote_qualified_identifier(const char *qualifier,
 						   const char *ident);
+extern Datum ag_get_propindexdef(PG_FUNCTION_ARGS);
+extern Datum ag_get_graphconstraintdef(PG_FUNCTION_ARGS);
 
 
 /* tid.c */
