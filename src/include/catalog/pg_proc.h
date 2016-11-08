@@ -5374,6 +5374,7 @@ DATA(insert OID = 7079 ( nodes			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7011
 DESCR("get vertices in graphpath");
 DATA(insert OID = 7080 ( relationships	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7021 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_edges _null_ _null_ _null_ ));
 DESCR("get edges in graphpath");
+
 DATA(insert OID = 7081 ( graphid_eq		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_eq _null_ _null_ _null_ ));
 DATA(insert OID = 7082 ( graphid_ne		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_ne _null_ _null_ _null_ ));
 DATA(insert OID = 7083 ( graphid_lt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7002 7002" _null_ _null_ _null_ _null_ _null_ graphid_lt _null_ _null_ _null_ ));
@@ -5394,6 +5395,14 @@ DATA(insert OID = 7102 ( gin_consistent_graphid		 PGNSP PGUID 12 1 0 0 0 f f f f
 DESCR("GIN graphid support");
 DATA(insert OID = 7103 ( gin_compare_partial_graphid PGNSP PGUID 12 1 0 0 0 f f f f t f i s 4 0 23 "7002 7002 21 2281" _null_ _null_ _null_ _null_ _null_ gin_compare_partial_graphid _null_ _null_ _null_ ));
 DESCR("GIN graphid support");
+
+DATA(insert OID = 7009 (  ag_label_is_visible		PGNSP PGUID 12 10 0 0 0 f f f f t f s s 1 0 16 "26" _null_ _null_ _null_ _null_ _null_ ag_label_is_visible _null_ _null_ _null_ ));
+DESCR("is label visible in graph path?");
+
+DATA(insert OID = 7013 (  ag_get_propindexdef		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 25 "26" _null_ _null_ _null_ _null_ _null_ ag_get_propindexdef _null_ _null_ _null_ ));
+DESCR("property index description");
+DATA(insert OID = 7015 (  ag_get_graphconstraintdef PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 25 "26" _null_ _null_ _null_ _null_ _null_ ag_get_graphconstraintdef _null_ _null_ _null_ ));
+DESCR("constraint description");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

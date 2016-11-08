@@ -15,6 +15,7 @@
 #include "access/xact.h"
 #include "catalog/ag_graph.h"
 #include "catalog/ag_graph_fn.h"
+#include "catalog/ag_label.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/objectaccess.h"
@@ -30,6 +31,13 @@
 /* a global variable for the GUC variable */
 char *graph_path = NULL;
 bool DisableGraphDML = true;
+
+/*
+ * Export the FooIsVisible functions as SQL-callable functions.
+ *
+ * See namespace.c
+ */
+Datum		ag_label_is_visible(PG_FUNCTION_ARGS);
 
 /* check_hook: validate new graph_path value */
 bool
@@ -144,4 +152,41 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString)
 	recordDependencyOn(&schemaobj, &graphobj, DEPENDENCY_INTERNAL);
 
 	return graphoid;
+}
+
+/*
+ * LabelIsVisible
+ *     Determine whether a label (identified by OID) is visible in the
+ *     current graph path.  Visible means "would be found by searching
+ *     for the unqualified label name".
+ */
+bool
+LabelIsVisible(Oid labid)
+{
+	HeapTuple   labtup;
+	Form_ag_label labform;
+	bool        visible = false;
+
+	labtup = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	if (!HeapTupleIsValid(labtup))
+		elog(ERROR, "cache lookup failed for label %u", labid);
+	labform = (Form_ag_label) GETSTRUCT(labtup);
+
+	if (get_graphname_oid(get_graph_path()) ==  labform->graphid)
+		visible = true;
+
+	ReleaseSysCache(labtup);
+
+	return visible;
+}
+
+Datum
+ag_label_is_visible(PG_FUNCTION_ARGS)
+{
+	Oid			oid = PG_GETARG_OID(0);
+
+	if (!SearchSysCacheExists1(LABELOID, ObjectIdGetDatum(oid)))
+		PG_RETURN_NULL();
+
+	PG_RETURN_BOOL(LabelIsVisible(oid));
 }
