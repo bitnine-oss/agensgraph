@@ -188,6 +188,7 @@ SELECT labname, labkind FROM pg_catalog.ag_label;
 CREATE VLABEL regv1;
 
 CREATE CONSTRAINT ON regv1 ASSERT a.b IS UNIQUE;
+\dGv+ regv1
 
 CREATE (:regv1 {'a':{'b':'agens', 'c':'graph'}});
 CREATE (:regv1 {'a':{'b':'agens', 'c':'graph'}});
@@ -202,6 +203,7 @@ DROP VLABEL regv1;
 CREATE ELABEL rege1;
 
 CREATE CONSTRAINT ON rege1 ASSERT c || d IS UNIQUE;
+\dGe+ rege1
 
 CREATE ()-[:rege1 {'c':'agens', 'd':'graph'}]->();
 CREATE ()-[:rege1 {'c':'agens', 'd':'graph'}]->();
@@ -214,6 +216,7 @@ DROP ELABEL rege1;
 CREATE VLABEL regv2;
 
 CREATE CONSTRAINT ON regv2 ASSERT name IS NOT NULL;
+\dGv+ regv2
 
 CREATE (:regv2 {'name':'agens'});
 CREATE (:regv2 {'age':'0'});
@@ -226,6 +229,7 @@ DROP VLABEL regv2;
 CREATE VLABEL regv3;
 
 CREATE CONSTRAINT ON regv3 ASSERT (name.first, name.last) IS NOT NULL;
+\dGv+ regv3
 
 CREATE (:regv3 {'name':'agens'});
 CREATE (:regv3 {'name':{'first':'agens', 'last':'graph'}});
@@ -239,6 +243,7 @@ DROP VLABEL regv3;
 CREATE ELABEL rege2;
 
 CREATE CONSTRAINT ON rege2 ASSERT a != b;
+\dGe+ rege2
 
 CREATE ()-[:rege2 {'a':'agens', 'b':'graph'}]->();
 CREATE ()-[:rege2 {'a':'agens', 'b':'agens'}]->();
@@ -251,6 +256,7 @@ DROP ELABEL rege2;
 CREATE VLABEL regv4;
 
 CREATE CONSTRAINT ON regv4 ASSERT (length(password) > 8 AND length(password) < 16);
+\dGv+ regv4
 
 CREATE (:regv4 {'password':'12345678'});
 CREATE (:regv4 {'password':'123456789'});
@@ -263,6 +269,7 @@ DROP VLABEL regv4;
 CREATE ELABEL rege3;
 
 CREATE CONSTRAINT ON rege3 ASSERT type IN ('friend','lover','parent');
+\dGe+ rege3
 
 CREATE ()-[:rege3 {'type':'friend', 'name':'agens'}]->();
 CREATE ()-[:rege3 {'type':'love', 'name':'graph'}]->();
@@ -275,6 +282,7 @@ DROP ELABEL rege3;
 CREATE VLABEL regv5;
 
 CREATE CONSTRAINT ON regv5 ASSERT lower(btrim(id)) IS UNIQUE;
+\dGv+ regv5
 
 CREATE (:regv5 {'id':'agens'});
 CREATE (:regv5 {'id':' agens'});
@@ -290,6 +298,7 @@ DROP VLABEL regv5;
 CREATE VLABEL regv6;
 
 CREATE CONSTRAINT ON regv6 ASSERT age::int > 0 AND age::int < 128;
+\dGv+ regv6
 
 CREATE (:regv6 {'age':'0'});
 CREATE (:regv6 {'age':'1'});
@@ -305,6 +314,7 @@ DROP VLABEL regv6;
 CREATE ELABEL rege4;
 
 CREATE CONSTRAINT rege4_name_isnull_constraint ON rege4 ASSERT id IS NULL;
+\dGe+ rege4
 
 CREATE ()-[:rege4 {'id':NULL, 'name':'agens'}]->();
 CREATE ()-[:rege4 {'id':10, 'name':'agens'}]->();
@@ -320,6 +330,7 @@ DROP ELABEL rege4;
 CREATE VLABEL regv7;
 
 CREATE CONSTRAINT ON regv7 ASSERT a.b[0].c IS NOT NULL;
+\dGv+ regv7
 
 CREATE (:regv7 {'a':{'b':ARRAY[{'c':'d'},{'c':'e'}]}});
 CREATE (:regv7 {'a':{'b':ARRAY[{'c':'d'},{'e':'e'}]}});

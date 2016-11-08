@@ -450,6 +450,15 @@ static char *generate_function_name(Oid funcid, int nargs,
 static char *generate_operator_name(Oid operid, Oid arg1, Oid arg2);
 static text *string_to_text(char *str);
 static char *flatten_reloptions(Oid relid);
+static char *ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
+										int prettyFlags, bool missing_ok);
+static char *ag_get_graphconstraintdef_worker(Oid constraintId,
+											  int prettyFlags,
+											  bool missing_ok);
+static char *deparse_prop_expression_pretty(Node *expr, List *dpcontext,
+						  bool forceprefix, bool showimplicit,
+						  int prettyFlags, int startIndent);
+static char *removePropertiesOpExpr(char *src);
 
 #define only_marker(rte)  ((rte)->inh ? "" : "ONLY ")
 
@@ -10168,4 +10177,548 @@ flatten_reloptions(Oid relid)
 	ReleaseSysCache(tuple);
 
 	return result;
+}
+
+/* ----------
+ * ag_get_propindexdef	- Get the definition of an property index
+ *
+ * Based on pg_get_indexdef()
+ * ----------
+ */
+Datum
+ag_get_propindexdef(PG_FUNCTION_ARGS)
+{
+	Oid			indexrelid = PG_GETARG_OID(0);
+	int			prettyFlags;
+	char	   *res;
+
+	prettyFlags = PRETTYFLAG_PAREN | PRETTYFLAG_INDENT;
+
+	res = ag_get_propindexdef_worker(indexrelid, NULL, prettyFlags, true);
+
+	if (res == NULL)
+		PG_RETURN_NULL();
+
+	PG_RETURN_TEXT_P(string_to_text(res));
+}
+
+/*
+ * Changes expressions of AG_PROP_ELEM to '.' expression.
+ * e.g. properties #>> '{a,b,c}'   ->   a.b.c
+ *
+ * Based on pg_get_indexdef_worker()
+ */
+static char *
+ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
+						   int prettyFlags, bool missing_ok)
+{
+	/* might want a separate isConstraint parameter later */
+	bool		isConstraint = (excludeOps != NULL);
+	HeapTuple	ht_idx;
+	HeapTuple	ht_idxrel;
+	HeapTuple	ht_am;
+	Form_pg_index idxrec;
+	Form_pg_class idxrelrec;
+	Form_pg_am	amrec;
+	IndexAmRoutine *amroutine;
+	List	   *indexprs;
+	ListCell   *indexpr_item;
+	List	   *context;
+	Oid			indrelid;
+	int			keyno;
+	Datum		indcollDatum;
+	Datum		indclassDatum;
+	Datum		indoptionDatum;
+	bool		isnull;
+	oidvector  *indcollation;
+	oidvector  *indclass;
+	int2vector *indoption;
+	StringInfoData buf;
+	char	   *str;
+	char	   *sep;
+
+	/*
+	 * Fetch the pg_index tuple by the Oid of the index
+	 */
+	ht_idx = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexrelid));
+	if (!HeapTupleIsValid(ht_idx))
+	{
+		if (missing_ok)
+			return NULL;
+		elog(ERROR, "cache lookup failed for index %u", indexrelid);
+	}
+	idxrec = (Form_pg_index) GETSTRUCT(ht_idx);
+
+	indrelid = idxrec->indrelid;
+	Assert(indexrelid == idxrec->indexrelid);
+
+	/* Must get indcollation, indclass, and indoption the hard way */
+	indcollDatum = SysCacheGetAttr(INDEXRELID, ht_idx,
+								   Anum_pg_index_indcollation, &isnull);
+	Assert(!isnull);
+	indcollation = (oidvector *) DatumGetPointer(indcollDatum);
+
+	indclassDatum = SysCacheGetAttr(INDEXRELID, ht_idx,
+									Anum_pg_index_indclass, &isnull);
+	Assert(!isnull);
+	indclass = (oidvector *) DatumGetPointer(indclassDatum);
+
+	indoptionDatum = SysCacheGetAttr(INDEXRELID, ht_idx,
+									 Anum_pg_index_indoption, &isnull);
+	Assert(!isnull);
+	indoption = (int2vector *) DatumGetPointer(indoptionDatum);
+
+	/*
+	 * Fetch the pg_class tuple of the index relation
+	 */
+	ht_idxrel = SearchSysCache1(RELOID, ObjectIdGetDatum(indexrelid));
+	if (!HeapTupleIsValid(ht_idxrel))
+		elog(ERROR, "cache lookup failed for relation %u", indexrelid);
+	idxrelrec = (Form_pg_class) GETSTRUCT(ht_idxrel);
+
+	if (!OidIsValid(get_relid_labid(indrelid)))
+		elog(ERROR, "'%s' is not property index",
+			 NameStr(idxrelrec->relname));
+
+	/*
+	 * Fetch the pg_am tuple of the index' access method
+	 */
+	ht_am = SearchSysCache1(AMOID, ObjectIdGetDatum(idxrelrec->relam));
+	if (!HeapTupleIsValid(ht_am))
+		elog(ERROR, "cache lookup failed for access method %u",
+			 idxrelrec->relam);
+	amrec = (Form_pg_am) GETSTRUCT(ht_am);
+
+	/* Fetch the index AM's API struct */
+	amroutine = GetIndexAmRoutine(amrec->amhandler);
+
+	/* Get the index expressions. */
+	if (!heap_attisnull(ht_idx, Anum_pg_index_indexprs))
+	{
+		Datum		exprsDatum;
+		bool		isnull;
+		char	   *exprsString;
+
+		exprsDatum = SysCacheGetAttr(INDEXRELID, ht_idx,
+									 Anum_pg_index_indexprs, &isnull);
+		Assert(!isnull);
+		exprsString = TextDatumGetCString(exprsDatum);
+		indexprs = (List *) stringToNode(exprsString);
+		pfree(exprsString);
+	}
+	else
+		elog(ERROR, "property index '%s' must be expression index",
+			 NameStr(idxrelrec->relname));
+
+	indexpr_item = list_head(indexprs);
+
+	context = deparse_context_for(get_relation_name(indrelid), indrelid);
+
+	/*
+	 * Start the index definition.  Note that the index's name should never be
+	 * schema-qualified, but the indexed rel's name may be.
+	 */
+	initStringInfo(&buf);
+
+	if (!isConstraint)
+	{
+		appendStringInfo(&buf, "CREATE %sINDEX %s ON %s USING %s (",
+						 idxrec->indisunique ? "UNIQUE " : "",
+						 quote_identifier(NameStr(idxrelrec->relname)),
+						 generate_relation_name(indrelid, NIL),
+						 quote_identifier(NameStr(amrec->amname)));
+	}
+	else
+	{
+		/*
+		 * Currently, must be EXCLUDE constraint.
+		 * And unique constraint uses EXCLUDE index.
+		 */
+		appendStringInfo(&buf, "UNIQUE USING %s (",
+						 quote_identifier(NameStr(amrec->amname)));
+	}
+
+	/*
+	 * Report the indexed attributes
+	 */
+	sep = "";
+	for (keyno = 0; keyno < idxrec->indnatts; keyno++)
+	{
+		AttrNumber	attnum = idxrec->indkey.values[keyno];
+		int16		opt = indoption->values[keyno];
+		Oid			keycoltype;
+		Oid			keycolcollation;
+		Node	   *indexkey;
+		Oid			indcoll;
+
+		appendStringInfoString(&buf, sep);
+		sep = ", ";
+
+		if (attnum != 0)
+			elog(ERROR, "invalid property index, attnum: %u", attnum);
+
+		if (indexpr_item == NULL)
+			elog(ERROR, "too few entries in indexprs list");
+		indexkey = (Node *) lfirst(indexpr_item);
+		indexpr_item = lnext(indexpr_item);
+		/* Deparse */
+		str = deparse_prop_expression_pretty(indexkey, context, false, false,
+											 prettyFlags, 0);
+		appendStringInfo(&buf, "%s", str);
+		keycoltype = exprType(indexkey);
+		keycolcollation = exprCollation(indexkey);
+
+		/* Add collation, if not default for column */
+		indcoll = indcollation->values[keyno];
+		if (OidIsValid(indcoll) && indcoll != keycolcollation)
+			appendStringInfo(&buf, " COLLATE %s",
+							 generate_collation_name((indcoll)));
+
+		/* Add the operator class name, if not default */
+		get_opclass_name(indclass->values[keyno], keycoltype, &buf);
+
+		/* Add options if relevant */
+		if (amroutine->amcanorder)
+		{
+			/* if it supports sort ordering, report DESC and NULLS opts */
+			if (opt & INDOPTION_DESC)
+			{
+				appendStringInfoString(&buf, " DESC");
+				/* NULLS FIRST is the default in this case */
+				if (!(opt & INDOPTION_NULLS_FIRST))
+					appendStringInfoString(&buf, " NULLS LAST");
+			}
+			else
+			{
+				if (opt & INDOPTION_NULLS_FIRST)
+					appendStringInfoString(&buf, " NULLS FIRST");
+			}
+		}
+
+		/* Add the exclusion operator if relevant */
+		if (excludeOps != NULL)
+		{
+			char *op;
+
+			op = generate_operator_name(excludeOps[keyno],
+										keycoltype, keycoltype);
+			if (strcmp(op, "=") != 0)
+				elog(ERROR, "invalid property index on '%s'",
+					 NameStr(idxrelrec->relname));
+		}
+	}
+	appendStringInfoChar(&buf, ')');
+
+	/*
+	 * If it has options, append "WITH (options)"
+	 */
+	str = flatten_reloptions(indexrelid);
+	if (str)
+	{
+		appendStringInfo(&buf, " WITH (%s)", str);
+		pfree(str);
+	}
+
+	/*
+	 * If it's a partial index, decompile and append the predicate
+	 */
+	if (!heap_attisnull(ht_idx, Anum_pg_index_indpred))
+	{
+		Node	   *node;
+		Datum		predDatum;
+		bool		isnull;
+		char	   *predString;
+
+		/* Convert text string to node tree */
+		predDatum = SysCacheGetAttr(INDEXRELID, ht_idx,
+									Anum_pg_index_indpred, &isnull);
+		Assert(!isnull);
+		predString = TextDatumGetCString(predDatum);
+		node = (Node *) stringToNode(predString);
+		pfree(predString);
+
+		/* Deparse */
+		str = deparse_prop_expression_pretty(node, context, false, false,
+											 prettyFlags, 0);
+
+		if (isConstraint)
+			appendStringInfo(&buf, " WHERE (%s)", str);
+		else
+			appendStringInfo(&buf, " WHERE %s", str);
+	}
+
+	/* Clean up */
+	ReleaseSysCache(ht_idx);
+	ReleaseSysCache(ht_idxrel);
+	ReleaseSysCache(ht_am);
+
+	return buf.data;
+}
+
+/*
+ * Based on pg_get_constraintdef()
+ */
+Datum
+ag_get_graphconstraintdef(PG_FUNCTION_ARGS)
+{
+	Oid			constraintId = PG_GETARG_OID(0);
+	int			prettyFlags;
+	char	   *res;
+
+	prettyFlags = PRETTYFLAG_PAREN | PRETTYFLAG_INDENT;
+
+	res = ag_get_graphconstraintdef_worker(constraintId, prettyFlags, true);
+
+	if (res == NULL)
+		PG_RETURN_NULL();
+
+	PG_RETURN_TEXT_P(string_to_text(res));
+}
+
+/*
+ * Based on pg_get_constraintdef_worker()
+ */
+static char *
+ag_get_graphconstraintdef_worker(Oid constraintId, int prettyFlags,
+								 bool missing_ok)
+{
+	HeapTuple	tup;
+	Form_pg_constraint conForm;
+	StringInfoData buf;
+	SysScanDesc scandesc;
+	ScanKeyData scankey[1];
+	Snapshot	snapshot = RegisterSnapshot(GetTransactionSnapshot());
+	Relation	relation = heap_open(ConstraintRelationId, AccessShareLock);
+
+	ScanKeyInit(&scankey[0],
+				ObjectIdAttributeNumber,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(constraintId));
+
+	scandesc = systable_beginscan(relation,
+								  ConstraintOidIndexId,
+								  true,
+								  snapshot,
+								  1,
+								  scankey);
+
+	/*
+	 * We later use the tuple with SysCacheGetAttr() as if we had obtained it
+	 * via SearchSysCache, which works fine.
+	 */
+	tup = systable_getnext(scandesc);
+
+	UnregisterSnapshot(snapshot);
+
+	if (!HeapTupleIsValid(tup))
+	{
+		if (missing_ok)
+		{
+			systable_endscan(scandesc);
+			heap_close(relation, AccessShareLock);
+			return NULL;
+		}
+		elog(ERROR, "cache lookup failed for constraint %u", constraintId);
+	}
+
+	conForm = (Form_pg_constraint) GETSTRUCT(tup);
+
+	initStringInfo(&buf);
+
+	switch (conForm->contype)
+	{
+		case CONSTRAINT_CHECK:
+			{
+				Datum		val;
+				bool		isnull;
+				char	   *conbin;
+				char	   *consrc;
+				Node	   *expr;
+				List	   *context;
+
+				/* Fetch constraint expression in parsetree form */
+				val = SysCacheGetAttr(CONSTROID, tup,
+									  Anum_pg_constraint_conbin, &isnull);
+				if (isnull)
+					elog(ERROR, "null conbin for constraint %u",
+						 constraintId);
+
+				conbin = TextDatumGetCString(val);
+				expr = stringToNode(conbin);
+
+				/* Set up deparsing context for Var nodes in constraint */
+				if (conForm->conrelid != InvalidOid)
+				{
+					/* relation constraint */
+					context = deparse_context_for(get_relation_name(conForm->conrelid),
+												  conForm->conrelid);
+				}
+				else
+				{
+					/* domain constraint --- can't have Vars */
+					context = NIL;
+				}
+
+				consrc = deparse_prop_expression_pretty(expr, context,false,
+														false, prettyFlags, 0);
+
+				appendStringInfo(&buf, "CHECK (%s)", consrc);
+				break;
+			}
+		/* Unique constraint on AgensGraph is implemented using exclude index */
+		case CONSTRAINT_EXCLUSION:
+			{
+				Oid			indexOid = conForm->conindid;
+				Datum		val;
+				bool		isnull;
+				Datum	   *elems;
+				int			nElems;
+				int			i;
+				Oid		   *operators;
+
+				/* Extract operator OIDs from the pg_constraint tuple */
+				val = SysCacheGetAttr(CONSTROID, tup,
+									  Anum_pg_constraint_conexclop,
+									  &isnull);
+				if (isnull)
+					elog(ERROR, "null conexclop for constraint %u",
+						 constraintId);
+
+				deconstruct_array(DatumGetArrayTypeP(val),
+								  OIDOID, sizeof(Oid), true, 'i',
+								  &elems, NULL, &nElems);
+
+				operators = (Oid *) palloc(nElems * sizeof(Oid));
+				for (i = 0; i < nElems; i++)
+					operators[i] = DatumGetObjectId(elems[i]);
+
+				/* pg_get_indexdef_worker does the rest */
+				/* suppress tablespace because pg_dump wants it that way */
+				appendStringInfoString(&buf,
+									   ag_get_propindexdef_worker(indexOid,
+																  operators,
+																  prettyFlags,
+																  false));
+				break;
+			}
+		case CONSTRAINT_FOREIGN:
+		case CONSTRAINT_PRIMARY:
+		case CONSTRAINT_UNIQUE:
+		case CONSTRAINT_TRIGGER:
+			elog(ERROR, "invalid graph constraint type '%c'", conForm->contype);
+			break;
+		default:
+			elog(ERROR, "invalid constraint type \"%c\"", conForm->contype);
+			break;
+	}
+
+	if (conForm->condeferrable)
+		appendStringInfoString(&buf, " DEFERRABLE");
+	if (conForm->condeferred)
+		appendStringInfoString(&buf, " INITIALLY DEFERRED");
+	if (!conForm->convalidated)
+		appendStringInfoString(&buf, " NOT VALID");
+
+	/* Cleanup */
+	systable_endscan(scandesc);
+	heap_close(relation, AccessShareLock);
+
+	return buf.data;
+}
+
+/*
+ * agens-graph utility for deparsing expressions
+ */
+static char *
+deparse_prop_expression_pretty(Node *expr, List *dpcontext,
+							   bool forceprefix, bool showimplicit,
+							   int prettyFlags, int startIndent)
+{
+	char *res;
+
+	res = deparse_expression_pretty(expr, dpcontext, forceprefix,
+									showimplicit, prettyFlags, startIndent);
+
+	return removePropertiesOpExpr(res);
+}
+
+/*
+ * Prints the path elements of the properties (right operand of `#>>`) only.
+ * Other expressions are printed as they are.
+ */
+static char *
+removePropertiesOpExpr(char *src)
+{
+	const char *prop_prefix = "properties #>> ARRAY[";
+	const char *prop_postfix = "::text]";
+	const char *prop_delim = "::text, ";
+	const int	len_prefix = strlen(prop_prefix);
+	const int	len_postfix = strlen(prop_postfix);
+	const int	len_delim = strlen(prop_delim);
+	StringInfoData strInfo;
+	char	   *prev;
+	char	   *curr;
+
+	initStringInfo(&strInfo);
+
+	prev = src;
+	while ((curr = strstr(prev, prop_prefix)) != NULL)
+	{
+		char	   *next;
+		char	   *sep = "";
+
+		/* print the beginning of the rest */
+		appendBinaryStringInfo(&strInfo, prev, curr - prev);
+
+		/* find a properties expression */
+		curr = curr + len_prefix;
+		next = strstr(curr, prop_postfix);
+		if (!next)
+			elog(ERROR, "invalid properties expression: %s", src);
+
+		/* extracts elements */
+		while (curr < next)
+		{
+			char *end;
+
+			/*
+			 * NOTE: How about ' character in '...'?
+			 */
+			if (*curr == '\'')			/* string key */
+			{
+				curr++;
+				end = strchr(curr, '\'');
+
+				appendStringInfo(&strInfo, "%s", sep);
+				appendBinaryStringInfo(&strInfo, curr, end - curr);
+
+				curr = end + 1;
+			}
+			else if (isdigit(*curr))	/* index of array */
+			{
+				end = strstr(curr, prop_delim);
+
+				appendStringInfoChar(&strInfo, '[');
+				appendBinaryStringInfo(&strInfo, curr, end - curr);
+				appendStringInfoChar(&strInfo, ']');
+
+				curr = end;
+			}
+			else
+			{
+				elog(ERROR, "invalid properties expression: %s", src);
+			}
+
+			sep = ".";
+
+			curr += len_delim;
+		}
+
+		prev = next + len_postfix;
+	}
+
+	/* print the rest */
+	appendStringInfoString(&strInfo, prev);
+
+	return strInfo.data;
 }

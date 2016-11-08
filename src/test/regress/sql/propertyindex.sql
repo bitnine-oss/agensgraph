@@ -1,6 +1,9 @@
 --
 -- Cypher Query Language - Property Index
 --
+DROP ROLE IF EXISTS regressrole;
+CREATE ROLE regressrole SUPERUSER;
+SET ROLE regressrole;
 
 --
 -- CREATE GRAPH
@@ -36,6 +39,7 @@ CREATE PROPERTY INDEX ON regv1 USING gin ((self_intro::tsvector));
 CREATE PROPERTY INDEX ON regv1 USING gist ((hobby::tsvector));
 
 \d g.regv1
+\dGv+ regv1
 
 DROP VLABEL regv1;
 
@@ -56,6 +60,7 @@ CREATE PROPERTY INDEX ON regv1 (name.first) WITH (fillfactor = 80);
 CREATE PROPERTY INDEX ON regv1 (name.first) WHERE (name IS NOT NULL);
 
 \d g.regv1
+\dGv+ regv1
 DROP VLABEL regv1;
 
 -- DROP PROPERTY INDEX
@@ -83,9 +88,11 @@ DROP ELABEL rege1;
 CREATE VLABEL regv1;
 
 CREATE PROPERTY INDEX regv1_multi_col ON regv1 (name.first, name.middle, name.last);
+\dGv+ regv1
 DROP PROPERTY INDEX regv1_multi_col;
 
 CREATE PROPERTY INDEX regv1_multi_expr ON regv1 ((name.first || name.last), (age::integer));
+\dGv+ regv1
 DROP PROPERTY INDEX regv1_multi_expr;
 
 DROP VLABEL regv1;
@@ -93,3 +100,6 @@ DROP VLABEL regv1;
 -- DROP GRAPH
 --
 DROP GRAPH g CASCADE;
+
+RESET ROLE;
+DROP ROLE regressrole;
