@@ -804,6 +804,7 @@ initialize_environment(void)
 		unsetenv("PGSSLMODE");
 		unsetenv("PGREQUIRESSL");
 		unsetenv("PGCONNECT_TIMEOUT");
+		unsetenv("AGDATA");
 		unsetenv("PGDATA");
 #ifdef HAVE_UNIX_SOCKETS
 		if (hostname != NULL)

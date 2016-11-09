@@ -134,7 +134,11 @@ main(int argc, char *argv[])
 		if (optind < argc)
 			DataDir = argv[optind++];
 		else
-			DataDir = getenv("PGDATA");
+		{
+			DataDir = getenv("AGDATA");
+			if (!DataDir)
+				DataDir = getenv("PGDATA");
+		}
 	}
 
 	/* Complain if any arguments remain */

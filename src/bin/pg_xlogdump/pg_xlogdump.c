@@ -181,7 +181,9 @@ fuzzy_open_file(const char *directory, const char *fname)
 		else if (fd >= 0)
 			return fd;
 
-		datadir = getenv("PGDATA");
+		datadir = getenv("AGDATA");
+		if (datadir == NULL)
+			datadir = getenv("PGDATA");
 		/* $PGDATA / XLOGDIR / fname */
 		if (datadir != NULL)
 		{

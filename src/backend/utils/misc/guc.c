@@ -4611,7 +4611,14 @@ SelectConfigFiles(const char *userDoption, const char *progname)
 	if (userDoption)
 		configdir = make_absolute_path(userDoption);
 	else
-		configdir = make_absolute_path(getenv("PGDATA"));
+	{
+		char *datadir;
+
+		datadir = getenv("AGDATA");
+		if (!datadir)
+			datadir = getenv("PGDATA");
+		configdir = make_absolute_path(datadir);
+	}
 
 	if (configdir && stat(configdir, &stat_buf) != 0)
 	{

@@ -2821,7 +2821,10 @@ setup_pgdata(void)
 
 	if (strlen(pg_data) == 0)
 	{
-		pgdata_get_env = getenv("PGDATA");
+		pgdata_get_env = getenv("AGDATA");
+		if (!pgdata_get_env)
+			pgdata_get_env = getenv("PGDATA");
+
 		if (pgdata_get_env && strlen(pgdata_get_env))
 		{
 			/* PGDATA found */
