@@ -43,6 +43,7 @@
 #define CYPHER_OPTRIGHT_ALIAS	"_r"
 #define CYPHER_VLR_WITH_ALIAS	"_vlr"
 #define CYPHER_VLR_EDGE_ALIAS	"_e"
+#define CYPHER_VLR_NONE_DIR_CTE_ALIAS "_uni"
 
 #define VLR_COLNAME_START		"start"
 #define VLR_COLNAME_END			"end"
@@ -1187,6 +1188,27 @@ getCypherRelType(CypherRel *crel, char **typname, int *typloc)
 	}
 }
 
+static CommonTableExpr *
+genCTEUnionForNoneDir(CypherRel *crel)
+{
+	Node *u;
+	char *typename;
+	CommonTableExpr *cte;
+
+	getCypherRelType(crel, &typename, NULL);
+	u = genEdgeUnion(typename, -1);
+	cte = makeNode(CommonTableExpr);
+	cte->ctename = CYPHER_VLR_NONE_DIR_CTE_ALIAS;
+	cte->aliascolnames = list_make4(makeString(AG_ELEM_LOCAL_ID),
+									makeString(AG_START_ID),
+									makeString(AG_END_ID),
+									makeString(AG_ELEM_PROP_MAP));
+	cte->ctequery = (Node *)u;
+	cte->location = -1;
+
+	return cte;
+}
+
 static RangeTblEntry *
 transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 {
@@ -1197,11 +1219,6 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 	SelectStmt *vlr;
 	Alias	   *alias;
 	RangeTblEntry *rte;
-
-	if (crel->direction == CYPHER_REL_DIR_NONE)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("any direction for VLR is not supported")));
 
 	/* UNION ALL */
 	u = makeNode(SelectStmt);
@@ -1221,6 +1238,8 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 
 	with = makeNode(WithClause);
 	with->ctes = list_make1(cte);
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+		with->ctes = lappend(with->ctes, genCTEUnionForNoneDir(crel));
 	with->recursive = true;
 	with->location = -1;
 
@@ -1360,7 +1379,10 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	patharr->location = -1;
 	path = makeResTarget((Node *) patharr, NULL);
 
-	edge = makeRangeVar(get_graph_path(), typname, -1);
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+		edge = makeRangeVar(NULL, CYPHER_VLR_NONE_DIR_CTE_ALIAS, -1);
+	else
+		edge = makeRangeVar(get_graph_path(), typname, -1);
 	edge->inhOpt = INH_YES;
 
 	if (crel->direction == CYPHER_REL_DIR_LEFT)
@@ -1482,8 +1504,11 @@ genSelectRightVLR(CypherRel *crel)
 	path = makeResTarget((Node *) pathexpr, NULL);
 
 	vlr = makeRangeVar(NULL, CYPHER_VLR_WITH_ALIAS, -1);
-	edge = makeRangeVar(get_graph_path(), typname, -1);
-	edge->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
+
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+		edge = makeRangeVar(NULL, CYPHER_VLR_NONE_DIR_CTE_ALIAS, -1);
+	else
+		edge = makeRangeVar(get_graph_path(), typname, -1);
 	edge->inhOpt = INH_YES;
 
 	if (crel->direction == CYPHER_REL_DIR_LEFT)
