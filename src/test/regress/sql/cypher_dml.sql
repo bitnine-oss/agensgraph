@@ -214,6 +214,9 @@ RETURN d.sec AS d, array_length(z, 1) AS z,
        c.sec AS c, type(y) AS y,
        b.sec AS b, array_length(x, 1) AS x, a.sec AS a;
 
+MATCH (a:time)-[x*0..2]-(b)
+RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
+
 CREATE (:time {sec: 11})-[:goes {int: 1}]->
        (:time {sec: 12})-[:goes {int: 1}]->
        (:time {sec: 13})-[:goes {int: 2}]->
