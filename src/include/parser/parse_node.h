@@ -171,6 +171,7 @@ struct ParseState
 	/* graph */
 	Node	   *p_last_colref_elem;		/* for property access */
 	Node	   *p_last_vertex;			/* for VLR */
+	bool		p_opt_match;
 };
 
 /*

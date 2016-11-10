@@ -140,19 +140,19 @@ CREATE (:person {name: 'someone'})-[:knows]->(:person {name: 'somebody'}),
 OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q)
 RETURN n.name AS n, type(r) AS r, p.name AS p,
        m.name AS m, type(s) AS s, q.name AS q
-ORDER BY n, p, m, s;
+ORDER BY n, p, m, q;
 
 MATCH (n:person), (m:person) WHERE id(n) <> id(m)
 OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q)
 RETURN n.name AS n, type(r) AS r, p.name AS p,
        m.name AS m, type(s) AS s, q.name AS q
-ORDER BY n, p, m, s;
+ORDER BY n, p, m, q;
 
 MATCH (n:person), (m:person) WHERE id(n) <> id(m)
 OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q) WHERE m.name = 'someone'
 RETURN n.name AS n, type(r) AS r, p.name AS p,
        m.name AS m, type(s) AS s, q.name AS q
-ORDER BY n, p, m, s;
+ORDER BY n, p, m, q;
 
 -- Variable Length Relationship
 
