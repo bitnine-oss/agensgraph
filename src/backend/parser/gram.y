@@ -562,13 +562,12 @@ static Node *wrapCypherWithSelect(Node *stmt);
 				cypher_load cypher_match cypher_no_parens cypher_node
 				cypher_path cypher_path_opt_varirable cypher_prop_map_opt
 				cypher_range_idx cypher_range_idx_opt cypher_range_opt
+				cypher_read cypher_read_clauses cypher_read_opt
+				cypher_read_opt_parens cypher_read_stmt cypher_read_with_parens
 				cypher_rel cypher_remove cypher_return cypher_rmitem cypher_set
 				cypher_setitem cypher_skip_opt cypher_variable
 				cypher_variable_opt cypher_varlen_opt cypher_with
 				cypher_with_parens
-
-				cypher_read cypher_read_clauses cypher_read_opt cypher_read_opt_parens cypher_read_stmt cypher_read_with_parens
-
 %type <list>	cypher_distinct_opt cypher_expr_list cypher_rmitem_list
 				cypher_path_chain cypher_path_chain_opt_parens cypher_pattern
 				cypher_setitem_list cypher_types cypher_types_opt
