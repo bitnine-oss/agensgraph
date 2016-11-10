@@ -74,6 +74,7 @@ static RangeTblEntry *transformMatchVLR(ParseState *pstate, CypherRel *crel,
 										List **targetList);
 static SelectStmt *genSelectLeftVLR(ParseState *pstate, CypherRel *crel);
 static SelectStmt *genSelectRightVLR(CypherRel *crel);
+static RangeSubselect *genEdgeUnionVLR(char *edge_label);
 static SelectStmt *genSelectWithVLR(CypherRel *crel, WithClause *with);
 static RangeTblEntry *addEdgeUnion(ParseState *pstate, char *edge_label,
 								   int location, Alias *alias);
@@ -1238,11 +1239,6 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 	Alias	   *alias;
 	RangeTblEntry *rte;
 
-	if (crel->direction == CYPHER_REL_DIR_NONE)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("any direction for VLR is not supported")));
-
 	/* UNION ALL */
 	u = makeNode(SelectStmt);
 	u->op = SETOP_UNION;
@@ -1299,6 +1295,11 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
  * SELECT start, "end", 1, ARRAY[id]
  * FROM `get_graph_path()`.`typname`
  * WHERE start = `id(vertex)` AND properties @> `crel->prop_map`
+ *
+ * -- level > 0, CYPHER_REL_DIR_NONE
+ * SELECT start, "end", 1, ARRAY[id]
+ * FROM `genEdgeUnionVLR(typname)`
+ * WHERE start = `id(vertex)` AND properties @> `crel->prop_map`
  */
 static SelectStmt *
 genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
@@ -1314,7 +1315,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	ResTarget  *level;
 	ColumnRef  *id;
 	ResTarget  *path;
-	RangeVar   *edge;
+	Node       *edge;
 	List	   *where_args = NIL;
 	ColumnRef  *begin;
 	A_Expr	   *vidcond;
@@ -1400,8 +1401,22 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	patharr->location = -1;
 	path = makeResTarget((Node *) patharr, NULL);
 
-	edge = makeRangeVar(get_graph_path(), typname, -1);
-	edge->inhOpt = INH_YES;
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+	{
+		RangeSubselect *sub;
+
+		sub = genEdgeUnionVLR(typname);
+		sub->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
+		edge = (Node *) sub;
+	}
+	else
+	{
+		RangeVar *r;
+
+		r = makeRangeVar(get_graph_path(), typname, -1);
+		r->inhOpt = INH_YES;
+		edge = (Node *) r;
+	}
 
 	if (crel->direction == CYPHER_REL_DIR_LEFT)
 	{
@@ -1455,6 +1470,14 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
  *       _vlr.end = _e.start AND
  *       array_position(path, id) IS NULL AND
  *       properties @> `crel->prop_map`
+ *
+ * -- CYPHER_REL_DIR_NONE
+ * SELECT DISTINCT _vlr.start, _e.end, level + 1, array_append(path, id)
+ * FROM _vlr, `genEdgeUnionVLR(typname)` AS _e
+ * WHERE level < `indices->uidx` AND
+ *       _vlr.end = _e.start AND
+ *       array_position(path, id) IS NULL AND
+ *       properties @> `crel->prop_map`
  */
 static SelectStmt *
 genSelectRightVLR(CypherRel *crel)
@@ -1471,7 +1494,7 @@ genSelectRightVLR(CypherRel *crel)
 	FuncCall   *pathexpr;
 	ResTarget  *path;
 	RangeVar   *vlr;
-	RangeVar   *edge;
+	Node       *edge;
 	ColumnRef  *prev;
 	ColumnRef  *next;
 	List	   *where_args = NIL;
@@ -1522,9 +1545,24 @@ genSelectRightVLR(CypherRel *crel)
 	path = makeResTarget((Node *) pathexpr, NULL);
 
 	vlr = makeRangeVar(NULL, CYPHER_VLR_WITH_ALIAS, -1);
-	edge = makeRangeVar(get_graph_path(), typname, -1);
-	edge->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
-	edge->inhOpt = INH_YES;
+
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+	{
+		RangeSubselect *sub;
+
+		sub = genEdgeUnionVLR(typname);
+		sub->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
+		edge = (Node *) sub;
+	}
+	else
+	{
+		RangeVar *r;
+
+		r = makeRangeVar(get_graph_path(), typname, -1);
+		r->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
+		r->inhOpt = INH_YES;
+		edge = (Node *) r;
+	}
 
 	if (crel->direction == CYPHER_REL_DIR_LEFT)
 	{
@@ -1595,6 +1633,58 @@ genSelectRightVLR(CypherRel *crel)
 	return sel;
 }
 
+/*
+ * SELECT id, properties, start, "end"
+ * FROM `get_graph_path()`.`edge_label`
+ * UNION
+ * SELECT id, properties, "end" as start, start as "end"
+ * FROM `get_graph_path()`.`edge_label`
+ */
+static RangeSubselect *
+genEdgeUnionVLR(char *edge_label)
+{
+	ResTarget  *id;
+	ResTarget  *prop_map;
+	RangeVar   *r;
+	SelectStmt *lsel;
+	SelectStmt *rsel;
+	SelectStmt *u;
+	RangeSubselect *sub;
+
+	id = makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL);
+	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
+
+	r = makeRangeVar(get_graph_path(), edge_label, -1);
+	r->inhOpt = INH_YES;
+
+	lsel = makeNode(SelectStmt);
+	lsel->targetList = list_make2(id, prop_map);
+	lsel->fromClause = list_make1(r);
+
+	rsel = copyObject(lsel);
+
+	lsel->targetList = lappend(lsel->targetList,
+							   makeSimpleResTarget(AG_START_ID, NULL));
+	lsel->targetList = lappend(lsel->targetList,
+							   makeSimpleResTarget(AG_END_ID, NULL));
+
+	rsel->targetList = lappend(rsel->targetList,
+							   makeSimpleResTarget(AG_END_ID, AG_START_ID));
+	rsel->targetList = lappend(rsel->targetList,
+							   makeSimpleResTarget(AG_START_ID, AG_END_ID));
+
+	u = makeNode(SelectStmt);
+	u->op = SETOP_UNION;
+	u->all = true;
+	u->larg = lsel;
+	u->rarg = rsel;
+
+	sub = makeNode(RangeSubselect);
+	sub->subquery = (Node *) u;
+
+	return sub;
+}
+
 static SelectStmt *
 genSelectWithVLR(CypherRel *crel, WithClause *with)
 {
@@ -1606,8 +1696,16 @@ genSelectWithVLR(CypherRel *crel, WithClause *with)
 	SelectStmt *sel;
 	Node	   *lidx;
 
-	start = makeSimpleResTarget(VLR_COLNAME_START, NULL);
-	end = makeSimpleResTarget(VLR_COLNAME_END, NULL);
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+	{
+		start = makeSimpleResTarget(VLR_COLNAME_START, EDGE_UNION_START_ID);
+		end = makeSimpleResTarget(VLR_COLNAME_END, EDGE_UNION_END_ID);
+	}
+	else
+	{
+		start = makeSimpleResTarget(VLR_COLNAME_START, AG_START_ID);
+		end = makeSimpleResTarget(VLR_COLNAME_END, AG_END_ID);
+	}
 	path = makeSimpleResTarget(VLR_COLNAME_PATH, NULL);
 
 	vlr = makeRangeVar(NULL, CYPHER_VLR_WITH_ALIAS, -1);
