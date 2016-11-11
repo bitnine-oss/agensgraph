@@ -43,6 +43,7 @@
 #define CYPHER_OPTRIGHT_ALIAS	"_r"
 #define CYPHER_VLR_WITH_ALIAS	"_vlr"
 #define CYPHER_VLR_EDGE_ALIAS	"_e"
+#define CYPHER_VLR_NONE_DIR_CTE_ALIAS "_uni"
 
 #define VLR_COLNAME_START		"start"
 #define VLR_COLNAME_END			"end"
@@ -77,6 +78,7 @@ static SelectStmt *genSelectRightVLR(CypherRel *crel);
 static SelectStmt *genSelectWithVLR(CypherRel *crel, WithClause *with);
 static RangeTblEntry *addEdgeUnion(ParseState *pstate, char *edge_label,
 								   int location, Alias *alias);
+static RangeSubselect *genCTEBaseUnion(char *edge_label);
 static Node *genEdgeUnion(char *edge_label, int location);
 static Node *addQualRelPath(ParseState *pstate, Node *qual,
 							CypherRel *prev_crel, RangeTblEntry *prev_edge,
@@ -1238,11 +1240,6 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 	Alias	   *alias;
 	RangeTblEntry *rte;
 
-	if (crel->direction == CYPHER_REL_DIR_NONE)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("any direction for VLR is not supported")));
-
 	/* UNION ALL */
 	u = makeNode(SelectStmt);
 	u->op = SETOP_UNION;
@@ -1314,7 +1311,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	ResTarget  *level;
 	ColumnRef  *id;
 	ResTarget  *path;
-	RangeVar   *edge;
+	Node       *edge;
 	List	   *where_args = NIL;
 	ColumnRef  *begin;
 	A_Expr	   *vidcond;
@@ -1400,8 +1397,23 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	patharr->location = -1;
 	path = makeResTarget((Node *) patharr, NULL);
 
-	edge = makeRangeVar(get_graph_path(), typname, -1);
-	edge->inhOpt = INH_YES;
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+	{
+		char *typename;
+		RangeSubselect *v;
+
+		getCypherRelType(crel, &typename, NULL);
+		v = genCTEBaseUnion(typename);
+		v->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
+		edge = (Node *)v;
+	}
+	else
+	{
+		RangeVar *rv;
+		rv = makeRangeVar(get_graph_path(), typname, -1);
+		rv->inhOpt = INH_YES;
+		edge = (Node *)rv;
+	}
 
 	if (crel->direction == CYPHER_REL_DIR_LEFT)
 	{
@@ -1471,7 +1483,7 @@ genSelectRightVLR(CypherRel *crel)
 	FuncCall   *pathexpr;
 	ResTarget  *path;
 	RangeVar   *vlr;
-	RangeVar   *edge;
+	Node       *edge;
 	ColumnRef  *prev;
 	ColumnRef  *next;
 	List	   *where_args = NIL;
@@ -1522,9 +1534,25 @@ genSelectRightVLR(CypherRel *crel)
 	path = makeResTarget((Node *) pathexpr, NULL);
 
 	vlr = makeRangeVar(NULL, CYPHER_VLR_WITH_ALIAS, -1);
-	edge = makeRangeVar(get_graph_path(), typname, -1);
-	edge->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
-	edge->inhOpt = INH_YES;
+
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+	{
+		char *typename;
+		RangeSubselect *v;
+
+		getCypherRelType(crel, &typename, NULL);
+		v = genCTEBaseUnion(typename);
+		v->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
+		edge = (Node *)v;
+	}
+	else
+	{
+		RangeVar *rv;
+		rv = makeRangeVar(get_graph_path(), typname, -1);
+		rv->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
+		rv->inhOpt = INH_YES;
+		edge = (Node *)rv;
+	}
 
 	if (crel->direction == CYPHER_REL_DIR_LEFT)
 	{
@@ -1606,8 +1634,16 @@ genSelectWithVLR(CypherRel *crel, WithClause *with)
 	SelectStmt *sel;
 	Node	   *lidx;
 
-	start = makeSimpleResTarget(VLR_COLNAME_START, NULL);
-	end = makeSimpleResTarget(VLR_COLNAME_END, NULL);
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+	{
+		start = makeSimpleResTarget(VLR_COLNAME_START, EDGE_UNION_START_ID);
+		end = makeSimpleResTarget(VLR_COLNAME_END, EDGE_UNION_END_ID);
+	}
+	else
+	{
+		start = makeSimpleResTarget(VLR_COLNAME_START, NULL);
+		end = makeSimpleResTarget(VLR_COLNAME_END, NULL);
+	}
 	path = makeSimpleResTarget(VLR_COLNAME_PATH, NULL);
 
 	vlr = makeRangeVar(NULL, CYPHER_VLR_WITH_ALIAS, -1);
@@ -1667,6 +1703,61 @@ addEdgeUnion(ParseState *pstate, char *edge_label, int location, Alias *alias)
 	rte = addRangeTableEntryForSubquery(pstate, qry, alias, false, true);
 
 	return rte;
+}
+
+/*
+ * SELECT id, start, "end", properties,
+ *        start as _start, "end" as _end
+ * FROM `get_graph_path()`.`edge_label`
+ * UNION
+ * SELECT id, start, "end", properties,
+ *        "end" as _start, start as _end
+ * FROM `get_graph_path()`.`edge_label`
+ */
+static RangeSubselect *
+genCTEBaseUnion(char *edge_label)
+{
+	ResTarget  *id;
+	ResTarget  *prop_map;
+	RangeVar   *r;
+	SelectStmt *lsel;
+	SelectStmt *rsel;
+	SelectStmt *u;
+	RangeSubselect *v;
+
+	id = makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL);
+	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
+
+	r = makeRangeVar(get_graph_path(), edge_label, -1);
+	r->inhOpt = INH_YES;
+
+	lsel = makeNode(SelectStmt);
+	lsel->targetList = list_make2(id, prop_map);
+	lsel->fromClause = list_make1(r);
+
+	rsel = copyObject(lsel);
+
+	lsel->targetList = lappend(lsel->targetList
+			, makeSimpleResTarget(AG_START_ID, NULL));
+	lsel->targetList = lappend(lsel->targetList
+			, makeSimpleResTarget(AG_END_ID, NULL));
+
+	rsel->targetList = lappend(rsel->targetList
+			, makeSimpleResTarget(AG_END_ID, NULL));
+	rsel->targetList = lappend(rsel->targetList
+			, makeSimpleResTarget(AG_START_ID, NULL));
+
+	u = makeNode(SelectStmt);
+	u->op = SETOP_UNION;
+	u->all = true;
+	u->larg = lsel;
+	u->rarg = rsel;
+
+	v = makeNode(RangeSubselect);
+	v->lateral = false;
+	v->subquery = (Node *)u;
+
+	return v;
 }
 
 /*
