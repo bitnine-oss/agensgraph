@@ -172,6 +172,8 @@ CREATE (:time {sec: 1})-[:goes]->
        (:time {sec: 8})-[:goes]->
        (:time {sec: 9});
 
+CREATE (:time {sec: 9})-[:goes*1..2]->(:time {sec: 10});
+
 MATCH (a:time)-[x:goes*3]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
 

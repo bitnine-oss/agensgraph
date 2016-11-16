@@ -2151,6 +2151,11 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("only one relationship type is allowed for CREATE")));
 
+	if (crel->varlen != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("variable length relationship is not allowed for CREATE")));
+
 	varname = getCypherName(crel->variable);
 
 	/*
