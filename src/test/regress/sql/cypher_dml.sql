@@ -181,7 +181,7 @@ MATCH (a:time)-[x:goes*0]->(b:time)
 RETURN a.sec AS a, x, b.sec AS b;
 
 MATCH (a:time)-[x:goes*0..1]->(b:time)
-RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
+RETURN a.sec AS a, label(x[1]), array_length(x, 1) AS l, b.sec AS b;
 
 MATCH (a:time)-[x:goes*..1]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;

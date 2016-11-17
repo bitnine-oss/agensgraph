@@ -48,6 +48,7 @@
 #define VLR_COLNAME_END			"end"
 #define VLR_COLNAME_LEVEL		"level"
 #define VLR_COLNAME_PATH		"path"
+#define VLR_COLNAME_EDGES		"edges"
 
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
@@ -1252,6 +1253,12 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 									makeString(VLR_COLNAME_END),
 									makeString(VLR_COLNAME_LEVEL),
 									makeString(VLR_COLNAME_PATH));
+	if (varname != NULL)
+	{
+		cte->aliascolnames = lappend(cte->aliascolnames, 
+				makeString(VLR_COLNAME_EDGES));
+	}
+
 	cte->ctequery = (Node *) u;
 	cte->location = -1;
 
@@ -1270,7 +1277,7 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 		TargetEntry *te;
 		Node *var;
 
-		var = getColumnVar(pstate, rte, VLR_COLNAME_PATH);
+		var = getColumnVar(pstate, rte, VLR_COLNAME_EDGES);
 		te = makeTargetEntry((Expr *) var,
 							 (AttrNumber) pstate->p_next_resno++,
 							 pstrdup(varname),
@@ -1280,6 +1287,37 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 	}
 
 	return rte;
+}
+
+static Node *
+makeEdgeExprForVLR(void)
+{
+	ColumnRef *id;
+	ColumnRef *start;
+	ColumnRef *end;
+	ColumnRef *prop_map;
+
+	id = makeNode(ColumnRef);
+	id->fields = list_make2(makeString(CYPHER_VLR_EDGE_ALIAS), 
+			makeString(AG_ELEM_LOCAL_ID));
+	id->location = -1;
+
+	start = makeNode(ColumnRef);
+	start->fields = list_make2(makeString(CYPHER_VLR_EDGE_ALIAS),
+			makeString(AG_START_ID));
+	start->location = -1;
+
+	end = makeNode(ColumnRef);
+	end->fields = list_make2(makeString(CYPHER_VLR_EDGE_ALIAS),
+			makeString(AG_END_ID));
+	end->location = -1;
+
+	prop_map = makeNode(ColumnRef);
+	prop_map->fields = list_make2(makeString(CYPHER_VLR_EDGE_ALIAS),
+			makeString(AG_ELEM_PROP_MAP));
+	prop_map->location = -1;
+
+	return makeTypedRowExpr(list_make4(id, start, end, prop_map), EDGEOID, -1);
 }
 
 /*
@@ -1308,6 +1346,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	Node	   *vertex;
 	Node	   *vid;
 	bool		zero = false;
+	TypeCast   *typecast;
 	A_ArrayExpr *patharr;
 	char	   *typname;
 	ResTarget  *start;
@@ -1315,6 +1354,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	ResTarget  *level;
 	ColumnRef  *id;
 	ResTarget  *path;
+	ResTarget  *edges = NULL;
 	Node       *edge;
 	List	   *where_args = NIL;
 	ColumnRef  *begin;
@@ -1368,7 +1408,6 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 
 	if (zero)
 	{
-		TypeCast   *typecast;
 		List	   *values;
 
 		patharr = makeNode(A_ArrayExpr);
@@ -1377,8 +1416,18 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 		typecast->arg = (Node *) patharr;
 		typecast->typeName = makeTypeName("_graphid");
 		typecast->location = -1;
-
 		values = list_make4(vid, vid, makeIntConst(0), typecast);
+
+		if (crel->variable != NULL)
+		{
+			patharr = makeNode(A_ArrayExpr);
+			patharr->location = -1;
+			typecast = makeNode(TypeCast);
+			typecast->arg = (Node *) patharr;
+			typecast->typeName = makeTypeName("_edge");
+			typecast->location = -1;
+			values = lappend(values, typecast);
+		}
 
 		sel = makeNode(SelectStmt);
 		sel->valuesLists = list_make1(values);
@@ -1400,6 +1449,21 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	patharr->elements = list_make1(id);
 	patharr->location = -1;
 	path = makeResTarget((Node *) patharr, NULL);
+	if (crel->variable != NULL)
+	{
+		Node *edge_val;
+		A_ArrayExpr *edgearr;
+
+ 		edge_val = makeEdgeExprForVLR();
+		edgearr = makeNode(A_ArrayExpr);
+		edgearr->elements = list_make1(edge_val);
+		edgearr->location = -1;
+		typecast = makeNode(TypeCast);
+		typecast->arg = (Node *)edgearr;
+		typecast->typeName = makeTypeName("_edge");
+		typecast->location = -1;
+		edges = makeResTarget((Node *)typecast, NULL);
+	}
 
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
@@ -1414,6 +1478,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 		RangeVar *r;
 
 		r = makeRangeVar(get_graph_path(), typname, -1);
+		r->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
 		r->inhOpt = INH_YES;
 		edge = (Node *) r;
 	}
@@ -1448,6 +1513,8 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 
 	sel = makeNode(SelectStmt);
 	sel->targetList = list_make4(start, end, level, path);
+	if (crel->variable != NULL)
+		sel->targetList = lappend(sel->targetList, edges);
 	sel->fromClause = list_make1(edge);
 	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
@@ -1493,6 +1560,7 @@ genSelectRightVLR(CypherRel *crel)
 	ColumnRef  *id;
 	FuncCall   *pathexpr;
 	ResTarget  *path;
+	ResTarget  *edges = NULL;
 	RangeVar   *vlr;
 	Node       *edge;
 	ColumnRef  *prev;
@@ -1543,6 +1611,25 @@ genSelectRightVLR(CypherRel *crel)
 	pathexpr = makeFuncCall(list_make1(makeString("array_append")),
 							list_make2(pathref, id), -1);
 	path = makeResTarget((Node *) pathexpr, NULL);
+	if (crel->variable != NULL)
+	{
+		ColumnRef *edges_ref;
+		Node *edge_val;
+		FuncCall *array_append;
+		TypeCast *typecast;
+		
+		edges_ref = makeNode(ColumnRef);
+		edges_ref->fields = list_make1(makeString(VLR_COLNAME_EDGES));
+		edges_ref->location = -1;
+		edge_val = makeEdgeExprForVLR();
+		typecast = makeNode(TypeCast);
+		typecast->arg = (Node *)edge_val;
+		typecast->typeName = makeTypeName("edge");
+		typecast->location = -1;
+		array_append = makeFuncCall(list_make1(makeString("array_append")),
+				list_make2(edges_ref, typecast), -1);
+		edges = makeResTarget((Node *)array_append, NULL);
+	}
 
 	vlr = makeRangeVar(NULL, CYPHER_VLR_WITH_ALIAS, -1);
 
@@ -1627,6 +1714,8 @@ genSelectRightVLR(CypherRel *crel)
 	sel = makeNode(SelectStmt);
 	sel->distinctClause = list_make1(NIL);
 	sel->targetList = list_make4(start, end, level, path);
+	if (crel->variable != NULL)
+		sel->targetList = lappend(sel->targetList, edges);
 	sel->fromClause = list_make2(vlr, edge);
 	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
@@ -1712,6 +1801,12 @@ genSelectWithVLR(CypherRel *crel, WithClause *with)
 
 	sel = makeNode(SelectStmt);
 	sel->targetList = list_make3(start, end, path);
+	if (crel->variable != NULL)
+	{
+		ResTarget *edges = makeSimpleResTarget(VLR_COLNAME_EDGES, NULL);
+		sel->targetList = lappend(sel->targetList, edges);
+	}
+
 	sel->fromClause = list_make1(vlr);
 
 	if (indices->lidx == NULL)
