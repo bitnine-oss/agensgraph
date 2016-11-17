@@ -2850,7 +2850,10 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 {
 	CypherClause *clause;
 	NodeTag		type;
-	bool		valid = false;
+	bool		valid = true;
+	bool		endret = false;
+	NodeTag		update_type = T_Invalid;
+	bool		read = false;
 
 	clause = (CypherClause *) stmt->last;
 	type = cypherClauseTag(clause);
@@ -2858,14 +2861,17 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 	{
 		case T_CypherProjection:
 			if (cypherProjectionKind(clause->detail) == CP_RETURN)
-				valid = true;
+				endret = true;
+			else
+				valid = false;
 			break;
 		case T_CypherCreateClause:
 		case T_CypherDeleteClause:
 		case T_CypherSetClause:
-			valid = true;
+			update_type = type;
 			break;
 		default:
+			valid = false;
 			break;
 	}
 
@@ -2874,60 +2880,72 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("Cypher query must end with RETURN or update clause")));
 
-	if (type == T_CypherProjection)
-	{
-		clause = (CypherClause *) clause->prev;
-		if (clause == NULL)
-			return transformStmt(pstate, stmt->last);
-
-		type = cypherClauseTag(clause);
-		if (type == T_CypherDeleteClause)
-			ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("Cypher DELETE clause cannot end with RETURN clause")));
-		if (type == T_CypherSetClause)
-			ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("Cypher SET/REMOVE clause cannot end with RETURN clause")));
-
-		if (type != T_CypherCreateClause)
-		{
-			clause = (CypherClause *) clause->prev;
-			while (clause != NULL)
-			{
-				type = cypherClauseTag(clause);
-				if (type == T_CypherCreateClause ||
-					type == T_CypherDeleteClause ||
-					type == T_CypherSetClause)
-					ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("Cypher query must end with RETURN or update clause")));
-
-				clause = (CypherClause *) clause->prev;
-			}
-		}
-
-		return transformStmt(pstate, stmt->last);
-	}
-
 	clause = (CypherClause *) clause->prev;
 	while (clause != NULL)
 	{
-		if (cypherClauseTag(clause) != type)
-			break;
-
-		clause = (CypherClause *) clause->prev;
-	}
-
-	while (clause != NULL)
-	{
 		type = cypherClauseTag(clause);
-		if (type == T_CypherCreateClause ||
-			type == T_CypherDeleteClause ||
-			type == T_CypherSetClause)
-			ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("There must be one type of consecutive update clauses")));
+		switch (type)
+		{
+			case T_CypherMatchClause:
+				read = true;
+				break;
+			case T_CypherProjection:
+				if (cypherProjectionKind(clause->detail) == CP_RETURN)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("RETURN must be at the end of the query")));
+				}
+				else
+				{
+					/* CP_WITH */
+					if (update_type != T_Invalid &&
+						update_type != T_CypherCreateClause)
+						read = true;
+				}
+				break;
+			case T_CypherCreateClause:
+				if (update_type == T_Invalid)
+					update_type = T_CypherCreateClause;
+				else if (update_type != T_CypherCreateClause)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("There must be one type of consecutive update clauses")));
+				if (read)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("Cypher read clauses cannot follow update clauses")));
+				break;
+			case T_CypherDeleteClause:
+			case T_CypherSetClause:
+				if (endret)
+				{
+					if (type == T_CypherDeleteClause)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("Cypher DELETE clause cannot end with RETURN clause")));
+					else
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("Cypher SET/REMOVE clause cannot end with RETURN clause")));
+				}
+				if (type != update_type)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("There must be one type of consecutive update clauses")));
+				if (read)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("Cypher read clauses cannot follow update clauses")));
+				break;
+				break;
+			case T_CypherLoadClause:
+				read = true;
+				break;
+			default:
+				elog(ERROR, "unrecognized Cypher clause type: %d", type);
+				break;
+		}
 
 		clause = (CypherClause *) clause->prev;
 	}
