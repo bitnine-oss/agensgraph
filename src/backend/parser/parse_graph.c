@@ -1712,7 +1712,6 @@ genSelectRightVLR(CypherRel *crel)
 	}
 
 	sel = makeNode(SelectStmt);
-	sel->distinctClause = list_make1(NIL);
 	sel->targetList = list_make4(start, end, level, path);
 	if (crel->variable != NULL)
 		sel->targetList = lappend(sel->targetList, edges);
