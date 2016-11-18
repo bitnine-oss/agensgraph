@@ -1523,7 +1523,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 
 /*
  * -- CYPHER_REL_DIR_LEFT
- * SELECT DISTINCT _e.start, _vlr.end, level + 1, array_append(path, id)
+ * SELECT _e.start, _vlr.end, level + 1, array_append(path, id)
  * FROM _vlr, `get_graph_path()`.`typname` AS _e
  * WHERE level < `indices->uidx` AND
  *       _e.end = _vlr.start AND
@@ -1531,7 +1531,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
  *       properties @> `crel->prop_map`
  *
  * -- CYPHER_REL_DIR_RIGHT
- * SELECT DISTINCT _vlr.start, _e.end, level + 1, array_append(path, id)
+ * SELECT _vlr.start, _e.end, level + 1, array_append(path, id)
  * FROM _vlr, `get_graph_path()`.`typname` AS _e
  * WHERE level < `indices->uidx` AND
  *       _vlr.end = _e.start AND
@@ -1539,7 +1539,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
  *       properties @> `crel->prop_map`
  *
  * -- CYPHER_REL_DIR_NONE
- * SELECT DISTINCT _vlr.start, _e.end, level + 1, array_append(path, id)
+ * SELECT _vlr.start, _e.end, level + 1, array_append(path, id)
  * FROM _vlr, `genEdgeUnionVLR(typname)` AS _e
  * WHERE level < `indices->uidx` AND
  *       _vlr.end = _e.start AND
