@@ -1202,6 +1202,7 @@ typedef struct CommonTableExpr
 	List	   *ctecoltypes;	/* OID list of output column type OIDs */
 	List	   *ctecoltypmods;	/* integer list of output column typmods */
 	List	   *ctecolcollations;		/* OID list of column collation OIDs */
+	int         maxdepth;
 } CommonTableExpr;
 
 /* Convenience macro to get the output tlist of a CTE's query */
@@ -1367,6 +1368,7 @@ typedef struct SetOperationStmt
 	List	   *colCollations;	/* OID list of output column collation OIDs */
 	List	   *groupClauses;	/* a list of SortGroupClause's */
 	/* groupClauses is NIL if UNION ALL, but must be set otherwise */
+	int         maxDepth;
 } SetOperationStmt;
 
 

@@ -245,6 +245,8 @@ typedef struct RecursiveUnion
 	AttrNumber *dupColIdx;		/* their indexes in the target list */
 	Oid		   *dupOperators;	/* equality operators to compare with */
 	long		numGroups;		/* estimated number of groups in input */
+	bool        hasMaxDepth;
+	int         maxDepth;
 } RecursiveUnion;
 
 /* ----------------

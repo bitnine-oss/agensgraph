@@ -501,7 +501,8 @@ generate_recursion_path(SetOperationStmt *setOp, PlannerInfo *root,
 											   create_pathtarget(root, tlist),
 											   groupList,
 											   root->wt_param_id,
-											   dNumGroups);
+											   dNumGroups,
+											   setOp->maxDepth);
 
 	return path;
 }
