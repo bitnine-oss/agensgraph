@@ -1902,7 +1902,10 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 		if (isTopLevel &&
 			pstate->p_parent_cte &&
 			pstate->p_parent_cte->cterecursive)
+		{
 			determineRecursiveColTypes(pstate, op->larg, ltargetlist);
+			op->maxDepth = pstate->p_parent_cte->maxdepth;
+		}
 
 		/*
 		 * Recursively transform the right child node.

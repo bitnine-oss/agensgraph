@@ -274,6 +274,7 @@ _copyRecursiveUnion(const RecursiveUnion *from)
 		COPY_POINTER_FIELD(dupOperators, from->numCols * sizeof(Oid));
 	}
 	COPY_SCALAR_FIELD(numGroups);
+	COPY_SCALAR_FIELD(maxDepth);
 
 	return newnode;
 }
@@ -2328,6 +2329,7 @@ _copyCommonTableExpr(const CommonTableExpr *from)
 	COPY_NODE_FIELD(ctecoltypes);
 	COPY_NODE_FIELD(ctecoltypmods);
 	COPY_NODE_FIELD(ctecolcollations);
+	COPY_SCALAR_FIELD(maxdepth);
 
 	return newnode;
 }
@@ -2852,6 +2854,7 @@ _copySetOperationStmt(const SetOperationStmt *from)
 	COPY_NODE_FIELD(colTypmods);
 	COPY_NODE_FIELD(colCollations);
 	COPY_NODE_FIELD(groupClauses);
+	COPY_SCALAR_FIELD(maxDepth);
 
 	return newnode;
 }
