@@ -1420,6 +1420,7 @@ typedef struct RecursiveUnionPath
 	List	   *distinctList;	/* SortGroupClauses identifying target cols */
 	int			wtParam;		/* ID of Param representing work table */
 	double		numGroups;		/* estimated number of groups in input */
+	int			maxDepth;		/* level of recursion */
 } RecursiveUnionPath;
 
 /*

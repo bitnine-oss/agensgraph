@@ -1234,6 +1234,7 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 	char	   *varname = getCypherName(crel->variable);
 	SelectStmt *u;
 	CommonTableExpr *cte;
+	A_Indices  *varlen;
 	WithClause *with;
 	SelectStmt *vlr;
 	Alias	   *alias;
@@ -1254,6 +1255,22 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 									makeString(VLR_COLNAME_PATH));
 	cte->ctequery = (Node *) u;
 	cte->location = -1;
+
+	varlen = (A_Indices *) crel->varlen;
+	if (varlen->uidx != NULL)
+	{
+		A_Const	   *lidx;
+		A_Const	   *uidx;
+		int			base = 0;
+
+		lidx = (A_Const *) varlen->lidx;
+		if (lidx == NULL || lidx->val.val.ival != 0)
+			base = 1;
+
+		uidx = (A_Const *) varlen->uidx;
+
+		cte->maxdepth = uidx->val.val.ival - base + 1;
+	}
 
 	with = makeNode(WithClause);
 	with->ctes = list_make1(cte);
@@ -1482,7 +1499,6 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 static SelectStmt *
 genSelectRightVLR(CypherRel *crel)
 {
-	A_Indices  *indices = (A_Indices *) crel->varlen;
 	char	   *typname;
 	ResTarget  *start;
 	ResTarget  *end;
@@ -1587,15 +1603,6 @@ genSelectRightVLR(CypherRel *crel)
 		next->fields = list_make2(makeString(CYPHER_VLR_EDGE_ALIAS),
 								  makeString(AG_START_ID));
 		next->location = -1;
-	}
-
-	if (indices->uidx != NULL)
-	{
-		A_Expr *levelcond;
-
-		levelcond = makeSimpleA_Expr(AEXPR_OP, "<", (Node *) levelref,
-									 indices->uidx, -1);
-		where_args = lappend(where_args, levelcond);
 	}
 
 	joincond = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) prev, (Node *) next,
@@ -1715,10 +1722,10 @@ genSelectWithVLR(CypherRel *crel, WithClause *with)
 
 	if (indices->lidx == NULL)
 	{
-		if (indices->uidx != NULL)
-			lidx = indices->uidx;
-		else
+		if (indices->uidx == NULL)
 			lidx = NULL;
+		else
+			lidx = indices->uidx;
 	}
 	else
 	{
