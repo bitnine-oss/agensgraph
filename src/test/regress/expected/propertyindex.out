@@ -1,6 +1,10 @@
 --
 -- Cypher Query Language - Property Index
 --
+DROP ROLE IF EXISTS regressrole;
+NOTICE:  role "regressrole" does not exist, skipping
+CREATE ROLE regressrole SUPERUSER;
+SET ROLE regressrole;
 --
 -- CREATE GRAPH
 --
@@ -72,6 +76,24 @@ Indexes:
     "regv1_property_idx5" gist (((properties #>> ARRAY['hobby'::text])::tsvector))
 Inherits: g.ag_vertex
 
+\dGv+ regv1
+                         List of labels
+ Graph | Name  |  Type  |    Owner    |    Size    | Description 
+-------+-------+--------+-------------+------------+-------------
+ g     | regv1 | vertex | regressrole | 8192 bytes | 
+(1 row)
+
+Vertex label "g.regv1"
+--
+Property Indexes:
+    "regv1_property_idx" btree (name)
+    "regv1_property_idx1" btree (name.first)
+    "regv1_property_idx2" hash (name.first)
+    "regv1_property_idx3" brin (name.first)
+    "regv1_property_idx4" gin ((self_intro)::tsvector)
+    "regv1_property_idx5" gist ((hobby)::tsvector)
+Inherits: g.ag_vertex
+
 DROP VLABEL regv1;
 -- Concurrently build & if not exist
 CREATE VLABEL regv1;
@@ -101,6 +123,23 @@ Indexes:
     "regv1_property_idx4" btree ((properties #>> ARRAY['name'::text, 'first'::text])) WHERE (properties #>> ARRAY['name'::text]) IS NOT NULL
 Inherits: g.ag_vertex
 
+\dGv+ regv1
+                         List of labels
+ Graph | Name  |  Type  |    Owner    |    Size    | Description 
+-------+-------+--------+-------------+------------+-------------
+ g     | regv1 | vertex | regressrole | 8192 bytes | 
+(1 row)
+
+Vertex label "g.regv1"
+--
+Property Indexes:
+    "regv1_property_idx" btree (name.first)
+    "regv1_property_idx1" btree (name.first COLLATE "C" NULLS FIRST)
+    "regv1_property_idx2" btree (name)
+    "regv1_property_idx3" btree (name.first) WITH (fillfactor='80')
+    "regv1_property_idx4" btree (name.first) WHERE (name) IS NOT NULL
+Inherits: g.ag_vertex
+
 DROP VLABEL regv1;
 -- DROP PROPERTY INDEX
 CREATE VLABEL regv1;
@@ -125,8 +164,34 @@ ERROR:  "rege1_end_idx" is not property index
 DROP ELABEL rege1;
 CREATE VLABEL regv1;
 CREATE PROPERTY INDEX regv1_multi_col ON regv1 (name.first, name.middle, name.last);
+\dGv+ regv1
+                         List of labels
+ Graph | Name  |  Type  |    Owner    |    Size    | Description 
+-------+-------+--------+-------------+------------+-------------
+ g     | regv1 | vertex | regressrole | 8192 bytes | 
+(1 row)
+
+Vertex label "g.regv1"
+--
+Property Indexes:
+    "regv1_multi_col" btree (name.first, name.middle, name.last)
+Inherits: g.ag_vertex
+
 DROP PROPERTY INDEX regv1_multi_col;
 CREATE PROPERTY INDEX regv1_multi_expr ON regv1 ((name.first || name.last), (age::integer));
+\dGv+ regv1
+                         List of labels
+ Graph | Name  |  Type  |    Owner    |    Size    | Description 
+-------+-------+--------+-------------+------------+-------------
+ g     | regv1 | vertex | regressrole | 8192 bytes | 
+(1 row)
+
+Vertex label "g.regv1"
+--
+Property Indexes:
+    "regv1_multi_expr" btree ((name.first) || (name.last), (age)::integer)
+Inherits: g.ag_vertex
+
 DROP PROPERTY INDEX regv1_multi_expr;
 DROP VLABEL regv1;
 --
@@ -136,3 +201,5 @@ DROP GRAPH g CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DETAIL:  drop cascades to label ag_vertex
 drop cascades to label ag_edge
+RESET ROLE;
+DROP ROLE regressrole;

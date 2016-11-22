@@ -19,4 +19,6 @@ extern char *get_graph_path(void);
 
 extern Oid GraphCreate(CreateGraphStmt *stmt, const char *queryString);
 
+extern bool LabelIsVisible(Oid labid);
+
 #endif	/* AG_GRAPH_FN_H */
