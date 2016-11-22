@@ -8482,6 +8482,12 @@ fi # fi
 
 
 
+if test "$PORTNAME" = "linux" ; then
+
+$as_echo "#define USE_PG_STATSINFO 1" >>confdefs.h
+
+fi
+
 
 ##
 ## Libraries

@@ -1032,6 +1032,10 @@ PTHREAD_LIBS=
 AC_SUBST(PTHREAD_CFLAGS)
 AC_SUBST(PTHREAD_LIBS)
 
+if test "$PORTNAME" = "linux" ; then
+  AC_DEFINE(USE_PG_STATSINFO, 1, [Define to 1 if pg_statsinfo is available.])
+fi
+
 
 ##
 ## Libraries

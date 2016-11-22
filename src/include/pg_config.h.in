@@ -845,6 +845,9 @@
 /* Define to 1 to build with PAM support. (--with-pam) */
 #undef USE_PAM
 
+/* Define to 1 if pg_statsinfo is available. */
+#undef USE_PG_STATSINFO
+
 /* Use replacement snprintf() functions. */
 #undef USE_REPL_SNPRINTF
 
