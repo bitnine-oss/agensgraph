@@ -63,6 +63,28 @@ CREATE PROPERTY INDEX ON regv1 (name.first) WHERE (name IS NOT NULL);
 \dGv+ regv1
 DROP VLABEL regv1;
 
+-- Unique property index
+CREATE VLABEL regv1;
+
+CREATE UNIQUE PROPERTY INDEX ON regv1 (id);
+CREATE (:regv1 {'id':'100'});
+CREATE (:regv1 {'id':'100'});
+
+\d g.regv1
+DROP VLABEL regv1;
+
+-- Multi-column unique property index
+CREATE VLABEL regv1;
+
+CREATE UNIQUE PROPERTY INDEX ON regv1 (name.first, name.last);
+CREATE (:regv1 {'name':{'first':'agens'}});
+CREATE (:regv1 {'name':{'first':'agens'}});
+CREATE (:regv1 {'name':{'first':'agens', 'last':'graph'}});
+CREATE (:regv1 {'name':{'first':'agens', 'last':'graph'}});
+
+\d g.regv1
+DROP VLABEL regv1;
+
 -- DROP PROPERTY INDEX
 CREATE VLABEL regv1;
 
