@@ -71,6 +71,7 @@ CREATE (:regv1 {'id':'100'});
 CREATE (:regv1 {'id':'100'});
 
 \d g.regv1
+\dGv+ regv1
 DROP VLABEL regv1;
 
 -- Multi-column unique property index
@@ -83,6 +84,7 @@ CREATE (:regv1 {'name':{'first':'agens', 'last':'graph'}});
 CREATE (:regv1 {'name':{'first':'agens', 'last':'graph'}});
 
 \d g.regv1
+\dGv+ regv1
 DROP VLABEL regv1;
 
 -- DROP PROPERTY INDEX
