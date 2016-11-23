@@ -161,6 +161,19 @@ Indexes:
     "regv1_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.ag_vertex
 
+\dGv+ regv1
+                       List of labels
+ Graph | Name  |  Type  |    Owner    | Size  | Description 
+-------+-------+--------+-------------+-------+-------------
+ g     | regv1 | vertex | regressrole | 16 kB | 
+(1 row)
+
+Vertex label "g.regv1"
+--
+Property Indexes:
+    "regv1_property_idx" UNIQUE btree (id)
+Inherits: g.ag_vertex
+
 DROP VLABEL regv1;
 -- Multi-column unique property index
 CREATE VLABEL regv1;
@@ -182,6 +195,19 @@ Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
     "regv1_property_idx" UNIQUE, btree ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))
     "regv1_properties_idx" gin (properties jsonb_path_ops)
+Inherits: g.ag_vertex
+
+\dGv+ regv1
+                       List of labels
+ Graph | Name  |  Type  |    Owner    | Size  | Description 
+-------+-------+--------+-------------+-------+-------------
+ g     | regv1 | vertex | regressrole | 16 kB | 
+(1 row)
+
+Vertex label "g.regv1"
+--
+Property Indexes:
+    "regv1_property_idx" UNIQUE btree (name.first, name.last)
 Inherits: g.ag_vertex
 
 DROP VLABEL regv1;
