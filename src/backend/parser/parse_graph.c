@@ -1238,6 +1238,7 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 	SelectStmt *vlr;
 	Alias	   *alias;
 	RangeTblEntry *rte;
+	A_Indices *varlen;
 
 	/* UNION ALL */
 	u = makeNode(SelectStmt);
@@ -1254,6 +1255,19 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 									makeString(VLR_COLNAME_PATH));
 	cte->ctequery = (Node *) u;
 	cte->location = -1;
+	varlen = (A_Indices *)crel->varlen;
+	if (varlen->uidx != NULL)
+	{
+		A_Const *lidx;
+		A_Const *uidx;
+		int base = 0;
+
+		lidx = (A_Const *)varlen->lidx;
+		if (lidx == NULL || lidx->val.val.ival != 0)
+			base = 1;
+		uidx = (A_Const *)varlen->uidx;
+		cte->maxdepth = uidx->val.val.ival - base + 1;
+	}
 
 	with = makeNode(WithClause);
 	with->ctes = list_make1(cte);
@@ -1456,7 +1470,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 
 /*
  * -- CYPHER_REL_DIR_LEFT
- * SELECT DISTINCT _e.start, _vlr.end, level + 1, array_append(path, id)
+ * SELECT _e.start, _vlr.end, level + 1, array_append(path, id)
  * FROM _vlr, `get_graph_path()`.`typname` AS _e
  * WHERE level < `indices->uidx` AND
  *       _e.end = _vlr.start AND
@@ -1464,7 +1478,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
  *       properties @> `crel->prop_map`
  *
  * -- CYPHER_REL_DIR_RIGHT
- * SELECT DISTINCT _vlr.start, _e.end, level + 1, array_append(path, id)
+ * SELECT _vlr.start, _e.end, level + 1, array_append(path, id)
  * FROM _vlr, `get_graph_path()`.`typname` AS _e
  * WHERE level < `indices->uidx` AND
  *       _vlr.end = _e.start AND
@@ -1472,7 +1486,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
  *       properties @> `crel->prop_map`
  *
  * -- CYPHER_REL_DIR_NONE
- * SELECT DISTINCT _vlr.start, _e.end, level + 1, array_append(path, id)
+ * SELECT _vlr.start, _e.end, level + 1, array_append(path, id)
  * FROM _vlr, `genEdgeUnionVLR(typname)` AS _e
  * WHERE level < `indices->uidx` AND
  *       _vlr.end = _e.start AND
@@ -1482,7 +1496,6 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 static SelectStmt *
 genSelectRightVLR(CypherRel *crel)
 {
-	A_Indices  *indices = (A_Indices *) crel->varlen;
 	char	   *typname;
 	ResTarget  *start;
 	ResTarget  *end;
@@ -1589,15 +1602,6 @@ genSelectRightVLR(CypherRel *crel)
 		next->location = -1;
 	}
 
-	if (indices->uidx != NULL)
-	{
-		A_Expr *levelcond;
-
-		levelcond = makeSimpleA_Expr(AEXPR_OP, "<", (Node *) levelref,
-									 indices->uidx, -1);
-		where_args = lappend(where_args, levelcond);
-	}
-
 	joincond = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) prev, (Node *) next,
 								-1);
 	where_args = lappend(where_args, joincond);
@@ -1625,7 +1629,6 @@ genSelectRightVLR(CypherRel *crel)
 	}
 
 	sel = makeNode(SelectStmt);
-	sel->distinctClause = list_make1(NIL);
 	sel->targetList = list_make4(start, end, level, path);
 	sel->fromClause = list_make2(vlr, edge);
 	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
@@ -1869,6 +1872,9 @@ addQualNodeIn(ParseState *pstate, Node *qual, Node *vertex, CypherRel *crel,
 	Node	   *vid;
 
 	if (vertex == NULL || crel == NULL || edge == NULL)
+		return qual;
+
+	if (!last && crel->varlen != NULL)
 		return qual;
 
 	id = getElemField(pstate, vertex, AG_ELEM_ID);
@@ -2150,6 +2156,11 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("only one relationship type is allowed for CREATE")));
+
+	if (crel->varlen != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("variable length relationship is not allowed for CREATE")));
 
 	varname = getCypherName(crel->variable);
 
