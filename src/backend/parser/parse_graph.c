@@ -1874,6 +1874,9 @@ addQualNodeIn(ParseState *pstate, Node *qual, Node *vertex, CypherRel *crel,
 	if (vertex == NULL || crel == NULL || edge == NULL)
 		return qual;
 
+	if (!last && crel->varlen != NULL)
+		return qual;
+
 	id = getElemField(pstate, vertex, AG_ELEM_ID);
 	vid = getColumnVar(pstate, edge, getEdgeColname(crel, last));
 
