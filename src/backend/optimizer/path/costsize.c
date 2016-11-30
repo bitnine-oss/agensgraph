@@ -1395,6 +1395,7 @@ cost_recursive_union(Path *runion, Path *nrterm, Path *rterm)
 	Cost		startup_cost;
 	Cost		total_cost;
 	double		total_rows;
+	RecursiveUnionPath *rupath;
 
 	/* We probably have decent estimates for the non-recursive term */
 	startup_cost = nrterm->startup_cost;
@@ -1407,8 +1408,19 @@ cost_recursive_union(Path *runion, Path *nrterm, Path *rterm)
 	 * size of each one of them.  These are mighty shaky assumptions but it's
 	 * hard to see how to do better.
 	 */
-	total_cost += 10 * rterm->total_cost;
-	total_rows += 10 * rterm->rows;
+	rupath = (RecursiveUnionPath *) runion;
+	if (rupath->maxDepth > 0)
+	{
+		int loop = rupath->maxDepth - 1;
+
+		total_cost += loop * rterm->total_cost;
+		total_rows += loop * rterm->rows;
+	}
+	else
+	{
+		total_cost += 10 * rterm->total_cost;
+		total_rows += 10 * rterm->rows;
+	}
 
 	/*
 	 * Also charge cpu_tuple_cost per row to account for the costs of
