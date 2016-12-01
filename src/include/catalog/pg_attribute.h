@@ -225,11 +225,11 @@ typedef FormData_pg_attribute *Form_pg_attribute;
  */
 
 /* graph */
-DATA(insert ( 7010 id 7002 -1 16 1 0 -1 -1 f p d f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7010 id 7002 -1 8 1 0 -1 -1 FLOAT8PASSBYVAL p d f f f t 0 0 _null_ _null_ _null_ ));
 DATA(insert ( 7010 properties 3802 -1 -1 2 0 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7020 id 7002 -1 16 1 0 -1 -1 f p d f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7020 start 7002 -1 16 2 0 -1 -1 f p d f f f t 0 0 _null_ _null_ _null_ ));
-DATA(insert ( 7020 end 7002 -1 16 3 0 -1 -1 f p d f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7020 id 7002 -1 8 1 0 -1 -1 FLOAT8PASSBYVAL p d f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7020 start 7002 -1 8 2 0 -1 -1 FLOAT8PASSBYVAL p d f f f t 0 0 _null_ _null_ _null_ ));
+DATA(insert ( 7020 end 7002 -1 8 3 0 -1 -1 FLOAT8PASSBYVAL p d f f f t 0 0 _null_ _null_ _null_ ));
 DATA(insert ( 7020 properties 3802 -1 -1 4 0 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
 DATA(insert ( 7030 vertices 7011 -1 -1 1 1 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));
 DATA(insert ( 7030 edges 7021 -1 -1 2 1 -1 -1 f x i f f f t 0 0 _null_ _null_ _null_ ));

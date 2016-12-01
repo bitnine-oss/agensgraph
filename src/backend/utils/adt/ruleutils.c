@@ -10276,7 +10276,7 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		elog(ERROR, "cache lookup failed for relation %u", indexrelid);
 	idxrelrec = (Form_pg_class) GETSTRUCT(ht_idxrel);
 
-	if (!OidIsValid(get_relid_labid(indrelid)))
+	if (!OidIsValid(get_relid_laboid(indrelid)))
 		elog(ERROR, "'%s' is not property index",
 			 NameStr(idxrelrec->relname));
 

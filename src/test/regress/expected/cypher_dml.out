@@ -909,24 +909,28 @@ RETURN properties(r) as r;
 
 -- cleanup
 DROP GRAPH p CASCADE;
-NOTICE:  drop cascades to 3 other objects
-DETAIL:  drop cascades to label ag_vertex
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence p.ag_label_seq
+drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label rel
 DROP GRAPH u CASCADE;
-NOTICE:  drop cascades to 3 other objects
-DETAIL:  drop cascades to label ag_vertex
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence u.ag_label_seq
+drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label rel
 DROP GRAPH t CASCADE;
-NOTICE:  drop cascades to 4 other objects
-DETAIL:  drop cascades to label ag_vertex
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence t.ag_label_seq
+drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label time
 drop cascades to label goes
 DROP GRAPH o CASCADE;
-NOTICE:  drop cascades to 4 other objects
-DETAIL:  drop cascades to label ag_vertex
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence o.ag_label_seq
+drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label person
 drop cascades to label knows
@@ -937,7 +941,8 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
-NOTICE:  drop cascades to 2 other objects
-DETAIL:  drop cascades to label ag_vertex
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence agens.ag_label_seq
+drop cascades to label ag_vertex
 drop cascades to label ag_edge
 DROP TABLE history;

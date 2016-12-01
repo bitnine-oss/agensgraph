@@ -5385,24 +5385,19 @@ ag_graph_ownercheck(Oid graphid, Oid roleid)
  * Ownership check for a label (specified by OID).
  */
 bool
-ag_label_ownercheck(Oid labid, Oid roleid)
+ag_label_ownercheck(Oid laboid, Oid roleid)
 {
-	HeapTuple	tuple;
-	Oid			relid;
+	Oid relid;
 
 	/* Superusers bypass all permission checking. */
 	if (superuser_arg(roleid))
 		return true;
 
-	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
-	if (!HeapTupleIsValid(tuple))
+	relid = get_laboid_relid(laboid);
+	if (!OidIsValid(relid))
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_DATABASE),
-				 errmsg("graph label with OID %u does not exist", labid)));
-
-	relid = ((Form_ag_label) GETSTRUCT(tuple))->relid;
-
-	ReleaseSysCache(tuple);
+				 errmsg("graph label with OID %u does not exist", laboid)));
 
 	return pg_class_ownercheck(relid, roleid);
 }
