@@ -42,8 +42,8 @@
 
 static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
-static void AgInheritanceDependancy(Oid labid, List *supers);
-static void CheckAlterLabel(ObjectType alterType, Oid labid);
+static void AgInheritanceDependancy(Oid laboid, List *supers);
+static void CheckAlterLabel(ObjectType alterType, Oid laboid);
 
 /* See ProcessUtilitySlow() case T_CreateSchemaStmt */
 void
@@ -53,6 +53,7 @@ CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString)
 	ListCell   *parsetree_item;
 
 	GraphCreate(stmt, queryString);
+	CommandCounterIncrement();
 
 	parsetree_list = transformCreateGraphStmt(stmt);
 
@@ -192,7 +193,7 @@ DefineLabel(CreateStmt *stmt, char labkind)
 	ObjectAddress reladdr;
 	Datum		toast_options;
 	Oid			tablespaceId;
-	Oid			labid;
+	Oid			laboid;
 	List	   *inheritOids = NIL;
 	ObjectAddress labaddr;
 
@@ -224,18 +225,18 @@ DefineLabel(CreateStmt *stmt, char labkind)
 	/* current implementation does not get tablespace name; so */
 	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence);
 
-	labid = label_create_with_catalog(stmt->relation, reladdr.objectId,
-									  labkind, tablespaceId);
+	laboid = label_create_with_catalog(stmt->relation, reladdr.objectId,
+									   labkind, tablespaceId);
 
 	GetSuperOids(stmt->inhRelations, labkind, &inheritOids);
-	AgInheritanceDependancy(labid, inheritOids);
+	AgInheritanceDependancy(laboid, inheritOids);
 
 	/*
 	 * Make a dependency link to force the table to be deleted if its
 	 * graph label is.
 	 */
 	labaddr.classId = LabelRelationId;
-	labaddr.objectId = labid;
+	labaddr.objectId = laboid;
 	labaddr.objectSubId = 0;
 	recordDependencyOn(&reladdr, &labaddr, DEPENDENCY_INTERNAL);
 
@@ -251,18 +252,19 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 	foreach(entry, supers)
 	{
 		RangeVar   *parent = (RangeVar *) lfirst(entry);
-		Oid			parent_labid;
 		Oid			graphid;
 		HeapTuple	tuple;
 		Form_ag_label labtup;
+		Oid			parent_laboid;
 
 		graphid = get_graphname_oid(parent->schemaname);
-		parent_labid = get_labname_labid(parent->relname, graphid);
 
-		tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(parent_labid));
+		tuple = SearchSysCache2(LABELNAMEGRAPH,
+								PointerGetDatum(parent->relname),
+								ObjectIdGetDatum(graphid));
 		if (!HeapTupleIsValid(tuple))
-			elog(ERROR, "cache lookup failed for parent label (OID=%u)",
-				 parent_labid);
+			elog(ERROR, "cache lookup failed for parent label \"%s.%s\"",
+				 parent->schemaname, parent->relname);
 
 		labtup = (Form_ag_label) GETSTRUCT(tuple);
 		if (labtup->labkind != labkind)
@@ -271,9 +273,10 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 					 errmsg("invalid parent label with labkind '%c'",
 							labtup->labkind)));
 
+		parent_laboid = HeapTupleGetOid(tuple);
 		ReleaseSysCache(tuple);
 
-		parentOids = lappend_oid(parentOids, parent_labid);
+		parentOids = lappend_oid(parentOids, parent_laboid);
 	}
 
 	*supOids = parentOids;
@@ -281,7 +284,7 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 
 /* This function mimics StoreCatalogInheritance() */
 static void
-AgInheritanceDependancy(Oid labid, List *supers)
+AgInheritanceDependancy(Oid laboid, List *supers)
 {
 	int16		seq;
 	ListCell   *entry;
@@ -297,7 +300,7 @@ AgInheritanceDependancy(Oid labid, List *supers)
 		ObjectAddress parentobject;
 
 		childobject.classId = LabelRelationId;
-		childobject.objectId = labid;
+		childobject.objectId = laboid;
 		childobject.objectSubId = 0;
 		parentobject.classId = LabelRelationId;
 		parentobject.objectId = parentOid;
@@ -311,7 +314,7 @@ AgInheritanceDependancy(Oid labid, List *supers)
 ObjectAddress
 RenameLabel(RenameStmt *stmt)
 {
-	Oid			labid;
+	Oid			laboid;
 	Oid			graphid;
 	HeapTuple	tup;
 	Relation	rel;
@@ -324,7 +327,7 @@ RenameLabel(RenameStmt *stmt)
 
 	graphid = get_graphname_oid(stmt->relation->schemaname);
 
-	tup = SearchSysCacheCopy2(LABELNAME,
+	tup = SearchSysCacheCopy2(LABELNAMEGRAPH,
 							  CStringGetDatum(stmt->relation->relname),
 							  ObjectIdGetDatum(graphid));
 
@@ -338,9 +341,9 @@ RenameLabel(RenameStmt *stmt)
 		return InvalidObjectAddress;
 	}
 
-	labid = HeapTupleGetOid(tup);
+	laboid = HeapTupleGetOid(tup);
 
-	CheckAlterLabel(stmt->renameType, labid);
+	CheckAlterLabel(stmt->renameType, laboid);
 
 	/* renamimg label and table should be processed in one lock */
 	RenameRelation(stmt);
@@ -354,7 +357,7 @@ RenameLabel(RenameStmt *stmt)
 
 	InvokeObjectPostAlterHook(LabelRelationId, HeapTupleGetOid(tup), 0);
 
-	ObjectAddressSet(address, LabelRelationId, labid);
+	ObjectAddressSet(address, LabelRelationId, laboid);
 
 	heap_close(rel, NoLock);
 	heap_freetuple(tup);
@@ -363,14 +366,14 @@ RenameLabel(RenameStmt *stmt)
 }
 
 static void
-CheckAlterLabel(ObjectType removeType, Oid labid)
+CheckAlterLabel(ObjectType removeType, Oid laboid)
 {
 	HeapTuple	tuple;
 	Form_ag_label labtup;
 
-	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
 	if (!HeapTupleIsValid(tuple))
-		elog(ERROR, "cache lookup failed for label (OID=%u)", labid);
+		elog(ERROR, "cache lookup failed for label (OID=%u)", laboid);
 
 	labtup = (Form_ag_label) GETSTRUCT(tuple);
 
@@ -400,14 +403,14 @@ CheckAlterLabel(ObjectType removeType, Oid labid)
  * DROP ELABEL cannot drop vertex and base edge label.
  */
 void
-CheckDropLabel(ObjectType removeType, Oid labid)
+CheckDropLabel(ObjectType removeType, Oid laboid)
 {
 	HeapTuple	tuple;
 	Form_ag_label labtup;
 
-	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
 	if (!HeapTupleIsValid(tuple))
-		elog(ERROR, "cache lookup failed for label (OID=%u)", labid);
+		elog(ERROR, "cache lookup failed for label (OID=%u)", laboid);
 
 	labtup = (Form_ag_label) GETSTRUCT(tuple);
 

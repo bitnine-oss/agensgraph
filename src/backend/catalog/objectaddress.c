@@ -470,7 +470,7 @@ static const ObjectPropertyType ObjectProperty[] =
 		LabelRelationId,
 		LabelOidIndexId,
 		LABELOID,
-		LABELNAME,
+		LABELNAMEGRAPH,
 		Anum_ag_label_labname,
 		InvalidAttrNumber,
 		InvalidAttrNumber,
@@ -740,7 +740,7 @@ static void getProcedureTypeDescription(StringInfo buffer, Oid procid);
 static void getConstraintTypeDescription(StringInfo buffer, Oid constroid);
 static void getOpFamilyIdentity(StringInfo buffer, Oid opfid, List **objname);
 static void getRelationIdentity(StringInfo buffer, Oid relid, List **objname);
-static void getLabelDescription(StringInfo buffer, Oid labid);
+static void getLabelDescription(StringInfo buffer, Oid laboid);
 
 /*
  * Translate an object name and arguments (as passed by the parser) to an
@@ -1954,7 +1954,7 @@ get_object_address_label(List *objname, bool missing_ok)
 
 	graphid = get_graphname_oid(graphname);
 	address.classId = LabelRelationId;
-	address.objectId = get_labname_labid(labname, graphid);
+	address.objectId = get_labname_laboid(labname, graphid);
 	address.objectSubId = 0;
 
 	if (!OidIsValid(address.objectId) && !missing_ok)
@@ -4947,14 +4947,14 @@ strlist_to_textarray(List *list)
 /*
  * subroutine for getObjectTypeDescription: describe a graph label
  */
-static void getLabelDescription(StringInfo buffer, Oid labid)
+static void getLabelDescription(StringInfo buffer, Oid laboid)
 {
 	HeapTuple   tuple;
 	Form_ag_label labtup;
 
-	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(labid));
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
 	if (!HeapTupleIsValid(tuple))
-		elog(ERROR, "cache lookup failed for label (OID=%u)", labid);
+		elog(ERROR, "cache lookup failed for label (OID=%u)", laboid);
 
 	labtup = (Form_ag_label) GETSTRUCT(tuple);
 
@@ -4963,7 +4963,7 @@ static void getLabelDescription(StringInfo buffer, Oid labid)
 	else if (labtup->labkind == LABEL_KIND_EDGE)
 		appendStringInfo(buffer, "elabel");
 	else
-		elog(ERROR, "invalid label (OID=%u)",labid);
+		elog(ERROR, "invalid label (OID=%u)",laboid);
 
 	ReleaseSysCache(tuple);
 }

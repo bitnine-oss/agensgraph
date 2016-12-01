@@ -2187,7 +2187,7 @@ transformRuleStmt(RuleStmt *stmt, const char *queryString,
 	 */
 	rel = heap_openrv(stmt->relation, AccessExclusiveLock);
 
-	if (OidIsValid(get_relid_labid(rel->rd_id)))
+	if (OidIsValid(get_relid_laboid(rel->rd_id)))
 		elog(ERROR, "cannot create rule on graph label");
 
 	if (rel->rd_rel->relkind == RELKIND_MATVIEW)
@@ -2494,7 +2494,7 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	AlterTableCmd *newcmd;
 	RangeTblEntry *rte;
 
-	if (OidIsValid(get_relid_labid(relid))
+	if (OidIsValid(get_relid_laboid(relid))
 		&& stmt->relkind != OBJECT_VLABEL
 		&& stmt->relkind != OBJECT_ELABEL)
 		elog(ERROR, "cannot ALTER TABLE on graph label");
@@ -3005,8 +3005,17 @@ setSchemaName(char *context_schema, char **stmt_schema_name)
 List *
 transformCreateGraphStmt(CreateGraphStmt *stmt)
 {
+	CreateSeqStmt *labseq;
 	CreateLabelStmt	*vertex;
 	CreateLabelStmt	*edge;
+
+	labseq = makeNode(CreateSeqStmt);
+	labseq->sequence = makeRangeVar(stmt->graphname, AG_LABEL_SEQ, -1);
+	labseq->options =
+			list_make2(makeDefElem("maxvalue", (Node *) makeInteger(USHRT_MAX)),
+					   makeDefElem("cycle", (Node *) makeInteger(TRUE)));
+	labseq->ownerId = InvalidOid;
+	labseq->if_not_exists = false;
 
 	vertex = makeNode(CreateLabelStmt);
 	vertex->labelKind = LABEL_VERTEX;
@@ -3018,7 +3027,7 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 	edge->relation = makeRangeVar(stmt->graphname, AG_EDGE, -1);
 	edge->inhRelations = NIL;
 
-	return list_make2(vertex, edge);
+	return list_make3(labseq, vertex, edge);
 }
 
 /*
@@ -3096,7 +3105,6 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	stmt->oncommit = ONCOMMIT_NOOP;
 	stmt->tablespacename = labelStmt->tablespacename;
 	stmt->if_not_exists = labelStmt->if_not_exists;
-
 
 	/* set appropriate table elements and indexes */
 	if (labelStmt->labelKind == LABEL_VERTEX)
@@ -3233,7 +3241,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 		comment = makeComment(OBJECT_VLABEL, stmt->relation, labdesc);
 		cxt.alist = lappend(cxt.alist, comment);
 	}
-	else if(strcmp(labelStmt->relation->relname, AG_EDGE) == 0)
+	else if (strcmp(labelStmt->relation->relname, AG_EDGE) == 0)
 	{
 		snprintf(descbuf, sizeof(descbuf), "base edge label of graph %s",
 				 graphname);
@@ -3450,12 +3458,12 @@ static bool
 isLabelKind(RangeVar *label, char labkind)
 {
 	Oid			graphid;
-	Oid			labelid;
+	Oid			laboid;
 
 	graphid = get_graphname_oid(label->schemaname);
-	labelid = get_labname_labid(label->relname, graphid);
+	laboid = get_labname_laboid(label->relname, graphid);
 
-	return (labelid != InvalidOid && get_labid_labkind(labelid) == labkind);
+	return (laboid != InvalidOid && get_laboid_labkind(laboid) == labkind);
 }
 
 /* See transformColumnDefinition() */
@@ -3469,9 +3477,9 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	List	   *attnamelist;
 	AlterSeqStmt *altseqstmt;
 	char	   *qname;
-	A_Const    *relname;
-	TypeCast   *castrel;
-	A_Const    *seqname;
+	A_Const	   *relname;
+	FuncCall   *fclabid;
+	A_Const	   *seqname;
 	TypeCast   *castseq;
 	FuncCall   *fcnextval;
 	FuncCall   *fcgraphid;
@@ -3511,7 +3519,7 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	/*
 	 * add DEFAULT constraint to the column
 	 *
-	 * graphid(`relname`::regclass, nextval(`seqname`::regclass))
+	 * graphid(graph_labid(`relname`), nextval(`seqname`::regclass))
 	 */
 
 	qname = quote_qualified_identifier(snamespace, cxt->relation->relname);
@@ -3519,10 +3527,8 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	relname->val.type = T_String;
 	relname->val.val.str = qname;
 	relname->location = -1;
-	castrel = makeNode(TypeCast);
-	castrel->typeName = SystemTypeName("regclass");
-	castrel->arg = (Node *) relname;
-	castrel->location = -1;
+	fclabid = makeFuncCall(SystemFuncName("graph_labid"),
+						   list_make1(relname), -1);
 	qname = quote_qualified_identifier(snamespace, sname);
 	seqname = makeNode(A_Const);
 	seqname->val.type = T_String;
@@ -3535,7 +3541,7 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	fcnextval = makeFuncCall(SystemFuncName("nextval"),
 							 list_make1(castseq), -1);
 	fcgraphid = makeFuncCall(SystemFuncName("graphid"),
-							 list_make2(castrel, fcnextval), -1);
+							 list_make2(fclabid, fcnextval), -1);
 	defid = makeNode(Constraint);
 	defid->contype = CONSTR_DEFAULT;
 	defid->location = -1;
@@ -3625,7 +3631,7 @@ transformCreateConstraintStmt(ParseState *pstate,
 {
 	RangeVar   *label;
 	Oid			graphid;
-	Oid			labid;
+	Oid			laboid;
 	char		labkind;
 	ObjectType	objtype;
 	Node	   *propExpr;
@@ -3641,8 +3647,8 @@ transformCreateConstraintStmt(ParseState *pstate,
 	if (graphid == InvalidOid)
 		elog(ERROR, "invalid graph path \"%s\"", label->schemaname);
 
-	labid = get_labname_labid(label->relname, graphid);
-	labkind = get_labid_labkind(labid);
+	laboid = get_labname_laboid(label->relname, graphid);
+	labkind = get_laboid_labkind(laboid);
 
 	if (labkind == LABEL_KIND_VERTEX)
 	{
@@ -3733,7 +3739,7 @@ transformDropConstraintStmt(ParseState *pstate,
 {
 	RangeVar   *label;
 	Oid			graphid;
-	Oid			labid;
+	Oid			laboid;
 	char		labkind;
 	ObjectType	objtype;
 	AlterTableCmd *atcmd;
@@ -3747,8 +3753,8 @@ transformDropConstraintStmt(ParseState *pstate,
 	if (graphid == InvalidOid)
 		elog(ERROR, "invalid graph path \"%s\"", label->schemaname);
 
-	labid = get_labname_labid(label->relname, graphid);
-	labkind = get_labid_labkind(labid);
+	laboid = get_labname_laboid(label->relname, graphid);
+	labkind = get_laboid_labkind(laboid);
 
 	if (labkind == LABEL_KIND_VERTEX)
 	{
@@ -3969,13 +3975,13 @@ transformDropPropertyIndex(DropPropertyIndexStmt *stmt)
 {
 	DropStmt *dropstmt = makeNode(DropStmt);
 	Oid		indexoid;
-	Oid		graphoid;
+	Oid		graphid;
 	Oid		schemaoid;
 	char   *graphname;
 
 	graphname = get_graph_path();
-	graphoid = get_graphname_oid(graphname);
-	if (!OidIsValid(graphoid))
+	graphid = get_graphname_oid(graphname);
+	if (!OidIsValid(graphid))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
@@ -4029,7 +4035,7 @@ isPropertyIndex(Oid indexoid)
 	 * If this index is a table for graph label and is an expressional index,
 	 * decide this is property index.
 	 */
-	if (!OidIsValid(get_relid_labid(index->indrelid)))
+	if (!OidIsValid(get_relid_laboid(index->indrelid)))
 	{
 		retval = false;
 	}

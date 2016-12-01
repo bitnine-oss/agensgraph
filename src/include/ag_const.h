@@ -10,6 +10,7 @@
 #ifndef AG_CONST_H
 #define AG_CONST_H
 
+#define AG_LABEL_SEQ		"ag_label_seq"
 #define AG_VERTEX			"ag_vertex"
 #define AG_EDGE				"ag_edge"
 #define AG_ELEM_LOCAL_ID	"id"

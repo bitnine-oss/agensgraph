@@ -31,6 +31,7 @@ CATALOG(ag_label,7045) BKI_SCHEMA_MACRO
 {
 	NameData	labname;		/* label name */
 	Oid			graphid;		/* graph oid */
+	int32		labid;			/* label ID in a graph */
 	Oid			relid;			/* table oid under the label */
 	char		labkind;		/* see LABEL_KIND_XXX constants below */
 } FormData_ag_label;
@@ -50,8 +51,9 @@ typedef FormData_ag_label *Form_ag_label;
 #define Natts_ag_label			4
 #define Anum_ag_label_labname	1
 #define Anum_ag_label_graphid	2
-#define Anum_ag_label_relid		3
-#define Anum_ag_label_labkind	4
+#define Anum_ag_label_labid		3
+#define Anum_ag_label_relid		4
+#define Anum_ag_label_labkind	5
 
 #define LABEL_KIND_VERTEX	'v'
 #define LABEL_KIND_EDGE		'e'

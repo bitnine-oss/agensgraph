@@ -14,32 +14,30 @@
 
 #include "fmgr.h"
 
-typedef struct Graphid
-{
-	uint32		_reserved;
-	Oid			oid;
-	int64		lid;
-} Graphid;
+typedef uint64 Graphid;
 
-#define DatumGetGraphidP(d)		((Graphid *) DatumGetPointer(d))
-#define GraphidPGetDatum(p)		PointerGetDatum(p)
-#define PG_GETARG_GRAPHID_P(x)	DatumGetGraphidP(PG_GETARG_DATUM(x))
-#define PG_RETURN_GRAPHID_P(x)	PG_RETURN_POINTER(x)
+#define DatumGetGraphid(d)		DatumGetUInt64(d)
+#define GraphidGetDatum(p)		UInt64GetDatum(p)
+#define PG_GETARG_GRAPHID(x)	DatumGetGraphid(PG_GETARG_DATUM(x))
+#define PG_RETURN_GRAPHID(x)	return UInt64GetDatum(x)
 
-#define GraphidSet(_id, _oid, _lid) \
+#define GraphidGetLabid(id)		((uint16) (((uint64) (id)) >> (32 + 16)))
+#define GraphidGetLocid(id)		(((uint64) (id)) & 0x0000ffffffffffff)
+
+#define GraphidSet(_id, _labid, _locid) \
 	do { \
 		AssertMacro(PointerIsValid(_id)); \
-		(_id)->_reserved = 0; \
-		(_id)->oid = (_oid); \
-		(_id)->lid = (_lid); \
+		*(_id) = (((uint64) (_labid)) << (32 + 16)) | \
+				 (((uint64) (_locid)) & 0x0000ffffffffffff); \
 	} while (0)
 
 /* graphid */
 extern Datum graphid(PG_FUNCTION_ARGS);
 extern Datum graphid_in(PG_FUNCTION_ARGS);
 extern Datum graphid_out(PG_FUNCTION_ARGS);
-extern Datum graphid_oid(PG_FUNCTION_ARGS);
-extern Datum graphid_lid(PG_FUNCTION_ARGS);
+extern Datum graphid_labid(PG_FUNCTION_ARGS);
+extern Datum graphid_locid(PG_FUNCTION_ARGS);
+extern Datum graph_labid(PG_FUNCTION_ARGS);
 /* graphid - comparison */
 extern Datum graphid_eq(PG_FUNCTION_ARGS);
 extern Datum graphid_ne(PG_FUNCTION_ARGS);

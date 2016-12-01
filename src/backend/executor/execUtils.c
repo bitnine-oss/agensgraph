@@ -982,11 +982,13 @@ InitScanLabelInfo(ScanState *node)
 	labtup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(relid));
 	if (HeapTupleIsValid(labtup))
 	{
-		char labkind;
+		Form_ag_label label = (Form_ag_label) GETSTRUCT(labtup);
 
-		labkind = ((Form_ag_label) GETSTRUCT(labtup))->labkind;
-		if (labkind == LABEL_KIND_VERTEX)
+		if (label->labkind == LABEL_KIND_VERTEX)
+		{
 			node->ss_isLabel = true;
+			node->ss_labid = (uint16) label->labid;
+		}
 
 		ReleaseSysCache(labtup);
 	}

@@ -377,10 +377,10 @@ ExecReScanSeqScan(SeqScanState *node)
 		}
 		else if (isdone == ExprSingleResult)
 		{
-			Oid oid;
+			uint16 labid;
 
-			oid = DatumGetObjectId(DirectFunctionCall1(graphid_oid, graphid));
-			if (node->ss.ss_currentRelation->rd_id != oid)
+			labid = DatumGetUInt16(DirectFunctionCall1(graphid_labid, graphid));
+			if (node->ss.ss_labid != labid)
 				node->ss.ss_skipLabelScan = true;
 		}
 

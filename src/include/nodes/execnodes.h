@@ -1263,6 +1263,7 @@ typedef struct ScanState
 
 	/* to skip unneccessary graph label scan */
 	bool		ss_isLabel;			/* vertex? */
+	uint16		ss_labid;			/* label ID in a graph */
 	ExprState  *ss_labelSkipExpr;	/* SeqScan */
 	int			ss_labelSkipIdx;	/* IndexScan */
 	bool		ss_skipLabelScan;

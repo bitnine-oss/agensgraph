@@ -9,17 +9,17 @@ INSERT INTO GRAPHID_TBL(f1) VALUES ('12345.12'::graphid);
 INSERT INTO GRAPHID_TBL(f1) VALUES ('12345.123'::graphid);
 INSERT INTO GRAPHID_TBL(f1) VALUES ('12345.1234'::graphid);
 INSERT INTO GRAPHID_TBL(f1) VALUES ('12346.123'::graphid);
-INSERT INTO GRAPHID_TBL(f1) VALUES ('4294967295.9223372036854775807'::graphid);
+INSERT INTO GRAPHID_TBL(f1) VALUES ('65535.281474976710655'::graphid);
 SELECT * FROM GRAPHID_TBL;
-               f1               
---------------------------------
+          f1           
+-----------------------
  0.0
  12345.1
  12345.12
  12345.123
  12345.1234
  12346.123
- 4294967295.9223372036854775807
+ 65535.281474976710655
 (7 rows)
 
 SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 =  '12345.123'::graphid;
@@ -29,31 +29,31 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 =  '12345.123'::graphid;
 (1 row)
 
 SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <> '12345.123'::graphid;
-               f1               
---------------------------------
+          f1           
+-----------------------
  0.0
  12345.1
  12345.12
  12345.1234
  12346.123
- 4294967295.9223372036854775807
+ 65535.281474976710655
 (6 rows)
 
 SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >  '12345.123'::graphid;
-               f1               
---------------------------------
+          f1           
+-----------------------
  12345.1234
  12346.123
- 4294967295.9223372036854775807
+ 65535.281474976710655
 (3 rows)
 
 SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >= '12345.123'::graphid;
-               f1               
---------------------------------
+          f1           
+-----------------------
  12345.123
  12345.1234
  12346.123
- 4294967295.9223372036854775807
+ 65535.281474976710655
 (4 rows)
 
 SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <  '12345.123'::graphid;
@@ -83,31 +83,31 @@ SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 =  '12345.123'::graphid;
 (1 row)
 
 SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <> '12345.123'::graphid;
-               f1               
---------------------------------
+          f1           
+-----------------------
  0.0
  12345.1
  12345.12
  12345.1234
  12346.123
- 4294967295.9223372036854775807
+ 65535.281474976710655
 (6 rows)
 
 SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >  '12345.123'::graphid;
-               f1               
---------------------------------
+          f1           
+-----------------------
  12345.1234
  12346.123
- 4294967295.9223372036854775807
+ 65535.281474976710655
 (3 rows)
 
 SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 >= '12345.123'::graphid;
-               f1               
---------------------------------
+          f1           
+-----------------------
  12345.123
  12345.1234
  12346.123
- 4294967295.9223372036854775807
+ 65535.281474976710655
 (4 rows)
 
 SELECT g.* FROM GRAPHID_TBL g WHERE g.f1 <  '12345.123'::graphid;

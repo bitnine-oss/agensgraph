@@ -554,11 +554,11 @@ ExecReScanIndexScan(IndexScanState *node)
 		}
 		else
 		{
-			Oid oid;
+			uint16 labid;
 
-			oid = DatumGetObjectId(DirectFunctionCall1(graphid_oid,
+			labid = DatumGetUInt16(DirectFunctionCall1(graphid_labid,
 													   skey->sk_argument));
-			if (node->ss.ss_currentRelation->rd_id != oid)
+			if (node->ss.ss_labid != labid)
 				node->ss.ss_skipLabelScan = true;
 		}
 	}

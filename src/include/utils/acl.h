@@ -336,6 +336,6 @@ extern bool pg_extension_ownercheck(Oid ext_oid, Oid roleid);
 extern bool has_createrole_privilege(Oid roleid);
 extern bool has_bypassrls_privilege(Oid roleid);
 extern bool ag_graph_ownercheck(Oid graphid, Oid roleid);
-extern bool ag_label_ownercheck(Oid labid, Oid roleid);
+extern bool ag_label_ownercheck(Oid laboid, Oid roleid);
 
 #endif   /* ACL_H */

@@ -28,10 +28,10 @@ CREATE PROPERTY INDEX ON regv1 ((name.first || name.last));
 CREATE PROPERTY INDEX ON regv1 ((age::integer));
 CREATE PROPERTY INDEX ON regv1 ((body.weight::integer / body.height::integer));
 \d g.regv1
-                                                 Table "g.regv1"
-   Column   |  Type   |                                         Modifiers                                         
-------------+---------+-------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(('g.regv1'::regclass)::oid, nextval('g.regv1_id_seq'::regclass))
+                                                    Table "g.regv1"
+   Column   |  Type   |                                           Modifiers                                            
+------------+---------+------------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
@@ -60,10 +60,10 @@ HINT:  You must specify an operator class for the index or define a default oper
 CREATE PROPERTY INDEX ON regv1 USING gin ((self_intro::tsvector));
 CREATE PROPERTY INDEX ON regv1 USING gist ((hobby::tsvector));
 \d g.regv1
-                                                 Table "g.regv1"
-   Column   |  Type   |                                         Modifiers                                         
-------------+---------+-------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(('g.regv1'::regclass)::oid, nextval('g.regv1_id_seq'::regclass))
+                                                    Table "g.regv1"
+   Column   |  Type   |                                           Modifiers                                            
+------------+---------+------------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
@@ -108,10 +108,10 @@ CREATE PROPERTY INDEX ON regv1 (name) TABLESPACE pg_default;
 CREATE PROPERTY INDEX ON regv1 (name.first) WITH (fillfactor = 80);
 CREATE PROPERTY INDEX ON regv1 (name.first) WHERE (name IS NOT NULL);
 \d g.regv1
-                                                 Table "g.regv1"
-   Column   |  Type   |                                         Modifiers                                         
-------------+---------+-------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(('g.regv1'::regclass)::oid, nextval('g.regv1_id_seq'::regclass))
+                                                    Table "g.regv1"
+   Column   |  Type   |                                           Modifiers                                            
+------------+---------+------------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
@@ -150,10 +150,10 @@ ERROR:  duplicate key value violates unique constraint "regv1_property_idx"
 DETAIL:  Key ((properties #>> ARRAY['id'::text]))=(100) already exists.
 CONTEXT:  SQL statement "INSERT INTO "g"."regv1" VALUES (DEFAULT, $1) RETURNING id AS id, properties"
 \d g.regv1
-                                                 Table "g.regv1"
-   Column   |  Type   |                                         Modifiers                                         
-------------+---------+-------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(('g.regv1'::regclass)::oid, nextval('g.regv1_id_seq'::regclass))
+                                                    Table "g.regv1"
+   Column   |  Type   |                                           Modifiers                                            
+------------+---------+------------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
@@ -186,10 +186,10 @@ ERROR:  duplicate key value violates unique constraint "regv1_property_idx"
 DETAIL:  Key ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))=(agens, graph) already exists.
 CONTEXT:  SQL statement "INSERT INTO "g"."regv1" VALUES (DEFAULT, $1) RETURNING id AS id, properties"
 \d g.regv1
-                                                 Table "g.regv1"
-   Column   |  Type   |                                         Modifiers                                         
-------------+---------+-------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(('g.regv1'::regclass)::oid, nextval('g.regv1_id_seq'::regclass))
+                                                    Table "g.regv1"
+   Column   |  Type   |                                           Modifiers                                            
+------------+---------+------------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
@@ -268,8 +268,9 @@ DROP VLABEL regv1;
 -- DROP GRAPH
 --
 DROP GRAPH g CASCADE;
-NOTICE:  drop cascades to 2 other objects
-DETAIL:  drop cascades to label ag_vertex
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence g.ag_label_seq
+drop cascades to label ag_vertex
 drop cascades to label ag_edge
 RESET ROLE;
 DROP ROLE regressrole;
