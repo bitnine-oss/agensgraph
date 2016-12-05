@@ -440,6 +440,9 @@ _ei_compare(Relation rel,
 	if (!P_ISLEAF(opaque) && offnum == P_FIRSTDATAKEY(opaque))
 		return 1;
 
+	if (!P_ISLEAF(opaque))
+		keysz = 1;
+
 	itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
 
 	/*
