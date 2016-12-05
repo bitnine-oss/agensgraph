@@ -1303,10 +1303,17 @@ setup_config(void)
 #endif
 
 	/* set shared preload libraries */
+#ifdef USE_PG_STATSINFO
 	conflines = replace_token(conflines,
 							"#shared_preload_libraries = ''",
 							"shared_preload_libraries = "
 									"'pg_stat_statements,pg_statsinfo'");
+#else
+	conflines = replace_token(conflines,
+							"#shared_preload_libraries = ''",
+							"shared_preload_libraries = "
+									"'pg_stat_statements'");
+#endif
 
 	/* pg_stat_statements */
 	conflines = replace_token(conflines,
