@@ -6,6 +6,8 @@
 
 // edgeidx.c
 extern Datum edgeidxhandler(PG_FUNCTION_ARGS);
+extern IndexBuildResult *eibuild(Relation heap, Relation index,
+								 struct IndexInfo *indexInfo);
 extern bool eiinsert(Relation rel, Datum *values, bool *isnull,
 		 ItemPointer ht_ctid, Relation heapRel,
 		 IndexUniqueCheck checkUnique);
@@ -40,6 +42,8 @@ extern void _ei_finish_split(Relation rel, Buffer bbuf, BTStack stack);
 
 // eipage.c
 extern int  _ei_pagedel(Relation rel, Buffer buf); 
+
+extern IndexTuple _ei_reformTuple (IndexTuple source, TupleDesc tupDesc);
 
 
 #endif	/* EDGEIDX_H */

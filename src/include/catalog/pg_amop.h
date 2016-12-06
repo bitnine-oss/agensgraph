@@ -1156,4 +1156,11 @@ DATA(insert ( 7105 7002 7002  3 s 7087 3580 0 ));
 DATA(insert ( 7105 7002 7002  4 s 7092 3580 0 ));
 DATA(insert ( 7105 7002 7002  5 s 7090 3580 0 ));
 
+/* Edge index */
+DATA(insert ( 7095 7002 7002  1 s 7089 7200 0 ));
+DATA(insert ( 7095 7002 7002  2 s 7091 7200 0 ));
+DATA(insert ( 7095 7002 7002  3 s 7087 7200 0 ));
+DATA(insert ( 7095 7002 7002  4 s 7092 7200 0 ));
+DATA(insert ( 7095 7002 7002  5 s 7090 7200 0 ));
+
 #endif   /* PG_AMOP_H */

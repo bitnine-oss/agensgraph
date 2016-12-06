@@ -86,8 +86,6 @@ static bool _bt_isequal(TupleDesc itupdesc, Page page, OffsetNumber offnum,
 static void _bt_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel);
 
 
-static IndexTuple _ei_reformTuple (IndexTuple source, TupleDesc tupDesc);
-
 IndexTuple
 _ei_reformTuple(IndexTuple itup, TupleDesc tupDesc)
 {

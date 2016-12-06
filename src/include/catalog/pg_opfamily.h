@@ -190,4 +190,5 @@ DATA(insert OID = 7096 (  405 graphid_ops           PGNSP PGUID ));
 DATA(insert OID = 7098 ( 2742 graphid_ops           PGNSP PGUID ));
 DATA(insert OID = 7105 ( 3580 graphid_minmax_ops    PGNSP PGUID ));
 
+DATA(insert OID = 7095 ( 7200 graphid_ops           PGNSP PGUID ));
 #endif   /* PG_OPFAMILY_H */
