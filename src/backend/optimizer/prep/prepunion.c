@@ -447,6 +447,8 @@ generate_recursion_path(SetOperationStmt *setOp, PlannerInfo *root,
 								   NULL);
 	/* The right path will want to look at the left one ... */
 	root->non_recursive_path = lpath;
+	if (setOp->maxDepth > 0)
+		root->max_hoop = setOp->maxDepth - 1;
 	rpath = recurse_set_operations(setOp->rarg, root,
 								   setOp->colTypes, setOp->colCollations,
 								   false, -1,
@@ -454,6 +456,7 @@ generate_recursion_path(SetOperationStmt *setOp, PlannerInfo *root,
 								   &rpath_tlist,
 								   NULL);
 	root->non_recursive_path = NULL;
+	root->max_hoop = DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT;
 
 	/*
 	 * Generate tlist for RecursiveUnion path node --- same as in Append cases

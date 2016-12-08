@@ -30,6 +30,7 @@
 #define DEFAULT_PARALLEL_SETUP_COST  1000.0
 
 #define DEFAULT_EFFECTIVE_CACHE_SIZE  524288	/* measured in pages */
+#define DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT 10
 
 typedef enum
 {
@@ -180,7 +181,7 @@ extern void set_subquery_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_function_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_values_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel,
-					   double cte_rows);
+					   double cte_rows, int iter_cnt);
 extern void set_foreign_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern PathTarget *set_pathtarget_cost_width(PlannerInfo *root, PathTarget *target);
 

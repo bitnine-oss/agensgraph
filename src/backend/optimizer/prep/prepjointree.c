@@ -27,6 +27,7 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
+#include "optimizer/cost.h"
 #include "optimizer/placeholder.h"
 #include "optimizer/prep.h"
 #include "optimizer/subselect.h"
@@ -917,6 +918,7 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	subroot->hasRecursion = false;
 	subroot->wt_param_id = -1;
 	subroot->non_recursive_path = NULL;
+	subroot->max_hoop = DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT;
 
 	/* No CTEs to worry about */
 	Assert(subquery->cteList == NIL);

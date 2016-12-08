@@ -491,6 +491,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	else
 		root->wt_param_id = -1;
 	root->non_recursive_path = NULL;
+	root->max_hoop = DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT;
 
 	/*
 	 * If there is a WITH list, process each WITH query and build an initplan
