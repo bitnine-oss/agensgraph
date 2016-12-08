@@ -1935,7 +1935,8 @@ set_cte_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	cteplan = (Plan *) list_nth(root->glob->subplans, plan_id - 1);
 
 	/* Mark rel with estimated output rows, width, etc */
-	set_cte_size_estimates(root, rel, cteplan->plan_rows);
+	set_cte_size_estimates(root, rel, cteplan->plan_rows,
+						   DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT);
 
 	/*
 	 * We don't support pushing join clauses into the quals of a CTE scan, but
@@ -1984,7 +1985,7 @@ set_worktable_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 		elog(ERROR, "could not find path for CTE \"%s\"", rte->ctename);
 
 	/* Mark rel with estimated output rows, width, etc */
-	set_cte_size_estimates(root, rel, ctepath->rows);
+	set_cte_size_estimates(root, rel, ctepath->rows, cteroot->max_hoop);
 
 	/*
 	 * We don't support pushing join clauses into the quals of a worktable

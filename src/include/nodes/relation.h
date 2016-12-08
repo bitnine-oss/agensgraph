@@ -297,6 +297,7 @@ typedef struct PlannerInfo
 	/* These fields are used only when hasRecursion is true: */
 	int			wt_param_id;	/* PARAM_EXEC ID for the work table */
 	struct Path *non_recursive_path;	/* a path for non-recursive term */
+	int			max_hoop;		/* used to estimate worktable rows */
 
 	/* These fields are workspace for createplan.c */
 	Relids		curOuterRels;	/* outer rels above current node */
