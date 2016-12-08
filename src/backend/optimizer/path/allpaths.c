@@ -1935,7 +1935,8 @@ set_cte_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	cteplan = (Plan *) list_nth(root->glob->subplans, plan_id - 1);
 
 	/* Mark rel with estimated output rows, width, etc */
-	set_cte_size_estimates(root, rel, cteplan->plan_rows, 10);
+	set_cte_size_estimates(root, rel, cteplan->plan_rows, 
+						   DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT);
 
 	/*
 	 * We don't support pushing join clauses into the quals of a CTE scan, but

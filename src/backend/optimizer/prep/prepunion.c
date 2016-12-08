@@ -456,7 +456,7 @@ generate_recursion_path(SetOperationStmt *setOp, PlannerInfo *root,
 								   &rpath_tlist,
 								   NULL);
 	root->non_recursive_path = NULL;
-	root->max_hoop = 10;
+	root->max_hoop = DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT;
 
 	/*
 	 * Generate tlist for RecursiveUnion path node --- same as in Append cases
