@@ -917,6 +917,7 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	subroot->hasRecursion = false;
 	subroot->wt_param_id = -1;
 	subroot->non_recursive_path = NULL;
+	subroot->max_hoop = 10; /* 10 iterations */
 
 	/* No CTEs to worry about */
 	Assert(subquery->cteList == NIL);

@@ -4448,7 +4448,8 @@ set_values_size_estimates(PlannerInfo *root, RelOptInfo *rel)
  * We set the same fields as set_baserel_size_estimates.
  */
 void
-set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel, double cte_rows)
+set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel, double cte_rows, 
+					   int max_hoop)
 {
 	RangeTblEntry *rte;
 
@@ -4463,7 +4464,7 @@ set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel, double cte_rows)
 		 * In a self-reference, arbitrarily assume the average worktable size
 		 * is about 10 times the nonrecursive term's size.
 		 */
-		rel->tuples = 10 * cte_rows;
+		rel->tuples = max_hoop * cte_rows;
 	}
 	else
 	{
