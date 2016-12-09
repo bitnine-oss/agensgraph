@@ -5021,7 +5021,7 @@ describeOneLabelDetails(const char *graphname, const char *labelname)
 		int			tuples = 0;
 
 		printfPQExpBuffer(&buf,
-				"SELECT c.relname, "
+				"SELECT c.relname, i.indisunique, "
 					"i.indisclustered, i.indisvalid, i.indisreplident, "
 					"pg_catalog.ag_get_propindexdef(i.indexrelid), "
 					"c.reltablespace\n"
@@ -5053,8 +5053,11 @@ describeOneLabelDetails(const char *graphname, const char *labelname)
 				printfPQExpBuffer(&buf, "    \"%s\"",
 								  PQgetvalue(result, i, 0));
 
+				if (strcmp(PQgetvalue(result, i, 1), "t") == 0)
+					appendPQExpBufferStr(&buf, " UNIQUE");
+
 				/* Everything after "USING" is echoed verbatim */
-				indexdef = PQgetvalue(result, i, 4);
+				indexdef = PQgetvalue(result, i, 5);
 				usingpos = strstr(indexdef, " USING ");
 				if (usingpos)
 					indexdef = usingpos + 7;
@@ -5063,18 +5066,18 @@ describeOneLabelDetails(const char *graphname, const char *labelname)
 
 				/* Add these for all cases */
 
-				if (strcmp(PQgetvalue(result, i, 1), "t") == 0)
+				if (strcmp(PQgetvalue(result, i, 2), "t") == 0)
 					appendPQExpBufferStr(&buf, " CLUSTER");
 
-				if (strcmp(PQgetvalue(result, i, 2), "t") != 0)
+				if (strcmp(PQgetvalue(result, i, 3), "t") != 0)
 					appendPQExpBufferStr(&buf, " INVALID");
 
-				if (strcmp(PQgetvalue(result, i, 3), "t") == 0)
+				if (strcmp(PQgetvalue(result, i, 4), "t") == 0)
 					appendPQExpBuffer(&buf, " REPLICA IDENTITY");
 
 				printTableAddFooter(&cont, buf.data);
 				add_tablespace_footer(&cont, 'i',
-									  atooid(PQgetvalue(result, i, 5)), false);
+									  atooid(PQgetvalue(result, i, 6)), false);
 			}
 		}
 

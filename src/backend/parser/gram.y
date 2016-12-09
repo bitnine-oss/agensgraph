@@ -14617,21 +14617,21 @@ opt_constraint_name:
  *       willing to make TABLESPACE a fully reserved word.
  */
 CreatePropertyIndexStmt:
-			CREATE PROPERTY INDEX opt_concurrently opt_index_name
+			CREATE opt_unique PROPERTY INDEX opt_concurrently opt_index_name
 			ON ColId access_method_clause '(' prop_idx_params ')'
 			opt_reloptions OptTableSpace where_clause
 				{
 					CreatePropertyIndexStmt *n =
 											makeNode(CreatePropertyIndexStmt);
-					n->unique = false;
-					n->concurrent = $4;
-					n->idxname = $5;
-					n->relation = makeRangeVar(NULL, $7, @7);
-					n->accessMethod = $8;
-					n->indexParams = $10;
-					n->options = $12;
-					n->tableSpace = $13;
-					n->whereClause = $14;
+					n->unique = $2;
+					n->concurrent = $5;
+					n->idxname = $6;
+					n->relation = makeRangeVar(NULL, $8, @8);
+					n->accessMethod = $9;
+					n->indexParams = $11;
+					n->options = $13;
+					n->tableSpace = $14;
+					n->whereClause = $15;
 					n->excludeOpNames = NIL;
 					n->idxcomment = NULL;
 					n->indexOid = InvalidOid;
@@ -14644,21 +14644,21 @@ CreatePropertyIndexStmt:
 					n->if_not_exists = false;
 					$$ = (Node *)n;
 				}
-			| CREATE PROPERTY INDEX opt_concurrently IF_P NOT EXISTS index_name
-			ON ColId access_method_clause '(' prop_idx_params ')'
+			| CREATE opt_unique PROPERTY INDEX opt_concurrently IF_P NOT EXISTS
+			index_name ON ColId access_method_clause '(' prop_idx_params ')'
 			opt_reloptions OptTableSpace where_clause
 				{
 					CreatePropertyIndexStmt *n =
 											makeNode(CreatePropertyIndexStmt);
-					n->unique = false;
-					n->concurrent = $4;
-					n->idxname = $8;
-					n->relation = makeRangeVar(NULL, $10, @10);
-					n->accessMethod = $11;
-					n->indexParams = $13;
-					n->options = $15;
-					n->tableSpace = $16;
-					n->whereClause = $17;
+					n->unique = $2;
+					n->concurrent = $5;
+					n->idxname = $9;
+					n->relation = makeRangeVar(NULL, $11, @11);
+					n->accessMethod = $12;
+					n->indexParams = $14;
+					n->options = $16;
+					n->tableSpace = $17;
+					n->whereClause = $18;
 					n->excludeOpNames = NIL;
 					n->idxcomment = NULL;
 					n->indexOid = InvalidOid;
