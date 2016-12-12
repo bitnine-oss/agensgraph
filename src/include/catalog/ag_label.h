@@ -48,7 +48,7 @@ typedef FormData_ag_label *Form_ag_label;
  * ----------------
  */
 
-#define Natts_ag_label			4
+#define Natts_ag_label			5
 #define Anum_ag_label_labname	1
 #define Anum_ag_label_graphid	2
 #define Anum_ag_label_labid		3
