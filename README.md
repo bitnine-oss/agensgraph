@@ -1,9 +1,9 @@
-Agens Graph: Powerful Graph Database
+AgensGraph: Powerful Graph Database
 ====================================
 
 [![Build Status](https://travis-ci.org/bitnine-oss/agens-graph.svg?branch=master)](https://travis-ci.org/bitnine-oss/agens-graph)
 
-Agens Graph is a new generation multi-model graph database for the modern complex data environment. Agens Graph is a unique multi-model database, which supports relational and graph data model at the same time. It enables developers to integrate the legacy relational data model and the nobel graph data model in one database. SQL query and Cypher query can be integrated into a single query in Agens Graph. Agens Graph is based on powerful PostgreSQL RDBMS, so it is very robust, fully-featured and ready to enterprise use. It is optimzied for handling complex connected graph data but at the same time, it provides a plenty of powerful database features essential to the enterprise database environment, like ACID transaction, multi version concurrency control, stored procedure, trigger, constraint, sophistrated monitoring and flexible data model (JSON). Moreover, Agens Graph can leverage the rich eco-systems of PostgreSQL and can be extended with many outstanding external modules, like PostGIS. 
+AgensGraph is a new generation multi-model graph database for the modern complex data environment. AgensGraph is a unique multi-model database, which supports relational and graph data model at the same time. It enables developers to integrate the legacy relational data model and the nobel graph data model in one database. SQL query and Cypher query can be integrated into a single query in AgensGraph. AgensGraph is based on powerful PostgreSQL RDBMS, so it is very robust, fully-featured and ready to enterprise use. It is optimzied for handling complex connected graph data but at the same time, it provides a plenty of powerful database features essential to the enterprise database environment, like ACID transaction, multi version concurrency control, stored procedure, trigger, constraint, sophistrated monitoring and flexible data model (JSON). Moreover, AgensGraph can leverage the rich eco-systems of PostgreSQL and can be extended with many outstanding external modules, like PostGIS. 
 
 Builing from Source
 -------------------
