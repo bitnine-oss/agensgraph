@@ -43,6 +43,11 @@ Builing from Source
     make install-world
     ```
 
+Documentation
+-------------
+* [Short Guide](http://bitnine.net/support/documents_backup/quick-start-guide-html)
+
+
 License
 -------
 
