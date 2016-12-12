@@ -55,7 +55,7 @@ PG_FUNCTION_INFO_V1(pg_relpagesbyid);
 PG_FUNCTION_INFO_V1(pgstatginindex);
 
 #define IS_INDEX(r) ((r)->rd_rel->relkind == RELKIND_INDEX)
-#define IS_BTREE(r) ((r)->rd_rel->relam == BTREE_AM_OID)
+#define IS_BTREE(r) ((r)->rd_rel->relam == BTREE_AM_OID || (r)->rd_rel->relam == EDGEIDX_AM_OID)
 #define IS_GIN(r) ((r)->rd_rel->relam == GIN_AM_OID)
 
 /* ------------------------------------------------
