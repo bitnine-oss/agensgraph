@@ -1,14 +1,12 @@
 /*-------------------------------------------------------------------------
  *
- * nbtsearch.c
- *	  Search code for postgres btrees.
+ * eisearch.c
+ *	  Mimics nbtree/nbtsearch.c
  *
- *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
- * Portions Copyright (c) 1994, Regents of the University of California
+ * Copyright (c) 2016 by Bitnine Global, Inc.
  *
  * IDENTIFICATION
- *	  src/backend/access/nbtree/nbtsearch.c
+ *	  src/backend/access/edgeidx/eisearch.c
  *
  *-------------------------------------------------------------------------
  */
@@ -440,9 +438,6 @@ _ei_compare(Relation rel,
 	if (!P_ISLEAF(opaque) && offnum == P_FIRSTDATAKEY(opaque))
 		return 1;
 
-	if (!P_ISLEAF(opaque))
-		keysz = 1;
-
 	itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
 
 	/*
@@ -457,6 +452,8 @@ _ei_compare(Relation rel,
 	 * _ei_first).
 	 */
 
+	/* edgeidx compares firstkey only */
+	keysz = 1;
 	for (i = 1; i <= keysz; i++)
 	{
 		Datum		datum;

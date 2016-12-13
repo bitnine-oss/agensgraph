@@ -1,14 +1,13 @@
 /*-------------------------------------------------------------------------
  *
- * nbtinsert.c
- *	  Item insertion in Lehman and Yao btrees for Postgres.
+ * eiinsert.c
+ *	  The implementation difference between this and nbtinsert.c is
+ *	  _ei_reformTuple.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
- * Portions Copyright (c) 1994, Regents of the University of California
- *
+ * Copyright (c) 2016 by Bitnine Global, Inc.
  *
  * IDENTIFICATION
- *	  src/backend/access/nbtree/nbtinsert.c
+ *	  src/backend/access/edgeidx/eiinsert.c
  *
  *-------------------------------------------------------------------------
  */
@@ -85,7 +84,9 @@ static bool _bt_isequal(TupleDesc itupdesc, Page page, OffsetNumber offnum,
 			int keysz, ScanKey scankey);
 static void _bt_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel);
 
-
+/*
+ * make 1 key idexn tuple from given itup
+ */
 IndexTuple
 _ei_reformTuple(IndexTuple itup, TupleDesc tupDesc)
 {
@@ -1716,8 +1717,7 @@ _ei_insert_parent(Relation rel,
 		ritem = (IndexTuple) PageGetItem(page,
 										 PageGetItemId(page, P_HIKEY));
 
-		/* form an index tuple that points at the new right page */
-//		new_item = CopyIndexTuple(ritem);
+		/* form an 1 key index tuple that points at the new right page */
 		new_item = _ei_reformTuple(ritem, RelationGetDescr(rel));
 		ItemPointerSet(&(new_item->t_tid), rbknum, P_HIKEY);
 
@@ -1993,7 +1993,6 @@ _ei_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 	itemid = PageGetItemId(lpage, P_HIKEY);
 	right_item_sz = ItemIdGetLength(itemid);
 	item = (IndexTuple) PageGetItem(lpage, itemid);
-//	right_item = CopyIndexTuple(item);
 	right_item = _ei_reformTuple(item, RelationGetDescr(rel));
 	ItemPointerSet(&(right_item->t_tid), rbkno, P_HIKEY);
 

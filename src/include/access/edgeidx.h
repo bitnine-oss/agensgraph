@@ -1,4 +1,14 @@
-
+/*-------------------------------------------------------------------------
+ *
+ * nbtree.h
+ *	  header file for AgensGraph edge index access method implementation.
+ *
+ * Copyright (c) 2016 by Bitnine Global, Inc.
+ *
+ * src/include/access/edgeidx.h
+ *
+ *-------------------------------------------------------------------------
+ */
 #ifndef EDGEIDX_H
 #define	EDGEIDX_H
 
@@ -45,5 +55,7 @@ extern int  _ei_pagedel(Relation rel, Buffer buf);
 
 extern IndexTuple _ei_reformTuple (IndexTuple source, TupleDesc tupDesc);
 
+// eisort.c
+extern void _ei_leafbuild(BTSpool *btspool, BTSpool *btspool2);
 
 #endif	/* EDGEIDX_H */

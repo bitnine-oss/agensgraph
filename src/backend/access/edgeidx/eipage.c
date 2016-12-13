@@ -1,22 +1,12 @@
 /*-------------------------------------------------------------------------
  *
- * nbtpage.c
- *	  BTree-specific page management code for the Postgres btree access
- *	  method.
+ * eipage.c
+ *		Mimics nbtree/nbtpage.c
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
- * Portions Copyright (c) 1994, Regents of the University of California
- *
+ * Copyright (c) 2016 by Bitnine Global, Inc.
  *
  * IDENTIFICATION
- *	  src/backend/access/nbtree/nbtpage.c
- *
- *	NOTES
- *	   Postgres btree pages look like ordinary relation pages.  The opaque
- *	   data at high addresses includes pointers to left and right siblings
- *	   and flag data describing page state.  The first page in a btree, page
- *	   zero, is special -- it stores meta-information describing the tree.
- *	   Pages one and higher store the actual tree data.
+ *	  src/backend/access/edgeidx/eipage.c
  *
  *-------------------------------------------------------------------------
  */
