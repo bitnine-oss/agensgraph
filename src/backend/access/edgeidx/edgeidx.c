@@ -68,14 +68,14 @@ edgeidxhandler(PG_FUNCTION_ARGS)
 
 	amroutine->amstrategies = BTMaxStrategyNumber;
 	amroutine->amsupport = BTNProcs;
-	amroutine->amcanorder = true;
+	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = false;
 	amroutine->amcanbackward = true;
-	amroutine->amcanunique = true;
+	amroutine->amcanunique = false;
 	amroutine->amcanmulticol = true;
-	amroutine->amoptionalkey = true;
+	amroutine->amoptionalkey = false;
 	amroutine->amsearcharray = true;
-	amroutine->amsearchnulls = true;
+	amroutine->amsearchnulls = false;
 	amroutine->amstorage = false;
 	amroutine->amclusterable = true;
 	amroutine->ampredlocks = true;
