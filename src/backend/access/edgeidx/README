@@ -1,0 +1,28 @@
+src/backend/access/edgeidx/README
+
+Base on Btree
+=============
+
+This directory contains a copied implemention of btree files in 
+src/backend/access/nbtree/. The ei functions are little bit changed from
+bt functions. The remaining bt functions and structures are not changed but
+the original are defined as a static. The modification of original function
+is no good for maintenance. Thus same bt functions and structure are redefined.
+
+
+The difference with Btree
+--------------
+
+The functions which has important difference are _ei_insert_parent, 
+_ei_newroot and _ei_compare.
+
+_ei_insert_parent and _ei_newroot calls _ei_reformTuple instead of
+CopyIndexTuple. CopyIndexTuple returns complete index tuple from the item.
+But _ei_reformTuple makes index tuple with first key of the item and
+returns it.
+
+_ei_compare fixes the key size to 1. The Edge index do not need to care
+about order of second key. 
+
+The other _ei_* functions are just calling these functions or caller of these
+functions. That's all.
