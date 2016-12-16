@@ -1792,7 +1792,7 @@ genSelectWithVLR(CypherRel *crel, WithClause *with, bool out)
 	ResTarget  *path;
 	RangeVar   *vlr;
 	SelectStmt *sel;
-	Node	   *lidx;
+	Node	   *lidx = NULL;
 
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
@@ -1816,16 +1816,10 @@ genSelectWithVLR(CypherRel *crel, WithClause *with, bool out)
 		sel->targetList = lappend(sel->targetList, path);
 	sel->fromClause = list_make1(vlr);
 
-	if (indices->lidx == NULL)
+	if (indices->lidx != NULL)
 	{
-		if (indices->uidx == NULL)
-			lidx = NULL;
-		else
-			lidx = indices->uidx;
-	}
-	else
-	{
-		lidx = indices->lidx;
+		if (((A_Const *) indices->lidx)->val.val.ival > 1)
+			lidx = indices->lidx;
 	}
 
 	if (lidx != NULL)
