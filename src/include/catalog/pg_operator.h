@@ -1841,5 +1841,31 @@ DATA(insert OID = 7091 (  "<="	   PGNSP PGUID b f f 7002 7002 16 7092 7090 graph
 DESCR("less than or equal");
 DATA(insert OID = 7092 (  ">="	   PGNSP PGUID b f f 7002 7002 16 7091 7089 graphid_ge scalargtsel scalargtjoinsel ));
 DESCR("greater than or equal");
+/* vertex operators */
+DATA(insert OID = 7136 (  "="	   PGNSP PGUID b t t 7012 7012 16 7136 7137 vertex_eq eqsel eqjoinsel ));
+DESCR("equal");
+DATA(insert OID = 7137 (  "<>"	   PGNSP PGUID b f f 7012 7012 16 7137 7136 vertex_ne neqsel neqjoinsel ));
+DESCR("not equal");
+DATA(insert OID = 7138 (  "<"	   PGNSP PGUID b f f 7012 7012 16 7139 7141 vertex_lt scalarltsel scalarltjoinsel ));
+DESCR("less than");
+DATA(insert OID = 7139 (  ">"	   PGNSP PGUID b f f 7012 7012 16 7138 7140 vertex_gt scalargtsel scalargtjoinsel ));
+DESCR("greater than");
+DATA(insert OID = 7140 (  "<="	   PGNSP PGUID b f f 7012 7012 16 7141 7139 vertex_le scalarltsel scalarltjoinsel ));
+DESCR("less than or equal");
+DATA(insert OID = 7141 (  ">="	   PGNSP PGUID b f f 7012 7012 16 7140 7138 vertex_ge scalargtsel scalargtjoinsel ));
+DESCR("greater than or equal");
+/* edge operators */
+DATA(insert OID = 7148 (  "="	   PGNSP PGUID b t t 7022 7022 16 7148 7149 edge_eq eqsel eqjoinsel ));
+DESCR("equal");
+DATA(insert OID = 7149 (  "<>"	   PGNSP PGUID b f f 7022 7022 16 7149 7148 edge_ne neqsel neqjoinsel ));
+DESCR("not equal");
+DATA(insert OID = 7150 (  "<"	   PGNSP PGUID b f f 7022 7022 16 7151 7153 edge_lt scalarltsel scalarltjoinsel ));
+DESCR("less than");
+DATA(insert OID = 7151 (  ">"	   PGNSP PGUID b f f 7022 7022 16 7150 7152 edge_gt scalargtsel scalargtjoinsel ));
+DESCR("greater than");
+DATA(insert OID = 7152 (  "<="	   PGNSP PGUID b f f 7022 7022 16 7153 7151 edge_le scalarltsel scalarltjoinsel ));
+DESCR("less than or equal");
+DATA(insert OID = 7153 (  ">="	   PGNSP PGUID b f f 7022 7022 16 7152 7150 edge_ge scalargtsel scalargtjoinsel ));
+DESCR("greater than or equal");
 
 #endif   /* PG_OPERATOR_H */

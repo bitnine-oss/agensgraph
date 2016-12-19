@@ -294,6 +294,60 @@ vtojb(PG_FUNCTION_ARGS)
 }
 
 Datum
+vertex_eq(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_eq, id1, id2));
+}
+
+Datum
+vertex_ne(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ne, id1, id2) != 0);
+}
+
+Datum
+vertex_lt(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_lt, id1, id2) < 0);
+}
+
+Datum
+vertex_gt(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_gt, id1, id2) > 0);
+}
+
+Datum
+vertex_le(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_le, id1, id2) <= 0);
+}
+
+Datum
+vertex_ge(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ge, id1, id2) >= 0);
+}
+
+Datum
 edge_out(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
@@ -372,6 +426,60 @@ etojb(PG_FUNCTION_ARGS)
 	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
 
 	PG_RETURN_DATUM(tuple_getattr(edge, Anum_edge_properties));
+}
+
+Datum
+edge_eq(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_eq, id1, id2) == 0);
+}
+
+Datum
+edge_ne(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ne, id1, id2) != 0);
+}
+
+Datum
+edge_lt(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_lt, id1, id2) < 0);
+}
+
+Datum
+edge_gt(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_gt, id1, id2) > 0);
+}
+
+Datum
+edge_le(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_le, id1, id2) <= 0);
+}
+
+Datum
+edge_ge(PG_FUNCTION_ARGS)
+{
+	Datum		id1 = getEdgeIdDatum(PG_GETARG_DATUM(0));
+	Datum		id2 = getEdgeIdDatum(PG_GETARG_DATUM(1));
+
+	PG_RETURN_DATUM(DirectFunctionCall2(graphid_ge, id1, id2) >= 0);
 }
 
 static LabelOutData *
