@@ -1036,9 +1036,11 @@ WHERE p1.oprcanmerge AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree') AND
          amopopr = p1.oid AND amopstrategy = 3);
- oid | oprname 
------+---------
-(0 rows)
+ oid  | oprname 
+------+---------
+ 7136 | =
+ 7148 | =
+(2 rows)
 
 -- And the converse.
 SELECT p1.oid, p1.oprname, p.amopfamily
@@ -1058,9 +1060,11 @@ WHERE p1.oprcanhash AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'hash') AND
          amopopr = p1.oid AND amopstrategy = 1);
- oid | oprname 
------+---------
-(0 rows)
+ oid  | oprname 
+------+---------
+ 7136 | =
+ 7148 | =
+(2 rows)
 
 -- And the converse.
 SELECT p1.oid, p1.oprname, p.amopfamily

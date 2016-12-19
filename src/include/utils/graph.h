@@ -51,12 +51,26 @@ extern Datum vertex_out(PG_FUNCTION_ARGS);
 extern Datum _vertex_out(PG_FUNCTION_ARGS);
 extern Datum vertex_label(PG_FUNCTION_ARGS);
 extern Datum vtojb(PG_FUNCTION_ARGS);
+/* vertex - comparison */
+extern Datum vertex_eq(PG_FUNCTION_ARGS);
+extern Datum vertex_ne(PG_FUNCTION_ARGS);
+extern Datum vertex_lt(PG_FUNCTION_ARGS);
+extern Datum vertex_gt(PG_FUNCTION_ARGS);
+extern Datum vertex_le(PG_FUNCTION_ARGS);
+extern Datum vertex_ge(PG_FUNCTION_ARGS);
 
 /* edge */
 extern Datum edge_out(PG_FUNCTION_ARGS);
 extern Datum _edge_out(PG_FUNCTION_ARGS);
 extern Datum edge_label(PG_FUNCTION_ARGS);
 extern Datum etojb(PG_FUNCTION_ARGS);
+/* edge - comparison */
+extern Datum edge_eq(PG_FUNCTION_ARGS);
+extern Datum edge_ne(PG_FUNCTION_ARGS);
+extern Datum edge_lt(PG_FUNCTION_ARGS);
+extern Datum edge_gt(PG_FUNCTION_ARGS);
+extern Datum edge_le(PG_FUNCTION_ARGS);
+extern Datum edge_ge(PG_FUNCTION_ARGS);
 
 /* graphpath */
 extern Datum graphpath_out(PG_FUNCTION_ARGS);

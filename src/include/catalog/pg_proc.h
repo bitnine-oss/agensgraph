@@ -5401,6 +5401,20 @@ DATA(insert OID = 7110 ( ag_get_propindexdef		PGNSP PGUID 12 1 0 0 0 f f f f t f
 DESCR("describe property index");
 DATA(insert OID = 7111 ( ag_get_graphconstraintdef	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 25 "26" _null_ _null_ _null_ _null_ _null_ ag_get_graphconstraintdef _null_ _null_ _null_ ));
 DESCR("describe constraint");
+/* vertex comparison */
+DATA(insert OID = 7130 ( vertex_eq		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7012 7012" _null_ _null_ _null_ _null_ _null_ vertex_eq _null_ _null_ _null_ ));
+DATA(insert OID = 7131 ( vertex_ne		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7012 7012" _null_ _null_ _null_ _null_ _null_ vertex_ne _null_ _null_ _null_ ));
+DATA(insert OID = 7132 ( vertex_lt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7012 7012" _null_ _null_ _null_ _null_ _null_ vertex_lt _null_ _null_ _null_ ));
+DATA(insert OID = 7133 ( vertex_gt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7012 7012" _null_ _null_ _null_ _null_ _null_ vertex_gt _null_ _null_ _null_ ));
+DATA(insert OID = 7134 ( vertex_le		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7012 7012" _null_ _null_ _null_ _null_ _null_ vertex_le _null_ _null_ _null_ ));
+DATA(insert OID = 7135 ( vertex_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7012 7012" _null_ _null_ _null_ _null_ _null_ vertex_ge _null_ _null_ _null_ ));
+/* edge comparison */
+DATA(insert OID = 7142 ( edge_eq		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7022 7022" _null_ _null_ _null_ _null_ _null_ edge_eq _null_ _null_ _null_ ));
+DATA(insert OID = 7143 ( edge_ne		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7022 7022" _null_ _null_ _null_ _null_ _null_ edge_ne _null_ _null_ _null_ ));
+DATA(insert OID = 7144 ( edge_lt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7022 7022" _null_ _null_ _null_ _null_ _null_ edge_lt _null_ _null_ _null_ ));
+DATA(insert OID = 7145 ( edge_gt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7022 7022" _null_ _null_ _null_ _null_ _null_ edge_gt _null_ _null_ _null_ ));
+DATA(insert OID = 7146 ( edge_le		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7022 7022" _null_ _null_ _null_ _null_ _null_ edge_le _null_ _null_ _null_ ));
+DATA(insert OID = 7147 ( edge_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7022 7022" _null_ _null_ _null_ _null_ _null_ edge_ge _null_ _null_ _null_ ));
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
