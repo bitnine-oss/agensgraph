@@ -159,6 +159,39 @@ ORDER BY 1;
 
 -- TABLESPACE
 CREATE VLABEL tblspc TABLESPACE pg_default;
+-- DISABLE INDEX
+CREATE VLABEL vdi disable index;
+\d g.vdi
+                                                   Table "g.vdi"
+   Column   |  Type   |                                         Modifiers                                          
+------------+---------+--------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
+ properties | jsonb   | not null default jsonb_build_object()
+Indexes:
+    "vdi_pkey" PRIMARY KEY, btree (id) INVALID
+    "vdi_properties_idx" gin (properties jsonb_path_ops) INVALID
+Inherits: g.ag_vertex
+
+-- REINDEX
+REINDEX VLABEL vdi;
+\d g.vdi
+                                                   Table "g.vdi"
+   Column   |  Type   |                                         Modifiers                                          
+------------+---------+--------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
+ properties | jsonb   | not null default jsonb_build_object()
+Indexes:
+    "vdi_pkey" PRIMARY KEY, btree (id)
+    "vdi_properties_idx" gin (properties jsonb_path_ops)
+Inherits: g.ag_vertex
+
+-- REINDEX wrong case
+REINDEX ELABEL vdi;
+ERROR:  REINDEX ELABEL cannot REINDEX vertex label
+REINDEX VLABEL g.vdi;
+ERROR:  syntax error at or near "."
+LINE 1: REINDEX VLABEL g.vdi;
+                        ^
 --
 -- COMMENT and \dG commands
 --
@@ -184,7 +217,8 @@ COMMENT ON VLABEL v1 IS 'multiple inheritance test';
  g     | v00       | vertex | graph_role | 8192 bytes | 
  g     | v01       | vertex | graph_role | 8192 bytes | 
  g     | v1        | vertex | graph_role | 8192 bytes | multiple inheritance test
-(9 rows)
+ g     | vdi       | vertex | graph_role | 8192 bytes | 
+(10 rows)
 
 Vertex label "g.ag_vertex"
 --
@@ -192,7 +226,8 @@ Child labels: g.dup,
               g.stor,
               g.tblspc,
               g.unlog,
-              g.v0
+              g.v0,
+              g.vdi
 
 Vertex label "g.dup"
 --
@@ -230,6 +265,10 @@ Vertex label "g.v1"
 --
 Inherits: g.v00,
           g.v01
+
+Vertex label "g.vdi"
+--
+Inherits: g.ag_vertex
 
 \dGe+
                                 List of labels
@@ -290,8 +329,9 @@ ALTER VLABEL v0 RENAME TO vv;
  g     | v00       | vertex | graph_role
  g     | v01       | vertex | graph_role
  g     | v1        | vertex | graph_role
+ g     | vdi       | vertex | graph_role
  g     | vv        | vertex | graph_role
-(9 rows)
+(10 rows)
 
 Vertex label "g.ag_vertex"
 --
@@ -299,6 +339,7 @@ Child labels: g.dup,
               g.stor,
               g.tblspc,
               g.unlog,
+              g.vdi,
               g.vv
 
 Vertex label "g.dup"
@@ -331,6 +372,10 @@ Vertex label "g.v1"
 --
 Inherits: g.v00,
           g.v01
+
+Vertex label "g.vdi"
+--
+Inherits: g.ag_vertex
 
 Vertex label "g.vv"
 --
@@ -454,6 +499,18 @@ SELECT relreplident FROM pg_class WHERE relname = 'v0';
 (1 row)
 
 ALTER VLABEL v0 REPLICA IDENTITY default;
+ALTER VLABEL vdi disable index;
+\d g.vdi
+                                                   Table "g.vdi"
+   Column   |  Type   |                                         Modifiers                                          
+------------+---------+--------------------------------------------------------------------------------------------
+ id         | graphid | not null default graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
+ properties | jsonb   | not null default jsonb_build_object()
+Indexes:
+    "vdi_pkey" PRIMARY KEY, btree (id) INVALID
+    "vdi_properties_idx" gin (properties jsonb_path_ops) INVALID
+Inherits: g.ag_vertex
+
 --
 -- DROP LABEL
 --
@@ -469,9 +526,9 @@ ERROR:  graph label "unknown" does not exist
 DROP ELABEL unknown;
 ERROR:  graph label "unknown" does not exist
 DROP VLABEL e1;
-ERROR:  DROP VLABEL cannot drop edge label
+ERROR:  DROP VLABEL cannot DROP edge label
 DROP ELABEL v1;
-ERROR:  DROP ELABEL cannot drop vertex label
+ERROR:  DROP ELABEL cannot DROP vertex label
 DROP VLABEL v0;
 ERROR:  cannot drop label v0 because other objects depend on it
 DETAIL:  label v00 depends on label v0
@@ -487,9 +544,9 @@ ERROR:  cannot drop label e0 because other objects depend on it
 DETAIL:  label e01 depends on label e0
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 DROP VLABEL ag_vertex CASCADE;
-ERROR:  cannot drop base vertex label
+ERROR:  DROP base vertex label is prohibited
 DROP ELABEL ag_edge CASCADE;
-ERROR:  cannot drop base edge label
+ERROR:  DROP base edge label is prohibited
 -- drop all
 DROP VLABEL v01 CASCADE;
 NOTICE:  drop cascades to label v1
@@ -507,7 +564,8 @@ SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY 2, 1;
  unlog     | v
  v0        | v
  v00       | v
-(11 rows)
+ vdi       | v
+(12 rows)
 
 DROP VLABEL v0 CASCADE;
 NOTICE:  drop cascades to label v00
@@ -523,7 +581,8 @@ SELECT labname, labkind FROM pg_catalog.ag_label;
  dup       | v
  stor      | v
  tblspc    | v
-(6 rows)
+ vdi       | v
+(7 rows)
 
 --
 -- CONSTRAINT
@@ -813,7 +872,7 @@ DROP VLABEL regv8;
 DROP GRAPH g;
 ERROR:  cannot drop graph g because other objects depend on it
 DROP GRAPH g CASCADE;
-NOTICE:  drop cascades to 7 other objects
+NOTICE:  drop cascades to 8 other objects
 SELECT labname, labkind FROM ag_label;
  labname | labkind 
 ---------+---------

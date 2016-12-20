@@ -1242,13 +1242,12 @@ static void
 savePreparedPlan(SqlcmdKey *key, SPIPlanPtr plan)
 {
 	SqlcmdEntry *entry;
-	int			ret;
 	bool		found;
 
 	Assert(sqlcmd_cache != NULL);
 
-	ret = SPI_keepplan(plan);
-	Assert(ret == 0);
+	if (SPI_keepplan(plan))
+		elog(ERROR, "savePreparedPlan: SPI_keepplan failed");
 
 	entry = hash_search(sqlcmd_cache, (void *) key, HASH_ENTER, &found);
 	Assert(!found || entry->plan == NULL);

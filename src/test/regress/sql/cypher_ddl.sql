@@ -90,6 +90,18 @@ ORDER BY 1;
 -- TABLESPACE
 CREATE VLABEL tblspc TABLESPACE pg_default;
 
+-- DISABLE INDEX
+CREATE VLABEL vdi disable index;
+\d g.vdi
+
+-- REINDEX
+REINDEX VLABEL vdi;
+\d g.vdi
+
+-- REINDEX wrong case
+REINDEX ELABEL vdi;
+REINDEX VLABEL g.vdi;
+
 --
 -- COMMENT and \dG commands
 --
@@ -147,6 +159,9 @@ SELECT relreplident FROM pg_class WHERE relname = 'v0';
 ALTER VLABEL v0 REPLICA IDENTITY full;
 SELECT relreplident FROM pg_class WHERE relname = 'v0';
 ALTER VLABEL v0 REPLICA IDENTITY default;
+
+ALTER VLABEL vdi disable index;
+\d g.vdi
 
 --
 -- DROP LABEL
