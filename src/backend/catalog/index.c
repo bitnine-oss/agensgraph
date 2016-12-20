@@ -126,6 +126,8 @@ static void ResetReindexProcessing(void);
 static void SetReindexPending(List *indexes);
 static void RemoveReindexPending(Oid indexOid);
 static void ResetReindexPending(void);
+static void disable_index(Oid indexId);
+static void index_set_disable_flag(Oid indexId);
 
 
 /*
@@ -3628,6 +3630,136 @@ reindex_relation(Oid relid, int flags, int options)
 	return result;
 }
 
+/*
+ * disableIndexLabel - This routine is used to disable all indexes
+ *					  of a graph label.
+ */
+bool
+disableIndexLabel(Oid relid)
+{
+	Oid			toast_relid;
+	Relation	rel;
+	List	   *indexIds;
+	ListCell   *indexId;
+	bool		result;
+
+	rel = heap_open(relid, ShareLock);
+
+	toast_relid = rel->rd_rel->reltoastrelid;
+
+	indexIds = RelationGetIndexList(rel);
+
+	foreach(indexId, indexIds)
+	{
+		Oid	indexOid = lfirst_oid(indexId);
+
+		disable_index(indexOid);
+
+		CommandCounterIncrement();
+	}
+
+	/* Close rels, but keep locks */
+	heap_close(rel, NoLock);
+
+	result = (indexIds != NIL);
+
+	if (OidIsValid(toast_relid))
+		result |= disableIndexLabel(toast_relid);
+
+	return result;
+}
+
+/*
+ * disable_index - This routine is used to disable a single index.
+ *	see reindex_index together.
+ */
+void
+disable_index(Oid indexId)
+{
+	Relation	iRel,
+				heapRelation;
+	Oid			heapId;
+
+	/*
+	 * Open and lock the parent heap relation.  ShareLock is sufficient since
+	 * we only need to be sure no schema or data changes are going on.
+	 */
+	heapId = IndexGetRelation(indexId, false);
+	heapRelation = heap_open(heapId, ShareLock);
+
+	/*
+	 * Open the target index relation and get an exclusive lock on it, to
+	 * ensure that no one else is touching this particular index.
+	 */
+	iRel = index_open(indexId, AccessExclusiveLock);
+
+	/*
+	 * Don't allow disable index on temp tables of other backends ... their local
+	 * buffer manager is not going to cope.
+	 */
+	if (RELATION_IS_OTHER_TEMP(iRel))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			   errmsg("cannot reindex temporary tables of other sessions")));
+
+	/*
+	 * Also check for active uses of the index in the current transaction; we
+	 * don't want to reindex underneath an open indexscan.
+	 */
+	CheckTableNotInUse(iRel, "DISABLE INDEX");
+
+	/*
+	 * All predicate locks on the index are about to be made invalid. Promote
+	 * them to relation locks on the heap.
+	 */
+	TransferPredicateLocksToHeapRelation(iRel);
+
+	/*
+	 * Mark index invalid by updating its pg_index entry
+	 */
+	index_set_disable_flag(indexId);
+
+	/*
+	 * Invalidate the relcache for the table, so that after this commit
+	 * all sessions will refresh any cached plans that might reference the
+	 * index.
+	 */
+	CacheInvalidateRelcache(heapRelation);
+
+	/* Close rels, but keep locks */
+	index_close(iRel, NoLock);
+	heap_close(heapRelation, NoLock);
+}
+
+
+/*
+ * Clear indisvalid / indisready during CREATE LABEL DISABLE INDEX
+ * or ALTER LABEL DISABLE INDEX
+ */
+void
+index_set_disable_flag(Oid indexId)
+{
+	Relation	pg_index;
+	HeapTuple	indexTuple;
+	Form_pg_index indexForm;
+
+	/* Open pg_index and fetch a writable copy of the index's tuple */
+	pg_index = heap_open(IndexRelationId, RowExclusiveLock);
+
+	indexTuple = SearchSysCacheCopy1(INDEXRELID,
+									 ObjectIdGetDatum(indexId));
+	if (!HeapTupleIsValid(indexTuple))
+		elog(ERROR, "cache lookup failed for index %u", indexId);
+
+	indexForm = (Form_pg_index) GETSTRUCT(indexTuple);
+	indexForm->indisvalid = false;
+	indexForm->indisready = false;
+
+	/* ... and write it back in-place */
+	heap_inplace_update(pg_index, indexTuple);
+
+	heap_close(pg_index, RowExclusiveLock);
+}
 
 /* ----------------------------------------------------------------
  *		System index reindexing support

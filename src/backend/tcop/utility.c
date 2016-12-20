@@ -796,6 +796,12 @@ standard_ProcessUtility(Node *parsetree,
 												"REINDEX DATABASE");
 						ReindexMultipleTables(stmt->name, stmt->kind, stmt->options);
 						break;
+					case REINDEX_OBJECT_VLABEL:
+						ReindexLabel(stmt->relation, stmt->options, OBJECT_VLABEL);
+						break;
+					case REINDEX_OBJECT_ELABEL:
+						ReindexLabel(stmt->relation, stmt->options, OBJECT_ELABEL);
+						break;
 					default:
 						elog(ERROR, "unrecognized object type: %d",
 							 (int) stmt->kind);
@@ -912,7 +918,12 @@ standard_ProcessUtility(Node *parsetree,
 					ExecSecLabelStmt(stmt);
 				break;
 			}
-
+		case T_DisableIndexStmt:
+			{
+				DisableIndexStmt *stmt = (DisableIndexStmt *) parsetree;
+				DisableIndexCommand(stmt);
+				break;
+			}
 		default:
 			/* All other statement types have event trigger support */
 			ProcessUtilitySlow(parsetree, queryString,

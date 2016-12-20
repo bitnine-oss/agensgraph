@@ -417,6 +417,7 @@ typedef enum NodeTag
 	T_CreatePropertyIndexStmt,
 	T_DropPropertyIndexStmt,
 	T_CypherStmt,
+	T_DisableIndexStmt,
 
 	/*
 	 * TAGS FOR PARSE TREE NODES (parsenodes.h)

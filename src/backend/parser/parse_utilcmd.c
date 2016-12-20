@@ -3057,6 +3057,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	CommentStmt *comment;
 	List	   *save_alist;
 	List	   *result;
+	DisableIndexStmt	*disable_index;
 
 	label = copyObject(labelStmt->relation);
 	/* set graph schema name, if not specified */
@@ -3262,6 +3263,15 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	transformIndexConstraints(&cxt);
 	cxt.alist = list_concat(cxt.alist, indexlist);
 	transformFKConstraints(&cxt, true, false);
+
+	/* if disable_index is true
+	 * than set index disable after create index stmt */
+	if (labelStmt->disable_index)
+	{
+		disable_index = makeNode(DisableIndexStmt);
+		disable_index->relation = label;
+		cxt.alist = lappend(cxt.alist, disable_index);
+	}
 
 	stmt->tableElts = cxt.columns;
 	stmt->constraints = cxt.ckconstraints;
@@ -3571,12 +3581,17 @@ transformAlterLabelStmt(AlterTableStmt *stmt)
 	AlterTableStmt	*result;
 	List			*newcmds = NIL;
 	ListCell		*lcmd;
+	Oid				 laboid;
 
 	result = makeNode(AlterTableStmt);
 	result->relation = makeRangeVar(get_graph_path(),
 									stmt->relation->relname, 0);
 	result->relkind = stmt->relkind;
 	result->missing_ok = stmt->missing_ok;
+
+	laboid = get_labname_laboid(stmt->relation->relname,
+					get_graphname_oid(get_graph_path()));
+	CheckLabelDDL(stmt->relkind, laboid, "ALTER");
 
 	foreach(lcmd, stmt->cmds)
 	{

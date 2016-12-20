@@ -1539,7 +1539,8 @@ typedef enum AlterTableType
 	AT_DisableRowSecurity,		/* DISABLE ROW SECURITY */
 	AT_ForceRowSecurity,		/* FORCE ROW SECURITY */
 	AT_NoForceRowSecurity,		/* NO FORCE ROW SECURITY */
-	AT_GenericOptions			/* OPTIONS (...) */
+	AT_GenericOptions,			/* OPTIONS (...) */
+	AT_DisableIndex				/* Disable index of graph label */
 } AlterTableType;
 
 typedef struct ReplicaIdentityStmt
@@ -2965,7 +2966,9 @@ typedef enum ReindexObjectType
 	REINDEX_OBJECT_TABLE,		/* table or materialized view */
 	REINDEX_OBJECT_SCHEMA,		/* schema */
 	REINDEX_OBJECT_SYSTEM,		/* system catalogs */
-	REINDEX_OBJECT_DATABASE		/* database */
+	REINDEX_OBJECT_DATABASE,		/* database */
+	REINDEX_OBJECT_VLABEL,		/* vlabel of graph */
+	REINDEX_OBJECT_ELABEL		/* vlabel of graph */
 } ReindexObjectType;
 
 typedef struct ReindexStmt
@@ -3164,6 +3167,7 @@ typedef struct CreateLabelStmt
 	List	   *options;		/* options from WITH clause */
 	char	   *tablespacename; /* table space to use, or NULL */
 	bool		if_not_exists;	/* just do nothing if it already exists? */
+	bool		disable_index;	/* create invalid and not ready index if true */
 } CreateLabelStmt;
 
 /* ALTER VLABEL/ELABEL ... */
@@ -3196,6 +3200,12 @@ typedef struct DropPropertyIndexStmt
 	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
 	bool		 missing_ok;	/* skip error if object is missing? */
 } DropPropertyIndexStmt;
+
+typedef struct DisableIndexStmt
+{
+	NodeTag		type;
+	RangeVar   *relation;		/* label to disable indices*/
+} DisableIndexStmt;
 
 /****************************************************************************
  * Cypher related node structures

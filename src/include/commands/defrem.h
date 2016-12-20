@@ -31,6 +31,7 @@ extern ObjectAddress DefineIndex(Oid relationId,
 			bool quiet);
 extern Oid	ReindexIndex(RangeVar *indexRelation, int options);
 extern Oid	ReindexTable(RangeVar *relation, int options);
+extern Oid	ReindexLabel(RangeVar *relation, int options, ObjectType type);
 extern void ReindexMultipleTables(const char *objectName, ReindexObjectType objectKind,
 					  int options);
 extern char *makeObjectName(const char *name1, const char *name2,
