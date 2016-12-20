@@ -2072,7 +2072,6 @@ typedef struct LimitState
 	TupleTableSlot *subSlot;	/* tuple last obtained from subplan */
 } LimitState;
 
-
 /*
  * Graph nodes
  */
@@ -2083,6 +2082,7 @@ typedef struct ModifyGraphState
 	bool		canSetTag;
 	bool		done;
 	PlanState  *subplan;
+	List	   *resultRelidx;	/* list of resultRelation idx */
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE
 								   with `es_prop_map` */
 	List	   *exprs;			/* expression state list for DELETE */

@@ -2720,6 +2720,7 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	WRITE_BOOL_FIELD(graph.last);
 	WRITE_BOOL_FIELD(graph.detach);
+	WRITE_NODE_FIELD(graph.resultRel);
 	WRITE_NODE_FIELD(graph.pattern);
 	WRITE_NODE_FIELD(graph.exprs);
 	WRITE_NODE_FIELD(graph.sets);

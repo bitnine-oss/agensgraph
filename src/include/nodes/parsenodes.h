@@ -166,6 +166,7 @@ typedef struct Query
 		GraphWriteOp writeOp;
 		bool		last;		/* is this for the last clause? */
 		bool		detach;		/* DETACH DELETE */
+		List	   *resultRel;	/* list for Oid of target labels */
 		List	   *pattern;	/* graph pattern (list of paths) for CREATE */
 		List	   *exprs;		/* expression list for DELETE */
 		List	   *sets;		/* expression list for SET/REMOVE */
