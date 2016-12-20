@@ -145,7 +145,6 @@ CREATE (:regv1 {'id':'100'});
 CREATE (:regv1 {'id':'100'});
 ERROR:  duplicate key value violates unique constraint "regv1_property_idx"
 DETAIL:  Key ((properties #>> ARRAY['id'::text]))=(100) already exists.
-CONTEXT:  SQL statement "INSERT INTO "g"."regv1" VALUES (DEFAULT, $1) RETURNING id AS id, properties"
 \d g.regv1
                                                     Table "g.regv1"
    Column   |  Type   |                                           Modifiers                                            
@@ -180,7 +179,6 @@ CREATE (:regv1 {'name':{'first':'agens', 'last':'graph'}});
 CREATE (:regv1 {'name':{'first':'agens', 'last':'graph'}});
 ERROR:  duplicate key value violates unique constraint "regv1_property_idx"
 DETAIL:  Key ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))=(agens, graph) already exists.
-CONTEXT:  SQL statement "INSERT INTO "g"."regv1" VALUES (DEFAULT, $1) RETURNING id AS id, properties"
 \d g.regv1
                                                     Table "g.regv1"
    Column   |  Type   |                                           Modifiers                                            

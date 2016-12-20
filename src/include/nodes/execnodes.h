@@ -2073,7 +2073,6 @@ typedef struct LimitState
 	TupleTableSlot *subSlot;	/* tuple last obtained from subplan */
 } LimitState;
 
-
 /*
  * Graph nodes
  */

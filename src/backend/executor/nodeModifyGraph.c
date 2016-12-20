@@ -20,12 +20,14 @@
 #include "funcapi.h"
 #include "nodes/graphnodes.h"
 #include "nodes/nodeFuncs.h"
+#include "parser/parse_relation.h"
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
 #include "utils/graph.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/rel.h"
 #include "utils/typcache.h"
 
 #define SQLCMD_BUFLEN				(NAMEDATALEN + 192)
@@ -34,17 +36,6 @@
  * NOTE: If you add SQLCMD, you should add SqlcmdType for it and use
  *       sqlcmd_cache to run the SQLCMD.
  */
-#define SQLCMD_CREAT_VERTEX \
-	"INSERT INTO \"%s\".\"%s\" VALUES (DEFAULT, $1) RETURNING " \
-	AG_ELEM_LOCAL_ID " AS " AG_ELEM_ID ", " AG_ELEM_PROP_MAP
-#define SQLCMD_VERTEX_NPARAMS		1
-
-#define SQLCMD_CREAT_EDGE \
-	"INSERT INTO \"%s\".\"%s\" VALUES (DEFAULT, $1, $2, $3) RETURNING " \
-	AG_ELEM_LOCAL_ID " AS " AG_ELEM_ID ", " \
-	AG_START_ID ", \"" AG_END_ID "\", " AG_ELEM_PROP_MAP
-#define SQLCMD_EDGE_NPARAMS			3
-
 #define SQLCMD_DEL_ELEM \
 	"DELETE FROM ONLY \"%s\".\"%s\" WHERE " AG_ELEM_LOCAL_ID " = $1"
 #define SQLCMD_DEL_ELEM_NPARAMS		1
@@ -114,7 +105,6 @@ typedef struct SqlcmdEntry
 
 static HTAB *sqlcmd_cache = NULL;
 
-static List *ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate);
 static List *ExecInitGraphSets(List *sets, ModifyGraphState *mgstate);
 static TupleTableSlot *ExecCreateGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
@@ -126,11 +116,8 @@ static Datum createEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
 static TupleTableSlot *createPath(ModifyGraphState *mgstate, GraphPath *path,
 								  TupleTableSlot *slot);
 static Datum findVertex(TupleTableSlot *slot, GraphVertex *node, Graphid *vid);
+static Datum findEdge(TupleTableSlot *slot, GraphEdge *node, Graphid *eid);
 static AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
-static Datum evalPropMap(ExprState *prop_map, ExprContext *econtext,
-						 TupleTableSlot *slot);
-static Datum copyTupleAsDatum(ExprContext *econtext, HeapTuple tuple,
-							  Oid tupType);
 static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 static Datum *makeDatumArray(ExprContext *econtext, int len);
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
@@ -160,6 +147,7 @@ ModifyGraphState *
 ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 {
 	ModifyGraphState *mgstate;
+	ListCell		*lc;
 
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -176,12 +164,53 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->done = false;
 	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
 
-	mgstate->pattern = ExecInitGraphPattern(mgplan->pattern, mgstate);
 	mgstate->exprs = (List *) ExecInitExpr((Expr *) mgplan->exprs,
 										   (PlanState *) mgstate);
 	mgstate->sets = ExecInitGraphSets(mgplan->sets, mgstate);
 
 	InitSqlcmdHashTable(estate->es_query_cxt);
+
+	if (mgplan->resultRel)
+	{
+		int		numResultRelations = list_length(mgplan->resultRel);
+		ResultRelInfo *resultRelInfos;
+		ResultRelInfo *resultRelInfo;
+		ParseState	  *temp_pstate = make_parsestate(NULL);
+
+		resultRelInfos = (ResultRelInfo *)
+			palloc(numResultRelations * sizeof(ResultRelInfo));
+		resultRelInfo = resultRelInfos;
+		foreach(lc, mgplan->resultRel)
+		{
+			Oid			resultrel = lfirst_oid(lc);
+			Relation	relation;
+			RangeTblEntry *rte;
+
+			relation = heap_open(resultrel, RowExclusiveLock);
+
+			/* Add this rel to the parsestate's rangetable, for dependencies */
+			rte = addRangeTableEntryForRelation(temp_pstate, relation,
+												NULL, false, false);
+			rte->requiredPerms = ACL_INSERT;
+			estate->es_range_table = lappend(estate->es_range_table, rte);
+
+			InitResultRelInfo(resultRelInfo,
+							  relation,
+							  list_length(estate->es_range_table),
+							  estate->es_instrument);
+
+			ExecOpenIndices(resultRelInfo, false);
+
+			resultRelInfo++;
+		}
+
+		estate->es_result_relations = resultRelInfos;
+		estate->es_num_result_relations = numResultRelations;
+		/* es_result_relation_info is NULL except when within ModifyTable */
+		estate->es_result_relation_info = NULL;
+
+		free_parsestate(temp_pstate);
+	}
 
 	return mgstate;
 }
@@ -240,46 +269,6 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 }
 
 static List *
-ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate)
-{
-	ListCell *lp;
-
-	foreach(lp, pattern)
-	{
-		GraphPath  *p = lfirst(lp);
-		ListCell   *le;
-
-		foreach(le, p->chain)
-		{
-			Node *elem = lfirst(le);
-
-			if (nodeTag(elem) == T_GraphVertex)
-			{
-				GraphVertex *gvertex = (GraphVertex *) elem;
-
-				if (gvertex->create)
-				{
-					gvertex->es_prop_map
-							= ExecInitExpr((Expr *) gvertex->prop_map,
-										   (PlanState *) mgstate);
-				}
-			}
-			else
-			{
-				GraphEdge *gedge = (GraphEdge *) elem;
-
-				Assert(nodeTag(elem) == T_GraphEdge);
-
-				gedge->es_prop_map = ExecInitExpr((Expr *) gedge->prop_map,
-												  (PlanState *) mgstate);
-			}
-		}
-	}
-
-	return pattern;
-}
-
-static List *
 ExecInitGraphSets(List *sets, ModifyGraphState *mgstate)
 {
 	ListCell *ls;
@@ -330,9 +319,6 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 	ListCell   *le;
 	Graphid		prevvid = 0;
 	GraphEdge  *gedge = NULL;
-
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
 
 	if (out)
 	{
@@ -393,9 +379,6 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 		}
 	}
 
-	if (SPI_finish() != SPI_OK_FINISH)
-		elog(ERROR, "SPI_finish failed");
-
 	/* make a graphpath and set it to the slot */
 	if (out)
 	{
@@ -417,6 +400,34 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 	return slot;
 }
 
+static ResultRelInfo *
+getResultRelationInfo(ModifyGraphState *mgstate, char *labelname)
+{
+	EState *estate = mgstate->ps.state;
+	Oid		relOid;
+	Oid		graphOid;
+	int		i;
+	ResultRelInfo *resultRel = estate->es_result_relations;
+
+	graphOid = get_graphname_oid(get_graph_path());
+	relOid   = get_laboid_relid(get_labname_laboid(labelname, graphOid));
+
+	for (i = 0; i < estate->es_num_result_relations; i++)
+	{
+		if (RelationGetRelid(resultRel->ri_RelationDesc) == relOid)
+			break;
+
+		resultRel++;
+	}
+
+	if (i == estate->es_num_result_relations)
+	{
+		elog(ERROR, "could not find target label: %s", labelname);
+	}
+
+	return resultRel;
+}
+
 /*
  * createVertex - creates a vertex of a given node
  *
@@ -427,69 +438,70 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 			 TupleTableSlot *slot, bool inPath)
 {
 	EState	   *estate = mgstate->ps.state;
-	ExprContext *econtext = mgstate->ps.ps_ExprContext;
-	char	   *label;
-	uint16		labid;
-	Datum		values[SQLCMD_VERTEX_NPARAMS];
-	Oid			argTypes[SQLCMD_VERTEX_NPARAMS] = {JSONBOID};
-	SqlcmdKey	key;
-	SPIPlanPtr	plan;
-	int			ret;
-	TupleDesc	tupDesc;
+	Datum		values[2];
+	bool		isnull[2];
 	HeapTuple	tuple;
-	Datum		vertex = (Datum) NULL;
+	Datum		vertex;
+	ResultRelInfo *resultRelInfo;
+	ResultRelInfo *savedResultRel;
+	TupleTableSlot *insertSlot;
 
-	label = gvertex->label;
-	if (label == NULL)
-		label = AG_VERTEX;
+	Assert(gvertex->label != NULL && gvertex->variable != NULL);
 
-	labid = get_labname_labid(label, get_graphname_oid(get_graph_path()));
+	/*
+	 * Get resultRelationInfo for current label and set to estate.
+	 */
+	resultRelInfo = getResultRelationInfo(mgstate, gvertex->label);
+	savedResultRel = estate->es_result_relation_info;
+	estate->es_result_relation_info = resultRelInfo;
 
-	key.cmdtype = SQLCMD_TYPE_CREAT_VERTEX;
-	key.labid = labid;
-	plan = findPreparedPlan(&key);
-	if (plan == NULL)
-	{
-		char sqlcmd[SQLCMD_BUFLEN];
+	/* Find my vertex slot that be made from result plan. */
+	vertex = findVertex(slot, gvertex, vid);
 
-		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_VERTEX,
-				 get_graph_path(), label);
+	/* Make Heap Tuple for inserting to the heap. */
+	values[0] = GraphidGetDatum(*vid);
+	values[1] = getVertexPropDatum(vertex);
 
-		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_VERTEX_NPARAMS, argTypes);
-	}
+	memset(isnull, 0, sizeof(bool)*2);
 
-	values[0] = evalPropMap(gvertex->es_prop_map, mgstate->ps.ps_ExprContext,
-							slot);
+	insertSlot = MakeTupleTableSlot();
+	insertSlot->tts_tupleDescriptor = RelationGetDescr(resultRelInfo->ri_RelationDesc);
+	insertSlot->tts_values = values;
+	insertSlot->tts_isnull = isnull;
+	insertSlot->tts_isempty = false;
 
-	ret = SPI_execp(plan, values, NULL, 0);
-	if (ret != SPI_OK_INSERT_RETURNING)
-		elog(ERROR, "CREAT_VERTEX (%s): SPI_execp returned %d", label, ret);
-	if (SPI_processed != 1)
-		elog(ERROR,
-			 "CREAT_VERTEX (%s): only one vertex per execution must be created",
-			 label);
+	tuple = ExecMaterializeSlot(insertSlot);
 
-	tupDesc = SPI_tuptable->tupdesc;
-	tuple = SPI_tuptable->vals[0];
+	/*
+	 * Constraints might reference the tableoid column, so initialize
+	 * t_tableOid before evaluating them.
+	 */
+	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
-	if (vid != NULL)
-	{
-		bool isnull;
+	/*
+	 * Check the constraints of the tuple
+	 */
+	if (resultRelInfo->ri_RelationDesc->rd_att->constr)
+		ExecConstraints(resultRelInfo, insertSlot, estate);
 
-		Assert(SPI_fnumber(tupDesc, AG_ELEM_ID) == 1);
-		*vid = DatumGetGraphid(SPI_getbinval(tuple, tupDesc, 1, &isnull));
-		Assert(!isnull);
-	}
+	/*
+	 * insert the tuple normally.
+	 *
+	 * Note: heap_insert returns the tid (location) of the new tuple
+	 * in the t_self field.
+	 */
+	(void)heap_insert(resultRelInfo->ri_RelationDesc, tuple,
+					  estate->es_output_cid, 0, NULL);
 
-	/* if this vertex is in the result solely or in some paths, */
-	if (gvertex->variable != NULL || inPath)
-		vertex = copyTupleAsDatum(econtext, tuple, VERTEXOID);
-
-	if (gvertex->variable != NULL)
-		setSlotValueByName(slot, vertex, gvertex->variable);
+	/* insert index entries for tuple */
+	if (resultRelInfo->ri_NumIndices > 0)
+		(void)ExecInsertIndexTuples(insertSlot, &(tuple->t_self),
+									estate, false, NULL, NIL);
 
 	if (mgstate->canSetTag)
-		estate->es_graphwrstats.insertVertex += SPI_processed;
+		estate->es_graphwrstats.insertVertex++;
+
+	estate->es_result_relation_info = savedResultRel;
 
 	return vertex;
 }
@@ -499,58 +511,69 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		   Graphid end, TupleTableSlot *slot, bool inPath)
 {
 	EState	   *estate = mgstate->ps.state;
-	ExprContext *econtext = mgstate->ps.ps_ExprContext;
-	uint16		labid;
-	Datum		values[SQLCMD_EDGE_NPARAMS];
-	Oid			argTypes[SQLCMD_EDGE_NPARAMS] = {GRAPHIDOID, GRAPHIDOID,
-												 JSONBOID};
-	SqlcmdKey	key;
-	SPIPlanPtr	plan;
-	int			ret;
-	Datum		edge = (Datum) NULL;
+	Datum		values[4];
+	bool		isnull[4];
+	Datum		edge;
+	Graphid		id;
+	ResultRelInfo *resultRelInfo;
+	ResultRelInfo *savedResultRel;
+	TupleTableSlot *insertSlot;
+	HeapTuple	tuple;
 
-	labid = get_labname_labid(gedge->label,
-							  get_graphname_oid(get_graph_path()));
+	/*
+	 * Get resultRelationInfo for current label and set to estate.
+	 */
+	resultRelInfo = getResultRelationInfo(mgstate, gedge->label);
 
-	key.cmdtype = SQLCMD_TYPE_CREAT_EDGE;
-	key.labid = labid;
-	plan = findPreparedPlan(&key);
-	if (plan == NULL)
-	{
-		char sqlcmd[SQLCMD_BUFLEN];
+	savedResultRel = estate->es_result_relation_info;
+	estate->es_result_relation_info = resultRelInfo;
 
-		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_CREAT_EDGE,
-				 get_graph_path(), gedge->label);
+	edge = findEdge(slot, gedge, &id);
 
-		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_EDGE_NPARAMS, argTypes);
-	}
+	values[0] = UInt64GetDatum(id);
+	values[1] = GraphidGetDatum(start);
+	values[2] = GraphidGetDatum(end);
+	values[3] = getEdgePropDatum(edge);
 
-	values[0] = GraphidGetDatum(start);
-	values[1] = GraphidGetDatum(end);
-	values[2] = evalPropMap(gedge->es_prop_map, mgstate->ps.ps_ExprContext,
-							slot);
+	memset(isnull, 0, sizeof(bool)*4);
 
-	ret = SPI_execp(plan, values, NULL, 0);
-	if (ret != SPI_OK_INSERT_RETURNING)
-		elog(ERROR, "CREAT_EDGE (%s): SPI_execp returned %d",
-			 gedge->label, ret);
-	if (SPI_processed != 1)
-		elog(ERROR,
-			 "CREAT_EDGE (%s): only one edge per execution must be created",
-			 gedge->label);
+	insertSlot = MakeTupleTableSlot();
+	insertSlot->tts_tupleDescriptor = RelationGetDescr(resultRelInfo->ri_RelationDesc);
+	insertSlot->tts_values = values;
+	insertSlot->tts_isnull = isnull;
+	insertSlot->tts_isempty = false;
 
-	if (gedge->variable != NULL || inPath)
-	{
-		HeapTuple tuple = SPI_tuptable->vals[0];
+	tuple = ExecMaterializeSlot(insertSlot);
 
-		edge = copyTupleAsDatum(econtext, tuple, EDGEOID);
-	}
+	/*
+	 * Constraints might reference the tableoid column, so initialize
+	 * t_tableOid before evaluating them.
+	 */
+	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	/*
+	 * Check the constraints of the tuple
+	 */
+	if (resultRelInfo->ri_RelationDesc->rd_att->constr)
+		ExecConstraints(resultRelInfo, insertSlot, estate);
 
-	if (gedge->variable != NULL)
-		setSlotValueByName(slot, edge, gedge->variable);
+	/*
+	 * insert the tuple normally.
+	 *
+	 * Note: heap_insert returns the tid (location) of the new tuple
+	 * in the t_self field.
+	 */
+	(void)heap_insert(resultRelInfo->ri_RelationDesc, tuple,
+					  estate->es_output_cid, 0, NULL);
+
+	/* insert index entries for tuple */
+	if (resultRelInfo->ri_NumIndices > 0)
+		(void)ExecInsertIndexTuples(insertSlot, &(tuple->t_self),
+									estate, false, NULL, NIL);
 
 	if (mgstate->canSetTag)
-		estate->es_graphwrstats.insertEdge += SPI_processed;
+		estate->es_graphwrstats.insertEdge++;
+
+	estate->es_result_relation_info = savedResultRel;
 
 	return edge;
 }
@@ -571,6 +594,22 @@ findVertex(TupleTableSlot *slot, GraphVertex *gvertex, Graphid *vid)
 	return vertex;
 }
 
+static Datum
+findEdge(TupleTableSlot *slot, GraphEdge *gedge, Graphid *eid)
+{
+	AttrNumber	attno;
+	Datum		edge;
+
+	attno = findAttrInSlotByName(slot, gedge->variable);
+
+	edge = slot->tts_values[attno - 1];
+
+	if (eid != NULL)
+		*eid = DatumGetGraphid(getEdgeIdDatum(edge));
+
+	return edge;
+}
+
 static AttrNumber
 findAttrInSlotByName(TupleTableSlot *slot, char *name)
 {
@@ -588,62 +627,6 @@ findAttrInSlotByName(TupleTableSlot *slot, char *name)
 			(errcode(ERRCODE_INVALID_NAME),
 			 errmsg("variable \"%s\" does not exist", name)));
 	return InvalidAttrNumber;
-}
-
-static Datum
-evalPropMap(ExprState *prop_map, ExprContext *econtext, TupleTableSlot *slot)
-{
-	Datum		datum;
-	bool		isNull;
-	ExprDoneCond isDone;
-	Jsonb	   *jsonb;
-
-	if (prop_map == NULL)
-		return jsonb_build_object_noargs(NULL);
-
-	if (!(exprType((Node *) prop_map->expr) == JSONBOID))
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("property map must be jsonb type")));
-
-	econtext->ecxt_scantuple = slot;
-	datum = ExecEvalExpr(prop_map, econtext, &isNull, &isDone);
-	if (isNull)
-		ereport(ERROR,
-				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				 errmsg("property map cannot be NULL")));
-	if (isDone != ExprSingleResult)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("single result is expected for property map")));
-
-	jsonb = DatumGetJsonb(datum);
-	if (!JB_ROOT_IS_OBJECT(jsonb))
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("jsonb object is expected for property map")));
-
-	return datum;
-}
-
-static Datum
-copyTupleAsDatum(ExprContext *econtext, HeapTuple tuple, Oid tupType)
-{
-	TupleDesc		tupDesc;
-	MemoryContext	oldmctx;
-	Datum			value;
-
-	tupDesc = lookup_rowtype_tupdesc(tupType, -1);
-
-	oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-
-	value = heap_copy_tuple_as_datum(tuple, tupDesc);
-
-	MemoryContextSwitchTo(oldmctx);
-
-	ReleaseTupleDesc(tupDesc);
-
-	return value;
 }
 
 static void
