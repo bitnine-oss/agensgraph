@@ -815,12 +815,29 @@ getVertexIdDatum(Datum datum)
 	return tuple_getattr(tuphdr, Anum_vertex_id);
 }
 
+
+Datum
+getVertexPropDatum(Datum datum)
+{
+	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	return tuple_getattr(tuphdr, Anum_vertex_properties);
+}
+
 Datum
 getEdgeIdDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_edge_id);
+}
+
+Datum
+getEdgePropDatum(Datum datum)
+{
+	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	return tuple_getattr(tuphdr, Anum_edge_properties);
 }
 
 void

@@ -36,7 +36,10 @@
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
 #include "parser/parser.h"
+#include "parser/parsetree.h"
+#include "rewrite/rewriteHandler.h"
 #include "utils/builtins.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
@@ -178,6 +181,10 @@ static GraphVertex *transformCreateNode(ParseState *pstate, CypherNode *cnode,
 										List **targetList);
 static GraphEdge *transformCreateRel(ParseState *pstate, CypherRel *crel,
 									 List **targetList);
+static Node *makeResultVertex(ParseState *pstate,
+							  char *labname, CypherNode *cnode);
+static Node *makeResultEdge(ParseState *pstate,
+							char *labname, CypherRel *crel);
 
 /* SET/REMOVE */
 static List *transformSetPropList(ParseState *pstate, RangeTblEntry *rte,
@@ -214,6 +221,7 @@ static List *makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte);
 static List *makeTargetListFromJoin(ParseState *pstate, RangeTblEntry *rte);
 static TargetEntry *makeWholeRowTarget(ParseState *pstate, RangeTblEntry *rte);
 static TargetEntry *findTarget(List *targetList, char *resname);
+static Relation setTargetLabel(ParseState *pstate, char *labname);
 
 /* expression - type */
 static Node *makeVertexExpr(ParseState *pstate, RangeTblEntry *rte,
@@ -242,6 +250,7 @@ static RowExpr *makeRowExpr(List *args);
 
 /* utils */
 static char *genUniqueName(void);
+static char *genUniqueVarname(List *targetList);
 
 Query *
 transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
@@ -563,9 +572,12 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.pattern = transformCreatePattern(pstate, pattern,
 												&qry->targetList);
 
+	qry->graph.resultRel = pstate->p_target_labels;
+
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
 													 FVR_DONT_RESOLVE);
+
 	markTargetListOrigins(pstate, qry->targetList);
 
 	qry->rtable = pstate->p_rtable;
@@ -2984,11 +2996,11 @@ static GraphVertex *
 transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 {
 	char	   *varname = getCypherName(cnode->variable);
+	char	   *labname = getCypherName(cnode->label);
 	int			varloc = getCypherNameLoc(cnode->variable);
-	TargetEntry *te;
 	bool		create;
-	Node	   *prop_map = NULL;
-	GraphVertex *gvertex;
+	TargetEntry	*te;
+	GraphVertex	*gvertex;
 
 	te = findTarget(*targetList, varname);
 	if (te != NULL &&
@@ -3002,36 +3014,37 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 
 	if (create)
 	{
-		if (varname != NULL)
-		{
-			Const *dummy;
+		Node	   *vertex;
 
-			/*
-			 * Create a room for a newly created vertex.
-			 * This dummy value will be replaced with the vertex
-			 * in ExecCypherCreate().
-			 */
+		if (labname == NULL)
+			labname = AG_VERTEX;
 
-			dummy = makeNullConst(VERTEXOID, -1, InvalidOid);
-			te = makeTargetEntry((Expr *) dummy,
-								 (AttrNumber) pstate->p_next_resno++,
-								 varname,
-								 false);
+		/* Make vertex expression for result plan */
+		vertex = makeResultVertex(pstate, labname, cnode);
+		te = makeTargetEntry((Expr *) vertex,
+							 (AttrNumber) pstate->p_next_resno++,
+							 varname,
+							 false);
 
-			*targetList = lappend(*targetList, te);
-		}
+		/*
+		 * varname will be used to find vertex that be made from ExecResult.
+		 * so that, varname must be unique in targetList.
+		 */
+		if (varname == NULL)
+			varname = genUniqueVarname(*targetList);
 
-		if (cnode->prop_map != NULL)
-			prop_map = transformPropMap(pstate, cnode->prop_map,
-										EXPR_KIND_INSERT_TARGET);
+		te = makeTargetEntry((Expr *) vertex,
+							 (AttrNumber) pstate->p_next_resno++,
+							 pstrdup(varname),
+							 false);
+
+		*targetList = lappend(*targetList, te);
 	}
 
 	gvertex = makeNode(GraphVertex);
-	if (varname != NULL)
-		gvertex->variable = pstrdup(varname);
-	if (cnode->label != NULL)
-		gvertex->label = pstrdup(getCypherName(cnode->label));
-	gvertex->prop_map = prop_map;
+	gvertex->variable = varname;
+	if (labname != NULL)
+		gvertex->label = pstrdup(labname);
 	gvertex->create = create;
 
 	return gvertex;
@@ -3042,6 +3055,8 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 {
 	char	   *varname;
 	GraphEdge  *gedge;
+	TargetEntry *te;
+	Node	   *edge;
 
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 		ereport(ERROR,
@@ -3070,17 +3085,24 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 				 errmsg("duplicate variable \"%s\"", varname),
 				 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
 
-	if (varname != NULL)
-	{
-		TargetEntry *te;
+	/*
+	 * Make edge expression for result plan.
+	 */
+	edge = makeResultEdge(pstate, getCypherName(linitial(crel->types)), crel);
 
-		te = makeTargetEntry((Expr *) makeNullConst(EDGEOID, -1, InvalidOid),
-							 (AttrNumber) pstate->p_next_resno++,
-							 varname,
-							 false);
+	/*
+	 * varname will be used to find edge that be made from ExecResult.
+	 * so that, varname must be unique in targetList.
+	 */
+	if (varname == NULL)
+		varname = genUniqueVarname(*targetList);
 
-		*targetList = lappend(*targetList, te);
-	}
+	te = makeTargetEntry((Expr *) edge,
+						 (AttrNumber) pstate->p_next_resno++,
+						 pstrdup(varname),
+						 false);
+
+	*targetList = lappend(*targetList, te);
 
 	gedge = makeNode(GraphEdge);
 	switch (crel->direction)
@@ -3095,12 +3117,9 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 		default:
 			Assert(!"invalid direction");
 	}
-	if (varname != NULL)
-		gedge->variable = pstrdup(varname);
+
+	gedge->variable = varname;
 	gedge->label = pstrdup(getCypherName(linitial(crel->types)));
-	if (crel->prop_map != NULL)
-		gedge->prop_map = transformPropMap(pstate, crel->prop_map,
-										   EXPR_KIND_INSERT_TARGET);
 
 	return gedge;
 }
@@ -3955,4 +3974,128 @@ genUniqueName(void)
 	snprintf(data, sizeof(data), "<%010u>", seq++);
 
 	return pstrdup(data);
+}
+
+static Relation
+setTargetLabel(ParseState *pstate, char *labname)
+{
+	RangeVar   *rv;
+	Relation	relation;
+
+	Assert(labname != NULL);
+
+	rv = makeRangeVar(get_graph_path(), labname, -1);
+	relation = parserOpenTable(pstate, rv, RowExclusiveLock);
+
+	pstate->p_target_labels = lappend_oid(pstate->p_target_labels,
+										  RelationGetRelid(relation));
+	return relation;
+}
+
+static Node *
+makeResultVertex(ParseState *pstate, char *labname, CypherNode *cnode)
+{
+	Node 	*id;
+	Node	*prop_map;
+	Node	*vertex_expr;
+	Relation relation;
+
+	/*
+	 * Lock the label and return open relation.
+	 */
+	relation = setTargetLabel(pstate, labname);
+
+	/*
+	 * Properties column has emply jsonb-object, if prop_map is null.
+	 */
+	if(cnode->prop_map == NULL)
+	{
+		A_Const *nullJson = makeNode(A_Const);
+
+		nullJson->val.type = T_String;
+		nullJson->val.val.str = "{}";
+
+		cnode->prop_map = (Node *) nullJson;
+	}
+
+	/* id column must be first. */
+	Assert(attnameAttNum(relation, AG_ELEM_LOCAL_ID, true) == 1);
+
+	/*
+	 * Since build_column_default is a function of the rewrite phase,
+	 * calling it here is not good. However, because there are multiple
+	 * result relations, processing here can reduce complexity.
+	 */
+	id = build_column_default(relation, 1);
+	prop_map = transformPropMap(pstate, cnode->prop_map,
+								EXPR_KIND_INSERT_TARGET);
+
+	vertex_expr = makeTypedRowExpr(list_make2(id, prop_map), VERTEXOID, -1);
+
+	/* not release the lock. */
+	heap_close(relation, NoLock);
+
+	return vertex_expr;
+}
+
+static Node *
+makeResultEdge(ParseState *pstate, char *labname, CypherRel *cnode)
+{
+	Node 	*id;
+	Node	*start;
+	Node	*end;
+	Node	*prop_map;
+	Node	*edge_expr;
+	Relation relation;
+
+	/*
+	 * Lock the label and open relation.
+	 */
+	relation = setTargetLabel(pstate, labname);
+
+	/*
+	 * Properties column has emply jsonb-object, if prop_map is null.
+	 */
+	if(cnode->prop_map == NULL)
+	{
+		A_Const *nullJson = makeNode(A_Const);
+
+		nullJson->val.type = T_String;
+		nullJson->val.val.str = "{}";
+
+		cnode->prop_map = (Node *) nullJson;
+	}
+
+	/* id column must be first. */
+	Assert(attnameAttNum(relation, AG_ELEM_LOCAL_ID, true) == 1);
+
+	id = build_column_default(relation, 1);
+	start = (Node *) makeNullConst(GRAPHIDOID, -1, InvalidOid);
+	end = (Node *)makeNullConst(GRAPHIDOID, -1, InvalidOid);
+	prop_map = transformPropMap(pstate, cnode->prop_map,
+								EXPR_KIND_INSERT_TARGET);
+
+	edge_expr = makeTypedRowExpr(list_make4(id, start, end, prop_map),
+								 EDGEOID, -1);
+
+	/* not release the lock. */
+	heap_close(relation, NoLock);
+
+	return edge_expr;
+}
+
+static char*
+genUniqueVarname(List *targetList)
+{
+	char	ret[20];
+
+	for (;;)
+	{
+		sprintf(ret, "_temp_%u", (uint)random());
+
+		if (findTarget(targetList, ret) == NULL)
+			break;
+	}
+
+	return pstrdup(ret);
 }
