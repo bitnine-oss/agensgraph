@@ -425,6 +425,7 @@ static void ATExecGenericOptions(Relation rel, List *options);
 static void ATExecEnableRowSecurity(Relation rel);
 static void ATExecDisableRowSecurity(Relation rel);
 static void ATExecForceNoForceRowSecurity(Relation rel, bool force_rls);
+static void ATExecDisableIndex(Relation rel);
 
 static void copy_relation_data(SMgrRelation rel, SMgrRelation dst,
 				   ForkNumber forkNum, char relpersistence);
@@ -3066,6 +3067,10 @@ AlterTableGetLockLevel(List *cmds)
 				cmd_lockmode = AlterTableGetRelOptionsLockLevel((List *) cmd->def);
 				break;
 
+			case AT_DisableIndex:
+				cmd_lockmode = AccessShareLock;
+				break;
+
 			default:			/* oops */
 				elog(ERROR, "unrecognized alter table type: %d",
 					 (int) cmd->subtype);
@@ -3381,6 +3386,10 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 		case AT_GenericOptions:
 			ATSimplePermissions(rel, ATT_FOREIGN_TABLE);
 			/* No command-specific prep needed */
+			pass = AT_PASS_MISC;
+			break;
+		case AT_DisableIndex:
+			ATSimplePermissions(rel, ATT_TABLE);
 			pass = AT_PASS_MISC;
 			break;
 		default:				/* oops */
@@ -3701,6 +3710,9 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation rel,
 			break;
 		case AT_GenericOptions:
 			ATExecGenericOptions(rel, (List *) cmd->def);
+			break;
+		case AT_DisableIndex:
+			ATExecDisableIndex(rel);
 			break;
 		default:				/* oops */
 			elog(ERROR, "unrecognized alter table type: %d",
@@ -11245,6 +11257,12 @@ ATExecGenericOptions(Relation rel, List *options)
 	heap_close(ftrel, RowExclusiveLock);
 
 	heap_freetuple(tuple);
+}
+
+static void
+ATExecDisableIndex(Relation rel)
+{
+	DisableIndexLabel(rel->rd_id);
 }
 
 /*

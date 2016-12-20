@@ -20,7 +20,7 @@ extern ObjectAddress RenameGraph(const char *oldname, const char *newname);
 extern void CreateLabelCommand(CreateLabelStmt *labelStmt,
 							   const char *queryString, ParamListInfo params);
 extern ObjectAddress RenameLabel(RenameStmt *stmt);
-extern void CheckDropLabel(ObjectType removeType, Oid laboid);
+extern void CheckLabelType(ObjectType type, Oid laboid, const char *command);
 extern void CheckInheritLabel(CreateStmt *stmt);
 
 extern bool RangeVarIsLabel(RangeVar *rel);
@@ -31,5 +31,7 @@ extern void CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
 extern void DropConstraintCommand(DropConstraintStmt *constraintStmt,
 								  const char *queryString,
 								  ParamListInfo params);
+
+extern Oid DisableIndexCommand(DisableIndexStmt *disableStmt);
 
 #endif	/* GRAPHCMDS_H */

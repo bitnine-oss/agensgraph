@@ -3263,6 +3263,19 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	cxt.alist = list_concat(cxt.alist, indexlist);
 	transformFKConstraints(&cxt, true, false);
 
+	/*
+	 * if `disable_index` is true
+	 * then set DisableIndexStmt after CREATE INDEX statements
+	 */
+	if (labelStmt->disable_index)
+	{
+		DisableIndexStmt *disable_idx_stmt;
+
+		disable_idx_stmt = makeNode(DisableIndexStmt);
+		disable_idx_stmt->relation = stmt->relation;
+		cxt.alist = lappend(cxt.alist, disable_idx_stmt);
+	}
+
 	stmt->tableElts = cxt.columns;
 	stmt->constraints = cxt.ckconstraints;
 
@@ -3568,15 +3581,20 @@ makeComment(ObjectType type, RangeVar *name, char *desc)
 AlterTableStmt *
 transformAlterLabelStmt(AlterTableStmt *stmt)
 {
-	AlterTableStmt	*result;
-	List			*newcmds = NIL;
-	ListCell		*lcmd;
+	AlterTableStmt *result;
+	List		   *newcmds = NIL;
+	ListCell	   *lcmd;
+	Oid				laboid;
 
 	result = makeNode(AlterTableStmt);
 	result->relation = makeRangeVar(get_graph_path(),
 									stmt->relation->relname, 0);
 	result->relkind = stmt->relkind;
 	result->missing_ok = stmt->missing_ok;
+
+	laboid = get_labname_laboid(stmt->relation->relname,
+					get_graphname_oid(get_graph_path()));
+	CheckLabelType(stmt->relkind, laboid, "ALTER");
 
 	foreach(lcmd, stmt->cmds)
 	{

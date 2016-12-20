@@ -131,4 +131,6 @@ extern bool ReindexIsProcessingHeap(Oid heapOid);
 extern bool ReindexIsProcessingIndex(Oid indexOid);
 extern Oid	IndexGetRelation(Oid indexId, bool missing_ok);
 
+extern bool DisableIndexLabel(Oid relid);
+
 #endif   /* INDEX_H */

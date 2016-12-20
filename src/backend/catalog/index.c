@@ -127,6 +127,9 @@ static void SetReindexPending(List *indexes);
 static void RemoveReindexPending(Oid indexOid);
 static void ResetReindexPending(void);
 
+static void disable_index(Oid indexId);
+static void index_set_disable_flag(Oid indexId);
+
 
 /*
  * relationHasPrimaryKey
@@ -3628,7 +3631,6 @@ reindex_relation(Oid relid, int flags, int options)
 	return result;
 }
 
-
 /* ----------------------------------------------------------------
  *		System index reindexing support
  *
@@ -3740,4 +3742,98 @@ static void
 ResetReindexPending(void)
 {
 	pendingReindexedIndexes = NIL;
+}
+
+
+/* disable all indexes of the given graph label */
+bool
+DisableIndexLabel(Oid relid)
+{
+	Relation	rel;
+	List	   *indexoidlist;
+	ListCell   *indexoidscan;
+	Oid			toast_relid;
+	bool		result;
+
+	rel = heap_open(relid, ShareLock);
+
+	indexoidlist = RelationGetIndexList(rel);
+	foreach(indexoidscan, indexoidlist)
+	{
+		Oid	indexoid = lfirst_oid(indexoidscan);
+
+		disable_index(indexoid);
+
+		CommandCounterIncrement();
+	}
+
+	toast_relid = rel->rd_rel->reltoastrelid;
+
+	/* close `rel`, but keep the lock */
+	heap_close(rel, NoLock);
+
+	result = (indexoidlist != NIL);
+
+	if (OidIsValid(toast_relid))
+		result = (result || DisableIndexLabel(toast_relid));
+
+	return result;
+}
+
+/* See reindex_index() */
+static void
+disable_index(Oid indexId)
+{
+	Relation	iRel;
+	Relation	heapRelation;
+	Oid			heapId;
+
+	heapId = IndexGetRelation(indexId, false);
+	heapRelation = heap_open(heapId, ShareLock);
+
+	iRel = index_open(indexId, AccessExclusiveLock);
+
+	if (RELATION_IS_OTHER_TEMP(iRel))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot diable index of temporary tables of other sessions")));
+
+	CheckTableNotInUse(iRel, "DISABLE INDEX");
+
+	TransferPredicateLocksToHeapRelation(iRel);
+
+	index_set_disable_flag(indexId);
+
+	CacheInvalidateRelcache(heapRelation);
+
+	index_close(iRel, NoLock);
+	heap_close(heapRelation, NoLock);
+}
+
+/*
+ * Clear `indisvalid` and `indisready` during CREATE LABEL DISABLE INDEX
+ * or ALTER LABEL DISABLE INDEX.
+ * See index_set_state_flags().
+ */
+void
+index_set_disable_flag(Oid indexId)
+{
+	Relation	pg_index;
+	HeapTuple	indexTuple;
+	Form_pg_index indexForm;
+
+	pg_index = heap_open(IndexRelationId, RowExclusiveLock);
+
+	indexTuple = SearchSysCacheCopy1(INDEXRELID,
+									 ObjectIdGetDatum(indexId));
+	if (!HeapTupleIsValid(indexTuple))
+		elog(ERROR, "cache lookup failed for index %u", indexId);
+
+	indexForm = (Form_pg_index) GETSTRUCT(indexTuple);
+	indexForm->indisvalid = false;
+	indexForm->indisready = false;
+
+	heap_inplace_update(pg_index, indexTuple);
+
+	heap_close(pg_index, RowExclusiveLock);
 }

@@ -119,7 +119,7 @@ RemoveObjects(DropStmt *stmt)
 
 		if (stmt->removeType == OBJECT_ELABEL ||
 			stmt->removeType == OBJECT_VLABEL)
-			CheckDropLabel(stmt->removeType, address.objectId);
+			CheckLabelType(stmt->removeType, address.objectId, "DROP");
 
 		/* Check permissions. */
 		namespaceId = get_object_namespace(&address);
