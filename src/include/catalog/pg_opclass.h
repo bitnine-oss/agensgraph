@@ -277,5 +277,6 @@ DATA(insert (  403 graphid_ops          PGNSP PGUID 7093 7002 t 0 ));
 DATA(insert (  405 graphid_ops          PGNSP PGUID 7096 7002 t 0 ));
 DATA(insert ( 2742 graphid_ops          PGNSP PGUID 7098 7002 t 0 ));
 DATA(insert ( 3580 graphid_minmax_ops   PGNSP PGUID 7105 7002 t 0 ));
+DATA(insert ( 7120 graphid_ops          PGNSP PGUID 7121 7002 t 0 ));
 
 #endif   /* PG_OPCLASS_H */

@@ -1,21 +1,21 @@
-/*-------------------------------------------------------------------------
+/*
+ * einsearch.c
+ *	  Search code for Edge Index.
  *
- * nbtsearch.c
- *	  Search code for postgres btrees.
+ * NOTES
+ *	  This file is based on nbtsearch.c. See README for more details.
  *
- *
+ * Portions Copyright (c) 2016 by Bitnine Global, Inc.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/backend/access/nbtree/nbtsearch.c
- *
- *-------------------------------------------------------------------------
+ *	  src/backend/access/ein/einsearch.c
  */
 
 #include "postgres.h"
 
-#include "access/nbtree.h"
+#include "access/ein.h"
 #include "access/relscan.h"
 #include "miscadmin.h"
 #include "pgstat.h"
@@ -90,7 +90,7 @@ _bt_drop_lock_and_maybe_pin(IndexScanDesc scan, BTScanPos sp)
  * any incomplete splits encountered during the search will be finished.
  */
 BTStack
-_bt_search(Relation rel, int keysz, ScanKey scankey, bool nextkey,
+_ei_search(Relation rel, int keysz, ScanKey scankey, bool nextkey,
 		   Buffer *bufP, int access, Snapshot snapshot)
 {
 	BTStack		stack_in = NULL;
@@ -126,7 +126,7 @@ _bt_search(Relation rel, int keysz, ScanKey scankey, bool nextkey,
 		 * if the leaf page is split and we insert to the parent page).  But
 		 * this is a good opportunity to finish splits of internal pages too.
 		 */
-		*bufP = _bt_moveright(rel, *bufP, keysz, scankey, nextkey,
+		*bufP = _ei_moveright(rel, *bufP, keysz, scankey, nextkey,
 							  (access == BT_WRITE), stack_in,
 							  BT_READ, snapshot);
 
@@ -140,7 +140,7 @@ _bt_search(Relation rel, int keysz, ScanKey scankey, bool nextkey,
 		 * Find the appropriate item on the internal page, and get the child
 		 * page that it points to.
 		 */
-		offnum = _bt_binsrch(rel, *bufP, keysz, scankey, nextkey);
+		offnum = _ei_binsrch(rel, *bufP, keysz, scankey, nextkey);
 		itemid = PageGetItemId(page, offnum);
 		itup = (IndexTuple) PageGetItem(page, itemid);
 		blkno = ItemPointerGetBlockNumber(&(itup->t_tid));
@@ -207,7 +207,7 @@ _bt_search(Relation rel, int keysz, ScanKey scankey, bool nextkey,
  * positioning for an insert or delete, so NULL is used for those cases.
  */
 Buffer
-_bt_moveright(Relation rel,
+_ei_moveright(Relation rel,
 			  Buffer buf,
 			  int keysz,
 			  ScanKey scankey,
@@ -262,7 +262,7 @@ _bt_moveright(Relation rel,
 			}
 
 			if (P_INCOMPLETE_SPLIT(opaque))
-				_bt_finish_split(rel, buf, stack);
+				_ei_finish_split(rel, buf, stack);
 			else
 				_bt_relbuf(rel, buf);
 
@@ -271,7 +271,7 @@ _bt_moveright(Relation rel,
 			continue;
 		}
 
-		if (P_IGNORE(opaque) || _bt_compare(rel, keysz, scankey, page, P_HIKEY) >= cmpval)
+		if (P_IGNORE(opaque) || _ei_compare(rel, keysz, scankey, page, P_HIKEY) >= cmpval)
 		{
 			/* step right one page */
 			buf = _bt_relandgetbuf(rel, buf, opaque->btpo_next, access);
@@ -316,7 +316,7 @@ _bt_moveright(Relation rel,
  * on the buffer.
  */
 OffsetNumber
-_bt_binsrch(Relation rel,
+_ei_binsrch(Relation rel,
 			Buffer buf,
 			int keysz,
 			ScanKey scankey,
@@ -367,7 +367,7 @@ _bt_binsrch(Relation rel,
 
 		/* We have low <= mid < high, so mid points at a real slot */
 
-		result = _bt_compare(rel, keysz, scankey, page, mid);
+		result = _ei_compare(rel, keysz, scankey, page, mid);
 
 		if (result >= cmpval)
 			low = mid + 1;
@@ -421,7 +421,7 @@ _bt_binsrch(Relation rel,
  *----------
  */
 int32
-_bt_compare(Relation rel,
+_ei_compare(Relation rel,
 			int keysz,
 			ScanKey scankey,
 			Page page,
@@ -452,6 +452,9 @@ _bt_compare(Relation rel,
 	 * initial setup for the index scan had better have gotten it right (see
 	 * _bt_first).
 	 */
+
+	/* Edge Index compares the first key only */
+	keysz = 1;
 
 	for (i = 1; i <= keysz; i++)
 	{
@@ -529,7 +532,7 @@ _bt_compare(Relation rel,
  * in locating the scan start position.
  */
 bool
-_bt_first(IndexScanDesc scan, ScanDirection dir)
+_ei_first(IndexScanDesc scan, ScanDirection dir)
 {
 	Relation	rel = scan->indexRelation;
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
@@ -980,7 +983,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	 * Use the manufactured insertion scan key to descend the tree and
 	 * position ourselves on the target leaf page.
 	 */
-	stack = _bt_search(rel, keysCount, scankeys, nextkey, &buf, BT_READ,
+	stack = _ei_search(rel, keysCount, scankeys, nextkey, &buf, BT_READ,
 					   scan->xs_snapshot);
 
 	/* don't need to keep the stack around... */
@@ -1014,7 +1017,7 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	Assert(so->markItemIndex == -1);
 
 	/* position to the precise item on the page */
-	offnum = _bt_binsrch(rel, buf, keysCount, scankeys, nextkey);
+	offnum = _ei_binsrch(rel, buf, keysCount, scankeys, nextkey);
 
 	/*
 	 * If nextkey = false, we are positioned at the first item >= scan key, or
@@ -1058,56 +1061,6 @@ _bt_first(IndexScanDesc scan, ScanDirection dir)
 	{
 		/* Drop the lock, and maybe the pin, on the current page */
 		_bt_drop_lock_and_maybe_pin(scan, &so->currPos);
-	}
-
-	/* OK, itemIndex says what to return */
-	currItem = &so->currPos.items[so->currPos.itemIndex];
-	scan->xs_ctup.t_self = currItem->heapTid;
-	if (scan->xs_want_itup)
-		scan->xs_itup = (IndexTuple) (so->currTuples + currItem->tupleOffset);
-
-	return true;
-}
-
-/*
- *	_bt_next() -- Get the next item in a scan.
- *
- *		On entry, so->currPos describes the current page, which may be pinned
- *		but is not locked, and so->currPos.itemIndex identifies which item was
- *		previously returned.
- *
- *		On successful exit, scan->xs_ctup.t_self is set to the TID of the
- *		next heap tuple, and if requested, scan->xs_itup points to a copy of
- *		the index tuple.  so->currPos is updated as needed.
- *
- *		On failure exit (no more tuples), we release pin and set
- *		so->currPos.buf to InvalidBuffer.
- */
-bool
-_bt_next(IndexScanDesc scan, ScanDirection dir)
-{
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-	BTScanPosItem *currItem;
-
-	/*
-	 * Advance to next tuple on current page; or if there's no more, try to
-	 * step to the next page with data.
-	 */
-	if (ScanDirectionIsForward(dir))
-	{
-		if (++so->currPos.itemIndex > so->currPos.lastItem)
-		{
-			if (!_bt_steppage(scan, dir))
-				return false;
-		}
-	}
-	else
-	{
-		if (--so->currPos.itemIndex < so->currPos.firstItem)
-		{
-			if (!_bt_steppage(scan, dir))
-				return false;
-		}
 	}
 
 	/* OK, itemIndex says what to return */
@@ -1564,87 +1517,6 @@ _bt_walk_left(Relation rel, Buffer buf, Snapshot snapshot)
 	}
 
 	return InvalidBuffer;
-}
-
-/*
- * _bt_get_endpoint() -- Find the first or last page on a given tree level
- *
- * If the index is empty, we will return InvalidBuffer; any other failure
- * condition causes ereport().  We will not return a dead page.
- *
- * The returned buffer is pinned and read-locked.
- */
-Buffer
-_bt_get_endpoint(Relation rel, uint32 level, bool rightmost,
-				 Snapshot snapshot)
-{
-	Buffer		buf;
-	Page		page;
-	BTPageOpaque opaque;
-	OffsetNumber offnum;
-	BlockNumber blkno;
-	IndexTuple	itup;
-
-	/*
-	 * If we are looking for a leaf page, okay to descend from fast root;
-	 * otherwise better descend from true root.  (There is no point in being
-	 * smarter about intermediate levels.)
-	 */
-	if (level == 0)
-		buf = _bt_getroot(rel, BT_READ);
-	else
-		buf = _bt_gettrueroot(rel);
-
-	if (!BufferIsValid(buf))
-		return InvalidBuffer;
-
-	page = BufferGetPage(buf);
-	TestForOldSnapshot(snapshot, rel, page);
-	opaque = (BTPageOpaque) PageGetSpecialPointer(page);
-
-	for (;;)
-	{
-		/*
-		 * If we landed on a deleted page, step right to find a live page
-		 * (there must be one).  Also, if we want the rightmost page, step
-		 * right if needed to get to it (this could happen if the page split
-		 * since we obtained a pointer to it).
-		 */
-		while (P_IGNORE(opaque) ||
-			   (rightmost && !P_RIGHTMOST(opaque)))
-		{
-			blkno = opaque->btpo_next;
-			if (blkno == P_NONE)
-				elog(ERROR, "fell off the end of index \"%s\"",
-					 RelationGetRelationName(rel));
-			buf = _bt_relandgetbuf(rel, buf, blkno, BT_READ);
-			page = BufferGetPage(buf);
-			TestForOldSnapshot(snapshot, rel, page);
-			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
-		}
-
-		/* Done? */
-		if (opaque->btpo.level == level)
-			break;
-		if (opaque->btpo.level < level)
-			elog(ERROR, "btree level %u not found in index \"%s\"",
-				 level, RelationGetRelationName(rel));
-
-		/* Descend to leftmost or rightmost child page */
-		if (rightmost)
-			offnum = PageGetMaxOffsetNumber(page);
-		else
-			offnum = P_FIRSTDATAKEY(opaque);
-
-		itup = (IndexTuple) PageGetItem(page, PageGetItemId(page, offnum));
-		blkno = ItemPointerGetBlockNumber(&(itup->t_tid));
-
-		buf = _bt_relandgetbuf(rel, buf, blkno, BT_READ);
-		page = BufferGetPage(buf);
-		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
-	}
-
-	return buf;
 }
 
 /*
