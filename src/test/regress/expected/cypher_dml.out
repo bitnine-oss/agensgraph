@@ -67,10 +67,10 @@ RETURN properties(l) AS lj, properties(j) AS j,
  {"lang": "java"} | {"name": "agens-graph-jdbc", "year": 2016} | {"lang": "c"} | {"name": "agens-graph-odbc", "year": 2016} | {"lang": "en"} | {"name": "agens-graph-docs", "year": 2016}
 (1 row)
 
-CREATE ()-[a:r]->(a);
+CREATE ()-[a:lib]->(a);
 ERROR:  duplicate variable "a"
-LINE 1: CREATE ()-[a:r]->(a);
-                          ^
+LINE 1: CREATE ()-[a:lib]->(a);
+                            ^
 CREATE a=(), (a);
 ERROR:  duplicate variable "a"
 LINE 1: CREATE a=(), (a);
@@ -91,32 +91,32 @@ CREATE ()-[]-();
 ERROR:  only directed relationships are allowed in CREATE
 CREATE ()-[]->();
 ERROR:  only one relationship type is allowed for CREATE
-CREATE ()-[:r|z]->();
+CREATE ()-[:lib|doc]->();
 ERROR:  only one relationship type is allowed for CREATE
-CREATE (a)-[a:r]->();
+CREATE (a)-[a:lib]->();
 ERROR:  duplicate variable "a"
-LINE 1: CREATE (a)-[a:r]->();
+LINE 1: CREATE (a)-[a:lib]->();
                     ^
-CREATE ()-[a:r]->()-[a:z]->();
+CREATE ()-[a:lib]->()-[a:doc]->();
 ERROR:  duplicate variable "a"
-LINE 1: CREATE ()-[a:r]->()-[a:z]->();
-                             ^
-CREATE a=(), ()-[a:z]->();
+LINE 1: CREATE ()-[a:lib]->()-[a:doc]->();
+                               ^
+CREATE a=(), ()-[a:doc]->();
 ERROR:  duplicate variable "a"
-LINE 1: CREATE a=(), ()-[a:z]->();
+LINE 1: CREATE a=(), ()-[a:doc]->();
                          ^
-CREATE ()-[:r =0]->();
+CREATE ()-[:lib =0]->();
 ERROR:  property map must be jsonb type
-LINE 1: CREATE ()-[:r =0]->();
-                       ^
+LINE 1: CREATE ()-[:lib =0]->();
+                         ^
 CREATE (a), a=();
 ERROR:  duplicate variable "a"
 LINE 1: CREATE (a), a=();
                     ^
-CREATE ()-[a:r]->(), a=();
+CREATE ()-[a:lib]->(), a=();
 ERROR:  duplicate variable "a"
-LINE 1: CREATE ()-[a:r]->(), a=();
-                             ^
+LINE 1: CREATE ()-[a:lib]->(), a=();
+                               ^
 CREATE a=(), a=();
 ERROR:  duplicate variable "a"
 LINE 1: CREATE a=(), a=();

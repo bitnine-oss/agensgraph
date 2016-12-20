@@ -24,8 +24,6 @@ typedef struct GraphVertex
 	NodeTag		type;
 	char	   *variable;
 	char	   *label;
-	Node	   *prop_map;		/* expression of type jsonb */
-	ExprState  *es_prop_map;	/* expression state of `prop_map` */
 	bool		create;			/* whether this vertex will be created or not */
 } GraphVertex;
 
@@ -39,8 +37,6 @@ typedef struct GraphEdge
 	uint32		direction;		/* bitmask of directions (see above) */
 	char	   *variable;
 	char	   *label;
-	Node	   *prop_map;		/* expression of type jsonb */
-	ExprState  *es_prop_map;	/* expression state of `prop_map` */
 } GraphEdge;
 
 typedef struct GraphSetProp
