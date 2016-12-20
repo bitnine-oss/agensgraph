@@ -1,24 +1,21 @@
-/*-------------------------------------------------------------------------
- *
- * nbtree.c
- *	  Implementation of Lehman and Yao's btree management algorithm for
- *	  Postgres.
+/*
+ * ein.c
+ *	  Implementation of Edge Index.
  *
  * NOTES
- *	  This file contains only the public interface routines.
+ *	  This file is based on nbtree.c. See README for more details.
  *
- *
+ * Portions Copyright (c) 2016 by Bitnine Global, Inc.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/backend/access/nbtree/nbtree.c
- *
- *-------------------------------------------------------------------------
+ *	  src/backend/access/ein/ein.c
  */
+
 #include "postgres.h"
 
-#include "access/nbtree.h"
+#include "access/ein.h"
 #include "access/relscan.h"
 #include "access/xlog.h"
 #include "catalog/index.h"
@@ -69,10 +66,10 @@ static void btbuildCallback(Relation index,
 				bool *isnull,
 				bool tupleIsAlive,
 				void *state);
-static void btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
+static void eivacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 			 IndexBulkDeleteCallback callback, void *callback_state,
 			 BTCycleId cycleid);
-static void btvacuumpage(BTVacState *vstate, BlockNumber blkno,
+static void eivacuumpage(BTVacState *vstate, BlockNumber blkno,
 			 BlockNumber orig_blkno);
 
 
@@ -81,30 +78,30 @@ static void btvacuumpage(BTVacState *vstate, BlockNumber blkno,
  * and callbacks.
  */
 Datum
-bthandler(PG_FUNCTION_ARGS)
+eihandler(PG_FUNCTION_ARGS)
 {
 	IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
 
 	amroutine->amstrategies = BTMaxStrategyNumber;
 	amroutine->amsupport = BTNProcs;
-	amroutine->amcanorder = true;
+	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = false;
 	amroutine->amcanbackward = true;
-	amroutine->amcanunique = true;
+	amroutine->amcanunique = false;
 	amroutine->amcanmulticol = true;
-	amroutine->amoptionalkey = true;
+	amroutine->amoptionalkey = false;
 	amroutine->amsearcharray = true;
-	amroutine->amsearchnulls = true;
+	amroutine->amsearchnulls = false;
 	amroutine->amstorage = false;
 	amroutine->amclusterable = true;
 	amroutine->ampredlocks = true;
 	amroutine->amkeytype = InvalidOid;
 
-	amroutine->ambuild = btbuild;
+	amroutine->ambuild = eibuild;
 	amroutine->ambuildempty = btbuildempty;
-	amroutine->aminsert = btinsert;
-	amroutine->ambulkdelete = btbulkdelete;
-	amroutine->amvacuumcleanup = btvacuumcleanup;
+	amroutine->aminsert = eiinsert;
+	amroutine->ambulkdelete = eibulkdelete;
+	amroutine->amvacuumcleanup = eivacuumcleanup;
 	amroutine->amcanreturn = btcanreturn;
 	amroutine->amcostestimate = btcostestimate;
 	amroutine->amoptions = btoptions;
@@ -112,8 +109,8 @@ bthandler(PG_FUNCTION_ARGS)
 	amroutine->amvalidate = btvalidate;
 	amroutine->ambeginscan = btbeginscan;
 	amroutine->amrescan = btrescan;
-	amroutine->amgettuple = btgettuple;
-	amroutine->amgetbitmap = btgetbitmap;
+	amroutine->amgettuple = eigettuple;
+	amroutine->amgetbitmap = eigetbitmap;
 	amroutine->amendscan = btendscan;
 	amroutine->ammarkpos = btmarkpos;
 	amroutine->amrestrpos = btrestrpos;
@@ -125,7 +122,7 @@ bthandler(PG_FUNCTION_ARGS)
  *	btbuild() -- build a new btree index.
  */
 IndexBuildResult *
-btbuild(Relation heap, Relation index, IndexInfo *indexInfo)
+eibuild(Relation heap, Relation index, IndexInfo *indexInfo)
 {
 	IndexBuildResult *result;
 	double		reltuples;
@@ -177,7 +174,7 @@ btbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	 * inserting the sorted tuples into btree pages and (3) building the upper
 	 * levels.
 	 */
-	_bt_leafbuild(buildstate.spool, buildstate.spool2);
+	_ei_leafbuild(buildstate.spool, buildstate.spool2);
 	_bt_spooldestroy(buildstate.spool);
 	if (buildstate.spool2)
 		_bt_spooldestroy(buildstate.spool2);
@@ -231,41 +228,13 @@ btbuildCallback(Relation index,
 }
 
 /*
- *	btbuildempty() -- build an empty btree index in the initialization fork
- */
-void
-btbuildempty(Relation index)
-{
-	Page		metapage;
-
-	/* Construct metapage. */
-	metapage = (Page) palloc(BLCKSZ);
-	_bt_initmetapage(metapage, P_NONE, 0);
-
-	/* Write the page.  If archiving/streaming, XLOG it. */
-	PageSetChecksumInplace(metapage, BTREE_METAPAGE);
-	smgrwrite(index->rd_smgr, INIT_FORKNUM, BTREE_METAPAGE,
-			  (char *) metapage, true);
-	if (XLogIsNeeded())
-		log_newpage(&index->rd_smgr->smgr_rnode.node, INIT_FORKNUM,
-					BTREE_METAPAGE, metapage, false);
-
-	/*
-	 * An immediate sync is required even if we xlog'd the page, because the
-	 * write did not go through shared_buffers and therefore a concurrent
-	 * checkpoint may have moved the redo pointer past our xlog record.
-	 */
-	smgrimmedsync(index->rd_smgr, INIT_FORKNUM);
-}
-
-/*
  *	btinsert() -- insert an index tuple into a btree.
  *
  *		Descend the tree recursively, find the appropriate location for our
  *		new tuple, and put it there.
  */
 bool
-btinsert(Relation rel, Datum *values, bool *isnull,
+eiinsert(Relation rel, Datum *values, bool *isnull,
 		 ItemPointer ht_ctid, Relation heapRel,
 		 IndexUniqueCheck checkUnique)
 {
@@ -276,7 +245,7 @@ btinsert(Relation rel, Datum *values, bool *isnull,
 	itup = index_form_tuple(RelationGetDescr(rel), values, isnull);
 	itup->t_tid = *ht_ctid;
 
-	result = _bt_doinsert(rel, itup, checkUnique, heapRel);
+	result = _ei_doinsert(rel, itup, checkUnique, heapRel);
 
 	pfree(itup);
 
@@ -287,7 +256,7 @@ btinsert(Relation rel, Datum *values, bool *isnull,
  *	btgettuple() -- Get the next tuple in the scan.
  */
 bool
-btgettuple(IndexScanDesc scan, ScanDirection dir)
+eigettuple(IndexScanDesc scan, ScanDirection dir)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	bool		res;
@@ -318,7 +287,7 @@ btgettuple(IndexScanDesc scan, ScanDirection dir)
 		 * _bt_first() to get the first item in the scan.
 		 */
 		if (!BTScanPosIsValid(so->currPos))
-			res = _bt_first(scan, dir);
+			res = _ei_first(scan, dir);
 		else
 		{
 			/*
@@ -361,7 +330,7 @@ btgettuple(IndexScanDesc scan, ScanDirection dir)
  * btgetbitmap() -- gets all matching tuples, and adds them to a bitmap
  */
 int64
-btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
+eigetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 {
 	BTScanOpaque so = (BTScanOpaque) scan->opaque;
 	int64		ntids = 0;
@@ -383,7 +352,7 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	do
 	{
 		/* Fetch the first page & tuple */
-		if (_bt_first(scan, ForwardScanDirection))
+		if (_ei_first(scan, ForwardScanDirection))
 		{
 			/* Save tuple ID, and continue scanning */
 			heapTid = &scan->xs_ctup.t_self;
@@ -416,233 +385,6 @@ btgetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 }
 
 /*
- *	btbeginscan() -- start a scan on a btree index
- */
-IndexScanDesc
-btbeginscan(Relation rel, int nkeys, int norderbys)
-{
-	IndexScanDesc scan;
-	BTScanOpaque so;
-
-	/* no order by operators allowed */
-	Assert(norderbys == 0);
-
-	/* get the scan */
-	scan = RelationGetIndexScan(rel, nkeys, norderbys);
-
-	/* allocate private workspace */
-	so = (BTScanOpaque) palloc(sizeof(BTScanOpaqueData));
-	BTScanPosInvalidate(so->currPos);
-	BTScanPosInvalidate(so->markPos);
-	if (scan->numberOfKeys > 0)
-		so->keyData = (ScanKey) palloc(scan->numberOfKeys * sizeof(ScanKeyData));
-	else
-		so->keyData = NULL;
-
-	so->arrayKeyData = NULL;	/* assume no array keys for now */
-	so->numArrayKeys = 0;
-	so->arrayKeys = NULL;
-	so->arrayContext = NULL;
-
-	so->killedItems = NULL;		/* until needed */
-	so->numKilled = 0;
-
-	/*
-	 * We don't know yet whether the scan will be index-only, so we do not
-	 * allocate the tuple workspace arrays until btrescan.  However, we set up
-	 * scan->xs_itupdesc whether we'll need it or not, since that's so cheap.
-	 */
-	so->currTuples = so->markTuples = NULL;
-
-	scan->xs_itupdesc = RelationGetDescr(rel);
-
-	scan->opaque = so;
-
-	return scan;
-}
-
-/*
- *	btrescan() -- rescan an index relation
- */
-void
-btrescan(IndexScanDesc scan, ScanKey scankey, int nscankeys,
-		 ScanKey orderbys, int norderbys)
-{
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-
-	/* we aren't holding any read locks, but gotta drop the pins */
-	if (BTScanPosIsValid(so->currPos))
-	{
-		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
-			_bt_killitems(scan);
-		BTScanPosUnpinIfPinned(so->currPos);
-		BTScanPosInvalidate(so->currPos);
-	}
-
-	so->markItemIndex = -1;
-	BTScanPosUnpinIfPinned(so->markPos);
-	BTScanPosInvalidate(so->markPos);
-
-	/*
-	 * Allocate tuple workspace arrays, if needed for an index-only scan and
-	 * not already done in a previous rescan call.  To save on palloc
-	 * overhead, both workspaces are allocated as one palloc block; only this
-	 * function and btendscan know that.
-	 *
-	 * NOTE: this data structure also makes it safe to return data from a
-	 * "name" column, even though btree name_ops uses an underlying storage
-	 * datatype of cstring.  The risk there is that "name" is supposed to be
-	 * padded to NAMEDATALEN, but the actual index tuple is probably shorter.
-	 * However, since we only return data out of tuples sitting in the
-	 * currTuples array, a fetch of NAMEDATALEN bytes can at worst pull some
-	 * data out of the markTuples array --- running off the end of memory for
-	 * a SIGSEGV is not possible.  Yeah, this is ugly as sin, but it beats
-	 * adding special-case treatment for name_ops elsewhere.
-	 */
-	if (scan->xs_want_itup && so->currTuples == NULL)
-	{
-		so->currTuples = (char *) palloc(BLCKSZ * 2);
-		so->markTuples = so->currTuples + BLCKSZ;
-	}
-
-	/*
-	 * Reset the scan keys. Note that keys ordering stuff moved to _bt_first.
-	 * - vadim 05/05/97
-	 */
-	if (scankey && scan->numberOfKeys > 0)
-		memmove(scan->keyData,
-				scankey,
-				scan->numberOfKeys * sizeof(ScanKeyData));
-	so->numberOfKeys = 0;		/* until _bt_preprocess_keys sets it */
-
-	/* If any keys are SK_SEARCHARRAY type, set up array-key info */
-	_bt_preprocess_array_keys(scan);
-}
-
-/*
- *	btendscan() -- close down a scan
- */
-void
-btendscan(IndexScanDesc scan)
-{
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-
-	/* we aren't holding any read locks, but gotta drop the pins */
-	if (BTScanPosIsValid(so->currPos))
-	{
-		/* Before leaving current page, deal with any killed items */
-		if (so->numKilled > 0)
-			_bt_killitems(scan);
-		BTScanPosUnpinIfPinned(so->currPos);
-	}
-
-	so->markItemIndex = -1;
-	BTScanPosUnpinIfPinned(so->markPos);
-
-	/* No need to invalidate positions, the RAM is about to be freed. */
-
-	/* Release storage */
-	if (so->keyData != NULL)
-		pfree(so->keyData);
-	/* so->arrayKeyData and so->arrayKeys are in arrayContext */
-	if (so->arrayContext != NULL)
-		MemoryContextDelete(so->arrayContext);
-	if (so->killedItems != NULL)
-		pfree(so->killedItems);
-	if (so->currTuples != NULL)
-		pfree(so->currTuples);
-	/* so->markTuples should not be pfree'd, see btrescan */
-	pfree(so);
-}
-
-/*
- *	btmarkpos() -- save current scan position
- */
-void
-btmarkpos(IndexScanDesc scan)
-{
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-
-	/* There may be an old mark with a pin (but no lock). */
-	BTScanPosUnpinIfPinned(so->markPos);
-
-	/*
-	 * Just record the current itemIndex.  If we later step to next page
-	 * before releasing the marked position, _bt_steppage makes a full copy of
-	 * the currPos struct in markPos.  If (as often happens) the mark is moved
-	 * before we leave the page, we don't have to do that work.
-	 */
-	if (BTScanPosIsValid(so->currPos))
-		so->markItemIndex = so->currPos.itemIndex;
-	else
-	{
-		BTScanPosInvalidate(so->markPos);
-		so->markItemIndex = -1;
-	}
-
-	/* Also record the current positions of any array keys */
-	if (so->numArrayKeys)
-		_bt_mark_array_keys(scan);
-}
-
-/*
- *	btrestrpos() -- restore scan to last saved position
- */
-void
-btrestrpos(IndexScanDesc scan)
-{
-	BTScanOpaque so = (BTScanOpaque) scan->opaque;
-
-	/* Restore the marked positions of any array keys */
-	if (so->numArrayKeys)
-		_bt_restore_array_keys(scan);
-
-	if (so->markItemIndex >= 0)
-	{
-		/*
-		 * The scan has never moved to a new page since the last mark.  Just
-		 * restore the itemIndex.
-		 *
-		 * NB: In this case we can't count on anything in so->markPos to be
-		 * accurate.
-		 */
-		so->currPos.itemIndex = so->markItemIndex;
-	}
-	else
-	{
-		/*
-		 * The scan moved to a new page after last mark or restore, and we are
-		 * now restoring to the marked page.  We aren't holding any read
-		 * locks, but if we're still holding the pin for the current position,
-		 * we must drop it.
-		 */
-		if (BTScanPosIsValid(so->currPos))
-		{
-			/* Before leaving current page, deal with any killed items */
-			if (so->numKilled > 0)
-				_bt_killitems(scan);
-			BTScanPosUnpinIfPinned(so->currPos);
-		}
-
-		if (BTScanPosIsValid(so->markPos))
-		{
-			/* bump pin on mark buffer for assignment to current buffer */
-			if (BTScanPosIsPinned(so->markPos))
-				IncrBufferRefCount(so->markPos.buf);
-			memcpy(&so->currPos, &so->markPos,
-				   offsetof(BTScanPosData, items[1]) +
-				   so->markPos.lastItem * sizeof(BTScanPosItem));
-			if (so->currTuples)
-				memcpy(so->currTuples, so->markTuples,
-					   so->markPos.nextTupleOffset);
-		}
-		else
-			BTScanPosInvalidate(so->currPos);
-	}
-}
-
-/*
  * Bulk deletion of all index entries pointing to a set of heap tuples.
  * The set of target tuples is specified via a callback routine that tells
  * whether any given heap tuple (identified by ItemPointer) is being deleted.
@@ -650,7 +392,7 @@ btrestrpos(IndexScanDesc scan)
  * Result: a palloc'd struct containing statistical info for VACUUM displays.
  */
 IndexBulkDeleteResult *
-btbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
+eibulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 			 IndexBulkDeleteCallback callback, void *callback_state)
 {
 	Relation	rel = info->index;
@@ -666,7 +408,7 @@ btbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	{
 		cycleid = _bt_start_vacuum(rel);
 
-		btvacuumscan(info, stats, callback, callback_state, cycleid);
+		eivacuumscan(info, stats, callback, callback_state, cycleid);
 	}
 	PG_END_ENSURE_ERROR_CLEANUP(_bt_end_vacuum_callback, PointerGetDatum(rel));
 	_bt_end_vacuum(rel);
@@ -680,7 +422,7 @@ btbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
  * Result: a palloc'd struct containing statistical info for VACUUM displays.
  */
 IndexBulkDeleteResult *
-btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
+eivacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 {
 	/* No-op in ANALYZE ONLY mode */
 	if (info->analyze_only)
@@ -698,7 +440,7 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	if (stats == NULL)
 	{
 		stats = (IndexBulkDeleteResult *) palloc0(sizeof(IndexBulkDeleteResult));
-		btvacuumscan(info, stats, NULL, NULL, 0);
+		eivacuumscan(info, stats, NULL, NULL, 0);
 	}
 
 	/* Finally, vacuum the FSM */
@@ -732,7 +474,7 @@ btvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
  * and for obtaining a vacuum cycle ID if necessary.
  */
 static void
-btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
+eivacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 			 IndexBulkDeleteCallback callback, void *callback_state,
 			 BTCycleId cycleid)
 {
@@ -806,7 +548,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 		/* Iterate over pages, then loop back to recheck length */
 		for (; blkno < num_pages; blkno++)
 		{
-			btvacuumpage(&vstate, blkno, blkno);
+			eivacuumpage(&vstate, blkno, blkno);
 		}
 	}
 
@@ -862,7 +604,7 @@ btvacuumscan(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
  * are recursing to re-examine a previous page).
  */
 static void
-btvacuumpage(BTVacState *vstate, BlockNumber blkno, BlockNumber orig_blkno)
+eivacuumpage(BTVacState *vstate, BlockNumber blkno, BlockNumber orig_blkno)
 {
 	IndexVacuumInfo *info = vstate->info;
 	IndexBulkDeleteResult *stats = vstate->stats;
@@ -1091,7 +833,7 @@ restart:
 		MemoryContextReset(vstate->pagedelcontext);
 		oldcontext = MemoryContextSwitchTo(vstate->pagedelcontext);
 
-		ndel = _bt_pagedel(rel, buf);
+		ndel = _ei_pagedel(rel, buf);
 
 		/* count only this page, else may double-count parent */
 		if (ndel)
@@ -1115,15 +857,4 @@ restart:
 		blkno = recurse_to;
 		goto restart;
 	}
-}
-
-/*
- *	btcanreturn() -- Check whether btree indexes support index-only scans.
- *
- * btrees always do, so this is trivial.
- */
-bool
-btcanreturn(Relation index, int attno)
-{
-	return true;
 }
