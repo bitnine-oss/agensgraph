@@ -1,72 +1,21 @@
-/*-------------------------------------------------------------------------
- *
- * nbtsort.c
- *		Build a btree from sorted input by loading leaf pages sequentially.
+/*
+ * einsort.c
+ *	  Build a btree from sorted input by loading leaf pages sequentially.
  *
  * NOTES
+ *	  This file is based on nbtsort.c. See README for more details.
  *
- * We use tuplesort.c to sort the given index tuples into order.
- * Then we scan the index tuples in order and build the btree pages
- * for each level.  We load source tuples into leaf-level pages.
- * Whenever we fill a page at one level, we add a link to it to its
- * parent level (starting a new parent level if necessary).  When
- * done, we write out each final page on each level, adding it to
- * its parent level.  When we have only one page on a level, it must be
- * the root -- it can be attached to the btree metapage and we are done.
- *
- * This code is moderately slow (~10% slower) compared to the regular
- * btree (insertion) build code on sorted or well-clustered data.  On
- * random data, however, the insertion build code is unusable -- the
- * difference on a 60MB heap is a factor of 15 because the random
- * probes into the btree thrash the buffer pool.  (NOTE: the above
- * "10%" estimate is probably obsolete, since it refers to an old and
- * not very good external sort implementation that used to exist in
- * this module.  tuplesort.c is almost certainly faster.)
- *
- * It is not wise to pack the pages entirely full, since then *any*
- * insertion would cause a split (and not only of the leaf page; the need
- * for a split would cascade right up the tree).  The steady-state load
- * factor for btrees is usually estimated at 70%.  We choose to pack leaf
- * pages to the user-controllable fill factor (default 90%) while upper pages
- * are always packed to 70%.  This gives us reasonable density (there aren't
- * many upper pages if the keys are reasonable-size) without risking a lot of
- * cascading splits during early insertions.
- *
- * Formerly the index pages being built were kept in shared buffers, but
- * that is of no value (since other backends have no interest in them yet)
- * and it created locking problems for CHECKPOINT, because the upper-level
- * pages were held exclusive-locked for long periods.  Now we just build
- * the pages in local memory and smgrwrite or smgrextend them as we finish
- * them.  They will need to be re-read into shared buffers on first use after
- * the build finishes.
- *
- * Since the index will never be used unless it is completely built,
- * from a crash-recovery point of view there is no need to WAL-log the
- * steps of the build.  After completing the index build, we can just sync
- * the whole file to disk using smgrimmedsync() before exiting this module.
- * This can be seen to be sufficient for crash recovery by considering that
- * it's effectively equivalent to what would happen if a CHECKPOINT occurred
- * just after the index build.  However, it is clearly not sufficient if the
- * DBA is using the WAL log for PITR or replication purposes, since another
- * machine would not be able to reconstruct the index from WAL.  Therefore,
- * we log the completed index pages to WAL if and only if WAL archiving is
- * active.
- *
- * This code isn't concerned about the FSM at all. The caller is responsible
- * for initializing that.
- *
+ * Portions Copyright (c) 2016 by Bitnine Global, Inc.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/backend/access/nbtree/nbtsort.c
- *
- *-------------------------------------------------------------------------
+ *	  src/backend/access/ein/einsort.c
  */
 
 #include "postgres.h"
 
-#include "access/nbtree.h"
+#include "access/ein.h"
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "miscadmin.h"
@@ -133,10 +82,10 @@ static BTPageState *_bt_pagestate(BTWriteState *wstate, uint32 level);
 static void _bt_slideleft(Page page);
 static void _bt_sortaddtup(Page page, Size itemsize,
 			   IndexTuple itup, OffsetNumber itup_off);
-static void _bt_buildadd(BTWriteState *wstate, BTPageState *state,
+static void _ei_buildadd(BTWriteState *wstate, BTPageState *state,
 			 IndexTuple itup);
-static void _bt_uppershutdown(BTWriteState *wstate, BTPageState *state);
-static void _bt_load(BTWriteState *wstate,
+static void _ei_uppershutdown(BTWriteState *wstate, BTPageState *state);
+static void _ei_load(BTWriteState *wstate,
 		 BTSpool *btspool, BTSpool *btspool2);
 
 
@@ -146,59 +95,11 @@ static void _bt_load(BTWriteState *wstate,
 
 
 /*
- * create and initialize a spool structure
- */
-BTSpool *
-_bt_spoolinit(Relation heap, Relation index, bool isunique, bool isdead)
-{
-	BTSpool    *btspool = (BTSpool *) palloc0(sizeof(BTSpool));
-	int			btKbytes;
-
-	btspool->heap = heap;
-	btspool->index = index;
-	btspool->isunique = isunique;
-
-	/*
-	 * We size the sort area as maintenance_work_mem rather than work_mem to
-	 * speed index creation.  This should be OK since a single backend can't
-	 * run multiple index creations in parallel.  Note that creation of a
-	 * unique index actually requires two BTSpool objects.  We expect that the
-	 * second one (for dead tuples) won't get very full, so we give it only
-	 * work_mem.
-	 */
-	btKbytes = isdead ? work_mem : maintenance_work_mem;
-	btspool->sortstate = tuplesort_begin_index_btree(heap, index, isunique,
-													 btKbytes, false);
-
-	return btspool;
-}
-
-/*
- * clean up a spool structure and its substructures.
- */
-void
-_bt_spooldestroy(BTSpool *btspool)
-{
-	tuplesort_end(btspool->sortstate);
-	pfree(btspool);
-}
-
-/*
- * spool an index entry into the sort file.
- */
-void
-_bt_spool(BTSpool *btspool, ItemPointer self, Datum *values, bool *isnull)
-{
-	tuplesort_putindextuplevalues(btspool->sortstate, btspool->index,
-								  self, values, isnull);
-}
-
-/*
  * given a spool loaded by successive calls to _bt_spool,
  * create an entire btree.
  */
 void
-_bt_leafbuild(BTSpool *btspool, BTSpool *btspool2)
+_ei_leafbuild(BTSpool *btspool, BTSpool *btspool2)
 {
 	BTWriteState wstate;
 
@@ -228,7 +129,7 @@ _bt_leafbuild(BTSpool *btspool, BTSpool *btspool2)
 	wstate.btws_pages_written = 0;
 	wstate.btws_zeropage = NULL;	/* until needed */
 
-	_bt_load(&wstate, btspool, btspool2);
+	_ei_load(&wstate, btspool, btspool2);
 }
 
 
@@ -449,7 +350,7 @@ _bt_sortaddtup(Page page,
  *----------
  */
 static void
-_bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
+_ei_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
 {
 	Page		npage;
 	BlockNumber nblkno;
@@ -547,15 +448,17 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
 
 		Assert(state->btps_minkey != NULL);
 		ItemPointerSet(&(state->btps_minkey->t_tid), oblkno, P_HIKEY);
-		_bt_buildadd(wstate, state->btps_next, state->btps_minkey);
+		_ei_buildadd(wstate, state->btps_next, state->btps_minkey);
 		pfree(state->btps_minkey);
 
 		/*
 		 * Save a copy of the minimum key for the new page.  We have to copy
 		 * it off the old page, not the new one, in case we are not at leaf
 		 * level.
+		 * And reduce unused attributes in index tuple.
 		 */
-		state->btps_minkey = CopyIndexTuple(oitup);
+		state->btps_minkey = _ei_reformTuple(oitup,
+											 RelationGetDescr(wstate->index));
 
 		/*
 		 * Set the sibling links for both pages.
@@ -590,7 +493,8 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
 	if (last_off == P_HIKEY)
 	{
 		Assert(state->btps_minkey == NULL);
-		state->btps_minkey = CopyIndexTuple(itup);
+		state->btps_minkey = _ei_reformTuple(itup,
+											 RelationGetDescr(wstate->index));
 	}
 
 	/*
@@ -608,7 +512,7 @@ _bt_buildadd(BTWriteState *wstate, BTPageState *state, IndexTuple itup)
  * Finish writing out the completed btree.
  */
 static void
-_bt_uppershutdown(BTWriteState *wstate, BTPageState *state)
+_ei_uppershutdown(BTWriteState *wstate, BTPageState *state)
 {
 	BTPageState *s;
 	BlockNumber rootblkno = P_NONE;
@@ -644,7 +548,7 @@ _bt_uppershutdown(BTWriteState *wstate, BTPageState *state)
 		{
 			Assert(s->btps_minkey != NULL);
 			ItemPointerSet(&(s->btps_minkey->t_tid), blkno, P_HIKEY);
-			_bt_buildadd(wstate, s->btps_next, s->btps_minkey);
+			_ei_buildadd(wstate, s->btps_next, s->btps_minkey);
 			pfree(s->btps_minkey);
 			s->btps_minkey = NULL;
 		}
@@ -674,7 +578,7 @@ _bt_uppershutdown(BTWriteState *wstate, BTPageState *state)
  * btree leaves.
  */
 static void
-_bt_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
+_ei_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
 {
 	BTPageState *state = NULL;
 	bool		merge = (btspool2 != NULL);
@@ -774,7 +678,7 @@ _bt_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
 
 			if (load1)
 			{
-				_bt_buildadd(wstate, state, itup);
+				_ei_buildadd(wstate, state, itup);
 				if (should_free)
 					pfree(itup);
 				itup = tuplesort_getindextuple(btspool->sortstate,
@@ -782,7 +686,7 @@ _bt_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
 			}
 			else
 			{
-				_bt_buildadd(wstate, state, itup2);
+				_ei_buildadd(wstate, state, itup2);
 				if (should_free2)
 					pfree(itup2);
 				itup2 = tuplesort_getindextuple(btspool2->sortstate,
@@ -801,14 +705,14 @@ _bt_load(BTWriteState *wstate, BTSpool *btspool, BTSpool *btspool2)
 			if (state == NULL)
 				state = _bt_pagestate(wstate, 0);
 
-			_bt_buildadd(wstate, state, itup);
+			_ei_buildadd(wstate, state, itup);
 			if (should_free)
 				pfree(itup);
 		}
 	}
 
 	/* Close down final pages and write the metapage */
-	_bt_uppershutdown(wstate, state);
+	_ei_uppershutdown(wstate, state);
 
 	/*
 	 * If the index is WAL-logged, we must fsync it down to disk before it's

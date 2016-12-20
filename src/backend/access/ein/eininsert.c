@@ -1,22 +1,22 @@
-/*-------------------------------------------------------------------------
+/*
+ * eininsert.c
+ *	  Item insertion in Edge Index.
  *
- * nbtinsert.c
- *	  Item insertion in Lehman and Yao btrees for Postgres.
+ * NOTES
+ *	  This file is based on nbtinsert.c. See README for more details.
  *
+ * Portions Copyright (c) 2016 by Bitnine Global, Inc.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
- *
  * IDENTIFICATION
- *	  src/backend/access/nbtree/nbtinsert.c
- *
- *-------------------------------------------------------------------------
+ *	  src/backend/access/ein/eininsert.c
  */
 
 #include "postgres.h"
 
+#include "access/ein.h"
 #include "access/heapam.h"
-#include "access/nbtree.h"
 #include "access/transam.h"
 #include "access/xloginsert.h"
 #include "miscadmin.h"
@@ -46,14 +46,14 @@ typedef struct
 } FindSplitData;
 
 
-static Buffer _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf);
+static Buffer _ei_newroot(Relation rel, Buffer lbuf, Buffer rbuf);
 
 static TransactionId _bt_check_unique(Relation rel, IndexTuple itup,
 				 Relation heapRel, Buffer buf, OffsetNumber offset,
 				 ScanKey itup_scankey,
 				 IndexUniqueCheck checkUnique, bool *is_unique,
 				 uint32 *speculativeToken);
-static void _bt_findinsertloc(Relation rel,
+static void _ei_findinsertloc(Relation rel,
 				  Buffer *bufptr,
 				  OffsetNumber *offsetptr,
 				  int keysz,
@@ -61,7 +61,7 @@ static void _bt_findinsertloc(Relation rel,
 				  IndexTuple newtup,
 				  BTStack stack,
 				  Relation heapRel);
-static void _bt_insertonpg(Relation rel, Buffer buf, Buffer cbuf,
+static void _ei_insertonpg(Relation rel, Buffer buf, Buffer cbuf,
 			   BTStack stack,
 			   IndexTuple itup,
 			   OffsetNumber newitemoff,
@@ -69,7 +69,7 @@ static void _bt_insertonpg(Relation rel, Buffer buf, Buffer cbuf,
 static Buffer _bt_split(Relation rel, Buffer buf, Buffer cbuf,
 		  OffsetNumber firstright, OffsetNumber newitemoff, Size newitemsz,
 		  IndexTuple newitem, bool newitemonleft);
-static void _bt_insert_parent(Relation rel, Buffer buf, Buffer rbuf,
+static void _ei_insert_parent(Relation rel, Buffer buf, Buffer rbuf,
 				  BTStack stack, bool is_root, bool is_only);
 static OffsetNumber _bt_findsplitloc(Relation rel, Page page,
 				 OffsetNumber newitemoff,
@@ -104,7 +104,7 @@ static void _bt_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel);
  *		that's just a coding artifact.)
  */
 bool
-_bt_doinsert(Relation rel, IndexTuple itup,
+_ei_doinsert(Relation rel, IndexTuple itup,
 			 IndexUniqueCheck checkUnique, Relation heapRel)
 {
 	bool		is_unique = false;
@@ -119,7 +119,7 @@ _bt_doinsert(Relation rel, IndexTuple itup,
 
 top:
 	/* find the first page containing this key */
-	stack = _bt_search(rel, natts, itup_scankey, false, &buf, BT_WRITE, NULL);
+	stack = _ei_search(rel, natts, itup_scankey, false, &buf, BT_WRITE, NULL);
 
 	offset = InvalidOffsetNumber;
 
@@ -134,7 +134,7 @@ top:
 	 * move right in the tree.  See Lehman and Yao for an excruciatingly
 	 * precise description.
 	 */
-	buf = _bt_moveright(rel, buf, natts, itup_scankey, false,
+	buf = _ei_moveright(rel, buf, natts, itup_scankey, false,
 						true, stack, BT_WRITE, NULL);
 
 	/*
@@ -163,7 +163,7 @@ top:
 		TransactionId xwait;
 		uint32		speculativeToken;
 
-		offset = _bt_binsrch(rel, buf, natts, itup_scankey, false);
+		offset = _ei_binsrch(rel, buf, natts, itup_scankey, false);
 		xwait = _bt_check_unique(rel, itup, heapRel, buf, offset, itup_scankey,
 								 checkUnique, &is_unique, &speculativeToken);
 
@@ -199,9 +199,9 @@ top:
 		 */
 		CheckForSerializableConflictIn(rel, NULL, buf);
 		/* do the insertion */
-		_bt_findinsertloc(rel, &buf, &offset, natts, itup_scankey, itup,
+		_ei_findinsertloc(rel, &buf, &offset, natts, itup_scankey, itup,
 						  stack, heapRel);
-		_bt_insertonpg(rel, buf, InvalidBuffer, stack, itup, offset, false);
+		_ei_insertonpg(rel, buf, InvalidBuffer, stack, itup, offset, false);
 	}
 	else
 	{
@@ -537,7 +537,7 @@ _bt_check_unique(Relation rel, IndexTuple itup, Relation heapRel,
  *		type scan key for it.
  */
 static void
-_bt_findinsertloc(Relation rel,
+_ei_findinsertloc(Relation rel,
 				  Buffer *bufptr,
 				  OffsetNumber *offsetptr,
 				  int keysz,
@@ -629,7 +629,7 @@ _bt_findinsertloc(Relation rel,
 		 * nope, so check conditions (b) and (c) enumerated above
 		 */
 		if (P_RIGHTMOST(lpageop) ||
-			_bt_compare(rel, keysz, scankey, page, P_HIKEY) != 0 ||
+			_ei_compare(rel, keysz, scankey, page, P_HIKEY) != 0 ||
 			random() <= (MAX_RANDOM_VALUE / 100))
 			break;
 
@@ -658,7 +658,7 @@ _bt_findinsertloc(Relation rel,
 			 */
 			if (P_INCOMPLETE_SPLIT(lpageop))
 			{
-				_bt_finish_split(rel, rbuf, stack);
+				_ei_finish_split(rel, rbuf, stack);
 				rbuf = InvalidBuffer;
 				continue;
 			}
@@ -690,7 +690,7 @@ _bt_findinsertloc(Relation rel,
 	else if (firstlegaloff != InvalidOffsetNumber && !vacuumed)
 		newitemoff = firstlegaloff;
 	else
-		newitemoff = _bt_binsrch(rel, buf, keysz, scankey, false);
+		newitemoff = _ei_binsrch(rel, buf, keysz, scankey, false);
 
 	*bufptr = buf;
 	*offsetptr = newitemoff;
@@ -730,7 +730,7 @@ _bt_findinsertloc(Relation rel,
  *----------
  */
 static void
-_bt_insertonpg(Relation rel,
+_ei_insertonpg(Relation rel,
 			   Buffer buf,
 			   Buffer cbuf,
 			   BTStack stack,
@@ -800,7 +800,7 @@ _bt_insertonpg(Relation rel,
 		 * for the reasoning).
 		 *----------
 		 */
-		_bt_insert_parent(rel, buf, rbuf, stack, is_root, is_only);
+		_ei_insert_parent(rel, buf, rbuf, stack, is_root, is_only);
 	}
 	else
 	{
@@ -1630,7 +1630,7 @@ _bt_checksplitloc(FindSplitData *state,
  * is_only - we split a page alone on its level (might have been fast root)
  */
 static void
-_bt_insert_parent(Relation rel,
+_ei_insert_parent(Relation rel,
 				  Buffer buf,
 				  Buffer rbuf,
 				  BTStack stack,
@@ -1657,7 +1657,7 @@ _bt_insert_parent(Relation rel,
 		Assert(stack == NULL);
 		Assert(is_only);
 		/* create a new root node and update the metapage */
-		rootbuf = _bt_newroot(rel, buf, rbuf);
+		rootbuf = _ei_newroot(rel, buf, rbuf);
 		/* release the split buffers */
 		_bt_relbuf(rel, rootbuf);
 		_bt_relbuf(rel, rbuf);
@@ -1695,8 +1695,8 @@ _bt_insert_parent(Relation rel,
 		ritem = (IndexTuple) PageGetItem(page,
 										 PageGetItemId(page, P_HIKEY));
 
-		/* form an index tuple that points at the new right page */
-		new_item = CopyIndexTuple(ritem);
+		/* form an 1 key index tuple that points at the new right page */
+		new_item = _ei_reformTuple(ritem, RelationGetDescr(rel));
 		ItemPointerSet(&(new_item->t_tid), rbknum, P_HIKEY);
 
 		/*
@@ -1707,7 +1707,7 @@ _bt_insert_parent(Relation rel,
 		 * 05/27/97
 		 */
 		ItemPointerSet(&(stack->bts_btentry.t_tid), bknum, P_HIKEY);
-		pbuf = _bt_getstackbuf(rel, stack, BT_WRITE);
+		pbuf = _ei_getstackbuf(rel, stack, BT_WRITE);
 
 		/*
 		 * Now we can unlock the right child. The left child will be unlocked
@@ -1721,7 +1721,7 @@ _bt_insert_parent(Relation rel,
 				 RelationGetRelationName(rel), bknum, rbknum);
 
 		/* Recursively update the parent */
-		_bt_insertonpg(rel, pbuf, buf, stack->bts_parent,
+		_ei_insertonpg(rel, pbuf, buf, stack->bts_parent,
 					   new_item, stack->bts_offset + 1,
 					   is_only);
 
@@ -1741,7 +1741,7 @@ _bt_insert_parent(Relation rel,
  * and unpinned.
  */
 void
-_bt_finish_split(Relation rel, Buffer lbuf, BTStack stack)
+_ei_finish_split(Relation rel, Buffer lbuf, BTStack stack)
 {
 	Page		lpage = BufferGetPage(lbuf);
 	BTPageOpaque lpageop = (BTPageOpaque) PageGetSpecialPointer(lpage);
@@ -1783,7 +1783,7 @@ _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack)
 	elog(DEBUG1, "finishing incomplete split of %u/%u",
 		 BufferGetBlockNumber(lbuf), BufferGetBlockNumber(rbuf));
 
-	_bt_insert_parent(rel, lbuf, rbuf, stack, was_root, was_only);
+	_ei_insert_parent(rel, lbuf, rbuf, stack, was_root, was_only);
 }
 
 /*
@@ -1800,7 +1800,7 @@ _bt_finish_split(Relation rel, Buffer lbuf, BTStack stack)
  *		Returns InvalidBuffer if item not found (should not happen).
  */
 Buffer
-_bt_getstackbuf(Relation rel, BTStack stack, int access)
+_ei_getstackbuf(Relation rel, BTStack stack, int access)
 {
 	BlockNumber blkno;
 	OffsetNumber start;
@@ -1820,7 +1820,7 @@ _bt_getstackbuf(Relation rel, BTStack stack, int access)
 
 		if (access == BT_WRITE && P_INCOMPLETE_SPLIT(opaque))
 		{
-			_bt_finish_split(rel, buf, stack->bts_parent);
+			_ei_finish_split(rel, buf, stack->bts_parent);
 			continue;
 		}
 
@@ -1919,7 +1919,7 @@ _bt_getstackbuf(Relation rel, BTStack stack, int access)
  *		lbuf, rbuf & rootbuf.
  */
 static Buffer
-_bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
+_ei_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 {
 	Buffer		rootbuf;
 	Page		lpage,
@@ -1971,7 +1971,7 @@ _bt_newroot(Relation rel, Buffer lbuf, Buffer rbuf)
 	itemid = PageGetItemId(lpage, P_HIKEY);
 	right_item_sz = ItemIdGetLength(itemid);
 	item = (IndexTuple) PageGetItem(lpage, itemid);
-	right_item = CopyIndexTuple(item);
+	right_item = _ei_reformTuple(item, RelationGetDescr(rel));
 	ItemPointerSet(&(right_item->t_tid), rbkno, P_HIKEY);
 
 	/* NO EREPORT(ERROR) from here till newroot op is logged */
@@ -2203,4 +2203,27 @@ _bt_vacuum_one_page(Relation rel, Buffer buffer, Relation heapRel)
 	 * separate write to clear it, however.  We will clear it when we split
 	 * the page.
 	 */
+}
+
+
+/* make 1 key index tuple from given itup */
+IndexTuple
+_ei_reformTuple(IndexTuple itup, TupleDesc tupDesc)
+{
+   Datum       values[INDEX_MAX_KEYS];
+   bool        isnull[INDEX_MAX_KEYS];
+   IndexTuple  result;
+   int         oldnatts;
+
+   index_deform_tuple(itup, tupDesc, values, isnull);
+
+   oldnatts = tupDesc->natts;
+
+   tupDesc->natts = 1;
+
+   result = index_form_tuple(tupDesc, values, isnull);
+
+   tupDesc->natts = oldnatts;
+
+   return result;
 }
