@@ -3434,14 +3434,14 @@ makeEdgeIndex(RangeVar *label)
 	start_idx->idxname = ChooseRelationName(labname, AG_START_ID,
 											"idx", graphid);
 	start_idx->relation = copyObject(label);
-	start_idx->accessMethod = "btree";
+	start_idx->accessMethod = "ein";
 	start_idx->indexParams = list_make3(start_col, end_col, id_col);
 
 	end_idx = makeNode(IndexStmt);
 	end_idx->idxname = ChooseRelationName(labname, AG_END_ID,
 										  "idx", graphid);
 	end_idx->relation = copyObject(label);
-	end_idx->accessMethod = "btree";
+	end_idx->accessMethod = "ein";
 	end_idx->indexParams = list_make3(end_col, start_col, id_col);
 
 	prop_idx = makeNode(IndexStmt);
