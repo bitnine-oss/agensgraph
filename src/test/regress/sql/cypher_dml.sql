@@ -319,7 +319,7 @@ MATCH (a:repo {'name': 'agens-graph'})
 LOAD FROM history AS h
 CREATE (:feature {'name': (h).event})-[:supported]->(a);
 
-MATCH p=(a)-[:supported]->() RETURN properties(a) AS a;
+MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
 
 --
 -- DELETE

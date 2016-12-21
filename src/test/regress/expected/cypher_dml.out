@@ -825,11 +825,11 @@ CREATE ELABEL supported;
 MATCH (a:repo {'name': 'agens-graph'})
 LOAD FROM history AS h
 CREATE (:feature {'name': (h).event})-[:supported]->(a);
-MATCH p=(a)-[:supported]->() RETURN properties(a) AS a;
+MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
            a            
 ------------------------
- {"name": "PostgreSQL"}
  {"name": "Graph"}
+ {"name": "PostgreSQL"}
 (2 rows)
 
 --
