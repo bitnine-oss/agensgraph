@@ -1,0 +1,10 @@
+# Global excludes across all subdirectories
+*.o
+*.so
+tags
+regression.*
+
+# Generated subdirectories
+/log/
+/results/
+/tmp_check/
