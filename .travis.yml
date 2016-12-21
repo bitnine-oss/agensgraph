@@ -5,7 +5,7 @@ env:
  - AGDATA=`pwd`/data PGPORT=54333
 
 before_script:
- - ./configure --prefix=`pwd`
+ - ./configure --prefix="$(pwd)"
  - make install-world
  - bin/initdb
  - bin/pg_ctl start && sleep 3
