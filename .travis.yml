@@ -2,12 +2,13 @@ language: c
 dist: trusty
 sudo: required
 env:
- - AGDATA=`pwd`/data PGPORT=54333
+ - AGDATA=`pwd`/data PGPORT=61958
 
 before_script:
- - ./configure --prefix=`pwd`
- - make install-world
- - bin/initdb
- - bin/pg_ctl start && sleep 3
+ - ./configure --prefix="$(pwd)"
+ - export PATH="$(pwd)"/bin:$PATH
+ - make install-world > /dev/null
+ - initdb
+ - pg_ctl start -w
 
 script: make installcheck
