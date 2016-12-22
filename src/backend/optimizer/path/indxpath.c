@@ -1780,6 +1780,31 @@ find_list_position(Node *node, List **nodelist)
 	return i;
 }
 
+static bool
+match_index_to_expr(Node *clause, IndexOptInfo *index)
+{
+	Node *leftop;
+	Node *rightop;
+	int indexcol;
+
+	if (!is_opclause(clause))
+		return false;
+
+	leftop = get_leftop((Expr *)clause);
+	rightop = get_rightop((Expr *)clause);
+	if (!leftop || !rightop)
+		return false;
+
+	for (indexcol = 0; indexcol < index->ncolumns; indexcol++)
+	{
+		if (index->indexkeys[indexcol] == 0 && 
+				(match_index_to_operand(leftop, indexcol, index) || 
+				 match_index_to_operand(rightop, indexcol, index)))
+			return true;
+	}
+
+	return false;
+}
 
 /*
  * check_index_only
@@ -1825,6 +1850,8 @@ check_index_only(RelOptInfo *rel, IndexOptInfo *index)
 	{
 		RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
 
+		if (match_index_to_expr((Node *) rinfo->clause, index))
+			continue;
 		pull_varattnos((Node *) rinfo->clause, rel->relid, &attrs_used);
 	}
 
