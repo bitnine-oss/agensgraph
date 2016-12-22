@@ -6,6 +6,8 @@ env:
 
 before_script:
  - ./configure --prefix="$(pwd)"
+ - make install
+ - export PATH="$(pwd)"/bin:$PATH
  - make install-world
  - bin/initdb
  - bin/pg_ctl start && sleep 3
