@@ -7585,3 +7585,295 @@ brincostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 
 	/* XXX what about pages_per_range? */
 }
+
+void
+eicostestimate(PlannerInfo *root, IndexPath *path, double loop_count,
+			   Cost *indexStartupCost, Cost *indexTotalCost,
+			   Selectivity *indexSelectivity, double *indexCorrelation)
+{
+	IndexOptInfo *index = path->indexinfo;
+	List	   *qinfos;
+	GenericCosts costs;
+	Oid			relid;
+	AttrNumber	colnum;
+	VariableStatData vardata;
+	double		numIndexTuples;
+	Cost		descentCost;
+	List	   *indexBoundQuals;
+	int			indexcol;
+	bool		eqQualHere;
+	bool		found_saop;
+	bool		found_is_null_op;
+	double		num_sa_scans;
+	ListCell   *lc;
+
+	/* Do preliminary analysis of indexquals */
+	qinfos = deconstruct_indexquals(path);
+
+	/*
+	 * For a btree scan, only leading '=' quals plus inequality quals for the
+	 * immediately next attribute contribute to index selectivity (these are
+	 * the "boundary quals" that determine the starting and stopping points of
+	 * the index scan).  Additional quals can suppress visits to the heap, so
+	 * it's OK to count them in indexSelectivity, but they should not count
+	 * for estimating numIndexTuples.  So we must examine the given indexquals
+	 * to find out which ones count as boundary quals.  We rely on the
+	 * knowledge that they are given in index column order.
+	 *
+	 * For a RowCompareExpr, we consider only the first column, just as
+	 * rowcomparesel() does.
+	 *
+	 * If there's a ScalarArrayOpExpr in the quals, we'll actually perform N
+	 * index scans not one, but the ScalarArrayOpExpr's operator can be
+	 * considered to act the same as it normally does.
+	 */
+	indexBoundQuals = NIL;
+	indexcol = 0;
+	eqQualHere = false;
+	found_saop = false;
+	found_is_null_op = false;
+	num_sa_scans = 1;
+	foreach(lc, qinfos)
+	{
+		IndexQualInfo *qinfo = (IndexQualInfo *) lfirst(lc);
+		RestrictInfo *rinfo = qinfo->rinfo;
+		Expr	   *clause = rinfo->clause;
+		Oid			clause_op;
+		int			op_strategy;
+
+		if (indexcol != qinfo->indexcol)
+		{
+			/* Beginning of a new column's quals */
+			if (!eqQualHere)
+				break;			/* done if no '=' qual for indexcol */
+			eqQualHere = false;
+			indexcol++;
+			if (indexcol != qinfo->indexcol)
+				break;			/* no quals at all for indexcol */
+		}
+
+		if (IsA(clause, ScalarArrayOpExpr))
+		{
+			int			alength = estimate_array_length(qinfo->other_operand);
+
+			found_saop = true;
+			/* count up number of SA scans induced by indexBoundQuals only */
+			if (alength > 1)
+				num_sa_scans *= alength;
+		}
+		else if (IsA(clause, NullTest))
+		{
+			NullTest   *nt = (NullTest *) clause;
+
+			if (nt->nulltesttype == IS_NULL)
+			{
+				found_is_null_op = true;
+				/* IS NULL is like = for selectivity determination purposes */
+				eqQualHere = true;
+			}
+		}
+
+		/*
+		 * We would need to commute the clause_op if not varonleft, except
+		 * that we only care if it's equality or not, so that refinement is
+		 * unnecessary.
+		 */
+		clause_op = qinfo->clause_op;
+
+		/* check for equality operator */
+		if (OidIsValid(clause_op))
+		{
+			op_strategy = get_op_opfamily_strategy(clause_op,
+												   index->opfamily[indexcol]);
+			Assert(op_strategy != 0);	/* not a member of opfamily?? */
+			if (op_strategy == BTEqualStrategyNumber)
+				eqQualHere = true;
+		}
+
+		indexBoundQuals = lappend(indexBoundQuals, rinfo);
+	}
+
+	/*
+	 * If index is unique and we found an '=' clause for each column, we can
+	 * just assume numIndexTuples = 1 and skip the expensive
+	 * clauselist_selectivity calculations.  However, a ScalarArrayOp or
+	 * NullTest invalidates that theory, even though it sets eqQualHere.
+	 */
+	if (index->unique &&
+		indexcol == index->ncolumns - 1 &&
+		eqQualHere &&
+		!found_saop &&
+		!found_is_null_op)
+		numIndexTuples = 1.0;
+	else
+	{
+		List	   *selectivityQuals;
+		Selectivity btreeSelectivity;
+
+		/*
+		 * If the index is partial, AND the index predicate with the
+		 * index-bound quals to produce a more accurate idea of the number of
+		 * rows covered by the bound conditions.
+		 */
+		selectivityQuals = add_predicate_to_quals(index, indexBoundQuals);
+
+		btreeSelectivity = clauselist_selectivity(root, selectivityQuals,
+												  index->rel->relid,
+												  JOIN_INNER,
+												  NULL);
+		numIndexTuples = btreeSelectivity * index->rel->tuples;
+
+		/*
+		 * As in genericcostestimate(), we have to adjust for any
+		 * ScalarArrayOpExpr quals included in indexBoundQuals, and then round
+		 * to integer.
+		 */
+		numIndexTuples = rint(numIndexTuples / num_sa_scans);
+	}
+
+	/*
+	 * Now do generic index cost estimation.
+	 */
+	MemSet(&costs, 0, sizeof(costs));
+	costs.numIndexTuples = numIndexTuples;
+
+	genericcostestimate(root, path, loop_count, qinfos, &costs);
+
+	/*
+	 * Add a CPU-cost component to represent the costs of initial btree
+	 * descent.  We don't charge any I/O cost for touching upper btree levels,
+	 * since they tend to stay in cache, but we still have to do about log2(N)
+	 * comparisons to descend a btree of N leaf tuples.  We charge one
+	 * cpu_operator_cost per comparison.
+	 *
+	 * If there are ScalarArrayOpExprs, charge this once per SA scan.  The
+	 * ones after the first one are not startup cost so far as the overall
+	 * plan is concerned, so add them only to "total" cost.
+	 */
+	if (index->tuples > 1)		/* avoid computing log(0) */
+	{
+		descentCost = ceil(log(index->tuples) / log(2.0)) * cpu_operator_cost;
+		costs.indexStartupCost += descentCost;
+		costs.indexTotalCost += costs.num_sa_scans * descentCost;
+	}
+
+	/*
+	 * Even though we're not charging I/O cost for touching upper btree pages,
+	 * it's still reasonable to charge some CPU cost per page descended
+	 * through.  Moreover, if we had no such charge at all, bloated indexes
+	 * would appear to have the same search cost as unbloated ones, at least
+	 * in cases where only a single leaf page is expected to be visited.  This
+	 * cost is somewhat arbitrarily set at 50x cpu_operator_cost per page
+	 * touched.  The number of such pages is btree tree height plus one (ie,
+	 * we charge for the leaf page too).  As above, charge once per SA scan.
+	 */
+	descentCost = (index->tree_height + 1) * 50.0 * cpu_operator_cost;
+	costs.indexStartupCost += descentCost;
+	costs.indexTotalCost += costs.num_sa_scans * descentCost;
+
+	/*
+	 * If we can get an estimate of the first column's ordering correlation C
+	 * from pg_statistic, estimate the index correlation as C for a
+	 * single-column index, or C * 0.75 for multiple columns. (The idea here
+	 * is that multiple columns dilute the importance of the first column's
+	 * ordering, but don't negate it entirely.  Before 8.0 we divided the
+	 * correlation by the number of columns, but that seems too strong.)
+	 */
+	MemSet(&vardata, 0, sizeof(vardata));
+
+	if (index->indexkeys[0] != 0)
+	{
+		/* Simple variable --- look to stats for the underlying table */
+		RangeTblEntry *rte = planner_rt_fetch(index->rel->relid, root);
+
+		Assert(rte->rtekind == RTE_RELATION);
+		relid = rte->relid;
+		Assert(relid != InvalidOid);
+		colnum = index->indexkeys[0];
+
+		if (get_relation_stats_hook &&
+			(*get_relation_stats_hook) (root, rte, colnum, &vardata))
+		{
+			/*
+			 * The hook took control of acquiring a stats tuple.  If it did
+			 * supply a tuple, it'd better have supplied a freefunc.
+			 */
+			if (HeapTupleIsValid(vardata.statsTuple) &&
+				!vardata.freefunc)
+				elog(ERROR, "no function provided to release variable stats with");
+		}
+		else
+		{
+			vardata.statsTuple = SearchSysCache3(STATRELATTINH,
+												 ObjectIdGetDatum(relid),
+												 Int16GetDatum(colnum),
+												 BoolGetDatum(rte->inh));
+			vardata.freefunc = ReleaseSysCache;
+		}
+	}
+	else
+	{
+		/* Expression --- maybe there are stats for the index itself */
+		relid = index->indexoid;
+		colnum = 1;
+
+		if (get_index_stats_hook &&
+			(*get_index_stats_hook) (root, relid, colnum, &vardata))
+		{
+			/*
+			 * The hook took control of acquiring a stats tuple.  If it did
+			 * supply a tuple, it'd better have supplied a freefunc.
+			 */
+			if (HeapTupleIsValid(vardata.statsTuple) &&
+				!vardata.freefunc)
+				elog(ERROR, "no function provided to release variable stats with");
+		}
+		else
+		{
+			vardata.statsTuple = SearchSysCache3(STATRELATTINH,
+												 ObjectIdGetDatum(relid),
+												 Int16GetDatum(colnum),
+												 BoolGetDatum(false));
+			vardata.freefunc = ReleaseSysCache;
+		}
+	}
+
+	if (HeapTupleIsValid(vardata.statsTuple))
+	{
+		Oid			sortop;
+		float4	   *numbers;
+		int			nnumbers;
+
+		sortop = get_opfamily_member(index->opfamily[0],
+									 index->opcintype[0],
+									 index->opcintype[0],
+									 BTLessStrategyNumber);
+		if (OidIsValid(sortop) &&
+			get_attstatsslot(vardata.statsTuple, InvalidOid, 0,
+							 STATISTIC_KIND_CORRELATION,
+							 sortop,
+							 NULL,
+							 NULL, NULL,
+							 &numbers, &nnumbers))
+		{
+			double		varCorrelation;
+
+			Assert(nnumbers == 1);
+			varCorrelation = numbers[0];
+
+			if (index->ncolumns > 1)
+				costs.indexCorrelation = varCorrelation * 0.75;
+			else
+				costs.indexCorrelation = varCorrelation;
+
+			free_attstatsslot(InvalidOid, NULL, 0, numbers, nnumbers);
+		}
+	}
+
+	ReleaseVariableStats(vardata);
+
+	*indexStartupCost = costs.indexStartupCost;
+	*indexTotalCost = costs.indexTotalCost;
+	*indexSelectivity = costs.indexSelectivity;
+	*indexCorrelation = costs.indexCorrelation;
+}
