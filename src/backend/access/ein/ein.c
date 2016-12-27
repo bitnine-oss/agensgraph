@@ -103,7 +103,7 @@ eihandler(PG_FUNCTION_ARGS)
 	amroutine->ambulkdelete = eibulkdelete;
 	amroutine->amvacuumcleanup = eivacuumcleanup;
 	amroutine->amcanreturn = btcanreturn;
-	amroutine->amcostestimate = btcostestimate;
+	amroutine->amcostestimate = eicostestimate;
 	amroutine->amoptions = btoptions;
 	amroutine->amproperty = btproperty;
 	amroutine->amvalidate = btvalidate;
