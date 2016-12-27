@@ -854,6 +854,10 @@ InitScanLabelSkipIdx(IndexScanState *node)
 		if (skey->sk_attno != 1)
 			continue;
 
+		/* index on `id` column has no expression */
+		if (index->rd_indexprs != NULL)
+			continue;
+
 		/* assume `id` column of graph vertex label is indexed by BTree */
 		opfamily = index->rd_opfamily[skey->sk_attno - 1];
 		if (opfamily != GRAPHID_BTREE_FAM_OID)
