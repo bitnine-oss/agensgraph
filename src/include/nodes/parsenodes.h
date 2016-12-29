@@ -3222,8 +3222,7 @@ typedef enum CSPKind
 {
 	CSP_EXISTS,
 	CSP_SIZE,
-	CSP_SP_ONE, 			/* shortestpath */
-	CSP_SP_ALL  			/* allshortestpath */
+	CSP_SHORTESTPATH 		/* [all]shortestpath */
 } CSPKind;
 
 typedef struct CypherSubPattern

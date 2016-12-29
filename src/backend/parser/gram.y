@@ -603,7 +603,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 
 /* ordinary key words in alphabetical order */
 %token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
-	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
+	AGGREGATE ALL ALLSHORTESTPATH ALSO ALTER ALWAYS ANALYSE ANALYZE AND
+	ANY ARRAY AS ASC
 	ASSERT ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
@@ -749,7 +750,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			DELETE_P DETACH LOAD OPTIONAL REMOVE SIZE SKIP SHORTESTPATH
+			DELETE_P DETACH LOAD OPTIONAL REMOVE SIZE SKIP
+			SHORTESTPATH ALLSHORTESTPATH
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -12322,7 +12324,7 @@ c_expr:		columnref								{ $$ = $1; }
 					SubLink *n;
 
 					sub = makeNode(CypherSubPattern);
-					sub->kind = CSP_SP_ONE;
+					sub->kind = CSP_SHORTESTPATH;
 					sub->pattern = list_make1($1);
 					n = makeNode(SubLink);
 					n->subLinkType = EXPR_SUBLINK;
@@ -12845,6 +12847,23 @@ shortestpath_expr:
 					p = makeNode(CypherPath);
 					p->chain = $3;
 					p->spkind = CPATHSP_ONE;
+
+					$$ = (Node *)p;
+				}
+			| ALLSHORTESTPATH '(' cypher_path_chain ')'
+				{
+					CypherPath *p;
+
+					if (list_length($3) != 3)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("invalid cypher path"),
+								 parser_errposition(@3)));
+					}
+					p = makeNode(CypherPath);
+					p->chain = $3;
+					p->spkind = CPATHSP_ALL;
 
 					$$ = (Node *)p;
 				}
@@ -13964,6 +13983,7 @@ unreserved_keyword:
 			| ADMIN
 			| AFTER
 			| AGGREGATE
+			| ALLSHORTESTPATH
 			| ALSO
 			| ALTER
 			| ALWAYS
