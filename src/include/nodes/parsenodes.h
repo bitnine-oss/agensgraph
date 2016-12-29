@@ -3221,7 +3221,9 @@ typedef struct CypherStmt
 typedef enum CSPKind
 {
 	CSP_EXISTS,
-	CSP_SIZE
+	CSP_SIZE,
+	CSP_SP_ONE, 			/* shortestpath */
+	CSP_SP_ALL  			/* allshortestpath */
 } CSPKind;
 
 typedef struct CypherSubPattern
@@ -3305,11 +3307,19 @@ typedef struct CypherLoadClause
 	RangeVar   *relation;	/* a relation to load */
 } CypherLoadClause;
 
+typedef enum CPathSPKind
+{
+	CPATHSP_NONE,
+	CPATHSP_ONE,
+	CPATHSP_ALL
+} CPathSPKind;
+
 typedef struct CypherPath
 {
 	NodeTag		type;
 	Node	   *variable;	/* CypherName */
 	List	   *chain;		/* node, relationship, node, ... */
+	CPathSPKind spkind;     /* shoreteset path */
 } CypherPath;
 
 typedef struct CypherNode
