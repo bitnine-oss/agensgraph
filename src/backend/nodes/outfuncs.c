@@ -3475,6 +3475,7 @@ _outCypherPath(StringInfo str, const CypherPath *node)
 {
 	WRITE_NODE_TYPE("CYPHERPATH");
 
+	WRITE_ENUM_FIELD(kind, CPathKind);
 	WRITE_NODE_FIELD(variable);
 	WRITE_NODE_FIELD(chain);
 }
