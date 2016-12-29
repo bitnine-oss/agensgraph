@@ -567,9 +567,9 @@ static Node *wrapCypherWithSelect(Node *stmt);
 				cypher_read cypher_read_clauses cypher_read_opt
 				cypher_read_opt_parens cypher_read_stmt cypher_read_with_parens
 				cypher_rel cypher_remove cypher_return cypher_rmitem cypher_set
-				cypher_setitem cypher_skip_opt cypher_variable
-				cypher_variable_opt cypher_varlen_opt cypher_with
-				cypher_with_parens
+				cypher_setitem cypher_shortestpath_expr cypher_skip_opt
+				cypher_variable cypher_variable_opt cypher_varlen_opt
+				cypher_with cypher_with_parens
 %type <list>	cypher_distinct_opt cypher_expr_list cypher_rmitem_list
 				cypher_path_chain cypher_path_chain_opt_parens cypher_pattern
 				cypher_setitem_list cypher_types cypher_types_opt
@@ -603,7 +603,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 
 /* ordinary key words in alphabetical order */
 %token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
-	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
+	AGGREGATE ALL ALLSHORTESTPATHS ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY
+	ARRAY AS ASC
 	ASSERT ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
@@ -667,7 +668,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	ROLLUP ROW ROWS RULE
 
 	SAVEPOINT SCHEMA SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
-	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW SIMILAR
+	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHORTESTPATH
+	SHOW SIMILAR
 	SIMPLE SIZE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P START
 	STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P SUBSTRING
 	SYMMETRIC SYSID SYSTEM_P
@@ -742,13 +744,14 @@ static Node *wrapCypherWithSelect(Node *stmt);
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
  * To support Cypher, the precedence of unreserved keywords,
- * DELETE_P, DETACH, LOAD, OPTIONAL, REMOVE, SIZE and SKIP must be the same as
- * that of IDENT so that they can follow a_expr without creating
- * postfix-operator problems.
+ * ALLSHORTESTPATHS, DELETE_P, DETACH, LOAD, OPTIONAL, REMOVE, SHORTESTPATH,
+ * SIZE and SKIP must be the same as that of IDENT so that they can follow
+ * a_expr without creating postfix-operator problems.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			DELETE_P DETACH LOAD OPTIONAL REMOVE SIZE SKIP
+			ALLSHORTESTPATHS DELETE_P DETACH LOAD OPTIONAL REMOVE SHORTESTPATH
+			SIZE SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -12315,6 +12318,20 @@ c_expr:		columnref								{ $$ = $1; }
 					n->location = @1;
 					$$ = (Node *)n;
 				}
+			| cypher_shortestpath_expr
+				{
+					CypherSubPattern *sub = makeNode(CypherSubPattern);
+					SubLink *n = makeNode(SubLink);
+					sub->kind = CSP_SHORTESTPATH;
+					sub->pattern = list_make1($1);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *)n;
+				}
 			| ARRAY select_with_parens
 				{
 					SubLink *n = makeNode(SubLink);
@@ -13925,6 +13942,7 @@ unreserved_keyword:
 			| ADMIN
 			| AFTER
 			| AGGREGATE
+			| ALLSHORTESTPATHS
 			| ALSO
 			| ALTER
 			| ALWAYS
@@ -14136,6 +14154,7 @@ unreserved_keyword:
 			| SET
 			| SETS
 			| SHARE
+			| SHORTESTPATH
 			| SHOW
 			| SIMPLE
 			| SIZE
@@ -15025,16 +15044,57 @@ cypher_path_opt_varirable:
 					n->variable = $1;
 					$$ = (Node *) n;
 				}
+			| cypher_shortestpath_expr
+			| cypher_variable '=' cypher_shortestpath_expr
+				{
+					CypherPath *n = (CypherPath *) $3;
+					n->variable = $1;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_path:
 			cypher_path_chain_opt_parens
 				{
 					CypherPath *n = makeNode(CypherPath);
+					n->kind = CPATH_NORMAL;
 					n->chain = $1;
 					$$ = (Node *) n;
 				}
 		;
+
+cypher_shortestpath_expr:
+			SHORTESTPATH '(' cypher_path_chain ')'
+				{
+					CypherPath *n;
+
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					n = makeNode(CypherPath);
+					n->kind = CPATH_SHORTEST;
+					n->chain = $3;
+					$$ = (Node *) n;
+				}
+			| ALLSHORTESTPATHS '(' cypher_path_chain ')'
+				{
+					CypherPath *n;
+
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					n = makeNode(CypherPath);
+					n->kind = CPATH_SHORTEST_ALL;
+					n->chain = $3;
+					$$ = (Node *) n;
+				}
+			;
 
 cypher_path_chain_opt_parens:
 			cypher_path_chain

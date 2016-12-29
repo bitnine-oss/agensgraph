@@ -4419,6 +4419,7 @@ _copyCypherPath(const CypherPath *from)
 {
 	CypherPath *newnode = makeNode(CypherPath);
 
+	COPY_SCALAR_FIELD(kind);
 	COPY_NODE_FIELD(variable);
 	COPY_NODE_FIELD(chain);
 
