@@ -12844,6 +12844,7 @@ shortestpath_expr:
 					}
 					p = makeNode(CypherPath);
 					p->chain = $3;
+					p->spkind = CPATHSP_ONE;
 
 					$$ = (Node *)p;
 				}
@@ -15065,17 +15066,10 @@ cypher_path_opt_varirable:
 					$$ = (Node *) n;
 				}
 			| shortestpath_expr
-				{
-					CypherPath *n = (CypherPath *) $1;
-					n->spkind = CPATHSP_ONE;
-					$$ = (Node *) n;
-
-				}
 			| cypher_variable '=' shortestpath_expr
 				{
 					CypherPath *n = (CypherPath *) $3;
 					n->variable = $1;
-					n->spkind = CPATHSP_ONE;
 					$$ = (Node *) n;
 				}
 		;
