@@ -14738,6 +14738,7 @@ cypher_read_opt_parens:
 cypher_read_with_parens:
 			'(' cypher_read_stmt ')'			{ $$ = $2; }
 			| '(' cypher_read_with_parens ')'	{ $$ = $2; }
+		;
 
 cypher_read_stmt:
 			cypher_read_opt cypher_return
