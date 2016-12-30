@@ -270,10 +270,17 @@ RETURN a.name AS a;
  agens-graph
 (1 row)
 
+MATCH (a), (a:repo) RETURN a.name AS a;
+        a         
+------------------
+ agens-graph
+ agens-graph-jdbc
+ agens-graph-docs
+ agens-graph-odbc
+(4 rows)
+
 MATCH ();
 ERROR:  Cypher query must end with RETURN or update clause
-MATCH (a), (a:repo) RETURN *;
-ERROR:  label conflict on node "a"
 MATCH ()-[a]-(), (a) RETURN *;
 ERROR:  duplicate variable "a"
 LINE 1: MATCH ()-[a]-(), (a) RETURN *;
@@ -320,12 +327,11 @@ MATCH (a {'name': properties->'name'}) RETURN *;
 ERROR:  column "properties" does not exist
 LINE 1: MATCH (a {'name': properties->'name'}) RETURN *;
                           ^
-HINT:  There is a column named "properties" in table "a", but it cannot be referenced from this part of the query.
 MATCH (a {'name': a.properties->'name'}) RETURN *;
-ERROR:  invalid reference to FROM-clause entry for table "a"
+ERROR:  operator does not exist: text -> unknown
 LINE 1: MATCH (a {'name': a.properties->'name'}) RETURN *;
-                          ^
-HINT:  There is an entry for table "a", but it cannot be referenced from this part of the query.
+                                      ^
+HINT:  No operator matches the given name and argument type(s). You might need to add explicit type casts.
 -- OPTIONAL MATCH
 CREATE GRAPH o;
 SET graph_path = o;

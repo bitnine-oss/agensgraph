@@ -3286,27 +3286,8 @@ add_expr_to_group_exprs(Expr *expr, List **group_exprs)
 	{
 		Expr *gexpr = (Expr *) lfirst(gl);
 
-		switch (nodeTag(gexpr))
-		{
-			case T_FieldSelect:
-				if (equal(gexpr, expr))
-					return false;
-				break;
-			case T_Var:
-				{
-					Var *gvar = (Var *) gexpr;
-					Var *var = (Var *) expr;
-
-					if (gvar->varno == var->varno &&
-						gvar->varattno == var->varattno &&
-						gvar->varlevelsup == 0)
-						return false;
-				}
-				break;
-			default:
-				/* can't happen */
-				Assert(!"invalid node");
-		}
+		if (equal(gexpr, expr))
+			return false;
 	}
 
 	*group_exprs = lappend(*group_exprs, expr);
@@ -3323,6 +3304,7 @@ typedef struct
 static bool
 gen_group_exprs_walker(Node *node, gen_group_exprs_context *ctx)
 {
+	FieldSelect *fselect;
 	Var *var;
 
 	if (node == NULL)
@@ -3350,21 +3332,58 @@ gen_group_exprs_walker(Node *node, gen_group_exprs_context *ctx)
 	 * need to consider pre-existing variables and expressions in the GROUP BY.
 	 */
 
+	if (IsA(node, OpExpr))
+	{
+		OpExpr *op = (OpExpr *) node;
+
+		/* #>> */
+		if (op->opno == 3206)
+		{
+			Node *arg1 = linitial(op->args);
+
+			if (IsA(arg1, FieldSelect))
+			{
+				fselect = (FieldSelect *) arg1;
+				if (!IsA(fselect->arg, Var))
+					return gen_group_exprs_walker((Node *) fselect->arg, ctx);
+
+				var = (Var *) fselect->arg;
+				if ((int) var->varlevelsup != ctx->sublevels_up)
+					return false;
+
+				add_expr_to_group_exprs((Expr *) op, &ctx->group_exprs);
+				return false;
+			}
+
+			if (IsA(arg1, Var))
+			{
+				var = (Var *) arg1;
+				if ((int) var->varlevelsup != ctx->sublevels_up)
+					return false;
+
+				add_expr_to_group_exprs((Expr *) op, &ctx->group_exprs);
+				return false;
+			}
+		}
+
+		return gen_group_exprs_walker((Node *) op->args, ctx);
+	}
+
 	if (IsA(node, FieldSelect))
 	{
-		FieldSelect *fs = (FieldSelect *) node;
+		fselect = (FieldSelect *) node;
 
 		/* NOTE: There might be other cases to check. */
 
-		if (!IsA(fs->arg, Var))
-			return gen_group_exprs_walker((Node *) fs->arg, ctx);
+		if (!IsA(fselect->arg, Var))
+			return gen_group_exprs_walker((Node *) fselect->arg, ctx);
 
-		var = (Var *) fs->arg;
+		var = (Var *) fselect->arg;
 
 		if ((int) var->varlevelsup != ctx->sublevels_up)
 			return false;
 
-		add_expr_to_group_exprs((Expr *) fs, &ctx->group_exprs);
+		add_expr_to_group_exprs((Expr *) fselect, &ctx->group_exprs);
 		return false;
 	}
 
@@ -3384,14 +3403,14 @@ gen_group_exprs_walker(Node *node, gen_group_exprs_context *ctx)
 		bool result;
 
 		ctx->sublevels_up++;
-		result = query_tree_walker((Query *) node, gen_group_exprs_walker,
-								   (void *) ctx, 0);
+		result = query_tree_walker((Query *) node, gen_group_exprs_walker, ctx,
+								   0);
 		ctx->sublevels_up--;
 
 		return result;
 	}
 
-	return expression_tree_walker(node, gen_group_exprs_walker, (void *) ctx);
+	return expression_tree_walker(node, gen_group_exprs_walker, ctx);
 }
 
 /*
