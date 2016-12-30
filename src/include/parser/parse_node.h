@@ -168,10 +168,18 @@ struct ParseState
 	CoerceParamHook p_coerce_param_hook;
 	void	   *p_ref_hook_state;		/* common passthrough link for above */
 
-	/* graph */
+	/*
+	 * Additional information for Cypher queries
+	 */
+	bool		p_is_match_quals;
+	List	   *p_node_info_list;		/* final shape of named nodes */
+	Node	   *p_vlr_initial_vid;		/* initial vid for VLR */
+	RangeTblEntry *p_vlr_initial_rte;	/* RTE of initial vid for VLR */
+	List	   *p_elem_quals;			/* quals of elements */
+	List	   *p_future_vertices;		/* vertices to be resolved */
+	Node	   *p_resolved_qual;		/* qual of resolved future vertices */
+	bool		p_is_optional_match;
 	Node	   *p_last_colref_elem;		/* for property access */
-	Node	   *p_last_vertex;			/* for VLR */
-	bool		p_opt_match;
 };
 
 /*

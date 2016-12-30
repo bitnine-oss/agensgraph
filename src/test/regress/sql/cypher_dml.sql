@@ -109,8 +109,9 @@ MATCH (a {'year': (SELECT year FROM history WHERE event = 'Graph')})
 WHERE a.name = 'agens-graph'
 RETURN a.name AS a;
 
+MATCH (a), (a:repo) RETURN a.name AS a;
+
 MATCH ();
-MATCH (a), (a:repo) RETURN *;
 MATCH ()-[a]-(), (a) RETURN *;
 MATCH a=(), (a) RETURN *;
 MATCH (a =0) RETURN *;

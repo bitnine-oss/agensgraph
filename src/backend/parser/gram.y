@@ -15184,8 +15184,23 @@ cypher_types:
 cypher_varlen_opt:
 			'*' cypher_range_opt
 				{
-					if ($2 == NULL)
-						$2 = (Node *) makeNode(A_Indices);
+					A_Indices *n = (A_Indices *) $2;
+
+					if (n->lidx == NULL)
+						n->lidx = makeIntConst(1, -1);
+
+					if (n->uidx != NULL)
+					{
+						A_Const	   *lidx = (A_Const *) n->lidx;
+						A_Const	   *uidx = (A_Const *) n->uidx;
+
+						if (lidx->val.val.ival > uidx->val.val.ival)
+							ereport(ERROR,
+									(errcode(ERRCODE_SYNTAX_ERROR),
+									 errmsg("invalid range"),
+									 parser_errposition(@2)));
+					}
+
 					$$ = $2;
 				}
 			| /* EMPTY */
@@ -15208,7 +15223,7 @@ cypher_range_opt:
 					$$ = (Node *) n;
 				}
 			| /* EMPTY */
-					{ $$ = NULL; }
+					{ $$ = (Node *) makeNode(A_Indices); }
 		;
 
 cypher_range_idx_opt:
@@ -16120,6 +16135,7 @@ wrapCypherWithSelect(Node *stmt)
 
 	sub = makeNode(RangeSubselect);
 	sub->subquery = stmt;
+	/* CYPHER_SUBQUERY_ALIAS */
 	sub->alias = makeAlias("_", NIL);
 
 	select = makeNode(SelectStmt);
