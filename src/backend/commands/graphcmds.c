@@ -19,6 +19,7 @@
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
+#include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
@@ -43,7 +44,6 @@
 static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
 static void AgInheritanceDependancy(Oid laboid, List *supers);
-static void CheckAlterLabel(ObjectType alterType, Oid laboid);
 
 /* See ProcessUtilitySlow() case T_CreateSchemaStmt */
 void
@@ -343,7 +343,7 @@ RenameLabel(RenameStmt *stmt)
 
 	laboid = HeapTupleGetOid(tup);
 
-	CheckAlterLabel(stmt->renameType, laboid);
+	CheckLabelDDL(stmt->renameType, laboid, "RENAME");
 
 	/* renamimg label and table should be processed in one lock */
 	RenameRelation(stmt);
@@ -365,45 +365,12 @@ RenameLabel(RenameStmt *stmt)
 	return address;
 }
 
-static void
-CheckAlterLabel(ObjectType removeType, Oid laboid)
-{
-	HeapTuple	tuple;
-	Form_ag_label labtup;
-
-	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
-	if (!HeapTupleIsValid(tuple))
-		elog(ERROR, "cache lookup failed for label (OID=%u)", laboid);
-
-	labtup = (Form_ag_label) GETSTRUCT(tuple);
-
-	if (removeType == OBJECT_VLABEL && labtup->labkind != LABEL_KIND_VERTEX)
-		ereport(ERROR,
-				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("ALTER VLABEL cannot alter edge label")));
-	if (removeType == OBJECT_ELABEL && labtup->labkind != LABEL_KIND_EDGE)
-		ereport(ERROR,
-				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("ALTER ELABEL cannot alter vertex label")));
-
-	if (namestrcmp(&(labtup->labname), AG_VERTEX) == 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("cannot alter base vertex label")));
-	if (namestrcmp(&(labtup->labname), AG_EDGE) == 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("cannot alter base edge label")));
-
-	ReleaseSysCache(tuple);
-}
-
 /*
- * DROP VLABEL cannot drop edge and base vertex label.
- * DROP ELABEL cannot drop vertex and base edge label.
+ * ALTER/DROP VLABEL cannot drop edge and base vertex label.
+ * ALTER/DROP ELABEL cannot drop vertex and base edge label.
  */
 void
-CheckDropLabel(ObjectType removeType, Oid laboid)
+CheckLabelDDL(ObjectType type, Oid laboid, const char *command)
 {
 	HeapTuple	tuple;
 	Form_ag_label labtup;
@@ -414,23 +381,23 @@ CheckDropLabel(ObjectType removeType, Oid laboid)
 
 	labtup = (Form_ag_label) GETSTRUCT(tuple);
 
-	if (removeType == OBJECT_VLABEL && labtup->labkind != LABEL_KIND_VERTEX)
+	if (type == OBJECT_VLABEL && labtup->labkind != LABEL_KIND_VERTEX)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("DROP VLABEL cannot drop edge label")));
-	if (removeType == OBJECT_ELABEL && labtup->labkind != LABEL_KIND_EDGE)
+				 errmsg("%s VLABEL cannot %s edge label", command, command)));
+	if (type == OBJECT_ELABEL && labtup->labkind != LABEL_KIND_EDGE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("DROP ELABEL cannot drop vertex label")));
+				 errmsg("%s ELABEL cannot %s vertex label", command, command)));
 
 	if (namestrcmp(&(labtup->labname), AG_VERTEX) == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("cannot drop base vertex label")));
+				 errmsg("%s base vertex label is prohibited", command)));
 	if (namestrcmp(&(labtup->labname), AG_EDGE) == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("cannot drop base edge label")));
+				 errmsg("%s base edge label is prohibited", command)));
 
 	ReleaseSysCache(tuple);
 }
@@ -516,4 +483,26 @@ DropConstraintCommand(DropConstraintStmt *constraintStmt,
 	CommandCounterIncrement();
 
 	free_parsestate(pstate);
+}
+
+Oid
+DisableIndexCommand(DisableIndexStmt *disableStmt)
+{
+	Oid			 relid;
+	RangeVar	*relation=disableStmt->relation;
+
+	relid = RangeVarGetRelidExtended(relation, ShareLock, false, false,
+									   RangeVarCallbackOwnsTable, NULL);
+
+	if (!RangeVarIsLabel(relation))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("The disabling index works for graph label only")));
+
+	if (!disableIndexLabel(relid))
+		ereport(NOTICE,
+				(errmsg("label \"%s\" has no enabled indexes",
+					relation->relname)));
+
+	return relid;
 }

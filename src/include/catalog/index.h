@@ -117,6 +117,7 @@ extern void index_set_state_flags(Oid indexId, IndexStateFlagsAction action);
 
 extern void reindex_index(Oid indexId, bool skip_constraint_checks,
 			  char relpersistence, int options);
+extern bool disableIndexLabel(Oid relid);
 
 /* Flag bits for reindex_relation(): */
 #define REINDEX_REL_PROCESS_TOAST			0x01

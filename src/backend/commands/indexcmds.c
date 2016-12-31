@@ -20,6 +20,7 @@
 #include "access/reloptions.h"
 #include "access/sysattr.h"
 #include "access/xact.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/indexing.h"
@@ -1840,6 +1841,33 @@ ReindexTable(RangeVar *relation, int options)
 	return heapOid;
 }
 
+/*
+ * ReindexLabel
+ *		Recreate all indexes of a label (and of its toast table, if any)
+ */
+Oid
+ReindexLabel(RangeVar *relation, int options, ObjectType type)
+{
+	Oid		heapOid;
+
+	relation->schemaname = get_graph_path();
+
+	/* The lock level used here should match reindex_relation(). */
+	heapOid = RangeVarGetRelidExtended(relation, ShareLock, false, false,
+									   RangeVarCallbackOwnsTable, NULL);
+
+	CheckLabelDDL(type, get_relid_laboid(heapOid), "REINDEX");
+
+	if (!reindex_relation(heapOid,
+						  REINDEX_REL_PROCESS_TOAST |
+						  REINDEX_REL_CHECK_CONSTRAINTS,
+						  options))
+		ereport(NOTICE,
+				(errmsg("label \"%s\" has no indexes",
+						relation->relname)));
+
+	return heapOid;
+}
 /*
  * ReindexMultipleTables
  *		Recreate indexes of tables selected by objectName/objectKind.

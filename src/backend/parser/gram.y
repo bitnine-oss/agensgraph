@@ -555,6 +555,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <list>	alter_label_cmds prop_idx_params
 %type <str>		opt_constraint_name
 %type <ielem>	prop_idx_elem
+%type <boolean> opt_disable_index
 
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
@@ -574,6 +575,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %type <str>		cypher_varname
 %type <boolean>	cypher_detach_opt cypher_optional_opt cypher_rel_left
 				cypher_rel_right
+%type <ival>	reindex_target_label
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -7555,6 +7557,24 @@ ReindexStmt:
 					n->options = $3;
 					$$ = (Node *)n;
 				}
+			| REINDEX reindex_target_label name
+				{
+					ReindexStmt *n = makeNode(ReindexStmt);
+					n->kind = $2;
+					n->relation = makeRangeVar(NULL, $3, -1);
+					n->name = NULL;
+					n->options = 0;
+					$$ = (Node *)n;
+				}
+			| REINDEX '(' reindex_option_list ')' reindex_target_label name
+				{
+					ReindexStmt *n = makeNode(ReindexStmt);
+					n->kind = $5;
+					n->relation = makeRangeVar(NULL, $6, -1);
+					n->name = NULL;
+					n->options = $3;
+					$$ = (Node *)n;
+				}
 		;
 reindex_target_type:
 			INDEX					{ $$ = REINDEX_OBJECT_INDEX; }
@@ -7571,6 +7591,10 @@ reindex_option_list:
 		;
 reindex_option_elem:
 			VERBOSE	{ $$ = REINDEXOPT_VERBOSE; }
+		;
+reindex_target_label:
+			 VLABEL				{ $$ = REINDEX_OBJECT_VLABEL; }
+			| ELABEL			{ $$ = REINDEX_OBJECT_ELABEL; }
 		;
 
 /*****************************************************************************
@@ -14397,61 +14421,71 @@ CreateGraphStmt:
 		;
 
 CreateLabelStmt:
-			CREATE OptNoLog VLABEL ColId OptInherit opt_reloptions OptTableSpace
+			CREATE OptNoLog VLABEL name opt_disable_index
+			OptInherit opt_reloptions OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = LABEL_VERTEX;
 					n->relation = makeRangeVar(NULL, $4, -1);
 					n->relation->relpersistence = $2;
-					n->inhRelations = $5;
-					n->options = $6;
-					n->tablespacename = $7;
+					n->disable_index = $5;
+					n->inhRelations = $6;
+					n->options = $7;
+					n->tablespacename = $8;
 					n->if_not_exists = false;
 					$$ = (Node *)n;
 				}
-			| CREATE OptNoLog VLABEL IF_P NOT EXISTS ColId OptInherit
-			opt_reloptions OptTableSpace
+			| CREATE OptNoLog VLABEL IF_P NOT EXISTS name opt_disable_index
+			OptInherit opt_reloptions OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = LABEL_VERTEX;
 					n->relation = makeRangeVar(NULL, $7, -1);
 					n->relation->relpersistence = $2;
-					n->inhRelations = $8;
-					n->options = $9;
-					n->tablespacename = $10;
+					n->disable_index = $8;
+					n->inhRelations = $9;
+					n->options = $10;
+					n->tablespacename = $11;
 					n->if_not_exists = true;
 					$$ = (Node *)n;
 				}
-			| CREATE OptNoLog ELABEL ColId OptInherit opt_reloptions
-			OptTableSpace
+			| CREATE OptNoLog ELABEL name opt_disable_index
+			OptInherit opt_reloptions OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = LABEL_EDGE;
 					n->relation = makeRangeVar(NULL, $4, -1);
 					n->relation->relpersistence = $2;
-					n->inhRelations = $5;
-					n->options = $6;
-					n->tablespacename = $7;
+					n->disable_index = $5;
+					n->inhRelations = $6;
+					n->options = $7;
+					n->tablespacename = $8;
 					n->if_not_exists = false;
 					$$ = (Node *)n;
 				}
-			| CREATE OptNoLog ELABEL IF_P NOT EXISTS ColId OptInherit
-			opt_reloptions OptTableSpace
+			| CREATE OptNoLog ELABEL IF_P NOT EXISTS name opt_disable_index
+			OptInherit opt_reloptions OptTableSpace
 				{
 					CreateLabelStmt *n = makeNode(CreateLabelStmt);
 					n->labelKind = LABEL_EDGE;
 					n->relation = makeRangeVar(NULL, $7, -1);
 					n->relation->relpersistence = $2;
-					n->inhRelations = $8;
-					n->options = $9;
-					n->tablespacename = $10;
+					n->disable_index = $8;
+					n->inhRelations = $9;
+					n->options = $10;
+					n->tablespacename = $11;
 					n->if_not_exists = true;
 					$$ = (Node *)n;
 				}
 		;
 
+opt_disable_index:
+			DISABLE_P INDEX							{ $$ = true; }
+			| /*EMPTY*/								{ $$ = false; }
+		;
+
 AlterLabelStmt:
-			ALTER VLABEL ColId alter_label_cmds
+			ALTER VLABEL name alter_label_cmds
 				{
 					AlterLabelStmt *n = makeNode(AlterLabelStmt);
 					n->relation = makeRangeVar(NULL, $3, -1);
@@ -14460,7 +14494,7 @@ AlterLabelStmt:
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
-			| ALTER VLABEL IF_P EXISTS ColId alter_label_cmds
+			| ALTER VLABEL IF_P EXISTS name alter_label_cmds
 				{
 					AlterLabelStmt *n = makeNode(AlterLabelStmt);
 					n->relation = makeRangeVar(NULL, $5, -1);
@@ -14469,7 +14503,7 @@ AlterLabelStmt:
 					n->missing_ok = true;
 					$$ = (Node *)n;
 				}
-			| ALTER ELABEL ColId alter_label_cmds
+			| ALTER ELABEL name alter_label_cmds
 				{
 					AlterLabelStmt *n = makeNode(AlterLabelStmt);
 					n->relation = makeRangeVar(NULL, $3, -1);
@@ -14478,7 +14512,7 @@ AlterLabelStmt:
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
-			| ALTER ELABEL IF_P EXISTS ColId alter_label_cmds
+			| ALTER ELABEL IF_P EXISTS name alter_label_cmds
 				{
 					AlterLabelStmt *n = makeNode(AlterLabelStmt);
 					n->relation = makeRangeVar(NULL, $5, -1);
@@ -14496,7 +14530,7 @@ alter_label_cmds:
 
 alter_label_cmd:
 			/* ALTER VLABEL <name> SET STORAGE <storagemode> */
-			SET STORAGE ColId
+			SET STORAGE name
 				{
 					AlterTableCmd *n = makeNode(AlterTableCmd);
 					n->subtype = AT_SetStorage;
@@ -14572,6 +14606,12 @@ alter_label_cmd:
 					AlterTableCmd *n = makeNode(AlterTableCmd);
 					n->subtype = AT_ReplicaIdentity;
 					n->def = $3;
+					$$ = (Node *)n;
+				}
+			| DISABLE_P INDEX
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_DisableIndex;
 					$$ = (Node *)n;
 				}
 		;
