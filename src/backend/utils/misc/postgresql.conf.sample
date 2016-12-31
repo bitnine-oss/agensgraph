@@ -749,3 +749,15 @@
 					# text log.
 #pg_statsinfo.textlog_permission = 0600
 					# Permission mode for textlog file.
+
+#pg_hint_plan.enable_hint = on
+					# Force planner to use plans specified in the hint comment
+					# preceding to the query.
+#pg_hint_plan.debug_print = off
+					# Logs results of hint parsing.
+#pg_hint_plan.parse_messages = info
+					# Message level of parse errors.
+#pg_hint_plan.message_level = info
+					# Message level of debug messages.
+#pg_hint_plan.enable_hint_table = false
+					# Force planner to not get hint by using table lookups.
