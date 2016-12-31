@@ -1307,12 +1307,13 @@ setup_config(void)
 	conflines = replace_token(conflines,
 							"#shared_preload_libraries = ''",
 							"shared_preload_libraries = "
-									"'pg_stat_statements,pg_statsinfo'");
+									"'pg_stat_statements,pg_statsinfo,"
+									"pg_hint_plan'");
 #else
 	conflines = replace_token(conflines,
 							"#shared_preload_libraries = ''",
 							"shared_preload_libraries = "
-									"'pg_stat_statements'");
+									"'pg_stat_statements,pg_hint_plan'");
 #endif
 
 	/* pg_stat_statements */
