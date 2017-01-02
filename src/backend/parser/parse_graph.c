@@ -33,6 +33,7 @@
 #include "parser/parse_graph.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_relation.h"
+#include "parser/parse_shortestpath.h"
 #include "parser/parse_target.h"
 #include "parser/parser.h"
 #include "parser/parsetree.h"
@@ -258,6 +259,12 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	CypherClause *clause;
 	Query *qry;
 	RangeTblEntry *rte;
+
+	if (subpat->kind == CSP_SHORTESTPATH)
+	{
+		Assert(list_length(subpat->pattern) == 1);
+		return transformShortestPath(pstate, linitial(subpat->pattern));
+	}
 
 	match = makeNode(CypherMatchClause);
 	match->pattern = subpat->pattern;
