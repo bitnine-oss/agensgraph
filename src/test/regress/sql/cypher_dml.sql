@@ -230,6 +230,56 @@ CREATE (:time {sec: 11})-[:goes {int: 1}]->
 MATCH (a:time)-[x:goes*1..2 {int: 1}]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
 
+-- Variable Length Relationship
+
+CREATE OR REPLACE FUNCTION ids(vertex[]) RETURNS int[] AS $$
+DECLARE
+  v vertex;
+  vids int[];
+BEGIN
+  IF $1 IS NULL THEN
+    RETURN ARRAY[]::int[];
+  END IF;
+  FOREACH v IN ARRAY $1 LOOP
+    vids = array_append(vids, (v).id::int);
+  END LOOP;
+  RETURN vids;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE VLABEL person;
+CREATE ELABEL knows;
+
+CREATE (:person {id: 1})-[:knows]->
+       (:person {id: 2})-[:knows]->
+       (:person {id: 3})-[:knows]->
+       (:person {id: 4})-[:knows]->
+       (:person {id: 5});
+
+MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 4
+RETURN ids(nodes(shortestpath((p)-[:knows]->(f)))) AS ids;
+
+MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 5
+RETURN ids(nodes(shortestpath((p)-[:knows]->(f)))) AS ids;
+
+MATCH (p:person), (f:person) WHERE p.id::int = 3
+RETURN ids(nodes(shortestpath((p)<-[:knows]-(f)))) AS ids;
+
+MATCH (p:person), (f:person) WHERE p.id::int = 3
+RETURN ids(nodes(shortestpath((p)-[:knows*]-(f)))) AS ids;
+
+MATCH (p:person), (f:person) WHERE p.id::int = 3
+RETURN ids(nodes(shortestpath((p)-[:knows*0..1]-(f)))) AS ids;
+
+MATCH (p:person), (f:person) WHERE p.id::int = 1
+RETURN ids(nodes(shortestpath((p)-[:knows*2..]->(f)))) AS ids;
+
+MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 5
+CREATE (p)-[:knows]->(:person {id: 6})-[:knows]->(f);
+
+MATCH (p:person), (f:person) WHERE p.id::int = 1 AND f.id::int = 5
+RETURN array_length(allshortestpaths((p)-[:knows*]-(f)), 1) AS cnt;
+
 SET graph_path = agens;
 
 --

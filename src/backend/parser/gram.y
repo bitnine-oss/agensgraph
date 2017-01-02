@@ -15248,7 +15248,7 @@ cypher_varlen_opt:
 					A_Indices *n = (A_Indices *) $2;
 
 					if (n->lidx == NULL)
-						n->lidx = makeIntConst(1, -1);
+						n->lidx = makeIntConst(1, @2);
 
 					if (n->uidx != NULL)
 					{
