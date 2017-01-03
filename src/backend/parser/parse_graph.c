@@ -119,9 +119,10 @@ static void setInitialVidForVLR(ParseState *pstate, CypherRel *crel,
 static RangeTblEntry *transformMatchVLR(ParseState *pstate, CypherRel *crel,
 										List **targetList);
 static SelectStmt *genSelectLeftVLR(ParseState *pstate, CypherRel *crel);
-static SelectStmt *genSelectRightVLR(CypherRel *crel);
+static SelectStmt *genSelectRightVLR(ParseState *pstate, CypherRel *crel);
 static RangeSubselect *genEdgeUnionVLR(char *edge_label);
-static SelectStmt *genSelectWithVLR(CypherRel *crel, WithClause *with);
+static SelectStmt *genSelectWithVLR(ParseState *pstate,
+									CypherRel *crel, WithClause *with);
 static RangeTblEntry *transformVLRtoRTE(ParseState *pstate, SelectStmt *vlr,
 										Alias *alias);
 static bool isZeroLengthVLR(CypherRel *crel);
@@ -1054,6 +1055,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 							 parser_errposition(pstate, pathloc)));
 			}
 
+			pstate->p_last_edge = NULL;
 			le = list_head(p->chain);
 			for (;;)
 			{
@@ -1130,6 +1132,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 
 				prev_crel = crel;
 				prev_edge = edge;
+				pstate->p_last_edge = (Node *) edge;
 
 				le = lnext(le);
 			}
@@ -1574,13 +1577,17 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 	u->op = SETOP_UNION;
 	u->all = true;
 	u->larg = genSelectLeftVLR(pstate, crel);
-	u->rarg = genSelectRightVLR(crel);
+	u->rarg = genSelectRightVLR(pstate, crel);
 
 	cte = makeNode(CommonTableExpr);
 	cte->ctename = CYPHER_VLR_WITH_ALIAS;
-	cte->aliascolnames = list_make3(makeString(VLR_COLNAME_START),
-									makeString(VLR_COLNAME_END),
+	cte->aliascolnames = list_make2(makeString(VLR_COLNAME_END),
 									makeString(VLR_COLNAME_LEVEL));
+	if (pstate->p_last_edge != NULL)
+	{
+		cte->aliascolnames = lappend(cte->aliascolnames,
+									 makeString(VLR_COLNAME_START));
+	}
 	if (varname != NULL)
 	{
 		cte->aliascolnames = lappend(cte->aliascolnames,
@@ -1610,7 +1617,7 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 	with->recursive = true;
 	with->location = -1;
 
-	vlr = genSelectWithVLR(crel, with);
+	vlr = genSelectWithVLR(pstate, crel, with);
 
 	alias = makeAliasOptUnique(varname);
 	rte = transformVLRtoRTE(pstate, vlr, alias);
@@ -1657,13 +1664,13 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	Node	   *vid;
 	A_ArrayExpr *patharr;
 	char	   *typname;
-	ResTarget  *start;
 	ResTarget  *end;
 	ResTarget  *level;
 	Node       *edge;
 	List	   *where_args = NIL;
 	SelectStmt *sel;
-	bool path_out = getCypherName(crel->variable) != NULL;
+	bool start_out;
+	bool path_out;
 
 	/*
 	 * `vid` is NULL only if
@@ -1673,11 +1680,18 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	 */
 	vid = pstate->p_vlr_initial_vid;
 
+	start_out = pstate->p_last_edge != NULL;
+	path_out = getCypherName(crel->variable) != NULL;
+
 	if (isZeroLengthVLR(crel))
 	{
 		List *values;
 
-		values = list_make3(vid, vid, makeIntConst(0));
+		values = list_make2(vid, makeIntConst(0));
+		if (start_out)
+		{
+			values = lappend(values, vid);
+		}
 		if (path_out)
 		{
 			TypeCast *typecast;
@@ -1697,7 +1711,6 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 
 	getCypherRelType(crel, &typname, NULL);
 
-	start = makeSimpleResTarget(AG_START_ID, NULL);
 	end = makeSimpleResTarget(AG_END_ID, NULL);
 
 	level = makeResTarget((Node *) makeIntConst(1), NULL);
@@ -1755,7 +1768,12 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	}
 
 	sel = makeNode(SelectStmt);
-	sel->targetList = list_make3(start, end, level);
+	sel->targetList = list_make2(end, level);
+	if (start_out)
+	{
+		sel->targetList = lappend(sel->targetList,
+								  makeSimpleResTarget(AG_START_ID, NULL));
+	}
 	if (path_out)
 	{
 		ColumnRef *id;
@@ -1803,10 +1821,10 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
  *       properties @> `crel->prop_map`
  */
 static SelectStmt *
-genSelectRightVLR(CypherRel *crel)
+genSelectRightVLR(ParseState *pstate, CypherRel *crel)
 {
 	char	   *typname;
-	ResTarget  *start;
+	ResTarget  *start = NULL;
 	ResTarget  *end;
 	ColumnRef  *levelref;
 	A_Expr	   *levelexpr;
@@ -1914,7 +1932,11 @@ genSelectRightVLR(CypherRel *crel)
 	}
 
 	sel = makeNode(SelectStmt);
-	sel->targetList = list_make3(start, end, level);
+	sel->targetList = list_make2(end, level);
+	if (pstate->p_last_edge != NULL)
+	{
+		sel->targetList = lappend(sel->targetList, start);
+	}
 	if (getCypherName(crel->variable) != NULL)
 	{
 		ColumnRef  *pathref;
@@ -2001,10 +2023,10 @@ genEdgeUnionVLR(char *edge_label)
 }
 
 static SelectStmt *
-genSelectWithVLR(CypherRel *crel, WithClause *with)
+genSelectWithVLR(ParseState *pstate, CypherRel *crel, WithClause *with)
 {
 	A_Indices  *indices = (A_Indices *) crel->varlen;
-	ResTarget  *start;
+	ResTarget  *start = NULL;
 	ResTarget  *end;
 	RangeVar   *vlr;
 	SelectStmt *sel;
@@ -2024,7 +2046,11 @@ genSelectWithVLR(CypherRel *crel, WithClause *with)
 	vlr = makeRangeVar(NULL, CYPHER_VLR_WITH_ALIAS, -1);
 
 	sel = makeNode(SelectStmt);
-	sel->targetList = list_make2(start, end);
+	sel->targetList = list_make1(end);
+	if (pstate->p_last_edge != NULL)
+	{
+		sel->targetList = lappend(sel->targetList, start);
+	}
 	if (getCypherName(crel->variable) != NULL)
 	{
 		ResTarget *path;

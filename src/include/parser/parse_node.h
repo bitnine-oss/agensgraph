@@ -175,6 +175,7 @@ struct ParseState
 	List	   *p_node_info_list;		/* final shape of named nodes */
 	Node	   *p_vlr_initial_vid;		/* initial vid for VLR */
 	RangeTblEntry *p_vlr_initial_rte;	/* RTE of initial vid for VLR */
+	Node	   *p_last_edge;			/* for VLR */
 	List	   *p_elem_quals;			/* quals of elements */
 	List	   *p_future_vertices;		/* vertices to be resolved */
 	Node	   *p_resolved_qual;		/* qual of resolved future vertices */
