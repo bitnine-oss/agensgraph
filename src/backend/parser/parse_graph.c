@@ -1588,11 +1588,8 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 		cte->aliascolnames = lappend(cte->aliascolnames,
 									 makeString(VLR_COLNAME_START));
 	}
-	if (varname != NULL)
-	{
-		cte->aliascolnames = lappend(cte->aliascolnames,
-									 makeString(VLR_COLNAME_PATH));
-	}
+	cte->aliascolnames = lappend(cte->aliascolnames,
+								 makeString(VLR_COLNAME_PATH));
 	cte->ctequery = (Node *) u;
 	cte->location = -1;
 
@@ -1670,7 +1667,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	List	   *where_args = NIL;
 	SelectStmt *sel;
 	bool start_out;
-	bool path_out;
+	bool path_out = true;
 
 	/*
 	 * `vid` is NULL only if
@@ -1681,7 +1678,6 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel)
 	vid = pstate->p_vlr_initial_vid;
 
 	start_out = pstate->p_last_edge != NULL;
-	path_out = getCypherName(crel->variable) != NULL;
 
 	if (isZeroLengthVLR(crel))
 	{
@@ -1837,6 +1833,11 @@ genSelectRightVLR(ParseState *pstate, CypherRel *crel)
 	List	   *where_args = NIL;
 	A_Expr	   *joincond;
 	SelectStmt *sel;
+	List       *arrpos_args;
+	FuncCall   *arrpos;
+	NullTest   *dupcond;
+	ColumnRef  *id;
+	ColumnRef  *pathref;
 
 	getCypherRelType(crel, &typname, NULL);
 
@@ -1915,7 +1916,22 @@ genSelectRightVLR(ParseState *pstate, CypherRel *crel)
 
 	joincond = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) prev, (Node *) next,
 								-1);
+	pathref = makeNode(ColumnRef);
+	pathref->fields = list_make1(makeString(VLR_COLNAME_PATH));
+	pathref->location = -1;
+	id = makeNode(ColumnRef);
+	id->fields = list_make1(makeString(AG_ELEM_LOCAL_ID));
+	id->location = -1;
 	where_args = lappend(where_args, joincond);
+
+	arrpos_args = list_make2(pathref, id);
+	arrpos = makeFuncCall(list_make1(makeString("array_position")),
+						  arrpos_args, -1);
+	dupcond = makeNode(NullTest);
+	dupcond->arg = (Expr *) arrpos;
+	dupcond->nulltesttype = IS_NULL;
+	dupcond->location = -1;
+	where_args = lappend(where_args, dupcond);
 
 	/* TODO: cannot see properties of future vertices */
 	if (crel->prop_map != NULL)
@@ -1937,19 +1953,11 @@ genSelectRightVLR(ParseState *pstate, CypherRel *crel)
 	{
 		sel->targetList = lappend(sel->targetList, start);
 	}
-	if (getCypherName(crel->variable) != NULL)
+	if (true)
 	{
-		ColumnRef  *pathref;
-		ColumnRef  *id;
 		FuncCall   *pathexpr;
 		ResTarget  *path;
 
-		pathref = makeNode(ColumnRef);
-		pathref->fields = list_make1(makeString(VLR_COLNAME_PATH));
-		pathref->location = -1;
-		id = makeNode(ColumnRef);
-		id->fields = list_make1(makeString(AG_ELEM_LOCAL_ID));
-		id->location = -1;
 		pathexpr = makeFuncCall(list_make1(makeString("array_append")),
 								list_make2(pathref, id), -1);
 		path = makeResTarget((Node *) pathexpr, NULL);
