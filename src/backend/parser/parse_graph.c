@@ -1815,7 +1815,6 @@ genSelectRightVLR(CypherRel *crel)
 	Node       *edge;
 	ColumnRef  *prev;
 	ColumnRef  *next;
-	ColumnRef  *dist_start;
 	ColumnRef  *dist_end;
 	List	   *where_args = NIL;
 	A_Expr	   *joincond;
@@ -1937,13 +1936,10 @@ genSelectRightVLR(CypherRel *crel)
 
 	sel->fromClause = list_make2(vlr, edge);
 	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
-	dist_start = makeNode(ColumnRef);
-	dist_start->fields = list_make1(makeString(VLR_COLNAME_START));
-	dist_start->location = -1;
 	dist_end = makeNode(ColumnRef);
 	dist_end->fields = list_make1(makeString(VLR_COLNAME_END));
 	dist_end->location = -1;
-	sel->distinctClause = list_make2(dist_start, dist_end);
+	sel->distinctClause = list_make1(dist_end);
 
 	return sel;
 }
