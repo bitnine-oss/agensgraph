@@ -3552,8 +3552,8 @@ _outGraphSetProp(StringInfo str, const GraphSetProp *node)
 {
 	WRITE_NODE_TYPE("GRAPHSETPROP");
 
+	WRITE_STRING_FIELD(variable);
 	WRITE_NODE_FIELD(elem);
-	WRITE_NODE_FIELD(path);
 	WRITE_NODE_FIELD(expr);
 }
 

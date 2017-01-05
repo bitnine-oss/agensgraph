@@ -588,7 +588,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
  */
 %token <str>	IDENT FCONST SCONST BCONST XCONST Op
 %token <ival>	ICONST PARAM
-%token			TYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER
+%token			TYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER ADD_EQUALS
 %token			LESS_EQUALS GREATER_EQUALS NOT_EQUALS
 
 /*
@@ -709,7 +709,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %left		AND
 %right		NOT
 %nonassoc	IS ISNULL NOTNULL	/* IS sets precedence for IS NULL, etc */
-%nonassoc	'<' '>' '=' LESS_EQUALS GREATER_EQUALS NOT_EQUALS
+%nonassoc	'<' '>' '=' LESS_EQUALS GREATER_EQUALS NOT_EQUALS ADD_EQUALS
 %nonassoc	BETWEEN IN_P LIKE ILIKE SIMILAR NOT_LA
 %nonassoc	ESCAPE			/* ESCAPE must be just above LIKE/ILIKE/SIMILAR */
 %left		POSTFIXOP		/* dummy for postfix Op rules */
@@ -15271,6 +15271,15 @@ cypher_setitem:
 					CypherSetProp *n = makeNode(CypherSetProp);
 					n->prop = $1;
 					n->expr = $3;
+					n->add = false;
+					$$ = (Node *) n;
+				}
+			| a_expr ADD_EQUALS a_expr
+				{
+					CypherSetProp *n = makeNode(CypherSetProp);
+					n->prop = $1;
+					n->expr = $3;
+					n->add = true;
 					$$ = (Node *) n;
 				}
 		;
@@ -15288,6 +15297,7 @@ cypher_rmitem:
 					CypherSetProp *n = makeNode(CypherSetProp);
 					n->prop = $1;
 					n->expr = makeNullAConst(-1);
+					n->add = false;
 					$$ = (Node *) n;
 				}
 		;

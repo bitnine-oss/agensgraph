@@ -51,18 +51,10 @@
 #define SQLCMD_DEL_EDGES_NPARAMS	1
 
 #define SQLCMD_SET_PROP \
-	"UPDATE \"%s\".\"%s\" SET properties = jsonb_set(properties, $1, $2)" \
-	" WHERE " AG_ELEM_LOCAL_ID " = $3"
-#define SQLCMD_SET_PROP_NPARAMS		3
-
-#define SQLCMD_OVERWR_PROP \
-	"UPDATE \"%s\".\"%s\" SET properties = $1 WHERE " AG_ELEM_LOCAL_ID " = $2"
-#define SQLCMD_OVERWR_PROP_NPARAMS	2
-
-#define SQLCMD_RM_PROP \
-	"UPDATE \"%s\".\"%s\" SET properties = jsonb_delete_path(properties, $1)" \
+	"UPDATE \"%s\".\"%s\" SET properties = $1" \
 	" WHERE " AG_ELEM_LOCAL_ID " = $2"
-#define SQLCMD_RM_PROP_NPARAMS		2
+#define SQLCMD_SET_PROP_NPARAMS		2
+
 
 typedef enum SqlcmdType
 {
@@ -72,8 +64,6 @@ typedef enum SqlcmdType
 	SQLCMD_TYPE_DETACH,
 	SQLCMD_TYPE_DEL_EDGES,
 	SQLCMD_TYPE_SET_PROP,
-	SQLCMD_TYPE_OVERWR_PROP,
-	SQLCMD_TYPE_RM_PROP
 } SqlcmdType;
 
 typedef struct ArrayAccessTypeInfo
@@ -129,11 +119,8 @@ static void deleteElem(ModifyGraphState *mgstate, Datum id, DelElemKind kind);
 static void deletePath(ModifyGraphState *mgstate, Datum graphpath, bool detach);
 static TupleTableSlot *ExecSetGraph(ModifyGraphState *mgstate,
 									TupleTableSlot *slot);
-static void setElemProp(ModifyGraphState *mgstate, Datum id, Datum path,
-						Datum expr);
-static void overwiteElemProp(ModifyGraphState *mgstate, Datum id,
-							 Datum prop_map);
-static void removeElemProp(ModifyGraphState *mgstate, Datum id, Datum path);
+static void updateProp(ModifyGraphState *mgstate, Datum id, Datum expr);
+static Datum makeModifiedElement(Datum old, Oid type, Datum id, Datum prop);
 
 /* caching SPIPlan's (See ri_triggers.c) */
 static void InitSqlcmdHashTable(MemoryContext mcxt);
@@ -278,7 +265,6 @@ ExecInitGraphSets(List *sets, ModifyGraphState *mgstate)
 		GraphSetProp *gsp = lfirst(ls);
 
 		gsp->es_elem = ExecInitExpr((Expr *) gsp->elem, (PlanState *) mgstate);
-		gsp->es_path = ExecInitExpr((Expr *) gsp->path, (PlanState *) mgstate);
 		gsp->es_expr = ExecInitExpr((Expr *) gsp->expr, (PlanState *) mgstate);
 	}
 
@@ -945,10 +931,11 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		Oid			elemtype;
 		Datum		elem_datum;
 		Datum		id_datum;
-		Datum		path_datum = (Datum) 0;
 		Datum		expr_datum;
+		Datum		reselem;
 		bool		isNull;
 		ExprDoneCond isDone;
+		MemoryContext oldmctx;
 
 		elemtype = exprType((Node *) gsp->es_elem->expr);
 		if (elemtype != VERTEXOID && elemtype != EDGEOID)
@@ -969,14 +956,6 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		else
 			id_datum = getEdgeIdDatum(elem_datum);
 
-		if (gsp->es_path != NULL)
-		{
-			path_datum = ExecEvalExpr(gsp->es_path, econtext, &isNull,
-									  &isDone);
-			if (isNull || isDone != ExprSingleResult)
-				elog(ERROR, "invalid path");
-		}
-
 		expr_datum = ExecEvalExpr(gsp->es_expr, econtext, &isNull, &isDone);
 		if (isDone != ExprSingleResult)
 			ereport(ERROR,
@@ -984,27 +963,18 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 					 errmsg("expected single result")));
 
 		if (isNull)
-		{
-			Assert(gsp->es_path != NULL);
+			continue;
 
-			removeElemProp(mgstate, id_datum, path_datum);
-		}
-		else
-		{
-			if (gsp->es_path == NULL)
-			{
-				if (exprType((Node *) gsp->es_expr->expr) != JSONBOID)
-					ereport(ERROR,
-							(errcode(ERRCODE_DATATYPE_MISMATCH),
-							 errmsg("expected jsonb")));
+		updateProp(mgstate, id_datum, expr_datum);
 
-				overwiteElemProp(mgstate, id_datum, expr_datum);
-			}
-			else
-			{
-				setElemProp(mgstate, id_datum, path_datum, expr_datum);
-			}
-		}
+		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+
+		reselem = makeModifiedElement(elem_datum, elemtype,
+									  id_datum, expr_datum);
+
+		MemoryContextSwitchTo(oldmctx);
+
+		setSlotValueByName(slot, reselem, gsp->variable);
 	}
 
 	if (SPI_finish() != SPI_OK_FINISH)
@@ -1013,15 +983,38 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	return (plan->last ? NULL : slot);
 }
 
+static Datum
+makeModifiedElement(Datum old, Oid type, Datum id, Datum prop)
+{
+	if (type == VERTEXOID)
+	{
+		return makeGraphVertexDatum(id, prop);
+	}
+	else
+	{
+		Datum start;
+		Datum end;
+
+		if (type != EDGEOID)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("expected node, relationship")));
+
+		start = getEdgeStartDatum(old);
+		end = getEdgeEndDatum(old);
+
+		return makeGraphEdgeDatum(id, start, end, prop);
+	}
+}
+
 static void
-setElemProp(ModifyGraphState *mgstate, Datum id, Datum path, Datum expr)
+updateProp(ModifyGraphState *mgstate, Datum id, Datum expr)
 {
 	EState	   *estate = mgstate->ps.state;
 	Graphid		id_val;
 	uint16		labid;
 	Datum		values[SQLCMD_SET_PROP_NPARAMS];
-	Oid			argTypes[SQLCMD_SET_PROP_NPARAMS] = {TEXTARRAYOID, JSONBOID,
-													 GRAPHIDOID};
+	Oid			argTypes[SQLCMD_SET_PROP_NPARAMS] = {JSONBOID, GRAPHIDOID};
 	SqlcmdKey	key;
 	SPIPlanPtr	plan;
 	int			ret;
@@ -1044,9 +1037,8 @@ setElemProp(ModifyGraphState *mgstate, Datum id, Datum path, Datum expr)
 		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_SET_PROP_NPARAMS, argTypes);
 	}
 
-	values[0] = path;
-	values[1] = expr;
-	values[2] = id;
+	values[0] = expr;
+	values[1] = id;
 
 	ret = SPI_execp(plan, values, NULL, 0);
 	if (ret != SPI_OK_UPDATE)
@@ -1054,95 +1046,6 @@ setElemProp(ModifyGraphState *mgstate, Datum id, Datum path, Datum expr)
 			 labid, GraphidGetLocid(id_val), ret);
 	if (SPI_processed > 1)
 		elog(ERROR, "SET_PROP (%hu." INT64_FORMAT "): only one element per execution must be updated", labid, GraphidGetLocid(id_val));
-
-	if (mgstate->canSetTag)
-		estate->es_graphwrstats.updateProperty += SPI_processed;
-}
-
-static void
-overwiteElemProp(ModifyGraphState *mgstate, Datum id, Datum prop_map)
-{
-	EState	   *estate = mgstate->ps.state;
-	Graphid		id_val;
-	uint16		labid;
-	Datum		values[SQLCMD_OVERWR_PROP_NPARAMS];
-	Oid			argTypes[SQLCMD_OVERWR_PROP_NPARAMS] = {JSONBOID, GRAPHIDOID};
-	SqlcmdKey	key;
-	SPIPlanPtr	plan;
-	int			ret;
-
-	id_val = DatumGetGraphid(id);
-	labid = GraphidGetLabid(id_val);
-
-	key.cmdtype = SQLCMD_TYPE_OVERWR_PROP;
-	key.labid = labid;
-	plan = findPreparedPlan(&key);
-	if (plan == NULL)
-	{
-		char		sqlcmd[SQLCMD_BUFLEN];
-		Oid			graphid = get_graphname_oid(get_graph_path());
-		char	   *relname = get_rel_name(get_labid_relid(graphid, labid));
-
-		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_OVERWR_PROP,
-				 get_graph_path(), relname);
-
-		plan = prepareSqlcmd(&key, sqlcmd,
-							 SQLCMD_OVERWR_PROP_NPARAMS, argTypes);
-	}
-
-	values[0] = prop_map;
-	values[1] = id;
-
-	ret = SPI_execp(plan, values, NULL, 0);
-	if (ret != SPI_OK_UPDATE)
-		elog(ERROR, "OVERWR_PROP (%hu." INT64_FORMAT "): SPI_execp returned %d",
-			 labid, GraphidGetLocid(id_val), ret);
-	if (SPI_processed > 1)
-		elog(ERROR, "OVERWR_PROP (%hu." INT64_FORMAT "): only one element per execution must be updated", labid, GraphidGetLocid(id_val));
-
-	if (mgstate->canSetTag)
-		estate->es_graphwrstats.updateProperty += SPI_processed;
-}
-
-static void
-removeElemProp(ModifyGraphState *mgstate, Datum id, Datum path)
-{
-	EState	   *estate = mgstate->ps.state;
-	Graphid		id_val;
-	uint16		labid;
-	Datum		values[SQLCMD_RM_PROP_NPARAMS];
-	Oid			argTypes[SQLCMD_RM_PROP_NPARAMS] = {TEXTARRAYOID, GRAPHIDOID};
-	SqlcmdKey	key;
-	SPIPlanPtr	plan;
-	int			ret;
-
-	id_val = DatumGetGraphid(id);
-	labid = GraphidGetLabid(id_val);
-
-	key.cmdtype = SQLCMD_TYPE_RM_PROP;
-	key.labid = labid;
-	plan = findPreparedPlan(&key);
-	if (plan == NULL)
-	{
-		char		sqlcmd[SQLCMD_BUFLEN];
-		Oid			graphid = get_graphname_oid(get_graph_path());
-		char	   *relname = get_rel_name(get_labid_relid(graphid, labid));
-
-		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_RM_PROP,
-				 get_graph_path(), relname);
-
-		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_RM_PROP_NPARAMS, argTypes);
-	}
-
-	values[0] = path;
-	values[1] = id;
-
-	ret = SPI_execp(plan, values, NULL, 0);
-	if (ret != SPI_OK_UPDATE)
-		elog(ERROR, "RM_PROP (%hu." INT64_FORMAT "): SPI_execp returned %d",
-			 labid, GraphidGetLocid(id_val), ret);
-	if (SPI_processed > 1)
-		elog(ERROR, "RM_PROP (%hu." INT64_FORMAT "): only one element per execution must be updated", labid, GraphidGetLocid(id_val));
 
 	if (mgstate->canSetTag)
 		estate->es_graphwrstats.updateProperty += SPI_processed;

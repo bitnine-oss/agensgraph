@@ -371,12 +371,85 @@ MATCH (n)-[r]->(m) REMOVE m.name;
 MATCH (n)-[r]->(m)
 RETURN properties(n) as n, properties(r) as r, properties(m) as m;
 
+MATCH (a) DETACH DELETE (a);
+
+-- Strandard SQL 
+CREATE ({age:10});
+
+MATCH (a {age:10})
+SET a.age = '20', a.age = (a.age::int + 1)::text::jsonb;
+
+MATCH (a)
+RETURN properties(a);
+
+MATCH (a) DETACH DELETE (a);
+
 -- multiple SET
+CREATE ({age:10});
+
+MATCH (a {age:10})
+SET a.age = '20' SET a.age = (a.age::int + 1)::text::jsonb;
+
+MATCH (a)
+RETURN properties(a);
+
+MATCH (a) DETACH DELETE (a);
+
+CREATE ({'name': 'someone'})-[:rel {'k': 'v'}]->({'name': 'somebody'});
 
 MATCH (n)-[r]->(m) SET r.l = '"x"' SET r.l = '"y"';
 
 MATCH (n)-[r]->(m)
 RETURN properties(r) as r;
+
+MATCH (a) DETACH DELETE (a);
+
+-- addtion operator (+=)
+CREATE ();
+
+MATCH (a)
+SET a.name += '"new"', a.bit += '"nine"';
+
+MATCH (a) RETURN a;
+
+MATCH (a)
+SET a.name += '"same"';
+
+MATCH (a) RETURN a;
+
+MATCH (a) DETACH DELETE (a);
+
+-- Remove
+CREATE ({a:'a', b:'b', c:'c'});
+
+MATCH (a)
+SET a.a = NULL
+REMOVE a.b;
+
+MATCH (a) RETURN a;
+
+MATCH (a)
+SET a = NULL;
+
+MATCH (a)
+SET a += NULL;
+
+MATCH (a)
+SET a.c += NULL;
+
+MATCH (a) RETURN a;
+
+MATCH (a) DETACH DELETE (a);
+
+-- refering to undefined attributes on SET clause.
+CREATE ({name:'undefined node'});
+CREATE ({age:30});
+
+MATCH (a) SET a.age = (a.age::int + 10)::text::jsonb;
+
+MATCH (a) RETURN a;
+
+MATCH (a) DETACH DELETE (a);
 
 -- cleanup
 

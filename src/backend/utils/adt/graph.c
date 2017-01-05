@@ -833,6 +833,22 @@ getEdgeIdDatum(Datum datum)
 }
 
 Datum
+getEdgeStartDatum(Datum datum)
+{
+	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	return tuple_getattr(tuphdr, Anum_edge_start);
+}
+
+Datum
+getEdgeEndDatum(Datum datum)
+{
+	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	return tuple_getattr(tuphdr, Anum_edge_end);
+}
+
+Datum
 getEdgePropDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
@@ -895,6 +911,50 @@ makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges, int nedges)
 	ReleaseTupleDesc(tupDesc);
 
 	return HeapTupleGetDatum(graphpath);
+}
+
+Datum
+makeGraphVertexDatum(Datum id, Datum prop)
+{
+	Datum		values[Natts_vertex];
+	bool		isnull[Natts_vertex] = {false, false};
+	TupleDesc	tupDesc;
+	HeapTuple	vertex;
+
+	values[Anum_vertex_id - 1] = id;
+	values[Anum_vertex_properties - 1] = prop;
+
+	tupDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
+	Assert(tupDesc->natts == Natts_vertex);
+
+	vertex = heap_form_tuple(tupDesc, values, isnull);
+
+	ReleaseTupleDesc(tupDesc);
+
+	return HeapTupleGetDatum(vertex);
+}
+
+Datum
+makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop)
+{
+	Datum		values[Natts_edge];
+	bool		isnull[Natts_edge] = {false, false, false, false};
+	TupleDesc	tupDesc;
+	HeapTuple	edge;
+
+	values[Anum_edge_id - 1] = id;
+	values[Anum_edge_start - 1] = start;
+	values[Anum_edge_end - 1] = end;
+	values[Anum_edge_properties - 1] = prop;
+
+	tupDesc = lookup_rowtype_tupdesc(EDGEOID, -1);
+	Assert(tupDesc->natts == Natts_edge);
+
+	edge = heap_form_tuple(tupDesc, values, isnull);
+
+	ReleaseTupleDesc(tupDesc);
+
+	return HeapTupleGetDatum(edge);
 }
 
 static Datum
