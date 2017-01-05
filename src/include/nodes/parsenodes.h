@@ -3364,6 +3364,7 @@ typedef struct CypherSetProp
 	NodeTag		type;
 	Node	   *prop;
 	Node	   *expr;
+	bool		add;
 } CypherSetProp;
 
 #endif   /* PARSENODES_H */

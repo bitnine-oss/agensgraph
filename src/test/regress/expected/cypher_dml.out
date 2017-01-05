@@ -904,15 +904,107 @@ RETURN properties(n) as n, properties(r) as r, properties(m) as m;
  {"name": "somebody"} | {"l": "w"} | {}
 (1 row)
 
+MATCH (a) DETACH DELETE (a);
+-- Strandard SQL 
+CREATE ({age:10});
+MATCH (a {age:10})
+SET a.age = '20', a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a)
+RETURN properties(a);
+ properties  
+-------------
+ {"age": 11}
+(1 row)
+
+MATCH (a) DETACH DELETE (a);
 -- multiple SET
+CREATE ({age:10});
+MATCH (a {age:10})
+SET a.age = '20' SET a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a)
+RETURN properties(a);
+ properties  
+-------------
+ {"age": 21}
+(1 row)
+
+MATCH (a) DETACH DELETE (a);
+CREATE ({'name': 'someone'})-[:rel {'k': 'v'}]->({'name': 'somebody'});
 MATCH (n)-[r]->(m) SET r.l = '"x"' SET r.l = '"y"';
 MATCH (n)-[r]->(m)
 RETURN properties(r) as r;
-     r      
-------------
- {"l": "y"}
+          r           
+----------------------
+ {"k": "v", "l": "y"}
 (1 row)
 
+MATCH (a) DETACH DELETE (a);
+-- addtion operator (+=)
+CREATE ();
+MATCH (a)
+SET a.name += '"new"', a.bit += '"nine"';
+MATCH (a) RETURN a;
+                      a                       
+----------------------------------------------
+ ag_vertex[1.7]{"bit": "nine", "name": "new"}
+(1 row)
+
+MATCH (a)
+SET a.name += '"same"';
+ERROR:  cannot replace existing key
+HINT:  Try using the function jsonb_set to replace key value.
+MATCH (a) RETURN a;
+                      a                       
+----------------------------------------------
+ ag_vertex[1.7]{"bit": "nine", "name": "new"}
+(1 row)
+
+MATCH (a) DETACH DELETE (a);
+-- Remove
+CREATE ({a:'a', b:'b', c:'c'});
+MATCH (a)
+SET a.a = NULL
+REMOVE a.b;
+MATCH (a) RETURN a;
+            a             
+--------------------------
+ ag_vertex[1.8]{"c": "c"}
+(1 row)
+
+MATCH (a)
+SET a = NULL;
+ERROR:  expression must be of type jsonb but unknown
+LINE 2: SET a = NULL;
+                ^
+MATCH (a)
+SET a += NULL;
+ERROR:  expression must be of type jsonb but unknown
+LINE 2: SET a += NULL;
+                 ^
+MATCH (a)
+SET a.c += NULL;
+ERROR:  Invalid Input : '+=' requires not null values.
+LINE 2: SET a.c += NULL;
+                   ^
+MATCH (a) RETURN a;
+            a             
+--------------------------
+ ag_vertex[1.8]{"c": "c"}
+(1 row)
+
+MATCH (a) DETACH DELETE (a);
+-- refering to undefined attributes on SET clause.
+CREATE ({name:'undefined node'});
+CREATE ({age:30});
+MATCH (a) SET a.age = (a.age::int + 10)::text::jsonb;
+MATCH (a) RETURN a;
+                    a                     
+------------------------------------------
+ ag_vertex[1.9]{"name": "undefined node"}
+ ag_vertex[1.10]{"age": 40}
+(2 rows)
+
+MATCH (a) DETACH DELETE (a);
 -- cleanup
 DROP GRAPH p CASCADE;
 NOTICE:  drop cascades to 4 other objects

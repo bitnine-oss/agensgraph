@@ -943,7 +943,6 @@ preprocess_graph_sets(PlannerInfo *root, List *sets)
 		GraphSetProp *gsp = lfirst(ls);
 
 		gsp->elem = preprocess_expression(root, gsp->elem, EXPRKIND_TARGET);
-		gsp->path = preprocess_expression(root, gsp->path, EXPRKIND_VALUES);
 		gsp->expr = preprocess_expression(root, gsp->expr, EXPRKIND_VALUES);
 	}
 }
