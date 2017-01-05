@@ -53,8 +53,15 @@ get_graph_path(void)
 	if (graph_path == NULL || strlen(graph_path) == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-				 errmsg("the graph_path is NULL"),
+				 errmsg("The graph_path is NULL"),
 				 errhint("Use SET graph_path")));
+	else if (!OidIsValid(get_graphname_oid(graph_path)))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+				 errmsg("The graph_path \"%s\" is invalid", graph_path),
+				 errhint("Use CREATE GRAPH")));
+	}
 
 	return graph_path;
 }
