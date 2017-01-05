@@ -190,7 +190,7 @@ static Node *makeResultEdge(ParseState *pstate,
 static List *transformSetPropList(ParseState *pstate, RangeTblEntry *rte,
 								  List *items);
 static GraphSetProp *transformSetProp(ParseState *pstate, RangeTblEntry *rte,
-									  CypherSetProp *sp);
+									  CypherSetProp *sp, List *sps);
 
 /* common */
 static bool isNodeForRef(CypherNode *cnode);
@@ -251,6 +251,9 @@ static RowExpr *makeRowExpr(List *args);
 /* utils */
 static char *genUniqueName(void);
 static char *genUniqueVarname(List *targetList);
+
+static GraphSetProp *findElem(List *sps, char *elem);
+static bool IsNullAConst(Node *arg);
 
 Query *
 transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
@@ -3019,19 +3022,15 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 		if (labname == NULL)
 			labname = AG_VERTEX;
 
-		/* Make vertex expression for result plan */
-		vertex = makeResultVertex(pstate, labname, cnode);
-		te = makeTargetEntry((Expr *) vertex,
-							 (AttrNumber) pstate->p_next_resno++,
-							 varname,
-							 false);
-
 		/*
 		 * varname will be used to find vertex that be made from ExecResult.
 		 * so that, varname must be unique in targetList.
 		 */
 		if (varname == NULL)
 			varname = genUniqueVarname(*targetList);
+
+		/* Make vertex expression for result plan */
+		vertex = makeResultVertex(pstate, labname, cnode);
 
 		te = makeTargetEntry((Expr *) vertex,
 							 (AttrNumber) pstate->p_next_resno++,
@@ -3133,25 +3132,33 @@ transformSetPropList(ParseState *pstate, RangeTblEntry *rte, List *items)
 	foreach(li, items)
 	{
 		CypherSetProp *sp = lfirst(li);
+		GraphSetProp  *gsp;
 
-		sps = lappend(sps, transformSetProp(pstate, rte, sp));
+		gsp = transformSetProp(pstate, rte, sp, sps);
+
+		if (gsp != NULL)
+			sps = lappend(sps, gsp);
 	}
 
 	return sps;
 }
 
 static GraphSetProp *
-transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp)
+transformSetProp(ParseState *pstate, RangeTblEntry *rte,
+				 CypherSetProp *sp, List *sps)
 {
 	Node	   *node;
 	List	   *inds;
 	Node	   *elem;
 	List	   *pathelems = NIL;
 	ListCell   *lf;
+	Node	   *path;
+	Node	   *origin_expr;
 	Node	   *expr;
 	Oid			exprtype;
 	Node	   *cexpr;
 	GraphSetProp *gsp;
+	char	   *varname;
 
 	if (!IsA(sp->prop, ColumnRef) && !IsA(sp->prop, A_Indirection))
 		ereport(ERROR,
@@ -3174,7 +3181,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp)
 	if (IsA(node, ColumnRef))
 	{
 		ColumnRef  *cref = (ColumnRef *) node;
-		char	   *varname = strVal(linitial(cref->fields));
+		varname = strVal(linitial(cref->fields));
 
 		elem = getColumnVar(pstate, rte, varname);
 
@@ -3192,8 +3199,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp)
 		Oid elemtype;
 
 		elem = transformExpr(pstate, node, EXPR_KIND_UPDATE_TARGET);
-
 		elemtype = exprType(elem);
+
 		if (elemtype != VERTEXOID && elemtype != EDGEOID)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -3210,6 +3217,27 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp)
 		}
 	}
 
+	if (pathelems != NULL)
+	{
+		path = makeArrayExpr(TEXTARRAYOID, TEXTOID, pathelems);
+		path = resolve_future_vertex(pstate, path, FVR_PRESERVE_VAR_REF);
+	}
+
+	/* Find the previously processed element */
+	gsp = findElem(sps, varname);
+	if (gsp == NULL)
+	{
+		expr = transformExpr(pstate, elem, EXPR_KIND_UPDATE_SOURCE);
+		exprtype = exprType(expr);
+		origin_expr = coerce_to_target_type(pstate, expr, exprtype, JSONBOID, -1,
+									COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST,
+									-1);
+	}
+	else
+	{
+		origin_expr = gsp->expr;
+	}
+
 	expr = transformExpr(pstate, sp->expr, EXPR_KIND_UPDATE_SOURCE);
 	expr = resolve_future_vertex(pstate, expr, FVR_PRESERVE_VAR_REF);
 	exprtype = exprType(expr);
@@ -3223,17 +3251,78 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp)
 						format_type_be(exprtype)),
 				 parser_errposition(pstate, exprLocation(expr))));
 
-	gsp = makeNode(GraphSetProp);
-	gsp->elem = resolve_future_vertex(pstate, elem, FVR_PRESERVE_VAR_REF);
-	if (pathelems != NIL)
+	if (pathelems == NULL)				/* target is properties column. */
 	{
-		gsp->path = makeArrayExpr(TEXTARRAYOID, TEXTOID, pathelems);
-		gsp->path = resolve_future_vertex(pstate, gsp->path,
-										  FVR_PRESERVE_VAR_REF);
-	}
-	gsp->expr = cexpr;
+		if (IsNullAConst(sp->expr))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("expression must be of type jsonb but %s",
+							format_type_be(exprtype)),
+					 parser_errposition(pstate, exprLocation(expr))));
+		}
 
-	return gsp;
+		if (sp->add)
+		{
+			cexpr = (Node *) ParseFuncOrColumn(pstate,
+								list_make1(makeString("jsonb_concat")),
+								list_make2(origin_expr, cexpr), NULL, -1);
+		}
+		else
+		{
+			/* do noting, just assign cexpr. */
+		}
+	}
+	else								/* target is properties's attr */
+	{
+		if (IsNullAConst(sp->expr))
+		{
+			if (sp->add)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("Invalid Input : '+=' requires not null values."),
+						 parser_errposition(pstate, exprLocation(expr))));
+
+			cexpr = (Node *) ParseFuncOrColumn(pstate,
+								list_make1(makeString("jsonb_delete_path")),
+								list_make2(origin_expr, path), NULL, -1);
+		}
+		else
+		{
+			if (sp->add)
+			{
+				cexpr = (Node *) ParseFuncOrColumn(pstate,
+									list_make1(makeString("jsonb_insert")),
+									list_make3(origin_expr, path, cexpr),
+									NULL, -1);
+			}
+			else
+			{
+				cexpr = (Node *) ParseFuncOrColumn(pstate,
+									list_make1(makeString("jsonb_set")),
+									list_make3(origin_expr, path, cexpr),
+									NULL, -1);
+			}
+		}
+	}
+
+	if (gsp == NULL)
+	{
+		gsp = makeNode(GraphSetProp);
+		gsp->elem = resolve_future_vertex(pstate, elem, FVR_PRESERVE_VAR_REF);
+		gsp->expr = cexpr;
+		gsp->variable = varname;
+
+		return gsp;
+	}
+	else
+	{
+		Assert(strcmp(gsp->variable, varname) == 0);
+
+		gsp->expr = cexpr;
+	}
+
+	return NULL;
 }
 
 static bool
@@ -4099,3 +4188,37 @@ genUniqueVarname(List *targetList)
 
 	return pstrdup(ret);
 }
+
+static GraphSetProp *
+findElem(List *sps, char *varname)
+{
+	GraphSetProp *result = NULL;
+	ListCell     *lc;
+
+	foreach(lc, sps)
+	{
+		GraphSetProp *gsp = (GraphSetProp *) lfirst(lc);
+
+		if (strcmp(gsp->variable, varname) == 0)
+		{
+			result = gsp;
+			break;
+		}
+	}
+
+	return result;
+}
+
+static bool
+IsNullAConst(Node *arg)
+{
+	if (arg && IsA(arg, A_Const))
+	{
+		A_Const    *con = (A_Const *) arg;
+
+		if (con->val.type == T_Null)
+			return true;
+	}
+	return false;
+}
+

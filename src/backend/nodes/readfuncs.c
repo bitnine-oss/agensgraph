@@ -2337,8 +2337,8 @@ _readGraphSetProp(void)
 {
 	READ_LOCALS(GraphSetProp);
 
+	READ_STRING_FIELD(variable);
 	READ_NODE_FIELD(elem);
-	READ_NODE_FIELD(path);
 	READ_NODE_FIELD(expr);
 
 	READ_DONE();

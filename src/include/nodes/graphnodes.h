@@ -42,11 +42,10 @@ typedef struct GraphEdge
 typedef struct GraphSetProp
 {
 	NodeTag		type;
+	char	   *variable;
 	Node	   *elem;			/* expression of vertex/edge */
-	Node	   *path;			/* expression of path (text[]) */
 	Node	   *expr;			/* expression of value */
 	ExprState  *es_elem;
-	ExprState  *es_path;
 	ExprState  *es_expr;
 } GraphSetProp;
 

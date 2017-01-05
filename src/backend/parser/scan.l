@@ -340,6 +340,7 @@ less_equals		"<="
 greater_equals	">="
 less_greater	"<>"
 not_equals		"!="
+add_equals		"+="
 
 /*
  * "self" is the set of chars that should be returned as single-character
@@ -844,6 +845,11 @@ other			.
 					/* We accept both "<>" and "!=" as meaning NOT_EQUALS */
 					SET_YYLLOC();
 					return NOT_EQUALS;
+				}
+
+{add_equals}	{
+					SET_YYLLOC();
+					return ADD_EQUALS;
 				}
 
 {self}			{

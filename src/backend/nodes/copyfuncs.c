@@ -2767,6 +2767,7 @@ _copyQuery(const Query *from)
 	COPY_NODE_FIELD(graph.resultRel);
 	COPY_NODE_FIELD(graph.pattern);
 	COPY_NODE_FIELD(graph.exprs);
+	COPY_NODE_FIELD(graph.sets);
 
 	return newnode;
 }
@@ -4510,8 +4511,8 @@ _copyGraphSetProp(const GraphSetProp *from)
 {
 	GraphSetProp *newnode = makeNode(GraphSetProp);
 
+	COPY_STRING_FIELD(variable);
 	COPY_NODE_FIELD(elem);
-	COPY_NODE_FIELD(path);
 	COPY_NODE_FIELD(expr);
 
 	return newnode;
