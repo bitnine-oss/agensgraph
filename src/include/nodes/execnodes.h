@@ -1404,6 +1404,7 @@ typedef struct IndexOnlyScanState
 	IndexScanDesc ioss_ScanDesc;
 	Buffer		ioss_VMBuffer;
 	long		ioss_HeapFetches;
+	AttrNumber *ioss_SysAttMap;
 } IndexOnlyScanState;
 
 /* ----------------
