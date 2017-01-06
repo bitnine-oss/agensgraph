@@ -169,7 +169,6 @@ CREATE VLABEL vdi disable index;
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "vdi_pkey" PRIMARY KEY, btree (id) INVALID
-    "vdi_properties_idx" gin (properties jsonb_path_ops) INVALID
 Inherits: g.ag_vertex
 
 -- REINDEX
@@ -182,7 +181,6 @@ REINDEX VLABEL vdi;
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "vdi_pkey" PRIMARY KEY, btree (id)
-    "vdi_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.ag_vertex
 
 -- REINDEX wrong case
@@ -311,7 +309,6 @@ ALTER VLABEL v0 SET STORAGE external;
  properties | jsonb   | not null default jsonb_build_object()                                                    | external |              | 
 Indexes:
     "v0_pkey" PRIMARY KEY, btree (id)
-    "v0_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.ag_vertex
 Child tables: g.v00,
               g.v01
@@ -405,24 +402,21 @@ SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
  indisclustered 
 ----------------
  f
- f
-(2 rows)
+(1 row)
 
 ALTER VLABEL v0 CLUSTER ON v0_pkey;
 SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass ORDER BY indexrelid;
  indisclustered 
 ----------------
  t
- f
-(2 rows)
+(1 row)
 
 ALTER VLABEL v0 SET WITHOUT CLUSTER;
 SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
  indisclustered 
 ----------------
  f
- f
-(2 rows)
+(1 row)
 
 SELECT relpersistence FROM pg_class WHERE relname = 'v0';
  relpersistence 
@@ -452,7 +446,6 @@ SELECT relpersistence FROM pg_class WHERE relname = 'v0';
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
-    "v1_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.v00,
           g.v01
 
@@ -465,7 +458,6 @@ ALTER VLABEL v1 NO INHERIT v00;
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
-    "v1_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.v01
 
 ALTER VLABEL v1 INHERIT v00;
@@ -477,7 +469,6 @@ ALTER VLABEL v1 INHERIT v00;
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
-    "v1_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.v01,
           g.v00
 
@@ -508,7 +499,6 @@ ALTER VLABEL vdi disable index;
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "vdi_pkey" PRIMARY KEY, btree (id) INVALID
-    "vdi_properties_idx" gin (properties jsonb_path_ops) INVALID
 Inherits: g.ag_vertex
 
 --
