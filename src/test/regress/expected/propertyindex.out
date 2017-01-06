@@ -35,7 +35,6 @@ CREATE PROPERTY INDEX ON regv1 ((body.weight::integer / body.height::integer));
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
-    "regv1_properties_idx" gin (properties jsonb_path_ops)
     "regv1_property_idx" btree ((properties #>> ARRAY['name'::text]))
     "regv1_property_idx1" btree ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))
     "regv1_property_idx2" btree (((properties #>> ARRAY['name'::text, 'first'::text]) || (properties #>> ARRAY['name'::text, 'last'::text])))
@@ -67,7 +66,6 @@ CREATE PROPERTY INDEX ON regv1 USING gist ((hobby::tsvector));
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
-    "regv1_properties_idx" gin (properties jsonb_path_ops)
     "regv1_property_idx" btree ((properties #>> ARRAY['name'::text]))
     "regv1_property_idx1" btree ((properties #>> ARRAY['name'::text, 'first'::text]))
     "regv1_property_idx2" hash ((properties #>> ARRAY['name'::text, 'first'::text]))
@@ -115,7 +113,6 @@ CREATE PROPERTY INDEX ON regv1 (name.first) WHERE (name IS NOT NULL);
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
-    "regv1_properties_idx" gin (properties jsonb_path_ops)
     "regv1_property_idx" btree ((properties #>> ARRAY['name'::text, 'first'::text]))
     "regv1_property_idx1" btree ((properties #>> ARRAY['name'::text, 'first'::text]) COLLATE "C" NULLS FIRST)
     "regv1_property_idx2" btree ((properties #>> ARRAY['name'::text]))
@@ -158,7 +155,6 @@ CONTEXT:  SQL statement "INSERT INTO "g"."regv1" VALUES (DEFAULT, $1) RETURNING 
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
     "regv1_property_idx" UNIQUE, btree ((properties #>> ARRAY['id'::text]))
-    "regv1_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.ag_vertex
 
 \dGv+ regv1
@@ -194,7 +190,6 @@ CONTEXT:  SQL statement "INSERT INTO "g"."regv1" VALUES (DEFAULT, $1) RETURNING 
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
     "regv1_property_idx" UNIQUE, btree ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))
-    "regv1_properties_idx" gin (properties jsonb_path_ops)
 Inherits: g.ag_vertex
 
 \dGv+ regv1
