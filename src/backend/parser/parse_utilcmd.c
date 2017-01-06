@@ -138,7 +138,6 @@ static void setSchemaName(char *context_schema, char **stmt_schema_name);
 /* for agensgraph */
 static List *makeVertexElements(void);
 static List *makeEdgeElements(void);
-static List *makeVertexIndex(RangeVar *label);
 static List *makeEdgeIndex(RangeVar *label);
 static bool isLabelKind(RangeVar *label, char labkind);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
@@ -3113,7 +3112,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	{
 		stmt->tableElts = makeVertexElements();
 
-		indexlist = makeVertexIndex(stmt->relation);
+		indexlist = NIL;
 	}
 	else if (labelStmt->labelKind == LABEL_EDGE)
 	{
@@ -3378,32 +3377,6 @@ makeEdgeElements(void)
 	return list_make4(id, start, end, prop_map);
 }
 
-/* NOTE: index for id column is made in makeVertexElements() */
-static List *
-makeVertexIndex(RangeVar *label)
-{
-	char	   *labname;
-	Oid			graphid;
-	IndexElem  *prop_col;
-	IndexStmt  *prop_idx;
-
-	labname = label->relname;
-	graphid = RangeVarGetCreationNamespace(label);
-
-	prop_col = makeNode(IndexElem);
-	prop_col->name = AG_ELEM_PROP_MAP;
-	prop_col->opclass = list_make1(makeString("jsonb_path_ops"));
-
-	prop_idx = makeNode(IndexStmt);
-	prop_idx->idxname = ChooseRelationName(labname, AG_ELEM_PROP_MAP,
-										   "idx", graphid);
-	prop_idx->relation = copyObject(label);
-	prop_idx->accessMethod = "gin";
-	prop_idx->indexParams = list_make1(prop_col);
-
-	return list_make1(prop_idx);
-}
-
 static List *
 makeEdgeIndex(RangeVar *label)
 {
@@ -3412,11 +3385,9 @@ makeEdgeIndex(RangeVar *label)
 	IndexElem  *id_col;
 	IndexElem  *start_col;
 	IndexElem  *end_col;
-	IndexElem  *prop_col;
 	IndexStmt  *edge_id_idx;
 	IndexStmt  *start_idx;
 	IndexStmt  *end_idx;
-	IndexStmt  *prop_idx;
 
 	labname = label->relname;
 	graphid = RangeVarGetCreationNamespace(label);
@@ -3432,10 +3403,6 @@ makeEdgeIndex(RangeVar *label)
 	end_col = makeNode(IndexElem);
 	end_col->name = AG_END_ID;
 
-	prop_col = makeNode(IndexElem);
-	prop_col->name = AG_ELEM_PROP_MAP;
-	prop_col->opclass = list_make1(makeString("jsonb_path_ops"));
-
 	/* make indexes */
 
 	edge_id_idx = makeNode(IndexStmt);
@@ -3449,24 +3416,17 @@ makeEdgeIndex(RangeVar *label)
 	start_idx->idxname = ChooseRelationName(labname, AG_START_ID,
 											"idx", graphid);
 	start_idx->relation = copyObject(label);
-	start_idx->accessMethod = "ein";
+	start_idx->accessMethod = "btree";
 	start_idx->indexParams = list_make2(start_col, end_col);
 
 	end_idx = makeNode(IndexStmt);
 	end_idx->idxname = ChooseRelationName(labname, AG_END_ID,
 										  "idx", graphid);
 	end_idx->relation = copyObject(label);
-	end_idx->accessMethod = "ein";
+	end_idx->accessMethod = "btree";
 	end_idx->indexParams = list_make2(end_col, start_col);
 
-	prop_idx = makeNode(IndexStmt);
-	prop_idx->idxname = ChooseRelationName(labname, AG_ELEM_PROP_MAP,
-										   "idx", graphid);
-	prop_idx->relation = copyObject(label);
-	prop_idx->accessMethod = "gin";
-	prop_idx->indexParams = list_make1(prop_col);
-
-	return list_make4(edge_id_idx, start_idx, end_idx, prop_idx);
+	return list_make3(edge_id_idx, start_idx, end_idx);
 }
 
 static bool
