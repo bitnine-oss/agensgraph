@@ -33,6 +33,7 @@
 #include "parser/parse_graph.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_relation.h"
+#include "parser/parse_shortestpath.h"
 #include "parser/parse_target.h"
 #include "parser/parser.h"
 #include "parser/parsetree.h"
@@ -248,11 +249,6 @@ static A_Const *makeIntConst(int val);
 static RowExpr *makeRowExpr(List *args);
 static bool IsNullAConst(Node *arg);
 
-/* shortest path */
-static Query *transformShortestPath(ParseState *pstate, CypherPath *cpath);
-static void checkNodeForRef(ParseState *pstate, CypherNode *cnode);
-static void checkNoPropRel(ParseState *pstate, CypherRel *rel);
-
 /* utils */
 static char *genUniqueName(void);
 
@@ -315,92 +311,6 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 
 	return qry;
 }
-
-static Query *
-transformShortestPath(ParseState *pstate, CypherPath *cpath)
-{
-	checkNodeForRef(pstate, (CypherNode *)linitial(cpath->chain));
-	checkNoPropRel(pstate, (CypherRel *)lsecond(cpath->chain));
-	checkNodeForRef(pstate, (CypherNode *)lthird(cpath->chain));
-
-	return NULL;
-}
-
-static void
-checkNodeForRef(ParseState *pstate, CypherNode *cnode)
-{
-	char *name = getCypherName(cnode->variable);
-	int loc = getCypherNameLoc(cnode->variable);
-	Node *col;
-
-	if (name == NULL)
-	{
-		/* Location */
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-				 errmsg("variable's name must be provided")));
-	}
-
-	if (getCypherName(cnode->label) != NULL)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-				 errmsg("label not supported"),
-				 parser_errposition(pstate, getCypherNameLoc(cnode->label))));
-	}
-
-	if (cnode->prop_map != NULL)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("prop_map not supported"),
-				 parser_errposition(pstate, loc)));
-	}
-
-	col = colNameToVar(pstate, name, false, loc);
-	if (col == NULL)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-				 errmsg("the variable \"%s\" not defined", name),
-				 parser_errposition(pstate, loc)));
-	}
-}
-
-static void
-checkNoPropRel(ParseState *pstate, CypherRel *rel)
-{
-	if (rel->prop_map != NULL)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("prop_map not supported")));
-	}
-
-	if (rel->variable != NULL)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("label variable not supported")));
-	}
-}
-
-/*
- * WITH RECURSIVE _sp ( vid, varr, earr, hops ) AS (
- * 	 VALUES id(start_id), ARRAY[id(start_id)]::graphid[], ARRAY[]::graphid[], 0
- * 	 UNION ALL
- * 	 SELECT id(), array_append(varr, id()), array_append(earr, id()), hops + 1
- * 	 FROM _sp, get_graph_path().typename AS _e
- * 	 WHERE level < maxHops
- * 	   AND <dup-check>
- * 	   AND _sp.vid = _e.start -- right
- * )
- * SELECT ROW( varr, err )::graphpath AS p
- * FROM _sp
- * WHERE vid = end_id
- *   AND hops >= minHops
- * LIMIT 1;
- */
 
 Query *
 transformCypherProjection(ParseState *pstate, CypherClause *clause)
