@@ -133,7 +133,7 @@ checkNoPropRel(ParseState *pstate, CypherRel *rel)
 
 #define CTE_COLNAME_VARR 	"varr"
 #define CTE_COLNAME_EARR 	"earr"
-#define CTE_COLNAME_RIDARR 	"rowidarr"
+#define CTE_COLNAME_VIDARR 	"vidarr"
 #define CTE_COLNAME_HOPS 	"hops"
 #define CTE_COLNAME_VID 	"vid"
 #define CTE_NAME 			"_sp"
@@ -143,20 +143,24 @@ checkNoPropRel(ParseState *pstate, CypherRel *rel)
 /* XXX length 0 ? */
 /*
  * WITH _sp(varr, earr, ridarr, hops) AS (
- *   VALUES ARRAY[startVertexExpr]::vertex[], ARRAY[]::edge[], ARRAY[]::record[], 0
+ *   VALUES (
+ *     ARRAY[startVertexExpr]::vertex[],
+ *     ARRAY[]::edge[],
+ *     ARRAY[startVertexExprId]::graphid[],
+ *     0)
  *   UNION ALL
  *   SELECT DISTINCT
  *     array_append(_sp.varr, ROW(_v.id, _v.properties)::vertex),
- *     array_append(_sp.earr, ROW(_e.id, _e.start, _e.end, _e.properties)::edge),
- *     array_append(rowidarr, ROW(tabloid, ctid)),
+ *     array_append(_sp.earr, ROW(_e.id, _e.start, _e."end", _e.properties)::edge),
+ *     array_append(vidarr, _e."end"),
  *     hops + 1
  *   FROM _sp,
  *   	 get_graph_path().typename AS _e,
  *   	 get_graph_path().'ag_vertex' AS _v
  *   WHERE
  *         id(_sp.varr[array_length(_sp.varr, 1)]) = _e.start
- *     AND _e.end = _v.id
- *     AND array_position(rowidarr, ROW(tableoid, ctid)) IS NULL
+ *     AND _e."end" = _v.id
+ *     AND array_position(vidarr, _e."end") IS NULL
  * )
  * SELECT ROW(_sp.varr, _sp.earr)::graphpath
  * FROM _sp
@@ -183,7 +187,7 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath)
 
 	colnames = list_make4(makeString(CTE_COLNAME_VARR),
 						  makeString(CTE_COLNAME_EARR),
-						  makeString(CTE_COLNAME_RIDARR),
+						  makeString(CTE_COLNAME_VIDARR),
 						  makeString(CTE_COLNAME_HOPS));
 
 	cte = makeNode(CommonTableExpr);
@@ -220,7 +224,12 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath)
 }
 
 
-/* VALUES ARRAY[vvar]::vertex[], ARRAY[]::edge[], ARRAY[]::record[], 0
+/*
+ * VALUES (
+ * 	 ARRAY[startVertex]::vertex[],
+ *   ARRAY[]::edge[],
+ *   ARRAY[startVertexId]::_graphid[],
+ *   0)
  */
 static SelectStmt *
 makeNonRecursiveTerm(ParseState *pstate, CypherNode *cnode)
@@ -237,7 +246,8 @@ makeNonRecursiveTerm(ParseState *pstate, CypherNode *cnode)
 	col = makeAArrayExpr(NIL, "_edge");
 	values = lappend(values, col);
 
-	col = makeAArrayExpr(NIL, "_record");
+	sid = copyObject(sid);
+	col = makeAArrayExpr(list_make1(makeVertexId(sid)), "_graphid");
 	values = lappend(values, col);
 
 	values = lappend(values, makeIntConst(0));
@@ -267,10 +277,10 @@ makeAArrayExpr(List *elements, char *typeName)
 }
 
 /*
- * SELECT DISTINCT
+ * SELECT DISTINCT ON (_e."end")
  *   array_append(_sp.varr, ROW(_v.id, _v.properties)::vertex),
  *   array_append(_sp.earr, ROW(_e.id, _e.start, _e.end, _e.properties)::edge),
- *   array_append(rowidarr, ROW(tabloid, ctid)),
+ *   array_append(viddarr, _e."end"),
  *   hops + 1
  * FROM _sp,
  * 	 get_graph_path().typename AS _e,
@@ -278,7 +288,7 @@ makeAArrayExpr(List *elements, char *typeName)
  * WHERE
  *       id(_sp.varr[array_length(_sp.varr, 1)]) = _e.start
  *   AND _e.end = _v.id
- *   AND array_position(rowidarr, ROW(tableoid, ctid)) IS NULL
+ *   AND array_position(vidarr, _e."end") IS NULL
  */
 static SelectStmt *
 makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
@@ -288,8 +298,8 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	Node		*vexpr;
 	Node		*earr;
 	Node		*eexpr;
-	Node		*ridarr;
-	Node		*ridexpr;
+	Node		*vidarr;
+	Node		*videxpr;
 	A_Expr		*incrHops;
 	ResTarget 	*hops;
 	RangeVar   	*sp;
@@ -306,7 +316,9 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 
 	sel = makeNode(SelectStmt);
 
-	sel->distinctClause = list_make1(NIL);
+	/* TODO direct */
+	sel->distinctClause = list_make1(
+			makeColumnRef2(CTE_ENAME, AG_END_ID));
 
 	/* targetList */
 
@@ -327,13 +339,11 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	sel->targetList = lappend(sel->targetList,
 			makeArrayAppendResTarget(earr, eexpr));
 
-	ridarr = makeColumnRef1(CTE_COLNAME_RIDARR);
-	ridexpr = makeRowExpr(list_make2(
-				makeColumnRef2(CTE_ENAME, "tableoid"),
-				makeColumnRef2(CTE_ENAME, "ctid")),
-			"record");
+	/* TODO direct */
+	vidarr = makeColumnRef1(CTE_COLNAME_VIDARR);
+	videxpr = makeColumnRef2(CTE_ENAME, AG_END_ID);
 	sel->targetList = lappend(sel->targetList,
-			makeArrayAppendResTarget(ridarr, ridexpr));
+			makeArrayAppendResTarget(vidarr, videxpr));
 
 	incrHops = makeSimpleA_Expr(AEXPR_OP, "+",
 			(Node *) makeColumnRef1(CTE_COLNAME_HOPS),
@@ -405,10 +415,10 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 
 	/* dup checking */
 
-	ridarr = copyObject(ridarr);
-	ridexpr = copyObject(ridexpr);
+	vidarr = copyObject(vidarr);
+	videxpr = copyObject(videxpr);
 	arrpos = makeFuncCall(list_make1(makeString("array_position")),
-						  list_make2(ridarr, ridexpr), -1);
+						  list_make2(vidarr, videxpr), -1);
 	dupcond = makeNode(NullTest);
 	dupcond->arg = (Expr *) arrpos;
 	dupcond->nulltesttype = IS_NULL;
