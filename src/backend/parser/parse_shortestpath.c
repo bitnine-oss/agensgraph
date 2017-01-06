@@ -158,13 +158,13 @@ checkNoPropRel(ParseState *pstate, CypherRel *rel)
  *   	 get_graph_path().typename AS _e,
  *   	 get_graph_path().'ag_vertex' AS _v
  *   WHERE
- *         id(_sp.varr[array_length(_sp.varr, 1)]) = _e.start
+ *         _sp.vidarr[array_length(_sp.vidarr, 1)] = _e.start
  *     AND _e."end" = _v.id
- *     AND array_position(vidarr, _e."end") IS NULL
+ *     AND array_position(_sp.vidarr, _e."end") IS NULL
  * )
  * SELECT ROW(_sp.varr, _sp.earr)::graphpath
  * FROM _sp
- * WHERE _id(_sp.varr[array_length(_sp.varr, 1)]) = id(endVertexExpr)
+ * WHERE _id(_sp.vidarr[array_length(_sp.vidarr, 1)]) = id(endVertexExpr)
  *   AND _sp.hops >= minHops
  * LIMIT 1;
  */
@@ -286,9 +286,9 @@ makeAArrayExpr(List *elements, char *typeName)
  * 	 get_graph_path().typename AS _e,
  * 	 get_graph_path().'ag_vertex' AS _v
  * WHERE
- *       id(_sp.varr[array_length(_sp.varr, 1)]) = _e.start
+ *       _sp.vidarr[array_length(_sp.vidarr, 1)]) = _e.start
  *   AND _e.end = _v.id
- *   AND array_position(vidarr, _e."end") IS NULL
+ *   AND array_position(_sp.vidarr, _e."end") IS NULL
  */
 static SelectStmt *
 makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
@@ -527,7 +527,7 @@ makeLastElem(void)
 	A_Indices 		*ind;
 	A_Indirection 	*i;
 
-	varr1 = makeColumnRef1(CTE_COLNAME_VARR);
+	varr1 = makeColumnRef1(CTE_COLNAME_VIDARR);
 	varr2 = (Node *) copyObject(varr1);
 
 	alen = makeFuncCall(list_make1(makeString("array_length")),
@@ -542,7 +542,7 @@ makeLastElem(void)
 	i->arg = varr1;
 	i->indirection = list_make1(ind);
 
-	return makeVertexId((Node *) i);
+	return (Node *) i;
 }
 
 /*
