@@ -83,8 +83,5 @@ DESCR("SP-GiST index access method");
 DATA(insert OID = 3580 (  brin		brinhandler i ));
 DESCR("block range index (BRIN) access method");
 #define BRIN_AM_OID 3580
-DATA(insert OID = 7120 (  ein		eihandler	i ));
-DESCR("graph edge index access method");
-#define EIN_AM_OID 7120
 
 #endif   /* PG_AM_H */
