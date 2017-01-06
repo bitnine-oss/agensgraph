@@ -20,6 +20,7 @@
 #include "catalog/indexing.h"
 #include "commands/sequence.h"
 #include "utils/builtins.h"
+#include "utils/graph.h"
 #include "utils/rel.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
@@ -131,7 +132,7 @@ GetNewLabelId(char *graphname, Oid graphid)
 		if (!labid_exists(graphid, labid))
 			break;
 
-		if (++cnt >= USHRT_MAX)
+		if (++cnt >= GRAPHID_LABID_MAX)
 			ereport(ERROR,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 					 errmsg("no more new labels are available")));

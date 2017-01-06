@@ -41,8 +41,8 @@
 #define Anum_graphpath_vertices	1
 #define Anum_graphpath_edges	2
 
-#define GRAPHID_FMTSTR			"%u." INT64_FORMAT
-#define GRAPHID_BUFLEN			32	/* "4294967295.18446744073709551615" */
+#define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
+#define GRAPHID_BUFLEN			32	/* "65535.281474976710655" */
 
 typedef struct LabelOutData {
 	uint16		label_labid;
