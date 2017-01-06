@@ -188,7 +188,7 @@ InitScanLabelSkipExpr(SeqScanState *node)
 		if (!is_opclause(expr))
 			continue;
 
-		if (((OpExpr *) expr)->opno != GraphidEqualOperator)
+		if (((OpExpr *) expr)->opno != OID_GRAPHID_EQ_OP)
 			continue;
 
 		/* expr is of the form `graphid = graphid` */

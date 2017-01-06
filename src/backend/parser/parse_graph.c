@@ -15,6 +15,7 @@
 #include "catalog/ag_graph_fn.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_collation.h"
+#include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "lib/stringinfo.h"
 #include "nodes/graphnodes.h"
@@ -2665,6 +2666,27 @@ resolve_future_vertex_mutator(Node *node, resolve_future_vertex_context *ctx)
 
 		if (agglevelsup > ctx->sublevels_up)
 			return node;
+
+		/* fall-through */
+	}
+
+	if (IsA(node, OpExpr))
+	{
+		OpExpr *op = (OpExpr *) node;
+
+		switch (op->opno)
+		{
+			case OID_VERTEX_EQ_OP:
+			case OID_VERTEX_NE_OP:
+			case OID_VERTEX_LT_OP:
+			case OID_VERTEX_GT_OP:
+			case OID_VERTEX_LE_OP:
+			case OID_VERTEX_GE_OP:
+				/* comparing only `id`s is enough */
+				return node;
+			default:
+				break;
+		}
 
 		/* fall-through */
 	}
