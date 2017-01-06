@@ -1830,7 +1830,7 @@ DESCR("delete path");
 /* graphid operators */
 DATA(insert OID = 7087 (  "="	   PGNSP PGUID b t t 7002 7002 16 7087 7088 graphid_eq eqsel eqjoinsel ));
 DESCR("equal");
-#define GraphidEqualOperator	7087
+#define OID_GRAPHID_EQ_OP 7087
 DATA(insert OID = 7088 (  "<>"	   PGNSP PGUID b f f 7002 7002 16 7088 7087 graphid_ne neqsel neqjoinsel ));
 DESCR("not equal");
 DATA(insert OID = 7089 (  "<"	   PGNSP PGUID b f f 7002 7002 16 7090 7092 graphid_lt scalarltsel scalarltjoinsel ));
@@ -1844,16 +1844,22 @@ DESCR("greater than or equal");
 /* vertex operators */
 DATA(insert OID = 7136 (  "="	   PGNSP PGUID b t t 7012 7012 16 7136 7137 vertex_eq eqsel eqjoinsel ));
 DESCR("equal");
+#define OID_VERTEX_EQ_OP 7136
 DATA(insert OID = 7137 (  "<>"	   PGNSP PGUID b f f 7012 7012 16 7137 7136 vertex_ne neqsel neqjoinsel ));
 DESCR("not equal");
+#define OID_VERTEX_NE_OP 7137
 DATA(insert OID = 7138 (  "<"	   PGNSP PGUID b f f 7012 7012 16 7139 7141 vertex_lt scalarltsel scalarltjoinsel ));
 DESCR("less than");
+#define OID_VERTEX_LT_OP 7138
 DATA(insert OID = 7139 (  ">"	   PGNSP PGUID b f f 7012 7012 16 7138 7140 vertex_gt scalargtsel scalargtjoinsel ));
 DESCR("greater than");
+#define OID_VERTEX_GT_OP 7139
 DATA(insert OID = 7140 (  "<="	   PGNSP PGUID b f f 7012 7012 16 7141 7139 vertex_le scalarltsel scalarltjoinsel ));
 DESCR("less than or equal");
+#define OID_VERTEX_LE_OP 7140
 DATA(insert OID = 7141 (  ">="	   PGNSP PGUID b f f 7012 7012 16 7140 7138 vertex_ge scalargtsel scalargtjoinsel ));
 DESCR("greater than or equal");
+#define OID_VERTEX_GE_OP 7141
 /* edge operators */
 DATA(insert OID = 7148 (  "="	   PGNSP PGUID b t t 7022 7022 16 7148 7149 edge_eq eqsel eqjoinsel ));
 DESCR("equal");
