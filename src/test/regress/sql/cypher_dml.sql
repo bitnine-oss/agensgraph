@@ -49,20 +49,20 @@ RETURN properties(l) AS lj, properties(j) AS j,
        properties((edges(p))[1]) AS lc, properties((vertices(p))[2]) AS c,
        properties(e) AS e, properties(d) AS d;
 
-CREATE ()-[a:r]->(a);
+CREATE ()-[a:lib]->(a);
 CREATE a=(), (a);
 CREATE (a), (a {});
 CREATE (a), (a);
 CREATE (=0);
 CREATE ()-[]-();
 CREATE ()-[]->();
-CREATE ()-[:r|z]->();
-CREATE (a)-[a:r]->();
-CREATE ()-[a:r]->()-[a:z]->();
-CREATE a=(), ()-[a:z]->();
-CREATE ()-[:r =0]->();
+CREATE ()-[:lib|doc]->();
+CREATE (a)-[a:lib]->();
+CREATE ()-[a:lib]->()-[a:doc]->();
+CREATE a=(), ()-[a:doc]->();
+CREATE ()-[:lib =0]->();
 CREATE (a), a=();
-CREATE ()-[a:r]->(), a=();
+CREATE ()-[a:lib]->(), a=();
 CREATE a=(), a=();
 
 --

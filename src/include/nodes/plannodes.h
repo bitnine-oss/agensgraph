@@ -958,6 +958,7 @@ typedef struct ModifyGraph
 	bool		last;			/* is this for the last clause? */
 	bool		detach;			/* DETACH DELETE */
 	Plan	   *subplan;		/* plan producing source data */
+	List	   *resultRel;		/* list for Oid of target labels */
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
 	List	   *exprs;			/* expression list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */

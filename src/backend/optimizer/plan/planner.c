@@ -2063,6 +2063,7 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 													parse->graph.last,
 													parse->graph.detach,
 													path,
+													parse->graph.resultRel,
 													parse->graph.pattern,
 													parse->graph.exprs,
 													parse->graph.sets);
