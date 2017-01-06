@@ -31,6 +31,9 @@ typedef uint64 Graphid;
 				 (((uint64) (_locid)) & 0x0000ffffffffffff); \
 	} while (0)
 
+#define GRAPHID_LABID_MAX	USHRT_MAX
+#define GRAPHID_LOCID_MAX	((UINT64CONST(1) << (32 + 16)) - 1)
+
 /* graphid */
 extern Datum graphid(PG_FUNCTION_ARGS);
 extern Datum graphid_in(PG_FUNCTION_ARGS);

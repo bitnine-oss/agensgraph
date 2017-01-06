@@ -64,6 +64,7 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/graph.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -3011,7 +3012,8 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 	labseq = makeNode(CreateSeqStmt);
 	labseq->sequence = makeRangeVar(stmt->graphname, AG_LABEL_SEQ, -1);
 	labseq->options =
-			list_make2(makeDefElem("maxvalue", (Node *) makeInteger(USHRT_MAX)),
+			list_make2(makeDefElem("maxvalue", (Node *)
+								   makeInteger(GRAPHID_LABID_MAX)),
 					   makeDefElem("cycle", (Node *) makeInteger(TRUE)));
 	labseq->ownerId = InvalidOid;
 	labseq->if_not_exists = false;
@@ -3447,7 +3449,9 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	char	   *snamespace;
 	char	   *sname;
 	CreateSeqStmt *seqstmt;
+	DefElem	   *maxval;
 	List	   *attnamelist;
+	DefElem	   *ownedby;
 	AlterSeqStmt *altseqstmt;
 	char	   *qname;
 	A_Const	   *relname;
@@ -3479,13 +3483,23 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 
 	/* ALTER SEQUENCE OWNED BY after CREATE TABLE */
 
+#ifdef HAVE_LONG_INT_64
+	maxval = makeDefElem("maxvalue", (Node *) makeInteger(GRAPHID_LOCID_MAX));
+#else
+	{
+		char *buf[32];
+
+		snprintf(buf, UINT64_FORMAT, GRAPHID_LOCID_MAX);
+		maxval = makeDefElem("maxvalue", (Node *) makeFloat(pstrdup(buf)));
+	}
+#endif
 	attnamelist = list_make3(makeString(snamespace),
 							 makeString(cxt->relation->relname),
 							 makeString(AG_ELEM_LOCAL_ID));
+	ownedby = makeDefElem("owned_by", (Node *) attnamelist);
 	altseqstmt = makeNode(AlterSeqStmt);
 	altseqstmt->sequence = makeRangeVar(snamespace, sname, -1);
-	altseqstmt->options = list_make1(makeDefElem("owned_by",
-												 (Node *) attnamelist));
+	altseqstmt->options = list_make2(maxval, ownedby);
 
 	cxt->alist = lappend(cxt->alist, altseqstmt);
 
