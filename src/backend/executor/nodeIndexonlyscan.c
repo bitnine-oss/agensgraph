@@ -25,6 +25,7 @@
 #include "postgres.h"
 
 #include "access/relscan.h"
+#include "access/sysattr.h"
 #include "access/visibilitymap.h"
 #include "executor/execdebug.h"
 #include "executor/nodeIndexonlyscan.h"
@@ -36,8 +37,10 @@
 
 
 static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node);
-static void StoreIndexTuple(TupleTableSlot *slot, IndexTuple itup,
-				TupleDesc itupdesc);
+static void StoreIndexTuple(TupleTableSlot *slot, AttrNumber *sysattmap,
+							IndexTuple itup, TupleDesc itupdesc,
+							Oid tableoid, ItemPointer ctid);
+static void IndexOnlyMarkSysAtt(IndexOnlyScanState *node, List *indextlist);
 
 
 /* ----------------------------------------------------------------
@@ -146,7 +149,9 @@ IndexOnlyNext(IndexOnlyScanState *node)
 		/*
 		 * Fill the scan tuple slot with data from the index.
 		 */
-		StoreIndexTuple(slot, scandesc->xs_itup, scandesc->xs_itupdesc);
+		StoreIndexTuple(slot, node->ioss_SysAttMap,
+						scandesc->xs_itup, scandesc->xs_itupdesc,
+						RelationGetRelid(node->ss.ss_currentRelation), tid);
 
 		/*
 		 * If the index was lossy, we have to recheck the index quals.
@@ -208,8 +213,12 @@ IndexOnlyNext(IndexOnlyScanState *node)
  * right now we don't need it elsewhere.
  */
 static void
-StoreIndexTuple(TupleTableSlot *slot, IndexTuple itup, TupleDesc itupdesc)
+StoreIndexTuple(TupleTableSlot *slot, AttrNumber *sysattmap,
+				IndexTuple itup, TupleDesc itupdesc,
+				Oid tableoid, ItemPointer ctid)
 {
+	TupleDesc	stupdesc = slot->tts_tupleDescriptor;
+	int			nslotatts = stupdesc->natts;
 	int			nindexatts = itupdesc->natts;
 	Datum	   *values = slot->tts_values;
 	bool	   *isnull = slot->tts_isnull;
@@ -221,12 +230,31 @@ StoreIndexTuple(TupleTableSlot *slot, IndexTuple itup, TupleDesc itupdesc)
 	 * happens for btree name_ops in particular).  They'd better have the same
 	 * number of columns though, as well as being datatype-compatible which is
 	 * something we can't so easily check.
+	 *
+	 * The slot's tupdesc can have more attributes than itupdesc
+	 * only if those attributes are tableoid and/or ctid.
 	 */
-	Assert(slot->tts_tupleDescriptor->natts == nindexatts);
+	Assert(nslotatts >= nindexatts);
 
 	ExecClearTuple(slot);
 	for (i = 0; i < nindexatts; i++)
 		values[i] = index_getattr(itup, i + 1, itupdesc, &isnull[i]);
+	for (; i < nslotatts; i++)
+	{
+		switch (sysattmap[i])
+		{
+			case TableOidAttributeNumber:
+				values[i] = ObjectIdGetDatum(tableoid);
+				isnull[i] = false;
+				break;
+			case SelfItemPointerAttributeNumber:
+				values[i] = PointerGetDatum(ctid);
+				isnull[i] = false;
+				break;
+			default:
+				Assert(!"invalid attribute found in system attribute map");
+		}
+	}
 	ExecStoreVirtualTuple(slot);
 }
 
@@ -454,6 +482,8 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	tupDesc = ExecTypeFromTL(node->indextlist, false);
 	ExecAssignScanType(&indexstate->ss, tupDesc);
 
+	IndexOnlyMarkSysAtt(indexstate, node->indextlist);
+
 	/*
 	 * Initialize result tuple type and projection info.  The node's
 	 * targetlist will contain Vars with varno = INDEX_VAR, referencing the
@@ -563,4 +593,46 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 	 * all done.
 	 */
 	return indexstate;
+}
+
+static void
+IndexOnlyMarkSysAtt(IndexOnlyScanState *node, List *indextlist)
+{
+	AttrNumber *map;
+	int			i;
+	ListCell   *lt;
+
+	map = palloc(ExecTargetListLength(indextlist) * sizeof(*map));
+
+	i = 0;
+	foreach(lt, indextlist)
+	{
+		TargetEntry *te = lfirst(lt);
+
+
+		if (IsA(te->expr, Var))
+		{
+			Var		   *var = (Var *) te->expr;
+
+			if (var->varattno == TableOidAttributeNumber ||
+				var->varattno == SelfItemPointerAttributeNumber)
+			{
+				map[i] = var->varattno;
+			}
+			else
+			{
+				/* user attributes or oid */
+				map[i] = InvalidAttrNumber;
+			}
+		}
+		else
+		{
+			/* index expressions */
+			map[i] = InvalidAttrNumber;
+		}
+
+		i++;
+	}
+
+	node->ioss_SysAttMap = map;
 }

@@ -1782,6 +1782,7 @@ find_list_position(Node *node, List **nodelist)
 	return i;
 }
 
+
 /*
  * check_index_only
  *		Determine whether an index-only scan is possible for this index.
@@ -1870,6 +1871,11 @@ check_index_only(RelOptInfo *rel, IndexOptInfo *index, List *index_clauses,
 				bms_add_member(index_canreturn_attrs,
 							   attno - FirstLowInvalidHeapAttributeNumber);
 	}
+	/* We can get tableoid and ctid through index-only scan. */
+	index_canreturn_attrs = bms_add_member(index_canreturn_attrs,
+		TableOidAttributeNumber - FirstLowInvalidHeapAttributeNumber);
+	index_canreturn_attrs = bms_add_member(index_canreturn_attrs,
+		SelfItemPointerAttributeNumber - FirstLowInvalidHeapAttributeNumber);
 
 	/* Do we have all the necessary attributes? */
 	result = bms_is_subset(attrs_used, index_canreturn_attrs);
