@@ -42,7 +42,6 @@ PG_FUNCTION_INFO_V1(bt_page_stats);
 
 #define IS_INDEX(r) ((r)->rd_rel->relkind == RELKIND_INDEX)
 #define IS_BTREE(r) ((r)->rd_rel->relam == BTREE_AM_OID)
-#define IS_EDGE(r) ((r)->rd_rel->relam == EIN_AM_OID)
 
 /* note: BlockNumber is unsigned, hence can't be negative */
 #define CHECK_RELATION_BLOCK_RANGE(rel, blkno) { \
@@ -177,7 +176,7 @@ bt_page_stats(PG_FUNCTION_ARGS)
 	relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
 	rel = relation_openrv(relrv, AccessShareLock);
 
-	if (!IS_INDEX(rel) || !(IS_BTREE(rel) || IS_EDGE(rel)))
+	if (!IS_INDEX(rel) || !IS_BTREE(rel))
 		elog(ERROR, "relation \"%s\" is not a btree index",
 			 RelationGetRelationName(rel));
 
@@ -281,7 +280,7 @@ bt_page_items(PG_FUNCTION_ARGS)
 		relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
 		rel = relation_openrv(relrv, AccessShareLock);
 
-		if (!IS_INDEX(rel) || !(IS_BTREE(rel) || IS_EDGE(rel)))
+		if (!IS_INDEX(rel) || !IS_BTREE(rel))
 			elog(ERROR, "relation \"%s\" is not a btree index",
 				 RelationGetRelationName(rel));
 
@@ -426,7 +425,7 @@ bt_metap(PG_FUNCTION_ARGS)
 	relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
 	rel = relation_openrv(relrv, AccessShareLock);
 
-	if (!IS_INDEX(rel) || !(IS_BTREE(rel) || IS_EDGE(rel)))
+	if (!IS_INDEX(rel) || !IS_BTREE(rel))
 		elog(ERROR, "relation \"%s\" is not a btree index",
 			 RelationGetRelationName(rel));
 

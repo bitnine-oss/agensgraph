@@ -57,7 +57,6 @@ PG_FUNCTION_INFO_V1(pgstatginindex);
 #define IS_INDEX(r) ((r)->rd_rel->relkind == RELKIND_INDEX)
 #define IS_BTREE(r) ((r)->rd_rel->relam == BTREE_AM_OID)
 #define IS_GIN(r) ((r)->rd_rel->relam == GIN_AM_OID)
-#define IS_EDGE(r) ((r)->rd_rel->relam == EIN_AM_OID)
 
 /* ------------------------------------------------
  * A structure for a whole btree index statistics
@@ -145,7 +144,7 @@ pgstatindex_impl(Relation rel, FunctionCallInfo fcinfo)
 	BTIndexStat indexStat;
 	BufferAccessStrategy bstrategy = GetAccessStrategy(BAS_BULKREAD);
 
-	if (!IS_INDEX(rel) || !(IS_BTREE(rel) || IS_EDGE(rel)))
+	if (!IS_INDEX(rel) || !IS_BTREE(rel))
 		elog(ERROR, "relation \"%s\" is not a btree index",
 			 RelationGetRelationName(rel));
 
