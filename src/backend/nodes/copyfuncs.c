@@ -2765,8 +2765,10 @@ _copyQuery(const Query *from)
 	COPY_SCALAR_FIELD(graph.writeOp);
 	COPY_SCALAR_FIELD(graph.last);
 	COPY_SCALAR_FIELD(graph.detach);
+	COPY_NODE_FIELD(graph.resultRel);
 	COPY_NODE_FIELD(graph.pattern);
 	COPY_NODE_FIELD(graph.exprs);
+	COPY_NODE_FIELD(graph.sets);
 
 	return newnode;
 }
@@ -4488,7 +4490,6 @@ _copyGraphVertex(const GraphVertex *from)
 
 	COPY_STRING_FIELD(variable);
 	COPY_STRING_FIELD(label);
-	COPY_NODE_FIELD(prop_map);
 	COPY_SCALAR_FIELD(create);
 
 	return newnode;
@@ -4502,7 +4503,6 @@ _copyGraphEdge(const GraphEdge *from)
 	COPY_SCALAR_FIELD(direction);
 	COPY_STRING_FIELD(variable);
 	COPY_STRING_FIELD(label);
-	COPY_NODE_FIELD(prop_map);
 
 	return newnode;
 }
@@ -4512,8 +4512,8 @@ _copyGraphSetProp(const GraphSetProp *from)
 {
 	GraphSetProp *newnode = makeNode(GraphSetProp);
 
+	COPY_STRING_FIELD(variable);
 	COPY_NODE_FIELD(elem);
-	COPY_NODE_FIELD(path);
 	COPY_NODE_FIELD(expr);
 
 	return newnode;
