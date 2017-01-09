@@ -300,7 +300,6 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 
 	sel = makeNode(SelectStmt);
 
-	/* TODO direct */
 	sel->distinctClause = list_make1(
 			makeColumnRef2(CTE_ENAME, AG_END_ID));
 
@@ -341,9 +340,16 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 
 		re = makeRangeVar(get_graph_path(), typname, -1);
 		re->alias = makeAliasNoDup(CTE_ENAME, NIL);
+		if (crel->direction == CYPHER_REL_DIR_LEFT)
+		{
+			re->alias->colnames = list_make4(
+					makeString("id"), makeString("end"),
+					makeString("start"), makeString("properties"));
+		}
 		re->inhOpt = INH_YES;
 		edge = (Node *) re;
 	}
+
 	sel->fromClause = list_make2(sp, edge);
 
 	/* WHERE */
@@ -351,14 +357,7 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	/* _vp JOIN _e */
 
 	prev = makeLastElem();
-	if (crel->direction == CYPHER_REL_DIR_LEFT)
-	{
-		next = makeColumnRef2(CTE_ENAME, AG_END_ID);
-	}
-	else
-	{
-		next = makeColumnRef2(CTE_ENAME, AG_START_ID);
-	}
+	next = makeColumnRef2(CTE_ENAME, AG_START_ID);
 	joincond = makeSimpleA_Expr(AEXPR_OP, "=", prev, next, -1);
 	where_args = list_make1(joincond);
 
