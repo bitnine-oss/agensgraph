@@ -680,22 +680,19 @@ deleteVertex(ModifyGraphState *mgstate, Datum vertex, bool detach)
 	id_datum = getVertexIdDatum(vertex);
 	id = DatumGetGraphid(id_datum);
 
-	if (vertexHasEdge(id_datum))
+	if (detach)
 	{
-		if (detach)
-		{
-			deleteVertexEdges(mgstate, id_datum);
-		}
-		else
-		{
-			Oid			graphid = get_graphname_oid(get_graph_path());
-			Oid			relid = get_labid_relid(graphid, GraphidGetLabid(id));
+		deleteVertexEdges(mgstate, id_datum);
+	}
+	else if (vertexHasEdge(id_datum))
+	{
+		Oid			graphid = get_graphname_oid(get_graph_path());
+		Oid			relid = get_labid_relid(graphid, GraphidGetLabid(id));
 
-			ereport(ERROR,
-					(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
-					 errmsg("vertex " INT64_FORMAT " in \"%s\" has edge(s)",
-							GraphidGetLocid(id), get_rel_name(relid))));
-		}
+		ereport(ERROR,
+				(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
+				 errmsg("vertex " INT64_FORMAT " in \"%s\" has edge(s)",
+						GraphidGetLocid(id), get_rel_name(relid))));
 	}
 
 	deleteElem(mgstate, id_datum, DEL_ELEM_VERTEX);
