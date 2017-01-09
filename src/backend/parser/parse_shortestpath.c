@@ -47,8 +47,8 @@ static SelectStmt *makeNonRecursiveTerm(ParseState *pstate, CypherNode *cnode);
 static SelectStmt *makeRecursiveTerm(ParseState *pstate, CypherPath *cpath);
 static SelectStmt *makeSubquery(CypherPath *cpath, WithClause *with);
 static RangeSubselect *makeCTEScan(CypherPath *cpath);
-static RangeSubselect *makeVertexScan(CypherPath *cpath);
-static RangeSubselect *makeEdgeScan(CypherPath *cpath);
+static Node *makeVertexScan(CypherPath *cpath);
+static Node *makeEdgeScan(CypherPath *cpath);
 static RangeSubselect *makeEdgeUnion(char *edge_label);
 
 static Node *makeColumnRef(List *fields);
@@ -64,6 +64,7 @@ static Node *makeSimpleResTarget(char *field, char *name);
 static A_Const *makeIntConst(int val);
 static void getCypherRelType(CypherRel *crel, char **typname, int *typloc);
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
+static Node *makeSubLink(Node *sel);
 
 Query *
 transformShortestPath(ParseState *pstate, CypherPath *cpath)
@@ -145,34 +146,32 @@ checkNoPropRel(ParseState *pstate, CypherRel *rel)
 #define CTE_VNAME			"_v"
 
 /*
- * WITH _sp(vidarr, earr, hops) AS (
+ * WITH _sp(vidarr, eidarr, hops) AS (
  *   VALUES (
  *     ARRAY[startVertexExprId]::graphid[],
- *     ARRAY[]::edge[],
+ *     ARRAY[]::graphid[],
  *     0)
  *   UNION ALL
  *   SELECT DISTINCT ON (_e."end")
  *     array_append(vidarr, _e."end"),
- *     array_append(_sp.earr, ROW(_e.id, _e.start, _e."end", _e.properties)::edge),
+ *     array_append(eidarr, _e.id),
  *     hops + 1
- *   FROM _sp,
- *   	 get_graph_path().typename AS _e,
- *   WHERE
- *         _sp.vidarr[array_length(_sp.vidarr, 1)] = _e.start
+ *   FROM _sp, get_graph_path().typename AS _e,
+ *   WHERE _sp.vidarr[array_length(_sp.vidarr, 1)] = _e.start
  *     AND array_position(_sp.vidarr, _e."end") IS NULL
  * )
- * SELECT ROW(_v.varr, _sp.earr)::graphpath
- * FROM (
- *   SELECT _sp.vidarr, _sp.earr
- *   FROM _sp
- *   WHERE _sp.vidarr[array_length(_sp.vidarr, 1)]) = id(endVertexExpr)
- *     AND _sp.hops >= minHops
- *   LIMIT 1;
- * ) _sp, lateral (
- *   SELECT array_agg(ROW(_v.id, _v.properties)::vertex) AS varr
- * 	 FROM unnest(_sp.vidarr) AS vid, get_graph_path().'ag_vertex' AS _v
- *   WHERE vid = _v.id
- * ) AS _v
+ * SELECT ROW((SELECT (SELECT array_agg(ROW(_v.id, _v.properties)::vertex)
+ *                     FROM get_graph_path().'ag_vertex' AS _v
+ *        		       WHERE vid = _v.id) AS varr
+ *             FROM unnest(_sp.vidarr) AS vid),
+ *            (SELECT (SELECT array_agg(ROW(_e.id, _e.start, _e."end", _e.properties)::edge) AS earr
+ * 	                   FROM unnest(_sp.eidarr) eid, egde AS _e
+ *                     WHERE eid = _e.id) AS earr
+ *             FROM unnest(_sp.eidarr) AS eid))::graphpath
+ * FROM _sp
+ * WHERE _sp.vidarr[array_length(_sp.vidarr, 1)]) = id(endVertexExpr)
+ *   AND _sp.hops >= minHops
+ * LIMIT 1
  */
 static Query *
 makeShortestPathQuery(ParseState *pstate, CypherPath *cpath)
@@ -488,44 +487,36 @@ makeLastElem(void)
 }
 
 /*
- * SELECT ROW(_v.varr, _sp.earr)::graphpath
- * FROM (
- *   SELECT _sp.vidarr, _sp.eidarr
- *   FROM _sp
- *   WHERE _sp.vidarr[array_length(_sp.vidarr, 1)]) = id(endVertexExpr)
- *     AND _sp.hops >= minHops
- *   LIMIT 1;
- * ) _sp, lateral (
- *   SELECT array_agg(ROW(_v.id, _v.properties)::vertex) AS varr
- * 	 FROM unnest(_sp.vidarr) AS vid, get_graph_path().'ag_vertex' AS _v
- *   WHERE vid = _v.id
- * ) AS _v,  lateral (
- *   SELECT array_agg(ROW(_e.id, _e.start, _e."end", _e.properties)::edge) AS earr
- * 	 FROM unnest(_sp.eidarr) AS (id1 oid, id2 tid), egde AS _e
- *   WHERE id1 = _e.tabloid
- *     AND id2 = _e.ctid
- * ) AS _e
+ * SELECT ROW((SELECT (SELECT array_agg(ROW(_v.id, _v.properties)::vertex)
+ *                     FROM get_graph_path().'ag_vertex' AS _v
+ *        		       WHERE vid = _v.id) AS varr
+ *             FROM unnest(_sp.vidarr) AS vid),
+ *            (SELECT (SELECT array_agg(ROW(_e.id, _e.start, _e."end", _e.properties)::edge) AS earr
+ * 	                   FROM unnest(_sp.eidarr) eid, egde AS _e
+ *                     WHERE eid = _e.id) AS earr
+ *             FROM unnest(_sp.eidarr) AS eid))::graphpath
+ * FROM _sp
+ * WHERE _sp.vidarr[array_length(_sp.vidarr, 1)]) = id(endVertexExpr)
+ *   AND _sp.hops >= minHops
+ * LIMIT 1;
  */
 static SelectStmt *
 makeSubquery(CypherPath *cpath, WithClause *with)
 {
 	SelectStmt 		*sel;
 	RangeSubselect 	*ctescan;
-	RangeSubselect 	*vertexscan;
-	RangeSubselect 	*edgescan;
+	Node		 	*varr;
+	Node		 	*earr;
 	Node			*gpath;
 
 	ctescan = makeCTEScan(cpath);
-	vertexscan = makeVertexScan(cpath);
-	edgescan = makeEdgeScan(cpath);
+	varr = makeVertexScan(cpath);
+	earr = makeEdgeScan(cpath);
 
 	sel = makeNode(SelectStmt);
 	sel->withClause = with;
-	sel->fromClause = list_make3(ctescan, vertexscan, edgescan);
-	gpath = makeRowExpr(list_make2(
-				makeColumnRef2(CTE_VNAME, CTE_COLNAME_VARR),
-				makeColumnRef2(CTE_ENAME, CTE_COLNAME_EARR)),
-			"graphpath");
+	sel->fromClause = list_make1(ctescan);
+	gpath = makeRowExpr(list_make2(varr, earr), "graphpath");
 	sel->targetList = list_make1(makeResTarget(gpath, NULL));
 
 	return sel;
@@ -616,13 +607,12 @@ makeCTEScan(CypherPath *cpath)
 }
 
 /*
- * lateral (
- *   SELECT array_agg(ROW(_v.id, _v.properties)::vertex) AS varr
- * 	 FROM unnest(_sp.vidarr) AS vid, get_graph_path().'ag_vertex' AS _v
- *   WHERE vid = _v.id
- * ) AS _v
+ * SELECT (SELECT array_agg(ROW(_v.id, _v.properties)::vertex)
+ *         FROM get_graph_path().'ag_vertex' AS _v
+ * 		   WHERE vid = _v.id) AS varr
+ * FROM unnest(_sp.vidarr) AS vid
  */
-static RangeSubselect *
+static Node *
 makeVertexScan(CypherPath *cpath)
 {
 	SelectStmt 		*sel;
@@ -636,7 +626,7 @@ makeVertexScan(CypherPath *cpath)
 	Node  			*vvid;
 	A_Expr			*cond;
 	List			*where_args;
-	RangeSubselect 	*vscan;
+	Node			*varr;
 
 	sel = makeNode(SelectStmt);
 
@@ -645,10 +635,28 @@ makeVertexScan(CypherPath *cpath)
 				makeColumnRef2(CTE_VNAME, AG_ELEM_PROP_MAP)),
 			"vertex");
 
-	aa = makeFuncCall(list_make1(makeString("array_agg")), list_make1(row), -1);
-	col = makeResTarget((Node *) aa, CTE_COLNAME_VARR);
+	col = makeResTarget(row, CTE_COLNAME_VARR);
 
 	sel->targetList = list_make1(col);
+
+	v = makeRangeVar(get_graph_path(), AG_VERTEX, -1);
+	v->alias = makeAliasNoDup(CTE_VNAME, NIL);
+	v->inhOpt = INH_YES;
+
+	sel->fromClause = list_make1(v);
+
+	vid = makeColumnRef1("vid");
+	vvid = makeColumnRef2(CTE_VNAME, AG_ELEM_ID);
+	cond = makeSimpleA_Expr(AEXPR_OP, "=", vid, vvid, -1);
+	where_args = list_make1(cond);
+
+	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
+
+	varr = makeSubLink((Node *) sel);
+
+	sel = makeNode(SelectStmt);
+	aa = makeFuncCall(list_make1(makeString("array_agg")), list_make1(varr), -1);
+	sel->targetList = list_make1(makeResTarget((Node *) aa, CTE_COLNAME_VARR));
 
 	unnest = makeFuncCall(
 			list_make1(makeString("unnest")),
@@ -662,35 +670,18 @@ makeVertexScan(CypherPath *cpath)
 	rf->alias = makeAliasNoDup("vid", NIL);
 	rf->coldeflist = NIL;
 
-	v = makeRangeVar(get_graph_path(), AG_VERTEX, -1);
-	v->alias = makeAliasNoDup(CTE_VNAME, NIL);
-	v->inhOpt = INH_YES;
+	sel->fromClause = list_make1(rf);
 
-	sel->fromClause = list_make2(rf, v);
-
-	vid = makeColumnRef1("vid");
-	vvid = makeColumnRef2(CTE_VNAME, AG_ELEM_ID);
-	cond = makeSimpleA_Expr(AEXPR_OP, "=", vid, vvid, -1);
-	where_args = list_make1(cond);
-
-	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
-
-	vscan = makeNode(RangeSubselect);
-	vscan->subquery = (Node *) sel;
-	vscan->alias = makeAliasNoDup(CTE_VNAME, NIL);
-	vscan->lateral = true;
-
-	return vscan;
+	return makeSubLink((Node *)sel);
 }
 
 /*
- * lateral (
- *   SELECT array_agg(ROW(_e.id, _e.start, _e."end", _e.properties)::edge) AS earr
- * 	 FROM unnest(_sp.eidarr) eid, egde AS _e
- *   WHERE eid = _e.id
- * ) AS _e
+ * SELECT (SELECT array_agg(ROW(_e.id, _e.start, _e."end", _e.properties)::edge) AS earr
+ * 	       FROM unnest(_sp.eidarr) eid, egde AS _e
+ *         WHERE eid = _e.id) AS earr
+ * FROM unnest(_sp.eidarr) AS eid
  */
-static RangeSubselect *
+static Node *
 makeEdgeScan(CypherPath *cpath)
 {
 	SelectStmt 		*sel;
@@ -706,7 +697,7 @@ makeEdgeScan(CypherPath *cpath)
 	Node  			*col2;
 	A_Expr			*cond;
 	List			*where_args;
-	RangeSubselect 	*escan;
+	Node 			*earr;
 
 	sel = makeNode(SelectStmt);
 
@@ -717,10 +708,30 @@ makeEdgeScan(CypherPath *cpath)
 				makeColumnRef2(CTE_ENAME, AG_ELEM_PROP_MAP)),
 			"edge");
 
-	aa = makeFuncCall(list_make1(makeString("array_agg")), list_make1(row), -1);
-	col = makeResTarget((Node *) aa, CTE_COLNAME_EARR);
+	col = makeResTarget(row, CTE_COLNAME_EARR);
 
 	sel->targetList = list_make1(col);
+
+	crel = (CypherRel *)lsecond(cpath->chain);
+	getCypherRelType(crel, &typname, NULL);
+	e = makeRangeVar(get_graph_path(), typname, -1);
+	e->alias = makeAliasNoDup(CTE_ENAME, NIL);
+	e->inhOpt = INH_YES;
+
+	sel->fromClause = list_make1(e);
+
+	col1 = makeColumnRef1("eid");
+	col2 = makeColumnRef2(CTE_ENAME, "id");
+	cond = makeSimpleA_Expr(AEXPR_OP, "=", col1, col2, -1);
+	where_args = list_make1(cond);
+
+	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
+
+	earr = makeSubLink((Node *) sel);
+
+	sel = makeNode(SelectStmt);
+	aa = makeFuncCall(list_make1(makeString("array_agg")), list_make1(earr), -1);
+	sel->targetList = list_make1(makeResTarget((Node *) aa, CTE_COLNAME_VARR));
 
 	unnest = makeFuncCall(
 			list_make1(makeString("unnest")),
@@ -734,27 +745,9 @@ makeEdgeScan(CypherPath *cpath)
 	rf->alias = makeAliasNoDup("eid", NIL);
 	rf->coldeflist = NIL;
 
-	crel = (CypherRel *)lsecond(cpath->chain);
-	getCypherRelType(crel, &typname, NULL);
-	e = makeRangeVar(get_graph_path(), typname, -1);
-	e->alias = makeAliasNoDup(CTE_ENAME, NIL);
-	e->inhOpt = INH_YES;
+	sel->fromClause = list_make1(rf);
 
-	sel->fromClause = list_make2(rf, e);
-
-	col1 = makeColumnRef1("eid");
-	col2 = makeColumnRef2(CTE_ENAME, "id");
-	cond = makeSimpleA_Expr(AEXPR_OP, "=", col1, col2, -1);
-	where_args = list_make1(cond);
-
-	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
-
-	escan = makeNode(RangeSubselect);
-	escan->subquery = (Node *) sel;
-	escan->alias = makeAliasNoDup(CTE_ENAME, NIL);
-	escan->lateral = true;
-
-	return escan;
+	return makeSubLink((Node *) sel);
 }
 
 static Node *
@@ -866,3 +859,15 @@ makeAliasNoDup(char *aliasname, List *colnames)
 	return alias;
 }
 
+static Node *
+makeSubLink(Node *sel)
+{
+	SubLink *n = makeNode(SubLink);
+	n->subLinkType = EXPR_SUBLINK;
+	n->subLinkId = 0;
+	n->testexpr = NULL;
+	n->operName = NIL;
+	n->subselect = sel;
+	n->location = -1;
+	return (Node *) n;
+}
