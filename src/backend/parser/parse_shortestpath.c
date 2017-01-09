@@ -142,7 +142,6 @@ checkNoPropRel(ParseState *pstate, CypherRel *rel)
 #define CTE_ENAME			"_e"
 #define CTE_VNAME			"_v"
 
-/* XXX length 0 ? */
 /*
  * WITH _sp(vidarr, earr, hops) AS (
  *   VALUES (
@@ -204,17 +203,9 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath)
 	varlen = (A_Indices *) crel->varlen;
 	if (varlen != NULL && varlen->uidx != NULL)
 	{
-		A_Const	   *lidx;
-		A_Const	   *uidx;
-		int			base = 0;
-
-		lidx = (A_Const *) varlen->lidx;
-		if (lidx == NULL || lidx->val.val.ival != 0)
-			base = 1;
-
+		A_Const	*uidx;
 		uidx = (A_Const *) varlen->uidx;
-
-		cte->maxdepth = uidx->val.val.ival - base + 1;
+		cte->maxdepth = uidx->val.val.ival + 1;
 	}
 
 	with = makeNode(WithClause);
@@ -548,7 +539,7 @@ makeCTEScan(CypherPath *cpath)
 	List			*where_args;
 	CypherRel  		*crel;
 	CypherNode 		*endNode;
-	Node	   		*lidx = NULL;
+	int				 minHops = 1;
 	RangeSubselect 	*ctescan;
 
 	sel = makeNode(SelectStmt);
@@ -569,12 +560,29 @@ makeCTEScan(CypherPath *cpath)
 	where_args = list_make1(cond);
 	crel = (CypherRel *) lsecond(cpath->chain);
 	indices = (A_Indices *) crel->varlen;
-	if (indices != NULL && indices->lidx != NULL)
+	if (indices != NULL)
 	{
-		if (((A_Const *) indices->lidx)->val.val.ival > 1)
-			lidx = indices->lidx;
+		if (indices->lidx == NULL)
+		{
+			if (indices->uidx != NULL)
+			{
+				A_Const *uidx = (A_Const *) indices->uidx;
+				if (uidx->val.val.ival == 0)
+					minHops = 0;
+			}
+		}
+		else
+		{
+			A_Const *lidx = (A_Const *) indices->lidx;
+			minHops = lidx->val.val.ival;
+			if (minHops > 1)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("minHops are only allowed 0 or 1")));
+		}
 	}
-	if (lidx != NULL)
+
+	if (minHops == 1)
 	{
 		ColumnRef *hops;
 		Node *minHopsCond;
@@ -584,7 +592,7 @@ makeCTEScan(CypherPath *cpath)
 		hops->location = -1;
 
 		minHopsCond = (Node *) makeSimpleA_Expr(
-				AEXPR_OP, ">=", (Node *) hops, lidx, -1);
+				AEXPR_OP, "<>", (Node *) hops, (Node *) makeIntConst(0), -1);
 		where_args = lappend(where_args, minHopsCond);
 	}
 	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
