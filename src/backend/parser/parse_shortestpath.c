@@ -39,6 +39,7 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
+static void checkNode(ParseState *pstate, CypherNode *cnode);
 static void checkNodeForRef(ParseState *pstate, CypherNode *cnode);
 static void checkNoPropRel(ParseState *pstate, CypherRel *rel);
 
@@ -76,8 +77,28 @@ transformShortestPath(ParseState *pstate, CypherPath *cpath)
 	return makeShortestPathQuery(pstate, cpath);
 }
 
+Query *
+transformShortestPathInMatch(ParseState *parentParseState, CypherPath *cpath)
+{
+	ParseState *pstate = make_parsestate(parentParseState);
+	Query	   *query;
+
+	pstate->p_parent_cte = NULL;
+	pstate->p_locked_from_parent = false;
+
+	Assert(list_length(cpath->chain) == 3);
+	checkNode(pstate, (CypherNode *)linitial(cpath->chain));
+	checkNoPropRel(pstate, (CypherRel *)lsecond(cpath->chain));
+	checkNode(pstate, (CypherNode *)lthird(cpath->chain));
+	query = makeShortestPathQuery(pstate, cpath);
+
+	free_parsestate(pstate);
+
+	return query;
+}
+
 static void
-checkNodeForRef(ParseState *pstate, CypherNode *cnode)
+checkNode(ParseState *pstate, CypherNode *cnode)
 {
 	char *name = getCypherName(cnode->variable);
 	int loc = getCypherNameLoc(cnode->variable);
@@ -88,23 +109,7 @@ checkNodeForRef(ParseState *pstate, CypherNode *cnode)
 		/* Location */
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-				 errmsg("variable's name must be provided")));
-	}
-
-	if (getCypherName(cnode->label) != NULL)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-				 errmsg("label not supported"),
-				 parser_errposition(pstate, getCypherNameLoc(cnode->label))));
-	}
-
-	if (cnode->prop_map != NULL)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("prop_map not supported"),
-				 parser_errposition(pstate, loc)));
+				 errmsg("a variable name must be provided")));
 	}
 
 	col = colNameToVar(pstate, name, false, loc);
@@ -113,6 +118,30 @@ checkNodeForRef(ParseState *pstate, CypherNode *cnode)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
 				 errmsg("the variable \"%s\" not defined", name),
+				 parser_errposition(pstate, loc)));
+	}
+}
+
+static void
+checkNodeForRef(ParseState *pstate, CypherNode *cnode)
+{
+	int loc = getCypherNameLoc(cnode->variable);
+
+	checkNode (pstate, cnode);
+
+	if (getCypherName(cnode->label) != NULL)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+				 errmsg("a label not supported"),
+				 parser_errposition(pstate, getCypherNameLoc(cnode->label))));
+	}
+
+	if (cnode->prop_map != NULL)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("a prop_map not supported"),
 				 parser_errposition(pstate, loc)));
 	}
 }
@@ -160,12 +189,12 @@ checkNoPropRel(ParseState *pstate, CypherRel *rel)
  *   WHERE _sp.vidarr[array_length(_sp.vidarr, 1)] = _e.start
  *     AND array_position(_sp.vidarr, _e."end") IS NULL
  * )
- * SELECT ROW((SELECT (SELECT array_agg(ROW(_v.id, _v.properties)::vertex)
+ * SELECT ROW((SELECT array_agg(SELECT ROW(_v.id, _v.properties)::vertex
  *                     FROM get_graph_path().'ag_vertex' AS _v
  *        		       WHERE vid = _v.id) AS varr
  *             FROM unnest(_sp.vidarr) AS vid),
- *            (SELECT (SELECT array_agg(ROW(_e.id, _e.start, _e."end", _e.properties)::edge) AS earr
- * 	                   FROM unnest(_sp.eidarr) eid, egde AS _e
+ *            (SELECT array_agg(SELECT ROW(_e.id, _e.start, _e."end", _e.properties)::edge
+ * 	                   FROM egde AS _e
  *                     WHERE eid = _e.id) AS earr
  *             FROM unnest(_sp.eidarr) AS eid))::graphpath
  * FROM _sp

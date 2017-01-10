@@ -3255,8 +3255,9 @@ typedef struct CypherMatchClause
 {
 	NodeTag		type;
 	List	   *pattern;
-	Node	   *where;		/* WHERE qualification */
-	bool		optional;	/* OPTIONAL MATCH */
+	Node	   *where;			/* WHERE qualification */
+	bool		optional;		/* OPTIONAL MATCH */
+	bool		spProcessed;  	/* shortestpath */
 } CypherMatchClause;
 
 /* which clause is parsed as a CypherProjection */

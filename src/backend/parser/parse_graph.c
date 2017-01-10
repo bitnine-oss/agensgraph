@@ -252,6 +252,10 @@ static bool IsNullAConst(Node *arg);
 /* utils */
 static char *genUniqueName(void);
 
+/* shortestpath */
+static List *getShortestPath(List *pattern);
+static void appendShortestPathTargetEntry(
+		ParseState *pstate, List *splist, List *targetList);
 Query *
 transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 {
@@ -497,26 +501,36 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 		}
 		else
 		{
-			List *components;
+			List *splist = NIL;
 
-			pstate->p_is_match_quals = false;
-
-			/*
-			 * To do this at here is safe since it just uses transformed
-			 * expression and does not look over the ancestors of `pstate`.
-			 */
-			if (clause->prev != NULL)
+			if (detail->spProcessed == false)
 			{
-				rte = transformClause(pstate, clause->prev);
-
-				qry->targetList = makeTargetListFromRTE(pstate, rte);
+				splist = getShortestPath(detail->pattern);
+				detail->spProcessed = true;
 			}
+			if (splist == NIL)
+			{
+				pstate->p_is_match_quals = false;
+				collectNodeInfo(pstate, detail->pattern);
+				List *components = makeComponents(detail->pattern);
+				if (clause->prev != NULL)
+				{
+					rte = transformClause(pstate, clause->prev, NULL, true);
 
-			collectNodeInfo(pstate, detail->pattern);
-			components = makeComponents(detail->pattern);
-
-			qual = transformComponents(pstate, components, &qry->targetList);
-			/* there is no need to resolve `qual` here */
+					/*
+					 * To do this at here is safe since it just uses transformed
+					 * expression and does not look over the ancestors of `pstate`.
+					 */
+					qry->targetList = makeTargetListFromRTE(pstate, rte);
+				}
+				qual = transformComponents(pstate, components, &qry->targetList);
+			}
+			else
+			{
+				rte = transformClause(pstate, (Node *) clause, NULL, true);
+				qry->targetList = makeTargetListFromRTE(pstate, rte);
+				appendShortestPathTargetEntry(pstate, splist, qry->targetList);
+			}
 		}
 
 		qry->targetList = (List *) resolve_future_vertex(pstate,
@@ -749,6 +763,60 @@ checkNameInItems(ParseState *pstate, List *items, List *targetList)
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("expression in WITH must be aliased (use AS)"),
 					 parser_errposition(pstate, exprLocation(res->val))));
+	}
+}
+
+static List *
+getShortestPath(List *pattern)
+{
+	List 		*splist = NIL;
+	ListCell 	*lp;
+
+	foreach(lp, pattern)
+	{
+		CypherPath *p = lfirst(lp);
+		if (p->spkind != CPATHSP_NONE)
+		{
+			splist = lappend(splist, p);
+		}
+	}
+
+	return splist;
+}
+
+static void
+appendShortestPathTargetEntry(ParseState *pstate,
+	 						  List *splist,
+							  List *targetList)
+{
+	ListCell *e;
+
+	foreach(e, splist)
+	{
+		CypherPath *p;
+		char *pathname;
+		Query *sp;
+		SubLink *spexpr;
+		TargetEntry *te;
+
+		p = lfirst(e);
+
+		pathname = getCypherName(p->variable);
+		if (pathname == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+					 errmsg("a path variable name must be provided")));
+
+		sp = transformShortestPathInMatch(pstate, p);
+		spexpr = makeNode(SubLink);
+		spexpr->subLinkType = EXPR_SUBLINK;
+		spexpr->subselect = (Node *) sp;
+		te = makeTargetEntry((Expr *) spexpr,
+							 (AttrNumber) pstate->p_next_resno++,
+							 pstrdup(pathname),
+							 false);
+
+		targetList = lappend(targetList, te);
 	}
 }
 
@@ -1111,6 +1179,12 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 						break;
 					}
 
+					if (p->spkind != CPATHSP_NONE)
+					{
+						le = lnext(le);
+						continue;
+					}
+
 					crel = lfirst(le);
 
 					/*
@@ -1137,6 +1211,12 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					/* end of the path */
 					if (le == NULL)
 						break;
+
+					if (p->spkind != CPATHSP_NONE)
+					{
+						le = lnext(le);
+						continue;
+					}
 
 					crel = lfirst(le);
 					setInitialVidForVLR(pstate, crel, vertex,
@@ -1175,7 +1255,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				le = lnext(le);
 			}
 
-			if (out)
+			if (out && p->spkind == CPATHSP_NONE)
 			{
 				Node *graphpath;
 				TargetEntry *te;
