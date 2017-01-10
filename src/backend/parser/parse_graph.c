@@ -105,6 +105,9 @@ static RangeTblEntry *transformMatchOptional(ParseState *pstate,
 											 CypherClause *clause);
 /* MATCH - preprocessing */
 static bool hasPropConstr(List *pattern);
+static List *getShortestPaths(List *pattern);
+static void appendShortestPathsResult(ParseState *pstate, List *splist,
+									  List **targetList);
 static void collectNodeInfo(ParseState *pstate, List *pattern);
 static void addNodeInfo(ParseState *pstate, CypherNode *cnode);
 static NodeInfo *getNodeInfo(ParseState *pstate, char *varname);
@@ -477,7 +480,6 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	}
 	else
 	{
-
 		if (!pstate->p_is_match_quals &&
 			(detail->where != NULL || hasPropConstr(detail->pattern)))
 		{
@@ -495,26 +497,42 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 		}
 		else
 		{
-			List *components;
+			List *splist = NIL;
 
-			pstate->p_is_match_quals = false;
-
-			/*
-			 * To do this at here is safe since it just uses transformed
-			 * expression and does not look over the ancestors of `pstate`.
-			 */
-			if (clause->prev != NULL)
+			splist = getShortestPaths(detail->pattern);
+			if (!pstate->p_is_sp_processed && splist != NULL)
 			{
-				rte = transformClause(pstate, clause->prev);
+				pstate->p_is_sp_processed = true;
+				rte = transformClause(pstate, (Node *) clause);
 
 				qry->targetList = makeTargetListFromRTE(pstate, rte);
+				appendShortestPathsResult(pstate, splist, &qry->targetList);
 			}
+			else
+			{
+				List *components;
 
-			collectNodeInfo(pstate, detail->pattern);
-			components = makeComponents(detail->pattern);
+				pstate->p_is_match_quals = false;
+				pstate->p_is_sp_processed = false;
 
-			qual = transformComponents(pstate, components, &qry->targetList);
-			/* there is no need to resolve `qual` here */
+				/*
+				 * To do this at here is safe since it just uses transformed
+				 * expression and does not look over the ancestors of `pstate`.
+				 */
+				if (clause->prev != NULL)
+				{
+					rte = transformClause(pstate, clause->prev);
+
+					qry->targetList = makeTargetListFromRTE(pstate, rte);
+				}
+
+				collectNodeInfo(pstate, detail->pattern);
+				components = makeComponents(detail->pattern);
+
+				qual = transformComponents(pstate, components,
+										   &qry->targetList);
+				/* there is no need to resolve `qual` here */
+			}
 		}
 
 		qry->targetList = (List *) resolve_future_vertex(pstate,
@@ -829,6 +847,58 @@ hasPropConstr(List *pattern)
 	return false;
 }
 
+static List *
+getShortestPaths(List *pattern)
+{
+	List	   *splist = NIL;
+	ListCell   *lp;
+
+	foreach(lp, pattern)
+	{
+		CypherPath *p = lfirst(lp);
+
+		if (p->kind != CPATH_NORMAL)
+			splist = lappend(splist, p);
+	}
+
+	return splist;
+}
+
+static void
+appendShortestPathsResult(ParseState *pstate, List *splist, List **targetList)
+{
+	ListCell *le;
+
+	foreach(le, splist)
+	{
+		CypherPath *p = lfirst(le);
+		char	   *pathname = getCypherName(p->variable);
+		Query	   *sp;
+		Alias	   *alias;
+		RangeTblEntry *rte;
+		TargetEntry *te;
+
+		pathname = getCypherName(p->variable);
+		if (pathname == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("a variable name of path must be provided")));
+
+		sp = transformShortestPathInMatch(pstate, p);
+
+		alias = makeAliasOptUnique(NULL);
+		rte = addRangeTableEntryForSubquery(pstate, sp, alias, true, true);
+		addRTEtoJoinlist(pstate, rte, true);
+
+		te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, pathname),
+							 (AttrNumber) pstate->p_next_resno++,
+							 pathname,
+							 false);
+
+		*targetList = lappend(*targetList, te);
+	}
+}
+
 static void
 collectNodeInfo(ParseState *pstate, List *pattern)
 {
@@ -1097,7 +1167,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				/* `cnode` is the first node in the path */
 				if (prev_crel == NULL)
 				{
-					bool zero;
+					bool		zero;
 
 					le = lnext(le);
 
@@ -1118,6 +1188,12 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					zero = isZeroLengthVLR(crel);
 					vertex = transformMatchNode(pstate, cnode,
 												(zero || out), targetList);
+
+					if (p->kind != CPATH_NORMAL)
+					{
+						le = lnext(le);
+						continue;
+					}
 
 					setInitialVidForVLR(pstate, crel, vertex, NULL, NULL);
 					edge = transformMatchRel(pstate, crel, targetList);
@@ -1173,7 +1249,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				le = lnext(le);
 			}
 
-			if (out)
+			if (out && p->kind == CPATH_NORMAL)
 			{
 				Node *graphpath;
 				TargetEntry *te;
@@ -1465,11 +1541,11 @@ addEdgeUnion(ParseState *pstate, char *edge_label, int location, Alias *alias)
 
 /*
  * SELECT tableoid, ctid, id, start, "end", properties,
- *        start as _start, "end" as _end
+ *        start AS _start, "end" AS _end
  * FROM `get_graph_path()`.`edge_label`
  * UNION
  * SELECT tableoid, ctid, id, start, "end", properties,
- *        "end" as _start, start as _end
+ *        "end" AS _start, start AS _end
  * FROM `get_graph_path()`.`edge_label`
  */
 static Node *
@@ -1638,7 +1714,7 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 		int			base = 0;
 
 		lidx = (A_Const *) indices->lidx;
-		if (lidx == NULL || lidx->val.val.ival != 0)
+		if (lidx->val.val.ival > 0)
 			base = 1;
 
 		uidx = (A_Const *) indices->uidx;
@@ -2049,7 +2125,7 @@ genSelectRightVLR(CypherRel *crel, bool out)
  * SELECT tableoid, ctid, id, properties, start, "end"
  * FROM `get_graph_path()`.`edge_label`
  * UNION
- * SELECT tableoid, ctid, id, properties, "end" as start, start as "end"
+ * SELECT tableoid, ctid, id, properties, "end" AS start, start AS "end"
  * FROM `get_graph_path()`.`edge_label`
  */
 static RangeSubselect *
@@ -3178,7 +3254,7 @@ makeNewEdge(ParseState *pstate, Relation relation, Node *prop_map)
 	id = build_column_default(relation, id_attnum);
 
 	start = (Node *) makeNullConst(GRAPHIDOID, -1, InvalidOid);
-	end = (Node *)makeNullConst(GRAPHIDOID, -1, InvalidOid);
+	end = (Node *) makeNullConst(GRAPHIDOID, -1, InvalidOid);
 
 	if (prop_map == NULL)
 	{
@@ -3542,6 +3618,7 @@ transformClauseImpl(ParseState *pstate, Node *clause, Alias *alias)
 
 	childParseState = make_parsestate(pstate);
 	childParseState->p_is_match_quals = pstate->p_is_match_quals;
+	childParseState->p_is_sp_processed = pstate->p_is_sp_processed;
 	childParseState->p_is_optional_match = pstate->p_is_optional_match;
 
 	qry = transformStmt(childParseState, clause);

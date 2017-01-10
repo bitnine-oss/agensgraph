@@ -268,6 +268,14 @@ RETURN ids(nodes(shortestpath((p)<-[:knows]-(f)))) AS ids;
 MATCH (p:person), (f:person) WHERE p.id::int = 3
 RETURN ids(nodes(shortestpath((p)-[:knows*]-(f)))) AS ids;
 
+MATCH (p:person), (f:person), x = shortestpath((p)-[:knows*]-(f))
+WHERE p.id::int = 3
+RETURN ids(nodes(x)) AS ids;
+
+MATCH x = shortestpath((p:person)-[:knows*]-(f:person))
+WHERE p.id::int = 3
+RETURN ids(nodes(x)) AS ids;
+
 MATCH (p:person), (f:person) WHERE p.id::int = 3
 RETURN ids(nodes(shortestpath((p)-[:knows*0..1]-(f)))) AS ids;
 

@@ -14,5 +14,7 @@
 #include "parser/parse_node.h"
 
 extern Query *transformShortestPath(ParseState *pstate, CypherPath *cpath);
+extern Query *transformShortestPathInMatch(ParseState *parentParseState,
+										   CypherPath *cpath);
 
 #endif	/* PARSE_SHORTESTPATH_H */
