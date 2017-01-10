@@ -27,15 +27,18 @@
 #define SP_COLNAME_HOPS		"hops"
 
 /* semantic checks */
-static void checkNodeFormat(ParseState *pstate, CypherNode *cnode);
+static void checkNodeForRef(ParseState *pstate, CypherNode *cnode);
+static void checkNodeReferable(ParseState *pstate, CypherNode *cnode);
 static void checkRelFormat(ParseState *pstate, CypherRel *rel);
 
 /* shortest path */
-static Query *makeShortestPathQuery(ParseState *pstate, CypherPath *cpath);
+static Query *makeShortestPathQuery(ParseState *pstate, CypherPath *cpath,
+									bool isexpr);
 static SelectStmt *makeNonRecursiveTerm(ParseState *pstate, CypherNode *cnode);
 static SelectStmt *makeRecursiveTerm(ParseState *pstate, CypherPath *cpath);
 static RangeSubselect *makeEdgeUnion(char *edge_label);
-static SelectStmt *makeSelectWith(CypherPath *cpath, WithClause *with);
+static SelectStmt *makeSelectWith(CypherPath *cpath, WithClause *with,
+								  bool isexpr);
 static RangeSubselect *makeSubselectCTE(CypherPath *cpath);
 static Node *makeVerticesSubLink(void);
 static Node *makeEdgesSubLink(CypherPath *cpath);
@@ -60,24 +63,36 @@ transformShortestPath(ParseState *pstate, CypherPath *cpath)
 {
 	Assert(list_length(cpath->chain) == 3);
 
-	checkNodeFormat(pstate, linitial(cpath->chain));
+	checkNodeForRef(pstate, linitial(cpath->chain));
 	checkRelFormat(pstate, lsecond(cpath->chain));
-	checkNodeFormat(pstate, llast(cpath->chain));
+	checkNodeForRef(pstate, llast(cpath->chain));
 
-	return makeShortestPathQuery(pstate, cpath);
+	return makeShortestPathQuery(pstate, cpath, true);
+}
+
+Query *
+transformShortestPathInMatch(ParseState *parentParseState, CypherPath *cpath)
+{
+	ParseState *pstate = make_parsestate(parentParseState);
+	Query	   *qry;
+
+	Assert(list_length(cpath->chain) == 3);
+
+	checkNodeReferable(pstate, linitial(cpath->chain));
+	checkRelFormat(pstate, lsecond(cpath->chain));
+	checkNodeReferable(pstate, llast(cpath->chain));
+
+	qry = makeShortestPathQuery(pstate, cpath, false);
+
+	free_parsestate(pstate);
+
+	return qry;
 }
 
 static void
-checkNodeFormat(ParseState *pstate, CypherNode *cnode)
+checkNodeForRef(ParseState *pstate, CypherNode *cnode)
 {
-	char	   *varname = getCypherName(cnode->variable);
-	int			varloc = getCypherNameLoc(cnode->variable);
-	Node	   *col;
-
-	if (varname == NULL)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-				 errmsg("nodes in shortest path must be a reference to a specific node")));
+	checkNodeReferable(pstate, cnode);
 
 	if (getCypherName(cnode->label) != NULL)
 		ereport(ERROR,
@@ -89,7 +104,21 @@ checkNodeFormat(ParseState *pstate, CypherNode *cnode)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("property constraint on nodes in shortest path are not supported"),
-				 parser_errposition(pstate, varloc)));
+				 parser_errposition(pstate,
+									getCypherNameLoc(cnode->variable))));
+}
+
+static void
+checkNodeReferable(ParseState *pstate, CypherNode *cnode)
+{
+	char	   *varname = getCypherName(cnode->variable);
+	int			varloc = getCypherNameLoc(cnode->variable);
+	Node	   *col;
+
+	if (varname == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+				 errmsg("nodes in shortest path must be a reference to a specific node")));
 
 	col = colNameToVar(pstate, varname, false, varloc);
 	if (col == NULL)
@@ -173,7 +202,7 @@ checkRelFormat(ParseState *pstate, CypherRel *crel)
  * ) AS _r
  */
 static Query *
-makeShortestPathQuery(ParseState *pstate, CypherPath *cpath)
+makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 {
 	SelectStmt *u;
 	CommonTableExpr *cte;
@@ -217,7 +246,7 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath)
 	with->recursive = true;
 	with->location = -1;
 
-	sp = makeSelectWith(cpath, with);
+	sp = makeSelectWith(cpath, with, isexpr);
 
 	return transformStmt(pstate, (Node *) sp);
 }
@@ -436,7 +465,7 @@ makeEdgeUnion(char *edge_label)
  * ) AS _r
  */
 static SelectStmt *
-makeSelectWith(CypherPath *cpath, WithClause *with)
+makeSelectWith(CypherPath *cpath, WithClause *with, bool isexpr)
 {
 	SelectStmt *sel;
 	Node	   *vertices;
@@ -456,7 +485,7 @@ makeSelectWith(CypherPath *cpath, WithClause *with)
 	coalesced->args = list_make2(edges, empty_edges);
 	coalesced->location = -1;
 	path = makeRowExpr(list_make2(vertices, coalesced), "graphpath");
-	if (cpath->kind == CPATH_SHORTEST_ALL)
+	if (cpath->kind == CPATH_SHORTEST_ALL && isexpr)
 	{
 		FuncCall *arragg;
 
