@@ -58,7 +58,7 @@ extern bool is_projection_capable_plan(Plan *plan);
 extern ModifyGraph *make_modifygraph(PlannerInfo *root, bool canSetTag,
 									 GraphWriteOp operation, bool last,
 									 bool detach, Plan *subplan,
-									 List *resultRel,List *pattern,
+									 List *pattern, List *targets,
 									 List *exprs, List *sets);
 
 /* External use of these functions is deprecated: */

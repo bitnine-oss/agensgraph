@@ -914,7 +914,7 @@ makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges, int nedges)
 }
 
 Datum
-makeGraphVertexDatum(Datum id, Datum prop)
+makeGraphVertexDatum(Datum id, Datum prop_map)
 {
 	Datum		values[Natts_vertex];
 	bool		isnull[Natts_vertex] = {false, false};
@@ -922,7 +922,7 @@ makeGraphVertexDatum(Datum id, Datum prop)
 	HeapTuple	vertex;
 
 	values[Anum_vertex_id - 1] = id;
-	values[Anum_vertex_properties - 1] = prop;
+	values[Anum_vertex_properties - 1] = prop_map;
 
 	tupDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
 	Assert(tupDesc->natts == Natts_vertex);
@@ -935,7 +935,7 @@ makeGraphVertexDatum(Datum id, Datum prop)
 }
 
 Datum
-makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop)
+makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop_map)
 {
 	Datum		values[Natts_edge];
 	bool		isnull[Natts_edge] = {false, false, false, false};
@@ -945,7 +945,7 @@ makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop)
 	values[Anum_edge_id - 1] = id;
 	values[Anum_edge_start - 1] = start;
 	values[Anum_edge_end - 1] = end;
-	values[Anum_edge_properties - 1] = prop;
+	values[Anum_edge_properties - 1] = prop_map;
 
 	tupDesc = lookup_rowtype_tupdesc(EDGEOID, -1);
 	Assert(tupDesc->natts == Natts_edge);

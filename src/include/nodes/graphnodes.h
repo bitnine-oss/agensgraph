@@ -23,8 +23,8 @@ typedef struct GraphVertex
 {
 	NodeTag		type;
 	char	   *variable;
-	char	   *label;
 	bool		create;			/* whether this vertex will be created or not */
+	Oid			relid;
 } GraphVertex;
 
 #define GRAPH_EDGE_DIR_NONE		0
@@ -36,7 +36,7 @@ typedef struct GraphEdge
 	NodeTag		type;
 	uint32		direction;		/* bitmask of directions (see above) */
 	char	   *variable;
-	char	   *label;
+	Oid			relid;
 } GraphEdge;
 
 typedef struct GraphSetProp
