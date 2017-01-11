@@ -47,7 +47,7 @@ DROP VLABEL regv1;
 CREATE VLABEL regv1;
 
 CREATE PROPERTY INDEX CONCURRENTLY ON regv1 (name.first);
-CREATE PROPERTY INDEX IF NOT EXISTS regv1_property_idx ON regv1 (name.first);
+CREATE PROPERTY INDEX IF NOT EXISTS regv1_first_idx ON regv1 (name.first);
 
 -- Collation & Sort & NULL order
 CREATE PROPERTY INDEX ON regv1 (name.first COLLATE "C" ASC NULLS FIRST);
