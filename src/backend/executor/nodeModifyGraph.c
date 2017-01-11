@@ -51,15 +51,11 @@
 #define SQLCMD_DEL_EDGES_NPARAMS	1
 
 #define SQLCMD_SET_PROP \
-	"UPDATE \"%s\".\"%s\" SET properties = $1" \
-	" WHERE " AG_ELEM_LOCAL_ID " = $2"
+	"UPDATE \"%s\".\"%s\" SET properties = $1 WHERE " AG_ELEM_LOCAL_ID " = $2"
 #define SQLCMD_SET_PROP_NPARAMS		2
-
 
 typedef enum SqlcmdType
 {
-	SQLCMD_TYPE_CREAT_VERTEX,
-	SQLCMD_TYPE_CREAT_EDGE,
 	SQLCMD_TYPE_DEL_ELEM,
 	SQLCMD_TYPE_DETACH,
 	SQLCMD_TYPE_DEL_EDGES,
@@ -98,13 +94,14 @@ static HTAB *sqlcmd_cache = NULL;
 static List *ExecInitGraphSets(List *sets, ModifyGraphState *mgstate);
 static TupleTableSlot *ExecCreateGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
+static TupleTableSlot *createPath(ModifyGraphState *mgstate, GraphPath *path,
+								  TupleTableSlot *slot);
 static Datum createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 						  Graphid *vid, TupleTableSlot *slot, bool inPath);
 static Datum createEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
 						Graphid start, Graphid end, TupleTableSlot *slot,
 						bool inPath);
-static TupleTableSlot *createPath(ModifyGraphState *mgstate, GraphPath *path,
-								  TupleTableSlot *slot);
+static ResultRelInfo *getResultRelInfo(ModifyGraphState *mgstate, Oid relid);
 static Datum findVertex(TupleTableSlot *slot, GraphVertex *node, Graphid *vid);
 static Datum findEdge(TupleTableSlot *slot, GraphEdge *node, Graphid *eid);
 static AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
@@ -119,8 +116,9 @@ static void deleteElem(ModifyGraphState *mgstate, Datum id, DelElemKind kind);
 static void deletePath(ModifyGraphState *mgstate, Datum graphpath, bool detach);
 static TupleTableSlot *ExecSetGraph(ModifyGraphState *mgstate,
 									TupleTableSlot *slot);
-static void updateProp(ModifyGraphState *mgstate, Datum id, Datum expr);
-static Datum makeModifiedElement(Datum old, Oid type, Datum id, Datum prop);
+static void updateElemProp(ModifyGraphState *mgstate, Datum id, Datum expr);
+static Datum makeModifiedElem(Datum elem, Oid elemtype, Datum id,
+							  Datum prop_map);
 
 /* caching SPIPlan's (See ri_triggers.c) */
 static void InitSqlcmdHashTable(MemoryContext mcxt);
@@ -134,7 +132,6 @@ ModifyGraphState *
 ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 {
 	ModifyGraphState *mgstate;
-	ListCell		*lc;
 
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -151,32 +148,27 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->done = false;
 	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
 
-	mgstate->exprs = (List *) ExecInitExpr((Expr *) mgplan->exprs,
-										   (PlanState *) mgstate);
-	mgstate->sets = ExecInitGraphSets(mgplan->sets, mgstate);
-
-	InitSqlcmdHashTable(estate->es_query_cxt);
-
-	if (mgplan->resultRel)
+	if (mgplan->targets != NIL)
 	{
-		int		numResultRelations = list_length(mgplan->resultRel);
+		int			numResultRelInfo = list_length(mgplan->targets);
 		ResultRelInfo *resultRelInfos;
+		ParseState *pstate;
 		ResultRelInfo *resultRelInfo;
-		ParseState	  *temp_pstate = make_parsestate(NULL);
+		ListCell   *lt;
 
-		resultRelInfos = (ResultRelInfo *)
-			palloc(numResultRelations * sizeof(ResultRelInfo));
+		resultRelInfos = palloc(numResultRelInfo * sizeof(*resultRelInfos));
+
+		pstate = make_parsestate(NULL);
 		resultRelInfo = resultRelInfos;
-		foreach(lc, mgplan->resultRel)
+		foreach(lt, mgplan->targets)
 		{
-			Oid			resultrel = lfirst_oid(lc);
+			Oid			relid = lfirst_oid(lt);
 			Relation	relation;
 			RangeTblEntry *rte;
 
-			relation = heap_open(resultrel, RowExclusiveLock);
+			relation = heap_open(relid, RowExclusiveLock);
 
-			/* Add this rel to the parsestate's rangetable, for dependencies */
-			rte = addRangeTableEntryForRelation(temp_pstate, relation,
+			rte = addRangeTableEntryForRelation(pstate, relation,
 												NULL, false, false);
 			rte->requiredPerms = ACL_INSERT;
 			estate->es_range_table = lappend(estate->es_range_table, rte);
@@ -192,12 +184,19 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		}
 
 		estate->es_result_relations = resultRelInfos;
-		estate->es_num_result_relations = numResultRelations;
-		/* es_result_relation_info is NULL except when within ModifyTable */
+		estate->es_num_result_relations = numResultRelInfo;
+
+		/* es_result_relation_info is NULL except ModifyTable case */
 		estate->es_result_relation_info = NULL;
 
-		free_parsestate(temp_pstate);
+		free_parsestate(pstate);
 	}
+
+	mgstate->exprs = (List *) ExecInitExpr((Expr *) mgplan->exprs,
+										   (PlanState *) mgstate);
+	mgstate->sets = ExecInitGraphSets(mgplan->sets, mgstate);
+
+	InitSqlcmdHashTable(estate->es_query_cxt);
 
 	return mgstate;
 }
@@ -386,34 +385,6 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 	return slot;
 }
 
-static ResultRelInfo *
-getResultRelationInfo(ModifyGraphState *mgstate, char *labelname)
-{
-	EState *estate = mgstate->ps.state;
-	Oid		relOid;
-	Oid		graphOid;
-	int		i;
-	ResultRelInfo *resultRel = estate->es_result_relations;
-
-	graphOid = get_graphname_oid(get_graph_path());
-	relOid   = get_laboid_relid(get_labname_laboid(labelname, graphOid));
-
-	for (i = 0; i < estate->es_num_result_relations; i++)
-	{
-		if (RelationGetRelid(resultRel->ri_RelationDesc) == relOid)
-			break;
-
-		resultRel++;
-	}
-
-	if (i == estate->es_num_result_relations)
-	{
-		elog(ERROR, "could not find target label: %s", labelname);
-	}
-
-	return resultRel;
-}
-
 /*
  * createVertex - creates a vertex of a given node
  *
@@ -424,34 +395,28 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 			 TupleTableSlot *slot, bool inPath)
 {
 	EState	   *estate = mgstate->ps.state;
-	Datum		values[2];
-	bool		isnull[2];
-	HeapTuple	tuple;
-	Datum		vertex;
 	ResultRelInfo *resultRelInfo;
-	ResultRelInfo *savedResultRel;
+	ResultRelInfo *savedResultRelInfo;
+	Datum		values[2];
+	bool		isnull[2] = {false, false};
+	Datum		vertex;
 	TupleTableSlot *insertSlot;
+	HeapTuple	tuple;
 
-	Assert(gvertex->label != NULL && gvertex->variable != NULL);
+	Assert(gvertex->variable != NULL);
 
-	/*
-	 * Get resultRelationInfo for current label and set to estate.
-	 */
-	resultRelInfo = getResultRelationInfo(mgstate, gvertex->label);
-	savedResultRel = estate->es_result_relation_info;
+	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
+	savedResultRelInfo = estate->es_result_relation_info;
 	estate->es_result_relation_info = resultRelInfo;
 
-	/* Find my vertex slot that be made from result plan. */
 	vertex = findVertex(slot, gvertex, vid);
 
-	/* Make Heap Tuple for inserting to the heap. */
 	values[0] = GraphidGetDatum(*vid);
 	values[1] = getVertexPropDatum(vertex);
 
-	memset(isnull, 0, sizeof(bool)*2);
-
 	insertSlot = MakeTupleTableSlot();
-	insertSlot->tts_tupleDescriptor = RelationGetDescr(resultRelInfo->ri_RelationDesc);
+	insertSlot->tts_tupleDescriptor =
+			RelationGetDescr(resultRelInfo->ri_RelationDesc);
 	insertSlot->tts_values = values;
 	insertSlot->tts_isnull = isnull;
 	insertSlot->tts_isempty = false;
@@ -467,27 +432,26 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	/*
 	 * Check the constraints of the tuple
 	 */
-	if (resultRelInfo->ri_RelationDesc->rd_att->constr)
+	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
 	/*
-	 * insert the tuple normally.
+	 * insert the tuple normally
 	 *
-	 * Note: heap_insert returns the tid (location) of the new tuple
-	 * in the t_self field.
+	 * NOTE: heap_insert() returns the ctid of the new tuple in the t_self.
 	 */
-	(void)heap_insert(resultRelInfo->ri_RelationDesc, tuple,
-					  estate->es_output_cid, 0, NULL);
+	heap_insert(resultRelInfo->ri_RelationDesc, tuple, estate->es_output_cid,
+				0, NULL);
 
-	/* insert index entries for tuple */
+	/* insert index entries for the tuple */
 	if (resultRelInfo->ri_NumIndices > 0)
-		(void)ExecInsertIndexTuples(insertSlot, &(tuple->t_self),
-									estate, false, NULL, NIL);
+		ExecInsertIndexTuples(insertSlot, &(tuple->t_self), estate, false,
+							  NULL, NIL);
 
 	if (mgstate->canSetTag)
 		estate->es_graphwrstats.insertVertex++;
 
-	estate->es_result_relation_info = savedResultRel;
+	estate->es_result_relation_info = savedResultRelInfo;
 
 	return vertex;
 }
@@ -497,21 +461,17 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		   Graphid end, TupleTableSlot *slot, bool inPath)
 {
 	EState	   *estate = mgstate->ps.state;
-	Datum		values[4];
-	bool		isnull[4];
-	Datum		edge;
-	Graphid		id;
 	ResultRelInfo *resultRelInfo;
-	ResultRelInfo *savedResultRel;
+	ResultRelInfo *savedResultRelInfo;
+	Graphid		id;
+	Datum		values[4];
+	bool		isnull[4] = {false, false, false, false};
+	Datum		edge;
 	TupleTableSlot *insertSlot;
 	HeapTuple	tuple;
 
-	/*
-	 * Get resultRelationInfo for current label and set to estate.
-	 */
-	resultRelInfo = getResultRelationInfo(mgstate, gedge->label);
-
-	savedResultRel = estate->es_result_relation_info;
+	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
+	savedResultRelInfo = estate->es_result_relation_info;
 	estate->es_result_relation_info = resultRelInfo;
 
 	edge = findEdge(slot, gedge, &id);
@@ -521,47 +481,55 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	values[2] = GraphidGetDatum(end);
 	values[3] = getEdgePropDatum(edge);
 
-	memset(isnull, 0, sizeof(bool)*4);
-
 	insertSlot = MakeTupleTableSlot();
-	insertSlot->tts_tupleDescriptor = RelationGetDescr(resultRelInfo->ri_RelationDesc);
+	insertSlot->tts_tupleDescriptor =
+			RelationGetDescr(resultRelInfo->ri_RelationDesc);
 	insertSlot->tts_values = values;
 	insertSlot->tts_isnull = isnull;
 	insertSlot->tts_isempty = false;
 
 	tuple = ExecMaterializeSlot(insertSlot);
 
-	/*
-	 * Constraints might reference the tableoid column, so initialize
-	 * t_tableOid before evaluating them.
-	 */
 	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
-	/*
-	 * Check the constraints of the tuple
-	 */
-	if (resultRelInfo->ri_RelationDesc->rd_att->constr)
+
+	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
-	/*
-	 * insert the tuple normally.
-	 *
-	 * Note: heap_insert returns the tid (location) of the new tuple
-	 * in the t_self field.
-	 */
-	(void)heap_insert(resultRelInfo->ri_RelationDesc, tuple,
-					  estate->es_output_cid, 0, NULL);
+	heap_insert(resultRelInfo->ri_RelationDesc, tuple, estate->es_output_cid,
+				0, NULL);
 
-	/* insert index entries for tuple */
 	if (resultRelInfo->ri_NumIndices > 0)
-		(void)ExecInsertIndexTuples(insertSlot, &(tuple->t_self),
-									estate, false, NULL, NIL);
+		ExecInsertIndexTuples(insertSlot, &(tuple->t_self), estate, false,
+							  NULL, NIL);
 
 	if (mgstate->canSetTag)
 		estate->es_graphwrstats.insertEdge++;
 
-	estate->es_result_relation_info = savedResultRel;
+	estate->es_result_relation_info = savedResultRelInfo;
 
 	return edge;
+}
+
+static ResultRelInfo *
+getResultRelInfo(ModifyGraphState *mgstate, Oid relid)
+{
+	EState	   *estate = mgstate->ps.state;
+	ResultRelInfo *resultRelInfo;
+	int			i;
+
+	resultRelInfo = estate->es_result_relations;
+	for (i = 0; i < estate->es_num_result_relations; i++)
+	{
+		if (RelationGetRelid(resultRelInfo->ri_RelationDesc) == relid)
+			break;
+
+		resultRelInfo++;
+	}
+
+	if (i >= estate->es_num_result_relations)
+		elog(ERROR, "invalid object ID %u for the target label", relid);
+
+	return resultRelInfo;
 }
 
 static Datum
@@ -932,7 +900,7 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		Datum		elem_datum;
 		Datum		id_datum;
 		Datum		expr_datum;
-		Datum		reselem;
+		Datum		newelem;
 		bool		isNull;
 		ExprDoneCond isDone;
 		MemoryContext oldmctx;
@@ -943,38 +911,50 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 
 		elem_datum = ExecEvalExpr(gsp->es_elem, econtext, &isNull, &isDone);
 		if (isNull)
-			ereport(ERROR,
+		{
+			ereport(WARNING,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("updating NULL is not allowed")));
+			continue;
+		}
 		if (isDone != ExprSingleResult)
-			ereport(ERROR,
+		{
+			ereport(WARNING,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("expected single result")));
+			continue;
+		}
+
+		expr_datum = ExecEvalExpr(gsp->es_expr, econtext, &isNull, &isDone);
+		if (isNull)
+		{
+			ereport(WARNING,
+					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+					 errmsg("property map cannot be NULL")));
+			continue;
+		}
+		if (isDone != ExprSingleResult)
+		{
+			ereport(WARNING,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("expected single result")));
+			continue;
+		}
 
 		if (elemtype == VERTEXOID)
 			id_datum = getVertexIdDatum(elem_datum);
 		else
 			id_datum = getEdgeIdDatum(elem_datum);
 
-		expr_datum = ExecEvalExpr(gsp->es_expr, econtext, &isNull, &isDone);
-		if (isDone != ExprSingleResult)
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("expected single result")));
-
-		if (isNull)
-			continue;
-
-		updateProp(mgstate, id_datum, expr_datum);
+		updateElemProp(mgstate, id_datum, expr_datum);
 
 		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
-		reselem = makeModifiedElement(elem_datum, elemtype,
-									  id_datum, expr_datum);
+		newelem = makeModifiedElem(elem_datum, elemtype, id_datum, expr_datum);
 
 		MemoryContextSwitchTo(oldmctx);
 
-		setSlotValueByName(slot, reselem, gsp->variable);
+		setSlotValueByName(slot, newelem, gsp->variable);
 	}
 
 	if (SPI_finish() != SPI_OK_FINISH)
@@ -983,32 +963,8 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	return (plan->last ? NULL : slot);
 }
 
-static Datum
-makeModifiedElement(Datum old, Oid type, Datum id, Datum prop)
-{
-	if (type == VERTEXOID)
-	{
-		return makeGraphVertexDatum(id, prop);
-	}
-	else
-	{
-		Datum start;
-		Datum end;
-
-		if (type != EDGEOID)
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("expected node, relationship")));
-
-		start = getEdgeStartDatum(old);
-		end = getEdgeEndDatum(old);
-
-		return makeGraphEdgeDatum(id, start, end, prop);
-	}
-}
-
 static void
-updateProp(ModifyGraphState *mgstate, Datum id, Datum expr)
+updateElemProp(ModifyGraphState *mgstate, Datum id, Datum expr)
 {
 	EState	   *estate = mgstate->ps.state;
 	Graphid		id_val;
@@ -1049,6 +1005,25 @@ updateProp(ModifyGraphState *mgstate, Datum id, Datum expr)
 
 	if (mgstate->canSetTag)
 		estate->es_graphwrstats.updateProperty += SPI_processed;
+}
+
+static Datum
+makeModifiedElem(Datum elem, Oid elemtype, Datum id, Datum prop_map)
+{
+	if (elemtype == VERTEXOID)
+	{
+		return makeGraphVertexDatum(id, prop_map);
+	}
+	else
+	{
+		Datum		start;
+		Datum		end;
+
+		start = getEdgeStartDatum(elem);
+		end = getEdgeEndDatum(elem);
+
+		return makeGraphEdgeDatum(id, start, end, prop_map);
+	}
 }
 
 /* 

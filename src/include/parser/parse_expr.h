@@ -23,6 +23,6 @@ extern Node *transformExpr(ParseState *pstate, Node *expr, ParseExprKind exprKin
 
 extern const char *ParseExprKindName(ParseExprKind exprKind);
 
-extern Node *transformJsonKey(ParseState *pstate, Node *node);
+extern Node *transformJsonKey(ParseState *pstate, Node *expr, ParseExprKind exprKind);
 
 #endif   /* PARSE_EXPR_H */

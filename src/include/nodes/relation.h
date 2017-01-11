@@ -1480,8 +1480,8 @@ typedef struct ModifyGraphPath
 	bool		last;			/* is this for the last clause? */
 	bool		detach;			/* DETACH DELETE */
 	Path	   *subpath;		/* Path producing source data */
-	List	   *resultRel;		/* list for Oid of target labels */
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
+	List	   *targets;		/* relation Oid's of target labels */
 	List	   *exprs;			/* expression list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 } ModifyGraphPath;

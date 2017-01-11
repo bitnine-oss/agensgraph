@@ -34,17 +34,17 @@ CREATE ELABEL lib;
 CREATE ELABEL doc;
 
 CREATE (g:repo {'name': 'agens-graph',
-                'year': (SELECT year FROM history WHERE event = 'Graph')})
+                year: (SELECT year FROM history WHERE event = 'Graph')})
 RETURN properties(g) AS g;
 
 MATCH (g:repo)
 CREATE (j:repo '{"name": "agens-graph-jdbc", "year": 2016}'),
        (d:repo =jsonb_build_object('name', 'agens-graph-docs', 'year', 2016))
-CREATE (g)-[l:lib {'lang': 'java'}]->(j),
+CREATE (g)-[l:lib {lang: 'java'}]->(j),
        p=(g)
-         -[:lib {'lang': 'c'}]->
-         (:repo {'name': 'agens-graph-odbc', 'year': 2016}),
-       (g)-[e:doc {'lang': 'en'}]->(d)
+         -[:lib {lang: 'c'}]->
+         (:repo {name: 'agens-graph-odbc', year: 2016}),
+       (g)-[e:doc {lang: 'en'}]->(d)
 RETURN properties(l) AS lj, properties(j) AS j,
        properties((edges(p))[1]) AS lc, properties((vertices(p))[2]) AS c,
        properties(e) AS e, properties(d) AS d;
@@ -100,12 +100,12 @@ RETURN a.name AS a, b.lang AS b, c.name AS c,
        f.name AS f, g.lang AS g, h.name AS h
        ORDER BY a, b, c, d, e, f, g, h;
 
-MATCH (a {'name': 'agens-graph'}), (a {'year': 2016}) RETURN properties(a) AS a;
-MATCH p=(a)-[]->({'name': 'agens-graph-jdbc'}) RETURN a.name AS a;
+MATCH (a {name: 'agens-graph'}), (a {year: 2016}) RETURN properties(a) AS a;
+MATCH p=(a)-[]->({name: 'agens-graph-jdbc'}) RETURN a.name AS a;
 MATCH p=()-[:lib]->(a) RETURN a.name AS a;
-MATCH p=()-[{'lang': 'en'}]->(a) RETURN a.name AS a;
+MATCH p=()-[{lang: 'en'}]->(a) RETURN a.name AS a;
 
-MATCH (a {'year': (SELECT year FROM history WHERE event = 'Graph')})
+MATCH (a {year: (SELECT year FROM history WHERE event = 'Graph')})
 WHERE a.name = 'agens-graph'
 RETURN a.name AS a;
 
@@ -124,8 +124,8 @@ MATCH (a), a=() RETURN *;
 MATCH ()-[a]->(), a=() RETURN *;
 MATCH a=(), a=() RETURN *;
 
-MATCH (a {'name': properties->'name'}) RETURN *;
-MATCH (a {'name': a.properties->'name'}) RETURN *;
+MATCH (a {name: properties->'name'}) RETURN *;
+MATCH (a {name: a.properties->'name'}) RETURN *;
 
 -- OPTIONAL MATCH
 
@@ -316,9 +316,9 @@ MATCH (a) LOAD FROM history AS a RETURN *;
 CREATE VLABEL feature;
 CREATE ELABEL supported;
 
-MATCH (a:repo {'name': 'agens-graph'})
+MATCH (a:repo {name: 'agens-graph'})
 LOAD FROM history AS h
-CREATE (:feature {'name': (h).event})-[:supported]->(a);
+CREATE (:feature {name: (h).event})-[:supported]->(a);
 
 MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
 
@@ -348,7 +348,7 @@ SET graph_path = u;
 
 CREATE ELABEL rel;
 
-CREATE (s {'id': 1})-[:rel {'p': 'a'}]->({'id': 2})-[:rel {'p': 'b'}]->(s);
+CREATE (s {id: 1})-[:rel {p: 'a'}]->({id: 2})-[:rel {p: 'b'}]->(s);
 
 MATCH (s)-[r1]-(m)-[r2]-(x)
 RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
@@ -363,93 +363,61 @@ SET graph_path = p;
 
 CREATE ELABEL rel;
 
-CREATE ({'name': 'someone'})-[:rel {'k': 'v'}]->({'name': 'somebody'});
+CREATE ({name: 'someone'})-[:rel {k: 'v'}]->({name: 'somebody'});
 
 MATCH (n)-[r]->(m) SET r.l = '"w"', n = m, r.k = NULL;
 MATCH (n)-[r]->(m) REMOVE m.name;
 
 MATCH (n)-[r]->(m)
-RETURN properties(n) as n, properties(r) as r, properties(m) as m;
+RETURN properties(n) AS n, properties(r) AS r, properties(m) AS m;
+
+MATCH (n) DETACH DELETE (n);
+
+-- overwrite (Standard SQL)
+CREATE ({age: 10});
+MATCH (a) SET a.age = '11', a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) RETURN properties(a);
+MATCH (a) DETACH DELETE (a);
+
+-- multiple SET's
+
+CREATE ({age: 10});
+MATCH (a) SET a.age = '11' SET a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) RETURN properties(a);
+MATCH (a) DETACH DELETE (a);
+
+CREATE ()-[:rel {k: 'v'}]->();
+MATCH ()-[r]->() SET r.l = '"x"' SET r.l = '"y"';
+MATCH ()-[r]->() RETURN properties(r) AS r;
+MATCH (a) DETACH DELETE (a);
+
+-- += operator
+
+CREATE ({age: 10});
+MATCH (a) SET a += {name: 'bitnine', age: '3'};
+MATCH (a) RETURN properties(a);
+
+MATCH (a) SET a += NULL;
+MATCH (a) SET a.name += NULL;
+MATCH (a) SET a.name += '"someone"';
 
 MATCH (a) DETACH DELETE (a);
 
--- Strandard SQL 
-CREATE ({age:10});
+-- remove
 
-MATCH (a {age:10})
-SET a.age = '20', a.age = (a.age::int + 1)::text::jsonb;
+CREATE ({a: 'a', b: 'b', c: 'c'});
+MATCH (a) SET a.a = NULL REMOVE a.b;
+MATCH (a) RETURN properties(a);
 
-MATCH (a)
-RETURN properties(a);
-
-MATCH (a) DETACH DELETE (a);
-
--- multiple SET
-CREATE ({age:10});
-
-MATCH (a {age:10})
-SET a.age = '20' SET a.age = (a.age::int + 1)::text::jsonb;
-
-MATCH (a)
-RETURN properties(a);
+MATCH (a) SET a = NULL;
 
 MATCH (a) DETACH DELETE (a);
 
-CREATE ({'name': 'someone'})-[:rel {'k': 'v'}]->({'name': 'somebody'});
-
-MATCH (n)-[r]->(m) SET r.l = '"x"' SET r.l = '"y"';
-
-MATCH (n)-[r]->(m)
-RETURN properties(r) as r;
-
-MATCH (a) DETACH DELETE (a);
-
--- addtion operator (+=)
-CREATE ();
-
-MATCH (a)
-SET a.name += '"new"', a.bit += '"nine"';
-
-MATCH (a) RETURN a;
-
-MATCH (a)
-SET a.name += '"same"';
-
-MATCH (a) RETURN a;
-
-MATCH (a) DETACH DELETE (a);
-
--- Remove
-CREATE ({a:'a', b:'b', c:'c'});
-
-MATCH (a)
-SET a.a = NULL
-REMOVE a.b;
-
-MATCH (a) RETURN a;
-
-MATCH (a)
-SET a = NULL;
-
-MATCH (a)
-SET a += NULL;
-
-MATCH (a)
-SET a.c += NULL;
-
-MATCH (a) RETURN a;
-
-MATCH (a) DETACH DELETE (a);
-
--- refering to undefined attributes on SET clause.
-CREATE ({name:'undefined node'});
-CREATE ({age:30});
-
-MATCH (a) SET a.age = (a.age::int + 10)::text::jsonb;
-
-MATCH (a) RETURN a;
-
-MATCH (a) DETACH DELETE (a);
+-- referring to undefined attributes
+CREATE ({name: 'bitnine'});
+CREATE ({age: 10});
+MATCH (a) SET a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) RETURN properties(a);
 
 -- cleanup
 

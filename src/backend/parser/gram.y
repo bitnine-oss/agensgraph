@@ -585,11 +585,14 @@ static Node *wrapCypherWithSelect(Node *stmt);
  *
  * DOT_DOT is unused in the core SQL grammar, and so will always provoke
  * parse errors.  It is needed by PL/pgsql.
+ *
+ * ADD_EQUALS is for Cypher SET clause.
  */
 %token <str>	IDENT FCONST SCONST BCONST XCONST Op
 %token <ival>	ICONST PARAM
-%token			TYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER ADD_EQUALS
+%token			TYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER
 %token			LESS_EQUALS GREATER_EQUALS NOT_EQUALS
+%token			ADD_EQUALS
 
 /*
  * If you want to make any keyword changes, update the keyword table in

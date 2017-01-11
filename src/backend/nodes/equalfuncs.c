@@ -940,8 +940,8 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_SCALAR_FIELD(graph.writeOp);
 	COMPARE_SCALAR_FIELD(graph.last);
 	COMPARE_SCALAR_FIELD(graph.detach);
-	COMPARE_NODE_FIELD(graph.resultRel);
 	COMPARE_NODE_FIELD(graph.pattern);
+	COMPARE_NODE_FIELD(graph.targets);
 	COMPARE_NODE_FIELD(graph.exprs);
 	COMPARE_NODE_FIELD(graph.sets);
 
@@ -2888,8 +2888,8 @@ static bool
 _equalGraphVertex(const GraphVertex *a, const GraphVertex *b)
 {
 	COMPARE_STRING_FIELD(variable);
-	COMPARE_STRING_FIELD(label);
 	COMPARE_SCALAR_FIELD(create);
+	COMPARE_SCALAR_FIELD(relid);
 
 	return true;
 }
@@ -2899,7 +2899,7 @@ _equalGraphEdge(const GraphEdge *a, const GraphEdge *b)
 {
 	COMPARE_SCALAR_FIELD(direction);
 	COMPARE_STRING_FIELD(variable);
-	COMPARE_STRING_FIELD(label);
+	COMPARE_SCALAR_FIELD(relid);
 
 	return true;
 }

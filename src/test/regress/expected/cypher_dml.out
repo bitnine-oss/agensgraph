@@ -44,7 +44,7 @@ CREATE VLABEL repo;
 CREATE ELABEL lib;
 CREATE ELABEL doc;
 CREATE (g:repo {'name': 'agens-graph',
-                'year': (SELECT year FROM history WHERE event = 'Graph')})
+                year: (SELECT year FROM history WHERE event = 'Graph')})
 RETURN properties(g) AS g;
                    g                   
 ---------------------------------------
@@ -54,11 +54,11 @@ RETURN properties(g) AS g;
 MATCH (g:repo)
 CREATE (j:repo '{"name": "agens-graph-jdbc", "year": 2016}'),
        (d:repo =jsonb_build_object('name', 'agens-graph-docs', 'year', 2016))
-CREATE (g)-[l:lib {'lang': 'java'}]->(j),
+CREATE (g)-[l:lib {lang: 'java'}]->(j),
        p=(g)
-         -[:lib {'lang': 'c'}]->
-         (:repo {'name': 'agens-graph-odbc', 'year': 2016}),
-       (g)-[e:doc {'lang': 'en'}]->(d)
+         -[:lib {lang: 'c'}]->
+         (:repo {name: 'agens-graph-odbc', year: 2016}),
+       (g)-[e:doc {lang: 'en'}]->(d)
 RETURN properties(l) AS lj, properties(j) AS j,
        properties((edges(p))[1]) AS lc, properties((vertices(p))[2]) AS c,
        properties(e) AS e, properties(d) AS d;
@@ -84,7 +84,7 @@ ERROR:  there must be at least one relationship
 LINE 1: CREATE (a), (a);
                      ^
 CREATE (=0);
-ERROR:  property map must be jsonb type
+ERROR:  property map must be of type jsonb
 LINE 1: CREATE (=0);
                  ^
 CREATE ()-[]-();
@@ -106,7 +106,7 @@ ERROR:  duplicate variable "a"
 LINE 1: CREATE a=(), ()-[a:doc]->();
                          ^
 CREATE ()-[:lib =0]->();
-ERROR:  property map must be jsonb type
+ERROR:  property map must be of type jsonb
 LINE 1: CREATE ()-[:lib =0]->();
                          ^
 CREATE (a), a=();
@@ -237,13 +237,13 @@ RETURN a.name AS a, b.lang AS b, c.name AS c,
  agens-graph-odbc | c    | agens-graph | java | agens-graph-jdbc | agens-graph | java | agens-graph-jdbc
 (18 rows)
 
-MATCH (a {'name': 'agens-graph'}), (a {'year': 2016}) RETURN properties(a) AS a;
+MATCH (a {name: 'agens-graph'}), (a {year: 2016}) RETURN properties(a) AS a;
                    a                   
 ---------------------------------------
  {"name": "agens-graph", "year": 2016}
 (1 row)
 
-MATCH p=(a)-[]->({'name': 'agens-graph-jdbc'}) RETURN a.name AS a;
+MATCH p=(a)-[]->({name: 'agens-graph-jdbc'}) RETURN a.name AS a;
       a      
 -------------
  agens-graph
@@ -256,13 +256,13 @@ MATCH p=()-[:lib]->(a) RETURN a.name AS a;
  agens-graph-odbc
 (2 rows)
 
-MATCH p=()-[{'lang': 'en'}]->(a) RETURN a.name AS a;
+MATCH p=()-[{lang: 'en'}]->(a) RETURN a.name AS a;
         a         
 ------------------
  agens-graph-docs
 (1 row)
 
-MATCH (a {'year': (SELECT year FROM history WHERE event = 'Graph')})
+MATCH (a {year: (SELECT year FROM history WHERE event = 'Graph')})
 WHERE a.name = 'agens-graph'
 RETURN a.name AS a;
       a      
@@ -290,7 +290,7 @@ ERROR:  duplicate variable "a"
 LINE 1: MATCH a=(), (a) RETURN *;
                      ^
 MATCH (a =0) RETURN *;
-ERROR:  property map must be jsonb type
+ERROR:  property map must be of type jsonb
 LINE 1: MATCH (a =0) RETURN *;
                   ^
 MATCH ()-[a]-(a) RETURN *;
@@ -308,7 +308,7 @@ LINE 1: MATCH a=(), ()-[a]-() RETURN *;
 MATCH p=()-[:lib|doc]->() RETURN *;
 ERROR:  multiple types for relationship not supported
 MATCH ()-[a =0]-() RETURN *;
-ERROR:  property map must be jsonb type
+ERROR:  property map must be of type jsonb
 LINE 1: MATCH ()-[a =0]-() RETURN *;
                      ^
 MATCH (a), a=() RETURN *;
@@ -323,14 +323,14 @@ MATCH a=(), a=() RETURN *;
 ERROR:  duplicate variable "a"
 LINE 1: MATCH a=(), a=() RETURN *;
                     ^
-MATCH (a {'name': properties->'name'}) RETURN *;
+MATCH (a {name: properties->'name'}) RETURN *;
 ERROR:  column "properties" does not exist
-LINE 1: MATCH (a {'name': properties->'name'}) RETURN *;
-                          ^
-MATCH (a {'name': a.properties->'name'}) RETURN *;
+LINE 1: MATCH (a {name: properties->'name'}) RETURN *;
+                        ^
+MATCH (a {name: a.properties->'name'}) RETURN *;
 ERROR:  operator does not exist: text -> unknown
-LINE 1: MATCH (a {'name': a.properties->'name'}) RETURN *;
-                                      ^
+LINE 1: MATCH (a {name: a.properties->'name'}) RETURN *;
+                                    ^
 HINT:  No operator matches the given name and argument type(s). You might need to add explicit type casts.
 -- OPTIONAL MATCH
 CREATE GRAPH o;
@@ -828,9 +828,9 @@ MATCH (a) LOAD FROM history AS a RETURN *;
 ERROR:  duplicate variable "a"
 CREATE VLABEL feature;
 CREATE ELABEL supported;
-MATCH (a:repo {'name': 'agens-graph'})
+MATCH (a:repo {name: 'agens-graph'})
 LOAD FROM history AS h
-CREATE (:feature {'name': (h).event})-[:supported]->(a);
+CREATE (:feature {name: (h).event})-[:supported]->(a);
 MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
            a            
 ------------------------
@@ -876,7 +876,7 @@ SELECT count(*) FROM agens.ag_edge;
 CREATE GRAPH u;
 SET graph_path = u;
 CREATE ELABEL rel;
-CREATE (s {'id': 1})-[:rel {'p': 'a'}]->({'id': 2})-[:rel {'p': 'b'}]->(s);
+CREATE (s {id: 1})-[:rel {p: 'a'}]->({id: 2})-[:rel {p: 'b'}]->(s);
 MATCH (s)-[r1]-(m)-[r2]-(x)
 RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
        ORDER BY s, r1, m, r2, x;
@@ -894,117 +894,96 @@ RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
 CREATE GRAPH p;
 SET graph_path = p;
 CREATE ELABEL rel;
-CREATE ({'name': 'someone'})-[:rel {'k': 'v'}]->({'name': 'somebody'});
+CREATE ({name: 'someone'})-[:rel {k: 'v'}]->({name: 'somebody'});
 MATCH (n)-[r]->(m) SET r.l = '"w"', n = m, r.k = NULL;
 MATCH (n)-[r]->(m) REMOVE m.name;
 MATCH (n)-[r]->(m)
-RETURN properties(n) as n, properties(r) as r, properties(m) as m;
+RETURN properties(n) AS n, properties(r) AS r, properties(m) AS m;
           n           |     r      | m  
 ----------------------+------------+----
  {"name": "somebody"} | {"l": "w"} | {}
 (1 row)
 
-MATCH (a) DETACH DELETE (a);
--- Strandard SQL 
-CREATE ({age:10});
-MATCH (a {age:10})
-SET a.age = '20', a.age = (a.age::int + 1)::text::jsonb;
-MATCH (a)
-RETURN properties(a);
+MATCH (n) DETACH DELETE (n);
+-- overwrite (Standard SQL)
+CREATE ({age: 10});
+MATCH (a) SET a.age = '11', a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) RETURN properties(a);
  properties  
 -------------
  {"age": 11}
 (1 row)
 
 MATCH (a) DETACH DELETE (a);
--- multiple SET
-CREATE ({age:10});
-MATCH (a {age:10})
-SET a.age = '20' SET a.age = (a.age::int + 1)::text::jsonb;
-MATCH (a)
-RETURN properties(a);
+-- multiple SET's
+CREATE ({age: 10});
+MATCH (a) SET a.age = '11' SET a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) RETURN properties(a);
  properties  
 -------------
- {"age": 21}
+ {"age": 12}
 (1 row)
 
 MATCH (a) DETACH DELETE (a);
-CREATE ({'name': 'someone'})-[:rel {'k': 'v'}]->({'name': 'somebody'});
-MATCH (n)-[r]->(m) SET r.l = '"x"' SET r.l = '"y"';
-MATCH (n)-[r]->(m)
-RETURN properties(r) as r;
+CREATE ()-[:rel {k: 'v'}]->();
+MATCH ()-[r]->() SET r.l = '"x"' SET r.l = '"y"';
+MATCH ()-[r]->() RETURN properties(r) AS r;
           r           
 ----------------------
  {"k": "v", "l": "y"}
 (1 row)
 
 MATCH (a) DETACH DELETE (a);
--- addtion operator (+=)
-CREATE ();
-MATCH (a)
-SET a.name += '"new"', a.bit += '"nine"';
-MATCH (a) RETURN a;
-                      a                       
-----------------------------------------------
- ag_vertex[1.7]{"bit": "nine", "name": "new"}
+-- += operator
+CREATE ({age: 10});
+MATCH (a) SET a += {name: 'bitnine', age: '3'};
+MATCH (a) RETURN properties(a);
+           properties            
+---------------------------------
+ {"age": "3", "name": "bitnine"}
 (1 row)
 
-MATCH (a)
-SET a.name += '"same"';
-ERROR:  cannot replace existing key
-HINT:  Try using the function jsonb_set to replace key value.
-MATCH (a) RETURN a;
-                      a                       
-----------------------------------------------
- ag_vertex[1.7]{"bit": "nine", "name": "new"}
-(1 row)
-
+MATCH (a) SET a += NULL;
+ERROR:  cannot set property map to NULL
+LINE 1: MATCH (a) SET a += NULL;
+                           ^
+HINT:  use {} instead of NULL to remove all properties
+MATCH (a) SET a.name += NULL;
+ERROR:  += operator on a property is not allowed
+LINE 1: MATCH (a) SET a.name += NULL;
+                      ^
+MATCH (a) SET a.name += '"someone"';
+ERROR:  += operator on a property is not allowed
+LINE 1: MATCH (a) SET a.name += '"someone"';
+                      ^
 MATCH (a) DETACH DELETE (a);
--- Remove
-CREATE ({a:'a', b:'b', c:'c'});
-MATCH (a)
-SET a.a = NULL
-REMOVE a.b;
-MATCH (a) RETURN a;
-            a             
---------------------------
- ag_vertex[1.8]{"c": "c"}
+-- remove
+CREATE ({a: 'a', b: 'b', c: 'c'});
+MATCH (a) SET a.a = NULL REMOVE a.b;
+MATCH (a) RETURN properties(a);
+ properties 
+------------
+ {"c": "c"}
 (1 row)
 
-MATCH (a)
-SET a = NULL;
-ERROR:  expression must be of type jsonb but unknown
-LINE 2: SET a = NULL;
-                ^
-MATCH (a)
-SET a += NULL;
-ERROR:  expression must be of type jsonb but unknown
-LINE 2: SET a += NULL;
-                 ^
-MATCH (a)
-SET a.c += NULL;
-ERROR:  Invalid Input : '+=' requires not null values.
-LINE 2: SET a.c += NULL;
-                   ^
-MATCH (a) RETURN a;
-            a             
---------------------------
- ag_vertex[1.8]{"c": "c"}
-(1 row)
-
+MATCH (a) SET a = NULL;
+ERROR:  cannot set property map to NULL
+LINE 1: MATCH (a) SET a = NULL;
+                          ^
+HINT:  use {} instead of NULL to remove all properties
 MATCH (a) DETACH DELETE (a);
--- refering to undefined attributes on SET clause.
-CREATE ({name:'undefined node'});
-CREATE ({age:30});
-MATCH (a) SET a.age = (a.age::int + 10)::text::jsonb;
-MATCH (a) RETURN a;
-                    a                     
-------------------------------------------
- ag_vertex[1.9]{"name": "undefined node"}
- ag_vertex[1.10]{"age": 40}
+-- referring to undefined attributes
+CREATE ({name: 'bitnine'});
+CREATE ({age: 10});
+MATCH (a) SET a.age = (a.age::int + 1)::text::jsonb;
+WARNING:  property map cannot be NULL
+MATCH (a) RETURN properties(a);
+     properties      
+---------------------
+ {"name": "bitnine"}
+ {"age": 11}
 (2 rows)
 
-MATCH (a) DETACH DELETE (a);
 -- cleanup
 DROP GRAPH p CASCADE;
 NOTICE:  drop cascades to 4 other objects

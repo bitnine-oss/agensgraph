@@ -1050,6 +1050,7 @@ _copyModifyGraph(const ModifyGraph *from)
 	COPY_SCALAR_FIELD(detach);
 	COPY_NODE_FIELD(subplan);
 	COPY_NODE_FIELD(pattern);
+	COPY_NODE_FIELD(targets);
 	COPY_NODE_FIELD(exprs);
 	COPY_NODE_FIELD(sets);
 
@@ -2765,8 +2766,8 @@ _copyQuery(const Query *from)
 	COPY_SCALAR_FIELD(graph.writeOp);
 	COPY_SCALAR_FIELD(graph.last);
 	COPY_SCALAR_FIELD(graph.detach);
-	COPY_NODE_FIELD(graph.resultRel);
 	COPY_NODE_FIELD(graph.pattern);
+	COPY_NODE_FIELD(graph.targets);
 	COPY_NODE_FIELD(graph.exprs);
 	COPY_NODE_FIELD(graph.sets);
 
@@ -4489,8 +4490,8 @@ _copyGraphVertex(const GraphVertex *from)
 	GraphVertex *newnode = makeNode(GraphVertex);
 
 	COPY_STRING_FIELD(variable);
-	COPY_STRING_FIELD(label);
 	COPY_SCALAR_FIELD(create);
+	COPY_SCALAR_FIELD(relid);
 
 	return newnode;
 }
@@ -4502,7 +4503,7 @@ _copyGraphEdge(const GraphEdge *from)
 
 	COPY_SCALAR_FIELD(direction);
 	COPY_STRING_FIELD(variable);
-	COPY_STRING_FIELD(label);
+	COPY_SCALAR_FIELD(relid);
 
 	return newnode;
 }
