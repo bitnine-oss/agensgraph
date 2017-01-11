@@ -35,11 +35,11 @@ CREATE PROPERTY INDEX ON regv1 ((body.weight::integer / body.height::integer));
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
-    "regv1_property_idx" btree ((properties #>> ARRAY['name'::text]))
-    "regv1_property_idx1" btree ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))
-    "regv1_property_idx2" btree (((properties #>> ARRAY['name'::text, 'first'::text]) || (properties #>> ARRAY['name'::text, 'last'::text])))
-    "regv1_property_idx3" btree (((properties #>> ARRAY['age'::text])::integer))
-    "regv1_property_idx4" btree ((((properties #>> ARRAY['body'::text, 'weight'::text])::integer) / ((properties #>> ARRAY['body'::text, 'height'::text])::integer)))
+    "regv1_age_idx" btree (((properties #>> ARRAY['age'::text])::integer))
+    "regv1_first_idx" btree (((properties #>> ARRAY['name'::text, 'first'::text]) || (properties #>> ARRAY['name'::text, 'last'::text])))
+    "regv1_first_last_idx" btree ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))
+    "regv1_name_idx" btree ((properties #>> ARRAY['name'::text]))
+    "regv1_weight_idx" btree ((((properties #>> ARRAY['body'::text, 'weight'::text])::integer) / ((properties #>> ARRAY['body'::text, 'height'::text])::integer)))
 Inherits: g.ag_vertex
 
 DROP VLABEL regv1;
@@ -66,12 +66,12 @@ CREATE PROPERTY INDEX ON regv1 USING gist ((hobby::tsvector));
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
-    "regv1_property_idx" btree ((properties #>> ARRAY['name'::text]))
-    "regv1_property_idx1" btree ((properties #>> ARRAY['name'::text, 'first'::text]))
-    "regv1_property_idx2" hash ((properties #>> ARRAY['name'::text, 'first'::text]))
-    "regv1_property_idx3" brin ((properties #>> ARRAY['name'::text, 'first'::text]))
-    "regv1_property_idx4" gin (((properties #>> ARRAY['self_intro'::text])::tsvector))
-    "regv1_property_idx5" gist (((properties #>> ARRAY['hobby'::text])::tsvector))
+    "regv1_first_idx" btree ((properties #>> ARRAY['name'::text, 'first'::text]))
+    "regv1_first_idx1" hash ((properties #>> ARRAY['name'::text, 'first'::text]))
+    "regv1_first_idx2" brin ((properties #>> ARRAY['name'::text, 'first'::text]))
+    "regv1_hobby_idx" gist (((properties #>> ARRAY['hobby'::text])::tsvector))
+    "regv1_name_idx" btree ((properties #>> ARRAY['name'::text]))
+    "regv1_self_intro_idx" gin (((properties #>> ARRAY['self_intro'::text])::tsvector))
 Inherits: g.ag_vertex
 
 \dGv+ regv1
@@ -84,20 +84,20 @@ Inherits: g.ag_vertex
 Vertex label "g.regv1"
 --
 Property Indexes:
-    "regv1_property_idx" btree (name)
-    "regv1_property_idx1" btree (name.first)
-    "regv1_property_idx2" hash (name.first)
-    "regv1_property_idx3" brin (name.first)
-    "regv1_property_idx4" gin ((self_intro)::tsvector)
-    "regv1_property_idx5" gist ((hobby)::tsvector)
+    "regv1_first_idx" btree (name.first)
+    "regv1_first_idx1" hash (name.first)
+    "regv1_first_idx2" brin (name.first)
+    "regv1_hobby_idx" gist ((hobby)::tsvector)
+    "regv1_name_idx" btree (name)
+    "regv1_self_intro_idx" gin ((self_intro)::tsvector)
 Inherits: g.ag_vertex
 
 DROP VLABEL regv1;
 -- Concurrently build & if not exist
 CREATE VLABEL regv1;
 CREATE PROPERTY INDEX CONCURRENTLY ON regv1 (name.first);
-CREATE PROPERTY INDEX IF NOT EXISTS regv1_property_idx ON regv1 (name.first);
-NOTICE:  relation "regv1_property_idx" already exists, skipping
+CREATE PROPERTY INDEX IF NOT EXISTS regv1_first_idx ON regv1 (name.first);
+NOTICE:  relation "regv1_first_idx" already exists, skipping
 -- Collation & Sort & NULL order
 CREATE PROPERTY INDEX ON regv1 (name.first COLLATE "C" ASC NULLS FIRST);
 -- Tablespace
@@ -113,11 +113,11 @@ CREATE PROPERTY INDEX ON regv1 (name.first) WHERE (name IS NOT NULL);
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
-    "regv1_property_idx" btree ((properties #>> ARRAY['name'::text, 'first'::text]))
-    "regv1_property_idx1" btree ((properties #>> ARRAY['name'::text, 'first'::text]) COLLATE "C" NULLS FIRST)
-    "regv1_property_idx2" btree ((properties #>> ARRAY['name'::text]))
-    "regv1_property_idx3" btree ((properties #>> ARRAY['name'::text, 'first'::text])) WITH (fillfactor='80')
-    "regv1_property_idx4" btree ((properties #>> ARRAY['name'::text, 'first'::text])) WHERE (properties #>> ARRAY['name'::text]) IS NOT NULL
+    "regv1_first_idx" btree ((properties #>> ARRAY['name'::text, 'first'::text]))
+    "regv1_first_idx1" btree ((properties #>> ARRAY['name'::text, 'first'::text]) COLLATE "C" NULLS FIRST)
+    "regv1_first_idx2" btree ((properties #>> ARRAY['name'::text, 'first'::text])) WITH (fillfactor='80')
+    "regv1_first_idx3" btree ((properties #>> ARRAY['name'::text, 'first'::text])) WHERE (properties #>> ARRAY['name'::text]) IS NOT NULL
+    "regv1_name_idx" btree ((properties #>> ARRAY['name'::text]))
 Inherits: g.ag_vertex
 
 \dGv+ regv1
@@ -130,11 +130,11 @@ Inherits: g.ag_vertex
 Vertex label "g.regv1"
 --
 Property Indexes:
-    "regv1_property_idx" btree (name.first)
-    "regv1_property_idx1" btree (name.first COLLATE "C" NULLS FIRST)
-    "regv1_property_idx2" btree (name)
-    "regv1_property_idx3" btree (name.first) WITH (fillfactor='80')
-    "regv1_property_idx4" btree (name.first) WHERE (name) IS NOT NULL
+    "regv1_first_idx" btree (name.first)
+    "regv1_first_idx1" btree (name.first COLLATE "C" NULLS FIRST)
+    "regv1_first_idx2" btree (name.first) WITH (fillfactor='80')
+    "regv1_first_idx3" btree (name.first) WHERE (name) IS NOT NULL
+    "regv1_name_idx" btree (name)
 Inherits: g.ag_vertex
 
 DROP VLABEL regv1;
@@ -143,7 +143,7 @@ CREATE VLABEL regv1;
 CREATE UNIQUE PROPERTY INDEX ON regv1 (id);
 CREATE (:regv1 {'id':'100'});
 CREATE (:regv1 {'id':'100'});
-ERROR:  duplicate key value violates unique constraint "regv1_property_idx"
+ERROR:  duplicate key value violates unique constraint "regv1_id_idx"
 DETAIL:  Key ((properties #>> ARRAY['id'::text]))=(100) already exists.
 \d g.regv1
                                                     Table "g.regv1"
@@ -153,7 +153,7 @@ DETAIL:  Key ((properties #>> ARRAY['id'::text]))=(100) already exists.
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
-    "regv1_property_idx" UNIQUE, btree ((properties #>> ARRAY['id'::text]))
+    "regv1_id_idx" UNIQUE, btree ((properties #>> ARRAY['id'::text]))
 Inherits: g.ag_vertex
 
 \dGv+ regv1
@@ -166,7 +166,7 @@ Inherits: g.ag_vertex
 Vertex label "g.regv1"
 --
 Property Indexes:
-    "regv1_property_idx" UNIQUE btree (id)
+    "regv1_id_idx" UNIQUE btree (id)
 Inherits: g.ag_vertex
 
 DROP VLABEL regv1;
@@ -177,7 +177,7 @@ CREATE (:regv1 {'name':{'first':'agens'}});
 CREATE (:regv1 {'name':{'first':'agens'}});
 CREATE (:regv1 {'name':{'first':'agens', 'last':'graph'}});
 CREATE (:regv1 {'name':{'first':'agens', 'last':'graph'}});
-ERROR:  duplicate key value violates unique constraint "regv1_property_idx"
+ERROR:  duplicate key value violates unique constraint "regv1_first_last_idx"
 DETAIL:  Key ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))=(agens, graph) already exists.
 \d g.regv1
                                                     Table "g.regv1"
@@ -187,7 +187,7 @@ DETAIL:  Key ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #
  properties | jsonb   | not null default jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
-    "regv1_property_idx" UNIQUE, btree ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))
+    "regv1_first_last_idx" UNIQUE, btree ((properties #>> ARRAY['name'::text, 'first'::text]), (properties #>> ARRAY['name'::text, 'last'::text]))
 Inherits: g.ag_vertex
 
 \dGv+ regv1
@@ -200,7 +200,7 @@ Inherits: g.ag_vertex
 Vertex label "g.regv1"
 --
 Property Indexes:
-    "regv1_property_idx" UNIQUE btree (name.first, name.last)
+    "regv1_first_last_idx" UNIQUE btree (name.first, name.last)
 Inherits: g.ag_vertex
 
 DROP VLABEL regv1;

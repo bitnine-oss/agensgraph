@@ -142,6 +142,7 @@ static bool isLabelKind(RangeVar *label, char labkind);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
 static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
 static Node *makePropertiesIndirectionMutator(Node *node);
+static bool figure_prop_index_colname_walker(Node *node, char **colname);
 static bool isPropertyIndex(Oid indexoid);
 
 
@@ -3776,6 +3777,10 @@ transformDropConstraintStmt(ParseState *pstate,
 	return (Node *) atstmt;
 }
 
+/*
+ * Change ColumnRef in `node` to an expression which is an indirection on
+ * AG_ELEM_PROP_MAP
+ */
 static Node *
 makePropertiesIndirectionMutator(Node *node)
 {
@@ -3846,7 +3851,6 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	Relation	rel;
 	RangeTblEntry *rte;
 
-	/* Never come in here statement already transformed. */
 	Assert(!stmt->transformed);
 
 	idxstmt = (IndexStmt *) copyObject(stmt);
@@ -3855,19 +3859,6 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	/* Set up pstate */
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
-
-	if (idxstmt->idxname == NULL)
-	{
-		Oid namespaceId;
-
-		namespaceId = get_namespace_oid(idxstmt->relation->schemaname,
-										false);	/* missing_ok */
-
-		idxstmt->idxname = ChooseRelationName(idxstmt->relation->relname,
-											  "property",
-											  "idx",
-											  namespaceId);
-	}
 
 	/*
 	 * Put the parent table into the rtable so that the expressions can refer
@@ -3883,10 +3874,6 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	/* take care of the where clause */
 	if (idxstmt->whereClause)
 	{
-		/*
-		 * Makes column reference in where clause to expression that
-		 * get jsonb object from AG_ELEM_PROP.
-		 */
 		idxstmt->whereClause =
 						makePropertiesIndirectionMutator(idxstmt->whereClause);
 
@@ -3901,24 +3888,28 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	/* take care of any index expressions */
 	foreach(l, idxstmt->indexParams)
 	{
-		IndexElem *ielem = (IndexElem *) lfirst(l);
+		IndexElem  *ielem = (IndexElem *) lfirst(l);
 
 		if (ielem->expr == NULL || ielem->name != NULL)
-		{
 			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("property index must have expressions.")));
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("property index must have expressions")));
+
+		if (ielem->indexcolname == NULL)
+		{
+			char	   *colname;
+
+			/*
+			 * just fill indexcolname with a properly chosen name at here and
+			 * let ChooseIndexName() build the name of the index later
+			 */
+			if (figure_prop_index_colname_walker(ielem->expr, &colname))
+				ielem->indexcolname = colname;
+			else
+				ielem->indexcolname = FigureIndexColname(ielem->expr);
 		}
 
-		/*
-		 * makes column reference in expression to expression that
-		 * get jsonb object from AG_ELEM_PROP
-		 */
 		ielem->expr = makePropertiesIndirectionMutator(ielem->expr);
-
-		/* Extract preliminary index col name before transforming expr */
-		if (ielem->indexcolname == NULL)
-			ielem->indexcolname = FigureIndexColname(ielem->expr);
 
 		/* Now do parse transformation of the expression */
 		ielem->expr = transformExpr(pstate, ielem->expr,
@@ -3960,6 +3951,50 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	idxstmt->transformed = true;
 
 	return idxstmt;
+}
+
+/*
+ * Just return the last valid name in the fields of ColumnRef or
+ * in the indirection of A_Indirection.
+ * It will be the last path element of the indirection on properties.
+ */
+static bool
+figure_prop_index_colname_walker(Node *node, char **colname)
+{
+	char *name;
+
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, A_Indirection))
+	{
+		A_Indirection *ind = (A_Indirection *) node;
+
+		if (IsA(ind->arg, ColumnRef))
+		{
+			name = FigureIndexColname(node);
+			if (name == NULL)
+				return false;
+
+			*colname = name;
+			return true;
+		}
+
+		return figure_prop_index_colname_walker(ind->arg, colname);
+	}
+
+	if (IsA(node, ColumnRef))
+	{
+		name = FigureIndexColname(node);
+		if (name == NULL)
+			return false;
+
+		*colname = name;
+		return true;
+	}
+
+	return raw_expression_tree_walker(node, figure_prop_index_colname_walker,
+									  colname);
 }
 
 DropStmt *
