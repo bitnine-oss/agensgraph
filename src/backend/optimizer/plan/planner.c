@@ -93,6 +93,7 @@ typedef struct
 static Node *preprocess_expression(PlannerInfo *root, Node *expr, int kind);
 static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
 static void preprocess_graph_sets(PlannerInfo *root, List *sets);
+static void preprocess_graph_mergepath(PlannerInfo *root, Node *path);
 static void inheritance_planner(PlannerInfo *root);
 static void grouping_planner(PlannerInfo *root, bool inheritance_update,
 				 double tuple_fraction);
@@ -701,6 +702,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		preprocess_expression(root, (Node *) parse->graph.exprs,
 							  EXPRKIND_TARGET);
 	preprocess_graph_sets(root, parse->graph.sets);
+	preprocess_graph_mergepath(root, parse->graph.mergepattern);
 
 	/*
 	 * In some cases we may want to transfer a HAVING clause into WHERE. We
@@ -942,8 +944,44 @@ preprocess_graph_sets(PlannerInfo *root, List *sets)
 	{
 		GraphSetProp *gsp = lfirst(ls);
 
-		gsp->elem = preprocess_expression(root, gsp->elem, EXPRKIND_TARGET);
+		gsp->elem = preprocess_expression(root, gsp->elem, EXPRKIND_VALUES);
 		gsp->expr = preprocess_expression(root, gsp->expr, EXPRKIND_VALUES);
+	}
+}
+
+static void
+preprocess_graph_mergepath(PlannerInfo *root, Node *path)
+{
+	GraphPath  *gp = (GraphPath *)path;
+	ListCell   *lc;
+
+	if (gp != NULL)
+	{
+		foreach(lc, gp->chain)
+		{
+			Node * node = lfirst(lc);
+
+			if (IsA(node, GraphVertex))
+			{
+				GraphVertex *gv = (GraphVertex *) node;
+
+				gv->expr = preprocess_expression(root, gv->expr,
+												 EXPRKIND_VALUES);
+				gv->qual = preprocess_expression(root, gv->qual,
+												 EXPRKIND_VALUES);
+			}
+			else
+			{
+				GraphEdge *ge = (GraphEdge *) node;
+
+				Assert(IsA(node, GraphEdge));
+
+				ge->expr = preprocess_expression(root, ge->expr,
+												 EXPRKIND_VALUES);
+				ge->qual = preprocess_expression(root, ge->qual,
+												 EXPRKIND_VALUES);
+			}
+		}
 	}
 }
 
@@ -2027,7 +2065,8 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 													parse->graph.pattern,
 													parse->graph.targets,
 													parse->graph.exprs,
-													parse->graph.sets);
+													parse->graph.sets,
+													parse->graph.mergepattern);
 		}
 		/*
 		 * If this is an INSERT/UPDATE/DELETE, and we're not being called from

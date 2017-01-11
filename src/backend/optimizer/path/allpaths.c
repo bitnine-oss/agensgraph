@@ -2780,12 +2780,13 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 		return;
 
 	/*
-	 * Do nothing if subquery is CypherCreate. We need all the target entries
-	 * in CypherCreate to get the result of subquery in CypherCreate.
+	 * Do nothing if subquery is CypherCreate/Merge. We need all the target
+	 * entries in CypherCreate to get the result of subquery in CypherCreate.
 	 * Those entries are used to create a graph pattern.
 	 */
 	if (subquery->commandType == CMD_GRAPHWRITE &&
-		subquery->graph.writeOp == GWROP_CREATE)
+		(subquery->graph.writeOp == GWROP_CREATE ||
+		 subquery->graph.writeOp == GWROP_MERGE))
 		return;
 
 	/*
