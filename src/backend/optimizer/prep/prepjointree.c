@@ -288,6 +288,9 @@ pull_up_sublinks_jointree_recurse(PlannerInfo *root, Node *jtnode,
 														 leftrelids,
 														 NULL, NULL);
 				break;
+			case JOIN_CYPHER_MERGE:
+				// TODO : check
+				break;
 			default:
 				elog(ERROR, "unrecognized join type: %d",
 					 (int) j->jointype);
@@ -806,6 +809,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 			case JOIN_LEFT:
 			case JOIN_SEMI:
 			case JOIN_ANTI:
+			case JOIN_CYPHER_MERGE:
 				j->larg = pull_up_subqueries_recurse(root, j->larg,
 													 j,
 												   lowest_nulling_outer_join,
@@ -2638,6 +2642,9 @@ reduce_outer_joins_pass2(Node *jtnode,
 				 * so there's no way that upper quals could refer to their
 				 * righthand sides, and no point in checking.
 				 */
+				break;
+			case JOIN_CYPHER_MERGE:
+				/* do nothing */
 				break;
 			default:
 				elog(ERROR, "unrecognized join type: %d",

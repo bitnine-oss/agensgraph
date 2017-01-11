@@ -1054,6 +1054,7 @@ _copyModifyGraph(const ModifyGraph *from)
 	COPY_NODE_FIELD(targets);
 	COPY_NODE_FIELD(exprs);
 	COPY_NODE_FIELD(sets);
+	COPY_NODE_FIELD(mergepattern);
 
 	return newnode;
 }
@@ -2772,6 +2773,7 @@ _copyQuery(const Query *from)
 	COPY_NODE_FIELD(graph.targets);
 	COPY_NODE_FIELD(graph.exprs);
 	COPY_NODE_FIELD(graph.sets);
+	COPY_NODE_FIELD(graph.mergepattern);
 
 	return newnode;
 }
@@ -4406,6 +4408,17 @@ _copyCypherSetClause(const CypherSetClause *from)
 	return newnode;
 }
 
+static CypherMergeClause *
+_copyCypherMergeClause(const CypherMergeClause *from)
+{
+	CypherMergeClause *newnode = makeNode(CypherMergeClause);
+
+	COPY_NODE_FIELD(pattern);
+	COPY_NODE_FIELD(setitems);
+
+	return newnode;
+}
+
 static CypherLoadClause *
 _copyCypherLoadClause(const CypherLoadClause *from)
 {
@@ -4495,6 +4508,8 @@ _copyGraphVertex(const GraphVertex *from)
 	COPY_STRING_FIELD(variable);
 	COPY_SCALAR_FIELD(create);
 	COPY_SCALAR_FIELD(relid);
+	COPY_NODE_FIELD(expr);
+	COPY_NODE_FIELD(qual);
 
 	return newnode;
 }
@@ -4507,6 +4522,8 @@ _copyGraphEdge(const GraphEdge *from)
 	COPY_SCALAR_FIELD(direction);
 	COPY_STRING_FIELD(variable);
 	COPY_SCALAR_FIELD(relid);
+	COPY_NODE_FIELD(expr);
+	COPY_NODE_FIELD(qual);
 
 	return newnode;
 }
@@ -4516,6 +4533,7 @@ _copyGraphSetProp(const GraphSetProp *from)
 {
 	GraphSetProp *newnode = makeNode(GraphSetProp);
 
+	COPY_SCALAR_FIELD(kind);
 	COPY_STRING_FIELD(variable);
 	COPY_NODE_FIELD(elem);
 	COPY_NODE_FIELD(expr);
@@ -5487,6 +5505,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherSetClause:
 			retval = _copyCypherSetClause(from);
+			break;
+		case T_CypherMergeClause:
+			retval = _copyCypherMergeClause(from);
 			break;
 		case T_CypherLoadClause:
 			retval = _copyCypherLoadClause(from);

@@ -4035,6 +4035,7 @@ calc_joinrel_size_estimate(PlannerInfo *root,
 			/* pselec not used */
 			break;
 		case JOIN_LEFT:
+		case JOIN_CYPHER_MERGE:
 			nrows = outer_rows * inner_rows * fkselec * jselec;
 			if (nrows < outer_rows)
 				nrows = outer_rows;

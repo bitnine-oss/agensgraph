@@ -878,6 +878,7 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 				break;
 			case JOIN_LEFT:
 			case JOIN_ANTI:
+			case JOIN_CYPHER_MERGE:
 				leftjoinlist = deconstruct_recurse(root, j->larg,
 												   below_outer_join,
 												   &leftids, &left_inners,
