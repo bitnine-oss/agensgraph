@@ -76,7 +76,6 @@ static Oid GetIndexOpClass(List *opclass, Oid attrType,
 static char *ChooseIndexName(const char *tabname, Oid namespaceId,
 				List *colnames, List *exclusionOpNames,
 				bool primary, bool isconstraint);
-static char *ChooseIndexNameAddition(List *colnames);
 static List *ChooseIndexColumnNames(List *indexElems);
 static void RangeVarCallbackForReindexIndex(const RangeVar *relation,
 								Oid relId, Oid oldRelId, void *arg);
@@ -1636,7 +1635,7 @@ ChooseIndexName(const char *tabname, Oid namespaceId,
  * We know that less than NAMEDATALEN characters will actually be used,
  * so we can truncate the result once we've generated that many.
  */
-static char *
+char *
 ChooseIndexNameAddition(List *colnames)
 {
 	char		buf[NAMEDATALEN * 2];
