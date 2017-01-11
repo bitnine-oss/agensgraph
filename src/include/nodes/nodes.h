@@ -490,6 +490,7 @@ typedef enum NodeTag
 	T_CypherDeleteClause,
 	T_CypherSetClause,
 	T_CypherLoadClause,
+	T_CypherMergeClause,
 	T_CypherPath,
 	T_CypherNode,
 	T_CypherRel,
@@ -726,7 +727,10 @@ typedef enum JoinType
 	 * by the executor (nor, indeed, by most of the planner).
 	 */
 	JOIN_UNIQUE_OUTER,			/* LHS path must be made unique */
-	JOIN_UNIQUE_INNER			/* RHS path must be made unique */
+	JOIN_UNIQUE_INNER,			/* RHS path must be made unique */
+
+	/* This is only used in CypherMerge. It behaves similarly to LeftJoin. */
+	JOIN_CYPHER_MERGE
 
 	/*
 	 * We might need additional join types someday.
@@ -752,6 +756,7 @@ typedef enum JoinType
 	  ((1 << JOIN_LEFT) | \
 	   (1 << JOIN_FULL) | \
 	   (1 << JOIN_RIGHT) | \
+	   (1 << JOIN_CYPHER_MERGE) | \
 	   (1 << JOIN_ANTI))) != 0)
 
 /*
@@ -841,7 +846,8 @@ typedef enum GraphWriteOp
 	GWROP_NONE = 0,
 	GWROP_CREATE,
 	GWROP_DELETE,
-	GWROP_SET
+	GWROP_SET,
+	GWROP_MERGE
 } GraphWriteOp;
 
 #endif   /* NODES_H */

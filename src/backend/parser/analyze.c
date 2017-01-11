@@ -2951,6 +2951,7 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 		case T_CypherCreateClause:
 		case T_CypherDeleteClause:
 		case T_CypherSetClause:
+		case T_CypherMergeClause:
 			update_type = type;
 			break;
 		default:
@@ -3022,6 +3023,18 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 							 errmsg("Cypher read clauses cannot follow update clauses")));
 				break;
 				break;
+			case T_CypherMergeClause:
+				if (update_type == T_Invalid)
+					update_type = T_CypherMergeClause;
+				if (type != update_type)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("There must be one type of consecutive update clauses")));
+				if (read)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("Cypher read clauses cannot follow update clauses")));
+				break;
 			case T_CypherLoadClause:
 				read = true;
 				break;
@@ -3057,6 +3070,9 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 			break;
 		case T_CypherSetClause:
 			qry = transformCypherSetClause(pstate, clause);
+			break;
+		case T_CypherMergeClause:
+			qry = transformCypherMergeClause(pstate, clause);
 			break;
 		case T_CypherLoadClause:
 			qry = transformCypherLoadClause(pstate, clause);

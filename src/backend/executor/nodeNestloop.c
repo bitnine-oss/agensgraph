@@ -21,9 +21,12 @@
 
 #include "postgres.h"
 
+#include "access/xact.h"
 #include "executor/execdebug.h"
 #include "executor/nodeNestloop.h"
 #include "utils/memutils.h"
+#include "utils/snapmgr.h"
+#include "utils/tqual.h"
 
 
 /* ----------------------------------------------------------------
@@ -95,6 +98,8 @@ ExecNestLoop(NestLoopState *node)
 
 	for (;;)
 	{
+		Snapshot svSnapshot = NULL;
+
 		/*
 		 * If we don't have an outer tuple, get the next one and reset the
 		 * inner scan.
@@ -153,8 +158,24 @@ ExecNestLoop(NestLoopState *node)
 		 */
 		ENL1_printf("getting new inner tuple");
 
+		if (node->js.jointype == JOIN_CYPHER_MERGE)
+		{
+			/* Increase commandId for scanning modified tuples. */
+			while (node->nl_MergeMatchSnapshot->curcid <=
+												GetCurrentCommandId(false))
+			{
+				node->nl_MergeMatchSnapshot->curcid++;
+			}
+
+			svSnapshot = innerPlan->state->es_snapshot;
+			innerPlan->state->es_snapshot = node->nl_MergeMatchSnapshot;
+		}
+
 		innerTupleSlot = ExecProcNode(innerPlan);
 		econtext->ecxt_innertuple = innerTupleSlot;
+
+		if (svSnapshot)
+			innerPlan->state->es_snapshot = svSnapshot;
 
 		if (TupIsNull(innerTupleSlot))
 		{
@@ -164,6 +185,7 @@ ExecNestLoop(NestLoopState *node)
 
 			if (!node->nl_MatchedOuter &&
 				(node->js.jointype == JOIN_LEFT ||
+				 node->js.jointype == JOIN_CYPHER_MERGE ||
 				 node->js.jointype == JOIN_ANTI))
 			{
 				/*
@@ -258,6 +280,7 @@ NestLoopState *
 ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 {
 	NestLoopState *nlstate;
+	Snapshot	   svSnapshot = NULL;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -307,8 +330,23 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		eflags |= EXEC_FLAG_REWIND;
 	else
 		eflags &= ~EXEC_FLAG_REWIND;
+
+	if (node->join.jointype == JOIN_CYPHER_MERGE)
+	{
+		Snapshot snap;
+
+		/* Modify the cid to see the pattern created by MERGE_CREATE. */
+		snap = RegisterCopiedSnapshot(estate->es_snapshot);
+		snap->curcid = estate->es_output_cid + 1;
+
+		svSnapshot = estate->es_snapshot;
+		estate->es_snapshot = nlstate->nl_MergeMatchSnapshot = snap;
+	}
+
 	innerPlanState(nlstate) = ExecInitNode(innerPlan(node), estate, eflags);
 
+	if (svSnapshot)
+		estate->es_snapshot = svSnapshot;
 	/*
 	 * tuple table initialization
 	 */
@@ -321,6 +359,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 			break;
 		case JOIN_LEFT:
 		case JOIN_ANTI:
+		case JOIN_CYPHER_MERGE:
 			nlstate->nl_NullInnerTupleSlot =
 				ExecInitNullTupleSlot(estate,
 								 ExecGetResultType(innerPlanState(nlstate)));
@@ -375,6 +414,8 @@ ExecEndNestLoop(NestLoopState *node)
 	 */
 	ExecEndNode(outerPlanState(node));
 	ExecEndNode(innerPlanState(node));
+
+	UnregisterSnapshot(node->nl_MergeMatchSnapshot);
 
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "node processing ended");

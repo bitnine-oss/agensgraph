@@ -25,6 +25,8 @@ extern Query *transformCypherDeleteClause(ParseState *pstate,
 										  CypherClause *clause);
 extern Query *transformCypherSetClause(ParseState *pstate,
 									   CypherClause *clause);
+extern Query *transformCypherMergeClause(ParseState *pstate,
+										 CypherClause *clause);
 extern Query *transformCypherLoadClause(ParseState *pstate,
 										CypherClause *clause);
 

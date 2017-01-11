@@ -909,6 +909,7 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 	WRITE_NODE_FIELD(targets);
 	WRITE_NODE_FIELD(exprs);
 	WRITE_NODE_FIELD(sets);
+	WRITE_NODE_FIELD(mergepattern);
 }
 
 static void
@@ -2766,6 +2767,7 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_NODE_FIELD(graph.targets);
 	WRITE_NODE_FIELD(graph.exprs);
 	WRITE_NODE_FIELD(graph.sets);
+	WRITE_NODE_FIELD(graph.mergepattern);
 }
 
 static void
@@ -3548,6 +3550,15 @@ _outCypherSetClause(StringInfo str, const CypherSetClause *node)
 }
 
 static void
+_outCypherMergeClause(StringInfo str, const CypherMergeClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERMERGECLAUSE");
+
+	WRITE_NODE_FIELD(pattern);
+	WRITE_NODE_FIELD(setitems);
+}
+
+static void
 _outCypherLoadClause(StringInfo str, const CypherLoadClause *node)
 {
 	WRITE_NODE_TYPE("CYPHERLOADCLAUSE");
@@ -3622,6 +3633,8 @@ _outGraphVertex(StringInfo str, const GraphVertex *node)
 	WRITE_STRING_FIELD(variable);
 	WRITE_BOOL_FIELD(create);
 	WRITE_OID_FIELD(relid);
+	WRITE_NODE_FIELD(expr);
+	WRITE_NODE_FIELD(qual);
 }
 
 static void
@@ -3632,6 +3645,8 @@ _outGraphEdge(StringInfo str, const GraphEdge *node)
 	WRITE_INT_FIELD(direction);
 	WRITE_STRING_FIELD(variable);
 	WRITE_OID_FIELD(relid);
+	WRITE_NODE_FIELD(expr);
+	WRITE_NODE_FIELD(qual);
 }
 
 static void
@@ -3639,6 +3654,7 @@ _outGraphSetProp(StringInfo str, const GraphSetProp *node)
 {
 	WRITE_NODE_TYPE("GRAPHSETPROP");
 
+	WRITE_ENUM_FIELD(kind, CSetKind);
 	WRITE_STRING_FIELD(variable);
 	WRITE_NODE_FIELD(elem);
 	WRITE_NODE_FIELD(expr);
@@ -4298,6 +4314,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherSetClause:
 				_outCypherSetClause(str, obj);
+				break;
+			case T_CypherMergeClause:
+				_outCypherMergeClause(str, obj);
 				break;
 			case T_CypherLoadClause:
 				_outCypherLoadClause(str, obj);

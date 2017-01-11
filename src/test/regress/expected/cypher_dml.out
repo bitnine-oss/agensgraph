@@ -1125,6 +1125,210 @@ MATCH (a:person) WHERE a.age IS NULL RETURN properties(a) AS a;
  {"name": "bitnine"}
 (1 row)
 
+--
+-- MERGE
+--
+CREATE GRAPH gm;
+SET GRAPH_PATH = gm;
+CREATE VLABEL v1;
+CREATE VLABEL v2;
+CREATE ELABEL e1;
+MERGE (a);
+MATCH (a) DELETE a;
+CREATE (:v1 {name:'foo'}), (:v1 {name:'bar'}), (:v1 {name:'foo'}), (:v1 {name:'bar'});
+MATCH (a:v1) MERGE (b:v2 {name:a.name})
+	ON CREATE SET b.created = 'true' ON MATCH SET b.matched = 'true';
+MATCH (a:v2) RETURN properties(a);
+                    properties                     
+---------------------------------------------------
+ {"name": "foo", "created": true, "matched": true}
+ {"name": "bar", "created": true, "matched": true}
+(2 rows)
+
+MATCH (a:v1) MERGE (a)-[r:e1 {type:'same name'}]->(b:v2 {name:a.name})
+	ON CREATE SET r.created = 'true', r.matched = null
+	ON MATCH SET r.matched = 'true', r.created = null;
+MATCH (a)-[r:e1]->(b) RETURN properties(a), properties(r), properties(b);
+   properties    |               properties               |   properties    
+-----------------+----------------------------------------+-----------------
+ {"name": "foo"} | {"type": "same name", "created": true} | {"name": "foo"}
+ {"name": "bar"} | {"type": "same name", "created": true} | {"name": "bar"}
+ {"name": "foo"} | {"type": "same name", "created": true} | {"name": "foo"}
+ {"name": "bar"} | {"type": "same name", "created": true} | {"name": "bar"}
+(4 rows)
+
+MATCH (a:v1) MERGE (a)-[r:e1 {type:'same name'}]->(b:v2 {name:a.name})
+	ON CREATE SET r.created = 'true', r.matched = null
+	ON MATCH SET r.matched = 'true', r.created = null;
+MATCH (a)-[r:e1]->(b) RETURN properties(a), properties(r), properties(b);
+   properties    |               properties               |   properties    
+-----------------+----------------------------------------+-----------------
+ {"name": "foo"} | {"type": "same name", "matched": true} | {"name": "foo"}
+ {"name": "bar"} | {"type": "same name", "matched": true} | {"name": "bar"}
+ {"name": "foo"} | {"type": "same name", "matched": true} | {"name": "foo"}
+ {"name": "bar"} | {"type": "same name", "matched": true} | {"name": "bar"}
+(4 rows)
+
+MATCH (a:v2) RETURN properties(a);
+                    properties                     
+---------------------------------------------------
+ {"name": "foo", "created": true, "matched": true}
+ {"name": "bar", "created": true, "matched": true}
+ {"name": "foo"}
+ {"name": "bar"}
+ {"name": "foo"}
+ {"name": "bar"}
+(6 rows)
+
+MERGE (a:v1)-[r1:e1]->(b:v2) MERGE (a)-[r2:e1]->(b)
+	ON CREATE SET r2.created = 'true';
+MATCH p=(a)-[r:e1 {created:true}]->(b) RETURN count(p);
+ count 
+-------
+     0
+(1 row)
+
+CREATE (:v1 {name:'v1-1'});
+MERGE (a:v1 {name:'v1-1'})-[:e1]->(b:v2 {name:'v2-1'});
+MATCH (a:v1 {name:'v1-1'})-[r]->(b) RETURN properties(a), properties(b);
+    properties    |    properties    
+------------------+------------------
+ {"name": "v1-1"} | {"name": "v2-1"}
+(1 row)
+
+MATCH (a:v1 {name:'v1-1'}) RETURN count(a);
+ count 
+-------
+     2
+(1 row)
+
+MATCH (a:v1 {name:'v1-1'}) DETACH DELETE a;
+CREATE (:v1 {name:'v1-1'});
+MERGE (a:v1 {name:'v1-1'})
+MERGE (b:v2 {name:'v2-1'})
+MERGE (a)-[:e1]->(b);
+MATCH (a:v1 {name:'v1-1'})-[r]->(b) RETURN properties(a), properties(b);
+    properties    |    properties    
+------------------+------------------
+ {"name": "v1-1"} | {"name": "v2-1"}
+(1 row)
+
+MATCH (a:v1 {name:'v1-1'}) RETURN count(a);
+ count 
+-------
+     1
+(1 row)
+
+MATCH (a:v1 {name:'v1-1'}) DETACH DELETE a;
+CREATE VLABEL person;
+CREATE VLABEL city;
+CREATE ELABEL hometown;
+CREATE (:person {name:'a', bornin:'seoul'}),
+	   (:person {name:'b', bornin:'san jose'}),
+	   (:person {name:'c', bornin:'jeju'}),
+	   (:person {name:'d', bornin:'san jose'}),
+	   (:person {name:'e', bornin:'seoul'}),
+	   (:person {name:'f', bornin:'los angeles'});
+MATCH (a:person)
+MERGE (b:city {name:a.bornin})
+	ON CREATE SET b.population = '1'
+	ON MATCH SET b.population = (b.population::int + 1)::text::jsonb;
+MATCH (c:city) RETURN properties(c);
+                properties                
+------------------------------------------
+ {"name": "jeju", "population": 1}
+ {"name": "san jose", "population": 2}
+ {"name": "seoul", "population": 2}
+ {"name": "los angeles", "population": 1}
+(4 rows)
+
+MATCH (a:person)
+MERGE (a)-[:hometown]->(b:city {name:a.bornin});
+MATCH (:city)<-[r]-(:person) RETURN count(r);
+ count 
+-------
+     6
+(1 row)
+
+MATCH (a:city) DETACH DELETE a;
+CREATE CONSTRAINT ON city ASSERT name is unique;
+MATCH (a:person)
+MERGE (a)-[:hometown]->(b:city {name:a.bornin});
+ERROR:  conflicting key value violates exclusion constraint "city_unique_constraint"
+DETAIL:  Key ((properties #>> ARRAY['name'::text]))=(san jose) conflicts with existing key ((properties #>> ARRAY['name'::text]))=(san jose).
+MATCH (a:city) DETACH DELETE a;
+-- unspecified direction
+CREATE (a {id:'2'}), (b {id:'1'});
+MATCH (a {id:'2'}), (b {id:'1'})
+MERGE (a)-[r:e1]-(b)
+RETURN properties(startnode(r)) as s, properties(endnode(r)) as e;
+      s      |      e      
+-------------+-------------
+ {"id": "2"} | {"id": "1"}
+(1 row)
+
+MATCH (a {id:'1'}), (b {id:'2'})
+MERGE (a)-[r:e1]-(b)
+RETURN properties(a), properties(b);
+ properties  | properties  
+-------------+-------------
+ {"id": "1"} | {"id": "2"}
+(1 row)
+
+MATCH (a) DETACH DELETE a;
+CREATE (a {id: 2}), (b {id: 1}), (c {id: 1}), (d {id: 2})
+CREATE (a)-[:e1 {name: 'ab'}]->(b)
+CREATE (c)-[:e1 {name: 'cd'}]->(d);
+MATCH (a {id: 2})-[]-(b {id: 1})
+MERGE (a)-[r:e1]-(b)
+RETURN r;
+               r                
+--------------------------------
+ e1[5.8][1.4,1.5]{"name": "ab"}
+ e1[5.9][1.6,1.7]{"name": "cd"}
+(2 rows)
+
+MATCH (a) DETACH DELETE a;
+-- wrong case
+MERGE (a:v1) MERGE (b:v2 {name:a.notexistent});
+ERROR:  cannot use null property value in MERGE
+MERGE (a:v1)
+	ON MATCH SET a.matched = 'true'
+MERGE (b:v2 {name:a.name});
+ERROR:  ON CREATE/MATCH SET between MERGE clauses is not allowed.
+MERGE (a:v1) MATCH (b:v2 {name:a.name}) RETURN a, b;
+ERROR:  Cypher read clauses cannot follow update clauses
+CREATE (a:v1 {name:'bitnine'}) MERGE (:v2 {name:a.name});
+ERROR:  There must be one type of consecutive update clauses
+MERGE (a:v1) MERGE (b:v2 {name:a.name}) MERGE (a);
+ERROR:  duplicate variable "a"
+LINE 1: MERGE (a:v1) MERGE (b:v2 {name:a.name}) MERGE (a);
+                                                       ^
+MERGE (a)-[r]->(b);
+ERROR:  only one relationship type is allowed for MERGE
+MERGE (a)-[r:e1]->(b) MERGE (a);
+ERROR:  duplicate variable "a"
+LINE 1: MERGE (a)-[r:e1]->(b) MERGE (a);
+                                     ^
+MERGE (a)-[r:e1]->(b) MERGE (a)-[r:e1]->(b);
+ERROR:  duplicate variable "r"
+LINE 1: MERGE (a)-[r:e1]->(b) MERGE (a)-[r:e1]->(b);
+                                         ^
+MERGE (a)-[:e1]->(a:v1);
+ERROR:  duplicate variable "a"
+LINE 1: MERGE (a)-[:e1]->(a:v1);
+                          ^
+DROP GRAPH gm CASCADE;
+NOTICE:  drop cascades to 9 other objects
+DETAIL:  drop cascades to sequence gm.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label v1
+drop cascades to label v2
+drop cascades to label e1
+drop cascades to label person
+drop cascades to label city
+drop cascades to label hometown
 -- cleanup
 DROP GRAPH p CASCADE;
 NOTICE:  drop cascades to 5 other objects

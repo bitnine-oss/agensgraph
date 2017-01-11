@@ -11,6 +11,7 @@
 #define GRAPHNODES_H
 
 #include "nodes/execnodes.h"
+#include "nodes/parsenodes.h"
 
 typedef struct GraphPath
 {
@@ -25,6 +26,10 @@ typedef struct GraphVertex
 	char	   *variable;
 	bool		create;			/* whether this vertex will be created or not */
 	Oid			relid;
+	Node	   *expr;
+	Node	   *qual;
+	ExprState  *es_expr;
+	ExprState  *es_qual;
 } GraphVertex;
 
 #define GRAPH_EDGE_DIR_NONE		0
@@ -37,11 +42,16 @@ typedef struct GraphEdge
 	uint32		direction;		/* bitmask of directions (see above) */
 	char	   *variable;
 	Oid			relid;
+	Node	   *expr;
+	Node	   *qual;
+	ExprState  *es_expr;
+	ExprState  *es_qual;
 } GraphEdge;
 
 typedef struct GraphSetProp
 {
 	NodeTag		type;
+	CSetKind	kind;
 	char	   *variable;
 	Node	   *elem;			/* expression of vertex/edge */
 	Node	   *expr;			/* expression of value */
