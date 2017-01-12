@@ -603,7 +603,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 
 /* ordinary key words in alphabetical order */
 %token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
-	AGGREGATE ALL ALLSHORTESTPATH ALSO ALTER ALWAYS ANALYSE ANALYZE AND
+	AGGREGATE ALL ALLSHORTESTPATHS ALSO ALTER ALWAYS ANALYSE ANALYZE AND
 	ANY ARRAY AS ASC
 	ASSERT ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUTHORIZATION
 
@@ -751,7 +751,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
 			DELETE_P DETACH LOAD OPTIONAL REMOVE SIZE SKIP
-			SHORTESTPATH ALLSHORTESTPATH
+			SHORTESTPATH ALLSHORTESTPATHS
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -12850,7 +12850,7 @@ shortestpath_expr:
 
 					$$ = (Node *)p;
 				}
-			| ALLSHORTESTPATH '(' cypher_path_chain ')'
+			| ALLSHORTESTPATHS '(' cypher_path_chain ')'
 				{
 					CypherPath *p;
 
@@ -13983,7 +13983,7 @@ unreserved_keyword:
 			| ADMIN
 			| AFTER
 			| AGGREGATE
-			| ALLSHORTESTPATH
+			| ALLSHORTESTPATHS
 			| ALSO
 			| ALTER
 			| ALWAYS
