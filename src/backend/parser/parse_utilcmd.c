@@ -3842,6 +3842,7 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 {
 	IndexStmt  *idxstmt;
 	ParseState *pstate;
+	List	   *colnames = NIL;
 	ListCell   *l;
 	Relation	rel;
 	RangeTblEntry *rte;
@@ -3855,19 +3856,6 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	/* Set up pstate */
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
-
-	if (idxstmt->idxname == NULL)
-	{
-		Oid namespaceId;
-
-		namespaceId = get_namespace_oid(idxstmt->relation->schemaname,
-										false);	/* missing_ok */
-
-		idxstmt->idxname = ChooseRelationName(idxstmt->relation->relname,
-											  "property",
-											  "idx",
-											  namespaceId);
-	}
 
 	/*
 	 * Put the parent table into the rtable so that the expressions can refer
@@ -3902,6 +3890,7 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	foreach(l, idxstmt->indexParams)
 	{
 		IndexElem *ielem = (IndexElem *) lfirst(l);
+		char	  *name = NULL;
 
 		if (ielem->expr == NULL || ielem->name != NULL)
 		{
@@ -3919,6 +3908,21 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 		/* Extract preliminary index col name before transforming expr */
 		if (ielem->indexcolname == NULL)
 			ielem->indexcolname = FigureIndexColname(ielem->expr);
+
+		name = ielem->indexcolname;
+		if (name == NULL)
+		{
+			A_Expr	*node = ielem->expr;
+
+			if (node->rexpr != NULL)
+				name = FigureIndexColname(node->rexpr);
+			else if (node->lexpr != NULL)
+				name = FigureIndexColname(node->lexpr);
+
+		}
+
+		if (name != NULL)
+			colnames = lappend(colnames, pstrdup(name));
 
 		/* Now do parse transformation of the expression */
 		ielem->expr = transformExpr(pstate, ielem->expr,
@@ -3940,6 +3944,19 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
 					 errmsg("property index expression cannot return a set")));
+	}
+
+	if (idxstmt->idxname == NULL)
+	{
+		Oid namespaceId;
+
+		namespaceId = get_namespace_oid(idxstmt->relation->schemaname,
+										false);	/* missing_ok */
+
+		idxstmt->idxname = ChooseRelationName(idxstmt->relation->relname,
+											  ChooseIndexNameAddition(colnames),
+											  "prop_idx",
+											  namespaceId);
 	}
 
 	/*
