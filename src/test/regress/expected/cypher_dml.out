@@ -663,6 +663,122 @@ RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
  16 | 1 | 17
 (6 rows)
 
+create vlabel person;
+create elabel knows;
+create or replace function ids(nodes vertex[])
+returns int8[] as $$
+declare
+    v vertex;
+    arr int8[];
+begin
+    foreach v in array nodes
+    loop
+        arr = array_append(arr, (v.properties->>'id')::int8);
+    end loop;
+    return arr;
+end
+$$ language plpgsql;
+create (:person {id: 1})-[:knows]->
+       (:person {id: 2})-[:knows]->
+	   (:person {id: 3})-[:knows]->
+	   (:person {id: 4})-[:knows]->
+	   (:person {id: 5});
+match (p:person), (f:person)
+where p.id::int8 = 1 and f.id::int8 = 4
+return ids(nodes(shortestpath((p)-[:knows]->(f))));
+    ids    
+-----------
+ {1,2,3,4}
+(1 row)
+
+match (p:person), (f:person)
+where p.id::int8 = 1 and f.id::int8 = 4
+return ids(nodes(shortestpath((p)-[:knows]-(f))));
+    ids    
+-----------
+ {1,2,3,4}
+(1 row)
+
+match (p:person), (f:person)
+where p.id::int8 = 4 and f.id::int8 = 1
+return ids(nodes(shortestpath((p)<-[:knows]-(f))));
+    ids    
+-----------
+ {4,3,2,1}
+(1 row)
+
+match (p:person), (f:person), x = shortestpath((p:person)<-[:knows]-(f:person))
+where p.id::int8 = 4 and f.id::int8 = 1
+return ids(nodes(x));
+    ids    
+-----------
+ {4,3,2,1}
+(1 row)
+
+match x = shortestpath((p:person)<-[:knows]-(f:person))
+where p.id::int8 = 4 and f.id::int8 = 1
+return ids(nodes(x));
+    ids    
+-----------
+ {4,3,2,1}
+(1 row)
+
+match x = shortestpath((p:person)-[*1..2]->(f:person))
+where p.id::int8 = 1 and f.id::int8 = 4
+return ids(nodes(x));
+ ids 
+-----
+(0 rows)
+
+match x = shortestpath((p:person)-[:knows*1..2]->(f:person))
+where p.id::int8 = 1 and f.id::int8 = 1
+return ids(nodes(x));
+ ids 
+-----
+(0 rows)
+
+match x = shortestpath((p:person)-[:knows*0..2]->(f:person))
+where p.id::int8 = 1 and f.id::int8 = 1
+return ids(nodes(x));
+ ids 
+-----
+ {1}
+(1 row)
+
+match x = shortestpath((p:person)-[:knows*2..4]->(f:person))
+where p.id::int8 = 1 and f.id::int8 = 1
+return ids(nodes(x));
+ERROR:  minHops are only allowed 0 or 1
+create (:person {id:6});
+match (p:person {id:2}), (f:person {id:4}), (n:person {id:6})
+create (p)-[:knows]->(n)
+create (n)-[:knows]->(f);
+match x = allshortestpaths((p:person)-[:knows]->(f:person))
+where p.id::int8 = 1 and f.id::int8 = 5
+return count(x);
+ count 
+-------
+     2
+(1 row)
+
+match (p:person {id:1}), (f:person {id:5})
+return array_length(allshortestpaths((p)-[:knows]->(f)), 1);
+ array_length 
+--------------
+            2
+(1 row)
+
+match (t:time), x = shortestpath((p:person)<-[:knows]-(f:person))
+where t.sec::int8 < 5 and p.id::int8 = 4 and f.id::int8 = 1
+return ids(nodes(x));
+    ids    
+-----------
+ {4,3,2,1}
+ {4,3,2,1}
+ {4,3,2,1}
+ {4,3,2,1}
+(4 rows)
+
 SET graph_path = agens;
 --
 -- DISTINCT
@@ -998,12 +1114,14 @@ drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label rel
 DROP GRAPH t CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 7 other objects
 DETAIL:  drop cascades to sequence t.ag_label_seq
 drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label time
 drop cascades to label goes
+drop cascades to label person
+drop cascades to label knows
 DROP GRAPH o CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence o.ag_label_seq
