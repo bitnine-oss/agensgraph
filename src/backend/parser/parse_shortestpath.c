@@ -255,7 +255,7 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 /*
  *   VALUES (
  *     ARRAY[startVertexExprId]::graphid[],
- *     ARRAY[]::edge[],
+ *     ARRAY[]::graphid[],
  *     0)
  */
 static SelectStmt *
@@ -539,17 +539,23 @@ makeSubquery(CypherPath *cpath, WithClause *with, bool isexpr)
 	RangeSubselect 	*ctescan;
 	Node		 	*varr;
 	Node		 	*earr;
+	Node			*ee;
+	CoalesceExpr	*ce;
 	Node			*gpath;
 	char			*gpathname;
 
 	ctescan = makeCTEScan(cpath);
 	varr = makeVertexScan(cpath);
 	earr = makeEdgeScan(cpath);
+	ee = makeAArrayExpr(NIL, "_edge");
+	ce = makeNode(CoalesceExpr);
+	ce->args = list_make2(earr, ee);
+	ce->location = -1;
 
 	sel = makeNode(SelectStmt);
 	sel->withClause = with;
 	sel->fromClause = list_make1(ctescan);
-	gpath = makeRowExpr(list_make2(varr, earr), "graphpath");
+	gpath = makeRowExpr(list_make2(varr, ce), "graphpath");
 	gpathname = getCypherName(cpath->variable);
 	if (cpath->spkind == CPATHSP_ALL && isexpr)
 	{
