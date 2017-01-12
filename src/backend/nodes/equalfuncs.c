@@ -2606,6 +2606,7 @@ _equalCommonTableExpr(const CommonTableExpr *a, const CommonTableExpr *b)
 	COMPARE_NODE_FIELD(ctecoltypmods);
 	COMPARE_NODE_FIELD(ctecolcollations);
 	COMPARE_SCALAR_FIELD(maxdepth);
+	COMPARE_SCALAR_FIELD(ctestop);
 
 	return true;
 }

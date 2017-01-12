@@ -1204,6 +1204,7 @@ typedef struct CommonTableExpr
 	List	   *ctecoltypmods;	/* integer list of output column typmods */
 	List	   *ctecolcollations;		/* OID list of column collation OIDs */
 	int			maxdepth;		/* level of recursion */
+	bool		ctestop;
 } CommonTableExpr;
 
 /* Convenience macro to get the output tlist of a CTE's query */
