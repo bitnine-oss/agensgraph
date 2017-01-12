@@ -510,24 +510,30 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 			}
 			if (splist == NIL)
 			{
+				List *components;
+
 				pstate->p_is_match_quals = false;
-				collectNodeInfo(pstate, detail->pattern);
-				List *components = makeComponents(detail->pattern);
+
+				/*
+				 * To do this at here is safe since it just uses transformed
+				 * expression and does not look over the ancestors of `pstate`.
+				 */
 				if (clause->prev != NULL)
 				{
-					rte = transformClause(pstate, clause->prev, NULL, true);
+					rte = transformClause(pstate, clause->prev);
 
-					/*
-					 * To do this at here is safe since it just uses transformed
-					 * expression and does not look over the ancestors of `pstate`.
-					 */
 					qry->targetList = makeTargetListFromRTE(pstate, rte);
 				}
+
+				collectNodeInfo(pstate, detail->pattern);
+				components = makeComponents(detail->pattern);
+
 				qual = transformComponents(pstate, components, &qry->targetList);
+				/* there is no need to resolve `qual` here */
 			}
 			else
 			{
-				rte = transformClause(pstate, (Node *) clause, NULL, true);
+				rte = transformClause(pstate, (Node *) clause);
 				qry->targetList = makeTargetListFromRTE(pstate, rte);
 				appendShortestPathTargetEntry(pstate, splist, &qry->targetList);
 			}
@@ -1184,12 +1190,6 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 						break;
 					}
 
-					if ( p->spkind != CPATHSP_NONE)
-					{
-						le = lnext(le);
-						continue;
-					}
-
 					crel = lfirst(le);
 
 					/*
@@ -1199,6 +1199,12 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					zero = isZeroLengthVLR(crel);
 					vertex = transformMatchNode(pstate, cnode,
 												(zero || out), targetList);
+
+					if (p->spkind != CPATHSP_NONE)
+					{
+						le = lnext(le);
+						continue;
+					}
 
 					setInitialVidForVLR(pstate, crel, vertex, NULL, NULL);
 					edge = transformMatchRel(pstate, crel, targetList);
@@ -1216,12 +1222,6 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					/* end of the path */
 					if (le == NULL)
 						break;
-
-					if (p->spkind != CPATHSP_NONE)
-					{
-						le = lnext(le);
-						continue;
-					}
 
 					crel = lfirst(le);
 					setInitialVidForVLR(pstate, crel, vertex,
