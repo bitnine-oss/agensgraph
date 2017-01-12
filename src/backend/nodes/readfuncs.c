@@ -408,6 +408,7 @@ _readCommonTableExpr(void)
 	READ_NODE_FIELD(ctecoltypmods);
 	READ_NODE_FIELD(ctecolcollations);
 	READ_INT_FIELD(maxdepth);
+	READ_BOOL_FIELD(ctestop);
 
 	READ_DONE();
 }
@@ -1786,6 +1787,7 @@ _readCteScan(void)
 
 	READ_INT_FIELD(ctePlanId);
 	READ_INT_FIELD(cteParam);
+	READ_BOOL_FIELD(cteStop);
 
 	READ_DONE();
 }

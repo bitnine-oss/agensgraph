@@ -1211,6 +1211,7 @@ typedef struct RecursiveUnionState
 	TupleHashTable hashtable;	/* hash table for tuples already seen */
 	MemoryContext tableContext; /* memory context containing hash table */
 	int			depth;			/* current level of recursion */
+	bool		end;
 } RecursiveUnionState;
 
 /* ----------------

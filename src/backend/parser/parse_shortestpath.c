@@ -223,6 +223,7 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 									makeString(SP_COLNAME_EIDS),
 									makeString(SP_COLNAME_HOPS));
 	cte->ctequery = (Node *) u;
+	cte->ctestop = true;
 	cte->location = -1;
 
 	crel = lsecond(cpath->chain);
