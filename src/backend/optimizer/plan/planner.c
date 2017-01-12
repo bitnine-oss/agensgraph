@@ -92,7 +92,6 @@ typedef struct
 /* Local functions */
 static Node *preprocess_expression(PlannerInfo *root, Node *expr, int kind);
 static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
-static void preprocess_graph_pattern(PlannerInfo *root, List *pattern);
 static void preprocess_graph_sets(PlannerInfo *root, List *sets);
 static void inheritance_planner(PlannerInfo *root);
 static void grouping_planner(PlannerInfo *root, bool inheritance_update,
@@ -698,7 +697,6 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	}
 
 	/* expressions for graph */
-	preprocess_graph_pattern(root, parse->graph.pattern);
 	parse->graph.exprs = (List *)
 		preprocess_expression(root, (Node *) parse->graph.exprs,
 							  EXPRKIND_TARGET);
@@ -936,42 +934,6 @@ preprocess_qual_conditions(PlannerInfo *root, Node *jtnode)
 }
 
 static void
-preprocess_graph_pattern(PlannerInfo *root, List *pattern)
-{
-	ListCell *lp;
-
-	foreach(lp, pattern)
-	{
-		GraphPath  *p = lfirst(lp);
-		ListCell   *le;
-
-		foreach(le, p->chain)
-		{
-			Node *elem = lfirst(le);
-
-			if (nodeTag(elem) == T_GraphVertex)
-			{
-				GraphVertex *gvertex = (GraphVertex *) elem;
-
-				if (gvertex->create)
-					gvertex->prop_map = preprocess_expression(root,
-															  gvertex->prop_map,
-															  EXPRKIND_VALUES);
-			}
-			else
-			{
-				GraphEdge *gedge = (GraphEdge *) elem;
-
-				Assert(nodeTag(elem) == T_GraphEdge);
-
-				gedge->prop_map = preprocess_expression(root, gedge->prop_map,
-														EXPRKIND_VALUES);
-			}
-		}
-	}
-}
-
-static void
 preprocess_graph_sets(PlannerInfo *root, List *sets)
 {
 	ListCell *ls;
@@ -981,7 +943,6 @@ preprocess_graph_sets(PlannerInfo *root, List *sets)
 		GraphSetProp *gsp = lfirst(ls);
 
 		gsp->elem = preprocess_expression(root, gsp->elem, EXPRKIND_TARGET);
-		gsp->path = preprocess_expression(root, gsp->path, EXPRKIND_VALUES);
 		gsp->expr = preprocess_expression(root, gsp->expr, EXPRKIND_VALUES);
 	}
 }
@@ -2064,6 +2025,7 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 													parse->graph.detach,
 													path,
 													parse->graph.pattern,
+													parse->graph.targets,
 													parse->graph.exprs,
 													parse->graph.sets);
 		}

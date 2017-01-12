@@ -3965,8 +3965,8 @@ create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
 
 	plan = make_modifygraph(root, best_path->canSetTag, best_path->operation,
 							best_path->last, best_path->detach, subplan,
-							best_path->pattern, best_path->exprs,
-							best_path->sets);
+							best_path->pattern, best_path->targets,
+							best_path->exprs, best_path->sets);
 
 	copy_generic_path_info(&plan->plan, &best_path->path);
 
@@ -6305,7 +6305,7 @@ is_projection_capable_plan(Plan *plan)
 ModifyGraph *
 make_modifygraph(PlannerInfo *root, bool canSetTag, GraphWriteOp operation,
 				 bool last, bool detach, Plan *subplan, List *pattern,
-				 List *exprs, List *sets)
+				 List *targets, List *exprs, List *sets)
 {
 	ModifyGraph *node = makeNode(ModifyGraph);
 
@@ -6315,6 +6315,7 @@ make_modifygraph(PlannerInfo *root, bool canSetTag, GraphWriteOp operation,
 	node->detach = detach;
 	node->subplan = subplan;
 	node->pattern = pattern;
+	node->targets = targets;
 	node->exprs = exprs;
 	node->sets = sets;
 

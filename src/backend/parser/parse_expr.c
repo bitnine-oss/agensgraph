@@ -152,6 +152,7 @@ static Node *scanRTEForElem(ParseState *pstate, RangeTblEntry *rte,
 							char *colname, int location);
 static Node *appendElemIndirection(ParseState *pstate, Node *basenode,
 								   List *indirection);
+static Node *transformJsonKey_internal(ParseState *pstate, Node *node);
 
 
 /*
@@ -3432,7 +3433,7 @@ append_json_indirection(ParseState *pstate, List *pathelems, List *indirection,
 	{
 		Node *ind = lfirst(li);
 
-		pathelems = lappend(pathelems, transformJsonKey(pstate, ind));
+		pathelems = lappend(pathelems, transformJsonKey_internal(pstate, ind));
 	}
 
 	return pathelems;
@@ -3724,8 +3725,8 @@ appendElemIndirection(ParseState *pstate, Node *basenode, List *indirection)
 	return basenode;
 }
 
-Node *
-transformJsonKey(ParseState *pstate, Node *node)
+static Node *
+transformJsonKey_internal(ParseState *pstate, Node *node)
 {
 	if (IsA(node, String))
 	{
@@ -3771,4 +3772,21 @@ transformJsonKey(ParseState *pstate, Node *node)
 	}
 
 	return NULL;
+}
+
+Node *
+transformJsonKey(ParseState *pstate, Node *expr, ParseExprKind exprKind)
+{
+	Node	   *result;
+	ParseExprKind sv_expr_kind;
+
+	Assert(exprKind != EXPR_KIND_NONE);
+	sv_expr_kind = pstate->p_expr_kind;
+	pstate->p_expr_kind = exprKind;
+
+	result = transformJsonKey_internal(pstate, expr);
+
+	pstate->p_expr_kind = sv_expr_kind;
+
+	return result;
 }

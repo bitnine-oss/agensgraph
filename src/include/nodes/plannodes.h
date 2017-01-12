@@ -959,6 +959,7 @@ typedef struct ModifyGraph
 	bool		detach;			/* DETACH DELETE */
 	Plan	   *subplan;		/* plan producing source data */
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
+	List	   *targets;		/* relation Oid's of target labels */
 	List	   *exprs;			/* expression list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 } ModifyGraph;

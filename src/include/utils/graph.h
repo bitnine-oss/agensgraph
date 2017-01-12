@@ -88,10 +88,17 @@ extern Datum vertex_labels(PG_FUNCTION_ARGS);
 
 /* support functions */
 extern Datum getVertexIdDatum(Datum datum);
+extern Datum getVertexPropDatum(Datum datum);
 extern Datum getEdgeIdDatum(Datum datum);
+extern Datum getEdgeStartDatum(Datum datum);
+extern Datum getEdgeEndDatum(Datum datum);
+extern Datum getEdgePropDatum(Datum datum);
 extern void getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges);
 extern Datum makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges,
 								int nedges);
+extern Datum makeGraphVertexDatum(Datum id, Datum prop_map);
+extern Datum makeGraphEdgeDatum(Datum id, Datum start, Datum end,
+								Datum prop_map);
 
 /* index support - BTree */
 extern Datum btgraphidcmp(PG_FUNCTION_ARGS);

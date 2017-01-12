@@ -267,6 +267,7 @@ _readQuery(void)
 	READ_BOOL_FIELD(graph.last);
 	READ_BOOL_FIELD(graph.detach);
 	READ_NODE_FIELD(graph.pattern);
+	READ_NODE_FIELD(graph.targets);
 	READ_NODE_FIELD(graph.exprs);
 	READ_NODE_FIELD(graph.sets);
 
@@ -2275,9 +2276,8 @@ _readGraphVertex(void)
 	READ_LOCALS(GraphVertex);
 
 	READ_STRING_FIELD(variable);
-	READ_STRING_FIELD(label);
-	READ_NODE_FIELD(prop_map);
 	READ_BOOL_FIELD(create);
+	READ_OID_FIELD(relid);
 
 	READ_DONE();
 }
@@ -2289,8 +2289,7 @@ _readGraphEdge(void)
 
 	READ_INT_FIELD(direction);
 	READ_STRING_FIELD(variable);
-	READ_STRING_FIELD(label);
-	READ_NODE_FIELD(prop_map);
+	READ_OID_FIELD(relid);
 
 	READ_DONE();
 }
@@ -2300,8 +2299,8 @@ _readGraphSetProp(void)
 {
 	READ_LOCALS(GraphSetProp);
 
+	READ_STRING_FIELD(variable);
 	READ_NODE_FIELD(elem);
-	READ_NODE_FIELD(path);
 	READ_NODE_FIELD(expr);
 
 	READ_DONE();
