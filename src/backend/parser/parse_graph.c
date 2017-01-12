@@ -255,7 +255,7 @@ static char *genUniqueName(void);
 /* shortestpath */
 static List *getShortestPath(List *pattern);
 static void appendShortestPathTargetEntry(
-		ParseState *pstate, List *splist, List *targetList);
+		ParseState *pstate, List *splist, List **targetList);
 Query *
 transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 {
@@ -529,7 +529,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 			{
 				rte = transformClause(pstate, (Node *) clause, NULL, true);
 				qry->targetList = makeTargetListFromRTE(pstate, rte);
-				appendShortestPathTargetEntry(pstate, splist, qry->targetList);
+				appendShortestPathTargetEntry(pstate, splist, &qry->targetList);
 			}
 		}
 
@@ -787,7 +787,7 @@ getShortestPath(List *pattern)
 static void
 appendShortestPathTargetEntry(ParseState *pstate,
 	 						  List *splist,
-							  List *targetList)
+							  List **targetList)
 {
 	ListCell *e;
 
@@ -796,7 +796,9 @@ appendShortestPathTargetEntry(ParseState *pstate,
 		CypherPath *p;
 		char *pathname;
 		Query *sp;
-		SubLink *spexpr;
+		Alias *alias;
+		RangeTblEntry *rte;
+		Node *var;
 		TargetEntry *te;
 
 		p = lfirst(e);
@@ -808,15 +810,18 @@ appendShortestPathTargetEntry(ParseState *pstate,
 					 errmsg("a path variable name must be provided")));
 
 		sp = transformShortestPathInMatch(pstate, p);
-		spexpr = makeNode(SubLink);
-		spexpr->subLinkType = EXPR_SUBLINK;
-		spexpr->subselect = (Node *) sp;
-		te = makeTargetEntry((Expr *) spexpr,
+
+		alias = makeAliasOptUnique(NULL);
+		rte = addRangeTableEntryForSubquery(pstate, sp, alias, true, true);
+		addRTEtoJoinlist(pstate, rte, true);
+
+		var = getColumnVar(pstate, rte, pathname);
+		te = makeTargetEntry((Expr *) var,
 							 (AttrNumber) pstate->p_next_resno++,
 							 pstrdup(pathname),
 							 false);
 
-		targetList = lappend(targetList, te);
+		*targetList = lappend(*targetList, te);
 	}
 }
 

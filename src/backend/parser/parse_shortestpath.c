@@ -43,10 +43,12 @@ static void checkNode(ParseState *pstate, CypherNode *cnode);
 static void checkNodeForRef(ParseState *pstate, CypherNode *cnode);
 static void checkNoPropRel(ParseState *pstate, CypherRel *rel);
 
-static Query *makeShortestPathQuery(ParseState *pstate, CypherPath *cpath);
+static Query *makeShortestPathQuery(ParseState *pstate, CypherPath *cpath,
+									bool isexpr);
 static SelectStmt *makeNonRecursiveTerm(ParseState *pstate, CypherNode *cnode);
 static SelectStmt *makeRecursiveTerm(ParseState *pstate, CypherPath *cpath);
-static SelectStmt *makeSubquery(CypherPath *cpath, WithClause *with);
+static SelectStmt *makeSubquery(CypherPath *cpath, WithClause *with,
+								bool isexpr);
 static RangeSubselect *makeCTEScan(CypherPath *cpath);
 static Node *makeVertexScan(CypherPath *cpath);
 static Node *makeEdgeScan(CypherPath *cpath);
@@ -74,7 +76,7 @@ transformShortestPath(ParseState *pstate, CypherPath *cpath)
 	checkNodeForRef(pstate, (CypherNode *)linitial(cpath->chain));
 	checkNoPropRel(pstate, (CypherRel *)lsecond(cpath->chain));
 	checkNodeForRef(pstate, (CypherNode *)lthird(cpath->chain));
-	return makeShortestPathQuery(pstate, cpath);
+	return makeShortestPathQuery(pstate, cpath, true);
 }
 
 Query *
@@ -90,7 +92,7 @@ transformShortestPathInMatch(ParseState *parentParseState, CypherPath *cpath)
 	checkNode(pstate, (CypherNode *)linitial(cpath->chain));
 	checkNoPropRel(pstate, (CypherRel *)lsecond(cpath->chain));
 	checkNode(pstate, (CypherNode *)lthird(cpath->chain));
-	query = makeShortestPathQuery(pstate, cpath);
+	query = makeShortestPathQuery(pstate, cpath, false);
 
 	free_parsestate(pstate);
 
@@ -203,7 +205,7 @@ checkNoPropRel(ParseState *pstate, CypherRel *rel)
  * LIMIT 1
  */
 static Query *
-makeShortestPathQuery(ParseState *pstate, CypherPath *cpath)
+makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 {
 	SelectStmt 		*u;
 	List	   		*colnames;
@@ -227,6 +229,7 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath)
 	cte->ctename = CTE_NAME;
 	cte->aliascolnames = colnames;
 	cte->ctequery = (Node *) u;
+	cte->spstop = true;
 	cte->location = -1;
 
 	crel = (CypherRel *)lsecond(cpath->chain);
@@ -243,7 +246,7 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath)
 	with->recursive = true;
 	with->location = -1;
 
-	sp = makeSubquery(cpath, with);
+	sp = makeSubquery(cpath, with, isexpr);
 
 	return transformStmt(pstate, (Node *) sp);
 }
@@ -329,8 +332,9 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 
 	sel = makeNode(SelectStmt);
 
-	sel->distinctClause = list_make1(
-			makeColumnRef2(CTE_ENAME, AG_END_ID));
+
+	if (cpath->spkind == CPATHSP_ONE)
+		sel->distinctClause = list_make1(makeColumnRef2(CTE_ENAME, AG_END_ID));
 
 	/* targetList */
 
@@ -529,13 +533,14 @@ makeLastElem(void)
  * LIMIT 1;
  */
 static SelectStmt *
-makeSubquery(CypherPath *cpath, WithClause *with)
+makeSubquery(CypherPath *cpath, WithClause *with, bool isexpr)
 {
 	SelectStmt 		*sel;
 	RangeSubselect 	*ctescan;
 	Node		 	*varr;
 	Node		 	*earr;
 	Node			*gpath;
+	char			*gpathname;
 
 	ctescan = makeCTEScan(cpath);
 	varr = makeVertexScan(cpath);
@@ -545,7 +550,15 @@ makeSubquery(CypherPath *cpath, WithClause *with)
 	sel->withClause = with;
 	sel->fromClause = list_make1(ctescan);
 	gpath = makeRowExpr(list_make2(varr, earr), "graphpath");
-	sel->targetList = list_make1(makeResTarget(gpath, NULL));
+	gpathname = getCypherName(cpath->variable);
+	if (cpath->spkind == CPATHSP_ALL && isexpr)
+	{
+		FuncCall *ag;
+		ag = makeFuncCall(list_make1(makeString("array_agg")),
+						  list_make1(gpath), -1);
+		gpath = (Node *)ag;
+	}
+	sel->targetList = list_make1(makeResTarget(gpath, gpathname));
 
 	return sel;
 }

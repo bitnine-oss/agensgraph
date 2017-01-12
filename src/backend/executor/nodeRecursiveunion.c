@@ -116,6 +116,9 @@ ExecRecursiveUnion(RecursiveUnionState *node)
 		slot = ExecProcNode(innerPlan);
 		if (TupIsNull(slot))
 		{
+			if (node->end)
+				break;
+
 			if (plan->maxDepth > 0)
 				node->depth++;
 
@@ -195,6 +198,7 @@ ExecInitRecursiveUnion(RecursiveUnion *node, EState *estate, int eflags)
 	rustate->working_table = tuplestore_begin_heap(false, false, work_mem);
 	rustate->intermediate_table = tuplestore_begin_heap(false, false, work_mem);
 	rustate->depth = 1;
+	rustate->end = false;
 
 	/*
 	 * If hashing, we need a per-tuple memory context for comparisons, and a
@@ -339,4 +343,5 @@ ExecReScanRecursiveUnion(RecursiveUnionState *node)
 	tuplestore_clear(node->working_table);
 	tuplestore_clear(node->intermediate_table);
 	node->depth = 1;
+	node->end = false;
 }

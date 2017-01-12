@@ -152,9 +152,21 @@ CteScanRecheck(CteScanState *node, TupleTableSlot *slot)
 TupleTableSlot *
 ExecCteScan(CteScanState *node)
 {
-	return ExecScan(&node->ss,
+	TupleTableSlot *slot;
+	CteScan *plan;
+
+	slot = ExecScan(&node->ss,
 					(ExecScanAccessMtd) CteScanNext,
 					(ExecScanRecheckMtd) CteScanRecheck);
+
+	plan = (CteScan *)node->ss.ps.plan;
+	if (! TupIsNull(slot) && plan->spStop)
+	{
+		RecursiveUnionState *rustate = (RecursiveUnionState *)node->cteplanstate;
+		rustate->end = true;
+	}
+
+	return slot;
 }
 
 
