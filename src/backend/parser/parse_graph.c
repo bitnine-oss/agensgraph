@@ -1184,7 +1184,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 						break;
 					}
 
-					if (p->spkind != CPATHSP_NONE)
+					if ( p->spkind != CPATHSP_NONE)
 					{
 						le = lnext(le);
 						continue;
