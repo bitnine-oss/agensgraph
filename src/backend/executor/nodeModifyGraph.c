@@ -148,6 +148,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->done = false;
 	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
 
+	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate);
+
 	if (mgplan->targets != NIL)
 	{
 		int			numResultRelInfo = list_length(mgplan->targets);
@@ -395,12 +397,10 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 			 TupleTableSlot *slot, bool inPath)
 {
 	EState	   *estate = mgstate->ps.state;
+	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
 	ResultRelInfo *resultRelInfo;
 	ResultRelInfo *savedResultRelInfo;
-	Datum		values[2];
-	bool		isnull[2] = {false, false};
 	Datum		vertex;
-	TupleTableSlot *insertSlot;
 	HeapTuple	tuple;
 
 	Assert(gvertex->variable != NULL);
@@ -411,17 +411,17 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 
 	vertex = findVertex(slot, gvertex, vid);
 
-	values[0] = GraphidGetDatum(*vid);
-	values[1] = getVertexPropDatum(vertex);
+	ExecClearTuple(elemTupleSlot);
 
-	insertSlot = MakeTupleTableSlot();
-	insertSlot->tts_tupleDescriptor =
-			RelationGetDescr(resultRelInfo->ri_RelationDesc);
-	insertSlot->tts_values = values;
-	insertSlot->tts_isnull = isnull;
-	insertSlot->tts_isempty = false;
+	ExecSetSlotDescriptor(elemTupleSlot,
+						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
+	elemTupleSlot->tts_values[0] = GraphidGetDatum(*vid);
+	elemTupleSlot->tts_values[1] = getVertexPropDatum(vertex);
+	MemSet(elemTupleSlot->tts_isnull, false,
+		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
+	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecMaterializeSlot(insertSlot);
+	tuple = ExecMaterializeSlot(elemTupleSlot);
 
 	/*
 	 * Constraints might reference the tableoid column, so initialize
@@ -433,19 +433,19 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	 * Check the constraints of the tuple
 	 */
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
-		ExecConstraints(resultRelInfo, insertSlot, estate);
+		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
 	/*
 	 * insert the tuple normally
 	 *
-	 * NOTE: heap_insert() returns the ctid of the new tuple in the t_self.
+	 * NOTE: heap_insert() returns the cid of the new tuple in the t_self.
 	 */
 	heap_insert(resultRelInfo->ri_RelationDesc, tuple, estate->es_output_cid,
 				0, NULL);
 
 	/* insert index entries for the tuple */
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(insertSlot, &(tuple->t_self), estate, false,
+		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self), estate, false,
 							  NULL, NIL);
 
 	if (mgstate->canSetTag)
@@ -461,13 +461,11 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		   Graphid end, TupleTableSlot *slot, bool inPath)
 {
 	EState	   *estate = mgstate->ps.state;
+	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
 	ResultRelInfo *resultRelInfo;
 	ResultRelInfo *savedResultRelInfo;
 	Graphid		id;
-	Datum		values[4];
-	bool		isnull[4] = {false, false, false, false};
 	Datum		edge;
-	TupleTableSlot *insertSlot;
 	HeapTuple	tuple;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
@@ -476,30 +474,30 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 
 	edge = findEdge(slot, gedge, &id);
 
-	values[0] = UInt64GetDatum(id);
-	values[1] = GraphidGetDatum(start);
-	values[2] = GraphidGetDatum(end);
-	values[3] = getEdgePropDatum(edge);
+	ExecClearTuple(elemTupleSlot);
 
-	insertSlot = MakeTupleTableSlot();
-	insertSlot->tts_tupleDescriptor =
-			RelationGetDescr(resultRelInfo->ri_RelationDesc);
-	insertSlot->tts_values = values;
-	insertSlot->tts_isnull = isnull;
-	insertSlot->tts_isempty = false;
+	ExecSetSlotDescriptor(elemTupleSlot,
+						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
+	elemTupleSlot->tts_values[0] = GraphidGetDatum(id);
+	elemTupleSlot->tts_values[1] = GraphidGetDatum(start);
+	elemTupleSlot->tts_values[2] = GraphidGetDatum(end);
+	elemTupleSlot->tts_values[3] = getEdgePropDatum(edge);
+	MemSet(elemTupleSlot->tts_isnull, false,
+		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
+	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecMaterializeSlot(insertSlot);
+	tuple = ExecMaterializeSlot(elemTupleSlot);
 
 	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
-		ExecConstraints(resultRelInfo, insertSlot, estate);
+		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
 	heap_insert(resultRelInfo->ri_RelationDesc, tuple, estate->es_output_cid,
 				0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(insertSlot, &(tuple->t_self), estate, false,
+		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self), estate, false,
 							  NULL, NIL);
 
 	if (mgstate->canSetTag)

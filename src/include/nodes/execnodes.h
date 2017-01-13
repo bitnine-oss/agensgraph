@@ -2084,6 +2084,7 @@ typedef struct ModifyGraphState
 	bool		canSetTag;
 	bool		done;
 	PlanState  *subplan;
+	TupleTableSlot *elemTupleSlot;	/* to insert vertex/edge */
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE
 								   with `es_prop_map` */
 	List	   *exprs;			/* expression state list for DELETE */
