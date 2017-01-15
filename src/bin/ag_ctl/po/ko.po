@@ -478,10 +478,10 @@ msgstr "보다 자세한 사용법은 \"%s --help\"\n"
 #: pg_ctl.c:1933
 #, c-format
 msgid ""
-"%s is a utility to initialize, start, stop, or control a PostgreSQL server.\n"
+"%s is a utility to initialize, start, stop, or control a AgensGraph server.\n"
 "\n"
 msgstr ""
-"%s 프로그램은 PostgreSQL 서버를 초기화, 시작, 중지, 제어하는 도구입니다.\n"
+"%s 프로그램은 AgensGraph 서버를 초기화, 시작, 중지, 제어하는 도구입니다.\n"
 "\n"
 
 #: pg_ctl.c:1934
@@ -562,8 +562,8 @@ msgstr ""
 
 #: pg_ctl.c:1951
 #, c-format
-msgid "  -D, --pgdata=DATADIR   location of the database storage area\n"
-msgstr "  -D, --pgdata=데이터디렉터리  데이터베이스 자료가 저장되어있는 디렉터리\n"
+msgid "  -D, --agdata=DATADIR   location of the database storage area\n"
+msgstr "  -D, --agdata=데이터디렉터리  데이터베이스 자료가 저장되어있는 디렉터리\n"
 
 #: pg_ctl.c:1953
 #, c-format
@@ -613,8 +613,8 @@ msgstr ""
 
 #: pg_ctl.c:1962
 #, c-format
-msgid "If the -D option is omitted, the environment variable PGDATA is used.\n"
-msgstr "-D 옵션을 사용하지 않으면, PGDATA 환경변수값을 사용함.\n"
+msgid "If the -D option is omitted, the environment variable AGDATA is used.\n"
+msgstr "-D 옵션을 사용하지 않으면, AGDATA 환경변수값을 사용함.\n"
 
 #: pg_ctl.c:1964
 #, c-format
@@ -644,15 +644,15 @@ msgstr "  -l, --log=로그파일     서버 로그를 이 로그파일에 기록
 #, c-format
 msgid ""
 "  -o OPTIONS             command line options to pass to postgres\n"
-"                         (PostgreSQL server executable) or initdb\n"
+"                         (AgensGraph server executable) or initdb\n"
 msgstr ""
-"  -o 옵션들              PostgreSQL 서버프로그램인 postgres나 initdb\n"
+"  -o 옵션들              AgensGraph 서버프로그램인 postgres나 initdb\n"
 "                         명령에서 사용할 명령행 옵션들\n"
 
 #: pg_ctl.c:1973
 #, c-format
-msgid "  -p PATH-TO-POSTGRES    normally not necessary\n"
-msgstr "  -p PATH-TO-POSTGRES    보통은 필요치 않음\n"
+msgid "  -p PATH-TO-AGENS       normally not necessary\n"
+msgstr "  -p PATH-TO-AGENS       보통은 필요치 않음\n"
 
 #: pg_ctl.c:1974
 #, c-format
@@ -718,23 +718,23 @@ msgstr ""
 #: pg_ctl.c:1987
 #, c-format
 msgid ""
-"  -N SERVICENAME  service name with which to register PostgreSQL server\n"
-msgstr "  -N SERVICENAME  서비스 목록에 등록될 PostgreSQL 서비스 이름\n"
+"  -N SERVICENAME  service name with which to register AgensGraph server\n"
+msgstr "  -N SERVICENAME  서비스 목록에 등록될 AgensGraph 서비스 이름\n"
 
 #: pg_ctl.c:1988
 #, c-format
-msgid "  -P PASSWORD     password of account to register PostgreSQL server\n"
+msgid "  -P PASSWORD     password of account to register AgensGraph server\n"
 msgstr "  -P PASSWORD     이 서비스를 실행할 사용자의 암호\n"
 
 #: pg_ctl.c:1989
 #, c-format
-msgid "  -U USERNAME     user name of account to register PostgreSQL server\n"
+msgid "  -U USERNAME     user name of account to register AgensGraph server\n"
 msgstr "  -U USERNAME     이 서비스를 실행할 사용자 이름\n"
 
 #: pg_ctl.c:1990
 #, c-format
-msgid "  -S START-TYPE   service start type to register PostgreSQL server\n"
-msgstr "  -S 시작형태     서비스로 등록된 PostgreSQL 서버 시작 방법\n"
+msgid "  -S START-TYPE   service start type to register AgensGraph server\n"
+msgstr "  -S 시작형태     서비스로 등록된 AgensGraph 서버 시작 방법\n"
 
 #: pg_ctl.c:1992
 #, c-format
@@ -825,5 +825,5 @@ msgstr "%s: 수행할 작업을 지정하지 않았습니다\n"
 #: pg_ctl.c:2388
 #, c-format
 msgid ""
-"%s: no database directory specified and environment variable PGDATA unset\n"
-msgstr "%s: -D 옵션도 없고, PGDATA 환경변수값도 지정되어 있지 않습니다.\n"
+"%s: no database directory specified and environment variable AGDATA unset\n"
+msgstr "%s: -D 옵션도 없고, AGDATA 환경변수값도 지정되어 있지 않습니다.\n"

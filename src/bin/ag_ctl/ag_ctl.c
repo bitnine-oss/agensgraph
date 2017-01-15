@@ -2,6 +2,7 @@
  *
  * pg_ctl --- start/stops/restarts the PostgreSQL server
  *
+ * Portions Copyright (c) 2017, Bitnine Inc.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
  *
  * src/bin/pg_ctl/pg_ctl.c
@@ -458,13 +459,30 @@ start_postmaster(void)
 	 * everything to a shell to process them.  Use exec so that the postmaster
 	 * has the same PID as the current child process.
 	 */
-	if (log_file != NULL)
+	if (log_file != NULL || pg_data != NULL)
+	{
+		char	   *filename;
+		char		buf[MAXPGPATH];
+
+		if (log_file == NULL)
+		{
+			snprintf(buf, MAXPGPATH, "%s/logfile", pg_data);
+			filename = buf;
+		}
+		else
+		{
+			filename = log_file;
+		}
+
 		snprintf(cmd, MAXPGPATH, "exec \"%s\" %s%s < \"%s\" >> \"%s\" 2>&1",
 				 exec_path, pgdata_opt, post_opts,
-				 DEVNULL, log_file);
+				 DEVNULL, filename);
+	}
 	else
+	{
 		snprintf(cmd, MAXPGPATH, "exec \"%s\" %s%s < \"%s\" 2>&1",
 				 exec_path, pgdata_opt, post_opts, DEVNULL);
+	}
 
 	(void) execl("/bin/sh", "/bin/sh", "-c", cmd, (char *) NULL);
 
@@ -1906,7 +1924,7 @@ do_advice(void)
 static void
 do_help(void)
 {
-	printf(_("%s is a utility to initialize, start, stop, or control a PostgreSQL server.\n\n"), progname);
+	printf(_("%s is a utility to initialize, start, stop, or control a AgensGraph server.\n\n"), progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s init[db]               [-D DATADIR] [-s] [-o \"OPTIONS\"]\n"), progname);
 	printf(_("  %s start   [-w] [-t SECS] [-D DATADIR] [-s] [-l FILENAME] [-o \"OPTIONS\"]\n"), progname);
@@ -1924,7 +1942,7 @@ do_help(void)
 #endif
 
 	printf(_("\nCommon options:\n"));
-	printf(_("  -D, --pgdata=DATADIR   location of the database storage area\n"));
+	printf(_("  -D, --agdata=DATADIR   location of the database storage area\n"));
 #ifdef WIN32
 	printf(_("  -e SOURCE              event source for logging when running as a service\n"));
 #endif
@@ -1935,7 +1953,7 @@ do_help(void)
 	printf(_("  -W                     do not wait until operation completes\n"));
 	printf(_("  -?, --help             show this help, then exit\n"));
 	printf(_("(The default is to wait for shutdown, but not for start or restart.)\n\n"));
-	printf(_("If the -D option is omitted, the environment variable PGDATA is used.\n"));
+	printf(_("If the -D option is omitted, the environment variable AGDATA is used.\n"));
 
 	printf(_("\nOptions for start or restart:\n"));
 #if defined(HAVE_GETRLIMIT) && defined(RLIMIT_CORE)
@@ -1945,8 +1963,8 @@ do_help(void)
 #endif
 	printf(_("  -l, --log=FILENAME     write (or append) server log to FILENAME\n"));
 	printf(_("  -o OPTIONS             command line options to pass to postgres\n"
-	 "                         (PostgreSQL server executable) or initdb\n"));
-	printf(_("  -p PATH-TO-POSTGRES    normally not necessary\n"));
+	 "                         (AgensGraph server executable) or initdb\n"));
+	printf(_("  -p PATH-TO-AGENS       normally not necessary\n"));
 	printf(_("\nOptions for stop or restart:\n"));
 	printf(_("  -m, --mode=MODE        MODE can be \"smart\", \"fast\", or \"immediate\"\n"));
 
@@ -1960,17 +1978,15 @@ do_help(void)
 
 #ifdef WIN32
 	printf(_("\nOptions for register and unregister:\n"));
-	printf(_("  -N SERVICENAME  service name with which to register PostgreSQL server\n"));
-	printf(_("  -P PASSWORD     password of account to register PostgreSQL server\n"));
-	printf(_("  -U USERNAME     user name of account to register PostgreSQL server\n"));
-	printf(_("  -S START-TYPE   service start type to register PostgreSQL server\n"));
+	printf(_("  -N SERVICENAME  service name with which to register AgensGraph server\n"));
+	printf(_("  -P PASSWORD     password of account to register AgensGraph server\n"));
+	printf(_("  -U USERNAME     user name of account to register AgensGraph server\n"));
+	printf(_("  -S START-TYPE   service start type to register AgensGraph server\n"));
 
 	printf(_("\nStart types are:\n"));
 	printf(_("  auto       start service automatically during system startup (default)\n"));
 	printf(_("  demand     start service on demand\n"));
 #endif
-
-	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
 }
 
 
@@ -2123,7 +2139,7 @@ main(int argc, char **argv)
 		{"version", no_argument, NULL, 'V'},
 		{"log", required_argument, NULL, 'l'},
 		{"mode", required_argument, NULL, 'm'},
-		{"pgdata", required_argument, NULL, 'D'},
+		{"agdata", required_argument, NULL, 'D'},
 		{"silent", no_argument, NULL, 's'},
 		{"timeout", required_argument, NULL, 't'},
 		{"core-files", no_argument, NULL, 'c'},
@@ -2140,7 +2156,7 @@ main(int argc, char **argv)
 #endif
 
 	progname = get_progname(argv[0]);
-	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_ctl"));
+	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("ag_ctl"));
 	start_time = time(NULL);
 
 	/*
@@ -2161,7 +2177,7 @@ main(int argc, char **argv)
 		}
 		else if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)
 		{
-			puts("pg_ctl (PostgreSQL) " PG_VERSION);
+			puts("ag_ctl (AgensGraph) " AG_VERSION);
 			exit(0);
 		}
 	}
@@ -2207,7 +2223,7 @@ main(int argc, char **argv)
 
 						pgdata_D = pg_strdup(optarg);
 						canonicalize_path(pgdata_D);
-						env_var = psprintf("PGDATA=%s", pgdata_D);
+						env_var = psprintf("AGDATA=%s", pgdata_D);
 						putenv(env_var);
 
 						/*
@@ -2352,7 +2368,9 @@ main(int argc, char **argv)
 	}
 
 	/* Note we put any -D switch into the env var above */
-	pg_config = getenv("PGDATA");
+	pg_config = getenv("AGDATA");
+	if (pg_config == NULL)
+		pg_config = getenv("PGDATA");
 	if (pg_config)
 	{
 		pg_config = pg_strdup(pg_config);
@@ -2367,7 +2385,7 @@ main(int argc, char **argv)
 	if (pg_config == NULL &&
 		ctl_command != KILL_COMMAND && ctl_command != UNREGISTER_COMMAND)
 	{
-		write_stderr(_("%s: no database directory specified and environment variable PGDATA unset\n"),
+		write_stderr(_("%s: no database directory specified and environment variable AGDATA unset\n"),
 					 progname);
 		do_advice();
 		exit(1);

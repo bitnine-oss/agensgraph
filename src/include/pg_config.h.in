@@ -763,6 +763,9 @@
 /* A string containing the version number, platform, and C compiler */
 #undef PG_VERSION_STR
 
+/* AgensGraph version as a string */
+#undef AG_VERSION
+
 /* Define to 1 to allow profiling output to be saved separately for each
    process. */
 #undef PROFILE_PID_DIR
