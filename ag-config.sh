@@ -31,4 +31,4 @@ case "$1" in
 		;;
 esac
 
-./configure --with-tcl --with-perl --with-python --with-gssapi --with-pam --with-ldap --with-openssl --with-libxml --with-libxslt "$@" "${opt[@]}"
+./configure --enable-nls=ko --with-tcl --with-perl --with-python --with-gssapi --with-pam --with-ldap --with-openssl --with-libxml --with-libxslt "$@" "${opt[@]}"

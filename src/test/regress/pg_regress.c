@@ -1079,7 +1079,7 @@ psql_command(const char *database, const char *query,...)
 
 	/* And now we can build and execute the shell command */
 	snprintf(psql_cmd, sizeof(psql_cmd),
-			 "\"%s%spsql\" -X -c \"%s\" \"%s\"",
+			 "\"%s%sagens\" -X -c \"%s\" \"%s\"",
 			 bindir ? bindir : "",
 			 bindir ? "/" : "",
 			 query_escaped,
