@@ -16,6 +16,7 @@ include $(top_builddir)/src/Makefile.global
 
 SUBDIRS = \
 	ag_ctl \
+	agens \
 	initdb \
 	pg_archivecleanup \
 	pg_basebackup \

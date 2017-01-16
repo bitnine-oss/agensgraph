@@ -37,11 +37,11 @@
 PsqlSettings pset;
 
 #ifndef WIN32
-#define SYSPSQLRC	"psqlrc"
-#define PSQLRC		".psqlrc"
+#define SYSPSQLRC	"agensrc"
+#define PSQLRC		".agensrc"
 #else
-#define SYSPSQLRC	"psqlrc"
-#define PSQLRC		"psqlrc.conf"
+#define SYSPSQLRC	"agensrc"
+#define PSQLRC		"agensrc.conf"
 #endif
 
 /*
@@ -771,7 +771,7 @@ process_psqlrc_file(char *filename)
 static void
 showVersion(void)
 {
-	puts("psql (PostgreSQL) " PG_VERSION);
+	puts("agens (AgensGraph) " AG_VERSION);
 }
 
 
