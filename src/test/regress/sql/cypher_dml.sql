@@ -230,6 +230,82 @@ CREATE (:time {sec: 11})-[:goes {int: 1}]->
 MATCH (a:time)-[x:goes*1..2 {int: 1}]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
 
+create vlabel person;
+create elabel knows;
+
+create or replace function ids(nodes vertex[])
+returns int8[] as $$
+declare
+    v vertex;
+    arr int8[];
+begin
+    foreach v in array nodes
+    loop
+        arr = array_append(arr, (v.properties->>'id')::int8);
+    end loop;
+    return arr;
+end
+$$ language plpgsql;
+
+create (:person {id: 1})-[:knows]->
+       (:person {id: 2})-[:knows]->
+	   (:person {id: 3})-[:knows]->
+	   (:person {id: 4})-[:knows]->
+	   (:person {id: 5});
+
+match (p:person), (f:person)
+where p.id::int8 = 1 and f.id::int8 = 4
+return ids(nodes(shortestpath((p)-[:knows]->(f))));
+
+match (p:person), (f:person)
+where p.id::int8 = 1 and f.id::int8 = 4
+return ids(nodes(shortestpath((p)-[:knows]-(f))));
+
+match (p:person), (f:person)
+where p.id::int8 = 4 and f.id::int8 = 1
+return ids(nodes(shortestpath((p)<-[:knows]-(f))));
+
+match (p:person), (f:person), x = shortestpath((p:person)<-[:knows]-(f:person))
+where p.id::int8 = 4 and f.id::int8 = 1
+return ids(nodes(x));
+
+match x = shortestpath((p:person)<-[:knows]-(f:person))
+where p.id::int8 = 4 and f.id::int8 = 1
+return ids(nodes(x));
+
+match x = shortestpath((p:person)-[*1..2]->(f:person))
+where p.id::int8 = 1 and f.id::int8 = 4
+return ids(nodes(x));
+
+match x = shortestpath((p:person)-[:knows*1..2]->(f:person))
+where p.id::int8 = 1 and f.id::int8 = 1
+return ids(nodes(x));
+
+match x = shortestpath((p:person)-[:knows*0..2]->(f:person))
+where p.id::int8 = 1 and f.id::int8 = 1
+return ids(nodes(x));
+
+match x = shortestpath((p:person)-[:knows*2..4]->(f:person))
+where p.id::int8 = 1 and f.id::int8 = 1
+return ids(nodes(x));
+
+create (:person {id:6});
+
+match (p:person {id:2}), (f:person {id:4}), (n:person {id:6})
+create (p)-[:knows]->(n)
+create (n)-[:knows]->(f);
+
+match x = allshortestpaths((p:person)-[:knows]->(f:person))
+where p.id::int8 = 1 and f.id::int8 = 5
+return count(x);
+
+match (p:person {id:1}), (f:person {id:5})
+return array_length(allshortestpaths((p)-[:knows]->(f)), 1);
+
+match (t:time), x = shortestpath((p:person)<-[:knows]-(f:person))
+where t.sec::int8 < 5 and p.id::int8 = 4 and f.id::int8 = 1
+return ids(nodes(x));
+
 SET graph_path = agens;
 
 --

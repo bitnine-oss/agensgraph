@@ -1204,6 +1204,7 @@ typedef struct CommonTableExpr
 	List	   *ctecoltypmods;	/* integer list of output column typmods */
 	List	   *ctecolcollations;		/* OID list of column collation OIDs */
 	int			maxdepth;		/* level of recursion */
+	bool		spstop;
 } CommonTableExpr;
 
 /* Convenience macro to get the output tlist of a CTE's query */
@@ -3221,7 +3222,8 @@ typedef struct CypherStmt
 typedef enum CSPKind
 {
 	CSP_EXISTS,
-	CSP_SIZE
+	CSP_SIZE,
+	CSP_SHORTESTPATH 		/* [all]shortestpath */
 } CSPKind;
 
 typedef struct CypherSubPattern
@@ -3254,8 +3256,9 @@ typedef struct CypherMatchClause
 {
 	NodeTag		type;
 	List	   *pattern;
-	Node	   *where;		/* WHERE qualification */
-	bool		optional;	/* OPTIONAL MATCH */
+	Node	   *where;			/* WHERE qualification */
+	bool		optional;		/* OPTIONAL MATCH */
+	bool		spProcessed;  	/* shortestpath */
 } CypherMatchClause;
 
 /* which clause is parsed as a CypherProjection */
@@ -3305,11 +3308,19 @@ typedef struct CypherLoadClause
 	RangeVar   *relation;	/* a relation to load */
 } CypherLoadClause;
 
+typedef enum CPathSPKind
+{
+	CPATHSP_NONE,
+	CPATHSP_ONE,
+	CPATHSP_ALL
+} CPathSPKind;
+
 typedef struct CypherPath
 {
 	NodeTag		type;
 	Node	   *variable;	/* CypherName */
 	List	   *chain;		/* node, relationship, node, ... */
+	CPathSPKind spkind;     /* shoreteset path */
 } CypherPath;
 
 typedef struct CypherNode

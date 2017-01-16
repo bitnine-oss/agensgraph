@@ -569,7 +569,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 				cypher_rel cypher_remove cypher_return cypher_rmitem cypher_set
 				cypher_setitem cypher_skip_opt cypher_variable
 				cypher_variable_opt cypher_varlen_opt cypher_with
-				cypher_with_parens
+				cypher_with_parens shortestpath_expr
 %type <list>	cypher_distinct_opt cypher_expr_list cypher_rmitem_list
 				cypher_path_chain cypher_path_chain_opt_parens cypher_pattern
 				cypher_setitem_list cypher_types cypher_types_opt
@@ -603,7 +603,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 
 /* ordinary key words in alphabetical order */
 %token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
-	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
+	AGGREGATE ALL ALLSHORTESTPATHS ALSO ALTER ALWAYS ANALYSE ANALYZE AND
+	ANY ARRAY AS ASC
 	ASSERT ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
@@ -667,7 +668,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	ROLLUP ROW ROWS RULE
 
 	SAVEPOINT SCHEMA SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
-	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW SIMILAR
+	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHORTESTPATH
+	SHOW SIMILAR
 	SIMPLE SIZE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P START
 	STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P SUBSTRING
 	SYMMETRIC SYSID SYSTEM_P
@@ -749,6 +751,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
 			DELETE_P DETACH LOAD OPTIONAL REMOVE SIZE SKIP
+			SHORTESTPATH ALLSHORTESTPATHS
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -12315,6 +12318,23 @@ c_expr:		columnref								{ $$ = $1; }
 					n->location = @1;
 					$$ = (Node *)n;
 				}
+			| shortestpath_expr
+				{
+					CypherSubPattern *sub;
+					SubLink *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_SHORTESTPATH;
+					sub->pattern = list_make1($1);
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
 			| ARRAY select_with_parens
 				{
 					SubLink *n = makeNode(SubLink);
@@ -12810,6 +12830,44 @@ json_key_value:
 					$$ = (Node *) n;
 				}
 		;
+
+
+shortestpath_expr:
+			SHORTESTPATH '(' cypher_path_chain ')'
+				{
+					CypherPath *p;
+
+					if (list_length($3) != 3)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("invalid cypher path"),
+								 parser_errposition(@3)));
+					}
+					p = makeNode(CypherPath);
+					p->chain = $3;
+					p->spkind = CPATHSP_ONE;
+
+					$$ = (Node *)p;
+				}
+			| ALLSHORTESTPATHS '(' cypher_path_chain ')'
+				{
+					CypherPath *p;
+
+					if (list_length($3) != 3)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("invalid cypher path"),
+								 parser_errposition(@3)));
+					}
+					p = makeNode(CypherPath);
+					p->chain = $3;
+					p->spkind = CPATHSP_ALL;
+
+					$$ = (Node *)p;
+				}
+			;
 
 /*
  * SQL/XML support
@@ -13925,6 +13983,7 @@ unreserved_keyword:
 			| ADMIN
 			| AFTER
 			| AGGREGATE
+			| ALLSHORTESTPATHS
 			| ALSO
 			| ALTER
 			| ALWAYS
@@ -14136,6 +14195,7 @@ unreserved_keyword:
 			| SET
 			| SETS
 			| SHARE
+			| SHORTESTPATH
 			| SHOW
 			| SIMPLE
 			| SIZE
@@ -15020,6 +15080,13 @@ cypher_pattern:
 cypher_path_opt_varirable:
 			cypher_path
 			| cypher_variable '=' cypher_path
+				{
+					CypherPath *n = (CypherPath *) $3;
+					n->variable = $1;
+					$$ = (Node *) n;
+				}
+			| shortestpath_expr
+			| cypher_variable '=' shortestpath_expr
 				{
 					CypherPath *n = (CypherPath *) $3;
 					n->variable = $1;

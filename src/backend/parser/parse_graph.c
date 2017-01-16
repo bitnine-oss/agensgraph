@@ -33,6 +33,7 @@
 #include "parser/parse_graph.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_relation.h"
+#include "parser/parse_shortestpath.h"
 #include "parser/parse_target.h"
 #include "parser/parser.h"
 #include "parser/parsetree.h"
@@ -251,6 +252,10 @@ static bool IsNullAConst(Node *arg);
 /* utils */
 static char *genUniqueName(void);
 
+/* shortestpath */
+static List *getShortestPath(List *pattern);
+static void appendShortestPathTargetEntry(
+		ParseState *pstate, List *splist, List **targetList);
 Query *
 transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 {
@@ -258,6 +263,13 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	CypherClause *clause;
 	Query *qry;
 	RangeTblEntry *rte;
+
+	if (subpat->kind == CSP_SHORTESTPATH)
+	{
+		Assert(list_length(subpat->pattern) == 1);
+		return transformShortestPath(pstate,
+				(CypherPath *)linitial(subpat->pattern));
+	}
 
 	match = makeNode(CypherMatchClause);
 	match->pattern = subpat->pattern;
@@ -274,6 +286,7 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	rte = transformClause(pstate, (Node *) clause);
 
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
+
 	if (subpat->kind == CSP_SIZE)
 	{
 		FuncCall *count;
@@ -488,26 +501,42 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 		}
 		else
 		{
-			List *components;
+			List *splist = NIL;
 
-			pstate->p_is_match_quals = false;
-
-			/*
-			 * To do this at here is safe since it just uses transformed
-			 * expression and does not look over the ancestors of `pstate`.
-			 */
-			if (clause->prev != NULL)
+			if (detail->spProcessed == false)
 			{
-				rte = transformClause(pstate, clause->prev);
-
-				qry->targetList = makeTargetListFromRTE(pstate, rte);
+				splist = getShortestPath(detail->pattern);
+				detail->spProcessed = true;
 			}
+			if (splist == NIL)
+			{
+				List *components;
 
-			collectNodeInfo(pstate, detail->pattern);
-			components = makeComponents(detail->pattern);
+				pstate->p_is_match_quals = false;
 
-			qual = transformComponents(pstate, components, &qry->targetList);
-			/* there is no need to resolve `qual` here */
+				/*
+				 * To do this at here is safe since it just uses transformed
+				 * expression and does not look over the ancestors of `pstate`.
+				 */
+				if (clause->prev != NULL)
+				{
+					rte = transformClause(pstate, clause->prev);
+
+					qry->targetList = makeTargetListFromRTE(pstate, rte);
+				}
+
+				collectNodeInfo(pstate, detail->pattern);
+				components = makeComponents(detail->pattern);
+
+				qual = transformComponents(pstate, components, &qry->targetList);
+				/* there is no need to resolve `qual` here */
+			}
+			else
+			{
+				rte = transformClause(pstate, (Node *) clause);
+				qry->targetList = makeTargetListFromRTE(pstate, rte);
+				appendShortestPathTargetEntry(pstate, splist, &qry->targetList);
+			}
 		}
 
 		qry->targetList = (List *) resolve_future_vertex(pstate,
@@ -740,6 +769,65 @@ checkNameInItems(ParseState *pstate, List *items, List *targetList)
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("expression in WITH must be aliased (use AS)"),
 					 parser_errposition(pstate, exprLocation(res->val))));
+	}
+}
+
+static List *
+getShortestPath(List *pattern)
+{
+	List 		*splist = NIL;
+	ListCell 	*lp;
+
+	foreach(lp, pattern)
+	{
+		CypherPath *p = lfirst(lp);
+		if (p->spkind != CPATHSP_NONE)
+		{
+			splist = lappend(splist, p);
+		}
+	}
+
+	return splist;
+}
+
+static void
+appendShortestPathTargetEntry(ParseState *pstate,
+	 						  List *splist,
+							  List **targetList)
+{
+	ListCell *e;
+
+	foreach(e, splist)
+	{
+		CypherPath *p;
+		char *pathname;
+		Query *sp;
+		Alias *alias;
+		RangeTblEntry *rte;
+		Node *var;
+		TargetEntry *te;
+
+		p = lfirst(e);
+
+		pathname = getCypherName(p->variable);
+		if (pathname == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+					 errmsg("a path variable name must be provided")));
+
+		sp = transformShortestPathInMatch(pstate, p);
+
+		alias = makeAliasOptUnique(NULL);
+		rte = addRangeTableEntryForSubquery(pstate, sp, alias, true, true);
+		addRTEtoJoinlist(pstate, rte, true);
+
+		var = getColumnVar(pstate, rte, pathname);
+		te = makeTargetEntry((Expr *) var,
+							 (AttrNumber) pstate->p_next_resno++,
+							 pstrdup(pathname),
+							 false);
+
+		*targetList = lappend(*targetList, te);
 	}
 }
 
@@ -1112,6 +1200,12 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					vertex = transformMatchNode(pstate, cnode,
 												(zero || out), targetList);
 
+					if (p->spkind != CPATHSP_NONE)
+					{
+						le = lnext(le);
+						continue;
+					}
+
 					setInitialVidForVLR(pstate, crel, vertex, NULL, NULL);
 					edge = transformMatchRel(pstate, crel, targetList);
 
@@ -1166,7 +1260,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				le = lnext(le);
 			}
 
-			if (out)
+			if (out && p->spkind == CPATHSP_NONE)
 			{
 				Node *graphpath;
 				TargetEntry *te;
