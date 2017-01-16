@@ -2606,6 +2606,7 @@ _equalCommonTableExpr(const CommonTableExpr *a, const CommonTableExpr *b)
 	COMPARE_NODE_FIELD(ctecoltypmods);
 	COMPARE_NODE_FIELD(ctecolcollations);
 	COMPARE_SCALAR_FIELD(maxdepth);
+	COMPARE_SCALAR_FIELD(ctestop);
 
 	return true;
 }
@@ -2830,6 +2831,7 @@ _equalCypherLoadClause(const CypherLoadClause *a, const CypherLoadClause *b)
 static bool
 _equalCypherPath(const CypherPath *a, const CypherPath *b)
 {
+	COMPARE_SCALAR_FIELD(kind);
 	COMPARE_NODE_FIELD(variable);
 	COMPARE_NODE_FIELD(chain);
 

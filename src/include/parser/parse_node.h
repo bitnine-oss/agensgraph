@@ -172,6 +172,7 @@ struct ParseState
 	 * Additional information for Cypher queries
 	 */
 	bool		p_is_match_quals;
+	bool		p_is_sp_processed;
 	List	   *p_node_info_list;		/* final shape of named nodes */
 	Node	   *p_vlr_initial_vid;		/* initial vid for VLR */
 	RangeTblEntry *p_vlr_initial_rte;	/* RTE of initial vid for VLR */

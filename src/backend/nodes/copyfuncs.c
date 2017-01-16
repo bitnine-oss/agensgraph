@@ -611,6 +611,7 @@ _copyCteScan(const CteScan *from)
 	 */
 	COPY_SCALAR_FIELD(ctePlanId);
 	COPY_SCALAR_FIELD(cteParam);
+	COPY_SCALAR_FIELD(cteStop);
 
 	return newnode;
 }
@@ -2332,6 +2333,7 @@ _copyCommonTableExpr(const CommonTableExpr *from)
 	COPY_NODE_FIELD(ctecoltypmods);
 	COPY_NODE_FIELD(ctecolcollations);
 	COPY_SCALAR_FIELD(maxdepth);
+	COPY_SCALAR_FIELD(ctestop);
 
 	return newnode;
 }
@@ -4419,6 +4421,7 @@ _copyCypherPath(const CypherPath *from)
 {
 	CypherPath *newnode = makeNode(CypherPath);
 
+	COPY_SCALAR_FIELD(kind);
 	COPY_NODE_FIELD(variable);
 	COPY_NODE_FIELD(chain);
 
