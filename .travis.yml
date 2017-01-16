@@ -9,6 +9,6 @@ before_script:
  - export PATH="$(pwd)"/bin:$PATH
  - make install-world > /dev/null
  - initdb
- - pg_ctl start -w
+ - ag_ctl start -w
 
 script: make installcheck
