@@ -185,8 +185,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 			resultRelInfo++;
 		}
 
-		estate->es_result_relations = resultRelInfos;
-		estate->es_num_result_relations = numResultRelInfo;
+		mgstate->resultRelations = resultRelInfos;
+		mgstate->numResultRelations = numResultRelInfo;
 
 		/* es_result_relation_info is NULL except ModifyTable case */
 		estate->es_result_relation_info = NULL;
@@ -249,11 +249,23 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 void
 ExecEndModifyGraph(ModifyGraphState *mgstate)
 {
+	ResultRelInfo *resultRelInfo;
+	int			i;
+
 	if (sqlcmd_cache != NULL)
 		EndSqlcmdHashTable();
 
-	ExecFreeExprContext(&mgstate->ps);
+	resultRelInfo = mgstate->resultRelations;
+	for (i = mgstate->numResultRelations; i > 0; i--)
+	{
+		ExecCloseIndices(resultRelInfo);
+		heap_close(resultRelInfo->ri_RelationDesc, NoLock);
+
+		resultRelInfo++;
+	}
+
 	ExecEndNode(mgstate->subplan);
+	ExecFreeExprContext(&mgstate->ps);
 }
 
 static List *
@@ -511,12 +523,11 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 static ResultRelInfo *
 getResultRelInfo(ModifyGraphState *mgstate, Oid relid)
 {
-	EState	   *estate = mgstate->ps.state;
 	ResultRelInfo *resultRelInfo;
 	int			i;
 
-	resultRelInfo = estate->es_result_relations;
-	for (i = 0; i < estate->es_num_result_relations; i++)
+	resultRelInfo = mgstate->resultRelations;
+	for (i = 0; i < mgstate->numResultRelations; i++)
 	{
 		if (RelationGetRelid(resultRelInfo->ri_RelationDesc) == relid)
 			break;
@@ -524,7 +535,7 @@ getResultRelInfo(ModifyGraphState *mgstate, Oid relid)
 		resultRelInfo++;
 	}
 
-	if (i >= estate->es_num_result_relations)
+	if (i >= mgstate->numResultRelations)
 		elog(ERROR, "invalid object ID %u for the target label", relid);
 
 	return resultRelInfo;
