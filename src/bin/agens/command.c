@@ -2069,7 +2069,7 @@ connection_warnings(bool in_startup)
 		}
 		/* For version match, only print psql banner on startup. */
 		else if (in_startup)
-			printf("%s (%s)\n", pset.progname, PG_VERSION);
+			printf("%s (%s)\n", pset.progname, AG_VERSION);
 
 		if (pset.sversion / 100 > client_ver / 100)
 			printf(_("WARNING: %s major version %s, server major version %s.\n"
