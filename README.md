@@ -8,40 +8,49 @@ AgensGraph is a new generation multi-model graph database for the modern complex
 Builing from Source
 -------------------
 1. Getting the source
-    ```bash
-    git clone git@github.com:bitnine-oss/agens-graph.git /path/
+    ```sh
+    git clone git@github.com:bitnine-oss/agens-graph.git
     ```
 
 2. Install libraries
     * CENTOS
-        ```bash
+        ```sh
         yum install gcc glibc glib-common readline readline-devel zlib zlib-devel
         ```
     * Fedora
-        ```bash
+        ```sh
         dnf install gcc glibc bison flex readline readline-devel zlib zlib-devel
         ```
     * Ubuntu
-        ```bash
+        ```sh
         sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison
         ```
-    * Mac OS X(If you didn't install xcode.)
+    * Mac OS X (if you didn't install xcode yet)
         ```bash
         xcode-select --install
         ```
 
 3. Configure the source tree
-    ```bash
-	./configure
+    ```sh
+    ./configure
     ```
-    >If you want to install to a specific folder, you can use ``--prefix=[INSTALL_PATH]`` option.
-    >If ``configure`` doesn't find any header with an error message, you can use '--with-includes=/path/' option.
+    > If you want to install to a specific folder, you can use `--prefix=/path/to/install` option.
+
+    > If `configure` doesn't find any header with an error message, you can use `--with-includes=/path/to/headers` option.
 
 4. Building & install
-    ```bash
-    make world
-    make install-world
-    ```
+    * Build and install AgensGraph engine
+        ```sh
+        make install
+        ```
+    * Build and install other contrib and external modules
+        ```sh
+        make install-world
+        ```
+        Before compiling contrib modules, it is highly recommended to add the install path to `PATH` environment variable because some of them use `pg_config` to get the installation information.
+        > If `make install-world` failed with an error message complaining about `pgxs.mk`, then add the install path to `PATH` environment variable and rerun the command.
+
+        > If you install AgensGraph at the same location with the sources, then you can source `ag-env.sh` script, which sets `PATH` and `LD_LIBRARY_PATH` using the current directory. (Run `. ag-env.sh` to source the script.)
 
 Documentation
 -------------
@@ -49,5 +58,4 @@ Documentation
 
 License
 -------
-
 * [Apache License 2.0](http://www.apache.org/license/LICENSE-2.0.html)
