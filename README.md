@@ -50,4 +50,4 @@ Documentation
 License
 -------
 
-* [Apache Lincense 2.0](http://www.apache.org/license/LICENSE-2.0.html)
+* [Apache License 2.0](http://www.apache.org/license/LICENSE-2.0.html)
