@@ -200,7 +200,7 @@ static GraphSetProp *findGraphSetProp(List *gsplist, char *varname);
 static bool isNodeForRef(CypherNode *cnode);
 static Node *transformPropMap(ParseState *pstate, Node *expr,
 							  ParseExprKind exprKind);
-static Node *preprocessPropMap(Node *expr);
+static Node *preprocessPropMap(Node *expr, ParseExprKind exprKind);
 
 /* transform */
 static RangeTblEntry *transformClause(ParseState *pstate, Node *clause);
@@ -3562,7 +3562,9 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 {
 	Node *prop_map;
 
-	prop_map = transformExpr(pstate, preprocessPropMap(expr), exprKind);
+	prop_map = transformExpr(pstate,
+							 preprocessPropMap(expr, exprKind),
+							 exprKind);
 	if (exprType(prop_map) != JSONBOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -3573,7 +3575,7 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 }
 
 static Node *
-preprocessPropMap(Node *expr)
+preprocessPropMap(Node *expr, ParseExprKind exprKind)
 {
 	Node *result = expr;
 
@@ -3586,7 +3588,13 @@ preprocessPropMap(Node *expr)
 										   list_make1(expr), -1);
 	}
 
-	return result;
+	/* The keys with NULL value will be eliminated to save storage. */
+	if (exprKind == EXPR_KIND_INSERT_TARGET)
+		return (Node *) makeFuncCall(
+							list_make1(makeString("jsonb_strip_nulls")),
+							list_make1(result), -1);
+	else
+		return result;
 }
 
 static RangeTblEntry *

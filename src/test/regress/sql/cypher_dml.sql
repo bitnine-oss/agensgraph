@@ -477,6 +477,13 @@ CREATE ({age: 10});
 MATCH (a) SET a.age = (a.age::int + 1)::text::jsonb;
 MATCH (a) RETURN properties(a);
 
+-- working with NULL
+CREATE VLABEL person;
+CREATE (a:person {name:'A', age:null});
+MATCH (a:person {name:'A'}) return a;
+MATCH (a:person {age:null}) return a;
+MATCH (a:person) WHERE a.age IS NULL return a;
+
 -- cleanup
 
 DROP GRAPH p CASCADE;
