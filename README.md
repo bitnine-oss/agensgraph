@@ -38,10 +38,25 @@ Builing from Source
     >If ``configure`` doesn't find any header with an error message, you can use '--with-includes=/path/' option.
 
 4. Building & install
+
+    * Build and install AgensGraph engine
+
     ```bash
-    make world
+    make install
+	```
+
+	* Build and install other contrib and external modules
+
+	Before compiling contrib modules it is highly recommended to add the install path to ``PATH`` environment variable.
+	If you install AgensGraph at the same location with the sources, then you can source ``ag-env.sh`` script, which set ``PATH`` and ``LD_LIBRARY_PATH`` using the current directory.
+    ```bash
+	. ag-env.sh
+	```
+
+	```bash
     make install-world
     ```
+	>If ``make install-world`` failed with an error message complaining about ``pgxs.mk``, then add the install path to ``PATH`` environment variable and rerun the command.
 
 Documentation
 -------------

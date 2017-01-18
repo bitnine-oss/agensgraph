@@ -8,9 +8,9 @@
 export AG_HOME="$(pwd)"
 
 _path=$(echo $PATH | tr ':' '\n' | grep -vE "postgres|agens-graph|^$" | tr '\n' ':' | sed 's/:$//')
-export PATH=$_path:$AG_HOME/bin
+export PATH=$AG_HOME/bin:$_path
 
 _path=$(echo $LD_LIBRARY_PATH | tr ':' '\n' | grep -vE "postgres|agens-graph|^$" | tr '\n' ':' | sed 's/:$//')
-export LD_LIBRARY_PATH=$_path:$AG_HOME/lib
+export LD_LIBRARY_PATH=$AG_HOME/lib:$_path
 
 unset _path
