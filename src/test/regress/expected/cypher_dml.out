@@ -1089,13 +1089,34 @@ MATCH (a) RETURN properties(a);
  {"age": 11}
 (2 rows)
 
+-- working with NULL
+CREATE VLABEL person;
+CREATE (:person {name: 'bitnine', age: NULL});
+MATCH (a:person {name: 'bitnine'}) RETURN properties(a) AS a;
+          a          
+---------------------
+ {"name": "bitnine"}
+(1 row)
+
+MATCH (a:person {age: NULL}) RETURN properties(a) AS a;
+ a 
+---
+(0 rows)
+
+MATCH (a:person) WHERE a.age IS NULL RETURN properties(a) AS a;
+          a          
+---------------------
+ {"name": "bitnine"}
+(1 row)
+
 -- cleanup
 DROP GRAPH p CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence p.ag_label_seq
 drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label rel
+drop cascades to label person
 DROP GRAPH u CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to sequence u.ag_label_seq

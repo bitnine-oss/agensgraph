@@ -3569,6 +3569,17 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 				 errmsg("property map must be of type jsonb"),
 				 parser_errposition(pstate, exprLocation(prop_map))));
 
+	if (exprKind == EXPR_KIND_INSERT_TARGET)
+	{
+		FuncCall *strip;
+
+		/* keys with NULL value is not allowed */
+		strip = makeFuncCall(list_make1(makeString("jsonb_strip_nulls")), NIL,
+							 -1);
+		prop_map = ParseFuncOrColumn(pstate, strip->funcname,
+									 list_make1(prop_map), strip, -1);
+	}
+
 	return resolve_future_vertex(pstate, prop_map, 0);
 }
 
