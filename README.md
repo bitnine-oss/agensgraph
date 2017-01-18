@@ -15,15 +15,15 @@ Builing from Source
 2. Install libraries
     * CENTOS
         ```bash
-        yum install gcc glibc glib-common perl-ExtUtils-Embed readline readline-devel zlib zlib-devel openssl openssl-devel  pam pam-devel libxml2 libxml2-devel libxslt libxslt-devel ldap libldap-devel libpam0g-dev openldap-devel tcl tcl-devel python-devel
+        yum install gcc glibc glib-common readline readline-devel zlib zlib-devel
         ```
     * Fedora
         ```bash
-        dnf install gcc glibc bison flex perl-ExtUtils-Embed readline readline-devel zlib zlib-devel openssl openssl-devel  pam pam-devel libxml2 libxml2-devel libxslt libxslt-devel openldap-devel tcl tcl-devel python-devel
+        dnf install gcc glibc bison flex readline readline-devel zlib zlib-devel
         ```
     * Ubuntu
         ```bash
-        sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison libxml2-dev libxslt-dev libssl-dev openssl libgnutls-openssl27 libcrypto++-dev libldap2-dev libpam0g-dev tcl-dev python-dev
+        sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison
         ```
     * Mac OS X(If you didn't install xcode.)
         ```bash
@@ -32,10 +32,10 @@ Builing from Source
 
 3. Configure the source tree
     ```bash
-    ag-config.sh
+	./configure
     ```
     >If you want to install to a specific folder, you can use ``--prefix=[INSTALL_PATH]`` option.
-    >If ``ag-config.sh`` doesn't find any header with an error message, you can use '--with-includes=/path/' option.
+    >If ``configure`` doesn't find any header with an error message, you can use '--with-includes=/path/' option.
 
 4. Building & install
     ```bash
