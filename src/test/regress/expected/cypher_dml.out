@@ -84,9 +84,8 @@ ERROR:  there must be at least one relationship
 LINE 1: CREATE (a), (a);
                      ^
 CREATE (=0);
-ERROR:  property map must be of type jsonb
-LINE 1: CREATE (=0);
-                 ^
+ERROR:  function jsonb_strip_nulls(integer) does not exist
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
 CREATE ()-[]-();
 ERROR:  only directed relationships are allowed in CREATE
 CREATE ()-[]->();
@@ -106,9 +105,8 @@ ERROR:  duplicate variable "a"
 LINE 1: CREATE a=(), ()-[a:doc]->();
                          ^
 CREATE ()-[:lib =0]->();
-ERROR:  property map must be of type jsonb
-LINE 1: CREATE ()-[:lib =0]->();
-                         ^
+ERROR:  function jsonb_strip_nulls(integer) does not exist
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
 CREATE (a), a=();
 ERROR:  duplicate variable "a"
 LINE 1: CREATE (a), a=();
@@ -1089,13 +1087,34 @@ MATCH (a) RETURN properties(a);
  {"age": 11}
 (2 rows)
 
+-- working with NULL
+CREATE VLABEL person;
+CREATE (a:person {name:'A', age:null});
+MATCH (a:person {name:'A'}) return a;
+            a             
+--------------------------
+ person[4.1]{"name": "A"}
+(1 row)
+
+MATCH (a:person {age:null}) return a;
+ a 
+---
+(0 rows)
+
+MATCH (a:person) WHERE a.age IS NULL return a;
+            a             
+--------------------------
+ person[4.1]{"name": "A"}
+(1 row)
+
 -- cleanup
 DROP GRAPH p CASCADE;
-NOTICE:  drop cascades to 4 other objects
+NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence p.ag_label_seq
 drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label rel
+drop cascades to label person
 DROP GRAPH u CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to sequence u.ag_label_seq
