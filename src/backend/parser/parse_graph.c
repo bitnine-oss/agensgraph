@@ -166,8 +166,8 @@ static void addFutureVertex(ParseState *pstate, AttrNumber varattno,
 							char *labname);
 static FutureVertex *findFutureVertex(ParseState *pstate, Index varno,
 									  AttrNumber varattno, int sublevels_up);
-static void adjustFutureVertices(List *future_vertices, RangeTblEntry *rte,
-								 int rtindex);
+static List *adjustFutureVertices(List *future_vertices, RangeTblEntry *rte,
+								  int rtindex);
 static Node *resolve_future_vertex(ParseState *pstate, Node *node, int flags);
 static Node *resolve_future_vertex_mutator(Node *node,
 										   resolve_future_vertex_context *ctx);
@@ -2644,7 +2644,7 @@ findFutureVertex(ParseState *pstate, Index varno, AttrNumber varattno,
 	return NULL;
 }
 
-static void
+static List *
 adjustFutureVertices(List *future_vertices, RangeTblEntry *rte, int rtindex)
 {
 	ListCell   *prev;
@@ -2708,6 +2708,8 @@ adjustFutureVertices(List *future_vertices, RangeTblEntry *rte, int rtindex)
 		else
 			prev = le;
 	}
+
+	return future_vertices;
 }
 
 static Node *
@@ -3655,7 +3657,7 @@ transformClauseImpl(ParseState *pstate, Node *clause, Alias *alias)
 	adjustElemQuals(pstate->p_elem_quals, rte, rtindex);
 
 	future_vertices = removeResolvedFutureVertices(future_vertices);
-	adjustFutureVertices(future_vertices, rte, rtindex);
+	future_vertices = adjustFutureVertices(future_vertices, rte, rtindex);
 	pstate->p_future_vertices = list_concat(pstate->p_future_vertices,
 											future_vertices);
 
