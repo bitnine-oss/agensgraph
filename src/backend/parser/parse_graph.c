@@ -1315,6 +1315,18 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 			 * If it is from the pattern, it should be an actual vertex or
 			 * a future vertex
 			 */
+
+			/*
+			 * if the variable is from the previous clause, it should not
+			 * have a label constraint
+			 */
+			if (getCypherName(cnode->label) != NULL && IsA(te->expr, Var))
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("label on variable from previous clauses is not allowed"),
+						 parser_errposition(pstate,
+											getCypherNameLoc(cnode->label))));
+
 			return (Node *) te;
 		}
 		else
