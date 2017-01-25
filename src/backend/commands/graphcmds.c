@@ -251,7 +251,7 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 
 	foreach(entry, supers)
 	{
-		RangeVar   *parent = (RangeVar *) lfirst(entry);
+		RangeVar   *parent = lfirst(entry);
 		Oid			graphid;
 		HeapTuple	tuple;
 		Form_ag_label labtup;
@@ -314,23 +314,20 @@ AgInheritanceDependancy(Oid laboid, List *supers)
 ObjectAddress
 RenameLabel(RenameStmt *stmt)
 {
-	Oid			laboid;
-	Oid			graphid;
-	HeapTuple	tup;
+	Oid			graphid = get_graph_path_oid();
 	Relation	rel;
+	HeapTuple	tup;
+	Oid			laboid;
 	ObjectAddress address;
 
 	/* schemaname is NULL always */
-	stmt->relation->schemaname = get_graph_path();
+	stmt->relation->schemaname = get_graph_path(false);
 
 	rel = heap_open(LabelRelationId, RowExclusiveLock);
-
-	graphid = get_graphname_oid(stmt->relation->schemaname);
 
 	tup = SearchSysCacheCopy2(LABELNAMEGRAPH,
 							  CStringGetDatum(stmt->relation->relname),
 							  ObjectIdGetDatum(graphid));
-
 	if (!HeapTupleIsValid(tup))
 	{
 		heap_close(rel, NoLock);
@@ -421,8 +418,7 @@ RangeVarIsLabel(RangeVar *rel)
 	Oid			nspid;
 	HeapTuple	nsptuple;
 	Form_pg_namespace nspdata;
-	HeapTuple	graphtuple;
-	bool		result = false;
+	bool		result;
 
 	nspid = RangeVarGetCreationNamespace(rel);
 	nsptuple = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(nspid));
@@ -430,12 +426,7 @@ RangeVarIsLabel(RangeVar *rel)
 		elog(ERROR, "cache lookup failed for label (OID=%u)", nspid);
 
 	nspdata = (Form_pg_namespace) GETSTRUCT(nsptuple);
-	graphtuple = SearchSysCache1(GRAPHNAME, NameGetDatum(&nspdata->nspname));
-	if (HeapTupleIsValid(graphtuple))
-	{
-		ReleaseSysCache(graphtuple);
-		result = true;
-	}
+	result = OidIsValid(get_graphname_oid(NameStr(nspdata->nspname)));
 
 	ReleaseSysCache(nsptuple);
 

@@ -10277,8 +10277,7 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 	idxrelrec = (Form_pg_class) GETSTRUCT(ht_idxrel);
 
 	if (!OidIsValid(get_relid_laboid(indrelid)))
-		elog(ERROR, "'%s' is not property index",
-			 NameStr(idxrelrec->relname));
+		elog(ERROR, "'%s' is not property index", NameStr(idxrelrec->relname));
 
 	/*
 	 * Fetch the pg_am tuple of the index' access method

@@ -3074,6 +3074,62 @@ get_graphname_oid(const char *graphname)
 
 /*				---------- AG_LABEL CACHE ----------				 */
 
+char *
+get_labid_labname(Oid graphid, uint16 labid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache2(LABELLABID,
+						 ObjectIdGetDatum(graphid),
+						 Int32GetDatum((int32) labid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		char *result;
+
+		result = pstrdup(NameStr(labtup->labname));
+		ReleaseSysCache(tp);
+		return result;
+	}
+	else
+	{
+		return NULL;
+	}
+}
+
+Oid
+get_labid_relid(Oid graphid, uint16 labid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache2(LABELLABID,
+						 ObjectIdGetDatum(graphid),
+						 Int32GetDatum((int32) labid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		Oid relid;
+
+		relid = labtup->relid;
+		ReleaseSysCache(tp);
+		return relid;
+	}
+	else
+	{
+		return InvalidOid;
+	}
+}
+
+bool
+labid_exists(Oid graphid, uint16 labid)
+{
+	return SearchSysCacheExists2(LABELLABID,
+								 ObjectIdGetDatum(graphid),
+								 Int32GetDatum((int32) labid));
+}
+
 /*
  * get_labname_laboid
  *		Given name of a label, look up the OID
@@ -3096,28 +3152,6 @@ get_labname_labid(const char *labname, Oid graphid)
 	tp = SearchSysCache2(LABELNAMEGRAPH,
 						 PointerGetDatum(labname),
 						 ObjectIdGetDatum(graphid));
-
-	if (HeapTupleIsValid(tp))
-	{
-		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		uint16 labid;
-
-		labid = (uint16) labtup->labid;
-		ReleaseSysCache(tp);
-		return labid;
-	}
-	else
-	{
-		return 0;
-	}
-}
-
-uint16
-get_laboid_labid(Oid laboid)
-{
-	HeapTuple tp;
-
-	tp = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
 
 	if (HeapTupleIsValid(tp))
 	{
@@ -3172,88 +3206,4 @@ Oid
 get_relid_laboid(Oid relid)
 {
 	return GetSysCacheOid1(LABELRELID, ObjectIdGetDatum(relid));
-}
-
-/*
- * get_laboid_labkind
- *		Returns the labkind associated with a given relation.
- *
- * Returns '\0' if there is no such label.
- */
-char
-get_laboid_labkind(Oid laboid)
-{
-	HeapTuple tp;
-
-	tp = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
-
-	if (HeapTupleIsValid(tp))
-	{
-		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		char labkind;
-
-		labkind = labtup->labkind;
-		ReleaseSysCache(tp);
-		return labkind;
-	}
-	else
-	{
-		return '\0';
-	}
-}
-
-bool
-labid_exists(Oid graphid, uint16 labid)
-{
-	return SearchSysCacheExists2(LABELLABID,
-								 ObjectIdGetDatum(graphid),
-								 Int32GetDatum((int32) labid));
-}
-
-char *
-get_labid_labname(Oid graphid, uint16 labid)
-{
-	HeapTuple tp;
-
-	tp = SearchSysCache2(LABELLABID,
-						 ObjectIdGetDatum(graphid),
-						 Int32GetDatum((int32) labid));
-
-	if (HeapTupleIsValid(tp))
-	{
-		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		char *result;
-
-		result = pstrdup(NameStr(labtup->labname));
-		ReleaseSysCache(tp);
-		return result;
-	}
-	else
-	{
-		return NULL;
-	}
-}
-
-Oid
-get_labid_relid(Oid graphid, uint16 labid)
-{
-	HeapTuple tp;
-
-	tp = SearchSysCache2(LABELLABID,
-						 ObjectIdGetDatum(graphid),
-						 Int32GetDatum((int32) labid));
-
-	if (HeapTupleIsValid(tp))
-	{
-		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-		Oid relid;
-
-		relid = labtup->relid;
-		ReleaseSysCache(tp);
-		return relid;
-	}
-	else
-	{
-		return InvalidOid;
-	}
 }

@@ -345,7 +345,7 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	{
 		RangeVar   *r;
 
-		r = makeRangeVar(get_graph_path(), typname, -1);
+		r = makeRangeVar(get_graph_path(true), typname, -1);
 		r->alias = makeAliasNoDup("_e", NIL);
 		if (crel->direction == CYPHER_REL_DIR_LEFT)
 		{
@@ -402,7 +402,7 @@ makeEdgeUnion(char *edge_label)
 
 	id = makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL);
 
-	r = makeRangeVar(get_graph_path(), edge_label, -1);
+	r = makeRangeVar(get_graph_path(true), edge_label, -1);
 	r->inhOpt = INH_YES;
 
 	lsel = makeNode(SelectStmt);
@@ -603,7 +603,7 @@ makeVerticesSubLink(void)
 						 "vertex");
 	selsub->targetList = list_make1(makeResTarget(vertex, NULL));
 
-	ag_vertex = makeRangeVar(get_graph_path(), AG_VERTEX, -1);
+	ag_vertex = makeRangeVar(get_graph_path(true), AG_VERTEX, -1);
 	ag_vertex->inhOpt = INH_YES;
 	selsub->fromClause = list_make1(ag_vertex);
 
@@ -679,7 +679,7 @@ makeEdgesSubLink(CypherPath *cpath)
 
 	crel = lsecond(cpath->chain);
 	getCypherRelType(crel, &typname, NULL);
-	e = makeRangeVar(get_graph_path(), typname, -1);
+	e = makeRangeVar(get_graph_path(true), typname, -1);
 	e->inhOpt = INH_YES;
 	selsub->fromClause = list_make1(e);
 
