@@ -1613,7 +1613,7 @@ ProcessUtilitySlow(Node *parsetree,
 
 					/* Parser prevent to input graph name for label. */
 					Assert(stmt->relation->schemaname == NULL);
-					stmt->relation->schemaname = get_graph_path();
+					stmt->relation->schemaname = get_graph_path(true);
 
 					if (!RangeVarIsLabel(stmt->relation))
 					{

@@ -110,7 +110,7 @@ static Datum *makeDatumArray(ExprContext *econtext, int len);
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
 static void deleteVertex(ModifyGraphState *mgstate, Datum vertex, bool detach);
-static bool vertexHasEdge(Datum vid);
+static bool vertexHasEdge(ModifyGraphState *mgstate, Datum vid);
 static void deleteVertexEdges(ModifyGraphState *mgstate, Datum vid);
 static void deleteElem(ModifyGraphState *mgstate, Datum id, DelElemKind kind);
 static void deletePath(ModifyGraphState *mgstate, Datum graphpath, bool detach);
@@ -149,6 +149,10 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
 
 	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate);
+
+	mgstate->graphid = get_graph_path_oid();
+	mgstate->graphname = get_graph_path(false);
+	mgstate->edgeid = get_labname_labid(AG_EDGE, mgstate->graphid);
 
 	if (mgplan->targets != NIL)
 	{
@@ -693,10 +697,9 @@ deleteVertex(ModifyGraphState *mgstate, Datum vertex, bool detach)
 	{
 		deleteVertexEdges(mgstate, id_datum);
 	}
-	else if (vertexHasEdge(id_datum))
+	else if (vertexHasEdge(mgstate, id_datum))
 	{
-		Oid			graphid = get_graphname_oid(get_graph_path());
-		Oid			relid = get_labid_relid(graphid, GraphidGetLabid(id));
+		Oid relid = get_labid_relid(mgstate->graphid, GraphidGetLabid(id));
 
 		ereport(ERROR,
 				(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
@@ -708,25 +711,22 @@ deleteVertex(ModifyGraphState *mgstate, Datum vertex, bool detach)
 }
 
 static bool
-vertexHasEdge(Datum vid)
+vertexHasEdge(ModifyGraphState *mgstate, Datum vid)
 {
-	uint16		labid;
 	Datum		values[SQLCMD_DETACH_NPARAMS];
 	Oid			argTypes[SQLCMD_DETACH_NPARAMS] = {GRAPHIDOID};
 	SqlcmdKey	key;
 	SPIPlanPtr	plan;
 	int			ret;
 
-	labid = get_labname_labid(AG_EDGE, get_graphname_oid(get_graph_path()));
-
 	key.cmdtype = SQLCMD_TYPE_DETACH;
-	key.labid = labid;
+	key.labid = mgstate->edgeid;
 	plan = findPreparedPlan(&key);
 	if (plan == NULL)
 	{
 		char sqlcmd[SQLCMD_BUFLEN];
 
-		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DETACH, get_graph_path());
+		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DETACH, mgstate->graphname);
 
 		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_DETACH_NPARAMS, argTypes);
 	}
@@ -749,23 +749,20 @@ static void
 deleteVertexEdges(ModifyGraphState *mgstate, Datum vid)
 {
 	EState	   *estate = mgstate->ps.state;
-	uint16		labid;
 	Datum		values[SQLCMD_DEL_EDGES_NPARAMS];
 	Oid			argTypes[SQLCMD_DEL_EDGES_NPARAMS] = {GRAPHIDOID};
 	SqlcmdKey	key;
 	SPIPlanPtr	plan;
 	int			ret;
 
-	labid = get_labname_labid(AG_EDGE, get_graphname_oid(get_graph_path()));
-
 	key.cmdtype = SQLCMD_TYPE_DEL_EDGES;
-	key.labid = labid;
+	key.labid = mgstate->edgeid;
 	plan = findPreparedPlan(&key);
 	if (plan == NULL)
 	{
 		char sqlcmd[SQLCMD_BUFLEN];
 
-		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DEL_EDGES, get_graph_path());
+		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DEL_EDGES, mgstate->graphname);
 
 		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_DEL_EDGES_NPARAMS, argTypes);
 	}
@@ -806,11 +803,11 @@ deleteElem(ModifyGraphState *mgstate, Datum id, DelElemKind kind)
 	if (plan == NULL)
 	{
 		char		sqlcmd[SQLCMD_BUFLEN];
-		Oid			graphid = get_graphname_oid(get_graph_path());
-		char	   *relname = get_rel_name(get_labid_relid(graphid, labid));
+		char	   *relname;
 
+		relname = get_rel_name(get_labid_relid(mgstate->graphid, labid));
 		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DEL_ELEM,
-				 get_graph_path(), relname);
+				 mgstate->graphname, relname);
 
 		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_DEL_ELEM_NPARAMS, argTypes);
 	}
@@ -990,11 +987,11 @@ updateElemProp(ModifyGraphState *mgstate, Datum id, Datum expr)
 	if (plan == NULL)
 	{
 		char		sqlcmd[SQLCMD_BUFLEN];
-		Oid			graphid = get_graphname_oid(get_graph_path());
-		char	   *relname = get_rel_name(get_labid_relid(graphid, labid));
+		char	   *relname;
 
+		relname = get_rel_name(get_labid_relid(mgstate->graphid, labid));
 		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_SET_PROP,
-				 get_graph_path(), relname);
+				 mgstate->graphname, relname);
 
 		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_SET_PROP_NPARAMS, argTypes);
 	}

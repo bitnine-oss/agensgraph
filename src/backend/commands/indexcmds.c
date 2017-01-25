@@ -1851,7 +1851,7 @@ ReindexLabel(RangeVar *relation, int options, ObjectType type)
 {
 	Oid heapOid;
 
-	relation->schemaname = get_graph_path();
+	relation->schemaname = get_graph_path(true);
 
 	/* the lock level used here should match that of reindex_relation() */
 	heapOid = RangeVarGetRelidExtended(relation, ShareLock, false, false,

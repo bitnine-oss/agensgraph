@@ -503,7 +503,7 @@ cache_label(FmgrInfo *flinfo, uint16 labid)
 
 	if (my_extra->label_labid != labid)
 	{
-		Oid			graphoid = get_graphname_oid(get_graph_path());
+		Oid			graphoid = get_graph_path_oid();
 		char	   *label;
 
 		label = get_labid_labname(graphoid, labid);
@@ -759,7 +759,7 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 	Datum		vertex;
 	bool		isnull;
 
-	snprintf(sqlcmd, sizeof(sqlcmd), querystr, get_graph_path());
+	snprintf(sqlcmd, sizeof(sqlcmd), querystr, get_graph_path(false));
 
 	values[0] = tuple_getattr(edge, attnum);
 

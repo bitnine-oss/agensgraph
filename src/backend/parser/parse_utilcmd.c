@@ -139,9 +139,11 @@ static List *makeVertexElements(void);
 static List *makeEdgeElements(void);
 static List *makeEdgeIndex(RangeVar *label);
 static bool isLabelKind(RangeVar *label, char labkind);
+static char getLabelKind(char *labname, Oid graphid);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
 static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
 static Node *makePropertiesIndirectionMutator(Node *node);
+static ObjectType getLabelObjectType(char *labname, Oid graphid);
 static bool figure_prop_index_colname_walker(Node *node, char **colname);
 static bool isPropertyIndex(Oid indexoid);
 
@@ -2495,9 +2497,9 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	AlterTableCmd *newcmd;
 	RangeTblEntry *rte;
 
-	if (OidIsValid(get_relid_laboid(relid))
-		&& stmt->relkind != OBJECT_VLABEL
-		&& stmt->relkind != OBJECT_ELABEL)
+	if (OidIsValid(get_relid_laboid(relid)) &&
+		stmt->relkind != OBJECT_VLABEL &&
+		stmt->relkind != OBJECT_ELABEL)
 		elog(ERROR, "cannot ALTER TABLE on graph label");
 
 	/*
@@ -3063,7 +3065,7 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	label = copyObject(labelStmt->relation);
 	/* set graph schema name, if not specified */
 	if (label->schemaname == NULL)
-		label->schemaname = get_graph_path();
+		label->schemaname = get_graph_path(true);
 	graphname = label->schemaname;
 
 	pstate = make_parsestate(NULL);
@@ -3433,13 +3435,30 @@ makeEdgeIndex(RangeVar *label)
 static bool
 isLabelKind(RangeVar *label, char labkind)
 {
-	Oid			graphid;
-	Oid			laboid;
+	Oid graphid = get_graphname_oid(label->schemaname);
 
-	graphid = get_graphname_oid(label->schemaname);
-	laboid = get_labname_laboid(label->relname, graphid);
+	return (getLabelKind(label->relname, graphid) == labkind);
+}
 
-	return (laboid != InvalidOid && get_laboid_labkind(laboid) == labkind);
+static char
+getLabelKind(char *labname, Oid graphid)
+{
+	HeapTuple	tuple;
+	Form_ag_label labtup;
+	char		labkind;
+
+	tuple = SearchSysCache2(LABELNAMEGRAPH, PointerGetDatum(labname),
+							ObjectIdGetDatum(graphid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "label \"%s\" does not exist", labname);
+
+	labtup = (Form_ag_label) GETSTRUCT(tuple);
+	labkind = labtup->labkind;
+	Assert(labkind == LABEL_KIND_VERTEX || labkind == LABEL_KIND_EDGE);
+
+	ReleaseSysCache(tuple);
+
+	return labkind;
 }
 
 /* See transformColumnDefinition() */
@@ -3557,18 +3576,17 @@ AlterTableStmt *
 transformAlterLabelStmt(AlterTableStmt *stmt)
 {
 	AlterTableStmt *result;
-	List		   *newcmds = NIL;
-	ListCell	   *lcmd;
-	Oid				laboid;
+	List	   *newcmds = NIL;
+	ListCell   *lcmd;
+	Oid			laboid;
 
 	result = makeNode(AlterTableStmt);
-	result->relation = makeRangeVar(get_graph_path(),
+	result->relation = makeRangeVar(get_graph_path(false),
 									stmt->relation->relname, 0);
 	result->relkind = stmt->relkind;
 	result->missing_ok = stmt->missing_ok;
 
-	laboid = get_labname_laboid(stmt->relation->relname,
-					get_graphname_oid(get_graph_path()));
+	laboid = get_labname_laboid(stmt->relation->relname, get_graph_path_oid());
 	CheckLabelType(stmt->relkind, laboid, "ALTER");
 
 	foreach(lcmd, stmt->cmds)
@@ -3597,7 +3615,7 @@ transformAlterLabelStmt(AlterTableStmt *stmt)
 								(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 								 errmsg("cannot ALTER inheritance with base label")));
 
-					par->schemaname = get_graph_path();
+					par->schemaname = get_graph_path(false);
 
 					newcmds = lappend(newcmds, cmd);
 					break;
@@ -3623,9 +3641,6 @@ transformCreateConstraintStmt(ParseState *pstate,
 							  CreateConstraintStmt *constraintStmt)
 {
 	RangeVar   *label;
-	Oid			graphid;
-	Oid			laboid;
-	char		labkind;
 	ObjectType	objtype;
 	Node	   *propExpr;
 	Constraint *constr;
@@ -3633,30 +3648,9 @@ transformCreateConstraintStmt(ParseState *pstate,
 	AlterTableStmt *atstmt;
 
 	label = constraintStmt->graphlabel;
-	if (label->schemaname == NULL)
-		label->schemaname = get_graph_path();
+	label->schemaname = get_graph_path(false);
 
-	graphid = get_graphname_oid(label->schemaname);
-	if (graphid == InvalidOid)
-		elog(ERROR, "invalid graph path \"%s\"", label->schemaname);
-
-	laboid = get_labname_laboid(label->relname, graphid);
-	labkind = get_laboid_labkind(laboid);
-
-	if (labkind == LABEL_KIND_VERTEX)
-	{
-		objtype = OBJECT_VLABEL;
-	}
-	else if (labkind == LABEL_KIND_EDGE)
-	{
-		objtype = OBJECT_ELABEL;
-	}
-	else
-	{
-		Assert(labkind == '\0');
-
-		elog(ERROR, "label \"%s\" does not exist", label->relname);
-	}
+	objtype = getLabelObjectType(label->relname, get_graph_path_oid());
 
 	propExpr = makePropertiesIndirectionMutator(constraintStmt->expr);
 
@@ -3731,38 +3725,14 @@ transformDropConstraintStmt(ParseState *pstate,
 							DropConstraintStmt *constraintStmt)
 {
 	RangeVar   *label;
-	Oid			graphid;
-	Oid			laboid;
-	char		labkind;
 	ObjectType	objtype;
 	AlterTableCmd *atcmd;
 	AlterTableStmt *atstmt;
 
 	label = constraintStmt->graphlabel;
-	if (label->schemaname == NULL)
-		label->schemaname = get_graph_path();
+	label->schemaname = get_graph_path(false);
 
-	graphid = get_graphname_oid(label->schemaname);
-	if (graphid == InvalidOid)
-		elog(ERROR, "invalid graph path \"%s\"", label->schemaname);
-
-	laboid = get_labname_laboid(label->relname, graphid);
-	labkind = get_laboid_labkind(laboid);
-
-	if (labkind == LABEL_KIND_VERTEX)
-	{
-		objtype = OBJECT_VLABEL;
-	}
-	else if (labkind == LABEL_KIND_EDGE)
-	{
-		objtype = OBJECT_ELABEL;
-	}
-	else
-	{
-		Assert(labkind == '\0');
-
-		elog(ERROR, "label \"%s\" does not exist", label->relname);
-	}
+	objtype = getLabelObjectType(label->relname, get_graph_path_oid());
 
 	atcmd = makeNode(AlterTableCmd);
 	atcmd->subtype = AT_DropConstraint;
@@ -3832,6 +3802,23 @@ makePropertiesIndirectionMutator(Node *node)
 
 	return raw_expression_tree_mutator(node, makePropertiesIndirectionMutator,
 									   NULL);
+}
+
+static ObjectType
+getLabelObjectType(char *labname, Oid graphid)
+{
+	char labkind = getLabelKind(labname, graphid);
+
+	if (labkind == LABEL_KIND_VERTEX)
+	{
+		return OBJECT_VLABEL;
+	}
+	else
+	{
+		Assert(labkind == LABEL_KIND_EDGE);
+
+		return OBJECT_ELABEL;
+	}
 }
 
 /*
@@ -4000,20 +3987,12 @@ figure_prop_index_colname_walker(Node *node, char **colname)
 DropStmt *
 transformDropPropertyIndex(DropPropertyIndexStmt *stmt)
 {
-	DropStmt *dropstmt = makeNode(DropStmt);
-	Oid		indexoid;
-	Oid		graphid;
-	Oid		schemaoid;
-	char   *graphname;
+	DropStmt   *dropstmt = makeNode(DropStmt);
+	char	   *graphname;
+	Oid			indexoid;
+	Oid			schemaoid;
 
-	graphname = get_graph_path();
-	graphid = get_graphname_oid(graphname);
-	if (!OidIsValid(graphid))
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("graph \"%s\" does not exist", graphname)));
-	}
+	graphname = get_graph_path(true);
 
 	/* get schema that exists target index */
 	schemaoid = get_namespace_oid(graphname, false);

@@ -39,7 +39,7 @@ check_graph_path(char **newval, void **extra, GucSource source)
 	{
 		if (!OidIsValid(get_graphname_oid(*newval)))
 		{
-			GUC_check_errdetail("Graph \"%s\" does not exist.", *newval);
+			GUC_check_errdetail("graph \"%s\" does not exist.", *newval);
 			return false;
 		}
 	}
@@ -48,22 +48,42 @@ check_graph_path(char **newval, void **extra, GucSource source)
 }
 
 char *
-get_graph_path(void)
+get_graph_path(bool lookup_cache)
 {
 	if (graph_path == NULL || strlen(graph_path) == 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-				 errmsg("The graph_path is NULL"),
+				 errmsg("graph_path is NULL"),
 				 errhint("Use SET graph_path")));
-	else if (!OidIsValid(get_graphname_oid(graph_path)))
-	{
+
+	if (lookup_cache && !OidIsValid(get_graphname_oid(graph_path)))
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
-				 errmsg("The graph_path \"%s\" is invalid", graph_path),
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("current graph_path \"%s\" is invalid", graph_path),
 				 errhint("Use CREATE GRAPH")));
-	}
 
 	return graph_path;
+}
+
+Oid
+get_graph_path_oid(void)
+{
+	Oid graphoid;
+
+	if (graph_path == NULL || strlen(graph_path) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+				 errmsg("graph_path is NULL"),
+				 errhint("Use SET graph_path")));
+
+	graphoid = get_graphname_oid(graph_path);
+	if (!OidIsValid(graphoid))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("current graph_path \"%s\" is invalid", graph_path),
+				 errhint("Use SET graph_path")));
+
+	return graphoid;
 }
 
 /* Create a graph (schema) with the name and owner OID. */
@@ -86,7 +106,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString)
 
 	AssertArg(graphName != NULL);
 
-	if (SearchSysCacheExists1(GRAPHNAME, PointerGetDatum(graphName)))
+	if (OidIsValid(get_graphname_oid(graphName)))
 	{
 		if (stmt->if_not_exists)
 		{

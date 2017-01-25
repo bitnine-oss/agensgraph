@@ -2086,6 +2086,9 @@ typedef struct ModifyGraphState
 	bool		done;
 	PlanState  *subplan;
 	TupleTableSlot *elemTupleSlot;	/* to insert vertex/edge */
+	Oid			graphid;
+	char	   *graphname;
+	uint16		edgeid;
 	ResultRelInfo *resultRelations;
 	int			numResultRelations;
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE

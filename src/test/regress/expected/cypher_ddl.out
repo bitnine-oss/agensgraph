@@ -58,7 +58,7 @@ ALTER GRAPH g OWNER TO graph_role;
 --
 SET graph_path = n;
 ERROR:  invalid value for parameter "graph_path": "n"
-DETAIL:  Graph "n" does not exist.
+DETAIL:  graph "n" does not exist.
 SET graph_path = n, m;
 ERROR:  SET graph_path takes only one argument
 --

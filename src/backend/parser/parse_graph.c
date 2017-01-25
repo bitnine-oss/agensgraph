@@ -1406,7 +1406,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 		Alias	   *alias;
 		RangeTblEntry *rte;
 
-		r = makeRangeVar(get_graph_path(), labname, labloc);
+		r = makeRangeVar(get_graph_path(true), labname, labloc);
 		alias = makeAliasOptUnique(varname);
 
 		/* set `ihn` to true because we should scan all derived tables */
@@ -1506,7 +1506,7 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList)
 	{
 		RangeVar *r;
 
-		r = makeRangeVar(get_graph_path(), typname, typloc);
+		r = makeRangeVar(get_graph_path(true), typname, typloc);
 
 		rte = addRangeTableEntry(pstate, r, alias, true, true);
 	}
@@ -1581,7 +1581,7 @@ genEdgeUnion(char *edge_label, int location)
 	end = makeSimpleResTarget(AG_END_ID, NULL);
 	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
 
-	r = makeRangeVar(get_graph_path(), edge_label, location);
+	r = makeRangeVar(get_graph_path(true), edge_label, location);
 	r->inhOpt = INH_YES;
 
 	lsel = makeNode(SelectStmt);
@@ -1884,7 +1884,7 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel, bool out)
 	{
 		RangeVar *r;
 
-		r = makeRangeVar(get_graph_path(), typname, -1);
+		r = makeRangeVar(get_graph_path(true), typname, -1);
 		r->inhOpt = INH_YES;
 		edge = (Node *) r;
 	}
@@ -2065,7 +2065,7 @@ genSelectRightVLR(CypherRel *crel, bool out)
 	{
 		RangeVar *r;
 
-		r = makeRangeVar(get_graph_path(), typname, -1);
+		r = makeRangeVar(get_graph_path(true), typname, -1);
 		r->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
 		r->inhOpt = INH_YES;
 		edge = (Node *) r;
@@ -2158,7 +2158,7 @@ genEdgeUnionVLR(char *edge_label)
 	id = makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL);
 	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
 
-	r = makeRangeVar(get_graph_path(), edge_label, -1);
+	r = makeRangeVar(get_graph_path(true), edge_label, -1);
 	r->inhOpt = INH_YES;
 
 	lsel = makeNode(SelectStmt);
@@ -2961,7 +2961,7 @@ makeVertexRTE(ParseState *parentParseState, char *varname, char *labname)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
-	r = makeRangeVar(get_graph_path(), labname, -1);
+	r = makeRangeVar(get_graph_path(true), labname, -1);
 
 	rte = addRangeTableEntry(pstate, r, alias, true, true);
 	addRTEtoJoinlist(pstate, rte, false);
@@ -3294,7 +3294,7 @@ openTargetLabel(ParseState *pstate, char *labname)
 
 	Assert(labname != NULL);
 
-	rv = makeRangeVar(get_graph_path(), labname, -1);
+	rv = makeRangeVar(get_graph_path(true), labname, -1);
 	relation = parserOpenTable(pstate, rv, RowExclusiveLock);
 
 	return relation;

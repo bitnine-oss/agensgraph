@@ -1915,11 +1915,9 @@ get_object_address_graph(List *objname, bool missing_ok)
 	address.objectSubId = 0;
 
 	if (!OidIsValid(address.objectId) && !missing_ok)
-	{
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("graph \"%s\" does not exist", graphname)));
-	}
 
 	return address;
 }
@@ -1938,7 +1936,7 @@ get_object_address_label(List *objname, bool missing_ok)
 	switch (list_length(objname))
 	{
 		case 1:
-			graphname = get_graph_path();
+			graphname = get_graph_path(false);
 			labname = strVal(linitial(objname));
 			break;
 		case 2:
@@ -1953,16 +1951,19 @@ get_object_address_label(List *objname, bool missing_ok)
 	}
 
 	graphid = get_graphname_oid(graphname);
+	if (!OidIsValid(graphid))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("graph \"%s\" does not exist", graphname)));
+
 	address.classId = LabelRelationId;
 	address.objectId = get_labname_laboid(labname, graphid);
 	address.objectSubId = 0;
 
 	if (!OidIsValid(address.objectId) && !missing_ok)
-	{
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("graph label \"%s\" does not exist", labname)));
-	}
 
 	return address;
 }
