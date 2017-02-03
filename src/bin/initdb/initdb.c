@@ -1337,9 +1337,6 @@ setup_config(void)
 							"#log_min_messages = warning",
 							"log_min_messages = log");
 	conflines = replace_token(conflines,
-							"#track_functions = none",
-							"track_functions = all");
-	conflines = replace_token(conflines,
 							"#log_autovacuum_min_duration = -1",
 							"log_autovacuum_min_duration = 0");
 	/* pg_statsinfo parameters */
