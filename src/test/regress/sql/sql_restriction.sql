@@ -20,14 +20,21 @@ CREATE TABLE g.t (i int);
 CREATE TABLE t (i int) INHERITS (g.ag_vertex);
 
 --
--- ALTER TABLE
---
+-- ALTER TABLE 
+-- allowed to super user
+GRANT ALL ON DATABASE regression TO tmp;
+SET ROLE tmp;
+CREATE GRAPH t;
+SET graph_path=t;
 
 CREATE VLABEL v;
+ALTER TABLE t.v ADD COLUMN tmp int;
 
-ALTER TABLE g.v ADD COLUMN tmp int;
+RESET ROLE;
+SET graph_path=g;
+
+CREATE VLABEL v;
 ALTER TABLE g.v RENAME TO e;
-ALTER TABLE g.v OWNER TO tmp;
 
 --
 -- TRIGGER
@@ -50,5 +57,7 @@ UPDATE g.v SET properties='{"update":"impossible"}' WHERE id = '1234.56';
 DELETE FROM g.v;
 
 -- cleanup
+REVOKE ALL ON DATABASE regression FROM tmp;
+DROP GRAPH t CASCADE;
 DROP ROLE tmp;
 DROP GRAPH g CASCADE;

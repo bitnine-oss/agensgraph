@@ -2497,10 +2497,10 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	AlterTableCmd *newcmd;
 	RangeTblEntry *rte;
 
-	if (OidIsValid(get_relid_laboid(relid)) &&
-		stmt->relkind != OBJECT_VLABEL &&
-		stmt->relkind != OBJECT_ELABEL)
-		elog(ERROR, "cannot ALTER TABLE on graph label");
+	if (!superuser_arg(GetUserId()) &&
+		OidIsValid(get_relid_laboid(relid)) &&
+		stmt->relkind == OBJECT_TABLE)
+		elog(ERROR, "only superuser can ALTER TABLE on graph label");
 
 	/*
 	 * We must not scribble on the passed-in AlterTableStmt, so copy it. (This
