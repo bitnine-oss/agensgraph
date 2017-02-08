@@ -861,6 +861,7 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 		switch (j->jointype)
 		{
 			case JOIN_INNER:
+			case JOIN_VLR:
 				leftjoinlist = deconstruct_recurse(root, j->larg,
 												   below_outer_join,
 												   &leftids, &left_inners,
@@ -976,7 +977,7 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 		 * Semijoins are a bit of a hybrid: we build a SpecialJoinInfo, but we
 		 * want ojscope = NULL for distribute_qual_to_rels.
 		 */
-		if (j->jointype != JOIN_INNER)
+		if (j->jointype != JOIN_INNER && j->jointype != JOIN_VLR)
 		{
 			sjinfo = make_outerjoininfo(root,
 										leftids, rightids,

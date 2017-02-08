@@ -132,12 +132,14 @@ static void setInitialVidForVLR(ParseState *pstate, CypherRel *crel,
 								RangeTblEntry *prev_edge);
 static RangeTblEntry *transformMatchVLR(ParseState *pstate, CypherRel *crel,
 										List **targetList);
-static SelectStmt *genSelectLeftVLR(ParseState *pstate, CypherRel *crel,
+static SelectStmt *genVLRsubselect(ParseState *pstate, CypherRel *crel,
 									bool out);
-static SelectStmt *genSelectRightVLR(CypherRel *crel, bool out);
+static Node *genEdgeNode(CypherRel *crel, char *aliasname);
+static Node *genVLRJoinExpr(CypherRel *crel, Node *larg);
+static List *genVLRTargetList(char *schemaName, bool outPath);
+static List *genFields(char *schemaName, char *colName);
+static Node *genVLRQual(Node *propMap);
 static RangeSubselect *genEdgeUnionVLR(char *edge_label);
-static SelectStmt *genSelectWithVLR(CypherRel *crel, WithClause *with,
-									bool out);
 static RangeTblEntry *transformVLRtoRTE(ParseState *pstate, SelectStmt *vlr,
 										Alias *alias);
 static bool isZeroLengthVLR(CypherRel *crel);
@@ -1684,65 +1686,26 @@ setInitialVidForVLR(ParseState *pstate, CypherRel *crel, Node *vertex,
 	}
 }
 
+/*
+ * RTE
+ * - isvlr = true
+ *
+ * TODO: hops
+ * TODO: dup-check
+ */
 static RangeTblEntry *
 transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 {
-	char	   *varname = getCypherName(crel->variable);
-	bool		out = (varname != NULL);
-	SelectStmt *u;
-	List	   *colnames;
-	CommonTableExpr *cte;
-	A_Indices  *indices;
-	WithClause *with;
-	SelectStmt *vlr;
-	Alias	   *alias;
-	RangeTblEntry *rte;
+	char	   	   *varname = getCypherName(crel->variable);
+	bool			out = (varname != NULL);
+	SelectStmt 	   *sel;
+	Alias	   	   *alias;
+	RangeTblEntry  *rte;
 
-	/* UNION ALL */
-	u = makeNode(SelectStmt);
-	u->op = SETOP_UNION;
-	u->all = true;
-	u->larg = genSelectLeftVLR(pstate, crel, out);
-	u->rarg = genSelectRightVLR(crel, out);
-
-	colnames = list_make4(makeString(VLR_COLNAME_START),
-						  makeString(VLR_COLNAME_END),
-						  makeString(VLR_COLNAME_LEVEL),
-						  makeString(VLR_COLNAME_ROWIDS));
-	if (out)
-		colnames = lappend(colnames, makeString(VLR_COLNAME_PATH));
-
-	cte = makeNode(CommonTableExpr);
-	cte->ctename = CYPHER_VLR_WITH_ALIAS;
-	cte->aliascolnames = colnames;
-	cte->ctequery = (Node *) u;
-	cte->location = -1;
-
-	indices = (A_Indices *) crel->varlen;
-	if (indices->uidx != NULL)
-	{
-		A_Const	   *lidx;
-		A_Const	   *uidx;
-		int			base = 0;
-
-		lidx = (A_Const *) indices->lidx;
-		if (lidx->val.val.ival > 0)
-			base = 1;
-
-		uidx = (A_Const *) indices->uidx;
-
-		cte->maxdepth = uidx->val.val.ival - base + 1;
-	}
-
-	with = makeNode(WithClause);
-	with->ctes = list_make1(cte);
-	with->recursive = true;
-	with->location = -1;
-
-	vlr = genSelectWithVLR(crel, with, out);
+	sel = genVLRsubselect(pstate, crel, out);
 
 	alias = makeAliasOptUnique(varname);
-	rte = transformVLRtoRTE(pstate, vlr, alias);
+	rte = transformVLRtoRTE(pstate, sel, alias);
 
 	if (out)
 	{
@@ -1762,42 +1725,20 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 }
 
 /*
- * -- level == 0
- * VALUES (`id(vertex)`, `id(vertex)`, 0, ARRAY[]::record[], ARRAY[]::graphid[])
- *
- * -- level > 0, CYPHER_REL_DIR_LEFT
- * SELECT start, "end", 1, ARRAY[(tableoid, ctid)], ARRAY[id]
- * FROM `get_graph_path()`.`typname`
- * WHERE "end" = `id(vertex)` AND properties @> `crel->prop_map`
- *
- * -- level > 0, CYPHER_REL_DIR_RIGHT
- * SELECT start, "end", 1, ARRAY[(tableoid, ctid)], ARRAY[id]
- * FROM `get_graph_path()`.`typname`
- * WHERE start = `id(vertex)` AND properties @> `crel->prop_map`
- *
- * -- level > 0, CYPHER_REL_DIR_NONE
- * SELECT start, "end", 1, ARRAY[(tableoid, ctid)], ARRAY[id]
- * FROM `genEdgeUnionVLR(typname)`
- * WHERE start = `id(vertex)` AND properties @> `crel->prop_map`
+ * SELECT l.start, l.end, array[(l.tableoid, l.ctid)] AS rowids, array[l.id] AS path
+ * FROM edge AS l VLR JOIN lateral (
+ *   select tableoid, ctid, id, properties, start, end FROM edge r
+ *   where r.start = l.end and r.properties @> ...) AS r ON true
+ * WHERE l.start = vid AND l.properties @> ...
  */
 static SelectStmt *
-genSelectLeftVLR(ParseState *pstate, CypherRel *crel, bool out)
+genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
 {
 	Node	   *vid;
-	A_ArrayExpr *rowidarr;
-	A_ArrayExpr *patharr;
-	char	   *typname;
-	ResTarget  *start;
-	ResTarget  *end;
-	ResTarget  *level;
-	ColumnRef  *tableoid;
-	ColumnRef  *ctid;
-	RowExpr	   *rowid;
-	ResTarget  *rowids;
-	ResTarget  *path;
-	Node       *edge;
+	Node       *left = NULL;
 	List	   *where_args = NIL;
 	SelectStmt *sel;
+	Node	   *join;
 
 	/*
 	 * `vid` is NULL only if
@@ -1809,10 +1750,12 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel, bool out)
 
 	if (isZeroLengthVLR(crel))
 	{
-		TypeCast   *rowids;
-		List	   *values;
+		RangeSubselect 	*sub;
+		A_ArrayExpr 	*rowidarr;
+		TypeCast   		*rowids;
+		List	   		*values;
 
-		Assert(pstate->p_vlr_initial_vid != NULL);
+		Assert(vid != NULL);
 
 		rowidarr = makeNode(A_ArrayExpr);
 		rowidarr->location = -1;
@@ -1824,7 +1767,8 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel, bool out)
 
 		if (out)
 		{
-			TypeCast *path;
+			A_ArrayExpr *patharr;
+			TypeCast 	*path;
 
 			patharr = makeNode(A_ArrayExpr);
 			patharr->location = -1;
@@ -1838,299 +1782,269 @@ genSelectLeftVLR(ParseState *pstate, CypherRel *crel, bool out)
 		sel = makeNode(SelectStmt);
 		sel->valuesLists = list_make1(values);
 
-		return sel;
+		sub = makeNode(RangeSubselect);
+		sub->subquery = (Node *) sel;
+		sub->alias = makeAliasNoDup("l", NIL);
+		left = (Node *) sub;
 	}
+	else {
+		left = genEdgeNode(crel, "l");
 
-	getCypherRelType(crel, &typname, NULL);
-
-	start = makeSimpleResTarget(AG_START_ID, NULL);
-	end = makeSimpleResTarget(AG_END_ID, NULL);
-
-	level = makeResTarget((Node *) makeIntConst(1), NULL);
-
-	tableoid = makeNode(ColumnRef);
-	tableoid->fields = list_make1(makeString("tableoid"));
-	tableoid->location = -1;
-	ctid = makeNode(ColumnRef);
-	ctid->fields = list_make1(makeString("ctid"));
-	ctid->location = -1;
-	rowid = makeRowExpr(list_make2(tableoid, ctid));
-	rowidarr = makeNode(A_ArrayExpr);
-	rowidarr->elements = list_make1(rowid);
-	rowids = makeResTarget((Node *) rowidarr, NULL);
-
-	if (out)
-	{
-		ColumnRef *id;
-
-		id = makeNode(ColumnRef);
-		id->fields = list_make1(makeString(AG_ELEM_LOCAL_ID));
-		id->location = -1;
-		patharr = makeNode(A_ArrayExpr);
-		patharr->elements = list_make1(id);
-		patharr->location = -1;
-		path = makeResTarget((Node *) patharr, NULL);
-	}
-
-	if (crel->direction == CYPHER_REL_DIR_NONE)
-	{
-		RangeSubselect *sub;
-
-		sub = genEdgeUnionVLR(typname);
-		sub->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
-		edge = (Node *) sub;
-	}
-	else
-	{
-		RangeVar *r;
-
-		r = makeRangeVar(get_graph_path(true), typname, -1);
-		r->inhOpt = INH_YES;
-		edge = (Node *) r;
-	}
-
-	if (vid != NULL)
-	{
-		ColumnRef  *begin;
-		A_Expr	   *vidcond;
-
-		if (crel->direction == CYPHER_REL_DIR_LEFT)
+		if (vid != NULL)
 		{
-			begin = makeNode(ColumnRef);
-			begin->fields = list_make1(makeString(AG_END_ID));
-			begin->location = -1;
+			ColumnRef  *begin;
+			A_Expr	   *vidcond;
+
+			if (crel->direction == CYPHER_REL_DIR_LEFT)
+			{
+				begin = makeNode(ColumnRef);
+				begin->fields = list_make1(makeString(AG_END_ID));
+				begin->location = -1;
+			}
+			else
+			{
+				begin = makeNode(ColumnRef);
+				begin->fields = list_make1(makeString(AG_START_ID));
+				begin->location = -1;
+			}
+			vidcond = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) begin, vid, -1);
+			where_args = lappend(where_args, vidcond);
 		}
-		else
+
+		/* TODO: cannot see properties of future vertices */
+		if (crel->prop_map != NULL)
 		{
-			begin = makeNode(ColumnRef);
-			begin->fields = list_make1(makeString(AG_START_ID));
-			begin->location = -1;
+			where_args = lappend(where_args, genVLRQual(crel->prop_map));
 		}
-		vidcond = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) begin, vid, -1);
-		where_args = lappend(where_args, vidcond);
 	}
 
-	/* TODO: cannot see properties of future vertices */
-	if (crel->prop_map != NULL)
-	{
-		ColumnRef  *prop;
-		A_Expr	   *propcond;
-
-		prop = makeNode(ColumnRef);
-		prop->fields = list_make1(makeString(AG_ELEM_PROP_MAP));
-		prop->location = -1;
-		propcond = makeSimpleA_Expr(AEXPR_OP, "@>", (Node *) prop,
-									crel->prop_map, -1);
-		where_args = lappend(where_args, propcond);
-	}
+	join = genVLRJoinExpr(crel, left);
 
 	sel = makeNode(SelectStmt);
-	sel->targetList = list_make4(start, end, level, rowids);
-	if (out)
-		sel->targetList = lappend(sel->targetList, path);
-	sel->fromClause = list_make1(edge);
+	sel->targetList = genVLRTargetList("l", out);
+	sel->fromClause = list_make1(join);
 	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
 	return sel;
 }
 
-/*
- * -- CYPHER_REL_DIR_LEFT
- * SELECT _e.start, _vlr.end, level + 1,
- *        array_append(rowids, (tableoid, ctid)), array_append(path, id)
- * FROM _vlr, `get_graph_path()`.`typname` AS _e
- * WHERE _e.end = _vlr.start AND
- *       <dup-check> AND
- *       properties @> `crel->prop_map`
- *
- * -- CYPHER_REL_DIR_RIGHT
- * SELECT _vlr.start, _e.end, level + 1,
- *        array_append(rowids, (tableoid, ctid)), array_append(path, id)
- * FROM _vlr, `get_graph_path()`.`typname` AS _e
- * WHERE _vlr.end = _e.start AND
- *       <dup-check> AND
- *       properties @> `crel->prop_map`
- *
- * -- CYPHER_REL_DIR_NONE
- * SELECT _vlr.start, _e.end, level + 1,
- *        array_append(rowids, (tableoid, ctid)), array_append(path, id)
- * FROM _vlr, `genEdgeUnionVLR(typname)` AS _e
- * WHERE _vlr.end = _e.start AND
- *       <dup-check> AND
- *       properties @> `crel->prop_map`
- *
- * <dup-check>
- * if `out` then; array_position(path, id) IS NULL
- * else; array_position(rowids, (tableoid, ctid)) IS NULL
- */
-static SelectStmt *
-genSelectRightVLR(CypherRel *crel, bool out)
+static Node *
+genEdgeNode(CypherRel *crel, char *aliasname)
 {
-	char	   *typname;
-	ResTarget  *start;
-	ResTarget  *end;
-	ColumnRef  *levelref;
-	A_Expr	   *levelexpr;
-	ResTarget  *level;
-	ColumnRef  *rowidsref;
-	ColumnRef  *tableoid;
-	ColumnRef  *ctid;
-	RowExpr	   *rowid;
-	FuncCall   *rowidsexpr;
-	ResTarget  *rowids;
-	ColumnRef  *pathref;
-	ColumnRef  *id;
-	ResTarget  *path;
-	RangeVar   *vlr;
-	Node       *edge;
-	ColumnRef  *prev;
-	ColumnRef  *next;
-	List	   *where_args = NIL;
-	A_Expr	   *joincond;
-	List	   *arrpos_args;
-	FuncCall   *arrpos;
-	NullTest   *dupcond;
-	SelectStmt *sel;
+	char	*typname;
+	Alias	*alias;
+	Node 	*edge;
 
 	getCypherRelType(crel, &typname, NULL);
-
-	if (crel->direction == CYPHER_REL_DIR_LEFT)
-	{
-		start = makeFieldsResTarget(
-					list_make2(makeString(CYPHER_VLR_EDGE_ALIAS),
-							   makeString(AG_START_ID)),
-					NULL);
-		end = makeFieldsResTarget(list_make2(makeString(CYPHER_VLR_WITH_ALIAS),
-											 makeString(VLR_COLNAME_END)),
-								  NULL);
-	}
-	else
-	{
-		start = makeFieldsResTarget(
-					list_make2(makeString(CYPHER_VLR_WITH_ALIAS),
-							   makeString(VLR_COLNAME_START)),
-					NULL);
-		end = makeFieldsResTarget(list_make2(makeString(CYPHER_VLR_EDGE_ALIAS),
-											 makeString(AG_END_ID)),
-								  NULL);
-	}
-
-	levelref = makeNode(ColumnRef);
-	levelref->fields = list_make1(makeString(VLR_COLNAME_LEVEL));
-	levelref->location = -1;
-	levelexpr = makeSimpleA_Expr(AEXPR_OP, "+", (Node *) levelref,
-								 (Node *) makeIntConst(1), -1);
-	level = makeResTarget((Node *) levelexpr, NULL);
-
-	rowidsref = makeNode(ColumnRef);
-	rowidsref->fields = list_make1(makeString(VLR_COLNAME_ROWIDS));
-	rowidsref->location = -1;
-	tableoid = makeNode(ColumnRef);
-	tableoid->fields = list_make1(makeString("tableoid"));
-	tableoid->location = -1;
-	ctid = makeNode(ColumnRef);
-	ctid->fields = list_make1(makeString("ctid"));
-	ctid->location = -1;
-	rowid = makeRowExpr(list_make2(tableoid, ctid));
-	rowidsexpr = makeFuncCall(list_make1(makeString("array_append")),
-							  list_make2(rowidsref, rowid), -1);
-	rowids = makeResTarget((Node *) rowidsexpr, NULL);
-
-	if (out)
-	{
-		FuncCall *pathexpr;
-
-		pathref = makeNode(ColumnRef);
-		pathref->fields = list_make1(makeString(VLR_COLNAME_PATH));
-		pathref->location = -1;
-		id = makeNode(ColumnRef);
-		id->fields = list_make1(makeString(AG_ELEM_LOCAL_ID));
-		id->location = -1;
-		pathexpr = makeFuncCall(list_make1(makeString("array_append")),
-								list_make2(pathref, id), -1);
-		path = makeResTarget((Node *) pathexpr, NULL);
-	}
-
-	vlr = makeRangeVar(NULL, CYPHER_VLR_WITH_ALIAS, -1);
+	alias = makeAliasNoDup(aliasname, NIL);
 
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
 		RangeSubselect *sub;
-
 		sub = genEdgeUnionVLR(typname);
-		sub->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
+		sub->alias = alias;
 		edge = (Node *) sub;
 	}
 	else
 	{
 		RangeVar *r;
-
 		r = makeRangeVar(get_graph_path(true), typname, -1);
-		r->alias = makeAliasNoDup(CYPHER_VLR_EDGE_ALIAS, NIL);
 		r->inhOpt = INH_YES;
+		r->alias = alias;
 		edge = (Node *) r;
 	}
+
+	return edge;
+}
+
+static Node *
+genVLRJoinExpr(CypherRel *crel, Node *larg)
+{
+	ResTarget  	   *tableoid;
+	ResTarget  	   *ctid;
+	ResTarget  	   *id;
+	ResTarget  	   *prop_map;
+	ResTarget  	   *start;
+	ResTarget  	   *end;
+	Node		   *right;
+	ColumnRef	   *prev;
+	ColumnRef	   *next;
+	A_Expr	   	   *joincond;
+	List		   *where_args;
+	SelectStmt 	   *sel;
+	RangeSubselect *sub;
+	JoinExpr	   *n;
+	A_Const		   *trueconst;
+	TypeCast	   *truecond;
+	A_Indices  	   *indices;
+	int				minHops = 1;
+	int				maxHops = -1;
+
+	tableoid = makeSimpleResTarget("tableoid", NULL);
+	ctid = makeSimpleResTarget("ctid", NULL);
+	id = makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL);
+	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
+	start = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
+	end = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
+
+	right = genEdgeNode(crel, "r");
 
 	if (crel->direction == CYPHER_REL_DIR_LEFT)
 	{
 		prev = makeNode(ColumnRef);
-		prev->fields = list_make2(makeString(CYPHER_VLR_WITH_ALIAS),
-								  makeString(VLR_COLNAME_START));
+		prev->fields = genFields("l", VLR_COLNAME_START);
 		prev->location = -1;
 
 		next = makeNode(ColumnRef);
-		next->fields = list_make2(makeString(CYPHER_VLR_EDGE_ALIAS),
-								  makeString(AG_END_ID));
+		next->fields = genFields("r", VLR_COLNAME_END);
 		next->location = -1;
 	}
 	else
 	{
 		prev = makeNode(ColumnRef);
-		prev->fields = list_make2(makeString(CYPHER_VLR_WITH_ALIAS),
-								  makeString(VLR_COLNAME_END));
+		prev->fields = genFields("l", VLR_COLNAME_END);
 		prev->location = -1;
 
 		next = makeNode(ColumnRef);
-		next->fields = list_make2(makeString(CYPHER_VLR_EDGE_ALIAS),
-								  makeString(AG_START_ID));
+		next->fields = genFields("r", VLR_COLNAME_START);
 		next->location = -1;
 	}
 
 	joincond = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) prev, (Node *) next,
 								-1);
-	where_args = lappend(where_args, joincond);
-
-	arrpos_args = out ? list_make2(pathref, id) : list_make2(rowidsref, rowid);
-	arrpos = makeFuncCall(list_make1(makeString("array_position")),
-						  arrpos_args, -1);
-	dupcond = makeNode(NullTest);
-	dupcond->arg = (Expr *) arrpos;
-	dupcond->nulltesttype = IS_NULL;
-	dupcond->location = -1;
-	where_args = lappend(where_args, dupcond);
-
-	/* TODO: cannot see properties of future vertices */
+	where_args = list_make1(joincond);
 	if (crel->prop_map != NULL)
 	{
-		ColumnRef  *prop;
-		A_Expr	   *propcond;
-
-		prop = makeNode(ColumnRef);
-		prop->fields = list_make1(makeString(AG_ELEM_PROP_MAP));
-		prop->location = -1;
-		propcond = makeSimpleA_Expr(AEXPR_OP, "@>", (Node *) prop,
-									crel->prop_map, -1);
-		where_args = lappend(where_args, propcond);
+		where_args = lappend(where_args, genVLRQual(crel->prop_map));
 	}
 
 	sel = makeNode(SelectStmt);
-	sel->targetList = list_make4(start, end, level, rowids);
-	if (out)
-		sel->targetList = lappend(sel->targetList, path);
-	sel->fromClause = list_make2(vlr, edge);
+	sel->targetList = list_make4(tableoid, ctid, id, prop_map);
+	sel->targetList = lappend(sel->targetList, start);
+	sel->targetList = lappend(sel->targetList, end);
+	sel->fromClause = list_make1(right);
 	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
-	return sel;
+	sub = makeNode(RangeSubselect);
+	sub->subquery = (Node *)sel;
+	sub->lateral = true;
+	sub->alias = makeAliasNoDup("r", NIL);
+
+	n = makeNode(JoinExpr);
+	n->jointype = JOIN_VLR;
+	n->isNatural = false;
+	n->larg = larg;
+	n->rarg = (Node *) sub;
+	n->usingClause = NIL;
+
+	trueconst = makeNode(A_Const);
+	trueconst->val.type = T_String;
+	trueconst->val.val.str = "t";
+	trueconst->location = -1;
+	truecond = makeNode(TypeCast);
+	truecond->arg = (Node *) trueconst;
+	truecond->typeName = makeTypeNameFromNameList(
+			list_make2(makeString("pg_catalog"), makeString("bool")));
+	truecond->location = -1;
+	n->quals = (Node *) truecond;
+
+	indices = (A_Indices *) crel->varlen;
+	if (indices->uidx != NULL)
+	{
+		A_Const	*uidx;
+		uidx = (A_Const *) indices->uidx;
+		maxHops = uidx->val.val.ival;
+	}
+	if (indices->lidx != NULL)
+	{
+		A_Const *lidx;
+		lidx = (A_Const *) indices->lidx;
+		minHops = lidx->val.val.ival;
+	}
+	else
+	{
+		if (maxHops == 0)
+		{
+			minHops = 0;
+		}
+	}
+	n->minHops = minHops;
+	n->maxHops = maxHops;
+
+	/* TODO: minHops <= maxHops check */
+
+	return (Node *) n;
+}
+
+static List *
+genVLRTargetList(char *schemaName, bool outPath)
+{
+	ResTarget  	*start;
+	ResTarget  	*end;
+	ColumnRef  	*tableoid;
+	ColumnRef  	*ctid;
+	RowExpr	   	*rowid;
+	A_ArrayExpr *rowidarr;
+	ResTarget  	*rowids;
+	List 		*tlist;
+
+	start = makeFieldsResTarget(genFields(schemaName, AG_START_ID),
+								VLR_COLNAME_START);
+	end = makeFieldsResTarget(genFields(schemaName, AG_END_ID),
+							  VLR_COLNAME_END);
+	tableoid = makeNode(ColumnRef);
+	tableoid->fields = genFields(schemaName, "tableoid");
+	tableoid->location = -1;
+	ctid = makeNode(ColumnRef);
+	ctid->fields = genFields(schemaName, "ctid");
+	ctid->location = -1;
+	rowid = makeRowExpr(list_make2(tableoid, ctid));
+	rowidarr = makeNode(A_ArrayExpr);
+	rowidarr->elements = list_make1(rowid);
+	rowids = makeResTarget((Node *) rowidarr, VLR_COLNAME_ROWIDS);
+
+	tlist = list_make3(start, end, rowids);
+
+	if (outPath)
+	{
+		ColumnRef 	*id;
+		A_ArrayExpr *patharr;
+		ResTarget  	*path;
+
+		id = makeNode(ColumnRef);
+		id->fields = genFields(schemaName, AG_ELEM_LOCAL_ID);
+		id->location = -1;
+		patharr = makeNode(A_ArrayExpr);
+		patharr->elements = list_make1(id);
+		patharr->location = -1;
+		path = makeResTarget((Node *) patharr, VLR_COLNAME_PATH);
+		tlist = lappend(tlist, path);
+	}
+
+	return tlist;
+}
+
+static List *
+genFields(char *schemaName, char *colName)
+{
+	if (schemaName != NULL)
+		return list_make2(makeString(schemaName), makeString(colName));
+	else
+		return list_make1(makeString(colName));
+}
+
+static Node *
+genVLRQual(Node *propMap)
+{
+	ColumnRef  *prop;
+	A_Expr	   *propcond;
+
+	prop = makeNode(ColumnRef);
+	prop->fields = list_make1(makeString(AG_ELEM_PROP_MAP));
+	prop->location = -1;
+	propcond = makeSimpleA_Expr(AEXPR_OP, "@>", (Node *) prop,
+								propMap, -1);
+	return (Node *)propcond;
 }
 
 /*
@@ -2189,60 +2103,6 @@ genEdgeUnionVLR(char *edge_label)
 	return sub;
 }
 
-static SelectStmt *
-genSelectWithVLR(CypherRel *crel, WithClause *with, bool out)
-{
-	A_Indices  *indices = (A_Indices *) crel->varlen;
-	ResTarget  *start;
-	ResTarget  *end;
-	ResTarget  *rowids;
-	ResTarget  *path;
-	RangeVar   *vlr;
-	SelectStmt *sel;
-	Node	   *lidx = NULL;
-
-	if (crel->direction == CYPHER_REL_DIR_NONE)
-	{
-		start = makeSimpleResTarget(VLR_COLNAME_START, EDGE_UNION_START_ID);
-		end = makeSimpleResTarget(VLR_COLNAME_END, EDGE_UNION_END_ID);
-	}
-	else
-	{
-		start = makeSimpleResTarget(VLR_COLNAME_START, AG_START_ID);
-		end = makeSimpleResTarget(VLR_COLNAME_END, AG_END_ID);
-	}
-	rowids = makeSimpleResTarget(VLR_COLNAME_ROWIDS, NULL);
-	if (out)
-		path = makeSimpleResTarget(VLR_COLNAME_PATH, NULL);
-
-	vlr = makeRangeVar(NULL, CYPHER_VLR_WITH_ALIAS, -1);
-
-	sel = makeNode(SelectStmt);
-	sel->targetList = list_make3(start, end, rowids);
-	if (out)
-		sel->targetList = lappend(sel->targetList, path);
-	sel->fromClause = list_make1(vlr);
-
-	if (((A_Const *) indices->lidx)->val.val.ival > 1)
-		lidx = indices->lidx;
-
-	if (lidx != NULL)
-	{
-		ColumnRef *level;
-
-		level = makeNode(ColumnRef);
-		level->fields = list_make1(makeString(VLR_COLNAME_LEVEL));
-		level->location = -1;
-
-		sel->whereClause = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=",
-													 (Node *) level, lidx, -1);
-	}
-
-	sel->withClause = with;
-
-	return sel;
-}
-
 static RangeTblEntry *
 transformVLRtoRTE(ParseState *pstate, SelectStmt *vlr, Alias *alias)
 {
@@ -2276,6 +2136,7 @@ transformVLRtoRTE(ParseState *pstate, SelectStmt *vlr, Alias *alias)
 		nsitem->p_rel_visible = false;
 
 	rte = addRangeTableEntryForSubquery(pstate, qry, alias, true, true);
+	rte->isVLR = true;
 	addRTEtoJoinlist(pstate, rte, false);
 
 	return rte;

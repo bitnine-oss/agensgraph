@@ -1233,6 +1233,8 @@ _readJoinExpr(void)
 	READ_NODE_FIELD(quals);
 	READ_NODE_FIELD(alias);
 	READ_INT_FIELD(rtindex);
+	READ_INT_FIELD(minHops);
+	READ_INT_FIELD(maxHops);
 
 	READ_DONE();
 }
@@ -1298,6 +1300,7 @@ _readRangeTblEntry(void)
 		case RTE_SUBQUERY:
 			READ_NODE_FIELD(subquery);
 			READ_BOOL_FIELD(security_barrier);
+			READ_BOOL_FIELD(isVLR);
 			break;
 		case RTE_JOIN:
 			READ_ENUM_FIELD(jointype, JoinType);
