@@ -861,6 +861,7 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 		switch (j->jointype)
 		{
 			case JOIN_INNER:
+			case JOIN_VLE:
 				leftjoinlist = deconstruct_recurse(root, j->larg,
 												   below_outer_join,
 												   &leftids, &left_inners,
@@ -986,6 +987,12 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 										my_quals);
 			if (j->jointype == JOIN_SEMI)
 				ojscope = NULL;
+			else if (j->jointype == JOIN_VLE)
+			{
+				ojscope = NULL;
+				sjinfo->min_hops = j->minHops;
+				sjinfo->max_hops = j->maxHops;
+			}
 			else
 				ojscope = bms_union(sjinfo->min_lefthand,
 									sjinfo->min_righthand);
@@ -1006,6 +1013,18 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 									*qualscope,
 									ojscope, nonnullable_rels, NULL,
 									postponed_qual_list);
+		}
+
+		if (j->jointype == JOIN_VLE)
+		{
+			RangeTblEntry *rte = root->simple_rte_array[j->rtindex];
+			Relids proj_varnos = pull_varnos((Node *) rte->joinaliasvars);
+			List *vars = pull_var_clause((Node *) rte->joinaliasvars,
+										 PVC_RECURSE_AGGREGATES |
+										 PVC_RECURSE_WINDOWFUNCS |
+										 PVC_INCLUDE_PLACEHOLDERS);
+			add_vars_to_targetlist(root, vars, proj_varnos, false);
+			list_free(vars);
 		}
 
 		/* Now we can add the SpecialJoinInfo to join_info_list */
@@ -1135,7 +1154,7 @@ make_outerjoininfo(PlannerInfo *root,
 	compute_semijoin_info(sjinfo, clause);
 
 	/* If it's a full join, no need to be very smart */
-	if (jointype == JOIN_FULL)
+	if (jointype == JOIN_FULL || jointype == JOIN_VLE)
 	{
 		sjinfo->min_lefthand = bms_copy(left_rels);
 		sjinfo->min_righthand = bms_copy(right_rels);

@@ -34,6 +34,11 @@ static void sort_inner_and_outer(PlannerInfo *root, RelOptInfo *joinrel,
 static void match_unsorted_outer(PlannerInfo *root, RelOptInfo *joinrel,
 					 RelOptInfo *outerrel, RelOptInfo *innerrel,
 					 JoinType jointype, JoinPathExtraData *extra);
+static void match_unsorted_outer_for_vle(PlannerInfo *root,
+					 RelOptInfo *joinrel,
+					 RelOptInfo *outerrel,
+					 RelOptInfo *innerrel,
+					 JoinPathExtraData *extra);
 static void consider_parallel_nestloop(PlannerInfo *root,
 						   RelOptInfo *joinrel,
 						   RelOptInfo *outerrel,
@@ -305,6 +310,24 @@ add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
 		joinrel->fdwroutine->GetForeignJoinPaths(root, joinrel,
 												 outerrel, innerrel,
 												 JOIN_CYPHER_MERGE, &extra);
+}
+
+void
+add_paths_to_joinrel_for_vle(PlannerInfo *root,
+							 RelOptInfo *joinrel,
+							 RelOptInfo *outerrel,
+							 RelOptInfo *innerrel,
+							 SpecialJoinInfo *sjinfo,
+							 List *restrictlist)
+{
+	JoinPathExtraData extra;
+
+	extra.restrictlist = restrictlist;
+	extra.mergeclause_list = NIL;
+	extra.sjinfo = sjinfo;
+	extra.param_source_rels = NULL;
+
+	match_unsorted_outer_for_vle(root, joinrel, outerrel, innerrel, &extra);
 }
 
 /*
@@ -1342,6 +1365,57 @@ consider_parallel_nestloop(PlannerInfo *root,
 		}
 	}
 }
+
+static void
+match_unsorted_outer_for_vle(PlannerInfo *root,
+							 RelOptInfo *joinrel,
+							 RelOptInfo *outerrel,
+							 RelOptInfo *innerrel,
+							 JoinPathExtraData *extra)
+{
+	ListCell   *lc1;
+
+	foreach(lc1, outerrel->pathlist)
+	{
+		Path	   *outerpath = (Path *) lfirst(lc1);
+		List	   *merge_pathkeys;
+		ListCell   *lc2;
+
+		/*
+		 * We cannot use an outer path that is parameterized by the inner rel.
+		 */
+		if (PATH_PARAM_BY_REL(outerpath, innerrel))
+			continue;
+
+		/*
+		 * The result will have this sort order (even if it is implemented as
+		 * a nestloop, and even if some of the mergeclauses are implemented by
+		 * qpquals rather than as true mergeclauses):
+		 */
+		merge_pathkeys = build_join_pathkeys(root, joinrel, JOIN_INNER,
+											 outerpath->pathkeys);
+
+		/*
+		 * Consider nestloop joins using this outer path and various
+		 * available paths for the inner relation.  We consider the
+		 * cheapest-total paths for each available parameterization of the
+		 * inner relation, including the unparameterized case.
+		 */
+		foreach(lc2, innerrel->cheapest_parameterized_paths)
+		{
+			Path	   *innerpath = (Path *) lfirst(lc2);
+
+			try_nestloop_path(root,
+							  joinrel,
+							  outerpath,
+							  innerpath,
+							  merge_pathkeys,
+							  JOIN_VLE,
+							  extra);
+		}
+	}
+}
+
 
 /*
  * hash_inner_and_outer

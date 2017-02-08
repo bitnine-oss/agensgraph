@@ -599,6 +599,7 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 			break;
 
 		case T_NestLoop:
+		case T_NestLoopVLE:
 		case T_MergeJoin:
 		case T_HashJoin:
 			set_join_references(root, (Join *) plan, rtoffset);
@@ -1570,7 +1571,7 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 								   rtoffset);
 
 	/* Now do join-type-specific stuff */
-	if (IsA(join, NestLoop))
+	if (IsA(join, NestLoop) || IsA(join, NestLoopVLE))
 	{
 		NestLoop   *nl = (NestLoop *) join;
 		ListCell   *lc;

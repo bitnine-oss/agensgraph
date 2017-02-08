@@ -67,6 +67,7 @@ typedef enum NodeTag
 	T_CustomScan,
 	T_Join,
 	T_NestLoop,
+	T_NestLoopVLE,
 	T_MergeJoin,
 	T_HashJoin,
 	T_Material,
@@ -116,6 +117,7 @@ typedef enum NodeTag
 	T_CustomScanState,
 	T_JoinState,
 	T_NestLoopState,
+	T_NestLoopVLEState,
 	T_MergeJoinState,
 	T_HashJoinState,
 	T_MaterialState,
@@ -694,7 +696,8 @@ typedef enum JoinType
 	JOIN_UNIQUE_INNER,			/* RHS path must be made unique */
 
 	/* This is similar to JOIN_LEFT but only for Cypher MERGE clause. */
-	JOIN_CYPHER_MERGE
+	JOIN_CYPHER_MERGE,
+	JOIN_VLE
 
 	/*
 	 * We might need additional join types someday.

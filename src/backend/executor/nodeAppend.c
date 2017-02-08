@@ -59,6 +59,7 @@
 
 #include "executor/execdebug.h"
 #include "executor/nodeAppend.h"
+#include "lib/ilist.h"
 
 static bool exec_append_initialize_next(AppendState *appendstate);
 
@@ -181,6 +182,9 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	appendstate->as_whichplan = 0;
 	exec_append_initialize_next(appendstate);
 
+	dlist_init(&appendstate->vle_ctxs);
+	appendstate->cur_ctx = NULL;
+
 	return appendstate;
 }
 
@@ -248,6 +252,7 @@ ExecEndAppend(AppendState *node)
 	PlanState **appendplans;
 	int			nplans;
 	int			i;
+	dlist_mutable_iter miter;
 
 	/*
 	 * get information from the node
@@ -260,6 +265,14 @@ ExecEndAppend(AppendState *node)
 	 */
 	for (i = 0; i < nplans; i++)
 		ExecEndNode(appendplans[i]);
+
+	dlist_foreach_modify(miter, &node->vle_ctxs)
+	{
+		AppendVLECtx *ctx = dlist_container(AppendVLECtx, list, miter.cur);
+		dlist_delete(miter.cur);
+		pfree(ctx);
+	}
+	node->cur_ctx = NULL;
 }
 
 void
@@ -282,9 +295,56 @@ ExecReScanAppend(AppendState *node)
 		 * If chgParam of subnode is not null then plan will be re-scanned by
 		 * first ExecProcNode.
 		 */
-		if (subnode->chgParam == NULL)
+		if (node->ps.state->es_forceReScan || subnode->chgParam == NULL)
 			ExecReScan(subnode);
 	}
 	node->as_whichplan = 0;
 	exec_append_initialize_next(node);
+}
+
+void
+ExecUpScanAppend(AppendState *node)
+{
+	AppendVLECtx *ctx;
+	int i;
+
+	ctx = dlist_container(AppendVLECtx, list, node->cur_ctx);
+	node->as_whichplan = ctx->as_whichplan;
+	if (dlist_has_prev(&node->vle_ctxs, node->cur_ctx))
+		node->cur_ctx = dlist_prev_node(&node->vle_ctxs, node->cur_ctx);
+	else
+		node->cur_ctx = NULL;
+
+	for (i = 0; i < node->as_nplans; i++)
+		ExecUpScan(node->appendplans[i]);
+}
+
+void
+ExecDownScanAppend(AppendState *node)
+{
+	AppendVLECtx *ctx;
+	int i;
+
+	if (node->cur_ctx && dlist_has_next(&node->vle_ctxs, node->cur_ctx))
+	{
+		node->cur_ctx = dlist_next_node(&node->vle_ctxs, node->cur_ctx);
+		ctx = dlist_container(AppendVLECtx, list, node->cur_ctx);
+		ctx->as_whichplan = node->as_whichplan;
+	}
+	else if (! node->cur_ctx && ! dlist_is_empty(&node->vle_ctxs))
+	{
+		node->cur_ctx = dlist_head_node(&node->vle_ctxs);
+		ctx = dlist_container(AppendVLECtx, list, node->cur_ctx);
+		ctx->as_whichplan = node->as_whichplan;
+	}
+	else
+	{
+		ctx = (AppendVLECtx *) palloc(sizeof(AppendVLECtx));
+		ctx->as_whichplan = node->as_whichplan;
+		dlist_push_tail(&node->vle_ctxs, &ctx->list);
+		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+	}
+
+	for (i = 0; i < node->as_nplans; i++)
+		ExecDownScan(node->appendplans[i]);
 }

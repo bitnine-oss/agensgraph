@@ -658,6 +658,18 @@ _outNestLoop(StringInfo str, const NestLoop *node)
 }
 
 static void
+_outNestLoopVLE(StringInfo str, const NestLoopVLE *node)
+{
+	WRITE_NODE_TYPE("NESTLOOP");
+
+	_outJoinPlanInfo(str, (const Join *) node);
+
+	WRITE_NODE_FIELD(nl.nestParams);
+	WRITE_INT_FIELD(minHops);
+	WRITE_INT_FIELD(maxHops);
+}
+
+static void
 _outMergeJoin(StringInfo str, const MergeJoin *node)
 {
 	int			numCols;
@@ -1573,6 +1585,8 @@ _outJoinExpr(StringInfo str, const JoinExpr *node)
 	WRITE_NODE_FIELD(quals);
 	WRITE_NODE_FIELD(alias);
 	WRITE_INT_FIELD(rtindex);
+	WRITE_INT_FIELD(minHops);
+	WRITE_INT_FIELD(maxHops);
 }
 
 static void
@@ -1649,6 +1663,8 @@ _outJoinPathInfo(StringInfo str, const JoinPath *node)
 	WRITE_NODE_FIELD(outerjoinpath);
 	WRITE_NODE_FIELD(innerjoinpath);
 	WRITE_NODE_FIELD(joinrestrictinfo);
+	WRITE_INT_FIELD(minhops);
+	WRITE_INT_FIELD(maxhops);
 }
 
 static void
@@ -2330,6 +2346,8 @@ _outSpecialJoinInfo(StringInfo str, const SpecialJoinInfo *node)
 	WRITE_BOOL_FIELD(semi_can_hash);
 	WRITE_NODE_FIELD(semi_operators);
 	WRITE_NODE_FIELD(semi_rhs_exprs);
+	WRITE_INT_FIELD(min_hops);
+	WRITE_INT_FIELD(max_hops);
 }
 
 static void
@@ -2854,6 +2872,7 @@ _outRangeTblEntry(StringInfo str, const RangeTblEntry *node)
 		case RTE_SUBQUERY:
 			WRITE_NODE_FIELD(subquery);
 			WRITE_BOOL_FIELD(security_barrier);
+			WRITE_BOOL_FIELD(isVLE);
 			break;
 		case RTE_JOIN:
 			WRITE_ENUM_FIELD(jointype, JoinType);
@@ -3681,6 +3700,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_NestLoop:
 				_outNestLoop(str, obj);
+				break;
+			case T_NestLoopVLE:
+				_outNestLoopVLE(str, obj);
 				break;
 			case T_MergeJoin:
 				_outMergeJoin(str, obj);

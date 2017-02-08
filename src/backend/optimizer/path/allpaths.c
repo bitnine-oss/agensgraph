@@ -513,6 +513,9 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 	Assert(rel->reloptkind == RELOPT_BASEREL ||
 		   rel->reloptkind == RELOPT_OTHER_MEMBER_REL);
 
+	if (root->hasVLEJoinRTE)
+		return;
+
 	/* Assorted checks based on rtekind. */
 	switch (rte->rtekind)
 	{
@@ -667,7 +670,8 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	create_index_paths(root, rel);
 
 	/* Consider TID scans */
-	create_tidscan_paths(root, rel);
+	if (! root->hasVLEJoinRTE)
+		create_tidscan_paths(root, rel);
 }
 
 /*
@@ -1721,7 +1725,8 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * The upper query might not use all the subquery's output columns; if
 	 * not, we can simplify.
 	 */
-	remove_unused_subquery_outputs(subquery, rel);
+	if (! rte->isVLE)
+		remove_unused_subquery_outputs(subquery, rel);
 
 	/*
 	 * We can safely pass the outer tuple_fraction down to the subquery if the

@@ -492,6 +492,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		root->wt_param_id = -1;
 	root->non_recursive_path = NULL;
 	root->max_hoop = DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT;
+	root->hasVLEJoinRTE = parent_root ? parent_root->hasVLEJoinRTE : false;
 
 	/*
 	 * If there is a WITH list, process each WITH query and build an initplan
@@ -550,6 +551,8 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 			root->hasJoinRTEs = true;
 			if (IS_OUTER_JOIN(rte->jointype))
 				hasOuterJoins = true;
+			if (rte->jointype == JOIN_VLE)
+				root->hasVLEJoinRTE = true;
 		}
 		if (rte->lateral)
 			root->hasLateralRTEs = true;

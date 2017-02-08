@@ -308,6 +308,9 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 										&bitjoinpaths);
 	}
 
+	if (root->hasVLEJoinRTE)
+		return;
+
 	/*
 	 * Generate BitmapOrPaths for any suitable OR-clauses present in the
 	 * restriction list.  Add these to bitindexpaths.

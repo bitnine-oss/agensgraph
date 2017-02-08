@@ -2599,6 +2599,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 			break;
 
 		case T_NestLoop:
+		case T_NestLoopVLE:
 			{
 				ListCell   *l;
 

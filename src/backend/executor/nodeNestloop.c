@@ -395,6 +395,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	{
 		case JOIN_INNER:
 		case JOIN_SEMI:
+		case JOIN_VLE:
 			break;
 		case JOIN_LEFT:
 		case JOIN_ANTI:
