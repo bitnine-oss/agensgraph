@@ -1415,6 +1415,8 @@ typedef struct JoinExpr
 	Node	   *quals;			/* qualifiers on join, if any */
 	Alias	   *alias;			/* user-written alias clause, if any */
 	int			rtindex;		/* RT index assigned for join, or 0 */
+	int         minHops;
+	int         maxHops;
 } JoinExpr;
 
 /*----------

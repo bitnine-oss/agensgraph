@@ -22,5 +22,7 @@ extern void ExecEndIndexOnlyScan(IndexOnlyScanState *node);
 extern void ExecIndexOnlyMarkPos(IndexOnlyScanState *node);
 extern void ExecIndexOnlyRestrPos(IndexOnlyScanState *node);
 extern void ExecReScanIndexOnlyScan(IndexOnlyScanState *node);
+extern void ExecUpScanIndexOnlyScan(IndexOnlyScanState *node);
+extern void ExecDownScanIndexOnlyScan(IndexOnlyScanState *node);
 
 #endif   /* NODEINDEXONLYSCAN_H */

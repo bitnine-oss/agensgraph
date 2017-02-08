@@ -103,6 +103,7 @@
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNestloop.h"
 #include "executor/nodeProjectSet.h"
+#include "executor/nodeNestloopVle.h"
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeSamplescan.h"
@@ -276,6 +277,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 		case T_NestLoop:
 			result = (PlanState *) ExecInitNestLoop((NestLoop *) node,
 													estate, eflags);
+			break;
+
+		case T_NestLoopVLE:
+			result = (PlanState *) ExecInitNestLoopVLE((NestLoopVLE *) node,
+													   estate, eflags);
 			break;
 
 		case T_MergeJoin:
@@ -494,6 +500,10 @@ ExecProcNode(PlanState *node)
 			 */
 		case T_NestLoopState:
 			result = ExecNestLoop((NestLoopState *) node);
+			break;
+
+		case T_NestLoopVLEState:
+			result = ExecNestLoopVLE((NestLoopVLEState *) node);
 			break;
 
 		case T_MergeJoinState:
@@ -754,6 +764,10 @@ ExecEndNode(PlanState *node)
 			 */
 		case T_NestLoopState:
 			ExecEndNestLoop((NestLoopState *) node);
+			break;
+
+		case T_NestLoopVLEState:
+			ExecEndNestLoopVLE((NestLoopVLEState *) node);
 			break;
 
 		case T_MergeJoinState:

@@ -758,6 +758,16 @@ make_join_rel(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2)
 								 JOIN_INNER, sjinfo,
 								 restrictlist);
 			break;
+		case JOIN_VLE:
+			if (is_dummy_rel(rel1) || is_dummy_rel(rel2) ||
+				restriction_is_constant_false(restrictlist, false))
+			{
+				mark_dummy_rel(joinrel);
+				break;
+			}
+			add_paths_to_joinrel_for_vle(root, joinrel, rel1, rel2,
+										 sjinfo, restrictlist);
+			break;
 		case JOIN_LEFT:
 			if (is_dummy_rel(rel1) ||
 				restriction_is_constant_false(restrictlist, true))

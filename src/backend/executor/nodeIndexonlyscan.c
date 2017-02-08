@@ -331,6 +331,66 @@ ExecReScanIndexOnlyScan(IndexOnlyScanState *node)
 	ExecScanReScan(&node->ss);
 }
 
+void
+ExecUpScanIndexOnlyScan(IndexOnlyScanState *node)
+{
+	IndexScanVLECtx *ctx;
+
+	node->cur_ctx = dlist_prev_node(&node->vle_ctxs, node->cur_ctx);
+	ctx = dlist_container(IndexScanVLECtx, list, node->cur_ctx);
+	node->ss.ss_currentRelation = ctx->ss_currentRelation;
+	node->ioss_RelationDesc = ctx->iss_RelationDesc;
+	node->ioss_ScanDesc = ctx->iss_ScanDesc;
+}
+
+void
+ExecDownScanIndexOnlyScan(IndexOnlyScanState *node)
+{
+	IndexScanVLECtx *ctx;
+
+	if (node->cur_ctx == NULL)
+	{
+		ctx = (IndexScanVLECtx *) palloc(sizeof(IndexScanVLECtx));
+		ctx->ss_currentRelation = node->ss.ss_currentRelation;
+		ctx->iss_RelationDesc = node->ioss_RelationDesc;
+		ctx->iss_ScanDesc = node->ioss_ScanDesc;
+		dlist_push_tail(&node->vle_ctxs, &ctx->list);
+		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+	}
+
+	if (dlist_has_next(&node->vle_ctxs, node->cur_ctx))
+	{
+		node->cur_ctx = dlist_next_node(&node->vle_ctxs, node->cur_ctx);
+		ctx = dlist_container(IndexScanVLECtx, list, node->cur_ctx);
+		node->ss.ss_currentRelation = ctx->ss_currentRelation;
+		node->ioss_RelationDesc = ctx->iss_RelationDesc;
+		node->ioss_ScanDesc = ctx->iss_ScanDesc;
+	}
+	else
+	{
+		IndexOnlyScan *plan = (IndexOnlyScan *) node->ss.ps.plan;
+		EState *estate = node->ss.ps.state;
+		bool relistarget = ExecRelationIsTargetRelation(estate,
+														plan->scan.scanrelid);
+
+		node->ss.ss_currentRelation = ExecOpenScanRelation(
+				estate, plan->scan.scanrelid, 0);
+		node->ioss_RelationDesc = index_open(
+				plan->indexid, relistarget ? NoLock : AccessShareLock);
+		node->ioss_ScanDesc = index_beginscan(
+				node->ss.ss_currentRelation, node->ioss_RelationDesc,
+				estate->es_snapshot, node->ioss_NumScanKeys,
+				node->ioss_NumOrderByKeys);
+		node->ioss_ScanDesc->xs_want_itup = true;
+
+		ctx = (IndexScanVLECtx *) palloc(sizeof(IndexScanVLECtx));
+		ctx->ss_currentRelation = node->ss.ss_currentRelation;
+		ctx->iss_RelationDesc = node->ioss_RelationDesc;
+		ctx->iss_ScanDesc = node->ioss_ScanDesc;
+		dlist_push_tail(&node->vle_ctxs, &ctx->list);
+		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+	}
+}
 
 /* ----------------------------------------------------------------
  *		ExecEndIndexOnlyScan
@@ -342,6 +402,7 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 	Relation	indexRelationDesc;
 	IndexScanDesc indexScanDesc;
 	Relation	relation;
+	dlist_mutable_iter miter;
 
 	/*
 	 * extract information from the node
@@ -375,6 +436,23 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 	/*
 	 * close the index relation (no-op if we didn't open it)
 	 */
+	dlist_foreach_modify(miter, &node->vle_ctxs)
+	{
+		IndexScanVLECtx *ctx;
+
+		if (miter.cur == node->cur_ctx)
+			continue;
+		ctx = dlist_container(IndexScanVLECtx, list, miter.cur);
+		dlist_delete(miter.cur);
+		if (ctx->iss_ScanDesc)
+			index_endscan(ctx->iss_ScanDesc);
+		if (ctx->iss_RelationDesc)
+			index_close(ctx->iss_RelationDesc, NoLock);
+		ExecCloseScanRelation(ctx->ss_currentRelation);
+		pfree(ctx);
+	}
+	node->cur_ctx = NULL;
+
 	if (indexScanDesc)
 		index_endscan(indexScanDesc);
 	if (indexRelationDesc)

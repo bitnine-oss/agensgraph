@@ -234,7 +234,57 @@ CREATE (:time {sec: 11})-[:goes {int: 1}]->
 MATCH (a:time)-[x:goes*1..2 {int: 1}]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
 
--- Variable Length Relationship
+create vlabel person;
+create elabel knows;
+
+-- 1->2->3->4
+CREATE (:person {id: 1})-[:knows]->
+       (:person {id: 2})-[:knows]->
+       (:person {id: 3})-[:knows]->
+       (:person {id: 4});
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
+
+-- 1->2->3->4
+-- `->5
+match (a:person {id: 1}) create (a)-[:knows]->(:person {id: 5});
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
+
+-- 1<->2->3->4
+-- `->5
+match (a:person {id: 2}), (b:person {id: 1}) create (a)-[:knows]->(b);
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
+
+match (a:person {id: 1})-[x:knows*0..0]->(b:person) return a.id, b.id, x;
+
+match (a:person {id: 1})-[x:knows*0..1]->(b:person) return a.id, b.id, x;
+
+match (a:person {id: 1})-[x:knows*2..2]->(b:person) return a.id, b.id, x;
+
+match (a:person {id: 2})-[x:knows*1..1]->(b:person) return a.id, b.id, x;
+
+match (a:person)-[x:knows*1..1]->(b:person) return a.id, b.id, x;
+
+match (a:person)-[x:knows*]->(b:person) return a.id, b.id, x;
+
+match (a:person {id: 1})-[x:knows*0..3]->(b:person) return a.id, b.id, x;
+
+match (a:person {id: 1})-[x*1..2]-(b:person) return a.id, b.id, x;
+
+-- 1->2->3->4
+-- `->5
+match (a:person {id: 2})-[k:knows]->(b:person {id: 1}) delete k;
+
+-- +<----+
+-- 1->2->3->4
+-- `->5
+match (a:person {id: 3}), (b:person {id: 1}) create (a)-[:knows]->(b);
+
+match (a:person {id: 1})-[x:knows*1..]->(b:person) return a.id, b.id, x;
+
+-- shortestpath(), allshortestpaths()
 
 CREATE OR REPLACE FUNCTION ids(vertex[]) RETURNS int[] AS $$
 DECLARE
@@ -251,14 +301,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE VLABEL person;
-CREATE ELABEL knows;
-
-CREATE (:person {id: 1})-[:knows]->
-       (:person {id: 2})-[:knows]->
-       (:person {id: 3})-[:knows]->
-       (:person {id: 4})-[:knows]->
-       (:person {id: 5});
+-- 1->2->3->4->5
+match (a:person {id: 3})-[k:knows]->(b:person {id: 1}) delete k;
+match (a:person {id: 1})-[k:knows]->(b:person {id: 5}) delete k;
+match (a:person {id: 4}), (b:person {id: 5}) create (a)-[:knows]->(b);
 
 MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 4
 RETURN ids(nodes(shortestpath((p)-[:knows]->(f)))) AS ids;

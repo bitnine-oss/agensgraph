@@ -27,6 +27,6 @@ OBJS = execAmi.o execCurrent.o execGrouping.o execIndexing.o execJunk.o \
        nodeValuesscan.o nodeCtescan.o nodeWorktablescan.o \
        nodeGroup.o nodeSubplan.o nodeSubqueryscan.o nodeTidscan.o \
        nodeForeignscan.o nodeWindowAgg.o tstoreReceiver.o tqueue.o spi.o \
-       nodeModifyGraph.o
+       nodeModifyGraph.o nodeNestloopVle.o
 
 include $(top_srcdir)/src/backend/common.mk
