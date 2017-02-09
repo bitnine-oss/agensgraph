@@ -38,6 +38,8 @@ typedef uint64 Graphid;
 extern Datum graphid(PG_FUNCTION_ARGS);
 extern Datum graphid_in(PG_FUNCTION_ARGS);
 extern Datum graphid_out(PG_FUNCTION_ARGS);
+extern Datum graphid_recv(PG_FUNCTION_ARGS);
+extern Datum graphid_send(PG_FUNCTION_ARGS);
 extern Datum graphid_labid(PG_FUNCTION_ARGS);
 extern Datum graphid_locid(PG_FUNCTION_ARGS);
 extern Datum graph_labid(PG_FUNCTION_ARGS);
