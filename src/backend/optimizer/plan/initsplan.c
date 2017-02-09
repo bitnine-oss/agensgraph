@@ -977,7 +977,7 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 		 * Semijoins are a bit of a hybrid: we build a SpecialJoinInfo, but we
 		 * want ojscope = NULL for distribute_qual_to_rels.
 		 */
-		if (j->jointype != JOIN_INNER && j->jointype != JOIN_VLR)
+		if (j->jointype != JOIN_INNER)
 		{
 			sjinfo = make_outerjoininfo(root,
 										leftids, rightids,
@@ -986,6 +986,12 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 										my_quals);
 			if (j->jointype == JOIN_SEMI)
 				ojscope = NULL;
+			else if (j->jointype == JOIN_VLR)
+			{
+				ojscope = NULL;
+				sjinfo->min_hops = j->minHops;
+				sjinfo->max_hops = j->maxHops;
+			}
 			else
 				ojscope = bms_union(sjinfo->min_lefthand,
 									sjinfo->min_righthand);
@@ -1135,7 +1141,7 @@ make_outerjoininfo(PlannerInfo *root,
 	compute_semijoin_info(sjinfo, clause);
 
 	/* If it's a full join, no need to be very smart */
-	if (jointype == JOIN_FULL)
+	if (jointype == JOIN_FULL || jointype == JOIN_VLR)
 	{
 		sjinfo->min_lefthand = bms_copy(left_rels);
 		sjinfo->min_righthand = bms_copy(right_rels);

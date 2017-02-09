@@ -4034,6 +4034,14 @@ calc_joinrel_size_estimate(PlannerInfo *root,
 			nrows = outer_rows * inner_rows * fkselec * jselec;
 			/* pselec not used */
 			break;
+		case JOIN_VLR:
+			{
+				int base = (sjinfo->min_hops > 0) ? 1 : 0;
+				int inner_loop_cnt = sjinfo->max_hops - base;
+				nrows = outer_rows * (inner_rows * inner_loop_cnt)
+					* fkselec * jselec;
+			}
+			break;
 		case JOIN_LEFT:
 			nrows = outer_rows * inner_rows * fkselec * jselec;
 			if (nrows < outer_rows)

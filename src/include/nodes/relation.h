@@ -1799,6 +1799,9 @@ typedef struct SpecialJoinInfo
 	bool		semi_can_hash;	/* true if semi_operators are all hash */
 	List	   *semi_operators; /* OIDs of equality join operators */
 	List	   *semi_rhs_exprs; /* righthand-side expressions of these ops */
+	/* Fields for JOIN_VLR */
+	int			min_hops;
+	int			max_hops;
 } SpecialJoinInfo;
 
 /*
