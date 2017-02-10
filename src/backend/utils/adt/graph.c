@@ -19,6 +19,8 @@
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
 #include "funcapi.h"
+#include "libpq/libpq.h"
+#include "libpq/pqformat.h"
 #include "utils/array.h"
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
@@ -129,6 +131,25 @@ graphid_out(PG_FUNCTION_ARGS)
 			 GraphidGetLabid(id), GraphidGetLocid(id));
 
 	PG_RETURN_CSTRING(buf);
+}
+
+Datum
+graphid_recv(PG_FUNCTION_ARGS)
+{
+	StringInfo	buf = (StringInfo) PG_GETARG_POINTER(0);
+
+	PG_RETURN_GRAPHID((Graphid) pq_getmsgint64(buf));
+}
+
+Datum
+graphid_send(PG_FUNCTION_ARGS)
+{
+	Graphid		arg1 = PG_GETARG_GRAPHID(0);
+	StringInfoData buf;
+
+	pq_begintypsend(&buf);
+	pq_sendint64(&buf, arg1);
+	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
 
 static void
