@@ -136,7 +136,7 @@ static SelectStmt *genVLRsubselect(ParseState *pstate, CypherRel *crel,
 									bool out);
 static Node *genEdgeNode(CypherRel *crel, char *aliasname);
 static Node *genVLRJoinExpr(CypherRel *crel, Node *larg);
-static List *genVLRTargetList(char *schemaName, bool outPath);
+static List *genVLRTargetList(char *schemaName, bool outPath, CypherRel *crel);
 static List *genFields(char *schemaName, char *colName);
 static Node *genVLRQual(char *alias, Node *propMap);
 static RangeSubselect *genEdgeUnionVLR(char *edge_label);
@@ -1813,7 +1813,7 @@ genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
 	join = genVLRJoinExpr(crel, left);
 
 	sel = makeNode(SelectStmt);
-	sel->targetList = genVLRTargetList("l", out);
+	sel->targetList = genVLRTargetList("l", out, crel);
 	sel->fromClause = list_make1(join);
 	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
@@ -1923,7 +1923,7 @@ genVLRJoinExpr(CypherRel *crel, Node *larg)
 }
 
 static List *
-genVLRTargetList(char *schemaName, bool outPath)
+genVLRTargetList(char *schemaName, bool outPath, CypherRel *crel)
 {
 	ResTarget  	*start;
 	ResTarget  	*end;
@@ -1934,10 +1934,20 @@ genVLRTargetList(char *schemaName, bool outPath)
 	ResTarget  	*rowids;
 	List 		*tlist;
 
-	start = makeFieldsResTarget(genFields(schemaName, AG_START_ID),
-								VLR_COLNAME_START);
-	end = makeFieldsResTarget(genFields(schemaName, AG_END_ID),
-							  VLR_COLNAME_END);
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+	{
+		start = makeFieldsResTarget(genFields(schemaName, AG_START_ID),
+									EDGE_UNION_START_ID);
+		end = makeFieldsResTarget(genFields(schemaName, AG_END_ID),
+								  EDGE_UNION_END_ID);
+	}
+	else
+	{
+		start = makeFieldsResTarget(genFields(schemaName, AG_START_ID),
+									VLR_COLNAME_START);
+		end = makeFieldsResTarget(genFields(schemaName, AG_END_ID),
+								  VLR_COLNAME_END);
+	}
 	tableoid = makeNode(ColumnRef);
 	tableoid->fields = genFields(schemaName, "tableoid");
 	tableoid->location = -1;
