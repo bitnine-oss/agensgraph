@@ -2001,10 +2001,10 @@ genVLRQual(char *alias, Node *propMap)
 }
 
 /*
- * SELECT tableoid, ctid, id, properties, start, "end"
+ * SELECT start, "end", tableoid, ctid, id, properties
  * FROM `get_graph_path()`.`edge_label`
  * UNION
- * SELECT tableoid, ctid, id, properties, "end" AS start, start AS "end"
+ * SELECT "end" AS start, start AS "end", tableoid, ctid, id, properties
  * FROM `get_graph_path()`.`edge_label`
  */
 static RangeSubselect *
@@ -2034,15 +2034,15 @@ genEdgeUnionVLR(char *edge_label)
 
 	rsel = copyObject(lsel);
 
-	lsel->targetList = lappend(lsel->targetList,
-							   makeSimpleResTarget(AG_START_ID, NULL));
-	lsel->targetList = lappend(lsel->targetList,
-							   makeSimpleResTarget(AG_END_ID, NULL));
+	lsel->targetList = lcons(makeSimpleResTarget(AG_END_ID, NULL),
+							 lsel->targetList);
+	lsel->targetList = lcons(makeSimpleResTarget(AG_START_ID, NULL),
+							 lsel->targetList);
 
-	rsel->targetList = lappend(rsel->targetList,
-							   makeSimpleResTarget(AG_END_ID, AG_START_ID));
-	rsel->targetList = lappend(rsel->targetList,
-							   makeSimpleResTarget(AG_START_ID, AG_END_ID));
+	rsel->targetList = lcons(makeSimpleResTarget(AG_START_ID, AG_END_ID),
+							 rsel->targetList);
+	rsel->targetList = lcons(makeSimpleResTarget(AG_END_ID, AG_START_ID),
+							 rsel->targetList);
 
 	u = makeNode(SelectStmt);
 	u->op = SETOP_UNION;
