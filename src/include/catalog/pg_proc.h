@@ -5332,6 +5332,10 @@ DATA(insert OID = 7003 ( graphid_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 
 DESCR("I/O");
 DATA(insert OID = 7004 ( graphid_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7002" _null_ _null_ _null_ _null_ _null_ graphid_out _null_ _null_ _null_ ));
 DESCR("I/O");
+DATA(insert OID = 7005 ( graphid_recv	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7002 "2281" _null_ _null_ _null_ _null_ _null_ graphid_recv _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7006 ( graphid_send	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "7002" _null_ _null_ _null_ _null_ _null_ graphid_send _null_ _null_ _null_ ));
+DESCR("I/O");
 DATA(insert OID = 7007 ( graphid_labid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "7002" _null_ _null_ _null_ _null_ _null_ graphid_labid _null_ _null_ _null_ ));
 DATA(insert OID = 7008 ( graphid_locid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 20 "7002" _null_ _null_ _null_ _null_ _null_ graphid_locid _null_ _null_ _null_ ));
 DATA(insert OID = 7009 ( graph_labid	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 23 "2275" _null_ _null_ _null_ _null_ _null_ graph_labid _null_ _null_ _null_ ));
