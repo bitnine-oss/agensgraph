@@ -153,6 +153,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->graphid = get_graph_path_oid();
 	mgstate->graphname = get_graph_path(false);
 	mgstate->edgeid = get_labname_labid(AG_EDGE, mgstate->graphid);
+	mgstate->numOldRtable = list_length(estate->es_range_table);
 
 	if (mgplan->targets != NIL)
 	{
@@ -253,6 +254,7 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 void
 ExecEndModifyGraph(ModifyGraphState *mgstate)
 {
+	EState	   *estate = mgstate->ps.state;
 	ResultRelInfo *resultRelInfo;
 	int			i;
 
@@ -267,6 +269,12 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 
 		resultRelInfo++;
 	}
+
+	/*
+	 * PlannedStmt can be used as a cached plan,
+	 * so remove the rtables added to this run.
+	 */
+	list_truncate(estate->es_range_table, mgstate->numOldRtable);
 
 	ExecEndNode(mgstate->subplan);
 	ExecFreeExprContext(&mgstate->ps);

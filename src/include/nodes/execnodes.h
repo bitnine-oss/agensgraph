@@ -2088,6 +2088,7 @@ typedef struct ModifyGraphState
 	Oid			graphid;
 	char	   *graphname;
 	uint16		edgeid;
+	int			numOldRtable;
 	ResultRelInfo *resultRelations;
 	int			numResultRelations;
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE
