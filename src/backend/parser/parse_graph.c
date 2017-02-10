@@ -250,7 +250,6 @@ static Node *qualAndExpr(Node *qual, Node *expr);
 static ResTarget *makeSimpleResTarget(char *field, char *name);
 static ResTarget *makeFieldsResTarget(List *fields, char *name);
 static ResTarget *makeResTarget(Node *val, char *name);
-static A_Const *makeIntConst(int val);
 static RowExpr *makeRowExpr(List *args);
 static bool IsNullAConst(Node *arg);
 
@@ -1749,32 +1748,26 @@ genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
 	if (isZeroLengthVLR(crel))
 	{
 		RangeSubselect 	*sub;
-		A_ArrayExpr 	*rowidarr;
-		TypeCast   		*rowids;
 		List	   		*values;
+		A_Const 		*tableoid;
+		A_Const 		*ctid;
+		List			*colnames;
 
 		Assert(vid != NULL);
 
-		rowidarr = makeNode(A_ArrayExpr);
-		rowidarr->location = -1;
-		rowids = makeNode(TypeCast);
-		rowids->arg = (Node *) rowidarr;
-		rowids->typeName = makeTypeName("_record");
-		rowids->location = -1;
-		values = list_make4(vid, vid, makeIntConst(0), rowids);
+		tableoid = makeNode(A_Const);
+		tableoid->val.type = T_Null;
+		tableoid->location = -1;
+		ctid = copyObject(tableoid);
 
+		values = list_make4(vid, vid, tableoid, ctid);
+		colnames = list_make4(makeString("start"), makeString("end"),
+							  makeString("tableoid"), makeString("ctid"));
 		if (out)
 		{
-			A_ArrayExpr *patharr;
-			TypeCast 	*path;
-
-			patharr = makeNode(A_ArrayExpr);
-			patharr->location = -1;
-			path = makeNode(TypeCast);
-			path->arg = (Node *) patharr;
-			path->typeName = makeTypeName("_graphid");
-			path->location = -1;
-			values = lappend(values, path);
+			A_Const *id = copyObject(tableoid);
+			values = lappend(values, id);
+			colnames = lappend(colnames, makeString("id"));
 		}
 
 		sel = makeNode(SelectStmt);
@@ -1782,7 +1775,7 @@ genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
 
 		sub = makeNode(RangeSubselect);
 		sub->subquery = (Node *) sel;
-		sub->alias = makeAliasNoDup("l", NIL);
+		sub->alias = makeAliasNoDup("l", colnames);
 		left = (Node *) sub;
 	}
 	else {
@@ -4087,19 +4080,6 @@ makeResTarget(Node *val, char *name)
 	res->location = -1;
 
 	return res;
-}
-
-static A_Const *
-makeIntConst(int val)
-{
-	A_Const *c;
-
-	c = makeNode(A_Const);
-	c->val.type = T_Integer;
-	c->val.val.ival = val;
-	c->location = -1;
-
-	return c;
 }
 
 static RowExpr *
