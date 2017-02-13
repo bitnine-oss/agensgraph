@@ -655,6 +655,8 @@ _outNestLoop(StringInfo str, const NestLoop *node)
 	_outJoinPlanInfo(str, (const Join *) node);
 
 	WRITE_NODE_FIELD(nestParams);
+	WRITE_INT_FIELD(minHops);
+	WRITE_INT_FIELD(maxHops);
 }
 
 static void
@@ -1651,6 +1653,8 @@ _outJoinPathInfo(StringInfo str, const JoinPath *node)
 	WRITE_NODE_FIELD(outerjoinpath);
 	WRITE_NODE_FIELD(innerjoinpath);
 	WRITE_NODE_FIELD(joinrestrictinfo);
+	WRITE_INT_FIELD(minhops);
+	WRITE_INT_FIELD(maxhops);
 }
 
 static void

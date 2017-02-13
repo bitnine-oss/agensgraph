@@ -748,6 +748,8 @@ _copyNestLoop(const NestLoop *from)
 	 * copy remainder of node
 	 */
 	COPY_NODE_FIELD(nestParams);
+	COPY_SCALAR_FIELD(minHops);
+	COPY_SCALAR_FIELD(maxHops);
 
 	return newnode;
 }

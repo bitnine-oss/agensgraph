@@ -209,7 +209,7 @@ static BitmapOr *make_bitmap_or(List *bitmapplans);
 static NestLoop *make_nestloop(List *tlist,
 			  List *joinclauses, List *otherclauses, List *nestParams,
 			  Plan *lefttree, Plan *righttree,
-			  JoinType jointype);
+			  JoinType jointype, int minhops, int maxhops);
 static HashJoin *make_hashjoin(List *tlist,
 			  List *joinclauses, List *otherclauses,
 			  List *hashclauses,
@@ -3508,7 +3508,9 @@ create_nestloop_plan(PlannerInfo *root,
 							  nestParams,
 							  outer_plan,
 							  inner_plan,
-							  best_path->jointype);
+							  best_path->jointype,
+							  best_path->minhops,
+							  best_path->maxhops);
 
 	copy_generic_path_info(&join_plan->join.plan, &best_path->path);
 
@@ -5121,7 +5123,9 @@ make_nestloop(List *tlist,
 			  List *nestParams,
 			  Plan *lefttree,
 			  Plan *righttree,
-			  JoinType jointype)
+			  JoinType jointype,
+			  int 	minhops,
+			  int 	maxhops)
 {
 	NestLoop   *node = makeNode(NestLoop);
 	Plan	   *plan = &node->join.plan;
@@ -5133,6 +5137,8 @@ make_nestloop(List *tlist,
 	node->join.jointype = jointype;
 	node->join.joinqual = joinclauses;
 	node->nestParams = nestParams;
+	node->minHops = minhops;
+	node->maxHops = maxhops;
 
 	return node;
 }

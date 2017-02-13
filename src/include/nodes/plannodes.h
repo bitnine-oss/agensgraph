@@ -617,6 +617,8 @@ typedef struct NestLoop
 {
 	Join		join;
 	List	   *nestParams;		/* list of NestLoopParam nodes */
+	int			minHops;
+	int			maxHops;
 } NestLoop;
 
 typedef struct NestLoopParam

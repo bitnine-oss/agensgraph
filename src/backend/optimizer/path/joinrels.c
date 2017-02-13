@@ -765,10 +765,8 @@ make_join_rel(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2)
 				mark_dummy_rel(joinrel);
 				break;
 			}
-			/* TODO: add VLR paths */
-			add_paths_to_joinrel(root, joinrel, rel1, rel2,
-								 JOIN_INNER, sjinfo,
-								 restrictlist);
+			add_paths_to_joinrel_for_vlr(root, joinrel, rel1, rel2,
+										 sjinfo, restrictlist);
 			break;
 		case JOIN_LEFT:
 			if (is_dummy_rel(rel1) ||

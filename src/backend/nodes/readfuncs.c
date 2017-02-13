@@ -1900,6 +1900,8 @@ _readNestLoop(void)
 	ReadCommonJoin(&local_node->join);
 
 	READ_NODE_FIELD(nestParams);
+	READ_INT_FIELD(minHops);
+	READ_INT_FIELD(maxHops);
 
 	READ_DONE();
 }

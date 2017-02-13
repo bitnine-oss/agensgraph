@@ -1155,6 +1155,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					case JOIN_INNER:
 						jointype = "Inner";
 						break;
+					case JOIN_VLR:
+						jointype = "VLE";
+						break;
 					case JOIN_LEFT:
 						jointype = "Left";
 						break;

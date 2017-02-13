@@ -2133,6 +2133,12 @@ final_cost_nestloop(PlannerInfo *root, NestPath *path,
 				inner_path_rows;
 		}
 	}
+	else if (path->jointype == JOIN_VLR)
+	{
+		int base = (sjinfo->min_hops > 0) ? 1 : 0;
+		int inner_loop_cnt = sjinfo->max_hops - base;
+		ntuples = outer_path_rows * inner_path_rows * inner_loop_cnt;
+	}
 	else
 	{
 		/* Normal-case source costs were included in preliminary estimate */
