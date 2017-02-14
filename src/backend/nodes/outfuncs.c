@@ -655,6 +655,16 @@ _outNestLoop(StringInfo str, const NestLoop *node)
 	_outJoinPlanInfo(str, (const Join *) node);
 
 	WRITE_NODE_FIELD(nestParams);
+}
+
+static void
+_outNestLoopVLE(StringInfo str, const NestLoopVLE *node)
+{
+	WRITE_NODE_TYPE("NESTLOOP");
+
+	_outJoinPlanInfo(str, (const Join *) node);
+
+	WRITE_NODE_FIELD(nl.nestParams);
 	WRITE_INT_FIELD(minHops);
 	WRITE_INT_FIELD(maxHops);
 }
@@ -3673,6 +3683,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_NestLoop:
 				_outNestLoop(str, obj);
+				break;
+			case T_NestLoopVLE:
+				_outNestLoopVLE(str, obj);
 				break;
 			case T_MergeJoin:
 				_outMergeJoin(str, obj);

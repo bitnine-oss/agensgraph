@@ -748,12 +748,33 @@ _copyNestLoop(const NestLoop *from)
 	 * copy remainder of node
 	 */
 	COPY_NODE_FIELD(nestParams);
+
+	return newnode;
+}
+
+/*
+ * _copyNestLoopVLE
+ */
+static NestLoopVLE *
+_copyNestLoopVLE(const NestLoopVLE *from)
+{
+	NestLoopVLE   *newnode = makeNode(NestLoopVLE);
+
+	/*
+	 * copy node superclass fields
+	 */
+	CopyJoinFields((const Join *) from, (Join *) newnode);
+
+	/*
+	 * copy remainder of node
+	 */
+	/* FIXME: ugly */
+	COPY_NODE_FIELD(nl.nestParams);
 	COPY_SCALAR_FIELD(minHops);
 	COPY_SCALAR_FIELD(maxHops);
 
 	return newnode;
 }
-
 
 /*
  * _copyMergeJoin
@@ -4744,6 +4765,9 @@ copyObject(const void *from)
 			break;
 		case T_NestLoop:
 			retval = _copyNestLoop(from);
+			break;
+		case T_NestLoopVLE:
+			retval = _copyNestLoopVLE(from);
 			break;
 		case T_MergeJoin:
 			retval = _copyMergeJoin(from);

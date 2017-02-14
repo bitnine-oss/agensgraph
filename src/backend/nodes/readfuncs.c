@@ -1900,6 +1900,22 @@ _readNestLoop(void)
 	ReadCommonJoin(&local_node->join);
 
 	READ_NODE_FIELD(nestParams);
+
+	READ_DONE();
+}
+
+/*
+ * _readNestLoop
+ */
+static NestLoopVLE *
+_readNestLoopVLE(void)
+{
+	READ_LOCALS(NestLoopVLE);
+
+	ReadCommonJoin(&local_node->nl.join);
+
+	READ_NODE_FIELD(nl.nestParams);
+
 	READ_INT_FIELD(minHops);
 	READ_INT_FIELD(maxHops);
 
@@ -2505,6 +2521,8 @@ parseNodeString(void)
 		return_value = _readJoin();
 	else if (MATCH("NESTLOOP", 8))
 		return_value = _readNestLoop();
+	else if (MATCH("NESTLOOPVLE", 8))
+		return_value = _readNestLoopVLE();
 	else if (MATCH("MERGEJOIN", 9))
 		return_value = _readMergeJoin();
 	else if (MATCH("HASHJOIN", 8))

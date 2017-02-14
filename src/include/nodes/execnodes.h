@@ -1672,6 +1672,12 @@ typedef struct NestLoopState
 	TupleTableSlot *nl_NullInnerTupleSlot;
 } NestLoopState;
 
+typedef struct NestLoopVLEState
+{
+	NestLoopState 	nls;
+	int				curhops;
+} NestLoopVLEState;
+
 /* ----------------
  *	 MergeJoinState information
  *

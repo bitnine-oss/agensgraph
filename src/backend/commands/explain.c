@@ -860,6 +860,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			pname = sname = "BitmapOr";
 			break;
 		case T_NestLoop:
+		case T_NestLoopVLE:
 			pname = sname = "Nested Loop";
 			break;
 		case T_MergeJoin:
@@ -1145,6 +1146,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			ExplainModifyTarget((ModifyTable *) plan, es);
 			break;
 		case T_NestLoop:
+		case T_NestLoopVLE:
 		case T_MergeJoin:
 		case T_HashJoin:
 			{
@@ -1455,6 +1457,17 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			show_upper_qual(((NestLoop *) plan)->join.joinqual,
 							"Join Filter", planstate, ancestors, es);
 			if (((NestLoop *) plan)->join.joinqual)
+				show_instrumentation_count("Rows Removed by Join Filter", 1,
+										   planstate, es);
+			show_upper_qual(plan->qual, "Filter", planstate, ancestors, es);
+			if (plan->qual)
+				show_instrumentation_count("Rows Removed by Filter", 2,
+										   planstate, es);
+			break;
+		case T_NestLoopVLE:
+			show_upper_qual(((NestLoopVLE *) plan)->nl.join.joinqual,
+							"Join Filter", planstate, ancestors, es);
+			if (((NestLoopVLE *) plan)->nl.join.joinqual)
 				show_instrumentation_count("Rows Removed by Join Filter", 1,
 										   planstate, es);
 			show_upper_qual(plan->qual, "Filter", planstate, ancestors, es);

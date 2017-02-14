@@ -617,8 +617,6 @@ typedef struct NestLoop
 {
 	Join		join;
 	List	   *nestParams;		/* list of NestLoopParam nodes */
-	int			minHops;
-	int			maxHops;
 } NestLoop;
 
 typedef struct NestLoopParam
@@ -627,6 +625,14 @@ typedef struct NestLoopParam
 	int			paramno;		/* number of the PARAM_EXEC Param to set */
 	Var		   *paramval;		/* outer-relation Var to assign to Param */
 } NestLoopParam;
+
+/* XXX: inheritance ? */
+typedef struct NestLoopVLE
+{
+	NestLoop	nl;
+	int			minHops;
+	int			maxHops;
+} NestLoopVLE;
 
 /* ----------------
  *		merge join node
