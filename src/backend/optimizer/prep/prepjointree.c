@@ -691,6 +691,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 		 * unless is_safe_append_member says so.
 		 */
 		if (rte->rtekind == RTE_SUBQUERY &&
+			! rte->isVLR &&
 			is_simple_subquery(rte->subquery, rte,
 							   lowest_outer_join, deletion_ok) &&
 			(containing_appendrel == NULL ||
@@ -786,8 +787,6 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 		switch (j->jointype)
 		{
 			case JOIN_INNER:
-			case JOIN_VLR:
-
 				/*
 				 * INNER JOIN can allow deletion of either child node, but not
 				 * both.  So right child gets permission to delete only if
@@ -841,6 +840,8 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 												   lowest_nulling_outer_join,
 													 NULL,
 													 false);
+				break;
+			case JOIN_VLR:
 				break;
 			default:
 				elog(ERROR, "unrecognized join type: %d",
@@ -956,8 +957,7 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	 * easier just to keep this "if" looking the same as the one in
 	 * pull_up_subqueries_recurse.
 	 */
-	if (! rte->isVLR &&
-		is_simple_subquery(subquery, rte,
+	if (is_simple_subquery(subquery, rte,
 						   lowest_outer_join, deletion_ok) &&
 		(containing_appendrel == NULL || is_safe_append_member(subquery)))
 	{
