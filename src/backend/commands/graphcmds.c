@@ -44,6 +44,7 @@
 static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
 static void AgInheritanceDependancy(Oid laboid, List *supers);
+static void SetMaxStatisticsTarget(Oid laboid);
 
 /* See ProcessUtilitySlow() case T_CreateSchemaStmt */
 void
@@ -207,6 +208,9 @@ DefineLabel(CreateStmt *stmt, char labkind)
 
 	CommandCounterIncrement();
 
+	if (labkind == LABEL_KIND_EDGE)
+		SetMaxStatisticsTarget(reladdr.objectId);
+
 	/* parse and validate reloptions for the toast table */
 	toast_options = transformRelOptions((Datum) 0, stmt->options, "toast",
 										validnsps, true, false);
@@ -241,6 +245,57 @@ DefineLabel(CreateStmt *stmt, char labkind)
 	recordDependencyOn(&reladdr, &labaddr, DEPENDENCY_INTERNAL);
 
 	return labaddr;
+}
+
+/* See ATExecSetStatistics() */
+static void
+SetMaxStatisticsTarget(Oid laboid)
+{
+	Relation	attrelation;
+	HeapTuple	tuple;
+	Form_pg_attribute attrtuple;
+	int			maxtarget = 10000;
+
+	attrelation = heap_open(AttributeRelationId, RowExclusiveLock);
+
+	/* start column */
+
+	tuple = SearchSysCacheCopyAttName(laboid, AG_START_ID);
+
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("edge label must have start column")));
+
+	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
+	attrtuple->attstattarget = maxtarget;
+
+	simple_heap_update(attrelation, &tuple->t_self, tuple);
+
+	CatalogUpdateIndexes(attrelation, tuple);
+
+	heap_freetuple(tuple);
+
+	/* end column */
+
+	tuple = SearchSysCacheCopyAttName(laboid, AG_END_ID);
+
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("edge label must have end column")));
+
+	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
+
+	attrtuple->attstattarget = maxtarget;
+
+	simple_heap_update(attrelation, &tuple->t_self, tuple);
+
+	CatalogUpdateIndexes(attrelation, tuple);
+
+	heap_freetuple(tuple);
+
+	heap_close(attrelation, RowExclusiveLock);
 }
 
 static void
