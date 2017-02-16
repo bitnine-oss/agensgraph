@@ -249,10 +249,10 @@ static Node *qualAndExpr(Node *qual, Node *expr);
 
 /* parse node */
 static ResTarget *makeSimpleResTarget(char *field, char *name);
-static ResTarget *makeFieldsResTarget(List *fields, char *name);
 static ResTarget *makeResTarget(Node *val, char *name);
 static RowExpr *makeRowExpr(List *args);
 static Node *makeColumnRef(List *fields);
+static Node *makeNullAwareArrayAppend(Node *arr, Node *elem);
 static bool IsNullAConst(Node *arg);
 
 /* utils */
@@ -1726,44 +1726,69 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 }
 
 /*
- * SELECT l.start, l.end, array[(l.tableoid, l.ctid)] AS rowids, array[l.id] AS path
+ * SELECT l.end, array[(l.tableoid, l.ctid)] AS rowids, array[l.id] AS path
  * FROM edge AS l VLR JOIN edge AS r ON l.end = r.start
  * WHERE l.start = vid AND l.properties @> ... AND r.properties @> ...
  */
 static SelectStmt *
 genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
 {
+	Node 	   *l_jid;
+	Node 	   *r_jid;
 	ResTarget  *jid;
+	char	   *jid_name;
+	CoalesceExpr *coal;
+	Node	   *l_rowids;
+	Node	   *r_rowid;
 	ResTarget  *rowids;
 	List 	   *tlist;
 	Node       *left;
 	Node       *right;
 	Node	   *join;
+	FuncCall   *fn_ap;
+	NullTest   *dup_check;
+	List	   *where_args = NIL;
 	SelectStmt *sel;
 
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
-		jid = makeFieldsResTarget(genFields("l", AG_END_ID),
-								  EDGE_UNION_END_ID);
+		l_jid = makeColumnRef(genFields("l", AG_END_ID));
+		r_jid = makeColumnRef(genFields("r", AG_END_ID));
+		jid_name = EDGE_UNION_END_ID;
 	}
 	else if (crel->direction == CYPHER_REL_DIR_LEFT)
 	{
-		jid = makeFieldsResTarget(genFields("l", AG_START_ID),
-								  VLR_COLNAME_START);
+		l_jid = makeColumnRef(genFields("l", AG_START_ID));
+		r_jid = makeColumnRef(genFields("r", AG_START_ID));
+		jid_name = VLR_COLNAME_START;
 	}
 	else
 	{
-		jid = makeFieldsResTarget(genFields("l", AG_END_ID),
-								  VLR_COLNAME_END);
+		l_jid = makeColumnRef(genFields("l", AG_END_ID));
+		r_jid = makeColumnRef(genFields("r", AG_END_ID));
+		jid_name = VLR_COLNAME_END;
 	}
-	rowids = makeFieldsResTarget(genFields("l", VLR_COLNAME_ROWIDS),
-								 VLR_COLNAME_ROWIDS);
+
+	coal = makeNode(CoalesceExpr);
+	coal->args = list_make2(l_jid, r_jid);
+	coal->location = -1;
+	jid = makeResTarget((Node *) coal, jid_name);
+
+	l_rowids = makeColumnRef(genFields("l", VLR_COLNAME_ROWIDS));
+	r_rowid = makeColumnRef(genFields("r", "rowid"));
+	rowids = makeResTarget(makeNullAwareArrayAppend(l_rowids, r_rowid),
+						   VLR_COLNAME_ROWIDS);
 	tlist = list_make2(jid, rowids);
 	if (out)
 	{
-		ResTarget *path;
-		path = makeFieldsResTarget(genFields("l", VLR_COLNAME_PATH),
-								   VLR_COLNAME_PATH);
+		Node	   *l_path;
+		Node	   *r_id;
+		ResTarget  *path;
+
+		l_path = makeColumnRef(genFields("l", VLR_COLNAME_PATH));
+		r_id = makeColumnRef(genFields("r", "id"));
+		path = makeResTarget(makeNullAwareArrayAppend(l_path, r_id),
+							 VLR_COLNAME_PATH);
 		tlist = lappend(tlist, path);
 	}
 
@@ -1772,9 +1797,19 @@ genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
 
 	join = genVLRJoinExpr(crel, left, right);
 
+	fn_ap = makeFuncCall(list_make1(makeString("array_position")),
+						 list_make2(copyObject(l_rowids), copyObject(r_rowid)),
+						 -1);
+	dup_check = makeNode(NullTest);
+	dup_check->arg = (Expr *) fn_ap;
+	dup_check->nulltesttype = IS_NULL;
+	dup_check->location = -1;
+	where_args = lappend(where_args, dup_check);
+
 	sel = makeNode(SelectStmt);
 	sel->targetList = tlist;
 	sel->fromClause = list_make1(join);
+	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
 	return sel;
 }
@@ -4164,18 +4199,6 @@ makeSimpleResTarget(char *field, char *name)
 }
 
 static ResTarget *
-makeFieldsResTarget(List *fields, char *name)
-{
-	ColumnRef *cref;
-
-	cref = makeNode(ColumnRef);
-	cref->fields = fields;
-	cref->location = -1;
-
-	return makeResTarget((Node *) cref, name);
-}
-
-static ResTarget *
 makeResTarget(Node *val, char *name)
 {
 	ResTarget *res;
@@ -4209,6 +4232,35 @@ makeColumnRef(List *fields)
 	n->fields = fields;
 	n->location = -1;
 	return (Node *)n;
+}
+
+static Node *
+makeNullAwareArrayAppend(Node *arr, Node *elem)
+{
+	FuncCall *aa_fn;
+	NullTest *elem_is_null;
+	CaseWhen *w;
+	CaseExpr *c;
+
+	aa_fn = makeFuncCall(list_make1(makeString("array_append")),
+						 list_make2(arr, elem), -1);
+
+	elem_is_null = makeNode(NullTest);
+	elem_is_null->arg = (Expr *) copyObject(elem);
+	elem_is_null->nulltesttype = IS_NULL;
+	elem_is_null->location = -1;
+
+	w = makeNode(CaseWhen);
+	w->expr = (Expr *) elem_is_null;
+	w->result = (Expr *) copyObject(arr);
+
+	c = makeNode(CaseExpr);
+	c->casetype = InvalidOid;
+	c->arg = NULL;
+	c->args = list_make1(w);
+	c->defresult = (Expr *) aa_fn;
+
+	return (Node *) c;
 }
 
 static bool
