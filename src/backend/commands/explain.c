@@ -1185,7 +1185,17 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					 * For historical reasons, the join type is interpolated
 					 * into the node type name...
 					 */
-					if (((Join *) plan)->jointype != JOIN_INNER)
+					if (((Join *) plan)->jointype == JOIN_VLR)
+					{
+						NestLoopVLE *nlvPlan = (NestLoopVLE *) plan;
+						appendStringInfo(es->str, " %s [%d..",
+										 jointype, nlvPlan->minHops);
+						if (nlvPlan->maxHops != -1)
+							appendStringInfo(es->str, "%d]", nlvPlan->maxHops);
+						else
+							appendStringInfo(es->str, "]");
+					}
+					else if (((Join *) plan)->jointype != JOIN_INNER)
 						appendStringInfo(es->str, " %s Join", jointype);
 					else if (!IsA(plan, NestLoop))
 						appendStringInfoString(es->str, " Join");
