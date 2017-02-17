@@ -102,6 +102,10 @@ REINDEX VLABEL vdi;
 REINDEX ELABEL vdi;
 REINDEX VLABEL g.vdi;
 
+-- check default attstattarget of edge label
+SELECT attname, attstattarget FROM pg_attribute
+WHERE attrelid = ( SELECT oid FROM pg_class WHERE relname = 'e1');
+
 --
 -- COMMENT and \dG commands
 --
