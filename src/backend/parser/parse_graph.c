@@ -11,10 +11,13 @@
 #include "postgres.h"
 
 #include "ag_const.h"
+#include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "catalog/ag_graph_fn.h"
+#include "catalog/pg_am.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_collation.h"
+#include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "lib/stringinfo.h"
@@ -40,6 +43,7 @@
 #include "rewrite/rewriteHandler.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
+#include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
@@ -76,6 +80,14 @@ typedef struct
 	AttrNumber	varattno;		/* in the target list */
 	Node	   *prop_constr;	/* property constraint of the element */
 } ElemQual;
+
+typedef struct prop_constr_context
+{
+	ParseState *pstate;
+	Node	   *qual;
+	Node	   *prop_map;
+	List	   *pathelems;
+} prop_constr_context;
 
 typedef struct
 {
@@ -161,6 +173,12 @@ static void addElemQual(ParseState *pstate, AttrNumber varattno,
 						Node *prop_constr);
 static void adjustElemQuals(List *elem_quals, RangeTblEntry *rte, int rtindex);
 static Node *transformElemQuals(ParseState *pstate, Node *qual);
+static Node *transform_prop_constr(ParseState *pstate, Node *qual,
+								   Node *prop_map, Node *prop_constr);
+static void transform_prop_constr_worker(Node *node, prop_constr_context *ctx);
+static bool ginAvail(ParseState *pstate, Index varno, AttrNumber varattno);
+static Oid getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno);
+static bool hasGinOnProp(Oid relid);
 /* MATCH - future vertex */
 static void addFutureVertex(ParseState *pstate, AttrNumber varattno,
 							char *labname);
@@ -2598,24 +2616,331 @@ transformElemQuals(ParseState *pstate, Node *qual)
 		RangeTblEntry *rte;
 		Var		   *var;
 		Node	   *prop_map;
-		Node	   *prop_constr;
-		Expr	   *expr;
+		bool		is_jsonobj;
 
 		rte = GetRTEByRangeTablePosn(pstate, eq->varno, 0);
 		var = make_var(pstate, rte, eq->varattno, -1);
 		/* skip markVarForSelectPriv() because `rte` is RTE_SUBQUERY */
 
 		prop_map = getExprField((Expr *) var, AG_ELEM_PROP_MAP);
-		prop_constr = transformPropMap(pstate, eq->prop_constr,
-									   EXPR_KIND_WHERE);
-		expr = make_op(pstate, list_make1(makeString("@>")),
-					   prop_map, prop_constr, -1);
 
-		qual = qualAndExpr(qual, (Node *) expr);
+		is_jsonobj = IsA(eq->prop_constr, JsonObject);
+
+		if (is_jsonobj)
+			qual = transform_prop_constr(pstate, qual, prop_map,
+										 eq->prop_constr);
+
+		if ((is_jsonobj && ginAvail(pstate, eq->varno, eq->varattno)) ||
+			(!is_jsonobj))
+		{
+			Node	   *prop_constr;
+			Expr	   *expr;
+
+			prop_constr = transformPropMap(pstate, eq->prop_constr,
+										   EXPR_KIND_WHERE);
+			expr = make_op(pstate, list_make1(makeString("@>")),
+						   prop_map, prop_constr, -1);
+
+			qual = qualAndExpr(qual, (Node *) expr);
+		}
 	}
 
 	pstate->p_elem_quals = NIL;
 	return qual;
+}
+
+static Node *
+transform_prop_constr(ParseState *pstate, Node *qual, Node *prop_map,
+					  Node *prop_constr)
+{
+	prop_constr_context ctx;
+
+	ctx.pstate = pstate;
+	ctx.qual = qual;
+	ctx.prop_map = prop_map;
+	ctx.pathelems = NIL;
+
+	transform_prop_constr_worker(prop_constr, &ctx);
+
+	return ctx.qual;
+}
+
+static void
+transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
+{
+	JsonObject *jo = (JsonObject *) node;
+	ListCell   *lp;
+
+	foreach(lp, jo->keyvals)
+	{
+		JsonKeyVal *keyval = (JsonKeyVal *) lfirst(lp);
+		Node	   *pathelem;
+		Oid			pathelemtype;
+		int			pathelemloc;
+		ListCell   *prev;
+
+		if (IsA(keyval->key, ColumnRef))
+		{
+			ColumnRef *cref = (ColumnRef *) keyval->key;
+
+			if (list_length(cref->fields) < 2)
+			{
+				A_Const *c = makeNode(A_Const);
+
+				c->val.type = T_String;
+				c->val.val.str = strVal(linitial(cref->fields));
+				c->location = cref->location;
+
+				pathelem = transformExpr(ctx->pstate, (Node *) c,
+										 EXPR_KIND_WHERE);
+			}
+			else
+			{
+				pathelem = transformExpr(ctx->pstate, keyval->key,
+										 EXPR_KIND_WHERE);
+			}
+		}
+		else
+		{
+			pathelem = transformExpr(ctx->pstate, keyval->key,
+									 EXPR_KIND_WHERE);
+		}
+		pathelemtype = exprType(pathelem);
+		pathelemloc = exprLocation(pathelem);
+		pathelem = coerce_to_target_type(ctx->pstate, pathelem, pathelemtype,
+										 TEXTOID, -1,COERCION_ASSIGNMENT,
+										 COERCE_IMPLICIT_CAST, -1);
+		if (pathelem == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("expression must be of type text but %s",
+							format_type_be(pathelemtype)),
+					 parser_errposition(ctx->pstate, pathelemloc)));
+
+		prev = list_tail(ctx->pathelems);
+		ctx->pathelems = lappend(ctx->pathelems, pathelem);
+
+		if (IsA(keyval->val, JsonObject))
+		{
+			transform_prop_constr_worker(keyval->val, ctx);
+		}
+		else
+		{
+			Node	   *path;
+			Expr	   *lval;
+			Node	   *rval;
+			Oid			rvaltype;
+			int			rvalloc;
+			Expr	   *expr;
+
+			path = makeArrayExpr(TEXTARRAYOID, TEXTOID,
+								 copyObject(ctx->pathelems));
+			lval = make_op(ctx->pstate, list_make1(makeString("#>>")),
+						   ctx->prop_map, path, -1);
+
+			rval = transformExpr(ctx->pstate, keyval->val, EXPR_KIND_WHERE);
+			rvaltype = exprType(rval);
+			rvalloc = exprLocation(rval);
+			rval = coerce_to_target_type(ctx->pstate, rval, rvaltype, TEXTOID,
+										 -1,COERCION_ASSIGNMENT,
+										 COERCE_IMPLICIT_CAST, -1);
+			if (rval == NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("expression must be of type text but %s",
+								format_type_be(rvaltype)),
+						 parser_errposition(ctx->pstate, rvalloc)));
+
+			expr = make_op(ctx->pstate, list_make1(makeString("=")),
+						   (Node *) lval, rval, -1);
+
+			ctx->qual = qualAndExpr(ctx->qual, (Node *) expr);
+		}
+
+		ctx->pathelems = list_delete_cell(ctx->pathelems,
+										  list_tail(ctx->pathelems),
+										  prev);
+	}
+}
+
+static bool
+ginAvail(ParseState *pstate, Index varno, AttrNumber varattno)
+{
+	Oid			relid;
+	List	   *inhoids;
+	ListCell   *li;
+
+	relid = getSourceRelid(pstate, varno, varattno);
+	if (!OidIsValid(relid))
+		return false;
+
+	if (!has_subclass(relid))
+		return hasGinOnProp(relid);
+
+	inhoids = find_all_inheritors(relid, AccessShareLock, NULL);
+	foreach(li, inhoids)
+	{
+		Oid inhoid = lfirst_oid(li);
+
+		if (hasGinOnProp(inhoid))
+			return true;
+	}
+
+	return false;
+}
+
+static Oid
+getSourceRelid(ParseState *pstate, Index varno, AttrNumber varattno)
+{
+	FutureVertex *fv;
+	List *rtable;
+
+	/*
+	 * If the given Var refers to a future vertex, there is no actual RTE for
+	 * it. So, find the Var from the list of future vertices first.
+	 */
+	fv = findFutureVertex(pstate, varno, varattno, 0);
+	if (fv != NULL)
+	{
+		RangeVar *rv = makeRangeVar(get_graph_path(true), fv->labname, -1);
+
+		return RangeVarGetRelid(rv, AccessShareLock, false);
+	}
+
+	rtable = pstate->p_rtable;
+	for (;;)
+	{
+		RangeTblEntry *rte;
+		Var *var;
+
+		rte = rt_fetch(varno, rtable);
+		switch (rte->rtekind)
+		{
+			case RTE_RELATION:
+				/* already locked */
+				return rte->relid;
+			case RTE_SUBQUERY:
+				{
+					TargetEntry *te;
+					Oid type;
+
+					te = get_tle_by_resno(rte->subquery->targetList, varattno);
+
+					type = exprType((Node *) te->expr);
+					if (type != VERTEXOID && type != EDGEOID)
+						return InvalidOid;
+
+					/* In RowExpr case, `(id, ...)` is assumed */
+					if (IsA(te->expr, Var))
+						var = (Var *) te->expr;
+					else if (IsA(te->expr, RowExpr))
+						var = linitial(((RowExpr *) te->expr)->args);
+					else
+						return InvalidOid;
+
+					rtable = rte->subquery->rtable;
+					varno = var->varno;
+					varattno = var->varattno;
+				}
+				break;
+			case RTE_JOIN:
+				{
+					Expr *expr;
+
+					expr = list_nth(rte->joinaliasvars, varattno - 1);
+					if (!IsA(expr, Var))
+						return InvalidOid;
+
+					var = (Var *) expr;
+					// XXX: Do we need type check?
+
+					varno = var->varno;
+					varattno = var->varattno;
+				}
+				break;
+			case RTE_FUNCTION:
+			case RTE_VALUES:
+			case RTE_CTE:
+				return InvalidOid;
+			default:
+				elog(ERROR, "invalid RTEKind %d", rte->rtekind);
+		}
+	}
+}
+
+/* See get_relation_info() */
+static bool
+hasGinOnProp(Oid relid)
+{
+	Relation	rel;
+	List	   *indexoidlist;
+	ListCell   *li;
+	bool		ret = false;
+
+	rel = heap_open(relid, NoLock);
+
+	if (!rel->rd_rel->relhasindex)
+	{
+		heap_close(rel, NoLock);
+
+		return false;
+	}
+
+	indexoidlist = RelationGetIndexList(rel);
+
+	foreach(li, indexoidlist)
+	{
+		Oid			indexoid = lfirst_oid(li);
+		Relation	indexRel;
+		Form_pg_index index;
+		int			attnum;
+
+		indexRel = index_open(indexoid, NoLock);
+		index = indexRel->rd_index;
+
+		if (!IndexIsValid(index))
+		{
+			index_close(indexRel, NoLock);
+			continue;
+		}
+
+		if (index->indcheckxmin &&
+			!TransactionIdPrecedes(
+					HeapTupleHeaderGetXmin(indexRel->rd_indextuple->t_data),
+					TransactionXmin))
+		{
+			index_close(indexRel, NoLock);
+			continue;
+		}
+
+		if (indexRel->rd_rel->relam != GIN_AM_OID)
+		{
+			index_close(indexRel, NoLock);
+			continue;
+		}
+
+		attnum = attnameAttNum(rel, AG_ELEM_PROP_MAP, false);
+		if (attnum == InvalidAttrNumber)
+		{
+			index_close(indexRel, NoLock);
+			continue;
+		}
+
+		if (index->indkey.values[0] == attnum)
+		{
+			index_close(indexRel, NoLock);
+			ret = true;
+			break;
+		}
+
+		index_close(indexRel, NoLock);
+	}
+
+	list_free(indexoidlist);
+
+	heap_close(rel, NoLock);
+
+	return ret;
 }
 
 static void
