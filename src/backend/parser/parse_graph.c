@@ -14,6 +14,7 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "catalog/ag_graph_fn.h"
+#include "catalog/ag_label.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_collation.h"
@@ -38,6 +39,7 @@
 #include "parser/parse_relation.h"
 #include "parser/parse_shortestpath.h"
 #include "parser/parse_target.h"
+#include "parser/parse_utilcmd.h"
 #include "parser/parser.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteHandler.h"
@@ -215,6 +217,9 @@ static GraphSetProp *transformSetProp(ParseState *pstate, RangeTblEntry *rte,
 static GraphSetProp *findGraphSetProp(List *gsplist, char *varname);
 
 /* common */
+static void vertexLabelExist(ParseState *pstate, char *labname, int labloc);
+static void edgeLabelExist(ParseState *pstate, char *labname, int labloc);
+static bool labelExist(char *labname, char labkind);
 static bool isNodeForRef(CypherNode *cnode);
 static Node *transformPropMap(ParseState *pstate, Node *expr,
 							  ParseExprKind exprKind);
@@ -1406,6 +1411,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 		labloc = -1;
 		prop_constr = ni->prop_constr;
 	}
+	vertexLabelExist(pstate, labname, labloc);
 	if (labname == NULL)
 		labname = AG_VERTEX;
 
@@ -1477,6 +1483,8 @@ transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList)
 {
 	char	   *varname = getCypherName(crel->variable);
 	int			varloc = getCypherNameLoc(crel->variable);
+	char	   *typname;
+	int			typloc;
 	TargetEntry *te;
 
 	/* all relationships must be unique */
@@ -1495,6 +1503,10 @@ transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList)
 					 errmsg("duplicate variable \"%s\"", varname),
 					 parser_errposition(pstate, varloc)));
 	}
+
+	getCypherRelType(crel, &typname, &typloc);
+	if (strcmp(typname, AG_EDGE) != 0)
+		edgeLabelExist(pstate, typname, typloc);
 
 	if (crel->varlen == NULL)
 		return transformMatchSR(pstate, crel, targetList);
@@ -3437,6 +3449,8 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 		Relation 	relation;
 		Node	   *vertex;
 
+		vertexLabelExist(pstate, labname, getCypherNameLoc(cnode->label));
+
 		/*
 		 * varname will be used to find vertex that be made from ExecResult.
 		 * so that, varname must be unique in targetList.
@@ -3480,6 +3494,8 @@ static GraphEdge *
 transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 {
 	char	   *varname;
+	Node	   *type;
+	char	   *typname;
 	Relation 	relation;
 	Node	   *edge;
 	Oid			relid = InvalidOid;
@@ -3504,7 +3520,7 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 	varname = getCypherName(crel->variable);
 
 	/*
-	 * All relationships must be unique and We cannot reference an edge
+	 * All relationships must be unique and we cannot reference an edge
 	 * from the previous clause in CREATE clause.
 	 */
 	if (findTarget(*targetList, varname) != NULL)
@@ -3516,7 +3532,12 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 	if (varname == NULL)
 		varname = genUniqueName();
 
-	relation = openTargetLabel(pstate, getCypherName(linitial(crel->types)));
+	type = linitial(crel->types);
+	typname = getCypherName(type);
+
+	edgeLabelExist(pstate, typname, getCypherNameLoc(type));
+
+	relation = openTargetLabel(pstate, typname);
 
 	edge = makeNewEdge(pstate, relation, crel->prop_map);
 	relid = RelationGetRelid(relation);
@@ -3886,6 +3907,40 @@ findGraphSetProp(List *gsplist, char *varname)
 	}
 
 	return NULL;
+}
+
+static void
+vertexLabelExist(ParseState *pstate, char *labname, int labloc)
+{
+	if (!labelExist(labname, LABEL_KIND_VERTEX))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("vertex label \"%s\" does not exist", labname),
+				 parser_errposition(pstate, labloc)));
+}
+
+static void
+edgeLabelExist(ParseState *pstate, char *labname, int labloc)
+{
+	if (!labelExist(labname, LABEL_KIND_EDGE))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("edge label \"%s\" does not exist", labname),
+				 parser_errposition(pstate, labloc)));
+}
+
+static bool
+labelExist(char *labname, char labkind)
+{
+	Oid graphid;
+
+	/* ag_vertex or ag_edge */
+	if (labname == NULL)
+		return true;
+
+	graphid = get_graph_path_oid();
+
+	return (getLabelKind(labname, graphid) == labkind);
 }
 
 static bool

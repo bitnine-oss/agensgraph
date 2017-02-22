@@ -121,6 +121,14 @@ CREATE a=(), a=();
 ERROR:  duplicate variable "a"
 LINE 1: CREATE a=(), a=();
                      ^
+CREATE (:lib);
+ERROR:  vertex label "lib" does not exist
+LINE 1: CREATE (:lib);
+                 ^
+CREATE ()-[:repo]->();
+ERROR:  edge label "repo" does not exist
+LINE 1: CREATE ()-[:repo]->();
+                    ^
 --
 -- MATCH
 --
@@ -323,6 +331,14 @@ MATCH a=(), a=() RETURN *;
 ERROR:  duplicate variable "a"
 LINE 1: MATCH a=(), a=() RETURN *;
                     ^
+MATCH (:lib) RETURN *;
+ERROR:  vertex label "lib" does not exist
+LINE 1: MATCH (:lib) RETURN *;
+                ^
+MATCH ()-[:repo]->() RETURN *;
+ERROR:  edge label "repo" does not exist
+LINE 1: MATCH ()-[:repo]->() RETURN *;
+                   ^
 MATCH (a {name: properties->'name'}) RETURN *;
 ERROR:  column "properties" does not exist
 LINE 1: MATCH (a {name: properties->'name'}) RETURN *;
@@ -871,19 +887,19 @@ LINE 1: MATCH () WITH a AS z RETURN a;
 MATCH (a:repo)
 RETURN a.name AS a
 UNION ALL
-MATCH (b:lib)
-RETURN b.lang AS b
+MATCH ()-[b:lib]->()
+RETURN DISTINCT b.lang AS b
 UNION ALL
-MATCH (c:doc)
-RETURN c.lang AS c;
+MATCH ()-[c:doc]->()
+RETURN DISTINCT c.lang AS c;
         a         
 ------------------
  agens-graph
  agens-graph-jdbc
  agens-graph-docs
  agens-graph-odbc
- java
  c
+ java
  en
 (7 rows)
 

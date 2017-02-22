@@ -30,6 +30,7 @@ extern List *transformCreateSchemaStmt(CreateSchemaStmt *stmt);
 extern List *transformCreateGraphStmt(CreateGraphStmt *stmt);
 extern List *transformCreateLabelStmt(CreateLabelStmt *labelStmt,
 									  const char *queryString);
+extern char getLabelKind(char *labname, Oid graphid);
 extern AlterTableStmt *transformAlterLabelStmt(AlterTableStmt *stmt);
 
 extern Node *transformCreateConstraintStmt(ParseState *pstate,
