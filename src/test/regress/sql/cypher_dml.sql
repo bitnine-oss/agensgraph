@@ -64,6 +64,8 @@ CREATE ()-[:lib =0]->();
 CREATE (a), a=();
 CREATE ()-[a:lib]->(), a=();
 CREATE a=(), a=();
+CREATE (:lib);
+CREATE ()-[:repo]->();
 
 --
 -- MATCH
@@ -123,6 +125,8 @@ MATCH ()-[a =0]-() RETURN *;
 MATCH (a), a=() RETURN *;
 MATCH ()-[a]->(), a=() RETURN *;
 MATCH a=(), a=() RETURN *;
+MATCH (:lib) RETURN *;
+MATCH ()-[:repo]->() RETURN *;
 
 MATCH (a {name: properties->'name'}) RETURN *;
 MATCH (a {name: a.properties->'name'}) RETURN *;
@@ -335,11 +339,11 @@ MATCH () WITH a AS z RETURN a;
 MATCH (a:repo)
 RETURN a.name AS a
 UNION ALL
-MATCH (b:lib)
-RETURN b.lang AS b
+MATCH ()-[b:lib]->()
+RETURN DISTINCT b.lang AS b
 UNION ALL
-MATCH (c:doc)
-RETURN c.lang AS c;
+MATCH ()-[c:doc]->()
+RETURN DISTINCT c.lang AS c;
 
 MATCH (a)
 RETURN a
