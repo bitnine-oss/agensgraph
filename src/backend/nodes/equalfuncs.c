@@ -2449,7 +2449,7 @@ _equalRangeTblEntry(const RangeTblEntry *a, const RangeTblEntry *b)
 	COMPARE_NODE_FIELD(tablesample);
 	COMPARE_NODE_FIELD(subquery);
 	COMPARE_SCALAR_FIELD(security_barrier);
-	COMPARE_SCALAR_FIELD(isVLR);
+	COMPARE_SCALAR_FIELD(isVLE);
 	COMPARE_SCALAR_FIELD(jointype);
 	COMPARE_NODE_FIELD(joinaliasvars);
 	COMPARE_NODE_FIELD(functions);

@@ -45,14 +45,12 @@
 
 #define CYPHER_SUBQUERY_ALIAS	"_"
 #define CYPHER_OPTMATCH_ALIAS	"_o"
-#define CYPHER_VLR_WITH_ALIAS	"_vlr"
-#define CYPHER_VLR_EDGE_ALIAS	"_e"
 
-#define VLR_COLNAME_START		"start"
-#define VLR_COLNAME_END			"end"
-#define VLR_COLNAME_LEVEL		"level"
-#define VLR_COLNAME_ROWIDS		"rowids"
-#define VLR_COLNAME_PATH		"path"
+#define VLE_COLNAME_START		"start"
+#define VLE_COLNAME_END			"end"
+#define VLE_COLNAME_LEVEL		"level"
+#define VLE_COLNAME_ROWIDS		"rowids"
+#define VLE_COLNAME_PATH		"path"
 
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
@@ -127,23 +125,23 @@ static RangeTblEntry *transformMatchSR(ParseState *pstate, CypherRel *crel,
 static RangeTblEntry *addEdgeUnion(ParseState *pstate, char *edge_label,
 								   int location, Alias *alias);
 static Node *genEdgeUnion(char *edge_label, int location);
-static void setInitialVidForVLR(ParseState *pstate, CypherRel *crel,
+static void setInitialVidForVLE(ParseState *pstate, CypherRel *crel,
 								Node *vertex, CypherRel *prev_crel,
 								RangeTblEntry *prev_edge);
-static RangeTblEntry *transformMatchVLR(ParseState *pstate, CypherRel *crel,
+static RangeTblEntry *transformMatchVLE(ParseState *pstate, CypherRel *crel,
 										List **targetList);
-static SelectStmt *genVLRsubselect(ParseState *pstate, CypherRel *crel,
+static SelectStmt *genVLEsubselect(ParseState *pstate, CypherRel *crel,
 								   bool out);
-static Node *genVLRLeftChild(ParseState *pstate, CypherRel *crel, bool out);
-static Node *genVLRRightChild(ParseState *pstate, CypherRel *crel, bool out);
+static Node *genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out);
+static Node *genVLERightChild(ParseState *pstate, CypherRel *crel, bool out);
 static Node *genEdgeNode(CypherRel *crel, char *aliasname);
-static Node *genVLRJoinExpr(CypherRel *crel, Node *larg, Node *rarg);
+static Node *genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg);
 static List *genFields(char *schemaName, char *colName);
-static Node *genVLRQual(char *alias, Node *propMap);
-static RangeSubselect *genEdgeUnionVLR(char *edge_label);
-static RangeTblEntry *transformVLRtoRTE(ParseState *pstate, SelectStmt *vlr,
+static Node *genVLEQual(char *alias, Node *propMap);
+static RangeSubselect *genEdgeUnionVLE(char *edge_label);
+static RangeTblEntry *transformVLEtoRTE(ParseState *pstate, SelectStmt *vle,
 										Alias *alias);
-static bool isZeroLengthVLR(CypherRel *crel);
+static bool isZeroLengthVLE(CypherRel *crel);
 static void getCypherRelType(CypherRel *crel, char **typname, int *typloc);
 static Node *addQualRelPath(ParseState *pstate, Node *qual,
 							CypherRel *prev_crel, RangeTblEntry *prev_edge,
@@ -1185,10 +1183,10 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					crel = lfirst(le);
 
 					/*
-					 * if `crel` is zero-length VLR, get RTE of `cnode`
+					 * if `crel` is zero-length VLE, get RTE of `cnode`
 					 * because `crel` needs `id` column of the RTE
 					 */
-					zero = isZeroLengthVLR(crel);
+					zero = isZeroLengthVLE(crel);
 					vertex = transformMatchNode(pstate, cnode,
 												(zero || out), targetList);
 
@@ -1198,7 +1196,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 						continue;
 					}
 
-					setInitialVidForVLR(pstate, crel, vertex, NULL, NULL);
+					setInitialVidForVLE(pstate, crel, vertex, NULL, NULL);
 					edge = transformMatchRel(pstate, crel, targetList);
 
 					qual = addQualNodeIn(pstate, qual, vertex, crel, edge,
@@ -1216,7 +1214,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 						break;
 
 					crel = lfirst(le);
-					setInitialVidForVLR(pstate, crel, vertex,
+					setInitialVidForVLE(pstate, crel, vertex,
 										prev_crel, prev_edge);
 					edge = transformMatchRel(pstate, crel, targetList);
 					qual = addQualRelPath(pstate, qual,
@@ -1235,7 +1233,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				{
 					Node *earr;
 
-					earr = getColumnVar(pstate, edge, VLR_COLNAME_ROWIDS);
+					earr = getColumnVar(pstate, edge, VLE_COLNAME_ROWIDS);
 					uearrs = list_append_unique(uearrs, earr);
 				}
 
@@ -1484,7 +1482,7 @@ transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList)
 	if (crel->varlen == NULL)
 		return transformMatchSR(pstate, crel, targetList);
 	else
-		return transformMatchVLR(pstate, crel, targetList);
+		return transformMatchVLE(pstate, crel, targetList);
 }
 
 static RangeTblEntry *
@@ -1618,7 +1616,7 @@ genEdgeUnion(char *edge_label, int location)
 }
 
 static void
-setInitialVidForVLR(ParseState *pstate, CypherRel *crel, Node *vertex,
+setInitialVidForVLE(ParseState *pstate, CypherRel *crel, Node *vertex,
 					CypherRel *prev_crel, RangeTblEntry *prev_edge)
 {
 	ColumnRef  *cref;
@@ -1631,8 +1629,8 @@ setInitialVidForVLR(ParseState *pstate, CypherRel *crel, Node *vertex,
 	{
 		if (prev_crel == NULL)
 		{
-			pstate->p_vlr_initial_vid = NULL;
-			pstate->p_vlr_initial_rte = NULL;
+			pstate->p_vle_initial_vid = NULL;
+			pstate->p_vle_initial_rte = NULL;
 		}
 		else
 		{
@@ -1645,8 +1643,8 @@ setInitialVidForVLR(ParseState *pstate, CypherRel *crel, Node *vertex,
 									  makeString(colname));
 			cref->location = -1;
 
-			pstate->p_vlr_initial_vid = (Node *) cref;
-			pstate->p_vlr_initial_rte = prev_edge;
+			pstate->p_vle_initial_vid = (Node *) cref;
+			pstate->p_vle_initial_rte = prev_edge;
 		}
 
 		return;
@@ -1663,8 +1661,8 @@ setInitialVidForVLR(ParseState *pstate, CypherRel *crel, Node *vertex,
 								  makeString(AG_ELEM_LOCAL_ID));
 		cref->location = -1;
 
-		pstate->p_vlr_initial_vid = (Node *) cref;
-		pstate->p_vlr_initial_rte = rte;
+		pstate->p_vle_initial_vid = (Node *) cref;
+		pstate->p_vle_initial_rte = rte;
 	}
 	else
 	{
@@ -1682,20 +1680,13 @@ setInitialVidForVLR(ParseState *pstate, CypherRel *crel, Node *vertex,
 		vid = (Node *) makeFuncCall(list_make1(makeString(AG_ELEM_ID)),
 									list_make1(cref), -1);
 
-		pstate->p_vlr_initial_vid = vid;
-		pstate->p_vlr_initial_rte = NULL;
+		pstate->p_vle_initial_vid = vid;
+		pstate->p_vle_initial_rte = NULL;
 	}
 }
 
-/*
- * RTE
- * - isvlr = true
- *
- * TODO: hops
- * TODO: dup-check
- */
 static RangeTblEntry *
-transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
+transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList)
 {
 	char	   	   *varname = getCypherName(crel->variable);
 	bool			out = (varname != NULL);
@@ -1703,17 +1694,17 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 	Alias	   	   *alias;
 	RangeTblEntry  *rte;
 
-	sel = genVLRsubselect(pstate, crel, out);
+	sel = genVLEsubselect(pstate, crel, out);
 
 	alias = makeAliasOptUnique(varname);
-	rte = transformVLRtoRTE(pstate, sel, alias);
+	rte = transformVLEtoRTE(pstate, sel, alias);
 
 	if (out)
 	{
 		TargetEntry *te;
 		Node *var;
 
-		var = getColumnVar(pstate, rte, VLR_COLNAME_PATH);
+		var = getColumnVar(pstate, rte, VLE_COLNAME_PATH);
 		te = makeTargetEntry((Expr *) var,
 							 (AttrNumber) pstate->p_next_resno++,
 							 varname,
@@ -1727,11 +1718,11 @@ transformMatchVLR(ParseState *pstate, CypherRel *crel, List **targetList)
 
 /*
  * SELECT l.end, array[(l.tableoid, l.ctid)] AS rowids, array[l.id] AS path
- * FROM edge AS l VLR JOIN edge AS r ON l.end = r.start
+ * FROM edge AS l VLE JOIN edge AS r ON l.end = r.start
  * WHERE l.start = vid AND l.properties @> ... AND r.properties @> ...
  */
 static SelectStmt *
-genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
+genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
 {
 	Node 	   *l_jid;
 	Node 	   *r_jid;
@@ -1760,13 +1751,13 @@ genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
 	{
 		l_jid = makeColumnRef(genFields("l", AG_START_ID));
 		r_jid = makeColumnRef(genFields("r", AG_START_ID));
-		jid_name = VLR_COLNAME_START;
+		jid_name = VLE_COLNAME_START;
 	}
 	else
 	{
 		l_jid = makeColumnRef(genFields("l", AG_END_ID));
 		r_jid = makeColumnRef(genFields("r", AG_END_ID));
-		jid_name = VLR_COLNAME_END;
+		jid_name = VLE_COLNAME_END;
 	}
 
 	coal = makeNode(CoalesceExpr);
@@ -1774,10 +1765,10 @@ genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
 	coal->location = -1;
 	jid = makeResTarget((Node *) coal, jid_name);
 
-	l_rowids = makeColumnRef(genFields("l", VLR_COLNAME_ROWIDS));
+	l_rowids = makeColumnRef(genFields("l", VLE_COLNAME_ROWIDS));
 	r_rowid = makeColumnRef(genFields("r", "rowid"));
 	rowids = makeResTarget(makeNullAwareArrayAppend(l_rowids, r_rowid),
-						   VLR_COLNAME_ROWIDS);
+						   VLE_COLNAME_ROWIDS);
 	tlist = list_make2(jid, rowids);
 	if (out)
 	{
@@ -1785,17 +1776,17 @@ genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
 		Node	   *r_id;
 		ResTarget  *path;
 
-		l_path = makeColumnRef(genFields("l", VLR_COLNAME_PATH));
+		l_path = makeColumnRef(genFields("l", VLE_COLNAME_PATH));
 		r_id = makeColumnRef(genFields("r", "id"));
 		path = makeResTarget(makeNullAwareArrayAppend(l_path, r_id),
-							 VLR_COLNAME_PATH);
+							 VLE_COLNAME_PATH);
 		tlist = lappend(tlist, path);
 	}
 
-	left = genVLRLeftChild(pstate, crel, out);
-	right = genVLRRightChild(pstate, crel, out);
+	left = genVLELeftChild(pstate, crel, out);
+	right = genVLERightChild(pstate, crel, out);
 
-	join = genVLRJoinExpr(crel, left, right);
+	join = genVLEJoinExpr(crel, left, right);
 
 	fn_ap = makeFuncCall(list_make1(makeString("array_position")),
 						 list_make2(copyObject(l_rowids), copyObject(r_rowid)),
@@ -1815,7 +1806,7 @@ genVLRsubselect(ParseState *pstate, CypherRel *crel, bool out)
 }
 
 static Node *
-genVLRLeftChild(ParseState *pstate, CypherRel *crel, bool out)
+genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 {
 	char		   *jcolname;
 	Node	   	   *vid;
@@ -1826,9 +1817,9 @@ genVLRLeftChild(ParseState *pstate, CypherRel *crel, bool out)
 	RangeSubselect *sub;
 
 	if (crel->direction == CYPHER_REL_DIR_LEFT)
-		jcolname = VLR_COLNAME_START;
+		jcolname = VLE_COLNAME_START;
 	else
-		jcolname = VLR_COLNAME_END;
+		jcolname = VLE_COLNAME_END;
 
 	/*
 	 * `vid` is NULL only if
@@ -1836,9 +1827,9 @@ genVLRLeftChild(ParseState *pstate, CypherRel *crel, bool out)
 	 *  and the vertex is transformed first time in the pattern)
 	 * and `crel` is not zero-length
 	 */
-	vid = pstate->p_vlr_initial_vid;
+	vid = pstate->p_vle_initial_vid;
 
-	if (isZeroLengthVLR(crel))
+	if (isZeroLengthVLE(crel))
 	{
 		TypeCast   *rowids;
 		List 	   *values;
@@ -1854,7 +1845,7 @@ genVLRLeftChild(ParseState *pstate, CypherRel *crel, bool out)
 
 		values = list_make2(vid, rowids);
 		colnames = list_make2(makeString(jcolname),
-							  makeString(VLR_COLNAME_ROWIDS));
+							  makeString(VLE_COLNAME_ROWIDS));
 		if (out)
 		{
 			TypeCast *path;
@@ -1867,7 +1858,7 @@ genVLRLeftChild(ParseState *pstate, CypherRel *crel, bool out)
 			path->location = -1;
 
 			values = lappend(values, path);
-			colnames = lappend(colnames, makeString(VLR_COLNAME_PATH));
+			colnames = lappend(colnames, makeString(VLE_COLNAME_PATH));
 		}
 
 		sel = makeNode(SelectStmt);
@@ -1895,7 +1886,7 @@ genVLRLeftChild(ParseState *pstate, CypherRel *crel, bool out)
 		cast->arg = (Node *) rowidarr;
 		cast->typeName = makeTypeName("_record");
 		cast->location = -1;
-		rowids = makeResTarget((Node *) cast, VLR_COLNAME_ROWIDS);
+		rowids = makeResTarget((Node *) cast, VLE_COLNAME_ROWIDS);
 		tlist = list_make2(jid, rowids);
 		if (out)
 		{
@@ -1910,7 +1901,7 @@ genVLRLeftChild(ParseState *pstate, CypherRel *crel, bool out)
 			cast->arg = (Node *) idarr;
 			cast->typeName = makeTypeName("_graphid");
 			cast->location = -1;
-			path = makeResTarget((Node *) cast, VLR_COLNAME_PATH);
+			path = makeResTarget((Node *) cast, VLE_COLNAME_PATH);
 			tlist = lappend(tlist, path);
 		}
 
@@ -1939,7 +1930,7 @@ genVLRLeftChild(ParseState *pstate, CypherRel *crel, bool out)
 
 		/* TODO: cannot see properties of future vertices */
 		if (crel->prop_map != NULL)
-			where_args = lappend(where_args, genVLRQual("l", crel->prop_map));
+			where_args = lappend(where_args, genVLEQual("l", crel->prop_map));
 
 		sel = makeNode(SelectStmt);
 		sel->targetList = tlist;
@@ -1955,7 +1946,7 @@ genVLRLeftChild(ParseState *pstate, CypherRel *crel, bool out)
 }
 
 static Node *
-genVLRRightChild(ParseState *pstate, CypherRel *crel, bool out)
+genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 {
 	ResTarget      *jid;
 	Node		   *tableoid;
@@ -1976,32 +1967,32 @@ genVLRRightChild(ParseState *pstate, CypherRel *crel, bool out)
 	if (crel->direction == CYPHER_REL_DIR_LEFT)
 	{
 		prev = makeNode(ColumnRef);
-		prev->fields = genFields("l", VLR_COLNAME_START);
+		prev->fields = genFields("l", VLE_COLNAME_START);
 		prev->location = -1;
 
 		next = makeNode(ColumnRef);
-		next->fields = genFields("r", VLR_COLNAME_END);
+		next->fields = genFields("r", VLE_COLNAME_END);
 		next->location = -1;
 
-		jid = makeSimpleResTarget(VLR_COLNAME_START, NULL);
+		jid = makeSimpleResTarget(VLE_COLNAME_START, NULL);
 	}
 	else
 	{
 		prev = makeNode(ColumnRef);
-		prev->fields = genFields("l", VLR_COLNAME_END);
+		prev->fields = genFields("l", VLE_COLNAME_END);
 		prev->location = -1;
 
 		next = makeNode(ColumnRef);
-		next->fields = genFields("r", VLR_COLNAME_START);
+		next->fields = genFields("r", VLE_COLNAME_START);
 		next->location = -1;
 
-		jid = makeSimpleResTarget(VLR_COLNAME_END, NULL);
+		jid = makeSimpleResTarget(VLE_COLNAME_END, NULL);
 	}
 
 	jqual = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) prev, (Node *) next, -1);
 	where_args = lappend(where_args, jqual);
 	if (crel->prop_map != NULL)
-		where_args = lappend(where_args, genVLRQual("r", crel->prop_map));
+		where_args = lappend(where_args, genVLEQual("r", crel->prop_map));
 
 	tableoid = makeColumnRef(genFields(NULL, "tableoid"));
 	ctid = makeColumnRef(genFields(NULL, "ctid"));
@@ -2041,7 +2032,7 @@ genEdgeNode(CypherRel *crel, char *aliasname)
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
 		RangeSubselect *sub;
-		sub = genEdgeUnionVLR(typname);
+		sub = genEdgeUnionVLE(typname);
 		sub->alias = alias;
 		edge = (Node *) sub;
 	}
@@ -2058,7 +2049,7 @@ genEdgeNode(CypherRel *crel, char *aliasname)
 }
 
 static Node *
-genVLRJoinExpr(CypherRel *crel, Node *larg, Node *rarg)
+genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg)
 {
 	A_Const        *trueconst;
 	TypeCast       *truecond;
@@ -2100,7 +2091,7 @@ genVLRJoinExpr(CypherRel *crel, Node *larg, Node *rarg)
 	}
 
 	n = makeNode(JoinExpr);
-	n->jointype = JOIN_VLR;
+	n->jointype = JOIN_VLE;
 	n->isNatural = false;
 	n->larg = larg;
 	n->rarg = rarg;
@@ -2122,7 +2113,7 @@ genFields(char *schemaName, char *colName)
 }
 
 static Node *
-genVLRQual(char *alias, Node *propMap)
+genVLEQual(char *alias, Node *propMap)
 {
 	ColumnRef  *prop;
 	A_Expr	   *propcond;
@@ -2143,7 +2134,7 @@ genVLRQual(char *alias, Node *propMap)
  * FROM `get_graph_path()`.`edge_label`
  */
 static RangeSubselect *
-genEdgeUnionVLR(char *edge_label)
+genEdgeUnionVLE(char *edge_label)
 {
 	ResTarget  *tableoid;
 	ResTarget  *ctid;
@@ -2192,7 +2183,7 @@ genEdgeUnionVLR(char *edge_label)
 }
 
 static RangeTblEntry *
-transformVLRtoRTE(ParseState *pstate, SelectStmt *vlr, Alias *alias)
+transformVLEtoRTE(ParseState *pstate, SelectStmt *vle, Alias *alias)
 {
 	ParseNamespaceItem *nsitem = NULL;
 	Query	   *qry;
@@ -2202,9 +2193,9 @@ transformVLRtoRTE(ParseState *pstate, SelectStmt *vlr, Alias *alias)
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 
 	/* make the RTE temporarily visible */
-	if (pstate->p_vlr_initial_rte != NULL)
+	if (pstate->p_vle_initial_rte != NULL)
 	{
-		nsitem = findNamespaceItemForRTE(pstate, pstate->p_vlr_initial_rte);
+		nsitem = findNamespaceItemForRTE(pstate, pstate->p_vle_initial_rte);
 		Assert(nsitem != NULL);
 
 		nsitem->p_rel_visible = true;
@@ -2213,7 +2204,7 @@ transformVLRtoRTE(ParseState *pstate, SelectStmt *vlr, Alias *alias)
 	pstate->p_lateral_active = true;
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
 
-	qry = parse_sub_analyze((Node *) vlr, pstate, NULL,
+	qry = parse_sub_analyze((Node *) vle, pstate, NULL,
 							isLockedRefname(pstate, alias->aliasname));
 	Assert(qry->commandType == CMD_SELECT);
 
@@ -2224,14 +2215,14 @@ transformVLRtoRTE(ParseState *pstate, SelectStmt *vlr, Alias *alias)
 		nsitem->p_rel_visible = false;
 
 	rte = addRangeTableEntryForSubquery(pstate, qry, alias, true, true);
-	rte->isVLR = true;
+	rte->isVLE = true;
 	addRTEtoJoinlist(pstate, rte, false);
 
 	return rte;
 }
 
 static bool
-isZeroLengthVLR(CypherRel *crel)
+isZeroLengthVLE(CypherRel *crel)
 {
 	A_Indices  *indices;
 	A_Const	   *lidx;
@@ -2281,7 +2272,7 @@ addQualRelPath(ParseState *pstate, Node *qual, CypherRel *prev_crel,
 	Node	   *vid;
 
 	/*
-	 * NOTE: If `crel` is VLR and a node between `prev_crel` and `crel` is
+	 * NOTE: If `crel` is VLE and a node between `prev_crel` and `crel` is
 	 *       either a placeholder or a new future vertex,
 	 *       the initial vid of `crel` is `prev_vid` already.
 	 *       Currently, just add kind of duplicate qual anyway.
@@ -2314,7 +2305,7 @@ addQualNodeIn(ParseState *pstate, Node *qual, Node *vertex, CypherRel *crel,
 		return qual;
 	}
 
-	/* already done in transformMatchVLR() */
+	/* already done in transformMatchVLE() */
 	if (crel->varlen != NULL && !prev)
 		return qual;
 

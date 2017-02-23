@@ -2870,7 +2870,7 @@ _outRangeTblEntry(StringInfo str, const RangeTblEntry *node)
 		case RTE_SUBQUERY:
 			WRITE_NODE_FIELD(subquery);
 			WRITE_BOOL_FIELD(security_barrier);
-			WRITE_BOOL_FIELD(isVLR);
+			WRITE_BOOL_FIELD(isVLE);
 			break;
 		case RTE_JOIN:
 			WRITE_ENUM_FIELD(jointype, JoinType);

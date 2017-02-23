@@ -93,7 +93,7 @@ extern void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
 					 JoinType jointype, SpecialJoinInfo *sjinfo,
 					 List *restrictlist);
 
-extern void add_paths_to_joinrel_for_vlr(PlannerInfo *root, RelOptInfo *joinrel,
+extern void add_paths_to_joinrel_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
 					 RelOptInfo *outerrel, RelOptInfo *innerrel,
 					 SpecialJoinInfo *sjinfo, List *restrictlist);
 

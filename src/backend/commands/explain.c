@@ -1157,7 +1157,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					case JOIN_INNER:
 						jointype = "Inner";
 						break;
-					case JOIN_VLR:
+					case JOIN_VLE:
 						jointype = "VLE";
 						break;
 					case JOIN_LEFT:
@@ -1185,7 +1185,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					 * For historical reasons, the join type is interpolated
 					 * into the node type name...
 					 */
-					if (((Join *) plan)->jointype == JOIN_VLR)
+					if (((Join *) plan)->jointype == JOIN_VLE)
 					{
 						NestLoopVLE *nlvPlan = (NestLoopVLE *) plan;
 						appendStringInfo(es->str, " %s [%d..",

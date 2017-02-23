@@ -1722,7 +1722,7 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * The upper query might not use all the subquery's output columns; if
 	 * not, we can simplify.
 	 */
-	if (! rte->isVLR)
+	if (! rte->isVLE)
 		remove_unused_subquery_outputs(subquery, rel);
 
 	/*

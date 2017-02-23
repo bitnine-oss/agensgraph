@@ -693,7 +693,7 @@ typedef enum JoinType
 	 */
 	JOIN_UNIQUE_OUTER,			/* LHS path must be made unique */
 	JOIN_UNIQUE_INNER,			/* RHS path must be made unique */
-	JOIN_VLR
+	JOIN_VLE
 
 	/*
 	 * We might need additional join types someday.

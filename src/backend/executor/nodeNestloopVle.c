@@ -269,7 +269,7 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	nlvstate->nls.nl_NullInnerTupleSlot = ExecInitNullTupleSlot(
 			estate, ExecGetResultType(innerPlanState(nlvstate)));
 
-	if (node->nl.join.jointype != JOIN_VLR)
+	if (node->nl.join.jointype != JOIN_VLE)
 		elog(ERROR, "unrecognized join type: %d", (int) node->nl.join.jointype);
 
 	/*

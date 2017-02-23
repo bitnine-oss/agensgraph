@@ -293,7 +293,7 @@ typedef struct PlannerInfo
 	bool		hasPseudoConstantQuals; /* true if any RestrictInfo has
 										 * pseudoconstant = true */
 	bool		hasRecursion;	/* true if planning a recursive WITH item */
-	bool		hasVLRJoinRTE;  /* has VLR join or a child node of VLR join */
+	bool		hasVLEJoinRTE;  /* has VLE join or a child node of VLE join */
 
 	/* These fields are used only when hasRecursion is true: */
 	int			wt_param_id;	/* PARAM_EXEC ID for the work table */
@@ -1802,7 +1802,7 @@ typedef struct SpecialJoinInfo
 	bool		semi_can_hash;	/* true if semi_operators are all hash */
 	List	   *semi_operators; /* OIDs of equality join operators */
 	List	   *semi_rhs_exprs; /* righthand-side expressions of these ops */
-	/* Fields for JOIN_VLR */
+	/* Fields for JOIN_VLE */
 	int			min_hops;
 	int			max_hops;
 } SpecialJoinInfo;

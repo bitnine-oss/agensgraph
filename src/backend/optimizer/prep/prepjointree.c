@@ -691,7 +691,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 		 * unless is_safe_append_member says so.
 		 */
 		if (rte->rtekind == RTE_SUBQUERY &&
-			! rte->isVLR &&
+			! rte->isVLE &&
 			is_simple_subquery(rte->subquery, rte,
 							   lowest_outer_join, deletion_ok) &&
 			(containing_appendrel == NULL ||
@@ -841,7 +841,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 													 NULL,
 													 false);
 				break;
-			case JOIN_VLR:
+			case JOIN_VLE:
 				break;
 			default:
 				elog(ERROR, "unrecognized join type: %d",

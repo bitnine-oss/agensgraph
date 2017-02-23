@@ -819,7 +819,7 @@ typedef struct RangeTblEntry
 	 */
 	Query	   *subquery;		/* the sub-query */
 	bool		security_barrier;		/* is from security_barrier view? */
-	bool		isVLR;
+	bool		isVLE;
 
 	/*
 	 * Fields valid for a join RTE (else NULL/zero):

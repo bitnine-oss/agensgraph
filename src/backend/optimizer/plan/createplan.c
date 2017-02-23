@@ -5130,7 +5130,7 @@ make_nestloop(List *tlist,
 	NestLoop   *node;
 	Plan	   *plan;
 
-	if (jointype == JOIN_VLR)
+	if (jointype == JOIN_VLE)
 	{
 		NestLoopVLE *vle = makeNode(NestLoopVLE);
 		vle->minHops = minhops;

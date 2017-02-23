@@ -2203,7 +2203,7 @@ eqjoinsel(PG_FUNCTION_ARGS)
 		case JOIN_INNER:
 		case JOIN_LEFT:
 		case JOIN_FULL:
-		case JOIN_VLR:
+		case JOIN_VLE:
 			selec = eqjoinsel_inner(operator, &vardata1, &vardata2);
 			break;
 		case JOIN_SEMI:

@@ -174,8 +174,8 @@ struct ParseState
 	bool		p_is_match_quals;
 	bool		p_is_sp_processed;
 	List	   *p_node_info_list;		/* final shape of named nodes */
-	Node	   *p_vlr_initial_vid;		/* initial vid for VLR */
-	RangeTblEntry *p_vlr_initial_rte;	/* RTE of initial vid for VLR */
+	Node	   *p_vle_initial_vid;		/* initial vid for VLE */
+	RangeTblEntry *p_vle_initial_rte;	/* RTE of initial vid for VLE */
 	List	   *p_elem_quals;			/* quals of elements */
 	List	   *p_future_vertices;		/* vertices to be resolved */
 	Node	   *p_resolved_qual;		/* qual of resolved future vertices */

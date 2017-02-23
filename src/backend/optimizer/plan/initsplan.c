@@ -861,7 +861,7 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 		switch (j->jointype)
 		{
 			case JOIN_INNER:
-			case JOIN_VLR:
+			case JOIN_VLE:
 				leftjoinlist = deconstruct_recurse(root, j->larg,
 												   below_outer_join,
 												   &leftids, &left_inners,
@@ -986,7 +986,7 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 										my_quals);
 			if (j->jointype == JOIN_SEMI)
 				ojscope = NULL;
-			else if (j->jointype == JOIN_VLR)
+			else if (j->jointype == JOIN_VLE)
 			{
 				ojscope = NULL;
 				sjinfo->min_hops = j->minHops;
@@ -1014,7 +1014,7 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 									postponed_qual_list);
 		}
 
-		if (j->jointype == JOIN_VLR)
+		if (j->jointype == JOIN_VLE)
 		{
 			RangeTblEntry *rte = root->simple_rte_array[j->rtindex];
 			Relids proj_varnos = pull_varnos((Node *) rte->joinaliasvars);
@@ -1153,7 +1153,7 @@ make_outerjoininfo(PlannerInfo *root,
 	compute_semijoin_info(sjinfo, clause);
 
 	/* If it's a full join, no need to be very smart */
-	if (jointype == JOIN_FULL || jointype == JOIN_VLR)
+	if (jointype == JOIN_FULL || jointype == JOIN_VLE)
 	{
 		sjinfo->min_lefthand = bms_copy(left_rels);
 		sjinfo->min_righthand = bms_copy(right_rels);

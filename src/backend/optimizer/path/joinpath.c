@@ -34,7 +34,7 @@ static void sort_inner_and_outer(PlannerInfo *root, RelOptInfo *joinrel,
 static void match_unsorted_outer(PlannerInfo *root, RelOptInfo *joinrel,
 					 RelOptInfo *outerrel, RelOptInfo *innerrel,
 					 JoinType jointype, JoinPathExtraData *extra);
-static void match_unsorted_outer_for_vlr(PlannerInfo *root,
+static void match_unsorted_outer_for_vle(PlannerInfo *root,
 					 RelOptInfo *joinrel,
 					 RelOptInfo *outerrel,
 					 RelOptInfo *innerrel,
@@ -236,7 +236,7 @@ add_paths_to_joinrel(PlannerInfo *root,
 }
 
 void
-add_paths_to_joinrel_for_vlr(PlannerInfo *root,
+add_paths_to_joinrel_for_vle(PlannerInfo *root,
 							 RelOptInfo *joinrel,
 							 RelOptInfo *outerrel,
 							 RelOptInfo *innerrel,
@@ -250,7 +250,7 @@ add_paths_to_joinrel_for_vlr(PlannerInfo *root,
 	extra.sjinfo = sjinfo;
 	extra.param_source_rels = NULL;
 
-	match_unsorted_outer_for_vlr(root, joinrel, outerrel, innerrel, &extra);
+	match_unsorted_outer_for_vle(root, joinrel, outerrel, innerrel, &extra);
 }
 
 /*
@@ -1289,7 +1289,7 @@ consider_parallel_nestloop(PlannerInfo *root,
 }
 
 static void
-match_unsorted_outer_for_vlr(PlannerInfo *root,
+match_unsorted_outer_for_vle(PlannerInfo *root,
 							 RelOptInfo *joinrel,
 							 RelOptInfo *outerrel,
 							 RelOptInfo *innerrel,
@@ -1342,7 +1342,7 @@ match_unsorted_outer_for_vlr(PlannerInfo *root,
 							  outerpath,
 							  innerpath,
 							  merge_pathkeys,
-							  JOIN_VLR,
+							  JOIN_VLE,
 							  extra);
 		}
 
@@ -1353,7 +1353,7 @@ match_unsorted_outer_for_vlr(PlannerInfo *root,
 							  outerpath,
 							  matpath,
 							  merge_pathkeys,
-							  JOIN_VLR,
+							  JOIN_VLE,
 							  extra);
 	}
 }
