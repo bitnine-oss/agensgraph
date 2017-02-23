@@ -381,6 +381,7 @@ ExecDownScanIndexOnlyScan(IndexOnlyScanState *node)
 				node->ss.ss_currentRelation, node->ioss_RelationDesc,
 				estate->es_snapshot, node->ioss_NumScanKeys,
 				node->ioss_NumOrderByKeys);
+		node->ioss_ScanDesc->xs_want_itup = true;
 
 		ctx = (IndexScanVLECtx *) palloc(sizeof(IndexScanVLECtx));
 		ctx->ss_currentRelation = node->ss.ss_currentRelation;
