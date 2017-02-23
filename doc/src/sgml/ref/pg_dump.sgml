@@ -138,8 +138,11 @@ PostgreSQL documentation
        <para>
         Include large objects in the dump.  This is the default behavior
         except when <option>--schema</>, <option>--table</>, or
-        <option>--schema-only</> is specified, so the <option>-b</>
-        switch is only useful to add large objects to selective dumps.
+        <option>--schema-only</> is specified.  The <option>-b</>
+        switch is therefore only useful to add large objects to dumps
+        where a specific schema or table has been requested.  Note that
+        blobs are considered data and therefore will be included when
+        --data-only is used, but not when --schema-only is.
        </para>
       </listitem>
      </varlistentry>
@@ -699,6 +702,11 @@ PostgreSQL documentation
         to dump the parts of the contents of the table that they have access to.
        </para>
 
+       <para>
+        Note that if you use this option currently, you probably also want
+        the dump be in <command>INSERT</command> format, as the
+        <command>COPY FROM</command> during restore does not support row security.
+       </para>
       </listitem>
      </varlistentry>
 

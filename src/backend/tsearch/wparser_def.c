@@ -2123,7 +2123,7 @@ hlCover(HeadlineParsedText *prs, TSQuery query, int *p, int *q)
 
 		ch.words = &(prs->words[*p]);
 		ch.len = *q - *p + 1;
-		if (TS_execute(GETQUERY(query), &ch, false, checkcondition_HL))
+		if (TS_execute(GETQUERY(query), &ch, TS_EXEC_EMPTY, checkcondition_HL))
 			return true;
 		else
 		{
@@ -2445,7 +2445,7 @@ mark_hl_words(HeadlineParsedText *prs, TSQuery query, int highlight,
 						break;
 				}
 				if (curlen < min_words && i >= prs->curwords)
-				{				/* got end of text and our cover is shoter
+				{				/* got end of text and our cover is shorter
 								 * than min_words */
 					for (i = p - 1; i >= 0; i--)
 					{

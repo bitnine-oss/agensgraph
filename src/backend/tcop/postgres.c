@@ -844,7 +844,7 @@ pg_plan_queries(List *querytrees, int cursorOptions, ParamListInfo boundParams)
 
 	foreach(query_list, querytrees)
 	{
-		Query	   *query = (Query *) lfirst(query_list);
+		Query	   *query = castNode(Query, lfirst(query_list));
 		Node	   *stmt;
 
 		if (query->commandType == CMD_UTILITY)
@@ -3946,6 +3946,12 @@ PostgresMain(int argc, char *argv[],
 		MemoryContextResetAndDeleteChildren(MessageContext);
 
 		initStringInfo(&input_message);
+
+		/*
+		 * Also consider releasing our catalog snapshot if any, so that it's
+		 * not preventing advance of global xmin while we wait for the client.
+		 */
+		InvalidateCatalogSnapshotConditionally();
 
 		/*
 		 * (1) If we've reached idle state, tell the frontend we're ready for

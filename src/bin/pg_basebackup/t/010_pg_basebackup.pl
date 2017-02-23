@@ -4,7 +4,7 @@ use Cwd;
 use Config;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 51;
+use Test::More tests => 52;
 
 program_help_ok('pg_basebackup');
 program_version_ok('pg_basebackup');
@@ -102,7 +102,17 @@ unlink "$pgdata/$superlongname";
 # skip on Windows.
 SKIP:
 {
-	skip "symlinks not supported on Windows", 10 if ($windows_os);
+	skip "symlinks not supported on Windows", 11 if ($windows_os);
+
+	# Move pg_replslot out of $pgdata and create a symlink to it.
+	$node->stop;
+
+	rename("$pgdata/pg_replslot", "$tempdir/pg_replslot")
+		   or BAIL_OUT "could not move $pgdata/pg_replslot";
+	symlink("$tempdir/pg_replslot", "$pgdata/pg_replslot")
+		   or BAIL_OUT "could not symlink to $pgdata/pg_replslot";
+
+	$node->start;
 
 	# Create a temporary directory in the system location and symlink it
 	# to our physical temp location.  That way we can use shorter names
@@ -140,6 +150,8 @@ SKIP:
 		"tablespace symlink was updated");
 	closedir $dh;
 
+	ok(-d "$tempdir/backup1/pg_replslot", 'pg_replslot symlink copied as directory');
+
 	mkdir "$tempdir/tbl=spc2";
 	$node->safe_psql('postgres', "DROP TABLE test1;");
 	$node->safe_psql('postgres', "DROP TABLESPACE tblspc1;");
@@ -167,16 +179,14 @@ $node->command_ok([ 'pg_basebackup', '-D', "$tempdir/backupR", '-R' ],
 ok(-f "$tempdir/backupR/recovery.conf", 'recovery.conf was created');
 my $recovery_conf = slurp_file "$tempdir/backupR/recovery.conf";
 
-# using a character class for the final "'" here works around an apparent
-# bug in several version of the Msys DTK perl
 my $port = $node->port;
 like(
 	$recovery_conf,
-	qr/^standby_mode = 'on[']$/m,
+	qr/^standby_mode = 'on'\n/m,
 	'recovery.conf sets standby_mode');
 like(
 	$recovery_conf,
-	qr/^primary_conninfo = '.*port=$port.*'$/m,
+	qr/^primary_conninfo = '.*port=$port.*'\n/m,
 	'recovery.conf sets primary_conninfo');
 
 $node->command_ok(
@@ -221,5 +231,5 @@ $node->command_ok(
 	'pg_basebackup with replication slot and -R runs');
 like(
 	slurp_file("$tempdir/backupxs_sl_R/recovery.conf"),
-	qr/^primary_slot_name = 'slot1'$/m,
+	qr/^primary_slot_name = 'slot1'\n/m,
 	'recovery.conf sets primary_slot_name');
