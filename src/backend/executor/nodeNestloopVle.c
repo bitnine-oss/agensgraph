@@ -10,6 +10,21 @@
 #include "executor/execdebug.h"
 #include "executor/nodeNestloopVle.h"
 #include "utils/memutils.h"
+#include "catalog/pg_type.h"
+#include "nodes/pg_list.h"
+
+
+static bool incrDepth(NestLoopVLEState *node);
+static bool decrDepth(NestLoopVLEState *node);
+static bool isMaxDepth(NestLoopVLEState *node);
+static void bindNestParam(NestLoopVLE *nlv,
+						  ExprContext *econtext,
+						  TupleTableSlot *outerTupleSlot,
+						  PlanState *innerPlan);
+static void pushContext(NestLoopVLEState *node,
+						TupleTableSlot *outerTupleSlot);
+static void popContext(NestLoopVLEState *node, TupleTableSlot *selfTupleSlot);
+static void clearVleCtxs(List *vleCtxs);
 
 
 TupleTableSlot *
@@ -20,10 +35,12 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 	PlanState  *outerPlan;
 	TupleTableSlot *outerTupleSlot;
 	TupleTableSlot *innerTupleSlot;
+	TupleTableSlot *selfTupleSlot;
 	List	   *joinqual;
 	List	   *otherqual;
 	ExprContext *econtext;
-	ListCell   *lc;
+	TupleTableSlot *result;
+	ExprDoneCond isDone;
 
 	/*
 	 * get information from the node
@@ -36,23 +53,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 	outerPlan = outerPlanState(node);
 	innerPlan = innerPlanState(node);
 	econtext = node->nls.js.ps.ps_ExprContext;
-
-	/*
-	 * Check to see if we're still projecting out tuples from a previous join
-	 * tuple (because there is a function-returning-set in the projection
-	 * expressions).  If so, try to project another one.
-	 */
-	if (node->nls.js.ps.ps_TupFromTlist)
-	{
-		TupleTableSlot *result;
-		ExprDoneCond isDone;
-
-		result = ExecProject(node->nls.js.ps.ps_ProjInfo, &isDone);
-		if (isDone == ExprMultipleResult)
-			return result;
-		/* Done with that source tuple... */
-		node->nls.js.ps.ps_TupFromTlist = false;
-	}
+	selfTupleSlot = node->selfTupleSlot;
 
 	/*
 	 * Reset per-tuple memory context to free any expression evaluation
@@ -76,50 +77,49 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 		if (node->nls.nl_NeedNewOuter)
 		{
 			ENL1_printf("getting new outer tuple");
-			outerTupleSlot = ExecProcNode(outerPlan);
 
-			/*
-			 * if there are no more outer tuples, then the join is complete..
-			 */
-			if (TupIsNull(outerTupleSlot))
+			if (node->selfLoop)
+				outerTupleSlot = selfTupleSlot;
+			else
 			{
-				ENL1_printf("no outer tuple, ending join");
-				return NULL;
+				outerTupleSlot = ExecProcNode(outerPlan);
+				/*
+				 * if there are no more outer tuples, then the join is complete..
+				 */
+				if (TupIsNull(outerTupleSlot))
+				{
+					ENL1_printf("no outer tuple, ending join");
+					return NULL;
+				}
 			}
 
 			ENL1_printf("saving new outer tuple information");
 			econtext->ecxt_outertuple = outerTupleSlot;
-			node->nls.nl_NeedNewOuter = false;
-			node->nls.nl_MatchedOuter = false;
 
-			/*
-			 * fetch the values of any outer Vars that must be passed to the
-			 * inner scan, and store them in the appropriate PARAM_EXEC slots.
-			 */
-			foreach(lc, nlv->nl.nestParams)
+			result = NULL;
+			if (! node->selfLoop && (node->curhops >= nlv->minHops))
 			{
-				NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
-				int			paramno = nlp->paramno;
-				ParamExecData *prm;
-
-				prm = &(econtext->ecxt_param_exec_vals[paramno]);
-				/* Param value should be an OUTER_VAR var */
-				Assert(IsA(nlp->paramval, Var));
-				Assert(nlp->paramval->varno == OUTER_VAR);
-				Assert(nlp->paramval->varattno > 0);
-				prm->value = slot_getattr(outerTupleSlot,
-										  nlp->paramval->varattno,
-										  &(prm->isnull));
-				/* Flag parameter value as changed */
-				innerPlan->chgParam = bms_add_member(innerPlan->chgParam,
-													 paramno);
+				econtext->ecxt_innertuple = node->nls.nl_NullInnerTupleSlot;
+				result = ExecProject(node->nls.js.ps.ps_ProjInfo, &isDone);
 			}
 
-			/*
-			 * now rescan the inner plan
-			 */
-			ENL1_printf("rescanning inner plan");
-			ExecReScan(innerPlan);
+			if (incrDepth(node))
+			{
+				node->nls.nl_NeedNewOuter = false;
+
+				bindNestParam(nlv, econtext, outerTupleSlot, innerPlan);
+
+				/*
+				 * now rescan the inner plan
+				 */
+				ENL1_printf("rescanning inner plan");
+				if (node->selfLoop)
+					ExecDownScan(innerPlan);
+				ExecReScan(innerPlan);
+			}
+
+			if (result)
+				return result;
 		}
 
 		/*
@@ -129,12 +129,25 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 
 		innerTupleSlot = ExecProcNode(innerPlan);
 		econtext->ecxt_innertuple = innerTupleSlot;
+		econtext->ecxt_outertuple->tts_isnull[0] = true;
 
 		if (TupIsNull(innerTupleSlot))
 		{
 			ENL1_printf("no inner tuple, need new outer tuple");
 
-			node->nls.nl_NeedNewOuter = true;
+			decrDepth(node);
+			if (node->vleCtxs == NULL)
+			{
+				node->nls.nl_NeedNewOuter = true;
+				node->selfLoop = false;
+			}
+			else
+			{
+				popContext(node, selfTupleSlot);
+				ExecUpScan(innerPlan);
+				econtext->ecxt_outertuple = selfTupleSlot;
+				bindNestParam(nlv, econtext, selfTupleSlot, NULL);
+			}
 
 			/*
 			 * Otherwise just return to top of loop for a new outer tuple.
@@ -154,27 +167,25 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 
 		if (ExecQual(joinqual, econtext, false))
 		{
-			node->nls.nl_MatchedOuter = true;
-
 			if (otherqual == NIL || ExecQual(otherqual, econtext, false))
 			{
 				/*
 				 * qualification was satisfied so we project and return the
 				 * slot containing the result tuple using ExecProject().
 				 */
-				TupleTableSlot *result;
-				ExprDoneCond isDone;
-
 				ENL1_printf("qualification succeeded, projecting tuple");
 
 				result = ExecProject(node->nls.js.ps.ps_ProjInfo, &isDone);
 
-				if (isDone != ExprEndResult)
+				if (! isMaxDepth(node))
 				{
-					node->nls.js.ps.ps_TupFromTlist =
-						(isDone == ExprMultipleResult);
-					return result;
+					ExecCopySlot(selfTupleSlot, result);
+					pushContext(node, econtext->ecxt_outertuple);
+					node->nls.nl_NeedNewOuter = true;
+					node->selfLoop = true;
 				}
+
+				return result;
 			}
 			else
 				InstrCountFiltered2(node, 1);
@@ -254,6 +265,9 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	 * tuple table initialization
 	 */
 	ExecInitResultTupleSlot(estate, &nlvstate->nls.js.ps);
+	nlvstate->selfTupleSlot = ExecInitExtraTupleSlot(estate);
+	nlvstate->nls.nl_NullInnerTupleSlot = ExecInitNullTupleSlot(
+			estate, ExecGetResultType(innerPlanState(nlvstate)));
 
 	if (node->nl.join.jointype != JOIN_VLR)
 		elog(ERROR, "unrecognized join type: %d", (int) node->nl.join.jointype);
@@ -264,13 +278,18 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	ExecAssignResultTypeFromTL(&nlvstate->nls.js.ps);
 	ExecAssignProjectionInfo(&nlvstate->nls.js.ps, NULL);
 
+	ExecSetSlotDescriptor(
+			nlvstate->selfTupleSlot,
+			nlvstate->nls.js.ps.ps_ResultTupleSlot->tts_tupleDescriptor);
+
+	nlvstate->selfLoop = false;
+	nlvstate->curhops = (node->minHops == 0) ? 0 : 1;
+
 	/*
 	 * finally, wipe the current outer tuple clean.
 	 */
 	nlvstate->nls.js.ps.ps_TupFromTlist = false;
 	nlvstate->nls.nl_NeedNewOuter = true;
-	nlvstate->nls.nl_MatchedOuter = false;
-	nlvstate->curhops = (node->minHops == 0) ? 0 : 1;
 
 	NL1_printf("ExecInitNestLoopVLE: %s\n",
 			   "node initialized");
@@ -299,6 +318,8 @@ ExecEndNestLoopVLE(NestLoopVLEState *node)
 	 * clean out the tuple table
 	 */
 	ExecClearTuple(node->nls.js.ps.ps_ResultTupleSlot);
+	ExecClearTuple(node->selfTupleSlot);
+	clearVleCtxs(node->vleCtxs);
 
 	/*
 	 * close down subplans
@@ -334,7 +355,108 @@ ExecReScanNestLoopVLE(NestLoopVLEState *node)
 
 	node->nls.js.ps.ps_TupFromTlist = false;
 	node->nls.nl_NeedNewOuter = true;
-	node->nls.nl_MatchedOuter = false;
+	node->selfLoop = false;
 	node->curhops = ((NestLoopVLE *) node->nls.js.ps.plan)->minHops == 0
 		? 0 : 1;
+
+	ExecClearTuple(node->selfTupleSlot);
+	clearVleCtxs(node->vleCtxs);
+	node->vleCtxs = NULL;
+}
+
+static bool
+incrDepth(NestLoopVLEState *node)
+{
+	NestLoopVLE *nlv = (NestLoopVLE *) node->nls.js.ps.plan;
+
+	if (nlv->maxHops != -1 && node->curhops >= nlv->maxHops)
+		return false;
+	node->curhops++;
+	return true;
+}
+
+static bool
+decrDepth(NestLoopVLEState *node)
+{
+	NestLoopVLE *nlv = (NestLoopVLE *) node->nls.js.ps.plan;
+	int base = (nlv->minHops == 0) ? 0 : 1;
+
+	if (node->curhops <= base)
+		return false;
+	node->curhops--;
+	return true;
+}
+
+static bool
+isMaxDepth(NestLoopVLEState *node)
+{
+	NestLoopVLE *nlv = (NestLoopVLE *) node->nls.js.ps.plan;
+	return (node->curhops == nlv->maxHops);
+}
+
+/*
+ * fetch the values of any outer Vars that must be passed to the
+ * inner scan, and store them in the appropriate PARAM_EXEC slots.
+ */
+static void
+bindNestParam(NestLoopVLE *nlv,
+			  ExprContext *econtext,
+			  TupleTableSlot *outerTupleSlot,
+			  PlanState *innerPlan)
+{
+	ListCell *lc;
+
+	foreach(lc, nlv->nl.nestParams)
+	{
+		NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
+		int			paramno = nlp->paramno;
+		ParamExecData *prm;
+
+		prm = &(econtext->ecxt_param_exec_vals[paramno]);
+		/* Param value should be an OUTER_VAR var */
+		Assert(IsA(nlp->paramval, Var));
+		Assert(nlp->paramval->varno == OUTER_VAR);
+		Assert(nlp->paramval->varattno > 0);
+		prm->value = slot_getattr(outerTupleSlot,
+								  nlp->paramval->varattno,
+								  &(prm->isnull));
+		/* Flag parameter value as changed */
+		if (innerPlan)
+			innerPlan->chgParam = bms_add_member(innerPlan->chgParam, paramno);
+	}
+}
+
+static void
+pushContext(NestLoopVLEState *node, TupleTableSlot *outerTupleSlot)
+{
+	TupleTableSlot *t;
+
+	t = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
+	ExecCopySlot(t, outerTupleSlot);
+	node->vleCtxs = lcons(t, node->vleCtxs);
+}
+
+static void
+popContext(NestLoopVLEState *node, TupleTableSlot *selfTupleSlot)
+{
+	TupleTableSlot *t;
+
+	Assert (list_length(node->vleCtxs) > 0);
+	t = linitial(node->vleCtxs);
+	node->vleCtxs = list_delete_cell(
+			node->vleCtxs, list_head(node->vleCtxs), NULL);
+	ExecCopySlot(selfTupleSlot, t);
+	ExecDropSingleTupleTableSlot(t);
+}
+
+static void
+clearVleCtxs(List *vleCtxs)
+{
+	ListCell *cell;
+	foreach(cell, vleCtxs)
+	{
+		TupleTableSlot *slot = cell->data.ptr_value;
+		ExecDropSingleTupleTableSlot(slot);
+	}
+	list_free(vleCtxs);
 }

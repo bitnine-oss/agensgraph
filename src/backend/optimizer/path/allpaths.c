@@ -1722,7 +1722,8 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * The upper query might not use all the subquery's output columns; if
 	 * not, we can simplify.
 	 */
-	remove_unused_subquery_outputs(subquery, rel);
+	if (! rte->isVLR)
+		remove_unused_subquery_outputs(subquery, rel);
 
 	/*
 	 * We can safely pass the outer tuple_fraction down to the subquery if the

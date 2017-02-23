@@ -102,6 +102,8 @@ extern PGDLLIMPORT ExecutorCheckPerms_hook_type ExecutorCheckPerms_hook;
 struct Path;					/* avoid including relation.h here */
 
 extern void ExecReScan(PlanState *node);
+extern void ExecUpScan(PlanState *node);
+extern void ExecDownScan(PlanState *node);
 extern void ExecMarkPos(PlanState *node);
 extern void ExecRestrPos(PlanState *node);
 extern bool ExecSupportsMarkRestore(struct Path *pathnode);

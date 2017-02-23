@@ -21,6 +21,8 @@ extern SeqScanState *ExecInitSeqScan(SeqScan *node, EState *estate, int eflags);
 extern TupleTableSlot *ExecSeqScan(SeqScanState *node);
 extern void ExecEndSeqScan(SeqScanState *node);
 extern void ExecReScanSeqScan(SeqScanState *node);
+extern void ExecUpScanSeqScan(SeqScanState *node);
+extern void ExecDownScanSeqScan(SeqScanState *node);
 
 /* parallel scan support */
 extern void ExecSeqScanEstimate(SeqScanState *node, ParallelContext *pcxt);

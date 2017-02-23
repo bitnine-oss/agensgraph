@@ -17,6 +17,7 @@
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "executor/instrument.h"
+#include "lib/ilist.h"
 #include "lib/pairingheap.h"
 #include "nodes/params.h"
 #include "nodes/plannodes.h"
@@ -1161,7 +1162,15 @@ typedef struct AppendState
 	PlanState **appendplans;	/* array of PlanStates for my inputs */
 	int			as_nplans;
 	int			as_whichplan;
+	dlist_head  vle_ctxs;		/* list of AppendVLECtx */
+	dlist_node *cur_ctx;
 } AppendState;
+
+typedef struct AppendVLECtx
+{
+	dlist_node list;
+	int as_whichplan;
+} AppendVLECtx;
 
 /* ----------------
  *	 MergeAppendState information
@@ -1278,7 +1287,16 @@ typedef struct SeqScanState
 {
 	ScanState	ss;				/* its first field is NodeTag */
 	Size		pscan_len;		/* size of parallel heap scan descriptor */
+	dlist_head  vle_ctxs;		/* list of SeqScanVLECtx */
+	dlist_node *cur_ctx;
 } SeqScanState;
+
+typedef struct SeqScanVLECtx
+{
+	dlist_node 		list;
+	Relation		ss_currentRelation;
+	HeapScanDesc ss_currentScanDesc;
+} SeqScanVLECtx;
 
 /* ----------------
  *	 SampleScanState information
@@ -1360,6 +1378,8 @@ typedef struct IndexScanState
 	ExprContext *iss_RuntimeContext;
 	Relation	iss_RelationDesc;
 	IndexScanDesc iss_ScanDesc;
+	dlist_head  vle_ctxs;		/* list of IndexScanVLECtx */
+	dlist_node *cur_ctx;
 
 	/* These are needed for re-checking ORDER BY expr ordering */
 	pairingheap *iss_ReorderQueue;
@@ -1370,6 +1390,14 @@ typedef struct IndexScanState
 	bool	   *iss_OrderByTypByVals;
 	int16	   *iss_OrderByTypLens;
 } IndexScanState;
+
+typedef struct IndexScanVLECtx
+{
+	dlist_node 		list;
+	Relation		ss_currentRelation;
+	Relation		iss_RelationDesc;
+	IndexScanDesc 	iss_ScanDesc;
+} IndexScanVLECtx;
 
 /* ----------------
  *	 IndexOnlyScanState information
@@ -1406,6 +1434,8 @@ typedef struct IndexOnlyScanState
 	Buffer		ioss_VMBuffer;
 	long		ioss_HeapFetches;
 	AttrNumber *ioss_SysAttMap;
+	dlist_head  vle_ctxs;		/* list of IndexScanVLECtx */
+	dlist_node *cur_ctx;
 } IndexOnlyScanState;
 
 /* ----------------
@@ -1676,6 +1706,9 @@ typedef struct NestLoopVLEState
 {
 	NestLoopState 	nls;
 	int				curhops;
+	bool			selfLoop;
+	TupleTableSlot *selfTupleSlot;
+	List		   *vleCtxs;
 } NestLoopVLEState;
 
 /* ----------------

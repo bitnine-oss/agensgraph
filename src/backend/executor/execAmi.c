@@ -283,6 +283,52 @@ ExecReScan(PlanState *node)
 	}
 }
 
+void
+ExecUpScan(PlanState *node)
+{
+	switch (nodeTag(node))
+	{
+		case T_AppendState:
+			ExecUpScanAppend((AppendState *) node);
+			break;
+		case T_IndexScanState:
+			ExecUpScanIndexScan((IndexScanState *) node);
+			break;
+		case T_IndexOnlyScanState:
+			ExecUpScanIndexOnlyScan((IndexOnlyScanState *) node);
+			break;
+		case T_SeqScanState:
+			ExecUpScanSeqScan((SeqScanState *) node);
+			break;
+		default:
+			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
+			break;
+	}
+}
+
+void
+ExecDownScan(PlanState *node)
+{
+	switch (nodeTag(node))
+	{
+		case T_AppendState:
+			ExecDownScanAppend((AppendState *) node);
+			break;
+		case T_IndexScanState:
+			ExecDownScanIndexScan((IndexScanState *) node);
+			break;
+		case T_IndexOnlyScanState:
+			ExecDownScanIndexOnlyScan((IndexOnlyScanState *) node);
+			break;
+		case T_SeqScanState:
+			ExecDownScanSeqScan((SeqScanState *) node);
+			break;
+		default:
+			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
+			break;
+	}
+}
+
 /*
  * ExecMarkPos
  *
