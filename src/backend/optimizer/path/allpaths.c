@@ -667,7 +667,7 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	create_index_paths(root, rel);
 
 	/* Consider TID scans */
-	if (! root->hasVLRJoinRTE)
+	if (! root->hasVLEJoinRTE)
 		create_tidscan_paths(root, rel);
 }
 

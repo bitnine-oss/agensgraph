@@ -308,7 +308,7 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 										&bitjoinpaths);
 	}
 
-	if (root->hasVLRJoinRTE)
+	if (root->hasVLEJoinRTE)
 		return;
 
 	/*
