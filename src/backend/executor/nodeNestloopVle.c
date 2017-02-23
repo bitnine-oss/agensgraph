@@ -129,7 +129,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 
 		innerTupleSlot = ExecProcNode(innerPlan);
 		econtext->ecxt_innertuple = innerTupleSlot;
-		econtext->ecxt_outertuple->tts_isnull[0] = true;
+		econtext->ecxt_outertuple->tts_isnull[1] = true;
 
 		if (TupIsNull(innerTupleSlot))
 		{
