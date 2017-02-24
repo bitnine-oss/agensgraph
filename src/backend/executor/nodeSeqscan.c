@@ -456,7 +456,8 @@ ExecDownScanSeqScan(SeqScanState *node)
 
 		node->ss.ss_currentRelation = ExecOpenScanRelation(
 				estate, plan->scanrelid, 0);
-		node->ss.ss_currentScanDesc = NULL;
+		node->ss.ss_currentScanDesc = heap_beginscan(
+				node->ss.ss_currentRelation, estate->es_snapshot, 0, NULL);
 
 		ctx = (SeqScanVLECtx *) palloc(sizeof(SeqScanVLECtx));
 		ctx->ss_currentRelation = node->ss.ss_currentRelation;
