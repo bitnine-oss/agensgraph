@@ -1708,8 +1708,16 @@ typedef struct NestLoopVLEState
 	int				curhops;
 	bool			selfLoop;
 	TupleTableSlot *selfTupleSlot;
-	List		   *vleCtxs;
+	dlist_head  	vleCtxs;		/* list of NestLoopVLECtx */
+	dlist_node 	   *curCtx;
 } NestLoopVLEState;
+
+typedef struct NestLoopVLECtx
+{
+	dlist_node list;
+	TupleTableSlot *slot;
+} NestLoopVLECtx;
+
 
 /* ----------------
  *	 MergeJoinState information

@@ -9,6 +9,7 @@
 
 #include "executor/execdebug.h"
 #include "executor/nodeNestloopVle.h"
+#include "utils/datum.h"
 #include "utils/memutils.h"
 #include "catalog/pg_type.h"
 #include "nodes/pg_list.h"
@@ -21,10 +22,11 @@ static void bindNestParam(NestLoopVLE *nlv,
 						  ExprContext *econtext,
 						  TupleTableSlot *outerTupleSlot,
 						  PlanState *innerPlan);
-static void pushContext(NestLoopVLEState *node,
+static TupleTableSlot *upContext(NestLoopVLEState *node);
+static void downContext(NestLoopVLEState *node,
 						TupleTableSlot *outerTupleSlot);
-static void popContext(NestLoopVLEState *node, TupleTableSlot *selfTupleSlot);
-static void clearVleCtxs(List *vleCtxs);
+static void clearVleCtxs(dlist_head *vleCtxs);
+static void copySlot(TupleTableSlot *dst, TupleTableSlot *src);
 
 
 TupleTableSlot *
@@ -136,17 +138,16 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 			ENL1_printf("no inner tuple, need new outer tuple");
 
 			decrDepth(node);
-			if (node->vleCtxs == NULL)
+			if (node->curCtx == NULL)
 			{
 				node->nls.nl_NeedNewOuter = true;
 				node->selfLoop = false;
 			}
 			else
 			{
-				popContext(node, selfTupleSlot);
 				ExecUpScan(innerPlan);
-				econtext->ecxt_outertuple = selfTupleSlot;
-				bindNestParam(nlv, econtext, selfTupleSlot, NULL);
+				econtext->ecxt_outertuple = upContext(node);
+				bindNestParam(nlv, econtext, econtext->ecxt_outertuple, NULL);
 			}
 
 			/*
@@ -179,8 +180,8 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 
 				if (! isMaxDepth(node))
 				{
-					ExecCopySlot(selfTupleSlot, result);
-					pushContext(node, econtext->ecxt_outertuple);
+					copySlot(selfTupleSlot, result);
+					downContext(node, econtext->ecxt_outertuple);
 					node->nls.nl_NeedNewOuter = true;
 					node->selfLoop = true;
 				}
@@ -319,7 +320,7 @@ ExecEndNestLoopVLE(NestLoopVLEState *node)
 	 */
 	ExecClearTuple(node->nls.js.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->selfTupleSlot);
-	clearVleCtxs(node->vleCtxs);
+	clearVleCtxs(&node->vleCtxs);
 
 	/*
 	 * close down subplans
@@ -360,8 +361,8 @@ ExecReScanNestLoopVLE(NestLoopVLEState *node)
 		? 0 : 1;
 
 	ExecClearTuple(node->selfTupleSlot);
-	clearVleCtxs(node->vleCtxs);
-	node->vleCtxs = NULL;
+	clearVleCtxs(&node->vleCtxs);
+	node->curCtx = NULL;
 }
 
 static bool
@@ -425,38 +426,76 @@ bindNestParam(NestLoopVLE *nlv,
 			innerPlan->chgParam = bms_add_member(innerPlan->chgParam, paramno);
 	}
 }
-
-static void
-pushContext(NestLoopVLEState *node, TupleTableSlot *outerTupleSlot)
+static TupleTableSlot *
+upContext(NestLoopVLEState *node)
 {
-	TupleTableSlot *t;
+	NestLoopVLECtx *ctx;
 
-	t = MakeSingleTupleTableSlot(outerTupleSlot->tts_tupleDescriptor);
-	ExecCopySlot(t, outerTupleSlot);
-	node->vleCtxs = lcons(t, node->vleCtxs);
+	ctx = dlist_container(NestLoopVLECtx, list, node->curCtx);
+	if (dlist_has_prev(&node->vleCtxs, node->curCtx))
+		node->curCtx = dlist_prev_node(&node->vleCtxs, node->curCtx);
+	else
+		node->curCtx = NULL;
+	return ctx->slot;
 }
 
-static void
-popContext(NestLoopVLEState *node, TupleTableSlot *selfTupleSlot)
-{
-	TupleTableSlot *t;
-
-	Assert (list_length(node->vleCtxs) > 0);
-	t = linitial(node->vleCtxs);
-	node->vleCtxs = list_delete_cell(
-			node->vleCtxs, list_head(node->vleCtxs), NULL);
-	ExecCopySlot(selfTupleSlot, t);
-	ExecDropSingleTupleTableSlot(t);
-}
 
 static void
-clearVleCtxs(List *vleCtxs)
+downContext(NestLoopVLEState *node, TupleTableSlot *outerTupleSlot)
 {
-	ListCell *cell;
-	foreach(cell, vleCtxs)
+	NestLoopVLECtx *ctx;
+
+	if (node->curCtx && dlist_has_next(&node->vleCtxs, node->curCtx))
 	{
-		TupleTableSlot *slot = cell->data.ptr_value;
-		ExecDropSingleTupleTableSlot(slot);
+		node->curCtx = dlist_next_node(&node->vleCtxs, node->curCtx);
+		ctx = dlist_container(NestLoopVLECtx, list, node->curCtx);
+		copySlot(ctx->slot, outerTupleSlot);
 	}
-	list_free(vleCtxs);
+	else if (! node->curCtx && ! dlist_is_empty(&node->vleCtxs))
+	{
+		node->curCtx = dlist_head_node(&node->vleCtxs);
+		ctx = dlist_container(NestLoopVLECtx, list, node->curCtx);
+		copySlot(ctx->slot, outerTupleSlot);
+	}
+	else
+	{
+		ctx = (NestLoopVLECtx *) palloc(sizeof(NestLoopVLECtx));
+		ctx->slot = MakeSingleTupleTableSlot(
+				outerTupleSlot->tts_tupleDescriptor);
+		copySlot(ctx->slot, outerTupleSlot);
+		dlist_push_tail(&node->vleCtxs, &ctx->list);
+		node->curCtx = dlist_tail_node(&node->vleCtxs);
+	}
+}
+
+static void
+clearVleCtxs(dlist_head *vleCtxs)
+{
+	dlist_mutable_iter miter;
+
+	dlist_foreach_modify(miter, vleCtxs)
+	{
+		NestLoopVLECtx *ctx = dlist_container(NestLoopVLECtx, list, miter.cur);
+		dlist_delete(miter.cur);
+		ExecDropSingleTupleTableSlot(ctx->slot);
+		pfree(ctx);
+	}
+	dlist_init(vleCtxs);
+}
+
+static void
+copySlot(TupleTableSlot *dst, TupleTableSlot *src)
+{
+	int i;
+	Form_pg_attribute *attrs = src->tts_tupleDescriptor->attrs;
+	int natts = src->tts_tupleDescriptor->natts;
+
+	ExecClearTuple(dst);
+	for (i = 0; i < natts; ++i)
+	{
+		dst->tts_values[i] = datumCopy(
+				src->tts_values[i], attrs[i]->attbyval, attrs[i]->attlen);
+		dst->tts_isnull[i] = src->tts_isnull[i];
+	}
+	ExecStoreVirtualTuple(dst);
 }
