@@ -493,9 +493,18 @@ copySlot(TupleTableSlot *dst, TupleTableSlot *src)
 	ExecClearTuple(dst);
 	for (i = 0; i < natts; ++i)
 	{
-		dst->tts_values[i] = datumCopy(
-				src->tts_values[i], attrs[i]->attbyval, attrs[i]->attlen);
-		dst->tts_isnull[i] = src->tts_isnull[i];
+		if (src->tts_isnull[i])
+		{
+			dst->tts_values[i] = (Datum) 0;
+			dst->tts_isnull[i] = true;
+		}
+		else
+		{
+			dst->tts_values[i] = datumCopy(src->tts_values[i],
+										   attrs[i]->attbyval,
+										   attrs[i]->attlen);
+			dst->tts_isnull[i] = false;
+		}
 	}
 	ExecStoreVirtualTuple(dst);
 }
