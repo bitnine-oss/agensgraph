@@ -177,7 +177,6 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 				ENL1_printf("qualification succeeded, projecting tuple");
 
 				result = ExecProject(node->nls.js.ps.ps_ProjInfo, &isDone);
-
 				if (! isMaxDepth(node))
 				{
 					copySlot(selfTupleSlot, result);
@@ -186,7 +185,8 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 					node->selfLoop = true;
 				}
 
-				return result;
+				if (node->curhops >= nlv->minHops)
+					return result;
 			}
 			else
 				InstrCountFiltered2(node, 1);
