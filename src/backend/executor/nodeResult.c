@@ -306,3 +306,17 @@ ExecReScanResult(ResultState *node)
 		node->ps.lefttree->chgParam == NULL)
 		ExecReScan(node->ps.lefttree);
 }
+
+void
+ExecUpScanResult(ResultState *node)
+{
+	if (node->ps.lefttree)
+		ExecUpScan(node->ps.lefttree);
+}
+
+void
+ExecDownScanResult(ResultState *node)
+{
+	if (node->ps.lefttree)
+		ExecDownScan(node->ps.lefttree);
+}
