@@ -313,6 +313,8 @@ ExecUpScanAppend(AppendState *node)
 		node->cur_ctx = dlist_prev_node(&node->vle_ctxs, node->cur_ctx);
 	else
 		node->cur_ctx = NULL;
+
+	ExecUpScan(node->appendplans[node->as_whichplan]);
 }
 
 void
@@ -339,4 +341,6 @@ ExecDownScanAppend(AppendState *node)
 		dlist_push_tail(&node->vle_ctxs, &ctx->list);
 		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
 	}
+
+	ExecDownScan(node->appendplans[node->as_whichplan]);
 }
