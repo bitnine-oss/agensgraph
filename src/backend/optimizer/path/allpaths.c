@@ -513,6 +513,9 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 	Assert(rel->reloptkind == RELOPT_BASEREL ||
 		   rel->reloptkind == RELOPT_OTHER_MEMBER_REL);
 
+	if (root->hasVLEJoinRTE)
+		return;
+
 	/* Assorted checks based on rtekind. */
 	switch (rte->rtekind)
 	{
