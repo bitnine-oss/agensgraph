@@ -250,7 +250,6 @@ static ResTarget *makeSimpleResTarget(char *field, char *name);
 static ResTarget *makeResTarget(Node *val, char *name);
 static RowExpr *makeRowExpr(List *args);
 static Node *makeColumnRef(List *fields);
-static Node *makeNullAwareArrayAppend(Node *arr, Node *elem);
 static bool IsNullAConst(Node *arg);
 
 /* utils */
@@ -1728,12 +1727,11 @@ genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
 	ResTarget  *start;
 	char	   *start_name;
 	Node 	   *l_end;
-	Node 	   *r_end;
 	ResTarget  *end;
 	char	   *end_name;
-	CoalesceExpr *coal;
 	Node	   *l_rowids;
 	Node	   *r_rowid;
+	Node	   *append;
 	ResTarget  *rowids;
 	List 	   *tlist;
 	Node       *left;
@@ -1748,7 +1746,6 @@ genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
 	{
 		l_start = makeColumnRef(genFields("l", AG_START_ID));
 		l_end = makeColumnRef(genFields("l", AG_END_ID));
-		r_end = makeColumnRef(genFields("r", AG_END_ID));
 		start_name = EDGE_UNION_START_ID;
 		end_name = EDGE_UNION_END_ID;
 	}
@@ -1756,7 +1753,6 @@ genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
 	{
 		l_start = makeColumnRef(genFields("l", AG_END_ID));
 		l_end = makeColumnRef(genFields("l", AG_START_ID));
-		r_end = makeColumnRef(genFields("r", AG_START_ID));
 		start_name = VLE_COLNAME_END;
 		end_name = VLE_COLNAME_START;
 	}
@@ -1764,22 +1760,18 @@ genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
 	{
 		l_start = makeColumnRef(genFields("l", AG_START_ID));
 		l_end = makeColumnRef(genFields("l", AG_END_ID));
-		r_end = makeColumnRef(genFields("r", AG_END_ID));
 		start_name = VLE_COLNAME_START;
 		end_name = VLE_COLNAME_END;
 	}
 
 	start = makeResTarget(l_start, start_name);
-
-	coal = makeNode(CoalesceExpr);
-	coal->args = list_make2(l_end, r_end);
-	coal->location = -1;
-	end = makeResTarget((Node *) coal, end_name);
+	end = makeResTarget((Node *) l_end, end_name);
 
 	l_rowids = makeColumnRef(genFields("l", VLE_COLNAME_ROWIDS));
 	r_rowid = makeColumnRef(genFields("r", "rowid"));
-	rowids = makeResTarget(makeNullAwareArrayAppend(l_rowids, r_rowid),
-						   VLE_COLNAME_ROWIDS);
+	append = (Node *) makeFuncCall(list_make1(makeString("array_append")),
+								   list_make2(l_rowids, r_rowid), -1);
+	rowids = makeResTarget(append, VLE_COLNAME_ROWIDS);
 	tlist = list_make3(start, end, rowids);
 	if (out)
 	{
@@ -1789,8 +1781,9 @@ genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
 
 		l_path = makeColumnRef(genFields("l", VLE_COLNAME_PATH));
 		r_id = makeColumnRef(genFields("r", "id"));
-		path = makeResTarget(makeNullAwareArrayAppend(l_path, r_id),
-							 VLE_COLNAME_PATH);
+		append = (Node *) makeFuncCall(list_make1(makeString("array_append")),
+									   list_make2(l_path, r_id), -1);
+		path = makeResTarget(append, VLE_COLNAME_PATH);
 		tlist = lappend(tlist, path);
 	}
 
@@ -1969,7 +1962,6 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 static Node *
 genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 {
-	ResTarget	   *start;
 	ResTarget      *end;
 	Node		   *tableoid;
 	Node	       *ctid;
@@ -1996,7 +1988,6 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 		next->fields = genFields("r", VLE_COLNAME_END);
 		next->location = -1;
 
-		start = makeSimpleResTarget(VLE_COLNAME_END, NULL);
 		end = makeSimpleResTarget(VLE_COLNAME_START, NULL);
 	}
 	else
@@ -2009,7 +2000,6 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 		next->fields = genFields("r", VLE_COLNAME_START);
 		next->location = -1;
 
-		start = makeSimpleResTarget(VLE_COLNAME_START, NULL);
 		end = makeSimpleResTarget(VLE_COLNAME_END, NULL);
 	}
 
@@ -2022,7 +2012,7 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 	ctid = makeColumnRef(genFields(NULL, "ctid"));
 	row = makeRowExpr(list_make2(tableoid, ctid));
 	rowid = makeResTarget((Node *) row, "rowid");
-	tlist = list_make3(start, end, rowid);
+	tlist = list_make2(end, rowid);
 	if (out)
 	{
 		ResTarget *id;
@@ -4247,35 +4237,6 @@ makeColumnRef(List *fields)
 	n->fields = fields;
 	n->location = -1;
 	return (Node *)n;
-}
-
-static Node *
-makeNullAwareArrayAppend(Node *arr, Node *elem)
-{
-	FuncCall *aa_fn;
-	NullTest *elem_is_null;
-	CaseWhen *w;
-	CaseExpr *c;
-
-	aa_fn = makeFuncCall(list_make1(makeString("array_append")),
-						 list_make2(arr, elem), -1);
-
-	elem_is_null = makeNode(NullTest);
-	elem_is_null->arg = (Expr *) copyObject(elem);
-	elem_is_null->nulltesttype = IS_NULL;
-	elem_is_null->location = -1;
-
-	w = makeNode(CaseWhen);
-	w->expr = (Expr *) elem_is_null;
-	w->result = (Expr *) copyObject(arr);
-
-	c = makeNode(CaseExpr);
-	c->casetype = InvalidOid;
-	c->arg = NULL;
-	c->args = list_make1(w);
-	c->defresult = (Expr *) aa_fn;
-
-	return (Node *) c;
 }
 
 static bool

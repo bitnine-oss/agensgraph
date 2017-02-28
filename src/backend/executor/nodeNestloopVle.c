@@ -101,8 +101,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 			result = NULL;
 			if (! node->selfLoop && (node->curhops >= nlv->minHops))
 			{
-				econtext->ecxt_innertuple = node->nls.nl_NullInnerTupleSlot;
-				result = ExecProject(node->nls.js.ps.ps_ProjInfo, &isDone);
+				result = outerTupleSlot;
 			}
 
 			if (incrDepth(node))
@@ -131,7 +130,10 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 
 		innerTupleSlot = ExecProcNode(innerPlan);
 		econtext->ecxt_innertuple = innerTupleSlot;
-		econtext->ecxt_outertuple->tts_isnull[1] = true;
+		econtext->ecxt_outertuple->tts_values[1]
+			= econtext->ecxt_innertuple->tts_values[0];
+		econtext->ecxt_outertuple->tts_isnull[1]
+			= econtext->ecxt_innertuple->tts_isnull[0];
 
 		if (TupIsNull(innerTupleSlot))
 		{
@@ -267,8 +269,6 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	 */
 	ExecInitResultTupleSlot(estate, &nlvstate->nls.js.ps);
 	nlvstate->selfTupleSlot = ExecInitExtraTupleSlot(estate);
-	nlvstate->nls.nl_NullInnerTupleSlot = ExecInitNullTupleSlot(
-			estate, ExecGetResultType(innerPlanState(nlvstate)));
 
 	if (node->nl.join.jointype != JOIN_VLE)
 		elog(ERROR, "unrecognized join type: %d", (int) node->nl.join.jointype);
