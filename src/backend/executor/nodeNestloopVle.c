@@ -116,7 +116,9 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 				ENL1_printf("rescanning inner plan");
 				if (node->selfLoop)
 					ExecDownScan(innerPlan);
+				node->nls.js.ps.state->es_forceReScan = true;
 				ExecReScan(innerPlan);
+				node->nls.js.ps.state->es_forceReScan = false;
 			}
 
 			if (result)
@@ -129,11 +131,6 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 		ENL1_printf("getting new inner tuple");
 
 		innerTupleSlot = ExecProcNode(innerPlan);
-		econtext->ecxt_innertuple = innerTupleSlot;
-		econtext->ecxt_outertuple->tts_values[1]
-			= econtext->ecxt_innertuple->tts_values[0];
-		econtext->ecxt_outertuple->tts_isnull[1]
-			= econtext->ecxt_innertuple->tts_isnull[0];
 
 		if (TupIsNull(innerTupleSlot))
 		{
@@ -157,6 +154,12 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 			 */
 			continue;
 		}
+
+		econtext->ecxt_innertuple = innerTupleSlot;
+		econtext->ecxt_outertuple->tts_values[1]
+			= econtext->ecxt_innertuple->tts_values[0];
+		econtext->ecxt_outertuple->tts_isnull[1]
+			= econtext->ecxt_innertuple->tts_isnull[0];
 
 		/*
 		 * at this point we have a new pair of inner and outer tuples so we

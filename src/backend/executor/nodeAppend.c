@@ -295,7 +295,7 @@ ExecReScanAppend(AppendState *node)
 		 * If chgParam of subnode is not null then plan will be re-scanned by
 		 * first ExecProcNode.
 		 */
-		if (subnode->chgParam == NULL)
+		if (node->ps.state->es_forceReScan || subnode->chgParam == NULL)
 			ExecReScan(subnode);
 	}
 	node->as_whichplan = 0;
@@ -306,6 +306,7 @@ void
 ExecUpScanAppend(AppendState *node)
 {
 	AppendVLECtx *ctx;
+	int i;
 
 	ctx = dlist_container(AppendVLECtx, list, node->cur_ctx);
 	node->as_whichplan = ctx->as_whichplan;
@@ -314,13 +315,15 @@ ExecUpScanAppend(AppendState *node)
 	else
 		node->cur_ctx = NULL;
 
-	ExecUpScan(node->appendplans[node->as_whichplan]);
+	for (i = 0; i < node->as_nplans; i++)
+		ExecUpScan(node->appendplans[i]);
 }
 
 void
 ExecDownScanAppend(AppendState *node)
 {
 	AppendVLECtx *ctx;
+	int i;
 
 	if (node->cur_ctx && dlist_has_next(&node->vle_ctxs, node->cur_ctx))
 	{
@@ -342,5 +345,6 @@ ExecDownScanAppend(AppendState *node)
 		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
 	}
 
-	ExecDownScan(node->appendplans[node->as_whichplan]);
+	for (i = 0; i < node->as_nplans; i++)
+		ExecDownScan(node->appendplans[i]);
 }
