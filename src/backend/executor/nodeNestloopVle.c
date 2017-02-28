@@ -181,8 +181,8 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 				result = ExecProject(node->nls.js.ps.ps_ProjInfo, &isDone);
 				if (! isMaxDepth(node))
 				{
-					copySlot(selfTupleSlot, result);
 					downContext(node, econtext->ecxt_outertuple);
+					copySlot(selfTupleSlot, result);
 					node->nls.nl_NeedNewOuter = true;
 					node->selfLoop = true;
 				}
