@@ -1275,7 +1275,6 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	bool			isNull;
 	ExprDoneCond 	isDone;
 	Datum			vertex;
-	Datum			resqual;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
 	HeapTuple		tuple;
 
@@ -1299,28 +1298,14 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 				 errmsg("expected single result")));
 	}
 
-	if (gvertex->es_qual != NULL)
+	if (gvertex->es_qual &&
+		ExecQual((List *)gvertex->es_qual, econtext, false))
 	{
-		resqual = ExecEvalExpr(gvertex->es_qual, econtext, &isNull, &isDone);
-		if (isNull)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-					 errmsg("NULL is not allowed in MERGE")));
-		}
-		if (isDone != ExprSingleResult)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("expected single result")));
-		}
-		if (BoolGetDatum(resqual) == true)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("cannot use null property value in MERGE")));
-		}
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("cannot use null property value in MERGE")));
 	}
+
 
 	*vid = getVertexIdDatum(vertex);
 
@@ -1380,7 +1365,6 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	bool			isNull;
 	ExprDoneCond	isDone;
 	Datum			edge;
-	Datum			resqual;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
 	HeapTuple		tuple;
 
@@ -1402,27 +1386,11 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 				 errmsg("expected single result")));
 	}
 
-	if (gedge->es_qual != NULL)
+	if (gedge->es_qual && ExecQual((List *)gedge->es_qual, econtext, false))
 	{
-		resqual = ExecEvalExpr(gedge->es_qual, econtext, &isNull, &isDone);
-		if (isNull)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-					 errmsg("NULL is not allowed in MERGE")));
-		}
-		if (isDone != ExprSingleResult)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("expected single result")));
-		}
-		if (BoolGetDatum(resqual) == true)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("cannot use null property value in MERGE")));
-		}
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("cannot use null property value in MERGE")));
 	}
 
 	ExecClearTuple(insertSlot);
