@@ -14939,14 +14939,14 @@ cypher_match:
 					CypherMatchClause *n = makeNode(CypherMatchClause);
 					n->pattern = $3;
 					n->where = $4;
-					n->optional = $1;
+					n->kind = $1;
 					$$ = (Node *) n;
 				}
 		;
 
 cypher_optional_opt:
-			OPTIONAL			{ $$ = true; }
-			| /* EMPTY */		{ $$ = false; }
+			OPTIONAL			{ $$ = CM_OPTIONAL; }
+			| /* EMPTY */		{ $$ = CM_NORMAL; }
 		;
 
 cypher_return:

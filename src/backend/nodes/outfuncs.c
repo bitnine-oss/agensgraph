@@ -3424,7 +3424,7 @@ _outCypherMatchClause(StringInfo str, const CypherMatchClause *node)
 
 	WRITE_NODE_FIELD(pattern);
 	WRITE_NODE_FIELD(where);
-	WRITE_BOOL_FIELD(optional);
+	WRITE_ENUM_FIELD(kind, CMKind);
 }
 
 static void

@@ -3253,12 +3253,20 @@ typedef struct CypherClause
 /* previous Cypher clause is transformed to RangeSubselect */
 typedef RangeSubselect RangePrevclause;
 
+/* which clause is parsed as a CypherProjection */
+typedef enum CMKind
+{
+	CM_NORMAL,
+	CM_OPTIONAL,
+	CM_MERGE
+} CMKind;
+
 typedef struct CypherMatchClause
 {
 	NodeTag		type;
 	List	   *pattern;
 	Node	   *where;		/* WHERE qualification */
-	bool		optional;	/* OPTIONAL MATCH */
+	CMKind		kind;		/* MatchKind */
 } CypherMatchClause;
 
 /* which clause is parsed as a CypherProjection */

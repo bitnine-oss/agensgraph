@@ -944,7 +944,7 @@ preprocess_graph_sets(PlannerInfo *root, List *sets)
 	{
 		GraphSetProp *gsp = lfirst(ls);
 
-		gsp->elem = preprocess_expression(root, gsp->elem, EXPRKIND_VALUES);
+		gsp->elem = preprocess_expression(root, gsp->elem, EXPRKIND_TARGET);
 		gsp->expr = preprocess_expression(root, gsp->expr, EXPRKIND_VALUES);
 	}
 }
@@ -966,9 +966,9 @@ preprocess_graph_mergepath(PlannerInfo *root, Node *path)
 				GraphVertex *gv = (GraphVertex *) node;
 
 				gv->expr = preprocess_expression(root, gv->expr,
-												 EXPRKIND_VALUES);
+												 EXPRKIND_TARGET);
 				gv->qual = preprocess_expression(root, gv->qual,
-												 EXPRKIND_VALUES);
+												 EXPRKIND_QUAL);
 			}
 			else
 			{
@@ -977,9 +977,9 @@ preprocess_graph_mergepath(PlannerInfo *root, Node *path)
 				Assert(IsA(node, GraphEdge));
 
 				ge->expr = preprocess_expression(root, ge->expr,
-												 EXPRKIND_VALUES);
+												 EXPRKIND_TARGET);
 				ge->qual = preprocess_expression(root, ge->qual,
-												 EXPRKIND_VALUES);
+												 EXPRKIND_QUAL);
 			}
 		}
 	}
