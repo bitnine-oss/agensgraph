@@ -270,6 +270,7 @@ _readQuery(void)
 	READ_NODE_FIELD(graph.targets);
 	READ_NODE_FIELD(graph.exprs);
 	READ_NODE_FIELD(graph.sets);
+	READ_NODE_FIELD(graph.mergepattern);
 
 	READ_DONE();
 }
@@ -2280,6 +2281,8 @@ _readGraphVertex(void)
 	READ_STRING_FIELD(variable);
 	READ_BOOL_FIELD(create);
 	READ_OID_FIELD(relid);
+	READ_NODE_FIELD(expr);
+	READ_NODE_FIELD(qual);
 
 	READ_DONE();
 }
@@ -2292,6 +2295,8 @@ _readGraphEdge(void)
 	READ_INT_FIELD(direction);
 	READ_STRING_FIELD(variable);
 	READ_OID_FIELD(relid);
+	READ_NODE_FIELD(expr);
+	READ_NODE_FIELD(qual);
 
 	READ_DONE();
 }
@@ -2301,6 +2306,7 @@ _readGraphSetProp(void)
 {
 	READ_LOCALS(GraphSetProp);
 
+	READ_ENUM_FIELD(kind, CSetKind);
 	READ_STRING_FIELD(variable);
 	READ_NODE_FIELD(elem);
 	READ_NODE_FIELD(expr);

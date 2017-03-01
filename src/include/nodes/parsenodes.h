@@ -170,6 +170,7 @@ typedef struct Query
 		List	   *targets;	/* relation Oid's of target labels */
 		List	   *exprs;		/* expression list for DELETE */
 		List	   *sets;		/* expression list for SET/REMOVE */
+		Node	   *mergepattern;	/* graph path for MERGE */
 	}			graph;
 } Query;
 
@@ -3252,12 +3253,20 @@ typedef struct CypherClause
 /* previous Cypher clause is transformed to RangeSubselect */
 typedef RangeSubselect RangePrevclause;
 
+/* which clause is parsed as a CypherProjection */
+typedef enum CMKind
+{
+	CM_NORMAL,
+	CM_OPTIONAL,
+	CM_MERGE
+} CMKind;
+
 typedef struct CypherMatchClause
 {
 	NodeTag		type;
 	List	   *pattern;
 	Node	   *where;		/* WHERE qualification */
-	bool		optional;	/* OPTIONAL MATCH */
+	CMKind		kind;		/* MatchKind */
 } CypherMatchClause;
 
 /* which clause is parsed as a CypherProjection */
@@ -3295,10 +3304,18 @@ typedef struct CypherDeleteClause
 	List	   *exprs;
 } CypherDeleteClause;
 
+typedef enum CSetKind
+{
+	CSET_NORMAL,
+	CSET_ON_CREATE,
+	CSET_ON_MATCH
+} CSetKind;
+
 typedef struct CypherSetClause
 {
 	NodeTag		type;
 	List	   *items;
+	CSetKind	kind;
 } CypherSetClause;
 
 typedef struct CypherLoadClause
@@ -3306,6 +3323,13 @@ typedef struct CypherLoadClause
 	NodeTag		type;
 	RangeVar   *relation;	/* a relation to load */
 } CypherLoadClause;
+
+typedef struct CypherMergeClause
+{
+	NodeTag		type;
+	List	   *pattern;
+	List	   *setitems;
+} CypherMergeClause;
 
 typedef enum CPathKind
 {

@@ -217,7 +217,7 @@ networkjoinsel(PG_FUNCTION_ARGS)
 		case JOIN_INNER:
 		case JOIN_LEFT:
 		case JOIN_FULL:
-
+		case JOIN_CYPHER_MERGE:
 			/*
 			 * Selectivity for left/full join is not exactly the same as inner
 			 * join, but we neglect the difference, as eqjoinsel does.

@@ -1670,6 +1670,7 @@ typedef struct NestLoopState
 	bool		nl_NeedNewOuter;
 	bool		nl_MatchedOuter;
 	TupleTableSlot *nl_NullInnerTupleSlot;
+	Snapshot	nl_MergeMatchSnapshot;
 } NestLoopState;
 
 /* ----------------
@@ -2096,6 +2097,7 @@ typedef struct ModifyGraphState
 								   with `es_prop_map` */
 	List	   *exprs;			/* expression state list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
+	Node	   *mergepattern;	/* graph pattern to create for MERGE */
 } ModifyGraphState;
 
 #endif   /* EXECNODES_H */
