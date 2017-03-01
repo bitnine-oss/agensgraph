@@ -51,7 +51,6 @@
 
 #define CYPHER_SUBQUERY_ALIAS	"_"
 #define CYPHER_OPTMATCH_ALIAS	"_o"
-#define CYPHER_MERGEMATCH_ALIAS	"_m"
 #define CYPHER_VLR_WITH_ALIAS	"_vlr"
 #define CYPHER_VLR_EDGE_ALIAS	"_e"
 
@@ -225,6 +224,9 @@ static GraphVertex *transformMergeNode(ParseState *pstate, CypherNode *cnode,
 									   bool singlenode, List **targetlist);
 static GraphEdge *transformMergeRel(ParseState *pstate, CypherRel *crel,
 									List **targetlist);
+static RangeTblEntry *transformMatchMerge(ParseState *pstate,
+										  CypherClause *clause);
+
 /* common */
 static void vertexLabelExist(ParseState *pstate, char *labname, int labloc);
 static void edgeLabelExist(ParseState *pstate, char *labname, int labloc);
@@ -304,7 +306,7 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	match = makeNode(CypherMatchClause);
 	match->pattern = subpat->pattern;
 	match->where = NULL;
-	match->optional = false;
+	match->kind = CM_NORMAL;
 
 	clause = makeNode(CypherClause);
 	clause->detail = (Node *) match;
@@ -494,11 +496,17 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
+	if (detail->kind == CM_MERGE)
+	{
+		rte = transformMatchMerge(pstate, clause);
+
+		qry->targetList = makeTargetListFromJoin(pstate, rte);
+	}
 	/*
 	 * since WHERE clause is part of MATCH,
 	 * transform OPTIONAL MATCH with its WHERE clause
 	 */
-	if (detail->optional && clause->prev != NULL)
+	else if (detail->kind == CM_OPTIONAL && clause->prev != NULL)
 	{
 		/*
 		 * NOTE: Should we return a single row with NULL values
@@ -741,7 +749,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 }
 
 static Node *
-makeMergePatternMatch(List *pattern)
+makeMergePatternMatch(List *pattern, Node *prev)
 {
 	CypherMatchClause *patternmatch = makeNode(CypherMatchClause);
 	CypherClause *cypherclause = makeNode(CypherClause);
@@ -751,10 +759,10 @@ makeMergePatternMatch(List *pattern)
 
 	patternmatch->pattern = pattern;
 	patternmatch->where = NULL;
-	patternmatch->optional = false;
+	patternmatch->kind = CM_MERGE;
 
 	cypherclause->detail = (Node *) patternmatch;
-	cypherclause->prev = NULL;
+	cypherclause->prev = prev;
 
 	return (Node *) cypherclause;
 }
@@ -780,114 +788,59 @@ makeCypherDummySelect()
 	return (Node *) clause;
 }
 
-
 static RangeTblEntry *
-cypherMergeJoinRTEs(ParseState *pstate, RangeTblEntry *l_rte,
-					RangeTblEntry *r_rte, Node *qual, Alias *alias)
+transformMatchMerge(ParseState *pstate, CypherClause *clause)
 {
-	int			l_rtindex;
-	ListCell   *le;
-	Node	   *l_jt = NULL;
-	RangeTblRef *r_rtr;
-	List	   *res_colnames = NIL;
-	List	   *res_colvars = NIL;
-	JoinExpr   *j;
-	RangeTblEntry *rte;
-	int			i;
-	ParseNamespaceItem *nsitem;
+	CypherMatchClause *detail = (CypherMatchClause *) clause->detail;
+	RangeTblEntry	  *l_rte;
+	RangeTblEntry	  *r_rte;
+	Alias	*r_alias;
+	Alias	*alias;
+	Node	*qual;
+	Node	*prevclause;
 
-	/* find JOIN-subtree of `l_rte` */
-	l_rtindex = RTERangeTablePosn(pstate, l_rte, NULL);
-	foreach(le, pstate->p_joinlist)
-	{
-		Node	   *jt = lfirst(le);
-		int			rtindex;
-
-		if (IsA(jt, RangeTblRef))
-		{
-			rtindex = ((RangeTblRef *) jt)->rtindex;
-		}
-		else
-		{
-			Assert(IsA(jt, JoinExpr));
-			rtindex = ((JoinExpr *) jt)->rtindex;
-		}
-
-		if (rtindex == l_rtindex)
-			l_jt = jt;
-	}
-	Assert(l_jt != NULL);
-
-	makeExtraFromRTE(pstate, r_rte, &r_rtr, NULL, false);
-
-	j = makeNode(JoinExpr);
-	j->jointype = JOIN_CYPHER_MERGE;
-	j->larg = l_jt;
-	j->rarg = (Node *) r_rtr;
-	j->quals = qual;
-	j->alias = alias;
-
-	makeJoinResCols(pstate, l_rte, r_rte, &res_colnames, &res_colvars);
-	rte = addRangeTableEntryForJoin(pstate, res_colnames, j->jointype,
-									res_colvars, j->alias, true);
-	j->rtindex = RTERangeTablePosn(pstate, rte, NULL);
-
-	for (i = list_length(pstate->p_joinexprs) + 1; i < j->rtindex; i++)
-		pstate->p_joinexprs = lappend(pstate->p_joinexprs, NULL);
-	pstate->p_joinexprs = lappend(pstate->p_joinexprs, j);
-	Assert(list_length(pstate->p_joinexprs) == j->rtindex);
-
-	pstate->p_joinlist = list_delete_ptr(pstate->p_joinlist, l_jt);
-	pstate->p_joinlist = lappend(pstate->p_joinlist, j);
-
-	makeExtraFromRTE(pstate, rte, NULL, &nsitem, true);
-	pstate->p_namespace = lappend(pstate->p_namespace, nsitem);
-
-	return rte;
-}
-
-static RangeTblEntry *
-makeCypherMergeJoin(ParseState *pstate, Node *left, Node *right)
-{
-	Node	   *qual;
-	Alias	   *alias;
-	Alias	   *r_alias;
-	RangeTblEntry *l_rte;
-	RangeTblEntry *r_rte;
-	int sv_namespace_length;
-
-	sv_namespace_length = list_length(pstate->p_namespace);
+	Assert(clause->prev != NULL);
 
 	/* transform LEFT */
-	l_rte = transformClause(pstate, left);
+	l_rte = transformClause(pstate, clause->prev);
+
+	/*
+	 * Transform RIGHT. Prevent `clause` from being transformed infinitely.
+	 * `p_cols_visible` of `l_rte` must be set to allow `r_rte` to see columns
+	 * of `l_rte` by their name.
+	 */
+	prevclause = clause->prev;
+	clause->prev = NULL;
+	detail->kind = CM_NORMAL;
 
 	pstate->p_lateral_active = true;
+	pstate->p_is_optional_match = true;
 
-	r_alias = makeAliasNoDup(CYPHER_MERGEMATCH_ALIAS, NIL);
-	r_rte = transformClauseImpl(pstate, right, r_alias);
+	r_alias = makeAliasNoDup(CYPHER_OPTMATCH_ALIAS, NIL);
+	r_rte = transformClauseImpl(pstate, (Node *) clause, r_alias);
 
-	/* Remove the left-side RTEs from the namespace list again */
-	pstate->p_namespace = list_truncate(pstate->p_namespace,
-										sv_namespace_length);
-
+	pstate->p_is_optional_match = false;
 	pstate->p_lateral_active = false;
+
+	detail->kind = CM_MERGE;
+	clause->prev = prevclause;
 
 	qual = makeBoolConst(true, false);
 	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
 
-	return cypherMergeJoinRTEs(pstate, l_rte, r_rte, qual, alias);
+	return incrementalJoinRTEs(pstate, JOIN_CYPHER_MERGE, l_rte, r_rte, qual, alias);
 }
 
 static RangeTblEntry *
 transformMergeMatch(ParseState *pstate, CypherClause *clause)
 {
 	CypherMergeClause *detail = (CypherMergeClause *) clause->detail;
-	Node   *larg;
-	Node   *rarg;
+	Node   *prevclause;
+	Node   *mergematch;
 
 	/* make dummy selectStmt for merge join, if previous clause is null. */
 	if (clause->prev == NULL)
-		larg = makeCypherDummySelect();
+		prevclause = makeCypherDummySelect();
 	else
 	{
 		CypherClause *prev = (CypherClause *) clause->prev;
@@ -906,12 +859,12 @@ transformMergeMatch(ParseState *pstate, CypherClause *clause)
 			}
 		}
 
-		larg = clause->prev;
+		prevclause = clause->prev;
 	}
 
-	rarg = makeMergePatternMatch(detail->pattern);
+	mergematch = makeMergePatternMatch(detail->pattern, prevclause);
 
-	return makeCypherMergeJoin(pstate, larg, rarg);
+	return transformClause(pstate, mergematch);
 }
 
 static List *
@@ -1009,9 +962,8 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 
 	/* join previous clauses and merge pattern match */
 	rte = transformMergeMatch(pstate, clause);
-	Assert(rte->rtekind == RTE_JOIN);
 
-	qry->targetList = makeTargetListFromJoin(pstate, rte);
+	qry->targetList = makeTargetListFromRTE(pstate, rte);
 
 	/* make expression list for creating merge's graph pattern. */
 	qry->graph.mergepattern = transformMergeCreate(pstate, detail->pattern,
@@ -1120,7 +1072,7 @@ transformMatchOptional(ParseState *pstate, CypherClause *clause)
 
 	prevclause = clause->prev;
 	clause->prev = NULL;
-	detail->optional = false;
+	detail->kind = CM_NORMAL;
 
 	pstate->p_lateral_active = true;
 	pstate->p_is_optional_match = true;
@@ -1131,7 +1083,7 @@ transformMatchOptional(ParseState *pstate, CypherClause *clause)
 	pstate->p_is_optional_match = false;
 	pstate->p_lateral_active = false;
 
-	detail->optional = true;
+	detail->kind = CM_OPTIONAL;
 	clause->prev = prevclause;
 
 	qual = makeBoolConst(true, false);
