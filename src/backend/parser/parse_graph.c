@@ -1716,9 +1716,28 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList)
 }
 
 /*
- * SELECT l.end, array[(l.tableoid, l.ctid)] AS rowids, array[l.id] AS path
- * FROM edge AS l VLE JOIN edge AS r ON l.end = r.start
- * WHERE l.start = vid AND l.properties @> ... AND r.properties @> ...
+ * SELECT l.start,
+ * 		  l.end,
+ * 		  ARRAY_APPEND(l.rowids, r.rowid) AS rowids,
+ * 		  ARRAY_APPNED(l.path, r.id) AS path
+ * FROM   (
+ *          SELECT l.start,
+ *                 l.end,
+ *                 array[(l.tableoid, l.ctid)] AS rowids,
+ *                 ARRAY[l.id] AS path
+ * 		    FROM   edge AS l
+ * 		    WHERE  l.start = outer_vid
+ * 		      AND  l.properties @> ...)
+ * 		  VLE JOIN
+ * 		    LATERAL (
+ * 		    SELECT r.end,
+ * 		  		   ROW(r.tableoid, r.ctid) AS rowid,
+ * 		  		   r.id
+ * 		    FROM   edge AS r
+ * 		    WHERE  r.start = l.end
+ * 		      AND  r.properties @> ...)
+ * 		  ON TRUE
+ * WHERE  ARRAY_POSITION(l.rowids, r.rowid) IS NULL
  */
 static SelectStmt *
 genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
