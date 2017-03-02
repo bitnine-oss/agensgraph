@@ -431,12 +431,16 @@ ExecUpScanSeqScan(SeqScanState *node)
 void
 ExecDownScanSeqScan(SeqScanState *node)
 {
+	EState *estate = node->ss.ps.state;
 	SeqScanVLECtx *ctx;
 
 	if (node->cur_ctx == NULL)
 	{
 		ctx = (SeqScanVLECtx *) palloc(sizeof(SeqScanVLECtx));
 		ctx->ss_currentRelation = node->ss.ss_currentRelation;
+		if (node->ss.ss_currentScanDesc == NULL)
+			node->ss.ss_currentScanDesc = heap_beginscan(
+					node->ss.ss_currentRelation, estate->es_snapshot, 0, NULL);
 		ctx->ss_currentScanDesc = node->ss.ss_currentScanDesc;
 		dlist_push_tail(&node->vle_ctxs, &ctx->list);
 		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
@@ -452,7 +456,6 @@ ExecDownScanSeqScan(SeqScanState *node)
 	else
 	{
 		SeqScan *plan = (SeqScan *) node->ss.ps.plan;
-		EState *estate = node->ss.ps.state;
 
 		node->ss.ss_currentRelation = ExecOpenScanRelation(
 				estate, plan->scanrelid, 0);
