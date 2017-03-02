@@ -1703,12 +1703,27 @@ typedef struct NestLoopState
 	TupleTableSlot *nl_NullInnerTupleSlot;
 } NestLoopState;
 
+typedef struct VLEArrayExpr
+{
+	Oid         element_typeid; /* common type of array elements */
+	int16		elemlength;		/* typlen of the array element type */
+	bool		elembyval;		/* is the element type pass-by-value? */
+	char		elemalign;		/* typalign of the element type */
+	int	        nelems;
+	int	        telems;
+	Datum      *elements;
+	ExprContext *econtext;
+} VLEArrayExpr;
+
 typedef struct NestLoopVLEState
 {
 	NestLoopState 	nls;
 	int				curhops;
 	bool			selfLoop;
+	bool			hasPath;
 	TupleTableSlot *selfTupleSlot;
+	VLEArrayExpr	rowids;
+	VLEArrayExpr	path;
 	dlist_head  	vleCtxs;		/* list of NestLoopVLECtx */
 	dlist_node 	   *curCtx;
 } NestLoopVLEState;

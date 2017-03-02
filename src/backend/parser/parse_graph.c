@@ -1718,12 +1718,12 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList)
 /*
  * SELECT l.start,
  * 		  l.end,
- * 		  ARRAY_APPEND(l.rowids, r.rowid) AS rowids,
- * 		  ARRAY_APPNED(l.path, r.id) AS path
+ * 		  l.rowids,
+ * 		  l.path
  * FROM   (
  *          SELECT l.start,
  *                 l.end,
- *                 array[(l.tableoid, l.ctid)] AS rowids,
+ *                 ARRAY[ROW(l.tableoid, l.ctid)] AS rowids,
  *                 ARRAY[l.id] AS path
  * 		    FROM   edge AS l
  * 		    WHERE  l.start = outer_vid
@@ -1737,7 +1737,6 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList)
  * 		    WHERE  r.start = l.end
  * 		      AND  r.properties @> ...)
  * 		  ON TRUE
- * WHERE  ARRAY_POSITION(l.rowids, r.rowid) IS NULL
  */
 static SelectStmt *
 genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
@@ -1749,16 +1748,11 @@ genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
 	ResTarget  *end;
 	char	   *end_name;
 	Node	   *l_rowids;
-	Node	   *r_rowid;
-	Node	   *append;
 	ResTarget  *rowids;
 	List 	   *tlist;
 	Node       *left;
 	Node       *right;
 	Node	   *join;
-	FuncCall   *fn_ap;
-	NullTest   *dup_check;
-	List	   *where_args = NIL;
 	SelectStmt *sel;
 
 	if (crel->direction == CYPHER_REL_DIR_NONE)
@@ -1787,22 +1781,15 @@ genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
 	end = makeResTarget((Node *) l_end, end_name);
 
 	l_rowids = makeColumnRef(genFields("l", VLE_COLNAME_ROWIDS));
-	r_rowid = makeColumnRef(genFields("r", "rowid"));
-	append = (Node *) makeFuncCall(list_make1(makeString("array_append")),
-								   list_make2(l_rowids, r_rowid), -1);
-	rowids = makeResTarget(append, VLE_COLNAME_ROWIDS);
+	rowids = makeResTarget(l_rowids, VLE_COLNAME_ROWIDS);
 	tlist = list_make3(start, end, rowids);
 	if (out)
 	{
 		Node	   *l_path;
-		Node	   *r_id;
 		ResTarget  *path;
 
 		l_path = makeColumnRef(genFields("l", VLE_COLNAME_PATH));
-		r_id = makeColumnRef(genFields("r", "id"));
-		append = (Node *) makeFuncCall(list_make1(makeString("array_append")),
-									   list_make2(l_path, r_id), -1);
-		path = makeResTarget(append, VLE_COLNAME_PATH);
+		path = makeResTarget(l_path, VLE_COLNAME_PATH);
 		tlist = lappend(tlist, path);
 	}
 
@@ -1811,19 +1798,9 @@ genVLEsubselect(ParseState *pstate, CypherRel *crel, bool out)
 
 	join = genVLEJoinExpr(crel, left, right);
 
-	fn_ap = makeFuncCall(list_make1(makeString("array_position")),
-						 list_make2(copyObject(l_rowids), copyObject(r_rowid)),
-						 -1);
-	dup_check = makeNode(NullTest);
-	dup_check->arg = (Expr *) fn_ap;
-	dup_check->nulltesttype = IS_NULL;
-	dup_check->location = -1;
-	where_args = lappend(where_args, dup_check);
-
 	sel = makeNode(SelectStmt);
 	sel->targetList = tlist;
 	sel->fromClause = list_make1(join);
-	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
 	return sel;
 }
