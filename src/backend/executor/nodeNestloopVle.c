@@ -47,7 +47,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 	/*
 	 * get information from the node
 	 */
-	ENL1_printf("getting info from node");
+	ENLV1_printf("getting info from node");
 
 	nlv = (NestLoopVLE *) node->nls.js.ps.plan;
 	joinqual = node->nls.js.joinqual;
@@ -68,7 +68,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 	 * Ok, everything is setup for the join so now loop until we return a
 	 * qualifying join tuple.
 	 */
-	ENL1_printf("entering main loop");
+	ENLV1_printf("entering main loop");
 
 	for (;;)
 	{
@@ -78,12 +78,14 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 		 */
 		if (node->nls.nl_NeedNewOuter)
 		{
-			ENL1_printf("getting new outer tuple");
-
 			if (node->selfLoop)
+			{
+				ENLV1_printf("getting new self outer tuple");
 				outerTupleSlot = selfTupleSlot;
+			}
 			else
 			{
+				ENLV1_printf("getting new outer tuple");
 				outerTupleSlot = ExecProcNode(outerPlan);
 				/*
 				 * if there are no more outer tuples, then the join is complete..
@@ -95,7 +97,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 				}
 			}
 
-			ENL1_printf("saving new outer tuple information");
+			ENLV1_printf("saving new outer tuple information");
 			econtext->ecxt_outertuple = outerTupleSlot;
 
 			result = NULL;
@@ -113,9 +115,12 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 				/*
 				 * now rescan the inner plan
 				 */
-				ENL1_printf("rescanning inner plan");
 				if (node->selfLoop)
+				{
+					ENLV1_printf("downscanning inner plan");
 					ExecDownScan(innerPlan);
+				}
+				ENLV1_printf("rescanning inner plan");
 				node->nls.js.ps.state->es_forceReScan = true;
 				ExecReScan(innerPlan);
 				node->nls.js.ps.state->es_forceReScan = false;
@@ -128,22 +133,22 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 		/*
 		 * we have an outerTuple, try to get the next inner tuple.
 		 */
-		ENL1_printf("getting new inner tuple");
+		ENLV1_printf("getting new inner tuple");
 
 		innerTupleSlot = ExecProcNode(innerPlan);
 
 		if (TupIsNull(innerTupleSlot))
 		{
-			ENL1_printf("no inner tuple, need new outer tuple");
-
 			decrDepth(node);
 			if (node->curCtx == NULL)
 			{
+				ENLV1_printf("no inner tuple, need new outer tuple");
 				node->nls.nl_NeedNewOuter = true;
 				node->selfLoop = false;
 			}
 			else
 			{
+				ENLV1_printf("no inner tuple, upscanning inner plan, looping");
 				ExecUpScan(innerPlan);
 				econtext->ecxt_outertuple = upContext(node);
 				bindNestParam(nlv, econtext, econtext->ecxt_outertuple, NULL);
@@ -169,7 +174,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 		 * Only the joinquals determine MatchedOuter status, but all quals
 		 * must pass to actually return the tuple.
 		 */
-		ENL1_printf("testing qualification");
+		ENLV1_printf("testing qualification");
 
 		if (ExecQual(joinqual, econtext, false))
 		{
@@ -179,7 +184,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 				 * qualification was satisfied so we project and return the
 				 * slot containing the result tuple using ExecProject().
 				 */
-				ENL1_printf("qualification succeeded, projecting tuple");
+				ENLV1_printf("qualification succeeded, projecting tuple");
 
 				result = ExecProject(node->nls.js.ps.ps_ProjInfo, &isDone);
 				if (! isMaxDepth(node))
@@ -204,7 +209,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 		 */
 		ResetExprContext(econtext);
 
-		ENL1_printf("qualification failed, looping");
+		ENLV1_printf("qualification failed, looping");
 	}
 }
 
@@ -220,8 +225,7 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
-	NL1_printf("ExecInitNestLoopVLE: %s\n",
-			   "initializing node");
+	NLV1_printf("ExecInitNestLoopVLE: %s\n", "initializing node");
 
 	/*
 	 * create state structure
@@ -295,8 +299,7 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	nlvstate->nls.js.ps.ps_TupFromTlist = false;
 	nlvstate->nls.nl_NeedNewOuter = true;
 
-	NL1_printf("ExecInitNestLoopVLE: %s\n",
-			   "node initialized");
+	NLV1_printf("ExecInitNestLoopVLE: %s\n", "node initialized");
 
 	return nlvstate;
 }
@@ -310,8 +313,7 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 void
 ExecEndNestLoopVLE(NestLoopVLEState *node)
 {
-	NL1_printf("ExecEndNestLoopVLE: %s\n",
-			   "ending node processing");
+	NLV1_printf("ExecEndNestLoopVLE: %s\n", "ending node processing");
 
 	/*
 	 * Free the exprcontext
@@ -331,8 +333,7 @@ ExecEndNestLoopVLE(NestLoopVLEState *node)
 	ExecEndNode(outerPlanState(node));
 	ExecEndNode(innerPlanState(node));
 
-	NL1_printf("ExecEndNestLoopVLE: %s\n",
-			   "node processing ended");
+	NLV1_printf("ExecEndNestLoopVLE: %s\n", "node processing ended");
 }
 
 /* ----------------------------------------------------------------
