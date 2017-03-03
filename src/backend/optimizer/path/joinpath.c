@@ -1295,17 +1295,7 @@ match_unsorted_outer_for_vle(PlannerInfo *root,
 							 RelOptInfo *innerrel,
 							 JoinPathExtraData *extra)
 {
-	Path	   *inner_cheapest_total = innerrel->cheapest_total_path;
-	Path	   *matpath = NULL;
 	ListCell   *lc1;
-
-	if (PATH_PARAM_BY_REL(inner_cheapest_total, outerrel))
-		inner_cheapest_total = NULL;
-
-	if (enable_material && inner_cheapest_total != NULL &&
-		!ExecMaterializesOutput(inner_cheapest_total->pathtype))
-		matpath = (Path *)
-			create_material_path(innerrel, inner_cheapest_total);
 
 	foreach(lc1, outerrel->pathlist)
 	{
@@ -1345,16 +1335,6 @@ match_unsorted_outer_for_vle(PlannerInfo *root,
 							  JOIN_VLE,
 							  extra);
 		}
-
-		/* Also consider materialized form of the cheapest inner path */
-		if (matpath != NULL)
-			try_nestloop_path(root,
-							  joinrel,
-							  outerpath,
-							  matpath,
-							  merge_pathkeys,
-							  JOIN_VLE,
-							  extra);
 	}
 }
 
