@@ -17,6 +17,14 @@
 #include "nodes/pg_list.h"
 
 
+#define OUTER_START_VARNO 	0
+#define OUTER_BIND_VARNO	1
+#define OUTER_ROWIDS_VARNO	2
+#define OUTER_PATH_VARNO	3
+#define INNER_BIND_VARNO	0
+#define INNER_ROWID_VARNO	1
+#define INNER_EGID_VARNO	2
+
 static bool incrDepth(NestLoopVLEState *node);
 static bool decrDepth(NestLoopVLEState *node);
 static bool isMaxDepth(NestLoopVLEState *node);
@@ -175,10 +183,10 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 		}
 
 		econtext->ecxt_innertuple = innerTupleSlot;
-		econtext->ecxt_outertuple->tts_values[1]
-			= econtext->ecxt_innertuple->tts_values[0];
-		econtext->ecxt_outertuple->tts_isnull[1]
-			= econtext->ecxt_innertuple->tts_isnull[0];
+		econtext->ecxt_outertuple->tts_values[OUTER_BIND_VARNO]
+			= econtext->ecxt_innertuple->tts_values[INNER_BIND_VARNO];
+		econtext->ecxt_outertuple->tts_isnull[OUTER_BIND_VARNO]
+			= econtext->ecxt_innertuple->tts_isnull[INNER_BIND_VARNO];
 
 		/*
 		 * at this point we have a new pair of inner and outer tuples so we
@@ -190,7 +198,8 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 		 */
 		ENLV1_printf("testing qualification");
 
-		if (! hasElem(&node->rowids, econtext->ecxt_innertuple->tts_values[1]))
+		if (! hasElem(&node->rowids,
+					  econtext->ecxt_innertuple->tts_values[INNER_ROWID_VARNO]))
 		{
 			if (otherqual == NIL || ExecQual(otherqual, econtext, false))
 			{
@@ -313,11 +322,13 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 
 	innerTupleDesc
 		= innerPlanState(nlvstate)->ps_ResultTupleSlot->tts_tupleDescriptor;
-	initArray(&nlvstate->rowids, innerTupleDesc->attrs[1]->atttypid,
+	initArray(&nlvstate->rowids,
+			  innerTupleDesc->attrs[INNER_ROWID_VARNO]->atttypid,
 			  nlvstate->nls.js.ps.ps_ExprContext);
 	if (list_length(nlvstate->nls.js.ps.targetlist) == 4)
 	{
-		initArray(&nlvstate->path, innerTupleDesc->attrs[2]->atttypid,
+		initArray(&nlvstate->path,
+				  innerTupleDesc->attrs[INNER_EGID_VARNO]->atttypid,
 				  nlvstate->nls.js.ps.ps_ExprContext);
 		nlvstate->hasPath = true;
 	}
@@ -555,12 +566,12 @@ copyStartAndBindVar(TupleTableSlot *dst, TupleTableSlot *src)
 static void
 replaceResult(NestLoopVLEState *node, TupleTableSlot *slot)
 {
-	slot->tts_values[2] = evalArray(&node->rowids);
-	slot->tts_isnull[2] = false;
+	slot->tts_values[OUTER_ROWIDS_VARNO] = evalArray(&node->rowids);
+	slot->tts_isnull[OUTER_ROWIDS_VARNO] = false;
 	if (node->hasPath)
 	{
-		slot->tts_values[3] = evalArray(&node->path);
-		slot->tts_isnull[3] = false;
+		slot->tts_values[OUTER_PATH_VARNO] = evalArray(&node->path);
+		slot->tts_isnull[OUTER_PATH_VARNO] = false;
 	}
 }
 
@@ -684,19 +695,19 @@ addOuterRowidAndGid(NestLoopVLEState *node, TupleTableSlot *slot)
 	Form_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
 
 	upper.indx[0] = 1;
-	rowid = array_get_element(slot->tts_values[2], 1, upper.indx,
-							  attrs[2]->attlen, node->rowids.elemlength,
-							  node->rowids.elembyval, node->rowids.elemalign,
-							  &isNull);
+	rowid = array_get_element(slot->tts_values[OUTER_ROWIDS_VARNO],
+							  1, upper.indx, attrs[OUTER_ROWIDS_VARNO]->attlen,
+							  node->rowids.elemlength, node->rowids.elembyval,
+							  node->rowids.elemalign, &isNull);
 	if (isNull)
 		return;
 
 	if (node->hasPath)
 	{
-		gid = array_get_element(slot->tts_values[3], 1, upper.indx,
-							   attrs[3]->attlen, node->path.elemlength,
-							   node->path.elembyval, node->path.elemalign,
-							   &isNull);
+		gid = array_get_element(slot->tts_values[OUTER_PATH_VARNO],
+								1, upper.indx, attrs[OUTER_PATH_VARNO]->attlen,
+								node->path.elemlength, node->path.elembyval,
+								node->path.elemalign, &isNull);
 	}
 	addRowidAndGid(node, rowid, gid);
 }
@@ -706,8 +717,8 @@ addInnerRowidAndGid(NestLoopVLEState *node, TupleTableSlot *slot)
 {
 	Datum gid = (Datum) 0;
 	if (node->hasPath)
-		gid = slot->tts_values[2];
-	addRowidAndGid(node, slot->tts_values[1], gid);
+		gid = slot->tts_values[INNER_EGID_VARNO];
+	addRowidAndGid(node, slot->tts_values[INNER_ROWID_VARNO], gid);
 }
 
 static void
