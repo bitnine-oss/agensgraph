@@ -3454,20 +3454,12 @@ typedef struct CypherClause
 /* previous Cypher clause is transformed to RangeSubselect */
 typedef RangeSubselect RangePrevclause;
 
-/* which clause is parsed as a CypherProjection */
-typedef enum CMKind
-{
-	CM_NORMAL,
-	CM_OPTIONAL,
-	CM_MERGE
-} CMKind;
-
 typedef struct CypherMatchClause
 {
 	NodeTag		type;
 	List	   *pattern;
 	Node	   *where;		/* WHERE qualification */
-	CMKind		kind;		/* MatchKind */
+	bool		optional;	/* OPTIONAL MATCH */
 } CypherMatchClause;
 
 /* which clause is parsed as a CypherProjection */
@@ -3515,8 +3507,8 @@ typedef enum CSetKind
 typedef struct CypherSetClause
 {
 	NodeTag		type;
-	List	   *items;
 	CSetKind	kind;
+	List	   *items;
 } CypherSetClause;
 
 typedef struct CypherLoadClause
@@ -3529,7 +3521,7 @@ typedef struct CypherMergeClause
 {
 	NodeTag		type;
 	List	   *pattern;
-	List	   *setitems;
+	List	   *sets;
 } CypherMergeClause;
 
 typedef enum CPathKind

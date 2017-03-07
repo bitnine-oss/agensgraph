@@ -863,8 +863,6 @@ make_join_rel(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2)
 								 JOIN_ANTI, sjinfo,
 								 restrictlist);
 			break;
-
-			// TODO : add JOIN_CYPHERMERGE
 		case JOIN_CYPHER_MERGE:
 			if (is_dummy_rel(rel1) ||
 				restriction_is_constant_false(restrictlist, true))

@@ -289,7 +289,7 @@ pull_up_sublinks_jointree_recurse(PlannerInfo *root, Node *jtnode,
 														 NULL, NULL);
 				break;
 			case JOIN_CYPHER_MERGE:
-				// TODO : check
+				/* TODO? */
 				break;
 			default:
 				elog(ERROR, "unrecognized join type: %d",
