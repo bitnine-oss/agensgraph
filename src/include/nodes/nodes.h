@@ -474,8 +474,8 @@ typedef enum NodeTag
 	T_CypherCreateClause,
 	T_CypherDeleteClause,
 	T_CypherSetClause,
-	T_CypherLoadClause,
 	T_CypherMergeClause,
+	T_CypherLoadClause,
 	T_CypherPath,
 	T_CypherNode,
 	T_CypherRel,
@@ -693,7 +693,7 @@ typedef enum JoinType
 	JOIN_UNIQUE_OUTER,			/* LHS path must be made unique */
 	JOIN_UNIQUE_INNER,			/* RHS path must be made unique */
 
-	/* This is only used in CypherMerge. It behaves similarly to LeftJoin. */
+	/* This is similar to JOIN_LEFT but only for Cypher MERGE clause. */
 	JOIN_CYPHER_MERGE
 
 	/*

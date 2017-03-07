@@ -1372,9 +1372,6 @@ buildMergedJoinVar(ParseState *pstate, JoinType jointype,
 				break;
 			}
 		case JOIN_CYPHER_MERGE:
-			elog(ERROR, "buildMergedJoinVar: wrong join type: %d",
-				 (int) jointype);
-			break;
 		default:
 			elog(ERROR, "unrecognized join type: %d", (int) jointype);
 			res_node = NULL;	/* keep compiler quiet */

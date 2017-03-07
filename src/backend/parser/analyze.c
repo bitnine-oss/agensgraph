@@ -2939,14 +2939,26 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 							(errcode(ERRCODE_SYNTAX_ERROR),
 							 errmsg("Cypher read clauses cannot follow update clauses")));
 				break;
-				break;
 			case T_CypherMergeClause:
 				if (update_type == T_Invalid)
+				{
 					update_type = T_CypherMergeClause;
-				if (type != update_type)
+				}
+				else if (update_type == T_CypherMergeClause)
+				{
+					CypherMergeClause *detail = (CypherMergeClause *) clause->detail;
+
+					if (detail->sets != NIL)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("ON CREATE/MATCH SET between MERGE clauses is not allowed")));
+				}
+				else
+				{
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
 							 errmsg("There must be one type of consecutive update clauses")));
+				}
 				if (read)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),

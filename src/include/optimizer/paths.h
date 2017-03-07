@@ -95,11 +95,11 @@ extern void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
 
 /*
  * joinpath.c
- * 		routines to create cypher merge join path
+ * 		routines to create CYPHER MERGE JOIN path
  */
 extern void add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
-					 RelOptInfo *outerrel, RelOptInfo *innerrel,
-					 SpecialJoinInfo *sjinfo, List *restrictlist);
+								 RelOptInfo *outerrel, RelOptInfo *innerrel,
+								 SpecialJoinInfo *sjinfo, List *restrictlist);
 
 /*
  * joinrels.c

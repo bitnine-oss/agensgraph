@@ -1295,7 +1295,7 @@ ERROR:  cannot use null property value in MERGE
 MERGE (a:v1)
 	ON MATCH SET a.matched = 'true'
 MERGE (b:v2 {name:a.name});
-ERROR:  ON CREATE/MATCH SET between MERGE clauses is not allowed.
+ERROR:  ON CREATE/MATCH SET between MERGE clauses is not allowed
 MERGE (a:v1) MATCH (b:v2 {name:a.name}) RETURN a, b;
 ERROR:  Cypher read clauses cannot follow update clauses
 CREATE (a:v1 {name:'bitnine'}) MERGE (:v2 {name:a.name});

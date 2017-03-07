@@ -50,11 +50,9 @@ static List *select_mergejoin_clauses(PlannerInfo *root,
 						 List *restrictlist,
 						 JoinType jointype,
 						 bool *mergejoin_allowed);
-static void add_cyphermerge_path(PlannerInfo *root,
-					 RelOptInfo *joinrel,
-					 RelOptInfo *outerrel,
-					 RelOptInfo *innerrel,
-					 JoinPathExtraData *extra);
+static void add_cyphermerge_path(PlannerInfo *root, RelOptInfo *joinrel,
+								 RelOptInfo *outerrel, RelOptInfo *innerrel,
+								 JoinPathExtraData *extra);
 
 
 /*
@@ -236,12 +234,9 @@ add_paths_to_joinrel(PlannerInfo *root,
 }
 
 void
-add_paths_for_cmerge(PlannerInfo *root,
-					 RelOptInfo *joinrel,
-					 RelOptInfo *outerrel,
-					 RelOptInfo *innerrel,
-					 SpecialJoinInfo *sjinfo,
-					 List *restrictlist)
+add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
+					 RelOptInfo *outerrel, RelOptInfo *innerrel,
+					 SpecialJoinInfo *sjinfo, List *restrictlist)
 {
 	JoinPathExtraData extra;
 	ListCell   *lc;
@@ -1702,13 +1697,12 @@ select_mergejoin_clauses(PlannerInfo *root,
 }
 
 /*
- * If explicitly specify a cyphermerge join, no other join method is considered
+ * If CYPHER MERGE JOIN is explicitly specified,
+ * no other join methods are considered.
  */
 static void
-add_cyphermerge_path(PlannerInfo *root,
-					 RelOptInfo *joinrel,
-					 RelOptInfo *outerrel,
-					 RelOptInfo *innerrel,
+add_cyphermerge_path(PlannerInfo *root, RelOptInfo *joinrel,
+					 RelOptInfo *outerrel, RelOptInfo *innerrel,
 					 JoinPathExtraData *extra)
 {
 	ListCell   *lc1;

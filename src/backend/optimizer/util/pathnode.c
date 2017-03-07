@@ -3137,7 +3137,7 @@ ModifyGraphPath *
 create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
 						GraphWriteOp operation, bool last, bool detach,
 						Path *subpath, List *pattern, List *targets,
-						List *exprs, List *sets, Node *mergepattern)
+						List *exprs, List *sets)
 {
 	ModifyGraphPath *pathnode = makeNode(ModifyGraphPath);
 
@@ -3162,7 +3162,6 @@ create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
 	pathnode->targets = targets;
 	pathnode->exprs = exprs;
 	pathnode->sets = sets;
-	pathnode->mergepath = mergepattern;
 
 	return pathnode;
 }

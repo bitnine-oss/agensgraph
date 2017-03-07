@@ -3655,7 +3655,7 @@ jsonb_has_nulls(PG_FUNCTION_ARGS)
 	bool		res = false;
 
 	if (JB_ROOT_IS_SCALAR(jb))
-		PG_RETURN_POINTER(res);
+		PG_RETURN_BOOL(res);
 
 	it = JsonbIteratorInit(&jb->root);
 

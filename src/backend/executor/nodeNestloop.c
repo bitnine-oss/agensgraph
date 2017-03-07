@@ -178,12 +178,10 @@ ExecNestLoop(NestLoopState *node)
 
 		if (node->js.jointype == JOIN_CYPHER_MERGE)
 		{
-			/* Increase commandId for scanning modified tuples. */
+			/* Increase CommandId to scan modified tuples. */
 			while (node->nl_MergeMatchSnapshot->curcid <=
 												GetCurrentCommandId(false))
-			{
 				node->nl_MergeMatchSnapshot->curcid++;
-			}
 
 			svSnapshot = innerPlan->state->es_snapshot;
 			innerPlan->state->es_snapshot = node->nl_MergeMatchSnapshot;
@@ -192,7 +190,7 @@ ExecNestLoop(NestLoopState *node)
 		innerTupleSlot = ExecProcNode(innerPlan);
 		econtext->ecxt_innertuple = innerTupleSlot;
 
-		if (svSnapshot)
+		if (svSnapshot != NULL)
 			innerPlan->state->es_snapshot = svSnapshot;
 
 		if (TupIsNull(innerTupleSlot))
@@ -318,7 +316,7 @@ NestLoopState *
 ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 {
 	NestLoopState *nlstate;
-	Snapshot	   svSnapshot = NULL;
+	Snapshot	svSnapshot = NULL;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -371,20 +369,23 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 
 	if (node->join.jointype == JOIN_CYPHER_MERGE)
 	{
-		Snapshot snap;
+		Snapshot snapshot;
 
-		/* Modify the cid to see the pattern created by MERGE_CREATE. */
-		snap = RegisterCopiedSnapshot(estate->es_snapshot);
-		snap->curcid = estate->es_output_cid + 1;
+		/* Modify the cid to see the pattern created by MERGE CREATE. */
+
+		snapshot = RegisterCopiedSnapshot(estate->es_snapshot);
+		snapshot->curcid = estate->es_output_cid + 1;
+		nlstate->nl_MergeMatchSnapshot = snapshot;
 
 		svSnapshot = estate->es_snapshot;
-		estate->es_snapshot = nlstate->nl_MergeMatchSnapshot = snap;
+		estate->es_snapshot = nlstate->nl_MergeMatchSnapshot;
 	}
 
 	innerPlanState(nlstate) = ExecInitNode(innerPlan(node), estate, eflags);
 
-	if (svSnapshot)
+	if (svSnapshot != NULL)
 		estate->es_snapshot = svSnapshot;
+
 	/*
 	 * tuple table initialization
 	 */

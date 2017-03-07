@@ -3969,9 +3969,9 @@ create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
 	apply_tlist_labeling(subplan->targetlist, root->processed_tlist);
 
 	plan = make_modifygraph(root, best_path->canSetTag, best_path->operation,
-				best_path->last, best_path->detach, subplan,
-				best_path->pattern, best_path->targets,best_path->exprs,
-				best_path->sets, best_path->mergepath);
+							best_path->last, best_path->detach, subplan,
+							best_path->pattern, best_path->targets,
+							best_path->exprs, best_path->sets);
 
 	copy_generic_path_info(&plan->plan, &best_path->path);
 
@@ -6310,7 +6310,7 @@ is_projection_capable_plan(Plan *plan)
 ModifyGraph *
 make_modifygraph(PlannerInfo *root, bool canSetTag, GraphWriteOp operation,
 				 bool last, bool detach, Plan *subplan, List *pattern,
-				 List *targets, List *exprs, List *sets, Node *mergepattern)
+				 List *targets, List *exprs, List *sets)
 {
 	ModifyGraph *node = makeNode(ModifyGraph);
 
@@ -6323,7 +6323,6 @@ make_modifygraph(PlannerInfo *root, bool canSetTag, GraphWriteOp operation,
 	node->targets = targets;
 	node->exprs = exprs;
 	node->sets = sets;
-	node->mergepattern = mergepattern;
 
 	return node;
 }

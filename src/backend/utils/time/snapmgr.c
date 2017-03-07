@@ -2082,12 +2082,7 @@ RestoreTransactionSnapshot(Snapshot snapshot, void *master_pgproc)
 	SetTransactionSnapshot(snapshot, InvalidTransactionId, master_pgproc);
 }
 
-/*
- * RegisterSnapshot
- *		Register a snapshot as being in use by the current resource owner
- *
- * If InvalidSnapshot is passed, it is not registered.
- */
+/* See RegisterSnapshot() */
 Snapshot
 RegisterCopiedSnapshot(Snapshot snapshot)
 {
