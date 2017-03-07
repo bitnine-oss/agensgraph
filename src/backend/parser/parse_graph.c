@@ -53,6 +53,7 @@
 #define CYPHER_OPTMATCH_ALIAS	"_o"
 #define CYPHER_VLR_WITH_ALIAS	"_vlr"
 #define CYPHER_VLR_EDGE_ALIAS	"_e"
+#define CYPHER_MERGEMATCH_ALIAS	"_m"
 
 #define VLR_COLNAME_START		"start"
 #define VLR_COLNAME_END			"end"
@@ -211,10 +212,29 @@ static Relation openTargetLabel(ParseState *pstate, char *labname);
 
 /* SET/REMOVE */
 static List *transformSetPropList(ParseState *pstate, RangeTblEntry *rte,
-								  List *items);
+								  CSetKind kind, List *items);
 static GraphSetProp *transformSetProp(ParseState *pstate, RangeTblEntry *rte,
-									  CypherSetProp *sp, List *gsplist);
+									  CypherSetProp *sp, CSetKind kind,
+									  List *gsplist);
 static GraphSetProp *findGraphSetProp(List *gsplist, char *varname);
+
+/* MERGE */
+static RangeTblEntry *transformMergeMatchSub(ParseState *pstate,
+											 CypherClause *clause);
+static Query *transformMergeMatch(ParseState *pstate, CypherClause *clause);
+static RangeTblEntry *transformMergeMatchJoin(ParseState *pstate,
+											  CypherClause *clause);
+static RangeTblEntry *transformNullSelect(ParseState *pstate);
+static Node *makeMatchForMerge(List *pattern);
+static List *transformMergeCreate(ParseState *pstate, List *pattern,
+								  RangeTblEntry *prevrte, List *resultList);
+static GraphVertex *transformMergeNode(ParseState *pstate, CypherNode *cnode,
+									   bool singlenode, List **targetList,
+									   List *resultList);
+static GraphEdge *transformMergeRel(ParseState *pstate, CypherRel *crel,
+									List **targetList, List *resultList);
+static List *transformMergeOnSet(ParseState *pstate, List *sets,
+								 RangeTblEntry *rte);
 
 /* common */
 static void vertexLabelExist(ParseState *pstate, char *labname, int labloc);
@@ -703,6 +723,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	/* SET/REMOVE cannot be the first clause */
 	AssertArg(clause->prev != NULL);
+	Assert(detail->kind == CSET_NORMAL);
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_GRAPHWRITE;
@@ -713,11 +734,60 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
 
-	qry->graph.sets = transformSetPropList(pstate, rte, detail->items);
+	qry->graph.sets = transformSetPropList(pstate, rte, detail->kind,
+										   detail->items);
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
 													 FVR_DONT_RESOLVE);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
+
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+Query *
+transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherMergeClause *detail = (CypherMergeClause *) clause->detail;
+	Query	   *qry;
+	RangeTblEntry *rte;
+
+	if (list_length(detail->pattern) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("MERGE can have only one path")));
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_GRAPHWRITE;
+	qry->graph.writeOp = GWROP_MERGE;
+	qry->graph.last = (pstate->parentParseState == NULL);
+
+	rte = transformMergeMatchSub(pstate, clause);
+	Assert(rte->rtekind == RTE_SUBQUERY);
+
+	qry->targetList = makeTargetListFromRTE(pstate, rte);
+
+	/*
+	 * Make an expression list to create the MERGE path.
+	 * We assume that the previous clause is the first RTE of MERGE MATCH.
+	 */
+	qry->graph.pattern = transformMergeCreate(pstate, detail->pattern,
+									rt_fetch(1, rte->subquery->rtable),
+									qry->targetList);
+	qry->graph.targets = pstate->p_target_labels;
+
+	qry->graph.sets = transformMergeOnSet(pstate, detail->sets, rte);
+
+	qry->targetList = (List *) resolve_future_vertex(pstate,
+													 (Node *) qry->targetList,
+													 FVR_DONT_RESOLVE);
+	markTargetListOrigins(pstate, qry->targetList);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
@@ -3450,14 +3520,6 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 		Node	   *vertex;
 
 		vertexLabelExist(pstate, labname, getCypherNameLoc(cnode->label));
-
-		/*
-		 * varname will be used to find vertex that be made from ExecResult.
-		 * so that, varname must be unique in targetList.
-		 */
-		if (varname == NULL)
-			varname = genUniqueName();
-
 		if (labname == NULL)
 			labname = AG_VERTEX;
 
@@ -3473,7 +3535,7 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 
 		te = makeTargetEntry((Expr *) vertex,
 							 (AttrNumber) pstate->p_next_resno++,
-							 varname,
+							 (varname == NULL ? "?column?" : varname),
 							 false);
 
 		*targetList = lappend(*targetList, te);
@@ -3483,7 +3545,7 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 	}
 
 	gvertex = makeNode(GraphVertex);
-	gvertex->variable = varname;
+	gvertex->resno = te->resno;
 	gvertex->create = create;
 	gvertex->relid = relid;
 
@@ -3529,9 +3591,6 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 				 errmsg("duplicate variable \"%s\"", varname),
 				 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
 
-	if (varname == NULL)
-		varname = genUniqueName();
-
 	type = linitial(crel->types);
 	typname = getCypherName(type);
 
@@ -3546,7 +3605,7 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 
 	te = makeTargetEntry((Expr *) edge,
 						 (AttrNumber) pstate->p_next_resno++,
-						 pstrdup(varname),
+						 (varname == NULL ? "?column?" : varname),
 						 false);
 
 	*targetList = lappend(*targetList, te);
@@ -3567,7 +3626,7 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 		default:
 			Assert(!"invalid direction");
 	}
-	gedge->variable = varname;
+	gedge->resno = te->resno;
 	gedge->relid = relid;
 
 	return gedge;
@@ -3647,7 +3706,8 @@ openTargetLabel(ParseState *pstate, char *labname)
 }
 
 static List *
-transformSetPropList(ParseState *pstate, RangeTblEntry *rte, List *items)
+transformSetPropList(ParseState *pstate, RangeTblEntry *rte, CSetKind kind,
+					 List *items)
 {
 	List	   *gsplist = NIL;
 	ListCell   *li;
@@ -3657,7 +3717,7 @@ transformSetPropList(ParseState *pstate, RangeTblEntry *rte, List *items)
 		CypherSetProp *sp = lfirst(li);
 		GraphSetProp *gsp;
 
-		gsp = transformSetProp(pstate, rte, sp, gsplist);
+		gsp = transformSetProp(pstate, rte, sp, kind, gsplist);
 
 		if (gsp != NULL)
 			gsplist = lappend(gsplist, gsp);
@@ -3668,7 +3728,7 @@ transformSetPropList(ParseState *pstate, RangeTblEntry *rte, List *items)
 
 static GraphSetProp *
 transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
-				 List *gsplist)
+				 CSetKind kind, List *gsplist)
 {
 	Node	   *node;
 	List	   *inds;
@@ -3682,6 +3742,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	Node	   *prop_map;
 	Node	   *expr;
 	Oid			exprtype;
+	GSPKind		gspkind;
 
 	if (!IsA(sp->prop, ColumnRef) && !IsA(sp->prop, A_Indirection))
 		ereport(ERROR,
@@ -3873,9 +3934,25 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		}
 	}
 
+	switch (kind)
+	{
+		case CSET_NORMAL:
+			gspkind = GSP_NORMAL;
+			break;
+		case CSET_ON_CREATE:
+			gspkind = GSP_ON_CREATE;
+			break;
+		case CSET_ON_MATCH:
+			gspkind = GSP_ON_MATCH;
+			break;
+		default:
+			elog(ERROR, "unexpected CSetKind %d", kind);
+	}
+
 	if (gsp == NULL)
 	{
 		gsp = makeNode(GraphSetProp);
+		gsp->kind = gspkind;
 		gsp->variable = varname;
 		gsp->elem = resolve_future_vertex(pstate, elem, FVR_PRESERVE_VAR_REF);
 		gsp->expr = prop_map;
@@ -3884,6 +3961,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	}
 	else
 	{
+		Assert(gsp->kind == gspkind);
+
 		gsp->expr = prop_map;
 
 		return NULL;
@@ -3907,6 +3986,419 @@ findGraphSetProp(List *gsplist, char *varname)
 	}
 
 	return NULL;
+}
+
+static RangeTblEntry *
+transformMergeMatchSub(ParseState *pstate, CypherClause *clause)
+{
+	ParseState *childParseState;
+	Query	   *qry;
+	List	   *future_vertices;
+	Alias	   *alias;
+	RangeTblEntry *rte;
+	int			rtindex;
+
+	AssertArg(IsA(clause, CypherClause));
+
+	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
+	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+
+	childParseState = make_parsestate(pstate);
+
+	qry = transformMergeMatch(childParseState, clause);
+
+	future_vertices = childParseState->p_future_vertices;
+
+	free_parsestate(childParseState);
+
+	pstate->p_expr_kind = EXPR_KIND_NONE;
+
+	if (!IsA(qry, Query) ||
+		(qry->commandType != CMD_SELECT &&
+		 qry->commandType != CMD_GRAPHWRITE) ||
+		qry->utilityStmt != NULL)
+		elog(ERROR, "unexpected command in previous clause");
+
+	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
+	rte = addRangeTableEntryForSubquery(pstate, qry, alias,
+										pstate->p_lateral_active, true);
+
+	rtindex = RTERangeTablePosn(pstate, rte, NULL);
+
+	future_vertices = removeResolvedFutureVertices(future_vertices);
+	future_vertices = adjustFutureVertices(future_vertices, rte, rtindex);
+	pstate->p_future_vertices = list_concat(pstate->p_future_vertices,
+											future_vertices);
+
+	addRTEtoJoinlist(pstate, rte, true);
+
+	return rte;
+}
+
+static Query *
+transformMergeMatch(ParseState *pstate, CypherClause *clause)
+{
+	Query	   *qry;
+	RangeTblEntry *rte;
+	Node	   *qual = NULL;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	rte = transformMergeMatchJoin(pstate, clause);
+
+	qry->targetList = makeTargetListFromJoin(pstate, rte);
+	markTargetListOrigins(pstate, qry->targetList);
+
+	qual = qualAndExpr(qual, pstate->p_resolved_qual);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
+
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+/* See transformMatchOptional() */
+static RangeTblEntry *
+transformMergeMatchJoin(ParseState *pstate, CypherClause *clause)
+{
+	CypherMergeClause *detail = (CypherMergeClause *) clause->detail;
+	Node	   *prevclause = clause->prev;
+	RangeTblEntry *l_rte;
+	Alias	   *r_alias;
+	RangeTblEntry *r_rte;
+	Node	   *qual;
+	Alias	   *alias;
+
+	if (prevclause == NULL)
+		l_rte = transformNullSelect(pstate);
+	else
+		l_rte = transformClause(pstate, prevclause);
+
+	pstate->p_lateral_active = true;
+
+	r_alias = makeAliasNoDup(CYPHER_MERGEMATCH_ALIAS, NIL);
+	r_rte = transformClauseImpl(pstate, makeMatchForMerge(detail->pattern),
+								r_alias);
+
+	pstate->p_lateral_active = false;
+
+	qual = makeBoolConst(true, false);
+	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
+
+	return incrementalJoinRTEs(pstate, JOIN_CYPHER_MERGE, l_rte, r_rte, qual,
+							   alias);
+}
+
+static RangeTblEntry *
+transformNullSelect(ParseState *pstate)
+{
+	A_Const	   *nullconst;
+	ResTarget  *nullres;
+	SelectStmt *sel;
+	Alias	   *alias;
+	Query	   *qry;
+	RangeTblEntry *rte;
+
+	nullconst = makeNode(A_Const);
+	nullconst->val.type = T_Null;
+	nullconst->location = -1;
+
+	nullres = makeResTarget((Node *) nullconst, NULL);
+
+	sel = makeNode(SelectStmt);
+	sel->targetList = list_make1(nullres);
+
+	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
+
+	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
+	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+
+	qry = parse_sub_analyze((Node *) sel, pstate, NULL,
+							isLockedRefname(pstate, alias->aliasname));
+
+	pstate->p_expr_kind = EXPR_KIND_NONE;
+
+	rte = addRangeTableEntryForSubquery(pstate, qry, alias, false, true);
+	addRTEtoJoinlist(pstate, rte, false);
+
+	return rte;
+}
+
+static Node *
+makeMatchForMerge(List *pattern)
+{
+	CypherMatchClause *match;
+	CypherClause *clause;
+
+	match = makeNode(CypherMatchClause);
+	match->pattern = pattern;
+	match->where = NULL;
+	match->optional = false;
+
+	clause = makeNode(CypherClause);
+	clause->detail = (Node *) match;
+	clause->prev = NULL;
+
+	return (Node *) clause;
+}
+
+static List *
+transformMergeCreate(ParseState *pstate, List *pattern, RangeTblEntry *prevrte,
+					 List *resultList)
+{
+	List	   *prevtlist;
+	CypherPath *path;
+	bool		singlenode;
+	ListCell   *le;
+	List	   *gchain = NIL;
+	GraphPath  *gpath;
+
+	AssertArg(prevrte != NULL && prevrte->rtekind == RTE_SUBQUERY);
+
+	/*
+	 * Copy the target list of the RTE of the previous clause
+	 * to check duplicate variables.
+	 */
+	prevtlist = copyObject(prevrte->subquery->targetList);
+
+	path = linitial(pattern);
+	singlenode = (list_length(path->chain) == 1);
+	foreach(le, path->chain)
+	{
+		Node *elem = lfirst(le);
+
+		if (IsA(elem, CypherNode))
+		{
+			CypherNode *cnode = (CypherNode *) elem;
+			GraphVertex *gvertex;
+
+			gvertex = transformMergeNode(pstate, cnode, singlenode, &prevtlist,
+										 resultList);
+
+			gchain = lappend(gchain, gvertex);
+		}
+		else
+		{
+			CypherRel  *crel = (CypherRel *) elem;
+			GraphEdge  *gedge;
+
+			Assert(IsA(elem, CypherRel));
+
+			gedge = transformMergeRel(pstate, crel, &prevtlist, resultList);
+
+			gchain = lappend(gchain, gedge);
+		}
+	}
+
+	gpath = makeNode(GraphPath);
+	gpath->variable = getCypherName(path->variable);
+	gpath->chain = gchain;
+
+	return list_make1(gpath);
+}
+
+/* See transformCreateNode() */
+static GraphVertex *
+transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
+				   List **targetList, List *resultList)
+{
+	char	   *varname = getCypherName(cnode->variable);
+	int			varloc = getCypherNameLoc(cnode->variable);
+	char	   *labname = getCypherName(cnode->label);
+	TargetEntry *te;
+	Relation 	relation;
+	Node	   *vertex = NULL;
+	Oid			relid = InvalidOid;
+	Node	   *qual = NULL;
+	AttrNumber	resno = InvalidAttrNumber;
+	GraphVertex	*gvertex;
+
+	te = findTarget(*targetList, varname);
+	if (te != NULL &&
+		(exprType((Node *) te->expr) != VERTEXOID || !isNodeForRef(cnode) ||
+		 singlenode))
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_ALIAS),
+				 errmsg("duplicate variable \"%s\"", varname),
+				 parser_errposition(pstate, varloc)));
+
+	vertexLabelExist(pstate, labname, getCypherNameLoc(cnode->label));
+	if (labname == NULL)
+		labname = AG_VERTEX;
+
+	relation = openTargetLabel(pstate, labname);
+
+	vertex = makeNewVertex(pstate, relation, cnode->prop_map);
+	relid = RelationGetRelid(relation);
+
+	heap_close(relation, NoLock);
+
+	if (cnode->prop_map != NULL)
+	{
+		FuncCall   *fc;
+		Node	   *prop_expr;
+
+		/* check if null values exist in the properties */
+		fc = makeFuncCall(list_make1(makeString("jsonb_has_nulls")), NIL, -1);
+		prop_expr = transformPropMap(pstate, cnode->prop_map,
+									 EXPR_KIND_SELECT_TARGET);
+		qual = ParseFuncOrColumn(pstate, fc->funcname,
+								 list_make1(prop_expr), fc, -1);
+	}
+
+	te = makeTargetEntry((Expr *) vertex,
+						 InvalidAttrNumber,
+						 (varname == NULL ? "?column?" : varname),
+						 false);
+
+	*targetList = lappend(*targetList, te);
+
+	pstate->p_target_labels =
+			list_append_unique_oid(pstate->p_target_labels, relid);
+
+	te = findTarget(resultList, varname);
+	if (te != NULL)
+		resno = te->resno;
+
+	gvertex = makeNode(GraphVertex);
+	gvertex->resno = resno;
+	gvertex->create = true;
+	gvertex->relid = relid;
+	gvertex->expr = vertex;
+	gvertex->qual = qual;
+
+	return gvertex;
+}
+
+/* See transformCreateRel() */
+static GraphEdge *
+transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
+				  List *resultList)
+{
+	char	   *varname;
+	Node	   *type;
+	char	   *typname;
+	Relation 	relation;
+	Node	   *edge;
+	Oid			relid = InvalidOid;
+	Node	   *qual = NULL;
+	TargetEntry	*te;
+	AttrNumber	resno = InvalidAttrNumber;
+	GraphEdge  *gedge;
+
+	if (list_length(crel->types) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("only one relationship type is allowed for MERGE")));
+
+	if (crel->varlen != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("variable length relationship is not allowed for MERGE")));
+
+	varname = getCypherName(crel->variable);
+
+	if (findTarget(*targetList, varname) != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_ALIAS),
+				 errmsg("duplicate variable \"%s\"", varname),
+				 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
+
+	type = linitial(crel->types);
+	typname = getCypherName(type);
+
+	edgeLabelExist(pstate, typname, getCypherNameLoc(type));
+
+	relation = openTargetLabel(pstate, getCypherName(linitial(crel->types)));
+
+	edge = makeNewEdge(pstate, relation, crel->prop_map);
+	relid = RelationGetRelid(relation);
+
+	heap_close(relation, NoLock);
+
+	if (crel->prop_map)
+	{
+		FuncCall   *fc;
+		Node	   *prop_expr;
+
+		fc = makeFuncCall(list_make1(makeString("jsonb_has_nulls")), NIL, -1);
+		prop_expr = transformPropMap(pstate, crel->prop_map,
+									 EXPR_KIND_SELECT_TARGET);
+		qual = ParseFuncOrColumn(pstate, fc->funcname,
+								 list_make1(prop_expr), fc, -1);
+	}
+
+	te = makeTargetEntry((Expr *) edge,
+						 InvalidAttrNumber,
+						 (varname == NULL ? "?column?" : varname),
+						 false);
+
+	*targetList = lappend(*targetList, te);
+
+	pstate->p_target_labels =
+			list_append_unique_oid(pstate->p_target_labels, relid);
+
+	te = findTarget(resultList, varname);
+	if (te != NULL)
+		resno = te->resno;
+
+	gedge = makeNode(GraphEdge);
+	switch (crel->direction)
+	{
+		case CYPHER_REL_DIR_LEFT:
+			gedge->direction = GRAPH_EDGE_DIR_LEFT;
+			break;
+		case CYPHER_REL_DIR_RIGHT:
+		case CYPHER_REL_DIR_NONE:
+			/*
+			 * According to the TCK of openCypher,
+			 * use outgoing direction if direction is unspecified.
+			 */
+			gedge->direction = GRAPH_EDGE_DIR_RIGHT;
+			break;
+		default:
+			Assert(!"invalid direction");
+	}
+	gedge->resno = resno;
+	gedge->relid = relid;
+	gedge->expr = edge;
+	gedge->qual = qual;
+
+	return gedge;
+}
+
+static List *
+transformMergeOnSet(ParseState *pstate, List *sets, RangeTblEntry *rte)
+{
+	ListCell   *lc;
+	List	   *l_oncreate = NIL;
+	List	   *l_onmatch = NIL;
+
+	foreach(lc, sets)
+	{
+		CypherSetClause *detail = lfirst(lc);
+
+		if (detail->kind == CSET_ON_CREATE)
+		{
+			l_oncreate = list_concat(l_oncreate, detail->items);
+		}
+		else
+		{
+			Assert(detail->kind == CSET_ON_MATCH);
+
+			l_onmatch = list_concat(l_onmatch, detail->items);
+		}
+	}
+
+	l_oncreate = transformSetPropList(pstate, rte, CSET_ON_CREATE, l_oncreate);
+	l_onmatch = transformSetPropList(pstate, rte, CSET_ON_MATCH, l_onmatch);
+
+	return list_concat(l_onmatch, l_oncreate);
 }
 
 static void

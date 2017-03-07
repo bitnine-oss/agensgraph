@@ -1670,6 +1670,7 @@ typedef struct NestLoopState
 	bool		nl_NeedNewOuter;
 	bool		nl_MatchedOuter;
 	TupleTableSlot *nl_NullInnerTupleSlot;
+	Snapshot	nl_MergeMatchSnapshot;
 } NestLoopState;
 
 /* ----------------

@@ -2815,7 +2815,18 @@ _equalCypherDeleteClause(const CypherDeleteClause *a,
 static bool
 _equalCypherSetClause(const CypherSetClause *a, const CypherSetClause *b)
 {
+	COMPARE_SCALAR_FIELD(kind);
 	COMPARE_NODE_FIELD(items);
+
+	return true;
+}
+
+static bool
+_equalCypherMergeClause(const CypherMergeClause *a,
+						const CypherMergeClause *b)
+{
+	COMPARE_NODE_FIELD(pattern);
+	COMPARE_NODE_FIELD(sets);
 
 	return true;
 }
@@ -2889,9 +2900,11 @@ _equalGraphPath(const GraphPath *a, const GraphPath *b)
 static bool
 _equalGraphVertex(const GraphVertex *a, const GraphVertex *b)
 {
-	COMPARE_STRING_FIELD(variable);
+	COMPARE_SCALAR_FIELD(resno);
 	COMPARE_SCALAR_FIELD(create);
 	COMPARE_SCALAR_FIELD(relid);
+	COMPARE_NODE_FIELD(expr);
+	COMPARE_NODE_FIELD(qual);
 
 	return true;
 }
@@ -2900,8 +2913,21 @@ static bool
 _equalGraphEdge(const GraphEdge *a, const GraphEdge *b)
 {
 	COMPARE_SCALAR_FIELD(direction);
-	COMPARE_STRING_FIELD(variable);
+	COMPARE_SCALAR_FIELD(resno);
 	COMPARE_SCALAR_FIELD(relid);
+	COMPARE_NODE_FIELD(expr);
+	COMPARE_NODE_FIELD(qual);
+
+	return true;
+}
+
+static bool
+_equalGraphSetProp(const GraphSetProp *a, const GraphSetProp *b)
+{
+	COMPARE_SCALAR_FIELD(kind);
+	COMPARE_STRING_FIELD(variable);
+	COMPARE_NODE_FIELD(elem);
+	COMPARE_NODE_FIELD(expr);
 
 	return true;
 }
@@ -3712,6 +3738,9 @@ equal(const void *a, const void *b)
 		case T_CypherSetClause:
 			retval = _equalCypherSetClause(a, b);
 			break;
+		case T_CypherMergeClause:
+			retval = _equalCypherMergeClause(a, b);
+			break;
 		case T_CypherLoadClause:
 			retval = _equalCypherLoadClause(a, b);
 			break;
@@ -3742,6 +3771,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_GraphEdge:
 			retval = _equalGraphEdge(a, b);
+			break;
+		case T_GraphSetProp:
+			retval = _equalGraphSetProp(a, b);
 			break;
 
 		default:

@@ -2081,3 +2081,14 @@ RestoreTransactionSnapshot(Snapshot snapshot, void *master_pgproc)
 {
 	SetTransactionSnapshot(snapshot, InvalidTransactionId, master_pgproc);
 }
+
+/* See RegisterSnapshot() */
+Snapshot
+RegisterCopiedSnapshot(Snapshot snapshot)
+{
+	if (snapshot == InvalidSnapshot)
+		return InvalidSnapshot;
+
+	return RegisterSnapshotOnOwner(CopySnapshot(snapshot),
+								   CurrentResourceOwner);
+}

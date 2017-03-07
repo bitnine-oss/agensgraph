@@ -12,6 +12,7 @@
 
 #include "ag_const.h"
 #include "access/htup_details.h"
+#include "access/xact.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
@@ -54,6 +55,8 @@
 	"UPDATE \"%s\".\"%s\" SET properties = $1 WHERE " AG_ELEM_LOCAL_ID " = $2"
 #define SQLCMD_SET_PROP_NPARAMS		2
 
+#define DATUM_NULL	PointerGetDatum(NULL)
+
 typedef enum SqlcmdType
 {
 	SQLCMD_TYPE_DEL_ELEM,
@@ -91,6 +94,7 @@ typedef struct SqlcmdEntry
 
 static HTAB *sqlcmd_cache = NULL;
 
+static List *ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate);
 static List *ExecInitGraphSets(List *sets, ModifyGraphState *mgstate);
 static TupleTableSlot *ExecCreateGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
@@ -106,6 +110,7 @@ static Datum findVertex(TupleTableSlot *slot, GraphVertex *node, Graphid *vid);
 static Datum findEdge(TupleTableSlot *slot, GraphEdge *node, Graphid *eid);
 static AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
 static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
+static void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
 static Datum *makeDatumArray(ExprContext *econtext, int len);
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
@@ -114,11 +119,21 @@ static bool vertexHasEdge(ModifyGraphState *mgstate, Datum vid);
 static void deleteVertexEdges(ModifyGraphState *mgstate, Datum vid);
 static void deleteElem(ModifyGraphState *mgstate, Datum id, DelElemKind kind);
 static void deletePath(ModifyGraphState *mgstate, Datum graphpath, bool detach);
-static TupleTableSlot *ExecSetGraph(ModifyGraphState *mgstate,
+static TupleTableSlot *ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind,
 									TupleTableSlot *slot);
 static void updateElemProp(ModifyGraphState *mgstate, Datum id, Datum expr);
 static Datum makeModifiedElem(Datum elem, Oid elemtype, Datum id,
 							  Datum prop_map);
+static TupleTableSlot *ExecMergeGraph(ModifyGraphState *mgstate,
+									  TupleTableSlot *slot);
+static bool isMatchedMergePattern(PlanState *planstate);
+static TupleTableSlot *createMergePath(ModifyGraphState *mgstate,
+									   GraphPath *path, TupleTableSlot *slot);
+static Datum createMergeVertex(ModifyGraphState *mgstate,
+							   GraphVertex *gvertex,
+							   Graphid *vid, TupleTableSlot *slot);
+static Datum createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
+							 Graphid start, Graphid end, TupleTableSlot *slot);
 
 /* caching SPIPlan's (See ri_triggers.c) */
 static void InitSqlcmdHashTable(MemoryContext mcxt);
@@ -147,6 +162,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->canSetTag = mgplan->canSetTag;
 	mgstate->done = false;
 	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
+	Assert(mgplan->operation != GWROP_MERGE ||
+		   IsA(mgstate->subplan, NestLoopState));
 
 	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate);
 
@@ -154,6 +171,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->graphname = get_graph_path(false);
 	mgstate->edgeid = get_labname_labid(AG_EDGE, mgstate->graphid);
 	mgstate->numOldRtable = list_length(estate->es_range_table);
+
+	mgstate->pattern = ExecInitGraphPattern(mgplan->pattern, mgstate);
 
 	if (mgplan->targets != NIL)
 	{
@@ -234,7 +253,17 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 				slot = ExecDeleteGraph(mgstate, slot);
 				break;
 			case GWROP_SET:
-				slot = ExecSetGraph(mgstate, slot);
+				{
+					ExprContext *econtext = mgstate->ps.ps_ExprContext;
+
+					ResetExprContext(econtext);
+					econtext->ecxt_scantuple = slot;
+
+					slot = ExecSetGraph(mgstate, GSP_NORMAL, slot);
+				}
+				break;
+			case GWROP_MERGE:
+				slot = ExecMergeGraph(mgstate, slot);
 				break;
 			default:
 				elog(ERROR, "unknown operation");
@@ -281,19 +310,46 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 }
 
 static List *
-ExecInitGraphSets(List *sets, ModifyGraphState *mgstate)
+ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate)
 {
-	ListCell *ls;
+	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+	GraphPath  *gpath;
+	ListCell   *le;
 
-	foreach(ls, sets)
+	if (plan->operation != GWROP_MERGE)
+		return pattern;
+
+	AssertArg(list_length(pattern) == 1);
+
+	gpath = linitial(pattern);
+
+	foreach(le, gpath->chain)
 	{
-		GraphSetProp *gsp = lfirst(ls);
+		Node *elem = lfirst(le);
 
-		gsp->es_elem = ExecInitExpr((Expr *) gsp->elem, (PlanState *) mgstate);
-		gsp->es_expr = ExecInitExpr((Expr *) gsp->expr, (PlanState *) mgstate);
+		if (IsA(elem, GraphVertex))
+		{
+			GraphVertex *gvertex = (GraphVertex *) elem;
+
+			gvertex->es_expr = ExecInitExpr((Expr *) gvertex->expr,
+											(PlanState *) mgstate);
+			gvertex->es_qual = ExecInitExpr((Expr *) gvertex->qual,
+											(PlanState *) mgstate);
+		}
+		else
+		{
+			GraphEdge *gedge = (GraphEdge *) elem;
+
+			Assert(IsA(elem, GraphEdge));
+
+			gedge->es_expr = ExecInitExpr((Expr *) gedge->expr,
+										  (PlanState *) mgstate);
+			gedge->es_qual = ExecInitExpr((Expr *) gedge->qual,
+										  (PlanState *) mgstate);
+		}
 	}
 
-	return sets;
+	return pattern;
 }
 
 static TupleTableSlot *
@@ -314,6 +370,22 @@ ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	}
 
 	return (plan->last ? NULL : slot);
+}
+
+static List *
+ExecInitGraphSets(List *sets, ModifyGraphState *mgstate)
+{
+	ListCell *ls;
+
+	foreach(ls, sets)
+	{
+		GraphSetProp *gsp = lfirst(ls);
+
+		gsp->es_elem = ExecInitExpr((Expr *) gsp->elem, (PlanState *) mgstate);
+		gsp->es_expr = ExecInitExpr((Expr *) gsp->expr, (PlanState *) mgstate);
+	}
+
+	return sets;
 }
 
 /* create a path and accumulate it to the given slot */
@@ -347,7 +419,7 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 	{
 		Node *elem = (Node *) lfirst(le);
 
-		if (nodeTag(elem) == T_GraphVertex)
+		if (IsA(elem, GraphVertex))
 		{
 			GraphVertex *gvertex = (GraphVertex *) elem;
 			Graphid		vid;
@@ -357,6 +429,8 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 				vertex = createVertex(mgstate, gvertex, &vid, slot, out);
 			else
 				vertex = findVertex(slot, gvertex, &vid);
+
+			Assert(vertex != DATUM_NULL);
 
 			if (out)
 				vertices[nvertices++] = vertex;
@@ -384,7 +458,7 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 		}
 		else
 		{
-			Assert(nodeTag(elem) == T_GraphEdge);
+			Assert(IsA(elem, GraphEdge));
 
 			gedge = (GraphEdge *) elem;
 		}
@@ -426,8 +500,6 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	ResultRelInfo *savedResultRelInfo;
 	Datum		vertex;
 	HeapTuple	tuple;
-
-	Assert(gvertex->variable != NULL);
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -497,6 +569,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	estate->es_result_relation_info = resultRelInfo;
 
 	edge = findEdge(slot, gedge, &id);
+	Assert(edge != DATUM_NULL);
 
 	ExecClearTuple(elemTupleSlot);
 
@@ -556,12 +629,15 @@ getResultRelInfo(ModifyGraphState *mgstate, Oid relid)
 static Datum
 findVertex(TupleTableSlot *slot, GraphVertex *gvertex, Graphid *vid)
 {
-	AttrNumber	attno;
+	bool		isnull;
 	Datum		vertex;
 
-	attno = findAttrInSlotByName(slot, gvertex->variable);
+	if (gvertex->resno == InvalidAttrNumber)
+		return DATUM_NULL;
 
-	vertex = slot->tts_values[attno - 1];
+	vertex = slot_getattr(slot, gvertex->resno, &isnull);
+	if (isnull)
+		return DATUM_NULL;
 
 	if (vid != NULL)
 		*vid = DatumGetGraphid(getVertexIdDatum(vertex));
@@ -572,12 +648,15 @@ findVertex(TupleTableSlot *slot, GraphVertex *gvertex, Graphid *vid)
 static Datum
 findEdge(TupleTableSlot *slot, GraphEdge *gedge, Graphid *eid)
 {
-	AttrNumber	attno;
+	bool		isnull;
 	Datum		edge;
 
-	attno = findAttrInSlotByName(slot, gedge->variable);
+	if (gedge->resno == InvalidAttrNumber)
+		return DATUM_NULL;
 
-	edge = slot->tts_values[attno - 1];
+	edge = slot_getattr(slot, gedge->resno, &isnull);
+	if (isnull)
+		return DATUM_NULL;
 
 	if (eid != NULL)
 		*eid = DatumGetGraphid(getEdgeIdDatum(edge));
@@ -613,6 +692,15 @@ setSlotValueByName(TupleTableSlot *slot, Datum value, char *name)
 
 	slot->tts_values[attno - 1] = value;
 	slot->tts_isnull[attno - 1] = false;
+}
+
+static void
+setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum)
+{
+	AssertArg(attnum > 0 && attnum <= slot->tts_tupleDescriptor->natts);
+
+	slot->tts_values[attnum - 1] = value;
+	slot->tts_isnull[attnum - 1] = false;
 }
 
 static Datum *
@@ -891,18 +979,14 @@ deletePath(ModifyGraphState *mgstate, Datum graphpath, bool detach)
 }
 
 static TupleTableSlot *
-ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
+ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 {
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
 	ExprContext *econtext = mgstate->ps.ps_ExprContext;
 	ListCell   *ls;
 
-	ResetExprContext(econtext);
-
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
-
-	econtext->ecxt_scantuple = slot;
 
 	foreach(ls, mgstate->sets)
 	{
@@ -915,6 +999,12 @@ ExecSetGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		bool		isNull;
 		ExprDoneCond isDone;
 		MemoryContext oldmctx;
+
+		if (gsp->kind != kind)
+		{
+			Assert(kind != GSP_NORMAL);
+			continue;
+		}
 
 		elemtype = exprType((Node *) gsp->es_elem->expr);
 		if (elemtype != VERTEXOID && elemtype != EDGEOID)
@@ -1035,6 +1125,298 @@ makeModifiedElem(Datum elem, Oid elemtype, Datum id, Datum prop_map)
 
 		return makeGraphEdgeDatum(id, start, end, prop_map);
 	}
+}
+
+static TupleTableSlot *
+ExecMergeGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
+{
+	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+	ExprContext *econtext = mgstate->ps.ps_ExprContext;
+	GraphPath *path = (GraphPath *) linitial(mgstate->pattern);
+
+	ResetExprContext(econtext);
+	econtext->ecxt_scantuple = slot;
+
+	if (isMatchedMergePattern(mgstate->subplan))
+	{
+		slot = ExecSetGraph(mgstate, GSP_ON_MATCH, slot);
+	}
+	else
+	{
+		slot = createMergePath(mgstate, path, slot);
+
+		/* Increase CommandId to scan tuples created by createMergePath(). */
+		while (mgstate->ps.state->es_output_cid >= GetCurrentCommandId(true))
+			CommandCounterIncrement();
+
+		slot = ExecSetGraph(mgstate, GSP_ON_CREATE, slot);
+	}
+
+	return (plan->last ? NULL : slot);
+}
+
+/* tricky but efficient */
+static bool
+isMatchedMergePattern(PlanState *planstate)
+{
+	NestLoopState *nlstate = (NestLoopState *) planstate;
+
+	return nlstate->nl_MatchedOuter;
+}
+
+static TupleTableSlot *
+createMergePath(ModifyGraphState *mgstate, GraphPath *path,
+				TupleTableSlot *slot)
+{
+	ExprContext *econtext = mgstate->ps.ps_ExprContext;
+	bool		out = (path->variable != NULL);
+	int			pathlen;
+	Datum	   *vertices = NULL;
+	Datum	   *edges = NULL;
+	int			nvertices;
+	int			nedges;
+	ListCell   *le;
+	Graphid		prevvid = 0;
+	GraphEdge  *gedge = NULL;
+
+	if (out)
+	{
+		pathlen = list_length(path->chain);
+		Assert(pathlen % 2 == 1);
+
+		vertices = makeDatumArray(econtext, (pathlen / 2) + 1);
+		edges = makeDatumArray(econtext, pathlen / 2);
+
+		nvertices = 0;
+		nedges = 0;
+	}
+
+	foreach(le, path->chain)
+	{
+		Node *elem = (Node *) lfirst(le);
+
+		if (IsA(elem, GraphVertex))
+		{
+			GraphVertex *gvertex = (GraphVertex *) elem;
+			Graphid		vid;
+			Datum		vertex;
+
+			vertex = findVertex(slot, gvertex, &vid);
+			if (vertex == DATUM_NULL)
+				vertex = createMergeVertex(mgstate, gvertex, &vid, slot);
+
+			if (out)
+				vertices[nvertices++] = vertex;
+
+			if (gedge != NULL)
+			{
+				Datum edge;
+
+				edge = findEdge(slot, gedge, NULL);
+				Assert(edge == DATUM_NULL);
+
+				if (gedge->direction == GRAPH_EDGE_DIR_LEFT)
+				{
+					edge = createMergeEdge(mgstate, gedge, vid, prevvid, slot);
+				}
+				else
+				{
+					Assert(gedge->direction == GRAPH_EDGE_DIR_RIGHT);
+
+					edge = createMergeEdge(mgstate, gedge, prevvid, vid, slot);
+				}
+
+				if (out)
+					edges[nedges++] = edge;
+			}
+
+			prevvid = vid;
+		}
+		else
+		{
+			Assert(IsA(elem, GraphEdge));
+
+			gedge = (GraphEdge *) elem;
+		}
+	}
+
+	/* make a graphpath and set it to the slot */
+	if (out)
+	{
+		MemoryContext oldmctx;
+		Datum graphpath;
+
+		Assert(nvertices == nedges + 1);
+		Assert(pathlen == nvertices + nedges);
+
+		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+
+		graphpath = makeGraphpathDatum(vertices, nvertices, edges, nedges);
+
+		MemoryContextSwitchTo(oldmctx);
+
+		setSlotValueByName(slot, graphpath, path->variable);
+	}
+
+	return slot;
+}
+
+static Datum
+createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
+				  Graphid *vid, TupleTableSlot *slot)
+{
+	EState		   *estate = mgstate->ps.state;
+	ExprContext	   *econtext = mgstate->ps.ps_ExprContext;
+	ResultRelInfo  *resultRelInfo;
+	ResultRelInfo  *savedResultRelInfo;
+	bool			isNull;
+	ExprDoneCond 	isDone;
+	Datum			vertex;
+	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
+	HeapTuple		tuple;
+
+	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
+	savedResultRelInfo = estate->es_result_relation_info;
+	estate->es_result_relation_info = resultRelInfo;
+
+	vertex = ExecEvalExpr(gvertex->es_expr, econtext, &isNull, &isDone);
+	if (isNull)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("NULL is not allowed in MERGE")));
+	if (isDone != ExprSingleResult)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("expected single result")));
+
+	if (gvertex->es_qual != NULL &&
+		ExecQual((List *) gvertex->es_qual, econtext, false))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("cannot use null property value in MERGE")));
+
+	*vid = getVertexIdDatum(vertex);
+
+	ExecClearTuple(insertSlot);
+
+	ExecSetSlotDescriptor(insertSlot,
+						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
+	insertSlot->tts_values[0] = GraphidGetDatum(*vid);
+	insertSlot->tts_values[1] = getVertexPropDatum(vertex);
+	MemSet(insertSlot->tts_isnull, false,
+		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
+	ExecStoreVirtualTuple(insertSlot);
+
+	tuple = ExecMaterializeSlot(insertSlot);
+
+	/*
+	 * Constraints might reference the tableoid column, so initialize
+	 * t_tableOid before evaluating them.
+	 */
+	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+
+	/*
+	 * Check the constraints of the tuple
+	 */
+	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
+		ExecConstraints(resultRelInfo, insertSlot, estate);
+
+	/*
+	 * insert the tuple normally
+	 */
+	heap_insert(resultRelInfo->ri_RelationDesc, tuple, estate->es_output_cid,
+				0, NULL);
+
+	/* insert index entries for the tuple */
+	if (resultRelInfo->ri_NumIndices > 0)
+		ExecInsertIndexTuples(insertSlot, &(tuple->t_self), estate, false,
+							  NULL, NIL);
+
+	if (gvertex->resno > 0)
+		setSlotValueByAttnum(slot, vertex, gvertex->resno);
+
+	if (mgstate->canSetTag)
+		estate->es_graphwrstats.insertVertex++;
+
+	estate->es_result_relation_info = savedResultRelInfo;
+
+	return vertex;
+}
+
+static Datum
+createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
+				Graphid end, TupleTableSlot *slot)
+{
+	EState		   *estate = mgstate->ps.state;
+	ExprContext	   *econtext = mgstate->ps.ps_ExprContext;
+	ResultRelInfo  *resultRelInfo;
+	ResultRelInfo  *savedResultRelInfo;
+	bool			isNull;
+	ExprDoneCond	isDone;
+	Datum			edge;
+	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
+	HeapTuple		tuple;
+
+	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
+	savedResultRelInfo = estate->es_result_relation_info;
+	estate->es_result_relation_info = resultRelInfo;
+
+	edge = ExecEvalExpr(gedge->es_expr, econtext, &isNull, &isDone);
+	if (isNull)
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("NULL is not allowed in MERGE")));
+	if (isDone != ExprSingleResult)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("expected single result")));
+
+	if (gedge->es_qual != NULL &&
+		ExecQual((List *) gedge->es_qual, econtext, false))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("cannot use null property value in MERGE")));
+
+	ExecClearTuple(insertSlot);
+
+	ExecSetSlotDescriptor(insertSlot,
+						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
+	insertSlot->tts_values[0] = getEdgeIdDatum(edge);
+	insertSlot->tts_values[1] = GraphidGetDatum(start);
+	insertSlot->tts_values[2] = GraphidGetDatum(end);
+	insertSlot->tts_values[3] = getEdgePropDatum(edge);
+	MemSet(insertSlot->tts_isnull, false,
+		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
+	ExecStoreVirtualTuple(insertSlot);
+
+	tuple = ExecMaterializeSlot(insertSlot);
+
+	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+
+	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
+		ExecConstraints(resultRelInfo, insertSlot, estate);
+
+	heap_insert(resultRelInfo->ri_RelationDesc, tuple, estate->es_output_cid,
+				0, NULL);
+
+	if (resultRelInfo->ri_NumIndices > 0)
+		ExecInsertIndexTuples(insertSlot, &(tuple->t_self), estate, false,
+							  NULL, NIL);
+
+	edge = makeGraphEdgeDatum(insertSlot->tts_values[0],
+							  insertSlot->tts_values[1],
+							  insertSlot->tts_values[2],
+							  insertSlot->tts_values[3]);
+
+	if (gedge->resno > 0)
+		setSlotValueByAttnum(slot, edge, gedge->resno);
+
+	if (mgstate->canSetTag)
+		estate->es_graphwrstats.insertEdge++;
+
+	estate->es_result_relation_info = savedResultRelInfo;
+
+	return edge;
 }
 
 /* 

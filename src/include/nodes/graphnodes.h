@@ -22,9 +22,13 @@ typedef struct GraphPath
 typedef struct GraphVertex
 {
 	NodeTag		type;
-	char	   *variable;
+	AttrNumber	resno;
 	bool		create;			/* whether this vertex will be created or not */
 	Oid			relid;
+	Node	   *expr;
+	Node	   *qual;
+	ExprState  *es_expr;
+	ExprState  *es_qual;
 } GraphVertex;
 
 #define GRAPH_EDGE_DIR_NONE		0
@@ -35,13 +39,25 @@ typedef struct GraphEdge
 {
 	NodeTag		type;
 	uint32		direction;		/* bitmask of directions (see above) */
-	char	   *variable;
+	AttrNumber	resno;
 	Oid			relid;
+	Node	   *expr;
+	Node	   *qual;
+	ExprState  *es_expr;
+	ExprState  *es_qual;
 } GraphEdge;
+
+typedef enum GSPKind
+{
+	GSP_NORMAL,
+	GSP_ON_CREATE,
+	GSP_ON_MATCH
+} GSPKind;
 
 typedef struct GraphSetProp
 {
 	NodeTag		type;
+	GSPKind		kind;
 	char	   *variable;
 	Node	   *elem;			/* expression of vertex/edge */
 	Node	   *expr;			/* expression of value */

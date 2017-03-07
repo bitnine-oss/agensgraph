@@ -92,6 +92,7 @@ typedef struct
 /* Local functions */
 static Node *preprocess_expression(PlannerInfo *root, Node *expr, int kind);
 static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
+static void preprocess_graph_pattern(PlannerInfo *root, List *pattern);
 static void preprocess_graph_sets(PlannerInfo *root, List *sets);
 static void inheritance_planner(PlannerInfo *root);
 static void grouping_planner(PlannerInfo *root, bool inheritance_update,
@@ -697,6 +698,8 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	}
 
 	/* expressions for graph */
+	if (parse->graph.writeOp == GWROP_MERGE)
+		preprocess_graph_pattern(root, parse->graph.pattern);
 	parse->graph.exprs = (List *)
 		preprocess_expression(root, (Node *) parse->graph.exprs,
 							  EXPRKIND_TARGET);
@@ -931,6 +934,43 @@ preprocess_qual_conditions(PlannerInfo *root, Node *jtnode)
 	else
 		elog(ERROR, "unrecognized node type: %d",
 			 (int) nodeTag(jtnode));
+}
+
+static void
+preprocess_graph_pattern(PlannerInfo *root, List *pattern)
+{
+	GraphPath  *gpath;
+	ListCell   *le;
+
+	AssertArg(list_length(pattern) == 1);
+
+	gpath = linitial(pattern);
+
+	foreach(le, gpath->chain)
+	{
+		Node *elem = lfirst(le);
+
+		if (IsA(elem, GraphVertex))
+		{
+			GraphVertex *gvertex = (GraphVertex *) elem;
+
+			gvertex->expr = preprocess_expression(root, gvertex->expr,
+												  EXPRKIND_TARGET);
+			gvertex->qual = preprocess_expression(root, gvertex->qual,
+												  EXPRKIND_QUAL);
+		}
+		else
+		{
+			GraphEdge *gedge = (GraphEdge *) elem;
+
+			Assert(IsA(elem, GraphEdge));
+
+			gedge->expr = preprocess_expression(root, gedge->expr,
+												EXPRKIND_TARGET);
+			gedge->qual = preprocess_expression(root, gedge->qual,
+												EXPRKIND_QUAL);
+		}
+	}
 }
 
 static void

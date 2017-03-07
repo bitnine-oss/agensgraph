@@ -561,7 +561,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
 				cypher_create cypher_delete cypher_label_opt cypher_limit_opt
-				cypher_load cypher_match cypher_no_parens cypher_node
+				cypher_load cypher_match cypher_merge cypher_merge_set
+				cypher_no_parens cypher_node
 				cypher_path cypher_path_opt_varirable cypher_prop_map_opt
 				cypher_range_idx cypher_range_idx_opt cypher_range_opt
 				cypher_read cypher_read_clauses cypher_read_opt
@@ -570,8 +571,9 @@ static Node *wrapCypherWithSelect(Node *stmt);
 				cypher_setitem cypher_shortestpath_expr cypher_skip_opt
 				cypher_variable cypher_variable_opt cypher_varlen_opt
 				cypher_with cypher_with_parens
-%type <list>	cypher_distinct_opt cypher_expr_list cypher_rmitem_list
-				cypher_path_chain cypher_path_chain_opt_parens cypher_pattern
+%type <list>	cypher_distinct_opt cypher_expr_list cypher_merge_sets_opt
+				cypher_merge_set_list cypher_path_chain
+				cypher_path_chain_opt_parens cypher_pattern cypher_rmitem_list
 				cypher_setitem_list cypher_types cypher_types_opt
 %type <str>		cypher_varname
 %type <boolean>	cypher_detach_opt cypher_optional_opt cypher_rel_left
@@ -647,7 +649,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	LEADING LEAKPROOF LEAST LEFT LEVEL LIKE LIMIT LISTEN LOAD LOCAL
 	LOCALTIME LOCALTIMESTAMP LOCATION LOCK_P LOCKED LOGGED
 
-	MAPPING MATCH MATERIALIZED MAXVALUE METHOD MINUTE_P MINVALUE MODE MONTH_P MOVE
+	MAPPING MATCH MATERIALIZED MAXVALUE MERGE METHOD
+	MINUTE_P MINVALUE MODE MONTH_P MOVE
 
 	NAME_P NAMES NATIONAL NATURAL NCHAR NEXT NO NONE
 	NOT NOTHING NOTIFY NOTNULL NOWAIT NULL_P NULLIF
@@ -14370,6 +14373,7 @@ reserved_keyword:
 			| LOCALTIME
 			| LOCALTIMESTAMP
 			| MATCH
+			| MERGE
 			| NOT
 			| NULL_P
 			| OFFSET
@@ -14917,6 +14921,7 @@ cypher_clause_head:
 			cypher_match
 			| cypher_return
 			| cypher_create
+			| cypher_merge
 			| cypher_load
 		;
 
@@ -15001,20 +15006,60 @@ cypher_detach_opt:
 		;
 
 cypher_set:	SET cypher_setitem_list
-			{
-				CypherSetClause *n = makeNode(CypherSetClause);
-				n->items = $2;
-				$$ = (Node *) n;
-			}
+				{
+					CypherSetClause *n = makeNode(CypherSetClause);
+					n->kind = CSET_NORMAL;
+					n->items = $2;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_remove:
 			REMOVE cypher_rmitem_list
-			{
-				CypherSetClause *n = makeNode(CypherSetClause);
-				n->items = $2;
-				$$ = (Node *) n;
-			}
+				{
+					CypherSetClause *n = makeNode(CypherSetClause);
+					n->items = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_merge:
+			MERGE cypher_path_opt_varirable cypher_merge_sets_opt
+				{
+					CypherMergeClause *n = makeNode(CypherMergeClause);
+					n->pattern = list_make1($2);
+					n->sets = $3;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_merge_sets_opt:
+			cypher_merge_set_list		{ $$ = $1; }
+			| /* EMPTY */				{ $$ = NIL; }
+		;
+
+cypher_merge_set_list:
+			cypher_merge_set
+					{ $$ = list_make1($1); }
+			| cypher_merge_set_list cypher_merge_set
+					{ $$ = lappend($1, $2); }
+		;
+
+cypher_merge_set:
+			ON CREATE SET cypher_setitem_list
+				{
+					CypherSetClause *n = makeNode(CypherSetClause);
+					n->kind = CSET_ON_CREATE;
+					n->items = $4;
+					$$ = (Node *) n;
+				}
+			| ON MATCH SET cypher_setitem_list
+				{
+					CypherSetClause *n = makeNode(CypherSetClause);
+					n->kind = CSET_ON_MATCH;
+					n->items = $4;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_load:
