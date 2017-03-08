@@ -849,6 +849,8 @@ _equalSpecialJoinInfo(const SpecialJoinInfo *a, const SpecialJoinInfo *b)
 	COMPARE_SCALAR_FIELD(semi_can_hash);
 	COMPARE_NODE_FIELD(semi_operators);
 	COMPARE_NODE_FIELD(semi_rhs_exprs);
+	COMPARE_SCALAR_FIELD(min_hops);
+	COMPARE_SCALAR_FIELD(max_hops);
 
 	return true;
 }

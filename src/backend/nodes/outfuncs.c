@@ -2346,6 +2346,8 @@ _outSpecialJoinInfo(StringInfo str, const SpecialJoinInfo *node)
 	WRITE_BOOL_FIELD(semi_can_hash);
 	WRITE_NODE_FIELD(semi_operators);
 	WRITE_NODE_FIELD(semi_rhs_exprs);
+	WRITE_INT_FIELD(min_hops);
+	WRITE_INT_FIELD(max_hops);
 }
 
 static void

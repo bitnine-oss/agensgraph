@@ -2121,6 +2121,8 @@ _copySpecialJoinInfo(const SpecialJoinInfo *from)
 	COPY_SCALAR_FIELD(semi_can_hash);
 	COPY_NODE_FIELD(semi_operators);
 	COPY_NODE_FIELD(semi_rhs_exprs);
+	COPY_SCALAR_FIELD(min_hops);
+	COPY_SCALAR_FIELD(max_hops);
 
 	return newnode;
 }
