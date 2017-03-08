@@ -752,6 +752,29 @@ _copyNestLoop(const NestLoop *from)
 	return newnode;
 }
 
+/*
+ * _copyNestLoopVLE
+ */
+static NestLoopVLE *
+_copyNestLoopVLE(const NestLoopVLE *from)
+{
+	NestLoopVLE   *newnode = makeNode(NestLoopVLE);
+
+	/*
+	 * copy node superclass fields
+	 */
+	CopyJoinFields((const Join *) from, (Join *) newnode);
+
+	/*
+	 * copy remainder of node
+	 */
+	/* FIXME: ugly */
+	COPY_NODE_FIELD(nl.nestParams);
+	COPY_SCALAR_FIELD(minHops);
+	COPY_SCALAR_FIELD(maxHops);
+
+	return newnode;
+}
 
 /*
  * _copyMergeJoin
@@ -1957,6 +1980,8 @@ _copyJoinExpr(const JoinExpr *from)
 	COPY_NODE_FIELD(quals);
 	COPY_NODE_FIELD(alias);
 	COPY_SCALAR_FIELD(rtindex);
+	COPY_SCALAR_FIELD(minHops);
+	COPY_SCALAR_FIELD(maxHops);
 
 	return newnode;
 }
@@ -2096,6 +2121,8 @@ _copySpecialJoinInfo(const SpecialJoinInfo *from)
 	COPY_SCALAR_FIELD(semi_can_hash);
 	COPY_NODE_FIELD(semi_operators);
 	COPY_NODE_FIELD(semi_rhs_exprs);
+	COPY_SCALAR_FIELD(min_hops);
+	COPY_SCALAR_FIELD(max_hops);
 
 	return newnode;
 }
@@ -2152,6 +2179,7 @@ _copyRangeTblEntry(const RangeTblEntry *from)
 	COPY_NODE_FIELD(tablesample);
 	COPY_NODE_FIELD(subquery);
 	COPY_SCALAR_FIELD(security_barrier);
+	COPY_SCALAR_FIELD(isVLE);
 	COPY_SCALAR_FIELD(jointype);
 	COPY_NODE_FIELD(joinaliasvars);
 	COPY_NODE_FIELD(functions);
@@ -4739,6 +4767,9 @@ copyObject(const void *from)
 			break;
 		case T_NestLoop:
 			retval = _copyNestLoop(from);
+			break;
+		case T_NestLoopVLE:
+			retval = _copyNestLoopVLE(from);
 			break;
 		case T_MergeJoin:
 			retval = _copyMergeJoin(from);

@@ -39,6 +39,7 @@
 #include "executor/nodeMergejoin.h"
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNestloop.h"
+#include "executor/nodeNestloopVle.h"
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeSamplescan.h"
@@ -218,6 +219,10 @@ ExecReScan(PlanState *node)
 			ExecReScanNestLoop((NestLoopState *) node);
 			break;
 
+		case T_NestLoopVLEState:
+			ExecReScanNestLoopVLE((NestLoopVLEState *) node);
+			break;
+
 		case T_MergeJoinState:
 			ExecReScanMergeJoin((MergeJoinState *) node);
 			break;
@@ -275,6 +280,58 @@ ExecReScan(PlanState *node)
 	{
 		bms_free(node->chgParam);
 		node->chgParam = NULL;
+	}
+}
+
+void
+ExecUpScan(PlanState *node)
+{
+	switch (nodeTag(node))
+	{
+		case T_AppendState:
+			ExecUpScanAppend((AppendState *) node);
+			break;
+		case T_IndexScanState:
+			ExecUpScanIndexScan((IndexScanState *) node);
+			break;
+		case T_IndexOnlyScanState:
+			ExecUpScanIndexOnlyScan((IndexOnlyScanState *) node);
+			break;
+		case T_SeqScanState:
+			ExecUpScanSeqScan((SeqScanState *) node);
+			break;
+		case T_ResultState:
+			ExecUpScanResult((ResultState *) node);
+			break;
+		default:
+			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
+			break;
+	}
+}
+
+void
+ExecDownScan(PlanState *node)
+{
+	switch (nodeTag(node))
+	{
+		case T_AppendState:
+			ExecDownScanAppend((AppendState *) node);
+			break;
+		case T_IndexScanState:
+			ExecDownScanIndexScan((IndexScanState *) node);
+			break;
+		case T_IndexOnlyScanState:
+			ExecDownScanIndexOnlyScan((IndexOnlyScanState *) node);
+			break;
+		case T_SeqScanState:
+			ExecDownScanSeqScan((SeqScanState *) node);
+			break;
+		case T_ResultState:
+			ExecDownScanResult((ResultState *) node);
+			break;
+		default:
+			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
+			break;
 	}
 }
 

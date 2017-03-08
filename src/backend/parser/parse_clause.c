@@ -988,7 +988,8 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		 * NB: this coding relies on the fact that list_concat is not
 		 * destructive to its second argument.
 		 */
-		lateral_ok = (j->jointype == JOIN_INNER || j->jointype == JOIN_LEFT);
+		lateral_ok = (j->jointype == JOIN_INNER || j->jointype == JOIN_LEFT ||
+					  j->jointype == JOIN_VLE);
 		setNamespaceLateralState(l_namespace, true, lateral_ok);
 
 		sv_namespace_length = list_length(pstate->p_namespace);

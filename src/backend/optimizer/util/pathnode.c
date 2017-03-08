@@ -2008,6 +2008,8 @@ create_nestloop_path(PlannerInfo *root,
 	pathnode->outerjoinpath = outer_path;
 	pathnode->innerjoinpath = inner_path;
 	pathnode->joinrestrictinfo = restrict_clauses;
+	pathnode->minhops = sjinfo->min_hops;
+	pathnode->maxhops = sjinfo->max_hops;
 
 	final_cost_nestloop(root, pathnode, workspace, sjinfo, semifactors);
 

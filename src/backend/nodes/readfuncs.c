@@ -1233,6 +1233,8 @@ _readJoinExpr(void)
 	READ_NODE_FIELD(quals);
 	READ_NODE_FIELD(alias);
 	READ_INT_FIELD(rtindex);
+	READ_INT_FIELD(minHops);
+	READ_INT_FIELD(maxHops);
 
 	READ_DONE();
 }
@@ -1298,6 +1300,7 @@ _readRangeTblEntry(void)
 		case RTE_SUBQUERY:
 			READ_NODE_FIELD(subquery);
 			READ_BOOL_FIELD(security_barrier);
+			READ_BOOL_FIELD(isVLE);
 			break;
 		case RTE_JOIN:
 			READ_ENUM_FIELD(jointype, JoinType);
@@ -1902,6 +1905,24 @@ _readNestLoop(void)
 }
 
 /*
+ * _readNestLoop
+ */
+static NestLoopVLE *
+_readNestLoopVLE(void)
+{
+	READ_LOCALS(NestLoopVLE);
+
+	ReadCommonJoin(&local_node->nl.join);
+
+	READ_NODE_FIELD(nl.nestParams);
+
+	READ_INT_FIELD(minHops);
+	READ_INT_FIELD(maxHops);
+
+	READ_DONE();
+}
+
+/*
  * _readMergeJoin
  */
 static MergeJoin *
@@ -2500,6 +2521,8 @@ parseNodeString(void)
 		return_value = _readJoin();
 	else if (MATCH("NESTLOOP", 8))
 		return_value = _readNestLoop();
+	else if (MATCH("NESTLOOPVLE", 8))
+		return_value = _readNestLoopVLE();
 	else if (MATCH("MERGEJOIN", 9))
 		return_value = _readMergeJoin();
 	else if (MATCH("HASHJOIN", 8))
