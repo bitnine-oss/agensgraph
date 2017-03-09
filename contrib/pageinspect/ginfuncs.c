@@ -28,11 +28,31 @@ PG_FUNCTION_INFO_V1(gin_metapage_info);
 PG_FUNCTION_INFO_V1(gin_page_opaque_info);
 PG_FUNCTION_INFO_V1(gin_leafpage_items);
 
+
+static Page
+get_page_from_raw(bytea *raw_page)
+{
+	int			raw_page_size;
+	Page		page;
+
+	raw_page_size = VARSIZE(raw_page) - VARHDRSZ;
+	if (raw_page_size < BLCKSZ)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("input page too small (%d bytes)", raw_page_size)));
+
+	/* make a copy so that the page is properly aligned for struct access */
+	page = palloc(raw_page_size);
+	memcpy(page, VARDATA(raw_page), raw_page_size);
+
+	return page;
+}
+
+
 Datum
 gin_metapage_info(PG_FUNCTION_ARGS)
 {
 	bytea	   *raw_page = PG_GETARG_BYTEA_P(0);
-	int			raw_page_size;
 	TupleDesc	tupdesc;
 	Page		page;
 	GinPageOpaque opaq;
@@ -46,12 +66,7 @@ gin_metapage_info(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 (errmsg("must be superuser to use raw page functions"))));
 
-	raw_page_size = VARSIZE(raw_page) - VARHDRSZ;
-	if (raw_page_size < BLCKSZ)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("input page too small (%d bytes)", raw_page_size)));
-	page = VARDATA(raw_page);
+	page = get_page_from_raw(raw_page);
 
 	opaq = (GinPageOpaque) PageGetSpecialPointer(page);
 	if (opaq->flags != GIN_META)
@@ -94,13 +109,12 @@ Datum
 gin_page_opaque_info(PG_FUNCTION_ARGS)
 {
 	bytea	   *raw_page = PG_GETARG_BYTEA_P(0);
-	int			raw_page_size;
 	TupleDesc	tupdesc;
 	Page		page;
 	GinPageOpaque opaq;
 	HeapTuple	resultTuple;
 	Datum		values[3];
-	bool		nulls[10];
+	bool		nulls[3];
 	Datum		flags[16];
 	int			nflags = 0;
 	uint16		flagbits;
@@ -110,12 +124,7 @@ gin_page_opaque_info(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 (errmsg("must be superuser to use raw page functions"))));
 
-	raw_page_size = VARSIZE(raw_page) - VARHDRSZ;
-	if (raw_page_size < BLCKSZ)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("input page too small (%d bytes)", raw_page_size)));
-	page = VARDATA(raw_page);
+	page = get_page_from_raw(raw_page);
 
 	opaq = (GinPageOpaque) PageGetSpecialPointer(page);
 
@@ -152,9 +161,9 @@ gin_page_opaque_info(PG_FUNCTION_ARGS)
 	memset(nulls, 0, sizeof(nulls));
 
 	values[0] = Int64GetDatum(opaq->rightlink);
-	values[1] = Int64GetDatum(opaq->maxoff);
-	values[2] = PointerGetDatum(
-					construct_array(flags, nflags, TEXTOID, -1, false, 'i'));
+	values[1] = Int32GetDatum(opaq->maxoff);
+	values[2] = PointerGetDatum(construct_array(flags, nflags,
+												TEXTOID, -1, false, 'i'));
 
 	/* Build and return the result tuple. */
 	resultTuple = heap_form_tuple(tupdesc, values, nulls);
@@ -173,7 +182,6 @@ Datum
 gin_leafpage_items(PG_FUNCTION_ARGS)
 {
 	bytea	   *raw_page = PG_GETARG_BYTEA_P(0);
-	int			raw_page_size;
 	FuncCallContext *fctx;
 	gin_leafpage_items_state *inter_call_data;
 
@@ -182,8 +190,6 @@ gin_leafpage_items(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 (errmsg("must be superuser to use raw page functions"))));
 
-	raw_page_size = VARSIZE(raw_page) - VARHDRSZ;
-
 	if (SRF_IS_FIRSTCALL())
 	{
 		TupleDesc	tupdesc;
@@ -191,11 +197,10 @@ gin_leafpage_items(PG_FUNCTION_ARGS)
 		Page		page;
 		GinPageOpaque opaq;
 
-		if (raw_page_size < BLCKSZ)
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				  errmsg("input page too small (%d bytes)", raw_page_size)));
-		page = VARDATA(raw_page);
+		fctx = SRF_FIRSTCALL_INIT();
+		mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
+
+		page = get_page_from_raw(raw_page);
 
 		if (PageGetSpecialSize(page) != MAXALIGN(sizeof(GinPageOpaqueData)))
 			ereport(ERROR,
@@ -213,9 +218,6 @@ gin_leafpage_items(PG_FUNCTION_ARGS)
 					 errdetail("Flags %04X, expected %04X",
 							   opaq->flags,
 							   (GIN_DATA | GIN_LEAF | GIN_COMPRESSED))));
-
-		fctx = SRF_FIRSTCALL_INIT();
-		mctx = MemoryContextSwitchTo(fctx->multi_call_memory_ctx);
 
 		inter_call_data = palloc(sizeof(gin_leafpage_items_state));
 

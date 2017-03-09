@@ -502,7 +502,7 @@ ExecParallelRetrieveInstrumentation(PlanState *planstate,
 	int			plan_node_id = planstate->plan->plan_node_id;
 	MemoryContext oldcontext;
 
-	/* Find the instumentation for this node. */
+	/* Find the instrumentation for this node. */
 	for (i = 0; i < instrumentation->num_plan_nodes; ++i)
 		if (instrumentation->plan_node_id[i] == plan_node_id)
 			break;
@@ -563,7 +563,7 @@ ExecParallelFinish(ParallelExecutorInfo *pei)
 }
 
 /*
- * Clean up whatever ParallelExecutreInfo resources still exist after
+ * Clean up whatever ParallelExecutorInfo resources still exist after
  * ExecParallelFinish.  We separate these routines because someone might
  * want to examine the contents of the DSM after ExecParallelFinish and
  * before calling this routine.

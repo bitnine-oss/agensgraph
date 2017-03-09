@@ -308,33 +308,16 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	if (cursorOptions & CURSOR_OPT_SCROLL)
 	{
 		if (!ExecSupportsBackwardScan(top_plan))
-		{
-			Plan	   *sub_plan = top_plan;
-
-			top_plan = materialize_finished_plan(sub_plan);
-
-			/*
-			 * XXX horrid kluge: if there are any initPlans attached to the
-			 * formerly-top plan node, move them up to the Material node. This
-			 * prevents failure in SS_finalize_plan, which see for comments.
-			 * We don't bother adjusting the sub_plan's cost estimate for
-			 * this.
-			 */
-			top_plan->initPlan = sub_plan->initPlan;
-			sub_plan->initPlan = NIL;
-		}
+			top_plan = materialize_finished_plan(top_plan);
 	}
 
 	/*
 	 * Optionally add a Gather node for testing purposes, provided this is
 	 * actually a safe thing to do.  (Note: we assume adding a Material node
 	 * above did not change the parallel safety of the plan, so we can still
-	 * rely on best_path->parallel_safe.  However, that flag doesn't account
-	 * for initPlans, which render the plan parallel-unsafe.)
+	 * rely on best_path->parallel_safe.)
 	 */
-	if (force_parallel_mode != FORCE_PARALLEL_OFF &&
-		best_path->parallel_safe &&
-		top_plan->initPlan == NIL)
+	if (force_parallel_mode != FORCE_PARALLEL_OFF && best_path->parallel_safe)
 	{
 		Gather	   *gather = makeNode(Gather);
 
@@ -797,10 +780,10 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	SS_identify_outer_params(root);
 
 	/*
-	 * If any initPlans were created in this query level, increment the
-	 * surviving Paths' costs to account for them.  They won't actually get
-	 * attached to the plan tree till create_plan() runs, but we want to be
-	 * sure their costs are included now.
+	 * If any initPlans were created in this query level, adjust the surviving
+	 * Paths' costs and parallel-safety flags to account for them.  The
+	 * initPlans won't actually get attached to the plan tree till
+	 * create_plan() runs, but we must include their effects now.
 	 */
 	final_rel = fetch_upper_rel(root, UPPERREL_FINAL, NULL);
 	SS_charge_for_initplans(root, final_rel);
@@ -3793,11 +3776,11 @@ create_grouping_paths(PlannerInfo *root,
 											   &total_groups);
 
 			/*
-			 * Gather is always unsorted, so we'll need to sort, unless
-			 * there's no GROUP BY clause, in which case there will only be a
-			 * single group.
+			 * Since Gather's output is always unsorted, we'll need to sort,
+			 * unless there's no GROUP BY clause or a degenerate (constant)
+			 * one, in which case there will only be a single group.
 			 */
-			if (parse->groupClause)
+			if (root->group_pathkeys)
 				path = (Path *) create_sort_path(root,
 												 grouped_rel,
 												 path,

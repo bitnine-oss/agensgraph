@@ -262,6 +262,15 @@ $$ LANGUAGE plpgsql;
 SELECT array_position('[2:4]={1,2,3}'::int[], 1);
 SELECT array_positions('[2:4]={1,2,3}'::int[], 1);
 
+SELECT
+    array_position(ids, (1, 1)),
+    array_positions(ids, (1, 1))
+        FROM
+(VALUES
+    (ARRAY[(0, 0), (1, 1)]),
+    (ARRAY[(1, 1)])
+) AS f (ids);
+
 -- operators
 SELECT a FROM arrtest WHERE b = ARRAY[[[113,142],[1,147]]];
 SELECT NOT ARRAY[1.1,1.2,1.3] = ARRAY[1.1,1.2,1.3] AS "FALSE";
@@ -473,11 +482,19 @@ select array_fill(7, array[3,3],array[2,2]);
 select array_fill(7, array[3,3]);
 select array_fill('juhu'::text, array[3,3],array[2,2]);
 select array_fill('juhu'::text, array[3,3]);
+select a, a = '{}' as is_eq, array_dims(a)
+  from (select array_fill(42, array[0]) as a) ss;
+select a, a = '{}' as is_eq, array_dims(a)
+  from (select array_fill(42, '{}') as a) ss;
+select a, a = '{}' as is_eq, array_dims(a)
+  from (select array_fill(42, '{}', '{}') as a) ss;
 -- raise exception
 select array_fill(1, null, array[2,2]);
 select array_fill(1, array[2,2], null);
+select array_fill(1, array[2,2], '{}');
 select array_fill(1, array[3,3], array[1,1,1]);
 select array_fill(1, array[1,2,null]);
+select array_fill(1, array[[1,2],[3,4]]);
 
 select string_to_array('1|2|3', '|');
 select string_to_array('1|2|3|', '|');
