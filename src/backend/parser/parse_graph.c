@@ -3584,23 +3584,38 @@ makeNewVertex(ParseState *pstate, Relation relation, Node *prop_map)
 {
 	int			id_attnum;
 	Node	   *id;
+	int			prop_map_attnum;
+	Node	   *prop_map_default;
 	Node	   *expr;
 
 	id_attnum = attnameAttNum(relation, AG_ELEM_LOCAL_ID, false);
 	Assert(id_attnum == 1);
 	id = build_column_default(relation, id_attnum);
 
+	prop_map_attnum = attnameAttNum(relation, AG_ELEM_PROP_MAP, false);
+	Assert(prop_map_attnum == 2);
+	prop_map_default = build_column_default(relation, prop_map_attnum);
+
 	if (prop_map == NULL)
 	{
-		int			prop_map_attnum;
-
-		prop_map_attnum = attnameAttNum(relation, AG_ELEM_PROP_MAP, false);
-		Assert(prop_map_attnum == 2);
-		expr = build_column_default(relation, prop_map_attnum);
+		expr = prop_map_default;
 	}
 	else
 	{
+		CoalesceExpr *coalesce;
+
 		expr = transformPropMap(pstate, prop_map, EXPR_KIND_INSERT_TARGET);
+
+		/*
+		 * If the evaluated value of the user-supplied expression is NULL,
+		 * use the default properties.
+		 */
+		coalesce = makeNode(CoalesceExpr);
+		coalesce->args = list_make2(expr, prop_map_default);
+		coalesce->coalescetype = JSONBOID;
+		coalesce->location = -1;
+
+		expr = (Node *) coalesce;
 	}
 
 	return makeTypedRowExpr(list_make2(id, expr), VERTEXOID, -1);
@@ -3613,6 +3628,8 @@ makeNewEdge(ParseState *pstate, Relation relation, Node *prop_map)
 	Node	   *id;
 	Node	   *start;
 	Node	   *end;
+	int			prop_map_attnum;
+	Node	   *prop_map_default;
 	Node	   *expr;
 
 	id_attnum = attnameAttNum(relation, AG_ELEM_LOCAL_ID, false);
@@ -3622,17 +3639,26 @@ makeNewEdge(ParseState *pstate, Relation relation, Node *prop_map)
 	start = (Node *) makeNullConst(GRAPHIDOID, -1, InvalidOid);
 	end = (Node *) makeNullConst(GRAPHIDOID, -1, InvalidOid);
 
+	prop_map_attnum = attnameAttNum(relation, AG_ELEM_PROP_MAP, false);
+	Assert(prop_map_attnum == 4);
+	prop_map_default = build_column_default(relation, prop_map_attnum);
+
 	if (prop_map == NULL)
 	{
-		int			prop_map_attnum;
-
-		prop_map_attnum = attnameAttNum(relation, AG_ELEM_PROP_MAP, false);
-		Assert(prop_map_attnum == 4);
-		expr = build_column_default(relation, prop_map_attnum);
+		expr = prop_map_default;
 	}
 	else
 	{
+		CoalesceExpr *coalesce;
+
 		expr = transformPropMap(pstate, prop_map, EXPR_KIND_INSERT_TARGET);
+
+		coalesce = makeNode(CoalesceExpr);
+		coalesce->args = list_make2(expr, prop_map_default);
+		coalesce->coalescetype = JSONBOID;
+		coalesce->location = -1;
+
+		expr = (Node *) coalesce;
 	}
 
 	return makeTypedRowExpr(list_make4(id, start, end, expr), EDGEOID, -1);
