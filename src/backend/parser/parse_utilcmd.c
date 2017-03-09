@@ -64,11 +64,7 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
-<<<<<<< HEAD
 #include "utils/graph.h"
-#include "utils/guc.h"
-=======
->>>>>>> postgres
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
