@@ -7,7 +7,7 @@
 # - ssl/root+client_ca.crt as the CA root for validating client certs.
 # - reject non-SSL connections
 # - a database called trustdb that lets anyone in
-# - another database called certdb that uses certificate authentiction, ie.
+# - another database called certdb that uses certificate authentication, ie.
 #   the client must present a valid certificate signed by the client CA
 # - two users, called ssltestuser and anotheruser.
 #
@@ -75,6 +75,7 @@ sub configure_test_server_for_ssl
 	copy_files("ssl/server-*.key", $pgdata);
 	chmod(0600, glob "$pgdata/server-*.key") or die $!;
 	copy_files("ssl/root+client_ca.crt", $pgdata);
+	copy_files("ssl/root_ca.crt", $pgdata);
 	copy_files("ssl/root+client.crl",    $pgdata);
 
   # Only accept SSL connections from localhost. Our tests don't depend on this
@@ -101,13 +102,14 @@ sub switch_server_cert
 {
 	my $node     = $_[0];
 	my $certfile = $_[1];
+	my $cafile = $_[2] || "root+client_ca";
 	my $pgdata   = $node->data_dir;
 
-	diag "Restarting server with certfile \"$certfile\"...";
+	diag "Restarting server with certfile \"$certfile\" and cafile \"$cafile\"...";
 
 	open SSLCONF, ">$pgdata/sslconfig.conf";
 	print SSLCONF "ssl=on\n";
-	print SSLCONF "ssl_ca_file='root+client_ca.crt'\n";
+	print SSLCONF "ssl_ca_file='$cafile.crt'\n";
 	print SSLCONF "ssl_cert_file='$certfile.crt'\n";
 	print SSLCONF "ssl_key_file='$certfile.key'\n";
 	print SSLCONF "ssl_crl_file='root+client.crl'\n";

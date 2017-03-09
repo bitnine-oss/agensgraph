@@ -40,6 +40,7 @@
 #include "access/reloptions.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
+#include "catalog/pg_foreign_data_wrapper.h"
 #include "catalog/pg_foreign_server.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_user_mapping.h"
@@ -112,7 +113,8 @@ static Relation get_rel_from_relname(text *relname_text, LOCKMODE lockmode, AclM
 static char *generate_relation_name(Relation rel);
 static void dblink_connstr_check(const char *connstr);
 static void dblink_security_check(PGconn *conn, remoteConn *rconn);
-static void dblink_res_error(const char *conname, PGresult *res, const char *dblink_context_msg, bool fail);
+static void dblink_res_error(PGconn *conn, const char *conname, PGresult *res,
+							 const char *dblink_context_msg, bool fail);
 static char *get_connect_string(const char *servername);
 static char *escape_param_str(const char *from);
 static void validate_pkattnums(Relation rel,
@@ -427,7 +429,7 @@ dblink_open(PG_FUNCTION_ARGS)
 	res = PQexec(conn, buf.data);
 	if (!res || PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		dblink_res_error(conname, res, "could not open cursor", fail);
+		dblink_res_error(conn, conname, res, "could not open cursor", fail);
 		PG_RETURN_TEXT_P(cstring_to_text("ERROR"));
 	}
 
@@ -496,7 +498,7 @@ dblink_close(PG_FUNCTION_ARGS)
 	res = PQexec(conn, buf.data);
 	if (!res || PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		dblink_res_error(conname, res, "could not close cursor", fail);
+		dblink_res_error(conn, conname, res, "could not close cursor", fail);
 		PG_RETURN_TEXT_P(cstring_to_text("ERROR"));
 	}
 
@@ -599,7 +601,8 @@ dblink_fetch(PG_FUNCTION_ARGS)
 		(PQresultStatus(res) != PGRES_COMMAND_OK &&
 		 PQresultStatus(res) != PGRES_TUPLES_OK))
 	{
-		dblink_res_error(conname, res, "could not fetch from cursor", fail);
+		dblink_res_error(conn, conname, res,
+						 "could not fetch from cursor", fail);
 		return (Datum) 0;
 	}
 	else if (PQresultStatus(res) == PGRES_COMMAND_OK)
@@ -750,8 +753,8 @@ dblink_record_internal(FunctionCallInfo fcinfo, bool is_async)
 				if (PQresultStatus(res) != PGRES_COMMAND_OK &&
 					PQresultStatus(res) != PGRES_TUPLES_OK)
 				{
-					dblink_res_error(conname, res, "could not execute query",
-									 fail);
+					dblink_res_error(conn, conname, res,
+									 "could not execute query", fail);
 					/* if fail isn't set, we'll return an empty query result */
 				}
 				else
@@ -996,7 +999,8 @@ materializeQueryResult(FunctionCallInfo fcinfo,
 			PGresult   *res1 = res;
 
 			res = NULL;
-			dblink_res_error(conname, res1, "could not execute query", fail);
+			dblink_res_error(conn, conname, res1,
+							 "could not execute query", fail);
 			/* if fail isn't set, we'll return an empty query result */
 		}
 		else if (PQresultStatus(res) == PGRES_COMMAND_OK)
@@ -1431,7 +1435,8 @@ dblink_exec(PG_FUNCTION_ARGS)
 			(PQresultStatus(res) != PGRES_COMMAND_OK &&
 			 PQresultStatus(res) != PGRES_TUPLES_OK))
 		{
-			dblink_res_error(conname, res, "could not execute command", fail);
+			dblink_res_error(conn, conname, res,
+							 "could not execute command", fail);
 
 			/*
 			 * and save a copy of the command status string to return as our
@@ -2662,7 +2667,8 @@ dblink_connstr_check(const char *connstr)
 }
 
 static void
-dblink_res_error(const char *conname, PGresult *res, const char *dblink_context_msg, bool fail)
+dblink_res_error(PGconn *conn, const char *conname, PGresult *res,
+				 const char *dblink_context_msg, bool fail)
 {
 	int			level;
 	char	   *pg_diag_sqlstate = PQresultErrorField(res, PG_DIAG_SQLSTATE);
@@ -2696,6 +2702,14 @@ dblink_res_error(const char *conname, PGresult *res, const char *dblink_context_
 	xpstrdup(message_hint, pg_diag_message_hint);
 	xpstrdup(message_context, pg_diag_context);
 
+	/*
+	 * If we don't get a message from the PGresult, try the PGconn.  This
+	 * is needed because for connection-level failures, PQexec may just
+	 * return NULL, not a PGresult at all.
+	 */
+	if (message_primary == NULL)
+		message_primary = PQerrorMessage(conn);
+
 	if (res)
 		PQclear(res);
 
@@ -2705,7 +2719,7 @@ dblink_res_error(const char *conname, PGresult *res, const char *dblink_context_
 	ereport(level,
 			(errcode(sqlstate),
 			 message_primary ? errmsg_internal("%s", message_primary) :
-			 errmsg("unknown error"),
+			 errmsg("could not obtain message string for remote error"),
 			 message_detail ? errdetail_internal("%s", message_detail) : 0,
 			 message_hint ? errhint("%s", message_hint) : 0,
 			 message_context ? errcontext("%s", message_context) : 0,
@@ -2726,6 +2740,25 @@ get_connect_string(const char *servername)
 	ForeignDataWrapper *fdw;
 	AclResult	aclresult;
 	char	   *srvname;
+
+	static const PQconninfoOption *options = NULL;
+
+	/*
+	 * Get list of valid libpq options.
+	 *
+	 * To avoid unnecessary work, we get the list once and use it throughout
+	 * the lifetime of this backend process.  We don't need to care about
+	 * memory context issues, because PQconndefaults allocates with malloc.
+	 */
+	if (!options)
+	{
+		options = PQconndefaults();
+		if (!options)			/* assume reason for failure is OOM */
+			ereport(ERROR,
+					(errcode(ERRCODE_FDW_OUT_OF_MEMORY),
+					 errmsg("out of memory"),
+			 errdetail("could not get libpq's default connection options")));
+	}
 
 	/* first gather the server connstr options */
 	srvname = pstrdup(servername);
@@ -2750,16 +2783,18 @@ get_connect_string(const char *servername)
 		{
 			DefElem    *def = lfirst(cell);
 
-			appendStringInfo(buf, "%s='%s' ", def->defname,
-							 escape_param_str(strVal(def->arg)));
+			if (is_valid_dblink_option(options, def->defname, ForeignDataWrapperRelationId))
+				appendStringInfo(buf, "%s='%s' ", def->defname,
+								 escape_param_str(strVal(def->arg)));
 		}
 
 		foreach(cell, foreign_server->options)
 		{
 			DefElem    *def = lfirst(cell);
 
-			appendStringInfo(buf, "%s='%s' ", def->defname,
-							 escape_param_str(strVal(def->arg)));
+			if (is_valid_dblink_option(options, def->defname, ForeignServerRelationId))
+				appendStringInfo(buf, "%s='%s' ", def->defname,
+								 escape_param_str(strVal(def->arg)));
 		}
 
 		foreach(cell, user_mapping->options)
@@ -2767,8 +2802,9 @@ get_connect_string(const char *servername)
 
 			DefElem    *def = lfirst(cell);
 
-			appendStringInfo(buf, "%s='%s' ", def->defname,
-							 escape_param_str(strVal(def->arg)));
+			if (is_valid_dblink_option(options, def->defname, UserMappingRelationId))
+				appendStringInfo(buf, "%s='%s' ", def->defname,
+								 escape_param_str(strVal(def->arg)));
 		}
 
 		return buf->data;

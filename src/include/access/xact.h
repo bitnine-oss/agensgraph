@@ -65,7 +65,7 @@ typedef enum
 										 * apply */
 }	SyncCommitLevel;
 
-/* Define the default setting for synchonous_commit */
+/* Define the default setting for synchronous_commit */
 #define SYNCHRONOUS_COMMIT_ON	SYNCHRONOUS_COMMIT_REMOTE_FLUSH
 
 /* Synchronous commit level */
@@ -225,7 +225,6 @@ typedef struct xl_xact_twophase
 {
 	TransactionId xid;
 } xl_xact_twophase;
-#define MinSizeOfXactInvals offsetof(xl_xact_invals, msgs)
 
 typedef struct xl_xact_origin
 {

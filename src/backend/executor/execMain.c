@@ -1546,9 +1546,11 @@ ExecutePlan(EState *estate,
 
 	/*
 	 * If a tuple count was supplied, we must force the plan to run without
-	 * parallelism, because we might exit early.
+	 * parallelism, because we might exit early.  Also disable parallelism
+	 * when writing into a relation, because no database changes are allowed
+	 * in parallel mode.
 	 */
-	if (numberTuples)
+	if (numberTuples || dest->mydest == DestIntoRel)
 		use_parallel_mode = false;
 
 	/*

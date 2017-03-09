@@ -834,7 +834,7 @@ LWLockAttemptLock(LWLock *lock, LWLockMode mode)
 				return false;
 			}
 			else
-				return true;	/* someobdy else has the lock */
+				return true;	/* somebody else has the lock */
 		}
 	}
 	pg_unreachable();
@@ -1006,7 +1006,7 @@ LWLockWakeup(LWLock *lock)
 		 * that happens before the list unlink happens, the list would end up
 		 * being corrupted.
 		 *
-		 * The barrier pairs with the LWLockWaitListLock() when enqueing for
+		 * The barrier pairs with the LWLockWaitListLock() when enqueuing for
 		 * another lock.
 		 */
 		pg_write_barrier();
@@ -1082,7 +1082,7 @@ LWLockDequeueSelf(LWLock *lock)
 
 	/*
 	 * Can't just remove ourselves from the list, but we need to iterate over
-	 * all entries as somebody else could have unqueued us.
+	 * all entries as somebody else could have dequeued us.
 	 */
 	dlist_foreach_modify(iter, &lock->waiters)
 	{
@@ -1781,15 +1781,14 @@ LWLockRelease(LWLock *lock)
 	 * be the latest-acquired lock; so search array backwards.
 	 */
 	for (i = num_held_lwlocks; --i >= 0;)
-	{
 		if (lock == held_lwlocks[i].lock)
-		{
-			mode = held_lwlocks[i].mode;
 			break;
-		}
-	}
+
 	if (i < 0)
 		elog(ERROR, "lock %s %d is not held", T_NAME(lock), T_ID(lock));
+
+	mode = held_lwlocks[i].mode;
+
 	num_held_lwlocks--;
 	for (; i < num_held_lwlocks; i++)
 		held_lwlocks[i] = held_lwlocks[i + 1];

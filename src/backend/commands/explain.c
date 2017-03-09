@@ -3375,13 +3375,15 @@ ExplainSeparatePlans(ExplainState *es)
  * Optionally, OR in X_NOWHITESPACE to suppress the whitespace we'd normally
  * add.
  *
- * XML tag names can't contain white space, so we replace any spaces in
- * "tagname" with dashes.
+ * XML restricts tag names more than our other output formats, eg they can't
+ * contain white space or slashes.  Replace invalid characters with dashes,
+ * so that for example "I/O Read Time" becomes "I-O-Read-Time".
  */
 static void
 ExplainXMLTag(const char *tagname, int flags, ExplainState *es)
 {
 	const char *s;
+	const char *valid = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.";
 
 	if ((flags & X_NOWHITESPACE) == 0)
 		appendStringInfoSpaces(es->str, 2 * es->indent);
@@ -3389,7 +3391,7 @@ ExplainXMLTag(const char *tagname, int flags, ExplainState *es)
 	if ((flags & X_CLOSING) != 0)
 		appendStringInfoCharMacro(es->str, '/');
 	for (s = tagname; *s; s++)
-		appendStringInfoCharMacro(es->str, (*s == ' ') ? '-' : *s);
+		appendStringInfoChar(es->str, strchr(valid, *s) ? *s : '-');
 	if ((flags & X_CLOSE_IMMEDIATE) != 0)
 		appendStringInfoString(es->str, " /");
 	appendStringInfoCharMacro(es->str, '>');
@@ -3440,7 +3442,7 @@ ExplainYAMLLineStarting(ExplainState *es)
 }
 
 /*
- * YAML is a superset of JSON; unfortuantely, the YAML quoting rules are
+ * YAML is a superset of JSON; unfortunately, the YAML quoting rules are
  * ridiculously complicated -- as documented in sections 5.3 and 7.3.3 of
  * http://yaml.org/spec/1.2/spec.html -- so we chose to just quote everything.
  * Empty strings, strings with leading or trailing whitespace, and strings

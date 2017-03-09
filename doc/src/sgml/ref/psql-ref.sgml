@@ -3798,8 +3798,9 @@ $endif
       If the query results do not fit on the screen, they are piped
       through this command.  Typical values are
       <literal>more</literal> or <literal>less</literal>.  The default
-      is platform-dependent.  The use of the pager can be disabled by
-      using the <command>\pset</command> command.
+      is platform-dependent.  Use of the pager can be disabled by setting
+      <envar>PAGER</envar> to empty, or by using pager-related options of
+      the <command>\pset</command> command.
      </para>
     </listitem>
    </varlistentry>
@@ -4170,7 +4171,7 @@ second | four
   with the <command>\crosstabview</command> command:
 <programlisting>
 testdb=&gt; <userinput>SELECT first, second, first &gt; 2 AS gt2 FROM my_table;</userinput>
- first | second | ge2 
+ first | second | gt2 
 -------+--------+-----
      1 | one    | f
      2 | two    | f
