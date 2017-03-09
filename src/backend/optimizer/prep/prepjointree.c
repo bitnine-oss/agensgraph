@@ -694,7 +694,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 		 * unless is_safe_append_member says so.
 		 */
 		if (rte->rtekind == RTE_SUBQUERY &&
-			! rte->isVLE &&
+			!rte->isVLE &&
 			is_simple_subquery(rte->subquery, rte,
 							   lowest_outer_join, deletion_ok) &&
 			(containing_appendrel == NULL ||
@@ -790,6 +790,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 		switch (j->jointype)
 		{
 			case JOIN_INNER:
+
 				/*
 				 * INNER JOIN can allow deletion of either child node, but not
 				 * both.  So right child gets permission to delete only if

@@ -998,7 +998,9 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 										j->jointype,
 										my_quals);
 			if (j->jointype == JOIN_SEMI)
+			{
 				ojscope = NULL;
+			}
 			else if (j->jointype == JOIN_VLE)
 			{
 				ojscope = NULL;
@@ -1006,8 +1008,10 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 				sjinfo->max_hops = j->maxHops;
 			}
 			else
+			{
 				ojscope = bms_union(sjinfo->min_lefthand,
 									sjinfo->min_righthand);
+			}
 		}
 		else
 		{
@@ -1036,7 +1040,9 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 										 PVC_RECURSE_AGGREGATES |
 										 PVC_RECURSE_WINDOWFUNCS |
 										 PVC_INCLUDE_PLACEHOLDERS);
+
 			add_vars_to_targetlist(root, vars, proj_varnos, false);
+
 			list_free(vars);
 		}
 

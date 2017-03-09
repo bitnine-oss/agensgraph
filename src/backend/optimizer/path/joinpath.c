@@ -34,10 +34,8 @@ static void sort_inner_and_outer(PlannerInfo *root, RelOptInfo *joinrel,
 static void match_unsorted_outer(PlannerInfo *root, RelOptInfo *joinrel,
 					 RelOptInfo *outerrel, RelOptInfo *innerrel,
 					 JoinType jointype, JoinPathExtraData *extra);
-static void match_unsorted_outer_for_vle(PlannerInfo *root,
-					 RelOptInfo *joinrel,
-					 RelOptInfo *outerrel,
-					 RelOptInfo *innerrel,
+static void match_unsorted_outer_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
+					 RelOptInfo *outerrel, RelOptInfo *innerrel,
 					 JoinPathExtraData *extra);
 static void consider_parallel_nestloop(PlannerInfo *root,
 						   RelOptInfo *joinrel,
@@ -313,12 +311,9 @@ add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
 }
 
 void
-add_paths_to_joinrel_for_vle(PlannerInfo *root,
-							 RelOptInfo *joinrel,
-							 RelOptInfo *outerrel,
-							 RelOptInfo *innerrel,
-							 SpecialJoinInfo *sjinfo,
-							 List *restrictlist)
+add_paths_to_joinrel_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
+							 RelOptInfo *outerrel, RelOptInfo *innerrel,
+							 SpecialJoinInfo *sjinfo, List *restrictlist)
 {
 	JoinPathExtraData extra;
 
@@ -1367,10 +1362,8 @@ consider_parallel_nestloop(PlannerInfo *root,
 }
 
 static void
-match_unsorted_outer_for_vle(PlannerInfo *root,
-							 RelOptInfo *joinrel,
-							 RelOptInfo *outerrel,
-							 RelOptInfo *innerrel,
+match_unsorted_outer_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
+							 RelOptInfo *outerrel, RelOptInfo *innerrel,
 							 JoinPathExtraData *extra)
 {
 	ListCell   *lc1;
@@ -1415,7 +1408,6 @@ match_unsorted_outer_for_vle(PlannerInfo *root,
 		}
 	}
 }
-
 
 /*
  * hash_inner_and_outer

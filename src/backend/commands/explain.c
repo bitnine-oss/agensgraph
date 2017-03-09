@@ -1187,9 +1187,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					case JOIN_INNER:
 						jointype = "Inner";
 						break;
-					case JOIN_VLE:
-						jointype = "VLE";
-						break;
 					case JOIN_LEFT:
 						jointype = "Left";
 						break;
@@ -1208,6 +1205,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					case JOIN_CYPHER_MERGE:
 						jointype = "CypherMerge";
 						break;
+					case JOIN_VLE:
+						jointype = "VLE";
+						break;
 					default:
 						jointype = "???";
 						break;
@@ -1221,6 +1221,7 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					if (((Join *) plan)->jointype == JOIN_VLE)
 					{
 						NestLoopVLE *nlvPlan = (NestLoopVLE *) plan;
+
 						appendStringInfo(es->str, " %s [%d..",
 										 jointype, nlvPlan->minHops);
 						if (nlvPlan->maxHops != -1)
@@ -1229,9 +1230,13 @@ ExplainNode(PlanState *planstate, List *ancestors,
 							appendStringInfo(es->str, "]");
 					}
 					else if (((Join *) plan)->jointype != JOIN_INNER)
+					{
 						appendStringInfo(es->str, " %s Join", jointype);
+					}
 					else if (!IsA(plan, NestLoop))
+					{
 						appendStringInfoString(es->str, " Join");
+					}
 				}
 				else
 					ExplainPropertyText("Join Type", jointype, es);
