@@ -67,6 +67,12 @@ CREATE a=(), a=();
 CREATE (:lib);
 CREATE ()-[:repo]->();
 
+CREATE (=null::jsonb)-[:lib =null::jsonb]->();
+CREATE TABLE t1 (prop jsonb);
+CREATE (=(SELECT prop FROM t1))-[:lib =(SELECT prop FROM t1)]->();
+
+MATCH (a) WHERE a.name IS NULL DETACH DELETE a;
+DROP TABLE t1;
 --
 -- MATCH
 --
