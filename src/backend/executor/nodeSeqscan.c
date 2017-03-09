@@ -298,6 +298,9 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	ExecAssignResultTypeFromTL(&scanstate->ss.ps);
 	ExecAssignScanProjectionInfo(&scanstate->ss);
 
+	dlist_init(&scanstate->vle_ctxs);
+	scanstate->cur_ctx = NULL;
+
 	return scanstate;
 }
 
@@ -312,6 +315,7 @@ ExecEndSeqScan(SeqScanState *node)
 {
 	Relation	relation;
 	HeapScanDesc scanDesc;
+	dlist_mutable_iter miter;
 
 	/*
 	 * get information from node
@@ -333,6 +337,23 @@ ExecEndSeqScan(SeqScanState *node)
 	/*
 	 * close heap scan
 	 */
+	dlist_foreach_modify(miter, &node->vle_ctxs)
+	{
+		SeqScanVLECtx *ctx;
+
+		ctx = dlist_container(SeqScanVLECtx, list, miter.cur);
+		dlist_delete(miter.cur);
+
+		if (miter.cur != node->cur_ctx)
+		{
+			if (ctx->ss_currentScanDesc != NULL)
+				heap_endscan(ctx->ss_currentScanDesc);
+		}
+
+		pfree(ctx);
+	}
+	node->cur_ctx = NULL;
+
 	if (scanDesc != NULL)
 		heap_endscan(scanDesc);
 
@@ -396,6 +417,52 @@ ExecReScanSeqScan(SeqScanState *node)
 					NULL);		/* new scan keys */
 
 	ExecScanReScan((ScanState *) node);
+}
+
+void
+ExecUpScanSeqScan(SeqScanState *node)
+{
+	SeqScanVLECtx *ctx;
+
+	node->cur_ctx = dlist_prev_node(&node->vle_ctxs, node->cur_ctx);
+	ctx = dlist_container(SeqScanVLECtx, list, node->cur_ctx);
+	node->ss.ss_currentScanDesc = ctx->ss_currentScanDesc;
+}
+
+void
+ExecDownScanSeqScan(SeqScanState *node)
+{
+	EState *estate = node->ss.ps.state;
+	SeqScanVLECtx *ctx;
+
+	if (node->cur_ctx == NULL)
+	{
+		if (node->ss.ss_currentScanDesc == NULL)
+			node->ss.ss_currentScanDesc = heap_beginscan(
+					node->ss.ss_currentRelation, estate->es_snapshot, 0, NULL);
+
+		ctx = palloc(sizeof(*ctx));
+		ctx->ss_currentScanDesc = node->ss.ss_currentScanDesc;
+		dlist_push_tail(&node->vle_ctxs, &ctx->list);
+		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+	}
+
+	if (dlist_has_next(&node->vle_ctxs, node->cur_ctx))
+	{
+		node->cur_ctx = dlist_next_node(&node->vle_ctxs, node->cur_ctx);
+		ctx = dlist_container(SeqScanVLECtx, list, node->cur_ctx);
+		node->ss.ss_currentScanDesc = ctx->ss_currentScanDesc;
+	}
+	else
+	{
+		node->ss.ss_currentScanDesc = heap_beginscan(
+				node->ss.ss_currentRelation, estate->es_snapshot, 0, NULL);
+
+		ctx = palloc(sizeof(*ctx));
+		ctx->ss_currentScanDesc = node->ss.ss_currentScanDesc;
+		dlist_push_tail(&node->vle_ctxs, &ctx->list);
+		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+	}
 }
 
 /* ----------------------------------------------------------------

@@ -331,6 +331,51 @@ ExecReScanIndexOnlyScan(IndexOnlyScanState *node)
 	ExecScanReScan(&node->ss);
 }
 
+void
+ExecUpScanIndexOnlyScan(IndexOnlyScanState *node)
+{
+	IndexScanVLECtx *ctx;
+
+	node->cur_ctx = dlist_prev_node(&node->vle_ctxs, node->cur_ctx);
+	ctx = dlist_container(IndexScanVLECtx, list, node->cur_ctx);
+	node->ioss_ScanDesc = ctx->iss_ScanDesc;
+}
+
+void
+ExecDownScanIndexOnlyScan(IndexOnlyScanState *node)
+{
+	IndexScanVLECtx *ctx;
+
+	if (node->cur_ctx == NULL)
+	{
+		ctx = palloc(sizeof(*ctx));
+		ctx->iss_ScanDesc = node->ioss_ScanDesc;
+		dlist_push_tail(&node->vle_ctxs, &ctx->list);
+		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+	}
+
+	if (dlist_has_next(&node->vle_ctxs, node->cur_ctx))
+	{
+		node->cur_ctx = dlist_next_node(&node->vle_ctxs, node->cur_ctx);
+		ctx = dlist_container(IndexScanVLECtx, list, node->cur_ctx);
+		node->ioss_ScanDesc = ctx->iss_ScanDesc;
+	}
+	else
+	{
+		EState *estate = node->ss.ps.state;
+
+		node->ioss_ScanDesc = index_beginscan(
+				node->ss.ss_currentRelation, node->ioss_RelationDesc,
+				estate->es_snapshot, node->ioss_NumScanKeys,
+				node->ioss_NumOrderByKeys);
+		node->ioss_ScanDesc->xs_want_itup = true;
+
+		ctx = palloc(sizeof(*ctx));
+		ctx->iss_ScanDesc = node->ioss_ScanDesc;
+		dlist_push_tail(&node->vle_ctxs, &ctx->list);
+		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+	}
+}
 
 /* ----------------------------------------------------------------
  *		ExecEndIndexOnlyScan
@@ -342,6 +387,7 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 	Relation	indexRelationDesc;
 	IndexScanDesc indexScanDesc;
 	Relation	relation;
+	dlist_mutable_iter miter;
 
 	/*
 	 * extract information from the node
@@ -375,6 +421,23 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 	/*
 	 * close the index relation (no-op if we didn't open it)
 	 */
+	dlist_foreach_modify(miter, &node->vle_ctxs)
+	{
+		IndexScanVLECtx *ctx;
+
+		ctx = dlist_container(IndexScanVLECtx, list, miter.cur);
+		dlist_delete(miter.cur);
+
+		if (miter.cur != node->cur_ctx)
+		{
+			if (ctx->iss_ScanDesc)
+				index_endscan(ctx->iss_ScanDesc);
+		}
+
+		pfree(ctx);
+	}
+	node->cur_ctx = NULL;
+
 	if (indexScanDesc)
 		index_endscan(indexScanDesc);
 	if (indexRelationDesc)
@@ -588,6 +651,9 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 					 indexstate->ioss_NumScanKeys,
 					 indexstate->ioss_OrderByKeys,
 					 indexstate->ioss_NumOrderByKeys);
+
+	dlist_init(&indexstate->vle_ctxs);
+	indexstate->cur_ctx = NULL;
 
 	/*
 	 * all done.

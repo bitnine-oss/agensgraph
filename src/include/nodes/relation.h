@@ -293,6 +293,7 @@ typedef struct PlannerInfo
 	bool		hasPseudoConstantQuals; /* true if any RestrictInfo has
 										 * pseudoconstant = true */
 	bool		hasRecursion;	/* true if planning a recursive WITH item */
+	bool		hasVLEJoinRTE;  /* has VLE join or a child node of VLE join */
 
 	/* These fields are used only when hasRecursion is true: */
 	int			wt_param_id;	/* PARAM_EXEC ID for the work table */
@@ -1212,6 +1213,9 @@ typedef struct JoinPath
 	 * joinrestrictinfo is needed in JoinPath, and can't be merged into the
 	 * parent RelOptInfo.
 	 */
+
+	int			minhops;
+	int			maxhops;
 } JoinPath;
 
 /*
@@ -1799,6 +1803,9 @@ typedef struct SpecialJoinInfo
 	bool		semi_can_hash;	/* true if semi_operators are all hash */
 	List	   *semi_operators; /* OIDs of equality join operators */
 	List	   *semi_rhs_exprs; /* righthand-side expressions of these ops */
+	/* Fields for JOIN_VLE */
+	int			min_hops;
+	int			max_hops;
 } SpecialJoinInfo;
 
 /*
