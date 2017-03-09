@@ -1905,7 +1905,7 @@ _readNestLoop(void)
 }
 
 /*
- * _readNestLoop
+ * _readNestLoopVLE
  */
 static NestLoopVLE *
 _readNestLoopVLE(void)
@@ -2526,7 +2526,7 @@ parseNodeString(void)
 		return_value = _readJoin();
 	else if (MATCH("NESTLOOP", 8))
 		return_value = _readNestLoop();
-	else if (MATCH("NESTLOOPVLE", 8))
+	else if (MATCH("NESTLOOPVLE", 11))
 		return_value = _readNestLoopVLE();
 	else if (MATCH("MERGEJOIN", 9))
 		return_value = _readMergeJoin();

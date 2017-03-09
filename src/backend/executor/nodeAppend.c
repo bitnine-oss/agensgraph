@@ -268,7 +268,9 @@ ExecEndAppend(AppendState *node)
 
 	dlist_foreach_modify(miter, &node->vle_ctxs)
 	{
-		AppendVLECtx *ctx = dlist_container(AppendVLECtx, list, miter.cur);
+		AppendVLECtx *ctx;
+
+		ctx = dlist_container(AppendVLECtx, list, miter.cur);
 		dlist_delete(miter.cur);
 		pfree(ctx);
 	}
@@ -325,13 +327,13 @@ ExecDownScanAppend(AppendState *node)
 	AppendVLECtx *ctx;
 	int i;
 
-	if (node->cur_ctx && dlist_has_next(&node->vle_ctxs, node->cur_ctx))
+	if (node->cur_ctx != NULL && dlist_has_next(&node->vle_ctxs, node->cur_ctx))
 	{
 		node->cur_ctx = dlist_next_node(&node->vle_ctxs, node->cur_ctx);
 		ctx = dlist_container(AppendVLECtx, list, node->cur_ctx);
 		ctx->as_whichplan = node->as_whichplan;
 	}
-	else if (! node->cur_ctx && ! dlist_is_empty(&node->vle_ctxs))
+	else if (node->cur_ctx == NULL && !dlist_is_empty(&node->vle_ctxs))
 	{
 		node->cur_ctx = dlist_head_node(&node->vle_ctxs);
 		ctx = dlist_container(AppendVLECtx, list, node->cur_ctx);
@@ -339,7 +341,7 @@ ExecDownScanAppend(AppendState *node)
 	}
 	else
 	{
-		ctx = (AppendVLECtx *) palloc(sizeof(AppendVLECtx));
+		ctx = palloc(sizeof(*ctx));
 		ctx->as_whichplan = node->as_whichplan;
 		dlist_push_tail(&node->vle_ctxs, &ctx->list);
 		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);

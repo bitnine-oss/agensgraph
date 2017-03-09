@@ -1208,13 +1208,14 @@ typedef struct JoinPath
 
 	List	   *joinrestrictinfo;		/* RestrictInfos to apply to join */
 
-	int			minhops;
-	int			maxhops;
 	/*
 	 * See the notes for RelOptInfo and ParamPathInfo to understand why
 	 * joinrestrictinfo is needed in JoinPath, and can't be merged into the
 	 * parent RelOptInfo.
 	 */
+
+	int			minhops;
+	int			maxhops;
 } JoinPath;
 
 /*

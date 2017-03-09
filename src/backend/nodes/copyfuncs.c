@@ -758,7 +758,7 @@ _copyNestLoop(const NestLoop *from)
 static NestLoopVLE *
 _copyNestLoopVLE(const NestLoopVLE *from)
 {
-	NestLoopVLE   *newnode = makeNode(NestLoopVLE);
+	NestLoopVLE *newnode = makeNode(NestLoopVLE);
 
 	/*
 	 * copy node superclass fields
@@ -768,8 +768,9 @@ _copyNestLoopVLE(const NestLoopVLE *from)
 	/*
 	 * copy remainder of node
 	 */
-	/* FIXME: ugly */
+
 	COPY_NODE_FIELD(nl.nestParams);
+
 	COPY_SCALAR_FIELD(minHops);
 	COPY_SCALAR_FIELD(maxHops);
 

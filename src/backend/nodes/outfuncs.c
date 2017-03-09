@@ -660,11 +660,12 @@ _outNestLoop(StringInfo str, const NestLoop *node)
 static void
 _outNestLoopVLE(StringInfo str, const NestLoopVLE *node)
 {
-	WRITE_NODE_TYPE("NESTLOOP");
+	WRITE_NODE_TYPE("NESTLOOPVLE");
 
 	_outJoinPlanInfo(str, (const Join *) node);
 
 	WRITE_NODE_FIELD(nl.nestParams);
+
 	WRITE_INT_FIELD(minHops);
 	WRITE_INT_FIELD(maxHops);
 }

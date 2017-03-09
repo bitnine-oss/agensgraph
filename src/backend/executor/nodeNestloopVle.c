@@ -1,4 +1,16 @@
 /*
+ * nodeNestloopVle.c
+ *	  routines to support nest-loop joins for VLE
+ *
+ * Portions Copyright (c) 2017, Bitnine Inc.
+ * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1994, Regents of the University of California
+ *
+ * IDENTIFICATION
+ *	  src/backend/executor/nodeNestloopVle.c
+ */
+
+/*
  *	 INTERFACE ROUTINES
  *		ExecNestLoopVLE	 	- process a nestloop join of two plans
  *		ExecInitNestLoopVLE - initialize the join
@@ -7,14 +19,14 @@
 
 #include "postgres.h"
 
+#include "catalog/pg_type.h"
 #include "executor/execdebug.h"
 #include "executor/nodeNestloopVle.h"
+#include "nodes/pg_list.h"
 #include "utils/array.h"
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
-#include "catalog/pg_type.h"
-#include "nodes/pg_list.h"
 
 
 #define OUTER_START_VARNO 	0
@@ -24,6 +36,7 @@
 #define INNER_BIND_VARNO	0
 #define INNER_ROWID_VARNO	1
 #define INNER_EGID_VARNO	2
+
 
 static bool incrDepth(NestLoopVLEState *node);
 static bool decrDepth(NestLoopVLEState *node);
@@ -111,7 +124,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 				 */
 				if (TupIsNull(outerTupleSlot))
 				{
-					ENL1_printf("no outer tuple, ending join");
+					ENLV1_printf("no outer tuple, ending join");
 					return NULL;
 				}
 
@@ -122,10 +135,10 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 			econtext->ecxt_outertuple = outerTupleSlot;
 
 			result = NULL;
-			if (! node->selfLoop && (node->curhops >= nlv->minHops))
-			{
+
+			/* in the case that minHops is 0 or 1 (starting point) */
+			if (!node->selfLoop && (node->curhops >= nlv->minHops))
 				result = outerTupleSlot;
-			}
 
 			if (incrDepth(node))
 			{
@@ -147,7 +160,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 				node->nls.js.ps.state->es_forceReScan = false;
 			}
 
-			if (result)
+			if (result != NULL)
 				return result;
 		}
 
@@ -198,8 +211,8 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 		 */
 		ENLV1_printf("testing qualification");
 
-		if (! hasElem(&node->rowids,
-					  econtext->ecxt_innertuple->tts_values[INNER_ROWID_VARNO]))
+		if (!hasElem(&node->rowids,
+					 econtext->ecxt_innertuple->tts_values[INNER_ROWID_VARNO]))
 		{
 			if (otherqual == NIL || ExecQual(otherqual, econtext, false))
 			{
@@ -211,21 +224,25 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 
 				result = ExecProject(node->nls.js.ps.ps_ProjInfo, &isDone);
 				addInnerRowidAndGid(node, econtext->ecxt_innertuple);
-				replaceResult(node, result);
-				if (! isMaxDepth(node))
+
+				/* in both [x..y] and [x..] cases */
+				if (node->curhops >= nlv->minHops)
+					replaceResult(node, result);
+
+				if (isMaxDepth(node))
+				{
+					popRowidAndGid(node);
+				}
+				else
 				{
 					storeStartAndBindVar(node, econtext->ecxt_outertuple);
 					copyStartAndBindVar(selfTupleSlot, result);
 					node->nls.nl_NeedNewOuter = true;
 					node->selfLoop = true;
 				}
-				else
-					popRowidAndGid(node);
 
 				if (node->curhops >= nlv->minHops)
-				{
 					return result;
-				}
 			}
 			else
 				InstrCountFiltered2(node, 1);
@@ -320,8 +337,8 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	nlvstate->selfLoop = false;
 	nlvstate->curhops = (node->minHops == 0) ? 0 : 1;
 
-	innerTupleDesc
-		= innerPlanState(nlvstate)->ps_ResultTupleSlot->tts_tupleDescriptor;
+	innerTupleDesc =
+			innerPlanState(nlvstate)->ps_ResultTupleSlot->tts_tupleDescriptor;
 	initArray(&nlvstate->rowids,
 			  innerTupleDesc->attrs[INNER_ROWID_VARNO]->atttypid,
 			  nlvstate->nls.js.ps.ps_ExprContext);
@@ -333,7 +350,9 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 		nlvstate->hasPath = true;
 	}
 	else
+	{
 		nlvstate->hasPath = false;
+	}
 
 	/*
 	 * finally, wipe the current outer tuple clean.
@@ -406,8 +425,10 @@ ExecReScanNestLoopVLE(NestLoopVLEState *node)
 	node->nls.js.ps.ps_TupFromTlist = false;
 	node->nls.nl_NeedNewOuter = true;
 	node->selfLoop = false;
-	node->curhops = ((NestLoopVLE *) node->nls.js.ps.plan)->minHops == 0
-		? 0 : 1;
+	if (((NestLoopVLE *) node->nls.js.ps.plan)->minHops == 0)
+		node->curhops = 0;
+	else
+		node->curhops = 1;
 
 	ExecClearTuple(node->selfTupleSlot);
 	clearVleCtxs(&node->vleCtxs);
@@ -445,6 +466,7 @@ static bool
 isMaxDepth(NestLoopVLEState *node)
 {
 	NestLoopVLE *nlv = (NestLoopVLE *) node->nls.js.ps.plan;
+
 	return (node->curhops == nlv->maxHops);
 }
 
@@ -475,10 +497,11 @@ bindNestParam(NestLoopVLE *nlv,
 								  nlp->paramval->varattno,
 								  &(prm->isnull));
 		/* Flag parameter value as changed */
-		if (innerPlan)
+		if (innerPlan != NULL)
 			innerPlan->chgParam = bms_add_member(innerPlan->chgParam, paramno);
 	}
 }
+
 static TupleTableSlot *
 restoreStartAndBindVar(NestLoopVLEState *node)
 {
@@ -489,22 +512,22 @@ restoreStartAndBindVar(NestLoopVLEState *node)
 		node->curCtx = dlist_prev_node(&node->vleCtxs, node->curCtx);
 	else
 		node->curCtx = NULL;
+
 	return ctx->slot;
 }
-
 
 static void
 storeStartAndBindVar(NestLoopVLEState *node, TupleTableSlot *outerTupleSlot)
 {
 	NestLoopVLECtx *ctx;
 
-	if (node->curCtx && dlist_has_next(&node->vleCtxs, node->curCtx))
+	if (node->curCtx != NULL && dlist_has_next(&node->vleCtxs, node->curCtx))
 	{
 		node->curCtx = dlist_next_node(&node->vleCtxs, node->curCtx);
 		ctx = dlist_container(NestLoopVLECtx, list, node->curCtx);
 		copyStartAndBindVar(ctx->slot, outerTupleSlot);
 	}
-	else if (! node->curCtx && ! dlist_is_empty(&node->vleCtxs))
+	else if (node->curCtx == NULL && !dlist_is_empty(&node->vleCtxs))
 	{
 		node->curCtx = dlist_head_node(&node->vleCtxs);
 		ctx = dlist_container(NestLoopVLECtx, list, node->curCtx);
@@ -512,7 +535,7 @@ storeStartAndBindVar(NestLoopVLEState *node, TupleTableSlot *outerTupleSlot)
 	}
 	else
 	{
-		ctx = (NestLoopVLECtx *) palloc(sizeof(NestLoopVLECtx));
+		ctx = palloc(sizeof(*ctx));
 		ctx->slot = MakeSingleTupleTableSlot(
 				outerTupleSlot->tts_tupleDescriptor);
 		copyStartAndBindVar(ctx->slot, outerTupleSlot);
@@ -529,6 +552,7 @@ clearVleCtxs(dlist_head *vleCtxs)
 	dlist_foreach_modify(miter, vleCtxs)
 	{
 		NestLoopVLECtx *ctx = dlist_container(NestLoopVLECtx, list, miter.cur);
+
 		dlist_delete(miter.cur);
 		ExecDropSingleTupleTableSlot(ctx->slot);
 		pfree(ctx);
@@ -539,8 +563,8 @@ clearVleCtxs(dlist_head *vleCtxs)
 static void
 copyStartAndBindVar(TupleTableSlot *dst, TupleTableSlot *src)
 {
-	int i;
 	Form_pg_attribute *attrs = src->tts_tupleDescriptor->attrs;
+	int i;
 
 	Assert(src->tts_tupleDescriptor->natts > 2);
 
@@ -587,7 +611,7 @@ initArray(VLEArrayExpr *array, Oid typid, ExprContext *econtext)
 						 &array->elembyval,
 						 &array->elemalign);
 	array->telems = VLEARRAY_INIT_SIZE;
-	array->elements = (Datum *) palloc(sizeof(Datum) * array->telems);
+	array->elements = palloc(sizeof(Datum) * array->telems);
 	array->nelems = 0;
 	array->econtext = econtext;
 }
@@ -595,33 +619,31 @@ initArray(VLEArrayExpr *array, Oid typid, ExprContext *econtext)
 static Datum
 evalArray(VLEArrayExpr *array)
 {
-	int         i;
-	Datum      *dvalues;
-	bool       *dnulls;
-	int         ndims = 1;
-	int         dims[0];
-	int         lbs[0];
-	ArrayType  *result;
 	MemoryContext oldContext;
+	Datum	   *values;
+	bool	   *nulls;
+	int			i;
+	int			dims[1];
+	int			lbs[1];
+	ArrayType  *result;
 
 	if (array->nelems == 0)
 		return PointerGetDatum(construct_empty_array(array->element_typeid));
 
 	oldContext = MemoryContextSwitchTo(array->econtext->ecxt_per_tuple_memory);
 
-	dvalues = (Datum *) palloc(array->nelems * sizeof(Datum));
-	dnulls = (bool *) palloc(array->nelems * sizeof(bool));
-
+	values = palloc(array->nelems * sizeof(*values));
+	nulls = palloc(array->nelems * sizeof(*nulls));
 	for (i = 0; i < array->nelems; i++)
 	{
-		dvalues[i] = array->elements[i];
-		dnulls[i] = false;
+		values[i] = array->elements[i];
+		nulls[i] = false;
 	}
 
 	dims[0] = array->nelems;
 	lbs[0] = 1;
 
-	result = construct_md_array(dvalues, dnulls, ndims, dims, lbs,
+	result = construct_md_array(values, nulls, 1, dims, lbs,
 								array->element_typeid,
 								array->elemlength,
 								array->elembyval,
@@ -635,14 +657,14 @@ evalArray(VLEArrayExpr *array)
 static void
 clearArray(VLEArrayExpr *array)
 {
-	if (! array->elembyval)
+	if (!array->elembyval)
 	{
 		int i;
+
 		for (i = 0; i < array->nelems; i++)
-		{
 			pfree(DatumGetPointer(array->elements[i]));
-		}
 	}
+
 	array->nelems = 0;
 }
 
@@ -652,8 +674,8 @@ addElem(VLEArrayExpr *array, Datum elem)
 	if (array->nelems >= array->telems)
 	{
 		array->telems += VLEARRAY_INCR_SIZE;
-		array->elements = (Datum *) repalloc(array->elements,
-											 sizeof(Datum) * array->telems);
+		array->elements = repalloc(array->elements,
+								   sizeof(Datum) * array->telems);
 	}
 
 	array->elements[array->nelems++] = elem;
@@ -665,7 +687,7 @@ popElem(VLEArrayExpr *array)
 	if (array->nelems > 0)
 	{
 		array->nelems--;
-		if (! array->elembyval)
+		if (!array->elembyval)
 			pfree(DatumGetPointer(array->elements[array->nelems]));
 	}
 }
@@ -688,11 +710,11 @@ hasElem(VLEArrayExpr *array, Datum elem)
 static void
 addOuterRowidAndGid(NestLoopVLEState *node, TupleTableSlot *slot)
 {
-	Datum rowid = (Datum) 0;
-	Datum gid = (Datum) 0;
-	IntArray upper;
-	bool isNull;
 	Form_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
+	Datum		rowid = (Datum) 0;
+	Datum		gid = (Datum) 0;
+	IntArray	upper;
+	bool		isNull;
 
 	upper.indx[0] = 1;
 	rowid = array_get_element(slot->tts_values[OUTER_ROWIDS_VARNO],
@@ -709,6 +731,7 @@ addOuterRowidAndGid(NestLoopVLEState *node, TupleTableSlot *slot)
 								node->path.elemlength, node->path.elembyval,
 								node->path.elemalign, &isNull);
 	}
+
 	addRowidAndGid(node, rowid, gid);
 }
 
@@ -716,8 +739,10 @@ static void
 addInnerRowidAndGid(NestLoopVLEState *node, TupleTableSlot *slot)
 {
 	Datum gid = (Datum) 0;
+
 	if (node->hasPath)
 		gid = slot->tts_values[INNER_EGID_VARNO];
+
 	addRowidAndGid(node, slot->tts_values[INNER_ROWID_VARNO], gid);
 }
 
@@ -727,10 +752,8 @@ addRowidAndGid(NestLoopVLEState *node, Datum rowid, Datum gid)
 	addElem(&node->rowids, datumCopy(rowid, node->rowids.elembyval,
 									 node->rowids.elemlength));
 	if (gid != (Datum) 0)
-	{
 		addElem(&node->path, datumCopy(gid, node->path.elembyval,
 									   node->path.elemlength));
-	}
 }
 
 static void

@@ -586,8 +586,6 @@ ExecUpScanIndexScan(IndexScanState *node)
 
 	node->cur_ctx = dlist_prev_node(&node->vle_ctxs, node->cur_ctx);
 	ctx = dlist_container(IndexScanVLECtx, list, node->cur_ctx);
-	node->ss.ss_currentRelation = ctx->ss_currentRelation;
-	node->iss_RelationDesc = ctx->iss_RelationDesc;
 	node->iss_ScanDesc = ctx->iss_ScanDesc;
 }
 
@@ -598,9 +596,7 @@ ExecDownScanIndexScan(IndexScanState *node)
 
 	if (node->cur_ctx == NULL)
 	{
-		ctx = (IndexScanVLECtx *) palloc(sizeof(IndexScanVLECtx));
-		ctx->ss_currentRelation = node->ss.ss_currentRelation;
-		ctx->iss_RelationDesc = node->iss_RelationDesc;
+		ctx = palloc(sizeof(*ctx));
 		ctx->iss_ScanDesc = node->iss_ScanDesc;
 		dlist_push_tail(&node->vle_ctxs, &ctx->list);
 		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
@@ -610,29 +606,18 @@ ExecDownScanIndexScan(IndexScanState *node)
 	{
 		node->cur_ctx = dlist_next_node(&node->vle_ctxs, node->cur_ctx);
 		ctx = dlist_container(IndexScanVLECtx, list, node->cur_ctx);
-		node->ss.ss_currentRelation = ctx->ss_currentRelation;
-		node->iss_RelationDesc = ctx->iss_RelationDesc;
 		node->iss_ScanDesc = ctx->iss_ScanDesc;
 	}
 	else
 	{
-		IndexScan *plan = (IndexScan *) node->ss.ps.plan;
 		EState *estate = node->ss.ps.state;
-		bool relistarget = ExecRelationIsTargetRelation(estate,
-														plan->scan.scanrelid);
 
-		node->ss.ss_currentRelation = ExecOpenScanRelation(
-				estate, plan->scan.scanrelid, 0);
-		node->iss_RelationDesc = index_open(
-				plan->indexid, relistarget ? NoLock : AccessShareLock);
 		node->iss_ScanDesc = index_beginscan(
 				node->ss.ss_currentRelation, node->iss_RelationDesc,
 				estate->es_snapshot, node->iss_NumScanKeys,
 				node->iss_NumOrderByKeys);
 
 		ctx = (IndexScanVLECtx *) palloc(sizeof(IndexScanVLECtx));
-		ctx->ss_currentRelation = node->ss.ss_currentRelation;
-		ctx->iss_RelationDesc = node->iss_RelationDesc;
 		ctx->iss_ScanDesc = node->iss_ScanDesc;
 		dlist_push_tail(&node->vle_ctxs, &ctx->list);
 		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
@@ -868,15 +853,15 @@ ExecEndIndexScan(IndexScanState *node)
 	{
 		IndexScanVLECtx *ctx;
 
-		if (miter.cur == node->cur_ctx)
-			continue;
 		ctx = dlist_container(IndexScanVLECtx, list, miter.cur);
 		dlist_delete(miter.cur);
-		if (ctx->iss_ScanDesc)
-			index_endscan(ctx->iss_ScanDesc);
-		if (ctx->iss_RelationDesc)
-			index_close(ctx->iss_RelationDesc, NoLock);
-		ExecCloseScanRelation(ctx->ss_currentRelation);
+
+		if (miter.cur != node->cur_ctx)
+		{
+			if (ctx->iss_ScanDesc)
+				index_endscan(ctx->iss_ScanDesc);
+		}
+
 		pfree(ctx);
 	}
 	node->cur_ctx = NULL;

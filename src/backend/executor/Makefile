@@ -22,7 +22,7 @@ OBJS = execAmi.o execCurrent.o execGrouping.o execIndexing.o execJunk.o \
        nodeLimit.o nodeLockRows.o nodeMaterial.o nodeMergeAppend.o \
        nodeMergejoin.o nodeModifyGraph.o nodeModifyTable.o \
        nodeNestloop.o nodeNestloopVle.o nodeFunctionscan.o \
-	   nodeRecursiveunion.o nodeResult.o \
+       nodeRecursiveunion.o nodeResult.o \
        nodeSamplescan.o nodeSeqscan.o nodeSetOp.o nodeSort.o nodeUnique.o \
        nodeValuesscan.o nodeCtescan.o nodeWorktablescan.o \
        nodeGroup.o nodeSubplan.o nodeSubqueryscan.o nodeTidscan.o \

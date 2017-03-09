@@ -1169,8 +1169,8 @@ typedef struct AppendState
 
 typedef struct AppendVLECtx
 {
-	dlist_node list;
-	int as_whichplan;
+	dlist_node	list;
+	int			as_whichplan;
 } AppendVLECtx;
 
 /* ----------------
@@ -1294,8 +1294,7 @@ typedef struct SeqScanState
 
 typedef struct SeqScanVLECtx
 {
-	dlist_node 		list;
-	Relation		ss_currentRelation;
+	dlist_node	list;
 	HeapScanDesc ss_currentScanDesc;
 } SeqScanVLECtx;
 
@@ -1394,10 +1393,8 @@ typedef struct IndexScanState
 
 typedef struct IndexScanVLECtx
 {
-	dlist_node 		list;
-	Relation		ss_currentRelation;
-	Relation		iss_RelationDesc;
-	IndexScanDesc 	iss_ScanDesc;
+	dlist_node	list;
+	IndexScanDesc iss_ScanDesc;
 } IndexScanVLECtx;
 
 /* ----------------
@@ -1706,27 +1703,27 @@ typedef struct NestLoopState
 
 typedef struct VLEArrayExpr
 {
-	Oid         element_typeid; /* common type of array elements */
+	Oid			element_typeid; /* common type of array elements */
 	int16		elemlength;		/* typlen of the array element type */
 	bool		elembyval;		/* is the element type pass-by-value? */
 	char		elemalign;		/* typalign of the element type */
-	int	        nelems;
-	int	        telems;
-	Datum      *elements;
+	int			nelems;
+	int			telems;
+	Datum	   *elements;
 	ExprContext *econtext;
 } VLEArrayExpr;
 
 typedef struct NestLoopVLEState
 {
-	NestLoopState 	nls;
-	int				curhops;
-	bool			selfLoop;
-	bool			hasPath;
+	NestLoopState nls;
+	int			curhops;
+	bool		selfLoop;
+	bool		hasPath;
 	TupleTableSlot *selfTupleSlot;
-	VLEArrayExpr	rowids;
-	VLEArrayExpr	path;
-	dlist_head  	vleCtxs;		/* list of NestLoopVLECtx */
-	dlist_node 	   *curCtx;
+	VLEArrayExpr rowids;
+	VLEArrayExpr path;
+	dlist_head	vleCtxs;		/* list of NestLoopVLECtx */
+	dlist_node *curCtx;
 } NestLoopVLEState;
 
 typedef struct NestLoopVLECtx

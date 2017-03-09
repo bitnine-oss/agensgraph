@@ -670,7 +670,7 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	create_index_paths(root, rel);
 
 	/* Consider TID scans */
-	if (! root->hasVLEJoinRTE)
+	if (!root->hasVLEJoinRTE)
 		create_tidscan_paths(root, rel);
 }
 
@@ -1725,7 +1725,7 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * The upper query might not use all the subquery's output columns; if
 	 * not, we can simplify.
 	 */
-	if (! rte->isVLE)
+	if (!rte->isVLE)
 		remove_unused_subquery_outputs(subquery, rel);
 
 	/*

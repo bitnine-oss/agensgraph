@@ -5124,8 +5124,8 @@ make_nestloop(List *tlist,
 			  Plan *lefttree,
 			  Plan *righttree,
 			  JoinType jointype,
-			  int 	minhops,
-			  int 	maxhops)
+			  int minhops,
+			  int maxhops)
 {
 	NestLoop   *node;
 	Plan	   *plan;
@@ -5133,12 +5133,15 @@ make_nestloop(List *tlist,
 	if (jointype == JOIN_VLE)
 	{
 		NestLoopVLE *vle = makeNode(NestLoopVLE);
+
 		vle->minHops = minhops;
 		vle->maxHops = maxhops;
 		node = &vle->nl;
 	}
 	else
+	{
 		node = makeNode(NestLoop);
+	}
 	plan = &node->join.plan;
 	plan->targetlist = tlist;
 	plan->qual = otherclauses;
