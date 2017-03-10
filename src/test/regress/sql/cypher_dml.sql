@@ -499,6 +499,10 @@ MATCH ()-[r]->() SET r.l = '"x"' SET r.l = '"y"';
 MATCH ()-[r]->() RETURN properties(r) AS r;
 MATCH (a) DETACH DELETE (a);
 
+CREATE ({age:'1'})-[:rel]->({age:'2'});
+MATCH (a)-[]->(b) SET a.age = (a.age::int + 1)::text::jsonb, b.age = (a.age::int + b.age::int)::text::jsonb;
+MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
+MATCH (a) DETACH DELETE (a);
 -- += operator
 
 CREATE ({age: 10});
