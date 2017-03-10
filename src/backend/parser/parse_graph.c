@@ -4526,6 +4526,7 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 					RangeTblEntry *l_rte, RangeTblEntry *r_rte, Node *qual,
 					Alias *alias)
 {
+	ParseNamespaceItem *l_nsitem;
 	int			l_rtindex;
 	ListCell   *le;
 	Node	   *l_jt = NULL;
@@ -4537,6 +4538,9 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 	RangeTblEntry *rte;
 	int			i;
 	ParseNamespaceItem *nsitem;
+
+	l_nsitem = findNamespaceItemForRTE(pstate, l_rte);
+	l_nsitem->p_cols_visible = false;
 
 	/* find JOIN-subtree of `l_rte` */
 	l_rtindex = RTERangeTablePosn(pstate, l_rte, NULL);
