@@ -1,0 +1,20 @@
+language: c
+
+env:
+  - PGVERSION=9.1
+  - PGVERSION=9.2
+  - PGVERSION=9.3
+
+before_script:
+  - export PATH=/usr/lib/postgresql/$PGVERSION/bin:$PATH     # Add our chosen PG version to the path
+  - sudo /etc/init.d/postgresql stop                         # Stop whichever version of PG that travis started
+  - sudo /etc/init.d/postgresql start $PGVERSION             # Start the version of PG that we want to test
+  - sudo apt-get install postgresql-server-dev-$PGVERSION    # Required for PGXS
+  - sudo apt-get install postgresql-common                   # Required for extension support files
+  - createdb hll_regress                                     # Create the test database
+
+script:
+  - make && sudo make install
+  - psql -c "create extension hll" hll_regress
+  - make -C regress
+
