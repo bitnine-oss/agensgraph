@@ -505,6 +505,12 @@ MATCH ()-[r]->() SET r.l = '"x"' SET r.l = '"y"';
 MATCH ()-[r]->() RETURN properties(r) AS r;
 MATCH (a) DETACH DELETE (a);
 
+CREATE ({age: 1})-[:rel]->({age: 2});
+MATCH (a)-[]->(b)
+SET a.age = to_jsonb(a.age::int + 1), b.age = to_jsonb(a.age::int + b.age::int);
+MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
+MATCH (a) DETACH DELETE (a);
+
 -- += operator
 
 CREATE ({age: 10});
@@ -553,24 +559,28 @@ MERGE (a);
 MATCH (a) DELETE a;
 
 CREATE (:v1 {name:'foo'}), (:v1 {name:'bar'}), (:v1 {name:'foo'}), (:v1 {name:'bar'});
-MATCH (a:v1) MERGE (b:v2 {name:a.name})
-	ON CREATE SET b.created = 'true' ON MATCH SET b.matched = 'true';
+MATCH (a:v1)
+MERGE (b:v2 {name:a.name})
+  ON CREATE SET b.created = 'true' ON MATCH SET b.matched = 'true';
 MATCH (a:v2) RETURN properties(a);
 
-MATCH (a:v1) MERGE (a)-[r:e1 {type:'same name'}]->(b:v2 {name:a.name})
-	ON CREATE SET r.created = 'true', r.matched = null
-	ON MATCH SET r.matched = 'true', r.created = null;
+MATCH (a:v1)
+MERGE (a)-[r:e1 {type:'same name'}]->(b:v2 {name:a.name})
+  ON CREATE SET r.created = 'true', r.matched = null
+  ON MATCH SET r.matched = 'true', r.created = null;
 MATCH (a)-[r:e1]->(b) RETURN properties(a), properties(r), properties(b);
 
-MATCH (a:v1) MERGE (a)-[r:e1 {type:'same name'}]->(b:v2 {name:a.name})
-	ON CREATE SET r.created = 'true', r.matched = null
-	ON MATCH SET r.matched = 'true', r.created = null;
+MATCH (a:v1)
+MERGE (a)-[r:e1 {type:'same name'}]->(b:v2 {name:a.name})
+  ON CREATE SET r.created = 'true', r.matched = null
+  ON MATCH SET r.matched = 'true', r.created = null;
 MATCH (a)-[r:e1]->(b) RETURN properties(a), properties(r), properties(b);
 
 MATCH (a:v2) RETURN properties(a);
 
-MERGE (a:v1)-[r1:e1]->(b:v2) MERGE (a)-[r2:e1]->(b)
-	ON CREATE SET r2.created = 'true';
+MERGE (a:v1)-[r1:e1]->(b:v2)
+MERGE (a)-[r2:e1]->(b)
+  ON CREATE SET r2.created = 'true';
 MATCH p=(a)-[r:e1 {created:true}]->(b) RETURN count(p);
 
 CREATE (:v1 {name:'v1-1'});
@@ -594,16 +604,16 @@ CREATE VLABEL city;
 CREATE ELABEL hometown;
 
 CREATE (:person {name:'a', bornin:'seoul'}),
-	   (:person {name:'b', bornin:'san jose'}),
-	   (:person {name:'c', bornin:'jeju'}),
-	   (:person {name:'d', bornin:'san jose'}),
-	   (:person {name:'e', bornin:'seoul'}),
-	   (:person {name:'f', bornin:'los angeles'});
+       (:person {name:'b', bornin:'san jose'}),
+       (:person {name:'c', bornin:'jeju'}),
+       (:person {name:'d', bornin:'san jose'}),
+       (:person {name:'e', bornin:'seoul'}),
+       (:person {name:'f', bornin:'los angeles'});
 
 MATCH (a:person)
 MERGE (b:city {name:a.bornin})
-	ON CREATE SET b.population = '1'
-	ON MATCH SET b.population = (b.population::int + 1)::text::jsonb;
+  ON CREATE SET b.population = '1'
+  ON MATCH SET b.population = (b.population::int + 1)::text::jsonb;
 MATCH (c:city) RETURN properties(c);
 
 MATCH (a:person)
@@ -644,8 +654,7 @@ MATCH (a) DETACH DELETE a;
 
 -- wrong case
 MERGE (a:v1) MERGE (b:v2 {name:a.notexistent});
-MERGE (a:v1)
-	ON MATCH SET a.matched = 'true'
+MERGE (a:v1) ON MATCH SET a.matched = 'true'
 MERGE (b:v2 {name:a.name});
 MERGE (a:v1) MATCH (b:v2 {name:a.name}) RETURN a, b;
 CREATE (a:v1 {name:'bitnine'}) MERGE (:v2 {name:a.name});
