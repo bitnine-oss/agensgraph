@@ -28,6 +28,7 @@ CREATE TABLE
 -- Copy the CSV data into the table
 --
 \copy test_ptwysrqk (cardinality, raw_value, union_compressed_multiset) from pstdin with csv header
+COPY 10001
 SELECT COUNT(*) FROM test_ptwysrqk;
  count 
 -------

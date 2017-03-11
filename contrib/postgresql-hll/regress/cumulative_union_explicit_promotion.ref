@@ -28,6 +28,7 @@ CREATE TABLE
 -- Copy the CSV data into the table
 --
 \copy test_wsdiietv (cardinality,compressed_multiset,union_cardinality,union_compressed_multiset) from pstdin with csv header
+COPY 629
 SELECT COUNT(*) FROM test_wsdiietv;
  count 
 -------
