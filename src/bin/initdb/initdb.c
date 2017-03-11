@@ -1329,12 +1329,12 @@ setup_config(void)
 							"#shared_preload_libraries = ''",
 							"shared_preload_libraries = "
 									"'pg_stat_statements,pg_statsinfo,"
-									"pg_hint_plan'");
+									"pg_hint_plan,hll'");
 #else
 	conflines = replace_token(conflines,
 							"#shared_preload_libraries = ''",
 							"shared_preload_libraries = "
-									"'pg_stat_statements,pg_hint_plan'");
+									"'pg_stat_statements,pg_hint_plan,hll'");
 #endif
 
 	/* pg_stat_statements */
