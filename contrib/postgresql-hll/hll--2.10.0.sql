@@ -25,22 +25,22 @@ CREATE TYPE hll;
 CREATE FUNCTION hll_in(cstring, oid, integer)
 RETURNS hll
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE FUNCTION hll_out(hll)
 RETURNS cstring
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE FUNCTION hll_recv(internal)
 RETURNS hll
 AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE STRICT;
+LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
 CREATE FUNCTION hll_send(hll)
 RETURNS bytea
 AS 'MODULE_PATHNAME'
-LANGUAGE C IMMUTABLE STRICT;
+LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
 CREATE FUNCTION hll_typmod_in(cstring[])
 RETURNS integer
@@ -50,12 +50,12 @@ LANGUAGE C STRICT IMMUTABLE;
 CREATE FUNCTION hll_typmod_out(integer)
 RETURNS cstring
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE FUNCTION hll(hll, integer, boolean)
 RETURNS hll
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE TYPE hll (
         INTERNALLENGTH = variable,
@@ -81,12 +81,12 @@ CREATE TYPE hll_hashval;
 CREATE FUNCTION hll_hashval_in(cstring, oid, integer)
 RETURNS hll_hashval
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE FUNCTION hll_hashval_out(hll_hashval)
 RETURNS cstring
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE TYPE hll_hashval (
         INTERNALLENGTH = 8,
@@ -99,22 +99,22 @@ CREATE TYPE hll_hashval (
 CREATE FUNCTION hll_hashval_eq(hll_hashval, hll_hashval)
 RETURNS bool
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE FUNCTION hll_hashval_ne(hll_hashval, hll_hashval)
 RETURNS bool
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE FUNCTION hll_hashval(bigint)
 RETURNS hll_hashval
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE FUNCTION hll_hashval_int4(integer)
 RETURNS hll_hashval
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 CREATE OPERATOR = (
 	LEFTARG = hll_hashval, RIGHTARG = hll_hashval,
@@ -144,21 +144,21 @@ CREATE CAST (integer AS hll_hashval) WITH FUNCTION hll_hashval_int4(integer);
 CREATE FUNCTION hll_eq(hll, hll)
 RETURNS bool
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Inequality of multisets.
 --
 CREATE FUNCTION hll_ne(hll, hll)
 RETURNS bool
 AS 'MODULE_PATHNAME'
-LANGUAGE C STRICT IMMUTABLE;
+LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Cardinality of a multiset.
 --
 CREATE FUNCTION hll_cardinality(hll)
      RETURNS double precision
      AS 'MODULE_PATHNAME'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Union of a pair of multisets.
 --
@@ -186,7 +186,7 @@ CREATE FUNCTION hll_add_rev(hll_hashval, hll)
 CREATE FUNCTION hll_print(hll)
      RETURNS cstring
      AS 'MODULE_PATHNAME'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Create an empty multiset with parameters.
 --
@@ -223,41 +223,41 @@ CREATE FUNCTION hll_empty(integer, integer, bigint, integer)
 CREATE FUNCTION hll_schema_version(hll)
      RETURNS integer
      AS 'MODULE_PATHNAME'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Returns the type of an hll.
 --
 CREATE FUNCTION hll_type(hll)
      RETURNS integer
      AS 'MODULE_PATHNAME'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Returns the log2m value of an hll.
 --
 CREATE FUNCTION hll_log2m(hll)
      RETURNS integer
      AS 'MODULE_PATHNAME'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Returns the register width of an hll.
 --
 CREATE FUNCTION hll_regwidth(hll)
      RETURNS integer
      AS 'MODULE_PATHNAME'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Returns the maximum explicit threshold of an hll.
 --
 CREATE FUNCTION hll_expthresh(hll, OUT specified bigint, OUT effective bigint)
      AS 'MODULE_PATHNAME'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Returns the sparse enabled value of an hll.
 --
 CREATE FUNCTION hll_sparseon(hll)
      RETURNS integer
      AS 'MODULE_PATHNAME'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Set output version.
 --
@@ -294,49 +294,49 @@ CREATE FUNCTION hll_set_defaults(IN i_log2m integer,
 CREATE FUNCTION hll_hash_boolean(boolean, integer default 0)
      RETURNS hll_hashval
      AS 'MODULE_PATHNAME', 'hll_hash_1byte'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Hash a smallint.
 --
 CREATE FUNCTION hll_hash_smallint(smallint, integer default 0)
      RETURNS hll_hashval
      AS 'MODULE_PATHNAME', 'hll_hash_2byte'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Hash an integer.
 --
 CREATE FUNCTION hll_hash_integer(integer, integer default 0)
      RETURNS hll_hashval
      AS 'MODULE_PATHNAME', 'hll_hash_4byte'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Hash a bigint.
 --
 CREATE FUNCTION hll_hash_bigint(bigint, integer default 0)
      RETURNS hll_hashval
      AS 'MODULE_PATHNAME', 'hll_hash_8byte'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Hash a byte array.
 --
 CREATE FUNCTION hll_hash_bytea(bytea, integer default 0)
      RETURNS hll_hashval
      AS 'MODULE_PATHNAME', 'hll_hash_varlena'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Hash a text.
 --
 CREATE FUNCTION hll_hash_text(text, integer default 0)
      RETURNS hll_hashval
      AS 'MODULE_PATHNAME', 'hll_hash_varlena'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 -- Hash any scalar data type.
 --
 CREATE FUNCTION hll_hash_any(anyelement, integer default 0)
      RETURNS hll_hashval
      AS 'MODULE_PATHNAME', 'hll_hash_any'
-     LANGUAGE C STRICT IMMUTABLE;
+     LANGUAGE C STRICT IMMUTABLE PARALLEL SAFE;
 
 
 -- ----------------------------------------------------------------
