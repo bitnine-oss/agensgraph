@@ -17,18 +17,22 @@ Building from the Source Code
         ```sh
         $ yum install gcc glibc glib-common readline readline-devel zlib zlib-devel
         ```
+
     * Fedora:
         ```sh
         $ dnf install gcc glibc bison flex readline readline-devel zlib zlib-devel
         ```
+
     * Ubuntu:
         ```sh
         $ sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison
         ```
+
     * Mac OS X (install Xcode):
         ```bash
         $ xcode-select --install
         ```
+
 
 3. Configure the source tree in /path/to/agensgraph:
     ```sh
