@@ -12,20 +12,20 @@ Building from the Source Code
     $ git clone git@github.com:bitnine-oss/agensgraph.git
     ```
 
-2. Install the necessary libraries and dependencies
-    * CENTOS
+2. Install the necessary libraries and dependencies:
+    * CENTOS:
         ```sh
         $ yum install gcc glibc glib-common readline readline-devel zlib zlib-devel
         ```
-    * Fedora
+    * Fedora:
         ```sh
         $ dnf install gcc glibc bison flex readline readline-devel zlib zlib-devel
         ```
-    * Ubuntu
+    * Ubuntu:
         ```sh
         $ sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison
         ```
-    * Mac OS X (install Xcode)
+    * Mac OS X (install Xcode):
         ```bash
         $ xcode-select --install
         ```
@@ -38,7 +38,7 @@ Building from the Source Code
 
     > If `configure` doesn't find any header with an error message, you can use `--with-includes=/path/to/headers` option.
 
-4. Build & install AgensGraph
+4. Build & install AgensGraph:
     * Build and install AgensGraph engine
         ```sh
         $ make install
@@ -57,7 +57,7 @@ Building from the Source Code
         $ make install-world
         ```
         
-    * OPTIONAL: Set the `AGDATA` environment variable to easily configure AgensGraph settings when necessary.
+    * OPTIONAL: Set the `AGDATA` environment variable to easily configure AgensGraph settings when necessary:
         ```sh
         $ echo "export AGDATA=/path/to/agensgraph/data" >> ~/.bashrc 
         ```
