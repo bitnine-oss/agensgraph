@@ -1,0 +1,21 @@
+TestClient.sh is a test script to check the Hive JDBC drivers connectivity with Hadoop Sandbox VM
+
+General instructions to run this script:
+
+Linux and OS X
+Assuming that you copied the Hive client JAR files to the directory /opt/hadoop/hive-client-lib
+
+Windows
+Assuming that you copied the Hive client JAR files to the directory C:\hive-client-lib
+
+Before running this test script please set the environment variable HADOOP_FDW_CLASSPATH referencing all the Hive client JARfiles we identified previously.This shell script can be run from command prompt with the following available options
+
+General options:
+	
+	 -h 	=HOSTNAME   hive server host name or IP address(default: localhost)
+	 -p 	=PORT       database name to connect to (default: 10000)
+	 -s 	=SCHEMA     database schema name (default: default)
+         -help              help for all the available options to run the script
+
+Example: 
+	 sh TestClient.sh -h localhost -p 10000 -s default 

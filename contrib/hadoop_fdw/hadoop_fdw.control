@@ -1,0 +1,13 @@
+##########################################################################
+#
+#                foreign-data wrapper for HADOOP 
+#
+# IDENTIFICATION
+#                 hadoop_fdw/hadoop_fdw.control
+# 
+##########################################################################
+
+comment = 'Foreign data wrapper for querying HADOOP'
+default_version = '2.5'
+module_pathname = '$libdir/hadoop_fdw'
+relocatable = true
