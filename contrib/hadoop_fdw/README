@@ -1,0 +1,491 @@
+Options which are to be set
+-----
+
+The following parameters can be set on a JDBC foreign server:
+
+drivername:	The name of the JDBC driver e.g.(org.postgresql.Driver).
+		Note that drivername has to be specified for jdbc_fdw
+		to work i.e. it is compulsory.
+
+url:	        The JDBC URL that shall be used to connect to the foreign database.
+	        Note that URL has to be specified for jdbc_fdw
+		to work i.e. it is compulsory.
+
+querytimeout:   The time after which a query shall automatically be terminated.
+		The option can be used for terminating hung queries.
+
+jarfile:	The path and name(e.g. folder1/folder2/abc.jar) of the JAR file
+		of the JDBC driver to be used of the foreign database.
+
+maxheapsize:    The value of the maximum heap size of the JVM being used in jdbc_fdw.
+		Please read the notes about maxheapsize option in the installation 
+		instructions carefully before setting a value for the option.
+
+The following parameter can be set on a JDBC foreign table:
+
+query:		An SQL query to define the data set on the JDBC server.
+
+table:		The name of a table (quoted and qualified as required)
+		on the foreign database table.
+
+The following parameter can be set on a user mapping for a JDBC
+foreign server:
+
+username:	The username to use when connecting to foreign database.
+		Default <none>
+
+password:	The password to authenticate to the foreign database with.
+		Default: <none>
+
+
+Installing
+----------
+
+**Important**
+
+Please ensure that the URL you pass in the url option when creating the server 
+is correct and is according to the JDBC URL that is accepted by the foreign database.
+Any fault in the passed JDBC URL can cause hard-to-understand errors.Please recheck 
+and validate the JDBC URL before passing it in server options.
+
+
+************************************************************************************************************************************************
+
+** Installation instructions for source installation of PostgreSQL
+
+Documentation for installing PostgreSQL from source 
+can be found [here](http://www.postgresql.org/docs/current/static/installation.html).
+
+The steps to follow to install JDBC_FDW on source installation of PostgreSQL are:
+
+1) Enter the /contrib directory in PostgreSQL folder.
+
+    gitc@ubuntu:~$ cd Downloads/postgresql-9.2beta2/contrib
+
+2) Get JDBC_FDW source.
+
+    gitc@ubuntu:~$ git clone git://github.com/atris/JDBC_FDW.git
+
+3) Enter the JDBC_FDW folder.
+
+    gitc@ubuntu:~$ cd JDBC_FDW
+
+4) Execute Make Clean
+
+    gitc@ubuntu:~$ Make Clean
+
+5) Execute Make Install 
+(You may have to change to root/installation privileges before executing 
+Make Install)
+
+**Important** : Before running Make Install,please execute the following command:
+
+    gitc@ubuntu:~$ sudo ln -s /usr/lib/jvm/java-6-openjdk/jre/lib/amd64/server/libjvm.so /usr/lib/libjvm.so
+
+Please replace the path in the command with the path to libjvm.so(it should be 
+in Java JRE folder).
+
+For locating libjvm.so,you can use the following command:
+
+    gitc@ubuntu:~$ locate libjvm.so
+
+Please give the path to libjvm.so in the 'server' folder if multiple libjvm.so 
+files are being shown.
+
+If the above command does not work,please execute the following command
+
+    gitc@ubuntu:~$ sudo ln -s /usr/lib/jvm/java-6-openjdk/jre/lib/i386/server/libjvm.so /usr/lib/libjvm.so
+
+After running one of the above commands,please execute the following command:
+
+    gitc@ubuntu:~$ sudo Make Install
+    
+6) Ensure Make Install executes successfully without any warning or errors.
+
+7) Enter psql.
+
+    gitc@ubuntu:~$ psql
+
+6) Set up jdbc_fdw extension.
+
+    CREATE EXTENSION jdbc_fdw;
+
+7) Create a server that uses jdbc_fdw.
+
+**Command to set up server that uses jdbc_fdw as the foreign data wrapper:**
+ 
+     CREATE SERVER jdbc_serv4 FOREIGN DATA WRAPPER jdbc_fdw OPTIONS(
+drivername 'org.sqlite.JDBC',
+url 'jdbc:sqlite:/home/atri/atri1.sdb',
+querytimeout '15',
+jarfile '/home/atri/Downloads/sqlite-jdbc-3.7.2.jar',
+maxheapsize '600'
+);
+
+** Explanation of setting up options for the server
+
+drivername : The drivername has to be given the value of the exact class name 
+which has to be loaded for the JDBC driver e.g. org.postgresql.Driver
+
+url : The url has to be given the value of the JDBC URL of the database from 
+which the data has to fetched by jdbc_fdw into PostgreSQL.
+
+jarfile : The jarfile has to be given the value of the path and name of the JAR 
+file of the JDBC driver of the database from which the data has to fetched.
+
+querytimeout : The time after which a query will be terminated automatically.
+This can be used for terminating hung queries.
+
+maxheapsize : The value of the option shall be set to the maximum heap size of 
+the JVM which is being used in jdbc fdw.It can be set from 1 Mb onwards.
+This option is used for setting the maximum heap size of the JVM manually.
+
+**Important** : Please note that setting the maximum heap size of the JVM 
+manually can lead to decrease in performance of jdbc_fdw.It is recommended that
+you double check the value you are setting in maxheapsize.It is not a 
+compulsory option i.e. If you do net set any value for maxheapsize,the default 
+value for the maximum heap size of the JVM being used in jdbc_fdw shall be used.
+Please use it only if you want to set the maximum heap size of the JVM manually.
+Setting it to a very low value can lead to drastic performance hit.
+Also,since the JVM being used in jdbc fdw is created only once for the entire 
+psql session,therefore,the first query issued that uses jdbc fdw shall set the
+value of maximum heap size of the JVM(if the first query specifies a maximum heap value).
+
+8) Create a user mapping for the server.
+
+    gitc=# CREATE USER MAPPING FOR gitc SERVER jdbc_serv3 OPTIONS(username 'test',password 'test');
+
+9) Create a foreign table on the server.
+
+    gitc=# CREATE FOREIGN TABLE test16 (a int) SERVER jdbc_serv3 OPTIONS (query 'select generate_series(1,1000000)');
+
+10) Query the foreign table.
+
+    gitc=# SELECT * FROM test16;
+
+The output should be :
+
+    Connection to PostgreSQL 9.2beta2 successful.
+
+    a    
+    ---------
+       1
+       2
+       3
+       4
+       5
+       6
+       7
+       8
+       9
+      10
+      11
+      12
+      13
+      14
+      15
+      16
+      17
+      18
+      19
+      20
+      21
+    Time: 6080.603 ms
+    gitc=# 
+
+** Installation instructions for packaged installation of PostgreSQL on Debian versions
+
+Documentation for installing PostgreSQL from packages can be found 
+[here](http://wiki.debian.org/PostgreSql).
+
+1) Ensure you have the PostgreSQL dev package installed.If not,please install the latest version.
+
+    gitc@ubuntu:~$ sudo apt-get install postgresql-server-dev-9.1
+
+Please replace '9.1' with the appropriate version of your installation of PostgreSQL.
+
+2) Get JDBC_FDW source.
+
+    gitc@ubuntu:~$ git clone git://github.com/atris/JDBC_FDW.git
+
+3) Enter the JDBC_FDW folder.
+
+    gitc@ubuntu:~$ cd JDBC_FDW
+ 
+4) Execute Make Clean
+
+    gitc@ubuntu:~$ sudo PATH=/usr/lib/postgresql/9.1/bin/:$PATH make USE_PGXS=1 clean
+
+Assuming you have PostgreSQL installed in /usr/lib/postgresql.If not,please 
+make appropriate changes to the $PATH value set in the command.
+
+5)Execute Make Install
+(You may have to change to root/installation privileges before executing Make 
+Install)
+
+**Important** : Before running Make Install,please execute the following command:
+
+    gitc@ubuntu:~$ sudo ln -s /usr/lib/jvm/java-6-openjdk/jre/lib/amd64/server/libjvm.so /usr/lib/libjvm.so
+
+Please replace the path in the command with the path to libjvm.so
+(it should be in Java JRE folder).
+
+For locating libjvm.so,you can use the following command:
+
+    gitc@ubuntu:~$ locate libjvm.so
+
+Please give the path to libjvm.so in the 'server' folder if multiple libjvm.so 
+files are being shown.
+
+If the above command does not work,please execute the following command
+
+    gitc@ubuntu:~$ sudo ln -s /usr/lib/jvm/java-6-openjdk/jre/lib/i386/server/libjvm.so /usr/lib/libjvm.so
+
+After running one of the above commands,please execute the following command:
+
+    gitc@ubuntu:~$ sudo PATH=/usr/lib/postgresql/9.1/bin/:$PATH make USE_PGXS=1 install
+
+Assuming you have PostgreSQL installed in /usr/lib/postgresql.If not,please 
+make appropriate changes to the $PATH value set in the command.
+
+6) Ensure Make Install executes successfully without any warning or errors.
+
+7) Enter psql.
+
+    gitc@ubuntu:~$ psql
+
+8) Set up jdbc_fdw extension.
+
+    CREATE EXTENSION jdbc_fdw;
+
+9) Create a server that uses jdbc_fdw.
+
+**Command to set up server that uses jdbc_fdw as the foreign data wrapper:**
+ 
+    CREATE SERVER jdbc_serv4 FOREIGN DATA WRAPPER jdbc_fdw OPTIONS(
+drivername 'org.sqlite.JDBC',
+url 'jdbc:sqlite:/home/atri/atri1.sdb',
+querytimeout '15',
+jarfile '/home/atri/Downloads/sqlite-jdbc-3.7.2.jar',
+maxheapsize '600'
+);
+
+** Explanation of setting up options for the server
+
+drivername : The drivername has to be given the value of the exact class name 
+which has to be loaded for the JDBC driver e.g. org.postgresql.Driver
+
+url : The url has to be given the value of the JDBC URL of the database from 
+which the data has to fetched by jdbc_fdw into PostgreSQL.
+
+jarfile : The jarfile has to be given the value of the path and name of the JAR 
+file of the JDBC driver of the database from which the data has to fetched.
+
+querytimeout : The time after which a query will be terminated automatically.
+This can be used for terminating hung queries.
+
+maxheapsize : The value of the option shall be set to the maximum heap size of 
+the JVM which is being used in jdbc fdw.It can be set from 1 Mb onwards.
+This option is used for setting the maximum heap size of the JVM manually.
+
+**Important** : Please note that setting the maximum heap size of the JVM 
+manually can lead to decrease in performance of jdbc_fdw.It is recommended that
+you double check the value you are setting in maxheapsize.It is not a 
+compulsory option i.e. If you do net set any value for maxheapsize,the default 
+value for the maximum heap size of the JVM being used in jdbc_fdw shall be used.
+Please use it only if you want to set the maximum heap size of the JVM manually.
+Setting it to a very low value can lead to drastic performance hit.
+Also,since the JVM being used in jdbc fdw is created only once for the entire 
+psql session,therefore,the first query issued that uses jdbc fdw shall set the
+value of maximum heap size of the JVM(if the first query specifies a maximum heap value).
+
+10) Create a user mapping for the server.
+
+    CREATE USER MAPPING FOR postgres SERVER jdbc_serv4;
+
+11) Create a foreign table on the server.
+
+    CREATE FOREIGN TABLE test13 (a int,b int,c int) SERVER jdbc_serv4 OPTIONS (table 'stest1');
+
+12) Query the foreign table.
+
+    gitc=# SELECT * FROM test13;
+
+The output should be :
+
+    Connection to SQLite 3.7.2 successful.
+
+     a | b |  c   
+    ---+---+------
+     4 | 5 |    6
+     7 | 8 |    9
+     1 | 2 | 1009
+    (3 rows)
+
+** Installation Instruction for packaged installation of PostgreSQL on Red Hat versions
+
+Documentation for installing PostgreSQL from packages can be found 
+[here](http://wiki.postgresql.org/wiki/Detailed_installation_guides#RedHat.2FFedora.2FCentOS).
+
+1) Ensure you have the PostgreSQL dev package installed.If not,please install
+the latest version.
+
+    [root@AtriServer atri]# yum install postgresql-devel
+
+2) Get JDBC_FDW source.
+
+    gitc@ubuntu:~$ git clone git://github.com/atris/JDBC_FDW.git
+
+3) Enter the JDBC_FDW folder.
+
+    gitc@ubuntu:~$ cd JDBC_FDW
+ 
+4) Execute Make Clean
+
+     [root@AtriServer atri]# sudo PATH=/usr/local/pgsql/bin/:$PATH make USE_PGXS=1 clean
+
+Assuming you have PostgreSQL installed in /usr/local/pgsql.If not,please make 
+appropriate changes to the $PATH value set in the command.
+
+5)Execute Make Install 
+(You may have to change to root/installation privileges before executing 
+Make Install)
+
+**Important** : Before running Make Install,please execute the following command:
+
+    [root@AtriServer atri]# ln -s /usr/lib/jvm/jre/lib/amd64/server/libjvm.so /usr/lib/libjvm.so
+
+Please replace the path in the command with the path to libjvm.so
+(it should be in Java JRE folder).
+
+For locating libjvm.so,you can use the following command:
+
+    [root@AtriServer atri]# locate libjvm.so
+
+Please give the path to libjvm.so in the 'server' folder if multiple libjvm.so 
+files are being shown.
+
+If the above command does not work,please execute the following command
+
+    [root@AtriServer atri]# ln -s /usr/lib/jvm/jre/lib/i386/server/libjvm.so /usr/lib/libjvm.so
+
+After running one of the above commands,please execute the following command:
+
+    [root@AtriServer atri]# sudo PATH=/usr/local/pgsql/bin/:$PATH make USE_PGXS=1 install
+
+Assuming you have PostgreSQL installed in /usr/local/pgsql.If not,please make 
+appropriate changes to the $PATH value set in the command.
+
+6) Ensure Make Install executes successfully without any warning or errors.
+
+7) Enter psql.
+
+    [atri@AtriServer ~]$ psql
+
+8) Set up jdbc_fdw extension.
+
+    CREATE EXTENSION jdbc_fdw;
+
+9) Create a server that uses jdbc_fdw.
+
+**Command to set up server that uses jdbc_fdw as the foreign data wrapper:**
+ 
+    CREATE SERVER jdbc_serv4 FOREIGN DATA WRAPPER jdbc_fdw OPTIONS(
+drivername 'org.sqlite.JDBC',
+url 'jdbc:sqlite:/home/atri/atri1.sdb',
+querytimeout '15',
+jarfile '/home/atri/Downloads/sqlite-jdbc-3.7.2.jar',
+maxheapsize '600'
+);
+
+** Explanation of setting up options for the server
+
+drivername : The drivername has to be given the value of the exact class name 
+which has to be loaded for the JDBC driver e.g. org.postgresql.Driver
+
+url : The url has to be given the value of the JDBC URL of the database from 
+which the data has to fetched by jdbc_fdw into PostgreSQL.
+
+jarfile : The jarfile has to be given the value of the path and name of the JAR 
+file of the JDBC driver of the database from which the data has to fetched.
+
+querytimeout : The time after which a query will be terminated automatically.
+This can be used for terminating hung queries.
+
+maxheapsize : The value of the option shall be set to the maximum heap size of 
+the JVM which is being used in jdbc fdw.It can be set from 1 Mb onwards.
+This option is used for setting the maximum heap size of the JVM manually.
+
+**Important** : Please note that setting the maximum heap size of the JVM 
+manually can lead to decrease in performance of jdbc_fdw.It is recommended that
+you double check the value you are setting in maxheapsize.It is not a 
+compulsory option i.e. If you do net set any value for maxheapsize,the default 
+value for the maximum heap size of the JVM being used in jdbc_fdw shall be used.
+Please use it only if you want to set the maximum heap size of the JVM manually.
+Setting it to a very low value can lead to drastic performance hit.
+Also,since the JVM being used in jdbc fdw is created only once for the entire 
+psql session,therefore,the first query issued that uses jdbc fdw shall set the
+value of maximum heap size of the JVM(if the first query specifies a maximum heap value).
+
+10) Create a user mapping for the server.
+
+    CREATE USER MAPPING FOR postgres SERVER jdbc_serv4;
+
+11) Create a foreign table on the server.
+
+    CREATE FOREIGN TABLE test13 (a int,b int,c int) SERVER jdbc_serv4 OPTIONS (table 'stest1');
+
+12) Query the foreign table.
+
+    atri=# SELECT * FROM test13;
+
+The output should be :
+
+    Connection to SQLite 3.7.2 successful.
+
+     a | b |  c   
+    ---+---+------
+     4 | 5 |    6
+     7 | 8 |    9
+     1 | 2 | 1009
+    (3 rows)
+
+Example
+-------
+
+-- Install the extension
+CREATE EXTENSION jdbc_fdw;
+
+-- Create the foreign server, a pointer to the JDBC server.
+CREATE SERVER jdbc_serv3 
+    FOREIGN DATA WRAPPER jdbc_fdw 
+    OPTIONS(drivername 'org.postgresql.Driver',url 'jdbc:postgresql:gitc');
+
+-- Create one or more foreign tables on the JDBC server.
+CREATE FOREIGN TABLE test12(a text,b text,c text) 
+    SERVER jdbc_serv3 
+    OPTIONS(query 'SELECT * FROM test11');
+
+-- Create a user mapping to tell the FDW the username/password to 
+-- use to connect to foreign database. This could be done on a per-
+-- role basis.
+CREATE USER MAPPING FOR gitc
+    SERVER jdbc_serv3
+    OPTIONS(username 'gitc',password '');
+
+Features
+--------
+
+1)jdbc_fdw can connect and fetch data to PostgreSQL from any data source that 
+supports JDBC.
+
+2)Basic query cancellation is supported.
+
+--
+Atri Sharma
+atri.jiit@gmail.com
+
+
+
+
+

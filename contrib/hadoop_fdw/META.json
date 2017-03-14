@@ -1,0 +1,45 @@
+{
+   "name": "jdbc_fdw",
+   "abstract": "jdbc FDW for PostgreSQL 9.1+",
+   "description": "This extension implements a Foreign Data Wrapper for jdbc. It is supported on PostgreSQL 9.1 and above.",
+   "version": "1.0.0",
+   "maintainer": [
+      "Atri Sharma <atri.jiit@gmail.com>"
+   ],
+   "license": "postgresql",
+   "provides": {
+      "jdbc_fdw": {
+         "abstract": "jdbc FDW for PostgreSQL 9.1+",
+         "file": "jdbc_fdw--1.0.sql",
+         "docfile": "README",
+         "version": "1.0.0"
+      }
+   },
+   "prereqs": {
+      "runtime": {
+         "requires": {
+            "PostgreSQL": "9.1.0"
+         }
+      }
+   },
+   "resources": {
+      "bugtracker": {jdbc
+         "web": "https://github.com/atris/JDBC_FDW/issues"
+      },
+      "repository": {
+        "url":  "https://github.com/atris/JDBC_FDW.git",
+        "web":  "https://github.com/atris/JDBC_FDW",
+        "type": "git"
+      }
+   },
+   "generated_by": "Atri Sharma",
+   "meta-spec": {
+      "version": "1.0.0",
+      "url": "http://pgxn.org/meta/spec.txt"
+   },
+   "tags": [
+      "fdw",
+      "jdbc",
+      "foreign data wrapper"
+   ]
+}
