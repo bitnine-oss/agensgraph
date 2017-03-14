@@ -28,7 +28,7 @@ Building from the Source Code
         $ sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison
         ```
 
-    * Mac OS X (install Xcode):
+    * macOS (install Xcode):
         ```bash
         $ xcode-select --install
         ```
@@ -52,7 +52,7 @@ Building from the Source Code
         ```sh
         $ ./sh ag-env.sh
         ```
-        OR, if you installed AgensGraph elsewhere, you can also do so by editing your `/.bashrc` file with the following command:
+        OR, if you installed AgensGraph elsewhere, you can also do so by editing your `/.bashrc` file (`/.bash_profile` on macOS) with the following command:
         ```sh
         $ echo "export PATH=/path/to/agensgraph/bin:\$PATH" >> ~/.bashrc
         ```
