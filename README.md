@@ -3,7 +3,7 @@ AgensGraph: Powerful Graph Database
 
 [![Build Status](https://travis-ci.org/bitnine-oss/agensgraph.svg?branch=master)](https://travis-ci.org/bitnine-oss/agensgraph)
 
-AAgensGraph is a new generation multi-model graph database for the modern complex data environment. AgensGraph is a multi-model database, which supports the relational and graph data model at the same time that enables developers to integrate the legacy relational data model and the flexible graph data model in one database. AgensGraph supports Ansi-SQL and Open Cypher (http://www.opencypher.org). SQL queries and Cypher queries can be integrated into a single query in AgensGraph. 
+AgensGraph is a new generation multi-model graph database for the modern complex data environment. AgensGraph is a multi-model database, which supports the relational and graph data model at the same time that enables developers to integrate the legacy relational data model and the flexible graph data model in one database. AgensGraph supports Ansi-SQL and Open Cypher (http://www.opencypher.org). SQL queries and Cypher queries can be integrated into a single query in AgensGraph. 
 
 AgensGraph is based on the powerful PostgreSQL RDBMS, and is very robust, fully-featured and ready for enterprise use. AgensGraph is optimized for handling complex connected graph data and provides plenty of powerful database features essential to the enterprise database environment including ACID transactions, multi-version concurrency control, stored procedure, triggers, constraints, sophisticated monitoring and a flexible data model (JSON). Moreover, AgensGraph leverages the rich eco-systems of PostgreSQL and can be extended with many outstanding external modules, like PostGIS.
 
