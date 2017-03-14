@@ -20,6 +20,7 @@ SUBDIRS = \
 		earthdistance	\
 		file_fdw	\
 		fuzzystrmatch	\
+		hadoop_fdw	\
 		hstore		\
 		intagg		\
 		intarray	\

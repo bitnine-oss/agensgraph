@@ -1064,8 +1064,8 @@ deparseColumnRef(StringInfo buf, int varno, int varattno, PlannerInfo *root, boo
 	if (colname == NULL)
 		colname = get_relid_attribute_name(rte->relid, varattno);
 
-		if (qualify_col)
-			ADD_REL_QUALIFIER(buf, varno);
+	if (qualify_col)
+		ADD_REL_QUALIFIER(buf, varno);
 
 	appendStringInfoString(buf, quote_identifier(colname));
 }

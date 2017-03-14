@@ -1040,10 +1040,10 @@ hadoopIterateForeignScan(ForeignScanState *node)
 			values[i] = ConvertStringToCString((jobject) (*env)->GetObjectArrayElement(env, java_rowarray, i));
 		}
 
-	if (fsplan->scan.scanrelid > 0)
-		tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(node->ss.ss_currentRelation->rd_att), values);
-	else
-		tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(node->ss.ss_ScanTupleSlot->tts_tupleDescriptor), values);
+		if (fsplan->scan.scanrelid > 0)
+			tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(node->ss.ss_currentRelation->rd_att), values);
+		else
+			tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(node->ss.ss_ScanTupleSlot->tts_tupleDescriptor), values);
 
 		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 		++(festate->NumberOfRows);

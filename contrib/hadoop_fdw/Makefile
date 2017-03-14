@@ -11,7 +11,7 @@ MODULE_big = hadoop_fdw
 OBJS = hadoop_fdw.o deparse.o hive_funcs.o
 
 EXTENSION = hadoop_fdw
-DATA = hadoop_fdw--2.5beta1.sql
+DATA = hadoop_fdw--2.5.sql
 
 REGRESS = hadoop_fdw
 
@@ -49,6 +49,7 @@ subdir = contrib/hadoop_fdw
 top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
+SHLIB_LINK += -L$(JAVA_LIBRARY_PATH)
 endif
 
 
