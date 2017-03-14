@@ -4530,6 +4530,7 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 	ListCell   *le;
 	Node	   *l_jt = NULL;
 	RangeTblRef *r_rtr;
+	ParseNamespaceItem *l_nsitem;
 	ParseNamespaceItem *r_nsitem;
 	List	   *res_colnames = NIL;
 	List	   *res_colvars = NIL;
@@ -4540,6 +4541,8 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 
 	/* find JOIN-subtree of `l_rte` */
 	l_rtindex = RTERangeTablePosn(pstate, l_rte, NULL);
+	l_nsitem = findNamespaceItemForRTE(pstate, l_rte);
+
 	foreach(le, pstate->p_joinlist)
 	{
 		Node	   *jt = lfirst(le);
@@ -4560,6 +4563,7 @@ incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 	}
 	Assert(l_jt != NULL);
 
+	l_nsitem->p_cols_visible = false;
 	makeExtraFromRTE(pstate, r_rte, &r_rtr, &r_nsitem, false);
 
 	j = makeNode(JoinExpr);
