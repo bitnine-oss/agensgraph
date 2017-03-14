@@ -232,7 +232,7 @@ main(int argc, char *argv[])
 static void
 help(const char *progname)
 {
-	printf(_("%s installs a procedural language into a PostgreSQL database.\n\n"), progname);
+	printf(_("%s installs a procedural language into an AgensGraph database.\n\n"), progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]... LANGNAME [DBNAME]\n"), progname);
 	printf(_("\nOptions:\n"));
@@ -247,5 +247,4 @@ help(const char *progname)
 	printf(_("  -U, --username=USERNAME   user name to connect as\n"));
 	printf(_("  -w, --no-password         never prompt for password\n"));
 	printf(_("  -W, --password            force password prompt\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
 }

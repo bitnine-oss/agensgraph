@@ -397,7 +397,7 @@ reindex_system_catalogs(const char *dbname, const char *host, const char *port,
 static void
 help(const char *progname)
 {
-	printf(_("%s reindexes a PostgreSQL database.\n\n"), progname);
+	printf(_("%s reindexes an AgensGraph database.\n\n"), progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]... [DBNAME]\n"), progname);
 	printf(_("\nOptions:\n"));
@@ -420,5 +420,4 @@ help(const char *progname)
 	printf(_("  -W, --password            force password prompt\n"));
 	printf(_("  --maintenance-db=DBNAME   alternate maintenance database\n"));
 	printf(_("\nRead the description of the SQL command REINDEX for details.\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
 }

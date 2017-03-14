@@ -942,7 +942,7 @@ init_slot(ParallelSlot *slot, PGconn *conn, const char *progname)
 static void
 help(const char *progname)
 {
-	printf(_("%s cleans and analyzes a PostgreSQL database.\n\n"), progname);
+	printf(_("%s cleans and analyzes an AgensGraph database.\n\n"), progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]... [DBNAME]\n"), progname);
 	printf(_("\nOptions:\n"));
@@ -969,5 +969,4 @@ help(const char *progname)
 	printf(_("  -W, --password            force password prompt\n"));
 	printf(_("  --maintenance-db=DBNAME   alternate maintenance database\n"));
 	printf(_("\nRead the description of the SQL command VACUUM for details.\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
 }

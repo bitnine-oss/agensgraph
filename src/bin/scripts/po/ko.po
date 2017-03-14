@@ -336,10 +336,10 @@ msgstr "%s: 코멘트 추가하기 실패 (데이터베이스는 만들어졌음
 #: createdb.c:251
 #, c-format
 msgid ""
-"%s creates a PostgreSQL database.\n"
+"%s creates an AgensGraph database.\n"
 "\n"
 msgstr ""
-"%s 프로그램은 PostgreSQL 데이터베이스를 만듭니다.\n"
+"%s 프로그램은 AgensGraph 데이터베이스를 만듭니다.\n"
 "\n"
 
 #: createdb.c:253
@@ -479,10 +479,10 @@ msgstr "%s: 언어 설치 실패: %s"
 #: createlang.c:235
 #, c-format
 msgid ""
-"%s installs a procedural language into a PostgreSQL database.\n"
+"%s installs a procedural language into an AgensGraph database.\n"
 "\n"
 msgstr ""
-"%s 프로그램은 PostgreSQL 데이터베이스에 프로시쥬얼 언어를 설치합니다.\n"
+"%s 프로그램은 AgensGraph 데이터베이스에 프로시쥬얼 언어를 설치합니다.\n"
 "\n"
 
 #: createlang.c:237 droplang.c:238
@@ -543,10 +543,10 @@ msgstr "%s: 새 롤 만들기 실패: %s"
 #: createuser.c:348
 #, c-format
 msgid ""
-"%s creates a new PostgreSQL role.\n"
+"%s creates a new AgensGraph role.\n"
 "\n"
 msgstr ""
-"%s 프로그램은 PostgreSQL 롤을 만듭니다.\n"
+"%s 프로그램은 AgensGraph 롤을 만듭니다.\n"
 "\n"
 
 #: createuser.c:350 dropuser.c:157
@@ -685,10 +685,10 @@ msgstr "%s: 데이터베이스 삭제 실패: %s"
 #: dropdb.c:154
 #, c-format
 msgid ""
-"%s removes a PostgreSQL database.\n"
+"%s removes an AgensGraph database.\n"
 "\n"
 msgstr ""
-"%s 프로그램은 PostgreSQL 데이터베이스를 삭제합니다.\n"
+"%s 프로그램은 AgensGraph 데이터베이스를 삭제합니다.\n"
 "\n"
 
 #: dropdb.c:156
@@ -755,10 +755,10 @@ msgstr "%s: \"%s\" 롤 삭제 실패: %s"
 #: dropuser.c:155
 #, c-format
 msgid ""
-"%s removes a PostgreSQL role.\n"
+"%s removes an AgensGraph role.\n"
 "\n"
 msgstr ""
-"%s 프로그램은 PostgreSQL 롤을 삭제합니다.\n"
+"%s 프로그램은 AgensGraph 롤을 삭제합니다.\n"
 "\n"
 
 #: dropuser.c:160
@@ -962,10 +962,10 @@ msgstr "%s: 시스템 카탈로그 재색인 작업 실패: %s"
 #: reindexdb.c:400
 #, c-format
 msgid ""
-"%s reindexes a PostgreSQL database.\n"
+"%s reindexes an AgensGraph database.\n"
 "\n"
 msgstr ""
-"%s 프로그램은 PostgreSQL 데이터베이스 재색인 작업을 합니다.\n"
+"%s 프로그램은 AgensGraph 데이터베이스 재색인 작업을 합니다.\n"
 "\n"
 
 #: reindexdb.c:404
@@ -1074,10 +1074,10 @@ msgstr "%s: 잘못된 소켓: %s"
 #: vacuumdb.c:941
 #, c-format
 msgid ""
-"%s cleans and analyzes a PostgreSQL database.\n"
+"%s cleans and analyzes an AgensGraph database.\n"
 "\n"
 msgstr ""
-"%s 프로그램은 PostgreSQL 데이터베이스 자료 정리 및\n"
+"%s 프로그램은 AgensGraph 데이터베이스 자료 정리 및\n"
 "퀴리 최적화기의 참고 자료를 갱신합니다.\n"
 "\n"
 
