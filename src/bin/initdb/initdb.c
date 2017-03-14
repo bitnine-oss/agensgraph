@@ -1327,13 +1327,13 @@ setup_config(void)
 #ifdef USE_PG_STATSINFO
 	conflines = replace_token(conflines,
 							"#shared_preload_libraries = ''",
-							"shared_preload_libraries = "
+							"#shared_preload_libraries = "
 									"'pg_stat_statements,pg_statsinfo,"
 									"pg_hint_plan,hll'");
 #else
 	conflines = replace_token(conflines,
 							"#shared_preload_libraries = ''",
-							"shared_preload_libraries = "
+							"#shared_preload_libraries = "
 									"'pg_stat_statements,pg_hint_plan,hll'");
 #endif
 
