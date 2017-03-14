@@ -50,13 +50,14 @@ Building from the Source Code
         $ make install
         ```
 
-    * Add the install path to the `PATH` environment variable to allow the modules that need `pg_config` to get necessary installation information. If you installed AgensGraph at the same location as the source directory you pulled from GitHub, then you can use the `ag-env.sh` script, which sets `PATH` and `LD_LIBRARY_PATH` using the current directory. (Run `. ag-env.sh` to use the script.):
+    * Add the install path to the `PATH` environment variable to allow the modules that need `pg_config` to get necessary installation information. If you installed AgensGraph at the same location as the source directory you pulled from GitHub, then you can use the `ag-env.sh` script, which sets `PATH` and `LD_LIBRARY_PATH` using the current directory. Run the following command to use the script:
         ```sh
-        $ ./sh ag-env.sh
+        $ . ag-env.sh
         ```
         OR, if you installed AgensGraph elsewhere, you can also do so by editing your `/.bashrc` file (`/.bash_profile` on macOS) with the following command:
         ```sh
         $ echo "export PATH=/path/to/agensgraph/bin:\$PATH" >> ~/.bashrc
+        $ echo "export LD_LIBRARY_PATH=/path/to/agensgraph/lib:\$LD_LIBRARY_PATH" >> ~/.bashrc
         ```
     * Build and install other contrib and external modules:
         ```sh
