@@ -5,12 +5,13 @@
 #
 # Usage: . ag-env.sh
 
-export AG_HOME="$(pwd)"
+_aghome="$(pwd)"
 
-_path=$(echo $PATH | tr ':' '\n' | grep -vE "postgres|agens-graph|^$" | tr '\n' ':' | sed 's/:$//')
-export PATH=$AG_HOME/bin:$_path
+_path=$(echo $PATH | tr ':' '\n' | grep -vE "postgres|agensgraph|^$" | tr '\n' ':' | sed 's/:$//')
+export PATH=$_aghome/bin:$_path
 
-_path=$(echo $LD_LIBRARY_PATH | tr ':' '\n' | grep -vE "postgres|agens-graph|^$" | tr '\n' ':' | sed 's/:$//')
-export LD_LIBRARY_PATH=$AG_HOME/lib:$_path
+_path=$(echo $LD_LIBRARY_PATH | tr ':' '\n' | grep -vE "postgres|agensgraph|^$" | tr '\n' ':' | sed 's/:$//')
+export LD_LIBRARY_PATH=$_aghome/lib:$_path
 
 unset _path
+unset _aghome
