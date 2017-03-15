@@ -1,7 +1,7 @@
 /*
  * collector_sql.h
  *
- * Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 #ifndef COLLECTOR_SQL_H
@@ -350,6 +350,46 @@ ORDER BY \
 #define SQL_SELECT_LOCK_CLIENT_HOSTNAME		"'(N/A)'"
 #endif
 
+#if PG_VERSION_NUM >= 90600
+#define SQL_SELECT_LOCK "\
+SELECT \
+	db.datname, \
+	ns.nspname, \
+	t.relation, \
+	sa.application_name, \
+	sa.client_addr, \
+	sa.client_hostname, \
+	sa.client_port, \
+	t.blockee_pid, \
+	t.blocker_pid, \
+	px.gid AS blocker_gid, \
+	(statement_timestamp() - sa.query_start)::interval(0), \
+	sa.query, \
+	CASE \
+		WHEN px.gid IS NOT NULL THEN '(xact is detached from session)' \
+		WHEN lx.queries IS NULL THEN '(library might not have been loaded)' \
+		ELSE lx.queries \
+	END \
+FROM \
+	(SELECT DISTINCT \
+		pid AS blockee_pid, \
+		unnest(pg_blocking_pids(pid)) AS blocker_pid, \
+		transactionid, \
+		relation \
+	 FROM \
+		pg_locks \
+	 WHERE \
+		granted = false \
+	) t \
+	LEFT JOIN pg_prepared_xacts px ON px.transaction = t.transactionid \
+	LEFT JOIN pg_stat_activity sa ON sa.pid = t.blockee_pid \
+	LEFT JOIN statsinfo.last_xact_activity() lx ON lx.pid = t.blocker_pid \
+	LEFT JOIN pg_database db ON db.oid = sa.datid \
+	LEFT JOIN pg_class c ON c.oid = t.relation \
+	LEFT JOIN pg_namespace ns ON ns.oid = c.relnamespace \
+WHERE \
+	sa.query_start < statement_timestamp() - current_setting('" GUC_PREFIX ".long_lock_threshold')::interval"
+#else
 #define SQL_SELECT_LOCK "\
 SELECT \
 	db.datname, \
@@ -391,6 +431,7 @@ FROM \
 WHERE \
 	(la.transactionid = lb.transactionid OR la.relation = lb.relation) AND \
 	sb.query_start < statement_timestamp() - current_setting('" GUC_PREFIX ".long_lock_threshold')::interval"
+#endif
 
 /* replication */
 #if PG_VERSION_NUM >= 90400

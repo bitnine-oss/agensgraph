@@ -1,12 +1,12 @@
 /*
  * pg_statsinfo.c
  *
- * Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 #include "pg_statsinfo.h"
 
-const char *PROGRAM_VERSION	= "3.2.1";
+const char *PROGRAM_VERSION	= "3.2.3";
 const char *PROGRAM_URL		= "http://pgstatsinfo.sourceforge.net/";
 const char *PROGRAM_EMAIL   = NULL;
 

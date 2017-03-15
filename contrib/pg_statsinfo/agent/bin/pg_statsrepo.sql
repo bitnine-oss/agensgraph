@@ -3,7 +3,7 @@
  *
  * Create a repository schema.
  *
- * Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 -- Adjust this setting to control where the objects get created.
@@ -2539,6 +2539,43 @@ CREATE FUNCTION statsrepo.get_query_activity_statements(
 	OUT blk_write_time	numeric
 ) RETURNS SETOF record AS
 $$
+DECLARE
+	pg_version_num	integer;
+BEGIN
+	SELECT
+		CASE WHEN split_part(pg_version, '.', 3) != '' THEN
+			(split_part(pg_version, '.', 1)::integer * 100 +
+			 split_part(pg_version, '.', 2)::integer) * 100 +
+			 split_part(pg_version, '.', 3)::integer
+		ELSE
+			(split_part(pg_version, '.', 1)::integer * 100 +
+			 substring(split_part(pg_version, '.', 2) from '^\d+')::integer) * 100
+		END
+	INTO pg_version_num FROM statsrepo.instance
+	WHERE instid = (SELECT instid FROM statsrepo.snapshot WHERE snapid = $1);
+
+	IF pg_version_num >= 90400 THEN
+		RETURN QUERY SELECT * FROM statsrepo.get_query_activity_statemets_body($1, $2);
+	ELSE
+		RETURN QUERY SELECT * FROM statsrepo.get_query_activity_statemets_body_legacy($1, $2);
+	END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- internal function for get_query_activity_statements()
+CREATE FUNCTION statsrepo.get_query_activity_statemets_body(
+	IN snapid_begin		bigint,
+	IN snapid_end		bigint,
+	OUT rolname			text,
+	OUT datname			name,
+	OUT query			text,
+	OUT calls			bigint,
+	OUT total_time		numeric,
+	OUT time_per_call	numeric,
+	OUT blk_read_time	numeric,
+	OUT blk_write_time	numeric
+) RETURNS SETOF record AS
+$$
 	SELECT
 		t1.rolname::text,
 		t1.dbname::name,
@@ -2562,6 +2599,75 @@ $$
 		 		s.dbid,
 		 		s.userid,
 		 		s.queryid,
+		 		max(s.query) AS query,
+				$1 AS first,
+				max(s.snapid) AS last
+			 FROM
+			 	statsrepo.statement s
+				JOIN statsrepo.snapshot ss ON (ss.snapid = s.snapid)
+			 WHERE
+			 	s.snapid >= $1 AND s.snapid <= $2
+				AND ss.instid = (SELECT instid FROM statsrepo.snapshot ss1 WHERE ss1.snapid = $2)
+			 GROUP BY
+				s.dbid,
+				s.userid,
+				s.queryid
+			) AS reg
+		LEFT JOIN statsrepo.statement st1 ON
+			(st1.dbid = reg.dbid AND st1.userid = reg.userid AND
+			 st1.queryid = reg.queryid AND st1.snapid = reg.first)
+		JOIN statsrepo.statement st2 ON
+			(st2.dbid = reg.dbid AND st2.userid = reg.userid AND
+			 st2.queryid = reg.queryid AND st2.snapid = reg.last)
+		JOIN statsrepo.database db ON
+			(db.snapid = reg.first AND db.dbid = reg.dbid)
+		JOIN statsrepo.role rol ON
+			(rol.snapid = reg.first AND rol.userid = reg.userid)
+	) AS t1
+	WHERE
+		t1.calls > 0 and t1.total_time > 0
+	ORDER BY
+		5 DESC,
+		4 DESC;
+$$
+LANGUAGE sql;
+
+-- internal function for get_query_activity_statements()
+CREATE FUNCTION statsrepo.get_query_activity_statemets_body_legacy(
+	IN snapid_begin		bigint,
+	IN snapid_end		bigint,
+	OUT rolname			text,
+	OUT datname			name,
+	OUT query			text,
+	OUT calls			bigint,
+	OUT total_time		numeric,
+	OUT time_per_call	numeric,
+	OUT blk_read_time	numeric,
+	OUT blk_write_time	numeric
+) RETURNS SETOF record AS
+$$
+		SELECT
+		t1.rolname::text,
+		t1.dbname::name,
+		t1.query,
+		t1.calls,
+		t1.total_time::numeric(1000, 3),
+		(t1.total_time / t1.calls)::numeric(1000, 3),
+		t1.blk_read_time::numeric(1000, 3),
+		t1.blk_write_time::numeric(1000, 3)
+	FROM
+		(SELECT
+			rol.name AS rolname,
+			db.name AS dbname,
+			reg.query,
+			statsrepo.sub(st2.calls, st1.calls) AS calls,
+			statsrepo.sub(st2.total_time, st1.total_time) AS total_time,
+			statsrepo.sub(st2.blk_read_time, st1.blk_read_time) AS blk_read_time,
+			statsrepo.sub(st2.blk_write_time, st1.blk_write_time) AS blk_write_time
+		 FROM
+		 	(SELECT
+		 		s.dbid,
+		 		s.userid,
 		 		s.query,
 				$1 AS first,
 				max(s.snapid) AS last
@@ -2574,16 +2680,13 @@ $$
 			 GROUP BY
 				s.dbid,
 				s.userid,
-				s.queryid,
 				s.query
 			) AS reg
 		LEFT JOIN statsrepo.statement st1 ON
 			(st1.dbid = reg.dbid AND st1.userid = reg.userid AND
-			 st1.queryid = reg.queryid AND
 			 st1.query = reg.query AND st1.snapid = reg.first)
 		JOIN statsrepo.statement st2 ON
 			(st2.dbid = reg.dbid AND st2.userid = reg.userid AND
-			 st2.queryid = reg.queryid AND
 			 st2.query = reg.query AND st2.snapid = reg.last)
 		JOIN statsrepo.database db ON
 			(db.snapid = reg.first AND db.dbid = reg.dbid)
@@ -2759,9 +2862,23 @@ $$
 			(db.snapid = reg.last AND db.dbid = reg.dbid)
 		JOIN statsrepo.role rol ON
 			(rol.snapid = reg.last AND rol.userid = reg.userid)
-		JOIN statsrepo.statement st ON
-			(st.snapid = reg.last AND st.queryid = reg.queryid AND
-			 st.dbid = reg.dbid AND st.userid = reg.userid)
+		JOIN
+			(SELECT queryid,
+					dbid,
+					userid,
+					max(query) AS query
+			 FROM
+			 	statsrepo.statement s
+				JOIN statsrepo.snapshot ss ON (ss.snapid = s.snapid)
+			 WHERE
+			 	s.snapid >= $1 AND s.snapid <= $2
+				AND ss.instid = (SELECT instid FROM statsrepo.snapshot WHERE snapid = $2)
+			 GROUP BY
+			 	queryid, dbid, userid
+			) AS st ON
+				st.queryid = reg.queryid AND
+				st.dbid = reg.dbid AND
+				st.userid = reg.userid
 	) AS t1
 	WHERE
 		t1.calls > 0 and t1.total_time > 0

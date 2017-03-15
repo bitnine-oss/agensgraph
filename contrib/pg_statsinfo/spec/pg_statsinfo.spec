@@ -1,5 +1,5 @@
 # SPEC file for pg_statsinfo
-# Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+# Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
 
 # Original declaration for pg_statsinfo rpmbuild #
 
@@ -10,7 +10,7 @@
 
 ## Set general information for pg_statsinfo.
 Name:       pg_statsinfo
-Version:    3.2.1
+Version:    3.2.3
 Release:    1%{?dist}
 Summary:    Performance monitoring tool for PostgreSQL
 Group:      Applications/Databases
@@ -117,6 +117,16 @@ fi
 
 # History of pg_statsinfo-v3.2 RPM.
 %changelog
+* Fri Jan  27 2017 - NTT OSS Center 3.2.3-1
+- Fixed a bug that SEGV occurs when the backend terminate during sampling.
+* Thu Jan  19 2017 - NTT OSS Center 3.2.2-1
+- Supports PostgreSQL 9.6. No functional changes have been made.
+- Fixed a bug that an integer(bit flag) is displayed when the value of
+  pg_statsinfo.enable_maintenance is displayed with SHOW command.
+- For PostgreSQL 9.4 and later, fixes a bug that NULL is stored in
+  the "query" column of pg_stat_statements.
+- For PostgreSQL 9.3 and earlier, fixed a bug that QueryActivity Statements
+  are not displayed when pg_store_plans is not installed.
 * Thu Feb  18 2016 - NTT OSS Center 3.2.1-1
 - If the page size of the monitored database is other than the default(8192byte),
   Add measures to ensure that correct report of "Low Density Tables".

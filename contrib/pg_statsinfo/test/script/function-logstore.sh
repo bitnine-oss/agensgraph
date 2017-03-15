@@ -55,14 +55,14 @@ echo "/*---- Server Log Accumulation ----*/"
 echo "/**--- Log Storing (repolog_min_messages = disable) ---**/"
 update_pgconfig ${PGDATA} "<guc_prefix>.repolog_min_messages" "disable"
 pg_ctl reload && sleep ${RELOAD_DELAY}
-psql -c "SELECT statsinfo.elog('ALL', 'log storing test (disable)')" > /dev/null
+psql -c "SELECT statsinfo.elog('ALL', 'log storing test (disable)')" 2> /dev/null
 sleep ${STORE_DELAY}
 send_query -c "SELECT elevel, message FROM statsrepo.log WHERE message = 'log storing test (disable)'"
 
 echo "/**--- Log Storing (repolog_min_messages = error) ---**/"
 update_pgconfig ${PGDATA} "<guc_prefix>.repolog_min_messages" "error"
 pg_ctl reload && sleep ${RELOAD_DELAY}
-psql -c "SELECT statsinfo.elog('ALL', 'log storing test (error)')" > /dev/null
+psql -c "SELECT statsinfo.elog('ALL', 'log storing test (error)')" 2> /dev/null
 sleep ${STORE_DELAY}
 send_query -c "SELECT elevel, message FROM statsrepo.log WHERE message = 'log storing test (error)'"
 

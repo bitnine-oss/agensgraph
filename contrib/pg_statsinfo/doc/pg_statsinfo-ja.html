@@ -71,7 +71,7 @@ PostgreSQL の出力するサーバログを解析することでSQLの性能情
 </p>
 
 <p>
-また、pg_statsinfo で収集した情報は <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter-ja.html">pg_stats_reporter</a> 
+また、pg_statsinfo で収集した情報は <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter-ja.html">pg_stats_reporter</a>
 を用いることでグラフィカルな形で解析・出力することがきます。
 </p>
 
@@ -202,8 +202,8 @@ PostgreSQL の出力するサーバログを解析することでSQLの性能情
 
 <p>
 簡易レポート機能が出力するレポートの項目については「<a href="files/pg_statsinfo_v3.2_report_infomation.xls">pg_statsinfo v3.2 レポート項目一覧</a>」をご覧ください。<br>
-なお、簡易レポート機能が出力するレポートの項目は <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter-ja.html">pg_stats_reporter</a> と同等です。<br>
-グラフを用いたグラフィカルなレポートを出力したい場合は <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter-ja.html">pg_stats_reporter</a> を使用してください。
+なお、簡易レポート機能が出力するレポートの項目は <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter-ja.html">pg_stats_reporter</a> と同等です。<br>
+グラフを用いたグラフィカルなレポートを出力したい場合は <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter-ja.html">pg_stats_reporter</a> を使用してください。
 </p>
 
 <h4>運用管理機能</h4>
@@ -245,7 +245,7 @@ pg_statsinfo の運用管理向けの操作を行うコマンドを提供しま�
 <h3 id="requirement">動作環境</h3>
 <dl>
   <dt>PostgreSQL</dt>
-  <dd>バージョン 9.1, 9.2, 9.3, 9.4, 9.5</dd>
+  <dd>バージョン 9.1, 9.2, 9.3, 9.4, 9.5, 9.6</dd>
   <dt>動作検証済みOS</dt>
   <dd>RHEL 6.x (x86_64), CentOS 6.x (x86_64), RHEL 7.x (x86_64), CentOS 7.x (x86_64)</dd>
 </dl>
@@ -1574,6 +1574,7 @@ repository=$ SET TIME ZONE '<u>PRC</u>'; select '2014/1/1 0:0:0 <u>CST</u>'::tim
   <li>PostgreSQL 9.3.10</li>
   <li>PostgreSQL 9.4.5</li>
   <li>PostgreSQL 9.5.0</li>
+  <li>PostgreSQL 9.6.0</li>
 </ul>
 </dd>
 </dl>
@@ -1592,7 +1593,7 @@ $psql -d postgres -c "SELECT * FROM statsrepo.snapshot WHERE COMMENT = 'test'"
 <h4>Q2. 取得したスナップショットはどのように使えばいいの？</h4>
 <p>
 pg_statsinfo の統計情報の取得機能は、その時点の統計情報をスナップショットとして定期的に取得する機能のみになります。
-取得した統計情報から、有益な情報を見たい場合は <a href="#features-cmdline">簡易レポート機能</a> を利用するか、<a href='http://pgstatsinfo.sourceforge.net/pg_stats_reporter-ja.html'>pg_stats_reporter</a> をお使いください。
+取得した統計情報から、有益な情報を見たい場合は <a href="#features-cmdline">簡易レポート機能</a> を利用するか、<a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter-ja.html">pg_stats_reporter</a> をお使いください。
 </p>
 
 <h4>Q3. 自動メンテナンス機能のスナップショット削除が動作しません。</h4>
@@ -1724,6 +1725,7 @@ pg_statsinfo は「インスタンスID」でインスタンスを識別しま�
 <p>pg_statsinfo 3.1 からの変更点は以下の通りです。</p>
 <ul>
   <li>PostgreSQL 9.5に対応</li>
+  <li>PostgreSQL 9.6に対応 (pg_statsinfo 3.2.2以降)</li>
   <li>PostgreSQL 9.0がサポート対象外になりました</li>
 </ul>
 <br>
@@ -1757,7 +1759,7 @@ pg_statsinfo は「インスタンスID」でインスタンスを識別しま�
 <h3 id="warm-standby">ウォームスタンバイ</h3>
 <p>構成例として、<a href="http://www.postgresql.jp/document/current/html/warm-standby.html">ウォームスタンバイ</a>での構成を説明します。
 ウォームスタンバイ構成で pg_statsinfo を利用する場合、大きく分けて2つの構成があります。
-詳細は "<a href="http://pgstatsinfo.sourceforge.net/pg_statsinfo-warm-standby-ja.html">pg_statsinfo: warm-standby</a>" を参照してください。
+詳細は "<a href="http://pgstatsinfo.sourceforge.net/documents/statsinfo_old/pg_statsinfo-warm-standby-ja.html">pg_statsinfo: warm-standby</a>" を参照してください。
 </p>
 
 <ol>
@@ -1848,7 +1850,7 @@ pg_statsinfo は、この SystemTap が収集するプロファイリング情�
 <p>SystemTap を実行するユーザは、postgres を起動するユーザ(典型的には postgres ユーザ)である必要があります。
 まず、このユーザを stapdev グループに所属させる必要があります。</p>
 <pre>$ usermod -g stapdev &lt;username&gt;</pre>
-<p>PostgreSQL のプロファイリング情報収集を行うには、専用のスクリプトを使用します。スクリプトを <a href="http://pgstatsinfo.sourceforge.net/pg_statsinfo_profile.stp">pg_statsinfo_profile.stp</a> に示します。
+<p>PostgreSQL のプロファイリング情報収集を行うには、専用のスクリプトを使用します。スクリプトを <a href="http://pgstatsinfo.sourceforge.net/documents/statsinfo_old/pg_statsinfo_profile.stp">pg_statsinfo_profile.stp</a> に示します。
 スクリプトを監視対象インスタンスの任意の場所に配置し、SystemTap で実行して下さい。</p>
 <pre>$ stap -m statsinfo_prof pg_statsinfo_profile.stp</pre>
 <p>SystemTap が収集するプロファイリング情報は、スナップショット取得と同じタイミングで取得され、リポジトリDBに蓄積されます。</p>
@@ -1860,7 +1862,7 @@ pg_statsinfo は、この SystemTap が収集するプロファイリング情�
 <h3 id="internal">内部構成</h3>
 <p>pg_statsinfo はPostgreSQLのサーバサイドで動作する pg_statsinfo ライブラリと、エージェントとして動作する実行プログラムの2つのモジュールで構成されています。
 ライブラリはロード直後に呼ばれるフック関数からエージェントを起動するため、ユーザがエージェントを明示的に起動することはありません。
-詳細は "<a href="http://pgstatsinfo.sourceforge.net/pg_statsinfo-internal-ja.html">pg_statsinfo: internal</a>" を参照してください。
+詳細は "<a href="http://pgstatsinfo.sourceforge.net/documents/statsinfo_old/pg_statsinfo-internal-ja.html">pg_statsinfo: internal</a>" を参照してください。
 </p>
 
 <h3 id="internal-log-route">サーバログ分配機能</h3>
@@ -1887,13 +1889,13 @@ pg_statsinfo は、この SystemTap が収集するプロファイリング情�
 <a href="http://www.postgresql.jp/document/current/html/monitoring-stats.html">統計情報コレクタ</a>,
 <a href="http://www.postgresql.jp/document/current/html/catalogs.html">システムカタログ</a>,
 <a href="http://www.postgresql.jp/document/current/html/pgstatstatements.html">pg_stat_statements</a>,
-<a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter-ja.html">pg_stats_reporter</a>
+<a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter-ja.html">pg_stats_reporter</a>
 <hr>
 <div class="navigation">
   <a href="http://pgstatsinfo.sourceforge.net/index_ja.html">Top</a> &gt;
-  <a href="http://pgstatsinfo.sourceforge.net/pg_statsinfo-ja.html">pg_statsinfo</a>
+  <a href="http://pgstatsinfo.sourceforge.net/documents/statsinfo3.2/pg_statsinfo-ja.html">pg_statsinfo</a>
 <div>
-<p class="footer">Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION</p>
+<p class="footer">Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION</p>
 
 <script type="text/javascript">
 var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");

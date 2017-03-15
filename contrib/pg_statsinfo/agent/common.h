@@ -2,7 +2,7 @@
  *
  * common.h
  *
- * Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  *
  *-------------------------------------------------------------------------
  */
@@ -43,11 +43,6 @@
 /* manual maintenance log message */
 #define LOGMSG_MAINTENANCE	LOG_PREFIX "maintenance requested"
 #define LOGMSG_RESTART		LOG_PREFIX "restart requested"
-
-/* maintenance mode flag */
-#define MAINTENANCE_MODE_SNAPSHOT	(1 << 0)
-#define MAINTENANCE_MODE_LOG		(1 << 1)
-#define MAINTENANCE_MODE_REPOLOG	(1 << 2)
 
 /* exit code for pg_statsinfod */
 #define STATSINFO_EXIT_SUCCESS		0x00

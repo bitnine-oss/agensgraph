@@ -59,7 +59,7 @@
 statistics of PostgreSQL server in the form of time series of
 snapshots. You can examine the snapshots on graphical representations
 by
-using <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>.
+using <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter.html">pg_stats_reporter</a>.
 </p>
 
 
@@ -68,13 +68,13 @@ using <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_sta
 
 <p>Two or more PostgreSQL <i>instances</i> can share single repository database.
 
-<p>You can check for server health and activities in easy-to-grasp graphical representation by using  <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>. It shows various information as interactive tables and graphs.</p>
+<p>You can check for server health and activities in easy-to-grasp graphical representation by using  <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter.html">pg_stats_reporter</a>. It shows various information as interactive tables and graphs.</p>
 
 <p>Components of pg_statsinfo are typically placed as the picture
 below. Each pg_statsinfo collects the information of the <i>Database
 Server</i> where it resides on and sends snapshots to
 the <i>Repository
-Server</i>. <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>
+Server</i>. <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter.html">pg_stats_reporter</a>
 runs behind web server so that the Users can get graphical reports on
 web browser on the <i>Client</i>.</p>
 
@@ -191,8 +191,8 @@ pg_statsinfo has some functions which could be done in command line. Besides, yo
 
 <p>
 The comprehensive list of report items is shown in <a href="files/pg_statsinfo_v3.2_report_infomation.xls">"report item list of pg_statsinfo v3.2".</a> (.xls in Japanese)<br>
-Report items are equivalent with <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>.<br>
-If you would like to see graphical reports, please try <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>.
+Report items are equivalent with <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter.html">pg_stats_reporter</a>.<br>
+If you would like to see graphical reports, please try <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter.html">pg_stats_reporter</a>.
 </p>
 
 <h4>Administrative operations</h4>
@@ -232,7 +232,7 @@ Setup reference of this feature is <a href="#usage-maintenance">here</a>.
 <h3 id="requirement">Requirement</h3>
 <dl>
 <dt>PostgreSQL versions</dt>
-<dd>PostgreSQL 9.1, 9.2, 9.3, 9.4, 9.5 (--with-libxml is required. Standard RPM's are built with this option.)</dd>
+<dd>PostgreSQL 9.1, 9.2, 9.3, 9.4, 9.5, 9.6 (--with-libxml is required. Standard RPM's are built with this option.)</dd>
 <dt>OS</dt>
 <dd>RHEL 7.x (x86_64), CentOS 7.x (x86_64)</dd>
 </dl>
@@ -1451,6 +1451,7 @@ these minor versions and later. <ul>
   <li>PostgreSQL 9.3.10</li>
   <li>PostgreSQL 9.4.5</li>
   <li>PostgreSQL 9.5.0</li>
+  <li>PostgreSQL 9.6.0</li>
 </ul>
 </dd>
 </dl>
@@ -1467,7 +1468,7 @@ $psql -d postgres -c "SELECT * FROM statsrepo.snapshot WHERE COMMENT = 'test'"
 </pre>
 <h4>Q2. How to utilize snapshots in repository?</h4>
 <p>The snapshots in repository can be of course inspected using sql queries but it needs too much labor for most cases.
-You can use pg_statsinfo's command line reporting feature to see them as simple reports in text format. For those who wants to see them in graphically interface, <a href='http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html'>pg_stats_reporter</a> provides sortable tables with pager and manipulative graphs. 
+You can use pg_statsinfo's command line reporting feature to see them as simple reports in text format. For those who wants to see them in graphically interface, <a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a> provides sortable tables with pager and manipulative graphs. 
 An operable sample is available <a href='files/details.html'>here</a>.
 </p>
 
@@ -1580,6 +1581,7 @@ Currently there is no available means of preventing this to occur.
 <p>Following changes have been made after pg_statsinfo 3.1.</p>
 <ul>
   <li>Supports PostgreSQL 9.5. No functional changes have been made.</li>
+  <li>Supports PostgreSQL 9.6. No functional changes have been made (pg_statsinfo higher than 3.2.2).</li>
   <li>Dropped support for PostgreSQL 9.0.</li>
 </ul>
 <br>
@@ -1718,14 +1720,14 @@ prevents this from occurring for this case.
 <a href="http://www.postgresql.org/docs/current/static/monitoring-stats.html">The Statistics Collector</a>,
 <a href="http://www.postgresql.org/docs/current/static/catalogs.html">System Catalogs</a>,
 <a href="http://www.postgresql.org/docs/current/static/pgstatstatements.html">pg_stat_statements</a>,
-<a href="http://pgstatsinfo.sourceforge.net/pg_stats_reporter.html">pg_stats_reporter</a>
+<a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter.html">pg_stats_reporter</a>
 
 <hr />
 <div class="navigation">
   <a href="index.html">Top</a> &gt;
   <a href="pg_statsinfo.html">pg_statsinfo</a>
 <div>
-<p class="footer">Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION</p>
+<p class="footer">Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION</p>
 
 <script type="text/javascript">
 var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");

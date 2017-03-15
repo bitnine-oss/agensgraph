@@ -9,16 +9,8 @@ server signaled
 pg_statsinfo.log -rw-rw-rw-(666)
 /**--- Textlog routing (textlog_min_messages = disable) ---**/
 server signaled
-INFO:  textlog routing test (disable)
-NOTICE:  textlog routing test (disable)
-WARNING:  textlog routing test (disable)
-ERROR:  textlog routing test (disable)
 /**--- Textlog routing (textlog_min_messages = error) ---**/
 server signaled
-INFO:  textlog routing test (error)
-NOTICE:  textlog routing test (error)
-WARNING:  textlog routing test (error)
-ERROR:  textlog routing test (error)
 00000 LOG:  textlog routing test (error)
 00000 STATEMENT:  SELECT statsinfo.elog('ALL', 'textlog routing test (error)')
 P0001 ERROR:  textlog routing test (error)

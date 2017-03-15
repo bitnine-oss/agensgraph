@@ -2,7 +2,7 @@
  *
  * pg_statsinfod.h
  *
- * Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  *
  *-------------------------------------------------------------------------
  */
@@ -93,6 +93,11 @@ FROM \
 #else
 #define CSV_COLS			23
 #endif
+
+/* maintenance mode flag */
+#define MAINTENANCE_MODE_SNAPSHOT	(1 << 0)
+#define MAINTENANCE_MODE_LOG		(1 << 1)
+#define MAINTENANCE_MODE_REPOLOG	(1 << 2)
 
 /* shutdown state */
 typedef enum ShutdownState

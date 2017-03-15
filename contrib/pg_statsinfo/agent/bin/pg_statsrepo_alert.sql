@@ -3,7 +3,7 @@
  *
  * Setup of an alert function.
  *
- * Copyright (c) 2009-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 -- Adjust this setting to control where the objects get created.

@@ -5,20 +5,12 @@ CREATE FUNCTION
 /*---- Server Log Accumulation ----*/
 /**--- Log Storing (repolog_min_messages = disable) ---**/
 server signaled
-INFO:  log storing test (disable)
-NOTICE:  log storing test (disable)
-WARNING:  log storing test (disable)
-ERROR:  log storing test (disable)
  elevel | message 
 --------+---------
 (0 rows)
 
 /**--- Log Storing (repolog_min_messages = error) ---**/
 server signaled
-INFO:  log storing test (error)
-NOTICE:  log storing test (error)
-WARNING:  log storing test (error)
-ERROR:  log storing test (error)
  elevel |         message          
 --------+--------------------------
  LOG    | log storing test (error)

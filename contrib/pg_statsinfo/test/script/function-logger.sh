@@ -68,14 +68,14 @@ stat -c "pg_statsinfo.log %A(%a)" ${PGDATA}/pg_log/pg_statsinfo.log
 echo "/**--- Textlog routing (textlog_min_messages = disable) ---**/"
 update_pgconfig ${PGDATA} "<guc_prefix>.textlog_min_messages" "disable"
 pg_ctl reload && sleep ${RELOAD_DELAY}
-psql -c "SELECT statsinfo.elog('ALL', 'textlog routing test (disable)')" > /dev/null
+psql -c "SELECT statsinfo.elog('ALL', 'textlog routing test (disable)')" 2> /dev/null
 sleep ${WRITE_DELAY}
 grep "textlog routing test (disable)" ${PGDATA}/pg_log/pg_statsinfo.log
 
 echo "/**--- Textlog routing (textlog_min_messages = error) ---**/"
 update_pgconfig ${PGDATA} "<guc_prefix>.textlog_min_messages" "error"
 pg_ctl reload && sleep ${RELOAD_DELAY}
-psql -c "SELECT statsinfo.elog('ALL', 'textlog routing test (error)')" > /dev/null
+psql -c "SELECT statsinfo.elog('ALL', 'textlog routing test (error)')" 2> /dev/null
 sleep ${WRITE_DELAY}
 grep "textlog routing test (error)" ${PGDATA}/pg_log/pg_statsinfo.log
 
