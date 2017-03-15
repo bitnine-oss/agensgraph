@@ -1441,6 +1441,41 @@ RETURN r;
 (2 rows)
 
 MATCH (a) DETACH DELETE a;
+-- update clauses
+CREATE (a:v1 {name:'bitnine'}) MERGE (:v2 {name:a.name});
+CREATE (a:v1 {name:'AgensGraph'})
+MERGE (b:v2 {name:a.name})
+RETURN properties(a), properties(b);
+       properties       |       properties       
+------------------------+------------------------
+ {"name": "AgensGraph"} | {"name": "AgensGraph"}
+(1 row)
+
+MERGE (a:v1 {name:'bitnine'})
+MERGE (b:v1 {name:'AgensGraph'})
+CREATE p=(a)-[r:e1 {name:a.name || b.name}]->(b)
+RETURN properties(a), properties(r), properties(b), count(p);
+     properties      |          properties           |       properties       | count 
+---------------------+-------------------------------+------------------------+-------
+ {"name": "bitnine"} | {"name": "bitnineAgensGraph"} | {"name": "AgensGraph"} |     1
+(1 row)
+
+MERGE (a {name:'bitnine'})
+CREATE (b:v1 {name:a.name})
+MERGE (c:v1 {name:'bitnine'})
+	ON MATCH SET c.matched = 'true'
+	ON CREATE SET c.matched = 'false';
+MATCH (a) RETURN properties(a);
+              properties              
+--------------------------------------
+ {"name": "AgensGraph"}
+ {"name": "bitnine", "matched": true}
+ {"name": "bitnine", "matched": true}
+ {"name": "bitnine", "matched": true}
+ {"name": "bitnine"}
+ {"name": "AgensGraph"}
+(6 rows)
+
 -- wrong case
 MERGE (a:v1) MERGE (b:v2 {name:a.notexistent});
 ERROR:  cannot use null property value in MERGE
@@ -1449,8 +1484,6 @@ MERGE (b:v2 {name:a.name});
 ERROR:  ON CREATE/MATCH SET between MERGE clauses is not allowed
 MERGE (a:v1) MATCH (b:v2 {name:a.name}) RETURN a, b;
 ERROR:  Cypher read clauses cannot follow update clauses
-CREATE (a:v1 {name:'bitnine'}) MERGE (:v2 {name:a.name});
-ERROR:  There must be one type of consecutive update clauses
 MERGE (a:v1) MERGE (b:v2 {name:a.name}) MERGE (a);
 ERROR:  duplicate variable "a"
 LINE 1: MERGE (a:v1) MERGE (b:v2 {name:a.name}) MERGE (a);

@@ -652,12 +652,29 @@ RETURN r;
 
 MATCH (a) DETACH DELETE a;
 
+-- update clauses
+CREATE (a:v1 {name:'bitnine'}) MERGE (:v2 {name:a.name});
+CREATE (a:v1 {name:'AgensGraph'})
+MERGE (b:v2 {name:a.name})
+RETURN properties(a), properties(b);
+
+MERGE (a:v1 {name:'bitnine'})
+MERGE (b:v1 {name:'AgensGraph'})
+CREATE p=(a)-[r:e1 {name:a.name || b.name}]->(b)
+RETURN properties(a), properties(r), properties(b), count(p);
+
+MERGE (a {name:'bitnine'})
+CREATE (b:v1 {name:a.name})
+MERGE (c:v1 {name:'bitnine'})
+	ON MATCH SET c.matched = 'true'
+	ON CREATE SET c.matched = 'false';
+MATCH (a) RETURN properties(a);
+
 -- wrong case
 MERGE (a:v1) MERGE (b:v2 {name:a.notexistent});
 MERGE (a:v1) ON MATCH SET a.matched = 'true'
 MERGE (b:v2 {name:a.name});
 MERGE (a:v1) MATCH (b:v2 {name:a.name}) RETURN a, b;
-CREATE (a:v1 {name:'bitnine'}) MERGE (:v2 {name:a.name});
 MERGE (a:v1) MERGE (b:v2 {name:a.name}) MERGE (a);
 MERGE (a)-[r]->(b);
 MERGE (a)-[r:e1]->(b) MERGE (a);

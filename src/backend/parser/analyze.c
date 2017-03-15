@@ -2989,7 +2989,8 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 				}
 				break;
 			case T_CypherCreateClause:
-				if (update_type == T_Invalid)
+				if (update_type == T_Invalid ||
+					update_type == T_CypherMergeClause)
 					update_type = T_CypherCreateClause;
 				else if (update_type != T_CypherCreateClause)
 					ereport(ERROR,
@@ -3023,7 +3024,8 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 							 errmsg("Cypher read clauses cannot follow update clauses")));
 				break;
 			case T_CypherMergeClause:
-				if (update_type == T_Invalid)
+				if (update_type == T_Invalid ||
+					update_type == T_CypherCreateClause)
 				{
 					update_type = T_CypherMergeClause;
 				}
