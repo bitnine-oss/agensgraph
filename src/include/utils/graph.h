@@ -30,6 +30,7 @@
 #define Anum_graphpath_edges	2
 
 typedef uint64 Graphid;
+typedef uint64 EdgeRef;
 
 #define DatumGetGraphid(d)		DatumGetUInt64(d)
 #define GraphidGetDatum(p)		UInt64GetDatum(p)

@@ -5326,7 +5326,6 @@ make_nestloop(List *tlist,
 	if (jointype == JOIN_VLE)
 	{
 		NestLoopVLE *vle = makeNode(NestLoopVLE);
-
 		vle->minHops = minhops;
 		vle->maxHops = maxhops;
 		node = &vle->nl;

@@ -1198,7 +1198,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					if (((Join *) plan)->jointype == JOIN_VLE)
 					{
 						NestLoopVLE *nlvPlan = (NestLoopVLE *) plan;
-
 						appendStringInfo(es->str, " %s [%d..",
 										 jointype, nlvPlan->minHops);
 						if (nlvPlan->maxHops != -1)
