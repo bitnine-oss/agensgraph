@@ -444,9 +444,15 @@ WHERE d.classoid IS NULL AND p1.oid <= 9999;
  7007 | graphid_labid
  7008 | graphid_locid
  7097 | graphid_hash
+<<<<<<< 87c86b2531ffba200f6d0474c162d04a6937536d
  7050 | edgeref
  7053 | edgeref_in
  7054 | edgeref_out
+=======
+ 7154 | edgeref_in
+ 7155 | edgeref_out
+ 7156 | edgeref
+>>>>>>> feat: Convert elements of path variable to edge references
 (7 rows)
 
 -- List of built-in leakproof functions
