@@ -53,8 +53,10 @@
 #include "pgstat.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/rel.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
 
@@ -4439,6 +4441,92 @@ ExecEvalCurrentOfExpr(ExprState *exprstate, ExprContext *econtext,
 	return 0;					/* keep compiler quiet */
 }
 
+static Datum
+ExecEvalEdgeRefProp(ExprState *exprstate, ExprContext *econtext,
+					bool *isNull, ExprDoneCond *isDone)
+{
+	EdgeRefPropState *prop = (EdgeRefPropState *) exprstate;
+	Datum result;
+	EdgeRef eref;
+	HeapTupleData tup;
+	Relation rel;
+	Buffer buf;
+
+	result = ExecEvalExpr(prop->arg, econtext, isNull, isDone);
+
+	if (isDone && *isDone == ExprEndResult)
+		return result;			/* nothing to do */
+	if (*isNull)
+		return result;			/* nothing to do */
+
+	eref = DatumGetEdgeRef(result);
+
+	ItemPointerSet(&tup.t_self, EdgeRefGetBlockNumber(eref),
+				   EdgeRefGetOffsetNumber(eref));
+	rel = prop->edgerefrels[EdgeRefGetRelid(eref)];
+	if (heap_fetch(rel, prop->snapshot, &tup, &buf, false, NULL))
+	{
+		result = heap_getattr(&tup, Anum_edge_properties,
+							  RelationGetDescr(rel), isNull);
+	}
+	else
+	{
+		result = (Datum) 0;
+		*isNull = true;
+	}
+
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	if (buf != InvalidBuffer)
+		ReleaseBuffer(buf);
+
+	return result;
+}
+
+static Datum
+ExecEvalEdgeRefRow(ExprState *exprstate, ExprContext *econtext,
+				bool *isNull, ExprDoneCond *isDone)
+{
+	EdgeRefRowState *row = (EdgeRefRowState *) exprstate;
+	Datum result;
+	EdgeRef eref;
+	HeapTupleData tup;
+	Relation rel;
+	Buffer buf;
+
+	result = ExecEvalExpr(row->arg, econtext, isNull, isDone);
+
+	if (isDone && *isDone == ExprEndResult)
+		return result;			/* nothing to do */
+	if (*isNull)
+		return result;			/* nothing to do */
+
+	eref = DatumGetEdgeRef(result);
+
+	ItemPointerSet(&tup.t_self, EdgeRefGetBlockNumber(eref),
+				   EdgeRefGetOffsetNumber(eref));
+	rel = row->edgerefrels[EdgeRefGetRelid(eref)];
+	if (heap_fetch(rel, row->snapshot, &tup, &buf, false, NULL))
+	{
+		result = heap_copy_tuple_as_datum(&tup, RelationGetDescr(rel));
+		*isNull = false;
+	}
+	else
+	{
+		result = (Datum) 0;
+		*isNull = true;
+	}
+
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	if (buf != InvalidBuffer)
+		ReleaseBuffer(buf);
+
+	return result;
+}
+
 
 /*
  * ExecEvalExprSwitchContext
@@ -5132,6 +5220,30 @@ ExecInitExpr(Expr *node, PlanState *parent)
 				xstate->args = outlist;
 
 				state = (ExprState *) xstate;
+			}
+			break;
+		case T_EdgeRefProp:
+			{
+				EdgeRefProp *prop = (EdgeRefProp *) node;
+				EdgeRefPropState *nstate = makeNode(EdgeRefPropState);
+
+				nstate->xprstate.evalfunc = (ExprStateEvalFunc) ExecEvalEdgeRefProp;
+				nstate->arg = ExecInitExpr((Expr *) prop->arg, parent);
+				nstate->edgerefrels = parent->state->es_edgerefrels;
+				nstate->snapshot = parent->state->es_snapshot;
+				state = (ExprState *) nstate;
+			}
+			break;
+		case T_EdgeRefRow:
+			{
+				EdgeRefRow *row = (EdgeRefRow *) node;
+				EdgeRefRowState *nstate = makeNode(EdgeRefRowState);
+
+				nstate->xprstate.evalfunc = (ExprStateEvalFunc) ExecEvalEdgeRefRow;
+				nstate->arg = ExecInitExpr((Expr *) row->arg, parent);
+				nstate->edgerefrels = parent->state->es_edgerefrels;
+				nstate->snapshot = parent->state->es_snapshot;
+				state = (ExprState *) nstate;
 			}
 			break;
 		case T_NullTest:

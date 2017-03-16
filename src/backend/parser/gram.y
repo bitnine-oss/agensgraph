@@ -625,8 +625,8 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DESC DETACH
 	DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P DOUBLE_P DROP
 
-	EACH ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT
-	EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
+	EACH EDGEREFROW ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P
+	ESCAPE EVENT EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
 	EXTENSION EXTERNAL EXTRACT
 
 	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
@@ -752,9 +752,9 @@ static Node *wrapCypherWithSelect(Node *stmt);
  * a_expr without creating postfix-operator problems.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
-%nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			ALLSHORTESTPATHS DELETE_P DETACH LOAD OPTIONAL REMOVE SHORTESTPATH
-			SIZE SKIP
+%nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING
+			CUBE ROLLUP ALLSHORTESTPATHS DELETE_P DETACH LOAD OPTIONAL REMOVE
+			SHORTESTPATH SIZE SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -12810,6 +12810,13 @@ func_expr_common_subexpr:
 					n->location = @1;
 					$$ = (Node *)n;
 				}
+			| EDGEREFROW '(' a_expr ')'
+				{
+					EdgeRefRow *n = makeNode(EdgeRefRow);
+					n->arg = $3;
+					n->location = @3;
+					$$ = (Node *) n;
+				}
 		;
 
 json_object_expr:
@@ -14249,6 +14256,7 @@ col_name_keyword:
 			| COALESCE
 			| DEC
 			| DECIMAL_P
+			| EDGEREFROW
 			| EXISTS
 			| EXTRACT
 			| FLOAT_P

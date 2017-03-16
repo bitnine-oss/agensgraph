@@ -776,6 +776,23 @@ _equalOnConflictExpr(const OnConflictExpr *a, const OnConflictExpr *b)
 	return true;
 }
 
+static bool
+_equalEdgeRefProp(const EdgeRefProp *a, const EdgeRefProp *b)
+{
+	COMPARE_NODE_FIELD(arg);
+
+	return true;
+}
+
+static bool
+_equalEdgeRefRow(const EdgeRefRow *a, const EdgeRefRow *b)
+{
+	COMPARE_NODE_FIELD(arg);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
 /*
  * Stuff from relation.h
  */
@@ -3198,6 +3215,12 @@ equal(const void *a, const void *b)
 			break;
 		case T_JoinExpr:
 			retval = _equalJoinExpr(a, b);
+			break;
+		case T_EdgeRefProp:
+			retval = _equalEdgeRefProp(a, b);
+			break;
+		case T_EdgeRefRow:
+			retval = _equalEdgeRefRow(a, b);
 			break;
 
 			/*
