@@ -790,7 +790,6 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 		switch (j->jointype)
 		{
 			case JOIN_INNER:
-
 				/*
 				 * INNER JOIN can allow deletion of either child node, but not
 				 * both.  So right child gets permission to delete only if

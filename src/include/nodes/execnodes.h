@@ -413,6 +413,10 @@ typedef struct EState
 
 	List	   *es_auxmodifytables;		/* List of secondary ModifyTableStates */
 
+	/* VLE working state: */
+	int			es_num_edgerefrels;
+	Relation   *es_edgerefrels;
+
 	/*
 	 * this ExprContext is for per-output-tuple operations, such as constraint
 	 * checks and index-value computations.  It will be reset for each output
@@ -1017,6 +1021,21 @@ typedef struct DomainConstraintState
 	ExprState  *check_expr;		/* for CHECK, a boolean expression */
 } DomainConstraintState;
 
+typedef struct EdgeRefPropState
+{
+	ExprState 	xprstate;
+	ExprState  *arg;
+	Relation   *edgerefrels;
+	Snapshot    snapshot;
+} EdgeRefPropState;
+
+typedef struct EdgeRefRowState
+{
+	ExprState 	xprstate;
+	ExprState  *arg;
+	Relation   *edgerefrels;
+	Snapshot    snapshot;
+} EdgeRefRowState;
 
 /* ----------------------------------------------------------------
  *				 Executor State Trees

@@ -1430,4 +1430,17 @@ typedef struct OnConflictExpr
 	List	   *exclRelTlist;	/* tlist of the EXCLUDED pseudo relation */
 } OnConflictExpr;
 
+typedef struct EdgeRefProp
+{
+	NodeTag		type;
+	Node	   *arg;
+} EdgeRefProp;
+
+typedef struct EdgeRefRow
+{
+	NodeTag		type;
+	Node	   *arg;
+	int			location;
+} EdgeRefRow;
+
 #endif   /* PRIMNODES_H */

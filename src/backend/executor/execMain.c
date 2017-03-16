@@ -232,6 +232,10 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 	estate->es_crosscheck_snapshot = RegisterSnapshot(queryDesc->crosscheck_snapshot);
 	estate->es_top_eflags = eflags;
 	estate->es_instrument = queryDesc->instrument_options;
+	estate->es_num_edgerefrels = queryDesc->plannedstmt->nVlePaths;
+	if (estate->es_num_edgerefrels > 0)
+		estate->es_edgerefrels = (Relation *)
+			palloc0(sizeof(Relation) * estate->es_num_edgerefrels);
 
 	/*
 	 * Initialize the plan state tree

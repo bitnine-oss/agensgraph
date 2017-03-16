@@ -5421,6 +5421,10 @@ DATA(insert OID = 7144 ( edge_lt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 
 DATA(insert OID = 7145 ( edge_gt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7022 7022" _null_ _null_ _null_ _null_ _null_ edge_gt _null_ _null_ _null_ ));
 DATA(insert OID = 7146 ( edge_le		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7022 7022" _null_ _null_ _null_ _null_ _null_ edge_le _null_ _null_ _null_ ));
 DATA(insert OID = 7147 ( edge_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7022 7022" _null_ _null_ _null_ _null_ _null_ edge_ge _null_ _null_ _null_ ));
+/* edgeref */
+DATA(insert OID = 7050 ( edgeref		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 7052 "23 27" _null_ _null_ _null_ _null_ _null_ edgeref _null_ _null_ _null_ ));
+DATA(insert OID = 7053 ( edgeref_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7052 "2275" _null_ _null_ _null_ _null_ _null_ edgeref_in _null_ _null_ _null_ ));
+DATA(insert OID = 7054 ( edgeref_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7052" _null_ _null_ _null_ _null_ _null_ edgeref_out _null_ _null_ _null_ ));
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

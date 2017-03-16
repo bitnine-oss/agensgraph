@@ -126,6 +126,7 @@ static Node *transformCollateClause(ParseState *pstate, CollateClause *c);
 static Node *transformJsonIndirection(ParseState *pstate, Node *json,
 									  List *indirection);
 static Node *transformJsonObject(ParseState *pstate, JsonObject *jo);
+static Node *transformEdgeRefRow(ParseState *pstate, EdgeRefRow *err);
 static Node *make_row_comparison_op(ParseState *pstate, List *opname,
 					   List *largs, List *rargs, int location);
 static Node *make_row_distinct_op(ParseState *pstate, List *opname,
@@ -384,6 +385,10 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 			result = transformJsonObject(pstate, (JsonObject *) expr);
 			break;
 
+		case T_EdgeRefRow:
+			result = transformEdgeRefRow(pstate, (EdgeRefRow *) expr);
+			break;
+
 		default:
 			/* should not reach here */
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
@@ -468,6 +473,13 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 		case JSONOID:
 		case JSONBOID:
 			return transformJsonIndirection(pstate, result, indirection);
+		case EDGEREFOID:
+			{
+				EdgeRefProp *fn = (EdgeRefProp *) makeNode(EdgeRefProp);
+				fn->arg = result;
+				result = (Node *) fn;
+			}
+			return transformJsonIndirection(pstate, result, indirection);
 		default:
 			break;
 	}
@@ -505,6 +517,25 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 														   exprTypmod(result),
 														   subscripts,
 														   NULL);
+
+			if (exprType(result) == EDGEREFOID)
+			{
+				EdgeRefProp *fn = (EdgeRefProp *) makeNode(EdgeRefProp);
+				List *json_path = NIL;
+				ListCell *le;
+
+				fn->arg = result;
+				result = (Node *) fn;
+
+				for_each_cell(le, i)
+				{
+					json_path = lappend(json_path, lfirst(le));
+				}
+				Assert(list_length(json_path) > 0);
+
+				return transformJsonIndirection(pstate, result, json_path);
+			}
+
 			subscripts = NIL;
 
 			newresult = ParseFuncOrColumn(pstate,
@@ -2769,6 +2800,25 @@ transformJsonObject(ParseState *pstate, JsonObject *jo)
 	return transformFuncCall(pstate, build);
 }
 
+static Node *
+transformEdgeRefRow(ParseState *pstate, EdgeRefRow *err)
+{
+	EdgeRefRow *newnode = makeNode(EdgeRefRow);
+	Oid argtype;
+
+	newnode->arg = transformExprRecurse(pstate, err->arg);
+	argtype = exprType(newnode->arg);
+	if (argtype != EDGEREFOID)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("argument(s) of edgerefrow function must be type edgeref, "
+						"not type %s", format_type_be(argtype)),
+				 parser_errposition(pstate, err->location)));
+	newnode->location = err->location;
+
+	return (Node *) newnode;
+}
+
 /*
  * Transform a "row compare-op row" construct
  *
@@ -3571,9 +3621,18 @@ resolveAsElem(ParseState *pstate, ColumnRef *cref)
 		ArrayExpr  *patharr;
 
 		/* get properties */
-		res = ParseFuncOrColumn(pstate,
-								list_make1(makeString(AG_ELEM_PROP_MAP)),
-								list_make1(res), NULL, -1);
+		if (exprType(res) == EDGEREFOID)
+		{
+			EdgeRefProp *fn = (EdgeRefProp *) makeNode(EdgeRefProp);
+			fn->arg = res;
+			res = (Node *) fn;
+		}
+		else
+		{
+			res = ParseFuncOrColumn(pstate,
+									list_make1(makeString(AG_ELEM_PROP_MAP)),
+									list_make1(res), NULL, -1);
+		}
 
 		for_each_cell(lf, list_nth_cell(cref->fields, indidx))
 		{
@@ -3723,7 +3782,9 @@ scanRTEForElem(ParseState *pstate, RangeTblEntry *rte, char *colname,
 			continue;
 
 		get_rte_attribute_type(rte, attrno, &vartypid, &vartypmod, &varcollid);
-		if (vartypid != VERTEXOID && vartypid != EDGEOID)
+		if (vartypid != VERTEXOID &&
+			vartypid != EDGEOID &&
+			vartypid != EDGEREFOID)
 			continue;
 
 		if (res != NULL)

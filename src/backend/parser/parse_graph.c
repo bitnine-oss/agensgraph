@@ -44,6 +44,7 @@
 #include "parser/parsetree.h"
 #include "rewrite/rewriteHandler.h"
 #include "utils/builtins.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -59,6 +60,7 @@
 #define VLE_COLNAME_LEVEL		"level"
 #define VLE_COLNAME_ROWIDS		"rowids"
 #define VLE_COLNAME_PATH		"path"
+#define VLE_COLNAME_EREF		"eref"		/* edgeref */
 
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
@@ -150,8 +152,9 @@ static SelectStmt *genVLESubselect(ParseState *pstate, CypherRel *crel,
 								   bool out);
 static Node *genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out);
 static Node *genVLERightChild(ParseState *pstate, CypherRel *crel, bool out);
-static Node *genEdgeNode(CypherRel *crel, char *aliasname);
+static Node *genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname);
 static RangeSubselect *genEdgeUnionVLE(char *edge_label);
+static RangeSubselect *genInhEdge(RangeVar *r, Oid parentoid);
 static Node *genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg);
 static List *genQualifiedName(char *name1, char *name2);
 static Node *genVLEQual(char *alias, Node *propMap);
@@ -303,6 +306,7 @@ static ResTarget *makeSimpleResTarget(char *field, char *name);
 static ResTarget *makeResTarget(Node *val, char *name);
 static RowExpr *makeRowExpr(List *args);
 static Node *makeColumnRef(List *fields);
+static Node *makeDummyEdgeRef(Node *ctid);
 static bool IsNullAConst(Node *arg);
 
 /* utils */
@@ -1832,14 +1836,14 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList)
  * FROM (
  *     SELECT l.start, l.end,
  *            ARRAY[ROW(l.tableoid, l.ctid)] AS rowids,
- *            ARRAY[l.id] AS path
+ *            ARRAY[l.eref] AS path
  *     FROM edge AS l
  *     WHERE l.start = outer_vid AND l.properties @> ...)
  *   VLE JOIN
  *     LATERAL (
  *     SELECT r.end,
  *            ROW(r.tableoid, r.ctid) AS rowid,
- *            r.id
+ *            r.eref
  *     FROM edge AS r
  *     WHERE  r.start = l.end AND r.properties @> ...)
  *   ON TRUE
@@ -1925,7 +1929,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 	char	   *end_name;
 	Node	   *vid;
 	A_ArrayExpr *rowidarr;
-	A_ArrayExpr *idarr;
+	A_ArrayExpr *erefarr;
 	List	   *colnames = NIL;
 	SelectStmt *sel;
 	RangeSubselect *sub;
@@ -1972,11 +1976,11 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 		{
 			TypeCast *path;
 
-			idarr = makeNode(A_ArrayExpr);
-			idarr->location = -1;
+			erefarr = makeNode(A_ArrayExpr);
+			erefarr->location = -1;
 			path = makeNode(TypeCast);
-			path->arg = (Node *) idarr;
-			path->typeName = makeTypeName("_graphid");
+			path->arg = (Node *) erefarr;
+			path->typeName = makeTypeName("_edgeref");
 			path->location = -1;
 
 			values = lappend(values, path);
@@ -1995,7 +1999,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 		RowExpr	   *row;
 		TypeCast   *cast;
 		ResTarget  *rowids;
-		List	   *tlist;
+		List	   *tlist = NIL;
 		Node	   *from;
 		List	   *where_args = NIL;
 
@@ -2016,25 +2020,30 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 
 		tlist = list_make3(start, end, rowids);
 
+		from = genEdgeNode(pstate, crel, "l");
+
 		if (out)
 		{
-			Node	   *id;
+			Node	   *edgeref;
 			ResTarget  *path;
 
-			id = makeColumnRef(genQualifiedName(NULL, AG_ELEM_LOCAL_ID));
-			idarr = makeNode(A_ArrayExpr);
-			idarr->elements = list_make1(id);
-			idarr->location = -1;
+			if (IsA(from, RangeSubselect))
+				edgeref = makeColumnRef(genQualifiedName(NULL,
+														 VLE_COLNAME_EREF));
+			else
+				edgeref = makeDummyEdgeRef(copyObject(ctid));
+
+			erefarr = makeNode(A_ArrayExpr);
+			erefarr->elements = list_make1(edgeref);
+			erefarr->location = -1;
 			cast = makeNode(TypeCast);
-			cast->arg = (Node *) idarr;
-			cast->typeName = makeTypeName("_graphid");
+			cast->arg = (Node *) erefarr;
+			cast->typeName = makeTypeName("_edgeref");
 			cast->location = -1;
 			path = makeResTarget((Node *) cast, VLE_COLNAME_PATH);
 
 			tlist = lappend(tlist, path);
 		}
-
-		from = genEdgeNode(crel, "l");
 
 		if (vid != NULL)
 		{
@@ -2116,7 +2125,7 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 		end = makeSimpleResTarget(VLE_COLNAME_END, NULL);
 	}
 
-	from = genEdgeNode(crel, "r");
+	from = genEdgeNode(pstate, crel, "r");
 
 	joinqual = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) prev, (Node *) next,
 								-1);
@@ -2133,11 +2142,16 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 
 	if (out)
 	{
-		ResTarget *id;
+		Node	   *col;
+		ResTarget  *eref;
 
-		id = makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL);
+		if (IsA(from, RangeSubselect))
+			col = makeColumnRef(genQualifiedName(NULL, VLE_COLNAME_EREF));
+		else
+			col = makeDummyEdgeRef(copyObject(ctid));
 
-		tlist = lappend(tlist, id);
+		eref = makeResTarget(col, VLE_COLNAME_EREF);
+		tlist = lappend(tlist, eref);
 	}
 
 	sel = makeNode(SelectStmt);
@@ -2154,7 +2168,7 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 }
 
 static Node *
-genEdgeNode(CypherRel *crel, char *aliasname)
+genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
 {
 	char	   *typname;
 	Alias	   *alias;
@@ -2173,22 +2187,43 @@ genEdgeNode(CypherRel *crel, char *aliasname)
 	}
 	else
 	{
-		RangeVar *r;
+		RangeVar   *r;
+		LOCKMODE	lockmode;
+		Relation	rel;
 
 		r = makeRangeVar(get_graph_path(true), typname, -1);
 		r->inhOpt = INH_YES;
 		r->alias = alias;
-		edge = (Node *) r;
+
+		lockmode = isLockedRefname(pstate, aliasname)
+			? RowShareLock : AccessShareLock;
+		rel = parserOpenTable(pstate, r, lockmode);
+
+		if (has_subclass(rel->rd_id))
+		{
+			RangeSubselect *sub;
+
+			r->inhOpt = INH_NO;
+			sub = genInhEdge(r, rel->rd_id);
+			sub->alias = alias;
+			edge = (Node *) sub;
+		}
+		else
+		{
+			edge = (Node *) r;
+		}
+
+		heap_close(rel, NoLock);
 	}
 
 	return edge;
 }
 
 /*
- * SELECT start, "end", tableoid, ctid, id, properties
+ * SELECT start, "end", tableoid, ctid, 0 AS pathid, properties
  * FROM `get_graph_path()`.`edge_label`
  * UNION
- * SELECT "end" AS start, start AS "end", tableoid, ctid, id, properties
+ * SELECT "end" AS start, start AS "end", tableoid, ctid, 0 AS pathid, properties
  * FROM `get_graph_path()`.`edge_label`
  */
 static RangeSubselect *
@@ -2196,7 +2231,8 @@ genEdgeUnionVLE(char *edge_label)
 {
 	ResTarget  *tableoid;
 	ResTarget  *ctid;
-	ResTarget  *id;
+	Node	   *col;
+	ResTarget  *eref;
 	ResTarget  *prop_map;
 	RangeVar   *r;
 	SelectStmt *lsel;
@@ -2206,14 +2242,15 @@ genEdgeUnionVLE(char *edge_label)
 
 	tableoid = makeSimpleResTarget("tableoid", NULL);
 	ctid = makeSimpleResTarget("ctid", NULL);
-	id = makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL);
+	col = makeDummyEdgeRef(makeColumnRef(genQualifiedName(NULL, "ctid")));
+	eref = makeResTarget(col, VLE_COLNAME_EREF);
 	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
 
 	r = makeRangeVar(get_graph_path(true), edge_label, -1);
 	r->inhOpt = INH_YES;
 
 	lsel = makeNode(SelectStmt);
-	lsel->targetList = list_make4(tableoid, ctid, id, prop_map);
+	lsel->targetList = list_make4(tableoid, ctid, eref, prop_map);
 	lsel->fromClause = list_make1(r);
 
 	rsel = copyObject(lsel);
@@ -2298,7 +2335,75 @@ genVLEQual(char *alias, Node *propMap)
 	prop->location = -1;
 	propcond = makeSimpleA_Expr(AEXPR_OP, "@>", (Node *) prop, propMap, -1);
 
-	return (Node *)propcond;
+	return (Node *) propcond;
+}
+
+static RangeSubselect *
+genInhEdge(RangeVar *r, Oid parentoid)
+{
+	ResTarget  *start;
+	ResTarget  *end;
+	ResTarget  *tableoid;
+	ResTarget  *ctid;
+	Node	   *col;
+	ResTarget  *eref;
+	ResTarget  *prop_map;
+	SelectStmt *sel;
+	SelectStmt *lsel;
+	List	   *children;
+	ListCell   *el;
+	RangeSubselect *sub;
+
+	start = makeSimpleResTarget(AG_START_ID, NULL);
+	end = makeSimpleResTarget(AG_END_ID, NULL);
+	tableoid = makeSimpleResTarget("tableoid", NULL);
+	ctid = makeSimpleResTarget("ctid", NULL);
+	col = makeDummyEdgeRef(makeColumnRef(genQualifiedName(NULL, "ctid")));
+	eref = makeResTarget(col, VLE_COLNAME_EREF);
+	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
+
+	sel = makeNode(SelectStmt);
+	sel->targetList = list_make4(start, end, tableoid, ctid);
+	sel->targetList = lappend(sel->targetList, eref);
+	sel->targetList = lappend(sel->targetList, prop_map);
+	sel->fromClause = list_make1(r);
+	lsel = sel;
+
+	children = find_inheritance_children(parentoid, AccessShareLock);
+	foreach(el, children)
+	{
+		Oid childoid = lfirst_oid(el);
+		Relation childrel;
+		RangeVar *childrv;
+		SelectStmt *rsel;
+		SelectStmt *u;
+
+		childrel = heap_open(childoid, AccessShareLock);
+
+		childrv = makeRangeVar(get_graph_path(true),
+							   RelationGetRelationName(childrel),
+							   -1);
+		childrv->inhOpt = INH_YES;
+
+		heap_close(childrel, AccessShareLock);
+
+		rsel = copyObject(sel);
+		rsel->fromClause = list_delete_first(rsel->fromClause);
+		rsel->fromClause = list_make1(childrv);
+
+		u = makeNode(SelectStmt);
+		u->op = SETOP_UNION;
+		u->all = true;
+		u->larg = lsel;
+		u->rarg = rsel;
+
+		lsel = u;
+	}
+
+	sub = makeNode(RangeSubselect);
+	sub->subquery = (Node *) lsel;
+
+	return sub;
 }
 
 static RangeTblEntry *
@@ -3171,10 +3276,9 @@ resolve_future_vertex_mutator(Node *node, resolve_future_vertex_context *ctx)
 		{
 			var = (Var *) fselect->arg;
 
-			/* TODO: use Anum_vertex_id */
 			if ((int) var->varlevelsup == ctx->sublevels_up &&
 				exprType((Node *) var) == VERTEXOID &&
-				fselect->fieldnum == 1)
+				fselect->fieldnum == Anum_vertex_id)
 				return node;
 		}
 
@@ -5200,8 +5304,25 @@ makeColumnRef(List *fields)
 
 	n->fields = fields;
 	n->location = -1;
+	return (Node *)n;
+}
 
-	return (Node *) n;
+static Node *
+makeDummyEdgeRef(Node *ctid)
+{
+	A_Const	   *relid;
+	FuncCall   *edgeref;
+
+	/* dummy relid */
+	relid = makeNode(A_Const);
+	relid->val.type = T_Integer;
+	relid->val.val.ival = 0;
+	relid->location = -1;
+
+	edgeref = makeFuncCall(list_make1(makeString("edgeref")),
+						   list_make2(relid, ctid), -1);
+
+	return (Node *) edgeref;
 }
 
 static bool
