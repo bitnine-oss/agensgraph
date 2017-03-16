@@ -128,6 +128,8 @@ typedef struct PlannerGlobal
 	bool		parallelModeNeeded;		/* parallel mode actually required? */
 
 	char		maxParallelHazard;		/* worst PROPARALLEL hazard level */
+
+	int			nVlePaths;		/* number of path variables */
 } PlannerGlobal;
 
 /* macro for fetching the Plan associated with a SubPlan node */

@@ -292,6 +292,45 @@ match (a:person {id: 3}), (b:person {id: 1}) create (a)-[:knows]->(b);
 
 match (a:person {id: 1})-[x:knows*1..]->(b:person) return a.id, b.id, x;
 
+-- edgeref
+
+-- 1->2->3->4
+-- `->5
+match (a:person {id: 3})-[k:knows]->(b:person {id: 1}) delete k;
+match (a:person {id: 1})-[k:knows]->(b:person {id: 5}) delete k;
+
+create elabel friendships inherits (knows);
+
+match (a:person {id: 1}) create (a)-[:friendships {fromDate:'2014-11-24'}]->(:person {id: 5});
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+return a.id, b.id, x[1].fromdate;
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+where x[1].fromdate is not null
+return a.id, b.id, x[1].fromdate;
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1].fromdate as fromdate
+return fromdate;
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1
+return x1.fromdate, x1;
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+where x[2].fromdate is not null
+with x[1] as x1, array_length(x, 1) as l
+return edgerefrow(x1), l;
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1, array_length(x, 1) as l
+return edgerefrow(x1), l;
+
+match (a:person {id: 1})-[x:knows*1..2]-(b:person)
+with x[1] as x1, array_length(x, 1) as l
+return edgerefrow(x1), l;
+
 -- shortestpath(), allshortestpaths()
 
 CREATE OR REPLACE FUNCTION ids(vertex[]) RETURNS int[] AS $$
@@ -310,7 +349,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 1->2->3->4->5
-match (a:person {id: 3})-[k:knows]->(b:person {id: 1}) delete k;
 match (a:person {id: 1})-[k:knows]->(b:person {id: 5}) delete k;
 match (a:person {id: 4}), (b:person {id: 5}) create (a)-[:knows]->(b);
 

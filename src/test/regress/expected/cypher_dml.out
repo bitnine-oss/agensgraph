@@ -696,33 +696,33 @@ CREATE (:person {id: 1})-[:knows]->
        (:person {id: 3})-[:knows]->
        (:person {id: 4});
 match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
- id | id |     x     
-----+----+-----------
- 1  | 2  | {6.1}
- 1  | 3  | {6.1,6.2}
+ id | id |             x             
+----+----+---------------------------
+ 1  | 2  | {"(0,(0,1))"}
+ 1  | 3  | {"(0,(0,1))","(0,(0,2))"}
 (2 rows)
 
 -- 1->2->3->4
 -- `->5
 match (a:person {id: 1}) create (a)-[:knows]->(:person {id: 5});
 match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
- id | id |     x     
-----+----+-----------
- 1  | 2  | {6.1}
- 1  | 3  | {6.1,6.2}
- 1  | 5  | {6.4}
+ id | id |             x             
+----+----+---------------------------
+ 1  | 2  | {"(0,(0,1))"}
+ 1  | 3  | {"(0,(0,1))","(0,(0,2))"}
+ 1  | 5  | {"(0,(0,4))"}
 (3 rows)
 
 -- 1<->2->3->4
 -- `->5
 match (a:person {id: 2}), (b:person {id: 1}) create (a)-[:knows]->(b);
 match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
- id | id |     x     
-----+----+-----------
- 1  | 1  | {6.1,6.5}
- 1  | 2  | {6.1}
- 1  | 3  | {6.1,6.2}
- 1  | 5  | {6.4}
+ id | id |             x             
+----+----+---------------------------
+ 1  | 1  | {"(0,(0,1))","(0,(0,5))"}
+ 1  | 2  | {"(0,(0,1))"}
+ 1  | 3  | {"(0,(0,1))","(0,(0,2))"}
+ 1  | 5  | {"(0,(0,4))"}
 (4 rows)
 
 match (a:person {id: 1})-[x:knows*0..0]->(b:person) return a.id, b.id, x;
@@ -732,78 +732,78 @@ match (a:person {id: 1})-[x:knows*0..0]->(b:person) return a.id, b.id, x;
 (1 row)
 
 match (a:person {id: 1})-[x:knows*0..1]->(b:person) return a.id, b.id, x;
- id | id |   x   
-----+----+-------
+ id | id |       x       
+----+----+---------------
  1  | 1  | {}
- 1  | 2  | {6.1}
- 1  | 5  | {6.4}
+ 1  | 2  | {"(0,(0,1))"}
+ 1  | 5  | {"(0,(0,4))"}
 (3 rows)
 
 match (a:person {id: 1})-[x:knows*2..2]->(b:person) return a.id, b.id, x;
- id | id |     x     
-----+----+-----------
- 1  | 1  | {6.1,6.5}
- 1  | 3  | {6.1,6.2}
+ id | id |             x             
+----+----+---------------------------
+ 1  | 1  | {"(0,(0,1))","(0,(0,5))"}
+ 1  | 3  | {"(0,(0,1))","(0,(0,2))"}
 (2 rows)
 
 match (a:person {id: 2})-[x:knows*1..1]->(b:person) return a.id, b.id, x;
- id | id |   x   
-----+----+-------
- 2  | 1  | {6.5}
- 2  | 3  | {6.2}
+ id | id |       x       
+----+----+---------------
+ 2  | 1  | {"(0,(0,5))"}
+ 2  | 3  | {"(0,(0,2))"}
 (2 rows)
 
 match (a:person)-[x:knows*1..1]->(b:person) return a.id, b.id, x;
- id | id |   x   
-----+----+-------
- 1  | 2  | {6.1}
- 1  | 5  | {6.4}
- 2  | 1  | {6.5}
- 2  | 3  | {6.2}
- 3  | 4  | {6.3}
+ id | id |       x       
+----+----+---------------
+ 1  | 2  | {"(0,(0,1))"}
+ 1  | 5  | {"(0,(0,4))"}
+ 2  | 1  | {"(0,(0,5))"}
+ 2  | 3  | {"(0,(0,2))"}
+ 3  | 4  | {"(0,(0,3))"}
 (5 rows)
 
 match (a:person)-[x:knows*]->(b:person) return a.id, b.id, x;
- id | id |         x         
-----+----+-------------------
- 1  | 2  | {6.1}
- 1  | 1  | {6.1,6.5}
- 1  | 5  | {6.1,6.5,6.4}
- 1  | 3  | {6.1,6.2}
- 1  | 4  | {6.1,6.2,6.3}
- 1  | 5  | {6.4}
- 2  | 1  | {6.5}
- 2  | 2  | {6.5,6.1}
- 2  | 3  | {6.5,6.1,6.2}
- 2  | 4  | {6.5,6.1,6.2,6.3}
- 2  | 5  | {6.5,6.4}
- 2  | 3  | {6.2}
- 2  | 4  | {6.2,6.3}
- 3  | 4  | {6.3}
+ id | id |                         x                         
+----+----+---------------------------------------------------
+ 1  | 2  | {"(0,(0,1))"}
+ 1  | 1  | {"(0,(0,1))","(0,(0,5))"}
+ 1  | 5  | {"(0,(0,1))","(0,(0,5))","(0,(0,4))"}
+ 1  | 3  | {"(0,(0,1))","(0,(0,2))"}
+ 1  | 4  | {"(0,(0,1))","(0,(0,2))","(0,(0,3))"}
+ 1  | 5  | {"(0,(0,4))"}
+ 2  | 1  | {"(0,(0,5))"}
+ 2  | 2  | {"(0,(0,5))","(0,(0,1))"}
+ 2  | 3  | {"(0,(0,5))","(0,(0,1))","(0,(0,2))"}
+ 2  | 4  | {"(0,(0,5))","(0,(0,1))","(0,(0,2))","(0,(0,3))"}
+ 2  | 5  | {"(0,(0,5))","(0,(0,4))"}
+ 2  | 3  | {"(0,(0,2))"}
+ 2  | 4  | {"(0,(0,2))","(0,(0,3))"}
+ 3  | 4  | {"(0,(0,3))"}
 (14 rows)
 
 match (a:person {id: 1})-[x:knows*0..3]->(b:person) return a.id, b.id, x;
- id | id |       x       
-----+----+---------------
- 1  | 1  | {6.1,6.5}
+ id | id |                   x                   
+----+----+---------------------------------------
+ 1  | 1  | {"(0,(0,1))","(0,(0,5))"}
  1  | 1  | {}
- 1  | 2  | {6.1}
- 1  | 3  | {6.1,6.2}
- 1  | 4  | {6.1,6.2,6.3}
- 1  | 5  | {6.4}
- 1  | 5  | {6.1,6.5,6.4}
+ 1  | 2  | {"(0,(0,1))"}
+ 1  | 3  | {"(0,(0,1))","(0,(0,2))"}
+ 1  | 4  | {"(0,(0,1))","(0,(0,2))","(0,(0,3))"}
+ 1  | 5  | {"(0,(0,4))"}
+ 1  | 5  | {"(0,(0,1))","(0,(0,5))","(0,(0,4))"}
 (7 rows)
 
 match (a:person {id: 1})-[x*1..2]-(b:person) return a.id, b.id, x;
- id | id |     x     
-----+----+-----------
- 1  | 2  | {6.1}
- 1  | 1  | {6.1,6.5}
- 1  | 3  | {6.1,6.2}
- 1  | 5  | {6.4}
- 1  | 2  | {6.5}
- 1  | 3  | {6.5,6.2}
- 1  | 1  | {6.5,6.1}
+ id | id |             x             
+----+----+---------------------------
+ 1  | 2  | {"(2,(0,1))"}
+ 1  | 1  | {"(2,(0,1))","(2,(0,5))"}
+ 1  | 3  | {"(2,(0,1))","(2,(0,2))"}
+ 1  | 5  | {"(2,(0,4))"}
+ 1  | 2  | {"(2,(0,5))"}
+ 1  | 3  | {"(2,(0,5))","(2,(0,2))"}
+ 1  | 1  | {"(2,(0,5))","(2,(0,1))"}
 (7 rows)
 
 -- 1->2->3->4
@@ -814,15 +814,87 @@ match (a:person {id: 2})-[k:knows]->(b:person {id: 1}) delete k;
 -- `->5
 match (a:person {id: 3}), (b:person {id: 1}) create (a)-[:knows]->(b);
 match (a:person {id: 1})-[x:knows*1..]->(b:person) return a.id, b.id, x;
- id | id |         x         
-----+----+-------------------
- 1  | 2  | {6.1}
- 1  | 3  | {6.1,6.2}
- 1  | 1  | {6.1,6.2,6.6}
- 1  | 5  | {6.1,6.2,6.6,6.4}
- 1  | 4  | {6.1,6.2,6.3}
- 1  | 5  | {6.4}
+ id | id |                         x                         
+----+----+---------------------------------------------------
+ 1  | 2  | {"(0,(0,1))"}
+ 1  | 3  | {"(0,(0,1))","(0,(0,2))"}
+ 1  | 1  | {"(0,(0,1))","(0,(0,2))","(0,(0,6))"}
+ 1  | 5  | {"(0,(0,1))","(0,(0,2))","(0,(0,6))","(0,(0,4))"}
+ 1  | 4  | {"(0,(0,1))","(0,(0,2))","(0,(0,3))"}
+ 1  | 5  | {"(0,(0,4))"}
 (6 rows)
+
+-- edgeref
+-- 1->2->3->4
+-- `->5
+match (a:person {id: 3})-[k:knows]->(b:person {id: 1}) delete k;
+match (a:person {id: 1})-[k:knows]->(b:person {id: 5}) delete k;
+create elabel friendships inherits (knows);
+match (a:person {id: 1}) create (a)-[:friendships {fromDate:'2014-11-24'}]->(:person {id: 5});
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+return a.id, b.id, x[1].fromdate;
+ id | id |  fromdate  
+----+----+------------
+ 1  | 2  | 
+ 1  | 3  | 
+ 1  | 5  | 2014-11-24
+(3 rows)
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+where x[1].fromdate is not null
+return a.id, b.id, x[1].fromdate;
+ id | id |  fromdate  
+----+----+------------
+ 1  | 5  | 2014-11-24
+(1 row)
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1].fromdate as fromdate
+return fromdate;
+  fromdate  
+------------
+ 
+ 
+ 2014-11-24
+(3 rows)
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1
+return x1.fromdate, x1;
+  fromdate  |    x1     
+------------+-----------
+            | (0,(0,1))
+            | (0,(0,1))
+ 2014-11-24 | (1,(0,1))
+(3 rows)
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+where x[2].fromdate is not null
+with x[1] as x1, array_length(x, 1) as l
+return edgerefrow(x1), l;
+ ?column? | l 
+----------+---
+(0 rows)
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1, array_length(x, 1) as l
+return edgerefrow(x1), l;
+                      ?column?                       | l 
+-----------------------------------------------------+---
+ knows[6.1][5.1,5.2]{}                               | 1
+ knows[6.1][5.1,5.2]{}                               | 2
+ friendships[7.1][5.1,5.6]{"fromdate": "2014-11-24"} | 1
+(3 rows)
+
+match (a:person {id: 1})-[x:knows*1..2]-(b:person)
+with x[1] as x1, array_length(x, 1) as l
+return edgerefrow(x1), l;
+                      ?column?                       | l 
+-----------------------------------------------------+---
+ knows[6.1][5.1,5.2]{}                               | 1
+ knows[6.1][5.1,5.2]{}                               | 2
+ friendships[7.1][5.1,5.6]{"fromdate": "2014-11-24"} | 1
+(3 rows)
 
 -- shortestpath(), allshortestpaths()
 CREATE OR REPLACE FUNCTION ids(vertex[]) RETURNS int[] AS $$
@@ -840,7 +912,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 -- 1->2->3->4->5
-match (a:person {id: 3})-[k:knows]->(b:person {id: 1}) delete k;
 match (a:person {id: 1})-[k:knows]->(b:person {id: 5}) delete k;
 match (a:person {id: 4}), (b:person {id: 5}) create (a)-[:knows]->(b);
 MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 4
@@ -855,7 +926,8 @@ RETURN ids(nodes(shortestpath((p)-[:knows]->(f)))) AS ids;
  ids 
 -----
  {}
-(1 row)
+ {}
+(2 rows)
 
 MATCH (p:person), (f:person) WHERE p.id::int = 3
 RETURN ids(nodes(shortestpath((p)<-[:knows]-(f)))) AS ids;
@@ -866,7 +938,8 @@ RETURN ids(nodes(shortestpath((p)<-[:knows]-(f)))) AS ids;
  {}
  {}
  {}
-(5 rows)
+ {}
+(6 rows)
 
 MATCH (p:person), (f:person) WHERE p.id::int = 3
 RETURN ids(nodes(shortestpath((p)-[:knows*]-(f)))) AS ids;
@@ -877,7 +950,8 @@ RETURN ids(nodes(shortestpath((p)-[:knows*]-(f)))) AS ids;
  {}
  {3,4}
  {3,4,5}
-(5 rows)
+ {3,4,5}
+(6 rows)
 
 MATCH (p:person), (f:person), x = shortestpath((p)-[:knows*]-(f))
 WHERE p.id::int = 3
@@ -888,7 +962,8 @@ RETURN ids(nodes(x)) AS ids;
  {3,2}
  {3,4}
  {3,4,5}
-(4 rows)
+ {3,4,5}
+(5 rows)
 
 MATCH x = shortestpath((p:person)-[:knows*]-(f:person))
 WHERE p.id::int = 3
@@ -899,7 +974,8 @@ RETURN ids(nodes(x)) AS ids;
  {3,2}
  {3,4}
  {3,4,5}
-(4 rows)
+ {3,4,5}
+(5 rows)
 
 MATCH (p:person), (f:person) WHERE p.id::int = 3
 RETURN ids(nodes(shortestpath((p)-[:knows*0..1]-(f)))) AS ids;
@@ -910,7 +986,8 @@ RETURN ids(nodes(shortestpath((p)-[:knows*0..1]-(f)))) AS ids;
  {3}
  {3,4}
  {}
-(5 rows)
+ {}
+(6 rows)
 
 MATCH (p:person), (f:person) WHERE p.id::int = 1
 RETURN ids(nodes(shortestpath((p)-[:knows*2..]->(f)))) AS ids;
@@ -924,7 +1001,8 @@ RETURN array_length(allshortestpaths((p)-[:knows*]-(f)), 1) AS cnt;
  cnt 
 -----
    2
-(1 row)
+   2
+(2 rows)
 
 SET graph_path = agens;
 --
@@ -1536,7 +1614,7 @@ drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label rel
 DROP GRAPH t CASCADE;
-NOTICE:  drop cascades to 7 other objects
+NOTICE:  drop cascades to 8 other objects
 DETAIL:  drop cascades to sequence t.ag_label_seq
 drop cascades to label ag_vertex
 drop cascades to label ag_edge
@@ -1544,6 +1622,7 @@ drop cascades to label time
 drop cascades to label goes
 drop cascades to label person
 drop cascades to label knows
+drop cascades to label friendships
 DROP GRAPH o CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence o.ag_label_seq

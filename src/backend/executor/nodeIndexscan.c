@@ -911,8 +911,7 @@ InitScanLabelSkipIdx(IndexScanState *node)
 		ScanKey		skey = &node->iss_ScanKeys[i];
 		Oid			opfamily;
 
-		/* TODO: use Anum_vertex_id */
-		if (skey->sk_attno != 1)
+		if (skey->sk_attno != Anum_vertex_id)
 			continue;
 
 		/* index on `id` column has no expression */
@@ -949,6 +948,7 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 {
 	IndexScanState *indexstate;
 	Relation	currentRelation;
+	int			edgerefid;
 	bool		relistarget;
 
 	/*
@@ -1001,6 +1001,19 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 
 	indexstate->ss.ss_currentRelation = currentRelation;
 	indexstate->ss.ss_currentScanDesc = NULL;	/* no heap scan here */
+
+	edgerefid = node->scan.edgerefid;
+	if (edgerefid != -1)
+	{
+		Relation edgerefrel = estate->es_edgerefrels[edgerefid];
+
+		Assert(edgerefid < estate->es_num_edgerefrels);
+
+		if (edgerefrel == InvalidRelation)
+			estate->es_edgerefrels[edgerefid] = currentRelation;
+		else
+			Assert(edgerefrel->rd_id == currentRelation->rd_id);
+	}
 
 	InitScanLabelInfo((ScanState *) indexstate);
 
