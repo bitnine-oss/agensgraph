@@ -1648,7 +1648,6 @@ _outEdgeRefRows(StringInfo str, const EdgeRefRows *node)
 	WRITE_NODE_FIELD(arg);
 }
 
-
 /*****************************************************************************
  *
  *	Stuff from relation.h.

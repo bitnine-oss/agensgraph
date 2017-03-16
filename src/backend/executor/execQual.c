@@ -4519,7 +4519,6 @@ ExecEvalEdgeRefRow(ExprState *exprstate, ExprContext *econtext,
 
 	eref = DatumGetEdgeRef(result);
 
-
 	ItemPointerSet(&tup.t_self, EdgeRefGetBlockNumber(eref),
 				   EdgeRefGetOffsetNumber(eref));
 	rel = row->edgerefrels[EdgeRefGetRelid(eref)];

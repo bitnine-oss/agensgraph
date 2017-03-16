@@ -2031,6 +2031,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 		{
 			Node	   *edgeref;
 			ResTarget  *path;
+			Node	   *relid;
 
 			if (IsA(from, RangeSubselect))
 				edgeref = makeColumnRef(genQualifiedName(NULL,
