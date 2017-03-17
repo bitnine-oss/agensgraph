@@ -3,15 +3,37 @@
  * core.c
  *	  Routines copied from PostgreSQL core distribution.
  *
+
+ * The main purpose of this files is having access to static functions in core.
+ * Another purpose is tweaking functions behavior by replacing part of them by
+ * macro definitions. See at the end of pg_hint_plan.c for details. Anyway,
+ * this file *must* contain required functions without making any change.
+ *
+ * This file contains the following functions from corresponding files.
+ *
  * src/backend/optimizer/path/allpaths.c
+ *
+ *	static functions:
+ *	   set_plain_rel_pathlist()
  *     set_append_rel_pathlist()
  *     generate_mergeappend_paths()
  *     get_cheapest_parameterized_child_path()
  *     accumulate_append_subpath()
- *     standard_join_search()
+ *
+ *  public functions:
+ *     standard_join_search(): This funcion is not static. The reason for
+ *        including this function is make_rels_by_clause_joins. In order to
+ *        avoid generating apparently unwanted join combination, we decided to
+ *        change the behavior of make_join_rel, which is called under this
+ *        function.
  *
  * src/backend/optimizer/path/joinrels.c
- *     join_search_one_level()
+ *
+ *	public functions:
+ *     join_search_one_level(): We have to modify this to call my definition of
+ * 		    make_rels_by_clause_joins.
+ *
+ *	static functions:
  *     make_rels_by_clause_joins()
  *     make_rels_by_clauseless_joins()
  *     join_is_legal()
@@ -20,11 +42,43 @@
  *     mark_dummy_rel()
  *     restriction_is_constant_false()
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ *
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *-------------------------------------------------------------------------
  */
+
+
+/*
+ * set_plain_rel_pathlist
+ *	  Build access paths for a plain relation (no subquery, no inheritance)
+ */
+static void
+set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
+{
+	Relids		required_outer;
+
+	/*
+	 * We don't support pushing join clauses into the quals of a seqscan, but
+	 * it could still have required parameterization due to LATERAL refs in
+	 * its tlist.
+	 */
+	required_outer = rel->lateral_relids;
+
+	/* Consider sequential scan */
+	add_path(rel, create_seqscan_path(root, rel, required_outer, 0));
+
+	/* If appropriate, consider parallel sequential scan */
+	if (rel->consider_parallel && required_outer == NULL)
+		create_plain_partial_paths(root, rel);
+
+	/* Consider index scans */
+	create_index_paths(root, rel);
+
+	/* Consider TID scans */
+	create_tidscan_paths(root, rel);
+}
 
 /*
  * set_append_rel_pathlist
@@ -573,6 +627,83 @@ standard_join_search(PlannerInfo *root, int levels_needed, List *initial_rels)
 
 	return rel;
 }
+
+/*
+ * create_plain_partial_paths
+ *	  Build partial access paths for parallel scan of a plain relation
+ */
+static void
+create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
+{
+	int			parallel_workers;
+
+	parallel_workers = compute_parallel_worker(rel, rel->pages);
+
+	/* If any limit was set to zero, the user doesn't want a parallel scan. */
+	if (parallel_workers <= 0)
+		return;
+
+	/* Add an unordered partial path based on a parallel sequential scan. */
+	add_partial_path(rel, create_seqscan_path(root, rel, NULL, parallel_workers));
+}
+
+/*
+ * Compute the number of parallel workers that should be used to scan a
+ * relation.  "pages" is the number of pages from the relation that we
+ * expect to scan.
+ */
+static int
+compute_parallel_worker(RelOptInfo *rel, BlockNumber pages)
+{
+	int			parallel_workers;
+
+	/*
+	 * If the user has set the parallel_workers reloption, use that; otherwise
+	 * select a default number of workers.
+	 */
+	if (rel->rel_parallel_workers != -1)
+		parallel_workers = rel->rel_parallel_workers;
+	else
+	{
+		int			parallel_threshold;
+
+		/*
+		 * If this relation is too small to be worth a parallel scan, just
+		 * return without doing anything ... unless it's an inheritance child.
+		 * In that case, we want to generate a parallel path here anyway.  It
+		 * might not be worthwhile just for this relation, but when combined
+		 * with all of its inheritance siblings it may well pay off.
+		 */
+		if (pages < (BlockNumber) min_parallel_relation_size &&
+			rel->reloptkind == RELOPT_BASEREL)
+			return 0;
+
+		/*
+		 * Select the number of workers based on the log of the size of the
+		 * relation.  This probably needs to be a good deal more
+		 * sophisticated, but we need something here for now.  Note that the
+		 * upper limit of the min_parallel_relation_size GUC is chosen to
+		 * prevent overflow here.
+		 */
+		parallel_workers = 1;
+		parallel_threshold = Max(min_parallel_relation_size, 1);
+		while (pages >= (BlockNumber) (parallel_threshold * 3))
+		{
+			parallel_workers++;
+			parallel_threshold *= 3;
+			if (parallel_threshold > INT_MAX / 3)
+				break;			/* avoid overflow */
+		}
+	}
+
+	/*
+	 * In no case use more than max_parallel_workers_per_gather workers.
+	 */
+	parallel_workers = Min(parallel_workers, max_parallel_workers_per_gather);
+
+	return parallel_workers;
+}
+
 
 /*
  * join_search_one_level
