@@ -18,9 +18,17 @@ DATA = pg_hint_plan--1.2.0.sql pg_hint_plan--1.1.3--1.2.0.sql
 
 EXTRA_CLEAN = sql/ut-fdw.sql expected/ut-fdw.out RPMS
 
+ifdef USE_PGXS
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
+else
+subdir = contrib/pg_hint_plan
+top_builddir = ../..
+include $(top_builddir)/src/Makefile.global
+include $(top_srcdir)/contrib/contrib-global.mk
+override CPPFLAGS += -I$(top_srcdir)/src/pl/plpgsql/src
+endif
 
 STARBALL96 = pg_hint_plan96-$(HINTPLANVER).tar.gz
 STARBALLS = $(STARBALL96)
