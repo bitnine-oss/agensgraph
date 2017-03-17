@@ -1,13 +1,14 @@
 /*-------------------------------------------------------------------------
  *
  * make_join_rel.c
- *	  Routines copied from PostgreSQL core distribution.
+ *	  Routines copied from PostgreSQL core distribution with some
+ *	  modifications.
  *
  * src/backend/optimizer/path/joinrels.c
  *     make_join_rel()
  *
- * Portions Copyright (c) 2013-2016, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2013-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *-------------------------------------------------------------------------
@@ -127,9 +128,9 @@ make_join_rel(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2)
 		RowsHint   *domultiply = NULL;
 
 		/* Search for applicable rows hint for this join node */
-		for (i = 0; i < current_hint->num_hints[HINT_TYPE_ROWS]; i++)
+		for (i = 0; i < current_hint_state->num_hints[HINT_TYPE_ROWS]; i++)
 		{
-			rows_hint = current_hint->rows_hints[i];
+			rows_hint = current_hint_state->rows_hints[i];
 
 			/*
 			 * Skip this rows_hint if it is invalid from the first or it
