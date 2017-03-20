@@ -127,7 +127,7 @@ typedef struct PlannerGlobal
 
 	bool		parallelModeNeeded;		/* parallel mode actually required? */
 
-	int			nVlePaths;		/* number of path variables */
+	List	   *vlePathRelationOids;
 } PlannerGlobal;
 
 /* macro for fetching the Plan associated with a SubPlan node */
