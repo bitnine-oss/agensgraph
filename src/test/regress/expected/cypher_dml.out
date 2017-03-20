@@ -896,6 +896,19 @@ return edgerefrow(x1), l;
  friendships[7.1][5.1,5.6]{"fromdate": "2014-11-24"} | 1
 (3 rows)
 
+create elabel familyship inherits (friendships);
+match (a:person {id: 5}) create (a)-[:familyship {fromDate:'2015-12-24'}]->(:person {id: 6});
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1, x[2] as x2, array_length(x, 1) as l
+return edgerefrow(x1), edgerefrow(x2), l;
+                      ?column?                       |                      ?column?                      | l 
+-----------------------------------------------------+----------------------------------------------------+---
+ knows[6.1][5.1,5.2]{}                               |                                                    | 1
+ knows[6.1][5.1,5.2]{}                               | knows[6.2][5.2,5.3]{}                              | 2
+ friendships[7.1][5.1,5.6]{"fromdate": "2014-11-24"} |                                                    | 1
+ friendships[7.1][5.1,5.6]{"fromdate": "2014-11-24"} | familyship[8.2][5.6,5.8]{"fromdate": "2015-12-24"} | 2
+(4 rows)
+
 -- shortestpath(), allshortestpaths()
 CREATE OR REPLACE FUNCTION ids(vertex[]) RETURNS int[] AS $$
 DECLARE
@@ -913,6 +926,8 @@ END;
 $$ LANGUAGE plpgsql;
 -- 1->2->3->4->5
 match (a:person {id: 1})-[k:knows]->(b:person {id: 5}) delete k;
+match (a:person {id: 5})-[k:knows]->(b:person {id: 6}) delete k;
+match (a:person {id: 6}) delete a;
 match (a:person {id: 4}), (b:person {id: 5}) create (a)-[:knows]->(b);
 MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 4
 RETURN ids(nodes(shortestpath((p)-[:knows]->(f)))) AS ids;
@@ -1614,7 +1629,7 @@ drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label rel
 DROP GRAPH t CASCADE;
-NOTICE:  drop cascades to 8 other objects
+NOTICE:  drop cascades to 9 other objects
 DETAIL:  drop cascades to sequence t.ag_label_seq
 drop cascades to label ag_vertex
 drop cascades to label ag_edge
@@ -1623,6 +1638,7 @@ drop cascades to label goes
 drop cascades to label person
 drop cascades to label knows
 drop cascades to label friendships
+drop cascades to label familyship
 DROP GRAPH o CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence o.ag_label_seq
