@@ -146,12 +146,10 @@ static CustomScan *create_customscan_plan(PlannerInfo *root,
 					   CustomPath *best_path,
 					   List *tlist, List *scan_clauses);
 static NestLoop *create_nestloop_plan(PlannerInfo *root, NestPath *best_path);
-static void set_edgerefid_recurse(PlannerInfo *root, Plan *plan,
-								  List **reloids, List **edgerefids);
-static int get_edgerefid(PlannerInfo *root, Index scanrelid, List **reloids,
-						 List **edgerefids);
+static void set_edgerefid_recurse(PlannerInfo *root, Plan *plan);
+static int get_edgerefid(PlannerInfo *root, Index scanrelid);
 static void replace_edgerefid(List *tlist, int edgerefid);
-static int search_edgerefid(List *reloids, List *edgerefids, Index scanreloid);
+static int search_edgerefid(List *reloids, Index scanreloid);
 static MergeJoin *create_mergejoin_plan(PlannerInfo *root, MergePath *best_path);
 static HashJoin *create_hashjoin_plan(PlannerInfo *root, HashPath *best_path);
 static ModifyGraph *create_modifygraph_plan(PlannerInfo *root,
@@ -3522,16 +3520,10 @@ create_nestloop_plan(PlannerInfo *root,
 	if (best_path->jointype == JOIN_VLE &&
 		list_length(inner_plan->targetlist) == 3) /* a path is projected */
 	{
-		List *reloids = NIL;
-		List *edgerefids = NIL;
-
 		if (best_path->minhops != 0)
-			set_edgerefid_recurse(root, outer_plan, &reloids, &edgerefids);
+			set_edgerefid_recurse(root, outer_plan);
 
-		set_edgerefid_recurse(root, inner_plan, &reloids, &edgerefids);
-
-		list_free(reloids);
-		list_free(edgerefids);
+		set_edgerefid_recurse(root, inner_plan);
 	}
 
 	copy_generic_path_info(&join_plan->join.plan, &best_path->path);
@@ -3540,33 +3532,29 @@ create_nestloop_plan(PlannerInfo *root,
 }
 
 static void
-set_edgerefid_recurse(PlannerInfo *root, Plan *plan,
-					  List **reloids, List **edgerefids)
+set_edgerefid_recurse(PlannerInfo *root, Plan *plan)
 {
 	switch (nodeTag(plan))
 	{
 	case T_SeqScan:
 		{
 			SeqScan *sscan = (SeqScan *) plan;
-			sscan->edgerefid = get_edgerefid(root, sscan->scanrelid,
-											 reloids, edgerefids);
+			sscan->edgerefid = get_edgerefid(root, sscan->scanrelid);
 			replace_edgerefid(plan->targetlist, sscan->edgerefid);
-			/* List append */
 		}
 		break;
 	case T_IndexScan:
 		{
 			IndexScan *iscan = (IndexScan *) plan;
-			iscan->scan.edgerefid = get_edgerefid(root, iscan->scan.scanrelid,
-												  reloids, edgerefids);
+			iscan->scan.edgerefid = get_edgerefid(root, iscan->scan.scanrelid);
 			replace_edgerefid(plan->targetlist, iscan->scan.edgerefid);
 		}
 		break;
 	case T_IndexOnlyScan:
 		{
-			IndexScan *ioscan = (IndexScan *) plan;
-			ioscan->scan.edgerefid = get_edgerefid(root, ioscan->scan.scanrelid,
-												   reloids, edgerefids);
+			IndexOnlyScan *ioscan = (IndexOnlyScan *) plan;
+			ioscan->scan.edgerefid = get_edgerefid(root,
+												   ioscan->scan.scanrelid);
 			replace_edgerefid(plan->targetlist, ioscan->scan.edgerefid);
 		}
 		break;
@@ -3577,19 +3565,18 @@ set_edgerefid_recurse(PlannerInfo *root, Plan *plan,
 			foreach(el, apd->appendplans)
 			{
 				Plan *subplan = (Plan *) lfirst(el);
-				set_edgerefid_recurse(root, subplan, reloids, edgerefids);
+				set_edgerefid_recurse(root, subplan);
 			}
 		}
 		break;
 	case T_Result:
-		set_edgerefid_recurse(root, outerPlan(plan), reloids, edgerefids);
+		set_edgerefid_recurse(root, outerPlan(plan));
 		break;
 	case T_SubqueryScan:
 		{
 			SubqueryScan *sub = (SubqueryScan *) plan;
 			RelOptInfo *rel = root->simple_rel_array[sub->scan.scanrelid];
-			set_edgerefid_recurse(rel->subroot, sub->subplan, reloids,
-								  edgerefids);
+			set_edgerefid_recurse(rel->subroot, sub->subplan);
 		}
 		break;
 	default:
@@ -3599,36 +3586,37 @@ set_edgerefid_recurse(PlannerInfo *root, Plan *plan,
 }
 
 static int
-get_edgerefid(PlannerInfo *root, Index scanrelid,
-			  List **reloids, List **edgerefids)
+get_edgerefid(PlannerInfo *root, Index scanrelid)
 {
 	RangeTblEntry *rte;
 	int edgerefid;
 
 	rte = planner_rt_fetch(scanrelid, root);
-	edgerefid = search_edgerefid(*reloids, *edgerefids, rte->relid);
+	edgerefid = search_edgerefid(root->glob->vlePathRelationOids, rte->relid);
 	if (edgerefid == -1)
 	{
-		edgerefid = root->glob->nVlePaths++;
-		*edgerefids = lappend_int(*edgerefids, edgerefid);
-		*reloids = lappend_oid(*reloids, rte->relid);
+		edgerefid = list_length(root->glob->vlePathRelationOids);
+		root->glob->vlePathRelationOids = lappend_oid(
+				root->glob->vlePathRelationOids, rte->relid);
 	}
 
 	return edgerefid;
 }
 
 static int
-search_edgerefid(List *reloids, List *edgerefids, Index scanreloid)
+search_edgerefid(List *reloids, Index scanreloid)
 {
-	ListCell *el1;
-	ListCell *el2;
+	int			i = 0;
+	ListCell   *le;
 
-	forboth(el1, reloids, el2, edgerefids)
+	foreach(le, reloids)
 	{
-		Oid reloid = (Oid) lfirst_oid(el1);
+		Oid reloid = lfirst_oid(le);
 
 		if (reloid == scanreloid)
-			return lfirst_int(el2);
+			return i;
+
+		i++;
 	}
 
 	return -1;
