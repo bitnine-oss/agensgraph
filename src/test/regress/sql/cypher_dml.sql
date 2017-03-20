@@ -331,6 +331,14 @@ match (a:person {id: 1})-[x:knows*1..2]-(b:person)
 with x[1] as x1, array_length(x, 1) as l
 return edgerefrow(x1), l;
 
+create elabel familyship inherits (friendships);
+
+match (a:person {id: 5}) create (a)-[:familyship {fromDate:'2015-12-24'}]->(:person {id: 6});
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1, x[2] as x2, array_length(x, 1) as l
+return edgerefrow(x1), edgerefrow(x2), l;
+
 -- shortestpath(), allshortestpaths()
 
 CREATE OR REPLACE FUNCTION ids(vertex[]) RETURNS int[] AS $$
@@ -350,6 +358,8 @@ $$ LANGUAGE plpgsql;
 
 -- 1->2->3->4->5
 match (a:person {id: 1})-[k:knows]->(b:person {id: 5}) delete k;
+match (a:person {id: 5})-[k:knows]->(b:person {id: 6}) delete k;
+match (a:person {id: 6}) delete a;
 match (a:person {id: 4}), (b:person {id: 5}) create (a)-[:knows]->(b);
 
 MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 4
