@@ -2886,6 +2886,7 @@ _outSetOperationStmt(StringInfo str, const SetOperationStmt *node)
 	WRITE_NODE_FIELD(colCollations);
 	WRITE_NODE_FIELD(groupClauses);
 	WRITE_INT_FIELD(maxDepth);
+	WRITE_BOOL_FIELD(shortestpath);
 }
 
 static void
