@@ -1911,6 +1911,7 @@ transformSetOperationTree(ParseState *pstate, SelectStmt *stmt,
 		{
 			determineRecursiveColTypes(pstate, op->larg, ltargetlist);
 			op->maxDepth = pstate->p_parent_cte->maxdepth;
+			op->shortestpath = pstate->p_parent_cte->ctestop;
 		}
 
 		/*

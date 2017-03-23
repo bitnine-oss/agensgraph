@@ -98,6 +98,8 @@ static List *generate_append_tlist(List *colTypes, List *colCollations,
 					  List *input_tlists,
 					  List *refnames_tlist);
 static List *generate_setop_grouplist(SetOperationStmt *op, List *targetlist);
+static List *generate_setop_grouplist_for_shortestpath(SetOperationStmt *op,
+													   List *targetlist);
 static void expand_inherited_rtentry(PlannerInfo *root, RangeTblEntry *rte,
 						 Index rti);
 static void make_inh_translation_list(Relation oldrelation,
@@ -478,7 +480,10 @@ generate_recursion_path(SetOperationStmt *setOp, PlannerInfo *root,
 	else
 	{
 		/* Identify the grouping semantics */
-		groupList = generate_setop_grouplist(setOp, tlist);
+		if (setOp->shortestpath && !setOp->all)
+			groupList = generate_setop_grouplist_for_shortestpath(setOp, tlist);
+		else
+			groupList = generate_setop_grouplist(setOp, tlist);
 
 		/* We only support hashing here */
 		if (!grouping_is_hashable(groupList))
@@ -1308,6 +1313,47 @@ generate_setop_grouplist(SetOperationStmt *op, List *targetlist)
 		sgc->tleSortGroupRef = tle->ressortgroupref;
 	}
 	Assert(lg == NULL);
+	return grouplist;
+}
+
+static List *
+generate_setop_grouplist_for_shortestpath(SetOperationStmt *op,
+										  List *targetlist)
+{
+	List	   *grouplist = NIL;
+	ListCell   *lg;
+	ListCell   *lt;
+
+	lg = list_head(op->groupClauses);
+	foreach(lt, targetlist)
+	{
+		TargetEntry *tle = (TargetEntry *) lfirst(lt);
+		SortGroupClause *sgc;
+
+		if (tle->resjunk)
+		{
+			/* resjunk columns should not have sortgrouprefs */
+			Assert(tle->ressortgroupref == 0);
+			continue;			/* ignore resjunk columns */
+		}
+
+		if (strcmp(tle->resname, "vid") != 0)
+		{
+			/* non-resjunk columns should have sortgroupref = resno */
+			Assert(tle->ressortgroupref == tle->resno);
+
+			/* non-resjunk columns should have grouping clauses */
+			Assert(lg != NULL);
+			sgc = (SortGroupClause *) lfirst(lg);
+			lg = lnext(lg);
+			Assert(sgc->tleSortGroupRef == 0);
+
+			sgc->tleSortGroupRef = tle->ressortgroupref;
+			grouplist = list_make1(sgc);
+			break;
+		}
+	}
+	Assert(list_length(grouplist) == 1);
 	return grouplist;
 }
 
