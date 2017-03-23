@@ -1044,6 +1044,7 @@ _equalSetOperationStmt(const SetOperationStmt *a, const SetOperationStmt *b)
 	COMPARE_NODE_FIELD(colCollations);
 	COMPARE_NODE_FIELD(groupClauses);
 	COMPARE_SCALAR_FIELD(maxDepth);
+	COMPARE_SCALAR_FIELD(shortestpath);
 
 	return true;
 }

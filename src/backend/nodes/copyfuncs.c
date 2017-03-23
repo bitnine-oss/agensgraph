@@ -2913,6 +2913,7 @@ _copySetOperationStmt(const SetOperationStmt *from)
 	COPY_NODE_FIELD(colCollations);
 	COPY_NODE_FIELD(groupClauses);
 	COPY_SCALAR_FIELD(maxDepth);
+	COPY_SCALAR_FIELD(shortestpath);
 
 	return newnode;
 }

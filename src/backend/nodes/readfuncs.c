@@ -430,6 +430,7 @@ _readSetOperationStmt(void)
 	READ_NODE_FIELD(colCollations);
 	READ_NODE_FIELD(groupClauses);
 	READ_INT_FIELD(maxDepth);
+	READ_BOOL_FIELD(shortestpath);
 
 	READ_DONE();
 }
