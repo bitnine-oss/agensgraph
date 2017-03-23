@@ -25,6 +25,7 @@
 #define SP_COLNAME_VIDS		"vids"
 #define SP_COLNAME_EIDS		"eids"
 #define SP_COLNAME_HOPS		"hops"
+#define SP_COLNAME_VID		"vid"
 
 /* semantic checks */
 static void checkNodeForRef(ParseState *pstate, CypherNode *cnode);
@@ -34,7 +35,7 @@ static void checkRelFormat(ParseState *pstate, CypherRel *rel);
 /* shortest path */
 static Query *makeShortestPathQuery(ParseState *pstate, CypherPath *cpath,
 									bool isexpr);
-static SelectStmt *makeNonRecursiveTerm(ParseState *pstate, CypherNode *cnode);
+static SelectStmt *makeNonRecursiveTerm(ParseState *pstate, CypherPath *cpath);
 static SelectStmt *makeRecursiveTerm(ParseState *pstate, CypherPath *cpath);
 static RangeSubselect *makeEdgeUnion(char *edge_label);
 static SelectStmt *makeSelectWith(CypherPath *cpath, WithClause *with,
@@ -213,8 +214,9 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 
 	u = makeNode(SelectStmt);
 	u->op = SETOP_UNION;
-	u->all = true;
-	u->larg = makeNonRecursiveTerm(pstate, linitial(cpath->chain));
+	if (cpath->kind == CPATH_SHORTEST_ALL)
+		u->all = true;
+	u->larg = makeNonRecursiveTerm(pstate, cpath);
 	u->rarg = makeRecursiveTerm(pstate, cpath);
 
 	cte = makeNode(CommonTableExpr);
@@ -222,6 +224,9 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 	cte->aliascolnames = list_make3(makeString(SP_COLNAME_VIDS),
 									makeString(SP_COLNAME_EIDS),
 									makeString(SP_COLNAME_HOPS));
+	if (cpath->kind == CPATH_SHORTEST)
+		cte->aliascolnames = lappend(cte->aliascolnames,
+									 makeString(SP_COLNAME_VID));
 	cte->ctequery = (Node *) u;
 	cte->ctestop = true;
 	cte->location = -1;
@@ -252,34 +257,59 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 	return transformStmt(pstate, (Node *) sp);
 }
 
-/* VALUES (ARRAY[id(`initialVertex`)]::graphid[], ARRAY[]::graphid[], 0) */
+/* VALUES (ARRAY[id(`initialVertex`)]::graphid[],
+ *         ARRAY[]::graphid[], 0, NULL::graphid) */
 static SelectStmt *
-makeNonRecursiveTerm(ParseState *pstate, CypherNode *cnode)
+makeNonRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 {
+	CypherNode *cnode;
 	Node	   *initialVertex;
 	Node	   *col;
-	List	   *values;
+	ResTarget  *vids;
+	ResTarget  *eids;
+	ResTarget  *hops;
+	List	   *tlist = NIL;
 	SelectStmt *sel;
 
+	cnode = linitial(cpath->chain);
 	initialVertex = makeColumnRef1(getCypherName(cnode->variable));
 	col = makeAArrayExpr(list_make1(makeVertexIdExpr(initialVertex)),
 						 "_graphid");
-	values = list_make1(col);
+	vids = makeResTarget(col, SP_COLNAME_VIDS);
 
 	col = makeAArrayExpr(NIL, "_graphid");
-	values = lappend(values, col);
+	eids = makeResTarget(col, SP_COLNAME_EIDS);
 
-	values = lappend(values, makeIntConst(0));
+	hops = makeResTarget((Node *) makeIntConst(0), SP_COLNAME_HOPS);
+	tlist = list_make3(vids, eids, hops);
+
+	if (cpath->kind == CPATH_SHORTEST)
+	{
+		A_Const	   *nullconst;
+		TypeCast   *cast;
+		ResTarget  *vid;
+
+		nullconst = makeNode(A_Const);
+		nullconst->val.type = T_Null;
+		nullconst->location = -1;
+
+		cast = makeNode(TypeCast);
+		cast->arg = (Node *) nullconst;
+		cast->typeName = makeTypeName("graphid");
+		cast->location = -1;
+
+		vid = makeResTarget((Node *) cast, SP_COLNAME_VID);
+		tlist = lappend(tlist, vid);
+	}
 
 	sel = makeNode(SelectStmt);
-	sel->valuesLists = list_make1(values);
+	sel->targetList = tlist;
 
 	return sel;
 }
 
 /*
- * SELECT DISTINCT ON ("end")
- *        array_append(vids, "end"), array_append(eids, id), hops + 1
+ * SELECT array_append(vids, "end"), array_append(eids, id), hops + 1, "end"
  * FROM _sp, `get_graph_path()`.`typname` AS _e(id, start, "end", properties)
  * WHERE vids[array_upper(vids, 1)] = start AND
  *       array_position(vids, "end") IS NULL
@@ -309,10 +339,6 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 
 	sel = makeNode(SelectStmt);
 
-	/* DISTINCT */
-	if (cpath->kind == CPATH_SHORTEST)
-		sel->distinctClause = list_make1(end);
-
 	/* vids */
 	vids = makeColumnRef1(SP_COLNAME_VIDS);
 	sel->targetList = list_make1(makeArrayAppendResTarget(vids, end));
@@ -328,6 +354,13 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 									 makeColumnRef1(SP_COLNAME_HOPS),
 									 (Node *) makeIntConst(1), -1);
 	sel->targetList = lappend(sel->targetList, makeResTarget(hops, NULL));
+
+	/* vid */
+	if (cpath->kind == CPATH_SHORTEST)
+	{
+		Node *n = copyObject(end);
+		sel->targetList = lappend(sel->targetList, makeResTarget(n, NULL));
+	}
 
 	/* FROM */
 	sp = makeRangeVar(NULL, SP_ALIAS_CTE, -1);
