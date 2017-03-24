@@ -446,6 +446,18 @@ does_not_exist_skipping(ObjectType objtype, List *objname, List *objargs)
 				}
 			}
 			break;
+		case OBJECT_GRAPH:
+			msg = gettext_noop("graph \"%s\" does not exist, skipping");
+			name = NameListToString(objname);
+			break;
+		case OBJECT_VLABEL:
+			msg = gettext_noop("vlabel \"%s\" does not exist, skipping");
+			name = NameListToString(objname);
+			break;
+		case OBJECT_ELABEL:
+			msg = gettext_noop("elabel \"%s\" does not exist, skipping");
+			name = NameListToString(objname);
+			break;
 		default:
 			elog(ERROR, "unrecognized object type: %d", (int) objtype);
 			break;
