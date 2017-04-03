@@ -50,10 +50,14 @@ static void SetMaxStatisticsTarget(Oid laboid);
 void
 CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString)
 {
+	Oid			graphid;
 	List	   *parsetree_list;
 	ListCell   *parsetree_item;
 
-	GraphCreate(stmt, queryString);
+	graphid = GraphCreate(stmt, queryString);
+	if (!OidIsValid(graphid))
+		return;
+
 	CommandCounterIncrement();
 
 	parsetree_list = transformCreateGraphStmt(stmt);
