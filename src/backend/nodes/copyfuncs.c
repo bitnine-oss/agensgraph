@@ -2039,7 +2039,16 @@ _copyEdgeRefRow(const EdgeRefRow *from)
 	EdgeRefRow *newnode = makeNode(EdgeRefRow);
 
 	COPY_NODE_FIELD(arg);
-	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+static EdgeRefRows *
+_copyEdgeRefRows(const EdgeRefRows *from)
+{
+	EdgeRefRows *newnode = makeNode(EdgeRefRows);
+
+	COPY_NODE_FIELD(arg);
 
 	return newnode;
 }
@@ -5013,6 +5022,9 @@ copyObject(const void *from)
 			break;
 		case T_EdgeRefRow:
 			retval = _copyEdgeRefRow(from);
+			break;
+		case T_EdgeRefRows:
+			retval = _copyEdgeRefRows(from);
 			break;
 
 			/*

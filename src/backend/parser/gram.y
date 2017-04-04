@@ -625,7 +625,7 @@ static Node *wrapCypherWithSelect(Node *stmt);
 	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DESC DETACH
 	DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P DOUBLE_P DROP
 
-	EACH EDGEREFROW ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P
+	EACH ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P
 	ESCAPE EVENT EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
 	EXTENSION EXTERNAL EXTRACT
 
@@ -12810,13 +12810,6 @@ func_expr_common_subexpr:
 					n->location = @1;
 					$$ = (Node *)n;
 				}
-			| EDGEREFROW '(' a_expr ')'
-				{
-					EdgeRefRow *n = makeNode(EdgeRefRow);
-					n->arg = $3;
-					n->location = @3;
-					$$ = (Node *) n;
-				}
 		;
 
 json_object_expr:
@@ -14256,7 +14249,6 @@ col_name_keyword:
 			| COALESCE
 			| DEC
 			| DECIMAL_P
-			| EDGEREFROW
 			| EXISTS
 			| EXTRACT
 			| FLOAT_P

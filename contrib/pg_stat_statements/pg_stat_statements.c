@@ -2838,6 +2838,13 @@ JumbleExpr(pgssJumbleState *jstate, Node *node)
 				JumbleExpr(jstate, (Node *) err->arg);
 			}
 			break;
+		case T_EdgeRefRows:
+			{
+				EdgeRefRows *err = (EdgeRefRows *) node;
+
+				JumbleExpr(jstate, (Node *) err->arg);
+			}
+			break;
 		default:
 			/* Only a warning, since we can stumble along anyway */
 			elog(WARNING, "unrecognized node type: %d",
