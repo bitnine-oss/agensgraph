@@ -51,10 +51,12 @@ make_parsestate(ParseState *parentParseState)
 
 	/* Fill in fields that don't start at null/false/zero */
 	pstate->p_next_resno = 1;
+	pstate->p_convert_edgeref = true;
 
 	if (parentParseState)
 	{
 		pstate->p_sourcetext = parentParseState->p_sourcetext;
+		pstate->p_convert_edgeref = parentParseState->p_convert_edgeref;
 		/* all hooks are copied from parent */
 		pstate->p_pre_columnref_hook = parentParseState->p_pre_columnref_hook;
 		pstate->p_post_columnref_hook = parentParseState->p_post_columnref_hook;

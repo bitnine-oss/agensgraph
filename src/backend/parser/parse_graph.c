@@ -393,6 +393,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		detail->where = where;
 
 		qry->targetList = makeTargetListFromRTE(pstate, rte);
+		wrapEdgeRefTargetList(pstate, qry->targetList);
 
 		qual = transformWhereClause(pstate, where, EXPR_KIND_WHERE, "WHERE");
 		qual = resolve_future_vertex(pstate, qual, 0);
@@ -420,6 +421,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		detail->limit = limit;
 
 		qry->targetList = makeTargetListFromRTE(pstate, rte);
+		wrapEdgeRefTargetList(pstate, qry->targetList);
 
 		qry->sortClause = transformSortClause(pstate, order, &qry->targetList,
 											  EXPR_KIND_ORDER_BY, true, false);
@@ -458,6 +460,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 		qry->targetList = transformTargetList(pstate, detail->items,
 											  EXPR_KIND_SELECT_TARGET);
+		wrapEdgeRefTargetList(pstate, qry->targetList);
 
 		if (detail->kind == CP_WITH)
 			checkNameInItems(pstate, detail->items, qry->targetList);
@@ -465,6 +468,9 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		qry->groupClause = generateGroupClause(pstate, &qry->targetList,
 											   qry->sortClause);
 	}
+
+	if (pstate->parentParseState != NULL)
+		stripEdgeRefTargetList(qry->targetList);
 
 	if (detail->kind == CP_WITH)
 	{
@@ -2412,6 +2418,7 @@ transformVLEtoRTE(ParseState *pstate, SelectStmt *vle, Alias *alias)
 	ParseNamespaceItem *nsitem = NULL;
 	Query	   *qry;
 	RangeTblEntry *rte;
+	bool sv_convert_edgeref = pstate->p_convert_edgeref;
 
 	Assert(!pstate->p_lateral_active);
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
@@ -2427,6 +2434,7 @@ transformVLEtoRTE(ParseState *pstate, SelectStmt *vle, Alias *alias)
 
 	pstate->p_lateral_active = true;
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+	pstate->p_convert_edgeref = false;
 
 	qry = parse_sub_analyze((Node *) vle, pstate, NULL,
 							isLockedRefname(pstate, alias->aliasname));
@@ -2434,6 +2442,7 @@ transformVLEtoRTE(ParseState *pstate, SelectStmt *vle, Alias *alias)
 
 	pstate->p_lateral_active = false;
 	pstate->p_expr_kind = EXPR_KIND_NONE;
+	pstate->p_convert_edgeref = sv_convert_edgeref;
 
 	if (nsitem != NULL)
 		nsitem->p_rel_visible = false;

@@ -1831,3 +1831,43 @@ FigureColnameInternal(Node *node, char **name)
 
 	return strength;
 }
+
+void
+wrapEdgeRefTargetList(ParseState *pstate, List *targetList)
+{
+	ListCell *lc;
+
+	foreach(lc, targetList)
+	{
+		TargetEntry *te = (TargetEntry *) lfirst(lc);
+
+		te->expr = (Expr *) wrapEdgeRef(pstate, (Node *) te->expr);
+	}
+}
+
+void
+stripEdgeRefTargetList(List *targetList)
+{
+	ListCell *lc;
+
+	foreach(lc, targetList)
+	{
+		TargetEntry *te = (TargetEntry *) lfirst(lc);
+		NodeTag type;
+
+		if (te->ressortgroupref != 0)
+			continue;
+
+		type = nodeTag((Node *) te->expr);
+		if (type == T_EdgeRefRow)
+		{
+			EdgeRefRow *row = (EdgeRefRow *) te->expr;
+			te->expr = row->arg;
+		}
+		else if (type == T_EdgeRefRows)
+		{
+			EdgeRefRows *rows = (EdgeRefRows *) te->expr;
+			te->expr = rows->arg;
+		}
+	}
+}

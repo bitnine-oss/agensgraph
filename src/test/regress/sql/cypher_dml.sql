@@ -321,15 +321,15 @@ return x1.fromdate, x1;
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 where x[2].fromdate is not null
 with x[1] as x1, array_length(x, 1) as l
-return edgerefrow(x1), l;
+return x1, l;
 
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with x[1] as x1, array_length(x, 1) as l
-return edgerefrow(x1), l;
+return x1, l;
 
 match (a:person {id: 1})-[x:knows*1..2]-(b:person)
 with x[1] as x1, array_length(x, 1) as l
-return edgerefrow(x1), l;
+return x1, l;
 
 create elabel familyship inherits (friendships);
 
@@ -337,7 +337,44 @@ match (a:person {id: 5}) create (a)-[:familyship {fromDate:'2015-12-24'}]->(:per
 
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with x[1] as x1, x[2] as x2, array_length(x, 1) as l
-return edgerefrow(x1), edgerefrow(x2), l;
+return x1, x2, l;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1, x[2] as x2 order by x2 return x1;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with max(b.id) as id, x[1] as x return *;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with distinct x as path return *;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with max(b.id) as id, x as x return *;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with max(x) as x, b.id as id return *;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+return x, x is not null, x[1] is null;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+where x[1] is not null return x[1];
+
+explain verbose
+select * from (
+	match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+	where x[1] is not null return x[1]
+	union all
+	match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+	return x[2]
+) as foo;
 
 -- shortestpath(), allshortestpaths()
 
