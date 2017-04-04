@@ -12862,13 +12862,6 @@ func_expr_common_subexpr:
 					n->location = @1;
 					$$ = (Node *)n;
 				}
-			| EDGEREFROW '(' a_expr ')'
-				{
-					EdgeRefRow *n = makeNode(EdgeRefRow);
-					n->arg = $3;
-					n->location = @3;
-					$$ = (Node *) n;
-				}
 		;
 
 json_object_expr:
@@ -14312,7 +14305,6 @@ col_name_keyword:
 			| COALESCE
 			| DEC
 			| DECIMAL_P
-			| EDGEREFROW
 			| EXISTS
 			| EXTRACT
 			| FLOAT_P

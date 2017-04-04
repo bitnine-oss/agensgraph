@@ -1050,6 +1050,10 @@ typedef struct EdgeRefRowsState
 	ArrayMetaState iter_meta;
 } EdgeRefRowsState;
 
+<<<<<<< 448dc454eee2b406ac64c9ffb6b31a84ac1cd961
+=======
+
+>>>>>>> refactor: Adding an implicit conversion of edgeref
 /* ----------------------------------------------------------------
  *				 Executor State Trees
  *
