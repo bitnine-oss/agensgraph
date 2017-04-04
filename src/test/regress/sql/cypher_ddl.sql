@@ -16,6 +16,9 @@ SHOW graph_path;
 CREATE GRAPH g;
 SHOW graph_path;
 
+CREATE GRAPH g;
+CREATE GRAPH IF NOT EXISTS g;
+
 -- check default graph objects
 \dGl
 
@@ -31,6 +34,8 @@ ALTER GRAPH p RENAME TO g;
 ALTER GRAPH g OWNER TO temp;
 \dG
 ALTER GRAPH g OWNER TO graph_role;
+
+-- ALTER GRAPH IF EXISTS is not supported
 
 --
 -- SET graph_path
@@ -62,6 +67,14 @@ FROM pg_catalog.ag_label AS parent,
 WHERE child.relid = inh.inhrelid AND parent.relid = inh.inhparent
 ORDER BY 1, 2;
 
+-- IF NOT EXISTS
+
+CREATE VLABEL v0;
+CREATE VLABEL IF NOT EXISTS v0;
+
+CREATE ELABEL e0;
+CREATE ELABEL IF NOT EXISTS e0;
+
 -- wrong cases
 
 CREATE VLABEL wrong_parent INHERITS (e1);
@@ -73,11 +86,6 @@ SELECT l.labname as name, c.relpersistence as persistence
 FROM pg_catalog.ag_label l
      LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid
 ORDER BY 1;
-
--- IF NOT EXISTS
-CREATE VLABEL dup;
-CREATE VLABEL dup;
-CREATE VLABEL IF NOT EXISTS dup;
 
 -- WITH
 CREATE VLABEL stor
@@ -167,6 +175,11 @@ ALTER VLABEL v0 REPLICA IDENTITY default;
 ALTER VLABEL vdi disable index;
 \d g.vdi
 
+-- IF EXISTS
+
+ALTER VLABEL IF EXISTS v0 SET LOGGED;
+ALTER VLABEL IF EXISTS unknown SET LOGGED;
+
 --
 -- DROP LABEL
 --
@@ -179,8 +192,14 @@ DROP TABLE g.e1;
 DROP VLABEL unknown;
 DROP ELABEL unknown;
 
+DROP VLABEL IF EXISTS unknown;
+DROP ELABEL IF EXISTS unknown;
+
 DROP VLABEL e1;
 DROP ELABEL v1;
+
+DROP VLABEL IF EXISTS e1;
+DROP ELABEL IF EXISTS v1;
 
 DROP VLABEL v0;
 DROP VLABEL v00;
@@ -373,6 +392,9 @@ DROP VLABEL regv8;
 DROP GRAPH g;
 DROP GRAPH g CASCADE;
 SELECT labname, labkind FROM ag_label;
+
+DROP GRAPH unknown;
+DROP GRAPH IF EXISTS unknown;
 
 -- teardown
 

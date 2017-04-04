@@ -22,6 +22,10 @@ SHOW graph_path;
  g
 (1 row)
 
+CREATE GRAPH g;
+ERROR:  graph "g" already exists
+CREATE GRAPH IF NOT EXISTS g;
+NOTICE:  graph "g" already exists, skipping
 -- check default graph objects
 \dGl
              List of labels
@@ -53,6 +57,7 @@ List of graphs
 (1 row)
 
 ALTER GRAPH g OWNER TO graph_role;
+-- ALTER GRAPH IF EXISTS is not supported
 --
 -- SET graph_path
 --
@@ -103,6 +108,15 @@ ORDER BY 1, 2;
  v1    | v01
 (8 rows)
 
+-- IF NOT EXISTS
+CREATE VLABEL v0;
+ERROR:  label "v0" already exists
+CREATE VLABEL IF NOT EXISTS v0;
+NOTICE:  label "v0" already exists, skipping
+CREATE ELABEL e0;
+ERROR:  label "e0" already exists
+CREATE ELABEL IF NOT EXISTS e0;
+NOTICE:  label "e0" already exists, skipping
 -- wrong cases
 CREATE VLABEL wrong_parent INHERITS (e1);
 ERROR:  parent graph label "e1" is not vertex label.
@@ -128,12 +142,6 @@ ORDER BY 1;
  v1        | p
 (10 rows)
 
--- IF NOT EXISTS
-CREATE VLABEL dup;
-CREATE VLABEL dup;
-ERROR:  label "dup" already exists
-CREATE VLABEL IF NOT EXISTS dup;
-NOTICE:  label "dup" already exists, skipping
 -- WITH
 CREATE VLABEL stor
 WITH (fillfactor=90, autovacuum_enabled, autovacuum_vacuum_threshold=100);
@@ -145,7 +153,6 @@ ORDER BY 1;
 -----------+-------------------------------------------------------------------------
  ag_edge   | 
  ag_vertex | 
- dup       | 
  e0        | 
  e01       | 
  e1        | 
@@ -155,7 +162,7 @@ ORDER BY 1;
  v00       | 
  v01       | 
  v1        | 
-(12 rows)
+(11 rows)
 
 -- TABLESPACE
 CREATE VLABEL tblspc TABLESPACE pg_default;
@@ -224,7 +231,6 @@ COMMENT ON VLABEL v1 IS 'multiple inheritance test';
  Graph |   Name    |  Type  |   Owner    |    Size    |         Description          
 -------+-----------+--------+------------+------------+------------------------------
  g     | ag_vertex | vertex | graph_role | 8192 bytes | base vertex label of graph g
- g     | dup       | vertex | graph_role | 8192 bytes | 
  g     | stor      | vertex | graph_role | 8192 bytes | 
  g     | tblspc    | vertex | graph_role | 8192 bytes | 
  g     | unlog     | vertex | graph_role | 16 kB      | 
@@ -233,20 +239,15 @@ COMMENT ON VLABEL v1 IS 'multiple inheritance test';
  g     | v01       | vertex | graph_role | 8192 bytes | 
  g     | v1        | vertex | graph_role | 8192 bytes | multiple inheritance test
  g     | vdi       | vertex | graph_role | 8192 bytes | 
-(10 rows)
+(9 rows)
 
 Vertex label "g.ag_vertex"
 --
-Child labels: g.dup,
-              g.stor,
+Child labels: g.stor,
               g.tblspc,
               g.unlog,
               g.v0,
               g.vdi
-
-Vertex label "g.dup"
---
-Inherits: g.ag_vertex
 
 Vertex label "g.stor"
 --
@@ -336,7 +337,6 @@ ALTER VLABEL v0 RENAME TO vv;
  Graph |   Name    |  Type  |   Owner    
 -------+-----------+--------+------------
  g     | ag_vertex | vertex | graph_role
- g     | dup       | vertex | graph_role
  g     | stor      | vertex | graph_role
  g     | tblspc    | vertex | graph_role
  g     | unlog     | vertex | graph_role
@@ -345,20 +345,15 @@ ALTER VLABEL v0 RENAME TO vv;
  g     | v1        | vertex | graph_role
  g     | vdi       | vertex | graph_role
  g     | vv        | vertex | graph_role
-(10 rows)
+(9 rows)
 
 Vertex label "g.ag_vertex"
 --
-Child labels: g.dup,
-              g.stor,
+Child labels: g.stor,
               g.tblspc,
               g.unlog,
               g.vdi,
               g.vv
-
-Vertex label "g.dup"
---
-Inherits: g.ag_vertex
 
 Vertex label "g.stor"
 --
@@ -518,6 +513,10 @@ Indexes:
     "vdi_pkey" PRIMARY KEY, btree (id) INVALID
 Inherits: g.ag_vertex
 
+-- IF EXISTS
+ALTER VLABEL IF EXISTS v0 SET LOGGED;
+ALTER VLABEL IF EXISTS unknown SET LOGGED;
+NOTICE:  graph label "unknown" does not exist, skipping
 --
 -- DROP LABEL
 --
@@ -532,9 +531,17 @@ DROP VLABEL unknown;
 ERROR:  graph label "unknown" does not exist
 DROP ELABEL unknown;
 ERROR:  graph label "unknown" does not exist
+DROP VLABEL IF EXISTS unknown;
+NOTICE:  vlabel "unknown" does not exist, skipping
+DROP ELABEL IF EXISTS unknown;
+NOTICE:  elabel "unknown" does not exist, skipping
 DROP VLABEL e1;
 ERROR:  DROP VLABEL cannot DROP edge label
 DROP ELABEL v1;
+ERROR:  DROP ELABEL cannot DROP vertex label
+DROP VLABEL IF EXISTS e1;
+ERROR:  DROP VLABEL cannot DROP edge label
+DROP ELABEL IF EXISTS v1;
 ERROR:  DROP ELABEL cannot DROP vertex label
 DROP VLABEL v0;
 ERROR:  cannot drop label v0 because other objects depend on it
@@ -565,14 +572,13 @@ SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY 2, 1;
  e01       | e
  e1        | e
  ag_vertex | v
- dup       | v
  stor      | v
  tblspc    | v
  unlog     | v
  v0        | v
  v00       | v
  vdi       | v
-(12 rows)
+(11 rows)
 
 DROP VLABEL v0 CASCADE;
 NOTICE:  drop cascades to label v00
@@ -585,11 +591,10 @@ SELECT labname, labkind FROM pg_catalog.ag_label;
  ag_vertex | v
  ag_edge   | e
  unlog     | v
- dup       | v
  stor      | v
  tblspc    | v
  vdi       | v
-(7 rows)
+(6 rows)
 
 --
 -- CONSTRAINT
@@ -879,12 +884,16 @@ DROP VLABEL regv8;
 DROP GRAPH g;
 ERROR:  cannot drop graph g because other objects depend on it
 DROP GRAPH g CASCADE;
-NOTICE:  drop cascades to 8 other objects
+NOTICE:  drop cascades to 7 other objects
 SELECT labname, labkind FROM ag_label;
  labname | labkind 
 ---------+---------
 (0 rows)
 
+DROP GRAPH unknown;
+ERROR:  graph "unknown" does not exist
+DROP GRAPH IF EXISTS unknown;
+NOTICE:  graph "unknown" does not exist, skipping
 -- teardown
 RESET ROLE;
 DROP ROLE graph_role;
