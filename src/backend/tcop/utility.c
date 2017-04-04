@@ -1083,8 +1083,13 @@ ProcessUtilitySlow(Node *parsetree,
 					LOCKMODE	lockmode;
 
 					if (nodeTag(parsetree) == T_AlterLabelStmt)
+					{
 						atstmt = transformAlterLabelStmt(
 													(AlterLabelStmt *) atstmt);
+						if (atstmt == NULL)
+							break;
+					}
+
 					/*
 					 * Figure out lock mode, and acquire lock.  This also does
 					 * basic permissions checks, so that we won't wait for a

@@ -3571,6 +3571,22 @@ transformAlterLabelStmt(AlterTableStmt *stmt)
 	result->missing_ok = stmt->missing_ok;
 
 	laboid = get_labname_laboid(stmt->relation->relname, get_graph_path_oid());
+	if (!OidIsValid(laboid))
+	{
+		if (stmt->missing_ok)
+			ereport(NOTICE,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("graph label \"%s\" does not exist, skipping",
+							stmt->relation->relname)));
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("graph label \"%s\" does not exist",
+							stmt->relation->relname)));
+
+		return NULL;
+	}
+
 	CheckLabelType(stmt->relkind, laboid, "ALTER");
 
 	foreach(lcmd, stmt->cmds)

@@ -8133,6 +8133,16 @@ RenameStmt: ALTER AGGREGATE func_name aggr_args RENAME TO name
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
+			| ALTER VLABEL IF_P EXISTS name RENAME TO name
+				{
+					RenameStmt *n = makeNode(RenameStmt);
+					n->renameType = OBJECT_VLABEL;
+					n->relation = makeRangeVar(NULL, $5, -1);
+					n->subname = NULL;
+					n->newname = $8;
+					n->missing_ok = true;
+					$$ = (Node *)n;
+				}
 			| ALTER ELABEL name RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
@@ -8141,6 +8151,16 @@ RenameStmt: ALTER AGGREGATE func_name aggr_args RENAME TO name
 					n->subname = NULL;
 					n->newname = $6;
 					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER ELABEL IF_P EXISTS name RENAME TO name
+				{
+					RenameStmt *n = makeNode(RenameStmt);
+					n->renameType = OBJECT_ELABEL;
+					n->relation = makeRangeVar(NULL, $5, -1);
+					n->subname = NULL;
+					n->newname = $8;
+					n->missing_ok = true;
 					$$ = (Node *)n;
 				}
 		;
