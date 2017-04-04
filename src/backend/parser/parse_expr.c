@@ -128,7 +128,6 @@ static Node *transformCollateClause(ParseState *pstate, CollateClause *c);
 static Node *transformJsonIndirection(ParseState *pstate, Node *json,
 									  List *indirection);
 static Node *transformJsonObject(ParseState *pstate, JsonObject *jo);
-static Node *transformEdgeRefRow(ParseState *pstate, EdgeRefRow *err);
 static Node *make_row_comparison_op(ParseState *pstate, List *opname,
 					   List *largs, List *rargs, int location);
 static Node *make_row_distinct_op(ParseState *pstate, List *opname,
@@ -392,10 +391,6 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 
 		case T_JsonObject:
 			result = transformJsonObject(pstate, (JsonObject *) expr);
-			break;
-
-		case T_EdgeRefRow:
-			result = transformEdgeRefRow(pstate, (EdgeRefRow *) expr);
 			break;
 
 		default:
