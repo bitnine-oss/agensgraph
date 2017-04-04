@@ -494,6 +494,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	{
 		flags = 0;
 	}
+
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
 													 flags);
