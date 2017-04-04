@@ -2460,7 +2460,16 @@ _readEdgeRefRow(void)
 	READ_LOCALS(EdgeRefRow);
 
 	READ_NODE_FIELD(arg);
-	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static EdgeRefRows *
+_readEdgeRefRows(void)
+{
+	READ_LOCALS(EdgeRefRows);
+
+	READ_NODE_FIELD(arg);
 
 	READ_DONE();
 }
@@ -2717,6 +2726,8 @@ parseNodeString(void)
 		return_value = _readEdgeRefProp();
 	else if (MATCH("EDGEREFROW", 10))
 		return_value = _readEdgeRefRow();
+	else if (MATCH("EDGEREFROWS", 11))
+		return_value = _readEdgeRefRows();
 	else
 	{
 		elog(ERROR, "badly formatted node string \"%.32s\"...", token);

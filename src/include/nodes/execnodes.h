@@ -23,6 +23,7 @@
 #include "nodes/params.h"
 #include "nodes/plannodes.h"
 #include "utils/hsearch.h"
+#include "utils/array.h"
 #include "utils/reltrigger.h"
 #include "utils/sortsupport.h"
 #include "utils/tuplestore.h"
@@ -1046,9 +1047,21 @@ typedef struct EdgeRefRowState
 {
 	ExprState 	xprstate;
 	ExprState  *arg;
+	Datum		val;
 	Relation   *edgerefrels;
 	Snapshot    snapshot;
 } EdgeRefRowState;
+
+typedef struct EdgeRefRowsState
+{
+	ExprState 	xprstate;
+	ExprState  *arg;
+	EdgeRefRowState *rowstate;
+	FmgrInfo    aa_flinfo;
+	FunctionCallInfoData aa_fcinfo;
+	FuncExpr	aa_fn_expr;
+	ArrayMetaState iter_meta;
+} EdgeRefRowsState;
 
 /* ----------------------------------------------------------------
  *				 Executor State Trees

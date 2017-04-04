@@ -1637,8 +1637,16 @@ _outEdgeRefRow(StringInfo str, const EdgeRefRow *node)
 	WRITE_NODE_TYPE("EDGEREFROW");
 
 	WRITE_NODE_FIELD(arg);
-	WRITE_LOCATION_FIELD(location);
 }
+
+static void
+_outEdgeRefRows(StringInfo str, const EdgeRefRows *node)
+{
+	WRITE_NODE_TYPE("EDGEREFROWS");
+
+	WRITE_NODE_FIELD(arg);
+}
+
 
 /*****************************************************************************
  *
@@ -4010,6 +4018,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_EdgeRefRow:
 				_outEdgeRefRow(str, obj);
+				break;
+			case T_EdgeRefRows:
+				_outEdgeRefRows(str, obj);
 				break;
 			case T_Path:
 				_outPath(str, obj);

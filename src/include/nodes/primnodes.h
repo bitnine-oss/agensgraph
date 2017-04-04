@@ -1464,15 +1464,20 @@ typedef struct OnConflictExpr
 
 typedef struct EdgeRefProp
 {
-	NodeTag		type;
-	Node	   *arg;
+	Expr		xpr;
+	Expr	   *arg;
 } EdgeRefProp;
 
 typedef struct EdgeRefRow
 {
-	NodeTag		type;
-	Node	   *arg;
-	int			location;
+	Expr		xpr;
+	Expr	   *arg;
 } EdgeRefRow;
+
+typedef struct EdgeRefRows
+{
+	Expr		xpr;
+	Expr	   *arg;
+} EdgeRefRows;
 
 #endif   /* PRIMNODES_H */

@@ -798,7 +798,14 @@ static bool
 _equalEdgeRefRow(const EdgeRefRow *a, const EdgeRefRow *b)
 {
 	COMPARE_NODE_FIELD(arg);
-	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
+_equalEdgeRefRows(const EdgeRefRows *a, const EdgeRefRows *b)
+{
+	COMPARE_NODE_FIELD(arg);
 
 	return true;
 }
@@ -3375,6 +3382,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_EdgeRefRow:
 			retval = _equalEdgeRefRow(a, b);
+			break;
+		case T_EdgeRefRows:
+			retval = _equalEdgeRefRows(a, b);
 			break;
 
 			/*

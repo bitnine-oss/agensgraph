@@ -667,7 +667,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 	DETACH DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P
 	DOUBLE_P DROP
 
-	EACH EDGEREFROW ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT EXCEPT
+	EACH ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT EXCEPT
 	EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
 	EXTENSION EXTERNAL EXTRACT
 
@@ -13423,13 +13423,6 @@ func_expr_common_subexpr:
 					n->location = @1;
 					$$ = (Node *)n;
 				}
-			| EDGEREFROW '(' a_expr ')'
-				{
-					EdgeRefRow *n = makeNode(EdgeRefRow);
-					n->arg = $3;
-					n->location = @3;
-					$$ = (Node *) n;
-				}
 		;
 
 json_object_expr:
@@ -14850,7 +14843,6 @@ col_name_keyword:
 			| COALESCE
 			| DEC
 			| DECIMAL_P
-			| EDGEREFROW
 			| EXISTS
 			| EXTRACT
 			| FLOAT_P

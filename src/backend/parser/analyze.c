@@ -1238,6 +1238,7 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 	/* transform targetlist */
 	qry->targetList = transformTargetList(pstate, stmt->targetList,
 										  EXPR_KIND_SELECT_TARGET);
+	wrapEdgeRefTargetList(pstate, qry->targetList);
 
 	/* mark column origins */
 	markTargetListOrigins(pstate, qry->targetList);
@@ -1308,6 +1309,9 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 	/* resolve any still-unresolved output columns as being type text */
 	if (pstate->p_resolve_unknowns)
 		resolveTargetListUnknowns(pstate, qry->targetList);
+
+	if (pstate->parentParseState != NULL)
+		stripEdgeRefTargetList(qry->targetList);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
@@ -1725,6 +1729,8 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 		left_tlist = lnext(left_tlist);
 	}
 
+	wrapEdgeRefTargetList(pstate, qry->targetList);
+
 	/*
 	 * As a first step towards supporting sort clauses that are expressions
 	 * using the output columns, generate a namespace entry that makes the
@@ -1763,6 +1769,9 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 										  &qry->targetList,
 										  EXPR_KIND_ORDER_BY,
 										  false /* allow SQL92 rules */ );
+
+	if (pstate->parentParseState != NULL)
+		stripEdgeRefTargetList(qry->targetList);
 
 	/* restore namespace, remove jrte from rtable */
 	pstate->p_namespace = sv_namespace;
@@ -2303,6 +2312,7 @@ transformUpdateTargetList(ParseState *pstate, List *origTlist)
 
 	tlist = transformTargetList(pstate, origTlist,
 								EXPR_KIND_UPDATE_SOURCE);
+	wrapEdgeRefTargetList(pstate, tlist);
 
 	/* Prepare to assign non-conflicting resnos to resjunk attributes */
 	if (pstate->p_next_resno <= pstate->p_target_relation->rd_rel->relnatts)
@@ -2385,6 +2395,7 @@ transformReturningList(ParseState *pstate, List *returningList)
 
 	/* transform RETURNING identically to a SELECT targetlist */
 	rlist = transformTargetList(pstate, returningList, EXPR_KIND_RETURNING);
+	wrapEdgeRefTargetList(pstate, rlist);
 
 	/*
 	 * Complain if the nonempty tlist expanded to nothing (which is possible

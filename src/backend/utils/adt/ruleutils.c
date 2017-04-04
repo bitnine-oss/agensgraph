@@ -8577,6 +8577,16 @@ get_rule_expr(Node *node, deparse_context *context,
 			}
 			break;
 
+		case T_EdgeRefRows:
+			{
+				EdgeRefRows *err = (EdgeRefRows *) node;
+
+				appendStringInfoString(buf, "EDGEREFROWS(");
+				get_rule_expr((Node *) err->arg, context, true);
+				appendStringInfoChar(buf, ')');
+			}
+			break;
+
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			break;
