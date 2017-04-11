@@ -499,6 +499,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	ResultRelInfo *resultRelInfo;
 	ResultRelInfo *savedResultRelInfo;
 	Datum		vertex;
+	Datum		vertexProp;
 	HeapTuple	tuple;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
@@ -507,12 +508,18 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 
 	vertex = findVertex(slot, gvertex, vid);
 
+	vertexProp = getVertexPropDatum(vertex);
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(vertexProp)))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("jsonb object is expected for property map")));
+
 	ExecClearTuple(elemTupleSlot);
 
 	ExecSetSlotDescriptor(elemTupleSlot,
 						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
 	elemTupleSlot->tts_values[0] = GraphidGetDatum(*vid);
-	elemTupleSlot->tts_values[1] = getVertexPropDatum(vertex);
+	elemTupleSlot->tts_values[1] = vertexProp;
 	MemSet(elemTupleSlot->tts_isnull, false,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
@@ -562,6 +569,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	ResultRelInfo *savedResultRelInfo;
 	Graphid		id;
 	Datum		edge;
+	Datum		edgeProp;
 	HeapTuple	tuple;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
@@ -571,6 +579,12 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	edge = findEdge(slot, gedge, &id);
 	Assert(edge != DATUM_NULL);
 
+	edgeProp = getEdgePropDatum(edge);
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(edgeProp)))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("jsonb object is expected for property map")));
+
 	ExecClearTuple(elemTupleSlot);
 
 	ExecSetSlotDescriptor(elemTupleSlot,
@@ -578,7 +592,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	elemTupleSlot->tts_values[0] = GraphidGetDatum(id);
 	elemTupleSlot->tts_values[1] = GraphidGetDatum(start);
 	elemTupleSlot->tts_values[2] = GraphidGetDatum(end);
-	elemTupleSlot->tts_values[3] = getEdgePropDatum(edge);
+	elemTupleSlot->tts_values[3] = edgeProp;
 	MemSet(elemTupleSlot->tts_isnull, false,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
@@ -1272,6 +1286,8 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	bool			isNull;
 	ExprDoneCond 	isDone;
 	Datum			vertex;
+	Datum			vertexId;
+	Datum			vertexProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
 	HeapTuple		tuple;
 
@@ -1295,14 +1311,21 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("cannot use null property value in MERGE")));
 
-	*vid = getVertexIdDatum(vertex);
+	vertexId = getVertexIdDatum(vertex);
+	*vid = DatumGetGraphid(vertexId);
+
+	vertexProp = getVertexPropDatum(vertex);
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(vertexProp)))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("jsonb object is expected for property map")));
 
 	ExecClearTuple(insertSlot);
 
 	ExecSetSlotDescriptor(insertSlot,
 						  RelationGetDescr(resultRelInfo->ri_RelationDesc));
-	insertSlot->tts_values[0] = GraphidGetDatum(*vid);
-	insertSlot->tts_values[1] = getVertexPropDatum(vertex);
+	insertSlot->tts_values[0] = vertexId;
+	insertSlot->tts_values[1] = vertexProp;
 	MemSet(insertSlot->tts_isnull, false,
 		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(insertSlot);
@@ -1354,6 +1377,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	bool			isNull;
 	ExprDoneCond	isDone;
 	Datum			edge;
+	Datum			edgeProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
 	HeapTuple		tuple;
 
@@ -1377,6 +1401,12 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("cannot use null property value in MERGE")));
 
+	edgeProp = getEdgePropDatum(edge);
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(edgeProp)))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("jsonb object is expected for property map")));
+
 	ExecClearTuple(insertSlot);
 
 	ExecSetSlotDescriptor(insertSlot,
@@ -1384,7 +1414,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	insertSlot->tts_values[0] = getEdgeIdDatum(edge);
 	insertSlot->tts_values[1] = GraphidGetDatum(start);
 	insertSlot->tts_values[2] = GraphidGetDatum(end);
-	insertSlot->tts_values[3] = getEdgePropDatum(edge);
+	insertSlot->tts_values[3] = edgeProp;
 	MemSet(insertSlot->tts_isnull, false,
 		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(insertSlot);
