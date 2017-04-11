@@ -129,6 +129,10 @@ CREATE ()-[:repo]->();
 ERROR:  edge label "repo" does not exist
 LINE 1: CREATE ()-[:repo]->();
                     ^
+CREATE ('10');
+ERROR:  jsonb object is expected for property map
+CREATE ()-[:lib '10']->();
+ERROR:  jsonb object is expected for property map
 CREATE (=null::jsonb)-[:lib =null::jsonb]->();
 CREATE TABLE t1 (prop jsonb);
 CREATE (=(SELECT prop FROM t1))-[:lib =(SELECT prop FROM t1)]->();
@@ -1502,6 +1506,10 @@ MERGE (a)-[:e1]->(a:v1);
 ERROR:  duplicate variable "a"
 LINE 1: MERGE (a)-[:e1]->(a:v1);
                           ^
+MERGE ('10');
+ERROR:  jsonb object is expected for property map
+MERGE ()-[:e1 '10']->();
+ERROR:  jsonb object is expected for property map
 DROP GRAPH gm CASCADE;
 NOTICE:  drop cascades to 9 other objects
 DETAIL:  drop cascades to sequence gm.ag_label_seq
