@@ -400,6 +400,14 @@ s{PG_VERSION_STR "[^"]+"}{__STRINGIFY(x) #x\n#define __STRINGIFY2(z) __STRINGIFY
 		chdir('../../..');
 	}
 
+	if (IsNewer('src/bin/agens/sql_help.h', 'src/bin/agens/create_help.pl'))
+	{
+		print "Generating sql_help.h...\n";
+		chdir('src/bin/agens');
+		system("perl create_help.pl ../../../doc/src/sgml/ref sql_help");
+		chdir('../../..');
+	}
+
 	if (IsNewer(
 			'src/interfaces/ecpg/preproc/preproc.y',
 			'src/backend/parser/gram.y'))
