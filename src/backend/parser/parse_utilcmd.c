@@ -3491,9 +3491,9 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	maxval = makeDefElem("maxvalue", (Node *) makeInteger(GRAPHID_LOCID_MAX));
 #else
 	{
-		char *buf[32];
+		char buf[32];
 
-		snprintf(buf, UINT64_FORMAT, GRAPHID_LOCID_MAX);
+		snprintf(buf, sizeof(buf), UINT64_FORMAT, GRAPHID_LOCID_MAX);
 		maxval = makeDefElem("maxvalue", (Node *) makeFloat(pstrdup(buf)));
 	}
 #endif
