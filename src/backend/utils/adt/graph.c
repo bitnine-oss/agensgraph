@@ -25,6 +25,7 @@
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
 #include "utils/graph.h"
+#include "utils/int8.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
