@@ -61,6 +61,7 @@
 #include "parser/gramparse.h"
 #include "parser/parser.h"
 #include "parser/parse_expr.h"
+#include "parser/scansup.h"
 #include "storage/lmgr.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
@@ -180,6 +181,7 @@ static void processCASbits(int cas_bits, int location, const char *constrType,
 static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 static Node *makeCypherSetOp(SetOperation op, bool all, Node *larg, Node *rarg);
 static Node *wrapCypherWithSelect(Node *stmt);
+static List *preserve_downcasing_funcname(List *funcname);
 
 %}
 
@@ -3804,8 +3806,20 @@ opt_trusted:
  * Work around by using simple names, instead.
  */
 handler_name:
-			name						{ $$ = list_make1(makeString($1)); }
-			| name attrs				{ $$ = lcons(makeString($1), $2); }
+			name
+				{
+					List *funcname;
+
+					funcname = list_make1(makeString($1));
+					$$ = preserve_downcasing_funcname(funcname);
+				}
+			| name attrs
+				{
+					List *funcname;
+
+					funcname = lcons(makeString($1), $2);
+					$$ = preserve_downcasing_funcname(funcname);
+				}
 		;
 
 opt_inline_handler:
@@ -9396,7 +9410,7 @@ CreateConversionStmt:
 				n->conversion_name = $4;
 				n->for_encoding_name = $6;
 				n->to_encoding_name = $8;
-				n->func_name = $10;
+				n->func_name = preserve_downcasing_funcname($10);
 				n->def = $2;
 				$$ = (Node *)n;
 			}
@@ -13717,12 +13731,20 @@ file_name:	Sconst									{ $$ = $1; };
  * ever implement SQL99-like methods, such syntax may actually become legal!)
  */
 func_name:	type_function_name
-					{ $$ = list_make1(makeString($1)); }
+				{
+					List *funcname;
+
+					funcname = list_make1(makeString($1));
+					$$ = preserve_downcasing_funcname(funcname);
+				}
 			| ColId indirection
-					{
-						$$ = check_func_name(lcons(makeString($1), $2),
-											 yyscanner);
-					}
+				{
+					List *funcname;
+
+					funcname = check_func_name(lcons(makeString($1), $2),
+											   yyscanner);
+					$$ = preserve_downcasing_funcname(funcname);
+				}
 		;
 
 
@@ -16289,6 +16311,22 @@ wrapCypherWithSelect(Node *stmt)
 	select->fromClause = list_make1(sub);
 
 	return (Node *) select;
+}
+
+/* downcase function name for user convenience if disable_downcasing is on */
+static List *
+preserve_downcasing_funcname(List *funcname)
+{
+	if (disable_downcasing)
+	{
+		Value	   *objstrval = llast(funcname);
+		char	   *objname = strVal(objstrval);
+
+		objname = downcase_identifier(objname, strlen(objname), false, false);
+		objstrval->val.str = objname;
+	}
+
+	return funcname;
 }
 
 /* parser_init()
