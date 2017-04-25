@@ -1003,7 +1003,11 @@ other			.
 												yyextra->num_keywords);
 					if (keyword != NULL)
 					{
-						yylval->keyword = keyword->name;
+						if (disable_downcasing)
+							yylval->keyword = yytext;
+						else
+							yylval->keyword = keyword->name;
+
 						return keyword->value;
 					}
 
