@@ -60,6 +60,8 @@ fprintf_to_ereport(const char *fmt, const char *msg)
 int			backslash_quote = BACKSLASH_QUOTE_SAFE_ENCODING;
 bool		escape_string_warning = true;
 bool		standard_conforming_strings = true;
+bool		disable_downcasing = false;
+
 
 /*
  * Set the type of YYSTYPE.
@@ -800,7 +802,16 @@ other			.
 					/* throw back all but the initial u/U */
 					yyless(1);
 					/* and treat it as {identifier} */
-					ident = downcase_truncate_identifier(yytext, yyleng, true);
+					if (disable_downcasing)
+					{
+						ident = pstrdup(yytext);
+						truncate_identifier(ident, yyleng, true);
+					}
+					else
+					{
+						ident = downcase_truncate_identifier(yytext, yyleng,
+															 true);
+					}
 					yylval->str = ident;
 					return IDENT;
 				}
@@ -992,7 +1003,11 @@ other			.
 												yyextra->num_keywords);
 					if (keyword != NULL)
 					{
-						yylval->keyword = keyword->name;
+						if (disable_downcasing)
+							yylval->keyword = yytext;
+						else
+							yylval->keyword = keyword->name;
+
 						return keyword->value;
 					}
 
@@ -1000,7 +1015,16 @@ other			.
 					 * No.  Convert the identifier to lower case, and truncate
 					 * if necessary.
 					 */
-					ident = downcase_truncate_identifier(yytext, yyleng, true);
+					if (disable_downcasing)
+					{
+						ident = pstrdup(yytext);
+						truncate_identifier(ident, yyleng, true);
+					}
+					else
+					{
+						ident = downcase_truncate_identifier(yytext, yyleng,
+															 true);
+					}
 					yylval->str = ident;
 					return IDENT;
 				}

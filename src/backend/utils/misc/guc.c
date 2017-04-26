@@ -1544,6 +1544,16 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 
 	{
+		{"disable_downcasing", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
+			gettext_noop("Disable downcasing identifiers."),
+			NULL
+		},
+		&disable_downcasing,
+		false,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"synchronize_seqscans", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
 			gettext_noop("Enable synchronized sequential scans."),
 			NULL

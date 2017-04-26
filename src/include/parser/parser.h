@@ -29,6 +29,7 @@ typedef enum
 extern int	backslash_quote;
 extern bool escape_string_warning;
 extern PGDLLIMPORT bool standard_conforming_strings;
+extern bool disable_downcasing;
 
 
 /* Primary entry point for the raw parsing functions */
