@@ -2281,9 +2281,17 @@ proc_conditions	: proc_conditions K_OR proc_condition
 
 proc_condition	: any_identifier
 						{
-							if (strcmp($1, "sqlstate") != 0)
+							char *ident;
+							
+							if (disable_downcasing)
+								ident = downcase_identifier($1, strlen($1),
+															false, false);
+							else
+								ident = $1;
+
+							if (strcmp(ident, "sqlstate") != 0)
 							{
-								$$ = plpgsql_parse_err_condition($1);
+								$$ = plpgsql_parse_err_condition(ident);
 							}
 							else
 							{

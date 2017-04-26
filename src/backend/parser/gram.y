@@ -1024,36 +1024,38 @@ AlterOptRoleElem:
 				}
 			| IDENT
 				{
+					char *ident = preserve_downcasing_ident($1);
+
 					/*
 					 * We handle identifiers that aren't parser keywords with
 					 * the following special-case codes, to avoid bloating the
 					 * size of the main parser.
 					 */
-					if (strcmp($1, "superuser") == 0)
+					if (strcmp(ident, "superuser") == 0)
 						$$ = makeDefElem("superuser", (Node *)makeInteger(TRUE));
-					else if (strcmp($1, "nosuperuser") == 0)
+					else if (strcmp(ident, "nosuperuser") == 0)
 						$$ = makeDefElem("superuser", (Node *)makeInteger(FALSE));
-					else if (strcmp($1, "createrole") == 0)
+					else if (strcmp(ident, "createrole") == 0)
 						$$ = makeDefElem("createrole", (Node *)makeInteger(TRUE));
-					else if (strcmp($1, "nocreaterole") == 0)
+					else if (strcmp(ident, "nocreaterole") == 0)
 						$$ = makeDefElem("createrole", (Node *)makeInteger(FALSE));
-					else if (strcmp($1, "replication") == 0)
+					else if (strcmp(ident, "replication") == 0)
 						$$ = makeDefElem("isreplication", (Node *)makeInteger(TRUE));
-					else if (strcmp($1, "noreplication") == 0)
+					else if (strcmp(ident, "noreplication") == 0)
 						$$ = makeDefElem("isreplication", (Node *)makeInteger(FALSE));
-					else if (strcmp($1, "createdb") == 0)
+					else if (strcmp(ident, "createdb") == 0)
 						$$ = makeDefElem("createdb", (Node *)makeInteger(TRUE));
-					else if (strcmp($1, "nocreatedb") == 0)
+					else if (strcmp(ident, "nocreatedb") == 0)
 						$$ = makeDefElem("createdb", (Node *)makeInteger(FALSE));
-					else if (strcmp($1, "login") == 0)
+					else if (strcmp(ident, "login") == 0)
 						$$ = makeDefElem("canlogin", (Node *)makeInteger(TRUE));
-					else if (strcmp($1, "nologin") == 0)
+					else if (strcmp(ident, "nologin") == 0)
 						$$ = makeDefElem("canlogin", (Node *)makeInteger(FALSE));
-					else if (strcmp($1, "bypassrls") == 0)
+					else if (strcmp(ident, "bypassrls") == 0)
 						$$ = makeDefElem("bypassrls", (Node *)makeInteger(TRUE));
-					else if (strcmp($1, "nobypassrls") == 0)
+					else if (strcmp(ident, "nobypassrls") == 0)
 						$$ = makeDefElem("bypassrls", (Node *)makeInteger(FALSE));
-					else if (strcmp($1, "noinherit") == 0)
+					else if (strcmp(ident, "noinherit") == 0)
 					{
 						/*
 						 * Note that INHERIT is a keyword, so it's handled by main parser, but
@@ -3775,7 +3777,7 @@ CreatePLangStmt:
 			{
 				CreatePLangStmt *n = makeNode(CreatePLangStmt);
 				n->replace = $2;
-				n->plname = $6;
+				n->plname = preserve_downcasing_ident($6);
 				/* parameters are all to be supplied by system */
 				n->plhandler = NIL;
 				n->plinline = NIL;
@@ -3788,7 +3790,7 @@ CreatePLangStmt:
 			{
 				CreatePLangStmt *n = makeNode(CreatePLangStmt);
 				n->replace = $2;
-				n->plname = $6;
+				n->plname = preserve_downcasing_ident($6);
 				n->plhandler = $8;
 				n->plinline = $9;
 				n->plvalidator = $10;
@@ -3843,7 +3845,7 @@ DropPLangStmt:
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_LANGUAGE;
-					n->objects = list_make1(list_make1(makeString($4)));
+					n->objects = list_make1(list_make1(makeString(preserve_downcasing_ident($4))));
 					n->arguments = NIL;
 					n->behavior = $5;
 					n->missing_ok = false;
@@ -3854,7 +3856,7 @@ DropPLangStmt:
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_LANGUAGE;
-					n->objects = list_make1(list_make1(makeString($6)));
+					n->objects = list_make1(list_make1(makeString(preserve_downcasing_ident($6))));
 					n->behavior = $7;
 					n->missing_ok = true;
 					n->concurrent = false;
@@ -4075,7 +4077,7 @@ AlterExtensionContentsStmt:
 					n->extname = $3;
 					n->action = $4;
 					n->objtype = OBJECT_LANGUAGE;
-					n->objname = list_make1(makeString($7));
+					n->objname = list_make1(makeString(preserve_downcasing_ident($7)));
 					$$ = (Node *)n;
 				}
 			| ALTER EXTENSION name add_drop OPERATOR any_operator oper_argtypes
@@ -4230,7 +4232,7 @@ AlterExtensionContentsStmt:
 					n->action = $4;
 					n->objtype = OBJECT_TRANSFORM;
 					n->objname = list_make1($7);
-					n->objargs = list_make1(makeString($9));
+					n->objargs = list_make1(makeString(preserve_downcasing_ident($9)));
 					$$ = (Node *)n;
 				}
 			| ALTER EXTENSION name add_drop TYPE_P Typename
@@ -5063,7 +5065,7 @@ event_trigger_when_list:
 
 event_trigger_when_item:
 		ColId IN_P '(' event_trigger_value_list ')'
-			{ $$ = makeDefElem($1, (Node *) $4); }
+			{ $$ = makeDefElem(preserve_downcasing_ident($1), (Node *) $4); }
 		;
 
 event_trigger_value_list:
@@ -5915,7 +5917,7 @@ CommentStmt:
 					CommentStmt *n = makeNode(CommentStmt);
 					n->objtype = OBJECT_TRANSFORM;
 					n->objname = list_make1($5);
-					n->objargs = list_make1(makeString($7));
+					n->objargs = list_make1(makeString(preserve_downcasing_ident($7)));
 					n->comment = $9;
 					$$ = (Node *) n;
 				}
@@ -5967,7 +5969,7 @@ CommentStmt:
 				{
 					CommentStmt *n = makeNode(CommentStmt);
 					n->objtype = OBJECT_LANGUAGE;
-					n->objname = $5;
+					n->objname = preserve_downcasing_namelist($5);
 					n->objargs = NIL;
 					n->comment = $7;
 					$$ = (Node *) n;
@@ -6090,7 +6092,7 @@ SecLabelStmt:
 					SecLabelStmt *n = makeNode(SecLabelStmt);
 					n->provider = $3;
 					n->objtype = OBJECT_LANGUAGE;
-					n->objname = $7;
+					n->objname = preserve_downcasing_namelist($7);
 					n->objargs = NIL;
 					n->label = $9;
 					$$ = (Node *) n;
@@ -6391,7 +6393,7 @@ privilege:	SELECT opt_column_list
 		| ColId opt_column_list
 			{
 				AccessPriv *n = makeNode(AccessPriv);
-				n->priv_name = $1;
+				n->priv_name = preserve_downcasing_ident($1);
 				n->cols = $2;
 				$$ = n;
 			}
@@ -6471,7 +6473,7 @@ privilege_target:
 					PrivTarget *n = (PrivTarget *) palloc(sizeof(PrivTarget));
 					n->targtype = ACL_TARGET_OBJECT;
 					n->objtype = ACL_OBJECT_LANGUAGE;
-					n->objs = $2;
+					n->objs = preserve_downcasing_namelist($2);
 					$$ = n;
 				}
 			| LARGE_P OBJECT_P NumericOnly_list
@@ -7208,7 +7210,7 @@ createfunc_opt_item:
 				}
 			| LANGUAGE NonReservedWord_or_Sconst
 				{
-					$$ = makeDefElem("language", (Node *)makeString($2));
+					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2)));
 				}
 			| TRANSFORM transform_type_list
 				{
@@ -7432,7 +7434,7 @@ dostmt_opt_item:
 				}
 			| LANGUAGE NonReservedWord_or_Sconst
 				{
-					$$ = makeDefElem("language", (Node *)makeString($2));
+					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2)));
 				}
 		;
 
@@ -7512,7 +7514,7 @@ CreateTransformStmt: CREATE opt_or_replace TRANSFORM FOR Typename LANGUAGE name 
 					CreateTransformStmt *n = makeNode(CreateTransformStmt);
 					n->replace = $2;
 					n->type_name = $5;
-					n->lang = $7;
+					n->lang = preserve_downcasing_ident($7);
 					n->fromsql = linitial($9);
 					n->tosql = lsecond($9);
 					$$ = (Node *)n;
@@ -7543,7 +7545,7 @@ DropTransformStmt: DROP TRANSFORM opt_if_exists FOR Typename LANGUAGE name opt_d
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_TRANSFORM;
 					n->objects = list_make1(list_make1($5));
-					n->arguments = list_make1(list_make1(makeString($7)));
+					n->arguments = list_make1(list_make1(makeString(preserve_downcasing_ident($7))));
 					n->behavior = $8;
 					n->missing_ok = $3;
 					$$ = (Node *)n;
@@ -7755,8 +7757,8 @@ RenameStmt: ALTER AGGREGATE func_name aggr_args RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_LANGUAGE;
-					n->object = list_make1(makeString($4));
-					n->newname = $7;
+					n->object = list_make1(makeString(preserve_downcasing_ident($4)));
+					n->newname = preserve_downcasing_ident($7);
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
@@ -8557,7 +8559,7 @@ AlterOwnerStmt: ALTER AGGREGATE func_name aggr_args OWNER TO RoleSpec
 				{
 					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
 					n->objectType = OBJECT_LANGUAGE;
-					n->object = list_make1(makeString($4));
+					n->object = list_make1(makeString(preserve_downcasing_ident($4)));
 					n->newowner = $7;
 					$$ = (Node *)n;
 				}
@@ -9676,7 +9678,7 @@ explain_option_elem:
 		;
 
 explain_option_name:
-			NonReservedWord			{ $$ = $1; }
+			NonReservedWord			{ $$ = preserve_downcasing_ident($1); }
 			| analyze_keyword		{ $$ = "analyze"; }
 		;
 
