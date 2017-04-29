@@ -1554,6 +1554,16 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 
 	{
+		{"case_compat_type_func", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
+			gettext_noop("If case_sensitive_ident is on, use case-insensitive identifiers for type and function names."),
+			NULL
+		},
+		&case_compat_type_func,
+		false,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"synchronize_seqscans", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
 			gettext_noop("Enable synchronized sequential scans."),
 			NULL

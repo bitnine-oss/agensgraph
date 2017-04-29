@@ -31,6 +31,9 @@ extern bool escape_string_warning;
 extern PGDLLIMPORT bool standard_conforming_strings;
 extern bool case_sensitive_ident;
 
+/* GUC variables in gram.y */
+bool case_compat_type_func;
+
 
 /* Primary entry point for the raw parsing functions */
 extern List *raw_parser(const char *str);
