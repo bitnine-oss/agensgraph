@@ -27,6 +27,8 @@
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
+#include "parser/parser.h"
+#include "parser/scansup.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -1067,6 +1069,24 @@ ExpandColumnRefStar(ParseState *pstate, ColumnRef *cref,
 				rte = refnameRangeTblEntry(pstate, nspname, relname,
 										   cref->location,
 										   &levels_up);
+				if (rte == NULL && case_sensitive_ident)
+				{
+					char *_relname;
+
+					/*
+					 * FIXME: Try to find hard-coded magic variables using
+					 *        downcased identifier. This is buggy and ugly but
+					 *        results minimum code changes.
+					 */
+
+					_relname = downcase_identifier(relname, strlen(relname),
+												   false, false);
+					if (strcmp(_relname, "new") == 0 ||
+						strcmp(_relname, "old") == 0)
+						rte = refnameRangeTblEntry(pstate, nspname, _relname,
+												   cref->location,
+												   &levels_up);
+				}
 				break;
 			case 3:
 				nspname = strVal(linitial(fields));
