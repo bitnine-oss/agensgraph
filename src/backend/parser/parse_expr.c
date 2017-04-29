@@ -35,7 +35,9 @@
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
 #include "parser/parse_agg.h"
+#include "parser/parser.h"
 #include "parser/parsetree.h"
+#include "parser/scansup.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
 #include "utils/lsyscache.h"
@@ -622,6 +624,18 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 
 				if (node == NULL)
 				{
+					char *_colname;
+
+					if (case_sensitive_ident)
+					{
+						_colname = downcase_identifier(colname, strlen(colname),
+													   false, false);
+					}
+					else
+					{
+						_colname = colname;
+					}
+
 					/*
 					 * Not known as a column of any range-table entry.
 					 *
@@ -656,8 +670,33 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 										   &levels_up);
 				if (rte == NULL)
 				{
-					crerr = CRERR_NO_RTE;
-					break;
+					char *_relname;
+
+					if (!case_sensitive_ident)
+					{
+						crerr = CRERR_NO_RTE;
+						break;
+					}
+
+					/*
+					 * FIXME: Try to find hard-coded magic variables using
+					 *        downcased identifier. This is buggy and ugly but
+					 *        results minimum code changes.
+					 */
+
+					_relname = downcase_identifier(relname, strlen(relname),
+												   false, false);
+					if (strcmp(_relname, "excluded") == 0 ||
+						strcmp(_relname, "new") == 0 ||
+						strcmp(_relname, "old") == 0)
+						rte = refnameRangeTblEntry(pstate, nspname, _relname,
+												   cref->location,
+												   &levels_up);
+					if (rte == NULL)
+					{
+						crerr = CRERR_NO_RTE;
+						break;
+					}
 				}
 
 				/* Whole-row reference? */
