@@ -108,6 +108,8 @@ static	PLpgSQL_expr	*read_cursor_args(PLpgSQL_var *cursor,
 static	List			*read_raise_options(void);
 static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 
+static char *preserve_downcasing_ident(char *ident);
+
 %}
 
 %expect 0
@@ -362,9 +364,11 @@ comp_option		: '#' K_OPTION K_DUMP
 					}
 				| '#' K_PRINT_STRICT_PARAMS option_value
 					{
-						if (strcmp($3, "on") == 0)
+						char *ident = preserve_downcasing_ident($3);
+
+						if (strcmp(ident, "on") == 0)
 							plpgsql_curr_compile->print_strict_params = true;
-						else if (strcmp($3, "off") == 0)
+						else if (strcmp(ident, "off") == 0)
 							plpgsql_curr_compile->print_strict_params = false;
 						else
 							elog(ERROR, "unrecognized print_strict_params option %s", $3);
@@ -2281,9 +2285,11 @@ proc_conditions	: proc_conditions K_OR proc_condition
 
 proc_condition	: any_identifier
 						{
-							if (strcmp($1, "sqlstate") != 0)
+							char *ident = preserve_downcasing_ident($1);
+
+							if (strcmp(ident, "sqlstate") != 0)
 							{
-								$$ = plpgsql_parse_err_condition($1);
+								$$ = plpgsql_parse_err_condition(ident);
 							}
 							else
 							{
@@ -2493,9 +2499,13 @@ tok_is_keyword(int token, union YYSTYPE *lval,
 		 * match composite names (hence an unreserved word followed by "."
 		 * will not be recognized).
 		 */
-		if (!lval->wdatum.quoted && lval->wdatum.ident != NULL &&
-			strcmp(lval->wdatum.ident, kw_str) == 0)
-			return true;
+		if (!lval->wdatum.quoted && lval->wdatum.ident != NULL)
+		{
+			char *ident = preserve_downcasing_ident(lval->wdatum.ident);
+
+			if (strcmp(ident, kw_str) == 0)
+				return true;
+		}
 	}
 	return false;				/* not the keyword */
 }
@@ -3999,4 +4009,14 @@ make_case(int location, PLpgSQL_expr *t_expr,
 	}
 
 	return (PLpgSQL_stmt *) new;
+}
+
+/* downcase identifier for user convenience if case_sensitive_ident is on */
+static char *
+preserve_downcasing_ident(char *ident)
+{
+	if (case_sensitive_ident)
+		ident = downcase_identifier(ident, strlen(ident), false, false);
+
+	return ident;
 }
