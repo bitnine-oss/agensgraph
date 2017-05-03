@@ -21,6 +21,7 @@
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
+#include "executor/spi.h"
 #include "lib/stringinfo.h"
 #include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
@@ -39,11 +40,11 @@
 #include "parser/parse_relation.h"
 #include "parser/parse_shortestpath.h"
 #include "parser/parse_target.h"
-#include "parser/parse_utilcmd.h"
 #include "parser/parser.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteHandler.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
@@ -238,9 +239,18 @@ static List *transformMergeOnSet(ParseState *pstate, List *sets,
 								 RangeTblEntry *rte);
 
 /* common */
-static void vertexLabelExist(ParseState *pstate, char *labname, int labloc);
-static void edgeLabelExist(ParseState *pstate, char *labname, int labloc);
-static bool labelExist(char *labname, char labkind);
+static bool labelExist(ParseState *pstate, char *labname, int labloc,
+					   char labkind, bool throw);
+#define vertexLabelExist(pstate, labname, labloc) \
+	labelExist(pstate, labname, labloc, LABEL_KIND_VERTEX, true)
+#define edgeLabelExist(pstate, labname, labloc) \
+	labelExist(pstate, labname, labloc, LABEL_KIND_EDGE, true)
+static void createLabelIfNotExist(ParseState *pstate, char *labname, int labloc,
+								  char labkind);
+#define createVertexLabelIfNotExist(pstate, labname, labloc) \
+	createLabelIfNotExist(pstate, labname, labloc, LABEL_KIND_VERTEX)
+#define createEdgeLabelIfNotExist(pstate, labname, labloc) \
+	createLabelIfNotExist(pstate, labname, labloc, LABEL_KIND_EDGE)
 static bool isNodeForRef(CypherNode *cnode);
 static Node *transformPropMap(ParseState *pstate, Node *expr,
 							  ParseExprKind exprKind);
@@ -1481,9 +1491,11 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 		labloc = -1;
 		prop_constr = ni->prop_constr;
 	}
-	vertexLabelExist(pstate, labname, labloc);
+
 	if (labname == NULL)
 		labname = AG_VERTEX;
+	else
+		vertexLabelExist(pstate, labname, labloc);
 
 	/*
 	 * If `cnode` has a label constraint or a property constraint, return RTE.
@@ -3466,9 +3478,15 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 		Relation 	relation;
 		Node	   *vertex;
 
-		vertexLabelExist(pstate, labname, getCypherNameLoc(cnode->label));
 		if (labname == NULL)
+		{
 			labname = AG_VERTEX;
+		}
+		else
+		{
+			createVertexLabelIfNotExist(pstate, labname,
+										getCypherNameLoc(cnode->label));
+		}
 
 		/* lock the relation of the label and return it */
 		relation = openTargetLabel(pstate, labname);
@@ -3541,7 +3559,7 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 	type = linitial(crel->types);
 	typname = getCypherName(type);
 
-	edgeLabelExist(pstate, typname, getCypherNameLoc(type));
+	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
 
 	relation = openTargetLabel(pstate, typname);
 
@@ -4200,9 +4218,15 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 				 errmsg("duplicate variable \"%s\"", varname),
 				 parser_errposition(pstate, varloc)));
 
-	vertexLabelExist(pstate, labname, getCypherNameLoc(cnode->label));
 	if (labname == NULL)
+	{
 		labname = AG_VERTEX;
+	}
+	else
+	{
+		createVertexLabelIfNotExist(pstate, labname,
+									getCypherNameLoc(cnode->label));
+	}
 
 	relation = openTargetLabel(pstate, labname);
 
@@ -4285,7 +4309,7 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	type = linitial(crel->types);
 	typname = getCypherName(type);
 
-	edgeLabelExist(pstate, typname, getCypherNameLoc(type));
+	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
 
 	relation = openTargetLabel(pstate, getCypherName(linitial(crel->types)));
 
@@ -4374,38 +4398,82 @@ transformMergeOnSet(ParseState *pstate, List *sets, RangeTblEntry *rte)
 	return list_concat(l_onmatch, l_oncreate);
 }
 
-static void
-vertexLabelExist(ParseState *pstate, char *labname, int labloc)
-{
-	if (!labelExist(labname, LABEL_KIND_VERTEX))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("vertex label \"%s\" does not exist", labname),
-				 parser_errposition(pstate, labloc)));
-}
-
-static void
-edgeLabelExist(ParseState *pstate, char *labname, int labloc)
-{
-	if (!labelExist(labname, LABEL_KIND_EDGE))
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("edge label \"%s\" does not exist", labname),
-				 parser_errposition(pstate, labloc)));
-}
-
 static bool
-labelExist(char *labname, char labkind)
+labelExist(ParseState *pstate, char *labname, int labloc, char labkind,
+		   bool throw)
 {
-	Oid graphid;
-
-	/* ag_vertex or ag_edge */
-	if (labname == NULL)
-		return true;
+	Oid			graphid;
+	HeapTuple	tuple;
+	char	   *elemstr;
+	Form_ag_label labtup;
 
 	graphid = get_graph_path_oid();
 
-	return (getLabelKind(labname, graphid) == labkind);
+	tuple = SearchSysCache2(LABELNAMEGRAPH, PointerGetDatum(labname),
+							ObjectIdGetDatum(graphid));
+	if (!HeapTupleIsValid(tuple))
+	{
+		if (throw)
+		{
+			if (labkind == LABEL_KIND_VERTEX)
+				elemstr = "vertex";
+			else
+				elemstr = "edge";
+
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("%s label \"%s\" does not exist", elemstr, labname),
+					 parser_errposition(pstate, labloc)));
+		}
+		else
+		{
+			return false;
+		}
+	}
+
+	labtup = (Form_ag_label) GETSTRUCT(tuple);
+	if (labtup->labkind != labkind)
+	{
+		if (labtup->labkind == LABEL_KIND_VERTEX)
+			elemstr = "vertex";
+		else
+			elemstr = "edge";
+
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("label \"%s\" is %s label", labname, elemstr),
+				 parser_errposition(pstate, labloc)));
+	}
+
+	ReleaseSysCache(tuple);
+
+	return true;
+}
+
+static void
+createLabelIfNotExist(ParseState *pstate, char *labname, int labloc,
+					  char labkind)
+{
+	char	   *keyword;
+	char		sqlcmd[128];
+
+	if (labelExist(pstate, labname, labloc, labkind, false))
+		return;
+
+	if (labkind == LABEL_KIND_VERTEX)
+		keyword = "VLABEL";
+	else
+		keyword = "ELABEL";
+
+	snprintf(sqlcmd, sizeof(sqlcmd), "CREATE %s %s", keyword, labname);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	SPI_exec(sqlcmd, 0);
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
 }
 
 static bool
