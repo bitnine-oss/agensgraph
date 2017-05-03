@@ -21,6 +21,7 @@
 #include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
+#include "executor/spi.h"
 #include "lib/stringinfo.h"
 #include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
@@ -44,6 +45,7 @@
 #include "parser/parsetree.h"
 #include "rewrite/rewriteHandler.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
@@ -241,6 +243,11 @@ static List *transformMergeOnSet(ParseState *pstate, List *sets,
 static void vertexLabelExist(ParseState *pstate, char *labname, int labloc);
 static void edgeLabelExist(ParseState *pstate, char *labname, int labloc);
 static bool labelExist(char *labname, char labkind);
+#define createVertexLabelIfNotExist(labname) \
+	createLabelIfNotExist(labname, true)
+#define createEdgeLabelIfNotExist(labname) \
+	createLabelIfNotExist(labname, false)
+static void createLabelIfNotExist(char *labname, bool vertex);
 static bool isNodeForRef(CypherNode *cnode);
 static Node *transformPropMap(ParseState *pstate, Node *expr,
 							  ParseExprKind exprKind);
@@ -3466,9 +3473,10 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 		Relation 	relation;
 		Node	   *vertex;
 
-		vertexLabelExist(pstate, labname, getCypherNameLoc(cnode->label));
 		if (labname == NULL)
 			labname = AG_VERTEX;
+		else
+			createVertexLabelIfNotExist(labname);
 
 		/* lock the relation of the label and return it */
 		relation = openTargetLabel(pstate, labname);
@@ -3541,7 +3549,7 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 	type = linitial(crel->types);
 	typname = getCypherName(type);
 
-	edgeLabelExist(pstate, typname, getCypherNameLoc(type));
+	createEdgeLabelIfNotExist(typname);
 
 	relation = openTargetLabel(pstate, typname);
 
@@ -4200,9 +4208,10 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 				 errmsg("duplicate variable \"%s\"", varname),
 				 parser_errposition(pstate, varloc)));
 
-	vertexLabelExist(pstate, labname, getCypherNameLoc(cnode->label));
 	if (labname == NULL)
 		labname = AG_VERTEX;
+	else
+		createVertexLabelIfNotExist(labname);
 
 	relation = openTargetLabel(pstate, labname);
 
@@ -4285,7 +4294,7 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	type = linitial(crel->types);
 	typname = getCypherName(type);
 
-	edgeLabelExist(pstate, typname, getCypherNameLoc(type));
+	createEdgeLabelIfNotExist(typname);
 
 	relation = openTargetLabel(pstate, getCypherName(linitial(crel->types)));
 
@@ -4406,6 +4415,27 @@ labelExist(char *labname, char labkind)
 	graphid = get_graph_path_oid();
 
 	return (getLabelKind(labname, graphid) == labkind);
+}
+
+static void
+createLabelIfNotExist(char *labname, bool vertex)
+{
+	char	   *ident;
+	char		sqlcmd[128];
+
+	if (OidIsValid(get_labname_laboid(labname, get_graph_path_oid())))
+		return;
+
+	ident = (vertex ? "VLABEL" : "ELABEL");
+	snprintf(sqlcmd, sizeof(sqlcmd), "CREATE %s %s", ident, labname);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	SPI_exec(sqlcmd, 0);
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
 }
 
 static bool
