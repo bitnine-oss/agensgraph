@@ -21,6 +21,7 @@
 #include "lib/pairingheap.h"
 #include "nodes/params.h"
 #include "nodes/plannodes.h"
+#include "utils/array.h"
 #include "utils/reltrigger.h"
 #include "utils/sortsupport.h"
 #include "utils/tuplestore.h"
@@ -412,6 +413,10 @@ typedef struct EState
 	List	   *es_subplanstates;		/* List of PlanState for SubPlans */
 
 	List	   *es_auxmodifytables;		/* List of secondary ModifyTableStates */
+
+	/* VLE working state: */
+	int			es_num_edgerefrels;
+	Relation   *es_edgerefrels;
 
 	/*
 	 * this ExprContext is for per-output-tuple operations, such as constraint
@@ -1016,6 +1021,34 @@ typedef struct DomainConstraintState
 	char	   *name;			/* name of constraint (for error msgs) */
 	ExprState  *check_expr;		/* for CHECK, a boolean expression */
 } DomainConstraintState;
+
+typedef struct EdgeRefPropState
+{
+	ExprState 	xprstate;
+	ExprState  *arg;
+	Relation   *edgerefrels;
+	Snapshot    snapshot;
+} EdgeRefPropState;
+
+typedef struct EdgeRefRowState
+{
+	ExprState 	xprstate;
+	ExprState  *arg;
+	Datum		val;
+	Relation   *edgerefrels;
+	Snapshot    snapshot;
+} EdgeRefRowState;
+
+typedef struct EdgeRefRowsState
+{
+	ExprState 	xprstate;
+	ExprState  *arg;
+	EdgeRefRowState *rowstate;
+	FmgrInfo    aa_flinfo;
+	FunctionCallInfoData aa_fcinfo;
+	FuncExpr	aa_fn_expr;
+	ArrayMetaState iter_meta;
+} EdgeRefRowsState;
 
 
 /* ----------------------------------------------------------------
@@ -1716,15 +1749,15 @@ typedef struct VLEArrayExpr
 
 typedef struct NestLoopVLEState
 {
-	NestLoopState nls;
-	int			curhops;
-	bool		selfLoop;
-	bool		hasPath;
+	NestLoopState 	nls;
+	int				curhops;
+	bool			selfLoop;
+	bool			hasPath;
 	TupleTableSlot *selfTupleSlot;
-	VLEArrayExpr rowids;
-	VLEArrayExpr path;
-	dlist_head	vleCtxs;		/* list of NestLoopVLECtx */
-	dlist_node *curCtx;
+	VLEArrayExpr	rowids;
+	VLEArrayExpr	path;
+	dlist_head  	vleCtxs;		/* list of NestLoopVLECtx */
+	dlist_node 	   *curCtx;
 } NestLoopVLEState;
 
 typedef struct NestLoopVLECtx

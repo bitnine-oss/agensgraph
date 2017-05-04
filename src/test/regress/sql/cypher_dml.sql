@@ -292,6 +292,90 @@ match (a:person {id: 3}), (b:person {id: 1}) create (a)-[:knows]->(b);
 
 match (a:person {id: 1})-[x:knows*1..]->(b:person) return a.id, b.id, x;
 
+-- edgeref
+
+-- 1->2->3->4
+-- `->5
+match (a:person {id: 3})-[k:knows]->(b:person {id: 1}) delete k;
+match (a:person {id: 1})-[k:knows]->(b:person {id: 5}) delete k;
+
+create elabel friendships inherits (knows);
+
+match (a:person {id: 1}) create (a)-[:friendships {fromDate:'2014-11-24'}]->(:person {id: 5});
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+return a.id, b.id, x[1].fromdate;
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+where x[1].fromdate is not null
+return a.id, b.id, x[1].fromdate;
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1].fromdate as fromdate
+return fromdate;
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1
+return x1.fromdate, x1;
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+where x[2].fromdate is not null
+with x[1] as x1, array_length(x, 1) as l
+return x1, l;
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1, array_length(x, 1) as l
+return x1, l;
+
+match (a:person {id: 1})-[x:knows*1..2]-(b:person)
+with x[1] as x1, array_length(x, 1) as l
+return x1, l;
+
+create elabel familyship inherits (friendships);
+
+match (a:person {id: 5}) create (a)-[:familyship {fromDate:'2015-12-24'}]->(:person {id: 6});
+
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1, x[2] as x2, array_length(x, 1) as l
+return x1, x2, l;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with x[1] as x1, x[2] as x2 order by x2 return x1;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with max(b.id) as id, x[1] as x return *;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with distinct x as path return *;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with max(b.id) as id, x as x return *;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+with max(x) as x, b.id as id return *;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+return x, x is not null, x[1] is null;
+
+explain verbose
+match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+where x[1] is not null return x[1];
+
+explain verbose
+select * from (
+	match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+	where x[1] is not null return x[1]
+	union all
+	match (a:person {id: 1})-[x:knows*1..2]->(b:person)
+	return x[2]
+) as foo;
+
 -- shortestpath(), allshortestpaths()
 
 CREATE OR REPLACE FUNCTION ids(vertex[]) RETURNS int[] AS $$
@@ -310,8 +394,9 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 1->2->3->4->5
-match (a:person {id: 3})-[k:knows]->(b:person {id: 1}) delete k;
 match (a:person {id: 1})-[k:knows]->(b:person {id: 5}) delete k;
+match (a:person {id: 5})-[k:knows]->(b:person {id: 6}) delete k;
+match (a:person {id: 6}) delete a;
 match (a:person {id: 4}), (b:person {id: 5}) create (a)-[:knows]->(b);
 
 MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 4

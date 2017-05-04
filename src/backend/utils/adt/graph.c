@@ -29,20 +29,6 @@
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
-#define Natts_vertex			2
-#define Anum_vertex_id			1
-#define Anum_vertex_properties	2
-
-#define Natts_edge				4
-#define Anum_edge_id			1
-#define Anum_edge_start			2
-#define Anum_edge_end			3
-#define Anum_edge_properties	4
-
-#define Natts_graphpath			2
-#define Anum_graphpath_vertices	1
-#define Anum_graphpath_edges	2
-
 #define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "65535.281474976710655" */
 
@@ -243,6 +229,117 @@ Datum
 graphid_ge(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_BOOL(graphid_cmp(fcinfo) >= 0);
+}
+
+/* edgeref APIs */
+
+Datum
+edgeref(PG_FUNCTION_ARGS)
+{
+	int			relid = PG_GETARG_INT32(0);
+	ItemPointer	tid = (ItemPointer) DatumGetPointer(PG_GETARG_DATUM(1));
+	EdgeRef	   	edgeref;
+
+	EdgeRefSet(edgeref, relid, tid);
+
+	PG_RETURN_EDGEREF(edgeref);
+}
+
+Datum
+edgeref_in(PG_FUNCTION_ARGS)
+{
+	const char	DELIM = ',';
+	char	   *str = PG_GETARG_CSTRING(0);
+	char	   *ptr;
+	char	   *rdimpos;
+	char	   *endptr;
+	char	   *ctidbuf;
+	int			ctidbuflen;
+	Oid			typiofunc;
+	Oid			typioparam;
+	FmgrInfo	proc;
+	uint16		relid;
+	Datum		tid;
+	EdgeRef	   	edgeref;
+
+	ptr = str;
+
+	/* Allow leading whitespace */
+	while (*ptr && isspace((unsigned char) *ptr))
+		ptr++;
+	if (*ptr++ != '(')
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("malformed edgeref literal: \"%s\"", str),
+				 errdetail("Missing left parenthesis.")));
+
+	errno = 0;
+	ptr++;
+	relid = strtoul(ptr, &endptr, 10);
+	if (errno || *endptr != DELIM)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("malformed edgeref literal: \"%s\"", str),
+				 errdetail("Invalid relation index")));
+
+	ptr = endptr + 1;
+	rdimpos = strrchr(ptr, ')');
+	if (rdimpos == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("malformed edgeref literal: \"%s\"", str),
+				 errdetail("Invalid tid")));
+
+	ctidbuflen = rdimpos - ptr;
+	ctidbuf = palloc(sizeof(char) * ctidbuflen + 1);
+	strncpy(ctidbuf, ptr, ctidbuflen);
+	ctidbuf[ctidbuflen] = '\0';
+
+	getTypeInputInfo(TIDOID, &typiofunc, &typioparam);
+	fmgr_info_cxt(typiofunc, &proc, fcinfo->flinfo->fn_mcxt);
+
+	tid = InputFunctionCall(&proc, ctidbuf, typioparam, -1);
+
+	EdgeRefSet(edgeref, relid, (ItemPointer) DatumGetPointer(tid));
+
+	ptr = rdimpos + 1;
+
+	/* Allow trailing whitespace */
+	while (*ptr && isspace((unsigned char) *ptr))
+		ptr++;
+	if (*ptr)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("malformed record literal: \"%s\"", str),
+				 errdetail("Junk after right parenthesis.")));
+
+	pfree(ctidbuf);
+
+	PG_RETURN_EDGEREF(edgeref);
+}
+
+Datum
+edgeref_out(PG_FUNCTION_ARGS)
+{
+	EdgeRef	    eref = PG_GETARG_EDGEREF(0);
+	StringInfoData buf;
+	Oid			typiofunc;
+	bool		typisvarlena;
+	ItemPointerData tid;
+	FmgrInfo	proc;
+	char	   *value;
+
+	initStringInfo(&buf);
+	appendStringInfo(&buf, "(%u,", EdgeRefGetRelid(eref));
+
+	getTypeOutputInfo(TIDOID, &typiofunc, &typisvarlena);
+	fmgr_info_cxt(typiofunc, &proc, fcinfo->flinfo->fn_mcxt);
+	ItemPointerSet(&tid, EdgeRefGetBlockNumber(eref), EdgeRefGetOffsetNumber(eref));
+	value = OutputFunctionCall(&proc, PointerGetDatum(&tid));
+
+	appendStringInfo(&buf, "%s)", value);
+
+	PG_RETURN_CSTRING(buf.data);
 }
 
 Datum

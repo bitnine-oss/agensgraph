@@ -667,6 +667,10 @@ DATA(insert OID = 7022 ( edge		PGNSP PGUID -1 f c C f t \054 7020 0 7021 record_
 DATA(insert OID = 7031 ( _graphpath	PGNSP PGUID -1 f b A f t \054 0 7032 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
 DATA(insert OID = 7032 ( graphpath	PGNSP PGUID -1 f c C f t \054 7030 0 7031 record_in graphpath_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
 #define GRAPHPATHOID	7032
+DATA(insert OID = 7051 ( _edgeref	PGNSP PGUID -1 f b A f t \054 0 7052 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
+#define EDGEREFARRAYOID 7051
+DATA(insert OID = 7052 ( edgeref	PGNSP PGUID 8 FLOAT8PASSBYVAL b U f t \054 0 0 7051 edgeref_in edgeref_out - - - - - d p f 0 -1 0 0 _null_ _null_ _null_ ));
+#define EDGEREFOID		7052
 
 /*
  * pseudo-types

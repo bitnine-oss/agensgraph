@@ -3277,6 +3277,24 @@ transformFrameOffset(ParseState *pstate, int frameOptions, Node *clause)
 	return node;
 }
 
+static bool
+has_column_in_edgeref(Expr *node, int var_level)
+{
+	Var *var;
+
+	if (IsA(node, Var))
+	{
+		var = (Var *) node;
+		return (int) var->varlevelsup == var_level;
+	}
+	if (IsA(node, ArrayRef))
+	{
+		ArrayRef *aref = (ArrayRef *) node;
+		return has_column_in_edgeref(aref->refexpr, var_level);
+	}
+
+	return false;
+}
 
 static bool
 add_expr_to_group_exprs(Expr *expr, List **group_exprs)
@@ -3369,6 +3387,31 @@ gen_group_exprs_walker(Node *node, gen_group_exprs_context *ctx)
 		}
 
 		return gen_group_exprs_walker((Node *) op->args, ctx);
+	}
+
+	if (IsA(node, EdgeRefRow))
+	{
+		EdgeRefRow *r = (EdgeRefRow *) node;
+
+		if (has_column_in_edgeref (r->arg, ctx->sublevels_up))
+		{
+			add_expr_to_group_exprs((Expr *) r, &ctx->group_exprs);
+			return false;
+		}
+
+		return gen_group_exprs_walker((Node *) r->arg, ctx);
+	}
+
+	if (IsA(node, EdgeRefRows))
+	{
+		EdgeRefRows *r = (EdgeRefRows *) node;
+
+		if (has_column_in_edgeref (r->arg, ctx->sublevels_up))
+		{
+			add_expr_to_group_exprs((Expr *) r, &ctx->group_exprs);
+			return false;
+		}
+		return gen_group_exprs_walker((Node *) r->arg, ctx);
 	}
 
 	if (IsA(node, FieldSelect))

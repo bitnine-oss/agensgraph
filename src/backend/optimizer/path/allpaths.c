@@ -1692,7 +1692,7 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 	 * XXX Are there any cases where we want to make a policy decision not to
 	 * push down a pushable qual, because it'd result in a worse plan?
 	 */
-	if (rel->baserestrictinfo != NIL &&
+	if (rel->baserestrictinfo != NIL && !rte->isVLE &&
 		subquery_is_pushdown_safe(subquery, subquery, &safetyInfo))
 	{
 		/* OK to consider pushing down individual quals */
