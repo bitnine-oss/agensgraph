@@ -665,7 +665,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 	NOT NOTHING NOTIFY NOTNULL NOWAIT NULL_P NULLIF
 	NULLS_P NUMERIC
 
-	OBJECT_P OF OFF OFFSET OIDS ON ONLY OPERATOR OPTION OPTIONAL OPTIONS OR
+	OBJECT_P OF OFF OFFSET OIDS ON ONLY OPERATOR OPTION OPTIONAL_P OPTIONS OR
 	ORDER ORDINALITY OUT_P OUTER_P OVER OVERLAPS OVERLAY OWNED OWNER
 
 	PARALLEL PARSER PARTIAL PARTITION PASSING PASSWORD PLACING PLANS POLICY
@@ -682,7 +682,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 	SAVEPOINT SCHEMA SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
 	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHORTESTPATH
 	SHOW SIMILAR
-	SIMPLE SIZE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P START
+	SIMPLE SIZE_P SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P START
 	STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P SUBSTRING
 	SYMMETRIC SYSID SYSTEM_P
 
@@ -756,14 +756,14 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
  * To support Cypher, the precedence of unreserved keywords,
- * ALLSHORTESTPATHS, DELETE_P, DETACH, LOAD, OPTIONAL, REMOVE, SHORTESTPATH,
+ * ALLSHORTESTPATHS, DELETE_P, DETACH, LOAD, OPTIONAL_P, REMOVE, SHORTESTPATH,
  * SIZE and SKIP must be the same as that of IDENT so that they can follow
  * a_expr without creating postfix-operator problems.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
-			ALLSHORTESTPATHS DELETE_P DETACH LOAD OPTIONAL REMOVE SHORTESTPATH
-			SIZE SKIP
+			ALLSHORTESTPATHS DELETE_P DETACH LOAD OPTIONAL_P REMOVE SHORTESTPATH
+			SIZE_P SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -12368,7 +12368,7 @@ c_expr:		columnref								{ $$ = $1; }
 					n->location = @1;
 					$$ = (Node *)n;
 				}
-			| SIZE '(' cypher_pattern ')'
+			| SIZE_P '(' cypher_pattern ')'
 				{
 					CypherSubPattern *sub = makeNode(CypherSubPattern);
 					SubLink *n = makeNode(SubLink);
@@ -14158,7 +14158,7 @@ unreserved_keyword:
 			| OIDS
 			| OPERATOR
 			| OPTION
-			| OPTIONAL
+			| OPTIONAL_P
 			| OPTIONS
 			| ORDINALITY
 			| OVER
@@ -14225,7 +14225,7 @@ unreserved_keyword:
 			| SHORTESTPATH
 			| SHOW
 			| SIMPLE
-			| SIZE
+			| SIZE_P
 			| SKIP
 			| SNAPSHOT
 			| SQL_P
@@ -15010,7 +15010,7 @@ cypher_match:
 		;
 
 cypher_optional_opt:
-			OPTIONAL			{ $$ = true; }
+			OPTIONAL_P			{ $$ = true; }
 			| /* EMPTY */		{ $$ = false; }
 		;
 
