@@ -28,7 +28,6 @@ SELECT * FROM (RETURN 3 + 4, 'hello' || ' agens') AS _(lucky, greeting);
 --
 -- CREATE
 --
-
 CREATE VLABEL repo;
 CREATE ELABEL lib;
 CREATE ELABEL doc;
@@ -75,9 +74,21 @@ CREATE (=(SELECT prop FROM t1))-[:lib =(SELECT prop FROM t1)]->();
 
 MATCH (a) WHERE a.name IS NULL DETACH DELETE a;
 DROP TABLE t1;
+
+CREATE GRAPH g_create;
+SET GRAPH_PATH = g_create;
+
+CREATE ELABEL e1;
+
+CREATE p=()-[:e1]->() RETURN p;
+
+DROP GRAPH g_create CASCADE;
+
 --
 -- MATCH
 --
+
+SET GRAPH_PATH = agens;
 
 MATCH (a) RETURN a.name AS a;
 MATCH (a), (a) RETURN a.name AS a;
