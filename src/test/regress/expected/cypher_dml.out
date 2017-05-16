@@ -138,9 +138,25 @@ CREATE TABLE t1 (prop jsonb);
 CREATE (=(SELECT prop FROM t1))-[:lib =(SELECT prop FROM t1)]->();
 MATCH (a) WHERE a.name IS NULL DETACH DELETE a;
 DROP TABLE t1;
+CREATE GRAPH g_create;
+SET GRAPH_PATH = g_create;
+CREATE ELABEL e1;
+CREATE p=()-[:e1]->() RETURN p;
+                           p                            
+--------------------------------------------------------
+ [ag_vertex[1.1]{},e1[3.1][1.1,1.2]{},ag_vertex[1.2]{}]
+(1 row)
+
+DROP GRAPH g_create CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence g_create.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label e1
 --
 -- MATCH
 --
+SET GRAPH_PATH = agens;
 MATCH (a) RETURN a.name AS a;
         a         
 ------------------
