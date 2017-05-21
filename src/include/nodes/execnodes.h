@@ -1914,6 +1914,25 @@ typedef struct GroupState
 	bool		grp_done;		/* indicates completion of Group scan */
 } GroupState;
 
+/* ----------------------------------------------------------------
+ *				 Eager State Information
+ * ----------------------------------------------------------------
+ */
+
+/* ----------------
+ *	 EagerState information
+ *
+ *		ss.ss_ScanTupleSlot refers to output of underlying plan.
+ * ----------------
+ */
+typedef struct EagerState
+{
+	ScanState	ss;				/* its first field is NodeTag */
+	bool		child_done;		/* reached end of child plan? */
+	Tuplestorestate *tuplestorestate;
+} EagerState;
+
+
 /* ---------------------
  *	AggState information
  *

@@ -81,6 +81,7 @@ typedef enum NodeTag
 	T_SetOp,
 	T_LockRows,
 	T_Limit,
+	T_Eager,
 	T_ModifyGraph,
 	/* these aren't subclasses of Plan: */
 	T_NestLoopParam,
@@ -123,6 +124,7 @@ typedef enum NodeTag
 	T_MaterialState,
 	T_SortState,
 	T_GroupState,
+	T_EagerState,
 	T_AggState,
 	T_WindowAggState,
 	T_UniqueState,
@@ -267,6 +269,7 @@ typedef enum NodeTag
 	T_LockRowsPath,
 	T_ModifyTablePath,
 	T_LimitPath,
+	T_EagerPath,
 	T_ModifyGraphPath,
 	/* these aren't subclasses of Path: */
 	T_EquivalenceClass,

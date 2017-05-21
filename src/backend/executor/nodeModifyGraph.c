@@ -611,7 +611,6 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self), estate, false,
 							  NULL, NIL);
 
-
 	edge = makeGraphEdgeDatum(elemTupleSlot->tts_values[0],
 							  elemTupleSlot->tts_values[1],
 							  elemTupleSlot->tts_values[2],

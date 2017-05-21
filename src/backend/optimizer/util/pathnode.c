@@ -3135,6 +3135,63 @@ create_limit_path(PlannerInfo *root, RelOptInfo *rel,
 	return pathnode;
 }
 
+/*
+ * create_eager_path
+ *	  Creates a path corresponding to a Eager plan, returning the
+ *	  pathnode.
+ */
+EagerPath *
+create_eager_path(RelOptInfo *rel, Path *subpath)
+{
+	EagerPath *pathnode = makeNode(EagerPath);
+
+	pathnode->path.pathtype = T_Eager;
+	pathnode->path.parent = rel;
+	pathnode->path.pathtarget = rel->reltarget;
+	pathnode->path.param_info = subpath->param_info;
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = rel->consider_parallel &&
+		subpath->parallel_safe;
+	pathnode->path.parallel_workers = subpath->parallel_workers;
+	pathnode->path.pathkeys = subpath->pathkeys;
+
+	/* For now, eager cost is ignored. */
+	pathnode->path.rows = subpath->rows;
+	pathnode->path.startup_cost = subpath->startup_cost;
+	pathnode->path.total_cost = subpath->total_cost;
+	pathnode->path.pathkeys = NIL;
+
+	pathnode->subpath = subpath;
+
+	return pathnode;
+}
+
+static Path *considerEager(RelOptInfo *rel, Path *path)
+{
+	if (IsA(path, ModifyGraphPath))
+	{
+		return (Path *) create_eager_path(rel, path);
+	}
+	else if (IsA(path, SubqueryScanPath))
+	{
+		SubqueryScanPath *pathnode = (SubqueryScanPath *) path;
+
+		if (IsA(pathnode->subpath, ModifyGraphPath))
+			return (Path *) create_eager_path(pathnode->path.parent, path);
+	}
+	/* For CypherMergeJoin */
+	else if (IsA(path, NestPath))
+	{
+		NestPath *pathnode = (NestPath *) path;
+
+		pathnode->outerjoinpath =
+					(Path *) considerEager(pathnode->path.parent,
+										   pathnode->outerjoinpath);
+	}
+
+	return path;
+}
+
 ModifyGraphPath *
 create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
 						GraphWriteOp operation, bool last, bool detach,
@@ -3154,6 +3211,8 @@ create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
 	pathnode->path.startup_cost = subpath->startup_cost;
 	pathnode->path.total_cost = subpath->total_cost;
 	pathnode->path.pathkeys = NIL;
+
+	subpath = considerEager(rel, subpath);
 
 	pathnode->canSetTag = canSetTag;
 	pathnode->operation = operation;

@@ -768,6 +768,45 @@ MERGE (c:v1 {name:'bitnine'})
 	ON CREATE SET c.matched = 'false';
 MATCH (a) RETURN properties(a);
 
+MATCH (a) DETACH DELETE a;
+
+--------------
+-- Eager plan
+--------------
+-- CREATE - MERGE
+CREATE (:v1 {no:1}), (:v1 {no:2}), (:v1 {no:3});
+MATCH (a:v1)
+CREATE (b:v2 {no:a.no::int})
+MERGE (c:v2 {no:a.no::int + 2});
+
+MATCH (a:v2) RETURN a.no;
+MATCH (a:v2) DETACH DELETE a;
+
+-- MERGE - MERGE
+MATCH (a:v1)
+MERGE (b:v2 {no:a.no::int})
+MERGE (c:v2 {no:a.no::int + 2});
+
+MATCH (a:v2) RETURN a.no;
+
+-- SET - MERGE
+MATCH (a:v1) SET a.no = (a.no::int - 2)::text::jsonb
+MERGE (b:v1 {no:1});
+
+MATCh (a:v1) return a.no;
+
+-- DELETE - MERGE
+MATCH (a) DELETE a;
+CREATE (:v1 {no:1}), (:v1 {no:2}), (:v1 {no:3});
+
+MATCH (a:v1)
+	WHERE a.no::int < 3
+	DELETE a
+MERGE (b:v1 {no:2})
+	ON MATCH SET b.no = a.no::jsonb;
+
+MATCH (a:v1) return a.no;
+
 -- wrong case
 MERGE (a:v1) MERGE (b:v2 {name:a.notexistent});
 MERGE (a:v1) ON MATCH SET a.matched = 'true'

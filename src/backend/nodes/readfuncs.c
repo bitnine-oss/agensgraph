@@ -2167,6 +2167,19 @@ _readLimit(void)
 }
 
 /*
+ * _readEager
+ */
+static Eager *
+_readEager(void)
+{
+	READ_LOCALS_NO_FIELDS(Eager);
+
+	ReadCommonPlan(&local_node->plan);
+
+	READ_DONE();
+}
+
+/*
  * _readNestLoopParam
  */
 static NestLoopParam *
@@ -2586,6 +2599,8 @@ parseNodeString(void)
 		return_value = _readLockRows();
 	else if (MATCH("LIMIT", 5))
 		return_value = _readLimit();
+	else if (MATCH("EAGER", 5))
+		return_value = _readEager();
 	else if (MATCH("NESTLOOPPARAM", 13))
 		return_value = _readNestLoopParam();
 	else if (MATCH("PLANROWMARK", 11))

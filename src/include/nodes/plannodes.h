@@ -691,6 +691,15 @@ typedef struct Sort
 	bool	   *nullsFirst;		/* NULLS FIRST/LAST directions */
 } Sort;
 
+/* ----------------
+ *		eager node
+ * ----------------
+ */
+typedef struct Eager
+{
+	Plan		plan;
+} Eager;
+
 /* ---------------
  *	 group node -
  *		Used for queries with GROUP BY (but no aggregates) specified.
