@@ -3003,10 +3003,6 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 				if (update_type == T_Invalid ||
 					update_type == T_CypherMergeClause)
 					update_type = T_CypherCreateClause;
-				else if (update_type != T_CypherCreateClause)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("There must be one type of consecutive update clauses")));
 				if (read)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
@@ -3025,10 +3021,6 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 								(errcode(ERRCODE_SYNTAX_ERROR),
 								 errmsg("Cypher SET/REMOVE clause cannot end with RETURN clause")));
 				}
-				if (type != update_type)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("There must be one type of consecutive update clauses")));
 				if (read)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
@@ -3048,12 +3040,6 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
 								 errmsg("ON CREATE/MATCH SET between MERGE clauses is not allowed")));
-				}
-				else
-				{
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("There must be one type of consecutive update clauses")));
 				}
 				if (read)
 					ereport(ERROR,
