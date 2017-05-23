@@ -151,6 +151,8 @@ static Node *makeNullAConst(int location);
 static Node *makeAConst(Value *v, int location);
 static Node *makeBoolAConst(bool state, int location);
 static Node *makeRoleSpec(RoleSpecType type, int location);
+static Node *makeDijkstraPath(List *chain, Node *weight, Node *qual,
+							  Node *limit);
 static void check_qualified_name(List *names, core_yyscan_t yyscanner);
 static List *check_func_name(List *names, core_yyscan_t yyscanner);
 static List *check_indirection(List *indirection, core_yyscan_t yyscanner);
@@ -577,7 +579,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 				cypher_read cypher_read_clauses cypher_read_opt
 				cypher_read_opt_parens cypher_read_stmt cypher_read_with_parens
 				cypher_rel cypher_remove cypher_return cypher_rmitem cypher_set
-				cypher_setitem cypher_shortestpath_expr cypher_skip_opt
+				cypher_setitem cypher_findpath_expr cypher_skip_opt
 				cypher_variable cypher_variable_opt cypher_varlen_opt
 				cypher_with cypher_with_parens
 %type <list>	cypher_distinct_opt cypher_expr_list cypher_merge_sets_opt
@@ -632,7 +634,8 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 	DATA_P DATABASE DAY_P DEALLOCATE DEC DECIMAL_P DECLARE DEFAULT DEFAULTS
 	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DESC DETACH
-	DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P DOUBLE_P DROP
+	DICTIONARY DIJKSTRA DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P
+	DOUBLE_P DROP
 
 	EACH ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P
 	ESCAPE EVENT EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
@@ -763,7 +766,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
 			ALLSHORTESTPATHS DELETE_P DETACH LOAD OPTIONAL_P REMOVE SHORTESTPATH
-			SIZE_P SKIP
+			SIZE_P SKIP DIJKSTRA
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -12382,11 +12385,11 @@ c_expr:		columnref								{ $$ = $1; }
 					n->location = @1;
 					$$ = (Node *)n;
 				}
-			| cypher_shortestpath_expr
+			| cypher_findpath_expr
 				{
 					CypherSubPattern *sub = makeNode(CypherSubPattern);
 					SubLink *n = makeNode(SubLink);
-					sub->kind = CSP_SHORTESTPATH;
+					sub->kind = CSP_FINDPATH;
 					sub->pattern = list_make1($1);
 					n->subLinkType = EXPR_SUBLINK;
 					n->subLinkId = 0;
@@ -14066,6 +14069,7 @@ unreserved_keyword:
 			| DEPENDS
 			| DETACH
 			| DICTIONARY
+			| DIJKSTRA
 			| DISABLE_P
 			| DISCARD
 			| DOCUMENT_P
@@ -15154,11 +15158,24 @@ cypher_path_opt_varirable:
 					n->variable = $1;
 					$$ = (Node *) n;
 				}
-			| cypher_shortestpath_expr
-			| cypher_variable '=' cypher_shortestpath_expr
+			| cypher_findpath_expr
+			| cypher_variable '=' cypher_findpath_expr
 				{
 					CypherPath *n = (CypherPath *) $3;
 					n->variable = $1;
+					$$ = (Node *) n;
+				}
+			| '(' cypher_variable ',' cypher_variable ')' '=' cypher_findpath_expr
+				{
+					CypherPath *n = (CypherPath *) $7;
+					n->variable = $2;
+					if (n->kind != CPATH_DIJKSTRA)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("The weight variable is valid only "
+										"in the dijkstra function"),
+								 parser_errposition(@3)));
+					n->weight_variable = $4;
 					$$ = (Node *) n;
 				}
 		;
@@ -15173,7 +15190,7 @@ cypher_path:
 				}
 		;
 
-cypher_shortestpath_expr:
+cypher_findpath_expr:
 			SHORTESTPATH '(' cypher_path_chain ')'
 				{
 					CypherPath *n;
@@ -15193,16 +15210,51 @@ cypher_shortestpath_expr:
 				{
 					CypherPath *n;
 
+					n = makeNode(CypherPath);
+					n->kind = CPATH_SHORTEST_ALL;
+					n->chain = $3;
+					$$ = (Node *) n;
+				}
+			| DIJKSTRA '(' cypher_path_chain ',' a_expr ')'
+				{
 					if (list_length($3) != 3)
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
 								 errmsg("only one relationship is allowed"),
 								 parser_errposition(@3)));
 
-					n = makeNode(CypherPath);
-					n->kind = CPATH_SHORTEST_ALL;
-					n->chain = $3;
-					$$ = (Node *) n;
+					$$ = makeDijkstraPath($3, $5, NULL, makeIntConst(1, -1));
+				}
+			| DIJKSTRA '(' cypher_path_chain ',' a_expr ',' a_expr ')'
+				{
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					$$ = makeDijkstraPath($3, $5, $7, makeIntConst(1, -1));
+				}
+			| DIJKSTRA '(' cypher_path_chain ',' a_expr ',' LIMIT a_expr ')'
+				{
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					$$ = makeDijkstraPath($3, $5, NULL, $8);
+				}
+			| DIJKSTRA '(' cypher_path_chain ',' a_expr ',' a_expr ','
+						   LIMIT a_expr ')'
+				{
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					$$ = makeDijkstraPath($3, $5, $7, $10);
 				}
 			;
 
@@ -15668,6 +15720,21 @@ makeRoleSpec(RoleSpecType type, int location)
 	spec->location = location;
 
 	return (Node *) spec;
+}
+
+static Node *
+makeDijkstraPath(List *chain, Node *weight, Node *qual, Node *limit)
+{
+	CypherPath *n;
+
+	n = makeNode(CypherPath);
+	n->kind = CPATH_DIJKSTRA;
+	n->chain = chain;
+	n->weight = weight;
+	n->qual = qual;
+	n->limit = limit;
+
+	return (Node *) n;
 }
 
 /* check_qualified_name --- check the result of qualified_name production

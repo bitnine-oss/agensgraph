@@ -5450,6 +5450,9 @@ DATA(insert OID = 7177 ( rowid_tableoid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1
 DESCR("get tableoid from rowid");
 DATA(insert OID = 7178 ( rowid_ctid		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 27 "7062" _null_ _null_ _null_ _null_ _null_ rowid_ctid _null_ _null_ _null_ ));
 DESCR("get ctid from rowid");
+/* dijkstra */
+DATA(insert OID = 7180 ( dijkstra_vids	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 7001 "" _null_ _null_ _null_ _null_ _null_ dijkstra_vids _null_ _null_ _null_ ));
+DATA(insert OID = 7181 ( dijkstra_eids	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 7001 "" _null_ _null_ _null_ _null_ _null_ dijkstra_eids _null_ _null_ _null_ ));
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

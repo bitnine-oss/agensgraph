@@ -2274,6 +2274,16 @@ query_tree_walker(Query *query,
 		return true;
 	if (walker(query->limitCount, context))
 		return true;
+	if (walker(query->dijkstraEndId, context))
+		return true;
+	if (walker(query->dijkstraEdgeId, context))
+		return true;
+	if (walker(query->dijkstraSource, context))
+		return true;
+	if (walker(query->dijkstraTarget, context))
+		return true;
+	if (walker(query->dijkstraLimit, context))
+		return true;
 	if (!(flags & QTW_IGNORE_CTE_SUBQUERIES))
 	{
 		if (walker((Node *) query->cteList, context))
@@ -3103,6 +3113,12 @@ query_tree_mutator(Query *query,
 	MUTATE(query->setOperations, query->setOperations, Node *);
 	MUTATE(query->havingQual, query->havingQual, Node *);
 	MUTATE(query->limitOffset, query->limitOffset, Node *);
+	MUTATE(query->limitCount, query->limitCount, Node *);
+	MUTATE(query->dijkstraEndId, query->dijkstraEndId, Node *);
+	MUTATE(query->dijkstraEdgeId, query->dijkstraEdgeId, Node *);
+	MUTATE(query->dijkstraSource, query->dijkstraSource, Node *);
+	MUTATE(query->dijkstraTarget, query->dijkstraTarget, Node *);
+	MUTATE(query->dijkstraLimit, query->dijkstraLimit, Node *);
 	MUTATE(query->limitCount, query->limitCount, Node *);
 	if (!(flags & QTW_IGNORE_CTE_SUBQUERIES))
 		MUTATE(query->cteList, query->cteList, List *);

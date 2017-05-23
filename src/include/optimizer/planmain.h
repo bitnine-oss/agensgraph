@@ -59,6 +59,10 @@ extern ModifyGraph *make_modifygraph(PlannerInfo *root, bool canSetTag,
 						 GraphWriteOp operation, bool last, bool detach,
 						 Plan *subplan, List *pattern, List *targets,
 						 List *exprs, List *sets);
+extern Dijkstra *make_dijkstra(PlannerInfo *root, List *tlist, Plan *subplan,
+							   AttrNumber end_id, AttrNumber edge_id,
+							   AttrNumber weight, Node *source, Node *target,
+							   Node *limit, bool weight_out);
 
 /* External use of these functions is deprecated: */
 extern Sort *make_sort_from_sortclauses(List *sortcls, Plan *lefttree);

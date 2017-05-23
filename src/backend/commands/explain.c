@@ -1053,6 +1053,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					break;
 			}
 			break;
+		case T_Dijkstra:
+			pname = sname = "Dijkstra";
+			break;
 		default:
 			pname = sname = "???";
 			break;

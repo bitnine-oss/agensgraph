@@ -121,9 +121,9 @@ static RangeTblEntry *transformMatchOptional(ParseState *pstate,
 											 CypherClause *clause);
 /* MATCH - preprocessing */
 static bool hasPropConstr(List *pattern);
-static List *getShortestPaths(List *pattern);
-static void appendShortestPathsResult(ParseState *pstate, List *splist,
-									  List **targetList);
+static List *getFindPaths(List *pattern);
+static void appendFindPathResult(ParseState *pstate, List *find_paths,
+								 List **targetList);
 static void collectNodeInfo(ParseState *pstate, List *pattern);
 static void addNodeInfo(ParseState *pstate, CypherNode *cnode);
 static NodeInfo *getNodeInfo(ParseState *pstate, char *varname);
@@ -324,10 +324,15 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	Query *qry;
 	RangeTblEntry *rte;
 
-	if (subpat->kind == CSP_SHORTESTPATH)
+	if (subpat->kind == CSP_FINDPATH)
 	{
+		CypherPath *cp;
 		Assert(list_length(subpat->pattern) == 1);
-		return transformShortestPath(pstate, linitial(subpat->pattern));
+		cp = linitial(subpat->pattern);
+		if (cp->kind == CPATH_DIJKSTRA)
+			return transformDijkstra(pstate, cp);
+		else
+			return transformShortestPath(pstate, cp);
 	}
 
 	match = makeNode(CypherMatchClause);
@@ -565,16 +570,16 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 		}
 		else
 		{
-			List *splist = NIL;
+			List *find_paths = NIL;
 
-			splist = getShortestPaths(detail->pattern);
-			if (!pstate->p_is_sp_processed && splist != NULL)
+			find_paths = getFindPaths(detail->pattern);
+			if (!pstate->p_is_sp_processed && find_paths != NULL)
 			{
 				pstate->p_is_sp_processed = true;
 				rte = transformClause(pstate, (Node *) clause);
 
 				qry->targetList = makeTargetListFromRTE(pstate, rte);
-				appendShortestPathsResult(pstate, splist, &qry->targetList);
+				appendFindPathResult(pstate, find_paths, &qry->targetList);
 			}
 			else
 			{
@@ -966,9 +971,9 @@ hasPropConstr(List *pattern)
 }
 
 static List *
-getShortestPaths(List *pattern)
+getFindPaths(List *pattern)
 {
-	List	   *splist = NIL;
+	List	   *find_paths = NIL;
 	ListCell   *lp;
 
 	foreach(lp, pattern)
@@ -976,18 +981,18 @@ getShortestPaths(List *pattern)
 		CypherPath *p = lfirst(lp);
 
 		if (p->kind != CPATH_NORMAL)
-			splist = lappend(splist, p);
+			find_paths = lappend(find_paths, p);
 	}
 
-	return splist;
+	return find_paths;
 }
 
 static void
-appendShortestPathsResult(ParseState *pstate, List *splist, List **targetList)
+appendFindPathResult(ParseState *pstate, List *find_paths, List **targetList)
 {
 	ListCell *le;
 
-	foreach(le, splist)
+	foreach(le, find_paths)
 	{
 		CypherPath *p = lfirst(le);
 		char	   *pathname = getCypherName(p->variable);
@@ -1002,7 +1007,10 @@ appendShortestPathsResult(ParseState *pstate, List *splist, List **targetList)
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("a variable name of path must be provided")));
 
-		sp = transformShortestPathInMatch(pstate, p);
+		if (p->kind == CPATH_DIJKSTRA)
+			sp = transformDijkstraInMatch(pstate, p);
+		else
+			sp = transformShortestPathInMatch(pstate, p);
 
 		alias = makeAliasOptUnique(NULL);
 		rte = addRangeTableEntryForSubquery(pstate, sp, alias, true, true);
@@ -1012,8 +1020,17 @@ appendShortestPathsResult(ParseState *pstate, List *splist, List **targetList)
 							 (AttrNumber) pstate->p_next_resno++,
 							 pathname,
 							 false);
-
 		*targetList = lappend(*targetList, te);
+
+		if (p->weight_variable)
+		{
+			pathname = getCypherName(p->weight_variable);
+			te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, pathname),
+								 (AttrNumber) pstate->p_next_resno++,
+								 pathname,
+								 false);
+			*targetList = lappend(*targetList, te);
+		}
 	}
 }
 

@@ -24,6 +24,7 @@
 #include "executor/nodeCtescan.h"
 #include "executor/nodeCustom.h"
 #include "executor/nodeEager.h"
+#include "executor/nodeDijkstra.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeFunctionscan.h"
 #include "executor/nodeGather.h"
@@ -274,6 +275,10 @@ ExecReScan(PlanState *node)
 
 		case T_EagerState:
 			ExecReScanEager((EagerState *) node);
+			break;
+
+		case T_DijkstraState:
+			ExecReScanDijkstra((DijkstraState *) node);
 			break;
 
 		default:

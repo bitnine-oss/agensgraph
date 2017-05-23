@@ -106,6 +106,9 @@ extern void cost_merge_append(Path *path, PlannerInfo *root,
 extern void cost_material(Path *path,
 			  Cost input_startup_cost, Cost input_total_cost,
 			  double tuples, int width);
+extern void cost_dijkstra(Path *path,
+			  Cost input_startup_cost, Cost input_total_cost,
+			  double tuples, int width);
 extern void cost_agg(Path *path, PlannerInfo *root,
 		 AggStrategy aggstrategy, const AggClauseCosts *aggcosts,
 		 int numGroupCols, double numGroups,

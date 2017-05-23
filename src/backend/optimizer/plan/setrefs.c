@@ -99,6 +99,9 @@ static void set_foreignscan_references(PlannerInfo *root,
 static void set_customscan_references(PlannerInfo *root,
 						  CustomScan *cscan,
 						  int rtoffset);
+static void set_dijkstra_references(PlannerInfo *root,
+							Plan *plan,
+							int rtoffset);
 static Node *fix_scan_expr(PlannerInfo *root, Node *node, int rtoffset);
 static Node *fix_scan_expr_mutator(Node *node, fix_scan_expr_context *context);
 static bool fix_scan_expr_walker(Node *node, fix_scan_expr_context *context);
@@ -930,6 +933,9 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				splan->subplan = set_plan_refs(root, splan->subplan, rtoffset);
 			}
 			break;
+		case T_Dijkstra:
+			set_dijkstra_references(root, plan, rtoffset);
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(plan));
@@ -1271,6 +1277,24 @@ set_customscan_references(PlannerInfo *root,
 			tempset = bms_add_member(tempset, x + rtoffset);
 		cscan->custom_relids = tempset;
 	}
+}
+
+static void
+set_dijkstra_references(PlannerInfo *root, Plan *plan, int rtoffset)
+{
+	Plan	   *subplan = plan->lefttree;
+	Dijkstra   *dijkstra = (Dijkstra *) plan;
+	indexed_tlist *subplan_itlist;
+
+	set_upper_references(root, plan, rtoffset);
+
+	subplan_itlist = build_tlist_index(subplan->targetlist);
+	dijkstra->source = fix_upper_expr(root, dijkstra->source, subplan_itlist,
+									  OUTER_VAR, rtoffset);
+	dijkstra->target = fix_upper_expr(root, dijkstra->target, subplan_itlist,
+									  OUTER_VAR, rtoffset);
+	dijkstra->limit = fix_upper_expr(root, dijkstra->limit, subplan_itlist,
+									 OUTER_VAR, rtoffset);
 }
 
 /*
