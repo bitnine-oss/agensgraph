@@ -984,4 +984,16 @@ typedef struct ModifyGraph
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 } ModifyGraph;
 
+typedef struct Dijkstra
+{
+	Plan		plan;
+	AttrNumber  weight;
+	bool		weight_out;
+	AttrNumber  end_id;
+	AttrNumber  edge_id;
+	Node	   *source;
+	Node	   *target;
+	Node	   *limit;
+} Dijkstra;
+
 #endif   /* PLANNODES_H */

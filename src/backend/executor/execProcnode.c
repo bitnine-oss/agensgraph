@@ -87,6 +87,7 @@
 #include "executor/nodeCtescan.h"
 #include "executor/nodeCustom.h"
 #include "executor/nodeEager.h"
+#include "executor/nodeDijkstra.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeFunctionscan.h"
 #include "executor/nodeGroup.h"
@@ -352,6 +353,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 												 estate, eflags);
 			break;
 
+		case T_Dijkstra:
+			result = (PlanState *) ExecInitDijkstra((Dijkstra *) node,
+													estate, eflags);
+			break;
+
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			result = NULL;		/* keep compiler quiet */
@@ -559,6 +565,10 @@ ExecProcNode(PlanState *node)
 
 		case T_EagerState:
 			result = ExecEager((EagerState *) node);
+			break;
+
+		case T_DijkstraState:
+			result = ExecDijkstra((DijkstraState *) node);
 			break;
 
 		default:
@@ -819,6 +829,10 @@ ExecEndNode(PlanState *node)
 
 		case T_EagerState:
 			ExecEndEager((EagerState *) node);
+			break;
+
+		case T_DijkstraState:
+			ExecEndDijkstra((DijkstraState *) node);
 			break;
 
 		default:

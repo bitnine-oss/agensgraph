@@ -237,6 +237,14 @@ extern Path *reparameterize_path(PlannerInfo *root, Path *path,
 					Relids required_outer,
 					double loop_count);
 
+extern DijkstraPath *create_dijkstra_path(PlannerInfo *root, RelOptInfo *rel,
+										  Path *subpath,
+										  PathTarget *path_target,
+										  int weight, bool weight_out,
+										  Node *end_id, Node *edge_id,
+										  Node *source, Node *target,
+										  Node *limit);
+
 /*
  * prototypes for relnode.c
  */

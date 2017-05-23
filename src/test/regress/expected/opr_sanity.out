@@ -447,7 +447,9 @@ WHERE d.classoid IS NULL AND p1.oid <= 9999;
  7050 | edgeref
  7053 | edgeref_in
  7054 | edgeref_out
-(7 rows)
+ 7170 | dijkstra_vids
+ 7171 | dijkstra_eids
+(9 rows)
 
 -- List of built-in leakproof functions
 --

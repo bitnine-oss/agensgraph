@@ -3305,3 +3305,46 @@ reparameterize_path(PlannerInfo *root, Path *path,
 	}
 	return NULL;
 }
+
+DijkstraPath *
+create_dijkstra_path(PlannerInfo *root,
+					 RelOptInfo *rel,
+					 Path *subpath,
+					 PathTarget *path_target,
+					 int weight, bool weight_out,
+					 Node *end_id, Node *edge_id,
+					 Node *source, Node *target, Node *limit)
+{
+	DijkstraPath *pathnode = makeNode(DijkstraPath);
+
+	pathnode->path.pathtype = T_Dijkstra;
+	pathnode->path.parent = rel;
+	pathnode->path.pathtarget = path_target;
+	/* For now, assume we are above any joins, so no parameterization */
+	pathnode->path.param_info = NULL;
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = rel->consider_parallel &&
+		subpath->parallel_safe;
+	pathnode->path.parallel_workers = subpath->parallel_workers;
+	pathnode->path.pathkeys = subpath->pathkeys;
+
+	pathnode->subpath = subpath;
+	pathnode->weight = weight;
+	pathnode->weight_out = weight_out;
+	pathnode->end_id = end_id;
+	pathnode->edge_id = edge_id;
+	pathnode->source = source;
+	pathnode->target = target;
+	pathnode->limit = limit;
+
+	cost_dijkstra(&pathnode->path, subpath->startup_cost,
+				  subpath->total_cost, subpath->rows,
+				  subpath->pathtarget->width);
+
+	/* add tlist eval cost for each output row */
+	pathnode->path.startup_cost += path_target->cost.startup;
+	pathnode->path.total_cost += path_target->cost.startup +
+		path_target->cost.per_tuple * pathnode->path.rows;
+
+	return pathnode;
+}

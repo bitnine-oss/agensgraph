@@ -17,8 +17,15 @@
 #include "nodes/nodeFuncs.h"
 #include "nodes/pg_list.h"
 #include "parser/analyze.h"
+#include "parser/parse_agg.h"
+#include "parser/parse_clause.h"
+#include "parser/parse_coerce.h"
+#include "parser/parse_collate.h"
+#include "parser/parse_expr.h"
+#include "parser/parse_func.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_shortestpath.h"
+#include "parser/parse_target.h"
 
 #define SP_ALIAS_CTE		"_sp"
 
@@ -31,6 +38,7 @@
 static void checkNodeForRef(ParseState *pstate, CypherNode *cnode);
 static void checkNodeReferable(ParseState *pstate, CypherNode *cnode);
 static void checkRelFormat(ParseState *pstate, CypherRel *rel);
+static void checkRelFormatForDijkstra(ParseState *pstate, CypherRel *crel);
 
 /* shortest path */
 static Query *makeShortestPathQuery(ParseState *pstate, CypherPath *cpath,
@@ -42,9 +50,20 @@ static SelectStmt *makeSelectWith(CypherPath *cpath, WithClause *with,
 								  bool isexpr);
 static RangeSubselect *makeSubselectCTE(CypherPath *cpath);
 static Node *makeVerticesSubLink(void);
-static Node *makeEdgesSubLink(CypherPath *cpath);
+static Node *makeEdgesSubLink(CypherPath *cpath, bool is_dijkstra);
 static void getCypherRelType(CypherRel *crel, char **typname, int *typloc);
 static Node *makeVertexIdExpr(Node *vertex);
+
+/* dijkstra */
+static Query *makeDijkstraQuery(ParseState *pstate, CypherPath *cpath,
+								bool is_expr);
+static RangeTblEntry *makeDijkstraFrom(ParseState *parentParseState,
+									   CypherPath *cpath);
+static RangeTblEntry *makeDijkstraEdgeQuery(ParseState *pstate,
+											CypherPath *cpath);
+static Node *makeDijkstraEdgeUnion(char *elabel_name, char *row_name);
+static Node *makeDijkstraEdge(char *elabel_name, char *row_name,
+							  CypherRel *crel);
 
 /* parse node */
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
@@ -57,6 +76,12 @@ static A_Const *makeIntConst(int val);
 static Node *makeAArrayExpr(List *elements, char *typeName);
 static Node *makeRowExpr(List *args, char *typeName);
 static Node *makeSubLink(SelectStmt *sel);
+
+/* utils */
+static void addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte,
+							 bool visible);
+static Alias *makeAliasOptUnique(char *aliasname);
+static char *genUniqueName(void);
 
 Query *
 transformShortestPath(ParseState *pstate, CypherPath *cpath)
@@ -97,13 +122,13 @@ checkNodeForRef(ParseState *pstate, CypherNode *cnode)
 	if (getCypherName(cnode->label) != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("labels on nodes in shortest path are not supported"),
+				 errmsg("label is not supported"),
 				 parser_errposition(pstate, getCypherNameLoc(cnode->label))));
 
 	if (cnode->prop_map != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("property constraint on nodes in shortest path are not supported"),
+				 errmsg("property constraint is not supported"),
 				 parser_errposition(pstate,
 									getCypherNameLoc(cnode->variable))));
 }
@@ -118,7 +143,7 @@ checkNodeReferable(ParseState *pstate, CypherNode *cnode)
 	if (varname == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-				 errmsg("nodes in shortest path must be a reference to a specific node")));
+				 errmsg("node must be a reference to a specific node")));
 
 	col = colNameToVar(pstate, varname, false, varloc);
 	if (col == NULL)
@@ -131,6 +156,12 @@ checkNodeReferable(ParseState *pstate, CypherNode *cnode)
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("variable \"%s\" is not a vertex", varname),
 				 parser_errposition(pstate, varloc)));
+
+	if (cnode->prop_map != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("property constraint is not supported"),
+				 parser_errposition(pstate, varloc)));
 }
 
 static void
@@ -139,7 +170,7 @@ checkRelFormat(ParseState *pstate, CypherRel *crel)
 	if (crel->variable != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("variable on relationship is not supported"),
+				 errmsg("variable is not supported"),
 				 parser_errposition(pstate, getCypherNameLoc(crel->variable))));
 
 	if (crel->varlen != NULL)
@@ -157,7 +188,7 @@ checkRelFormat(ParseState *pstate, CypherRel *crel)
 	if (crel->prop_map != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("property constraint on relationship in shortest path are not supported")));
+				 errmsg("property constraint is not supported")));
 }
 
 /*
@@ -514,7 +545,7 @@ makeSelectWith(CypherPath *cpath, WithClause *with, bool isexpr)
 	sel->withClause = with;
 
 	vertices = makeVerticesSubLink();
-	edges = makeEdgesSubLink(cpath);
+	edges = makeEdgesSubLink(cpath, false);
 	empty_edges = makeAArrayExpr(NIL, "_edge");
 	coalesced = makeNode(CoalesceExpr);
 	coalesced->args = list_make2(edges, empty_edges);
@@ -675,13 +706,18 @@ makeVerticesSubLink(void)
  *     (
  *       SELECT (id, start, "end", properties)::vertex
  *       FROM `get_graph_path()`.`typname`
+ *
+ *       # shortestpath()
+ *       WHERE tableoid = rowid_tableoid(eid) AND ctid = rowid_ctid(eid)
+ *
+ *       # dijkstra()
  *       WHERE id = eid
  *     )
  *   )
  * FROM unnest(eids) AS eid
  */
 static Node *
-makeEdgesSubLink(CypherPath *cpath)
+makeEdgesSubLink(CypherPath *cpath, bool is_dijkstra)
 {
 	Node	   *id;
 	SelectStmt *selsub;
@@ -689,9 +725,6 @@ makeEdgesSubLink(CypherPath *cpath)
 	CypherRel  *crel;
 	char	   *typname;
 	RangeVar   *e;
-	Node	   *tableoid;
-	Node	   *ctid;
-	FuncCall   *getid;
 	A_Expr	   *qual;
 	List	   *where_args = NIL;
 	Node	   *edges;
@@ -721,17 +754,30 @@ makeEdgesSubLink(CypherPath *cpath)
 	e->inhOpt = INH_YES;
 	selsub->fromClause = list_make1(e);
 
-	tableoid = makeColumnRef1("tableoid");
-	getid = makeFuncCall(list_make1(makeString("rowid_tableoid")),
-						 list_make1(makeColumnRef1("eid")), -1);
-	qual = makeSimpleA_Expr(AEXPR_OP, "=", tableoid, (Node *) getid, -1);
-	where_args = list_make1(qual);
+	if (is_dijkstra)
+	{
+		qual = makeSimpleA_Expr(AEXPR_OP, "=", copyObject(id),
+								makeColumnRef1("eid"), -1);
+		where_args = list_make1(qual);
+	}
+	else
+	{
+		Node	   *tableoid;
+		Node	   *ctid;
+		FuncCall   *getid;
 
-	ctid = makeColumnRef1("ctid");
-	getid = makeFuncCall(list_make1(makeString("rowid_ctid")),
-						 list_make1(makeColumnRef1("eid")), -1);
-	qual = makeSimpleA_Expr(AEXPR_OP, "=", ctid, (Node *) getid, -1);
-	where_args = lappend(where_args, qual);
+		tableoid = makeColumnRef1("tableoid");
+		getid = makeFuncCall(list_make1(makeString("rowid_tableoid")),
+							 list_make1(makeColumnRef1("eid")), -1);
+		qual = makeSimpleA_Expr(AEXPR_OP, "=", tableoid, (Node *) getid, -1);
+		where_args = list_make1(qual);
+
+		ctid = makeColumnRef1("ctid");
+		getid = makeFuncCall(list_make1(makeString("rowid_ctid")),
+							 list_make1(makeColumnRef1("eid")), -1);
+		qual = makeSimpleA_Expr(AEXPR_OP, "=", ctid, (Node *) getid, -1);
+		where_args = lappend(where_args, qual);
+	}
 
 	selsub->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
@@ -930,4 +976,559 @@ makeSubLink(SelectStmt *sel)
 	sublink->location = -1;
 
 	return (Node *) sublink;
+}
+
+Query *
+transformDijkstra(ParseState *pstate, CypherPath *cpath)
+{
+	Assert(list_length(cpath->chain) == 3);
+
+	checkNodeForRef(pstate, linitial(cpath->chain));
+	checkRelFormatForDijkstra(pstate, lsecond(cpath->chain));
+	checkNodeForRef(pstate, llast(cpath->chain));
+
+	return makeDijkstraQuery(pstate, cpath, true);
+}
+
+Query *
+transformDijkstraInMatch(ParseState *parentParseState, CypherPath *cpath)
+{
+	ParseState *pstate = make_parsestate(parentParseState);
+	Query	   *qry;
+
+	Assert(list_length(cpath->chain) == 3);
+
+	checkNodeReferable(pstate, linitial(cpath->chain));
+	checkRelFormatForDijkstra(pstate, lsecond(cpath->chain));
+	checkNodeReferable(pstate, llast(cpath->chain));
+
+	qry = makeDijkstraQuery(pstate, cpath, false);
+
+	free_parsestate(pstate);
+
+	return qry;
+}
+
+static void
+checkRelFormatForDijkstra(ParseState *pstate, CypherRel *crel)
+{
+	if (crel->varlen != NULL)
+	{
+		A_Indices  *indices = (A_Indices *) crel->varlen;
+		A_Const	   *lidx = (A_Const *) indices->lidx;
+
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("variable length relationship is not supported"),
+				 parser_errposition(pstate, lidx->location)));
+	}
+
+	if (crel->prop_map != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("property constraint is not supported")));
+}
+
+/*
+ * path = DIJKSTRA((source)-[:edge_label]->(target), weight, qual, LIMIT n)
+ *
+ * |
+ * v
+ *
+ * SELECT (
+ *     (
+ *       SELECT array_agg(
+ *           (
+ *             SELECT (id, properties)::vertex
+ *             FROM `get_graph_path()`.ag_vertex
+ *             WHERE id = vid
+ *           )
+ *         )
+ *       FROM unnest(vids) AS vid
+ *     ),
+ *     (
+ *       SELECT array_agg(
+ *           (
+ *             SELECT (id, start, "end", properties)::vertex
+ *             FROM `get_graph_path()`.`typname`
+ *             WHERE id = eid
+ *           )
+ *         )
+ *       FROM unnest(eids) AS eid
+ *     )
+ *   )::graphpath AS `pathname`,
+ *   weight
+ * FROM
+ * (
+ *   SELECT dijkstra_vids() as vids,
+ *          dijkstra_eids() as eids,
+ *          weight
+ *   FROM `graph_path`.edge_label
+ *   WHERE start = id(source) AND `qual`
+ *
+ *   DIJKSTRA (id(source), id(target), LIMIT n, "end", id)
+ * )
+ */
+static Query *
+makeDijkstraQuery(ParseState *pstate, CypherPath *cpath, bool is_expr)
+{
+	Query 	   *qry;
+	RangeTblEntry *rte;
+	Node	   *vertices;
+	Node	   *edges;
+	Node	   *empty_edges;
+	CoalesceExpr *coalesced;
+	Node	   *path;
+	Node	   *expr;
+	char	   *pathname;
+	TargetEntry *te;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	rte = makeDijkstraFrom(pstate, cpath);
+	addRTEtoJoinlist(pstate, rte, true);
+
+	vertices = makeVerticesSubLink();
+	edges = makeEdgesSubLink(cpath, true);
+	empty_edges = makeAArrayExpr(NIL, "_edge");
+	coalesced = makeNode(CoalesceExpr);
+	coalesced->args = list_make2(edges, empty_edges);
+	coalesced->location = -1;
+	path = makeRowExpr(list_make2(vertices, coalesced), "graphpath");
+	if (is_expr)
+	{
+		FuncCall *arragg;
+
+		arragg = makeFuncCall(list_make1(makeString("array_agg")),
+							  list_make1(path), -1);
+		path = (Node *) arragg;
+	}
+	expr = transformExpr(pstate, path, EXPR_KIND_SELECT_TARGET);
+	pathname = getCypherName(cpath->variable);
+	te = makeTargetEntry((Expr *) expr,
+						 (AttrNumber) pstate->p_next_resno++,
+						 pathname, false);
+	qry->targetList = list_make1(te);
+
+	if (cpath->weight_var)
+	{
+		char *weight_varname = getCypherName(cpath->weight_var);
+
+		expr = transformExpr(pstate, makeColumnRef1("weight"),
+							 EXPR_KIND_SELECT_TARGET);
+		te = makeTargetEntry((Expr *) expr,
+							 (AttrNumber) pstate->p_next_resno++,
+							 weight_varname, false);
+		qry->targetList = lappend(qry->targetList, te);
+	}
+
+	markTargetListOrigins(pstate, qry->targetList);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasAggs = pstate->p_hasAggs;
+	if (qry->hasAggs)
+		parseCheckAggregates(pstate, qry);
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+/*
+ * SELECT dijkstra_vids() as vids,
+ *        dijkstra_eids() as eids,
+ *        weight
+ * FROM `graph_path`.edge_label
+ * WHERE start = id(source) AND `qual`
+ *
+ * DIJKSTRA (id(source), id(target), LIMIT n, "end", id)
+ */
+static RangeTblEntry *
+makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
+{
+	Alias	   *alias;
+	ParseState *pstate;
+	Query	   *qry;
+	RangeTblEntry *rte;
+	Node	   *target;
+	TargetEntry *te;
+	FuncCall   *fc;
+	CypherRel  *crel;
+
+	Node  	   *start;
+	CypherNode *vertex;
+	Node	   *param;
+	Node	   *vertex_id;
+	List	   *where = NIL;
+	Node	   *qual;
+
+	Assert(parentParseState->p_expr_kind == EXPR_KIND_NONE);
+	parentParseState->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+
+	alias = makeAlias("_d", NIL);
+
+	pstate = make_parsestate(parentParseState);
+	pstate->p_locked_from_parent = isLockedRefname(pstate, alias->aliasname);
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	rte = makeDijkstraEdgeQuery(pstate, cpath);
+	addRTEtoJoinlist(pstate, rte, true);
+
+	/* vids */
+	fc = makeFuncCall(list_make1(makeString("dijkstra_vids")), NIL, -1);
+	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, fc, -1);
+	te = makeTargetEntry((Expr *) target,
+						 (AttrNumber) pstate->p_next_resno++,
+						 "vids", false);
+	qry->targetList = list_make1(te);
+
+	/* eids */
+	fc = makeFuncCall(list_make1(makeString("dijkstra_eids")), NIL, -1);
+	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, fc, -1);
+	te = makeTargetEntry((Expr *) target,
+						 (AttrNumber) pstate->p_next_resno++,
+						 "eids", false);
+	qry->targetList = lappend(qry->targetList, te);
+
+	/* weight */
+	target = transformExpr(pstate, cpath->weight, EXPR_KIND_SELECT_TARGET);
+	target = coerce_to_specific_type(pstate, target, FLOAT8OID, "WEIGHT");
+	te = makeTargetEntry((Expr *) target,
+						 (AttrNumber) pstate->p_next_resno++,
+						 "weight", cpath->weight_var == NULL);
+	qry->targetList = lappend(qry->targetList, te);
+
+	qry->dijkstraWeight = pstate->p_next_resno;
+	qry->dijkstraWeightOut = (cpath->weight_var != NULL);
+
+	/* end ID */
+	crel = lsecond(cpath->chain);
+	if (crel->direction == CYPHER_REL_DIR_LEFT)
+		target = transformExpr(pstate, makeColumnRef1("start"),
+							   EXPR_KIND_SELECT_TARGET);
+	else
+		target = transformExpr(pstate, makeColumnRef1("end"),
+							   EXPR_KIND_SELECT_TARGET);
+	qry->dijkstraEndId = target;
+
+	/* edge ID */
+	target = transformExpr(pstate, makeColumnRef1("id"),
+						   EXPR_KIND_SELECT_TARGET);
+	qry->dijkstraEdgeId = target;
+
+	markTargetListOrigins(pstate, qry->targetList);
+
+	/* WHERE */
+	if (crel->direction == CYPHER_REL_DIR_LEFT)
+		start = makeColumnRef1("end");
+	else
+		start = makeColumnRef1("start");
+
+	vertex = linitial(cpath->chain);
+	param = makeColumnRef1(getCypherName(vertex->variable));
+	vertex_id = makeVertexIdExpr(param);
+
+	where = list_make1(makeSimpleA_Expr(AEXPR_OP, "=", start, vertex_id, -1));
+
+	/* qual */
+	if (cpath->qual != NULL)
+		where = lappend(where, cpath->qual);
+
+	qual = transformExpr(pstate, (Node *) makeBoolExpr(AND_EXPR, where, -1),
+						 EXPR_KIND_WHERE);
+
+	/* Dijkstra source */
+	qry->dijkstraSource = transformExpr(pstate,
+										(Node *) copyObject(vertex_id),
+										EXPR_KIND_SELECT_TARGET);
+
+	/* Dijkstra target */
+	vertex = llast(cpath->chain);
+	param = makeColumnRef1(getCypherName(vertex->variable));
+	vertex_id = makeVertexIdExpr(param);
+	qry->dijkstraTarget = transformExpr(pstate,
+										vertex_id,
+										EXPR_KIND_SELECT_TARGET);
+
+	/* Dijkstra LIMIT */
+	target = transformLimitClause(pstate, cpath->limit,
+								  EXPR_KIND_LIMIT, "LIMIT");
+	target = coerce_to_specific_type(pstate, target, INT8OID, "LIMIT");
+	qry->dijkstraLimit = target;
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
+
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasAggs = pstate->p_hasAggs;
+	if (qry->hasAggs)
+		parseCheckAggregates(pstate, qry);
+
+	assign_query_collations(pstate, qry);
+
+	parentParseState->p_expr_kind = EXPR_KIND_NONE;
+
+	return addRangeTableEntryForSubquery(parentParseState, qry, alias, false,
+										 true);
+}
+
+static RangeTblEntry *
+makeDijkstraEdgeQuery(ParseState *pstate, CypherPath *cpath)
+{
+	CypherRel 	   *crel;
+	char 		   *elabel_name;
+	char		   *row_name;
+	Alias		   *alias;
+	RangeTblEntry  *rte;
+	Node		   *sub;
+	Query		   *qry;
+
+	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
+	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+
+	crel = lsecond(cpath->chain);
+	getCypherRelType(crel, &elabel_name, NULL);
+	row_name = getCypherName(crel->variable);
+
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+		sub = makeDijkstraEdgeUnion(elabel_name, row_name);
+	else
+		sub = makeDijkstraEdge(elabel_name, row_name, crel);
+
+	alias = makeAliasOptUnique(NULL);
+	qry = parse_sub_analyze((Node *) sub, pstate, NULL,
+							isLockedRefname(pstate, alias->aliasname));
+	pstate->p_expr_kind = EXPR_KIND_NONE;
+
+	rte = addRangeTableEntryForSubquery(pstate, qry, alias, false, true);
+
+	return rte;
+}
+
+/*
+ * SELECT start, "end", id, (id, _start, _end, properties)::edge AS row_name
+ * FROM (
+ *   SELECT start AS _start, "end" AS _end, start, "end", id, properties
+ *   FROM `get_graph_path()`.`elabel_name`
+ *   UNION
+ *   SELECT start AS _start, "end" AS _end, end, start, id, properties
+ *   FROM `get_graph_path()`.`elabel_name`
+ * )
+ */
+static Node *
+makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
+{
+	RangeVar   *r;
+	SelectStmt *lsel;
+	Node	   *row;
+	SelectStmt *rsel;
+	SelectStmt *u;
+	RangeSubselect *sub_sel;
+	SelectStmt *sel;
+
+	r = makeRangeVar(get_graph_path(true), elabel_name, -1);
+	r->inhOpt = INH_YES;
+
+	lsel = makeNode(SelectStmt);
+	lsel->targetList = lappend(lsel->targetList,
+							   makeSimpleResTarget(AG_START_ID, "_start"));
+	lsel->targetList = lappend(lsel->targetList,
+							   makeSimpleResTarget(AG_END_ID, "_end"));
+	lsel->fromClause = list_make1(r);
+
+	rsel = copyObject(lsel);
+
+	lsel->targetList = lappend(lsel->targetList,
+							   makeSimpleResTarget(AG_START_ID, NULL));
+	lsel->targetList = lappend(lsel->targetList,
+							   makeSimpleResTarget(AG_END_ID, NULL));
+	lsel->targetList = lappend(lsel->targetList,
+							   makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL));
+	if (row_name != NULL)
+		lsel->targetList = lappend(lsel->targetList,
+								   makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL));
+
+	rsel->targetList = lappend(rsel->targetList,
+							   makeSimpleResTarget(AG_END_ID, NULL));
+	rsel->targetList = lappend(rsel->targetList,
+							   makeSimpleResTarget(AG_START_ID, NULL));
+	rsel->targetList = lappend(rsel->targetList,
+							   makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL));
+	if (row_name != NULL)
+		rsel->targetList = lappend(rsel->targetList,
+								   makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL));
+
+	u = makeNode(SelectStmt);
+	u->op = SETOP_UNION;
+	u->all = true;
+	u->larg = lsel;
+	u->rarg = rsel;
+
+	sub_sel = makeNode(RangeSubselect);
+	sub_sel->subquery = (Node *) u;
+	sub_sel->alias = makeAliasOptUnique(NULL);
+
+	sel = makeNode(SelectStmt);
+	sel->fromClause = list_make1(sub_sel);
+
+	sel->targetList = list_make3(makeSimpleResTarget(AG_START_ID, NULL),
+								 makeSimpleResTarget(AG_END_ID, NULL),
+								 makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL));
+	if (row_name != NULL)
+	{
+		row = makeRowExpr(list_make4(makeColumnRef1(AG_ELEM_LOCAL_ID),
+									 makeColumnRef1("_start"),
+									 makeColumnRef1("_end"),
+									 makeColumnRef1(AG_ELEM_PROP_MAP)),
+						  "edge");
+		sel->targetList = lappend(sel->targetList,
+								  makeResTarget(row, row_name));
+	}
+
+	return (Node *) sel;
+}
+
+/*
+ * SELECT start, "end", id, (id, start, end, properties)::edge AS row_name
+ * FROM `get_graph_path()`.`elabel_name`
+ */
+static Node *
+makeDijkstraEdge(char *elabel_name, char *row_name, CypherRel *crel)
+{
+	SelectStmt *sel;
+	RangeVar   *r;
+
+	sel = makeNode(SelectStmt);
+
+	r = makeRangeVar(get_graph_path(true), elabel_name, -1);
+	r->inhOpt = INH_YES;
+	sel->fromClause = list_make1(r);
+
+	sel->targetList = list_make3(makeSimpleResTarget(AG_START_ID, NULL),
+								 makeSimpleResTarget(AG_END_ID, NULL),
+								 makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL));
+	if (row_name != NULL)
+	{
+		Node	   *row;
+
+		row = makeRowExpr(list_make4(makeColumnRef1(AG_ELEM_LOCAL_ID),
+									 makeColumnRef1(AG_START_ID),
+									 makeColumnRef1(AG_END_ID),
+									 makeColumnRef1(AG_ELEM_PROP_MAP)),
+						  "edge");
+		sel->targetList = lappend(sel->targetList,
+								  makeResTarget(row, row_name));
+	}
+
+	return (Node *) sel;
+}
+
+/* TODO: Remove */
+
+static void
+makeExtraFromRTE(ParseState *pstate, RangeTblEntry *rte, RangeTblRef **rtr,
+				 ParseNamespaceItem **nsitem, bool visible)
+{
+	if (rtr != NULL)
+	{
+		RangeTblRef *_rtr;
+
+		_rtr = makeNode(RangeTblRef);
+		_rtr->rtindex = RTERangeTablePosn(pstate, rte, NULL);
+
+		*rtr = _rtr;
+	}
+
+	if (nsitem != NULL)
+	{
+		ParseNamespaceItem *_nsitem;
+
+		_nsitem = (ParseNamespaceItem *) palloc(sizeof(ParseNamespaceItem));
+		_nsitem->p_rte = rte;
+		_nsitem->p_rel_visible = visible;
+		_nsitem->p_cols_visible = visible;
+		_nsitem->p_lateral_only = false;
+		_nsitem->p_lateral_ok = true;
+
+		*nsitem = _nsitem;
+	}
+}
+
+/* just find RTE of `refname` in the current namespace */
+static RangeTblEntry *
+findRTEfromNamespace(ParseState *pstate, char *refname)
+{
+	ListCell *lni;
+
+	if (refname == NULL)
+		return NULL;
+
+	foreach(lni, pstate->p_namespace)
+	{
+		ParseNamespaceItem *nsitem = lfirst(lni);
+		RangeTblEntry *rte = nsitem->p_rte;
+
+		/* NOTE: skip all checks on `nsitem` */
+
+		if (strcmp(rte->eref->aliasname, refname) == 0)
+			return rte;
+	}
+
+	return NULL;
+}
+
+static void
+addRTEtoJoinlist(ParseState *pstate, RangeTblEntry *rte, bool visible)
+{
+	RangeTblEntry *tmp;
+	RangeTblRef *rtr;
+	ParseNamespaceItem *nsitem;
+
+	/*
+	 * There should be no namespace conflicts because we check a variable
+	 * (which becomes an alias) is duplicated. This check remains to prevent
+	 * future programming error.
+	 */
+	tmp = findRTEfromNamespace(pstate, rte->eref->aliasname);
+	if (tmp != NULL)
+	{
+		if (!(rte->rtekind == RTE_RELATION && rte->alias == NULL &&
+			  tmp->rtekind == RTE_RELATION && tmp->alias == NULL &&
+			  rte->relid != tmp->relid))
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_ALIAS),
+					 errmsg("variable \"%s\" specified more than once",
+							rte->eref->aliasname)));
+	}
+
+	makeExtraFromRTE(pstate, rte, &rtr, &nsitem, visible);
+	pstate->p_joinlist = lappend(pstate->p_joinlist, rtr);
+	pstate->p_namespace = lappend(pstate->p_namespace, nsitem);
+}
+
+static Alias *
+makeAliasOptUnique(char *aliasname)
+{
+	aliasname = (aliasname == NULL ? genUniqueName() : pstrdup(aliasname));
+	return makeAliasNoDup(aliasname, NIL);
+}
+
+/* generate unique name */
+static char *
+genUniqueName(void)
+{
+	/* NOTE: safe unless there are more than 2^32 anonymous names at once */
+	static uint32 seq = 0;
+
+	char data[NAMEDATALEN];
+
+	snprintf(data, sizeof(data), "<%010u>", seq++);
+
+	return pstrdup(data);
 }

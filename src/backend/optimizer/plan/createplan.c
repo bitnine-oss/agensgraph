@@ -155,6 +155,8 @@ static HashJoin *create_hashjoin_plan(PlannerInfo *root, HashPath *best_path);
 static Eager *create_eager_plan(PlannerInfo *root, EagerPath *best_path, int flags);
 static ModifyGraph *create_modifygraph_plan(PlannerInfo *root,
 											ModifyGraphPath *best_path);
+static Dijkstra *create_dijkstra_plan(PlannerInfo *root,
+									  DijkstraPath *best_path);
 static Node *replace_nestloop_params(PlannerInfo *root, Node *expr);
 static Node *replace_nestloop_params_mutator(Node *node, PlannerInfo *root);
 static void process_subquery_nestloop_params(PlannerInfo *root,
@@ -483,6 +485,10 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 		case T_ModifyGraph:
 			plan = (Plan *) create_modifygraph_plan(root,
 												(ModifyGraphPath *) best_path);
+			break;
+		case T_Dijkstra:
+			plan = (Plan *) create_dijkstra_plan(root,
+												 (DijkstraPath *) best_path);
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
@@ -4170,6 +4176,33 @@ create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
 	return plan;
 }
 
+static Dijkstra *
+create_dijkstra_plan(PlannerInfo *root, DijkstraPath *best_path)
+{
+	Dijkstra   *plan;
+	Plan	   *subplan;
+	List	   *sub_tlist;
+	TargetEntry *tle;
+	AttrNumber	end_id;
+	AttrNumber	edge_id;
+
+	subplan = create_plan_recurse(root, best_path->subpath, CP_EXACT_TLIST);
+
+	sub_tlist = subplan->targetlist;
+	tle = tlist_member(best_path->end_id, sub_tlist);
+	end_id = tle->resno;
+	tle = tlist_member(best_path->edge_id, sub_tlist);
+	edge_id = tle->resno;
+
+	plan = make_dijkstra(root, build_path_tlist(root, &best_path->path),
+						 subplan, best_path->weight, best_path->weight_out,
+						 end_id, edge_id, best_path->source,
+						 best_path->target, best_path->limit);
+
+	copy_generic_path_info(&plan->plan, &best_path->path);
+
+	return plan;
+}
 
 /*****************************************************************************
  *
@@ -6559,6 +6592,30 @@ make_modifygraph(PlannerInfo *root, bool canSetTag, GraphWriteOp operation,
 	node->targets = targets;
 	node->exprs = exprs;
 	node->sets = sets;
+
+	return node;
+}
+
+Dijkstra *
+make_dijkstra(PlannerInfo *root, List *tlist, Plan *lefttree,
+			  AttrNumber weight, bool weight_out, AttrNumber end_id,
+			  AttrNumber edge_id, Node *source, Node *target, Node *limit)
+{
+	Dijkstra *node = makeNode(Dijkstra);
+	Plan	   *plan = &node->plan;
+
+	node->weight = weight;
+	node->weight_out = weight_out;
+	node->end_id = end_id;
+	node->edge_id = edge_id;
+	node->source = source;
+	node->target = target;
+	node->limit = limit;
+
+	plan->qual = NIL;
+	plan->targetlist = tlist;
+	plan->lefttree = lefttree;
+	plan->righttree = NULL;
 
 	return node;
 }

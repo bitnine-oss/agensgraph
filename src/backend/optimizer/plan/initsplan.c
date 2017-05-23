@@ -45,6 +45,7 @@ typedef struct PostponedQual
 } PostponedQual;
 
 
+static void add_extra_vars_to_targetlist(PlannerInfo *root, Node *node);
 static void extract_lateral_references(PlannerInfo *root, RelOptInfo *brel,
 						   Index rtindex);
 static List *deconstruct_recurse(PlannerInfo *root, Node *jtnode,
@@ -161,17 +162,25 @@ build_base_rel_tlists(PlannerInfo *root, List *final_tlist)
 	 * that HAVING can contain Aggrefs but not WindowFuncs.
 	 */
 	if (root->parse->havingQual)
-	{
-		List	   *having_vars = pull_var_clause(root->parse->havingQual,
-												  PVC_RECURSE_AGGREGATES |
-												  PVC_INCLUDE_PLACEHOLDERS);
+		add_extra_vars_to_targetlist(root, root->parse->havingQual);
 
-		if (having_vars != NIL)
-		{
-			add_vars_to_targetlist(root, having_vars,
-								   bms_make_singleton(0), true);
-			list_free(having_vars);
-		}
+	if (root->parse->dijkstraEndId)
+		add_extra_vars_to_targetlist(root, root->parse->dijkstraEndId);
+
+	if (root->parse->dijkstraEdgeId)
+		add_extra_vars_to_targetlist(root, root->parse->dijkstraEdgeId);
+}
+
+static void
+add_extra_vars_to_targetlist(PlannerInfo *root, Node *node)
+{
+	List *vars = pull_var_clause(node,
+								 PVC_RECURSE_AGGREGATES |
+								 PVC_INCLUDE_PLACEHOLDERS);
+	if (vars != NIL)
+	{
+		add_vars_to_targetlist(root, vars, bms_make_singleton(0), true);
+		list_free(vars);
 	}
 }
 

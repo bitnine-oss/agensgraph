@@ -5445,6 +5445,9 @@ DATA(insert OID = 7160 ( rowid_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16
 /* BTree for rowid */
 DATA(insert OID = 7168 ( btrowidcmp		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 23 "7062 7062" _null_ _null_ _null_ _null_ _null_ btrowidcmp _null_ _null_ _null_ ));
 DESCR("less-equal-greater");
+/* Dijkstra */
+DATA(insert OID = 7170 ( dijkstra_vids	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 7001 "" _null_ _null_ _null_ _null_ _null_ dijkstra_vids _null_ _null_ _null_ ));
+DATA(insert OID = 7171 ( dijkstra_eids	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 7001 "" _null_ _null_ _null_ _null_ _null_ dijkstra_eids _null_ _null_ _null_ ));
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
