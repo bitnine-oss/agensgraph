@@ -1062,6 +1062,22 @@ _copyLimit(const Limit *from)
 	return newnode;
 }
 
+/*
+ * _copyEager
+ */
+static Eager *
+_copyEager(const Eager *from)
+{
+	Eager   *newnode = makeNode(Eager);
+
+	/*
+	 * copy node superclass fields
+	 */
+	CopyPlanFields((const Plan *) from, (Plan *) newnode);
+
+	return newnode;
+}
+
 static ModifyGraph *
 _copyModifyGraph(const ModifyGraph *from)
 {
@@ -4824,6 +4840,9 @@ copyObject(const void *from)
 			break;
 		case T_Limit:
 			retval = _copyLimit(from);
+			break;
+		case T_Eager:
+			retval = _copyEager(from);
 			break;
 		case T_ModifyGraph:
 			retval = _copyModifyGraph(from);

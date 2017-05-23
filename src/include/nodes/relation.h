@@ -1474,6 +1474,15 @@ typedef struct LimitPath
 } LimitPath;
 
 /*
+ * EagerPath represents use of a Eager plan node.
+ */
+typedef struct EagerPath
+{
+	Path		path;
+	Path	   *subpath;
+} EagerPath;
+
+/*
  * ModifyGraphPath
  */
 typedef struct ModifyGraphPath

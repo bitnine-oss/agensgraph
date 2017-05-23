@@ -146,6 +146,7 @@ static CustomScan *create_customscan_plan(PlannerInfo *root,
 static NestLoop *create_nestloop_plan(PlannerInfo *root, NestPath *best_path);
 static MergeJoin *create_mergejoin_plan(PlannerInfo *root, MergePath *best_path);
 static HashJoin *create_hashjoin_plan(PlannerInfo *root, HashPath *best_path);
+static Eager *create_eager_plan(PlannerInfo *root, EagerPath *best_path, int flags);
 static ModifyGraph *create_modifygraph_plan(PlannerInfo *root,
 											ModifyGraphPath *best_path);
 static Node *replace_nestloop_params(PlannerInfo *root, Node *expr);
@@ -274,6 +275,7 @@ static ModifyTable *make_modifytable(PlannerInfo *root,
 				 List *resultRelations, List *subplans,
 				 List *withCheckOptionLists, List *returningLists,
 				 List *rowMarks, OnConflictExpr *onconflict, int epqParam);
+static Eager *make_eager(Plan *lefttree);
 
 
 /*
@@ -465,6 +467,11 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 		case T_Limit:
 			plan = (Plan *) create_limit_plan(root,
 											  (LimitPath *) best_path,
+											  flags);
+			break;
+		case T_Eager:
+			plan = (Plan *) create_eager_plan(root,
+											  (EagerPath *) best_path,
 											  flags);
 			break;
 		case T_ModifyGraph:
@@ -3960,6 +3967,32 @@ create_hashjoin_plan(PlannerInfo *root,
 	return join_plan;
 }
 
+/*
+ * create_eager_plan
+ *	  Create a Eager plan for 'best_path' and (recursively) plans
+ *	  for its subpaths.
+ *
+ *	  Returns a Plan node.
+ */
+static Eager *
+create_eager_plan(PlannerInfo *root, EagerPath *best_path, int flags)
+{
+	Eager  *plan;
+	Plan   *subplan;
+
+	/*
+	 * since Eager doesn't project, tlist requirements pass through.
+	 */
+	subplan = create_plan_recurse(root, best_path->subpath,
+								  flags | CP_SMALL_TLIST);
+
+	plan = make_eager(subplan);
+
+	copy_generic_path_info(&plan->plan, (Path *) best_path);
+
+	return plan;
+}
+
 static ModifyGraph *
 create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
 {
@@ -6286,6 +6319,7 @@ is_projection_capable_path(Path *path)
 		case T_ModifyTable:
 		case T_MergeAppend:
 		case T_RecursiveUnion:
+		case T_Eager:
 			return false;
 		case T_Append:
 
@@ -6323,11 +6357,26 @@ is_projection_capable_plan(Plan *plan)
 		case T_Append:
 		case T_MergeAppend:
 		case T_RecursiveUnion:
+		case T_Eager:
 			return false;
 		default:
 			break;
 	}
 	return true;
+}
+
+static Eager *
+make_eager(Plan *lefttree)
+{
+	Eager  *node = makeNode(Eager);
+	Plan   *plan = &node->plan;
+
+	plan->targetlist = lefttree->targetlist;
+	plan->qual = NIL;
+	plan->lefttree = lefttree;
+	plan->righttree = NULL;
+
+	return node;
 }
 
 /*
