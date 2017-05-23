@@ -1486,6 +1486,189 @@ RETURN array_length(allshortestpaths((p)-[:knows*]-(f)), 1) AS cnt;
    2
 (2 rows)
 
+create vlabel v;
+create elabel e;
+create (:v {id: 0});
+create (:v {id: 1});
+create (:v {id: 2});
+create (:v {id: 3});
+create (:v {id: 4});
+create (:v {id: 5});
+create (:v {id: 6});
+match (v1:v {id:0}), (v2:v {id:4})
+create (v1)-[:e {weight: 3}]->(v2);
+match (v1:v {id:0}), (v2:v {id:1})
+create (v1)-[:e {weight: 7}]->(v2);
+match (v1:v {id:0}), (v2:v {id:5})
+create (v1)-[:e {weight: 10}]->(v2);
+match (v1:v {id:4}), (v2:v {id:6})
+create (v1)-[:e {weight: 5}]->(v2);
+match (v1:v {id:4}), (v2:v {id:3})
+create (v1)-[:e {weight: 11}]->(v2);
+match (v1:v {id:4}), (v2:v {id:1})
+create (v1)-[:e {weight: 2}]->(v2);
+match (v1:v {id:1}), (v2:v {id:3})
+create (v1)-[:e {weight: 10}]->(v2);
+match (v1:v {id:1}), (v2:v {id:2})
+create (v1)-[:e {weight: 4}]->(v2);
+match (v1:v {id:1}), (v2:v {id:5})
+create (v1)-[:e {weight: 6}]->(v2);
+match (v1:v {id:5}), (v2:v {id:3})
+create (v1)-[:e {weight: 9}]->(v2);
+match (v1:v {id:6}), (v2:v {id:3})
+create (v1)-[:e {weight: 4}]->(v2);
+match (v1:v {id:2}), (v2:v {id:3})
+create (v1)-[:e {weight: 2}]->(v2);
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1)-[e:e]->(v2), e.weight::float8)
+return nodes(path);
+                                       nodes                                       
+-----------------------------------------------------------------------------------
+ [v[9.1]{"id": 0},v[9.5]{"id": 4},v[9.2]{"id": 1},v[9.3]{"id": 2},v[9.4]{"id": 3}]
+(1 row)
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v2)<-[e:e]-(v1), e.weight::float8)
+return nodes(path);
+                                       nodes                                       
+-----------------------------------------------------------------------------------
+ [v[9.4]{"id": 3},v[9.3]{"id": 2},v[9.2]{"id": 1},v[9.5]{"id": 4},v[9.1]{"id": 0}]
+(1 row)
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1)-[e:e]-(v2), e.weight::float8)
+return nodes(path);
+                                       nodes                                       
+-----------------------------------------------------------------------------------
+ [v[9.1]{"id": 0},v[9.5]{"id": 4},v[9.2]{"id": 1},v[9.3]{"id": 2},v[9.4]{"id": 3}]
+(1 row)
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v2)-[e:e]-(v1), e.weight::float8)
+return nodes(path);
+                                       nodes                                       
+-----------------------------------------------------------------------------------
+ [v[9.4]{"id": 3},v[9.3]{"id": 2},v[9.2]{"id": 1},v[9.5]{"id": 4},v[9.1]{"id": 0}]
+(1 row)
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1)-[e:e]->(v2), e.weight::float8 + 1)
+return nodes(path);
+                               nodes                               
+-------------------------------------------------------------------
+ [v[9.1]{"id": 0},v[9.5]{"id": 4},v[9.7]{"id": 6},v[9.4]{"id": 3}]
+(1 row)
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1)-[e:e]->(v2), e.weight::float8, e.weight::float8 >=5)
+return nodes(path);
+                       nodes                       
+---------------------------------------------------
+ [v[9.1]{"id": 0},v[9.2]{"id": 1},v[9.4]{"id": 3}]
+(1 row)
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1)-[e:e]->(v2), e.weight::float8, e.weight::float8)
+return nodes(path);
+ERROR:  argument of AND must be type boolean, not type double precision
+LINE 2: ...path=dijkstra((v1)-[e:e]->(v2), e.weight::float8, e.weight::...
+                                                             ^
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1:v {id:0})-[e:e]->(v2), e.weight::float8)
+return nodes(path);
+ERROR:  property constraint is not supported
+LINE 2:    path=dijkstra((v1:v {id:0})-[e:e]->(v2), e.weight::float8...
+                          ^
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1:v)-[e:e*1..]->(v2), e.weight::float8)
+return nodes(path);
+ERROR:  variable length relationship is not supported
+LINE 2:    path=dijkstra((v1:v)-[e:e*1..]->(v2), e.weight::float8)
+                                     ^
+match (v1:v {id: 6}), (v2:v {id: 2}),
+	  path=dijkstra((v1:v)-[e:e]->(v2), e.weight::float8)
+return nodes(path);
+ nodes 
+-------
+(0 rows)
+
+match (v1:v), (v2:v),
+	  path=dijkstra((v1:v)-[e:e]->(v2), e.weight::float8)
+where v1.id::int8 = 6 and v2.id::int8 = 2
+return nodes(path);
+ nodes 
+-------
+(0 rows)
+
+match (v1:v {id: 0}), (v2:v {id: 3})
+return dijkstra((v1)-[e:e]->(v2), e.weight::float8);
+                                                                                                             ?column?                                                                                                             
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"[v[9.1]{\"id\": 0},e[10.1][9.1,9.5]{\"weight\": 3},v[9.5]{\"id\": 4},e[10.6][9.5,9.2]{\"weight\": 2},v[9.2]{\"id\": 1},e[10.8][9.2,9.3]{\"weight\": 4},v[9.3]{\"id\": 2},e[10.12][9.3,9.4]{\"weight\": 2},v[9.4]{\"id\": 3}]"}
+(1 row)
+
+match (v1:v {id: 0}), (v2:v {id: 0})
+return dijkstra((v1)-[e:e]->(v2), e.weight::float8);
+        ?column?         
+-------------------------
+ {"[v[9.1]{\"id\": 0}]"}
+(1 row)
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+p = dijkstra((v1)-[:e]->(v2), 1)
+return nodes(p);
+                       nodes                       
+---------------------------------------------------
+ [v[9.1]{"id": 0},v[9.5]{"id": 4},v[9.4]{"id": 3}]
+(1 row)
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+p = dijkstra((v1)-[:e]->(v2), 1, limit 10)
+return nodes(p);
+                       nodes                       
+---------------------------------------------------
+ [v[9.1]{"id": 0},v[9.5]{"id": 4},v[9.4]{"id": 3}]
+ [v[9.1]{"id": 0},v[9.6]{"id": 5},v[9.4]{"id": 3}]
+ [v[9.1]{"id": 0},v[9.2]{"id": 1},v[9.4]{"id": 3}]
+(3 rows)
+
+match (:v {id:4 })-[e:e]-(:v {id:6})
+set e.weight = '4';
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  (path,x)=dijkstra((v1)-[e:e]->(v2), e.weight::float8, limit 2)
+return nodes(path), x;
+                                       nodes                                       | x  
+-----------------------------------------------------------------------------------+----
+ [v[9.1]{"id": 0},v[9.5]{"id": 4},v[9.7]{"id": 6},v[9.4]{"id": 3}]                 | 11
+ [v[9.1]{"id": 0},v[9.5]{"id": 4},v[9.2]{"id": 1},v[9.3]{"id": 2},v[9.4]{"id": 3}] | 11
+(2 rows)
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  (path,x)=dijkstra((v2)<-[e:e]->(v1), e.weight::float8, limit 2)
+return nodes(path), x;
+                                       nodes                                       | x  
+-----------------------------------------------------------------------------------+----
+ [v[9.4]{"id": 3},v[9.7]{"id": 6},v[9.5]{"id": 4},v[9.1]{"id": 0}]                 | 11
+ [v[9.4]{"id": 3},v[9.3]{"id": 2},v[9.2]{"id": 1},v[9.5]{"id": 4},v[9.1]{"id": 0}] | 11
+(2 rows)
+
+match (v1:v {id: 0}), (v2:v {id: 3})
+return dijkstra((v1)-[e:e]->(v2), e.weight::float8, limit 2);
+                                                                                                                                                                                                   ?column?                                                                                                                                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"[v[9.1]{\"id\": 0},e[10.1][9.1,9.5]{\"weight\": 3},v[9.5]{\"id\": 4},e[10.4][9.5,9.7]{\"weight\": 4},v[9.7]{\"id\": 6},e[10.11][9.7,9.4]{\"weight\": 4},v[9.4]{\"id\": 3}]","[v[9.1]{\"id\": 0},e[10.1][9.1,9.5]{\"weight\": 3},v[9.5]{\"id\": 4},e[10.6][9.5,9.2]{\"weight\": 2},v[9.2]{\"id\": 1},e[10.8][9.2,9.3]{\"weight\": 4},v[9.3]{\"id\": 2},e[10.12][9.3,9.4]{\"weight\": 2},v[9.4]{\"id\": 3}]"}
+(1 row)
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  (path,x)=dijkstra((v1)-[e:e]->(v2), e.weight::float8, limit 0)
+return nodes(path), x;
+ERROR:  LIMIT must be larger than 0
+match (:v {id:4 })-[e:e]-(:v {id:6})
+set e.weight = '-1';
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  (path,x)=dijkstra((v1)-[e:e]->(v2), e.weight::float8, limit 10)
+return nodes(path), x;
+ERROR:  WEIGHT must be larger than 0
 SET graph_path = agens;
 --
 -- DISTINCT
@@ -2156,7 +2339,7 @@ drop cascades to label ag_vertex
 drop cascades to label ag_edge
 drop cascades to label rel
 DROP GRAPH t CASCADE;
-NOTICE:  drop cascades to 9 other objects
+NOTICE:  drop cascades to 11 other objects
 DETAIL:  drop cascades to sequence t.ag_label_seq
 drop cascades to label ag_vertex
 drop cascades to label ag_edge
@@ -2166,6 +2349,8 @@ drop cascades to label person
 drop cascades to label knows
 drop cascades to label friendships
 drop cascades to label familyship
+drop cascades to label v
+drop cascades to label e
 DROP GRAPH o CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence o.ag_label_seq

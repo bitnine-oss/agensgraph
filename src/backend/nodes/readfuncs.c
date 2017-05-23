@@ -267,6 +267,14 @@ _readQuery(void)
 	READ_LOCATION_FIELD(stmt_location);
 	READ_LOCATION_FIELD(stmt_len);
 
+	READ_INT_FIELD(dijkstraWeight);
+	READ_BOOL_FIELD(dijkstraWeightOut);
+	READ_NODE_FIELD(dijkstraEndId);
+	READ_NODE_FIELD(dijkstraEdgeId);
+	READ_NODE_FIELD(dijkstraSource);
+	READ_NODE_FIELD(dijkstraTarget);
+	READ_NODE_FIELD(dijkstraLimit);
+
 	READ_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	READ_BOOL_FIELD(graph.last);
 	READ_BOOL_FIELD(graph.detach);
@@ -2206,6 +2214,24 @@ _readLimit(void)
 	READ_DONE();
 }
 
+static Dijkstra *
+_readDijkstra(void)
+{
+	READ_LOCALS(Dijkstra);
+
+	ReadCommonPlan(&local_node->plan);
+
+	READ_INT_FIELD(weight);
+	READ_BOOL_FIELD(weight_out);
+	READ_INT_FIELD(end_id);
+	READ_INT_FIELD(edge_id);
+	READ_NODE_FIELD(source);
+	READ_NODE_FIELD(target);
+	READ_NODE_FIELD(limit);
+
+	READ_DONE();
+}
+
 /*
  * _readEager
  */
@@ -2714,6 +2740,8 @@ parseNodeString(void)
 		return_value = _readLimit();
 	else if (MATCH("EAGER", 5))
 		return_value = _readEager();
+	else if (MATCH("DIJKSTRA", 8))
+		return_value = _readDijkstra();
 	else if (MATCH("NESTLOOPPARAM", 13))
 		return_value = _readNestLoopParam();
 	else if (MATCH("PLANROWMARK", 11))

@@ -976,6 +976,23 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_NODE_FIELD(setOperations);
 	COMPARE_NODE_FIELD(constraintDeps);
 	COMPARE_NODE_FIELD(withCheckOptions);
+
+	COMPARE_SCALAR_FIELD(graph.writeOp);
+	COMPARE_SCALAR_FIELD(graph.last);
+	COMPARE_SCALAR_FIELD(graph.detach);
+	COMPARE_NODE_FIELD(graph.pattern);
+	COMPARE_NODE_FIELD(graph.targets);
+	COMPARE_NODE_FIELD(graph.exprs);
+	COMPARE_NODE_FIELD(graph.sets);
+
+	COMPARE_SCALAR_FIELD(dijkstraWeight);
+	COMPARE_SCALAR_FIELD(dijkstraWeightOut);
+	COMPARE_NODE_FIELD(dijkstraEndId);
+	COMPARE_NODE_FIELD(dijkstraEdgeId);
+	COMPARE_NODE_FIELD(dijkstraSource);
+	COMPARE_NODE_FIELD(dijkstraTarget);
+	COMPARE_NODE_FIELD(dijkstraLimit);
+
 	COMPARE_LOCATION_FIELD(stmt_location);
 	COMPARE_LOCATION_FIELD(stmt_len);
 
@@ -988,14 +1005,6 @@ _equalRawStmt(const RawStmt *a, const RawStmt *b)
 	COMPARE_NODE_FIELD(stmt);
 	COMPARE_LOCATION_FIELD(stmt_location);
 	COMPARE_LOCATION_FIELD(stmt_len);
-
-	COMPARE_SCALAR_FIELD(graph.writeOp);
-	COMPARE_SCALAR_FIELD(graph.last);
-	COMPARE_SCALAR_FIELD(graph.detach);
-	COMPARE_NODE_FIELD(graph.pattern);
-	COMPARE_NODE_FIELD(graph.targets);
-	COMPARE_NODE_FIELD(graph.exprs);
-	COMPARE_NODE_FIELD(graph.sets);
 
 	return true;
 }

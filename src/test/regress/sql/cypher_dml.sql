@@ -442,6 +442,131 @@ CREATE (p)-[:knows]->(:person {id: 6})-[:knows]->(f);
 MATCH (p:person), (f:person) WHERE p.id::int = 1 AND f.id::int = 5
 RETURN array_length(allshortestpaths((p)-[:knows*]-(f)), 1) AS cnt;
 
+create vlabel v;
+create elabel e;
+
+create (:v {id: 0});
+create (:v {id: 1});
+create (:v {id: 2});
+create (:v {id: 3});
+create (:v {id: 4});
+create (:v {id: 5});
+create (:v {id: 6});
+
+match (v1:v {id:0}), (v2:v {id:4})
+create (v1)-[:e {weight: 3}]->(v2);
+match (v1:v {id:0}), (v2:v {id:1})
+create (v1)-[:e {weight: 7}]->(v2);
+match (v1:v {id:0}), (v2:v {id:5})
+create (v1)-[:e {weight: 10}]->(v2);
+
+match (v1:v {id:4}), (v2:v {id:6})
+create (v1)-[:e {weight: 5}]->(v2);
+match (v1:v {id:4}), (v2:v {id:3})
+create (v1)-[:e {weight: 11}]->(v2);
+match (v1:v {id:4}), (v2:v {id:1})
+create (v1)-[:e {weight: 2}]->(v2);
+
+match (v1:v {id:1}), (v2:v {id:3})
+create (v1)-[:e {weight: 10}]->(v2);
+match (v1:v {id:1}), (v2:v {id:2})
+create (v1)-[:e {weight: 4}]->(v2);
+match (v1:v {id:1}), (v2:v {id:5})
+create (v1)-[:e {weight: 6}]->(v2);
+
+match (v1:v {id:5}), (v2:v {id:3})
+create (v1)-[:e {weight: 9}]->(v2);
+
+match (v1:v {id:6}), (v2:v {id:3})
+create (v1)-[:e {weight: 4}]->(v2);
+
+match (v1:v {id:2}), (v2:v {id:3})
+create (v1)-[:e {weight: 2}]->(v2);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1)-[e:e]->(v2), e.weight::float8)
+return nodes(path);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v2)<-[e:e]-(v1), e.weight::float8)
+return nodes(path);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1)-[e:e]-(v2), e.weight::float8)
+return nodes(path);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v2)-[e:e]-(v1), e.weight::float8)
+return nodes(path);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1)-[e:e]->(v2), e.weight::float8 + 1)
+return nodes(path);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1)-[e:e]->(v2), e.weight::float8, e.weight::float8 >=5)
+return nodes(path);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1)-[e:e]->(v2), e.weight::float8, e.weight::float8)
+return nodes(path);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1:v {id:0})-[e:e]->(v2), e.weight::float8)
+return nodes(path);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  path=dijkstra((v1:v)-[e:e*1..]->(v2), e.weight::float8)
+return nodes(path);
+
+match (v1:v {id: 6}), (v2:v {id: 2}),
+	  path=dijkstra((v1:v)-[e:e]->(v2), e.weight::float8)
+return nodes(path);
+
+match (v1:v), (v2:v),
+	  path=dijkstra((v1:v)-[e:e]->(v2), e.weight::float8)
+where v1.id::int8 = 6 and v2.id::int8 = 2
+return nodes(path);
+
+match (v1:v {id: 0}), (v2:v {id: 3})
+return dijkstra((v1)-[e:e]->(v2), e.weight::float8);
+
+match (v1:v {id: 0}), (v2:v {id: 0})
+return dijkstra((v1)-[e:e]->(v2), e.weight::float8);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+p = dijkstra((v1)-[:e]->(v2), 1)
+return nodes(p);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+p = dijkstra((v1)-[:e]->(v2), 1, limit 10)
+return nodes(p);
+
+match (:v {id:4 })-[e:e]-(:v {id:6})
+set e.weight = '4';
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  (path,x)=dijkstra((v1)-[e:e]->(v2), e.weight::float8, limit 2)
+return nodes(path), x;
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  (path,x)=dijkstra((v2)<-[e:e]->(v1), e.weight::float8, limit 2)
+return nodes(path), x;
+
+match (v1:v {id: 0}), (v2:v {id: 3})
+return dijkstra((v1)-[e:e]->(v2), e.weight::float8, limit 2);
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  (path,x)=dijkstra((v1)-[e:e]->(v2), e.weight::float8, limit 0)
+return nodes(path), x;
+
+match (:v {id:4 })-[e:e]-(:v {id:6})
+set e.weight = '-1';
+
+match (v1:v {id: 0}), (v2:v {id: 3}),
+	  (path,x)=dijkstra((v1)-[e:e]->(v2), e.weight::float8, limit 10)
+return nodes(path), x;
+
 SET graph_path = agens;
 
 --

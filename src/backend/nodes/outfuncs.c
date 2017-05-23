@@ -936,6 +936,22 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 }
 
 static void
+_outDijkstra(StringInfo str, const Dijkstra *node)
+{
+	WRITE_NODE_TYPE("DIJKSTRA");
+
+	_outPlanInfo(str, (const Plan *) node);
+
+	WRITE_INT_FIELD(weight);
+	WRITE_BOOL_FIELD(weight_out);
+	WRITE_INT_FIELD(end_id);
+	WRITE_INT_FIELD(edge_id);
+	WRITE_NODE_FIELD(source);
+	WRITE_NODE_FIELD(target);
+	WRITE_NODE_FIELD(limit);
+}
+
+static void
 _outNestLoopParam(StringInfo str, const NestLoopParam *node)
 {
 	WRITE_NODE_TYPE("NESTLOOPPARAM");
@@ -2059,6 +2075,23 @@ _outLimitPath(StringInfo str, const LimitPath *node)
 }
 
 static void
+_outDijkstraPath(StringInfo str, const DijkstraPath *node)
+{
+	WRITE_NODE_TYPE("DIJKSTRA");
+
+	_outPathInfo(str, (const Path *) node);
+
+	WRITE_NODE_FIELD(subpath);
+	WRITE_BOOL_FIELD(weight_out);
+	WRITE_INT_FIELD(weight);
+	WRITE_NODE_FIELD(end_id);
+	WRITE_NODE_FIELD(edge_id);
+	WRITE_NODE_FIELD(source);
+	WRITE_NODE_FIELD(target);
+	WRITE_NODE_FIELD(limit);
+}
+
+static void
 _outNestPath(StringInfo str, const NestPath *node)
 {
 	WRITE_NODE_TYPE("NESTPATH");
@@ -2813,6 +2846,14 @@ _outQuery(StringInfo str, const Query *node)
 	/* withCheckOptions intentionally omitted, see comment in parsenodes.h */
 	WRITE_LOCATION_FIELD(stmt_location);
 	WRITE_LOCATION_FIELD(stmt_len);
+
+	WRITE_INT_FIELD(dijkstraWeight);
+	WRITE_BOOL_FIELD(dijkstraWeightOut);
+	WRITE_NODE_FIELD(dijkstraEndId);
+	WRITE_NODE_FIELD(dijkstraEdgeId);
+	WRITE_NODE_FIELD(dijkstraSource);
+	WRITE_NODE_FIELD(dijkstraTarget);
+	WRITE_NODE_FIELD(dijkstraLimit);
 
 	WRITE_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	WRITE_BOOL_FIELD(graph.last);
@@ -3869,6 +3910,9 @@ outNode(StringInfo str, const void *obj)
 			case T_ModifyGraph:
 				_outModifyGraph(str, obj);
 				break;
+			case T_Dijkstra:
+				_outDijkstra(str, obj);
+				break;
 			case T_NestLoopParam:
 				_outNestLoopParam(str, obj);
 				break;
@@ -4120,6 +4164,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_LimitPath:
 				_outLimitPath(str, obj);
+				break;
+			case T_DijkstraPath:
+				_outDijkstraPath(str, obj);
 				break;
 			case T_NestPath:
 				_outNestPath(str, obj);

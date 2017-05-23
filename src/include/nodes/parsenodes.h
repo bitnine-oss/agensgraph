@@ -172,6 +172,14 @@ typedef struct Query
 	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
 
 	/* for agensgraph */
+	int			dijkstraWeight;
+	bool		dijkstraWeightOut;
+	Node	   *dijkstraEndId;
+	Node	   *dijkstraEdgeId;
+	Node	   *dijkstraSource;
+	Node	   *dijkstraTarget;
+	Node	   *dijkstraLimit;
+
 	struct {
 		GraphWriteOp writeOp;
 		bool		last;		/* is this for the last clause? */
@@ -3427,7 +3435,7 @@ typedef enum CSPKind
 {
 	CSP_EXISTS,
 	CSP_SIZE,
-	CSP_SHORTESTPATH		/* [all]shortestpath[s] */
+	CSP_FINDPATH			/* shortestpath, allshortestpaths, dijkstra */
 } CSPKind;
 
 typedef struct CypherSubPattern
@@ -3530,7 +3538,8 @@ typedef enum CPathKind
 {
 	CPATH_NORMAL,
 	CPATH_SHORTEST,
-	CPATH_SHORTEST_ALL
+	CPATH_SHORTEST_ALL,
+	CPATH_DIJKSTRA
 } CPathKind;
 
 typedef struct CypherPath
@@ -3539,6 +3548,11 @@ typedef struct CypherPath
 	CPathKind	kind;
 	Node	   *variable;	/* CypherName */
 	List	   *chain;		/* node, relationship, node, ... */
+	/* Fields valid for Dijkstra */
+	Node	   *weight;
+	Node	   *qual;
+	Node	   *limit;
+	Node	   *weight_var;
 } CypherPath;
 
 typedef struct CypherNode

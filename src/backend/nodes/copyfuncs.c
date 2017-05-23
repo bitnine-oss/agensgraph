@@ -1118,6 +1118,25 @@ _copyModifyGraph(const ModifyGraph *from)
 	return newnode;
 }
 
+static Dijkstra *
+_copyDijkstra(const Dijkstra *from)
+{
+	Dijkstra *newnode = makeNode(Dijkstra);
+
+	CopyPlanFields((const Plan *) from, (Plan *) newnode);
+
+	COPY_SCALAR_FIELD(weight);
+	COPY_SCALAR_FIELD(weight_out);
+	COPY_SCALAR_FIELD(end_id);
+	COPY_SCALAR_FIELD(edge_id);
+	COPY_NODE_FIELD(source);
+	COPY_NODE_FIELD(target);
+	COPY_NODE_FIELD(limit);
+
+	return newnode;
+}
+
+
 /*
  * _copyNestLoopParam
  */
@@ -2893,6 +2912,22 @@ _copyQuery(const Query *from)
 	COPY_LOCATION_FIELD(stmt_location);
 	COPY_LOCATION_FIELD(stmt_len);
 
+	COPY_SCALAR_FIELD(graph.writeOp);
+	COPY_SCALAR_FIELD(graph.last);
+	COPY_SCALAR_FIELD(graph.detach);
+	COPY_NODE_FIELD(graph.pattern);
+	COPY_NODE_FIELD(graph.targets);
+	COPY_NODE_FIELD(graph.exprs);
+	COPY_NODE_FIELD(graph.sets);
+
+	COPY_SCALAR_FIELD(dijkstraWeight);
+	COPY_SCALAR_FIELD(dijkstraWeightOut);
+	COPY_NODE_FIELD(dijkstraEndId);
+	COPY_NODE_FIELD(dijkstraEdgeId);
+	COPY_NODE_FIELD(dijkstraSource);
+	COPY_NODE_FIELD(dijkstraTarget);
+	COPY_NODE_FIELD(dijkstraLimit);
+
 	return newnode;
 }
 
@@ -2904,14 +2939,6 @@ _copyRawStmt(const RawStmt *from)
 	COPY_NODE_FIELD(stmt);
 	COPY_LOCATION_FIELD(stmt_location);
 	COPY_LOCATION_FIELD(stmt_len);
-
-	COPY_SCALAR_FIELD(graph.writeOp);
-	COPY_SCALAR_FIELD(graph.last);
-	COPY_SCALAR_FIELD(graph.detach);
-	COPY_NODE_FIELD(graph.pattern);
-	COPY_NODE_FIELD(graph.targets);
-	COPY_NODE_FIELD(graph.exprs);
-	COPY_NODE_FIELD(graph.sets);
 
 	return newnode;
 }
@@ -5085,6 +5112,9 @@ copyObject(const void *from)
 			break;
 		case T_PlanInvalItem:
 			retval = _copyPlanInvalItem(from);
+			break;
+		case T_Dijkstra:
+			retval = _copyDijkstra(from);
 			break;
 
 			/*
