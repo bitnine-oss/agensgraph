@@ -2860,7 +2860,6 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 	CypherClause *clause;
 	NodeTag		type;
 	bool		valid = true;
-	bool		endret = false;
 	NodeTag		update_type = T_Invalid;
 	bool		read = false;
 
@@ -2869,9 +2868,7 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 	switch (type)
 	{
 		case T_CypherProjection:
-			if (cypherProjectionKind(clause->detail) == CP_RETURN)
-				endret = true;
-			else
+			if (cypherProjectionKind(clause->detail) != CP_RETURN)
 				valid = false;
 			break;
 		case T_CypherCreateClause:
@@ -2925,17 +2922,6 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 				break;
 			case T_CypherDeleteClause:
 			case T_CypherSetClause:
-				if (endret)
-				{
-					if (type == T_CypherDeleteClause)
-						ereport(ERROR,
-								(errcode(ERRCODE_SYNTAX_ERROR),
-								 errmsg("Cypher DELETE clause cannot end with RETURN clause")));
-					else
-						ereport(ERROR,
-								(errcode(ERRCODE_SYNTAX_ERROR),
-								 errmsg("Cypher SET/REMOVE clause cannot end with RETURN clause")));
-				}
 				if (read)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),

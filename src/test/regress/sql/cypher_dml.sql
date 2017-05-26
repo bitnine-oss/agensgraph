@@ -665,18 +665,13 @@ MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
 -- DELETE
 --
 
-MATCH (a) DELETE a;
-
-MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[2];
-MATCH (a:repo) RETURN a.name AS a;
-
-MATCH ()-[a:doc]->() DETACH DELETE end_vertex(a);
-MATCH (a:repo) RETURN a.name AS a;
-
 MATCH (a) DETACH DELETE a;
-MATCH (a) RETURN a;
 
 SELECT count(*) FROM agens.ag_edge;
+
+-- wrong case
+MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[2];
+MATCH ()-[a:doc]->() DETACH DELETE end_vertex(a);
 
 --
 -- Uniqueness
@@ -704,8 +699,11 @@ CREATE ELABEL rel;
 
 CREATE ({name: 'someone'})-[:rel {k: 'v'}]->({name: 'somebody'});
 
-MATCH (n)-[r]->(m) SET r.l = '"w"', n = m, r.k = NULL;
-MATCH (n)-[r]->(m) REMOVE m.name;
+MATCH (n)-[r]->(m) SET r.l = '"w"', n = m, r.k = NULL
+RETURN properties(n) AS n, properties(r) AS r, properties(m) AS m;
+
+MATCH (n)-[r]->(m) REMOVE m.name
+RETURN properties(n) AS n, properties(r) AS r, properties(m) AS m;
 
 MATCH (n)-[r]->(m)
 RETURN properties(n) AS n, properties(r) AS r, properties(m) AS m;
@@ -714,25 +712,29 @@ MATCH (n) DETACH DELETE (n);
 
 -- overwrite (Standard SQL)
 CREATE ({age: 10});
-MATCH (a) SET a.age = '11', a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) SET a.age = '11', a.age = (a.age::int + 1)::text::jsonb
+RETURN properties(a);
 MATCH (a) RETURN properties(a);
 MATCH (a) DETACH DELETE (a);
 
 -- multiple SET's
 
 CREATE ({age: 10});
-MATCH (a) SET a.age = '11' SET a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) SET a.age = '11' SET a.age = (a.age::int + 1)::text::jsonb
+RETURN properties(a);
 MATCH (a) RETURN properties(a);
 MATCH (a) DETACH DELETE (a);
 
 CREATE ()-[:rel {k: 'v'}]->();
-MATCH ()-[r]->() SET r.l = '"x"' SET r.l = '"y"';
+MATCH ()-[r]->() SET r.l = '"x"' SET r.l = '"y"'
+RETURN properties(r) AS r;
 MATCH ()-[r]->() RETURN properties(r) AS r;
 MATCH (a) DETACH DELETE (a);
 
 CREATE ({age: 1})-[:rel]->({age: 2});
 MATCH (a)-[]->(b)
-SET a.age = to_jsonb(a.age::int + 1), b.age = to_jsonb(a.age::int + b.age::int);
+SET a.age = to_jsonb(a.age::int + 1), b.age = to_jsonb(a.age::int + b.age::int)
+RETURN properties(a) AS a, properties(b) AS b;
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
 MATCH (a) DETACH DELETE (a);
 
@@ -751,7 +753,8 @@ MATCH (a) DETACH DELETE (a);
 -- += operator
 
 CREATE ({age: 10});
-MATCH (a) SET a += {name: 'bitnine', age: '3'};
+MATCH (a) SET a += {name: 'bitnine', age: '3'}
+RETURN properties(a);
 MATCH (a) RETURN properties(a);
 
 MATCH (a) SET a += NULL;
@@ -763,7 +766,8 @@ MATCH (a) DETACH DELETE (a);
 -- remove
 
 CREATE ({a: 'a', b: 'b', c: 'c'});
-MATCH (a) SET a.a = NULL REMOVE a.b;
+MATCH (a) SET a.a = NULL REMOVE a.b
+RETURN properties(a);
 MATCH (a) RETURN properties(a);
 
 MATCH (a) SET a = NULL;
@@ -773,7 +777,8 @@ MATCH (a) DETACH DELETE (a);
 -- referring to undefined attributes
 CREATE ({name: 'bitnine'});
 CREATE ({age: 10});
-MATCH (a) SET a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) SET a.age = (a.age::int + 1)::text::jsonb
+RETURN properties(a);
 MATCH (a) RETURN properties(a);
 
 MATCH (a) SET a.age = to_jsonb(2017 - a.undefined_attr::int);
@@ -945,9 +950,35 @@ MATCH (a:v1)
 	WHERE a.no::int < 3
 	DELETE a
 MERGE (b:v1 {no:2})
-	ON MATCH SET b.no = a.no::jsonb;
+	ON MATCH SET b.no = '3'::jsonb;
 
 MATCH (a:v1) return a.no;
+
+-- MATCH - SET - RETURN
+MATCH (a) DETACH DELETE a;
+CREATE (:v1 {no:1})-[:e]->(:v1 {no:2})-[:e]->(:v1 {no:3});
+
+MATCH (a)-[]->(b)
+	SET b.no = to_jsonb(a.no::int + b.no::int)
+	RETURN properties(a) AS a, properties(b) AS b;
+
+MATCH (a)-[]->(b)
+	RETURN properties(a) AS a, properties(b) AS b;
+
+MATCH (a)-[]->(b)
+	SET b.no = to_jsonb(a.no::int + b.no::int)
+	CREATE (:v2 {ano:a.no}), (d:v2 {bno:b.no});
+
+MATCH (a:v2) RETURN properties(a);
+
+-- MATCH - DELETE - RETURN
+MATCH (a) DETACH DELETE a;
+CREATE (:v1 {no:1}), (:v1 {no:2}), (:v1 {no:3});
+
+MATCH (a),(b) WHERE a.no = '2'
+	DELETE a
+	RETURN properties(a) AS a, properties(b) AS b;
+MATCH (a) RETURN properties(a);
 
 -- wrong case
 MERGE (a:v1) MERGE (b:v2 {name:a.notexistent});

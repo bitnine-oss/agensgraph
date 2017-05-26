@@ -17,7 +17,9 @@
 #include <math.h>
 
 #include "miscadmin.h"
+#include "nodes/graphnodes.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/nodes.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/pathnode.h"
@@ -3135,13 +3137,59 @@ create_limit_path(PlannerInfo *root, RelOptInfo *rel,
 	return pathnode;
 }
 
+static
+List *getmodifylist(Path *path, GraphWriteOp operation)
+{
+	List	 *result = NIL;
+	ListCell *lc;
+	ModifyGraphPath *mgp = (ModifyGraphPath *) path;
+
+	if (operation == GWROP_SET)
+	{
+		foreach(lc, mgp->sets)
+		{
+			GraphSetProp *gsp = (GraphSetProp *) lfirst(lc);
+
+			if (IsA(gsp->elem, Var))
+			{
+				Var *var = (Var *) gsp->elem;
+
+				result = lappend_int(result, var->varattno - 1);
+			}
+			else
+				Assert(0);
+		}
+	}
+	else if (operation == GWROP_DELETE)
+	{
+		foreach(lc, mgp->exprs)
+		{
+			Node *expr = (Node *) lfirst(lc);
+			if (IsA(expr, Var))
+			{
+				Var *var = (Var *) expr;
+
+				result = lappend_int(result, var->varattno - 1);
+			}
+			else
+				Assert(0);
+		}
+	}
+	else
+		return NIL;
+
+	Assert(list_length(result) != 0);
+
+	return result;
+}
+
 /*
  * create_eager_path
  *	  Creates a path corresponding to a Eager plan, returning the
  *	  pathnode.
  */
 EagerPath *
-create_eager_path(RelOptInfo *rel, Path *subpath)
+create_eager_path(RelOptInfo *rel, GraphWriteOp operation, Path *subpath)
 {
 	EagerPath *pathnode = makeNode(EagerPath);
 
@@ -3163,21 +3211,24 @@ create_eager_path(RelOptInfo *rel, Path *subpath)
 
 	pathnode->subpath = subpath;
 
+	pathnode->modifiedlist = getmodifylist(subpath, operation);
+
 	return pathnode;
 }
 
-static Path *considerEager(RelOptInfo *rel, Path *path)
+static Path *considerEager(RelOptInfo *rel, GraphWriteOp operation, Path *path)
 {
 	if (IsA(path, ModifyGraphPath))
 	{
-		return (Path *) create_eager_path(rel, path);
+		return (Path *) create_eager_path(rel, operation, path);
 	}
 	else if (IsA(path, SubqueryScanPath))
 	{
 		SubqueryScanPath *pathnode = (SubqueryScanPath *) path;
 
 		if (IsA(pathnode->subpath, ModifyGraphPath))
-			return (Path *) create_eager_path(pathnode->path.parent, path);
+			return (Path *) create_eager_path(pathnode->path.parent,
+											  operation, path);
 	}
 	/* For CypherMergeJoin */
 	else if (IsA(path, NestPath))
@@ -3186,6 +3237,7 @@ static Path *considerEager(RelOptInfo *rel, Path *path)
 
 		pathnode->outerjoinpath =
 					(Path *) considerEager(pathnode->path.parent,
+										   operation,
 										   pathnode->outerjoinpath);
 	}
 
@@ -3212,13 +3264,11 @@ create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
 	pathnode->path.total_cost = subpath->total_cost;
 	pathnode->path.pathkeys = NIL;
 
-	subpath = considerEager(rel, subpath);
-
 	pathnode->canSetTag = canSetTag;
 	pathnode->operation = operation;
 	pathnode->last = last;
 	pathnode->detach = detach;
-	pathnode->subpath = subpath;
+	pathnode->subpath = considerEager(rel, operation, (Path *) subpath);
 	pathnode->pattern = pattern;
 	pathnode->targets = targets;
 	pathnode->exprs = exprs;

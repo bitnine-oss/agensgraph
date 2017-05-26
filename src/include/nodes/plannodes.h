@@ -698,6 +698,8 @@ typedef struct Sort
 typedef struct Eager
 {
 	Plan		plan;
+	List	   *modifylist;
+	GraphWriteOp gwop;
 } Eager;
 
 /* ---------------
