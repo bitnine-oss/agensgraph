@@ -1505,6 +1505,7 @@ typedef struct EagerPath
 {
 	Path		path;
 	Path	   *subpath;
+	List	   *modifiedlist;
 } EagerPath;
 
 /*

@@ -693,8 +693,8 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	CypherDeleteClause *detail = (CypherDeleteClause *) clause->detail;
 	Query	   *qry;
 	RangeTblEntry *rte;
-	List	   *exprs;
-	ListCell   *le;
+	List	   *exprs = NIL;
+	ListCell   *lc;
 
 	/* DELETE cannot be the first clause */
 	AssertArg(clause->prev != NULL);
@@ -714,16 +714,18 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	/* select all from previous clause */
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
 
-	exprs = transformExpressionList(pstate, detail->exprs, EXPR_KIND_OTHER);
-
-	foreach(le, exprs)
+	foreach(lc, detail->exprs)
 	{
-		Node	   *expr = lfirst(le);
-		Oid			vartype;
+		Node   *e = (Node *) lfirst(lc);
+		Node   *expr;
+		Oid		vartype;
+
+		expr = transformExpr(pstate, e, EXPR_KIND_OTHER);
 
 		vartype = exprType(expr);
-		if (vartype != VERTEXOID && vartype != EDGEOID &&
-			vartype != GRAPHPATHOID)
+		if (!IsA(e, ColumnRef) ||
+			(vartype != VERTEXOID && vartype != EDGEOID &&
+			 vartype != GRAPHPATHOID))
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
 					 errmsg("node, relationship, or path is expected"),
@@ -731,9 +733,12 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 
 		/*
 		 * TODO: `expr` must contain one of the target variables
-		 *		 and it mustn't contain aggregate and SubLink's.
+		 *               and it mustn't contain aggregate and SubLink's.
 		 */
+
+		exprs = lappend(exprs, expr);
 	}
+
 	qry->graph.exprs = exprs;
 
 	qry->rtable = pstate->p_rtable;
@@ -3950,7 +3955,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	if (!IsA(sp->prop, ColumnRef) && !IsA(sp->prop, A_Indirection))
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("only variable or property is valid for SET target")));
+				 errmsg("only variable is valid for SET target")));
 
 	/*
 	 * get `elem` and `path` (LHS of the SET clause item)
@@ -3982,9 +3987,10 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 
 	if (IsA(node, ColumnRef))
 	{
-		ColumnRef  *cref = (ColumnRef *) node;
+		ColumnRef  *cref;
 		Var		   *var;
 
+		cref = (ColumnRef *) node;
 		varname = strVal(linitial(cref->fields));
 		var = (Var *) getColumnVar(pstate, rte, varname);
 		var->location = cref->location;
@@ -4002,18 +4008,9 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		}
 	}
 	else
-	{
-		Oid elemtype;
-
-		elem = transformExpr(pstate, node, EXPR_KIND_UPDATE_TARGET);
-
-		elemtype = exprType(elem);
-		if (elemtype != VERTEXOID && elemtype != EDGEOID)
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("node or relationship is expected"),
-					 parser_errposition(pstate, exprLocation(elem))));
-	}
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("only variable is valid for SET target")));
 
 	if (inds != NIL)
 	{

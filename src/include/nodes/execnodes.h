@@ -1963,6 +1963,9 @@ typedef struct EagerState
 {
 	ScanState	ss;				/* its first field is NodeTag */
 	bool		child_done;		/* reached end of child plan? */
+	HTAB	   *modifiedObject;	/* SET/DELETEd graph elements table */
+	List	   *modifiedList;	/* index list of modified slot */
+	GraphWriteOp gwop;
 	Tuplestorestate *tuplestorestate;
 } EagerState;
 
