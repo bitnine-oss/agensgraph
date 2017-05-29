@@ -69,6 +69,15 @@ typedef uint64 EdgeRef;
 				 ((uint64) (_offset)); \
 	} while (0)
 
+typedef struct {
+	Oid			tableoid;
+	ItemPointerData tid;
+} Rowid;
+
+#define RowidGetDatum(X)	PointerGetDatum(X)
+#define PG_GETARG_ROWID(n)	((Rowid *) DatumGetPointer(PG_GETARG_DATUM(n)))
+#define PG_RETURN_ROWID(x)	return RowidGetDatum(x)
+
 /* graphid */
 extern Datum graphid(PG_FUNCTION_ARGS);
 extern Datum graphid_in(PG_FUNCTION_ARGS);
@@ -90,6 +99,20 @@ extern Datum graphid_ge(PG_FUNCTION_ARGS);
 extern Datum edgeref(PG_FUNCTION_ARGS);
 extern Datum edgeref_in(PG_FUNCTION_ARGS);
 extern Datum edgeref_out(PG_FUNCTION_ARGS);
+
+/* rowid */
+extern Datum rowid(PG_FUNCTION_ARGS);
+extern Datum rowid_in(PG_FUNCTION_ARGS);
+extern Datum rowid_out(PG_FUNCTION_ARGS);
+/* rowid -comparison */
+extern Datum rowid_eq(PG_FUNCTION_ARGS);
+extern Datum rowid_ne(PG_FUNCTION_ARGS);
+extern Datum rowid_lt(PG_FUNCTION_ARGS);
+extern Datum rowid_gt(PG_FUNCTION_ARGS);
+extern Datum rowid_le(PG_FUNCTION_ARGS);
+extern Datum rowid_ge(PG_FUNCTION_ARGS);
+/* rowid - BTree */
+extern Datum btrowidcmp(PG_FUNCTION_ARGS);
 
 /* vertex */
 extern Datum vertex_out(PG_FUNCTION_ARGS);

@@ -5425,6 +5425,22 @@ DATA(insert OID = 7147 ( edge_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 
 DATA(insert OID = 7050 ( edgeref		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 7052 "23 27" _null_ _null_ _null_ _null_ _null_ edgeref _null_ _null_ _null_ ));
 DATA(insert OID = 7053 ( edgeref_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7052 "2275" _null_ _null_ _null_ _null_ _null_ edgeref_in _null_ _null_ _null_ ));
 DATA(insert OID = 7054 ( edgeref_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7052" _null_ _null_ _null_ _null_ _null_ edgeref_out _null_ _null_ _null_ ));
+/* rowid */
+DATA(insert OID = 7060 ( rowid			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 7062 "26 27" _null_ _null_ _null_ _null_ _null_ rowid _null_ _null_ _null_ ));
+DESCR("store oid and tid into rowid");
+DATA(insert OID = 7063 ( rowid_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7062 "2275" _null_ _null_ _null_ _null_ _null_ rowid_in _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7064 ( rowid_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7062" _null_ _null_ _null_ _null_ _null_ rowid_out _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7155 ( rowid_eq		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7062 7062" _null_ _null_ _null_ _null_ _null_ rowid_eq _null_ _null_ _null_ ));
+DATA(insert OID = 7156 ( rowid_ne		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7062 7062" _null_ _null_ _null_ _null_ _null_ rowid_ne _null_ _null_ _null_ ));
+DATA(insert OID = 7157 ( rowid_lt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7062 7062" _null_ _null_ _null_ _null_ _null_ rowid_lt _null_ _null_ _null_ ));
+DATA(insert OID = 7158 ( rowid_gt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7062 7062" _null_ _null_ _null_ _null_ _null_ rowid_gt _null_ _null_ _null_ ));
+DATA(insert OID = 7159 ( rowid_le		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7062 7062" _null_ _null_ _null_ _null_ _null_ rowid_le _null_ _null_ _null_ ));
+DATA(insert OID = 7160 ( rowid_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7062 7062" _null_ _null_ _null_ _null_ _null_ rowid_ge _null_ _null_ _null_ ));
+/* BTree for rowid */
+DATA(insert OID = 7168 ( btrowidcmp		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 23 "7062 7062" _null_ _null_ _null_ _null_ _null_ btrowidcmp _null_ _null_ _null_ ));
+DESCR("less-equal-greater");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

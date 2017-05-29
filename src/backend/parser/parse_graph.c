@@ -61,6 +61,7 @@
 #define VLE_COLNAME_ROWIDS		"rowids"
 #define VLE_COLNAME_PATH		"path"
 #define VLE_COLNAME_EREF		"eref"		/* edgeref */
+#define VLE_COLNAME_ROWID		"rowid"
 
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
@@ -304,7 +305,6 @@ static Node *qualAndExpr(Node *qual, Node *expr);
 /* parse node */
 static ResTarget *makeSimpleResTarget(char *field, char *name);
 static ResTarget *makeResTarget(Node *val, char *name);
-static RowExpr *makeRowExpr(List *args);
 static Node *makeColumnRef(List *fields);
 static Node *makeDummyEdgeRef(Node *ctid);
 static bool IsNullAConst(Node *arg);
@@ -1841,14 +1841,14 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList)
  * SELECT l.start, l.end, l.rowids, l.path
  * FROM (
  *     SELECT l.start, l.end,
- *            ARRAY[ROW(l.tableoid, l.ctid)] AS rowids,
+ *            ARRAY[rowid(l.tableoid, l.ctid)] AS rowids,
  *            ARRAY[l.eref] AS path
  *     FROM edge AS l
  *     WHERE l.start = outer_vid AND l.properties @> ...)
  *   VLE JOIN
  *     LATERAL (
  *     SELECT r.end,
- *            ROW(r.tableoid, r.ctid) AS rowid,
+ *            rowid(r.tableoid, r.ctid) AS rowid,
  *            r.eref
  *     FROM edge AS r
  *     WHERE  r.start = l.end AND r.properties @> ...)
@@ -1970,7 +1970,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 		rowidarr->location = -1;
 		rowids = makeNode(TypeCast);
 		rowids->arg = (Node *) rowidarr;
-		rowids->typeName = makeTypeName("_record");
+		rowids->typeName = makeTypeName("_rowid");
 		rowids->location = -1;
 
 		values = list_make3(vid, vid, rowids);
@@ -2002,7 +2002,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 		ResTarget  *end;
 		Node	   *tableoid;
 		Node	   *ctid;
-		RowExpr	   *row;
+		FuncCall   *rowid;
 		TypeCast   *cast;
 		ResTarget  *rowids;
 		List	   *tlist = NIL;
@@ -2014,13 +2014,14 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 
 		tableoid = makeColumnRef(genQualifiedName(NULL, "tableoid"));
 		ctid = makeColumnRef(genQualifiedName(NULL, "ctid"));
-		row = makeRowExpr(list_make2(tableoid, ctid));
+		rowid = makeFuncCall(list_make1(makeString("rowid")),
+							 list_make2(tableoid, ctid), -1);
 		rowidarr = makeNode(A_ArrayExpr);
-		rowidarr->elements = list_make1(row);
+		rowidarr->elements = list_make1(rowid);
 		rowidarr->location = -1;
 		cast = makeNode(TypeCast);
 		cast->arg = (Node *) rowidarr;
-		cast->typeName = makeTypeName("_record");
+		cast->typeName = makeTypeName("_rowid");
 		cast->location = -1;
 		rowids = makeResTarget((Node *) cast, VLE_COLNAME_ROWIDS);
 
@@ -2099,8 +2100,7 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 	A_Expr	   *joinqual;
 	Node	   *tableoid;
 	Node	   *ctid;
-	RowExpr	   *row;
-	ResTarget  *rowid;
+	FuncCall   *rowid;
 	List	   *tlist;
 	List	   *where_args = NIL;
 	SelectStmt     *sel;
@@ -2141,10 +2141,10 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 
 	tableoid = makeColumnRef(genQualifiedName(NULL, "tableoid"));
 	ctid = makeColumnRef(genQualifiedName(NULL, "ctid"));
-	row = makeRowExpr(list_make2(tableoid, ctid));
-	rowid = makeResTarget((Node *) row, "rowid");
+	rowid = makeFuncCall(list_make1(makeString("rowid")),
+						 list_make2(tableoid, ctid), -1);
 
-	tlist = list_make2(end, rowid);
+	tlist = list_make2(end, makeResTarget((Node *) rowid, VLE_COLNAME_ROWID));
 
 	if (out)
 	{
@@ -2680,18 +2680,19 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ues, List *uearrs)
 		foreach(lea1, uearrs)
 		{
 			Node	   *earr = lfirst(lea1);
-			RowExpr	   *rowid;
+			FuncCall   *rowid;
 			Node	   *funcexpr;
 			NullTest   *dupcond;
 
-			rowid = makeNode(RowExpr);
-			rowid->args = list_make2(e1->tableoid, e1->ctid);
-			rowid->row_typeid = RECORDOID;
-			rowid->row_format = COERCE_IMPLICIT_CAST;
-			rowid->location = -1;
+			rowid = makeFuncCall(list_make1(makeString("rowid")),
+								 list_make2(e1->tableoid, e1->ctid), -1);
 
+			funcexpr = ParseFuncOrColumn(pstate, rowid->funcname,
+										 list_make2(e1->tableoid, e1->ctid),
+										 rowid, -1);
 			funcexpr = ParseFuncOrColumn(pstate, arrpos->funcname,
-										 list_make2(earr, rowid), arrpos, -1);
+										 list_make2(earr, funcexpr),
+										 arrpos, -1);
 
 			dupcond = makeNode(NullTest);
 			dupcond->arg = (Expr *) funcexpr;
@@ -5291,19 +5292,6 @@ makeResTarget(Node *val, char *name)
 	res->location = -1;
 
 	return res;
-}
-
-static RowExpr *
-makeRowExpr(List *args)
-{
-	RowExpr *row = makeNode(RowExpr);
-
-	row->args = args;
-	row->row_typeid = InvalidOid;
-	row->row_format = COERCE_IMPLICIT_CAST;
-	row->location = -1;
-
-	return row;
 }
 
 static Node *

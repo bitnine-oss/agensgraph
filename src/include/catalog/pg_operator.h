@@ -1873,5 +1873,18 @@ DATA(insert OID = 7152 (  "<="	   PGNSP PGUID b f f 7022 7022 16 7153 7151 edge_
 DESCR("less than or equal");
 DATA(insert OID = 7153 (  ">="	   PGNSP PGUID b f f 7022 7022 16 7152 7150 edge_ge scalargtsel scalargtjoinsel ));
 DESCR("greater than or equal");
+/* rowid operators */
+DATA(insert OID = 7161 (  "="	   PGNSP PGUID b t f 7062 7062 16 7161 7162 rowid_eq eqsel eqjoinsel ));
+DESCR("equal");
+DATA(insert OID = 7162 (  "<>"	   PGNSP PGUID b f f 7062 7062 16 7162 7161 rowid_ne neqsel neqjoinsel ));
+DESCR("not equal");
+DATA(insert OID = 7163 (  "<"	   PGNSP PGUID b f f 7062 7062 16 7164 7166 rowid_lt scalarltsel scalarltjoinsel ));
+DESCR("less than");
+DATA(insert OID = 7164 (  ">"	   PGNSP PGUID b f f 7062 7062 16 7163 7165 rowid_gt scalargtsel scalargtjoinsel ));
+DESCR("greater than");
+DATA(insert OID = 7165 (  "<="	   PGNSP PGUID b f f 7062 7062 16 7166 7164 rowid_le scalarltsel scalarltjoinsel ));
+DESCR("less than or equal");
+DATA(insert OID = 7166 (  ">="	   PGNSP PGUID b f f 7062 7062 16 7165 7163 rowid_ge scalargtsel scalargtjoinsel ));
+DESCR("greater than or equal");
 
 #endif   /* PG_OPERATOR_H */

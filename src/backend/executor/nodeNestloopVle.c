@@ -22,9 +22,11 @@
 #include "catalog/pg_type.h"
 #include "executor/execdebug.h"
 #include "executor/nodeNestloopVle.h"
+#include "fmgr.h"
 #include "nodes/pg_list.h"
 #include "utils/array.h"
 #include "utils/datum.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 
@@ -699,8 +701,8 @@ hasElem(VLEArrayExpr *array, Datum elem)
 
 	for (i = 0; i < array->nelems; i++)
 	{
-		if (datumIsEqual(array->elements[i], elem,
-						 array->elembyval, array->elemlength))
+		if (DatumGetBool(DirectFunctionCall2(rowid_eq,
+											 array->elements[i], elem)))
 			return true;
 	}
 
