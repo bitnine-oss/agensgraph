@@ -930,29 +930,29 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with x[1] as x1, x[2] as x2 order by x2 return x1;
                                                                                  QUERY PLAN                                                                                 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Subquery Scan on _  (cost=408.20..412.40 rows=336 width=32)
+ Subquery Scan on _  (cost=408.34..412.54 rows=336 width=32)
    Output: EDGEREFROW(_.x1)
-   ->  Sort  (cost=408.20..409.04 rows=336 width=40)
+   ->  Sort  (cost=408.34..409.18 rows=336 width=40)
          Output: (x.path[1]), (EDGEREFROW(x.path[2]))
          Sort Key: (EDGEREFROW(x.path[2]))
-         ->  Nested Loop  (cost=200.38..394.10 rows=336 width=40)
+         ->  Nested Loop  (cost=200.52..394.24 rows=336 width=40)
                Output: x.path[1], EDGEREFROW(x.path[2])
                ->  Seq Scan on t.person a  (cost=0.00..28.00 rows=6 width=8)
                      Output: a.id, a.properties
                      Filter: ((a.properties #>> '{id}'::text[]) = '1'::text)
-               ->  Hash Join  (cost=200.38..227.44 rows=56 width=32)
+               ->  Hash Join  (cost=200.52..227.58 rows=56 width=32)
                      Output: x.path
                      Hash Cond: (b.id = x."end")
                      ->  Seq Scan on t.person b  (cost=0.00..22.00 rows=1200 width=8)
                            Output: b.id, b.properties
-                     ->  Hash  (cost=199.68..199.68 rows=56 width=40)
+                     ->  Hash  (cost=199.82..199.82 rows=56 width=40)
                            Output: x.path, x."end"
-                           ->  Subquery Scan on x  (cost=0.00..199.68 rows=56 width=40)
+                           ->  Subquery Scan on x  (cost=0.00..199.82 rows=56 width=40)
                                  Output: x.path, x."end"
-                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.12 rows=56 width=80)
-                                       Output: l.start, l."end", (ARRAY[ROW(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=80)
-                                             Output: l.start, l."end", ARRAY[ROW(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
+                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=80)
+                                       Output: l.start, l."end", (ARRAY[rowid(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=80)
+                                             Output: l.start, l."end", ARRAY[rowid(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
                                              ->  Append  (cost=0.00..24.68 rows=7 width=34)
                                                    ->  Seq Scan on t.knows l  (cost=0.00..2.21 rows=1 width=34)
                                                          Output: l.start, l."end", l.tableoid, l.ctid, edgeref(0, l.ctid)
@@ -963,8 +963,8 @@ with x[1] as x1, x[2] as x2 order by x2 return x1;
                                                    ->  Index Only Scan using familyship_start_idx on t.familyship  (cost=0.15..20.25 rows=5 width=34)
                                                          Output: familyship.start, familyship."end", familyship.tableoid, familyship.ctid, edgeref(2, familyship.ctid)
                                                          Index Cond: (familyship.start = a.id)
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=48)
-                                             Output: r."end", ROW(r.tableoid, r.ctid), (edgeref(0, r.ctid))
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=26)
+                                             Output: r."end", rowid(r.tableoid, r.ctid), (edgeref(0, r.ctid))
                                              ->  Append  (cost=0.00..24.68 rows=7 width=26)
                                                    ->  Seq Scan on t.knows r  (cost=0.00..2.21 rows=1 width=26)
                                                          Output: r."end", r.tableoid, r.ctid, edgeref(0, r.ctid)
@@ -982,30 +982,30 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with max(b.id) as id, x[1] as x return *;
                                                                                  QUERY PLAN                                                                                 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=408.20..412.12 rows=56 width=64)
+ GroupAggregate  (cost=408.34..412.26 rows=56 width=64)
    Output: max((b.properties #>> '{id}'::text[])), (EDGEREFROW(x.path[1]))
    Group Key: (EDGEREFROW(x.path[1]))
-   ->  Sort  (cost=408.20..409.04 rows=336 width=64)
+   ->  Sort  (cost=408.34..409.18 rows=336 width=64)
          Output: (EDGEREFROW(x.path[1])), b.properties
          Sort Key: (EDGEREFROW(x.path[1]))
-         ->  Nested Loop  (cost=200.38..394.10 rows=336 width=64)
+         ->  Nested Loop  (cost=200.52..394.24 rows=336 width=64)
                Output: EDGEREFROW(x.path[1]), b.properties
                ->  Seq Scan on t.person a  (cost=0.00..28.00 rows=6 width=8)
                      Output: a.id, a.properties
                      Filter: ((a.properties #>> '{id}'::text[]) = '1'::text)
-               ->  Hash Join  (cost=200.38..227.44 rows=56 width=64)
+               ->  Hash Join  (cost=200.52..227.58 rows=56 width=64)
                      Output: x.path, b.properties
                      Hash Cond: (b.id = x."end")
                      ->  Seq Scan on t.person b  (cost=0.00..22.00 rows=1200 width=40)
                            Output: b.id, b.properties
-                     ->  Hash  (cost=199.68..199.68 rows=56 width=40)
+                     ->  Hash  (cost=199.82..199.82 rows=56 width=40)
                            Output: x.path, x."end"
-                           ->  Subquery Scan on x  (cost=0.00..199.68 rows=56 width=40)
+                           ->  Subquery Scan on x  (cost=0.00..199.82 rows=56 width=40)
                                  Output: x.path, x."end"
-                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.12 rows=56 width=80)
-                                       Output: l.start, l."end", (ARRAY[ROW(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=80)
-                                             Output: l.start, l."end", ARRAY[ROW(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
+                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=80)
+                                       Output: l.start, l."end", (ARRAY[rowid(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=80)
+                                             Output: l.start, l."end", ARRAY[rowid(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
                                              ->  Append  (cost=0.00..24.68 rows=7 width=34)
                                                    ->  Seq Scan on t.knows l  (cost=0.00..2.21 rows=1 width=34)
                                                          Output: l.start, l."end", l.tableoid, l.ctid, edgeref(0, l.ctid)
@@ -1016,8 +1016,8 @@ with max(b.id) as id, x[1] as x return *;
                                                    ->  Index Only Scan using familyship_start_idx on t.familyship  (cost=0.15..20.25 rows=5 width=34)
                                                          Output: familyship.start, familyship."end", familyship.tableoid, familyship.ctid, edgeref(2, familyship.ctid)
                                                          Index Cond: (familyship.start = a.id)
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=48)
-                                             Output: r."end", ROW(r.tableoid, r.ctid), (edgeref(0, r.ctid))
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=26)
+                                             Output: r."end", rowid(r.tableoid, r.ctid), (edgeref(0, r.ctid))
                                              ->  Append  (cost=0.00..24.68 rows=7 width=26)
                                                    ->  Seq Scan on t.knows r  (cost=0.00..2.21 rows=1 width=26)
                                                          Output: r."end", r.tableoid, r.ctid, edgeref(0, r.ctid)
@@ -1035,29 +1035,29 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with distinct x as path return *;
                                                                                  QUERY PLAN                                                                                 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Unique  (cost=408.20..409.88 rows=56 width=32)
+ Unique  (cost=408.34..410.02 rows=56 width=32)
    Output: (EDGEREFROWS(x.path))
-   ->  Sort  (cost=408.20..409.04 rows=336 width=32)
+   ->  Sort  (cost=408.34..409.18 rows=336 width=32)
          Output: (EDGEREFROWS(x.path))
          Sort Key: (EDGEREFROWS(x.path))
-         ->  Nested Loop  (cost=200.38..394.10 rows=336 width=32)
+         ->  Nested Loop  (cost=200.52..394.24 rows=336 width=32)
                Output: EDGEREFROWS(x.path)
                ->  Seq Scan on t.person a  (cost=0.00..28.00 rows=6 width=8)
                      Output: a.id, a.properties
                      Filter: ((a.properties #>> '{id}'::text[]) = '1'::text)
-               ->  Hash Join  (cost=200.38..227.44 rows=56 width=32)
+               ->  Hash Join  (cost=200.52..227.58 rows=56 width=32)
                      Output: x.path
                      Hash Cond: (b.id = x."end")
                      ->  Seq Scan on t.person b  (cost=0.00..22.00 rows=1200 width=8)
                            Output: b.id, b.properties
-                     ->  Hash  (cost=199.68..199.68 rows=56 width=40)
+                     ->  Hash  (cost=199.82..199.82 rows=56 width=40)
                            Output: x.path, x."end"
-                           ->  Subquery Scan on x  (cost=0.00..199.68 rows=56 width=40)
+                           ->  Subquery Scan on x  (cost=0.00..199.82 rows=56 width=40)
                                  Output: x.path, x."end"
-                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.12 rows=56 width=80)
-                                       Output: l.start, l."end", (ARRAY[ROW(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=80)
-                                             Output: l.start, l."end", ARRAY[ROW(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
+                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=80)
+                                       Output: l.start, l."end", (ARRAY[rowid(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=80)
+                                             Output: l.start, l."end", ARRAY[rowid(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
                                              ->  Append  (cost=0.00..24.68 rows=7 width=34)
                                                    ->  Seq Scan on t.knows l  (cost=0.00..2.21 rows=1 width=34)
                                                          Output: l.start, l."end", l.tableoid, l.ctid, edgeref(0, l.ctid)
@@ -1068,8 +1068,8 @@ with distinct x as path return *;
                                                    ->  Index Only Scan using familyship_start_idx on t.familyship  (cost=0.15..20.25 rows=5 width=34)
                                                          Output: familyship.start, familyship."end", familyship.tableoid, familyship.ctid, edgeref(2, familyship.ctid)
                                                          Index Cond: (familyship.start = a.id)
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=48)
-                                             Output: r."end", ROW(r.tableoid, r.ctid), (edgeref(0, r.ctid))
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=26)
+                                             Output: r."end", rowid(r.tableoid, r.ctid), (edgeref(0, r.ctid))
                                              ->  Append  (cost=0.00..24.68 rows=7 width=26)
                                                    ->  Seq Scan on t.knows r  (cost=0.00..2.21 rows=1 width=26)
                                                          Output: r."end", r.tableoid, r.ctid, edgeref(0, r.ctid)
@@ -1087,30 +1087,30 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with max(b.id) as id, x as x return *;
                                                                                  QUERY PLAN                                                                                 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate  (cost=408.20..412.12 rows=56 width=64)
+ GroupAggregate  (cost=408.34..412.26 rows=56 width=64)
    Output: max((b.properties #>> '{id}'::text[])), (EDGEREFROWS(x.path))
    Group Key: (EDGEREFROWS(x.path))
-   ->  Sort  (cost=408.20..409.04 rows=336 width=64)
+   ->  Sort  (cost=408.34..409.18 rows=336 width=64)
          Output: (EDGEREFROWS(x.path)), b.properties
          Sort Key: (EDGEREFROWS(x.path))
-         ->  Nested Loop  (cost=200.38..394.10 rows=336 width=64)
+         ->  Nested Loop  (cost=200.52..394.24 rows=336 width=64)
                Output: EDGEREFROWS(x.path), b.properties
                ->  Seq Scan on t.person a  (cost=0.00..28.00 rows=6 width=8)
                      Output: a.id, a.properties
                      Filter: ((a.properties #>> '{id}'::text[]) = '1'::text)
-               ->  Hash Join  (cost=200.38..227.44 rows=56 width=64)
+               ->  Hash Join  (cost=200.52..227.58 rows=56 width=64)
                      Output: x.path, b.properties
                      Hash Cond: (b.id = x."end")
                      ->  Seq Scan on t.person b  (cost=0.00..22.00 rows=1200 width=40)
                            Output: b.id, b.properties
-                     ->  Hash  (cost=199.68..199.68 rows=56 width=40)
+                     ->  Hash  (cost=199.82..199.82 rows=56 width=40)
                            Output: x.path, x."end"
-                           ->  Subquery Scan on x  (cost=0.00..199.68 rows=56 width=40)
+                           ->  Subquery Scan on x  (cost=0.00..199.82 rows=56 width=40)
                                  Output: x.path, x."end"
-                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.12 rows=56 width=80)
-                                       Output: l.start, l."end", (ARRAY[ROW(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=80)
-                                             Output: l.start, l."end", ARRAY[ROW(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
+                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=80)
+                                       Output: l.start, l."end", (ARRAY[rowid(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=80)
+                                             Output: l.start, l."end", ARRAY[rowid(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
                                              ->  Append  (cost=0.00..24.68 rows=7 width=34)
                                                    ->  Seq Scan on t.knows l  (cost=0.00..2.21 rows=1 width=34)
                                                          Output: l.start, l."end", l.tableoid, l.ctid, edgeref(0, l.ctid)
@@ -1121,8 +1121,8 @@ with max(b.id) as id, x as x return *;
                                                    ->  Index Only Scan using familyship_start_idx on t.familyship  (cost=0.15..20.25 rows=5 width=34)
                                                          Output: familyship.start, familyship."end", familyship.tableoid, familyship.ctid, edgeref(2, familyship.ctid)
                                                          Index Cond: (familyship.start = a.id)
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=48)
-                                             Output: r."end", ROW(r.tableoid, r.ctid), (edgeref(0, r.ctid))
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=26)
+                                             Output: r."end", rowid(r.tableoid, r.ctid), (edgeref(0, r.ctid))
                                              ->  Append  (cost=0.00..24.68 rows=7 width=26)
                                                    ->  Seq Scan on t.knows r  (cost=0.00..2.21 rows=1 width=26)
                                                          Output: r."end", r.tableoid, r.ctid, edgeref(0, r.ctid)
@@ -1140,27 +1140,27 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with max(x) as x, b.id as id return *;
                                                                               QUERY PLAN                                                                              
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
- HashAggregate  (cost=396.62..399.12 rows=200 width=64)
+ HashAggregate  (cost=396.76..399.26 rows=200 width=64)
    Output: max(EDGEREFROWS(x.path)), ((b.properties #>> '{id}'::text[]))
    Group Key: (b.properties #>> '{id}'::text[])
-   ->  Nested Loop  (cost=200.38..394.94 rows=336 width=64)
+   ->  Nested Loop  (cost=200.52..395.08 rows=336 width=64)
          Output: (b.properties #>> '{id}'::text[]), x.path
          ->  Seq Scan on t.person a  (cost=0.00..28.00 rows=6 width=8)
                Output: a.id, a.properties
                Filter: ((a.properties #>> '{id}'::text[]) = '1'::text)
-         ->  Hash Join  (cost=200.38..227.44 rows=56 width=64)
+         ->  Hash Join  (cost=200.52..227.58 rows=56 width=64)
                Output: x.path, b.properties
                Hash Cond: (b.id = x."end")
                ->  Seq Scan on t.person b  (cost=0.00..22.00 rows=1200 width=40)
                      Output: b.id, b.properties
-               ->  Hash  (cost=199.68..199.68 rows=56 width=40)
+               ->  Hash  (cost=199.82..199.82 rows=56 width=40)
                      Output: x.path, x."end"
-                     ->  Subquery Scan on x  (cost=0.00..199.68 rows=56 width=40)
+                     ->  Subquery Scan on x  (cost=0.00..199.82 rows=56 width=40)
                            Output: x.path, x."end"
-                           ->  Nested Loop VLE [1..2]  (cost=0.00..199.12 rows=56 width=80)
-                                 Output: l.start, l."end", (ARRAY[ROW(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
-                                 ->  Result  (cost=0.00..24.75 rows=7 width=80)
-                                       Output: l.start, l."end", ARRAY[ROW(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
+                           ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=80)
+                                 Output: l.start, l."end", (ARRAY[rowid(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
+                                 ->  Result  (cost=0.00..24.77 rows=7 width=80)
+                                       Output: l.start, l."end", ARRAY[rowid(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
                                        ->  Append  (cost=0.00..24.68 rows=7 width=34)
                                              ->  Seq Scan on t.knows l  (cost=0.00..2.21 rows=1 width=34)
                                                    Output: l.start, l."end", l.tableoid, l.ctid, edgeref(0, l.ctid)
@@ -1171,8 +1171,8 @@ with max(x) as x, b.id as id return *;
                                              ->  Index Only Scan using familyship_start_idx on t.familyship  (cost=0.15..20.25 rows=5 width=34)
                                                    Output: familyship.start, familyship."end", familyship.tableoid, familyship.ctid, edgeref(2, familyship.ctid)
                                                    Index Cond: (familyship.start = a.id)
-                                 ->  Result  (cost=0.00..24.75 rows=7 width=48)
-                                       Output: r."end", ROW(r.tableoid, r.ctid), (edgeref(0, r.ctid))
+                                 ->  Result  (cost=0.00..24.77 rows=7 width=26)
+                                       Output: r."end", rowid(r.tableoid, r.ctid), (edgeref(0, r.ctid))
                                        ->  Append  (cost=0.00..24.68 rows=7 width=26)
                                              ->  Seq Scan on t.knows r  (cost=0.00..2.21 rows=1 width=26)
                                                    Output: r."end", r.tableoid, r.ctid, edgeref(0, r.ctid)
@@ -1190,24 +1190,24 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 return x, x is not null, x[1] is null;
                                                                            QUERY PLAN                                                                           
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------
- Nested Loop  (cost=200.38..394.10 rows=336 width=34)
+ Nested Loop  (cost=200.52..394.24 rows=336 width=34)
    Output: EDGEREFROWS(x.path), (EDGEREFROWS(x.path) IS NOT NULL), (EDGEREFROW(x.path[1]) IS NULL)
    ->  Seq Scan on t.person a  (cost=0.00..28.00 rows=6 width=8)
          Output: a.id, a.properties
          Filter: ((a.properties #>> '{id}'::text[]) = '1'::text)
-   ->  Hash Join  (cost=200.38..227.44 rows=56 width=32)
+   ->  Hash Join  (cost=200.52..227.58 rows=56 width=32)
          Output: x.path
          Hash Cond: (b.id = x."end")
          ->  Seq Scan on t.person b  (cost=0.00..22.00 rows=1200 width=8)
                Output: b.id, b.properties
-         ->  Hash  (cost=199.68..199.68 rows=56 width=40)
+         ->  Hash  (cost=199.82..199.82 rows=56 width=40)
                Output: x.path, x."end"
-               ->  Subquery Scan on x  (cost=0.00..199.68 rows=56 width=40)
+               ->  Subquery Scan on x  (cost=0.00..199.82 rows=56 width=40)
                      Output: x.path, x."end"
-                     ->  Nested Loop VLE [1..2]  (cost=0.00..199.12 rows=56 width=80)
-                           Output: l.start, l."end", (ARRAY[ROW(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
-                           ->  Result  (cost=0.00..24.75 rows=7 width=80)
-                                 Output: l.start, l."end", ARRAY[ROW(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
+                     ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=80)
+                           Output: l.start, l."end", (ARRAY[rowid(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
+                           ->  Result  (cost=0.00..24.77 rows=7 width=80)
+                                 Output: l.start, l."end", ARRAY[rowid(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
                                  ->  Append  (cost=0.00..24.68 rows=7 width=34)
                                        ->  Seq Scan on t.knows l  (cost=0.00..2.21 rows=1 width=34)
                                              Output: l.start, l."end", l.tableoid, l.ctid, edgeref(0, l.ctid)
@@ -1218,8 +1218,8 @@ return x, x is not null, x[1] is null;
                                        ->  Index Only Scan using familyship_start_idx on t.familyship  (cost=0.15..20.25 rows=5 width=34)
                                              Output: familyship.start, familyship."end", familyship.tableoid, familyship.ctid, edgeref(2, familyship.ctid)
                                              Index Cond: (familyship.start = a.id)
-                           ->  Result  (cost=0.00..24.75 rows=7 width=48)
-                                 Output: r."end", ROW(r.tableoid, r.ctid), (edgeref(0, r.ctid))
+                           ->  Result  (cost=0.00..24.77 rows=7 width=26)
+                                 Output: r."end", rowid(r.tableoid, r.ctid), (edgeref(0, r.ctid))
                                  ->  Append  (cost=0.00..24.68 rows=7 width=26)
                                        ->  Seq Scan on t.knows r  (cost=0.00..2.21 rows=1 width=26)
                                              Output: r."end", r.tableoid, r.ctid, edgeref(0, r.ctid)
@@ -1237,25 +1237,25 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 where x[1] is not null return x[1];
                                                                            QUERY PLAN                                                                           
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------
- Nested Loop  (cost=200.38..394.10 rows=336 width=32)
+ Nested Loop  (cost=200.52..394.24 rows=336 width=32)
    Output: EDGEREFROW(x.path[1])
    ->  Seq Scan on t.person a  (cost=0.00..28.00 rows=6 width=8)
          Output: a.id, a.properties
          Filter: ((a.properties #>> '{id}'::text[]) = '1'::text)
-   ->  Hash Join  (cost=200.38..227.44 rows=56 width=32)
+   ->  Hash Join  (cost=200.52..227.58 rows=56 width=32)
          Output: x.path
          Hash Cond: (b.id = x."end")
          ->  Seq Scan on t.person b  (cost=0.00..22.00 rows=1200 width=8)
                Output: b.id, b.properties
-         ->  Hash  (cost=199.68..199.68 rows=56 width=40)
+         ->  Hash  (cost=199.82..199.82 rows=56 width=40)
                Output: x.path, x."end"
-               ->  Subquery Scan on x  (cost=0.00..199.68 rows=56 width=40)
+               ->  Subquery Scan on x  (cost=0.00..199.82 rows=56 width=40)
                      Output: x.path, x."end"
                      Filter: (EDGEREFROW(x.path[1]) IS NOT NULL)
-                     ->  Nested Loop VLE [1..2]  (cost=0.00..199.12 rows=56 width=80)
-                           Output: l.start, l."end", (ARRAY[ROW(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
-                           ->  Result  (cost=0.00..24.75 rows=7 width=80)
-                                 Output: l.start, l."end", ARRAY[ROW(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
+                     ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=80)
+                           Output: l.start, l."end", (ARRAY[rowid(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
+                           ->  Result  (cost=0.00..24.77 rows=7 width=80)
+                                 Output: l.start, l."end", ARRAY[rowid(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
                                  ->  Append  (cost=0.00..24.68 rows=7 width=34)
                                        ->  Seq Scan on t.knows l  (cost=0.00..2.21 rows=1 width=34)
                                              Output: l.start, l."end", l.tableoid, l.ctid, edgeref(0, l.ctid)
@@ -1266,8 +1266,8 @@ where x[1] is not null return x[1];
                                        ->  Index Only Scan using familyship_start_idx on t.familyship  (cost=0.15..20.25 rows=5 width=34)
                                              Output: familyship.start, familyship."end", familyship.tableoid, familyship.ctid, edgeref(2, familyship.ctid)
                                              Index Cond: (familyship.start = a.id)
-                           ->  Result  (cost=0.00..24.75 rows=7 width=48)
-                                 Output: r."end", ROW(r.tableoid, r.ctid), (edgeref(0, r.ctid))
+                           ->  Result  (cost=0.00..24.77 rows=7 width=26)
+                                 Output: r."end", rowid(r.tableoid, r.ctid), (edgeref(0, r.ctid))
                                  ->  Append  (cost=0.00..24.68 rows=7 width=26)
                                        ->  Seq Scan on t.knows r  (cost=0.00..2.21 rows=1 width=26)
                                              Output: r."end", r.tableoid, r.ctid, edgeref(0, r.ctid)
@@ -1290,28 +1290,28 @@ select * from (
 ) as foo;
                                                                                       QUERY PLAN                                                                                      
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Result  (cost=200.38..801.64 rows=672 width=32)
+ Result  (cost=200.52..801.92 rows=672 width=32)
    Output: EDGEREFROW((x.path[1]))
-   ->  Append  (cost=200.38..794.92 rows=672 width=8)
-         ->  Nested Loop  (cost=200.38..394.10 rows=336 width=8)
+   ->  Append  (cost=200.52..795.20 rows=672 width=8)
+         ->  Nested Loop  (cost=200.52..394.24 rows=336 width=8)
                Output: x.path[1]
                ->  Seq Scan on t.person a  (cost=0.00..28.00 rows=6 width=8)
                      Output: a.id, a.properties
                      Filter: ((a.properties #>> '{id}'::text[]) = '1'::text)
-               ->  Hash Join  (cost=200.38..227.44 rows=56 width=32)
+               ->  Hash Join  (cost=200.52..227.58 rows=56 width=32)
                      Output: x.path
                      Hash Cond: (b.id = x."end")
                      ->  Seq Scan on t.person b  (cost=0.00..22.00 rows=1200 width=8)
                            Output: b.id, b.properties
-                     ->  Hash  (cost=199.68..199.68 rows=56 width=40)
+                     ->  Hash  (cost=199.82..199.82 rows=56 width=40)
                            Output: x.path, x."end"
-                           ->  Subquery Scan on x  (cost=0.00..199.68 rows=56 width=40)
+                           ->  Subquery Scan on x  (cost=0.00..199.82 rows=56 width=40)
                                  Output: x.path, x."end"
                                  Filter: (EDGEREFROW(x.path[1]) IS NOT NULL)
-                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.12 rows=56 width=80)
-                                       Output: l.start, l."end", (ARRAY[ROW(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=80)
-                                             Output: l.start, l."end", ARRAY[ROW(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
+                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=80)
+                                       Output: l.start, l."end", (ARRAY[rowid(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))])
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=80)
+                                             Output: l.start, l."end", ARRAY[rowid(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
                                              ->  Append  (cost=0.00..24.68 rows=7 width=34)
                                                    ->  Seq Scan on t.knows l  (cost=0.00..2.21 rows=1 width=34)
                                                          Output: l.start, l."end", l.tableoid, l.ctid, edgeref(0, l.ctid)
@@ -1322,8 +1322,8 @@ select * from (
                                                    ->  Index Only Scan using familyship_start_idx on t.familyship  (cost=0.15..20.25 rows=5 width=34)
                                                          Output: familyship.start, familyship."end", familyship.tableoid, familyship.ctid, edgeref(2, familyship.ctid)
                                                          Index Cond: (familyship.start = a.id)
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=48)
-                                             Output: r."end", ROW(r.tableoid, r.ctid), (edgeref(0, r.ctid))
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=26)
+                                             Output: r."end", rowid(r.tableoid, r.ctid), (edgeref(0, r.ctid))
                                              ->  Append  (cost=0.00..24.68 rows=7 width=26)
                                                    ->  Seq Scan on t.knows r  (cost=0.00..2.21 rows=1 width=26)
                                                          Output: r."end", r.tableoid, r.ctid, edgeref(0, r.ctid)
@@ -1334,24 +1334,24 @@ select * from (
                                                    ->  Index Only Scan using familyship_start_idx on t.familyship familyship_1  (cost=0.15..20.25 rows=5 width=26)
                                                          Output: familyship_1."end", familyship_1.tableoid, familyship_1.ctid, edgeref(2, familyship_1.ctid)
                                                          Index Cond: (familyship_1.start = $1)
-         ->  Nested Loop  (cost=200.38..394.10 rows=336 width=8)
+         ->  Nested Loop  (cost=200.52..394.24 rows=336 width=8)
                Output: x_1.path[2]
                ->  Seq Scan on t.person a_1  (cost=0.00..28.00 rows=6 width=8)
                      Output: a_1.id, a_1.properties
                      Filter: ((a_1.properties #>> '{id}'::text[]) = '1'::text)
-               ->  Hash Join  (cost=200.38..227.44 rows=56 width=32)
+               ->  Hash Join  (cost=200.52..227.58 rows=56 width=32)
                      Output: x_1.path
                      Hash Cond: (b_1.id = x_1."end")
                      ->  Seq Scan on t.person b_1  (cost=0.00..22.00 rows=1200 width=8)
                            Output: b_1.id, b_1.properties
-                     ->  Hash  (cost=199.68..199.68 rows=56 width=40)
+                     ->  Hash  (cost=199.82..199.82 rows=56 width=40)
                            Output: x_1.path, x_1."end"
-                           ->  Subquery Scan on x_1  (cost=0.00..199.68 rows=56 width=40)
+                           ->  Subquery Scan on x_1  (cost=0.00..199.82 rows=56 width=40)
                                  Output: x_1.path, x_1."end"
-                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.12 rows=56 width=80)
-                                       Output: l_1.start, l_1."end", (ARRAY[ROW(l_1.tableoid, l_1.ctid)]), (ARRAY[(edgeref(0, l_1.ctid))])
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=80)
-                                             Output: l_1.start, l_1."end", ARRAY[ROW(l_1.tableoid, l_1.ctid)], ARRAY[(edgeref(0, l_1.ctid))]
+                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=80)
+                                       Output: l_1.start, l_1."end", (ARRAY[rowid(l_1.tableoid, l_1.ctid)]), (ARRAY[(edgeref(0, l_1.ctid))])
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=80)
+                                             Output: l_1.start, l_1."end", ARRAY[rowid(l_1.tableoid, l_1.ctid)], ARRAY[(edgeref(0, l_1.ctid))]
                                              ->  Append  (cost=0.00..24.68 rows=7 width=34)
                                                    ->  Seq Scan on t.knows l_1  (cost=0.00..2.21 rows=1 width=34)
                                                          Output: l_1.start, l_1."end", l_1.tableoid, l_1.ctid, edgeref(0, l_1.ctid)
@@ -1362,8 +1362,8 @@ select * from (
                                                    ->  Index Only Scan using familyship_start_idx on t.familyship familyship_2  (cost=0.15..20.25 rows=5 width=34)
                                                          Output: familyship_2.start, familyship_2."end", familyship_2.tableoid, familyship_2.ctid, edgeref(2, familyship_2.ctid)
                                                          Index Cond: (familyship_2.start = a_1.id)
-                                       ->  Result  (cost=0.00..24.75 rows=7 width=48)
-                                             Output: r_1."end", ROW(r_1.tableoid, r_1.ctid), (edgeref(0, r_1.ctid))
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=26)
+                                             Output: r_1."end", rowid(r_1.tableoid, r_1.ctid), (edgeref(0, r_1.ctid))
                                              ->  Append  (cost=0.00..24.68 rows=7 width=26)
                                                    ->  Seq Scan on t.knows r_1  (cost=0.00..2.21 rows=1 width=26)
                                                          Output: r_1."end", r_1.tableoid, r_1.ctid, edgeref(0, r_1.ctid)

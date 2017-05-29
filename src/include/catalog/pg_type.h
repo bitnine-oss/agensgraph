@@ -671,6 +671,10 @@ DATA(insert OID = 7051 ( _edgeref	PGNSP PGUID -1 f b A f t \054 0 7052 0 array_i
 #define EDGEREFARRAYOID 7051
 DATA(insert OID = 7052 ( edgeref	PGNSP PGUID 8 FLOAT8PASSBYVAL b U f t \054 0 0 7051 edgeref_in edgeref_out - - - - - d p f 0 -1 0 0 _null_ _null_ _null_ ));
 #define EDGEREFOID		7052
+DATA(insert OID = 7061 ( _rowid		PGNSP PGUID -1 f b A f t \054 0 7062 0 array_in array_out array_recv array_send - - array_typanalyze i x f 0 -1 0 0 _null_ _null_ _null_ ));
+#define ROWIDARRAYOID 7061
+DATA(insert OID = 7062 ( rowid		PGNSP PGUID 10 f b U f t \054 0 0 7061 rowid_in rowid_out - - - - - s p f 0 -1 0 0 _null_ _null_ _null_ ));
+#define ROWIDOID 7062
 
 /*
  * pseudo-types
