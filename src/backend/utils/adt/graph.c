@@ -382,6 +382,22 @@ rowid_out(PG_FUNCTION_ARGS)
 	PG_RETURN_NULL();
 }
 
+Datum
+rowid_tableoid(PG_FUNCTION_ARGS)
+{
+	Rowid *rowid = PG_GETARG_ROWID(0);
+
+	PG_RETURN_OID(rowid->tableoid);
+}
+
+Datum
+rowid_ctid(PG_FUNCTION_ARGS)
+{
+	Rowid *rowid = PG_GETARG_ROWID(0);
+
+	return PointerGetDatum(&rowid->tid);
+}
+
 #define ItemPointerGetDatum(X)	PointerGetDatum(X)
 
 Datum

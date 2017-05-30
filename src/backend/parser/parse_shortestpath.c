@@ -163,10 +163,12 @@ checkRelFormat(ParseState *pstate, CypherRel *crel)
 
 /*
  * WITH _sp(vids, eids, hops) AS (
- *   VALUES (ARRAY[id(`initialVertex`)]::graphid[], ARRAY[]::graphid[], 0)
+ *   VALUES (ARRAY[id(`initialVertex`)]::graphid[], ARRAY[]::rowid[], 0)
  *   UNION ALL
  *   SELECT DISTINCT ON ("end")
- *          array_append(vids, "end"), array_append(eids, id), hops + 1
+ *          array_append(vids, "end"),
+ *          array_append(eids, rowid(tableoid, ctid)),
+ *          hops + 1
  *   FROM _sp, `get_graph_path()`.`typname` AS _e(id, start, "end", properties)
  *   WHERE vids[array_upper(vids, 1)] = start AND
  *         array_position(vids, "end") IS NULL
@@ -187,7 +189,8 @@ checkRelFormat(ParseState *pstate, CypherRel *crel)
  *           (
  *             SELECT (id, start, "end", properties)::vertex
  *             FROM `get_graph_path()`.`typname`
- *             WHERE id = eid
+ *             WHERE tableoid = rowid_tableoid(eid)
+ *               AND ctid = rowid_ctid(eid)
  *           )
  *         )
  *       FROM unnest(eids) AS eid
@@ -258,7 +261,7 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 }
 
 /* VALUES (ARRAY[id(`initialVertex`)]::graphid[],
- *         ARRAY[]::graphid[], 0, NULL::graphid) */
+ *         ARRAY[]::rowid[], 0, NULL::graphid) */
 static SelectStmt *
 makeNonRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 {
@@ -277,7 +280,7 @@ makeNonRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 						 "_graphid");
 	vids = makeResTarget(col, SP_COLNAME_VIDS);
 
-	col = makeAArrayExpr(NIL, "_graphid");
+	col = makeAArrayExpr(NIL, "_rowid");
 	eids = makeResTarget(col, SP_COLNAME_EIDS);
 
 	hops = makeResTarget((Node *) makeIntConst(0), SP_COLNAME_HOPS);
@@ -298,7 +301,10 @@ makeNonRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 }
 
 /*
- * SELECT array_append(vids, "end"), array_append(eids, id), hops + 1, "end"
+ * SELECT array_append(vids, "end"),
+ *        array_append(eids, rowid(tableoid, ctid)),
+ *        hops + 1,
+ *        "end"
  * FROM _sp, `get_graph_path()`.`typname` AS _e(id, start, "end", properties)
  * WHERE vids[array_upper(vids, 1)] = start AND
  *       array_position(vids, "end") IS NULL
@@ -311,7 +317,9 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	SelectStmt *sel;
 	Node	   *vids;
 	Node	   *eids;
-	Node	   *eid;
+	Node	   *tableoid;
+	Node	   *ctid;
+	FuncCall   *rowid;
 	Node	   *hops;
 	RangeVar   *sp;
 	CypherRel  *crel;
@@ -334,9 +342,12 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 
 	/* eids */
 	eids = makeColumnRef1(SP_COLNAME_EIDS);
-	eid = makeColumnRef1(AG_ELEM_LOCAL_ID);
+	tableoid = makeColumnRef1("tableoid");
+	ctid = makeColumnRef1("ctid");
+	rowid = makeFuncCall(list_make1(makeString("rowid")),
+						 list_make2(tableoid, ctid), -1);
 	sel->targetList = lappend(sel->targetList,
-							  makeArrayAppendResTarget(eids, eid));
+							  makeArrayAppendResTarget(eids, (Node *) rowid));
 
 	/* hops */
 	hops = (Node *) makeSimpleA_Expr(AEXPR_OP, "+",
@@ -409,10 +420,10 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 }
 
 /*
- * SELECT id, start, "end"
+ * SELECT id, start, "end", tableoid, ctid
  * FROM `get_graph_path()`.`edge_label`
  * UNION
- * SELECT id, "end" AS start, start AS "end"
+ * SELECT id, "end" AS start, start AS "end", tableoid, ctid
  * FROM `get_graph_path()`.`edge_label`
  */
 static RangeSubselect *
@@ -440,11 +451,19 @@ makeEdgeUnion(char *edge_label)
 							   makeSimpleResTarget(AG_START_ID, NULL));
 	lsel->targetList = lappend(lsel->targetList,
 							   makeSimpleResTarget(AG_END_ID, NULL));
+	lsel->targetList = lappend(lsel->targetList,
+							   makeSimpleResTarget("tableoid", NULL));
+	lsel->targetList = lappend(lsel->targetList,
+							   makeSimpleResTarget("ctid", NULL));
 
 	rsel->targetList = lappend(rsel->targetList,
 							   makeSimpleResTarget(AG_END_ID, AG_START_ID));
 	rsel->targetList = lappend(rsel->targetList,
 							   makeSimpleResTarget(AG_START_ID, AG_END_ID));
+	rsel->targetList = lappend(rsel->targetList,
+							   makeSimpleResTarget("tableoid", NULL));
+	rsel->targetList = lappend(rsel->targetList,
+							   makeSimpleResTarget("ctid", NULL));
 
 	u = makeNode(SelectStmt);
 	u->op = SETOP_UNION;
@@ -680,7 +699,11 @@ makeEdgesSubLink(CypherPath *cpath)
 	CypherRel  *crel;
 	char	   *typname;
 	RangeVar   *e;
+	Node	   *tableoid;
+	Node	   *ctid;
+	FuncCall   *getid;
 	A_Expr	   *qual;
+	List	   *where_args = NIL;
 	Node	   *edges;
 	SelectStmt *sel;
 	FuncCall   *arragg;
@@ -708,8 +731,19 @@ makeEdgesSubLink(CypherPath *cpath)
 	e->inhOpt = INH_YES;
 	selsub->fromClause = list_make1(e);
 
-	qual = makeSimpleA_Expr(AEXPR_OP, "=", id, makeColumnRef1("eid"), -1);
-	selsub->whereClause = (Node *) makeBoolExpr(AND_EXPR, list_make1(qual), -1);
+	tableoid = makeColumnRef1("tableoid");
+	getid = makeFuncCall(list_make1(makeString("rowid_tableoid")),
+						 list_make1(makeColumnRef1("eid")), -1);
+	qual = makeSimpleA_Expr(AEXPR_OP, "=", tableoid, (Node *) getid, -1);
+	where_args = list_make1(qual);
+
+	ctid = makeColumnRef1("ctid");
+	getid = makeFuncCall(list_make1(makeString("rowid_ctid")),
+						 list_make1(makeColumnRef1("eid")), -1);
+	qual = makeSimpleA_Expr(AEXPR_OP, "=", ctid, (Node *) getid, -1);
+	where_args = lappend(where_args, qual);
+
+	selsub->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
 	edges = makeSubLink(selsub);
 

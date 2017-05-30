@@ -104,6 +104,8 @@ extern Datum edgeref_out(PG_FUNCTION_ARGS);
 extern Datum rowid(PG_FUNCTION_ARGS);
 extern Datum rowid_in(PG_FUNCTION_ARGS);
 extern Datum rowid_out(PG_FUNCTION_ARGS);
+extern Datum rowid_tableoid(PG_FUNCTION_ARGS);
+extern Datum rowid_ctid(PG_FUNCTION_ARGS);
 /* rowid -comparison */
 extern Datum rowid_eq(PG_FUNCTION_ARGS);
 extern Datum rowid_ne(PG_FUNCTION_ARGS);

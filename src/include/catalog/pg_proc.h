@@ -5432,6 +5432,10 @@ DATA(insert OID = 7063 ( rowid_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 70
 DESCR("I/O");
 DATA(insert OID = 7064 ( rowid_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7062" _null_ _null_ _null_ _null_ _null_ rowid_out _null_ _null_ _null_ ));
 DESCR("I/O");
+DATA(insert OID = 7065 ( rowid_tableoid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 26 "7062" _null_ _null_ _null_ _null_ _null_ rowid_tableoid _null_ _null_ _null_ ));
+DESCR("get tableoid from rowid");
+DATA(insert OID = 7066 ( rowid_ctid		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 27 "7062" _null_ _null_ _null_ _null_ _null_ rowid_ctid _null_ _null_ _null_ ));
+DESCR("get ctid from rowid");
 DATA(insert OID = 7155 ( rowid_eq		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7062 7062" _null_ _null_ _null_ _null_ _null_ rowid_eq _null_ _null_ _null_ ));
 DATA(insert OID = 7156 ( rowid_ne		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7062 7062" _null_ _null_ _null_ _null_ _null_ rowid_ne _null_ _null_ _null_ ));
 DATA(insert OID = 7157 ( rowid_lt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7062 7062" _null_ _null_ _null_ _null_ _null_ rowid_lt _null_ _null_ _null_ ));
