@@ -107,6 +107,8 @@ extern Datum rowid_le(PG_FUNCTION_ARGS);
 extern Datum rowid_gt(PG_FUNCTION_ARGS);
 extern Datum rowid_ge(PG_FUNCTION_ARGS);
 extern Datum btrowid_cmp(PG_FUNCTION_ARGS);
+extern Datum rowid_tableoid(PG_FUNCTION_ARGS);
+extern Datum rowid_ctid(PG_FUNCTION_ARGS);
 
 /* vertex */
 extern Datum vertex_out(PG_FUNCTION_ARGS);

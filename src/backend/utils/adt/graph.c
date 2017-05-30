@@ -466,6 +466,20 @@ btrowid_cmp(PG_FUNCTION_ARGS)
 }
 
 Datum
+rowid_tableoid(PG_FUNCTION_ARGS)
+{
+	Rowid *rowid = PG_GETARG_ROWID(0);
+	PG_RETURN_OID(rowid->tableoid);
+}
+
+Datum
+rowid_ctid(PG_FUNCTION_ARGS)
+{
+	Rowid *rowid = PG_GETARG_ROWID(0);
+	return PointerGetDatum(&rowid->tid);
+}
+
+Datum
 vertex_out(PG_FUNCTION_ARGS)
 {
 	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);

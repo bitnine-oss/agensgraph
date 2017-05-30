@@ -5446,6 +5446,10 @@ DATA(insert OID = 7169 ( rowid_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16
 DESCR("implementation of >= operator");
 DATA(insert OID = 7170 ( btrowid_cmp	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 23 "7062 7062" _null_ _null_ _null_ _null_ _null_ btrowid_cmp _null_ _null_ _null_ ));
 DESCR("less-equal-greater");
+DATA(insert OID = 7177 ( rowid_tableoid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 26 "7062" _null_ _null_ _null_ _null_ _null_ rowid_tableoid _null_ _null_ _null_ ));
+DESCR("get tableoid from rowid");
+DATA(insert OID = 7178 ( rowid_ctid		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 27 "7062" _null_ _null_ _null_ _null_ _null_ rowid_ctid _null_ _null_ _null_ ));
+DESCR("get ctid from rowid");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
