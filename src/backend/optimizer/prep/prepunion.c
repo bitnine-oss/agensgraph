@@ -1337,7 +1337,7 @@ generate_setop_grouplist_for_shortestpath(SetOperationStmt *op,
 			continue;			/* ignore resjunk columns */
 		}
 
-		if (strcmp(tle->resname, "vid") != 0)
+		if (strcmp(tle->resname, "vid") == 0)
 		{
 			/* non-resjunk columns should have sortgroupref = resno */
 			Assert(tle->ressortgroupref == tle->resno);
@@ -1345,13 +1345,13 @@ generate_setop_grouplist_for_shortestpath(SetOperationStmt *op,
 			/* non-resjunk columns should have grouping clauses */
 			Assert(lg != NULL);
 			sgc = (SortGroupClause *) lfirst(lg);
-			lg = lnext(lg);
 			Assert(sgc->tleSortGroupRef == 0);
 
 			sgc->tleSortGroupRef = tle->ressortgroupref;
 			grouplist = list_make1(sgc);
 			break;
 		}
+		lg = lnext(lg);
 	}
 	Assert(list_length(grouplist) == 1);
 	return grouplist;
