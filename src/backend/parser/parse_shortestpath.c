@@ -285,20 +285,9 @@ makeNonRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 
 	if (cpath->kind == CPATH_SHORTEST)
 	{
-		A_Const	   *nullconst;
-		TypeCast   *cast;
 		ResTarget  *vid;
 
-		nullconst = makeNode(A_Const);
-		nullconst->val.type = T_Null;
-		nullconst->location = -1;
-
-		cast = makeNode(TypeCast);
-		cast->arg = (Node *) nullconst;
-		cast->typeName = makeTypeName("graphid");
-		cast->location = -1;
-
-		vid = makeResTarget((Node *) cast, SP_COLNAME_VID);
+		vid = makeResTarget(makeVertexIdExpr(initialVertex), SP_COLNAME_VID);
 		tlist = lappend(tlist, vid);
 	}
 
@@ -403,13 +392,16 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	where_args = list_make1(joincond);
 
 	/* vertex uniqueness */
-	arrpos = makeFuncCall(list_make1(makeString("array_position")),
-						  list_make2(vids, end), -1);
-	dupcond = makeNode(NullTest);
-	dupcond->arg = (Expr *) arrpos;
-	dupcond->nulltesttype = IS_NULL;
-	dupcond->location = -1;
-	where_args = lappend(where_args, dupcond);
+	if (cpath->kind == CPATH_SHORTEST_ALL)
+	{
+		arrpos = makeFuncCall(list_make1(makeString("array_position")),
+							  list_make2(vids, end), -1);
+		dupcond = makeNode(NullTest);
+		dupcond->arg = (Expr *) arrpos;
+		dupcond->nulltesttype = IS_NULL;
+		dupcond->location = -1;
+		where_args = lappend(where_args, dupcond);
+	}
 
 	sel->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
