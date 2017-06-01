@@ -45,7 +45,6 @@ static Node *makeVerticesSubLink(void);
 static Node *makeEdgesSubLink(CypherPath *cpath);
 static void getCypherRelType(CypherRel *crel, char **typname, int *typloc);
 static Node *makeVertexIdExpr(Node *vertex);
-static Node *makeLastVidRefExpr(void);
 
 /* parse node */
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
@@ -224,12 +223,10 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 
 	cte = makeNode(CommonTableExpr);
 	cte->ctename = SP_ALIAS_CTE;
-	cte->aliascolnames = list_make3(makeString(SP_COLNAME_VIDS),
+	cte->aliascolnames = list_make4(makeString(SP_COLNAME_VIDS),
 									makeString(SP_COLNAME_EIDS),
-									makeString(SP_COLNAME_HOPS));
-	if (cpath->kind == CPATH_SHORTEST)
-		cte->aliascolnames = lappend(cte->aliascolnames,
-									 makeString(SP_COLNAME_VID));
+									makeString(SP_COLNAME_HOPS),
+									makeString(SP_COLNAME_VID));
 	cte->ctequery = (Node *) u;
 	cte->ctestop = true;
 	cte->location = -1;
@@ -271,6 +268,7 @@ makeNonRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	ResTarget  *vids;
 	ResTarget  *eids;
 	ResTarget  *hops;
+	ResTarget  *vid;
 	List	   *tlist = NIL;
 	SelectStmt *sel;
 
@@ -284,15 +282,10 @@ makeNonRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	eids = makeResTarget(col, SP_COLNAME_EIDS);
 
 	hops = makeResTarget((Node *) makeIntConst(0), SP_COLNAME_HOPS);
-	tlist = list_make3(vids, eids, hops);
 
-	if (cpath->kind == CPATH_SHORTEST)
-	{
-		ResTarget  *vid;
+	vid = makeResTarget(makeVertexIdExpr(initialVertex), SP_COLNAME_VID);
 
-		vid = makeResTarget(makeVertexIdExpr(initialVertex), SP_COLNAME_VID);
-		tlist = lappend(tlist, vid);
-	}
+	tlist = list_make4(vids, eids, hops, vid);
 
 	sel = makeNode(SelectStmt);
 	sel->targetList = tlist;
@@ -356,11 +349,8 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	sel->targetList = lappend(sel->targetList, makeResTarget(hops, NULL));
 
 	/* vid */
-	if (cpath->kind == CPATH_SHORTEST)
-	{
-		Node *n = copyObject(end);
-		sel->targetList = lappend(sel->targetList, makeResTarget(n, NULL));
-	}
+	sel->targetList = lappend(sel->targetList,
+							  makeResTarget(copyObject(end), NULL));
 
 	/* FROM */
 	sp = makeRangeVar(NULL, SP_ALIAS_CTE, -1);
@@ -398,7 +388,7 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	 */
 
 	/* _sp JOIN _e */
-	last_vid = makeLastVidRefExpr();
+	last_vid = makeColumnRef1(SP_COLNAME_VID);
 	joincond = makeSimpleA_Expr(AEXPR_OP, "=", last_vid, start, -1);
 	where_args = list_make1(joincond);
 
@@ -585,7 +575,7 @@ makeSubselectCTE(CypherPath *cpath)
 	 * WHERE
 	 */
 
-	vid = makeLastVidRefExpr();
+	vid = makeColumnRef1(SP_COLNAME_VID);
 	cnode = llast(cpath->chain);
 	lastVertex = makeColumnRef1(getCypherName(cnode->variable));
 	lastVid = makeVertexIdExpr(lastVertex);
@@ -803,33 +793,6 @@ makeVertexIdExpr(Node *vertex)
 	return (Node *) makeFuncCall(list_make1(makeString(AG_ELEM_ID)),
 								 list_make1(vertex),
 								 -1);
-}
-
-/* vids[array_upper(vids, 1)] */
-static Node *
-makeLastVidRefExpr(void)
-{
-	Node	   *vids;
-	FuncCall   *arrup;
-	A_Indices  *ind;
-	A_Indirection *ref;
-
-	vids = makeColumnRef1(SP_COLNAME_VIDS);
-
-	arrup = makeFuncCall(list_make1(makeString("array_upper")),
-						 list_make2(vids, makeIntConst(1)),
-						 -1);
-
-	ind = makeNode(A_Indices);
-	ind->is_slice = false;
-	ind->lidx = NULL;
-	ind->uidx = (Node *) arrup;
-
-	ref = makeNode(A_Indirection);
-	ref->arg = vids;
-	ref->indirection = list_make1(ind);
-
-	return (Node *) ref;
 }
 
 static Alias *
