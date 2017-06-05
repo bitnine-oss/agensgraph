@@ -73,6 +73,8 @@ typedef struct PlannedStmt
 	List	   *invalItems;		/* other dependencies, as PlanInvalItems */
 
 	int			nParamExec;		/* number of PARAM_EXEC Params used */
+
+	int			nVlePaths;		/* number of path columns */
 } PlannedStmt;
 
 /* macro for fetching the Plan associated with a SubPlan node */
@@ -285,6 +287,7 @@ typedef struct Scan
 {
 	Plan		plan;
 	Index		scanrelid;		/* relid is index into the range table */
+	int			edgerefid;
 } Scan;
 
 /* ----------------

@@ -53,8 +53,10 @@
 #include "pgstat.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/rel.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
 
@@ -4439,6 +4441,153 @@ ExecEvalCurrentOfExpr(ExprState *exprstate, ExprContext *econtext,
 	return 0;					/* keep compiler quiet */
 }
 
+static Datum
+ExecEvalEdgeRefProp(ExprState *exprstate, ExprContext *econtext,
+					bool *isNull, ExprDoneCond *isDone)
+{
+	EdgeRefPropState *prop = (EdgeRefPropState *) exprstate;
+	Datum result;
+	EdgeRef eref;
+	HeapTupleData tup;
+	Relation rel;
+	Buffer buf;
+
+	result = ExecEvalExpr(prop->arg, econtext, isNull, isDone);
+
+	if (isDone && *isDone == ExprEndResult)
+		return result;			/* nothing to do */
+	if (*isNull)
+		return result;			/* nothing to do */
+
+	eref = DatumGetEdgeRef(result);
+
+	ItemPointerSet(&tup.t_self, EdgeRefGetBlockNumber(eref),
+				   EdgeRefGetOffsetNumber(eref));
+	rel = prop->edgerefrels[EdgeRefGetRelid(eref)];
+	if (heap_fetch(rel, prop->snapshot, &tup, &buf, false, NULL))
+	{
+		result = heap_getattr(&tup, Anum_edge_properties,
+							  RelationGetDescr(rel), isNull);
+	}
+	else
+	{
+		result = (Datum) 0;
+		*isNull = true;
+	}
+
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	if (buf != InvalidBuffer)
+		ReleaseBuffer(buf);
+
+	return result;
+}
+
+static Datum
+ExecEvalEdgeRefRow(ExprState *exprstate, ExprContext *econtext,
+				   bool *isNull, ExprDoneCond *isDone)
+{
+	EdgeRefRowState *row = (EdgeRefRowState *) exprstate;
+	Datum result;
+	EdgeRef eref;
+	HeapTupleData tup;
+	Relation rel;
+	Buffer buf;
+
+	if (row->arg != NULL)
+	{
+		result = ExecEvalExpr(row->arg, econtext, isNull, isDone);
+
+		if (isDone && *isDone == ExprEndResult)
+			return result;			/* nothing to do */
+		if (*isNull)
+			return result;			/* nothing to do */
+	}
+	else
+	{
+		if (row->val == (Datum) NULL)
+		{
+			*isNull = true;
+			if (isDone != NULL)
+				*isDone = ExprSingleResult;
+
+			return (Datum) NULL;
+		}
+		result = row->val;
+	}
+
+	eref = DatumGetEdgeRef(result);
+
+	ItemPointerSet(&tup.t_self, EdgeRefGetBlockNumber(eref),
+				   EdgeRefGetOffsetNumber(eref));
+	rel = row->edgerefrels[EdgeRefGetRelid(eref)];
+	if (heap_fetch(rel, row->snapshot, &tup, &buf, false, NULL))
+	{
+		result = heap_copy_tuple_as_datum(&tup, RelationGetDescr(rel));
+		*isNull = false;
+	}
+	else
+	{
+		result = (Datum) 0;
+		*isNull = true;
+	}
+
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	if (buf != InvalidBuffer)
+		ReleaseBuffer(buf);
+
+	return result;
+}
+
+static Datum
+ExecEvalEdgeRefRows(ExprState *exprstate, ExprContext *econtext,
+					bool *isNull, ExprDoneCond *isDone)
+{
+	EdgeRefRowsState *rows = (EdgeRefRowsState *) exprstate;
+	EdgeRefRowState *row;
+	Datum result;
+	Datum new_array;
+	Datum edge;
+	FunctionCallInfo fcinfo;
+	ArrayType *erefarray;
+	Datum eref;
+	ArrayIterator array_iterator;
+	bool elemisnull;
+
+	result = ExecEvalExpr(rows->arg, econtext, isNull, isDone);
+
+	if (*isNull)
+		return (Datum) NULL;			/* nothing to do */
+
+	new_array = PointerGetDatum(construct_empty_array(EDGEOID));
+	row = rows->rowstate;
+	fcinfo = &rows->aa_fcinfo;
+	erefarray = DatumGetArrayTypeP(result);
+	array_iterator = array_create_iterator(erefarray, 0, &rows->iter_meta);
+	while (array_iterate(array_iterator, &eref, &elemisnull))
+	{
+		row->val = eref;
+		edge = ExecEvalEdgeRefRow((ExprState *) row, econtext, isNull, isDone);
+		fcinfo->arg[0] = new_array;
+		fcinfo->arg[1] = edge;
+		fcinfo->argnull[0] = false;
+		fcinfo->argnull[1] = *isNull;
+		new_array = FunctionCallInvoke(fcinfo);
+	}
+
+	array_free_iterator(array_iterator);
+	if (result != PointerGetDatum(erefarray))
+		pfree(erefarray);
+
+	*isNull = false;
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	return new_array;
+}
 
 /*
  * ExecEvalExprSwitchContext
@@ -5132,6 +5281,69 @@ ExecInitExpr(Expr *node, PlanState *parent)
 				xstate->args = outlist;
 
 				state = (ExprState *) xstate;
+			}
+			break;
+		case T_EdgeRefProp:
+			{
+				EdgeRefProp *prop = (EdgeRefProp *) node;
+				EdgeRefPropState *nstate = makeNode(EdgeRefPropState);
+
+				nstate->xprstate.evalfunc = (ExprStateEvalFunc) ExecEvalEdgeRefProp;
+				nstate->arg = ExecInitExpr((Expr *) prop->arg, parent);
+				nstate->edgerefrels = parent->state->es_edgerefrels;
+				nstate->snapshot = parent->state->es_snapshot;
+				state = (ExprState *) nstate;
+			}
+			break;
+		case T_EdgeRefRow:
+			{
+				EdgeRefRow *row = (EdgeRefRow *) node;
+				EdgeRefRowState *nstate = makeNode(EdgeRefRowState);
+
+				nstate->xprstate.evalfunc = (ExprStateEvalFunc) ExecEvalEdgeRefRow;
+				nstate->arg = ExecInitExpr((Expr *) row->arg, parent);
+				nstate->edgerefrels = parent->state->es_edgerefrels;
+				nstate->snapshot = parent->state->es_snapshot;
+				state = (ExprState *) nstate;
+			}
+			break;
+		case T_EdgeRefRows:
+			{
+				EdgeRefRows *rows = (EdgeRefRows *) node;
+				EdgeRefRowsState *nstate = makeNode(EdgeRefRowsState);
+				EdgeRefRowState *row;
+				FmgrInfo *flinfo;
+				FuncExpr *fn_expr;
+				Const *nulledge;
+				FunctionCallInfo fcinfo;
+				ArrayMetaState *iter_meta;
+
+				nstate->xprstate.evalfunc = (ExprStateEvalFunc) ExecEvalEdgeRefRows;
+				nstate->arg = ExecInitExpr((Expr *) rows->arg, parent);
+				row = makeNode(EdgeRefRowState);
+				row->arg = NULL;
+				row->edgerefrels = parent->state->es_edgerefrels;
+				row->snapshot = parent->state->es_snapshot;
+				nstate->rowstate = row;
+				flinfo = &nstate->aa_flinfo;
+				fmgr_info(378, flinfo); /* array_append */
+				fn_expr = &nstate->aa_fn_expr;
+				fn_expr->xpr.type = T_FuncExpr;
+				nulledge = makeNode(Const);
+				nulledge->consttype = EDGEARRAYOID;
+				nulledge->constisnull = true;
+				fn_expr->args = list_make1(nulledge);
+				flinfo->fn_expr = (Node *) fn_expr;
+				fcinfo = &nstate->aa_fcinfo;
+				InitFunctionCallInfoData(*fcinfo, flinfo, 2,
+										 InvalidOid, NULL, NULL);
+				iter_meta = &nstate->iter_meta;
+				iter_meta->element_type = EDGEREFOID;
+				get_typlenbyvalalign(iter_meta->element_type,
+									 &iter_meta->typlen,
+									 &iter_meta->typbyval,
+									 &iter_meta->typalign);
+				state = (ExprState *) nstate;
 			}
 			break;
 		case T_NullTest:

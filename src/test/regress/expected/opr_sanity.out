@@ -444,7 +444,10 @@ WHERE d.classoid IS NULL AND p1.oid <= 9999;
  7007 | graphid_labid
  7008 | graphid_locid
  7097 | graphid_hash
-(4 rows)
+ 7050 | edgeref
+ 7053 | edgeref_in
+ 7054 | edgeref_out
+(7 rows)
 
 -- List of built-in leakproof functions
 --

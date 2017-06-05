@@ -13,6 +13,21 @@
 #include "postgres.h"
 
 #include "fmgr.h"
+#include "storage/itemptr.h"
+
+#define Natts_vertex			2
+#define Anum_vertex_id			1
+#define Anum_vertex_properties	2
+
+#define Natts_edge				4
+#define Anum_edge_id			1
+#define Anum_edge_start			2
+#define Anum_edge_end			3
+#define Anum_edge_properties	4
+
+#define Natts_graphpath			2
+#define Anum_graphpath_vertices	1
+#define Anum_graphpath_edges	2
 
 typedef uint64 Graphid;
 
@@ -34,6 +49,26 @@ typedef uint64 Graphid;
 #define GRAPHID_LABID_MAX	USHRT_MAX
 #define GRAPHID_LOCID_MAX	((UINT64CONST(1) << (32 + 16)) - 1)
 
+typedef uint64 EdgeRef;
+
+#define DatumGetEdgeRef(d)		((EdgeRef) DatumGetUInt64(d))
+#define EdgeRefGetDatum(p)		UInt64GetDatum(p)
+#define PG_GETARG_EDGEREF(x)	DatumGetEdgeRef(PG_GETARG_DATUM(x))
+#define PG_RETURN_EDGEREF(x)	return EdgeRefGetDatum(x)
+
+#define EdgeRefGetRelid(_ref)			((uint16) ((_ref) >> 48))
+#define EdgeRefGetBlockNumber(_ref)		((BlockNumber) ((_ref) >> 16))
+#define EdgeRefGetOffsetNumber(_ref)	((OffsetNumber) ((_ref) & 0xffff))
+
+#define EdgeRefSet(_ref, _relid, _ip) \
+	do { \
+		BlockNumber _blkno = ItemPointerGetBlockNumber(_ip); \
+		OffsetNumber _offset = ItemPointerGetOffsetNumber(_ip); \
+		(_ref) = (((uint64) (_relid)) << 48) | \
+				 (((uint64) (_blkno)) << 16) | \
+				 ((uint64) (_offset)); \
+	} while (0)
+
 /* graphid */
 extern Datum graphid(PG_FUNCTION_ARGS);
 extern Datum graphid_in(PG_FUNCTION_ARGS);
@@ -50,6 +85,11 @@ extern Datum graphid_lt(PG_FUNCTION_ARGS);
 extern Datum graphid_gt(PG_FUNCTION_ARGS);
 extern Datum graphid_le(PG_FUNCTION_ARGS);
 extern Datum graphid_ge(PG_FUNCTION_ARGS);
+
+/* edgeref */
+extern Datum edgeref(PG_FUNCTION_ARGS);
+extern Datum edgeref_in(PG_FUNCTION_ARGS);
+extern Datum edgeref_out(PG_FUNCTION_ARGS);
 
 /* vertex */
 extern Datum vertex_out(PG_FUNCTION_ARGS);
