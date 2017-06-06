@@ -577,8 +577,11 @@ CREATE ELABEL rel;
 
 CREATE ({name: 'someone'})-[:rel {k: 'v'}]->({name: 'somebody'});
 
-MATCH (n)-[r]->(m) SET r.l = '"w"', n = m, r.k = NULL;
-MATCH (n)-[r]->(m) REMOVE m.name;
+MATCH (n)-[r]->(m) SET r.l = '"w"', n = m, r.k = NULL
+RETURN properties(n) AS n, properties(r) AS r, properties(m) AS m;
+
+MATCH (n)-[r]->(m) REMOVE m.name
+RETURN properties(n) AS n, properties(r) AS r, properties(m) AS m;
 
 MATCH (n)-[r]->(m)
 RETURN properties(n) AS n, properties(r) AS r, properties(m) AS m;
@@ -587,32 +590,37 @@ MATCH (n) DETACH DELETE (n);
 
 -- overwrite (Standard SQL)
 CREATE ({age: 10});
-MATCH (a) SET a.age = '11', a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) SET a.age = '11', a.age = (a.age::int + 1)::text::jsonb
+RETURN properties(a);
 MATCH (a) RETURN properties(a);
 MATCH (a) DETACH DELETE (a);
 
 -- multiple SET's
 
 CREATE ({age: 10});
-MATCH (a) SET a.age = '11' SET a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) SET a.age = '11' SET a.age = (a.age::int + 1)::text::jsonb
+RETURN properties(a);
 MATCH (a) RETURN properties(a);
 MATCH (a) DETACH DELETE (a);
 
 CREATE ()-[:rel {k: 'v'}]->();
-MATCH ()-[r]->() SET r.l = '"x"' SET r.l = '"y"';
+MATCH ()-[r]->() SET r.l = '"x"' SET r.l = '"y"'
+RETURN properties(r) AS r;
 MATCH ()-[r]->() RETURN properties(r) AS r;
 MATCH (a) DETACH DELETE (a);
 
 CREATE ({age: 1})-[:rel]->({age: 2});
 MATCH (a)-[]->(b)
-SET a.age = to_jsonb(a.age::int + 1), b.age = to_jsonb(a.age::int + b.age::int);
+SET a.age = to_jsonb(a.age::int + 1), b.age = to_jsonb(a.age::int + b.age::int)
+RETURN properties(a) AS a, properties(b) AS b;
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
 MATCH (a) DETACH DELETE (a);
 
 -- += operator
 
 CREATE ({age: 10});
-MATCH (a) SET a += {name: 'bitnine', age: '3'};
+MATCH (a) SET a += {name: 'bitnine', age: '3'}
+RETURN properties(a);
 MATCH (a) RETURN properties(a);
 
 MATCH (a) SET a += NULL;
@@ -624,7 +632,8 @@ MATCH (a) DETACH DELETE (a);
 -- remove
 
 CREATE ({a: 'a', b: 'b', c: 'c'});
-MATCH (a) SET a.a = NULL REMOVE a.b;
+MATCH (a) SET a.a = NULL REMOVE a.b
+RETURN properties(a);
 MATCH (a) RETURN properties(a);
 
 MATCH (a) SET a = NULL;
@@ -634,7 +643,8 @@ MATCH (a) DETACH DELETE (a);
 -- referring to undefined attributes
 CREATE ({name: 'bitnine'});
 CREATE ({age: 10});
-MATCH (a) SET a.age = (a.age::int + 1)::text::jsonb;
+MATCH (a) SET a.age = (a.age::int + 1)::text::jsonb
+RETURN properties(a);
 MATCH (a) RETURN properties(a);
 
 -- working with NULL
