@@ -14,25 +14,25 @@ CREATE GRAPH agens;
 -- RETURN
 --
 RETURN 3 + 4, 'hello' || ' agens';
- ?column? |  ?column?
+ ?column? |  ?column?   
 ----------+-------------
         7 | hello agens
 (1 row)
 
 RETURN 3 + 4 AS lucky, 'hello' || ' agens' AS greeting;
- lucky |  greeting
+ lucky |  greeting   
 -------+-------------
      7 | hello agens
 (1 row)
 
 RETURN (SELECT event FROM history WHERE year = 2016);
- event
+ event 
 -------
  Graph
 (1 row)
 
 SELECT * FROM (RETURN 3 + 4, 'hello' || ' agens') AS _(lucky, greeting);
- lucky |  greeting
+ lucky |  greeting   
 -------+-------------
      7 | hello agens
 (1 row)
@@ -46,7 +46,7 @@ CREATE ELABEL doc;
 CREATE (g:repo {'name': 'agens-graph',
                 year: (SELECT year FROM history WHERE event = 'Graph')})
 RETURN properties(g) AS g;
-                   g
+                   g                   
 ---------------------------------------
  {"name": "agens-graph", "year": 2016}
 (1 row)
@@ -62,7 +62,7 @@ CREATE (g)-[l:lib {lang: 'java'}]->(j),
 RETURN properties(l) AS lj, properties(j) AS j,
        properties((edges(p))[1]) AS lc, properties((vertices(p))[2]) AS c,
        properties(e) AS e, properties(d) AS d;
-        lj        |                     j                      |      lc       |                     c                      |       e        |                     d
+        lj        |                     j                      |      lc       |                     c                      |       e        |                     d                      
 ------------------+--------------------------------------------+---------------+--------------------------------------------+----------------+--------------------------------------------
  {"lang": "java"} | {"name": "agens-graph-jdbc", "year": 2016} | {"lang": "c"} | {"name": "agens-graph-odbc", "year": 2016} | {"lang": "en"} | {"name": "agens-graph-docs", "year": 2016}
 (1 row)
@@ -142,7 +142,7 @@ CREATE GRAPH g_create;
 SET GRAPH_PATH = g_create;
 CREATE ELABEL e1;
 CREATE p=()-[:e1]->() RETURN p;
-                           p
+                           p                            
 --------------------------------------------------------
  [ag_vertex[1.1]{},e1[3.1][1.1,1.2]{},ag_vertex[1.2]{}]
 (1 row)
@@ -158,7 +158,7 @@ drop cascades to label e1
 --
 SET GRAPH_PATH = agens;
 MATCH (a) RETURN a.name AS a;
-        a
+        a         
 ------------------
  agens-graph
  agens-graph-jdbc
@@ -167,7 +167,7 @@ MATCH (a) RETURN a.name AS a;
 (4 rows)
 
 MATCH (a), (a) RETURN a.name AS a;
-        a
+        a         
 ------------------
  agens-graph
  agens-graph-jdbc
@@ -177,7 +177,7 @@ MATCH (a), (a) RETURN a.name AS a;
 
 CREATE ();
 MATCH (a:repo) RETURN a.name AS name, a['year'] AS year;
-       name       | year
+       name       | year 
 ------------------+------
  agens-graph      | 2016
  agens-graph-jdbc | 2016
@@ -188,7 +188,7 @@ MATCH (a:repo) RETURN a.name AS name, a['year'] AS year;
 MATCH p=(a)-[b]-(c)
 RETURN a.name AS a, b.lang AS b, c.name AS c
        ORDER BY a, b, c;
-        a         |  b   |        c
+        a         |  b   |        c         
 ------------------+------+------------------
  agens-graph      | c    | agens-graph-odbc
  agens-graph      | en   | agens-graph-docs
@@ -202,7 +202,7 @@ MATCH (a)<-[b]-(c)-[d]->(e)
 RETURN a.name AS a, b.lang AS b, c.name AS c,
        d.lang AS d, e.name AS e
        ORDER BY a, b, c, d, e;
-        a         |  b   |      c      |  d   |        e
+        a         |  b   |      c      |  d   |        e         
 ------------------+------+-------------+------+------------------
  agens-graph-docs | en   | agens-graph | c    | agens-graph-odbc
  agens-graph-docs | en   | agens-graph | java | agens-graph-jdbc
@@ -216,7 +216,7 @@ MATCH (a)<-[b]-(c), (c)-[d]->(e)
 RETURN a.name AS a, b.lang AS b, c.name AS c,
        d.lang AS d, e.name AS e
        ORDER BY a, b, c, d, e;
-        a         |  b   |      c      |  d   |        e
+        a         |  b   |      c      |  d   |        e         
 ------------------+------+-------------+------+------------------
  agens-graph-docs | en   | agens-graph | c    | agens-graph-odbc
  agens-graph-docs | en   | agens-graph | java | agens-graph-jdbc
@@ -230,7 +230,7 @@ MATCH (a)<-[b]-(c) MATCH (c)-[d]->(e)
 RETURN a.name AS a, b.lang AS b, c.name AS c,
        d.lang AS d, e.name AS e
        ORDER BY a, b, c, d, e;
-        a         |  b   |      c      |  d   |        e
+        a         |  b   |      c      |  d   |        e         
 ------------------+------+-------------+------+------------------
  agens-graph-docs | en   | agens-graph | c    | agens-graph-odbc
  agens-graph-docs | en   | agens-graph | en   | agens-graph-docs
@@ -248,7 +248,7 @@ RETURN a.name AS a, b.lang AS b, c.name AS c,
        d.lang AS d, e.name AS e,
        f.name AS f, g.lang AS g, h.name AS h
        ORDER BY a, b, c, d, e, f, g, h;
-        a         |  b   |      c      |  d   |        e         |      f      |  g   |        h
+        a         |  b   |      c      |  d   |        e         |      f      |  g   |        h         
 ------------------+------+-------------+------+------------------+-------------+------+------------------
  agens-graph-docs | en   | agens-graph | c    | agens-graph-odbc | agens-graph | c    | agens-graph-odbc
  agens-graph-docs | en   | agens-graph | c    | agens-graph-odbc | agens-graph | en   | agens-graph-docs
@@ -271,26 +271,26 @@ RETURN a.name AS a, b.lang AS b, c.name AS c,
 (18 rows)
 
 MATCH (a {name: 'agens-graph'}), (a {year: 2016}) RETURN properties(a) AS a;
-                   a
+                   a                   
 ---------------------------------------
  {"name": "agens-graph", "year": 2016}
 (1 row)
 
 MATCH p=(a)-[]->({name: 'agens-graph-jdbc'}) RETURN a.name AS a;
-      a
+      a      
 -------------
  agens-graph
 (1 row)
 
 MATCH p=()-[:lib]->(a) RETURN a.name AS a;
-        a
+        a         
 ------------------
  agens-graph-jdbc
  agens-graph-odbc
 (2 rows)
 
 MATCH p=()-[{lang: 'en'}]->(a) RETURN a.name AS a;
-        a
+        a         
 ------------------
  agens-graph-docs
 (1 row)
@@ -298,13 +298,13 @@ MATCH p=()-[{lang: 'en'}]->(a) RETURN a.name AS a;
 MATCH (a {year: (SELECT year FROM history WHERE event = 'Graph')})
 WHERE a.name = 'agens-graph'
 RETURN a.name AS a;
-      a
+      a      
 -------------
  agens-graph
 (1 row)
 
 MATCH (a), (a:repo) RETURN a.name AS a;
-        a
+        a         
 ------------------
  agens-graph
  agens-graph-jdbc
@@ -384,7 +384,7 @@ OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q)
 RETURN n.name AS n, type(r) AS r, p.name AS p,
        m.name AS m, type(s) AS s, q.name AS q
 ORDER BY n, p, m, q;
-    n    |   r   |    p     |    m    |   s   |    q
+    n    |   r   |    p     |    m    |   s   |    q     
 ---------+-------+----------+---------+-------+----------
  anybody | knows | nobody   | anybody | knows | nobody
  anybody | knows | nobody   | someone | knows | somebody
@@ -397,20 +397,20 @@ OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q)
 RETURN n.name AS n, type(r) AS r, p.name AS p,
        m.name AS m, type(s) AS s, q.name AS q
 ORDER BY n, p, m, q;
-    n     |   r   |    p     |    m     |   s   |    q
+    n     |   r   |    p     |    m     |   s   |    q     
 ----------+-------+----------+----------+-------+----------
  anybody  | knows | nobody   | someone  | knows | somebody
- anybody  |       |          | nobody   |       |
- anybody  |       |          | somebody |       |
- nobody   |       |          | anybody  |       |
- nobody   |       |          | somebody |       |
- nobody   |       |          | someone  |       |
- somebody |       |          | anybody  |       |
- somebody |       |          | nobody   |       |
- somebody |       |          | someone  |       |
+ anybody  |       |          | nobody   |       | 
+ anybody  |       |          | somebody |       | 
+ nobody   |       |          | anybody  |       | 
+ nobody   |       |          | somebody |       | 
+ nobody   |       |          | someone  |       | 
+ somebody |       |          | anybody  |       | 
+ somebody |       |          | nobody   |       | 
+ somebody |       |          | someone  |       | 
  someone  | knows | somebody | anybody  | knows | nobody
- someone  |       |          | nobody   |       |
- someone  |       |          | somebody |       |
+ someone  |       |          | nobody   |       | 
+ someone  |       |          | somebody |       | 
 (12 rows)
 
 MATCH (n:person), (m:person) WHERE id(n) <> id(m)
@@ -418,20 +418,20 @@ OPTIONAL MATCH (n)-[r]->(p), (m)-[s]->(q) WHERE m.name = 'someone'
 RETURN n.name AS n, type(r) AS r, p.name AS p,
        m.name AS m, type(s) AS s, q.name AS q
 ORDER BY n, p, m, q;
-    n     |   r   |   p    |    m     |   s   |    q
+    n     |   r   |   p    |    m     |   s   |    q     
 ----------+-------+--------+----------+-------+----------
  anybody  | knows | nobody | someone  | knows | somebody
- anybody  |       |        | nobody   |       |
- anybody  |       |        | somebody |       |
- nobody   |       |        | anybody  |       |
- nobody   |       |        | somebody |       |
- nobody   |       |        | someone  |       |
- somebody |       |        | anybody  |       |
- somebody |       |        | nobody   |       |
- somebody |       |        | someone  |       |
- someone  |       |        | anybody  |       |
- someone  |       |        | nobody   |       |
- someone  |       |        | somebody |       |
+ anybody  |       |        | nobody   |       | 
+ anybody  |       |        | somebody |       | 
+ nobody   |       |        | anybody  |       | 
+ nobody   |       |        | somebody |       | 
+ nobody   |       |        | someone  |       | 
+ somebody |       |        | anybody  |       | 
+ somebody |       |        | nobody   |       | 
+ somebody |       |        | someone  |       | 
+ someone  |       |        | anybody  |       | 
+ someone  |       |        | nobody   |       | 
+ someone  |       |        | somebody |       | 
 (12 rows)
 
 -- Variable Length Relationship
@@ -452,7 +452,7 @@ CREATE (:time {sec: 9})-[:goes*1..2]->(:time {sec: 10});
 ERROR:  variable length relationship is not allowed for CREATE
 MATCH (a:time)-[x:goes*3]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
- a | x | b
+ a | x | b 
 ---+---+---
  1 | 3 | 4
  2 | 3 | 5
@@ -464,7 +464,7 @@ RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
 
 MATCH (a:time)-[x:goes*0]->(b:time)
 RETURN a.sec AS a, x, b.sec AS b;
- a | x  | b
+ a | x  | b 
 ---+----+---
  1 | [] | 1
  2 | [] | 2
@@ -479,7 +479,7 @@ RETURN a.sec AS a, x, b.sec AS b;
 
 MATCH (a:time)-[x:goes*0..1]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
- a | x | b
+ a | x | b 
 ---+---+---
  1 |   | 1
  1 | 1 | 2
@@ -502,7 +502,7 @@ RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
 
 MATCH (a:time)-[x:goes*..1]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
- a | x | b
+ a | x | b 
 ---+---+---
  1 | 1 | 2
  2 | 1 | 3
@@ -516,7 +516,7 @@ RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
 
 MATCH (a:time)-[x:goes*0..]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
- a | x | b
+ a | x | b 
 ---+---+---
  1 |   | 1
  1 | 1 | 2
@@ -567,7 +567,7 @@ RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
 
 MATCH (a:time)-[x:goes*3..6]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
- a | x | b
+ a | x | b 
 ---+---+---
  1 | 3 | 4
  1 | 4 | 5
@@ -593,7 +593,7 @@ MATCH (a:time)-[x:goes*2]->(b:time)-[y:goes]->(c:time)-[z:goes*2]->(d:time)
 RETURN a.sec AS a, array_length(x, 1) AS x,
        b.sec AS b, type(y) AS y,
        c.sec AS c, array_length(z, 1) AS z, d.sec AS d;
- a | x | b |  y   | c | z | d
+ a | x | b |  y   | c | z | d 
 ---+---+---+------+---+---+---
  1 | 2 | 3 | goes | 4 | 2 | 6
  2 | 2 | 4 | goes | 5 | 2 | 7
@@ -607,7 +607,7 @@ MATCH (c)-[z:goes*2]->(d:time)
 RETURN a.sec AS a, array_length(x, 1) AS x,
        b.sec AS b, type(y) AS y,
        c.sec AS c, array_length(z, 1) AS z, d.sec AS d;
- a | x | b |  y   | c | z | d
+ a | x | b |  y   | c | z | d 
 ---+---+---+------+---+---+---
  1 | 2 | 3 | goes | 4 | 2 | 6
  2 | 2 | 4 | goes | 5 | 2 | 7
@@ -619,7 +619,7 @@ MATCH (d:time)<-[z:goes*2]-(c:time)<-[y:goes]-(b:time)<-[x:goes*2]-(a:time)
 RETURN d.sec AS d, array_length(z, 1) AS z,
        c.sec AS c, type(y) AS y,
        b.sec AS b, array_length(x, 1) AS x, a.sec AS a;
- d | z | c |  y   | b | x | a
+ d | z | c |  y   | b | x | a 
 ---+---+---+------+---+---+---
  6 | 2 | 4 | goes | 3 | 2 | 1
  7 | 2 | 5 | goes | 4 | 2 | 2
@@ -633,7 +633,7 @@ MATCH (b)<-[x:goes*2]-(a:time)
 RETURN d.sec AS d, array_length(z, 1) AS z,
        c.sec AS c, type(y) AS y,
        b.sec AS b, array_length(x, 1) AS x, a.sec AS a;
- d | z | c |  y   | b | x | a
+ d | z | c |  y   | b | x | a 
 ---+---+---+------+---+---+---
  9 | 2 | 7 | goes | 6 | 2 | 4
  6 | 2 | 4 | goes | 3 | 2 | 1
@@ -643,7 +643,7 @@ RETURN d.sec AS d, array_length(z, 1) AS z,
 
 MATCH (a:time)-[x*0..2]-(b)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
- a | x | b
+ a | x | b 
 ---+---+---
  1 |   | 1
  1 | 1 | 2
@@ -694,7 +694,7 @@ CREATE (:time {sec: 11})-[:goes {int: 1}]->
        (:time {sec: 17});
 MATCH (a:time)-[x:goes*1..2 {int: 1}]->(b:time)
 RETURN a.sec AS a, array_length(x, 1) AS x, b.sec AS b;
- a  | x | b
+ a  | x | b  
 ----+---+----
  11 | 1 | 12
  11 | 2 | 13
@@ -712,7 +712,7 @@ CREATE (:person {id: 1})-[:knows]->
        (:person {id: 3})-[:knows]->
        (:person {id: 4});
 match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
- id | id |                       x
+ id | id |                       x                       
 ----+----+-----------------------------------------------
  1  | 2  | [knows[6.1][5.1,5.2]{}]
  1  | 3  | [knows[6.1][5.1,5.2]{},knows[6.2][5.2,5.3]{}]
@@ -722,7 +722,7 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
 -- `->5
 match (a:person {id: 1}) create (a)-[:knows]->(:person {id: 5});
 match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
- id | id |                       x
+ id | id |                       x                       
 ----+----+-----------------------------------------------
  1  | 2  | [knows[6.1][5.1,5.2]{}]
  1  | 3  | [knows[6.1][5.1,5.2]{},knows[6.2][5.2,5.3]{}]
@@ -733,7 +733,7 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
 -- `->5
 match (a:person {id: 2}), (b:person {id: 1}) create (a)-[:knows]->(b);
 match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
- id | id |                       x
+ id | id |                       x                       
 ----+----+-----------------------------------------------
  1  | 1  | [knows[6.1][5.1,5.2]{},knows[6.5][5.2,5.1]{}]
  1  | 2  | [knows[6.1][5.1,5.2]{}]
@@ -742,13 +742,13 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person) return a.id, b.id, x;
 (4 rows)
 
 match (a:person {id: 1})-[x:knows*0..0]->(b:person) return a.id, b.id, x;
- id | id | x
+ id | id | x  
 ----+----+----
  1  | 1  | []
 (1 row)
 
 match (a:person {id: 1})-[x:knows*0..1]->(b:person) return a.id, b.id, x;
- id | id |            x
+ id | id |            x            
 ----+----+-------------------------
  1  | 1  | []
  1  | 2  | [knows[6.1][5.1,5.2]{}]
@@ -756,21 +756,21 @@ match (a:person {id: 1})-[x:knows*0..1]->(b:person) return a.id, b.id, x;
 (3 rows)
 
 match (a:person {id: 1})-[x:knows*2..2]->(b:person) return a.id, b.id, x;
- id | id |                       x
+ id | id |                       x                       
 ----+----+-----------------------------------------------
  1  | 1  | [knows[6.1][5.1,5.2]{},knows[6.5][5.2,5.1]{}]
  1  | 3  | [knows[6.1][5.1,5.2]{},knows[6.2][5.2,5.3]{}]
 (2 rows)
 
 match (a:person {id: 2})-[x:knows*1..1]->(b:person) return a.id, b.id, x;
- id | id |            x
+ id | id |            x            
 ----+----+-------------------------
  2  | 1  | [knows[6.5][5.2,5.1]{}]
  2  | 3  | [knows[6.2][5.2,5.3]{}]
 (2 rows)
 
 match (a:person)-[x:knows*1..1]->(b:person) return a.id, b.id, x;
- id | id |            x
+ id | id |            x            
 ----+----+-------------------------
  1  | 2  | [knows[6.1][5.1,5.2]{}]
  1  | 5  | [knows[6.4][5.1,5.5]{}]
@@ -780,7 +780,7 @@ match (a:person)-[x:knows*1..1]->(b:person) return a.id, b.id, x;
 (5 rows)
 
 match (a:person)-[x:knows*]->(b:person) return a.id, b.id, x;
- id | id |                                             x
+ id | id |                                             x                                             
 ----+----+-------------------------------------------------------------------------------------------
  1  | 2  | [knows[6.1][5.1,5.2]{}]
  1  | 1  | [knows[6.1][5.1,5.2]{},knows[6.5][5.2,5.1]{}]
@@ -799,7 +799,7 @@ match (a:person)-[x:knows*]->(b:person) return a.id, b.id, x;
 (14 rows)
 
 match (a:person {id: 1})-[x:knows*0..3]->(b:person) return a.id, b.id, x;
- id | id |                                  x
+ id | id |                                  x                                  
 ----+----+---------------------------------------------------------------------
  1  | 1  | [knows[6.1][5.1,5.2]{},knows[6.5][5.2,5.1]{}]
  1  | 1  | []
@@ -811,7 +811,7 @@ match (a:person {id: 1})-[x:knows*0..3]->(b:person) return a.id, b.id, x;
 (7 rows)
 
 match (a:person {id: 1})-[x*1..2]-(b:person) return a.id, b.id, x;
- id | id |                       x
+ id | id |                       x                       
 ----+----+-----------------------------------------------
  1  | 2  | [knows[6.1][5.1,5.2]{}]
  1  | 1  | [knows[6.1][5.1,5.2]{},knows[6.5][5.2,5.1]{}]
@@ -830,7 +830,7 @@ match (a:person {id: 2})-[k:knows]->(b:person {id: 1}) delete k;
 -- `->5
 match (a:person {id: 3}), (b:person {id: 1}) create (a)-[:knows]->(b);
 match (a:person {id: 1})-[x:knows*1..]->(b:person) return a.id, b.id, x;
- id | id |                                             x
+ id | id |                                             x                                             
 ----+----+-------------------------------------------------------------------------------------------
  1  | 2  | [knows[6.1][5.1,5.2]{}]
  1  | 3  | [knows[6.1][5.1,5.2]{},knows[6.2][5.2,5.3]{}]
@@ -849,17 +849,17 @@ create elabel friendships inherits (knows);
 match (a:person {id: 1}) create (a)-[:friendships {fromDate:'2014-11-24'}]->(:person {id: 5});
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 return a.id, b.id, x[1].fromdate;
- id | id |  fromdate
+ id | id |  fromdate  
 ----+----+------------
- 1  | 2  |
- 1  | 3  |
+ 1  | 2  | 
+ 1  | 3  | 
  1  | 5  | 2014-11-24
 (3 rows)
 
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 where x[1].fromdate is not null
 return a.id, b.id, x[1].fromdate;
- id | id |  fromdate
+ id | id |  fromdate  
 ----+----+------------
  1  | 5  | 2014-11-24
 (1 row)
@@ -867,17 +867,17 @@ return a.id, b.id, x[1].fromdate;
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with x[1].fromdate as fromdate
 return fromdate;
-  fromdate
+  fromdate  
 ------------
-
-
+ 
+ 
  2014-11-24
 (3 rows)
 
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with x[1] as x1
 return x1.fromdate, x1;
-  fromdate  |                         x1
+  fromdate  |                         x1                          
 ------------+-----------------------------------------------------
             | knows[6.1][5.1,5.2]{}
             | knows[6.1][5.1,5.2]{}
@@ -888,14 +888,14 @@ match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 where x[2].fromdate is not null
 with x[1] as x1, array_length(x, 1) as l
 return x1, l;
- x1 | l
+ x1 | l 
 ----+---
 (0 rows)
 
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with x[1] as x1, array_length(x, 1) as l
 return x1, l;
-                         x1                          | l
+                         x1                          | l 
 -----------------------------------------------------+---
  knows[6.1][5.1,5.2]{}                               | 1
  knows[6.1][5.1,5.2]{}                               | 2
@@ -905,7 +905,7 @@ return x1, l;
 match (a:person {id: 1})-[x:knows*1..2]-(b:person)
 with x[1] as x1, array_length(x, 1) as l
 return x1, l;
-                         x1                          | l
+                         x1                          | l 
 -----------------------------------------------------+---
  knows[6.1][5.1,5.2]{}                               | 1
  knows[6.1][5.1,5.2]{}                               | 2
@@ -917,7 +917,7 @@ match (a:person {id: 5}) create (a)-[:familyship {fromDate:'2015-12-24'}]->(:per
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with x[1] as x1, x[2] as x2, array_length(x, 1) as l
 return x1, x2, l;
-                         x1                          |                         x2                         | l
+                         x1                          |                         x2                         | l 
 -----------------------------------------------------+----------------------------------------------------+---
  knows[6.1][5.1,5.2]{}                               |                                                    | 1
  knows[6.1][5.1,5.2]{}                               | knows[6.2][5.2,5.3]{}                              | 2
@@ -928,7 +928,7 @@ return x1, x2, l;
 explain verbose
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with x[1] as x1, x[2] as x2 order by x2 return x1;
-                                                                                 QUERY PLAN
+                                                                                 QUERY PLAN                                                                                 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Subquery Scan on _  (cost=408.20..412.40 rows=336 width=32)
    Output: EDGEREFROW(_.x1)
@@ -980,7 +980,7 @@ with x[1] as x1, x[2] as x2 order by x2 return x1;
 explain verbose
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with max(b.id) as id, x[1] as x return *;
-                                                                                 QUERY PLAN
+                                                                                 QUERY PLAN                                                                                 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=408.20..412.12 rows=56 width=64)
    Output: max((b.properties #>> '{id}'::text[])), (EDGEREFROW(x.path[1]))
@@ -1033,7 +1033,7 @@ with max(b.id) as id, x[1] as x return *;
 explain verbose
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with distinct x as path return *;
-                                                                                 QUERY PLAN
+                                                                                 QUERY PLAN                                                                                 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Unique  (cost=408.20..409.88 rows=56 width=32)
    Output: (EDGEREFROWS(x.path))
@@ -1085,7 +1085,7 @@ with distinct x as path return *;
 explain verbose
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with max(b.id) as id, x as x return *;
-                                                                                 QUERY PLAN
+                                                                                 QUERY PLAN                                                                                 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate  (cost=408.20..412.12 rows=56 width=64)
    Output: max((b.properties #>> '{id}'::text[])), (EDGEREFROWS(x.path))
@@ -1138,7 +1138,7 @@ with max(b.id) as id, x as x return *;
 explain verbose
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 with max(x) as x, b.id as id return *;
-                                                                              QUERY PLAN
+                                                                              QUERY PLAN                                                                              
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate  (cost=396.62..399.12 rows=200 width=64)
    Output: max(EDGEREFROWS(x.path)), ((b.properties #>> '{id}'::text[]))
@@ -1188,7 +1188,7 @@ with max(x) as x, b.id as id return *;
 explain verbose
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 return x, x is not null, x[1] is null;
-                                                                           QUERY PLAN
+                                                                           QUERY PLAN                                                                           
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop  (cost=200.38..394.10 rows=336 width=34)
    Output: EDGEREFROWS(x.path), (EDGEREFROWS(x.path) IS NOT NULL), (EDGEREFROW(x.path[1]) IS NULL)
@@ -1235,7 +1235,7 @@ return x, x is not null, x[1] is null;
 explain verbose
 match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 where x[1] is not null return x[1];
-                                                                           QUERY PLAN
+                                                                           QUERY PLAN                                                                           
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop  (cost=200.38..394.10 rows=336 width=32)
    Output: EDGEREFROW(x.path[1])
@@ -1288,7 +1288,7 @@ select * from (
 	match (a:person {id: 1})-[x:knows*1..2]->(b:person)
 	return x[2]
 ) as foo;
-                                                                                      QUERY PLAN
+                                                                                      QUERY PLAN                                                                                      
 --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Result  (cost=200.38..801.64 rows=672 width=32)
    Output: EDGEREFROW((x.path[1]))
@@ -1398,14 +1398,14 @@ match (a:person {id: 6}) delete a;
 match (a:person {id: 4}), (b:person {id: 5}) create (a)-[:knows]->(b);
 MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 4
 RETURN ids(nodes(shortestpath((p)-[:knows]->(f)))) AS ids;
-  ids
+  ids  
 -------
  {3,4}
 (1 row)
 
 MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 5
 RETURN ids(nodes(shortestpath((p)-[:knows]->(f)))) AS ids;
- ids
+ ids 
 -----
  {}
  {}
@@ -1413,7 +1413,7 @@ RETURN ids(nodes(shortestpath((p)-[:knows]->(f)))) AS ids;
 
 MATCH (p:person), (f:person) WHERE p.id::int = 3
 RETURN ids(nodes(shortestpath((p)<-[:knows]-(f)))) AS ids;
-  ids
+  ids  
 -------
  {}
  {3,2}
@@ -1425,7 +1425,7 @@ RETURN ids(nodes(shortestpath((p)<-[:knows]-(f)))) AS ids;
 
 MATCH (p:person), (f:person) WHERE p.id::int = 3
 RETURN ids(nodes(shortestpath((p)-[:knows*]-(f)))) AS ids;
-   ids
+   ids   
 ---------
  {3,2,1}
  {3,2}
@@ -1438,7 +1438,7 @@ RETURN ids(nodes(shortestpath((p)-[:knows*]-(f)))) AS ids;
 MATCH (p:person), (f:person), x = shortestpath((p)-[:knows*]-(f))
 WHERE p.id::int = 3
 RETURN ids(nodes(x)) AS ids;
-   ids
+   ids   
 ---------
  {3,2,1}
  {3,2}
@@ -1450,7 +1450,7 @@ RETURN ids(nodes(x)) AS ids;
 MATCH x = shortestpath((p:person)-[:knows*]-(f:person))
 WHERE p.id::int = 3
 RETURN ids(nodes(x)) AS ids;
-   ids
+   ids   
 ---------
  {3,2,1}
  {3,2}
@@ -1461,7 +1461,7 @@ RETURN ids(nodes(x)) AS ids;
 
 MATCH (p:person), (f:person) WHERE p.id::int = 3
 RETURN ids(nodes(shortestpath((p)-[:knows*0..1]-(f)))) AS ids;
-  ids
+  ids  
 -------
  {}
  {3,2}
@@ -1480,7 +1480,7 @@ MATCH (p:person), (f:person) WHERE p.id::int = 3 AND f.id::int = 5
 CREATE (p)-[:knows]->(:person {id: 6})-[:knows]->(f);
 MATCH (p:person), (f:person) WHERE p.id::int = 1 AND f.id::int = 5
 RETURN array_length(allshortestpaths((p)-[:knows*]-(f)), 1) AS cnt;
- cnt
+ cnt 
 -----
    2
    2
@@ -1491,7 +1491,7 @@ SET graph_path = agens;
 -- DISTINCT
 --
 MATCH (a:repo)-[]-() RETURN DISTINCT a.name AS a ORDER BY a;
-        a
+        a         
 ------------------
  agens-graph
  agens-graph-docs
@@ -1501,7 +1501,7 @@ MATCH (a:repo)-[]-() RETURN DISTINCT a.name AS a ORDER BY a;
 
 MATCH (a:repo)-[b]-(c)
 RETURN DISTINCT ON (a) a.name AS a, b.lang AS b, c.name AS c;
-        a         |  b   |        c
+        a         |  b   |        c         
 ------------------+------+------------------
  agens-graph      | java | agens-graph-jdbc
  agens-graph-docs | en   | agens-graph
@@ -1513,7 +1513,7 @@ RETURN DISTINCT ON (a) a.name AS a, b.lang AS b, c.name AS c;
 -- ORDER BY
 --
 MATCH (a:repo) RETURN a.name AS a ORDER BY a;
-        a
+        a         
 ------------------
  agens-graph
  agens-graph-docs
@@ -1522,7 +1522,7 @@ MATCH (a:repo) RETURN a.name AS a ORDER BY a;
 (4 rows)
 
 MATCH (a:repo) RETURN a.name AS a ORDER BY a ASC;
-        a
+        a         
 ------------------
  agens-graph
  agens-graph-docs
@@ -1531,7 +1531,7 @@ MATCH (a:repo) RETURN a.name AS a ORDER BY a ASC;
 (4 rows)
 
 MATCH (a:repo) RETURN a.name AS a ORDER BY a DESC;
-        a
+        a         
 ------------------
  agens-graph-odbc
  agens-graph-jdbc
@@ -1543,7 +1543,7 @@ MATCH (a:repo) RETURN a.name AS a ORDER BY a DESC;
 -- SKIP and LIMIT
 --
 MATCH (a:repo) RETURN a.name AS a ORDER BY a SKIP 1 LIMIT 1;
-        a
+        a         
 ------------------
  agens-graph-docs
 (1 row)
@@ -1552,7 +1552,7 @@ MATCH (a:repo) RETURN a.name AS a ORDER BY a SKIP 1 LIMIT 1;
 -- WITH
 --
 MATCH (a:repo) WITH a.name AS name RETURN name;
-       name
+       name       
 ------------------
  agens-graph
  agens-graph-jdbc
@@ -1564,7 +1564,7 @@ MATCH (a)
 WITH a WHERE label(a) = 'repo'
 MATCH p=(a)-[]->(b)
 RETURN b.name AS b ORDER BY b;
-        b
+        b         
 ------------------
  agens-graph-docs
  agens-graph-jdbc
@@ -1594,7 +1594,7 @@ RETURN DISTINCT b.lang AS b
 UNION ALL
 MATCH ()-[c:doc]->()
 RETURN DISTINCT c.lang AS c;
-        a
+        a         
 ------------------
  agens-graph
  agens-graph-jdbc
@@ -1615,7 +1615,7 @@ ERROR:  UNION types vertex and text cannot be matched
 -- aggregates
 --
 MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a, b;
- a |        b
+ a |        b         
 ---+------------------
  1 | agens-graph-docs
  1 | agens-graph-jdbc
@@ -1627,7 +1627,7 @@ MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a, b;
 -- EXISTS
 --
 MATCH (a:repo) WHERE exists((a)-[]->()) RETURN a.name AS a;
-      a
+      a      
 -------------
  agens-graph
 (1 row)
@@ -1636,7 +1636,7 @@ MATCH (a:repo) WHERE exists((a)-[]->()) RETURN a.name AS a;
 -- SIZE
 --
 MATCH (a:repo) RETURN a.name AS a, size((a)-[]->()) AS s;
-        a         | s
+        a         | s 
 ------------------+---
  agens-graph      | 3
  agens-graph-jdbc | 0
@@ -1655,7 +1655,7 @@ MATCH (a:repo {name: 'agens-graph'})
 LOAD FROM history AS h
 CREATE (:feature {name: (h).event})-[:supported]->(a);
 MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
-           a
+           a            
 ------------------------
  {"name": "Graph"}
  {"name": "PostgreSQL"}
@@ -1668,7 +1668,7 @@ MATCH (a) DELETE a;
 ERROR:  vertex 1 in "repo" has edge(s)
 MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[2];
 MATCH (a:repo) RETURN a.name AS a;
-        a
+        a         
 ------------------
  agens-graph
  agens-graph-docs
@@ -1676,19 +1676,19 @@ MATCH (a:repo) RETURN a.name AS a;
 
 MATCH ()-[a:doc]->() DETACH DELETE end_vertex(a);
 MATCH (a:repo) RETURN a.name AS a;
-      a
+      a      
 -------------
  agens-graph
 (1 row)
 
 MATCH (a) DETACH DELETE a;
 MATCH (a) RETURN a;
- a
+ a 
 ---
 (0 rows)
 
 SELECT count(*) FROM agens.ag_edge;
- count
+ count 
 -------
      0
 (1 row)
@@ -1703,7 +1703,7 @@ CREATE (s {id: 1})-[:rel {p: 'a'}]->({id: 2})-[:rel {p: 'b'}]->(s);
 MATCH (s)-[r1]-(m)-[r2]-(x)
 RETURN s.id AS s, r1.p AS r1, m.id AS m, r2.p AS r2, x.id AS x
        ORDER BY s, r1, m, r2, x;
- s | r1 | m | r2 | x
+ s | r1 | m | r2 | x 
 ---+----+---+----+---
  1 | a  | 2 | b  | 1
  1 | b  | 2 | a  | 1
@@ -1722,7 +1722,7 @@ MATCH (n)-[r]->(m) SET r.l = '"w"', n = m, r.k = NULL;
 MATCH (n)-[r]->(m) REMOVE m.name;
 MATCH (n)-[r]->(m)
 RETURN properties(n) AS n, properties(r) AS r, properties(m) AS m;
-          n           |     r      | m
+          n           |     r      | m  
 ----------------------+------------+----
  {"name": "somebody"} | {"l": "w"} | {}
 (1 row)
@@ -1732,7 +1732,7 @@ MATCH (n) DETACH DELETE (n);
 CREATE ({age: 10});
 MATCH (a) SET a.age = '11', a.age = (a.age::int + 1)::text::jsonb;
 MATCH (a) RETURN properties(a);
- properties
+ properties  
 -------------
  {"age": 11}
 (1 row)
@@ -1742,7 +1742,7 @@ MATCH (a) DETACH DELETE (a);
 CREATE ({age: 10});
 MATCH (a) SET a.age = '11' SET a.age = (a.age::int + 1)::text::jsonb;
 MATCH (a) RETURN properties(a);
- properties
+ properties  
 -------------
  {"age": 12}
 (1 row)
@@ -1751,7 +1751,7 @@ MATCH (a) DETACH DELETE (a);
 CREATE ()-[:rel {k: 'v'}]->();
 MATCH ()-[r]->() SET r.l = '"x"' SET r.l = '"y"';
 MATCH ()-[r]->() RETURN properties(r) AS r;
-          r
+          r           
 ----------------------
  {"k": "v", "l": "y"}
 (1 row)
@@ -1761,7 +1761,7 @@ CREATE ({age: 1})-[:rel]->({age: 2});
 MATCH (a)-[]->(b)
 SET a.age = to_jsonb(a.age::int + 1), b.age = to_jsonb(a.age::int + b.age::int);
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
-     a      |     b
+     a      |     b      
 ------------+------------
  {"age": 2} | {"age": 4}
 (1 row)
@@ -1771,7 +1771,7 @@ MATCH (a) DETACH DELETE (a);
 CREATE ({age: 10});
 MATCH (a) SET a += {name: 'bitnine', age: '3'};
 MATCH (a) RETURN properties(a);
-           properties
+           properties            
 ---------------------------------
  {"age": "3", "name": "bitnine"}
 (1 row)
@@ -1794,7 +1794,7 @@ MATCH (a) DETACH DELETE (a);
 CREATE ({a: 'a', b: 'b', c: 'c'});
 MATCH (a) SET a.a = NULL REMOVE a.b;
 MATCH (a) RETURN properties(a);
- properties
+ properties 
 ------------
  {"c": "c"}
 (1 row)
@@ -1811,7 +1811,7 @@ CREATE ({age: 10});
 MATCH (a) SET a.age = (a.age::int + 1)::text::jsonb;
 WARNING:  property map cannot be NULL
 MATCH (a) RETURN properties(a);
-     properties
+     properties      
 ---------------------
  {"name": "bitnine"}
  {"age": 11}
@@ -1821,18 +1821,18 @@ MATCH (a) RETURN properties(a);
 CREATE VLABEL person;
 CREATE (:person {name: 'bitnine', age: NULL});
 MATCH (a:person {name: 'bitnine'}) RETURN properties(a) AS a;
-          a
+          a          
 ---------------------
  {"name": "bitnine"}
 (1 row)
 
 MATCH (a:person {age: NULL}) RETURN properties(a) AS a;
- a
+ a 
 ---
 (0 rows)
 
 MATCH (a:person) WHERE a.age IS NULL RETURN properties(a) AS a;
-          a
+          a          
 ---------------------
  {"name": "bitnine"}
 (1 row)
@@ -1852,7 +1852,7 @@ MATCH (a:v1)
 MERGE (b:v2 {name:a.name})
   ON CREATE SET b.created = 'true' ON MATCH SET b.matched = 'true';
 MATCH (a:v2) RETURN properties(a);
-                    properties
+                    properties                     
 ---------------------------------------------------
  {"name": "foo", "created": true, "matched": true}
  {"name": "bar", "created": true, "matched": true}
@@ -1863,7 +1863,7 @@ MERGE (a)-[r:e1 {type:'same name'}]->(b:v2 {name:a.name})
   ON CREATE SET r.created = 'true', r.matched = null
   ON MATCH SET r.matched = 'true', r.created = null;
 MATCH (a)-[r:e1]->(b) RETURN properties(a), properties(r), properties(b);
-   properties    |               properties               |   properties
+   properties    |               properties               |   properties    
 -----------------+----------------------------------------+-----------------
  {"name": "foo"} | {"type": "same name", "created": true} | {"name": "foo"}
  {"name": "bar"} | {"type": "same name", "created": true} | {"name": "bar"}
@@ -1876,7 +1876,7 @@ MERGE (a)-[r:e1 {type:'same name'}]->(b:v2 {name:a.name})
   ON CREATE SET r.created = 'true', r.matched = null
   ON MATCH SET r.matched = 'true', r.created = null;
 MATCH (a)-[r:e1]->(b) RETURN properties(a), properties(r), properties(b);
-   properties    |               properties               |   properties
+   properties    |               properties               |   properties    
 -----------------+----------------------------------------+-----------------
  {"name": "foo"} | {"type": "same name", "matched": true} | {"name": "foo"}
  {"name": "bar"} | {"type": "same name", "matched": true} | {"name": "bar"}
@@ -1885,7 +1885,7 @@ MATCH (a)-[r:e1]->(b) RETURN properties(a), properties(r), properties(b);
 (4 rows)
 
 MATCH (a:v2) RETURN properties(a);
-                    properties
+                    properties                     
 ---------------------------------------------------
  {"name": "foo", "created": true, "matched": true}
  {"name": "bar", "created": true, "matched": true}
@@ -1899,7 +1899,7 @@ MERGE (a:v1)-[r1:e1]->(b:v2)
 MERGE (a)-[r2:e1]->(b)
   ON CREATE SET r2.created = 'true';
 MATCH p=(a)-[r:e1 {created:true}]->(b) RETURN count(p);
- count
+ count 
 -------
      0
 (1 row)
@@ -1907,13 +1907,13 @@ MATCH p=(a)-[r:e1 {created:true}]->(b) RETURN count(p);
 CREATE (:v1 {name:'v1-1'});
 MERGE (a:v1 {name:'v1-1'})-[:e1]->(b:v2 {name:'v2-1'});
 MATCH (a:v1 {name:'v1-1'})-[r]->(b) RETURN properties(a), properties(b);
-    properties    |    properties
+    properties    |    properties    
 ------------------+------------------
  {"name": "v1-1"} | {"name": "v2-1"}
 (1 row)
 
 MATCH (a:v1 {name:'v1-1'}) RETURN count(a);
- count
+ count 
 -------
      2
 (1 row)
@@ -1924,13 +1924,13 @@ MERGE (a:v1 {name:'v1-1'})
 MERGE (b:v2 {name:'v2-1'})
 MERGE (a)-[:e1]->(b);
 MATCH (a:v1 {name:'v1-1'})-[r]->(b) RETURN properties(a), properties(b);
-    properties    |    properties
+    properties    |    properties    
 ------------------+------------------
  {"name": "v1-1"} | {"name": "v2-1"}
 (1 row)
 
 MATCH (a:v1 {name:'v1-1'}) RETURN count(a);
- count
+ count 
 -------
      1
 (1 row)
@@ -1950,7 +1950,7 @@ MERGE (b:city {name:a.bornin})
   ON CREATE SET b.population = '1'
   ON MATCH SET b.population = (b.population::int + 1)::text::jsonb;
 MATCH (c:city) RETURN properties(c);
-                properties
+                properties                
 ------------------------------------------
  {"name": "jeju", "population": 1}
  {"name": "san jose", "population": 2}
@@ -1961,7 +1961,7 @@ MATCH (c:city) RETURN properties(c);
 MATCH (a:person)
 MERGE (a)-[:hometown]->(b:city {name:a.bornin});
 MATCH (:city)<-[r]-(:person) RETURN count(r);
- count
+ count 
 -------
      6
 (1 row)
@@ -1978,7 +1978,7 @@ CREATE (a {id:'2'}), (b {id:'1'});
 MATCH (a {id:'2'}), (b {id:'1'})
 MERGE (a)-[r:e1]-(b)
 RETURN properties(startnode(r)) as s, properties(endnode(r)) as e;
-      s      |      e
+      s      |      e      
 -------------+-------------
  {"id": "2"} | {"id": "1"}
 (1 row)
@@ -1986,7 +1986,7 @@ RETURN properties(startnode(r)) as s, properties(endnode(r)) as e;
 MATCH (a {id:'1'}), (b {id:'2'})
 MERGE (a)-[r:e1]-(b)
 RETURN properties(a), properties(b);
- properties  | properties
+ properties  | properties  
 -------------+-------------
  {"id": "1"} | {"id": "2"}
 (1 row)
@@ -1998,7 +1998,7 @@ CREATE (c)-[:e1 {name: 'cd'}]->(d);
 MATCH (a {id: 2})-[]-(b {id: 1})
 MERGE (a)-[r:e1]-(b)
 RETURN r;
-               r
+               r                
 --------------------------------
  e1[5.8][1.4,1.5]{"name": "ab"}
  e1[5.9][1.6,1.7]{"name": "cd"}
@@ -2010,7 +2010,7 @@ CREATE (a:v1 {name:'bitnine'}) MERGE (:v2 {name:a.name});
 CREATE (a:v1 {name:'AgensGraph'})
 MERGE (b:v2 {name:a.name})
 RETURN properties(a), properties(b);
-       properties       |       properties
+       properties       |       properties       
 ------------------------+------------------------
  {"name": "AgensGraph"} | {"name": "AgensGraph"}
 (1 row)
@@ -2019,7 +2019,7 @@ MERGE (a:v1 {name:'bitnine'})
 MERGE (b:v1 {name:'AgensGraph'})
 CREATE p=(a)-[r:e1 {name:a.name || b.name}]->(b)
 RETURN properties(a), properties(r), properties(b), count(p);
-     properties      |          properties           |       properties       | count
+     properties      |          properties           |       properties       | count 
 ---------------------+-------------------------------+------------------------+-------
  {"name": "bitnine"} | {"name": "bitnineAgensGraph"} | {"name": "AgensGraph"} |     1
 (1 row)
@@ -2030,7 +2030,7 @@ MERGE (c:v1 {name:'bitnine'})
 	ON MATCH SET c.matched = 'true'
 	ON CREATE SET c.matched = 'false';
 MATCH (a) RETURN properties(a);
-              properties
+              properties              
 --------------------------------------
  {"name": "AgensGraph"}
  {"name": "bitnine", "matched": true}
@@ -2050,7 +2050,7 @@ MATCH (a:v1)
 CREATE (b:v2 {no:a.no::int})
 MERGE (c:v2 {no:a.no::int + 2});
 MATCH (a:v2) RETURN a.no;
- no
+ no 
 ----
  1
  2
@@ -2065,7 +2065,7 @@ MATCH (a:v1)
 MERGE (b:v2 {no:a.no::int})
 MERGE (c:v2 {no:a.no::int + 2});
 MATCH (a:v2) RETURN a.no;
- no
+ no 
 ----
  1
  2
@@ -2078,7 +2078,7 @@ MATCH (a:v2) RETURN a.no;
 MATCH (a:v1) SET a.no = (a.no::int - 2)::text::jsonb
 MERGE (b:v1 {no:1});
 MATCh (a:v1) return a.no;
- no
+ no 
 ----
  -1
  0
@@ -2094,7 +2094,7 @@ MATCH (a:v1)
 MERGE (b:v1 {no:2})
 	ON MATCH SET b.no = a.no::jsonb;
 MATCH (a:v1) return a.no;
- no
+ no 
 ----
  3
  2

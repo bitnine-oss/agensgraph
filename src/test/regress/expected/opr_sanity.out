@@ -60,7 +60,7 @@ WHERE p1.prolang = 0 OR p1.prorettype = 0 OR
        CASE WHEN proretset THEN prorows <= 0 ELSE prorows != 0 END OR
        provolatile NOT IN ('i', 's', 'v') OR
        proparallel NOT IN ('s', 'r', 'u');
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -68,7 +68,7 @@ WHERE p1.prolang = 0 OR p1.prorettype = 0 OR
 SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE prosrc IS NULL OR prosrc = '' OR prosrc = '-';
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -76,7 +76,7 @@ WHERE prosrc IS NULL OR prosrc = '' OR prosrc = '-';
 SELECT p1.oid, p1.proname
 FROM pg_proc AS p1
 WHERE proiswindow AND (proisagg OR proretset);
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -84,7 +84,7 @@ WHERE proiswindow AND (proisagg OR proretset);
 SELECT p1.oid, p1.proname
 FROM pg_proc AS p1
 WHERE (pronargdefaults <> 0) != (proargdefaults IS NOT NULL);
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -92,14 +92,14 @@ WHERE (pronargdefaults <> 0) != (proargdefaults IS NOT NULL);
 SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE prolang = 13 AND (probin IS NULL OR probin = '' OR probin = '-');
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
 SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE prolang != 13 AND probin IS NOT NULL;
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -112,7 +112,7 @@ WHERE p1.oid != p2.oid AND
     p1.proname = p2.proname AND
     p1.pronargs = p2.pronargs AND
     p1.proargtypes = p2.proargtypes;
- oid | proname | oid | proname
+ oid | proname | oid | proname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -137,7 +137,7 @@ WHERE p1.oid < p2.oid AND
      p1.proretset != p2.proretset OR
      p1.provolatile != p2.provolatile OR
      p1.pronargs != p2.pronargs);
- oid | proname | oid | proname
+ oid | proname | oid | proname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -161,7 +161,7 @@ WHERE p1.oid != p2.oid AND
     p2.prosrc NOT LIKE E'range\\_constructor_' AND
     (p1.prorettype < p2.prorettype)
 ORDER BY 1, 2;
- prorettype | prorettype
+ prorettype | prorettype 
 ------------+------------
          25 |       1043
        1114 |       1184
@@ -177,7 +177,7 @@ WHERE p1.oid != p2.oid AND
     p2.prosrc NOT LIKE E'range\\_constructor_' AND
     (p1.proargtypes[0] < p2.proargtypes[0])
 ORDER BY 1, 2;
- proargtypes | proargtypes
+ proargtypes | proargtypes 
 -------------+-------------
           25 |        1042
           25 |        1043
@@ -195,7 +195,7 @@ WHERE p1.oid != p2.oid AND
     p2.prosrc NOT LIKE E'range\\_constructor_' AND
     (p1.proargtypes[1] < p2.proargtypes[1])
 ORDER BY 1, 2;
- proargtypes | proargtypes
+ proargtypes | proargtypes 
 -------------+-------------
           23 |          28
         1114 |        1184
@@ -210,7 +210,7 @@ WHERE p1.oid != p2.oid AND
     NOT p1.proisagg AND NOT p2.proisagg AND
     (p1.proargtypes[2] < p2.proargtypes[2])
 ORDER BY 1, 2;
- proargtypes | proargtypes
+ proargtypes | proargtypes 
 -------------+-------------
         1114 |        1184
 (1 row)
@@ -223,7 +223,7 @@ WHERE p1.oid != p2.oid AND
     NOT p1.proisagg AND NOT p2.proisagg AND
     (p1.proargtypes[3] < p2.proargtypes[3])
 ORDER BY 1, 2;
- proargtypes | proargtypes
+ proargtypes | proargtypes 
 -------------+-------------
         1114 |        1184
 (1 row)
@@ -236,7 +236,7 @@ WHERE p1.oid != p2.oid AND
     NOT p1.proisagg AND NOT p2.proisagg AND
     (p1.proargtypes[4] < p2.proargtypes[4])
 ORDER BY 1, 2;
- proargtypes | proargtypes
+ proargtypes | proargtypes 
 -------------+-------------
 (0 rows)
 
@@ -248,7 +248,7 @@ WHERE p1.oid != p2.oid AND
     NOT p1.proisagg AND NOT p2.proisagg AND
     (p1.proargtypes[5] < p2.proargtypes[5])
 ORDER BY 1, 2;
- proargtypes | proargtypes
+ proargtypes | proargtypes 
 -------------+-------------
 (0 rows)
 
@@ -260,7 +260,7 @@ WHERE p1.oid != p2.oid AND
     NOT p1.proisagg AND NOT p2.proisagg AND
     (p1.proargtypes[6] < p2.proargtypes[6])
 ORDER BY 1, 2;
- proargtypes | proargtypes
+ proargtypes | proargtypes 
 -------------+-------------
 (0 rows)
 
@@ -272,7 +272,7 @@ WHERE p1.oid != p2.oid AND
     NOT p1.proisagg AND NOT p2.proisagg AND
     (p1.proargtypes[7] < p2.proargtypes[7])
 ORDER BY 1, 2;
- proargtypes | proargtypes
+ proargtypes | proargtypes 
 -------------+-------------
 (0 rows)
 
@@ -285,7 +285,7 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE p1.prorettype = 'internal'::regtype AND NOT
     'internal'::regtype = ANY (p1.proargtypes);
- oid  |   proname
+ oid  |   proname   
 ------+-------------
  2304 | internal_in
 (1 row)
@@ -306,7 +306,7 @@ WHERE p1.prorettype IN
      'anyenum'::regtype = ANY (p1.proargtypes) OR
      'anyrange'::regtype = ANY (p1.proargtypes))
 ORDER BY 2;
- oid  |     proname
+ oid  |     proname      
 ------+------------------
  2296 | anyarray_in
  2502 | anyarray_recv
@@ -338,7 +338,7 @@ WHERE 'cstring'::regtype = ANY (p1.proargtypes)
     AND NOT EXISTS(SELECT 1 FROM pg_conversion WHERE conproc = p1.oid)
     AND p1.oid != 'shell_in(cstring)'::regprocedure
 ORDER BY 1;
- oid  |   proname
+ oid  |   proname    
 ------+--------------
  2293 | cstring_out
  2501 | cstring_send
@@ -356,7 +356,7 @@ WHERE  p1.prorettype = 'cstring'::regtype
     AND NOT EXISTS(SELECT 1 FROM pg_type WHERE typmodout = p1.oid)
     AND p1.oid != 'shell_out(opaque)'::regprocedure
 ORDER BY 1;
- oid  |   proname
+ oid  |   proname    
 ------+--------------
  2292 | cstring_in
  2500 | cstring_recv
@@ -367,7 +367,7 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE proallargtypes IS NOT NULL AND
     array_length(proallargtypes,1) < array_length(proargtypes,1);
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -375,7 +375,7 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE proargmodes IS NOT NULL AND
     array_length(proargmodes,1) < array_length(proargtypes,1);
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -383,7 +383,7 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE proargnames IS NOT NULL AND
     array_length(proargnames,1) < array_length(proargtypes,1);
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -391,7 +391,7 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE proallargtypes IS NOT NULL AND proargmodes IS NOT NULL AND
     array_length(proallargtypes,1) <> array_length(proargmodes,1);
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -399,7 +399,7 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE proallargtypes IS NOT NULL AND proargnames IS NOT NULL AND
     array_length(proallargtypes,1) <> array_length(proargnames,1);
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -407,7 +407,7 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE proargmodes IS NOT NULL AND proargnames IS NOT NULL AND
     array_length(proargmodes,1) <> array_length(proargnames,1);
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -419,7 +419,7 @@ WHERE proallargtypes IS NOT NULL AND
   ARRAY(SELECT proallargtypes[i]
         FROM generate_series(1, array_length(proallargtypes, 1)) g(i)
         WHERE proargmodes IS NULL OR proargmodes[i] IN ('i', 'b', 'v'));
- oid | proname | proargtypes | proallargtypes | proargmodes
+ oid | proname | proargtypes | proallargtypes | proargmodes 
 -----+---------+-------------+----------------+-------------
 (0 rows)
 
@@ -429,7 +429,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p2.oid = p1.protransform AND
     (p2.prorettype != 'internal'::regtype OR p2.proretset OR p2.pronargs != 1
      OR p2.proargtypes[0] != 'internal'::regtype);
- oid | proname | oid | proname
+ oid | proname | oid | proname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -438,7 +438,7 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1 LEFT JOIN pg_description as d
      ON p1.tableoid = d.classoid and p1.oid = d.objoid and d.objsubid = 0
 WHERE d.classoid IS NULL AND p1.oid <= 9999;
- oid  |    proname
+ oid  |    proname    
 ------+---------------
  7000 | graphid
  7007 | graphid_labid
@@ -718,7 +718,7 @@ where proname in (
 and pronamespace = (select oid from pg_catalog.pg_namespace
                     where nspname = 'pg_catalog')
 order by 1;
-    proname    | oid
+    proname    | oid  
 ---------------+------
  lo_close      |  953
  lo_creat      |  957
@@ -742,7 +742,7 @@ SELECT *
 FROM pg_cast c
 WHERE castsource = 0 OR casttarget = 0 OR castcontext NOT IN ('e', 'a', 'i')
     OR castmethod NOT IN ('f', 'b' ,'i');
- castsource | casttarget | castfunc | castcontext | castmethod
+ castsource | casttarget | castfunc | castcontext | castmethod 
 ------------+------------+----------+-------------+------------
 (0 rows)
 
@@ -752,7 +752,7 @@ SELECT *
 FROM pg_cast c
 WHERE (castmethod = 'f' AND castfunc = 0)
    OR (castmethod IN ('b', 'i') AND castfunc <> 0);
- castsource | casttarget | castfunc | castcontext | castmethod
+ castsource | casttarget | castfunc | castcontext | castmethod 
 ------------+------------+----------+-------------+------------
 (0 rows)
 
@@ -762,14 +762,14 @@ WHERE (castmethod = 'f' AND castfunc = 0)
 SELECT *
 FROM pg_cast c
 WHERE castsource = casttarget AND castfunc = 0;
- castsource | casttarget | castfunc | castcontext | castmethod
+ castsource | casttarget | castfunc | castcontext | castmethod 
 ------------+------------+----------+-------------+------------
 (0 rows)
 
 SELECT c.*
 FROM pg_cast c, pg_proc p
 WHERE c.castfunc = p.oid AND p.pronargs < 2 AND castsource = casttarget;
- castsource | casttarget | castfunc | castcontext | castmethod
+ castsource | casttarget | castfunc | castcontext | castmethod 
 ------------+------------+----------+-------------+------------
 (0 rows)
 
@@ -788,7 +788,7 @@ WHERE c.castfunc = p.oid AND
              OR (c.castsource = 'character'::regtype AND
                  p.proargtypes[0] = 'text'::regtype))
      OR NOT binary_coercible(p.prorettype, c.casttarget));
- castsource | casttarget | castfunc | castcontext | castmethod
+ castsource | casttarget | castfunc | castcontext | castmethod 
 ------------+------------+----------+-------------+------------
 (0 rows)
 
@@ -797,7 +797,7 @@ FROM pg_cast c, pg_proc p
 WHERE c.castfunc = p.oid AND
     ((p.pronargs > 1 AND p.proargtypes[1] != 'int4'::regtype) OR
      (p.pronargs > 2 AND p.proargtypes[2] != 'bool'::regtype));
- castsource | casttarget | castfunc | castcontext | castmethod
+ castsource | casttarget | castfunc | castcontext | castmethod 
 ------------+------------+----------+-------------+------------
 (0 rows)
 
@@ -820,7 +820,7 @@ WHERE c.castmethod = 'b' AND
                 WHERE k.castmethod = 'b' AND
                     k.castsource = c.casttarget AND
                     k.casttarget = c.castsource);
-    castsource     |    casttarget     | castfunc | castcontext
+    castsource     |    casttarget     | castfunc | castcontext 
 -------------------+-------------------+----------+-------------
  text              | character         |        0 | i
  character varying | character         |        0 | i
@@ -838,7 +838,7 @@ FROM pg_conversion as p1
 WHERE p1.conproc = 0 OR
     pg_encoding_to_char(conforencoding) = '' OR
     pg_encoding_to_char(contoencoding) = '';
- oid | conname
+ oid | conname 
 -----+---------
 (0 rows)
 
@@ -853,7 +853,7 @@ WHERE p.oid = c.conproc AND
      p.proargtypes[2] != 'cstring'::regtype OR
      p.proargtypes[3] != 'internal'::regtype OR
      p.proargtypes[4] != 'int4'::regtype);
- oid | proname | oid | conname
+ oid | proname | oid | conname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -871,7 +871,7 @@ FROM pg_conversion as p1
 WHERE condefault AND
     convert('ABC'::bytea, pg_encoding_to_char(conforencoding),
             pg_encoding_to_char(contoencoding)) != 'ABC';
- oid | conname
+ oid | conname 
 -----+---------
 (0 rows)
 
@@ -881,7 +881,7 @@ SELECT p1.oid, p1.oprname
 FROM pg_operator as p1
 WHERE (p1.oprkind != 'b' AND p1.oprkind != 'l' AND p1.oprkind != 'r') OR
     p1.oprresult = 0 OR p1.oprcode = 0;
- oid | oprname
+ oid | oprname 
 -----+---------
 (0 rows)
 
@@ -892,7 +892,7 @@ WHERE (p1.oprleft = 0 and p1.oprkind != 'l') OR
     (p1.oprleft != 0 and p1.oprkind = 'l') OR
     (p1.oprright = 0 and p1.oprkind != 'r') OR
     (p1.oprright != 0 and p1.oprkind = 'r');
- oid | oprname
+ oid | oprname 
 -----+---------
 (0 rows)
 
@@ -904,7 +904,7 @@ WHERE p1.oid != p2.oid AND
     p1.oprkind = p2.oprkind AND
     p1.oprleft = p2.oprleft AND
     p1.oprright = p2.oprright;
- oid | oprcode | oid | oprcode
+ oid | oprcode | oid | oprcode 
 -----+---------+-----+---------
 (0 rows)
 
@@ -920,7 +920,7 @@ WHERE p1.oprcom = p2.oid AND
      p1.oprright != p2.oprleft OR
      p1.oprresult != p2.oprresult OR
      p1.oid != p2.oprcom);
- oid | oprcode | oid | oprcode
+ oid | oprcode | oid | oprcode 
 -----+---------+-----+---------
 (0 rows)
 
@@ -941,7 +941,7 @@ WHERE p1.oprnegate = p2.oid AND
      p2.oprresult != 'bool'::regtype OR
      p1.oid != p2.oprnegate OR
      p1.oid = p2.oid);
- oid | oprcode | oid | oprcode
+ oid | oprcode | oid | oprcode 
 -----+---------+-----+---------
 (0 rows)
 
@@ -952,7 +952,7 @@ SELECT DISTINCT o1.oprname AS op1, o2.oprname AS op2
 FROM pg_operator o1, pg_operator o2
 WHERE o1.oprcom = o2.oid AND o1.oprname <= o2.oprname
 ORDER BY 1, 2;
- op1  | op2
+ op1  | op2  
 ------+------
  #    | #
  &    | &
@@ -991,7 +991,7 @@ SELECT DISTINCT o1.oprname AS op1, o2.oprname AS op2
 FROM pg_operator o1, pg_operator o2
 WHERE o1.oprnegate = o2.oid AND o1.oprname <= o2.oprname
 ORDER BY 1, 2;
- op1  | op2
+ op1  | op2  
 ------+------
  !~   | ~
  !~*  | ~*
@@ -1017,7 +1017,7 @@ ORDER BY 1, 2;
 SELECT p1.oid, p1.oprname FROM pg_operator AS p1
 WHERE (p1.oprcanmerge OR p1.oprcanhash) AND NOT
     (p1.oprkind = 'b' AND p1.oprresult = 'bool'::regtype AND p1.oprcom != 0);
- oid | oprname
+ oid | oprname 
 -----+---------
 (0 rows)
 
@@ -1027,7 +1027,7 @@ FROM pg_operator AS p1, pg_operator AS p2
 WHERE p1.oprcom = p2.oid AND
     (p1.oprcanmerge != p2.oprcanmerge OR
      p1.oprcanhash != p2.oprcanhash);
- oid | oprname | oid | oprname
+ oid | oprname | oid | oprname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -1039,7 +1039,7 @@ WHERE p1.oprcanmerge AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree') AND
          amopopr = p1.oid AND amopstrategy = 3);
- oid  | oprname
+ oid  | oprname 
 ------+---------
  7136 | =
  7148 | =
@@ -1052,7 +1052,7 @@ WHERE amopopr = p1.oid
   AND amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree')
   AND amopstrategy = 3
   AND NOT p1.oprcanmerge;
- oid | oprname | amopfamily
+ oid | oprname | amopfamily 
 -----+---------+------------
 (0 rows)
 
@@ -1063,7 +1063,7 @@ WHERE p1.oprcanhash AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'hash') AND
          amopopr = p1.oid AND amopstrategy = 1);
- oid  | oprname
+ oid  | oprname 
 ------+---------
  7136 | =
  7148 | =
@@ -1075,7 +1075,7 @@ FROM pg_operator AS p1, pg_amop p
 WHERE amopopr = p1.oid
   AND amopmethod = (SELECT oid FROM pg_am WHERE amname = 'hash')
   AND NOT p1.oprcanhash;
- oid | oprname | amopfamily
+ oid | oprname | amopfamily 
 -----+---------+------------
 (0 rows)
 
@@ -1089,7 +1089,7 @@ WHERE p1.oprcode = p2.oid AND
      OR NOT binary_coercible(p2.prorettype, p1.oprresult)
      OR NOT binary_coercible(p1.oprleft, p2.proargtypes[0])
      OR NOT binary_coercible(p1.oprright, p2.proargtypes[1]));
- oid | oprname | oid | proname
+ oid | oprname | oid | proname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -1101,7 +1101,7 @@ WHERE p1.oprcode = p2.oid AND
      OR NOT binary_coercible(p2.prorettype, p1.oprresult)
      OR NOT binary_coercible(p1.oprright, p2.proargtypes[0])
      OR p1.oprleft != 0);
- oid | oprname | oid | proname
+ oid | oprname | oid | proname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -1113,7 +1113,7 @@ WHERE p1.oprcode = p2.oid AND
      OR NOT binary_coercible(p2.prorettype, p1.oprresult)
      OR NOT binary_coercible(p1.oprleft, p2.proargtypes[0])
      OR p1.oprright != 0);
- oid | oprname | oid | proname
+ oid | oprname | oid | proname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -1124,7 +1124,7 @@ FROM pg_operator AS p1, pg_proc AS p2
 WHERE p1.oprcode = p2.oid AND
     (p1.oprcanmerge OR p1.oprcanhash) AND
     p2.provolatile = 'v';
- oid | oprname | oid | proname
+ oid | oprname | oid | proname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -1142,7 +1142,7 @@ WHERE p1.oprrest = p2.oid AND
      p2.proargtypes[1] != 'oid'::regtype OR
      p2.proargtypes[2] != 'internal'::regtype OR
      p2.proargtypes[3] != 'int4'::regtype);
- oid | oprname | oid | proname
+ oid | oprname | oid | proname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -1163,7 +1163,7 @@ WHERE p1.oprjoin = p2.oid AND
      p2.proargtypes[2] != 'internal'::regtype OR
      p2.proargtypes[3] != 'int2'::regtype OR
      p2.proargtypes[4] != 'internal'::regtype);
- oid | oprname | oid | proname
+ oid | oprname | oid | proname 
 -----+---------+-----+---------
 (0 rows)
 
@@ -1172,7 +1172,7 @@ SELECT p1.oid, p1.oprname
 FROM pg_operator as p1 LEFT JOIN pg_description as d
      ON p1.tableoid = d.classoid and p1.oid = d.objoid and d.objsubid = 0
 WHERE d.classoid IS NULL AND p1.oid <= 9999;
- oid | oprname
+ oid | oprname 
 -----+---------
 (0 rows)
 
@@ -1196,7 +1196,7 @@ SELECT * FROM funcdescs
   WHERE prodesc IS DISTINCT FROM expecteddesc
     AND oprdesc NOT LIKE 'deprecated%'
     AND prodesc IS DISTINCT FROM oprdesc;
- p_oid | proname | o_oid | prodesc | expecteddesc | oprdesc
+ p_oid | proname | o_oid | prodesc | expecteddesc | oprdesc 
 -------+---------+-------+---------+--------------+---------
 (0 rows)
 
@@ -1216,7 +1216,7 @@ SELECT p_oid, proname, prodesc FROM funcdescs
   WHERE prodesc IS DISTINCT FROM expecteddesc
     AND oprdesc NOT LIKE 'deprecated%'
 ORDER BY 1;
- p_oid |         proname         |                     prodesc
+ p_oid |         proname         |                     prodesc                     
 -------+-------------------------+-------------------------------------------------
    378 | array_append            | append element onto end of array
    379 | array_prepend           | prepend element onto front of array
@@ -1238,7 +1238,7 @@ WHERE aggfnoid = 0 OR aggtransfn = 0 OR
     aggnumdirectargs < 0 OR
     (aggkind = 'n' AND aggnumdirectargs > 0) OR
     aggtranstype = 0 OR aggtransspace < 0 OR aggmtransspace < 0;
- ctid | aggfnoid
+ ctid | aggfnoid 
 ------+----------
 (0 rows)
 
@@ -1247,7 +1247,7 @@ SELECT a.aggfnoid::oid, p.proname
 FROM pg_aggregate as a, pg_proc as p
 WHERE a.aggfnoid = p.oid AND
     (NOT p.proisagg OR p.proretset OR p.pronargs < a.aggnumdirectargs);
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1256,7 +1256,7 @@ SELECT oid, proname
 FROM pg_proc as p
 WHERE p.proisagg AND
     NOT EXISTS (SELECT 1 FROM pg_aggregate a WHERE a.aggfnoid = p.oid);
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -1265,7 +1265,7 @@ SELECT a.aggfnoid::oid, p.proname
 FROM pg_aggregate as a, pg_proc as p
 WHERE a.aggfnoid = p.oid AND
     a.aggfinalfn = 0 AND p.prorettype != a.aggtranstype;
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1290,7 +1290,7 @@ WHERE a.aggfnoid = p.oid AND
          NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
     );
- aggfnoid | proname | oid | proname
+ aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
 (0 rows)
 
@@ -1312,7 +1312,7 @@ WHERE a.aggfnoid = p.oid AND
          NOT binary_coercible(p.proargtypes[2], pfn.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
     );
- aggfnoid | proname | oid | proname
+ aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
 (0 rows)
 
@@ -1325,7 +1325,7 @@ WHERE a.aggfnoid = p.oid AND
     a.aggtransfn = ptr.oid AND ptr.proisstrict AND
     a.agginitval IS NULL AND
     NOT binary_coercible(p.proargtypes[0], a.aggtranstype);
- aggfnoid | proname | oid | proname
+ aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
 (0 rows)
 
@@ -1334,7 +1334,7 @@ SELECT ctid, aggfnoid::oid
 FROM pg_aggregate as p1
 WHERE aggmtranstype != 0 AND
     (aggmtransfn = 0 OR aggminvtransfn = 0);
- ctid | aggfnoid
+ ctid | aggfnoid 
 ------+----------
 (0 rows)
 
@@ -1343,7 +1343,7 @@ FROM pg_aggregate as p1
 WHERE aggmtranstype = 0 AND
     (aggmtransfn != 0 OR aggminvtransfn != 0 OR aggmfinalfn != 0 OR
      aggmtransspace != 0 OR aggminitval IS NOT NULL);
- ctid | aggfnoid
+ ctid | aggfnoid 
 ------+----------
 (0 rows)
 
@@ -1353,7 +1353,7 @@ FROM pg_aggregate as a, pg_proc as p
 WHERE a.aggfnoid = p.oid AND
     a.aggmtransfn != 0 AND
     a.aggmfinalfn = 0 AND p.prorettype != a.aggmtranstype;
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1376,7 +1376,7 @@ WHERE a.aggfnoid = p.oid AND
          NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
     );
- aggfnoid | proname | oid | proname
+ aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
 (0 rows)
 
@@ -1399,7 +1399,7 @@ WHERE a.aggfnoid = p.oid AND
          NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
     );
- aggfnoid | proname | oid | proname
+ aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
 (0 rows)
 
@@ -1421,7 +1421,7 @@ WHERE a.aggfnoid = p.oid AND
          NOT binary_coercible(p.proargtypes[2], pfn.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
     );
- aggfnoid | proname | oid | proname
+ aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
 (0 rows)
 
@@ -1434,7 +1434,7 @@ WHERE a.aggfnoid = p.oid AND
     a.aggmtransfn = ptr.oid AND ptr.proisstrict AND
     a.aggminitval IS NULL AND
     NOT binary_coercible(p.proargtypes[0], a.aggmtranstype);
- aggfnoid | proname | oid | proname
+ aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
 (0 rows)
 
@@ -1445,7 +1445,7 @@ WHERE a.aggfnoid = p.oid AND
     a.aggmtransfn = ptr.oid AND
     a.aggminvtransfn = iptr.oid AND
     ptr.proisstrict != iptr.proisstrict;
- aggfnoid | proname | oid | proname | oid | proname
+ aggfnoid | proname | oid | proname | oid | proname 
 ----------+---------+-----+---------+-----+---------
 (0 rows)
 
@@ -1460,7 +1460,7 @@ WHERE a.aggcombinefn = p.oid AND
      p.prorettype != p.proargtypes[0] OR
      p.prorettype != p.proargtypes[1] OR
      NOT physically_coercible(a.aggtranstype, p.proargtypes[0]));
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1469,7 +1469,7 @@ SELECT a.aggfnoid, p.proname
 FROM pg_aggregate as a, pg_proc as p
 WHERE a.aggcombinefn = p.oid AND
     a.aggtranstype = 'internal'::regtype AND p.proisstrict;
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1481,7 +1481,7 @@ FROM pg_aggregate
 WHERE (aggserialfn != 0 OR aggdeserialfn != 0)
   AND (aggtranstype != 'internal'::regtype OR aggcombinefn = 0 OR
        aggserialfn = 0 OR aggdeserialfn = 0);
- aggfnoid | aggtranstype | aggserialfn | aggdeserialfn
+ aggfnoid | aggtranstype | aggserialfn | aggdeserialfn 
 ----------+--------------+-------------+---------------
 (0 rows)
 
@@ -1494,7 +1494,7 @@ WHERE a.aggserialfn = p.oid AND
     (p.prorettype != 'bytea'::regtype OR p.pronargs != 1 OR
      p.proargtypes[0] != 'internal'::regtype OR
      NOT p.proisstrict);
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1508,7 +1508,7 @@ WHERE a.aggdeserialfn = p.oid AND
      p.proargtypes[0] != 'bytea'::regtype OR
      p.proargtypes[1] != 'internal'::regtype OR
      NOT p.proisstrict);
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1523,7 +1523,7 @@ WHERE
     a.aggfnoid < b.aggfnoid AND a.aggtransfn = b.aggtransfn AND
     (a.aggcombinefn != b.aggcombinefn OR a.aggserialfn != b.aggserialfn
      OR a.aggdeserialfn != b.aggdeserialfn);
- aggfnoid | aggcombinefn | aggserialfn | aggdeserialfn | aggfnoid | aggcombinefn | aggserialfn | aggdeserialfn
+ aggfnoid | aggcombinefn | aggserialfn | aggdeserialfn | aggfnoid | aggcombinefn | aggserialfn | aggdeserialfn 
 ----------+--------------+-------------+---------------+----------+--------------+-------------+---------------
 (0 rows)
 
@@ -1533,7 +1533,7 @@ SELECT DISTINCT proname, oprname
 FROM pg_operator AS o, pg_aggregate AS a, pg_proc AS p
 WHERE a.aggfnoid = p.oid AND a.aggsortop = o.oid
 ORDER BY 1, 2;
- proname  | oprname
+ proname  | oprname 
 ----------+---------
  bool_and | <
  bool_or  | >
@@ -1548,7 +1548,7 @@ FROM pg_operator AS o, pg_aggregate AS a, pg_proc AS p
 WHERE a.aggfnoid = p.oid AND a.aggsortop = o.oid AND
     (oprkind != 'b' OR oprresult != 'boolean'::regtype
      OR oprleft != p.proargtypes[0] OR oprright != p.proargtypes[0]);
- aggfnoid | oid
+ aggfnoid | oid 
 ----------+-----
 (0 rows)
 
@@ -1561,7 +1561,7 @@ WHERE a.aggfnoid = p.oid AND a.aggsortop = o.oid AND
                      AND amopopr = o.oid
                      AND amoplefttype = o.oprleft
                      AND amoprighttype = o.oprright);
- aggfnoid | oid
+ aggfnoid | oid 
 ----------+-----
 (0 rows)
 
@@ -1573,7 +1573,7 @@ WHERE a.aggfnoid = p.oid AND a.aggsortop = o.oid AND
     amopopr = o.oid AND
     amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree')
 ORDER BY 1, 2;
- proname  | oprname | amopstrategy
+ proname  | oprname | amopstrategy 
 ----------+---------+--------------
  bool_and | <       |            1
  bool_or  | >       |            5
@@ -1596,7 +1596,7 @@ WHERE p1.oid < p2.oid AND p1.proname = p2.proname AND
     p1.proisagg AND p2.proisagg AND
     array_dims(p1.proargtypes) != array_dims(p2.proargtypes)
 ORDER BY 1;
-     oid      |   oid
+     oid      |   oid   
 --------------+---------
  count("any") | count()
 (1 row)
@@ -1605,7 +1605,7 @@ ORDER BY 1;
 SELECT oid, proname
 FROM pg_proc AS p
 WHERE proisagg AND proargdefaults IS NOT NULL;
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -1615,7 +1615,7 @@ WHERE proisagg AND proargdefaults IS NOT NULL;
 SELECT p.oid, proname
 FROM pg_proc AS p JOIN pg_aggregate AS a ON a.aggfnoid = p.oid
 WHERE proisagg AND provariadic != 0 AND a.aggkind = 'n';
- oid | proname
+ oid | proname 
 -----+---------
 (0 rows)
 
@@ -1624,7 +1624,7 @@ WHERE proisagg AND provariadic != 0 AND a.aggkind = 'n';
 SELECT p1.oid
 FROM pg_opfamily as p1
 WHERE p1.opfmethod = 0 OR p1.opfnamespace = 0;
- oid
+ oid 
 -----
 (0 rows)
 
@@ -1634,7 +1634,7 @@ SELECT p1.oid
 FROM pg_opclass AS p1
 WHERE p1.opcmethod = 0 OR p1.opcnamespace = 0 OR p1.opcfamily = 0
     OR p1.opcintype = 0;
- oid
+ oid 
 -----
 (0 rows)
 
@@ -1642,7 +1642,7 @@ WHERE p1.opcmethod = 0 OR p1.opcnamespace = 0 OR p1.opcfamily = 0
 SELECT p1.oid, p2.oid
 FROM pg_opclass AS p1, pg_opfamily AS p2
 WHERE p1.opcfamily = p2.oid AND p1.opcmethod != p2.opfmethod;
- oid | oid
+ oid | oid 
 -----+-----
 (0 rows)
 
@@ -1653,14 +1653,14 @@ FROM pg_opclass AS p1, pg_opclass AS p2
 WHERE p1.oid != p2.oid AND
     p1.opcmethod = p2.opcmethod AND p1.opcintype = p2.opcintype AND
     p1.opcdefault AND p2.opcdefault;
- oid | oid
+ oid | oid 
 -----+-----
 (0 rows)
 
 -- Ask access methods to validate opclasses
 -- (this replaces a lot of SQL-level checks that used to be done in this file)
 SELECT oid, opcname FROM pg_opclass WHERE NOT amvalidate(oid);
- oid | opcname
+ oid | opcname 
 -----+---------
 (0 rows)
 
@@ -1669,7 +1669,7 @@ SELECT oid, opcname FROM pg_opclass WHERE NOT amvalidate(oid);
 SELECT p1.oid, p1.amname
 FROM pg_am AS p1
 WHERE p1.amhandler = 0;
- oid | amname
+ oid | amname 
 -----+--------
 (0 rows)
 
@@ -1680,7 +1680,7 @@ WHERE p2.oid = p1.amhandler AND
     (p2.prorettype != 'index_am_handler'::regtype OR p2.proretset
      OR p2.pronargs != 1
      OR p2.proargtypes[0] != 'internal'::regtype);
- oid | amname | oid | proname
+ oid | amname | oid | proname 
 -----+--------+-----+---------
 (0 rows)
 
@@ -1690,7 +1690,7 @@ SELECT p1.amopfamily, p1.amopstrategy
 FROM pg_amop as p1
 WHERE p1.amopfamily = 0 OR p1.amoplefttype = 0 OR p1.amoprighttype = 0
     OR p1.amopopr = 0 OR p1.amopmethod = 0 OR p1.amopstrategy < 1;
- amopfamily | amopstrategy
+ amopfamily | amopstrategy 
 ------------+--------------
 (0 rows)
 
@@ -1698,7 +1698,7 @@ SELECT p1.amopfamily, p1.amopstrategy
 FROM pg_amop as p1
 WHERE NOT ((p1.amoppurpose = 's' AND p1.amopsortfamily = 0) OR
            (p1.amoppurpose = 'o' AND p1.amopsortfamily <> 0));
- amopfamily | amopstrategy
+ amopfamily | amopstrategy 
 ------------+--------------
 (0 rows)
 
@@ -1706,7 +1706,7 @@ WHERE NOT ((p1.amoppurpose = 's' AND p1.amopsortfamily = 0) OR
 SELECT p1.oid, p2.oid
 FROM pg_amop AS p1, pg_opfamily AS p2
 WHERE p1.amopfamily = p2.oid AND p1.amopmethod != p2.opfmethod;
- oid | oid
+ oid | oid 
 -----+-----
 (0 rows)
 
@@ -1717,7 +1717,7 @@ WHERE p1.amopfamily = p2.oid AND p1.amopmethod != p2.opfmethod;
 SELECT DISTINCT amopmethod, amopstrategy, oprname
 FROM pg_amop p1 LEFT JOIN pg_operator p2 ON amopopr = p2.oid
 ORDER BY 1, 2, 3;
- amopmethod | amopstrategy | oprname
+ amopmethod | amopstrategy | oprname 
 ------------+--------------+---------
         403 |            1 | *<
         403 |            1 | <
@@ -1845,7 +1845,7 @@ SELECT p1.amopfamily, p1.amopopr, p2.oid, p2.oprname
 FROM pg_amop AS p1, pg_operator AS p2
 WHERE p1.amopopr = p2.oid AND p1.amoppurpose = 's' AND
     (p2.oprrest = 0 OR p2.oprjoin = 0);
- amopfamily | amopopr | oid | oprname
+ amopfamily | amopopr | oid | oprname 
 ------------+---------+-----+---------
 (0 rows)
 
@@ -1856,7 +1856,7 @@ FROM pg_opclass AS p1
 WHERE NOT EXISTS(SELECT 1 FROM pg_amop AS p2
                  WHERE p2.amopfamily = p1.opcfamily
                    AND binary_coercible(p1.opcintype, p2.amoplefttype));
- opcname | opcfamily
+ opcname | opcfamily 
 ---------+-----------
 (0 rows)
 
@@ -1871,7 +1871,7 @@ FROM pg_amop AS p1
 WHERE NOT EXISTS(SELECT 1 FROM pg_opclass AS p2
                  WHERE p2.opcfamily = p1.amopfamily
                    AND binary_coercible(p2.opcintype, p1.amoplefttype));
- amopfamily | amopstrategy | amopopr
+ amopfamily | amopstrategy | amopopr 
 ------------+--------------+---------
 (0 rows)
 
@@ -1884,7 +1884,7 @@ FROM pg_amop AS p1, pg_operator AS p2, pg_proc AS p3
 WHERE p1.amopopr = p2.oid AND p2.oprcode = p3.oid AND
     p1.amoplefttype = p1.amoprighttype AND
     p3.provolatile != 'i';
- amopfamily | amopopr | oprname | prosrc
+ amopfamily | amopopr | oprname | prosrc 
 ------------+---------+---------+--------
 (0 rows)
 
@@ -1893,7 +1893,7 @@ FROM pg_amop AS p1, pg_operator AS p2, pg_proc AS p3
 WHERE p1.amopopr = p2.oid AND p2.oprcode = p3.oid AND
     p1.amoplefttype != p1.amoprighttype AND
     p3.provolatile = 'v';
- amopfamily | amopopr | oprname | prosrc
+ amopfamily | amopopr | oprname | prosrc 
 ------------+---------+---------+--------
 (0 rows)
 
@@ -1903,7 +1903,7 @@ SELECT p1.amprocfamily, p1.amprocnum
 FROM pg_amproc as p1
 WHERE p1.amprocfamily = 0 OR p1.amproclefttype = 0 OR p1.amprocrighttype = 0
     OR p1.amprocnum < 1 OR p1.amproc = 0;
- amprocfamily | amprocnum
+ amprocfamily | amprocnum 
 --------------+-----------
 (0 rows)
 
@@ -1916,7 +1916,7 @@ FROM pg_amproc AS p1, pg_proc AS p2
 WHERE p1.amproc = p2.oid AND
     p1.amproclefttype = p1.amprocrighttype AND
     p2.provolatile != 'i';
- amprocfamily | amproc | prosrc
+ amprocfamily | amproc | prosrc 
 --------------+--------+--------
 (0 rows)
 
@@ -1925,7 +1925,7 @@ FROM pg_amproc AS p1, pg_proc AS p2
 WHERE p1.amproc = p2.oid AND
     p1.amproclefttype != p1.amprocrighttype AND
     p2.provolatile = 'v';
- amprocfamily | amproc | prosrc
+ amprocfamily | amproc | prosrc 
 --------------+--------+--------
 (0 rows)
 
@@ -1935,7 +1935,7 @@ SELECT p1.indexrelid, p1.indrelid
 FROM pg_index as p1
 WHERE p1.indexrelid = 0 OR p1.indrelid = 0 OR
       p1.indnatts <= 0 OR p1.indnatts > 32;
- indexrelid | indrelid
+ indexrelid | indrelid 
 ------------+----------
 (0 rows)
 
@@ -1946,7 +1946,7 @@ WHERE array_lower(indkey, 1) != 0 OR array_upper(indkey, 1) != indnatts-1 OR
     array_lower(indclass, 1) != 0 OR array_upper(indclass, 1) != indnatts-1 OR
     array_lower(indcollation, 1) != 0 OR array_upper(indcollation, 1) != indnatts-1 OR
     array_lower(indoption, 1) != 0 OR array_upper(indoption, 1) != indnatts-1;
- indexrelid | indrelid
+ indexrelid | indrelid 
 ------------+----------
 (0 rows)
 
@@ -1960,7 +1960,7 @@ FROM (SELECT indexrelid, indrelid, unnest(indkey) as ikey,
       pg_opclass opc
 WHERE a.attrelid = indrelid AND a.attnum = ikey AND opc.oid = iclass AND
       (NOT binary_coercible(atttypid, opcintype) OR icoll != attcollation);
- indexrelid | indrelid | attname | atttypid | opcname
+ indexrelid | indrelid | attname | atttypid | opcname 
 ------------+----------+---------+----------+---------
 (0 rows)
 
@@ -1977,7 +1977,7 @@ FROM (SELECT indexrelid, indrelid, unnest(indkey) as ikey,
 WHERE a.attrelid = indrelid AND a.attnum = ikey AND opc.oid = iclass AND
       (opcintype != atttypid OR icoll != attcollation)
 ORDER BY 1;
-        indexrelid        |   indrelid   | attname  | atttypid | opcname
+        indexrelid        |   indrelid   | attname  | atttypid | opcname 
 --------------------------+--------------+----------+----------+---------
  pg_aggregate_fnoid_index | pg_aggregate | aggfnoid | regproc  | oid_ops
 (1 row)
@@ -1998,7 +1998,7 @@ WHERE icoll != 0 AND iclass !=
     (SELECT oid FROM pg_opclass
      WHERE opcname = 'text_pattern_ops' AND opcmethod =
            (SELECT oid FROM pg_am WHERE amname = 'btree'));
- indexrelid | indrelid | iclass | icoll
+ indexrelid | indrelid | iclass | icoll 
 ------------+----------+--------+-------
 (0 rows)
 

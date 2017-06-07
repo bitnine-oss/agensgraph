@@ -2031,7 +2031,6 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 		{
 			Node	   *edgeref;
 			ResTarget  *path;
-			Node	   *relid;
 
 			if (IsA(from, RangeSubselect))
 				edgeref = makeColumnRef(genQualifiedName(NULL,
@@ -2287,7 +2286,7 @@ genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg)
 	A_Const        *trueconst;
 	TypeCast       *truecond;
 	A_Indices  	   *indices;
-	int				minHops = 1;
+	int				minHops;
 	int				maxHops = -1;
 	JoinExpr	   *n;
 
@@ -2302,25 +2301,9 @@ genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg)
 	truecond->location = -1;
 
 	indices = (A_Indices *) crel->varlen;
+	minHops = ((A_Const *) indices->lidx)->val.val.ival;
 	if (indices->uidx != NULL)
-	{
-		A_Const	*uidx;
-		uidx = (A_Const *) indices->uidx;
-		maxHops = uidx->val.val.ival;
-	}
-	if (indices->lidx != NULL)
-	{
-		A_Const *lidx;
-		lidx = (A_Const *) indices->lidx;
-		minHops = lidx->val.val.ival;
-	}
-	else
-	{
-		if (maxHops == 0)
-		{
-			minHops = 0;
-		}
-	}
+		maxHops = ((A_Const *) indices->uidx)->val.val.ival;
 
 	n = makeNode(JoinExpr);
 	n->jointype = JOIN_VLE;
@@ -2385,76 +2368,6 @@ genInhEdge(RangeVar *r, Oid parentoid)
 	sel = makeNode(SelectStmt);
 	sel->targetList = list_make4(start, end, tableoid, ctid);
 	sel->targetList = lappend(sel->targetList, eref);
-	sel->targetList = lappend(sel->targetList, prop_map);
-	sel->fromClause = list_make1(r);
-	lsel = sel;
-
-	children = find_inheritance_children(parentoid, AccessShareLock);
-	foreach(el, children)
-	{
-		Oid childoid = lfirst_oid(el);
-		Relation childrel;
-		RangeVar *childrv;
-		SelectStmt *rsel;
-		SelectStmt *u;
-
-		childrel = heap_open(childoid, AccessShareLock);
-
-		childrv = makeRangeVar(get_graph_path(true),
-							   RelationGetRelationName(childrel),
-							   -1);
-		childrv->inhOpt = INH_YES;
-
-		heap_close(childrel, AccessShareLock);
-
-		rsel = copyObject(sel);
-		rsel->fromClause = list_delete_first(rsel->fromClause);
-		rsel->fromClause = list_make1(childrv);
-
-		u = makeNode(SelectStmt);
-		u->op = SETOP_UNION;
-		u->all = true;
-		u->larg = lsel;
-		u->rarg = rsel;
-
-		lsel = u;
-	}
-
-	sub = makeNode(RangeSubselect);
-	sub->subquery = (Node *) lsel;
-
-	return sub;
-}
-
-static RangeSubselect *
-genInhEdge(RangeVar *r, Oid parentoid)
-{
-	ResTarget  *start;
-	ResTarget  *end;
-	ResTarget  *tableoid;
-	ResTarget  *ctid;
-	Node	   *pathid;
-	Node	   *edgeref;
-	ResTarget  *id;
-	ResTarget  *prop_map;
-	SelectStmt *sel;
-	SelectStmt *lsel;
-	List	   *children;
-	ListCell   *el;
-	RangeSubselect *sub;
-
-	start = makeSimpleResTarget(AG_START_ID, NULL);
-	end = makeSimpleResTarget(AG_END_ID, NULL);
-	tableoid = makeSimpleResTarget("tableoid", NULL);
-	ctid = makeSimpleResTarget("ctid", NULL);
-	pathid = make_A_Const(0); /* dummy path id */
-	edgeref = makeEdgeRef(pathid, makeColumnRef(genQualifiedName(NULL, "ctid")));
-	id = makeResTarget(edgeref, "pathid");
-	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
-
-	sel = makeNode(SelectStmt);
-	sel->targetList = list_make4(start, end, tableoid, ctid);
-	sel->targetList = lappend(sel->targetList, id);
 	sel->targetList = lappend(sel->targetList, prop_map);
 	sel->fromClause = list_make1(r);
 	lsel = sel;
@@ -5411,17 +5324,6 @@ makeDummyEdgeRef(Node *ctid)
 	relid->val.type = T_Integer;
 	relid->val.val.ival = 0;
 	relid->location = -1;
-
-	edgeref = makeFuncCall(list_make1(makeString("edgeref")),
-						   list_make2(relid, ctid), -1);
-
-	return (Node *) edgeref;
-}
-
-static Node *
-makeEdgeRef(Node *relid, Node *ctid)
-{
-	FuncCall *edgeref;
 
 	edgeref = makeFuncCall(list_make1(makeString("edgeref")),
 						   list_make2(relid, ctid), -1);
