@@ -494,6 +494,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	{
 		flags = 0;
 	}
+
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
 													 flags);
@@ -1962,7 +1963,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 	if (isZeroLengthVLE(crel))
 	{
 		TypeCast   *rowids;
-		List	   *values;
+		List 	   *values;
 
 		Assert(vid != NULL);
 
@@ -2011,7 +2012,6 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 
 		start = makeSimpleResTarget(start_name, NULL);
 		end = makeSimpleResTarget(end_name, NULL);
-
 		tableoid = makeColumnRef(genQualifiedName(NULL, "tableoid"));
 		ctid = makeColumnRef(genQualifiedName(NULL, "ctid"));
 		row = makeRowExpr(list_make2(tableoid, ctid));
@@ -2023,7 +2023,6 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 		cast->typeName = makeTypeName("_record");
 		cast->location = -1;
 		rowids = makeResTarget((Node *) cast, VLE_COLNAME_ROWIDS);
-
 		tlist = list_make3(start, end, rowids);
 
 		from = genEdgeNode(pstate, crel, "l");
@@ -2047,7 +2046,6 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 			cast->typeName = makeTypeName("_edgeref");
 			cast->location = -1;
 			path = makeResTarget((Node *) cast, VLE_COLNAME_PATH);
-
 			tlist = lappend(tlist, path);
 		}
 
@@ -2176,9 +2174,9 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 static Node *
 genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
 {
-	char	   *typname;
-	Alias	   *alias;
-	Node	   *edge;
+	char	*typname;
+	Alias	*alias;
+	Node 	*edge;
 
 	getCypherRelType(crel, &typname, NULL);
 	alias = makeAliasNoDup(aliasname, NIL);
@@ -2186,7 +2184,6 @@ genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
 		RangeSubselect *sub;
-
 		sub = genEdgeUnionVLE(typname);
 		sub->alias = alias;
 		edge = (Node *) sub;
@@ -2286,12 +2283,12 @@ genEdgeUnionVLE(char *edge_label)
 static Node *
 genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg)
 {
-	A_Const	   *trueconst;
-	TypeCast   *truecond;
-	A_Indices  *indices;
-	int			minHops;
-	int			maxHops = -1;
-	JoinExpr   *n;
+	A_Const        *trueconst;
+	TypeCast       *truecond;
+	A_Indices  	   *indices;
+	int				minHops;
+	int				maxHops = -1;
+	JoinExpr	   *n;
 
 	trueconst = makeNode(A_Const);
 	trueconst->val.type = T_String;
