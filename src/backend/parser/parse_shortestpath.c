@@ -50,7 +50,7 @@ static SelectStmt *makeSelectWith(CypherPath *cpath, WithClause *with,
 								  bool isexpr);
 static RangeSubselect *makeSubselectCTE(CypherPath *cpath);
 static Node *makeVerticesSubLink(void);
-static Node *makeEdgesSubLink(CypherPath *cpath);
+static Node *makeEdgesSubLink(CypherPath *cpath, bool is_dijkstra);
 static void getCypherRelType(CypherRel *crel, char **typname, int *typloc);
 static Node *makeVertexIdExpr(Node *vertex);
 
@@ -545,7 +545,7 @@ makeSelectWith(CypherPath *cpath, WithClause *with, bool isexpr)
 	sel->withClause = with;
 
 	vertices = makeVerticesSubLink();
-	edges = makeEdgesSubLink(cpath);
+	edges = makeEdgesSubLink(cpath, false);
 	empty_edges = makeAArrayExpr(NIL, "_edge");
 	coalesced = makeNode(CoalesceExpr);
 	coalesced->args = list_make2(edges, empty_edges);
@@ -706,13 +706,15 @@ makeVerticesSubLink(void)
  *     (
  *       SELECT (id, start, "end", properties)::vertex
  *       FROM `get_graph_path()`.`typname`
- *       WHERE id = eid
+ *       WHERE tableoid = rowid_tableoid(eid)   // shortestpath()
+ *         AND ctid = rowid_ctid(eid)
+ *       WHERE id = eid							// dijkstra()
  *     )
  *   )
  * FROM unnest(eids) AS eid
  */
 static Node *
-makeEdgesSubLink(CypherPath *cpath)
+makeEdgesSubLink(CypherPath *cpath, bool is_dijkstra)
 {
 	Node	   *id;
 	SelectStmt *selsub;
@@ -720,9 +722,6 @@ makeEdgesSubLink(CypherPath *cpath)
 	CypherRel  *crel;
 	char	   *typname;
 	RangeVar   *e;
-	Node	   *tableoid;
-	Node	   *ctid;
-	FuncCall   *getid;
 	A_Expr	   *qual;
 	List	   *where_args = NIL;
 	Node	   *edges;
@@ -752,17 +751,31 @@ makeEdgesSubLink(CypherPath *cpath)
 	e->inhOpt = INH_YES;
 	selsub->fromClause = list_make1(e);
 
-	tableoid = makeColumnRef1("tableoid");
-	getid = makeFuncCall(list_make1(makeString("rowid_tableoid")),
-						 list_make1(makeColumnRef1("eid")), -1);
-	qual = makeSimpleA_Expr(AEXPR_OP, "=", tableoid, (Node *) getid, -1);
-	where_args = list_make1(qual);
-	ctid = makeColumnRef1("ctid");
-	getid = makeFuncCall(list_make1(makeString("rowid_ctid")),
-						 list_make1(makeColumnRef1("eid")), -1);
+	if (is_dijkstra)
+	{
+		qual = makeSimpleA_Expr(AEXPR_OP, "=", copyObject(id),
+								makeColumnRef1("eid"), -1);
+		where_args = list_make1(qual);
+	}
+	else
+	{
+		Node	   *tableoid;
+		Node	   *ctid;
+		FuncCall   *getid;
 
-	qual = makeSimpleA_Expr(AEXPR_OP, "=", ctid, (Node *) getid, -1);
-	where_args = lappend(where_args, qual);
+		tableoid = makeColumnRef1("tableoid");
+		getid = makeFuncCall(list_make1(makeString("rowid_tableoid")),
+							 list_make1(makeColumnRef1("eid")), -1);
+		qual = makeSimpleA_Expr(AEXPR_OP, "=", tableoid, (Node *) getid, -1);
+		where_args = list_make1(qual);
+		ctid = makeColumnRef1("ctid");
+		getid = makeFuncCall(list_make1(makeString("rowid_ctid")),
+							 list_make1(makeColumnRef1("eid")), -1);
+
+		qual = makeSimpleA_Expr(AEXPR_OP, "=", ctid, (Node *) getid, -1);
+		where_args = lappend(where_args, qual);
+	}
+
 	selsub->whereClause = (Node *) makeBoolExpr(AND_EXPR, where_args, -1);
 
 	edges = makeSubLink(selsub);
@@ -1047,8 +1060,7 @@ checkRelFormatForDijkstra(ParseState *pstate, CypherRel *crel)
  * FROM
  *   (SELECT dijkstra_vids() as vids,
  *   		 dijkstra_eids() as eids,
- *   		 weight,
- *   		 "end", id -> dummy columns used in DIJKSTRA
+ *   		 weight
  *      FROM `graph_path`.edge_label
  *     WHERE start = id(source)
  *       AND qual
@@ -1076,7 +1088,7 @@ makeDijkstraQuery(ParseState *pstate, CypherPath *cpath, bool is_expr)
 	addRTEtoJoinlist(pstate, rte, true);
 
 	vertices = makeVerticesSubLink();
-	edges = makeEdgesSubLink(cpath);
+	edges = makeEdgesSubLink(cpath, true);
 	empty_edges = makeAArrayExpr(NIL, "_edge");
 	coalesced = makeNode(CoalesceExpr);
 	coalesced->args = list_make2(edges, empty_edges);
