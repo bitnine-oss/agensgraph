@@ -121,9 +121,9 @@ static RangeTblEntry *transformMatchOptional(ParseState *pstate,
 											 CypherClause *clause);
 /* MATCH - preprocessing */
 static bool hasPropConstr(List *pattern);
-static List *getShortestPaths(List *pattern);
-static void appendShortestPathsResult(ParseState *pstate, List *splist,
-									  List **targetList);
+static List *getFindPaths(List *pattern);
+static void appendFindPathResult(ParseState *pstate, List *find_paths,
+								 List **targetList);
 static void collectNodeInfo(ParseState *pstate, List *pattern);
 static void addNodeInfo(ParseState *pstate, CypherNode *cnode);
 static NodeInfo *getNodeInfo(ParseState *pstate, char *varname);
@@ -304,7 +304,6 @@ static Node *qualAndExpr(Node *qual, Node *expr);
 /* parse node */
 static ResTarget *makeSimpleResTarget(char *field, char *name);
 static ResTarget *makeResTarget(Node *val, char *name);
-static RowExpr *makeRowExpr(List *args);
 static Node *makeColumnRef(List *fields);
 static Node *makeDummyEdgeRef(Node *ctid);
 static bool IsNullAConst(Node *arg);
@@ -320,10 +319,15 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	Query *qry;
 	RangeTblEntry *rte;
 
-	if (subpat->kind == CSP_SHORTESTPATH)
+	if (subpat->kind == CSP_FINDPATH)
 	{
+		CypherPath *cp;
 		Assert(list_length(subpat->pattern) == 1);
-		return transformShortestPath(pstate, linitial(subpat->pattern));
+		cp = linitial(subpat->pattern);
+		if (cp->kind == CPATH_DIJKSTRA)
+			return transformDijkstra(pstate, cp);
+		else
+			return transformShortestPath(pstate, cp);
 	}
 
 	match = makeNode(CypherMatchClause);
@@ -494,6 +498,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	{
 		flags = 0;
 	}
+
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
 													 flags);
@@ -560,16 +565,16 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 		}
 		else
 		{
-			List *splist = NIL;
+			List *find_paths = NIL;
 
-			splist = getShortestPaths(detail->pattern);
-			if (!pstate->p_is_sp_processed && splist != NULL)
+			find_paths = getFindPaths(detail->pattern);
+			if (!pstate->p_is_sp_processed && find_paths != NULL)
 			{
 				pstate->p_is_sp_processed = true;
 				rte = transformClause(pstate, (Node *) clause);
 
 				qry->targetList = makeTargetListFromRTE(pstate, rte);
-				appendShortestPathsResult(pstate, splist, &qry->targetList);
+				appendFindPathResult(pstate, find_paths, &qry->targetList);
 			}
 			else
 			{
@@ -961,9 +966,9 @@ hasPropConstr(List *pattern)
 }
 
 static List *
-getShortestPaths(List *pattern)
+getFindPaths(List *pattern)
 {
-	List	   *splist = NIL;
+	List	   *find_paths = NIL;
 	ListCell   *lp;
 
 	foreach(lp, pattern)
@@ -971,18 +976,18 @@ getShortestPaths(List *pattern)
 		CypherPath *p = lfirst(lp);
 
 		if (p->kind != CPATH_NORMAL)
-			splist = lappend(splist, p);
+			find_paths = lappend(find_paths, p);
 	}
 
-	return splist;
+	return find_paths;
 }
 
 static void
-appendShortestPathsResult(ParseState *pstate, List *splist, List **targetList)
+appendFindPathResult(ParseState *pstate, List *find_paths, List **targetList)
 {
 	ListCell *le;
 
-	foreach(le, splist)
+	foreach(le, find_paths)
 	{
 		CypherPath *p = lfirst(le);
 		char	   *pathname = getCypherName(p->variable);
@@ -997,7 +1002,10 @@ appendShortestPathsResult(ParseState *pstate, List *splist, List **targetList)
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("a variable name of path must be provided")));
 
-		sp = transformShortestPathInMatch(pstate, p);
+		if (p->kind == CPATH_DIJKSTRA)
+			sp = transformDijkstraInMatch(pstate, p);
+		else
+			sp = transformShortestPathInMatch(pstate, p);
 
 		alias = makeAliasOptUnique(NULL);
 		rte = addRangeTableEntryForSubquery(pstate, sp, alias, true, true);
@@ -1007,8 +1015,17 @@ appendShortestPathsResult(ParseState *pstate, List *splist, List **targetList)
 							 (AttrNumber) pstate->p_next_resno++,
 							 pathname,
 							 false);
-
 		*targetList = lappend(*targetList, te);
+
+		if (p->weight_variable)
+		{
+			pathname = getCypherName(p->weight_variable);
+			te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, pathname),
+								 (AttrNumber) pstate->p_next_resno++,
+								 pathname,
+								 false);
+			*targetList = lappend(*targetList, te);
+		}
 	}
 }
 
@@ -1841,15 +1858,15 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList)
  * SELECT l.start, l.end, l.rowids, l.path
  * FROM (
  *     SELECT l.start, l.end,
- *            ARRAY[ROW(l.tableoid, l.ctid)] AS rowids,
- *            ARRAY[l.eref] AS path
+ *            ARRAY[rowid(l.tableoid, l.ctid)] AS rowids,
+ *            ARRAY[l.id] AS path
  *     FROM edge AS l
  *     WHERE l.start = outer_vid AND l.properties @> ...)
  *   VLE JOIN
  *     LATERAL (
  *     SELECT r.end,
- *            ROW(r.tableoid, r.ctid) AS rowid,
- *            r.eref
+ *            rowid(r.tableoid, r.ctid) AS rowid,
+ *            r.id
  *     FROM edge AS r
  *     WHERE  r.start = l.end AND r.properties @> ...)
  *   ON TRUE
@@ -1962,7 +1979,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 	if (isZeroLengthVLE(crel))
 	{
 		TypeCast   *rowids;
-		List	   *values;
+		List 	   *values;
 
 		Assert(vid != NULL);
 
@@ -1970,7 +1987,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 		rowidarr->location = -1;
 		rowids = makeNode(TypeCast);
 		rowids->arg = (Node *) rowidarr;
-		rowids->typeName = makeTypeName("_record");
+		rowids->typeName = makeTypeName("_rowid");
 		rowids->location = -1;
 
 		values = list_make3(vid, vid, rowids);
@@ -1998,32 +2015,31 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 	}
 	else
 	{
-		ResTarget  *start;
-		ResTarget  *end;
-		Node	   *tableoid;
-		Node	   *ctid;
-		RowExpr	   *row;
-		TypeCast   *cast;
-		ResTarget  *rowids;
-		List	   *tlist = NIL;
-		Node	   *from;
-		List	   *where_args = NIL;
+		ResTarget  	   *start;
+		ResTarget  	   *end;
+		Node	  	   *tableoid;
+		Node	  	   *ctid;
+		FuncCall	   *rowid;
+		TypeCast	   *cast;
+		ResTarget	   *rowids;
+		List		   *tlist = NIL;
+		Node 		   *from;
+		List 		   *where_args = NIL;
 
 		start = makeSimpleResTarget(start_name, NULL);
 		end = makeSimpleResTarget(end_name, NULL);
-
 		tableoid = makeColumnRef(genQualifiedName(NULL, "tableoid"));
 		ctid = makeColumnRef(genQualifiedName(NULL, "ctid"));
-		row = makeRowExpr(list_make2(tableoid, ctid));
+		rowid = makeFuncCall(list_make1(makeString("rowid")),
+							 list_make2(tableoid, ctid), -1);
 		rowidarr = makeNode(A_ArrayExpr);
-		rowidarr->elements = list_make1(row);
+		rowidarr->elements = list_make1(rowid);
 		rowidarr->location = -1;
 		cast = makeNode(TypeCast);
 		cast->arg = (Node *) rowidarr;
-		cast->typeName = makeTypeName("_record");
+		cast->typeName = makeTypeName("_rowid");
 		cast->location = -1;
 		rowids = makeResTarget((Node *) cast, VLE_COLNAME_ROWIDS);
-
 		tlist = list_make3(start, end, rowids);
 
 		from = genEdgeNode(pstate, crel, "l");
@@ -2047,7 +2063,6 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 			cast->typeName = makeTypeName("_edgeref");
 			cast->location = -1;
 			path = makeResTarget((Node *) cast, VLE_COLNAME_PATH);
-
 			tlist = lappend(tlist, path);
 		}
 
@@ -2099,8 +2114,7 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 	A_Expr	   *joinqual;
 	Node	   *tableoid;
 	Node	   *ctid;
-	RowExpr	   *row;
-	ResTarget  *rowid;
+	FuncCall   *rowid;
 	List	   *tlist;
 	List	   *where_args = NIL;
 	SelectStmt     *sel;
@@ -2141,10 +2155,10 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 
 	tableoid = makeColumnRef(genQualifiedName(NULL, "tableoid"));
 	ctid = makeColumnRef(genQualifiedName(NULL, "ctid"));
-	row = makeRowExpr(list_make2(tableoid, ctid));
-	rowid = makeResTarget((Node *) row, "rowid");
+	rowid = makeFuncCall(list_make1(makeString("rowid")),
+						 list_make2(tableoid, ctid), -1);
 
-	tlist = list_make2(end, rowid);
+	tlist = list_make2(end, makeResTarget((Node *) rowid, "rowid"));
 
 	if (out)
 	{
@@ -2176,9 +2190,9 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 static Node *
 genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
 {
-	char	   *typname;
-	Alias	   *alias;
-	Node	   *edge;
+	char	*typname;
+	Alias	*alias;
+	Node 	*edge;
 
 	getCypherRelType(crel, &typname, NULL);
 	alias = makeAliasNoDup(aliasname, NIL);
@@ -2186,7 +2200,6 @@ genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
 		RangeSubselect *sub;
-
 		sub = genEdgeUnionVLE(typname);
 		sub->alias = alias;
 		edge = (Node *) sub;
@@ -2286,12 +2299,12 @@ genEdgeUnionVLE(char *edge_label)
 static Node *
 genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg)
 {
-	A_Const	   *trueconst;
-	TypeCast   *truecond;
-	A_Indices  *indices;
-	int			minHops;
-	int			maxHops = -1;
-	JoinExpr   *n;
+	A_Const        *trueconst;
+	TypeCast       *truecond;
+	A_Indices  	   *indices;
+	int				minHops;
+	int				maxHops = -1;
+	JoinExpr	   *n;
 
 	trueconst = makeNode(A_Const);
 	trueconst->val.type = T_String;
@@ -2680,18 +2693,19 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ues, List *uearrs)
 		foreach(lea1, uearrs)
 		{
 			Node	   *earr = lfirst(lea1);
-			RowExpr	   *rowid;
+			FuncCall   *rowid;
 			Node	   *funcexpr;
 			NullTest   *dupcond;
 
-			rowid = makeNode(RowExpr);
-			rowid->args = list_make2(e1->tableoid, e1->ctid);
-			rowid->row_typeid = RECORDOID;
-			rowid->row_format = COERCE_IMPLICIT_CAST;
-			rowid->location = -1;
+			rowid = makeFuncCall(list_make1(makeString("rowid")),
+								 list_make2(e1->tableoid, e1->ctid), -1);
 
+			funcexpr = ParseFuncOrColumn(pstate, rowid->funcname,
+										 list_make2(e1->tableoid, e1->ctid),
+										 rowid, -1);
 			funcexpr = ParseFuncOrColumn(pstate, arrpos->funcname,
-										 list_make2(earr, rowid), arrpos, -1);
+										 list_make2(earr, funcexpr),
+										 arrpos, -1);
 
 			dupcond = makeNode(NullTest);
 			dupcond->arg = (Expr *) funcexpr;
@@ -5291,19 +5305,6 @@ makeResTarget(Node *val, char *name)
 	res->location = -1;
 
 	return res;
-}
-
-static RowExpr *
-makeRowExpr(List *args)
-{
-	RowExpr *row = makeNode(RowExpr);
-
-	row->args = args;
-	row->row_typeid = InvalidOid;
-	row->row_format = COERCE_IMPLICIT_CAST;
-	row->location = -1;
-
-	return row;
 }
 
 static Node *

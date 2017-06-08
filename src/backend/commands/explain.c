@@ -1053,6 +1053,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					break;
 			}
 			break;
+		case T_Dijkstra:
+			pname = sname = "Dijkstra";
+			break;
 		default:
 			pname = sname = "???";
 			break;
@@ -1198,7 +1201,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 					if (((Join *) plan)->jointype == JOIN_VLE)
 					{
 						NestLoopVLE *nlvPlan = (NestLoopVLE *) plan;
-
 						appendStringInfo(es->str, " %s [%d..",
 										 jointype, nlvPlan->minHops);
 						if (nlvPlan->maxHops != -1)

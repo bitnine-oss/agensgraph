@@ -1682,6 +1682,23 @@ cost_material(Path *path,
 	path->total_cost = startup_cost + run_cost;
 }
 
+/* FIXME */
+void
+cost_dijkstra(Path *path,
+			  Cost input_startup_cost, Cost input_total_cost,
+			  double tuples, int width)
+{
+	Cost		startup_cost = input_startup_cost;
+	Cost		run_cost = input_total_cost - input_startup_cost;
+
+	path->rows = tuples;
+
+	run_cost += 10 * cpu_operator_cost * tuples;
+
+	path->startup_cost = startup_cost;
+	path->total_cost = startup_cost + run_cost;
+}
+
 /*
  * cost_agg
  *		Determines and returns the cost of performing an Agg plan node,

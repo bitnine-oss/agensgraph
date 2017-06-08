@@ -22,6 +22,7 @@
 #include "nodes/params.h"
 #include "nodes/plannodes.h"
 #include "utils/array.h"
+#include "utils/graph.h"
 #include "utils/reltrigger.h"
 #include "utils/sortsupport.h"
 #include "utils/tuplestore.h"
@@ -1748,15 +1749,15 @@ typedef struct VLEArrayExpr
 
 typedef struct NestLoopVLEState
 {
-	NestLoopState nls;
-	int			curhops;
-	bool		selfLoop;
-	bool		hasPath;
+	NestLoopState 	nls;
+	int				curhops;
+	bool			selfLoop;
+	bool			hasPath;
 	TupleTableSlot *selfTupleSlot;
-	VLEArrayExpr rowids;
-	VLEArrayExpr path;
-	dlist_head	vleCtxs;		/* list of NestLoopVLECtx */
-	dlist_node *curCtx;
+	VLEArrayExpr	rowids;
+	VLEArrayExpr	path;
+	dlist_head  	vleCtxs;		/* list of NestLoopVLECtx */
+	dlist_node 	   *curCtx;
 } NestLoopVLEState;
 
 typedef struct NestLoopVLECtx
@@ -2210,5 +2211,21 @@ typedef struct ModifyGraphState
 	List	   *exprs;			/* expression state list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 } ModifyGraphState;
+
+typedef struct DijkstraState
+{
+	PlanState 		ps;
+	HTAB		   *visited_nodes;
+	pairingheap	   *pq;
+	MemoryContext 	pq_mcxt;
+	ExprState  	   *source;
+	ExprState  	   *target;
+	ExprState  	   *limit;
+	int				n;
+	int				max_n;
+	Graphid 		target_id;
+	bool			is_executed;
+	TupleTableSlot *selfTupleSlot;
+} DijkstraState;
 
 #endif   /* EXECNODES_H */

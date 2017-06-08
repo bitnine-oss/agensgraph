@@ -964,6 +964,13 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_NODE_FIELD(setOperations);
 	COMPARE_NODE_FIELD(constraintDeps);
 	COMPARE_NODE_FIELD(withCheckOptions);
+	COMPARE_NODE_FIELD(dijkstraEndId);
+	COMPARE_NODE_FIELD(dijkstraEdgeId);
+	COMPARE_SCALAR_FIELD(dijkstraWeight);
+	COMPARE_NODE_FIELD(dijkstraSource);
+	COMPARE_NODE_FIELD(dijkstraTarget);
+	COMPARE_NODE_FIELD(dijkstraLimit);
+	COMPARE_SCALAR_FIELD(dijkstraWeightOut);
 
 	COMPARE_SCALAR_FIELD(graph.writeOp);
 	COMPARE_SCALAR_FIELD(graph.last);
@@ -1051,6 +1058,7 @@ _equalSetOperationStmt(const SetOperationStmt *a, const SetOperationStmt *b)
 	COMPARE_NODE_FIELD(colCollations);
 	COMPARE_NODE_FIELD(groupClauses);
 	COMPARE_SCALAR_FIELD(maxDepth);
+	COMPARE_SCALAR_FIELD(shortestpath);
 
 	return true;
 }

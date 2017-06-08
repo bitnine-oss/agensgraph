@@ -75,6 +75,7 @@ typedef enum UpperRelationKind
 	UPPERREL_WINDOW,			/* result of window functions, if any */
 	UPPERREL_DISTINCT,			/* result of "SELECT DISTINCT", if any */
 	UPPERREL_ORDERED,			/* result of ORDER BY, if any */
+	UPPERREL_DIJKSTRA,			/* result of dijkstra */
 	UPPERREL_FINAL				/* result of any remaining top-level actions */
 	/* NB: UPPERREL_FINAL must be last enum entry; it's used to size arrays */
 } UpperRelationKind;
@@ -1501,6 +1502,18 @@ typedef struct ModifyGraphPath
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 } ModifyGraphPath;
 
+typedef struct DijkstraPath
+{
+	Path 		path;
+	Path	   *subpath;
+	Node	   *end_id;
+	Node	   *edge_id;
+	int	   		weight;
+	Node	   *source;
+	Node	   *target;
+	Node	   *limit;
+	bool		weight_out;
+} DijkstraPath;
 
 /*
  * Restriction clause info.

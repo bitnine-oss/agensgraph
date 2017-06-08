@@ -141,7 +141,16 @@ static RelOptInfo *create_ordered_paths(PlannerInfo *root,
 					 RelOptInfo *input_rel,
 					 PathTarget *target,
 					 double limit_tuples);
+static RelOptInfo *create_dijkstra_paths(PlannerInfo *root,
+										 RelOptInfo *input_rel,
+										 PathTarget *path_target,
+										 Node *end_id, Node *egde_id,
+										 int weight, Node *source,
+										 Node *target, Node *limit,
+										 bool weight_out);
 static PathTarget *make_group_input_target(PlannerInfo *root,
+						PathTarget *final_target);
+static PathTarget *make_dijkstra_input_target(PlannerInfo *root,
 						PathTarget *final_target);
 static PathTarget *make_partial_grouping_target(PlannerInfo *root,
 							 PathTarget *grouping_target);
@@ -637,7 +646,6 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 			preprocess_expression(root,
 								  parse->onConflict->onConflictWhere,
 								  EXPRKIND_QUAL);
-		/* exclRelTlist contains only Vars, so no preprocessing needed */
 	}
 
 	root->append_rel_list = (List *)
@@ -757,6 +765,25 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 
 	/* Remove any redundant GROUP BY columns */
 	remove_useless_groupby_columns(root);
+
+	if (parse->dijkstraSource)
+	{
+		parse->dijkstraEndId = preprocess_expression(root,
+													 parse->dijkstraEndId,
+													 EXPRKIND_TARGET);
+		parse->dijkstraEdgeId = preprocess_expression(root,
+													  parse->dijkstraEdgeId,
+													  EXPRKIND_TARGET);
+		parse->dijkstraSource = preprocess_expression(root,
+													  parse->dijkstraSource,
+													  EXPRKIND_TARGET);
+		parse->dijkstraTarget = preprocess_expression(root,
+													  parse->dijkstraTarget,
+													  EXPRKIND_TARGET);
+		parse->dijkstraLimit = preprocess_expression(root,
+													 parse->dijkstraLimit,
+													 EXPRKIND_TARGET);
+	}
 
 	/*
 	 * If we have any outer joins, try to reduce them to plain inner joins.
@@ -1815,6 +1842,13 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 		else
 			scanjoin_target = grouping_target;
 
+		if (parse->dijkstraSource)
+		{
+			Assert(!have_grouping && activeWindows == NIL &&
+				   parse->sortClause == NIL && parse->distinctClause == NIL);
+			scanjoin_target = make_dijkstra_input_target(root, final_target);
+		}
+
 		/*
 		 * Forcibly apply scan/join target to all the Paths for the scan/join
 		 * rel.
@@ -1955,6 +1989,20 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 										   final_target,
 										   have_postponed_srfs ? -1.0 :
 										   limit_tuples);
+	}
+
+	if (parse->dijkstraSource)
+	{
+		current_rel = create_dijkstra_paths(root,
+											current_rel,
+											final_target,
+											parse->dijkstraEndId,
+											parse->dijkstraEdgeId,
+											parse->dijkstraWeight,
+											parse->dijkstraSource,
+											parse->dijkstraTarget,
+											parse->dijkstraLimit,
+											parse->dijkstraWeightOut);
 	}
 
 	/*
@@ -4399,6 +4447,62 @@ create_ordered_paths(PlannerInfo *root,
 	return ordered_rel;
 }
 
+static RelOptInfo *
+create_dijkstra_paths(PlannerInfo *root, RelOptInfo *input_rel,
+					  PathTarget *path_target,
+					  Node *end_id, Node *edge_id, int weight,
+					  Node *source, Node *target, Node *limit,
+					  bool weight_out)
+{
+	RelOptInfo *dijkstra_rel;
+	ListCell   *lc;
+
+	dijkstra_rel = fetch_upper_rel(root, UPPERREL_DIJKSTRA, NULL);
+
+	dijkstra_rel->consider_parallel = false;
+
+	/*
+	 * If the input rel belongs to a single FDW, so does the ordered_rel.
+	 */
+	dijkstra_rel->serverid = input_rel->serverid;
+	dijkstra_rel->userid = input_rel->userid;
+	dijkstra_rel->useridiscurrent = input_rel->useridiscurrent;
+	dijkstra_rel->fdwroutine = input_rel->fdwroutine;
+
+	foreach(lc, input_rel->pathlist)
+	{
+		Path	   *path = (Path *) lfirst(lc);
+
+		path = (Path *) create_dijkstra_path(root, dijkstra_rel, path,
+											 path_target,
+											 end_id, edge_id, weight,
+											 source, target, limit,
+											 weight_out);
+		add_path(dijkstra_rel, path);
+	}
+
+	/*
+	 * If there is an FDW that's responsible for all baserels of the query,
+	 * let it consider adding ForeignPaths.
+	 */
+	if (dijkstra_rel->fdwroutine &&
+		dijkstra_rel->fdwroutine->GetForeignUpperPaths)
+		dijkstra_rel->fdwroutine->GetForeignUpperPaths(root, UPPERREL_DIJKSTRA,
+													  input_rel, dijkstra_rel);
+
+	/* Let extensions possibly add some more paths */
+	if (create_upper_paths_hook)
+		(*create_upper_paths_hook) (root, UPPERREL_DIJKSTRA,
+									input_rel, dijkstra_rel);
+
+	/*
+	 * No need to bother with set_cheapest here; grouping_planner does not
+	 * need us to do it.
+	 */
+	Assert(dijkstra_rel->pathlist != NIL);
+
+	return dijkstra_rel;
+}
 
 /*
  * make_group_input_target
@@ -4493,6 +4597,29 @@ make_group_input_target(PlannerInfo *root, PathTarget *final_target)
 	/* clean up cruft */
 	list_free(non_group_vars);
 	list_free(non_group_cols);
+
+	/* XXX this causes some redundant cost calculation ... */
+	return set_pathtarget_cost_width(root, input_target);
+}
+
+static PathTarget *
+make_dijkstra_input_target(PlannerInfo *root, PathTarget *final_target)
+{
+	Query      *parse = root->parse;
+	PathTarget *input_target;
+
+	/*
+	 * We must build a target containing all grouping columns, plus any other
+	 * Vars mentioned in the query's targetlist and HAVING qual.
+	 */
+	input_target = create_empty_pathtarget();
+
+	/* weight */
+	parse->dijkstraWeight = 1;
+	add_new_column_to_pathtarget(input_target,
+								 (Expr *) llast(final_target->exprs));
+	add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEndId);
+	add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEdgeId);
 
 	/* XXX this causes some redundant cost calculation ... */
 	return set_pathtarget_cost_width(root, input_target);

@@ -2701,6 +2701,12 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 			/* currently, this node does not consider params */
 			break;
 
+		case T_Dijkstra:
+			finalize_primnode(((Dijkstra *) plan)->source, &context);
+			finalize_primnode(((Dijkstra *) plan)->target, &context);
+			finalize_primnode(((Dijkstra *) plan)->limit, &context);
+			break;
+
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(plan));

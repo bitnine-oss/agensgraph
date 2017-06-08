@@ -262,6 +262,13 @@ _readQuery(void)
 	READ_NODE_FIELD(rowMarks);
 	READ_NODE_FIELD(setOperations);
 	READ_NODE_FIELD(constraintDeps);
+	READ_NODE_FIELD(dijkstraEndId);
+	READ_NODE_FIELD(dijkstraEdgeId);
+	READ_INT_FIELD(dijkstraWeight);
+	READ_NODE_FIELD(dijkstraSource);
+	READ_NODE_FIELD(dijkstraTarget);
+	READ_NODE_FIELD(dijkstraLimit);
+	READ_BOOL_FIELD(dijkstraWeightOut);
 
 	READ_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	READ_BOOL_FIELD(graph.last);
@@ -430,6 +437,7 @@ _readSetOperationStmt(void)
 	READ_NODE_FIELD(colCollations);
 	READ_NODE_FIELD(groupClauses);
 	READ_INT_FIELD(maxDepth);
+	READ_BOOL_FIELD(shortestpath);
 
 	READ_DONE();
 }
@@ -2166,6 +2174,24 @@ _readLimit(void)
 	READ_DONE();
 }
 
+static Dijkstra *
+_readDijkstra(void)
+{
+	READ_LOCALS(Dijkstra);
+
+	ReadCommonPlan(&local_node->plan);
+
+	READ_INT_FIELD(end_id);
+	READ_INT_FIELD(edge_id);
+	READ_INT_FIELD(weight);
+	READ_NODE_FIELD(source);
+	READ_NODE_FIELD(target);
+	READ_NODE_FIELD(limit);
+	READ_BOOL_FIELD(weight_out);
+
+	READ_DONE();
+}
+
 /*
  * _readEager
  */
@@ -2601,6 +2627,8 @@ parseNodeString(void)
 		return_value = _readLimit();
 	else if (MATCH("EAGER", 5))
 		return_value = _readEager();
+	else if (MATCH("DIJKSTRA", 8))
+		return_value = _readDijkstra();
 	else if (MATCH("NESTLOOPPARAM", 13))
 		return_value = _readNestLoopParam();
 	else if (MATCH("PLANROWMARK", 11))

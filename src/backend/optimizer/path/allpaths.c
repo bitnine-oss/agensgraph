@@ -2794,6 +2794,9 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 		 subquery->graph.writeOp == GWROP_MERGE))
 		return;
 
+	if (subquery->dijkstraSource)
+		return;
+
 	/*
 	 * Collect a bitmap of all the output column numbers used by the upper
 	 * query.
