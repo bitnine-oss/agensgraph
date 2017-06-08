@@ -387,14 +387,6 @@ select * from (
 	return x[2]
 ) as foo;
 
-match (a:person {id: 1})-[x:knows*1..2]->(b:person)
-with x[1] as x1, array_length(x, 1) as l
-return edgerefrow(x1), l;
-
-match (a:person {id: 1})-[x:knows*1..2]-(b:person)
-with x[1] as x1, array_length(x, 1) as l
-return edgerefrow(x1), l;
-
 -- shortestpath(), allshortestpaths()
 
 CREATE OR REPLACE FUNCTION ids(vertex[]) RETURNS int[] AS $$

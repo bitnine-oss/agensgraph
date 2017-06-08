@@ -1648,14 +1648,6 @@ _outEdgeRefRows(StringInfo str, const EdgeRefRows *node)
 	WRITE_NODE_FIELD(arg);
 }
 
-static void
-_outEdgeRefRows(StringInfo str, const EdgeRefRows *node)
-{
-	WRITE_NODE_TYPE("EDGEREFROWS");
-
-	WRITE_NODE_FIELD(arg);
-}
-
 
 /*****************************************************************************
  *

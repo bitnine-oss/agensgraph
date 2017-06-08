@@ -45,7 +45,6 @@ static Node *makeVerticesSubLink(void);
 static Node *makeEdgesSubLink(CypherPath *cpath);
 static void getCypherRelType(CypherRel *crel, char **typname, int *typloc);
 static Node *makeVertexIdExpr(Node *vertex);
-static Node *makeLastVidRefExpr(void);
 
 /* parse node */
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
@@ -389,7 +388,6 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 	 */
 
 	/* _sp JOIN _e */
-	//last_vid = makeLastVidRefExpr();
 	last_vid = makeColumnRef1(SP_COLNAME_VID);
 	joincond = makeSimpleA_Expr(AEXPR_OP, "=", last_vid, start, -1);
 	where_args = list_make1(joincond);
@@ -794,33 +792,6 @@ makeVertexIdExpr(Node *vertex)
 	return (Node *) makeFuncCall(list_make1(makeString(AG_ELEM_ID)),
 								 list_make1(vertex),
 								 -1);
-}
-
-/* vids[array_upper(vids, 1)] */
-static Node *
-makeLastVidRefExpr(void)
-{
-	Node	   *vids;
-	FuncCall   *arrup;
-	A_Indices  *ind;
-	A_Indirection *ref;
-
-	vids = makeColumnRef1(SP_COLNAME_VIDS);
-
-	arrup = makeFuncCall(list_make1(makeString("array_upper")),
-						 list_make2(vids, makeIntConst(1)),
-						 -1);
-
-	ind = makeNode(A_Indices);
-	ind->is_slice = false;
-	ind->lidx = NULL;
-	ind->uidx = (Node *) arrup;
-
-	ref = makeNode(A_Indirection);
-	ref->arg = vids;
-	ref->indirection = list_make1(ind);
-
-	return (Node *) ref;
 }
 
 static Alias *
