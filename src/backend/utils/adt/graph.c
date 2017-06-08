@@ -343,6 +343,142 @@ edgeref_out(PG_FUNCTION_ARGS)
 	PG_RETURN_CSTRING(buf.data);
 }
 
+/* edgeref APIs */
+
+#define DatumGetItemPointer(X) ((ItemPointer) DatumGetPointer(X))
+#define PG_GETARG_ITEMPOINTER(n) DatumGetItemPointer(PG_GETARG_DATUM(n))
+#define RowidGetDatum(X) PointerGetDatum(X)
+#define PG_RETURN_ROWID(x) return RowidGetDatum(x)
+
+Datum
+rowid(PG_FUNCTION_ARGS)
+{
+	Oid			tableoid = PG_GETARG_OID(0);
+	ItemPointer	tid = PG_GETARG_ITEMPOINTER(1);
+	Rowid	   *result;
+
+	result = (Rowid *) palloc(sizeof(Rowid));
+	result->tableoid = tableoid;
+	memcpy(&result->tid, tid, sizeof(ItemPointerData));
+
+	PG_RETURN_ROWID(result);
+}
+
+Datum
+rowid_in(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("function \"rowid_in\" not supported")));
+	PG_RETURN_NULL();
+}
+
+Datum
+rowid_out(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("function \"rowid_out\" not supported")));
+	PG_RETURN_NULL();
+}
+
+#define ItemPointerGetDatum(X) PointerGetDatum(X)
+#define PG_GETARG_ROWID(n) ((Rowid *) DatumGetPointer(PG_GETARG_DATUM(n)))
+
+Datum
+rowid_eq(PG_FUNCTION_ARGS)
+{
+	Rowid *id0 = PG_GETARG_ROWID(0);
+	Rowid *id1 = PG_GETARG_ROWID(1);
+	Datum sub_id0;
+	Datum sub_id1;
+	bool result;
+
+	sub_id0 = ObjectIdGetDatum(id0->tableoid);
+	sub_id1 = ObjectIdGetDatum(id1->tableoid);
+	result = DatumGetBool(DirectFunctionCall2(oideq, sub_id0, sub_id1));
+	if (result == false)
+		PG_RETURN_BOOL(false);
+
+	sub_id0 = ItemPointerGetDatum(&id0->tid);
+	sub_id1 = ItemPointerGetDatum(&id1->tid);
+	result = DatumGetBool(DirectFunctionCall2(tideq, sub_id0, sub_id1));
+	PG_RETURN_BOOL(result);
+}
+
+Datum
+rowid_ne(PG_FUNCTION_ARGS)
+{
+	bool result;
+	result = DatumGetBool(DirectFunctionCall2(
+				rowid_eq, PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)));
+	PG_RETURN_BOOL(!result);
+}
+
+Datum
+rowid_lt(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("function \"rowid_lt\" not supported")));
+
+	PG_RETURN_BOOL(false);
+}
+
+Datum
+rowid_le(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("function \"rowid_le\" not supported")));
+
+	PG_RETURN_BOOL(false);
+}
+
+Datum
+rowid_gt(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("function \"rowid_gt\" not supported")));
+
+	PG_RETURN_BOOL(false);
+}
+
+Datum
+rowid_ge(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("function \"rowid_ge\" not supported")));
+
+	PG_RETURN_BOOL(false);
+}
+
+Datum
+btrowid_cmp(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("function \"btrowid_cmp\" not supported")));
+
+	PG_RETURN_INT32(0);
+}
+
+Datum
+rowid_tableoid(PG_FUNCTION_ARGS)
+{
+	Rowid *rowid = PG_GETARG_ROWID(0);
+	PG_RETURN_OID(rowid->tableoid);
+}
+
+Datum
+rowid_ctid(PG_FUNCTION_ARGS)
+{
+	Rowid *rowid = PG_GETARG_ROWID(0);
+	return PointerGetDatum(&rowid->tid);
+}
+
 Datum
 vertex_out(PG_FUNCTION_ARGS)
 {

@@ -1156,4 +1156,14 @@ DATA(insert ( 7105 7002 7002  3 s 7087 3580 0 ));
 DATA(insert ( 7105 7002 7002  4 s 7092 3580 0 ));
 DATA(insert ( 7105 7002 7002  5 s 7090 3580 0 ));
 
+/*
+ * rowid_ops
+ */
+/* BTree */
+DATA(insert ( 7106 7062 7062  1 s 7173 403 0 ));
+DATA(insert ( 7106 7062 7062  2 s 7175 403 0 ));
+DATA(insert ( 7106 7062 7062  3 s 7171 403 0 ));
+DATA(insert ( 7106 7062 7062  4 s 7176 403 0 ));
+DATA(insert ( 7106 7062 7062  5 s 7174 403 0 ));
+
 #endif   /* PG_AMOP_H */

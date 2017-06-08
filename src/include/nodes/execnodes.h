@@ -1748,15 +1748,15 @@ typedef struct VLEArrayExpr
 
 typedef struct NestLoopVLEState
 {
-	NestLoopState nls;
-	int			curhops;
-	bool		selfLoop;
-	bool		hasPath;
+	NestLoopState 	nls;
+	int				curhops;
+	bool			selfLoop;
+	bool			hasPath;
 	TupleTableSlot *selfTupleSlot;
-	VLEArrayExpr rowids;
-	VLEArrayExpr path;
-	dlist_head	vleCtxs;		/* list of NestLoopVLECtx */
-	dlist_node *curCtx;
+	VLEArrayExpr	rowids;
+	VLEArrayExpr	path;
+	dlist_head  	vleCtxs;		/* list of NestLoopVLECtx */
+	dlist_node 	   *curCtx;
 } NestLoopVLEState;
 
 typedef struct NestLoopVLECtx

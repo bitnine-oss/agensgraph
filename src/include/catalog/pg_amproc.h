@@ -689,4 +689,9 @@ DATA(insert ( 7105 7002 7002  2 3384 ));
 DATA(insert ( 7105 7002 7002  3 3385 ));
 DATA(insert ( 7105 7002 7002  4 3386 ));
 
+/*
+ * rowid_ops
+ */
+/* BTree */
+DATA(insert ( 7106 7062 7062  1 7170 ));
 #endif   /* PG_AMPROC_H */
