@@ -1283,6 +1283,18 @@ drop table cchild;
 -- temporarily disable fancy output, so view changes create less diff noise
 \a\t
 SELECT viewname, definition FROM pg_views WHERE schemaname <> 'information_schema' ORDER BY viewname;
+ag_property_indexes| SELECT n.nspname AS graphname,
+    c.relname AS labelname,
+    i.relname AS indexname,
+    t.spcname AS tablespace,
+    pg_get_indexdef(i.oid) AS indexdef
+   FROM (((((pg_index x
+     JOIN pg_class c ON ((c.oid = x.indrelid)))
+     JOIN ag_label l ON ((x.indrelid = l.relid)))
+     JOIN pg_class i ON ((i.oid = x.indexrelid)))
+     LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
+     LEFT JOIN pg_tablespace t ON ((t.oid = i.reltablespace)))
+  WHERE ((c.relkind = 'r'::"char") AND (i.relkind = 'i'::"char") AND (x.indisexclusion = false) AND (x.indexprs IS NOT NULL));
 iexit| SELECT ih.name,
     ih.thepath,
     interpt_pp(ih.thepath, r.thepath) AS exit
