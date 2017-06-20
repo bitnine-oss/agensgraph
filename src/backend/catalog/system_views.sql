@@ -887,6 +887,21 @@ CREATE VIEW pg_user_mappings AS
         JOIN pg_foreign_server S ON (U.umserver = S.oid)
         LEFT JOIN pg_authid A ON (A.oid = U.umuser);
 
+CREATE VIEW ag_property_indexes AS
+    SELECT
+        N.nspname AS graphname,
+        C.relname AS labelname,
+        I.relname AS indexname,
+        T.spcname AS tablespace,
+        pg_get_indexdef(I.oid) AS indexdef
+    FROM pg_index X JOIN pg_class C ON (C.oid = X.indrelid)
+        JOIN ag_label L ON (X.indrelid = L.relid)
+        JOIN pg_class I ON (I.oid = X.indexrelid)
+        LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
+        LEFT JOIN pg_tablespace T ON (T.oid = I.reltablespace)
+    WHERE C.relkind = 'r' AND I.relkind = 'i' AND
+        X.indisexclusion = false AND X.indexprs IS NOT NULL;
+
 REVOKE ALL on pg_user_mapping FROM public;
 
 CREATE VIEW pg_replication_origin_status AS
