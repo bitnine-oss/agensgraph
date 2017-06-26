@@ -1946,7 +1946,27 @@ SET a.age = to_jsonb(a.age::int + 1), b.age = to_jsonb(a.age::int + b.age::int);
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
      a      |     b      
 ------------+------------
- {"age": 2} | {"age": 4}
+ {"age": 2} | {"age": 3}
+(1 row)
+
+MATCH (a) DETACH DELETE (a);
+CREATE ({val: 1})-[:rel]->({val: 2});
+MATCH (a)-[]->(b)
+	SET a.val = b.val::jsonb, b.val = a.val::jsonb;
+MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
+     a      |     b      
+------------+------------
+ {"val": 2} | {"val": 1}
+(1 row)
+
+MATCH (a) DETACH DELETE (a);
+CREATE ({val: 1})-[:rel]->({val: 2});
+MATCH (a)-[]->(b)
+	SET a.val = b.val::jsonb SET b.val = a.val::jsonb;
+MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
+     a      |     b      
+------------+------------
+ {"val": 2} | {"val": 2}
 (1 row)
 
 MATCH (a) DETACH DELETE (a);

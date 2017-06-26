@@ -734,6 +734,18 @@ SET a.age = to_jsonb(a.age::int + 1), b.age = to_jsonb(a.age::int + b.age::int);
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
 MATCH (a) DETACH DELETE (a);
 
+CREATE ({val: 1})-[:rel]->({val: 2});
+MATCH (a)-[]->(b)
+	SET a.val = b.val::jsonb, b.val = a.val::jsonb;
+MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
+MATCH (a) DETACH DELETE (a);
+
+CREATE ({val: 1})-[:rel]->({val: 2});
+MATCH (a)-[]->(b)
+	SET a.val = b.val::jsonb SET b.val = a.val::jsonb;
+MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
+MATCH (a) DETACH DELETE (a);
+
 -- += operator
 
 CREATE ({age: 10});

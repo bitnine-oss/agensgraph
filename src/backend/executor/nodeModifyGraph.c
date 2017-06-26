@@ -134,6 +134,8 @@ static Datum createMergeVertex(ModifyGraphState *mgstate,
 							   Graphid *vid, TupleTableSlot *slot);
 static Datum createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
 							 Graphid start, Graphid end, TupleTableSlot *slot);
+static TupleTableSlot *copyVirtualTupleTableSlot(TupleTableSlot *dstslot,
+												 TupleTableSlot *srcslot);
 
 /* caching SPIPlan's (See ri_triggers.c) */
 static void InitSqlcmdHashTable(MemoryContext mcxt);
@@ -304,6 +306,11 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 	 * so remove the rtables added to this run.
 	 */
 	list_truncate(estate->es_range_table, mgstate->numOldRtable);
+
+	/*
+	 * clean out the tuple table
+	 */
+	ExecClearTuple(mgstate->ps.ps_ResultTupleSlot);
 
 	ExecEndNode(mgstate->subplan);
 	ExecFreeExprContext(&mgstate->ps);
@@ -1006,6 +1013,13 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
 	ExprContext *econtext = mgstate->ps.ps_ExprContext;
 	ListCell   *ls;
+	TupleTableSlot *result = mgstate->ps.ps_ResultTupleSlot;
+
+	/*
+	 * The results of previous clauses should be preserved.
+	 * So, shallow copying is used.
+	 */
+	copyVirtualTupleTableSlot(result, slot);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -1077,13 +1091,13 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 
 		MemoryContextSwitchTo(oldmctx);
 
-		setSlotValueByName(slot, newelem, gsp->variable);
+		setSlotValueByName(result, newelem, gsp->variable);
 	}
 
 	if (SPI_finish() != SPI_OK_FINISH)
 		elog(ERROR, "SPI_finish failed");
 
-	return (plan->last ? NULL : slot);
+	return (plan->last ? NULL : result);
 }
 
 static void
@@ -1544,4 +1558,20 @@ savePreparedPlan(SqlcmdKey *key, SPIPlanPtr plan)
 	entry = hash_search(sqlcmd_cache, (void *) key, HASH_ENTER, &found);
 	Assert(!found || entry->plan == NULL);
 	entry->plan = plan;
+}
+
+static TupleTableSlot *
+copyVirtualTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
+{
+	int natts = srcslot->tts_tupleDescriptor->natts;
+
+	ExecSetSlotDescriptor(dstslot, srcslot->tts_tupleDescriptor);
+
+	/* shallow copy */
+	memcpy(dstslot->tts_values, srcslot->tts_values, natts * sizeof(Datum));
+	memcpy(dstslot->tts_isnull, srcslot->tts_isnull, natts * sizeof(bool));
+
+	ExecStoreVirtualTuple(dstslot);
+
+	return dstslot;
 }
