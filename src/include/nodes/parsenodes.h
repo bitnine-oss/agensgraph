@@ -1373,6 +1373,7 @@ typedef struct SetOperationStmt
 	List	   *groupClauses;	/* a list of SortGroupClause's */
 	/* groupClauses is NIL if UNION ALL, but must be set otherwise */
 	int			maxDepth;		/* level of recursion */
+	bool		shortestpath;
 } SetOperationStmt;
 
 
