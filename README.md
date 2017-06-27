@@ -11,7 +11,7 @@ Building from the Source Code
 -------------------
 1. Clone AgensGraph onto your local machine
     ```sh
-    $ git clone git@github.com:bitnine-oss/agensgraph.git
+    $ git clone https://github.com/bitnine-oss/agensgraph.git
     ```
 
 2. Install the necessary libraries and dependencies:
