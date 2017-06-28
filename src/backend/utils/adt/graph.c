@@ -234,11 +234,14 @@ graphid_ge(PG_FUNCTION_ARGS)
 
 /* edgeref APIs */
 
+#define DatumGetItemPointer(X)		((ItemPointer) DatumGetPointer(X))
+#define PG_GETARG_ITEMPOINTER(n)	DatumGetItemPointer(PG_GETARG_DATUM(n))
+
 Datum
 edgeref(PG_FUNCTION_ARGS)
 {
 	int			relid = PG_GETARG_INT32(0);
-	ItemPointer	tid = (ItemPointer) DatumGetPointer(PG_GETARG_DATUM(1));
+	ItemPointer	tid = PG_GETARG_ITEMPOINTER(1);
 	EdgeRef	   	edgeref;
 
 	EdgeRefSet(edgeref, relid, tid);
@@ -341,6 +344,146 @@ edgeref_out(PG_FUNCTION_ARGS)
 	appendStringInfo(&buf, "%s)", value);
 
 	PG_RETURN_CSTRING(buf.data);
+}
+
+/* rowid APIs */
+
+Datum
+rowid(PG_FUNCTION_ARGS)
+{
+	Oid			tableoid = PG_GETARG_OID(0);
+	ItemPointer	tid = PG_GETARG_ITEMPOINTER(1);
+	Rowid	   *result;
+
+	result = (Rowid *) palloc(sizeof(Rowid));
+	result->tableoid = tableoid;
+	memcpy(&result->tid, tid, sizeof(ItemPointerData));
+
+	PG_RETURN_ROWID(result);
+}
+
+Datum
+rowid_in(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("\"rowid\" type does not support input function")));
+
+	PG_RETURN_NULL();
+}
+
+Datum
+rowid_out(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("\"rowid\" type does not support output function")));
+
+	PG_RETURN_NULL();
+}
+
+Datum
+rowid_tableoid(PG_FUNCTION_ARGS)
+{
+	Rowid *rowid = PG_GETARG_ROWID(0);
+
+	PG_RETURN_OID(rowid->tableoid);
+}
+
+Datum
+rowid_ctid(PG_FUNCTION_ARGS)
+{
+	Rowid	   *rowid = PG_GETARG_ROWID(0);
+	ItemPointer result;
+
+	result = palloc(sizeof(ItemPointerData));
+	ItemPointerCopy(&rowid->tid, result);
+
+	return PointerGetDatum(result);
+}
+
+#define ItemPointerGetDatum(X)	PointerGetDatum(X)
+
+Datum
+rowid_eq(PG_FUNCTION_ARGS)
+{
+	Rowid	   *id0 = PG_GETARG_ROWID(0);
+	Rowid	   *id1 = PG_GETARG_ROWID(1);
+	Datum		sub_id0;
+	Datum		sub_id1;
+	bool		result;
+
+	sub_id0 = ObjectIdGetDatum(id0->tableoid);
+	sub_id1 = ObjectIdGetDatum(id1->tableoid);
+	result = DatumGetBool(DirectFunctionCall2(oideq, sub_id0, sub_id1));
+	if (result == false)
+		PG_RETURN_BOOL(false);
+
+	sub_id0 = ItemPointerGetDatum(&id0->tid);
+	sub_id1 = ItemPointerGetDatum(&id1->tid);
+	result = DatumGetBool(DirectFunctionCall2(tideq, sub_id0, sub_id1));
+	PG_RETURN_BOOL(result);
+}
+
+Datum
+rowid_ne(PG_FUNCTION_ARGS)
+{
+	bool result;
+
+	result = DatumGetBool(DirectFunctionCall2(
+				rowid_eq, PG_GETARG_DATUM(0), PG_GETARG_DATUM(1)));
+
+	PG_RETURN_BOOL(!result);
+}
+
+Datum
+rowid_lt(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("cannot apply \"less-then\" to \"rowid\" type")));
+
+	PG_RETURN_NULL();
+}
+
+Datum
+rowid_gt(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("cannot apply \"greater-then\" to \"rowid\" type")));
+
+	PG_RETURN_NULL();
+}
+
+Datum
+rowid_le(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("cannot apply \"less-or-equal\" to \"rowid\" type")));
+
+	PG_RETURN_NULL();
+}
+
+Datum
+rowid_ge(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("cannot apply \"greater-or-equal\" to \"rowid\" type")));
+
+	PG_RETURN_NULL();
+}
+
+Datum
+btrowidcmp(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("\"rowid\" does not support comparison operation")));
+
+	PG_RETURN_NULL();
 }
 
 Datum
