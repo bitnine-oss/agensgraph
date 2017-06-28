@@ -1880,6 +1880,15 @@ cost_group(Path *path, PlannerInfo *root,
 	path->total_cost = total_cost;
 }
 
+static double
+get_vle_inner_rows(SpecialJoinInfo *sjinfo, double input_rows)
+{
+	int base = (sjinfo->min_hops > 0) ? 1 : 0;
+	int inner_loop_cnt = (sjinfo->max_hops == -1)
+		? 10 : sjinfo->max_hops - base;
+	return (input_rows * inner_loop_cnt * 1.15) * inner_loop_cnt;
+}
+
 /*
  * initial_cost_nestloop
  *	  Preliminary estimate of the cost of a nestloop join path.
@@ -1959,7 +1968,16 @@ initial_cost_nestloop(PlannerInfo *root, JoinCostWorkspace *workspace,
 		/* Normal case; we'll scan whole input rel for each outer row */
 		run_cost += inner_run_cost;
 		if (outer_path_rows > 1)
-			run_cost += (outer_path_rows - 1) * inner_rescan_run_cost;
+		{
+			double rescan_rows;
+
+			if (jointype == JOIN_VLE)
+				rescan_rows = get_vle_inner_rows(sjinfo, inner_path->rows);
+			else
+				rescan_rows = outer_path_rows - 1;
+
+			run_cost += rescan_rows * inner_rescan_run_cost;
+		}
 	}
 
 	/* CPU costs left for later */
@@ -2121,12 +2139,14 @@ final_cost_nestloop(PlannerInfo *root, NestPath *path,
 	}
 	else if (path->jointype == JOIN_VLE)
 	{
-		int base = (sjinfo->min_hops > 0) ? 1 : 0;
-		int max_hops = (sjinfo->max_hops == -1) ? 10 : sjinfo->max_hops;
-		int inner_loop_cnt = max_hops - base;
+		/* rowids targetexpr and array_position */
+		Cost expr_cost = cpu_tuple_cost + cpu_operator_cost;
 
-		ntuples = outer_path_rows +
-				  outer_path_rows * inner_path_rows * inner_loop_cnt;
+		ntuples = outer_path_rows + get_vle_inner_rows(sjinfo, inner_path_rows);
+		if (list_length(path->path.pathtarget->exprs) == 4)
+			expr_cost += cpu_tuple_cost; /* path targetexpr */
+		run_cost += ntuples * expr_cost;
+
 	}
 	else
 	{
@@ -4039,13 +4059,7 @@ calc_joinrel_size_estimate(PlannerInfo *root,
 			/* pselec not used */
 			break;
 		case JOIN_VLE:
-			{
-				int base = (sjinfo->min_hops > 0) ? 1 : 0;
-				int max_hops = (sjinfo->max_hops == -1) ? 10 : sjinfo->max_hops;
-				int inner_loop_cnt = max_hops - base;
-
-				nrows = outer_rows + outer_rows * inner_rows * inner_loop_cnt;
-			}
+			nrows = outer_rows + get_vle_inner_rows(sjinfo, inner_rows);
 			break;
 		case JOIN_LEFT:
 		case JOIN_CYPHER_MERGE:
