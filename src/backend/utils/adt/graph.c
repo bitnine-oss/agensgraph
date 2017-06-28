@@ -393,9 +393,13 @@ rowid_tableoid(PG_FUNCTION_ARGS)
 Datum
 rowid_ctid(PG_FUNCTION_ARGS)
 {
-	Rowid *rowid = PG_GETARG_ROWID(0);
+	Rowid	   *rowid = PG_GETARG_ROWID(0);
+	ItemPointer result;
 
-	return PointerGetDatum(&rowid->tid);
+	result = palloc(sizeof(ItemPointerData));
+	ItemPointerCopy(&rowid->tid, result);
+
+	return PointerGetDatum(result);
 }
 
 #define ItemPointerGetDatum(X)	PointerGetDatum(X)
