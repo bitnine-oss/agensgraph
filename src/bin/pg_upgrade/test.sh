@@ -106,6 +106,7 @@ export PATH
 BASE_PGDATA=$temp_root/data
 PGDATA="$BASE_PGDATA.old"
 export PGDATA
+export AGDATA=$PGDATA
 rm -rf "$BASE_PGDATA" "$PGDATA"
 
 logdir=`pwd`/log
@@ -207,6 +208,7 @@ if [ -n "$pg_dumpall1_status" ]; then
 fi
 
 PGDATA=$BASE_PGDATA
+AGDATA=$PGDATA
 
 standard_initdb 'initdb'
 
