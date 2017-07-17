@@ -89,6 +89,15 @@ typedef enum OidOptions
 	zeroAsNone = 8
 } OidOptions;
 
+typedef enum GraphObject
+{
+	GO_Graph,
+	GO_Label,
+	GO_Index,
+	GO_Sequence,
+	GO_Constraint
+} GraphObject;
+
 /* global decls */
 bool		g_verbose;			/* User wants verbose narration of our
 								 * activities. */
@@ -205,6 +214,8 @@ static void dumpUserMappings(Archive *fout,
 				 const char *servername, const char *namespace,
 				 const char *owner, CatalogId catalogId, DumpId dumpId);
 static void dumpDefaultACL(Archive *fout, DefaultACLInfo *daclinfo);
+static bool IsGraphObject(Archive *fout, DumpableObject *dobj,
+							GraphObject kind, char *labkind);
 
 static void dumpACL(Archive *fout, CatalogId objCatId, DumpId objDumpId,
 		const char *type, const char *name, const char *subname,
@@ -9547,6 +9558,7 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 	PQExpBuffer delq;
 	PQExpBuffer labelq;
 	char	   *qnspname;
+	char	   *kind;
 
 	/* Skip if not to be dumped */
 	if (!nspinfo->dobj.dump || dopt->dataOnly)
@@ -9562,11 +9574,16 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 
 	qnspname = pg_strdup(fmtId(nspinfo->dobj.name));
 
-	appendPQExpBuffer(delq, "DROP SCHEMA %s;\n", qnspname);
+	if (IsGraphObject(fout, (DumpableObject *) nspinfo, GO_Graph, NULL))
+		kind = "GRAPH";
+	else
+		kind = "SCHEMA";
 
-	appendPQExpBuffer(q, "CREATE SCHEMA %s;\n", qnspname);
+	appendPQExpBuffer(delq, "DROP %s %s;\n", kind, qnspname);
 
-	appendPQExpBuffer(labelq, "SCHEMA %s", qnspname);
+	appendPQExpBuffer(q, "CREATE %s %s;\n", kind, qnspname);
+
+	appendPQExpBuffer(labelq, "%s %s", kind, qnspname);
 
 	if (dopt->binary_upgrade)
 		binary_upgrade_extension_member(q, &nspinfo->dobj, labelq->data);
@@ -9576,7 +9593,7 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 					 nspinfo->dobj.name,
 					 NULL, NULL,
 					 nspinfo->rolname,
-					 false, "SCHEMA", SECTION_PRE_DATA,
+					 false, kind, SECTION_PRE_DATA,
 					 q->data, delq->data, NULL,
 					 NULL, 0,
 					 NULL, NULL);
@@ -9593,7 +9610,7 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 					 nspinfo->dobj.catId, 0, nspinfo->dobj.dumpId);
 
 	if (nspinfo->dobj.dump & DUMP_COMPONENT_ACL)
-		dumpACL(fout, nspinfo->dobj.catId, nspinfo->dobj.dumpId, "SCHEMA",
+		dumpACL(fout, nspinfo->dobj.catId, nspinfo->dobj.dumpId, kind,
 				qnspname, NULL, nspinfo->dobj.name, NULL,
 				nspinfo->rolname, nspinfo->nspacl, nspinfo->rnspacl,
 				nspinfo->initnspacl, nspinfo->initrnspacl);
@@ -14685,6 +14702,103 @@ dumpDefaultACL(Archive *fout, DefaultACLInfo *daclinfo)
 	destroyPQExpBuffer(q);
 }
 
+static bool IsGraphObject(Archive *fout, DumpableObject *dobj,
+							GraphObject kind, char *labkind)
+{
+	PQExpBuffer query;
+	PGresult   *res;
+	bool ret;
+
+	query = createPQExpBuffer();
+
+	switch (kind)
+	{
+		case GO_Graph :
+			appendPQExpBuffer(
+				query,
+				"SELECT nspid FROM pg_catalog.ag_graph g WHERE g.graphname = '%s'\n",
+				fmtId(dobj->name));
+			res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+			if (PQntuples(res) == 1)
+				ret = true;
+			else
+				ret = false;
+			break;
+		case GO_Label :
+			appendPQExpBuffer(query,
+					"SELECT labkind FROM ag_label l, ag_graph g, pg_class c \
+					WHERE l.labname = '%s' \
+					AND c.relname = l.labname \
+					AND c.relnamespace = g.nspid", fmtId(dobj->name));
+
+			res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+			if (PQntuples(res) == 0)
+				ret = false;
+			else
+			{
+				strcpy(labkind, PQgetvalue(res, 0, PQfnumber(res, "labkind")));
+				ret = true;
+			}
+			break;
+		case GO_Sequence :
+			appendPQExpBuffer(query,
+					"SELECT relname FROM ag_graph g, pg_class c \
+					WHERE c.relname = '%s' \
+					AND c.relkind = 'S' \
+					AND c.relnamespace = g.nspid", fmtId(dobj->name));
+			res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+			if (PQntuples(res) == 1)
+				ret = true;
+			else
+				ret = false;
+			break;
+		case GO_Index :
+			/* default index : to be skipped
+			 * property indexes : to be created
+			 * this query get indexes which is in graph but is not property index */
+			appendPQExpBuffer(query,
+					"SELECT \
+					I.relname AS indexname \
+					FROM pg_index X JOIN pg_class C ON (C.oid = X.indrelid) \
+						JOIN ag_label L ON (X.indrelid = L.relid) \
+						JOIN pg_class I ON (I.oid = X.indexrelid) \
+						LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace) \
+						LEFT JOIN pg_tablespace T ON (T.oid = I.reltablespace) \
+					WHERE C.relkind = 'r' AND I.relkind = 'i' AND \
+						X.indisexclusion = true OR X.indexprs IS NULL \
+						AND I.relname = '%s'",
+					fmtId(dobj->name));
+			res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+			if (PQntuples(res) == 1)
+				ret = true;
+			else
+				ret = false;
+			break;
+		case GO_Constraint :
+			/* pkey is a constraint but also a index */
+			appendPQExpBuffer(query,
+					"SELECT relname FROM ag_graph g, pg_class c \
+					WHERE c.relname = '%s' \
+					AND c.relkind = 'i' \
+					AND c.relnamespace = g.nspid", fmtId(dobj->name));
+			res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+			if (PQntuples(res) == 1)
+				ret = true;
+			else
+				ret = false;
+			break;
+	}
+
+	PQclear(res);
+	destroyPQExpBuffer(query);
+
+	return ret;
+}
+
 /*----------
  * Write out grant/revoke information
  *
@@ -15361,9 +15475,34 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 				ftoptions = NULL;
 				break;
 			default:
-				reltypename = "TABLE";
-				srvname = NULL;
-				ftoptions = NULL;
+				{
+					char labkind[2] = {'\0'};
+
+					srvname = NULL;
+					ftoptions = NULL;
+
+					if (IsGraphObject(fout, (DumpableObject *) tbinfo,
+										GO_Label, labkind))
+					{
+						if (strcmp(labkind, "v") == 0)
+							reltypename = "VLABEL";
+						else if (strcmp(labkind, "e") == 0)
+							reltypename = "ELABEL";
+						else
+							reltypename = "Invalid LABKIND";
+
+						if (strcmp("ag_vertex", fmtId(tbinfo->dobj.name)) == 0
+							|| strcmp("ag_edge", fmtId(tbinfo->dobj.name)) == 0)
+						{
+							destroyPQExpBuffer(q);
+							destroyPQExpBuffer(delq);
+							destroyPQExpBuffer(labelq);
+							return;
+						}
+					}
+					else
+						reltypename = "TABLE";
+				}
 		}
 
 		numParents = tbinfo->numParents;
@@ -15398,7 +15537,10 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 		if (tbinfo->reloftype && !dopt->binary_upgrade)
 			appendPQExpBuffer(q, " OF %s", tbinfo->reloftype);
 
-		if (tbinfo->relkind != RELKIND_MATVIEW)
+		if ((tbinfo->relkind != RELKIND_MATVIEW) &&
+			(strcmp(reltypename, "VLABEL") != 0) &&
+			(strcmp(reltypename, "ELABEL") != 0))
+
 		{
 			/* Dump the attributes */
 			actual_atts = 0;
@@ -16018,7 +16160,8 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 	PQExpBuffer delq;
 	PQExpBuffer labelq;
 
-	if (dopt->dataOnly)
+	if (dopt->dataOnly ||
+		IsGraphObject(fout, (DumpableObject *) indxinfo, GO_Index, NULL))
 		return;
 
 	q = createPQExpBuffer();
@@ -16111,7 +16254,8 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 	char	   *tag = NULL;
 
 	/* Skip if not to be dumped */
-	if (!coninfo->dobj.dump || dopt->dataOnly)
+	if (!coninfo->dobj.dump || dopt->dataOnly ||
+		IsGraphObject(fout, (DumpableObject *) coninfo, GO_Constraint, NULL))
 		return;
 
 	q = createPQExpBuffer();
@@ -16439,6 +16583,15 @@ dumpSequence(Archive *fout, TableInfo *tbinfo)
 	PQExpBuffer query = createPQExpBuffer();
 	PQExpBuffer delqry = createPQExpBuffer();
 	PQExpBuffer labelq = createPQExpBuffer();
+
+	if (IsGraphObject(fout, (DumpableObject *) tbinfo, GO_Sequence, NULL))
+	{
+
+		destroyPQExpBuffer(query);
+		destroyPQExpBuffer(delqry);
+		destroyPQExpBuffer(labelq);
+		return;
+	}
 
 	/* Make sure we are in proper schema */
 	selectSourceSchema(fout, tbinfo->dobj.namespace->dobj.name);
