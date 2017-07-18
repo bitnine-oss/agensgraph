@@ -89,15 +89,6 @@ typedef enum OidOptions
 	zeroAsNone = 8
 } OidOptions;
 
-typedef enum GraphObject
-{
-	GO_Graph,
-	GO_Label,
-	GO_Index,
-	GO_Sequence,
-	GO_Constraint
-} GraphObject;
-
 /* global decls */
 bool		g_verbose;			/* User wants verbose narration of our
 								 * activities. */
@@ -214,8 +205,6 @@ static void dumpUserMappings(Archive *fout,
 				 const char *servername, const char *namespace,
 				 const char *owner, CatalogId catalogId, DumpId dumpId);
 static void dumpDefaultACL(Archive *fout, DefaultACLInfo *daclinfo);
-static bool IsGraphObject(Archive *fout, DumpableObject *dobj,
-							GraphObject kind, char *labkind);
 
 static void dumpACL(Archive *fout, CatalogId objCatId, DumpId objDumpId,
 		const char *type, const char *name, const char *subname,
@@ -9557,6 +9546,8 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 	PQExpBuffer q;
 	PQExpBuffer delq;
 	PQExpBuffer labelq;
+	PQExpBuffer query;
+	PGresult   *res;
 	char	   *qnspname;
 	char	   *kind;
 
@@ -9571,10 +9562,17 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 	q = createPQExpBuffer();
 	delq = createPQExpBuffer();
 	labelq = createPQExpBuffer();
+	query = createPQExpBuffer();
 
 	qnspname = pg_strdup(fmtId(nspinfo->dobj.name));
 
-	if (IsGraphObject(fout, (DumpableObject *) nspinfo, GO_Graph, NULL))
+	/* check if it's schema or graph */
+	appendPQExpBuffer(query,
+			"SELECT nspid FROM pg_catalog.ag_graph g WHERE g.graphname = '%s'\n",
+			qnspname);
+	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+	if (PQntuples(res) == 1)
 		kind = "GRAPH";
 	else
 		kind = "SCHEMA";
@@ -9617,9 +9615,11 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 
 	free(qnspname);
 
+	PQclear(res);
 	destroyPQExpBuffer(q);
 	destroyPQExpBuffer(delq);
 	destroyPQExpBuffer(labelq);
+	destroyPQExpBuffer(query);
 }
 
 /*
@@ -14702,103 +14702,6 @@ dumpDefaultACL(Archive *fout, DefaultACLInfo *daclinfo)
 	destroyPQExpBuffer(q);
 }
 
-static bool IsGraphObject(Archive *fout, DumpableObject *dobj,
-							GraphObject kind, char *labkind)
-{
-	PQExpBuffer query;
-	PGresult   *res;
-	bool ret;
-
-	query = createPQExpBuffer();
-
-	switch (kind)
-	{
-		case GO_Graph :
-			appendPQExpBuffer(
-				query,
-				"SELECT nspid FROM pg_catalog.ag_graph g WHERE g.graphname = '%s'\n",
-				fmtId(dobj->name));
-			res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
-			if (PQntuples(res) == 1)
-				ret = true;
-			else
-				ret = false;
-			break;
-		case GO_Label :
-			appendPQExpBuffer(query,
-					"SELECT labkind FROM ag_label l, ag_graph g, pg_class c \
-					WHERE l.labname = '%s' \
-					AND c.relname = l.labname \
-					AND c.relnamespace = g.nspid", fmtId(dobj->name));
-
-			res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
-
-			if (PQntuples(res) == 0)
-				ret = false;
-			else
-			{
-				strcpy(labkind, PQgetvalue(res, 0, PQfnumber(res, "labkind")));
-				ret = true;
-			}
-			break;
-		case GO_Sequence :
-			appendPQExpBuffer(query,
-					"SELECT relname FROM ag_graph g, pg_class c \
-					WHERE c.relname = '%s' \
-					AND c.relkind = 'S' \
-					AND c.relnamespace = g.nspid", fmtId(dobj->name));
-			res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
-
-			if (PQntuples(res) == 1)
-				ret = true;
-			else
-				ret = false;
-			break;
-		case GO_Index :
-			/* default index : to be skipped
-			 * property indexes : to be created
-			 * this query get indexes which is in graph but is not property index */
-			appendPQExpBuffer(query,
-					"SELECT \
-					I.relname AS indexname \
-					FROM pg_index X JOIN pg_class C ON (C.oid = X.indrelid) \
-						JOIN ag_label L ON (X.indrelid = L.relid) \
-						JOIN pg_class I ON (I.oid = X.indexrelid) \
-						LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace) \
-						LEFT JOIN pg_tablespace T ON (T.oid = I.reltablespace) \
-					WHERE C.relkind = 'r' AND I.relkind = 'i' AND \
-						X.indisexclusion = true OR X.indexprs IS NULL \
-						AND I.relname = '%s'",
-					fmtId(dobj->name));
-			res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
-
-			if (PQntuples(res) == 1)
-				ret = true;
-			else
-				ret = false;
-			break;
-		case GO_Constraint :
-			/* pkey is a constraint but also a index */
-			appendPQExpBuffer(query,
-					"SELECT relname FROM ag_graph g, pg_class c \
-					WHERE c.relname = '%s' \
-					AND c.relkind = 'i' \
-					AND c.relnamespace = g.nspid", fmtId(dobj->name));
-			res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
-
-			if (PQntuples(res) == 1)
-				ret = true;
-			else
-				ret = false;
-			break;
-	}
-
-	PQclear(res);
-	destroyPQExpBuffer(query);
-
-	return ret;
-}
-
 /*----------
  * Write out grant/revoke information
  *
@@ -15476,23 +15379,36 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 				break;
 			default:
 				{
+					/* check if it's table or label  */
+					PQExpBuffer query = createPQExpBuffer();
+					PGresult   *res;
 					char labkind[2] = {'\0'};
 
-					srvname = NULL;
-					ftoptions = NULL;
+					appendPQExpBuffer(query,
+							"SELECT labkind \
+							FROM ag_label l, ag_graph g, pg_class c \
+							WHERE l.labname = '%s' \
+							AND c.relname = l.labname \
+							AND c.relnamespace = g.nspid",
+							fmtId(tbinfo->dobj.name));
 
-					if (IsGraphObject(fout, (DumpableObject *) tbinfo,
-										GO_Label, labkind))
+					res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+					if (PQntuples(res) == 0)
+						reltypename = "TABLE";
+					else
 					{
+						strcpy(labkind, PQgetvalue(res, 0, PQfnumber(res, "labkind")));
 						if (strcmp(labkind, "v") == 0)
 							reltypename = "VLABEL";
 						else if (strcmp(labkind, "e") == 0)
 							reltypename = "ELABEL";
 						else
-							reltypename = "Invalid LABKIND";
+							exit_horribly(NULL, "Invalid labkind detected : %s",
+									labkind);
 
-						if (strcmp("ag_vertex", fmtId(tbinfo->dobj.name)) == 0
-							|| strcmp("ag_edge", fmtId(tbinfo->dobj.name)) == 0)
+						if (strcmp("ag_vertex", fmtId(tbinfo->dobj.name)) == 0 ||
+							strcmp("ag_edge", fmtId(tbinfo->dobj.name)) == 0)
 						{
 							destroyPQExpBuffer(q);
 							destroyPQExpBuffer(delq);
@@ -15500,8 +15416,11 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 							return;
 						}
 					}
-					else
-						reltypename = "TABLE";
+					srvname = NULL;
+					ftoptions = NULL;
+
+					PQclear(res);
+					destroyPQExpBuffer(query);
 				}
 		}
 
@@ -16160,8 +16079,7 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 	PQExpBuffer delq;
 	PQExpBuffer labelq;
 
-	if (dopt->dataOnly ||
-		IsGraphObject(fout, (DumpableObject *) indxinfo, GO_Index, NULL))
+	if (dopt->dataOnly)
 		return;
 
 	q = createPQExpBuffer();
@@ -16180,12 +16098,16 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 	 */
 	if (!is_constraint)
 	{
+		/* Skip duplicated object error for graph default indexes */
+		char temp[200]="CREATE INDEX IF NOT EXISTS ";
+		strcpy(temp + strlen(temp), indxinfo->indexdef + 13);
+
 		if (dopt->binary_upgrade)
 			binary_upgrade_set_pg_class_oids(fout, q,
 											 indxinfo->dobj.catId.oid, true);
 
 		/* Plain secondary index */
-		appendPQExpBuffer(q, "%s;\n", indxinfo->indexdef);
+		appendPQExpBuffer(q, "%s;\n", temp);
 
 		/* If the index is clustered, we need to record that. */
 		if (indxinfo->indisclustered)
@@ -16251,12 +16173,31 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 	TableInfo  *tbinfo = coninfo->contable;
 	PQExpBuffer q;
 	PQExpBuffer delq;
+	PQExpBuffer query;
+	PGresult   *res;
 	char	   *tag = NULL;
 
 	/* Skip if not to be dumped */
-	if (!coninfo->dobj.dump || dopt->dataOnly ||
-		IsGraphObject(fout, (DumpableObject *) coninfo, GO_Constraint, NULL))
+	if (!coninfo->dobj.dump || dopt->dataOnly)
 		return;
+
+	/* Skip vlabel primary key in graph */
+	query = createPQExpBuffer();
+
+	appendPQExpBuffer(query,
+			"SELECT relname FROM ag_graph g, pg_class c, pg_index i \
+			WHERE c.relname = '%s' \
+			AND c.oid = i.indexrelid \
+			AND i.indisprimary = true \
+			AND c.relnamespace = g.nspid", fmtId(coninfo->dobj.name));
+	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+
+	if (PQntuples(res) == 1)
+	{
+		PQclear(res);
+		destroyPQExpBuffer(query);
+		return;
+	}
 
 	q = createPQExpBuffer();
 	delq = createPQExpBuffer();
@@ -16584,15 +16525,6 @@ dumpSequence(Archive *fout, TableInfo *tbinfo)
 	PQExpBuffer delqry = createPQExpBuffer();
 	PQExpBuffer labelq = createPQExpBuffer();
 
-	if (IsGraphObject(fout, (DumpableObject *) tbinfo, GO_Sequence, NULL))
-	{
-
-		destroyPQExpBuffer(query);
-		destroyPQExpBuffer(delqry);
-		destroyPQExpBuffer(labelq);
-		return;
-	}
-
 	/* Make sure we are in proper schema */
 	selectSourceSchema(fout, tbinfo->dobj.namespace->dobj.name);
 
@@ -16682,8 +16614,9 @@ dumpSequence(Archive *fout, TableInfo *tbinfo)
 												tbinfo->dobj.catId.oid);
 	}
 
+	/* Skip duplicated object error for graph default sequence */
 	appendPQExpBuffer(query,
-					  "CREATE SEQUENCE %s\n",
+					  "CREATE SEQUENCE IF NOT EXISTS %s\n",
 					  fmtId(tbinfo->dobj.name));
 
 	if (fout->remoteVersion >= 80400)
