@@ -332,7 +332,7 @@ ExecDijkstra(DijkstraState *node)
 
 	start_vid = ExecEvalExpr(node->source, econtext, &is_null, &is_done);
 	start_node = pq_add(node->pq, node->pq_mcxt, DatumGetGraphid(start_vid),
-						0.0d);
+						0.0);
 
 	end_vid = ExecEvalExpr(node->target, econtext, &is_null, &is_done);
 	node->target_id = DatumGetGraphid(end_vid);
@@ -340,7 +340,7 @@ ExecDijkstra(DijkstraState *node)
 	vertex = hash_search(node->visited_nodes, &start_node->to, HASH_ENTER,
 						 NULL);
 	vertex->incoming_enodes = NIL;
-	vnode_add_enode(vertex, 0.0d, -1, NULL);
+	vnode_add_enode(vertex, 0.0, -1, NULL);
 
 	while (!pairingheap_is_empty(node->pq))
 	{
@@ -390,7 +390,7 @@ ExecDijkstra(DijkstraState *node)
 
 			weight = slot_getattr(outerTupleSlot, dijkstra->weight, &is_null);
 			weight_val = DatumGetFloat8(weight);
-			if (weight_val < 0.0d)
+			if (weight_val < 0.0)
 				ereport(ERROR,
 						(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 						 errmsg("WEIGHT must be larger than 0")));
