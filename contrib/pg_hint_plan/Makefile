@@ -39,7 +39,13 @@ TARSOURCES = Makefile *.c  *.h COPYRIGHT* \
 	doc/* expected/*.out sql/*.sql sql/maskout.sh \
 	data/data.csv input/*.source output/*.source SPECS/*.spec
 
-LDFLAGS+=-Wl,--build-id
+UNAME = $(shell uname)
+
+ifeq ($(UNAME), Darwin)
+	LDFLAGS+=-Wl
+else
+	LDFLAGS+=-Wl,--build-id
+endif
 
 installcheck: $(REGRESSION_EXPECTED)
 

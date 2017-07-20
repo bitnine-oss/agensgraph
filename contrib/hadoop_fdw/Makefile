@@ -22,7 +22,7 @@ SHLIB_LINK = -ljvm
 UNAME = $(shell uname)
 
 ifeq ($(UNAME), Darwin)
-	SHLIB_LINK = -I/System/Library/Frameworks/JavaVM.framework/Headers -L/System/Library/Frameworks/JavaVM.framework/Libraries -ljvm -framework JavaVM
+	SHLIB_LINK = -L$(shell /usr/libexec/java_home)/jre/lib/server -ljvm
 endif
 
 TRGTS = JAVAFILES
@@ -49,7 +49,6 @@ subdir = contrib/hadoop_fdw
 top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk
-SHLIB_LINK += -L$(JAVA_LIBRARY_PATH)
 endif
 
 
