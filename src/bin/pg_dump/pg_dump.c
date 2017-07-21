@@ -16098,16 +16098,20 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 	 */
 	if (!is_constraint)
 	{
-		/* Skip duplicated object error for graph default indexes */
-		char temp[200]="CREATE INDEX IF NOT EXISTS ";
-		strcpy(temp + strlen(temp), indxinfo->indexdef + 13);
+		int headlen = strstr(indxinfo->indexdef, "INDEX") - indxinfo->indexdef;
+		char str[20]={'\0'};
 
 		if (dopt->binary_upgrade)
 			binary_upgrade_set_pg_class_oids(fout, q,
 											 indxinfo->dobj.catId.oid, true);
 
 		/* Plain secondary index */
-		appendPQExpBuffer(q, "%s;\n", temp);
+		/* Skip duplicated object error for graph default indexes */
+		/* CREATE INDEX or CREATE UNIQUE INDEX */
+		headlen += strlen("INDEX ");
+		appendPQExpBuffer(q, "%s", strncat(str, indxinfo->indexdef, headlen));
+
+		appendPQExpBuffer(q, "IF NOT EXISTS %s;\n", indxinfo->indexdef + headlen);
 
 		/* If the index is clustered, we need to record that. */
 		if (indxinfo->indisclustered)
