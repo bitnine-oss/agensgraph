@@ -2012,7 +2012,6 @@ MATCH (a) DETACH DELETE (a);
 CREATE ({name: 'bitnine'});
 CREATE ({age: 10});
 MATCH (a) SET a.age = (a.age::int + 1)::text::jsonb;
-WARNING:  property map cannot be NULL
 MATCH (a) RETURN properties(a);
      properties      
 ---------------------

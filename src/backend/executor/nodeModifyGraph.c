@@ -1049,33 +1049,29 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 		elem_datum = ExecEvalExpr(gsp->es_elem, econtext, &isNull, &isDone);
 		if (isNull)
 		{
-			ereport(WARNING,
+			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("updating NULL is not allowed")));
-			continue;
 		}
 		if (isDone != ExprSingleResult)
 		{
-			ereport(WARNING,
+			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("expected single result")));
-			continue;
 		}
 
 		expr_datum = ExecEvalExpr(gsp->es_expr, econtext, &isNull, &isDone);
 		if (isNull)
 		{
-			ereport(WARNING,
+			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("property map cannot be NULL")));
-			continue;
 		}
 		if (isDone != ExprSingleResult)
 		{
-			ereport(WARNING,
+			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("expected single result")));
-			continue;
 		}
 
 		if (elemtype == VERTEXOID)

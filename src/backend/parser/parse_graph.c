@@ -4030,6 +4030,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	else
 	{
 		/* LHS is a property in the property map */
+		FuncCall   *delete;
+		Node	   *del_prop;
 
 		if (sp->add)
 			ereport(ERROR,
@@ -4037,24 +4039,36 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 					 errmsg("+= operator on a property is not allowed"),
 					 parser_errposition(pstate, exprLocation(elem))));
 
-		if (IsNullAConst(sp->expr))
-		{
-			FuncCall   *delete;
+		delete = makeFuncCall(list_make1(makeString("jsonb_delete_path")),
+							  NIL, -1);
 
-			delete = makeFuncCall(list_make1(makeString("jsonb_delete_path")),
-								  NIL, -1);
-			prop_map = ParseFuncOrColumn(pstate, delete->funcname,
-										 list_make2(prop_map, path), delete,
-										 -1);
-		}
-		else
+		del_prop = ParseFuncOrColumn(pstate, delete->funcname,
+									 list_make2(prop_map, path), delete,
+									 -1);
+
+		if (IsNullAConst(sp->expr))		/* SET a.b.c = NULL */
+			prop_map = del_prop;
+		else							/* SET a.b.c = expr */
 		{
 			FuncCall   *set;
+			Node	   *set_prop;
+			CoalesceExpr *coalesce;
 
 			set = makeFuncCall(list_make1(makeString("jsonb_set")), NIL, -1);
-			prop_map = ParseFuncOrColumn(pstate, set->funcname,
+			set_prop = ParseFuncOrColumn(pstate, set->funcname,
 										 list_make3(prop_map, path, expr), set,
 										 -1);
+
+			/*
+			 * The right operand can be null. In this case,
+			 * it behaves like a REMOVE clause.
+			 */
+			coalesce = makeNode(CoalesceExpr);
+			coalesce->args = list_make2(set_prop, del_prop);
+			coalesce->coalescetype = JSONBOID;
+			coalesce->location = -1;
+
+			prop_map = (Node *) coalesce;
 		}
 	}
 
