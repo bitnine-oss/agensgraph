@@ -136,6 +136,7 @@ static Datum createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
 							 Graphid start, Graphid end, TupleTableSlot *slot);
 static TupleTableSlot *copyVirtualTupleTableSlot(TupleTableSlot *dstslot,
 												 TupleTableSlot *srcslot);
+static void initGraphWRStats(ModifyGraphState *mgstate, GraphWriteOp op);
 
 /* caching SPIPlan's (See ri_triggers.c) */
 static void InitSqlcmdHashTable(MemoryContext mcxt);
@@ -223,6 +224,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->exprs = (List *) ExecInitExpr((Expr *) mgplan->exprs,
 										   (PlanState *) mgstate);
 	mgstate->sets = ExecInitGraphSets(mgplan->sets, mgstate);
+
+	initGraphWRStats(mgstate, mgplan->operation);
 
 	InitSqlcmdHashTable(estate->es_query_cxt);
 
@@ -314,6 +317,33 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 
 	ExecEndNode(mgstate->subplan);
 	ExecFreeExprContext(&mgstate->ps);
+}
+
+static void
+initGraphWRStats(ModifyGraphState *mgstate, GraphWriteOp op)
+{
+	EState *estate = mgstate->ps.state;
+
+	if (mgstate->pattern != NIL)
+	{
+		Assert(op == GWROP_CREATE || op == GWROP_MERGE);
+
+		estate->es_graphwrstats.insertVertex = 0;
+		estate->es_graphwrstats.insertEdge = 0;
+	}
+	if (mgstate->exprs != NIL)
+	{
+		Assert(op == GWROP_DELETE);
+
+		estate->es_graphwrstats.deleteVertex = 0;
+		estate->es_graphwrstats.deleteEdge = 0;
+	}
+	if (mgstate->sets != NIL)
+	{
+		Assert(op == GWROP_SET || op == GWROP_MERGE);
+
+		estate->es_graphwrstats.updateProperty = 0;
+	}
 }
 
 static List *
@@ -559,7 +589,11 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 							  NULL, NIL);
 
 	if (mgstate->canSetTag)
+	{
+		Assert(estate->es_graphwrstats.insertVertex != UINT_MAX);
+
 		estate->es_graphwrstats.insertVertex++;
+	}
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -627,7 +661,11 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		setSlotValueByAttnum(slot, edge, gedge->resno);
 
 	if (mgstate->canSetTag)
+	{
+		Assert(estate->es_graphwrstats.insertEdge != UINT_MAX);
+
 		estate->es_graphwrstats.insertEdge++;
+	}
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -904,7 +942,11 @@ deleteVertexEdges(ModifyGraphState *mgstate, Datum vid)
 	}
 
 	if (mgstate->canSetTag)
+	{
+		Assert(estate->es_graphwrstats.deleteEdge != UINT_MAX);
+
 		estate->es_graphwrstats.deleteEdge += SPI_processed;
+	}
 }
 
 static void
@@ -949,9 +991,17 @@ deleteElem(ModifyGraphState *mgstate, Datum id, DelElemKind kind)
 	if (mgstate->canSetTag)
 	{
 		if (kind == DEL_ELEM_VERTEX)
+		{
+			Assert(estate->es_graphwrstats.deleteVertex != UINT_MAX);
+
 			estate->es_graphwrstats.deleteVertex += SPI_processed;
+		}
 		else
+		{
+			Assert(estate->es_graphwrstats.deleteEdge != UINT_MAX);
+
 			estate->es_graphwrstats.deleteEdge += SPI_processed;
+		}
 	}
 }
 
@@ -1137,7 +1187,11 @@ updateElemProp(ModifyGraphState *mgstate, Datum id, Datum expr)
 		elog(ERROR, "SET_PROP (%hu." INT64_FORMAT "): only one element per execution must be updated", labid, GraphidGetLocid(id_val));
 
 	if (mgstate->canSetTag)
+	{
+		Assert(estate->es_graphwrstats.updateProperty != UINT_MAX);
+
 		estate->es_graphwrstats.updateProperty += SPI_processed;
+	}
 }
 
 static Datum
@@ -1377,7 +1431,11 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 		setSlotValueByAttnum(slot, vertex, gvertex->resno);
 
 	if (mgstate->canSetTag)
+	{
+		Assert(estate->es_graphwrstats.insertVertex != UINT_MAX);
+
 		estate->es_graphwrstats.insertVertex++;
+	}
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -1460,7 +1518,12 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		setSlotValueByAttnum(slot, edge, gedge->resno);
 
 	if (mgstate->canSetTag)
+	{
+		Assert(estate->es_graphwrstats.insertEdge != UINT_MAX);
+
 		estate->es_graphwrstats.insertEdge++;
+	}
+
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
