@@ -86,6 +86,12 @@ typedef struct
 	Node	   *prop_constr;	/* property constraint of the element */
 } ElemQual;
 
+typedef struct
+{
+	TargetEntry *te;
+	Node	   *prop_map;
+} ElemQualOnly;
+
 typedef struct prop_constr_context
 {
 	ParseState *pstate;
@@ -136,11 +142,11 @@ static bool arePathsConnected(CypherPath *path1, CypherPath *path2);
 static Node *transformComponents(ParseState *pstate, List *components,
 								 List **targetList);
 static Node *transformMatchNode(ParseState *pstate, CypherNode *cnode,
-								bool force, List **targetList);
+								bool force, List **targetList, List **eqoList);
 static RangeTblEntry *transformMatchRel(ParseState *pstate, CypherRel *crel,
-										List **targetList);
+										List **targetList, List **eqoList);
 static RangeTblEntry *transformMatchSR(ParseState *pstate, CypherRel *crel,
-									   List **targetList);
+									   List **targetList, List **eqoList);
 static RangeTblEntry *addEdgeUnion(ParseState *pstate, char *edge_label,
 								   int location, Alias *alias);
 static Node *genEdgeUnion(char *edge_label, int location);
@@ -1247,8 +1253,10 @@ arePathsConnected(CypherPath *path1, CypherPath *path2)
 static Node *
 transformComponents(ParseState *pstate, List *components, List **targetList)
 {
+	List	   *eqoList = NIL;
 	Node	   *qual = NULL;
 	ListCell   *lc;
+	ListCell   *leqo;
 
 	foreach(lc, components)
 	{
@@ -1307,7 +1315,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					if (le == NULL)
 					{
 						vertex = transformMatchNode(pstate, cnode, true,
-													targetList);
+													targetList, &eqoList);
 						break;
 					}
 
@@ -1319,7 +1327,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					 */
 					zero = isZeroLengthVLE(crel);
 					vertex = transformMatchNode(pstate, cnode,
-												(zero || out), targetList);
+												(zero || out), targetList,
+												&eqoList);
 
 					if (p->kind != CPATH_NORMAL)
 					{
@@ -1328,14 +1337,16 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					}
 
 					setInitialVidForVLE(pstate, crel, vertex, NULL, NULL);
-					edge = transformMatchRel(pstate, crel, targetList);
+					edge = transformMatchRel(pstate, crel, targetList,
+											 &eqoList);
 
 					qual = addQualNodeIn(pstate, qual, vertex, crel, edge,
 										 false);
 				}
 				else
 				{
-					vertex = transformMatchNode(pstate, cnode, out, targetList);
+					vertex = transformMatchNode(pstate, cnode, out, targetList,
+												&eqoList);
 					qual = addQualNodeIn(pstate, qual, vertex,
 										 prev_crel, prev_edge, true);
 
@@ -1347,7 +1358,8 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 					crel = lfirst(le);
 					setInitialVidForVLE(pstate, crel, vertex,
 										prev_crel, prev_edge);
-					edge = transformMatchRel(pstate, crel, targetList);
+					edge = transformMatchRel(pstate, crel, targetList,
+											 &eqoList);
 					qual = addQualRelPath(pstate, qual,
 										  prev_crel, prev_edge, crel, edge);
 				}
@@ -1402,12 +1414,26 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 		qual = addQualUniqueEdges(pstate, qual, ues, uearrs);
 	}
 
+	/*
+	 * Process all ElemQualOnly's at here because there are places that assume
+	 * resjunk columns come after non-junk columns.
+	 */
+	foreach(leqo, eqoList)
+	{
+		ElemQualOnly *eqo = lfirst(leqo);
+		TargetEntry *te = eqo->te;
+
+		te->resno = (AttrNumber) pstate->p_next_resno++;
+		addElemQual(pstate, te->resno, eqo->prop_map);
+		*targetList = lappend(*targetList, te);
+	}
+
 	return qual;
 }
 
 static Node *
 transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
-				   List **targetList)
+				   List **targetList, List **eqoList)
 {
 	char	   *varname = getCypherName(cnode->variable);
 	int			varloc = getCypherNameLoc(cnode->variable);
@@ -1529,7 +1555,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 	/*
 	 * If `cnode` has a label constraint or a property constraint, return RTE.
 	 *
-	 * if `cnode` is in a path, return RTE because the path must consit of
+	 * If `cnode` is in a path, return RTE because the path must consist of
 	 * valid vertices.
 	 * If there is no previous relationship of `cnode` in the path and
 	 * the next relationship of `cnode` is zero-length, return RTE
@@ -1550,13 +1576,36 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 
 		if (varname != NULL || prop_constr)
 		{
-			te = makeTargetEntry((Expr *) makeVertexExpr(pstate, rte, varloc),
-								 (AttrNumber) pstate->p_next_resno++,
-								 alias->aliasname,
-								 false);
+			bool		resjunk;
+			int			resno;
 
-			addElemQual(pstate, te->resno, cnode->prop_map);
-			*targetList = lappend(*targetList, te);
+			/*
+			 * If `varname` is NULL, this target has to be ignored when
+			 * `RETURN *`.
+			 */
+			resjunk = (varname == NULL);
+			resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
+
+			te = makeTargetEntry((Expr *) makeVertexExpr(pstate, rte, varloc),
+								 (AttrNumber) resno,
+								 alias->aliasname,
+								 resjunk);
+
+			if (resjunk)
+			{
+				ElemQualOnly *eqo;
+
+				eqo = palloc(sizeof(*eqo));
+				eqo->te = te;
+				eqo->prop_map = cnode->prop_map;
+
+				*eqoList = lappend(*eqoList, eqo);
+			}
+			else
+			{
+				addElemQual(pstate, te->resno, cnode->prop_map);
+				*targetList = lappend(*targetList, te);
+			}
 		}
 
 		/* return RTE to help the caller can access columns directly */
@@ -1590,7 +1639,8 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 }
 
 static RangeTblEntry *
-transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList)
+transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList,
+				  List **eqoList)
 {
 	char	   *varname = getCypherName(crel->variable);
 	int			varloc = getCypherNameLoc(crel->variable);
@@ -1620,13 +1670,14 @@ transformMatchRel(ParseState *pstate, CypherRel *crel, List **targetList)
 		edgeLabelExist(pstate, typname, typloc);
 
 	if (crel->varlen == NULL)
-		return transformMatchSR(pstate, crel, targetList);
+		return transformMatchSR(pstate, crel, targetList, eqoList);
 	else
 		return transformMatchVLE(pstate, crel, targetList);
 }
 
 static RangeTblEntry *
-transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList)
+transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
+				 List **eqoList)
 {
 	char	   *varname = getCypherName(crel->variable);
 	int			varloc = getCypherNameLoc(crel->variable);
@@ -1655,15 +1706,33 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList)
 
 	if (varname != NULL || crel->prop_map != NULL)
 	{
+		bool		resjunk;
+		int			resno;
 		TargetEntry *te;
 
-		te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, rte, varloc),
-							 (AttrNumber) pstate->p_next_resno++,
-							 alias->aliasname,
-							 false);
+		resjunk = (varname == NULL);
+		resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
 
-		addElemQual(pstate, te->resno, crel->prop_map);
-		*targetList = lappend(*targetList, te);
+		te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, rte, varloc),
+							 (AttrNumber) resno,
+							 alias->aliasname,
+							 resjunk);
+
+		if (resjunk)
+		{
+			ElemQualOnly *eqo;
+
+			eqo = palloc(sizeof(*eqo));
+			eqo->te = te;
+			eqo->prop_map = crel->prop_map;
+
+			*eqoList = lappend(*eqoList, eqo);
+		}
+		else
+		{
+			addElemQual(pstate, te->resno, crel->prop_map);
+			*targetList = lappend(*targetList, te);
+		}
 	}
 
 	return rte;
@@ -2789,12 +2858,22 @@ transformElemQuals(ParseState *pstate, Node *qual)
 	{
 		ElemQual   *eq = lfirst(le);
 		RangeTblEntry *rte;
+		TargetEntry *te;
+		Oid			type;
+		int32		typmod;
+		Oid			collid;
 		Var		   *var;
 		Node	   *prop_map;
 		bool		is_jsonobj;
 
 		rte = GetRTEByRangeTablePosn(pstate, eq->varno, 0);
-		var = make_var(pstate, rte, eq->varattno, -1);
+		/* don't use make_var() because `te` can be resjunk */
+		te = get_tle_by_resno(rte->subquery->targetList, eq->varattno);
+		type = exprType((Node *) te->expr);
+		typmod = exprTypmod((Node *) te->expr);
+		collid = exprCollation((Node *) te->expr);
+		var = makeVar(eq->varno, eq->varattno, type, typmod, collid, 0);
+		var->location = -1;
 		/* skip markVarForSelectPriv() because `rte` is RTE_SUBQUERY */
 
 		prop_map = getExprField((Expr *) var, AG_ELEM_PROP_MAP);

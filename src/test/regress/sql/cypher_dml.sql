@@ -132,6 +132,8 @@ RETURN a.name AS a;
 
 MATCH (a), (a:repo) RETURN a.name AS a;
 
+MATCH p=({name: 'agens-graph'})-[{lang: 'java'}]->(m) RETURN *;
+
 MATCH ();
 MATCH ()-[a]-(), (a) RETURN *;
 MATCH a=(), (a) RETURN *;
