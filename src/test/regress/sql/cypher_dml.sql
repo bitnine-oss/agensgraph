@@ -774,6 +774,9 @@ CREATE ({age: 10});
 MATCH (a) SET a.age = (a.age::int + 1)::text::jsonb;
 MATCH (a) RETURN properties(a);
 
+MATCH (a) SET a.age = to_jsonb(2017 - a.undefined_attr::int);
+MATCH (a) RETURN properties(a);
+
 -- working with NULL
 CREATE VLABEL person;
 CREATE (:person {name: 'bitnine', age: NULL});

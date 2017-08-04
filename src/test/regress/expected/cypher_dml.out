@@ -2019,6 +2019,14 @@ MATCH (a) RETURN properties(a);
  {"age": 11}
 (2 rows)
 
+MATCH (a) SET a.age = to_jsonb(2017 - a.undefined_attr::int);
+MATCH (a) RETURN properties(a);
+     properties      
+---------------------
+ {"name": "bitnine"}
+ {}
+(2 rows)
+
 -- working with NULL
 CREATE VLABEL person;
 CREATE (:person {name: 'bitnine', age: NULL});
