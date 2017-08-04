@@ -312,6 +312,12 @@ MATCH (a), (a:repo) RETURN a.name AS a;
  agens-graph-odbc
 (4 rows)
 
+MATCH p=({name: 'agens-graph'})-[{lang: 'java'}]->(m) RETURN *;
+                          m                          |                                                                   p                                                                    
+-----------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------
+ repo[3.2]{"name": "agens-graph-jdbc", "year": 2016} | [repo[3.1]{"name": "agens-graph", "year": 2016},lib[4.1][3.1,3.2]{"lang": "java"},repo[3.2]{"name": "agens-graph-jdbc", "year": 2016}]
+(1 row)
+
 MATCH ();
 ERROR:  Cypher query must end with RETURN or update clause
 MATCH ()-[a]-(), (a) RETURN *;
