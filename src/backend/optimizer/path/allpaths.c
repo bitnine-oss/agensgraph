@@ -2785,13 +2785,10 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 		return;
 
 	/*
-	 * Do nothing if subquery is Cypher CREATE/MERGE. We need all the target
+	 * Do nothing if subquery is ModifyGraph. We need all the target
 	 * entries in it to get the result of subquery in it.
-	 * Those entries are used to create a graph pattern.
 	 */
-	if (subquery->commandType == CMD_GRAPHWRITE &&
-		(subquery->graph.writeOp == GWROP_CREATE ||
-		 subquery->graph.writeOp == GWROP_MERGE))
+	if (subquery->commandType == CMD_GRAPHWRITE)
 		return;
 
 	if (subquery->dijkstraSource)

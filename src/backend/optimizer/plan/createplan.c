@@ -283,7 +283,7 @@ static ModifyTable *make_modifytable(PlannerInfo *root,
 				 List *resultRelations, List *subplans,
 				 List *withCheckOptionLists, List *returningLists,
 				 List *rowMarks, OnConflictExpr *onconflict, int epqParam);
-static Eager *make_eager(Plan *lefttree);
+static Eager *make_eager(PlannerInfo *root, Plan *lefttree);
 
 
 /*
@@ -4149,7 +4149,9 @@ create_eager_plan(PlannerInfo *root, EagerPath *best_path, int flags)
 	subplan = create_plan_recurse(root, best_path->subpath,
 								  flags | CP_SMALL_TLIST);
 
-	plan = make_eager(subplan);
+	plan = make_eager(root, subplan);
+
+	plan->modifylist = best_path->modifiedlist;
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
 
@@ -6559,12 +6561,25 @@ is_projection_capable_plan(Plan *plan)
 }
 
 static Eager *
-make_eager(Plan *lefttree)
+make_eager(PlannerInfo *root, Plan *lefttree)
 {
 	Eager  *node = makeNode(Eager);
 	Plan   *plan = &node->plan;
 
-	plan->targetlist = lefttree->targetlist;
+	if (IsA(lefttree, ModifyGraph))
+	{
+		ModifyGraph *mgplan = (ModifyGraph *) lefttree;
+
+		node->gwop = mgplan->operation;
+
+		plan->targetlist = root->processed_tlist;
+	}
+	else
+	{
+		plan->targetlist = lefttree->targetlist;
+
+		node->gwop = GWROP_NONE;
+	}
 	plan->qual = NIL;
 	plan->lefttree = lefttree;
 	plan->righttree = NULL;
