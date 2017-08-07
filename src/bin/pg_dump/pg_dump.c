@@ -15385,7 +15385,7 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 			default:
 				{
 					/* check if it's table or label  */
-					char	   *id;
+					const char *id;
 					PQExpBuffer query = createPQExpBuffer();
 					PGresult   *res;
 					char		labkind[2] = {'\0'};
