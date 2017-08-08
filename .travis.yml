@@ -8,7 +8,5 @@ before_script:
  - ./configure --prefix="$(pwd)"
  - make install > /dev/null
  - export PATH="$(pwd)"/bin:$PATH
- - initdb
- - ag_ctl start -w
 
-script: make installcheck
+script: make check -C src/bin
