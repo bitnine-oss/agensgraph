@@ -16113,7 +16113,7 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 	if (!is_constraint)
 	{
 		int headlen = strstr(indxinfo->indexdef, "INDEX") - indxinfo->indexdef;
-		char str[20] = {'\0'};
+		char str[32] = {'\0'};
 
 		if (dopt->binary_upgrade)
 			binary_upgrade_set_pg_class_oids(fout, q,
