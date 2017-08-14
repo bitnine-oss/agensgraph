@@ -367,6 +367,8 @@ operator		{op_chars}+
  * backup when the {real} rule fails to match completely.
  */
 
+hex				0[xX][0-9A-Fa-f]+
+hexfail			0[xX]
 integer			{digit}+
 decimal			(({digit}*\.{digit}+)|({digit}+\.{digit}*))
 decimalfail		{digit}+\.\.
@@ -949,6 +951,15 @@ other			.
 					return PARAM;
 				}
 
+{hex}			{
+					SET_YYLLOC();
+					return process_integer_literal(yytext, yylval);
+				}
+{hexfail}		{
+					yyless(yyleng - 1);
+					SET_YYLLOC();
+					return process_integer_literal(yytext, yylval);
+				}
 {integer}		{
 					SET_YYLLOC();
 					return process_integer_literal(yytext, yylval);
@@ -1239,7 +1250,7 @@ process_integer_literal(const char *token, YYSTYPE *lval)
 	char	   *endptr;
 
 	errno = 0;
-	val = strtol(token, &endptr, 10);
+	val = strtol(token, &endptr, 0);
 	if (*endptr != '\0' || errno == ERANGE
 #ifdef HAVE_LONG_INT_64
 	/* if long > 32 bits, check for overflow of int4 */
