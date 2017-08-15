@@ -33,6 +33,7 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_cte.h"
+#include "parser/parse_cypher_expr.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_func.h"
 #include "parser/parse_graph.h"
@@ -471,8 +472,12 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		if (clause->prev != NULL)
 			transformClause(pstate, clause->prev);
 
-		qry->targetList = transformTargetList(pstate, detail->items,
-											  EXPR_KIND_SELECT_TARGET);
+		if (detail->kind == CP_RETURN)
+			qry->targetList = transformItemList(pstate, detail->items,
+												EXPR_KIND_SELECT_TARGET);
+		else
+			qry->targetList = transformTargetList(pstate, detail->items,
+												  EXPR_KIND_SELECT_TARGET);
 		wrapEdgeRefTargetList(pstate, qry->targetList);
 
 		if (detail->kind == CP_WITH)

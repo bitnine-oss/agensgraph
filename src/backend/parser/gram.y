@@ -579,17 +579,36 @@ static Node *makeDijkstraPath(List *chain, Node *weight, Node *qual,
 				cypher_range_idx cypher_range_idx_opt cypher_range_opt
 				cypher_read cypher_read_clauses cypher_read_opt
 				cypher_read_opt_parens cypher_read_stmt cypher_read_with_parens
-				cypher_rel cypher_remove cypher_return cypher_rmitem cypher_set
+				cypher_rel cypher_remove cypher_rmitem cypher_set
 				cypher_setitem cypher_skip_opt
 				cypher_variable cypher_variable_opt cypher_varlen_opt
 				cypher_with cypher_with_parens
-%type <list>	cypher_distinct_opt cypher_expr_list cypher_merge_sets_opt
+%type <list>	cypher_distinct_opt cypher_merge_sets_opt
 				cypher_merge_set_list cypher_path_chain
 				cypher_path_chain_opt_parens cypher_pattern cypher_rmitem_list
 				cypher_setitem_list cypher_types cypher_types_opt
 %type <str>		cypher_varname
 %type <boolean>	cypher_detach_opt cypher_optional_opt cypher_rel_left
 				cypher_rel_right
+
+/*
+ * Cypher Query Language
+ */
+
+%type <node>	cypher_expr cypher_expr_opt
+				cypher_expr_atom cypher_expr_literal cypher_expr_var
+
+%type <node>	cypher_expr_map
+%type <list>	cypher_expr_map_keyvals
+%type <value>	cypher_expr_map_key
+
+%type <node>	cypher_expr_list
+%type <list>	cypher_expr_list_elems
+
+%type <node>	cypher_return
+%type <list>	cypher_return_items
+%type <target>	cypher_return_item
+
 
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
@@ -15019,21 +15038,6 @@ cypher_optional_opt:
 			| /* EMPTY */		{ $$ = false; }
 		;
 
-cypher_return:
-			RETURN cypher_distinct_opt target_list
-			opt_sort_clause cypher_skip_opt cypher_limit_opt
-				{
-					CypherProjection *n = makeNode(CypherProjection);
-					n->kind = CP_RETURN;
-					n->distinct = $2;
-					n->items = $3;
-					n->order = $4;
-					n->skip = $5;
-					n->limit = $6;
-					$$ = (Node *) n;
-				}
-		;
-
 cypher_create:
 			CREATE cypher_pattern
 				{
@@ -15061,7 +15065,7 @@ cypher_with:
 		;
 
 cypher_delete:
-			cypher_detach_opt DELETE_P cypher_expr_list
+			cypher_detach_opt DELETE_P expr_list
 				{
 					CypherDeleteClause *n = makeNode(CypherDeleteClause);
 					n->detach = $1;
@@ -15476,13 +15480,6 @@ cypher_limit_opt:
 			| /* EMPTY */		{ $$ = NULL; }
 		;
 
-cypher_expr_list:
-			a_expr
-					{ $$ = list_make1($1); }
-			| cypher_expr_list ',' a_expr
-					{ $$ = lappend($1, $3); }
-		;
-
 cypher_setitem_list:
 			cypher_setitem
 					{ $$ = list_make1($1); }
@@ -15524,6 +15521,260 @@ cypher_rmitem:
 					n->expr = makeNullAConst(-1);
 					n->add = false;
 					$$ = (Node *) n;
+				}
+		;
+
+/*
+ * Cypher Query Language
+ */
+
+cypher_expr:
+			cypher_expr OR cypher_expr
+					{ $$ = makeOrExpr($1, $3, @2); }
+			| cypher_expr AND cypher_expr
+					{ $$ = makeAndExpr($1, $3, @2); }
+			| NOT cypher_expr
+					{ $$ = makeNotExpr($2, @1); }
+			| cypher_expr '=' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", $1, $3, @2);
+				}
+			| cypher_expr NOT_EQUALS cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<>", $1, $3, @2);
+				}
+			| cypher_expr '<' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<", $1, $3, @2);
+				}
+			| cypher_expr '>' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">", $1, $3, @2);
+				}
+			| cypher_expr LESS_EQUALS cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<=", $1, $3, @2);
+				}
+			| cypher_expr GREATER_EQUALS cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=", $1, $3, @2);
+				}
+			| cypher_expr '+' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", $1, $3, @2);
+				}
+			| cypher_expr '-' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-", $1, $3, @2);
+				}
+			| cypher_expr '*' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "*", $1, $3, @2);
+				}
+			| cypher_expr '/' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "/", $1, $3, @2);
+				}
+			| cypher_expr '%' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "%", $1, $3, @2);
+				}
+			| cypher_expr '^' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "^", $1, $3, @2);
+				}
+			| '+' cypher_expr								%prec UMINUS
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", NULL, $2, @1);
+				}
+			| '-' cypher_expr								%prec UMINUS
+					{ $$ = doNegate($2, @1); }
+			| cypher_expr '[' cypher_expr ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = false;
+					ind->lidx = NULL;
+					ind->uidx = $3;
+
+					n = makeNode(A_Indirection);
+					n->arg = $1;
+					n->indirection = list_make1(ind);
+					$$ = (Node *) n;
+				}
+			| cypher_expr '[' cypher_expr_opt DOT_DOT cypher_expr_opt ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = true;
+					ind->lidx = $3;
+					ind->uidx = $5;
+
+					n = makeNode(A_Indirection);
+					n->arg = $1;
+					n->indirection = list_make1(ind);
+					$$ = (Node *) n;
+				}
+			| cypher_expr IS NULL_P							%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_expr IS NOT NULL_P						%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| '(' cypher_expr ')'
+					{ $$ = $2; }
+			| cypher_expr '.' cypher_expr_map_key
+				{
+					A_Indirection *n;
+
+					n = makeNode(A_Indirection);
+					n->arg = $1;
+					n->indirection = list_make1($3);
+					$$ = (Node *) n;
+				}
+			| cypher_expr_atom
+		;
+
+cypher_expr_opt:
+			cypher_expr
+			| /* EMPTY */		{ $$ = NULL; }
+		;
+
+cypher_expr_atom:
+			cypher_expr_literal
+			| cypher_expr_var
+		;
+
+cypher_expr_literal:
+			Iconst					{ $$ = makeIntConst($1, @1); }
+			| FCONST				{ $$ = makeFloatConst($1, @1); }
+			| Sconst				{ $$ = makeStringConst($1, @1); }
+			| TRUE_P				{ $$ = makeBoolAConst(TRUE, @1); }
+			| FALSE_P				{ $$ = makeBoolAConst(FALSE, @1); }
+			| NULL_P				{ $$ = makeNullAConst(@1); }
+			| cypher_expr_map
+			| cypher_expr_list
+		;
+
+cypher_expr_map:
+			'{' cypher_expr_map_keyvals '}'
+				{
+					CypherMap  *n;
+
+					n = makeNode(CypherMap);
+					n->keyvals = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_map_keyvals:
+			cypher_expr_map_key ':' cypher_expr
+					{ $$ = list_make2($1, $3); }
+			| cypher_expr_map_keyvals ',' cypher_expr_map_key ':' cypher_expr
+					{ $$ = lappend(lappend($1, $3), $5); }
+			| /* EMPTY */
+					{ $$ = NIL; }
+		;
+
+cypher_expr_map_key:
+			Sconst			{ $$ = makeString($1); }
+			| ColLabel		{ $$ = makeString($1); }
+		;
+
+cypher_expr_list:
+			'[' cypher_expr_list_elems ']'
+				{
+					CypherList *n;
+
+					n = makeNode(CypherList);
+					n->elems = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_list_elems:
+			cypher_expr
+					{ $$ = list_make1($1); }
+			| cypher_expr_list_elems ',' cypher_expr
+					{ $$ = lappend($1, $3); }
+			| /* EMPTY */
+					{ $$ = NIL; }
+		;
+
+cypher_expr_var:
+			ColId
+				{
+					ColumnRef  *n;
+
+					n = makeNode(ColumnRef);
+					n->fields = list_make1(makeString($1));
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_return:
+			RETURN cypher_return_items
+				{
+					CypherProjection *n;
+
+					n = makeNode(CypherProjection);
+					n->kind = CP_RETURN;
+					n->items = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_return_items:
+			cypher_return_item
+					{ $$ = list_make1($1); }
+			| cypher_return_items ',' cypher_return_item
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_return_item:
+			cypher_expr AS ColLabel
+				{
+					$$ = makeNode(ResTarget);
+					$$->name = $3;
+					$$->val = (Node *) $1;
+					$$->location = @1;
+				}
+			| cypher_expr
+				{
+					$$ = makeNode(ResTarget);
+					$$->val = (Node *) $1;
+					$$->location = @1;
+				}
+			| '*'
+				{
+					ColumnRef  *cref;
+
+					cref = makeNode(ColumnRef);
+					cref->fields = list_make1(makeNode(A_Star));
+					cref->location = @1;
+
+					$$ = makeNode(ResTarget);
+					$$->val = (Node *) cref;
+					$$->location = @1;
 				}
 		;
 
