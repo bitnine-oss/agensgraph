@@ -56,9 +56,9 @@ extern Plan *materialize_finished_plan(Plan *subplan);
 extern bool is_projection_capable_path(Path *path);
 extern bool is_projection_capable_plan(Plan *plan);
 extern ModifyGraph *make_modifygraph(PlannerInfo *root, bool canSetTag,
-						 GraphWriteOp operation, bool last, bool detach,
-						 Plan *subplan, List *pattern, List *targets,
-						 List *exprs, List *sets);
+						 bool last, bool detach, bool eager,
+						 GraphWriteOp operation, Plan *subplan, List *pattern,
+						 List *targets, List *exprs, List *sets);
 extern Dijkstra *make_dijkstra(PlannerInfo *root, List *tlist, Plan *subplan,
 							   AttrNumber weight, bool weight_out,
 							   AttrNumber end_id, AttrNumber edge_id,

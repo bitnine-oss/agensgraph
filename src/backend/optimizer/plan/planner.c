@@ -2106,13 +2106,6 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 													parse->graph.targets,
 													parse->graph.exprs,
 													parse->graph.sets);
-
-			if (parse->graph.last == false &&
-				(parse->graph.writeOp == GWROP_SET ||
-				 parse->graph.writeOp == GWROP_DELETE))
-			{
-				path = (Path *) create_eager_path(final_rel, parse->graph.writeOp, path);
-			}
 		}
 		/*
 		 * If this is an INSERT/UPDATE/DELETE, and we're not being called from

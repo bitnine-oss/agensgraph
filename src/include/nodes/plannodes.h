@@ -691,16 +691,6 @@ typedef struct Sort
 	bool	   *nullsFirst;		/* NULLS FIRST/LAST directions */
 } Sort;
 
-/* ----------------
- *		eager node
- * ----------------
- */
-typedef struct Eager
-{
-	Plan		plan;
-	List	   *modifylist;
-	GraphWriteOp gwop;
-} Eager;
 
 /* ---------------
  *	 group node -
@@ -976,9 +966,10 @@ typedef struct ModifyGraph
 {
 	Plan		plan;
 	bool		canSetTag;
-	GraphWriteOp operation;
 	bool		last;			/* is this for the last clause? */
 	bool		detach;			/* DETACH DELETE */
+	bool		eagerness;		/* need eager mode? */
+	GraphWriteOp operation;
 	Plan	   *subplan;		/* plan producing source data */
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
 	List	   *targets;		/* relation Oid's of target labels */
