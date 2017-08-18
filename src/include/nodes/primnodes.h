@@ -1448,4 +1448,15 @@ typedef struct EdgeRefRows
 	Expr	   *arg;
 } EdgeRefRows;
 
+/*
+ * Cypher Query Language
+ */
+
+typedef struct CypherMapExpr
+{
+	Expr		xpr;
+	List	   *keyvals;
+	int			location;
+} CypherMapExpr;
+
 #endif   /* PRIMNODES_H */

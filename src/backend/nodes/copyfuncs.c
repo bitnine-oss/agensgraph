@@ -2088,6 +2088,17 @@ _copyEdgeRefRows(const EdgeRefRows *from)
 	return newnode;
 }
 
+static CypherMapExpr *
+_copyCypherMapExpr(const CypherMapExpr *from)
+{
+	CypherMapExpr *newnode = makeNode(CypherMapExpr);
+
+	COPY_NODE_FIELD(keyvals);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *						relation.h copy functions
  *
@@ -5074,6 +5085,9 @@ copyObject(const void *from)
 			break;
 		case T_EdgeRefRows:
 			retval = _copyEdgeRefRows(from);
+			break;
+		case T_CypherMapExpr:
+			retval = _copyCypherMapExpr(from);
 			break;
 
 			/*
