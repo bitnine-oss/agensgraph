@@ -3137,113 +3137,6 @@ create_limit_path(PlannerInfo *root, RelOptInfo *rel,
 	return pathnode;
 }
 
-static
-List *getmodifylist(Path *path, GraphWriteOp operation)
-{
-	List	 *result = NIL;
-	ListCell *lc;
-	ModifyGraphPath *mgp = (ModifyGraphPath *) path;
-
-	if (operation == GWROP_SET)
-	{
-		foreach(lc, mgp->sets)
-		{
-			GraphSetProp *gsp = (GraphSetProp *) lfirst(lc);
-
-			if (IsA(gsp->elem, Var))
-			{
-				Var *var = (Var *) gsp->elem;
-
-				result = lappend_int(result, var->varattno - 1);
-			}
-			else
-				Assert(0);
-		}
-	}
-	else if (operation == GWROP_DELETE)
-	{
-		foreach(lc, mgp->exprs)
-		{
-			Node *expr = (Node *) lfirst(lc);
-			if (IsA(expr, Var))
-			{
-				Var *var = (Var *) expr;
-
-				result = lappend_int(result, var->varattno - 1);
-			}
-			else
-				Assert(0);
-		}
-	}
-	else
-		return NIL;
-
-	Assert(list_length(result) != 0);
-
-	return result;
-}
-
-/*
- * create_eager_path
- *	  Creates a path corresponding to a Eager plan, returning the
- *	  pathnode.
- */
-EagerPath *
-create_eager_path(RelOptInfo *rel, GraphWriteOp operation, Path *subpath)
-{
-	EagerPath *pathnode = makeNode(EagerPath);
-
-	pathnode->path.pathtype = T_Eager;
-	pathnode->path.parent = rel;
-	pathnode->path.pathtarget = rel->reltarget;
-	pathnode->path.param_info = subpath->param_info;
-	pathnode->path.parallel_aware = false;
-	pathnode->path.parallel_safe = rel->consider_parallel &&
-		subpath->parallel_safe;
-	pathnode->path.parallel_workers = subpath->parallel_workers;
-	pathnode->path.pathkeys = subpath->pathkeys;
-
-	/* For now, eager cost is ignored. */
-	pathnode->path.rows = subpath->rows;
-	pathnode->path.startup_cost = subpath->startup_cost;
-	pathnode->path.total_cost = subpath->total_cost;
-	pathnode->path.pathkeys = NIL;
-
-	pathnode->subpath = subpath;
-
-	pathnode->modifiedlist = getmodifylist(subpath, operation);
-
-	return pathnode;
-}
-
-static Path *considerEager(RelOptInfo *rel, GraphWriteOp operation, Path *path)
-{
-	if (IsA(path, ModifyGraphPath))
-	{
-		return (Path *) create_eager_path(rel, operation, path);
-	}
-	else if (IsA(path, SubqueryScanPath))
-	{
-		SubqueryScanPath *pathnode = (SubqueryScanPath *) path;
-
-		if (IsA(pathnode->subpath, ModifyGraphPath))
-			return (Path *) create_eager_path(pathnode->path.parent,
-											  operation, path);
-	}
-	/* For CypherMergeJoin */
-	else if (IsA(path, NestPath))
-	{
-		NestPath *pathnode = (NestPath *) path;
-
-		pathnode->outerjoinpath =
-					(Path *) considerEager(pathnode->path.parent,
-										   operation,
-										   pathnode->outerjoinpath);
-	}
-
-	return path;
-}
-
 ModifyGraphPath *
 create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
 						GraphWriteOp operation, bool last, bool detach,
@@ -3268,11 +3161,16 @@ create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
 	pathnode->operation = operation;
 	pathnode->last = last;
 	pathnode->detach = detach;
-	pathnode->subpath = considerEager(rel, operation, (Path *) subpath);
+	pathnode->subpath = subpath;
 	pathnode->pattern = pattern;
 	pathnode->targets = targets;
 	pathnode->exprs = exprs;
 	pathnode->sets = sets;
+
+	if (!last)
+		pathnode->eager = true;
+	else
+		pathnode->eager = false;
 
 	return pathnode;
 }

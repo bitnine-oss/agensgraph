@@ -664,14 +664,18 @@ MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
 --
 -- DELETE
 --
+MATCH (a) DELETE a;
+
+MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[2];
+MATCH (a:repo) RETURN a.name AS a;
+
+MATCH ()-[a:doc]->() DETACH DELETE end_vertex(a);
+MATCH (a:repo) RETURN a.name AS a;
 
 MATCH (a) DETACH DELETE a;
+MATCH (a) RETURN a;
 
 SELECT count(*) FROM agens.ag_edge;
-
--- wrong case
-MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[2];
-MATCH ()-[a:doc]->() DETACH DELETE end_vertex(a);
 
 --
 -- Uniqueness
@@ -940,7 +944,7 @@ MATCH (a:v2) RETURN a.no;
 MATCH (a:v1) SET a.no = (a.no::int - 2)::text::jsonb
 MERGE (b:v1 {no:1});
 
-MATCh (a:v1) return a.no;
+MATCH (a:v1) return a.no ORDER BY no::int DESC;
 
 -- DELETE - MERGE
 MATCH (a) DELETE a;

@@ -152,7 +152,6 @@ static void replace_edgerefid(List *tlist, int edgerefid);
 static int search_edgerefid(List *reloids, Index scanreloid);
 static MergeJoin *create_mergejoin_plan(PlannerInfo *root, MergePath *best_path);
 static HashJoin *create_hashjoin_plan(PlannerInfo *root, HashPath *best_path);
-static Eager *create_eager_plan(PlannerInfo *root, EagerPath *best_path, int flags);
 static ModifyGraph *create_modifygraph_plan(PlannerInfo *root,
 											ModifyGraphPath *best_path);
 static Dijkstra *create_dijkstra_plan(PlannerInfo *root,
@@ -283,7 +282,6 @@ static ModifyTable *make_modifytable(PlannerInfo *root,
 				 List *resultRelations, List *subplans,
 				 List *withCheckOptionLists, List *returningLists,
 				 List *rowMarks, OnConflictExpr *onconflict, int epqParam);
-static Eager *make_eager(PlannerInfo *root, Plan *lefttree);
 
 
 /*
@@ -475,11 +473,6 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 		case T_Limit:
 			plan = (Plan *) create_limit_plan(root,
 											  (LimitPath *) best_path,
-											  flags);
-			break;
-		case T_Eager:
-			plan = (Plan *) create_eager_plan(root,
-											  (EagerPath *) best_path,
 											  flags);
 			break;
 		case T_ModifyGraph:
@@ -4130,34 +4123,6 @@ create_hashjoin_plan(PlannerInfo *root,
 	return join_plan;
 }
 
-/*
- * create_eager_plan
- *	  Create a Eager plan for 'best_path' and (recursively) plans
- *	  for its subpaths.
- *
- *	  Returns a Plan node.
- */
-static Eager *
-create_eager_plan(PlannerInfo *root, EagerPath *best_path, int flags)
-{
-	Eager  *plan;
-	Plan   *subplan;
-
-	/*
-	 * since Eager doesn't project, tlist requirements pass through.
-	 */
-	subplan = create_plan_recurse(root, best_path->subpath,
-								  flags | CP_SMALL_TLIST);
-
-	plan = make_eager(root, subplan);
-
-	plan->modifylist = best_path->modifiedlist;
-
-	copy_generic_path_info(&plan->plan, (Path *) best_path);
-
-	return plan;
-}
-
 static ModifyGraph *
 create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
 {
@@ -4168,10 +4133,11 @@ create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
 
 	apply_tlist_labeling(subplan->targetlist, root->processed_tlist);
 
-	plan = make_modifygraph(root, best_path->canSetTag, best_path->operation,
-							best_path->last, best_path->detach, subplan,
-							best_path->pattern, best_path->targets,
-							best_path->exprs, best_path->sets);
+	plan = make_modifygraph(root, best_path->canSetTag, best_path->last,
+							best_path->detach, best_path->eager,
+							best_path->operation, subplan, best_path->pattern,
+							best_path->targets,	best_path->exprs,
+							best_path->sets);
 
 	copy_generic_path_info(&plan->plan, &best_path->path);
 
@@ -6514,7 +6480,6 @@ is_projection_capable_path(Path *path)
 		case T_ModifyTable:
 		case T_MergeAppend:
 		case T_RecursiveUnion:
-		case T_Eager:
 			return false;
 		case T_Append:
 
@@ -6552,7 +6517,6 @@ is_projection_capable_plan(Plan *plan)
 		case T_Append:
 		case T_MergeAppend:
 		case T_RecursiveUnion:
-		case T_Eager:
 			return false;
 		default:
 			break;
@@ -6560,48 +6524,22 @@ is_projection_capable_plan(Plan *plan)
 	return true;
 }
 
-static Eager *
-make_eager(PlannerInfo *root, Plan *lefttree)
-{
-	Eager  *node = makeNode(Eager);
-	Plan   *plan = &node->plan;
-
-	if (IsA(lefttree, ModifyGraph))
-	{
-		ModifyGraph *mgplan = (ModifyGraph *) lefttree;
-
-		node->gwop = mgplan->operation;
-
-		plan->targetlist = root->processed_tlist;
-	}
-	else
-	{
-		plan->targetlist = lefttree->targetlist;
-
-		node->gwop = GWROP_NONE;
-	}
-	plan->qual = NIL;
-	plan->lefttree = lefttree;
-	plan->righttree = NULL;
-
-	return node;
-}
-
 /*
  * make_modifygraph
  *	  Build a ModifyGraph plan node
  */
 ModifyGraph *
-make_modifygraph(PlannerInfo *root, bool canSetTag, GraphWriteOp operation,
-				 bool last, bool detach, Plan *subplan, List *pattern,
-				 List *targets, List *exprs, List *sets)
+make_modifygraph(PlannerInfo *root, bool canSetTag, bool last, bool detach,
+				 bool eager, GraphWriteOp operation, Plan *subplan,
+				 List *pattern, List *targets, List *exprs, List *sets)
 {
 	ModifyGraph *node = makeNode(ModifyGraph);
 
 	node->canSetTag = canSetTag;
-	node->operation = operation;
 	node->last = last;
 	node->detach = detach;
+	node->eagerness = eager;
+	node->operation = operation;
 	node->subplan = subplan;
 	node->pattern = pattern;
 	node->targets = targets;

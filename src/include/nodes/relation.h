@@ -1493,9 +1493,10 @@ typedef struct ModifyGraphPath
 {
 	Path		path;
 	bool		canSetTag;		/* do we set the command tag/es_processed? */
-	GraphWriteOp operation;		/* CREATE or DELETE */
 	bool		last;			/* is this for the last clause? */
 	bool		detach;			/* DETACH DELETE */
+	bool		eager;			/* eagerness */
+	GraphWriteOp operation;		/* CREATE or DELETE */
 	Path	   *subpath;		/* Path producing source data */
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
 	List	   *targets;		/* relation Oid's of target labels */

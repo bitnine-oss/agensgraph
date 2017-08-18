@@ -3044,10 +3044,6 @@ print_path(PlannerInfo *root, Path *path, int indent)
 			ptype = "Limit";
 			subpath = ((LimitPath *) path)->subpath;
 			break;
-		case T_EagerPath:
-			ptype = "Eager";
-			subpath = ((EagerPath *) path)->subpath;
-			break;
 		case T_NestPath:
 			ptype = "NestLoop";
 			join = true;
