@@ -2241,6 +2241,8 @@ typedef struct ModifyGraphState
 	PlanState	ps;
 	bool		canSetTag;
 	bool		done;
+	bool		child_done;
+	bool		eagerness;
 	PlanState  *subplan;
 	TupleTableSlot *elemTupleSlot;	/* to insert vertex/edge */
 	Oid			graphid;
@@ -2253,6 +2255,8 @@ typedef struct ModifyGraphState
 								   with `es_prop_map` */
 	List	   *exprs;			/* expression state list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
+	HTAB	   *propTable;
+	Tuplestorestate *tuplestorestate;
 } ModifyGraphState;
 
 typedef struct DijkstraState

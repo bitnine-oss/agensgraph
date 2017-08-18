@@ -86,7 +86,6 @@
 #include "executor/nodeBitmapOr.h"
 #include "executor/nodeCtescan.h"
 #include "executor/nodeCustom.h"
-#include "executor/nodeEager.h"
 #include "executor/nodeDijkstra.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeFunctionscan.h"
@@ -354,11 +353,6 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 												 estate, eflags);
 			break;
 
-		case T_Eager:
-			result = (PlanState *) ExecInitEager((Eager *) node,
-												 estate, eflags);
-			break;
-
 		case T_Dijkstra:
 			result = (PlanState *) ExecInitDijkstra((Dijkstra *) node,
 													estate, eflags);
@@ -571,10 +565,6 @@ ExecProcNode(PlanState *node)
 
 		case T_LimitState:
 			result = ExecLimit((LimitState *) node);
-			break;
-
-		case T_EagerState:
-			result = ExecEager((EagerState *) node);
 			break;
 
 		case T_DijkstraState:
@@ -839,10 +829,6 @@ ExecEndNode(PlanState *node)
 
 		case T_LimitState:
 			ExecEndLimit((LimitState *) node);
-			break;
-
-		case T_EagerState:
-			ExecEndEager((EagerState *) node);
 			break;
 
 		case T_DijkstraState:

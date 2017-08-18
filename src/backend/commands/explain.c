@@ -1050,9 +1050,6 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		case T_Hash:
 			pname = sname = "Hash";
 			break;
-		case T_Eager:
-			pname = sname = "Eager";
-			break;
 		case T_ModifyGraph:
 			sname = "ModifyGraph";
 			switch (((ModifyGraph *) plan)->operation)
