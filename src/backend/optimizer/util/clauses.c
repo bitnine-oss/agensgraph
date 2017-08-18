@@ -3508,6 +3508,54 @@ eval_const_expressions_mutator(Node *node,
 													  context);
 			}
 			break;
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+				List	   *newkeyvals = NIL;
+				ListCell   *le;
+				bool		all_const = true;
+				CypherMapExpr *newm;
+
+				le = list_head(m->keyvals);
+				while (le != NULL)
+				{
+					Node	   *k;
+					Node	   *v;
+					Node	   *newv;
+					Node	   *newk;
+
+					k = lfirst(le);
+					le = lnext(le);
+					v = lfirst(le);
+					le = lnext(le);
+
+					newv = eval_const_expressions_mutator(v, context);
+					if (IsA(newv, Const))
+					{
+						if (((Const *) newv)->constisnull)
+							continue;
+					}
+					else
+					{
+						all_const = false;
+					}
+
+					newk = eval_const_expressions_mutator(k, context);
+					if (!IsA(newv, Const))
+						all_const = false;
+
+					newkeyvals = lappend(lappend(newkeyvals, newk), newv);
+				}
+
+				newm = makeNode(CypherMapExpr);
+				newm->keyvals = newkeyvals;
+
+				if (all_const)
+					return (Node *) evaluate_expr((Expr *) newm, JSONBOID, -1,
+												  InvalidOid);
+
+				return (Node *) newm;
+			}
 		default:
 			break;
 	}

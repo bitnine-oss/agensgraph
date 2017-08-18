@@ -54,6 +54,7 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/graph.h"
+#include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
@@ -186,6 +187,9 @@ static Datum ExecEvalCurrentOfExpr(ExprState *exprstate, ExprContext *econtext,
 static Datum ExecEvalGroupingFuncExpr(GroupingFuncExprState *gstate,
 						 ExprContext *econtext,
 						 bool *isNull, ExprDoneCond *isDone);
+static Datum ExecEvalCypherMap(CypherMapExprState *mstate,
+							   ExprContext *econtext, bool *isNull,
+							   ExprDoneCond *isDone);
 
 
 /* ----------------------------------------------------------------
@@ -4589,6 +4593,89 @@ ExecEvalEdgeRefRows(ExprState *exprstate, ExprContext *econtext,
 	return new_array;
 }
 
+static Datum
+ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
+				  bool *isNull, ExprDoneCond *isDone)
+{
+	ListCell   *le;
+	JsonbParseState *jpstate = NULL;
+	JsonbValue *j;
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_OBJECT, NULL);
+
+	le = list_head(mstate->keyvals);
+	while (le != NULL)
+	{
+		ExprState  *k;
+		ExprState  *v;
+		bool		eisnull;
+		Datum		kd;
+		Datum		vd;
+		JsonbValue	ejv;
+		char	   *ks;
+		Jsonb	   *vj;
+		JsonbIterator *it;
+
+		k = lfirst(le);
+		le = lnext(le);
+		v = lfirst(le);
+		le = lnext(le);
+
+		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
+		if (eisnull)
+			continue;
+
+		kd = ExecEvalExpr(k, econtext, &eisnull, NULL);
+		Assert(!eisnull);
+
+		ks = TextDatumGetCString(kd);
+		ejv.type = jbvString;
+		ejv.val.string.len = strlen(ks);
+		ejv.val.string.val = ks;
+		if (ejv.val.string.len > JENTRY_OFFLENMASK)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("string too long to represent as jsonb string"),
+					 errdetail("Due to an implementation restriction, "
+							   "jsonb strings cannot exceed %d bytes.",
+							   JENTRY_OFFLENMASK)));
+		pushJsonbValue(&jpstate, WJB_KEY, &ejv);
+
+		vj = DatumGetJsonb(vd);
+		it = JsonbIteratorInit(&vj->root);
+		if (JB_ROOT_IS_SCALAR(vj))
+		{
+			JsonbIteratorNext(&it, &ejv, true);
+			Assert(ejv.type == jbvArray);
+			JsonbIteratorNext(&it, &ejv, true);
+
+			Assert(jpstate->contVal.type == jbvObject);
+			pushJsonbValue(&jpstate, WJB_VALUE, &ejv);
+		}
+		else
+		{
+			JsonbIteratorToken type;
+
+			while ((type = JsonbIteratorNext(&it, &ejv, false)) != WJB_DONE)
+			{
+				if (type == WJB_BEGIN_ARRAY || type == WJB_END_ARRAY ||
+					type == WJB_BEGIN_OBJECT || type == WJB_END_OBJECT)
+					pushJsonbValue(&jpstate, type, NULL);
+				else
+					pushJsonbValue(&jpstate, type, &ejv);
+			}
+		}
+	}
+
+	j = pushJsonbValue(&jpstate, WJB_END_OBJECT, NULL);
+
+	*isNull = false;
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	return JsonbGetDatum(JsonbValueToJsonb(j));
+}
+
 /*
  * ExecEvalExprSwitchContext
  *
@@ -5411,6 +5498,20 @@ ExecInitExpr(Expr *node, PlanState *parent)
 				/* Don't fall through to the "common" code below */
 				return (ExprState *) outlist;
 			}
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+				CypherMapExprState *mstate;
+
+				mstate = makeNode(CypherMapExprState);
+				mstate->xprstate.evalfunc =
+						(ExprStateEvalFunc) ExecEvalCypherMap;
+				mstate->keyvals = (List *) ExecInitExpr((Expr *) m->keyvals,
+														parent);
+
+				state = (ExprState *) mstate;
+			}
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));

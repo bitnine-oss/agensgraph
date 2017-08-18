@@ -1656,6 +1656,15 @@ _outEdgeRefRows(StringInfo str, const EdgeRefRows *node)
 	WRITE_NODE_FIELD(arg);
 }
 
+static void
+_outCypherMapExpr(StringInfo str, const CypherMapExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERMAPEXPR");
+
+	WRITE_NODE_FIELD(keyvals);
+	WRITE_LOCATION_FIELD(location);
+}
+
 
 /*****************************************************************************
  *
@@ -3976,6 +3985,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_EdgeRefRows:
 				_outEdgeRefRows(str, obj);
+				break;
+			case T_CypherMapExpr:
+				_outCypherMapExpr(str, obj);
 				break;
 			case T_Path:
 				_outPath(str, obj);

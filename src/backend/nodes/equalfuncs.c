@@ -800,6 +800,15 @@ _equalEdgeRefRows(const EdgeRefRows *a, const EdgeRefRows *b)
 	return true;
 }
 
+static bool
+_equalCypherMapExpr(const CypherMapExpr *a, const CypherMapExpr *b)
+{
+	COMPARE_NODE_FIELD(keyvals);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
 /*
  * Stuff from relation.h
  */
@@ -3239,6 +3248,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_EdgeRefRows:
 			retval = _equalEdgeRefRows(a, b);
+			break;
+		case T_CypherMapExpr:
+			retval = _equalCypherMapExpr(a, b);
 			break;
 
 			/*
