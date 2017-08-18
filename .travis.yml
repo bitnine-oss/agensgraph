@@ -10,3 +10,6 @@ before_script:
  - export PATH="$(pwd)"/bin:$PATH
 
 script: make check -C src/bin
+
+after_failure:
+ - cat src/test/regress/regression.diffs
