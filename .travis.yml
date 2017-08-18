@@ -12,3 +12,6 @@ before_script:
  - ag_ctl start -w
 
 script: make installcheck
+
+after_failure:
+ - cat src/test/regress/regression.diffs
