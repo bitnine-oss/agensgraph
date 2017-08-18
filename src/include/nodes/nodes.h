@@ -194,6 +194,7 @@ typedef enum NodeTag
 	T_EdgeRefProp,
 	T_EdgeRefRow,
 	T_EdgeRefRows,
+	T_CypherMapExpr,
 
 	/*
 	 * TAGS FOR EXPRESSION STATE NODES (execnodes.h)
@@ -232,6 +233,7 @@ typedef enum NodeTag
 	T_EdgeRefPropState,
 	T_EdgeRefRowState,
 	T_EdgeRefRowsState,
+	T_CypherMapExprState,
 
 	/*
 	 * TAGS FOR PLANNER NODES (relation.h)
@@ -510,7 +512,6 @@ typedef enum NodeTag
 	T_CypherRel,
 	T_CypherName,
 	T_CypherSetProp,
-	T_CypherMap,
 	T_CypherList,
 
 	/*

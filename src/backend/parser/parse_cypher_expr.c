@@ -10,6 +10,7 @@
 
 #include "postgres.h"
 
+#include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -19,15 +20,34 @@
 #include "utils/jsonb.h"
 #include "utils/numeric.h"
 
+static Node *transformCypherExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformA_Const(ParseState *pstate, A_Const *a_con);
 static Datum integerToJsonb(ParseState *pstate, int64 i, int location);
 static Datum floatToJsonb(ParseState *pstate, char *f, int location);
 static Jsonb *numericToJsonb(Numeric n);
 static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
+static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
 
 Node *
 transformCypherExpr(ParseState *pstate, Node *expr, ParseExprKind exprKind)
+{
+	Node	   *result;
+	ParseExprKind sv_expr_kind;
+
+	Assert(exprKind != EXPR_KIND_NONE);
+	sv_expr_kind = pstate->p_expr_kind;
+	pstate->p_expr_kind = exprKind;
+
+	result = transformCypherExprRecurse(pstate, expr);
+
+	pstate->p_expr_kind = sv_expr_kind;
+
+	return result;
+}
+
+static Node *
+transformCypherExprRecurse(ParseState *pstate, Node *expr)
 {
 	if (expr == NULL)
 		return NULL;
@@ -40,6 +60,8 @@ transformCypherExpr(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 			return transformA_Const(pstate, (A_Const *) expr);
 		case T_TypeCast:
 			return transformTypeCast(pstate, (TypeCast *) expr);
+		case T_CypherMapExpr:
+			return transformCypherMapExpr(pstate, (CypherMapExpr *) expr);
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			return NULL;
@@ -73,7 +95,7 @@ transformA_Const(ParseState *pstate, A_Const *a_con)
 			datum = stringToJsonb(pstate, strVal(value), location);
 			break;
 		case T_Null:
-			con = makeConst(UNKNOWNOID, -1, InvalidOid, -2, (Datum) 0, true,
+			con = makeConst(JSONBOID, -1, InvalidOid, -1, (Datum) 0, true,
 							false);
 			con->location = location;
 			return (Node *) con;
@@ -216,6 +238,44 @@ transformTypeCast(ParseState *pstate, TypeCast *tc)
 	con->location = location;
 
 	return (Node *) con;
+}
+
+static Node *
+transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
+{
+	List	   *newkeyvals = NIL;
+	ListCell   *le;
+	CypherMapExpr *newm;
+
+	Assert(list_length(m->keyvals) % 2 == 0);
+
+	le = list_head(m->keyvals);
+	while (le != NULL)
+	{
+		Value	   *k;
+		Node	   *v;
+		Node	   *newv;
+		Const	   *newk;
+
+		k = lfirst(le);
+		le = lnext(le);
+		v = lfirst(le);
+		le = lnext(le);
+
+		newv = transformCypherExprRecurse(pstate, v);
+		if (IsA(newv, Const) && ((Const *) newv)->constisnull)
+			continue;
+
+		newk = makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
+						 CStringGetTextDatum(strVal(k)), false, false);
+
+		newkeyvals = lappend(lappend(newkeyvals, newk), newv);
+	}
+
+	newm = makeNode(CypherMapExpr);
+	newm->keyvals = newkeyvals;
+
+	return (Node *) newm;
 }
 
 List *

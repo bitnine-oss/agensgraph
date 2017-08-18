@@ -16214,10 +16214,11 @@ cypher_expr_literal:
 cypher_expr_map:
 			'{' cypher_expr_map_keyvals '}'
 				{
-					CypherMap  *n;
+					CypherMapExpr  *n;
 
-					n = makeNode(CypherMap);
+					n = makeNode(CypherMapExpr);
 					n->keyvals = $2;
+					n->location = @1;
 					$$ = (Node *) n;
 				}
 		;
