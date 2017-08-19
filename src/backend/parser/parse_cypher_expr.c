@@ -15,6 +15,7 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_cypher_expr.h"
+#include "parser/parse_oper.h"
 #include "utils/builtins.h"
 #include "utils/int8.h"
 #include "utils/jsonb.h"
@@ -28,6 +29,7 @@ static Jsonb *numericToJsonb(Numeric n);
 static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
+static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
 
 Node *
 transformCypherExpr(ParseState *pstate, Node *expr, ParseExprKind exprKind)
@@ -62,6 +64,19 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			return transformTypeCast(pstate, (TypeCast *) expr);
 		case T_CypherMapExpr:
 			return transformCypherMapExpr(pstate, (CypherMapExpr *) expr);
+		case T_A_Expr:
+			{
+				A_Expr	   *a = (A_Expr *) expr;
+
+				switch (a->kind)
+				{
+					case AEXPR_OP:
+						return transformAExprOp(pstate, a);
+					default:
+						elog(ERROR, "unrecognized A_Expr kind: %d", a->kind);
+						return NULL;
+				}
+			}
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			return NULL;
@@ -276,6 +291,18 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 	newm->keyvals = newkeyvals;
 
 	return (Node *) newm;
+}
+
+static Node *
+transformAExprOp(ParseState *pstate, A_Expr *a)
+{
+	Node	   *l;
+	Node	   *r;
+
+	l = transformCypherExprRecurse(pstate, a->lexpr);
+	r = transformCypherExprRecurse(pstate, a->rexpr);
+
+	return (Node *) make_op(pstate, a->name, l, r, a->location);
 }
 
 List *
