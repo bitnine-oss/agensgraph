@@ -1886,5 +1886,22 @@ DATA(insert OID = 7165 (  "<="	   PGNSP PGUID b f f 7062 7062 16 7166 7164 rowid
 DESCR("less than or equal");
 DATA(insert OID = 7166 (  ">="	   PGNSP PGUID b f f 7062 7062 16 7165 7163 rowid_ge scalargtsel scalargtjoinsel ));
 DESCR("greater than or equal");
+/* Cypher expressions - operators for jsonb */
+DATA(insert OID = 7176 (  "`+`"	   PGNSP PGUID b f f 3802 3802 3802 7176 0 jsonb_add - - ));
+DESCR("add");
+DATA(insert OID = 7178 (  "`-`"	   PGNSP PGUID b f f 3802 3802 3802 0 0 jsonb_sub - - ));
+DESCR("subtract");
+DATA(insert OID = 7180 (  "`*`"	   PGNSP PGUID b f f 3802 3802 3802 7180 0 jsonb_mul - - ));
+DESCR("multiply");
+DATA(insert OID = 7182 (  "`/`"	   PGNSP PGUID b f f 3802 3802 3802 0 0 jsonb_div - - ));
+DESCR("divide");
+DATA(insert OID = 7184 (  "`%`"	   PGNSP PGUID b f f 3802 3802 3802 0 0 jsonb_mod - - ));
+DESCR("modulus");
+DATA(insert OID = 7186 (  "`^`"	   PGNSP PGUID b f f 3802 3802 3802 0 0 jsonb_pow - - ));
+DESCR("exponentiation");
+DATA(insert OID = 7188 (  "`+`"	   PGNSP PGUID l f f 0 3802 3802 0 0 jsonb_uplus - - ));
+DESCR("unary plus");
+DATA(insert OID = 7190 (  "`-`"	   PGNSP PGUID l f f 0 3802 3802 0 0 jsonb_uminus - - ));
+DESCR("negate");
 
 #endif   /* PG_OPERATOR_H */

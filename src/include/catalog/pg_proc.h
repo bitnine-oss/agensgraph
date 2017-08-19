@@ -5448,6 +5448,15 @@ DESCR("less-equal-greater");
 /* Dijkstra */
 DATA(insert OID = 7170 ( dijkstra_vids	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 7001 "" _null_ _null_ _null_ _null_ _null_ dijkstra_vids _null_ _null_ _null_ ));
 DATA(insert OID = 7171 ( dijkstra_eids	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 7001 "" _null_ _null_ _null_ _null_ _null_ dijkstra_eids _null_ _null_ _null_ ));
+/* Cypher expressions - operators for jsonb */
+DATA(insert OID = 7175 ( jsonb_add		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_add _null_ _null_ _null_ ));
+DATA(insert OID = 7177 ( jsonb_sub		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_sub _null_ _null_ _null_ ));
+DATA(insert OID = 7179 ( jsonb_mul		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_mul _null_ _null_ _null_ ));
+DATA(insert OID = 7181 ( jsonb_div		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_div _null_ _null_ _null_ ));
+DATA(insert OID = 7183 ( jsonb_mod		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_mod _null_ _null_ _null_ ));
+DATA(insert OID = 7185 ( jsonb_pow		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_pow _null_ _null_ _null_ ));
+DATA(insert OID = 7187 ( jsonb_uplus	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_uplus _null_ _null_ _null_ ));
+DATA(insert OID = 7189 ( jsonb_uminus	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_uminus _null_ _null_ _null_ ));
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
