@@ -15561,34 +15561,69 @@ cypher_expr:
 				}
 			| cypher_expr '+' cypher_expr
 				{
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", $1, $3, @2);
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`+`",
+												   $1, $3, @2);
 				}
 			| cypher_expr '-' cypher_expr
 				{
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-", $1, $3, @2);
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`-`",
+												   $1, $3, @2);
 				}
 			| cypher_expr '*' cypher_expr
 				{
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "*", $1, $3, @2);
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`*`",
+												   $1, $3, @2);
 				}
 			| cypher_expr '/' cypher_expr
 				{
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "/", $1, $3, @2);
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`/`",
+												   $1, $3, @2);
 				}
 			| cypher_expr '%' cypher_expr
 				{
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "%", $1, $3, @2);
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`%`",
+												   $1, $3, @2);
 				}
 			| cypher_expr '^' cypher_expr
 				{
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "^", $1, $3, @2);
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`^`",
+												   $1, $3, @2);
 				}
 			| '+' cypher_expr								%prec UMINUS
 				{
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", NULL, $2, @1);
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`+`",
+												   NULL, $2, @1);
 				}
 			| '-' cypher_expr								%prec UMINUS
-					{ $$ = doNegate($2, @1); }
+				{
+					if (IsA($2, A_Const))
+					{
+						A_Const	   *con = (A_Const *) $2;
+
+						if (con->val.type == T_Integer)
+						{
+							con->val.val.ival = -con->val.val.ival;
+							con->location = @1;
+							$$ = $2;
+						}
+						else if (con->val.type == T_Float)
+						{
+							doNegateFloat(&con->val);
+							con->location = @1;
+							$$ = $2;
+						}
+						else
+						{
+							$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`-`",
+														   NULL, $2, @1);
+						}
+					}
+					else
+					{
+						$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`-`",
+													   NULL, $2, @1);
+					}
+				}
 			| cypher_expr '[' cypher_expr ']'
 				{
 					A_Indices  *ind;
