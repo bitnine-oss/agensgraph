@@ -795,6 +795,22 @@ MATCH (a:person {name: 'bitnine'}) RETURN properties(a) AS a;
 MATCH (a:person {age: NULL}) RETURN properties(a) AS a;
 MATCH (a:person) WHERE a.age IS NULL RETURN properties(a) AS a;
 
+CREATE (:person {name:'agens', key1:1, key2:2, key3:3});
+MATCH (a:person {name:'agens'})
+	SET a.key1 = NULL
+	RETURN properties(a);
+MATCH (a:person {name:'agens'})
+	SET a.key2 = 'null'
+	RETURN properties(a);
+MATCH (a:person {name:'agens'})
+	SET a.key3 = '{"first":1, "last":null}'
+	RETURN properties(a);
+MATCH (a:person {name:'agens'})
+	SET a = '{"name":"agens", "key4":null}'
+	RETURN properties(a);
+
+MATCH (a:person {name:'agens'}) RETURN properties(a);
+
 --
 -- MERGE
 --
