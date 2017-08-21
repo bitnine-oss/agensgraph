@@ -914,14 +914,6 @@ _outLimit(StringInfo str, const Limit *node)
 }
 
 static void
-_outEager(StringInfo str, const Eager *node)
-{
-	WRITE_NODE_TYPE("EAGER");
-
-	_outPlanInfo(str, (const Plan *) node);
-}
-
-static void
 _outModifyGraph(StringInfo str, const ModifyGraph *node)
 {
 	WRITE_NODE_TYPE("MODIFYGRAPH");
@@ -3816,9 +3808,6 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_Limit:
 				_outLimit(str, obj);
-				break;
-			case T_Eager:
-				_outEager(str, obj);
 				break;
 			case T_ModifyGraph:
 				_outModifyGraph(str, obj);

@@ -226,7 +226,8 @@ extern LimitPath *create_limit_path(PlannerInfo *root, RelOptInfo *rel,
 				  Path *subpath,
 				  Node *limitOffset, Node *limitCount,
 				  int64 offset_est, int64 count_est);
-extern EagerPath *create_eager_path(RelOptInfo *rel, Path *subpath);
+extern EagerPath *create_eager_path(RelOptInfo *rel, GraphWriteOp operation,
+				  Path *subpath);
 extern ModifyGraphPath *create_modifygraph_path(PlannerInfo *root,
 						RelOptInfo *rel, bool canSetTag,
 						GraphWriteOp operation, bool last, bool detach,
