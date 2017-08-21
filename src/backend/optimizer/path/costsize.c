@@ -3189,7 +3189,6 @@ cost_rescan(PlannerInfo *root, Path *path,
 			break;
 		case T_Material:
 		case T_Sort:
-		case T_Eager:
 			{
 				/*
 				 * These plan types not only materialize their results, but do
