@@ -3161,16 +3161,12 @@ create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
 	pathnode->operation = operation;
 	pathnode->last = last;
 	pathnode->detach = detach;
+	pathnode->eager = !last;
 	pathnode->subpath = subpath;
 	pathnode->pattern = pattern;
 	pathnode->targets = targets;
 	pathnode->exprs = exprs;
 	pathnode->sets = sets;
-
-	if (!last)
-		pathnode->eager = true;
-	else
-		pathnode->eager = false;
 
 	return pathnode;
 }
