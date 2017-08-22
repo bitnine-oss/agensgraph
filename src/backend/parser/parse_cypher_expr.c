@@ -79,6 +79,16 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 						return NULL;
 				}
 			}
+		case T_NullTest:
+			{
+				NullTest   *n = (NullTest *) expr;
+
+				n->arg = (Expr *) transformCypherExprRecurse(pstate,
+															 (Node *) n->arg);
+				n->argisrow = false;
+
+				return expr;
+			}
 		case T_BoolExpr:
 			return transformBoolExpr(pstate, (BoolExpr *) expr);
 		default:
