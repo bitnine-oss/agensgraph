@@ -14,6 +14,7 @@
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
+#include "parser/parse_coerce.h"
 #include "parser/parse_cypher_expr.h"
 #include "parser/parse_oper.h"
 #include "utils/builtins.h"
@@ -30,6 +31,7 @@ static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
+static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
 
 Node *
 transformCypherExpr(ParseState *pstate, Node *expr, ParseExprKind exprKind)
@@ -77,6 +79,8 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 						return NULL;
 				}
 			}
+		case T_BoolExpr:
+			return transformBoolExpr(pstate, (BoolExpr *) expr);
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			return NULL;
@@ -110,8 +114,7 @@ transformA_Const(ParseState *pstate, A_Const *a_con)
 			datum = stringToJsonb(pstate, strVal(value), location);
 			break;
 		case T_Null:
-			con = makeConst(JSONBOID, -1, InvalidOid, -1, (Datum) 0, true,
-							false);
+			con = makeConst(JSONBOID, -1, InvalidOid, -1, 0, true, false);
 			con->location = location;
 			return (Node *) con;
 		default:
@@ -280,6 +283,7 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 		newv = transformCypherExprRecurse(pstate, v);
 		if (IsA(newv, Const) && ((Const *) newv)->constisnull)
 			continue;
+		newv = coerce_to_specific_type(pstate, newv, JSONBOID, "{}");
 
 		newk = makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
 						 CStringGetTextDatum(strVal(k)), false, false);
@@ -303,6 +307,43 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 	r = transformCypherExprRecurse(pstate, a->rexpr);
 
 	return (Node *) make_op(pstate, a->name, l, r, a->location);
+}
+
+static Node *
+transformBoolExpr(ParseState *pstate, BoolExpr *b)
+{
+	List	   *args = NIL;
+	const char *opname;
+	ListCell   *la;
+
+	switch (b->boolop)
+	{
+		case AND_EXPR:
+			opname = "AND";
+			break;
+		case OR_EXPR:
+			opname = "OR";
+			break;
+		case NOT_EXPR:
+			opname = "NOT";
+			break;
+		default:
+			elog(ERROR, "unrecognized boolop: %d", (int) b->boolop);
+			opname = NULL;
+			break;
+	}
+
+	foreach(la, b->args)
+	{
+		Node	   *arg = lfirst(la);
+
+		arg = transformCypherExprRecurse(pstate, arg);
+		arg = coerce_to_boolean(pstate, arg, opname);
+
+		args = lappend(args, arg);
+	}
+
+	return (Node *) makeBoolExpr(b->boolop, args, b->location);
 }
 
 List *
