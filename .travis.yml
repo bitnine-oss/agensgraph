@@ -9,7 +9,7 @@ before_script:
  - make install > /dev/null
  - export PATH="$(pwd)"/bin:$PATH
 
-script: make check -C src/bin
+script: make check -C src/bin LC_ALL="C"
 
 after_failure:
  - cat src/test/regress/regression.diffs
