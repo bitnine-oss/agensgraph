@@ -2387,7 +2387,7 @@ MATCH (a:v2) RETURN a.no;
 -- SET - MERGE
 MATCH (a:v1) SET a.no = (a.no::int - 2)::text::jsonb
 MERGE (b:v1 {no:1});
-MATCH (a:v1) return a.no ORDER BY no::int DESC;
+MATCH (a:v1) return a.no ORDER BY no DESC;
  no 
 ----
  1
