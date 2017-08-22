@@ -4609,12 +4609,13 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 		ExprState  *k;
 		ExprState  *v;
 		bool		eisnull;
-		Datum		kd;
 		Datum		vd;
-		JsonbValue	ejv;
-		char	   *ks;
 		Jsonb	   *vj;
 		JsonbIterator *it;
+		JsonbValue	vjv;
+		Datum		kd;
+		char	   *ks;
+		JsonbValue	kjv;
 
 		k = lfirst(le);
 		le = lnext(le);
@@ -4624,45 +4625,67 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
 		if (eisnull)
 			continue;
+		vj = DatumGetJsonb(vd);
+		it = JsonbIteratorInit(&vj->root);
+		if (JB_ROOT_IS_SCALAR(vj))
+		{
+			JsonbIteratorNext(&it, &vjv, true);
+			Assert(vjv.type == jbvArray);
+			JsonbIteratorNext(&it, &vjv, true);
+
+			if (vjv.type == jbvNull)
+				continue;
+		}
 
 		kd = ExecEvalExpr(k, econtext, &eisnull, NULL);
 		Assert(!eisnull);
 
 		ks = TextDatumGetCString(kd);
-		ejv.type = jbvString;
-		ejv.val.string.len = strlen(ks);
-		ejv.val.string.val = ks;
-		if (ejv.val.string.len > JENTRY_OFFLENMASK)
+		kjv.type = jbvString;
+		kjv.val.string.len = strlen(ks);
+		kjv.val.string.val = ks;
+		if (kjv.val.string.len > JENTRY_OFFLENMASK)
 			ereport(ERROR,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 					 errmsg("string too long to represent as jsonb string"),
 					 errdetail("Due to an implementation restriction, "
 							   "jsonb strings cannot exceed %d bytes.",
 							   JENTRY_OFFLENMASK)));
-		pushJsonbValue(&jpstate, WJB_KEY, &ejv);
+		pushJsonbValue(&jpstate, WJB_KEY, &kjv);
 
-		vj = DatumGetJsonb(vd);
-		it = JsonbIteratorInit(&vj->root);
 		if (JB_ROOT_IS_SCALAR(vj))
 		{
-			JsonbIteratorNext(&it, &ejv, true);
-			Assert(ejv.type == jbvArray);
-			JsonbIteratorNext(&it, &ejv, true);
-
 			Assert(jpstate->contVal.type == jbvObject);
-			pushJsonbValue(&jpstate, WJB_VALUE, &ejv);
+			pushJsonbValue(&jpstate, WJB_VALUE, &vjv);
 		}
 		else
 		{
-			JsonbIteratorToken type;
-
-			while ((type = JsonbIteratorNext(&it, &ejv, false)) != WJB_DONE)
+			for (;;)
 			{
-				if (type == WJB_BEGIN_ARRAY || type == WJB_END_ARRAY ||
-					type == WJB_BEGIN_OBJECT || type == WJB_END_OBJECT)
-					pushJsonbValue(&jpstate, type, NULL);
-				else
+				JsonbValue	ejv;
+				JsonbIteratorToken type;
+
+				type = JsonbIteratorNext(&it, &ejv, false);
+				if (type == WJB_DONE)
+					break;
+
+				if (type == WJB_KEY)
+				{
+					kjv = ejv;
+
+					type = JsonbIteratorNext(&it, &ejv, false);
+					Assert(type != WJB_DONE);
+
+					if (type == WJB_VALUE && ejv.type == jbvNull)
+						continue;
+
+					pushJsonbValue(&jpstate, WJB_KEY, &kjv);
+				}
+
+				if (type == WJB_VALUE || type == WJB_ELEM)
 					pushJsonbValue(&jpstate, type, &ejv);
+				else
+					pushJsonbValue(&jpstate, type, NULL);
 			}
 		}
 	}
