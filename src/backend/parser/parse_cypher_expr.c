@@ -239,9 +239,6 @@ transformTypeCast(ParseState *pstate, TypeCast *tc)
 	Value	   *value;
 	int			location;
 	bool		b;
-	JsonbValue	jv;
-	ParseCallbackState pcbstate;
-	Jsonb	   *j;
 	Const	   *con;
 
 	Assert(IsA(tc->arg, A_Const));
@@ -252,17 +249,7 @@ transformTypeCast(ParseState *pstate, TypeCast *tc)
 
 	parse_bool(value->val.str, &b);
 
-	jv.type = jbvBool;
-	jv.val.boolean = b;
-
-	setup_parser_errposition_callback(&pcbstate, pstate, location);
-
-	j = JsonbValueToJsonb(&jv);
-
-	cancel_parser_errposition_callback(&pcbstate);
-
-	con = makeConst(JSONBOID, -1, InvalidOid, -1, JsonbGetDatum(j), false,
-					false);
+	con = makeConst(BOOLOID, -1, InvalidOid, 1, BoolGetDatum(b), false, true);
 	con->location = location;
 
 	return (Node *) con;
