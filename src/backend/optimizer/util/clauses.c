@@ -3547,9 +3547,18 @@ eval_const_expressions_mutator(Node *node,
 						Const	   *con = (Const *) newv;
 						Jsonb	   *j;
 
+						/*
+						 * The evaluated value of v might be NULL. If so, omit
+						 * this property because we don't store properties that
+						 * have NULL values.
+						 */
 						if (con->constisnull)
 							continue;
 
+						/*
+						 * The evaluated value of v might be 'null'::jsonb.
+						 * If so, omit this property.
+						 */
 						j = DatumGetJsonb(con->constvalue);
 						if (JB_ROOT_IS_SCALAR(j))
 						{
@@ -3582,6 +3591,7 @@ eval_const_expressions_mutator(Node *node,
 				newm = makeNode(CypherMapExpr);
 				newm->keyvals = newkeyvals;
 
+				/* it is safe to reduce this CypherMapExpr */
 				if (all_const)
 					return (Node *) evaluate_expr((Expr *) newm, JSONBOID, -1,
 												  InvalidOid);

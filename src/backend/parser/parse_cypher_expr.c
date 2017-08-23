@@ -6,6 +6,17 @@
  *
  * IDENTIFICATION
  *	  src/backend/parser/parse_cypher_expr.c
+ *
+ *
+ * To store all types that Cypher supports in a single column, almost all
+ * expressions expect jsonb values as their arguments and return a jsonb value.
+ * Exceptions are comparison operators (=, <>, <, >, <=, >=) and boolean
+ * operators (OR, AND, NOT). Comparison operators take jsonb values and return
+ * a bool value. And boolean operators take bool values and return a bool
+ * value. This is because they use the existing implementation to evaluate
+ * themselves.
+ * We treat 'null'::jsonb as SQL NULL. This makes it easy to implement
+ * "operations on NULL values return NULL".
  */
 
 #include "postgres.h"
@@ -207,10 +218,12 @@ stringToJsonb(ParseState *pstate, char *s, int location)
 			switch (*c)
 			{
 				case '\\':
+					/* any character coming next will be escaped */
 					appendStringInfoCharMacro(&si, '\\');
 					escape = true;
 					break;
 				case '"':
+					/* Escape `"`. `"` and `\"` are the same as `\"`. */
 					appendStringInfoString(&si, "\\\"");
 					break;
 				default:
@@ -231,7 +244,13 @@ stringToJsonb(ParseState *pstate, char *s, int location)
 	return j;
 }
 
-/* This function assumes that TypeCast is for boolean constants only. */
+/*
+ * This function assumes that TypeCast is for boolean constants only and
+ * returns a bool value. The reason why it returns a bool value is that there
+ * may be a chance to use the value as an argument of a boolean expression.
+ * If the value is used as an argument of other expressions, it will be
+ * converted into jsonb value implicitly.
+ */
 static Node *
 transformTypeCast(ParseState *pstate, TypeCast *tc)
 {
@@ -278,10 +297,13 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 		le = lnext(le);
 
 		newv = transformCypherExprRecurse(pstate, v);
+		/* we don't store properties that have NULL values */
 		if (IsA(newv, Const) && ((Const *) newv)->constisnull)
 			continue;
+		/* newv might be bool */
 		newv = coerce_to_specific_type(pstate, newv, JSONBOID, "{}");
 
+		Assert(IsA(k, String));
 		newk = makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
 						 CStringGetTextDatum(strVal(k)), false, false);
 
@@ -303,6 +325,7 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 	l = transformCypherExprRecurse(pstate, a->lexpr);
 	r = transformCypherExprRecurse(pstate, a->rexpr);
 
+	/* l or r might be bool. If so, it will be converted into jsonb. */
 	return (Node *) make_op(pstate, a->name, l, r, a->location);
 }
 
@@ -335,6 +358,7 @@ transformBoolExpr(ParseState *pstate, BoolExpr *b)
 		Node	   *arg = lfirst(la);
 
 		arg = transformCypherExprRecurse(pstate, arg);
+		/* arg might be jsonb */
 		arg = coerce_to_boolean(pstate, arg, opname);
 
 		args = lappend(args, arg);
