@@ -47,6 +47,7 @@
 #include "utils/builtins.h"
 #include "utils/datum.h"
 #include "utils/fmgroids.h"
+#include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
@@ -3530,10 +3531,30 @@ eval_const_expressions_mutator(Node *node,
 					le = lnext(le);
 
 					newv = eval_const_expressions_mutator(v, context);
+					Assert(exprType(newv) == JSONBOID);
 					if (IsA(newv, Const))
 					{
-						if (((Const *) newv)->constisnull)
+						Const	   *con = (Const *) newv;
+						Jsonb	   *j;
+
+						if (con->constisnull)
 							continue;
+
+						j = DatumGetJsonb(con->constvalue);
+						if (JB_ROOT_IS_SCALAR(j))
+						{
+							JsonbIterator *it;
+							JsonbValue	jv;
+
+							it = JsonbIteratorInit(&j->root);
+
+							JsonbIteratorNext(&it, &jv, true);
+							Assert(jv.type == jbvArray);
+							JsonbIteratorNext(&it, &jv, true);
+
+							if (jv.type == jbvNull)
+								continue;
+						}
 					}
 					else
 					{
@@ -3541,8 +3562,9 @@ eval_const_expressions_mutator(Node *node,
 					}
 
 					newk = eval_const_expressions_mutator(k, context);
-					if (!IsA(newv, Const))
-						all_const = false;
+					Assert(exprType(newk) == TEXTOID &&
+						   IsA(newk, Const) &&
+						   !((Const *) newk)->constisnull);
 
 					newkeyvals = lappend(lappend(newkeyvals, newk), newv);
 				}
