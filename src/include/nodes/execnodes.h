@@ -1054,7 +1054,7 @@ typedef struct EdgeRefRowsState
 typedef struct CypherMapExprState
 {
 	ExprState	xprstate;
-	List	   *keyvals;
+	List	   *keyvals;		/* key, value, key, value, ... (ExprState's) */
 } CypherMapExprState;
 
 /* ----------------------------------------------------------------
