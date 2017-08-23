@@ -4623,10 +4623,17 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 		le = lnext(le);
 
 		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
+		/*
+		 * The evaluated value of v might be NULL. If so, omit this property
+		 * because we don't store properties that have NULL values.
+		 */
 		if (eisnull)
 			continue;
+
 		vj = DatumGetJsonb(vd);
 		it = JsonbIteratorInit(&vj->root);
+
+		/* vj might be 'null'::jsonb. If so, omit this property. */
 		if (JB_ROOT_IS_SCALAR(vj))
 		{
 			JsonbIteratorNext(&it, &vjv, true);

@@ -1455,7 +1455,7 @@ typedef struct EdgeRefRows
 typedef struct CypherMapExpr
 {
 	Expr		xpr;
-	List	   *keyvals;
+	List	   *keyvals;		/* key, value, key, value, ... */
 	int			location;
 } CypherMapExpr;
 
