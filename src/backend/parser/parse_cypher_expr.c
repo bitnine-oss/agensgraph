@@ -15,7 +15,7 @@
  * a bool value. And boolean operators take bool values and return a bool
  * value. This is because they use the existing implementation to evaluate
  * themselves.
- * We treat 'null'::jsonb as SQL NULL. This makes it easy to implement
+ * We use SQL NULL instead of 'null'::jsonb. This makes it easy to implement
  * "operations on NULL values return NULL".
  */
 
@@ -256,20 +256,18 @@ transformTypeCast(ParseState *pstate, TypeCast *tc)
 {
 	A_Const	   *a_con;
 	Value	   *value;
-	int			location;
 	bool		b;
 	Const	   *con;
 
 	Assert(IsA(tc->arg, A_Const));
 	a_con = (A_Const *) tc->arg;
 	value = &a_con->val;
-	Assert(IsA(value, String));
-	location = a_con->location;
 
-	parse_bool(value->val.str, &b);
+	Assert(IsA(value, String));
+	parse_bool(strVal(value), &b);
 
 	con = makeConst(BOOLOID, -1, InvalidOid, 1, BoolGetDatum(b), false, true);
-	con->location = location;
+	con->location = a_con->location;
 
 	return (Node *) con;
 }
@@ -286,7 +284,7 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 	le = list_head(m->keyvals);
 	while (le != NULL)
 	{
-		Value	   *k;
+		Node	   *k;
 		Node	   *v;
 		Node	   *newv;
 		Const	   *newk;
@@ -297,9 +295,6 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 		le = lnext(le);
 
 		newv = transformCypherExprRecurse(pstate, v);
-		/* we don't store properties that have NULL values */
-		if (IsA(newv, Const) && ((Const *) newv)->constisnull)
-			continue;
 		/* newv might be bool */
 		newv = coerce_to_specific_type(pstate, newv, JSONBOID, "{}");
 
