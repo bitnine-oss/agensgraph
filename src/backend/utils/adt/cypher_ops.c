@@ -28,9 +28,8 @@ jsonb_add(PG_FUNCTION_ARGS)
 {
 	Jsonb	   *l = PG_GETARG_JSONB(0);
 	Jsonb	   *r = PG_GETARG_JSONB(1);
-	JsonbIterator *it;
-	JsonbValue	ljv;
-	JsonbValue	rjv;
+	JsonbValue *ljv;
+	JsonbValue *rjv;
 	JsonbValue	jv;
 	Size		len;
 	char	   *buf;
@@ -40,24 +39,17 @@ jsonb_add(PG_FUNCTION_ARGS)
 	if (!(JB_ROOT_IS_SCALAR(l) && JB_ROOT_IS_SCALAR(r)))
 		ereport_op("+", l, r);
 
-	it = JsonbIteratorInit(&l->root);
-	JsonbIteratorNext(&it, &ljv, true);
-	Assert(ljv.type == jbvArray);
-	JsonbIteratorNext(&it, &ljv, true);
+	ljv = getIthJsonbValueFromContainer(&l->root, 0);
+	rjv = getIthJsonbValueFromContainer(&r->root, 0);
 
-	it = JsonbIteratorInit(&r->root);
-	JsonbIteratorNext(&it, &rjv, true);
-	Assert(rjv.type == jbvArray);
-	JsonbIteratorNext(&it, &rjv, true);
-
-	if (ljv.type == jbvString && rjv.type == jbvString)
+	if (ljv->type == jbvString && rjv->type == jbvString)
 	{
-		len = ljv.val.string.len + rjv.val.string.len;
+		len = ljv->val.string.len + rjv->val.string.len;
 		buf = palloc(len + 1);
 
-		strncpy(buf, ljv.val.string.val, ljv.val.string.len);
-		strncpy(buf + ljv.val.string.len,
-				rjv.val.string.val, rjv.val.string.len);
+		strncpy(buf, ljv->val.string.val, ljv->val.string.len);
+		strncpy(buf + ljv->val.string.len,
+				rjv->val.string.val, rjv->val.string.len);
 		buf[len] = '\0';
 
 		jv.type = jbvString;
@@ -66,16 +58,17 @@ jsonb_add(PG_FUNCTION_ARGS)
 
 		PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
 	}
-	else if (ljv.type == jbvString && rjv.type == jbvNumeric)
+	else if (ljv->type == jbvString && rjv->type == jbvNumeric)
 	{
-		n = DirectFunctionCall1(numeric_out, NumericGetDatum(rjv.val.numeric));
+		n = DirectFunctionCall1(numeric_out,
+								NumericGetDatum(rjv->val.numeric));
 		nstr = DatumGetCString(n);
 
-		len = ljv.val.string.len + strlen(nstr);
+		len = ljv->val.string.len + strlen(nstr);
 		buf = palloc(len + 1);
 
-		strncpy(buf, ljv.val.string.val, ljv.val.string.len);
-		strcpy(buf + ljv.val.string.len, nstr);
+		strncpy(buf, ljv->val.string.val, ljv->val.string.len);
+		strcpy(buf + ljv->val.string.len, nstr);
 
 		jv.type = jbvString;
 		jv.val.string.len = len;
@@ -83,19 +76,20 @@ jsonb_add(PG_FUNCTION_ARGS)
 
 		PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
 	}
-	else if (ljv.type == jbvNumeric && rjv.type == jbvString)
+	else if (ljv->type == jbvNumeric && rjv->type == jbvString)
 	{
 		Size		nlen;
 
-		n = DirectFunctionCall1(numeric_out, NumericGetDatum(ljv.val.numeric));
+		n = DirectFunctionCall1(numeric_out,
+								NumericGetDatum(ljv->val.numeric));
 		nstr = DatumGetCString(n);
 		nlen = strlen(nstr);
 
-		len = nlen + rjv.val.string.len;
+		len = nlen + rjv->val.string.len;
 		buf = palloc(len + 1);
 
 		strcpy(buf, nstr);
-		strncpy(buf + nlen, rjv.val.string.val, rjv.val.string.len);
+		strncpy(buf + nlen, rjv->val.string.val, rjv->val.string.len);
 		buf[len] = '\0';
 
 		jv.type = jbvString;
@@ -104,11 +98,11 @@ jsonb_add(PG_FUNCTION_ARGS)
 
 		PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
 	}
-	else if (ljv.type == jbvNumeric && rjv.type == jbvNumeric)
+	else if (ljv->type == jbvNumeric && rjv->type == jbvNumeric)
 	{
 		n = DirectFunctionCall2(numeric_add,
-								NumericGetDatum(ljv.val.numeric),
-								NumericGetDatum(rjv.val.numeric));
+								NumericGetDatum(ljv->val.numeric),
+								NumericGetDatum(rjv->val.numeric));
 
 		PG_RETURN_JSONB(numeric_to_number(DatumGetNumeric(n)));
 	}
@@ -171,8 +165,7 @@ static Jsonb *
 number_op(PGFunction f, Jsonb *l, Jsonb *r)
 {
 	FunctionCallInfoData fcinfo;
-	JsonbIterator *it;
-	JsonbValue	jv;
+	JsonbValue *jv;
 	Datum		n;
 
 	AssertArg(r != NULL);
@@ -184,28 +177,20 @@ number_op(PGFunction f, Jsonb *l, Jsonb *r)
 
 	if (l != NULL)
 	{
-		it = JsonbIteratorInit(&l->root);
-		JsonbIteratorNext(&it, &jv, true);
-		Assert(jv.type == jbvArray);
-		JsonbIteratorNext(&it, &jv, true);
-
-		if (jv.type != jbvNumeric)
+		jv = getIthJsonbValueFromContainer(&l->root, 0);
+		if (jv->type != jbvNumeric)
 			ereport_number_op(f, l, r);
 
-		fcinfo.arg[fcinfo.nargs] = NumericGetDatum(jv.val.numeric);
+		fcinfo.arg[fcinfo.nargs] = NumericGetDatum(jv->val.numeric);
 		fcinfo.argnull[fcinfo.nargs] = false;
 		fcinfo.nargs++;
 	}
 
-	it = JsonbIteratorInit(&r->root);
-	JsonbIteratorNext(&it, &jv, true);
-	Assert(jv.type == jbvArray);
-	JsonbIteratorNext(&it, &jv, true);
-
-	if (jv.type != jbvNumeric)
+	jv = getIthJsonbValueFromContainer(&r->root, 0);
+	if (jv->type != jbvNumeric)
 		ereport_number_op(f, l, r);
 
-	fcinfo.arg[fcinfo.nargs] = NumericGetDatum(jv.val.numeric);
+	fcinfo.arg[fcinfo.nargs] = NumericGetDatum(jv->val.numeric);
 	fcinfo.argnull[fcinfo.nargs] = false;
 	fcinfo.nargs++;
 
@@ -288,34 +273,29 @@ jsonb_bool(PG_FUNCTION_ARGS)
 
 	if (JB_ROOT_IS_SCALAR(j))
 	{
-		JsonbIterator *it;
-		JsonbValue	jv;
+		JsonbValue *jv;
 
-		it = JsonbIteratorInit(&j->root);
-		JsonbIteratorNext(&it, &jv, true);
-		Assert(jv.type == jbvArray);
-		JsonbIteratorNext(&it, &jv, true);
-
-		switch (jv.type)
+		jv = getIthJsonbValueFromContainer(&j->root, 0);
+		switch (jv->type)
 		{
 			case jbvNull:
 				PG_RETURN_NULL();
 			case jbvString:
-				PG_RETURN_BOOL(jv.val.string.len > 0);
+				PG_RETURN_BOOL(jv->val.string.len > 0);
 			case jbvNumeric:
 				{
 					Datum		b;
 
-					if (numeric_is_nan(jv.val.numeric))
+					if (numeric_is_nan(jv->val.numeric))
 						PG_RETURN_BOOL(false);
 
 					b = DirectFunctionCall2(numeric_ne,
-											NumericGetDatum(jv.val.numeric),
+											NumericGetDatum(jv->val.numeric),
 											get_numeric_0_datum());
 					PG_RETURN_BOOL(b);
 				}
 			case jbvBool:
-				PG_RETURN_BOOL(jv.val.boolean);
+				PG_RETURN_BOOL(jv->val.boolean);
 			default:
 				elog(ERROR, "unknown jsonb scalar type");
 		}
