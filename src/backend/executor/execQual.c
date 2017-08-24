@@ -4622,6 +4622,9 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 		v = lfirst(le);
 		le = lnext(le);
 
+		Assert(exprType((Node *) k->expr) == TEXTOID &&
+			   exprType((Node *) v->expr) == JSONBOID);
+
 		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
 		/*
 		 * The evaluated value of v might be NULL. If so, omit this property
