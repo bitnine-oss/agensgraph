@@ -25,6 +25,7 @@
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
+#include "nodes/nodeFuncs.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_cypher_expr.h"
 #include "parser/parse_oper.h"
@@ -41,6 +42,8 @@ static Jsonb *numericToJsonb(Numeric n);
 static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
+static Node *transformIndirection(ParseState *pstate, Node *basenode,
+								  List *indirection);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
 
@@ -77,6 +80,15 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			return transformTypeCast(pstate, (TypeCast *) expr);
 		case T_CypherMapExpr:
 			return transformCypherMapExpr(pstate, (CypherMapExpr *) expr);
+		case T_A_Indirection:
+			{
+				A_Indirection *indir = (A_Indirection *) expr;
+				Node	   *basenode;
+
+				basenode = transformCypherExprRecurse(pstate, indir->arg);
+				return transformIndirection(pstate, basenode,
+											indir->indirection);
+			}
 		case T_A_Expr:
 			{
 				A_Expr	   *a = (A_Expr *) expr;
@@ -312,6 +324,64 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 }
 
 static Node *
+transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
+{
+	List	   *path = NIL;
+	ListCell   *li;
+	Node	   *elem;
+	CypherAccessExpr *a;
+
+	/* `FALSE.p`, `(0 < 1)[0]`, ...  */
+	if (exprType(basenode) == BOOLOID)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("map or list is expected but bool"),
+				 parser_errposition(pstate, exprLocation(basenode))));
+		return NULL;
+	}
+
+	Assert(exprType(basenode) == JSONBOID);
+
+	foreach(li, indirection)
+	{
+		Node	   *i = lfirst(li);
+
+		if (IsA(i, String))
+		{
+			elem = (Node *) makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
+									  CStringGetTextDatum(strVal(i)),
+									  false, false);
+		}
+		else
+		{
+			A_Indices  *ind;
+
+			Assert(IsA(i, A_Indices));
+
+			ind = (A_Indices *) i;
+			if (ind->is_slice)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("[..] not supported")));
+				return NULL;
+			}
+
+			elem = transformCypherExprRecurse(pstate, ind->uidx);
+		}
+
+		path = lappend(path, elem);
+	}
+
+	a = makeNode(CypherAccessExpr);
+	a->arg = (Expr *) basenode;
+	a->path = path;
+
+	return (Node *) a;
+}
+
+static Node *
 transformAExprOp(ParseState *pstate, A_Expr *a)
 {
 	Node	   *l;
@@ -344,8 +414,7 @@ transformBoolExpr(ParseState *pstate, BoolExpr *b)
 			break;
 		default:
 			elog(ERROR, "unrecognized boolop: %d", (int) b->boolop);
-			opname = NULL;
-			break;
+			return NULL;
 	}
 
 	foreach(la, b->args)

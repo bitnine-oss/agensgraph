@@ -2117,6 +2117,17 @@ _copyCypherMapExpr(const CypherMapExpr *from)
 	return newnode;
 }
 
+static CypherAccessExpr *
+_copyCypherAccessExpr(const CypherAccessExpr *from)
+{
+	CypherAccessExpr *newnode = makeNode(CypherAccessExpr);
+
+	COPY_NODE_FIELD(arg);
+	COPY_NODE_FIELD(path);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *						relation.h copy functions
  *
@@ -5270,6 +5281,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherMapExpr:
 			retval = _copyCypherMapExpr(from);
+			break;
+		case T_CypherAccessExpr:
+			retval = _copyCypherAccessExpr(from);
 			break;
 
 			/*
