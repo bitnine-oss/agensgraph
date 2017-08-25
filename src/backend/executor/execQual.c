@@ -190,6 +190,9 @@ static Datum ExecEvalGroupingFuncExpr(GroupingFuncExprState *gstate,
 static Datum ExecEvalCypherMap(CypherMapExprState *mstate,
 							   ExprContext *econtext, bool *isNull,
 							   ExprDoneCond *isDone);
+static Datum ExecEvalCypherAccess(CypherAccessExprState *astate,
+								  ExprContext *econtext, bool *isNull,
+								  ExprDoneCond *isDone);
 
 
 /* ----------------------------------------------------------------
@@ -4655,12 +4658,15 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 		kjv.val.string.len = strlen(ks);
 		kjv.val.string.val = ks;
 		if (kjv.val.string.len > JENTRY_OFFLENMASK)
+		{
 			ereport(ERROR,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 					 errmsg("string too long to represent as jsonb string"),
 					 errdetail("Due to an implementation restriction, "
 							   "jsonb strings cannot exceed %d bytes.",
 							   JENTRY_OFFLENMASK)));
+			return 0;
+		}
 		pushJsonbValue(&jpstate, WJB_KEY, &kjv);
 
 		if (JB_ROOT_IS_SCALAR(vj))
@@ -4707,6 +4713,178 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 		*isDone = ExprSingleResult;
 
 	return JsonbGetDatum(JsonbValueToJsonb(j));
+}
+
+static Datum
+ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
+					 bool *isNull, ExprDoneCond *isDone)
+{
+	bool		eisnull;
+	Datum		argd;
+	Jsonb	   *argj;
+	JsonbValue	_vjv;
+	JsonbValue *vjv;
+	JsonbContainer *container;
+	ListCell   *le;
+
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	Assert(exprType((Node *) astate->arg->expr) == JSONBOID);
+
+	/*
+	 * The evaluated value of astate->arg might be NULL.
+	 * `NULL.p`, `NULL[0]`, ... are NULL.
+	 */
+	argd = ExecEvalExpr(astate->arg, econtext, &eisnull, NULL);
+	if (eisnull)
+	{
+		*isNull = true;
+		return 0;
+	}
+
+	argj = DatumGetJsonb(argd);
+	if (JB_ROOT_IS_SCALAR(argj))
+	{
+		vjv = getIthJsonbValueFromContainer(&argj->root, 0);
+	}
+	else
+	{
+		_vjv.type = jbvBinary;
+		_vjv.val.binary.len = argj->vl_len_;
+		_vjv.val.binary.data = &argj->root;
+		vjv = &_vjv;
+	}
+
+	Assert(list_length(astate->path) > 0);
+
+	foreach(le, astate->path)
+	{
+		ExprState  *elem;
+		Oid			elemtype;
+		Datum		elemd;
+		JsonbValue	_ejv;
+		JsonbValue *ejv;
+		JsonbValue	kjv;
+
+		switch (vjv->type)
+		{
+			case jbvNull:
+				*isNull = true;
+				return 0;
+			case jbvString:
+			case jbvNumeric:
+			case jbvBool:
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("map or list is expected but scalar value")));
+				return 0;
+			case jbvArray:
+			case jbvObject:
+				elog(ERROR, "unexpected jsonb scalar type");
+				return 0;
+			case jbvBinary:
+				container = vjv->val.binary.data;
+				break;
+			default:
+				elog(ERROR, "unknown jsonb scalar type");
+				return 0;
+		}
+		Assert(container->header & (JB_FOBJECT | JB_FARRAY));
+
+		if (container->header & JB_FARRAY)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("accessing list elements not supported")));
+			return 0;
+		}
+
+		elem = lfirst(le);
+		elemtype = exprType((Node *) elem->expr);
+		elemd = ExecEvalExpr(elem, econtext, &eisnull, NULL);
+		if (eisnull)
+		{
+			_ejv.type = jbvNull;
+			ejv = &_ejv;
+		}
+		else if (elemtype == TEXTOID)
+		{
+			char	   *estr = TextDatumGetCString(elemd);
+
+			_ejv.type = jbvString;
+			_ejv.val.string.len = strlen(estr);
+			_ejv.val.string.val = estr;
+			ejv = &_ejv;
+		}
+		else if (elemtype == BOOLOID)
+		{
+			_ejv.type = jbvBool;
+			_ejv.val.boolean = DatumGetBool(elemd);
+			ejv = &_ejv;
+		}
+		else if (elemtype == JSONBOID)
+		{
+			Jsonb	   *j = DatumGetJsonb(elemd);
+
+			if (JB_ROOT_IS_SCALAR(j))
+			{
+				ejv = getIthJsonbValueFromContainer(&j->root, 0);
+			}
+			else
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("key value must be scalar")));
+				return 0;
+			}
+		}
+		else
+		{
+			Assert(!"unexpected key type");
+			return 0;
+		}
+
+		kjv.type = jbvString;
+		switch (ejv->type)
+		{
+			case jbvNull:
+				kjv.val.string.len = 4;
+				kjv.val.string.val = "null";
+				break;
+			case jbvString:
+				kjv.val.string = ejv->val.string;
+				break;
+			case jbvNumeric:
+				elog(ERROR, "numeric key value not supported");
+				return 0;
+			case jbvBool:
+				if (ejv->val.boolean)
+				{
+					kjv.val.string.len = 4;
+					kjv.val.string.val = "true";
+				}
+				else
+				{
+					kjv.val.string.len = 5;
+					kjv.val.string.val = "false";
+				}
+				break;
+			default:
+				elog(ERROR, "unknown jsonb scalar type");
+				return 0;
+		}
+
+		vjv = findJsonbValueFromContainer(container, JB_FOBJECT, &kjv);
+		if (vjv == NULL)
+		{
+			*isNull = true;
+			return 0;
+		}
+	}
+
+	*isNull = false;
+	PG_RETURN_JSONB(JsonbValueToJsonb(vjv));
 }
 
 /*
@@ -5543,6 +5721,20 @@ ExecInitExpr(Expr *node, PlanState *parent)
 														parent);
 
 				state = (ExprState *) mstate;
+			}
+			break;
+		case T_CypherAccessExpr:
+			{
+				CypherAccessExpr *a = (CypherAccessExpr *) node;
+				CypherAccessExprState *astate;
+
+				astate = makeNode(CypherAccessExprState);
+				astate->xprstate.evalfunc =
+						(ExprStateEvalFunc) ExecEvalCypherAccess;
+				astate->arg = ExecInitExpr((Expr *) a->arg, parent);
+				astate->path = (List *) ExecInitExpr((Expr *) a->path, parent);
+
+				state = (ExprState *) astate;
 			}
 			break;
 		default:

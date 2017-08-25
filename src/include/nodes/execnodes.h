@@ -1057,6 +1057,13 @@ typedef struct CypherMapExprState
 	List	   *keyvals;		/* key, value, key, value, ... (ExprState's) */
 } CypherMapExprState;
 
+typedef struct CypherAccessExprState
+{
+	ExprState	xprstate;
+	ExprState  *arg;
+	List	   *path;
+} CypherAccessExprState;
+
 /* ----------------------------------------------------------------
  *				 Executor State Trees
  *

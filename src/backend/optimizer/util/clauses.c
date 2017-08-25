@@ -3549,6 +3549,42 @@ eval_const_expressions_mutator(Node *node,
 
 				return (Node *) newm;
 			}
+		case T_CypherAccessExpr:
+			{
+				CypherAccessExpr *a = (CypherAccessExpr *) node;
+				bool		all_const = true;
+				Node	   *newarg;
+				List	   *newpath = NIL;
+				ListCell   *le;
+				CypherAccessExpr *newa;
+
+				newarg = eval_const_expressions_mutator((Node *) a->arg,
+														context);
+				if (!IsA(newarg, Const))
+					all_const = false;
+
+				foreach(le, a->path)
+				{
+					Node	   *elem = lfirst(le);
+					Node	   *newelem;
+
+					newelem = eval_const_expressions_mutator(elem, context);
+					if (!IsA(newelem, Const))
+						all_const = false;
+
+					newpath = lappend(newpath, newelem);
+				}
+
+				newa = makeNode(CypherAccessExpr);
+				newa->arg = (Expr *) newarg;
+				newa->path = newpath;
+
+				if (all_const)
+					return (Node *) evaluate_expr((Expr *) newa, JSONBOID, -1,
+												  InvalidOid);
+
+				return (Node *) newa;
+			}
 		default:
 			break;
 	}

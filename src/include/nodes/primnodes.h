@@ -1459,4 +1459,11 @@ typedef struct CypherMapExpr
 	int			location;
 } CypherMapExpr;
 
+typedef struct CypherAccessExpr
+{
+	Expr		xpr;
+	Expr	   *arg;
+	List	   *path;
+} CypherAccessExpr;
+
 #endif   /* PRIMNODES_H */
