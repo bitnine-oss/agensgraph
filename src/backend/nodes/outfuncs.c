@@ -1665,6 +1665,15 @@ _outCypherMapExpr(StringInfo str, const CypherMapExpr *node)
 	WRITE_LOCATION_FIELD(location);
 }
 
+static void
+_outCypherAccessExpr(StringInfo str, const CypherAccessExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERACCESSEXPR");
+
+	WRITE_NODE_FIELD(arg);
+	WRITE_NODE_FIELD(path);
+}
+
 
 /*****************************************************************************
  *
@@ -3988,6 +3997,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherMapExpr:
 				_outCypherMapExpr(str, obj);
+				break;
+			case T_CypherAccessExpr:
+				_outCypherAccessExpr(str, obj);
 				break;
 			case T_Path:
 				_outPath(str, obj);
