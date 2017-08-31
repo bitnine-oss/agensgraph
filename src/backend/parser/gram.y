@@ -15765,9 +15765,9 @@ cypher_expr_map_key:
 cypher_expr_list:
 			'[' cypher_expr_list_elems ']'
 				{
-					CypherList *n;
+					CypherListExpr *n;
 
-					n = makeNode(CypherList);
+					n = makeNode(CypherListExpr);
 					n->elems = $2;
 					$$ = (Node *) n;
 				}
