@@ -195,6 +195,7 @@ typedef enum NodeTag
 	T_EdgeRefRow,
 	T_EdgeRefRows,
 	T_CypherMapExpr,
+	T_CypherListExpr,
 	T_CypherAccessExpr,
 
 	/*
@@ -235,6 +236,7 @@ typedef enum NodeTag
 	T_EdgeRefRowState,
 	T_EdgeRefRowsState,
 	T_CypherMapExprState,
+	T_CypherListExprState,
 	T_CypherAccessExprState,
 
 	/*
@@ -514,7 +516,6 @@ typedef enum NodeTag
 	T_CypherRel,
 	T_CypherName,
 	T_CypherSetProp,
-	T_CypherList,
 
 	/*
 	 * TAGS FOR REPLICATION GRAMMAR PARSE NODES (replnodes.h)

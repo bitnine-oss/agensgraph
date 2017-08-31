@@ -2117,6 +2117,17 @@ _copyCypherMapExpr(const CypherMapExpr *from)
 	return newnode;
 }
 
+static CypherListExpr *
+_copyCypherListExpr(const CypherListExpr *from)
+{
+	CypherListExpr *newnode = makeNode(CypherListExpr);
+
+	COPY_NODE_FIELD(elems);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
 static CypherAccessExpr *
 _copyCypherAccessExpr(const CypherAccessExpr *from)
 {
@@ -5281,6 +5292,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherMapExpr:
 			retval = _copyCypherMapExpr(from);
+			break;
+		case T_CypherListExpr:
+			retval = _copyCypherListExpr(from);
 			break;
 		case T_CypherAccessExpr:
 			retval = _copyCypherAccessExpr(from);

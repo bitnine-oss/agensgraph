@@ -3610,14 +3610,4 @@ typedef struct CypherSetProp
 	bool		add;
 } CypherSetProp;
 
-/*
- * Cypher Query Language
- */
-
-typedef struct CypherList
-{
-	NodeTag		type;
-	List	   *elems;
-} CypherList;
-
 #endif   /* PARSENODES_H */
