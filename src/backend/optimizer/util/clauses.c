@@ -3558,11 +3558,12 @@ eval_const_expressions_mutator(Node *node,
 
 				foreach(le, cl->elems)
 				{
-					Node *newv;
+					Node	   *e = lfirst(le);
+					Node	   *newe;
 
-					newv = eval_const_expressions_mutator(lfirst(le), context);
+					newe = eval_const_expressions_mutator(e, context);
 
-					newelems = lappend(newelems, newv);
+					newelems = lappend(newelems, newe);
 				}
 
 				newcl = makeNode(CypherListExpr);

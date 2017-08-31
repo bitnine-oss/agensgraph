@@ -1691,6 +1691,7 @@ _outCypherAccessExpr(StringInfo str, const CypherAccessExpr *node)
 	WRITE_NODE_FIELD(path);
 }
 
+
 /*****************************************************************************
  *
  *	Stuff from relation.h.
