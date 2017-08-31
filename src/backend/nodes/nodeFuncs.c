@@ -1171,9 +1171,6 @@ exprSetCollation(Node *expr, Oid collation)
 		case T_CypherAccessExpr:
 			Assert(!OidIsValid(collation));
 			break;
-		case T_CypherListExpr:
-			Assert(!OidIsValid(collation));
-			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			break;

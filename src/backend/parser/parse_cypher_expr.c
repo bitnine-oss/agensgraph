@@ -335,11 +335,12 @@ transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 
 	foreach(le, cl->elems)
 	{
-		Node	   *newv;
+		Node	   *e = lfirst(le);
+		Node	   *newe;
 
-		newv = transformCypherExprRecurse(pstate, lfirst(le));
+		newe = transformCypherExprRecurse(pstate, e);
 
-		newelems = lappend(newelems, newv);
+		newelems = lappend(newelems, newe);
 	}
 
 	newcl = makeNode(CypherListExpr);

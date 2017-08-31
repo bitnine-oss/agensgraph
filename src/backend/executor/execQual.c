@@ -191,8 +191,8 @@ static Datum ExecEvalCypherMap(CypherMapExprState *mstate,
 							   ExprContext *econtext, bool *isNull,
 							   ExprDoneCond *isDone);
 static Datum ExecEvalCypherList(CypherListExprState *clstate,
-							   ExprContext *econtext, bool *isNull,
-							   ExprDoneCond *isDone);
+								ExprContext *econtext, bool *isNull,
+								ExprDoneCond *isDone);
 static Datum ExecEvalCypherAccess(CypherAccessExprState *astate,
 								  ExprContext *econtext, bool *isNull,
 								  ExprDoneCond *isDone);
@@ -4648,6 +4648,9 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 			JsonbIteratorNext(&it, &vjv, true);
 			Assert(vjv.type == jbvArray);
 			JsonbIteratorNext(&it, &vjv, true);
+
+			if (vjv.type == jbvNull)
+				continue;
 		}
 
 		kd = ExecEvalExpr(k, econtext, &eisnull, NULL);
@@ -4717,7 +4720,7 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 
 static Datum
 ExecEvalCypherList(CypherListExprState *clstate, ExprContext *econtext,
-				  bool *isNull, ExprDoneCond *isDone)
+				   bool *isNull, ExprDoneCond *isDone)
 {
 	ListCell   *le;
 	JsonbParseState *jpstate = NULL;
@@ -4727,27 +4730,29 @@ ExecEvalCypherList(CypherListExprState *clstate, ExprContext *econtext,
 
 	foreach(le, clstate->elems)
 	{
-		ExprState  *v;
+		ExprState  *e;
 		bool		eisnull;
-		Datum		vd;
+		Datum		ed;
 		JsonbValue	ejv;
-		Jsonb	   *vj;
+		Jsonb	   *ej;
 		JsonbIterator *it;
 
-		v = lfirst(le);
+		e = lfirst(le);
 
-		Assert(exprType((Node *) v->expr) == JSONBOID);
+		Assert(exprType((Node *) e->expr) == JSONBOID);
 
-		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
+		ed = ExecEvalExpr(e, econtext, &eisnull, NULL);
 
-		if (eisnull){
+		if (eisnull)
+		{
 			ejv.type = jbvNull;
 			pushJsonbValue(&jpstate, WJB_ELEM, &ejv);
+			continue;
 		}
 
-		vj = DatumGetJsonb(vd);
-		it = JsonbIteratorInit(&vj->root);
-		if (JB_ROOT_IS_SCALAR(vj))
+		ej = DatumGetJsonb(ed);
+		it = JsonbIteratorInit(&ej->root);
+		if (JB_ROOT_IS_SCALAR(ej))
 		{
 			JsonbIteratorNext(&it, &ejv, true);
 			Assert(ejv.type == jbvArray);
@@ -4776,7 +4781,6 @@ ExecEvalCypherList(CypherListExprState *clstate, ExprContext *econtext,
 	*isNull = false;
 	if (isDone != NULL)
 		*isDone = ExprSingleResult;
-
 
 	return JsonbGetDatum(JsonbValueToJsonb(j));
 }
@@ -5796,9 +5800,9 @@ ExecInitExpr(Expr *node, PlanState *parent)
 
 				clstate = makeNode(CypherListExprState);
 				clstate->xprstate.evalfunc =
-					(ExprStateEvalFunc) ExecEvalCypherList;
+						(ExprStateEvalFunc) ExecEvalCypherList;
 				clstate->elems = (List *) ExecInitExpr((Expr *) cl->elems,
-														parent);
+													   parent);
 
 				state = (ExprState *) clstate;
 			}
