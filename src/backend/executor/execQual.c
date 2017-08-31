@@ -190,6 +190,9 @@ static Datum ExecEvalGroupingFuncExpr(GroupingFuncExprState *gstate,
 static Datum ExecEvalCypherMap(CypherMapExprState *mstate,
 							   ExprContext *econtext, bool *isNull,
 							   ExprDoneCond *isDone);
+static Datum ExecEvalCypherList(CypherListExprState *clstate,
+							   ExprContext *econtext, bool *isNull,
+							   ExprDoneCond *isDone);
 static Datum ExecEvalCypherAccess(CypherAccessExprState *astate,
 								  ExprContext *econtext, bool *isNull,
 								  ExprDoneCond *isDone);
@@ -4645,9 +4648,6 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 			JsonbIteratorNext(&it, &vjv, true);
 			Assert(vjv.type == jbvArray);
 			JsonbIteratorNext(&it, &vjv, true);
-
-			if (vjv.type == jbvNull)
-				continue;
 		}
 
 		kd = ExecEvalExpr(k, econtext, &eisnull, NULL);
@@ -4711,6 +4711,72 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 	*isNull = false;
 	if (isDone != NULL)
 		*isDone = ExprSingleResult;
+
+	return JsonbGetDatum(JsonbValueToJsonb(j));
+}
+
+static Datum
+ExecEvalCypherList(CypherListExprState *clstate, ExprContext *econtext,
+				  bool *isNull, ExprDoneCond *isDone)
+{
+	ListCell   *le;
+	JsonbParseState *jpstate = NULL;
+	JsonbValue *j;
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+	foreach(le, clstate->elems)
+	{
+		ExprState  *v;
+		bool		eisnull;
+		Datum		vd;
+		JsonbValue	ejv;
+		Jsonb	   *vj;
+		JsonbIterator *it;
+
+		v = lfirst(le);
+
+		Assert(exprType((Node *) v->expr) == JSONBOID);
+
+		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
+
+		if (eisnull){
+			ejv.type = jbvNull;
+			pushJsonbValue(&jpstate, WJB_ELEM, &ejv);
+		}
+
+		vj = DatumGetJsonb(vd);
+		it = JsonbIteratorInit(&vj->root);
+		if (JB_ROOT_IS_SCALAR(vj))
+		{
+			JsonbIteratorNext(&it, &ejv, true);
+			Assert(ejv.type == jbvArray);
+			JsonbIteratorNext(&it, &ejv, true);
+
+			Assert(jpstate->contVal.type == jbvArray);
+			pushJsonbValue(&jpstate, WJB_ELEM, &ejv);
+		}
+		else
+		{
+			JsonbIteratorToken type;
+
+			while ((type = JsonbIteratorNext(&it, &ejv, false)) != WJB_DONE)
+			{
+				if (type == WJB_BEGIN_ARRAY || type == WJB_END_ARRAY ||
+					type == WJB_BEGIN_OBJECT || type == WJB_END_OBJECT)
+					pushJsonbValue(&jpstate, type, NULL);
+				else
+					pushJsonbValue(&jpstate, type, &ejv);
+			}
+		}
+	}
+
+	j = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+
+	*isNull = false;
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
 
 	return JsonbGetDatum(JsonbValueToJsonb(j));
 }
@@ -5721,6 +5787,20 @@ ExecInitExpr(Expr *node, PlanState *parent)
 														parent);
 
 				state = (ExprState *) mstate;
+			}
+			break;
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+				CypherListExprState *clstate;
+
+				clstate = makeNode(CypherListExprState);
+				clstate->xprstate.evalfunc =
+					(ExprStateEvalFunc) ExecEvalCypherList;
+				clstate->elems = (List *) ExecInitExpr((Expr *) cl->elems,
+														parent);
+
+				state = (ExprState *) clstate;
 			}
 			break;
 		case T_CypherAccessExpr:

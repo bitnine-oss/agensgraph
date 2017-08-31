@@ -818,6 +818,15 @@ _equalCypherAccessExpr(const CypherAccessExpr *a, const CypherAccessExpr *b)
 	return true;
 }
 
+static bool
+_equalCypherListExpr(const CypherListExpr *a, const CypherListExpr *b)
+{
+	COMPARE_NODE_FIELD(elems);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
 /*
  * Stuff from relation.h
  */
@@ -3260,6 +3269,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherMapExpr:
 			retval = _equalCypherMapExpr(a, b);
+			break;
+		case T_CypherListExpr:
+			retval = _equalCypherListExpr(a, b);
 			break;
 		case T_CypherAccessExpr:
 			retval = _equalCypherAccessExpr(a, b);
