@@ -42,6 +42,7 @@ static Jsonb *numericToJsonb(Numeric n);
 static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
+static Node *transformCypherListExpr(ParseState *pstate, CypherListExpr *cl);
 static Node *transformIndirection(ParseState *pstate, Node *basenode,
 								  List *indirection);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
@@ -80,6 +81,8 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			return transformTypeCast(pstate, (TypeCast *) expr);
 		case T_CypherMapExpr:
 			return transformCypherMapExpr(pstate, (CypherMapExpr *) expr);
+		case T_CypherListExpr:
+			return transformCypherListExpr(pstate, (CypherListExpr *) expr);
 		case T_A_Indirection:
 			{
 				A_Indirection *indir = (A_Indirection *) expr;
@@ -321,6 +324,28 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 	newm->keyvals = newkeyvals;
 
 	return (Node *) newm;
+}
+
+static Node *
+transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
+{
+	List	   *newelems = NIL;
+	ListCell   *le;
+	CypherListExpr *newcl;
+
+	foreach(le, cl->elems)
+	{
+		Node	   *newv;
+
+		newv = transformCypherExprRecurse(pstate, lfirst(le));
+
+		newelems = lappend(newelems, newv);
+	}
+
+	newcl = makeNode(CypherListExpr);
+	newcl->elems = newelems;
+
+	return (Node *) newcl;
 }
 
 static Node *

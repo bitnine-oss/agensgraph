@@ -1459,6 +1459,13 @@ typedef struct CypherMapExpr
 	int			location;
 } CypherMapExpr;
 
+typedef struct CypherListExpr
+{
+	Expr		xpr;
+	List	   *elems;
+	int 		location;
+} CypherListExpr;
+
 typedef struct CypherAccessExpr
 {
 	Expr		xpr;

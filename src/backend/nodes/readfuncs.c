@@ -2403,6 +2403,17 @@ _readCypherMapExpr(void)
 	READ_DONE();
 }
 
+static CypherListExpr *
+_readCypherListExpr(void)
+{
+	READ_LOCALS(CypherListExpr);
+
+	READ_NODE_FIELD(elems);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
 static CypherAccessExpr *
 _readCypherAccessExpr(void)
 {
@@ -2664,6 +2675,8 @@ parseNodeString(void)
 		return_value = _readEdgeRefRows();
 	else if (MATCH("CYPHERMAPEXPR", 13))
 		return_value = _readCypherMapExpr();
+	else if (MATCH("CYPHERLISTEXPR", 14))
+		return_value = _readCypherListExpr();
 	else if (MATCH("CYPHERACCESSEXPR", 16))
 		return_value = _readCypherAccessExpr();
 	else
