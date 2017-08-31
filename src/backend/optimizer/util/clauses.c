@@ -3549,6 +3549,27 @@ eval_const_expressions_mutator(Node *node,
 
 				return (Node *) newm;
 			}
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+				List		*newelems = NIL;
+				ListCell	*le;
+				CypherListExpr *newcl;
+
+				foreach(le, cl->elems)
+				{
+					Node *newv;
+
+					newv = eval_const_expressions_mutator(lfirst(le), context);
+
+					newelems = lappend(newelems, newv);
+				}
+
+				newcl = makeNode(CypherListExpr);
+				newcl->elems = newelems;
+
+				return (Node *) newcl;
+			}
 		case T_CypherAccessExpr:
 			{
 				CypherAccessExpr *a = (CypherAccessExpr *) node;
