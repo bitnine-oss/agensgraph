@@ -475,9 +475,9 @@ bool
 RangeVarIsLabel(RangeVar *rel)
 {
 	Oid			nspid;
+	Oid			graphid;
 	HeapTuple	nsptuple;
 	Form_pg_namespace nspdata;
-	bool		result;
 
 	nspid = RangeVarGetCreationNamespace(rel);
 	nsptuple = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(nspid));
@@ -485,11 +485,10 @@ RangeVarIsLabel(RangeVar *rel)
 		elog(ERROR, "cache lookup failed for label (OID=%u)", nspid);
 
 	nspdata = (Form_pg_namespace) GETSTRUCT(nsptuple);
-	result = OidIsValid(get_graphname_oid(NameStr(nspdata->nspname)));
-
+	graphid = get_graphname_oid(NameStr(nspdata->nspname));
 	ReleaseSysCache(nsptuple);
 
-	return result;
+	return OidIsValid(get_labname_laboid(rel->relname, graphid));
 }
 
 void

@@ -53,11 +53,11 @@ ERROR:  cannot create rule on graph label
 -- DML
 --
 INSERT INTO g.v VALUES ('1234.56', NULL);
-ERROR:  DML query to graph objcts is not allowed
+ERROR:  DML query to graph objects is not allowed
 UPDATE g.v SET properties='{"update":"impossible"}' WHERE id = '1234.56';
-ERROR:  DML query to graph objcts is not allowed
+ERROR:  DML query to graph objects is not allowed
 DELETE FROM g.v;
-ERROR:  DML query to graph objcts is not allowed
+ERROR:  DML query to graph objects is not allowed
 -- cleanup
 REVOKE ALL ON DATABASE regression FROM tmp;
 DROP GRAPH t CASCADE;
