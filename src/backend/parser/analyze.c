@@ -413,7 +413,7 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 	qry->commandType = CMD_DELETE;
 
 	if (RangeVarIsLabel(stmt->relation) && DisableGraphDML)
-		elog(ERROR, "DML query to graph objcts is not allowed");
+		elog(ERROR, "DML query to graph objects is not allowed");
 
 	/* process the WITH clause independently of all else */
 	if (stmt->withClause)
@@ -496,7 +496,7 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 	AclMode		targetPerms;
 
 	if (RangeVarIsLabel(stmt->relation) && DisableGraphDML)
-		elog(ERROR, "DML query to graph objcts is not allowed");
+		elog(ERROR, "DML query to graph objects is not allowed");
 
 	/* There can't be any outer WITH to worry about */
 	Assert(pstate->p_ctenamespace == NIL);
@@ -2242,7 +2242,7 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 	Node	   *qual;
 
 	if (RangeVarIsLabel(stmt->relation) && DisableGraphDML)
-		elog(ERROR, "DML query to graph objcts is not allowed");
+		elog(ERROR, "DML query to graph objects is not allowed");
 
 	qry->commandType = CMD_UPDATE;
 	pstate->p_is_insert = false;

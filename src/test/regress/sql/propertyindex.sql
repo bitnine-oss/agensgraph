@@ -120,6 +120,16 @@ CREATE PROPERTY INDEX regv1_multi_expr ON regv1 ((name.first || name.last), (age
 DROP PROPERTY INDEX regv1_multi_expr;
 
 DROP VLABEL regv1;
+
+-- wrong case
+CREATE VLABEL regv2;
+
+CREATE PROPERTY INDEX regv2_index_key1 ON regv2 (key1);
+CREATE PROPERTY INDEX regv2_index_key1 ON regv2 (key1);
+
+CREATE PROPERTY INDEX ON nonexsist_name (key1);
+
+DROP VLABEL regv2;
 --
 -- DROP GRAPH
 --
