@@ -257,6 +257,14 @@ Inherits: g.ag_vertex
 
 DROP PROPERTY INDEX regv1_multi_expr;
 DROP VLABEL regv1;
+-- wrong case
+CREATE VLABEL regv2;
+CREATE PROPERTY INDEX regv2_index_key1 ON regv2 (key1);
+CREATE PROPERTY INDEX regv2_index_key1 ON regv2 (key1);
+ERROR:  relation "regv2_index_key1" already exists
+CREATE PROPERTY INDEX ON nonexsist_name (key1);
+ERROR:  label "nonexsist_name" does not exist
+DROP VLABEL regv2;
 --
 -- DROP GRAPH
 --
