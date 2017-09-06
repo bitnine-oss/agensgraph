@@ -597,10 +597,12 @@ static Node *makeDijkstraPath(List *chain, Node *weight, Node *qual,
 
 %type <node>	cypher_expr cypher_expr_opt
 				cypher_expr_atom cypher_expr_literal cypher_expr_var
+%type <value>	cypher_expr_name
+%type <str>		cypher_expr_varname
 
 %type <node>	cypher_expr_map
 %type <list>	cypher_expr_map_keyvals
-%type <value>	cypher_expr_map_key
+%type <value>	cypher_expr_map_key cypher_expr_escaped_name
 
 %type <node>	cypher_expr_list
 %type <list>	cypher_expr_list_elems
@@ -15694,11 +15696,36 @@ cypher_expr:
 				}
 			| '(' cypher_expr ')'
 					{ $$ = $2; }
-			| cypher_expr '.' cypher_expr_map_key
+			| cypher_expr '.' cypher_expr_escaped_name
 				{
 					A_Indirection *n;
 
 					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_expr '.' cypher_expr_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, ColumnRef))
+					{
+						ColumnRef  *cref = (ColumnRef *) $1;
+
+						cref->fields = lappend(cref->fields, $3);
+						$$ = $1;
+					}
+					else if (IsA($1, A_Indirection))
 					{
 						n = (A_Indirection *) $1;
 						n->indirection = lappend(n->indirection, $3);
@@ -15718,6 +15745,10 @@ cypher_expr:
 cypher_expr_opt:
 			cypher_expr
 			| /* EMPTY */		{ $$ = NULL; }
+		;
+
+cypher_expr_name:
+			ColLabel		{ $$ = makeString($1); }
 		;
 
 cypher_expr_atom:
@@ -15758,8 +15789,12 @@ cypher_expr_map_keyvals:
 		;
 
 cypher_expr_map_key:
-			Sconst			{ $$ = makeString($1); }
-			| ColLabel		{ $$ = makeString($1); }
+			cypher_expr_escaped_name
+			| cypher_expr_name
+		;
+
+cypher_expr_escaped_name:
+			Sconst		{ $$ = makeString($1); }
 		;
 
 cypher_expr_list:
@@ -15783,7 +15818,7 @@ cypher_expr_list_elems:
 		;
 
 cypher_expr_var:
-			ColId
+			cypher_expr_varname
 				{
 					ColumnRef  *n;
 
@@ -15792,6 +15827,10 @@ cypher_expr_var:
 					n->location = @1;
 					$$ = (Node *) n;
 				}
+		;
+
+cypher_expr_varname:
+			ColId
 		;
 
 cypher_return:
