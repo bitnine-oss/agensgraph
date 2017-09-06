@@ -21,20 +21,29 @@
 
 #include "postgres.h"
 
+#include "ag_const.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
+#include "commands/dbcommands.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_cypher_expr.h"
+#include "parser/parse_func.h"
 #include "parser/parse_oper.h"
+#include "parser/parse_relation.h"
+#include "parser/parse_target.h"
 #include "utils/builtins.h"
 #include "utils/int8.h"
 #include "utils/jsonb.h"
+#include "utils/lsyscache.h"
 #include "utils/numeric.h"
 
 static Node *transformCypherExprRecurse(ParseState *pstate, Node *expr);
+static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref);
+static Node *scanRTEForVar(ParseState *pstate, Node *var, RangeTblEntry *rte,
+						   char *colname, int location);
 static Node *transformA_Const(ParseState *pstate, A_Const *a_con);
 static Datum integerToJsonb(ParseState *pstate, int64 i, int location);
 static Datum floatToJsonb(ParseState *pstate, char *f, int location);
@@ -47,6 +56,7 @@ static Node *transformIndirection(ParseState *pstate, Node *basenode,
 								  List *indirection);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
+static List *transformA_Star(ParseState *pstate, int location);
 
 Node *
 transformCypherExpr(ParseState *pstate, Node *expr, ParseExprKind exprKind)
@@ -75,6 +85,8 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 
 	switch (nodeTag(expr))
 	{
+		case T_ColumnRef:
+			return transformColumnRef(pstate, (ColumnRef *) expr);
 		case T_A_Const:
 			return transformA_Const(pstate, (A_Const *) expr);
 		case T_TypeCast:
@@ -121,6 +133,198 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			return NULL;
 	}
+}
+
+/*
+ * Because we have to check all the cases of variable references (Cypher
+ * variables and variables in ancestor queries if the Cypher query is the
+ * subquery) for each level of ParseState, logic and functions in original
+ * transformColumnRef() are properly modified, refactored, and then integrated
+ * into one.
+ */
+static Node *
+transformColumnRef(ParseState *pstate, ColumnRef *cref)
+{
+	int			nfields = list_length(cref->fields);
+	int			location = cref->location;
+	Node	   *field1;
+	Node	   *field2 = NULL;
+	Node	   *field3 = NULL;
+	Oid			nspid1 = InvalidOid;
+	Node	   *field4 = NULL;
+	Oid			nspid2 = InvalidOid;
+	ParseState *orig_pstate = pstate;
+	Node	   *var = NULL;
+	int			nindir;
+
+	field1 = linitial(cref->fields);
+	if (nfields >= 2)
+		field2 = lsecond(cref->fields);
+	if (nfields >= 3)
+	{
+		field3 = lthird(cref->fields);
+		nspid1 = LookupNamespaceNoError(strVal(field1));
+	}
+	if (nfields >= 4 &&
+		strcmp(strVal(field1), get_database_name(MyDatabaseId)) == 0)
+	{
+		field4 = lfourth(cref->fields);
+		nspid2 = LookupNamespaceNoError(strVal(field2));
+	}
+
+	while (pstate != NULL)
+	{
+		ListCell   *lni;
+
+		/* find the Var at the current level of ParseState */
+
+		foreach(lni, pstate->p_namespace)
+		{
+			ParseNamespaceItem *nsitem = lfirst(lni);
+			RangeTblEntry *rte = nsitem->p_rte;
+			Oid			relid2;
+			Oid			relid3;
+
+			if (nsitem->p_lateral_only)
+			{
+				/* If not inside LATERAL, ignore lateral-only items. */
+				if (!pstate->p_lateral_active)
+					continue;
+
+				/*
+				 * If the namespace item is currently disallowed as a LATERAL
+				 * reference, skip the rest.
+				 */
+				if (!nsitem->p_lateral_ok)
+					continue;
+			}
+
+			/*
+			 * If this RTE is accessible by unqualified names,
+			 * examine `field1`.
+			 */
+			if (nsitem->p_cols_visible)
+			{
+				var = scanRTEForVar(orig_pstate, var, rte, strVal(field1),
+									location);
+				nindir = 0;
+			}
+
+			/*
+			 * If this RTE is inaccessible by qualified names,
+			 * skip the rest.
+			 */
+			if (!nsitem->p_rel_visible)
+				continue;
+
+			/* examine `field1.field2` */
+			if (field2 != NULL &&
+				strcmp(rte->eref->aliasname, strVal(field1)) == 0)
+			{
+				var = scanRTEForVar(orig_pstate, var, rte, strVal(field2),
+									location);
+				nindir = 1;
+			}
+
+			/* examine `field1.field2.field3` */
+			if (OidIsValid(nspid1) &&
+				OidIsValid(relid2 = get_relname_relid(strVal(field2),
+													  nspid1)) &&
+				rte->rtekind == RTE_RELATION &&
+				rte->relid == relid2 &&
+				rte->alias == NULL)
+			{
+				var = scanRTEForVar(orig_pstate, var, rte, strVal(field3),
+									location);
+				nindir = 2;
+			}
+
+			/* examine `field1.field2.field3.field4` */
+			if (OidIsValid(nspid2) &&
+				OidIsValid(relid3 = get_relname_relid(strVal(field3),
+													  nspid2)) &&
+				rte->rtekind == RTE_RELATION &&
+				rte->relid == relid3 &&
+				rte->alias == NULL)
+			{
+				var = scanRTEForVar(orig_pstate, var, rte, strVal(field4),
+									location);
+				nindir = 3;
+			}
+		}
+
+		if (var != NULL)
+			break;
+
+		pstate = pstate->parentParseState;
+	}
+
+	if (var == NULL)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_COLUMN),
+				 errmsg("variable does not exist"),
+				 parser_errposition(pstate, location)));
+		return NULL;
+	}
+
+	if (nindir + 1 < nfields)
+	{
+		Node	   *basenode;
+		List	   *newindir;
+
+		switch (exprType(var))
+		{
+			case VERTEXOID:
+			case EDGEOID:
+				basenode = ParseFuncOrColumn(pstate,
+									list_make1(makeString(AG_ELEM_PROP_MAP)),
+									list_make1(var), NULL, location);
+				break;
+			default:
+				basenode = var;
+				break;
+		}
+
+		newindir = list_copy_tail(cref->fields, nindir + 1);
+
+		return transformIndirection(pstate, basenode, newindir);
+	}
+
+	return var;
+}
+
+static Node *
+scanRTEForVar(ParseState *pstate, Node *var, RangeTblEntry *rte, char *colname,
+			  int location)
+{
+	int			attrno;
+	ListCell   *lc;
+
+	attrno = 0;
+	foreach(lc, rte->eref->colnames)
+	{
+		const char *colalias = strVal(lfirst(lc));
+
+		attrno++;
+
+		if (strcmp(colalias, colname) != 0)
+			continue;
+
+		if (var != NULL)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_AMBIGUOUS_COLUMN),
+					 errmsg("variable reference \"%s\" is ambiguous", colname),
+					 parser_errposition(pstate, location)));
+			return NULL;
+		}
+
+		var = (Node *) make_var(pstate, rte, attrno, location);
+		markVarForSelectPriv(pstate, (Var *) var, rte);
+	}
+
+	return var;
 }
 
 static Node *
@@ -310,7 +514,7 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 		le = lnext(le);
 
 		newv = transformCypherExprRecurse(pstate, v);
-		/* newv might be bool */
+		/* newv might not be jsonb */
 		newv = coerce_to_specific_type(pstate, newv, JSONBOID, "{}");
 
 		Assert(IsA(k, String));
@@ -359,6 +563,14 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 	Node	   *elem;
 	CypherAccessExpr *a;
 
+	if (IsA(basenode, CypherAccessExpr))
+	{
+		a = (CypherAccessExpr *) basenode;
+
+		basenode = (Node *) a->arg;
+		path = a->path;
+	}
+
 	/* `FALSE.p`, `(0 < 1)[0]`, ...  */
 	if (exprType(basenode) == BOOLOID)
 	{
@@ -369,7 +581,8 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 		return NULL;
 	}
 
-	Assert(exprType(basenode) == JSONBOID);
+	/* basenode might not be jsonb */
+	basenode = coerce_to_specific_type(pstate, basenode, JSONBOID, "ACCESS");
 
 	foreach(li, indirection)
 	{
@@ -483,8 +696,22 @@ transformItemList(ParseState *pstate, List *items, ParseExprKind exprKind)
 		char	   *colname;
 		TargetEntry *te;
 
+		if (IsA(item->val, ColumnRef))
+		{
+			ColumnRef  *cref = (ColumnRef *) item->val;
+
+			/* item is a bare `*` */
+			if (list_length(cref->fields) == 1 &&
+				IsA(linitial(cref->fields), A_Star))
+			{
+				targets = list_concat(targets,
+									  transformA_Star(pstate, cref->location));
+				continue;
+			}
+		}
+
 		expr = transformCypherExpr(pstate, item->val, exprKind);
-		colname = (item->name == NULL ? "?column?" : item->name);
+		colname = (item->name == NULL ? FigureColname(item->val) : item->name);
 
 		te = makeTargetEntry((Expr *) expr,
 							 (AttrNumber) pstate->p_next_resno++,
@@ -492,6 +719,43 @@ transformItemList(ParseState *pstate, List *items, ParseExprKind exprKind)
 
 		targets = lappend(targets, te);
 	}
+
+	return targets;
+}
+
+static List *
+transformA_Star(ParseState *pstate, int location)
+{
+	List	   *targets = NIL;
+	bool		visible = false;
+	ListCell   *lni;
+
+	foreach(lni, pstate->p_namespace)
+	{
+		ParseNamespaceItem *nsitem = lfirst(lni);
+		RangeTblEntry *rte = nsitem->p_rte;
+		int			rtindex;
+
+		/* ignore RTEs that are inaccessible by unqualified names */
+		if (!nsitem->p_cols_visible)
+			continue;
+		visible = true;
+
+		/* should not have any lateral-only items when parsing items */
+		Assert(!nsitem->p_lateral_only);
+
+		rtindex = RTERangeTablePosn(pstate, rte, NULL);
+
+		targets = list_concat(targets,
+							  expandRelAttrs(pstate, rte, rtindex, 0,
+											 location));
+	}
+
+	if (!visible)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("RETURN * with no accessible variables is invalid"),
+				 parser_errposition(pstate, location)));
 
 	return targets;
 }
