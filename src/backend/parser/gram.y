@@ -572,7 +572,7 @@ static Node *makeDijkstraPath(List *chain, Node *weight, Node *qual,
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
 				cypher_create cypher_delete cypher_findpath_expr
-				cypher_label_opt cypher_limit_opt
+				cypher_label_opt
 				cypher_load cypher_match cypher_merge cypher_merge_set
 				cypher_no_parens cypher_node
 				cypher_path cypher_path_opt_varirable cypher_prop_map_opt
@@ -580,10 +580,10 @@ static Node *makeDijkstraPath(List *chain, Node *weight, Node *qual,
 				cypher_read cypher_read_clauses cypher_read_opt
 				cypher_read_opt_parens cypher_read_stmt cypher_read_with_parens
 				cypher_rel cypher_remove cypher_rmitem cypher_set
-				cypher_setitem cypher_skip_opt
+				cypher_setitem
 				cypher_variable cypher_variable_opt cypher_varlen_opt
-				cypher_with cypher_with_parens
-%type <list>	cypher_distinct_opt cypher_merge_sets_opt
+				cypher_with_parens
+%type <list>	cypher_merge_sets_opt
 				cypher_merge_set_list cypher_path_chain
 				cypher_path_chain_opt_parens cypher_pattern cypher_rmitem_list
 				cypher_setitem_list cypher_types cypher_types_opt
@@ -607,9 +607,12 @@ static Node *makeDijkstraPath(List *chain, Node *weight, Node *qual,
 %type <node>	cypher_expr_list
 %type <list>	cypher_expr_list_elems
 
-%type <node>	cypher_return
-%type <list>	cypher_return_items
+%type <node>	cypher_return cypher_with
+				cypher_skip_opt cypher_limit_opt cypher_where_opt
+%type <list>	cypher_return_items cypher_distinct_opt
+				cypher_order_by_opt cypher_sort_items
 %type <target>	cypher_return_item
+%type <sortby>	cypher_sort_item
 
 
 /*
@@ -15049,23 +15052,6 @@ cypher_create:
 				}
 		;
 
-cypher_with:
-			WITH cypher_distinct_opt target_list
-			opt_sort_clause cypher_skip_opt cypher_limit_opt
-			where_clause
-				{
-					CypherProjection *n = makeNode(CypherProjection);
-					n->kind = CP_WITH;
-					n->distinct = $2;
-					n->items = $3;
-					n->order = $4;
-					n->skip = $5;
-					n->limit = $6;
-					n->where = $7;
-					$$ = (Node *) n;
-				}
-		;
-
 cypher_delete:
 			cypher_detach_opt DELETE_P expr_list
 				{
@@ -15465,23 +15451,6 @@ cypher_range_idx:
 			Iconst				{ $$ = makeIntConst($1, @1); }
 		;
 
-cypher_distinct_opt:
-			distinct_clause
-			| /* EMPTY */		{ $$ = NIL; }
-		;
-
-cypher_skip_opt:
-			SKIP select_offset_value
-					{ $$ = $2; }
-			| /* EMPTY */
-					{ $$ = NULL; }
-		;
-
-cypher_limit_opt:
-			limit_clause
-			| /* EMPTY */		{ $$ = NULL; }
-		;
-
 cypher_setitem_list:
 			cypher_setitem
 					{ $$ = list_make1($1); }
@@ -15834,13 +15803,37 @@ cypher_expr_varname:
 		;
 
 cypher_return:
-			RETURN cypher_return_items
+			RETURN cypher_distinct_opt cypher_return_items
+			cypher_order_by_opt cypher_skip_opt cypher_limit_opt
 				{
 					CypherProjection *n;
 
 					n = makeNode(CypherProjection);
 					n->kind = CP_RETURN;
-					n->items = $2;
+					n->distinct = $2;
+					n->items = $3;
+					n->order = $4;
+					n->skip = $5;
+					n->limit = $6;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_with:
+			WITH cypher_distinct_opt cypher_return_items
+			cypher_order_by_opt cypher_skip_opt cypher_limit_opt
+			cypher_where_opt
+				{
+					CypherProjection *n;
+
+					n = makeNode(CypherProjection);
+					n->kind = CP_WITH;
+					n->distinct = $2;
+					n->items = $3;
+					n->order = $4;
+					n->skip = $5;
+					n->limit = $6;
+					n->where = $7;
 					$$ = (Node *) n;
 				}
 		;
@@ -15878,6 +15871,52 @@ cypher_return_item:
 					$$->val = (Node *) cref;
 					$$->location = @1;
 				}
+		;
+
+cypher_distinct_opt:
+			DISTINCT
+					{ $$ = list_make1(NIL); }
+			| /* EMPTY */
+					{ $$ = NIL; }
+		;
+
+cypher_order_by_opt:
+			ORDER BY cypher_sort_items		{ $$ = $3; }
+			| /* EMPTY */					{ $$ = NIL; }
+		;
+
+cypher_sort_items:
+			cypher_sort_item
+					{ $$ = list_make1($1); }
+			| cypher_sort_items ',' cypher_sort_item
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_sort_item:
+			cypher_expr opt_asc_desc opt_nulls_order
+				{
+					$$ = makeNode(SortBy);
+					$$->node = $1;
+					$$->sortby_dir = $2;
+					$$->sortby_nulls = $3;
+					$$->useOp = NIL;
+					$$->location = -1;
+				}
+		;
+
+cypher_skip_opt:
+			SKIP cypher_expr		{ $$ = $2; }
+			| /* EMPTY */			{ $$ = NULL; }
+		;
+
+cypher_limit_opt:
+			LIMIT cypher_expr		{ $$ = $2; }
+			| /* EMPTY */			{ $$ = NULL; }
+		;
+
+cypher_where_opt:
+			WHERE cypher_expr		{ $$ = $2; }
+			| /*EMPTY*/				{ $$ = NULL; }
 		;
 
 %%
