@@ -304,7 +304,7 @@ jsonb_bool(PG_FUNCTION_ARGS)
 					b = DirectFunctionCall2(numeric_ne,
 											NumericGetDatum(jv->val.numeric),
 											get_numeric_0_datum());
-					PG_RETURN_BOOL(b);
+					PG_RETURN_DATUM(b);
 				}
 			case jbvBool:
 				PG_RETURN_BOOL(jv->val.boolean);
@@ -346,4 +346,29 @@ bool_jsonb(PG_FUNCTION_ARGS)
 	jv.val.boolean = b;
 
 	PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+}
+
+Datum
+jsonb_int8(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *j = PG_GETARG_JSONB(0);
+	JsonbValue *jv;
+	Datum		i;
+
+	if (!JB_ROOT_IS_SCALAR(j))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("%s cannot be converted to int8",
+						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+
+	jv = getIthJsonbValueFromContainer(&j->root, 0);
+	if (jv->type != jbvNumeric)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("%s cannot be converted to int8",
+						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+
+	i = DirectFunctionCall1(numeric_int8, NumericGetDatum(jv->val.numeric));
+
+	PG_RETURN_DATUM(i);
 }

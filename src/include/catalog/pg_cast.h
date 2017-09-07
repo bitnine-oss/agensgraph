@@ -386,4 +386,7 @@ DATA(insert ( 7022 3802 7029 i f ));
 DATA(insert ( 3802   16 7191 a f ));
 DATA(insert (   16 3802 7192 i f ));
 
+/* assignment coercion from jsonb to int8 */
+DATA(insert ( 3802   20 7193 a f ));
+
 #endif   /* PG_CAST_H */
