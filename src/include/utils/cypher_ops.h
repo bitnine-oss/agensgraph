@@ -26,4 +26,7 @@ extern Datum jsonb_uminus(PG_FUNCTION_ARGS);
 extern Datum jsonb_bool(PG_FUNCTION_ARGS);
 extern Datum bool_jsonb(PG_FUNCTION_ARGS);
 
+/* coercion from jsonb to int8 */
+extern Datum jsonb_int8(PG_FUNCTION_ARGS);
+
 #endif	/* CYPHER_OPS_H */
