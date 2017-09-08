@@ -396,6 +396,10 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 				return NULL;
 			}
 
+			/*
+			 * ExecEvalCypherAccess() will handle elem properly
+			 * based on its type.
+			 */
 			elem = transformCypherExprRecurse(pstate, ind->uidx);
 		}
 
