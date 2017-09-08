@@ -2425,6 +2425,18 @@ _readCypherAccessExpr(void)
 	READ_DONE();
 }
 
+static CypherIndices *
+_readCypherIndices(void)
+{
+	READ_LOCALS(CypherIndices);
+
+	READ_BOOL_FIELD(is_slice);
+	READ_NODE_FIELD(lidx);
+	READ_NODE_FIELD(uidx);
+
+	READ_DONE();
+}
+
 /*
  * parseNodeString
  *
@@ -2679,6 +2691,8 @@ parseNodeString(void)
 		return_value = _readCypherListExpr();
 	else if (MATCH("CYPHERACCESSEXPR", 16))
 		return_value = _readCypherAccessExpr();
+	else if (MATCH("CYPHERINDICES", 13))
+		return_value = _readCypherIndices();
 	else
 	{
 		elog(ERROR, "badly formatted node string \"%.32s\"...", token);

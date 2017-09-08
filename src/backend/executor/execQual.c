@@ -4830,12 +4830,7 @@ ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 
 	foreach(le, astate->path)
 	{
-		ExprState  *elem;
-		Oid			elemtype;
-		Datum		elemd;
-		JsonbValue	_ejv;
-		JsonbValue *ejv;
-		JsonbValue	kjv;
+		Node	   *elem;
 
 		switch (vjv->type)
 		{
@@ -4851,7 +4846,7 @@ ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 				return 0;
 			case jbvArray:
 			case jbvObject:
-				elog(ERROR, "unexpected jsonb scalar type");
+				elog(ERROR, "unexpected jsonb composite type");
 				return 0;
 			case jbvBinary:
 				container = vjv->val.binary.data;
@@ -4862,93 +4857,122 @@ ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 		}
 		Assert(container->header & (JB_FOBJECT | JB_FARRAY));
 
-		if (container->header & JB_FARRAY)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("accessing list elements not supported")));
-			return 0;
-		}
-
 		elem = lfirst(le);
-		elemtype = exprType((Node *) elem->expr);
-		elemd = ExecEvalExpr(elem, econtext, &eisnull, NULL);
-		if (eisnull)
-		{
-			_ejv.type = jbvNull;
-			ejv = &_ejv;
-		}
-		else if (elemtype == TEXTOID)
-		{
-			char	   *estr = TextDatumGetCString(elemd);
 
-			_ejv.type = jbvString;
-			_ejv.val.string.len = strlen(estr);
-			_ejv.val.string.val = estr;
-			ejv = &_ejv;
-		}
-		else if (elemtype == BOOLOID)
+		if (container->header & JB_FOBJECT)
 		{
-			_ejv.type = jbvBool;
-			_ejv.val.boolean = DatumGetBool(elemd);
-			ejv = &_ejv;
-		}
-		else if (elemtype == JSONBOID)
-		{
-			Jsonb	   *j = DatumGetJsonb(elemd);
+			ExprState  *s;
+			Oid			stype;
+			Datum		sd;
+			JsonbValue	_sjv;
+			JsonbValue *sjv;
+			JsonbValue	kjv;
 
-			if (JB_ROOT_IS_SCALAR(j))
+			if (IsA(elem, CypherIndices))
 			{
-				ejv = getIthJsonbValueFromContainer(&j->root, 0);
+				CypherIndices *cind = (CypherIndices *) elem;
+
+				if (cind->is_slice)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("slicing map not supported")));
+					return 0;
+				}
+
+				s = (ExprState *) cind->uidx;
 			}
 			else
 			{
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("key value must be scalar")));
+				s = (ExprState *) elem;
+			}
+
+			stype = exprType((Node *) s->expr);
+			sd = ExecEvalExpr(s, econtext, &eisnull, NULL);
+			if (eisnull)
+			{
+				_sjv.type = jbvNull;
+				sjv = &_sjv;
+			}
+			else if (stype == TEXTOID)
+			{
+				char	   *sstr = TextDatumGetCString(sd);
+
+				_sjv.type = jbvString;
+				_sjv.val.string.len = strlen(sstr);
+				_sjv.val.string.val = sstr;
+				sjv = &_sjv;
+			}
+			else if (stype == BOOLOID)
+			{
+				_sjv.type = jbvBool;
+				_sjv.val.boolean = DatumGetBool(sd);
+				sjv = &_sjv;
+			}
+			else if (stype == JSONBOID)
+			{
+				Jsonb	   *j = DatumGetJsonb(sd);
+
+				if (JB_ROOT_IS_SCALAR(j))
+				{
+					sjv = getIthJsonbValueFromContainer(&j->root, 0);
+				}
+				else
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("key value must be scalar")));
+					return 0;
+				}
+			}
+			else
+			{
+				Assert(!"unexpected key type");
+				return 0;
+			}
+
+			kjv.type = jbvString;
+			switch (sjv->type)
+			{
+				case jbvNull:
+					kjv.val.string.len = 4;
+					kjv.val.string.val = "null";
+					break;
+				case jbvString:
+					kjv.val.string = sjv->val.string;
+					break;
+				case jbvNumeric:
+					elog(ERROR, "numeric key value not supported");
+					return 0;
+				case jbvBool:
+					if (sjv->val.boolean)
+					{
+						kjv.val.string.len = 4;
+						kjv.val.string.val = "true";
+					}
+					else
+					{
+						kjv.val.string.len = 5;
+						kjv.val.string.val = "false";
+					}
+					break;
+				default:
+					elog(ERROR, "unknown jsonb scalar type");
+					return 0;
+			}
+
+			vjv = findJsonbValueFromContainer(container, JB_FOBJECT, &kjv);
+			if (vjv == NULL)
+			{
+				*isNull = true;
 				return 0;
 			}
 		}
 		else
 		{
-			Assert(!"unexpected key type");
-			return 0;
-		}
-
-		kjv.type = jbvString;
-		switch (ejv->type)
-		{
-			case jbvNull:
-				kjv.val.string.len = 4;
-				kjv.val.string.val = "null";
-				break;
-			case jbvString:
-				kjv.val.string = ejv->val.string;
-				break;
-			case jbvNumeric:
-				elog(ERROR, "numeric key value not supported");
-				return 0;
-			case jbvBool:
-				if (ejv->val.boolean)
-				{
-					kjv.val.string.len = 4;
-					kjv.val.string.val = "true";
-				}
-				else
-				{
-					kjv.val.string.len = 5;
-					kjv.val.string.val = "false";
-				}
-				break;
-			default:
-				elog(ERROR, "unknown jsonb scalar type");
-				return 0;
-		}
-
-		vjv = findJsonbValueFromContainer(container, JB_FOBJECT, &kjv);
-		if (vjv == NULL)
-		{
-			*isNull = true;
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("accessing list elements not supported")));
 			return 0;
 		}
 	}
@@ -5811,12 +5835,42 @@ ExecInitExpr(Expr *node, PlanState *parent)
 			{
 				CypherAccessExpr *a = (CypherAccessExpr *) node;
 				CypherAccessExprState *astate;
+				ListCell   *le;
 
 				astate = makeNode(CypherAccessExprState);
 				astate->xprstate.evalfunc =
 						(ExprStateEvalFunc) ExecEvalCypherAccess;
 				astate->arg = ExecInitExpr((Expr *) a->arg, parent);
-				astate->path = (List *) ExecInitExpr((Expr *) a->path, parent);
+				astate->path = NIL;
+				foreach(le, a->path)
+				{
+					Node	   *elem = lfirst(le);
+
+					if (IsA(elem, CypherIndices))
+					{
+						CypherIndices *cind = (CypherIndices *) elem;
+						CypherIndices *newcind;
+
+						newcind = makeNode(CypherIndices);
+						newcind->is_slice = cind->is_slice;
+						newcind->lidx = (Node *) ExecInitExpr(
+														(Expr *) cind->lidx,
+														parent);
+						newcind->uidx = (Node *) ExecInitExpr(
+														(Expr *) cind->uidx,
+														parent);
+
+						astate->path = lappend(astate->path, newcind);
+					}
+					else
+					{
+						ExprState *elemstate;
+
+						elemstate = ExecInitExpr((Expr *) elem, parent);
+
+						astate->path = lappend(astate->path, elemstate);
+					}
+				}
 
 				state = (ExprState *) astate;
 			}

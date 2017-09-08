@@ -1473,4 +1473,12 @@ typedef struct CypherAccessExpr
 	List	   *path;
 } CypherAccessExpr;
 
+typedef struct CypherIndices
+{
+	NodeTag		type;
+	bool		is_slice;
+	Node	   *lidx;			/* Expr or ExprState */
+	Node	   *uidx;			/* Expr or ExprState */
+} CypherIndices;
+
 #endif   /* PRIMNODES_H */
