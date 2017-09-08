@@ -384,6 +384,7 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 		else
 		{
 			A_Indices  *ind;
+			CypherIndices *cind;
 
 			Assert(IsA(i, A_Indices));
 
@@ -397,10 +398,16 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 			}
 
 			/*
-			 * ExecEvalCypherAccess() will handle elem properly
-			 * based on its type.
+			 * ExecEvalCypherAccess() will handle lidx and uidx properly
+			 * based on their types.
 			 */
-			elem = transformCypherExprRecurse(pstate, ind->uidx);
+
+			cind = makeNode(CypherIndices);
+			cind->is_slice = ind->is_slice;
+			cind->lidx = transformCypherExprRecurse(pstate, ind->lidx);
+			cind->uidx = transformCypherExprRecurse(pstate, ind->uidx);
+
+			elem = (Node *) cind;
 		}
 
 		path = lappend(path, elem);

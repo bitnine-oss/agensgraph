@@ -1690,6 +1690,16 @@ _outCypherAccessExpr(StringInfo str, const CypherAccessExpr *node)
 	WRITE_NODE_FIELD(path);
 }
 
+static void
+_outCypherIndices(StringInfo str, const CypherIndices *node)
+{
+	WRITE_NODE_TYPE("CYPHERINDICES");
+
+	WRITE_BOOL_FIELD(is_slice);
+	WRITE_NODE_FIELD(lidx);
+	WRITE_NODE_FIELD(uidx);
+}
+
 
 /*****************************************************************************
  *
@@ -4102,6 +4112,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherAccessExpr:
 				_outCypherAccessExpr(str, obj);
+				break;
+			case T_CypherIndices:
+				_outCypherIndices(str, obj);
 				break;
 			case T_Path:
 				_outPath(str, obj);

@@ -197,6 +197,7 @@ typedef enum NodeTag
 	T_CypherMapExpr,
 	T_CypherListExpr,
 	T_CypherAccessExpr,
+	T_CypherIndices,
 
 	/*
 	 * TAGS FOR EXPRESSION STATE NODES (execnodes.h)

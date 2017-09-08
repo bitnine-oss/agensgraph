@@ -820,6 +820,15 @@ _equalCypherMapExpr(const CypherMapExpr *a, const CypherMapExpr *b)
 }
 
 static bool
+_equalCypherListExpr(const CypherListExpr *a, const CypherListExpr *b)
+{
+	COMPARE_NODE_FIELD(elems);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
 _equalCypherAccessExpr(const CypherAccessExpr *a, const CypherAccessExpr *b)
 {
 	COMPARE_NODE_FIELD(arg);
@@ -829,10 +838,11 @@ _equalCypherAccessExpr(const CypherAccessExpr *a, const CypherAccessExpr *b)
 }
 
 static bool
-_equalCypherListExpr(const CypherListExpr *a, const CypherListExpr *b)
+_equalCypherIndices(const CypherIndices *a, const CypherIndices *b)
 {
-	COMPARE_NODE_FIELD(elems);
-	COMPARE_LOCATION_FIELD(location);
+	COMPARE_SCALAR_FIELD(is_slice);
+	COMPARE_NODE_FIELD(lidx);
+	COMPARE_NODE_FIELD(uidx);
 
 	return true;
 }
@@ -3431,6 +3441,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherAccessExpr:
 			retval = _equalCypherAccessExpr(a, b);
+			break;
+		case T_CypherIndices:
+			retval = _equalCypherIndices(a, b);
 			break;
 
 			/*
