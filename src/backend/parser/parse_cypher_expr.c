@@ -339,6 +339,8 @@ transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 		Node	   *newe;
 
 		newe = transformCypherExprRecurse(pstate, e);
+		/* newe might be bool */
+		newe = coerce_to_specific_type(pstate, newe, JSONBOID, "[]");
 
 		newelems = lappend(newelems, newe);
 	}
