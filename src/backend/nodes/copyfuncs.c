@@ -2121,6 +2121,18 @@ _copyCypherAccessExpr(const CypherAccessExpr *from)
 	return newnode;
 }
 
+static CypherIndices *
+_copyCypherIndices(const CypherIndices *from)
+{
+	CypherIndices *newnode = makeNode(CypherIndices);
+
+	COPY_SCALAR_FIELD(is_slice);
+	COPY_NODE_FIELD(lidx);
+	COPY_NODE_FIELD(uidx);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *						relation.h copy functions
  *
@@ -5116,6 +5128,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherAccessExpr:
 			retval = _copyCypherAccessExpr(from);
+			break;
+		case T_CypherIndices:
+			retval = _copyCypherIndices(from);
 			break;
 
 			/*

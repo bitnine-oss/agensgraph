@@ -8260,6 +8260,83 @@ get_rule_expr(Node *node, deparse_context *context,
 			}
 			break;
 
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+				char	   *sep = "";
+				ListCell   *le;
+
+				appendStringInfoChar(buf, '{');
+				le = list_head(m->keyvals);
+				while (le != NULL)
+				{
+					Node	   *e;
+
+					appendStringInfoString(buf, sep);
+
+					e = lfirst(le);
+					le = lnext(le);
+
+					get_rule_expr((Node *) e, context, true);
+
+					appendStringInfoString(buf, ": ");
+
+					e = lfirst(le);
+					le = lnext(le);
+
+					get_rule_expr((Node *) e, context, true);
+
+					sep = ", ";
+				}
+				appendStringInfoChar(buf, '}');
+			}
+			break;
+
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+
+				appendStringInfoChar(buf, '[');
+				get_rule_expr((Node *) cl->elems, context, true);
+				appendStringInfoChar(buf, ']');
+			}
+			break;
+
+		case T_CypherAccessExpr:
+			{
+				CypherAccessExpr *a = (CypherAccessExpr *) node;
+				ListCell   *le;
+
+				get_rule_expr((Node *) a->arg, context, true);
+
+				foreach(le, a->path)
+				{
+					Node	   *e = lfirst(le);
+
+					if (IsA(e, CypherIndices))
+					{
+						CypherIndices *cind = (CypherIndices *) e;
+
+						appendStringInfoChar(buf, '[');
+
+						if (cind->is_slice)
+						{
+							get_rule_expr(cind->lidx, context, true);
+							appendStringInfoString(buf, "..");
+						}
+						get_rule_expr(cind->uidx, context, true);
+
+						appendStringInfoChar(buf, ']');
+					}
+					else
+					{
+						appendStringInfoChar(buf, '.');
+						get_rule_expr(e, context, true);
+					}
+				}
+			}
+			break;
+
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			break;

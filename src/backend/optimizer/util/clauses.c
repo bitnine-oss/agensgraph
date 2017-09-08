@@ -3591,8 +3591,20 @@ eval_const_expressions_mutator(Node *node,
 					Node	   *newelem;
 
 					newelem = eval_const_expressions_mutator(elem, context);
-					if (!IsA(newelem, Const))
-						all_const = false;
+					if (IsA(newelem, CypherIndices))
+					{
+						CypherIndices *cind = (CypherIndices *) newelem;
+
+						if (cind->lidx != NULL && !IsA(cind->lidx, Const))
+							all_const = false;
+						if (cind->uidx != NULL && !IsA(cind->uidx, Const))
+							all_const = false;
+					}
+					else
+					{
+						if (!IsA(newelem, Const))
+							all_const = false;
+					}
 
 					newpath = lappend(newpath, newelem);
 				}

@@ -2295,11 +2295,30 @@ expression_tree_walker(Node *node,
 		case T_CypherAccessExpr:
 			{
 				CypherAccessExpr *a = (CypherAccessExpr *) node;
+				ListCell   *le;
 
 				if (walker(a->arg, context))
 					return true;
-				if (expression_tree_walker((Node *) a->path, walker, context))
-					return true;
+
+				foreach(le, a->path)
+				{
+					Node	   *elem = lfirst(le);
+
+					if (IsA(elem, CypherIndices))
+					{
+						CypherIndices *cind = (CypherIndices *) elem;
+
+						if (walker(cind->lidx, context))
+							return true;
+						if (walker(cind->uidx, context))
+							return true;
+					}
+					else
+					{
+						if (walker(elem, context))
+							return true;
+					}
+				}
 			}
 			break;
 		default:
@@ -3165,6 +3184,17 @@ expression_tree_mutator(Node *node,
 				FLATCOPY(newnode, a, CypherAccessExpr);
 				MUTATE(newnode->arg, a->arg, Expr *);
 				MUTATE(newnode->path, a->path, List *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherIndices:
+			{
+				CypherIndices *i = (CypherIndices *) node;
+				CypherIndices *newnode;
+
+				FLATCOPY(newnode, i, CypherIndices);
+				MUTATE(newnode->lidx, i->lidx, Node *);
+				MUTATE(newnode->uidx, i->uidx, Node *);
 				return (Node *) newnode;
 			}
 			break;
