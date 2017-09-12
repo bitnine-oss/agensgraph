@@ -37,7 +37,19 @@ jsonb_add(PG_FUNCTION_ARGS)
 	char	   *nstr;
 
 	if (!(JB_ROOT_IS_SCALAR(l) && JB_ROOT_IS_SCALAR(r)))
-		ereport_op("+", l, r);
+	{
+		Datum		j;
+
+		if ((JB_ROOT_IS_SCALAR(l) && JB_ROOT_IS_OBJECT(r)) ||
+			(JB_ROOT_IS_OBJECT(l) && JB_ROOT_IS_SCALAR(r)) ||
+			(JB_ROOT_IS_OBJECT(l) && JB_ROOT_IS_OBJECT(r)))
+			ereport_op("+", l, r);
+
+		j = DirectFunctionCall2(jsonb_concat,
+								JsonbGetDatum(l), JsonbGetDatum(r));
+
+		PG_RETURN_DATUM(j);
+	}
 
 	ljv = getIthJsonbValueFromContainer(&l->root, 0);
 	rjv = getIthJsonbValueFromContainer(&r->root, 0);
