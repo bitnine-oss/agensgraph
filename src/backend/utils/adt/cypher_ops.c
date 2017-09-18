@@ -22,6 +22,8 @@ static Jsonb *numeric_to_number(Numeric n);
 static void ereport_number_op(PGFunction f, Jsonb *l, Jsonb *r);
 static void ereport_op(const char *op, Jsonb *l, Jsonb *r);
 static Datum get_numeric_0_datum(void);
+static JsonbValue *IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
+			   JsonbParseState **state);
 
 Datum
 jsonb_add(PG_FUNCTION_ARGS)
@@ -36,8 +38,33 @@ jsonb_add(PG_FUNCTION_ARGS)
 	Datum		n;
 	char	   *nstr;
 
-	if (!(JB_ROOT_IS_SCALAR(l) && JB_ROOT_IS_SCALAR(r)))
-		ereport_op("+", l, r);
+	if(!(JB_ROOT_IS_SCALAR(l) && JB_ROOT_IS_SCALAR(r)))
+	{
+		JsonbParseState *state = NULL;
+		JsonbValue *res = NULL;
+		JsonbIterator *it1;
+		JsonbIterator *it2;
+
+		if(JB_ROOT_IS_OBJECT(l) && JB_ROOT_IS_OBJECT(r)){
+			ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid concatenation of jsonb objects")));
+		}
+
+		if (JB_ROOT_COUNT(l) == 0 && !JB_ROOT_IS_SCALAR(r))
+			PG_RETURN_JSONB(r);
+		else if (JB_ROOT_COUNT(r) == 0 && !JB_ROOT_IS_SCALAR(l))
+			PG_RETURN_JSONB(l);
+
+		it1 = JsonbIteratorInit(&l->root);
+		it2 = JsonbIteratorInit(&r->root);
+
+		res = IteratorConcat(&it1, &it2, &state);
+
+		Assert(res != NULL);
+
+		PG_RETURN_JSONB(JsonbValueToJsonb(res));
+	}
 
 	ljv = getIthJsonbValueFromContainer(&l->root, 0);
 	rjv = getIthJsonbValueFromContainer(&r->root, 0);
@@ -334,4 +361,82 @@ bool_jsonb(PG_FUNCTION_ARGS)
 	jv.val.boolean = b;
 
 	PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+}
+
+static JsonbValue *
+IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
+			   JsonbParseState **state)
+{
+	JsonbValue	v1;
+	JsonbValue	v2,
+	*res = NULL;
+	JsonbIteratorToken r1;
+	JsonbIteratorToken r2;
+	JsonbIteratorToken rk1;
+	JsonbIteratorToken rk2;
+
+	r1 = rk1 = JsonbIteratorNext(it1, &v1, false);
+	r2 = rk2 = JsonbIteratorNext(it2, &v2, false);
+
+	if (rk1 == WJB_BEGIN_ARRAY && rk2 == WJB_BEGIN_ARRAY)
+	{
+		pushJsonbValue(state, WJB_BEGIN_ARRAY, NULL);
+
+		while ((r1 = JsonbIteratorNext(it1, &v1, true)) != WJB_END_ARRAY)
+		{
+			Assert(r1 == WJB_ELEM);
+			pushJsonbValue(state, r1, &v1);
+		}
+
+		while ((r2 = JsonbIteratorNext(it2, &v2, true)) != WJB_END_ARRAY)
+		{
+			Assert(r2 == WJB_ELEM);
+			pushJsonbValue(state, r2, &v2);
+		}
+
+		res = pushJsonbValue(state, WJB_END_ARRAY, NULL);
+	}
+	else if (((rk1 == WJB_BEGIN_ARRAY && !(*it1)->isScalar)
+			   && rk2 == WJB_BEGIN_OBJECT) ||
+			 (rk1 == WJB_BEGIN_OBJECT && (rk2 == WJB_BEGIN_ARRAY
+			   && !(*it2)->isScalar)))
+	{
+		JsonbIterator **it_array = rk1 == WJB_BEGIN_ARRAY ? it1 : it2;
+		JsonbIterator **it_object = rk1 == WJB_BEGIN_OBJECT ? it1 : it2;
+
+		bool		prepend = (rk1 == WJB_BEGIN_OBJECT);
+
+		pushJsonbValue(state, WJB_BEGIN_ARRAY, NULL);
+
+		if (prepend)
+		{
+			pushJsonbValue(state, WJB_BEGIN_OBJECT, NULL);
+			while ((r1 = JsonbIteratorNext(it_object, &v1, true)) != 0)
+				pushJsonbValue(state, r1, r1 != WJB_END_OBJECT ? &v1 : NULL);
+
+			while ((r2 = JsonbIteratorNext(it_array, &v2, true)) != 0)
+				res = pushJsonbValue(state, r2,
+									   r2 != WJB_END_ARRAY ? &v2 : NULL);
+		}
+		else
+		{
+			while ((r1 = JsonbIteratorNext(it_array, &v1, true))
+				   != WJB_END_ARRAY)
+				pushJsonbValue(state, r1, &v1);
+
+			pushJsonbValue(state, WJB_BEGIN_OBJECT, NULL);
+			while ((r2 = JsonbIteratorNext(it_object, &v2, true)) != 0)
+				pushJsonbValue(state, r2, r2 != WJB_END_OBJECT ? &v2 : NULL);
+
+			res = pushJsonbValue(state, WJB_END_ARRAY, NULL);
+		}
+	}
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid concatenation of jsonb objects")));
+	}
+
+	return res;
 }
