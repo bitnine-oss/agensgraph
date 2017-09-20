@@ -24,6 +24,5 @@ extern Node *transformExpr(ParseState *pstate, Node *expr, ParseExprKind exprKin
 extern const char *ParseExprKindName(ParseExprKind exprKind);
 
 extern Node *transformJsonKey(ParseState *pstate, Node *expr, ParseExprKind exprKind);
-extern Node *wrapEdgeRef(ParseState *pstate, Node *node);
 
 #endif   /* PARSE_EXPR_H */

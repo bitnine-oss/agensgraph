@@ -4653,6 +4653,16 @@ _copyCypherStmt(const CypherStmt *from)
 	return newnode;
 }
 
+static CypherGenericExpr *
+_copyCypherGenericExpr(const CypherGenericExpr *from)
+{
+	CypherGenericExpr *newnode = makeNode(CypherGenericExpr);
+
+	COPY_NODE_FIELD(expr);
+
+	return newnode;
+}
+
 static CypherSubPattern *
 _copyCypherSubPattern(const CypherSubPattern *from)
 {
@@ -5721,6 +5731,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherStmt:
 			retval = _copyCypherStmt(from);
+			break;
+		case T_CypherGenericExpr:
+			_copyCypherGenericExpr(from);
 			break;
 		case T_CypherSubPattern:
 			retval = _copyCypherSubPattern(from);

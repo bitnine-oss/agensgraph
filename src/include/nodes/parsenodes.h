@@ -3438,6 +3438,16 @@ typedef enum CSPKind
 	CSP_FINDPATH			/* shortestpath, allshortestpaths, dijkstra */
 } CSPKind;
 
+/*
+ * A simple wrapper for Cypher expressions which allows transformExpr() to
+ * handle Cypher expressions.
+ */
+typedef struct CypherGenericExpr
+{
+	NodeTag		type;
+	Node	   *expr;
+} CypherGenericExpr;
+
 typedef struct CypherSubPattern
 {
 	NodeTag		type;

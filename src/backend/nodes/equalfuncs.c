@@ -2916,6 +2916,14 @@ _equalCypherStmt(const CypherStmt *a, const CypherStmt *b)
 }
 
 static bool
+_equalCypherGenericExpr(const CypherGenericExpr *a, const CypherGenericExpr *b)
+{
+	COMPARE_NODE_FIELD(expr);
+
+	return true;
+}
+
+static bool
 _equalCypherSubPattern(const CypherSubPattern *a, const CypherSubPattern *b)
 {
 	COMPARE_SCALAR_FIELD(kind);
@@ -4003,6 +4011,9 @@ equal(const void *a, const void *b)
 
 		case T_CypherStmt:
 			retval = _equalCypherStmt(a, b);
+			break;
+		case T_CypherGenericExpr:
+			retval = _equalCypherGenericExpr(a, b);
 			break;
 		case T_CypherSubPattern:
 			retval = _equalCypherSubPattern(a, b);
