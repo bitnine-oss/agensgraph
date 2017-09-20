@@ -39,6 +39,7 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_cte.h"
+#include "parser/parse_cypher_expr.h"
 #include "parser/parse_graph.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_param.h"
@@ -1253,7 +1254,7 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 												   &qry->targetList);
 
 	if (pstate->parentParseState != NULL)
-		stripEdgeRefTargetList(qry->targetList);
+		unwrapEdgeRefTargetList(qry->targetList);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
@@ -1700,7 +1701,7 @@ transformSetOperationStmt(ParseState *pstate, SelectStmt *stmt)
 										  false /* allow SQL92 rules */ );
 
 	if (pstate->parentParseState != NULL)
-		stripEdgeRefTargetList(qry->targetList);
+		unwrapEdgeRefTargetList(qry->targetList);
 
 	/* restore namespace, remove jrte from rtable */
 	pstate->p_namespace = sv_namespace;

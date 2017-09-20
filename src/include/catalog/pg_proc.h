@@ -5460,8 +5460,9 @@ DATA(insert OID = 7189 ( jsonb_uminus	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0
 /* Cypher expressions - coercions between jsonb and bool */
 DATA(insert OID = 7191 ( bool		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 16 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_bool _null_ _null_ _null_ ));
 DATA(insert OID = 7192 ( jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "16" _null_ _null_ _null_ _null_ _null_ bool_jsonb _null_ _null_ _null_ ));
-/* Cypher expressions - coercion from jsonb to int8 */
+/* Cypher expressions - coercion from jsonb to int8/int4 */
 DATA(insert OID = 7193 ( int8		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 20 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_int8 _null_ _null_ _null_ ));
+DATA(insert OID = 7194 ( int4		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_int4 _null_ _null_ _null_ ));
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
