@@ -486,7 +486,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	}
 
 	if (pstate->parentParseState != NULL)
-		stripEdgeRefTargetList(qry->targetList);
+		unwrapEdgeRefTargetList(qry->targetList);
 
 	if (detail->kind == CP_WITH)
 	{
@@ -569,8 +569,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 
 			qry->targetList = makeTargetListFromRTE(pstate, rte);
 
-			qual = transformWhereClause(pstate, detail->where, EXPR_KIND_WHERE,
-										"WHERE");
+			qual = transformCypherWhere(pstate, detail->where);
 			qual = transformElemQuals(pstate, qual);
 			qual = resolve_future_vertex(pstate, qual, flags);
 		}
@@ -2513,12 +2512,18 @@ static Node *
 genVLEQual(char *alias, Node *propMap)
 {
 	ColumnRef  *prop;
+	CypherGenericExpr *gexpr;
 	A_Expr	   *propcond;
 
 	prop = makeNode(ColumnRef);
 	prop->fields = genQualifiedName(alias, AG_ELEM_PROP_MAP);
 	prop->location = -1;
-	propcond = makeSimpleA_Expr(AEXPR_OP, "@>", (Node *) prop, propMap, -1);
+
+	gexpr = makeNode(CypherGenericExpr);
+	gexpr->expr = propMap;
+
+	propcond = makeSimpleA_Expr(AEXPR_OP, "@>", (Node *) prop, (Node *) gexpr,
+								-1);
 
 	return (Node *) propcond;
 }
@@ -2955,7 +2960,7 @@ transformElemQuals(ParseState *pstate, Node *qual)
 		Oid			collid;
 		Var		   *var;
 		Node	   *prop_map;
-		bool		is_jsonobj;
+		bool		is_cyphermap;
 
 		rte = GetRTEByRangeTablePosn(pstate, eq->varno, 0);
 		/* don't use make_var() because `te` can be resjunk */
@@ -2969,14 +2974,14 @@ transformElemQuals(ParseState *pstate, Node *qual)
 
 		prop_map = getExprField((Expr *) var, AG_ELEM_PROP_MAP);
 
-		is_jsonobj = IsA(eq->prop_constr, JsonObject);
+		is_cyphermap = IsA(eq->prop_constr, CypherMapExpr);
 
-		if (is_jsonobj)
+		if (is_cyphermap)
 			qual = transform_prop_constr(pstate, qual, prop_map,
 										 eq->prop_constr);
 
-		if ((is_jsonobj && ginAvail(pstate, eq->varno, eq->varattno)) ||
-			(!is_jsonobj))
+		if ((is_cyphermap && ginAvail(pstate, eq->varno, eq->varattno)) ||
+			!is_cyphermap)
 		{
 			Node	   *prop_constr;
 			Expr	   *expr;
@@ -3013,61 +3018,32 @@ transform_prop_constr(ParseState *pstate, Node *qual, Node *prop_map,
 static void
 transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 {
-	JsonObject *jo = (JsonObject *) node;
-	ListCell   *lp;
+	CypherMapExpr *m = (CypherMapExpr *) node;
+	ListCell   *le;
 
-	foreach(lp, jo->keyvals)
+	le = list_head(m->keyvals);
+	while (le != NULL)
 	{
-		JsonKeyVal *keyval = (JsonKeyVal *) lfirst(lp);
-		Node	   *pathelem;
-		Oid			pathelemtype;
-		int			pathelemloc;
+		Node	   *k;
+		Node	   *v;
+		Const	   *pathelem;
 		ListCell   *prev;
 
-		if (IsA(keyval->key, ColumnRef))
-		{
-			ColumnRef *cref = (ColumnRef *) keyval->key;
+		k = lfirst(le);
+		le = lnext(le);
+		v = lfirst(le);
+		le = lnext(le);
 
-			if (list_length(cref->fields) < 2)
-			{
-				A_Const *c = makeNode(A_Const);
-
-				c->val.type = T_String;
-				c->val.val.str = strVal(linitial(cref->fields));
-				c->location = cref->location;
-
-				pathelem = transformExpr(ctx->pstate, (Node *) c,
-										 EXPR_KIND_WHERE);
-			}
-			else
-			{
-				pathelem = transformExpr(ctx->pstate, keyval->key,
-										 EXPR_KIND_WHERE);
-			}
-		}
-		else
-		{
-			pathelem = transformExpr(ctx->pstate, keyval->key,
-									 EXPR_KIND_WHERE);
-		}
-		pathelemtype = exprType(pathelem);
-		pathelemloc = exprLocation(pathelem);
-		pathelem = coerce_to_target_type(ctx->pstate, pathelem, pathelemtype,
-										 TEXTOID, -1,COERCION_ASSIGNMENT,
-										 COERCE_IMPLICIT_CAST, -1);
-		if (pathelem == NULL)
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("expression must be of type text but %s",
-							format_type_be(pathelemtype)),
-					 parser_errposition(ctx->pstate, pathelemloc)));
+		Assert(IsA(k, String));
+		pathelem = makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
+							 CStringGetTextDatum(strVal(k)), false, false);
 
 		prev = list_tail(ctx->pathelems);
 		ctx->pathelems = lappend(ctx->pathelems, pathelem);
 
-		if (IsA(keyval->val, JsonObject))
+		if (IsA(v, CypherMapExpr))
 		{
-			transform_prop_constr_worker(keyval->val, ctx);
+			transform_prop_constr_worker(v, ctx);
 		}
 		else
 		{
@@ -3080,19 +3056,19 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 
 			path = makeArrayExpr(TEXTARRAYOID, TEXTOID,
 								 copyObject(ctx->pathelems));
-			lval = make_op(ctx->pstate, list_make1(makeString("#>>")),
+			lval = make_op(ctx->pstate, list_make1(makeString("#>")),
 						   ctx->prop_map, path, -1);
 
-			rval = transformExpr(ctx->pstate, keyval->val, EXPR_KIND_WHERE);
+			rval = transformCypherExpr(ctx->pstate, v, EXPR_KIND_WHERE);
 			rvaltype = exprType(rval);
 			rvalloc = exprLocation(rval);
-			rval = coerce_to_target_type(ctx->pstate, rval, rvaltype, TEXTOID,
-										 -1,COERCION_ASSIGNMENT,
+			rval = coerce_to_target_type(ctx->pstate, rval, rvaltype, JSONBOID,
+										 -1, COERCION_ASSIGNMENT,
 										 COERCE_IMPLICIT_CAST, -1);
 			if (rval == NULL)
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("expression must be of type text but %s",
+						 errmsg("expression must be of type jsonb but %s",
 								format_type_be(rvaltype)),
 						 parser_errposition(ctx->pstate, rvalloc)));
 
@@ -4808,7 +4784,7 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 {
 	Node *prop_map;
 
-	prop_map = transformExpr(pstate, preprocessPropMap(expr), exprKind);
+	prop_map = transformCypherExpr(pstate, preprocessPropMap(expr), exprKind);
 	if (exprType(prop_map) != JSONBOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),

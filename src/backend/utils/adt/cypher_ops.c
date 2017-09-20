@@ -22,6 +22,7 @@ static Jsonb *numeric_to_number(Numeric n);
 static void ereport_number_op(PGFunction f, Jsonb *l, Jsonb *r);
 static void ereport_op(const char *op, Jsonb *l, Jsonb *r);
 static Datum get_numeric_0_datum(void);
+static Datum jsonb_int(Jsonb *j, PGFunction f);
 
 Datum
 jsonb_add(PG_FUNCTION_ARGS)
@@ -352,23 +353,39 @@ Datum
 jsonb_int8(PG_FUNCTION_ARGS)
 {
 	Jsonb	   *j = PG_GETARG_JSONB(0);
+
+	PG_RETURN_DATUM(jsonb_int(j, numeric_int8));
+}
+
+Datum
+jsonb_int4(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *j = PG_GETARG_JSONB(0);
+
+	PG_RETURN_DATUM(jsonb_int(j, numeric_int4));
+}
+
+static Datum
+jsonb_int(Jsonb *j, PGFunction f)
+{
+	const char *type = (f == numeric_int8 ? "int8" : "int4");
 	JsonbValue *jv;
 	Datum		i;
 
 	if (!JB_ROOT_IS_SCALAR(j))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("%s cannot be converted to int8",
-						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+				 errmsg("%s cannot be converted to %s",
+						JsonbToCString(NULL, &j->root, VARSIZE(j)), type)));
 
 	jv = getIthJsonbValueFromContainer(&j->root, 0);
 	if (jv->type != jbvNumeric)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("%s cannot be converted to int8",
-						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+				 errmsg("%s cannot be converted to %s",
+						JsonbToCString(NULL, &j->root, VARSIZE(j)), type)));
 
-	i = DirectFunctionCall1(numeric_int8, NumericGetDatum(jv->val.numeric));
+	i = DirectFunctionCall1(f, NumericGetDatum(jv->val.numeric));
 
 	PG_RETURN_DATUM(i);
 }

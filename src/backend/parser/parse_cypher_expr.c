@@ -44,6 +44,10 @@ static Node *transformCypherExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref);
 static Node *scanRTEForVar(ParseState *pstate, Node *var, RangeTblEntry *rte,
 						   char *colname, int location);
+static Node *transformFields(ParseState *pstate, Node *basenode, List *fields,
+							 int location);
+static Node *filterAccessArg(ParseState *pstate, Node *expr, int location,
+							 const char *types);
 static Node *transformA_Const(ParseState *pstate, A_Const *a_con);
 static Datum integerToJsonb(ParseState *pstate, int64 i, int location);
 static Datum floatToJsonb(ParseState *pstate, char *f, int location);
@@ -54,8 +58,13 @@ static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
 static Node *transformCypherListExpr(ParseState *pstate, CypherListExpr *cl);
 static Node *transformIndirection(ParseState *pstate, Node *basenode,
 								  List *indirection);
+static Node *makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive);
+static Node *adjustListIndexType(ParseState *pstate, Node *idx);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
+static Node *coerce_to_jsonb(ParseState *pstate, Node *expr,
+							 const char *targetname);
+
 static List *transformA_Star(ParseState *pstate, int location);
 
 Node *
@@ -69,6 +78,7 @@ transformCypherExpr(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 	pstate->p_expr_kind = exprKind;
 
 	result = transformCypherExprRecurse(pstate, expr);
+	result = wrapEdgeRefTypes(pstate, result);
 
 	pstate->p_expr_kind = sv_expr_kind;
 
@@ -270,25 +280,11 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 
 	if (nindir + 1 < nfields)
 	{
-		Node	   *basenode;
-		List	   *newindir;
+		List	   *newfields;
 
-		switch (exprType(var))
-		{
-			case VERTEXOID:
-			case EDGEOID:
-				basenode = ParseFuncOrColumn(pstate,
-									list_make1(makeString(AG_ELEM_PROP_MAP)),
-									list_make1(var), NULL, location);
-				break;
-			default:
-				basenode = var;
-				break;
-		}
+		newfields = list_copy_tail(cref->fields, nindir + 1);
 
-		newindir = list_copy_tail(cref->fields, nindir + 1);
-
-		return transformIndirection(pstate, basenode, newindir);
+		return transformFields(pstate, var, newfields, location);
 	}
 
 	return var;
@@ -325,6 +321,102 @@ scanRTEForVar(ParseState *pstate, Node *var, RangeTblEntry *rte, char *colname,
 	}
 
 	return var;
+}
+
+static Node *
+transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
+{
+	Node	   *res;
+	Oid			restype;
+	ListCell   *lf;
+	Value	   *field;
+	List	   *path = NIL;
+	CypherAccessExpr *a;
+
+	res = basenode;
+	restype = exprType(res);
+
+	/* record/composite type */
+	foreach(lf, fields)
+	{
+		if (restype == VERTEXOID || restype == EDGEOID ||
+			restype == GRAPHPATHOID)
+			break;
+		if (!type_is_rowtype(restype))
+			break;
+
+		field = lfirst(lf);
+
+		res = ParseFuncOrColumn(pstate, list_make1(field), list_make1(res),
+								NULL, location);
+		restype = exprType(res);
+	}
+
+	if (lf == NULL)
+		return res;
+
+	res = filterAccessArg(pstate, res, location, "map");
+
+	for_each_cell(lf, lf)
+	{
+		Node	   *elem;
+
+		field = lfirst(lf);
+
+		elem = (Node *) makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
+								  CStringGetTextDatum(strVal(field)),
+								  false, false);
+
+		path = lappend(path, elem);
+	}
+
+	a = makeNode(CypherAccessExpr);
+	a->arg = (Expr *) res;
+	a->path = path;
+
+	return (Node *) a;
+}
+
+static Node *
+filterAccessArg(ParseState *pstate, Node *expr, int location,
+				const char *types)
+{
+	Oid			exprtype = exprType(expr);
+
+	switch (exprtype)
+	{
+		case EDGEREFOID:
+			{
+				EdgeRefProp *erp;
+
+				erp = makeNode(EdgeRefProp);
+				erp->arg = (Expr *) expr;
+
+				return (Node *) erp;
+			}
+			break;
+
+		case VERTEXOID:
+		case EDGEOID:
+			return ParseFuncOrColumn(pstate,
+									 list_make1(makeString(AG_ELEM_PROP_MAP)),
+									 list_make1(expr), NULL, location);
+		case JSONBOID:
+			return expr;
+
+		case JSONOID:
+			return coerce_to_target_type(pstate, expr, JSONOID,
+										 JSONBOID, -1, COERCION_EXPLICIT,
+										 COERCE_IMPLICIT_CAST, location);
+
+		default:
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("%s is expected but %s",
+							types, format_type_be(exprtype)),
+					 parser_errposition(pstate, location)));
+			return NULL;
+	}
 }
 
 static Node *
@@ -514,8 +606,7 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 		le = lnext(le);
 
 		newv = transformCypherExprRecurse(pstate, v);
-		/* newv might not be jsonb */
-		newv = coerce_to_specific_type(pstate, newv, JSONBOID, "{}");
+		newv = coerce_to_jsonb(pstate, newv, "property value");
 
 		Assert(IsA(k, String));
 		newk = makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
@@ -526,6 +617,7 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 
 	newm = makeNode(CypherMapExpr);
 	newm->keyvals = newkeyvals;
+	newm->location = m->location;
 
 	return (Node *) newm;
 }
@@ -543,14 +635,14 @@ transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 		Node	   *newe;
 
 		newe = transformCypherExprRecurse(pstate, e);
-		/* newe might be bool */
-		newe = coerce_to_specific_type(pstate, newe, JSONBOID, "[]");
+		newe = coerce_to_jsonb(pstate, newe, "list element");
 
 		newelems = lappend(newelems, newe);
 	}
 
 	newcl = makeNode(CypherListExpr);
 	newcl->elems = newelems;
+	newcl->location = cl->location;
 
 	return (Node *) newcl;
 }
@@ -558,35 +650,90 @@ transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 static Node *
 transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 {
-	List	   *path = NIL;
+	int			location = exprLocation(basenode);
+	Node	   *res;
+	Oid			restype;
 	ListCell   *li;
-	Node	   *elem;
 	CypherAccessExpr *a;
+	List	   *path = NIL;
 
-	if (IsA(basenode, CypherAccessExpr))
-	{
-		a = (CypherAccessExpr *) basenode;
+	res = basenode;
+	restype = exprType(res);
 
-		basenode = (Node *) a->arg;
-		path = a->path;
-	}
-
-	/* `FALSE.p`, `(0 < 1)[0]`, ...  */
-	if (exprType(basenode) == BOOLOID)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("map or list is expected but bool"),
-				 parser_errposition(pstate, exprLocation(basenode))));
-		return NULL;
-	}
-
-	/* basenode might not be jsonb */
-	basenode = coerce_to_specific_type(pstate, basenode, JSONBOID, "ACCESS");
-
+	/* record/composite or array type */
 	foreach(li, indirection)
 	{
 		Node	   *i = lfirst(li);
+
+		if (IsA(i, String))
+		{
+			if (restype == VERTEXOID || restype == EDGEOID ||
+				restype == GRAPHPATHOID)
+				break;
+			if (!type_is_rowtype(restype))
+				break;
+
+			res = ParseFuncOrColumn(pstate, list_make1(i), list_make1(res),
+									NULL, location);
+		}
+		else
+		{
+			A_Indices  *ind;
+			Node	   *lidx = NULL;
+			Node	   *uidx = NULL;
+			Oid			arrtype;
+			int32		arrtypmod;
+			Oid			elemtype;
+			ArrayRef   *aref;
+
+			Assert(IsA(i, A_Indices));
+
+			if (!type_is_array_domain(restype))
+				break;
+
+			ind = (A_Indices *) i;
+
+			if (ind->is_slice && ind->lidx != NULL)
+				lidx = makeArrayIndex(pstate, ind->lidx, false);
+
+			if (ind->uidx != NULL)
+				uidx = makeArrayIndex(pstate, ind->uidx, ind->is_slice);
+
+			arrtype = restype;
+			arrtypmod = exprTypmod(res);
+			elemtype = transformArrayType(&arrtype, &arrtypmod);
+
+			aref = makeNode(ArrayRef);
+			aref->refarraytype = arrtype;
+			aref->refelemtype = elemtype;
+			aref->reftypmod = arrtypmod;
+			aref->refupperindexpr = list_make1(uidx);
+			aref->reflowerindexpr = (ind->is_slice ? list_make1(lidx) : NIL);
+			aref->refexpr = (Expr *) res;
+			aref->refassgnexpr = NULL;
+
+			res = (Node *) aref;
+		}
+		restype = exprType(res);
+	}
+
+	if (li == NULL)
+		return res;
+
+	res = filterAccessArg(pstate, res, location, "map or list");
+
+	if (IsA(res, CypherAccessExpr))
+	{
+		a = (CypherAccessExpr *) res;
+
+		res = (Node *) a->arg;
+		path = a->path;
+	}
+
+	for_each_cell(li, li)
+	{
+		Node	   *i = lfirst(li);
+		Node	   *elem;
 
 		if (IsA(i, String))
 		{
@@ -598,6 +745,8 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 		{
 			A_Indices  *ind;
 			CypherIndices *cind;
+			Node	   *lidx;
+			Node	   *uidx;
 
 			Assert(IsA(i, A_Indices));
 
@@ -615,10 +764,15 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 			 * based on their types.
 			 */
 
+			lidx = transformCypherExprRecurse(pstate, ind->lidx);
+			lidx = adjustListIndexType(pstate, lidx);
+			uidx = transformCypherExprRecurse(pstate, ind->uidx);
+			uidx = adjustListIndexType(pstate, uidx);
+
 			cind = makeNode(CypherIndices);
 			cind->is_slice = ind->is_slice;
-			cind->lidx = transformCypherExprRecurse(pstate, ind->lidx);
-			cind->uidx = transformCypherExprRecurse(pstate, ind->uidx);
+			cind->lidx = lidx;
+			cind->uidx = uidx;
 
 			elem = (Node *) cind;
 		}
@@ -627,10 +781,61 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 	}
 
 	a = makeNode(CypherAccessExpr);
-	a->arg = (Expr *) basenode;
+	a->arg = (Expr *) res;
 	a->path = path;
 
 	return (Node *) a;
+}
+
+static Node *
+makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive)
+{
+	Node	   *idxexpr;
+	Node	   *result;
+	Node	   *one;
+
+	Assert(idx != NULL);
+
+	idxexpr = transformCypherExprRecurse(pstate, idx);
+	result = coerce_to_target_type(pstate, idxexpr, exprType(idxexpr),
+								   INT4OID, -1, COERCION_ASSIGNMENT,
+								   COERCE_IMPLICIT_CAST, -1);
+	if (result == NULL)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("array subscript must have type integer"),
+				 parser_errposition(pstate, exprLocation(idxexpr))));
+		return NULL;
+	}
+
+	if (exclusive)
+		return result;
+
+	one = (Node *) makeConst(INT4OID, -1, InvalidOid, sizeof(int32),
+							 Int32GetDatum(1), false, true);
+
+	result = (Node *) make_op(pstate, list_make1(makeString("+")),
+							  result, one, -1);
+
+	return result;
+}
+
+static Node *
+adjustListIndexType(ParseState *pstate, Node *idx)
+{
+	if (idx == NULL)
+		return NULL;
+
+	switch (exprType(idx))
+	{
+		case TEXTOID:
+		case BOOLOID:
+		case JSONBOID:
+			return idx;
+		default:
+			return coerce_to_jsonb(pstate, idx, "list index");
+	}
 }
 
 static Node *
@@ -640,9 +845,11 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 	Node	   *r;
 
 	l = transformCypherExprRecurse(pstate, a->lexpr);
-	r = transformCypherExprRecurse(pstate, a->rexpr);
+	l = coerce_to_jsonb(pstate, l, "jsonb");
 
-	/* l or r might be bool. If so, it will be converted into jsonb. */
+	r = transformCypherExprRecurse(pstate, a->rexpr);
+	r = coerce_to_jsonb(pstate, r, "jsonb");
+
 	return (Node *) make_op(pstate, a->name, l, r, a->location);
 }
 
@@ -674,7 +881,6 @@ transformBoolExpr(ParseState *pstate, BoolExpr *b)
 		Node	   *arg = lfirst(la);
 
 		arg = transformCypherExprRecurse(pstate, arg);
-		/* arg might be jsonb */
 		arg = coerce_to_boolean(pstate, arg, opname);
 
 		args = lappend(args, arg);
@@ -682,6 +888,86 @@ transformBoolExpr(ParseState *pstate, BoolExpr *b)
 
 	return (Node *) makeBoolExpr(b->boolop, args, b->location);
 }
+
+static Node *
+coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname)
+{
+	if (expr == NULL)
+		return NULL;
+
+	switch (exprType(expr))
+	{
+		case VERTEXARRAYOID:
+		case VERTEXOID:
+		case EDGEARRAYOID:
+		case EDGEOID:
+		case GRAPHPATHARRAYOID:
+		case GRAPHPATHOID:
+		case EDGEREFARRAYOID:
+		case EDGEREFOID:
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("graph object cannot be %s", targetname),
+					 parser_errposition(pstate, exprLocation(expr))));
+			return NULL;
+
+		case JSONBOID:
+			return expr;
+
+		default:
+			return ParseFuncOrColumn(pstate,
+									 list_make1(makeString("to_jsonb")),
+									 list_make1(expr), NULL,
+									 exprLocation(expr));
+	}
+}
+
+/*
+ * edgeref functions
+ */
+
+Node *
+wrapEdgeRef(Node *node)
+{
+	EdgeRefRow *newnode;
+
+	newnode = makeNode(EdgeRefRow);
+	newnode->arg = (Expr *) node;
+
+	return (Node *) newnode;
+}
+
+Node *
+wrapEdgeRefArray(Node *node)
+{
+	EdgeRefRows *newnode;
+
+	newnode = makeNode(EdgeRefRows);
+	newnode->arg = (Expr *) node;
+
+	return (Node *) newnode;
+}
+
+Node *
+wrapEdgeRefTypes(ParseState *pstate, Node *node)
+{
+	if (!pstate->p_convert_edgeref)
+		return node;
+
+	switch (exprType(node))
+	{
+		case EDGEREFOID:
+			return wrapEdgeRef(node);
+		case EDGEREFARRAYOID:
+			return wrapEdgeRefArray(node);
+		default:
+			return node;
+	}
+}
+
+/*
+ * Item list functions
+ */
 
 List *
 transformItemList(ParseState *pstate, List *items, ParseExprKind exprKind)
@@ -758,4 +1044,43 @@ transformA_Star(ParseState *pstate, int location)
 				 parser_errposition(pstate, location)));
 
 	return targets;
+}
+
+void
+wrapEdgeRefTargetList(ParseState *pstate, List *targetList)
+{
+	ListCell   *lt;
+
+	foreach(lt, targetList)
+	{
+		TargetEntry *te = lfirst(lt);
+
+		te->expr = (Expr *) wrapEdgeRefTypes(pstate, (Node *) te->expr);
+	}
+}
+
+void
+unwrapEdgeRefTargetList(List *targetList)
+{
+	ListCell   *lt;
+
+	foreach(lt, targetList)
+	{
+		TargetEntry *te = lfirst(lt);
+
+		if (te->ressortgroupref != 0)
+			continue;
+
+		switch (nodeTag(te->expr))
+		{
+			case T_EdgeRefRow:
+				te->expr = ((EdgeRefRow *) te->expr)->arg;
+				break;
+			case T_EdgeRefRows:
+				te->expr = ((EdgeRefRows *) te->expr)->arg;
+				break;
+			default:
+				break;
+		}
+	}
 }

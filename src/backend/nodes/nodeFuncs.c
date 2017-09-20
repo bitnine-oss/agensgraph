@@ -1608,6 +1608,9 @@ exprLocation(const Node *expr)
 								  exprLocation((Node *) cl->elems));
 			}
 			break;
+		case T_CypherAccessExpr:
+			loc = exprLocation((Node *) ((CypherAccessExpr *) expr)->arg);
+			break;
 		default:
 			/* for any other node type it's just unknown... */
 			loc = -1;
@@ -3838,6 +3841,14 @@ raw_expression_tree_walker(Node *node,
 			return walker(((EdgeRefRow *) node)->arg, context);
 		case T_EdgeRefRows:
 			return walker(((EdgeRefRows *) node)->arg, context);
+		case T_CypherGenericExpr:
+			{
+				CypherGenericExpr *g = (CypherGenericExpr *) node;
+
+				if (walker(g->expr, context))
+					return true;
+			}
+			break;
 		case T_CypherMapExpr:
 			{
 				CypherMapExpr *m = (CypherMapExpr *) node;
@@ -4602,6 +4613,16 @@ raw_expression_tree_mutator(Node *node,
 
 				FLATCOPY(newnode, err, EdgeRefRows);
 				MUTATE(newnode->arg, err->arg, Expr *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherGenericExpr:
+			{
+				CypherGenericExpr *g = (CypherGenericExpr *) node;
+				CypherGenericExpr *newnode;
+
+				FLATCOPY(newnode, g, CypherGenericExpr);
+				MUTATE(newnode->expr, g->expr, Node *);
 				return (Node *) newnode;
 			}
 			break;

@@ -181,7 +181,6 @@ struct ParseState
 	Node	   *p_resolved_qual;		/* qual of resolved future vertices */
 	bool		p_is_optional_match;
 	List	   *p_target_labels;		/* relation Oid's of target labels */
-	Node	   *p_last_colref_elem;		/* for property access */
 	bool		p_convert_edgeref;
 };
 

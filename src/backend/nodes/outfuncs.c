@@ -3523,6 +3523,14 @@ _outCypherStmt(StringInfo str, const CypherStmt *node)
 }
 
 static void
+_outCypherGenericExpr(StringInfo str, const CypherGenericExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERGENERICEXPR");
+
+	WRITE_NODE_FIELD(expr);
+}
+
+static void
 _outCypherSubPattern(StringInfo str, const CypherSubPattern *node)
 {
 	WRITE_NODE_TYPE("CYPHERSUBPATTERN");
@@ -4341,6 +4349,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherStmt:
 				_outCypherStmt(str, obj);
+				break;
+			case T_CypherGenericExpr:
+				_outCypherGenericExpr(str, obj);
 				break;
 			case T_CypherSubPattern:
 				_outCypherSubPattern(str, obj);
