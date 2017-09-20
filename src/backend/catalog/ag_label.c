@@ -119,7 +119,7 @@ GetNewLabelId(char *graphname, Oid graphid)
 	uint16		labid;
 	int			cnt;
 
-	snprintf(sname, 128, "%s.%s", graphname, AG_LABEL_SEQ);
+	snprintf(sname, 128, "\"%s\".\"%s\"", graphname, AG_LABEL_SEQ);
 	stext = CStringGetTextDatum(sname);
 
 	cnt = 0;
