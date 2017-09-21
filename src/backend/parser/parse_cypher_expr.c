@@ -349,6 +349,15 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 
 		res = ParseFuncOrColumn(pstate, list_make1(field), list_make1(res),
 								NULL, location);
+		if (res == NULL)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+					 errmsg("column \"%s\" not found in data type %s",
+							strVal(field), format_type_be(restype)),
+					 parser_errposition(pstate, location)));
+			return NULL;
+		}
 		restype = exprType(res);
 	}
 
@@ -675,6 +684,15 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 
 			res = ParseFuncOrColumn(pstate, list_make1(i), list_make1(res),
 									NULL, location);
+			if (res == NULL)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_UNDEFINED_COLUMN),
+						 errmsg("column \"%s\" not found in data type %s",
+								strVal(i), format_type_be(restype)),
+						 parser_errposition(pstate, location)));
+				return NULL;
+			}
 		}
 		else
 		{
