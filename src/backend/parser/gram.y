@@ -566,7 +566,6 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
 				cypher_findpath_expr
-				cypher_load
 				cypher_no_parens
 				cypher_read cypher_read_clauses cypher_read_opt
 				cypher_read_opt_parens cypher_read_stmt cypher_read_with_parens
@@ -621,6 +620,8 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 %type <node>	cypher_merge cypher_merge_set
 %type <list>	cypher_merge_sets_opt cypher_merge_set_list
+
+%type <node>	cypher_load
 
 
 /*
@@ -15022,18 +15023,6 @@ cypher_clause:
 			| cypher_remove
 		;
 
-cypher_load:
-			LOAD FROM qualified_name AS cypher_expr_varname
-				{
-					Alias *alias = makeNode(Alias);
-					CypherLoadClause *n = makeNode(CypherLoadClause);
-					alias->aliasname = $5;
-					n->relation = $3;
-					n->relation->alias = alias;
-					$$ = (Node *) n;
-				}
-		;
-
 cypher_findpath_expr:
 			cypher_shortestpath
 			| cypher_dijkstra
@@ -15991,6 +15980,22 @@ cypher_merge_set:
 					n = makeNode(CypherSetClause);
 					n->kind = CSET_ON_MATCH;
 					n->items = $4;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_load:
+			LOAD FROM qualified_name AS cypher_expr_varname
+				{
+					Alias	   *alias;
+					CypherLoadClause *n;
+
+					alias = makeNode(Alias);
+					alias->aliasname = $5;
+
+					n = makeNode(CypherLoadClause);
+					n->relation = $3;
+					n->relation->alias = alias;
 					$$ = (Node *) n;
 				}
 		;
