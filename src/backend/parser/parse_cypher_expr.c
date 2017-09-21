@@ -965,6 +965,173 @@ wrapEdgeRefTypes(ParseState *pstate, Node *node)
 	}
 }
 
+List *
+transformCypherExprList(ParseState *pstate, List *exprlist,
+						ParseExprKind exprKind)
+{
+	List	   *result = NIL;
+	ListCell   *le;
+
+	foreach(le, exprlist)
+	{
+		Node	   *expr = lfirst(le);
+
+		result = lappend(result,
+						 transformCypherExpr(pstate, expr, exprKind));
+	}
+
+	return result;
+}
+
+Node *
+transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
+						 char **varname)
+{
+	ParseExprKind sv_expr_kind;
+	Node	   *aelem;
+	List	   *apath;
+	Node	   *origelem;
+	Node	   *elem;
+	Oid			elemtype;
+	char	   *resname = NULL;
+	ListCell   *le;
+	List	   *textlist = NIL;
+
+	sv_expr_kind = pstate->p_expr_kind;
+	pstate->p_expr_kind = EXPR_KIND_UPDATE_SOURCE;
+
+	expr = transformCypherExprRecurse(pstate, expr);
+
+	pstate->p_expr_kind = sv_expr_kind;
+
+	if (IsA(expr, CypherAccessExpr))
+	{
+		CypherAccessExpr *a = (CypherAccessExpr *) expr;
+
+		aelem = (Node *) a->arg;
+		apath = a->path;
+	}
+	else
+	{
+		aelem = expr;
+		apath = NIL;
+	}
+
+	/* examine what aelem is */
+	if (IsA(aelem, EdgeRefProp))
+	{
+		origelem = (Node *) ((EdgeRefProp *) aelem)->arg;
+		elem = wrapEdgeRef(origelem);
+	}
+	else if (IsA(aelem, EdgeRefRow))
+	{
+		origelem = (Node *) ((EdgeRefRow *) aelem)->arg;
+		elem = aelem;
+	}
+	else if (IsA(aelem, FieldSelect))
+	{
+		origelem = (Node *) ((FieldSelect *) aelem)->arg;
+		elem = origelem;
+	}
+	else
+	{
+		origelem = aelem;
+		elem = origelem;
+	}
+
+	elemtype = exprType(elem);
+	if (elemtype != VERTEXOID && elemtype != EDGEOID)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("vertex or edge is expected but %s",
+						format_type_be(elemtype)),
+				 parser_errposition(pstate, exprLocation(aelem))));
+		return NULL;
+	}
+
+	if (IsA(origelem, Var))
+	{
+		Var		   *var = (Var *) origelem;
+
+		if (var->varlevelsup == 0)
+		{
+			RangeTblEntry *rte;
+			TargetEntry *te;
+
+			rte = GetRTEByRangeTablePosn(pstate, var->varno, 0);
+			Assert(rte->rtekind == RTE_SUBQUERY);
+
+			te = list_nth(rte->subquery->targetList, var->varattno - 1);
+
+			resname = pstrdup(te->resname);
+		}
+	}
+
+	/* FIXME: This is because of the way eager is implemented. */
+	if (resname == NULL)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("Only direct variable reference is supported"),
+				 parser_errposition(pstate, exprLocation(aelem))));
+		return NULL;
+	}
+
+	if (apath == NIL)
+	{
+		*pathelems = NIL;
+		*varname = resname;
+		return elem;
+	}
+
+	foreach(le, apath)
+	{
+		Node	   *e = lfirst(le);
+
+		if (IsA(e, Const))
+		{
+			Assert(exprType(e) == TEXTOID);
+
+			textlist = lappend(textlist, e);
+		}
+		else
+		{
+			CypherIndices *cind = (CypherIndices *) e;
+			Node	   *t;
+
+			Assert(IsA(e, CypherIndices));
+
+			if (cind->is_slice)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("list slicing on LHS of SET is invalid")));
+				return NULL;
+			}
+
+			t = coerce_to_target_type(pstate, cind->uidx, exprType(cind->uidx),
+									  TEXTOID, -1, COERCION_ASSIGNMENT,
+									  COERCE_IMPLICIT_CAST, -1);
+			if (t == NULL)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("path element must be text"),
+						 parser_errposition(pstate,
+											exprLocation(cind->uidx))));
+				return NULL;
+			}
+
+			textlist = lappend(textlist, t);
+		}
+	}
+
+	*pathelems = textlist;
+	*varname = resname;
+	return elem;
+}
+
 /*
  * Item list functions
  */
