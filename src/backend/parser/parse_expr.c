@@ -15,7 +15,6 @@
 
 #include "postgres.h"
 
-#include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
 #include "commands/dbcommands.h"
 #include "miscadmin.h"
@@ -122,7 +121,6 @@ static Node *transformIndirection(ParseState *pstate, Node *basenode,
 					 List *indirection);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCollateClause(ParseState *pstate, CollateClause *c);
-static Node *transformJsonObject(ParseState *pstate, JsonObject *jo);
 static Node *make_row_comparison_op(ParseState *pstate, List *opname,
 					   List *largs, List *rargs, int location);
 static Node *make_row_distinct_op(ParseState *pstate, List *opname,
@@ -136,8 +134,6 @@ static void emit_precedence_warnings(ParseState *pstate,
 						 int opgroup, const char *opname,
 						 Node *lchild, Node *rchild,
 						 int location);
-
-static Node *transformJsonKey_internal(ParseState *pstate, Node *node);
 
 
 /*
@@ -363,10 +359,6 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 				result = (Node *) expr;
 				break;
 			}
-
-		case T_JsonObject:
-			result = transformJsonObject(pstate, (JsonObject *) expr);
-			break;
 
 		case T_CypherGenericExpr:
 			result = transformCypherExpr(pstate,
@@ -2670,50 +2662,6 @@ transformCollateClause(ParseState *pstate, CollateClause *c)
 	return (Node *) newc;
 }
 
-static Node *
-transformJsonObject(ParseState *pstate, JsonObject *jo)
-{
-	ListCell   *lp;
-	List	   *args = NIL;
-	FuncCall   *build;
-
-	foreach (lp, jo->keyvals)
-	{
-		JsonKeyVal *keyval = (JsonKeyVal *) lfirst(lp);
-
-		if (IsA(keyval->key, ColumnRef))
-		{
-			ColumnRef *cref = (ColumnRef *) keyval->key;
-
-			if (list_length(cref->fields) < 2)
-			{
-				A_Const *c = makeNode(A_Const);
-
-				c->val.type = T_String;
-				c->val.val.str = strVal(linitial(cref->fields));
-				c->location = cref->location;
-
-				args = lappend(args, c);
-			}
-			else
-			{
-				args = lappend(args, keyval->key);
-			}
-		}
-		else
-		{
-			args = lappend(args, keyval->key);
-		}
-
-		args = lappend(args, keyval->val);
-	}
-
-	build = makeFuncCall(list_make1(makeString("jsonb_build_object")), args,
-						 -1);
-
-	return transformFuncCall(pstate, build);
-}
-
 /*
  * Transform a "row compare-op row" construct
  *
@@ -3405,70 +3353,4 @@ ParseExprKindName(ParseExprKind exprKind)
 			 */
 	}
 	return "unrecognized expression kind";
-}
-
-static Node *
-transformJsonKey_internal(ParseState *pstate, Node *node)
-{
-	if (IsA(node, String))
-	{
-		return (Node *) makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
-								  CStringGetTextDatum(strVal(node)),
-								  false, false);
-	}
-	else if (IsA(node, A_Indices))
-	{
-		A_Indices  *indices = (A_Indices *) node;
-		Node	   *idx;
-		Oid			idxtype;
-
-		if (indices->lidx != NULL)
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("slicing on json(b) is not supported"),
-					 parser_errposition(pstate,
-										exprLocation(indices->lidx))));
-
-		idx = transformExpr(pstate, indices->uidx, pstate->p_expr_kind);
-		idxtype = exprType(idx);
-
-		idx = coerce_to_target_type(pstate, idx, idxtype, TEXTOID, -1,
-									COERCION_ASSIGNMENT,
-									COERCE_IMPLICIT_CAST, -1);
-		if (idx == NULL)
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("path elements for json(b) must be type text"),
-					 parser_errposition(pstate,
-										exprLocation(indices->uidx))));
-
-		return idx;
-	}
-	else
-	{
-		Assert(IsA(node, A_Star));
-
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("\"*\" cannot be applied to vertex or edge")));
-	}
-
-	return NULL;
-}
-
-Node *
-transformJsonKey(ParseState *pstate, Node *expr, ParseExprKind exprKind)
-{
-	Node	   *result;
-	ParseExprKind sv_expr_kind;
-
-	Assert(exprKind != EXPR_KIND_NONE);
-	sv_expr_kind = pstate->p_expr_kind;
-	pstate->p_expr_kind = exprKind;
-
-	result = transformJsonKey_internal(pstate, expr);
-
-	pstate->p_expr_kind = sv_expr_kind;
-
-	return result;
 }

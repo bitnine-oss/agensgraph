@@ -19,6 +19,12 @@ extern Node *wrapEdgeRef(Node *node);
 extern Node *wrapEdgeRefArray(Node *node);
 extern Node *wrapEdgeRefTypes(ParseState *pstate, Node *node);
 
+extern List *transformCypherExprList(ParseState *pstate, List *exprlist,
+									 ParseExprKind exprKind);
+
+extern Node *transformCypherMapForSet(ParseState *pstate, Node *expr,
+									  List **pathelems, char **varname);
+
 extern List *transformItemList(ParseState *pstate, List *items,
 							   ParseExprKind exprKind);
 extern void wrapEdgeRefTargetList(ParseState *pstate, List *targetList);

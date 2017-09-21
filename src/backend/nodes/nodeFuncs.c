@@ -3820,21 +3820,6 @@ raw_expression_tree_walker(Node *node,
 			break;
 		case T_CommonTableExpr:
 			return walker(((CommonTableExpr *) node)->ctequery, context);
-		case T_JsonObject:
-			{
-				JsonObject *jsonobj = (JsonObject *) node;
-
-				foreach(temp, jsonobj->keyvals)
-				{
-					JsonKeyVal *keyval = lfirst(temp);
-
-					if (walker(keyval->key, context))
-						return true;
-					if (walker(keyval->val, context))
-						return true;
-				}
-			}
-			break;
 		case T_EdgeRefProp:
 			return walker(((EdgeRefProp *) node)->arg, context);
 		case T_EdgeRefRow:

@@ -4339,27 +4339,6 @@ _copyAlterPolicyStmt(const AlterPolicyStmt *from)
 	return newnode;
 }
 
-static JsonObject *
-_copyJsonObject(const JsonObject *from)
-{
-	JsonObject *newnode = makeNode(JsonObject);
-
-	COPY_NODE_FIELD(keyvals);
-
-	return newnode;
-}
-
-static JsonKeyVal *
-_copyJsonKeyVal(const JsonKeyVal *from)
-{
-	JsonKeyVal *newnode = makeNode(JsonKeyVal);
-
-	COPY_NODE_FIELD(key);
-	COPY_NODE_FIELD(val);
-
-	return newnode;
-}
-
 static CreateGraphStmt *
 _copyCreateGraphStmt(const CreateGraphStmt *from)
 {
@@ -5672,12 +5651,6 @@ copyObject(const void *from)
 			break;
 		case T_RoleSpec:
 			retval = _copyRoleSpec(from);
-			break;
-		case T_JsonObject:
-			retval = _copyJsonObject(from);
-			break;
-		case T_JsonKeyVal:
-			retval = _copyJsonKeyVal(from);
 			break;
 		case T_CypherClause:
 			retval = _copyCypherClause(from);

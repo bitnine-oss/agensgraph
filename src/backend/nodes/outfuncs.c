@@ -3437,23 +3437,6 @@ _outForeignKeyCacheInfo(StringInfo str, const ForeignKeyCacheInfo *node)
 }
 
 static void
-_outJsonObject(StringInfo str, const JsonObject *node)
-{
-	WRITE_NODE_TYPE("JSONOBJECT");
-
-	WRITE_NODE_FIELD(keyvals);
-}
-
-static void
-_outJsonKeyVal(StringInfo str, const JsonKeyVal *node)
-{
-	WRITE_NODE_TYPE("JSONKEYVAL");
-
-	WRITE_NODE_FIELD(key);
-	WRITE_NODE_FIELD(val);
-}
-
-static void
 _outCreateLabelStmt(StringInfo str, const CreateLabelStmt *node)
 {
 	WRITE_NODE_TYPE("CREATELABELSTMT");
@@ -4334,13 +4317,6 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_ForeignKeyCacheInfo:
 				_outForeignKeyCacheInfo(str, obj);
-				break;
-
-			case T_JsonObject:
-				_outJsonObject(str, obj);
-				break;
-			case T_JsonKeyVal:
-				_outJsonKeyVal(str, obj);
 				break;
 
 			case T_CreateLabelStmt:

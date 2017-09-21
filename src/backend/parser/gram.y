@@ -553,10 +553,6 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %type <str>		opt_existing_window_name
 %type <boolean> opt_if_not_exists
 
-/* JSON object */
-%type <node>	json_key_value json_object_expr
-%type <list>	json_key_value_list
-
 /* Agens Graph */
 %type <node>	CreateGraphStmt CreateLabelStmt AlterLabelStmt alter_label_cmd
 				CreateConstraintStmt DropConstraintStmt
@@ -569,19 +565,12 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
-				cypher_create cypher_delete cypher_findpath_expr
-				cypher_load cypher_merge cypher_merge_set
+				cypher_findpath_expr
+				cypher_load
 				cypher_no_parens
 				cypher_read cypher_read_clauses cypher_read_opt
 				cypher_read_opt_parens cypher_read_stmt cypher_read_with_parens
-				cypher_remove cypher_rmitem cypher_set
-				cypher_setitem
 				cypher_with_parens
-%type <list>	cypher_merge_sets_opt
-				cypher_merge_set_list
-				cypher_rmitem_list
-				cypher_setitem_list
-%type <boolean>	cypher_detach_opt
 
 /*
  * Cypher Query Language
@@ -590,6 +579,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %type <node>	cypher_expr cypher_expr_opt
 				cypher_expr_atom cypher_expr_literal
 				cypher_expr_var
+%type <list>	cypher_expr_comma_list
 %type <value>	cypher_expr_name
 %type <str>		cypher_expr_varname
 
@@ -620,6 +610,17 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 %type <node>	cypher_match
 %type <boolean>	cypher_optional_opt
+
+%type <node>	cypher_create
+
+%type <node>	cypher_delete
+%type <boolean>	cypher_detach_opt
+
+%type <node>	cypher_set cypher_setitem cypher_remove cypher_rmitem
+%type <list>	cypher_setitem_list cypher_rmitem_list
+
+%type <node>	cypher_merge cypher_merge_set
+%type <list>	cypher_merge_sets_opt cypher_merge_set_list
 
 
 /*
@@ -12358,7 +12359,6 @@ c_expr:		columnref								{ $$ = $1; }
 				{ $$ = $1; }
 			| func_expr
 				{ $$ = $1; }
-			| json_object_expr
 			| select_with_parens			%prec UMINUS
 				{
 					SubLink *n = makeNode(SubLink);
@@ -12912,34 +12912,6 @@ func_expr_common_subexpr:
 					n->typeName = $6;
 					n->location = @1;
 					$$ = (Node *)n;
-				}
-		;
-
-json_object_expr:
-			'{' json_key_value_list '}'
-				{
-					JsonObject *n = (JsonObject *) makeNode(JsonObject);
-					n->keyvals = $2;
-					$$ = (Node *) n;
-				}
-		;
-
-json_key_value_list:
-			json_key_value
-					{ $$ = list_make1($1); }
-			| json_key_value_list ',' json_key_value
-					{ $$ = lappend($1, $3); }
-			| /* EMPTY */
-					{ $$ = NIL; }
-		;
-
-json_key_value:
-			a_expr ':' a_expr
-				{
-					JsonKeyVal *n = (JsonKeyVal *) makeNode(JsonKeyVal);
-					n->key = $1;
-					n->val = $3;
-					$$ = (Node *) n;
 				}
 		;
 
@@ -15050,87 +15022,6 @@ cypher_clause:
 			| cypher_remove
 		;
 
-cypher_create:
-			CREATE cypher_pattern
-				{
-					CypherCreateClause *n = makeNode(CypherCreateClause);
-					n->pattern = $2;
-					$$ = (Node *) n;
-				}
-		;
-
-cypher_delete:
-			cypher_detach_opt DELETE_P expr_list
-				{
-					CypherDeleteClause *n = makeNode(CypherDeleteClause);
-					n->detach = $1;
-					n->exprs = $3;
-					$$ = (Node *) n;
-				}
-		;
-
-cypher_detach_opt:
-			DETACH				{ $$ = true; }
-			| /* EMPTY */		{ $$ = false; }
-		;
-
-cypher_set:	SET cypher_setitem_list
-				{
-					CypherSetClause *n = makeNode(CypherSetClause);
-					n->kind = CSET_NORMAL;
-					n->items = $2;
-					$$ = (Node *) n;
-				}
-		;
-
-cypher_remove:
-			REMOVE cypher_rmitem_list
-				{
-					CypherSetClause *n = makeNode(CypherSetClause);
-					n->items = $2;
-					$$ = (Node *) n;
-				}
-		;
-
-cypher_merge:
-			MERGE cypher_pattern_part cypher_merge_sets_opt
-				{
-					CypherMergeClause *n = makeNode(CypherMergeClause);
-					n->pattern = list_make1($2);
-					n->sets = $3;
-					$$ = (Node *) n;
-				}
-		;
-
-cypher_merge_sets_opt:
-			cypher_merge_set_list		{ $$ = $1; }
-			| /* EMPTY */				{ $$ = NIL; }
-		;
-
-cypher_merge_set_list:
-			cypher_merge_set
-					{ $$ = list_make1($1); }
-			| cypher_merge_set_list cypher_merge_set
-					{ $$ = lappend($1, $2); }
-		;
-
-cypher_merge_set:
-			ON CREATE SET cypher_setitem_list
-				{
-					CypherSetClause *n = makeNode(CypherSetClause);
-					n->kind = CSET_ON_CREATE;
-					n->items = $4;
-					$$ = (Node *) n;
-				}
-			| ON MATCH SET cypher_setitem_list
-				{
-					CypherSetClause *n = makeNode(CypherSetClause);
-					n->kind = CSET_ON_MATCH;
-					n->items = $4;
-					$$ = (Node *) n;
-				}
-		;
-
 cypher_load:
 			LOAD FROM qualified_name AS cypher_expr_varname
 				{
@@ -15146,50 +15037,6 @@ cypher_load:
 cypher_findpath_expr:
 			cypher_shortestpath
 			| cypher_dijkstra
-		;
-
-cypher_setitem_list:
-			cypher_setitem
-					{ $$ = list_make1($1); }
-			| cypher_setitem_list ',' cypher_setitem
-					{ $$ = lappend($1, $3); }
-		;
-
-cypher_setitem:
-			a_expr '=' a_expr
-				{
-					CypherSetProp *n = makeNode(CypherSetProp);
-					n->prop = $1;
-					n->expr = $3;
-					n->add = false;
-					$$ = (Node *) n;
-				}
-			| a_expr ADD_EQUALS a_expr
-				{
-					CypherSetProp *n = makeNode(CypherSetProp);
-					n->prop = $1;
-					n->expr = $3;
-					n->add = true;
-					$$ = (Node *) n;
-				}
-		;
-
-cypher_rmitem_list:
-			cypher_rmitem
-					{ $$ = list_make1($1); }
-			| cypher_rmitem_list ',' cypher_rmitem
-					{ $$ = lappend($1, $3); }
-		;
-
-cypher_rmitem:
-			a_expr
-				{
-					CypherSetProp *n = makeNode(CypherSetProp);
-					n->prop = $1;
-					n->expr = makeNullAConst(-1);
-					n->add = false;
-					$$ = (Node *) n;
-				}
 		;
 
 /*
@@ -15413,6 +15260,13 @@ cypher_expr_opt:
 			| /* EMPTY */		{ $$ = NULL; }
 		;
 
+cypher_expr_comma_list:
+			cypher_expr
+					{ $$ = list_make1($1); }
+			| cypher_expr_comma_list ',' cypher_expr
+					{ $$ = lappend($1, $3); }
+		;
+
 cypher_expr_name:
 			ColLabel		{ $$ = makeString($1); }
 		;
@@ -15476,12 +15330,8 @@ cypher_expr_list:
 		;
 
 cypher_expr_list_elems:
-			cypher_expr
-					{ $$ = list_make1($1); }
-			| cypher_expr_list_elems ',' cypher_expr
-					{ $$ = lappend($1, $3); }
-			| /* EMPTY */
-					{ $$ = NIL; }
+			cypher_expr_comma_list
+			| /* EMPTY */				{ $$ = NIL; }
 		;
 
 cypher_expr_var:
@@ -15997,6 +15847,152 @@ cypher_match:
 cypher_optional_opt:
 			OPTIONAL_P			{ $$ = true; }
 			| /* EMPTY */		{ $$ = false; }
+		;
+
+cypher_create:
+			CREATE cypher_pattern
+				{
+					CypherCreateClause *n;
+
+					n = makeNode(CypherCreateClause);
+					n->pattern = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_delete:
+			cypher_detach_opt DELETE_P cypher_expr_comma_list
+				{
+					CypherDeleteClause *n;
+
+					n = makeNode(CypherDeleteClause);
+					n->detach = $1;
+					n->exprs = $3;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_detach_opt:
+			DETACH				{ $$ = true; }
+			| /* EMPTY */		{ $$ = false; }
+		;
+
+cypher_set:	SET cypher_setitem_list
+				{
+					CypherSetClause *n;
+
+					n = makeNode(CypherSetClause);
+					n->kind = CSET_NORMAL;
+					n->items = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_setitem_list:
+			cypher_setitem
+					{ $$ = list_make1($1); }
+			| cypher_setitem_list ',' cypher_setitem
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_setitem:
+			cypher_expr '=' cypher_expr
+				{
+					CypherSetProp *n;
+
+					n = makeNode(CypherSetProp);
+					n->prop = $1;
+					n->expr = $3;
+					n->add = false;
+					$$ = (Node *) n;
+				}
+			| cypher_expr ADD_EQUALS cypher_expr
+				{
+					CypherSetProp *n;
+
+					n = makeNode(CypherSetProp);
+					n->prop = $1;
+					n->expr = $3;
+					n->add = true;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_remove:
+			REMOVE cypher_rmitem_list
+				{
+					CypherSetClause *n;
+
+					n = makeNode(CypherSetClause);
+					n->kind = CSET_NORMAL;
+					n->items = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_rmitem_list:
+			cypher_rmitem
+					{ $$ = list_make1($1); }
+			| cypher_rmitem_list ',' cypher_rmitem
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_rmitem:
+			cypher_expr
+				{
+					CypherSetProp *n;
+
+					n = makeNode(CypherSetProp);
+					n->prop = $1;
+					n->expr = makeNullAConst(-1);
+					n->add = false;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_merge:
+			MERGE cypher_pattern_part cypher_merge_sets_opt
+				{
+					CypherMergeClause *n;
+
+					n = makeNode(CypherMergeClause);
+					n->pattern = list_make1($2);
+					n->sets = $3;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_merge_sets_opt:
+			cypher_merge_set_list		{ $$ = $1; }
+			| /* EMPTY */				{ $$ = NIL; }
+		;
+
+cypher_merge_set_list:
+			cypher_merge_set
+					{ $$ = list_make1($1); }
+			| cypher_merge_set_list cypher_merge_set
+					{ $$ = lappend($1, $2); }
+		;
+
+cypher_merge_set:
+			ON CREATE SET cypher_setitem_list
+				{
+					CypherSetClause *n;
+
+					n = makeNode(CypherSetClause);
+					n->kind = CSET_ON_CREATE;
+					n->items = $4;
+					$$ = (Node *) n;
+				}
+			| ON MATCH SET cypher_setitem_list
+				{
+					CypherSetClause *n;
+
+					n = makeNode(CypherSetClause);
+					n->kind = CSET_ON_MATCH;
+					n->items = $4;
+					$$ = (Node *) n;
+				}
 		;
 
 %%

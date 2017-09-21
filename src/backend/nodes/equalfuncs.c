@@ -2707,23 +2707,6 @@ _equalRoleSpec(const RoleSpec *a, const RoleSpec *b)
 }
 
 static bool
-_equalJsonObject(const JsonObject *a, const JsonObject *b)
-{
-	COMPARE_NODE_FIELD(keyvals);
-
-	return true;
-}
-
-static bool
-_equalJsonKeyVal(const JsonKeyVal *a, const JsonKeyVal *b)
-{
-	COMPARE_NODE_FIELD(key);
-	COMPARE_NODE_FIELD(val);
-
-	return true;
-}
-
-static bool
 _equalCreateGraphStmt(const CreateGraphStmt *a, const CreateGraphStmt *b)
 {
 	COMPARE_STRING_FIELD(graphname);
@@ -3784,13 +3767,6 @@ equal(const void *a, const void *b)
 			break;
 		case T_RoleSpec:
 			retval = _equalRoleSpec(a, b);
-			break;
-
-		case T_JsonObject:
-			retval = _equalJsonObject(a, b);
-			break;
-		case T_JsonKeyVal:
-			retval = _equalJsonKeyVal(a, b);
 			break;
 
 		case T_CreateGraphStmt:
