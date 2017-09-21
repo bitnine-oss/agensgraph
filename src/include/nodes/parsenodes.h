@@ -3335,24 +3335,6 @@ typedef struct DropSubscriptionStmt
 
 
 /****************************************************************************
- * JSON object expression
- ****************************************************************************/
-
-typedef struct JsonObject
-{
-	NodeTag		type;
-	List	   *keyvals;
-} JsonObject;
-
-typedef struct JsonKeyVal
-{
-	NodeTag		type;
-	Node	   *key;
-	Node	   *val;
-} JsonKeyVal;
-
-
-/****************************************************************************
  * Agens Graph related node structures
  ****************************************************************************/
 

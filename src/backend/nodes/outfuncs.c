@@ -3513,22 +3513,6 @@ _outPartitionRangeDatum(StringInfo str, const PartitionRangeDatum *node)
 	WRITE_BOOL_FIELD(infinite);
 	WRITE_NODE_FIELD(value);
 }
-static void
-_outJsonObject(StringInfo str, const JsonObject *node)
-{
-	WRITE_NODE_TYPE("JSONOBJECT");
-
-	WRITE_NODE_FIELD(keyvals);
-}
-
-static void
-_outJsonKeyVal(StringInfo str, const JsonKeyVal *node)
-{
-	WRITE_NODE_TYPE("JSONKEYVAL");
-
-	WRITE_NODE_FIELD(key);
-	WRITE_NODE_FIELD(val);
-}
 
 static void
 _outCreateLabelStmt(StringInfo str, const CreateLabelStmt *node)
@@ -4431,13 +4415,6 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_PartitionRangeDatum:
 				_outPartitionRangeDatum(str, obj);
-				break;
-
-			case T_JsonObject:
-				_outJsonObject(str, obj);
-				break;
-			case T_JsonKeyVal:
-				_outJsonKeyVal(str, obj);
 				break;
 
 			case T_CreateLabelStmt:

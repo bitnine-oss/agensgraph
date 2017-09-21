@@ -2941,14 +2941,6 @@ _copyQuery(const Query *from)
 	COPY_LOCATION_FIELD(stmt_location);
 	COPY_LOCATION_FIELD(stmt_len);
 
-	COPY_SCALAR_FIELD(graph.writeOp);
-	COPY_SCALAR_FIELD(graph.last);
-	COPY_SCALAR_FIELD(graph.detach);
-	COPY_NODE_FIELD(graph.pattern);
-	COPY_NODE_FIELD(graph.targets);
-	COPY_NODE_FIELD(graph.exprs);
-	COPY_NODE_FIELD(graph.sets);
-
 	COPY_SCALAR_FIELD(dijkstraWeight);
 	COPY_SCALAR_FIELD(dijkstraWeightOut);
 	COPY_NODE_FIELD(dijkstraEndId);
@@ -2956,6 +2948,14 @@ _copyQuery(const Query *from)
 	COPY_NODE_FIELD(dijkstraSource);
 	COPY_NODE_FIELD(dijkstraTarget);
 	COPY_NODE_FIELD(dijkstraLimit);
+
+	COPY_SCALAR_FIELD(graph.writeOp);
+	COPY_SCALAR_FIELD(graph.last);
+	COPY_SCALAR_FIELD(graph.detach);
+	COPY_NODE_FIELD(graph.pattern);
+	COPY_NODE_FIELD(graph.targets);
+	COPY_NODE_FIELD(graph.exprs);
+	COPY_NODE_FIELD(graph.sets);
 
 	return newnode;
 }
@@ -4518,27 +4518,6 @@ _copyDropSubscriptionStmt(const DropSubscriptionStmt *from)
 	return newnode;
 }
 
-static JsonObject *
-_copyJsonObject(const JsonObject *from)
-{
-	JsonObject *newnode = makeNode(JsonObject);
-
-	COPY_NODE_FIELD(keyvals);
-
-	return newnode;
-}
-
-static JsonKeyVal *
-_copyJsonKeyVal(const JsonKeyVal *from)
-{
-	JsonKeyVal *newnode = makeNode(JsonKeyVal);
-
-	COPY_NODE_FIELD(key);
-	COPY_NODE_FIELD(val);
-
-	return newnode;
-}
-
 static CreateGraphStmt *
 _copyCreateGraphStmt(const CreateGraphStmt *from)
 {
@@ -5897,12 +5876,6 @@ copyObject(const void *from)
 			 */
 		case T_ForeignKeyCacheInfo:
 			retval = _copyForeignKeyCacheInfo(from);
-			break;
-		case T_JsonObject:
-			retval = _copyJsonObject(from);
-			break;
-		case T_JsonKeyVal:
-			retval = _copyJsonKeyVal(from);
 			break;
 		case T_CypherClause:
 			retval = _copyCypherClause(from);

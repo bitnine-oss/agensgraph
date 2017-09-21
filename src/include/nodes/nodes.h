@@ -501,8 +501,6 @@ typedef enum NodeTag
 	T_PartitionSpec,
 	T_PartitionBoundSpec,
 	T_PartitionRangeDatum,
-	T_JsonObject,
-	T_JsonKeyVal,
 	T_CypherGenericExpr,
 	T_CypherSubPattern,
 	T_CypherClause,

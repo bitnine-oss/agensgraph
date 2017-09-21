@@ -717,7 +717,7 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	/* select all from previous clause */
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
 
-	exprs = transformExpressionList(pstate, detail->exprs, EXPR_KIND_OTHER);
+	exprs = transformCypherExprList(pstate, detail->exprs, EXPR_KIND_OTHER);
 
 	foreach(le, exprs)
 	{
@@ -4000,99 +4000,17 @@ static GraphSetProp *
 transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 				 CSetKind kind, List *gsplist)
 {
-	Node	   *node;
-	List	   *inds;
-	char	   *varname = NULL;
 	Node	   *elem;
-	List	   *pathelems = NIL;
-	ListCell   *lf;
-	Node	   *pathelem;
+	List	   *pathelems;
 	Node	   *path = NULL;
+	char	   *varname;
 	GraphSetProp *gsp;
 	Node	   *prop_map;
 	Node	   *expr;
 	Oid			exprtype;
 	GSPKind		gspkind;
 
-	if (!IsA(sp->prop, ColumnRef) && !IsA(sp->prop, A_Indirection))
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("only variable or property is valid for SET target")));
-
-	/*
-	 * get `elem` and `path` (LHS of the SET clause item)
-	 */
-
-	if (IsA(sp->prop, A_Indirection))
-	{
-		A_Indirection *ind = (A_Indirection *) sp->prop;
-
-		/*
-		 * (expr).p...
-		 *
-		 * `node` is expr part and it can be a ColumnRef.
-		 * `inds` is p... part.
-		 */
-		node = ind->arg;
-		inds = ind->indirection;
-	}
-	else
-	{
-		/*
-		 * v.p...
-		 *
-		 * `node` is v.p... and it is a ColumnRef.
-		 */
-		node = sp->prop;
-		inds = NIL;
-	}
-
-	if (IsA(node, ColumnRef))
-	{
-		ColumnRef  *cref = (ColumnRef *) node;
-		Var		   *var;
-
-		varname = strVal(linitial(cref->fields));
-		var = (Var *) getColumnVar(pstate, rte, varname);
-		var->location = cref->location;
-		elem = (Node *) var;
-
-		if (list_length(cref->fields) > 1)
-		{
-			for_each_cell(lf, lnext(list_head(cref->fields)))
-			{
-				pathelem = transformJsonKey(pstate, lfirst(lf),
-											EXPR_KIND_UPDATE_SOURCE);
-
-				pathelems = lappend(pathelems, pathelem);
-			}
-		}
-	}
-	else
-	{
-		Oid elemtype;
-
-		elem = transformExpr(pstate, node, EXPR_KIND_UPDATE_TARGET);
-
-		elemtype = exprType(elem);
-		if (elemtype != VERTEXOID && elemtype != EDGEOID)
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("node or relationship is expected"),
-					 parser_errposition(pstate, exprLocation(elem))));
-	}
-
-	if (inds != NIL)
-	{
-		foreach(lf, inds)
-		{
-			pathelem = transformJsonKey(pstate, lfirst(lf),
-										EXPR_KIND_UPDATE_SOURCE);
-
-			pathelems = lappend(pathelems, pathelem);
-		}
-	}
-
+	elem = transformCypherMapForSet(pstate, sp->prop, &pathelems, &varname);
 	if (pathelems != NIL)
 	{
 		path = makeArrayExpr(TEXTARRAYOID, TEXTOID, pathelems);
@@ -4106,25 +4024,13 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	gsp = findGraphSetProp(gsplist, varname);
 	if (gsp == NULL)
 	{
-		Node *tmp;
-
 		/*
-		 * It is the first time to handle the element. Use `elem` to get the
-		 * original property map of the element if `elem` is from ColumnRef.
-		 * Otherwise, transform `node` to get it.
+		 * It is the first time to handle the element.
+		 * Get the original property map of the element.
 		 */
-		if (IsA(node, ColumnRef))
-			tmp = elem;
-		else
-			tmp = transformExpr(pstate, node, EXPR_KIND_UPDATE_SOURCE);
-
-		/*
-		 * get the original property map of the element through type coercion
-		 * because we have the type coercion of vertex/edge to jsonb
-		 */
-		prop_map = coerce_to_target_type(pstate, tmp, exprType(tmp), JSONBOID,
-										 -1, COERCION_ASSIGNMENT,
-										 COERCE_IMPLICIT_CAST, -1);
+		prop_map = ParseFuncOrColumn(pstate,
+									 list_make1(makeString(AG_ELEM_PROP_MAP)),
+									 list_make1(elem), NULL, -1);
 	}
 	else
 	{
@@ -4132,8 +4038,11 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		prop_map = gsp->expr;
 	}
 
-	/* transform the assigned property */
-	expr = transformExpr(pstate, sp->expr, EXPR_KIND_UPDATE_SOURCE);
+	/*
+	 * Transform the assigned property to get `expr` (RHS of the SET clause
+	 * item). `sp->expr` can be a null constant if this `sp` is for REMOVE.
+	 */
+	expr = transformCypherExpr(pstate, sp->expr, EXPR_KIND_UPDATE_SOURCE);
 	expr = resolve_future_vertex(pstate, expr, FVR_PRESERVE_VAR_REF);
 	exprtype = exprType(expr);
 	expr = coerce_to_target_type(pstate, expr, exprtype, JSONBOID, -1,
@@ -4146,10 +4055,12 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 						format_type_be(exprtype)),
 				 parser_errposition(pstate, exprLocation(expr))));
 
-	if (path == NULL)
-	{
-		/* LHS is the property map itself */
+	/*
+	 * make the modified property map
+	 */
 
+	if (path == NULL)	/* LHS is the property map itself */
+	{
 		if (IsNullAConst(sp->expr))
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
@@ -4173,9 +4084,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 			prop_map = expr;
 		}
 	}
-	else
+	else				/* LHS is a property in the property map */
 	{
-		/* LHS is a property in the property map */
 		FuncCall   *delete;
 		Node	   *del_prop;
 
@@ -4187,13 +4097,14 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 
 		delete = makeFuncCall(list_make1(makeString("jsonb_delete_path")),
 							  NIL, -1);
-
 		del_prop = ParseFuncOrColumn(pstate, delete->funcname,
 									 list_make2(prop_map, path), delete,
 									 -1);
 
 		if (IsNullAConst(sp->expr))		/* SET a.b.c = NULL */
+		{
 			prop_map = del_prop;
+		}
 		else							/* SET a.b.c = expr */
 		{
 			FuncCall   *set;
@@ -4207,7 +4118,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 
 			/*
 			 * The right operand can be null. In this case,
-			 * it behaves like a REMOVE clause.
+			 * it behaves like REMOVE clause.
 			 */
 			coalesce = makeNode(CoalesceExpr);
 			coalesce->args = list_make2(set_prop, del_prop);
@@ -4217,6 +4128,10 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 			prop_map = (Node *) coalesce;
 		}
 	}
+
+	/*
+	 * set the modified property map
+	 */
 
 	prop_map = stripNullKeys(pstate, prop_map);
 
@@ -4800,7 +4715,7 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 static Node *
 preprocessPropMap(Node *expr)
 {
-	Node *result = expr;
+	Node	   *result = expr;
 
 	if (IsA(expr, A_Const))
 	{
