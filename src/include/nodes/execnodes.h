@@ -1465,7 +1465,6 @@ typedef struct IndexOnlyScanState
 	IndexScanDesc ioss_ScanDesc;
 	Buffer		ioss_VMBuffer;
 	long		ioss_HeapFetches;
-	AttrNumber *ioss_SysAttMap;
 	dlist_head  vle_ctxs;		/* list of IndexScanVLECtx */
 	dlist_node *cur_ctx;
 } IndexOnlyScanState;
