@@ -21,7 +21,6 @@
 
 #include "access/stratnum.h"
 #include "access/sysattr.h"
-#include "catalog/heap.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
@@ -4952,56 +4951,8 @@ make_indexonlyscan(List *qptlist,
 				   List *indextlist,
 				   ScanDirection indexscandir)
 {
-	Bitmapset  *attrs_used = NULL;
-	int			attr_offset;
 	IndexOnlyScan *node = makeNode(IndexOnlyScan);
 	Plan	   *plan = &node->scan.plan;
-
-	/* If qptlist has tableoid and/or ctid, adjust indextlist to have them. */
-	pull_varattnos((Node *) qptlist, scanrelid, &attrs_used);
-	attr_offset = bms_first_member(attrs_used);
-	while (attr_offset > 0 && attr_offset < -FirstLowInvalidHeapAttributeNumber)
-	{
-		AttrNumber attnum = attr_offset + FirstLowInvalidHeapAttributeNumber;
-
-		switch (attnum)
-		{
-			case TableOidAttributeNumber:
-			case SelfItemPointerAttributeNumber:
-				{
-					Form_pg_attribute sysatt;
-					Expr	   *sysvar;
-					TargetEntry *te;
-
-					sysatt = SystemAttributeDefinition(attnum, false);
-
-					sysvar = (Expr *) makeVar(scanrelid,
-											  attnum,
-											  sysatt->atttypid,
-											  sysatt->atttypmod,
-											  sysatt->attcollation,
-											  0);
-
-					/*
-					 * Append the attribute to the end of the indextlist.
-					 * This is important because StoreIndexTuple() assumes
-					 * the order.
-					 */
-					te = makeTargetEntry(sysvar, list_length(indextlist) + 1,
-										 NULL, false);
-
-					indextlist = lappend(indextlist, te);
-				}
-				break;
-			case ObjectIdAttributeNumber:
-				break;
-			default:
-				elog(ERROR, "invalid variable found in plan target list");
-		}
-
-		attr_offset = bms_next_member(attrs_used, attr_offset);
-	}
-	bms_free(attrs_used);
 
 	plan->targetlist = qptlist;
 	plan->qual = qpqual;
