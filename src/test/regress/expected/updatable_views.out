@@ -403,10 +403,10 @@ EXPLAIN (costs off) UPDATE rw_view1 SET a=6 WHERE a=5;
 (3 rows)
 
 EXPLAIN (costs off) DELETE FROM rw_view1 WHERE a=5;
-                      QUERY PLAN                       
--------------------------------------------------------
+                    QUERY PLAN                    
+--------------------------------------------------
  Delete on base_tbl
-   ->  Index Only Scan using base_tbl_pkey on base_tbl
+   ->  Index Scan using base_tbl_pkey on base_tbl
          Index Cond: ((a > 0) AND (a = 5))
 (3 rows)
 
@@ -476,7 +476,7 @@ EXPLAIN (costs off) DELETE FROM rw_view2 WHERE aaa=4;
                        QUERY PLAN                       
 --------------------------------------------------------
  Delete on base_tbl
-   ->  Index Only Scan using base_tbl_pkey on base_tbl
+   ->  Index Scan using base_tbl_pkey on base_tbl
          Index Cond: ((a < 10) AND (a > 0) AND (a = 4))
 (3 rows)
 
@@ -661,7 +661,7 @@ EXPLAIN (costs off) UPDATE rw_view2 SET a=3 WHERE a=2;
 ----------------------------------------------------------------
  Update on base_tbl
    ->  Nested Loop
-         ->  Index Only Scan using base_tbl_pkey on base_tbl
+         ->  Index Scan using base_tbl_pkey on base_tbl
                Index Cond: (a = 2)
          ->  Subquery Scan on rw_view1
                Filter: ((rw_view1.a < 10) AND (rw_view1.a = 2))
@@ -676,7 +676,7 @@ EXPLAIN (costs off) DELETE FROM rw_view2 WHERE a=2;
 ----------------------------------------------------------------
  Delete on base_tbl
    ->  Nested Loop
-         ->  Index Only Scan using base_tbl_pkey on base_tbl
+         ->  Index Scan using base_tbl_pkey on base_tbl
                Index Cond: (a = 2)
          ->  Subquery Scan on rw_view1
                Filter: ((rw_view1.a < 10) AND (rw_view1.a = 2))
@@ -942,10 +942,10 @@ SELECT * FROM base_tbl;
 EXPLAIN (costs off)
 UPDATE rw_view1 v SET bb='Updated row 2' WHERE rw_view1_aa(v)=2
   RETURNING rw_view1_aa(v), v.bb;
-                      QUERY PLAN                       
--------------------------------------------------------
+                    QUERY PLAN                    
+--------------------------------------------------
  Update on base_tbl
-   ->  Index Only Scan using base_tbl_pkey on base_tbl
+   ->  Index Scan using base_tbl_pkey on base_tbl
          Index Cond: (a = 2)
 (3 rows)
 
@@ -2024,8 +2024,8 @@ EXPLAIN (costs off) DELETE FROM rw_view1 WHERE id = 1 AND snoop(data);
 DELETE FROM rw_view1 WHERE id = 1 AND snoop(data);
 NOTICE:  snooped value: Row 1
 EXPLAIN (costs off) INSERT INTO rw_view1 VALUES (2, 'New row 2');
-                         QUERY PLAN                          
--------------------------------------------------------------
+                        QUERY PLAN                         
+-----------------------------------------------------------
  Insert on base_tbl
    InitPlan 1 (returns $0)
      ->  Index Only Scan using base_tbl_pkey on base_tbl t
@@ -2039,7 +2039,7 @@ EXPLAIN (costs off) INSERT INTO rw_view1 VALUES (2, 'New row 2');
            Index Cond: (id = 2)
    ->  Result
          One-Time Filter: $0
-         ->  Index Only Scan using base_tbl_pkey on base_tbl
+         ->  Index Scan using base_tbl_pkey on base_tbl
                Index Cond: (id = 2)
 (15 rows)
 
