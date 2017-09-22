@@ -42,6 +42,17 @@ Indexes:
     "regv1_weight_idx" btree ((((properties #>> ARRAY['body'::text, 'weight'::text])::integer) / ((properties #>> ARRAY['body'::text, 'height'::text])::integer)))
 Inherits: g.ag_vertex
 
+\dGi
+                                                                           List of property indexes
+ Graph | LabelName |      IndexName       | Unique |    Owner    |                                                  Indexdef                                                  
+-------+-----------+----------------------+--------+-------------+------------------------------------------------------------------------------------------------------------
+ g     | regv1     | regv1_age_idx        | f      | regressrole | CREATE INDEX regv1_age_idx ON g.regv1 USING btree ((age)::integer)
+ g     | regv1     | regv1_first_idx      | f      | regressrole | CREATE INDEX regv1_first_idx ON g.regv1 USING btree ((name.first) || (name.last))
+ g     | regv1     | regv1_first_last_idx | f      | regressrole | CREATE INDEX regv1_first_last_idx ON g.regv1 USING btree (name.first, name.last)
+ g     | regv1     | regv1_name_idx       | f      | regressrole | CREATE INDEX regv1_name_idx ON g.regv1 USING btree (name)
+ g     | regv1     | regv1_weight_idx     | f      | regressrole | CREATE INDEX regv1_weight_idx ON g.regv1 USING btree (((body.weight)::integer) / ((body.height)::integer))
+(5 rows)
+
 DROP VLABEL regv1;
 -- Check property name & access method type
 CREATE VLABEL regv1;
@@ -92,6 +103,18 @@ Property Indexes:
     "regv1_self_intro_idx" gin ((self_intro)::tsvector)
 Inherits: g.ag_vertex
 
+\dGi
+                                                             List of property indexes
+ Graph | LabelName |      IndexName       | Unique |    Owner    |                                    Indexdef                                     
+-------+-----------+----------------------+--------+-------------+---------------------------------------------------------------------------------
+ g     | regv1     | regv1_first_idx      | f      | regressrole | CREATE INDEX regv1_first_idx ON g.regv1 USING btree (name.first)
+ g     | regv1     | regv1_first_idx1     | f      | regressrole | CREATE INDEX regv1_first_idx1 ON g.regv1 USING hash (name.first)
+ g     | regv1     | regv1_first_idx2     | f      | regressrole | CREATE INDEX regv1_first_idx2 ON g.regv1 USING brin (name.first)
+ g     | regv1     | regv1_hobby_idx      | f      | regressrole | CREATE INDEX regv1_hobby_idx ON g.regv1 USING gist ((hobby)::tsvector)
+ g     | regv1     | regv1_name_idx       | f      | regressrole | CREATE INDEX regv1_name_idx ON g.regv1 USING btree (name)
+ g     | regv1     | regv1_self_intro_idx | f      | regressrole | CREATE INDEX regv1_self_intro_idx ON g.regv1 USING gin ((self_intro)::tsvector)
+(6 rows)
+
 DROP VLABEL regv1;
 -- Concurrently build & if not exist
 CREATE VLABEL regv1;
@@ -137,6 +160,17 @@ Property Indexes:
     "regv1_name_idx" btree (name)
 Inherits: g.ag_vertex
 
+\dGi
+                                                                 List of property indexes
+ Graph | LabelName |    IndexName     | Unique |    Owner    |                                          Indexdef                                          
+-------+-----------+------------------+--------+-------------+--------------------------------------------------------------------------------------------
+ g     | regv1     | regv1_first_idx  | f      | regressrole | CREATE INDEX regv1_first_idx ON g.regv1 USING btree (name.first)
+ g     | regv1     | regv1_first_idx1 | f      | regressrole | CREATE INDEX regv1_first_idx1 ON g.regv1 USING btree (name.first COLLATE "C" NULLS FIRST)
+ g     | regv1     | regv1_first_idx2 | f      | regressrole | CREATE INDEX regv1_first_idx2 ON g.regv1 USING btree (name.first) WITH (fillfactor='80')
+ g     | regv1     | regv1_first_idx3 | f      | regressrole | CREATE INDEX regv1_first_idx3 ON g.regv1 USING btree (name.first) WHERE (name) IS NOT NULL
+ g     | regv1     | regv1_name_idx   | f      | regressrole | CREATE INDEX regv1_name_idx ON g.regv1 USING btree (name)
+(5 rows)
+
 DROP VLABEL regv1;
 -- Unique property index
 CREATE VLABEL regv1;
@@ -168,6 +202,13 @@ Vertex label "g.regv1"
 Property Indexes:
     "regv1_id_idx" UNIQUE btree (id)
 Inherits: g.ag_vertex
+
+\dGi
+                                                List of property indexes
+ Graph | LabelName |  IndexName   | Unique |    Owner    |                           Indexdef                           
+-------+-----------+--------------+--------+-------------+--------------------------------------------------------------
+ g     | regv1     | regv1_id_idx | t      | regressrole | CREATE UNIQUE INDEX regv1_id_idx ON g.regv1 USING btree (id)
+(1 row)
 
 DROP VLABEL regv1;
 -- Multi-column unique property index
@@ -202,6 +243,13 @@ Vertex label "g.regv1"
 Property Indexes:
     "regv1_first_last_idx" UNIQUE btree (name.first, name.last)
 Inherits: g.ag_vertex
+
+\dGi
+                                                                 List of property indexes
+ Graph | LabelName |      IndexName       | Unique |    Owner    |                                        Indexdef                                         
+-------+-----------+----------------------+--------+-------------+-----------------------------------------------------------------------------------------
+ g     | regv1     | regv1_first_last_idx | t      | regressrole | CREATE UNIQUE INDEX regv1_first_last_idx ON g.regv1 USING btree (name.first, name.last)
+(1 row)
 
 DROP VLABEL regv1;
 -- DROP PROPERTY INDEX
@@ -240,6 +288,13 @@ Property Indexes:
     "regv1_multi_col" btree (name.first, name.middle, name.last)
 Inherits: g.ag_vertex
 
+\dGi
+                                                               List of property indexes
+ Graph | LabelName |    IndexName    | Unique |    Owner    |                                         Indexdef                                         
+-------+-----------+-----------------+--------+-------------+------------------------------------------------------------------------------------------
+ g     | regv1     | regv1_multi_col | f      | regressrole | CREATE INDEX regv1_multi_col ON g.regv1 USING btree (name.first, name.middle, name.last)
+(1 row)
+
 DROP PROPERTY INDEX regv1_multi_col;
 CREATE PROPERTY INDEX regv1_multi_expr ON regv1 ((name.first || name.last), (age::integer));
 \dGv+ regv1
@@ -254,6 +309,13 @@ Vertex label "g.regv1"
 Property Indexes:
     "regv1_multi_expr" btree ((name.first) || (name.last), (age)::integer)
 Inherits: g.ag_vertex
+
+\dGi
+                                                                     List of property indexes
+ Graph | LabelName |    IndexName     | Unique |    Owner    |                                              Indexdef                                              
+-------+-----------+------------------+--------+-------------+----------------------------------------------------------------------------------------------------
+ g     | regv1     | regv1_multi_expr | f      | regressrole | CREATE INDEX regv1_multi_expr ON g.regv1 USING btree ((name.first) || (name.last), (age)::integer)
+(1 row)
 
 DROP PROPERTY INDEX regv1_multi_expr;
 DROP VLABEL regv1;
