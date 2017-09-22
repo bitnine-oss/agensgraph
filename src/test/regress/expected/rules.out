@@ -1287,7 +1287,11 @@ ag_property_indexes| SELECT n.nspname AS graphname,
     c.relname AS labelname,
     i.relname AS indexname,
     t.spcname AS tablespace,
-    pg_get_indexdef(i.oid) AS indexdef
+    x.indisunique AS "unique",
+    ag_get_propindexdef(i.oid) AS indexdef,
+    pg_get_userbyid(c.relowner) AS owner,
+    pg_size_pretty(pg_table_size((c.oid)::regclass)) AS size,
+    obj_description(c.oid, 'pg_class'::name) AS description
    FROM (((((pg_index x
      JOIN pg_class c ON ((c.oid = x.indrelid)))
      JOIN ag_label l ON ((x.indrelid = l.relid)))

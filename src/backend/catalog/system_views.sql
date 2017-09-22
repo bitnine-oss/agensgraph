@@ -841,7 +841,11 @@ CREATE VIEW ag_property_indexes AS
         C.relname AS labelname,
         I.relname AS indexname,
         T.spcname AS tablespace,
-        pg_get_indexdef(I.oid) AS indexdef
+ 		X.indisunique AS unique,
+        ag_get_propindexdef(I.oid) AS indexdef,
+		pg_get_userbyid(c.relowner) AS owner,
+		pg_size_pretty(pg_table_size(c.oid)) AS size,
+		obj_description(c.oid, 'pg_class') as description
     FROM pg_index X JOIN pg_class C ON (C.oid = X.indrelid)
         JOIN ag_label L ON (X.indrelid = L.relid)
         JOIN pg_class I ON (I.oid = X.indexrelid)

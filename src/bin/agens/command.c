@@ -570,6 +570,9 @@ exec_command(const char *cmd,
 					case 'e':
 						success = listLabels(pattern, show_verbose, 'e');
 						break;
+					case 'i':
+						success = listGraphIndexes(pattern, show_verbose);
+						break;
 					default:
 						status = PSQL_CMD_UNKNOWN;
 						break;

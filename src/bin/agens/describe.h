@@ -108,4 +108,7 @@ extern bool listGraphs(const char *pattern, bool verbose);
 /* \dGl, \dGv, \dGe */
 extern bool listLabels(const char *pattern, bool verbose, const char labkind);
 
+/* \dGi */
+extern bool listGraphIndexes(const char *pattern, bool verbose);
+
 #endif   /* DESCRIBE_H */
