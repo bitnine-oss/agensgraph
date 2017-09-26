@@ -5370,7 +5370,7 @@ DATA(insert OID = 7070 ( start_vertex	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0
 DESCR("get the start vertex of edge");
 DATA(insert OID = 7071 ( end_vertex		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_end_vertex _null_ _null_ _null_ ));
 DESCR("get the end vertex of edge");
-DATA(insert OID = 7075 ( labels			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 1009 "7012" _null_ _null_ _null_ _null_ _null_ vertex_labels _null_ _null_ _null_ ));
+DATA(insert OID = 7075 ( labels			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "7012" _null_ _null_ _null_ _null_ _null_ vertex_labels _null_ _null_ _null_ ));
 DESCR("get vertex's labels");
 DATA(insert OID = 7076 ( type			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 25 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
 DESCR("get edge's label");
@@ -5463,6 +5463,46 @@ DATA(insert OID = 7192 ( jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 
 /* Cypher expressions - coercion from jsonb to int8/int4 */
 DATA(insert OID = 7193 ( int8		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 20 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_int8 _null_ _null_ _null_ ));
 DATA(insert OID = 7194 ( int4		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_int4 _null_ _null_ _null_ ));
+DATA(insert OID = 7195 ( float8		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_float8 _null_ _null_ _null_ ));
+/* Cypher expressions - functions */
+DATA(insert OID = 7196 ( head		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_head _null_ _null_ _null_ ));
+DATA(insert OID = 7197 ( last		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_last _null_ _null_ _null_ ));
+DATA(insert OID = 7198 ( length		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_length _null_ _null_ _null_ ));
+DATA(insert OID = 7199 ( toboolean	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 16 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_toboolean _null_ _null_ _null_ ));
+DATA(insert OID = 7202 ( keys		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_keys _null_ _null_ _null_ ));
+DATA(insert OID = 7203 ( tail		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_tail _null_ _null_ _null_ ));
+DATA(insert OID = 7204 ( abs		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_abs _null_ _null_ _null_ ));
+DATA(insert OID = 7205 ( ceil		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_ceil _null_ _null_ _null_ ));
+DATA(insert OID = 7206 ( floor		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_floor _null_ _null_ _null_ ));
+DATA(insert OID = 7207 ( rand		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 0 0 3802 "" _null_ _null_ _null_ _null_ _null_ jsonb_rand _null_ _null_ _null_ ));
+DATA(insert OID = 7208 ( round		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_round _null_ _null_ _null_ ));
+DATA(insert OID = 7209 ( sign		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_sign _null_ _null_ _null_ ));
+DATA(insert OID = 7211 ( exp		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_exp _null_ _null_ _null_ ));
+DATA(insert OID = 7212 ( log		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_log _null_ _null_ _null_ ));
+DATA(insert OID = 7213 ( log10		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_log10 _null_ _null_ _null_ ));
+DATA(insert OID = 7214 ( sqrt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_sqrt _null_ _null_ _null_ ));
+DATA(insert OID = 7215 ( acos		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_acos _null_ _null_ _null_ ));
+DATA(insert OID = 7216 ( asin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_asin _null_ _null_ _null_ ));
+DATA(insert OID = 7217 ( atan		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_atan _null_ _null_ _null_ ));
+DATA(insert OID = 7218 ( atan2		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_atan2 _null_ _null_ _null_ ));
+DATA(insert OID = 7219 ( cos		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_cos _null_ _null_ _null_ ));
+DATA(insert OID = 7220 ( cot		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_cot _null_ _null_ _null_ ));
+DATA(insert OID = 7221 ( degrees	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_degrees _null_ _null_ _null_ ));
+DATA(insert OID = 7224 ( radians	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_radians _null_ _null_ _null_ ));
+DATA(insert OID = 7225 ( sin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_sin _null_ _null_ _null_ ));
+DATA(insert OID = 7226 ( tan		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_tan _null_ _null_ _null_ ));
+DATA(insert OID = 7227 ( left		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_left _null_ _null_ _null_ ));
+DATA(insert OID = 7228 ( ltrim		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_ltrim _null_ _null_ _null_ ));
+DATA(insert OID = 7229 ( replace	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 3802 "3802 3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_replace _null_ _null_ _null_ ));
+DATA(insert OID = 7230 ( reverse	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_reverse _null_ _null_ _null_ ));
+DATA(insert OID = 7231 ( right		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_right _null_ _null_ _null_ ));
+DATA(insert OID = 7232 ( rtrim		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_rtrim _null_ _null_ _null_ ));
+DATA(insert OID = 7234 ( substring	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_substr_no_len _null_ _null_ _null_ ));
+DATA(insert OID = 7235 ( substring	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 3802 "3802 3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_substr _null_ _null_ _null_ ));
+DATA(insert OID = 7236 ( tolower	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_tolower _null_ _null_ _null_ ));
+DATA(insert OID = 7237 ( tostring	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_tostring _null_ _null_ _null_ ));
+DATA(insert OID = 7238 ( toupper	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_toupper _null_ _null_ _null_ ));
+DATA(insert OID = 7239 ( trim		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_trim _null_ _null_ _null_ ));
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

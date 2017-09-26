@@ -565,7 +565,6 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 /* Cypher */
 %type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
-				cypher_findpath_expr
 				cypher_no_parens
 				cypher_read cypher_read_clauses cypher_read_opt
 				cypher_read_opt_parens cypher_read_stmt cypher_read_with_parens
@@ -577,6 +576,8 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 %type <node>	cypher_expr cypher_expr_opt
 				cypher_expr_atom cypher_expr_literal
+				cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
+				cypher_expr_shortestpath
 				cypher_expr_var
 %type <list>	cypher_expr_comma_list
 %type <value>	cypher_expr_name
@@ -589,7 +590,8 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %type <node>	cypher_expr_list
 %type <list>	cypher_expr_list_elems
 
-%type <list>	cypher_pattern cypher_path cypher_path_chain
+%type <list>	cypher_pattern cypher_anon_pattern
+				cypher_path cypher_path_chain
 				cypher_types cypher_types_opt
 %type <node>	cypher_pattern_part cypher_pattern_var cypher_anon_pattern_part
 				cypher_shortestpath cypher_dijkstra
@@ -12406,48 +12408,6 @@ c_expr:		columnref								{ $$ = $1; }
 					n->location = @1;
 					$$ = (Node *)n;
 				}
-			| EXISTS '(' cypher_pattern ')'
-				{
-					CypherSubPattern *sub = makeNode(CypherSubPattern);
-					SubLink *n = makeNode(SubLink);
-					sub->kind = CSP_EXISTS;
-					sub->pattern = $3;
-					n->subLinkType = EXISTS_SUBLINK;
-					n->subLinkId = 0;
-					n->testexpr = NULL;
-					n->operName = NIL;
-					n->subselect = (Node *) sub;
-					n->location = @1;
-					$$ = (Node *)n;
-				}
-			| SIZE_P '(' cypher_pattern ')'
-				{
-					CypherSubPattern *sub = makeNode(CypherSubPattern);
-					SubLink *n = makeNode(SubLink);
-					sub->kind = CSP_SIZE;
-					sub->pattern = $3;
-					n->subLinkType = EXPR_SUBLINK;
-					n->subLinkId = 0;
-					n->testexpr = NULL;
-					n->operName = NIL;
-					n->subselect = (Node *) sub;
-					n->location = @1;
-					$$ = (Node *)n;
-				}
-			| cypher_findpath_expr
-				{
-					CypherSubPattern *sub = makeNode(CypherSubPattern);
-					SubLink *n = makeNode(SubLink);
-					sub->kind = CSP_FINDPATH;
-					sub->pattern = list_make1($1);
-					n->subLinkType = EXPR_SUBLINK;
-					n->subLinkId = 0;
-					n->testexpr = NULL;
-					n->operName = NIL;
-					n->subselect = (Node *) sub;
-					n->location = @1;
-					$$ = (Node *)n;
-				}
 			| ARRAY select_with_parens
 				{
 					SubLink *n = makeNode(SubLink);
@@ -15023,11 +14983,6 @@ cypher_clause:
 			| cypher_remove
 		;
 
-cypher_findpath_expr:
-			cypher_shortestpath
-			| cypher_dijkstra
-		;
-
 /*
  * Cypher Query Language
  */
@@ -15262,6 +15217,7 @@ cypher_expr_name:
 
 cypher_expr_atom:
 			cypher_expr_literal
+			| cypher_expr_func
 			| cypher_expr_var
 		;
 
@@ -15323,6 +15279,127 @@ cypher_expr_list_elems:
 			| /* EMPTY */				{ $$ = NIL; }
 		;
 
+cypher_expr_func:
+			cypher_expr_func_norm
+			| cypher_expr_func_subexpr
+		;
+
+cypher_expr_func_norm:
+			type_function_name '(' ')'
+				{
+					$$ = (Node *) makeFuncCall(list_make1(makeString($1)),
+											   NIL, @1);
+				}
+			| type_function_name '(' cypher_expr_comma_list ')'
+				{
+					$$ = (Node *) makeFuncCall(list_make1(makeString($1)),
+											   $3, @1);
+				}
+			| type_function_name '(' DISTINCT cypher_expr_comma_list ')'
+				{
+					FuncCall   *n;
+
+					n = makeFuncCall(list_make1(makeString($1)), $4, @1);
+					n->agg_distinct = TRUE;
+					$$ = (Node *) n;
+				}
+			| type_function_name '(' '*' ')'
+				{
+					FuncCall   *n;
+
+					n = makeFuncCall(list_make1(makeString($1)), NIL, @1);
+					n->agg_star = TRUE;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_func_subexpr:
+			cypher_expr_shortestpath
+				{
+					CypherSubPattern *sub;
+					SubLink	   *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_FINDPATH;
+					sub->pattern = list_make1($1);
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| COALESCE '(' cypher_expr_comma_list ')'
+				{
+					CoalesceExpr *c;
+
+					c = makeNode(CoalesceExpr);
+					c->args = $3;
+					c->location = @1;
+					$$ = (Node *) c;
+				}
+			| EXISTS '(' cypher_anon_pattern ')'
+				{
+					CypherSubPattern *sub;
+					SubLink	   *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_EXISTS;
+					sub->pattern = $3;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXISTS_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| SIZE_P '(' cypher_anon_pattern ')'
+				{
+					CypherSubPattern *sub;
+					SubLink	   *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_SIZE;
+					sub->pattern = $3;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| SUBSTRING '(' cypher_expr_comma_list ')'
+				{
+					if (list_length($3) < 2 || list_length($3) > 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_UNDEFINED_FUNCTION),
+								 errmsg("No function matches the given name and argument types."),
+								 parser_errposition(@1)));
+
+					$$ = (Node *) makeFuncCall(SystemFuncName("substring"), $3,
+											   @1);
+				}
+			| TRIM '(' cypher_expr ')'
+				{
+					$$ = (Node *) makeFuncCall(SystemFuncName("trim"),
+											   list_make1($3), @1);
+				}
+		;
+
+cypher_expr_shortestpath:
+			cypher_shortestpath
+			| cypher_dijkstra
+		;
+
 cypher_expr_var:
 			cypher_expr_varname
 				{
@@ -15355,6 +15432,13 @@ cypher_pattern_part:
 					n->variable = $1;
 					$$ = (Node *) n;
 				}
+			| cypher_pattern_var '=' cypher_dijkstra
+				{
+					CypherPath *n = (CypherPath *) $3;
+
+					n->variable = $1;
+					$$ = (Node *) n;
+				}
 			| '(' cypher_pattern_var ',' cypher_var ')' '=' cypher_dijkstra
 				{
 					CypherPath *n = (CypherPath *) $7;
@@ -15381,6 +15465,13 @@ cypher_pattern_varname:
 			IDENT						{ $$ = $1; }
 			| col_name_keyword			{ $$ = pstrdup($1); }
 			| type_func_name_keyword	{ $$ = pstrdup($1); }
+		;
+
+cypher_anon_pattern:
+			cypher_anon_pattern_part
+					{ $$ = list_make1($1); }
+			| cypher_anon_pattern ',' cypher_anon_pattern_part
+					{ $$ = lappend($1, $3); }
 		;
 
 cypher_anon_pattern_part:
@@ -15451,6 +15542,7 @@ cypher_dijkstra:
 					n->chain = $3;
 					n->weight = $5;
 					n->limit = makeIntConst(1, -1);
+					$$ = (Node *) n;
 				}
 			| DIJKSTRA '(' cypher_path_chain ','
 			cypher_expr ',' cypher_expr ')'
@@ -15469,6 +15561,7 @@ cypher_dijkstra:
 					n->weight = $5;
 					n->qual = $7;
 					n->limit = makeIntConst(1, -1);
+					$$ = (Node *) n;
 				}
 			| DIJKSTRA '(' cypher_path_chain ','
 			cypher_expr ',' LIMIT cypher_expr ')'
@@ -15486,6 +15579,7 @@ cypher_dijkstra:
 					n->chain = $3;
 					n->weight = $5;
 					n->limit = $8;
+					$$ = (Node *) n;
 				}
 			| DIJKSTRA '(' cypher_path_chain ','
 			cypher_expr ',' cypher_expr ',' LIMIT cypher_expr ')'
@@ -15504,6 +15598,7 @@ cypher_dijkstra:
 					n->weight = $5;
 					n->qual = $7;
 					n->limit = $10;
+					$$ = (Node *) n;
 				}
 		;
 
@@ -15701,7 +15796,6 @@ cypher_range_idx_opt:
 
 cypher_prop_map_opt:
 			cypher_expr_map
-			| '=' cypher_expr		{ $$ = $2; }
 			| /* EMPTY */			{ $$ = NULL; }
 		;
 

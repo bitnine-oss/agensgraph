@@ -389,5 +389,7 @@ DATA(insert (   16 3802 7192 i f ));
 /* assignment coercion from jsonb to int8/int4 */
 DATA(insert ( 3802   20 7193 a f ));
 DATA(insert ( 3802   23 7194 a f ));
+/* explicit coercion from jsonb to numeric */
+DATA(insert ( 3802  701 7195 e f ));
 
 #endif   /* PG_CAST_H */

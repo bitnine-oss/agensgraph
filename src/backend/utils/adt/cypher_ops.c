@@ -22,7 +22,7 @@ static Jsonb *numeric_to_number(Numeric n);
 static void ereport_number_op(PGFunction f, Jsonb *l, Jsonb *r);
 static void ereport_op(const char *op, Jsonb *l, Jsonb *r);
 static Datum get_numeric_0_datum(void);
-static Datum jsonb_int(Jsonb *j, PGFunction f);
+static Datum jsonb_num(Jsonb *j, PGFunction f);
 
 Datum
 jsonb_add(PG_FUNCTION_ARGS)
@@ -207,6 +207,16 @@ number_op(PGFunction f, Jsonb *l, Jsonb *r)
 	fcinfo.argnull[fcinfo.nargs] = false;
 	fcinfo.nargs++;
 
+	if (f == numeric_div)
+	{
+		int			s;
+
+		s = DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo.arg[0])) +
+			DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo.arg[1]));
+		if (s == 0)
+			f = numeric_div_trunc;
+	}
+
 	n = (*f) (&fcinfo);
 
 	if (fcinfo.isnull)
@@ -352,40 +362,53 @@ bool_jsonb(PG_FUNCTION_ARGS)
 Datum
 jsonb_int8(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
-
-	PG_RETURN_DATUM(jsonb_int(j, numeric_int8));
+	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB(0), numeric_int8));
 }
 
 Datum
 jsonb_int4(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB(0), numeric_int4));
+}
 
-	PG_RETURN_DATUM(jsonb_int(j, numeric_int4));
+Datum
+jsonb_float8(PG_FUNCTION_ARGS)
+{
+	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB(0), numeric_float8));
 }
 
 static Datum
-jsonb_int(Jsonb *j, PGFunction f)
+jsonb_num(Jsonb *j, PGFunction f)
 {
 	const char *type = (f == numeric_int8 ? "int8" : "int4");
-	JsonbValue *jv;
-	Datum		i;
 
-	if (!JB_ROOT_IS_SCALAR(j))
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("%s cannot be converted to %s",
-						JsonbToCString(NULL, &j->root, VARSIZE(j)), type)));
+	if (f == numeric_int8)
+		type = "int8";
+	else if (f == numeric_int4)
+		type = "int4";
+	else if (f == numeric_float8)
+		type = "float8";
+	else
+		elog(ERROR, "unexpected type");
 
-	jv = getIthJsonbValueFromContainer(&j->root, 0);
-	if (jv->type != jbvNumeric)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("%s cannot be converted to %s",
-						JsonbToCString(NULL, &j->root, VARSIZE(j)), type)));
+	if (JB_ROOT_IS_SCALAR(j))
+	{
+		JsonbValue *jv;
 
-	i = DirectFunctionCall1(f, NumericGetDatum(jv->val.numeric));
+		jv = getIthJsonbValueFromContainer(&j->root, 0);
+		if (jv->type == jbvNumeric)
+		{
+			Datum		n;
 
-	PG_RETURN_DATUM(i);
+			n = DirectFunctionCall1(f, NumericGetDatum(jv->val.numeric));
+
+			return n;
+		}
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("%s cannot be converted to %s",
+					JsonbToCString(NULL, &j->root, VARSIZE(j)), type)));
+	return 0;
 }
