@@ -28,6 +28,8 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "optimizer/tlist.h"
+#include "parser/analyze.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_cypher_expr.h"
 #include "parser/parse_func.h"
@@ -56,6 +58,9 @@ static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
 static Node *transformCypherListExpr(ParseState *pstate, CypherListExpr *cl);
+static Node *transformFuncCall(ParseState *pstate, FuncCall *fn);
+static Node *transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c);
+static Node *transformSubLink(ParseState *pstate, SubLink *sublink);
 static Node *transformIndirection(ParseState *pstate, Node *basenode,
 								  List *indirection);
 static Node *makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive);
@@ -105,6 +110,12 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			return transformCypherMapExpr(pstate, (CypherMapExpr *) expr);
 		case T_CypherListExpr:
 			return transformCypherListExpr(pstate, (CypherListExpr *) expr);
+		case T_FuncCall:
+			return transformFuncCall(pstate, (FuncCall *) expr);
+		case T_CoalesceExpr:
+			return transformCoalesceExpr(pstate, (CoalesceExpr *) expr);
+		case T_SubLink:
+			return transformSubLink(pstate, (SubLink *) expr);
 		case T_A_Indirection:
 			{
 				A_Indirection *indir = (A_Indirection *) expr;
@@ -657,6 +668,190 @@ transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 }
 
 static Node *
+transformFuncCall(ParseState *pstate, FuncCall *fn)
+{
+	ListCell   *la;
+	List	   *args = NIL;
+
+	foreach(la, fn->args)
+	{
+		Node	   *arg;
+
+		arg = transformCypherExprRecurse(pstate, lfirst(la));
+		arg = wrapEdgeRefTypes(pstate, arg);
+
+		args = lappend(args, arg);
+	}
+
+	if (fn->agg_within_group)
+	{
+		Assert(fn->agg_order != NIL);
+
+		foreach(la, fn->agg_order)
+		{
+			SortBy	   *arg = lfirst(la);
+
+			args = lappend(args, transformCypherExpr(pstate, arg->node,
+													 EXPR_KIND_ORDER_BY));
+		}
+	}
+
+	return ParseFuncOrColumn(pstate, fn->funcname, args, fn, fn->location);
+}
+
+static Node *
+transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c)
+{
+	ListCell   *la;
+	Node	   *arg;
+	Node	   *newarg;
+	List	   *newargs = NIL;
+	bool		is_jsonb = false;
+	Oid			coalescetype;
+	List	   *newcoercedargs = NIL;
+	CoalesceExpr *newc;
+
+	foreach(la, c->args)
+	{
+		arg = lfirst(la);
+
+		newarg = transformCypherExprRecurse(pstate, arg);
+		newarg = wrapEdgeRefTypes(pstate, newarg);
+		if (exprType(newarg) == JSONBOID)
+			is_jsonb = true;
+
+		newargs = lappend(newargs, newarg);
+	}
+
+	if (is_jsonb)
+		coalescetype = JSONBOID;
+	else
+		coalescetype = select_common_type(pstate, newargs, "COALESCE", NULL);
+
+	foreach(la, newargs)
+	{
+		arg = lfirst(la);
+
+		if (is_jsonb)
+			newarg = coerce_to_jsonb(pstate, arg, "jsonb");
+		else
+			newarg = coerce_to_common_type(pstate, arg, coalescetype,
+										   "COALESCE");
+
+		newcoercedargs = lappend(newcoercedargs, newarg);
+	}
+
+	newc = makeNode(CoalesceExpr);
+	newc->coalescetype = coalescetype;
+	newc->args = newcoercedargs;
+	newc->location = c->location;
+
+	return (Node *) newc;
+}
+
+static Node *
+transformSubLink(ParseState *pstate, SubLink *sublink)
+{
+	Query	   *qry;
+	const char *err;
+
+	err = NULL;
+	switch (pstate->p_expr_kind)
+	{
+		case EXPR_KIND_NONE:
+			Assert(EXPR_KIND_NONE);
+			break;
+		case EXPR_KIND_OTHER:
+			break;
+		case EXPR_KIND_JOIN_ON:
+		case EXPR_KIND_JOIN_USING:
+		case EXPR_KIND_FROM_SUBSELECT:
+		case EXPR_KIND_FROM_FUNCTION:
+		case EXPR_KIND_WHERE:
+		case EXPR_KIND_HAVING:
+		case EXPR_KIND_FILTER:
+		case EXPR_KIND_WINDOW_PARTITION:
+		case EXPR_KIND_WINDOW_ORDER:
+		case EXPR_KIND_WINDOW_FRAME_RANGE:
+		case EXPR_KIND_WINDOW_FRAME_ROWS:
+		case EXPR_KIND_SELECT_TARGET:
+		case EXPR_KIND_INSERT_TARGET:
+		case EXPR_KIND_UPDATE_SOURCE:
+		case EXPR_KIND_UPDATE_TARGET:
+		case EXPR_KIND_GROUP_BY:
+		case EXPR_KIND_ORDER_BY:
+		case EXPR_KIND_DISTINCT_ON:
+		case EXPR_KIND_LIMIT:
+		case EXPR_KIND_OFFSET:
+		case EXPR_KIND_RETURNING:
+		case EXPR_KIND_VALUES:
+		case EXPR_KIND_POLICY:
+			break;
+		case EXPR_KIND_CHECK_CONSTRAINT:
+		case EXPR_KIND_DOMAIN_CHECK:
+			err = _("cannot use subquery in check constraint");
+			break;
+		case EXPR_KIND_COLUMN_DEFAULT:
+		case EXPR_KIND_FUNCTION_DEFAULT:
+			err = _("cannot use subquery in DEFAULT expression");
+			break;
+		case EXPR_KIND_INDEX_EXPRESSION:
+			err = _("cannot use subquery in index expression");
+			break;
+		case EXPR_KIND_INDEX_PREDICATE:
+			err = _("cannot use subquery in index predicate");
+			break;
+		case EXPR_KIND_ALTER_COL_TRANSFORM:
+			err = _("cannot use subquery in transform expression");
+			break;
+		case EXPR_KIND_EXECUTE_PARAMETER:
+			err = _("cannot use subquery in EXECUTE parameter");
+			break;
+		case EXPR_KIND_TRIGGER_WHEN:
+			err = _("cannot use subquery in trigger WHEN condition");
+			break;
+	}
+	if (err)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg_internal("%s", err),
+				 parser_errposition(pstate, sublink->location)));
+
+	pstate->p_hasSubLinks = true;
+
+	qry = parse_sub_analyze(sublink->subselect, pstate, NULL, false);
+	if (!IsA(qry, Query) ||
+		qry->commandType != CMD_SELECT ||
+		qry->utilityStmt != NULL)
+		elog(ERROR, "unexpected non-SELECT command in SubLink");
+
+	sublink->subselect = (Node *) qry;
+
+	if (sublink->subLinkType == EXISTS_SUBLINK)
+	{
+		sublink->testexpr = NULL;
+		sublink->operName = NIL;
+	}
+	else if (sublink->subLinkType == EXPR_SUBLINK)
+	{
+		if (count_nonjunk_tlist_entries(qry->targetList) != 1)
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("subquery must return only one column"),
+					 parser_errposition(pstate, sublink->location)));
+
+		sublink->testexpr = NULL;
+		sublink->operName = NIL;
+	}
+	else
+	{
+		elog(ERROR, "unexpected SubLinkType: %d", sublink->subLinkType);
+	}
+
+	return (Node *) sublink;
+}
+
+static Node *
 transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 {
 	int			location = exprLocation(basenode);
@@ -863,10 +1058,23 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 	Node	   *r;
 
 	l = transformCypherExprRecurse(pstate, a->lexpr);
-	l = coerce_to_jsonb(pstate, l, "jsonb");
-
 	r = transformCypherExprRecurse(pstate, a->rexpr);
-	r = coerce_to_jsonb(pstate, r, "jsonb");
+
+	if (a->kind == AEXPR_OP && list_length(a->name) == 1)
+	{
+		const char *opname = strVal(linitial(a->name));
+
+		if (strcmp(opname, "`+`") == 0 ||
+			strcmp(opname, "`-`") == 0 ||
+			strcmp(opname, "`*`") == 0 ||
+			strcmp(opname, "`/`") == 0 ||
+			strcmp(opname, "`%`") == 0 ||
+			strcmp(opname, "`^`") == 0)
+		{
+			l = coerce_to_jsonb(pstate, l, "jsonb");
+			r = coerce_to_jsonb(pstate, r, "jsonb");
+		}
+	}
 
 	return (Node *) make_op(pstate, a->name, l, r, a->location);
 }

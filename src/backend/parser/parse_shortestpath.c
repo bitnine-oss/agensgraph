@@ -16,16 +16,19 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/pg_list.h"
+#include "optimizer/var.h"
 #include "parser/analyze.h"
 #include "parser/parse_agg.h"
 #include "parser/parse_clause.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
+#include "parser/parse_cypher_expr.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_func.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_shortestpath.h"
 #include "parser/parse_target.h"
+#include "utils/builtins.h"
 
 #define SP_ALIAS_CTE		"_sp"
 
@@ -64,6 +67,9 @@ static RangeTblEntry *makeDijkstraEdgeQuery(ParseState *pstate,
 static Node *makeDijkstraEdgeUnion(char *elabel_name, char *row_name);
 static Node *makeDijkstraEdge(char *elabel_name, char *row_name,
 							  CypherRel *crel);
+static Node *transformCypherLimit(ParseState *pstate, Node *clause,
+								  ParseExprKind exprKind,
+								  const char *constructName);
 
 /* parse node */
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
@@ -192,16 +198,16 @@ checkRelFormat(ParseState *pstate, CypherRel *crel)
 }
 
 /*
- * WITH _sp(vids, eids, hops) AS (
- *   VALUES (ARRAY[id(`initialVertex`)]::graphid[], ARRAY[]::rowid[], 0)
+ * WITH _sp(vids, eids, hops, vid) AS (
+ *   VALUES (ARRAY[id(`initialVertex`)]::graphid[],
+ *           ARRAY[]::rowid[], 0, id(`initialVertex`))
  *   UNION ALL
- *   SELECT DISTINCT ON ("end")
- *          array_append(vids, "end"),
+ *   SELECT array_append(vids, "end"),
  *          array_append(eids, rowid(tableoid, ctid)),
- *          hops + 1
+ *          hops + 1,
+ *          "end"
  *   FROM _sp, `get_graph_path()`.`typname` AS _e(id, start, "end", properties)
- *   WHERE vids[array_upper(vids, 1)] = start AND
- *         array_position(vids, "end") IS NULL
+ *   WHERE vid = start AND array_position(vids, "end") IS NULL
  * )
  * SELECT (
  *     (
@@ -217,10 +223,9 @@ checkRelFormat(ParseState *pstate, CypherRel *crel)
  *     (
  *       SELECT array_agg(
  *           (
- *             SELECT (id, start, "end", properties)::vertex
+ *             SELECT (id, start, "end", properties)::edge
  *             FROM `get_graph_path()`.`typname`
- *             WHERE tableoid = rowid_tableoid(eid)
- *               AND ctid = rowid_ctid(eid)
+ *             WHERE tableoid = rowid_tableoid(eid) AND ctid = rowid_ctid(eid)
  *           )
  *         )
  *       FROM unnest(eids) AS eid
@@ -230,8 +235,7 @@ checkRelFormat(ParseState *pstate, CypherRel *crel)
  * (
  *   SELECT vids, eids
  *   FROM _sp
- *   WHERE vids[array_upper(vids, 1)] = id(`lastVertex`) AND
- *         hops >= `lidx`
+ *   WHERE vid = id(`lastVertex`) AND hops >= `lidx`
  *   LIMIT 1
  * ) AS _r
  */
@@ -289,7 +293,7 @@ makeShortestPathQuery(ParseState *pstate, CypherPath *cpath, bool isexpr)
 }
 
 /* VALUES (ARRAY[id(`initialVertex`)]::graphid[],
- *         ARRAY[]::rowid[], 0, NULL::graphid) */
+ *         ARRAY[]::rowid[], 0, id(`initialVertex`)) */
 static SelectStmt *
 makeNonRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 {
@@ -330,8 +334,7 @@ makeNonRecursiveTerm(ParseState *pstate, CypherPath *cpath)
  *        hops + 1,
  *        "end"
  * FROM _sp, `get_graph_path()`.`typname` AS _e(id, start, "end", properties)
- * WHERE vids[array_upper(vids, 1)] = start AND
- *       array_position(vids, "end") IS NULL
+ * WHERE vid = start AND array_position(vids, "end") IS NULL
  */
 static SelectStmt *
 makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
@@ -513,9 +516,9 @@ makeEdgeUnion(char *edge_label)
  *     (
  *       SELECT array_agg(
  *           (
- *             SELECT (id, start, "end", properties)::vertex
+ *             SELECT (id, start, "end", properties)::edge
  *             FROM `get_graph_path()`.`typname`
- *             WHERE id = eid
+ *             WHERE tableoid = rowid_tableoid(eid) AND ctid = rowid_ctid(eid)
  *           )
  *         )
  *       FROM unnest(eids) AS eid
@@ -525,8 +528,7 @@ makeEdgeUnion(char *edge_label)
  * (
  *   SELECT vids, eids
  *   FROM _sp
- *   WHERE vids[array_upper(vids, 1)] = id(`lastVertex`) AND
- *         hops >= `lidx`
+ *   WHERE vid = id(`lastVertex`) AND hops >= `lidx`
  *   LIMIT 1
  * ) AS _r
  */
@@ -570,8 +572,7 @@ makeSelectWith(CypherPath *cpath, WithClause *with, bool isexpr)
 /*
  * SELECT vids, eids
  * FROM _sp
- * WHERE vids[array_upper(vids, 1)] = id(`lastVertex`) AND
- *       hops >= `lidx`
+ * WHERE vid = id(`lastVertex`) AND hops >= `lidx`
  * LIMIT 1
  */
 static RangeSubselect *
@@ -704,7 +705,7 @@ makeVerticesSubLink(void)
 /*
  * SELECT array_agg(
  *     (
- *       SELECT (id, start, "end", properties)::vertex
+ *       SELECT (id, start, "end", properties)::edge
  *       FROM `get_graph_path()`.`typname`
  *
  *       # shortestpath()
@@ -1049,7 +1050,7 @@ checkRelFormatForDijkstra(ParseState *pstate, CypherRel *crel)
  *     (
  *       SELECT array_agg(
  *           (
- *             SELECT (id, start, "end", properties)::vertex
+ *             SELECT (id, start, "end", properties)::edge
  *             FROM `get_graph_path()`.`typname`
  *             WHERE id = eid
  *           )
@@ -1158,7 +1159,7 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	TargetEntry *te;
 	FuncCall   *fc;
 	CypherRel  *crel;
-
+	Oid			wtype;
 	Node  	   *start;
 	CypherNode *vertex;
 	Node	   *param;
@@ -1197,8 +1198,32 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	qry->targetList = lappend(qry->targetList, te);
 
 	/* weight */
-	target = transformExpr(pstate, cpath->weight, EXPR_KIND_SELECT_TARGET);
-	target = coerce_to_specific_type(pstate, target, FLOAT8OID, "WEIGHT");
+	target = transformCypherExpr(pstate, cpath->weight,
+								 EXPR_KIND_SELECT_TARGET);
+	wtype = exprType(target);
+	if (wtype != FLOAT8OID)
+	{
+		Node	   *weight;
+
+		weight = coerce_to_target_type(pstate, target, wtype, FLOAT8OID, -1,
+									   COERCION_EXPLICIT, COERCE_EXPLICIT_CAST,
+									   -1);
+		if (weight == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("weight must be type %s, not type %s",
+							format_type_be(FLOAT8OID),
+							format_type_be(wtype)),
+					 parser_errposition(pstate, exprLocation(target))));
+
+		target = weight;
+	}
+	if (expression_returns_set(target))
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("weight must not return a set"),
+				 parser_errposition(pstate, exprLocation(target))));
+
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "weight", cpath->weight_var == NULL);
@@ -1240,8 +1265,9 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	if (cpath->qual != NULL)
 		where = lappend(where, cpath->qual);
 
-	qual = transformExpr(pstate, (Node *) makeBoolExpr(AND_EXPR, where, -1),
-						 EXPR_KIND_WHERE);
+	qual = transformCypherExpr(pstate,
+							   (Node *) makeBoolExpr(AND_EXPR, where, -1),
+							   EXPR_KIND_WHERE);
 
 	/* Dijkstra source */
 	qry->dijkstraSource = transformExpr(pstate,
@@ -1257,10 +1283,8 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 										EXPR_KIND_SELECT_TARGET);
 
 	/* Dijkstra LIMIT */
-	target = transformLimitClause(pstate, cpath->limit,
-								  EXPR_KIND_LIMIT, "LIMIT");
-	target = coerce_to_specific_type(pstate, target, INT8OID, "LIMIT");
-	qry->dijkstraLimit = target;
+	qry->dijkstraLimit = transformCypherLimit(pstate, cpath->limit,
+											  EXPR_KIND_LIMIT, "LIMIT");
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
@@ -1427,6 +1451,32 @@ makeDijkstraEdge(char *elabel_name, char *row_name, CypherRel *crel)
 	}
 
 	return (Node *) sel;
+}
+
+static Node *
+transformCypherLimit(ParseState *pstate, Node *clause,
+					 ParseExprKind exprKind, const char *constructName)
+{
+	Node	   *qual;
+
+	if (clause == NULL)
+		return NULL;
+
+	qual = transformCypherExpr(pstate, clause, exprKind);
+
+	qual = coerce_to_specific_type(pstate, qual, INT8OID, constructName);
+
+	/* LIMIT can't refer to any variables of the current query */
+	if (contain_vars_of_level(qual, 0))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+				 errmsg("argument of %s must not contain variables",
+						constructName),
+				 parser_errposition(pstate, locate_var_of_level(qual, 0))));
+	}
+
+	return qual;
 }
 
 /* TODO: Remove */

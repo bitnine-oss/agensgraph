@@ -272,7 +272,6 @@ static void createLabelIfNotExist(ParseState *pstate, char *labname, int labloc,
 static bool isNodeForRef(CypherNode *cnode);
 static Node *transformPropMap(ParseState *pstate, Node *expr,
 							  ParseExprKind exprKind);
-static Node *preprocessPropMap(Node *expr);
 
 /* transform */
 static RangeTblEntry *transformClause(ParseState *pstate, Node *clause);
@@ -4696,7 +4695,7 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 {
 	Node *prop_map;
 
-	prop_map = transformCypherExpr(pstate, preprocessPropMap(expr), exprKind);
+	prop_map = transformCypherExpr(pstate, expr, exprKind);
 	if (exprType(prop_map) != JSONBOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -4704,23 +4703,6 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 				 parser_errposition(pstate, exprLocation(prop_map))));
 
 	return resolve_future_vertex(pstate, prop_map, 0);
-}
-
-static Node *
-preprocessPropMap(Node *expr)
-{
-	Node	   *result = expr;
-
-	if (IsA(expr, A_Const))
-	{
-		A_Const *c = (A_Const *) expr;
-
-		if (IsA(&c->val, String))
-			result = (Node *) makeFuncCall(list_make1(makeString("jsonb_in")),
-										   list_make1(expr), -1);
-	}
-
-	return result;
 }
 
 static RangeTblEntry *

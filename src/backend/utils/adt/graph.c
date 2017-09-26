@@ -1058,15 +1058,26 @@ vertex_labels(PG_FUNCTION_ARGS)
 {
 	Graphid		id;
 	LabelOutData *my_extra;
-	Datum		label;
+	char	   *label;
+	JsonbValue	jv;
+	JsonbParseState *jpstate = NULL;
+	JsonbValue *ajv;
 
 	id = DatumGetGraphid(getVertexIdDatum(PG_GETARG_DATUM(0)));
 
 	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
 
-	label = CStringGetTextDatum(NameStr(my_extra->label));
+	label = NameStr(my_extra->label);
 
-	PG_RETURN_ARRAYTYPE_P(makeArrayTypeDatum(&label, 1, TEXTOID));
+	jv.type = jbvString;
+	jv.val.string.len = strlen(label);
+	jv.val.string.val = label;
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+	pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+
+	PG_RETURN_JSONB(JsonbValueToJsonb(ajv));
 }
 
 Datum
