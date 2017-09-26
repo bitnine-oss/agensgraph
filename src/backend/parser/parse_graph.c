@@ -272,7 +272,6 @@ static void createLabelIfNotExist(ParseState *pstate, char *labname, int labloc,
 static bool isNodeForRef(CypherNode *cnode);
 static Node *transformPropMap(ParseState *pstate, Node *expr,
 							  ParseExprKind exprKind);
-static Node *preprocessPropMap(Node *expr);
 static Node *stripNullKeys(ParseState *pstate, Node *properties);
 
 /* transform */
@@ -4699,7 +4698,7 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 {
 	Node *prop_map;
 
-	prop_map = transformCypherExpr(pstate, preprocessPropMap(expr), exprKind);
+	prop_map = transformCypherExpr(pstate, expr, exprKind);
 	if (exprType(prop_map) != JSONBOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -4713,20 +4712,17 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 }
 
 static Node *
-preprocessPropMap(Node *expr)
+stripNullKeys(ParseState *pstate, Node *properties)
 {
-	Node	   *result = expr;
 
-	if (IsA(expr, A_Const))
-	{
-		A_Const *c = (A_Const *) expr;
+	FuncCall *strip;
 
-		if (IsA(&c->val, String))
-			result = (Node *) makeFuncCall(list_make1(makeString("jsonb_in")),
-										   list_make1(expr), -1);
-	}
+	/* keys with NULL value is not allowed */
+	strip = makeFuncCall(list_make1(makeString("jsonb_strip_nulls")), NIL, -1);
 
-	return result;
+	return ParseFuncOrColumn(pstate, strip->funcname,
+							 list_make1(properties), strip, -1);
+
 }
 
 static RangeTblEntry *
@@ -5437,18 +5433,4 @@ genUniqueName(void)
 	snprintf(data, sizeof(data), "<%010u>", seq++);
 
 	return pstrdup(data);
-}
-
-static Node *
-stripNullKeys(ParseState *pstate, Node *properties)
-{
-
-	FuncCall *strip;
-
-	/* keys with NULL value is not allowed */
-	strip = makeFuncCall(list_make1(makeString("jsonb_strip_nulls")), NIL, -1);
-
-	return ParseFuncOrColumn(pstate, strip->funcname,
-							 list_make1(properties), strip, -1);
-
 }
