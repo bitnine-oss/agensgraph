@@ -60,7 +60,14 @@
 #include "utils/rel.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
+#include "utils/numeric.h"
 
+typedef enum
+{
+	LOWER_IDX,
+	SINGLE_IDX,
+	UPPER_IDX
+} IndexPosition;
 
 /* static function decls */
 static Datum ExecEvalArrayRef(ArrayRefExprState *astate,
@@ -196,6 +203,9 @@ static Datum ExecEvalCypherList(CypherListExprState *clstate,
 static Datum ExecEvalCypherAccess(CypherAccessExprState *astate,
 								  ExprContext *econtext, bool *isNull,
 								  ExprDoneCond *isDone);
+static int GetListIndex(ExprState  *s, ExprContext *econtext,
+							 JsonbContainer *container, IndexPosition idx);
+static int ValidateListIndex(int n, uint32 size, IndexPosition idx);
 
 
 /* ----------------------------------------------------------------
@@ -4968,11 +4978,82 @@ ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 				return 0;
 			}
 		}
+		else if (container->header & JB_FARRAY)
+		{
+			CypherIndices *cind;
+			ExprState  *s;
+			ExprState  *t;
+
+			if (!IsA(elem, CypherIndices))
+			{
+				ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("map is expected but list")));
+				return 0;
+			}
+
+			cind = (CypherIndices *) elem;
+			if (cind->is_slice)
+			{
+				JsonbParseState *state = NULL;
+				JsonbValue *val;
+				int l = 0;
+				int u = container->header & JB_CMASK;
+
+				s = (ExprState *) cind->lidx;
+				t = (ExprState *) cind->uidx;
+
+				if (s != NULL)
+					l = GetListIndex(s, econtext, container, LOWER_IDX);
+				if (t != NULL)
+					u = GetListIndex(t, econtext, container, UPPER_IDX);
+
+				l = ValidateListIndex(l, container->header & JB_CMASK,
+									 LOWER_IDX);
+				u = ValidateListIndex(u, container->header & JB_CMASK,
+									 UPPER_IDX);
+
+				pushJsonbValue(&state, WJB_BEGIN_ARRAY, NULL);
+
+				for ( int i = l; i < u; i ++)
+				{
+					val = getIthJsonbValueFromContainer(container, i);
+					pushJsonbValue(&state, WJB_ELEM, val);
+				}
+
+				vjv = pushJsonbValue(&state, WJB_END_ARRAY, NULL);
+
+				if (vjv == NULL)
+				{
+					*isNull = true;
+					return 0;
+				}
+			}
+			else
+			{
+				int n;
+
+				s = (ExprState *) cind->uidx;
+				Assert(s != NULL);
+
+
+				n = GetListIndex(s, econtext, container, SINGLE_IDX);
+				n = ValidateListIndex(n, container->header & JB_CMASK,
+									 SINGLE_IDX);
+
+				vjv = getIthJsonbValueFromContainer(container, n);
+				if (vjv == NULL)
+				{
+					*isNull = true;
+					return 0;
+				}
+			}
+		}
 		else
 		{
 			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("accessing list elements not supported")));
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("Incorrect datatype")));
 			return 0;
 		}
 	}
@@ -4981,6 +5062,94 @@ ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 	PG_RETURN_JSONB(JsonbValueToJsonb(vjv));
 }
 
+int
+GetListIndex(ExprState *s, ExprContext *econtext,
+	JsonbContainer *container, IndexPosition idx)
+{
+	Oid			stype;
+	Datum		sd;
+	JsonbValue	_sjv;
+	JsonbValue *sjv;
+	int n;
+	bool eisnull;
+
+	stype = exprType((Node *) s->expr);
+	sd = ExecEvalExpr(s, econtext, &eisnull, NULL);
+	if (eisnull)
+	{
+		if (idx == LOWER_IDX)
+			return 0;
+		else if (idx == UPPER_IDX)
+			return container->header & JB_CMASK;
+
+		Assert(idx == SINGLE_IDX);
+
+		_sjv.type = jbvNull;
+		sjv = &_sjv;
+	}
+	else if (stype == JSONBOID)
+	{
+		Jsonb	   *j = DatumGetJsonb(sd);
+
+		if (JB_ROOT_IS_SCALAR(j))
+		{
+			sjv = getIthJsonbValueFromContainer(&j->root, 0);
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("key value must be scalar")));
+			return 0;
+		}
+	}
+	else
+	{
+		Assert(!"unexpected key type");
+		return 0;
+	}
+
+	switch (sjv->type)
+	{
+		case jbvNull:
+			elog(ERROR, "null index value not supported");
+			return 0;
+		case jbvString:
+			elog(ERROR, "string index value not supported");
+			return 0;
+		case jbvNumeric:
+			break;
+		case jbvBool:
+			elog(ERROR, "boolean index value not supported");
+			return 0;
+		default:
+			elog(ERROR, "unknown jsonb scalar type");
+			return 0;
+	}
+	if (DatumGetInt32(DirectFunctionCall1(numeric_scale, NumericGetDatum((sjv->val.numeric))) > 0))
+	{
+		ereport(ERROR,
+			(errcode(ERRCODE_DATATYPE_MISMATCH),
+			 errmsg("int value expected for index")));
+	}
+	n = DatumGetInt32(DirectFunctionCall1(numeric_int8, NumericGetDatum(sjv->val.numeric)));
+
+	return n;
+}
+
+static int ValidateListIndex(int n, uint32 size, IndexPosition idx )
+{
+	if(n < 0)
+		n += size;
+
+	if (n < 0 && (idx == LOWER_IDX || idx == UPPER_IDX))
+		n = 0;
+
+	if (n > size)
+		n = size;
+
+	return n;
+}
 /*
  * ExecEvalExprSwitchContext
  *
