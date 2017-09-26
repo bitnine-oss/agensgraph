@@ -1169,13 +1169,6 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 			Assert(IsA(i, A_Indices));
 
 			ind = (A_Indices *) i;
-			if (ind->is_slice)
-			{
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("[..] not supported")));
-				return NULL;
-			}
 
 			/*
 			 * ExecEvalCypherAccess() will handle lidx and uidx properly
