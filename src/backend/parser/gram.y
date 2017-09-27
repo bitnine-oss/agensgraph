@@ -576,8 +576,6 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 %type <node>	cypher_expr cypher_expr_opt
 				cypher_expr_atom cypher_expr_literal
-				cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
-				cypher_expr_shortestpath
 				cypher_expr_var
 %type <list>	cypher_expr_comma_list
 %type <value>	cypher_expr_name
@@ -589,6 +587,12 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 %type <node>	cypher_expr_list
 %type <list>	cypher_expr_list_elems
+
+%type <node>	cypher_expr_case cypher_expr_case_when cypher_expr_case_default
+%type <list>	cypher_expr_case_when_list
+
+%type <node>	cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
+				cypher_expr_shortestpath
 
 %type <list>	cypher_pattern cypher_anon_pattern
 				cypher_path cypher_path_chain
@@ -15131,6 +15135,10 @@ cypher_expr:
 						$$ = (Node *) n;
 					}
 				}
+			| cypher_expr IN_P cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_IN, "=", $1, $3, @2);
+				}
 			| cypher_expr IS NULL_P							%prec IS
 				{
 					NullTest   *n;
@@ -15217,6 +15225,7 @@ cypher_expr_name:
 
 cypher_expr_atom:
 			cypher_expr_literal
+			| cypher_expr_case
 			| cypher_expr_func
 			| cypher_expr_var
 		;
@@ -15277,6 +15286,47 @@ cypher_expr_list:
 cypher_expr_list_elems:
 			cypher_expr_comma_list
 			| /* EMPTY */				{ $$ = NIL; }
+		;
+
+cypher_expr_case:
+			CASE cypher_expr_opt cypher_expr_case_when_list
+			cypher_expr_case_default END_P
+				{
+					CaseExpr   *n;
+
+					n = makeNode(CaseExpr);
+					n->casetype = InvalidOid;
+					n->arg = (Expr *) $2;
+					n->args = $3;
+					n->defresult = (Expr *) $4;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_case_when_list:
+			cypher_expr_case_when
+					{ $$ = list_make1($1); }
+			| cypher_expr_case_when_list cypher_expr_case_when
+					{ $$ = lappend($1, $2); }
+		;
+
+cypher_expr_case_when:
+			WHEN cypher_expr THEN cypher_expr
+				{
+					CaseWhen   *n;
+
+					n = makeNode(CaseWhen);
+					n->expr = (Expr *) $2;
+					n->result = (Expr *) $4;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_case_default:
+			ELSE cypher_expr		{ $$ = $2; }
+			| /* EMPTY */			{ $$ = NULL; }
 		;
 
 cypher_expr_func:
