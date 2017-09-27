@@ -563,16 +563,15 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %type <boolean> opt_disable_index
 %type <ival>	reindex_target_label
 
-/* Cypher */
-%type <node>	CypherStmt cypher_clause cypher_clause_head cypher_clause_prev
-				cypher_no_parens
-				cypher_read cypher_read_clauses cypher_read_opt
-				cypher_read_opt_parens cypher_read_stmt cypher_read_with_parens
-				cypher_with_parens
-
 /*
  * Cypher Query Language
  */
+
+%type <node>	CypherStmt cypher_with_parens cypher_no_parens
+				cypher_clause_prev cypher_clause_head cypher_clause
+
+%type <node>	cypher_read_opt_parens cypher_read_with_parens cypher_read_stmt
+				cypher_read_opt cypher_read cypher_read_clauses
 
 %type <node>	cypher_expr cypher_expr_opt
 				cypher_expr_atom cypher_expr_literal
@@ -14847,82 +14846,8 @@ DropPropertyIndexStmt:
 		;
 
 /*
- * Cypher
+ * Cypher Query Language
  */
-
-cypher_read_opt_parens:
-			cypher_read_stmt
-			| cypher_read_with_parens
-		;
-
-cypher_read_with_parens:
-			'(' cypher_read_stmt ')'			{ $$ = $2; }
-			| '(' cypher_read_with_parens ')'	{ $$ = $2; }
-		;
-
-cypher_read_stmt:
-			cypher_read_opt cypher_return
-				{
-					CypherClause *clause;
-					CypherStmt *n;
-
-					clause = makeNode(CypherClause);
-					clause->detail = $2;
-					clause->prev = $1;
-
-					n = makeNode(CypherStmt);
-					n->last = (Node *) clause;
-					$$ = (Node *) n;
-				}
-			| cypher_read_opt_parens UNION all_or_distinct
-			  cypher_read_opt_parens
-				{
-					$$ = makeCypherSetOp(SETOP_UNION, $3, $1, $4);
-				}
-			| cypher_read_opt_parens INTERSECT all_or_distinct
-			  cypher_read_opt_parens
-				{
-					$$ = makeCypherSetOp(SETOP_INTERSECT, $3, $1, $4);
-				}
-			| cypher_read_opt_parens EXCEPT all_or_distinct
-			  cypher_read_opt_parens
-				{
-					$$ = makeCypherSetOp(SETOP_EXCEPT, $3, $1, $4);
-				}
-		;
-
-cypher_read_opt:
-			cypher_read
-			| /* EMPTY */		{ $$ = NULL; }
-		;
-
-cypher_read:
-			cypher_match
-				{
-					CypherClause *n = makeNode(CypherClause);
-					n->detail = $1;
-					$$ = (Node *) n;
-				}
-			| cypher_load
-				{
-					CypherClause *n = makeNode(CypherClause);
-					n->detail = $1;
-					$$ = (Node *) n;
-				}
-			| cypher_read cypher_read_clauses
-				{
-					CypherClause *n = makeNode(CypherClause);
-					n->detail = $2;
-					n->prev = $1;
-					$$ = (Node *) n;
-				}
-		;
-
-cypher_read_clauses:
-			cypher_match
-			| cypher_with
-			| cypher_load
-		;
 
 CypherStmt:
 			cypher_no_parens
@@ -14930,41 +14855,41 @@ CypherStmt:
 		;
 
 cypher_with_parens:
-			'(' cypher_no_parens ')'		{ $$ = $2; }
-			| '(' cypher_with_parens ')'	{ $$ = $2; }
+			'(' cypher_no_parens ')'			{ $$ = $2; }
+			| '(' cypher_with_parens ')'		{ $$ = $2; }
 		;
 
 cypher_no_parens:
 			cypher_clause_prev
 				{
-					CypherStmt *n = makeNode(CypherStmt);
+					CypherStmt *n;
+
+					n = makeNode(CypherStmt);
 					n->last = $1;
 					$$ = (Node *) n;
 				}
 			| CypherStmt UNION all_or_distinct CypherStmt
-				{
-					$$ = makeCypherSetOp(SETOP_UNION, $3, $1, $4);
-				}
+					{ $$ = makeCypherSetOp(SETOP_UNION, $3, $1, $4); }
 			| CypherStmt INTERSECT all_or_distinct CypherStmt
-				{
-					$$ = makeCypherSetOp(SETOP_INTERSECT, $3, $1, $4);
-				}
+					{ $$ = makeCypherSetOp(SETOP_INTERSECT, $3, $1, $4); }
 			| CypherStmt EXCEPT all_or_distinct CypherStmt
-				{
-					$$ = makeCypherSetOp(SETOP_EXCEPT, $3, $1, $4);
-				}
+					{ $$ = makeCypherSetOp(SETOP_EXCEPT, $3, $1, $4); }
 		;
 
 cypher_clause_prev:
 			cypher_clause_head
 				{
-					CypherClause *n = makeNode(CypherClause);
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
 					n->detail = $1;
 					$$ = (Node *) n;
 				}
 			| cypher_clause_prev cypher_clause
 				{
-					CypherClause *n = makeNode(CypherClause);
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
 					n->detail = $2;
 					n->prev = $1;
 					$$ = (Node *) n;
@@ -14987,9 +14912,79 @@ cypher_clause:
 			| cypher_remove
 		;
 
-/*
- * Cypher Query Language
- */
+cypher_read_opt_parens:
+			cypher_read_stmt
+			| cypher_read_with_parens
+		;
+
+cypher_read_with_parens:
+			'(' cypher_read_stmt ')'				{ $$ = $2; }
+			| '(' cypher_read_with_parens ')'		{ $$ = $2; }
+		;
+
+cypher_read_stmt:
+			cypher_read_opt cypher_return
+				{
+					CypherClause *clause;
+					CypherStmt *n;
+
+					clause = makeNode(CypherClause);
+					clause->detail = $2;
+					clause->prev = $1;
+
+					n = makeNode(CypherStmt);
+					n->last = (Node *) clause;
+					$$ = (Node *) n;
+				}
+			| cypher_read_opt_parens UNION all_or_distinct
+			  cypher_read_opt_parens
+					{ $$ = makeCypherSetOp(SETOP_UNION, $3, $1, $4); }
+			| cypher_read_opt_parens INTERSECT all_or_distinct
+			  cypher_read_opt_parens
+					{ $$ = makeCypherSetOp(SETOP_INTERSECT, $3, $1, $4); }
+			| cypher_read_opt_parens EXCEPT all_or_distinct
+			  cypher_read_opt_parens
+					{ $$ = makeCypherSetOp(SETOP_EXCEPT, $3, $1, $4); }
+		;
+
+cypher_read_opt:
+			cypher_read
+			| /* EMPTY */		{ $$ = NULL; }
+		;
+
+cypher_read:
+			cypher_match
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_load
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_read cypher_read_clauses
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $2;
+					n->prev = $1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_read_clauses:
+			cypher_match
+			| cypher_with
+			| cypher_load
+		;
 
 cypher_expr:
 			cypher_expr OR cypher_expr
