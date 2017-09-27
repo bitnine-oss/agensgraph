@@ -796,8 +796,39 @@ transformCaseExpr(ParseState *pstate, CaseExpr *c)
 static Node *
 transformFuncCall(ParseState *pstate, FuncCall *fn)
 {
+	bool		is_num_agg = false;
 	ListCell   *la;
 	List	   *args = NIL;
+
+	if (list_length(fn->funcname) == 1)
+	{
+		char	   *funcname;
+
+		funcname = strVal(linitial(fn->funcname));
+
+		if (strcmp(funcname, "avg") == 0 ||
+			strcmp(funcname, "max") == 0 ||
+			strcmp(funcname, "min") == 0 ||
+			strcmp(funcname, "sum") == 0)
+			is_num_agg = true;
+
+		if (strcmp(funcname, "collect") == 0)
+		{
+			fn->funcname = list_make1(makeString("jsonb_agg"));
+		}
+
+		if (strcmp(funcname, "stdev") == 0)
+		{
+			fn->funcname = list_make1(makeString("stddev_samp"));
+			is_num_agg = true;
+		}
+
+		if (strcmp(funcname, "stdevp") == 0)
+		{
+			fn->funcname = list_make1(makeString("stddev_pop"));
+			is_num_agg = true;
+		}
+	}
 
 	foreach(la, fn->args)
 	{
@@ -805,6 +836,27 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 
 		arg = transformCypherExprRecurse(pstate, lfirst(la));
 		arg = wrapEdgeRefTypes(pstate, arg);
+		if (is_num_agg)
+		{
+			Oid			argtype = exprType(arg);
+			int			argloc = exprLocation(arg);
+			Node	   *newarg;
+
+			newarg = coerce_to_target_type(pstate, arg, argtype,
+										   NUMERICOID, -1, COERCION_EXPLICIT,
+										   COERCE_IMPLICIT_CAST, argloc);
+			if (newarg == NULL)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("%s cannot be converted to numeric",
+								format_type_be(argtype)),
+						 parser_errposition(pstate, argloc)));
+				return NULL;
+			}
+
+			arg = newarg;
+		}
 
 		args = lappend(args, arg);
 	}

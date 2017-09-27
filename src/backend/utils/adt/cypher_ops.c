@@ -372,6 +372,28 @@ jsonb_int4(PG_FUNCTION_ARGS)
 }
 
 Datum
+jsonb_numeric(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *j = PG_GETARG_JSONB(0);
+
+	if (JB_ROOT_IS_SCALAR(j))
+	{
+		JsonbValue *jv;
+
+		jv = getIthJsonbValueFromContainer(&j->root, 0);
+		if (jv->type == jbvNumeric)
+			PG_RETURN_DATUM(datumCopy(NumericGetDatum(jv->val.numeric), false,
+													  -1));
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("%s cannot be converted to numeric",
+					JsonbToCString(NULL, &j->root, VARSIZE(j)))));
+	PG_RETURN_NULL();
+}
+
+Datum
 jsonb_float8(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB(0), numeric_float8));
@@ -380,7 +402,7 @@ jsonb_float8(PG_FUNCTION_ARGS)
 static Datum
 jsonb_num(Jsonb *j, PGFunction f)
 {
-	const char *type = (f == numeric_int8 ? "int8" : "int4");
+	const char *type;
 
 	if (f == numeric_int8)
 		type = "int8";
