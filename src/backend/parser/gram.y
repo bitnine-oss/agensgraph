@@ -608,7 +608,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 %type <node>	cypher_expr cypher_expr_opt
 				cypher_expr_atom cypher_expr_literal
-				cypher_expr_var
+				cypher_expr_param cypher_expr_var
 %type <list>	cypher_expr_comma_list
 %type <value>	cypher_expr_name
 %type <str>		cypher_expr_varname
@@ -10438,6 +10438,7 @@ PreparableStmt:
 			| InsertStmt
 			| UpdateStmt
 			| DeleteStmt					/* by default all are $$=$1 */
+			| CypherStmt
 		;
 
 /*****************************************************************************
@@ -15757,6 +15758,7 @@ cypher_expr_name:
 
 cypher_expr_atom:
 			cypher_expr_literal
+			| cypher_expr_param
 			| cypher_expr_case
 			| cypher_expr_func
 			| cypher_expr_var
@@ -15818,6 +15820,18 @@ cypher_expr_list:
 cypher_expr_list_elems:
 			cypher_expr_comma_list
 			| /* EMPTY */				{ $$ = NIL; }
+		;
+
+cypher_expr_param:
+			PARAM
+				{
+					ParamRef   *p;
+
+					p = makeNode(ParamRef);
+					p->number = $1;
+					p->location = @1;
+					$$ = (Node *) p;
+				}
 		;
 
 cypher_expr_case:
@@ -16378,6 +16392,7 @@ cypher_range_idx_opt:
 
 cypher_prop_map_opt:
 			cypher_expr_map
+			| cypher_expr_param
 			| /* EMPTY */			{ $$ = NULL; }
 		;
 
