@@ -51,6 +51,7 @@ static Node *transformFields(ParseState *pstate, Node *basenode, List *fields,
 							 int location);
 static Node *filterAccessArg(ParseState *pstate, Node *expr, int location,
 							 const char *types);
+static Node *transformParamRef(ParseState *pstate, ParamRef *pref);
 static Node *transformA_Const(ParseState *pstate, A_Const *a_con);
 static Datum integerToJsonb(ParseState *pstate, int64 i, int location);
 static Datum floatToJsonb(ParseState *pstate, char *f, int location);
@@ -71,7 +72,7 @@ static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
 static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
 static Node *coerce_to_jsonb(ParseState *pstate, Node *expr,
-							 const char *targetname);
+							 const char *targetname, bool err);
 
 static List *transformA_Star(ParseState *pstate, int location);
 
@@ -105,6 +106,8 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 	{
 		case T_ColumnRef:
 			return transformColumnRef(pstate, (ColumnRef *) expr);
+		case T_ParamRef:
+			return transformParamRef(pstate, (ParamRef *) expr);
 		case T_A_Const:
 			return transformA_Const(pstate, (A_Const *) expr);
 		case T_TypeCast:
@@ -449,6 +452,30 @@ filterAccessArg(ParseState *pstate, Node *expr, int location,
 }
 
 static Node *
+transformParamRef(ParseState *pstate, ParamRef *pref)
+{
+	Node	   *result;
+
+	if (pstate->p_paramref_hook != NULL)
+	{
+		result = (*pstate->p_paramref_hook) (pstate, pref);
+		result = coerce_to_jsonb(pstate, result, "parameter", false);
+	}
+	else
+	{
+		result = NULL;
+	}
+
+	if (result == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_PARAMETER),
+				 errmsg("there is no parameter $%d", pref->number),
+				 parser_errposition(pstate, pref->location)));
+
+	return result;
+}
+
+static Node *
 transformA_Const(ParseState *pstate, A_Const *a_con)
 {
 	Value	   *value = &a_con->val;
@@ -635,7 +662,7 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 		le = lnext(le);
 
 		newv = transformCypherExprRecurse(pstate, v);
-		newv = coerce_to_jsonb(pstate, newv, "property value");
+		newv = coerce_to_jsonb(pstate, newv, "property value", true);
 
 		Assert(IsA(k, String));
 		newk = makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
@@ -664,7 +691,7 @@ transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 		Node	   *newe;
 
 		newe = transformCypherExprRecurse(pstate, e);
-		newe = coerce_to_jsonb(pstate, newe, "list element");
+		newe = coerce_to_jsonb(pstate, newe, "list element", true);
 
 		newelems = lappend(newelems, newe);
 	}
@@ -760,10 +787,10 @@ transformCaseExpr(ParseState *pstate, CaseExpr *c)
 			w = lfirst(lw);
 
 			w->result = (Expr *) coerce_to_jsonb(pstate, (Node *) w->result,
-												 "jsonb");
+												 "jsonb", true);
 		}
 
-		defresult = coerce_to_jsonb(pstate, defresult, "jsonb");
+		defresult = coerce_to_jsonb(pstate, defresult, "jsonb", true);
 	}
 	else
 	{
@@ -911,7 +938,7 @@ transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c)
 		arg = lfirst(la);
 
 		if (is_jsonb)
-			newarg = coerce_to_jsonb(pstate, arg, "jsonb");
+			newarg = coerce_to_jsonb(pstate, arg, "jsonb", true);
 		else
 			newarg = coerce_to_common_type(pstate, arg, coalescetype,
 										   "COALESCE");
@@ -1225,7 +1252,7 @@ adjustListIndexType(ParseState *pstate, Node *idx)
 		case JSONBOID:
 			return idx;
 		default:
-			return coerce_to_jsonb(pstate, idx, "list index");
+			return coerce_to_jsonb(pstate, idx, "list index", true);
 	}
 }
 
@@ -1249,8 +1276,8 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 			strcmp(opname, "`%`") == 0 ||
 			strcmp(opname, "`^`") == 0)
 		{
-			l = coerce_to_jsonb(pstate, l, "jsonb");
-			r = coerce_to_jsonb(pstate, r, "jsonb");
+			l = coerce_to_jsonb(pstate, l, "jsonb", true);
+			r = coerce_to_jsonb(pstate, r, "jsonb", true);
 		}
 	}
 
@@ -1264,10 +1291,10 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 	Node	   *r;
 
 	l = transformCypherExprRecurse(pstate, a->lexpr);
-	l = coerce_to_jsonb(pstate, l, "jsonb");
+	l = coerce_to_jsonb(pstate, l, "jsonb", true);
 
 	r = transformCypherExprRecurse(pstate, a->rexpr);
-	r = coerce_to_jsonb(pstate, r, "jsonb");
+	r = coerce_to_jsonb(pstate, r, "jsonb", true);
 
 	return (Node *) make_op(pstate, list_make1(makeString("@>")), r, l,
 							a->location);
@@ -1310,13 +1337,16 @@ transformBoolExpr(ParseState *pstate, BoolExpr *b)
 }
 
 static Node *
-coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname)
+coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname,
+				bool err)
 {
 	if (expr == NULL)
 		return NULL;
 
 	switch (exprType(expr))
 	{
+		case GRAPHARRAYIDOID:
+		case GRAPHIDOID:
 		case VERTEXARRAYOID:
 		case VERTEXOID:
 		case EDGEARRAYOID:
@@ -1325,11 +1355,18 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname)
 		case GRAPHPATHOID:
 		case EDGEREFARRAYOID:
 		case EDGEREFOID:
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("graph object cannot be %s", targetname),
-					 parser_errposition(pstate, exprLocation(expr))));
-			return NULL;
+			if (err)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("graph object cannot be %s", targetname),
+						 parser_errposition(pstate, exprLocation(expr))));
+				return NULL;
+			}
+			else
+			{
+				return expr;
+			}
 
 		case JSONBOID:
 			return expr;
