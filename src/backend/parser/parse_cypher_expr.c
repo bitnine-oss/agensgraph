@@ -31,6 +31,7 @@
 #include "optimizer/tlist.h"
 #include "parser/analyze.h"
 #include "parser/parse_coerce.h"
+#include "parser/parse_collate.h"
 #include "parser/parse_cypher_expr.h"
 #include "parser/parse_func.h"
 #include "parser/parse_oper.h"
@@ -58,6 +59,7 @@ static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
 static Node *transformCypherListExpr(ParseState *pstate, CypherListExpr *cl);
+static Node *transformCaseExpr(ParseState *pstate, CaseExpr *c);
 static Node *transformFuncCall(ParseState *pstate, FuncCall *fn);
 static Node *transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c);
 static Node *transformSubLink(ParseState *pstate, SubLink *sublink);
@@ -66,6 +68,7 @@ static Node *transformIndirection(ParseState *pstate, Node *basenode,
 static Node *makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive);
 static Node *adjustListIndexType(ParseState *pstate, Node *idx);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
+static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
 static Node *coerce_to_jsonb(ParseState *pstate, Node *expr,
 							 const char *targetname);
@@ -110,6 +113,10 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			return transformCypherMapExpr(pstate, (CypherMapExpr *) expr);
 		case T_CypherListExpr:
 			return transformCypherListExpr(pstate, (CypherListExpr *) expr);
+		case T_CaseExpr:
+			return transformCaseExpr(pstate, (CaseExpr *) expr);
+		case T_CaseTestExpr:
+			return expr;
 		case T_FuncCall:
 			return transformFuncCall(pstate, (FuncCall *) expr);
 		case T_CoalesceExpr:
@@ -133,6 +140,8 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 				{
 					case AEXPR_OP:
 						return transformAExprOp(pstate, a);
+					case AEXPR_IN:
+						return transformAExprIn(pstate, a);
 					default:
 						elog(ERROR, "unrecognized A_Expr kind: %d", a->kind);
 						return NULL;
@@ -668,6 +677,123 @@ transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 }
 
 static Node *
+transformCaseExpr(ParseState *pstate, CaseExpr *c)
+{
+	Node	   *arg;
+	CaseTestExpr *placeholder;
+	ListCell   *lw;
+	CaseWhen   *w;
+	List	   *args = NIL;
+	List	   *results = NIL;
+	bool		is_jsonb = false;
+	Node	   *rdefresult;
+	Node	   *defresult;
+	Oid			restype;
+	CaseExpr   *newc;
+
+	arg = transformCypherExprRecurse(pstate, (Node *) c->arg);
+	if (arg == NULL)
+	{
+		placeholder = NULL;
+	}
+	else
+	{
+		assign_expr_collations(pstate, arg);
+
+		placeholder = makeNode(CaseTestExpr);
+		placeholder->typeId = exprType(arg);
+		placeholder->typeMod = exprTypmod(arg);
+		placeholder->collation = exprCollation(arg);
+	}
+
+	foreach(lw, c->args)
+	{
+		Node	   *rexpr;
+		Node	   *expr;
+		Node	   *result;
+		CaseWhen   *neww;
+
+		w = lfirst(lw);
+		Assert(IsA(w, CaseWhen));
+
+		rexpr = (Node *) w->expr;
+		if (placeholder != NULL)
+			rexpr = (Node *) makeSimpleA_Expr(AEXPR_OP, "=",
+											  (Node *) placeholder, rexpr,
+											  w->location);
+		expr = transformCypherExprRecurse(pstate, rexpr);
+		expr = coerce_to_boolean(pstate, expr, "CASE/WHEN");
+
+		result = transformCypherExprRecurse(pstate, (Node *) w->result);
+		if (exprType(result) == JSONBOID)
+			is_jsonb = true;
+
+		neww = makeNode(CaseWhen);
+		neww->expr = (Expr *) expr;
+		neww->result = (Expr *) result;
+		neww->location = w->location;
+
+		args = lappend(args, neww);
+		results = lappend(results, result);
+	}
+
+	rdefresult = (Node *) c->defresult;
+	if (rdefresult == NULL)
+	{
+		A_Const	   *n;
+
+		n = makeNode(A_Const);
+		n->val.type = T_Null;
+		n->location = -1;
+		rdefresult = (Node *) n;
+	}
+	defresult = transformCypherExprRecurse(pstate, rdefresult);
+	if (exprType(defresult) == JSONBOID)
+		is_jsonb = true;
+
+	if (is_jsonb)
+	{
+		restype = JSONBOID;
+
+		foreach(lw, args)
+		{
+			w = lfirst(lw);
+
+			w->result = (Expr *) coerce_to_jsonb(pstate, (Node *) w->result,
+												 "jsonb");
+		}
+
+		defresult = coerce_to_jsonb(pstate, defresult, "jsonb");
+	}
+	else
+	{
+		results = lcons(defresult, results);
+		restype = select_common_type(pstate, results, "CASE", NULL);
+
+		foreach(lw, args)
+		{
+			w = lfirst(lw);
+
+			w->result = (Expr *) coerce_to_common_type(pstate,
+													   (Node *) w->result,
+													   restype, "CASE/WHEN");
+		}
+
+		defresult = coerce_to_common_type(pstate, defresult, restype,
+										  "CASE/WHEN");
+	}
+
+	newc = makeNode(CaseExpr);
+	newc->casetype = restype;
+	newc->arg = (Expr *) arg;
+	newc->args = args;
+	newc->defresult = (Expr *) defresult;
+	newc->location = c->location;
+
+	return (Node *) newc;
+}
+
+static Node *
 transformFuncCall(ParseState *pstate, FuncCall *fn)
 {
 	ListCell   *la;
@@ -1077,6 +1203,22 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 	}
 
 	return (Node *) make_op(pstate, a->name, l, r, a->location);
+}
+
+static Node *
+transformAExprIn(ParseState *pstate, A_Expr *a)
+{
+	Node	   *l;
+	Node	   *r;
+
+	l = transformCypherExprRecurse(pstate, a->lexpr);
+	l = coerce_to_jsonb(pstate, l, "jsonb");
+
+	r = transformCypherExprRecurse(pstate, a->rexpr);
+	r = coerce_to_jsonb(pstate, r, "jsonb");
+
+	return (Node *) make_op(pstate, list_make1(makeString("@>")), r, l,
+							a->location);
 }
 
 static Node *
