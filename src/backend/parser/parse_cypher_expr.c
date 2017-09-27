@@ -51,6 +51,7 @@ static Node *transformFields(ParseState *pstate, Node *basenode, List *fields,
 							 int location);
 static Node *filterAccessArg(ParseState *pstate, Node *expr, int location,
 							 const char *types);
+static Node *transformParamRef(ParseState *pstate, ParamRef *pref);
 static Node *transformA_Const(ParseState *pstate, A_Const *a_con);
 static Datum integerToJsonb(ParseState *pstate, int64 i, int location);
 static Datum floatToJsonb(ParseState *pstate, char *f, int location);
@@ -105,6 +106,8 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 	{
 		case T_ColumnRef:
 			return transformColumnRef(pstate, (ColumnRef *) expr);
+		case T_ParamRef:
+			return transformParamRef(pstate, (ParamRef *) expr);
 		case T_A_Const:
 			return transformA_Const(pstate, (A_Const *) expr);
 		case T_TypeCast:
@@ -446,6 +449,25 @@ filterAccessArg(ParseState *pstate, Node *expr, int location,
 					 parser_errposition(pstate, location)));
 			return NULL;
 	}
+}
+
+static Node *
+transformParamRef(ParseState *pstate, ParamRef *pref)
+{
+	Node	   *result;
+
+	if (pstate->p_paramref_hook != NULL)
+		result = (*pstate->p_paramref_hook) (pstate, pref);
+	else
+		result = NULL;
+
+	if (result == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_PARAMETER),
+				 errmsg("there is no parameter $%d", pref->number),
+				 parser_errposition(pstate, pref->location)));
+
+	return result;
 }
 
 static Node *
