@@ -3277,60 +3277,43 @@ transformFrameOffset(ParseState *pstate, int frameOptions, Node *clause)
 	return node;
 }
 
-static bool
-has_column_in_edgeref(Expr *node, int var_level)
+typedef struct
 {
-	Var *var;
+	int			sublevels_up;
+} find_var_context;
+
+static bool
+find_var_walker(Node *node, find_var_context *ctx)
+{
+	if (node == NULL)
+		return false;
 
 	if (IsA(node, Var))
+		return ((int) ((Var *) node)->varlevelsup == ctx->sublevels_up);
+
+	if (IsA(node, Query))
 	{
-		var = (Var *) node;
-		return (int) var->varlevelsup == var_level;
-	}
-	if (IsA(node, ArrayRef))
-	{
-		ArrayRef *aref = (ArrayRef *) node;
-		return has_column_in_edgeref(aref->refexpr, var_level);
-	}
+		bool		result;
 
-	return false;
-}
+		ctx->sublevels_up++;
+		result = query_tree_walker((Query *) node, find_var_walker, ctx, 0);
+		ctx->sublevels_up--;
 
-static bool
-add_expr_to_group_exprs(Expr *expr, List **group_exprs)
-{
-	ListCell *gl;
-
-	/* check duplication */
-	foreach(gl, *group_exprs)
-	{
-		Expr *gexpr = (Expr *) lfirst(gl);
-
-		if (equal(gexpr, expr))
-			return false;
+		return result;
 	}
 
-	*group_exprs = lappend(*group_exprs, expr);
-	return true;
+	return expression_tree_walker(node, find_var_walker, ctx);
 }
 
 typedef struct
 {
-	List	   *group_exprs;
 	int			sublevels_up;
-} gen_group_exprs_context;
+} find_agg_context;
 
-/* See check_ungrouped_columns_walker() */
 static bool
-gen_group_exprs_walker(Node *node, gen_group_exprs_context *ctx)
+find_agg_walker(Node *node, find_agg_context *ctx)
 {
-	FieldSelect *fselect;
-	Var *var;
-
 	if (node == NULL)
-		return false;
-
-	if (IsA(node, Const) || IsA(node, Param))
 		return false;
 
 	if (IsA(node, Aggref))
@@ -3339,123 +3322,52 @@ gen_group_exprs_walker(Node *node, gen_group_exprs_context *ctx)
 		int			agglevelsup = (int) agg->agglevelsup;
 
 		if (agglevelsup == ctx->sublevels_up)
-			return gen_group_exprs_walker((Node *) agg->aggdirectargs, ctx);
+		{
+			find_var_context fvctx;
+
+			fvctx.sublevels_up = ctx->sublevels_up;
+			if (find_var_walker((Node *) agg->args, &fvctx))
+				return true;
+			if (find_var_walker((Node *) agg->aggdirectargs, &fvctx))
+				return true;
+
+			return false;
+		}
 
 		if (agglevelsup > ctx->sublevels_up)
 			return false;
-
-		/* fall-through */
-	}
-
-	/*
-	 * Since we are finding variables which should be in GROUP BY, there is no
-	 * need to consider pre-existing variables and expressions in the GROUP BY.
-	 */
-
-	if (IsA(node, OpExpr))
-	{
-		OpExpr *op = (OpExpr *) node;
-
-		/* #>> */
-		if (op->opno == 3206)
-		{
-			Node *arg1 = linitial(op->args);
-
-			if (IsA(arg1, FieldSelect))
-			{
-				fselect = (FieldSelect *) arg1;
-				if (!IsA(fselect->arg, Var))
-					return gen_group_exprs_walker((Node *) fselect->arg, ctx);
-
-				var = (Var *) fselect->arg;
-				if ((int) var->varlevelsup != ctx->sublevels_up)
-					return false;
-
-				add_expr_to_group_exprs((Expr *) op, &ctx->group_exprs);
-				return false;
-			}
-
-			if (IsA(arg1, Var))
-			{
-				var = (Var *) arg1;
-				if ((int) var->varlevelsup != ctx->sublevels_up)
-					return false;
-
-				add_expr_to_group_exprs((Expr *) op, &ctx->group_exprs);
-				return false;
-			}
-		}
-
-		return gen_group_exprs_walker((Node *) op->args, ctx);
-	}
-
-	if (IsA(node, EdgeRefRow))
-	{
-		EdgeRefRow *r = (EdgeRefRow *) node;
-
-		if (has_column_in_edgeref (r->arg, ctx->sublevels_up))
-		{
-			add_expr_to_group_exprs((Expr *) r, &ctx->group_exprs);
-			return false;
-		}
-
-		return gen_group_exprs_walker((Node *) r->arg, ctx);
-	}
-
-	if (IsA(node, EdgeRefRows))
-	{
-		EdgeRefRows *r = (EdgeRefRows *) node;
-
-		if (has_column_in_edgeref (r->arg, ctx->sublevels_up))
-		{
-			add_expr_to_group_exprs((Expr *) r, &ctx->group_exprs);
-			return false;
-		}
-		return gen_group_exprs_walker((Node *) r->arg, ctx);
-	}
-
-	if (IsA(node, FieldSelect))
-	{
-		fselect = (FieldSelect *) node;
-
-		/* NOTE: There might be other cases to check. */
-
-		if (!IsA(fselect->arg, Var))
-			return gen_group_exprs_walker((Node *) fselect->arg, ctx);
-
-		var = (Var *) fselect->arg;
-
-		if ((int) var->varlevelsup != ctx->sublevels_up)
-			return false;
-
-		add_expr_to_group_exprs((Expr *) fselect, &ctx->group_exprs);
-		return false;
-	}
-
-	if (IsA(node, Var))
-	{
-		var = (Var *) node;
-
-		if ((int) var->varlevelsup != ctx->sublevels_up)
-			return false;
-
-		add_expr_to_group_exprs((Expr *) var, &ctx->group_exprs);
-		return false;
 	}
 
 	if (IsA(node, Query))
 	{
-		bool result;
+		bool		result;
 
 		ctx->sublevels_up++;
-		result = query_tree_walker((Query *) node, gen_group_exprs_walker, ctx,
-								   0);
+		result = query_tree_walker((Query *) node, find_agg_walker, ctx, 0);
 		ctx->sublevels_up--;
 
 		return result;
 	}
 
-	return expression_tree_walker(node, gen_group_exprs_walker, ctx);
+	return expression_tree_walker(node, find_agg_walker, ctx);
+}
+
+static bool
+add_expr_to_group_exprs(Expr *expr, List **group_exprs)
+{
+	ListCell *le;
+
+	/* check duplication */
+	foreach(le, *group_exprs)
+	{
+		Expr	   *gexpr = lfirst(le);
+
+		if (equal(gexpr, expr))
+			return false;
+	}
+
+	*group_exprs = lappend(*group_exprs, expr);
+	return true;
 }
 
 /*
@@ -3466,62 +3378,94 @@ gen_group_exprs_walker(Node *node, gen_group_exprs_context *ctx)
 List *
 generateGroupClause(ParseState *pstate, List **targetlist, List *sortClause)
 {
+	ListCell   *lt;
+	TargetEntry *te;
+	List	   *group_exprs = NIL;
+	ListCell   *le;
 	List	   *group = NIL;
-	gen_group_exprs_context ctx;
-	ListCell   *gl;
 
 	if (!pstate->p_hasAggs)
 		return NIL;
 
-	ctx.group_exprs = NIL;
-	ctx.sublevels_up = 0;
-	gen_group_exprs_walker((Node *) *targetlist, &ctx);
-
-	foreach(gl, ctx.group_exprs)
+	foreach(lt, *targetlist)
 	{
-		Expr	   *gexpr = (Expr *) lfirst(gl);
-		ListCell   *tl;
-		TargetEntry *tle;
-		ListCell   *sl;
+		find_agg_context factx;
+
+		te = lfirst(lt);
+
+		factx.sublevels_up = 0;
+		if (find_agg_walker((Node *) te->expr, &factx))
+		{
+			if (!IsA(te->expr, Aggref))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("aggregate must exist solely"),
+						 parser_errposition(pstate,
+											exprLocation((Node *) te->expr))));
+				return NIL;
+			}
+		}
+		else
+		{
+			find_var_context fvctx;
+
+			/*
+			 * If `te->expr` does not have aggregate functions and
+			 * it is not a constant expression, add it to GROUP BY.
+			 */
+
+			fvctx.sublevels_up = 0;
+			if (find_var_walker((Node *) te->expr, &fvctx))
+				add_expr_to_group_exprs(te->expr, &group_exprs);
+		}
+	}
+
+	foreach(le, group_exprs)
+	{
+		Expr	   *gexpr = lfirst(le);
 		bool		done;
+		ListCell   *ls;
 
 		/*
 		 * See findTargetlistEntrySQL99()
 		 */
 
 		/* find the TargetEntry which exactly has this expression */
-		foreach(tl, *targetlist)
+		foreach(lt, *targetlist)
 		{
-			Node *texpr;
+			Node	   *expr;
 
-			tle = (TargetEntry *) lfirst(tl);
-			texpr = strip_implicit_coercions((Node *) tle->expr);
-			if (equal(texpr, gexpr))
+			te = lfirst(lt);
+
+			expr = strip_implicit_coercions((Node *) te->expr);
+			if (equal(expr, gexpr))
 				break;
 		}
 
 		/* not found, make one and add it to the target list */
-		if (tl == NULL)
+		if (lt == NULL)
 		{
-			tle = makeTargetEntry(copyObject(gexpr),
-								  (AttrNumber) pstate->p_next_resno++,
-								  NULL, true);
-			*targetlist = lappend(*targetlist, tle);
+			te = makeTargetEntry(copyObject(gexpr),
+								 (AttrNumber) pstate->p_next_resno++,
+								 NULL, true);
+
+			*targetlist = lappend(*targetlist, te);
 		}
 
 		/*
 		 * See transformGroupClauseExpr()
 		 */
 
-		if (targetIsInSortList(tle, InvalidOid, group))
+		if (targetIsInSortList(te, InvalidOid, group))
 			continue;
 
 		done = false;
-		foreach(sl, sortClause)
+		foreach(ls, sortClause)
 		{
-			SortGroupClause *sc = (SortGroupClause *) lfirst(sl);
+			SortGroupClause *sc = lfirst(ls);
 
-			if (sc->tleSortGroupRef == tle->ressortgroupref)
+			if (sc->tleSortGroupRef == te->ressortgroupref)
 			{
 				group = lappend(group, copyObject(sc));
 				done = true;
@@ -3531,7 +3475,7 @@ generateGroupClause(ParseState *pstate, List **targetlist, List *sortClause)
 		if (done)
 			continue;
 
-		group = addTargetToGroupList(pstate, tle, group, *targetlist, -1, true);
+		group = addTargetToGroupList(pstate, te, group, *targetlist, -1, true);
 	}
 
 	return group;
