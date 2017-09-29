@@ -268,6 +268,7 @@ static void appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 						const char *prefix, Archive *fout);
 static char *get_synchronized_snapshot(Archive *fout);
 static void setupDumpWorker(Archive *AHX);
+static void correctAGlabel(Archive *fout);
 
 
 int
@@ -818,6 +819,9 @@ main(int argc, char **argv)
 	/* Now the rearrangeable objects. */
 	for (i = 0; i < numObjs; i++)
 		dumpDumpableObject(fout, dobjs[i]);
+
+	/* Restore ag_label after of all labels restored */
+	correctAGlabel(fout);
 
 	/*
 	 * Set up options info to ensure we dump what we want.
@@ -16215,7 +16219,7 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 			AND c.relnamespace = g.nspid", fmtId(coninfo->dobj.name));
 	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
 
-	if (PQntuples(res) == 1)
+	if (PQntuples(res) > 0)
 	{
 		PQclear(res);
 		destroyPQExpBuffer(query);
@@ -18091,4 +18095,75 @@ appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 								fout->std_strings);
 	if (!res)
 		write_msg(NULL, "WARNING: could not parse reloptions array\n");
+}
+
+/*
+ * correctAGlabel
+ *		Dump pg_catalog.ag_label for restoring graph
+ */
+static void
+correctAGlabel(Archive *fout)
+{
+	PQExpBuffer		q;
+	PQExpBuffer		labelq;
+
+	PGresult   *res;
+	int			tuple;
+
+	q = createPQExpBuffer();
+	labelq = createPQExpBuffer();
+
+	appendPQExpBuffer(labelq,
+			"SELECT g.graphname, l.labname, l.labid "
+			"FROM pg_catalog.ag_label l, pg_catalog.ag_graph g "
+			"WHERE l.graphid = g.oid;\n");
+	res = ExecuteSqlQuery(fout, labelq->data, PGRES_TUPLES_OK);
+
+	appendPQExpBuffer(q,
+			"DROP TABLE IF EXISTS public._temp_ag_label;\n");
+
+	appendPQExpBuffer(q,
+			"CREATE TABLE public._temp_ag_label("
+			"graphname text, labname text, labid integer);\n");
+
+	for (tuple = 0; tuple < PQntuples(res); tuple++)
+	{
+		appendPQExpBuffer(q,
+				"INSERT INTO public._temp_ag_label VALUES (\'%s\', \'%s\', %d);\n",
+				PQgetvalue(res, tuple, 0),
+				PQgetvalue(res, tuple, 1),
+				atoi(PQgetvalue(res, tuple, 2)));
+	}
+
+	/*
+	 * max labid = 2^16 - 1
+	 * colum type of labid is integer so it can contain 4byte
+	 * labid + 2byte max = simple non-collisional temp number
+	 */
+	appendPQExpBuffer(q,
+			"UPDATE pg_catalog.ag_label "
+			"SET labid = labid + 65535;\n");
+
+	appendPQExpBuffer(q,
+			"UPDATE pg_catalog.ag_label a "
+			"SET labid = (SELECT labid from public._temp_ag_label t "
+						"WHERE a.labname = t.labname "
+						"AND a.graphid = "
+							"(SELECT oid FROM ag_graph g "
+							"WHERE g.graphname = t.graphname));\n");
+	appendPQExpBuffer(q,
+			"DROP TABLE public._temp_ag_label;\n");
+
+	ArchiveEntry(fout, nilCatalogId, createDumpId(),
+				 "restore ag_label",
+				 NULL, NULL,
+				 "",
+				 false, "TABLE", SECTION_POST_DATA,
+				 q->data, "", NULL,
+				 NULL, 0,
+				 NULL, NULL);
+
+	PQclear(res);
+	destroyPQExpBuffer(q);
+	destroyPQExpBuffer(labelq);
 }
