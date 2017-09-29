@@ -3140,6 +3140,8 @@ static void
 _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 {
 	PQExpBuffer qry;
+	PQExpBuffer graphqry;
+	PGresult   *graphres;
 
 	if (!schemaName || *schemaName == '\0' ||
 		(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0))
@@ -3151,6 +3153,16 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 					  fmtId(schemaName));
 	if (strcmp(schemaName, "pg_catalog") != 0)
 		appendPQExpBufferStr(qry, ", pg_catalog");
+
+	/* if it was graph, set graph_path too */
+	graphqry = createPQExpBuffer();
+	appendPQExpBuffer(graphqry,
+			"SELECT graphname FROM pg_catalog.ag_graph "
+			"WHERE graphname = '%s';\n", fmtId(schemaName));
+	graphres = ExecuteSqlQuery(&AH->public, graphqry->data, PGRES_TUPLES_OK);
+
+	if (PQntuples(graphres) > 0)
+		appendPQExpBuffer(qry, ";\nSET graph_path = %s", fmtId(schemaName));
 
 	if (RestoringToDB(AH))
 	{
@@ -3172,7 +3184,9 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 		free(AH->currSchema);
 	AH->currSchema = pg_strdup(schemaName);
 
+	PQclear(graphres);
 	destroyPQExpBuffer(qry);
+	destroyPQExpBuffer(graphqry);
 }
 
 /*
