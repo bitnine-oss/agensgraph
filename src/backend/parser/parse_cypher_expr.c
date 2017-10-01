@@ -1372,67 +1372,6 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname,
 	}
 }
 
-/*
- * edgeref functions
- */
-
-Node *
-wrapEdgeRef(Node *node)
-{
-	EdgeRefRow *newnode;
-
-	newnode = makeNode(EdgeRefRow);
-	newnode->arg = (Expr *) node;
-
-	return (Node *) newnode;
-}
-
-Node *
-wrapEdgeRefArray(Node *node)
-{
-	EdgeRefRows *newnode;
-
-	newnode = makeNode(EdgeRefRows);
-	newnode->arg = (Expr *) node;
-
-	return (Node *) newnode;
-}
-
-Node *
-wrapEdgeRefTypes(ParseState *pstate, Node *node)
-{
-	if (!pstate->p_convert_edgeref)
-		return node;
-
-	switch (exprType(node))
-	{
-		case EDGEREFOID:
-			return wrapEdgeRef(node);
-		case EDGEREFARRAYOID:
-			return wrapEdgeRefArray(node);
-		default:
-			return node;
-	}
-}
-
-List *
-transformCypherExprList(ParseState *pstate, List *exprlist,
-						ParseExprKind exprKind)
-{
-	List	   *result = NIL;
-	ListCell   *le;
-
-	foreach(le, exprlist)
-	{
-		Node	   *expr = lfirst(le);
-
-		result = lappend(result,
-						 transformCypherExpr(pstate, expr, exprKind));
-	}
-
-	return result;
-}
-
 Node *
 transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 						 char **varname)
@@ -1583,7 +1522,69 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 }
 
 /*
- * Item list functions
+ * edgeref functions
+ */
+
+Node *
+wrapEdgeRef(Node *node)
+{
+	EdgeRefRow *newnode;
+
+	newnode = makeNode(EdgeRefRow);
+	newnode->arg = (Expr *) node;
+
+	return (Node *) newnode;
+}
+
+Node *
+wrapEdgeRefArray(Node *node)
+{
+	EdgeRefRows *newnode;
+
+	newnode = makeNode(EdgeRefRows);
+	newnode->arg = (Expr *) node;
+
+	return (Node *) newnode;
+}
+
+Node *
+wrapEdgeRefTypes(ParseState *pstate, Node *node)
+{
+	if (!pstate->p_convert_edgeref)
+		return node;
+
+	switch (exprType(node))
+	{
+		case EDGEREFOID:
+			return wrapEdgeRef(node);
+		case EDGEREFARRAYOID:
+			return wrapEdgeRefArray(node);
+		default:
+			return node;
+	}
+}
+
+/*
+ * clause functions
+ */
+
+Node *
+transformCypherWhere(ParseState *pstate, Node *clause, ParseExprKind exprKind)
+{
+	Node	   *qual;
+
+	if (clause == NULL)
+		return NULL;
+
+	qual = transformCypherExpr(pstate, clause, exprKind);
+
+	qual = coerce_to_boolean(pstate, qual, "WHERE");
+
+	return qual;
+}
+
+/*
+ * item list functions
  */
 
 List *
@@ -1624,6 +1625,24 @@ transformItemList(ParseState *pstate, List *items, ParseExprKind exprKind)
 	}
 
 	return targets;
+}
+
+List *
+transformCypherExprList(ParseState *pstate, List *exprlist,
+						ParseExprKind exprKind)
+{
+	List	   *result = NIL;
+	ListCell   *le;
+
+	foreach(le, exprlist)
+	{
+		Node	   *expr = lfirst(le);
+
+		result = lappend(result,
+						 transformCypherExpr(pstate, expr, exprKind));
+	}
+
+	return result;
 }
 
 static List *
