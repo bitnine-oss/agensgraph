@@ -123,7 +123,6 @@ typedef struct
 } resolve_future_vertex_context;
 
 /* projection (RETURN and WITH) */
-static Node *transformCypherWhere(ParseState *pstate, Node *clause);
 static List *transformCypherOrderBy(ParseState *pstate, List *orderlist,
 									List **targetlist);
 static Node *transformCypherLimit(ParseState *pstate, Node *clause,
@@ -415,7 +414,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 		qry->targetList = makeTargetListFromRTE(pstate, rte);
 		wrapEdgeRefTargetList(pstate, qry->targetList);
 
-		qual = transformCypherWhere(pstate, where);
+		qual = transformCypherWhere(pstate, where, EXPR_KIND_WHERE);
 		qual = resolve_future_vertex(pstate, qual, 0);
 	}
 	else if (detail->distinct != NULL || detail->order != NULL ||
@@ -568,7 +567,8 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 
 			qry->targetList = makeTargetListFromRTE(pstate, rte);
 
-			qual = transformCypherWhere(pstate, detail->where);
+			qual = transformCypherWhere(pstate, detail->where,
+										EXPR_KIND_WHERE);
 			qual = transformElemQuals(pstate, qual);
 			qual = resolve_future_vertex(pstate, qual, flags);
 		}
@@ -831,21 +831,6 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	assign_query_collations(pstate, qry);
 
 	return qry;
-}
-
-static Node *
-transformCypherWhere(ParseState *pstate, Node *clause)
-{
-	Node	   *qual;
-
-	if (clause == NULL)
-		return NULL;
-
-	qual = transformCypherExpr(pstate, clause, EXPR_KIND_WHERE);
-
-	qual = coerce_to_boolean(pstate, qual, "WHERE");
-
-	return qual;
 }
 
 static List *
@@ -2511,17 +2496,17 @@ static Node *
 genVLEQual(char *alias, Node *propMap)
 {
 	ColumnRef  *prop;
-	CypherGenericExpr *gexpr;
+	CypherGenericExpr *cexpr;
 	A_Expr	   *propcond;
 
 	prop = makeNode(ColumnRef);
 	prop->fields = genQualifiedName(alias, AG_ELEM_PROP_MAP);
 	prop->location = -1;
 
-	gexpr = makeNode(CypherGenericExpr);
-	gexpr->expr = propMap;
+	cexpr = makeNode(CypherGenericExpr);
+	cexpr->expr = propMap;
 
-	propcond = makeSimpleA_Expr(AEXPR_OP, "@>", (Node *) prop, (Node *) gexpr,
+	propcond = makeSimpleA_Expr(AEXPR_OP, "@>", (Node *) prop, (Node *) cexpr,
 								-1);
 
 	return (Node *) propcond;
@@ -3046,17 +3031,17 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 		}
 		else
 		{
-			Node	   *path;
-			Expr	   *lval;
+			CypherAccessExpr *a;
+			Node	   *lval;
 			Node	   *rval;
 			Oid			rvaltype;
 			int			rvalloc;
 			Expr	   *expr;
 
-			path = makeArrayExpr(TEXTARRAYOID, TEXTOID,
-								 copyObject(ctx->pathelems));
-			lval = make_op(ctx->pstate, list_make1(makeString("#>")),
-						   ctx->prop_map, path, -1);
+			a = makeNode(CypherAccessExpr);
+			a->arg = (Expr *) ctx->prop_map;
+			a->path = copyObject(ctx->pathelems);
+			lval = (Node *) a;
 
 			rval = transformCypherExpr(ctx->pstate, v, EXPR_KIND_WHERE);
 			rvaltype = exprType(rval);
@@ -3072,7 +3057,7 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 						 parser_errposition(ctx->pstate, rvalloc)));
 
 			expr = make_op(ctx->pstate, list_make1(makeString("=")),
-						   (Node *) lval, rval, -1);
+						   lval, rval, -1);
 
 			ctx->qual = qualAndExpr(ctx->qual, (Node *) expr);
 		}

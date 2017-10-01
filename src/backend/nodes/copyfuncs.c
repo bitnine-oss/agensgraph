@@ -5508,7 +5508,7 @@ copyObject(const void *from)
 			retval = _copyCypherStmt(from);
 			break;
 		case T_CypherGenericExpr:
-			_copyCypherGenericExpr(from);
+			retval = _copyCypherGenericExpr(from);
 			break;
 		case T_CypherSubPattern:
 			retval = _copyCypherSubPattern(from);

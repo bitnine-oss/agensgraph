@@ -593,6 +593,9 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %type <node>	cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
 				cypher_expr_shortestpath
 
+%type <node>	cypher_expr_propref cypher_expr_indir_elem
+%type <list>	cypher_expr_indir_opt
+
 %type <list>	cypher_pattern cypher_anon_pattern
 				cypher_path cypher_path_chain
 				cypher_types cypher_types_opt
@@ -14697,23 +14700,28 @@ alter_label_cmd:
 		;
 
 CreateConstraintStmt:
-			CREATE CONSTRAINT opt_constraint_name ON ColId ASSERT a_expr IS UNIQUE
+			CREATE CONSTRAINT opt_constraint_name ON ColId ASSERT cypher_expr
+			IS UNIQUE
 				{
-					CreateConstraintStmt *n = makeNode(CreateConstraintStmt);
+					CreateConstraintStmt *n;
+
+					n = makeNode(CreateConstraintStmt);
 					n->graphlabel = makeRangeVar(NULL, $5, @5);
 					n->conname = $3;
 					n->contype = CONSTR_UNIQUE;
-					n->expr = (Node *)$7;
-					$$ = (Node *)n;
+					n->expr = $7;
+					$$ = (Node *) n;
 				}
-			| CREATE CONSTRAINT opt_constraint_name ON ColId ASSERT a_expr
+			| CREATE CONSTRAINT opt_constraint_name ON ColId ASSERT cypher_expr
 				{
-					CreateConstraintStmt *n = makeNode(CreateConstraintStmt);
+					CreateConstraintStmt *n;
+
+					n = makeNode(CreateConstraintStmt);
 					n->graphlabel = makeRangeVar(NULL, $5, @5);
 					n->conname = $3;
 					n->contype = CONSTR_CHECK;
-					n->expr = (Node *)$7;
-					$$ = (Node *)n;
+					n->expr = $7;
+					$$ = (Node *) n;
 				}
 		;
 
@@ -14741,8 +14749,9 @@ CreatePropertyIndexStmt:
 			ON ColId access_method_clause '(' prop_idx_params ')'
 			opt_reloptions OptTableSpace where_clause
 				{
-					CreatePropertyIndexStmt *n =
-											makeNode(CreatePropertyIndexStmt);
+					CreatePropertyIndexStmt *n;
+
+					n = makeNode(CreatePropertyIndexStmt);
 					n->unique = $2;
 					n->concurrent = $5;
 					n->idxname = $6;
@@ -14762,14 +14771,15 @@ CreatePropertyIndexStmt:
 					n->initdeferred = false;
 					n->transformed = false;
 					n->if_not_exists = false;
-					$$ = (Node *)n;
+					$$ = (Node *) n;
 				}
 			| CREATE opt_unique PROPERTY INDEX opt_concurrently IF_P NOT EXISTS
 			index_name ON ColId access_method_clause '(' prop_idx_params ')'
 			opt_reloptions OptTableSpace where_clause
 				{
-					CreatePropertyIndexStmt *n =
-											makeNode(CreatePropertyIndexStmt);
+					CreatePropertyIndexStmt *n;
+
+					n = makeNode(CreatePropertyIndexStmt);
 					n->unique = $2;
 					n->concurrent = $5;
 					n->idxname = $9;
@@ -14789,7 +14799,7 @@ CreatePropertyIndexStmt:
 					n->initdeferred = false;
 					n->transformed = false;
 					n->if_not_exists = true;
-					$$ = (Node *)n;
+					$$ = (Node *) n;
 				}
 		;
 
@@ -14803,7 +14813,8 @@ prop_idx_params:
  * or arbitrary expressions in parens.
  */
 prop_idx_elem:
-			columnref opt_collate opt_class opt_asc_desc opt_nulls_order
+			cypher_expr_propref
+			opt_collate opt_class opt_asc_desc opt_nulls_order
 				{
 					$$ = makeNode(IndexElem);
 					$$->name = NULL;
@@ -14814,7 +14825,8 @@ prop_idx_elem:
 					$$->ordering = $4;
 					$$->nulls_ordering = $5;
 				}
-			| '(' a_expr ')' opt_collate opt_class opt_asc_desc opt_nulls_order
+			| '(' cypher_expr ')'
+			opt_collate opt_class opt_asc_desc opt_nulls_order
 				{
 					$$ = makeNode(IndexElem);
 					$$->name = NULL;
@@ -15473,6 +15485,59 @@ cypher_expr_var:
 
 cypher_expr_varname:
 			ColId
+		;
+
+cypher_expr_propref:
+			cypher_expr_var cypher_expr_indir_opt
+				{
+					if ($2 == NIL)
+					{
+						$$ = $1;
+					}
+					else
+					{
+						A_Indirection *n;
+
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = $2;
+						$$ = (Node *) n;
+					}
+				}
+		;
+
+cypher_expr_indir_opt:
+			cypher_expr_indir_opt cypher_expr_indir_elem
+					{ $$ = lappend($1, $2); }
+			| /* EMPTY */
+					{ $$ = NIL; }
+		;
+
+cypher_expr_indir_elem:
+			'.' cypher_expr_name
+					{ $$ = (Node *) $2; }
+			| '.' cypher_expr_escaped_name
+					{ $$ = (Node *) $2; }
+			| '[' cypher_expr ']'
+				{
+					A_Indices  *n;
+
+					n = makeNode(A_Indices);
+					n->is_slice = false;
+					n->lidx = NULL;
+					n->uidx = $2;
+					$$ = (Node *) n;
+				}
+			| '[' cypher_expr_opt DOT_DOT cypher_expr_opt ']'
+				{
+					A_Indices  *n;
+
+					n = makeNode(A_Indices);
+					n->is_slice = true;
+					n->lidx = $2;
+					n->uidx = $4;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_pattern:

@@ -3850,16 +3850,6 @@ raw_expression_tree_walker(Node *node,
 					return true;
 			}
 			break;
-		case T_CypherAccessExpr:
-			{
-				CypherAccessExpr *a = (CypherAccessExpr *) node;
-
-				if (walker(a->arg, context))
-					return true;
-				if (walker(a->path, context))
-					return true;
-			}
-			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));
@@ -4628,17 +4618,6 @@ raw_expression_tree_mutator(Node *node,
 
 				FLATCOPY(newnode, cl, CypherListExpr);
 				MUTATE(newnode->elems, cl->elems, List *);
-				return (Node *) newnode;
-			}
-			break;
-		case T_CypherAccessExpr:
-			{
-				CypherAccessExpr *a = (CypherAccessExpr *) node;
-				CypherAccessExpr *newnode;
-
-				FLATCOPY(newnode, a, CypherAccessExpr);
-				MUTATE(newnode->arg, a->arg, Expr *);
-				MUTATE(newnode->path, a->path, List *);
 				return (Node *) newnode;
 			}
 			break;
