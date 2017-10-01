@@ -62,13 +62,6 @@
 #include "utils/xml.h"
 #include "utils/numeric.h"
 
-typedef enum
-{
-	LOWER_IDX,
-	SINGLE_IDX,
-	UPPER_IDX
-} IndexPosition;
-
 /* static function decls */
 static Datum ExecEvalArrayRef(ArrayRefExprState *astate,
 				 ExprContext *econtext,
@@ -203,9 +196,16 @@ static Datum ExecEvalCypherList(CypherListExprState *clstate,
 static Datum ExecEvalCypherAccess(CypherAccessExprState *astate,
 								  ExprContext *econtext, bool *isNull,
 								  ExprDoneCond *isDone);
-static int GetListIndex(ExprState  *s, ExprContext *econtext,
-							 JsonbContainer *container, IndexPosition idx);
-static int ValidateListIndex(int n, uint32 size, IndexPosition idx);
+static JsonbValue *cypher_access_object(JsonbContainer *container,
+										Node *pathelem, ExprContext *econtext);
+static JsonbValue *cypher_access_bin_array(JsonbValue *ajv, Node *pathelem,
+										   ExprContext *econtext);
+static JsonbValue *cypher_access_mem_array(JsonbValue *ajv, Node *pathelem,
+										   ExprContext *econtext);
+static int cypher_access_range(ExprState *i, ExprContext *econtext,
+							   const int nelems, const int defidx);
+static int cypher_access_index(ExprState *i, ExprContext *econtext,
+							   const int nelems);
 
 
 /* ----------------------------------------------------------------
@@ -4692,29 +4692,29 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 			for (;;)
 			{
 				JsonbValue	ejv;
-				JsonbIteratorToken type;
+				JsonbIteratorToken tok;
 
-				type = JsonbIteratorNext(&it, &ejv, false);
-				if (type == WJB_DONE)
+				tok = JsonbIteratorNext(&it, &ejv, false);
+				if (tok == WJB_DONE)
 					break;
 
-				if (type == WJB_KEY)
+				if (tok == WJB_KEY)
 				{
 					kjv = ejv;
 
-					type = JsonbIteratorNext(&it, &ejv, false);
-					Assert(type != WJB_DONE);
+					tok = JsonbIteratorNext(&it, &ejv, false);
+					Assert(tok != WJB_DONE);
 
-					if (type == WJB_VALUE && ejv.type == jbvNull)
+					if (tok == WJB_VALUE && ejv.type == jbvNull)
 						continue;
 
 					pushJsonbValue(&jpstate, WJB_KEY, &kjv);
 				}
 
-				if (type == WJB_VALUE || type == WJB_ELEM)
-					pushJsonbValue(&jpstate, type, &ejv);
+				if (tok == WJB_VALUE || tok == WJB_ELEM)
+					pushJsonbValue(&jpstate, tok, &ejv);
 				else
-					pushJsonbValue(&jpstate, type, NULL);
+					pushJsonbValue(&jpstate, tok, NULL);
 			}
 		}
 	}
@@ -4773,15 +4773,15 @@ ExecEvalCypherList(CypherListExprState *clstate, ExprContext *econtext,
 		}
 		else
 		{
-			JsonbIteratorToken type;
+			JsonbIteratorToken tok;
 
-			while ((type = JsonbIteratorNext(&it, &ejv, false)) != WJB_DONE)
+			while ((tok = JsonbIteratorNext(&it, &ejv, false)) != WJB_DONE)
 			{
-				if (type == WJB_BEGIN_ARRAY || type == WJB_END_ARRAY ||
-					type == WJB_BEGIN_OBJECT || type == WJB_END_OBJECT)
-					pushJsonbValue(&jpstate, type, NULL);
+				if (tok == WJB_BEGIN_ARRAY || tok == WJB_END_ARRAY ||
+					tok == WJB_BEGIN_OBJECT || tok == WJB_END_OBJECT)
+					pushJsonbValue(&jpstate, tok, NULL);
 				else
-					pushJsonbValue(&jpstate, type, &ejv);
+					pushJsonbValue(&jpstate, tok, &ejv);
 			}
 		}
 	}
@@ -4804,7 +4804,6 @@ ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 	Jsonb	   *argj;
 	JsonbValue	_vjv;
 	JsonbValue *vjv;
-	JsonbContainer *container;
 	ListCell   *le;
 
 	if (isDone != NULL)
@@ -4840,7 +4839,7 @@ ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 
 	foreach(le, astate->path)
 	{
-		Node	   *elem;
+		Node	   *pathelem = lfirst(le);
 
 		switch (vjv->type)
 		{
@@ -4855,206 +4854,43 @@ ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 						 errmsg("map or list is expected but scalar value")));
 				return 0;
 			case jbvArray:
+				/* sliced array */
+				vjv = cypher_access_mem_array(vjv, pathelem, econtext);
+				if (vjv == NULL)
+				{
+					*isNull = true;
+					return 0;
+				}
+				break;
 			case jbvObject:
 				elog(ERROR, "unexpected jsonb composite type");
 				return 0;
 			case jbvBinary:
-				container = vjv->val.binary.data;
+				{
+					JsonbContainer *container = vjv->val.binary.data;
+
+					if (container->header & JB_FOBJECT)
+					{
+						vjv = cypher_access_object(container, pathelem,
+												   econtext);
+					}
+					else
+					{
+						Assert(container->header & JB_FARRAY);
+
+						vjv = cypher_access_bin_array(vjv, pathelem, econtext);
+					}
+
+					if (vjv == NULL)
+					{
+						*isNull = true;
+						return 0;
+					}
+				}
 				break;
 			default:
 				elog(ERROR, "unknown jsonb scalar type");
 				return 0;
-		}
-		Assert(container->header & (JB_FOBJECT | JB_FARRAY));
-
-		elem = lfirst(le);
-
-		if (container->header & JB_FOBJECT)
-		{
-			ExprState  *s;
-			Oid			stype;
-			Datum		sd;
-			JsonbValue	_sjv;
-			JsonbValue *sjv;
-			JsonbValue	kjv;
-
-			if (IsA(elem, CypherIndices))
-			{
-				CypherIndices *cind = (CypherIndices *) elem;
-
-				if (cind->is_slice)
-				{
-					ereport(ERROR,
-							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("slicing map not supported")));
-					return 0;
-				}
-
-				s = (ExprState *) cind->uidx;
-			}
-			else
-			{
-				s = (ExprState *) elem;
-			}
-
-			stype = exprType((Node *) s->expr);
-			sd = ExecEvalExpr(s, econtext, &eisnull, NULL);
-			if (eisnull)
-			{
-				_sjv.type = jbvNull;
-				sjv = &_sjv;
-			}
-			else if (stype == TEXTOID)
-			{
-				char	   *sstr = TextDatumGetCString(sd);
-
-				_sjv.type = jbvString;
-				_sjv.val.string.len = strlen(sstr);
-				_sjv.val.string.val = sstr;
-				sjv = &_sjv;
-			}
-			else if (stype == BOOLOID)
-			{
-				_sjv.type = jbvBool;
-				_sjv.val.boolean = DatumGetBool(sd);
-				sjv = &_sjv;
-			}
-			else if (stype == JSONBOID)
-			{
-				Jsonb	   *j = DatumGetJsonb(sd);
-
-				if (JB_ROOT_IS_SCALAR(j))
-				{
-					sjv = getIthJsonbValueFromContainer(&j->root, 0);
-				}
-				else
-				{
-					ereport(ERROR,
-							(errcode(ERRCODE_DATATYPE_MISMATCH),
-							 errmsg("key value must be scalar")));
-					return 0;
-				}
-			}
-			else
-			{
-				Assert(!"unexpected key type");
-				return 0;
-			}
-
-			kjv.type = jbvString;
-			switch (sjv->type)
-			{
-				case jbvNull:
-					kjv.val.string.len = 4;
-					kjv.val.string.val = "null";
-					break;
-				case jbvString:
-					kjv.val.string = sjv->val.string;
-					break;
-				case jbvNumeric:
-					elog(ERROR, "numeric key value not supported");
-					return 0;
-				case jbvBool:
-					if (sjv->val.boolean)
-					{
-						kjv.val.string.len = 4;
-						kjv.val.string.val = "true";
-					}
-					else
-					{
-						kjv.val.string.len = 5;
-						kjv.val.string.val = "false";
-					}
-					break;
-				default:
-					elog(ERROR, "unknown jsonb scalar type");
-					return 0;
-			}
-
-			vjv = findJsonbValueFromContainer(container, JB_FOBJECT, &kjv);
-			if (vjv == NULL)
-			{
-				*isNull = true;
-				return 0;
-			}
-		}
-		else if (container->header & JB_FARRAY)
-		{
-			CypherIndices *cind;
-			ExprState  *s;
-			ExprState  *t;
-
-			if (!IsA(elem, CypherIndices))
-			{
-				ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("map is expected but list")));
-				return 0;
-			}
-
-			cind = (CypherIndices *) elem;
-			if (cind->is_slice)
-			{
-				JsonbParseState *state = NULL;
-				JsonbValue *val;
-				int l = 0;
-				int u = container->header & JB_CMASK;
-
-				s = (ExprState *) cind->lidx;
-				t = (ExprState *) cind->uidx;
-
-				if (s != NULL)
-					l = GetListIndex(s, econtext, container, LOWER_IDX);
-				if (t != NULL)
-					u = GetListIndex(t, econtext, container, UPPER_IDX);
-
-				l = ValidateListIndex(l, container->header & JB_CMASK,
-									 LOWER_IDX);
-				u = ValidateListIndex(u, container->header & JB_CMASK,
-									 UPPER_IDX);
-
-				pushJsonbValue(&state, WJB_BEGIN_ARRAY, NULL);
-
-				for ( int i = l; i < u; i ++)
-				{
-					val = getIthJsonbValueFromContainer(container, i);
-					pushJsonbValue(&state, WJB_ELEM, val);
-				}
-
-				vjv = pushJsonbValue(&state, WJB_END_ARRAY, NULL);
-
-				if (vjv == NULL)
-				{
-					*isNull = true;
-					return 0;
-				}
-			}
-			else
-			{
-				int n;
-
-				s = (ExprState *) cind->uidx;
-				Assert(s != NULL);
-
-
-				n = GetListIndex(s, econtext, container, SINGLE_IDX);
-				n = ValidateListIndex(n, container->header & JB_CMASK,
-									 SINGLE_IDX);
-
-				vjv = getIthJsonbValueFromContainer(container, n);
-				if (vjv == NULL)
-				{
-					*isNull = true;
-					return 0;
-				}
-			}
-		}
-		else
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("Incorrect datatype")));
-			return 0;
 		}
 	}
 
@@ -5062,29 +4898,57 @@ ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 	PG_RETURN_JSONB(JsonbValueToJsonb(vjv));
 }
 
-int
-GetListIndex(ExprState *s, ExprContext *econtext,
-	JsonbContainer *container, IndexPosition idx)
+static JsonbValue *
+cypher_access_object(JsonbContainer *container, Node *pathelem,
+					 ExprContext *econtext)
 {
+	ExprState  *s;
 	Oid			stype;
+	bool		eisnull;
 	Datum		sd;
 	JsonbValue	_sjv;
 	JsonbValue *sjv;
-	int n;
-	bool eisnull;
+	JsonbValue	kjv;
+
+	if (IsA(pathelem, CypherIndices))
+	{
+		CypherIndices *cind = (CypherIndices *) pathelem;
+
+		if (cind->is_slice)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("slicing map not supported")));
+			return NULL;
+		}
+
+		s = (ExprState *) cind->uidx;
+	}
+	else
+	{
+		s = (ExprState *) pathelem;
+	}
 
 	stype = exprType((Node *) s->expr);
 	sd = ExecEvalExpr(s, econtext, &eisnull, NULL);
 	if (eisnull)
 	{
-		if (idx == LOWER_IDX)
-			return 0;
-		else if (idx == UPPER_IDX)
-			return container->header & JB_CMASK;
-
-		Assert(idx == SINGLE_IDX);
-
 		_sjv.type = jbvNull;
+		sjv = &_sjv;
+	}
+	else if (stype == TEXTOID)
+	{
+		char	   *sstr = TextDatumGetCString(sd);
+
+		_sjv.type = jbvString;
+		_sjv.val.string.len = strlen(sstr);
+		_sjv.val.string.val = sstr;
+		sjv = &_sjv;
+	}
+	else if (stype == BOOLOID)
+	{
+		_sjv.type = jbvBool;
+		_sjv.val.boolean = DatumGetBool(sd);
 		sjv = &_sjv;
 	}
 	else if (stype == JSONBOID)
@@ -5100,56 +4964,299 @@ GetListIndex(ExprState *s, ExprContext *econtext,
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
 					 errmsg("key value must be scalar")));
-			return 0;
+			return NULL;
 		}
 	}
 	else
 	{
 		Assert(!"unexpected key type");
-		return 0;
+		return NULL;
 	}
 
+	kjv.type = jbvString;
 	switch (sjv->type)
 	{
 		case jbvNull:
-			elog(ERROR, "null index value not supported");
-			return 0;
-		case jbvString:
-			elog(ERROR, "string index value not supported");
-			return 0;
-		case jbvNumeric:
+			kjv.val.string.len = 4;
+			kjv.val.string.val = "null";
 			break;
-		case jbvBool:
-			elog(ERROR, "boolean index value not supported");
+		case jbvString:
+			kjv.val.string = sjv->val.string;
+			break;
+		case jbvNumeric:
+			elog(ERROR, "numeric key value not supported");
 			return 0;
+		case jbvBool:
+			if (sjv->val.boolean)
+			{
+				kjv.val.string.len = 4;
+				kjv.val.string.val = "true";
+			}
+			else
+			{
+				kjv.val.string.len = 5;
+				kjv.val.string.val = "false";
+			}
+			break;
 		default:
 			elog(ERROR, "unknown jsonb scalar type");
 			return 0;
 	}
-	if (DatumGetInt32(DirectFunctionCall1(numeric_scale, NumericGetDatum((sjv->val.numeric))) > 0))
+
+	return findJsonbValueFromContainer(container, JB_FOBJECT, &kjv);
+}
+
+static JsonbValue *
+cypher_access_bin_array(JsonbValue *ajv, Node *pathelem, ExprContext *econtext)
+{
+	JsonbContainer *container = ajv->val.binary.data;
+	int			nelems;
+	CypherIndices *cind;
+	int			idx;
+
+	if (!IsA(pathelem, CypherIndices))
 	{
 		ereport(ERROR,
-			(errcode(ERRCODE_DATATYPE_MISMATCH),
-			 errmsg("int value expected for index")));
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("map is expected but list")));
+		return NULL;
 	}
-	n = DatumGetInt32(DirectFunctionCall1(numeric_int8, NumericGetDatum(sjv->val.numeric)));
 
-	return n;
+	nelems = container->header & JB_CMASK;
+
+	cind = (CypherIndices *) pathelem;
+	if (cind->is_slice)
+	{
+		int			lidx;
+		int			uidx;
+		JsonbParseState *jpstate = NULL;
+		JsonbIterator *it;
+		JsonbValue	jv;
+		JsonbIteratorToken tok;
+
+		lidx = cypher_access_range((ExprState *) cind->lidx, econtext, nelems,
+								   0);
+		uidx = cypher_access_range((ExprState *) cind->uidx, econtext, nelems,
+								   nelems);
+
+		if (uidx <= lidx)
+		{
+			JsonbValue *newajv;
+
+			newajv = palloc(sizeof(*newajv));
+			newajv->type = jbvArray;
+			newajv->val.array.nElems = 0;
+			newajv->val.array.elems = NULL;
+			newajv->val.array.rawScalar = false;
+
+			return newajv;
+		}
+
+		if (uidx - lidx == nelems)
+			return ajv;
+
+		pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+		it = JsonbIteratorInit(container);
+		tok = JsonbIteratorNext(&it, &jv, false);
+		idx = 0;
+		while (tok != WJB_DONE)
+		{
+			if (tok == WJB_ELEM)
+			{
+				if (idx >= uidx)
+					break;
+				if (idx >= lidx)
+					pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+
+				idx++;
+			}
+
+			tok = JsonbIteratorNext(&it, &jv, true);
+		}
+
+		return pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+	}
+	else
+	{
+		if (nelems == 0)
+			return NULL;
+
+		Assert(cind->uidx != NULL);
+		idx = cypher_access_index((ExprState *) cind->uidx, econtext, nelems);
+		if (idx < 0 || idx >= nelems)
+			return NULL;
+
+		return getIthJsonbValueFromContainer(container, idx);
+	}
 }
 
-static int ValidateListIndex(int n, uint32 size, IndexPosition idx )
+static JsonbValue *
+cypher_access_mem_array(JsonbValue *ajv, Node *pathelem, ExprContext *econtext)
 {
-	if(n < 0)
-		n += size;
+	int			nelems = ajv->val.array.nElems;
+	CypherIndices *cind;
 
-	if (n < 0 && (idx == LOWER_IDX || idx == UPPER_IDX))
-		n = 0;
+	Assert(!ajv->val.array.rawScalar);
 
-	if (n > size)
-		n = size;
+	if (!IsA(pathelem, CypherIndices))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("map is expected but list")));
+		return NULL;
+	}
 
-	return n;
+	cind = (CypherIndices *) pathelem;
+	if (cind->is_slice)
+	{
+		int			lidx;
+		int			uidx;
+
+		lidx = cypher_access_range((ExprState *) cind->lidx, econtext, nelems,
+								   0);
+		uidx = cypher_access_range((ExprState *) cind->uidx, econtext, nelems,
+								   nelems);
+
+		if (uidx <= lidx)
+		{
+			ajv->val.array.nElems = 0;
+			return ajv;
+		}
+
+		ajv->val.array.nElems = uidx - lidx;
+		ajv->val.array.elems = ajv->val.array.elems + lidx;
+		return ajv;
+	}
+	else
+	{
+		int			idx;
+
+		if (nelems == 0)
+			return NULL;
+
+		Assert(cind->uidx != NULL);
+		idx = cypher_access_index((ExprState *) cind->uidx, econtext, nelems);
+		if (idx < 0 || idx >= nelems)
+			return NULL;
+
+		return ajv->val.array.elems + idx;
+	}
+
+	return NULL;
 }
+
+static int
+cypher_access_range(ExprState *i, ExprContext *econtext, const int nelems,
+					const int defidx)
+{
+	int			idx;
+
+	if (i == NULL)
+		return defidx;
+
+	idx = cypher_access_index(i, econtext, nelems);
+	if (idx < 0)
+		return 0;
+	else if (idx > nelems)
+		return nelems;
+	else
+		return idx;
+}
+
+static int
+cypher_access_index(ExprState *i, ExprContext *econtext, const int nelems)
+{
+	Oid			itype;
+	JsonbValue	_ijv;
+	JsonbValue *ijv;
+	char	   *typestr;
+
+	itype = exprType((Node *) i->expr);
+	if (itype == TEXTOID)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("text cannot be index value")));
+		return -1;
+	}
+	else if (itype == BOOLOID)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("bool cannot be index value")));
+		return -1;
+	}
+	else if (itype == JSONBOID)
+	{
+		bool		eisnull;
+		Datum		idatum;
+
+		idatum = ExecEvalExpr(i, econtext, &eisnull, NULL);
+		if (eisnull)
+		{
+			_ijv.type = jbvNull;
+			ijv = &_ijv;
+		}
+		else
+		{
+			Jsonb	   *j = DatumGetJsonb(idatum);
+
+			if (!JB_ROOT_IS_SCALAR(j))
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("index value must be scalar")));
+
+			ijv = getIthJsonbValueFromContainer(&j->root, 0);
+		}
+	}
+	else
+	{
+		Assert(!"unexpected index type");
+		return -1;
+	}
+
+	switch (ijv->type)
+	{
+		case jbvNull:
+			typestr = "null";
+			break;
+		case jbvString:
+			typestr = "string";
+			break;
+		case jbvNumeric:
+			{
+				Datum		n = NumericGetDatum(ijv->val.numeric);
+				int			idx;
+
+				if (DatumGetInt32(DirectFunctionCall1(numeric_scale, n)) > 0)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("integer is expected for index value")));
+					return -1;
+				}
+
+				idx = DatumGetInt32(DirectFunctionCall1(numeric_int4, n));
+				if (idx < 0)
+					idx += nelems;
+
+				return idx;
+			}
+		case jbvBool:
+			typestr = "boolean";
+			break;
+		default:
+			elog(ERROR, "unknown jsonb scalar type");
+			return -1;
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_DATATYPE_MISMATCH),
+			 errmsg("%s cannot be index value", typestr)));
+	return -1;
+}
+
 /*
  * ExecEvalExprSwitchContext
  *
