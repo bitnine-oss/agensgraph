@@ -71,7 +71,7 @@ jsonb_last(PG_FUNCTION_ARGS)
 						JsonbToCString(NULL, &j->root, VARSIZE(j)))));
 
 	cnt = JB_ROOT_COUNT(j);
-	if (cnt <= 0)
+	if (cnt == 0)
 		PG_RETURN_NULL();
 
 	jv = getIthJsonbValueFromContainer(&j->root, cnt - 1);
