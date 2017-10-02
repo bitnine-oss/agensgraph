@@ -57,10 +57,10 @@
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/numeric.h"
 #include "utils/rel.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
-#include "utils/numeric.h"
 
 /* static function decls */
 static Datum ExecEvalArrayRef(ArrayRefExprState *astate,

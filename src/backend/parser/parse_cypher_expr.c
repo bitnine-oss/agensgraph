@@ -29,7 +29,9 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/tlist.h"
+#include "optimizer/var.h"
 #include "parser/analyze.h"
+#include "parser/parse_clause.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_cypher_expr.h"
@@ -1581,6 +1583,78 @@ transformCypherWhere(ParseState *pstate, Node *clause, ParseExprKind exprKind)
 	qual = coerce_to_boolean(pstate, qual, "WHERE");
 
 	return qual;
+}
+
+Node *
+transformCypherLimit(ParseState *pstate, Node *clause,
+					 ParseExprKind exprKind, const char *constructName)
+{
+	Node	   *qual;
+
+	if (clause == NULL)
+		return NULL;
+
+	qual = transformCypherExpr(pstate, clause, exprKind);
+
+	qual = coerce_to_specific_type(pstate, qual, INT8OID, constructName);
+
+	/* LIMIT can't refer to any variables of the current query */
+	if (contain_vars_of_level(qual, 0))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+				 errmsg("argument of %s must not contain variables",
+						constructName),
+				 parser_errposition(pstate, locate_var_of_level(qual, 0))));
+	}
+
+	return qual;
+}
+
+List *
+transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
+{
+	const ParseExprKind exprKind = EXPR_KIND_ORDER_BY;
+	List	   *sortgroups = NIL;
+	ListCell   *lsi;
+
+	/* See findTargetlistEntrySQL99() */
+	foreach(lsi, sortitems)
+	{
+		SortBy	   *sortby = lfirst(lsi);
+		Node	   *expr;
+		ListCell   *lt;
+		TargetEntry *te = NULL;
+
+		expr = transformCypherExpr(pstate, sortby->node, exprKind);
+
+		foreach(lt, *targetlist)
+		{
+			TargetEntry *tmp;
+			Node	   *texpr;
+
+			tmp = lfirst(lt);
+			texpr = strip_implicit_coercions((Node *) tmp->expr);
+			if (equal(texpr, expr))
+			{
+				te = tmp;
+				break;
+			}
+		}
+
+		if (te == NULL)
+		{
+			te = transformTargetEntry(pstate, sortby->node, expr, exprKind,
+									  NULL, true);
+
+			*targetlist = lappend(*targetlist, te);
+		}
+
+		sortgroups = addTargetToSortList(pstate, te, sortgroups, *targetlist,
+										 sortby, true);
+	}
+
+	return sortgroups;
 }
 
 /*

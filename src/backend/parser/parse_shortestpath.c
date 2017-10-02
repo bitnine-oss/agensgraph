@@ -67,9 +67,6 @@ static RangeTblEntry *makeDijkstraEdgeQuery(ParseState *pstate,
 static Node *makeDijkstraEdgeUnion(char *elabel_name, char *row_name);
 static Node *makeDijkstraEdge(char *elabel_name, char *row_name,
 							  CypherRel *crel);
-static Node *transformCypherLimit(ParseState *pstate, Node *clause,
-								  ParseExprKind exprKind,
-								  const char *constructName);
 
 /* parse node */
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
@@ -1451,32 +1448,6 @@ makeDijkstraEdge(char *elabel_name, char *row_name, CypherRel *crel)
 	}
 
 	return (Node *) sel;
-}
-
-static Node *
-transformCypherLimit(ParseState *pstate, Node *clause,
-					 ParseExprKind exprKind, const char *constructName)
-{
-	Node	   *qual;
-
-	if (clause == NULL)
-		return NULL;
-
-	qual = transformCypherExpr(pstate, clause, exprKind);
-
-	qual = coerce_to_specific_type(pstate, qual, INT8OID, constructName);
-
-	/* LIMIT can't refer to any variables of the current query */
-	if (contain_vars_of_level(qual, 0))
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-				 errmsg("argument of %s must not contain variables",
-						constructName),
-				 parser_errposition(pstate, locate_var_of_level(qual, 0))));
-	}
-
-	return qual;
 }
 
 /* TODO: Remove */

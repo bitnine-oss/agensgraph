@@ -25,6 +25,11 @@ extern Node *wrapEdgeRefTypes(ParseState *pstate, Node *node);
 /* clause functions */
 extern Node *transformCypherWhere(ParseState *pstate, Node *clause,
 								  ParseExprKind exprKind);
+extern Node *transformCypherLimit(ParseState *pstate, Node *clause,
+								  ParseExprKind exprKind,
+								  const char *constructName);
+extern List *transformCypherOrderBy(ParseState *pstate, List *orderlist,
+									List **targetlist);
 
 /* item list functions */
 extern List *transformItemList(ParseState *pstate, List *items,
