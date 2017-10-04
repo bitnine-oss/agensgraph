@@ -50,6 +50,7 @@ typedef enum EdgeVertexKind {
 
 static void graphid_out_si(StringInfo si, Datum graphid);
 static int graphid_cmp(FunctionCallInfo fcinfo);
+static Jsonb *int_to_jsonb(int i);
 static LabelOutData *cache_label(FmgrInfo *flinfo, uint16 labid);
 static void elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo);
 static void get_elem_type_output(ArrayMetaState *state, Oid elem_type,
@@ -537,14 +538,47 @@ _vertex_out(PG_FUNCTION_ARGS)
 Datum
 vertex_label(PG_FUNCTION_ARGS)
 {
-	Graphid id;
+	Graphid		id;
 	LabelOutData *my_extra;
+	char	   *label;
+	JsonbValue	jv;
 
 	id = DatumGetGraphid(getVertexIdDatum(PG_GETARG_DATUM(0)));
 
 	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
 
-	PG_RETURN_TEXT_P(cstring_to_text(NameStr(my_extra->label)));
+	label = NameStr(my_extra->label);
+
+	jv.type = jbvString;
+	jv.val.string.len = strlen(label);
+	jv.val.string.val = label;
+
+	PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+}
+
+Datum
+_vertex_length(PG_FUNCTION_ARGS)
+{
+	AnyArrayType *vertices = PG_GETARG_ANY_ARRAY(0);
+	int			nvertices;
+
+	nvertices = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices));
+
+	PG_RETURN_JSONB(int_to_jsonb(nvertices));
+}
+
+static Jsonb *
+int_to_jsonb(int i)
+{
+	Datum		n;
+	JsonbValue	jv;
+
+	n = DirectFunctionCall1(int4_numeric, Int32GetDatum(i));
+
+	jv.type = jbvNumeric;
+	jv.val.numeric = DatumGetNumeric(n);
+
+	return JsonbValueToJsonb(&jv);
 }
 
 Datum
@@ -672,14 +706,33 @@ _edge_out(PG_FUNCTION_ARGS)
 Datum
 edge_label(PG_FUNCTION_ARGS)
 {
-	Graphid id;
+	Graphid		id;
 	LabelOutData *my_extra;
+	char	   *label;
+	JsonbValue	jv;
 
 	id = DatumGetGraphid(getEdgeIdDatum(PG_GETARG_DATUM(0)));
 
 	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
 
-	PG_RETURN_TEXT_P(cstring_to_text(NameStr(my_extra->label)));
+	label = NameStr(my_extra->label);
+
+	jv.type = jbvString;
+	jv.val.string.len = strlen(label);
+	jv.val.string.val = label;
+
+	PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+}
+
+Datum
+_edge_length(PG_FUNCTION_ARGS)
+{
+	AnyArrayType *edges = PG_GETARG_ANY_ARRAY(0);
+	int			nedges;
+
+	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
+
+	PG_RETURN_JSONB(int_to_jsonb(nedges));
 }
 
 Datum
@@ -914,6 +967,17 @@ array_iter_next_(array_iter *it, int idx, ArrayMetaState *state)
 }
 
 Datum
+_graphpath_length(PG_FUNCTION_ARGS)
+{
+	AnyArrayType *graphpaths = PG_GETARG_ANY_ARRAY(0);
+	int			ngraphpaths;
+
+	ngraphpaths = ArrayGetNItems(AARR_NDIM(graphpaths), AARR_DIMS(graphpaths));
+
+	PG_RETURN_JSONB(int_to_jsonb(ngraphpaths));
+}
+
+Datum
 graphpath_length(PG_FUNCTION_ARGS)
 {
 	Datum		edges_datum;
@@ -924,7 +988,7 @@ graphpath_length(PG_FUNCTION_ARGS)
 	edges = DatumGetAnyArray(edges_datum);
 	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
 
-	PG_RETURN_INT32(nedges);
+	PG_RETURN_JSONB(int_to_jsonb(nedges));
 }
 
 Datum
