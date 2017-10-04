@@ -15213,6 +15213,19 @@ cypher_expr:
 					}
 				}
 			| cypher_expr_atom
+			| select_with_parens							%prec UMINUS
+				{
+					SubLink	   *n;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $1;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
 		;
 
 cypher_expr_opt:
