@@ -16471,6 +16471,7 @@ cypher_range_idx_opt:
 cypher_prop_map_opt:
 			cypher_expr_map
 			| cypher_expr_param
+			| '=' cypher_expr		{ $$ = $2; }
 			| /* EMPTY */			{ $$ = NULL; }
 		;
 
