@@ -573,7 +573,8 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %type <node>	cypher_read_opt_parens cypher_read_with_parens cypher_read_stmt
 				cypher_read_opt cypher_read cypher_read_clauses
 
-%type <node>	cypher_expr cypher_expr_opt
+%type <node>	cypher_expr cypher_i_expr cypher_c_expr cypher_expr_opt
+				cypher_expr_filter
 				cypher_expr_atom cypher_expr_literal
 				cypher_expr_param cypher_expr_var
 %type <list>	cypher_expr_comma_list
@@ -584,8 +585,8 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %type <list>	cypher_expr_map_keyvals
 %type <value>	cypher_expr_map_key cypher_expr_escaped_name
 
-%type <node>	cypher_expr_list
-%type <list>	cypher_expr_list_elems
+%type <node>	cypher_expr_list cypher_expr_lc_res_opt
+%type <list>	cypher_expr_list_elems cypher_expr_list_elems_opt
 
 %type <node>	cypher_expr_case cypher_expr_case_when cypher_expr_case_default
 %type <list>	cypher_expr_case_when_list
@@ -801,9 +802,8 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
  *
  * To support Cypher, the precedence of unreserved keywords,
- * ALLSHORTESTPATHS, DELETE_P, DETACH, LOAD, OPTIONAL_P, REMOVE, SHORTESTPATH,
- * SIZE and SKIP must be the same as that of IDENT so that they can follow
- * a_expr without creating postfix-operator problems.
+ * ALLSHORTESTPATHS, DELETE_P, DETACH, DIJKSTRA, LOAD, OPTIONAL_P, REMOVE,
+ * SHORTESTPATH, SIZE_P and SKIP must be the same as that of IDENT.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
@@ -15167,8 +15167,6 @@ cypher_expr:
 					n->location = @2;
 					$$ = (Node *) n;
 				}
-			| '(' cypher_expr ')'
-					{ $$ = $2; }
 			| cypher_expr '.' cypher_expr_escaped_name
 				{
 					A_Indirection *n;
@@ -15212,6 +15210,222 @@ cypher_expr:
 						$$ = (Node *) n;
 					}
 				}
+			| cypher_c_expr
+		;
+
+cypher_i_expr:
+			cypher_i_expr OR cypher_i_expr
+					{ $$ = makeOrExpr($1, $3, @2); }
+			| cypher_i_expr AND cypher_i_expr
+					{ $$ = makeAndExpr($1, $3, @2); }
+			| NOT cypher_i_expr
+					{ $$ = makeNotExpr($2, @1); }
+			| cypher_i_expr '=' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", $1, $3, @2);
+				}
+			| cypher_i_expr NOT_EQUALS cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<>", $1, $3, @2);
+				}
+			| cypher_i_expr '<' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<", $1, $3, @2);
+				}
+			| cypher_i_expr '>' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">", $1, $3, @2);
+				}
+			| cypher_i_expr LESS_EQUALS cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<=", $1, $3, @2);
+				}
+			| cypher_i_expr GREATER_EQUALS cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=", $1, $3, @2);
+				}
+			| cypher_i_expr '+' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`+`",
+												   $1, $3, @2);
+				}
+			| cypher_i_expr '-' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`-`",
+												   $1, $3, @2);
+				}
+			| cypher_i_expr '*' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`*`",
+												   $1, $3, @2);
+				}
+			| cypher_i_expr '/' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`/`",
+												   $1, $3, @2);
+				}
+			| cypher_i_expr '%' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`%`",
+												   $1, $3, @2);
+				}
+			| cypher_i_expr '^' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`^`",
+												   $1, $3, @2);
+				}
+			| '+' cypher_i_expr								%prec UMINUS
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`+`",
+												   NULL, $2, @1);
+				}
+			| '-' cypher_i_expr								%prec UMINUS
+				{
+					if (IsA($2, A_Const))
+					{
+						A_Const	   *con = (A_Const *) $2;
+
+						if (con->val.type == T_Integer)
+						{
+							con->val.val.ival = -con->val.val.ival;
+							con->location = @1;
+							$$ = $2;
+						}
+						else if (con->val.type == T_Float)
+						{
+							doNegateFloat(&con->val);
+							con->location = @1;
+							$$ = $2;
+						}
+						else
+						{
+							$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`-`",
+														   NULL, $2, @1);
+						}
+					}
+					else
+					{
+						$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "`-`",
+													   NULL, $2, @1);
+					}
+				}
+			| cypher_i_expr '[' cypher_expr ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = false;
+					ind->lidx = NULL;
+					ind->uidx = $3;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, ind);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1(ind);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_i_expr '[' cypher_expr_opt DOT_DOT cypher_expr_opt ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = true;
+					ind->lidx = $3;
+					ind->uidx = $5;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, ind);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1(ind);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_i_expr IS NULL_P						%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_i_expr IS NOT NULL_P					%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_i_expr '.' cypher_expr_escaped_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_i_expr '.' cypher_expr_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, ColumnRef))
+					{
+						ColumnRef  *cref = (ColumnRef *) $1;
+
+						cref->fields = lappend(cref->fields, $3);
+						$$ = $1;
+					}
+					else if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_c_expr
+		;
+
+cypher_c_expr:
+			'(' cypher_expr ')'
+					{ $$ = $2; }
 			| cypher_expr_atom
 			| select_with_parens							%prec UMINUS
 				{
@@ -15242,6 +15456,13 @@ cypher_expr_comma_list:
 
 cypher_expr_name:
 			ColLabel		{ $$ = makeString($1); }
+		;
+
+cypher_expr_filter:
+			cypher_expr_varname IN_P cypher_expr cypher_where_opt
+				{
+					$$ = NULL;
+				}
 		;
 
 cypher_expr_atom:
@@ -15294,7 +15515,7 @@ cypher_expr_escaped_name:
 		;
 
 cypher_expr_list:
-			'[' cypher_expr_list_elems ']'
+			'[' cypher_expr_list_elems_opt ']'
 				{
 					CypherListExpr *n;
 
@@ -15303,11 +15524,42 @@ cypher_expr_list:
 					n->location = @1;
 					$$ = (Node *) n;
 				}
+			| '[' cypher_expr_filter cypher_expr_lc_res_opt ']'
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("list comprehension not supported"),
+							 parser_errposition(@1)));
+					$$ = NULL;
+				}
 		;
 
 cypher_expr_list_elems:
-			cypher_expr_comma_list
+			cypher_i_expr
+					{ $$ = list_make1($1); }
+			| cypher_expr_list_elems ',' cypher_expr
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_expr_list_elems_opt:
+			cypher_expr_list_elems
 			| /* EMPTY */				{ $$ = NIL; }
+		;
+
+cypher_expr_lc_res_opt:
+			Op cypher_expr
+				{
+					/* scanner treats | as an operator */
+					if (strcmp($1, "|") != 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("syntax error: | expected"),
+								 parser_errposition(@1)));
+
+					$$ = $2;
+				}
+			| /* EMPTY */
+					{ $$ = NULL; }
 		;
 
 cypher_expr_param:
