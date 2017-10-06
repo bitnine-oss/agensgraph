@@ -5330,6 +5330,7 @@ DESCR("pg_controldata init state information as a function");
 
 /* graph */
 DATA(insert OID = 7000 ( graphid		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 7002 "23 20" _null_ _null_ _null_ _null_ _null_ graphid _null_ _null_ _null_ ));
+DESCR("make graphid");
 DATA(insert OID = 7003 ( graphid_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7002 "2275" _null_ _null_ _null_ _null_ _null_ graphid_in _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7004 ( graphid_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7002" _null_ _null_ _null_ _null_ _null_ graphid_out _null_ _null_ _null_ ));
@@ -5339,7 +5340,9 @@ DESCR("I/O");
 DATA(insert OID = 7006 ( graphid_send	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 17 "7002" _null_ _null_ _null_ _null_ _null_ graphid_send _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7007 ( graphid_labid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "7002" _null_ _null_ _null_ _null_ _null_ graphid_labid _null_ _null_ _null_ ));
+DESCR("get label ID of graphid");
 DATA(insert OID = 7008 ( graphid_locid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 20 "7002" _null_ _null_ _null_ _null_ _null_ graphid_locid _null_ _null_ _null_ ));
+DESCR("get unique ID of graphid");
 DATA(insert OID = 7009 ( graph_labid	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 23 "2275" _null_ _null_ _null_ _null_ _null_ graph_labid _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7014 ( vertex_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7012" _null_ _null_ _null_ _null_ _null_ vertex_out _null_ _null_ _null_ ));
@@ -5399,6 +5402,7 @@ DATA(insert OID = 7094 ( btgraphidcmp	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0
 DESCR("less-equal-greater");
 /* Hash for graphid */
 DATA(insert OID = 7097 ( graphid_hash	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "7002" _null_ _null_ _null_ _null_ _null_ graphid_hash _null_ _null_ _null_ ));
+DESCR("hash");
 /* GIN (as BTree) for graphid */
 DATA(insert OID = 7100 ( gin_extract_value_graphid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 2281 "7002 2281 2281" _null_ _null_ _null_ _null_ _null_ gin_extract_value_graphid _null_ _null_ _null_ ));
 DESCR("GIN graphid support");
@@ -5429,8 +5433,11 @@ DATA(insert OID = 7146 ( edge_le		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 
 DATA(insert OID = 7147 ( edge_ge		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7022 7022" _null_ _null_ _null_ _null_ _null_ edge_ge _null_ _null_ _null_ ));
 /* edgeref */
 DATA(insert OID = 7050 ( edgeref		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 7052 "23 27" _null_ _null_ _null_ _null_ _null_ edgeref _null_ _null_ _null_ ));
+DESCR("make edgeref");
 DATA(insert OID = 7053 ( edgeref_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7052 "2275" _null_ _null_ _null_ _null_ _null_ edgeref_in _null_ _null_ _null_ ));
+DESCR("I/O");
 DATA(insert OID = 7054 ( edgeref_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7052" _null_ _null_ _null_ _null_ _null_ edgeref_out _null_ _null_ _null_ ));
+DESCR("I/O");
 /* rowid */
 DATA(insert OID = 7060 ( rowid			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 7062 "26 27" _null_ _null_ _null_ _null_ _null_ rowid _null_ _null_ _null_ ));
 DESCR("store oid and tid into rowid");
@@ -5453,7 +5460,9 @@ DATA(insert OID = 7168 ( btrowidcmp		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 
 DESCR("less-equal-greater");
 /* Dijkstra */
 DATA(insert OID = 7170 ( dijkstra_vids	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 7001 "" _null_ _null_ _null_ _null_ _null_ dijkstra_vids _null_ _null_ _null_ ));
+DESCR("placeholder");
 DATA(insert OID = 7171 ( dijkstra_eids	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 7001 "" _null_ _null_ _null_ _null_ _null_ dijkstra_eids _null_ _null_ _null_ ));
+DESCR("placeholder");
 /* Cypher expressions - operators for jsonb */
 DATA(insert OID = 7175 ( jsonb_add		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_add _null_ _null_ _null_ ));
 DATA(insert OID = 7177 ( jsonb_sub		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_sub _null_ _null_ _null_ ));
@@ -5465,51 +5474,95 @@ DATA(insert OID = 7187 ( jsonb_uplus	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 
 DATA(insert OID = 7189 ( jsonb_uminus	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_uminus _null_ _null_ _null_ ));
 /* Cypher expressions - coercions between jsonb and bool */
 DATA(insert OID = 7191 ( bool		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 16 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_bool _null_ _null_ _null_ ));
+DESCR("convert jsonb to bool");
 DATA(insert OID = 7192 ( jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "16" _null_ _null_ _null_ _null_ _null_ bool_jsonb _null_ _null_ _null_ ));
+DESCR("convert bool to jsonb");
 /* Cypher expressions - coercion from jsonb to int8/int4/numeric/float */
 DATA(insert OID = 7193 ( int8		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 20 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_int8 _null_ _null_ _null_ ));
+DESCR("convert jsonb to int8");
 DATA(insert OID = 7194 ( int4		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_int4 _null_ _null_ _null_ ));
+DESCR("convert jsonb to int4");
 DATA(insert OID = 7195 ( numeric	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 1700 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_numeric _null_ _null_ _null_ ));
+DESCR("convert jsonb to numeric");
 DATA(insert OID = 7196 ( float8		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 701 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_float8 _null_ _null_ _null_ ));
+DESCR("convert jsonb to float8");
 /* Cypher expressions - functions */
 DATA(insert OID = 7197 ( head		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_head _null_ _null_ _null_ ));
+DESCR("the first element in a list");
 DATA(insert OID = 7198 ( last		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_last _null_ _null_ _null_ ));
+DESCR("the last element in a list");
 DATA(insert OID = 7199 ( length		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_length _null_ _null_ _null_ ));
+DESCR("the length of a list");
 DATA(insert OID = 7200 ( toboolean	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 16 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_toboolean _null_ _null_ _null_ ));
+DESCR("convert the argument to a boolean");
 DATA(insert OID = 7203 ( keys		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_keys _null_ _null_ _null_ ));
+DESCR("a list of keys of a map");
 DATA(insert OID = 7204 ( tail		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_tail _null_ _null_ _null_ ));
+DESCR("all but the first element in a list");
 DATA(insert OID = 7205 ( abs		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_abs _null_ _null_ _null_ ));
+DESCR("absolute value");
 DATA(insert OID = 7206 ( ceil		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_ceil _null_ _null_ _null_ ));
+DESCR("nearest integer >= value");
 DATA(insert OID = 7207 ( floor		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_floor _null_ _null_ _null_ ));
+DESCR("nearest integer <= value");
 DATA(insert OID = 7208 ( rand		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 0 0 3802 "" _null_ _null_ _null_ _null_ _null_ jsonb_rand _null_ _null_ _null_ ));
+DESCR("a random number in [0, 1)");
 DATA(insert OID = 7209 ( round		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_round _null_ _null_ _null_ ));
+DESCR("round to nearest integer");
 DATA(insert OID = 7210 ( sign		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_sign _null_ _null_ _null_ ));
+DESCR("sign of value");
 DATA(insert OID = 7212 ( exp		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_exp _null_ _null_ _null_ ));
+DESCR("natural exponential (e^x)");
 DATA(insert OID = 7213 ( log		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_log _null_ _null_ _null_ ));
+DESCR("natural logarithm");
 DATA(insert OID = 7214 ( log10		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_log10 _null_ _null_ _null_ ));
+DESCR("base 10 logarithm");
 DATA(insert OID = 7215 ( sqrt		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_sqrt _null_ _null_ _null_ ));
+DESCR("square root");
 DATA(insert OID = 7216 ( acos		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_acos _null_ _null_ _null_ ));
+DESCR("arccosine");
 DATA(insert OID = 7217 ( asin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_asin _null_ _null_ _null_ ));
+DESCR("arcsine");
 DATA(insert OID = 7218 ( atan		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_atan _null_ _null_ _null_ ));
+DESCR("arctangent");
 DATA(insert OID = 7219 ( atan2		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_atan2 _null_ _null_ _null_ ));
+DESCR("arctangent, two arguments");
 DATA(insert OID = 7220 ( cos		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_cos _null_ _null_ _null_ ));
+DESCR("cosine");
 DATA(insert OID = 7221 ( cot		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_cot _null_ _null_ _null_ ));
+DESCR("cotangent");
 DATA(insert OID = 7222 ( degrees	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_degrees _null_ _null_ _null_ ));
+DESCR("radians to degrees");
 DATA(insert OID = 7225 ( radians	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_radians _null_ _null_ _null_ ));
+DESCR("degrees to radians");
 DATA(insert OID = 7226 ( sin		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_sin _null_ _null_ _null_ ));
+DESCR("sine");
 DATA(insert OID = 7227 ( tan		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_tan _null_ _null_ _null_ ));
+DESCR("tangent");
 DATA(insert OID = 7228 ( left		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_left _null_ _null_ _null_ ));
+DESCR("extract the first n characters");
 DATA(insert OID = 7229 ( ltrim		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_ltrim _null_ _null_ _null_ ));
+DESCR("trim whitespaces from left end of string");
 DATA(insert OID = 7230 ( replace	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 3802 "3802 3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_replace _null_ _null_ _null_ ));
+DESCR("replace all occurrences in string of old_substr with new_substr");
 DATA(insert OID = 7231 ( reverse	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_reverse _null_ _null_ _null_ ));
+DESCR("reverse string");
 DATA(insert OID = 7232 ( right		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_right _null_ _null_ _null_ ));
+DESCR("extract the last n characters");
 DATA(insert OID = 7233 ( rtrim		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_rtrim _null_ _null_ _null_ ));
+DESCR("trim whitespaces from right end of string");
 DATA(insert OID = 7235 ( substring	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_substr_no_len _null_ _null_ _null_ ));
+DESCR("extract portion of string");
 DATA(insert OID = 7236 ( substring	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 3 0 3802 "3802 3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_substr _null_ _null_ _null_ ));
+DESCR("extract portion of string");
 DATA(insert OID = 7237 ( tolower	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_tolower _null_ _null_ _null_ ));
+DESCR("lowercase");
 DATA(insert OID = 7238 ( tostring	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_tostring _null_ _null_ _null_ ));
+DESCR("convert the argument to a string");
 DATA(insert OID = 7239 ( toupper	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_toupper _null_ _null_ _null_ ));
+DESCR("uppercase");
 DATA(insert OID = 7240 ( trim		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_trim _null_ _null_ _null_ ));
+DESCR("trim whitespaces from both ends of string");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
