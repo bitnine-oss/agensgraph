@@ -748,6 +748,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	CypherSetClause *detail = (CypherSetClause *) clause->detail;
 	Query	   *qry;
 	RangeTblEntry *rte;
+	ListCell   *le;
 
 	/* SET/REMOVE cannot be the first clause */
 	AssertArg(clause->prev != NULL);
@@ -764,6 +765,15 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	qry->graph.sets = transformSetPropList(pstate, rte, detail->kind,
 										   detail->items);
+	foreach(le, qry->graph.sets)
+	{
+		GraphSetProp *gsp = lfirst(le);
+
+		gsp->elem = resolve_future_vertex(pstate, gsp->elem,
+										  FVR_PRESERVE_VAR_REF);
+		gsp->expr = resolve_future_vertex(pstate, gsp->expr,
+										  FVR_PRESERVE_VAR_REF);
+	}
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -3918,10 +3928,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 
 	elem = transformCypherMapForSet(pstate, sp->prop, &pathelems, &varname);
 	if (pathelems != NIL)
-	{
 		path = makeArrayExpr(TEXTARRAYOID, TEXTOID, pathelems);
-		path = resolve_future_vertex(pstate, path, FVR_PRESERVE_VAR_REF);
-	}
 
 	/*
 	 * find the previously processed element with `varname`
@@ -3949,7 +3956,6 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	 * item). `sp->expr` can be a null constant if this `sp` is for REMOVE.
 	 */
 	expr = transformCypherExpr(pstate, sp->expr, EXPR_KIND_UPDATE_SOURCE);
-	expr = resolve_future_vertex(pstate, expr, FVR_PRESERVE_VAR_REF);
 	exprtype = exprType(expr);
 	expr = coerce_to_target_type(pstate, expr, exprtype, JSONBOID, -1,
 								 COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST,
@@ -4061,7 +4067,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		gsp = makeNode(GraphSetProp);
 		gsp->kind = gspkind;
 		gsp->variable = varname;
-		gsp->elem = resolve_future_vertex(pstate, elem, FVR_PRESERVE_VAR_REF);
+		gsp->elem = elem;
 		gsp->expr = prop_map;
 
 		return gsp;
