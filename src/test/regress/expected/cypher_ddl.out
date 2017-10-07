@@ -124,7 +124,7 @@ CREATE ELABEL wrong_parent INHERITS (v1);
 ERROR:  parent graph label "v1" is not edge label.
 -- CREATE UNLOGGED
 CREATE UNLOGGED VLABEL unlog;
-SELECT l.labname as name, c.relpersistence as persistence
+SELECT l.labname AS name, c.relpersistence AS persistence
 FROM pg_catalog.ag_label l
      LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid
 ORDER BY 1;
@@ -145,7 +145,7 @@ ORDER BY 1;
 -- WITH
 CREATE VLABEL stor
 WITH (fillfactor=90, autovacuum_enabled, autovacuum_vacuum_threshold=100);
-SELECT l.labname as name, c.reloptions as options
+SELECT l.labname AS name, c.reloptions AS options
 FROM pg_catalog.ag_label l
      LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid
 ORDER BY 1;
@@ -167,7 +167,7 @@ ORDER BY 1;
 -- TABLESPACE
 CREATE VLABEL tblspc TABLESPACE pg_default;
 -- DISABLE INDEX
-CREATE VLABEL vdi disable index;
+CREATE VLABEL vdi DISABLE INDEX;
 \d g.vdi
                                                    Table "g.vdi"
    Column   |  Type   |                                         Modifiers                                          
@@ -394,21 +394,21 @@ Child labels: g.v00,
 
 ALTER VLABEL vv RENAME TO v0;
 SELECT relname, rolname FROM pg_class c, pg_roles r
-WHERE relname='v0' AND c.relowner = r.oid;
+WHERE relname = 'v0' AND c.relowner = r.oid;
  relname |  rolname   
 ---------+------------
  v0      | graph_role
 (1 row)
 
-ALTER VLABEL v0 owner TO temp;
+ALTER VLABEL v0 OWNER TO temp;
 SELECT relname, rolname FROM pg_class c, pg_roles r
-WHERE relname='v0' AND c.relowner = r.oid;
+WHERE relname = 'v0' AND c.relowner = r.oid;
  relname | rolname 
 ---------+---------
  v0      | temp
 (1 row)
 
-ALTER VLABEL v0 owner TO graph_role;
+ALTER VLABEL v0 OWNER TO graph_role;
 DROP ROLE temp;
 SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
  indisclustered 
@@ -502,7 +502,7 @@ SELECT relreplident FROM pg_class WHERE relname = 'v0';
 (1 row)
 
 ALTER VLABEL v0 REPLICA IDENTITY default;
-ALTER VLABEL vdi disable index;
+ALTER VLABEL vdi DISABLE INDEX;
 \d g.vdi
                                                    Table "g.vdi"
    Column   |  Type   |                                         Modifiers                                          
@@ -616,18 +616,20 @@ Constraints:
     "regv1_unique_constraint" UNIQUE USING btree (a.b)
 Inherits: g.ag_vertex
 
-CREATE (:regv1 {'a':{'b':'agens', 'c':'graph'}});
-CREATE (:regv1 {'a':{'b':'agens', 'c':'graph'}});
+CREATE (:regv1 {a: {b: 'agens', c: 'graph'}});
+CREATE (:regv1 {a: {b: 'agens', c: 'graph'}});
 ERROR:  conflicting key value violates exclusion constraint "regv1_unique_constraint"
-CREATE (:regv1 {'a':{'b':'agens'}});
+CREATE (:regv1 {a: {b: 'agens'}});
 ERROR:  conflicting key value violates exclusion constraint "regv1_unique_constraint"
-CREATE (:regv1 {'a':{'b':'c'}});
-CREATE (:regv1 {'a':'b'});
-CREATE (:regv1 {'a':'agens-graph'});
+CREATE (:regv1 {a: {b: 'c'}});
+CREATE (:regv1 {a: 'b'});
+ERROR:  map or list is expected but scalar value
+CREATE (:regv1 {a: 'agens-graph'});
+ERROR:  map or list is expected but scalar value
 DROP VLABEL regv1;
 -- expr unique constraint
 CREATE ELABEL rege1;
-CREATE CONSTRAINT ON rege1 ASSERT c || d IS UNIQUE;
+CREATE CONSTRAINT ON rege1 ASSERT c + d IS UNIQUE;
 \dGe+ rege1
                         List of labels
  Graph | Name  | Type |   Owner    |    Size    | Description 
@@ -638,14 +640,14 @@ CREATE CONSTRAINT ON rege1 ASSERT c || d IS UNIQUE;
 Edge label "g.rege1"
 --
 Constraints:
-    "rege1_unique_constraint" UNIQUE USING btree ((c) || (d))
+    "rege1_unique_constraint" UNIQUE USING btree ((c) + (d))
 Inherits: g.ag_edge
 
-CREATE ()-[:rege1 {'c':'agens', 'd':'graph'}]->();
-CREATE ()-[:rege1 {'c':'agens', 'd':'graph'}]->();
+CREATE ()-[:rege1 {c: 'agens', d: 'graph'}]->();
+CREATE ()-[:rege1 {c: 'agens', d: 'graph'}]->();
 ERROR:  conflicting key value violates exclusion constraint "rege1_unique_constraint"
-CREATE ()-[:rege1 {'c':'agens', 'd':'rdb'}]->();
-CREATE ()-[:rege1 {'c':'agen', 'd':'sgraph'}]->();
+CREATE ()-[:rege1 {c: 'agens', d: 'rdb'}]->();
+CREATE ()-[:rege1 {c: 'agen', d: 'sgraph'}]->();
 ERROR:  conflicting key value violates exclusion constraint "rege1_unique_constraint"
 DROP ELABEL rege1;
 -- simple not null constraint
@@ -664,16 +666,16 @@ Constraints:
     "regv2_properties_check" CHECK ((name) IS NOT NULL)
 Inherits: g.ag_vertex
 
-CREATE (:regv2 {'name':'agens'});
-CREATE (:regv2 {'age':'0'});
+CREATE (:regv2 {name: 'agens'});
+CREATE (:regv2 {age: 0});
 ERROR:  new row for relation "regv2" violates check constraint "regv2_properties_check"
-CREATE (:regv2 {'age':'0', 'name':'graph'});
-CREATE (:regv2 {'name':NULL});
+CREATE (:regv2 {age: 0, name: 'graph'});
+CREATE (:regv2 {name: NULL});
 ERROR:  new row for relation "regv2" violates check constraint "regv2_properties_check"
 DROP VLABEL regv2;
 -- multi not null constraint
 CREATE VLABEL regv3;
-CREATE CONSTRAINT ON regv3 ASSERT (name.first, name.last) IS NOT NULL;
+CREATE CONSTRAINT ON regv3 ASSERT name.first IS NOT NULL AND name.last IS NOT NULL;
 \dGv+ regv3
                          List of labels
  Graph | Name  |  Type  |   Owner    |    Size    | Description 
@@ -684,17 +686,17 @@ CREATE CONSTRAINT ON regv3 ASSERT (name.first, name.last) IS NOT NULL;
 Vertex label "g.regv3"
 --
 Constraints:
-    "regv3_properties_check" CHECK (ROW(name.first, name.last) IS NOT NULL)
+    "regv3_properties_check" CHECK ((name.first) IS NOT NULL AND (name.last) IS NOT NULL)
 Inherits: g.ag_vertex
 
-CREATE (:regv3 {'name':'agens'});
+CREATE (:regv3 {name: 'agens'});
+ERROR:  map or list is expected but scalar value
+CREATE (:regv3 {name: {first: 'agens', last: 'graph'}});
+CREATE (:regv3 {name: {first: 'agens'}});
 ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
-CREATE (:regv3 {'name':{'first':'agens', 'last':'graph'}});
-CREATE (:regv3 {'name':{'first':'agens'}});
+CREATE (:regv3 {name: {last: 'graph'}});
 ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
-CREATE (:regv3 {'name':{'last':'graph'}});
-ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
-CREATE (:regv3 {'name':{'first':NULL, 'last':NULL}});
+CREATE (:regv3 {name: {first: NULL, last: NULL}});
 ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
 DROP VLABEL regv3;
 -- simple check constraint
@@ -713,11 +715,11 @@ Constraints:
     "rege2_properties_check" CHECK ((a) <> (b))
 Inherits: g.ag_edge
 
-CREATE ()-[:rege2 {'a':'agens', 'b':'graph'}]->();
-CREATE ()-[:rege2 {'a':'agens', 'b':'agens'}]->();
+CREATE ()-[:rege2 {a: 'agens', b: 'graph'}]->();
+CREATE ()-[:rege2 {a: 'agens', b: 'agens'}]->();
 ERROR:  new row for relation "rege2" violates check constraint "rege2_properties_check"
-CREATE ()-[:rege2 {'a':'agens', 'b':'AGENS'}]->();
-CREATE ()-[:rege2 {'a':'agens', 'd':'graph'}]->();
+CREATE ()-[:rege2 {a: 'agens', b: 'AGENS'}]->();
+CREATE ()-[:rege2 {a: 'agens', d: 'graph'}]->();
 DROP ELABEL rege2;
 -- expression check constraint
 CREATE VLABEL regv4;
@@ -735,16 +737,16 @@ Constraints:
     "regv4_properties_check" CHECK (length(password) > 8 AND length(password) < 16)
 Inherits: g.ag_vertex
 
-CREATE (:regv4 {'password':'12345678'});
+CREATE (:regv4 {password: '12345678'});
 ERROR:  new row for relation "regv4" violates check constraint "regv4_properties_check"
-CREATE (:regv4 {'password':'123456789'});
-CREATE (:regv4 {'password':'123456789012345'});
-CREATE (:regv4 {'password':'1234567890123456'});
+CREATE (:regv4 {password: '123456789'});
+CREATE (:regv4 {password: '123456789012345'});
+CREATE (:regv4 {password: '1234567890123456'});
 ERROR:  new row for relation "regv4" violates check constraint "regv4_properties_check"
 DROP VLABEL regv4;
 -- IN check constraint
 CREATE ELABEL rege3;
-CREATE CONSTRAINT ON rege3 ASSERT type IN ('friend','lover','parent');
+CREATE CONSTRAINT ON rege3 ASSERT type IN ['friend', 'lover', 'parent'];
 \dGe+ rege3
                         List of labels
  Graph | Name  | Type |   Owner    |    Size    | Description 
@@ -755,19 +757,19 @@ CREATE CONSTRAINT ON rege3 ASSERT type IN ('friend','lover','parent');
 Edge label "g.rege3"
 --
 Constraints:
-    "rege3_properties_check" CHECK ((type) = ANY (ARRAY['friend'::text, 'lover'::text, 'parent'::text]))
+    "rege3_properties_check" CHECK ((['friend', 'lover', 'parent']) @> (type))
 Inherits: g.ag_edge
 
-CREATE ()-[:rege3 {'type':'friend', 'name':'agens'}]->();
-CREATE ()-[:rege3 {'type':'love', 'name':'graph'}]->();
+CREATE ()-[:rege3 {type: 'friend', name: 'agens'}]->();
+CREATE ()-[:rege3 {type: 'love', name: 'graph'}]->();
 ERROR:  new row for relation "rege3" violates check constraint "rege3_properties_check"
-CREATE ()-[:rege3 {'type':'parents', 'name':'AGENS'}]->();
+CREATE ()-[:rege3 {type: 'parents', name: 'AGENS'}]->();
 ERROR:  new row for relation "rege3" violates check constraint "rege3_properties_check"
-CREATE ()-[:rege3 {'type':'lover', 'name':'GRAPH'}]->();
+CREATE ()-[:rege3 {type: 'lover', name: 'GRAPH'}]->();
 DROP ELABEL rege3;
 -- case check constraint
 CREATE VLABEL regv5;
-CREATE CONSTRAINT ON regv5 ASSERT lower(btrim(id)) IS UNIQUE;
+CREATE CONSTRAINT ON regv5 ASSERT toLower(trim(id)) IS UNIQUE;
 \dGv+ regv5
                          List of labels
  Graph | Name  |  Type  |   Owner    |    Size    | Description 
@@ -778,50 +780,22 @@ CREATE CONSTRAINT ON regv5 ASSERT lower(btrim(id)) IS UNIQUE;
 Vertex label "g.regv5"
 --
 Constraints:
-    "regv5_unique_constraint" UNIQUE USING btree (lower(btrim(id)))
+    "regv5_unique_constraint" UNIQUE USING btree (tolower("trim"(id)))
 Inherits: g.ag_vertex
 
-CREATE (:regv5 {'id':'agens'});
-CREATE (:regv5 {'id':' agens'});
+CREATE (:regv5 {id: 'agens'});
+CREATE (:regv5 {id: ' agens'});
 ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
-CREATE (:regv5 {'id':'agens '});
+CREATE (:regv5 {id: 'agens '});
 ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
-CREATE (:regv5 {'id':'AGENS'});
+CREATE (:regv5 {id: 'AGENS'});
 ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
-CREATE (:regv5 {'id':' AGENS '});
+CREATE (:regv5 {id: ' AGENS '});
 ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
-CREATE (:regv5 {'id':'GRAPH'});
-CREATE (:regv5 {'id':' graph '});
+CREATE (:regv5 {id: 'GRAPH'});
+CREATE (:regv5 {id: ' graph '});
 ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
 DROP VLABEL regv5;
--- typecast check constraint
-CREATE VLABEL regv6;
-CREATE CONSTRAINT ON regv6 ASSERT age::int > 0 AND age::int < 128;
-\dGv+ regv6
-                         List of labels
- Graph | Name  |  Type  |   Owner    |    Size    | Description 
--------+-------+--------+------------+------------+-------------
- g     | regv6 | vertex | graph_role | 8192 bytes | 
-(1 row)
-
-Vertex label "g.regv6"
---
-Constraints:
-    "regv6_properties_check" CHECK (((age)::integer) > 0 AND ((age)::integer) < 128)
-Inherits: g.ag_vertex
-
-CREATE (:regv6 {'age':'0'});
-ERROR:  new row for relation "regv6" violates check constraint "regv6_properties_check"
-CREATE (:regv6 {'age':'1'});
-CREATE (:regv6 {'age':'127'});
-CREATE (:regv6 {'age':'128'});
-ERROR:  new row for relation "regv6" violates check constraint "regv6_properties_check"
-CREATE (:regv6 {'age':'-10'});
-ERROR:  new row for relation "regv6" violates check constraint "regv6_properties_check"
-CREATE (:regv6 {'age':1 + 1});
-CREATE (:regv6 {'age':1 + 127});
-ERROR:  new row for relation "regv6" violates check constraint "regv6_properties_check"
-DROP VLABEL regv6;
 -- IS NULL constraint
 CREATE ELABEL rege4;
 CREATE CONSTRAINT rege4_name_isnull_constraint ON rege4 ASSERT id IS NULL;
@@ -838,10 +812,10 @@ Constraints:
     "rege4_name_isnull_constraint" CHECK ((id) IS NULL)
 Inherits: g.ag_edge
 
-CREATE ()-[:rege4 {'id':NULL, 'name':'agens'}]->();
-CREATE ()-[:rege4 {'id':10, 'name':'agens'}]->();
+CREATE ()-[:rege4 {id: NULL, name: 'agens'}]->();
+CREATE ()-[:rege4 {id: 10, name: 'agens'}]->();
 ERROR:  new row for relation "rege4" violates check constraint "rege4_name_isnull_constraint"
-CREATE ()-[:rege4 {'name':'graph'}]->();
+CREATE ()-[:rege4 {name: 'graph'}]->();
 DROP CONSTRAINT rege4_name_isnull_constraint ON ag_edge;
 ERROR:  constraint "rege4_name_isnull_constraint" of relation "ag_edge" does not exist
 DROP CONSTRAINT ON rege4;
@@ -864,17 +838,17 @@ Constraints:
     "regv7_properties_check" CHECK ((a.b[0].c) IS NOT NULL)
 Inherits: g.ag_vertex
 
-CREATE (:regv7 {'a':{'b':ARRAY[{'c':'d'},{'c':'e'}]}});
-CREATE (:regv7 {'a':{'b':ARRAY[{'c':'d'},{'e':'e'}]}});
-CREATE (:regv7 {'a':{'b':ARRAY[{'d':'d'},{'e':'e'}]}});
+CREATE (:regv7 {a: {b: [{c: 'd'}, {c: 'e'}]}});
+CREATE (:regv7 {a: {b: [{c: 'd'}, {e: 'e'}]}});
+CREATE (:regv7 {a: {b: [{d: 'd'}, {e: 'e'}]}});
 ERROR:  new row for relation "regv7" violates check constraint "regv7_properties_check"
 DROP VLABEL regv7;
 -- wrong case
 CREATE VLABEL regv8;
-CREATE CONSTRAINT ON regv8 ASSERT (select * from graph.regv8).c IS NOT NULL;
+CREATE CONSTRAINT ON regv8 ASSERT (SELECT * FROM graph.regv8).c IS NOT NULL;
 ERROR:  cannot use subquery in check constraint
 CREATE CONSTRAINT ON regv8 ASSERT (1).c IS NOT NULL;
-ERROR:  column notation .c applied to type integer, which is not a composite type
+ERROR:  map or list is expected but scalar value
 CREATE CONSTRAINT ON regv8 ASSERT ($1).c IS NOT NULL;
 ERROR:  there is no parameter $1
 DROP VLABEL regv8;
