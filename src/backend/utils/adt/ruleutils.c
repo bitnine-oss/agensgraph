@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#include "ag_const.h"
 #include "access/amapi.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
@@ -59,6 +60,8 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/hsearch.h"
+#include "utils/json.h"
+#include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/ruleutils.h"
@@ -111,6 +114,8 @@ typedef struct
 	bool		varprefix;		/* TRUE to print prefixes on Vars */
 	ParseExprKind special_exprkind;		/* set only for exprkinds needing
 										 * special handling */
+
+	bool		cypherexpr;		/* true if deparsing is for Cypher expr */
 } deparse_context;
 
 /*
@@ -407,6 +412,11 @@ static void appendContextKeyword(deparse_context *context, const char *str,
 static void removeStringInfoSpaces(StringInfo str);
 static void get_rule_expr(Node *node, deparse_context *context,
 			  bool showimplicit);
+static bool get_access_arg_expr(Node *node, deparse_context *context,
+								bool showimplicit);
+static void get_pathelem_expr(Node *node, deparse_context *context,
+							  bool showimplicit);
+static bool is_ident(const char *str, const int len);
 static void get_rule_expr_toplevel(Node *node, deparse_context *context,
 					   bool showimplicit);
 static void get_oper_expr(OpExpr *expr, deparse_context *context);
@@ -422,6 +432,7 @@ static void get_coercion_expr(Node *arg, deparse_context *context,
 				  Node *parentNode);
 static void get_const_expr(Const *constval, deparse_context *context,
 			   int showtype);
+static void get_jsonb_scalar(JsonbValue *scalar, deparse_context *context);
 static void get_const_collation(Const *constval, deparse_context *context);
 static void simple_quote_literal(StringInfo buf, const char *val);
 static void get_sublink_expr(SubLink *sublink, deparse_context *context);
@@ -456,9 +467,7 @@ static char *ag_get_graphconstraintdef_worker(Oid constraintId,
 											  int prettyFlags,
 											  bool missing_ok);
 static char *deparse_prop_expression_pretty(Node *expr, List *dpcontext,
-						  bool forceprefix, bool showimplicit,
-						  int prettyFlags, int startIndent);
-static char *removePropertiesOpExpr(char *src);
+											int prettyFlags);
 
 #define only_marker(rte)  ((rte)->inh ? "" : "ONLY ")
 
@@ -994,6 +1003,7 @@ pg_get_triggerdef_worker(Oid trigid, bool pretty)
 		context.wrapColumn = WRAP_COLUMN_DEFAULT;
 		context.indentLevel = PRETTYINDENT_STD;
 		context.special_exprkind = EXPR_KIND_NONE;
+		context.cypherexpr = false;
 
 		get_rule_expr(qual, &context, false);
 
@@ -2664,6 +2674,7 @@ deparse_expression_pretty(Node *expr, List *dpcontext,
 	context.wrapColumn = WRAP_COLUMN_DEFAULT;
 	context.indentLevel = startIndent;
 	context.special_exprkind = EXPR_KIND_NONE;
+	context.cypherexpr = false;
 
 	get_rule_expr(expr, &context, showimplicit);
 
@@ -4345,6 +4356,7 @@ make_ruledef(StringInfo buf, HeapTuple ruletup, TupleDesc rulettc,
 		context.wrapColumn = WRAP_COLUMN_DEFAULT;
 		context.indentLevel = PRETTYINDENT_STD;
 		context.special_exprkind = EXPR_KIND_NONE;
+		context.cypherexpr = false;
 
 		set_deparse_for_query(&dpns, query, NIL);
 
@@ -4497,6 +4509,7 @@ get_query_def(Query *query, StringInfo buf, List *parentnamespace,
 	context.wrapColumn = wrapColumn;
 	context.indentLevel = startIndent;
 	context.special_exprkind = EXPR_KIND_NONE;
+	context.cypherexpr = false;
 
 	set_deparse_for_query(&dpns, query, parentnamespace);
 
@@ -8305,9 +8318,10 @@ get_rule_expr(Node *node, deparse_context *context,
 		case T_CypherAccessExpr:
 			{
 				CypherAccessExpr *a = (CypherAccessExpr *) node;
+				bool		dot;
 				ListCell   *le;
 
-				get_rule_expr((Node *) a->arg, context, true);
+				dot = get_access_arg_expr((Node *) a->arg, context, true);
 
 				foreach(le, a->path)
 				{
@@ -8324,14 +8338,18 @@ get_rule_expr(Node *node, deparse_context *context,
 							get_rule_expr(cind->lidx, context, true);
 							appendStringInfoString(buf, "..");
 						}
-						get_rule_expr(cind->uidx, context, true);
+						get_pathelem_expr(cind->uidx, context, true);
 
 						appendStringInfoChar(buf, ']');
 					}
 					else
 					{
-						appendStringInfoChar(buf, '.');
-						get_rule_expr(e, context, true);
+						if (dot)
+							appendStringInfoChar(buf, '.');
+						else
+							dot = true;
+
+						get_pathelem_expr(e, context, true);
 					}
 				}
 			}
@@ -8341,6 +8359,96 @@ get_rule_expr(Node *node, deparse_context *context,
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			break;
 	}
+}
+
+static bool
+get_access_arg_expr(Node *node, deparse_context *context, bool showimplicit)
+{
+	StringInfoData si;
+	StringInfo	buf;
+
+	if (!context->cypherexpr)
+	{
+		get_rule_expr(node, context, true);
+		return true;
+	}
+
+	initStringInfo(&si);
+
+	buf = context->buf;
+	context->buf = &si;
+
+	get_rule_expr(node, context, true);
+
+	context->buf = buf;
+
+	if (strcmp(si.data, AG_ELEM_PROP_MAP) != 0)
+	{
+		appendBinaryStringInfo(buf, si.data, si.len);
+		return true;
+	}
+
+	return false;
+}
+
+static void
+get_pathelem_expr(Node *node, deparse_context *context, bool showimplicit)
+{
+	StringInfoData si;
+	StringInfo	buf;
+
+	if (!context->cypherexpr)
+	{
+		get_rule_expr(node, context, true);
+		return;
+	}
+
+	initStringInfo(&si);
+
+	buf = context->buf;
+	context->buf = &si;
+
+	get_rule_expr(node, context, true);
+
+	context->buf = buf;
+
+	if (si.len > 2 && si.data[0] == '\'' && si.data[si.len - 1] == '\'')
+	{
+		si.data[si.len - 1] = '\0';
+		if (is_ident(si.data + 1, si.len - 2))
+		{
+			appendBinaryStringInfo(buf, si.data + 1, si.len - 2);
+			return;
+		}
+		else
+		{
+			si.data[si.len -1] = '\'';
+		}
+	}
+
+	appendBinaryStringInfo(buf, si.data, si.len);
+}
+
+static bool
+is_ident(const char *str, const int len)
+{
+	int			i;
+
+	for (i = 0; i < len; i++)
+	{
+		char		c = str[i];
+
+		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			IS_HIGHBIT_SET(c) || c == '_')
+			continue;
+
+		if (i > 0 && ((c >= '0' && c <= '9') || c == '$'))
+			continue;
+
+		return false;
+	}
+
+	return true;
 }
 
 /*
@@ -8382,12 +8490,24 @@ get_oper_expr(OpExpr *expr, deparse_context *context)
 		/* binary operator */
 		Node	   *arg1 = (Node *) linitial(args);
 		Node	   *arg2 = (Node *) lsecond(args);
+		char	   *oprname;
 
 		get_rule_expr_paren(arg1, context, true, (Node *) expr);
-		appendStringInfo(buf, " %s ",
-						 generate_operator_name(opno,
-												exprType(arg1),
-												exprType(arg2)));
+
+		oprname = generate_operator_name(opno, exprType(arg1), exprType(arg2));
+		if (context->cypherexpr &&
+			(strcmp(oprname, "`+`") == 0 ||
+			 strcmp(oprname, "`-`") == 0 ||
+			 strcmp(oprname, "`*`") == 0 ||
+			 strcmp(oprname, "`/`") == 0 ||
+			 strcmp(oprname, "`%`") == 0 ||
+			 strcmp(oprname, "`^`") == 0))
+		{
+			oprname[2] = '\0';
+			oprname = oprname + 1;
+		}
+		appendStringInfo(buf, " %s ", oprname);
+
 		get_rule_expr_paren(arg2, context, true, (Node *) expr);
 	}
 	else
@@ -8786,7 +8906,7 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 		 * about type when reparsing.
 		 */
 		appendStringInfoString(buf, "NULL");
-		if (showtype >= 0)
+		if (showtype >= 0 && !context->cypherexpr)
 		{
 			appendStringInfo(buf, "::%s",
 							 format_type_with_typemod(constval->consttype,
@@ -8854,6 +8974,75 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 				appendStringInfoString(buf, "false");
 			break;
 
+		case JSONBOID:
+			if (context->cypherexpr)
+			{
+				Jsonb	   *j = DatumGetJsonb(constval->constvalue);
+				JsonbIterator *it;
+				bool		first = true;
+				bool		raw_scalar = false;
+
+				it = JsonbIteratorInit(&j->root);
+
+				for (;;)
+				{
+					JsonbValue	jv;
+					JsonbIteratorToken tok;
+
+					tok = JsonbIteratorNext(&it, &jv, false);
+					if (tok == WJB_DONE)
+						break;
+
+					switch (tok)
+					{
+						case WJB_KEY:
+							if (!first)
+								appendBinaryStringInfo(buf, ", ", 2);
+							get_jsonb_scalar(&jv, context);
+							appendBinaryStringInfo(buf, ": ", 2);
+							break;
+						case WJB_VALUE:
+							get_jsonb_scalar(&jv, context);
+							first = false;
+							break;
+						case WJB_ELEM:
+							if (!first)
+								appendBinaryStringInfo(buf, ", ", 2);
+							get_jsonb_scalar(&jv, context);
+							first = false;
+							break;
+						case WJB_BEGIN_ARRAY:
+							if (!first)
+								appendBinaryStringInfo(buf, ", ", 2);
+							if (jv.val.array.rawScalar)
+								raw_scalar = true;
+							else
+								appendStringInfoCharMacro(buf, '[');
+							first = true;
+							break;
+						case WJB_END_ARRAY:
+							if (!raw_scalar)
+								appendStringInfoCharMacro(buf, ']');
+							first = false;
+							break;
+						case WJB_BEGIN_OBJECT:
+							if (!first)
+								appendBinaryStringInfo(buf, ", ", 2);
+							appendStringInfoCharMacro(buf, '{');
+							first = true;
+							break;
+						case WJB_END_OBJECT:
+							appendStringInfoCharMacro(buf, '}');
+							first = false;
+							break;
+						default:
+							elog(ERROR, "unknown jsonb iterator token type");
+					}
+				}
+
+				break;
+			}
+
 		default:
 			simple_quote_literal(buf, extval);
 			break;
@@ -8891,7 +9080,7 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 			needlabel |= (constval->consttypmod >= 0);
 			break;
 		default:
-			needlabel = true;
+			needlabel = !context->cypherexpr;
 			break;
 	}
 	if (needlabel || showtype > 0)
@@ -8902,6 +9091,59 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 	get_const_collation(constval, context);
 }
 
+static void
+get_jsonb_scalar(JsonbValue *scalar, deparse_context *context)
+{
+	StringInfo	buf = context->buf;
+
+	switch (scalar->type)
+	{
+		case jbvNull:
+			appendBinaryStringInfo(buf, "null", 4);
+			break;
+		case jbvString:
+			{
+				StringInfoData si;
+				char	   *str;
+				const char *c;
+
+				initStringInfo(&si);
+				escape_json(&si, pnstrdup(scalar->val.string.val,
+										  scalar->val.string.len));
+				str = si.data;
+
+				str[strlen(str) - 1] = '\0';
+				appendStringInfoCharMacro(buf, '\'');
+				for (c = str + 1; *c != '\0'; c++)
+				{
+					if (*c == '\'')
+						appendStringInfoCharMacro(buf, '\'');
+					appendStringInfoCharMacro(buf, *c);
+				}
+				appendStringInfoCharMacro(buf, '\'');
+			}
+			break;
+		case jbvNumeric:
+			{
+				Datum		s;
+
+				s = DirectFunctionCall1(numeric_out,
+										NumericGetDatum(scalar->val.numeric));
+
+				appendStringInfoString(buf, DatumGetCString(s));
+			}
+			break;
+		case jbvBool:
+			if (scalar->val.boolean)
+				appendBinaryStringInfo(buf, "true", 4);
+			else
+				appendBinaryStringInfo(buf, "false", 5);
+			break;
+		default:
+			elog(ERROR, "unknown jsonb scalar type");
+	}
+}
+
 /*
  * helper for get_const_expr: append COLLATE if needed
  */
@@ -8910,7 +9152,7 @@ get_const_collation(Const *constval, deparse_context *context)
 {
 	StringInfo	buf = context->buf;
 
-	if (OidIsValid(constval->constcollid))
+	if (OidIsValid(constval->constcollid) && !context->cypherexpr)
 	{
 		Oid			typcollation = get_typcollation(constval->consttype);
 
@@ -10296,7 +10538,7 @@ flatten_reloptions(Oid relid)
 }
 
 /* ----------
- * ag_get_propindexdef	- Get the definition of an property index
+ * ag_get_propindexdef	- Get the definition of a property index
  *
  * Based on pg_get_indexdef()
  * ----------
@@ -10477,8 +10719,7 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		indexkey = (Node *) lfirst(indexpr_item);
 		indexpr_item = lnext(indexpr_item);
 		/* Deparse */
-		str = deparse_prop_expression_pretty(indexkey, context, false, false,
-											 prettyFlags, 0);
+		str = deparse_prop_expression_pretty(indexkey, context, prettyFlags);
 		appendStringInfo(&buf, "%s", str);
 		keycoltype = exprType(indexkey);
 		keycolcollation = exprCollation(indexkey);
@@ -10553,8 +10794,7 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		pfree(predString);
 
 		/* Deparse */
-		str = deparse_prop_expression_pretty(node, context, false, false,
-											 prettyFlags, 0);
+		str = deparse_prop_expression_pretty(node, context, prettyFlags);
 
 		if (isConstraint)
 			appendStringInfo(&buf, " WHERE (%s)", str);
@@ -10674,8 +10914,8 @@ ag_get_graphconstraintdef_worker(Oid constraintId, int prettyFlags,
 					context = NIL;
 				}
 
-				consrc = deparse_prop_expression_pretty(expr, context,false,
-														false, prettyFlags, 0);
+				consrc = deparse_prop_expression_pretty(expr, context,
+														prettyFlags);
 
 				appendStringInfo(&buf, "CHECK (%s)", consrc);
 				break;
@@ -10745,95 +10985,25 @@ ag_get_graphconstraintdef_worker(Oid constraintId, int prettyFlags,
  * agens-graph utility for deparsing expressions
  */
 static char *
-deparse_prop_expression_pretty(Node *expr, List *dpcontext,
-							   bool forceprefix, bool showimplicit,
-							   int prettyFlags, int startIndent)
+deparse_prop_expression_pretty(Node *expr, List *dpcontext, int prettyFlags)
 {
-	char *res;
+	StringInfoData si;
+	deparse_context context;
 
-	res = deparse_expression_pretty(expr, dpcontext, forceprefix,
-									showimplicit, prettyFlags, startIndent);
+	initStringInfo(&si);
 
-	return removePropertiesOpExpr(res);
-}
+	context.buf = &si;
+	context.namespaces = dpcontext;
+	context.windowClause = NIL;
+	context.windowTList = NIL;
+	context.varprefix = false;
+	context.prettyFlags = prettyFlags;
+	context.wrapColumn = WRAP_COLUMN_DEFAULT;
+	context.indentLevel = 0;
+	context.special_exprkind = EXPR_KIND_NONE;
+	context.cypherexpr = true;
 
-/*
- * Prints the path elements of the properties (right operand of `#>>`) only.
- * Other expressions are printed as they are.
- */
-static char *
-removePropertiesOpExpr(char *src)
-{
-	const char *prop_prefix = "properties #>> ARRAY[";
-	const char *prop_postfix = "::text]";
-	const char *prop_delim = "::text, ";
-	const int	len_prefix = strlen(prop_prefix);
-	const int	len_postfix = strlen(prop_postfix);
-	const int	len_delim = strlen(prop_delim);
-	StringInfoData strInfo;
-	char	   *prev;
-	char	   *curr;
+	get_rule_expr(expr, &context, false);
 
-	initStringInfo(&strInfo);
-
-	prev = src;
-	while ((curr = strstr(prev, prop_prefix)) != NULL)
-	{
-		char	   *next;
-		char	   *sep = "";
-
-		/* print the beginning of the rest */
-		appendBinaryStringInfo(&strInfo, prev, curr - prev);
-
-		/* find a properties expression */
-		curr = curr + len_prefix;
-		next = strstr(curr, prop_postfix);
-		if (!next)
-			elog(ERROR, "invalid properties expression: %s", src);
-
-		/* extracts elements */
-		while (curr < next)
-		{
-			char *end;
-
-			/*
-			 * NOTE: How about ' character in '...'?
-			 */
-			if (*curr == '\'')			/* string key */
-			{
-				curr++;
-				end = strchr(curr, '\'');
-
-				appendStringInfo(&strInfo, "%s", sep);
-				appendBinaryStringInfo(&strInfo, curr, end - curr);
-
-				curr = end + 1;
-			}
-			else if (isdigit(*curr))	/* index of array */
-			{
-				end = strstr(curr, prop_delim);
-
-				appendStringInfoChar(&strInfo, '[');
-				appendBinaryStringInfo(&strInfo, curr, end - curr);
-				appendStringInfoChar(&strInfo, ']');
-
-				curr = end;
-			}
-			else
-			{
-				elog(ERROR, "invalid properties expression: %s", src);
-			}
-
-			sep = ".";
-
-			curr += len_delim;
-		}
-
-		prev = next + len_postfix;
-	}
-
-	/* print the rest */
-	appendStringInfoString(&strInfo, prev);
-
-	return strInfo.data;
+	return si.data;
 }
