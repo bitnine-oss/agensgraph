@@ -82,7 +82,7 @@ CREATE ELABEL wrong_parent INHERITS (v1);
 
 -- CREATE UNLOGGED
 CREATE UNLOGGED VLABEL unlog;
-SELECT l.labname as name, c.relpersistence as persistence
+SELECT l.labname AS name, c.relpersistence AS persistence
 FROM pg_catalog.ag_label l
      LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid
 ORDER BY 1;
@@ -90,7 +90,7 @@ ORDER BY 1;
 -- WITH
 CREATE VLABEL stor
 WITH (fillfactor=90, autovacuum_enabled, autovacuum_vacuum_threshold=100);
-SELECT l.labname as name, c.reloptions as options
+SELECT l.labname AS name, c.reloptions AS options
 FROM pg_catalog.ag_label l
      LEFT JOIN pg_catalog.pg_class c ON c.oid = l.relid
 ORDER BY 1;
@@ -99,7 +99,7 @@ ORDER BY 1;
 CREATE VLABEL tblspc TABLESPACE pg_default;
 
 -- DISABLE INDEX
-CREATE VLABEL vdi disable index;
+CREATE VLABEL vdi DISABLE INDEX;
 \d g.vdi
 
 -- REINDEX
@@ -139,12 +139,12 @@ ALTER VLABEL v0 RENAME TO vv;
 ALTER VLABEL vv RENAME TO v0;
 
 SELECT relname, rolname FROM pg_class c, pg_roles r
-WHERE relname='v0' AND c.relowner = r.oid;
-ALTER VLABEL v0 owner TO temp;
+WHERE relname = 'v0' AND c.relowner = r.oid;
+ALTER VLABEL v0 OWNER TO temp;
 
 SELECT relname, rolname FROM pg_class c, pg_roles r
-WHERE relname='v0' AND c.relowner = r.oid;
-ALTER VLABEL v0 owner TO graph_role;
+WHERE relname = 'v0' AND c.relowner = r.oid;
+ALTER VLABEL v0 OWNER TO graph_role;
 DROP ROLE temp;
 
 SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
@@ -172,7 +172,7 @@ ALTER VLABEL v0 REPLICA IDENTITY full;
 SELECT relreplident FROM pg_class WHERE relname = 'v0';
 ALTER VLABEL v0 REPLICA IDENTITY default;
 
-ALTER VLABEL vdi disable index;
+ALTER VLABEL vdi DISABLE INDEX;
 \d g.vdi
 
 -- IF EXISTS
@@ -228,25 +228,25 @@ CREATE VLABEL regv1;
 CREATE CONSTRAINT ON regv1 ASSERT a.b IS UNIQUE;
 \dGv+ regv1
 
-CREATE (:regv1 {'a':{'b':'agens', 'c':'graph'}});
-CREATE (:regv1 {'a':{'b':'agens', 'c':'graph'}});
-CREATE (:regv1 {'a':{'b':'agens'}});
-CREATE (:regv1 {'a':{'b':'c'}});
-CREATE (:regv1 {'a':'b'});
-CREATE (:regv1 {'a':'agens-graph'});
+CREATE (:regv1 {a: {b: 'agens', c: 'graph'}});
+CREATE (:regv1 {a: {b: 'agens', c: 'graph'}});
+CREATE (:regv1 {a: {b: 'agens'}});
+CREATE (:regv1 {a: {b: 'c'}});
+CREATE (:regv1 {a: 'b'});
+CREATE (:regv1 {a: 'agens-graph'});
 
 DROP VLABEL regv1;
 
 -- expr unique constraint
 CREATE ELABEL rege1;
 
-CREATE CONSTRAINT ON rege1 ASSERT c || d IS UNIQUE;
+CREATE CONSTRAINT ON rege1 ASSERT c + d IS UNIQUE;
 \dGe+ rege1
 
-CREATE ()-[:rege1 {'c':'agens', 'd':'graph'}]->();
-CREATE ()-[:rege1 {'c':'agens', 'd':'graph'}]->();
-CREATE ()-[:rege1 {'c':'agens', 'd':'rdb'}]->();
-CREATE ()-[:rege1 {'c':'agen', 'd':'sgraph'}]->();
+CREATE ()-[:rege1 {c: 'agens', d: 'graph'}]->();
+CREATE ()-[:rege1 {c: 'agens', d: 'graph'}]->();
+CREATE ()-[:rege1 {c: 'agens', d: 'rdb'}]->();
+CREATE ()-[:rege1 {c: 'agen', d: 'sgraph'}]->();
 
 DROP ELABEL rege1;
 
@@ -256,24 +256,24 @@ CREATE VLABEL regv2;
 CREATE CONSTRAINT ON regv2 ASSERT name IS NOT NULL;
 \dGv+ regv2
 
-CREATE (:regv2 {'name':'agens'});
-CREATE (:regv2 {'age':'0'});
-CREATE (:regv2 {'age':'0', 'name':'graph'});
-CREATE (:regv2 {'name':NULL});
+CREATE (:regv2 {name: 'agens'});
+CREATE (:regv2 {age: 0});
+CREATE (:regv2 {age: 0, name: 'graph'});
+CREATE (:regv2 {name: NULL});
 
 DROP VLABEL regv2;
 
 -- multi not null constraint
 CREATE VLABEL regv3;
 
-CREATE CONSTRAINT ON regv3 ASSERT (name.first, name.last) IS NOT NULL;
+CREATE CONSTRAINT ON regv3 ASSERT name.first IS NOT NULL AND name.last IS NOT NULL;
 \dGv+ regv3
 
-CREATE (:regv3 {'name':'agens'});
-CREATE (:regv3 {'name':{'first':'agens', 'last':'graph'}});
-CREATE (:regv3 {'name':{'first':'agens'}});
-CREATE (:regv3 {'name':{'last':'graph'}});
-CREATE (:regv3 {'name':{'first':NULL, 'last':NULL}});
+CREATE (:regv3 {name: 'agens'});
+CREATE (:regv3 {name: {first: 'agens', last: 'graph'}});
+CREATE (:regv3 {name: {first: 'agens'}});
+CREATE (:regv3 {name: {last: 'graph'}});
+CREATE (:regv3 {name: {first: NULL, last: NULL}});
 
 DROP VLABEL regv3;
 
@@ -283,10 +283,10 @@ CREATE ELABEL rege2;
 CREATE CONSTRAINT ON rege2 ASSERT a != b;
 \dGe+ rege2
 
-CREATE ()-[:rege2 {'a':'agens', 'b':'graph'}]->();
-CREATE ()-[:rege2 {'a':'agens', 'b':'agens'}]->();
-CREATE ()-[:rege2 {'a':'agens', 'b':'AGENS'}]->();
-CREATE ()-[:rege2 {'a':'agens', 'd':'graph'}]->();
+CREATE ()-[:rege2 {a: 'agens', b: 'graph'}]->();
+CREATE ()-[:rege2 {a: 'agens', b: 'agens'}]->();
+CREATE ()-[:rege2 {a: 'agens', b: 'AGENS'}]->();
+CREATE ()-[:rege2 {a: 'agens', d: 'graph'}]->();
 
 DROP ELABEL rege2;
 
@@ -296,57 +296,41 @@ CREATE VLABEL regv4;
 CREATE CONSTRAINT ON regv4 ASSERT (length(password) > 8 AND length(password) < 16);
 \dGv+ regv4
 
-CREATE (:regv4 {'password':'12345678'});
-CREATE (:regv4 {'password':'123456789'});
-CREATE (:regv4 {'password':'123456789012345'});
-CREATE (:regv4 {'password':'1234567890123456'});
+CREATE (:regv4 {password: '12345678'});
+CREATE (:regv4 {password: '123456789'});
+CREATE (:regv4 {password: '123456789012345'});
+CREATE (:regv4 {password: '1234567890123456'});
 
 DROP VLABEL regv4;
 
 -- IN check constraint
 CREATE ELABEL rege3;
 
-CREATE CONSTRAINT ON rege3 ASSERT type IN ('friend','lover','parent');
+CREATE CONSTRAINT ON rege3 ASSERT type IN ['friend', 'lover', 'parent'];
 \dGe+ rege3
 
-CREATE ()-[:rege3 {'type':'friend', 'name':'agens'}]->();
-CREATE ()-[:rege3 {'type':'love', 'name':'graph'}]->();
-CREATE ()-[:rege3 {'type':'parents', 'name':'AGENS'}]->();
-CREATE ()-[:rege3 {'type':'lover', 'name':'GRAPH'}]->();
+CREATE ()-[:rege3 {type: 'friend', name: 'agens'}]->();
+CREATE ()-[:rege3 {type: 'love', name: 'graph'}]->();
+CREATE ()-[:rege3 {type: 'parents', name: 'AGENS'}]->();
+CREATE ()-[:rege3 {type: 'lover', name: 'GRAPH'}]->();
 
 DROP ELABEL rege3;
 
 -- case check constraint
 CREATE VLABEL regv5;
 
-CREATE CONSTRAINT ON regv5 ASSERT lower(btrim(id)) IS UNIQUE;
+CREATE CONSTRAINT ON regv5 ASSERT toLower(trim(id)) IS UNIQUE;
 \dGv+ regv5
 
-CREATE (:regv5 {'id':'agens'});
-CREATE (:regv5 {'id':' agens'});
-CREATE (:regv5 {'id':'agens '});
-CREATE (:regv5 {'id':'AGENS'});
-CREATE (:regv5 {'id':' AGENS '});
-CREATE (:regv5 {'id':'GRAPH'});
-CREATE (:regv5 {'id':' graph '});
+CREATE (:regv5 {id: 'agens'});
+CREATE (:regv5 {id: ' agens'});
+CREATE (:regv5 {id: 'agens '});
+CREATE (:regv5 {id: 'AGENS'});
+CREATE (:regv5 {id: ' AGENS '});
+CREATE (:regv5 {id: 'GRAPH'});
+CREATE (:regv5 {id: ' graph '});
 
 DROP VLABEL regv5;
-
--- typecast check constraint
-CREATE VLABEL regv6;
-
-CREATE CONSTRAINT ON regv6 ASSERT age::int > 0 AND age::int < 128;
-\dGv+ regv6
-
-CREATE (:regv6 {'age':'0'});
-CREATE (:regv6 {'age':'1'});
-CREATE (:regv6 {'age':'127'});
-CREATE (:regv6 {'age':'128'});
-CREATE (:regv6 {'age':'-10'});
-CREATE (:regv6 {'age':1 + 1});
-CREATE (:regv6 {'age':1 + 127});
-
-DROP VLABEL regv6;
 
 -- IS NULL constraint
 CREATE ELABEL rege4;
@@ -354,13 +338,14 @@ CREATE ELABEL rege4;
 CREATE CONSTRAINT rege4_name_isnull_constraint ON rege4 ASSERT id IS NULL;
 \dGe+ rege4
 
-CREATE ()-[:rege4 {'id':NULL, 'name':'agens'}]->();
-CREATE ()-[:rege4 {'id':10, 'name':'agens'}]->();
-CREATE ()-[:rege4 {'name':'graph'}]->();
+CREATE ()-[:rege4 {id: NULL, name: 'agens'}]->();
+CREATE ()-[:rege4 {id: 10, name: 'agens'}]->();
+CREATE ()-[:rege4 {name: 'graph'}]->();
 
 DROP CONSTRAINT rege4_name_isnull_constraint ON ag_edge;
 DROP CONSTRAINT ON rege4;
 DROP CONSTRAINT rege4_name_isnull_constraint ON rege4;
+
 DROP ELABEL rege4;
 
 -- Indirection constraint
@@ -370,9 +355,9 @@ CREATE VLABEL regv7;
 CREATE CONSTRAINT ON regv7 ASSERT a.b[0].c IS NOT NULL;
 \dGv+ regv7
 
-CREATE (:regv7 {'a':{'b':ARRAY[{'c':'d'},{'c':'e'}]}});
-CREATE (:regv7 {'a':{'b':ARRAY[{'c':'d'},{'e':'e'}]}});
-CREATE (:regv7 {'a':{'b':ARRAY[{'d':'d'},{'e':'e'}]}});
+CREATE (:regv7 {a: {b: [{c: 'd'}, {c: 'e'}]}});
+CREATE (:regv7 {a: {b: [{c: 'd'}, {e: 'e'}]}});
+CREATE (:regv7 {a: {b: [{d: 'd'}, {e: 'e'}]}});
 
 DROP VLABEL regv7;
 
@@ -380,11 +365,12 @@ DROP VLABEL regv7;
 
 CREATE VLABEL regv8;
 
-CREATE CONSTRAINT ON regv8 ASSERT (select * from graph.regv8).c IS NOT NULL;
+CREATE CONSTRAINT ON regv8 ASSERT (SELECT * FROM graph.regv8).c IS NOT NULL;
 CREATE CONSTRAINT ON regv8 ASSERT (1).c IS NOT NULL;
 CREATE CONSTRAINT ON regv8 ASSERT ($1).c IS NOT NULL;
 
 DROP VLABEL regv8;
+
 --
 -- DROP GRAPH
 --

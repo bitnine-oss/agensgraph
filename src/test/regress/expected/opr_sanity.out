@@ -438,18 +438,9 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1 LEFT JOIN pg_description as d
      ON p1.tableoid = d.classoid and p1.oid = d.objoid and d.objsubid = 0
 WHERE d.classoid IS NULL AND p1.oid <= 9999;
- oid  |    proname    
-------+---------------
- 7000 | graphid
- 7007 | graphid_labid
- 7008 | graphid_locid
- 7097 | graphid_hash
- 7050 | edgeref
- 7053 | edgeref_in
- 7054 | edgeref_out
- 7170 | dijkstra_vids
- 7171 | dijkstra_eids
-(9 rows)
+ oid | proname 
+-----+---------
+(0 rows)
 
 -- List of built-in leakproof functions
 --
