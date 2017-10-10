@@ -1382,6 +1382,13 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				{
 					Node *earr;
 
+					if (out)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("graph path and variable length edge cannot be used at the same time"),
+								 parser_errposition(pstate,
+											getCypherNameLoc(p->variable))));
+
 					earr = getColumnVar(pstate, edge, VLE_COLNAME_ROWIDS);
 					uearrs = list_append_unique(uearrs, earr);
 				}
