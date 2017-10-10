@@ -971,6 +971,16 @@ MERGE (b:v1 {no: 2})
 
 MATCH (a:v1) RETURN a.no;
 
+MATCH (a) DELETE a;
+CREATE (:v1 {no: 1}), (:v1 {no: 2}), (:v1 {no: 3});
+
+MATCH (a:v1)
+  WHERE a.no < 3
+  DELETE a
+MERGE (b:v1 {no: 2})
+  ON MATCH SET b.no = a.no
+RETURN a, properties(b);
+
 -- MATCH - SET - RETURN
 MATCH (a) DETACH DELETE a;
 CREATE (:v1 {no: 1})-[:e]->(:v1 {no: 2})-[:e]->(:v1 {no: 3});
