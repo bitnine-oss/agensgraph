@@ -1448,4 +1448,37 @@ typedef struct EdgeRefRows
 	Expr	   *arg;
 } EdgeRefRows;
 
+/*
+ * Cypher Query Language
+ */
+
+typedef struct CypherMapExpr
+{
+	Expr		xpr;
+	List	   *keyvals;		/* key, value, key, value, ... */
+	int			location;
+} CypherMapExpr;
+
+typedef struct CypherListExpr
+{
+	Expr		xpr;
+	List	   *elems;
+	int 		location;
+} CypherListExpr;
+
+typedef struct CypherAccessExpr
+{
+	Expr		xpr;
+	Expr	   *arg;
+	List	   *path;
+} CypherAccessExpr;
+
+typedef struct CypherIndices
+{
+	NodeTag		type;
+	bool		is_slice;
+	Node	   *lidx;			/* Expr or ExprState */
+	Node	   *uidx;			/* Expr or ExprState */
+} CypherIndices;
+
 #endif   /* PRIMNODES_H */

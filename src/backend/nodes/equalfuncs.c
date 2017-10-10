@@ -800,6 +800,43 @@ _equalEdgeRefRows(const EdgeRefRows *a, const EdgeRefRows *b)
 	return true;
 }
 
+static bool
+_equalCypherMapExpr(const CypherMapExpr *a, const CypherMapExpr *b)
+{
+	COMPARE_NODE_FIELD(keyvals);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
+_equalCypherListExpr(const CypherListExpr *a, const CypherListExpr *b)
+{
+	COMPARE_NODE_FIELD(elems);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
+_equalCypherAccessExpr(const CypherAccessExpr *a, const CypherAccessExpr *b)
+{
+	COMPARE_NODE_FIELD(arg);
+	COMPARE_NODE_FIELD(path);
+
+	return true;
+}
+
+static bool
+_equalCypherIndices(const CypherIndices *a, const CypherIndices *b)
+{
+	COMPARE_SCALAR_FIELD(is_slice);
+	COMPARE_NODE_FIELD(lidx);
+	COMPARE_NODE_FIELD(uidx);
+
+	return true;
+}
+
 /*
  * Stuff from relation.h
  */
@@ -2670,23 +2707,6 @@ _equalRoleSpec(const RoleSpec *a, const RoleSpec *b)
 }
 
 static bool
-_equalJsonObject(const JsonObject *a, const JsonObject *b)
-{
-	COMPARE_NODE_FIELD(keyvals);
-
-	return true;
-}
-
-static bool
-_equalJsonKeyVal(const JsonKeyVal *a, const JsonKeyVal *b)
-{
-	COMPARE_NODE_FIELD(key);
-	COMPARE_NODE_FIELD(val);
-
-	return true;
-}
-
-static bool
 _equalCreateGraphStmt(const CreateGraphStmt *a, const CreateGraphStmt *b)
 {
 	COMPARE_STRING_FIELD(graphname);
@@ -2784,6 +2804,14 @@ static bool
 _equalCypherStmt(const CypherStmt *a, const CypherStmt *b)
 {
 	COMPARE_NODE_FIELD(last);
+
+	return true;
+}
+
+static bool
+_equalCypherGenericExpr(const CypherGenericExpr *a, const CypherGenericExpr *b)
+{
+	COMPARE_NODE_FIELD(expr);
 
 	return true;
 }
@@ -3239,6 +3267,18 @@ equal(const void *a, const void *b)
 			break;
 		case T_EdgeRefRows:
 			retval = _equalEdgeRefRows(a, b);
+			break;
+		case T_CypherMapExpr:
+			retval = _equalCypherMapExpr(a, b);
+			break;
+		case T_CypherListExpr:
+			retval = _equalCypherListExpr(a, b);
+			break;
+		case T_CypherAccessExpr:
+			retval = _equalCypherAccessExpr(a, b);
+			break;
+		case T_CypherIndices:
+			retval = _equalCypherIndices(a, b);
 			break;
 
 			/*
@@ -3729,13 +3769,6 @@ equal(const void *a, const void *b)
 			retval = _equalRoleSpec(a, b);
 			break;
 
-		case T_JsonObject:
-			retval = _equalJsonObject(a, b);
-			break;
-		case T_JsonKeyVal:
-			retval = _equalJsonKeyVal(a, b);
-			break;
-
 		case T_CreateGraphStmt:
 			retval = _equalCreateGraphStmt(a, b);
 			break;
@@ -3762,6 +3795,9 @@ equal(const void *a, const void *b)
 
 		case T_CypherStmt:
 			retval = _equalCypherStmt(a, b);
+			break;
+		case T_CypherGenericExpr:
+			retval = _equalCypherGenericExpr(a, b);
 			break;
 		case T_CypherSubPattern:
 			retval = _equalCypherSubPattern(a, b);

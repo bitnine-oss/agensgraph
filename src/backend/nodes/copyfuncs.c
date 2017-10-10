@@ -2072,6 +2072,51 @@ _copyEdgeRefRows(const EdgeRefRows *from)
 	return newnode;
 }
 
+static CypherMapExpr *
+_copyCypherMapExpr(const CypherMapExpr *from)
+{
+	CypherMapExpr *newnode = makeNode(CypherMapExpr);
+
+	COPY_NODE_FIELD(keyvals);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+static CypherListExpr *
+_copyCypherListExpr(const CypherListExpr *from)
+{
+	CypherListExpr *newnode = makeNode(CypherListExpr);
+
+	COPY_NODE_FIELD(elems);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+static CypherAccessExpr *
+_copyCypherAccessExpr(const CypherAccessExpr *from)
+{
+	CypherAccessExpr *newnode = makeNode(CypherAccessExpr);
+
+	COPY_NODE_FIELD(arg);
+	COPY_NODE_FIELD(path);
+
+	return newnode;
+}
+
+static CypherIndices *
+_copyCypherIndices(const CypherIndices *from)
+{
+	CypherIndices *newnode = makeNode(CypherIndices);
+
+	COPY_SCALAR_FIELD(is_slice);
+	COPY_NODE_FIELD(lidx);
+	COPY_NODE_FIELD(uidx);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *						relation.h copy functions
  *
@@ -4278,27 +4323,6 @@ _copyAlterPolicyStmt(const AlterPolicyStmt *from)
 	return newnode;
 }
 
-static JsonObject *
-_copyJsonObject(const JsonObject *from)
-{
-	JsonObject *newnode = makeNode(JsonObject);
-
-	COPY_NODE_FIELD(keyvals);
-
-	return newnode;
-}
-
-static JsonKeyVal *
-_copyJsonKeyVal(const JsonKeyVal *from)
-{
-	JsonKeyVal *newnode = makeNode(JsonKeyVal);
-
-	COPY_NODE_FIELD(key);
-	COPY_NODE_FIELD(val);
-
-	return newnode;
-}
-
 static CreateGraphStmt *
 _copyCreateGraphStmt(const CreateGraphStmt *from)
 {
@@ -4409,6 +4433,16 @@ _copyCypherStmt(const CypherStmt *from)
 	CypherStmt *newnode = makeNode(CypherStmt);
 
 	COPY_NODE_FIELD(last);
+
+	return newnode;
+}
+
+static CypherGenericExpr *
+_copyCypherGenericExpr(const CypherGenericExpr *from)
+{
+	CypherGenericExpr *newnode = makeNode(CypherGenericExpr);
+
+	COPY_NODE_FIELD(expr);
 
 	return newnode;
 }
@@ -5056,6 +5090,18 @@ copyObject(const void *from)
 		case T_EdgeRefRows:
 			retval = _copyEdgeRefRows(from);
 			break;
+		case T_CypherMapExpr:
+			retval = _copyCypherMapExpr(from);
+			break;
+		case T_CypherListExpr:
+			retval = _copyCypherListExpr(from);
+			break;
+		case T_CypherAccessExpr:
+			retval = _copyCypherAccessExpr(from);
+			break;
+		case T_CypherIndices:
+			retval = _copyCypherIndices(from);
+			break;
 
 			/*
 			 * RELATION NODES
@@ -5461,6 +5507,9 @@ copyObject(const void *from)
 		case T_CypherStmt:
 			retval = _copyCypherStmt(from);
 			break;
+		case T_CypherGenericExpr:
+			retval = _copyCypherGenericExpr(from);
+			break;
 		case T_CypherSubPattern:
 			retval = _copyCypherSubPattern(from);
 			break;
@@ -5583,12 +5632,6 @@ copyObject(const void *from)
 			break;
 		case T_RoleSpec:
 			retval = _copyRoleSpec(from);
-			break;
-		case T_JsonObject:
-			retval = _copyJsonObject(from);
-			break;
-		case T_JsonKeyVal:
-			retval = _copyJsonKeyVal(from);
 			break;
 		case T_CypherClause:
 			retval = _copyCypherClause(from);

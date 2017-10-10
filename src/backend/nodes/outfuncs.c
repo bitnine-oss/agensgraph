@@ -1656,6 +1656,43 @@ _outEdgeRefRows(StringInfo str, const EdgeRefRows *node)
 	WRITE_NODE_FIELD(arg);
 }
 
+static void
+_outCypherMapExpr(StringInfo str, const CypherMapExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERMAPEXPR");
+
+	WRITE_NODE_FIELD(keyvals);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outCypherListExpr(StringInfo str, const CypherListExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERLISTEXPR");
+
+	WRITE_NODE_FIELD(elems);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outCypherAccessExpr(StringInfo str, const CypherAccessExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERACCESSEXPR");
+
+	WRITE_NODE_FIELD(arg);
+	WRITE_NODE_FIELD(path);
+}
+
+static void
+_outCypherIndices(StringInfo str, const CypherIndices *node)
+{
+	WRITE_NODE_TYPE("CYPHERINDICES");
+
+	WRITE_BOOL_FIELD(is_slice);
+	WRITE_NODE_FIELD(lidx);
+	WRITE_NODE_FIELD(uidx);
+}
+
 
 /*****************************************************************************
  *
@@ -3392,23 +3429,6 @@ _outForeignKeyCacheInfo(StringInfo str, const ForeignKeyCacheInfo *node)
 }
 
 static void
-_outJsonObject(StringInfo str, const JsonObject *node)
-{
-	WRITE_NODE_TYPE("JSONOBJECT");
-
-	WRITE_NODE_FIELD(keyvals);
-}
-
-static void
-_outJsonKeyVal(StringInfo str, const JsonKeyVal *node)
-{
-	WRITE_NODE_TYPE("JSONKEYVAL");
-
-	WRITE_NODE_FIELD(key);
-	WRITE_NODE_FIELD(val);
-}
-
-static void
 _outCreateLabelStmt(StringInfo str, const CreateLabelStmt *node)
 {
 	WRITE_NODE_TYPE("CREATELABELSTMT");
@@ -3483,6 +3503,14 @@ _outCypherStmt(StringInfo str, const CypherStmt *node)
 	WRITE_NODE_TYPE("CYPHER");
 
 	WRITE_NODE_FIELD(last);
+}
+
+static void
+_outCypherGenericExpr(StringInfo str, const CypherGenericExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERGENERICEXPR");
+
+	WRITE_NODE_FIELD(expr);
 }
 
 static void
@@ -3977,6 +4005,18 @@ outNode(StringInfo str, const void *obj)
 			case T_EdgeRefRows:
 				_outEdgeRefRows(str, obj);
 				break;
+			case T_CypherMapExpr:
+				_outCypherMapExpr(str, obj);
+				break;
+			case T_CypherListExpr:
+				_outCypherListExpr(str, obj);
+				break;
+			case T_CypherAccessExpr:
+				_outCypherAccessExpr(str, obj);
+				break;
+			case T_CypherIndices:
+				_outCypherIndices(str, obj);
+				break;
 			case T_Path:
 				_outPath(str, obj);
 				break;
@@ -4268,13 +4308,6 @@ outNode(StringInfo str, const void *obj)
 				_outForeignKeyCacheInfo(str, obj);
 				break;
 
-			case T_JsonObject:
-				_outJsonObject(str, obj);
-				break;
-			case T_JsonKeyVal:
-				_outJsonKeyVal(str, obj);
-				break;
-
 			case T_CreateLabelStmt:
 				_outCreateLabelStmt(str, obj);
 				break;
@@ -4292,6 +4325,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherStmt:
 				_outCypherStmt(str, obj);
+				break;
+			case T_CypherGenericExpr:
+				_outCypherGenericExpr(str, obj);
 				break;
 			case T_CypherSubPattern:
 				_outCypherSubPattern(str, obj);

@@ -54,12 +54,13 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/graph.h"
+#include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/numeric.h"
 #include "utils/rel.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
-
 
 /* static function decls */
 static Datum ExecEvalArrayRef(ArrayRefExprState *astate,
@@ -186,6 +187,25 @@ static Datum ExecEvalCurrentOfExpr(ExprState *exprstate, ExprContext *econtext,
 static Datum ExecEvalGroupingFuncExpr(GroupingFuncExprState *gstate,
 						 ExprContext *econtext,
 						 bool *isNull, ExprDoneCond *isDone);
+static Datum ExecEvalCypherMap(CypherMapExprState *mstate,
+							   ExprContext *econtext, bool *isNull,
+							   ExprDoneCond *isDone);
+static Datum ExecEvalCypherList(CypherListExprState *clstate,
+								ExprContext *econtext, bool *isNull,
+								ExprDoneCond *isDone);
+static Datum ExecEvalCypherAccess(CypherAccessExprState *astate,
+								  ExprContext *econtext, bool *isNull,
+								  ExprDoneCond *isDone);
+static JsonbValue *cypher_access_object(JsonbContainer *container,
+										Node *pathelem, ExprContext *econtext);
+static JsonbValue *cypher_access_bin_array(JsonbValue *ajv, Node *pathelem,
+										   ExprContext *econtext);
+static JsonbValue *cypher_access_mem_array(JsonbValue *ajv, Node *pathelem,
+										   ExprContext *econtext);
+static int cypher_access_range(ExprState *i, ExprContext *econtext,
+							   const int nelems, const int defidx);
+static int cypher_access_index(ExprState *i, ExprContext *econtext,
+							   const int nelems);
 
 
 /* ----------------------------------------------------------------
@@ -4589,6 +4609,654 @@ ExecEvalEdgeRefRows(ExprState *exprstate, ExprContext *econtext,
 	return new_array;
 }
 
+static Datum
+ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
+				  bool *isNull, ExprDoneCond *isDone)
+{
+	ListCell   *le;
+	JsonbParseState *jpstate = NULL;
+	JsonbValue *j;
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_OBJECT, NULL);
+
+	le = list_head(mstate->keyvals);
+	while (le != NULL)
+	{
+		ExprState  *k;
+		ExprState  *v;
+		bool		eisnull;
+		Datum		vd;
+		Jsonb	   *vj;
+		JsonbIterator *it;
+		JsonbValue	vjv;
+		Datum		kd;
+		char	   *ks;
+		JsonbValue	kjv;
+
+		k = lfirst(le);
+		le = lnext(le);
+		v = lfirst(le);
+		le = lnext(le);
+
+		Assert(exprType((Node *) k->expr) == TEXTOID &&
+			   exprType((Node *) v->expr) == JSONBOID);
+
+		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
+		/*
+		 * The evaluated value of v might be NULL. If so, omit this property
+		 * because we don't store properties that have NULL values.
+		 */
+		if (eisnull)
+			continue;
+
+		vj = DatumGetJsonb(vd);
+		it = JsonbIteratorInit(&vj->root);
+
+		/* vj might be 'null'::jsonb. If so, omit this property. */
+		if (JB_ROOT_IS_SCALAR(vj))
+		{
+			JsonbIteratorNext(&it, &vjv, true);
+			Assert(vjv.type == jbvArray);
+			JsonbIteratorNext(&it, &vjv, true);
+
+			if (vjv.type == jbvNull)
+				continue;
+		}
+
+		kd = ExecEvalExpr(k, econtext, &eisnull, NULL);
+		Assert(!eisnull);
+
+		ks = TextDatumGetCString(kd);
+		kjv.type = jbvString;
+		kjv.val.string.len = strlen(ks);
+		kjv.val.string.val = ks;
+		if (kjv.val.string.len > JENTRY_OFFLENMASK)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("string too long to represent as jsonb string"),
+					 errdetail("Due to an implementation restriction, "
+							   "jsonb strings cannot exceed %d bytes.",
+							   JENTRY_OFFLENMASK)));
+			return 0;
+		}
+		pushJsonbValue(&jpstate, WJB_KEY, &kjv);
+
+		if (JB_ROOT_IS_SCALAR(vj))
+		{
+			Assert(jpstate->contVal.type == jbvObject);
+			pushJsonbValue(&jpstate, WJB_VALUE, &vjv);
+		}
+		else
+		{
+			for (;;)
+			{
+				JsonbValue	ejv;
+				JsonbIteratorToken tok;
+
+				tok = JsonbIteratorNext(&it, &ejv, false);
+				if (tok == WJB_DONE)
+					break;
+
+				if (tok == WJB_KEY)
+				{
+					kjv = ejv;
+
+					tok = JsonbIteratorNext(&it, &ejv, false);
+					Assert(tok != WJB_DONE);
+
+					if (tok == WJB_VALUE && ejv.type == jbvNull)
+						continue;
+
+					pushJsonbValue(&jpstate, WJB_KEY, &kjv);
+				}
+
+				if (tok == WJB_VALUE || tok == WJB_ELEM)
+					pushJsonbValue(&jpstate, tok, &ejv);
+				else
+					pushJsonbValue(&jpstate, tok, NULL);
+			}
+		}
+	}
+
+	j = pushJsonbValue(&jpstate, WJB_END_OBJECT, NULL);
+
+	*isNull = false;
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	return JsonbGetDatum(JsonbValueToJsonb(j));
+}
+
+static Datum
+ExecEvalCypherList(CypherListExprState *clstate, ExprContext *econtext,
+				   bool *isNull, ExprDoneCond *isDone)
+{
+	ListCell   *le;
+	JsonbParseState *jpstate = NULL;
+	JsonbValue *j;
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+	foreach(le, clstate->elems)
+	{
+		ExprState  *e;
+		bool		eisnull;
+		Datum		ed;
+		JsonbValue	ejv;
+		Jsonb	   *ej;
+		JsonbIterator *it;
+
+		e = lfirst(le);
+
+		Assert(exprType((Node *) e->expr) == JSONBOID);
+
+		ed = ExecEvalExpr(e, econtext, &eisnull, NULL);
+
+		if (eisnull)
+		{
+			ejv.type = jbvNull;
+			pushJsonbValue(&jpstate, WJB_ELEM, &ejv);
+			continue;
+		}
+
+		ej = DatumGetJsonb(ed);
+		it = JsonbIteratorInit(&ej->root);
+		if (JB_ROOT_IS_SCALAR(ej))
+		{
+			JsonbIteratorNext(&it, &ejv, true);
+			Assert(ejv.type == jbvArray);
+			JsonbIteratorNext(&it, &ejv, true);
+
+			Assert(jpstate->contVal.type == jbvArray);
+			pushJsonbValue(&jpstate, WJB_ELEM, &ejv);
+		}
+		else
+		{
+			JsonbIteratorToken tok;
+
+			while ((tok = JsonbIteratorNext(&it, &ejv, false)) != WJB_DONE)
+			{
+				if (tok == WJB_BEGIN_ARRAY || tok == WJB_END_ARRAY ||
+					tok == WJB_BEGIN_OBJECT || tok == WJB_END_OBJECT)
+					pushJsonbValue(&jpstate, tok, NULL);
+				else
+					pushJsonbValue(&jpstate, tok, &ejv);
+			}
+		}
+	}
+
+	j = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+
+	*isNull = false;
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	return JsonbGetDatum(JsonbValueToJsonb(j));
+}
+
+static Datum
+ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
+					 bool *isNull, ExprDoneCond *isDone)
+{
+	bool		eisnull;
+	Datum		argd;
+	Jsonb	   *argj;
+	JsonbValue	_vjv;
+	JsonbValue *vjv;
+	ListCell   *le;
+
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	Assert(exprType((Node *) astate->arg->expr) == JSONBOID);
+
+	/*
+	 * The evaluated value of astate->arg might be NULL.
+	 * `NULL.p`, `NULL[0]`, ... are NULL.
+	 */
+	argd = ExecEvalExpr(astate->arg, econtext, &eisnull, NULL);
+	if (eisnull)
+	{
+		*isNull = true;
+		return 0;
+	}
+
+	argj = DatumGetJsonb(argd);
+	if (JB_ROOT_IS_SCALAR(argj))
+	{
+		vjv = getIthJsonbValueFromContainer(&argj->root, 0);
+	}
+	else
+	{
+		_vjv.type = jbvBinary;
+		_vjv.val.binary.len = argj->vl_len_;
+		_vjv.val.binary.data = &argj->root;
+		vjv = &_vjv;
+	}
+
+	Assert(list_length(astate->path) > 0);
+
+	foreach(le, astate->path)
+	{
+		Node	   *pathelem = lfirst(le);
+
+		switch (vjv->type)
+		{
+			case jbvNull:
+				*isNull = true;
+				return 0;
+			case jbvString:
+			case jbvNumeric:
+			case jbvBool:
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("map or list is expected but scalar value")));
+				return 0;
+			case jbvArray:
+				/* sliced array */
+				vjv = cypher_access_mem_array(vjv, pathelem, econtext);
+				if (vjv == NULL)
+				{
+					*isNull = true;
+					return 0;
+				}
+				break;
+			case jbvObject:
+				elog(ERROR, "unexpected jsonb composite type");
+				return 0;
+			case jbvBinary:
+				{
+					JsonbContainer *container = vjv->val.binary.data;
+
+					if (container->header & JB_FOBJECT)
+					{
+						vjv = cypher_access_object(container, pathelem,
+												   econtext);
+					}
+					else
+					{
+						Assert(container->header & JB_FARRAY);
+
+						vjv = cypher_access_bin_array(vjv, pathelem, econtext);
+					}
+
+					if (vjv == NULL)
+					{
+						*isNull = true;
+						return 0;
+					}
+				}
+				break;
+			default:
+				elog(ERROR, "unknown jsonb scalar type");
+				return 0;
+		}
+	}
+
+	*isNull = false;
+	PG_RETURN_JSONB(JsonbValueToJsonb(vjv));
+}
+
+static JsonbValue *
+cypher_access_object(JsonbContainer *container, Node *pathelem,
+					 ExprContext *econtext)
+{
+	ExprState  *s;
+	Oid			stype;
+	bool		eisnull;
+	Datum		sd;
+	JsonbValue	_sjv;
+	JsonbValue *sjv;
+	JsonbValue	kjv;
+
+	if (IsA(pathelem, CypherIndices))
+	{
+		CypherIndices *cind = (CypherIndices *) pathelem;
+
+		if (cind->is_slice)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("slicing map not supported")));
+			return NULL;
+		}
+
+		s = (ExprState *) cind->uidx;
+	}
+	else
+	{
+		s = (ExprState *) pathelem;
+	}
+
+	stype = exprType((Node *) s->expr);
+	sd = ExecEvalExpr(s, econtext, &eisnull, NULL);
+	if (eisnull)
+	{
+		_sjv.type = jbvNull;
+		sjv = &_sjv;
+	}
+	else if (stype == TEXTOID)
+	{
+		char	   *sstr = TextDatumGetCString(sd);
+
+		_sjv.type = jbvString;
+		_sjv.val.string.len = strlen(sstr);
+		_sjv.val.string.val = sstr;
+		sjv = &_sjv;
+	}
+	else if (stype == BOOLOID)
+	{
+		_sjv.type = jbvBool;
+		_sjv.val.boolean = DatumGetBool(sd);
+		sjv = &_sjv;
+	}
+	else if (stype == JSONBOID)
+	{
+		Jsonb	   *j = DatumGetJsonb(sd);
+
+		if (JB_ROOT_IS_SCALAR(j))
+		{
+			sjv = getIthJsonbValueFromContainer(&j->root, 0);
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("key value must be scalar")));
+			return NULL;
+		}
+	}
+	else
+	{
+		Assert(!"unexpected key type");
+		return NULL;
+	}
+
+	kjv.type = jbvString;
+	switch (sjv->type)
+	{
+		case jbvNull:
+			kjv.val.string.len = 4;
+			kjv.val.string.val = "null";
+			break;
+		case jbvString:
+			kjv.val.string = sjv->val.string;
+			break;
+		case jbvNumeric:
+			elog(ERROR, "numeric key value not supported");
+			return 0;
+		case jbvBool:
+			if (sjv->val.boolean)
+			{
+				kjv.val.string.len = 4;
+				kjv.val.string.val = "true";
+			}
+			else
+			{
+				kjv.val.string.len = 5;
+				kjv.val.string.val = "false";
+			}
+			break;
+		default:
+			elog(ERROR, "unknown jsonb scalar type");
+			return 0;
+	}
+
+	return findJsonbValueFromContainer(container, JB_FOBJECT, &kjv);
+}
+
+static JsonbValue *
+cypher_access_bin_array(JsonbValue *ajv, Node *pathelem, ExprContext *econtext)
+{
+	JsonbContainer *container = ajv->val.binary.data;
+	int			nelems;
+	CypherIndices *cind;
+	int			idx;
+
+	if (!IsA(pathelem, CypherIndices))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("map is expected but list")));
+		return NULL;
+	}
+
+	nelems = container->header & JB_CMASK;
+
+	cind = (CypherIndices *) pathelem;
+	if (cind->is_slice)
+	{
+		int			lidx;
+		int			uidx;
+		JsonbParseState *jpstate = NULL;
+		JsonbIterator *it;
+		JsonbValue	jv;
+		JsonbIteratorToken tok;
+
+		lidx = cypher_access_range((ExprState *) cind->lidx, econtext, nelems,
+								   0);
+		uidx = cypher_access_range((ExprState *) cind->uidx, econtext, nelems,
+								   nelems);
+
+		if (uidx <= lidx)
+		{
+			JsonbValue *newajv;
+
+			newajv = palloc(sizeof(*newajv));
+			newajv->type = jbvArray;
+			newajv->val.array.nElems = 0;
+			newajv->val.array.elems = NULL;
+			newajv->val.array.rawScalar = false;
+
+			return newajv;
+		}
+
+		if (uidx - lidx == nelems)
+			return ajv;
+
+		pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+		it = JsonbIteratorInit(container);
+		tok = JsonbIteratorNext(&it, &jv, false);
+		idx = 0;
+		while (tok != WJB_DONE)
+		{
+			if (tok == WJB_ELEM)
+			{
+				if (idx >= uidx)
+					break;
+				if (idx >= lidx)
+					pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+
+				idx++;
+			}
+
+			tok = JsonbIteratorNext(&it, &jv, true);
+		}
+
+		return pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+	}
+	else
+	{
+		if (nelems == 0)
+			return NULL;
+
+		Assert(cind->uidx != NULL);
+		idx = cypher_access_index((ExprState *) cind->uidx, econtext, nelems);
+		if (idx < 0 || idx >= nelems)
+			return NULL;
+
+		return getIthJsonbValueFromContainer(container, idx);
+	}
+}
+
+static JsonbValue *
+cypher_access_mem_array(JsonbValue *ajv, Node *pathelem, ExprContext *econtext)
+{
+	int			nelems = ajv->val.array.nElems;
+	CypherIndices *cind;
+
+	Assert(!ajv->val.array.rawScalar);
+
+	if (!IsA(pathelem, CypherIndices))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("map is expected but list")));
+		return NULL;
+	}
+
+	cind = (CypherIndices *) pathelem;
+	if (cind->is_slice)
+	{
+		int			lidx;
+		int			uidx;
+
+		lidx = cypher_access_range((ExprState *) cind->lidx, econtext, nelems,
+								   0);
+		uidx = cypher_access_range((ExprState *) cind->uidx, econtext, nelems,
+								   nelems);
+
+		if (uidx <= lidx)
+		{
+			ajv->val.array.nElems = 0;
+			return ajv;
+		}
+
+		ajv->val.array.nElems = uidx - lidx;
+		ajv->val.array.elems = ajv->val.array.elems + lidx;
+		return ajv;
+	}
+	else
+	{
+		int			idx;
+
+		if (nelems == 0)
+			return NULL;
+
+		Assert(cind->uidx != NULL);
+		idx = cypher_access_index((ExprState *) cind->uidx, econtext, nelems);
+		if (idx < 0 || idx >= nelems)
+			return NULL;
+
+		return ajv->val.array.elems + idx;
+	}
+
+	return NULL;
+}
+
+static int
+cypher_access_range(ExprState *i, ExprContext *econtext, const int nelems,
+					const int defidx)
+{
+	int			idx;
+
+	if (i == NULL)
+		return defidx;
+
+	idx = cypher_access_index(i, econtext, nelems);
+	if (idx < 0)
+		return 0;
+	else if (idx > nelems)
+		return nelems;
+	else
+		return idx;
+}
+
+static int
+cypher_access_index(ExprState *i, ExprContext *econtext, const int nelems)
+{
+	Oid			itype;
+	JsonbValue	_ijv;
+	JsonbValue *ijv;
+	char	   *typestr;
+
+	itype = exprType((Node *) i->expr);
+	if (itype == TEXTOID)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("text cannot be index value")));
+		return -1;
+	}
+	else if (itype == BOOLOID)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("bool cannot be index value")));
+		return -1;
+	}
+	else if (itype == JSONBOID)
+	{
+		bool		eisnull;
+		Datum		idatum;
+
+		idatum = ExecEvalExpr(i, econtext, &eisnull, NULL);
+		if (eisnull)
+		{
+			_ijv.type = jbvNull;
+			ijv = &_ijv;
+		}
+		else
+		{
+			Jsonb	   *j = DatumGetJsonb(idatum);
+
+			if (!JB_ROOT_IS_SCALAR(j))
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("index value must be scalar")));
+
+			ijv = getIthJsonbValueFromContainer(&j->root, 0);
+		}
+	}
+	else
+	{
+		Assert(!"unexpected index type");
+		return -1;
+	}
+
+	switch (ijv->type)
+	{
+		case jbvNull:
+			typestr = "null";
+			break;
+		case jbvString:
+			typestr = "string";
+			break;
+		case jbvNumeric:
+			{
+				Datum		n = NumericGetDatum(ijv->val.numeric);
+				int			idx;
+
+				if (DatumGetInt32(DirectFunctionCall1(numeric_scale, n)) > 0)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("integer is expected for index value")));
+					return -1;
+				}
+
+				idx = DatumGetInt32(DirectFunctionCall1(numeric_int4, n));
+				if (idx < 0)
+					idx += nelems;
+
+				return idx;
+			}
+		case jbvBool:
+			typestr = "boolean";
+			break;
+		default:
+			elog(ERROR, "unknown jsonb scalar type");
+			return -1;
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_DATATYPE_MISMATCH),
+			 errmsg("%s cannot be index value", typestr)));
+	return -1;
+}
+
 /*
  * ExecEvalExprSwitchContext
  *
@@ -5411,6 +6079,78 @@ ExecInitExpr(Expr *node, PlanState *parent)
 				/* Don't fall through to the "common" code below */
 				return (ExprState *) outlist;
 			}
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+				CypherMapExprState *mstate;
+
+				mstate = makeNode(CypherMapExprState);
+				mstate->xprstate.evalfunc =
+						(ExprStateEvalFunc) ExecEvalCypherMap;
+				mstate->keyvals = (List *) ExecInitExpr((Expr *) m->keyvals,
+														parent);
+
+				state = (ExprState *) mstate;
+			}
+			break;
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+				CypherListExprState *clstate;
+
+				clstate = makeNode(CypherListExprState);
+				clstate->xprstate.evalfunc =
+						(ExprStateEvalFunc) ExecEvalCypherList;
+				clstate->elems = (List *) ExecInitExpr((Expr *) cl->elems,
+													   parent);
+
+				state = (ExprState *) clstate;
+			}
+			break;
+		case T_CypherAccessExpr:
+			{
+				CypherAccessExpr *a = (CypherAccessExpr *) node;
+				CypherAccessExprState *astate;
+				ListCell   *le;
+
+				astate = makeNode(CypherAccessExprState);
+				astate->xprstate.evalfunc =
+						(ExprStateEvalFunc) ExecEvalCypherAccess;
+				astate->arg = ExecInitExpr((Expr *) a->arg, parent);
+				astate->path = NIL;
+				foreach(le, a->path)
+				{
+					Node	   *elem = lfirst(le);
+
+					if (IsA(elem, CypherIndices))
+					{
+						CypherIndices *cind = (CypherIndices *) elem;
+						CypherIndices *newcind;
+
+						newcind = makeNode(CypherIndices);
+						newcind->is_slice = cind->is_slice;
+						newcind->lidx = (Node *) ExecInitExpr(
+														(Expr *) cind->lidx,
+														parent);
+						newcind->uidx = (Node *) ExecInitExpr(
+														(Expr *) cind->uidx,
+														parent);
+
+						astate->path = lappend(astate->path, newcind);
+					}
+					else
+					{
+						ExprState *elemstate;
+
+						elemstate = ExecInitExpr((Expr *) elem, parent);
+
+						astate->path = lappend(astate->path, elemstate);
+					}
+				}
+
+				state = (ExprState *) astate;
+			}
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));

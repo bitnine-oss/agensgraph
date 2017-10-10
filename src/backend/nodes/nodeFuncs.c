@@ -264,6 +264,15 @@ exprType(const Node *expr)
 		case T_EdgeRefRows:
 			type = EDGEARRAYOID;
 			break;
+		case T_CypherMapExpr:
+			type = JSONBOID;
+			break;
+		case T_CypherListExpr:
+			type = JSONBOID;
+			break;
+		case T_CypherAccessExpr:
+			type = JSONBOID;
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			type = InvalidOid;	/* keep compiler quiet */
@@ -500,6 +509,12 @@ exprTypmod(const Node *expr)
 		case T_EdgeRefProp:
 		case T_EdgeRefRow:
 		case T_EdgeRefRows:
+			return -1;
+		case T_CypherMapExpr:
+			return -1;
+		case T_CypherListExpr:
+			return -1;
+		case T_CypherAccessExpr:
 			return -1;
 		default:
 			break;
@@ -938,6 +953,15 @@ exprCollation(const Node *expr)
 		case T_EdgeRefRows:
 			coll = InvalidOid;
 			break;
+		case T_CypherMapExpr:
+			coll = InvalidOid;
+			break;
+		case T_CypherListExpr:
+			coll = InvalidOid;
+			break;
+		case T_CypherAccessExpr:
+			coll = InvalidOid;
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(expr));
 			coll = InvalidOid;	/* keep compiler quiet */
@@ -1136,6 +1160,15 @@ exprSetCollation(Node *expr, Oid collation)
 		case T_EdgeRefProp:
 		case T_EdgeRefRow:
 		case T_EdgeRefRows:
+			Assert(!OidIsValid(collation));
+			break;
+		case T_CypherMapExpr:
+			Assert(!OidIsValid(collation));
+			break;
+		case T_CypherListExpr:
+			Assert(!OidIsValid(collation));
+			break;
+		case T_CypherAccessExpr:
 			Assert(!OidIsValid(collation));
 			break;
 		default:
@@ -1558,6 +1591,25 @@ exprLocation(const Node *expr)
 		case T_InferenceElem:
 			/* just use nested expr's location */
 			loc = exprLocation((Node *) ((const InferenceElem *) expr)->expr);
+			break;
+		case T_CypherMapExpr:
+			{
+				const CypherMapExpr *m = (const CypherMapExpr *) expr;
+
+				loc = leftmostLoc(m->location,
+								  exprLocation((Node *) m->keyvals));
+			}
+			break;
+		case T_CypherListExpr:
+			{
+				const CypherListExpr *cl = (const CypherListExpr *) expr;
+
+				loc = leftmostLoc(cl->location,
+								  exprLocation((Node *) cl->elems));
+			}
+			break;
+		case T_CypherAccessExpr:
+			loc = exprLocation((Node *) ((CypherAccessExpr *) expr)->arg);
 			break;
 		default:
 			/* for any other node type it's just unknown... */
@@ -2224,6 +2276,53 @@ expression_tree_walker(Node *node,
 			break;
 		case T_EdgeRefRows:
 			return walker(((EdgeRefRows *) node)->arg, context);
+			break;
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+
+				if (expression_tree_walker((Node *) m->keyvals,
+										   walker, context))
+					return true;
+			}
+			break;
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+
+				if (expression_tree_walker((Node *) cl->elems,
+										   walker, context))
+					return true;
+			}
+			break;
+		case T_CypherAccessExpr:
+			{
+				CypherAccessExpr *a = (CypherAccessExpr *) node;
+				ListCell   *le;
+
+				if (walker(a->arg, context))
+					return true;
+
+				foreach(le, a->path)
+				{
+					Node	   *elem = lfirst(le);
+
+					if (IsA(elem, CypherIndices))
+					{
+						CypherIndices *cind = (CypherIndices *) elem;
+
+						if (walker(cind->lidx, context))
+							return true;
+						if (walker(cind->uidx, context))
+							return true;
+					}
+					else
+					{
+						if (walker(elem, context))
+							return true;
+					}
+				}
+			}
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
@@ -3060,6 +3159,48 @@ expression_tree_mutator(Node *node,
 				return (Node *) newnode;
 			}
 			break;
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+				CypherMapExpr *newnode;
+
+				FLATCOPY(newnode, m, CypherMapExpr);
+				MUTATE(newnode->keyvals, m->keyvals, List *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+				CypherListExpr *newnode;
+
+				FLATCOPY(newnode, cl, CypherListExpr);
+				MUTATE(newnode->elems, cl->elems, List *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherAccessExpr:
+			{
+				CypherAccessExpr *a = (CypherAccessExpr *) node;
+				CypherAccessExpr *newnode;
+
+				FLATCOPY(newnode, a, CypherAccessExpr);
+				MUTATE(newnode->arg, a->arg, Expr *);
+				MUTATE(newnode->path, a->path, List *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherIndices:
+			{
+				CypherIndices *i = (CypherIndices *) node;
+				CypherIndices *newnode;
+
+				FLATCOPY(newnode, i, CypherIndices);
+				MUTATE(newnode->lidx, i->lidx, Node *);
+				MUTATE(newnode->uidx, i->uidx, Node *);
+				return (Node *) newnode;
+			}
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));
@@ -3679,27 +3820,36 @@ raw_expression_tree_walker(Node *node,
 			break;
 		case T_CommonTableExpr:
 			return walker(((CommonTableExpr *) node)->ctequery, context);
-		case T_JsonObject:
-			{
-				JsonObject *jsonobj = (JsonObject *) node;
-
-				foreach(temp, jsonobj->keyvals)
-				{
-					JsonKeyVal *keyval = lfirst(temp);
-
-					if (walker(keyval->key, context))
-						return true;
-					if (walker(keyval->val, context))
-						return true;
-				}
-			}
-			break;
 		case T_EdgeRefProp:
 			return walker(((EdgeRefProp *) node)->arg, context);
 		case T_EdgeRefRow:
 			return walker(((EdgeRefRow *) node)->arg, context);
 		case T_EdgeRefRows:
 			return walker(((EdgeRefRows *) node)->arg, context);
+		case T_CypherGenericExpr:
+			{
+				CypherGenericExpr *g = (CypherGenericExpr *) node;
+
+				if (walker(g->expr, context))
+					return true;
+			}
+			break;
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+
+				if (walker(m->keyvals, context))
+					return true;
+			}
+			break;
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+
+				if (walker(cl->elems, context))
+					return true;
+			}
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));
@@ -4438,6 +4588,36 @@ raw_expression_tree_mutator(Node *node,
 
 				FLATCOPY(newnode, err, EdgeRefRows);
 				MUTATE(newnode->arg, err->arg, Expr *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherGenericExpr:
+			{
+				CypherGenericExpr *g = (CypherGenericExpr *) node;
+				CypherGenericExpr *newnode;
+
+				FLATCOPY(newnode, g, CypherGenericExpr);
+				MUTATE(newnode->expr, g->expr, Node *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+				CypherMapExpr *newnode;
+
+				FLATCOPY(newnode, m, CypherMapExpr);
+				MUTATE(newnode->keyvals, m->keyvals, List *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+				CypherListExpr *newnode;
+
+				FLATCOPY(newnode, cl, CypherListExpr);
+				MUTATE(newnode->elems, cl->elems, List *);
 				return (Node *) newnode;
 			}
 			break;

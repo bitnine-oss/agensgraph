@@ -55,6 +55,7 @@
 #include "parser/analyze.h"
 #include "parser/parse_clause.h"
 #include "parser/parse_collate.h"
+#include "parser/parse_cypher_expr.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
@@ -140,7 +141,7 @@ static List *makeEdgeIndex(RangeVar *label);
 static bool isLabelKind(RangeVar *label, char labkind);
 static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
 static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
-static Node *makePropertiesIndirectionMutator(Node *node);
+static Node *prop_ref_mutator(Node *node);
 static ObjectType getLabelObjectType(char *labname, Oid graphid);
 static bool figure_prop_index_colname_walker(Node *node, char **colname);
 static bool isPropertyIndex(Oid indexoid);
@@ -3642,7 +3643,8 @@ transformCreateConstraintStmt(ParseState *pstate,
 {
 	RangeVar   *label;
 	ObjectType	objtype;
-	Node	   *propExpr;
+	CypherGenericExpr *cexpr;
+	Node	   *propexpr;
 	Constraint *constr;
 	AlterTableCmd *atcmd;
 	AlterTableStmt *atstmt;
@@ -3652,7 +3654,10 @@ transformCreateConstraintStmt(ParseState *pstate,
 
 	objtype = getLabelObjectType(label->relname, get_graph_path_oid());
 
-	propExpr = makePropertiesIndirectionMutator(constraintStmt->expr);
+	cexpr = makeNode(CypherGenericExpr);
+	cexpr->expr = prop_ref_mutator(constraintStmt->expr);
+
+	propexpr = (Node *) cexpr;
 
 	constr = makeNode(Constraint);
 	switch (constraintStmt->contype)
@@ -3661,7 +3666,7 @@ transformCreateConstraintStmt(ParseState *pstate,
 			{
 				constr->contype = constraintStmt->contype;
 				constr->conname = constraintStmt->conname;
-				constr->raw_expr = propExpr;
+				constr->raw_expr = propexpr;
 				constr->initially_valid = true;
 			}
 			break;
@@ -3678,7 +3683,7 @@ transformCreateConstraintStmt(ParseState *pstate,
 				 */
 
 				uniqueElem = makeNode(IndexElem);
-				uniqueElem->expr = propExpr;
+				uniqueElem->expr = propexpr;
 				equalOp = list_make1(makeString("="));
 				excludeExpr = list_make2(uniqueElem, equalOp);
 
@@ -3752,56 +3757,22 @@ transformDropConstraintStmt(ParseState *pstate,
  * AG_ELEM_PROP_MAP
  */
 static Node *
-makePropertiesIndirectionMutator(Node *node)
+prop_ref_mutator(Node *node)
 {
 	if (node == NULL)
 		return NULL;
 
 	if (IsA(node, ColumnRef))
 	{
-		ColumnRef  *cref = (ColumnRef *) node;
-		ColumnRef  *prop;
-		A_Indirection *ind;
+		ColumnRef  *cref;
 
-		/* make an indirection on AG_ELEM_PROP_MAP */
+		cref = copyObject(node);
+		cref->fields = lcons(makeString(AG_ELEM_PROP_MAP), cref->fields);
 
-		prop = makeNode(ColumnRef);
-		prop->fields = list_make1(makeString(AG_ELEM_PROP_MAP));
-		prop->location = cref->location;
-
-		ind = makeNode(A_Indirection);
-		ind->arg = (Node *) prop;
-		ind->indirection = copyObject(cref->fields);
-
-		return (Node *) ind;
+		return (Node *) cref;
 	}
 
-	if (IsA(node, A_Indirection))
-	{
-		A_Indirection *ind = (A_Indirection *) node;
-		ColumnRef  *prop;
-		List	   *indirection;
-		A_Indirection *result;
-
-		if (!IsA(ind->arg, ColumnRef))
-			return copyObject(node);
-
-		prop = makeNode(ColumnRef);
-		prop->fields = list_make1(makeString(AG_ELEM_PROP_MAP));
-		prop->location = -1;
-
-		indirection = copyObject(((ColumnRef *) ind->arg)->fields);
-		indirection = list_concat(indirection, copyObject(ind->indirection));
-
-		result = makeNode(A_Indirection);
-		result->arg = (Node *) prop;
-		result->indirection = indirection;
-
-		return (Node *) result;
-	}
-
-	return raw_expression_tree_mutator(node, makePropertiesIndirectionMutator,
-									   NULL);
+	return raw_expression_tree_mutator(node, prop_ref_mutator, NULL);
 }
 
 static ObjectType
@@ -3861,13 +3832,12 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	/* take care of the where clause */
 	if (idxstmt->whereClause)
 	{
-		idxstmt->whereClause =
-						makePropertiesIndirectionMutator(idxstmt->whereClause);
+		idxstmt->whereClause = prop_ref_mutator(idxstmt->whereClause);
 
-		idxstmt->whereClause = transformWhereClause(pstate,
+		idxstmt->whereClause = transformCypherWhere(pstate,
 													idxstmt->whereClause,
-													EXPR_KIND_INDEX_PREDICATE,
-													"WHERE");
+													EXPR_KIND_INDEX_PREDICATE);
+
 		/* we have to fix its collations too */
 		assign_expr_collations(pstate, idxstmt->whereClause);
 	}
@@ -3896,11 +3866,11 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 				ielem->indexcolname = FigureIndexColname(ielem->expr);
 		}
 
-		ielem->expr = makePropertiesIndirectionMutator(ielem->expr);
+		ielem->expr = prop_ref_mutator(ielem->expr);
 
 		/* Now do parse transformation of the expression */
-		ielem->expr = transformExpr(pstate, ielem->expr,
-									EXPR_KIND_INDEX_EXPRESSION);
+		ielem->expr = transformCypherExpr(pstate, ielem->expr,
+										  EXPR_KIND_INDEX_EXPRESSION);
 
 		/* We have to fix its collations too */
 		assign_expr_collations(pstate, ielem->expr);
@@ -3948,35 +3918,50 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 static bool
 figure_prop_index_colname_walker(Node *node, char **colname)
 {
-	char *name;
+	char	   *fname = NULL;
 
 	if (node == NULL)
 		return false;
 
 	if (IsA(node, A_Indirection))
 	{
-		A_Indirection *ind = (A_Indirection *) node;
+		A_Indirection *indir = (A_Indirection *) node;
+		ListCell   *li;
 
-		if (IsA(ind->arg, ColumnRef))
+		foreach(li, indir->indirection)
 		{
-			name = FigureIndexColname(node);
-			if (name == NULL)
-				return false;
+			Node	   *i = lfirst(li);
 
-			*colname = name;
+			if (IsA(i, String))
+			{
+				fname = strVal(i);
+			}
+			else
+			{
+				A_Indices  *ind = (A_Indices *) i;
+
+				Assert(IsA(i, A_Indices));
+
+				if (!ind->is_slice && IsA(ind->uidx, A_Const))
+					fname = strVal(&((A_Const *) ind->uidx)->val);
+			}
+		}
+		if (fname != NULL)
+		{
+			*colname = fname;
 			return true;
 		}
 
-		return figure_prop_index_colname_walker(ind->arg, colname);
+		return figure_prop_index_colname_walker(indir->arg, colname);
 	}
 
 	if (IsA(node, ColumnRef))
 	{
-		name = FigureIndexColname(node);
-		if (name == NULL)
+		fname = FigureIndexColname(node);
+		if (fname == NULL)
 			return false;
 
-		*colname = name;
+		*colname = fname;
 		return true;
 	}
 

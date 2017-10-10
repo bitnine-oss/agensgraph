@@ -192,6 +192,10 @@ typedef enum NodeTag
 	T_EdgeRefProp,
 	T_EdgeRefRow,
 	T_EdgeRefRows,
+	T_CypherMapExpr,
+	T_CypherListExpr,
+	T_CypherAccessExpr,
+	T_CypherIndices,
 
 	/*
 	 * TAGS FOR EXPRESSION STATE NODES (execnodes.h)
@@ -230,6 +234,9 @@ typedef enum NodeTag
 	T_EdgeRefPropState,
 	T_EdgeRefRowState,
 	T_EdgeRefRowsState,
+	T_CypherMapExprState,
+	T_CypherListExprState,
+	T_CypherAccessExprState,
 
 	/*
 	 * TAGS FOR PLANNER NODES (relation.h)
@@ -479,8 +486,7 @@ typedef enum NodeTag
 	T_OnConflictClause,
 	T_CommonTableExpr,
 	T_RoleSpec,
-	T_JsonObject,
-	T_JsonKeyVal,
+	T_CypherGenericExpr,
 	T_CypherSubPattern,
 	T_CypherClause,
 	T_CypherMatchClause,

@@ -653,6 +653,7 @@ DATA(insert OID = 3927 ( _int8range		PGNSP PGUID  -1 f b A f t \054 0 3926 0 arr
 
 /* types for graphs */
 DATA(insert OID = 7001 ( _graphid	PGNSP PGUID -1 f b A f t \054 0 7002 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
+#define GRAPHARRAYIDOID	7001
 DATA(insert OID = 7002 ( graphid	PGNSP PGUID 8 FLOAT8PASSBYVAL b U f t \054 0 0 7001 graphid_in graphid_out graphid_recv graphid_send - - - d p f 0 -1 0 0 _null_ _null_ _null_ ));
 DESCR("unique ID of vertex/edge");
 #define GRAPHIDOID		7002
@@ -665,6 +666,7 @@ DATA(insert OID = 7021 ( _edge		PGNSP PGUID -1 f b A f t \054 0 7022 0 array_in 
 DATA(insert OID = 7022 ( edge		PGNSP PGUID -1 f c C f t \054 7020 0 7021 record_in edge_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
 #define EDGEOID			7022
 DATA(insert OID = 7031 ( _graphpath	PGNSP PGUID -1 f b A f t \054 0 7032 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));
+#define GRAPHPATHARRAYOID	7031
 DATA(insert OID = 7032 ( graphpath	PGNSP PGUID -1 f c C f t \054 7030 0 7031 record_in graphpath_out record_recv record_send - - - d x f 0 -1 0 0 _null_ _null_ _null_ ));
 #define GRAPHPATHOID	7032
 DATA(insert OID = 7051 ( _edgeref	PGNSP PGUID -1 f b A f t \054 0 7052 0 array_in array_out array_recv array_send - - array_typanalyze d x f 0 -1 0 0 _null_ _null_ _null_ ));

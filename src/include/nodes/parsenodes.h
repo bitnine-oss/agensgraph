@@ -3134,24 +3134,6 @@ typedef struct AlterTSConfigurationStmt
 
 
 /****************************************************************************
- * JSON object expression
- ****************************************************************************/
-
-typedef struct JsonObject
-{
-	NodeTag		type;
-	List	   *keyvals;
-} JsonObject;
-
-typedef struct JsonKeyVal
-{
-	NodeTag		type;
-	Node	   *key;
-	Node	   *val;
-} JsonKeyVal;
-
-
-/****************************************************************************
  * Agens Graph related node structures
  ****************************************************************************/
 
@@ -3236,6 +3218,16 @@ typedef enum CSPKind
 	CSP_SIZE,
 	CSP_FINDPATH			/* shortestpath, allshortestpaths, dijkstra */
 } CSPKind;
+
+/*
+ * A simple wrapper for Cypher expressions which allows transformExpr() to
+ * handle Cypher expressions.
+ */
+typedef struct CypherGenericExpr
+{
+	NodeTag		type;
+	Node	   *expr;
+} CypherGenericExpr;
 
 typedef struct CypherSubPattern
 {

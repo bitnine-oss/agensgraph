@@ -2392,6 +2392,51 @@ _readEdgeRefRows(void)
 	READ_DONE();
 }
 
+static CypherMapExpr *
+_readCypherMapExpr(void)
+{
+	READ_LOCALS(CypherMapExpr);
+
+	READ_NODE_FIELD(keyvals);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static CypherListExpr *
+_readCypherListExpr(void)
+{
+	READ_LOCALS(CypherListExpr);
+
+	READ_NODE_FIELD(elems);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static CypherAccessExpr *
+_readCypherAccessExpr(void)
+{
+	READ_LOCALS(CypherAccessExpr);
+
+	READ_NODE_FIELD(arg);
+	READ_NODE_FIELD(path);
+
+	READ_DONE();
+}
+
+static CypherIndices *
+_readCypherIndices(void)
+{
+	READ_LOCALS(CypherIndices);
+
+	READ_BOOL_FIELD(is_slice);
+	READ_NODE_FIELD(lidx);
+	READ_NODE_FIELD(uidx);
+
+	READ_DONE();
+}
+
 /*
  * parseNodeString
  *
@@ -2640,6 +2685,14 @@ parseNodeString(void)
 		return_value = _readEdgeRefRow();
 	else if (MATCH("EDGEREFROWS", 11))
 		return_value = _readEdgeRefRows();
+	else if (MATCH("CYPHERMAPEXPR", 13))
+		return_value = _readCypherMapExpr();
+	else if (MATCH("CYPHERLISTEXPR", 14))
+		return_value = _readCypherListExpr();
+	else if (MATCH("CYPHERACCESSEXPR", 16))
+		return_value = _readCypherAccessExpr();
+	else if (MATCH("CYPHERINDICES", 13))
+		return_value = _readCypherIndices();
 	else
 	{
 		elog(ERROR, "badly formatted node string \"%.32s\"...", token);

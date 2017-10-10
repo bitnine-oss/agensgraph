@@ -18,9 +18,9 @@ CREATE VLABEL regv1;
 
 CREATE PROPERTY INDEX ON regv1 (name);
 CREATE PROPERTY INDEX ON regv1 (name.first, name.last);
-CREATE PROPERTY INDEX ON regv1 ((name.first || name.last));
-CREATE PROPERTY INDEX ON regv1 ((age::integer));
-CREATE PROPERTY INDEX ON regv1 ((body.weight::integer / body.height::integer));
+CREATE PROPERTY INDEX ON regv1 ((name.first + name.last));
+CREATE PROPERTY INDEX ON regv1 (age);
+CREATE PROPERTY INDEX ON regv1 ((body.weight / body.height));
 
 \d g.regv1
 \dGi
@@ -36,8 +36,8 @@ CREATE PROPERTY INDEX ON regv1 USING brin (name.first);
 CREATE PROPERTY INDEX ON regv1 USING gin (name);
 CREATE PROPERTY INDEX ON regv1 USING gist (name);
 
-CREATE PROPERTY INDEX ON regv1 USING gin ((self_intro::tsvector));
-CREATE PROPERTY INDEX ON regv1 USING gist ((hobby::tsvector));
+--CREATE PROPERTY INDEX ON regv1 USING gin ((self_intro::tsvector));
+--CREATE PROPERTY INDEX ON regv1 USING gist ((hobby::tsvector));
 
 \d g.regv1
 \dGv+ regv1
@@ -52,7 +52,7 @@ CREATE PROPERTY INDEX CONCURRENTLY ON regv1 (name.first);
 CREATE PROPERTY INDEX IF NOT EXISTS regv1_first_idx ON regv1 (name.first);
 
 -- Collation & Sort & NULL order
-CREATE PROPERTY INDEX ON regv1 (name.first COLLATE "C" ASC NULLS FIRST);
+--CREATE PROPERTY INDEX ON regv1 (name.first COLLATE "C" ASC NULLS FIRST);
 
 -- Tablespace
 CREATE PROPERTY INDEX ON regv1 (name) TABLESPACE pg_default;
@@ -70,8 +70,8 @@ DROP VLABEL regv1;
 CREATE VLABEL regv1;
 
 CREATE UNIQUE PROPERTY INDEX ON regv1 (id);
-CREATE (:regv1 {'id':'100'});
-CREATE (:regv1 {'id':'100'});
+CREATE (:regv1 {id: 100});
+CREATE (:regv1 {id: 100});
 
 \d g.regv1
 \dGv+ regv1
@@ -82,10 +82,10 @@ DROP VLABEL regv1;
 CREATE VLABEL regv1;
 
 CREATE UNIQUE PROPERTY INDEX ON regv1 (name.first, name.last);
-CREATE (:regv1 {'name':{'first':'agens'}});
-CREATE (:regv1 {'name':{'first':'agens'}});
-CREATE (:regv1 {'name':{'first':'agens', 'last':'graph'}});
-CREATE (:regv1 {'name':{'first':'agens', 'last':'graph'}});
+CREATE (:regv1 {name: {first: 'agens'}});
+CREATE (:regv1 {name: {first: 'agens'}});
+CREATE (:regv1 {name: {first: 'agens', last: 'graph'}});
+CREATE (:regv1 {name: {first: 'agens', last: 'graph'}});
 
 \d g.regv1
 \dGv+ regv1
@@ -121,7 +121,7 @@ CREATE PROPERTY INDEX regv1_multi_col ON regv1 (name.first, name.middle, name.la
 \dGi
 DROP PROPERTY INDEX regv1_multi_col;
 
-CREATE PROPERTY INDEX regv1_multi_expr ON regv1 ((name.first || name.last), (age::integer));
+CREATE PROPERTY INDEX regv1_multi_expr ON regv1 ((name.first + name.last), age);
 \dGv+ regv1
 \dGi
 DROP PROPERTY INDEX regv1_multi_expr;
