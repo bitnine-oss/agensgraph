@@ -1952,7 +1952,6 @@ getVertexFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 	}
 	else
 	{
-		Assert(plan->operation == GWROP_SET);
 		return makeGraphVertexDatum(gid, entry->val.properties);
 	}
 }
@@ -1977,8 +1976,6 @@ getEdgeFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 	{
 		Datum		start;
 		Datum		end;
-
-		Assert(plan->operation == GWROP_SET);
 
 		start = getEdgeStartDatum(origin);
 		end = getEdgeEndDatum(origin);
@@ -2103,7 +2100,6 @@ reflectModifiedProp(ModifyGraphState *mgstate)
 		}
 		else
 		{
-			Assert(plan->operation == GWROP_SET);
 			updateElemProp(mgstate, gid, entry->val.properties);
 		}
 	}
