@@ -1947,14 +1947,9 @@ getVertexFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 		return origin;
 
 	if (plan->operation == GWROP_DELETE)
-	{
 		return (Datum) NULL;
-	}
 	else
-	{
-		Assert(plan->operation == GWROP_SET);
 		return makeGraphVertexDatum(gid, entry->val.properties);
-	}
 }
 
 static Datum
@@ -1977,8 +1972,6 @@ getEdgeFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 	{
 		Datum		start;
 		Datum		end;
-
-		Assert(plan->operation == GWROP_SET);
 
 		start = getEdgeStartDatum(origin);
 		end = getEdgeEndDatum(origin);
@@ -2098,14 +2091,9 @@ reflectModifiedProp(ModifyGraphState *mgstate)
 
 		/* write the object to heap */
 		if (plan->operation == GWROP_DELETE)
-		{
 			deleteElem(mgstate, gid, entry->val.kind);
-		}
 		else
-		{
-			Assert(plan->operation == GWROP_SET);
 			updateElemProp(mgstate, gid, entry->val.properties);
-		}
 	}
 
 	DisableGraphDML = true;

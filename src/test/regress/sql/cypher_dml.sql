@@ -970,9 +970,19 @@ MATCH (a:v1)
 	WHERE a.no::int < 3
 	DELETE a
 MERGE (b:v1 {no:2})
-	ON MATCH SET b.no = '3'::jsonb;
+	ON MATCH SET b.no = to_jsonb(a.no::int);
 
 MATCH (a:v1) return a.no;
+
+MATCH (a) DELETE a;
+CREATE (:v1 {no: 1}), (:v1 {no: 2}), (:v1 {no: 3});
+
+MATCH (a:v1)
+  WHERE a.no::int < 3
+  DELETE a
+MERGE (b:v1 {no: 2})
+  ON MATCH SET b.no = to_jsonb(a.no::int)
+RETURN a, properties(b);
 
 -- MATCH - SET - RETURN
 MATCH (a) DETACH DELETE a;
