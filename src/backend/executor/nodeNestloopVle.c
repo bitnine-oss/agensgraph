@@ -198,10 +198,7 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 		}
 
 		econtext->ecxt_innertuple = innerTupleSlot;
-		econtext->ecxt_outertuple->tts_values[OUTER_BIND_VARNO]
-			= econtext->ecxt_innertuple->tts_values[INNER_BIND_VARNO];
-		econtext->ecxt_outertuple->tts_isnull[OUTER_BIND_VARNO]
-			= econtext->ecxt_innertuple->tts_isnull[INNER_BIND_VARNO];
+
 
 		/*
 		 * at this point we have a new pair of inner and outer tuples so we
@@ -224,7 +221,18 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 				 */
 				ENLV1_printf("qualification succeeded, projecting tuple");
 
+				/* store current context before be modified outertuple. */
+				if (!isMaxDepth(node))
+					storeStartAndBindVar(node, econtext->ecxt_outertuple);
+
+				/* set outertuple of ExprContext for projection. */
+				econtext->ecxt_outertuple->tts_values[OUTER_BIND_VARNO]
+					= econtext->ecxt_innertuple->tts_values[INNER_BIND_VARNO];
+				econtext->ecxt_outertuple->tts_isnull[OUTER_BIND_VARNO]
+					= econtext->ecxt_innertuple->tts_isnull[INNER_BIND_VARNO];
+
 				result = ExecProject(node->nls.js.ps.ps_ProjInfo, &isDone);
+
 				addInnerRowidAndGid(node, econtext->ecxt_innertuple);
 
 				/* in both [x..y] and [x..] cases */
@@ -237,7 +245,6 @@ ExecNestLoopVLE(NestLoopVLEState *node)
 				}
 				else
 				{
-					storeStartAndBindVar(node, econtext->ecxt_outertuple);
 					copyStartAndBindVar(selfTupleSlot, result);
 					node->nls.nl_NeedNewOuter = true;
 					node->selfLoop = true;
