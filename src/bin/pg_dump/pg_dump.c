@@ -268,7 +268,7 @@ static void appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 						const char *prefix, Archive *fout);
 static char *get_synchronized_snapshot(Archive *fout);
 static void setupDumpWorker(Archive *AHX);
-static void restoreAGlabel(Archive *fout);
+static void correctAGlabel(Archive *fout);
 
 
 int
@@ -821,7 +821,7 @@ main(int argc, char **argv)
 		dumpDumpableObject(fout, dobjs[i]);
 
 	/* Restore ag_label after of all labels restored */
-	restoreAGlabel(fout);
+	correctAGlabel(fout);
 
 	/*
 	 * Set up options info to ensure we dump what we want.
@@ -18098,22 +18098,20 @@ appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 }
 
 /*
- * restoreAGlabel
+ * correctAGlabel
  *		Dump pg_catalog.ag_label for restoring graph
  */
 static void
-restoreAGlabel(Archive *fout)
+correctAGlabel(Archive *fout)
 {
 	PQExpBuffer		q;
 	PQExpBuffer		labelq;
-	PQExpBuffer		delq;
 
 	PGresult   *res;
 	int			tuple;
 
 	q = createPQExpBuffer();
 	labelq = createPQExpBuffer();
-	delq = createPQExpBuffer();
 
 	appendPQExpBuffer(labelq,
 			"SELECT g.graphname, l.labname, l.labid "
@@ -18121,8 +18119,8 @@ restoreAGlabel(Archive *fout)
 			"WHERE l.graphid = g.oid;\n");
 	res = ExecuteSqlQuery(fout, labelq->data, PGRES_TUPLES_OK);
 
-	appendPQExpBuffer(delq,
-			"DROP TABLE public._temp_ag_label;\n");
+	appendPQExpBuffer(q,
+			"DROP TABLE IF EXISTS public._temp_ag_label;\n");
 
 	appendPQExpBuffer(q,
 			"CREATE TABLE public._temp_ag_label("
@@ -18137,9 +18135,11 @@ restoreAGlabel(Archive *fout)
 				atoi(PQgetvalue(res, tuple, 2)));
 	}
 
-	//max labid = 2^16 - 1
-	//colum type of labid is integer so it can contain 4byte
-	//labid + 2byte max = simple non-collisional temp number
+	/*
+	 * max labid = 2^16 - 1
+	 * colum type of labid is integer so it can contain 4byte
+	 * labid + 2byte max = simple non-collisional temp number
+	 */
 	appendPQExpBuffer(q,
 			"UPDATE pg_catalog.ag_label "
 			"SET labid = labid + 65535;\n");
@@ -18159,12 +18159,11 @@ restoreAGlabel(Archive *fout)
 				 NULL, NULL,
 				 "",
 				 false, "TABLE", SECTION_POST_DATA,
-				 q->data, delq->data, NULL,
+				 q->data, "", NULL,
 				 NULL, 0,
 				 NULL, NULL);
 
 	PQclear(res);
 	destroyPQExpBuffer(q);
 	destroyPQExpBuffer(labelq);
-	destroyPQExpBuffer(delq);
 }
