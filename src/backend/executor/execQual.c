@@ -4522,7 +4522,6 @@ ExecEvalCypherList(CypherListExprState *clstate, ExprContext *econtext,
 		Assert(exprType((Node *) e->expr) == JSONBOID);
 
 		ed = ExecEvalExpr(e, econtext, &eisnull, NULL);
-
 		if (eisnull)
 		{
 			ejv.type = jbvNull;
@@ -4662,6 +4661,12 @@ ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 				elog(ERROR, "unknown jsonb scalar type");
 				return 0;
 		}
+	}
+
+	if (vjv->type == jbvNull)
+	{
+		*isNull = true;
+		return 0;
 	}
 
 	*isNull = false;
