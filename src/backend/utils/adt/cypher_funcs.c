@@ -126,10 +126,10 @@ jsonb_toboolean(PG_FUNCTION_ARGS)
 		if (jv->type == jbvString)
 		{
 			if (jv->val.string.len == 4 &&
-				strncasecmp(jv->val.string.val, "true", 4) == 0)
+				pg_strncasecmp(jv->val.string.val, "true", 4) == 0)
 				PG_RETURN_BOOL(true);
 			else if (jv->val.string.len == 5 &&
-					 strncasecmp(jv->val.string.val, "false", 5) == 0)
+					 pg_strncasecmp(jv->val.string.val, "false", 5) == 0)
 				PG_RETURN_BOOL(false);
 			else
 				PG_RETURN_NULL();
