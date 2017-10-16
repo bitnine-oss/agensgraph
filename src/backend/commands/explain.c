@@ -1152,6 +1152,14 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		case T_ModifyTable:
 			ExplainModifyTarget((ModifyTable *) plan, es);
 			break;
+		case T_ModifyGraph:
+			{
+				ModifyGraph *modifygraph = (ModifyGraph *) plan;
+
+				if (modifygraph->eagerness == true)
+					appendStringInfoString(es->str, " eager");
+			}
+			break;
 		case T_NestLoop:
 		case T_NestLoopVLE:
 		case T_MergeJoin:

@@ -124,6 +124,7 @@
 #replacement_sort_tuples = 150000	# limits use of replacement selection sort
 #autovacuum_work_mem = -1		# min 1MB, or -1 to use maintenance_work_mem
 #max_stack_depth = 2MB			# min 100kB
+#eager_mem = 4MB			# min 1MB
 #dynamic_shared_memory_type = posix	# the default is the first option
 					# supported by the operating system:
 					#   posix
@@ -288,6 +289,7 @@
 #enable_seqscan = on
 #enable_sort = on
 #enable_tidscan = on
+#enable_eager = off
 
 # - Planner Cost Constants -
 

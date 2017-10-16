@@ -172,5 +172,6 @@ test: graphid
 test: cypher_ddl
 test: cypher_expr
 test: cypher_dml
+test: cypher_eager
 test: sql_restriction
 test: propertyindex

@@ -112,7 +112,7 @@ bool		allowSystemTableMods = false;
 int			work_mem = 1024;
 int			maintenance_work_mem = 16384;
 int			replacement_sort_tuples = 150000;
-
+int			eager_mem = 4096;
 /*
  * Primary determinants of sizes of shared-memory structures.
  *

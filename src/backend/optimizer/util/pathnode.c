@@ -3140,8 +3140,8 @@ create_limit_path(PlannerInfo *root, RelOptInfo *rel,
 ModifyGraphPath *
 create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
 						GraphWriteOp operation, bool last, bool detach,
-						Path *subpath, List *pattern, List *targets,
-						List *exprs, List *sets)
+						bool eager, Path *subpath, List *pattern,
+						List *targets, List *exprs, List *sets)
 {
 	ModifyGraphPath *pathnode = makeNode(ModifyGraphPath);
 
@@ -3161,7 +3161,7 @@ create_modifygraph_path(PlannerInfo *root, RelOptInfo *rel, bool canSetTag,
 	pathnode->operation = operation;
 	pathnode->last = last;
 	pathnode->detach = detach;
-	pathnode->eager = !last;
+	pathnode->eager = eager;
 	pathnode->subpath = subpath;
 	pathnode->pattern = pattern;
 	pathnode->targets = targets;

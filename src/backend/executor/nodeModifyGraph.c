@@ -276,7 +276,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		mgstate->propTable = NULL;
 	}
 
-	mgstate->tuplestorestate = tuplestore_begin_heap(false, false, work_mem);
+	mgstate->tuplestorestate = tuplestore_begin_heap(false, false, eager_mem);
 
 	return mgstate;
 }

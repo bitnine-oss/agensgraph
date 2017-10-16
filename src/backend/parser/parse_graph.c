@@ -67,6 +67,8 @@
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
 
+bool		enable_eager = true;
+
 typedef struct
 {
 	char	   *varname;		/* variable assigned to the node */
@@ -266,6 +268,7 @@ static bool isNodeForRef(CypherNode *cnode);
 static Node *transformPropMap(ParseState *pstate, Node *expr,
 							  ParseExprKind exprKind);
 static Node *stripNullKeys(ParseState *pstate, Node *properties);
+static void assign_query_eager(Query *query);
 
 /* transform */
 static RangeTblEntry *transformClause(ParseState *pstate, Node *clause);
@@ -681,6 +684,8 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 
 	assign_query_collations(pstate, qry);
 
+	assign_query_eager(qry);
+
 	return qry;
 }
 
@@ -740,6 +745,8 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 
 	assign_query_collations(pstate, qry);
 
+	assign_query_eager(qry);
+
 	return qry;
 }
 
@@ -793,6 +800,8 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 		assign_expr_collations(pstate, gsp->expr);
 	}
 
+	assign_query_eager(qry);
+
 	return qry;
 }
 
@@ -840,6 +849,8 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
 	assign_query_collations(pstate, qry);
+
+	assign_query_eager(qry);
 
 	return qry;
 }
@@ -4648,6 +4659,67 @@ stripNullKeys(ParseState *pstate, Node *properties)
 							 list_make1(properties), strip, -1);
 
 }
+
+static bool
+assign_query_eager_walker(Node *node, Query *nxtQry)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Query))
+	{
+		Query *qry = (Query *) node;
+
+		if (qry->graph.eager == true)
+			return true;
+
+		if (qry->commandType == CMD_GRAPHWRITE)
+		{
+			/* Clauses whose CID is incremented should be run as eager. */
+			if (qry->graph.sets != NIL ||
+				qry->graph.exprs != NIL ||
+				qry->graph.writeOp == GWROP_MERGE)
+				qry->graph.eager = true;
+			else if (nxtQry->graph.writeOp == GWROP_MERGE &&
+					(qry->graph.writeOp == GWROP_CREATE ||
+					 qry->graph.writeOp == GWROP_MERGE))
+				qry->graph.eager = true;
+			else
+				qry->graph.eager = false;
+
+			if (qry->graph.eager == true &&
+				enable_eager == false)
+				elog(ERROR, "eagerness plan is not allowed.");
+			return true;
+		}
+
+		(void) range_table_walker(qry->rtable,
+								  assign_query_eager_walker,
+								  (void *)nxtQry,
+								  QTW_IGNORE_CTE_SUBQUERIES);
+	}
+
+	return false;
+}
+
+static void
+assign_query_eager(Query *query)
+{
+	(void) range_table_walker(query->rtable,
+							  assign_query_eager_walker,
+							  (void *)query,
+							  QTW_IGNORE_CTE_SUBQUERIES);
+
+	if (!query->graph.last &&
+		(query->graph.sets != NIL ||
+		 query->graph.exprs != NIL))
+		query->graph.eager = true;
+
+	if (query->graph.eager == true &&
+		enable_eager == false)
+		elog(ERROR, "eagerness plan is not allowed.");
+}
+
 
 static RangeTblEntry *
 transformClause(ParseState *pstate, Node *clause)

@@ -2925,6 +2925,7 @@ _copyQuery(const Query *from)
 	COPY_SCALAR_FIELD(graph.writeOp);
 	COPY_SCALAR_FIELD(graph.last);
 	COPY_SCALAR_FIELD(graph.detach);
+	COPY_SCALAR_FIELD(graph.eager);
 	COPY_NODE_FIELD(graph.pattern);
 	COPY_NODE_FIELD(graph.targets);
 	COPY_NODE_FIELD(graph.exprs);
