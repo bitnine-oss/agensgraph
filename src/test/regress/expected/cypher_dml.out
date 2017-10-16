@@ -2628,131 +2628,6 @@ MATCH (a) RETURN properties(a);
 (6 rows)
 
 MATCH (a) DETACH DELETE a;
---
--- Eager plan
---
--- CREATE - MERGE
-CREATE (:v1 {no: 1}), (:v1 {no: 2}), (:v1 {no: 3});
-MATCH (a:v1)
-CREATE (b:v2 {no: a.no})
-MERGE (c:v2 {no: a.no + 2});
-MATCH (a:v2) RETURN a.no;
- no 
-----
- 1
- 2
- 3
- 4
- 5
-(5 rows)
-
-MATCH (a:v2) DETACH DELETE a;
--- MERGE - MERGE
-MATCH (a:v1)
-MERGE (b:v2 {no: a.no})
-MERGE (c:v2 {no: a.no + 2});
-MATCH (a:v2) RETURN a.no;
- no 
-----
- 1
- 2
- 3
- 4
- 5
-(5 rows)
-
--- SET - MERGE
-MATCH (a:v1) SET a.no = a.no - 2
-MERGE (b:v1 {no: 1});
-MATCH (a:v1) RETURN a.no AS no ORDER BY no DESC;
- no 
-----
- 1
- 0
- -1
-(3 rows)
-
--- DELETE - MERGE
-MATCH (a) DELETE a;
-CREATE (:v1 {no: 1}), (:v1 {no: 2}), (:v1 {no: 3});
-MATCH (a:v1)
-  WHERE a.no < 3
-  DELETE a
-MERGE (b:v1 {no: 2})
-  ON MATCH SET b.no = a.no;
-MATCH (a:v1) RETURN a.no;
- no 
-----
- 3
- 
-(2 rows)
-
-MATCH (a) DELETE a;
-CREATE (:v1 {no: 1}), (:v1 {no: 2}), (:v1 {no: 3});
-MATCH (a:v1)
-  WHERE a.no < 3
-  DELETE a
-MERGE (b:v1 {no: 2})
-  ON MATCH SET b.no = a.no
-RETURN a, properties(b);
- a | properties 
----+------------
-   | {}
-   | {}
-(2 rows)
-
--- MATCH - SET - RETURN
-MATCH (a) DETACH DELETE a;
-CREATE (:v1 {no: 1})-[:e]->(:v1 {no: 2})-[:e]->(:v1 {no: 3});
-MATCH (a)-[]->(b)
-  SET b.no = a.no + b.no
-  RETURN properties(a) AS a, properties(b) AS b;
-     a     |     b     
------------+-----------
- {"no": 1} | {"no": 3}
- {"no": 3} | {"no": 5}
-(2 rows)
-
-MATCH (a)-[]->(b)
-  RETURN properties(a) AS a, properties(b) AS b;
-     a     |     b     
------------+-----------
- {"no": 1} | {"no": 3}
- {"no": 3} | {"no": 5}
-(2 rows)
-
-MATCH (a)-[]->(b)
-  SET b.no = a.no + b.no
-  CREATE (:v2 {ano: a.no}), (d:v2 {bno: b.no});
-MATCH (a:v2) RETURN properties(a) ORDER BY properties;
- properties 
-------------
- {"ano": 1}
- {"ano": 4}
- {"bno": 4}
- {"bno": 8}
-(4 rows)
-
--- MATCH - DELETE - RETURN
-MATCH (a) DETACH DELETE a;
-CREATE (:v1 {no: 1}), (:v1 {no: 2}), (:v1 {no: 3});
-MATCH (a), (b) WHERE a.no = 2
-  DELETE a
-  RETURN properties(a) AS a, properties(b) AS b;
- a |     b     
----+-----------
-   | {"no": 1}
-   | 
-   | {"no": 3}
-(3 rows)
-
-MATCH (a) RETURN properties(a);
- properties 
-------------
- {"no": 1}
- {"no": 3}
-(2 rows)
-
 -- wrong case
 MERGE (a:v1) MERGE (b:v2 {name: a.notexistent});
 MERGE (a:v1) ON MATCH SET a.matched = true
@@ -2783,7 +2658,7 @@ ERROR:  jsonb object is expected for property map
 MERGE ()-[:e1 =10]->();
 ERROR:  jsonb object is expected for property map
 DROP GRAPH gm CASCADE;
-NOTICE:  drop cascades to 10 other objects
+NOTICE:  drop cascades to 9 other objects
 DETAIL:  drop cascades to sequence gm.ag_label_seq
 drop cascades to label ag_vertex
 drop cascades to label ag_edge
@@ -2793,7 +2668,6 @@ drop cascades to label e1
 drop cascades to label person
 drop cascades to label city
 drop cascades to label hometown
-drop cascades to label e
 -- cleanup
 DROP GRAPH p CASCADE;
 NOTICE:  drop cascades to 5 other objects

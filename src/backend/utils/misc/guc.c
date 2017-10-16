@@ -50,6 +50,7 @@
 #include "optimizer/paths.h"
 #include "optimizer/planmain.h"
 #include "parser/parse_expr.h"
+#include "parser/parse_graph.h"
 #include "parser/parse_type.h"
 #include "parser/parser.h"
 #include "parser/scansup.h"
@@ -896,7 +897,15 @@ static struct config_bool ConfigureNamesBool[] =
 		true,
 		NULL, NULL, NULL
 	},
-
+	{
+		{"enable_eager", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables the planner's use of eager plans."),
+			NULL
+		},
+		&enable_eager,
+		true,
+		NULL, NULL, NULL
+	},
 	{
 		{"geqo", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("Enables genetic query optimization."),
@@ -1966,6 +1975,17 @@ static struct config_int ConfigureNamesInt[] =
 		&max_stack_depth,
 		100, 100, MAX_KILOBYTES,
 		check_max_stack_depth, assign_max_stack_depth, NULL
+	},
+
+	{
+		{"eager_mem", PGC_USERSET, RESOURCES_MEM,
+			gettext_noop("Sets the maximum memory to be used for eager plan."),
+			gettext_noop("This much memory can be used by each eager plan."),
+			GUC_UNIT_KB
+		},
+		&eager_mem,
+		4096, 1024, MAX_KILOBYTES,
+		NULL, NULL, NULL
 	},
 
 	{
