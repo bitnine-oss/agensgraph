@@ -1949,6 +1949,7 @@ do_help(void)
 	printf(_("  -s, --silent           only print errors, no informational messages\n"));
 	printf(_("  -t, --timeout=SECS     seconds to wait when using -w option\n"));
 	printf(_("  -V, --version          output version information, then exit\n"));
+	printf(_("      --revision         output revision information, then exit\n"));
 	printf(_("  -w                     wait until operation completes\n"));
 	printf(_("  -W                     do not wait until operation completes\n"));
 	printf(_("  -?, --help             show this help, then exit\n"));
@@ -2137,6 +2138,7 @@ main(int argc, char **argv)
 	static struct option long_options[] = {
 		{"help", no_argument, NULL, '?'},
 		{"version", no_argument, NULL, 'V'},
+		{"revision", no_argument, NULL, 0},
 		{"log", required_argument, NULL, 'l'},
 		{"mode", required_argument, NULL, 'm'},
 		{"agdata", required_argument, NULL, 'D'},
@@ -2178,6 +2180,11 @@ main(int argc, char **argv)
 		else if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)
 		{
 			puts("ag_ctl (AgensGraph) " AG_VERSION);
+			exit(0);
+		}
+		else if (strcmp(argv[1], "--revision") == 0)
+		{
+			puts("ag_ctl (AgensGraph) " AG_GIT_REVISION);
 			exit(0);
 		}
 	}

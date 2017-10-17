@@ -766,6 +766,9 @@
 /* AgensGraph version as a string */
 #undef AG_VERSION
 
+/* AgensGraph version as a string */
+#undef AG_GIT_REVISION
+
 /* Define to 1 to allow profiling output to be saved separately for each
    process. */
 #undef PROFILE_PID_DIR
