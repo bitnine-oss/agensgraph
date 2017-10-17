@@ -89,6 +89,7 @@ static void simple_action_list_append(SimpleActionList *list,
 static void process_psqlrc(char *argv0);
 static void process_psqlrc_file(char *filename);
 static void showVersion(void);
+static void showRevision(void);
 static void EstablishVariableSpace(void);
 
 #define NOPAGER		0
@@ -119,6 +120,11 @@ main(int argc, char *argv[])
 		if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)
 		{
 			showVersion();
+			exit(EXIT_SUCCESS);
+		}
+		if (strcmp(argv[1], "--revision") == 0)
+		{
+			showRevision();
 			exit(EXIT_SUCCESS);
 		}
 	}
@@ -440,6 +446,7 @@ parse_psql_options(int argc, char *argv[], struct adhoc_opts * options)
 		{"set", required_argument, NULL, 'v'},
 		{"variable", required_argument, NULL, 'v'},
 		{"version", no_argument, NULL, 'V'},
+		{"revision", no_argument, NULL, 0},
 		{"no-password", no_argument, NULL, 'w'},
 		{"password", no_argument, NULL, 'W'},
 		{"expanded", no_argument, NULL, 'x'},
@@ -643,6 +650,9 @@ parse_psql_options(int argc, char *argv[], struct adhoc_opts * options)
 					exit(EXIT_SUCCESS);
 				}
 				break;
+			case 0:
+				showRevision();
+				exit(EXIT_SUCCESS);
 			default:
 		unknown_option:
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
@@ -772,6 +782,12 @@ static void
 showVersion(void)
 {
 	puts("agens (AgensGraph) " AG_VERSION);
+}
+
+static void
+showRevision(void)
+{
+	puts("agens (AgensGraph) " AG_GIT_REVISION);
 }
 
 

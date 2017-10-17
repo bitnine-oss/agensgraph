@@ -41,6 +41,9 @@ AC_DEFINE_UNQUOTED(PG_VERSION, "$PG_VERSION", [PostgreSQL version as a string])
 [AG_VERSION=1.2.0]
 AC_DEFINE_UNQUOTED(AG_VERSION, "$AG_VERSION", [AgensGraph version as a string])
 
+[AG_GIT_REVISION=`git rev-parse HEAD`]
+AC_DEFINE_UNQUOTED(AG_GIT_REVISION, "$AG_GIT_REVISION", [AgensGraph Git revisionas a string])
+
 AC_CANONICAL_HOST
 
 template=

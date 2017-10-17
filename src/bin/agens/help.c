@@ -69,7 +69,7 @@ usage(unsigned short int pager)
 	 * Keep this line count in sync with the number of lines printed below!
 	 * Use "psql --help=options | wc" to count correctly.
 	 */
-	output = PageOutput(61, pager ? &(pset.popt.topt) : NULL);
+	output = PageOutput(60, pager ? &(pset.popt.topt) : NULL);
 
 	fprintf(output, _("agens is the AgensGraph interactive terminal.\n\n"));
 	fprintf(output, _("Usage:\n"));
@@ -88,6 +88,7 @@ usage(unsigned short int pager)
 			   "                           set agens variable NAME to VALUE\n"
 				 "                           (e.g., -v ON_ERROR_STOP=1)\n"));
 	fprintf(output, _("  -V, --version            output version information, then exit\n"));
+	fprintf(output, _("      --revision           output revision information, then exit\n"));
 	fprintf(output, _("  -X, --no-agensrc         do not read startup file (~/.agensrc)\n"));
 	fprintf(output, _("  -1 (\"one\"), --single-transaction\n"
 					  "                           execute as a single transaction (if non-interactive)\n"));
