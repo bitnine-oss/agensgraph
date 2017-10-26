@@ -193,6 +193,11 @@ static Datum ExecEvalCypherMap(CypherMapExprState *mstate,
 static Datum ExecEvalCypherList(CypherListExprState *clstate,
 								ExprContext *econtext, bool *isNull,
 								ExprDoneCond *isDone);
+static Datum ExecEvalCypherListComp(CypherListCompExprState *clcstate,
+									ExprContext *econtext, bool *isNull,
+									ExprDoneCond *isDone);
+static Datum ExecEvalCypherListCompVar(ExprState *state, ExprContext *econtext,
+									   bool *isNull, ExprDoneCond *isDone);
 static Datum ExecEvalCypherAccess(CypherAccessExprState *astate,
 								  ExprContext *econtext, bool *isNull,
 								  ExprDoneCond *isDone);
@@ -4795,6 +4800,141 @@ ExecEvalCypherList(CypherListExprState *clstate, ExprContext *econtext,
 }
 
 static Datum
+ExecEvalCypherListComp(CypherListCompExprState *clcstate,
+					   ExprContext *econtext, bool *isNull,
+					   ExprDoneCond *isDone)
+{
+	ExprState  *list = clcstate->list;
+	bool		eisnull;
+	Datum		listd;
+	Jsonb	   *listj;
+	JsonbParseState *jpstate = NULL;
+	JsonbIterator *it;
+	JsonbValue	jv;
+	JsonbIteratorToken tok;
+	JsonbValue *j;
+
+	Assert(exprType((Node *) list->expr) == JSONBOID);
+
+	listd = ExecEvalExpr(list, econtext, &eisnull, NULL);
+	if (eisnull)
+	{
+		*isNull = true;
+		return 0;
+	}
+
+	listj = DatumGetJsonb(listd);
+	if (!JB_ROOT_IS_ARRAY(listj) || JB_ROOT_IS_SCALAR(listj))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("list is expected but %s",
+						JsonbToCString(NULL, &listj->root, VARSIZE(listj)))));
+		return 0;
+	}
+
+	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+	it = JsonbIteratorInit(&listj->root);
+	for (tok = JsonbIteratorNext(&it, &jv, false);
+		 tok != WJB_DONE;
+		 tok = JsonbIteratorNext(&it, &jv, true))
+	{
+		bool		cond = true;
+
+		if (tok != WJB_ELEM)
+			continue;
+
+		if (!(clcstate->cond == NULL && clcstate->elem == NULL))
+		{
+			if (jv.type == jbvNull)
+			{
+				econtext->clcValue_datum = 0;
+				econtext->clcValue_isNull = true;
+			}
+			else
+			{
+				Datum		jvd;
+
+				jvd = JsonbGetDatum(JsonbValueToJsonb(&jv));
+				econtext->clcValue_datum = jvd;
+				econtext->clcValue_isNull = false;
+			}
+		}
+
+		if (clcstate->cond != NULL)
+		{
+			Datum		cd;
+
+			cd = ExecEvalExpr(clcstate->cond, econtext, &eisnull, NULL);
+			Assert(exprType((Node *) clcstate->cond->expr) == BOOLOID);
+			cond = (eisnull ? false : DatumGetBool(cd));
+		}
+
+		if (!cond)
+			continue;
+
+		if (clcstate->elem == NULL)
+		{
+			pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+		}
+		else
+		{
+			Datum		ed;
+			JsonbValue	_ejv;
+			JsonbValue *ejv;
+
+			ed = ExecEvalExpr(clcstate->elem, econtext, &eisnull, NULL);
+			if (eisnull)
+			{
+				_ejv.type = jbvNull;
+				ejv = &_ejv;
+			}
+			else
+			{
+				Jsonb	   *ej;
+
+				ej = DatumGetJsonb(ed);
+				if (JB_ROOT_IS_SCALAR(ej))
+				{
+					ejv = getIthJsonbValueFromContainer(&ej->root, 0);
+				}
+				else
+				{
+					_ejv.type = jbvBinary;
+					_ejv.val.binary.data = &ej->root;
+					ejv = &_ejv;
+				}
+			}
+
+			pushJsonbValue(&jpstate, WJB_ELEM, ejv);
+		}
+	}
+
+	econtext->clcValue_datum = 0;
+	econtext->clcValue_isNull = true;
+
+	j = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+
+	*isNull = false;
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	return JsonbGetDatum(JsonbValueToJsonb(j));
+}
+
+static Datum
+ExecEvalCypherListCompVar(ExprState *state, ExprContext *econtext,
+						  bool *isNull, ExprDoneCond *isDone)
+{
+	*isNull = econtext->clcValue_isNull;
+	if (isDone != NULL)
+		*isDone = ExprSingleResult;
+
+	return econtext->clcValue_datum;
+}
+
+static Datum
 ExecEvalCypherAccess(CypherAccessExprState *astate, ExprContext *econtext,
 					 bool *isNull, ExprDoneCond *isDone)
 {
@@ -6111,6 +6251,25 @@ ExecInitExpr(Expr *node, PlanState *parent)
 
 				state = (ExprState *) clstate;
 			}
+			break;
+		case T_CypherListCompExpr:
+			{
+				CypherListCompExpr *clc = (CypherListCompExpr *) node;
+				CypherListCompExprState *clcstate;
+
+				clcstate = makeNode(CypherListCompExprState);
+				clcstate->xprstate.evalfunc =
+						(ExprStateEvalFunc) ExecEvalCypherListComp;
+				clcstate->list = ExecInitExpr(clc->list, parent);
+				clcstate->cond = ExecInitExpr(clc->cond, parent);
+				clcstate->elem = ExecInitExpr(clc->elem, parent);
+
+				state = (ExprState *) clcstate;
+			}
+			break;
+		case T_CypherListCompVar:
+			state = makeNode(ExprState);
+			state->evalfunc = ExecEvalCypherListCompVar;
 			break;
 		case T_CypherAccessExpr:
 			{

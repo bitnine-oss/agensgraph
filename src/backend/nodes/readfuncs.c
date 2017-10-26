@@ -2392,6 +2392,20 @@ _readEdgeRefRows(void)
 	READ_DONE();
 }
 
+static CypherListComp *
+_readCypherListComp(void)
+{
+	READ_LOCALS(CypherListComp);
+
+	READ_NODE_FIELD(list);
+	READ_STRING_FIELD(varname);
+	READ_NODE_FIELD(cond);
+	READ_NODE_FIELD(elem);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
 static CypherMapExpr *
 _readCypherMapExpr(void)
 {
@@ -2409,6 +2423,31 @@ _readCypherListExpr(void)
 	READ_LOCALS(CypherListExpr);
 
 	READ_NODE_FIELD(elems);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static CypherListCompExpr *
+_readCypherListCompExpr(void)
+{
+	READ_LOCALS(CypherListCompExpr);
+
+	READ_NODE_FIELD(list);
+	READ_STRING_FIELD(varname);
+	READ_NODE_FIELD(cond);
+	READ_NODE_FIELD(elem);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static CypherListCompVar *
+_readCypherListCompVar(void)
+{
+	READ_LOCALS(CypherListCompVar);
+
+	READ_STRING_FIELD(varname);
 	READ_LOCATION_FIELD(location);
 
 	READ_DONE();
@@ -2685,10 +2724,16 @@ parseNodeString(void)
 		return_value = _readEdgeRefRow();
 	else if (MATCH("EDGEREFROWS", 11))
 		return_value = _readEdgeRefRows();
+	else if (MATCH("CYPHERLISTCOMP", 14))
+		return_value = _readCypherListComp();
 	else if (MATCH("CYPHERMAPEXPR", 13))
 		return_value = _readCypherMapExpr();
 	else if (MATCH("CYPHERLISTEXPR", 14))
 		return_value = _readCypherListExpr();
+	else if (MATCH("CYPHERLISTCOMPEXPR", 18))
+		return_value = _readCypherListCompExpr();
+	else if (MATCH("CYPHERLISTCOMPVAR", 17))
+		return_value = _readCypherListCompVar();
 	else if (MATCH("CYPHERACCESSEXPR", 16))
 		return_value = _readCypherAccessExpr();
 	else if (MATCH("CYPHERINDICES", 13))

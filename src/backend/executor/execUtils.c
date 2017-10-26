@@ -248,6 +248,9 @@ CreateExprContext(EState *estate)
 	econtext->domainValue_datum = (Datum) 0;
 	econtext->domainValue_isNull = true;
 
+	econtext->clcValue_datum = (Datum) 0;
+	econtext->clcValue_isNull = true;
+
 	econtext->ecxt_estate = estate;
 
 	econtext->ecxt_callbacks = NULL;
@@ -316,6 +319,9 @@ CreateStandaloneExprContext(void)
 
 	econtext->domainValue_datum = (Datum) 0;
 	econtext->domainValue_isNull = true;
+
+	econtext->clcValue_datum = (Datum) 0;
+	econtext->clcValue_isNull = true;
 
 	econtext->ecxt_estate = NULL;
 

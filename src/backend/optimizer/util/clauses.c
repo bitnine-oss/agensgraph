@@ -3554,6 +3554,7 @@ eval_const_expressions_mutator(Node *node,
 				CypherListExpr *cl = (CypherListExpr *) node;
 				List		*newelems = NIL;
 				ListCell	*le;
+				bool		all_const = true;
 				CypherListExpr *newcl;
 
 				foreach(le, cl->elems)
@@ -3562,6 +3563,8 @@ eval_const_expressions_mutator(Node *node,
 					Node	   *newe;
 
 					newe = eval_const_expressions_mutator(e, context);
+					if (!IsA(newe, Const))
+						all_const = false;
 
 					newelems = lappend(newelems, newe);
 				}
@@ -3569,7 +3572,23 @@ eval_const_expressions_mutator(Node *node,
 				newcl = makeNode(CypherListExpr);
 				newcl->elems = newelems;
 
+				if (all_const)
+					return (Node *) evaluate_expr((Expr *) newcl, JSONBOID, -1,
+												  InvalidOid);
+
 				return (Node *) newcl;
+			}
+		case T_CypherListCompExpr:
+			{
+				CypherListCompExpr *clc = (CypherListCompExpr *) node;
+				CypherListCompExpr *newclc;
+
+				newclc = makeNode(CypherListCompExpr);
+				newclc->list = clc->list;
+				newclc->varname = pstrdup(clc->varname);
+				newclc->cond = clc->cond;
+				newclc->elem = clc->elem;
+				return (Node *) newclc;
 			}
 		case T_CypherAccessExpr:
 			{

@@ -47,6 +47,8 @@
 
 static Node *transformCypherExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref);
+static Node *transformListCompColumnRef(ParseState *pstate, ColumnRef *cref,
+										char *varname);
 static Node *scanRTEForVar(ParseState *pstate, Node *var, RangeTblEntry *rte,
 						   char *colname, int location);
 static Node *transformFields(ParseState *pstate, Node *basenode, List *fields,
@@ -62,6 +64,7 @@ static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
 static Node *transformCypherListExpr(ParseState *pstate, CypherListExpr *cl);
+static Node *transformCypherListComp(ParseState *pstate, CypherListComp * clc);
 static Node *transformCaseExpr(ParseState *pstate, CaseExpr *c);
 static Node *transformFuncCall(ParseState *pstate, FuncCall *fn);
 static Node *transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c);
@@ -118,6 +121,8 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 			return transformCypherMapExpr(pstate, (CypherMapExpr *) expr);
 		case T_CypherListExpr:
 			return transformCypherListExpr(pstate, (CypherListExpr *) expr);
+		case T_CypherListComp:
+			return transformCypherListComp(pstate, (CypherListComp *) expr);
 		case T_CaseExpr:
 			return transformCaseExpr(pstate, (CaseExpr *) expr);
 		case T_CaseTestExpr:
@@ -182,15 +187,22 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 {
 	int			nfields = list_length(cref->fields);
 	int			location = cref->location;
+	Node	   *node = NULL;
 	Node	   *field1;
 	Node	   *field2 = NULL;
 	Node	   *field3 = NULL;
 	Oid			nspid1 = InvalidOid;
 	Node	   *field4 = NULL;
 	Oid			nspid2 = InvalidOid;
-	ParseState *orig_pstate = pstate;
-	Node	   *var = NULL;
-	int			nindir;
+	ParseState *pstate_up;
+	int			nindir = nfields - 1;
+
+	if (pstate->p_lc_varname != NULL)
+	{
+		node = transformListCompColumnRef(pstate, cref, pstate->p_lc_varname);
+		if (node != NULL)
+			return node;
+	}
 
 	field1 = linitial(cref->fields);
 	if (nfields >= 2)
@@ -207,13 +219,14 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 		nspid2 = LookupNamespaceNoError(strVal(field2));
 	}
 
-	while (pstate != NULL)
+	pstate_up = pstate;
+	while (pstate_up != NULL)
 	{
 		ListCell   *lni;
 
 		/* find the Var at the current level of ParseState */
 
-		foreach(lni, pstate->p_namespace)
+		foreach(lni, pstate_up->p_namespace)
 		{
 			ParseNamespaceItem *nsitem = lfirst(lni);
 			RangeTblEntry *rte = nsitem->p_rte;
@@ -223,7 +236,7 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			if (nsitem->p_lateral_only)
 			{
 				/* If not inside LATERAL, ignore lateral-only items. */
-				if (!pstate->p_lateral_active)
+				if (!pstate_up->p_lateral_active)
 					continue;
 
 				/*
@@ -240,8 +253,8 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			 */
 			if (nsitem->p_cols_visible)
 			{
-				var = scanRTEForVar(orig_pstate, var, rte, strVal(field1),
-									location);
+				node = scanRTEForVar(pstate, node, rte, strVal(field1),
+									 location);
 				nindir = 0;
 			}
 
@@ -256,8 +269,8 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			if (field2 != NULL &&
 				strcmp(rte->eref->aliasname, strVal(field1)) == 0)
 			{
-				var = scanRTEForVar(orig_pstate, var, rte, strVal(field2),
-									location);
+				node = scanRTEForVar(pstate, node, rte, strVal(field2),
+									 location);
 				nindir = 1;
 			}
 
@@ -269,8 +282,8 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 				rte->relid == relid2 &&
 				rte->alias == NULL)
 			{
-				var = scanRTEForVar(orig_pstate, var, rte, strVal(field3),
-									location);
+				node = scanRTEForVar(pstate, node, rte, strVal(field3),
+									 location);
 				nindir = 2;
 			}
 
@@ -282,19 +295,19 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 				rte->relid == relid3 &&
 				rte->alias == NULL)
 			{
-				var = scanRTEForVar(orig_pstate, var, rte, strVal(field4),
-									location);
+				node = scanRTEForVar(pstate, node, rte, strVal(field4),
+									 location);
 				nindir = 3;
 			}
 		}
 
-		if (var != NULL)
+		if (node != NULL)
 			break;
 
-		pstate = pstate->parentParseState;
+		pstate_up = pstate_up->parentParseState;
 	}
 
-	if (var == NULL)
+	if (node == NULL)
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
@@ -309,10 +322,36 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 
 		newfields = list_copy_tail(cref->fields, nindir + 1);
 
-		return transformFields(pstate, var, newfields, location);
+		return transformFields(pstate, node, newfields, location);
 	}
 
-	return var;
+	return node;
+}
+
+static Node *
+transformListCompColumnRef(ParseState *pstate, ColumnRef *cref, char *varname)
+{
+	Node	   *field1 = linitial(cref->fields);
+	CypherListCompVar *clcvar;
+
+	if (strcmp(varname, strVal(field1)) != 0)
+		return NULL;
+
+	clcvar = makeNode(CypherListCompVar);
+	clcvar->varname = pstrdup(varname);
+	clcvar->location = cref->location;
+
+	if (list_length(cref->fields) > 1)
+	{
+		List	   *newfields;
+
+		newfields = list_copy_tail(cref->fields, 1);
+
+		return transformFields(pstate, (Node *) clcvar, newfields,
+							   cref->location);
+	}
+
+	return (Node *) clcvar;
 }
 
 static Node *
@@ -703,6 +742,42 @@ transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 	newcl->location = cl->location;
 
 	return (Node *) newcl;
+}
+
+static Node *
+transformCypherListComp(ParseState *pstate, CypherListComp *clc)
+{
+	Node	   *list;
+	Oid			type;
+	Node	   *cond;
+	Node	   *elem;
+	CypherListCompExpr *clcexpr;
+
+	list = transformCypherExprRecurse(pstate, (Node *) clc->list);
+	type = exprType(list);
+	if (type != JSONBOID)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("jsonb is expected but %s", format_type_be(type)),
+				 parser_errposition(pstate, clc->location)));
+
+	pstate->p_lc_varname = clc->varname;
+	cond = transformCypherWhere(pstate, clc->cond, EXPR_KIND_WHERE);
+	pstate->p_lc_varname = NULL;
+
+	pstate->p_lc_varname = clc->varname;
+	elem = transformCypherExprRecurse(pstate, clc->elem);
+	pstate->p_lc_varname = NULL;
+	elem = coerce_to_jsonb(pstate, elem, "jsonb", true);
+
+	clcexpr = makeNode(CypherListCompExpr);
+	clcexpr->list = (Expr *) list;
+	clcexpr->varname = pstrdup(clc->varname);
+	clcexpr->cond = (Expr *) cond;
+	clcexpr->elem = (Expr *) elem;
+	clcexpr->location = clc->location;
+
+	return (Node *) clcexpr;
 }
 
 static Node *

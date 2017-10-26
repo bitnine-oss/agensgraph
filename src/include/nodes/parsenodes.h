@@ -3212,12 +3212,15 @@ typedef struct CypherStmt
 	Node	   *last;		/* last Cypher clause in the statement */
 } CypherStmt;
 
-typedef enum CSPKind
+typedef struct CypherListComp
 {
-	CSP_EXISTS,
-	CSP_SIZE,
-	CSP_FINDPATH			/* shortestpath, allshortestpaths, dijkstra */
-} CSPKind;
+	NodeTag		type;
+	Node	   *list;
+	char	   *varname;
+	Node	   *cond;
+	Node	   *elem;
+	int			location;
+} CypherListComp;
 
 /*
  * A simple wrapper for Cypher expressions which allows transformExpr() to
@@ -3228,6 +3231,13 @@ typedef struct CypherGenericExpr
 	NodeTag		type;
 	Node	   *expr;
 } CypherGenericExpr;
+
+typedef enum CSPKind
+{
+	CSP_EXISTS,
+	CSP_SIZE,
+	CSP_FINDPATH			/* shortestpath, allshortestpaths, dijkstra */
+} CSPKind;
 
 typedef struct CypherSubPattern
 {

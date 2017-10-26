@@ -1466,6 +1466,23 @@ typedef struct CypherListExpr
 	int 		location;
 } CypherListExpr;
 
+typedef struct CypherListCompExpr
+{
+	Expr		xpr;
+	Expr	   *list;
+	char	   *varname;
+	Expr	   *cond;
+	Expr	   *elem;
+	int			location;
+} CypherListCompExpr;
+
+typedef struct CypherListCompVar
+{
+	Expr		xpr;
+	char	   *varname;
+	int			location;
+} CypherListCompVar;
+
 typedef struct CypherAccessExpr
 {
 	Expr		xpr;

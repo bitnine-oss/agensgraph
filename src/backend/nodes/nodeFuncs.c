@@ -270,6 +270,12 @@ exprType(const Node *expr)
 		case T_CypherListExpr:
 			type = JSONBOID;
 			break;
+		case T_CypherListCompExpr:
+			type = JSONBOID;
+			break;
+		case T_CypherListCompVar:
+			type = JSONBOID;
+			break;
 		case T_CypherAccessExpr:
 			type = JSONBOID;
 			break;
@@ -513,6 +519,10 @@ exprTypmod(const Node *expr)
 		case T_CypherMapExpr:
 			return -1;
 		case T_CypherListExpr:
+			return -1;
+		case T_CypherListCompExpr:
+			return -1;
+		case T_CypherListCompVar:
 			return -1;
 		case T_CypherAccessExpr:
 			return -1;
@@ -959,6 +969,12 @@ exprCollation(const Node *expr)
 		case T_CypherListExpr:
 			coll = InvalidOid;
 			break;
+		case T_CypherListCompExpr:
+			coll = InvalidOid;
+			break;
+		case T_CypherListCompVar:
+			coll = InvalidOid;
+			break;
 		case T_CypherAccessExpr:
 			coll = InvalidOid;
 			break;
@@ -1166,6 +1182,12 @@ exprSetCollation(Node *expr, Oid collation)
 			Assert(!OidIsValid(collation));
 			break;
 		case T_CypherListExpr:
+			Assert(!OidIsValid(collation));
+			break;
+		case T_CypherListCompExpr:
+			Assert(!OidIsValid(collation));
+			break;
+		case T_CypherListCompVar:
 			Assert(!OidIsValid(collation));
 			break;
 		case T_CypherAccessExpr:
@@ -1607,6 +1629,12 @@ exprLocation(const Node *expr)
 				loc = leftmostLoc(cl->location,
 								  exprLocation((Node *) cl->elems));
 			}
+			break;
+		case T_CypherListCompExpr:
+			loc = exprLocation((Node *) ((CypherListCompExpr *) expr)->list);
+			break;
+		case T_CypherListCompVar:
+			loc = ((CypherListCompVar *) expr)->location;
 			break;
 		case T_CypherAccessExpr:
 			loc = exprLocation((Node *) ((CypherAccessExpr *) expr)->arg);
@@ -2294,6 +2322,20 @@ expression_tree_walker(Node *node,
 										   walker, context))
 					return true;
 			}
+			break;
+		case T_CypherListCompExpr:
+			{
+				CypherListCompExpr *clc = (CypherListCompExpr *) node;
+
+				if (walker(clc->list, context))
+					return true;
+				if (walker(clc->cond, context))
+					return true;
+				if (walker(clc->elem, context))
+					return true;
+			}
+			break;
+		case T_CypherListCompVar:
 			break;
 		case T_CypherAccessExpr:
 			{
@@ -3179,6 +3221,27 @@ expression_tree_mutator(Node *node,
 				return (Node *) newnode;
 			}
 			break;
+		case T_CypherListCompExpr:
+			{
+				CypherListCompExpr *clc = (CypherListCompExpr *) node;
+				CypherListCompExpr *newnode;
+
+				FLATCOPY(newnode, clc, CypherListCompExpr);
+				MUTATE(newnode->list, clc->list, Expr*);
+				MUTATE(newnode->cond, clc->cond, Expr*);
+				MUTATE(newnode->elem, clc->elem, Expr*);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherListCompVar:
+			{
+				CypherListCompVar *clcv = (CypherListCompVar *) node;
+				CypherListCompVar *newnode;
+
+				FLATCOPY(newnode, clcv, CypherListCompVar);
+				return (Node *) newnode;
+			}
+			break;
 		case T_CypherAccessExpr:
 			{
 				CypherAccessExpr *a = (CypherAccessExpr *) node;
@@ -3826,6 +3889,18 @@ raw_expression_tree_walker(Node *node,
 			return walker(((EdgeRefRow *) node)->arg, context);
 		case T_EdgeRefRows:
 			return walker(((EdgeRefRows *) node)->arg, context);
+		case T_CypherListComp:
+			{
+				CypherListComp *clc = (CypherListComp *) node;
+
+				if (walker(clc->list, context))
+					return true;
+				if (walker(clc->cond, context))
+					return true;
+				if (walker(clc->elem, context))
+					return true;
+			}
+			break;
 		case T_CypherGenericExpr:
 			{
 				CypherGenericExpr *g = (CypherGenericExpr *) node;
@@ -4588,6 +4663,18 @@ raw_expression_tree_mutator(Node *node,
 
 				FLATCOPY(newnode, err, EdgeRefRows);
 				MUTATE(newnode->arg, err->arg, Expr *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherListComp:
+			{
+				CypherListComp *clc = (CypherListComp *) node;
+				CypherListComp *newnode;
+
+				FLATCOPY(newnode, clc, CypherListComp);
+				MUTATE(newnode->list, clc->list, Node *);
+				MUTATE(newnode->cond, clc->cond, Node *);
+				MUTATE(newnode->elem, clc->elem, Node *);
 				return (Node *) newnode;
 			}
 			break;

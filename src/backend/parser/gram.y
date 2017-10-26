@@ -15461,7 +15461,13 @@ cypher_expr_name:
 cypher_expr_filter:
 			cypher_expr_varname IN_P cypher_expr cypher_where_opt
 				{
-					$$ = NULL;
+					CypherListComp *lc;
+
+					lc = makeNode(CypherListComp);
+					lc->list = $3;
+					lc->varname = $1;
+					lc->cond = $4;
+					$$ = (Node *) lc;
 				}
 		;
 
@@ -15526,11 +15532,11 @@ cypher_expr_list:
 				}
 			| '[' cypher_expr_filter cypher_expr_lc_res_opt ']'
 				{
-					ereport(ERROR,
-							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("list comprehension not supported"),
-							 parser_errposition(@1)));
-					$$ = NULL;
+					CypherListComp *lc = (CypherListComp *) $2;
+
+					lc->elem = $3;
+					lc->location = @1;
+					$$ = $2;
 				}
 		;
 

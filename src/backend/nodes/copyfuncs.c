@@ -2094,6 +2094,31 @@ _copyCypherListExpr(const CypherListExpr *from)
 	return newnode;
 }
 
+static CypherListCompExpr *
+_copyCypherListCompExpr(const CypherListCompExpr *from)
+{
+	CypherListCompExpr *newnode = makeNode(CypherListCompExpr);
+
+	COPY_NODE_FIELD(list);
+	COPY_STRING_FIELD(varname);
+	COPY_NODE_FIELD(cond);
+	COPY_NODE_FIELD(elem);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+static CypherListCompVar *
+_copyCypherListCompVar(const CypherListCompVar *from)
+{
+	CypherListCompVar *newnode = makeNode(CypherListCompVar);
+
+	COPY_STRING_FIELD(varname);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
 static CypherAccessExpr *
 _copyCypherAccessExpr(const CypherAccessExpr *from)
 {
@@ -4437,6 +4462,20 @@ _copyCypherStmt(const CypherStmt *from)
 	return newnode;
 }
 
+static CypherListComp *
+_copyCypherListComp(const CypherListComp *from)
+{
+	CypherListComp *newnode = makeNode(CypherListComp);
+
+	COPY_NODE_FIELD(list);
+	COPY_STRING_FIELD(varname);
+	COPY_NODE_FIELD(cond);
+	COPY_NODE_FIELD(elem);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
 static CypherGenericExpr *
 _copyCypherGenericExpr(const CypherGenericExpr *from)
 {
@@ -5096,6 +5135,12 @@ copyObject(const void *from)
 		case T_CypherListExpr:
 			retval = _copyCypherListExpr(from);
 			break;
+		case T_CypherListCompExpr:
+			retval = _copyCypherListCompExpr(from);
+			break;
+		case T_CypherListCompVar:
+			retval = _copyCypherListCompVar(from);
+			break;
 		case T_CypherAccessExpr:
 			retval = _copyCypherAccessExpr(from);
 			break;
@@ -5506,6 +5551,9 @@ copyObject(const void *from)
 			break;
 		case T_CypherStmt:
 			retval = _copyCypherStmt(from);
+			break;
+		case T_CypherListComp:
+			retval = _copyCypherListComp(from);
 			break;
 		case T_CypherGenericExpr:
 			retval = _copyCypherGenericExpr(from);

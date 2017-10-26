@@ -819,6 +819,28 @@ _equalCypherListExpr(const CypherListExpr *a, const CypherListExpr *b)
 }
 
 static bool
+_equalCypherListCompExpr(const CypherListCompExpr *a,
+						 const CypherListCompExpr *b)
+{
+	COMPARE_NODE_FIELD(list);
+	COMPARE_STRING_FIELD(varname);
+	COMPARE_NODE_FIELD(cond);
+	COMPARE_NODE_FIELD(elem);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
+_equalCypherListCompVar(const CypherListCompVar *a, const CypherListCompVar *b)
+{
+	COMPARE_STRING_FIELD(varname);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
 _equalCypherAccessExpr(const CypherAccessExpr *a, const CypherAccessExpr *b)
 {
 	COMPARE_NODE_FIELD(arg);
@@ -2809,6 +2831,18 @@ _equalCypherStmt(const CypherStmt *a, const CypherStmt *b)
 }
 
 static bool
+_equalCypherListComp(const CypherListComp *a, const CypherListComp *b)
+{
+	COMPARE_NODE_FIELD(list);
+	COMPARE_STRING_FIELD(varname);
+	COMPARE_NODE_FIELD(cond);
+	COMPARE_NODE_FIELD(elem);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
 _equalCypherGenericExpr(const CypherGenericExpr *a, const CypherGenericExpr *b)
 {
 	COMPARE_NODE_FIELD(expr);
@@ -3273,6 +3307,12 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherListExpr:
 			retval = _equalCypherListExpr(a, b);
+			break;
+		case T_CypherListCompExpr:
+			retval = _equalCypherListCompExpr(a, b);
+			break;
+		case T_CypherListCompVar:
+			retval = _equalCypherListCompVar(a, b);
 			break;
 		case T_CypherAccessExpr:
 			retval = _equalCypherAccessExpr(a, b);
@@ -3795,6 +3835,9 @@ equal(const void *a, const void *b)
 
 		case T_CypherStmt:
 			retval = _equalCypherStmt(a, b);
+			break;
+		case T_CypherListComp:
+			retval = _equalCypherListComp(a, b);
 			break;
 		case T_CypherGenericExpr:
 			retval = _equalCypherGenericExpr(a, b);
