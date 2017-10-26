@@ -3104,8 +3104,6 @@ static void
 _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 {
 	PQExpBuffer qry;
-	PQExpBuffer graphqry;
-	PGresult   *graphres;
 
 	if (!schemaName || *schemaName == '\0' ||
 		(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0))
@@ -3117,16 +3115,6 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 					  fmtId(schemaName));
 	if (strcmp(schemaName, "pg_catalog") != 0)
 		appendPQExpBufferStr(qry, ", pg_catalog");
-
-	/* if it was graph, set graph_path too */
-	graphqry = createPQExpBuffer();
-	appendPQExpBuffer(graphqry,
-			"SELECT graphname FROM pg_catalog.ag_graph "
-			"WHERE graphname = '%s';\n", fmtId(schemaName));
-	graphres = ExecuteSqlQuery(&AH->public, graphqry->data, PGRES_TUPLES_OK);
-
-	if (PQntuples(graphres) > 0)
-		appendPQExpBuffer(qry, ";\nSET graph_path = %s", fmtId(schemaName));
 
 	if (RestoringToDB(AH))
 	{
@@ -3148,9 +3136,7 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 		free(AH->currSchema);
 	AH->currSchema = pg_strdup(schemaName);
 
-	PQclear(graphres);
 	destroyPQExpBuffer(qry);
-	destroyPQExpBuffer(graphqry);
 }
 
 /*
@@ -3245,10 +3231,7 @@ _getObjectDescription(PQExpBuffer buf, TocEntry *te, ArchiveHandle *AH)
 		strcmp(type, "SCHEMA") == 0 ||
 		strcmp(type, "FOREIGN DATA WRAPPER") == 0 ||
 		strcmp(type, "SERVER") == 0 ||
-		strcmp(type, "USER MAPPING") == 0 ||
-		strcmp(type, "GRAPH") == 0 ||
-		strcmp(type, "VLABEL") == 0 ||
-		strcmp(type, "ELABEL") == 0)
+		strcmp(type, "USER MAPPING") == 0)
 	{
 		/* We already know that search_path was set properly */
 		appendPQExpBuffer(buf, "%s %s", type, fmtId(te->tag));
@@ -3458,10 +3441,7 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData, bool acl_pass)
 			strcmp(te->desc, "TEXT SEARCH DICTIONARY") == 0 ||
 			strcmp(te->desc, "TEXT SEARCH CONFIGURATION") == 0 ||
 			strcmp(te->desc, "FOREIGN DATA WRAPPER") == 0 ||
-			strcmp(te->desc, "SERVER") == 0 ||
-			strcmp(te->desc, "GRAPH") == 0 ||
-			strcmp(te->desc, "VLABEL") == 0 ||
-			strcmp(te->desc, "ELABEL") == 0)
+			strcmp(te->desc, "SERVER") == 0)
 		{
 			PQExpBuffer temp = createPQExpBuffer();
 
