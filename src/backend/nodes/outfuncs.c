@@ -1682,6 +1682,27 @@ _outCypherListExpr(StringInfo str, const CypherListExpr *node)
 }
 
 static void
+_outCypherListCompExpr(StringInfo str, const CypherListCompExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERLISTCOMPEXPR");
+
+	WRITE_NODE_FIELD(list);
+	WRITE_STRING_FIELD(varname);
+	WRITE_NODE_FIELD(cond);
+	WRITE_NODE_FIELD(elem);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outCypherListCompVar(StringInfo str, const CypherListCompVar *node)
+{
+	WRITE_NODE_TYPE("CYPHERLISTCOMPVAR");
+
+	WRITE_STRING_FIELD(varname);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
 _outCypherAccessExpr(StringInfo str, const CypherAccessExpr *node)
 {
 	WRITE_NODE_TYPE("CYPHERACCESSEXPR");
@@ -3592,6 +3613,18 @@ _outCypherStmt(StringInfo str, const CypherStmt *node)
 }
 
 static void
+_outCypherListComp(StringInfo str, const CypherListComp *node)
+{
+	WRITE_NODE_TYPE("CYPHERLISTCOMP");
+
+	WRITE_NODE_FIELD(list);
+	WRITE_STRING_FIELD(varname);
+	WRITE_NODE_FIELD(cond);
+	WRITE_NODE_FIELD(elem);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
 _outCypherGenericExpr(StringInfo str, const CypherGenericExpr *node)
 {
 	WRITE_NODE_TYPE("CYPHERGENERICEXPR");
@@ -4102,6 +4135,12 @@ outNode(StringInfo str, const void *obj)
 			case T_CypherListExpr:
 				_outCypherListExpr(str, obj);
 				break;
+			case T_CypherListCompExpr:
+				_outCypherListCompExpr(str, obj);
+				break;
+			case T_CypherListCompVar:
+				_outCypherListCompVar(str, obj);
+				break;
 			case T_CypherAccessExpr:
 				_outCypherAccessExpr(str, obj);
 				break;
@@ -4434,6 +4473,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherStmt:
 				_outCypherStmt(str, obj);
+				break;
+			case T_CypherListComp:
+				_outCypherListComp(str, obj);
 				break;
 			case T_CypherGenericExpr:
 				_outCypherGenericExpr(str, obj);

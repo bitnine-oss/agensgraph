@@ -8619,7 +8619,7 @@ get_rule_expr(Node *node, deparse_context *context,
 
 					get_rule_expr((Node *) e, context, true);
 
-					appendStringInfoString(buf, ": ");
+					appendBinaryStringInfo(buf, ": ", 2);
 
 					e = lfirst(le);
 					le = lnext(le);
@@ -8639,6 +8639,35 @@ get_rule_expr(Node *node, deparse_context *context,
 				appendStringInfoChar(buf, '[');
 				get_rule_expr((Node *) cl->elems, context, true);
 				appendStringInfoChar(buf, ']');
+			}
+			break;
+
+		case T_CypherListCompExpr:
+			{
+				CypherListCompExpr *clc = (CypherListCompExpr *) node;
+
+				appendStringInfoChar(buf, '[');
+				appendStringInfo(buf, "%s IN ", clc->varname);
+				get_rule_expr((Node *) clc->list, context, true);
+				if (clc->cond != NULL)
+				{
+					appendBinaryStringInfo(buf, " WHERE ", 7);
+					get_rule_expr((Node *) clc->cond, context, true);
+				}
+				if (clc->elem != NULL)
+				{
+					appendBinaryStringInfo(buf, " | ", 3);
+					get_rule_expr((Node *) clc->elem, context, true);
+				}
+				appendStringInfoChar(buf, ']');
+			}
+			break;
+
+		case T_CypherListCompVar:
+			{
+				CypherListCompVar *clcvar = (CypherListCompVar *) node;
+
+				appendStringInfoString(buf, clcvar->varname);
 			}
 			break;
 
@@ -8663,7 +8692,7 @@ get_rule_expr(Node *node, deparse_context *context,
 						if (cind->is_slice)
 						{
 							get_rule_expr(cind->lidx, context, true);
-							appendStringInfoString(buf, "..");
+							appendBinaryStringInfo(buf, "..", 2);
 						}
 						get_pathelem_expr(cind->uidx, context, true);
 

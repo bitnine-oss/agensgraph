@@ -366,6 +366,8 @@ LINE 1: MATCH ()-[:repo]->() RETURN *;
                    ^
 MATCH (a {name: properties.name}) RETURN *;
 ERROR:  variable does not exist
+LINE 1: MATCH (a {name: properties.name}) RETURN *;
+                        ^
 MATCH (a) RETURN a.properties;
  properties 
 ------------
@@ -1751,12 +1753,16 @@ RETURN b.name AS b ORDER BY b;
 
 MATCH (a) WITH a RETURN b;
 ERROR:  variable does not exist
+LINE 1: MATCH (a) WITH a RETURN b;
+                                ^
 MATCH (a) WITH a.name RETURN *;
 ERROR:  expression in WITH must be aliased (use AS)
 LINE 1: MATCH (a) WITH a.name RETURN *;
                        ^
 MATCH () WITH a AS z RETURN a;
 ERROR:  variable does not exist
+LINE 1: MATCH () WITH a AS z RETURN a;
+                      ^
 --
 -- UNION
 --

@@ -196,6 +196,8 @@ typedef enum NodeTag
 	T_EdgeRefRows,
 	T_CypherMapExpr,
 	T_CypherListExpr,
+	T_CypherListCompExpr,
+	T_CypherListCompVar,
 	T_CypherAccessExpr,
 	T_CypherIndices,
 
@@ -238,6 +240,7 @@ typedef enum NodeTag
 	T_EdgeRefRowsState,
 	T_CypherMapExprState,
 	T_CypherListExprState,
+	T_CypherListCompExprState,
 	T_CypherAccessExprState,
 
 	/*
@@ -501,6 +504,7 @@ typedef enum NodeTag
 	T_PartitionSpec,
 	T_PartitionBoundSpec,
 	T_PartitionRangeDatum,
+	T_CypherListComp,
 	T_CypherGenericExpr,
 	T_CypherSubPattern,
 	T_CypherClause,

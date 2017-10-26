@@ -151,6 +151,10 @@ typedef struct ExprContext
 	Datum		domainValue_datum;
 	bool		domainValue_isNull;
 
+	/* Value to substitute for CypherListCompVar nodes in expression */
+	Datum		clcValue_datum;
+	bool		clcValue_isNull;
+
 	/* Link to containing EState (NULL if a standalone ExprContext) */
 	struct EState *ecxt_estate;
 
@@ -1075,6 +1079,14 @@ typedef struct CypherListExprState
 	ExprState	xprstate;
 	List	   *elems;
 } CypherListExprState;
+
+typedef struct CypherListCompExprState
+{
+	ExprState	xprstate;
+	ExprState  *list;
+	ExprState  *cond;
+	ExprState  *elem;
+} CypherListCompExprState;
 
 typedef struct CypherAccessExprState
 {
