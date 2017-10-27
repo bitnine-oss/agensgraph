@@ -820,9 +820,6 @@ main(int argc, char **argv)
 	for (i = 0; i < numObjs; i++)
 		dumpDumpableObject(fout, dobjs[i]);
 
-	/* Restore ag_label after of all labels restored */
-	insertGraphCatalog(fout);
-
 	/*
 	 * Set up options info to ensure we dump what we want.
 	 */
@@ -9533,6 +9530,9 @@ dumpDumpableObject(Archive *fout, DumpableObject *dobj)
 			dumpPolicy(fout, (PolicyInfo *) dobj);
 			break;
 		case DO_PRE_DATA_BOUNDARY:
+			/* Restore ag_label after of all labels restored */
+			insertGraphCatalog(fout);
+			break;
 		case DO_POST_DATA_BOUNDARY:
 			/* never dumped, nothing to do */
 			break;
@@ -16039,12 +16039,54 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 	 */
 	if (!is_constraint)
 	{
+		PQExpBuffer  isprop = createPQExpBuffer();
+		PGresult	*res;
+		char		*def;
+
 		if (dopt->binary_upgrade)
 			binary_upgrade_set_pg_class_oids(fout, q,
 											 indxinfo->dobj.catId.oid, true);
 
+		appendPQExpBuffer(isprop,
+				"SELECT graphname, indexname FROM ag_property_indexes "
+				"WHERE graphname = '%s' and indexname = '%s'",
+				indxinfo->dobj.namespace->dobj.name,
+				indxinfo->dobj.name);
+
+		res = ExecuteSqlQuery(fout, isprop->data, PGRES_TUPLES_OK);
+
+		if (PQntuples(res) == 1)
+		{
+			PQExpBuffer  getdef = createPQExpBuffer();
+			PGresult	*defres;
+
+			appendPQExpBuffer(getdef,
+					"SELECT ag_get_propindexdef('%s.%s'::regclass)",
+					indxinfo->dobj.namespace->dobj.name,
+					indxinfo->dobj.name);
+
+			defres = ExecuteSqlQuery(fout, getdef->data, PGRES_TUPLES_OK);
+
+			if (PQntuples(res) == 1)
+			{
+				def = pg_strdup(PQgetvalue(defres, 0, 0));
+			}
+			else
+				exit_horribly(NULL, "Failed to pg_get_indexdef()\n");
+
+			PQclear(defres);
+			destroyPQExpBuffer(getdef);
+		}
+		else
+			def = indxinfo->indexdef;
+
 		/* Plain secondary index */
-		appendPQExpBuffer(q, "%s;\n", indxinfo->indexdef);
+		appendPQExpBuffer(q, "%s;\n", def);
+
+		if (PQntuples(res) == 1)
+			pg_free(def);
+		PQclear(res);
+		destroyPQExpBuffer(isprop);
 
 		/* If the index is clustered, we need to record that. */
 		if (indxinfo->indisclustered)
@@ -18044,7 +18086,7 @@ insertGraphCatalog(Archive *fout)
 				 "Insert Graph Catalog",
 				 NULL, NULL,
 				 "",
-				 false, "Insert Graph Catalog", SECTION_POST_DATA,
+				 false, "Insert Graph Catalog", SECTION_DATA,
 				 q->data, "", NULL,
 				 NULL, 0,
 				 NULL, NULL);

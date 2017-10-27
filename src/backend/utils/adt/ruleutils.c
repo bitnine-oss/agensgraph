@@ -10679,10 +10679,10 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 
 	if (!isConstraint)
 	{
-		appendStringInfo(&buf, "CREATE %sINDEX %s ON %s USING %s (",
+		appendStringInfo(&buf, "CREATE %sPROPERTY INDEX %s ON %s USING %s (",
 						 idxrec->indisunique ? "UNIQUE " : "",
 						 quote_identifier(NameStr(idxrelrec->relname)),
-						 generate_relation_name(indrelid, NIL),
+						 quote_identifier(get_relation_name(indrelid)),
 						 quote_identifier(NameStr(amrec->amname)));
 	}
 	else
