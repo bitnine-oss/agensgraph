@@ -268,7 +268,7 @@ static void appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 						const char *prefix, Archive *fout);
 static char *get_synchronized_snapshot(Archive *fout);
 static void setupDumpWorker(Archive *AHX);
-static void correctAGlabel(Archive *fout);
+static void insertGraphCatalog(Archive *fout);
 
 
 int
@@ -819,9 +819,6 @@ main(int argc, char **argv)
 	/* Now the rearrangeable objects. */
 	for (i = 0; i < numObjs; i++)
 		dumpDumpableObject(fout, dobjs[i]);
-
-	/* Restore ag_label after of all labels restored */
-	correctAGlabel(fout);
 
 	/*
 	 * Set up options info to ensure we dump what we want.
@@ -9533,6 +9530,9 @@ dumpDumpableObject(Archive *fout, DumpableObject *dobj)
 			dumpPolicy(fout, (PolicyInfo *) dobj);
 			break;
 		case DO_PRE_DATA_BOUNDARY:
+			/* Restore ag_label after of all labels restored */
+			insertGraphCatalog(fout);
+			break;
 		case DO_POST_DATA_BOUNDARY:
 			/* never dumped, nothing to do */
 			break;
@@ -9550,10 +9550,7 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 	PQExpBuffer q;
 	PQExpBuffer delq;
 	PQExpBuffer labelq;
-	PQExpBuffer query;
-	PGresult   *res;
-	char	   *qnspname;
-	char	   *kind;
+	const char *qnspname;
 
 	/* Skip if not to be dumped */
 	if (!nspinfo->dobj.dump || dopt->dataOnly)
@@ -9566,31 +9563,14 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 	q = createPQExpBuffer();
 	delq = createPQExpBuffer();
 	labelq = createPQExpBuffer();
-	query = createPQExpBuffer();
 
-	qnspname = pg_strdup(fmtId(nspinfo->dobj.name));
+	qnspname = nspinfo->dobj.name;
 
-	/* check if it's schema or graph */
-	appendPQExpBuffer(query,
-			"SELECT nspid FROM pg_catalog.ag_graph g "
-			"WHERE g.graphname = '%s';\n",
-			qnspname);
-	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
+	appendPQExpBuffer(delq, "DROP SCHEMA %s;\n", qnspname);
 
-	if (PQntuples(res) == 1)
-	{
-		kind = "GRAPH";
-		appendPQExpBuffer(delq, "DROP %s %s CASCADE;\n", kind, qnspname);
-	}
-	else
-	{
-		kind = "SCHEMA";
-		appendPQExpBuffer(delq, "DROP %s %s;\n", kind, qnspname);
-	}
+	appendPQExpBuffer(q, "CREATE SCHEMA %s;\n", fmtId(qnspname));
 
-	appendPQExpBuffer(q, "CREATE %s %s;\n", kind, qnspname);
-
-	appendPQExpBuffer(labelq, "%s %s", kind, qnspname);
+	appendPQExpBuffer(labelq, "SCHEMA %s", qnspname);
 
 	if (dopt->binary_upgrade)
 		binary_upgrade_extension_member(q, &nspinfo->dobj, labelq->data);
@@ -9600,7 +9580,7 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 					 nspinfo->dobj.name,
 					 NULL, NULL,
 					 nspinfo->rolname,
-					 false, kind, SECTION_PRE_DATA,
+					 false, "SCHEMA", SECTION_PRE_DATA,
 					 q->data, delq->data, NULL,
 					 NULL, 0,
 					 NULL, NULL);
@@ -9617,18 +9597,14 @@ dumpNamespace(Archive *fout, NamespaceInfo *nspinfo)
 					 nspinfo->dobj.catId, 0, nspinfo->dobj.dumpId);
 
 	if (nspinfo->dobj.dump & DUMP_COMPONENT_ACL)
-		dumpACL(fout, nspinfo->dobj.catId, nspinfo->dobj.dumpId, kind,
+		dumpACL(fout, nspinfo->dobj.catId, nspinfo->dobj.dumpId, "SCHEMA",
 				qnspname, NULL, nspinfo->dobj.name, NULL,
 				nspinfo->rolname, nspinfo->nspacl, nspinfo->rnspacl,
 				nspinfo->initnspacl, nspinfo->initrnspacl);
 
-	free(qnspname);
-
-	PQclear(res);
 	destroyPQExpBuffer(q);
 	destroyPQExpBuffer(delq);
 	destroyPQExpBuffer(labelq);
-	destroyPQExpBuffer(query);
 }
 
 /*
@@ -15387,59 +15363,9 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 				ftoptions = NULL;
 				break;
 			default:
-				{
-					/* check if it's table or label  */
-					const char *id;
-					PQExpBuffer query = createPQExpBuffer();
-					PGresult   *res;
-					char		labkind[2] = {'\0'};
-
-					id = fmtId(tbinfo->dobj.name);
-
-					appendPQExpBuffer(query,
-							"SELECT labkind \
-							FROM ag_label l, ag_graph g, pg_class c \
-							WHERE l.labname = '%s' \
-							AND c.relname = l.labname \
-							AND c.relnamespace = g.nspid",
-							id);
-
-					res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
-
-					if (PQntuples(res) == 0)
-					{
-						reltypename = "TABLE";
-					}
-					else
-					{
-						strcpy(labkind, PQgetvalue(res, 0, PQfnumber(res, "labkind")));
-						if (strcmp(labkind, "v") == 0)
-							reltypename = "VLABEL";
-						else if (strcmp(labkind, "e") == 0)
-							reltypename = "ELABEL";
-						else
-							exit_horribly(NULL, "Invalid labkind detected : %s",
-										  labkind);
-
-						if (strcmp("ag_vertex", id) == 0 ||
-							strcmp("ag_edge", id) == 0)
-						{
-							PQclear(res);
-							destroyPQExpBuffer(query);
-
-							destroyPQExpBuffer(q);
-							destroyPQExpBuffer(delq);
-							destroyPQExpBuffer(labelq);
-
-							return;
-						}
-					}
-					srvname = NULL;
-					ftoptions = NULL;
-
-					PQclear(res);
-					destroyPQExpBuffer(query);
-				}
+				reltypename = "TABLE";
+				srvname = NULL;
+				ftoptions = NULL;
 		}
 
 		numParents = tbinfo->numParents;
@@ -15474,10 +15400,7 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 		if (tbinfo->reloftype && !dopt->binary_upgrade)
 			appendPQExpBuffer(q, " OF %s", tbinfo->reloftype);
 
-		if ((tbinfo->relkind != RELKIND_MATVIEW) &&
-			(strcmp(reltypename, "VLABEL") != 0) &&
-			(strcmp(reltypename, "ELABEL") != 0))
-
+		if (tbinfo->relkind != RELKIND_MATVIEW)
 		{
 			/* Dump the attributes */
 			actual_atts = 0;
@@ -16116,22 +16039,54 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 	 */
 	if (!is_constraint)
 	{
-		int headlen = strstr(indxinfo->indexdef, "INDEX") - indxinfo->indexdef;
-		char str[32] = {'\0'};
+		PQExpBuffer  isprop = createPQExpBuffer();
+		PGresult	*res;
+		char		*def;
 
 		if (dopt->binary_upgrade)
 			binary_upgrade_set_pg_class_oids(fout, q,
 											 indxinfo->dobj.catId.oid, true);
 
+		appendPQExpBuffer(isprop,
+				"SELECT graphname, indexname FROM ag_property_indexes "
+				"WHERE graphname = '%s' and indexname = '%s'",
+				indxinfo->dobj.namespace->dobj.name,
+				indxinfo->dobj.name);
+
+		res = ExecuteSqlQuery(fout, isprop->data, PGRES_TUPLES_OK);
+
+		if (PQntuples(res) == 1)
+		{
+			PQExpBuffer  getdef = createPQExpBuffer();
+			PGresult	*defres;
+
+			appendPQExpBuffer(getdef,
+					"SELECT ag_get_propindexdef('%s.%s'::regclass)",
+					indxinfo->dobj.namespace->dobj.name,
+					indxinfo->dobj.name);
+
+			defres = ExecuteSqlQuery(fout, getdef->data, PGRES_TUPLES_OK);
+
+			if (PQntuples(res) == 1)
+			{
+				def = pg_strdup(PQgetvalue(defres, 0, 0));
+			}
+			else
+				exit_horribly(NULL, "Failed to pg_get_indexdef()\n");
+
+			PQclear(defres);
+			destroyPQExpBuffer(getdef);
+		}
+		else
+			def = indxinfo->indexdef;
+
 		/* Plain secondary index */
+		appendPQExpBuffer(q, "%s;\n", def);
 
-		/* Go to the end of either CREATE INDEX or CREATE UNIQUE INDEX */
-		headlen += strlen("INDEX ");
-		appendPQExpBuffer(q, "%s", strncat(str, indxinfo->indexdef, headlen));
-
-		/* Skip duplicated object error for graph default indexes */
-		appendPQExpBuffer(q, "IF NOT EXISTS %s;\n",
-						  indxinfo->indexdef + headlen);
+		if (PQntuples(res) == 1)
+			pg_free(def);
+		PQclear(res);
+		destroyPQExpBuffer(isprop);
 
 		/* If the index is clustered, we need to record that. */
 		if (indxinfo->indisclustered)
@@ -16197,34 +16152,11 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 	TableInfo  *tbinfo = coninfo->contable;
 	PQExpBuffer q;
 	PQExpBuffer delq;
-	PQExpBuffer query;
-	PGresult   *res;
 	char	   *tag = NULL;
 
 	/* Skip if not to be dumped */
 	if (!coninfo->dobj.dump || dopt->dataOnly)
 		return;
-
-	/*
-	 * Skip VLABEL primary key in graph.
-	 * (Normal users cannot create PK constraint on labels)
-	 */
-	query = createPQExpBuffer();
-
-	appendPQExpBuffer(query,
-			"SELECT relname FROM ag_graph g, pg_class c, pg_index i \
-			WHERE c.relname = '%s' \
-			AND c.oid = i.indexrelid \
-			AND i.indisprimary = true \
-			AND c.relnamespace = g.nspid", fmtId(coninfo->dobj.name));
-	res = ExecuteSqlQuery(fout, query->data, PGRES_TUPLES_OK);
-
-	if (PQntuples(res) > 0)
-	{
-		PQclear(res);
-		destroyPQExpBuffer(query);
-		return;
-	}
 
 	q = createPQExpBuffer();
 	delq = createPQExpBuffer();
@@ -16641,9 +16573,8 @@ dumpSequence(Archive *fout, TableInfo *tbinfo)
 												tbinfo->dobj.catId.oid);
 	}
 
-	/* Skip duplicated object error for graph default sequence */
 	appendPQExpBuffer(query,
-					  "CREATE SEQUENCE IF NOT EXISTS %s\n",
+					  "CREATE SEQUENCE %s\n",
 					  fmtId(tbinfo->dobj.name));
 
 	if (fout->remoteVersion >= 80400)
@@ -18098,72 +18029,68 @@ appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 }
 
 /*
- * correctAGlabel
- *		Dump pg_catalog.ag_label for restoring graph
+ * insertGraphCatalog
+ *		insert into ag_graph & ag_label
+ *		to make graph object from RDB object
  */
 static void
-correctAGlabel(Archive *fout)
+insertGraphCatalog(Archive *fout)
 {
 	PQExpBuffer		q;
-	PQExpBuffer		labelq;
 
 	PGresult   *res;
 	int			tuple;
 
 	q = createPQExpBuffer();
-	labelq = createPQExpBuffer();
 
-	appendPQExpBuffer(labelq,
-			"SELECT g.graphname, l.labname, l.labid "
-			"FROM pg_catalog.ag_label l, pg_catalog.ag_graph g "
-			"WHERE l.graphid = g.oid;\n");
-	res = ExecuteSqlQuery(fout, labelq->data, PGRES_TUPLES_OK);
+	res = ExecuteSqlQuery(fout, "SELECT graphname FROM pg_catalog.ag_graph",
+						  PGRES_TUPLES_OK);
 
-	appendPQExpBuffer(q,
-			"DROP TABLE IF EXISTS public._temp_ag_label;\n");
+	for (tuple = 0; tuple < PQntuples(res); tuple++)
+	{
+		const char *graph = PQgetvalue(res, tuple, 0);
 
-	appendPQExpBuffer(q,
-			"CREATE TABLE public._temp_ag_label("
-			"graphname text, labname text, labid integer);\n");
+		appendPQExpBuffer(q,
+			"INSERT INTO pg_catalog.ag_graph "
+				"SELECT '%s', oid "
+				"FROM pg_catalog.pg_namespace "
+				"WHERE nspname = '%s';\n\n",
+				graph, graph);
+	}
+
+	PQclear(res);
+
+	res = ExecuteSqlQuery(fout,
+			"SELECT l.labname, l.labid, l.labkind, g.graphname "
+			"FROM pg_catalog.ag_graph g, pg_catalog.ag_label l "
+			"WHERE g.oid = l.graphid",
+			PGRES_TUPLES_OK);
 
 	for (tuple = 0; tuple < PQntuples(res); tuple++)
 	{
 		appendPQExpBuffer(q,
-				"INSERT INTO public._temp_ag_label VALUES (\'%s\', \'%s\', %d);\n",
-				PQgetvalue(res, tuple, 0),
-				PQgetvalue(res, tuple, 1),
-				atoi(PQgetvalue(res, tuple, 2)));
+			"INSERT INTO pg_catalog.ag_label \n"
+				"\tSELECT '%s', g.oid, %d, c.oid, '%s' \n"
+				"\tFROM pg_catalog.ag_graph g \n"
+					"\t\tLEFT JOIN pg_catalog.pg_namespace n ON n.oid = g.nspid \n"
+					"\t\tLEFT JOIN pg_catalog.pg_class c ON n.oid = c.relnamespace \n"
+			"WHERE n.nspname = '%s' AND c.relname = '%s';\n\n",
+			PQgetvalue(res, tuple, 0),
+			atoi(PQgetvalue(res, tuple, 1)),
+			PQgetvalue(res, tuple, 2),
+			PQgetvalue(res, tuple, 3),
+			PQgetvalue(res, tuple, 0));
 	}
 
-	/*
-	 * max labid = 2^16 - 1
-	 * colum type of labid is integer so it can contain 4byte
-	 * labid + 2byte max = simple non-collisional temp number
-	 */
-	appendPQExpBuffer(q,
-			"UPDATE pg_catalog.ag_label "
-			"SET labid = labid + 65535;\n");
-
-	appendPQExpBuffer(q,
-			"UPDATE pg_catalog.ag_label a "
-			"SET labid = (SELECT labid from public._temp_ag_label t "
-						"WHERE a.labname = t.labname "
-						"AND a.graphid = "
-							"(SELECT oid FROM ag_graph g "
-							"WHERE g.graphname = t.graphname));\n");
-	appendPQExpBuffer(q,
-			"DROP TABLE public._temp_ag_label;\n");
-
 	ArchiveEntry(fout, nilCatalogId, createDumpId(),
-				 "restore ag_label",
+				 "Insert Graph Catalog",
 				 NULL, NULL,
 				 "",
-				 false, "TABLE", SECTION_POST_DATA,
+				 false, "Insert Graph Catalog", SECTION_DATA,
 				 q->data, "", NULL,
 				 NULL, 0,
 				 NULL, NULL);
 
 	PQclear(res);
 	destroyPQExpBuffer(q);
-	destroyPQExpBuffer(labelq);
 }
