@@ -640,7 +640,7 @@ CREATE CONSTRAINT ON rege1 ASSERT c + d IS UNIQUE;
 Edge label "g.rege1"
 --
 Constraints:
-    "rege1_unique_constraint" UNIQUE USING btree ((c) + (d))
+    "rege1_unique_constraint" UNIQUE USING btree (((c) + (d)))
 Inherits: g.ag_edge
 
 CREATE ()-[:rege1 {c: 'agens', d: 'graph'}]->();
@@ -780,7 +780,7 @@ CREATE CONSTRAINT ON regv5 ASSERT toLower(trim(id)) IS UNIQUE;
 Vertex label "g.regv5"
 --
 Constraints:
-    "regv5_unique_constraint" UNIQUE USING btree (tolower("trim"(id)))
+    "regv5_unique_constraint" UNIQUE USING btree ((tolower("trim"(id))))
 Inherits: g.ag_vertex
 
 CREATE (:regv5 {id: 'agens'});

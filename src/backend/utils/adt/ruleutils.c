@@ -10720,7 +10720,10 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		indexpr_item = lnext(indexpr_item);
 		/* Deparse */
 		str = deparse_prop_expression_pretty(indexkey, context, prettyFlags);
-		appendStringInfo(&buf, "%s", str);
+		if (IsA(indexkey, CypherAccessExpr))
+			appendStringInfo(&buf, "%s", str);
+		else
+			appendStringInfo(&buf, "(%s)", str);
 		keycoltype = exprType(indexkey);
 		keycolcollation = exprCollation(indexkey);
 
