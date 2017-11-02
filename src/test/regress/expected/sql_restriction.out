@@ -37,6 +37,11 @@ ALTER TABLE g.v RENAME TO e;
 ERROR:  cannot rename table "v"
 HINT:  Use rename label instead
 --
+-- TRUNCATE TABLE
+--
+TRUNCATE TABLE g.v;
+ERROR:  cannot truncate label in graph schema
+--
 -- TRIGGER
 --
 CREATE TRIGGER tt AFTER INSERT ON g.v

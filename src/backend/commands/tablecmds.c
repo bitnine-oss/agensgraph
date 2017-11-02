@@ -1324,6 +1324,11 @@ truncate_check_rel(Relation rel)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 			  errmsg("cannot truncate temporary tables of other sessions")));
 
+	if (OidIsValid(get_relid_laboid(RelationGetRelid(rel))))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot truncate label in graph schema")));
+
 	/*
 	 * Also check for active uses of the relation in the current transaction,
 	 * including open scans and pending AFTER trigger events.
