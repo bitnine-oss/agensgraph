@@ -67,7 +67,8 @@ static void _doSetWithOids(ArchiveHandle *AH, const bool withOids);
 static void _reconnectToDB(ArchiveHandle *AH, const char *dbname);
 static void _becomeUser(ArchiveHandle *AH, const char *user);
 static void _becomeOwner(ArchiveHandle *AH, TocEntry *te);
-static void _selectOutputSchema(ArchiveHandle *AH, const char *schemaName);
+static void _selectOutputSchema(ArchiveHandle *AH, const char *schemaName,
+								teSection sec);
 static void _selectTablespace(ArchiveHandle *AH, const char *tablespace);
 static void processEncodingEntry(ArchiveHandle *AH, TocEntry *te);
 static void processStdStringsEntry(ArchiveHandle *AH, TocEntry *te);
@@ -493,7 +494,7 @@ RestoreArchive(Archive *AHX)
 				ahlog(AH, 1, "dropping %s %s\n", te->desc, te->tag);
 				/* Select owner and schema as necessary */
 				_becomeOwner(AH, te);
-				_selectOutputSchema(AH, te->namespace);
+				_selectOutputSchema(AH, te->namespace, te->section);
 
 				/*
 				 * Now emit the DROP command, if the object has one.  Note we
@@ -824,7 +825,7 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 				{
 					ahlog(AH, 1, "processing %s\n", te->desc);
 
-					_selectOutputSchema(AH, "pg_catalog");
+					_selectOutputSchema(AH, "pg_catalog", te->section);
 
 					/* Send BLOB COMMENTS data to ExecuteSimpleCommands() */
 					if (strcmp(te->desc, "BLOB COMMENTS") == 0)
@@ -840,7 +841,7 @@ restore_toc_entry(ArchiveHandle *AH, TocEntry *te, bool is_parallel)
 
 					/* Select owner and schema as necessary */
 					_becomeOwner(AH, te);
-					_selectOutputSchema(AH, te->namespace);
+					_selectOutputSchema(AH, te->namespace, te->section);
 
 					ahlog(AH, 1, "processing data for table \"%s.%s\"\n",
 						  te->namespace, te->tag);
@@ -956,7 +957,7 @@ _disableTriggersIfNecessary(ArchiveHandle *AH, TocEntry *te)
 	/*
 	 * Disable them.
 	 */
-	_selectOutputSchema(AH, te->namespace);
+	_selectOutputSchema(AH, te->namespace, te->section);
 
 	ahprintf(AH, "ALTER TABLE %s DISABLE TRIGGER ALL;\n\n",
 			 fmtId(te->tag));
@@ -984,7 +985,7 @@ _enableTriggersIfNecessary(ArchiveHandle *AH, TocEntry *te)
 	/*
 	 * Enable them.
 	 */
-	_selectOutputSchema(AH, te->namespace);
+	_selectOutputSchema(AH, te->namespace, te->section);
 
 	ahprintf(AH, "ALTER TABLE %s ENABLE TRIGGER ALL;\n\n",
 			 fmtId(te->tag));
@@ -3101,11 +3102,9 @@ _setWithOids(ArchiveHandle *AH, TocEntry *te)
  * in the target database.
  */
 static void
-_selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
+_selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
 {
 	PQExpBuffer qry;
-	PQExpBuffer graphqry;
-	PGresult   *graphres;
 
 	if (!schemaName || *schemaName == '\0' ||
 		(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0))
@@ -3118,15 +3117,25 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 	if (strcmp(schemaName, "pg_catalog") != 0)
 		appendPQExpBufferStr(qry, ", pg_catalog");
 
-	/* if it was graph, set graph_path too */
-	graphqry = createPQExpBuffer();
-	appendPQExpBuffer(graphqry,
-			"SELECT graphname FROM pg_catalog.ag_graph "
-			"WHERE graphname = '%s';\n", fmtId(schemaName));
-	graphres = ExecuteSqlQuery(&AH->public, graphqry->data, PGRES_TUPLES_OK);
+	if (sec > SECTION_PRE_DATA)
+	{
+		PQExpBuffer tmp;
+		PGresult   *res;
 
-	if (PQntuples(graphres) > 0)
-		appendPQExpBuffer(qry, ";\nSET graph_path = %s", fmtId(schemaName));
+		/* if the given schema is a graph, set graph_path too */
+
+		tmp = createPQExpBuffer();
+		appendPQExpBuffer(tmp,
+				"SELECT 1 FROM pg_catalog.ag_graph WHERE graphname = '%s'",
+				schemaName);
+		res = ExecuteSqlQuery(&AH->public, tmp->data, PGRES_TUPLES_OK);
+
+		if (PQntuples(res) > 0)
+			appendPQExpBuffer(qry, ";\nSET graph_path = %s", fmtId(schemaName));
+
+		PQclear(res);
+		destroyPQExpBuffer(tmp);
+	}
 
 	if (RestoringToDB(AH))
 	{
@@ -3148,9 +3157,7 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 		free(AH->currSchema);
 	AH->currSchema = pg_strdup(schemaName);
 
-	PQclear(graphres);
 	destroyPQExpBuffer(qry);
-	destroyPQExpBuffer(graphqry);
 }
 
 /*
@@ -3245,10 +3252,7 @@ _getObjectDescription(PQExpBuffer buf, TocEntry *te, ArchiveHandle *AH)
 		strcmp(type, "SCHEMA") == 0 ||
 		strcmp(type, "FOREIGN DATA WRAPPER") == 0 ||
 		strcmp(type, "SERVER") == 0 ||
-		strcmp(type, "USER MAPPING") == 0 ||
-		strcmp(type, "GRAPH") == 0 ||
-		strcmp(type, "VLABEL") == 0 ||
-		strcmp(type, "ELABEL") == 0)
+		strcmp(type, "USER MAPPING") == 0)
 	{
 		/* We already know that search_path was set properly */
 		appendPQExpBuffer(buf, "%s %s", type, fmtId(te->tag));
@@ -3336,7 +3340,7 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData, bool acl_pass)
 
 	/* Select owner, schema, and tablespace as necessary */
 	_becomeOwner(AH, te);
-	_selectOutputSchema(AH, te->namespace);
+	_selectOutputSchema(AH, te->namespace, te->section);
 	_selectTablespace(AH, te->tablespace);
 
 	/* Set up OID mode too */
@@ -3458,10 +3462,7 @@ _printTocEntry(ArchiveHandle *AH, TocEntry *te, bool isData, bool acl_pass)
 			strcmp(te->desc, "TEXT SEARCH DICTIONARY") == 0 ||
 			strcmp(te->desc, "TEXT SEARCH CONFIGURATION") == 0 ||
 			strcmp(te->desc, "FOREIGN DATA WRAPPER") == 0 ||
-			strcmp(te->desc, "SERVER") == 0 ||
-			strcmp(te->desc, "GRAPH") == 0 ||
-			strcmp(te->desc, "VLABEL") == 0 ||
-			strcmp(te->desc, "ELABEL") == 0)
+			strcmp(te->desc, "SERVER") == 0)
 		{
 			PQExpBuffer temp = createPQExpBuffer();
 
