@@ -170,6 +170,7 @@ test: event_trigger
 test: stats
 test: graphid
 test: cypher_ddl
+test: cypher_expr
 test: cypher_dml
 test: sql_restriction
 test: propertyindex
