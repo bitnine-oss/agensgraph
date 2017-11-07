@@ -734,6 +734,9 @@ static const struct object_type_map
 	},
 	{
 		"vlabel", OBJECT_VLABEL
+	},
+	{
+		"property index", OBJECT_PROPERTY_INDEX
 	}
 };
 
@@ -841,6 +844,7 @@ get_object_address(ObjectType objtype, List *objname, List *objargs,
 		switch (objtype)
 		{
 			case OBJECT_INDEX:
+			case OBJECT_PROPERTY_INDEX:
 			case OBJECT_SEQUENCE:
 			case OBJECT_TABLE:
 			case OBJECT_VIEW:
@@ -1304,6 +1308,7 @@ get_relation_by_qualified_name(ObjectType objtype, List *objname,
 	switch (objtype)
 	{
 		case OBJECT_INDEX:
+		case OBJECT_PROPERTY_INDEX:
 			if (relation->rd_rel->relkind != RELKIND_INDEX)
 				ereport(ERROR,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
@@ -2304,6 +2309,7 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 	switch (objtype)
 	{
 		case OBJECT_INDEX:
+		case OBJECT_PROPERTY_INDEX:
 		case OBJECT_SEQUENCE:
 		case OBJECT_TABLE:
 		case OBJECT_VIEW:

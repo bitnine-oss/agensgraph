@@ -3595,16 +3595,6 @@ _outCreatePropertyIndexStmt(StringInfo str, const CreatePropertyIndexStmt *node)
 }
 
 static void
-_outDropPropertyIndexStmt(StringInfo str, const DropPropertyIndexStmt *node)
-{
-	WRITE_NODE_TYPE("DROPPROPERTYINDEXSTMT");
-
-	WRITE_STRING_FIELD(idxname);
-	WRITE_ENUM_FIELD(behavior, DropBehavior);
-	WRITE_BOOL_FIELD(missing_ok);
-}
-
-static void
 _outCypherStmt(StringInfo str, const CypherStmt *node)
 {
 	WRITE_NODE_TYPE("CYPHER");
@@ -4468,9 +4458,6 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_CreatePropertyIndexStmt:
 				_outCreatePropertyIndexStmt(str, obj);
-				break;
-			case T_DropPropertyIndexStmt:
-				_outDropPropertyIndexStmt(str, obj);
 				break;
 			case T_CypherStmt:
 				_outCypherStmt(str, obj);

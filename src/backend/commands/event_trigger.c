@@ -1082,6 +1082,13 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_EVENT_TRIGGER:
 			/* no support for event triggers on event triggers */
 			return false;
+		case OBJECT_PROPERTY_INDEX:
+		case OBJECT_VLABEL:
+		case OBJECT_GRAPH:
+		case OBJECT_ELABEL:
+			/* no support for event trigger on graph object */
+			return false;
+
 		case OBJECT_ACCESS_METHOD:
 		case OBJECT_AGGREGATE:
 		case OBJECT_AMOP:
@@ -1095,13 +1102,11 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_DEFAULT:
 		case OBJECT_DOMAIN:
 		case OBJECT_DOMCONSTRAINT:
-		case OBJECT_ELABEL:
 		case OBJECT_EXTENSION:
 		case OBJECT_FDW:
 		case OBJECT_FOREIGN_SERVER:
 		case OBJECT_FOREIGN_TABLE:
 		case OBJECT_FUNCTION:
-		case OBJECT_GRAPH:
 		case OBJECT_INDEX:
 		case OBJECT_LANGUAGE:
 		case OBJECT_LARGEOBJECT:
@@ -1127,7 +1132,6 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_TYPE:
 		case OBJECT_USER_MAPPING:
 		case OBJECT_VIEW:
-		case OBJECT_VLABEL:
 			return true;
 	}
 	return true;

@@ -2902,17 +2902,6 @@ _equalCreatePropertyIndexStmt(const CreatePropertyIndexStmt *a,
 }
 
 static bool
-_equalDropPropertyIndexStmt(const DropPropertyIndexStmt *a,
-							const DropPropertyIndexStmt *b)
-{
-	COMPARE_STRING_FIELD(idxname);
-	COMPARE_SCALAR_FIELD(behavior);
-	COMPARE_SCALAR_FIELD(missing_ok);
-
-	return true;
-}
-
-static bool
 _equalCypherStmt(const CypherStmt *a, const CypherStmt *b)
 {
 	COMPARE_NODE_FIELD(last);
@@ -4022,9 +4011,6 @@ equal(const void *a, const void *b)
 
 		case T_CreatePropertyIndexStmt:
 			retval = _equalCreatePropertyIndexStmt(a, b);
-			break;
-		case T_DropPropertyIndexStmt:
-			retval = _equalDropPropertyIndexStmt(a, b);
 			break;
 
 		case T_CypherStmt:
