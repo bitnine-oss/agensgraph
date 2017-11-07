@@ -318,6 +318,14 @@ ERROR:  relation "regv2_index_key1" already exists
 CREATE PROPERTY INDEX ON nonexsist_name (key1);
 ERROR:  label "nonexsist_name" does not exist
 DROP VLABEL regv2;
+CREATE VLABEL regv3;
+CREATE PROPERTY INDEX regv3_property_index_key1 ON regv3 (key1);
+DROP INDEX g.regv3_property_index_key1;
+ERROR:  "regv3_property_index_key1" is property index
+CREATE INDEX regv3_index_key1 ON g.regv3 (properties);
+DROP PROPERTY INDEX regv3_index_key1;
+ERROR:  "regv3_index_key1" is not property index
+DROP VLABEL regv3;
 --
 -- DROP GRAPH
 --

@@ -436,6 +436,7 @@ static void RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid,
 								Oid oldRelOid, void *arg);
 static void RangeVarCallbackForAlterRelation(const RangeVar *rv, Oid relid,
 								 Oid oldrelid, void *arg);
+static bool isPropertyIndex(Oid indexoid);
 
 
 /* ----------------------------------------------------------------
@@ -842,6 +843,7 @@ RemoveRelations(DropStmt *drop)
 			break;
 
 		case OBJECT_INDEX:
+		case OBJECT_PROPERTY_INDEX:
 			relkind = RELKIND_INDEX;
 			break;
 
@@ -905,6 +907,17 @@ RemoveRelations(DropStmt *drop)
 			DropErrorMsgNonExistent(rel, relkind, drop->missing_ok);
 			continue;
 		}
+
+
+		if (drop->removeType == OBJECT_PROPERTY_INDEX &&
+			!isPropertyIndex(relOid))
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("\"%s\" is not property index", rel->relname)));
+		if (drop->removeType == OBJECT_INDEX && isPropertyIndex(relOid))
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("\"%s\" is property index", rel->relname)));
 
 		/* OK, we're ready to delete this one */
 		obj.classId = RelationRelationId;
@@ -988,6 +1001,44 @@ RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid, Oid oldRelOid,
 		if (OidIsValid(state->heapOid))
 			LockRelationOid(state->heapOid, heap_lockmode);
 	}
+}
+
+static bool
+isPropertyIndex(Oid indexoid)
+{
+	Form_pg_index index;
+	HeapTuple	indexTuple;
+	bool		retval = true;
+	int			i;
+
+	/* Fetch pg_index tuple of source index. */
+	indexTuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexoid));
+	if (!HeapTupleIsValid(indexTuple))		/* should not happen */
+		elog(ERROR, "cache lookup failed for index %u", indexoid);
+	index = (Form_pg_index) GETSTRUCT(indexTuple);
+
+	/*
+	 * If this index is a table for graph label and is an expressional index,
+	 * decide this is property index.
+	 */
+	if (!OidIsValid(get_relid_laboid(index->indrelid)))
+	{
+		retval = false;
+	}
+	else
+	{
+		for (i = 0; i < index->indnatts; i++)
+		{
+			if (index->indkey.values[i] != 0)
+			{
+				retval = false;
+				break;
+			}
+		}
+	}
+
+	ReleaseSysCache(indexTuple);
+	return retval;
 }
 
 /*

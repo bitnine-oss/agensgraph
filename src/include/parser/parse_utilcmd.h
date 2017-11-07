@@ -41,6 +41,4 @@ extern Node *transformDropConstraintStmt(ParseState *pstate,
 extern IndexStmt *transformCreatePropertyIndexStmt(Oid relid,
 												CreatePropertyIndexStmt *stmt,
 												const char *queryString);
-extern DropStmt *transformDropPropertyIndex(DropPropertyIndexStmt *stmt);
-
 #endif   /* PARSE_UTILCMD_H */
