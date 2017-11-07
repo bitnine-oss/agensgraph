@@ -137,6 +137,16 @@ CREATE PROPERTY INDEX regv2_index_key1 ON regv2 (key1);
 CREATE PROPERTY INDEX ON nonexsist_name (key1);
 
 DROP VLABEL regv2;
+
+CREATE VLABEL regv3;
+
+CREATE PROPERTY INDEX regv3_property_index_key1 ON regv3 (key1);
+DROP INDEX g.regv3_property_index_key1;
+
+CREATE INDEX regv3_index_key1 ON g.regv3 (properties);
+DROP PROPERTY INDEX regv3_index_key1;
+
+DROP VLABEL regv3;
 --
 -- DROP GRAPH
 --

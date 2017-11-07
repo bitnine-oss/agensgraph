@@ -144,7 +144,6 @@ static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
 static Node *prop_ref_mutator(Node *node);
 static ObjectType getLabelObjectType(char *labname, Oid graphid);
 static bool figure_prop_index_colname_walker(Node *node, char **colname);
-static bool isPropertyIndex(Oid indexoid);
 
 
 /*
@@ -3967,81 +3966,4 @@ figure_prop_index_colname_walker(Node *node, char **colname)
 
 	return raw_expression_tree_walker(node, figure_prop_index_colname_walker,
 									  colname);
-}
-
-DropStmt *
-transformDropPropertyIndex(DropPropertyIndexStmt *stmt)
-{
-	DropStmt   *dropstmt = makeNode(DropStmt);
-	char	   *graphname;
-	Oid			indexoid;
-	Oid			schemaoid;
-
-	graphname = get_graph_path(true);
-
-	/* get schema that exists target index */
-	schemaoid = get_namespace_oid(graphname, false);
-
-	indexoid = get_relname_relid(stmt->idxname, schemaoid);
-	if (!OidIsValid(indexoid) && !stmt->missing_ok)
-		ereport(ERROR,
-				(errcode(ERRCODE_UNDEFINED_OBJECT),
-				 errmsg("index \"%s\" does not exist",
-						stmt->idxname)));
-
-	if (OidIsValid(indexoid) && !isPropertyIndex(indexoid))
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not property index",
-						stmt->idxname)));
-	}
-
-	dropstmt->objects = list_make1(list_make2(makeString(graphname),
-											  makeString(stmt->idxname)));
-	dropstmt->arguments = NIL;
-	dropstmt->removeType = OBJECT_INDEX;
-	dropstmt->behavior = stmt->behavior;
-	dropstmt->missing_ok = stmt->missing_ok;
-	dropstmt->concurrent = false;
-
-	return dropstmt;
-}
-
-static bool
-isPropertyIndex(Oid indexoid)
-{
-	Form_pg_index index;
-	HeapTuple	indexTuple;
-	bool		retval = true;
-	int			i;
-
-	/* Fetch pg_index tuple of source index. */
-	indexTuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexoid));
-	if (!HeapTupleIsValid(indexTuple))		/* should not happen */
-		elog(ERROR, "cache lookup failed for index %u", indexoid);
-	index = (Form_pg_index) GETSTRUCT(indexTuple);
-
-	/*
-	 * If this index is a table for graph label and is an expressional index,
-	 * decide this is property index.
-	 */
-	if (!OidIsValid(get_relid_laboid(index->indrelid)))
-	{
-		retval = false;
-	}
-	else
-	{
-		for (i = 0; i < index->indnatts; i++)
-		{
-			if (index->indkey.values[i] != 0)
-			{
-				retval = false;
-				break;
-			}
-		}
-	}
-
-	ReleaseSysCache(indexTuple);
-	return retval;
 }
