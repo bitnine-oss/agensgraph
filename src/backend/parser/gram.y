@@ -610,7 +610,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %type <boolean>	cypher_rel_left cypher_rel_right
 
 %type <node>	cypher_return cypher_with
-				cypher_skip_opt cypher_limit_opt cypher_where_opt
+				cypher_skip_opt cypher_limit_opt cypher_where cypher_where_opt
 %type <list>	cypher_return_items cypher_distinct_opt
 				cypher_order_by_opt cypher_sort_items
 %type <target>	cypher_return_item
@@ -728,8 +728,8 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 	SAVEPOINT SCHEMA SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
 	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHORTESTPATH
 	SHOW SIMILAR
-	SIMPLE SIZE_P SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P START
-	STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P SUBSTRING
+	SIMPLE SINGLE SIZE_P SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P
+	START STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P SUBSTRING
 	SYMMETRIC SYSID SYSTEM_P
 
 	TABLE TABLES TABLESAMPLE TABLESPACE TEMP TEMPLATE TEMPORARY TEXT_P THEN
@@ -808,7 +808,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
 			ALLSHORTESTPATHS DELETE_P DETACH DIJKSTRA LOAD OPTIONAL_P REMOVE
-			SHORTESTPATH SIZE_P SKIP
+			SHORTESTPATH SINGLE SIZE_P SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -14217,6 +14217,7 @@ unreserved_keyword:
 			| SHORTESTPATH
 			| SHOW
 			| SIMPLE
+			| SINGLE
 			| SIZE_P
 			| SKIP
 			| SNAPSHOT
@@ -15674,6 +15675,44 @@ cypher_expr_func_subexpr:
 					n->location = @1;
 					$$ = (Node *) n;
 				}
+			| ALL '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
+				{
+					CypherListComp *clc;
+					FuncCall   *n;
+					FuncCall   *m;
+
+					clc = makeNode(CypherListComp);
+					clc->list = $5;
+					clc->varname = $3;
+					clc->cond = $6;
+
+					n = makeFuncCall(SystemFuncName("jsonb_array_length"),
+									 list_make1(clc), @1);
+
+					m = makeFuncCall(SystemFuncName("jsonb_array_length"),
+									 list_make1($5), @1);
+
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=",
+												   (Node*) n, (Node*) m, @1);
+				}
+			| ANY '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
+				{
+					CypherListComp *clc;
+					FuncCall   *n;
+
+					clc = makeNode(CypherListComp);
+					clc->list = $5;
+					clc->varname = $3;
+					clc->cond = $6;
+
+					n = makeFuncCall(SystemFuncName("jsonb_array_length"),
+									 list_make1(clc), @1);
+					n = makeFuncCall(SystemFuncName("to_jsonb"), list_make1(n),
+									 @1);
+
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">", (Node*) n,
+												   makeIntConst(0, -1), @1);
+				}
 			| COALESCE '(' cypher_expr_comma_list ')'
 				{
 					CoalesceExpr *c;
@@ -15700,6 +15739,42 @@ cypher_expr_func_subexpr:
 					n->subselect = (Node *) sub;
 					n->location = @1;
 					$$ = (Node *) n;
+				}
+			| NONE '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
+				{
+					CypherListComp *clc;
+					FuncCall   *n;
+
+					clc = makeNode(CypherListComp);
+					clc->list = $5;
+					clc->varname = $3;
+					clc->cond = $6;
+
+					n = makeFuncCall(SystemFuncName("jsonb_array_length"),
+									 list_make1(clc), @1);
+					n = makeFuncCall(SystemFuncName("to_jsonb"), list_make1(n),
+									 @1);
+
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node*) n,
+												   makeIntConst(0, -1), @1);
+				}
+			| SINGLE '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
+				{
+					CypherListComp *clc;
+					FuncCall   *n;
+
+					clc = makeNode(CypherListComp);
+					clc->list = $5;
+					clc->varname = $3;
+					clc->cond = $6;
+
+					n = makeFuncCall(SystemFuncName("jsonb_array_length"),
+									 list_make1(clc), @1);
+					n = makeFuncCall(SystemFuncName("to_jsonb"), list_make1(n),
+									 @1);
+
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node*) n,
+												   makeIntConst(1, -1), @1);
 				}
 			| SIZE_P '(' cypher_anon_pattern ')'
 				{
@@ -16306,9 +16381,13 @@ cypher_limit_opt:
 			| /* EMPTY */			{ $$ = NULL; }
 		;
 
-cypher_where_opt:
+cypher_where:
 			WHERE cypher_expr		{ $$ = $2; }
-			| /*EMPTY*/				{ $$ = NULL; }
+		;
+
+cypher_where_opt:
+			cypher_where
+			| /*EMPTY*/			{ $$ = NULL; }
 		;
 
 cypher_match:

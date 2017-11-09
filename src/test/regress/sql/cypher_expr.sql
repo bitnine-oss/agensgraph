@@ -222,5 +222,27 @@ RETURN [x IN [0, 1, 2, 3, 4] WHERE x % 2 = 0];
 RETURN [x IN [0, 1, 2, 3, 4] | x + 1];
 RETURN [x IN [0, 1, 2, 3, 4] WHERE x % 2 = 0 | x + 1];
 
+-- List predicate functions
+RETURN ALL(x in [] WHERE x = 0);
+RETURN ALL(x in [0] WHERE x = 0);
+RETURN ALL(x in [0, 1, 2, 3, 4] WHERE x = 0);
+RETURN ALL(x in [0, 1, 2, 3, 4] WHERE x >= 0);
+RETURN ALL(x in [0, 1, 2, 3, 4] WHERE x = 5);
+RETURN ANY(x in [] WHERE x = 0);
+RETURN ANY(x in [0] WHERE x = 0);
+RETURN ANY(x in [0, 1, 2, 3, 4] WHERE x = 0);
+RETURN ANY(x in [0, 1, 2, 3, 4] WHERE x >= 0);
+RETURN ANY(x in [0, 1, 2, 3, 4] WHERE x = 5);
+RETURN NONE(x in [] WHERE x = 0);
+RETURN NONE(x in [0] WHERE x = 0);
+RETURN NONE(x in [0, 1, 2, 3, 4] WHERE x = 0);
+RETURN NONE(x in [0, 1, 2, 3, 4] WHERE x >= 0);
+RETURN NONE(x in [0, 1, 2, 3, 4] WHERE x = 5);
+RETURN SINGLE(x in [] WHERE x = 0);
+RETURN SINGLE(x in [0] WHERE x = 0);
+RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x = 0);
+RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x >= 0);
+RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x = 5);
+
 -- Tear down
 DROP GRAPH test_cypher_expr CASCADE;
