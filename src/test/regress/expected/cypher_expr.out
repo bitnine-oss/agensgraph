@@ -496,6 +496,127 @@ RETURN [x IN [0, 1, 2, 3, 4] WHERE x % 2 = 0 | x + 1];
  [1, 3, 5]
 (1 row)
 
+-- List predicate functions
+RETURN ALL(x in [] WHERE x = 0);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN ALL(x in [0] WHERE x = 0);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN ALL(x in [0, 1, 2, 3, 4] WHERE x = 0);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN ALL(x in [0, 1, 2, 3, 4] WHERE x >= 0);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN ALL(x in [0, 1, 2, 3, 4] WHERE x = 5);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN ANY(x in [] WHERE x = 0);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN ANY(x in [0] WHERE x = 0);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN ANY(x in [0, 1, 2, 3, 4] WHERE x = 0);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN ANY(x in [0, 1, 2, 3, 4] WHERE x >= 0);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN ANY(x in [0, 1, 2, 3, 4] WHERE x = 5);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN NONE(x in [] WHERE x = 0);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN NONE(x in [0] WHERE x = 0);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN NONE(x in [0, 1, 2, 3, 4] WHERE x = 0);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN NONE(x in [0, 1, 2, 3, 4] WHERE x >= 0);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN NONE(x in [0, 1, 2, 3, 4] WHERE x = 5);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN SINGLE(x in [] WHERE x = 0);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN SINGLE(x in [0] WHERE x = 0);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x = 0);
+ ?column? 
+----------
+ t
+(1 row)
+
+RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x >= 0);
+ ?column? 
+----------
+ f
+(1 row)
+
+RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x = 5);
+ ?column? 
+----------
+ f
+(1 row)
+
 -- Tear down
 DROP GRAPH test_cypher_expr CASCADE;
 NOTICE:  drop cascades to 5 other objects
