@@ -212,7 +212,7 @@ static RangeTblEntry *makeVertexRTE(ParseState *parentParseState, char *varname,
 static List *removeResolvedFutureVertices(List *future_vertices);
 
 /* CREATE */
-static List *transformCreatePattern(ParseState *pstate, List *pattern,
+static List *transformCreatePattern(ParseState *pstate, CypherPath *cpath,
 									List **targetList);
 static GraphVertex *transformCreateNode(ParseState *pstate, CypherNode *cnode,
 										List **targetList);
@@ -628,26 +628,27 @@ Query *
 transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 {
 	CypherCreateClause *detail;
-	CypherClause *prevclause;
-	List	   *pattern;
+	CypherPath *cpath;
 	Query	   *qry;
 
 	detail = (CypherCreateClause *) clause->detail;
-	pattern = detail->pattern;
-	prevclause = (CypherClause *) clause->prev;
+	cpath = llast(detail->pattern);
 
-	/* merge previous CREATE clauses into current CREATE clause */
-	while (prevclause != NULL &&
-		   cypherClauseTag(prevclause) == T_CypherCreateClause)
+	/* make a CREATE clause for each path in the pattern */
+	if (list_length(detail->pattern) > 1)
 	{
-		List *prevpattern;
+		CypherCreateClause *newcreate;
+		CypherClause *newprev;
 
-		detail = (CypherCreateClause *) prevclause->detail;
+		newcreate = makeNode(CypherCreateClause);
+		newcreate->pattern = list_truncate(detail->pattern,
+										   list_length(detail->pattern) - 1);
 
-		prevpattern = list_copy(detail->pattern);
-		pattern = list_concat(prevpattern, pattern);
+		newprev = makeNode(CypherClause);
+		newprev->detail = (Node *) newcreate;
+		newprev->prev = clause->prev;
 
-		prevclause = (CypherClause *) prevclause->prev;
+		clause->prev = (Node *) newprev;
 	}
 
 	qry = makeNode(Query);
@@ -655,16 +656,16 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.writeOp = GWROP_CREATE;
 	qry->graph.last = (pstate->parentParseState == NULL);
 
-	if (prevclause != NULL)
+	if (clause->prev != NULL)
 	{
 		RangeTblEntry *rte;
 
-		rte = transformClause(pstate, (Node *) prevclause);
+		rte = transformClause(pstate, (Node *) clause->prev);
 
 		qry->targetList = makeTargetListFromRTE(pstate, rte);
 	}
 
-	qry->graph.pattern = transformCreatePattern(pstate, pattern,
+	qry->graph.pattern = transformCreatePattern(pstate, cpath,
 												&qry->targetList);
 	qry->graph.targets = pstate->p_target_labels;
 
@@ -3585,80 +3586,74 @@ removeResolvedFutureVertices(List *future_vertices)
 }
 
 static List *
-transformCreatePattern(ParseState *pstate, List *pattern, List **targetList)
+transformCreatePattern(ParseState *pstate, CypherPath *cpath, List **targetList)
 {
 	List	   *graphPattern = NIL;
-	ListCell   *lp;
+	char	   *pathname = getCypherName(cpath->variable);
+	int			pathloc = getCypherNameLoc(cpath->variable);
+	List	   *gchain = NIL;
+	GraphPath  *gpath;
+	ListCell   *le;
 
-	foreach(lp, pattern)
+	if (findTarget(*targetList, pathname) != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_ALIAS),
+				 errmsg("duplicate variable \"%s\"", pathname),
+				 parser_errposition(pstate, pathloc)));
+
+	foreach(le, cpath->chain)
 	{
-		CypherPath *p = lfirst(lp);
-		char	   *pathname = getCypherName(p->variable);
-		int			pathloc = getCypherNameLoc(p->variable);
-		List	   *gchain = NIL;
-		GraphPath  *gpath;
-		ListCell   *le;
+		Node *elem = lfirst(le);
 
-		if (findTarget(*targetList, pathname) != NULL)
-			ereport(ERROR,
-					(errcode(ERRCODE_DUPLICATE_ALIAS),
-					 errmsg("duplicate variable \"%s\"", pathname),
-					 parser_errposition(pstate, pathloc)));
-
-		foreach(le, p->chain)
+		if (IsA(elem, CypherNode))
 		{
-			Node *elem = lfirst(le);
+			CypherNode *cnode = (CypherNode *) elem;
+			GraphVertex *gvertex;
 
-			if (IsA(elem, CypherNode))
-			{
-				CypherNode *cnode = (CypherNode *) elem;
-				GraphVertex *gvertex;
+			gvertex = transformCreateNode(pstate, cnode, targetList);
 
-				gvertex = transformCreateNode(pstate, cnode, targetList);
+			if (!gvertex->create && list_length(cpath->chain) <= 1)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("there must be at least one relationship"),
+						 parser_errposition(pstate,
+									getCypherNameLoc(cnode->variable))));
 
-				if (!gvertex->create && list_length(p->chain) <= 1)
-					ereport(ERROR,
-							(errcode(ERRCODE_SYNTAX_ERROR),
-							 errmsg("there must be at least one relationship"),
-							 parser_errposition(pstate,
-										getCypherNameLoc(cnode->variable))));
-
-				gchain = lappend(gchain, gvertex);
-			}
-			else
-			{
-				CypherRel  *crel = (CypherRel *) elem;
-				GraphEdge  *gedge;
-
-				Assert(IsA(elem, CypherRel));
-
-				gedge = transformCreateRel(pstate, crel, targetList);
-
-				gchain = lappend(gchain, gedge);
-			}
+			gchain = lappend(gchain, gvertex);
 		}
-
-		if (pathname != NULL)
+		else
 		{
-			Const *dummy;
-			TargetEntry *te;
+			CypherRel  *crel = (CypherRel *) elem;
+			GraphEdge  *gedge;
 
-			dummy = makeNullConst(GRAPHPATHOID, -1, InvalidOid);
-			te = makeTargetEntry((Expr *) dummy,
-								 (AttrNumber) pstate->p_next_resno++,
-								 pathname,
-								 false);
+			Assert(IsA(elem, CypherRel));
 
-			*targetList = lappend(*targetList, te);
+			gedge = transformCreateRel(pstate, crel, targetList);
+
+			gchain = lappend(gchain, gedge);
 		}
-
-		gpath = makeNode(GraphPath);
-		if (pathname != NULL)
-			gpath->variable = pstrdup(pathname);
-		gpath->chain = gchain;
-
-		graphPattern = lappend(graphPattern, gpath);
 	}
+
+	if (pathname != NULL)
+	{
+		Const *dummy;
+		TargetEntry *te;
+
+		dummy = makeNullConst(GRAPHPATHOID, -1, InvalidOid);
+		te = makeTargetEntry((Expr *) dummy,
+							 (AttrNumber) pstate->p_next_resno++,
+							 pathname,
+							 false);
+
+		*targetList = lappend(*targetList, te);
+	}
+
+	gpath = makeNode(GraphPath);
+	if (pathname != NULL)
+		gpath->variable = pstrdup(pathname);
+	gpath->chain = gchain;
+
+	graphPattern = lappend(graphPattern, gpath);
 
 	return graphPattern;
 }
