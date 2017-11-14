@@ -3631,6 +3631,7 @@ reindex_relation(Oid relid, int flags, int options)
 	return result;
 }
 
+
 /* ----------------------------------------------------------------
  *		System index reindexing support
  *
