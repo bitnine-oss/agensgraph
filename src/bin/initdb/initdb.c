@@ -2848,7 +2848,8 @@ void
 setup_pgdata(void)
 {
 	char	   *pgdata_get_env,
-			   *pgdata_set_env;
+			   *pgdata_set_env,
+			   *agdata_set_env;
 
 	if (strlen(pg_data) == 0)
 	{
@@ -2884,6 +2885,9 @@ setup_pgdata(void)
 	 */
 	pgdata_set_env = psprintf("PGDATA=%s", pg_data);
 	putenv(pgdata_set_env);
+
+	agdata_set_env = psprintf("AGDATA=%s", pg_data);
+	putenv(agdata_set_env);
 }
 
 
