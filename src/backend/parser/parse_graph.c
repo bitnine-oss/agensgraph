@@ -149,8 +149,8 @@ static RangeTblEntry *transformMatchRel(ParseState *pstate, CypherRel *crel,
 static RangeTblEntry *transformMatchSR(ParseState *pstate, CypherRel *crel,
 									   List **targetList, List **eqoList);
 static RangeTblEntry *addEdgeUnion(ParseState *pstate, char *edge_label,
-								   int location, Alias *alias);
-static Node *genEdgeUnion(char *edge_label, int location);
+								   bool only, int location, Alias *alias);
+static Node *genEdgeUnion(char *edge_label, bool only, int location);
 static void setInitialVidForVLE(ParseState *pstate, CypherRel *crel,
 								Node *vertex, CypherRel *prev_crel,
 								RangeTblEntry *prev_edge);
@@ -161,7 +161,7 @@ static SelectStmt *genVLESubselect(ParseState *pstate, CypherRel *crel,
 static Node *genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out);
 static Node *genVLERightChild(ParseState *pstate, CypherRel *crel, bool out);
 static Node *genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname);
-static RangeSubselect *genEdgeUnionVLE(char *edge_label);
+static RangeSubselect *genEdgeUnionVLE(char *edge_label, bool only);
 static RangeSubselect *genInhEdge(RangeVar *r, Oid parentoid);
 static Node *genVLEJoinExpr(CypherRel *crel, Node *larg, Node *rarg);
 static List *genQualifiedName(char *name1, char *name2);
@@ -1587,10 +1587,11 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 		RangeTblEntry *rte;
 
 		r = makeRangeVar(get_graph_path(true), labname, labloc);
+		r->inhOpt = !cnode->only;
 		alias = makeAliasOptUnique(varname);
 
 		/* set `ihn` to true because we should scan all derived tables */
-		rte = addRangeTableEntry(pstate, r, alias, true, true);
+		rte = addRangeTableEntry(pstate, r, alias, r->inhOpt, true);
 		addRTEtoJoinlist(pstate, rte, false);
 
 		if (varname != NULL || prop_constr)
@@ -1711,15 +1712,16 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 	{
-		rte = addEdgeUnion(pstate, typname, typloc, alias);
+		rte = addEdgeUnion(pstate, typname, crel->only, typloc, alias);
 	}
 	else
 	{
 		RangeVar *r;
 
 		r = makeRangeVar(get_graph_path(true), typname, typloc);
+		r->inhOpt = !crel->only;
 
-		rte = addRangeTableEntry(pstate, r, alias, true, true);
+		rte = addRangeTableEntry(pstate, r, alias, r->inhOpt, true);
 	}
 	addRTEtoJoinlist(pstate, rte, false);
 
@@ -1758,7 +1760,8 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 }
 
 static RangeTblEntry *
-addEdgeUnion(ParseState *pstate, char *edge_label, int location, Alias *alias)
+addEdgeUnion(ParseState *pstate, char *edge_label, bool only, int location,
+			 Alias *alias)
 {
 	Node	   *u;
 	Query	   *qry;
@@ -1769,7 +1772,7 @@ addEdgeUnion(ParseState *pstate, char *edge_label, int location, Alias *alias)
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
 
-	u = genEdgeUnion(edge_label, location);
+	u = genEdgeUnion(edge_label, only, location);
 	qry = parse_sub_analyze(u, pstate, NULL,
 							isLockedRefname(pstate, alias->aliasname));
 
@@ -1790,7 +1793,7 @@ addEdgeUnion(ParseState *pstate, char *edge_label, int location, Alias *alias)
  * FROM `get_graph_path()`.`edge_label`
  */
 static Node *
-genEdgeUnion(char *edge_label, int location)
+genEdgeUnion(char *edge_label, bool only, int location)
 {
 	ResTarget  *tableoid;
 	ResTarget  *ctid;
@@ -1811,7 +1814,7 @@ genEdgeUnion(char *edge_label, int location)
 	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
 
 	r = makeRangeVar(get_graph_path(true), edge_label, location);
-	r->inhOpt = INH_YES;
+	r->inhOpt = !only;
 
 	lsel = makeNode(SelectStmt);
 	lsel->targetList = lappend(list_make5(tableoid, ctid, id, start, end),
@@ -2294,7 +2297,7 @@ genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
 	{
 		RangeSubselect *sub;
 
-		sub = genEdgeUnionVLE(typname);
+		sub = genEdgeUnionVLE(typname, crel->only);
 		sub->alias = alias;
 		edge = (Node *) sub;
 	}
@@ -2305,14 +2308,14 @@ genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
 		Relation	rel;
 
 		r = makeRangeVar(get_graph_path(true), typname, -1);
-		r->inhOpt = INH_YES;
+		r->inhOpt = !crel->only;
 		r->alias = alias;
 
 		lockmode = isLockedRefname(pstate, aliasname)
 			? RowShareLock : AccessShareLock;
 		rel = parserOpenTable(pstate, r, lockmode);
 
-		if (has_subclass(rel->rd_id))
+		if (!crel->only && has_subclass(rel->rd_id))
 		{
 			RangeSubselect *sub;
 
@@ -2340,7 +2343,7 @@ genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
  * FROM `get_graph_path()`.`edge_label`
  */
 static RangeSubselect *
-genEdgeUnionVLE(char *edge_label)
+genEdgeUnionVLE(char *edge_label, bool only)
 {
 	ResTarget  *tableoid;
 	ResTarget  *ctid;
@@ -2360,7 +2363,7 @@ genEdgeUnionVLE(char *edge_label)
 	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
 
 	r = makeRangeVar(get_graph_path(true), edge_label, -1);
-	r->inhOpt = INH_YES;
+	r->inhOpt = !only;
 
 	lsel = makeNode(SelectStmt);
 	lsel->targetList = list_make4(tableoid, ctid, eref, prop_map);
