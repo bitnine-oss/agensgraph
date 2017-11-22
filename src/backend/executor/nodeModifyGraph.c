@@ -285,6 +285,7 @@ TupleTableSlot *
 ExecModifyGraph(ModifyGraphState *mgstate)
 {
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+	EState	   *estate = mgstate->ps.state;
 
 	if (mgstate->done)
 		return NULL;
@@ -294,6 +295,9 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 		for (;;)
 		{
 			TupleTableSlot *slot;
+
+			/* ExecInsertIndexTuples() uses per-tuple context. Reset it here. */
+			ResetPerTupleExprContext(estate);
 
 			slot = ExecProcNode(mgstate->subplan);
 			if (TupIsNull(slot))
