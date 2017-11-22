@@ -3562,6 +3562,7 @@ typedef struct CypherNode
 	NodeTag		type;
 	Node	   *variable;	/* CypherName */
 	Node	   *label;		/* CypherName */
+	bool		only;
 	Node	   *prop_map;	/* JSON object expression or string constant */
 } CypherNode;
 
@@ -3575,6 +3576,7 @@ typedef struct CypherRel
 	uint32		direction;	/* bitmask of directions (see above) */
 	Node	   *variable;	/* CypherName */
 	List	   *types;		/* ORed types */
+	bool		only;
 	Node	   *varlen;		/* variable length relationships (A_Indices) */
 	Node	   *prop_map;	/* JSON object expression or string constant */
 } CypherRel;

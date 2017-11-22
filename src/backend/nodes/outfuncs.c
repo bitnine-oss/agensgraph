@@ -3734,6 +3734,7 @@ _outCypherNode(StringInfo str, const CypherNode *node)
 
 	WRITE_NODE_FIELD(variable);
 	WRITE_NODE_FIELD(label);
+	WRITE_BOOL_FIELD(only);
 	WRITE_NODE_FIELD(prop_map);
 }
 
@@ -3745,8 +3746,8 @@ _outCypherRel(StringInfo str, const CypherRel *node)
 	WRITE_INT_FIELD(direction);
 	WRITE_NODE_FIELD(variable);
 	WRITE_NODE_FIELD(types);
+	WRITE_BOOL_FIELD(only);
 	WRITE_NODE_FIELD(varlen);
-	WRITE_NODE_FIELD(prop_map);
 }
 
 static void

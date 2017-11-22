@@ -378,6 +378,291 @@ MATCH (a) RETURN a.properties;
  
 (5 rows)
 
+-- MATCH ONLY
+CREATE VLABEL vl1;
+CREATE VLABEL vl2 INHERITS(vl1);
+CREATE VLABEL vl3 INHERITS(vl2);
+CREATE ELABEL el1;
+CREATE ELABEL el2 INHERITS(el1);
+CREATE ELABEL el3 INHERITS(el2);
+CREATE (:vl1 {id:1});
+CREATE (:vl2 {id:2});
+CREATE (:vl3 {id:3});
+MATCH (A:vl1 {id:1}), (B:vl2 {id:2}) MERGE (A)-[:el1]->(B);
+MATCH (A:vl1 {id:1}), (C:vl3 {id:3}) MERGE (A)-[:el2]->(C);
+MATCH (B:vl2 {id:2}), (C:vl3 {id:3}) MERGE (B)-[:el3]->(C);
+MATCH(N:vl1) RETURN N;
+         n         
+-------------------
+ vl1[6.1]{"id": 1}
+ vl2[7.1]{"id": 2}
+ vl3[8.1]{"id": 3}
+(3 rows)
+
+MATCH(N:vl2) RETURN N;
+         n         
+-------------------
+ vl2[7.1]{"id": 2}
+ vl3[8.1]{"id": 3}
+(2 rows)
+
+MATCH(N:vl3) RETURN N;
+         n         
+-------------------
+ vl3[8.1]{"id": 3}
+(1 row)
+
+MATCH(N:vl1 ONLY) RETURN N;
+         n         
+-------------------
+ vl1[6.1]{"id": 1}
+(1 row)
+
+MATCH(N:vl2 ONLY) RETURN N;
+         n         
+-------------------
+ vl2[7.1]{"id": 2}
+(1 row)
+
+MATCH(N ONLY) RETURN N;
+ERROR:  ONLY must have one label preceding it
+MATCH(A)-[r:el1]->(B) RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 1  | el1[9.1][6.1,7.1]{}  | 2
+ 1  | el2[10.1][6.1,8.1]{} | 3
+ 2  | el3[11.1][7.1,8.1]{} | 3
+(3 rows)
+
+MATCH(A)-[r:el2]->(B) RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 1  | el2[10.1][6.1,8.1]{} | 3
+ 2  | el3[11.1][7.1,8.1]{} | 3
+(2 rows)
+
+MATCH(A)-[r:el3]->(B) RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 2  | el3[11.1][7.1,8.1]{} | 3
+(1 row)
+
+MATCH(A)-[r:el1 ONLY]->(B)RETURN A.id,r,B.id;
+ id |          r          | id 
+----+---------------------+----
+ 1  | el1[9.1][6.1,7.1]{} | 2
+(1 row)
+
+MATCH(A)-[r:el2 ONLY]->(B)RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 1  | el2[10.1][6.1,8.1]{} | 3
+(1 row)
+
+MATCH(A)-[r ONLY]->(B) RETURN A.id,r,B.id;
+ERROR:  ONLY must have one label preceding it
+LINE 1: MATCH(A)-[r ONLY]->(B) RETURN A.id,r,B.id;
+                  ^
+MATCH(A)<-[r:el1]-(B) RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 2  | el1[9.1][6.1,7.1]{}  | 1
+ 3  | el2[10.1][6.1,8.1]{} | 1
+ 3  | el3[11.1][7.1,8.1]{} | 2
+(3 rows)
+
+MATCH(A)<-[r:el2]-(B) RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 3  | el2[10.1][6.1,8.1]{} | 1
+ 3  | el3[11.1][7.1,8.1]{} | 2
+(2 rows)
+
+MATCH(A)<-[r:el3]-(B) RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 3  | el3[11.1][7.1,8.1]{} | 2
+(1 row)
+
+MATCH(A)<-[r:el1 ONLY]-(B)RETURN A.id,r,B.id;
+ id |          r          | id 
+----+---------------------+----
+ 2  | el1[9.1][6.1,7.1]{} | 1
+(1 row)
+
+MATCH(A)<-[r:el2 ONLY]-(B)RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 3  | el2[10.1][6.1,8.1]{} | 1
+(1 row)
+
+MATCH(A)-[r:el1]-(B) RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 2  | el1[9.1][6.1,7.1]{}  | 1
+ 3  | el2[10.1][6.1,8.1]{} | 1
+ 1  | el1[9.1][6.1,7.1]{}  | 2
+ 3  | el3[11.1][7.1,8.1]{} | 2
+ 1  | el2[10.1][6.1,8.1]{} | 3
+ 2  | el3[11.1][7.1,8.1]{} | 3
+(6 rows)
+
+MATCH(A)-[r:el2]-(B) RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 3  | el2[10.1][6.1,8.1]{} | 1
+ 3  | el3[11.1][7.1,8.1]{} | 2
+ 1  | el2[10.1][6.1,8.1]{} | 3
+ 2  | el3[11.1][7.1,8.1]{} | 3
+(4 rows)
+
+MATCH(A)-[r:el3]-(B) RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 3  | el3[11.1][7.1,8.1]{} | 2
+ 2  | el3[11.1][7.1,8.1]{} | 3
+(2 rows)
+
+MATCH(A)-[r:el1 ONLY]-(B)RETURN A.id,r,B.id;
+ id |          r          | id 
+----+---------------------+----
+ 2  | el1[9.1][6.1,7.1]{} | 1
+ 1  | el1[9.1][6.1,7.1]{} | 2
+(2 rows)
+
+MATCH(A)-[r:el2 ONLY]-(B)RETURN A.id,r,B.id;
+ id |          r           | id 
+----+----------------------+----
+ 3  | el2[10.1][6.1,8.1]{} | 1
+ 1  | el2[10.1][6.1,8.1]{} | 3
+(2 rows)
+
+MATCH(A)-[r:el1 *1..3]->(B) RETURN A.id,r,B.id;
+ id |                     r                      | id 
+----+--------------------------------------------+----
+ 1  | [el1[9.1][6.1,7.1]{}]                      | 2
+ 1  | [el1[9.1][6.1,7.1]{},el3[11.1][7.1,8.1]{}] | 3
+ 1  | [el2[10.1][6.1,8.1]{}]                     | 3
+ 2  | [el3[11.1][7.1,8.1]{}]                     | 3
+(4 rows)
+
+MATCH(A)-[r:el2 *1..3]->(B) RETURN A.id,r,B.id;
+ id |           r            | id 
+----+------------------------+----
+ 1  | [el2[10.1][6.1,8.1]{}] | 3
+ 2  | [el3[11.1][7.1,8.1]{}] | 3
+(2 rows)
+
+MATCH(A)-[r:el3 *1..3]->(B) RETURN A.id,r,B.id;
+ id |           r            | id 
+----+------------------------+----
+ 2  | [el3[11.1][7.1,8.1]{}] | 3
+(1 row)
+
+MATCH(A)-[r:el1 ONLY *1..3]->(B) RETURN A.id,r,B.id;
+ id |           r           | id 
+----+-----------------------+----
+ 1  | [el1[9.1][6.1,7.1]{}] | 2
+(1 row)
+
+MATCH(A)-[r:el2 ONLY *1..3]->(B) RETURN A.id,r,B.id;
+ id |           r            | id 
+----+------------------------+----
+ 1  | [el2[10.1][6.1,8.1]{}] | 3
+(1 row)
+
+MATCH(A)<-[r:el1 *1..3]-(B) RETURN A.id,r,B.id;
+ id |                     r                      | id 
+----+--------------------------------------------+----
+ 2  | [el1[9.1][6.1,7.1]{}]                      | 1
+ 3  | [el2[10.1][6.1,8.1]{}]                     | 1
+ 3  | [el3[11.1][7.1,8.1]{},el1[9.1][6.1,7.1]{}] | 1
+ 3  | [el3[11.1][7.1,8.1]{}]                     | 2
+(4 rows)
+
+MATCH(A)<-[r:el2 *1..3]-(B) RETURN A.id,r,B.id;
+ id |           r            | id 
+----+------------------------+----
+ 3  | [el2[10.1][6.1,8.1]{}] | 1
+ 3  | [el3[11.1][7.1,8.1]{}] | 2
+(2 rows)
+
+MATCH(A)<-[r:el3 *1..3]-(B) RETURN A.id,r,B.id;
+ id |           r            | id 
+----+------------------------+----
+ 3  | [el3[11.1][7.1,8.1]{}] | 2
+(1 row)
+
+MATCH(A)<-[r:el1 ONLY *1..3]-(B) RETURN A.id,r,B.id;
+ id |           r           | id 
+----+-----------------------+----
+ 2  | [el1[9.1][6.1,7.1]{}] | 1
+(1 row)
+
+MATCH(A)<-[r:el2 ONLY *1..3]-(B) RETURN A.id,r,B.id;
+ id |           r            | id 
+----+------------------------+----
+ 3  | [el2[10.1][6.1,8.1]{}] | 1
+(1 row)
+
+MATCH(A)-[r:el1 *1..3]-(B) RETURN A.id,r,B.id;
+ id |                                r                                | id 
+----+-----------------------------------------------------------------+----
+ 2  | [el1[9.1][6.1,7.1]{}]                                           | 1
+ 2  | [el3[11.1][7.1,8.1]{},el2[10.1][6.1,8.1]{}]                     | 1
+ 1  | [el1[9.1][6.1,7.1]{},el3[11.1][7.1,8.1]{},el2[10.1][6.1,8.1]{}] | 1
+ 3  | [el2[10.1][6.1,8.1]{}]                                          | 1
+ 3  | [el3[11.1][7.1,8.1]{},el1[9.1][6.1,7.1]{}]                      | 1
+ 1  | [el2[10.1][6.1,8.1]{},el3[11.1][7.1,8.1]{},el1[9.1][6.1,7.1]{}] | 1
+ 1  | [el1[9.1][6.1,7.1]{}]                                           | 2
+ 1  | [el2[10.1][6.1,8.1]{},el3[11.1][7.1,8.1]{}]                     | 2
+ 2  | [el3[11.1][7.1,8.1]{},el2[10.1][6.1,8.1]{},el1[9.1][6.1,7.1]{}] | 2
+ 2  | [el1[9.1][6.1,7.1]{},el2[10.1][6.1,8.1]{},el3[11.1][7.1,8.1]{}] | 2
+ 3  | [el2[10.1][6.1,8.1]{},el1[9.1][6.1,7.1]{}]                      | 2
+ 3  | [el3[11.1][7.1,8.1]{}]                                          | 2
+ 1  | [el2[10.1][6.1,8.1]{}]                                          | 3
+ 1  | [el1[9.1][6.1,7.1]{},el3[11.1][7.1,8.1]{}]                      | 3
+ 3  | [el2[10.1][6.1,8.1]{},el1[9.1][6.1,7.1]{},el3[11.1][7.1,8.1]{}] | 3
+ 2  | [el3[11.1][7.1,8.1]{}]                                          | 3
+ 2  | [el1[9.1][6.1,7.1]{},el2[10.1][6.1,8.1]{}]                      | 3
+ 3  | [el3[11.1][7.1,8.1]{},el1[9.1][6.1,7.1]{},el2[10.1][6.1,8.1]{}] | 3
+(18 rows)
+
+MATCH(A)-[r:el2 *1..3]-(B) RETURN A.id,r,B.id;
+ id |                      r                      | id 
+----+---------------------------------------------+----
+ 2  | [el3[11.1][7.1,8.1]{},el2[10.1][6.1,8.1]{}] | 1
+ 3  | [el2[10.1][6.1,8.1]{}]                      | 1
+ 1  | [el2[10.1][6.1,8.1]{},el3[11.1][7.1,8.1]{}] | 2
+ 3  | [el3[11.1][7.1,8.1]{}]                      | 2
+ 1  | [el2[10.1][6.1,8.1]{}]                      | 3
+ 2  | [el3[11.1][7.1,8.1]{}]                      | 3
+(6 rows)
+
+MATCH(A)-[r:el3 *1..3]-(B) RETURN A.id,r,B.id;
+ id |           r            | id 
+----+------------------------+----
+ 3  | [el3[11.1][7.1,8.1]{}] | 2
+ 2  | [el3[11.1][7.1,8.1]{}] | 3
+(2 rows)
+
+MATCH(A)-[r:el1 ONLY *1..3]-(B) RETURN A.id,r,B.id;
+ id |           r           | id 
+----+-----------------------+----
+ 2  | [el1[9.1][6.1,7.1]{}] | 1
+ 1  | [el1[9.1][6.1,7.1]{}] | 2
+(2 rows)
+
+MATCH(A)-[r:el2 ONLY *1..3]-(B) RETURN A.id,r,B.id;
+ id |           r            | id 
+----+------------------------+----
+ 3  | [el2[10.1][6.1,8.1]{}] | 1
+ 1  | [el2[10.1][6.1,8.1]{}] | 3
+(2 rows)
+
+MATCH (A:vl1) DETACH DELETE A;
+MATCH (B:vl2) DETACH DELETE B;
+MATCH (C:vl3) DETACH DELETE C;
 -- OPTIONAL MATCH
 CREATE GRAPH o;
 SET graph_path = o;
@@ -2549,8 +2834,14 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 9 other objects
 DETAIL:  drop cascades to sequence agens.ag_label_seq
 drop cascades to label ag_vertex
 drop cascades to label ag_edge
+drop cascades to label vl1
+drop cascades to label vl2
+drop cascades to label vl3
+drop cascades to label el1
+drop cascades to label el2
+drop cascades to label el3
 DROP TABLE history;
