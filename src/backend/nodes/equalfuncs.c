@@ -2954,6 +2954,7 @@ _equalCypherNode(const CypherNode *a, const CypherNode *b)
 	COMPARE_NODE_FIELD(variable);
 	COMPARE_NODE_FIELD(label);
 	COMPARE_NODE_FIELD(prop_map);
+	COMPARE_SCALAR_FIELD(inhOpt);
 
 	return true;
 }
@@ -2966,6 +2967,7 @@ _equalCypherRel(const CypherRel *a, const CypherRel *b)
 	COMPARE_NODE_FIELD(types);
 	COMPARE_NODE_FIELD(varlen);
 	COMPARE_NODE_FIELD(prop_map);
+	COMPARE_SCALAR_FIELD(inhOpt);
 
 	return true;
 }

@@ -3362,6 +3362,7 @@ typedef struct CypherNode
 	Node	   *variable;	/* CypherName */
 	Node	   *label;		/* CypherName */
 	Node	   *prop_map;	/* JSON object expression or string constant */
+	bool		inhOpt;
 } CypherNode;
 
 #define CYPHER_REL_DIR_NONE		0
@@ -3376,6 +3377,7 @@ typedef struct CypherRel
 	List	   *types;		/* ORed types */
 	Node	   *varlen;		/* variable length relationships (A_Indices) */
 	Node	   *prop_map;	/* JSON object expression or string constant */
+	bool		inhOpt;
 } CypherRel;
 
 typedef struct CypherName
