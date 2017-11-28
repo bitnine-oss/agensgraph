@@ -1014,6 +1014,7 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 	WRITE_ENUM_FIELD(operation, GraphWriteOp);
 	WRITE_BOOL_FIELD(last);
 	WRITE_BOOL_FIELD(detach);
+	WRITE_UINT_FIELD(modifyno);
 	WRITE_NODE_FIELD(subplan);
 	WRITE_NODE_FIELD(pattern);
 	WRITE_NODE_FIELD(targets);
@@ -3119,6 +3120,7 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_BOOL_FIELD(graph.last);
 	WRITE_BOOL_FIELD(graph.detach);
 	WRITE_BOOL_FIELD(graph.eager);
+	WRITE_UINT_FIELD(graph.modifyno);
 	WRITE_NODE_FIELD(graph.pattern);
 	WRITE_NODE_FIELD(graph.targets);
 	WRITE_NODE_FIELD(graph.exprs);

@@ -1730,6 +1730,7 @@ typedef struct ModifyGraphPath
 	bool		detach;			/* DETACH DELETE */
 	bool		eager;			/* eagerness */
 	GraphWriteOp operation;		/* CREATE or DELETE */
+	uint32		modifyno;		/* # of clauses between modifygraph clause */
 	Path	   *subpath;		/* Path producing source data */
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
 	List	   *targets;		/* relation Oid's of target labels */

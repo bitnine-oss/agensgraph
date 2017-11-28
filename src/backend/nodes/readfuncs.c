@@ -286,6 +286,7 @@ _readQuery(void)
 	READ_BOOL_FIELD(graph.last);
 	READ_BOOL_FIELD(graph.detach);
 	READ_BOOL_FIELD(graph.eager);
+	READ_UINT_FIELD(graph.modifyno);
 	READ_NODE_FIELD(graph.pattern);
 	READ_NODE_FIELD(graph.targets);
 	READ_NODE_FIELD(graph.exprs);
