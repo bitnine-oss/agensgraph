@@ -2140,7 +2140,8 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 													parse->graph.pattern,
 													parse->graph.targets,
 													parse->graph.exprs,
-													parse->graph.sets);
+													parse->graph.sets,
+													parse->graph.modifyno);
 		}
 		/*
 		 * If this is an INSERT/UPDATE/DELETE, and we're not being called from

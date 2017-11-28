@@ -112,6 +112,11 @@ extern void add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
 								 RelOptInfo *outerrel, RelOptInfo *innerrel,
 								 SpecialJoinInfo *sjinfo, List *restrictlist);
 
+
+extern void add_paths_for_cdelete(PlannerInfo *root, RelOptInfo *joinrel,
+								  JoinType type, RelOptInfo *outerrel,
+								  RelOptInfo *innerrel, SpecialJoinInfo *sjinfo,
+								  List *restrictlist);
 /*
  * joinrels.c
  *	  routines to determine which relations to join

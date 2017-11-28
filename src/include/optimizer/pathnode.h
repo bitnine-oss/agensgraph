@@ -251,7 +251,8 @@ extern ModifyGraphPath *create_modifygraph_path(PlannerInfo *root,
 						RelOptInfo *rel, bool canSetTag,
 						GraphWriteOp operation, bool last, bool detach,
 						bool eager, Path *subpath, List *pattern,
-						List *targets, List *exprs, List *sets);
+						List *targets, List *exprs, List *sets,
+						uint32 modifyno);
 
 extern Path *reparameterize_path(PlannerInfo *root, Path *path,
 					Relids required_outer,

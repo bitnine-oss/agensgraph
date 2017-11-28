@@ -38,6 +38,8 @@
 #define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
 #define GRAPHID_BUFLEN			32	/* "65535.281474976710655" */
 
+#define DATUM_NULL	PointerGetDatum(NULL)
+
 typedef struct LabelOutData {
 	uint16		label_labid;
 	NameData	label;
@@ -624,6 +626,14 @@ vertex_eq(PG_FUNCTION_ARGS)
 	Datum		id2 = getVertexIdDatum(PG_GETARG_DATUM(1));
 
 	PG_RETURN_DATUM(DirectFunctionCall2(graphid_eq, id1, id2));
+}
+
+Datum
+vtovid(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
+
+	PG_RETURN_DATUM(tuple_getattr(vertex, Anum_vertex_id));
 }
 
 Datum
@@ -1260,6 +1270,15 @@ getVertexPropDatum(Datum datum)
 }
 
 Datum
+getVertexTidDatum(Datum datum)
+{
+	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	return tuple_getattr(tuphdr, Anum_vertex_tid);
+}
+
+
+Datum
 getEdgeIdDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
@@ -1289,6 +1308,15 @@ getEdgePropDatum(Datum datum)
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_edge_properties);
+}
+
+
+Datum
+getEdgeTidDatum(Datum datum)
+{
+	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	return tuple_getattr(tuphdr, Anum_edge_tid);
 }
 
 void
@@ -1359,8 +1387,6 @@ makeGraphVertexDatum(Datum id, Datum prop_map, Datum tid)
 	values[Anum_vertex_id - 1] = id;
 	values[Anum_vertex_properties - 1] = prop_map;
 	values[Anum_vertex_tid - 1] = tid;
-	if (tid == (Datum) 0)
-		isnull[Anum_vertex_tid - 1] = true;
 
 	tupDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
 	Assert(tupDesc->natts == Natts_vertex);
@@ -1385,8 +1411,6 @@ makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop_map, Datum tid)
 	values[Anum_edge_end - 1] = end;
 	values[Anum_edge_properties - 1] = prop_map;
 	values[Anum_edge_tid - 1] = tid;
-	if (tid == (Datum) 0)
-		isnull[Anum_edge_tid - 1] = true;
 
 	tupDesc = lookup_rowtype_tupdesc(EDGEOID, -1);
 	Assert(tupDesc->natts == Natts_edge);

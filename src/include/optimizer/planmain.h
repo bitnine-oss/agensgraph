@@ -58,7 +58,8 @@ extern bool is_projection_capable_plan(Plan *plan);
 extern ModifyGraph *make_modifygraph(PlannerInfo *root, bool canSetTag,
 						 bool last, bool detach, bool eager,
 						 GraphWriteOp operation, Plan *subplan, List *pattern,
-						 List *targets, List *exprs, List *sets);
+						 List *targets, List *exprs, List *sets,
+						 uint32 modifyno);
 extern Dijkstra *make_dijkstra(PlannerInfo *root, List *tlist, Plan *subplan,
 							   AttrNumber weight, bool weight_out,
 							   AttrNumber end_id, AttrNumber edge_id,

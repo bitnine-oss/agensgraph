@@ -2139,21 +2139,32 @@ MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
 -- DELETE
 --
 MATCH (a) DELETE a;
-ERROR:  vertex 1 in "repo" has edge(s)
+ERROR:  vertices with edges can not be removed.
 MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[1];
+ERROR:  Only direct variable reference is supported
+LINE 1: MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[1];
+                                                      ^
 MATCH (a:repo) RETURN a.name AS a;
          a          
 --------------------
  "agens-graph"
+ "agens-graph-jdbc"
  "agens-graph-docs"
-(2 rows)
+ "agens-graph-odbc"
+(4 rows)
 
 MATCH ()-[a:doc]->() DETACH DELETE end_vertex(a);
+ERROR:  Only direct variable reference is supported
+LINE 1: MATCH ()-[a:doc]->() DETACH DELETE end_vertex(a);
+                                           ^
 MATCH (a:repo) RETURN a.name AS a;
-       a       
----------------
+         a          
+--------------------
  "agens-graph"
-(1 row)
+ "agens-graph-jdbc"
+ "agens-graph-docs"
+ "agens-graph-odbc"
+(4 rows)
 
 MATCH (a) DETACH DELETE a;
 MATCH (a) RETURN a;
@@ -2335,6 +2346,24 @@ MATCH (a) SET a.name += 'someone';
 ERROR:  += operator on a property is not allowed
 LINE 1: MATCH (a) SET a.name += 'someone';
                       ^
+MATCH (a) DETACH DELETE (a);
+-- CREATE ... SET ...
+CREATE p=(a {no:1})-[r1:rel]->(b {no:2})-[r2:rel]->(c {no:3})
+SET a.no = 4, b.no = 5, c.no = 6
+SET r1.name = 'agens', r2.name = 'graph'
+RETURN properties(a), properties(r1), properties(b), properties(r2), properties(c);
+ properties |    properties     | properties |    properties     | properties 
+------------+-------------------+------------+-------------------+------------
+ {"no": 4}  | {"name": "agens"} | {"no": 5}  | {"name": "graph"} | {"no": 6}
+(1 row)
+
+MATCH (a)-[r]->(b) RETURN a.no, r.name, b.no;
+ no |  name   | no 
+----+---------+----
+ 4  | "agens" | 5
+ 5  | "graph" | 6
+(2 rows)
+
 MATCH (a) DETACH DELETE (a);
 -- remove
 CREATE ({a: 'a', b: 'b', c: 'c'});
@@ -2554,13 +2583,14 @@ MATCH (a:person)
 MERGE (b:city {name: a.bornin})
   ON CREATE SET b.population = 1
   ON MATCH SET b.population = b.population + 1;
-MATCH (c:city) RETURN properties(c);
-                properties                
-------------------------------------------
- {"name": "jeju", "population": 1}
- {"name": "san jose", "population": 2}
- {"name": "seoul", "population": 2}
- {"name": "los angeles", "population": 1}
+MATCH (c:city)
+RETURN c.name, c.population ORDER BY name;
+     name      | population 
+---------------+------------
+ "jeju"        | 1
+ "los angeles" | 1
+ "san jose"    | 2
+ "seoul"       | 2
 (4 rows)
 
 MATCH (a:person)
@@ -2602,11 +2632,11 @@ CREATE (a)-[:e1 {name: 'ab'}]->(b)
 CREATE (c)-[:e1 {name: 'cd'}]->(d);
 MATCH (a {id: 2})-[]-(b {id: 1})
 MERGE (a)-[r:e1]-(b)
-RETURN r;
-               r                
---------------------------------
- e1[5.8][1.4,1.5]{"name": "ab"}
- e1[5.9][1.6,1.7]{"name": "cd"}
+RETURN properties(r);
+   properties   
+----------------
+ {"name": "ab"}
+ {"name": "cd"}
 (2 rows)
 
 MATCH (a) DETACH DELETE a;

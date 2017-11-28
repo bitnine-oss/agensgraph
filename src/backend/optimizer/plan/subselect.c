@@ -2773,7 +2773,21 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 			break;
 
 		case T_ModifyGraph:
-			/* currently, this node does not consider params */
+		{
+			ModifyGraph *mgplan = (ModifyGraph *) plan;
+
+			finalize_primnode((Node *) mgplan->pattern, &context);
+			finalize_primnode((Node *) mgplan->exprs, &context);
+			finalize_primnode((Node *) mgplan->sets, &context);
+
+			context.paramids =
+					bms_add_members(context.paramids,
+									finalize_plan(root,
+												  mgplan->subplan,
+												  gather_param,
+												  valid_params,
+												  scan_params));
+		}
 			break;
 
 		case T_Dijkstra:

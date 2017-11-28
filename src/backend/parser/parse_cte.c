@@ -855,6 +855,8 @@ checkWellFormedRecursionWalker(Node *node, CteState *cstate)
 				break;
 			case JOIN_LEFT:
 			case JOIN_CYPHER_MERGE:
+			case JOIN_CYPHER_DELETE:
+			case JOIN_CYPHER_DETACH:
 				checkWellFormedRecursionWalker(j->larg, cstate);
 				if (save_context == RECURSION_OK)
 					cstate->context = RECURSION_OUTERJOIN;
