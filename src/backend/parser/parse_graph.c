@@ -293,11 +293,13 @@ static List *makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte);
 static List *makeTargetListFromJoin(ParseState *pstate, RangeTblEntry *rte);
 static TargetEntry *makeWholeRowTarget(ParseState *pstate, RangeTblEntry *rte);
 static TargetEntry *findTarget(List *targetList, char *resname);
+static List *findAllModifiedLabels(Query *qry);
 
 /* expression - type */
 static Node *makeVertexExpr(ParseState *pstate, RangeTblEntry *rte,
 							int location);
-static Node *makeEdgeExpr(ParseState *pstate, RangeTblEntry *rte, int location);
+static Node *makeEdgeExpr(ParseState *pstate, RangeTblEntry *rte,
+						  CypherRel *crel);
 static Node *makePathVertexExpr(ParseState *pstate, Node *obj);
 static Node *makeGraphpath(List *vertices, List *edges, int location);
 /* expression - common */
@@ -747,6 +749,8 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 
 	assign_query_eager(qry);
 
+	findAllModifiedLabels(qry);
+
 	return qry;
 }
 
@@ -802,6 +806,8 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	assign_query_eager(qry);
 
+	findAllModifiedLabels(qry);
+
 	return qry;
 }
 
@@ -851,6 +857,8 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	assign_query_collations(pstate, qry);
 
 	assign_query_eager(qry);
+
+	findAllModifiedLabels(qry);
 
 	return qry;
 }
@@ -1414,7 +1422,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				{
 					Assert(vertex != NULL);
 					pvs = lappend(pvs, makePathVertexExpr(pstate, vertex));
-					pes = lappend(pes, makeEdgeExpr(pstate, edge, -1));
+					pes = lappend(pes, makeEdgeExpr(pstate, edge, crel));
 				}
 
 				prev_crel = crel;
@@ -1474,6 +1482,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 	bool		prop_constr;
 	Const	   *id;
 	Const	   *prop_map;
+	Const	   *tid;
 	Node	   *vertex;
 
 	/*
@@ -1655,7 +1664,9 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 
 	id = makeNullConst(GRAPHIDOID, -1, InvalidOid);
 	prop_map = makeNullConst(JSONBOID, -1, InvalidOid);
-	vertex = makeTypedRowExpr(list_make2(id, prop_map), VERTEXOID, varloc);
+	tid = makeNullConst(TIDOID, -1, InvalidOid);
+	vertex = makeTypedRowExpr(list_make3(id, prop_map, tid),
+							  VERTEXOID, varloc);
 	te = makeTargetEntry((Expr *) vertex,
 						 (AttrNumber) pstate->p_next_resno++,
 						 varname,
@@ -1711,7 +1722,6 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 				 List **eqoList)
 {
 	char	   *varname = getCypherName(crel->variable);
-	int			varloc = getCypherNameLoc(crel->variable);
 	char	   *typname;
 	int			typloc;
 	Alias	   *alias;
@@ -1745,7 +1755,7 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		resjunk = (varname == NULL);
 		resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
 
-		te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, rte, varloc),
+		te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, rte, crel),
 							 (AttrNumber) resno,
 							 alias->aliasname,
 							 resjunk);
@@ -4643,6 +4653,167 @@ createLabelIfNotExist(ParseState *pstate, char *labname, int labloc,
 		elog(ERROR, "SPI_finish failed");
 }
 
+
+/* Eager determine */
+
+typedef struct
+{
+	Index	relno;
+	int		attrno;
+	Oid		result;
+	List   *rtable;
+	List   *targetlist;
+} find_target_label_context;
+
+static bool
+find_var_target_walker(Node *node,
+					   find_target_label_context *context)
+{
+	if (node == NULL)
+		return false;
+	if (IsA(node, Var))
+	{
+		Var		   *var = (Var *) node;
+		RangeTblEntry *rte;
+		TargetEntry *te;
+
+		if (context->targetlist != NIL)
+		{
+			te = (TargetEntry *) list_nth(context->targetlist,
+										  var->varattno - 1);
+
+			context->targetlist = NIL;
+
+			if (find_var_target_walker((Node *) te->expr, context))
+				return true;
+		}
+
+		/* Find matching rtable entry, or complain if not found */
+		if (var->varno <= 0 || var->varno > list_length(context->rtable))
+			elog(ERROR, "invalid varno %d", var->varno);
+		rte = rt_fetch(var->varno, context->rtable);
+
+		/*
+		 * A whole-row Var references no specific columns, so adds no new
+		 * dependency.  (We assume that there is a whole-table dependency
+		 * arising from each underlying rangetable entry.  While we could
+		 * record such a dependency when finding a whole-row Var that
+		 * references a relation directly, it's quite unclear how to extend
+		 * that to whole-row Vars for JOINs, so it seems better to leave the
+		 * responsibility with the range table.  Note that this poses some
+		 * risks for identifying dependencies of stand-alone expressions:
+		 * whole-table references may need to be created separately.)
+		 */
+		if (var->varattno == InvalidAttrNumber)
+			return false;
+		if (rte->rtekind == RTE_RELATION)
+		{
+			context->result = rte->relid;
+
+			return true;
+		}
+		else if (rte->rtekind == RTE_SUBQUERY)
+		{
+			Query *qry = rte->subquery;
+			TargetEntry *te;
+
+			context->rtable = qry->rtable;
+
+			te = (TargetEntry *) list_nth(qry->targetList,
+										  var->varattno - 1);
+
+			if (find_var_target_walker((Node *) te->expr, context))
+				return true;
+		}
+		else if (rte->rtekind == RTE_JOIN)
+		{
+			if (var->varattno <= 0 ||
+				var->varattno > list_length(rte->joinaliasvars))
+				elog(ERROR, "invalid varattno %d", var->varattno);
+			if (find_var_target_walker((Node *) list_nth(rte->joinaliasvars,
+														 var->varattno - 1),
+									   context))
+				return true;
+		}
+
+		return false;
+	}
+
+	if (expression_tree_walker(node,
+							   find_var_target_walker,
+							   context))
+		return true;
+
+	return false;
+}
+
+static Oid
+findTargetLabel(Query *qry, Node *elem)
+{
+	find_target_label_context context;
+
+	context.result = InvalidOid;
+	context.rtable = qry->rtable;
+	context.targetlist = qry->targetList;
+
+	if (find_var_target_walker(elem, &context))
+	{
+		return context.result;
+	}
+
+	// cannot find target
+	// ag_vertex and ag_edge ?
+	Assert(0);
+
+	return InvalidOid;
+}
+
+static List *
+findAllModifiedLabels(Query *qry)
+{
+	ListCell  *lc;
+	List   *org_target = NIL;
+
+	/* DELETE */
+	if (qry->graph.exprs != NIL)
+	{
+		ListCell *lc;
+
+		foreach(lc, qry->graph.exprs)
+		{
+			Node *target_expr = (Node *)lfirst(lc);
+
+			org_target = lappend_oid(org_target,
+									 findTargetLabel(qry, target_expr));
+		}
+	}
+	/* SET, MERGE ON SET */
+	if (qry->graph.sets != NIL)
+	{
+		ListCell *ls;
+
+		foreach(ls, qry->graph.sets)
+		{
+			GraphSetProp *gsp = lfirst(ls);
+
+			org_target = lappend_oid(org_target,
+									 findTargetLabel(qry, gsp->elem));
+		}
+	}
+
+	foreach(lc, org_target)
+	{
+		Oid relid = lfirst_oid(lc);
+
+		qry->graph.targets = list_union_oid(qry->graph.targets,
+											find_all_inheritors(relid,
+																AccessShareLock,
+																NULL));
+	}
+
+	return qry->graph.targets;
+}
+
 static bool
 isNodeForRef(CypherNode *cnode)
 {
@@ -5167,28 +5338,40 @@ makeVertexExpr(ParseState *pstate, RangeTblEntry *rte, int location)
 {
 	Node	   *id;
 	Node	   *prop_map;
+	Node	   *tid;
 
 	id = getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
 	prop_map = getColumnVar(pstate, rte, AG_ELEM_PROP_MAP);
+	tid =  getSysColumnVar(pstate, rte,
+						   SelfItemPointerAttributeNumber);
 
-	return makeTypedRowExpr(list_make2(id, prop_map), VERTEXOID, location);
+	return makeTypedRowExpr(list_make3(id, prop_map, tid),
+							VERTEXOID, location);
 }
 
 static Node *
-makeEdgeExpr(ParseState *pstate, RangeTblEntry *rte, int location)
+makeEdgeExpr(ParseState *pstate, RangeTblEntry *rte, CypherRel *crel)
 {
 	Node	   *id;
 	Node	   *start;
 	Node	   *end;
 	Node	   *prop_map;
+	Node	   *tid;
+	int			varloc = getCypherNameLoc(crel->variable);
 
 	id = getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
 	start = getColumnVar(pstate, rte, AG_START_ID);
 	end = getColumnVar(pstate, rte, AG_END_ID);
 	prop_map = getColumnVar(pstate, rte, AG_ELEM_PROP_MAP);
 
-	return makeTypedRowExpr(list_make4(id, start, end, prop_map),
-							EDGEOID, location);
+	if (crel->direction == GRAPH_EDGE_DIR_NONE)
+		tid = getColumnVar(pstate, rte, "ctid");
+	else
+		tid = getSysColumnVar(pstate, rte,
+							  SelfItemPointerAttributeNumber);
+
+	return makeTypedRowExpr(list_make5(id, start, end, prop_map, tid),
+							EDGEOID, varloc);
 }
 
 static Node *
