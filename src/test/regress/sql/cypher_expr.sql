@@ -244,5 +244,12 @@ RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x = 0);
 RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x >= 0);
 RETURN SINGLE(x in [0, 1, 2, 3, 4] WHERE x = 5);
 
+-- Functions
+
+CREATE (:coll {name: 'AgensGraph'});
+MATCH (n:coll) SET n.l = tolower(n.name);
+MATCH (n:coll) SET n.u = toupper(n.name);
+MATCH (n:coll) RETURN n;
+
 -- Tear down
 DROP GRAPH test_cypher_expr CASCADE;
