@@ -785,6 +785,12 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
 	assign_query_collations(pstate, qry);
+	foreach(le, qry->graph.sets)
+	{
+		GraphSetProp *gsp = lfirst(le);
+
+		assign_expr_collations(pstate, gsp->expr);
+	}
 
 	return qry;
 }
