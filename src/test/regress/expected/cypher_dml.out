@@ -2351,9 +2351,9 @@ MATCH (a) RETURN properties(a);
 (6 rows)
 
 MATCH (a) DETACH DELETE a;
---------------
+--
 -- Eager plan
---------------
+--
 -- CREATE - MERGE
 CREATE (:v1 {no:1}), (:v1 {no:2}), (:v1 {no:3});
 MATCH (a:v1)
@@ -2506,8 +2506,21 @@ MERGE ('10');
 ERROR:  jsonb object is expected for property map
 MERGE ()-[:e1 '10']->();
 ERROR:  jsonb object is expected for property map
+--
+-- Functions
+--
+CREATE (:coll {name: 'AgensGraph'});
+MATCH (n:coll) SET n.l = to_jsonb(lower(n.name));
+MATCH (n:coll) SET n.u = to_jsonb(upper(n.name));
+MATCH (n:coll) RETURN n;
+                                   n                                    
+------------------------------------------------------------------------
+ coll[10.1]{"l": "agensgraph", "u": "AGENSGRAPH", "name": "AgensGraph"}
+(1 row)
+
+-- cleanup
 DROP GRAPH gm CASCADE;
-NOTICE:  drop cascades to 10 other objects
+NOTICE:  drop cascades to 11 other objects
 DETAIL:  drop cascades to sequence gm.ag_label_seq
 drop cascades to label ag_vertex
 drop cascades to label ag_edge
@@ -2518,7 +2531,7 @@ drop cascades to label person
 drop cascades to label city
 drop cascades to label hometown
 drop cascades to label e
--- cleanup
+drop cascades to label coll
 DROP GRAPH p CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence p.ag_label_seq

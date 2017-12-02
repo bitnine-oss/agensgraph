@@ -937,9 +937,10 @@ MATCH (a) RETURN properties(a);
 
 MATCH (a) DETACH DELETE a;
 
---------------
+--
 -- Eager plan
---------------
+--
+
 -- CREATE - MERGE
 CREATE (:v1 {no:1}), (:v1 {no:2}), (:v1 {no:3});
 MATCH (a:v1)
@@ -1023,10 +1024,18 @@ MERGE (a)-[:e1]->(a:v1);
 MERGE ('10');
 MERGE ()-[:e1 '10']->();
 
+--
+-- Functions
+--
 
-DROP GRAPH gm CASCADE;
+CREATE (:coll {name: 'AgensGraph'});
+MATCH (n:coll) SET n.l = to_jsonb(lower(n.name));
+MATCH (n:coll) SET n.u = to_jsonb(upper(n.name));
+MATCH (n:coll) RETURN n;
+
 -- cleanup
 
+DROP GRAPH gm CASCADE;
 DROP GRAPH p CASCADE;
 DROP GRAPH u CASCADE;
 DROP GRAPH t CASCADE;
