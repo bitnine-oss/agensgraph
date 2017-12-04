@@ -16088,6 +16088,26 @@ cypher_node:
 					n->variable = $2;
 					n->label = $3;
 					n->prop_map = $4;
+					n->inhOpt = true;
+					$$ = (Node *) n;
+				}
+			| '(' cypher_var_opt cypher_label_opt ONLY cypher_prop_map_opt ')'
+				{
+					CypherNode *n;
+
+					if($3 == NULL)
+					{
+						ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("ONLY must have one label preceding it"),
+							 parser_errposition(@3)));
+					}
+
+					n = makeNode(CypherNode);
+					n->variable = $2;
+					n->label = $3;
+					n->prop_map = $5;
+					n->inhOpt = false;
 					$$ = (Node *) n;
 				}
 		;
@@ -16110,6 +16130,35 @@ cypher_rel:
 					n->types = $4;
 					n->varlen = $5;
 					n->prop_map = $6;
+					n->inhOpt = true;
+					$$ = (Node *) n;
+				}
+			| cypher_rel_left '[' cypher_var_opt
+			cypher_types_opt ONLY cypher_varlen_opt cypher_prop_map_opt
+			']' cypher_rel_right
+				{
+					CypherRel  *n;
+
+					if($4 == NULL)
+					{
+						ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("ONLY must have one label preceding it"),
+							 parser_errposition(@3)));
+					}
+
+					n = makeNode(CypherRel);
+					if ($1)
+						n->direction |= CYPHER_REL_DIR_LEFT;
+					if ($9)
+						n->direction |= CYPHER_REL_DIR_RIGHT;
+					if ($1 && $9)
+						n->direction = CYPHER_REL_DIR_NONE;
+					n->variable = $3;
+					n->types = $4;
+					n->varlen = $6;
+					n->prop_map = $7;
+					n->inhOpt = false;
 					$$ = (Node *) n;
 				}
 		;
