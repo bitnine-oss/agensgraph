@@ -265,7 +265,6 @@ static void createLabelIfNotExist(ParseState *pstate, char *labname, int labloc,
 static bool isNodeForRef(CypherNode *cnode);
 static Node *transformPropMap(ParseState *pstate, Node *expr,
 							  ParseExprKind exprKind);
-static Node *stripNullKeys(ParseState *pstate, Node *properties);
 
 /* transform */
 static RangeTblEntry *transformClause(ParseState *pstate, Node *clause);
@@ -4061,8 +4060,6 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	 * set the modified property map
 	 */
 
-	prop_map = stripNullKeys(pstate, prop_map);
-
 	switch (kind)
 	{
 		case CSET_NORMAL:
@@ -4634,24 +4631,7 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 				 errmsg("property map must be of type jsonb"),
 				 parser_errposition(pstate, exprLocation(prop_map))));
 
-	if (exprKind == EXPR_KIND_INSERT_TARGET)
-		prop_map = stripNullKeys(pstate, prop_map);
-
 	return resolve_future_vertex(pstate, prop_map, 0);
-}
-
-static Node *
-stripNullKeys(ParseState *pstate, Node *properties)
-{
-
-	FuncCall *strip;
-
-	/* keys with NULL value is not allowed */
-	strip = makeFuncCall(list_make1(makeString("jsonb_strip_nulls")), NIL, -1);
-
-	return ParseFuncOrColumn(pstate, strip->funcname,
-							 list_make1(properties), strip, -1);
-
 }
 
 static RangeTblEntry *
