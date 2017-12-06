@@ -207,20 +207,19 @@ number_op(PGFunction f, Jsonb *l, Jsonb *r)
 	fcinfo.argnull[fcinfo.nargs] = false;
 	fcinfo.nargs++;
 
-	if (f == numeric_div)
+	n = (*f) (&fcinfo);
+	if (fcinfo.isnull)
+		elog(ERROR, "function %p returned NULL", (void *) f);
+
+	if (f == numeric_power || f == numeric_div)
 	{
 		int			s;
 
 		s = DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo.arg[0])) +
 			DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo.arg[1]));
 		if (s == 0)
-			f = numeric_div_trunc;
+			n = DirectFunctionCall2(numeric_trunc, n, 0);
 	}
-
-	n = (*f) (&fcinfo);
-
-	if (fcinfo.isnull)
-		elog(ERROR, "function %p returned NULL", (void *) f);
 
 	return numeric_to_number(DatumGetNumeric(n));
 }
