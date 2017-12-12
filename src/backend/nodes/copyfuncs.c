@@ -4440,18 +4440,6 @@ _copyCreatePropertyIndexStmt(const CreatePropertyIndexStmt *from)
 	return newnode;
 }
 
-static DropPropertyIndexStmt *
-_copyDropPropertyIndexStmt(const DropPropertyIndexStmt *from)
-{
-	DropPropertyIndexStmt *newnode = makeNode(DropPropertyIndexStmt);
-
-	COPY_STRING_FIELD(idxname);
-	COPY_SCALAR_FIELD(behavior);
-	COPY_SCALAR_FIELD(missing_ok);
-
-	return newnode;
-}
-
 static CypherStmt *
 _copyCypherStmt(const CypherStmt *from)
 {
@@ -5547,9 +5535,6 @@ copyObject(const void *from)
 			break;
 		case T_CreatePropertyIndexStmt:
 			retval = _copyCreatePropertyIndexStmt(from);
-			break;
-		case T_DropPropertyIndexStmt:
-			retval = _copyDropPropertyIndexStmt(from);
 			break;
 		case T_CypherStmt:
 			retval = _copyCypherStmt(from);
