@@ -1016,6 +1016,22 @@ MERGE ()-[:e1 =10]->();
 
 DROP GRAPH gm CASCADE;
 
+-- null properties
+
+CREATE GRAPH nk;
+SET GRAPH_PATH = nk;
+
+CREATE VLABEL v1;
+
+SHOW null_keys;
+CREATE (a:v1 {field: null, id: 1, notes: 'should not have null field'});
+MATCH (a) RETURN a;
+SET null_keys = on;
+CREATE (a:v1 {field: null, id: 2, notes: 'should have null field'});
+MATCH (a) RETURN a;
+
+DROP GRAPH nk CASCADE;
+
 -- cleanup
 
 DROP GRAPH p CASCADE;
@@ -1027,7 +1043,6 @@ SET graph_path = agens;
 
 DROP VLABEL feature;
 DROP ELABEL supported;
-
 DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;

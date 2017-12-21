@@ -46,6 +46,7 @@
 #include "rewrite/rewriteHandler.h"
 #include "utils/builtins.h"
 #include "utils/graph.h"
+#include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
@@ -4066,9 +4067,10 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	/*
 	 * set the modified property map
 	 */
-
-	prop_map = stripNullKeys(pstate, prop_map);
-
+	if(null_keys)
+	{
+		prop_map = stripNullKeys(pstate, prop_map);
+	}
 	switch (kind)
 	{
 		case CSET_NORMAL:
@@ -4640,7 +4642,7 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 				 errmsg("property map must be of type jsonb"),
 				 parser_errposition(pstate, exprLocation(prop_map))));
 
-	if (exprKind == EXPR_KIND_INSERT_TARGET)
+	if (exprKind == EXPR_KIND_INSERT_TARGET && !null_keys)
 		prop_map = stripNullKeys(pstate, prop_map);
 
 	return resolve_future_vertex(pstate, prop_map, 0);

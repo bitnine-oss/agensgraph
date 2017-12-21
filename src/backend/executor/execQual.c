@@ -54,6 +54,7 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/graph.h"
+#include "utils/guc.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -4646,28 +4647,6 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 		Assert(exprType((Node *) k->expr) == TEXTOID &&
 			   exprType((Node *) v->expr) == JSONBOID);
 
-		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
-		/*
-		 * The evaluated value of v might be NULL. If so, omit this property
-		 * because we don't store properties that have NULL values.
-		 */
-		if (eisnull)
-			continue;
-
-		vj = DatumGetJsonb(vd);
-		it = JsonbIteratorInit(&vj->root);
-
-		/* vj might be 'null'::jsonb. If so, omit this property. */
-		if (JB_ROOT_IS_SCALAR(vj))
-		{
-			JsonbIteratorNext(&it, &vjv, true);
-			Assert(vjv.type == jbvArray);
-			JsonbIteratorNext(&it, &vjv, true);
-
-			if (vjv.type == jbvNull)
-				continue;
-		}
-
 		kd = ExecEvalExpr(k, econtext, &eisnull, NULL);
 		Assert(!eisnull);
 
@@ -4684,6 +4663,35 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 							   "jsonb strings cannot exceed %d bytes.",
 							   JENTRY_OFFLENMASK)));
 			return 0;
+		}
+
+		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
+		/*
+		 * The evaluated value of v might be NULL. If so, we regularly omit this property
+		 * because we don't store properties that have NULL values. If nulls are enabled,
+		 * we push the null value instead.
+		 */
+		if (eisnull){
+			if(null_keys){
+				pushJsonbValue(&jpstate, WJB_KEY, &kjv);
+				vjv.type = jbvNull;
+				pushJsonbValue(&jpstate, WJB_VALUE, &vjv);
+			}
+			continue;
+		}
+
+		vj = DatumGetJsonb(vd);
+		it = JsonbIteratorInit(&vj->root);
+
+		/* vj might be 'null'::jsonb. If null_keys is off, omit this property. */
+		if (JB_ROOT_IS_SCALAR(vj))
+		{
+			JsonbIteratorNext(&it, &vjv, true);
+			Assert(vjv.type == jbvArray);
+			JsonbIteratorNext(&it, &vjv, true);
+
+			if (vjv.type == jbvNull && !null_keys)
+				continue;
 		}
 		pushJsonbValue(&jpstate, WJB_KEY, &kjv);
 
@@ -4710,7 +4718,7 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 					tok = JsonbIteratorNext(&it, &ejv, false);
 					Assert(tok != WJB_DONE);
 
-					if (tok == WJB_VALUE && ejv.type == jbvNull)
+					if (tok == WJB_VALUE && ejv.type == jbvNull && !null_keys)
 						continue;
 
 					pushJsonbValue(&jpstate, WJB_KEY, &kjv);
