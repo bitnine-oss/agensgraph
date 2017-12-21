@@ -2668,6 +2668,38 @@ drop cascades to label e1
 drop cascades to label person
 drop cascades to label city
 drop cascades to label hometown
+-- null properties
+CREATE GRAPH nk;
+SET GRAPH_PATH = nk;
+CREATE VLABEL v1;
+SHOW null_keys;
+ null_keys 
+-----------
+ off
+(1 row)
+
+CREATE (a:v1 {field: null, id: 1, notes: 'should not have null field'});
+MATCH (a) RETURN a;
+                            a                            
+---------------------------------------------------------
+ v1[3.1]{"id": 1, "notes": "should not have null field"}
+(1 row)
+
+SET null_keys = on;
+CREATE (a:v1 {field: null, id: 2, notes: 'should have null field'});
+MATCH (a) RETURN a;
+                                 a                                  
+--------------------------------------------------------------------
+ v1[3.1]{"id": 1, "notes": "should not have null field"}
+ v1[3.2]{"id": 2, "field": null, "notes": "should have null field"}
+(2 rows)
+
+DROP GRAPH nk CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence nk.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label v1
 -- cleanup
 DROP GRAPH p CASCADE;
 NOTICE:  drop cascades to 5 other objects
