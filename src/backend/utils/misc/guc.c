@@ -425,6 +425,8 @@ bool		check_function_bodies = true;
 bool		default_with_oids = false;
 bool		SQL_inheritance = true;
 
+bool		null_keys = false;
+
 bool		Password_encryption = true;
 
 int			log_min_error_statement = ERROR;
@@ -1684,6 +1686,16 @@ static struct config_bool ConfigureNamesBool[] =
 		},
 		&syslog_split_messages,
 		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"null_keys", PGC_USERSET, CUSTOM_OPTIONS,
+			gettext_noop("Enables the insertion of null values into nodes and edges"),
+			NULL
+		},
+		&null_keys,
+		false,
 		NULL, NULL, NULL
 	},
 
