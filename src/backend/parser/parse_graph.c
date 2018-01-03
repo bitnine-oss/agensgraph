@@ -4067,7 +4067,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	/*
 	 * set the modified property map
 	 */
-	if(null_keys)
+	if(!null_keys)
 	{
 		prop_map = stripNullKeys(pstate, prop_map);
 	}
