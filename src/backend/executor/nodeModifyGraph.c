@@ -1309,7 +1309,6 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 			MemoryContextSwitchTo(oldmctx);
 
 			setSlotValueByName(result, newelem, gsp->variable);
-
 		}
 	}
 
@@ -1521,6 +1520,7 @@ createMergePath(ModifyGraphState *mgstate, GraphPath *path,
 		MemoryContextSwitchTo(oldmctx);
 
 		setSlotValueByName(slot, graphpath, path->variable);
+
 	}
 
 	return slot;

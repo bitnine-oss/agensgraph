@@ -3322,6 +3322,7 @@ typedef struct CypherSetClause
 	NodeTag		type;
 	CSetKind	kind;
 	List	   *items;
+	bool		is_set;
 } CypherSetClause;
 
 typedef struct CypherLoadClause
