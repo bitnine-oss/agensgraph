@@ -2669,38 +2669,67 @@ drop cascades to label person
 drop cascades to label city
 drop cascades to label hometown
 -- null properties
-CREATE GRAPH nk;
-SET GRAPH_PATH = nk;
-CREATE VLABEL v1;
-SHOW null_keys;
- null_keys 
------------
+CREATE GRAPH np;
+SET GRAPH_PATH = np;
+SHOW enable_null_properties;
+ enable_null_properties 
+------------------------
  off
 (1 row)
 
-CREATE (a:v1 {field: null, id: 1, notes: 'should not have null field'});
-MATCH (a) RETURN a;
-                            a                            
----------------------------------------------------------
- v1[3.1]{"id": 1, "notes": "should not have null field"}
-(1 row)
+SET enable_null_properties = off;
+CREATE (:v {z: null});
+CREATE (:v {z: (SELECT 'null'::jsonb)});
+CREATE (:v {z: {z: null}});
+CREATE (:v {z: (SELECT '{"z": null}'::jsonb)});
+CREATE (n:v {p: 0}) SET n.z = null, n.p = null;
+CREATE (n:v) SET n.z = (SELECT 'null'::jsonb);
+CREATE (n:v) SET n.z = {z: null};
+CREATE (n:v) SET n.z = (SELECT '{"z": null}'::jsonb);
+MATCH (n:v) RETURN n;
+        n        
+-----------------
+ v[3.1]{}
+ v[3.2]{}
+ v[3.3]{"z": {}}
+ v[3.4]{"z": {}}
+ v[3.5]{}
+ v[3.6]{}
+ v[3.7]{"z": {}}
+ v[3.8]{"z": {}}
+(8 rows)
 
-SET null_keys = on;
-CREATE (a:v1 {field: null, id: 2, notes: 'should have null field'});
-MATCH (a) RETURN a;
-                                 a                                  
---------------------------------------------------------------------
- v1[3.1]{"id": 1, "notes": "should not have null field"}
- v1[3.2]{"id": 2, "field": null, "notes": "should have null field"}
-(2 rows)
+SET enable_null_properties = on;
+CREATE (:w {z: null});
+CREATE (:w {z: (SELECT 'null'::jsonb)});
+CREATE (:w {z: {z: null}});
+CREATE (:w {z: (SELECT '{"z": null}'::jsonb)});
+CREATE (n:w {p: 0}) SET n.z = null, n.p = null;
+CREATE (n:w) SET n.z = (SELECT 'null'::jsonb);
+CREATE (n:w) SET n.z = {z: null};
+CREATE (n:w) SET n.z = (SELECT '{"z": null}'::jsonb);
+MATCH (n:w) RETURN n;
+            n             
+--------------------------
+ w[4.1]{"z": null}
+ w[4.2]{"z": null}
+ w[4.3]{"z": {"z": null}}
+ w[4.4]{"z": {"z": null}}
+ w[4.5]{}
+ w[4.6]{"z": null}
+ w[4.7]{"z": {"z": null}}
+ w[4.8]{"z": {"z": null}}
+(8 rows)
 
-DROP GRAPH nk CASCADE;
-NOTICE:  drop cascades to 4 other objects
-DETAIL:  drop cascades to sequence nk.ag_label_seq
+SET enable_null_properties = off;
+-- cleanup
+DROP GRAPH np CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence np.ag_label_seq
 drop cascades to label ag_vertex
 drop cascades to label ag_edge
-drop cascades to label v1
--- cleanup
+drop cascades to label v
+drop cascades to label w
 DROP GRAPH p CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence p.ag_label_seq
