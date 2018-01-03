@@ -1018,22 +1018,38 @@ DROP GRAPH gm CASCADE;
 
 -- null properties
 
-CREATE GRAPH nk;
-SET GRAPH_PATH = nk;
+CREATE GRAPH np;
+SET GRAPH_PATH = np;
 
-CREATE VLABEL v1;
+SHOW enable_null_properties;
 
-SHOW null_keys;
-CREATE (a:v1 {field: null, id: 1, notes: 'should not have null field'});
-MATCH (a) RETURN a;
-SET null_keys = on;
-CREATE (a:v1 {field: null, id: 2, notes: 'should have null field'});
-MATCH (a) RETURN a;
+SET enable_null_properties = off;
+CREATE (:v {z: null});
+CREATE (:v {z: (SELECT 'null'::jsonb)});
+CREATE (:v {z: {z: null}});
+CREATE (:v {z: (SELECT '{"z": null}'::jsonb)});
+CREATE (n:v {p: 0}) SET n.z = null, n.p = null;
+CREATE (n:v) SET n.z = (SELECT 'null'::jsonb);
+CREATE (n:v) SET n.z = {z: null};
+CREATE (n:v) SET n.z = (SELECT '{"z": null}'::jsonb);
+MATCH (n:v) RETURN n;
 
-DROP GRAPH nk CASCADE;
+SET enable_null_properties = on;
+CREATE (:w {z: null});
+CREATE (:w {z: (SELECT 'null'::jsonb)});
+CREATE (:w {z: {z: null}});
+CREATE (:w {z: (SELECT '{"z": null}'::jsonb)});
+CREATE (n:w {p: 0}) SET n.z = null, n.p = null;
+CREATE (n:w) SET n.z = (SELECT 'null'::jsonb);
+CREATE (n:w) SET n.z = {z: null};
+CREATE (n:w) SET n.z = (SELECT '{"z": null}'::jsonb);
+MATCH (n:w) RETURN n;
+
+SET enable_null_properties = off;
 
 -- cleanup
 
+DROP GRAPH np CASCADE;
 DROP GRAPH p CASCADE;
 DROP GRAPH u CASCADE;
 DROP GRAPH t CASCADE;
