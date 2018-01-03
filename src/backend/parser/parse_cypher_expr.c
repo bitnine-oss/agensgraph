@@ -81,6 +81,9 @@ static Node *coerce_to_jsonb(ParseState *pstate, Node *expr,
 
 static List *transformA_Star(ParseState *pstate, int location);
 
+/* GUC variable (enable/disable null properties) */
+bool		enable_null_properties = false;
+
 Node *
 transformCypherExpr(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 {

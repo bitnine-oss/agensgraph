@@ -48,6 +48,7 @@
 #include "optimizer/geqo.h"
 #include "optimizer/paths.h"
 #include "optimizer/planmain.h"
+#include "parser/parse_cypher_expr.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_graph.h"
 #include "parser/parse_type.h"
@@ -424,8 +425,6 @@ bool		row_security;
 bool		check_function_bodies = true;
 bool		default_with_oids = false;
 bool		SQL_inheritance = true;
-
-bool		null_keys = false;
 
 bool		Password_encryption = true;
 
@@ -1690,11 +1689,11 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 
 	{
-		{"null_keys", PGC_USERSET, CUSTOM_OPTIONS,
-			gettext_noop("Enables the insertion of null values into nodes and edges"),
+		{"enable_null_properties", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
+			gettext_noop("Enables the insertion of null properties into vertices and edges"),
 			NULL
 		},
-		&null_keys,
+		&enable_null_properties,
 		false,
 		NULL, NULL, NULL
 	},

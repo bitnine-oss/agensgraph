@@ -49,12 +49,12 @@
 #include "nodes/nodeFuncs.h"
 #include "optimizer/planner.h"
 #include "parser/parse_coerce.h"
+#include "parser/parse_cypher_expr.h"
 #include "parser/parsetree.h"
 #include "pgstat.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/graph.h"
-#include "utils/guc.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -4632,9 +4632,10 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 		ExprState  *v;
 		bool		eisnull;
 		Datum		vd;
+		bool		vscalar;
+		JsonbValue	vjv;
 		Jsonb	   *vj;
 		JsonbIterator *it;
-		JsonbValue	vjv;
 		Datum		kd;
 		char	   *ks;
 		JsonbValue	kjv;
@@ -4646,6 +4647,44 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 
 		Assert(exprType((Node *) k->expr) == TEXTOID &&
 			   exprType((Node *) v->expr) == JSONBOID);
+
+		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
+		if (eisnull)
+		{
+			/*
+			 * The evaluated value of v might be NULL. If so, set type of vjv
+			 * to jbvNull for later use.
+			 */
+			vjv.type = jbvNull;
+			vscalar = true;
+		}
+		else
+		{
+			vj = DatumGetJsonb(vd);
+			it = JsonbIteratorInit(&vj->root);
+
+			/* vj might be 'null'::jsonb */
+			if (JB_ROOT_IS_SCALAR(vj))
+			{
+				JsonbIteratorNext(&it, &vjv, true);
+				Assert(vjv.type == jbvArray);
+				JsonbIteratorNext(&it, &vjv, true);
+
+				vscalar = true;
+			}
+			else
+			{
+				vscalar = false;
+			}
+		}
+
+		/*
+		 * We regularly omit null property because we don't store properties
+		 * that have null values. If nulls are enabled, we push the null value
+		 * instead.
+		 */
+		if (vscalar && vjv.type == jbvNull && !enable_null_properties)
+			continue;
 
 		kd = ExecEvalExpr(k, econtext, &eisnull, NULL);
 		Assert(!eisnull);
@@ -4664,38 +4703,9 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 							   JENTRY_OFFLENMASK)));
 			return 0;
 		}
-
-		vd = ExecEvalExpr(v, econtext, &eisnull, NULL);
-		/*
-		 * The evaluated value of v might be NULL. If so, we regularly omit this property
-		 * because we don't store properties that have NULL values. If nulls are enabled,
-		 * we push the null value instead.
-		 */
-		if (eisnull){
-			if(null_keys){
-				pushJsonbValue(&jpstate, WJB_KEY, &kjv);
-				vjv.type = jbvNull;
-				pushJsonbValue(&jpstate, WJB_VALUE, &vjv);
-			}
-			continue;
-		}
-
-		vj = DatumGetJsonb(vd);
-		it = JsonbIteratorInit(&vj->root);
-
-		/* vj might be 'null'::jsonb. If null_keys is off, omit this property. */
-		if (JB_ROOT_IS_SCALAR(vj))
-		{
-			JsonbIteratorNext(&it, &vjv, true);
-			Assert(vjv.type == jbvArray);
-			JsonbIteratorNext(&it, &vjv, true);
-
-			if (vjv.type == jbvNull && !null_keys)
-				continue;
-		}
 		pushJsonbValue(&jpstate, WJB_KEY, &kjv);
 
-		if (JB_ROOT_IS_SCALAR(vj))
+		if (vscalar)
 		{
 			Assert(jpstate->contVal.type == jbvObject);
 			pushJsonbValue(&jpstate, WJB_VALUE, &vjv);
@@ -4718,7 +4728,8 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 					tok = JsonbIteratorNext(&it, &ejv, false);
 					Assert(tok != WJB_DONE);
 
-					if (tok == WJB_VALUE && ejv.type == jbvNull && !null_keys)
+					if (tok == WJB_VALUE && ejv.type == jbvNull &&
+						!enable_null_properties)
 						continue;
 
 					pushJsonbValue(&jpstate, WJB_KEY, &kjv);
