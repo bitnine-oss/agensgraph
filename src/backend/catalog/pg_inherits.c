@@ -372,3 +372,121 @@ oid_cmp(const void *p1, const void *p2)
 		return 1;
 	return 0;
 }
+
+List *
+find_inheritance_parents( Oid childrelId, LOCKMODE lockmode )
+{
+    List       *list = NIL;
+    Relation    relation;
+    SysScanDesc scan;
+    ScanKeyData key[1];
+    HeapTuple	inheritsTuple;
+    Oid			inhParentId;
+    Oid		   *oidarr;
+    int			maxoids,
+                numoids,
+                i;
+
+    maxoids = 32;
+    oidarr = (Oid *) palloc( maxoids * sizeof( Oid ) );
+    numoids = 0;
+
+    relation = heap_open( InheritsRelationId, AccessShareLock );
+
+    ScanKeyInit( &key[0],
+                 Anum_pg_inherits_inhrelid,
+                 BTEqualStrategyNumber, F_OIDEQ,
+                 ObjectIdGetDatum( childrelId ) );
+
+    scan = systable_beginscan( relation, InheritsRelIndexId, true, NULL, 1, key );
+
+    while( ( inheritsTuple = systable_getnext( scan ) ) != NULL )
+    {
+        inhParentId = ( (Form_pg_inherits) GETSTRUCT( inheritsTuple ) )->inhparent;
+        if( numoids >= maxoids )
+        {
+            maxoids *= 2;
+            oidarr = (Oid *) repalloc( oidarr, maxoids * sizeof( Oid ) );
+        }
+        oidarr[numoids++] = inhParentId;
+    }
+
+    systable_endscan( scan );
+
+    heap_close( relation, AccessShareLock );
+
+    if( numoids > 1 )
+        qsort( oidarr, numoids, sizeof( Oid ), oid_cmp );
+
+    for( i = 0; i < numoids; i++ )
+    {
+        inhParentId = oidarr[i];
+
+        if( lockmode != NoLock )
+        {
+            LockRelationOid( inhParentId, lockmode );
+
+            if( !SearchSysCacheExists1( RELOID, ObjectIdGetDatum( inhParentId ) ) )
+            {
+                UnlockRelationOid( inhParentId, lockmode );
+                continue;
+            }
+        }
+
+        list = lappend_oid( list, inhParentId );
+    }
+
+    pfree( oidarr );
+
+    return list;
+}
+
+List *
+find_all_ancestors( Oid childrelId, LOCKMODE lockmode, List **numchildren )
+{
+    List	   *rels_list,
+               *rel_numchildren;
+    ListCell   *l;
+
+    rels_list = list_make1_oid( childrelId );
+    rel_numchildren = list_make1_int( 0 );
+
+    foreach( l, rels_list )
+    {
+        Oid       currRel = lfirst_oid( l );
+        List     *currParents;
+        ListCell *lc;
+
+        currParents = find_inheritance_parents( currRel, lockmode );
+
+        foreach( lc, currParents )
+        {
+            Oid			parent_oid = lfirst_oid( lc );
+            bool		found = false;
+            ListCell   *lo;
+            ListCell   *li;
+
+            forboth( lo, rels_list, li, rel_numchildren )
+            {
+                if( lfirst_oid( lo ) == parent_oid )
+                {
+                    lfirst_int( li )++;
+                    found = true;
+                    break;
+                }
+            }
+
+            if( !found )
+            {
+                rels_list = lappend_oid( rels_list, parent_oid );
+                rel_numchildren = lappend_int( rel_numchildren, 1 );
+            }
+        }
+    }
+
+    if( numchildren )
+        *numchildren = rel_numchildren;
+    else
+        list_free( rel_numchildren );
+    return rels_list;
+}
