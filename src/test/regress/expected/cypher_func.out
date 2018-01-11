@@ -1,0 +1,758 @@
+--
+-- labesl()
+--
+--
+-- simple test
+--
+--
+-- prepare
+--
+drop graph simpletest cascade;
+ERROR:  graph "simpletest" does not exist
+drop graph complextest1 cascade;
+ERROR:  graph "complextest1" does not exist
+drop graph complextest2 cascade;
+ERROR:  graph "complextest2" does not exist
+--
+-- set graph path
+--
+create graph simpletest;
+set graph_path=simpletest;
+--
+-- make vlabels
+--          A
+--          |
+--  B       C
+--  |       |
+--  ----D----
+--
+create vlabel a;
+create vlabel b;
+create vlabel c inherits ( a );
+create vlabel d inherits ( b , c );
+--
+-- make nodes
+--
+create (n:a {name:'nA'} ) return n;
+          n           
+----------------------
+ a[3.1]{"name": "nA"}
+(1 row)
+
+create (n:b {name:'nB'} ) return n;
+          n           
+----------------------
+ b[4.1]{"name": "nB"}
+(1 row)
+
+create (n:c {name:'nC'} ) return n;
+          n           
+----------------------
+ c[5.1]{"name": "nC"}
+(1 row)
+
+create (n:d {name:'nD'} ) return n;
+          n           
+----------------------
+ d[6.1]{"name": "nD"}
+(1 row)
+
+--
+-- label()
+--
+match (x:a) return x.name, label(x);
+ name | label 
+------+-------
+ "nA" | "a"
+ "nC" | "c"
+ "nD" | "d"
+(3 rows)
+
+match (x:b) return x.name, label(x);
+ name | label 
+------+-------
+ "nB" | "b"
+ "nD" | "d"
+(2 rows)
+
+match (x:c) return x.name, label(x);
+ name | label 
+------+-------
+ "nC" | "c"
+ "nD" | "d"
+(2 rows)
+
+match (x:d) return x.name, label(x);
+ name | label 
+------+-------
+ "nD" | "d"
+(1 row)
+
+--
+-- lables()
+--
+match (x:a) return x.name, labels(x);
+ name |      labels       
+------+-------------------
+ "nA" | ["a"]
+ "nC" | ["c , a"]
+ "nD" | ["d , b , c , a"]
+(3 rows)
+
+match (x:b) return x.name, labels(x);
+ name |      labels       
+------+-------------------
+ "nB" | ["b"]
+ "nD" | ["d , b , c , a"]
+(2 rows)
+
+match (x:c) return x.name, labels(x);
+ name |      labels       
+------+-------------------
+ "nC" | ["c , a"]
+ "nD" | ["d , b , c , a"]
+(2 rows)
+
+match (x:d) return x.name, labels(x);
+ name |      labels       
+------+-------------------
+ "nD" | ["d , b , c , a"]
+(1 row)
+
+--
+-- complex test 1
+--
+--
+-- set graph path
+--
+create graph complextest1;
+set graph_path=complextest1;
+--
+-- make vlabels
+--                     A
+--                     |
+--                     B       C
+--                     |       |
+-- --------D--------   ----E----   F   ----G
+-- |       |       |       |       |   |   |
+-- H       I       J       --------K----   |
+--         |       |               |       |
+--         ----------------L----------------
+--
+create vlabel a;
+create vlabel b inherits( a );
+create vlabel c;
+create vlabel d;
+create vlabel e inherits( b , c );
+create vlabel f;
+create vlabel g;
+create vlabel h inherits( d );
+create vlabel i inherits( d );
+create vlabel j inherits( d );
+create vlabel k inherits( e , f , g );
+create vlabel l inherits( i , j , k , g );
+--
+-- make nodes
+--
+create (n:a {name:'nA'} ) return n;
+          n           
+----------------------
+ a[3.1]{"name": "nA"}
+(1 row)
+
+create (n:b {name:'nB'} ) return n;
+          n           
+----------------------
+ b[4.1]{"name": "nB"}
+(1 row)
+
+create (n:c {name:'nC'} ) return n;
+          n           
+----------------------
+ c[5.1]{"name": "nC"}
+(1 row)
+
+create (n:d {name:'nD'} ) return n;
+          n           
+----------------------
+ d[6.1]{"name": "nD"}
+(1 row)
+
+create (n:e {name:'nE'} ) return n;
+          n           
+----------------------
+ e[7.1]{"name": "nE"}
+(1 row)
+
+create (n:f {name:'nF'} ) return n;
+          n           
+----------------------
+ f[8.1]{"name": "nF"}
+(1 row)
+
+create (n:g {name:'nG'} ) return n;
+          n           
+----------------------
+ g[9.1]{"name": "nG"}
+(1 row)
+
+create (n:h {name:'nH'} ) return n;
+           n           
+-----------------------
+ h[10.1]{"name": "nH"}
+(1 row)
+
+create (n:i {name:'nI'} ) return n;
+           n           
+-----------------------
+ i[11.1]{"name": "nI"}
+(1 row)
+
+create (n:j {name:'nJ'} ) return n;
+           n           
+-----------------------
+ j[12.1]{"name": "nJ"}
+(1 row)
+
+create (n:k {name:'nK'} ) return n;
+           n           
+-----------------------
+ k[13.1]{"name": "nK"}
+(1 row)
+
+create (n:l {name:'nL'} ) return n;
+           n           
+-----------------------
+ l[14.1]{"name": "nL"}
+(1 row)
+
+--
+-- label()
+--
+match (x:a) return x.name, label(x);
+ name | label 
+------+-------
+ "nA" | "a"
+ "nB" | "b"
+ "nE" | "e"
+ "nK" | "k"
+ "nL" | "l"
+(5 rows)
+
+match (x:b) return x.name, label(x);
+ name | label 
+------+-------
+ "nB" | "b"
+ "nE" | "e"
+ "nK" | "k"
+ "nL" | "l"
+(4 rows)
+
+match (x:c) return x.name, label(x);
+ name | label 
+------+-------
+ "nC" | "c"
+ "nE" | "e"
+ "nK" | "k"
+ "nL" | "l"
+(4 rows)
+
+match (x:d) return x.name, label(x);
+ name | label 
+------+-------
+ "nD" | "d"
+ "nH" | "h"
+ "nI" | "i"
+ "nJ" | "j"
+ "nL" | "l"
+(5 rows)
+
+match (x:e) return x.name, label(x);
+ name | label 
+------+-------
+ "nE" | "e"
+ "nK" | "k"
+ "nL" | "l"
+(3 rows)
+
+match (x:f) return x.name, label(x);
+ name | label 
+------+-------
+ "nF" | "f"
+ "nK" | "k"
+ "nL" | "l"
+(3 rows)
+
+match (x:g) return x.name, label(x);
+ name | label 
+------+-------
+ "nG" | "g"
+ "nK" | "k"
+ "nL" | "l"
+(3 rows)
+
+match (x:h) return x.name, label(x);
+ name | label 
+------+-------
+ "nH" | "h"
+(1 row)
+
+match (x:i) return x.name, label(x);
+ name | label 
+------+-------
+ "nI" | "i"
+ "nL" | "l"
+(2 rows)
+
+match (x:j) return x.name, label(x);
+ name | label 
+------+-------
+ "nJ" | "j"
+ "nL" | "l"
+(2 rows)
+
+match (x:k) return x.name, label(x);
+ name | label 
+------+-------
+ "nK" | "k"
+ "nL" | "l"
+(2 rows)
+
+match (x:l) return x.name, label(x);
+ name | label 
+------+-------
+ "nL" | "l"
+(1 row)
+
+--
+-- labels()
+--
+match (x:a) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nA" | ["a"]
+ "nB" | ["b , a"]
+ "nE" | ["e , b , c , a"]
+ "nK" | ["k , e , f , g , b , c , a"]
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(5 rows)
+
+match (x:b) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nB" | ["b , a"]
+ "nE" | ["e , b , c , a"]
+ "nK" | ["k , e , f , g , b , c , a"]
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(4 rows)
+
+match (x:c) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nC" | ["c"]
+ "nE" | ["e , b , c , a"]
+ "nK" | ["k , e , f , g , b , c , a"]
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(4 rows)
+
+match (x:d) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nD" | ["d"]
+ "nH" | ["h , d"]
+ "nI" | ["i , d"]
+ "nJ" | ["j , d"]
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(5 rows)
+
+match (x:e) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nE" | ["e , b , c , a"]
+ "nK" | ["k , e , f , g , b , c , a"]
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(3 rows)
+
+match (x:f) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nF" | ["f"]
+ "nK" | ["k , e , f , g , b , c , a"]
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(3 rows)
+
+match (x:g) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nG" | ["g"]
+ "nK" | ["k , e , f , g , b , c , a"]
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(3 rows)
+
+match (x:h) return x.name, labels(x);
+ name |  labels   
+------+-----------
+ "nH" | ["h , d"]
+(1 row)
+
+match (x:i) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nI" | ["i , d"]
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(2 rows)
+
+match (x:j) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nJ" | ["j , d"]
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(2 rows)
+
+match (x:k) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nK" | ["k , e , f , g , b , c , a"]
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(2 rows)
+
+match (x:l) return x.name, labels(x);
+ name |                    labels                     
+------+-----------------------------------------------
+ "nL" | ["l , g , i , j , k , d , e , f , b , c , a"]
+(1 row)
+
+--
+-- complex test 2 
+--
+--
+-- set graph path
+--
+create graph complextest2;
+set graph_path=complextest2;
+--
+-- make vlabels
+-- ----A------------
+-- |   |       B   |
+-- |   |       |   |
+-- |   ----D----   |
+-- |       |       |
+-- |       E--   --F
+-- |         |   |
+-- ----C     --G--
+--     |      | |
+--     ----H--- ---I
+--         |       | 
+--         ----J----
+--
+create vlabel a;
+create vlabel b;
+create vlabel c inherits( a );
+create vlabel d inherits( a , b );
+create vlabel e inherits( d );
+create vlabel f inherits( a );
+create vlabel g inherits( e , f );
+create vlabel h inherits( c , g );
+create vlabel i inherits( g );
+create vlabel j inherits( h , i );
+--
+-- make nodes
+--
+create (n:a {name:'nA'} ) return n;
+          n           
+----------------------
+ a[3.1]{"name": "nA"}
+(1 row)
+
+create (n:b {name:'nB'} ) return n;
+          n           
+----------------------
+ b[4.1]{"name": "nB"}
+(1 row)
+
+create (n:c {name:'nC'} ) return n;
+          n           
+----------------------
+ c[5.1]{"name": "nC"}
+(1 row)
+
+create (n:d {name:'nD'} ) return n;
+          n           
+----------------------
+ d[6.1]{"name": "nD"}
+(1 row)
+
+create (n:e {name:'nE'} ) return n;
+          n           
+----------------------
+ e[7.1]{"name": "nE"}
+(1 row)
+
+create (n:f {name:'nF'} ) return n;
+          n           
+----------------------
+ f[8.1]{"name": "nF"}
+(1 row)
+
+create (n:g {name:'nG'} ) return n;
+          n           
+----------------------
+ g[9.1]{"name": "nG"}
+(1 row)
+
+create (n:h {name:'nH'} ) return n;
+           n           
+-----------------------
+ h[10.1]{"name": "nH"}
+(1 row)
+
+create (n:i {name:'nI'} ) return n;
+           n           
+-----------------------
+ i[11.1]{"name": "nI"}
+(1 row)
+
+create (n:j {name:'nJ'} ) return n;
+           n           
+-----------------------
+ j[12.1]{"name": "nJ"}
+(1 row)
+
+--
+-- label()
+--
+match (x:a) return x.name, label(x);
+ name | label 
+------+-------
+ "nA" | "a"
+ "nC" | "c"
+ "nD" | "d"
+ "nF" | "f"
+ "nH" | "h"
+ "nE" | "e"
+ "nG" | "g"
+ "nJ" | "j"
+ "nI" | "i"
+(9 rows)
+
+match (x:b) return x.name, label(x);
+ name | label 
+------+-------
+ "nB" | "b"
+ "nD" | "d"
+ "nE" | "e"
+ "nG" | "g"
+ "nH" | "h"
+ "nI" | "i"
+ "nJ" | "j"
+(7 rows)
+
+match (x:c) return x.name, label(x);
+ name | label 
+------+-------
+ "nC" | "c"
+ "nH" | "h"
+ "nJ" | "j"
+(3 rows)
+
+match (x:d) return x.name, label(x);
+ name | label 
+------+-------
+ "nD" | "d"
+ "nE" | "e"
+ "nG" | "g"
+ "nH" | "h"
+ "nI" | "i"
+ "nJ" | "j"
+(6 rows)
+
+match (x:e) return x.name, label(x);
+ name | label 
+------+-------
+ "nE" | "e"
+ "nG" | "g"
+ "nH" | "h"
+ "nI" | "i"
+ "nJ" | "j"
+(5 rows)
+
+match (x:f) return x.name, label(x);
+ name | label 
+------+-------
+ "nF" | "f"
+ "nG" | "g"
+ "nH" | "h"
+ "nI" | "i"
+ "nJ" | "j"
+(5 rows)
+
+match (x:g) return x.name, label(x);
+ name | label 
+------+-------
+ "nG" | "g"
+ "nH" | "h"
+ "nI" | "i"
+ "nJ" | "j"
+(4 rows)
+
+match (x:h) return x.name, label(x);
+ name | label 
+------+-------
+ "nH" | "h"
+ "nJ" | "j"
+(2 rows)
+
+match (x:i) return x.name, label(x);
+ name | label 
+------+-------
+ "nI" | "i"
+ "nJ" | "j"
+(2 rows)
+
+match (x:j) return x.name, label(x);
+ name | label 
+------+-------
+ "nJ" | "j"
+(1 row)
+
+--
+-- labels()
+--
+match (x:a) return x.name, labels(x);
+ name |                  labels                   
+------+-------------------------------------------
+ "nA" | ["a"]
+ "nC" | ["c , a"]
+ "nD" | ["d , a , b"]
+ "nF" | ["f , a"]
+ "nH" | ["h , c , g , a , e , f , d , b"]
+ "nE" | ["e , d , a , b"]
+ "nG" | ["g , e , f , d , a , b"]
+ "nJ" | ["j , h , i , c , g , a , e , f , d , b"]
+ "nI" | ["i , g , e , f , d , a , b"]
+(9 rows)
+
+match (x:b) return x.name, labels(x);
+ name |                  labels                   
+------+-------------------------------------------
+ "nB" | ["b"]
+ "nD" | ["d , a , b"]
+ "nE" | ["e , d , a , b"]
+ "nG" | ["g , e , f , d , a , b"]
+ "nH" | ["h , c , g , a , e , f , d , b"]
+ "nI" | ["i , g , e , f , d , a , b"]
+ "nJ" | ["j , h , i , c , g , a , e , f , d , b"]
+(7 rows)
+
+match (x:c) return x.name, labels(x);
+ name |                  labels                   
+------+-------------------------------------------
+ "nC" | ["c , a"]
+ "nH" | ["h , c , g , a , e , f , d , b"]
+ "nJ" | ["j , h , i , c , g , a , e , f , d , b"]
+(3 rows)
+
+match (x:d) return x.name, labels(x);
+ name |                  labels                   
+------+-------------------------------------------
+ "nD" | ["d , a , b"]
+ "nE" | ["e , d , a , b"]
+ "nG" | ["g , e , f , d , a , b"]
+ "nH" | ["h , c , g , a , e , f , d , b"]
+ "nI" | ["i , g , e , f , d , a , b"]
+ "nJ" | ["j , h , i , c , g , a , e , f , d , b"]
+(6 rows)
+
+match (x:e) return x.name, labels(x);
+ name |                  labels                   
+------+-------------------------------------------
+ "nE" | ["e , d , a , b"]
+ "nG" | ["g , e , f , d , a , b"]
+ "nH" | ["h , c , g , a , e , f , d , b"]
+ "nI" | ["i , g , e , f , d , a , b"]
+ "nJ" | ["j , h , i , c , g , a , e , f , d , b"]
+(5 rows)
+
+match (x:f) return x.name, labels(x);
+ name |                  labels                   
+------+-------------------------------------------
+ "nF" | ["f , a"]
+ "nG" | ["g , e , f , d , a , b"]
+ "nH" | ["h , c , g , a , e , f , d , b"]
+ "nI" | ["i , g , e , f , d , a , b"]
+ "nJ" | ["j , h , i , c , g , a , e , f , d , b"]
+(5 rows)
+
+match (x:g) return x.name, labels(x);
+ name |                  labels                   
+------+-------------------------------------------
+ "nG" | ["g , e , f , d , a , b"]
+ "nH" | ["h , c , g , a , e , f , d , b"]
+ "nI" | ["i , g , e , f , d , a , b"]
+ "nJ" | ["j , h , i , c , g , a , e , f , d , b"]
+(4 rows)
+
+match (x:h) return x.name, labels(x);
+ name |                  labels                   
+------+-------------------------------------------
+ "nH" | ["h , c , g , a , e , f , d , b"]
+ "nJ" | ["j , h , i , c , g , a , e , f , d , b"]
+(2 rows)
+
+match (x:i) return x.name, labels(x);
+ name |                  labels                   
+------+-------------------------------------------
+ "nI" | ["i , g , e , f , d , a , b"]
+ "nJ" | ["j , h , i , c , g , a , e , f , d , b"]
+(2 rows)
+
+match (x:j) return x.name, labels(x);
+ name |                  labels                   
+------+-------------------------------------------
+ "nJ" | ["j , h , i , c , g , a , e , f , d , b"]
+(1 row)
+
+--
+-- cleanup
+--
+drop graph complextest2 cascade;
+NOTICE:  drop cascades to 13 other objects
+DETAIL:  drop cascades to sequence complextest2.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label a
+drop cascades to label b
+drop cascades to label c
+drop cascades to label d
+drop cascades to label e
+drop cascades to label f
+drop cascades to label g
+drop cascades to label h
+drop cascades to label i
+drop cascades to label j
+drop graph complextest1 cascade;
+NOTICE:  drop cascades to 15 other objects
+DETAIL:  drop cascades to sequence complextest1.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label a
+drop cascades to label b
+drop cascades to label c
+drop cascades to label d
+drop cascades to label e
+drop cascades to label f
+drop cascades to label g
+drop cascades to label h
+drop cascades to label i
+drop cascades to label j
+drop cascades to label k
+drop cascades to label l
+drop graph simpletest cascade;
+NOTICE:  drop cascades to 7 other objects
+DETAIL:  drop cascades to sequence simpletest.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label a
+drop cascades to label b
+drop cascades to label c
+drop cascades to label d

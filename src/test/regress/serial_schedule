@@ -173,5 +173,6 @@ test: cypher_ddl
 test: cypher_expr
 test: cypher_dml
 test: cypher_eager
+test: cypher_func
 test: sql_restriction
 test: propertyindex
