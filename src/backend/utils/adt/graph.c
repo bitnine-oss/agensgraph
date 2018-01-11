@@ -17,6 +17,7 @@
 #include "catalog/ag_graph_fn.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_inherits_fn.h"
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "libpq/libpq.h"
@@ -52,6 +53,7 @@ static void graphid_out_si(StringInfo si, Datum graphid);
 static int graphid_cmp(FunctionCallInfo fcinfo);
 static Jsonb *int_to_jsonb(int i);
 static LabelOutData *cache_label(FmgrInfo *flinfo, uint16 labid);
+static LabelOutData *cache_labels(FmgrInfo *flinfo, uint16 labid);
 static void elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo);
 static void get_elem_type_output(ArrayMetaState *state, Oid elem_type,
 								 MemoryContext mctx);
@@ -1120,28 +1122,28 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 Datum
 vertex_labels(PG_FUNCTION_ARGS)
 {
-	Graphid		id;
-	LabelOutData *my_extra;
-	char	   *label;
-	JsonbValue	jv;
-	JsonbParseState *jpstate = NULL;
-	JsonbValue *ajv;
+    Graphid          id;
+    LabelOutData    *my_extra;
+    char            *labels;
+    JsonbValue       jv;
+    JsonbParseState *jpstate = NULL;
+    JsonbValue      *ajv;
 
-	id = DatumGetGraphid(getVertexIdDatum(PG_GETARG_DATUM(0)));
+    id = DatumGetGraphid(getVertexIdDatum(PG_GETARG_DATUM(0)));
 
-	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
+    my_extra = cache_labels(fcinfo->flinfo, GraphidGetLabid(id));
 
-	label = NameStr(my_extra->label);
+    labels = NameStr(my_extra->label);
 
-	jv.type = jbvString;
-	jv.val.string.len = strlen(label);
-	jv.val.string.val = label;
+    jv.type = jbvString;
+    jv.val.string.len = strlen(labels);
+    jv.val.string.val = labels;
 
-	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
-	pushJsonbValue(&jpstate, WJB_ELEM, &jv);
-	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+    pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+    pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+    ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
 
-	PG_RETURN_JSONB(JsonbValueToJsonb(ajv));
+    PG_RETURN_JSONB(JsonbValueToJsonb(ajv));
 }
 
 Datum
@@ -1495,4 +1497,71 @@ gin_compare_partial_graphid(FunctionCallInfo fcinfo)
 	}
 
 	PG_RETURN_INT32(res);
+}
+
+static LabelOutData *
+cache_labels( FmgrInfo *flinfo, uint16 labid )
+{
+    MemoryContext oldMemoryContext;
+    LabelOutData *my_extra;
+
+    AssertArg(flinfo != NULL);
+
+    oldMemoryContext = MemoryContextSwitchTo(flinfo->fn_mcxt);
+
+    my_extra = (LabelOutData *) flinfo->fn_extra;
+    if (my_extra == NULL)
+    {
+        flinfo->fn_extra = palloc(sizeof(*my_extra));
+        my_extra = (LabelOutData *) flinfo->fn_extra;
+        my_extra->label_labid = 0;
+    }
+
+    if (my_extra->label_labid != labid)
+    {
+        Oid       graphoid = get_graph_path_oid();
+        Oid       labRelId;
+        List     *ancestorRelIds;
+        ListCell *l;
+
+        labRelId = get_labid_relid( graphoid, labid );
+
+        ancestorRelIds = find_all_ancestors( labRelId, AccessShareLock, NULL );
+
+        MemSetLoop(NameStr(my_extra->label), '\0', sizeof(my_extra->label));
+
+        foreach( l, ancestorRelIds )
+        {
+            Oid     ancestorRelId = lfirst_oid( l );
+            uint16  ancestorLabId;
+            char   *ancestorLabName;
+
+            ancestorLabId   = get_relid_labid( ancestorRelId );
+            ancestorLabName = get_labid_labname( graphoid, ancestorLabId );
+
+            if( ancestorLabName == NULL)
+            {
+                ancestorLabName = "?";
+            }
+
+            if( strcmp( ancestorLabName, "ag_vertex" ) != 0 )
+            {
+                if( strlen( NameStr( my_extra->label ) ) != 0 )
+                {
+                    strncat(NameStr(my_extra->label), " , ", 3);
+                    strncat(NameStr(my_extra->label), ancestorLabName, strlen(ancestorLabName) );
+                }
+                else /* strcmp( ancestorLabName, "ag_vertex" ) != 0 */ 
+                {
+                    strncpy(NameStr(my_extra->label), ancestorLabName, strlen(ancestorLabName) );
+                }
+            }
+        }
+
+        my_extra->label_labid = labid;
+    }
+
+    MemoryContextSwitchTo(oldMemoryContext);
+
+    return my_extra;
 }
