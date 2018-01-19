@@ -48,6 +48,7 @@
 #include "optimizer/geqo.h"
 #include "optimizer/paths.h"
 #include "optimizer/planmain.h"
+#include "parser/parse_cypher_expr.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_graph.h"
 #include "parser/parse_type.h"
@@ -1684,6 +1685,16 @@ static struct config_bool ConfigureNamesBool[] =
 		},
 		&syslog_split_messages,
 		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"allow_null_properties", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
+			gettext_noop("Enables the insertion of null properties into vertices and edges"),
+			NULL
+		},
+		&allow_null_properties,
+		false,
 		NULL, NULL, NULL
 	},
 
