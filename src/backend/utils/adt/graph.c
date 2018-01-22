@@ -15,6 +15,7 @@
 #include "access/htup_details.h"
 #include "access/tupdesc.h"
 #include "catalog/ag_graph_fn.h"
+#include "catalog/ag_label.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "catalog/pg_inherits_fn.h"
@@ -29,6 +30,8 @@
 #include "utils/int8.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
+#include "utils/syscache.h"
 #include "utils/typcache.h"
 
 #define GRAPHID_FMTSTR			"%hu." UINT64_FORMAT
@@ -49,6 +52,12 @@ typedef enum EdgeVertexKind {
 	EVK_END
 } EdgeVertexKind;
 
+typedef struct LabelsOutData {
+	MemoryContext mctx;
+	uint16		label_labid;
+	Jsonb	   *labels;
+} LabelsOutData;
+
 static void graphid_out_si(StringInfo si, Datum graphid);
 static int graphid_cmp(FunctionCallInfo fcinfo);
 static Jsonb *int_to_jsonb(int i);
@@ -60,6 +69,7 @@ static Datum array_iter_next_(array_iter *it, int idx, ArrayMetaState *state);
 static void deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull);
 static Datum tuple_getattr(HeapTupleHeader tuphdr, int attnum);
 static Datum getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk);
+static LabelsOutData *cache_labels(FmgrInfo *flinfo, uint16 labid);
 static Datum makeArrayTypeDatum(Datum *elems, int nelem, Oid type);
 static Datum graphid_minval(void);
 
@@ -824,7 +834,7 @@ cache_label(FmgrInfo *flinfo, uint16 labid)
 
 		label = get_labid_labname(graphoid, labid);
 		if (label == NULL)
-			elog(ERROR, "cache lookup failed for label %u", labid);
+			elog(ERROR, "cache lookup failed for label %hu", labid);
 
 		my_extra->label_labid = labid;
 		strncpy(NameStr(my_extra->label), label, sizeof(my_extra->label));
@@ -1121,48 +1131,104 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 Datum
 vertex_labels(PG_FUNCTION_ARGS)
 {
-	Graphid          id;
-	JsonbValue       jv;
-	JsonbParseState *jpstate = NULL;
-	JsonbValue      *ajv;
-	Oid              graphoid = get_graph_path_oid();
-	Oid              labRelid;
-	List            *ancestorRelids;
-	ListCell        *l;
+	Graphid		id;
+	LabelsOutData *my_extra;
 
-	/* get relation ids of ancestor label */
 	id = DatumGetGraphid(getVertexIdDatum(PG_GETARG_DATUM(0)));
-	labRelid = get_labid_relid(graphoid, GraphidGetLabid(id));
-	ancestorRelids = find_all_ancestors( labRelid, AccessShareLock, NULL );
 
-	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+	my_extra = cache_labels(fcinfo->flinfo, GraphidGetLabid(id));
 
-	foreach(l, ancestorRelids)
+	PG_RETURN_JSONB(my_extra->labels);
+}
+
+static LabelsOutData *
+cache_labels(FmgrInfo *flinfo, uint16 labid)
+{
+	MemoryContext oldMemoryContext;
+	LabelsOutData *my_extra;
+
+	AssertArg(flinfo != NULL);
+
+	oldMemoryContext = MemoryContextSwitchTo(flinfo->fn_mcxt);
+
+	my_extra = (LabelsOutData *) flinfo->fn_extra;
+	if (my_extra == NULL)
 	{
-		Oid     ancestorRelid = lfirst_oid(l);
-		uint16  ancestorLabid;
-		char   *ancestorLabname;
-
-		ancestorLabid   = get_relid_labid(ancestorRelid);
-		ancestorLabname = get_labid_labname(graphoid, ancestorLabid);
-		if (ancestorLabname == NULL)
-			elog(ERROR, "cache lookup failed for label %u", ancestorLabid);
-
-		if (strcmp(ancestorLabname, "ag_vertex") != 0)
-		{
-			jv.type = jbvString;
-			jv.val.string.len = strlen(ancestorLabname);
-			jv.val.string.val = ancestorLabname;
-
-			pushJsonbValue(&jpstate, WJB_ELEM, &jv);
-		}
-
-
+		flinfo->fn_extra = palloc(sizeof(*my_extra));
+		my_extra = (LabelsOutData *) flinfo->fn_extra;
+		my_extra->mctx = AllocSetContextCreate(CurrentMemoryContext,
+											   "vertex_labels() cache",
+											   ALLOCSET_DEFAULT_SIZES);
+		my_extra->label_labid = 0;
+		my_extra->labels = NULL;
 	}
 
-	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+	if (my_extra->label_labid != labid)
+	{
+		MemoryContext funcMemoryContext;
+		Oid			graphoid;
+		Oid			label_relid;
+		List	   *ancestor_relids;
+		JsonbParseState *jpstate = NULL;
+		ListCell   *li;
+		JsonbValue *labels;
 
-	PG_RETURN_JSONB(JsonbValueToJsonb(ajv));
+		if (my_extra->labels != NULL)
+			pfree(my_extra->labels);
+		MemoryContextReset(my_extra->mctx);
+
+		funcMemoryContext = MemoryContextSwitchTo(my_extra->mctx);
+
+		graphoid = get_graph_path_oid();
+
+		/* get relation IDs of ancestor labels */
+		label_relid = get_labid_relid(graphoid, labid);
+		ancestor_relids = find_all_ancestors(label_relid, AccessShareLock);
+
+		pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
+
+		foreach(li, ancestor_relids)
+		{
+			Oid			ancestor_relid = lfirst_oid(li);
+			HeapTuple	tp;
+			char	   *ancestor_labname;
+
+			tp = SearchSysCache1(LABELRELID, ObjectIdGetDatum(ancestor_relid));
+			if (HeapTupleIsValid(tp))
+			{
+				Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+
+				ancestor_labname = pstrdup(NameStr(labtup->labname));
+
+				ReleaseSysCache(tp);
+			}
+			else
+			{
+				elog(ERROR, "cache lookup failed for label %u", ancestor_relid);
+			}
+
+			if (strcmp(ancestor_labname, "ag_vertex") != 0)
+			{
+				JsonbValue	jv;
+
+				jv.type = jbvString;
+				jv.val.string.len = strlen(ancestor_labname);
+				jv.val.string.val = ancestor_labname;
+
+				pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+			}
+		}
+
+		labels = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
+
+		MemoryContextSwitchTo(funcMemoryContext);
+
+		my_extra->labels = JsonbValueToJsonb(labels);
+	}
+
+	MemoryContextSwitchTo(oldMemoryContext);
+
+	return my_extra;
 }
 
 Datum
