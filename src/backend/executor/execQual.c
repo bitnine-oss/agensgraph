@@ -4683,7 +4683,7 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 		 * that have null values. If nulls are enabled, we push the null value
 		 * instead.
 		 */
-		if (vscalar && vjv.type == jbvNull && !enable_null_properties)
+		if (vscalar && vjv.type == jbvNull && !allow_null_properties)
 			continue;
 
 		kd = ExecEvalExpr(k, econtext, &eisnull, NULL);
@@ -4729,7 +4729,7 @@ ExecEvalCypherMap(CypherMapExprState *mstate, ExprContext *econtext,
 					Assert(tok != WJB_DONE);
 
 					if (tok == WJB_VALUE && ejv.type == jbvNull &&
-						!enable_null_properties)
+						!allow_null_properties)
 						continue;
 
 					pushJsonbValue(&jpstate, WJB_KEY, &kjv);

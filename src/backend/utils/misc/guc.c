@@ -1689,11 +1689,11 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 
 	{
-		{"enable_null_properties", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
+		{"allow_null_properties", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
 			gettext_noop("Enables the insertion of null properties into vertices and edges"),
 			NULL
 		},
-		&enable_null_properties,
+		&allow_null_properties,
 		false,
 		NULL, NULL, NULL
 	},
