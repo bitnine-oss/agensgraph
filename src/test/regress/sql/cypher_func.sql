@@ -1,5 +1,5 @@
 --
--- labesl()
+-- labels()
 --
 
 
@@ -292,7 +292,7 @@ match (x:l) return x.name, labels(x)[10];
 
 
 --
--- complex test 2 
+-- complex test 2
 --
 
 --
@@ -313,7 +313,7 @@ set graph_path=complextest2;
 -- ----C     --G--
 --     |      | |
 --     ----H--- ---I
---         |       | 
+--         |       |
 --         ----J----
 --
 

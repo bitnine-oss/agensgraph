@@ -3206,25 +3206,3 @@ get_relid_laboid(Oid relid)
 {
 	return GetSysCacheOid1(LABELRELID, ObjectIdGetDatum(relid));
 }
-
-uint16
-get_relid_labid( Oid relid )
-{
-    HeapTuple tp;
-
-    tp = SearchSysCache1( LABELRELID, ObjectIdGetDatum(relid) );
-
-    if( HeapTupleIsValid( tp ) )
-    {
-        Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
-        uint16        labid;
-
-        labid = labtup->labid;
-        ReleaseSysCache(tp);
-        return labid;
-    }
-    else
-    {
-        return 0;
-    }
-}
