@@ -1021,9 +1021,10 @@ DROP GRAPH gm CASCADE;
 CREATE GRAPH np;
 SET GRAPH_PATH = np;
 
-SHOW enable_null_properties;
+SHOW allow_null_properties;
 
-SET enable_null_properties = off;
+SET allow_null_properties = off;
+
 CREATE (:v {z: null});
 CREATE (:v {z: (SELECT 'null'::jsonb)});
 CREATE (:v {z: {z: null}});
@@ -1034,7 +1035,13 @@ CREATE (n:v) SET n.z = {z: null};
 CREATE (n:v) SET n.z = (SELECT '{"z": null}'::jsonb);
 MATCH (n:v) RETURN n;
 
-SET enable_null_properties = on;
+CREATE (n:v {z: 0}) SET n.z = null;
+CREATE (n:v {z: 0}) SET n.z = (SELECT 'null'::jsonb);
+CREATE (n:v {z: 0}) REMOVE n.z;
+MATCH (n:v) RETURN n;
+
+SET allow_null_properties = on;
+
 CREATE (:w {z: null});
 CREATE (:w {z: (SELECT 'null'::jsonb)});
 CREATE (:w {z: {z: null}});
@@ -1045,7 +1052,12 @@ CREATE (n:w) SET n.z = {z: null};
 CREATE (n:w) SET n.z = (SELECT '{"z": null}'::jsonb);
 MATCH (n:w) RETURN n;
 
-SET enable_null_properties = off;
+CREATE (n:w {z: 0}) SET n.z = null;
+CREATE (n:w {z: 0}) SET n.z = (SELECT 'null'::jsonb);
+CREATE (n:w {z: 0}) REMOVE n.z;
+MATCH (n:w) RETURN n;
+
+SET allow_null_properties = off;
 
 -- cleanup
 

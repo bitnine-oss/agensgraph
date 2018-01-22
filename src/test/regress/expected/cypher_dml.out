@@ -2671,13 +2671,13 @@ drop cascades to label hometown
 -- null properties
 CREATE GRAPH np;
 SET GRAPH_PATH = np;
-SHOW enable_null_properties;
- enable_null_properties 
-------------------------
+SHOW allow_null_properties;
+ allow_null_properties 
+-----------------------
  off
 (1 row)
 
-SET enable_null_properties = off;
+SET allow_null_properties = off;
 CREATE (:v {z: null});
 CREATE (:v {z: (SELECT 'null'::jsonb)});
 CREATE (:v {z: {z: null}});
@@ -2699,7 +2699,26 @@ MATCH (n:v) RETURN n;
  v[3.8]{"z": {}}
 (8 rows)
 
-SET enable_null_properties = on;
+CREATE (n:v {z: 0}) SET n.z = null;
+CREATE (n:v {z: 0}) SET n.z = (SELECT 'null'::jsonb);
+CREATE (n:v {z: 0}) REMOVE n.z;
+MATCH (n:v) RETURN n;
+        n        
+-----------------
+ v[3.1]{}
+ v[3.2]{}
+ v[3.3]{"z": {}}
+ v[3.4]{"z": {}}
+ v[3.5]{}
+ v[3.6]{}
+ v[3.7]{"z": {}}
+ v[3.8]{"z": {}}
+ v[3.9]{}
+ v[3.10]{}
+ v[3.11]{}
+(11 rows)
+
+SET allow_null_properties = on;
 CREATE (:w {z: null});
 CREATE (:w {z: (SELECT 'null'::jsonb)});
 CREATE (:w {z: {z: null}});
@@ -2709,19 +2728,38 @@ CREATE (n:w) SET n.z = (SELECT 'null'::jsonb);
 CREATE (n:w) SET n.z = {z: null};
 CREATE (n:w) SET n.z = (SELECT '{"z": null}'::jsonb);
 MATCH (n:w) RETURN n;
-            n             
---------------------------
+              n               
+------------------------------
  w[4.1]{"z": null}
  w[4.2]{"z": null}
  w[4.3]{"z": {"z": null}}
  w[4.4]{"z": {"z": null}}
- w[4.5]{}
+ w[4.5]{"p": null, "z": null}
  w[4.6]{"z": null}
  w[4.7]{"z": {"z": null}}
  w[4.8]{"z": {"z": null}}
 (8 rows)
 
-SET enable_null_properties = off;
+CREATE (n:w {z: 0}) SET n.z = null;
+CREATE (n:w {z: 0}) SET n.z = (SELECT 'null'::jsonb);
+CREATE (n:w {z: 0}) REMOVE n.z;
+MATCH (n:w) RETURN n;
+              n               
+------------------------------
+ w[4.1]{"z": null}
+ w[4.2]{"z": null}
+ w[4.3]{"z": {"z": null}}
+ w[4.4]{"z": {"z": null}}
+ w[4.5]{"p": null, "z": null}
+ w[4.6]{"z": null}
+ w[4.7]{"z": {"z": null}}
+ w[4.8]{"z": {"z": null}}
+ w[4.9]{"z": null}
+ w[4.10]{"z": null}
+ w[4.11]{}
+(11 rows)
+
+SET allow_null_properties = off;
 -- cleanup
 DROP GRAPH np CASCADE;
 NOTICE:  drop cascades to 5 other objects
