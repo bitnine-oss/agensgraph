@@ -32,6 +32,7 @@
 #include "utils/tqual.h"
 
 static int	oid_cmp(const void *p1, const void *p2);
+static List *find_inheritance_parents(Oid childrelId, LOCKMODE lockmode);
 
 
 /*
@@ -373,23 +374,21 @@ oid_cmp(const void *p1, const void *p2)
 	return 0;
 }
 
-/*
- *
- * see find_inheritance_children
- */
-List *
+
+/* See find_inheritance_children() */
+static List *
 find_inheritance_parents(Oid childrelId, LOCKMODE lockmode)
 {
-	List       *list = NIL;
-	Relation    relation;
-	SysScanDesc scan;
-	ScanKeyData key[1];
-	HeapTuple   inheritsTuple;
-	Oid         inhParentId;
-	Oid        *oidarr;
-	int         maxoids,
-                numoids,
-                i;
+	List	   *list = NIL;
+	Relation	relation;
+	SysScanDesc	scan;
+	ScanKeyData	key[1];
+	HeapTuple	inheritsTuple;
+	Oid			inhparent;
+	Oid		   *oidarr;
+	int			maxoids;
+	int			numoids;
+	int			i;
 
 	maxoids = 32;
 	oidarr = (Oid *) palloc(maxoids * sizeof(Oid));
@@ -402,98 +401,87 @@ find_inheritance_parents(Oid childrelId, LOCKMODE lockmode)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(childrelId));
 
-	scan = systable_beginscan(relation, InheritsRelIndexId, true, NULL, 1, key);
+	scan = systable_beginscan(relation, InheritsRelidSeqnoIndexId,
+							  true, NULL, 1, key);
 
-	while((inheritsTuple = systable_getnext(scan)) != NULL)
+	while ((inheritsTuple = systable_getnext(scan)) != NULL)
 	{
-		inhParentId = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhparent;
-		if(numoids >= maxoids)
+		inhparent = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhparent;
+		if (numoids >= maxoids)
 		{
 			maxoids *= 2;
 			oidarr = (Oid *) repalloc(oidarr, maxoids * sizeof(Oid));
 		}
-		oidarr[numoids++] = inhParentId;
+		oidarr[numoids++] = inhparent;
 	}
 
 	systable_endscan(scan);
 
 	heap_close(relation, AccessShareLock);
 
-	if(numoids > 1)
-		qsort(oidarr, numoids, sizeof( Oid ), oid_cmp);
+	if (numoids > 1)
+		qsort(oidarr, numoids, sizeof(Oid), oid_cmp);
 
-	for(i = 0; i < numoids; i++)
+	for (i = 0; i < numoids; i++)
 	{
-		inhParentId = oidarr[i];
+		inhparent = oidarr[i];
 
-		if(lockmode != NoLock)
+		if (lockmode != NoLock)
 		{
-			LockRelationOid(inhParentId, lockmode);
+			LockRelationOid(inhparent, lockmode);
 
-			if(!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(inhParentId)))
+			if (!SearchSysCacheExists1(RELOID, ObjectIdGetDatum(inhparent)))
 			{
-				UnlockRelationOid(inhParentId, lockmode);
+				UnlockRelationOid(inhparent, lockmode);
 				continue;
 			}
 		}
 
-		list = lappend_oid(list, inhParentId);
+		list = lappend_oid(list, inhparent);
 	}
 
 	pfree(oidarr);
 
 	return list;
 }
-/*
- * see find_all_inheritors
- */
+
+
+/* See find_all_inheritors() */
 List *
-find_all_ancestors(Oid childrelId, LOCKMODE lockmode, List **numchildren)
+find_all_ancestors(Oid childrelId, LOCKMODE lockmode)
 {
-	List     *rels_list,
-			 *rel_numchildren;
-	ListCell *l;
+	List	   *rels_list;
+	ListCell   *l;
 
 	rels_list = list_make1_oid(childrelId);
-	rel_numchildren = list_make1_int(0);
 
 	foreach(l, rels_list)
 	{
-		Oid       currRel = lfirst_oid(l);
-		List     *currParents;
-		ListCell *lc;
+		Oid			currentrel = lfirst_oid(l);
+		List	   *currentparents;
+		ListCell   *lp;
 
-		currParents = find_inheritance_parents(currRel, lockmode);
+		currentparents = find_inheritance_parents(currentrel, lockmode);
 
-		foreach(lc, currParents)
+		foreach(lp, currentparents)
 		{
-			Oid			parent_oid = lfirst_oid(lc);
+			Oid			parent_oid = lfirst_oid(lp);
 			bool		found = false;
 			ListCell   *lo;
-			ListCell   *li;
 
-			forboth(lo, rels_list, li, rel_numchildren)
+			foreach(lo, rels_list)
 			{
-				if(lfirst_oid(lo) == parent_oid)
+				if (lfirst_oid(lo) == parent_oid)
 				{
-					lfirst_int(li)++;
 					found = true;
 					break;
 				}
 			}
 
-			if(!found)
-			{
+			if (!found)
 				rels_list = lappend_oid(rels_list, parent_oid);
-				rel_numchildren = lappend_int(rel_numchildren, 1);
-			}
 		}
 	}
-
-	if(numchildren)
-		*numchildren = rel_numchildren;
-	else
-		list_free(rel_numchildren);
 
 	return rels_list;
 }

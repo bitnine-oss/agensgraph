@@ -1,5 +1,5 @@
 --
--- labesl()
+-- labels()
 --
 --
 -- simple test
@@ -1552,7 +1552,7 @@ match (x:l) return x.name, labels(x)[10];
 (1 row)
 
 --
--- complex test 2 
+-- complex test 2
 --
 --
 -- set graph path
@@ -1571,7 +1571,7 @@ set graph_path=complextest2;
 -- ----C     --G--
 --     |      | |
 --     ----H--- ---I
---         |       | 
+--         |       |
 --         ----J----
 --
 create vlabel a;
