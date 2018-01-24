@@ -3105,6 +3105,15 @@ static void
 _selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
 {
 	PQExpBuffer qry;
+	static teSection oldsec = SECTION_NONE;
+
+	if (oldsec == SECTION_NONE && sec == SECTION_POST_DATA)
+	{
+		oldsec = sec;
+		if (AH->currSchema)
+			free(AH->currSchema);
+		AH->currSchema = NULL;
+	}
 
 	if (!schemaName || *schemaName == '\0' ||
 		(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0))
@@ -3117,7 +3126,7 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
 	if (strcmp(schemaName, "pg_catalog") != 0)
 		appendPQExpBufferStr(qry, ", pg_catalog");
 
-	if (sec > SECTION_PRE_DATA)
+	if (sec == SECTION_POST_DATA)
 	{
 		PQExpBuffer tmp;
 		PGresult   *res;
