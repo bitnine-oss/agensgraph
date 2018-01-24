@@ -227,10 +227,10 @@ static Relation openTargetLabel(ParseState *pstate, char *labname);
 
 /* SET/REMOVE */
 static List *transformSetPropList(ParseState *pstate, RangeTblEntry *rte,
-								  CSetKind kind, bool is_set, List *items);
+								  bool is_remove, CSetKind kind, List *items);
 static GraphSetProp *transformSetProp(ParseState *pstate, RangeTblEntry *rte,
-									  CypherSetProp *sp, CSetKind kind,
-									  bool is_set, List *gsplist);
+									  CypherSetProp *sp, bool is_remove,
+									  CSetKind kind, List *gsplist);
 static GraphSetProp *findGraphSetProp(List *gsplist, char *varname);
 
 /* MERGE */
@@ -771,8 +771,8 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
 
-	qry->graph.sets = transformSetPropList(pstate, rte, detail->kind, detail->is_set,
-										   detail->items);
+	qry->graph.sets = transformSetPropList(pstate, rte, detail->is_remove,
+										   detail->kind, detail->items);
 	foreach(le, qry->graph.sets)
 	{
 		GraphSetProp *gsp = lfirst(le);
@@ -781,7 +781,6 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 										  FVR_PRESERVE_VAR_REF);
 		gsp->expr = resolve_future_vertex(pstate, gsp->expr,
 										  FVR_PRESERVE_VAR_REF);
-		gsp->is_set = detail->is_set;
 	}
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
@@ -3915,8 +3914,8 @@ openTargetLabel(ParseState *pstate, char *labname)
 }
 
 static List *
-transformSetPropList(ParseState *pstate, RangeTblEntry *rte, CSetKind kind,
-					 bool is_set, List *items)
+transformSetPropList(ParseState *pstate, RangeTblEntry *rte, bool is_remove,
+					 CSetKind kind, List *items)
 {
 	List	   *gsplist = NIL;
 	ListCell   *li;
@@ -3926,7 +3925,7 @@ transformSetPropList(ParseState *pstate, RangeTblEntry *rte, CSetKind kind,
 		CypherSetProp *sp = lfirst(li);
 		GraphSetProp *gsp;
 
-		gsp = transformSetProp(pstate, rte, sp, kind, is_set, gsplist);
+		gsp = transformSetProp(pstate, rte, sp, is_remove, kind, gsplist);
 
 		if (gsp != NULL)
 			gsplist = lappend(gsplist, gsp);
@@ -3937,7 +3936,7 @@ transformSetPropList(ParseState *pstate, RangeTblEntry *rte, CSetKind kind,
 
 static GraphSetProp *
 transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
-				 CSetKind kind, bool is_set, List *gsplist)
+				 bool is_remove, CSetKind kind, List *gsplist)
 {
 	Node	   *elem;
 	List	   *pathelems;
@@ -4036,8 +4035,9 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 									 list_make2(prop_map, path), delete,
 									 -1);
 
-		if (IsNullAConst(sp->expr) && (!allow_null_properties || !is_set))		/* SET a.b.c = NULL */
+		if (IsNullAConst(sp->expr) && (!allow_null_properties || is_remove))
 		{
+			/* SET a.b.c = NULL */
 			prop_map = del_prop;
 		}
 		else							/* SET a.b.c = expr */
@@ -4046,6 +4046,10 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 			Node	   *set_prop;
 			CoalesceExpr *coalesce;
 
+			/*
+			 * UNKNOWNOID 'null' will be passed to jsonb_in()
+			 * when ParseFuncOrColumn()
+			 */
 			if (IsNullAConst(sp->expr))
 				expr = (Node *) makeConst(UNKNOWNOID, -1, InvalidOid, -2,
 						  CStringGetDatum("null"), false, false);
@@ -4530,6 +4534,8 @@ transformMergeOnSet(ParseState *pstate, List *sets, RangeTblEntry *rte)
 	{
 		CypherSetClause *detail = lfirst(lc);
 
+		Assert(!detail->is_remove);
+
 		if (detail->kind == CSET_ON_CREATE)
 		{
 			l_oncreate = list_concat(l_oncreate, detail->items);
@@ -4542,8 +4548,10 @@ transformMergeOnSet(ParseState *pstate, List *sets, RangeTblEntry *rte)
 		}
 	}
 
-	l_oncreate = transformSetPropList(pstate, rte, CSET_ON_CREATE, true, l_oncreate);
-	l_onmatch = transformSetPropList(pstate, rte, CSET_ON_MATCH, true, l_onmatch);
+	l_oncreate = transformSetPropList(pstate, rte, false, CSET_ON_CREATE,
+									  l_oncreate);
+	l_onmatch = transformSetPropList(pstate, rte, false, CSET_ON_MATCH,
+									 l_onmatch);
 
 	return list_concat(l_onmatch, l_oncreate);
 }

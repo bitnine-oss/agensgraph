@@ -1520,7 +1520,6 @@ createMergePath(ModifyGraphState *mgstate, GraphPath *path,
 		MemoryContextSwitchTo(oldmctx);
 
 		setSlotValueByName(slot, graphpath, path->variable);
-
 	}
 
 	return slot;

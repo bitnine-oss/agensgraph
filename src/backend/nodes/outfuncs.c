@@ -3687,6 +3687,7 @@ _outCypherSetClause(StringInfo str, const CypherSetClause *node)
 {
 	WRITE_NODE_TYPE("CYPHERSETCLAUSE");
 
+	WRITE_BOOL_FIELD(is_remove);
 	WRITE_ENUM_FIELD(kind, CSetKind);
 	WRITE_NODE_FIELD(items);
 }
