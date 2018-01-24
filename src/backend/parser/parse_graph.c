@@ -227,10 +227,10 @@ static Relation openTargetLabel(ParseState *pstate, char *labname);
 
 /* SET/REMOVE */
 static List *transformSetPropList(ParseState *pstate, RangeTblEntry *rte,
-								  CSetKind kind, List *items);
+								  bool is_remove, CSetKind kind, List *items);
 static GraphSetProp *transformSetProp(ParseState *pstate, RangeTblEntry *rte,
-									  CypherSetProp *sp, CSetKind kind,
-									  List *gsplist);
+									  CypherSetProp *sp, bool is_remove,
+									  CSetKind kind, List *gsplist);
 static GraphSetProp *findGraphSetProp(List *gsplist, char *varname);
 
 /* MERGE */
@@ -771,8 +771,8 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
 
-	qry->graph.sets = transformSetPropList(pstate, rte, detail->kind,
-										   detail->items);
+	qry->graph.sets = transformSetPropList(pstate, rte, detail->is_remove,
+										   detail->kind, detail->items);
 	foreach(le, qry->graph.sets)
 	{
 		GraphSetProp *gsp = lfirst(le);
@@ -3914,8 +3914,8 @@ openTargetLabel(ParseState *pstate, char *labname)
 }
 
 static List *
-transformSetPropList(ParseState *pstate, RangeTblEntry *rte, CSetKind kind,
-					 List *items)
+transformSetPropList(ParseState *pstate, RangeTblEntry *rte, bool is_remove,
+					 CSetKind kind, List *items)
 {
 	List	   *gsplist = NIL;
 	ListCell   *li;
@@ -3925,7 +3925,7 @@ transformSetPropList(ParseState *pstate, RangeTblEntry *rte, CSetKind kind,
 		CypherSetProp *sp = lfirst(li);
 		GraphSetProp *gsp;
 
-		gsp = transformSetProp(pstate, rte, sp, kind, gsplist);
+		gsp = transformSetProp(pstate, rte, sp, is_remove, kind, gsplist);
 
 		if (gsp != NULL)
 			gsplist = lappend(gsplist, gsp);
@@ -3936,7 +3936,7 @@ transformSetPropList(ParseState *pstate, RangeTblEntry *rte, CSetKind kind,
 
 static GraphSetProp *
 transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
-				 CSetKind kind, List *gsplist)
+				 bool is_remove, CSetKind kind, List *gsplist)
 {
 	Node	   *elem;
 	List	   *pathelems;
@@ -4035,8 +4035,9 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 									 list_make2(prop_map, path), delete,
 									 -1);
 
-		if (IsNullAConst(sp->expr))		/* SET a.b.c = NULL */
+		if (IsNullAConst(sp->expr) && (!allow_null_properties || is_remove))
 		{
+			/* SET a.b.c = NULL */
 			prop_map = del_prop;
 		}
 		else							/* SET a.b.c = expr */
@@ -4044,6 +4045,14 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 			FuncCall   *set;
 			Node	   *set_prop;
 			CoalesceExpr *coalesce;
+
+			/*
+			 * UNKNOWNOID 'null' will be passed to jsonb_in()
+			 * when ParseFuncOrColumn()
+			 */
+			if (IsNullAConst(sp->expr))
+				expr = (Node *) makeConst(UNKNOWNOID, -1, InvalidOid, -2,
+						  CStringGetDatum("null"), false, false);
 
 			set = makeFuncCall(list_make1(makeString("jsonb_set")), NIL, -1);
 			set_prop = ParseFuncOrColumn(pstate, set->funcname,
@@ -4067,7 +4076,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	 * set the modified property map
 	 */
 
-	prop_map = stripNullKeys(pstate, prop_map);
+	if (!allow_null_properties)
+		prop_map = stripNullKeys(pstate, prop_map);
 
 	switch (kind)
 	{
@@ -4524,6 +4534,8 @@ transformMergeOnSet(ParseState *pstate, List *sets, RangeTblEntry *rte)
 	{
 		CypherSetClause *detail = lfirst(lc);
 
+		Assert(!detail->is_remove);
+
 		if (detail->kind == CSET_ON_CREATE)
 		{
 			l_oncreate = list_concat(l_oncreate, detail->items);
@@ -4536,8 +4548,10 @@ transformMergeOnSet(ParseState *pstate, List *sets, RangeTblEntry *rte)
 		}
 	}
 
-	l_oncreate = transformSetPropList(pstate, rte, CSET_ON_CREATE, l_oncreate);
-	l_onmatch = transformSetPropList(pstate, rte, CSET_ON_MATCH, l_onmatch);
+	l_oncreate = transformSetPropList(pstate, rte, false, CSET_ON_CREATE,
+									  l_oncreate);
+	l_onmatch = transformSetPropList(pstate, rte, false, CSET_ON_MATCH,
+									 l_onmatch);
 
 	return list_concat(l_onmatch, l_oncreate);
 }
@@ -4640,7 +4654,7 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 				 errmsg("property map must be of type jsonb"),
 				 parser_errposition(pstate, exprLocation(prop_map))));
 
-	if (exprKind == EXPR_KIND_INSERT_TARGET)
+	if (exprKind == EXPR_KIND_INSERT_TARGET && !allow_null_properties)
 		prop_map = stripNullKeys(pstate, prop_map);
 
 	return resolve_future_vertex(pstate, prop_map, 0);

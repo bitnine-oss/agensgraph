@@ -3320,6 +3320,7 @@ typedef enum CSetKind
 typedef struct CypherSetClause
 {
 	NodeTag		type;
+	bool		is_remove;
 	CSetKind	kind;
 	List	   *items;
 } CypherSetClause;
