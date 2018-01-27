@@ -17,6 +17,7 @@
 #include "catalog/ag_graph_fn.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_inherits_fn.h"
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "libpq/libpq.h"
@@ -823,7 +824,7 @@ cache_label(FmgrInfo *flinfo, uint16 labid)
 
 		label = get_labid_labname(graphoid, labid);
 		if (label == NULL)
-			label = "?";
+			elog(ERROR, "cache lookup failed for label %u", labid);
 
 		my_extra->label_labid = labid;
 		strncpy(NameStr(my_extra->label), label, sizeof(my_extra->label));
@@ -1120,25 +1121,45 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 Datum
 vertex_labels(PG_FUNCTION_ARGS)
 {
-	Graphid		id;
-	LabelOutData *my_extra;
-	char	   *label;
-	JsonbValue	jv;
+	Graphid          id;
+	JsonbValue       jv;
 	JsonbParseState *jpstate = NULL;
-	JsonbValue *ajv;
+	JsonbValue      *ajv;
+	Oid              graphoid = get_graph_path_oid();
+	Oid              labRelid;
+	List            *ancestorRelids;
+	ListCell        *l;
 
+	/* get relation ids of ancestor label */
 	id = DatumGetGraphid(getVertexIdDatum(PG_GETARG_DATUM(0)));
-
-	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
-
-	label = NameStr(my_extra->label);
-
-	jv.type = jbvString;
-	jv.val.string.len = strlen(label);
-	jv.val.string.val = label;
+	labRelid = get_labid_relid(graphoid, GraphidGetLabid(id));
+	ancestorRelids = find_all_ancestors( labRelid, AccessShareLock, NULL );
 
 	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
-	pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+
+	foreach(l, ancestorRelids)
+	{
+		Oid     ancestorRelid = lfirst_oid(l);
+		uint16  ancestorLabid;
+		char   *ancestorLabname;
+
+		ancestorLabid   = get_relid_labid(ancestorRelid);
+		ancestorLabname = get_labid_labname(graphoid, ancestorLabid);
+		if (ancestorLabname == NULL)
+			elog(ERROR, "cache lookup failed for label %u", ancestorLabid);
+
+		if (strcmp(ancestorLabname, "ag_vertex") != 0)
+		{
+			jv.type = jbvString;
+			jv.val.string.len = strlen(ancestorLabname);
+			jv.val.string.val = ancestorLabname;
+
+			pushJsonbValue(&jpstate, WJB_ELEM, &jv);
+		}
+
+
+	}
+
 	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
 
 	PG_RETURN_JSONB(JsonbValueToJsonb(ajv));

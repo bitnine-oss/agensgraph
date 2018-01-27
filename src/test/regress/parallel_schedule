@@ -117,6 +117,9 @@ test: cypher_dml cypher_eager graphid
 # run cypher ddl test
 test: cypher_ddl
 
+# run cypher function test
+test: cypher_func
+
 # run sql restriction test
 test: sql_restriction
 
