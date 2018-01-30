@@ -5563,6 +5563,12 @@ DATA(insert OID = 7239 ( toupper	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802
 DESCR("uppercase");
 DATA(insert OID = 7240 ( trim		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_trim _null_ _null_ _null_ ));
 DESCR("trim whitespaces from both ends of string");
+DATA(insert OID = 7241 ( string_starts_with	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_string_starts_with _null_ _null_ _null_ ));
+DESCR("returns string element if beginning matches");
+DATA(insert OID = 7242 ( string_ends_with	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_string_ends_with _null_ _null_ _null_ ));
+DESCR("returns string element if end matches");
+DATA(insert OID = 7243 ( string_contains		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_string_contains _null_ _null_ _null_ ));
+DESCR("returns string element if contains substring");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
