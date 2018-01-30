@@ -16,6 +16,7 @@
 #include "utils/cypher_funcs.h"
 #include "utils/jsonb.h"
 #include "utils/memutils.h"
+#include <string.h>
 
 static Datum get_numeric_10_datum(void);
 
@@ -870,6 +871,175 @@ jsonb_trim(PG_FUNCTION_ARGS)
 	fcjinfo.rettype = TEXTOID;
 
 	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+}
+
+Datum
+jsonb_string_starts_with(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *sj = PG_GETARG_JSONB(0);
+	Jsonb	   *ij = PG_GETARG_JSONB(1);
+
+	if (JB_ROOT_IS_SCALAR(sj) && JB_ROOT_IS_SCALAR(ij))
+	{
+		JsonbValue *sjv;
+		JsonbValue *ijv;
+
+		sjv = getIthJsonbValueFromContainer(&sj->root, 0);
+		ijv = getIthJsonbValueFromContainer(&ij->root, 0);
+
+		if (sjv->type == jbvString &&
+			ijv->type == jbvString)
+		{
+			if(ijv->val.string.len == 0 ||
+				(ijv->val.string.len == 0 && 
+				sjv->val.string.len == 0))
+				PG_RETURN_BOOL(true);
+			else if(sjv->val.string.len < ijv->val.string.len)
+				PG_RETURN_BOOL(false);
+			else
+			{
+				char *s = NULL;
+				char *i = NULL;
+				int res;
+
+				s = strndup(sjv->val.string.val,
+					ijv->val.string.len);
+				i = strndup(ijv->val.string.val, 
+					ijv->val.string.len);
+
+				res = strcmp(s, i);
+
+				free(s);
+				free(i);
+
+				if(res == 0)
+					PG_RETURN_BOOL(true);
+
+				PG_RETURN_BOOL(false);	
+			}		
+		}
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("STARTS WITH: two string values expected but %s, %s",
+					JsonbToCString(NULL, &sj->root, VARSIZE(sj)),
+					JsonbToCString(NULL, &ij->root, VARSIZE(ij)))));
+	PG_RETURN_NULL();
+}
+
+Datum
+jsonb_string_ends_with(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *sj = PG_GETARG_JSONB(0);
+	Jsonb	   *ij = PG_GETARG_JSONB(1);
+
+	if (JB_ROOT_IS_SCALAR(sj) && JB_ROOT_IS_SCALAR(ij))
+	{
+		JsonbValue *sjv;
+		JsonbValue *ijv;
+
+		sjv = getIthJsonbValueFromContainer(&sj->root, 0);
+		ijv = getIthJsonbValueFromContainer(&ij->root, 0);
+
+		if (sjv->type == jbvString &&
+			ijv->type == jbvString)
+		{
+			if(ijv->val.string.len == 0 ||
+				(ijv->val.string.len == 0 && 
+				sjv->val.string.len == 0))
+			{
+				PG_RETURN_BOOL(true);
+			}
+			else if(sjv->val.string.len < ijv->val.string.len)
+			{
+				PG_RETURN_BOOL(false);
+			}
+			else
+			{
+				char *s = NULL;
+				char *i = NULL;
+				int res;
+
+				s = strdup(sjv->val.string.val + 
+					sjv->val.string.len - ijv->val.string.len);
+				i = strndup(ijv->val.string.val, 
+					ijv->val.string.len);
+
+				res = strcmp(s, i);
+
+				free(s);
+				free(i);
+
+				if(res == 0)
+					PG_RETURN_BOOL(true);
+
+				PG_RETURN_BOOL(false);	
+			}		
+		}
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("ENDS WITH: two string values expected but %s, %s",
+					JsonbToCString(NULL, &sj->root, VARSIZE(sj)),
+					JsonbToCString(NULL, &ij->root, VARSIZE(ij)))));
+	PG_RETURN_NULL();
+}
+
+Datum
+jsonb_string_contains(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *sj = PG_GETARG_JSONB(0);
+	Jsonb	   *ij = PG_GETARG_JSONB(1);
+
+	if (JB_ROOT_IS_SCALAR(sj) && JB_ROOT_IS_SCALAR(ij))
+	{
+		JsonbValue *sjv;
+		JsonbValue *ijv;
+
+		sjv = getIthJsonbValueFromContainer(&sj->root, 0);
+		ijv = getIthJsonbValueFromContainer(&ij->root, 0);
+
+		if (sjv->type == jbvString &&
+			ijv->type == jbvString)
+		{
+			if(ijv->val.string.len == 0 || 
+				(sjv->val.string.len == 0 &&
+				ijv->val.string.len == 0))
+				PG_RETURN_BOOL(true);
+			else if (sjv->val.string.len < ijv->val.string.len)
+				PG_RETURN_BOOL(false);
+			else
+			{
+				char *s = NULL;
+				char *i = NULL;
+				char *res;
+
+				s = strndup(sjv->val.string.val, 
+					sjv->val.string.len);
+				i = strndup(ijv->val.string.val, 
+					ijv->val.string.len);
+
+				res = strstr(s, i);
+
+				free(s);
+				free(i);
+
+				if(res != NULL)
+					PG_RETURN_BOOL(true);
+
+				PG_RETURN_BOOL(false);
+			}
+		}
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("CONTAINS: two string values expected but %s, %s",
+					JsonbToCString(NULL, &sj->root, VARSIZE(sj)),
+					JsonbToCString(NULL, &ij->root, VARSIZE(ij)))));
+	PG_RETURN_NULL();
 }
 
 static Jsonb *
