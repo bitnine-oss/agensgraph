@@ -837,9 +837,9 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
  * SHORTESTPATH, SIZE_P and SKIP must be the same as that of IDENT.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
-%nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CONTAINS CUBE ROLLUP
-			ALLSHORTESTPATHS DELETE_P DETACH DIJKSTRA ENDS LOAD OPTIONAL_P REMOVE
-			SHORTESTPATH SINGLE SIZE_P SKIP STARTS
+%nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
+			ALLSHORTESTPATHS DELETE_P DETACH DIJKSTRA LOAD OPTIONAL_P REMOVE
+			SHORTESTPATH SINGLE SIZE_P SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -848,6 +848,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %left		AT				/* sets precedence for AT TIME ZONE */
 %left		COLLATE
 %right		UMINUS
+%nonassoc	CONTAINS ENDS STARTS
 %left		'[' ']'
 %left		'(' ')'
 %left		TYPECAST
@@ -14938,7 +14939,6 @@ reserved_keyword:
 			| COLLATE
 			| COLUMN
 			| CONSTRAINT
-//			| CONTAINS
 			| CREATE
 			| CURRENT_CATALOG
 			| CURRENT_DATE
@@ -14953,7 +14953,6 @@ reserved_keyword:
 			| DO
 			| ELSE
 			| END_P
-//			| ENDS
 			| EXCEPT
 			| FALSE_P
 			| FETCH
@@ -14989,7 +14988,6 @@ reserved_keyword:
 			| SELECT
 			| SESSION_USER
 			| SOME
-//			| STARTS
 			| SYMMETRIC
 			| TABLE
 			| THEN
@@ -15620,21 +15618,6 @@ cypher_expr:
 													   NULL, $2, @1);
 					}
 				}
-			| cypher_expr STARTS cypher_expr
-				{
-					$$ = (Node *) makeFuncCall(SystemFuncName("string_starts_with"),
-											   list_make2($1, $3), @1);
-				} 
-			| cypher_expr ENDS cypher_expr
-				{
-					$$ = (Node *) makeFuncCall(SystemFuncName("string_ends_with"),
-											   list_make2($1, $3), @1);
-				}
-			| cypher_expr CONTAINS cypher_expr
-				{
-					$$ = (Node *) makeFuncCall(SystemFuncName("string_contains"),
-											   list_make2($1, $3), @1);
-				}
 			| cypher_expr '[' cypher_expr ']'
 				{
 					A_Indices  *ind;
@@ -15686,6 +15669,24 @@ cypher_expr:
 			| cypher_expr IN_P cypher_expr
 				{
 					$$ = (Node *) makeSimpleA_Expr(AEXPR_IN, "=", $1, $3, @2);
+				}
+			| cypher_expr STARTS WITH cypher_expr			%prec STARTS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_starts_with"),
+										list_make2($1, $4), @2);
+				}
+			| cypher_expr ENDS WITH cypher_expr				%prec ENDS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_ends_with"),
+										list_make2($1, $4), @2);
+				}
+			| cypher_expr CONTAINS cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_contains"),
+										list_make2($1, $3), @2);
 				}
 			| cypher_expr IS NULL_P							%prec IS
 				{
