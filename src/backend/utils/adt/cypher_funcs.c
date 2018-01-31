@@ -873,175 +873,6 @@ jsonb_trim(PG_FUNCTION_ARGS)
 	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
 }
 
-Datum
-jsonb_string_starts_with(PG_FUNCTION_ARGS)
-{
-	Jsonb	   *sj = PG_GETARG_JSONB(0);
-	Jsonb	   *ij = PG_GETARG_JSONB(1);
-
-	if (JB_ROOT_IS_SCALAR(sj) && JB_ROOT_IS_SCALAR(ij))
-	{
-		JsonbValue *sjv;
-		JsonbValue *ijv;
-
-		sjv = getIthJsonbValueFromContainer(&sj->root, 0);
-		ijv = getIthJsonbValueFromContainer(&ij->root, 0);
-
-		if (sjv->type == jbvString &&
-			ijv->type == jbvString)
-		{
-			if(ijv->val.string.len == 0 ||
-				(ijv->val.string.len == 0 && 
-				sjv->val.string.len == 0))
-				PG_RETURN_BOOL(true);
-			else if(sjv->val.string.len < ijv->val.string.len)
-				PG_RETURN_BOOL(false);
-			else
-			{
-				char *s = NULL;
-				char *i = NULL;
-				int res;
-
-				s = strndup(sjv->val.string.val,
-					ijv->val.string.len);
-				i = strndup(ijv->val.string.val, 
-					ijv->val.string.len);
-
-				res = strcmp(s, i);
-
-				free(s);
-				free(i);
-
-				if(res == 0)
-					PG_RETURN_BOOL(true);
-
-				PG_RETURN_BOOL(false);	
-			}		
-		}
-	}
-
-	ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("STARTS WITH: two string values expected but %s, %s",
-					JsonbToCString(NULL, &sj->root, VARSIZE(sj)),
-					JsonbToCString(NULL, &ij->root, VARSIZE(ij)))));
-	PG_RETURN_NULL();
-}
-
-Datum
-jsonb_string_ends_with(PG_FUNCTION_ARGS)
-{
-	Jsonb	   *sj = PG_GETARG_JSONB(0);
-	Jsonb	   *ij = PG_GETARG_JSONB(1);
-
-	if (JB_ROOT_IS_SCALAR(sj) && JB_ROOT_IS_SCALAR(ij))
-	{
-		JsonbValue *sjv;
-		JsonbValue *ijv;
-
-		sjv = getIthJsonbValueFromContainer(&sj->root, 0);
-		ijv = getIthJsonbValueFromContainer(&ij->root, 0);
-
-		if (sjv->type == jbvString &&
-			ijv->type == jbvString)
-		{
-			if(ijv->val.string.len == 0 ||
-				(ijv->val.string.len == 0 && 
-				sjv->val.string.len == 0))
-			{
-				PG_RETURN_BOOL(true);
-			}
-			else if(sjv->val.string.len < ijv->val.string.len)
-			{
-				PG_RETURN_BOOL(false);
-			}
-			else
-			{
-				char *s = NULL;
-				char *i = NULL;
-				int res;
-
-				s = strdup(sjv->val.string.val + 
-					sjv->val.string.len - ijv->val.string.len);
-				i = strndup(ijv->val.string.val, 
-					ijv->val.string.len);
-
-				res = strcmp(s, i);
-
-				free(s);
-				free(i);
-
-				if(res == 0)
-					PG_RETURN_BOOL(true);
-
-				PG_RETURN_BOOL(false);	
-			}		
-		}
-	}
-
-	ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("ENDS WITH: two string values expected but %s, %s",
-					JsonbToCString(NULL, &sj->root, VARSIZE(sj)),
-					JsonbToCString(NULL, &ij->root, VARSIZE(ij)))));
-	PG_RETURN_NULL();
-}
-
-Datum
-jsonb_string_contains(PG_FUNCTION_ARGS)
-{
-	Jsonb	   *sj = PG_GETARG_JSONB(0);
-	Jsonb	   *ij = PG_GETARG_JSONB(1);
-
-	if (JB_ROOT_IS_SCALAR(sj) && JB_ROOT_IS_SCALAR(ij))
-	{
-		JsonbValue *sjv;
-		JsonbValue *ijv;
-
-		sjv = getIthJsonbValueFromContainer(&sj->root, 0);
-		ijv = getIthJsonbValueFromContainer(&ij->root, 0);
-
-		if (sjv->type == jbvString &&
-			ijv->type == jbvString)
-		{
-			if(ijv->val.string.len == 0 || 
-				(sjv->val.string.len == 0 &&
-				ijv->val.string.len == 0))
-				PG_RETURN_BOOL(true);
-			else if (sjv->val.string.len < ijv->val.string.len)
-				PG_RETURN_BOOL(false);
-			else
-			{
-				char *s = NULL;
-				char *i = NULL;
-				char *res;
-
-				s = strndup(sjv->val.string.val, 
-					sjv->val.string.len);
-				i = strndup(ijv->val.string.val, 
-					ijv->val.string.len);
-
-				res = strstr(s, i);
-
-				free(s);
-				free(i);
-
-				if(res != NULL)
-					PG_RETURN_BOOL(true);
-
-				PG_RETURN_BOOL(false);
-			}
-		}
-	}
-
-	ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("CONTAINS: two string values expected but %s, %s",
-					JsonbToCString(NULL, &sj->root, VARSIZE(sj)),
-					JsonbToCString(NULL, &ij->root, VARSIZE(ij)))));
-	PG_RETURN_NULL();
-}
-
 static Jsonb *
 FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo)
 {
@@ -1226,4 +1057,116 @@ datum_to_jsonb(Datum d, Oid type)
 	}
 
 	return JsonbValueToJsonb(&jv);
+}
+
+Datum
+jsonb_string_starts_with(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *lj = PG_GETARG_JSONB(0);
+	Jsonb	   *rj = PG_GETARG_JSONB(1);
+
+	if (JB_ROOT_IS_SCALAR(lj) && JB_ROOT_IS_SCALAR(rj))
+	{
+		JsonbValue *ljv;
+		JsonbValue *rjv;
+
+		ljv = getIthJsonbValueFromContainer(&lj->root, 0);
+		rjv = getIthJsonbValueFromContainer(&rj->root, 0);
+
+		if (ljv->type == jbvString && rjv->type == jbvString)
+		{
+			if (ljv->val.string.len < rjv->val.string.len)
+				PG_RETURN_BOOL(false);
+
+			if (strncmp(ljv->val.string.val,
+						rjv->val.string.val,
+						rjv->val.string.len) == 0)
+				PG_RETURN_BOOL(true);
+			else
+				PG_RETURN_BOOL(false);
+		}
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("STARTS WITH: two string values expected but %s, %s",
+					JsonbToCString(NULL, &lj->root, VARSIZE(lj)),
+					JsonbToCString(NULL, &rj->root, VARSIZE(rj)))));
+	PG_RETURN_NULL();
+}
+
+Datum
+jsonb_string_ends_with(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *lj = PG_GETARG_JSONB(0);
+	Jsonb	   *rj = PG_GETARG_JSONB(1);
+
+	if (JB_ROOT_IS_SCALAR(lj) && JB_ROOT_IS_SCALAR(rj))
+	{
+		JsonbValue *ljv;
+		JsonbValue *rjv;
+
+		ljv = getIthJsonbValueFromContainer(&lj->root, 0);
+		rjv = getIthJsonbValueFromContainer(&rj->root, 0);
+
+		if (ljv->type == jbvString && rjv->type == jbvString)
+		{
+			if (ljv->val.string.len < rjv->val.string.len)
+				PG_RETURN_BOOL(false);
+
+			if (strncmp(ljv->val.string.val + ljv->val.string.len - rjv->val.string.len,
+						rjv->val.string.val,
+						rjv->val.string.len) == 0)
+				PG_RETURN_BOOL(true);
+			else
+				PG_RETURN_BOOL(false);
+		}
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("ENDS WITH: two string values expected but %s, %s",
+					JsonbToCString(NULL, &lj->root, VARSIZE(lj)),
+					JsonbToCString(NULL, &rj->root, VARSIZE(rj)))));
+	PG_RETURN_NULL();
+}
+
+Datum
+jsonb_string_contains(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *lj = PG_GETARG_JSONB(0);
+	Jsonb	   *rj = PG_GETARG_JSONB(1);
+
+	if (JB_ROOT_IS_SCALAR(lj) && JB_ROOT_IS_SCALAR(rj))
+	{
+		JsonbValue *ljv;
+		JsonbValue *rjv;
+
+		ljv = getIthJsonbValueFromContainer(&lj->root, 0);
+		rjv = getIthJsonbValueFromContainer(&rj->root, 0);
+
+		if (ljv->type == jbvString && rjv->type == jbvString)
+		{
+			char	   *l;
+			char	   *r;
+
+			if (ljv->val.string.len < rjv->val.string.len)
+				PG_RETURN_BOOL(false);
+
+			l = pnstrdup(ljv->val.string.val, ljv->val.string.len);
+			r = pnstrdup(rjv->val.string.val, rjv->val.string.len);
+
+			if (strstr(l, r) == NULL)
+				PG_RETURN_BOOL(false);
+			else
+				PG_RETURN_BOOL(true);
+		}
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("CONTAINS: two string values expected but %s, %s",
+					JsonbToCString(NULL, &lj->root, VARSIZE(lj)),
+					JsonbToCString(NULL, &rj->root, VARSIZE(rj)))));
+	PG_RETURN_NULL();
 }
