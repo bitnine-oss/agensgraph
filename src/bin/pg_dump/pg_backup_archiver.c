@@ -615,6 +615,9 @@ RestoreArchive(Archive *AHX)
 		if (AH->currSchema)
 			free(AH->currSchema);
 		AH->currSchema = NULL;
+		if (AH->currGraph)
+			free(AH->currGraph);
+		AH->currGraph = NULL;
 	}
 
 	/*
@@ -2283,6 +2286,7 @@ _allocAH(const char *FileSpec, const ArchiveFormat fmt,
 
 	AH->currUser = NULL;		/* unknown */
 	AH->currSchema = NULL;		/* ditto */
+	AH->currGraph = NULL;		/* ditto */
 	AH->currTablespace = NULL;	/* ditto */
 	AH->currWithOids = -1;		/* force SET */
 
@@ -3033,6 +3037,9 @@ _reconnectToDB(ArchiveHandle *AH, const char *dbname)
 	if (AH->currSchema)
 		free(AH->currSchema);
 	AH->currSchema = NULL;
+	if (AH->currGraph)
+		free(AH->currGraph);
+	AH->currGraph = NULL;
 	if (AH->currTablespace)
 		free(AH->currTablespace);
 	AH->currTablespace = NULL;
@@ -3106,9 +3113,15 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
 {
 	PQExpBuffer qry;
 
-	if (!schemaName || *schemaName == '\0' ||
-		(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0))
-		return;					/* no need to do anything */
+	if (!schemaName || *schemaName == '\0')
+		return;
+	else if	(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0)
+	{
+		if (sec < SECTION_POST_DATA)
+			return;					/* no need to do anything */
+		else if (AH->currGraph && strcmp(AH->currGraph, schemaName) == 0)
+			return;
+	}
 
 	qry = createPQExpBuffer();
 
@@ -3117,7 +3130,7 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
 	if (strcmp(schemaName, "pg_catalog") != 0)
 		appendPQExpBufferStr(qry, ", pg_catalog");
 
-	if (sec > SECTION_PRE_DATA)
+	if (sec == SECTION_POST_DATA)
 	{
 		PQExpBuffer tmp;
 		PGresult   *res;
@@ -3131,7 +3144,13 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
 		res = ExecuteSqlQuery(&AH->public, tmp->data, PGRES_TUPLES_OK);
 
 		if (PQntuples(res) > 0)
+		{
 			appendPQExpBuffer(qry, ";\nSET graph_path = %s", fmtId(schemaName));
+
+			if (AH->currGraph)
+				free(AH->currGraph);
+			AH->currGraph = pg_strdup(schemaName);
+		}
 
 		PQclear(res);
 		destroyPQExpBuffer(tmp);
@@ -3779,6 +3798,9 @@ restore_toc_entries_prefork(ArchiveHandle *AH)
 	if (AH->currSchema)
 		free(AH->currSchema);
 	AH->currSchema = NULL;
+	if (AH->currGraph)
+		free(AH->currGraph);
+	AH->currGraph = NULL;
 	if (AH->currTablespace)
 		free(AH->currTablespace);
 	AH->currTablespace = NULL;
@@ -4480,6 +4502,7 @@ CloneArchive(ArchiveHandle *AH)
 	clone->connCancel = NULL;
 	clone->currUser = NULL;
 	clone->currSchema = NULL;
+	clone->currGraph = NULL;
 	clone->currTablespace = NULL;
 	clone->currWithOids = -1;
 
@@ -4570,6 +4593,8 @@ DeCloneArchive(ArchiveHandle *AH)
 		free(AH->currUser);
 	if (AH->currSchema)
 		free(AH->currSchema);
+	if (AH->currGraph)
+		free(AH->currGraph);
 	if (AH->currTablespace)
 		free(AH->currTablespace);
 	if (AH->savedPassword)
