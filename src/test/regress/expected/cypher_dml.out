@@ -2760,6 +2760,81 @@ MATCH (n:w) RETURN n;
 (11 rows)
 
 SET allow_null_properties = off;
+--
+-- String Matching
+--
+RETURN 'abc' STARTS WITH 'a';
+ string_starts_with 
+--------------------
+ t
+(1 row)
+
+RETURN 'abc' STARTS WITH '';
+ string_starts_with 
+--------------------
+ t
+(1 row)
+
+RETURN 'abc' STARTS WITH 'bc';
+ string_starts_with 
+--------------------
+ f
+(1 row)
+
+RETURN 'abc' STARTS WITH 'abcd';
+ string_starts_with 
+--------------------
+ f
+(1 row)
+
+RETURN 'abc' STARTS WITH 1;
+ERROR:  STARTS WITH: two string values expected but "abc", 1
+RETURN 'abc' ENDS WITH 'c';
+ string_ends_with 
+------------------
+ t
+(1 row)
+
+RETURN 'abc' ENDS WITH '';
+ string_ends_with 
+------------------
+ t
+(1 row)
+
+RETURN 'abc' ENDS WITH 'ab';
+ string_ends_with 
+------------------
+ f
+(1 row)
+
+RETURN 'abc' ENDS WITH 'abcd';
+ string_ends_with 
+------------------
+ f
+(1 row)
+
+RETURN 'abc' ENDS WITH 1;
+ERROR:  ENDS WITH: two string values expected but "abc", 1
+RETURN 'abc' CONTAINS 'b';
+ string_contains 
+-----------------
+ t
+(1 row)
+
+RETURN 'abc' CONTAINS '';
+ string_contains 
+-----------------
+ t
+(1 row)
+
+RETURN 'abc' CONTAINS 'abcd';
+ string_contains 
+-----------------
+ f
+(1 row)
+
+RETURN 'abc' CONTAINS 1;
+ERROR:  CONTAINS: two string values expected but "abc", 1
 -- cleanup
 DROP GRAPH np CASCADE;
 NOTICE:  drop cascades to 5 other objects

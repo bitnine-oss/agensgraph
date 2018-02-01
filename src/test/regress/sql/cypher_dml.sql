@@ -1059,6 +1059,27 @@ MATCH (n:w) RETURN n;
 
 SET allow_null_properties = off;
 
+--
+-- String Matching
+--
+
+RETURN 'abc' STARTS WITH 'a';
+RETURN 'abc' STARTS WITH '';
+RETURN 'abc' STARTS WITH 'bc';
+RETURN 'abc' STARTS WITH 'abcd';
+RETURN 'abc' STARTS WITH 1;
+
+RETURN 'abc' ENDS WITH 'c';
+RETURN 'abc' ENDS WITH '';
+RETURN 'abc' ENDS WITH 'ab';
+RETURN 'abc' ENDS WITH 'abcd';
+RETURN 'abc' ENDS WITH 1;
+
+RETURN 'abc' CONTAINS 'b';
+RETURN 'abc' CONTAINS '';
+RETURN 'abc' CONTAINS 'abcd';
+RETURN 'abc' CONTAINS 1;
+
 -- cleanup
 
 DROP GRAPH np CASCADE;
