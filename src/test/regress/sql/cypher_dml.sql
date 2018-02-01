@@ -1059,6 +1059,27 @@ MATCH (n:w) RETURN n;
 
 SET allow_null_properties = off;
 
+--- String Pattern Matching
+CREATE GRAPH sm;
+SET GRAPH_PATH = sm;
+
+CREATE (:v {s:'abcd'});
+MATCH(a) WHERE a.s STARTS WITH 'ab' RETURN a.s STARTS WITH 'ab';
+MATCH(a) WHERE a.s STARTS WITH '' RETURN a.s STARTS WITH '';
+MATCH(a) WHERE a.s STARTS WITH 'abcde' RETURN a.s STARTS WITH 'abcde';
+MATCH(a) WHERE a.s STARTS WITH 1 RETURN a.s STARTS WITH 1;
+
+MATCH(a) WHERE a.s ENDS WITH 'cd' RETURN a.s ENDS WITH 'cd';
+MATCH(a) WHERE a.s ENDS WITH '' RETURN a.s ENDS WITH '';
+MATCH(a) WHERE a.s ENDS WITH 'abcde' RETURN a.s ENDS WITH 'abcde';
+MATCH(a) WHERE a.s ENDS WITH 1 RETURN a.s STARTS WITH 1;
+
+MATCH(a) WHERE a.s CONTAINS 'c' RETURN a.s CONTAINS 'c';
+MATCH(a) WHERE a.s CONTAINS '' RETURN a.s CONTAINS '';
+MATCH(a) WHERE a.s CONTAINS 'abcde' RETURN a.s CONTAINS 'abcde';
+MATCH(a) WHERE a.s CONTAINS 1 RETURN a.s STARTS WITH 1;
+
+
 -- cleanup
 
 DROP GRAPH np CASCADE;
