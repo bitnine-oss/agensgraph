@@ -1,0 +1,211 @@
+--
+-- vertex_labels()
+--
+-- prepare
+DROP GRAPH IF EXISTS vertex_labels_simple CASCADE;
+NOTICE:  graph "vertex_labels_simple" does not exist, skipping
+DROP GRAPH IF EXISTS vertex_labels_complex1 CASCADE;
+NOTICE:  graph "vertex_labels_complex1" does not exist, skipping
+DROP GRAPH IF EXISTS vertex_labels_complex2 CASCADE;
+NOTICE:  graph "vertex_labels_complex2" does not exist, skipping
+CREATE GRAPH vertex_labels_simple;
+CREATE GRAPH vertex_labels_complex1;
+CREATE GRAPH vertex_labels_complex2;
+-- simple test
+SET graph_path = vertex_labels_simple;
+--         a
+--         |
+-- b       c
+-- |       |
+-- +-- d --+
+CREATE VLABEL a;
+CREATE VLABEL b;
+CREATE VLABEL c INHERITS (a);
+CREATE VLABEL d INHERITS (b, c);
+CREATE (:a {name: 'a'});
+CREATE (:b {name: 'b'});
+CREATE (:c {name: 'c'});
+CREATE (:d {name: 'd'});
+MATCH (n) RETURN n.name, label(n);
+ name | label 
+------+-------
+ "a"  | "a"
+ "b"  | "b"
+ "c"  | "c"
+ "d"  | "d"
+(4 rows)
+
+MATCH (n) RETURN n.name, labels(n);
+ name |        labels        
+------+----------------------
+ "a"  | ["a"]
+ "b"  | ["b"]
+ "c"  | ["c", "a"]
+ "d"  | ["d", "b", "c", "a"]
+(4 rows)
+
+MATCH (n) RETURN n.name, labels(n)[0];
+ name | labels 
+------+--------
+ "a"  | "a"
+ "b"  | "b"
+ "c"  | "c"
+ "d"  | "d"
+(4 rows)
+
+MATCH (n:c) RETURN n.name, labels(n)[1];
+ name | labels 
+------+--------
+ "c"  | "a"
+ "d"  | "b"
+(2 rows)
+
+MATCH (n:d) RETURN n.name, labels(n)[2], labels(n)[3];
+ name | labels | labels 
+------+--------+--------
+ "d"  | "c"    | "a"
+(1 row)
+
+-- complex test 1
+SET graph_path = vertex_labels_complex1;
+--             a
+--             |
+--             b       c
+--             |       |
+-- +-- d --+   +-- e --+   f   +-- g
+-- |   |   |       |       |   |   |
+-- h   i   j       +------ k --+   |
+--     |   |               |       |
+--     +---+------ l ------+-------+
+CREATE VLABEL a;
+CREATE VLABEL b INHERITS (a);
+CREATE VLABEL c;
+CREATE VLABEL d;
+CREATE VLABEL e INHERITS (b, c);
+CREATE VLABEL f;
+CREATE VLABEL g;
+CREATE VLABEL h INHERITS (d);
+CREATE VLABEL i INHERITS (d);
+CREATE VLABEL j INHERITS (d);
+CREATE VLABEL k INHERITS (e, f, g);
+CREATE VLABEL l INHERITS (i, j, k, g);
+CREATE (:a {name: 'a'});
+CREATE (:b {name: 'b'});
+CREATE (:c {name: 'c'});
+CREATE (:d {name: 'd'});
+CREATE (:e {name: 'e'});
+CREATE (:f {name: 'f'});
+CREATE (:g {name: 'g'});
+CREATE (:h {name: 'h'});
+CREATE (:i {name: 'i'});
+CREATE (:j {name: 'j'});
+CREATE (:k {name: 'k'});
+CREATE (:l {name: 'l'});
+MATCH (n) RETURN n.name, label(n), labels(n);
+ name | label |                         labels                          
+------+-------+---------------------------------------------------------
+ "a"  | "a"   | ["a"]
+ "c"  | "c"   | ["c"]
+ "d"  | "d"   | ["d"]
+ "f"  | "f"   | ["f"]
+ "g"  | "g"   | ["g"]
+ "b"  | "b"   | ["b", "a"]
+ "e"  | "e"   | ["e", "b", "c", "a"]
+ "h"  | "h"   | ["h", "d"]
+ "i"  | "i"   | ["i", "d"]
+ "j"  | "j"   | ["j", "d"]
+ "k"  | "k"   | ["k", "e", "f", "g", "b", "c", "a"]
+ "l"  | "l"   | ["l", "g", "i", "j", "k", "d", "e", "f", "b", "c", "a"]
+(12 rows)
+
+-- complex test 2
+SET graph_path = vertex_labels_complex2;
+-- +-- a ----------+
+-- |   |       b   |
+-- |   |       |   |
+-- |   +-- d --+   |
+-- |       |       |
+-- |       e --+-- f
+-- |           |
+-- +-- c       g
+--     |       |
+--     +-- h --+-- i
+--         |       |
+--         +-- j --+
+CREATE VLABEL a;
+CREATE VLABEL b;
+CREATE VLABEL c INHERITS (a);
+CREATE VLABEL d INHERITS (a, b);
+CREATE VLABEL e INHERITS (d);
+CREATE VLABEL f INHERITS (a);
+CREATE VLABEL g INHERITS (e, f);
+CREATE VLABEL h INHERITS (c, g);
+CREATE VLABEL i INHERITS (g);
+CREATE VLABEL j INHERITS (h, i);
+CREATE (:a {name: 'a'});
+CREATE (:b {name: 'b'});
+CREATE (:c {name: 'c'});
+CREATE (:d {name: 'd'});
+CREATE (:e {name: 'e'});
+CREATE (:f {name: 'f'});
+CREATE (:g {name: 'g'});
+CREATE (:h {name: 'h'});
+CREATE (:i {name: 'i'});
+CREATE (:j {name: 'j'});
+MATCH (n) RETURN n.name, label(n), labels(n);
+ name | label |                       labels                       
+------+-------+----------------------------------------------------
+ "a"  | "a"   | ["a"]
+ "b"  | "b"   | ["b"]
+ "c"  | "c"   | ["c", "a"]
+ "d"  | "d"   | ["d", "a", "b"]
+ "f"  | "f"   | ["f", "a"]
+ "h"  | "h"   | ["h", "c", "g", "a", "e", "f", "d", "b"]
+ "e"  | "e"   | ["e", "d", "a", "b"]
+ "g"  | "g"   | ["g", "e", "f", "d", "a", "b"]
+ "j"  | "j"   | ["j", "h", "i", "c", "g", "a", "e", "f", "d", "b"]
+ "i"  | "i"   | ["i", "g", "e", "f", "d", "a", "b"]
+(10 rows)
+
+-- cleanup
+DROP GRAPH vertex_labels_complex2 CASCADE;
+NOTICE:  drop cascades to 13 other objects
+DETAIL:  drop cascades to sequence vertex_labels_complex2.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label a
+drop cascades to label b
+drop cascades to label c
+drop cascades to label d
+drop cascades to label e
+drop cascades to label f
+drop cascades to label g
+drop cascades to label h
+drop cascades to label i
+drop cascades to label j
+DROP GRAPH vertex_labels_complex1 CASCADE;
+NOTICE:  drop cascades to 15 other objects
+DETAIL:  drop cascades to sequence vertex_labels_complex1.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label a
+drop cascades to label b
+drop cascades to label c
+drop cascades to label d
+drop cascades to label e
+drop cascades to label f
+drop cascades to label g
+drop cascades to label h
+drop cascades to label i
+drop cascades to label j
+drop cascades to label k
+drop cascades to label l
+DROP GRAPH vertex_labels_simple CASCADE;
+NOTICE:  drop cascades to 7 other objects
+DETAIL:  drop cascades to sequence vertex_labels_simple.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label a
+drop cascades to label b
+drop cascades to label c
+drop cascades to label d
