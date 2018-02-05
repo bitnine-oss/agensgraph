@@ -1,0 +1,351 @@
+--
+-- Cypher Query Language - User Defined Function
+--
+-- prepare
+drop graph ag41 cascade;
+ERROR:  graph "ag41" does not exist
+drop table t1;
+ERROR:  table "t1" does not exist
+drop function func_usingparam( integer , integer );
+ERROR:  function func_usingparam(integer, integer) does not exist
+drop function func_usingvariable1( integer , integer );
+ERROR:  function func_usingvariable1(integer, integer) does not exist
+drop function func_usingvariable2( integer , varchar , integer , varchar );
+ERROR:  function func_usingvariable2(integer, character varying, integer, character varying) does not exist
+drop function func_usingvariable3( integer , integer );
+ERROR:  function func_usingvariable3(integer, integer) does not exist
+drop function func_usingvariable4( integer , varchar , integer , varchar );
+ERROR:  function func_usingvariable4(integer, character varying, integer, character varying) does not exist
+create graph ag41;
+set graph_path = ag41;
+-- +---a-----------+
+-- |   |       b   |
+-- |   |       |   |
+-- |   +---d---+   |
+-- |       |       |
+-- |       e-+   +-f
+-- |         |   |
+-- +---c     +-g-+
+--     |      | |
+--     +---h--+ +--i
+--         |       |
+--         +---j---+
+create vlabel a;
+create vlabel b;
+create vlabel c inherits( a );
+create vlabel d inherits( a , b );
+create vlabel e inherits( d );
+create vlabel f inherits( a );
+create vlabel g inherits( e , f );
+create vlabel h inherits( c , g );
+create vlabel i inherits( g );
+create vlabel j inherits( h , i );
+create (n:a {id:1 , name:'nA'} ) return n;
+               n               
+-------------------------------
+ a[3.1]{"id": 1, "name": "nA"}
+(1 row)
+
+create (n:b {id:2 , name:'nB'} ) return n;
+               n               
+-------------------------------
+ b[4.1]{"id": 2, "name": "nB"}
+(1 row)
+
+create (n:c {id:3 , name:'nC'} ) return n;
+               n               
+-------------------------------
+ c[5.1]{"id": 3, "name": "nC"}
+(1 row)
+
+create (n:d {id:4 , name:'nD'} ) return n;
+               n               
+-------------------------------
+ d[6.1]{"id": 4, "name": "nD"}
+(1 row)
+
+create (n:e {id:5 , name:'nE'} ) return n;
+               n               
+-------------------------------
+ e[7.1]{"id": 5, "name": "nE"}
+(1 row)
+
+create (n:f {id:6 , name:'nF'} ) return n;
+               n               
+-------------------------------
+ f[8.1]{"id": 6, "name": "nF"}
+(1 row)
+
+create (n:g {id:7 , name:'nG'} ) return n;
+               n               
+-------------------------------
+ g[9.1]{"id": 7, "name": "nG"}
+(1 row)
+
+create (n:h {id:8 , name:'nH'} ) return n;
+               n                
+--------------------------------
+ h[10.1]{"id": 8, "name": "nH"}
+(1 row)
+
+create (n:i {id:9 , name:'nI'} ) return n;
+               n                
+--------------------------------
+ i[11.1]{"id": 9, "name": "nI"}
+(1 row)
+
+create (n:j {id:10 , name:'nJ'} ) return n;
+                n                
+---------------------------------
+ j[12.1]{"id": 10, "name": "nJ"}
+(1 row)
+
+match (x:a) , (y:d) where x.name = 'nA' and y.name = 'nD' create (x)-[e:e1{id:51 , name:'edge1'}]->(y) return e;
+                      e                       
+----------------------------------------------
+ e1[13.1][3.1,6.1]{"id": 51, "name": "edge1"}
+(1 row)
+
+match (x:b) , (y:d) where x.name = 'nB' and y.name = 'nD' create (x)-[e:e2{id:52 , name:'edge2'}]->(y) return e;
+                      e                       
+----------------------------------------------
+ e2[14.1][4.1,6.1]{"id": 52, "name": "edge2"}
+(1 row)
+
+match (x:d) , (y:e) where x.name = 'nD' and y.name = 'nE' create (x)-[e:e3{id:53 , name:'edge3'}]->(y) return e;
+                      e                       
+----------------------------------------------
+ e3[15.1][6.1,7.1]{"id": 53, "name": "edge3"}
+(1 row)
+
+match (x:a) , (y:f) where x.name = 'nA' and y.name = 'nF' create (x)-[e:e4{id:54 , name:'edge4'}]->(y) return e;
+                      e                       
+----------------------------------------------
+ e4[16.1][3.1,8.1]{"id": 54, "name": "edge4"}
+(1 row)
+
+match (x:e) , (y:g) where x.name = 'nE' and y.name = 'nG' create (x)-[e:e5{id:55 , name:'edge5'}]->(y) return e;
+                      e                       
+----------------------------------------------
+ e5[17.1][7.1,9.1]{"id": 55, "name": "edge5"}
+(1 row)
+
+match (x:f) , (y:g) where x.name = 'nF' and y.name = 'nG' create (x)-[e:e6{id:56 , name:'edge6'}]->(y) return e;
+                      e                       
+----------------------------------------------
+ e6[18.1][8.1,9.1]{"id": 56, "name": "edge6"}
+(1 row)
+
+match (x:c) , (y:h) where x.name = 'nC' and y.name = 'nH' create (x)-[e:e7{id:57 , name:'edge7'}]->(y) return e;
+                       e                       
+-----------------------------------------------
+ e7[19.1][5.1,10.1]{"id": 57, "name": "edge7"}
+(1 row)
+
+match (x:g) , (y:h) where x.name = 'nG' and y.name = 'nH' create (x)-[e:e8{id:58 , name:'edge8'}]->(y) return e;
+                       e                       
+-----------------------------------------------
+ e8[20.1][9.1,10.1]{"id": 58, "name": "edge8"}
+(1 row)
+
+match (x:g) , (y:i) where x.name = 'nG' and y.name = 'nI' create (x)-[e:e9{id:59 , name:'edge9'}]->(y) return e;
+                       e                       
+-----------------------------------------------
+ e9[21.1][9.1,11.1]{"id": 59, "name": "edge9"}
+(1 row)
+
+match (x:h) , (y:j) where x.name = 'nH' and y.name = 'nJ' create (x)-[e:e10{id:60 , name:'edge10'}]->(y) return e;
+                        e                         
+--------------------------------------------------
+ e10[22.1][10.1,12.1]{"id": 60, "name": "edge10"}
+(1 row)
+
+match (x:i) , (y:j) where x.name = 'nI' and y.name = 'nJ' create (x)-[e:e11{id:61 , name:'edge11'}]->(y) return e;
+                        e                         
+--------------------------------------------------
+ e11[23.1][11.1,12.1]{"id": 61, "name": "edge11"}
+(1 row)
+
+match (x:a) , (y:c) where x.name = 'nA' and y.name = 'nC' create (x)-[e:e12{id:62 , name:'edge12'}]->(y) return e;
+                       e                        
+------------------------------------------------
+ e12[24.1][3.1,5.1]{"id": 62, "name": "edge12"}
+(1 row)
+
+create table t1( c1 integer , c2 varchar(10) );
+-- User Defined Function
+create or replace function func_usingparam( p1 integer , p2 integer ) returns jsonb as $$
+declare
+var1 jsonb;
+var2 jsonb;
+var3 jsonb;
+begin
+match (x)-[e]->(y) where x.id = to_jsonb(p1) and y.id = to_jsonb(p2)
+return x , e , y into var1 , var2 , var3;
+raise notice 'match (x)-[e]->(y) where x.id = to_jsonb(p1) and y.id = to_jsonb(p2) return x , e , y into var1 , var2 , var3;';
+raise notice 'var1 : %' , var1;
+raise notice 'var2 : %' , var2;
+raise notice 'var3 : %' , var3;
+return var2;
+end;
+$$ language plpgsql;
+select func_usingparam( 5 , 7 );
+NOTICE:  match (x)-[e]->(y) where x.id = to_jsonb(p1) and y.id = to_jsonb(p2) return x , e , y into var1 , var2 , var3;
+NOTICE:  var1 : {"id": 5, "name": "nE"}
+NOTICE:  var2 : {"id": 55, "name": "edge5"}
+NOTICE:  var3 : {"id": 7, "name": "nG"}
+       func_usingparam       
+-----------------------------
+ {"id": 55, "name": "edge5"}
+(1 row)
+
+create or replace function func_usingvariable1( p1 integer , p2 integer ) returns jsonb as $$
+declare
+var1 jsonb;
+var2 jsonb;
+var3 jsonb;
+var4 integer;
+var5 integer;
+begin
+var4 := p1;
+var5 := p2;
+match (x)-[e]->(y) where x.id = to_jsonb(var4) and y.id = to_jsonb(var5) return x , e , y into var1 , var2 , var3;
+raise notice 'match (x)-[e]->(y) where x.id = to_jsonb(var4) and y.id = to_jsonb(var5) return x , e , y into var1 , var2 , var3;';
+raise notice 'var1 : %' , var1;
+raise notice 'var2 : %' , var2;
+raise notice 'var3 : %' , var3;
+return var2;
+end;
+$$ language plpgsql;
+select func_usingvariable1( 1 , 3 );
+NOTICE:  match (x)-[e]->(y) where x.id = to_jsonb(var4) and y.id = to_jsonb(var5) return x , e , y into var1 , var2 , var3;
+NOTICE:  var1 : {"id": 1, "name": "nA"}
+NOTICE:  var2 : {"id": 62, "name": "edge12"}
+NOTICE:  var3 : {"id": 3, "name": "nC"}
+     func_usingvariable1      
+------------------------------
+ {"id": 62, "name": "edge12"}
+(1 row)
+
+create or replace function func_usingvariable2( start_id integer , start_name varchar(2) , end_id integer , end_name varchar(2) ) returns jsonb as $$
+declare
+var_start t1%rowtype;
+var_end t1%rowtype;
+var1 jsonb;
+begin
+var_start.c1 := start_id;
+var_start.c2 := start_name;
+var_end.c1 := end_id;
+var_end.c2 := end_name;
+match (x)-[e]->(y)
+where x.id = to_jsonb(var_start.c1) and x.name = to_jsonb(var_start.c2) and y.id = to_jsonb(var_end.c1) and y.name = to_jsonb(var_end.c2)
+return e into var1;
+raise notice 'match (x)-[e]->(y) where x.id = to_jsonb(var_start.c1) and x.name = to_jsonb(var_start.c2) and y.id = to_jsonb(var_end.c1) and y.name = to_jsonb(var_end.c2) return e into var1;';
+raise notice 'var1 : %' , var1;
+return var1;
+end;
+$$ language plpgsql;
+select func_usingvariable2( 1 , 'nA' , 6 , 'nF' );
+NOTICE:  match (x)-[e]->(y) where x.id = to_jsonb(var_start.c1) and x.name = to_jsonb(var_start.c2) and y.id = to_jsonb(var_end.c1) and y.name = to_jsonb(var_end.c2) return e into var1;
+NOTICE:  var1 : {"id": 54, "name": "edge4"}
+     func_usingvariable2     
+-----------------------------
+ {"id": 54, "name": "edge4"}
+(1 row)
+
+create or replace function func_usingvariable3( p1 integer , p2 integer ) returns jsonb as $$
+declare
+var1 jsonb;
+var2 jsonb;
+var3 jsonb;
+begin
+<<label1>>
+declare
+var4 integer;
+var5 integer;
+begin
+var4 := p1;
+var5 := p2;
+match (x)-[e]->(y) where x.id = to_jsonb(label1.var4) and y.id = to_jsonb(label1.var5) return x , e , y into var1 , var2 , var3;
+raise notice 'match (x)-[e]->(y) where x.id = to_jsonb(label1.var4) and y.id = to_jsonb(label1.var5) return x , e , y into var1 , var2 , var3;';
+raise notice 'var1 : %' , var1;
+raise notice 'var2 : %' , var2;
+raise notice 'var3 : %' , var3;
+return var2;
+end;
+end;
+$$ language plpgsql;
+select func_usingvariable3( 1 , 3 );
+NOTICE:  match (x)-[e]->(y) where x.id = to_jsonb(label1.var4) and y.id = to_jsonb(label1.var5) return x , e , y into var1 , var2 , var3;
+NOTICE:  var1 : {"id": 1, "name": "nA"}
+NOTICE:  var2 : {"id": 62, "name": "edge12"}
+NOTICE:  var3 : {"id": 3, "name": "nC"}
+     func_usingvariable3      
+------------------------------
+ {"id": 62, "name": "edge12"}
+(1 row)
+
+create or replace function func_usingvariable4( start_id integer , start_name varchar(2) , end_id integer , end_name varchar(2) ) returns jsonb as $$
+declare
+var1 jsonb;
+begin
+<<label1>>
+declare
+var_start t1%rowtype;
+var_end t1%rowtype;
+begin
+var_start.c1 := start_id;
+var_start.c2 := start_name;
+var_end.c1 := end_id;
+var_end.c2 := end_name;
+match (x)-[e]->(y)
+where x.id = to_jsonb(label1.var_start.c1) and x.name = to_jsonb(label1.var_start.c2) and y.id = to_jsonb(label1.var_end.c1) and y.name = to_jsonb(label1.var_end.c2)
+return e into var1;
+raise notice 'match (x)-[e]->(y) where x.id = to_jsonb(label1.var_start.c1) and x.name = to_jsonb(label1.var_start.c2) and y.id = to_jsonb(label1.var_end.c1) and y.name = to_jsonb(label1.var_end.c2) return e into var1;';
+raise notice 'var1 : %' , var1;
+return var1;
+end;
+end;
+$$ language plpgsql;
+select func_usingvariable4( 1 , 'nA' , 6 , 'nF' );
+NOTICE:  match (x)-[e]->(y) where x.id = to_jsonb(label1.var_start.c1) and x.name = to_jsonb(label1.var_start.c2) and y.id = to_jsonb(label1.var_end.c1) and y.name = to_jsonb(label1.var_end.c2) return e into var1;
+NOTICE:  var1 : {"id": 54, "name": "edge4"}
+     func_usingvariable4     
+-----------------------------
+ {"id": 54, "name": "edge4"}
+(1 row)
+
+-- finalize
+drop function func_usingvariable4( integer , varchar , integer , varchar );
+drop function func_usingvariable3( integer , integer );
+drop function func_usingvariable2( integer , varchar , integer , varchar );
+drop function func_usingvariable1( integer , integer );
+drop function func_usingparam( integer , integer );
+drop table t1;
+drop graph ag41 cascade;
+NOTICE:  drop cascades to 25 other objects
+DETAIL:  drop cascades to sequence ag41.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label a
+drop cascades to label b
+drop cascades to label c
+drop cascades to label d
+drop cascades to label e
+drop cascades to label f
+drop cascades to label g
+drop cascades to label h
+drop cascades to label i
+drop cascades to label j
+drop cascades to label e1
+drop cascades to label e2
+drop cascades to label e3
+drop cascades to label e4
+drop cascades to label e5
+drop cascades to label e6
+drop cascades to label e7
+drop cascades to label e8
+drop cascades to label e9
+drop cascades to label e10
+drop cascades to label e11
+drop cascades to label e12
