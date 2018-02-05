@@ -200,6 +200,17 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 	ParseState *pstate_up;
 	int			nindir = nfields - 1;
 
+	/*
+	 * Give the PreParseColumnRefHook, if any, first shot.  If it returns
+	 * non-null then that's all, folks.
+	 */
+	if (pstate->p_pre_columnref_hook != NULL)
+	{
+		node = (*pstate->p_pre_columnref_hook) (pstate, cref);
+		if (node != NULL)
+			return node;
+	}
+
 	if (pstate->p_lc_varname != NULL)
 	{
 		node = transformListCompColumnRef(pstate, cref, pstate->p_lc_varname);
@@ -308,6 +319,33 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			break;
 
 		pstate_up = pstate_up->parentParseState;
+	}
+
+	/*
+	 * Now give the PostParseColumnRefHook, if any, a chance.  We pass the
+	 * translation-so-far so that it can throw an error if it wishes in the
+	 * case that it has a conflicting interpretation of the ColumnRef. (If it
+	 * just translates anyway, we'll throw an error, because we can't undo
+	 * whatever effects the preceding steps may have had on the pstate.) If it
+	 * returns NULL, use the standard translation, or throw a suitable error
+	 * if there is none.
+	 */
+	if (pstate->p_post_columnref_hook != NULL)
+	{
+		Node	   *hookresult;
+
+		hookresult = (*pstate->p_post_columnref_hook) (pstate, cref, node);
+		if (node == NULL)
+		{
+			node   = hookresult;
+			nindir = nfields;
+		}
+		else if (hookresult != NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_AMBIGUOUS_COLUMN),
+					 errmsg("column reference \"%s\" is ambiguous",
+							NameListToString(cref->fields)),
+					 parser_errposition(pstate, cref->location)));
 	}
 
 	if (node == NULL)
