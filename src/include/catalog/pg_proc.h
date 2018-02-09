@@ -5502,6 +5502,8 @@ DATA(insert OID = 7018 ( length			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 380
 DESCR("get the length of vertex array");
 DATA(insert OID = 7019 ( to_jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "7012" _null_ _null_ _null_ _null_ _null_ vtojb _null_ _null_ _null_ ));
 DESCR("convert vertex to jsonb");
+DATA(insert OID = 7023 ( to_graphid		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7002 "7012" _null_ _null_ _null_ _null_ _null_ vtovid _null_ _null_ _null_ ));
+DESCR("convert vertex to graphid");
 DATA(insert OID = 7024 ( edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_out _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7026 ( _edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7021" _null_ _null_ _null_ _null_ _null_ _edge_out _null_ _null_ _null_ ));

@@ -215,6 +215,8 @@ networkjoinsel(PG_FUNCTION_ARGS)
 		case JOIN_LEFT:
 		case JOIN_FULL:
 		case JOIN_CYPHER_MERGE:
+		case JOIN_CYPHER_DELETE:
+		case JOIN_CYPHER_DETACH:
 
 			/*
 			 * Selectivity for left/full join is not exactly the same as inner

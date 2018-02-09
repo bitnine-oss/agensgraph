@@ -2131,7 +2131,7 @@ MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
 -- DELETE
 --
 MATCH (a) DELETE a;
-ERROR:  vertex 1 in "repo" has edge(s)
+ERROR:  vertices with edges can not be removed.
 MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[1];
 MATCH (a:repo) RETURN a.name AS a;
          a          

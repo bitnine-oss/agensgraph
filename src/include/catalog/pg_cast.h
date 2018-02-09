@@ -396,6 +396,9 @@ DATA(insert ( 3802	114    0 a i ));
 DATA(insert ( 7012 3802 7019 i f ));
 DATA(insert ( 7022 3802 7029 i f ));
 
+/* vertex to graphid */
+DATA(insert ( 7012 7002 7023 i f ));
+
 /* coercions between jsonb and bool */
 DATA(insert ( 3802   16 7191 a f ));
 DATA(insert (   16 3802 7192 i f ));

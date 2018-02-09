@@ -218,6 +218,7 @@ struct ParseState
 	 * Additional information for Cypher queries
 	 */
 	char	   *p_lc_varname;
+	char	   *p_delete_edges_name;
 	bool		p_is_match_quals;
 	bool		p_is_fp_processed;
 	List	   *p_node_info_list;		/* final shape of named nodes */

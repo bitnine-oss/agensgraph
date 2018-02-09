@@ -17,7 +17,6 @@
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
 #include "executor/nodeModifyGraph.h"
-#include "executor/spi.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "nodes/graphnodes.h"
@@ -34,67 +33,15 @@
 #include "utils/tuplestore.h"
 #include "utils/typcache.h"
 
-#define SQLCMD_BUFLEN				(NAMEDATALEN + 192)
-
-/*
- * NOTE: If you add SQLCMD, you should add SqlcmdType for it and use
- *       sqlcmd_cache to run the SQLCMD.
- */
-#define SQLCMD_DEL_ELEM \
-	"DELETE FROM ONLY \"%s\".\"%s\" WHERE " AG_ELEM_LOCAL_ID " = $1"
-#define SQLCMD_DEL_ELEM_NPARAMS		1
-
-#define SQLCMD_DETACH \
-	"SELECT " AG_ELEM_LOCAL_ID " FROM \"%s\"." AG_EDGE \
-	" WHERE " AG_START_ID " = $1 OR \"" AG_END_ID "\" = $1"
-#define SQLCMD_DETACH_NPARAMS		1
-
-#define SQLCMD_DEL_EDGES \
-	"DELETE FROM \"%s\"." AG_EDGE \
-	" WHERE " AG_START_ID " = $1 OR \"" AG_END_ID "\" = $1"
-#define SQLCMD_DEL_EDGES_NPARAMS	1
-
 #define DATUM_NULL	PointerGetDatum(NULL)
 
-typedef enum SqlcmdType
-{
-	SQLCMD_TYPE_DEL_ELEM,
-	SQLCMD_TYPE_DETACH,
-	SQLCMD_TYPE_DEL_EDGES,
-	SQLCMD_TYPE_SET_PROP,
-} SqlcmdType;
-
-typedef struct ArrayAccessTypeInfo
-{
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
-} ArrayAccessTypeInfo;
-
-/* hash key */
-typedef struct SqlcmdKey
-{
-	SqlcmdType	cmdtype;
-	uint16		labid;
-} SqlcmdKey;
-
 /* hash entry */
-typedef struct SqlcmdEntry
+typedef struct ModifiedEntry
 {
-	SqlcmdKey	key;
-	SPIPlanPtr	plan;
-} SqlcmdEntry;
-
-/* hash entry */
-typedef struct ModifiedPropEntry
-{
-	Graphid		key;
-	Datum		elem_datum;
-	Datum		prop_datum;
-	Oid			type;
-} ModifiedPropEntry;
-
-static HTAB *sqlcmd_cache = NULL;
+	Graphid	key;
+	Datum	elem_datum;
+	Oid		type;
+} ModifiedEntry;
 
 static TupleTableSlot *ExecModifyGraph(PlanState *pstate);
 static void initGraphWRStats(ModifyGraphState *mgstate, GraphWriteOp op);
@@ -118,17 +65,14 @@ static void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
 static Datum *makeDatumArray(ExprContext *econtext, int len);
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
-static void deleteVertex(ModifyGraphState *mgstate, Datum vertex, bool detach);
-static bool vertexHasEdge(ModifyGraphState *mgstate, Datum vid);
-static void deleteVertexEdges(ModifyGraphState *mgstate, Datum vid);
-static void deleteElem(ModifyGraphState *mgstate, Datum id, Oid type);
-static void deletePath(ModifyGraphState *mgstate, Datum graphpath, bool detach);
+static void deleteElem(ModifyGraphState *mgstate, Datum elem,
+					   Datum id, Oid type);
 static TupleTableSlot *ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind,
 									TupleTableSlot *slot);
-static Datum updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
-							Datum gid, Datum newelem);
+static void updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
+						   Datum gid, Datum elem_datum);
 static Datum makeModifiedElem(Datum elem, Oid elemtype, Datum id,
-							  Datum prop_map, Datum tid);
+							  Datum prop_map);
 static TupleTableSlot *ExecMergeGraph(ModifyGraphState *mgstate,
 									  TupleTableSlot *slot);
 static bool isMatchedMergePattern(PlanState *planstate);
@@ -142,19 +86,11 @@ static Datum createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
 static TupleTableSlot *copyVirtualTupleTableSlot(TupleTableSlot *dstslot,
 												 TupleTableSlot *srcslot);
 
-/* caching SPIPlan's (See ri_triggers.c) */
-static void InitSqlcmdHashTable(MemoryContext mcxt);
-static void EndSqlcmdHashTable(void);
-static SPIPlanPtr findPreparedPlan(SqlcmdKey *key);
-static SPIPlanPtr prepareSqlcmd(SqlcmdKey *key, char *sqlcmd,
-								int nargs, Oid *argtypes);
-static void savePreparedPlan(SqlcmdKey *key, SPIPlanPtr plan);
-
 /* eager */
 static void enterSetPropTable(ModifyGraphState *mgstate, Oid type, Datum gid,
 							  Datum newelem);
 static void enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type);
-static void getGidListInPath(Datum graphpath, List **vtxlist, List **edgelist);
+static void getElemListInPath(Datum graphpath, List **vtxlist, List **edgelist);
 static Datum getVertexFinalPropMap(ModifyGraphState *mgstate,
 								   Datum origin, Graphid gid);
 static Datum getEdgeFinalPropMap(ModifyGraphState *mgstate,
@@ -249,15 +185,13 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	initGraphWRStats(mgstate, mgplan->operation);
 
-	InitSqlcmdHashTable(estate->es_query_cxt);
-
-	if (mgstate->eagerness && (mgstate->sets != NIL || mgstate->exprs != NIL))
+	if (mgstate->sets != NIL || mgstate->exprs != NIL)
 	{
 		HASHCTL ctl;
 
 		memset(&ctl, 0, sizeof(ctl));
 		ctl.keysize = sizeof(Graphid);
-		ctl.entrysize = sizeof(ModifiedPropEntry);
+		ctl.entrysize = sizeof(ModifiedEntry);
 		ctl.hcxt = CurrentMemoryContext;
 
 		mgstate->propTable = hash_create("modified object table", 128, &ctl,
@@ -296,7 +230,6 @@ ExecModifyGraph(PlanState *pstate)
 			if (TupIsNull(slot))
 				break;
 
-			DisableGraphDML = false;
 			switch (plan->operation)
 			{
 				case GWROP_CREATE:
@@ -322,7 +255,6 @@ ExecModifyGraph(PlanState *pstate)
 					elog(ERROR, "unknown operation");
 					break;
 			}
-			DisableGraphDML = true;
 
 			if (mgstate->eagerness)
 			{
@@ -380,17 +312,28 @@ ExecModifyGraph(PlanState *pstate)
 			if (type == VERTEXOID)
 			{
 				gid = getVertexIdDatum(result->tts_values[i]);
-				elem = getVertexFinalPropMap(mgstate, result->tts_values[i],
+				elem = getVertexFinalPropMap(mgstate,
+											 result->tts_values[i],
 											 gid);
 			}
 			else if (type == EDGEOID)
 			{
 				gid = getEdgeIdDatum(result->tts_values[i]);
-				elem = getEdgeFinalPropMap(mgstate, result->tts_values[i], gid);
+				elem = getEdgeFinalPropMap(mgstate,
+										   result->tts_values[i],
+										   gid);
 			}
 			else if (type == GRAPHPATHOID)
 			{
 				elem = getPathFinalPropMap(mgstate, result->tts_values[i]);
+			}
+			else if (type == EDGEARRAYOID && plan->operation == GWROP_DELETE)
+			{
+				/*
+				 * The edges of the vertices are used only for removal,
+				 * not for result output.
+				 */
+				continue;
 			}
 			else
 			{
@@ -421,9 +364,6 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 
 	if (mgstate->propTable != NULL)
 		hash_destroy(mgstate->propTable);
-
-	if (sqlcmd_cache != NULL)
-		EndSqlcmdHashTable();
 
 	resultRelInfo = mgstate->resultRelations;
 	for (i = mgstate->numResultRelations; i > 0; i--)
@@ -915,223 +855,144 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 {
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
 	ExprContext *econtext = mgstate->ps.ps_ExprContext;
-	ListCell   *le;
+	ListCell	*le;
 
 	ResetExprContext(econtext);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
-
 	foreach(le, mgstate->exprs)
 	{
-		ExprState  *e = (ExprState *) lfirst(le);
-		Oid			type;
-		Datum		datum;
-		bool		isNull;
+		ExprState	*e = (ExprState *) lfirst(le);
+		Oid			 type;
+		Datum		 elem;
+		bool		 isNull;
 
 		type = exprType((Node *) e->expr);
-		if (!(type == VERTEXOID || type == EDGEOID || type == GRAPHPATHOID))
+		if (!(type == VERTEXOID || type == EDGEOID ||
+			  type == GRAPHPATHOID || type == EDGEARRAYOID))
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
 					 errmsg("expected node, relationship, or path")));
 
 		econtext->ecxt_scantuple = slot;
-		datum = ExecEvalExpr(e, econtext, &isNull);
+		elem = ExecEvalExpr(e, econtext, &isNull);
 		if (isNull)
 		{
-			ereport(NOTICE,
-					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-					 errmsg("skipping deletion of NULL graph element")));
+			if (type == EDGEARRAYOID)
+				continue;
+			else
+				ereport(NOTICE,
+						(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+						 errmsg("skipping deletion of NULL graph element")));
 
 			continue;
 		}
 
-		if (mgstate->eagerness)
-		{
-			if (type == VERTEXOID && !plan->detach)
-			{
-				Datum id_datum = getVertexIdDatum(datum);
-
-				if (vertexHasEdge(mgstate, id_datum))
-				{
-					Graphid		id = DatumGetGraphid(id_datum);
-					Oid			relid = get_labid_relid(mgstate->graphid,
-														GraphidGetLabid(id));
-
-					ereport(ERROR,
-							(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
-							 errmsg("vertex " INT64_FORMAT
-									" in \"%s\" has edge(s)",
-									GraphidGetLocid(id),
-									get_rel_name(relid))));
-				}
-			}
-
-			enterDelPropTable(mgstate, datum, type);
-		}
-		else
-		{
-			switch (type)
-			{
-				case VERTEXOID:
-					deleteVertex(mgstate, datum, plan->detach);
-					break;
-				case EDGEOID:
-					deleteElem(mgstate, getEdgeIdDatum(datum), EDGEOID);
-					break;
-				case GRAPHPATHOID:
-					deletePath(mgstate, datum, plan->detach);
-					break;
-				default:
-					elog(ERROR, "expected node, relationship, or path");
-			}
-		}
+		/*
+		 * Note: After all the graph elements to be removed are collected,
+		 * the elements will be removed.
+		 */
+		enterDelPropTable(mgstate, elem, type);
 	}
-
-	if (SPI_finish() != SPI_OK_FINISH)
-		elog(ERROR, "SPI_finish failed");
 
 	return (plan->last ? NULL : slot);
 }
 
 static void
-deleteVertex(ModifyGraphState *mgstate, Datum vertex, bool detach)
+deleteElem(ModifyGraphState *mgstate, Datum elem, Datum gid, Oid type)
 {
-	Datum id_datum = getVertexIdDatum(vertex);
+	EState		   *estate = mgstate->ps.state;
+	Oid				relid;
+	ItemPointer		ctid;
+	ResultRelInfo  *resultRelInfo;
+	ResultRelInfo  *savedResultRelInfo;
+	Relation		resultRelationDesc;
+	HTSU_Result 	result;
+	HeapUpdateFailureData hufd;
 
-	if (detach)
+	relid = get_labid_relid(mgstate->graphid,
+							GraphidGetLabid(DatumGetGraphid(gid)));
+	resultRelInfo = getResultRelInfo(mgstate, relid);
+
+	savedResultRelInfo = estate->es_result_relation_info;
+	estate->es_result_relation_info = resultRelInfo;
+	resultRelationDesc = resultRelInfo->ri_RelationDesc;
+
+	if (type == VERTEXOID)
+		ctid = (ItemPointer) DatumGetPointer(getVertexTidDatum(elem));
+	else if (type == EDGEOID)
+		ctid = (ItemPointer) DatumGetPointer(getEdgeTidDatum(elem));
+	else
+		elog(ERROR, "Invalid graph element type %d.", type);
+
+	/*
+	 * see ExecDelete
+	 */
+	result = heap_delete(resultRelationDesc, ctid,
+						 estate->es_output_cid,
+						 estate->es_crosscheck_snapshot,
+						 true /* wait for commit */ ,
+						 &hufd);
+	switch (result)
 	{
-		deleteVertexEdges(mgstate, id_datum);
-	}
-	else if (vertexHasEdge(mgstate, id_datum))
-	{
-		Graphid		id = DatumGetGraphid(id_datum);
-		Oid			relid = get_labid_relid(mgstate->graphid,
-											GraphidGetLabid(id));
+		case HeapTupleSelfUpdated:
 
-		ereport(ERROR,
-				(errcode(ERRCODE_INTEGRITY_CONSTRAINT_VIOLATION),
-				 errmsg("vertex " INT64_FORMAT " in \"%s\" has edge(s)",
-						GraphidGetLocid(id), get_rel_name(relid))));
-	}
+			/*
+			 * The target tuple was already updated or deleted by the
+			 * current command, or by a later command in the current
+			 * transaction.  The former case is possible in a join DELETE
+			 * where multiple tuples join to the same target tuple. This
+			 * is somewhat questionable, but Postgres has always allowed
+			 * it: we just ignore additional deletion attempts.
+			 *
+			 * The latter case arises if the tuple is modified by a
+			 * command in a BEFORE trigger, or perhaps by a command in a
+			 * volatile function used in the query.  In such situations we
+			 * should not ignore the deletion, but it is equally unsafe to
+			 * proceed.  We don't want to discard the original DELETE
+			 * while keeping the triggered actions based on its deletion;
+			 * and it would be no better to allow the original DELETE
+			 * while discarding updates that it triggered.  The row update
+			 * carries some information that might be important according
+			 * to business rules; so throwing an error is the only safe
+			 * course.
+			 *
+			 * If a trigger actually intends this type of interaction, it
+			 * can re-execute the DELETE and then return NULL to cancel
+			 * the outer delete.
+			 */
+			if (hufd.cmax != estate->es_output_cid)
+				ereport(ERROR,
+						(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
+						 errmsg("tuple to be updated was already modified by an operation triggered by the current command"),
+						 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
 
-	deleteElem(mgstate, id_datum, VERTEXOID);
-}
+			/* Else, already deleted by self; nothing to do */
+			return ;
 
-static bool
-vertexHasEdge(ModifyGraphState *mgstate, Datum vid)
-{
-	Datum		values[SQLCMD_DETACH_NPARAMS];
-	Oid			argTypes[SQLCMD_DETACH_NPARAMS] = {GRAPHIDOID};
-	SqlcmdKey	key;
-	SPIPlanPtr	plan;
-	int			ret;
+		case HeapTupleMayBeUpdated:
+			break;
 
-	key.cmdtype = SQLCMD_TYPE_DETACH;
-	key.labid = mgstate->edgeid;
-	plan = findPreparedPlan(&key);
-	if (plan == NULL)
-	{
-		char sqlcmd[SQLCMD_BUFLEN];
+		case HeapTupleUpdated:
+			ereport(ERROR,
+					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+					 errmsg("could not serialize access due to concurrent update")));
 
-		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DETACH, mgstate->graphname);
+			/* TODO : A solution to concurrent update is needed. */
+			return ;
 
-		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_DETACH_NPARAMS, argTypes);
-	}
-
-	values[0] = vid;
-
-	ret = SPI_execp(plan, values, NULL, 0);
-	if (ret != SPI_OK_SELECT)
-	{
-		Graphid id = DatumGetGraphid(vid);
-
-		elog(ERROR, "DETACH (%hu." INT64_FORMAT "): SPI_execp returned %d",
-			 GraphidGetLabid(id), GraphidGetLocid(id), ret);
-	}
-
-	return (SPI_processed > 0);
-}
-
-static void
-deleteVertexEdges(ModifyGraphState *mgstate, Datum vid)
-{
-	EState	   *estate = mgstate->ps.state;
-	Datum		values[SQLCMD_DEL_EDGES_NPARAMS];
-	Oid			argTypes[SQLCMD_DEL_EDGES_NPARAMS] = {GRAPHIDOID};
-	SqlcmdKey	key;
-	SPIPlanPtr	plan;
-	int			ret;
-
-	key.cmdtype = SQLCMD_TYPE_DEL_EDGES;
-	key.labid = mgstate->edgeid;
-	plan = findPreparedPlan(&key);
-	if (plan == NULL)
-	{
-		char sqlcmd[SQLCMD_BUFLEN];
-
-		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DEL_EDGES, mgstate->graphname);
-
-		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_DEL_EDGES_NPARAMS, argTypes);
-	}
-
-	values[0] = vid;
-
-	ret = SPI_execp(plan, values, NULL, 0);
-	if (ret != SPI_OK_DELETE)
-	{
-		Graphid id = DatumGetGraphid(vid);
-
-		elog(ERROR, "DEL_EDGES (%hu." INT64_FORMAT "): SPI_execp returned %d",
-			 GraphidGetLabid(id), GraphidGetLocid(id), ret);
+		default:
+			elog(ERROR, "unrecognized heap_update status: %u", result);
+			return ;
 	}
 
-	if (mgstate->canSetTag)
-	{
-		Assert(estate->es_graphwrstats.deleteEdge != UINT_MAX);
-
-		estate->es_graphwrstats.deleteEdge += SPI_processed;
-	}
-}
-
-static void
-deleteElem(ModifyGraphState *mgstate, Datum id, Oid type)
-{
-	EState	   *estate = mgstate->ps.state;
-	Graphid		id_val;
-	uint16		labid;
-	Datum		values[SQLCMD_DEL_ELEM_NPARAMS];
-	Oid			argTypes[SQLCMD_DEL_ELEM_NPARAMS] = {GRAPHIDOID};
-	SqlcmdKey	key;
-	SPIPlanPtr	plan;
-	int			ret;
-
-	id_val = DatumGetGraphid(id);
-	labid = GraphidGetLabid(id_val);
-
-	key.cmdtype = SQLCMD_TYPE_DEL_ELEM;
-	key.labid = labid;
-	plan = findPreparedPlan(&key);
-	if (plan == NULL)
-	{
-		char		sqlcmd[SQLCMD_BUFLEN];
-		char	   *relname;
-
-		relname = get_rel_name(get_labid_relid(mgstate->graphid, labid));
-		snprintf(sqlcmd, SQLCMD_BUFLEN, SQLCMD_DEL_ELEM,
-				 mgstate->graphname, relname);
-
-		plan = prepareSqlcmd(&key, sqlcmd, SQLCMD_DEL_ELEM_NPARAMS, argTypes);
-	}
-
-	values[0] = id;
-
-	ret = SPI_execp(plan, values, NULL, 0);
-	if (ret != SPI_OK_DELETE)
-		elog(ERROR, "DEL_EDGES (%hu." INT64_FORMAT "): SPI_execp returned %d",
-			 labid, GraphidGetLocid(id_val), ret);
-	if (SPI_processed > 1)
-		elog(ERROR, "DEL_EDGES (%hu." INT64_FORMAT "): only one or no element per execution must be deleted", labid, GraphidGetLocid(id_val));
+	/*
+	 * Note: Normally one would think that we have to delete index tuples
+	 * associated with the heap tuple now...
+	 *
+	 * ... but in POSTGRES, we have no need to do this because VACUUM will
+	 * take care of it later.  We can't delete index tuples immediately
+	 * anyway, since the tuple is still visible to other transactions.
+	 */
 
 	if (mgstate->canSetTag)
 	{
@@ -1139,67 +1000,17 @@ deleteElem(ModifyGraphState *mgstate, Datum id, Oid type)
 		{
 			Assert(estate->es_graphwrstats.deleteVertex != UINT_MAX);
 
-			estate->es_graphwrstats.deleteVertex += SPI_processed;
+			estate->es_graphwrstats.deleteVertex += 1;
 		}
 		else
 		{
 			Assert(estate->es_graphwrstats.deleteEdge != UINT_MAX);
 
-			estate->es_graphwrstats.deleteEdge += SPI_processed;
+			estate->es_graphwrstats.deleteEdge += 1;
 		}
 	}
-}
 
-static void
-deletePath(ModifyGraphState *mgstate, Datum graphpath, bool detach)
-{
-	Datum		vertices_datum;
-	Datum		edges_datum;
-	AnyArrayType *vertices;
-	AnyArrayType *edges;
-	int			nvertices;
-	int			nedges;
-	ArrayAccessTypeInfo vertexInfo;
-	ArrayAccessTypeInfo edgeInfo;
-	array_iter	it;
-	Datum		value;
-	bool		null;
-	int			i;
-
-	getGraphpathArrays(graphpath, &vertices_datum, &edges_datum);
-
-	vertices = DatumGetAnyArray(vertices_datum);
-	edges = DatumGetAnyArray(edges_datum);
-
-	nvertices = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices));
-	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
-	Assert(nvertices == nedges + 1);
-
-	get_typlenbyvalalign(AARR_ELEMTYPE(vertices), &vertexInfo.typlen,
-						 &vertexInfo.typbyval, &vertexInfo.typalign);
-	get_typlenbyvalalign(AARR_ELEMTYPE(edges), &edgeInfo.typlen,
-						 &edgeInfo.typbyval, &edgeInfo.typalign);
-
-	/* delete edges first to avoid vertexHasEdge() */
-	array_iter_setup(&it, edges);
-	for (i = 0; i < nedges; i++)
-	{
-		value = array_iter_next(&it, &null, i, edgeInfo.typlen,
-								edgeInfo.typbyval, edgeInfo.typalign);
-		Assert(!null);
-
-		deleteElem(mgstate, getEdgeIdDatum(value), EDGEOID);
-	}
-
-	array_iter_setup(&it, vertices);
-	for (i = 0; i < nvertices; i++)
-	{
-		value = array_iter_next(&it, &null, i, vertexInfo.typlen,
-								vertexInfo.typbyval, vertexInfo.typalign);
-		Assert(!null);
-
-		deleteVertex(mgstate, value, detach);
-	}
+	estate->es_result_relation_info = savedResultRelInfo;
 }
 
 static TupleTableSlot *
@@ -1207,7 +1018,7 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 {
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
 	ExprContext *econtext = mgstate->ps.ps_ExprContext;
-	ListCell   *ls;
+	ListCell	*ls;
 	TupleTableSlot *result = mgstate->ps.ps_ResultTupleSlot;
 
 	/*
@@ -1220,11 +1031,13 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 	{
 		GraphSetProp *gsp = lfirst(ls);
 		ExprDoneCond isDone;
-		Oid			elemtype;
-		Datum		elem_datum;
-		Datum		expr_datum;
-		bool		isNull;
-		Datum		newelem;
+		Oid		elemtype;
+		Datum	elem_datum;
+		Datum	expr_datum;
+		bool	isNull;
+		Datum	gid;
+		Datum	newelem;
+		MemoryContext oldmctx;
 
 		if (gsp->kind != kind)
 		{
@@ -1238,57 +1051,47 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 
 		elem_datum = ExecEvalExpr(gsp->es_elem, econtext, &isNull);
 		if (isNull)
-		{
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("updating NULL is not allowed")));
-		}
 
 		expr_datum = ExecEvalExpr(gsp->es_expr, econtext, &isNull);
 		if (isNull)
-		{
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("property map cannot be NULL")));
-		}
 
-		if (mgstate->eagerness)
-		{
-			enterSetPropTable(mgstate, elemtype, elem_datum, expr_datum);
-		}
-		else
-		{
-			newelem = updateElemProp(mgstate, elemtype, elem_datum, expr_datum);
+		gid = (elemtype == VERTEXOID) ? getVertexIdDatum(elem_datum) :
+										getEdgeIdDatum(elem_datum);
 
-			setSlotValueByName(result, newelem, gsp->variable);
-		}
+		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+		newelem = makeModifiedElem(elem_datum, elemtype, gid, expr_datum);
+		MemoryContextSwitchTo(oldmctx);
+
+		enterSetPropTable(mgstate, elemtype, gid, newelem);
+
+		setSlotValueByName(result, newelem, gsp->variable);
 	}
 
 	return (plan->last ? NULL : result);
 }
 
-static Datum
-updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
-			   Datum elem_datum, Datum expr_datum)
+static void
+updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
+			   Datum elem_datum)
 {
-	EState		*estate = mgstate->ps.state;
-	ExprContext *econtext = mgstate->ps.ps_ExprContext;
+	EState		   *estate = mgstate->ps.state;
 	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
-	HeapTuple	tuple;
-	ResultRelInfo *resultRelInfo;
-	ResultRelInfo *savedResultRelInfo;
-	Relation	resultRelationDesc;
-	HTSU_Result result;
-	LockTupleMode lockmode;
+	Oid				relid;
+	ItemPointer		ctid;
+	HeapTuple		tuple;
+	ResultRelInfo  *resultRelInfo;
+	ResultRelInfo  *savedResultRelInfo;
+	Relation		resultRelationDesc;
+	LockTupleMode	lockmode;
+	HTSU_Result		result;
 	HeapUpdateFailureData hufd;
-	Datum		gid;
-	Oid			relid;
-	ItemPointer	ctid;
-	Datum		newelem;
-	MemoryContext oldmctx;
 
-	gid = (elemtype == VERTEXOID) ? getVertexIdDatum(elem_datum) :
-									getEdgeIdDatum(elem_datum);
 	relid = get_labid_relid(mgstate->graphid,
 							GraphidGetLabid(DatumGetGraphid(gid)));
 	resultRelInfo = getResultRelInfo(mgstate, relid);
@@ -1307,7 +1110,7 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
 	if (elemtype == VERTEXOID)
 	{
 		elemTupleSlot->tts_values[0] = gid;
-		elemTupleSlot->tts_values[1] = expr_datum;
+		elemTupleSlot->tts_values[1] = getVertexPropDatum(elem_datum);
 
 		ctid = (ItemPointer) DatumGetPointer(getVertexTidDatum(elem_datum));
 	}
@@ -1318,7 +1121,7 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
 		elemTupleSlot->tts_values[0] = gid;
 		elemTupleSlot->tts_values[1] = getEdgeStartDatum(elem_datum);
 		elemTupleSlot->tts_values[2] = getEdgeEndDatum(elem_datum);
-		elemTupleSlot->tts_values[3] = expr_datum;
+		elemTupleSlot->tts_values[3] = getEdgePropDatum(elem_datum);
 
 		ctid = (ItemPointer) DatumGetPointer(getEdgeTidDatum(elem_datum));
 	}
@@ -1388,8 +1191,7 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
 						 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
 
 			/* Else, already updated by self; nothing to do */
-			return (Datum) NULL;
-
+			return;
 		case HeapTupleMayBeUpdated:
 			break;
 
@@ -1399,20 +1201,10 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
 					 errmsg("could not serialize access due to concurrent update")));
 
 			/* TODO : A solution to concurrent updates is needed. */
-			return (Datum) NULL;
-
+			return;
 		default:
 			elog(ERROR, "unrecognized heap_update status: %u", result);
-			return (Datum) NULL;
 	}
-
-	/*
-	 * Note: instead of having to update the old index tuples associated
-	 * with the heap tuple, all we do is form and insert new index tuples.
-	 * This is because UPDATEs are actually DELETEs and INSERTs, and index
-	 * tuple deletion is done later by VACUUM (see notes in ExecDelete).
-	 * All we do here is insert new index tuples.  -cim 9/27/89
-	 */
 
 	/*
 	 * insert index entries for tuple
@@ -1426,24 +1218,21 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
 		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self),
 							  estate, false, NULL, NIL);
 
-	oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-	newelem = makeModifiedElem(elem_datum, elemtype, gid, expr_datum,
-							   PointerGetDatum(&(tuple->t_self)));
-	MemoryContextSwitchTo(oldmctx);
-
 	if (mgstate->canSetTag)
 		(estate->es_graphwrstats.updateProperty)++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
-
-	return newelem;
 }
 
 static Datum
-makeModifiedElem(Datum elem, Oid elemtype, Datum id, Datum prop_map, Datum tid)
+makeModifiedElem(Datum elem, Oid elemtype, Datum id, Datum prop_map)
 {
+	Datum	tid;
+
 	if (elemtype == VERTEXOID)
 	{
+		tid = getVertexTidDatum(elem);
+
 		return makeGraphVertexDatum(id, prop_map, tid);
 	}
 	else
@@ -1453,6 +1242,7 @@ makeModifiedElem(Datum elem, Oid elemtype, Datum id, Datum prop_map, Datum tid)
 
 		start = getEdgeStartDatum(elem);
 		end = getEdgeEndDatum(elem);
+		tid = getEdgeTidDatum(elem);
 
 		return makeGraphEdgeDatum(id, start, end, prop_map, tid);
 	}
@@ -1780,176 +1570,129 @@ copyVirtualTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
 	return dstslot;
 }
 
-/* 
- * NOTE: What happens if there is a multiple execution of ModifyGraph?
- */
 static void
-InitSqlcmdHashTable(MemoryContext mcxt)
+enterSetPropTable(ModifyGraphState *mgstate, Oid type, Datum gid,
+				  Datum elem_datum)
 {
-	HASHCTL ctl;
-
-	memset(&ctl, 0, sizeof(ctl));
-	ctl.keysize = sizeof(SqlcmdKey);
-	ctl.entrysize = sizeof(SqlcmdEntry);
-	ctl.hcxt = mcxt;
-
-	sqlcmd_cache = hash_create("ModifyGraph SPIPlan cache", 128, &ctl,
-							   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
-}
-
-/*
- * NOTE: If an error occurs during the execution of ModifyGraph,
- *       there is no way to remove saved plans.
- */
-static void
-EndSqlcmdHashTable(void)
-{
-	HASH_SEQ_STATUS seqStatus;
-	SqlcmdEntry *entry;
-
-	hash_seq_init(&seqStatus, sqlcmd_cache);
-	while ((entry = hash_seq_search(&seqStatus)) != NULL)
-		SPI_freeplan(entry->plan);
-
-	hash_destroy(sqlcmd_cache);
-
-	sqlcmd_cache = NULL;
-}
-
-static SPIPlanPtr
-findPreparedPlan(SqlcmdKey *key)
-{
-	SqlcmdEntry *entry;
-	SPIPlanPtr plan;
-
-	Assert(sqlcmd_cache != NULL);
-
-	entry = hash_search(sqlcmd_cache, (void *) key, HASH_FIND, NULL);
-	if (entry == NULL)
-		return NULL;
-
-	plan = entry->plan;
-	if (plan && SPI_plan_is_valid(plan))
-		return plan;
-
-	entry->plan = NULL;
-	if (plan != NULL)
-		SPI_freeplan(plan);
-
-	return NULL;
-}
-
-static SPIPlanPtr
-prepareSqlcmd(SqlcmdKey *key, char *sqlcmd, int nargs, Oid *argtypes)
-{
-	SPIPlanPtr plan;
-
-	plan = SPI_prepare(sqlcmd, nargs, argtypes);
-	if (plan == NULL)
-		elog(ERROR, "failed to SPI_prepare(): %d", SPI_result);
-
-	savePreparedPlan(key, plan);
-
-	return plan;
-}
-
-static void
-savePreparedPlan(SqlcmdKey *key, SPIPlanPtr plan)
-{
-	SqlcmdEntry *entry;
-	bool		found;
-
-	Assert(sqlcmd_cache != NULL);
-
-	if (SPI_keepplan(plan))
-		elog(ERROR, "savePreparedPlan: SPI_keepplan failed");
-
-	entry = hash_search(sqlcmd_cache, (void *) key, HASH_ENTER, &found);
-	Assert(!found || entry->plan == NULL);
-	entry->plan = plan;
-}
-
-static void
-enterSetPropTable(ModifyGraphState *mgstate, Oid type, Datum elem_datum,
-				  Datum expr_datum)
-{
-	bool		found;
-	Datum		gid;
-	ModifiedPropEntry *entry;
-
-	gid = (type == VERTEXOID) ? getVertexIdDatum(elem_datum) :
-								getEdgeIdDatum(elem_datum);
+	ModifiedEntry *entry;
+	bool	found;
 
 	entry = hash_search(mgstate->propTable, (void *) &gid, HASH_ENTER, &found);
 	if (found)
-	{
-		pfree((void *) entry->prop_datum);
 		pfree((void *) entry->elem_datum);
-	}
+
 	entry->elem_datum = datumCopy(elem_datum, false, -1);
-	entry->prop_datum = datumCopy(expr_datum, false, -1);
 	entry->type = type;
 }
 
 static void
 enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 {
-	Datum gid;
-	ModifiedPropEntry *entry;
+	Datum	gid;
+	bool	found;
+	ModifiedEntry *entry;
 
 	if (type == VERTEXOID)
 	{
 		gid = getVertexIdDatum(elem);
 
-		entry = hash_search(mgstate->propTable, (void *) &gid, HASH_ENTER,
-							NULL);
+		entry = hash_search(mgstate->propTable, (void *) &gid,
+							HASH_ENTER, &found);
+		if (found)
+			return;
+
+		entry->elem_datum = datumCopy(elem, false, -1);
 		entry->type = type;
-		entry->elem_datum = (Datum) NULL;
-		entry->prop_datum = (Datum) NULL;
 	}
 	else if (type == EDGEOID)
 	{
 		gid = getEdgeIdDatum(elem);
 
-		entry = hash_search(mgstate->propTable, (void *) &gid, HASH_ENTER,
-							NULL);
+		entry = hash_search(mgstate->propTable, (void *) &gid,
+							HASH_ENTER, &found);
+		if (found)
+			return;
+
+		entry->elem_datum = datumCopy(elem, false, -1);
 		entry->type = type;
-		entry->prop_datum = (Datum) NULL;
 	}
-	else
+	else if (type == GRAPHPATHOID)
 	{
-		List	   *vtxGidList = NIL;
-		List	   *edgeGidList = NIL;
+		List	   *vtxList = NIL;
+		List	   *edgeList = NIL;
 		ListCell   *lc;
 
 		Assert(type == GRAPHPATHOID);
 
-		getGidListInPath(elem, &vtxGidList, &edgeGidList);
+		getElemListInPath(elem, &vtxList, &edgeList);
 
-		foreach(lc, vtxGidList)
+		foreach(lc, vtxList)
 		{
-			gid = (Datum) lfirst(lc);
+			Datum vtx = (Datum) lfirst(lc);
 
-			entry = hash_search(mgstate->propTable,
-								(void *) &gid, HASH_ENTER, NULL);
+			gid = getVertexIdDatum(vtx);
+			entry = hash_search(mgstate->propTable, (void *) &gid,
+								HASH_ENTER, &found);
+			if (found)
+				continue;
+
+			entry->elem_datum = datumCopy(vtx, false, -1);
 			entry->type = VERTEXOID;
-			entry->prop_datum = (Datum) NULL;
 		}
 
-		foreach(lc, edgeGidList)
+		foreach(lc, edgeList)
 		{
-			gid = (Datum) lfirst(lc);
+			Datum edge = (Datum) lfirst(lc);
 
-			entry = hash_search(mgstate->propTable,
-								(void *) &gid, HASH_ENTER, NULL);
+			gid = getEdgeIdDatum(edge);
+			entry = hash_search(mgstate->propTable, (void *) &gid,
+								HASH_ENTER, &found);
+			if (found)
+				continue;
+
+			entry->elem_datum = datumCopy(edge, false, -1);
 			entry->type = EDGEOID;
-			entry->prop_datum = (Datum) NULL;
+		}
+	}
+	else if (type == EDGEARRAYOID)
+	{
+		AnyArrayType *edges;
+		int			nedges;
+		int16		typlen;
+		bool		typbyval;
+		char		typalign;
+		array_iter	it;
+		int			i;
+		Datum		edge;
+		bool		isnull;
+
+		edges = DatumGetAnyArray(elem);
+		nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
+
+		get_typlenbyvalalign(AARR_ELEMTYPE(edges), &typlen,
+							 &typbyval, &typalign);
+
+		array_iter_setup(&it, edges);
+		for (i = 0; i < nedges; i++)
+		{
+			edge = array_iter_next(&it, &isnull, i,typlen,
+									typbyval, typalign);
+
+			gid = getEdgeIdDatum(edge);
+			entry = hash_search(mgstate->propTable,
+								(void *) &gid, HASH_ENTER, &found);
+
+			if (found)
+				continue;
+
+			entry->elem_datum = datumCopy(edge, false, -1);
+			entry->type = EDGEOID;
 		}
 	}
 }
 
 static void
-getGidListInPath(Datum graphpath, List **vtxlist, List **edgelist)
+getElemListInPath(Datum graphpath, List **vtxlist, List **edgelist)
 {
 	Datum		vertices_datum;
 	Datum		edges_datum;
@@ -1980,8 +1723,7 @@ getGidListInPath(Datum graphpath, List **vtxlist, List **edgelist)
 									typbyval, typalign);
 			Assert(!isnull);
 
-			*vtxlist = lappend(*vtxlist,
-							   DatumGetPointer(getVertexIdDatum(value)));
+			*vtxlist = lappend(*vtxlist, (void *) value);
 		}
 	}
 
@@ -2002,8 +1744,7 @@ getGidListInPath(Datum graphpath, List **vtxlist, List **edgelist)
 									typbyval, typalign);
 			Assert(!isnull);
 
-			*edgelist = lappend(*edgelist,
-								DatumGetPointer(getEdgeIdDatum(value)));
+			*edgelist = lappend(*edgelist, (void *) value);
 		}
 	}
 }
@@ -2011,7 +1752,7 @@ getGidListInPath(Datum graphpath, List **vtxlist, List **edgelist)
 static Datum
 getVertexFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 {
-	ModifiedPropEntry *entry;
+	ModifiedEntry *entry;
 
 	entry = hash_search(mgstate->propTable, (void *) &gid, HASH_FIND, NULL);
 
@@ -2025,7 +1766,7 @@ getVertexFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 static Datum
 getEdgeFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 {
-	ModifiedPropEntry *entry;
+	ModifiedEntry *entry;
 
 	entry = hash_search(mgstate->propTable, (void *) &gid, HASH_FIND, NULL);
 
@@ -2041,8 +1782,8 @@ getPathFinalPropMap(ModifyGraphState *mgstate, Datum origin)
 {
 	Datum		vertices_datum;
 	Datum		edges_datum;
-	AnyArrayType *arr_vertices;
-	AnyArrayType *arr_edges;
+	AnyArrayType *arrVertices;
+	AnyArrayType *arrEdges;
 	int			nvertices;
 	int			nedges;
 	Datum	   *vertices;
@@ -2060,20 +1801,19 @@ getPathFinalPropMap(ModifyGraphState *mgstate, Datum origin)
 
 	getGraphpathArrays(origin, &vertices_datum, &edges_datum);
 
-	arr_vertices = DatumGetAnyArray(vertices_datum);
-	arr_edges = DatumGetAnyArray(edges_datum);
+	arrVertices = DatumGetAnyArray(vertices_datum);
+	arrEdges = DatumGetAnyArray(edges_datum);
 
-	nvertices = ArrayGetNItems(AARR_NDIM(arr_vertices),
-							   AARR_DIMS(arr_vertices));
-	nedges = ArrayGetNItems(AARR_NDIM(arr_edges), AARR_DIMS(arr_edges));
+	nvertices = ArrayGetNItems(AARR_NDIM(arrVertices), AARR_DIMS(arrVertices));
+	nedges = ArrayGetNItems(AARR_NDIM(arrEdges), AARR_DIMS(arrEdges));
 	Assert(nvertices == nedges + 1);
 
 	vertices = palloc(nvertices * sizeof(Datum));
 	edges = palloc(nedges * sizeof(Datum));
 
-	get_typlenbyvalalign(AARR_ELEMTYPE(arr_vertices), &typlen,
+	get_typlenbyvalalign(AARR_ELEMTYPE(arrVertices), &typlen,
 						 &typbyval, &typalign);
-	array_iter_setup(&it, arr_vertices);
+	array_iter_setup(&it, arrVertices);
 	for (i = 0; i < nvertices; i++)
 	{
 		Datum		vertex;
@@ -2093,9 +1833,9 @@ getPathFinalPropMap(ModifyGraphState *mgstate, Datum origin)
 		vertices[i] = vertex;
 	}
 
-	get_typlenbyvalalign(AARR_ELEMTYPE(arr_edges), &typlen,
+	get_typlenbyvalalign(AARR_ELEMTYPE(arrEdges), &typlen,
 						 &typbyval, &typalign);
-	array_iter_setup(&it, arr_edges);
+	array_iter_setup(&it, arrEdges);
 	for (i = 0; i < nedges; i++)
 	{
 		Datum		edge;
@@ -2131,42 +1871,19 @@ reflectModifiedProp(ModifyGraphState *mgstate)
 {
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
 	HASH_SEQ_STATUS seq;
-	ModifiedPropEntry *entry;
+	ModifiedEntry *entry;
 
 	Assert(mgstate->propTable != NULL);
 
 	hash_seq_init(&seq, mgstate->propTable);
 	while ((entry = hash_seq_search(&seq)) != NULL)
 	{
-		Datum gid = GraphidGetDatum(entry->key);
+		Datum gid = PointerGetDatum(entry->key);
 
 		/* write the object to heap */
 		if (plan->operation == GWROP_DELETE)
-		{
-			DisableGraphDML = false;
-
-			if (SPI_connect() != SPI_OK_CONNECT)
-				elog(ERROR, "SPI_connect failed");
-
-			deleteElem(mgstate, gid, entry->type);
-
-			if (SPI_finish() != SPI_OK_FINISH)
-				elog(ERROR, "SPI_finish failed");
-
-			DisableGraphDML = true;
-		}
+			deleteElem(mgstate, entry->elem_datum, gid, entry->type);
 		else
-		{
-			Datum newelem;
-
-			newelem = updateElemProp(mgstate, entry->type,
-									 entry->elem_datum, entry->prop_datum);
-
-			pfree((void *) entry->elem_datum);
-			pfree((void *) entry->prop_datum);
-
-			entry->elem_datum = newelem;
-			entry->prop_datum = (Datum) NULL;
-		}
+			updateElemProp(mgstate, entry->type, gid, entry->elem_datum);
 	}
 }
