@@ -2527,7 +2527,6 @@ _readGraphVertex(void)
 	READ_BOOL_FIELD(create);
 	READ_OID_FIELD(relid);
 	READ_NODE_FIELD(expr);
-	READ_NODE_FIELD(qual);
 
 	READ_DONE();
 }
@@ -2541,7 +2540,6 @@ _readGraphEdge(void)
 	READ_INT_FIELD(resno);
 	READ_OID_FIELD(relid);
 	READ_NODE_FIELD(expr);
-	READ_NODE_FIELD(qual);
 
 	READ_DONE();
 }

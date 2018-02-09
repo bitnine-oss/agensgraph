@@ -507,8 +507,6 @@ ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate)
 
 			gvertex->es_expr = ExecInitExpr((Expr *) gvertex->expr,
 											(PlanState *) mgstate);
-			gvertex->es_qual = ExecInitExpr((Expr *) gvertex->qual,
-											(PlanState *) mgstate);
 		}
 		else
 		{
@@ -517,8 +515,6 @@ ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate)
 			Assert(IsA(elem, GraphEdge));
 
 			gedge->es_expr = ExecInitExpr((Expr *) gedge->expr,
-										  (PlanState *) mgstate);
-			gedge->es_qual = ExecInitExpr((Expr *) gedge->qual,
 										  (PlanState *) mgstate);
 		}
 	}
@@ -1544,12 +1540,6 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("expected single result")));
 
-	if (gvertex->es_qual != NULL &&
-		ExecQual((List *) gvertex->es_qual, econtext, false))
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("cannot use null property value in MERGE")));
-
 	vertexId = getVertexIdDatum(vertex);
 	*vid = DatumGetGraphid(vertexId);
 
@@ -1637,12 +1627,6 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("expected single result")));
-
-	if (gedge->es_qual != NULL &&
-		ExecQual((List *) gedge->es_qual, econtext, false))
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("cannot use null property value in MERGE")));
 
 	edgeProp = getEdgePropDatum(edge);
 	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(edgeProp)))

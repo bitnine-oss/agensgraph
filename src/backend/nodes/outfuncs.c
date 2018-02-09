@@ -4047,7 +4047,6 @@ _outGraphVertex(StringInfo str, const GraphVertex *node)
 	WRITE_BOOL_FIELD(create);
 	WRITE_OID_FIELD(relid);
 	WRITE_NODE_FIELD(expr);
-	WRITE_NODE_FIELD(qual);
 }
 
 static void
@@ -4059,7 +4058,6 @@ _outGraphEdge(StringInfo str, const GraphEdge *node)
 	WRITE_INT_FIELD(resno);
 	WRITE_OID_FIELD(relid);
 	WRITE_NODE_FIELD(expr);
-	WRITE_NODE_FIELD(qual);
 }
 
 static void

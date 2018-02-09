@@ -4359,7 +4359,6 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 	Relation 	relation;
 	Node	   *vertex = NULL;
 	Oid			relid = InvalidOid;
-	Node	   *qual = NULL;
 	AttrNumber	resno = InvalidAttrNumber;
 	GraphVertex	*gvertex;
 
@@ -4389,19 +4388,6 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 
 	heap_close(relation, NoLock);
 
-	if (cnode->prop_map != NULL)
-	{
-		FuncCall   *fc;
-		Node	   *prop_expr;
-
-		/* check if null values exist in the properties */
-		fc = makeFuncCall(list_make1(makeString("jsonb_has_nulls")), NIL, -1);
-		prop_expr = transformPropMap(pstate, cnode->prop_map,
-									 EXPR_KIND_SELECT_TARGET);
-		qual = ParseFuncOrColumn(pstate, fc->funcname,
-								 list_make1(prop_expr), fc, -1);
-	}
-
 	te = makeTargetEntry((Expr *) vertex,
 						 InvalidAttrNumber,
 						 (varname == NULL ? "?column?" : varname),
@@ -4421,7 +4407,6 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 	gvertex->create = true;
 	gvertex->relid = relid;
 	gvertex->expr = vertex;
-	gvertex->qual = qual;
 
 	return gvertex;
 }
@@ -4437,7 +4422,6 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	Relation 	relation;
 	Node	   *edge;
 	Oid			relid = InvalidOid;
-	Node	   *qual = NULL;
 	TargetEntry	*te;
 	AttrNumber	resno = InvalidAttrNumber;
 	GraphEdge  *gedge;
@@ -4471,18 +4455,6 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	relid = RelationGetRelid(relation);
 
 	heap_close(relation, NoLock);
-
-	if (crel->prop_map)
-	{
-		FuncCall   *fc;
-		Node	   *prop_expr;
-
-		fc = makeFuncCall(list_make1(makeString("jsonb_has_nulls")), NIL, -1);
-		prop_expr = transformPropMap(pstate, crel->prop_map,
-									 EXPR_KIND_SELECT_TARGET);
-		qual = ParseFuncOrColumn(pstate, fc->funcname,
-								 list_make1(prop_expr), fc, -1);
-	}
 
 	te = makeTargetEntry((Expr *) edge,
 						 InvalidAttrNumber,
@@ -4518,7 +4490,6 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 	gedge->resno = resno;
 	gedge->relid = relid;
 	gedge->expr = edge;
-	gedge->qual = qual;
 
 	return gedge;
 }
