@@ -4940,8 +4940,6 @@ DATA(insert OID = 3274 (  jsonb_build_object	PGNSP PGUID 12 1 0 0 0 f f f f f f 
 DESCR("build an empty jsonb object");
 DATA(insert OID = 3262 (  jsonb_strip_nulls    PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_strip_nulls _null_ _null_ _null_ ));
 DESCR("remove object fields with null values from jsonb");
-DATA(insert OID = 3343 (  jsonb_has_nulls		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 16 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_has_nulls _null_ _null_ _null_ ));
-DESCR("check to exist object fields with null values from jsonb");
 
 DATA(insert OID = 3478 (  jsonb_object_field			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3802 "3802 25" _null_ _null_ "{from_json, field_name}" _null_ _null_ jsonb_object_field _null_ _null_ _null_ ));
 DATA(insert OID = 3214 (  jsonb_object_field_text	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 25  "3802 25" _null_ _null_ "{from_json, field_name}" _null_ _null_ jsonb_object_field_text _null_ _null_ _null_ ));

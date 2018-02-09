@@ -1078,8 +1078,6 @@ preprocess_graph_pattern(PlannerInfo *root, List *pattern)
 
 			gvertex->expr = preprocess_expression(root, gvertex->expr,
 												  EXPRKIND_TARGET);
-			gvertex->qual = preprocess_expression(root, gvertex->qual,
-												  EXPRKIND_QUAL);
 		}
 		else
 		{
@@ -1089,8 +1087,6 @@ preprocess_graph_pattern(PlannerInfo *root, List *pattern)
 
 			gedge->expr = preprocess_expression(root, gedge->expr,
 												EXPRKIND_TARGET);
-			gedge->qual = preprocess_expression(root, gedge->qual,
-												EXPRKIND_QUAL);
 		}
 	}
 }

@@ -4422,52 +4422,6 @@ jsonb_insert(PG_FUNCTION_ARGS)
 }
 
 /*
- * SQL function jsonb_has_nulls(jsonb)
- */
-Datum
-jsonb_has_nulls(PG_FUNCTION_ARGS)
-{
-	Jsonb	   *jb = PG_GETARG_JSONB(0);
-	JsonbIterator *it;
-	JsonbValue	v;
-	JsonbIteratorToken type;
-	bool		last_was_key = false;
-	bool		res = false;
-
-	if (JB_ROOT_IS_SCALAR(jb))
-		PG_RETURN_BOOL(res);
-
-	it = JsonbIteratorInit(&jb->root);
-
-	while ((type = JsonbIteratorNext(&it, &v, false)) != WJB_DONE)
-	{
-		Assert(!(type == WJB_KEY && last_was_key));
-
-		if (type == WJB_KEY)
-		{
-			/* stash the key until we know if it has a null value */
-			last_was_key = true;
-			continue;
-		}
-
-		if (last_was_key)
-		{
-			/* if the last element was a key this one can't be */
-			last_was_key = false;
-
-			/* skip this field if value is null */
-			if (type == WJB_VALUE && v.type == jbvNull)
-			{
-				res = true;
-				break;
-			}
-		}
-	}
-
-	PG_RETURN_BOOL(res);
-}
-
-/*
  * Iterate over all jsonb objects and merge them into one.
  * The logic of this function copied from the same hstore function,
  * except the case, when it1 & it2 represents jbvObject.

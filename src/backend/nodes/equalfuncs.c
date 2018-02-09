@@ -3244,7 +3244,6 @@ _equalGraphVertex(const GraphVertex *a, const GraphVertex *b)
 	COMPARE_SCALAR_FIELD(create);
 	COMPARE_SCALAR_FIELD(relid);
 	COMPARE_NODE_FIELD(expr);
-	COMPARE_NODE_FIELD(qual);
 
 	return true;
 }
@@ -3256,7 +3255,6 @@ _equalGraphEdge(const GraphEdge *a, const GraphEdge *b)
 	COMPARE_SCALAR_FIELD(resno);
 	COMPARE_SCALAR_FIELD(relid);
 	COMPARE_NODE_FIELD(expr);
-	COMPARE_NODE_FIELD(qual);
 
 	return true;
 }
