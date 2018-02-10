@@ -9483,6 +9483,8 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 			case OCLASS_PUBLICATION_REL:
 			case OCLASS_SUBSCRIPTION:
 			case OCLASS_TRANSFORM:
+			case OCLASS_GRAPH:
+			case OCLASS_LABEL:
 
 				/*
 				 * We don't expect any of these sorts of objects to depend on

@@ -177,6 +177,7 @@ extern char *get_namespace_name(Oid nspid);
 extern char *get_namespace_name_or_temp(Oid nspid);
 extern Oid	get_range_subtype(Oid rangeOid);
 
+extern char *get_graphid_graphname(Oid graphid);
 extern Oid	get_graphname_oid(const char *graphname);
 extern char *get_labid_labname(Oid graphid, uint16 labid);
 extern Oid	get_labid_relid(Oid graphid, uint16 labid);

@@ -19,6 +19,7 @@
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "bootstrap/bootstrap.h"
+#include "catalog/ag_graph.h"
 #include "catalog/ag_label.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
@@ -3109,6 +3110,27 @@ get_range_subtype(Oid rangeOid)
 }
 
 /*				---------- AG_GRAPH CACHE ----------				 */
+
+char *
+get_graphid_graphname(Oid graphid)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(GRAPHOID, ObjectIdGetDatum(graphid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_graph graphtup = (Form_ag_graph) GETSTRUCT(tp);
+		char	   *result;
+
+		result = pstrdup(NameStr(graphtup->graphname));
+		ReleaseSysCache(tp);
+		return result;
+	}
+	else
+	{
+		return NULL;
+	}
+}
 
 Oid
 get_graphname_oid(const char *graphname)

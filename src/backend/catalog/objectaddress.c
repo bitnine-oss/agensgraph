@@ -807,6 +807,8 @@ static void getOpFamilyIdentity(StringInfo buffer, Oid opfid, List **object);
 static void getRelationIdentity(StringInfo buffer, Oid relid, List **object);
 
 static void getLabelDescription(StringInfo buffer, Oid laboid);
+static void getLabelTypeDescription(StringInfo buffer, Oid laboid);
+static void getLabelIdentity(StringInfo buffer, Oid laboid, List **object);
 
 /*
  * Translate an object name and arguments (as passed by the parser) to an
@@ -3579,44 +3581,13 @@ getObjectDescription(const ObjectAddress *object)
 				break;
 			}
 		case OCLASS_GRAPH:
-			{
-				HeapTuple	tuple;
-				Form_ag_graph graphtup;
-
-				tuple = SearchSysCache1(GRAPHOID,
-										ObjectIdGetDatum(object->objectId));
-				if (!HeapTupleIsValid(tuple))
-					elog(ERROR, "cache lookup failed for graph %u",
-						 object->objectId);
-
-				graphtup = (Form_ag_graph) GETSTRUCT(tuple);
-
-				appendStringInfo(&buffer, _("graph %s"),
-								 NameStr(graphtup->graphname));
-
-				ReleaseSysCache(tuple);
-				break;
-			}
+			appendStringInfo(&buffer, _("graph %s"),
+							 get_graphid_graphname(object->objectId));
+			break;
 
 		case OCLASS_LABEL:
-			{
-				HeapTuple	tuple;
-				Form_ag_label labtup;
-
-				tuple = SearchSysCache1(LABELOID,
-										ObjectIdGetDatum(object->objectId));
-				if (!HeapTupleIsValid(tuple))
-					elog(ERROR, "cache lookup failed for label %u",
-						 object->objectId);
-
-				labtup = (Form_ag_label) GETSTRUCT(tuple);
-
-				appendStringInfo(&buffer, _("label %s"),
-								 NameStr(labtup->labname));
-
-				ReleaseSysCache(tuple);
-				break;
-			}
+			getLabelDescription(&buffer, object->objectId);
+			break;
 
 			/*
 			 * There's intentionally no default: case here; we want the
@@ -4124,7 +4095,7 @@ getObjectTypeDescription(const ObjectAddress *object)
 			break;
 
 		case OCLASS_LABEL:
-			getLabelDescription(&buffer, object->objectId);
+			getLabelTypeDescription(&buffer, object->objectId);
 			break;
 
 			/*
@@ -5181,6 +5152,24 @@ getObjectIdentityParts(const ObjectAddress *object,
 			}
 			break;
 
+		case OCLASS_GRAPH:
+			{
+				char	   *graphname;
+
+				graphname = get_graphid_graphname(object->objectId);
+				if (graphname == NULL)
+					elog(ERROR, "cache lookup failed for graph %u",
+						 object->objectId);
+				appendStringInfoString(&buffer, quote_identifier(graphname));
+				if (objname != NULL)
+					*objname = list_make1(graphname);
+			}
+			break;
+
+		case OCLASS_LABEL:
+			getLabelIdentity(&buffer, object->objectId, objname);
+			break;
+
 			/*
 			 * There's intentionally no default: case here; we want the
 			 * compiler to warn if a new OCLASS hasn't been handled above.
@@ -5299,35 +5288,33 @@ strlist_to_textarray(List *list)
 	return arr;
 }
 
-ObjectType
-get_relkind_objtype(char relkind)
+static void
+getLabelDescription(StringInfo buffer, Oid laboid)
 {
-	switch (relkind)
-	{
-		case RELKIND_RELATION:
-		case RELKIND_PARTITIONED_TABLE:
-			return OBJECT_TABLE;
-		case RELKIND_INDEX:
-			return OBJECT_INDEX;
-		case RELKIND_SEQUENCE:
-			return OBJECT_SEQUENCE;
-		case RELKIND_VIEW:
-			return OBJECT_VIEW;
-		case RELKIND_MATVIEW:
-			return OBJECT_MATVIEW;
-		case RELKIND_FOREIGN_TABLE:
-			return OBJECT_FOREIGN_TABLE;
-		/* other relkinds are not supported here because they don't map to OBJECT_* values */
-		default:
-			elog(ERROR, "unexpected relkind: %d", relkind);
-			return 0;
-	}
+	HeapTuple   tuple;
+	Form_ag_label labtup;
+
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for label (OID=%u)", laboid);
+
+	labtup = (Form_ag_label) GETSTRUCT(tuple);
+
+	if (labtup->labkind == LABEL_KIND_VERTEX)
+		appendStringInfo(buffer, "vlabel %s", NameStr(labtup->labname));
+	else if (labtup->labkind == LABEL_KIND_EDGE)
+		appendStringInfo(buffer, "elabel %s", NameStr(labtup->labname));
+	else
+		elog(ERROR, "invalid label (OID=%u)", laboid);
+
+	ReleaseSysCache(tuple);
 }
 
 /*
  * subroutine for getObjectTypeDescription: describe a graph label
  */
-static void getLabelDescription(StringInfo buffer, Oid laboid)
+static void
+getLabelTypeDescription(StringInfo buffer, Oid laboid)
 {
 	HeapTuple   tuple;
 	Form_ag_label labtup;
@@ -5343,7 +5330,32 @@ static void getLabelDescription(StringInfo buffer, Oid laboid)
 	else if (labtup->labkind == LABEL_KIND_EDGE)
 		appendStringInfo(buffer, "elabel");
 	else
-		elog(ERROR, "invalid label (OID=%u)",laboid);
+		elog(ERROR, "invalid label (OID=%u)", laboid);
+
+	ReleaseSysCache(tuple);
+}
+
+static void
+getLabelIdentity(StringInfo buffer, Oid laboid, List **object)
+{
+	HeapTuple   tuple;
+	Form_ag_label labtup;
+	char	   *graphname;
+	char	   *labname;
+
+	tuple = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for label (OID=%u)", laboid);
+
+	labtup = (Form_ag_label) GETSTRUCT(tuple);
+
+	graphname = get_graphid_graphname(labtup->graphid);
+	labname = NameStr(labtup->labname);
+
+	appendStringInfoString(buffer,
+						   quote_qualified_identifier(graphname, labname));
+	if (object != NULL)
+		*object = list_make2(graphname, pstrdup(labname));
 
 	ReleaseSysCache(tuple);
 }
