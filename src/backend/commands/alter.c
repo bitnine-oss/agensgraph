@@ -830,7 +830,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 
 		case OBJECT_SCHEMA:
 			{
-				char *name = strVal(linitial(stmt->object));
+				char *name = strVal((Value *) stmt->object);
 
 				if (OidIsValid(get_graphname_oid(name)))
 					ereport(ERROR,
@@ -913,7 +913,7 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 
 		case OBJECT_GRAPH:
 			{
-				char *name = strVal(linitial(stmt->object));
+				char *name = strVal((Value *) stmt->object);
 
 				if (!OidIsValid(get_graphname_oid(name)))
 					ereport(ERROR,

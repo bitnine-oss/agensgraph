@@ -41,20 +41,22 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 
-static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind);
+static ObjectAddress DefineLabel(CreateStmt *stmt, char labkind,
+								 const char *queryString);
 static void GetSuperOids(List *supers, char labkind, List **supOids);
 static void AgInheritanceDependancy(Oid laboid, List *supers);
 static void SetMaxStatisticsTarget(Oid laboid);
 
 /* See ProcessUtilitySlow() case T_CreateSchemaStmt */
 void
-CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString)
+CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString,
+				   int stmt_location, int stmt_len)
 {
 	Oid			graphid;
 	List	   *parsetree_list;
 	ListCell   *parsetree_item;
 
-	graphid = GraphCreate(stmt, queryString);
+	graphid = GraphCreate(stmt, queryString, stmt_location, stmt_len);
 	if (!OidIsValid(graphid))
 		return;
 
@@ -64,14 +66,18 @@ CreateGraphCommand(CreateGraphStmt *stmt, const char *queryString)
 
 	foreach(parsetree_item, parsetree_list)
 	{
-		Node *stmt = lfirst(parsetree_item);
+		Node	   *stmt = lfirst(parsetree_item);
+		PlannedStmt *wrapper;
 
-		ProcessUtility(stmt,
-					   queryString,
-					   PROCESS_UTILITY_SUBCOMMAND,
-					   NULL,
-					   None_Receiver,
-					   NULL);
+		wrapper = makeNode(PlannedStmt);
+		wrapper->commandType = CMD_UTILITY;
+		wrapper->canSetTag = false;
+		wrapper->utilityStmt = stmt;
+		wrapper->stmt_location = stmt_location;
+		wrapper->stmt_len = stmt_len;
+
+		ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
+					   NULL, NULL, None_Receiver, NULL);
 
 		CommandCounterIncrement();
 	}
@@ -136,8 +142,7 @@ RenameGraph(const char *oldname, const char *newname)
 
 	/* rename */
 	namestrcpy(&(((Form_ag_graph) GETSTRUCT(tup))->graphname), newname);
-	simple_heap_update(rel, &tup->t_self, tup);
-	CatalogUpdateIndexes(rel, tup);
+	CatalogTupleUpdate(rel, &tup->t_self, tup);
 
 	InvokeObjectPostAlterHook(GraphRelationId, HeapTupleGetOid(tup), 0);
 
@@ -156,7 +161,7 @@ RenameGraph(const char *oldname, const char *newname)
 /* See ProcessUtilitySlow() case T_CreateStmt */
 void
 CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
-				   ParamListInfo params)
+				   int stmt_location, int stmt_len, ParamListInfo params)
 {
 	char		labkind;
 	List	   *stmts;
@@ -174,16 +179,26 @@ CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
 
 		if (IsA(stmt, CreateStmt))
 		{
-			DefineLabel((CreateStmt *) stmt, labkind);
+			DefineLabel((CreateStmt *) stmt, labkind, queryString);
 		}
 		else
 		{
+			PlannedStmt *wrapper;
+
 			/*
 			 * Recurse for anything else.  Note the recursive call will stash
 			 * the objects so created into our event trigger context.
 			 */
-			ProcessUtility(stmt, queryString, PROCESS_UTILITY_SUBCOMMAND,
-						   params, None_Receiver, NULL);
+
+			wrapper = makeNode(PlannedStmt);
+			wrapper->commandType = CMD_UTILITY;
+			wrapper->canSetTag = false;
+			wrapper->utilityStmt = stmt;
+			wrapper->stmt_location = stmt_location;
+			wrapper->stmt_len = stmt_len;
+
+			ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
+						   params, NULL, None_Receiver, NULL);
 		}
 
 		CommandCounterIncrement();
@@ -192,7 +207,7 @@ CreateLabelCommand(CreateLabelStmt *labelStmt, const char *queryString,
 
 /* creates a new graph label */
 static ObjectAddress
-DefineLabel(CreateStmt *stmt, char labkind)
+DefineLabel(CreateStmt *stmt, char labkind, const char *queryString)
 {
 	static char *validnsps[] = HEAP_RELOPT_NAMESPACES;
 	ObjectAddress reladdr;
@@ -206,7 +221,8 @@ DefineLabel(CreateStmt *stmt, char labkind)
 	 * Create the table
 	 */
 
-	reladdr = DefineRelation(stmt, RELKIND_RELATION, InvalidOid, NULL);
+	reladdr = DefineRelation(stmt, RELKIND_RELATION, InvalidOid, NULL,
+							 queryString);
 	EventTriggerCollectSimpleCommand(reladdr, InvalidObjectAddress,
 									 (Node *) stmt);
 
@@ -274,9 +290,7 @@ SetMaxStatisticsTarget(Oid laboid)
 	attrtuple = (Form_pg_attribute) GETSTRUCT(tuple);
 	attrtuple->attstattarget = maxtarget;
 
-	simple_heap_update(attrelation, &tuple->t_self, tuple);
-
-	CatalogUpdateIndexes(attrelation, tuple);
+	CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
 
 	heap_freetuple(tuple);
 
@@ -293,9 +307,7 @@ SetMaxStatisticsTarget(Oid laboid)
 
 	attrtuple->attstattarget = maxtarget;
 
-	simple_heap_update(attrelation, &tuple->t_self, tuple);
-
-	CatalogUpdateIndexes(attrelation, tuple);
+	CatalogTupleUpdate(attrelation, &tuple->t_self, tuple);
 
 	heap_freetuple(tuple);
 
@@ -408,8 +420,7 @@ RenameLabel(RenameStmt *stmt)
 
 	/* rename */
 	namestrcpy(&(((Form_ag_label) GETSTRUCT(tup))->labname), stmt->newname);
-	simple_heap_update(rel, &tup->t_self, tup);
-	CatalogUpdateIndexes(rel, tup);
+	CatalogTupleUpdate(rel, &tup->t_self, tup);
 
 	InvokeObjectPostAlterHook(LabelRelationId, HeapTupleGetOid(tup), 0);
 
@@ -493,18 +504,27 @@ RangeVarIsLabel(RangeVar *rel)
 
 void
 CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
-						const char *queryString, ParamListInfo params)
+						const char *queryString, int stmt_location,
+						int stmt_len,ParamListInfo params)
 {
-	Node	   *stmt;
 	ParseState *pstate;
+	Node	   *stmt;
+	PlannedStmt *wrapper;
 
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
 
 	stmt = transformCreateConstraintStmt(pstate, constraintStmt);
 
-	ProcessUtility(stmt, queryString, PROCESS_UTILITY_SUBCOMMAND,
-				   params, None_Receiver, NULL);
+	wrapper = makeNode(PlannedStmt);
+	wrapper->commandType = CMD_UTILITY;
+	wrapper->canSetTag = false;
+	wrapper->utilityStmt = stmt;
+	wrapper->stmt_location = stmt_location;
+	wrapper->stmt_len = stmt_len;
+
+	ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
+				   params, NULL, None_Receiver, NULL);
 
 	CommandCounterIncrement();
 
@@ -513,18 +533,27 @@ CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
 
 void
 DropConstraintCommand(DropConstraintStmt *constraintStmt,
-					  const char *queryString, ParamListInfo params)
+					  const char *queryString, int stmt_location,
+					  int stmt_len,ParamListInfo params)
 {
-	Node	   *stmt;
 	ParseState *pstate;
+	Node	   *stmt;
+	PlannedStmt *wrapper;
 
 	pstate = make_parsestate(NULL);
 	pstate->p_sourcetext = queryString;
 
 	stmt = transformDropConstraintStmt(pstate, constraintStmt);
 
-	ProcessUtility(stmt, queryString, PROCESS_UTILITY_SUBCOMMAND,
-				   params, None_Receiver, NULL);
+	wrapper = makeNode(PlannedStmt);
+	wrapper->commandType = CMD_UTILITY;
+	wrapper->canSetTag = false;
+	wrapper->utilityStmt = stmt;
+	wrapper->stmt_location = stmt_location;
+	wrapper->stmt_len = stmt_len;
+
+	ProcessUtility(wrapper, queryString, PROCESS_UTILITY_SUBCOMMAND,
+				   params, NULL, None_Receiver, NULL);
 
 	CommandCounterIncrement();
 

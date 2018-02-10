@@ -6275,7 +6275,6 @@ drop_type_any_name:
 			| TEXT_P SEARCH DICTIONARY				{ $$ = OBJECT_TSDICTIONARY; }
 			| TEXT_P SEARCH TEMPLATE				{ $$ = OBJECT_TSTEMPLATE; }
 			| TEXT_P SEARCH CONFIGURATION			{ $$ = OBJECT_TSCONFIGURATION; }
-			| GRAPH									{ $$ = OBJECT_GRAPH; }
 			| ELABEL								{ $$ = OBJECT_ELABEL; }
 			| VLABEL								{ $$ = OBJECT_VLABEL; }
 			| PROPERTY INDEX						{ $$ = OBJECT_PROPERTY_INDEX; }
@@ -6290,6 +6289,7 @@ drop_type_name:
 			| PUBLICATION							{ $$ = OBJECT_PUBLICATION; }
 			| SCHEMA								{ $$ = OBJECT_SCHEMA; }
 			| SERVER								{ $$ = OBJECT_FOREIGN_SERVER; }
+			| GRAPH									{ $$ = OBJECT_GRAPH; }
 		;
 
 /* object types attached to a table */
@@ -6532,7 +6532,6 @@ comment_type_any_name:
 			| TEXT_P SEARCH DICTIONARY			{ $$ = OBJECT_TSDICTIONARY; }
 			| TEXT_P SEARCH PARSER				{ $$ = OBJECT_TSPARSER; }
 			| TEXT_P SEARCH TEMPLATE			{ $$ = OBJECT_TSTEMPLATE; }
-			| GRAPH								{ $$ = OBJECT_GRAPH; }
 			| VLABEL							{ $$ = OBJECT_VLABEL; }
 			| ELABEL							{ $$ = OBJECT_ELABEL; }
 		;
@@ -6551,6 +6550,7 @@ comment_type_name:
 			| SERVER							{ $$ = OBJECT_FOREIGN_SERVER; }
 			| SUBSCRIPTION						{ $$ = OBJECT_SUBSCRIPTION; }
 			| TABLESPACE						{ $$ = OBJECT_TABLESPACE; }
+			| GRAPH								{ $$ = OBJECT_GRAPH; }
 		;
 
 comment_text:
@@ -9315,6 +9315,14 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 					n->newowner = $6;
 					$$ = (Node *)n;
 				}
+			| ALTER GRAPH name OWNER TO RoleSpec
+				{
+					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
+					n->objectType = OBJECT_GRAPH;
+					n->object = (Node *) makeString($3);
+					n->newowner = $6;
+					$$ = (Node *)n;
+				}
 		;
 
 
@@ -9501,14 +9509,6 @@ AlterSubscriptionStmt:
 					n->subname = $3;
 					n->options = list_make1(makeDefElem("enabled",
 											(Node *)makeInteger(FALSE), @1));
-					$$ = (Node *)n;
-				}
-			| ALTER GRAPH name OWNER TO RoleSpec
-				{
-					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
-					n->objectType = OBJECT_GRAPH;
-					n->object = list_make1(makeString($3));
-					n->newowner = $6;
 					$$ = (Node *)n;
 				}
 		;

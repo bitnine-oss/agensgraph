@@ -3611,8 +3611,8 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 	labseq->sequence = makeRangeVar(stmt->graphname, AG_LABEL_SEQ, -1);
 	labseq->options =
 			list_make2(makeDefElem("maxvalue", (Node *)
-								   makeInteger(GRAPHID_LABID_MAX)),
-					   makeDefElem("cycle", (Node *) makeInteger(TRUE)));
+								   makeInteger(GRAPHID_LABID_MAX), -1),
+					   makeDefElem("cycle", (Node *) makeInteger(TRUE), -1));
 	labseq->ownerId = InvalidOid;
 	labseq->if_not_exists = false;
 
@@ -3810,6 +3810,9 @@ transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
 	cxt.blist = NIL;
 	cxt.alist = NIL;
 	cxt.pkey = NULL;
+	cxt.ispartitioned = stmt->partspec != NULL;
+	cxt.partbound = stmt->partbound;
+	cxt.ofType = (stmt->ofTypename != NULL);
 
 	foreach(elements, stmt->tableElts)
 	{
@@ -4099,19 +4102,20 @@ transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
 	/* ALTER SEQUENCE OWNED BY after CREATE TABLE */
 
 #ifdef HAVE_LONG_INT_64
-	maxval = makeDefElem("maxvalue", (Node *) makeInteger(GRAPHID_LOCID_MAX));
+	maxval = makeDefElem("maxvalue", (Node *) makeInteger(GRAPHID_LOCID_MAX),
+						 -1);
 #else
 	{
 		char buf[32];
 
 		snprintf(buf, sizeof(buf), UINT64_FORMAT, GRAPHID_LOCID_MAX);
-		maxval = makeDefElem("maxvalue", (Node *) makeFloat(pstrdup(buf)));
+		maxval = makeDefElem("maxvalue", (Node *) makeFloat(pstrdup(buf)), -1);
 	}
 #endif
 	attnamelist = list_make3(makeString(snamespace),
 							 makeString(cxt->relation->relname),
 							 makeString(AG_ELEM_LOCAL_ID));
-	ownedby = makeDefElem("owned_by", (Node *) attnamelist);
+	ownedby = makeDefElem("owned_by", (Node *) attnamelist, -1);
 	altseqstmt = makeNode(AlterSeqStmt);
 	altseqstmt->sequence = makeRangeVar(snamespace, sname, -1);
 	altseqstmt->options = list_make2(maxval, ownedby);
@@ -4159,9 +4163,8 @@ makeComment(ObjectType type, RangeVar *name, char *desc)
 
 	c = makeNode(CommentStmt);
 	c->objtype = type;
-	c->objname = list_make2(makeString(name->schemaname),
-							makeString(name->relname));
-	c->objargs = NIL;
+	c->object = (Node *) list_make2(makeString(name->schemaname),
+									makeString(name->relname));
 	c->comment = pstrdup(desc);
 
 	return c;
@@ -4376,7 +4379,7 @@ prop_ref_mutator(Node *node)
 	{
 		ColumnRef  *cref;
 
-		cref = copyObject(node);
+		cref = castNode(ColumnRef, copyObject(node));
 		cref->fields = lcons(makeString(AG_ELEM_PROP_MAP), cref->fields);
 
 		return (Node *) cref;
