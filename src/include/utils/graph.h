@@ -46,7 +46,7 @@ typedef uint64 Graphid;
 				 (((uint64) (_locid)) & 0x0000ffffffffffff); \
 	} while (0)
 
-#define GRAPHID_LABID_MAX	USHRT_MAX
+#define GRAPHID_LABID_MAX	PG_UINT16_MAX
 #define GRAPHID_LOCID_MAX	((UINT64CONST(1) << (32 + 16)) - 1)
 
 typedef uint64 EdgeRef;

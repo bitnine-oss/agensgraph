@@ -793,8 +793,8 @@ static ObjectAddress get_object_address_publication_rel(List *object,
 								   bool missing_ok);
 static ObjectAddress get_object_address_defacl(List *object,
 						  bool missing_ok);
-static ObjectAddress get_object_address_graph(List *objname, bool missing_ok);
-static ObjectAddress get_object_address_label(List *objname, bool missing_ok);
+static ObjectAddress get_object_address_graph(Value *object, bool missing_ok);
+static ObjectAddress get_object_address_label(List *object, bool missing_ok);
 static const ObjectPropertyType *get_object_property_data(Oid class_id);
 
 static void getRelationDescription(StringInfo buffer, Oid relid);
@@ -1044,11 +1044,11 @@ get_object_address(ObjectType objtype, Node *object,
 				address.objectSubId = 0;
 				break;
 			case OBJECT_GRAPH:
-				address = get_object_address_graph(objname, missing_ok);
+				address = get_object_address_graph((Value *) object, missing_ok);
 				break;
 			case OBJECT_ELABEL:
 			case OBJECT_VLABEL:
-				address = get_object_address_label(objname, missing_ok);
+				address = get_object_address_label(castNode(List, object), missing_ok);
 				break;
 			default:
 				elog(ERROR, "unrecognized objtype: %d", (int) objtype);
@@ -1973,14 +1973,12 @@ not_found:
  * Find the ObjectAddress for a graph object
  */
 static ObjectAddress
-get_object_address_graph(List *objname, bool missing_ok)
+get_object_address_graph(Value *object, bool missing_ok)
 {
 	ObjectAddress address;
 	char *graphname;
 
-	Assert(list_length(objname) == 1);
-
-	graphname = strVal(linitial(objname));
+	graphname = strVal(object);
 
 	address.classId = GraphRelationId;
 	address.objectId = get_graphname_oid(graphname);
@@ -1998,28 +1996,28 @@ get_object_address_graph(List *objname, bool missing_ok)
  * Find the ObjectAddress for a graph label
  */
 static ObjectAddress
-get_object_address_label(List *objname, bool missing_ok)
+get_object_address_label(List *object, bool missing_ok)
 {
 	ObjectAddress address;
 	Oid			graphid;
 	char	   *graphname;
 	char	   *labname;
 
-	switch (list_length(objname))
+	switch (list_length(object))
 	{
 		case 1:
 			graphname = get_graph_path(false);
-			labname = strVal(linitial(objname));
+			labname = strVal(linitial(object));
 			break;
 		case 2:
-			graphname = strVal(linitial(objname));
-			labname = strVal(lsecond(objname));
+			graphname = strVal(linitial(object));
+			labname = strVal(lsecond(object));
 			break;
 		default:
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("improper qualified name (too many dotted names): %s",
-							NameListToString(objname))));
+							NameListToString(object))));
 	}
 
 	graphid = get_graphname_oid(graphname);
@@ -2544,13 +2542,13 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 		case OBJECT_GRAPH:
 			if (!ag_graph_ownercheck(address.objectId, roleid))
 				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_GRAPH,
-							   NameListToString(objname));
+							   strVal((Value *) object));
 			break;
 		case OBJECT_VLABEL:
 		case OBJECT_ELABEL:
 			if (!ag_label_ownercheck(address.objectId, roleid))
 				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_LABEL,
-							   NameListToString(objname));
+							   NameListToString(castNode(List, object)));
 			break;
 		default:
 			elog(ERROR, "unrecognized object type: %d",

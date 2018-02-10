@@ -3525,7 +3525,7 @@ typedef struct CreateGraphStmt
 {
 	NodeTag		type;
 	char	   *graphname;		/* the name of the graph to create */
-	Node	   *authrole;		/* the owner of the created graph */
+	RoleSpec   *authrole;		/* the owner of the created graph */
 	bool		if_not_exists;	/* just do nothing if graph already exists? */
 } CreateGraphStmt;
 

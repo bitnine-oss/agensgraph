@@ -479,15 +479,15 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 			break;
 		case OBJECT_GRAPH:
 			msg = gettext_noop("graph \"%s\" does not exist, skipping");
-			name = NameListToString(objname);
+			name = strVal((Value *) object);
 			break;
 		case OBJECT_VLABEL:
 			msg = gettext_noop("vlabel \"%s\" does not exist, skipping");
-			name = NameListToString(objname);
+			name = NameListToString(castNode(List, object));
 			break;
 		case OBJECT_ELABEL:
 			msg = gettext_noop("elabel \"%s\" does not exist, skipping");
-			name = NameListToString(objname);
+			name = NameListToString(castNode(List, object));
 			break;
 		default:
 			elog(ERROR, "unrecognized object type: %d", (int) objtype);
