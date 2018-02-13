@@ -200,9 +200,20 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 	ParseState *pstate_up;
 	int			nindir = nfields - 1;
 
+	/*
+	 * The iterator variable used in a list comprehension expression always
+	 * hides other variables with the same name.
+	 */
 	if (pstate->p_lc_varname != NULL)
 	{
 		node = transformListCompColumnRef(pstate, cref, pstate->p_lc_varname);
+		if (node != NULL)
+			return node;
+	}
+
+	if (pstate->p_pre_columnref_hook != NULL)
+	{
+		node = (*pstate->p_pre_columnref_hook) (pstate, cref);
 		if (node != NULL)
 			return node;
 	}
@@ -308,6 +319,27 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			break;
 
 		pstate_up = pstate_up->parentParseState;
+	}
+
+	if (pstate->p_post_columnref_hook != NULL)
+	{
+		Node	   *hookresult;
+
+		hookresult = (*pstate->p_post_columnref_hook) (pstate, cref, node);
+		if (node == NULL)
+		{
+			node = hookresult;
+			nindir = nfields;
+		}
+		else if (hookresult != NULL)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_AMBIGUOUS_COLUMN),
+					 errmsg("column reference \"%s\" is ambiguous",
+							NameListToString(cref->fields)),
+					 parser_errposition(pstate, cref->location)));
+			return NULL;
+		}
 	}
 
 	if (node == NULL)

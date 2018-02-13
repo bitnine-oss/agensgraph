@@ -1,0 +1,54 @@
+--
+-- Cypher Query Language - User Defined Function
+--
+-- setup
+DROP FUNCTION IF EXISTS udf_var(jsonb);
+NOTICE:  function udf_var(jsonb) does not exist, skipping
+DROP FUNCTION IF EXISTS udf_param(jsonb);
+NOTICE:  function udf_param(jsonb) does not exist, skipping
+DROP GRAPH IF EXISTS udf CASCADE;
+NOTICE:  graph "udf" does not exist, skipping
+CREATE GRAPH udf;
+SET graph_path = udf;
+CREATE (:v {id: 1, refs: [2, 3, 4]}), (:v {id: 2});
+-- test param and scope of the iterator variable used in a list comprehension
+CREATE FUNCTION udf_param(id jsonb) RETURNS jsonb AS $$
+DECLARE
+  r jsonb;
+BEGIN
+  MATCH (n:v) WHERE n.id = id RETURN [id IN n.refs WHERE id < 3] INTO r;
+  RETURN r;
+END;
+$$ LANGUAGE plpgsql;
+RETURN udf_param(1);
+ udf_param 
+-----------
+ [2]
+(1 row)
+
+-- test var
+CREATE FUNCTION udf_var(id jsonb) RETURNS jsonb AS $$
+DECLARE
+  i jsonb;
+  p jsonb;
+BEGIN
+  i := id;
+  MATCH (n:v) WHERE n.id = i RETURN properties(n) INTO p;
+  RETURN p;
+END;
+$$ LANGUAGE plpgsql;
+RETURN udf_var(2);
+  udf_var  
+-----------
+ {"id": 2}
+(1 row)
+
+-- teardown
+DROP FUNCTION udf_var(jsonb);
+DROP FUNCTION udf_param(jsonb);
+DROP GRAPH udf CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence udf.ag_label_seq
+drop cascades to label ag_vertex
+drop cascades to label ag_edge
+drop cascades to label v

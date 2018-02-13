@@ -118,7 +118,8 @@ test: cypher_dml cypher_eager graphid
 test: cypher_ddl
 
 # run cypher function test
-test: cypher_func
+test: cypher_func cypher_plpgsql
+
 
 # run sql restriction test
 test: sql_restriction
