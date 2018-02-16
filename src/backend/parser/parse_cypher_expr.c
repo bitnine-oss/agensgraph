@@ -447,7 +447,7 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		field = lfirst(lf);
 
 		res = ParseFuncOrColumn(pstate, list_make1(field), list_make1(res),
-								NULL, location);
+								pstate->p_last_srf, NULL, location);
 		if (res == NULL)
 		{
 			ereport(ERROR,
@@ -508,7 +508,8 @@ filterAccessArg(ParseState *pstate, Node *expr, int location,
 		case EDGEOID:
 			return ParseFuncOrColumn(pstate,
 									 list_make1(makeString(AG_ELEM_PROP_MAP)),
-									 list_make1(expr), NULL, location);
+									 list_make1(expr), pstate->p_last_srf,
+									 NULL, location);
 		case JSONBOID:
 			return expr;
 
@@ -1013,7 +1014,8 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 		}
 	}
 
-	return ParseFuncOrColumn(pstate, fn->funcname, args, fn, fn->location);
+	return ParseFuncOrColumn(pstate, fn->funcname, args, pstate->p_last_srf,
+							 fn, fn->location);
 }
 
 static Node *
@@ -1102,6 +1104,7 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 		case EXPR_KIND_OFFSET:
 		case EXPR_KIND_RETURNING:
 		case EXPR_KIND_VALUES:
+		case EXPR_KIND_VALUES_SINGLE:
 		case EXPR_KIND_POLICY:
 			break;
 		case EXPR_KIND_CHECK_CONSTRAINT:
@@ -1127,6 +1130,9 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 		case EXPR_KIND_TRIGGER_WHEN:
 			err = _("cannot use subquery in trigger WHEN condition");
 			break;
+		case EXPR_KIND_PARTITION_EXPRESSION:
+			err = _("cannot use subquery in partition key expression");
+			break;
 	}
 	if (err)
 		ereport(ERROR,
@@ -1136,7 +1142,7 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 
 	pstate->p_hasSubLinks = true;
 
-	qry = parse_sub_analyze(sublink->subselect, pstate, NULL, false);
+	qry = parse_sub_analyze(sublink->subselect, pstate, NULL, false, true);
 	if (!IsA(qry, Query) ||
 		qry->commandType != CMD_SELECT ||
 		qry->utilityStmt != NULL)
@@ -1195,7 +1201,7 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 				break;
 
 			res = ParseFuncOrColumn(pstate, list_make1(i), list_make1(res),
-									NULL, location);
+									pstate->p_last_srf, NULL, location);
 			if (res == NULL)
 			{
 				ereport(ERROR,
@@ -1339,7 +1345,7 @@ makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive)
 							 Int32GetDatum(1), false, true);
 
 	result = (Node *) make_op(pstate, list_make1(makeString("+")),
-							  result, one, -1);
+							  result, one, pstate->p_last_srf, -1);
 
 	return result;
 }
@@ -1386,7 +1392,8 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 		}
 	}
 
-	return (Node *) make_op(pstate, a->name, l, r, a->location);
+	return (Node *) make_op(pstate, a->name, l, r, pstate->p_last_srf,
+							a->location);
 }
 
 static Node *
@@ -1402,7 +1409,7 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 	r = coerce_to_jsonb(pstate, r, "jsonb", true);
 
 	return (Node *) make_op(pstate, list_make1(makeString("@>")), r, l,
-							a->location);
+							pstate->p_last_srf, a->location);
 }
 
 static Node *
@@ -1479,8 +1486,8 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname,
 		default:
 			return ParseFuncOrColumn(pstate,
 									 list_make1(makeString("to_jsonb")),
-									 list_make1(expr), NULL,
-									 exprLocation(expr));
+									 list_make1(expr), pstate->p_last_srf,
+									 NULL, exprLocation(expr));
 	}
 }
 
@@ -1761,7 +1768,7 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 		}
 
 		sortgroups = addTargetToSortList(pstate, te, sortgroups, *targetlist,
-										 sortby, true);
+										 sortby);
 	}
 
 	return sortgroups;

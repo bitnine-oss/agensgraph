@@ -409,7 +409,7 @@ makeRecursiveTerm(ParseState *pstate, CypherPath *cpath)
 											makeString(AG_START_ID),
 											makeString(AG_ELEM_PROP_MAP));
 		}
-		r->inhOpt = INH_YES;
+		r->inh = true;
 		e = (Node *) r;
 	}
 	sel->fromClause = list_make2(sp, e);
@@ -460,7 +460,7 @@ makeEdgeUnion(char *edge_label)
 	id = makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL);
 
 	r = makeRangeVar(get_graph_path(true), edge_label, -1);
-	r->inhOpt = INH_YES;
+	r->inh = true;
 
 	lsel = makeNode(SelectStmt);
 	lsel->targetList = list_make1(id);
@@ -667,7 +667,7 @@ makeVerticesSubLink(void)
 	selsub->targetList = list_make1(makeResTarget(vertex, NULL));
 
 	ag_vertex = makeRangeVar(get_graph_path(true), AG_VERTEX, -1);
-	ag_vertex->inhOpt = INH_YES;
+	ag_vertex->inh = true;
 	selsub->fromClause = list_make1(ag_vertex);
 
 	qual = makeSimpleA_Expr(AEXPR_OP, "=", id, makeColumnRef1("vid"), -1);
@@ -749,7 +749,7 @@ makeEdgesSubLink(CypherPath *cpath, bool is_dijkstra)
 	crel = lsecond(cpath->chain);
 	getCypherRelType(crel, &typname, NULL);
 	e = makeRangeVar(get_graph_path(true), typname, -1);
-	e->inhOpt = INH_YES;
+	e->inh = true;
 	selsub->fromClause = list_make1(e);
 
 	if (is_dijkstra)
@@ -1180,7 +1180,8 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 
 	/* vids */
 	fc = makeFuncCall(list_make1(makeString("dijkstra_vids")), NIL, -1);
-	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, fc, -1);
+	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
+							   fc, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "vids", false);
@@ -1188,7 +1189,8 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 
 	/* eids */
 	fc = makeFuncCall(list_make1(makeString("dijkstra_eids")), NIL, -1);
-	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, fc, -1);
+	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
+							   fc, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "eids", false);
@@ -1324,7 +1326,7 @@ makeDijkstraEdgeQuery(ParseState *pstate, CypherPath *cpath)
 
 	alias = makeAliasOptUnique(NULL);
 	qry = parse_sub_analyze((Node *) sub, pstate, NULL,
-							isLockedRefname(pstate, alias->aliasname));
+							isLockedRefname(pstate, alias->aliasname), true);
 	pstate->p_expr_kind = EXPR_KIND_NONE;
 
 	rte = addRangeTableEntryForSubquery(pstate, qry, alias, false, true);
@@ -1354,7 +1356,7 @@ makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
 	SelectStmt *sel;
 
 	r = makeRangeVar(get_graph_path(true), elabel_name, -1);
-	r->inhOpt = INH_YES;
+	r->inh = true;
 
 	lsel = makeNode(SelectStmt);
 	lsel->targetList = lappend(lsel->targetList,
@@ -1428,7 +1430,7 @@ makeDijkstraEdge(char *elabel_name, char *row_name, CypherRel *crel)
 	sel = makeNode(SelectStmt);
 
 	r = makeRangeVar(get_graph_path(true), elabel_name, -1);
-	r->inhOpt = INH_YES;
+	r->inh = true;
 	sel->fromClause = list_make1(r);
 
 	sel->targetList = list_make3(makeSimpleResTarget(AG_START_ID, NULL),
