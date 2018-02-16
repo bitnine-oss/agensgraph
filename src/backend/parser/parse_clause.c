@@ -3881,7 +3881,7 @@ generateGroupClause(ParseState *pstate, List **targetlist, List *sortClause)
 		if (done)
 			continue;
 
-		group = addTargetToGroupList(pstate, te, group, *targetlist, -1, true);
+		group = addTargetToGroupList(pstate, te, group, *targetlist, -1);
 	}
 
 	return group;

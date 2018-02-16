@@ -879,8 +879,7 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 				(errcode(ERRCODE_DUPLICATE_ALIAS),
 				 errmsg("duplicate variable \"%s\"", rv->alias->aliasname)));
 
-	rte = addRangeTableEntry(pstate, rv, rv->alias,
-							 interpretInhOption(rv->inhOpt), true);
+	rte = addRangeTableEntry(pstate, rv, rv->alias, rv->inh, true);
 	addRTEtoJoinlist(pstate, rte, false);
 
 	te = makeWholeRowTarget(pstate, rte);
@@ -1599,11 +1598,11 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 		RangeTblEntry *rte;
 
 		r = makeRangeVar(get_graph_path(true), labname, labloc);
-		r->inhOpt = !cnode->only;
+		r->inh = !cnode->only;
 		alias = makeAliasOptUnique(varname);
 
 		/* set `ihn` to true because we should scan all derived tables */
-		rte = addRangeTableEntry(pstate, r, alias, r->inhOpt, true);
+		rte = addRangeTableEntry(pstate, r, alias, r->inh, true);
 		addRTEtoJoinlist(pstate, rte, false);
 
 		if (varname != NULL || prop_constr)
@@ -1731,9 +1730,9 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		RangeVar *r;
 
 		r = makeRangeVar(get_graph_path(true), typname, typloc);
-		r->inhOpt = !crel->only;
+		r->inh = !crel->only;
 
-		rte = addRangeTableEntry(pstate, r, alias, r->inhOpt, true);
+		rte = addRangeTableEntry(pstate, r, alias, r->inh, true);
 	}
 	addRTEtoJoinlist(pstate, rte, false);
 
@@ -1786,7 +1785,7 @@ addEdgeUnion(ParseState *pstate, char *edge_label, bool only, int location,
 
 	u = genEdgeUnion(edge_label, only, location);
 	qry = parse_sub_analyze(u, pstate, NULL,
-							isLockedRefname(pstate, alias->aliasname));
+							isLockedRefname(pstate, alias->aliasname), true);
 
 	pstate->p_expr_kind = EXPR_KIND_NONE;
 
@@ -1826,7 +1825,7 @@ genEdgeUnion(char *edge_label, bool only, int location)
 	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
 
 	r = makeRangeVar(get_graph_path(true), edge_label, location);
-	r->inhOpt = !only;
+	r->inh = !only;
 
 	lsel = makeNode(SelectStmt);
 	lsel->targetList = lappend(list_make5(tableoid, ctid, id, start, end),
@@ -2320,7 +2319,7 @@ genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
 		Relation	rel;
 
 		r = makeRangeVar(get_graph_path(true), typname, -1);
-		r->inhOpt = !crel->only;
+		r->inh = !crel->only;
 		r->alias = alias;
 
 		lockmode = isLockedRefname(pstate, aliasname)
@@ -2331,7 +2330,7 @@ genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
 		{
 			RangeSubselect *sub;
 
-			r->inhOpt = INH_NO;
+			r->inh = false;
 			sub = genInhEdge(r, rel->rd_id);
 			sub->alias = alias;
 			edge = (Node *) sub;
@@ -2375,7 +2374,7 @@ genEdgeUnionVLE(char *edge_label, bool only)
 	prop_map = makeSimpleResTarget(AG_ELEM_PROP_MAP, NULL);
 
 	r = makeRangeVar(get_graph_path(true), edge_label, -1);
-	r->inhOpt = !only;
+	r->inh = !only;
 
 	lsel = makeNode(SelectStmt);
 	lsel->targetList = list_make4(tableoid, ctid, eref, prop_map);
@@ -2517,7 +2516,7 @@ genInhEdge(RangeVar *r, Oid parentoid)
 		childrv = makeRangeVar(get_graph_path(true),
 							   RelationGetRelationName(childrel),
 							   -1);
-		childrv->inhOpt = INH_YES;
+		childrv->inh = true;
 
 		heap_close(childrel, AccessShareLock);
 
@@ -2565,7 +2564,7 @@ transformVLEtoRTE(ParseState *pstate, SelectStmt *vle, Alias *alias)
 	pstate->p_convert_edgeref = false;
 
 	qry = parse_sub_analyze((Node *) vle, pstate, NULL,
-							isLockedRefname(pstate, alias->aliasname));
+							isLockedRefname(pstate, alias->aliasname), true);
 	Assert(qry->commandType == CMD_SELECT);
 
 	pstate->p_lateral_active = false;
@@ -2644,7 +2643,7 @@ addQualRelPath(ParseState *pstate, Node *qual, CypherRel *prev_crel,
 
 	qual = qualAndExpr(qual,
 					   (Node *) make_op(pstate, list_make1(makeString("=")),
-										prev_vid, vid, -1));
+										prev_vid, vid, pstate->p_last_srf, -1));
 
 	return qual;
 }
@@ -2690,7 +2689,7 @@ addQualNodeIn(ParseState *pstate, Node *qual, Node *vertex, CypherRel *crel,
 
 	qual = qualAndExpr(qual,
 					   (Node *) make_op(pstate, list_make1(makeString("=")),
-										id, vid, -1));
+										id, vid, pstate->p_last_srf, -1));
 
 	return qual;
 }
@@ -2797,9 +2796,10 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ues, List *uearrs)
 			Expr	   *ne;
 
 			ne_tableoid = make_op(pstate, list_make1(makeString("<>")),
-								  e1->tableoid, e2->tableoid, -1);
+								  e1->tableoid, e2->tableoid,
+								  pstate->p_last_srf, -1);
 			ne_ctid = make_op(pstate, list_make1(makeString("<>")),
-							  e1->ctid, e2->ctid, -1);
+							  e1->ctid, e2->ctid, pstate->p_last_srf, -1);
 			ne = makeBoolExpr(OR_EXPR, list_make2(ne_tableoid, ne_ctid), -1);
 
 			qual = qualAndExpr(qual, (Node *) ne);
@@ -2817,10 +2817,10 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ues, List *uearrs)
 
 			funcexpr = ParseFuncOrColumn(pstate, rowid->funcname,
 										 list_make2(e1->tableoid, e1->ctid),
-										 rowid, -1);
+										 pstate->p_last_srf, rowid, -1);
 			funcexpr = ParseFuncOrColumn(pstate, arrpos->funcname,
 										 list_make2(earr, funcexpr),
-										 arrpos, -1);
+										 pstate->p_last_srf, arrpos, -1);
 
 			dupcond = makeNode(NullTest);
 			dupcond->arg = (Expr *) funcexpr;
@@ -2846,8 +2846,8 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ues, List *uearrs)
 			Node	   *dupcond;
 
 			funcexpr = ParseFuncOrColumn(pstate, arroverlap->funcname,
-										 list_make2(earr1, earr2), arroverlap,
-										 -1);
+										 list_make2(earr1, earr2),
+										 pstate->p_last_srf, arroverlap, -1);
 
 			dupcond = (Node *) makeBoolExpr(NOT_EXPR, list_make1(funcexpr), -1);
 
@@ -2933,7 +2933,7 @@ transformElemQuals(ParseState *pstate, Node *qual)
 			prop_constr = transformPropMap(pstate, eq->prop_constr,
 										   EXPR_KIND_WHERE);
 			expr = make_op(pstate, list_make1(makeString("@>")),
-						   prop_map, prop_constr, -1);
+						   prop_map, prop_constr, pstate->p_last_srf, -1);
 
 			qual = qualAndExpr(qual, (Node *) expr);
 		}
@@ -3017,7 +3017,7 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 						 parser_errposition(ctx->pstate, rvalloc)));
 
 			expr = make_op(ctx->pstate, list_make1(makeString("=")),
-						   lval, rval, -1);
+						   lval, rval, ctx->pstate->p_last_srf, -1);
 
 			ctx->qual = qualAndExpr(ctx->qual, (Node *) expr);
 		}
@@ -3430,7 +3430,7 @@ resolve_future_vertex_mutator(Node *node, resolve_future_vertex_context *ctx)
 								(ctx->flags & FVR_IGNORE_NULLABLE));
 		}
 
-		newvar = copyObject(fv->expr);
+		newvar = castNode(Var, copyObject(fv->expr));
 		if (ctx->flags & FVR_PRESERVE_VAR_REF)
 		{
 			/* XXX: is this OK? */
@@ -3491,9 +3491,10 @@ resolveFutureVertex(ParseState *pstate, FutureVertex *fv, bool ignore_nullable)
 
 	sel_id = makeFuncCall(list_make1(makeString(AG_ELEM_ID)), NIL, -1);
 	id = ParseFuncOrColumn(pstate, sel_id->funcname, list_make1(vertex),
-						   sel_id, -1);
+						   pstate->p_last_srf, sel_id, -1);
 
-	qual = (Node *) make_op(pstate, list_make1(makeString("=")), fv_id, id, -1);
+	qual = (Node *) make_op(pstate, list_make1(makeString("=")), fv_id, id,
+							pstate->p_last_srf, -1);
 
 	if (ignore_nullable)
 	{
@@ -3965,7 +3966,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		 */
 		prop_map = ParseFuncOrColumn(pstate,
 									 list_make1(makeString(AG_ELEM_PROP_MAP)),
-									 list_make1(elem), NULL, -1);
+									 list_make1(elem), pstate->p_last_srf,
+									 NULL, -1);
 	}
 	else
 	{
@@ -4009,8 +4011,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 			concat = makeFuncCall(list_make1(makeString("jsonb_concat")), NIL,
 								  -1);
 			prop_map = ParseFuncOrColumn(pstate, concat->funcname,
-										 list_make2(prop_map, expr), concat,
-										 -1);
+										 list_make2(prop_map, expr),
+										 pstate->p_last_srf, concat, -1);
 		}
 		else
 		{
@@ -4032,8 +4034,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		delete = makeFuncCall(list_make1(makeString("jsonb_delete_path")),
 							  NIL, -1);
 		del_prop = ParseFuncOrColumn(pstate, delete->funcname,
-									 list_make2(prop_map, path), delete,
-									 -1);
+									 list_make2(prop_map, path),
+									 pstate->p_last_srf, delete, -1);
 
 		if (IsNullAConst(sp->expr) && (!allow_null_properties || is_remove))
 		{
@@ -4056,8 +4058,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 
 			set = makeFuncCall(list_make1(makeString("jsonb_set")), NIL, -1);
 			set_prop = ParseFuncOrColumn(pstate, set->funcname,
-										 list_make3(prop_map, path, expr), set,
-										 -1);
+										 list_make3(prop_map, path, expr),
+										 pstate->p_last_srf, set, -1);
 
 			/*
 			 * The right operand can be null. In this case,
@@ -4264,7 +4266,7 @@ transformNullSelect(ParseState *pstate)
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
 
 	qry = parse_sub_analyze((Node *) sel, pstate, NULL,
-							isLockedRefname(pstate, alias->aliasname));
+							isLockedRefname(pstate, alias->aliasname), true);
 
 	pstate->p_expr_kind = EXPR_KIND_NONE;
 
@@ -4640,8 +4642,8 @@ stripNullKeys(ParseState *pstate, Node *properties)
 	/* keys with NULL value is not allowed */
 	strip = makeFuncCall(list_make1(makeString("jsonb_strip_nulls")), NIL, -1);
 
-	return ParseFuncOrColumn(pstate, strip->funcname,
-							 list_make1(properties), strip, -1);
+	return ParseFuncOrColumn(pstate, strip->funcname, list_make1(properties),
+							 pstate->p_last_srf, strip, -1);
 
 }
 
