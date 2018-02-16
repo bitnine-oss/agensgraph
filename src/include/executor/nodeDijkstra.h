@@ -13,7 +13,6 @@
 
 extern DijkstraState *ExecInitDijkstra(Dijkstra *node, EState *estate,
 									   int eflags);
-extern TupleTableSlot *ExecDijkstra(DijkstraState *node);
 extern void ExecEndDijkstra(DijkstraState *node);
 extern void ExecReScanDijkstra(DijkstraState *node);
 
