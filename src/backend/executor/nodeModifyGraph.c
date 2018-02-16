@@ -108,6 +108,7 @@ typedef struct ModifiedPropEntry
 
 static HTAB *sqlcmd_cache = NULL;
 
+static TupleTableSlot *ExecModifyGraph(PlanState *pstate);
 static void initGraphWRStats(ModifyGraphState *mgstate, GraphWriteOp op);
 static List *ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate);
 static List *ExecInitGraphSets(List *sets, ModifyGraphState *mgstate);
@@ -182,6 +183,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate = makeNode(ModifyGraphState);
 	mgstate->ps.plan = (Plan *) mgplan;
 	mgstate->ps.state = estate;
+	mgstate->ps.ExecProcNode = ExecModifyGraph;
 
 	/* Tuple desc for result is the same as the subplan. */
 	ExecInitResultTupleSlot(estate, &mgstate->ps);
@@ -281,9 +283,10 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	return mgstate;
 }
 
-TupleTableSlot *
-ExecModifyGraph(ModifyGraphState *mgstate)
+static TupleTableSlot *
+ExecModifyGraph(PlanState *pstate)
 {
+	ModifyGraphState *mgstate = castNode(ModifyGraphState, pstate);
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
 	EState	   *estate = mgstate->ps.state;
 

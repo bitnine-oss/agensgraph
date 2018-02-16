@@ -294,9 +294,10 @@ compute_limit(DijkstraState *node)
 	}
 }
 
-TupleTableSlot *
-ExecDijkstra(DijkstraState *node)
+static TupleTableSlot *
+ExecDijkstra(PlanState *pstate)
 {
+	DijkstraState *node = castNode(DijkstraState, pstate);
 	Dijkstra   *dijkstra;
 	PlanState  *outerPlan;
 	ExprContext *econtext;
@@ -441,6 +442,7 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	dstate = makeNode(DijkstraState);
 	dstate->ps.plan = (Plan *) node;
 	dstate->ps.state = estate;
+	dstate->ps.ExecProcNode = ExecDijkstra;
 
 	/*
 	 * Miscellaneous initialization

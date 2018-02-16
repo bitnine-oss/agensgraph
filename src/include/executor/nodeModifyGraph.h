@@ -13,7 +13,6 @@
 
 extern ModifyGraphState *ExecInitModifyGraph(ModifyGraph *mgplan,
 											 EState *estate, int eflags);
-extern TupleTableSlot *ExecModifyGraph(ModifyGraphState *mgstate);
 extern void ExecEndModifyGraph(ModifyGraphState *mgstate);
 
 #endif

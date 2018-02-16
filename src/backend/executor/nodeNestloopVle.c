@@ -65,9 +65,10 @@ static void addRowidAndGid(NestLoopVLEState *node, Datum rowid, Datum gid);
 static void popRowidAndGid(NestLoopVLEState *node);
 
 
-TupleTableSlot *
-ExecNestLoopVLE(NestLoopVLEState *node)
+static TupleTableSlot *
+ExecNestLoopVLE(PlanState *pstate)
 {
+	NestLoopVLEState *node = castNode(NestLoopVLEState, pstate);
 	NestLoopVLE *nlv;
 	PlanState  *innerPlan;
 	PlanState  *outerPlan;
@@ -292,6 +293,7 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	nlvstate = makeNode(NestLoopVLEState);
 	nlvstate->nls.js.ps.plan = (Plan *) node;
 	nlvstate->nls.js.ps.state = estate;
+	nlvstate->nls.js.ps.ExecProcNode = ExecNestLoopVLE;
 
 	/*
 	 * Miscellaneous initialization
