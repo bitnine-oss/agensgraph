@@ -2202,8 +2202,8 @@ create_nestloop_path(PlannerInfo *root,
 	pathnode->innerjoinpath = inner_path;
 	pathnode->joinrestrictinfo = restrict_clauses;
 
-	pathnode->minhops = sjinfo->min_hops;
-	pathnode->maxhops = sjinfo->max_hops;
+	pathnode->minhops = extra->sjinfo->min_hops;
+	pathnode->maxhops = extra->sjinfo->max_hops;
 
 	final_cost_nestloop(root, pathnode, workspace, extra);
 

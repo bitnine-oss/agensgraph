@@ -4437,9 +4437,9 @@ create_dijkstra_plan(PlannerInfo *root, DijkstraPath *best_path)
 	subplan = create_plan_recurse(root, best_path->subpath, CP_EXACT_TLIST);
 
 	sub_tlist = subplan->targetlist;
-	tle = tlist_member(best_path->end_id, sub_tlist);
+	tle = tlist_member((Expr *) best_path->end_id, sub_tlist);
 	end_id = tle->resno;
-	tle = tlist_member(best_path->edge_id, sub_tlist);
+	tle = tlist_member((Expr *) best_path->edge_id, sub_tlist);
 	edge_id = tle->resno;
 
 	plan = make_dijkstra(root, build_path_tlist(root, &best_path->path),

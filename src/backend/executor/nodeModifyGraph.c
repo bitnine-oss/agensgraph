@@ -237,6 +237,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 			InitResultRelInfo(resultRelInfo,
 							  relation,
 							  list_length(estate->es_range_table),
+							  NULL,
 							  estate->es_instrument);
 
 			ExecOpenIndices(resultRelInfo, false);
