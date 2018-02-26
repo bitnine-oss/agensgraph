@@ -5569,6 +5569,8 @@ DATA(insert OID = 7242 ( string_ends_with	PGNSP PGUID 12 1 0 0 0 f f f f t f i s
 DESCR("true if the end of LHS matches RHS");
 DATA(insert OID = 7243 ( string_contains	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_string_contains _null_ _null_ _null_ ));
 DESCR("true if LHS contains RHS");
+DATA(insert OID = 7244 ( string_regex	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_string_regex _null_ _null_ _null_ ));
+DESCR("true if regex match");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

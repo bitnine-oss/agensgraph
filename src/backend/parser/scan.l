@@ -335,6 +335,7 @@ identifier		{ident_start}{ident_cont}*
 /* Assorted special-case operators and operator-like tokens */
 typecast		"::"
 dot_dot			\.\.
+equals_tilde	"=~"
 colon_equals	":="
 equals_greater	"=>"
 less_equals		"<="
@@ -825,6 +826,11 @@ other			.
 {dot_dot}		{
 					SET_YYLLOC();
 					return DOT_DOT;
+				}
+
+{equals_tilde}	{
+					SET_YYLLOC();
+					return EQUALS_TILDE;
 				}
 
 {colon_equals}	{
