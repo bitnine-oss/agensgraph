@@ -2763,6 +2763,7 @@ SET allow_null_properties = off;
 --
 -- String Matching
 --
+-- starts with
 RETURN 'abc' STARTS WITH 'a';
  string_starts_with 
 --------------------
@@ -2789,6 +2790,7 @@ RETURN 'abc' STARTS WITH 'abcd';
 
 RETURN 'abc' STARTS WITH 1;
 ERROR:  STARTS WITH: two string values expected but "abc", 1
+-- ends with
 RETURN 'abc' ENDS WITH 'c';
  string_ends_with 
 ------------------
@@ -2815,6 +2817,7 @@ RETURN 'abc' ENDS WITH 'abcd';
 
 RETURN 'abc' ENDS WITH 1;
 ERROR:  ENDS WITH: two string values expected but "abc", 1
+-- contains
 RETURN 'abc' CONTAINS 'b';
  string_contains 
 -----------------
@@ -2835,6 +2838,45 @@ RETURN 'abc' CONTAINS 'abcd';
 
 RETURN 'abc' CONTAINS 1;
 ERROR:  CONTAINS: two string values expected but "abc", 1
+-- =~
+RETURN 'abc' =~ 'abc';
+ string_regex 
+--------------
+ t
+(1 row)
+
+RETURN 'abc' =~ '';
+ string_regex 
+--------------
+ t
+(1 row)
+
+RETURN 'abc' =~ 'a';
+ string_regex 
+--------------
+ t
+(1 row)
+
+RETURN 'abc' =~ 'abcd';
+ string_regex 
+--------------
+ f
+(1 row)
+
+RETURN 'abc' =~ '(?i)A';
+ string_regex 
+--------------
+ t
+(1 row)
+
+RETURN 'abc' =~ 'a(b{1})c';
+ string_regex 
+--------------
+ t
+(1 row)
+
+RETURN 'abc' =~ 1;
+ERROR:  Regular Expression Pattern: two string values expected but "abc", 1
 -- cleanup
 DROP GRAPH np CASCADE;
 NOTICE:  drop cascades to 5 other objects
