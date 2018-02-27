@@ -542,8 +542,13 @@ ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	foreach(lp, plan->pattern)
 	{
 		GraphPath *path = (GraphPath *) lfirst(lp);
+		MemoryContext oldmctx;
+
+		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 		slot = createPath(mgstate, path, slot);
+
+		MemoryContextSwitchTo(oldmctx);
 	}
 
 	return (plan->last ? NULL : slot);
@@ -644,17 +649,12 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 	/* make a graphpath and set it to the slot */
 	if (out)
 	{
-		MemoryContext oldmctx;
 		Datum graphpath;
 
 		Assert(nvertices == nedges + 1);
 		Assert(pathlen == nvertices + nedges);
 
-		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-
 		graphpath = makeGraphpathDatum(vertices, nvertices, edges, nedges);
-
-		MemoryContextSwitchTo(oldmctx);
 
 		setSlotValueByName(slot, graphpath, path->variable);
 	}
@@ -1402,18 +1402,16 @@ ExecMergeGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	}
 	else
 	{
+		MemoryContext oldmctx;
+
+		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+
 		slot = createMergePath(mgstate, path, slot);
 
-		if (mgstate->sets != NIL)
-		{
-			/*
-			 * Increase CommandId to scan tuples created by createMergePath().
-			 */
-			while (mgstate->ps.state->es_output_cid >= GetCurrentCommandId(true))
-				CommandCounterIncrement();
+		MemoryContextSwitchTo(oldmctx);
 
+		if (mgstate->sets != NIL)
 			slot = ExecSetGraph(mgstate, GSP_ON_CREATE, slot);
-		}
 	}
 
 	return (plan->last ? NULL : slot);
@@ -1507,17 +1505,12 @@ createMergePath(ModifyGraphState *mgstate, GraphPath *path,
 	/* make a graphpath and set it to the slot */
 	if (out)
 	{
-		MemoryContext oldmctx;
 		Datum graphpath;
 
 		Assert(nvertices == nedges + 1);
 		Assert(pathlen == nvertices + nedges);
 
-		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-
 		graphpath = makeGraphpathDatum(vertices, nvertices, edges, nedges);
-
-		MemoryContextSwitchTo(oldmctx);
 
 		setSlotValueByName(slot, graphpath, path->variable);
 	}
