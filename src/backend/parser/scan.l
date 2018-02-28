@@ -335,7 +335,6 @@ identifier		{ident_start}{ident_cont}*
 /* Assorted special-case operators and operator-like tokens */
 typecast		"::"
 dot_dot			\.\.
-equals_tilde	"=~"
 colon_equals	":="
 equals_greater	"=>"
 less_equals		"<="
@@ -343,6 +342,7 @@ greater_equals	">="
 less_greater	"<>"
 not_equals		"!="
 add_equals		"+="
+equals_tilde	"=~"
 
 /*
  * "self" is the set of chars that should be returned as single-character
@@ -828,11 +828,6 @@ other			.
 					return DOT_DOT;
 				}
 
-{equals_tilde}	{
-					SET_YYLLOC();
-					return EQUALS_TILDE;
-				}
-
 {colon_equals}	{
 					SET_YYLLOC();
 					return COLON_EQUALS;
@@ -868,6 +863,11 @@ other			.
 {add_equals}	{
 					SET_YYLLOC();
 					return ADD_EQUALS;
+				}
+
+{equals_tilde}	{
+					SET_YYLLOC();
+					return EQUALS_TILDE;
 				}
 
 {self}			{

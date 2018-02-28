@@ -1163,8 +1163,6 @@ jsonb_string_contains(PG_FUNCTION_ARGS)
 		}
 	}
 
-
-
 	ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("CONTAINS: two string values expected but %s, %s",
@@ -1189,22 +1187,22 @@ jsonb_string_regex(PG_FUNCTION_ARGS)
 
 		if (ljv->type == jbvString && rjv->type == jbvString)
 		{
-			char *lc = ljv->val.string.val;
-			char *rc = rjv->val.string.val;
-			text *lt;
-			text *rt;
+			text	   *lt;
+			text	   *rt;
+			Datum		result;
 
-			lt = cstring_to_text(lc);
-			rt = cstring_to_text(rc);
+			lt = cstring_to_text_with_len(ljv->val.string.val,
+										  ljv->val.string.len);
+			rt = cstring_to_text_with_len(rjv->val.string.val,
+										  rjv->val.string.len);
 
-			PG_RETURN_BOOL(DirectFunctionCall2Coll(
-				textregexeq, DEFAULT_COLLATION_OID,
-						PointerGetDatum(lt),
-						PointerGetDatum(rt)));
+			result = DirectFunctionCall2Coll(textregexeq,
+											 DEFAULT_COLLATION_OID,
+											 PointerGetDatum(lt),
+											 PointerGetDatum(rt));
+			PG_RETURN_DATUM(result);
 		}
 	}
-
-
 
 	ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
