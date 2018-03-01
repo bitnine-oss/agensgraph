@@ -254,8 +254,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 		free_parsestate(pstate);
 	}
 
-	mgstate->exprs = (List *) ExecInitExpr((Expr *) mgplan->exprs,
-										   (PlanState *) mgstate);
+
+	mgstate->exprs = ExecInitExprList(mgplan->exprs, (PlanState *) mgstate);
 	mgstate->sets = ExecInitGraphSets(mgplan->sets, mgstate);
 
 	initGraphWRStats(mgstate, mgplan->operation);
@@ -934,7 +934,6 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		Oid			type;
 		Datum		datum;
 		bool		isNull;
-		ExprDoneCond isDone;
 
 		type = exprType((Node *) e->expr);
 		if (!(type == VERTEXOID || type == EDGEOID || type == GRAPHPATHOID))
@@ -943,15 +942,11 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 					 errmsg("expected node, relationship, or path")));
 
 		econtext->ecxt_scantuple = slot;
-		datum = ExecEvalExpr(e, econtext, &isNull, &isDone);
+		datum = ExecEvalExpr(e, econtext, &isNull);
 		if (isNull)
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("deleting NULL is not allowed")));
-		if (isDone != ExprSingleResult)
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("expected single result")));
 
 		if (mgstate->eagerness)
 		{
@@ -1235,7 +1230,6 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 		Datum		expr_datum;
 		Datum		newelem;
 		bool		isNull;
-		ExprDoneCond isDone;
 		MemoryContext oldmctx;
 
 		if (gsp->kind != kind)
@@ -1248,32 +1242,20 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 		if (elemtype != VERTEXOID && elemtype != EDGEOID)
 			elog(ERROR, "expected node or relationship");
 
-		elem_datum = ExecEvalExpr(gsp->es_elem, econtext, &isNull, &isDone);
+		elem_datum = ExecEvalExpr(gsp->es_elem, econtext, &isNull);
 		if (isNull)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("updating NULL is not allowed")));
 		}
-		if (isDone != ExprSingleResult)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("expected single result")));
-		}
 
-		expr_datum = ExecEvalExpr(gsp->es_expr, econtext, &isNull, &isDone);
+		expr_datum = ExecEvalExpr(gsp->es_expr, econtext, &isNull);
 		if (isNull)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("property map cannot be NULL")));
-		}
-		if (isDone != ExprSingleResult)
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("expected single result")));
 		}
 
 		if (elemtype == VERTEXOID)
@@ -1523,7 +1505,6 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	ResultRelInfo  *resultRelInfo;
 	ResultRelInfo  *savedResultRelInfo;
 	bool			isNull;
-	ExprDoneCond 	isDone;
 	Datum			vertex;
 	Datum			vertexId;
 	Datum			vertexProp;
@@ -1534,15 +1515,11 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	savedResultRelInfo = estate->es_result_relation_info;
 	estate->es_result_relation_info = resultRelInfo;
 
-	vertex = ExecEvalExpr(gvertex->es_expr, econtext, &isNull, &isDone);
+	vertex = ExecEvalExpr(gvertex->es_expr, econtext, &isNull);
 	if (isNull)
 		ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("NULL is not allowed in MERGE")));
-	if (isDone != ExprSingleResult)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("expected single result")));
 
 	vertexId = getVertexIdDatum(vertex);
 	*vid = DatumGetGraphid(vertexId);
@@ -1612,7 +1589,6 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	ResultRelInfo  *resultRelInfo;
 	ResultRelInfo  *savedResultRelInfo;
 	bool			isNull;
-	ExprDoneCond	isDone;
 	Datum			edge;
 	Datum			edgeProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
@@ -1622,15 +1598,11 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	savedResultRelInfo = estate->es_result_relation_info;
 	estate->es_result_relation_info = resultRelInfo;
 
-	edge = ExecEvalExpr(gedge->es_expr, econtext, &isNull, &isDone);
+	edge = ExecEvalExpr(gedge->es_expr, econtext, &isNull);
 	if (isNull)
 		ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 				 errmsg("NULL is not allowed in MERGE")));
-	if (isDone != ExprSingleResult)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("expected single result")));
 
 	edgeProp = getEdgePropDatum(edge);
 	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(edgeProp)))
