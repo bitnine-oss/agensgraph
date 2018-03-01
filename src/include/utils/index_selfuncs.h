@@ -70,12 +70,5 @@ extern void gincostestimate(struct PlannerInfo *root,
 				Selectivity *indexSelectivity,
 				double *indexCorrelation,
 				double *indexPages);
-extern void eicostestimate(struct PlannerInfo *root,
-			   struct IndexPath *path,
-			   double loop_count,
-			   Cost *indexStartupCost,
-			   Cost *indexTotalCost,
-			   Selectivity *indexSelectivity,
-			   double *indexCorrelation);
 
 #endif							/* INDEX_SELFUNCS_H */
