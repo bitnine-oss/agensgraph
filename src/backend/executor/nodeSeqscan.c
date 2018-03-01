@@ -378,18 +378,16 @@ ExecReScanSeqScan(SeqScanState *node)
 		ExprContext *econtext = node->ss.ps.ps_ExprContext;
 		MemoryContext oldmctx;
 		bool		isnull;
-		ExprDoneCond isdone;
 		Datum		graphid;
 
 		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
-		graphid = ExecEvalExpr(node->ss.ss_labelSkipExpr, econtext,
-							   &isnull, &isdone);
+		graphid = ExecEvalExpr(node->ss.ss_labelSkipExpr, econtext, &isnull);
 		if (isnull)
 		{
 			node->ss.ss_skipLabelScan = true;
 		}
-		else if (isdone == ExprSingleResult)
+		else
 		{
 			uint16 labid;
 

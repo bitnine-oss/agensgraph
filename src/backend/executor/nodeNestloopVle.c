@@ -23,6 +23,7 @@
 #include "executor/execdebug.h"
 #include "executor/nodeNestloopVle.h"
 #include "fmgr.h"
+#include "miscadmin.h"
 #include "nodes/pg_list.h"
 #include "utils/array.h"
 #include "utils/datum.h"
@@ -75,10 +76,11 @@ ExecNestLoopVLE(PlanState *pstate)
 	TupleTableSlot *outerTupleSlot;
 	TupleTableSlot *innerTupleSlot;
 	TupleTableSlot *selfTupleSlot;
-	List	   *otherqual;
+	ExprState  *otherqual;
 	ExprContext *econtext;
 	TupleTableSlot *result;
-	ExprDoneCond isDone;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/*
 	 * get information from the node
@@ -94,8 +96,7 @@ ExecNestLoopVLE(PlanState *pstate)
 
 	/*
 	 * Reset per-tuple memory context to free any expression evaluation
-	 * storage allocated in the previous tuple cycle.  Note this can't happen
-	 * until we're done projecting out tuples from a join tuple.
+	 * storage allocated in the previous tuple cycle.
 	 */
 	ResetExprContext(econtext);
 
@@ -123,7 +124,8 @@ ExecNestLoopVLE(PlanState *pstate)
 				ENLV1_printf("getting new outer tuple");
 				outerTupleSlot = ExecProcNode(outerPlan);
 				/*
-				 * if there are no more outer tuples, then the join is complete..
+				 * if there are no more outer tuples,
+				 * then the join is complete..
 				 */
 				if (TupIsNull(outerTupleSlot))
 				{
@@ -213,7 +215,7 @@ ExecNestLoopVLE(PlanState *pstate)
 		if (!hasElem(&node->rowids,
 					 econtext->ecxt_innertuple->tts_values[INNER_ROWID_VARNO]))
 		{
-			if (otherqual == NIL || ExecQual(otherqual, econtext, false))
+			if (otherqual == NULL || ExecQual(otherqual, econtext))
 			{
 				/*
 				 * qualification was satisfied so we project and return the
@@ -231,7 +233,7 @@ ExecNestLoopVLE(PlanState *pstate)
 				econtext->ecxt_outertuple->tts_isnull[OUTER_BIND_VARNO]
 					= econtext->ecxt_innertuple->tts_isnull[INNER_BIND_VARNO];
 
-				result = ExecProject(node->nls.js.ps.ps_ProjInfo, &isDone);
+				result = ExecProject(node->nls.js.ps.ps_ProjInfo);
 
 				addInnerRowidAndGid(node, econtext->ecxt_innertuple);
 
@@ -305,12 +307,8 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	nlvstate->nls.js.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->nl.join.plan.targetlist,
-					 (PlanState *) nlvstate);
-	nlvstate->nls.js.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->nl.join.plan.qual,
-					 (PlanState *) nlvstate);
+	nlvstate->nls.js.ps.qual =
+		ExecInitQual(node->nl.join.plan.qual, (PlanState *) nlvstate);
 	nlvstate->nls.js.jointype = node->nl.join.jointype;
 
 	/*
@@ -356,7 +354,7 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	initArray(&nlvstate->rowids,
 			  innerTupleDesc->attrs[INNER_ROWID_VARNO]->atttypid,
 			  nlvstate->nls.js.ps.ps_ExprContext);
-	if (list_length(nlvstate->nls.js.ps.targetlist) == 4)
+	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 4)
 	{
 		initArray(&nlvstate->path,
 				  innerTupleDesc->attrs[INNER_EGID_VARNO]->atttypid,
@@ -371,7 +369,6 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	/*
 	 * finally, wipe the current outer tuple clean.
 	 */
-	nlvstate->nls.js.ps.ps_TupFromTlist = false;
 	nlvstate->nls.nl_NeedNewOuter = true;
 
 	NLV1_printf("ExecInitNestLoopVLE: %s\n", "node initialized");
@@ -436,7 +433,6 @@ ExecReScanNestLoopVLE(NestLoopVLEState *node)
 	 * outer Vars are used as run-time keys...
 	 */
 
-	node->nls.js.ps.ps_TupFromTlist = false;
 	node->nls.nl_NeedNewOuter = true;
 	node->selfLoop = false;
 	if (((NestLoopVLE *) node->nls.js.ps.plan)->minHops == 0)
