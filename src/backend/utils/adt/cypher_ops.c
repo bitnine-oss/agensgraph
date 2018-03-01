@@ -17,10 +17,10 @@
 #include "utils/memutils.h"
 #include "utils/numeric.h"
 
-static Jsonb *number_op(PGFunction f, Jsonb *l, Jsonb *r);
-static Jsonb *numeric_to_number(Numeric n);
-static void ereport_number_op(PGFunction f, Jsonb *l, Jsonb *r);
-static void ereport_op(const char *op, Jsonb *l, Jsonb *r);
+static Jsonb *jnumber_op(PGFunction f, Jsonb *l, Jsonb *r);
+static Jsonb *numeric_to_jnumber(Numeric n);
+static void ereport_op(PGFunction f, Jsonb *l, Jsonb *r);
+static void ereport_op_str(const char *op, Jsonb *l, Jsonb *r);
 static Datum get_numeric_0_datum(void);
 static Datum jsonb_num(Jsonb *j, PGFunction f);
 
@@ -44,7 +44,7 @@ jsonb_add(PG_FUNCTION_ARGS)
 		if ((JB_ROOT_IS_SCALAR(l) && JB_ROOT_IS_OBJECT(r)) ||
 			(JB_ROOT_IS_OBJECT(l) && JB_ROOT_IS_SCALAR(r)) ||
 			(JB_ROOT_IS_OBJECT(l) && JB_ROOT_IS_OBJECT(r)))
-			ereport_op("+", l, r);
+			ereport_op_str("+", l, r);
 
 		j = DirectFunctionCall2(jsonb_concat,
 								JsonbGetDatum(l), JsonbGetDatum(r));
@@ -117,11 +117,11 @@ jsonb_add(PG_FUNCTION_ARGS)
 								NumericGetDatum(ljv->val.numeric),
 								NumericGetDatum(rjv->val.numeric));
 
-		PG_RETURN_JSONB(numeric_to_number(DatumGetNumeric(n)));
+		PG_RETURN_JSONB(numeric_to_jnumber(DatumGetNumeric(n)));
 	}
 	else
 	{
-		ereport_op("+", l, r);
+		ereport_op_str("+", l, r);
 	}
 
 	PG_RETURN_NULL();
@@ -130,52 +130,52 @@ jsonb_add(PG_FUNCTION_ARGS)
 Datum
 jsonb_sub(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(number_op(numeric_sub,
-							  PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
+	PG_RETURN_JSONB(jnumber_op(numeric_sub,
+							   PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
 }
 
 Datum
 jsonb_mul(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(number_op(numeric_mul,
-							  PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
+	PG_RETURN_JSONB(jnumber_op(numeric_mul,
+							   PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
 }
 
 Datum
 jsonb_div(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(number_op(numeric_div,
-							  PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
+	PG_RETURN_JSONB(jnumber_op(numeric_div,
+							   PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
 }
 
 Datum
 jsonb_mod(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(number_op(numeric_mod,
-							  PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
+	PG_RETURN_JSONB(jnumber_op(numeric_mod,
+							   PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
 }
 
 Datum
 jsonb_pow(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(number_op(numeric_power,
-							  PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
+	PG_RETURN_JSONB(jnumber_op(numeric_power,
+							   PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
 }
 
 Datum
 jsonb_uplus(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(number_op(numeric_uplus, NULL, PG_GETARG_JSONB(0)));
+	PG_RETURN_JSONB(jnumber_op(numeric_uplus, NULL, PG_GETARG_JSONB(0)));
 }
 
 Datum
 jsonb_uminus(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(number_op(numeric_uminus, NULL, PG_GETARG_JSONB(0)));
+	PG_RETURN_JSONB(jnumber_op(numeric_uminus, NULL, PG_GETARG_JSONB(0)));
 }
 
 static Jsonb *
-number_op(PGFunction f, Jsonb *l, Jsonb *r)
+jnumber_op(PGFunction f, Jsonb *l, Jsonb *r)
 {
 	FunctionCallInfoData fcinfo;
 	JsonbValue *jv;
@@ -184,7 +184,7 @@ number_op(PGFunction f, Jsonb *l, Jsonb *r)
 	AssertArg(r != NULL);
 
 	if (!((l == NULL || JB_ROOT_IS_SCALAR(l)) && JB_ROOT_IS_SCALAR(r)))
-		ereport_number_op(f, l, r);
+		ereport_op(f, l, r);
 
 	InitFunctionCallInfoData(fcinfo, NULL, 0, InvalidOid, NULL, NULL);
 
@@ -192,7 +192,7 @@ number_op(PGFunction f, Jsonb *l, Jsonb *r)
 	{
 		jv = getIthJsonbValueFromContainer(&l->root, 0);
 		if (jv->type != jbvNumeric)
-			ereport_number_op(f, l, r);
+			ereport_op(f, l, r);
 
 		fcinfo.arg[fcinfo.nargs] = NumericGetDatum(jv->val.numeric);
 		fcinfo.argnull[fcinfo.nargs] = false;
@@ -201,7 +201,7 @@ number_op(PGFunction f, Jsonb *l, Jsonb *r)
 
 	jv = getIthJsonbValueFromContainer(&r->root, 0);
 	if (jv->type != jbvNumeric)
-		ereport_number_op(f, l, r);
+		ereport_op(f, l, r);
 
 	fcinfo.arg[fcinfo.nargs] = NumericGetDatum(jv->val.numeric);
 	fcinfo.argnull[fcinfo.nargs] = false;
@@ -221,11 +221,11 @@ number_op(PGFunction f, Jsonb *l, Jsonb *r)
 			n = DirectFunctionCall2(numeric_trunc, n, 0);
 	}
 
-	return numeric_to_number(DatumGetNumeric(n));
+	return numeric_to_jnumber(DatumGetNumeric(n));
 }
 
 static Jsonb *
-numeric_to_number(Numeric n)
+numeric_to_jnumber(Numeric n)
 {
 	JsonbValue	jv;
 
@@ -236,7 +236,7 @@ numeric_to_number(Numeric n)
 }
 
 static void
-ereport_number_op(PGFunction f, Jsonb *l, Jsonb *r)
+ereport_op(PGFunction f, Jsonb *l, Jsonb *r)
 {
 	const char *op;
 
@@ -259,11 +259,11 @@ ereport_number_op(PGFunction f, Jsonb *l, Jsonb *r)
 	else
 		elog(ERROR, "invalid number operator");
 
-	ereport_op(op, l, r);
+	ereport_op_str(op, l, r);
 }
 
 static void
-ereport_op(const char *op, Jsonb *l, Jsonb *r)
+ereport_op_str(const char *op, Jsonb *l, Jsonb *r)
 {
 	const char *msgfmt;
 	const char *lstr;
