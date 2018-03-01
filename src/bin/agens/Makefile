@@ -2,8 +2,8 @@
 #
 # Makefile for src/bin/agens
 #
-# Portions Copyright (c) 2017, Bitnine Inc.
-# Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+# Portions Copyright (c) 2018, Bitnine Inc.
+# Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/agens/Makefile
@@ -20,19 +20,19 @@ include $(top_builddir)/src/Makefile.global
 REFDOCDIR= $(top_srcdir)/doc/src/sgml/ref
 
 override CPPFLAGS := -I. -I$(srcdir) -I$(libpq_srcdir) $(CPPFLAGS)
-LDFLAGS += -L$(top_builddir)/src/fe_utils -lpgfeutils -lpq
+override LDFLAGS := -L$(top_builddir)/src/fe_utils -lpgfeutils $(libpq_pgport) $(LDFLAGS)
 
-OBJS=	command.o common.o help.o input.o stringutils.o mainloop.o copy.o \
-	startup.o prompt.o variables.o large_obj.o describe.o \
-	crosstabview.o tab-complete.o \
-	sql_help.o psqlscanslash.o \
+OBJS=	command.o common.o conditional.o copy.o crosstabview.o \
+	describe.o help.o input.o large_obj.o mainloop.o \
+	prompt.o psqlscanslash.o sql_help.o startup.o stringutils.o \
+	tab-complete.o variables.o \
 	$(WIN32RES)
 
 
 all: agens
 
 agens: $(OBJS) | submake-libpq submake-libpgport submake-libpgfeutils
-	$(CC) $(CFLAGS) $(OBJS) $(libpq_pgport) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
+	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
 help.o: sql_help.h
 
@@ -42,11 +42,7 @@ sql_help.h: create_help.pl $(wildcard $(REFDOCDIR)/*.sgml)
 
 psqlscanslash.c: FLEXFLAGS = -Cfe -p -p
 psqlscanslash.c: FLEX_NO_BACKUP=yes
-
-# Latest flex causes warnings in this file.
-ifeq ($(GCC),yes)
-psqlscanslash.o: CFLAGS += -Wno-error
-endif
+psqlscanslash.c: FLEX_FIX_WARNING=yes
 
 distprep: sql_help.h psqlscanslash.c
 
