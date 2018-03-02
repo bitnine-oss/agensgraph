@@ -1170,3 +1170,44 @@ jsonb_string_contains(PG_FUNCTION_ARGS)
 					JsonbToCString(NULL, &rj->root, VARSIZE(rj)))));
 	PG_RETURN_NULL();
 }
+
+Datum
+jsonb_string_regex(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *lj = PG_GETARG_JSONB(0);
+	Jsonb	   *rj = PG_GETARG_JSONB(1);
+
+	if (JB_ROOT_IS_SCALAR(lj) && JB_ROOT_IS_SCALAR(rj))
+	{
+		JsonbValue *ljv;
+		JsonbValue *rjv;
+
+		ljv = getIthJsonbValueFromContainer(&lj->root, 0);
+		rjv = getIthJsonbValueFromContainer(&rj->root, 0);
+
+		if (ljv->type == jbvString && rjv->type == jbvString)
+		{
+			text	   *lt;
+			text	   *rt;
+			Datum		result;
+
+			lt = cstring_to_text_with_len(ljv->val.string.val,
+										  ljv->val.string.len);
+			rt = cstring_to_text_with_len(rjv->val.string.val,
+										  rjv->val.string.len);
+
+			result = DirectFunctionCall2Coll(textregexeq,
+											 DEFAULT_COLLATION_OID,
+											 PointerGetDatum(lt),
+											 PointerGetDatum(rt));
+			PG_RETURN_DATUM(result);
+		}
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("Regular Expression Pattern: two string values expected but %s, %s",
+					JsonbToCString(NULL, &lj->root, VARSIZE(lj)),
+					JsonbToCString(NULL, &rj->root, VARSIZE(rj)))));
+	PG_RETURN_NULL();
+}

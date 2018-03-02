@@ -342,6 +342,7 @@ greater_equals	">="
 less_greater	"<>"
 not_equals		"!="
 add_equals		"+="
+equals_tilde	"=~"
 
 /*
  * "self" is the set of chars that should be returned as single-character
@@ -862,6 +863,11 @@ other			.
 {add_equals}	{
 					SET_YYLLOC();
 					return ADD_EQUALS;
+				}
+
+{equals_tilde}	{
+					SET_YYLLOC();
+					return EQUALS_TILDE;
 				}
 
 {self}			{

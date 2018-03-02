@@ -816,7 +816,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 %left		AT				/* sets precedence for AT TIME ZONE */
 %left		COLLATE
 %right		UMINUS
-%nonassoc	CONTAINS ENDS STARTS
+%nonassoc	CONTAINS ENDS EQUALS_TILDE STARTS
 %left		'[' ']'
 %left		'(' ')'
 %left		TYPECAST
@@ -15149,6 +15149,12 @@ cypher_expr:
 				{
 					$$ = (Node *) makeFuncCall(
 										SystemFuncName("string_contains"),
+										list_make2($1, $3), @2);
+				}
+			| cypher_expr EQUALS_TILDE cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_regex"),
 										list_make2($1, $3), @2);
 				}
 			| cypher_expr IS NULL_P							%prec IS
