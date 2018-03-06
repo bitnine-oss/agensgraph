@@ -226,13 +226,6 @@ typedef enum NodeTag
 	T_SubPlanState,
 	T_AlternativeSubPlanState,
 	T_DomainConstraintState,
-	T_EdgeRefPropState,
-	T_EdgeRefRowState,
-	T_EdgeRefRowsState,
-	T_CypherMapExprState,
-	T_CypherListExprState,
-	T_CypherListCompExprState,
-	T_CypherAccessExprState,
 
 	/*
 	 * TAGS FOR PLANNER NODES (relation.h)
