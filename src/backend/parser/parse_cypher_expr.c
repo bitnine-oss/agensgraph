@@ -785,6 +785,7 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 {
 	Node	   *list;
 	Oid			type;
+	char	   *save_varname;
 	Node	   *cond;
 	Node	   *elem;
 	CypherListCompExpr *clcexpr;
@@ -797,13 +798,11 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 				 errmsg("jsonb is expected but %s", format_type_be(type)),
 				 parser_errposition(pstate, clc->location)));
 
+	save_varname = pstate->p_lc_varname;
 	pstate->p_lc_varname = clc->varname;
 	cond = transformCypherWhere(pstate, clc->cond, EXPR_KIND_WHERE);
-	pstate->p_lc_varname = NULL;
-
-	pstate->p_lc_varname = clc->varname;
 	elem = transformCypherExprRecurse(pstate, clc->elem);
-	pstate->p_lc_varname = NULL;
+	pstate->p_lc_varname = save_varname;
 	elem = coerce_to_jsonb(pstate, elem, "jsonb", true);
 
 	clcexpr = makeNode(CypherListCompExpr);
@@ -1300,8 +1299,8 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 
 			cind = makeNode(CypherIndices);
 			cind->is_slice = ind->is_slice;
-			cind->lidx = lidx;
-			cind->uidx = uidx;
+			cind->lidx = (Expr *) lidx;
+			cind->uidx = (Expr *) uidx;
 
 			elem = (Node *) cind;
 		}
@@ -1618,16 +1617,17 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 				return NULL;
 			}
 
-			t = coerce_to_target_type(pstate, cind->uidx, exprType(cind->uidx),
-									  TEXTOID, -1, COERCION_ASSIGNMENT,
-									  COERCE_IMPLICIT_CAST, -1);
+			t = (Node *) cind->uidx;
+			t = coerce_to_target_type(pstate, t, exprType(t), TEXTOID, -1,
+									  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST,
+									  -1);
 			if (t == NULL)
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
 						 errmsg("path element must be text"),
 						 parser_errposition(pstate,
-											exprLocation(cind->uidx))));
+										exprLocation((Node *) cind->uidx))));
 				return NULL;
 			}
 

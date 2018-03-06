@@ -1573,8 +1573,8 @@ typedef struct CypherIndices
 {
 	NodeTag		type;
 	bool		is_slice;
-	Node	   *lidx;			/* Expr or ExprState */
-	Node	   *uidx;			/* Expr or ExprState */
+	Expr	   *lidx;
+	Expr	   *uidx;
 } CypherIndices;
 
 #endif							/* PRIMNODES_H */

@@ -3306,8 +3306,8 @@ expression_tree_mutator(Node *node,
 				CypherIndices *newnode;
 
 				FLATCOPY(newnode, i, CypherIndices);
-				MUTATE(newnode->lidx, i->lidx, Node *);
-				MUTATE(newnode->uidx, i->uidx, Node *);
+				MUTATE(newnode->lidx, i->lidx, Expr *);
+				MUTATE(newnode->uidx, i->uidx, Expr *);
 				return (Node *) newnode;
 			}
 			break;
