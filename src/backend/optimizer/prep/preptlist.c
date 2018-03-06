@@ -97,7 +97,7 @@ preprocess_targetlist(PlannerInfo *root)
 		target_relation = heap_open(target_rte->relid, NoLock);
 	}
 	else
-		Assert(command_type == CMD_SELECT);
+		Assert(command_type == CMD_SELECT || command_type == CMD_GRAPHWRITE);
 
 	/*
 	 * For UPDATE/DELETE, add any junk column(s) needed to allow the executor
