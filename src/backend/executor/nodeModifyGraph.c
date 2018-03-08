@@ -389,14 +389,11 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 				gid = getVertexIdDatum(result->tts_values[i]);
 				elem = getVertexFinalPropMap(mgstate, result->tts_values[i],
 											 gid);
-
-				setSlotValueByAttnum(result, elem, i + 1);
 			}
 			else if (type == EDGEOID)
 			{
 				gid = getEdgeIdDatum(result->tts_values[i]);
 				elem = getEdgeFinalPropMap(mgstate, result->tts_values[i], gid);
-
 			}
 			else if (type == GRAPHPATHOID)
 			{
@@ -913,19 +910,10 @@ setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum)
 static Datum *
 makeDatumArray(ExprContext *econtext, int len)
 {
-	MemoryContext oldmctx;
-	Datum *result;
-
 	if (len == 0)
 		return NULL;
 
-	oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-
-	result = palloc(len * sizeof(Datum));
-
-	MemoryContextSwitchTo(oldmctx);
-
-	return result;
+	return palloc(len * sizeof(Datum));
 }
 
 static TupleTableSlot *
@@ -1411,7 +1399,15 @@ ExecMergeGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		MemoryContextSwitchTo(oldmctx);
 
 		if (mgstate->sets != NIL)
+		{
+			/*
+			 * Increase CommandId to scan tuples created by createMergePath().
+			 */
+			while (mgstate->ps.state->es_output_cid >= GetCurrentCommandId(true))
+				CommandCounterIncrement();
+
 			slot = ExecSetGraph(mgstate, GSP_ON_CREATE, slot);
+		}
 	}
 
 	return (plan->last ? NULL : slot);
@@ -1694,7 +1690,6 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 
 		estate->es_graphwrstats.insertEdge++;
 	}
-
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
