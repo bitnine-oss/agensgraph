@@ -221,6 +221,8 @@ RETURN [x IN [0, 1, 2, 3, 4]];
 RETURN [x IN [0, 1, 2, 3, 4] WHERE x % 2 = 0];
 RETURN [x IN [0, 1, 2, 3, 4] | x + 1];
 RETURN [x IN [0, 1, 2, 3, 4] WHERE x % 2 = 0 | x + 1];
+-- nested use of variables
+RETURN [x IN [[0], [1]] WHERE length([y IN x]) = 1 | [y IN x]];
 
 -- List predicate functions
 RETURN ALL(x in [] WHERE x = 0);
