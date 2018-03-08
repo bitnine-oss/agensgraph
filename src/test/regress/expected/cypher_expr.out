@@ -496,6 +496,13 @@ RETURN [x IN [0, 1, 2, 3, 4] WHERE x % 2 = 0 | x + 1];
  [1, 3, 5]
 (1 row)
 
+-- nested use of variables
+RETURN [x IN [[0], [1]] WHERE length([y IN x]) = 1 | [y IN x]];
+  ?column?  
+------------
+ [[0], [1]]
+(1 row)
+
 -- List predicate functions
 RETURN ALL(x in [] WHERE x = 0);
  ?column? 
