@@ -389,14 +389,11 @@ ExecModifyGraph(ModifyGraphState *mgstate)
 				gid = getVertexIdDatum(result->tts_values[i]);
 				elem = getVertexFinalPropMap(mgstate, result->tts_values[i],
 											 gid);
-
-				setSlotValueByAttnum(result, elem, i + 1);
 			}
 			else if (type == EDGEOID)
 			{
 				gid = getEdgeIdDatum(result->tts_values[i]);
 				elem = getEdgeFinalPropMap(mgstate, result->tts_values[i], gid);
-
 			}
 			else if (type == GRAPHPATHOID)
 			{
@@ -542,8 +539,13 @@ ExecCreateGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	foreach(lp, plan->pattern)
 	{
 		GraphPath *path = (GraphPath *) lfirst(lp);
+		MemoryContext oldmctx;
+
+		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 		slot = createPath(mgstate, path, slot);
+
+		MemoryContextSwitchTo(oldmctx);
 	}
 
 	return (plan->last ? NULL : slot);
@@ -644,17 +646,12 @@ createPath(ModifyGraphState *mgstate, GraphPath *path, TupleTableSlot *slot)
 	/* make a graphpath and set it to the slot */
 	if (out)
 	{
-		MemoryContext oldmctx;
 		Datum graphpath;
 
 		Assert(nvertices == nedges + 1);
 		Assert(pathlen == nvertices + nedges);
 
-		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-
 		graphpath = makeGraphpathDatum(vertices, nvertices, edges, nedges);
-
-		MemoryContextSwitchTo(oldmctx);
 
 		setSlotValueByName(slot, graphpath, path->variable);
 	}
@@ -913,19 +910,10 @@ setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum)
 static Datum *
 makeDatumArray(ExprContext *econtext, int len)
 {
-	MemoryContext oldmctx;
-	Datum *result;
-
 	if (len == 0)
 		return NULL;
 
-	oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-
-	result = palloc(len * sizeof(Datum));
-
-	MemoryContextSwitchTo(oldmctx);
-
-	return result;
+	return palloc(len * sizeof(Datum));
 }
 
 static TupleTableSlot *
@@ -1402,7 +1390,13 @@ ExecMergeGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	}
 	else
 	{
+		MemoryContext oldmctx;
+
+		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+
 		slot = createMergePath(mgstate, path, slot);
+
+		MemoryContextSwitchTo(oldmctx);
 
 		if (mgstate->sets != NIL)
 		{
@@ -1507,17 +1501,12 @@ createMergePath(ModifyGraphState *mgstate, GraphPath *path,
 	/* make a graphpath and set it to the slot */
 	if (out)
 	{
-		MemoryContext oldmctx;
 		Datum graphpath;
 
 		Assert(nvertices == nedges + 1);
 		Assert(pathlen == nvertices + nedges);
 
-		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-
 		graphpath = makeGraphpathDatum(vertices, nvertices, edges, nedges);
-
-		MemoryContextSwitchTo(oldmctx);
 
 		setSlotValueByName(slot, graphpath, path->variable);
 	}
@@ -1701,7 +1690,6 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 
 		estate->es_graphwrstats.insertEdge++;
 	}
-
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
