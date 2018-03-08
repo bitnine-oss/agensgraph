@@ -4808,6 +4808,8 @@ ExecEvalCypherListComp(CypherListCompExprState *clcstate,
 	bool		eisnull;
 	Datum		listd;
 	Jsonb	   *listj;
+	Datum		save_datum;
+	bool		save_isNull;
 	JsonbParseState *jpstate = NULL;
 	JsonbIterator *it;
 	JsonbValue	jv;
@@ -4832,6 +4834,9 @@ ExecEvalCypherListComp(CypherListCompExprState *clcstate,
 						JsonbToCString(NULL, &listj->root, VARSIZE(listj)))));
 		return 0;
 	}
+
+	save_datum = econtext->clcValue_datum;
+	save_isNull = econtext->clcValue_isNull;
 
 	pushJsonbValue(&jpstate, WJB_BEGIN_ARRAY, NULL);
 
@@ -4911,8 +4916,8 @@ ExecEvalCypherListComp(CypherListCompExprState *clcstate,
 		}
 	}
 
-	econtext->clcValue_datum = 0;
-	econtext->clcValue_isNull = true;
+	econtext->clcValue_datum = save_datum;
+	econtext->clcValue_isNull = save_isNull;
 
 	j = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
 
