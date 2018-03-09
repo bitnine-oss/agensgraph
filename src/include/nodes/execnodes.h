@@ -22,13 +22,10 @@
 #include "lib/pairingheap.h"
 #include "nodes/params.h"
 #include "nodes/plannodes.h"
-<<<<<<< HEAD
 #include "utils/array.h"
 #include "utils/graph.h"
-=======
 #include "utils/hsearch.h"
 #include "utils/queryenvironment.h"
->>>>>>> postgres
 #include "utils/reltrigger.h"
 #include "utils/sortsupport.h"
 #include "utils/tuplestore.h"
@@ -530,15 +527,12 @@ typedef struct EState
 	HeapTuple  *es_epqTuple;	/* array of EPQ substitute tuples */
 	bool	   *es_epqTupleSet; /* true if EPQ tuple is provided */
 	bool	   *es_epqScanDone; /* true if EPQ tuple has been fetched */
-<<<<<<< HEAD
 	bool		es_forceReScan;
-=======
 
 	/* The per-query shared memory area to use for parallel execution. */
 	struct dsa_area *es_query_dsa;
 
 	bool		es_use_parallel_mode; /* can we use parallel workers? */
->>>>>>> postgres
 } EState;
 
 
@@ -1358,12 +1352,9 @@ typedef struct IndexOnlyScanState
 	IndexScanDesc ioss_ScanDesc;
 	Buffer		ioss_VMBuffer;
 	long		ioss_HeapFetches;
-<<<<<<< HEAD
+	Size		ioss_PscanLen;
 	dlist_head  vle_ctxs;		/* list of IndexScanVLECtx */
 	dlist_node *cur_ctx;
-=======
-	Size		ioss_PscanLen;
->>>>>>> postgres
 } IndexOnlyScanState;
 
 /* ----------------
@@ -2225,7 +2216,6 @@ typedef struct LimitState
 	TupleTableSlot *subSlot;	/* tuple last obtained from subplan */
 } LimitState;
 
-<<<<<<< HEAD
 
 /*
  * Graph nodes
@@ -2270,7 +2260,4 @@ typedef struct DijkstraState
 	TupleTableSlot *selfTupleSlot;
 } DijkstraState;
 
-#endif   /* EXECNODES_H */
-=======
 #endif							/* EXECNODES_H */
->>>>>>> postgres

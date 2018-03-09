@@ -5464,7 +5464,19 @@ DESCR("pg_controldata recovery state information as a function");
 DATA(insert OID = 3444 ( pg_control_init PGNSP PGUID 12 1 0 0 0 f f f f t f v s 0 0 2249 "" "{23,23,23,23,23,23,23,23,23,16,16,23}" "{o,o,o,o,o,o,o,o,o,o,o,o}" "{max_data_alignment,database_block_size,blocks_per_segment,wal_block_size,bytes_per_wal_segment,max_identifier_length,max_index_columns,max_toast_chunk_size,large_object_chunk_size,float4_pass_by_value,float8_pass_by_value,data_page_checksum_version}" _null_ _null_ pg_control_init _null_ _null_ _null_ ));
 DESCR("pg_controldata init state information as a function");
 
-<<<<<<< HEAD
+/* collation management functions */
+DATA(insert OID = 3445 ( pg_import_system_collations PGNSP PGUID 12 100 0 0 0 f f f f t f v r 1 0 23 "4089" _null_ _null_ _null_ _null_ _null_ pg_import_system_collations _null_ _null_ _null_ ));
+DESCR("import collations from operating system");
+
+DATA(insert OID = 3448 ( pg_collation_actual_version PGNSP PGUID 12 100 0 0 0 f f f f t f v s 1 0 25 "26" _null_ _null_ _null_ _null_ _null_ pg_collation_actual_version _null_ _null_ _null_ ));
+DESCR("get actual version of collation from operating system");
+
+/* system management/monitoring related functions */
+DATA(insert OID = 3353 (  pg_ls_logdir				 PGNSP PGUID 12 10 20 0 0 f f f f t t v s 0 0 2249 "" "{25,20,1184}" "{o,o,o}" "{name,size,modification}" _null_ _null_ pg_ls_logdir _null_ _null_ _null_ ));
+DESCR("list files in the log directory");
+DATA(insert OID = 3354 (  pg_ls_waldir				 PGNSP PGUID 12 10 20 0 0 f f f f t t v s 0 0 2249 "" "{25,20,1184}" "{o,o,o}" "{name,size,modification}" _null_ _null_ pg_ls_waldir _null_ _null_ _null_ ));
+DESCR("list of files in the WAL directory");
+
 /* graph */
 DATA(insert OID = 7000 ( graphid		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 7002 "23 20" _null_ _null_ _null_ _null_ _null_ graphid _null_ _null_ _null_ ));
 DESCR("make graphid");
@@ -5708,20 +5720,6 @@ DATA(insert OID = 7243 ( string_contains	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 
 DESCR("true if LHS contains RHS");
 DATA(insert OID = 7244 ( string_regex		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_string_regex _null_ _null_ _null_ ));
 DESCR("true if regex match");
-=======
-/* collation management functions */
-DATA(insert OID = 3445 ( pg_import_system_collations PGNSP PGUID 12 100 0 0 0 f f f f t f v r 1 0 23 "4089" _null_ _null_ _null_ _null_ _null_ pg_import_system_collations _null_ _null_ _null_ ));
-DESCR("import collations from operating system");
-
-DATA(insert OID = 3448 ( pg_collation_actual_version PGNSP PGUID 12 100 0 0 0 f f f f t f v s 1 0 25 "26" _null_ _null_ _null_ _null_ _null_ pg_collation_actual_version _null_ _null_ _null_ ));
-DESCR("get actual version of collation from operating system");
-
-/* system management/monitoring related functions */
-DATA(insert OID = 3353 (  pg_ls_logdir				 PGNSP PGUID 12 10 20 0 0 f f f f t t v s 0 0 2249 "" "{25,20,1184}" "{o,o,o}" "{name,size,modification}" _null_ _null_ pg_ls_logdir _null_ _null_ _null_ ));
-DESCR("list files in the log directory");
-DATA(insert OID = 3354 (  pg_ls_waldir				 PGNSP PGUID 12 10 20 0 0 f f f f t t v s 0 0 2249 "" "{25,20,1184}" "{o,o,o}" "{name,size,modification}" _null_ _null_ pg_ls_waldir _null_ _null_ _null_ ));
-DESCR("list of files in the WAL directory");
->>>>>>> postgres
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result

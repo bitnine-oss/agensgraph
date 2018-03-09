@@ -131,10 +131,6 @@ extern bool ReindexIsProcessingHeap(Oid heapOid);
 extern bool ReindexIsProcessingIndex(Oid indexOid);
 extern Oid	IndexGetRelation(Oid indexId, bool missing_ok);
 
-<<<<<<< HEAD
 extern bool DisableIndexLabel(Oid relid);
 
-#endif   /* INDEX_H */
-=======
 #endif							/* INDEX_H */
->>>>>>> postgres

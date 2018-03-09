@@ -1466,13 +1466,8 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 	 * Let's just make sure it's a valid subselect ...
 	 */
 	if (!IsA(subquery, Query) ||
-<<<<<<< HEAD
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_GRAPHWRITE) ||
-		subquery->utilityStmt != NULL)
-=======
-		subquery->commandType != CMD_SELECT)
->>>>>>> postgres
+		 subquery->commandType != CMD_GRAPHWRITE))
 		elog(ERROR, "subquery is bogus");
 
 	if (subquery->commandType == CMD_GRAPHWRITE)
@@ -1810,13 +1805,8 @@ is_simple_union_all(Query *subquery)
 
 	/* Let's just make sure it's a valid subselect ... */
 	if (!IsA(subquery, Query) ||
-<<<<<<< HEAD
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_GRAPHWRITE) ||
-		subquery->utilityStmt != NULL)
-=======
-		subquery->commandType != CMD_SELECT)
->>>>>>> postgres
+		 subquery->commandType != CMD_GRAPHWRITE))
 		elog(ERROR, "subquery is bogus");
 
 	/* Is it a set-operation query at all? */

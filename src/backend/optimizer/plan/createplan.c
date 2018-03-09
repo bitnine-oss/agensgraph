@@ -226,11 +226,8 @@ static BitmapOr *make_bitmap_or(List *bitmapplans);
 static NestLoop *make_nestloop(List *tlist,
 			  List *joinclauses, List *otherclauses, List *nestParams,
 			  Plan *lefttree, Plan *righttree,
-<<<<<<< HEAD
-			  JoinType jointype, int minhops, int maxhops);
-=======
-			  JoinType jointype, bool inner_unique);
->>>>>>> postgres
+			  JoinType jointype, bool inner_unique,
+			  int minhops, int maxhops);
 static HashJoin *make_hashjoin(List *tlist,
 			  List *joinclauses, List *otherclauses,
 			  List *hashclauses,
@@ -499,7 +496,10 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 											  (LimitPath *) best_path,
 											  flags);
 			break;
-<<<<<<< HEAD
+		case T_GatherMerge:
+			plan = (Plan *) create_gather_merge_plan(root,
+													 (GatherMergePath *) best_path);
+			break;
 		case T_ModifyGraph:
 			plan = (Plan *) create_modifygraph_plan(root,
 												(ModifyGraphPath *) best_path);
@@ -507,11 +507,6 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 		case T_Dijkstra:
 			plan = (Plan *) create_dijkstra_plan(root,
 												 (DijkstraPath *) best_path);
-=======
-		case T_GatherMerge:
-			plan = (Plan *) create_gather_merge_plan(root,
-													 (GatherMergePath *) best_path);
->>>>>>> postgres
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
@@ -3776,7 +3771,7 @@ create_nestloop_plan(PlannerInfo *root,
 							  outer_plan,
 							  inner_plan,
 							  best_path->jointype,
-<<<<<<< HEAD
+							  best_path->inner_unique,
 							  best_path->minhops,
 							  best_path->maxhops);
 	if (best_path->jointype == JOIN_VLE &&
@@ -3787,9 +3782,6 @@ create_nestloop_plan(PlannerInfo *root,
 
 		set_edgerefid_recurse(root, inner_plan);
 	}
-=======
-							  best_path->inner_unique);
->>>>>>> postgres
 
 	copy_generic_path_info(&join_plan->join.plan, &best_path->path);
 
@@ -5621,12 +5613,9 @@ make_nestloop(List *tlist,
 			  Plan *lefttree,
 			  Plan *righttree,
 			  JoinType jointype,
-<<<<<<< HEAD
+			  bool inner_unique,
 			  int minhops,
 			  int maxhops)
-=======
-			  bool inner_unique)
->>>>>>> postgres
 {
 	NestLoop   *node;
 	Plan	   *plan;

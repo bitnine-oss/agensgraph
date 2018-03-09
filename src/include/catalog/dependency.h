@@ -162,16 +162,12 @@ typedef enum ObjectClass
 	OCLASS_EXTENSION,			/* pg_extension */
 	OCLASS_EVENT_TRIGGER,		/* pg_event_trigger */
 	OCLASS_POLICY,				/* pg_policy */
-<<<<<<< HEAD
-	OCLASS_TRANSFORM,			/* pg_transform */
-	OCLASS_GRAPH,				/* ag_graph */
-	OCLASS_LABEL				/* ag_label */
-=======
 	OCLASS_PUBLICATION,			/* pg_publication */
 	OCLASS_PUBLICATION_REL,		/* pg_publication_rel */
 	OCLASS_SUBSCRIPTION,		/* pg_subscription */
-	OCLASS_TRANSFORM			/* pg_transform */
->>>>>>> postgres
+	OCLASS_TRANSFORM,			/* pg_transform */
+	OCLASS_GRAPH,				/* ag_graph */
+	OCLASS_LABEL				/* ag_label */
 } ObjectClass;
 
 #define LAST_OCLASS		OCLASS_LABEL

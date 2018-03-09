@@ -1133,7 +1133,14 @@ setup_config(void)
 							  "#update_process_title = off");
 #endif
 
-<<<<<<< HEAD
+	if (strcmp(authmethodlocal, "scram-sha-256") == 0 ||
+		strcmp(authmethodhost, "scram-sha-256") == 0)
+	{
+		conflines = replace_token(conflines,
+								  "#password_encryption = md5",
+								  "password_encryption = scram-sha-256");
+	}
+
 	/* set shared preload libraries */
 #ifdef USE_PG_STATSINFO
 	conflines = replace_token(conflines,
@@ -1199,15 +1206,6 @@ setup_config(void)
 							"pg_statsinfo.textlog_line_prefix = "
 									"'%t %p %c-%l %x %q(%u, %d, %r, %a) '");
 #endif
-=======
-	if (strcmp(authmethodlocal, "scram-sha-256") == 0 ||
-		strcmp(authmethodhost, "scram-sha-256") == 0)
-	{
-		conflines = replace_token(conflines,
-								  "#password_encryption = md5",
-								  "password_encryption = scram-sha-256");
-	}
->>>>>>> postgres
 
 	snprintf(path, sizeof(path), "%s/postgresql.conf", pg_data);
 
@@ -3363,16 +3361,10 @@ main(int argc, char *argv[])
 	appendPQExpBuffer(start_db_cmd, " -l %s start", _("logfile"));
 
 	printf(_("\nSuccess. You can now start the database server using:\n\n"
-<<<<<<< HEAD
-			 "    %s%s%sag_ctl%s -D %s%s%s -l logfile start\n\n"),
-	   QUOTE_PATH, bin_dir, (strlen(bin_dir) > 0) ? DIR_SEP : "", QUOTE_PATH,
-		   QUOTE_PATH, pgdata_native, QUOTE_PATH);
-=======
 			 "    %s\n\n"),
 		   start_db_cmd->data);
 
 	destroyPQExpBuffer(start_db_cmd);
->>>>>>> postgres
 
 	return 0;
 }

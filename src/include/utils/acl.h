@@ -208,13 +208,10 @@ typedef enum AclObjectKind
 	ACL_KIND_FOREIGN_SERVER,	/* pg_foreign_server */
 	ACL_KIND_EVENT_TRIGGER,		/* pg_event_trigger */
 	ACL_KIND_EXTENSION,			/* pg_extension */
-<<<<<<< HEAD
-	ACL_KIND_GRAPH,				/* ag_graph */
-	ACL_KIND_LABEL,				/* ag_label */
-=======
 	ACL_KIND_PUBLICATION,		/* pg_publication */
 	ACL_KIND_SUBSCRIPTION,		/* pg_subscription */
->>>>>>> postgres
+	ACL_KIND_GRAPH,				/* ag_graph */
+	ACL_KIND_LABEL,				/* ag_label */
 	MAX_ACL_KIND				/* MUST BE LAST */
 } AclObjectKind;
 

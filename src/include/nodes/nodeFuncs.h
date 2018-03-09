@@ -71,13 +71,9 @@ extern Node *query_or_expression_tree_mutator(Node *node, Node *(*mutator) (),
 											  void *context, int flags);
 
 extern bool raw_expression_tree_walker(Node *node, bool (*walker) (),
-<<<<<<< HEAD
-												   void *context);
+									   void *context);
 extern Node *raw_expression_tree_mutator(Node *node, Node *(*mutator) (),
 										 void *context);
-=======
-									   void *context);
->>>>>>> postgres
 
 struct PlanState;
 extern bool planstate_tree_walker(struct PlanState *planstate, bool (*walker) (),

@@ -129,15 +129,11 @@ typedef struct PlannerGlobal
 
 	bool		parallelModeOK; /* parallel mode potentially OK? */
 
-<<<<<<< HEAD
-	bool		parallelModeNeeded;		/* parallel mode actually required? */
-
-	List	   *vlePathRelationOids;
-=======
 	bool		parallelModeNeeded; /* parallel mode actually required? */
 
 	char		maxParallelHazard;	/* worst PROPARALLEL hazard level */
->>>>>>> postgres
+
+	List	   *vlePathRelationOids;
 } PlannerGlobal;
 
 /* macro for fetching the Plan associated with a SubPlan node */

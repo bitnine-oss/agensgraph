@@ -174,16 +174,12 @@ static const Oid object_classes[] = {
 	ExtensionRelationId,		/* OCLASS_EXTENSION */
 	EventTriggerRelationId,		/* OCLASS_EVENT_TRIGGER */
 	PolicyRelationId,			/* OCLASS_POLICY */
-<<<<<<< HEAD
-	TransformRelationId,		/* OCLASS_TRANSFORM */
-	GraphRelationId,			/* OCLASS_GRAPH */
-	LabelRelationId				/* OCLASS_LABEL */
-=======
 	PublicationRelationId,		/* OCLASS_PUBLICATION */
 	PublicationRelRelationId,	/* OCLASS_PUBLICATION_REL */
 	SubscriptionRelationId,		/* OCLASS_SUBSCRIPTION */
-	TransformRelationId			/* OCLASS_TRANSFORM */
->>>>>>> postgres
+	TransformRelationId,		/* OCLASS_TRANSFORM */
+	GraphRelationId,			/* OCLASS_GRAPH */
+	LabelRelationId				/* OCLASS_LABEL */
 };
 
 
@@ -1281,19 +1277,6 @@ doDeletion(const ObjectAddress *object, int flags)
 			DropTransformById(object->objectId);
 			break;
 
-<<<<<<< HEAD
-		case OCLASS_GRAPH:
-			RemoveGraphById(object->objectId);
-			break;
-
-		case OCLASS_LABEL:
-			label_drop_with_catalog(object->objectId);
-			break;
-
-		default:
-			elog(ERROR, "unrecognized object class: %u",
-				 object->classId);
-=======
 			/*
 			 * These global object types are not supported here.
 			 */
@@ -1304,11 +1287,18 @@ doDeletion(const ObjectAddress *object, int flags)
 			elog(ERROR, "global objects cannot be deleted by doDeletion");
 			break;
 
+		case OCLASS_GRAPH:
+			RemoveGraphById(object->objectId);
+			break;
+
+		case OCLASS_LABEL:
+			label_drop_with_catalog(object->objectId);
+			break;
+
 			/*
 			 * There's intentionally no default: case here; we want the
 			 * compiler to warn if a new OCLASS hasn't been handled above.
 			 */
->>>>>>> postgres
 	}
 }
 

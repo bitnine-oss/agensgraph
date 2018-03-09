@@ -30,11 +30,8 @@
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "lib/bipartite_match.h"
-<<<<<<< HEAD
-#include "nodes/graphnodes.h"
-=======
 #include "lib/knapsack.h"
->>>>>>> postgres
+#include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #ifdef OPTIMIZER_DEBUG
@@ -465,15 +462,12 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	result->relationOids = glob->relationOids;
 	result->invalItems = glob->invalItems;
 	result->nParamExec = glob->nParamExec;
-<<<<<<< HEAD
-	result->nVlePaths = list_length(glob->vlePathRelationOids);
-	list_free(glob->vlePathRelationOids);
-=======
 	/* utilityStmt should be null, but we might as well copy it */
 	result->utilityStmt = parse->utilityStmt;
 	result->stmt_location = parse->stmt_location;
 	result->stmt_len = parse->stmt_len;
->>>>>>> postgres
+	result->nVlePaths = list_length(glob->vlePathRelationOids);
+	list_free(glob->vlePathRelationOids);
 
 	return result;
 }
@@ -2059,7 +2053,11 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 										   final_target,
 										   have_postponed_srfs ? -1.0 :
 										   limit_tuples);
-<<<<<<< HEAD
+		/* Fix things up if final_target contains SRFs */
+		if (parse->hasTargetSRFs)
+			adjust_paths_for_srfs(root, current_rel,
+								  final_targets,
+								  final_targets_contain_srfs);
 	}
 
 	if (parse->dijkstraSource)
@@ -2074,43 +2072,6 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 											parse->dijkstraSource,
 											parse->dijkstraTarget,
 											parse->dijkstraLimit);
-	}
-
-	/*
-	 * If there are set-returning functions in the tlist, scale up the output
-	 * rowcounts of all surviving Paths to account for that.  Note that if any
-	 * SRFs appear in sorting or grouping columns, we'll have underestimated
-	 * the numbers of rows passing through earlier steps; but that's such a
-	 * weird usage that it doesn't seem worth greatly complicating matters to
-	 * account for it.
-	 */
-	tlist_rows = tlist_returns_set_rows(tlist);
-	if (tlist_rows > 1)
-	{
-		foreach(lc, current_rel->pathlist)
-		{
-			Path	   *path = (Path *) lfirst(lc);
-
-			/*
-			 * We assume that execution costs of the tlist as such were
-			 * already accounted for.  However, it still seems appropriate to
-			 * charge something more for the executor's general costs of
-			 * processing the added tuples.  The cost is probably less than
-			 * cpu_tuple_cost, though, so we arbitrarily use half of that.
-			 */
-			path->total_cost += path->rows * (tlist_rows - 1) *
-				cpu_tuple_cost / 2;
-
-			path->rows *= tlist_rows;
-		}
-		/* No need to run set_cheapest; we're keeping all paths anyway. */
-=======
-		/* Fix things up if final_target contains SRFs */
-		if (parse->hasTargetSRFs)
-			adjust_paths_for_srfs(root, current_rel,
-								  final_targets,
-								  final_targets_contain_srfs);
->>>>>>> postgres
 	}
 
 	/*

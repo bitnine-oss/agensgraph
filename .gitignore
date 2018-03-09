@@ -25,10 +25,7 @@ lcov.info
 coverage/
 *.vcproj
 *.vcxproj
-<<<<<<< HEAD
-=======
 !win32ver.rc
->>>>>>> postgres
 *.exe
 lib*dll.def
 lib*.pc

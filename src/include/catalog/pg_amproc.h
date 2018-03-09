@@ -536,7 +536,6 @@ DATA(insert (	4104   603	 603  4  4108 ));
 DATA(insert (	4104   603	 603  11 4067 ));
 DATA(insert (	4104   603	 603  13  187 ));
 
-<<<<<<< HEAD
 /*
  * graphid_ops
  */
@@ -562,7 +561,4 @@ DATA(insert ( 7105 7002 7002  4 3386 ));
 /* BTree */
 DATA(insert ( 7167 7062 7062  1 7168 ));
 
-#endif   /* PG_AMPROC_H */
-=======
 #endif							/* PG_AMPROC_H */
->>>>>>> postgres

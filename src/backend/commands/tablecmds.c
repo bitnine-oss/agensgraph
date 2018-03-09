@@ -467,9 +467,7 @@ static void RangeVarCallbackForDropRelation(const RangeVar *rel, Oid relOid,
 								Oid oldRelOid, void *arg);
 static void RangeVarCallbackForAlterRelation(const RangeVar *rv, Oid relid,
 								 Oid oldrelid, void *arg);
-<<<<<<< HEAD
 static bool isPropertyIndex(Oid indexoid);
-=======
 static bool is_partition_attr(Relation rel, AttrNumber attnum, bool *used_in_expr);
 static PartitionSpec *transformPartitionSpec(Relation rel, PartitionSpec *partspec, char *strategy);
 static void ComputePartitionAttrs(Relation rel, List *partParams, AttrNumber *partattrs,
@@ -479,7 +477,6 @@ static void RemoveInheritance(Relation child_rel, Relation parent_rel);
 static ObjectAddress ATExecAttachPartition(List **wqueue, Relation rel,
 					  PartitionCmd *cmd);
 static ObjectAddress ATExecDetachPartition(Relation rel, RangeVar *name);
->>>>>>> postgres
 
 
 /* ----------------------------------------------------------------
@@ -1690,13 +1687,9 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 	int			parentsWithOids = 0;
 	bool		have_bogus_defaults = false;
 	int			child_attno;
-<<<<<<< HEAD
 	bool		isLabel = false;
-	static Node bogus_marker = {0};		/* marks conflicting defaults */
-=======
 	static Node bogus_marker = {0}; /* marks conflicting defaults */
 	List	   *saved_schema = NIL;
->>>>>>> postgres
 
 	/*
 	 * Check for and reject tables with too many columns. We perform this
@@ -2148,18 +2141,12 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				 * have the same type, typmod, and collation.
 				 */
 				if (exist_attno == schema_attno)
-<<<<<<< HEAD
 				{
 					if (!isLabel)
 						ereport(NOTICE,
-						(errmsg("merging column \"%s\" with inherited definition",
-							attributeName)));
+								(errmsg("merging column \"%s\" with inherited definition",
+										attributeName)));
 				}
-=======
-					ereport(NOTICE,
-							(errmsg("merging column \"%s\" with inherited definition",
-									attributeName)));
->>>>>>> postgres
 				else
 					ereport(NOTICE,
 							(errmsg("moving and merging column \"%s\" with inherited definition", attributeName),
@@ -3454,14 +3441,13 @@ AlterTableGetLockLevel(List *cmds)
 				cmd_lockmode = AlterTableGetRelOptionsLockLevel((List *) cmd->def);
 				break;
 
-<<<<<<< HEAD
-			case AT_DisableIndex:
-				cmd_lockmode = AccessShareLock;
-=======
 			case AT_AttachPartition:
 			case AT_DetachPartition:
 				cmd_lockmode = AccessExclusiveLock;
->>>>>>> postgres
+				break;
+
+			case AT_DisableIndex:
+				cmd_lockmode = AccessShareLock;
 				break;
 
 			default:			/* oops */
@@ -3794,15 +3780,14 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 			/* No command-specific prep needed */
 			pass = AT_PASS_MISC;
 			break;
-<<<<<<< HEAD
-		case AT_DisableIndex:
-			ATSimplePermissions(rel, ATT_TABLE);
-=======
 		case AT_AttachPartition:
 		case AT_DetachPartition:
 			ATSimplePermissions(rel, ATT_TABLE);
 			/* No command-specific prep needed */
->>>>>>> postgres
+			pass = AT_PASS_MISC;
+			break;
+		case AT_DisableIndex:
+			ATSimplePermissions(rel, ATT_TABLE);
 			pass = AT_PASS_MISC;
 			break;
 		default:				/* oops */
@@ -4138,16 +4123,14 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation rel,
 		case AT_GenericOptions:
 			ATExecGenericOptions(rel, (List *) cmd->def);
 			break;
-<<<<<<< HEAD
-		case AT_DisableIndex:
-			ATExecDisableIndex(rel);
-=======
 		case AT_AttachPartition:
 			ATExecAttachPartition(wqueue, rel, (PartitionCmd *) cmd->def);
 			break;
 		case AT_DetachPartition:
 			ATExecDetachPartition(rel, ((PartitionCmd *) cmd->def)->name);
->>>>>>> postgres
+			break;
+		case AT_DisableIndex:
+			ATExecDisableIndex(rel);
 			break;
 		default:				/* oops */
 			elog(ERROR, "unrecognized alter table type: %d",

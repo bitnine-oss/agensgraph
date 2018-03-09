@@ -4,12 +4,8 @@
  *		Internal definitions for parser
  *
  *
-<<<<<<< HEAD
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_node.h
@@ -216,8 +212,7 @@ struct ParseState
 	PostParseColumnRefHook p_post_columnref_hook;
 	ParseParamRefHook p_paramref_hook;
 	CoerceParamHook p_coerce_param_hook;
-<<<<<<< HEAD
-	void	   *p_ref_hook_state;		/* common passthrough link for above */
+	void	   *p_ref_hook_state;	/* common passthrough link for above */
 
 	/*
 	 * Additional information for Cypher queries
@@ -234,9 +229,6 @@ struct ParseState
 	bool		p_is_optional_match;
 	List	   *p_target_labels;		/* relation Oid's of target labels */
 	bool		p_convert_edgeref;
-=======
-	void	   *p_ref_hook_state;	/* common passthrough link for above */
->>>>>>> postgres
 };
 
 /*

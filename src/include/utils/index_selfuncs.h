@@ -68,8 +68,8 @@ extern void gincostestimate(struct PlannerInfo *root,
 				Cost *indexStartupCost,
 				Cost *indexTotalCost,
 				Selectivity *indexSelectivity,
-<<<<<<< HEAD
-				double *indexCorrelation);
+				double *indexCorrelation,
+				double *indexPages);
 extern void eicostestimate(struct PlannerInfo *root,
 			   struct IndexPath *path,
 			   double loop_count,
@@ -77,9 +77,5 @@ extern void eicostestimate(struct PlannerInfo *root,
 			   Cost *indexTotalCost,
 			   Selectivity *indexSelectivity,
 			   double *indexCorrelation);
-=======
-				double *indexCorrelation,
-				double *indexPages);
->>>>>>> postgres
 
 #endif							/* INDEX_SELFUNCS_H */

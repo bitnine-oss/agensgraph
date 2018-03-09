@@ -32,11 +32,8 @@
 #include "access/transam.h"
 #include "access/twophase.h"
 #include "access/xact.h"
-<<<<<<< HEAD
-#include "catalog/ag_graph_fn.h"
-=======
 #include "access/xlog_internal.h"
->>>>>>> postgres
+#include "catalog/ag_graph_fn.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "commands/async.h"
@@ -908,16 +905,6 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
-<<<<<<< HEAD
-		{"enable_eager", PGC_USERSET, QUERY_TUNING_METHOD,
-			gettext_noop("Enables the planner's use of eager plans."),
-			NULL
-		},
-		&enable_eager,
-		true,
-		NULL, NULL, NULL
-	},
-=======
 		{"enable_gathermerge", PGC_USERSET, QUERY_TUNING_METHOD,
 			gettext_noop("Enables the planner's use of gather merge plans."),
 			NULL
@@ -926,8 +913,16 @@ static struct config_bool ConfigureNamesBool[] =
 		true,
 		NULL, NULL, NULL
 	},
+	{
+		{"enable_eager", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables the planner's use of eager plans."),
+			NULL
+		},
+		&enable_eager,
+		true,
+		NULL, NULL, NULL
+	},
 
->>>>>>> postgres
 	{
 		{"geqo", PGC_USERSET, QUERY_TUNING_GEQO,
 			gettext_noop("Enables genetic query optimization."),
@@ -3698,16 +3693,6 @@ static struct config_string ConfigureNamesString[] =
 	},
 
 	{
-<<<<<<< HEAD
-		{"graph_path", PGC_USERSET, CLIENT_CONN_STATEMENT,
-			gettext_noop("Sets the graph search path for all names."),
-			NULL,
-			GUC_IS_NAME
-		},
-		&graph_path,
-		"",
-		check_graph_path, NULL, NULL
-=======
 		{"wal_consistency_checking", PGC_SUSET, DEVELOPER_OPTIONS,
 			gettext_noop("Sets the WAL resource managers for which WAL consistency checks are done."),
 			gettext_noop("Full-page images will be logged for all data blocks and cross-checked against the results of WAL replay."),
@@ -3716,7 +3701,17 @@ static struct config_string ConfigureNamesString[] =
 		&wal_consistency_checking_string,
 		"",
 		check_wal_consistency_checking, assign_wal_consistency_checking, NULL
->>>>>>> postgres
+	},
+
+	{
+		{"graph_path", PGC_USERSET, CLIENT_CONN_STATEMENT,
+			gettext_noop("Sets the graph search path for all names."),
+			NULL,
+			GUC_IS_NAME
+		},
+		&graph_path,
+		"",
+		check_graph_path, NULL, NULL
 	},
 
 	/* End-of-list marker */

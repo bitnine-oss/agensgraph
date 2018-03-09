@@ -455,7 +455,10 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 				}
 			}
 			break;
-<<<<<<< HEAD
+		case OBJECT_PUBLICATION:
+			msg = gettext_noop("publication \"%s\" does not exist, skipping");
+			name = strVal((Value *) object);
+			break;
 		case OBJECT_GRAPH:
 			msg = gettext_noop("graph \"%s\" does not exist, skipping");
 			name = NameListToString(objname);
@@ -467,11 +470,6 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 		case OBJECT_ELABEL:
 			msg = gettext_noop("elabel \"%s\" does not exist, skipping");
 			name = NameListToString(objname);
-=======
-		case OBJECT_PUBLICATION:
-			msg = gettext_noop("publication \"%s\" does not exist, skipping");
-			name = strVal((Value *) object);
->>>>>>> postgres
 			break;
 		default:
 			elog(ERROR, "unrecognized object type: %d", (int) objtype);

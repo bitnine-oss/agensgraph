@@ -434,71 +434,7 @@ msgstr ""
 "초기값으로, DB이름을 지정하지 않으면, 현재 사용자의 이름과 같은 데이터베이스"
 "가 만들어집니다.\n"
 
-<<<<<<< HEAD
-#: createlang.c:149 droplang.c:148
-msgid "Name"
-msgstr "이름"
-
-#: createlang.c:150 droplang.c:149
-msgid "no"
-msgstr "아니오"
-
-#: createlang.c:150 droplang.c:149
-msgid "yes"
-msgstr "예"
-
-#: createlang.c:151 droplang.c:150
-msgid "Trusted?"
-msgstr "신뢰된?"
-
-#: createlang.c:160 droplang.c:159
-msgid "Procedural Languages"
-msgstr "프로시쥬얼 언어들"
-
-#: createlang.c:173 droplang.c:172
-#, c-format
-msgid "%s: missing required argument language name\n"
-msgstr "%s: 필수 항목인, 언어 이름을 지정할 인수가 빠졌습니다\n"
-
-#: createlang.c:196
-#, c-format
-msgid "%s: language \"%s\" is already installed in database \"%s\"\n"
-msgstr "%s: \"%s\" 언어는 이미 \"%s\" 데이터베이스에 설치되어 있습니다.\n"
-
-#: createlang.c:219
-#, c-format
-msgid "%s: language installation failed: %s"
-msgstr "%s: 언어 설치 실패: %s"
-
-#: createlang.c:235
-#, c-format
-msgid ""
-"%s installs a procedural language into an AgensGraph database.\n"
-"\n"
-msgstr ""
-"%s 프로그램은 AgensGraph 데이터베이스에 프로시쥬얼 언어를 설치합니다.\n"
-"\n"
-
-#: createlang.c:237 droplang.c:238
-#, c-format
-msgid "  %s [OPTION]... LANGNAME [DBNAME]\n"
-msgstr "  %s [옵션]... 언어이름 [DB이름]\n"
-
-#: createlang.c:239
-#, c-format
-msgid "  -d, --dbname=DBNAME       database to install language in\n"
-msgstr "  -d, --dbname=DBNAME       언어를 설치할 DB이름\n"
-
-#: createlang.c:241 droplang.c:242
-#, c-format
-msgid ""
-"  -l, --list                show a list of currently installed languages\n"
-msgstr "  -l, --list                현재 설치 되어있는 언어들을 보여줌\n"
-
-#: createuser.c:191
-=======
 #: createuser.c:189
->>>>>>> postgres
 msgid "Enter name of role to add: "
 msgstr "추가할 새 롤(role)이름: "
 

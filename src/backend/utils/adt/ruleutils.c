@@ -118,15 +118,10 @@ typedef struct
 	int			wrapColumn;		/* max line length, or -1 for no limit */
 	int			indentLevel;	/* current indent level for prettyprint */
 	bool		varprefix;		/* TRUE to print prefixes on Vars */
-<<<<<<< HEAD
-	ParseExprKind special_exprkind;		/* set only for exprkinds needing
-										 * special handling */
-
-	bool		cypherexpr;		/* true if deparsing is for Cypher expr */
-=======
 	ParseExprKind special_exprkind; /* set only for exprkinds needing special
 									 * handling */
->>>>>>> postgres
+
+	bool		cypherexpr;		/* true if deparsing is for Cypher expr */
 } deparse_context;
 
 /*
@@ -8794,7 +8789,10 @@ get_rule_expr(Node *node, deparse_context *context,
 			}
 			break;
 
-<<<<<<< HEAD
+		case T_TableFunc:
+			get_tablefunc((TableFunc *) node, context, showimplicit);
+			break;
+
 		case T_EdgeRefProp:
 			{
 				EdgeRefProp *erp = (EdgeRefProp *) node;
@@ -8934,10 +8932,6 @@ get_rule_expr(Node *node, deparse_context *context,
 					}
 				}
 			}
-=======
-		case T_TableFunc:
-			get_tablefunc((TableFunc *) node, context, showimplicit);
->>>>>>> postgres
 			break;
 
 		default:
@@ -11322,7 +11316,46 @@ flatten_reloptions(Oid relid)
 	return result;
 }
 
-<<<<<<< HEAD
+/*
+ * get_one_range_partition_bound_string
+ *		A C string representation of one range partition bound
+ */
+char *
+get_range_partbound_string(List *bound_datums)
+{
+	deparse_context context;
+	StringInfo	buf = makeStringInfo();
+	ListCell   *cell;
+	char	   *sep;
+
+	memset(&context, 0, sizeof(deparse_context));
+	context.buf = buf;
+
+	appendStringInfoString(buf, "(");
+	sep = "";
+	foreach(cell, bound_datums)
+	{
+		PartitionRangeDatum *datum =
+		castNode(PartitionRangeDatum, lfirst(cell));
+
+		appendStringInfoString(buf, sep);
+		if (datum->kind == PARTITION_RANGE_DATUM_MINVALUE)
+			appendStringInfoString(buf, "MINVALUE");
+		else if (datum->kind == PARTITION_RANGE_DATUM_MAXVALUE)
+			appendStringInfoString(buf, "MAXVALUE");
+		else
+		{
+			Const	   *val = castNode(Const, datum->value);
+
+			get_const_expr(val, &context, -1);
+		}
+		sep = ", ";
+	}
+	appendStringInfoString(buf, ")");
+
+	return buf->data;
+}
+
 /* ----------
  * ag_get_propindexdef	- Get the definition of a property index
  *
@@ -11795,44 +11828,4 @@ deparse_prop_expression_pretty(Node *expr, List *dpcontext, int prettyFlags)
 	get_rule_expr(expr, &context, false);
 
 	return si.data;
-=======
-/*
- * get_one_range_partition_bound_string
- *		A C string representation of one range partition bound
- */
-char *
-get_range_partbound_string(List *bound_datums)
-{
-	deparse_context context;
-	StringInfo	buf = makeStringInfo();
-	ListCell   *cell;
-	char	   *sep;
-
-	memset(&context, 0, sizeof(deparse_context));
-	context.buf = buf;
-
-	appendStringInfoString(buf, "(");
-	sep = "";
-	foreach(cell, bound_datums)
-	{
-		PartitionRangeDatum *datum =
-		castNode(PartitionRangeDatum, lfirst(cell));
-
-		appendStringInfoString(buf, sep);
-		if (datum->kind == PARTITION_RANGE_DATUM_MINVALUE)
-			appendStringInfoString(buf, "MINVALUE");
-		else if (datum->kind == PARTITION_RANGE_DATUM_MAXVALUE)
-			appendStringInfoString(buf, "MAXVALUE");
-		else
-		{
-			Const	   *val = castNode(Const, datum->value);
-
-			get_const_expr(val, &context, -1);
-		}
-		sep = ", ";
-	}
-	appendStringInfoString(buf, ")");
-
-	return buf->data;
->>>>>>> postgres
 }

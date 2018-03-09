@@ -263,7 +263,10 @@ _readQuery(void)
 	READ_NODE_FIELD(rowMarks);
 	READ_NODE_FIELD(setOperations);
 	READ_NODE_FIELD(constraintDeps);
-<<<<<<< HEAD
+	/* withCheckOptions intentionally omitted, see comment in parsenodes.h */
+	READ_LOCATION_FIELD(stmt_location);
+	READ_LOCATION_FIELD(stmt_len);
+
 	READ_INT_FIELD(dijkstraWeight);
 	READ_BOOL_FIELD(dijkstraWeightOut);
 	READ_NODE_FIELD(dijkstraEndId);
@@ -280,11 +283,6 @@ _readQuery(void)
 	READ_NODE_FIELD(graph.targets);
 	READ_NODE_FIELD(graph.exprs);
 	READ_NODE_FIELD(graph.sets);
-=======
-	/* withCheckOptions intentionally omitted, see comment in parsenodes.h */
-	READ_LOCATION_FIELD(stmt_location);
-	READ_LOCATION_FIELD(stmt_len);
->>>>>>> postgres
 
 	READ_DONE();
 }
@@ -1502,13 +1500,11 @@ _readPlannedStmt(void)
 	READ_NODE_FIELD(relationOids);
 	READ_NODE_FIELD(invalItems);
 	READ_INT_FIELD(nParamExec);
-<<<<<<< HEAD
-	READ_BOOL_FIELD(nVlePaths);
-=======
 	READ_NODE_FIELD(utilityStmt);
 	READ_LOCATION_FIELD(stmt_location);
 	READ_LOCATION_FIELD(stmt_len);
->>>>>>> postgres
+
+	READ_BOOL_FIELD(nVlePaths);
 
 	READ_DONE();
 }
@@ -2895,7 +2891,10 @@ parseNodeString(void)
 		return_value = _readAlternativeSubPlan();
 	else if (MATCH("EXTENSIBLENODE", 14))
 		return_value = _readExtensibleNode();
-<<<<<<< HEAD
+	else if (MATCH("PARTITIONBOUNDSPEC", 18))
+		return_value = _readPartitionBoundSpec();
+	else if (MATCH("PARTITIONRANGEDATUM", 19))
+		return_value = _readPartitionRangeDatum();
 	else if (MATCH("GRAPHPATH", 9))
 		return_value = _readGraphPath();
 	else if (MATCH("GRAPHVERTEX", 11))
@@ -2924,12 +2923,6 @@ parseNodeString(void)
 		return_value = _readCypherAccessExpr();
 	else if (MATCH("CYPHERINDICES", 13))
 		return_value = _readCypherIndices();
-=======
-	else if (MATCH("PARTITIONBOUNDSPEC", 18))
-		return_value = _readPartitionBoundSpec();
-	else if (MATCH("PARTITIONRANGEDATUM", 19))
-		return_value = _readPartitionRangeDatum();
->>>>>>> postgres
 	else
 	{
 		elog(ERROR, "badly formatted node string \"%.32s\"...", token);

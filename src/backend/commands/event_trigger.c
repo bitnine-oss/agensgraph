@@ -3,12 +3,8 @@
  * event_trigger.c
  *	  PostgreSQL EVENT TRIGGER support code.
  *
-<<<<<<< HEAD
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -113,11 +109,8 @@ static event_trigger_support_data event_trigger_support[] = {
 	{"OPERATOR CLASS", true},
 	{"OPERATOR FAMILY", true},
 	{"POLICY", true},
-<<<<<<< HEAD
 	{"PROPERTY INDEX", true},
-=======
 	{"PUBLICATION", true},
->>>>>>> postgres
 	{"ROLE", false},
 	{"RULE", true},
 	{"SCHEMA", true},
@@ -1200,16 +1193,12 @@ EventTriggerSupportsObjectClass(ObjectClass objclass)
 		case OCLASS_DEFACL:
 		case OCLASS_EXTENSION:
 		case OCLASS_POLICY:
-<<<<<<< HEAD
-		case OCLASS_AM:
-		case OCLASS_GRAPH:
-		case OCLASS_LABEL:
-=======
 		case OCLASS_PUBLICATION:
 		case OCLASS_PUBLICATION_REL:
 		case OCLASS_SUBSCRIPTION:
 		case OCLASS_TRANSFORM:
->>>>>>> postgres
+		case OCLASS_GRAPH:
+		case OCLASS_LABEL:
 			return true;
 
 			/*

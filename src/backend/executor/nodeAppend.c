@@ -59,11 +59,8 @@
 
 #include "executor/execdebug.h"
 #include "executor/nodeAppend.h"
-<<<<<<< HEAD
 #include "lib/ilist.h"
-=======
 #include "miscadmin.h"
->>>>>>> postgres
 
 static TupleTableSlot *ExecAppend(PlanState *pstate);
 static bool exec_append_initialize_next(AppendState *appendstate);

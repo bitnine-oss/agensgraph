@@ -133,19 +133,15 @@ SeqRecheck(SeqScanState *node, TupleTableSlot *slot)
 static TupleTableSlot *
 ExecSeqScan(PlanState *pstate)
 {
-<<<<<<< HEAD
+	SeqScanState *node = castNode(SeqScanState, pstate);
+
 	if (node->ss.ss_skipLabelScan)
 	{
 		node->ss.ss_skipLabelScan = false;
 		return NULL;
 	}
 
-	return ExecScan((ScanState *) node,
-=======
-	SeqScanState *node = castNode(SeqScanState, pstate);
-
 	return ExecScan(&node->ss,
->>>>>>> postgres
 					(ExecScanAccessMtd) SeqNext,
 					(ExecScanRecheckMtd) SeqRecheck);
 }
@@ -303,15 +299,10 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	 */
 	InitScanRelation(scanstate, estate, eflags);
 
-<<<<<<< HEAD
 	InitScanLabelInfo((ScanState *) scanstate);
 	if (scanstate->ss.ss_isLabel)
 		InitScanLabelSkipExpr(scanstate);
 
-	scanstate->ss.ps.ps_TupFromTlist = false;
-
-=======
->>>>>>> postgres
 	/*
 	 * Initialize result tuple type and projection info.
 	 */

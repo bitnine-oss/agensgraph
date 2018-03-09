@@ -7,12 +7,8 @@
  * by the PG_KEYWORD macro, which is not defined in this file; it can
  * be defined by the caller for special purposes.
  *
-<<<<<<< HEAD
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -325,11 +321,8 @@ PG_KEYWORD("privileges", PRIVILEGES, UNRESERVED_KEYWORD)
 PG_KEYWORD("procedural", PROCEDURAL, UNRESERVED_KEYWORD)
 PG_KEYWORD("procedure", PROCEDURE, UNRESERVED_KEYWORD)
 PG_KEYWORD("program", PROGRAM, UNRESERVED_KEYWORD)
-<<<<<<< HEAD
 PG_KEYWORD("property", PROPERTY, UNRESERVED_KEYWORD)
-=======
 PG_KEYWORD("publication", PUBLICATION, UNRESERVED_KEYWORD)
->>>>>>> postgres
 PG_KEYWORD("quote", QUOTE, UNRESERVED_KEYWORD)
 PG_KEYWORD("range", RANGE, UNRESERVED_KEYWORD)
 PG_KEYWORD("read", READ, UNRESERVED_KEYWORD)

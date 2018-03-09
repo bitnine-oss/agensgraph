@@ -1854,7 +1854,6 @@ DESCR("delete array element");
 DATA(insert OID = 3287 (  "#-"	   PGNSP PGUID b f f 3802 1009 3802 0 0 jsonb_delete_path - - ));
 DESCR("delete path");
 
-<<<<<<< HEAD
 /* graphid operators */
 DATA(insert OID = 7087 (  "="	   PGNSP PGUID b t t 7002 7002 16 7087 7088 graphid_eq eqsel eqjoinsel ));
 DESCR("equal");
@@ -1932,7 +1931,4 @@ DESCR("unary plus");
 DATA(insert OID = 7190 (  "`-`"	   PGNSP PGUID l f f 0 3802 3802 0 0 jsonb_uminus - - ));
 DESCR("negate");
 
-#endif   /* PG_OPERATOR_H */
-=======
 #endif							/* PG_OPERATOR_H */
->>>>>>> postgres

@@ -76,8 +76,7 @@
 #define NL_printf(s)
 #define NL1_printf(s, a)
 #define ENL1_printf(message)
-<<<<<<< HEAD
-#endif   /* EXEC_NESTLOOPDEBUG */
+#endif							/* EXEC_NESTLOOPDEBUG */
 
 /* ----------------
  *		nest loop vle debugging defines
@@ -108,9 +107,6 @@
 #define EV_printf(s)
 #define EV1_printf(s, a)
 #endif   /* EXEC_EVALDEBUG */
-=======
-#endif							/* EXEC_NESTLOOPDEBUG */
->>>>>>> postgres
 
 /* ----------------
  *		sort node debugging defines

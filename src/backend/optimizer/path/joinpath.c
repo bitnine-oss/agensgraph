@@ -71,11 +71,6 @@ static List *select_mergejoin_clauses(PlannerInfo *root,
 						 List *restrictlist,
 						 JoinType jointype,
 						 bool *mergejoin_allowed);
-<<<<<<< HEAD
-static void add_cyphermerge_path(PlannerInfo *root, RelOptInfo *joinrel,
-								 RelOptInfo *outerrel, RelOptInfo *innerrel,
-								 JoinPathExtraData *extra);
-=======
 static void generate_mergejoin_paths(PlannerInfo *root,
 						 RelOptInfo *joinrel,
 						 RelOptInfo *innerrel,
@@ -86,7 +81,9 @@ static void generate_mergejoin_paths(PlannerInfo *root,
 						 Path *inner_cheapest_total,
 						 List *merge_pathkeys,
 						 bool is_partial);
->>>>>>> postgres
+static void add_cyphermerge_path(PlannerInfo *root, RelOptInfo *joinrel,
+								 RelOptInfo *outerrel, RelOptInfo *innerrel,
+								 JoinPathExtraData *extra);
 
 
 /*

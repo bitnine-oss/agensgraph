@@ -51,11 +51,8 @@ make_parsestate(ParseState *parentParseState)
 
 	/* Fill in fields that don't start at null/false/zero */
 	pstate->p_next_resno = 1;
-<<<<<<< HEAD
-	pstate->p_convert_edgeref = true;
-=======
 	pstate->p_resolve_unknowns = true;
->>>>>>> postgres
+	pstate->p_convert_edgeref = true;
 
 	if (parentParseState)
 	{
@@ -66,13 +63,10 @@ make_parsestate(ParseState *parentParseState)
 		pstate->p_paramref_hook = parentParseState->p_paramref_hook;
 		pstate->p_coerce_param_hook = parentParseState->p_coerce_param_hook;
 		pstate->p_ref_hook_state = parentParseState->p_ref_hook_state;
-<<<<<<< HEAD
-
-		pstate->p_convert_edgeref = parentParseState->p_convert_edgeref;
-=======
 		/* query environment stays in context for the whole parse analysis */
 		pstate->p_queryEnv = parentParseState->p_queryEnv;
->>>>>>> postgres
+
+		pstate->p_convert_edgeref = parentParseState->p_convert_edgeref;
 	}
 
 	return pstate;

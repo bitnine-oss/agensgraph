@@ -3338,17 +3338,14 @@ static const char *const no_priv_msg[MAX_ACL_KIND] =
 	gettext_noop("permission denied for event trigger %s"),
 	/* ACL_KIND_EXTENSION */
 	gettext_noop("permission denied for extension %s"),
-<<<<<<< HEAD
-	/* ACL_KIND_GRAPH */
-	gettext_noop("permission denied for graph %s"),
-	/* ACL_KIND_LABEL */
-	gettext_noop("permission denied for label %s"),
-=======
 	/* ACL_KIND_PUBLICATION */
 	gettext_noop("permission denied for publication %s"),
 	/* ACL_KIND_SUBSCRIPTION */
 	gettext_noop("permission denied for subscription %s"),
->>>>>>> postgres
+	/* ACL_KIND_GRAPH */
+	gettext_noop("permission denied for graph %s"),
+	/* ACL_KIND_LABEL */
+	gettext_noop("permission denied for label %s"),
 };
 
 static const char *const not_owner_msg[MAX_ACL_KIND] =
@@ -3397,17 +3394,14 @@ static const char *const not_owner_msg[MAX_ACL_KIND] =
 	gettext_noop("must be owner of event trigger %s"),
 	/* ACL_KIND_EXTENSION */
 	gettext_noop("must be owner of extension %s"),
-<<<<<<< HEAD
-	/* ACL_KIND_GRAPH */
-	gettext_noop("must be owner of graph %s"),
-	/* ACL_KIND_LABEL */
-	gettext_noop("must be owner of label %s"),
-=======
 	/* ACL_KIND_PUBLICATION */
 	gettext_noop("must be owner of publication %s"),
 	/* ACL_KIND_SUBSCRIPTION */
 	gettext_noop("must be owner of subscription %s"),
->>>>>>> postgres
+	/* ACL_KIND_GRAPH */
+	gettext_noop("must be owner of graph %s"),
+	/* ACL_KIND_LABEL */
+	gettext_noop("must be owner of label %s"),
 };
 
 

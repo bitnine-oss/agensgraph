@@ -6,12 +6,8 @@
  * gram.y
  *	  POSTGRESQL BISON rules/actions
  *
-<<<<<<< HEAD
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -682,13 +678,9 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
  * same lexer.  If you add/change tokens here, fix PL/pgSQL to match!
  *
  * DOT_DOT is unused in the core SQL grammar, and so will always provoke
-<<<<<<< HEAD
- * parse errors.  It is needed by PL/pgsql.
+ * parse errors.  It is needed by PL/pgSQL.
  *
  * ADD_EQUALS is for Cypher SET clause.
-=======
- * parse errors.  It is needed by PL/pgSQL.
->>>>>>> postgres
  */
 %token <str>	IDENT FCONST SCONST BCONST XCONST Op
 %token <ival>	ICONST PARAM
@@ -705,14 +697,9 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 /* ordinary key words in alphabetical order */
 %token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
-<<<<<<< HEAD
 	AGGREGATE ALL ALLSHORTESTPATHS ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY
 	ARRAY AS ASC
-	ASSERT ASSERTION ASSIGNMENT ASYMMETRIC AT ATTRIBUTE AUTHORIZATION
-=======
-	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
-	ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
->>>>>>> postgres
+	ASSERT ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
 	BOOLEAN_P BOTH BY
@@ -727,13 +714,8 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 	CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR CYCLE
 
 	DATA_P DATABASE DAY_P DEALLOCATE DEC DECIMAL_P DECLARE DEFAULT DEFAULTS
-<<<<<<< HEAD
-	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DESC DETACH
-	DICTIONARY DIJKSTRA DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P
-=======
 	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DESC
-	DETACH DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P
->>>>>>> postgres
+	DETACH DICTIONARY DIJKSTRA DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P
 	DOUBLE_P DROP
 
 	EACH ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENDS ENUM_P ESCAPE EVENT
@@ -743,11 +725,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
 	FORCE FOREIGN FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
 
-<<<<<<< HEAD
-	GLOBAL GRANT GRANTED GRAPH GREATEST GROUP_P GROUPING
-=======
-	GENERATED GLOBAL GRANT GRANTED GREATEST GROUP_P GROUPING
->>>>>>> postgres
+	GENERATED GLOBAL GRANT GRANTED GRAPH GREATEST GROUP_P GROUPING
 
 	HANDLER HAVING HEADER_P HOLD HOUR_P
 
@@ -771,48 +749,25 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 	NOT NOTHING NOTIFY NOTNULL NOWAIT NULL_P NULLIF
 	NULLS_P NUMERIC
 
-<<<<<<< HEAD
-	OBJECT_P OF OFF OFFSET OIDS ON ONLY OPERATOR OPTION OPTIONAL_P OPTIONS OR
-	ORDER ORDINALITY OUT_P OUTER_P OVER OVERLAPS OVERLAY OWNED OWNER
-
-	PARALLEL PARSER PARTIAL PARTITION PASSING PASSWORD PLACING PLANS POLICY
-	POSITION PRECEDING PRECISION PRESERVE PREPARE PREPARED PRIMARY
-	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROGRAM PROPERTY
-
-	QUOTE
-
-	RANGE READ REAL REASSIGN RECHECK RECURSIVE REF REFERENCES REFRESH REINDEX
-	RELATIVE_P RELEASE REMOVE RENAME REPEATABLE REPLACE REPLICA
-	RESET RESTART RESTRICT RETURN RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK
-	ROLLUP ROW ROWS RULE
-
-	SAVEPOINT SCHEMA SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
-	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHORTESTPATH
-	SHOW SIMILAR
-	SIMPLE SINGLE SIZE_P SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P
-	START STARTS STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P
-	SUBSTRING SYMMETRIC SYSID SYSTEM_P
-=======
-	OBJECT_P OF OFF OFFSET OIDS OLD ON ONLY OPERATOR OPTION OPTIONS OR
+	OBJECT_P OF OFF OFFSET OIDS OLD ON ONLY OPERATOR OPTION OPTIONAL_P OPTIONS OR
 	ORDER ORDINALITY OUT_P OUTER_P OVER OVERLAPS OVERLAY OVERRIDING OWNED OWNER
 
 	PARALLEL PARSER PARTIAL PARTITION PASSING PASSWORD PLACING PLANS POLICY
 	POSITION PRECEDING PRECISION PRESERVE PREPARE PREPARED PRIMARY
-	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROGRAM PUBLICATION
+	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROPERTY PROGRAM PUBLICATION
 
 	QUOTE
 
 	RANGE READ REAL REASSIGN RECHECK RECURSIVE REF REFERENCES REFERENCING
-	REFRESH REINDEX RELATIVE_P RELEASE RENAME REPEATABLE REPLACE REPLICA
-	RESET RESTART RESTRICT RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK ROLLUP
+	REFRESH REINDEX RELATIVE_P RELEASE REMOVE RENAME REPEATABLE REPLACE REPLICA
+	RESET RESTART RESTRICT RETURN RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK ROLLUP
 	ROW ROWS RULE
 
 	SAVEPOINT SCHEMA SCHEMAS SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
-	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW
-	SIMILAR SIMPLE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P
-	START STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P
+	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHORTESTPATH SHOW
+	SIMILAR SIMPLE SINGLE SIZE_P SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P
+	START STARTS STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P
 	SUBSCRIPTION SUBSTRING SYMMETRIC SYSID SYSTEM_P
->>>>>>> postgres
 
 	TABLE TABLES TABLESAMPLE TABLESPACE TEMP TEMPLATE TEMPORARY TEXT_P THEN
 	TIME TIMESTAMP TO TRAILING TRANSACTION TRANSFORM TREAT TRIGGER TRIM TRUE_P
@@ -889,13 +844,9 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
  * SHORTESTPATH, SIZE_P and SKIP must be the same as that of IDENT.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
-<<<<<<< HEAD
-%nonassoc	IDENT NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
+%nonassoc	IDENT GENERATED NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
 			ALLSHORTESTPATHS DELETE_P DETACH DIJKSTRA LOAD OPTIONAL_P REMOVE
 			SHORTESTPATH SINGLE SIZE_P SKIP
-=======
-%nonassoc	IDENT GENERATED NULL_P PARTITION RANGE ROWS PRECEDING FOLLOWING CUBE ROLLUP
->>>>>>> postgres
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -1047,13 +998,7 @@ stmt :
 			| DoStmt
 			| DropAssertStmt
 			| DropCastStmt
-<<<<<<< HEAD
 			| DropConstraintStmt
-			| DropFdwStmt
-			| DropForeignServerStmt
-			| DropGroupStmt
-=======
->>>>>>> postgres
 			| DropOpClassStmt
 			| DropOpFamilyStmt
 			| DropOwnedStmt
@@ -1194,59 +1139,31 @@ AlterOptRoleElem:
 					 * the following special-case codes, to avoid bloating the
 					 * size of the main parser.
 					 */
-<<<<<<< HEAD
 					if (strcmp(ident, "superuser") == 0)
-						$$ = makeDefElem("superuser", (Node *)makeInteger(TRUE));
-					else if (strcmp(ident, "nosuperuser") == 0)
-						$$ = makeDefElem("superuser", (Node *)makeInteger(FALSE));
-					else if (strcmp(ident, "createrole") == 0)
-						$$ = makeDefElem("createrole", (Node *)makeInteger(TRUE));
-					else if (strcmp(ident, "nocreaterole") == 0)
-						$$ = makeDefElem("createrole", (Node *)makeInteger(FALSE));
-					else if (strcmp(ident, "replication") == 0)
-						$$ = makeDefElem("isreplication", (Node *)makeInteger(TRUE));
-					else if (strcmp(ident, "noreplication") == 0)
-						$$ = makeDefElem("isreplication", (Node *)makeInteger(FALSE));
-					else if (strcmp(ident, "createdb") == 0)
-						$$ = makeDefElem("createdb", (Node *)makeInteger(TRUE));
-					else if (strcmp(ident, "nocreatedb") == 0)
-						$$ = makeDefElem("createdb", (Node *)makeInteger(FALSE));
-					else if (strcmp(ident, "login") == 0)
-						$$ = makeDefElem("canlogin", (Node *)makeInteger(TRUE));
-					else if (strcmp(ident, "nologin") == 0)
-						$$ = makeDefElem("canlogin", (Node *)makeInteger(FALSE));
-					else if (strcmp(ident, "bypassrls") == 0)
-						$$ = makeDefElem("bypassrls", (Node *)makeInteger(TRUE));
-					else if (strcmp(ident, "nobypassrls") == 0)
-						$$ = makeDefElem("bypassrls", (Node *)makeInteger(FALSE));
-					else if (strcmp(ident, "noinherit") == 0)
-=======
-					if (strcmp($1, "superuser") == 0)
 						$$ = makeDefElem("superuser", (Node *)makeInteger(TRUE), @1);
-					else if (strcmp($1, "nosuperuser") == 0)
+					else if (strcmp(ident, "nosuperuser") == 0)
 						$$ = makeDefElem("superuser", (Node *)makeInteger(FALSE), @1);
-					else if (strcmp($1, "createrole") == 0)
+					else if (strcmp(ident, "createrole") == 0)
 						$$ = makeDefElem("createrole", (Node *)makeInteger(TRUE), @1);
-					else if (strcmp($1, "nocreaterole") == 0)
+					else if (strcmp(ident, "nocreaterole") == 0)
 						$$ = makeDefElem("createrole", (Node *)makeInteger(FALSE), @1);
-					else if (strcmp($1, "replication") == 0)
+					else if (strcmp(ident, "replication") == 0)
 						$$ = makeDefElem("isreplication", (Node *)makeInteger(TRUE), @1);
-					else if (strcmp($1, "noreplication") == 0)
+					else if (strcmp(ident, "noreplication") == 0)
 						$$ = makeDefElem("isreplication", (Node *)makeInteger(FALSE), @1);
-					else if (strcmp($1, "createdb") == 0)
+					else if (strcmp(ident, "createdb") == 0)
 						$$ = makeDefElem("createdb", (Node *)makeInteger(TRUE), @1);
-					else if (strcmp($1, "nocreatedb") == 0)
+					else if (strcmp(ident, "nocreatedb") == 0)
 						$$ = makeDefElem("createdb", (Node *)makeInteger(FALSE), @1);
-					else if (strcmp($1, "login") == 0)
+					else if (strcmp(ident, "login") == 0)
 						$$ = makeDefElem("canlogin", (Node *)makeInteger(TRUE), @1);
-					else if (strcmp($1, "nologin") == 0)
+					else if (strcmp(ident, "nologin") == 0)
 						$$ = makeDefElem("canlogin", (Node *)makeInteger(FALSE), @1);
-					else if (strcmp($1, "bypassrls") == 0)
+					else if (strcmp(ident, "bypassrls") == 0)
 						$$ = makeDefElem("bypassrls", (Node *)makeInteger(TRUE), @1);
-					else if (strcmp($1, "nobypassrls") == 0)
+					else if (strcmp(ident, "nobypassrls") == 0)
 						$$ = makeDefElem("bypassrls", (Node *)makeInteger(FALSE), @1);
-					else if (strcmp($1, "noinherit") == 0)
->>>>>>> postgres
+					else if (strcmp(ident, "noinherit") == 0)
 					{
 						/*
 						 * Note that INHERIT is a keyword, so it's handled by main parser, but
@@ -3199,12 +3116,8 @@ copy_generic_opt_list:
 copy_generic_opt_elem:
 			ColLabel copy_generic_opt_arg
 				{
-<<<<<<< HEAD
 					char *name = preserve_downcasing_ident($1);
-					$$ = makeDefElem(name, $2);
-=======
-					$$ = makeDefElem($1, $2, @1);
->>>>>>> postgres
+					$$ = makeDefElem(name, $2, @1);
 				}
 		;
 
@@ -3284,12 +3197,8 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->relation = $4;
 					n->tableElts = $7;
 					n->inhRelations = NIL;
-<<<<<<< HEAD
-					n->ofTypename = makeTypeNameFromNameList(preserve_downcasing_type_func_namelist($6));
-=======
 					n->partspec = $8;
-					n->ofTypename = makeTypeNameFromNameList($6);
->>>>>>> postgres
+					n->ofTypename = makeTypeNameFromNameList(preserve_downcasing_type_func_namelist($6));
 					n->ofTypename->location = @6;
 					n->constraints = NIL;
 					n->options = $9;
@@ -3307,12 +3216,8 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->relation = $7;
 					n->tableElts = $10;
 					n->inhRelations = NIL;
-<<<<<<< HEAD
-					n->ofTypename = makeTypeNameFromNameList(preserve_downcasing_type_func_namelist($9));
-=======
 					n->partspec = $11;
-					n->ofTypename = makeTypeNameFromNameList($9);
->>>>>>> postgres
+					n->ofTypename = makeTypeNameFromNameList(preserve_downcasing_type_func_namelist($9));
 					n->ofTypename->location = @9;
 					n->constraints = NIL;
 					n->options = $12;
@@ -4409,12 +4314,7 @@ DropPLangStmt:
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_LANGUAGE;
-<<<<<<< HEAD
-					n->objects = list_make1(list_make1(makeString(preserve_downcasing_ident($4))));
-					n->arguments = NIL;
-=======
-					n->objects = list_make1(makeString($4));
->>>>>>> postgres
+					n->objects = list_make1(makeString(preserve_downcasing_ident($4)));
 					n->behavior = $5;
 					n->missing_ok = false;
 					n->concurrent = false;
@@ -4424,11 +4324,7 @@ DropPLangStmt:
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_LANGUAGE;
-<<<<<<< HEAD
-					n->objects = list_make1(list_make1(makeString(preserve_downcasing_ident($6))));
-=======
-					n->objects = list_make1(makeString($6));
->>>>>>> postgres
+					n->objects = list_make1(makeString(preserve_downcasing_ident($6)));
 					n->behavior = $7;
 					n->missing_ok = true;
 					n->concurrent = false;
@@ -4646,11 +4542,7 @@ AlterExtensionContentsStmt:
 					n->extname = $3;
 					n->action = $4;
 					n->objtype = OBJECT_LANGUAGE;
-<<<<<<< HEAD
-					n->objname = list_make1(makeString(preserve_downcasing_ident($7)));
-=======
-					n->object = (Node *) makeString($7);
->>>>>>> postgres
+					n->object = (Node *) makeString(preserve_downcasing_ident($7));
 					$$ = (Node *)n;
 				}
 			| ALTER EXTENSION name add_drop OPERATOR operator_with_argtypes
@@ -4803,12 +4695,7 @@ AlterExtensionContentsStmt:
 					n->extname = $3;
 					n->action = $4;
 					n->objtype = OBJECT_TRANSFORM;
-<<<<<<< HEAD
-					n->objname = list_make1($7);
-					n->objargs = list_make1(makeString(preserve_downcasing_ident($9)));
-=======
-					n->object = (Node *) list_make2($7, makeString($9));
->>>>>>> postgres
+					n->object = (Node *) list_make2($7, makeString(preserve_downcasing_ident($9)));
 					$$ = (Node *)n;
 				}
 			| ALTER EXTENSION name add_drop TYPE_P Typename
@@ -5658,11 +5545,7 @@ event_trigger_when_list:
 
 event_trigger_when_item:
 		ColId IN_P '(' event_trigger_value_list ')'
-<<<<<<< HEAD
-			{ $$ = makeDefElem(preserve_downcasing_ident($1), (Node *) $4); }
-=======
-			{ $$ = makeDefElem($1, (Node *) $4, @1); }
->>>>>>> postgres
+			{ $$ = makeDefElem(preserve_downcasing_ident($1), (Node *) $4, @1); }
 		;
 
 event_trigger_value_list:
@@ -5956,12 +5839,8 @@ AlterEnumStmt:
 		ALTER TYPE_P any_name ADD_P VALUE_P opt_if_not_exists Sconst
 			{
 				AlterEnumStmt *n = makeNode(AlterEnumStmt);
-<<<<<<< HEAD
 				n->typeName = preserve_downcasing_type_func_namelist($3);
-=======
-				n->typeName = $3;
 				n->oldVal = NULL;
->>>>>>> postgres
 				n->newVal = $7;
 				n->newValNeighbor = NULL;
 				n->newValIsAfter = true;
@@ -5971,12 +5850,8 @@ AlterEnumStmt:
 		 | ALTER TYPE_P any_name ADD_P VALUE_P opt_if_not_exists Sconst BEFORE Sconst
 			{
 				AlterEnumStmt *n = makeNode(AlterEnumStmt);
-<<<<<<< HEAD
 				n->typeName = preserve_downcasing_type_func_namelist($3);
-=======
-				n->typeName = $3;
 				n->oldVal = NULL;
->>>>>>> postgres
 				n->newVal = $7;
 				n->newValNeighbor = $9;
 				n->newValIsAfter = false;
@@ -5986,12 +5861,8 @@ AlterEnumStmt:
 		 | ALTER TYPE_P any_name ADD_P VALUE_P opt_if_not_exists Sconst AFTER Sconst
 			{
 				AlterEnumStmt *n = makeNode(AlterEnumStmt);
-<<<<<<< HEAD
 				n->typeName = preserve_downcasing_type_func_namelist($3);
-=======
-				n->typeName = $3;
 				n->oldVal = NULL;
->>>>>>> postgres
 				n->newVal = $7;
 				n->newValNeighbor = $9;
 				n->newValIsAfter = true;
@@ -6599,12 +6470,7 @@ CommentStmt:
 				{
 					CommentStmt *n = makeNode(CommentStmt);
 					n->objtype = OBJECT_TRANSFORM;
-<<<<<<< HEAD
-					n->objname = list_make1($5);
-					n->objargs = list_make1(makeString(preserve_downcasing_ident($7)));
-=======
-					n->object = (Node *) list_make2($5, makeString($7));
->>>>>>> postgres
+					n->object = (Node *) list_make2($5, makeString(preserve_downcasing_ident($7)));
 					n->comment = $9;
 					$$ = (Node *) n;
 				}
@@ -6648,18 +6514,6 @@ CommentStmt:
 					n->comment = $10;
 					$$ = (Node *) n;
 				}
-<<<<<<< HEAD
-			| COMMENT ON opt_procedural LANGUAGE any_name IS comment_text
-				{
-					CommentStmt *n = makeNode(CommentStmt);
-					n->objtype = OBJECT_LANGUAGE;
-					n->objname = preserve_downcasing_namelist($5);
-					n->objargs = NIL;
-					n->comment = $7;
-					$$ = (Node *) n;
-				}
-=======
->>>>>>> postgres
 		;
 
 /* object types taking any_name */
@@ -6780,14 +6634,8 @@ SecLabelStmt:
 				{
 					SecLabelStmt *n = makeNode(SecLabelStmt);
 					n->provider = $3;
-<<<<<<< HEAD
-					n->objtype = OBJECT_LANGUAGE;
-					n->objname = preserve_downcasing_namelist($7);
-					n->objargs = NIL;
-=======
 					n->objtype = OBJECT_LARGEOBJECT;
 					n->object = (Node *) $7;
->>>>>>> postgres
 					n->label = $9;
 					$$ = (Node *) n;
 				}
@@ -7956,11 +7804,7 @@ createfunc_opt_item:
 				}
 			| LANGUAGE NonReservedWord_or_Sconst
 				{
-<<<<<<< HEAD
-					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2)));
-=======
-					$$ = makeDefElem("language", (Node *)makeString($2), @1);
->>>>>>> postgres
+					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2)), @1);
 				}
 			| TRANSFORM transform_type_list
 				{
@@ -8194,11 +8038,7 @@ dostmt_opt_item:
 				}
 			| LANGUAGE NonReservedWord_or_Sconst
 				{
-<<<<<<< HEAD
-					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2)));
-=======
-					$$ = makeDefElem("language", (Node *)makeString($2), @1);
->>>>>>> postgres
+					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2)), @1);
 				}
 		;
 
@@ -8307,12 +8147,7 @@ DropTransformStmt: DROP TRANSFORM opt_if_exists FOR Typename LANGUAGE name opt_d
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_TRANSFORM;
-<<<<<<< HEAD
-					n->objects = list_make1(list_make1($5));
-					n->arguments = list_make1(list_make1(makeString(preserve_downcasing_ident($7))));
-=======
-					n->objects = list_make1(list_make2($5, makeString($7)));
->>>>>>> postgres
+					n->objects = list_make1(list_make2($5, makeString(preserve_downcasing_ident($7))));
 					n->behavior = $8;
 					n->missing_ok = $3;
 					$$ = (Node *)n;
@@ -8522,13 +8357,8 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_LANGUAGE;
-<<<<<<< HEAD
-					n->object = list_make1(makeString(preserve_downcasing_ident($4)));
+					n->object = (Node *) makeString(preserve_downcasing_ident($4));
 					n->newname = preserve_downcasing_ident($7);
-=======
-					n->object = (Node *) makeString($4);
-					n->newname = $7;
->>>>>>> postgres
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
@@ -8916,13 +8746,8 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_TYPE;
-<<<<<<< HEAD
-					n->object = preserve_downcasing_type_func_namelist($3);
+					n->object = (Node *) preserve_downcasing_type_func_namelist($3);
 					n->newname = preserve_downcasing_type_func_name($6);
-=======
-					n->object = (Node *) $3;
-					n->newname = $6;
->>>>>>> postgres
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
@@ -9266,11 +9091,7 @@ AlterObjectSchemaStmt:
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
 					n->objectType = OBJECT_TYPE;
-<<<<<<< HEAD
-					n->object = preserve_downcasing_type_func_namelist($3);
-=======
-					n->object = (Node *) $3;
->>>>>>> postgres
+					n->object = (Node *) preserve_downcasing_type_func_namelist($3);
 					n->newschema = $6;
 					n->missing_ok = false;
 					$$ = (Node *)n;
@@ -9370,11 +9191,7 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 				{
 					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
 					n->objectType = OBJECT_LANGUAGE;
-<<<<<<< HEAD
-					n->object = list_make1(makeString(preserve_downcasing_ident($4)));
-=======
-					n->object = (Node *) makeString($4);
->>>>>>> postgres
+					n->object = (Node *) makeString(preserve_downcasing_ident($4));
 					n->newowner = $7;
 					$$ = (Node *)n;
 				}
@@ -9422,11 +9239,7 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 				{
 					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
 					n->objectType = OBJECT_TYPE;
-<<<<<<< HEAD
-					n->object = preserve_downcasing_type_func_namelist($3);
-=======
-					n->object = (Node *) $3;
->>>>>>> postgres
+					n->object = (Node *) preserve_downcasing_type_func_namelist($3);
 					n->newowner = $6;
 					$$ = (Node *)n;
 				}
@@ -15217,11 +15030,8 @@ unreserved_keyword:
 			| PROCEDURAL
 			| PROCEDURE
 			| PROGRAM
-<<<<<<< HEAD
 			| PROPERTY
-=======
 			| PUBLICATION
->>>>>>> postgres
 			| QUOTE
 			| RANGE
 			| READ
@@ -15522,55 +15332,6 @@ reserved_keyword:
 /*
  * Agens Graph
  */
-<<<<<<< HEAD
-=======
-static void
-base_yyerror(YYLTYPE *yylloc, core_yyscan_t yyscanner, const char *msg)
-{
-	parser_yyerror(msg);
-}
-
-static RawStmt *
-makeRawStmt(Node *stmt, int stmt_location)
-{
-	RawStmt    *rs = makeNode(RawStmt);
-
-	rs->stmt = stmt;
-	rs->stmt_location = stmt_location;
-	rs->stmt_len = 0;			/* might get changed later */
-	return rs;
-}
-
-/* Adjust a RawStmt to reflect that it doesn't run to the end of the string */
-static void
-updateRawStmtEnd(RawStmt *rs, int end_location)
-{
-	/*
-	 * If we already set the length, don't change it.  This is for situations
-	 * like "select foo ;; select bar" where the same statement will be last
-	 * in the string for more than one semicolon.
-	 */
-	if (rs->stmt_len > 0)
-		return;
-
-	/* OK, update length of RawStmt */
-	rs->stmt_len = end_location - rs->stmt_location;
-}
-
-static Node *
-makeColumnRef(char *colname, List *indirection,
-			  int location, core_yyscan_t yyscanner)
-{
-	/*
-	 * Generate a ColumnRef node, with an A_Indirection node added if there
-	 * is any subscripting in the specified indirection list.  However,
-	 * any field selection at the start of the indirection list must be
-	 * transposed into the "fields" part of the ColumnRef node.
-	 */
-	ColumnRef  *c = makeNode(ColumnRef);
-	int		nfields = 0;
-	ListCell *l;
->>>>>>> postgres
 
 CreateGraphStmt:
 			CREATE GRAPH ColId AUTHORIZATION RoleSpec
@@ -17738,6 +17499,33 @@ static void
 base_yyerror(YYLTYPE *yylloc, core_yyscan_t yyscanner, const char *msg)
 {
 	parser_yyerror(msg);
+}
+
+static RawStmt *
+makeRawStmt(Node *stmt, int stmt_location)
+{
+	RawStmt    *rs = makeNode(RawStmt);
+
+	rs->stmt = stmt;
+	rs->stmt_location = stmt_location;
+	rs->stmt_len = 0;			/* might get changed later */
+	return rs;
+}
+
+/* Adjust a RawStmt to reflect that it doesn't run to the end of the string */
+static void
+updateRawStmtEnd(RawStmt *rs, int end_location)
+{
+	/*
+	 * If we already set the length, don't change it.  This is for situations
+	 * like "select foo ;; select bar" where the same statement will be last
+	 * in the string for more than one semicolon.
+	 */
+	if (rs->stmt_len > 0)
+		return;
+
+	/* OK, update length of RawStmt */
+	rs->stmt_len = end_location - rs->stmt_location;
 }
 
 static Node *

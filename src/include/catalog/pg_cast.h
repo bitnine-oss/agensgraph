@@ -392,7 +392,6 @@ DATA(insert ( 1700 1700 1703 i f ));
 DATA(insert (  114 3802    0 a i ));
 DATA(insert ( 3802	114    0 a i ));
 
-<<<<<<< HEAD
 /* vertex/edge to jsonb */
 DATA(insert ( 7012 3802 7019 i f ));
 DATA(insert ( 7022 3802 7029 i f ));
@@ -408,7 +407,4 @@ DATA(insert ( 3802   23 7194 a f ));
 DATA(insert ( 3802 1700 7195 e f ));
 DATA(insert ( 3802  701 7196 e f ));
 
-#endif   /* PG_CAST_H */
-=======
 #endif							/* PG_CAST_H */
->>>>>>> postgres

@@ -166,11 +166,18 @@ typedef struct Query
 	List	   *constraintDeps; /* a list of pg_constraint OIDs that the query
 								 * depends on to be semantically valid */
 
-<<<<<<< HEAD
-	List	   *withCheckOptions;		/* a list of WithCheckOption's, which
-										 * are only added during rewrite and
-										 * therefore are not written out as
-										 * part of Query. */
+	List	   *withCheckOptions;	/* a list of WithCheckOption's, which are
+									 * only added during rewrite and therefore
+									 * are not written out as part of Query. */
+
+	/*
+	 * The following two fields identify the portion of the source text string
+	 * containing this query.  They are typically only populated in top-level
+	 * Queries, not in sub-queries.  When not set, they might both be zero, or
+	 * both be -1 meaning "unknown".
+	 */
+	int			stmt_location;	/* start location, or -1 if unknown */
+	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
 
 	int			dijkstraWeight;
 	bool		dijkstraWeightOut;
@@ -191,20 +198,6 @@ typedef struct Query
 		List	   *sets;		/* expression list for SET/REMOVE */
 		Node	   *mergepattern;	/* graph path for MERGE */
 	}			graph;
-=======
-	List	   *withCheckOptions;	/* a list of WithCheckOption's, which are
-									 * only added during rewrite and therefore
-									 * are not written out as part of Query. */
-
-	/*
-	 * The following two fields identify the portion of the source text string
-	 * containing this query.  They are typically only populated in top-level
-	 * Queries, not in sub-queries.  When not set, they might both be zero, or
-	 * both be -1 meaning "unknown".
-	 */
-	int			stmt_location;	/* start location, or -1 if unknown */
-	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
->>>>>>> postgres
 } Query;
 
 
@@ -994,12 +987,8 @@ typedef struct RangeTblEntry
 	 * Fields valid for a subquery RTE (else NULL):
 	 */
 	Query	   *subquery;		/* the sub-query */
-<<<<<<< HEAD
-	bool		security_barrier;		/* is from security_barrier view? */
-	bool		isVLE;
-=======
 	bool		security_barrier;	/* is from security_barrier view? */
->>>>>>> postgres
+	bool		isVLE;
 
 	/*
 	 * Fields valid for a join RTE (else NULL/zero):
@@ -1410,13 +1399,9 @@ typedef struct CommonTableExpr
 	List	   *ctecolnames;	/* list of output column names */
 	List	   *ctecoltypes;	/* OID list of output column type OIDs */
 	List	   *ctecoltypmods;	/* integer list of output column typmods */
-<<<<<<< HEAD
-	List	   *ctecolcollations;		/* OID list of column collation OIDs */
+	List	   *ctecolcollations;	/* OID list of column collation OIDs */
 	int			maxdepth;		/* level of recursion */
 	bool		ctestop;
-=======
-	List	   *ctecolcollations;	/* OID list of column collation OIDs */
->>>>>>> postgres
 } CommonTableExpr;
 
 /* Convenience macro to get the output tlist of a CTE's query */
@@ -1679,12 +1664,9 @@ typedef enum ObjectType
 	OBJECT_OPERATOR,
 	OBJECT_OPFAMILY,
 	OBJECT_POLICY,
-<<<<<<< HEAD
 	OBJECT_PROPERTY_INDEX,
-=======
 	OBJECT_PUBLICATION,
 	OBJECT_PUBLICATION_REL,
->>>>>>> postgres
 	OBJECT_ROLE,
 	OBJECT_RULE,
 	OBJECT_SCHEMA,
@@ -1806,15 +1788,12 @@ typedef enum AlterTableType
 	AT_ForceRowSecurity,		/* FORCE ROW SECURITY */
 	AT_NoForceRowSecurity,		/* NO FORCE ROW SECURITY */
 	AT_GenericOptions,			/* OPTIONS (...) */
-<<<<<<< HEAD
-	AT_DisableIndex				/* DISABLE INDEX for graph labels */
-=======
 	AT_AttachPartition,			/* ATTACH PARTITION */
 	AT_DetachPartition,			/* DETACH PARTITION */
 	AT_AddIdentity,				/* ADD IDENTITY */
 	AT_SetIdentity,				/* SET identity column options */
-	AT_DropIdentity				/* DROP IDENTITY */
->>>>>>> postgres
+	AT_DropIdentity,			/* DROP IDENTITY */
+	AT_DisableIndex				/* DISABLE INDEX for graph labels */
 } AlterTableType;
 
 typedef struct ReplicaIdentityStmt
@@ -3426,7 +3405,66 @@ typedef struct AlterTSConfigurationStmt
 } AlterTSConfigurationStmt;
 
 
-<<<<<<< HEAD
+typedef struct CreatePublicationStmt
+{
+	NodeTag		type;
+	char	   *pubname;		/* Name of of the publication */
+	List	   *options;		/* List of DefElem nodes */
+	List	   *tables;			/* Optional list of tables to add */
+	bool		for_all_tables; /* Special publication for all tables in db */
+} CreatePublicationStmt;
+
+typedef struct AlterPublicationStmt
+{
+	NodeTag		type;
+	char	   *pubname;		/* Name of of the publication */
+
+	/* parameters used for ALTER PUBLICATION ... WITH */
+	List	   *options;		/* List of DefElem nodes */
+
+	/* parameters used for ALTER PUBLICATION ... ADD/DROP TABLE */
+	List	   *tables;			/* List of tables to add/drop */
+	bool		for_all_tables; /* Special publication for all tables in db */
+	DefElemAction tableAction;	/* What action to perform with the tables */
+} AlterPublicationStmt;
+
+typedef struct CreateSubscriptionStmt
+{
+	NodeTag		type;
+	char	   *subname;		/* Name of of the subscription */
+	char	   *conninfo;		/* Connection string to publisher */
+	List	   *publication;	/* One or more publication to subscribe to */
+	List	   *options;		/* List of DefElem nodes */
+} CreateSubscriptionStmt;
+
+typedef enum AlterSubscriptionType
+{
+	ALTER_SUBSCRIPTION_OPTIONS,
+	ALTER_SUBSCRIPTION_CONNECTION,
+	ALTER_SUBSCRIPTION_PUBLICATION,
+	ALTER_SUBSCRIPTION_REFRESH,
+	ALTER_SUBSCRIPTION_ENABLED
+} AlterSubscriptionType;
+
+typedef struct AlterSubscriptionStmt
+{
+	NodeTag		type;
+	AlterSubscriptionType kind; /* ALTER_SUBSCRIPTION_OPTIONS, etc */
+	char	   *subname;		/* Name of of the subscription */
+	char	   *conninfo;		/* Connection string to publisher */
+	List	   *publication;	/* One or more publication to subscribe to */
+	List	   *options;		/* List of DefElem nodes */
+} AlterSubscriptionStmt;
+
+typedef struct DropSubscriptionStmt
+{
+	NodeTag		type;
+	char	   *subname;		/* Name of of the subscription */
+	bool		missing_ok;		/* Skip error if missing? */
+	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
+} DropSubscriptionStmt;
+
+
 /****************************************************************************
  * Agens Graph related node structures
  ****************************************************************************/
@@ -3708,66 +3746,4 @@ typedef struct CypherSetProp
 	bool		add;
 } CypherSetProp;
 
-#endif   /* PARSENODES_H */
-=======
-typedef struct CreatePublicationStmt
-{
-	NodeTag		type;
-	char	   *pubname;		/* Name of of the publication */
-	List	   *options;		/* List of DefElem nodes */
-	List	   *tables;			/* Optional list of tables to add */
-	bool		for_all_tables; /* Special publication for all tables in db */
-} CreatePublicationStmt;
-
-typedef struct AlterPublicationStmt
-{
-	NodeTag		type;
-	char	   *pubname;		/* Name of of the publication */
-
-	/* parameters used for ALTER PUBLICATION ... WITH */
-	List	   *options;		/* List of DefElem nodes */
-
-	/* parameters used for ALTER PUBLICATION ... ADD/DROP TABLE */
-	List	   *tables;			/* List of tables to add/drop */
-	bool		for_all_tables; /* Special publication for all tables in db */
-	DefElemAction tableAction;	/* What action to perform with the tables */
-} AlterPublicationStmt;
-
-typedef struct CreateSubscriptionStmt
-{
-	NodeTag		type;
-	char	   *subname;		/* Name of of the subscription */
-	char	   *conninfo;		/* Connection string to publisher */
-	List	   *publication;	/* One or more publication to subscribe to */
-	List	   *options;		/* List of DefElem nodes */
-} CreateSubscriptionStmt;
-
-typedef enum AlterSubscriptionType
-{
-	ALTER_SUBSCRIPTION_OPTIONS,
-	ALTER_SUBSCRIPTION_CONNECTION,
-	ALTER_SUBSCRIPTION_PUBLICATION,
-	ALTER_SUBSCRIPTION_REFRESH,
-	ALTER_SUBSCRIPTION_ENABLED
-} AlterSubscriptionType;
-
-typedef struct AlterSubscriptionStmt
-{
-	NodeTag		type;
-	AlterSubscriptionType kind; /* ALTER_SUBSCRIPTION_OPTIONS, etc */
-	char	   *subname;		/* Name of of the subscription */
-	char	   *conninfo;		/* Connection string to publisher */
-	List	   *publication;	/* One or more publication to subscribe to */
-	List	   *options;		/* List of DefElem nodes */
-} AlterSubscriptionStmt;
-
-typedef struct DropSubscriptionStmt
-{
-	NodeTag		type;
-	char	   *subname;		/* Name of of the subscription */
-	bool		missing_ok;		/* Skip error if missing? */
-	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
-} DropSubscriptionStmt;
-
 #endif							/* PARSENODES_H */
->>>>>>> postgres

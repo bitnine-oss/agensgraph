@@ -459,30 +459,6 @@ static const ObjectPropertyType ObjectProperty[] =
 		true
 	},
 	{
-<<<<<<< HEAD
-		GraphRelationId,
-		GraphOidIndexId,
-		GRAPHOID,
-		GRAPHNAME,
-		Anum_ag_graph_graphname,
-		InvalidAttrNumber,
-		InvalidAttrNumber,
-		InvalidAttrNumber,
-		ACL_KIND_GRAPH,
-		true,
-	},
-	{
-		LabelRelationId,
-		LabelOidIndexId,
-		LABELOID,
-		LABELNAMEGRAPH,
-		Anum_ag_label_labname,
-		InvalidAttrNumber,
-		InvalidAttrNumber,
-		InvalidAttrNumber,
-		ACL_KIND_LABEL,
-		true,
-=======
 		PublicationRelationId,
 		PublicationObjectIndexId,
 		PUBLICATIONOID,
@@ -517,7 +493,30 @@ static const ObjectPropertyType ObjectProperty[] =
 		InvalidAttrNumber,		/* no ACL (same as relation) */
 		ACL_KIND_STATISTICS,
 		true
->>>>>>> postgres
+	},
+	{
+		GraphRelationId,
+		GraphOidIndexId,
+		GRAPHOID,
+		GRAPHNAME,
+		Anum_ag_graph_graphname,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		ACL_KIND_GRAPH,
+		true,
+	},
+	{
+		LabelRelationId,
+		LabelOidIndexId,
+		LABELOID,
+		LABELNAMEGRAPH,
+		Anum_ag_label_labname,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		ACL_KIND_LABEL,
+		true,
 	}
 };
 
@@ -737,7 +736,10 @@ static const struct object_type_map
 	{
 		"transform", OBJECT_TRANSFORM
 	},
-<<<<<<< HEAD
+	/* OBJECT_STATISTIC_EXT */
+	{
+		"statistics object", OBJECT_STATISTIC_EXT
+	},
 	/* OCLASS_GRAPH */
 	{
 		"graph", OBJECT_GRAPH
@@ -751,11 +753,6 @@ static const struct object_type_map
 	},
 	{
 		"property index", OBJECT_PROPERTY_INDEX
-=======
-	/* OBJECT_STATISTIC_EXT */
-	{
-		"statistics object", OBJECT_STATISTIC_EXT
->>>>>>> postgres
 	}
 };
 
@@ -803,14 +800,9 @@ static void getRelationTypeDescription(StringInfo buffer, Oid relid,
 						   int32 objectSubId);
 static void getProcedureTypeDescription(StringInfo buffer, Oid procid);
 static void getConstraintTypeDescription(StringInfo buffer, Oid constroid);
-<<<<<<< HEAD
-static void getOpFamilyIdentity(StringInfo buffer, Oid opfid, List **objname);
-static void getRelationIdentity(StringInfo buffer, Oid relid, List **objname);
-static void getLabelDescription(StringInfo buffer, Oid laboid);
-=======
 static void getOpFamilyIdentity(StringInfo buffer, Oid opfid, List **object);
 static void getRelationIdentity(StringInfo buffer, Oid relid, List **object);
->>>>>>> postgres
+static void getLabelDescription(StringInfo buffer, Oid laboid);
 
 /*
  * Translate an object name and arguments (as passed by the parser) to an
@@ -1043,20 +1035,18 @@ get_object_address(ObjectType objtype, Node *object,
 				address = get_object_address_defacl(castNode(List, object),
 													missing_ok);
 				break;
-<<<<<<< HEAD
+			case OBJECT_STATISTIC_EXT:
+				address.classId = StatisticExtRelationId;
+				address.objectId = get_statistics_object_oid(castNode(List, object),
+															 missing_ok);
+				address.objectSubId = 0;
+				break;
 			case OBJECT_GRAPH:
 				address = get_object_address_graph(objname, missing_ok);
 				break;
 			case OBJECT_ELABEL:
 			case OBJECT_VLABEL:
 				address = get_object_address_label(objname, missing_ok);
-=======
-			case OBJECT_STATISTIC_EXT:
-				address.classId = StatisticExtRelationId;
-				address.objectId = get_statistics_object_oid(castNode(List, object),
-															 missing_ok);
-				address.objectSubId = 0;
->>>>>>> postgres
 				break;
 			default:
 				elog(ERROR, "unrecognized objtype: %d", (int) objtype);
@@ -2536,7 +2526,10 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 						 errmsg("must be superuser")));
 			break;
-<<<<<<< HEAD
+		case OBJECT_STATISTIC_EXT:
+			if (!pg_statistics_object_ownercheck(address.objectId, roleid))
+				aclcheck_error_type(ACLCHECK_NOT_OWNER, address.objectId);
+			break;
 		case OBJECT_GRAPH:
 			if (!ag_graph_ownercheck(address.objectId, roleid))
 				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_GRAPH,
@@ -2547,11 +2540,6 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 			if (!ag_label_ownercheck(address.objectId, roleid))
 				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_LABEL,
 							   NameListToString(objname));
-=======
-		case OBJECT_STATISTIC_EXT:
-			if (!pg_statistics_object_ownercheck(address.objectId, roleid))
-				aclcheck_error_type(ACLCHECK_NOT_OWNER, address.objectId);
->>>>>>> postgres
 			break;
 		default:
 			elog(ERROR, "unrecognized object type: %d",
@@ -3539,7 +3527,34 @@ getObjectDescription(const ObjectAddress *object)
 				break;
 			}
 
-<<<<<<< HEAD
+		case OCLASS_SUBSCRIPTION:
+			{
+				appendStringInfo(&buffer, _("subscription %s"),
+								 get_subscription_name(object->objectId));
+				break;
+			}
+
+		case OCLASS_TRANSFORM:
+			{
+				HeapTuple	trfTup;
+				Form_pg_transform trfForm;
+
+				trfTup = SearchSysCache1(TRFOID,
+										 ObjectIdGetDatum(object->objectId));
+				if (!HeapTupleIsValid(trfTup))
+					elog(ERROR, "could not find tuple for transform %u",
+						 object->objectId);
+
+				trfForm = (Form_pg_transform) GETSTRUCT(trfTup);
+
+				appendStringInfo(&buffer, _("transform for %s language %s"),
+								 format_type_be(trfForm->trftype),
+								 get_language_name(trfForm->trflang, false));
+
+				ReleaseSysCache(trfTup);
+				break;
+			}
+
 		case OCLASS_GRAPH:
 			{
 				HeapTuple	tuple;
@@ -3580,46 +3595,10 @@ getObjectDescription(const ObjectAddress *object)
 				break;
 			}
 
-		default:
-			appendStringInfo(&buffer, "unrecognized object %u %u %d",
-							 object->classId,
-							 object->objectId,
-							 object->objectSubId);
-			break;
-=======
-		case OCLASS_SUBSCRIPTION:
-			{
-				appendStringInfo(&buffer, _("subscription %s"),
-								 get_subscription_name(object->objectId));
-				break;
-			}
-
-		case OCLASS_TRANSFORM:
-			{
-				HeapTuple	trfTup;
-				Form_pg_transform trfForm;
-
-				trfTup = SearchSysCache1(TRFOID,
-										 ObjectIdGetDatum(object->objectId));
-				if (!HeapTupleIsValid(trfTup))
-					elog(ERROR, "could not find tuple for transform %u",
-						 object->objectId);
-
-				trfForm = (Form_pg_transform) GETSTRUCT(trfTup);
-
-				appendStringInfo(&buffer, _("transform for %s language %s"),
-								 format_type_be(trfForm->trftype),
-								 get_language_name(trfForm->trflang, false));
-
-				ReleaseSysCache(trfTup);
-				break;
-			}
-
 			/*
 			 * There's intentionally no default: case here; we want the
 			 * compiler to warn if a new OCLASS hasn't been handled above.
 			 */
->>>>>>> postgres
 	}
 
 	return buffer.data;
@@ -4108,21 +4087,16 @@ getObjectTypeDescription(const ObjectAddress *object)
 			appendStringInfoString(&buffer, "publication relation");
 			break;
 
-<<<<<<< HEAD
+		case OCLASS_SUBSCRIPTION:
+			appendStringInfoString(&buffer, "subscription");
+			break;
+
 		case OCLASS_GRAPH:
 			appendStringInfoString(&buffer, "graph");
 			break;
 
 		case OCLASS_LABEL:
 			getLabelDescription(&buffer, object->objectId);
-			break;
-
-		default:
-			appendStringInfo(&buffer, "unrecognized %u", object->classId);
-=======
-		case OCLASS_SUBSCRIPTION:
-			appendStringInfoString(&buffer, "subscription");
->>>>>>> postgres
 			break;
 
 		case OCLASS_TRANSFORM:

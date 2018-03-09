@@ -2,12 +2,8 @@
 #
 # Makefile for src/bin (client programs)
 #
-<<<<<<< HEAD
-# Portions Copyright (c) 2017, Bitnine Inc.
-# Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+# Portions Copyright (c) 2018, Bitnine Inc.
 # Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/Makefile

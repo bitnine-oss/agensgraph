@@ -26,10 +26,6 @@ extern bool has_subclass(Oid relationId);
 extern bool has_superclass(Oid relationId);
 extern bool typeInheritsFrom(Oid subclassTypeId, Oid superclassTypeId);
 
-<<<<<<< HEAD
 extern List *find_all_ancestors(Oid childrelId, LOCKMODE lockmode);
 
-#endif   /* PG_INHERITS_FN_H */
-=======
 #endif							/* PG_INHERITS_FN_H */
->>>>>>> postgres

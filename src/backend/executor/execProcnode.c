@@ -100,12 +100,9 @@
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNamedtuplestorescan.h"
 #include "executor/nodeNestloop.h"
-<<<<<<< HEAD
 #include "executor/nodeNestloopVle.h"
 #include "executor/nodeGather.h"
-=======
 #include "executor/nodeProjectSet.h"
->>>>>>> postgres
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeSamplescan.h"
@@ -449,137 +446,8 @@ ExecProcNodeFirst(PlanState *node)
 	else
 		node->ExecProcNode = node->ExecProcNodeReal;
 
-<<<<<<< HEAD
-		case T_ModifyTableState:
-			result = ExecModifyTable((ModifyTableState *) node);
-			break;
-
-		case T_AppendState:
-			result = ExecAppend((AppendState *) node);
-			break;
-
-		case T_MergeAppendState:
-			result = ExecMergeAppend((MergeAppendState *) node);
-			break;
-
-		case T_RecursiveUnionState:
-			result = ExecRecursiveUnion((RecursiveUnionState *) node);
-			break;
-
-			/* BitmapAndState does not yield tuples */
-
-			/* BitmapOrState does not yield tuples */
-
-		case T_ModifyGraphState:
-			result = ExecModifyGraph((ModifyGraphState *) node);
-			break;
-
-			/*
-			 * scan nodes
-			 */
-		case T_SeqScanState:
-			result = ExecSeqScan((SeqScanState *) node);
-			break;
-
-		case T_SampleScanState:
-			result = ExecSampleScan((SampleScanState *) node);
-			break;
-
-		case T_IndexScanState:
-			result = ExecIndexScan((IndexScanState *) node);
-			break;
-
-		case T_IndexOnlyScanState:
-			result = ExecIndexOnlyScan((IndexOnlyScanState *) node);
-			break;
-
-			/* BitmapIndexScanState does not yield tuples */
-
-		case T_BitmapHeapScanState:
-			result = ExecBitmapHeapScan((BitmapHeapScanState *) node);
-			break;
-
-		case T_TidScanState:
-			result = ExecTidScan((TidScanState *) node);
-			break;
-
-		case T_SubqueryScanState:
-			result = ExecSubqueryScan((SubqueryScanState *) node);
-			break;
-
-		case T_FunctionScanState:
-			result = ExecFunctionScan((FunctionScanState *) node);
-			break;
-
-		case T_ValuesScanState:
-			result = ExecValuesScan((ValuesScanState *) node);
-			break;
-
-		case T_CteScanState:
-			result = ExecCteScan((CteScanState *) node);
-			break;
-
-		case T_WorkTableScanState:
-			result = ExecWorkTableScan((WorkTableScanState *) node);
-			break;
-
-		case T_ForeignScanState:
-			result = ExecForeignScan((ForeignScanState *) node);
-			break;
-
-		case T_CustomScanState:
-			result = ExecCustomScan((CustomScanState *) node);
-			break;
-
-			/*
-			 * join nodes
-			 */
-		case T_NestLoopState:
-			result = ExecNestLoop((NestLoopState *) node);
-			break;
-
-		case T_NestLoopVLEState:
-			result = ExecNestLoopVLE((NestLoopVLEState *) node);
-			break;
-
-		case T_MergeJoinState:
-			result = ExecMergeJoin((MergeJoinState *) node);
-			break;
-
-		case T_HashJoinState:
-			result = ExecHashJoin((HashJoinState *) node);
-			break;
-
-			/*
-			 * materialization nodes
-			 */
-		case T_MaterialState:
-			result = ExecMaterial((MaterialState *) node);
-			break;
-
-		case T_SortState:
-			result = ExecSort((SortState *) node);
-			break;
-
-		case T_GroupState:
-			result = ExecGroup((GroupState *) node);
-			break;
-
-		case T_AggState:
-			result = ExecAgg((AggState *) node);
-			break;
-
-		case T_WindowAggState:
-			result = ExecWindowAgg((WindowAggState *) node);
-			break;
-
-		case T_UniqueState:
-			result = ExecUnique((UniqueState *) node);
-			break;
-=======
 	return node->ExecProcNode(node);
 }
->>>>>>> postgres
 
 
 /*
@@ -596,22 +464,7 @@ ExecProcNodeInstr(PlanState *node)
 
 	result = node->ExecProcNodeReal(node);
 
-<<<<<<< HEAD
-		case T_DijkstraState:
-			result = ExecDijkstra((DijkstraState *) node);
-			break;
-
-		default:
-			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
-			result = NULL;
-			break;
-	}
-
-	if (node->instrument)
-		InstrStopNode(node->instrument, TupIsNull(result) ? 0.0 : 1.0);
-=======
 	InstrStopNode(node->instrument, TupIsNull(result) ? 0.0 : 1.0);
->>>>>>> postgres
 
 	return result;
 }

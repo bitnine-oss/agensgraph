@@ -42,11 +42,8 @@
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNamedtuplestorescan.h"
 #include "executor/nodeNestloop.h"
-<<<<<<< HEAD
 #include "executor/nodeNestloopVle.h"
-=======
 #include "executor/nodeProjectSet.h"
->>>>>>> postgres
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeSamplescan.h"

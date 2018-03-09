@@ -33,11 +33,6 @@
 #include "utils/syscache.h"
 #include "utils/tqual.h"
 
-<<<<<<< HEAD
-static int	oid_cmp(const void *p1, const void *p2);
-static List *find_inheritance_parents(Oid childrelId, LOCKMODE lockmode);
-
-=======
 /*
  * Entry of a hash table used in find_all_inheritors. See below.
  */
@@ -46,7 +41,8 @@ typedef struct SeenRelsEntry
 	Oid			rel_id;			/* relation oid */
 	ListCell   *numparents_cell;	/* corresponding list cell */
 } SeenRelsEntry;
->>>>>>> postgres
+
+static List *find_inheritance_parents(Oid childrelId, LOCKMODE lockmode);
 
 /*
  * find_inheritance_children
@@ -406,22 +402,6 @@ typeInheritsFrom(Oid subclassTypeId, Oid superclassTypeId)
 
 	return result;
 }
-<<<<<<< HEAD
-
-
-/* qsort comparison function */
-static int
-oid_cmp(const void *p1, const void *p2)
-{
-	Oid			v1 = *((const Oid *) p1);
-	Oid			v2 = *((const Oid *) p2);
-
-	if (v1 < v2)
-		return -1;
-	if (v1 > v2)
-		return 1;
-	return 0;
-}
 
 
 /* See find_inheritance_children() */
@@ -534,5 +514,3 @@ find_all_ancestors(Oid childrelId, LOCKMODE lockmode)
 
 	return rels_list;
 }
-=======
->>>>>>> postgres

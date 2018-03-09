@@ -998,11 +998,8 @@ _disableTriggersIfNecessary(ArchiveHandle *AH, TocEntry *te)
 	/*
 	 * Disable them.
 	 */
-<<<<<<< HEAD
 	_selectOutputSchema(AH, te->namespace, te->section);
 
-=======
->>>>>>> postgres
 	ahprintf(AH, "ALTER TABLE %s DISABLE TRIGGER ALL;\n\n",
 			 fmtQualifiedId(PQserverVersion(AH->connection),
 							te->namespace,
@@ -1031,11 +1028,8 @@ _enableTriggersIfNecessary(ArchiveHandle *AH, TocEntry *te)
 	/*
 	 * Enable them.
 	 */
-<<<<<<< HEAD
 	_selectOutputSchema(AH, te->namespace, te->section);
 
-=======
->>>>>>> postgres
 	ahprintf(AH, "ALTER TABLE %s ENABLE TRIGGER ALL;\n\n",
 			 fmtQualifiedId(PQserverVersion(AH->connection),
 							te->namespace,
@@ -3283,17 +3277,6 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
 {
 	PQExpBuffer qry;
 
-<<<<<<< HEAD
-	if (!schemaName || *schemaName == '\0')
-		return;
-	else if	(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0)
-	{
-		if (sec < SECTION_POST_DATA)
-			return;					/* no need to do anything */
-		else if (AH->currGraph && strcmp(AH->currGraph, schemaName) == 0)
-			return;
-	}
-=======
 	/*
 	 * If there was a SEARCHPATH TOC entry, we're supposed to just stay with
 	 * that search_path rather than switching to entry-specific paths.
@@ -3303,10 +3286,15 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName, teSection sec)
 	if (AH->public.searchpath)
 		return;
 
-	if (!schemaName || *schemaName == '\0' ||
-		(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0))
-		return;					/* no need to do anything */
->>>>>>> postgres
+	if (!schemaName || *schemaName == '\0')
+		return;
+	else if	(AH->currSchema && strcmp(AH->currSchema, schemaName) == 0)
+	{
+		if (sec < SECTION_POST_DATA)
+			return;					/* no need to do anything */
+		else if (AH->currGraph && strcmp(AH->currGraph, schemaName) == 0)
+			return;
+	}
 
 	qry = createPQExpBuffer();
 

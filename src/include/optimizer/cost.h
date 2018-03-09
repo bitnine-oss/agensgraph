@@ -187,13 +187,9 @@ extern void set_subquery_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_function_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_values_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel,
-<<<<<<< HEAD
 					   double cte_rows, int iter_cnt);
-=======
-					   double cte_rows);
 extern void set_tablefunc_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_namedtuplestore_size_estimates(PlannerInfo *root, RelOptInfo *rel);
->>>>>>> postgres
 extern void set_foreign_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern PathTarget *set_pathtarget_cost_width(PlannerInfo *root, PathTarget *target);
 extern double compute_bitmap_pages(PlannerInfo *root, RelOptInfo *baserel,

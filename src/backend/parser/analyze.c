@@ -1310,14 +1310,12 @@ transformSelectStmt(ParseState *pstate, SelectStmt *stmt)
 												   pstate->p_windowdefs,
 												   &qry->targetList);
 
-<<<<<<< HEAD
-	if (pstate->parentParseState != NULL)
-		unwrapEdgeRefTargetList(qry->targetList);
-=======
 	/* resolve any still-unresolved output columns as being type text */
 	if (pstate->p_resolve_unknowns)
 		resolveTargetListUnknowns(pstate, qry->targetList);
->>>>>>> postgres
+
+	if (pstate->parentParseState != NULL)
+		unwrapEdgeRefTargetList(qry->targetList);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
@@ -2956,8 +2954,7 @@ test_raw_expression_coverage(Node *node, void *context)
 									  context);
 }
 
-<<<<<<< HEAD
-#endif   /* RAW_EXPRESSION_COVERAGE_TEST */
+#endif							/* RAW_EXPRESSION_COVERAGE_TEST */
 
 
 /*
@@ -3105,6 +3102,3 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 
 	return qry;
 }
-=======
-#endif							/* RAW_EXPRESSION_COVERAGE_TEST */
->>>>>>> postgres

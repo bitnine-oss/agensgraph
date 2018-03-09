@@ -3,12 +3,8 @@
  * outfuncs.c
  *	  Output functions for Postgres tree nodes.
  *
-<<<<<<< HEAD
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -284,13 +280,11 @@ _outPlannedStmt(StringInfo str, const PlannedStmt *node)
 	WRITE_NODE_FIELD(relationOids);
 	WRITE_NODE_FIELD(invalItems);
 	WRITE_INT_FIELD(nParamExec);
-<<<<<<< HEAD
-	WRITE_BOOL_FIELD(nVlePaths);
-=======
 	WRITE_NODE_FIELD(utilityStmt);
 	WRITE_LOCATION_FIELD(stmt_location);
 	WRITE_LOCATION_FIELD(stmt_len);
->>>>>>> postgres
+
+	WRITE_BOOL_FIELD(nVlePaths);
 }
 
 /*
@@ -2267,20 +2261,13 @@ _outLimitPath(StringInfo str, const LimitPath *node)
 }
 
 static void
-<<<<<<< HEAD
 _outDijkstraPath(StringInfo str, const DijkstraPath *node)
 {
 	WRITE_NODE_TYPE("DIJKSTRA");
-=======
-_outGatherMergePath(StringInfo str, const GatherMergePath *node)
-{
-	WRITE_NODE_TYPE("GATHERMERGEPATH");
->>>>>>> postgres
 
 	_outPathInfo(str, (const Path *) node);
 
 	WRITE_NODE_FIELD(subpath);
-<<<<<<< HEAD
 	WRITE_BOOL_FIELD(weight_out);
 	WRITE_INT_FIELD(weight);
 	WRITE_NODE_FIELD(end_id);
@@ -2288,9 +2275,17 @@ _outGatherMergePath(StringInfo str, const GatherMergePath *node)
 	WRITE_NODE_FIELD(source);
 	WRITE_NODE_FIELD(target);
 	WRITE_NODE_FIELD(limit);
-=======
+}
+
+static void
+_outGatherMergePath(StringInfo str, const GatherMergePath *node)
+{
+	WRITE_NODE_TYPE("GATHERMERGEPATH");
+
+	_outPathInfo(str, (const Path *) node);
+
+	WRITE_NODE_FIELD(subpath);
 	WRITE_INT_FIELD(num_workers);
->>>>>>> postgres
 }
 
 static void
@@ -3089,7 +3084,10 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_NODE_FIELD(rowMarks);
 	WRITE_NODE_FIELD(setOperations);
 	WRITE_NODE_FIELD(constraintDeps);
-<<<<<<< HEAD
+	/* withCheckOptions intentionally omitted, see comment in parsenodes.h */
+	WRITE_LOCATION_FIELD(stmt_location);
+	WRITE_LOCATION_FIELD(stmt_len);
+
 	WRITE_INT_FIELD(dijkstraWeight);
 	WRITE_BOOL_FIELD(dijkstraWeightOut);
 	WRITE_NODE_FIELD(dijkstraEndId);
@@ -3106,11 +3104,6 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_NODE_FIELD(graph.targets);
 	WRITE_NODE_FIELD(graph.exprs);
 	WRITE_NODE_FIELD(graph.sets);
-=======
-	/* withCheckOptions intentionally omitted, see comment in parsenodes.h */
-	WRITE_LOCATION_FIELD(stmt_location);
-	WRITE_LOCATION_FIELD(stmt_len);
->>>>>>> postgres
 }
 
 static void
@@ -3739,7 +3732,50 @@ _outForeignKeyCacheInfo(StringInfo str, const ForeignKeyCacheInfo *node)
 }
 
 static void
-<<<<<<< HEAD
+_outPartitionElem(StringInfo str, const PartitionElem *node)
+{
+	WRITE_NODE_TYPE("PARTITIONELEM");
+
+	WRITE_STRING_FIELD(name);
+	WRITE_NODE_FIELD(expr);
+	WRITE_NODE_FIELD(collation);
+	WRITE_NODE_FIELD(opclass);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outPartitionSpec(StringInfo str, const PartitionSpec *node)
+{
+	WRITE_NODE_TYPE("PARTITIONSPEC");
+
+	WRITE_STRING_FIELD(strategy);
+	WRITE_NODE_FIELD(partParams);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outPartitionBoundSpec(StringInfo str, const PartitionBoundSpec *node)
+{
+	WRITE_NODE_TYPE("PARTITIONBOUNDSPEC");
+
+	WRITE_CHAR_FIELD(strategy);
+	WRITE_NODE_FIELD(listdatums);
+	WRITE_NODE_FIELD(lowerdatums);
+	WRITE_NODE_FIELD(upperdatums);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outPartitionRangeDatum(StringInfo str, const PartitionRangeDatum *node)
+{
+	WRITE_NODE_TYPE("PARTITIONRANGEDATUM");
+
+	WRITE_ENUM_FIELD(kind, PartitionRangeDatumKind);
+	WRITE_NODE_FIELD(value);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
 _outCreateLabelStmt(StringInfo str, const CreateLabelStmt *node)
 {
 	WRITE_NODE_TYPE("CREATELABELSTMT");
@@ -3815,21 +3851,10 @@ _outCypherListComp(StringInfo str, const CypherListComp *node)
 	WRITE_STRING_FIELD(varname);
 	WRITE_NODE_FIELD(cond);
 	WRITE_NODE_FIELD(elem);
-=======
-_outPartitionElem(StringInfo str, const PartitionElem *node)
-{
-	WRITE_NODE_TYPE("PARTITIONELEM");
-
-	WRITE_STRING_FIELD(name);
-	WRITE_NODE_FIELD(expr);
-	WRITE_NODE_FIELD(collation);
-	WRITE_NODE_FIELD(opclass);
->>>>>>> postgres
 	WRITE_LOCATION_FIELD(location);
 }
 
 static void
-<<<<<<< HEAD
 _outCypherGenericExpr(StringInfo str, const CypherGenericExpr *node)
 {
 	WRITE_NODE_TYPE("CYPHERGENERICEXPR");
@@ -3962,19 +3987,10 @@ _outCypherName(StringInfo str, const CypherName *node)
 	WRITE_NODE_TYPE("CYPHERNAME");
 
 	WRITE_STRING_FIELD(name);
-=======
-_outPartitionSpec(StringInfo str, const PartitionSpec *node)
-{
-	WRITE_NODE_TYPE("PARTITIONSPEC");
-
-	WRITE_STRING_FIELD(strategy);
-	WRITE_NODE_FIELD(partParams);
->>>>>>> postgres
 	WRITE_LOCATION_FIELD(location);
 }
 
 static void
-<<<<<<< HEAD
 _outCypherSetProp(StringInfo str, const CypherSetProp *node)
 {
 	WRITE_NODE_TYPE("CYPHERSETPROP");
@@ -4026,29 +4042,6 @@ _outGraphSetProp(StringInfo str, const GraphSetProp *node)
 	WRITE_NODE_FIELD(elem);
 	WRITE_NODE_FIELD(expr);
 }
-
-=======
-_outPartitionBoundSpec(StringInfo str, const PartitionBoundSpec *node)
-{
-	WRITE_NODE_TYPE("PARTITIONBOUNDSPEC");
-
-	WRITE_CHAR_FIELD(strategy);
-	WRITE_NODE_FIELD(listdatums);
-	WRITE_NODE_FIELD(lowerdatums);
-	WRITE_NODE_FIELD(upperdatums);
-	WRITE_LOCATION_FIELD(location);
-}
-
-static void
-_outPartitionRangeDatum(StringInfo str, const PartitionRangeDatum *node)
-{
-	WRITE_NODE_TYPE("PARTITIONRANGEDATUM");
-
-	WRITE_ENUM_FIELD(kind, PartitionRangeDatumKind);
-	WRITE_NODE_FIELD(value);
-	WRITE_LOCATION_FIELD(location);
-}
->>>>>>> postgres
 
 /*
  * outNode -
@@ -4488,13 +4481,11 @@ outNode(StringInfo str, const void *obj)
 			case T_LimitPath:
 				_outLimitPath(str, obj);
 				break;
-<<<<<<< HEAD
 			case T_DijkstraPath:
 				_outDijkstraPath(str, obj);
-=======
+				break;
 			case T_GatherMergePath:
 				_outGatherMergePath(str, obj);
->>>>>>> postgres
 				break;
 			case T_NestPath:
 				_outNestPath(str, obj);

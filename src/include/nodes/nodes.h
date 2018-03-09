@@ -4,12 +4,8 @@
  *	  Definitions for tagged nodes.
  *
  *
-<<<<<<< HEAD
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/nodes.h
@@ -438,7 +434,13 @@ typedef enum NodeTag
 	T_AlterPolicyStmt,
 	T_CreateTransformStmt,
 	T_CreateAmStmt,
-<<<<<<< HEAD
+	T_CreatePublicationStmt,
+	T_AlterPublicationStmt,
+	T_CreateSubscriptionStmt,
+	T_AlterSubscriptionStmt,
+	T_DropSubscriptionStmt,
+	T_CreateStatsStmt,
+	T_AlterCollationStmt,
 	T_CreateGraphStmt,
 	T_CreateLabelStmt,
 	T_AlterLabelStmt,
@@ -447,15 +449,6 @@ typedef enum NodeTag
 	T_CreatePropertyIndexStmt,
 	T_DisableIndexStmt,
 	T_CypherStmt,
-=======
-	T_CreatePublicationStmt,
-	T_AlterPublicationStmt,
-	T_CreateSubscriptionStmt,
-	T_AlterSubscriptionStmt,
-	T_DropSubscriptionStmt,
-	T_CreateStatsStmt,
-	T_AlterCollationStmt,
->>>>>>> postgres
 
 	/*
 	 * TAGS FOR PARSE TREE NODES (parsenodes.h)
@@ -505,7 +498,12 @@ typedef enum NodeTag
 	T_OnConflictClause,
 	T_CommonTableExpr,
 	T_RoleSpec,
-<<<<<<< HEAD
+	T_TriggerTransition,
+	T_PartitionElem,
+	T_PartitionSpec,
+	T_PartitionBoundSpec,
+	T_PartitionRangeDatum,
+	T_PartitionCmd,
 	T_CypherListComp,
 	T_CypherGenericExpr,
 	T_CypherSubPattern,
@@ -522,14 +520,6 @@ typedef enum NodeTag
 	T_CypherRel,
 	T_CypherName,
 	T_CypherSetProp,
-=======
-	T_TriggerTransition,
-	T_PartitionElem,
-	T_PartitionSpec,
-	T_PartitionBoundSpec,
-	T_PartitionRangeDatum,
-	T_PartitionCmd,
->>>>>>> postgres
 
 	/*
 	 * TAGS FOR REPLICATION GRAMMAR PARSE NODES (replnodes.h)
@@ -550,11 +540,7 @@ typedef enum NodeTag
 	 * purposes (usually because they are involved in APIs where we want to
 	 * pass multiple object types through the same pointer).
 	 */
-<<<<<<< HEAD
-	T_TriggerData = 1000,		/* in commands/trigger.h */
-=======
 	T_TriggerData,				/* in commands/trigger.h */
->>>>>>> postgres
 	T_EventTriggerData,			/* in commands/event_trigger.h */
 	T_ReturnSetInfo,			/* in nodes/execnodes.h */
 	T_WindowObjectData,			/* private in nodeWindowAgg.c */
@@ -883,7 +869,6 @@ typedef enum OnConflictAction
 	ONCONFLICT_UPDATE			/* ON CONFLICT ... DO UPDATE */
 } OnConflictAction;
 
-<<<<<<< HEAD
 
 /*
  * GraphWriteOp - enums for type of operation when CMD_GRAPHWRITE
@@ -899,7 +884,4 @@ typedef enum GraphWriteOp
 	GWROP_MERGE
 } GraphWriteOp;
 
-#endif   /* NODES_H */
-=======
 #endif							/* NODES_H */
->>>>>>> postgres

@@ -247,7 +247,6 @@ DATA(insert (	3580	pg_lsn_minmax_ops		PGNSP PGUID 4082  3220 t 3220 ));
 DATA(insert (	3580	box_inclusion_ops		PGNSP PGUID 4104   603 t 603 ));
 /* no brin opclass for the geometric types except box */
 
-<<<<<<< HEAD
 DATA(insert (  403 graphid_ops          PGNSP PGUID 7093 7002 t 0 ));
 DATA(insert (  405 graphid_ops          PGNSP PGUID 7096 7002 t 0 ));
 DATA(insert ( 2742 graphid_ops          PGNSP PGUID 7098 7002 t 0 ));
@@ -255,7 +254,4 @@ DATA(insert ( 3580 graphid_minmax_ops   PGNSP PGUID 7105 7002 t 0 ));
 
 DATA(insert (  403 rowid_ops          	PGNSP PGUID 7167 7062 t 0 ));
 
-#endif   /* PG_OPCLASS_H */
-=======
 #endif							/* PG_OPCLASS_H */
->>>>>>> postgres

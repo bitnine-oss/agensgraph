@@ -829,7 +829,6 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 			return AlterDatabaseOwner(strVal((Value *) stmt->object), newowner);
 
 		case OBJECT_SCHEMA:
-<<<<<<< HEAD
 			{
 				char *name = strVal(linitial(stmt->object));
 
@@ -841,9 +840,6 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 
 				return AlterSchemaOwner(name, newowner);
 			}
-=======
-			return AlterSchemaOwner(strVal((Value *) stmt->object), newowner);
->>>>>>> postgres
 
 		case OBJECT_TYPE:
 		case OBJECT_DOMAIN:		/* same as TYPE */

@@ -425,27 +425,7 @@ transformTableEntry(ParseState *pstate, RangeVar *r)
 	RangeTblEntry *rte;
 
 	/* We need only build a range table entry */
-<<<<<<< HEAD
-	rte = addRangeTableEntry(pstate, r, r->alias,
-							 interpretInhOption(r->inhOpt), true);
-
-	return rte;
-}
-
-/*
- * transformCTEReference --- transform a RangeVar that references a common
- * table expression (ie, a sub-SELECT defined in a WITH clause)
- */
-RangeTblEntry *
-transformCTEReference(ParseState *pstate, RangeVar *r,
-					  CommonTableExpr *cte, Index levelsup)
-{
-	RangeTblEntry *rte;
-
-	rte = addRangeTableEntryForCTE(pstate, cte, levelsup, r, true);
-=======
 	rte = addRangeTableEntry(pstate, r, r->alias, r->inh, true);
->>>>>>> postgres
 
 	return rte;
 }

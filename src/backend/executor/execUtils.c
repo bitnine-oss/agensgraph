@@ -54,11 +54,8 @@
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
-<<<<<<< HEAD
 #include "utils/syscache.h"
-=======
 #include "utils/typcache.h"
->>>>>>> postgres
 
 
 static void ShutdownExprContext(ExprContext *econtext, bool isCommit);
@@ -838,35 +835,6 @@ ShutdownExprContext(ExprContext *econtext, bool isCommit)
 	MemoryContextSwitchTo(oldcontext);
 }
 
-<<<<<<< HEAD
-
-/* set up to process the scan label */
-void
-InitScanLabelInfo(ScanState *node)
-{
-	Oid			relid;
-	HeapTuple	labtup;
-
-	AssertArg(node != NULL);
-
-	if (node->ss_currentRelation == NULL)
-		return;
-
-	relid = node->ss_currentRelation->rd_id;
-	labtup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(relid));
-	if (HeapTupleIsValid(labtup))
-	{
-		Form_ag_label label = (Form_ag_label) GETSTRUCT(labtup);
-
-		if (label->labkind == LABEL_KIND_VERTEX)
-		{
-			node->ss_isLabel = true;
-			node->ss_labid = (uint16) label->labid;
-		}
-
-		ReleaseSysCache(labtup);
-	}
-=======
 /*
  * ExecLockNonLeafAppendTables
  *
@@ -1069,5 +1037,32 @@ ExecCleanTargetListLength(List *targetlist)
 			len++;
 	}
 	return len;
->>>>>>> postgres
+}
+
+/* set up to process the scan label */
+void
+InitScanLabelInfo(ScanState *node)
+{
+	Oid			relid;
+	HeapTuple	labtup;
+
+	AssertArg(node != NULL);
+
+	if (node->ss_currentRelation == NULL)
+		return;
+
+	relid = node->ss_currentRelation->rd_id;
+	labtup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(relid));
+	if (HeapTupleIsValid(labtup))
+	{
+		Form_ag_label label = (Form_ag_label) GETSTRUCT(labtup);
+
+		if (label->labkind == LABEL_KIND_VERTEX)
+		{
+			node->ss_isLabel = true;
+			node->ss_labid = (uint16) label->labid;
+		}
+
+		ReleaseSysCache(labtup);
+	}
 }

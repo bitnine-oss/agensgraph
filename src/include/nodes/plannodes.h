@@ -91,15 +91,13 @@ typedef struct PlannedStmt
 
 	int			nParamExec;		/* number of PARAM_EXEC Params used */
 
-<<<<<<< HEAD
-	int			nVlePaths;		/* number of path columns */
-=======
 	Node	   *utilityStmt;	/* non-null if this is utility stmt */
 
 	/* statement location in source string (copied from Query) */
 	int			stmt_location;	/* start location, or -1 if unknown */
 	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
->>>>>>> postgres
+
+	int			nVlePaths;		/* number of path columns */
 } PlannedStmt;
 
 /* macro for fetching the Plan associated with a SubPlan node */
@@ -1052,7 +1050,6 @@ typedef struct PlanInvalItem
 	uint32		hashValue;		/* hash value of object's cache lookup key */
 } PlanInvalItem;
 
-<<<<<<< HEAD
 
 /*
  * Graph nodes
@@ -1085,7 +1082,4 @@ typedef struct Dijkstra
 	Node	   *limit;
 } Dijkstra;
 
-#endif   /* PLANNODES_H */
-=======
 #endif							/* PLANNODES_H */
->>>>>>> postgres

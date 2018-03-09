@@ -5,12 +5,8 @@
  *	  commands.  At one time acted as an interface between the Lisp and C
  *	  systems.
  *
-<<<<<<< HEAD
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -220,20 +216,17 @@ check_xact_readonly(Node *parsetree)
 		case T_CreateForeignTableStmt:
 		case T_ImportForeignSchemaStmt:
 		case T_SecLabelStmt:
-<<<<<<< HEAD
+		case T_CreatePublicationStmt:
+		case T_AlterPublicationStmt:
+		case T_CreateSubscriptionStmt:
+		case T_AlterSubscriptionStmt:
+		case T_DropSubscriptionStmt:
 		case T_CreateGraphStmt:
 		case T_CreateLabelStmt:
 		case T_AlterLabelStmt:
 		case T_CreateConstraintStmt:
 		case T_DropConstraintStmt:
 		case T_CreatePropertyIndexStmt:
-=======
-		case T_CreatePublicationStmt:
-		case T_AlterPublicationStmt:
-		case T_CreateSubscriptionStmt:
-		case T_AlterSubscriptionStmt:
-		case T_DropSubscriptionStmt:
->>>>>>> postgres
 			PreventCommandIfReadOnly(CreateCommandTag(parsetree));
 			PreventCommandIfParallelMode(CreateCommandTag(parsetree));
 			break;
@@ -1647,7 +1640,43 @@ ProcessUtilitySlow(ParseState *pstate,
 				address = CreateAccessMethod((CreateAmStmt *) parsetree);
 				break;
 
-<<<<<<< HEAD
+			case T_CreatePublicationStmt:
+				address = CreatePublication((CreatePublicationStmt *) parsetree);
+				break;
+
+			case T_AlterPublicationStmt:
+				AlterPublication((AlterPublicationStmt *) parsetree);
+
+				/*
+				 * AlterPublication calls EventTriggerCollectSimpleCommand
+				 * directly
+				 */
+				commandCollected = true;
+				break;
+
+			case T_CreateSubscriptionStmt:
+				address = CreateSubscription((CreateSubscriptionStmt *) parsetree,
+											 isTopLevel);
+				break;
+
+			case T_AlterSubscriptionStmt:
+				address = AlterSubscription((AlterSubscriptionStmt *) parsetree);
+				break;
+
+			case T_DropSubscriptionStmt:
+				DropSubscription((DropSubscriptionStmt *) parsetree, isTopLevel);
+				/* no commands stashed for DROP */
+				commandCollected = true;
+				break;
+
+			case T_CreateStatsStmt:
+				address = CreateStatistics((CreateStatsStmt *) parsetree);
+				break;
+
+			case T_AlterCollationStmt:
+				address = AlterCollation((AlterCollationStmt *) parsetree);
+				break;
+
 			case T_CreateGraphStmt:
 				CreateGraphCommand((CreateGraphStmt *) parsetree, queryString);
 				commandCollected = true;
@@ -1737,43 +1766,6 @@ ProcessUtilitySlow(ParseState *pstate,
 					commandCollected = true;
 					EventTriggerAlterTableEnd();
 				}
-=======
-			case T_CreatePublicationStmt:
-				address = CreatePublication((CreatePublicationStmt *) parsetree);
-				break;
-
-			case T_AlterPublicationStmt:
-				AlterPublication((AlterPublicationStmt *) parsetree);
-
-				/*
-				 * AlterPublication calls EventTriggerCollectSimpleCommand
-				 * directly
-				 */
-				commandCollected = true;
-				break;
-
-			case T_CreateSubscriptionStmt:
-				address = CreateSubscription((CreateSubscriptionStmt *) parsetree,
-											 isTopLevel);
-				break;
-
-			case T_AlterSubscriptionStmt:
-				address = AlterSubscription((AlterSubscriptionStmt *) parsetree);
-				break;
-
-			case T_DropSubscriptionStmt:
-				DropSubscription((DropSubscriptionStmt *) parsetree, isTopLevel);
-				/* no commands stashed for DROP */
-				commandCollected = true;
-				break;
-
-			case T_CreateStatsStmt:
-				address = CreateStatistics((CreateStatsStmt *) parsetree);
-				break;
-
-			case T_AlterCollationStmt:
-				address = AlterCollation((AlterCollationStmt *) parsetree);
->>>>>>> postgres
 				break;
 
 			default:
@@ -2162,16 +2154,6 @@ AlterObjectTypeCommandTag(ObjectType objtype)
 		case OBJECT_MATVIEW:
 			tag = "ALTER MATERIALIZED VIEW";
 			break;
-<<<<<<< HEAD
-		case OBJECT_GRAPH:
-			tag = "ALTER GRAPH";
-			break;
-		case OBJECT_VLABEL:
-			tag = "ALTER VLABEL";
-			break;
-		case OBJECT_ELABEL:
-			tag = "ALTER ELABEL";
-=======
 		case OBJECT_PUBLICATION:
 			tag = "ALTER PUBLICATION";
 			break;
@@ -2180,7 +2162,15 @@ AlterObjectTypeCommandTag(ObjectType objtype)
 			break;
 		case OBJECT_STATISTIC_EXT:
 			tag = "ALTER STATISTICS";
->>>>>>> postgres
+			break;
+		case OBJECT_GRAPH:
+			tag = "ALTER GRAPH";
+			break;
+		case OBJECT_VLABEL:
+			tag = "ALTER VLABEL";
+			break;
+		case OBJECT_ELABEL:
+			tag = "ALTER ELABEL";
 			break;
 		default:
 			tag = "???";
@@ -2532,7 +2522,12 @@ CreateCommandTag(Node *parsetree)
 				case OBJECT_ACCESS_METHOD:
 					tag = "DROP ACCESS METHOD";
 					break;
-<<<<<<< HEAD
+				case OBJECT_PUBLICATION:
+					tag = "DROP PUBLICATION";
+					break;
+				case OBJECT_STATISTIC_EXT:
+					tag = "DROP STATISTICS";
+					break;
 				case OBJECT_GRAPH:
 					tag = "DROP GRAPH";
 					break;
@@ -2541,13 +2536,6 @@ CreateCommandTag(Node *parsetree)
 					break;
 				case OBJECT_VLABEL:
 					tag = "DROP VLABEL";
-=======
-				case OBJECT_PUBLICATION:
-					tag = "DROP PUBLICATION";
-					break;
-				case OBJECT_STATISTIC_EXT:
-					tag = "DROP STATISTICS";
->>>>>>> postgres
 					break;
 				default:
 					tag = "???";

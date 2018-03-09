@@ -3,12 +3,8 @@
  * nodeFuncs.c
  *		Various general-purpose manipulations of Node trees
  *
-<<<<<<< HEAD
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1615,7 +1611,18 @@ exprLocation(const Node *expr)
 			/* just use nested expr's location */
 			loc = exprLocation((Node *) ((const InferenceElem *) expr)->expr);
 			break;
-<<<<<<< HEAD
+		case T_PartitionElem:
+			loc = ((const PartitionElem *) expr)->location;
+			break;
+		case T_PartitionSpec:
+			loc = ((const PartitionSpec *) expr)->location;
+			break;
+		case T_PartitionBoundSpec:
+			loc = ((const PartitionBoundSpec *) expr)->location;
+			break;
+		case T_PartitionRangeDatum:
+			loc = ((const PartitionRangeDatum *) expr)->location;
+			break;
 		case T_CypherMapExpr:
 			{
 				const CypherMapExpr *m = (const CypherMapExpr *) expr;
@@ -1640,19 +1647,6 @@ exprLocation(const Node *expr)
 			break;
 		case T_CypherAccessExpr:
 			loc = exprLocation((Node *) ((CypherAccessExpr *) expr)->arg);
-=======
-		case T_PartitionElem:
-			loc = ((const PartitionElem *) expr)->location;
-			break;
-		case T_PartitionSpec:
-			loc = ((const PartitionSpec *) expr)->location;
-			break;
-		case T_PartitionBoundSpec:
-			loc = ((const PartitionBoundSpec *) expr)->location;
-			break;
-		case T_PartitionRangeDatum:
-			loc = ((const PartitionRangeDatum *) expr)->location;
->>>>>>> postgres
 			break;
 		default:
 			/* for any other node type it's just unknown... */
@@ -2313,7 +2307,22 @@ expression_tree_walker(Node *node,
 					return true;
 			}
 			break;
-<<<<<<< HEAD
+		case T_TableFunc:
+			{
+				TableFunc  *tf = (TableFunc *) node;
+
+				if (walker(tf->ns_uris, context))
+					return true;
+				if (walker(tf->docexpr, context))
+					return true;
+				if (walker(tf->rowexpr, context))
+					return true;
+				if (walker(tf->colexprs, context))
+					return true;
+				if (walker(tf->coldefexprs, context))
+					return true;
+			}
+			break;
 		case T_EdgeRefProp:
 			return walker(((EdgeRefProp *) node)->arg, context);
 			break;
@@ -2382,22 +2391,6 @@ expression_tree_walker(Node *node,
 							return true;
 					}
 				}
-=======
-		case T_TableFunc:
-			{
-				TableFunc  *tf = (TableFunc *) node;
-
-				if (walker(tf->ns_uris, context))
-					return true;
-				if (walker(tf->docexpr, context))
-					return true;
-				if (walker(tf->rowexpr, context))
-					return true;
-				if (walker(tf->colexprs, context))
-					return true;
-				if (walker(tf->coldefexprs, context))
-					return true;
->>>>>>> postgres
 			}
 			break;
 		default:
@@ -3212,7 +3205,20 @@ expression_tree_mutator(Node *node,
 				return (Node *) newnode;
 			}
 			break;
-<<<<<<< HEAD
+		case T_TableFunc:
+			{
+				TableFunc  *tf = (TableFunc *) node;
+				TableFunc  *newnode;
+
+				FLATCOPY(newnode, tf, TableFunc);
+				MUTATE(newnode->ns_uris, tf->ns_uris, List *);
+				MUTATE(newnode->docexpr, tf->docexpr, Node *);
+				MUTATE(newnode->rowexpr, tf->rowexpr, Node *);
+				MUTATE(newnode->colexprs, tf->colexprs, List *);
+				MUTATE(newnode->coldefexprs, tf->coldefexprs, List *);
+				return (Node *) newnode;
+			}
+			break;
 		case T_EdgeRefProp:
 			{
 				EdgeRefProp *erf = (EdgeRefProp *) node;
@@ -3303,19 +3309,6 @@ expression_tree_mutator(Node *node,
 				FLATCOPY(newnode, i, CypherIndices);
 				MUTATE(newnode->lidx, i->lidx, Node *);
 				MUTATE(newnode->uidx, i->uidx, Node *);
-=======
-		case T_TableFunc:
-			{
-				TableFunc  *tf = (TableFunc *) node;
-				TableFunc  *newnode;
-
-				FLATCOPY(newnode, tf, TableFunc);
-				MUTATE(newnode->ns_uris, tf->ns_uris, List *);
-				MUTATE(newnode->docexpr, tf->docexpr, Node *);
-				MUTATE(newnode->rowexpr, tf->rowexpr, Node *);
-				MUTATE(newnode->colexprs, tf->colexprs, List *);
-				MUTATE(newnode->coldefexprs, tf->coldefexprs, List *);
->>>>>>> postgres
 				return (Node *) newnode;
 			}
 			break;

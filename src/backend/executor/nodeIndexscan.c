@@ -550,15 +550,13 @@ reorderqueue_pop(IndexScanState *node)
 static TupleTableSlot *
 ExecIndexScan(PlanState *pstate)
 {
-<<<<<<< HEAD
+	IndexScanState *node = castNode(IndexScanState, pstate);
+
 	if (node->ss.ss_skipLabelScan)
 	{
 		node->ss.ss_skipLabelScan = false;
 		return NULL;
 	}
-=======
-	IndexScanState *node = castNode(IndexScanState, pstate);
->>>>>>> postgres
 
 	/*
 	 * If we have runtime keys and they've not already been set up, do it now.
@@ -1266,31 +1264,10 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 		indexstate->iss_RuntimeContext = NULL;
 	}
 
-	/*
-<<<<<<< HEAD
-	 * Initialize scan descriptor.
-	 */
-	indexstate->iss_ScanDesc = index_beginscan(currentRelation,
-											   indexstate->iss_RelationDesc,
-											   estate->es_snapshot,
-											   indexstate->iss_NumScanKeys,
-											 indexstate->iss_NumOrderByKeys);
-
-	/*
-	 * If no run-time keys to calculate, go ahead and pass the scankeys to the
-	 * index AM.
-	 */
-	if (indexstate->iss_NumRuntimeKeys == 0)
-		index_rescan(indexstate->iss_ScanDesc,
-					 indexstate->iss_ScanKeys, indexstate->iss_NumScanKeys,
-				indexstate->iss_OrderByKeys, indexstate->iss_NumOrderByKeys);
-
 	dlist_init(&indexstate->vle_ctxs);
 	indexstate->cur_ctx = NULL;
 
 	/*
-=======
->>>>>>> postgres
 	 * all done.
 	 */
 	return indexstate;

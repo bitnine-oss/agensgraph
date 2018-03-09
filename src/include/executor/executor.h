@@ -513,9 +513,6 @@ extern void UnregisterExprContextCallback(ExprContext *econtext,
 							  ExprContextCallbackFunction function,
 							  Datum arg);
 
-<<<<<<< HEAD
-extern void InitScanLabelInfo(ScanState *node);
-=======
 extern void ExecLockNonLeafAppendTables(List *partitioned_rels, EState *estate);
 
 extern Datum GetAttributeByName(HeapTupleHeader tuple, const char *attname,
@@ -525,7 +522,8 @@ extern Datum GetAttributeByNum(HeapTupleHeader tuple, AttrNumber attrno,
 
 extern int	ExecTargetListLength(List *targetlist);
 extern int	ExecCleanTargetListLength(List *targetlist);
->>>>>>> postgres
+
+extern void InitScanLabelInfo(ScanState *node);
 
 /*
  * prototypes from functions in execIndexing.c

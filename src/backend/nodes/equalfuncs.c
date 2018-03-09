@@ -18,12 +18,8 @@
  * "x" to be considered equal() to another reference to "x" in the query.
  *
  *
-<<<<<<< HEAD
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -1080,7 +1076,9 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_NODE_FIELD(setOperations);
 	COMPARE_NODE_FIELD(constraintDeps);
 	COMPARE_NODE_FIELD(withCheckOptions);
-<<<<<<< HEAD
+	COMPARE_LOCATION_FIELD(stmt_location);
+	COMPARE_LOCATION_FIELD(stmt_len);
+
 	COMPARE_SCALAR_FIELD(dijkstraWeight);
 	COMPARE_SCALAR_FIELD(dijkstraWeightOut);
 	COMPARE_NODE_FIELD(dijkstraEndId);
@@ -1097,9 +1095,6 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_NODE_FIELD(graph.targets);
 	COMPARE_NODE_FIELD(graph.exprs);
 	COMPARE_NODE_FIELD(graph.sets);
-=======
-	COMPARE_LOCATION_FIELD(stmt_location);
-	COMPARE_LOCATION_FIELD(stmt_len);
 
 	return true;
 }
@@ -1110,7 +1105,6 @@ _equalRawStmt(const RawStmt *a, const RawStmt *b)
 	COMPARE_NODE_FIELD(stmt);
 	COMPARE_LOCATION_FIELD(stmt_location);
 	COMPARE_LOCATION_FIELD(stmt_len);
->>>>>>> postgres
 
 	return true;
 }
@@ -2921,7 +2915,69 @@ _equalRoleSpec(const RoleSpec *a, const RoleSpec *b)
 }
 
 static bool
-<<<<<<< HEAD
+_equalTriggerTransition(const TriggerTransition *a, const TriggerTransition *b)
+{
+	COMPARE_STRING_FIELD(name);
+	COMPARE_SCALAR_FIELD(isNew);
+	COMPARE_SCALAR_FIELD(isTable);
+
+	return true;
+}
+
+static bool
+_equalPartitionElem(const PartitionElem *a, const PartitionElem *b)
+{
+	COMPARE_STRING_FIELD(name);
+	COMPARE_NODE_FIELD(expr);
+	COMPARE_NODE_FIELD(collation);
+	COMPARE_NODE_FIELD(opclass);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
+_equalPartitionSpec(const PartitionSpec *a, const PartitionSpec *b)
+{
+	COMPARE_STRING_FIELD(strategy);
+	COMPARE_NODE_FIELD(partParams);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
+_equalPartitionBoundSpec(const PartitionBoundSpec *a, const PartitionBoundSpec *b)
+{
+	COMPARE_SCALAR_FIELD(strategy);
+	COMPARE_NODE_FIELD(listdatums);
+	COMPARE_NODE_FIELD(lowerdatums);
+	COMPARE_NODE_FIELD(upperdatums);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
+_equalPartitionRangeDatum(const PartitionRangeDatum *a, const PartitionRangeDatum *b)
+{
+	COMPARE_SCALAR_FIELD(kind);
+	COMPARE_NODE_FIELD(value);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
+_equalPartitionCmd(const PartitionCmd *a, const PartitionCmd *b)
+{
+	COMPARE_NODE_FIELD(name);
+	COMPARE_NODE_FIELD(bound);
+
+	return true;
+}
+
+static bool
 _equalCreateGraphStmt(const CreateGraphStmt *a, const CreateGraphStmt *b)
 {
 	COMPARE_STRING_FIELD(graphname);
@@ -2951,19 +3007,11 @@ _equalAlterLabelStmt(const AlterLabelStmt *a, const AlterLabelStmt *b)
 	COMPARE_NODE_FIELD(cmds);
 	COMPARE_SCALAR_FIELD(relkind);
 	COMPARE_SCALAR_FIELD(missing_ok);
-=======
-_equalTriggerTransition(const TriggerTransition *a, const TriggerTransition *b)
-{
-	COMPARE_STRING_FIELD(name);
-	COMPARE_SCALAR_FIELD(isNew);
-	COMPARE_SCALAR_FIELD(isTable);
->>>>>>> postgres
 
 	return true;
 }
 
 static bool
-<<<<<<< HEAD
 _equalCreateConstraintStmt(const CreateConstraintStmt *a,
 						   const CreateConstraintStmt *b)
 {
@@ -3027,21 +3075,12 @@ _equalCypherListComp(const CypherListComp *a, const CypherListComp *b)
 	COMPARE_STRING_FIELD(varname);
 	COMPARE_NODE_FIELD(cond);
 	COMPARE_NODE_FIELD(elem);
-=======
-_equalPartitionElem(const PartitionElem *a, const PartitionElem *b)
-{
-	COMPARE_STRING_FIELD(name);
-	COMPARE_NODE_FIELD(expr);
-	COMPARE_NODE_FIELD(collation);
-	COMPARE_NODE_FIELD(opclass);
->>>>>>> postgres
 	COMPARE_LOCATION_FIELD(location);
 
 	return true;
 }
 
 static bool
-<<<<<<< HEAD
 _equalCypherGenericExpr(const CypherGenericExpr *a, const CypherGenericExpr *b)
 {
 	COMPARE_NODE_FIELD(expr);
@@ -3126,37 +3165,19 @@ _equalCypherMergeClause(const CypherMergeClause *a,
 {
 	COMPARE_NODE_FIELD(pattern);
 	COMPARE_NODE_FIELD(sets);
-=======
-_equalPartitionSpec(const PartitionSpec *a, const PartitionSpec *b)
-{
-	COMPARE_STRING_FIELD(strategy);
-	COMPARE_NODE_FIELD(partParams);
-	COMPARE_LOCATION_FIELD(location);
->>>>>>> postgres
 
 	return true;
 }
 
 static bool
-<<<<<<< HEAD
 _equalCypherLoadClause(const CypherLoadClause *a, const CypherLoadClause *b)
 {
 	COMPARE_NODE_FIELD(relation);
-=======
-_equalPartitionBoundSpec(const PartitionBoundSpec *a, const PartitionBoundSpec *b)
-{
-	COMPARE_SCALAR_FIELD(strategy);
-	COMPARE_NODE_FIELD(listdatums);
-	COMPARE_NODE_FIELD(lowerdatums);
-	COMPARE_NODE_FIELD(upperdatums);
-	COMPARE_LOCATION_FIELD(location);
->>>>>>> postgres
 
 	return true;
 }
 
 static bool
-<<<<<<< HEAD
 _equalCypherPath(const CypherPath *a, const CypherPath *b)
 {
 	COMPARE_SCALAR_FIELD(kind);
@@ -3236,31 +3257,17 @@ _equalGraphEdge(const GraphEdge *a, const GraphEdge *b)
 	COMPARE_SCALAR_FIELD(relid);
 	COMPARE_NODE_FIELD(expr);
 	COMPARE_NODE_FIELD(qual);
-=======
-_equalPartitionRangeDatum(const PartitionRangeDatum *a, const PartitionRangeDatum *b)
-{
-	COMPARE_SCALAR_FIELD(kind);
-	COMPARE_NODE_FIELD(value);
-	COMPARE_LOCATION_FIELD(location);
->>>>>>> postgres
 
 	return true;
 }
 
 static bool
-<<<<<<< HEAD
 _equalGraphSetProp(const GraphSetProp *a, const GraphSetProp *b)
 {
 	COMPARE_SCALAR_FIELD(kind);
 	COMPARE_STRING_FIELD(variable);
 	COMPARE_NODE_FIELD(elem);
 	COMPARE_NODE_FIELD(expr);
-=======
-_equalPartitionCmd(const PartitionCmd *a, const PartitionCmd *b)
-{
-	COMPARE_NODE_FIELD(name);
-	COMPARE_NODE_FIELD(bound);
->>>>>>> postgres
 
 	return true;
 }

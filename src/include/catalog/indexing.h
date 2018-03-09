@@ -335,21 +335,6 @@ DECLARE_UNIQUE_INDEX(pg_replication_origin_roiident_index, 6001, on pg_replicati
 DECLARE_UNIQUE_INDEX(pg_replication_origin_roname_index, 6002, on pg_replication_origin using btree(roname text_pattern_ops));
 #define ReplicationOriginNameIndex 6002
 
-<<<<<<< HEAD
-DECLARE_UNIQUE_INDEX(ag_graph_oid_index, 7041, on ag_graph using btree(oid oid_ops));
-#define GraphOidIndexId 7041
-DECLARE_UNIQUE_INDEX(ag_graph_graphname_index, 7042, on ag_graph using btree(graphname name_ops));
-#define GraphNameIndexId 7042
-
-DECLARE_UNIQUE_INDEX(ag_label_oid_index, 7046, on ag_label using btree(oid oid_ops));
-#define LabelOidIndexId 7046
-DECLARE_UNIQUE_INDEX(ag_label_labname_graph_index, 7047, on ag_label using btree(labname name_ops, graphid oid_ops));
-#define LabelNameGraphIndexId 7047
-DECLARE_UNIQUE_INDEX(ag_label_graph_labid_index, 7048, on ag_label using btree(graphid oid_ops, labid int4_ops));
-#define LabelGraphLabelIndexId 7048
-DECLARE_UNIQUE_INDEX(ag_label_relid_index, 7049, on ag_label using btree(relid oid_ops));
-#define LabelRelidIndexId 7049
-=======
 DECLARE_UNIQUE_INDEX(pg_partitioned_table_partrelid_index, 3351, on pg_partitioned_table using btree(partrelid oid_ops));
 #define PartitionedRelidIndexId			 3351
 
@@ -373,7 +358,20 @@ DECLARE_UNIQUE_INDEX(pg_subscription_subname_index, 6115, on pg_subscription usi
 
 DECLARE_UNIQUE_INDEX(pg_subscription_rel_srrelid_srsubid_index, 6117, on pg_subscription_rel using btree(srrelid oid_ops, srsubid oid_ops));
 #define SubscriptionRelSrrelidSrsubidIndexId 6117
->>>>>>> postgres
+
+DECLARE_UNIQUE_INDEX(ag_graph_oid_index, 7041, on ag_graph using btree(oid oid_ops));
+#define GraphOidIndexId 7041
+DECLARE_UNIQUE_INDEX(ag_graph_graphname_index, 7042, on ag_graph using btree(graphname name_ops));
+#define GraphNameIndexId 7042
+
+DECLARE_UNIQUE_INDEX(ag_label_oid_index, 7046, on ag_label using btree(oid oid_ops));
+#define LabelOidIndexId 7046
+DECLARE_UNIQUE_INDEX(ag_label_labname_graph_index, 7047, on ag_label using btree(labname name_ops, graphid oid_ops));
+#define LabelNameGraphIndexId 7047
+DECLARE_UNIQUE_INDEX(ag_label_graph_labid_index, 7048, on ag_label using btree(graphid oid_ops, labid int4_ops));
+#define LabelGraphLabelIndexId 7048
+DECLARE_UNIQUE_INDEX(ag_label_relid_index, 7049, on ag_label using btree(relid oid_ops));
+#define LabelRelidIndexId 7049
 
 /* last step of initialization script: build the indexes declared above */
 BUILD_INDICES

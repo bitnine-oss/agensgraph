@@ -1501,7 +1501,6 @@ typedef struct OnConflictExpr
 	List	   *exclRelTlist;	/* tlist of the EXCLUDED pseudo relation */
 } OnConflictExpr;
 
-<<<<<<< HEAD
 typedef struct EdgeRefProp
 {
 	Expr		xpr;
@@ -1570,7 +1569,4 @@ typedef struct CypherIndices
 	Node	   *uidx;			/* Expr or ExprState */
 } CypherIndices;
 
-#endif   /* PRIMNODES_H */
-=======
 #endif							/* PRIMNODES_H */
->>>>>>> postgres

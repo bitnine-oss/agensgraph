@@ -11,12 +11,8 @@
  * be handled easily in a simple depth-first traversal.
  *
  *
-<<<<<<< HEAD
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
-=======
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
->>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -104,13 +100,10 @@ _copyPlannedStmt(const PlannedStmt *from)
 	COPY_NODE_FIELD(relationOids);
 	COPY_NODE_FIELD(invalItems);
 	COPY_SCALAR_FIELD(nParamExec);
-<<<<<<< HEAD
-	COPY_SCALAR_FIELD(nVlePaths);
-=======
 	COPY_NODE_FIELD(utilityStmt);
 	COPY_LOCATION_FIELD(stmt_location);
 	COPY_LOCATION_FIELD(stmt_len);
->>>>>>> postgres
+	COPY_SCALAR_FIELD(nVlePaths);
 
 	return newnode;
 }
@@ -3142,7 +3135,9 @@ _copyQuery(const Query *from)
 	COPY_NODE_FIELD(setOperations);
 	COPY_NODE_FIELD(constraintDeps);
 	COPY_NODE_FIELD(withCheckOptions);
-<<<<<<< HEAD
+	COPY_LOCATION_FIELD(stmt_location);
+	COPY_LOCATION_FIELD(stmt_len);
+
 	COPY_SCALAR_FIELD(dijkstraWeight);
 	COPY_SCALAR_FIELD(dijkstraWeightOut);
 	COPY_NODE_FIELD(dijkstraEndId);
@@ -3159,9 +3154,6 @@ _copyQuery(const Query *from)
 	COPY_NODE_FIELD(graph.targets);
 	COPY_NODE_FIELD(graph.exprs);
 	COPY_NODE_FIELD(graph.sets);
-=======
-	COPY_LOCATION_FIELD(stmt_location);
-	COPY_LOCATION_FIELD(stmt_len);
 
 	return newnode;
 }
@@ -3174,7 +3166,6 @@ _copyRawStmt(const RawStmt *from)
 	COPY_NODE_FIELD(stmt);
 	COPY_LOCATION_FIELD(stmt_location);
 	COPY_LOCATION_FIELD(stmt_len);
->>>>>>> postgres
 
 	return newnode;
 }
@@ -4620,7 +4611,135 @@ _copyAlterPolicyStmt(const AlterPolicyStmt *from)
 	return newnode;
 }
 
-<<<<<<< HEAD
+static PartitionElem *
+_copyPartitionElem(const PartitionElem *from)
+{
+	PartitionElem *newnode = makeNode(PartitionElem);
+
+	COPY_STRING_FIELD(name);
+	COPY_NODE_FIELD(expr);
+	COPY_NODE_FIELD(collation);
+	COPY_NODE_FIELD(opclass);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+static PartitionSpec *
+_copyPartitionSpec(const PartitionSpec *from)
+{
+	PartitionSpec *newnode = makeNode(PartitionSpec);
+
+	COPY_STRING_FIELD(strategy);
+	COPY_NODE_FIELD(partParams);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+static PartitionBoundSpec *
+_copyPartitionBoundSpec(const PartitionBoundSpec *from)
+{
+	PartitionBoundSpec *newnode = makeNode(PartitionBoundSpec);
+
+	COPY_SCALAR_FIELD(strategy);
+	COPY_NODE_FIELD(listdatums);
+	COPY_NODE_FIELD(lowerdatums);
+	COPY_NODE_FIELD(upperdatums);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+static PartitionRangeDatum *
+_copyPartitionRangeDatum(const PartitionRangeDatum *from)
+{
+	PartitionRangeDatum *newnode = makeNode(PartitionRangeDatum);
+
+	COPY_SCALAR_FIELD(kind);
+	COPY_NODE_FIELD(value);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
+static PartitionCmd *
+_copyPartitionCmd(const PartitionCmd *from)
+{
+	PartitionCmd *newnode = makeNode(PartitionCmd);
+
+	COPY_NODE_FIELD(name);
+	COPY_NODE_FIELD(bound);
+
+	return newnode;
+}
+
+static CreatePublicationStmt *
+_copyCreatePublicationStmt(const CreatePublicationStmt *from)
+{
+	CreatePublicationStmt *newnode = makeNode(CreatePublicationStmt);
+
+	COPY_STRING_FIELD(pubname);
+	COPY_NODE_FIELD(options);
+	COPY_NODE_FIELD(tables);
+	COPY_SCALAR_FIELD(for_all_tables);
+
+	return newnode;
+}
+
+static AlterPublicationStmt *
+_copyAlterPublicationStmt(const AlterPublicationStmt *from)
+{
+	AlterPublicationStmt *newnode = makeNode(AlterPublicationStmt);
+
+	COPY_STRING_FIELD(pubname);
+	COPY_NODE_FIELD(options);
+	COPY_NODE_FIELD(tables);
+	COPY_SCALAR_FIELD(for_all_tables);
+	COPY_SCALAR_FIELD(tableAction);
+
+	return newnode;
+}
+
+static CreateSubscriptionStmt *
+_copyCreateSubscriptionStmt(const CreateSubscriptionStmt *from)
+{
+	CreateSubscriptionStmt *newnode = makeNode(CreateSubscriptionStmt);
+
+	COPY_STRING_FIELD(subname);
+	COPY_STRING_FIELD(conninfo);
+	COPY_NODE_FIELD(publication);
+	COPY_NODE_FIELD(options);
+
+	return newnode;
+}
+
+static AlterSubscriptionStmt *
+_copyAlterSubscriptionStmt(const AlterSubscriptionStmt *from)
+{
+	AlterSubscriptionStmt *newnode = makeNode(AlterSubscriptionStmt);
+
+	COPY_SCALAR_FIELD(kind);
+	COPY_STRING_FIELD(subname);
+	COPY_STRING_FIELD(conninfo);
+	COPY_NODE_FIELD(publication);
+	COPY_NODE_FIELD(options);
+
+	return newnode;
+}
+
+static DropSubscriptionStmt *
+_copyDropSubscriptionStmt(const DropSubscriptionStmt *from)
+{
+	DropSubscriptionStmt *newnode = makeNode(DropSubscriptionStmt);
+
+	COPY_STRING_FIELD(subname);
+	COPY_SCALAR_FIELD(missing_ok);
+	COPY_SCALAR_FIELD(behavior);
+
+	return newnode;
+}
+
 static CreateGraphStmt *
 _copyCreateGraphStmt(const CreateGraphStmt *from)
 {
@@ -4732,23 +4851,11 @@ _copyCypherListComp(const CypherListComp *from)
 	COPY_STRING_FIELD(varname);
 	COPY_NODE_FIELD(cond);
 	COPY_NODE_FIELD(elem);
-=======
-static PartitionElem *
-_copyPartitionElem(const PartitionElem *from)
-{
-	PartitionElem *newnode = makeNode(PartitionElem);
-
-	COPY_STRING_FIELD(name);
-	COPY_NODE_FIELD(expr);
-	COPY_NODE_FIELD(collation);
-	COPY_NODE_FIELD(opclass);
->>>>>>> postgres
 	COPY_LOCATION_FIELD(location);
 
 	return newnode;
 }
 
-<<<<<<< HEAD
 static CypherGenericExpr *
 _copyCypherGenericExpr(const CypherGenericExpr *from)
 {
@@ -4777,21 +4884,10 @@ _copyCypherClause(const CypherClause *from)
 
 	COPY_NODE_FIELD(detail);
 	COPY_NODE_FIELD(prev);
-=======
-static PartitionSpec *
-_copyPartitionSpec(const PartitionSpec *from)
-{
-	PartitionSpec *newnode = makeNode(PartitionSpec);
-
-	COPY_STRING_FIELD(strategy);
-	COPY_NODE_FIELD(partParams);
-	COPY_LOCATION_FIELD(location);
->>>>>>> postgres
 
 	return newnode;
 }
 
-<<<<<<< HEAD
 static CypherMatchClause *
 _copyCypherMatchClause(const CypherMatchClause *from)
 {
@@ -4800,23 +4896,10 @@ _copyCypherMatchClause(const CypherMatchClause *from)
 	COPY_NODE_FIELD(pattern);
 	COPY_NODE_FIELD(where);
 	COPY_SCALAR_FIELD(optional);
-=======
-static PartitionBoundSpec *
-_copyPartitionBoundSpec(const PartitionBoundSpec *from)
-{
-	PartitionBoundSpec *newnode = makeNode(PartitionBoundSpec);
-
-	COPY_SCALAR_FIELD(strategy);
-	COPY_NODE_FIELD(listdatums);
-	COPY_NODE_FIELD(lowerdatums);
-	COPY_NODE_FIELD(upperdatums);
-	COPY_LOCATION_FIELD(location);
->>>>>>> postgres
 
 	return newnode;
 }
 
-<<<<<<< HEAD
 static CypherProjection *
 _copyCypherProjection(const CypherProjection *from)
 {
@@ -4839,21 +4922,10 @@ _copyCypherCreateClause(const CypherCreateClause *from)
 	CypherCreateClause *newnode = makeNode(CypherCreateClause);
 
 	COPY_NODE_FIELD(pattern);
-=======
-static PartitionRangeDatum *
-_copyPartitionRangeDatum(const PartitionRangeDatum *from)
-{
-	PartitionRangeDatum *newnode = makeNode(PartitionRangeDatum);
-
-	COPY_SCALAR_FIELD(kind);
-	COPY_NODE_FIELD(value);
-	COPY_LOCATION_FIELD(location);
->>>>>>> postgres
 
 	return newnode;
 }
 
-<<<<<<< HEAD
 static CypherDeleteClause *
 _copyCypherDeleteClause(const CypherDeleteClause *from)
 {
@@ -4861,20 +4933,10 @@ _copyCypherDeleteClause(const CypherDeleteClause *from)
 
 	COPY_SCALAR_FIELD(detach);
 	COPY_NODE_FIELD(exprs);
-=======
-static PartitionCmd *
-_copyPartitionCmd(const PartitionCmd *from)
-{
-	PartitionCmd *newnode = makeNode(PartitionCmd);
-
-	COPY_NODE_FIELD(name);
-	COPY_NODE_FIELD(bound);
->>>>>>> postgres
 
 	return newnode;
 }
 
-<<<<<<< HEAD
 static CypherSetClause *
 _copyCypherSetClause(const CypherSetClause *from)
 {
@@ -4883,22 +4945,10 @@ _copyCypherSetClause(const CypherSetClause *from)
 	COPY_SCALAR_FIELD(is_remove);
 	COPY_SCALAR_FIELD(kind);
 	COPY_NODE_FIELD(items);
-=======
-static CreatePublicationStmt *
-_copyCreatePublicationStmt(const CreatePublicationStmt *from)
-{
-	CreatePublicationStmt *newnode = makeNode(CreatePublicationStmt);
-
-	COPY_STRING_FIELD(pubname);
-	COPY_NODE_FIELD(options);
-	COPY_NODE_FIELD(tables);
-	COPY_SCALAR_FIELD(for_all_tables);
->>>>>>> postgres
 
 	return newnode;
 }
 
-<<<<<<< HEAD
 static CypherMergeClause *
 _copyCypherMergeClause(const CypherMergeClause *from)
 {
@@ -4906,45 +4956,20 @@ _copyCypherMergeClause(const CypherMergeClause *from)
 
 	COPY_NODE_FIELD(pattern);
 	COPY_NODE_FIELD(sets);
-=======
-static AlterPublicationStmt *
-_copyAlterPublicationStmt(const AlterPublicationStmt *from)
-{
-	AlterPublicationStmt *newnode = makeNode(AlterPublicationStmt);
-
-	COPY_STRING_FIELD(pubname);
-	COPY_NODE_FIELD(options);
-	COPY_NODE_FIELD(tables);
-	COPY_SCALAR_FIELD(for_all_tables);
-	COPY_SCALAR_FIELD(tableAction);
->>>>>>> postgres
 
 	return newnode;
 }
 
-<<<<<<< HEAD
 static CypherLoadClause *
 _copyCypherLoadClause(const CypherLoadClause *from)
 {
 	CypherLoadClause *newnode = makeNode(CypherLoadClause);
 
 	COPY_NODE_FIELD(relation);
-=======
-static CreateSubscriptionStmt *
-_copyCreateSubscriptionStmt(const CreateSubscriptionStmt *from)
-{
-	CreateSubscriptionStmt *newnode = makeNode(CreateSubscriptionStmt);
-
-	COPY_STRING_FIELD(subname);
-	COPY_STRING_FIELD(conninfo);
-	COPY_NODE_FIELD(publication);
-	COPY_NODE_FIELD(options);
->>>>>>> postgres
 
 	return newnode;
 }
 
-<<<<<<< HEAD
 static CypherPath *
 _copyCypherPath(const CypherPath *from)
 {
@@ -5042,23 +5067,10 @@ _copyGraphEdge(const GraphEdge *from)
 	COPY_SCALAR_FIELD(relid);
 	COPY_NODE_FIELD(expr);
 	COPY_NODE_FIELD(qual);
-=======
-static AlterSubscriptionStmt *
-_copyAlterSubscriptionStmt(const AlterSubscriptionStmt *from)
-{
-	AlterSubscriptionStmt *newnode = makeNode(AlterSubscriptionStmt);
-
-	COPY_SCALAR_FIELD(kind);
-	COPY_STRING_FIELD(subname);
-	COPY_STRING_FIELD(conninfo);
-	COPY_NODE_FIELD(publication);
-	COPY_NODE_FIELD(options);
->>>>>>> postgres
 
 	return newnode;
 }
 
-<<<<<<< HEAD
 static GraphSetProp *
 _copyGraphSetProp(const GraphSetProp *from)
 {
@@ -5068,16 +5080,6 @@ _copyGraphSetProp(const GraphSetProp *from)
 	COPY_STRING_FIELD(variable);
 	COPY_NODE_FIELD(elem);
 	COPY_NODE_FIELD(expr);
-=======
-static DropSubscriptionStmt *
-_copyDropSubscriptionStmt(const DropSubscriptionStmt *from)
-{
-	DropSubscriptionStmt *newnode = makeNode(DropSubscriptionStmt);
-
-	COPY_STRING_FIELD(subname);
-	COPY_SCALAR_FIELD(missing_ok);
-	COPY_SCALAR_FIELD(behavior);
->>>>>>> postgres
 
 	return newnode;
 }
@@ -5942,7 +5944,21 @@ copyObjectImpl(const void *from)
 		case T_AlterPolicyStmt:
 			retval = _copyAlterPolicyStmt(from);
 			break;
-<<<<<<< HEAD
+		case T_CreatePublicationStmt:
+			retval = _copyCreatePublicationStmt(from);
+			break;
+		case T_AlterPublicationStmt:
+			retval = _copyAlterPublicationStmt(from);
+			break;
+		case T_CreateSubscriptionStmt:
+			retval = _copyCreateSubscriptionStmt(from);
+			break;
+		case T_AlterSubscriptionStmt:
+			retval = _copyAlterSubscriptionStmt(from);
+			break;
+		case T_DropSubscriptionStmt:
+			retval = _copyDropSubscriptionStmt(from);
+			break;
 		case T_CreateGraphStmt:
 			retval = _copyCreateGraphStmt(from);
 			break;
@@ -5972,22 +5988,6 @@ copyObjectImpl(const void *from)
 			break;
 		case T_CypherSubPattern:
 			retval = _copyCypherSubPattern(from);
-=======
-		case T_CreatePublicationStmt:
-			retval = _copyCreatePublicationStmt(from);
-			break;
-		case T_AlterPublicationStmt:
-			retval = _copyAlterPublicationStmt(from);
-			break;
-		case T_CreateSubscriptionStmt:
-			retval = _copyCreateSubscriptionStmt(from);
-			break;
-		case T_AlterSubscriptionStmt:
-			retval = _copyAlterSubscriptionStmt(from);
-			break;
-		case T_DropSubscriptionStmt:
-			retval = _copyDropSubscriptionStmt(from);
->>>>>>> postgres
 			break;
 		case T_A_Expr:
 			retval = _copyAExpr(from);
@@ -6115,7 +6115,24 @@ copyObjectImpl(const void *from)
 		case T_RoleSpec:
 			retval = _copyRoleSpec(from);
 			break;
-<<<<<<< HEAD
+		case T_TriggerTransition:
+			retval = _copyTriggerTransition(from);
+			break;
+		case T_PartitionElem:
+			retval = _copyPartitionElem(from);
+			break;
+		case T_PartitionSpec:
+			retval = _copyPartitionSpec(from);
+			break;
+		case T_PartitionBoundSpec:
+			retval = _copyPartitionBoundSpec(from);
+			break;
+		case T_PartitionRangeDatum:
+			retval = _copyPartitionRangeDatum(from);
+			break;
+		case T_PartitionCmd:
+			retval = _copyPartitionCmd(from);
+			break;
 		case T_CypherClause:
 			retval = _copyCypherClause(from);
 			break;
@@ -6170,25 +6187,6 @@ copyObjectImpl(const void *from)
 			break;
 		case T_GraphSetProp:
 			retval = _copyGraphSetProp(from);
-=======
-		case T_TriggerTransition:
-			retval = _copyTriggerTransition(from);
-			break;
-		case T_PartitionElem:
-			retval = _copyPartitionElem(from);
-			break;
-		case T_PartitionSpec:
-			retval = _copyPartitionSpec(from);
-			break;
-		case T_PartitionBoundSpec:
-			retval = _copyPartitionBoundSpec(from);
-			break;
-		case T_PartitionRangeDatum:
-			retval = _copyPartitionRangeDatum(from);
-			break;
-		case T_PartitionCmd:
-			retval = _copyPartitionCmd(from);
->>>>>>> postgres
 			break;
 
 			/*

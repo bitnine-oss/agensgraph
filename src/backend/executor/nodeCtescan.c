@@ -159,16 +159,11 @@ CteScanRecheck(CteScanState *node, TupleTableSlot *slot)
 static TupleTableSlot *
 ExecCteScan(PlanState *pstate)
 {
-<<<<<<< HEAD
+	CteScanState *node = castNode(CteScanState, pstate);
 	TupleTableSlot *slot;
-	CteScan *plan;
+	CteScan	   *plan;
 
 	slot = ExecScan(&node->ss,
-=======
-	CteScanState *node = castNode(CteScanState, pstate);
-
-	return ExecScan(&node->ss,
->>>>>>> postgres
 					(ExecScanAccessMtd) CteScanNext,
 					(ExecScanRecheckMtd) CteScanRecheck);
 

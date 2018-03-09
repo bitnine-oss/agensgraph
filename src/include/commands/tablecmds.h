@@ -87,9 +87,4 @@ extern void RangeVarCallbackOwnsTable(const RangeVar *relation,
 
 extern void RangeVarCallbackOwnsRelation(const RangeVar *relation,
 							 Oid relId, Oid oldRelId, void *noCatalogs);
-<<<<<<< HEAD
-
-#endif   /* TABLECMDS_H */
-=======
 #endif							/* TABLECMDS_H */
->>>>>>> postgres
