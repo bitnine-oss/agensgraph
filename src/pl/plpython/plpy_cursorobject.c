@@ -25,7 +25,6 @@
 
 
 static PyObject *PLy_cursor_query(const char *query);
-static PyObject *PLy_cursor_plan(PyObject *ob, PyObject *args);
 static void PLy_cursor_dealloc(PyObject *arg);
 static PyObject *PLy_cursor_iternext(PyObject *self);
 static PyObject *PLy_cursor_fetch(PyObject *self, PyObject *args);
@@ -160,7 +159,7 @@ PLy_cursor_query(const char *query)
 	return (PyObject *) cursor;
 }
 
-static PyObject *
+PyObject *
 PLy_cursor_plan(PyObject *ob, PyObject *args)
 {
 	PLyCursorObject *cursor;
@@ -193,8 +192,8 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 			PLy_elog(ERROR, "could not execute plan");
 		sv = PyString_AsString(so);
 		PLy_exception_set_plural(PyExc_TypeError,
-							  "Expected sequence of %d argument, got %d: %s",
-							 "Expected sequence of %d arguments, got %d: %s",
+								 "Expected sequence of %d argument, got %d: %s",
+								 "Expected sequence of %d arguments, got %d: %s",
 								 plan->nargs,
 								 plan->nargs, nargs, sv);
 		Py_DECREF(so);
@@ -240,7 +239,8 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 					plan->values[j] =
 						plan->args[j].out.d.func(&(plan->args[j].out.d),
 												 -1,
-												 elem);
+												 elem,
+												 false);
 				}
 				PG_CATCH();
 				{
@@ -405,7 +405,7 @@ PLy_cursor_fetch(PyObject *self, PyObject *args)
 	volatile ResourceOwner oldowner;
 	Portal		portal;
 
-	if (!PyArg_ParseTuple(args, "i", &count))
+	if (!PyArg_ParseTuple(args, "i:fetch", &count))
 		return NULL;
 
 	cursor = (PLyCursorObject *) self;
@@ -501,7 +501,7 @@ PLy_cursor_close(PyObject *self, PyObject *unused)
 		if (!PortalIsValid(portal))
 		{
 			PLy_exception_set(PyExc_ValueError,
-							"closing a cursor in an aborted subtransaction");
+							  "closing a cursor in an aborted subtransaction");
 			return NULL;
 		}
 

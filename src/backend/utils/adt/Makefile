@@ -15,11 +15,18 @@ OBJS = acl.o amutils.o arrayfuncs.o array_expanded.o array_selfuncs.o \
 	date.o datetime.o datum.o dbsize.o dijkstrafuncs.o domains.o \
 	encode.o enum.o expandeddatum.o \
 	float.o format_type.o formatting.o genfile.o \
+<<<<<<< HEAD
 	geo_ops.o geo_selfuncs.o geo_spgist.o graph.o \
 	inet_cidr_ntop.o inet_net_pton.o int.o int8.o \
 	json.o jsonb.o jsonb_gin.o jsonb_op.o jsonb_util.o \
 	jsonfuncs.o like.o lockfuncs.o mac.o misc.o nabstime.o name.o \
 	network.o network_gist.o network_selfuncs.o \
+=======
+	geo_ops.o geo_selfuncs.o geo_spgist.o inet_cidr_ntop.o inet_net_pton.o \
+	int.o int8.o json.o jsonb.o jsonb_gin.o jsonb_op.o jsonb_util.o \
+	jsonfuncs.o like.o lockfuncs.o mac.o mac8.o misc.o nabstime.o name.o \
+	network.o network_gist.o network_selfuncs.o network_spgist.o \
+>>>>>>> postgres
 	numeric.o numutils.o oid.o oracle_compat.o \
 	orderedsetaggs.o pg_locale.o pg_lsn.o pg_upgrade_support.o \
 	pgstatfuncs.o \

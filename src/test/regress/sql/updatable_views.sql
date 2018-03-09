@@ -95,7 +95,7 @@ DELETE FROM rw_view16 WHERE a=-3; -- should be OK
 -- Read-only views
 INSERT INTO ro_view17 VALUES (3, 'ROW 3');
 DELETE FROM ro_view18;
-UPDATE ro_view19 SET max_value=1000;
+UPDATE ro_view19 SET last_value=1000;
 UPDATE ro_view20 SET b=upper(b);
 
 DROP TABLE base_tbl CASCADE;
@@ -1001,8 +1001,8 @@ SELECT * FROM v1 WHERE a=3; -- should not see anything
 SELECT * FROM v1 WHERE a=8;
 
 EXPLAIN (VERBOSE, COSTS OFF)
-UPDATE v1 SET a=100 WHERE snoop(a) AND leakproof(a) AND a = 3;
-UPDATE v1 SET a=100 WHERE snoop(a) AND leakproof(a) AND a = 3;
+UPDATE v1 SET a=100 WHERE snoop(a) AND leakproof(a) AND a < 7 AND a != 6;
+UPDATE v1 SET a=100 WHERE snoop(a) AND leakproof(a) AND a < 7 AND a != 6;
 
 SELECT * FROM v1 WHERE a=100; -- Nothing should have been changed to 100
 SELECT * FROM t1 WHERE a=100; -- Nothing should have been changed to 100
@@ -1112,3 +1112,59 @@ INSERT INTO v1 VALUES (-1, 'invalid'); -- should fail
 
 DROP VIEW v1;
 DROP TABLE t1;
+
+-- check that an auto-updatable view on a partitioned table works correctly
+create table pt (a int, b int, v varchar) partition by range (a, b);
+create table pt1 (b int not null, v varchar, a int not null) partition by range (b);
+create table pt11 (like pt1);
+alter table pt11 drop a;
+alter table pt11 add a int;
+alter table pt11 drop a;
+alter table pt11 add a int not null;
+alter table pt1 attach partition pt11 for values from (2) to (5);
+alter table pt attach partition pt1 for values from (1, 2) to (1, 10);
+
+create view ptv as select * from pt;
+select events & 4 != 0 AS upd,
+       events & 8 != 0 AS ins,
+       events & 16 != 0 AS del
+  from pg_catalog.pg_relation_is_updatable('pt'::regclass, false) t(events);
+select pg_catalog.pg_column_is_updatable('pt'::regclass, 1::smallint, false);
+select pg_catalog.pg_column_is_updatable('pt'::regclass, 2::smallint, false);
+select table_name, is_updatable, is_insertable_into
+  from information_schema.views where table_name = 'ptv';
+select table_name, column_name, is_updatable
+  from information_schema.columns where table_name = 'ptv' order by column_name;
+insert into ptv values (1, 2);
+select tableoid::regclass, * from pt;
+create view ptv_wco as select * from pt where a = 0 with check option;
+insert into ptv_wco values (1, 2);
+drop view ptv, ptv_wco;
+drop table pt, pt1, pt11;
+
+-- check that wholerow vars appearing in WITH CHECK OPTION constraint expressions
+-- work fine with partitioned tables
+create table wcowrtest (a int) partition by list (a);
+create table wcowrtest1 partition of wcowrtest for values in (1);
+create view wcowrtest_v as select * from wcowrtest where wcowrtest = '(2)'::wcowrtest with check option;
+insert into wcowrtest_v values (1);
+
+alter table wcowrtest add b text;
+create table wcowrtest2 (b text, c int, a int);
+alter table wcowrtest2 drop c;
+alter table wcowrtest attach partition wcowrtest2 for values in (2);
+
+create table sometable (a int, b text);
+insert into sometable values (1, 'a'), (2, 'b');
+create view wcowrtest_v2 as
+    select *
+      from wcowrtest r
+      where r in (select s from sometable s where r.a = s.a)
+with check option;
+
+-- WITH CHECK qual will be processed with wcowrtest2's
+-- rowtype after tuple-routing
+insert into wcowrtest_v2 values (2, 'no such row in sometable');
+
+drop view wcowrtest_v, wcowrtest_v2;
+drop table wcowrtest, sometable;

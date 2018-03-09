@@ -4,7 +4,7 @@
  *	  POSTGRES LIBPQ buffer structure definitions.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/libpq/libpq.h
@@ -14,7 +14,6 @@
 #ifndef LIBPQ_H
 #define LIBPQ_H
 
-#include <sys/types.h>
 #include <netinet/in.h>
 
 #include "lib/stringinfo.h"
@@ -80,11 +79,9 @@ extern char *ssl_cert_file;
 extern char *ssl_key_file;
 extern char *ssl_ca_file;
 extern char *ssl_crl_file;
+extern char *ssl_dh_params_file;
 
-extern int	(*pq_putmessage_hook) (char msgtype, const char *s, size_t len);
-extern int	(*pq_flush_hook) (void);
-
-extern int	secure_initialize(void);
+extern int	secure_initialize(bool isServerStart);
 extern bool secure_loaded_verify_locations(void);
 extern void secure_destroy(void);
 extern int	secure_open_server(Port *port);
@@ -103,4 +100,4 @@ extern char *SSLCipherSuites;
 extern char *SSLECDHCurve;
 extern bool SSLPreferServerCiphers;
 
-#endif   /* LIBPQ_H */
+#endif							/* LIBPQ_H */

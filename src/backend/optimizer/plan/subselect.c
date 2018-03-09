@@ -3,7 +3,7 @@
  * subselect.c
  *	  Planning routines for subselects and parameters.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -79,6 +79,7 @@ static Node *process_sublinks_mutator(Node *node,
 						 process_sublinks_context *context);
 static Bitmapset *finalize_plan(PlannerInfo *root,
 			  Plan *plan,
+			  int gather_param,
 			  Bitmapset *valid_params,
 			  Bitmapset *scan_params);
 static bool finalize_primnode(Node *node, finalize_primnode_context *context);
@@ -125,7 +126,7 @@ assign_param_for_var(PlannerInfo *root, Var *var)
 	}
 
 	/* Nope, so make a new one */
-	var = (Var *) copyObject(var);
+	var = copyObject(var);
 	var->varlevelsup = 0;
 
 	pitem = makeNode(PlannerParamItem);
@@ -224,7 +225,7 @@ assign_param_for_placeholdervar(PlannerInfo *root, PlaceHolderVar *phv)
 	}
 
 	/* Nope, so make a new one */
-	phv = (PlaceHolderVar *) copyObject(phv);
+	phv = copyObject(phv);
 	if (phv->phlevelsup != 0)
 	{
 		IncrementVarSublevelsUp((Node *) phv, -((int) phv->phlevelsup), 0);
@@ -316,7 +317,7 @@ replace_outer_agg(PlannerInfo *root, Aggref *agg)
 	 * It does not seem worthwhile to try to match duplicate outer aggs. Just
 	 * make a new slot every time.
 	 */
-	agg = (Aggref *) copyObject(agg);
+	agg = copyObject(agg);
 	IncrementVarSublevelsUp((Node *) agg, -((int) agg->agglevelsup), 0);
 	Assert(agg->agglevelsup == 0);
 
@@ -358,7 +359,7 @@ replace_outer_grouping(PlannerInfo *root, GroupingFunc *grp)
 	 * It does not seem worthwhile to try to match duplicate outer aggs. Just
 	 * make a new slot every time.
 	 */
-	grp = (GroupingFunc *) copyObject(grp);
+	grp = copyObject(grp);
 	IncrementVarSublevelsUp((Node *) grp, -((int) grp->agglevelsup), 0);
 	Assert(grp->agglevelsup == 0);
 
@@ -433,9 +434,8 @@ get_first_col_type(Plan *plan, Oid *coltype, int32 *coltypmod,
 	/* In cases such as EXISTS, tlist might be empty; arbitrarily use VOID */
 	if (plan->targetlist)
 	{
-		TargetEntry *tent = (TargetEntry *) linitial(plan->targetlist);
+		TargetEntry *tent = linitial_node(TargetEntry, plan->targetlist);
 
-		Assert(IsA(tent, TargetEntry));
 		if (!tent->resjunk)
 		{
 			*coltype = exprType((Node *) tent->expr);
@@ -492,7 +492,7 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 	 * same sub-Query node, but the planner wants to scribble on the Query.
 	 * Try to clean this up when we do querytree redesign...
 	 */
-	subquery = (Query *) copyObject(orig_subquery);
+	subquery = copyObject(orig_subquery);
 
 	/*
 	 * If it's an EXISTS subplan, we might be able to simplify it.
@@ -568,7 +568,7 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 		List	   *paramIds;
 
 		/* Make a second copy of the original subquery */
-		subquery = (Query *) copyObject(orig_subquery);
+		subquery = copyObject(orig_subquery);
 		/* and re-simplify */
 		simple_exists = simplify_EXISTS_query(root, subquery);
 		Assert(simple_exists);
@@ -600,13 +600,13 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 				AlternativeSubPlan *asplan;
 
 				/* OK, convert to SubPlan format. */
-				hashplan = (SubPlan *) build_subplan(root, plan, subroot,
-													 plan_params,
-													 ANY_SUBLINK, 0,
-													 newtestexpr,
-													 false, true);
+				hashplan = castNode(SubPlan,
+									build_subplan(root, plan, subroot,
+												  plan_params,
+												  ANY_SUBLINK, 0,
+												  newtestexpr,
+												  false, true));
 				/* Check we got what we expected */
-				Assert(IsA(hashplan, SubPlan));
 				Assert(hashplan->parParam == NIL);
 				Assert(hashplan->useHashTable);
 				/* build_subplan won't have filled in paramIds */
@@ -653,6 +653,7 @@ build_subplan(PlannerInfo *root, Plan *plan, PlannerInfo *subroot,
 					   &splan->firstColCollation);
 	splan->useHashTable = false;
 	splan->unknownEqFalse = unknownEqFalse;
+	splan->parallel_safe = plan->parallel_safe;
 	splan->setParam = NIL;
 	splan->parParam = NIL;
 	splan->args = NIL;
@@ -1213,6 +1214,13 @@ SS_process_ctes(PlannerInfo *root)
 						   &splan->firstColCollation);
 		splan->useHashTable = false;
 		splan->unknownEqFalse = false;
+
+		/*
+		 * CTE scans are not considered for parallelism (cf
+		 * set_rel_consider_parallel), and even if they were, initPlans aren't
+		 * parallel-safe.
+		 */
+		splan->parallel_safe = false;
 		splan->setParam = NIL;
 		splan->parParam = NIL;
 		splan->args = NIL;
@@ -1423,7 +1431,7 @@ convert_EXISTS_sublink_to_join(PlannerInfo *root, SubLink *sublink,
 	 * Copy the subquery so we can modify it safely (see comments in
 	 * make_subplan).
 	 */
-	subselect = (Query *) copyObject(subselect);
+	subselect = copyObject(subselect);
 
 	/*
 	 * See if the subquery can be simplified based on the knowledge that it's
@@ -1562,7 +1570,7 @@ simplify_EXISTS_query(PlannerInfo *root, Query *query)
 {
 	/*
 	 * We don't try to simplify at all if the query uses set operations,
-	 * aggregates, grouping sets, modifying CTEs, HAVING, OFFSET, or FOR
+	 * aggregates, grouping sets, SRFs, modifying CTEs, HAVING, OFFSET, or FOR
 	 * UPDATE/SHARE; none of these seem likely in normal usage and their
 	 * possible effects are complex.  (Note: we could ignore an "OFFSET 0"
 	 * clause, but that traditionally is used as an optimization fence, so we
@@ -1573,6 +1581,7 @@ simplify_EXISTS_query(PlannerInfo *root, Query *query)
 		query->hasAggs ||
 		query->groupingSets ||
 		query->hasWindowFuncs ||
+		query->hasTargetSRFs ||
 		query->hasModifyingCTE ||
 		query->havingQual ||
 		query->limitOffset ||
@@ -1612,13 +1621,6 @@ simplify_EXISTS_query(PlannerInfo *root, Query *query)
 		/* Whether or not the targetlist is safe, we can drop the LIMIT. */
 		query->limitCount = NULL;
 	}
-
-	/*
-	 * Mustn't throw away the targetlist if it contains set-returning
-	 * functions; those could affect whether zero rows are returned!
-	 */
-	if (expression_returns_set((Node *) query->targetList))
-		return false;
 
 	/*
 	 * Otherwise, we can throw away the targetlist, as well as any GROUP,
@@ -1914,7 +1916,7 @@ replace_correlation_vars_mutator(Node *node, PlannerInfo *root)
 	{
 		if (((PlaceHolderVar *) node)->phlevelsup > 0)
 			return (Node *) replace_outer_placeholdervar(root,
-													(PlaceHolderVar *) node);
+														 (PlaceHolderVar *) node);
 	}
 	if (IsA(node, Aggref))
 	{
@@ -2216,11 +2218,14 @@ void
 SS_finalize_plan(PlannerInfo *root, Plan *plan)
 {
 	/* No setup needed, just recurse through plan tree. */
-	(void) finalize_plan(root, plan, root->outer_params, NULL);
+	(void) finalize_plan(root, plan, -1, root->outer_params, NULL);
 }
 
 /*
  * Recursive processing of all nodes in the plan tree
+ *
+ * gather_param is the rescan_param of an ancestral Gather/GatherMerge,
+ * or -1 if there is none.
  *
  * valid_params is the set of param IDs supplied by outer plan levels
  * that are valid to reference in this plan node or its children.
@@ -2248,7 +2253,9 @@ SS_finalize_plan(PlannerInfo *root, Plan *plan)
  * can be handled more cleanly.
  */
 static Bitmapset *
-finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
+finalize_plan(PlannerInfo *root, Plan *plan,
+			  int gather_param,
+			  Bitmapset *valid_params,
 			  Bitmapset *scan_params)
 {
 	finalize_primnode_context context;
@@ -2300,6 +2307,18 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 	/* Find params in targetlist and qual */
 	finalize_primnode((Node *) plan->targetlist, &context);
 	finalize_primnode((Node *) plan->qual, &context);
+
+	/*
+	 * If it's a parallel-aware scan node, mark it as dependent on the parent
+	 * Gather/GatherMerge's rescan Param.
+	 */
+	if (plan->parallel_aware)
+	{
+		if (gather_param < 0)
+			elog(ERROR, "parallel-aware plan node is not below a Gather");
+		context.paramids =
+			bms_add_member(context.paramids, gather_param);
+	}
 
 	/* Check additional node-type-specific fields */
 	switch (nodeTag(plan))
@@ -2419,6 +2438,12 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 			}
 			break;
 
+		case T_TableFuncScan:
+			finalize_primnode((Node *) ((TableFuncScan *) plan)->tablefunc,
+							  &context);
+			context.paramids = bms_add_members(context.paramids, scan_params);
+			break;
+
 		case T_ValuesScan:
 			finalize_primnode((Node *) ((ValuesScan *) plan)->values_lists,
 							  &context);
@@ -2468,6 +2493,10 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 			context.paramids = bms_add_members(context.paramids, scan_params);
 			break;
 
+		case T_NamedTuplestoreScan:
+			context.paramids = bms_add_members(context.paramids, scan_params);
+			break;
+
 		case T_ForeignScan:
 			{
 				ForeignScan *fscan = (ForeignScan *) plan;
@@ -2501,6 +2530,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 						bms_add_members(context.paramids,
 										finalize_plan(root,
 													  (Plan *) lfirst(lc),
+													  gather_param,
 													  valid_params,
 													  scan_params));
 				}
@@ -2531,6 +2561,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 						bms_add_members(context.paramids,
 										finalize_plan(root,
 													  (Plan *) lfirst(l),
+													  gather_param,
 													  valid_params,
 													  scan_params));
 				}
@@ -2547,6 +2578,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 						bms_add_members(context.paramids,
 										finalize_plan(root,
 													  (Plan *) lfirst(l),
+													  gather_param,
 													  valid_params,
 													  scan_params));
 				}
@@ -2563,6 +2595,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 						bms_add_members(context.paramids,
 										finalize_plan(root,
 													  (Plan *) lfirst(l),
+													  gather_param,
 													  valid_params,
 													  scan_params));
 				}
@@ -2579,6 +2612,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 						bms_add_members(context.paramids,
 										finalize_plan(root,
 													  (Plan *) lfirst(l),
+													  gather_param,
 													  valid_params,
 													  scan_params));
 				}
@@ -2595,6 +2629,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 						bms_add_members(context.paramids,
 										finalize_plan(root,
 													  (Plan *) lfirst(l),
+													  gather_param,
 													  valid_params,
 													  scan_params));
 				}
@@ -2687,13 +2722,54 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 							  &context);
 			break;
 
+		case T_Gather:
+			/* child nodes are allowed to reference rescan_param, if any */
+			locally_added_param = ((Gather *) plan)->rescan_param;
+			if (locally_added_param >= 0)
+			{
+				valid_params = bms_add_member(bms_copy(valid_params),
+											  locally_added_param);
+
+				/*
+				 * We currently don't support nested Gathers.  The issue so
+				 * far as this function is concerned would be how to identify
+				 * which child nodes depend on which Gather.
+				 */
+				Assert(gather_param < 0);
+				/* Pass down rescan_param to child parallel-aware nodes */
+				gather_param = locally_added_param;
+			}
+			/* rescan_param does *not* get added to scan_params */
+			break;
+
+		case T_GatherMerge:
+			/* child nodes are allowed to reference rescan_param, if any */
+			locally_added_param = ((GatherMerge *) plan)->rescan_param;
+			if (locally_added_param >= 0)
+			{
+				valid_params = bms_add_member(bms_copy(valid_params),
+											  locally_added_param);
+
+				/*
+				 * We currently don't support nested Gathers.  The issue so
+				 * far as this function is concerned would be how to identify
+				 * which child nodes depend on which Gather.
+				 */
+				Assert(gather_param < 0);
+				/* Pass down rescan_param to child parallel-aware nodes */
+				gather_param = locally_added_param;
+			}
+			/* rescan_param does *not* get added to scan_params */
+			break;
+
+		case T_ProjectSet:
 		case T_Hash:
 		case T_Material:
 		case T_Sort:
 		case T_Unique:
-		case T_Gather:
 		case T_SetOp:
 		case T_Group:
+			/* no node-type-specific fields need fixing */
 			break;
 
 		case T_ModifyGraph:
@@ -2714,6 +2790,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 	/* Process left and right child plans, if any */
 	child_params = finalize_plan(root,
 								 plan->lefttree,
+								 gather_param,
 								 valid_params,
 								 scan_params);
 	context.paramids = bms_add_members(context.paramids, child_params);
@@ -2723,6 +2800,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 		/* right child can reference nestloop_params as well as valid_params */
 		child_params = finalize_plan(root,
 									 plan->righttree,
+									 gather_param,
 									 bms_union(nestloop_params, valid_params),
 									 scan_params);
 		/* ... and they don't count as parameters used at my level */
@@ -2734,6 +2812,7 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 		/* easy case */
 		child_params = finalize_plan(root,
 									 plan->righttree,
+									 gather_param,
 									 valid_params,
 									 scan_params);
 	}

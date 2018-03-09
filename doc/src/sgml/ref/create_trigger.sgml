@@ -8,6 +8,11 @@ PostgreSQL documentation
   <primary>CREATE TRIGGER</primary>
  </indexterm>
 
+ <indexterm>
+  <primary>transition tables</primary>
+  <seealso>ephemeral named relation</seealso>
+ </indexterm>
+
  <refmeta>
   <refentrytitle>CREATE TRIGGER</refentrytitle>
   <manvolnum>7</manvolnum>
@@ -25,6 +30,7 @@ CREATE [ CONSTRAINT ] TRIGGER <replaceable class="PARAMETER">name</replaceable> 
     ON <replaceable class="PARAMETER">table_name</replaceable>
     [ FROM <replaceable class="parameter">referenced_table_name</replaceable> ]
     [ NOT DEFERRABLE | [ DEFERRABLE ] [ INITIALLY IMMEDIATE | INITIALLY DEFERRED ] ]
+    [ REFERENCING { { OLD | NEW } TABLE [ AS ] <replaceable class="PARAMETER">transition_relation_name</replaceable> } [ ... ] ]
     [ FOR [ EACH ] { ROW | STATEMENT } ]
     [ WHEN ( <replaceable class="parameter">condition</replaceable> ) ]
     EXECUTE PROCEDURE <replaceable class="PARAMETER">function_name</replaceable> ( <replaceable class="PARAMETER">arguments</replaceable> )
@@ -46,7 +52,7 @@ CREATE [ CONSTRAINT ] TRIGGER <replaceable class="PARAMETER">name</replaceable> 
    trigger will be associated with the specified table, view, or foreign table
    and will execute the specified
    function <replaceable class="parameter">function_name</replaceable> when
-   certain events occur.
+   certain operations are performed on that table.
   </para>
 
   <para>
@@ -76,10 +82,7 @@ CREATE [ CONSTRAINT ] TRIGGER <replaceable class="PARAMETER">name</replaceable> 
    executes once for any given operation, regardless of how many rows
    it modifies (in particular, an operation that modifies zero rows
    will still result in the execution of any applicable <literal>FOR
-   EACH STATEMENT</literal> triggers).  Note that with an
-   <command>INSERT</command> with an <literal>ON CONFLICT DO UPDATE</>
-   clause, both <command>INSERT</command> and
-   <command>UPDATE</command> statement level trigger will be fired.
+   EACH STATEMENT</literal> triggers).
   </para>
 
   <para>
@@ -168,7 +171,8 @@ CREATE [ CONSTRAINT ] TRIGGER <replaceable class="PARAMETER">name</replaceable> 
    <firstterm>constraint trigger</>.  This is the same as a regular trigger
    except that the timing of the trigger firing can be adjusted using
    <xref linkend="SQL-SET-CONSTRAINTS">.
-   Constraint triggers must be <literal>AFTER ROW</> triggers on tables.  They
+   Constraint triggers must be <literal>AFTER ROW</> triggers on plain
+   tables (not foreign tables).  They
    can be fired either at the end of the statement causing the triggering
    event, or at the end of the containing transaction; in the latter case they
    are said to be <firstterm>deferred</>.  A pending deferred-trigger firing
@@ -178,9 +182,29 @@ CREATE [ CONSTRAINT ] TRIGGER <replaceable class="PARAMETER">name</replaceable> 
   </para>
 
   <para>
+   The <literal>REFERENCING</> option enables collection
+   of <firstterm>transition relations</>, which are row sets that include all
+   of the rows inserted, deleted, or modified by the current SQL statement.
+   This feature lets the trigger see a global view of what the statement did,
+   not just one row at a time.  This option is only allowed for
+   an <literal>AFTER</> trigger that is not a constraint trigger; also, if
+   the trigger is an <literal>UPDATE</> trigger, it must not specify
+   a <replaceable class="parameter">column_name</replaceable> list.
+   <literal>OLD TABLE</> may only be specified once, and only for a trigger
+   that can fire on <literal>UPDATE</> or <literal>DELETE</>; it creates a
+   transition relation containing the <firstterm>before-images</> of all rows
+   updated or deleted by the statement.
+   Similarly, <literal>NEW TABLE</> may only be specified once, and only for
+   a trigger that can fire on <literal>UPDATE</> or <literal>INSERT</>;
+   it creates a transition relation containing the <firstterm>after-images</>
+   of all rows updated or inserted by the statement.
+  </para>
+
+  <para>
    <command>SELECT</command> does not modify any rows so you cannot
-   create <command>SELECT</command> triggers. Rules and views are more
-   appropriate in such cases.
+   create <command>SELECT</command> triggers.  Rules and views may provide
+   workable solutions to problems that seem to need <command>SELECT</command>
+   triggers.
   </para>
 
   <para>
@@ -226,7 +250,8 @@ CREATE [ CONSTRAINT ] TRIGGER <replaceable class="PARAMETER">name</replaceable> 
       One of <literal>INSERT</literal>, <literal>UPDATE</literal>,
       <literal>DELETE</literal>, or <literal>TRUNCATE</literal>;
       this specifies the event that will fire the trigger. Multiple
-      events can be specified using <literal>OR</literal>.
+      events can be specified using <literal>OR</literal>, except when
+      transition relations are requested.
      </para>
 
      <para>
@@ -239,7 +264,10 @@ UPDATE OF <replaceable>column_name1</replaceable> [, <replaceable>column_name2</
       is mentioned as a target of the <command>UPDATE</> command.
      </para>
 
-     <para><literal>INSTEAD OF UPDATE</> events do not support lists of columns.
+     <para>
+      <literal>INSTEAD OF UPDATE</> events do not allow a list of columns.
+      A column list cannot be specified when requesting transition relations,
+      either.
      </para>
     </listitem>
    </varlistentry>
@@ -277,6 +305,39 @@ UPDATE OF <replaceable>column_name1</replaceable> [, <replaceable>column_name2</
       See the <xref linkend="SQL-CREATETABLE"> documentation for details of
       these constraint options.  This can only be specified for constraint
       triggers.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>REFERENCING</literal></term>
+    <listitem>
+     <para>
+      This keyword immediately precedes the declaration of one or two
+      relation names that provide access to the transition relations of the
+      triggering statement.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>OLD TABLE</literal></term>
+    <term><literal>NEW TABLE</literal></term>
+    <listitem>
+     <para>
+      This clause indicates whether the following relation name is for the
+      before-image transition relation or the after-image transition
+      relation.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="PARAMETER">transition_relation_name</replaceable></term>
+    <listitem>
+     <para>
+      The (unqualified) name to be used within the trigger for this
+      transition relation.
      </para>
     </listitem>
    </varlistentry>
@@ -410,6 +471,50 @@ UPDATE OF <replaceable>column_name1</replaceable> [, <replaceable>column_name2</
   </para>
 
   <para>
+   In some cases it is possible for a single SQL command to fire more than
+   one kind of trigger.  For instance an <command>INSERT</command> with
+   an <literal>ON CONFLICT DO UPDATE</> clause may cause both insert and
+   update operations, so it will fire both kinds of triggers as needed.
+   The transition relations supplied to triggers are
+   specific to their event type; thus an <command>INSERT</command> trigger
+   will see only the inserted rows, while an <command>UPDATE</command>
+   trigger will see only the updated rows.
+  </para>
+
+  <para>
+   Row updates or deletions caused by foreign-key enforcement actions, such
+   as <literal>ON UPDATE CASCADE</> or <literal>ON DELETE SET NULL</>, are
+   treated as part of the SQL command that caused them (note that such
+   actions are never deferred).  Relevant triggers on the affected table will
+   be fired, so that this provides another way in which a SQL command might
+   fire triggers not directly matching its type.  In simple cases, triggers
+   that request transition relations will see all changes caused in their
+   table by a single original SQL command as a single transition relation.
+   However, there are cases in which the presence of an <literal>AFTER ROW</>
+   trigger that requests transition relations will cause the foreign-key
+   enforcement actions triggered by a single SQL command to be split into
+   multiple steps, each with its own transition relation(s).  In such cases,
+   any statement-level triggers that are present will be fired once per
+   creation of a transition relation set, ensuring that the triggers see
+   each affected row in a transition relation once and only once.
+  </para>
+
+  <para>
+   Modifying a partitioned table or a table with inheritance children fires
+   statement-level triggers attached to the explicitly named table, but not
+   statement-level triggers for its partitions or child tables.  In contrast,
+   row-level triggers are fired on the rows in affected partitions or
+   child tables, even if they are not explicitly named in the query.
+   If a statement-level trigger has been defined with transition relations
+   named by a <literal>REFERENCING</literal> clause, then before and after
+   images of rows are visible from all affected partitions or child tables.
+   In the case of inheritance children, the row images include only columns
+   that are present in the table that the trigger is attached to.  Currently,
+   row-level triggers with transition relations cannot be defined on
+   partitions or inheritance child tables.
+  </para>
+
+  <para>
    In <productname>PostgreSQL</productname> versions before 7.3, it was
    necessary to declare trigger functions as returning the placeholder
    type <type>opaque</>, rather than <type>trigger</>.  To support loading
@@ -474,6 +579,30 @@ CREATE TRIGGER view_insert
     FOR EACH ROW
     EXECUTE PROCEDURE view_insert_row();
 </programlisting>
+
+   Execute the function <function>check_transfer_balances_to_zero</> for each
+   statement to confirm that the <literal>transfer</> rows offset to a net of
+   zero:
+
+<programlisting>
+CREATE TRIGGER transfer_insert
+    AFTER INSERT ON transfer
+    REFERENCING NEW TABLE AS inserted
+    FOR EACH STATEMENT
+    EXECUTE PROCEDURE check_transfer_balances_to_zero();
+</programlisting>
+
+   Execute the function <function>check_matching_pairs</> for each row to
+   confirm that changes are made to matching pairs at the same time (by the
+   same statement):
+
+<programlisting>
+CREATE TRIGGER paired_items_update
+    AFTER UPDATE ON paired_items
+    REFERENCING NEW TABLE AS newtab OLD TABLE AS oldtab
+    FOR EACH ROW
+    EXECUTE PROCEDURE check_matching_pairs();
+</programlisting>
   </para>
 
   <para>
@@ -502,29 +631,30 @@ CREATE TRIGGER view_insert
    <itemizedlist>
     <listitem>
      <para>
-      SQL allows you to define aliases for the <quote>old</quote>
-      and <quote>new</quote> rows or tables for use in the definition
-      of the triggered action (e.g., <literal>CREATE TRIGGER ... ON
-      tablename REFERENCING OLD ROW AS somename NEW ROW AS othername
-      ...</literal>).  Since <productname>PostgreSQL</productname>
-      allows trigger procedures to be written in any number of
-      user-defined languages, access to the data is handled in a
-      language-specific way.
+      While transition table names for <literal>AFTER</> triggers are
+      specified using the <literal>REFERENCING</> clause in the standard way,
+      the row variables used in <literal>FOR EACH ROW</> triggers may not be
+      specified in a <literal>REFERENCING</> clause.  They are available in a
+      manner that is dependent on the language in which the trigger function
+      is written, but is fixed for any one language.  Some languages
+      effectively behave as though there is a <literal>REFERENCING</> clause
+      containing <literal>OLD ROW AS OLD NEW ROW AS NEW</>.
      </para>
     </listitem>
 
     <listitem>
      <para>
-      <productname>PostgreSQL</productname> does not allow the old and new
-      tables to be referenced in statement-level triggers, i.e., the tables
-      that contain all the old and/or new rows, which are referred to by the
-      <literal>OLD TABLE</literal> and <literal>NEW TABLE</literal> clauses in
-      the <acronym>SQL</> standard.
+      The standard allows transition tables to be used with
+      column-specific <literal>UPDATE</> triggers, but then the set of rows
+      that should be visible in the transition tables depends on the
+      trigger's column list.  This is not currently implemented by
+      <productname>PostgreSQL</productname>.
      </para>
     </listitem>
 
     <listitem>
-     <para><productname>PostgreSQL</productname> only allows the execution
+     <para>
+      <productname>PostgreSQL</productname> only allows the execution
       of a user-defined function for the triggered action.  The standard
       allows the execution of a number of other SQL commands, such as
       <command>CREATE TABLE</command>, as the triggered action.  This

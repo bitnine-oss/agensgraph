@@ -3,7 +3,7 @@
  *
  *	server checks and output routines
  *
- *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/check.c
  */
 
@@ -26,7 +26,6 @@ static void check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster);
 static void check_for_reg_data_type_usage(ClusterInfo *cluster);
 static void check_for_jsonb_9_4_usage(ClusterInfo *cluster);
 static void check_for_pg_role_prefix(ClusterInfo *cluster);
-static void get_bin_version(ClusterInfo *cluster);
 static char *get_canonical_locale_name(int category, const char *locale);
 
 
@@ -63,13 +62,15 @@ output_check_banner(bool live_check)
 {
 	if (user_opts.check && live_check)
 	{
-		pg_log(PG_REPORT, "Performing Consistency Checks on Old Live Server\n");
-		pg_log(PG_REPORT, "------------------------------------------------\n");
+		pg_log(PG_REPORT,
+			   "Performing Consistency Checks on Old Live Server\n"
+			   "------------------------------------------------\n");
 	}
 	else
 	{
-		pg_log(PG_REPORT, "Performing Consistency Checks\n");
-		pg_log(PG_REPORT, "-----------------------------\n");
+		pg_log(PG_REPORT,
+			   "Performing Consistency Checks\n"
+			   "-----------------------------\n");
 	}
 }
 
@@ -98,6 +99,17 @@ check_and_dump_old_cluster(bool live_check)
 	check_for_prepared_transactions(&old_cluster);
 	check_for_reg_data_type_usage(&old_cluster);
 	check_for_isn_and_int8_passing_mismatch(&old_cluster);
+
+	/*
+	 * Pre-PG 10 allowed tables with 'unknown' type columns and non WAL logged
+	 * hash indexes
+	 */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 906)
+	{
+		old_9_6_check_for_unknown_data_type_usage(&old_cluster);
+		if (user_opts.check)
+			old_9_6_invalidate_hash_indexes(&old_cluster, true);
+	}
 
 	/* 9.5 and below should not have roles starting with pg_ */
 	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 905)
@@ -164,15 +176,25 @@ report_clusters_compatible(void)
 
 
 void
-issue_warnings(void)
+issue_warnings_and_set_wal_level(void)
 {
+	/*
+	 * We unconditionally start/stop the new server because pg_resetwal -o set
+	 * wal_level to 'minimum'.  If the user is upgrading standby servers using
+	 * the rsync instructions, they will need pg_upgrade to write its final
+	 * WAL record showing wal_level as 'replica'.
+	 */
+	start_postmaster(&new_cluster, true);
+
 	/* Create dummy large object permissions for old < PG 9.0? */
 	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 804)
-	{
-		start_postmaster(&new_cluster, true);
 		new_9_0_populate_pg_largeobject_metadata(&new_cluster, false);
-		stop_postmaster(false);
-	}
+
+	/* Reindex hash indexes for old < 10.0 */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 906)
+		old_9_6_invalidate_hash_indexes(&new_cluster, false);
+
+	stop_postmaster(false);
 }
 
 
@@ -189,18 +211,18 @@ output_completion_banner(char *analyze_script_file_name,
 	else
 		pg_log(PG_REPORT,
 			   "Optimizer statistics and free space information are not transferred\n"
-		"by pg_upgrade so, once you start the new server, consider running:\n"
+			   "by pg_upgrade so, once you start the new server, consider running:\n"
 			   "    %s\n\n", analyze_script_file_name);
 
 
 	if (deletion_script_file_name)
 		pg_log(PG_REPORT,
-			"Running this script will delete the old cluster's data files:\n"
+			   "Running this script will delete the old cluster's data files:\n"
 			   "    %s\n",
 			   deletion_script_file_name);
 	else
 		pg_log(PG_REPORT,
-		 "Could not create a script to delete the old cluster's data files\n"
+			   "Could not create a script to delete the old cluster's data files\n"
 			   "because user-defined tablespaces or the new cluster's data directory\n"
 			   "exist in the old cluster directory.  The old cluster's contents must\n"
 			   "be deleted manually.\n");
@@ -212,9 +234,9 @@ check_cluster_versions(void)
 {
 	prep_status("Checking cluster versions");
 
-	/* get old and new cluster versions */
-	old_cluster.major_version = get_major_server_version(&old_cluster);
-	new_cluster.major_version = get_major_server_version(&new_cluster);
+	/* cluster versions should already have been obtained */
+	Assert(old_cluster.major_version != 0);
+	Assert(new_cluster.major_version != 0);
 
 	/*
 	 * We allow upgrades from/to the same major version for alpha/beta
@@ -237,10 +259,6 @@ check_cluster_versions(void)
 	if (old_cluster.major_version > new_cluster.major_version)
 		pg_fatal("This utility cannot be used to downgrade to older major PostgreSQL versions.\n");
 
-	/* get old and new binary versions */
-	get_bin_version(&old_cluster);
-	get_bin_version(&new_cluster);
-
 	/* Ensure binaries match the designated data directories */
 	if (GET_MAJOR_VERSION(old_cluster.major_version) !=
 		GET_MAJOR_VERSION(old_cluster.bin_version))
@@ -260,12 +278,6 @@ check_cluster_compatibility(bool live_check)
 	get_control_data(&old_cluster, live_check);
 	get_control_data(&new_cluster, false);
 	check_control_data(&old_cluster.controldata, &new_cluster.controldata);
-
-	/* Is it 9.0 but without tablespace directories? */
-	if (GET_MAJOR_VERSION(new_cluster.major_version) == 900 &&
-		new_cluster.controldata.cat_ver < TABLE_SPACE_SUBDIRS_CAT_VER)
-		pg_fatal("This utility can only upgrade to PostgreSQL version 9.0 after 2010-01-11\n"
-				 "because of backend API changes made during development.\n");
 
 	/* We read the real port number for PG >= 9.1 */
 	if (live_check && GET_MAJOR_VERSION(old_cluster.major_version) < 901 &&
@@ -723,7 +735,7 @@ check_proper_datallowconn(ClusterInfo *cluster)
 			 */
 			if (strcmp(datallowconn, "f") == 0)
 				pg_fatal("All non-template0 databases must allow connections, "
-					   "i.e. their pg_database.datallowconn must be true\n");
+						 "i.e. their pg_database.datallowconn must be true\n");
 		}
 	}
 
@@ -754,8 +766,12 @@ check_for_prepared_transactions(ClusterInfo *cluster)
 							"FROM pg_catalog.pg_prepared_xacts");
 
 	if (PQntuples(res) != 0)
-		pg_fatal("The %s cluster contains prepared transactions\n",
-				 CLUSTER_NAME(cluster));
+	{
+		if (cluster == &old_cluster)
+			pg_fatal("The source cluster contains prepared transactions\n");
+		else
+			pg_fatal("The target cluster contains prepared transactions\n");
+	}
 
 	PQclear(res);
 
@@ -843,8 +859,8 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 	{
 		pg_log(PG_REPORT, "fatal\n");
 		pg_fatal("Your installation contains \"contrib/isn\" functions which rely on the\n"
-		  "bigint data type.  Your old and new clusters pass bigint values\n"
-		"differently so this cluster cannot currently be upgraded.  You can\n"
+				 "bigint data type.  Your old and new clusters pass bigint values\n"
+				 "differently so this cluster cannot currently be upgraded.  You can\n"
 				 "manually upgrade databases that use \"contrib/isn\" facilities and remove\n"
 				 "\"contrib/isn\" from the old cluster and restart the upgrade.  A list of\n"
 				 "the problem functions is in the file:\n"
@@ -874,7 +890,7 @@ check_for_reg_data_type_usage(ClusterInfo *cluster)
 	bool		found = false;
 	char		output_path[MAXPGPATH];
 
-	prep_status("Checking for reg* system OID user data types");
+	prep_status("Checking for reg* data types in user tables");
 
 	snprintf(output_path, sizeof(output_path), "tables_using_reg.txt");
 
@@ -903,13 +919,13 @@ check_for_reg_data_type_usage(ClusterInfo *cluster)
 								"WHERE	c.oid = a.attrelid AND "
 								"		NOT a.attisdropped AND "
 								"		a.atttypid IN ( "
-		  "			'pg_catalog.regproc'::pg_catalog.regtype, "
+								"			'pg_catalog.regproc'::pg_catalog.regtype, "
 								"			'pg_catalog.regprocedure'::pg_catalog.regtype, "
-		  "			'pg_catalog.regoper'::pg_catalog.regtype, "
+								"			'pg_catalog.regoper'::pg_catalog.regtype, "
 								"			'pg_catalog.regoperator'::pg_catalog.regtype, "
 		/* regclass.oid is preserved, so 'regclass' is OK */
 		/* regtype.oid is preserved, so 'regtype' is OK */
-		"			'pg_catalog.regconfig'::pg_catalog.regtype, "
+								"			'pg_catalog.regconfig'::pg_catalog.regtype, "
 								"			'pg_catalog.regdictionary'::pg_catalog.regtype) AND "
 								"		c.relnamespace = n.oid AND "
 								"		n.nspname NOT IN ('pg_catalog', 'information_schema')");
@@ -947,8 +963,8 @@ check_for_reg_data_type_usage(ClusterInfo *cluster)
 	{
 		pg_log(PG_REPORT, "fatal\n");
 		pg_fatal("Your installation contains one of the reg* data types in user tables.\n"
-		 "These data types reference system OIDs that are not preserved by\n"
-		"pg_upgrade, so this cluster cannot currently be upgraded.  You can\n"
+				 "These data types reference system OIDs that are not preserved by\n"
+				 "pg_upgrade, so this cluster cannot currently be upgraded.  You can\n"
 				 "remove the problem tables and restart the upgrade.  A list of the problem\n"
 				 "columns is in the file:\n"
 				 "    %s\n\n", output_path);
@@ -971,7 +987,7 @@ check_for_jsonb_9_4_usage(ClusterInfo *cluster)
 	bool		found = false;
 	char		output_path[MAXPGPATH];
 
-	prep_status("Checking for JSONB user data types");
+	prep_status("Checking for incompatible \"jsonb\" data type");
 
 	snprintf(output_path, sizeof(output_path), "tables_using_jsonb.txt");
 
@@ -1002,7 +1018,7 @@ check_for_jsonb_9_4_usage(ClusterInfo *cluster)
 								"		a.atttypid = 'pg_catalog.jsonb'::pg_catalog.regtype AND "
 								"		c.relnamespace = n.oid AND "
 		/* exclude possible orphaned temp tables */
-								"  		n.nspname !~ '^pg_temp_' AND "
+								"		n.nspname !~ '^pg_temp_' AND "
 								"		n.nspname NOT IN ('pg_catalog', 'information_schema')");
 
 		ntups = PQntuples(res);
@@ -1037,8 +1053,8 @@ check_for_jsonb_9_4_usage(ClusterInfo *cluster)
 	if (found)
 	{
 		pg_log(PG_REPORT, "fatal\n");
-		pg_fatal("Your installation contains one of the JSONB data types in user tables.\n"
-				 "The internal format of JSONB changed during 9.4 beta so this cluster cannot currently\n"
+		pg_fatal("Your installation contains the \"jsonb\" data type in user tables.\n"
+				 "The internal format of \"jsonb\" changed during 9.4 beta so this cluster cannot currently\n"
 				 "be upgraded.  You can remove the problem tables and restart the upgrade.  A list\n"
 				 "of the problem columns is in the file:\n"
 				 "    %s\n\n", output_path);
@@ -1058,7 +1074,7 @@ check_for_pg_role_prefix(ClusterInfo *cluster)
 	PGresult   *res;
 	PGconn	   *conn = connectToServer(cluster, "template1");
 
-	prep_status("Checking for roles starting with 'pg_'");
+	prep_status("Checking for roles starting with \"pg_\"");
 
 	res = executeQueryOrDie(conn,
 							"SELECT * "
@@ -1066,42 +1082,18 @@ check_for_pg_role_prefix(ClusterInfo *cluster)
 							"WHERE rolname ~ '^pg_'");
 
 	if (PQntuples(res) != 0)
-		pg_fatal("The %s cluster contains roles starting with 'pg_'\n",
-				 CLUSTER_NAME(cluster));
+	{
+		if (cluster == &old_cluster)
+			pg_fatal("The source cluster contains roles starting with \"pg_\"\n");
+		else
+			pg_fatal("The target cluster contains roles starting with \"pg_\"\n");
+	}
 
 	PQclear(res);
 
 	PQfinish(conn);
 
 	check_ok();
-}
-
-static void
-get_bin_version(ClusterInfo *cluster)
-{
-	char		cmd[MAXPGPATH],
-				cmd_output[MAX_STRING];
-	FILE	   *output;
-	int			pre_dot,
-				post_dot;
-
-	snprintf(cmd, sizeof(cmd), "\"%s/pg_ctl\" --version", cluster->bindir);
-
-	if ((output = popen(cmd, "r")) == NULL ||
-		fgets(cmd_output, sizeof(cmd_output), output) == NULL)
-		pg_fatal("could not get pg_ctl version data using %s: %s\n",
-				 cmd, strerror(errno));
-
-	pclose(output);
-
-	/* Remove trailing newline */
-	if (strchr(cmd_output, '\n') != NULL)
-		*strchr(cmd_output, '\n') = '\0';
-
-	if (sscanf(cmd_output, "%*s %*s %d.%d", &pre_dot, &post_dot) != 2)
-		pg_fatal("could not get version from %s\n", cmd);
-
-	cluster->bin_version = (pre_dot * 100 + post_dot) * 100;
 }
 
 

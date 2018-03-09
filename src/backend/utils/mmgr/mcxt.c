@@ -9,7 +9,7 @@
  * context's MemoryContextMethods struct.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -389,55 +389,10 @@ MemoryContextAllowInCriticalSection(MemoryContext context, bool allow)
 Size
 GetMemoryChunkSpace(void *pointer)
 {
-	StandardChunkHeader *header;
+	MemoryContext context = GetMemoryChunkContext(pointer);
 
-	/*
-	 * Try to detect bogus pointers handed to us, poorly though we can.
-	 * Presumably, a pointer that isn't MAXALIGNED isn't pointing at an
-	 * allocated chunk.
-	 */
-	Assert(pointer != NULL);
-	Assert(pointer == (void *) MAXALIGN(pointer));
-
-	/*
-	 * OK, it's probably safe to look at the chunk header.
-	 */
-	header = (StandardChunkHeader *)
-		((char *) pointer - STANDARDCHUNKHEADERSIZE);
-
-	AssertArg(MemoryContextIsValid(header->context));
-
-	return (*header->context->methods->get_chunk_space) (header->context,
-														 pointer);
-}
-
-/*
- * GetMemoryChunkContext
- *		Given a currently-allocated chunk, determine the context
- *		it belongs to.
- */
-MemoryContext
-GetMemoryChunkContext(void *pointer)
-{
-	StandardChunkHeader *header;
-
-	/*
-	 * Try to detect bogus pointers handed to us, poorly though we can.
-	 * Presumably, a pointer that isn't MAXALIGNED isn't pointing at an
-	 * allocated chunk.
-	 */
-	Assert(pointer != NULL);
-	Assert(pointer == (void *) MAXALIGN(pointer));
-
-	/*
-	 * OK, it's probably safe to look at the chunk header.
-	 */
-	header = (StandardChunkHeader *)
-		((char *) pointer - STANDARDCHUNKHEADERSIZE);
-
-	AssertArg(MemoryContextIsValid(header->context));
-
-	return header->context;
+	return (context->methods->get_chunk_space) (context,
+												pointer);
 }
 
 /*
@@ -501,7 +456,7 @@ MemoryContextStatsDetail(MemoryContext context, int max_children)
 	MemoryContextStatsInternal(context, 0, true, max_children, &grand_totals);
 
 	fprintf(stderr,
-	"Grand total: %zu bytes in %zd blocks; %zu free (%zd chunks); %zu used\n",
+			"Grand total: %zu bytes in %zd blocks; %zu free (%zd chunks); %zu used\n",
 			grand_totals.totalspace, grand_totals.nblocks,
 			grand_totals.freespace, grand_totals.freechunks,
 			grand_totals.totalspace - grand_totals.freespace);
@@ -611,9 +566,13 @@ MemoryContextCheck(MemoryContext context)
 bool
 MemoryContextContains(MemoryContext context, void *pointer)
 {
-	StandardChunkHeader *header;
+	MemoryContext ptr_context;
 
 	/*
+	 * NB: Can't use GetMemoryChunkContext() here - that performs assertions
+	 * that aren't acceptable here since we might be passed memory not
+	 * allocated by any memory context.
+	 *
 	 * Try to detect bogus pointers handed to us, poorly though we can.
 	 * Presumably, a pointer that isn't MAXALIGNED isn't pointing at an
 	 * allocated chunk.
@@ -622,12 +581,11 @@ MemoryContextContains(MemoryContext context, void *pointer)
 		return false;
 
 	/*
-	 * OK, it's probably safe to look at the chunk header.
+	 * OK, it's probably safe to look at the context.
 	 */
-	header = (StandardChunkHeader *)
-		((char *) pointer - STANDARDCHUNKHEADERSIZE);
+	ptr_context = *(MemoryContext *) (((char *) pointer) - sizeof(void *));
 
-	return header->context == context;
+	return ptr_context == context;
 }
 
 /*--------------------
@@ -991,23 +949,7 @@ palloc_extended(Size size, int flags)
 void
 pfree(void *pointer)
 {
-	MemoryContext context;
-
-	/*
-	 * Try to detect bogus pointers handed to us, poorly though we can.
-	 * Presumably, a pointer that isn't MAXALIGNED isn't pointing at an
-	 * allocated chunk.
-	 */
-	Assert(pointer != NULL);
-	Assert(pointer == (void *) MAXALIGN(pointer));
-
-	/*
-	 * OK, it's probably safe to look at the chunk header.
-	 */
-	context = ((StandardChunkHeader *)
-			   ((char *) pointer - STANDARDCHUNKHEADERSIZE))->context;
-
-	AssertArg(MemoryContextIsValid(context));
+	MemoryContext context = GetMemoryChunkContext(pointer);
 
 	(*context->methods->free_p) (context, pointer);
 	VALGRIND_MEMPOOL_FREE(context, pointer);
@@ -1020,27 +962,12 @@ pfree(void *pointer)
 void *
 repalloc(void *pointer, Size size)
 {
-	MemoryContext context;
+	MemoryContext context = GetMemoryChunkContext(pointer);
 	void	   *ret;
 
 	if (!AllocSizeIsValid(size))
 		elog(ERROR, "invalid memory alloc request size %zu", size);
 
-	/*
-	 * Try to detect bogus pointers handed to us, poorly though we can.
-	 * Presumably, a pointer that isn't MAXALIGNED isn't pointing at an
-	 * allocated chunk.
-	 */
-	Assert(pointer != NULL);
-	Assert(pointer == (void *) MAXALIGN(pointer));
-
-	/*
-	 * OK, it's probably safe to look at the chunk header.
-	 */
-	context = ((StandardChunkHeader *)
-			   ((char *) pointer - STANDARDCHUNKHEADERSIZE))->context;
-
-	AssertArg(MemoryContextIsValid(context));
 	AssertNotInCriticalSection(context);
 
 	/* isReset must be false already */
@@ -1103,27 +1030,12 @@ MemoryContextAllocHuge(MemoryContext context, Size size)
 void *
 repalloc_huge(void *pointer, Size size)
 {
-	MemoryContext context;
+	MemoryContext context = GetMemoryChunkContext(pointer);
 	void	   *ret;
 
 	if (!AllocHugeSizeIsValid(size))
 		elog(ERROR, "invalid memory alloc request size %zu", size);
 
-	/*
-	 * Try to detect bogus pointers handed to us, poorly though we can.
-	 * Presumably, a pointer that isn't MAXALIGNED isn't pointing at an
-	 * allocated chunk.
-	 */
-	Assert(pointer != NULL);
-	Assert(pointer == (void *) MAXALIGN(pointer));
-
-	/*
-	 * OK, it's probably safe to look at the chunk header.
-	 */
-	context = ((StandardChunkHeader *)
-			   ((char *) pointer - STANDARDCHUNKHEADERSIZE))->context;
-
-	AssertArg(MemoryContextIsValid(context));
 	AssertNotInCriticalSection(context);
 
 	/* isReset must be false already */
@@ -1180,4 +1092,18 @@ pnstrdup(const char *in, Size len)
 	memcpy(out, in, len);
 	out[len] = '\0';
 	return out;
+}
+
+/*
+ * Make copy of string with all trailing newline characters removed.
+ */
+char *
+pchomp(const char *in)
+{
+	size_t		n;
+
+	n = strlen(in);
+	while (n > 0 && in[n - 1] == '\n')
+		n--;
+	return pnstrdup(in, n);
 }

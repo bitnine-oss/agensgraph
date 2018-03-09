@@ -2,12 +2,14 @@
  * ginfuncs.c
  *		Functions to investigate the content of GIN indexes
  *
- * Copyright (c) 2014-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		contrib/pageinspect/ginfuncs.c
  */
 #include "postgres.h"
+
+#include "pageinspect.h"
 
 #include "access/gin.h"
 #include "access/gin_private.h"
@@ -27,26 +29,6 @@
 PG_FUNCTION_INFO_V1(gin_metapage_info);
 PG_FUNCTION_INFO_V1(gin_page_opaque_info);
 PG_FUNCTION_INFO_V1(gin_leafpage_items);
-
-
-static Page
-get_page_from_raw(bytea *raw_page)
-{
-	int			raw_page_size;
-	Page		page;
-
-	raw_page_size = VARSIZE(raw_page) - VARHDRSZ;
-	if (raw_page_size < BLCKSZ)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("input page too small (%d bytes)", raw_page_size)));
-
-	/* make a copy so that the page is properly aligned for struct access */
-	page = palloc(raw_page_size);
-	memcpy(page, VARDATA(raw_page), raw_page_size);
-
-	return page;
-}
 
 
 Datum
@@ -214,7 +196,7 @@ gin_leafpage_items(PG_FUNCTION_ARGS)
 		if (opaq->flags != (GIN_DATA | GIN_LEAF | GIN_COMPRESSED))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("input page is not a compressed GIN data leaf page"),
+					 errmsg("input page is not a compressed GIN data leaf page"),
 					 errdetail("Flags %04X, expected %04X",
 							   opaq->flags,
 							   (GIN_DATA | GIN_LEAF | GIN_COMPRESSED))));

@@ -2,7 +2,7 @@
  *
  * rewriteManip.c
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1000,7 +1000,7 @@ AddQual(Query *parsetree, Node *qual)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			  errmsg("conditional utility statements are not implemented")));
+					 errmsg("conditional utility statements are not implemented")));
 	}
 
 	if (parsetree->setOperations != NULL)
@@ -1166,7 +1166,7 @@ replace_rte_variables_mutator(Node *node,
 			 */
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				   errmsg("WHERE CURRENT OF on a view is not implemented")));
+					 errmsg("WHERE CURRENT OF on a view is not implemented")));
 		}
 		/* otherwise fall through to copy the expr normally */
 	}
@@ -1203,14 +1203,12 @@ replace_rte_variables_mutator(Node *node,
  * appear in the expression.
  *
  * If the expression tree contains a whole-row Var for the target RTE,
- * the Var is not changed but *found_whole_row is returned as TRUE.
- * For most callers this is an error condition, but we leave it to the caller
- * to report the error so that useful context can be provided.  (In some
- * usages it would be appropriate to modify the Var's vartype and insert a
- * ConvertRowtypeExpr node to map back to the original vartype.  We might
- * someday extend this function's API to support that.  For now, the only
- * concession to that future need is that this function is a tree mutator
- * not just a walker.)
+ * *found_whole_row is returned as TRUE.  In addition, if to_rowtype is
+ * not InvalidOid, we modify the Var's vartype and insert a ConvertRowTypeExpr
+ * to map back to the orignal rowtype.  Callers that don't provide to_rowtype
+ * should report an error if *found_row_type is true; we don't do that here
+ * because we don't know exactly what wording for the error message would
+ * be most appropriate.  The caller will be aware of the context.
  *
  * This could be built using replace_rte_variables and a callback function,
  * but since we don't ever need to insert sublinks, replace_rte_variables is
@@ -1223,6 +1221,8 @@ typedef struct
 	int			sublevels_up;	/* (current) nesting depth */
 	const AttrNumber *attno_map;	/* map array for user attnos */
 	int			map_length;		/* number of entries in attno_map[] */
+	/* Target type when converting whole-row vars */
+	Oid			to_rowtype;
 	bool	   *found_whole_row;	/* output flag */
 } map_variable_attnos_context;
 
@@ -1257,6 +1257,34 @@ map_variable_attnos_mutator(Node *node,
 			{
 				/* whole-row variable, warn caller */
 				*(context->found_whole_row) = true;
+
+				/* If the callers expects us to convert the same, do so. */
+				if (OidIsValid(context->to_rowtype))
+				{
+					/* No support for RECORDOID. */
+					Assert(var->vartype != RECORDOID);
+
+					/* Don't convert unless necessary. */
+					if (context->to_rowtype != var->vartype)
+					{
+						ConvertRowtypeExpr *r;
+
+						/* Var itself is converted to the requested type. */
+						newvar->vartype = context->to_rowtype;
+
+						/*
+						 * And a conversion node on top to convert back to the
+						 * original type.
+						 */
+						r = makeNode(ConvertRowtypeExpr);
+						r->arg = (Expr *) newvar;
+						r->resulttype = var->vartype;
+						r->convertformat = COERCE_IMPLICIT_CAST;
+						r->location = -1;
+
+						return (Node *) r;
+					}
+				}
 			}
 			return (Node *) newvar;
 		}
@@ -1283,7 +1311,7 @@ Node *
 map_variable_attnos(Node *node,
 					int target_varno, int sublevels_up,
 					const AttrNumber *attno_map, int map_length,
-					bool *found_whole_row)
+					Oid to_rowtype, bool *found_whole_row)
 {
 	map_variable_attnos_context context;
 
@@ -1291,6 +1319,7 @@ map_variable_attnos(Node *node,
 	context.sublevels_up = sublevels_up;
 	context.attno_map = attno_map;
 	context.map_length = map_length;
+	context.to_rowtype = to_rowtype;
 	context.found_whole_row = found_whole_row;
 
 	*found_whole_row = false;
@@ -1397,7 +1426,7 @@ ReplaceVarsFromTargetList_callback(Var *var,
 				 */
 				return coerce_to_domain((Node *) makeNullConst(var->vartype,
 															   var->vartypmod,
-															 var->varcollid),
+															   var->varcollid),
 										InvalidOid, -1,
 										var->vartype,
 										COERCE_IMPLICIT_CAST,
@@ -1412,11 +1441,11 @@ ReplaceVarsFromTargetList_callback(Var *var,
 	else
 	{
 		/* Make a copy of the tlist item to return */
-		Node	   *newnode = copyObject(tle->expr);
+		Expr	   *newnode = copyObject(tle->expr);
 
 		/* Must adjust varlevelsup if tlist item is from higher query */
 		if (var->varlevelsup > 0)
-			IncrementVarSublevelsUp(newnode, var->varlevelsup, 0);
+			IncrementVarSublevelsUp((Node *) newnode, var->varlevelsup, 0);
 
 		/*
 		 * Check to see if the tlist item contains a PARAM_MULTIEXPR Param,
@@ -1428,12 +1457,12 @@ ReplaceVarsFromTargetList_callback(Var *var,
 		 * create semantic oddities that users of rules would probably prefer
 		 * not to cope with.  So treat it as an unimplemented feature.
 		 */
-		if (contains_multiexpr_param(newnode, NULL))
+		if (contains_multiexpr_param((Node *) newnode, NULL))
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("NEW variables in ON UPDATE rules cannot reference columns that are part of a multiple assignment in the subject UPDATE command")));
 
-		return newnode;
+		return (Node *) newnode;
 	}
 }
 

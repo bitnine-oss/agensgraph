@@ -32,7 +32,7 @@
  * input group.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -47,6 +47,7 @@
 #include "access/htup_details.h"
 #include "executor/executor.h"
 #include "executor/nodeSetOp.h"
+#include "miscadmin.h"
 #include "utils/memutils.h"
 
 
@@ -64,20 +65,7 @@ typedef struct SetOpStatePerGroupData
 {
 	long		numLeft;		/* number of left-input dups in group */
 	long		numRight;		/* number of right-input dups in group */
-} SetOpStatePerGroupData;
-
-/*
- * To implement hashed mode, we need a hashtable that stores a
- * representative tuple and the duplicate counts for each distinct set
- * of grouping columns.  We compute the hash key from the grouping columns.
- */
-typedef struct SetOpHashEntryData *SetOpHashEntry;
-
-typedef struct SetOpHashEntryData
-{
-	TupleHashEntryData shared;	/* common header for hash table entries */
-	SetOpStatePerGroupData pergroup;
-}	SetOpHashEntryData;
+}			SetOpStatePerGroupData;
 
 
 static TupleTableSlot *setop_retrieve_direct(SetOpState *setopstate);
@@ -141,9 +129,10 @@ build_hash_table(SetOpState *setopstate)
 												setopstate->eqfunctions,
 												setopstate->hashfunctions,
 												node->numGroups,
-												sizeof(SetOpHashEntryData),
+												0,
 												setopstate->tableContext,
-												setopstate->tempContext);
+												setopstate->tempContext,
+												false);
 }
 
 /*
@@ -191,11 +180,14 @@ set_output_count(SetOpState *setopstate, SetOpStatePerGroup pergroup)
  *		ExecSetOp
  * ----------------------------------------------------------------
  */
-TupleTableSlot *				/* return: a tuple or NULL */
-ExecSetOp(SetOpState *node)
+static TupleTableSlot *			/* return: a tuple or NULL */
+ExecSetOp(PlanState *pstate)
 {
+	SetOpState *node = castNode(SetOpState, pstate);
 	SetOp	   *plannode = (SetOp *) node->ps.plan;
 	TupleTableSlot *resultTupleSlot = node->ps.ps_ResultTupleSlot;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/*
 	 * If the previously-returned tuple needs to be returned more than once,
@@ -238,7 +230,7 @@ setop_retrieve_direct(SetOpState *setopstate)
 	 * get state info from node
 	 */
 	outerPlan = outerPlanState(setopstate);
-	pergroup = setopstate->pergroup;
+	pergroup = (SetOpStatePerGroup) setopstate->pergroup;
 	resultTupleSlot = setopstate->ps.ps_ResultTupleSlot;
 
 	/*
@@ -275,7 +267,7 @@ setop_retrieve_direct(SetOpState *setopstate)
 					   resultTupleSlot,
 					   InvalidBuffer,
 					   true);
-		setopstate->grp_firstTuple = NULL;		/* don't keep two pointers */
+		setopstate->grp_firstTuple = NULL;	/* don't keep two pointers */
 
 		/* Initialize working state for a new input tuple group */
 		initialize_counts(pergroup);
@@ -345,7 +337,7 @@ setop_fill_hash_table(SetOpState *setopstate)
 	SetOp	   *node = (SetOp *) setopstate->ps.plan;
 	PlanState  *outerPlan;
 	int			firstFlag;
-	bool in_first_rel PG_USED_FOR_ASSERTS_ONLY;
+	bool		in_first_rel PG_USED_FOR_ASSERTS_ONLY;
 
 	/*
 	 * get state info from node
@@ -367,7 +359,7 @@ setop_fill_hash_table(SetOpState *setopstate)
 	{
 		TupleTableSlot *outerslot;
 		int			flag;
-		SetOpHashEntry entry;
+		TupleHashEntryData *entry;
 		bool		isnew;
 
 		outerslot = ExecProcNode(outerPlan);
@@ -383,15 +375,20 @@ setop_fill_hash_table(SetOpState *setopstate)
 			Assert(in_first_rel);
 
 			/* Find or build hashtable entry for this tuple's group */
-			entry = (SetOpHashEntry)
-				LookupTupleHashEntry(setopstate->hashtable, outerslot, &isnew);
+			entry = LookupTupleHashEntry(setopstate->hashtable, outerslot,
+										 &isnew);
 
 			/* If new tuple group, initialize counts */
 			if (isnew)
-				initialize_counts(&entry->pergroup);
+			{
+				entry->additional = (SetOpStatePerGroup)
+					MemoryContextAlloc(setopstate->hashtable->tablecxt,
+									   sizeof(SetOpStatePerGroupData));
+				initialize_counts((SetOpStatePerGroup) entry->additional);
+			}
 
 			/* Advance the counts */
-			advance_counts(&entry->pergroup, flag);
+			advance_counts((SetOpStatePerGroup) entry->additional, flag);
 		}
 		else
 		{
@@ -399,12 +396,12 @@ setop_fill_hash_table(SetOpState *setopstate)
 			in_first_rel = false;
 
 			/* For tuples not seen previously, do not make hashtable entry */
-			entry = (SetOpHashEntry)
-				LookupTupleHashEntry(setopstate->hashtable, outerslot, NULL);
+			entry = LookupTupleHashEntry(setopstate->hashtable, outerslot,
+										 NULL);
 
 			/* Advance the counts if entry is already present */
 			if (entry)
-				advance_counts(&entry->pergroup, flag);
+				advance_counts((SetOpStatePerGroup) entry->additional, flag);
 		}
 
 		/* Must reset temp context after each hashtable lookup */
@@ -422,7 +419,7 @@ setop_fill_hash_table(SetOpState *setopstate)
 static TupleTableSlot *
 setop_retrieve_hash_table(SetOpState *setopstate)
 {
-	SetOpHashEntry entry;
+	TupleHashEntryData *entry;
 	TupleTableSlot *resultTupleSlot;
 
 	/*
@@ -435,10 +432,12 @@ setop_retrieve_hash_table(SetOpState *setopstate)
 	 */
 	while (!setopstate->setop_done)
 	{
+		CHECK_FOR_INTERRUPTS();
+
 		/*
 		 * Find the next entry in the hash table
 		 */
-		entry = (SetOpHashEntry) ScanTupleHashTable(&setopstate->hashiter);
+		entry = ScanTupleHashTable(setopstate->hashtable, &setopstate->hashiter);
 		if (entry == NULL)
 		{
 			/* No more entries in hashtable, so done */
@@ -450,12 +449,12 @@ setop_retrieve_hash_table(SetOpState *setopstate)
 		 * See if we should emit any copies of this tuple, and if so return
 		 * the first copy.
 		 */
-		set_output_count(setopstate, &entry->pergroup);
+		set_output_count(setopstate, (SetOpStatePerGroup) entry->additional);
 
 		if (setopstate->numOutput > 0)
 		{
 			setopstate->numOutput--;
-			return ExecStoreMinimalTuple(entry->shared.firstTuple,
+			return ExecStoreMinimalTuple(entry->firstTuple,
 										 resultTupleSlot,
 										 false);
 		}
@@ -487,6 +486,7 @@ ExecInitSetOp(SetOp *node, EState *estate, int eflags)
 	setopstate = makeNode(SetOpState);
 	setopstate->ps.plan = (Plan *) node;
 	setopstate->ps.state = estate;
+	setopstate->ps.ExecProcNode = ExecSetOp;
 
 	setopstate->eqfunctions = NULL;
 	setopstate->hashfunctions = NULL;

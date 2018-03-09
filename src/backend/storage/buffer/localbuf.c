@@ -4,7 +4,7 @@
  *	  local buffer manager. Fast buffer manager for temporary tables,
  *	  which never need to be WAL-logged or checkpointed, etc.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  *
@@ -86,7 +86,7 @@ LocalPrefetchBuffer(SMgrRelation smgr, ForkNumber forkNum,
 
 	/* Not in buffers, so initiate prefetch */
 	smgrprefetch(smgr, forkNum, blockNum);
-#endif   /* USE_PREFETCH */
+#endif							/* USE_PREFETCH */
 }
 
 
@@ -189,7 +189,7 @@ LocalBufferAlloc(SMgrRelation smgr, ForkNumber forkNum, BlockNumber blockNum,
 				/* Found a usable buffer */
 				LocalRefCount[b]++;
 				ResourceOwnerRememberBuffer(CurrentResourceOwner,
-										  BufferDescriptorGetBuffer(bufHdr));
+											BufferDescriptorGetBuffer(bufHdr));
 				break;
 			}
 		}

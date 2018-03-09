@@ -2,7 +2,7 @@
  *
  * reindexdb
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  *
  * src/bin/scripts/reindexdb.c
  *
@@ -182,7 +182,7 @@ main(int argc, char *argv[])
 		}
 
 		reindex_all_databases(maintenance_db, host, port, username,
-							prompt_password, progname, echo, quiet, verbose);
+							  prompt_password, progname, echo, quiet, verbose);
 	}
 	else if (syscatalog)
 	{
@@ -234,7 +234,7 @@ main(int argc, char *argv[])
 			for (cell = schemas.head; cell; cell = cell->next)
 			{
 				reindex_one_database(cell->val, dbname, "SCHEMA", host, port,
-						 username, prompt_password, progname, echo, verbose);
+									 username, prompt_password, progname, echo, verbose);
 			}
 		}
 
@@ -245,7 +245,7 @@ main(int argc, char *argv[])
 			for (cell = indexes.head; cell; cell = cell->next)
 			{
 				reindex_one_database(cell->val, dbname, "INDEX", host, port,
-						 username, prompt_password, progname, echo, verbose);
+									 username, prompt_password, progname, echo, verbose);
 			}
 		}
 		if (tables.head != NULL)
@@ -255,7 +255,7 @@ main(int argc, char *argv[])
 			for (cell = tables.head; cell; cell = cell->next)
 			{
 				reindex_one_database(cell->val, dbname, "TABLE", host, port,
-						 username, prompt_password, progname, echo, verbose);
+									 username, prompt_password, progname, echo, verbose);
 			}
 		}
 
@@ -265,7 +265,7 @@ main(int argc, char *argv[])
 		 */
 		if (indexes.head == NULL && tables.head == NULL && schemas.head == NULL)
 			reindex_one_database(NULL, dbname, "DATABASE", host, port,
-						 username, prompt_password, progname, echo, verbose);
+								 username, prompt_password, progname, echo, verbose);
 	}
 
 	exit(0);
@@ -274,7 +274,7 @@ main(int argc, char *argv[])
 static void
 reindex_one_database(const char *name, const char *dbname, const char *type,
 					 const char *host, const char *port, const char *username,
-			  enum trivalue prompt_password, const char *progname, bool echo,
+					 enum trivalue prompt_password, const char *progname, bool echo,
 					 bool verbose)
 {
 	PQExpBufferData sql;
@@ -282,23 +282,24 @@ reindex_one_database(const char *name, const char *dbname, const char *type,
 	PGconn	   *conn;
 
 	conn = connectDatabase(dbname, host, port, username, prompt_password,
-						   progname, false, false);
+						   progname, echo, false, false);
 
 	initPQExpBuffer(&sql);
 
-	appendPQExpBufferStr(&sql, "REINDEX");
+	appendPQExpBufferStr(&sql, "REINDEX ");
 
 	if (verbose)
-		appendPQExpBufferStr(&sql, " (VERBOSE)");
+		appendPQExpBufferStr(&sql, "(VERBOSE) ");
 
-	if (strcmp(type, "TABLE") == 0)
-		appendPQExpBuffer(&sql, " TABLE %s", name);
-	else if (strcmp(type, "INDEX") == 0)
-		appendPQExpBuffer(&sql, " INDEX %s", name);
+	appendPQExpBufferStr(&sql, type);
+	appendPQExpBufferChar(&sql, ' ');
+	if (strcmp(type, "TABLE") == 0 ||
+		strcmp(type, "INDEX") == 0)
+		appendQualifiedRelation(&sql, name, conn, progname, echo);
 	else if (strcmp(type, "SCHEMA") == 0)
-		appendPQExpBuffer(&sql, " SCHEMA %s", name);
+		appendPQExpBufferStr(&sql, name);
 	else if (strcmp(type, "DATABASE") == 0)
-		appendPQExpBuffer(&sql, " DATABASE %s", fmtId(PQdb(conn)));
+		appendPQExpBufferStr(&sql, fmtId(PQdb(conn)));
 	appendPQExpBufferChar(&sql, ';');
 
 	if (!executeMaintenanceCommand(conn, sql.data, echo))
@@ -327,7 +328,7 @@ static void
 reindex_all_databases(const char *maintenance_db,
 					  const char *host, const char *port,
 					  const char *username, enum trivalue prompt_password,
-				   const char *progname, bool echo, bool quiet, bool verbose)
+					  const char *progname, bool echo, bool quiet, bool verbose)
 {
 	PGconn	   *conn;
 	PGresult   *result;
@@ -335,7 +336,7 @@ reindex_all_databases(const char *maintenance_db,
 	int			i;
 
 	conn = connectMaintenanceDatabase(maintenance_db, host, port, username,
-									  prompt_password, progname);
+									  prompt_password, progname, echo);
 	result = executeQuery(conn, "SELECT datname FROM pg_database WHERE datallowconn ORDER BY 1;", progname, echo);
 	PQfinish(conn);
 
@@ -372,7 +373,7 @@ reindex_system_catalogs(const char *dbname, const char *host, const char *port,
 	PQExpBufferData sql;
 
 	conn = connectDatabase(dbname, host, port, username, prompt_password,
-						   progname, false, false);
+						   progname, echo, false, false);
 
 	initPQExpBuffer(&sql);
 

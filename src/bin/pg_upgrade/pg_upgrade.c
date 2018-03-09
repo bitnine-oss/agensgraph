@@ -3,7 +3,7 @@
  *
  *	main source file
  *
- *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/pg_upgrade.c
  */
 
@@ -37,6 +37,7 @@
 #include "postgres_fe.h"
 
 #include "pg_upgrade.h"
+#include "catalog/pg_class.h"
 #include "common/restricted_token.h"
 #include "fe_utils/string_utils.h"
 
@@ -47,7 +48,7 @@
 static void prepare_new_cluster(void);
 static void prepare_new_databases(void);
 static void create_new_objects(void);
-static void copy_clog_xlog_xid(void);
+static void copy_xact_xlog_xid(void);
 static void set_frozenxids(bool minmxid_only);
 static void setup(char *argv0, bool *live_check);
 static void cleanup(void);
@@ -74,6 +75,11 @@ main(int argc, char **argv)
 	char	   *analyze_script_file_name = NULL;
 	char	   *deletion_script_file_name = NULL;
 	bool		live_check = false;
+
+	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_upgrade"));
+
+	/* Ensure that all files created by pg_upgrade are non-world-readable */
+	umask(S_IRWXG | S_IRWXO);
 
 	parseCommandLine(argc, argv);
 
@@ -102,8 +108,10 @@ main(int argc, char **argv)
 	check_new_cluster();
 	report_clusters_compatible();
 
-	pg_log(PG_REPORT, "\nPerforming Upgrade\n");
-	pg_log(PG_REPORT, "------------------\n");
+	pg_log(PG_REPORT,
+		   "\n"
+		   "Performing Upgrade\n"
+		   "------------------\n");
 
 	prepare_new_cluster();
 
@@ -113,7 +121,7 @@ main(int argc, char **argv)
 	 * Destructive Changes to New Cluster
 	 */
 
-	copy_clog_xlog_xid();
+	copy_xact_xlog_xid();
 
 	/* New now using xids of the old system */
 
@@ -145,14 +153,14 @@ main(int argc, char **argv)
 	 * because there is no need to have the schema load use new oids.
 	 */
 	prep_status("Setting next OID for new cluster");
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
-			  "\"%s/pg_resetxlog\" -o %u \"%s\"",
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
+			  "\"%s/pg_resetwal\" -o %u \"%s\"",
 			  new_cluster.bindir, old_cluster.controldata.chkpnt_nxtoid,
 			  new_cluster.pgdata);
 	check_ok();
 
 	prep_status("Sync data directory to disk");
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
 			  "\"%s/initdb\" --sync-only \"%s\"", new_cluster.bindir,
 			  new_cluster.pgdata);
 	check_ok();
@@ -160,10 +168,12 @@ main(int argc, char **argv)
 	create_script_for_cluster_analyze(&analyze_script_file_name);
 	create_script_for_old_cluster_deletion(&deletion_script_file_name);
 
-	issue_warnings();
+	issue_warnings_and_set_wal_level();
 
-	pg_log(PG_REPORT, "\nUpgrade Complete\n");
-	pg_log(PG_REPORT, "----------------\n");
+	pg_log(PG_REPORT,
+		   "\n"
+		   "Upgrade Complete\n"
+		   "----------------\n");
 
 	output_completion_banner(analyze_script_file_name,
 							 deletion_script_file_name);
@@ -243,7 +253,7 @@ prepare_new_cluster(void)
 	 * --analyze so autovacuum doesn't update statistics later
 	 */
 	prep_status("Analyzing all rows in the new cluster");
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
 			  "\"%s/vacuumdb\" %s --all --analyze %s",
 			  new_cluster.bindir, cluster_conn_opts(&new_cluster),
 			  log_opts.verbose ? "--verbose" : "");
@@ -255,8 +265,8 @@ prepare_new_cluster(void)
 	 * datfrozenxid, relfrozenxids, and relminmxid later to match the new xid
 	 * counter later.
 	 */
-	prep_status("Freezing all rows on the new cluster");
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
+	prep_status("Freezing all rows in the new cluster");
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
 			  "\"%s/vacuumdb\" %s --all --freeze %s",
 			  new_cluster.bindir, cluster_conn_opts(&new_cluster),
 			  log_opts.verbose ? "--verbose" : "");
@@ -268,13 +278,13 @@ static void
 prepare_new_databases(void)
 {
 	/*
-	 * We set autovacuum_freeze_max_age to its maximum value so autovacuum
-	 * does not launch here and delete clog files, before the frozen xids are
-	 * set.
+	 * Before we restore anything, set frozenxids of initdb-created tables.
 	 */
-
 	set_frozenxids(false);
 
+	/*
+	 * Now restore global objects (roles and tablespaces).
+	 */
 	prep_status("Restoring global objects in the new cluster");
 
 	/*
@@ -283,7 +293,7 @@ prepare_new_databases(void)
 	 * support functions in template1 but pg_dumpall creates database using
 	 * the template0 template.
 	 */
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
 			  "\"%s/psql\" " EXEC_PSQL_ARGS " %s -f \"%s\"",
 			  new_cluster.bindir, cluster_conn_opts(&new_cluster),
 			  GLOBALS_DUMP_FILE);
@@ -326,7 +336,7 @@ create_new_objects(void)
 		 */
 		parallel_exec_prog(log_file_name,
 						   NULL,
-		 "\"%s/pg_restore\" %s --exit-on-error --verbose --dbname %s \"%s\"",
+						   "\"%s/pg_restore\" %s --exit-on-error --verbose --dbname %s \"%s\"",
 						   new_cluster.bindir,
 						   cluster_conn_opts(&new_cluster),
 						   escaped_connstr.data,
@@ -374,19 +384,19 @@ remove_new_subdir(char *subdir, bool rmtopdir)
  * Copy the files from the old cluster into it
  */
 static void
-copy_subdir_files(char *subdir)
+copy_subdir_files(char *old_subdir, char *new_subdir)
 {
 	char		old_path[MAXPGPATH];
 	char		new_path[MAXPGPATH];
 
-	remove_new_subdir(subdir, true);
+	remove_new_subdir(new_subdir, true);
 
-	snprintf(old_path, sizeof(old_path), "%s/%s", old_cluster.pgdata, subdir);
-	snprintf(new_path, sizeof(new_path), "%s/%s", new_cluster.pgdata, subdir);
+	snprintf(old_path, sizeof(old_path), "%s/%s", old_cluster.pgdata, old_subdir);
+	snprintf(new_path, sizeof(new_path), "%s/%s", new_cluster.pgdata, new_subdir);
 
-	prep_status("Copying old %s to new server", subdir);
+	prep_status("Copying old %s to new server", old_subdir);
 
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
 #ifndef WIN32
 			  "cp -Rf \"%s\" \"%s\"",
 #else
@@ -399,24 +409,30 @@ copy_subdir_files(char *subdir)
 }
 
 static void
-copy_clog_xlog_xid(void)
+copy_xact_xlog_xid(void)
 {
-	/* copy old commit logs to new data dir */
-	copy_subdir_files("pg_clog");
+	/*
+	 * Copy old commit logs to new data dir. pg_clog has been renamed to
+	 * pg_xact in post-10 clusters.
+	 */
+	copy_subdir_files(GET_MAJOR_VERSION(old_cluster.major_version) < 1000 ?
+					  "pg_clog" : "pg_xact",
+					  GET_MAJOR_VERSION(new_cluster.major_version) < 1000 ?
+					  "pg_clog" : "pg_xact");
 
 	/* set the next transaction id and epoch of the new cluster */
 	prep_status("Setting next transaction ID and epoch for new cluster");
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
-			  "\"%s/pg_resetxlog\" -f -x %u \"%s\"",
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
+			  "\"%s/pg_resetwal\" -f -x %u \"%s\"",
 			  new_cluster.bindir, old_cluster.controldata.chkpnt_nxtxid,
 			  new_cluster.pgdata);
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
-			  "\"%s/pg_resetxlog\" -f -e %u \"%s\"",
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
+			  "\"%s/pg_resetwal\" -f -e %u \"%s\"",
 			  new_cluster.bindir, old_cluster.controldata.chkpnt_nxtepoch,
 			  new_cluster.pgdata);
 	/* must reset commit timestamp limits also */
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
-			  "\"%s/pg_resetxlog\" -f -c %u,%u \"%s\"",
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
+			  "\"%s/pg_resetwal\" -f -c %u,%u \"%s\"",
 			  new_cluster.bindir,
 			  old_cluster.controldata.chkpnt_nxtxid,
 			  old_cluster.controldata.chkpnt_nxtxid,
@@ -432,8 +448,8 @@ copy_clog_xlog_xid(void)
 	if (old_cluster.controldata.cat_ver >= MULTIXACT_FORMATCHANGE_CAT_VER &&
 		new_cluster.controldata.cat_ver >= MULTIXACT_FORMATCHANGE_CAT_VER)
 	{
-		copy_subdir_files("pg_multixact/offsets");
-		copy_subdir_files("pg_multixact/members");
+		copy_subdir_files("pg_multixact/offsets", "pg_multixact/offsets");
+		copy_subdir_files("pg_multixact/members", "pg_multixact/members");
 
 		prep_status("Setting next multixact ID and offset for new cluster");
 
@@ -441,8 +457,8 @@ copy_clog_xlog_xid(void)
 		 * we preserve all files and contents, so we must preserve both "next"
 		 * counters here and the oldest multi present on system.
 		 */
-		exec_prog(UTILITY_LOG_FILE, NULL, true,
-				  "\"%s/pg_resetxlog\" -O %u -m %u,%u \"%s\"",
+		exec_prog(UTILITY_LOG_FILE, NULL, true, true,
+				  "\"%s/pg_resetwal\" -O %u -m %u,%u \"%s\"",
 				  new_cluster.bindir,
 				  old_cluster.controldata.chkpnt_nxtmxoff,
 				  old_cluster.controldata.chkpnt_nxtmulti,
@@ -459,7 +475,7 @@ copy_clog_xlog_xid(void)
 		 */
 		remove_new_subdir("pg_multixact/offsets", false);
 
-		prep_status("Setting oldest multixact ID on new cluster");
+		prep_status("Setting oldest multixact ID in new cluster");
 
 		/*
 		 * We don't preserve files in this case, but it's important that the
@@ -469,8 +485,8 @@ copy_clog_xlog_xid(void)
 		 * might end up wrapped around (i.e. 0) if the old cluster had
 		 * next=MaxMultiXactId, but multixact.c can cope with that just fine.
 		 */
-		exec_prog(UTILITY_LOG_FILE, NULL, true,
-				  "\"%s/pg_resetxlog\" -m %u,%u \"%s\"",
+		exec_prog(UTILITY_LOG_FILE, NULL, true, true,
+				  "\"%s/pg_resetwal\" -m %u,%u \"%s\"",
 				  new_cluster.bindir,
 				  old_cluster.controldata.chkpnt_nxtmulti + 1,
 				  old_cluster.controldata.chkpnt_nxtmulti,
@@ -480,9 +496,9 @@ copy_clog_xlog_xid(void)
 
 	/* now reset the wal archives in the new cluster */
 	prep_status("Resetting WAL archives");
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
 	/* use timeline 1 to match controldata and no WAL history file */
-			  "\"%s/pg_resetxlog\" -l 00000001%s \"%s\"", new_cluster.bindir,
+			  "\"%s/pg_resetwal\" -l 00000001%s \"%s\"", new_cluster.bindir,
 			  old_cluster.controldata.nextxlogfile + 8,
 			  new_cluster.pgdata);
 	check_ok();
@@ -492,14 +508,25 @@ copy_clog_xlog_xid(void)
 /*
  *	set_frozenxids()
  *
- *	We have frozen all xids, so set datfrozenxid, relfrozenxid, and
- *	relminmxid to be the old cluster's xid counter, which we just set
- *	in the new cluster.  User-table frozenxid and minmxid values will
- *	be set by pg_dump --binary-upgrade, but objects not set by the pg_dump
- *	must have proper frozen counters.
+ * This is called on the new cluster before we restore anything, with
+ * minmxid_only = false.  Its purpose is to ensure that all initdb-created
+ * vacuumable tables have relfrozenxid/relminmxid matching the old cluster's
+ * xid/mxid counters.  We also initialize the datfrozenxid/datminmxid of the
+ * built-in databases to match.
+ *
+ * As we create user tables later, their relfrozenxid/relminmxid fields will
+ * be restored properly by the binary-upgrade restore script.  Likewise for
+ * user-database datfrozenxid/datminmxid.  However, if we're upgrading from a
+ * pre-9.3 database, which does not store per-table or per-DB minmxid, then
+ * the relminmxid/datminmxid values filled in by the restore script will just
+ * be zeroes.
+ *
+ * Hence, with a pre-9.3 source database, a second call occurs after
+ * everything is restored, with minmxid_only = true.  This pass will
+ * initialize all tables and databases, both those made by initdb and user
+ * objects, with the desired minmxid value.  frozenxid values are left alone.
  */
-static
-void
+static void
 set_frozenxids(bool minmxid_only)
 {
 	int			dbnum;
@@ -553,7 +580,7 @@ set_frozenxids(bool minmxid_only)
 		 */
 		if (strcmp(datallowconn, "f") == 0)
 			PQclear(executeQueryOrDie(conn_template1,
-								"ALTER DATABASE %s ALLOW_CONNECTIONS = true",
+									  "ALTER DATABASE %s ALLOW_CONNECTIONS = true",
 									  quote_identifier(datname)));
 
 		conn = connectToServer(&new_cluster, datname);
@@ -564,7 +591,10 @@ set_frozenxids(bool minmxid_only)
 									  "UPDATE	pg_catalog.pg_class "
 									  "SET	relfrozenxid = '%u' "
 			/* only heap, materialized view, and TOAST are vacuumed */
-									  "WHERE	relkind IN ('r', 'm', 't')",
+									  "WHERE	relkind IN ("
+									  CppAsString2(RELKIND_RELATION) ", "
+									  CppAsString2(RELKIND_MATVIEW) ", "
+									  CppAsString2(RELKIND_TOASTVALUE) ")",
 									  old_cluster.controldata.chkpnt_nxtxid));
 
 		/* set pg_class.relminmxid */
@@ -572,14 +602,17 @@ set_frozenxids(bool minmxid_only)
 								  "UPDATE	pg_catalog.pg_class "
 								  "SET	relminmxid = '%u' "
 		/* only heap, materialized view, and TOAST are vacuumed */
-								  "WHERE	relkind IN ('r', 'm', 't')",
+								  "WHERE	relkind IN ("
+								  CppAsString2(RELKIND_RELATION) ", "
+								  CppAsString2(RELKIND_MATVIEW) ", "
+								  CppAsString2(RELKIND_TOASTVALUE) ")",
 								  old_cluster.controldata.chkpnt_nxtmulti));
 		PQfinish(conn);
 
 		/* Reset datallowconn flag */
 		if (strcmp(datallowconn, "f") == 0)
 			PQclear(executeQueryOrDie(conn_template1,
-							   "ALTER DATABASE %s ALLOW_CONNECTIONS = false",
+									  "ALTER DATABASE %s ALLOW_CONNECTIONS = false",
 									  quote_identifier(datname)));
 	}
 

@@ -1,10 +1,11 @@
 /*-------------------------------------------------------------------------
  *
- * streamutil.c - utility functions for pg_basebackup and pg_receivelog
+ * streamutil.c - utility functions for pg_basebackup, pg_receivewal and
+ * 					pg_recvlogical
  *
  * Author: Magnus Hagander <magnus@hagander.net>
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/streamutil.c
@@ -13,10 +14,7 @@
 
 #include "postgres_fe.h"
 
-#include <stdio.h>
-#include <string.h>
 #include <sys/time.h>
-#include <sys/types.h>
 #include <unistd.h>
 
 /* for ntohl/htonl */
@@ -30,6 +28,7 @@
 #include "pqexpbuffer.h"
 #include "common/fe_memutils.h"
 #include "datatype/timestamp.h"
+#include "fe_utils/connect.h"
 
 #define ERRCODE_DUPLICATE_OBJECT  "42710"
 
@@ -38,10 +37,10 @@ char	   *connection_string = NULL;
 char	   *dbhost = NULL;
 char	   *dbuser = NULL;
 char	   *dbport = NULL;
-char	   *replication_slot = NULL;
 char	   *dbname = NULL;
 int			dbgetpassword = 0;	/* 0=auto, -1=never, 1=always */
-static char *dbpassword = NULL;
+static bool have_password = false;
+static char password[100];
 PGconn	   *conn = NULL;
 
 /*
@@ -141,24 +140,23 @@ GetConnection(void)
 	}
 
 	/* If -W was given, force prompt for password, but only the first time */
-	need_password = (dbgetpassword == 1 && dbpassword == NULL);
+	need_password = (dbgetpassword == 1 && !have_password);
 
 	do
 	{
 		/* Get a new password if appropriate */
 		if (need_password)
 		{
-			if (dbpassword)
-				free(dbpassword);
-			dbpassword = simple_prompt(_("Password: "), 100, false);
+			simple_prompt("Password: ", password, sizeof(password), false);
+			have_password = true;
 			need_password = false;
 		}
 
 		/* Use (or reuse, on a subsequent connection) password if we have it */
-		if (dbpassword)
+		if (have_password)
 		{
 			keywords[i] = "password";
-			values[i] = dbpassword;
+			values[i] = password;
 		}
 		else
 		{
@@ -208,28 +206,41 @@ GetConnection(void)
 	if (conn_opts)
 		PQconninfoFree(conn_opts);
 
+	/* Set always-secure search path, so malicious users can't get control. */
+	if (dbname != NULL)
+	{
+		PGresult   *res;
+
+		res = PQexec(tmpconn, ALWAYS_SECURE_SEARCH_PATH_SQL);
+		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		{
+			fprintf(stderr, _("%s: could not clear search_path: %s\n"),
+					progname, PQerrorMessage(tmpconn));
+			PQclear(res);
+			PQfinish(tmpconn);
+			exit(1);
+		}
+		PQclear(res);
+	}
+
 	/*
-	 * Ensure we have the same value of integer timestamps as the server we
-	 * are connecting to.
+	 * Ensure we have the same value of integer_datetimes (now always "on") as
+	 * the server we are connecting to.
 	 */
 	tmpparam = PQparameterStatus(tmpconn, "integer_datetimes");
 	if (!tmpparam)
 	{
 		fprintf(stderr,
-		 _("%s: could not determine server setting for integer_datetimes\n"),
+				_("%s: could not determine server setting for integer_datetimes\n"),
 				progname);
 		PQfinish(tmpconn);
 		exit(1);
 	}
 
-#ifdef HAVE_INT64_TIMESTAMP
 	if (strcmp(tmpparam, "on") != 0)
-#else
-	if (strcmp(tmpparam, "off") != 0)
-#endif
 	{
 		fprintf(stderr,
-			 _("%s: integer_datetimes compile flag does not match server\n"),
+				_("%s: integer_datetimes compile flag does not match server\n"),
 				progname);
 		PQfinish(tmpconn);
 		exit(1);
@@ -290,7 +301,7 @@ RunIdentifySystem(PGconn *conn, char **sysid, TimeLineID *starttli,
 		if (sscanf(PQgetvalue(res, 0, 2), "%X/%X", &hi, &lo) != 2)
 		{
 			fprintf(stderr,
-				  _("%s: could not parse transaction log location \"%s\"\n"),
+					_("%s: could not parse write-ahead log location \"%s\"\n"),
 					progname, PQgetvalue(res, 0, 2));
 
 			PQclear(res);
@@ -325,8 +336,7 @@ RunIdentifySystem(PGconn *conn, char **sysid, TimeLineID *starttli,
 
 /*
  * Create a replication slot for the given connection. This function
- * returns true in case of success as well as the start position
- * obtained after the slot creation.
+ * returns true in case of success.
  */
 bool
 CreateReplicationSlot(PGconn *conn, const char *slot_name, const char *plugin,
@@ -346,8 +356,13 @@ CreateReplicationSlot(PGconn *conn, const char *slot_name, const char *plugin,
 		appendPQExpBuffer(query, "CREATE_REPLICATION_SLOT \"%s\" PHYSICAL",
 						  slot_name);
 	else
+	{
 		appendPQExpBuffer(query, "CREATE_REPLICATION_SLOT \"%s\" LOGICAL \"%s\"",
 						  slot_name, plugin);
+		if (PQserverVersion(conn) >= 100000)
+			/* pg_recvlogical doesn't use an exported snapshot, so suppress */
+			appendPQExpBuffer(query, " NOEXPORT_SNAPSHOT");
+	}
 
 	res = PQexec(conn, query->data);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
@@ -438,20 +453,18 @@ DropReplicationSlot(PGconn *conn, const char *slot_name)
 
 /*
  * Frontend version of GetCurrentTimestamp(), since we are not linked with
- * backend code. The replication protocol always uses integer timestamps,
- * regardless of the server setting.
+ * backend code.
  */
-int64
+TimestampTz
 feGetCurrentTimestamp(void)
 {
-	int64		result;
+	TimestampTz result;
 	struct timeval tp;
 
 	gettimeofday(&tp, NULL);
 
-	result = (int64) tp.tv_sec -
+	result = (TimestampTz) tp.tv_sec -
 		((POSTGRES_EPOCH_JDATE - UNIX_EPOCH_JDATE) * SECS_PER_DAY);
-
 	result = (result * USECS_PER_SEC) + tp.tv_usec;
 
 	return result;
@@ -462,10 +475,10 @@ feGetCurrentTimestamp(void)
  * backend code.
  */
 void
-feTimestampDifference(int64 start_time, int64 stop_time,
+feTimestampDifference(TimestampTz start_time, TimestampTz stop_time,
 					  long *secs, int *microsecs)
 {
-	int64		diff = stop_time - start_time;
+	TimestampTz diff = stop_time - start_time;
 
 	if (diff <= 0)
 	{
@@ -484,11 +497,11 @@ feTimestampDifference(int64 start_time, int64 stop_time,
  * linked with backend code.
  */
 bool
-feTimestampDifferenceExceeds(int64 start_time,
-							 int64 stop_time,
+feTimestampDifferenceExceeds(TimestampTz start_time,
+							 TimestampTz stop_time,
 							 int msec)
 {
-	int64		diff = stop_time - start_time;
+	TimestampTz diff = stop_time - start_time;
 
 	return (diff >= msec * INT64CONST(1000));
 }

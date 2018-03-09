@@ -5,8 +5,12 @@
  *	  commands.  At one time acted as an interface between the Lisp and C
  *	  systems.
  *
+<<<<<<< HEAD
  * Portions Copyright (c) 2016, Bitnine Inc.
  * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+=======
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+>>>>>>> postgres
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -48,9 +52,11 @@
 #include "commands/portalcmds.h"
 #include "commands/prepare.h"
 #include "commands/proclang.h"
+#include "commands/publicationcmds.h"
 #include "commands/schemacmds.h"
 #include "commands/seclabel.h"
 #include "commands/sequence.h"
+#include "commands/subscriptioncmds.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
 #include "commands/trigger.h"
@@ -75,10 +81,12 @@
 ProcessUtility_hook_type ProcessUtility_hook = NULL;
 
 /* local function declarations */
-static void ProcessUtilitySlow(Node *parsetree,
+static void ProcessUtilitySlow(ParseState *pstate,
+				   PlannedStmt *pstmt,
 				   const char *queryString,
 				   ProcessUtilityContext context,
 				   ParamListInfo params,
+				   QueryEnvironment *queryEnv,
 				   DestReceiver *dest,
 				   char *completionTag);
 static void ExecDropStmt(DropStmt *stmt, bool isTopLevel);
@@ -91,35 +99,33 @@ static void ExecDropStmt(DropStmt *stmt, bool isTopLevel);
  * the query must be *in truth* read-only, because the caller wishes
  * not to do CommandCounterIncrement for it.
  *
- * Note: currently no need to support Query nodes here
+ * Note: currently no need to support raw or analyzed queries here
  */
 bool
-CommandIsReadOnly(Node *parsetree)
+CommandIsReadOnly(PlannedStmt *pstmt)
 {
-	if (IsA(parsetree, PlannedStmt))
+	Assert(IsA(pstmt, PlannedStmt));
+	switch (pstmt->commandType)
 	{
-		PlannedStmt *stmt = (PlannedStmt *) parsetree;
-
-		switch (stmt->commandType)
-		{
-			case CMD_SELECT:
-				if (stmt->rowMarks != NIL)
-					return false;		/* SELECT FOR [KEY] UPDATE/SHARE */
-				else if (stmt->hasModifyingCTE)
-					return false;		/* data-modifying CTE */
-				else
-					return true;
-			case CMD_UPDATE:
-			case CMD_INSERT:
-			case CMD_DELETE:
-				return false;
-			default:
-				elog(WARNING, "unrecognized commandType: %d",
-					 (int) stmt->commandType);
-				break;
-		}
+		case CMD_SELECT:
+			if (pstmt->rowMarks != NIL)
+				return false;	/* SELECT FOR [KEY] UPDATE/SHARE */
+			else if (pstmt->hasModifyingCTE)
+				return false;	/* data-modifying CTE */
+			else
+				return true;
+		case CMD_UPDATE:
+		case CMD_INSERT:
+		case CMD_DELETE:
+			return false;
+		case CMD_UTILITY:
+			/* For now, treat all utility commands as read/write */
+			return false;
+		default:
+			elog(WARNING, "unrecognized commandType: %d",
+				 (int) pstmt->commandType);
+			break;
 	}
-	/* For now, treat all utility commands as read/write */
 	return false;
 }
 
@@ -214,12 +220,20 @@ check_xact_readonly(Node *parsetree)
 		case T_CreateForeignTableStmt:
 		case T_ImportForeignSchemaStmt:
 		case T_SecLabelStmt:
+<<<<<<< HEAD
 		case T_CreateGraphStmt:
 		case T_CreateLabelStmt:
 		case T_AlterLabelStmt:
 		case T_CreateConstraintStmt:
 		case T_DropConstraintStmt:
 		case T_CreatePropertyIndexStmt:
+=======
+		case T_CreatePublicationStmt:
+		case T_AlterPublicationStmt:
+		case T_CreateSubscriptionStmt:
+		case T_AlterSubscriptionStmt:
+		case T_DropSubscriptionStmt:
+>>>>>>> postgres
 			PreventCommandIfReadOnly(CreateCommandTag(parsetree));
 			PreventCommandIfParallelMode(CreateCommandTag(parsetree));
 			break;
@@ -267,7 +281,7 @@ PreventCommandIfParallelMode(const char *cmdname)
 /*
  * PreventCommandDuringRecovery: throw error if RecoveryInProgress
  *
- * The majority of operations that are unsafe in a Hot Standby slave
+ * The majority of operations that are unsafe in a Hot Standby
  * will be rejected by XactReadOnly tests.  However there are a few
  * commands that are allowed in "read-only" xacts but cannot be allowed
  * in Hot Standby mode.  Those commands should call this function.
@@ -297,8 +311,8 @@ CheckRestrictedOperation(const char *cmdname)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 		/* translator: %s is name of a SQL command, eg PREPARE */
-			 errmsg("cannot execute %s within security-restricted operation",
-					cmdname)));
+				 errmsg("cannot execute %s within security-restricted operation",
+						cmdname)));
 }
 
 
@@ -306,31 +320,45 @@ CheckRestrictedOperation(const char *cmdname)
  * ProcessUtility
  *		general utility function invoker
  *
- *	parsetree: the parse tree for the utility statement
+ *	pstmt: PlannedStmt wrapper for the utility statement
  *	queryString: original source text of command
  *	context: identifies source of statement (toplevel client command,
  *		non-toplevel client command, subcommand of a larger utility command)
  *	params: parameters to use during execution
+ *	queryEnv: environment for parse through execution (e.g., ephemeral named
+ *		tables like trigger transition tables).  May be NULL.
  *	dest: where to send results
  *	completionTag: points to a buffer of size COMPLETION_TAG_BUFSIZE
  *		in which to store a command completion status string.
  *
- * Notes: as of PG 8.4, caller MUST supply a queryString; it is not
- * allowed anymore to pass NULL.  (If you really don't have source text,
- * you can pass a constant string, perhaps "(query not available)".)
+ * Caller MUST supply a queryString; it is not allowed (anymore) to pass NULL.
+ * If you really don't have source text, you can pass a constant string,
+ * perhaps "(query not available)".
  *
  * completionTag is only set nonempty if we want to return a nondefault status.
  *
  * completionTag may be NULL if caller doesn't want a status string.
+ *
+ * Note for users of ProcessUtility_hook: the same queryString may be passed
+ * to multiple invocations of ProcessUtility when processing a query string
+ * containing multiple semicolon-separated statements.  One should use
+ * pstmt->stmt_location and pstmt->stmt_len to identify the substring
+ * containing the current statement.  Keep in mind also that some utility
+ * statements (e.g., CREATE SCHEMA) will recurse to ProcessUtility to process
+ * sub-statements, often passing down the same queryString, stmt_location,
+ * and stmt_len that were given for the whole statement.
  */
 void
-ProcessUtility(Node *parsetree,
+ProcessUtility(PlannedStmt *pstmt,
 			   const char *queryString,
 			   ProcessUtilityContext context,
 			   ParamListInfo params,
+			   QueryEnvironment *queryEnv,
 			   DestReceiver *dest,
 			   char *completionTag)
 {
+	Assert(IsA(pstmt, PlannedStmt));
+	Assert(pstmt->commandType == CMD_UTILITY);
 	Assert(queryString != NULL);	/* required as of 8.4 */
 
 	/*
@@ -339,12 +367,12 @@ ProcessUtility(Node *parsetree,
 	 * call standard_ProcessUtility().
 	 */
 	if (ProcessUtility_hook)
-		(*ProcessUtility_hook) (parsetree, queryString,
-								context, params,
+		(*ProcessUtility_hook) (pstmt, queryString,
+								context, params, queryEnv,
 								dest, completionTag);
 	else
-		standard_ProcessUtility(parsetree, queryString,
-								context, params,
+		standard_ProcessUtility(pstmt, queryString,
+								context, params, queryEnv,
 								dest, completionTag);
 }
 
@@ -360,19 +388,25 @@ ProcessUtility(Node *parsetree,
  * which requires being in a valid transaction.
  */
 void
-standard_ProcessUtility(Node *parsetree,
+standard_ProcessUtility(PlannedStmt *pstmt,
 						const char *queryString,
 						ProcessUtilityContext context,
 						ParamListInfo params,
+						QueryEnvironment *queryEnv,
 						DestReceiver *dest,
 						char *completionTag)
 {
+	Node	   *parsetree = pstmt->utilityStmt;
 	bool		isTopLevel = (context == PROCESS_UTILITY_TOPLEVEL);
+	ParseState *pstate;
 
 	check_xact_readonly(parsetree);
 
 	if (completionTag)
 		completionTag[0] = '\0';
+
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
 
 	switch (nodeTag(parsetree))
 	{
@@ -491,20 +525,10 @@ standard_ProcessUtility(Node *parsetree,
 
 			/*
 			 * Portal (cursor) manipulation
-			 *
-			 * Note: DECLARE CURSOR is processed mostly as a SELECT, and
-			 * therefore what we will get here is a PlannedStmt not a bare
-			 * DeclareCursorStmt.
 			 */
-		case T_PlannedStmt:
-			{
-				PlannedStmt *stmt = (PlannedStmt *) parsetree;
-
-				if (stmt->utilityStmt == NULL ||
-					!IsA(stmt->utilityStmt, DeclareCursorStmt))
-					elog(ERROR, "non-DECLARE CURSOR PlannedStmt passed to ProcessUtility");
-				PerformCursorOpen(stmt, params, queryString, isTopLevel);
-			}
+		case T_DeclareCursorStmt:
+			PerformCursorOpen((DeclareCursorStmt *) parsetree, params,
+							  queryString, isTopLevel);
 			break;
 
 		case T_ClosePortalStmt:
@@ -550,7 +574,9 @@ standard_ProcessUtility(Node *parsetree,
 			{
 				uint64		processed;
 
-				DoCopy((CopyStmt *) parsetree, queryString, &processed);
+				DoCopy(pstate, (CopyStmt *) parsetree,
+					   pstmt->stmt_location, pstmt->stmt_len,
+					   &processed);
 				if (completionTag)
 					snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 							 "COPY " UINT64_FORMAT, processed);
@@ -559,7 +585,8 @@ standard_ProcessUtility(Node *parsetree,
 
 		case T_PrepareStmt:
 			CheckRestrictedOperation("PREPARE");
-			PrepareQuery((PrepareStmt *) parsetree, queryString);
+			PrepareQuery((PrepareStmt *) parsetree, queryString,
+						 pstmt->stmt_location, pstmt->stmt_len);
 			break;
 
 		case T_ExecuteStmt:
@@ -581,12 +608,12 @@ standard_ProcessUtility(Node *parsetree,
 		case T_CreatedbStmt:
 			/* no event triggers for global objects */
 			PreventTransactionChain(isTopLevel, "CREATE DATABASE");
-			createdb((CreatedbStmt *) parsetree);
+			createdb(pstate, (CreatedbStmt *) parsetree);
 			break;
 
 		case T_AlterDatabaseStmt:
 			/* no event triggers for global objects */
-			AlterDatabase((AlterDatabaseStmt *) parsetree, isTopLevel);
+			AlterDatabase(pstate, (AlterDatabaseStmt *) parsetree, isTopLevel);
 			break;
 
 		case T_AlterDatabaseSetStmt:
@@ -667,7 +694,8 @@ standard_ProcessUtility(Node *parsetree,
 			break;
 
 		case T_ExplainStmt:
-			ExplainQuery((ExplainStmt *) parsetree, queryString, params, dest);
+			ExplainQuery(pstate, (ExplainStmt *) parsetree, queryString, params,
+						 queryEnv, dest);
 			break;
 
 		case T_AlterSystemStmt:
@@ -708,7 +736,7 @@ standard_ProcessUtility(Node *parsetree,
 			 */
 		case T_CreateRoleStmt:
 			/* no event triggers for global objects */
-			CreateRole((CreateRoleStmt *) parsetree);
+			CreateRole(pstate, (CreateRoleStmt *) parsetree);
 			break;
 
 		case T_AlterRoleStmt:
@@ -819,11 +847,11 @@ standard_ProcessUtility(Node *parsetree,
 				GrantStmt  *stmt = (GrantStmt *) parsetree;
 
 				if (EventTriggerSupportsGrantObjectType(stmt->objtype))
-					ProcessUtilitySlow(parsetree, queryString,
-									   context, params,
+					ProcessUtilitySlow(pstate, pstmt, queryString,
+									   context, params, queryEnv,
 									   dest, completionTag);
 				else
-					ExecuteGrantStmt((GrantStmt *) parsetree);
+					ExecuteGrantStmt(stmt);
 			}
 			break;
 
@@ -832,8 +860,8 @@ standard_ProcessUtility(Node *parsetree,
 				DropStmt   *stmt = (DropStmt *) parsetree;
 
 				if (EventTriggerSupportsObjectType(stmt->removeType))
-					ProcessUtilitySlow(parsetree, queryString,
-									   context, params,
+					ProcessUtilitySlow(pstate, pstmt, queryString,
+									   context, params, queryEnv,
 									   dest, completionTag);
 				else
 					ExecDropStmt(stmt, isTopLevel);
@@ -845,8 +873,8 @@ standard_ProcessUtility(Node *parsetree,
 				RenameStmt *stmt = (RenameStmt *) parsetree;
 
 				if (EventTriggerSupportsObjectType(stmt->renameType))
-					ProcessUtilitySlow(parsetree, queryString,
-									   context, params,
+					ProcessUtilitySlow(pstate, pstmt, queryString,
+									   context, params, queryEnv,
 									   dest, completionTag);
 				else
 					ExecRenameStmt(stmt);
@@ -858,8 +886,8 @@ standard_ProcessUtility(Node *parsetree,
 				AlterObjectDependsStmt *stmt = (AlterObjectDependsStmt *) parsetree;
 
 				if (EventTriggerSupportsObjectType(stmt->objectType))
-					ProcessUtilitySlow(parsetree, queryString,
-									   context, params,
+					ProcessUtilitySlow(pstate, pstmt, queryString,
+									   context, params, queryEnv,
 									   dest, completionTag);
 				else
 					ExecAlterObjectDependsStmt(stmt, NULL);
@@ -871,8 +899,8 @@ standard_ProcessUtility(Node *parsetree,
 				AlterObjectSchemaStmt *stmt = (AlterObjectSchemaStmt *) parsetree;
 
 				if (EventTriggerSupportsObjectType(stmt->objectType))
-					ProcessUtilitySlow(parsetree, queryString,
-									   context, params,
+					ProcessUtilitySlow(pstate, pstmt, queryString,
+									   context, params, queryEnv,
 									   dest, completionTag);
 				else
 					ExecAlterObjectSchemaStmt(stmt, NULL);
@@ -884,8 +912,8 @@ standard_ProcessUtility(Node *parsetree,
 				AlterOwnerStmt *stmt = (AlterOwnerStmt *) parsetree;
 
 				if (EventTriggerSupportsObjectType(stmt->objectType))
-					ProcessUtilitySlow(parsetree, queryString,
-									   context, params,
+					ProcessUtilitySlow(pstate, pstmt, queryString,
+									   context, params, queryEnv,
 									   dest, completionTag);
 				else
 					ExecAlterOwnerStmt(stmt);
@@ -897,11 +925,11 @@ standard_ProcessUtility(Node *parsetree,
 				CommentStmt *stmt = (CommentStmt *) parsetree;
 
 				if (EventTriggerSupportsObjectType(stmt->objtype))
-					ProcessUtilitySlow(parsetree, queryString,
-									   context, params,
+					ProcessUtilitySlow(pstate, pstmt, queryString,
+									   context, params, queryEnv,
 									   dest, completionTag);
 				else
-					CommentObject((CommentStmt *) parsetree);
+					CommentObject(stmt);
 				break;
 			}
 
@@ -910,8 +938,8 @@ standard_ProcessUtility(Node *parsetree,
 				SecLabelStmt *stmt = (SecLabelStmt *) parsetree;
 
 				if (EventTriggerSupportsObjectType(stmt->objtype))
-					ProcessUtilitySlow(parsetree, queryString,
-									   context, params,
+					ProcessUtilitySlow(pstate, pstmt, queryString,
+									   context, params, queryEnv,
 									   dest, completionTag);
 				else
 					ExecSecLabelStmt(stmt);
@@ -927,11 +955,13 @@ standard_ProcessUtility(Node *parsetree,
 
 		default:
 			/* All other statement types have event trigger support */
-			ProcessUtilitySlow(parsetree, queryString,
-							   context, params,
+			ProcessUtilitySlow(pstate, pstmt, queryString,
+							   context, params, queryEnv,
 							   dest, completionTag);
 			break;
 	}
+
+	free_parsestate(pstate);
 }
 
 /*
@@ -940,13 +970,16 @@ standard_ProcessUtility(Node *parsetree,
  * perform the trigger support calls if the context allows it.
  */
 static void
-ProcessUtilitySlow(Node *parsetree,
+ProcessUtilitySlow(ParseState *pstate,
+				   PlannedStmt *pstmt,
 				   const char *queryString,
 				   ProcessUtilityContext context,
 				   ParamListInfo params,
+				   QueryEnvironment *queryEnv,
 				   DestReceiver *dest,
 				   char *completionTag)
 {
+	Node	   *parsetree = pstmt->utilityStmt;
 	bool		isTopLevel = (context == PROCESS_UTILITY_TOPLEVEL);
 	bool		isCompleteQuery = (context <= PROCESS_UTILITY_QUERY);
 	bool		needCleanup;
@@ -970,7 +1003,9 @@ ProcessUtilitySlow(Node *parsetree,
 				 */
 			case T_CreateSchemaStmt:
 				CreateSchemaCommand((CreateSchemaStmt *) parsetree,
-									queryString);
+									queryString,
+									pstmt->stmt_location,
+									pstmt->stmt_len);
 
 				/*
 				 * EventTriggerCollectSimpleCommand called by
@@ -1004,7 +1039,8 @@ ProcessUtilitySlow(Node *parsetree,
 							/* Create the table itself */
 							address = DefineRelation((CreateStmt *) stmt,
 													 RELKIND_RELATION,
-													 InvalidOid, NULL);
+													 InvalidOid, NULL,
+													 queryString);
 							EventTriggerCollectSimpleCommand(address,
 															 secondaryObject,
 															 stmt);
@@ -1020,7 +1056,7 @@ ProcessUtilitySlow(Node *parsetree,
 							 * table
 							 */
 							toast_options = transformRelOptions((Datum) 0,
-											  ((CreateStmt *) stmt)->options,
+																((CreateStmt *) stmt)->options,
 																"toast",
 																validnsps,
 																true,
@@ -1037,7 +1073,8 @@ ProcessUtilitySlow(Node *parsetree,
 							/* Create the table itself */
 							address = DefineRelation((CreateStmt *) stmt,
 													 RELKIND_FOREIGN_TABLE,
-													 InvalidOid, NULL);
+													 InvalidOid, NULL,
+													 queryString);
 							CreateForeignTable((CreateForeignTableStmt *) stmt,
 											   address.objectId);
 							EventTriggerCollectSimpleCommand(address,
@@ -1051,10 +1088,20 @@ ProcessUtilitySlow(Node *parsetree,
 							 * call will stash the objects so created into our
 							 * event trigger context.
 							 */
-							ProcessUtility(stmt,
+							PlannedStmt *wrapper;
+
+							wrapper = makeNode(PlannedStmt);
+							wrapper->commandType = CMD_UTILITY;
+							wrapper->canSetTag = false;
+							wrapper->utilityStmt = stmt;
+							wrapper->stmt_location = pstmt->stmt_location;
+							wrapper->stmt_len = pstmt->stmt_len;
+
+							ProcessUtility(wrapper,
 										   queryString,
 										   PROCESS_UTILITY_SUBCOMMAND,
 										   params,
+										   NULL,
 										   None_Receiver,
 										   NULL);
 						}
@@ -1129,11 +1176,20 @@ ProcessUtilitySlow(Node *parsetree,
 								 * queued commands is consistent with the way
 								 * they are executed here.
 								 */
+								PlannedStmt *wrapper;
+
 								EventTriggerAlterTableEnd();
-								ProcessUtility(stmt,
+								wrapper = makeNode(PlannedStmt);
+								wrapper->commandType = CMD_UTILITY;
+								wrapper->canSetTag = false;
+								wrapper->utilityStmt = stmt;
+								wrapper->stmt_location = pstmt->stmt_location;
+								wrapper->stmt_len = pstmt->stmt_len;
+								ProcessUtility(wrapper,
 											   queryString,
 											   PROCESS_UTILITY_SUBCOMMAND,
 											   params,
+											   NULL,
 											   None_Receiver,
 											   NULL);
 								EventTriggerAlterTableStart(parsetree);
@@ -1150,8 +1206,8 @@ ProcessUtilitySlow(Node *parsetree,
 					}
 					else
 						ereport(NOTICE,
-						  (errmsg("relation \"%s\" does not exist, skipping",
-								  atstmt->relation->relname)));
+								(errmsg("relation \"%s\" does not exist, skipping",
+										atstmt->relation->relname)));
 				}
 
 				/* ALTER TABLE stashes commands internally */
@@ -1168,7 +1224,7 @@ ProcessUtilitySlow(Node *parsetree,
 					 */
 					switch (stmt->subtype)
 					{
-						case 'T':		/* ALTER DOMAIN DEFAULT */
+						case 'T':	/* ALTER DOMAIN DEFAULT */
 
 							/*
 							 * Recursively alter column default for table and,
@@ -1178,35 +1234,35 @@ ProcessUtilitySlow(Node *parsetree,
 								AlterDomainDefault(stmt->typeName,
 												   stmt->def);
 							break;
-						case 'N':		/* ALTER DOMAIN DROP NOT NULL */
+						case 'N':	/* ALTER DOMAIN DROP NOT NULL */
 							address =
 								AlterDomainNotNull(stmt->typeName,
 												   false);
 							break;
-						case 'O':		/* ALTER DOMAIN SET NOT NULL */
+						case 'O':	/* ALTER DOMAIN SET NOT NULL */
 							address =
 								AlterDomainNotNull(stmt->typeName,
 												   true);
 							break;
-						case 'C':		/* ADD CONSTRAINT */
+						case 'C':	/* ADD CONSTRAINT */
 							address =
 								AlterDomainAddConstraint(stmt->typeName,
 														 stmt->def,
 														 &secondaryObject);
 							break;
-						case 'X':		/* DROP CONSTRAINT */
+						case 'X':	/* DROP CONSTRAINT */
 							address =
 								AlterDomainDropConstraint(stmt->typeName,
 														  stmt->name,
 														  stmt->behavior,
 														  stmt->missing_ok);
 							break;
-						case 'V':		/* VALIDATE CONSTRAINT */
+						case 'V':	/* VALIDATE CONSTRAINT */
 							address =
 								AlterDomainValidateConstraint(stmt->typeName,
 															  stmt->name);
 							break;
-						default:		/* oops */
+						default:	/* oops */
 							elog(ERROR, "unrecognized alter domain type: %d",
 								 (int) stmt->subtype);
 							break;
@@ -1225,9 +1281,9 @@ ProcessUtilitySlow(Node *parsetree,
 					{
 						case OBJECT_AGGREGATE:
 							address =
-								DefineAggregate(stmt->defnames, stmt->args,
+								DefineAggregate(pstate, stmt->defnames, stmt->args,
 												stmt->oldstyle,
-											  stmt->definition, queryString);
+												stmt->definition);
 							break;
 						case OBJECT_OPERATOR:
 							Assert(stmt->args == NIL);
@@ -1236,7 +1292,8 @@ ProcessUtilitySlow(Node *parsetree,
 							break;
 						case OBJECT_TYPE:
 							Assert(stmt->args == NIL);
-							address = DefineType(stmt->defnames,
+							address = DefineType(pstate,
+												 stmt->defnames,
 												 stmt->definition);
 							break;
 						case OBJECT_TSPARSER:
@@ -1262,8 +1319,10 @@ ProcessUtilitySlow(Node *parsetree,
 							break;
 						case OBJECT_COLLATION:
 							Assert(stmt->args == NIL);
-							address = DefineCollation(stmt->defnames,
-													  stmt->definition);
+							address = DefineCollation(pstate,
+													  stmt->defnames,
+													  stmt->definition,
+													  stmt->if_not_exists);
 							break;
 						default:
 							elog(ERROR, "unrecognized define stmt type: %d",
@@ -1306,13 +1365,14 @@ ProcessUtilitySlow(Node *parsetree,
 					/* ... and do it */
 					EventTriggerAlterTableStart(parsetree);
 					address =
-						DefineIndex(relid,		/* OID of heap relation */
+						DefineIndex(relid,	/* OID of heap relation */
 									stmt,
 									InvalidOid, /* no predefined OID */
-									false,		/* is_alter_table */
-									true,		/* check_rights */
-									false,		/* skip_build */
-									false);		/* quiet */
+									false,	/* is_alter_table */
+									true,	/* check_rights */
+									true,	/* check_not_in_use */
+									false,	/* skip_build */
+									false); /* quiet */
 
 					/*
 					 * Add the CREATE INDEX node itself to stash right away;
@@ -1327,11 +1387,11 @@ ProcessUtilitySlow(Node *parsetree,
 				break;
 
 			case T_CreateExtensionStmt:
-				address = CreateExtension((CreateExtensionStmt *) parsetree);
+				address = CreateExtension(pstate, (CreateExtensionStmt *) parsetree);
 				break;
 
 			case T_AlterExtensionStmt:
-				address = ExecAlterExtensionStmt((AlterExtensionStmt *) parsetree);
+				address = ExecAlterExtensionStmt(pstate, (AlterExtensionStmt *) parsetree);
 				break;
 
 			case T_AlterExtensionContentsStmt:
@@ -1384,21 +1444,22 @@ ProcessUtilitySlow(Node *parsetree,
 				}
 				break;
 
-			case T_CreateEnumStmt:		/* CREATE TYPE AS ENUM */
+			case T_CreateEnumStmt:	/* CREATE TYPE AS ENUM */
 				address = DefineEnum((CreateEnumStmt *) parsetree);
 				break;
 
-			case T_CreateRangeStmt:		/* CREATE TYPE AS RANGE */
+			case T_CreateRangeStmt: /* CREATE TYPE AS RANGE */
 				address = DefineRange((CreateRangeStmt *) parsetree);
 				break;
 
-			case T_AlterEnumStmt:		/* ALTER TYPE (enum) */
+			case T_AlterEnumStmt:	/* ALTER TYPE (enum) */
 				address = AlterEnum((AlterEnumStmt *) parsetree, isTopLevel);
 				break;
 
 			case T_ViewStmt:	/* CREATE VIEW */
 				EventTriggerAlterTableStart(parsetree);
-				address = DefineView((ViewStmt *) parsetree, queryString);
+				address = DefineView((ViewStmt *) parsetree, queryString,
+									 pstmt->stmt_location, pstmt->stmt_len);
 				EventTriggerCollectSimpleCommand(address, secondaryObject,
 												 parsetree);
 				/* stashed internally */
@@ -1407,11 +1468,11 @@ ProcessUtilitySlow(Node *parsetree,
 				break;
 
 			case T_CreateFunctionStmt:	/* CREATE FUNCTION */
-				address = CreateFunction((CreateFunctionStmt *) parsetree, queryString);
+				address = CreateFunction(pstate, (CreateFunctionStmt *) parsetree);
 				break;
 
 			case T_AlterFunctionStmt:	/* ALTER FUNCTION */
-				address = AlterFunction((AlterFunctionStmt *) parsetree);
+				address = AlterFunction(pstate, (AlterFunctionStmt *) parsetree);
 				break;
 
 			case T_RuleStmt:	/* CREATE RULE */
@@ -1419,22 +1480,23 @@ ProcessUtilitySlow(Node *parsetree,
 				break;
 
 			case T_CreateSeqStmt:
-				address = DefineSequence((CreateSeqStmt *) parsetree);
+				address = DefineSequence(pstate, (CreateSeqStmt *) parsetree);
 				break;
 
 			case T_AlterSeqStmt:
-				address = AlterSequence((AlterSeqStmt *) parsetree);
+				address = AlterSequence(pstate, (AlterSeqStmt *) parsetree);
 				break;
 
 			case T_CreateTableAsStmt:
 				address = ExecCreateTableAs((CreateTableAsStmt *) parsetree,
-										 queryString, params, completionTag);
+											queryString, params, queryEnv,
+											completionTag);
 				break;
 
 			case T_RefreshMatViewStmt:
 
 				/*
-				 * REFRSH CONCURRENTLY executes some DDL commands internally.
+				 * REFRESH CONCURRENTLY executes some DDL commands internally.
 				 * Inhibit DDL command collection here to avoid those commands
 				 * from showing up in the deparsed command queue.  The refresh
 				 * command itself is queued, which is enough.
@@ -1443,7 +1505,7 @@ ProcessUtilitySlow(Node *parsetree,
 				PG_TRY();
 				{
 					address = ExecRefreshMatView((RefreshMatViewStmt *) parsetree,
-										 queryString, params, completionTag);
+												 queryString, params, completionTag);
 				}
 				PG_CATCH();
 				{
@@ -1502,6 +1564,7 @@ ProcessUtilitySlow(Node *parsetree,
 
 			case T_AlterTSConfigurationStmt:
 				AlterTSConfiguration((AlterTSConfigurationStmt *) parsetree);
+
 				/*
 				 * Commands are stashed in MakeConfigurationMapping and
 				 * DropConfigurationMapping, which are called from
@@ -1563,7 +1626,7 @@ ProcessUtilitySlow(Node *parsetree,
 				break;
 
 			case T_AlterDefaultPrivilegesStmt:
-				ExecAlterDefaultPrivilegesStmt((AlterDefaultPrivilegesStmt *) parsetree);
+				ExecAlterDefaultPrivilegesStmt(pstate, (AlterDefaultPrivilegesStmt *) parsetree);
 				EventTriggerCollectAlterDefPrivs((AlterDefaultPrivilegesStmt *) parsetree);
 				commandCollected = true;
 				break;
@@ -1572,7 +1635,7 @@ ProcessUtilitySlow(Node *parsetree,
 				address = CreatePolicy((CreatePolicyStmt *) parsetree);
 				break;
 
-			case T_AlterPolicyStmt:		/* ALTER POLICY */
+			case T_AlterPolicyStmt: /* ALTER POLICY */
 				address = AlterPolicy((AlterPolicyStmt *) parsetree);
 				break;
 
@@ -1584,6 +1647,7 @@ ProcessUtilitySlow(Node *parsetree,
 				address = CreateAccessMethod((CreateAmStmt *) parsetree);
 				break;
 
+<<<<<<< HEAD
 			case T_CreateGraphStmt:
 				CreateGraphCommand((CreateGraphStmt *) parsetree, queryString);
 				commandCollected = true;
@@ -1673,6 +1737,43 @@ ProcessUtilitySlow(Node *parsetree,
 					commandCollected = true;
 					EventTriggerAlterTableEnd();
 				}
+=======
+			case T_CreatePublicationStmt:
+				address = CreatePublication((CreatePublicationStmt *) parsetree);
+				break;
+
+			case T_AlterPublicationStmt:
+				AlterPublication((AlterPublicationStmt *) parsetree);
+
+				/*
+				 * AlterPublication calls EventTriggerCollectSimpleCommand
+				 * directly
+				 */
+				commandCollected = true;
+				break;
+
+			case T_CreateSubscriptionStmt:
+				address = CreateSubscription((CreateSubscriptionStmt *) parsetree,
+											 isTopLevel);
+				break;
+
+			case T_AlterSubscriptionStmt:
+				address = AlterSubscription((AlterSubscriptionStmt *) parsetree);
+				break;
+
+			case T_DropSubscriptionStmt:
+				DropSubscription((DropSubscriptionStmt *) parsetree, isTopLevel);
+				/* no commands stashed for DROP */
+				commandCollected = true;
+				break;
+
+			case T_CreateStatsStmt:
+				address = CreateStatistics((CreateStatsStmt *) parsetree);
+				break;
+
+			case T_AlterCollationStmt:
+				address = AlterCollation((AlterCollationStmt *) parsetree);
+>>>>>>> postgres
 				break;
 
 			default:
@@ -1780,7 +1881,7 @@ UtilityReturnsTuples(Node *parsetree)
 					return false;
 				portal = GetPortalByName(stmt->portalname);
 				if (!PortalIsValid(portal))
-					return false;		/* not our business to raise error */
+					return false;	/* not our business to raise error */
 				return portal->tupDesc ? true : false;
 			}
 
@@ -1791,7 +1892,7 @@ UtilityReturnsTuples(Node *parsetree)
 
 				entry = FetchPreparedStatement(stmt->name, false);
 				if (!entry)
-					return false;		/* not our business to raise error */
+					return false;	/* not our business to raise error */
 				if (entry->plansource->resultDesc)
 					return true;
 				return false;
@@ -1872,10 +1973,8 @@ QueryReturnsTuples(Query *parsetree)
 	switch (parsetree->commandType)
 	{
 		case CMD_SELECT:
-			/* returns tuples ... unless it's DECLARE CURSOR */
-			if (parsetree->utilityStmt == NULL)
-				return true;
-			break;
+			/* returns tuples */
+			return true;
 		case CMD_INSERT:
 		case CMD_UPDATE:
 		case CMD_DELETE:
@@ -1916,16 +2015,20 @@ UtilityContainsQuery(Node *parsetree)
 
 	switch (nodeTag(parsetree))
 	{
+		case T_DeclareCursorStmt:
+			qry = castNode(Query, ((DeclareCursorStmt *) parsetree)->query);
+			if (qry->commandType == CMD_UTILITY)
+				return UtilityContainsQuery(qry->utilityStmt);
+			return qry;
+
 		case T_ExplainStmt:
-			qry = (Query *) ((ExplainStmt *) parsetree)->query;
-			Assert(IsA(qry, Query));
+			qry = castNode(Query, ((ExplainStmt *) parsetree)->query);
 			if (qry->commandType == CMD_UTILITY)
 				return UtilityContainsQuery(qry->utilityStmt);
 			return qry;
 
 		case T_CreateTableAsStmt:
-			qry = (Query *) ((CreateTableAsStmt *) parsetree)->query;
-			Assert(IsA(qry, Query));
+			qry = castNode(Query, ((CreateTableAsStmt *) parsetree)->query);
 			if (qry->commandType == CMD_UTILITY)
 				return UtilityContainsQuery(qry->utilityStmt);
 			return qry;
@@ -2059,6 +2162,7 @@ AlterObjectTypeCommandTag(ObjectType objtype)
 		case OBJECT_MATVIEW:
 			tag = "ALTER MATERIALIZED VIEW";
 			break;
+<<<<<<< HEAD
 		case OBJECT_GRAPH:
 			tag = "ALTER GRAPH";
 			break;
@@ -2067,6 +2171,16 @@ AlterObjectTypeCommandTag(ObjectType objtype)
 			break;
 		case OBJECT_ELABEL:
 			tag = "ALTER ELABEL";
+=======
+		case OBJECT_PUBLICATION:
+			tag = "ALTER PUBLICATION";
+			break;
+		case OBJECT_SUBSCRIPTION:
+			tag = "ALTER SUBSCRIPTION";
+			break;
+		case OBJECT_STATISTIC_EXT:
+			tag = "ALTER STATISTICS";
+>>>>>>> postgres
 			break;
 		default:
 			tag = "???";
@@ -2079,7 +2193,8 @@ AlterObjectTypeCommandTag(ObjectType objtype)
 /*
  * CreateCommandTag
  *		utility to get a string representation of the command operation,
- *		given either a raw (un-analyzed) parsetree or a planned query.
+ *		given either a raw (un-analyzed) parsetree, an analyzed Query,
+ *		or a PlannedStmt.
  *
  * This must handle all command types, but since the vast majority
  * of 'em are utility commands, it seems sensible to keep it here.
@@ -2094,6 +2209,11 @@ CreateCommandTag(Node *parsetree)
 
 	switch (nodeTag(parsetree))
 	{
+			/* recurse if we're given a RawStmt */
+		case T_RawStmt:
+			tag = CreateCommandTag(((RawStmt *) parsetree)->stmt);
+			break;
+
 			/* raw plannable queries */
 		case T_InsertStmt:
 			tag = "INSERT";
@@ -2412,6 +2532,7 @@ CreateCommandTag(Node *parsetree)
 				case OBJECT_ACCESS_METHOD:
 					tag = "DROP ACCESS METHOD";
 					break;
+<<<<<<< HEAD
 				case OBJECT_GRAPH:
 					tag = "DROP GRAPH";
 					break;
@@ -2420,6 +2541,13 @@ CreateCommandTag(Node *parsetree)
 					break;
 				case OBJECT_VLABEL:
 					tag = "DROP VLABEL";
+=======
+				case OBJECT_PUBLICATION:
+					tag = "DROP PUBLICATION";
+					break;
+				case OBJECT_STATISTIC_EXT:
+					tag = "DROP STATISTICS";
+>>>>>>> postgres
 					break;
 				default:
 					tag = "???";
@@ -2791,12 +2919,40 @@ CreateCommandTag(Node *parsetree)
 			tag = "CREATE ACCESS METHOD";
 			break;
 
+		case T_CreatePublicationStmt:
+			tag = "CREATE PUBLICATION";
+			break;
+
+		case T_AlterPublicationStmt:
+			tag = "ALTER PUBLICATION";
+			break;
+
+		case T_CreateSubscriptionStmt:
+			tag = "CREATE SUBSCRIPTION";
+			break;
+
+		case T_AlterSubscriptionStmt:
+			tag = "ALTER SUBSCRIPTION";
+			break;
+
+		case T_DropSubscriptionStmt:
+			tag = "DROP SUBSCRIPTION";
+			break;
+
+		case T_AlterCollationStmt:
+			tag = "ALTER COLLATION";
+			break;
+
 		case T_PrepareStmt:
 			tag = "PREPARE";
 			break;
 
 		case T_ExecuteStmt:
 			tag = "EXECUTE";
+			break;
+
+		case T_CreateStatsStmt:
+			tag = "CREATE STATISTICS";
 			break;
 
 		case T_DeallocateStmt:
@@ -2824,12 +2980,7 @@ CreateCommandTag(Node *parsetree)
 						 * will be useful for complaints about read-only
 						 * statements
 						 */
-						if (stmt->utilityStmt != NULL)
-						{
-							Assert(IsA(stmt->utilityStmt, DeclareCursorStmt));
-							tag = "DECLARE CURSOR";
-						}
-						else if (stmt->rowMarks != NIL)
+						if (stmt->rowMarks != NIL)
 						{
 							/* not 100% but probably close enough */
 							switch (((PlanRowMark *) linitial(stmt->rowMarks))->strength)
@@ -2863,6 +3014,9 @@ CreateCommandTag(Node *parsetree)
 					case CMD_DELETE:
 						tag = "DELETE";
 						break;
+					case CMD_UTILITY:
+						tag = CreateCommandTag(stmt->utilityStmt);
+						break;
 					default:
 						elog(WARNING, "unrecognized commandType: %d",
 							 (int) stmt->commandType);
@@ -2886,12 +3040,7 @@ CreateCommandTag(Node *parsetree)
 						 * will be useful for complaints about read-only
 						 * statements
 						 */
-						if (stmt->utilityStmt != NULL)
-						{
-							Assert(IsA(stmt->utilityStmt, DeclareCursorStmt));
-							tag = "DECLARE CURSOR";
-						}
-						else if (stmt->rowMarks != NIL)
+						if (stmt->rowMarks != NIL)
 						{
 							/* not 100% but probably close enough */
 							switch (((RowMarkClause *) linitial(stmt->rowMarks))->strength)
@@ -2951,7 +3100,8 @@ CreateCommandTag(Node *parsetree)
 /*
  * GetCommandLogLevel
  *		utility to get the minimum log_statement level for a command,
- *		given either a raw (un-analyzed) parsetree or a planned query.
+ *		given either a raw (un-analyzed) parsetree, an analyzed Query,
+ *		or a PlannedStmt.
  *
  * This must handle all command types, but since the vast majority
  * of 'em are utility commands, it seems sensible to keep it here.
@@ -2963,6 +3113,11 @@ GetCommandLogLevel(Node *parsetree)
 
 	switch (nodeTag(parsetree))
 	{
+			/* recurse if we're given a RawStmt */
+		case T_RawStmt:
+			lev = GetCommandLogLevel(((RawStmt *) parsetree)->stmt);
+			break;
+
 			/* raw plannable queries */
 		case T_InsertStmt:
 		case T_DeleteStmt:
@@ -2972,7 +3127,7 @@ GetCommandLogLevel(Node *parsetree)
 
 		case T_SelectStmt:
 			if (((SelectStmt *) parsetree)->intoClause)
-				lev = LOGSTMT_DDL;		/* SELECT INTO */
+				lev = LOGSTMT_DDL;	/* SELECT INTO */
 			else
 				lev = LOGSTMT_ALL;
 			break;
@@ -3082,7 +3237,7 @@ GetCommandLogLevel(Node *parsetree)
 				/* Look through an EXECUTE to the referenced stmt */
 				ps = FetchPreparedStatement(stmt->name, false);
 				if (ps && ps->plansource->raw_parse_tree)
-					lev = GetCommandLogLevel(ps->plansource->raw_parse_tree);
+					lev = GetCommandLogLevel(ps->plansource->raw_parse_tree->stmt);
 				else
 					lev = LOGSTMT_ALL;
 			}
@@ -3105,6 +3260,10 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_AlterOwnerStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_AlterOperatorStmt:
 			lev = LOGSTMT_DDL;
 			break;
 
@@ -3372,6 +3531,34 @@ GetCommandLogLevel(Node *parsetree)
 			lev = LOGSTMT_DDL;
 			break;
 
+		case T_CreatePublicationStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_AlterPublicationStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_CreateSubscriptionStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_AlterSubscriptionStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_DropSubscriptionStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_CreateStatsStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
+		case T_AlterCollationStmt:
+			lev = LOGSTMT_DDL;
+			break;
+
 			/* already-planned queries */
 		case T_PlannedStmt:
 			{
@@ -3387,6 +3574,10 @@ GetCommandLogLevel(Node *parsetree)
 					case CMD_INSERT:
 					case CMD_DELETE:
 						lev = LOGSTMT_MOD;
+						break;
+
+					case CMD_UTILITY:
+						lev = GetCommandLogLevel(stmt->utilityStmt);
 						break;
 
 					default:

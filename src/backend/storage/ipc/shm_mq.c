@@ -8,7 +8,7 @@
  * and only the receiver may receive.  This is intended to allow a user
  * backend to communicate with worker backends that it has registered.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/shm_mq.h
@@ -19,6 +19,7 @@
 #include "postgres.h"
 
 #include "miscadmin.h"
+#include "pgstat.h"
 #include "postmaster/bgworker.h"
 #include "storage/procsignal.h"
 #include "storage/shm_mq.h"
@@ -82,7 +83,9 @@ struct shm_mq
  * This structure is a backend-private handle for access to a queue.
  *
  * mqh_queue is a pointer to the queue we've attached, and mqh_segment is
- * a pointer to the dynamic shared memory segment that contains it.
+ * an optional pointer to the dynamic shared memory segment that contains it.
+ * (If mqh_segment is provided, we register an on_dsm_detach callback to
+ * make sure we detach from the queue before detaching from DSM.)
  *
  * If this queue is intended to connect the current process with a background
  * worker that started it, the user can pass a pointer to the worker handle
@@ -138,13 +141,14 @@ struct shm_mq_handle
 	MemoryContext mqh_context;
 };
 
+static void shm_mq_detach_internal(shm_mq *mq);
 static shm_mq_result shm_mq_send_bytes(shm_mq_handle *mq, Size nbytes,
 				  const void *data, bool nowait, Size *bytes_written);
 static shm_mq_result shm_mq_receive_bytes(shm_mq *mq, Size bytes_needed,
 					 bool nowait, Size *nbytesp, void **datap);
 static bool shm_mq_counterparty_gone(volatile shm_mq *mq,
 						 BackgroundWorkerHandle *handle);
-static bool shm_mq_wait_internal(volatile shm_mq *mq, PGPROC *volatile * ptr,
+static bool shm_mq_wait_internal(volatile shm_mq *mq, PGPROC *volatile *ptr,
 					 BackgroundWorkerHandle *handle);
 static uint64 shm_mq_get_bytes_read(volatile shm_mq *mq, bool *detached);
 static void shm_mq_inc_bytes_read(volatile shm_mq *mq, Size n);
@@ -287,14 +291,15 @@ shm_mq_attach(shm_mq *mq, dsm_segment *seg, BackgroundWorkerHandle *handle)
 	Assert(mq->mq_receiver == MyProc || mq->mq_sender == MyProc);
 	mqh->mqh_queue = mq;
 	mqh->mqh_segment = seg;
-	mqh->mqh_buffer = NULL;
 	mqh->mqh_handle = handle;
+	mqh->mqh_buffer = NULL;
 	mqh->mqh_buflen = 0;
 	mqh->mqh_consume_pending = 0;
-	mqh->mqh_context = CurrentMemoryContext;
 	mqh->mqh_partial_bytes = 0;
+	mqh->mqh_expected_bytes = 0;
 	mqh->mqh_length_word_complete = false;
 	mqh->mqh_counterparty_attached = false;
+	mqh->mqh_context = CurrentMemoryContext;
 
 	if (seg != NULL)
 		on_dsm_detach(seg, shm_mq_detach_callback, PointerGetDatum(mq));
@@ -364,7 +369,7 @@ shm_mq_sendv(shm_mq_handle *mqh, shm_mq_iovec *iov, int iovcnt, bool nowait)
 	{
 		Assert(mqh->mqh_partial_bytes < sizeof(Size));
 		res = shm_mq_send_bytes(mqh, sizeof(Size) - mqh->mqh_partial_bytes,
-								((char *) &nbytes) +mqh->mqh_partial_bytes,
+								((char *) &nbytes) + mqh->mqh_partial_bytes,
 								nowait, &bytes_written);
 
 		if (res == SHM_MQ_DETACHED)
@@ -764,17 +769,42 @@ shm_mq_wait_for_attach(shm_mq_handle *mqh)
 }
 
 /*
- * Detach a shared message queue.
+ * Detach from a shared message queue, and destroy the shm_mq_handle.
+ */
+void
+shm_mq_detach(shm_mq_handle *mqh)
+{
+	/* Notify counterparty that we're outta here. */
+	shm_mq_detach_internal(mqh->mqh_queue);
+
+	/* Cancel on_dsm_detach callback, if any. */
+	if (mqh->mqh_segment)
+		cancel_on_dsm_detach(mqh->mqh_segment,
+							 shm_mq_detach_callback,
+							 PointerGetDatum(mqh->mqh_queue));
+
+	/* Release local memory associated with handle. */
+	if (mqh->mqh_buffer != NULL)
+		pfree(mqh->mqh_buffer);
+	pfree(mqh);
+}
+
+/*
+ * Notify counterparty that we're detaching from shared message queue.
  *
  * The purpose of this function is to make sure that the process
  * with which we're communicating doesn't block forever waiting for us to
- * fill or drain the queue once we've lost interest.  Whem the sender
+ * fill or drain the queue once we've lost interest.  When the sender
  * detaches, the receiver can read any messages remaining in the queue;
  * further reads will return SHM_MQ_DETACHED.  If the receiver detaches,
  * further attempts to send messages will likewise return SHM_MQ_DETACHED.
+ *
+ * This is separated out from shm_mq_detach() because if the on_dsm_detach
+ * callback fires, we only want to do this much.  We do not try to touch
+ * the local shm_mq_handle, as it may have been pfree'd already.
  */
-void
-shm_mq_detach(shm_mq *mq)
+static void
+shm_mq_detach_internal(shm_mq *mq)
 {
 	volatile shm_mq *vmq = mq;
 	PGPROC	   *victim;
@@ -894,7 +924,7 @@ shm_mq_send_bytes(shm_mq_handle *mqh, Size nbytes, const void *data,
 			 * at top of loop, because setting an already-set latch is much
 			 * cheaper than setting one that has been reset.
 			 */
-			WaitLatch(MyLatch, WL_LATCH_SET, 0);
+			WaitLatch(MyLatch, WL_LATCH_SET, 0, WAIT_EVENT_MQ_SEND);
 
 			/* Reset the latch so we don't spin. */
 			ResetLatch(MyLatch);
@@ -991,7 +1021,7 @@ shm_mq_receive_bytes(shm_mq *mq, Size bytes_needed, bool nowait,
 		 * loop, because setting an already-set latch is much cheaper than
 		 * setting one that has been reset.
 		 */
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+		WaitLatch(MyLatch, WL_LATCH_SET, 0, WAIT_EVENT_MQ_RECEIVE);
 
 		/* Reset the latch so we don't spin. */
 		ResetLatch(MyLatch);
@@ -1052,7 +1082,7 @@ shm_mq_counterparty_gone(volatile shm_mq *mq, BackgroundWorkerHandle *handle)
  * non-NULL when our counterpart attaches to the queue.
  */
 static bool
-shm_mq_wait_internal(volatile shm_mq *mq, PGPROC *volatile * ptr,
+shm_mq_wait_internal(volatile shm_mq *mq, PGPROC *volatile *ptr,
 					 BackgroundWorkerHandle *handle)
 {
 	bool		result = false;
@@ -1090,7 +1120,7 @@ shm_mq_wait_internal(volatile shm_mq *mq, PGPROC *volatile * ptr,
 		}
 
 		/* Wait to be signalled. */
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+		WaitLatch(MyLatch, WL_LATCH_SET, 0, WAIT_EVENT_MQ_INTERNAL);
 
 		/* Reset the latch so we don't spin. */
 		ResetLatch(MyLatch);
@@ -1166,7 +1196,7 @@ shm_mq_inc_bytes_written(volatile shm_mq *mq, Size n)
 }
 
 /*
- * Set sender's latch, unless queue is detached.
+ * Set receiver's latch, unless queue is detached.
  */
 static shm_mq_result
 shm_mq_notify_receiver(volatile shm_mq *mq)
@@ -1192,5 +1222,5 @@ shm_mq_detach_callback(dsm_segment *seg, Datum arg)
 {
 	shm_mq	   *mq = (shm_mq *) DatumGetPointer(arg);
 
-	shm_mq_detach(mq);
+	shm_mq_detach_internal(mq);
 }

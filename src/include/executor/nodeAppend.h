@@ -4,7 +4,7 @@
  *
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/nodeAppend.h
@@ -17,10 +17,9 @@
 #include "nodes/execnodes.h"
 
 extern AppendState *ExecInitAppend(Append *node, EState *estate, int eflags);
-extern TupleTableSlot *ExecAppend(AppendState *node);
 extern void ExecEndAppend(AppendState *node);
 extern void ExecReScanAppend(AppendState *node);
 extern void ExecUpScanAppend(AppendState *node);
 extern void ExecDownScanAppend(AppendState *node);
 
-#endif   /* NODEAPPEND_H */
+#endif							/* NODEAPPEND_H */

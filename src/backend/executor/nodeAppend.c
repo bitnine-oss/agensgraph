@@ -3,7 +3,7 @@
  * nodeAppend.c
  *	  routines to handle append nodes.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -59,8 +59,13 @@
 
 #include "executor/execdebug.h"
 #include "executor/nodeAppend.h"
+<<<<<<< HEAD
 #include "lib/ilist.h"
+=======
+#include "miscadmin.h"
+>>>>>>> postgres
 
+static TupleTableSlot *ExecAppend(PlanState *pstate);
 static bool exec_append_initialize_next(AppendState *appendstate);
 
 
@@ -130,6 +135,12 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	Assert(!(eflags & EXEC_FLAG_MARK));
 
 	/*
+	 * Lock the non-leaf tables in the partition tree controlled by this node.
+	 * It's a no-op for non-partitioned parent tables.
+	 */
+	ExecLockNonLeafAppendTables(node->partitioned_rels, estate);
+
+	/*
 	 * Set up empty vector of subplan states
 	 */
 	nplans = list_length(node->appendplans);
@@ -141,6 +152,7 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	 */
 	appendstate->ps.plan = (Plan *) node;
 	appendstate->ps.state = estate;
+	appendstate->ps.ExecProcNode = ExecAppend;
 	appendstate->appendplans = appendplanstates;
 	appendstate->as_nplans = nplans;
 
@@ -194,13 +206,17 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
  *		Handles iteration over multiple subplans.
  * ----------------------------------------------------------------
  */
-TupleTableSlot *
-ExecAppend(AppendState *node)
+static TupleTableSlot *
+ExecAppend(PlanState *pstate)
 {
+	AppendState *node = castNode(AppendState, pstate);
+
 	for (;;)
 	{
 		PlanState  *subnode;
 		TupleTableSlot *result;
+
+		CHECK_FOR_INTERRUPTS();
 
 		/*
 		 * figure out which subplan we are currently processing

@@ -28,7 +28,7 @@ su - postgres
 
    In general, a modern Unix-compatible platform should be able to run
    PostgreSQL. The platforms that had received specific testing at the
-   time of release are listed in the Section called Supported Platforms
+   time of release are listed in the section called "Supported Platforms"
    below. In the "doc" subdirectory of the distribution there are several
    platform-specific FAQ documents you might wish to consult if you are
    having trouble.
@@ -68,27 +68,24 @@ make --version
 
      * To build the server programming language PL/Perl you need a full
        Perl installation, including the "libperl" library and the header
-       files. Since PL/Perl will be a shared library, the "libperl"
-       library must be a shared library also on most platforms. This
-       appears to be the default in recent Perl versions, but it was not
-       in earlier versions, and in any case it is the choice of whomever
-       installed Perl at your site. "configure" will fail if building
-       PL/Perl is selected but it cannot find a shared "libperl". In that
-       case, you will have to rebuild and install Perl manually to be able
-       to build PL/Perl. During the configuration process for Perl,
-       request a shared library.
+       files. The minimum required version is Perl 5.8.3. Since PL/Perl
+       will be a shared library, the "libperl" library must be a shared
+       library also on most platforms. This appears to be the default in
+       recent Perl versions, but it was not in earlier versions, and in
+       any case it is the choice of whomever installed Perl at your site.
+       "configure" will fail if building PL/Perl is selected but it cannot
+       find a shared "libperl". In that case, you will have to rebuild and
+       install Perl manually to be able to build PL/Perl. During the
+       configuration process for Perl, request a shared library.
        If you intend to make more than incidental use of PL/Perl, you
        should ensure that the Perl installation was built with the
        usemultiplicity option enabled (perl -V will show whether this is
        the case).
      * To build the PL/Python server programming language, you need a
        Python installation with the header files and the distutils module.
-       The minimum required version is Python 2.3. (To work with function
-       arguments of type numeric, a 2.3.x installation must include the
-       separately-available "cdecimal" module; note the PL/Python
-       regression tests will not pass if that is missing.) Python 3 is
-       supported if it's version 3.1 or later; but see the PL/Python
-       documentation when using Python 3.
+       The minimum required version is Python 2.4. Python 3 is supported
+       if it's version 3.1 or later; but see the PL/Python documentation
+       when using Python 3.
        Since PL/Python will be a shared library, the "libpython" library
        must be a shared library also on most platforms. This is not the
        case in a default Python installation built from source, but a
@@ -109,8 +106,10 @@ make --version
        implementation in the GNU C library then you will additionally need
        the GNU Gettext package for some utility programs. For any of the
        other implementations you will not need it.
-     * You need Kerberos, OpenSSL, OpenLDAP, and/or PAM, if you want to
-       support authentication or encryption using those services.
+     * You need OpenSSL, if you want to support encrypted client
+       connections. The minimum required version is 0.9.8.
+     * You need Kerberos, OpenLDAP, and/or PAM, if you want to support
+       authentication using those services.
      * To build the PostgreSQL documentation, there is a separate set of
        requirements; see the main documentation's appendix on
        documentation.
@@ -123,10 +122,10 @@ make --version
        you changed the actual scanner and parser definition files. If you
        need them, be sure to get Flex 2.5.31 or later and Bison 1.875 or
        later. Other lex and yacc programs cannot be used.
-     * Perl 5.8 or later is needed to build from a Git checkout, or if you
-       changed the input files for any of the build steps that use Perl
-       scripts. If building on Windows you will need Perl in any case.
-       Perl is also required to run some test suites.
+     * Perl 5.8.3 or later is needed to build from a Git checkout, or if
+       you changed the input files for any of the build steps that use
+       Perl scripts. If building on Windows you will need Perl in any
+       case. Perl is also required to run some test suites.
 
    If you need to get a GNU package, you can find it at your local GNU
    mirror site (see http://www.gnu.org/order/ftp.html for a list) or at
@@ -244,22 +243,23 @@ make
                 installed under this directory. The default is
                 "DATAROOTDIR".
 
-     Note: Care has been taken to make it possible to install PostgreSQL
-     into shared installation locations (such as "/usr/local/include")
-     without interfering with the namespace of the rest of the system.
-     First, the string "/postgresql" is automatically appended to
-     datadir, sysconfdir, and docdir, unless the fully expanded directory
-     name already contains the string "postgres" or "pgsql". For example,
-     if you choose "/usr/local" as prefix, the documentation will be
-     installed in "/usr/local/doc/postgresql", but if the prefix is
-     "/opt/postgres", then it will be in "/opt/postgres/doc". The public
-     C header files of the client interfaces are installed into
-     includedir and are namespace-clean. The internal header files and
-     the server header files are installed into private directories under
-     includedir. See the documentation of each interface for information
-     about how to access its header files. Finally, a private
-     subdirectory will also be created, if appropriate, under libdir for
-     dynamically loadable modules.
+       Note:
+       Care has been taken to make it possible to install PostgreSQL into
+       shared installation locations (such as "/usr/local/include")
+       without interfering with the namespace of the rest of the system.
+       First, the string "/postgresql" is automatically appended to
+       datadir, sysconfdir, and docdir, unless the fully expanded
+       directory name already contains the string "postgres" or "pgsql".
+       For example, if you choose "/usr/local" as prefix, the
+       documentation will be installed in "/usr/local/doc/postgresql", but
+       if the prefix is "/opt/postgres", then it will be in
+       "/opt/postgres/doc". The public C header files of the client
+       interfaces are installed into includedir and are namespace-clean.
+       The internal header files and the server header files are installed
+       into private directories under includedir. See the documentation of
+       each interface for information about how to access its header
+       files. Finally, a private subdirectory will also be created, if
+       appropriate, under libdir for dynamically loadable modules.
 
         --with-extra-version=STRING
                 Append "STRING" to the PostgreSQL version number. You can
@@ -344,6 +344,24 @@ make
                 to change this unless you have a Windows environment, in
                 which case it must be set to upper case POSTGRES.
 
+        --with-icu
+                Build with support for the ICU library. This requires the
+                ICU4C package to be installed. The minimum required
+                version of ICU4C is currently 4.2.
+
+                By default, pkg-config will be used to find the required
+                compilation options. This is supported for ICU4C version
+                4.6 and later. For older versions, or if pkg-config is not
+                available, the variables ICU_CFLAGS and ICU_LIBS can be
+                specified to "configure", like in this example:
+
+./configure ... --with-icu ICU_CFLAGS='-I/some/where/include' ICU_LIBS='-L/some/
+where/lib -licui18n -licuuc -licudata'
+
+                (If ICU4C is in the default search path for the compiler,
+                then you still need to specify a nonempty string in order
+                to avoid use of pkg-config, for example, ICU_CFLAGS=' '.)
+
         --with-openssl
                 Build with support for SSL (encrypted) connections. This
                 requires the OpenSSL package to be installed. "configure"
@@ -389,7 +407,7 @@ make
 
         --with-bonjour
                 Build with Bonjour support. This requires Bonjour support
-                in your operating system. Recommended on OS X.
+                in your operating system. Recommended on macOS.
 
         --with-uuid=LIBRARY
                 Build the uuid-ossp module (which provides functions to
@@ -400,7 +418,7 @@ make
                  and some other BSD-derived systems
                o "e2fs" to use the UUID library created by the e2fsprogs
                  project; this library is present in most Linux systems
-                 and in OS X, and can be obtained for other platforms as
+                 and in macOS, and can be obtained for other platforms as
                  well
                o "ossp" to use the OSSP UUID library
 
@@ -423,20 +441,6 @@ make
         --with-libxslt
                 Use libxslt when building the xml2 module. xml2 relies on
                 this library to perform XSL transformations of XML.
-
-        --disable-integer-datetimes
-                Disable support for 64-bit integer storage for timestamps
-                and intervals, and store datetime values as floating-point
-                numbers instead. Floating-point datetime storage was the
-                default in PostgreSQL releases prior to 8.4, but it is now
-                deprecated, because it does not support microsecond
-                precision for the full range of timestamp values. However,
-                integer-based datetime storage requires a 64-bit integer
-                type. Therefore, this option can be used when no such type
-                is available, or for compatibility with applications
-                written for prior versions of PostgreSQL. See the
-                documentation about datetime datatypes for more
-                information.
 
         --disable-float4-byval
                 Disable passing float4 values "by value", causing them to
@@ -491,7 +495,7 @@ make
                 of each individual file in the WAL log. It may be useful
                 to adjust this size to control the granularity of WAL log
                 shipping. The default size is 16 megabytes. The value must
-                be a power of 2 between 1 and 64 (megabytes). Note that
+                be a power of 2 between 1 and 1024 (megabytes). Note that
                 changing this value requires an initdb.
 
         --with-wal-blocksize=BLOCKSIZE
@@ -510,6 +514,17 @@ make
                 you that the platform lacks spinlock support. If this
                 option is required to build PostgreSQL on your platform,
                 please report the problem to the PostgreSQL developers.
+
+        --disable-strong-random
+                Allow the build to succeed even if PostgreSQL has no
+                support for strong random numbers on the platform. A
+                source of random numbers is needed for some authentication
+                protocols, as well as some routines in the pgcrypto
+                module. "--disable-strong-random" disables functionality
+                that requires cryptographically strong random numbers, and
+                substitutes a weak pseudo-random-number-generator for the
+                generation of authentication salt values and query cancel
+                keys. It may make authentication less secure.
 
         --disable-thread-safety
                 Disable the thread-safety of client libraries. This
@@ -692,19 +707,37 @@ AGS='-64' ...
                 "xml2-config" program used to locate the libxml
                 installation.
 
-     Note: When developing code inside the server, it is recommended to
-     use the configure options "--enable-cassert" (which turns on many
-     run-time error checks) and "--enable-debug" (which improves the
-     usefulness of debugging tools).
-     If using GCC, it is best to build with an optimization level of at
-     least "-O1", because using no optimization ("-O0") disables some
-     important compiler warnings (such as the use of uninitialized
-     variables). However, non-zero optimization levels can complicate
-     debugging because stepping through compiled code will usually not
-     match up one-to-one with source code lines. If you get confused
-     while trying to debug optimized code, recompile the specific files
-     of interest with "-O0". An easy way to do this is by passing an
-     option to make: "make PROFILE=-O0 file.o".
+       Sometimes it is useful to add compiler flags after-the-fact to the
+       set that were chosen by "configure". An important example is that
+       gcc's "-Werror" option cannot be included in the CFLAGS passed to
+       "configure", because it will break many of "configure"'s built-in
+       tests. To add such flags, include them in the COPT environment
+       variable while running "make". The contents of COPT are added to
+       both the CFLAGS and LDFLAGS options set up by "configure". For
+       example, you could do
+make COPT='-Werror'
+       or
+export COPT='-Werror'
+make
+       Note:
+       When developing code inside the server, it is recommended to use
+       the configure options "--enable-cassert" (which turns on many
+       run-time error checks) and "--enable-debug" (which improves the
+       usefulness of debugging tools).
+       If using GCC, it is best to build with an optimization level of at
+       least "-O1", because using no optimization ("-O0") disables some
+       important compiler warnings (such as the use of uninitialized
+       variables). However, non-zero optimization levels can complicate
+       debugging because stepping through compiled code will usually not
+       match up one-to-one with source code lines. If you get confused
+       while trying to debug optimized code, recompile the specific files
+       of interest with "-O0". An easy way to do this is by passing an
+       option to make: "make PROFILE=-O0 file.o".
+       The COPT and PROFILE environment variables are actually handled
+       identically by the PostgreSQL makefiles. Which to use is a matter
+       of preference, but a common habit among developers is to use
+       PROFILE for one-time flag adjustments, while COPT might be kept set
+       all the time.
     2. Build
        To start the build, type:
 make
@@ -728,13 +761,13 @@ make check
        information about interpreting the test results. You can repeat
        this test at any later time by issuing the same command.
     4. Installing the Files
-
-     Note: If you are upgrading an existing system be sure to read the
-     documentation, which has instructions about upgrading a cluster.
+       Note:
+       If you are upgrading an existing system be sure to read the
+       documentation, which has instructions about upgrading a cluster.
        To install PostgreSQL enter:
 make install
        This will install files into the directories that were specified in
-       step 1. Make sure that you have appropriate permissions to write
+       Step 1. Make sure that you have appropriate permissions to write
        into that area. Normally you need to do this step as root.
        Alternatively, you can create the target directories in advance and
        arrange for appropriate permissions to be granted.
@@ -758,7 +791,7 @@ make install-world
        (Prior to PostgreSQL 8.0, a separate make install-all-headers
        command was needed for the latter, but this step has been folded
        into the standard install.)
-       Client-only installation: If you want to install only the client
+       Client-only installation:  If you want to install only the client
        applications and interface libraries, then you can use these
        commands:
 make -C src/bin install
@@ -768,10 +801,10 @@ make -C doc install
        "src/bin" has a few binaries for server-only use, but they are
        small.
 
-   Uninstallation: To undo the installation use the command "make
+   Uninstallation:  To undo the installation use the command "make
    uninstall". However, this will not remove any created directories.
 
-   Cleaning: After the installation you can free disk space by removing
+   Cleaning:  After the installation you can free disk space by removing
    the built files from the source tree with the command "make clean".
    This will preserve the files made by the "configure" program, so that
    you can rebuild everything with "make" later on. To reset the source
@@ -790,6 +823,7 @@ make -C doc install
      __________________________________________________________________
 
                            Post-Installation Setup
+     __________________________________________________________________
 
 Shared Libraries
 
@@ -809,7 +843,7 @@ export LD_LIBRARY_PATH
 setenv LD_LIBRARY_PATH /usr/local/pgsql/lib
 
    Replace /usr/local/pgsql/lib with whatever you set "--libdir" to in
-   step 1. You should put these commands into a shell start-up file such
+   Step 1. You should put these commands into a shell start-up file such
    as "/etc/profile" or "~/.bash_profile". Some good information about the
    caveats associated with this method can be found at
    http://xahlee.org/UnixResource_dir/_/ldpath.html.
@@ -843,7 +877,7 @@ Environment Variables
 
    If you installed into "/usr/local/pgsql" or some other location that is
    not searched for programs by default, you should add
-   "/usr/local/pgsql/bin" (or whatever you set "--bindir" to in step 1)
+   "/usr/local/pgsql/bin" (or whatever you set "--bindir" to in Step 1)
    into your PATH. Strictly speaking, this is not necessary, but it will
    make the use of PostgreSQL much more convenient.
 
@@ -875,6 +909,7 @@ export MANPATH
    The following is a quick summary of how to get PostgreSQL up and
    running once installed. The main documentation contains more
    information.
+
     1. Create a user account for the PostgreSQL server. This is the user
        the server will run as. For production use you should create a
        separate, unprivileged account ("postgres" is commonly used). If
@@ -958,20 +993,20 @@ psql testdb
 
    In general, PostgreSQL can be expected to work on these CPU
    architectures: x86, x86_64, IA64, PowerPC, PowerPC 64, S/390, S/390x,
-   Sparc, Sparc 64, ARM, MIPS, MIPSEL, M68K, and PA-RISC. Code support
-   exists for M32R and VAX, but these architectures are not known to have
+   Sparc, Sparc 64, ARM, MIPS, MIPSEL, and PA-RISC. Code support exists
+   for M68K, M32R, and VAX, but these architectures are not known to have
    been tested recently. It is often possible to build on an unsupported
    CPU type by configuring with "--disable-spinlocks", but performance
    will be poor.
 
    PostgreSQL can be expected to work on these operating systems: Linux
    (all recent distributions), Windows (Win2000 SP4 and later), FreeBSD,
-   OpenBSD, NetBSD, OS X, AIX, HP/UX, Solaris, and UnixWare. Other
-   Unix-like systems may also work but are not currently being tested. In
-   most cases, all CPU architectures supported by a given operating system
-   will work. Look in the the Section called Platform-specific Notes below
-   to see if there is information specific to your operating system,
-   particularly if using an older system.
+   OpenBSD, NetBSD, macOS, AIX, HP/UX, and Solaris. Other Unix-like
+   systems may also work but are not currently being tested. In most
+   cases, all CPU architectures supported by a given operating system will
+   work. Look in the section called "Platform-specific Notes" below to see
+   if there is information specific to your operating system, particularly
+   if using an older system.
 
    If you have installation problems on a platform that is known to be
    supported according to recent build farm results, please report it to
@@ -984,8 +1019,8 @@ psql testdb
 
    This section documents additional platform-specific issues regarding
    the installation and setup of PostgreSQL. Be sure to read the
-   installation instructions, and in particular the Section called
-   Requirements as well. Also, check the file "src/test/regress/README"
+   installation instructions, and in particular the section called
+   "Requirements" as well. Also, check the file "src/test/regress/README"
    and the documentation regarding the interpretation of regression test
    results.
 
@@ -1085,7 +1120,7 @@ hosts=local,bind
 hosts=local4,bind4
        to deactivate searching for IPv6 addresses.
 
-                                   Warning
+   Warning:
 
    This is really a workaround for problems relating to immaturity of IPv6
    support, which improved visibly during the course of AIX 5.3 releases.
@@ -1100,19 +1135,17 @@ Memory Management
    AIX can be somewhat peculiar with regards to the way it does memory
    management. You can have a server with many multiples of gigabytes of
    RAM free, but still get out of memory or address space errors when
-   running applications. One example is "createlang" failing with unusual
-   errors. For example, running as the owner of the PostgreSQL
+   running applications. One example is loading of extensions failing with
+   unusual errors. For example, running as the owner of the PostgreSQL
    installation:
--bash-3.00$ createlang plperl template1
-createlang: language installation failed: ERROR:  could not load library "/opt/d
-bs/pgsql748/lib/plperl.so": A memory address is not in the address space for the
- process.
+=# CREATE EXTENSION plperl;
+ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": A memory address
+is not in the address space for the process.
 
    Running as a non-owner in the group possessing the PostgreSQL
    installation:
--bash-3.00$ createlang plperl template1
-createlang: language installation failed: ERROR:  could not load library "/opt/d
-bs/pgsql748/lib/plperl.so": Bad address
+=# CREATE EXTENSION plperl;
+ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": Bad address
 
    Another example is out of memory errors in the PostgreSQL server logs,
    with every memory allocation near or greater than 256 MB failing.
@@ -1124,8 +1157,8 @@ bs/pgsql748/lib/plperl.so": Bad address
    256 MB segments using one of a few models. The default allows for less
    than 256 MB in the heap as it shares a single segment with the stack.
 
-   In the case of the "createlang" example, above, check your umask and
-   the permissions of the binaries in your PostgreSQL installation. The
+   In the case of the plperl example, above, check your umask and the
+   permissions of the binaries in your PostgreSQL installation. The
    binaries involved in that example were 32-bit and installed as mode 750
    instead of 755. Due to the permissions being set in this fashion, only
    the owner or a member of the possessing group can load the library.
@@ -1164,22 +1197,22 @@ bs/pgsql748/lib/plperl.so": Bad address
 
 References and Resources
 
-   "Large Program Support", AIX Documentation: General Programming
+   "Large Program Support". AIX Documentation: General Programming
    Concepts: Writing and Debugging Programs.
 
-   "Program Address Space Overview", AIX Documentation: General
+   "Program Address Space Overview". AIX Documentation: General
    Programming Concepts: Writing and Debugging Programs.
 
-   "Performance Overview of the Virtual Memory Manager (VMM)", AIX
+   "Performance Overview of the Virtual Memory Manager (VMM)". AIX
    Documentation: Performance Management Guide.
 
-   "Page Space Allocation", AIX Documentation: Performance Management
+   "Page Space Allocation". AIX Documentation: Performance Management
    Guide.
 
-   "Paging-space thresholds tuning", AIX Documentation: Performance
+   "Paging-space thresholds tuning". AIX Documentation: Performance
    Management Guide.
 
-   Developing and Porting C and C++ Applications on AIX, IBM Redbook.
+   Developing and Porting C and C++ Applications on AIX. IBM Redbook.
      __________________________________________________________________
 
 Cygwin
@@ -1242,15 +1275,14 @@ HP-UX
    hang:
 
    PHSS_30966  s700_800 ld(1) and linker tools cumulative patch
+
    On general principles you should be current on libc and ld/dld patches,
    as well as compiler patches if you are using HP's C compiler. See HP's
-   support sites such as http://itrc.hp.com and
-   ftp://us-ffs.external.hp.com/ for free copies of their latest patches.
+   support sites such as ftp://us-ffs.external.hp.com/ for free copies of
+   their latest patches.
 
    If you are building on a PA-RISC 2.0 machine and want to have 64-bit
-   binaries using GCC, you must use GCC 64-bit version. GCC binaries for
-   HP-UX PA-RISC and Itanium are available from http://www.hp.com/go/gcc.
-   Don't forget to get and install binutils at the same time.
+   binaries using GCC, you must use a GCC 64-bit version.
 
    If you are building on a PA-RISC 2.0 machine and want the compiled
    binaries to run on PA-RISC 1.1 machines you will need to specify
@@ -1321,97 +1353,6 @@ Collecting Crash Dumps on Windows
    process and the current time of the crash.
      __________________________________________________________________
 
-SCO OpenServer and SCO UnixWare
-
-   PostgreSQL can be built on SCO UnixWare 7 and SCO OpenServer 5. On
-   OpenServer, you can use either the OpenServer Development Kit or the
-   Universal Development Kit. However, some tweaking may be needed, as
-   described below.
-     __________________________________________________________________
-
-Skunkware
-
-   You should locate your copy of the SCO Skunkware CD. The Skunkware CD
-   is included with UnixWare 7 and current versions of OpenServer 5.
-   Skunkware includes ready-to-install versions of many popular programs
-   that are available on the Internet. For example, gzip, gunzip, GNU
-   Make, Flex, and Bison are all included. For UnixWare 7.1, this CD is
-   now labeled "Open License Software Supplement". If you do not have this
-   CD, the software on it is available from http://www.sco.com/skunkware/.
-
-   Skunkware has different versions for UnixWare and OpenServer. Make sure
-   you install the correct version for your operating system, except as
-   noted below.
-
-   On UnixWare 7.1.3 and beyond, the GCC compiler is included on the UDK
-   CD as is GNU Make.
-     __________________________________________________________________
-
-GNU Make
-
-   You need to use the GNU Make program, which is on the Skunkware CD. By
-   default, it installs as "/usr/local/bin/make".
-
-   As of UnixWare 7.1.3 and above, the GNU Make program is the OSTK
-   portion of the UDK CD, and is in "/usr/gnu/bin/gmake".
-     __________________________________________________________________
-
-Readline
-
-   The Readline library is on the Skunkware CD. But it is not included on
-   the UnixWare 7.1 Skunkware CD. If you have the UnixWare 7.0.0 or 7.0.1
-   Skunkware CDs, you can install it from there. Otherwise, try
-   http://www.sco.com/skunkware/.
-
-   By default, Readline installs into "/usr/local/lib" and
-   "/usr/local/include". However, the PostgreSQL "configure" program will
-   not find it there without help. If you installed Readline, then use the
-   following options to "configure":
-./configure --with-libraries=/usr/local/lib --with-includes=/usr/local/include
-     __________________________________________________________________
-
-Using the UDK on OpenServer
-
-   If you are using the new Universal Development Kit (UDK) compiler on
-   OpenServer, you need to specify the locations of the UDK libraries:
-./configure --with-libraries=/udk/usr/lib --with-includes=/udk/usr/include
-
-   Putting these together with the Readline options from above:
-./configure --with-libraries="/udk/usr/lib /usr/local/lib" --with-includes="/udk
-/usr/include /usr/local/include"
-     __________________________________________________________________
-
-Reading the PostgreSQL Man Pages
-
-   By default, the PostgreSQL man pages are installed into
-   "/usr/local/pgsql/share/man". By default, UnixWare does not look there
-   for man pages. To be able to read them you need to modify the MANPATH
-   variable in "/etc/default/man", for example:
-MANPATH=/usr/lib/scohelp/%L/man:/usr/dt/man:/usr/man:/usr/share/man:scohelp:/usr
-/local/man:/usr/local/pgsql/share/man
-
-   On OpenServer, some extra research needs to be invested to make the man
-   pages usable, because the man system is a bit different from other
-   platforms. Currently, PostgreSQL will not install them at all.
-     __________________________________________________________________
-
-C99 Issues with the 7.1.1b Feature Supplement
-
-   For compilers earlier than the one released with OpenUNIX 8.0.0
-   (UnixWare 7.1.2), including the 7.1.1b Feature Supplement, you may need
-   to specify "-Xb" in CFLAGS or the CC environment variable. The
-   indication of this is an error in compiling "tuplesort.c" referencing
-   inline functions. Apparently there was a change in the 7.1.2(8.0.0)
-   compiler and beyond.
-     __________________________________________________________________
-
-Threading on UnixWare
-
-   For threading, you*must* use "-Kpthread" on *all* libpq-using programs.
-   libpq uses pthread_* calls, which are only available with the
-   "-Kpthread"/"-Kthread" flag.
-     __________________________________________________________________
-
 Solaris
 
    PostgreSQL is well-supported on Solaris. The more up to date your
@@ -1433,23 +1374,6 @@ Required Tools
    version of Solaris, you can find these tools at
    http://www.sunfreeware.com. If you prefer sources, look at
    http://www.gnu.org/order/ftp.html.
-     __________________________________________________________________
-
-Problems with OpenSSL
-
-   When you build PostgreSQL with OpenSSL support you might get
-   compilation errors in the following files:
-
-     * "src/backend/libpq/crypt.c"
-     * "src/backend/libpq/password.c"
-     * "src/interfaces/libpq/fe-auth.c"
-     * "src/interfaces/libpq/fe-connect.c"
-
-   This is because of a namespace conflict between the standard
-   "/usr/include/crypt.h" header and the header files provided by OpenSSL.
-
-   Upgrading your OpenSSL installation to version 0.9.6a fixes this
-   problem. Solaris 9 and above has a newer version of OpenSSL.
      __________________________________________________________________
 
 configure Complains About a Failed Test Program
@@ -1500,8 +1424,7 @@ Compiling for Optimal Performance
 Using DTrace for Tracing PostgreSQL
 
    Yes, using DTrace is possible. See the documentation for further
-   information. You can also find more information in this article:
-   https://blogs.oracle.com/robertlor/entry/user_level_dtrace_probes_in.
+   information.
 
    If you see the linking of the "postgres" executable abort with an error
    message like:

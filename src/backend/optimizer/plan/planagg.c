@@ -17,7 +17,7 @@
  * scan all the rows anyway.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -89,8 +89,8 @@ preprocess_minmax_aggregates(PlannerInfo *root, List *tlist)
 	if (!parse->hasAggs)
 		return;
 
-	Assert(!parse->setOperations);		/* shouldn't get here if a setop */
-	Assert(parse->rowMarks == NIL);		/* nor if FOR UPDATE */
+	Assert(!parse->setOperations);	/* shouldn't get here if a setop */
+	Assert(parse->rowMarks == NIL); /* nor if FOR UPDATE */
 
 	/*
 	 * Reject unoptimizable cases.
@@ -203,7 +203,7 @@ preprocess_minmax_aggregates(PlannerInfo *root, List *tlist)
 			SS_make_initplan_output_param(root,
 										  exprType((Node *) mminfo->target),
 										  -1,
-									 exprCollation((Node *) mminfo->target));
+										  exprCollation((Node *) mminfo->target));
 	}
 
 	/*
@@ -369,11 +369,11 @@ build_minmax_path(PlannerInfo *root, MinMaxAggInfo *mminfo,
 	subroot->outer_params = NULL;
 	subroot->init_plans = NIL;
 
-	subroot->parse = parse = (Query *) copyObject(root->parse);
+	subroot->parse = parse = copyObject(root->parse);
 	IncrementVarSublevelsUp((Node *) parse, 1, 1);
 
 	/* append_rel_list might contain outer Vars? */
-	subroot->append_rel_list = (List *) copyObject(root->append_rel_list);
+	subroot->append_rel_list = copyObject(root->append_rel_list);
 	IncrementVarSublevelsUp((Node *) subroot->append_rel_list, 1, 1);
 	/* There shouldn't be any OJ info to translate, as yet */
 	Assert(subroot->join_info_list == NIL);

@@ -7,7 +7,7 @@
  *	 ExecProcNode, or ExecEndNode on its subnodes and do the appropriate
  *	 processing.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,15 +17,10 @@
  *-------------------------------------------------------------------------
  */
 /*
- *	 INTERFACE ROUTINES
- *		ExecInitNode	-		initialize a plan node and its subplans
- *		ExecProcNode	-		get a tuple by executing the plan node
- *		ExecEndNode		-		shut down a plan node and its subplans
- *
  *	 NOTES
  *		This used to be three files.  It is now all combined into
- *		one file so that it is easier to keep ExecInitNode, ExecProcNode,
- *		and ExecEndNode in sync when new nodes are added.
+ *		one file so that it is easier to keep the dispatch routines
+ *		in sync when new nodes are added.
  *
  *	 EXAMPLE
  *		Suppose we want the age of the manager of the shoe department and
@@ -89,6 +84,8 @@
 #include "executor/nodeDijkstra.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeFunctionscan.h"
+#include "executor/nodeGather.h"
+#include "executor/nodeGatherMerge.h"
 #include "executor/nodeGroup.h"
 #include "executor/nodeHash.h"
 #include "executor/nodeHashjoin.h"
@@ -101,9 +98,14 @@
 #include "executor/nodeMergejoin.h"
 #include "executor/nodeModifyGraph.h"
 #include "executor/nodeModifyTable.h"
+#include "executor/nodeNamedtuplestorescan.h"
 #include "executor/nodeNestloop.h"
+<<<<<<< HEAD
 #include "executor/nodeNestloopVle.h"
 #include "executor/nodeGather.h"
+=======
+#include "executor/nodeProjectSet.h"
+>>>>>>> postgres
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeSamplescan.h"
@@ -112,6 +114,7 @@
 #include "executor/nodeSort.h"
 #include "executor/nodeSubplan.h"
 #include "executor/nodeSubqueryscan.h"
+#include "executor/nodeTableFuncscan.h"
 #include "executor/nodeTidscan.h"
 #include "executor/nodeUnique.h"
 #include "executor/nodeValuesscan.h"
@@ -119,6 +122,10 @@
 #include "executor/nodeWorktablescan.h"
 #include "nodes/nodeFuncs.h"
 #include "miscadmin.h"
+
+
+static TupleTableSlot *ExecProcNodeFirst(PlanState *node);
+static TupleTableSlot *ExecProcNodeInstr(PlanState *node);
 
 
 /* ------------------------------------------------------------------------
@@ -148,6 +155,13 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 	if (node == NULL)
 		return NULL;
 
+	/*
+	 * Make sure there's enough stack available. Need to check here, in
+	 * addition to ExecProcNode() (via ExecProcNodeFirst()), to ensure the
+	 * stack isn't overrun while initializing the node tree.
+	 */
+	check_stack_depth();
+
 	switch (nodeTag(node))
 	{
 			/*
@@ -156,6 +170,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 		case T_Result:
 			result = (PlanState *) ExecInitResult((Result *) node,
 												  estate, eflags);
+			break;
+
+		case T_ProjectSet:
+			result = (PlanState *) ExecInitProjectSet((ProjectSet *) node,
+													  estate, eflags);
 			break;
 
 		case T_ModifyTable:
@@ -241,6 +260,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 														estate, eflags);
 			break;
 
+		case T_TableFuncScan:
+			result = (PlanState *) ExecInitTableFuncScan((TableFuncScan *) node,
+														 estate, eflags);
+			break;
+
 		case T_ValuesScan:
 			result = (PlanState *) ExecInitValuesScan((ValuesScan *) node,
 													  estate, eflags);
@@ -249,6 +273,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 		case T_CteScan:
 			result = (PlanState *) ExecInitCteScan((CteScan *) node,
 												   estate, eflags);
+			break;
+
+		case T_NamedTuplestoreScan:
+			result = (PlanState *) ExecInitNamedTuplestoreScan((NamedTuplestoreScan *) node,
+															   estate, eflags);
 			break;
 
 		case T_WorkTableScan:
@@ -327,6 +356,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 												  estate, eflags);
 			break;
 
+		case T_GatherMerge:
+			result = (PlanState *) ExecInitGatherMerge((GatherMerge *) node,
+													   estate, eflags);
+			break;
+
 		case T_Hash:
 			result = (PlanState *) ExecInitHash((Hash *) node,
 												estate, eflags);
@@ -359,6 +393,13 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 	}
 
 	/*
+	 * Add a wrapper around the ExecProcNode callback that checks stack depth
+	 * during the first execution.
+	 */
+	result->ExecProcNodeReal = result->ExecProcNode;
+	result->ExecProcNode = ExecProcNodeFirst;
+
+	/*
 	 * Initialize any initPlans present in this node.  The planner put them in
 	 * a separate list for us.
 	 */
@@ -382,34 +423,33 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 }
 
 
-/* ----------------------------------------------------------------
- *		ExecProcNode
- *
- *		Execute the given node to return a(nother) tuple.
- * ----------------------------------------------------------------
+/*
+ * ExecProcNode wrapper that performs some one-time checks, before calling
+ * the relevant node method (possibly via an instrumentation wrapper).
  */
-TupleTableSlot *
-ExecProcNode(PlanState *node)
+static TupleTableSlot *
+ExecProcNodeFirst(PlanState *node)
 {
-	TupleTableSlot *result;
+	/*
+	 * Perform stack depth check during the first execution of the node.  We
+	 * only do so the first time round because it turns out to not be cheap on
+	 * some common architectures (eg. x86).  This relies on the assumption
+	 * that ExecProcNode calls for a given plan node will always be made at
+	 * roughly the same stack depth.
+	 */
+	check_stack_depth();
 
-	CHECK_FOR_INTERRUPTS();
-
-	if (node->chgParam != NULL) /* something changed */
-		ExecReScan(node);		/* let ReScan handle this */
-
+	/*
+	 * If instrumentation is required, change the wrapper to one that just
+	 * does instrumentation.  Otherwise we can dispense with all wrappers and
+	 * have ExecProcNode() directly call the relevant function from now on.
+	 */
 	if (node->instrument)
-		InstrStartNode(node->instrument);
+		node->ExecProcNode = ExecProcNodeInstr;
+	else
+		node->ExecProcNode = node->ExecProcNodeReal;
 
-	switch (nodeTag(node))
-	{
-			/*
-			 * control nodes
-			 */
-		case T_ResultState:
-			result = ExecResult((ResultState *) node);
-			break;
-
+<<<<<<< HEAD
 		case T_ModifyTableState:
 			result = ExecModifyTable((ModifyTableState *) node);
 			break;
@@ -536,27 +576,27 @@ ExecProcNode(PlanState *node)
 		case T_UniqueState:
 			result = ExecUnique((UniqueState *) node);
 			break;
+=======
+	return node->ExecProcNode(node);
+}
+>>>>>>> postgres
 
-		case T_GatherState:
-			result = ExecGather((GatherState *) node);
-			break;
 
-		case T_HashState:
-			result = ExecHash((HashState *) node);
-			break;
+/*
+ * ExecProcNode wrapper that performs instrumentation calls.  By keeping
+ * this a separate function, we avoid overhead in the normal case where
+ * no instrumentation is wanted.
+ */
+static TupleTableSlot *
+ExecProcNodeInstr(PlanState *node)
+{
+	TupleTableSlot *result;
 
-		case T_SetOpState:
-			result = ExecSetOp((SetOpState *) node);
-			break;
+	InstrStartNode(node->instrument);
 
-		case T_LockRowsState:
-			result = ExecLockRows((LockRowsState *) node);
-			break;
+	result = node->ExecProcNodeReal(node);
 
-		case T_LimitState:
-			result = ExecLimit((LimitState *) node);
-			break;
-
+<<<<<<< HEAD
 		case T_DijkstraState:
 			result = ExecDijkstra((DijkstraState *) node);
 			break;
@@ -569,6 +609,9 @@ ExecProcNode(PlanState *node)
 
 	if (node->instrument)
 		InstrStopNode(node->instrument, TupIsNull(result) ? 0.0 : 1.0);
+=======
+	InstrStopNode(node->instrument, TupIsNull(result) ? 0.0 : 1.0);
+>>>>>>> postgres
 
 	return result;
 }
@@ -591,6 +634,8 @@ Node *
 MultiExecProcNode(PlanState *node)
 {
 	Node	   *result;
+
+	check_stack_depth();
 
 	CHECK_FOR_INTERRUPTS();
 
@@ -649,6 +694,13 @@ ExecEndNode(PlanState *node)
 	if (node == NULL)
 		return;
 
+	/*
+	 * Make sure there's enough stack available. Need to check here, in
+	 * addition to ExecProcNode() (via ExecProcNodeFirst()), because it's not
+	 * guaranteed that ExecProcNode() is reached for all nodes.
+	 */
+	check_stack_depth();
+
 	if (node->chgParam != NULL)
 	{
 		bms_free(node->chgParam);
@@ -662,6 +714,10 @@ ExecEndNode(PlanState *node)
 			 */
 		case T_ResultState:
 			ExecEndResult((ResultState *) node);
+			break;
+
+		case T_ProjectSetState:
+			ExecEndProjectSet((ProjectSetState *) node);
 			break;
 
 		case T_ModifyTableState:
@@ -707,6 +763,10 @@ ExecEndNode(PlanState *node)
 			ExecEndGather((GatherState *) node);
 			break;
 
+		case T_GatherMergeState:
+			ExecEndGatherMerge((GatherMergeState *) node);
+			break;
+
 		case T_IndexScanState:
 			ExecEndIndexScan((IndexScanState *) node);
 			break;
@@ -735,12 +795,20 @@ ExecEndNode(PlanState *node)
 			ExecEndFunctionScan((FunctionScanState *) node);
 			break;
 
+		case T_TableFuncScanState:
+			ExecEndTableFuncScan((TableFuncScanState *) node);
+			break;
+
 		case T_ValuesScanState:
 			ExecEndValuesScan((ValuesScanState *) node);
 			break;
 
 		case T_CteScanState:
 			ExecEndCteScan((CteScanState *) node);
+			break;
+
+		case T_NamedTuplestoreScanState:
+			ExecEndNamedTuplestoreScan((NamedTuplestoreScanState *) node);
 			break;
 
 		case T_WorkTableScanState:
@@ -843,14 +911,27 @@ ExecShutdownNode(PlanState *node)
 	if (node == NULL)
 		return false;
 
+	check_stack_depth();
+
+	planstate_tree_walker(node, ExecShutdownNode, NULL);
+
 	switch (nodeTag(node))
 	{
 		case T_GatherState:
 			ExecShutdownGather((GatherState *) node);
 			break;
+		case T_ForeignScanState:
+			ExecShutdownForeignScan((ForeignScanState *) node);
+			break;
+		case T_CustomScanState:
+			ExecShutdownCustomScan((CustomScanState *) node);
+			break;
+		case T_GatherMergeState:
+			ExecShutdownGatherMerge((GatherMergeState *) node);
+			break;
 		default:
 			break;
 	}
 
-	return planstate_tree_walker(node, ExecShutdownNode, NULL);
+	return false;
 }

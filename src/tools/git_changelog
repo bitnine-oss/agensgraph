@@ -31,10 +31,10 @@
 # The default output of this script is meant for generating minor release
 # notes, where we need to know which branches a merged commit affects.
 #
-# To generate major release notes, intended usage is
+# To generate major release notes, use:
 #   git_changelog --master-only --brief --oldest-first --since='start-date'
 # To find the appropriate start date, use:
-#   git show $(git merge-base REL9_5_STABLE master)
+#   git show --summary $(git merge-base REL9_5_STABLE master)
 # where the branch to mention is the previously forked-off branch.  This
 # shows the last commit before that branch was made.
 #
@@ -57,7 +57,7 @@ require IPC::Open2;
 # (We could get this from "git branches", but not worth the trouble.)
 # NB: master must be first!
 my @BRANCHES = qw(master
-  REL9_5_STABLE
+  REL9_6_STABLE REL9_5_STABLE
   REL9_4_STABLE REL9_3_STABLE REL9_2_STABLE REL9_1_STABLE REL9_0_STABLE
   REL8_4_STABLE REL8_3_STABLE REL8_2_STABLE REL8_1_STABLE REL8_0_STABLE
   REL7_4_STABLE REL7_3_STABLE REL7_2_STABLE REL7_1_STABLE REL7_0_PATCHES

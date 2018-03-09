@@ -64,3 +64,18 @@ VACUUM (DISABLE_PAGE_SKIPPING) vaccluster;
 
 DROP TABLE vaccluster;
 DROP TABLE vactst;
+
+-- partitioned table
+CREATE TABLE vacparted (a int, b char) PARTITION BY LIST (a);
+CREATE TABLE vacparted1 PARTITION OF vacparted FOR VALUES IN (1);
+INSERT INTO vacparted VALUES (1, 'a');
+UPDATE vacparted SET b = 'b';
+VACUUM (ANALYZE) vacparted;
+VACUUM (FULL) vacparted;
+VACUUM (FREEZE) vacparted;
+
+-- check behavior with duplicate column mentions
+VACUUM ANALYZE vacparted(a,b,a);
+ANALYZE vacparted(a,b,b);
+
+DROP TABLE vacparted;

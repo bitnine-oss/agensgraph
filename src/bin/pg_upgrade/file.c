@@ -3,7 +3,7 @@
  *
  *	file system operations
  *
- *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/file.c
  */
 
@@ -89,7 +89,7 @@ copyFile(const char *src, const char *dst,
 				 schemaName, relName, src, dst, strerror(errno));
 	}
 
-#endif   /* WIN32 */
+#endif							/* WIN32 */
 }
 
 
@@ -290,7 +290,7 @@ check_hard_link(void)
 
 	if (pg_link_file(existing_file, new_link_file) < 0)
 		pg_fatal("could not create hard link between old and new data directories: %s\n"
-				 "In link mode the old and new data directories must be on the same file system volume.\n",
+				 "In link mode the old and new data directories must be on the same file system.\n",
 				 strerror(errno));
 
 	unlink(new_link_file);
@@ -314,18 +314,3 @@ win32_pghardlink(const char *src, const char *dst)
 		return 0;
 }
 #endif
-
-
-/* fopen() file with no group/other permissions */
-FILE *
-fopen_priv(const char *path, const char *mode)
-{
-	mode_t		old_umask = umask(S_IRWXG | S_IRWXO);
-	FILE	   *fp;
-
-	fp = fopen(path, mode);
-
-	umask(old_umask);			/* we assume this can't change errno */
-
-	return fp;
-}

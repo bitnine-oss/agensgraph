@@ -4,7 +4,7 @@
  *	  prototypes for files in optimizer/prep/
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/prep.h
@@ -36,17 +36,9 @@ extern Node *negate_clause(Node *node);
 extern Expr *canonicalize_qual(Expr *qual);
 
 /*
- * prototypes for prepsecurity.c
- */
-extern void expand_security_quals(PlannerInfo *root, List *tlist);
-
-/*
  * prototypes for preptlist.c
  */
-extern List *preprocess_targetlist(PlannerInfo *root, List *tlist);
-
-extern List *preprocess_onconflict_targetlist(List *tlist,
-								 int result_relation, List *range_table);
+extern List *preprocess_targetlist(PlannerInfo *root);
 
 extern PlanRowMark *get_plan_rowmark(List *rowmarks, Index rtindex);
 
@@ -63,4 +55,4 @@ extern Node *adjust_appendrel_attrs(PlannerInfo *root, Node *node,
 extern Node *adjust_appendrel_attrs_multilevel(PlannerInfo *root, Node *node,
 								  RelOptInfo *child_rel);
 
-#endif   /* PREP_H */
+#endif							/* PREP_H */

@@ -224,6 +224,14 @@ SELECT relname, relkind, reloptions FROM pg_class
                      'mysecview3'::regclass, 'mysecview4'::regclass)
        ORDER BY relname;
 
+-- Check that unknown literals are converted to "text" in CREATE VIEW,
+-- so that we don't end up with unknown-type columns.
+
+CREATE VIEW unspecified_types AS
+  SELECT 42 as i, 42.5 as num, 'foo' as u, 'foo'::unknown as u2, null as n;
+\d+ unspecified_types
+SELECT * FROM unspecified_types;
+
 -- This test checks that proper typmods are assigned in a multi-row VALUES
 
 CREATE VIEW tt1 AS
@@ -449,11 +457,11 @@ alter table tt11 add column z int;
 select pg_get_viewdef('vv6', true);
 
 --
--- Check some cases involving dropped columns in a function's rowtype result
+-- Check cases involving dropped/altered columns in a function's rowtype result
 --
 
 create table tt14t (f1 text, f2 text, f3 text, f4 text);
-insert into tt14t values('foo', 'bar', 'baz', 'quux');
+insert into tt14t values('foo', 'bar', 'baz', '42');
 
 alter table tt14t drop column f2;
 
@@ -475,12 +483,31 @@ create view tt14v as select t.* from tt14f() t;
 select pg_get_viewdef('tt14v', true);
 select * from tt14v;
 
+begin;
+
 -- this perhaps should be rejected, but it isn't:
 alter table tt14t drop column f3;
 
--- f3 is still in the view but will read as nulls
+-- f3 is still in the view ...
 select pg_get_viewdef('tt14v', true);
+-- but will fail at execution
+select f1, f4 from tt14v;
 select * from tt14v;
+
+rollback;
+
+begin;
+
+-- this perhaps should be rejected, but it isn't:
+alter table tt14t alter column f4 type integer using f4::integer;
+
+-- f4 is still in the view ...
+select pg_get_viewdef('tt14v', true);
+-- but will fail at execution
+select f1, f3 from tt14v;
+select * from tt14v;
+
+rollback;
 
 -- check display of whole-row variables in some corner cases
 
@@ -520,7 +547,40 @@ select 'foo'::text = any(array['abc','def','foo']::text[]) c1,
        'foo'::text = any((select array['abc','def','foo']::text[])::text[]) c2;
 select pg_get_viewdef('tt19v', true);
 
+-- check display of assorted RTE_FUNCTION expressions
+
+create view tt20v as
+select * from
+  coalesce(1,2) as c,
+  collation for ('x'::text) col,
+  current_date as d,
+  localtimestamp(3) as t,
+  cast(1+2 as int4) as i4,
+  cast(1+2 as int8) as i8;
+select pg_get_viewdef('tt20v', true);
+
+-- corner cases with empty join conditions
+
+create view tt21v as
+select * from tt5 natural inner join tt6;
+select pg_get_viewdef('tt21v', true);
+
+create view tt22v as
+select * from tt5 natural left join tt6;
+select pg_get_viewdef('tt22v', true);
+
+-- check handling of views with immediately-renamed columns
+
+create view tt23v (col_a, col_b) as
+select q1 as other_name1, q2 as other_name2 from int8_tbl
+union
+select 42, 43;
+
+select pg_get_viewdef('tt23v', true);
+select pg_get_ruledef(oid, true) from pg_rewrite
+  where ev_class = 'tt23v'::regclass and ev_type = '1';
+
 -- clean up all the random objects we made above
-set client_min_messages = warning;
+\set VERBOSITY terse \\ -- suppress cascade details
 DROP SCHEMA temp_view_test CASCADE;
 DROP SCHEMA testviewschm2 CASCADE;

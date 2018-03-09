@@ -3,7 +3,7 @@
 # parser generater for ecpg version 2
 # call with backend parser as stdin
 #
-# Copyright (c) 2007-2016, PostgreSQL Global Development Group
+# Copyright (c) 2007-2017, PostgreSQL Global Development Group
 #
 # Written by Mike Aubury <mike.aubury@aubit.com>
 #            Michael Meskes <meskes@postgresql.org>
@@ -98,7 +98,7 @@ my %replace_line = (
 	'VariableShowStmtSHOWSESSIONAUTHORIZATION' =>
 	  'SHOW SESSION AUTHORIZATION ecpg_into',
 	'returning_clauseRETURNINGtarget_list' =>
-	  'RETURNING target_list ecpg_into',
+	  'RETURNING target_list opt_ecpg_into',
 	'ExecuteStmtEXECUTEnameexecute_param_clause' =>
 	  'EXECUTE prepared_name execute_param_clause execute_rest',
 'ExecuteStmtCREATEOptTempTABLEcreate_as_targetASEXECUTEnameexecute_param_clause'

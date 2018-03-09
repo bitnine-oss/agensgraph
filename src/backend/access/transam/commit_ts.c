@@ -3,7 +3,7 @@
  * commit_ts.c
  *		PostgreSQL commit timestamp manager
  *
- * This module is a pg_clog-like system that stores the commit timestamp
+ * This module is a pg_xact-like system that stores the commit timestamp
  * for each transaction.
  *
  * XLOG interactions: this module generates an XLOG record whenever a new
@@ -15,7 +15,7 @@
  * re-perform the status update on redo; so we need make no additional XLOG
  * entry here.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/commit_ts.c
@@ -32,6 +32,7 @@
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "pg_trace.h"
+#include "storage/shmem.h"
 #include "utils/builtins.h"
 #include "utils/snapmgr.h"
 #include "utils/timestamp.h"
@@ -112,7 +113,7 @@ static bool CommitTsPagePrecedes(int page1, int page2);
 static void ActivateCommitTs(void);
 static void DeactivateCommitTs(void);
 static void WriteZeroPageXlogRec(int pageno);
-static void WriteTruncateXlogRec(int pageno);
+static void WriteTruncateXlogRec(int pageno, TransactionId oldestXid);
 static void WriteSetTimestampXlogRec(TransactionId mainxid, int nsubxids,
 						 TransactionId *subxids, TimestampTz timestamp,
 						 RepOriginId nodeid);
@@ -291,7 +292,7 @@ TransactionIdGetCommitTsData(TransactionId xid, TimestampTz *ts,
 	if (!TransactionIdIsValid(xid))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-		errmsg("cannot retrieve commit timestamp for transaction %u", xid)));
+				 errmsg("cannot retrieve commit timestamp for transaction %u", xid)));
 	else if (!TransactionIdIsNormal(xid))
 	{
 		/* frozen and bootstrap xids are always committed far in the past */
@@ -620,7 +621,7 @@ CommitTsParameterChange(bool newvalue, bool oldvalue)
  *
  * The reason why this SLRU needs separate activation/deactivation functions is
  * that it can be enabled/disabled during start and the activation/deactivation
- * on master is propagated to slave via replay. Other SLRUs don't have this
+ * on master is propagated to standby via replay. Other SLRUs don't have this
  * property and they can be just initialized during normal startup.
  *
  * This is in charge of creating the currently active segment, if it's not
@@ -745,6 +746,12 @@ ShutdownCommitTs(void)
 {
 	/* Flush dirty CommitTs pages to disk */
 	SimpleLruFlush(CommitTsCtl, false);
+
+	/*
+	 * fsync pg_commit_ts to ensure that any files flushed previously are
+	 * durably on disk.
+	 */
+	fsync_fname("pg_commit_ts", true);
 }
 
 /*
@@ -755,6 +762,12 @@ CheckPointCommitTs(void)
 {
 	/* Flush dirty CommitTs pages to disk */
 	SimpleLruFlush(CommitTsCtl, true);
+
+	/*
+	 * fsync pg_commit_ts to ensure that any files flushed previously are
+	 * durably on disk.
+	 */
+	fsync_fname("pg_commit_ts", true);
 }
 
 /*
@@ -823,7 +836,7 @@ TruncateCommitTs(TransactionId oldestXact)
 		return;					/* nothing to remove */
 
 	/* Write XLOG record */
-	WriteTruncateXlogRec(cutoffPage);
+	WriteTruncateXlogRec(cutoffPage, oldestXact);
 
 	/* Now we can remove the old CommitTs segment(s) */
 	SimpleLruTruncate(CommitTsCtl, cutoffPage);
@@ -864,7 +877,7 @@ AdvanceOldestCommitTsXid(TransactionId oldestXact)
 {
 	LWLockAcquire(CommitTsLock, LW_EXCLUSIVE);
 	if (ShmemVariableCache->oldestCommitTsXid != InvalidTransactionId &&
-	TransactionIdPrecedes(ShmemVariableCache->oldestCommitTsXid, oldestXact))
+		TransactionIdPrecedes(ShmemVariableCache->oldestCommitTsXid, oldestXact))
 		ShmemVariableCache->oldestCommitTsXid = oldestXact;
 	LWLockRelease(CommitTsLock);
 }
@@ -909,10 +922,15 @@ WriteZeroPageXlogRec(int pageno)
  * Write a TRUNCATE xlog record
  */
 static void
-WriteTruncateXlogRec(int pageno)
+WriteTruncateXlogRec(int pageno, TransactionId oldestXid)
 {
+	xl_commit_ts_truncate xlrec;
+
+	xlrec.pageno = pageno;
+	xlrec.oldestXid = oldestXid;
+
 	XLogBeginInsert();
-	XLogRegisterData((char *) (&pageno), sizeof(int));
+	XLogRegisterData((char *) (&xlrec), SizeOfCommitTsTruncate);
 	(void) XLogInsert(RM_COMMIT_TS_ID, COMMIT_TS_TRUNCATE);
 }
 
@@ -966,17 +984,17 @@ commit_ts_redo(XLogReaderState *record)
 	}
 	else if (info == COMMIT_TS_TRUNCATE)
 	{
-		int			pageno;
+		xl_commit_ts_truncate *trunc = (xl_commit_ts_truncate *) XLogRecGetData(record);
 
-		memcpy(&pageno, XLogRecGetData(record), sizeof(int));
+		AdvanceOldestCommitTsXid(trunc->oldestXid);
 
 		/*
 		 * During XLOG replay, latest_page_number isn't set up yet; insert a
 		 * suitable value to bypass the sanity test in SimpleLruTruncate.
 		 */
-		CommitTsCtl->shared->latest_page_number = pageno;
+		CommitTsCtl->shared->latest_page_number = trunc->pageno;
 
-		SimpleLruTruncate(CommitTsCtl, pageno);
+		SimpleLruTruncate(CommitTsCtl, trunc->pageno);
 	}
 	else if (info == COMMIT_TS_SETTS)
 	{

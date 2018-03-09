@@ -3,7 +3,7 @@
  * nodeBitmapOr.c
  *	  routines to handle BitmapOr nodes.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -32,6 +32,19 @@
 #include "executor/nodeBitmapOr.h"
 #include "miscadmin.h"
 
+
+/* ----------------------------------------------------------------
+ *		ExecBitmapOr
+ *
+ *		stub for pro forma compliance
+ * ----------------------------------------------------------------
+ */
+static TupleTableSlot *
+ExecBitmapOr(PlanState *pstate)
+{
+	elog(ERROR, "BitmapOr node does not support ExecProcNode call convention");
+	return NULL;
+}
 
 /* ----------------------------------------------------------------
  *		ExecInitBitmapOr
@@ -64,6 +77,7 @@ ExecInitBitmapOr(BitmapOr *node, EState *estate, int eflags)
 	 */
 	bitmaporstate->ps.plan = (Plan *) node;
 	bitmaporstate->ps.state = estate;
+	bitmaporstate->ps.ExecProcNode = ExecBitmapOr;
 	bitmaporstate->bitmapplans = bitmapplanstates;
 	bitmaporstate->nplans = nplans;
 
@@ -129,7 +143,9 @@ MultiExecBitmapOr(BitmapOrState *node)
 			if (result == NULL) /* first subplan */
 			{
 				/* XXX should we use less than work_mem for this? */
-				result = tbm_create(work_mem * 1024L);
+				result = tbm_create(work_mem * 1024L,
+									((BitmapOr *) node->ps.plan)->isshared ?
+									node->ps.state->es_query_dsa : NULL);
 			}
 
 			((BitmapIndexScanState *) subnode)->biss_result = result;
@@ -148,7 +164,7 @@ MultiExecBitmapOr(BitmapOrState *node)
 				elog(ERROR, "unrecognized result from subplan");
 
 			if (result == NULL)
-				result = subresult;		/* first subplan */
+				result = subresult; /* first subplan */
 			else
 			{
 				tbm_union(result, subresult);

@@ -4,7 +4,7 @@
  *	  PostgreSQL type definitions for ISNs (ISBN, ISMN, ISSN, EAN13, UPC)
  *
  * Author:	German Mendez Bravo (Kronuz)
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/isn/isn.c
@@ -131,7 +131,7 @@ invalidindex:
 	elog(DEBUG1, "index %d is invalid", j);
 	return false;
 }
-#endif   /* ISN_DEBUG */
+#endif							/* ISN_DEBUG */
 
 /*----------------------------------------------------------
  * Formatting and conversion routines.
@@ -699,11 +699,11 @@ string2ean(const char *str, bool errorOK, ean13 *result,
 	/* recognize and validate the number: */
 	while (*aux2 && length <= 13)
 	{
-		last = (*(aux2 + 1) == '!' || *(aux2 + 1) == '\0');		/* is the last character */
+		last = (*(aux2 + 1) == '!' || *(aux2 + 1) == '\0'); /* is the last character */
 		digit = (isdigit((unsigned char) *aux2) != 0);	/* is current character
 														 * a digit? */
-		if (*aux2 == '?' && last)		/* automagically calculate check digit
-										 * if it's '?' */
+		if (*aux2 == '?' && last)	/* automagically calculate check digit if
+									 * it's '?' */
 			magic = digit = true;
 		if (length == 0 && (*aux2 == 'M' || *aux2 == 'm'))
 		{
@@ -832,8 +832,8 @@ string2ean(const char *str, bool errorOK, ean13 *result,
 				goto eanwrongtype;
 			break;
 		case ISMN:
-			memcpy(buf, "9790", 4);		/* this isn't for sure yet, for now
-										 * ISMN it's only 9790 */
+			memcpy(buf, "9790", 4); /* this isn't for sure yet, for now ISMN
+									 * it's only 9790 */
 			valid = (valid && ((rcheck = checkdig(buf, 13)) == check || magic));
 			break;
 		case ISBN:
@@ -887,8 +887,8 @@ eanbadcheck:
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-			errmsg("invalid check digit for %s number: \"%s\", should be %c",
-				   isn_names[accept], str, (rcheck == 10) ? ('X') : (rcheck + '0'))));
+					 errmsg("invalid check digit for %s number: \"%s\", should be %c",
+							isn_names[accept], str, (rcheck == 10) ? ('X') : (rcheck + '0'))));
 		}
 	}
 	return false;
@@ -1123,7 +1123,7 @@ accept_weak_input(PG_FUNCTION_ARGS)
 	g_weak = PG_GETARG_BOOL(0);
 #else
 	/* function has no effect */
-#endif   /* ISN_WEAK_MODE */
+#endif							/* ISN_WEAK_MODE */
 	PG_RETURN_BOOL(g_weak);
 }
 
