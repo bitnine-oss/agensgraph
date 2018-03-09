@@ -951,7 +951,7 @@ makeSelectVertexEdges(ParseState *pstate, Node *vertices,
 	Assert(vertices != NULL);
 
 	agedge = makeRangeVar(get_graph_path(true), AG_EDGE, -1);
-	agedge->inhOpt = INH_YES;
+	agedge->inh = true;
 
 	unnest = makeUnnestVertices(pstate, vertices);
 

@@ -2784,6 +2784,7 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 					bms_add_members(context.paramids,
 									finalize_plan(root,
 												  mgplan->subplan,
+												  gather_param,
 												  valid_params,
 												  scan_params));
 		}

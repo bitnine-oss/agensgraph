@@ -1177,7 +1177,6 @@ _copyModifyGraph(const ModifyGraph *from)
 	COPY_NODE_FIELD(targets);
 	COPY_NODE_FIELD(exprs);
 	COPY_NODE_FIELD(sets);
-	COPY_NODE_FIELD(sets);
 
 	return newnode;
 }
