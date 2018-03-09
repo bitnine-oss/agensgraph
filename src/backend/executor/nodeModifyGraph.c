@@ -698,6 +698,9 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 								  elemTupleSlot->tts_values[1],
 								  PointerGetDatum(&tuple->t_self));
 
+	if (gvertex->resno > 0)
+		setSlotValueByAttnum(slot, vertex, gvertex->resno);
+
 	if (mgstate->canSetTag)
 	{
 		Assert(estate->es_graphwrstats.insertVertex != UINT_MAX);

@@ -877,6 +877,16 @@ MATCH (a) SET a.name += 'someone';
 
 MATCH (a) DETACH DELETE (a);
 
+-- CREATE ... SET ...
+CREATE p=(a {no:1})-[r1:rel]->(b {no:2})-[r2:rel]->(c {no:3})
+SET a.no = 4, b.no = 5, c.no = 6
+SET r1.name = 'agens', r2.name = 'graph'
+RETURN properties(a), properties(r1), properties(b), properties(r2), properties(c);
+
+MATCH (a)-[r]->(b) RETURN a.no, r.name, b.no;
+
+MATCH (a) DETACH DELETE (a);
+
 -- remove
 
 CREATE ({a: 'a', b: 'b', c: 'c'});

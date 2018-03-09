@@ -2384,6 +2384,24 @@ ERROR:  += operator on a property is not allowed
 LINE 1: MATCH (a) SET a.name += 'someone';
                       ^
 MATCH (a) DETACH DELETE (a);
+-- CREATE ... SET ...
+CREATE p=(a {no:1})-[r1:rel]->(b {no:2})-[r2:rel]->(c {no:3})
+SET a.no = 4, b.no = 5, c.no = 6
+SET r1.name = 'agens', r2.name = 'graph'
+RETURN properties(a), properties(r1), properties(b), properties(r2), properties(c);
+ properties |    properties     | properties |    properties     | properties 
+------------+-------------------+------------+-------------------+------------
+ {"no": 4}  | {"name": "agens"} | {"no": 5}  | {"name": "graph"} | {"no": 6}
+(1 row)
+
+MATCH (a)-[r]->(b) RETURN a.no, r.name, b.no;
+ no |  name   | no 
+----+---------+----
+ 4  | "agens" | 5
+ 5  | "graph" | 6
+(2 rows)
+
+MATCH (a) DETACH DELETE (a);
 -- remove
 CREATE ({a: 'a', b: 'b', c: 'c'});
 MATCH (a) SET a.a = NULL REMOVE a.b

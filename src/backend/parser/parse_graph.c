@@ -5032,6 +5032,43 @@ find_var_target_walker(Node *node, find_target_label_context *context)
 			te = (TargetEntry *) list_nth(qry->targetList,
 										  var->varattno - 1);
 
+			/*
+			 * The CREATE clause does not create an RTE for the target label.
+			 * Use the GraphXXX struct to get the relid of the target label.
+			 */
+			if (IsA(te->expr, RowExpr) && qry->graph.writeOp == GWROP_CREATE)
+			{
+				GraphPath *gp = linitial(qry->graph.pattern);
+				Node 	  *elem = list_nth(gp->chain, var->varattno -1);
+
+				if (IsA(elem, GraphVertex))
+				{
+					GraphVertex *vtx = (GraphVertex *) elem;
+
+					if (vtx->resno != var->varattno)
+						elog(ERROR, "could not find target element: varattno %d",
+							 var->varattno);
+
+					context->result = vtx->relid;
+
+					return true;
+				}
+				else
+				{
+					GraphEdge *edge = (GraphEdge *) elem;;
+
+					Assert(IsA(edge, GraphEdge));
+
+					if (edge->resno != var->varattno)
+						elog(ERROR, "could not find target element: varattno %d",
+							 var->varattno);
+
+					context->result = edge->relid;
+
+					return true;
+				}
+			}
+
 			if (find_var_target_walker((Node *) te->expr, context))
 				return true;
 		}
