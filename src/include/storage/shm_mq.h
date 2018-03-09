@@ -3,7 +3,7 @@
  * shm_mq.h
  *	  single-reader, single-writer shared memory message queue
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/shm_mq.h
@@ -62,8 +62,8 @@ extern shm_mq_handle *shm_mq_attach(shm_mq *mq, dsm_segment *seg,
 /* Associate worker handle with shm_mq. */
 extern void shm_mq_set_handle(shm_mq_handle *, BackgroundWorkerHandle *);
 
-/* Break connection. */
-extern void shm_mq_detach(shm_mq *);
+/* Break connection, release handle resources. */
+extern void shm_mq_detach(shm_mq_handle *mqh);
 
 /* Get the shm_mq from handle. */
 extern shm_mq *shm_mq_get_queue(shm_mq_handle *mqh);
@@ -82,4 +82,4 @@ extern shm_mq_result shm_mq_wait_for_attach(shm_mq_handle *mqh);
 /* Smallest possible queue. */
 extern PGDLLIMPORT const Size shm_mq_minimum_size;
 
-#endif   /* SHM_MQ_H */
+#endif							/* SHM_MQ_H */

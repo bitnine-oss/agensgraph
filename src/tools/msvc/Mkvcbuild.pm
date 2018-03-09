@@ -28,6 +28,7 @@ my $libpgcommon;
 my $libpgfeutils;
 my $postgres;
 my $libpq;
+my @unlink_on_exit;
 
 # Set of variables for modules in contrib/ and src/test/modules/
 my $contrib_defines = { 'refint' => 'REFINT_VERBOSE' };
@@ -35,8 +36,7 @@ my @contrib_uselibpq = ('dblink', 'oid2name', 'postgres_fdw', 'vacuumlo');
 my @contrib_uselibpgport   = ('oid2name', 'pg_standby', 'vacuumlo');
 my @contrib_uselibpgcommon = ('oid2name', 'pg_standby', 'vacuumlo');
 my $contrib_extralibs      = undef;
-my $contrib_extraincludes =
-  { 'tsearch2' => ['contrib/tsearch2'], 'dblink' => ['src/backend'] };
+my $contrib_extraincludes = { 'dblink' => ['src/backend'] };
 my $contrib_extrasource = {
 	'cube' => [ 'contrib/cube/cubescan.l', 'contrib/cube/cubeparse.y' ],
 	'seg'  => [ 'contrib/seg/segscan.l',   'contrib/seg/segparse.y' ], };
@@ -50,15 +50,15 @@ my @contrib_excludes = (
 
 # Set of variables for frontend modules
 my $frontend_defines = { 'initdb' => 'FRONTEND' };
-my @frontend_uselibpq = ('pg_ctl', 'pg_upgrade', 'pgbench', 'psql');
+my @frontend_uselibpq = ('pg_ctl', 'pg_upgrade', 'pgbench', 'psql', 'initdb');
 my @frontend_uselibpgport = (
 	'pg_archivecleanup', 'pg_test_fsync',
 	'pg_test_timing',    'pg_upgrade',
-	'pg_xlogdump',       'pgbench');
+	'pg_waldump',        'pgbench');
 my @frontend_uselibpgcommon = (
 	'pg_archivecleanup', 'pg_test_fsync',
 	'pg_test_timing',    'pg_upgrade',
-	'pg_xlogdump',       'pgbench');
+	'pg_waldump',        'pgbench');
 my $frontend_extralibs = {
 	'initdb'     => ['ws2_32.lib'],
 	'pg_restore' => ['ws2_32.lib'],
@@ -72,8 +72,8 @@ my $frontend_extrasource = {
 	'pgbench' =>
 	  [ 'src/bin/pgbench/exprscan.l', 'src/bin/pgbench/exprparse.y' ] };
 my @frontend_excludes = (
-	'pgevent',     'pg_basebackup', 'pg_rewind', 'pg_dump',
-	'pg_xlogdump', 'scripts');
+	'pgevent',    'pg_basebackup', 'pg_rewind', 'pg_dump',
+	'pg_waldump', 'scripts');
 
 sub mkvcbuild
 {
@@ -91,8 +91,8 @@ sub mkvcbuild
 	  chklocale.c crypt.c fls.c fseeko.c getrusage.c inet_aton.c random.c
 	  srandom.c getaddrinfo.c gettimeofday.c inet_net_ntop.c kill.c open.c
 	  erand48.c snprintf.c strlcat.c strlcpy.c dirmod.c noblock.c path.c
-	  pgcheckdir.c pgmkdirp.c pgsleep.c pgstrcasecmp.c pqsignal.c
-	  mkdtemp.c qsort.c qsort_arg.c quotes.c system.c
+	  pg_strong_random.c pgcheckdir.c pgmkdirp.c pgsleep.c pgstrcasecmp.c
+	  pqsignal.c mkdtemp.c qsort.c qsort_arg.c quotes.c system.c
 	  sprompt.c tar.c thread.c getopt.c getopt_long.c dirent.c
 	  win32env.c win32error.c win32security.c win32setlocale.c);
 
@@ -110,12 +110,22 @@ sub mkvcbuild
 	}
 
 	our @pgcommonallfiles = qw(
-	  config_info.c controldata_utils.c exec.c keywords.c
-	  pg_lzcompress.c pgfnames.c psprintf.c relpath.c rmtree.c
-	  string.c username.c wait_error.c);
+	  base64.c config_info.c controldata_utils.c exec.c ip.c keywords.c
+	  md5.c pg_lzcompress.c pgfnames.c psprintf.c relpath.c rmtree.c
+	  saslprep.c scram-common.c string.c unicode_norm.c username.c
+	  wait_error.c);
+
+	if ($solution->{options}->{openssl})
+	{
+		push(@pgcommonallfiles, 'sha2_openssl.c');
+	}
+	else
+	{
+		push(@pgcommonallfiles, 'sha2.c');
+	}
 
 	our @pgcommonfrontendfiles = (
-		@pgcommonallfiles, qw(fe_memutils.c
+		@pgcommonallfiles, qw(fe_memutils.c file_utils.c
 		  restricted_token.c));
 
 	our @pgcommonbkndfiles = @pgcommonallfiles;
@@ -194,20 +204,24 @@ sub mkvcbuild
 
 	if ($solution->{options}->{tcl})
 	{
+		my $found = 0;
 		my $pltcl =
 		  $solution->AddProject('pltcl', 'dll', 'PLs', 'src/pl/tcl');
 		$pltcl->AddIncludeDir($solution->{options}->{tcl} . '/include');
 		$pltcl->AddReference($postgres);
-		if (-e $solution->{options}->{tcl} . '/lib/tcl85.lib')
+
+		for my $tclver (qw(86t 86 85 84))
 		{
-			$pltcl->AddLibrary(
-				$solution->{options}->{tcl} . '/lib/tcl85.lib');
+			my $tcllib = $solution->{options}->{tcl} . "/lib/tcl$tclver.lib";
+			if (-e $tcllib)
+			{
+				$pltcl->AddLibrary($tcllib);
+				$found = 1;
+				last;
+			}
 		}
-		else
-		{
-			$pltcl->AddLibrary(
-				$solution->{options}->{tcl} . '/lib/tcl84.lib');
-		}
+		die "Unable to find $solution->{options}->{tcl}/lib/tcl<version>.lib"
+		  unless $found;
 	}
 
 	$libpq = $solution->AddProject('libpq', 'dll', 'interfaces',
@@ -224,10 +238,16 @@ sub mkvcbuild
 	$libpq->AddReference($libpgport);
 
    # The OBJS scraper doesn't know about ifdefs, so remove fe-secure-openssl.c
-   # if building without OpenSSL
+   # and sha2_openssl.c if building without OpenSSL, and remove sha2.c if
+   # building with OpenSSL.
 	if (!$solution->{options}->{openssl})
 	{
 		$libpq->RemoveFile('src/interfaces/libpq/fe-secure-openssl.c');
+		$libpq->RemoveFile('src/common/sha2_openssl.c');
+	}
+	else
+	{
+		$libpq->RemoveFile('src/common/sha2.c');
 	}
 
 	my $libpqwalreceiver =
@@ -235,6 +255,10 @@ sub mkvcbuild
 		'src/backend/replication/libpqwalreceiver');
 	$libpqwalreceiver->AddIncludeDir('src/interfaces/libpq');
 	$libpqwalreceiver->AddReference($postgres, $libpq);
+
+	my $pgoutput = $solution->AddProject('pgoutput', 'dll', '',
+		'src/backend/replication/pgoutput');
+	$pgoutput->AddReference($postgres);
 
 	my $pgtypes = $solution->AddProject(
 		'libpgtypes', 'dll',
@@ -269,9 +293,6 @@ sub mkvcbuild
 	$ecpg->AddIncludeDir('src/interfaces/libpq');
 	$ecpg->AddPrefixInclude('src/interfaces/ecpg/preproc');
 	$ecpg->AddFiles('src/interfaces/ecpg/preproc', 'pgc.l', 'preproc.y');
-	$ecpg->AddDefine('MAJOR_VERSION=4');
-	$ecpg->AddDefine('MINOR_VERSION=12');
-	$ecpg->AddDefine('PATCHLEVEL=0');
 	$ecpg->AddDefine('ECPG_COMPILE');
 	$ecpg->AddReference($libpgcommon, $libpgport);
 
@@ -327,10 +348,10 @@ sub mkvcbuild
 	$pgbasebackup->AddFile('src/bin/pg_basebackup/pg_basebackup.c');
 	$pgbasebackup->AddLibrary('ws2_32.lib');
 
-	my $pgreceivexlog = AddSimpleFrontend('pg_basebackup', 1);
-	$pgreceivexlog->{name} = 'pg_receivexlog';
-	$pgreceivexlog->AddFile('src/bin/pg_basebackup/pg_receivexlog.c');
-	$pgreceivexlog->AddLibrary('ws2_32.lib');
+	my $pgreceivewal = AddSimpleFrontend('pg_basebackup', 1);
+	$pgreceivewal->{name} = 'pg_receivewal';
+	$pgreceivewal->AddFile('src/bin/pg_basebackup/pg_receivewal.c');
+	$pgreceivewal->AddLibrary('ws2_32.lib');
 
 	my $pgrecvlogical = AddSimpleFrontend('pg_basebackup', 1);
 	$pgrecvlogical->{name} = 'pg_recvlogical';
@@ -384,18 +405,7 @@ sub mkvcbuild
 	$zic->AddDirResourceFile('src/timezone');
 	$zic->AddReference($libpgcommon, $libpgport);
 
-	if ($solution->{options}->{xml})
-	{
-		$contrib_extraincludes->{'pgxml'} = [
-			$solution->{options}->{xml} . '/include',
-			$solution->{options}->{xslt} . '/include',
-			$solution->{options}->{iconv} . '/include' ];
-
-		$contrib_extralibs->{'pgxml'} = [
-			$solution->{options}->{xml} . '/lib/libxml2.lib',
-			$solution->{options}->{xslt} . '/lib/libxslt.lib' ];
-	}
-	else
+	if (!$solution->{options}->{xml})
 	{
 		push @contrib_excludes, 'xml2';
 	}
@@ -405,14 +415,7 @@ sub mkvcbuild
 		push @contrib_excludes, 'sslinfo';
 	}
 
-	if ($solution->{options}->{uuid})
-	{
-		$contrib_extraincludes->{'uuid-ossp'} =
-		  [ $solution->{options}->{uuid} . '/include' ];
-		$contrib_extralibs->{'uuid-ossp'} =
-		  [ $solution->{options}->{uuid} . '/lib/uuid.lib' ];
-	}
-	else
+	if (!$solution->{options}->{uuid})
 	{
 		push @contrib_excludes, 'uuid-ossp';
 	}
@@ -442,12 +445,11 @@ sub mkvcbuild
 	else
 	{
 		$pgcrypto->AddFiles(
-			'contrib/pgcrypto',   'md5.c',
-			'sha1.c',             'sha2.c',
-			'internal.c',         'internal-sha2.c',
-			'blf.c',              'rijndael.c',
-			'fortuna.c',          'random.c',
-			'pgp-mpi-internal.c', 'imath.c');
+			'contrib/pgcrypto', 'md5.c',
+			'sha1.c',           'internal.c',
+			'internal-sha2.c',  'blf.c',
+			'rijndael.c',       'pgp-mpi-internal.c',
+			'imath.c');
 	}
 	$pgcrypto->AddReference($postgres);
 	$pgcrypto->AddLibrary('ws2_32.lib');
@@ -496,14 +498,18 @@ sub mkvcbuild
 		$plpython->AddReference($postgres);
 
 		# Add transform modules dependent on plpython
-		AddTransformModule(
+		my $hstore_plpython = AddTransformModule(
 			'hstore_plpython' . $pymajorver, 'contrib/hstore_plpython',
 			'plpython' . $pymajorver,        'src/pl/plpython',
 			'hstore',                        'contrib/hstore');
-		AddTransformModule(
+		$hstore_plpython->AddDefine(
+			'PLPYTHON_LIBNAME="plpython' . $pymajorver . '"');
+		my $ltree_plpython = AddTransformModule(
 			'ltree_plpython' . $pymajorver, 'contrib/ltree_plpython',
 			'plpython' . $pymajorver,       'src/pl/plpython',
 			'ltree',                        'contrib/ltree');
+		$ltree_plpython->AddDefine(
+			'PLPYTHON_LIBNAME="plpython' . $pymajorver . '"');
 	}
 
 	if ($solution->{options}->{perl})
@@ -512,7 +518,159 @@ sub mkvcbuild
 		my $plperl =
 		  $solution->AddProject('plperl', 'dll', 'PLs', 'src/pl/plperl');
 		$plperl->AddIncludeDir($solution->{options}->{perl} . '/lib/CORE');
-		$plperl->AddDefine('PLPERL_HAVE_UID_GID');
+		$plperl->AddReference($postgres);
+
+		my $perl_path = $solution->{options}->{perl} . '\lib\CORE\*perl*';
+
+		# ActivePerl 5.16 provided perl516.lib; 5.18 provided libperl518.a
+		my @perl_libs =
+		  grep { /perl\d+\.lib$|libperl\d+\.a$/ } glob($perl_path);
+		if (@perl_libs == 1)
+		{
+			$plperl->AddLibrary($perl_libs[0]);
+		}
+		else
+		{
+			die
+"could not identify perl library version matching pattern $perl_path\n";
+		}
+
+		# Add defines from Perl's ccflags; see PGAC_CHECK_PERL_EMBED_CCFLAGS
+		my @perl_embed_ccflags;
+		foreach my $f (split(" ", $Config{ccflags}))
+		{
+			if ($f =~ /^-D[^_]/)
+			{
+				$f =~ s/\-D//;
+				push(@perl_embed_ccflags, $f);
+			}
+		}
+
+		# hack to prevent duplicate definitions of uid_t/gid_t
+		push(@perl_embed_ccflags, 'PLPERL_HAVE_UID_GID');
+
+		# Windows offers several 32-bit ABIs.  Perl is sensitive to
+		# sizeof(time_t), one of the ABI dimensions.  To get 32-bit time_t,
+		# use "cl -D_USE_32BIT_TIME_T" or plain "gcc".  For 64-bit time_t, use
+		# "gcc -D__MINGW_USE_VC2005_COMPAT" or plain "cl".  Before MSVC 2005,
+		# plain "cl" chose 32-bit time_t.  PostgreSQL doesn't support building
+		# with pre-MSVC-2005 compilers, but it does support linking to Perl
+		# built with such a compiler.  MSVC-built Perl 5.13.4 and later report
+		# -D_USE_32BIT_TIME_T in $Config{ccflags} if applicable, but
+		# MinGW-built Perl never reports -D_USE_32BIT_TIME_T despite typically
+		# needing it.  Ignore the $Config{ccflags} opinion about
+		# -D_USE_32BIT_TIME_T, and use a runtime test to deduce the ABI Perl
+		# expects.  Specifically, test use of PL_modglobal, which maps to a
+		# PerlInterpreter field whose position depends on sizeof(time_t).
+		if ($solution->{platform} eq 'Win32')
+		{
+			my $source_file = 'conftest.c';
+			my $obj         = 'conftest.obj';
+			my $exe         = 'conftest.exe';
+			my @conftest    = ($source_file, $obj, $exe);
+			push @unlink_on_exit, @conftest;
+			unlink $source_file;
+			open my $o, '>', $source_file
+			  || croak "Could not write to $source_file";
+			print $o '
+	/* compare to plperl.h */
+	#define __inline__ __inline
+	#define PERL_NO_GET_CONTEXT
+	#include <EXTERN.h>
+	#include <perl.h>
+
+	int
+	main(int argc, char **argv)
+	{
+		int			dummy_argc = 1;
+		char	   *dummy_argv[1] = {""};
+		char	   *dummy_env[1] = {NULL};
+		static PerlInterpreter *interp;
+
+		PERL_SYS_INIT3(&dummy_argc, (char ***) &dummy_argv,
+					   (char ***) &dummy_env);
+		interp = perl_alloc();
+		perl_construct(interp);
+		{
+			dTHX;
+			const char	key[] = "dummy";
+
+			PL_exit_flags |= PERL_EXIT_DESTRUCT_END;
+			hv_store(PL_modglobal, key, sizeof(key) - 1, newSViv(1), 0);
+			return hv_fetch(PL_modglobal, key, sizeof(key) - 1, 0) == NULL;
+		}
+	}
+';
+			close $o;
+
+			# Build $source_file with a given #define, and return a true value
+			# if a run of the resulting binary exits successfully.
+			my $try_define = sub {
+				my $define = shift;
+
+				unlink $obj, $exe;
+				my @cmd = (
+					'cl',
+					'-I' . $solution->{options}->{perl} . '/lib/CORE',
+					(map { "-D$_" } @perl_embed_ccflags, $define || ()),
+					$source_file,
+					'/link',
+					$perl_libs[0]);
+				my $compile_output = `@cmd 2>&1`;
+				-f $exe || die "Failed to build Perl test:\n$compile_output";
+
+				{
+
+					# Some builds exhibit runtime failure through Perl warning
+					# 'Can't spawn "conftest.exe"'; supress that.
+					no warnings;
+
+					# Disable error dialog boxes like we do in the postmaster.
+					# Here, we run code that triggers relevant errors.
+					use Win32API::File qw(SetErrorMode :SEM_);
+					my $oldmode = SetErrorMode(
+						SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+					system(".\\$exe");
+					SetErrorMode($oldmode);
+				}
+
+				return !($? >> 8);
+			};
+
+			my $define_32bit_time = '_USE_32BIT_TIME_T';
+			my $ok_now            = $try_define->(undef);
+			my $ok_32bit          = $try_define->($define_32bit_time);
+			unlink @conftest;
+			if (!$ok_now && !$ok_32bit)
+			{
+
+				# Unsupported configuration.  Since we used %Config from the
+				# Perl running the build scripts, this is expected if
+				# attempting to link with some other Perl.
+				die "Perl test fails with or without -D$define_32bit_time";
+			}
+			elsif ($ok_now && $ok_32bit)
+			{
+
+				# Resulting build may work, but it's especially important to
+				# verify with "vcregress plcheck".  A refined test may avoid
+				# this outcome.
+				warn "Perl test passes with or without -D$define_32bit_time";
+			}
+			elsif ($ok_32bit)
+			{
+				push(@perl_embed_ccflags, $define_32bit_time);
+			}    # else $ok_now, hence no flag required
+		}
+
+		print "CFLAGS recommended by Perl: $Config{ccflags}\n";
+		print "CFLAGS to compile embedded Perl: ",
+		  (join ' ', map { "-D$_" } @perl_embed_ccflags), "\n";
+		foreach my $f (@perl_embed_ccflags)
+		{
+			$plperl->AddDefine($f);
+		}
+
 		foreach my $xs ('SPI.xs', 'Util.xs')
 		{
 			(my $xsc = $xs) =~ s/\.xs/.c/;
@@ -577,25 +735,17 @@ sub mkvcbuild
 				die 'Failed to create plperl_opmask.h' . "\n";
 			}
 		}
-		$plperl->AddReference($postgres);
-		my @perl_libs =
-		  grep { /perl\d+.lib$/ }
-		  glob($solution->{options}->{perl} . '\lib\CORE\perl*.lib');
-		if (@perl_libs == 1)
-		{
-			$plperl->AddLibrary($perl_libs[0]);
-		}
-		else
-		{
-			die "could not identify perl library version";
-		}
 
 		# Add transform module dependent on plperl
 		my $hstore_plperl = AddTransformModule(
 			'hstore_plperl', 'contrib/hstore_plperl',
 			'plperl',        'src/pl/plperl',
 			'hstore',        'contrib/hstore');
-		$hstore_plperl->AddDefine('PLPERL_HAVE_UID_GID');
+
+		foreach my $f (@perl_embed_ccflags)
+		{
+			$hstore_plperl->AddDefine($f);
+		}
 	}
 
 	$mf =
@@ -650,15 +800,15 @@ sub mkvcbuild
 	$pgregress->AddDirResourceFile('src/test/regress');
 	$pgregress->AddReference($libpgcommon, $libpgport);
 
-	# fix up pg_xlogdump once it's been set up
+	# fix up pg_waldump once it's been set up
 	# files symlinked on Unix are copied on windows
-	my $pg_xlogdump = AddSimpleFrontend('pg_xlogdump');
-	$pg_xlogdump->AddDefine('FRONTEND');
+	my $pg_waldump = AddSimpleFrontend('pg_waldump');
+	$pg_waldump->AddDefine('FRONTEND');
 	foreach my $xf (glob('src/backend/access/rmgrdesc/*desc.c'))
 	{
-		$pg_xlogdump->AddFile($xf);
+		$pg_waldump->AddFile($xf);
 	}
-	$pg_xlogdump->AddFile('src/backend/access/transam/xlogreader.c');
+	$pg_waldump->AddFile('src/backend/access/transam/xlogreader.c');
 
 	$solution->Save();
 	return $solution->{vcver};
@@ -828,7 +978,7 @@ sub GenerateContribSqlFiles
 				$dn   =~ s/\.sql$//;
 				$cont =~ s/MODULE_PATHNAME/\$libdir\/$dn/g;
 				my $o;
-				open($o, ">contrib/$n/$out")
+				open($o, '>', "contrib/$n/$out")
 				  || croak "Could not write to contrib/$n/$d";
 				print $o $cont;
 				close($o);
@@ -911,6 +1061,11 @@ sub AdjustModule
 			$proj->AddFile($i);
 		}
 	}
+}
+
+END
+{
+	unlink @unlink_on_exit;
 }
 
 1;

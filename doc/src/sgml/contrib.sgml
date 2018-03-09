@@ -75,7 +75,7 @@ CREATE EXTENSION <replaceable>module_name</>;
   choice.  To do that, add <literal>SCHEMA
   <replaceable>schema_name</></literal> to the <command>CREATE EXTENSION</>
   command.  By default, the objects will be placed in your current creation
-  target schema, typically <literal>public</>.
+  target schema, which in turn defaults to <literal>public</>.
  </para>
 
  <para>
@@ -103,6 +103,7 @@ CREATE EXTENSION <replaceable>module_name</> FROM unpackaged;
  </para>
 
  &adminpack;
+ &amcheck;
  &auth-delay;
  &auto-explain;
  &bloom;
@@ -142,7 +143,6 @@ CREATE EXTENSION <replaceable>module_name</> FROM unpackaged;
  &tablefunc;
  &tcn;
  &test-decoding;
- &tsearch2;
  &tsm-system-rows;
  &tsm-system-time;
  &unaccent;

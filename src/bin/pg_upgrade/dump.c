@@ -3,7 +3,7 @@
  *
  *	dump functions
  *
- *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/dump.c
  */
 
@@ -11,7 +11,6 @@
 
 #include "pg_upgrade.h"
 
-#include <sys/types.h>
 #include "fe_utils/string_utils.h"
 
 
@@ -19,12 +18,11 @@ void
 generate_old_dump(void)
 {
 	int			dbnum;
-	mode_t		old_umask;
 
 	prep_status("Creating dump of global objects");
 
 	/* run new pg_dumpall binary for globals */
-	exec_prog(UTILITY_LOG_FILE, NULL, true,
+	exec_prog(UTILITY_LOG_FILE, NULL, true, true,
 			  "\"%s/pg_dumpall\" %s --globals-only --quote-all-identifiers "
 			  "--binary-upgrade %s -f %s",
 			  new_cluster.bindir, cluster_conn_opts(&old_cluster),
@@ -33,13 +31,6 @@ generate_old_dump(void)
 	check_ok();
 
 	prep_status("Creating dump of database schemas\n");
-
-	/*
-	 * Set umask for this function, all functions it calls, and all
-	 * subprocesses/threads it creates.  We can't use fopen_priv() as Windows
-	 * uses threads and umask is process-global.
-	 */
-	old_umask = umask(S_IRWXG | S_IRWXO);
 
 	/* create per-db dump files */
 	for (dbnum = 0; dbnum < old_cluster.dbarr.ndbs; dbnum++)
@@ -62,9 +53,9 @@ generate_old_dump(void)
 		snprintf(log_file_name, sizeof(log_file_name), DB_DUMP_LOG_FILE_MASK, old_db->db_oid);
 
 		parallel_exec_prog(log_file_name, NULL,
-				   "\"%s/pg_dump\" %s --schema-only --quote-all-identifiers "
-					  "--binary-upgrade --format=custom %s --file=\"%s\" %s",
-						 new_cluster.bindir, cluster_conn_opts(&old_cluster),
+						   "\"%s/pg_dump\" %s --schema-only --quote-all-identifiers "
+						   "--binary-upgrade --format=custom %s --file=\"%s\" %s",
+						   new_cluster.bindir, cluster_conn_opts(&old_cluster),
 						   log_opts.verbose ? "--verbose" : "",
 						   sql_file_name, escaped_connstr.data);
 
@@ -74,8 +65,6 @@ generate_old_dump(void)
 	/* reap all children */
 	while (reap_child(true) == true)
 		;
-
-	umask(old_umask);
 
 	end_progress_output();
 	check_ok();

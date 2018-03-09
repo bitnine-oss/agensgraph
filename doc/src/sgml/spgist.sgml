@@ -145,6 +145,23 @@
        <literal>~&gt;~</>
       </entry>
      </row>
+     <row>
+      <entry><literal>inet_ops</></entry>
+      <entry><type>inet</>, <type>cidr</></entry>
+      <entry>
+       <literal>&amp;&amp;</>
+       <literal>&gt;&gt;</>
+       <literal>&gt;&gt;=</>
+       <literal>&gt;</>
+       <literal>&gt;=</>
+       <literal>&lt;&gt;</>
+       <literal>&lt;&lt;</>
+       <literal>&lt;&lt;=</>
+       <literal>&lt;</>
+       <literal>&lt;=</>
+       <literal>=</>
+      </entry>
+     </row>
     </tbody>
    </tgroup>
   </table>
@@ -347,10 +364,13 @@ typedef struct spgChooseOut
         }           addNode;
         struct                  /* results for spgSplitTuple */
         {
-            /* Info to form new inner tuple with one node */
+            /* Info to form new upper-level inner tuple with one child tuple */
             bool        prefixHasPrefix;    /* tuple should have a prefix? */
             Datum       prefixPrefixDatum;  /* if so, its value */
-            Datum       nodeLabel;          /* node's label */
+            int         prefixNNodes;       /* number of nodes */
+            Datum      *prefixNodeLabels;   /* their labels (or NULL for
+                                             * no labels) */
+            int         childNodeN;         /* which node gets child tuple */
 
             /* Info to form new lower-level inner tuple with all old nodes */
             bool        postfixHasPrefix;   /* tuple should have a prefix? */
@@ -420,29 +440,33 @@ typedef struct spgChooseOut
        set <structfield>resultType</> to <literal>spgSplitTuple</>.
        This action moves all the existing nodes into a new lower-level
        inner tuple, and replaces the existing inner tuple with a tuple
-       having a single node that links to the new lower-level inner tuple.
+       having a single downlink pointing to the new lower-level inner tuple.
        Set <structfield>prefixHasPrefix</> to indicate whether the new
        upper tuple should have a prefix, and if so set
        <structfield>prefixPrefixDatum</> to the prefix value.  This new
        prefix value must be sufficiently less restrictive than the original
-       to accept the new value to be indexed, and it should be no longer
-       than the original prefix.
-       Set <structfield>nodeLabel</> to the label to be used for the
-       node that will point to the new lower-level inner tuple.
+       to accept the new value to be indexed.
+       Set <structfield>prefixNNodes</> to the number of nodes needed in the
+       new tuple, and set <structfield>prefixNodeLabels</> to a palloc'd array
+       holding their labels, or to NULL if node labels are not required.
+       Note that the total size of the new upper tuple must be no more
+       than the total size of the tuple it is replacing; this constrains
+       the lengths of the new prefix and new labels.
+       Set <structfield>childNodeN</> to the index (from zero) of the node
+       that will downlink to the new lower-level inner tuple.
        Set <structfield>postfixHasPrefix</> to indicate whether the new
        lower-level inner tuple should have a prefix, and if so set
        <structfield>postfixPrefixDatum</> to the prefix value.  The
-       combination of these two prefixes and the additional label must
-       have the same meaning as the original prefix, because there is
-       no opportunity to alter the node labels that are moved to the new
-       lower-level tuple, nor to change any child index entries.
+       combination of these two prefixes and the downlink node's label
+       (if any) must have the same meaning as the original prefix, because
+       there is no opportunity to alter the node labels that are moved to
+       the new lower-level tuple, nor to change any child index entries.
        After the node has been split, the <function>choose</function>
        function will be called again with the replacement inner tuple.
-       That call will usually result in an <literal>spgAddNode</> result,
-       since presumably the node label added in the split step will not
-       match the new value; so after that, there will be a third call
-       that finally returns <literal>spgMatchNode</> and allows the
-       insertion to descend to the leaf level.
+       That call may return an <literal>spgAddNode</> result, if no suitable
+       node was created by the <literal>spgSplitTuple</> action.  Eventually
+       <function>choose</function> must return <literal>spgMatchNode</> to
+       allow the insertion to descend to the next level.
       </para>
      </listitem>
     </varlistentry>
@@ -677,8 +701,8 @@ typedef struct spgLeafConsistentIn
     ScanKey     scankeys;       /* array of operators and comparison values */
     int         nkeys;          /* length of array */
 
-    void       *traversalValue; /* opclass-specific traverse value */
     Datum       reconstructedValue;     /* value reconstructed at parent */
+    void       *traversalValue; /* opclass-specific traverse value */
     int         level;          /* current level (counting from zero) */
     bool        returnData;     /* original data must be returned? */
 
@@ -807,7 +831,10 @@ typedef struct spgLeafConsistentOut
    point.  In such a case the code typically works with the nodes by
    number, and there is no need for explicit node labels.  To suppress
    node labels (and thereby save some space), the <function>picksplit</>
-   function can return NULL for the <structfield>nodeLabels</> array.
+   function can return NULL for the <structfield>nodeLabels</> array,
+   and likewise the <function>choose</> function can return NULL for
+   the <structfield>prefixNodeLabels</> array during
+   a <literal>spgSplitTuple</> action.
    This will in turn result in <structfield>nodeLabels</> being NULL during
    subsequent calls to <function>choose</> and <function>inner_consistent</>.
    In principle, node labels could be used for some inner tuples and omitted
@@ -817,10 +844,7 @@ typedef struct spgLeafConsistentOut
   <para>
    When working with an inner tuple having unlabeled nodes, it is an error
    for <function>choose</> to return <literal>spgAddNode</>, since the set
-   of nodes is supposed to be fixed in such cases.  Also, there is no
-   provision for generating an unlabeled node in <literal>spgSplitTuple</>
-   actions, since it is expected that an <literal>spgAddNode</> action will
-   be needed as well.
+   of nodes is supposed to be fixed in such cases.
   </para>
  </sect2>
 

@@ -9,6 +9,9 @@
  */
 #include "postgres_fe.h"
 
+#include "catalog/pg_class.h"
+
+#include "fe_utils/connect.h"
 #include "libpq-fe.h"
 #include "pg_getopt.h"
 
@@ -55,7 +58,7 @@ void		sql_exec_dumpalltbspc(PGconn *, struct options *);
 
 /* function to parse command line options and check for some usage errors. */
 void
-get_opts(int argc, char **argv, struct options * my_opts)
+get_opts(int argc, char **argv, struct options *my_opts)
 {
 	int			c;
 	const char *progname;
@@ -209,7 +212,7 @@ add_one_elt(char *eltname, eary *eary)
 	{
 		eary	  ->alloc *= 2;
 		eary	  ->array = (char **) pg_realloc(eary->array,
-											   eary->alloc * sizeof(char *));
+												 eary->alloc * sizeof(char *));
 	}
 
 	eary	  ->array[eary->num] = pg_strdup(eltname);
@@ -258,11 +261,13 @@ get_comma_elts(eary *eary)
 
 /* establish connection with database. */
 PGconn *
-sql_conn(struct options * my_opts)
+sql_conn(struct options *my_opts)
 {
 	PGconn	   *conn;
-	char	   *password = NULL;
+	bool		have_password = false;
+	char		password[100];
 	bool		new_pass;
+	PGresult   *res;
 
 	/*
 	 * Start the connection.  Loop until we have a password if requested by
@@ -282,7 +287,7 @@ sql_conn(struct options * my_opts)
 		keywords[2] = "user";
 		values[2] = my_opts->username;
 		keywords[3] = "password";
-		values[3] = password;
+		values[3] = have_password ? password : NULL;
 		keywords[4] = "dbname";
 		values[4] = my_opts->dbname;
 		keywords[5] = "fallback_application_name";
@@ -302,16 +307,14 @@ sql_conn(struct options * my_opts)
 
 		if (PQstatus(conn) == CONNECTION_BAD &&
 			PQconnectionNeedsPassword(conn) &&
-			password == NULL)
+			!have_password)
 		{
 			PQfinish(conn);
-			password = simple_prompt("Password: ", 100, false);
+			simple_prompt("Password: ", password, sizeof(password), false);
+			have_password = true;
 			new_pass = true;
 		}
 	} while (new_pass);
-
-	if (password)
-		free(password);
 
 	/* check to see that the backend connection was successfully made */
 	if (PQstatus(conn) == CONNECTION_BAD)
@@ -321,6 +324,17 @@ sql_conn(struct options * my_opts)
 		PQfinish(conn);
 		exit(1);
 	}
+
+	res = PQexec(conn, ALWAYS_SECURE_SEARCH_PATH_SQL);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		fprintf(stderr, "oid2name: could not clear search_path: %s\n",
+				PQerrorMessage(conn));
+		PQclear(res);
+		PQfinish(conn);
+		exit(-1);
+	}
+	PQclear(res);
 
 	/* return the conn if good */
 	return conn;
@@ -410,7 +424,7 @@ sql_exec(PGconn *conn, const char *todo, bool quiet)
  * Dump all databases.  There are no system objects to worry about.
  */
 void
-sql_exec_dumpalldbs(PGconn *conn, struct options * opts)
+sql_exec_dumpalldbs(PGconn *conn, struct options *opts)
 {
 	char		todo[1024];
 
@@ -427,18 +441,19 @@ sql_exec_dumpalldbs(PGconn *conn, struct options * opts)
  * Dump all tables, indexes and sequences in the current database.
  */
 void
-sql_exec_dumpalltables(PGconn *conn, struct options * opts)
+sql_exec_dumpalltables(PGconn *conn, struct options *opts)
 {
 	char		todo[1024];
 	char	   *addfields = ",c.oid AS \"Oid\", nspname AS \"Schema\", spcname as \"Tablespace\" ";
 
 	snprintf(todo, sizeof(todo),
 			 "SELECT pg_catalog.pg_relation_filenode(c.oid) as \"Filenode\", relname as \"Table Name\" %s "
-			 "FROM pg_class c "
-		   "	LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+			 "FROM pg_catalog.pg_class c "
+			 "	LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
 			 "	LEFT JOIN pg_catalog.pg_database d ON d.datname = pg_catalog.current_database(),"
 			 "	pg_catalog.pg_tablespace t "
-			 "WHERE relkind IN ('r', 'm'%s%s) AND "
+			 "WHERE relkind IN (" CppAsString2(RELKIND_RELATION) ","
+			 CppAsString2(RELKIND_MATVIEW) "%s%s) AND "
 			 "	%s"
 			 "		t.oid = CASE"
 			 "			WHEN reltablespace <> 0 THEN reltablespace"
@@ -446,8 +461,8 @@ sql_exec_dumpalltables(PGconn *conn, struct options * opts)
 			 "		END "
 			 "ORDER BY relname",
 			 opts->extended ? addfields : "",
-			 opts->indexes ? ", 'i', 'S'" : "",
-			 opts->systables ? ", 't'" : "",
+			 opts->indexes ? "," CppAsString2(RELKIND_INDEX) "," CppAsString2(RELKIND_SEQUENCE) : "",
+			 opts->systables ? "," CppAsString2(RELKIND_TOASTVALUE) : "",
 			 opts->systables ? "" : "n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname !~ '^pg_toast' AND");
 
 	sql_exec(conn, todo, opts->quiet);
@@ -458,7 +473,7 @@ sql_exec_dumpalltables(PGconn *conn, struct options * opts)
  * given objects in the current database.
  */
 void
-sql_exec_searchtables(PGconn *conn, struct options * opts)
+sql_exec_searchtables(PGconn *conn, struct options *opts)
 {
 	char	   *todo;
 	char	   *qualifiers,
@@ -504,16 +519,20 @@ sql_exec_searchtables(PGconn *conn, struct options * opts)
 	/* now build the query */
 	todo = psprintf(
 					"SELECT pg_catalog.pg_relation_filenode(c.oid) as \"Filenode\", relname as \"Table Name\" %s\n"
-					"FROM pg_catalog.pg_class c \n"
-		"	LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \n"
+					"FROM pg_catalog.pg_class c\n"
+					"	LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n"
 					"	LEFT JOIN pg_catalog.pg_database d ON d.datname = pg_catalog.current_database(),\n"
-					"	pg_catalog.pg_tablespace t \n"
-					"WHERE relkind IN ('r', 'm', 'i', 'S', 't') AND \n"
+					"	pg_catalog.pg_tablespace t\n"
+					"WHERE relkind IN (" CppAsString2(RELKIND_RELATION) ","
+					CppAsString2(RELKIND_MATVIEW) ","
+					CppAsString2(RELKIND_INDEX) ","
+					CppAsString2(RELKIND_SEQUENCE) ","
+					CppAsString2(RELKIND_TOASTVALUE) ") AND\n"
 					"		t.oid = CASE\n"
-			"			WHEN reltablespace <> 0 THEN reltablespace\n"
+					"			WHEN reltablespace <> 0 THEN reltablespace\n"
 					"			ELSE dattablespace\n"
-					"		END AND \n"
-					"  (%s) \n"
+					"		END AND\n"
+					"  (%s)\n"
 					"ORDER BY relname\n",
 					opts->extended ? addfields : "",
 					qualifiers);
@@ -524,7 +543,7 @@ sql_exec_searchtables(PGconn *conn, struct options * opts)
 }
 
 void
-sql_exec_dumpalltbspc(PGconn *conn, struct options * opts)
+sql_exec_dumpalltbspc(PGconn *conn, struct options *opts)
 {
 	char		todo[1024];
 

@@ -46,7 +46,7 @@
 
   <para>
    <ulink
-   url="http://bucardo.org/wiki/Check_postgres"><application>check_postgres</></ulink>
+   url="https://bucardo.org/check_postgres/"><application>check_postgres</></ulink>
    is available for monitoring database health and reporting unusual
    conditions.  <application>check_postgres</> integrates with
    Nagios and MRTG, but can be run standalone too.
@@ -526,19 +526,23 @@
 
    <para>
     The sole disadvantage of increasing <varname>autovacuum_freeze_max_age</>
-    (and <varname>vacuum_freeze_table_age</> along with it)
-    is that the <filename>pg_clog</> subdirectory of the database cluster
-    will take more space, because it must store the commit status of all
-    transactions back to the <varname>autovacuum_freeze_max_age</> horizon.
-    The commit status uses two bits per transaction, so if
-    <varname>autovacuum_freeze_max_age</> is set to its maximum allowed
-    value of two billion, <filename>pg_clog</> can be expected to
-    grow to about half a gigabyte.  If this is trivial compared to your
-    total database size, setting <varname>autovacuum_freeze_max_age</> to
-    its maximum allowed value is recommended.  Otherwise, set it depending
-    on what you are willing to allow for <filename>pg_clog</> storage.
-    (The default, 200 million transactions, translates to about 50MB of
-    <filename>pg_clog</> storage.)
+    (and <varname>vacuum_freeze_table_age</> along with it) is that
+    the <filename>pg_xact</> and <filename>pg_commit_ts</filename>
+    subdirectories of the database cluster will take more space, because it
+    must store the commit status and (if <varname>track_commit_timestamp</> is
+    enabled) timestamp of all transactions back to
+    the <varname>autovacuum_freeze_max_age</> horizon.  The commit status uses
+    two bits per transaction, so if
+    <varname>autovacuum_freeze_max_age</> is set to its maximum allowed value
+    of two billion, <filename>pg_xact</> can be expected to grow to about half
+    a gigabyte and <filename>pg_commit_ts</filename> to about 20GB.  If this
+    is trivial compared to your total database size,
+    setting <varname>autovacuum_freeze_max_age</> to its maximum allowed value
+    is recommended.  Otherwise, set it depending on what you are willing to
+    allow for <filename>pg_xact</> and <filename>pg_commit_ts</> storage.
+    (The default, 200 million transactions, translates to about 50MB
+    of <filename>pg_xact</> storage and about 2GB of <filename>pg_commit_ts</>
+    storage.)
    </para>
 
    <para>
@@ -594,7 +598,7 @@ SELECT datname, age(datfrozenxid) FROM pg_database;
     scans every page in the table that is not already all-frozen, it should
     set <literal>age(relfrozenxid)</> to a value just a little more than the
     <varname>vacuum_freeze_min_age</> setting
-    that was used (more by the number of transcations started since the
+    that was used (more by the number of transactions started since the
     <command>VACUUM</> started).  If no <structfield>relfrozenxid</>-advancing
     <command>VACUUM</> is issued on the table until
     <varname>autovacuum_freeze_max_age</> is reached, an autovacuum will soon
@@ -977,7 +981,7 @@ pg_ctl start | rotatelogs /var/log/pgsql_log 86400
    <ulink url="http://dalibo.github.io/pgbadger/"><productname>pgBadger</productname></ulink>
    is an external project that does sophisticated log file analysis.
    <ulink
-   url="http://bucardo.org/wiki/Check_postgres"><productname>check_postgres</productname></ulink>
+   url="https://bucardo.org/check_postgres/"><productname>check_postgres</productname></ulink>
    provides Nagios alerts when important messages appear in the log
    files, as well as detection of many other extraordinary conditions.
   </para>

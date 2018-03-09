@@ -3,7 +3,7 @@
  * compress_io.h
  *	 Interface to compress_io.c routines
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -65,5 +65,6 @@ extern int	cfgetc(cfp *fp);
 extern char *cfgets(cfp *fp, char *buf, int len);
 extern int	cfclose(cfp *fp);
 extern int	cfeof(cfp *fp);
+extern const char *get_cfp_error(cfp *fp);
 
 #endif

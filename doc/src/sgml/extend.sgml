@@ -390,6 +390,41 @@
     schema(s) its member objects are within.
    </para>
 
+   <para>
+    If an extension's script creates any temporary objects (such as temp
+    tables), those objects are treated as extension members for the
+    remainder of the current session, but are automatically dropped at
+    session end, as any temporary object would be.  This is an exception
+    to the rule that extension member objects cannot be dropped without
+    dropping the whole extension.
+   </para>
+
+   <sect2 id="extend-extensions-style">
+    <title>Defining Extension Objects</title>
+
+    <!-- XXX It's not enough to use qualified names, because one might write a
+         qualified name to an object that itself uses unqualified names.  Many
+         information_schema functions have that defect, for example.  However,
+         that's a defect in the referenced object, and relatively few queries
+         will be affected.  Also, we direct applications to secure search_path
+         when connecting to an untrusted database; if applications do that,
+         they are immune to known attacks even if some extension refers to a
+         defective object.  Therefore, guide extension authors as though core
+         PostgreSQL contained no such defect. -->
+    <para>
+     Widely-distributed extensions should assume little about the database
+     they occupy.  In particular, unless you issued <literal>SET search_path =
+     pg_temp</literal>, assume each unqualified name could resolve to an
+     object that a malicious user has defined.  Beware of constructs that
+     depend on <varname>search_path</varname> implicitly: <token>IN</token>
+     and <literal>CASE <replaceable>expression</replaceable> WHEN</literal>
+     always select an operator using the search path.  In their place, use
+     <literal>OPERATOR(<replaceable>schema</replaceable>.=) ANY</literal>
+     and <literal>CASE WHEN <replaceable>expression</replaceable></literal>.
+    </para>
+
+   </sect2>
+
    <sect2>
     <title>Extension Files</title>
 
@@ -803,7 +838,8 @@ SELECT pg_catalog.pg_extension_config_dump('my_config', 'WHERE NOT standard_entr
      environment that <command>CREATE EXTENSION</> provides for installation
      scripts: in particular, <varname>search_path</> is set up in the same
      way, and any new objects created by the script are automatically added
-     to the extension.
+     to the extension.  Also, if the script chooses to drop extension member
+     objects, they are automatically dissociated from the extension.
     </para>
 
     <para>
@@ -885,6 +921,47 @@ SELECT * FROM pg_extension_update_paths('<replaceable>extension_name</>');
     </para>
    </sect2>
 
+   <sect2>
+    <title>Installing Extensions using Update Scripts</title>
+
+    <para>
+     An extension that has been around for awhile will probably exist in
+     several versions, for which the author will need to write update scripts.
+     For example, if you have released a <literal>foo</> extension in
+     versions <literal>1.0</>, <literal>1.1</>, and <literal>1.2</>, there
+     should be update scripts <filename>foo--1.0--1.1.sql</>
+     and <filename>foo--1.1--1.2.sql</>.
+     Before <productname>PostgreSQL</> 10, it was necessary to also create
+     new script files <filename>foo--1.1.sql</> and <filename>foo--1.2.sql</>
+     that directly build the newer extension versions, or else the newer
+     versions could not be installed directly, only by
+     installing <literal>1.0</> and then updating.  That was tedious and
+     duplicative, but now it's unnecessary, because <command>CREATE
+     EXTENSION</> can follow update chains automatically.
+     For example, if only the script
+     files <filename>foo--1.0.sql</>, <filename>foo--1.0--1.1.sql</>,
+     and <filename>foo--1.1--1.2.sql</> are available then a request to
+     install version <literal>1.2</> is honored by running those three
+     scripts in sequence.  The processing is the same as if you'd first
+     installed <literal>1.0</> and then updated to <literal>1.2</>.
+     (As with <command>ALTER EXTENSION UPDATE</>, if multiple pathways are
+     available then the shortest is preferred.)  Arranging an extension's
+     script files in this style can reduce the amount of maintenance effort
+     needed to produce small updates.
+    </para>
+
+    <para>
+     If you use secondary (version-specific) control files with an extension
+     maintained in this style, keep in mind that each version needs a control
+     file even if it has no stand-alone installation script, as that control
+     file will determine how the implicit update to that version is performed.
+     For example, if <filename>foo--1.0.control</> specifies <literal>requires
+     = 'bar'</> but <literal>foo</>'s other control files do not, the
+     extension's dependency on <literal>bar</> will be dropped when updating
+     from <literal>1.0</> to another version.
+    </para>
+   </sect2>
+
    <sect2 id="extend-extensions-example">
     <title>Extension Example</title>
 
@@ -902,24 +979,24 @@ SELECT * FROM pg_extension_update_paths('<replaceable>extension_name</>');
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "CREATE EXTENSION pair" to load this file. \quit
 
-CREATE TYPE pair AS ( k text, v text );
+CREATE TYPE pair AS ( k pg_catalog.text, v pg_catalog.text );
 
-CREATE OR REPLACE FUNCTION pair(anyelement, text)
-RETURNS pair LANGUAGE SQL AS 'SELECT ROW($1, $2)::pair';
+CREATE OR REPLACE FUNCTION pair(pg_catalog.text, pg_catalog.text)
+RETURNS pair LANGUAGE SQL AS 'SELECT ROW($1, $2)::@extschema@.pair;';
 
-CREATE OR REPLACE FUNCTION pair(text, anyelement)
-RETURNS pair LANGUAGE SQL AS 'SELECT ROW($1, $2)::pair';
+CREATE OPERATOR ~> (LEFTARG = pg_catalog.text,
+                    RIGHTARG = pg_catalog.text, PROCEDURE = pair);
 
-CREATE OR REPLACE FUNCTION pair(anyelement, anyelement)
-RETURNS pair LANGUAGE SQL AS 'SELECT ROW($1, $2)::pair';
+-- "SET search_path" is easy to get right, but qualified names perform better.
+CREATE OR REPLACE FUNCTION lower(pair)
+RETURNS pair LANGUAGE SQL
+AS 'SELECT ROW(lower($1.k), lower($1.v))::@extschema@.pair;'
+SET search_path = pg_temp;
 
-CREATE OR REPLACE FUNCTION pair(text, text)
-RETURNS pair LANGUAGE SQL AS 'SELECT ROW($1, $2)::pair;';
-
-CREATE OPERATOR ~> (LEFTARG = text, RIGHTARG = anyelement, PROCEDURE = pair);
-CREATE OPERATOR ~> (LEFTARG = anyelement, RIGHTARG = text, PROCEDURE = pair);
-CREATE OPERATOR ~> (LEFTARG = anyelement, RIGHTARG = anyelement, PROCEDURE = pair);
-CREATE OPERATOR ~> (LEFTARG = text, RIGHTARG = text, PROCEDURE = pair);
+CREATE OR REPLACE FUNCTION pair_concat(pair, pair)
+RETURNS pair LANGUAGE SQL
+AS 'SELECT ROW($1.k OPERATOR(pg_catalog.||) $2.k,
+               $1.v OPERATOR(pg_catalog.||) $2.v)::@extschema@.pair;';
 ]]>
 </programlisting>
     </para>
@@ -931,7 +1008,7 @@ CREATE OPERATOR ~> (LEFTARG = text, RIGHTARG = text, PROCEDURE = pair);
 # pair extension
 comment = 'A key/value pair data type'
 default_version = '1.0'
-relocatable = true
+relocatable = false
 </programlisting>
     </para>
 
@@ -1148,6 +1225,15 @@ include $(PGXS)
       <listitem>
        <para>
         additional switches to pass to <application>pg_regress</>
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><varname>NO_INSTALLCHECK</varname></term>
+      <listitem>
+       <para>
+        don't define an <literal>installcheck</literal> target, useful e.g. if tests require special configuration, or don't use <application>pg_regress</application>
        </para>
       </listitem>
      </varlistentry>

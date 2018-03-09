@@ -3,7 +3,7 @@
  * nodeMaterial.c
  *	  Routines to handle materialization nodes.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -35,15 +35,18 @@
  *
  * ----------------------------------------------------------------
  */
-TupleTableSlot *				/* result tuple from subplan */
-ExecMaterial(MaterialState *node)
+static TupleTableSlot *			/* result tuple from subplan */
+ExecMaterial(PlanState *pstate)
 {
+	MaterialState *node = castNode(MaterialState, pstate);
 	EState	   *estate;
 	ScanDirection dir;
 	bool		forward;
 	Tuplestorestate *tuplestorestate;
 	bool		eof_tuplestore;
 	TupleTableSlot *slot;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/*
 	 * get state info from node
@@ -66,7 +69,7 @@ ExecMaterial(MaterialState *node)
 			 * Allocate a second read pointer to serve as the mark. We know it
 			 * must have index 1, so needn't store that.
 			 */
-			int ptrno	PG_USED_FOR_ASSERTS_ONLY;
+			int			ptrno PG_USED_FOR_ASSERTS_ONLY;
 
 			ptrno = tuplestore_alloc_read_pointer(tuplestorestate,
 												  node->eflags);
@@ -171,6 +174,7 @@ ExecInitMaterial(Material *node, EState *estate, int eflags)
 	matstate = makeNode(MaterialState);
 	matstate->ss.ps.plan = (Plan *) node;
 	matstate->ss.ps.state = estate;
+	matstate->ss.ps.ExecProcNode = ExecMaterial;
 
 	/*
 	 * We must have a tuplestore buffering the subplan output to do backward

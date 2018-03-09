@@ -3,7 +3,7 @@
  * nodeSeqscan.c
  *	  Support routines for sequential scans of relations.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,6 +22,7 @@
  *
  *		ExecSeqScanEstimate		estimates DSM space needed for parallel scan
  *		ExecSeqScanInitializeDSM initialize DSM for parallel scan
+ *		ExecSeqScanReInitializeDSM reinitialize DSM for fresh parallel scan
  *		ExecSeqScanInitializeWorker attach to DSM info in parallel worker
  */
 #include "postgres.h"
@@ -90,8 +91,8 @@ SeqNext(SeqScanState *node)
 	if (tuple)
 		ExecStoreTuple(tuple,	/* tuple to store */
 					   slot,	/* slot to store in */
-					   scandesc->rs_cbuf,		/* buffer associated with this
-												 * tuple */
+					   scandesc->rs_cbuf,	/* buffer associated with this
+											 * tuple */
 					   false);	/* don't pfree this pointer */
 	else
 		ExecClearTuple(slot);
@@ -121,10 +122,12 @@ SeqRecheck(SeqScanState *node, TupleTableSlot *slot)
  *		access method functions.
  * ----------------------------------------------------------------
  */
-TupleTableSlot *
-ExecSeqScan(SeqScanState *node)
+static TupleTableSlot *
+ExecSeqScan(PlanState *pstate)
 {
-	return ExecScan((ScanState *) node,
+	SeqScanState *node = castNode(SeqScanState, pstate);
+
+	return ExecScan(&node->ss,
 					(ExecScanAccessMtd) SeqNext,
 					(ExecScanRecheckMtd) SeqRecheck);
 }
@@ -145,7 +148,7 @@ InitScanRelation(SeqScanState *node, EState *estate, int eflags)
 	 * open that relation and acquire appropriate lock on it.
 	 */
 	currentRelation = ExecOpenScanRelation(estate,
-								   ((SeqScan *) node->ss.ps.plan)->scanrelid,
+										   ((SeqScan *) node->ss.ps.plan)->scanrelid,
 										   eflags);
 
 	node->ss.ss_currentRelation = currentRelation;
@@ -177,6 +180,7 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	scanstate = makeNode(SeqScanState);
 	scanstate->ss.ps.plan = (Plan *) node;
 	scanstate->ss.ps.state = estate;
+	scanstate->ss.ps.ExecProcNode = ExecSeqScan;
 
 	/*
 	 * Miscellaneous initialization
@@ -188,12 +192,8 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	scanstate->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->plan.targetlist,
-					 (PlanState *) scanstate);
-	scanstate->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->plan.qual,
-					 (PlanState *) scanstate);
+	scanstate->ss.ps.qual =
+		ExecInitQual(node->plan.qual, (PlanState *) scanstate);
 
 	/*
 	 * tuple table initialization
@@ -205,8 +205,6 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	 * initialize scan relation
 	 */
 	InitScanRelation(scanstate, estate, eflags);
-
-	scanstate->ss.ps.ps_TupFromTlist = false;
 
 	/*
 	 * Initialize result tuple type and projection info.
@@ -328,6 +326,21 @@ ExecSeqScanInitializeDSM(SeqScanState *node,
 }
 
 /* ----------------------------------------------------------------
+ *		ExecSeqScanReInitializeDSM
+ *
+ *		Reset shared state before beginning a fresh scan.
+ * ----------------------------------------------------------------
+ */
+void
+ExecSeqScanReInitializeDSM(SeqScanState *node,
+						   ParallelContext *pcxt)
+{
+	HeapScanDesc scan = node->ss.ss_currentScanDesc;
+
+	heap_parallelscan_reinitialize(scan->rs_parallel);
+}
+
+/* ----------------------------------------------------------------
  *		ExecSeqScanInitializeWorker
  *
  *		Copy relevant information from TOC into planstate.
@@ -338,7 +351,7 @@ ExecSeqScanInitializeWorker(SeqScanState *node, shm_toc *toc)
 {
 	ParallelHeapScanDesc pscan;
 
-	pscan = shm_toc_lookup(toc, node->ss.ps.plan->plan_node_id);
+	pscan = shm_toc_lookup(toc, node->ss.ps.plan->plan_node_id, false);
 	node->ss.ss_currentScanDesc =
 		heap_beginscan_parallel(node->ss.ss_currentRelation, pscan);
 }

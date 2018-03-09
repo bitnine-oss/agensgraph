@@ -1,5 +1,7 @@
 #include "postgres.h"
+
 #undef _
+
 #include "fmgr.h"
 #include "plperl.h"
 #include "plperl_helpers.h"
@@ -7,12 +9,65 @@
 
 PG_MODULE_MAGIC;
 
+extern void _PG_init(void);
+
+/* Linkage to functions in hstore module */
+typedef HStore *(*hstoreUpgrade_t) (Datum orig);
+static hstoreUpgrade_t hstoreUpgrade_p;
+typedef int (*hstoreUniquePairs_t) (Pairs *a, int32 l, int32 *buflen);
+static hstoreUniquePairs_t hstoreUniquePairs_p;
+typedef HStore *(*hstorePairs_t) (Pairs *pairs, int32 pcount, int32 buflen);
+static hstorePairs_t hstorePairs_p;
+typedef size_t (*hstoreCheckKeyLen_t) (size_t len);
+static hstoreCheckKeyLen_t hstoreCheckKeyLen_p;
+typedef size_t (*hstoreCheckValLen_t) (size_t len);
+static hstoreCheckValLen_t hstoreCheckValLen_p;
+
+
+/*
+ * Module initialize function: fetch function pointers for cross-module calls.
+ */
+void
+_PG_init(void)
+{
+	/* Asserts verify that typedefs above match original declarations */
+	AssertVariableIsOfType(&hstoreUpgrade, hstoreUpgrade_t);
+	hstoreUpgrade_p = (hstoreUpgrade_t)
+		load_external_function("$libdir/hstore", "hstoreUpgrade",
+							   true, NULL);
+	AssertVariableIsOfType(&hstoreUniquePairs, hstoreUniquePairs_t);
+	hstoreUniquePairs_p = (hstoreUniquePairs_t)
+		load_external_function("$libdir/hstore", "hstoreUniquePairs",
+							   true, NULL);
+	AssertVariableIsOfType(&hstorePairs, hstorePairs_t);
+	hstorePairs_p = (hstorePairs_t)
+		load_external_function("$libdir/hstore", "hstorePairs",
+							   true, NULL);
+	AssertVariableIsOfType(&hstoreCheckKeyLen, hstoreCheckKeyLen_t);
+	hstoreCheckKeyLen_p = (hstoreCheckKeyLen_t)
+		load_external_function("$libdir/hstore", "hstoreCheckKeyLen",
+							   true, NULL);
+	AssertVariableIsOfType(&hstoreCheckValLen, hstoreCheckValLen_t);
+	hstoreCheckValLen_p = (hstoreCheckValLen_t)
+		load_external_function("$libdir/hstore", "hstoreCheckValLen",
+							   true, NULL);
+}
+
+
+/* These defines must be after the module init function */
+#define hstoreUpgrade hstoreUpgrade_p
+#define hstoreUniquePairs hstoreUniquePairs_p
+#define hstorePairs hstorePairs_p
+#define hstoreCheckKeyLen hstoreCheckKeyLen_p
+#define hstoreCheckValLen hstoreCheckValLen_p
+
 
 PG_FUNCTION_INFO_V1(hstore_to_plperl);
 
 Datum
 hstore_to_plperl(PG_FUNCTION_ARGS)
 {
+	dTHX;
 	HStore	   *in = PG_GETARG_HS(0);
 	int			i;
 	int			count = HS_COUNT(in);
@@ -45,15 +100,14 @@ PG_FUNCTION_INFO_V1(plperl_to_hstore);
 Datum
 plperl_to_hstore(PG_FUNCTION_ARGS)
 {
-	HV		   *hv;
+	dTHX;
+	HV		   *hv = (HV *) SvRV((SV *) PG_GETARG_POINTER(0));
 	HE		   *he;
 	int32		buflen;
 	int32		i;
 	int32		pcount;
 	HStore	   *out;
 	Pairs	   *pairs;
-
-	hv = (HV *) SvRV((SV *) PG_GETARG_POINTER(0));
 
 	pcount = hv_iterinit(hv);
 

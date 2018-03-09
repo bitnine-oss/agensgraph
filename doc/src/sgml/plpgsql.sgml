@@ -180,8 +180,26 @@
   <title>Structure of <application>PL/pgSQL</application></title>
 
   <para>
+   Functions written in <application>PL/pgSQL</application> are defined
+   to the server by executing <xref linkend="sql-createfunction"> commands.
+   Such a command would normally look like, say,
+<programlisting>
+CREATE FUNCTION somefunc(integer, text) RETURNS integer
+AS '<replaceable>function body text</>'
+LANGUAGE plpgsql;
+</programlisting>
+   The function body is simply a string literal so far as <command>CREATE
+   FUNCTION</> is concerned.  It is often helpful to use dollar quoting
+   (see <xref linkend="sql-syntax-dollar-quoting">) to write the function
+   body, rather than the normal single quote syntax.  Without dollar quoting,
+   any single quotes or backslashes in the function body must be escaped by
+   doubling them.  Almost all the examples in this chapter use dollar-quoted
+   literals for their function bodies.
+  </para>
+
+  <para>
    <application>PL/pgSQL</application> is a block-structured language.
-   The complete text of a function definition must be a
+   The complete text of a function body must be a
    <firstterm>block</>. A block is defined as:
 
 <synopsis>
@@ -3995,17 +4013,14 @@ CREATE OR REPLACE FUNCTION process_emp_audit() RETURNS TRIGGER AS $emp_audit$
     BEGIN
         --
         -- Create a row in emp_audit to reflect the operation performed on emp,
-        -- make use of the special variable TG_OP to work out the operation.
+        -- making use of the special variable TG_OP to work out the operation.
         --
         IF (TG_OP = 'DELETE') THEN
             INSERT INTO emp_audit SELECT 'D', now(), user, OLD.*;
-            RETURN OLD;
         ELSIF (TG_OP = 'UPDATE') THEN
             INSERT INTO emp_audit SELECT 'U', now(), user, NEW.*;
-            RETURN NEW;
         ELSIF (TG_OP = 'INSERT') THEN
             INSERT INTO emp_audit SELECT 'I', now(), user, NEW.*;
-            RETURN NEW;
         END IF;
         RETURN NULL; -- result is ignored since this is an AFTER trigger
     END;
@@ -4250,6 +4265,82 @@ UPDATE sales_fact SET units_sold = units_sold * 2;
 SELECT * FROM sales_summary_bytime;
 </programlisting>
    </example>
+
+   <para>
+    <literal>AFTER</> triggers can also make use of <firstterm>transition
+    tables</> to inspect the entire set of rows changed by the triggering
+    statement.  The <command>CREATE TRIGGER</> command assigns names to one
+    or both transition tables, and then the function can refer to those names
+    as though they were read-only temporary tables.
+    <xref linkend="plpgsql-trigger-audit-transition-example"> shows an example.
+   </para>
+
+   <example id="plpgsql-trigger-audit-transition-example">
+    <title>Auditing with Transition Tables</title>
+
+    <para>
+     This example produces the same results as
+     <xref linkend="plpgsql-trigger-audit-example">, but instead of using a
+     trigger that fires for every row, it uses a trigger that fires once
+     per statement, after collecting the relevant information in a transition
+     table.  This can be significantly faster than the row-trigger approach
+     when the invoking statement has modified many rows.  Notice that we must
+     make a separate trigger declaration for each kind of event, since the
+     <literal>REFERENCING</> clauses must be different for each case.  But
+     this does not stop us from using a single trigger function if we choose.
+     (In practice, it might be better to use three separate functions and
+     avoid the run-time tests on <varname>TG_OP</>.)
+    </para>
+
+<programlisting>
+CREATE TABLE emp (
+    empname           text NOT NULL,
+    salary            integer
+);
+
+CREATE TABLE emp_audit(
+    operation         char(1)   NOT NULL,
+    stamp             timestamp NOT NULL,
+    userid            text      NOT NULL,
+    empname           text      NOT NULL,
+    salary integer
+);
+
+CREATE OR REPLACE FUNCTION process_emp_audit() RETURNS TRIGGER AS $emp_audit$
+    BEGIN
+        --
+        -- Create rows in emp_audit to reflect the operations performed on emp,
+        -- making use of the special variable TG_OP to work out the operation.
+        --
+        IF (TG_OP = 'DELETE') THEN
+            INSERT INTO emp_audit
+                SELECT 'D', now(), user, o.* FROM old_table o;
+        ELSIF (TG_OP = 'UPDATE') THEN
+            INSERT INTO emp_audit
+                SELECT 'U', now(), user, n.* FROM new_table n;
+        ELSIF (TG_OP = 'INSERT') THEN
+            INSERT INTO emp_audit
+                SELECT 'I', now(), user, n.* FROM new_table n;
+        END IF;
+        RETURN NULL; -- result is ignored since this is an AFTER trigger
+    END;
+$emp_audit$ LANGUAGE plpgsql;
+
+CREATE TRIGGER emp_audit_ins
+    AFTER INSERT ON emp
+    REFERENCING NEW TABLE AS new_table
+    FOR EACH STATEMENT EXECUTE PROCEDURE process_emp_audit();
+CREATE TRIGGER emp_audit_upd
+    AFTER UPDATE ON emp
+    REFERENCING OLD TABLE AS old_table NEW TABLE AS new_table
+    FOR EACH STATEMENT EXECUTE PROCEDURE process_emp_audit();
+CREATE TRIGGER emp_audit_del
+    AFTER DELETE ON emp
+    REFERENCING OLD TABLE AS old_table
+    FOR EACH STATEMENT EXECUTE PROCEDURE process_emp_audit();
+</programlisting>
+   </example>
+
 </sect2>
 
   <sect2 id="plpgsql-event-trigger">
@@ -4851,7 +4942,7 @@ a_output := a_output || $$ if v_$$ || referrer_keys.kind || $$ like '$$
 
    <para>
     To aid the user in finding instances of simple but common problems before
-    they cause harm, <application>PL/PgSQL</> provides additional
+    they cause harm, <application>PL/pgSQL</> provides additional
     <replaceable>checks</>. When enabled, depending on the configuration, they
     can be used to emit either a <literal>WARNING</> or an <literal>ERROR</>
     during the compilation of a function. A function which has received
@@ -5328,14 +5419,14 @@ SELECT * FROM cs_parse_url('http://foobar.com/query.cgi?baz');
 <programlisting>
 CREATE OR REPLACE PROCEDURE cs_create_job(v_job_id IN INTEGER) IS
     a_running_job_count INTEGER;
-    PRAGMA AUTONOMOUS_TRANSACTION;<co id="co.plpgsql-porting-pragma">
+    PRAGMA AUTONOMOUS_TRANSACTION; -- <co id="co.plpgsql-porting-pragma">
 BEGIN
-    LOCK TABLE cs_jobs IN EXCLUSIVE MODE;<co id="co.plpgsql-porting-locktable">
+    LOCK TABLE cs_jobs IN EXCLUSIVE MODE; -- <co id="co.plpgsql-porting-locktable">
 
     SELECT count(*) INTO a_running_job_count FROM cs_jobs WHERE end_stamp IS NULL;
 
     IF a_running_job_count &gt; 0 THEN
-        COMMIT; -- free lock<co id="co.plpgsql-porting-commit">
+        COMMIT; -- free lock <co id="co.plpgsql-porting-commit">
         raise_application_error(-20000,
                  'Unable to create a new job: a job is currently running.');
     END IF;
@@ -5402,7 +5493,7 @@ BEGIN
     SELECT count(*) INTO a_running_job_count FROM cs_jobs WHERE end_stamp IS NULL;
 
     IF a_running_job_count &gt; 0 THEN
-        RAISE EXCEPTION 'Unable to create a new job: a job is currently running';<co id="co.plpgsql-porting-raise">
+        RAISE EXCEPTION 'Unable to create a new job: a job is currently running'; -- <co id="co.plpgsql-porting-raise">
     END IF;
 
     DELETE FROM cs_active_job;
@@ -5411,7 +5502,7 @@ BEGIN
     BEGIN
         INSERT INTO cs_jobs (job_id, start_stamp) VALUES (v_job_id, now());
     EXCEPTION
-        WHEN unique_violation THEN <co id="co.plpgsql-porting-exception">
+        WHEN unique_violation THEN -- <co id="co.plpgsql-porting-exception">
             -- don't worry if it already exists
     END;
 END;
@@ -5543,27 +5634,29 @@ $$ LANGUAGE plpgsql STRICT IMMUTABLE;
     <primary><function>instr</> function</primary>
    </indexterm>
 
-<programlisting>
+<programlisting><![CDATA[
 --
 -- instr functions that mimic Oracle's counterpart
--- Syntax: instr(string1, string2, [n], [m]) where [] denotes optional parameters.
+-- Syntax: instr(string1, string2 [, n [, m]])
+-- where [] denotes optional parameters.
 --
--- Searches string1 beginning at the nth character for the mth occurrence
--- of string2.  If n is negative, search backwards.  If m is not passed,
--- assume 1 (search starts at first character).
+-- Search string1, beginning at the nth character, for the mth occurrence
+-- of string2.  If n is negative, search backwards, starting at the abs(n)'th
+-- character from the end of string1.
+-- If n is not passed, assume 1 (search starts at first character).
+-- If m is not passed, assume 1 (find first occurrence).
+-- Returns starting index of string2 in string1, or 0 if string2 is not found.
 --
 
 CREATE FUNCTION instr(varchar, varchar) RETURNS integer AS $$
-DECLARE
-    pos integer;
 BEGIN
-    pos:= instr($1, $2, 1);
-    RETURN pos;
+    RETURN instr($1, $2, 1);
 END;
 $$ LANGUAGE plpgsql STRICT IMMUTABLE;
 
 
-CREATE FUNCTION instr(string varchar, string_to_search varchar, beg_index integer)
+CREATE FUNCTION instr(string varchar, string_to_search_for varchar,
+                      beg_index integer)
 RETURNS integer AS $$
 DECLARE
     pos integer NOT NULL DEFAULT 0;
@@ -5572,25 +5665,23 @@ DECLARE
     length integer;
     ss_length integer;
 BEGIN
-    IF beg_index &gt; 0 THEN
+    IF beg_index > 0 THEN
         temp_str := substring(string FROM beg_index);
-        pos := position(string_to_search IN temp_str);
+        pos := position(string_to_search_for IN temp_str);
 
         IF pos = 0 THEN
             RETURN 0;
         ELSE
             RETURN pos + beg_index - 1;
         END IF;
-    ELSIF beg_index &lt; 0 THEN
-        ss_length := char_length(string_to_search);
+    ELSIF beg_index < 0 THEN
+        ss_length := char_length(string_to_search_for);
         length := char_length(string);
-        beg := length + beg_index - ss_length + 2;
+        beg := length + 1 + beg_index;
 
-        WHILE beg &gt; 0 LOOP
+        WHILE beg > 0 LOOP
             temp_str := substring(string FROM beg FOR ss_length);
-            pos := position(string_to_search IN temp_str);
-
-            IF pos &gt; 0 THEN
+            IF string_to_search_for = temp_str THEN
                 RETURN beg;
             END IF;
 
@@ -5605,7 +5696,7 @@ END;
 $$ LANGUAGE plpgsql STRICT IMMUTABLE;
 
 
-CREATE FUNCTION instr(string varchar, string_to_search varchar,
+CREATE FUNCTION instr(string varchar, string_to_search_for varchar,
                       beg_index integer, occur_index integer)
 RETURNS integer AS $$
 DECLARE
@@ -5617,39 +5708,32 @@ DECLARE
     length integer;
     ss_length integer;
 BEGIN
-    IF beg_index &gt; 0 THEN
-        beg := beg_index;
-        temp_str := substring(string FROM beg_index);
+    IF occur_index <= 0 THEN
+        RAISE 'argument ''%'' is out of range', occur_index
+          USING ERRCODE = '22003';
+    END IF;
 
+    IF beg_index > 0 THEN
+        beg := beg_index - 1;
         FOR i IN 1..occur_index LOOP
-            pos := position(string_to_search IN temp_str);
-
-            IF i = 1 THEN
-                beg := beg + pos - 1;
-            ELSE
-                beg := beg + pos;
-            END IF;
-
             temp_str := substring(string FROM beg + 1);
+            pos := position(string_to_search_for IN temp_str);
+            IF pos = 0 THEN
+                RETURN 0;
+            END IF;
+            beg := beg + pos;
         END LOOP;
 
-        IF pos = 0 THEN
-            RETURN 0;
-        ELSE
-            RETURN beg;
-        END IF;
-    ELSIF beg_index &lt; 0 THEN
-        ss_length := char_length(string_to_search);
+        RETURN beg;
+    ELSIF beg_index < 0 THEN
+        ss_length := char_length(string_to_search_for);
         length := char_length(string);
-        beg := length + beg_index - ss_length + 2;
+        beg := length + 1 + beg_index;
 
-        WHILE beg &gt; 0 LOOP
+        WHILE beg > 0 LOOP
             temp_str := substring(string FROM beg FOR ss_length);
-            pos := position(string_to_search IN temp_str);
-
-            IF pos &gt; 0 THEN
+            IF string_to_search_for = temp_str THEN
                 occur_number := occur_number + 1;
-
                 IF occur_number = occur_index THEN
                     RETURN beg;
                 END IF;
@@ -5664,6 +5748,7 @@ BEGIN
     END IF;
 END;
 $$ LANGUAGE plpgsql STRICT IMMUTABLE;
+]]>
 </programlisting>
   </sect2>
 

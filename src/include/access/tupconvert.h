@@ -4,7 +4,7 @@
  *	  Tuple conversion support.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/tupconvert.h
@@ -46,4 +46,4 @@ extern HeapTuple do_convert_tuple(HeapTuple tuple, TupleConversionMap *map);
 
 extern void free_conversion_map(TupleConversionMap *map);
 
-#endif   /* TUPCONVERT_H */
+#endif							/* TUPCONVERT_H */

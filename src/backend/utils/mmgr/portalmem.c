@@ -8,7 +8,7 @@
  * doesn't actually run the executor for them.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -139,45 +139,24 @@ GetPortalByName(const char *name)
 }
 
 /*
- * PortalListGetPrimaryStmt
+ * PortalGetPrimaryStmt
  *		Get the "primary" stmt within a portal, ie, the one marked canSetTag.
  *
  * Returns NULL if no such stmt.  If multiple PlannedStmt structs within the
  * portal are marked canSetTag, returns the first one.  Neither of these
  * cases should occur in present usages of this function.
- *
- * Copes if given a list of Querys --- can't happen in a portal, but this
- * code also supports plancache.c, which needs both cases.
- *
- * Note: the reason this is just handed a List is so that plancache.c
- * can share the code.  For use with a portal, use PortalGetPrimaryStmt
- * rather than calling this directly.
  */
-Node *
-PortalListGetPrimaryStmt(List *stmts)
+PlannedStmt *
+PortalGetPrimaryStmt(Portal portal)
 {
 	ListCell   *lc;
 
-	foreach(lc, stmts)
+	foreach(lc, portal->stmts)
 	{
-		Node	   *stmt = (Node *) lfirst(lc);
+		PlannedStmt *stmt = lfirst_node(PlannedStmt, lc);
 
-		if (IsA(stmt, PlannedStmt))
-		{
-			if (((PlannedStmt *) stmt)->canSetTag)
-				return stmt;
-		}
-		else if (IsA(stmt, Query))
-		{
-			if (((Query *) stmt)->canSetTag)
-				return stmt;
-		}
-		else
-		{
-			/* Utility stmts are assumed canSetTag if they're the only stmt */
-			if (list_length(stmts) == 1)
-				return stmt;
-		}
+		if (stmt->canSetTag)
+			return stmt;
 	}
 	return NULL;
 }
@@ -436,8 +415,8 @@ MarkPortalDone(Portal portal)
 	 * well do that now, since the portal can't be executed any more.
 	 *
 	 * In some cases involving execution of a ROLLBACK command in an already
-	 * aborted transaction, this prevents an assertion failure caused by
-	 * reaching AtCleanup_Portals with the cleanup hook still unexecuted.
+	 * aborted transaction, this is necessary, or we'd reach AtCleanup_Portals
+	 * with the cleanup hook still unexecuted.
 	 */
 	if (PointerIsValid(portal->cleanup))
 	{
@@ -464,8 +443,8 @@ MarkPortalFailed(Portal portal)
 	 * well do that now, since the portal can't be executed any more.
 	 *
 	 * In some cases involving cleanup of an already aborted transaction, this
-	 * prevents an assertion failure caused by reaching AtCleanup_Portals with
-	 * the cleanup hook still unexecuted.
+	 * is necessary, or we'd reach AtCleanup_Portals with the cleanup hook
+	 * still unexecuted.
 	 */
 	if (PointerIsValid(portal->cleanup))
 	{
@@ -863,8 +842,15 @@ AtCleanup_Portals(void)
 		if (portal->portalPinned)
 			portal->portalPinned = false;
 
-		/* We had better not be calling any user-defined code here */
-		Assert(portal->cleanup == NULL);
+		/*
+		 * We had better not call any user-defined code during cleanup, so if
+		 * the cleanup hook hasn't been run yet, too bad; we'll just skip it.
+		 */
+		if (PointerIsValid(portal->cleanup))
+		{
+			elog(WARNING, "skipping cleanup for portal \"%s\"", portal->name);
+			portal->cleanup = NULL;
+		}
 
 		/* Zap it. */
 		PortalDrop(portal, false);
@@ -1047,8 +1033,15 @@ AtSubCleanup_Portals(SubTransactionId mySubid)
 		if (portal->portalPinned)
 			portal->portalPinned = false;
 
-		/* We had better not be calling any user-defined code here */
-		Assert(portal->cleanup == NULL);
+		/*
+		 * We had better not call any user-defined code during cleanup, so if
+		 * the cleanup hook hasn't been run yet, too bad; we'll just skip it.
+		 */
+		if (PointerIsValid(portal->cleanup))
+		{
+			elog(WARNING, "skipping cleanup for portal \"%s\"", portal->name);
+			portal->cleanup = NULL;
+		}
 
 		/* Zap it. */
 		PortalDrop(portal, false);

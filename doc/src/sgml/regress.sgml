@@ -205,6 +205,12 @@ make installcheck-world
    <literal>ecpg1_regression</>, or <literal>ecpg2_regression</>, as well as
    <literal>regression</>.
   </para>
+
+  <para>
+   The TAP-based tests are run only when PostgreSQL was configured with the
+   option <option>--enable-tap-tests</option>.  This is recommended for
+   development, but can be omitted if there is no suitable Perl installation.
+  </para>
   </sect2>
 
   <sect2>
@@ -264,10 +270,12 @@ make check EXTRA_TESTS=numeric_big
 </screen>
     To run the collation tests:
 <screen>
-make check EXTRA_TESTS=collate.linux.utf8 LANG=en_US.utf8
+make check EXTRA_TESTS='collate.icu.utf8 collate.linux.utf8' LANG=en_US.utf8
 </screen>
     The <literal>collate.linux.utf8</> test works only on Linux/glibc
-    platforms, and only when run in a database that uses UTF-8 encoding.
+    platforms.  The <literal>collate.icu.utf8</literal> test only works when
+    support for ICU was built.  Both tests will only succeed when run in a
+    database that uses UTF-8 encoding.
    </para>
   </sect2>
 
@@ -656,20 +664,19 @@ float8:out:i.86-.*-openbsd=float8-small-is-zero.out
    <title>TAP Tests</title>
 
    <para>
-    The client program tests under <filename>src/bin</filename> use the Perl
-    TAP tools and are run by <command>prove</command>.  You can pass
+    Various tests, particularly the client program tests
+    under <filename>src/bin</filename>, use the Perl TAP tools and are run
+    using the Perl testing program <command>prove</command>.  You can pass
     command-line options to <command>prove</command> by setting
     the <command>make</command> variable <varname>PROVE_FLAGS</>, for example:
 <programlisting>
-make -C src/bin check PROVE_FLAGS='--reverse'
+make -C src/bin check PROVE_FLAGS='--timer'
 </programlisting>
-    The default is <literal>--verbose</literal>.  See the manual page
-    of <command>prove</command> for more information.
+    See the manual page of <command>prove</command> for more information.
    </para>
 
    <para>
-    The tests written in Perl require the Perl
-    module <literal>IPC::Run</literal>.
+    The TAP tests require the Perl module <literal>IPC::Run</literal>.
     This module is available from CPAN or an operating system package.
    </para>
   </sect1>

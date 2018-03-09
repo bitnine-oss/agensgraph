@@ -464,9 +464,9 @@ su - postgres -c "/usr/local/pgsql/bin/pg_ctl start -l logfile -D /usr/local/pgs
 
     <para>
 <screen>
-LOG:  could not bind IPv4 socket: Address already in use
+LOG:  could not bind IPv4 address "127.0.0.1": Address already in use
 HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
-FATAL:  could not create TCP/IP listen socket
+FATAL:  could not create any TCP/IP sockets
 </screen>
      This usually means just what it suggests: you tried to start
      another server on the same port where one is already running.
@@ -476,9 +476,9 @@ FATAL:  could not create TCP/IP listen socket
      on a reserved port number might draw something like:
 <screen>
 $ <userinput>postgres -p 666</userinput>
-LOG:  could not bind IPv4 socket: Permission denied
+LOG:  could not bind IPv4 address "127.0.0.1": Permission denied
 HINT:  Is another postmaster already running on port 666? If not, wait a few seconds and retry.
-FATAL:  could not create TCP/IP listen socket
+FATAL:  could not create any TCP/IP sockets
 </screen>
     </para>
 
@@ -605,27 +605,47 @@ psql: could not connect to server: No such file or directory
    </indexterm>
 
    <para>
-    Shared memory and semaphores are collectively referred to as
-    <quote><systemitem class="osname">System V</>
-    <acronym>IPC</></quote> (together with message queues, which are not
-    relevant for <productname>PostgreSQL</>).  Except on
-    <systemitem class="osname">Windows</>, where <productname>PostgreSQL</>
-    provides its own replacement implementation of these facilities, these
-    facilities are required in order to run
-    <productname>PostgreSQL</>.
+    <productname>PostgreSQL</> requires the operating system to provide
+    inter-process communication (<acronym>IPC</>) features, specifically
+    shared memory and semaphores.  Unix-derived systems typically provide
+    <quote><systemitem class="osname">System V</></> <acronym>IPC</>,
+    <quote><systemitem class="osname">POSIX</></> <acronym>IPC</>, or both.
+    <systemitem class="osname">Windows</> has its own implementation of
+    these features and is not discussed here.
    </para>
 
    <para>
     The complete lack of these facilities is usually manifested by an
-    <errorname>Illegal system call</> error upon server start. In
-    that case there is no alternative but to reconfigure your
+    <quote><errorname>Illegal system call</></quote> error upon server
+    start.  In that case there is no alternative but to reconfigure your
     kernel.  <productname>PostgreSQL</> won't work without them.
     This situation is rare, however, among modern operating systems.
    </para>
 
    <para>
-    When <productname>PostgreSQL</> exceeds one of the various hard
-    <acronym>IPC</> limits, the server will refuse to start and
+    Upon starting the server, <productname>PostgreSQL</> normally allocates
+    a very small amount of System V shared memory, as well as a much larger
+    amount of POSIX (<function>mmap</>) shared memory.
+    In addition a significant number of semaphores, which can be either
+    System V or POSIX style, are created at server startup.  Currently,
+    POSIX semaphores are used on Linux and FreeBSD systems while other
+    platforms use System V semaphores.
+   </para>
+
+   <note>
+    <para>
+     Prior to <productname>PostgreSQL</> 9.3, only System V shared memory
+     was used, so the amount of System V shared memory required to start the
+     server was much larger.  If you are running an older version of the
+     server, please consult the documentation for your server version.
+    </para>
+   </note>
+
+   <para>
+    System V <acronym>IPC</> features are typically constrained by
+    system-wide allocation limits.
+    When <productname>PostgreSQL</> exceeds one of these limits,
+    the server will refuse to start and
     should leave an instructive error message describing the problem
     and what to do about it. (See also <xref
     linkend="server-start-failures">.) The relevant kernel
@@ -633,15 +653,6 @@ psql: could not connect to server: No such file or directory
     linkend="sysvipc-parameters"> gives an overview. The methods to set
     them, however, vary. Suggestions for some platforms are given below.
    </para>
-
-   <note>
-     <para>
-       Prior to <productname>PostgreSQL</> 9.3, the amount of System V shared
-       memory required to start the server was much larger.  If you are running
-       an older version of the server, please consult the documentation for
-       your server version.
-     </para>
-   </note>
 
    <table id="sysvipc-parameters">
     <title><systemitem class="osname">System V</> <acronym>IPC</> Parameters</title>
@@ -651,7 +662,7 @@ psql: could not connect to server: No such file or directory
       <row>
        <entry>Name</>
        <entry>Description</>
-       <entry>Reasonable values</>
+       <entry>Values needed to run one <productname>PostgreSQL</> instance</>
       </row>
      </thead>
 
@@ -659,7 +670,7 @@ psql: could not connect to server: No such file or directory
       <row>
        <entry><varname>SHMMAX</></>
        <entry>Maximum size of shared memory segment (bytes)</>
-       <entry>at least 1kB (more if running many copies of the server)</entry>
+       <entry>at least 1kB, but the default is usually much higher</entry>
       </row>
 
       <row>
@@ -671,7 +682,9 @@ psql: could not connect to server: No such file or directory
       <row>
        <entry><varname>SHMALL</></>
        <entry>Total amount of shared memory available (bytes or pages)</>
-       <entry>if bytes, same as <varname>SHMMAX</varname>; if pages, <literal>ceil(SHMMAX/PAGE_SIZE)</literal></>
+       <entry>same as <varname>SHMMAX</varname> if bytes,
+        or <literal>ceil(SHMMAX/PAGE_SIZE)</literal> if pages,
+        plus room for other applications</>
       </row>
 
       <row>
@@ -689,7 +702,7 @@ psql: could not connect to server: No such file or directory
        <row>
         <entry><varname>SEMMNI</></>
         <entry>Maximum number of semaphore identifiers (i.e., sets)</>
-        <entry>at least <literal>ceil((max_connections + autovacuum_max_workers + max_worker_processes + 5) / 16)</literal></>
+        <entry>at least <literal>ceil((max_connections + autovacuum_max_workers + max_worker_processes + 5) / 16)</literal> plus room for other applications</>
        </row>
 
        <row>
@@ -725,9 +738,8 @@ psql: could not connect to server: No such file or directory
     (typically 48 bytes, on 64-bit platforms) for each copy of the server.
     On most modern operating systems, this amount can easily be allocated.
     However, if you are running many copies of the server, or if other
-    applications are also using System V shared memory, it may be necessary
-    to increase <varname>SHMMAX</>, the maximum size in bytes of a shared
-    memory segment, or <varname>SHMALL</>, the total amount of System V shared
+    applications are also using System V shared memory, it may be necessary to
+    increase <varname>SHMALL</>, which is the total amount of System V shared
     memory system-wide.  Note that <varname>SHMALL</> is measured in pages
     rather than bytes on many systems.
    </para>
@@ -742,6 +754,7 @@ psql: could not connect to server: No such file or directory
    </para>
 
    <para>
+    When using System V semaphores,
     <productname>PostgreSQL</> uses one semaphore per allowed connection
     (<xref linkend="guc-max-connections">), allowed autovacuum worker process
     (<xref linkend="guc-autovacuum-max-workers">) and allowed background
@@ -779,15 +792,19 @@ psql: could not connect to server: No such file or directory
    </para>
 
    <para>
-    The <varname>SEMMSL</> parameter, which determines how many
-    semaphores can be in a set, must be at least 17 for
+    Various other settings related to <quote>semaphore undo</>, such as
+    <varname>SEMMNU</> and <varname>SEMUME</>, do not affect
     <productname>PostgreSQL</>.
    </para>
 
    <para>
-    Various other settings related to <quote>semaphore undo</>, such as
-    <varname>SEMMNU</> and <varname>SEMUME</>, do not affect
-    <productname>PostgreSQL</>.
+    When using POSIX semaphores, the number of semaphores needed is the
+    same as for System V, that is one semaphore per allowed connection
+    (<xref linkend="guc-max-connections">), allowed autovacuum worker process
+    (<xref linkend="guc-autovacuum-max-workers">) and allowed background
+    process (<xref linkend="guc-max-worker-processes">).
+    On the platforms where this option is preferred, there is no specific
+    kernel limit on the number of POSIX semaphores.
    </para>
 
 
@@ -1006,12 +1023,12 @@ option        SEMMAP=256
 
 
      <varlistentry>
-      <term><systemitem class="osname">OS X</>
-      <indexterm><primary>OS X</><secondary>IPC configuration</></>
+      <term><systemitem class="osname">macOS</>
+      <indexterm><primary>macOS</><secondary>IPC configuration</></>
       </term>
       <listitem>
        <para>
-        The recommended method for configuring shared memory in OS X
+        The recommended method for configuring shared memory in macOS
         is to create a file named <filename>/etc/sysctl.conf</>,
         containing variable assignments such as:
 <programlisting>
@@ -1021,13 +1038,13 @@ kern.sysv.shmmni=32
 kern.sysv.shmseg=8
 kern.sysv.shmall=1024
 </programlisting>
-        Note that in some OS X versions,
+        Note that in some macOS versions,
         <emphasis>all five</> shared-memory parameters must be set in
         <filename>/etc/sysctl.conf</>, else the values will be ignored.
        </para>
 
        <para>
-        Beware that recent releases of OS X ignore attempts to set
+        Beware that recent releases of macOS ignore attempts to set
         <varname>SHMMAX</> to a value that isn't an exact multiple of 4096.
        </para>
 
@@ -1036,7 +1053,7 @@ kern.sysv.shmall=1024
        </para>
 
        <para>
-        In older OS X versions, you will need to reboot to have changes in the
+        In older macOS versions, you will need to reboot to have changes in the
         shared memory parameters take effect.  As of 10.5 it is possible to
         change all but <varname>SHMMNI</> on the fly, using
         <application>sysctl</>.  But it's still best to set up your preferred
@@ -1045,7 +1062,7 @@ kern.sysv.shmall=1024
        </para>
 
        <para>
-        The file <filename>/etc/sysctl.conf</> is only honored in OS X
+        The file <filename>/etc/sysctl.conf</> is only honored in macOS
         10.3.9 and later.  If you are running a previous 10.3.x release,
         you must edit the file <filename>/etc/rc</>
         and change the values in the following commands:
@@ -1057,41 +1074,13 @@ sysctl -w kern.sysv.shmseg
 sysctl -w kern.sysv.shmall
 </programlisting>
         Note that
-        <filename>/etc/rc</> is usually overwritten by OS X system updates,
+        <filename>/etc/rc</> is usually overwritten by macOS system updates,
         so you should expect to have to redo these edits after each update.
        </para>
 
        <para>
-        In OS X 10.2 and earlier, instead edit these commands in the file
+        In macOS 10.2 and earlier, instead edit these commands in the file
         <filename>/System/Library/StartupItems/SystemTuning/SystemTuning</>.
-       </para>
-      </listitem>
-     </varlistentry>
-
-
-     <varlistentry>
-      <term><systemitem class="osname">SCO OpenServer</>
-      <indexterm><primary>SCO OpenServer</><secondary>IPC configuration</></>
-      </term>
-      <listitem>
-       <para>
-        In the default configuration, only 512 kB of shared memory per
-        segment is allowed. To increase the setting, first change to the
-        directory <filename>/etc/conf/cf.d</>. To display the current value of
-        <varname>SHMMAX</>, run:
-<programlisting>
-./configure -y SHMMAX
-</programlisting>
-        To set a new value for <varname>SHMMAX</>, run:
-<programlisting>
-./configure SHMMAX=<replaceable>value</>
-</programlisting>
-        where <replaceable>value</> is the new value you want to use
-        (in bytes). After setting <varname>SHMMAX</>, rebuild the kernel:
-<programlisting>
-./link_unix
-</programlisting>
-        and reboot.
        </para>
       </listitem>
      </varlistentry>
@@ -1172,38 +1161,87 @@ project.max-msg-ids=(priv,4096,deny)
       </listitem>
      </varlistentry>
 
-
-     <varlistentry>
-      <term><systemitem class="osname">UnixWare</>
-      <indexterm><primary>UnixWare</><secondary>IPC configuration</></>
-      </term>
-      <listitem>
-       <para>
-        On <productname>UnixWare</> 7, the maximum size for shared
-        memory segments is 512 kB in the default configuration.
-        To display the current value of <varname>SHMMAX</>, run:
-<programlisting>
-/etc/conf/bin/idtune -g SHMMAX
-</programlisting>
-        which displays the current, default, minimum, and maximum
-        values. To set a new value for <varname>SHMMAX</>,
-        run:
-<programlisting>
-/etc/conf/bin/idtune SHMMAX <replaceable>value</>
-</programlisting>
-        where <replaceable>value</> is the new value you want to use
-        (in bytes). After setting <varname>SHMMAX</>, rebuild the
-        kernel:
-<programlisting>
-/etc/conf/bin/idbuild -B
-</programlisting>
-        and reboot.
-       </para>
-      </listitem>
-     </varlistentry>
-
     </variablelist>
 
+  </sect2>
+
+  <sect2 id="systemd-removeipc">
+   <title>systemd RemoveIPC</title>
+
+   <indexterm>
+    <primary>systemd</primary>
+    <secondary>RemoveIPC</secondary>
+   </indexterm>
+
+   <para>
+    If <productname>systemd</productname> is in use, some care must be taken
+    that IPC resources (shared memory and semaphores) are not prematurely
+    removed by the operating system.  This is especially of concern when
+    installing PostgreSQL from source.  Users of distribution packages of
+    PostgreSQL are less likely to be affected, as
+    the <literal>postgres</literal> user is then normally created as a system
+    user.
+   </para>
+
+   <para>
+    The setting <literal>RemoveIPC</literal>
+    in <filename>logind.conf</filename> controls whether IPC objects are
+    removed when a user fully logs out.  System users are exempt.  This
+    setting defaults to on in stock <productname>systemd</productname>, but
+    some operating system distributions default it to off.
+   </para>
+
+   <para>
+    A typical observed effect when this setting is on is that the semaphore
+    objects used by a PostgreSQL server are removed at apparently random
+    times, leading to the server crashing with log messages like
+<screen>
+LOG: semctl(1234567890, 0, IPC_RMID, ...) failed: Invalid argument
+</screen>
+    Different types of IPC objects (shared memory vs. semaphores, System V
+    vs. POSIX) are treated slightly differently
+    by <productname>systemd</productname>, so one might observe that some IPC
+    resources are not removed in the same way as others.  But it is not
+    advisable to rely on these subtle differences.
+   </para>
+
+   <para>
+    A <quote>user logging out</quote> might happen as part of a maintenance
+    job or manually when an administrator logs in as
+    the <literal>postgres</literal> user or something similar, so it is hard
+    to prevent in general.
+   </para>
+
+   <para>
+    What is a <quote>system user</quote> is determined
+    at <productname>systemd</productname> compile time from
+    the <symbol>SYS_UID_MAX</symbol> setting
+    in <filename>/etc/login.defs</filename>.
+   </para>
+
+   <para>
+    Packaging and deployment scripts should be careful to create
+    the <literal>postgres</literal> user as a system user by
+    using <literal>useradd -r</literal>, <literal>adduser --system</literal>,
+    or equivalent.
+   </para>
+
+   <para>
+    Alternatively, if the user account was created incorrectly or cannot be
+    changed, it is recommended to set
+<programlisting>
+RemoveIPC=no
+</programlisting>
+    in <filename>/etc/systemd/logind.conf</filename> or another appropriate
+    configuration file.
+   </para>
+
+   <caution>
+    <para>
+     At least one of these two things has to be ensured, or the PostgreSQL
+     server will be very unreliable.
+    </para>
+   </caution>
   </sect2>
 
   <sect2>
@@ -1615,17 +1653,26 @@ $ <userinput>kill -INT `head -1 /usr/local/pgsql/data/postmaster.pid`</userinput
   </para>
 
   <para>
-   <productname>PostgreSQL</> major versions are represented by the
-   first two digit groups of the version number, e.g., 8.4.
-   <productname>PostgreSQL</> minor versions are represented by the
-   third group of version digits, e.g., 8.4.2 is the second minor
-   release of 8.4.  Minor releases never change the internal storage
-   format and are always compatible with earlier and later minor
-   releases of the same major version number, e.g., 8.4.2 is compatible
-   with 8.4, 8.4.1 and 8.4.6.  To update between compatible versions,
-   you simply replace the executables while the server is down and
-   restart the server.  The data directory remains unchanged &mdash;
-   minor upgrades are that simple.
+   Current <productname>PostgreSQL</productname> version numbers consist of a
+   major and a minor version number.  For example, in the version number 10.1,
+   the 10 is the major version number and the 1 is the minor version number,
+   meaning this would be the first minor release of the major release 10.  For
+   releases before <productname>PostgreSQL</productname> version 10.0, version
+   numbers consist of three numbers, for example, 9.5.3.  In those cases, the
+   major version consists of the first two digit groups of the version number,
+   e.g., 9.5, and the minor version is the third number, e.g., 3, meaning this
+   would be the third minor release of the major release 9.5.
+  </para>
+
+  <para>
+   Minor releases never change the internal storage format and are always
+   compatible with earlier and later minor releases of the same major version
+   number.  For example, version 10.1 is compatible with version 10.0 and
+   version 10.6.  Similarly, for example, 9.5.3 is compatible with 9.5.0,
+   9.5.1, and 9.5.6.  To update between compatible versions, you simply
+   replace the executables while the server is down and restart the server.
+   The data directory remains unchanged &mdash; minor upgrades are that
+   simple.
   </para>
 
   <para>
@@ -1977,16 +2024,18 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
   <variablelist>
 
   <varlistentry>
-   <term>Password Storage Encryption</term>
+   <term>Password Encryption</term>
    <listitem>
 
     <para>
-     By default, database user passwords are stored as MD5 hashes, so
-     the administrator cannot determine the actual password assigned
-     to the user. If MD5 encryption is used for client authentication,
-     the unencrypted password is never even temporarily present on the
-     server because the client MD5-encrypts it before being sent
-     across the network.
+     Database user passwords are stored as hashes (determined by the setting
+     <xref linkend="guc-password-encryption">), so the administrator cannot
+     determine the actual password assigned to the user. If SCRAM or MD5
+     encryption is used for client authentication, the unencrypted password is
+     never even temporarily present on the server because the client encrypts
+     it before being sent across the network. SCRAM is preferred, because it
+     is an Internet standard and is more secure than the PostgreSQL-specific
+     MD5 authentication protocol.
     </para>
    </listitem>
   </varlistentry>
@@ -2038,24 +2087,6 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
      the disk.
     </para>
    </listitem>
-  </varlistentry>
-
-  <varlistentry>
-   <term>Encrypting Passwords Across A Network</term>
-
-   <listitem>
-     <para>
-      The <literal>MD5</> authentication method double-encrypts the
-      password on the client before sending it to the server. It first
-      MD5-encrypts it based on the user name, and then encrypts it
-      based on a random salt sent by the server when the database
-      connection was made. It is this double-encrypted value that is
-      sent over the network to the server. Double-encryption not only
-      prevents the password from being discovered, it also prevents
-      another connection from using the same encrypted password to
-      connect to the database server at a later time.
-     </para>
-    </listitem>
   </varlistentry>
 
   <varlistentry>
@@ -2194,43 +2225,53 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
    If the private key is protected with a passphrase, the
    server will prompt for the passphrase and will not start until it has
    been entered.
+   Using a passphrase also disables the ability to change the server's SSL
+   configuration without a server restart.
+   Furthermore, passphrase-protected private keys cannot be used at all
+   on Windows.
   </para>
 
   <para>
-   In some cases, the server certificate might be signed by an
-   <quote>intermediate</> certificate authority, rather than one that is
-   directly trusted by clients.  To use such a certificate, append the
-   certificate of the signing authority to the <filename>server.crt</> file,
-   then its parent authority's certificate, and so on up to a certificate
-   authority, <quote>root</> or <quote>intermediate</>, that is trusted by
-   clients, i.e. signed by a certificate in the clients'
-   <filename>root.crt</filename> files.
+   The first certificate in <filename>server.crt</> must be the
+   server's certificate because it must match the server's private key.
+   The certificates of <quote>intermediate</> certificate authorities
+   can also be appended to the file.  Doing this avoids the necessity of
+   storing intermediate certificates on clients, assuming the root and
+   intermediate certificates were created with <literal>v3_ca</>
+   extensions.  This allows easier expiration of intermediate certificates.
+  </para>
+
+  <para>
+   It is not necessary to add the root certificate to
+   <filename>server.crt</>.  Instead, clients must have the root
+   certificate of the server's certificate chain.
   </para>
 
   <sect2 id="ssl-client-certificates">
    <title>Using Client Certificates</title>
 
   <para>
-   To require the client to supply a trusted certificate, place
-   certificates of the certificate authorities (<acronym>CA</acronym>s)
-   you trust in the file <filename>root.crt</filename> in the data
+   To require the client to supply a trusted certificate,
+   place certificates of the root certificate authorities
+   (<acronym>CA</>s) you trust in a file in the data
    directory, set the parameter <xref linkend="guc-ssl-ca-file"> in
-   <filename>postgresql.conf</filename> to <literal>root.crt</literal>,
-   and add the authentication option <literal>clientcert=1</literal> to the
-   appropriate <literal>hostssl</> line(s) in <filename>pg_hba.conf</>.
-   A certificate will then be requested from the client during
-   SSL connection startup.  (See <xref linkend="libpq-ssl"> for a
-   description of how to set up certificates on the client.)  The server will
+   <filename>postgresql.conf</> to the new file name, and add the
+   authentication option <literal>clientcert=1</> to the appropriate
+   <literal>hostssl</> line(s) in <filename>pg_hba.conf</>.
+   A certificate will then be requested from the client during SSL
+   connection startup.  (See <xref linkend="libpq-ssl"> for a description
+   of how to set up certificates on the client.)  The server will
    verify that the client's certificate is signed by one of the trusted
    certificate authorities.
   </para>
 
   <para>
-   If intermediate <acronym>CA</>s appear in
-   <filename>root.crt</filename>, the file must also contain certificate
-   chains to their root <acronym>CA</>s.  Certificate Revocation List
-   (CRL) entries
-   are also checked if the parameter <xref linkend="guc-ssl-crl-file"> is set.
+   Intermediate certificates that chain up to existing root certificates
+   can also appear in the file <filename>root.crt</filename> if
+   you wish to avoid storing them on clients (assuming the root and
+   intermediate certificates were created with <literal>v3_ca</>
+   extensions).  Certificate Revocation List (CRL) entries are also
+   checked if the parameter <xref linkend="guc-ssl-crl-file"> is set.
    <!-- If this URL changes replace it with a URL to www.archive.org. -->
    (See <ulink
    url="http://h71000.www7.hp.com/doc/83final/ba554_90007/ch04s02.html"></>
@@ -2244,14 +2285,6 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
    not specified or is set to 0, the server will still verify any presented
    client certificates against its CA file, if one is configured &mdash; but
    it will not insist that a client certificate be presented.
-  </para>
-
-  <para>
-   Note that the server's <filename>root.crt</filename> lists the top-level
-   CAs that are considered trusted for signing client certificates.
-   In principle it need
-   not list the CA that signed the server's certificate, though in most cases
-   that CA would also be trusted for client certificates.
   </para>
 
   <para>
@@ -2317,40 +2350,36 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
   </table>
 
    <para>
-    The files <filename>server.key</>, <filename>server.crt</>,
-    <filename>root.crt</filename>, and <filename>root.crl</filename>
-    (or their configured alternative names)
-    are only examined during server start; so you must restart
-    the server for changes in them to take effect.
+    The server reads these files at server start and whenever the server
+    configuration is reloaded.  On <systemitem class="osname">Windows</>
+    systems, they are also re-read whenever a new backend process is spawned
+    for a new client connection.
+   </para>
+
+   <para>
+    If an error in these files is detected at server start, the server will
+    refuse to start.  But if an error is detected during a configuration
+    reload, the files are ignored and the old SSL configuration continues to
+    be used.  On <systemitem class="osname">Windows</> systems, if an error in
+    these files is detected at backend start, that backend will be unable to
+    establish an SSL connection.  In all these cases, the error condition is
+    reported in the server log.
    </para>
   </sect2>
 
   <sect2 id="ssl-certificate-creation">
-   <title>Creating a Self-signed Certificate</title>
+   <title>Creating Certificates</title>
 
    <para>
-    To create a quick self-signed certificate for the server, use the
-    following <productname>OpenSSL</productname> command:
+     To create a simple self-signed certificate for the server, valid for 365
+     days, use the following <productname>OpenSSL</productname> command,
+     replacing <replaceable>dbhost.yourdomain.com</> with the
+     server's host name:
 <programlisting>
-openssl req -new -text -out server.req
+openssl req -new -x509 -days 365 -nodes -text -out server.crt \
+  -keyout server.key -subj "/CN=<replaceable>dbhost.yourdomain.com</>"
 </programlisting>
-    Fill out the information that <application>openssl</> asks for. Make sure
-    you enter the local host name as <quote>Common Name</>; the challenge
-    password can be left blank. The program will generate a key that is
-    passphrase protected; it will not accept a passphrase that is less
-    than four characters long. To remove the passphrase (as you must if
-    you want automatic start-up of the server), run the commands:
-<programlisting>
-openssl rsa -in privkey.pem -out server.key
-rm privkey.pem
-</programlisting>
-    Enter the old passphrase to unlock the existing key. Now do:
-<programlisting>
-openssl req -x509 -in server.req -text -key server.key -out server.crt
-</programlisting>
-    to turn the certificate into a self-signed certificate and to copy
-    the key and certificate to where the server will look for them.
-    Finally do:
+    Then do:
 <programlisting>
 chmod og-rwx server.key
 </programlisting>
@@ -2361,14 +2390,86 @@ chmod og-rwx server.key
    </para>
 
    <para>
-    A self-signed certificate can be used for testing, but a certificate
-    signed by a certificate authority (<acronym>CA</>) (either one of the
-    global <acronym>CAs</> or a local one) should be used in production
-    so that clients can verify the server's identity. If all the clients
-    are local to the organization, using a local <acronym>CA</> is
-    recommended.
+    While a self-signed certificate can be used for testing, a certificate
+    signed by a certificate authority (<acronym>CA</>) (usually an
+    enterprise-wide root <acronym>CA</>) should be used in production.
    </para>
 
+   <para>
+    To create a server certificate whose identity can be validated
+    by clients, first create a certificate signing request
+    (<acronym>CSR</>) and a public/private key file:
+<programlisting>
+openssl req -new -nodes -text -out root.csr \
+  -keyout root.key -subj "/CN=<replaceable>root.yourdomain.com</>"
+chmod og-rwx root.key
+</programlisting>
+    Then, sign the request with the key to create a root certificate
+    authority (using the default <productname>OpenSSL</>
+    configuration file location on <productname>Linux</>):
+<programlisting>
+openssl x509 -req -in root.csr -text -days 3650 \
+  -extfile /etc/ssl/openssl.cnf -extensions v3_ca \
+  -signkey root.key -out root.crt
+</programlisting>
+    Finally, create a server certificate signed by the new root certificate
+    authority:
+<programlisting>
+openssl req -new -nodes -text -out server.csr \
+  -keyout server.key -subj "/CN=<replaceable>dbhost.yourdomain.com</>"
+chmod og-rwx server.key
+
+openssl x509 -req -in server.csr -text -days 365 \
+  -CA root.crt -CAkey root.key -CAcreateserial \
+  -out server.crt
+</programlisting>
+    <filename>server.crt</> and <filename>server.key</>
+    should be stored on the server, and <filename>root.crt</> should
+    be stored on the client so the client can verify that the server's leaf
+    certificate was signed by its trusted root certificate. 
+    <filename>root.key</> should be stored offline for use in
+    creating future certificates.
+   </para>
+
+   <para>
+    It is also possible to create a chain of trust that includes
+    intermediate certificates:
+<programlisting>
+# root
+openssl req -new -nodes -text -out root.csr \
+  -keyout root.key -subj "/CN=<replaceable>root.yourdomain.com</>"
+chmod og-rwx root.key
+openssl x509 -req -in root.csr -text -days 3650 \
+  -extfile /etc/ssl/openssl.cnf -extensions v3_ca \
+  -signkey root.key -out root.crt
+
+# intermediate
+openssl req -new -nodes -text -out intermediate.csr \
+  -keyout intermediate.key -subj "/CN=<replaceable>intermediate.yourdomain.com</>"
+chmod og-rwx intermediate.key
+openssl x509 -req -in intermediate.csr -text -days 1825 \
+  -extfile /etc/ssl/openssl.cnf -extensions v3_ca \
+  -CA root.crt -CAkey root.key -CAcreateserial \
+  -out intermediate.crt
+
+# leaf
+openssl req -new -nodes -text -out server.csr \
+  -keyout server.key -subj "/CN=<replaceable>dbhost.yourdomain.com</>"
+chmod og-rwx server.key
+openssl x509 -req -in server.csr -text -days 365 \
+  -CA intermediate.crt -CAkey intermediate.key -CAcreateserial \
+  -out server.crt
+</programlisting>
+    <filename>server.crt</> and
+    <filename>intermediate.crt</> should be concatenated
+    into a certificate file bundle and stored on the server.
+    <filename>server.key</> should also be stored on the server.
+    <filename>root.crt</> should be stored on the client so
+    the client can verify that the server's leaf certificate was signed
+    by a chain of certificates linked to its trusted root certificate.
+    <filename>root.key</> and <filename>intermediate.key</>
+    should be stored offline for use in creating future certificates.
+   </para>
   </sect2>
 
  </sect1>

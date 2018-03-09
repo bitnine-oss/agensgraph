@@ -3,7 +3,7 @@
  *
  *	server-side function support
  *
- *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/function.c
  */
 
@@ -95,7 +95,7 @@ get_loadable_libraries(void)
 									"FROM pg_catalog.pg_proc p "
 									"    JOIN pg_catalog.pg_namespace n "
 									"    ON pronamespace = n.oid "
-							   "WHERE proname = 'plpython_call_handler' AND "
+									"WHERE proname = 'plpython_call_handler' AND "
 									"nspname = 'public' AND "
 									"prolang = %u AND "
 									"probin = '$libdir/plpython' AND "
@@ -118,9 +118,9 @@ get_loadable_libraries(void)
 						   "pre-8.1 install of plpython, and must be removed for pg_upgrade\n"
 						   "to complete because it references a now-obsolete \"plpython\"\n"
 						   "shared object file.  You can remove the \"public\" schema version\n"
-					   "of this function by running the following command:\n"
+						   "of this function by running the following command:\n"
 						   "\n"
-						 "    DROP FUNCTION public.plpython_call_handler()\n"
+						   "    DROP FUNCTION public.plpython_call_handler()\n"
 						   "\n"
 						   "in each affected database:\n"
 						   "\n");
@@ -252,7 +252,7 @@ check_loadable_libraries(void)
 			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
 				pg_fatal("could not open file \"%s\": %s\n",
 						 output_path, strerror(errno));
-			fprintf(script, "could not load library \"%s\":\n%s\n",
+			fprintf(script, _("could not load library \"%s\": %s"),
 					lib,
 					PQerrorMessage(conn));
 		}

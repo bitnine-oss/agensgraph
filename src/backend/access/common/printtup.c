@@ -5,7 +5,7 @@
  *	  clients and standalone backends are supported here).
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -229,9 +229,7 @@ SendRowDescriptionMessage(TupleDesc typeinfo, List *targetlist, int16 *formats)
 		atttypid = getBaseTypeAndTypmod(atttypid, &atttypmod);
 		pq_sendint(&buf, (int) atttypid, sizeof(atttypid));
 		pq_sendint(&buf, attrs[i]->attlen, sizeof(attrs[i]->attlen));
-		/* typmod appears in protocol 2.0 and up */
-		if (proto >= 2)
-			pq_sendint(&buf, atttypmod, sizeof(atttypmod));
+		pq_sendint(&buf, atttypmod, sizeof(atttypmod));
 		/* format info appears in protocol 3.0 and up */
 		if (proto >= 3)
 		{

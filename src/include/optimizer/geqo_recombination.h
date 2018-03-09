@@ -3,7 +3,7 @@
  * geqo_recombination.h
  *	  prototypes for recombination in the genetic query optimizer
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/geqo_recombination.h
@@ -65,25 +65,25 @@ typedef struct City
 	int			tour1_position;
 	int			used;
 	int			select_list;
-} City;
+}			City;
 
-extern City *alloc_city_table(PlannerInfo *root, int num_gene);
-extern void free_city_table(PlannerInfo *root, City *city_table);
+extern City * alloc_city_table(PlannerInfo *root, int num_gene);
+extern void free_city_table(PlannerInfo *root, City * city_table);
 
 /* cycle crossover [CX] */
 extern int cx(PlannerInfo *root, Gene *tour1, Gene *tour2,
-   Gene *offspring, int num_gene, City *city_table);
+   Gene *offspring, int num_gene, City * city_table);
 
 /* position crossover [PX] */
 extern void px(PlannerInfo *root, Gene *tour1, Gene *tour2, Gene *offspring,
-   int num_gene, City *city_table);
+   int num_gene, City * city_table);
 
 /* order crossover [OX1] according to Davis */
 extern void ox1(PlannerInfo *root, Gene *mom, Gene *dad, Gene *offspring,
-	int num_gene, City *city_table);
+	int num_gene, City * city_table);
 
 /* order crossover [OX2] according to Syswerda */
 extern void ox2(PlannerInfo *root, Gene *mom, Gene *dad, Gene *offspring,
-	int num_gene, City *city_table);
+	int num_gene, City * city_table);
 
-#endif   /* GEQO_RECOMBINATION_H */
+#endif							/* GEQO_RECOMBINATION_H */

@@ -3,7 +3,7 @@
  * hashfunc.c
  *	  Support functions for hash access method.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -27,7 +27,17 @@
 #include "postgres.h"
 
 #include "access/hash.h"
+#include "utils/builtins.h"
 
+/*
+ * Datatype-specific hash functions.
+ *
+ * These support both hash indexes and hash joins.
+ *
+ * NOTE: some of these are also used by catcache operations, without
+ * any direct connection to hash indexes.  Also, the common hash_any
+ * routine is also used by dynahash tables.
+ */
 
 /* Note: this is used for both "char" and boolean datatypes */
 Datum
@@ -128,14 +138,6 @@ hashoidvector(PG_FUNCTION_ARGS)
 	oidvector  *key = (oidvector *) PG_GETARG_POINTER(0);
 
 	return hash_any((unsigned char *) key->values, key->dim1 * sizeof(Oid));
-}
-
-Datum
-hashint2vector(PG_FUNCTION_ARGS)
-{
-	int2vector *key = (int2vector *) PG_GETARG_POINTER(0);
-
-	return hash_any((unsigned char *) key->values, key->dim1 * sizeof(int16));
 }
 
 Datum
@@ -410,7 +412,7 @@ hash_any(register const unsigned char *k, register int keylen)
 				a += k[0];
 				/* case 0: nothing left to add */
 		}
-#endif   /* WORDS_BIGENDIAN */
+#endif							/* WORDS_BIGENDIAN */
 	}
 	else
 	{
@@ -427,7 +429,7 @@ hash_any(register const unsigned char *k, register int keylen)
 			a += (k[0] + ((uint32) k[1] << 8) + ((uint32) k[2] << 16) + ((uint32) k[3] << 24));
 			b += (k[4] + ((uint32) k[5] << 8) + ((uint32) k[6] << 16) + ((uint32) k[7] << 24));
 			c += (k[8] + ((uint32) k[9] << 8) + ((uint32) k[10] << 16) + ((uint32) k[11] << 24));
-#endif   /* WORDS_BIGENDIAN */
+#endif							/* WORDS_BIGENDIAN */
 			mix(a, b, c);
 			k += 12;
 			len -= 12;
@@ -490,7 +492,7 @@ hash_any(register const unsigned char *k, register int keylen)
 				a += k[0];
 				/* case 0: nothing left to add */
 		}
-#endif   /* WORDS_BIGENDIAN */
+#endif							/* WORDS_BIGENDIAN */
 	}
 
 	final(a, b, c);

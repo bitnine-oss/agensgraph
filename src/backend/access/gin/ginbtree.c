@@ -4,7 +4,7 @@
  *	  page utilities routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/gin_private.h"
+#include "access/ginxlog.h"
 #include "access/xloginsert.h"
 #include "miscadmin.h"
 #include "utils/memutils.h"
@@ -30,7 +31,7 @@ static void ginFinishSplit(GinBtree btree, GinBtreeStack *stack,
 /*
  * Lock buffer by needed method for search.
  */
-static int
+int
 ginTraverseLock(Buffer buffer, bool searchMode)
 {
 	Page		page;

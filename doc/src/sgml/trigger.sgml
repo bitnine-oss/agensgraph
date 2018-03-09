@@ -33,24 +33,21 @@
    <para>
     A trigger is a specification that the database should automatically
     execute a particular function whenever a certain type of operation is
-    performed.  Triggers can be attached to tables, views, and foreign tables.
+    performed.  Triggers can be attached to tables (partitioned or not),
+    views, and foreign tables.
   </para>
 
   <para>
     On tables and foreign tables, triggers can be defined to execute either
     before or after any <command>INSERT</command>, <command>UPDATE</command>,
     or <command>DELETE</command> operation, either once per modified row,
-    or once per <acronym>SQL</acronym> statement.  If an
-    <command>INSERT</command> contains an <literal>ON CONFLICT DO UPDATE</>
-    clause, it is possible that the effects of a BEFORE insert trigger and
-    a BEFORE update trigger can both be applied together, if a reference to
-    an <varname>EXCLUDED</> column appears.  <command>UPDATE</command>
-    triggers can moreover be set to fire only if certain columns are
-    mentioned in the <literal>SET</literal> clause of the
-    <command>UPDATE</command> statement.  Triggers can also fire for
-    <command>TRUNCATE</command> statements.  If a trigger event occurs,
+    or once per <acronym>SQL</acronym> statement.
+    <command>UPDATE</command> triggers can moreover be set to fire only if
+    certain columns are mentioned in the <literal>SET</literal> clause of
+    the <command>UPDATE</command> statement.  Triggers can also fire
+    for <command>TRUNCATE</command> statements.  If a trigger event occurs,
     the trigger's function is called at the appropriate time to handle the
-    event.  Foreign tables do not support the TRUNCATE statement at all.
+    event.
    </para>
 
    <para>
@@ -96,10 +93,7 @@
     two types of triggers are sometimes called <firstterm>row-level</>
     triggers and <firstterm>statement-level</> triggers,
     respectively. Triggers on <command>TRUNCATE</command> may only be
-    defined at statement level.  On views, triggers that fire before or
-    after may only be defined at statement level, while triggers that fire
-    instead of an <command>INSERT</command>, <command>UPDATE</command>,
-    or <command>DELETE</command> may only be defined at row level.
+    defined at statement level, not per-row.
    </para>
 
    <para>
@@ -111,30 +105,39 @@
     Statement-level <literal>BEFORE</> triggers naturally fire before the
     statement starts to do anything, while statement-level <literal>AFTER</>
     triggers fire at the very end of the statement.  These types of
-    triggers may be defined on tables or views.  Row-level <literal>BEFORE</>
-    triggers fire immediately before a particular row is operated on,
-    while row-level <literal>AFTER</> triggers fire at the end of the
-    statement (but before any statement-level <literal>AFTER</> triggers).
-    These types of triggers may only be defined on tables and foreign tables.
-    Row-level <literal>INSTEAD OF</> triggers may only be defined on views,
-    and fire immediately as each row in the view is identified as needing to
-    be operated on.
+    triggers may be defined on tables, views, or foreign tables.  Row-level
+    <literal>BEFORE</> triggers fire immediately before a particular row is
+    operated on, while row-level <literal>AFTER</> triggers fire at the end of
+    the statement (but before any statement-level <literal>AFTER</> triggers).
+    These types of triggers may only be defined on non-partitioned tables and
+    foreign tables, not views.  <literal>INSTEAD OF</> triggers may only be
+    defined on views, and only at row level; they fire immediately as each
+    row in the view is identified as needing to be operated on.
+   </para>
+
+   <para>
+    A statement that targets a parent table in an inheritance or partitioning
+    hierarchy does not cause the statement-level triggers of affected child
+    tables to be fired; only the parent table's statement-level triggers are
+    fired.  However, row-level triggers of any affected child tables will be
+    fired.
    </para>
 
    <para>
     If an <command>INSERT</command> contains an <literal>ON CONFLICT
-    DO UPDATE</> clause, it is possible that the effects of all
-    row-level <literal>BEFORE</> <command>INSERT</command> triggers
-    and all row-level <literal>BEFORE</literal> <command>UPDATE</command> triggers can
+    DO UPDATE</> clause, it is possible that the effects of
+    row-level <literal>BEFORE</> <command>INSERT</command> triggers and
+    row-level <literal>BEFORE</literal> <command>UPDATE</command> triggers can
     both be applied in a way that is apparent from the final state of
     the updated row, if an <varname>EXCLUDED</> column is referenced.
     There need not be an <varname>EXCLUDED</> column reference for
-    both sets of row-level <literal>BEFORE</literal> triggers to execute, though.  The
+    both sets of row-level <literal>BEFORE</literal> triggers to execute,
+    though.  The
     possibility of surprising outcomes should be considered when there
     are both <literal>BEFORE</> <command>INSERT</command> and
     <literal>BEFORE</> <command>UPDATE</command> row-level triggers
-    that both affect a row being inserted/updated (this can still be
-    problematic if the modifications are more or less equivalent if
+    that change a row being inserted/updated (this can be
+    problematic even if the modifications are more or less equivalent, if
     they're not also idempotent).  Note that statement-level
     <command>UPDATE</command> triggers are executed when <literal>ON
     CONFLICT DO UPDATE</> is specified, regardless of whether or not
@@ -305,8 +308,20 @@
     <varname>NEW</varname> row for <command>INSERT</command> and
     <command>UPDATE</command> triggers, and/or the <varname>OLD</varname> row
     for <command>UPDATE</command> and <command>DELETE</command> triggers.
-    Statement-level triggers do not currently have any way to examine the
-    individual row(s) modified by the statement.
+   </para>
+
+   <para>
+    By default, statement-level triggers do not have any way to examine the
+    individual row(s) modified by the statement.  But an <literal>AFTER
+    STATEMENT</> trigger can request that <firstterm>transition tables</>
+    be created to make the sets of affected rows available to the trigger.
+    <literal>AFTER ROW</> triggers can also request transition tables, so
+    that they can see the total changes in the table as well as the change in
+    the individual row they are currently being fired for.  The method for
+    examining the transition tables again depends on the programming language
+    that is being used, but the typical approach is to make the transition
+    tables act like read-only temporary tables that can be accessed by SQL
+    commands issued within the trigger function.
    </para>
 
   </sect1>
@@ -395,6 +410,11 @@
     <secondary>in C</secondary>
    </indexterm>
 
+   <indexterm>
+    <primary>transition tables</primary>
+    <secondary>referencing from C trigger</secondary>
+   </indexterm>
+
    <para>
     This section describes the low-level details of the interface to a
     trigger function.  This information is only needed when writing
@@ -438,14 +458,16 @@ CALLED_AS_TRIGGER(fcinfo)
 <programlisting>
 typedef struct TriggerData
 {
-    NodeTag       type;
-    TriggerEvent  tg_event;
-    Relation      tg_relation;
-    HeapTuple     tg_trigtuple;
-    HeapTuple     tg_newtuple;
-    Trigger      *tg_trigger;
-    Buffer        tg_trigtuplebuf;
-    Buffer        tg_newtuplebuf;
+    NodeTag          type;
+    TriggerEvent     tg_event;
+    Relation         tg_relation;
+    HeapTuple        tg_trigtuple;
+    HeapTuple        tg_newtuple;
+    Trigger         *tg_trigger;
+    Buffer           tg_trigtuplebuf;
+    Buffer           tg_newtuplebuf;
+    Tuplestorestate *tg_oldtable;
+    Tuplestorestate *tg_newtable;
 } TriggerData;
 </programlisting>
 
@@ -629,6 +651,8 @@ typedef struct Trigger
     int16      *tgattr;
     char      **tgargs;
     char       *tgqual;
+    char       *tgoldtable;
+    char       *tgnewtable;
 } Trigger;
 </programlisting>
 
@@ -662,7 +686,36 @@ typedef struct Trigger
       </listitem>
      </varlistentry>
 
+     <varlistentry>
+      <term><structfield>tg_oldtable</></term>
+      <listitem>
+       <para>
+        A pointer to a structure of type <structname>Tuplestorestate</structname>
+        containing zero or more rows in the format specified by
+        <structfield>tg_relation</structfield>, or a <symbol>NULL</> pointer
+        if there is no <literal>OLD TABLE</literal> transition relation.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><structfield>tg_newtable</></term>
+      <listitem>
+       <para>
+        A pointer to a structure of type <structname>Tuplestorestate</structname>
+        containing zero or more rows in the format specified by
+        <structfield>tg_relation</structfield>, or a <symbol>NULL</> pointer
+        if there is no <literal>NEW TABLE</literal> transition relation.
+       </para>
+      </listitem>
+     </varlistentry>
+
     </variablelist>
+   </para>
+
+   <para>
+    To allow queries issued through SPI to reference transition tables, see
+    <xref linkend="spi-spi-register-trigger-data">.
    </para>
 
    <para>
@@ -705,6 +758,7 @@ CREATE TABLE ttest (
     This is the source code of the trigger function:
 <programlisting><![CDATA[
 #include "postgres.h"
+#include "fmgr.h"
 #include "executor/spi.h"       /* this is what you need to work with SPI */
 #include "commands/trigger.h"   /* ... triggers ... */
 #include "utils/rel.h"          /* ... and relations */

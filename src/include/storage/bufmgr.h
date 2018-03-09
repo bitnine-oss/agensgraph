@@ -4,7 +4,7 @@
  *	  POSTGRES buffer manager definitions.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/bufmgr.h
@@ -79,7 +79,7 @@ extern PGDLLIMPORT int32 *LocalRefCount;
 #define MAX_IO_CONCURRENCY 1000
 
 /* special block number for ReadBuffer() */
-#define P_NEW	InvalidBlockNumber		/* grow the file to get a new page */
+#define P_NEW	InvalidBlockNumber	/* grow the file to get a new page */
 
 /*
  * Buffer content lock modes (mode argument for LockBuffer())
@@ -216,6 +216,7 @@ extern void LockBuffer(Buffer buffer, int mode);
 extern bool ConditionalLockBuffer(Buffer buffer);
 extern void LockBufferForCleanup(Buffer buffer);
 extern bool ConditionalLockBufferForCleanup(Buffer buffer);
+extern bool IsBufferCleanupOK(Buffer buffer);
 extern bool HoldingBufferPinThatDelaysRecovery(void);
 
 extern void AbortBufferIO(void);
@@ -236,7 +237,7 @@ extern void FreeAccessStrategy(BufferAccessStrategy strategy);
 
 /*
  * Although this header file is nominally backend-only, certain frontend
- * programs like pg_xlogdump include it.  For compilers that emit static
+ * programs like pg_waldump include it.  For compilers that emit static
  * inline functions even when they're unused, that leads to unsatisfied
  * external references; hence hide these with #ifndef FRONTEND.
  */
@@ -274,6 +275,6 @@ TestForOldSnapshot(Snapshot snapshot, Relation relation, Page page)
 		TestForOldSnapshot_impl(snapshot, relation);
 }
 
-#endif   /* FRONTEND */
+#endif							/* FRONTEND */
 
-#endif   /* BUFMGR_H */
+#endif							/* BUFMGR_H */
