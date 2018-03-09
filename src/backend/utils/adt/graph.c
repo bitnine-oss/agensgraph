@@ -1119,7 +1119,7 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
-	ret = SPI_execute_with_args(sqlcmd, 2, argTypes, values, NULL, false, 0);
+	ret = SPI_execute_with_args(sqlcmd, 2, argTypes, values, NULL, true, 0);
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 
