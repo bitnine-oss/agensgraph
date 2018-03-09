@@ -834,6 +834,38 @@ SET a.val = b.val SET b.val = a.val;
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
 MATCH (a) DETACH DELETE (a);
 
+-- enable_multiple_update
+SET enable_multiple_update = false;
+CREATE (:multiple_update {no:1}), (:multiple_update {no:1});
+
+MATCH (a:multiple_update), (b:multiple_update)
+SET a.no = a.no + 1
+RETURN a.no;
+
+MATCH (a:multiple_update)
+RETURN a.no;
+
+MATCH (a:multiple_update)
+SET a.no = 5
+SET a.no = 6
+SET a.no = 7
+SET a.no = 8
+RETURN a.no;
+
+MATCH (a:multiple_update)
+RETURN a.no;
+
+SET enable_multiple_update = true;
+
+MATCH (a:multiple_update), (b:multiple_update)
+SET a.no = a.no + 1
+RETURN a.no;
+
+MATCH (a:multiple_update)
+RETURN a.no;
+
+MATCH (a) DETACH DELETE (a);
+
 -- += operator
 
 CREATE ({age: 10});
