@@ -5995,6 +5995,21 @@ copyObjectImpl(const void *from)
 		case T_AlterPolicyStmt:
 			retval = _copyAlterPolicyStmt(from);
 			break;
+		case T_CreatePublicationStmt:
+			retval = _copyCreatePublicationStmt(from);
+			break;
+		case T_AlterPublicationStmt:
+			retval = _copyAlterPublicationStmt(from);
+			break;
+		case T_CreateSubscriptionStmt:
+			retval = _copyCreateSubscriptionStmt(from);
+			break;
+		case T_AlterSubscriptionStmt:
+			retval = _copyAlterSubscriptionStmt(from);
+			break;
+		case T_DropSubscriptionStmt:
+			retval = _copyDropSubscriptionStmt(from);
+			break;
 		case T_CreateGraphStmt:
 			retval = _copyCreateGraphStmt(from);
 			break;
@@ -6024,21 +6039,6 @@ copyObjectImpl(const void *from)
 			break;
 		case T_CypherSubPattern:
 			retval = _copyCypherSubPattern(from);
-			break;
-		case T_CreatePublicationStmt:
-			retval = _copyCreatePublicationStmt(from);
-			break;
-		case T_AlterPublicationStmt:
-			retval = _copyAlterPublicationStmt(from);
-			break;
-		case T_CreateSubscriptionStmt:
-			retval = _copyCreateSubscriptionStmt(from);
-			break;
-		case T_AlterSubscriptionStmt:
-			retval = _copyAlterSubscriptionStmt(from);
-			break;
-		case T_DropSubscriptionStmt:
-			retval = _copyDropSubscriptionStmt(from);
 			break;
 		case T_A_Expr:
 			retval = _copyAExpr(from);
@@ -6184,13 +6184,6 @@ copyObjectImpl(const void *from)
 		case T_PartitionCmd:
 			retval = _copyPartitionCmd(from);
 			break;
-
-			/*
-			 * MISCELLANEOUS NODES
-			 */
-		case T_ForeignKeyCacheInfo:
-			retval = _copyForeignKeyCacheInfo(from);
-			break;
 		case T_CypherClause:
 			retval = _copyCypherClause(from);
 			break;
@@ -6245,6 +6238,13 @@ copyObjectImpl(const void *from)
 			break;
 		case T_GraphSetProp:
 			retval = _copyGraphSetProp(from);
+			break;
+
+			/*
+			 * MISCELLANEOUS NODES
+			 */
+		case T_ForeignKeyCacheInfo:
+			retval = _copyForeignKeyCacheInfo(from);
 			break;
 
 		default:

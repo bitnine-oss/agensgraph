@@ -30,6 +30,6 @@ OBJS = execAmi.o execCurrent.o execExpr.o execExprInterp.o \
        nodeGroup.o nodeSubplan.o nodeSubqueryscan.o nodeTidscan.o \
        nodeForeignscan.o nodeWindowAgg.o tstoreReceiver.o tqueue.o spi.o \
        nodeTableFuncscan.o \
-       nodeModifyGraph.o nodeNestloopVle.o nodeEager.o nodeDijkstra.o
+       nodeModifyGraph.o nodeNestloopVle.o nodeDijkstra.o
 
 include $(top_srcdir)/src/backend/common.mk

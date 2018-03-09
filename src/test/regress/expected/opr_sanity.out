@@ -368,7 +368,8 @@ ORDER BY 1;
 ------+--------------
  2293 | cstring_out
  2501 | cstring_send
-(2 rows)
+ 7009 | graph_labid
+(3 rows)
 
 -- Likewise, look for functions that return cstring and aren't datatype output
 -- functions nor typmod output functions.
@@ -699,8 +700,6 @@ timestamp_lt(timestamp without time zone,timestamp without time zone)
 timestamp_le(timestamp without time zone,timestamp without time zone)
 timestamp_ge(timestamp without time zone,timestamp without time zone)
 timestamp_gt(timestamp without time zone,timestamp without time zone)
-md5(text)
-md5(bytea)
 tidgt(tid,tid)
 tidlt(tid,tid)
 tidge(tid,tid)
@@ -713,10 +712,6 @@ uuid_gt(uuid,uuid)
 uuid_ne(uuid,uuid)
 xidneq(xid,xid)
 xidneqint4(xid,integer)
-sha224(bytea)
-sha256(bytea)
-sha384(bytea)
-sha512(bytea)
 macaddr8_eq(macaddr8,macaddr8)
 macaddr8_lt(macaddr8,macaddr8)
 macaddr8_le(macaddr8,macaddr8)
@@ -1081,9 +1076,11 @@ WHERE p1.oprcanmerge AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree') AND
          amopopr = p1.oid AND amopstrategy = 3);
- oid | oprname 
------+---------
-(0 rows)
+ oid  | oprname 
+------+---------
+ 7136 | =
+ 7148 | =
+(2 rows)
 
 -- And the converse.
 SELECT p1.oid, p1.oprname, p.amopfamily
@@ -1103,9 +1100,11 @@ WHERE p1.oprcanhash AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'hash') AND
          amopopr = p1.oid AND amopstrategy = 1);
- oid | oprname 
------+---------
-(0 rows)
+ oid  | oprname 
+------+---------
+ 7136 | =
+ 7148 | =
+(2 rows)
 
 -- And the converse.
 SELECT p1.oid, p1.oprname, p.amopfamily
@@ -1283,8 +1282,6 @@ WHERE aggfnoid = 0 OR aggtransfn = 0 OR
     aggkind NOT IN ('n', 'o', 'h') OR
     aggnumdirectargs < 0 OR
     (aggkind = 'n' AND aggnumdirectargs > 0) OR
-    aggfinalmodify NOT IN ('r', 's', 'w') OR
-    aggmfinalmodify NOT IN ('r', 's', 'w') OR
     aggtranstype = 0 OR aggtransspace < 0 OR aggmtransspace < 0;
  ctid | aggfnoid 
 ------+----------
@@ -1816,11 +1813,16 @@ ORDER BY 1, 2, 3;
         783 |           48 | <@
         783 |           68 | <@
        2742 |            1 | &&
+       2742 |            1 | <
        2742 |            1 | @@
+       2742 |            2 | <=
        2742 |            2 | @>
        2742 |            2 | @@@
        2742 |            3 | <@
+       2742 |            3 | =
        2742 |            4 | =
+       2742 |            4 | >=
+       2742 |            5 | >
        2742 |            7 | @>
        2742 |            9 | ?
        2742 |           10 | ?|
@@ -1888,7 +1890,7 @@ ORDER BY 1, 2, 3;
        4000 |           25 | <<=
        4000 |           26 | >>
        4000 |           27 | >>=
-(121 rows)
+(126 rows)
 
 -- Check that all opclass search operators have selectivity estimators.
 -- This is not absolutely required, but it seems a reasonable thing

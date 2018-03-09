@@ -41,6 +41,7 @@ typedef struct SeenRelsEntry
 	Oid			rel_id;			/* relation oid */
 	ListCell   *numparents_cell;	/* corresponding list cell */
 } SeenRelsEntry;
+
 static List *find_inheritance_parents(Oid childrelId, LOCKMODE lockmode);
 
 /*

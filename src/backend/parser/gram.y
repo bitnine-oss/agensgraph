@@ -8661,8 +8661,8 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_LANGUAGE;
-					n->object = (Node *) makeString($4);
-					n->newname = $7;
+					n->object = (Node *) makeString(preserve_downcasing_ident($4));
+					n->newname = preserve_downcasing_ident($7);
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
@@ -9068,8 +9068,8 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_TYPE;
-					n->object = (Node *) $3;
-					n->newname = $6;
+					n->object = (Node *) preserve_downcasing_type_func_namelist($3);
+					n->newname = preserve_downcasing_type_func_name($6);
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
@@ -9447,7 +9447,7 @@ AlterObjectSchemaStmt:
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
 					n->objectType = OBJECT_TYPE;
-					n->object = (Node *) $3;
+					n->object = (Node *) preserve_downcasing_type_func_namelist($3);
 					n->newschema = $6;
 					n->missing_ok = false;
 					$$ = (Node *)n;
@@ -9547,7 +9547,7 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 				{
 					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
 					n->objectType = OBJECT_LANGUAGE;
-					n->object = (Node *) makeString($4);
+					n->object = (Node *) makeString(preserve_downcasing_ident($4));
 					n->newowner = $7;
 					$$ = (Node *)n;
 				}
@@ -9611,7 +9611,7 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 				{
 					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
 					n->objectType = OBJECT_TYPE;
-					n->object = (Node *) $3;
+					n->object = (Node *) preserve_downcasing_type_func_namelist($3);
 					n->newowner = $6;
 					$$ = (Node *)n;
 				}

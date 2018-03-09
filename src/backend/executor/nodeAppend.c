@@ -59,6 +59,7 @@
 
 #include "executor/execdebug.h"
 #include "executor/nodeAppend.h"
+#include "lib/ilist.h"
 #include "miscadmin.h"
 
 /* Shared state for parallel-aware Append. */

@@ -22,6 +22,8 @@
 #include "lib/pairingheap.h"
 #include "nodes/params.h"
 #include "nodes/plannodes.h"
+#include "utils/array.h"
+#include "utils/graph.h"
 #include "utils/hsearch.h"
 #include "utils/queryenvironment.h"
 #include "utils/array.h"

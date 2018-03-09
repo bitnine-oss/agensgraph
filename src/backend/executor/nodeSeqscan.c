@@ -270,6 +270,27 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	scanstate->ss.ps.qual =
 		ExecInitQual(node->plan.qual, (PlanState *) scanstate);
 
+	/*
+	 * tuple table initialization
+	 */
+	ExecInitResultTupleSlot(estate, &scanstate->ss.ps);
+	ExecInitScanTupleSlot(estate, &scanstate->ss);
+
+	/*
+	 * initialize scan relation
+	 */
+	InitScanRelation(scanstate, estate, eflags);
+
+	InitScanLabelInfo((ScanState *) scanstate);
+	if (scanstate->ss.ss_isLabel)
+		InitScanLabelSkipExpr(scanstate);
+
+	/*
+	 * Initialize result tuple type and projection info.
+	 */
+	ExecAssignResultTypeFromTL(&scanstate->ss.ps);
+	ExecAssignScanProjectionInfo(&scanstate->ss);
+
 	dlist_init(&scanstate->vle_ctxs);
 	scanstate->cur_ctx = NULL;
 

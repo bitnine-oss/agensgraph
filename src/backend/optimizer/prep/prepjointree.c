@@ -1806,7 +1806,7 @@ is_simple_union_all(Query *subquery)
 	/* Let's just make sure it's a valid subselect ... */
 	if (!IsA(subquery, Query) ||
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_GRAPHWRITE)
+		 subquery->commandType != CMD_GRAPHWRITE))
 		elog(ERROR, "subquery is bogus");
 
 	/* Is it a set-operation query at all? */

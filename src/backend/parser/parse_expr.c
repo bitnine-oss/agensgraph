@@ -580,18 +580,6 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 
 				if (node == NULL)
 				{
-					char *_colname;
-
-					if (case_sensitive_ident)
-					{
-						_colname = downcase_identifier(colname, strlen(colname),
-													   false, false);
-					}
-					else
-					{
-						_colname = colname;
-					}
-
 					/*
 					 * Not known as a column of any range-table entry.
 					 *

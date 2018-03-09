@@ -1241,6 +1241,9 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 		indexstate->iss_RuntimeContext = NULL;
 	}
 
+	dlist_init(&indexstate->vle_ctxs);
+	indexstate->cur_ctx = NULL;
+
 	/*
 	 * all done.
 	 */
