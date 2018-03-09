@@ -2318,6 +2318,62 @@ MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
 (1 row)
 
 MATCH (a) DETACH DELETE (a);
+-- enable_multiple_update
+SET enable_multiple_update = false;
+CREATE (:multiple_update {no:1}), (:multiple_update {no:1});
+MATCH (a:multiple_update), (b:multiple_update)
+SET a.no = a.no + 1
+RETURN a.no;
+ERROR:  Graph element(4,1) has been SET multiple times.
+MATCH (a:multiple_update)
+RETURN a.no;
+ no 
+----
+ 1
+ 1
+(2 rows)
+
+MATCH (a:multiple_update)
+SET a.no = 5
+SET a.no = 6
+SET a.no = 7
+SET a.no = 8
+RETURN a.no;
+ no 
+----
+ 8
+ 8
+(2 rows)
+
+MATCH (a:multiple_update)
+RETURN a.no;
+ no 
+----
+ 8
+ 8
+(2 rows)
+
+SET enable_multiple_update = true;
+MATCH (a:multiple_update), (b:multiple_update)
+SET a.no = a.no + 1
+RETURN a.no;
+ no 
+----
+ 10
+ 10
+ 10
+ 10
+(4 rows)
+
+MATCH (a:multiple_update)
+RETURN a.no;
+ no 
+----
+ 10
+ 10
+(2 rows)
+
+MATCH (a) DETACH DELETE (a);
 -- += operator
 CREATE ({age: 10});
 MATCH (a) SET a += {name: 'bitnine', age: 3}
@@ -2994,11 +3050,12 @@ drop cascades to elabel ag_edge
 drop cascades to vlabel v
 drop cascades to vlabel w
 DROP GRAPH p CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 6 other objects
 DETAIL:  drop cascades to sequence p.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to elabel rel
+drop cascades to vlabel multiple_update
 drop cascades to vlabel person
 DROP GRAPH u CASCADE;
 NOTICE:  drop cascades to 4 other objects

@@ -33,6 +33,8 @@
 #include "utils/tuplestore.h"
 #include "utils/typcache.h"
 
+bool	enable_multiple_update = true;
+
 #define DATUM_NULL	PointerGetDatum(NULL)
 
 /* hash entry */
@@ -212,7 +214,9 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	initGraphWRStats(mgstate, mgplan->operation);
 
-	if (mgstate->sets != NIL || mgstate->exprs != NIL)
+	if (mgstate->eagerness ||
+		(mgstate->sets != NIL && enable_multiple_update) ||
+		mgstate->exprs != NIL)
 	{
 		HASHCTL ctl;
 
@@ -310,8 +314,7 @@ ExecModifyGraph(PlanState *pstate)
 
 		mgstate->child_done = true;
 
-		if (mgstate->propTable != NULL &&
-			hash_get_num_entries(mgstate->propTable) > 0)
+		if (mgstate->propTable != NULL)
 			reflectModifiedProp(mgstate);
 	}
 
@@ -1102,7 +1105,10 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 								   gid, expr_datum, tid);
 		MemoryContextSwitchTo(oldmctx);
 
-		enterSetPropTable(mgstate, elemtype, gid, newelem);
+		if (mgstate->propTable)
+			enterSetPropTable(mgstate, elemtype, gid, newelem);
+		else
+			updateElemProp(mgstate, elemtype, gid, newelem);
 
 		setSlotValueByName(result, newelem, gsp->variable);
 	}
@@ -1220,7 +1226,9 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		case HeapTupleSelfUpdated:
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("Cypher query does not modify the record more than once.")));
+					 errmsg("Graph element(%u,"UINT64_FORMAT") has been SET multiple times.",
+							GraphidGetLabid(DatumGetGraphid(gid)),
+							GraphidGetLocid(DatumGetGraphid(gid)))));
 			break;
 		case HeapTupleMayBeUpdated:
 			break;
@@ -1605,7 +1613,15 @@ enterSetPropTable(ModifyGraphState *mgstate, Oid type, Datum gid,
 
 	entry = hash_search(mgstate->propTable, (void *) &gid, HASH_ENTER, &found);
 	if (found)
-		pfree(DatumGetPointer(entry->elem_datum));
+	{
+		if (enable_multiple_update)
+			pfree(DatumGetPointer(entry->elem_datum));
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("Graph element(%u,"UINT64_FORMAT") has been SET multiple times.",
+							GraphidGetLabid(entry->key), GraphidGetLocid(entry->key))));
+	}
 
 	entry->elem_datum = datumCopy(elem_datum, false, -1);
 	entry->type = type;

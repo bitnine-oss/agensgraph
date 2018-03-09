@@ -42,6 +42,7 @@
 #include "commands/vacuum.h"
 #include "commands/variable.h"
 #include "commands/trigger.h"
+#include "executor/nodeModifyGraph.h"
 #include "funcapi.h"
 #include "libpq/auth.h"
 #include "libpq/libpq.h"
@@ -949,6 +950,15 @@ static struct config_bool ConfigureNamesBool[] =
 			NULL
 		},
 		&enable_eager,
+		true,
+		NULL, NULL, NULL
+	},
+	{
+		{"enable_multiple_update", PGC_USERSET, QUERY_TUNING_METHOD,
+			gettext_noop("Enables the executor's multiple update a graph element."),
+			NULL
+		},
+		&enable_multiple_update,
 		true,
 		NULL, NULL, NULL
 	},
