@@ -704,6 +704,7 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.pattern = transformCreatePattern(pstate, cpath,
 												&qry->targetList);
 	qry->graph.targets = pstate->p_target_labels;
+	qry->graph.modifyno = pstate->p_modify_clause_no++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -744,6 +745,7 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
 	qry->graph.exprs = transformCypherExprList(pstate, detail->exprs,
 											   EXPR_KIND_OTHER);
+	qry->graph.modifyno = pstate->p_modify_clause_no++;
 
 	/*
 	 * The edges of the vertices to remove are used only for removal,
@@ -791,6 +793,8 @@ transformDeleteSubquery(ParseState *pstate, CypherClause *clause)
 
 	future_vertices = childParseState->p_future_vertices;
 	pstate->p_delete_edges_name = childParseState->p_delete_edges_name;
+	if (childParseState->p_modify_clause_no != 0)
+		pstate->p_modify_clause_no = childParseState->p_modify_clause_no;
 
 	free_parsestate(childParseState);
 
@@ -1100,6 +1104,8 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 										  FVR_PRESERVE_VAR_REF);
 	}
 
+	qry->graph.modifyno = pstate->p_modify_clause_no++;
+
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
 													 FVR_DONT_RESOLVE);
@@ -1156,6 +1162,7 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.targets = pstate->p_target_labels;
 
 	qry->graph.sets = transformMergeOnSet(pstate, detail->sets, rte);
+	qry->graph.modifyno = pstate->p_modify_clause_no++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -4514,6 +4521,8 @@ transformMergeMatchSub(ParseState *pstate, CypherClause *clause)
 	qry = transformMergeMatch(childParseState, clause);
 
 	future_vertices = childParseState->p_future_vertices;
+	if (childParseState->p_modify_clause_no != 0)
+		pstate->p_modify_clause_no = childParseState->p_modify_clause_no;
 
 	free_parsestate(childParseState);
 
@@ -5245,6 +5254,8 @@ transformClauseImpl(ParseState *pstate, Node *clause, Alias *alias)
 
 	qry = transformStmt(childParseState, clause);
 
+	if (childParseState->p_modify_clause_no != 0)
+		pstate->p_modify_clause_no = childParseState->p_modify_clause_no;
 	pstate->p_elem_quals = childParseState->p_elem_quals;
 	future_vertices = childParseState->p_future_vertices;
 

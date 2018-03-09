@@ -31,6 +31,16 @@
 #define Anum_graphpath_vertices	1
 #define Anum_graphpath_edges	2
 
+/* for visibility between cypher clauses */
+typedef enum ModifyCid
+{
+	MODIFY_CID_LOWER_BOUND,		/* for previous clause */
+	MODIFY_CID_OUTPUT,			/* for CREATE, MERGE, DELETE */
+	MODIFY_CID_SET,				/* for SET, ON MATCH SET, ON CREATE SET */
+	MODIFY_CID_NLJOIN_MATCH,	/* for DELETE JOIN, MERGE JOIN */
+	MODIFY_CID_MAX
+} ModifyCid;
+
 typedef uint64 Graphid;
 
 #define DatumGetGraphid(d)		DatumGetUInt64(d)

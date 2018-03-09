@@ -2546,13 +2546,14 @@ MATCH (a:person)
 MERGE (b:city {name: a.bornin})
   ON CREATE SET b.population = 1
   ON MATCH SET b.population = b.population + 1;
-MATCH (c:city) RETURN properties(c);
-                properties                
-------------------------------------------
- {"name": "jeju", "population": 1}
- {"name": "san jose", "population": 2}
- {"name": "seoul", "population": 2}
- {"name": "los angeles", "population": 1}
+MATCH (c:city)
+RETURN c.name, c.population ORDER BY name;
+     name      | population 
+---------------+------------
+ "jeju"        | 1
+ "los angeles" | 1
+ "san jose"    | 2
+ "seoul"       | 2
 (4 rows)
 
 MATCH (a:person)
@@ -2594,11 +2595,11 @@ CREATE (a)-[:e1 {name: 'ab'}]->(b)
 CREATE (c)-[:e1 {name: 'cd'}]->(d);
 MATCH (a {id: 2})-[]-(b {id: 1})
 MERGE (a)-[r:e1]-(b)
-RETURN r;
-               r                
---------------------------------
- e1[5.8][1.4,1.5]{"name": "ab"}
- e1[5.9][1.6,1.7]{"name": "cd"}
+RETURN properties(r);
+   properties   
+----------------
+ {"name": "ab"}
+ {"name": "cd"}
 (2 rows)
 
 MATCH (a) DETACH DELETE a;

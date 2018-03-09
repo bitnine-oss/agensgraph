@@ -230,6 +230,7 @@ struct ParseState
 	bool		p_is_optional_match;
 	List	   *p_target_labels;		/* relation Oid's of target labels */
 	bool		p_convert_edgeref;
+	uint32		p_modify_clause_no;
 };
 
 /*

@@ -958,7 +958,8 @@ MATCH (a:person)
 MERGE (b:city {name: a.bornin})
   ON CREATE SET b.population = 1
   ON MATCH SET b.population = b.population + 1;
-MATCH (c:city) RETURN properties(c);
+MATCH (c:city)
+RETURN c.name, c.population ORDER BY name;
 
 MATCH (a:person)
 MERGE (a)-[:hometown]->(b:city {name: a.bornin});
@@ -992,7 +993,7 @@ CREATE (c)-[:e1 {name: 'cd'}]->(d);
 
 MATCH (a {id: 2})-[]-(b {id: 1})
 MERGE (a)-[r:e1]-(b)
-RETURN r;
+RETURN properties(r);
 
 MATCH (a) DETACH DELETE a;
 

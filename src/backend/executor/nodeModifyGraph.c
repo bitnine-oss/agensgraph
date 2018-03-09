@@ -36,17 +36,19 @@
 #define DATUM_NULL	PointerGetDatum(NULL)
 
 /* hash entry */
-typedef struct ModifiedEntry
+typedef struct ModifiedElemEntry
 {
 	Graphid	key;
 	Datum	elem_datum;
 	Oid		type;
-} ModifiedEntry;
+} ModifiedElemEntry;
 
 static TupleTableSlot *ExecModifyGraph(PlanState *pstate);
 static void initGraphWRStats(ModifyGraphState *mgstate, GraphWriteOp op);
 static List *ExecInitGraphPattern(List *pattern, ModifyGraphState *mgstate);
 static List *ExecInitGraphSets(List *sets, ModifyGraphState *mgstate);
+
+/* CREATE */
 static TupleTableSlot *ExecCreateGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
 static TupleTableSlot *createPath(ModifyGraphState *mgstate, GraphPath *path,
@@ -56,23 +58,26 @@ static Datum createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 static Datum createEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
 						Graphid start, Graphid end, TupleTableSlot *slot,
 						bool inPath);
-static ResultRelInfo *getResultRelInfo(ModifyGraphState *mgstate, Oid relid);
-static Datum findVertex(TupleTableSlot *slot, GraphVertex *node, Graphid *vid);
-static Datum findEdge(TupleTableSlot *slot, GraphEdge *node, Graphid *eid);
-static AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
-static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
-static void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
-static Datum *makeDatumArray(ExprContext *econtext, int len);
+
+
+/* DELETE */
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
 static void deleteElem(ModifyGraphState *mgstate, Datum elem,
 					   Datum id, Oid type);
+
+/* SET */
 static TupleTableSlot *ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind,
 									TupleTableSlot *slot);
-static void updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
-						   Datum gid, Datum elem_datum);
-static Datum makeModifiedElem(Datum elem, Oid elemtype, Datum id,
-							  Datum prop_map);
+static void findAndReflectNewestValue(ModifyGraphState *mgstate,
+									  ExprContext *econtext,
+									  GraphSetProp *gsp, Datum gid);
+static ItemPointer updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
+								  Datum gid, Datum elem_datum);
+static Datum makeModifiedElem(ExprContext *econtext, Datum elem, Oid elemtype,
+							  Datum id, Datum prop_map, Datum tid);
+
+/* MERGE */
 static TupleTableSlot *ExecMergeGraph(ModifyGraphState *mgstate,
 									  TupleTableSlot *slot);
 static bool isMatchedMergePattern(PlanState *planstate);
@@ -98,10 +103,20 @@ static Datum getEdgeFinalPropMap(ModifyGraphState *mgstate,
 static Datum getPathFinalPropMap(ModifyGraphState *node, Datum origin);
 static void reflectModifiedProp(ModifyGraphState *mgstate);
 
+/* COMMON */
+static ResultRelInfo *getResultRelInfo(ModifyGraphState *mgstate, Oid relid);
+static Datum findVertex(TupleTableSlot *slot, GraphVertex *node, Graphid *vid);
+static Datum findEdge(TupleTableSlot *slot, GraphEdge *node, Graphid *eid);
+static AttrNumber findAttrInSlotByName(TupleTableSlot *slot, char *name);
+static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
+static void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
+static Datum *makeDatumArray(ExprContext *econtext, int len);
+
 ModifyGraphState *
 ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 {
 	ModifyGraphState *mgstate;
+	CommandId		  svCid;
 
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -121,9 +136,21 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->done = false;
 	mgstate->child_done = false;
 	mgstate->eagerness = mgplan->eagerness;
+	mgstate->modify_cid = GetCurrentCommandId(false) +
+									(mgplan->modifyno * MODIFY_CID_MAX);
+
+	/*
+	 * Pass the lower limit of the cid of the current clause
+	 * to the default cid of the previous clause.
+	 */
+	svCid = estate->es_snapshot->curcid;
+	estate->es_snapshot->curcid = mgstate->modify_cid;
+
 	mgstate->subplan = ExecInitNode(mgplan->subplan, estate, eflags);
-	Assert(mgplan->operation != GWROP_MERGE ||
-		   IsA(mgstate->subplan, NestLoopState));
+	AssertArg(mgplan->operation != GWROP_MERGE ||
+			  IsA(mgstate->subplan, NestLoopState));
+
+	estate->es_snapshot->curcid = svCid;
 
 	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate);
 
@@ -191,11 +218,12 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 		memset(&ctl, 0, sizeof(ctl));
 		ctl.keysize = sizeof(Graphid);
-		ctl.entrysize = sizeof(ModifiedEntry);
+		ctl.entrysize = sizeof(ModifiedElemEntry);
 		ctl.hcxt = CurrentMemoryContext;
 
-		mgstate->propTable = hash_create("modified object table", 128, &ctl,
-										HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+		mgstate->propTable =
+					hash_create("modified object table", 128, &ctl,
+								HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
 	}
 	else
 	{
@@ -222,11 +250,19 @@ ExecModifyGraph(PlanState *pstate)
 		for (;;)
 		{
 			TupleTableSlot *slot;
+			CommandId		svCid;
 
 			/* ExecInsertIndexTuples() uses per-tuple context. Reset it here. */
 			ResetPerTupleExprContext(estate);
 
+			/* pass LOWER_BOUND_CID to subplan */
+			svCid = estate->es_snapshot->curcid;
+			estate->es_snapshot->curcid =
+							mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
+
 			slot = ExecProcNode(mgstate->subplan);
+			estate->es_snapshot->curcid = svCid;
+
 			if (TupIsNull(slot))
 				break;
 
@@ -354,8 +390,8 @@ ExecModifyGraph(PlanState *pstate)
 void
 ExecEndModifyGraph(ModifyGraphState *mgstate)
 {
-	EState	   *estate = mgstate->ps.state;
-	ResultRelInfo *resultRelInfo;
+	EState		   *estate = mgstate->ps.state;
+	ResultRelInfo  *resultRelInfo;
 	int			i;
 
 	if (mgstate->tuplestorestate != NULL)
@@ -646,7 +682,8 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	 *
 	 * NOTE: heap_insert() returns the cid of the new tuple in the t_self.
 	 */
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple, estate->es_output_cid,
+	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
+				mgstate->modify_cid + MODIFY_CID_OUTPUT,
 				0, NULL);
 
 	/* insert index entries for the tuple */
@@ -715,7 +752,8 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple, estate->es_output_cid,
+	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
+				mgstate->modify_cid + MODIFY_CID_OUTPUT,
 				0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
@@ -826,6 +864,9 @@ setSlotValueByName(TupleTableSlot *slot, Datum value, char *name)
 {
 	AttrNumber attno;
 
+	if (slot == NULL)
+		return;
+
 	attno = findAttrInSlotByName(slot, name);
 
 	slot->tts_values[attno - 1] = value;
@@ -835,6 +876,9 @@ setSlotValueByName(TupleTableSlot *slot, Datum value, char *name)
 static void
 setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum)
 {
+	if (slot == NULL)
+		return;
+
 	AssertArg(attnum > 0 && attnum <= slot->tts_tupleDescriptor->natts);
 
 	slot->tts_values[attnum - 1] = value;
@@ -928,45 +972,16 @@ deleteElem(ModifyGraphState *mgstate, Datum elem, Datum gid, Oid type)
 	 * see ExecDelete
 	 */
 	result = heap_delete(resultRelationDesc, ctid,
-						 estate->es_output_cid,
+						 mgstate->modify_cid + MODIFY_CID_OUTPUT,
 						 estate->es_crosscheck_snapshot,
 						 true /* wait for commit */ ,
 						 &hufd);
 	switch (result)
 	{
 		case HeapTupleSelfUpdated:
-
-			/*
-			 * The target tuple was already updated or deleted by the
-			 * current command, or by a later command in the current
-			 * transaction.  The former case is possible in a join DELETE
-			 * where multiple tuples join to the same target tuple. This
-			 * is somewhat questionable, but Postgres has always allowed
-			 * it: we just ignore additional deletion attempts.
-			 *
-			 * The latter case arises if the tuple is modified by a
-			 * command in a BEFORE trigger, or perhaps by a command in a
-			 * volatile function used in the query.  In such situations we
-			 * should not ignore the deletion, but it is equally unsafe to
-			 * proceed.  We don't want to discard the original DELETE
-			 * while keeping the triggered actions based on its deletion;
-			 * and it would be no better to allow the original DELETE
-			 * while discarding updates that it triggered.  The row update
-			 * carries some information that might be important according
-			 * to business rules; so throwing an error is the only safe
-			 * course.
-			 *
-			 * If a trigger actually intends this type of interaction, it
-			 * can re-execute the DELETE and then return NULL to cancel
-			 * the outer delete.
-			 */
-			if (hufd.cmax != estate->es_output_cid)
-				ereport(ERROR,
-						(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
-						 errmsg("tuple to be updated was already modified by an operation triggered by the current command"),
-						 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
-
-			/* Else, already deleted by self; nothing to do */
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("Cypher query does not modify the record more than once.")));
 			return ;
 
 		case HeapTupleMayBeUpdated:
@@ -1030,12 +1045,12 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 	foreach(ls, mgstate->sets)
 	{
 		GraphSetProp *gsp = lfirst(ls);
-		ExprDoneCond isDone;
 		Oid		elemtype;
 		Datum	elem_datum;
 		Datum	expr_datum;
 		bool	isNull;
 		Datum	gid;
+		Datum	tid;
 		Datum	newelem;
 		MemoryContext oldmctx;
 
@@ -1049,23 +1064,39 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 		if (elemtype != VERTEXOID && elemtype != EDGEOID)
 			elog(ERROR, "expected node or relationship");
 
+		/* Do not store intermediate results in query memory. */
+		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
+
+		/* Get original graph element */
 		elem_datum = ExecEvalExpr(gsp->es_elem, econtext, &isNull);
 		if (isNull)
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("updating NULL is not allowed")));
 
+		/* Evaluate SET expression */
+		if (elemtype == VERTEXOID)
+		{
+			gid = getVertexIdDatum(elem_datum);
+			tid = getVertexTidDatum(elem_datum);
+		}
+		else
+		{
+			Assert(elemtype == EDGEOID);
+
+			gid = getEdgeIdDatum(elem_datum);
+			tid = getEdgeTidDatum(elem_datum);
+		}
+
+		findAndReflectNewestValue(mgstate, econtext, gsp, gid);
 		expr_datum = ExecEvalExpr(gsp->es_expr, econtext, &isNull);
 		if (isNull)
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("property map cannot be NULL")));
 
-		gid = (elemtype == VERTEXOID) ? getVertexIdDatum(elem_datum) :
-										getEdgeIdDatum(elem_datum);
-
-		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
-		newelem = makeModifiedElem(elem_datum, elemtype, gid, expr_datum);
+		newelem = makeModifiedElem(econtext, elem_datum, elemtype,
+								   gid, expr_datum, tid);
 		MemoryContextSwitchTo(oldmctx);
 
 		enterSetPropTable(mgstate, elemtype, gid, newelem);
@@ -1077,6 +1108,30 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 }
 
 static void
+findAndReflectNewestValue(ModifyGraphState *mgstate, ExprContext *econtext,
+						  GraphSetProp *gsp, Datum gid)
+{
+	ModifiedElemEntry *entry;
+	bool	found;
+
+	if (mgstate->propTable)
+	{
+		entry = hash_search(mgstate->propTable, (void *) &gid,
+							HASH_FIND, &found);
+		if (found)
+		{
+			/* reflect results to exprContext */
+			setSlotValueByName(econtext->ecxt_scantuple,
+							   entry->elem_datum, gsp->variable);
+			setSlotValueByName(econtext->ecxt_innertuple,
+							   entry->elem_datum, gsp->variable);
+			setSlotValueByName(econtext->ecxt_outertuple,
+							   entry->elem_datum, gsp->variable);
+		}
+	}
+}
+
+static ItemPointer
 updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 			   Datum elem_datum)
 {
@@ -1153,45 +1208,17 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	 * mode transactions.
 	 */
 	result = heap_update(resultRelationDesc, ctid, tuple,
-						 estate->es_output_cid,
+						 mgstate->modify_cid + MODIFY_CID_SET,
 						 estate->es_crosscheck_snapshot,
 						 true /* wait for commit */ ,
 						 &hufd, &lockmode);
 	switch (result)
 	{
 		case HeapTupleSelfUpdated:
-
-			/*
-			 * The target tuple was already updated or deleted by the
-			 * current command, or by a later command in the current
-			 * transaction.  The former case is possible in a join UPDATE
-			 * where multiple tuples join to the same target tuple. This
-			 * is pretty questionable, but Postgres has always allowed it:
-			 * we just execute the first update action and ignore
-			 * additional update attempts.
-			 *
-			 * The latter case arises if the tuple is modified by a
-			 * command in a BEFORE trigger, or perhaps by a command in a
-			 * volatile function used in the query.  In such situations we
-			 * should not ignore the update, but it is equally unsafe to
-			 * proceed.  We don't want to discard the original UPDATE
-			 * while keeping the triggered actions based on it; and we
-			 * have no principled way to merge this update with the
-			 * previous ones.  So throwing an error is the only safe
-			 * course.
-			 *
-			 * If a trigger actually intends this type of interaction, it
-			 * can re-execute the UPDATE (assuming it can figure out how)
-			 * and then return NULL to cancel the outer update.
-			 */
-			if (hufd.cmax != estate->es_output_cid)
-				ereport(ERROR,
-						(errcode(ERRCODE_TRIGGERED_DATA_CHANGE_VIOLATION),
-						 errmsg("tuple to be updated was already modified by an operation triggered by the current command"),
-						 errhint("Consider using an AFTER trigger instead of a BEFORE trigger to propagate changes to other rows.")));
-
-			/* Else, already updated by self; nothing to do */
-			return;
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("Cypher query does not modify the record more than once.")));
+			break;
 		case HeapTupleMayBeUpdated:
 			break;
 
@@ -1201,7 +1228,7 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 					 errmsg("could not serialize access due to concurrent update")));
 
 			/* TODO : A solution to concurrent updates is needed. */
-			return;
+			break;
 		default:
 			elog(ERROR, "unrecognized heap_update status: %u", result);
 	}
@@ -1222,18 +1249,19 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		(estate->es_graphwrstats.updateProperty)++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
+
+	return &tuple->t_self;
 }
 
 static Datum
-makeModifiedElem(Datum elem, Oid elemtype, Datum id, Datum prop_map)
+makeModifiedElem(ExprContext *econtext, Datum elem, Oid elemtype,
+				 Datum id, Datum prop_map, Datum tid)
 {
-	Datum	tid;
+	Datum result;
 
 	if (elemtype == VERTEXOID)
 	{
-		tid = getVertexTidDatum(elem);
-
-		return makeGraphVertexDatum(id, prop_map, tid);
+		result = makeGraphVertexDatum(id, prop_map, tid);
 	}
 	else
 	{
@@ -1242,10 +1270,11 @@ makeModifiedElem(Datum elem, Oid elemtype, Datum id, Datum prop_map)
 
 		start = getEdgeStartDatum(elem);
 		end = getEdgeEndDatum(elem);
-		tid = getEdgeTidDatum(elem);
 
-		return makeGraphEdgeDatum(id, start, end, prop_map, tid);
+		result = makeGraphEdgeDatum(id, start, end, prop_map, tid);
 	}
+
+	return result;
 }
 
 static TupleTableSlot *
@@ -1274,15 +1303,7 @@ ExecMergeGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		MemoryContextSwitchTo(oldmctx);
 
 		if (mgstate->sets != NIL)
-		{
-			/*
-			 * Increase CommandId to scan tuples created by createMergePath().
-			 */
-			while (mgstate->ps.state->es_output_cid >= GetCurrentCommandId(true))
-				CommandCounterIncrement();
-
 			slot = ExecSetGraph(mgstate, GSP_ON_CREATE, slot);
-		}
 	}
 
 	return (plan->last ? NULL : slot);
@@ -1450,7 +1471,8 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	/*
 	 * insert the tuple normally
 	 */
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple, estate->es_output_cid,
+	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
+				mgstate->modify_cid + MODIFY_CID_OUTPUT,
 				0, NULL);
 
 	/* insert index entries for the tuple */
@@ -1526,7 +1548,8 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple, estate->es_output_cid,
+	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
+				mgstate->modify_cid + MODIFY_CID_OUTPUT,
 				0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
@@ -1574,12 +1597,12 @@ static void
 enterSetPropTable(ModifyGraphState *mgstate, Oid type, Datum gid,
 				  Datum elem_datum)
 {
-	ModifiedEntry *entry;
+	ModifiedElemEntry *entry;
 	bool	found;
 
 	entry = hash_search(mgstate->propTable, (void *) &gid, HASH_ENTER, &found);
 	if (found)
-		pfree((void *) entry->elem_datum);
+		pfree(DatumGetPointer(entry->elem_datum));
 
 	entry->elem_datum = datumCopy(elem_datum, false, -1);
 	entry->type = type;
@@ -1590,7 +1613,7 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 {
 	Datum	gid;
 	bool	found;
-	ModifiedEntry *entry;
+	ModifiedElemEntry *entry;
 
 	if (type == VERTEXOID)
 	{
@@ -1689,6 +1712,8 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 			entry->type = EDGEOID;
 		}
 	}
+	else
+		elog(ERROR, "unexpected graph type %d", type);
 }
 
 static void
@@ -1752,7 +1777,8 @@ getElemListInPath(Datum graphpath, List **vtxlist, List **edgelist)
 static Datum
 getVertexFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 {
-	ModifiedEntry *entry;
+	ModifyGraph   *plan = (ModifyGraph *) mgstate->ps.plan;
+	ModifiedElemEntry *entry;
 
 	entry = hash_search(mgstate->propTable, (void *) &gid, HASH_FIND, NULL);
 
@@ -1760,13 +1786,17 @@ getVertexFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 	if (entry == NULL)
 		return origin;
 
-	return entry->elem_datum;
+	if (plan->operation == GWROP_DELETE)
+		return DATUM_NULL;
+	else
+		return entry->elem_datum;
 }
 
 static Datum
 getEdgeFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 {
-	ModifiedEntry *entry;
+	ModifyGraph   *plan = (ModifyGraph *) mgstate->ps.plan;
+	ModifiedElemEntry *entry;
 
 	entry = hash_search(mgstate->propTable, (void *) &gid, HASH_FIND, NULL);
 
@@ -1774,7 +1804,10 @@ getEdgeFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 	if (entry == NULL)
 		return origin;
 
-	return entry->elem_datum;
+	if (plan->operation == GWROP_DELETE)
+		return (Datum) NULL;
+	else
+		return entry->elem_datum;
 }
 
 static Datum
@@ -1869,9 +1902,10 @@ getPathFinalPropMap(ModifyGraphState *mgstate, Datum origin)
 static void
 reflectModifiedProp(ModifyGraphState *mgstate)
 {
-	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
-	HASH_SEQ_STATUS seq;
-	ModifiedEntry *entry;
+	ModifyGraph	   *plan = (ModifyGraph *) mgstate->ps.plan;
+	ExprContext	   *econtext = mgstate->ps.ps_ExprContext;
+	HASH_SEQ_STATUS	seq;
+	ModifiedElemEntry *entry;
 
 	Assert(mgstate->propTable != NULL);
 
@@ -1884,6 +1918,30 @@ reflectModifiedProp(ModifyGraphState *mgstate)
 		if (plan->operation == GWROP_DELETE)
 			deleteElem(mgstate, entry->elem_datum, gid, entry->type);
 		else
-			updateElemProp(mgstate, entry->type, gid, entry->elem_datum);
+		{
+			ItemPointer ctid;
+
+			ctid = updateElemProp(mgstate, entry->type, gid, entry->elem_datum);
+
+			if (mgstate->eagerness)
+			{
+				Datum property;
+				Datum newelem;
+
+				if (entry->type == VERTEXOID)
+					property = getVertexPropDatum(entry->elem_datum);
+				else if (entry->type == EDGEOID)
+					property = getEdgePropDatum(entry->elem_datum);
+				else
+					elog(ERROR, "unexpected graph type %d", entry->type);
+
+				newelem = makeModifiedElem(econtext, entry->elem_datum,
+										   entry->type, gid, property,
+										   PointerGetDatum(ctid));
+
+				pfree(DatumGetPointer(entry->elem_datum));
+				entry->elem_datum = newelem;
+			}
+		}
 	}
 }
