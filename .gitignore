@@ -25,7 +25,7 @@ lcov.info
 coverage/
 *.vcproj
 *.vcxproj
-win32ver.rc
+!win32ver.rc
 *.exe
 lib*dll.def
 lib*.pc
