@@ -1043,20 +1043,6 @@ deconstruct_recurse(PlannerInfo *root, Node *jtnode, bool below_outer_join,
 									postponed_qual_list);
 		}
 
-		if (j->jointype == JOIN_VLE)
-		{
-			RangeTblEntry *rte = root->simple_rte_array[j->rtindex];
-			Relids proj_varnos = pull_varnos((Node *) rte->joinaliasvars);
-			List *vars = pull_var_clause((Node *) rte->joinaliasvars,
-										 PVC_RECURSE_AGGREGATES |
-										 PVC_RECURSE_WINDOWFUNCS |
-										 PVC_INCLUDE_PLACEHOLDERS);
-
-			add_vars_to_targetlist(root, vars, proj_varnos, false);
-
-			list_free(vars);
-		}
-
 		/* Now we can add the SpecialJoinInfo to join_info_list */
 		if (sjinfo)
 		{
