@@ -883,6 +883,12 @@ transformDeleteJoinDetail(ParseState *pstate, CypherClause *clause)
 		Node	   *pexpr = lfirst(ld);
 		Oid			vartype;
 
+		if (!IsA(pexpr, ColumnRef))
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("Only direct variable reference is supported"),
+					 parser_errposition(pstate, exprLocation(expr))));
+
 		vartype = exprType(expr);
 		if (vartype == VERTEXOID)
 		{
