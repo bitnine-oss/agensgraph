@@ -58,11 +58,11 @@
 
 #define VLE_COLNAME_START		"start"
 #define VLE_COLNAME_END			"end"
-#define VLE_COLNAME_LEVEL		"level"
 #define VLE_COLNAME_ROWIDS		"rowids"
 #define VLE_COLNAME_PATH		"path"
-#define VLE_COLNAME_EREF		"eref"		/* edgeref */
+#define VLE_COLNAME_BIND		"bind"
 #define VLE_COLNAME_ROWID		"rowid"
+#define VLE_COLNAME_EREF		"eref"
 
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
@@ -1959,18 +1959,17 @@ transformMatchVLE(ParseState *pstate, CypherRel *crel, List **targetList)
 }
 
 /*
- * SELECT l.start, l.end, l.rowids, l.path
+ * SELECT l.start, l.end, l.rowids, l.path, r.bind, r.rowid, r.eref
  * FROM (
- *     SELECT l.start, l.end,
- *            ARRAY[rowid(l.tableoid, l.ctid)] AS rowids,
- *            ARRAY[l.eref] AS path
+ *     SELECT start, end,
+ *            ARRAY[rowid(tableoid, ctid)] AS rowids,
+ *            ARRAY[eref] AS path
  *     FROM edge AS l
  *     WHERE l.start = outer_vid AND l.properties @> ...)
  *   VLE JOIN
  *     LATERAL (
- *     SELECT r.end,
- *            rowid(r.tableoid, r.ctid) AS rowid,
- *            r.eref
+ *     SELECT end AS bind, rowid(tableoid, ctid) AS rowid,
+ *            edgeref(0, ctid) AS eref
  *     FROM edge AS r
  *     WHERE  r.start = l.end AND r.properties @> ...)
  *   ON TRUE
@@ -1990,6 +1989,10 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out)
 	ResTarget  *end;
 	Node	   *l_rowids;
 	ResTarget  *rowids;
+	Node       *r_bind;
+	ResTarget  *bind;
+	Node       *r_rowid;
+	ResTarget  *rowid;
 	List 	   *tlist;
 	Node       *left;
 	Node       *right;
@@ -2037,6 +2040,27 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out)
 		tlist = lappend(tlist, path);
 	}
 
+	r_bind = makeColumnRef(genQualifiedName("r", VLE_COLNAME_BIND));
+	bind = makeResTarget(r_bind, VLE_COLNAME_BIND);
+
+	tlist = lappend(tlist, bind);
+
+	r_rowid = makeColumnRef(genQualifiedName("r", VLE_COLNAME_ROWID));
+	rowid = makeResTarget(r_rowid, VLE_COLNAME_ROWID);
+
+	tlist = lappend(tlist, rowid);
+
+	if (out)
+	{
+		Node       *r_eref;
+		ResTarget  *eref;
+
+		r_eref = makeColumnRef(genQualifiedName("r", VLE_COLNAME_EREF));
+		eref = makeResTarget(r_eref, VLE_COLNAME_EREF);
+
+		tlist = lappend(tlist, eref);
+	}
+
 	left = genVLELeftChild(pstate, crel, out);
 	right = genVLERightChild(pstate, crel, out);
 
@@ -2049,6 +2073,12 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out)
 	return sel;
 }
 
+/*
+ * SELECT start, end, ARRAY[rowid(tableoid, ctid)] AS rowids,
+ *        ARRAY[eref] AS path
+ * FROM edge AS l
+ * WHERE l.start = outer_vid AND l.properties @> ...
+ */
 static Node *
 genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 {
@@ -2211,6 +2241,11 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out)
 	return (Node *) sub;
 }
 
+/*
+ * SELECT end AS bind, rowid(tableoid, ctid) AS rowid, edgeref(0, ctid) AS eref
+ * FROM edge AS r
+ * WHERE  r.start = l.end AND r.properties @> ...
+ */
 static Node *
 genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 {
@@ -2237,7 +2272,7 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 		next->fields = genQualifiedName("r", VLE_COLNAME_END);
 		next->location = -1;
 
-		end = makeSimpleResTarget(VLE_COLNAME_START, NULL);
+		end = makeSimpleResTarget(VLE_COLNAME_START, VLE_COLNAME_BIND);
 	}
 	else
 	{
@@ -2249,7 +2284,7 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 		next->fields = genQualifiedName("r", VLE_COLNAME_START);
 		next->location = -1;
 
-		end = makeSimpleResTarget(VLE_COLNAME_END, NULL);
+		end = makeSimpleResTarget(VLE_COLNAME_END, VLE_COLNAME_BIND);
 	}
 
 	from = genEdgeNode(pstate, crel, "r");
@@ -2347,10 +2382,11 @@ genEdgeNode(ParseState *pstate, CypherRel *crel, char *aliasname)
 }
 
 /*
- * SELECT start, "end", tableoid, ctid, 0 AS pathid, properties
+ * SELECT start, "end", tableoid, ctid, edgeref(0, ctid) AS eref, properties
  * FROM `get_graph_path()`.`edge_label`
  * UNION
- * SELECT "end" AS start, start AS "end", tableoid, ctid, 0 AS pathid, properties
+ * SELECT "end" AS start, start AS "end", tableoid, ctid
+ *        edgeref(0, ctid) AS eref, properties
  * FROM `get_graph_path()`.`edge_label`
  */
 static RangeSubselect *

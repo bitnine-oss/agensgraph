@@ -38,7 +38,7 @@
 #define OUTER_PATH_VARNO	3
 #define INNER_BIND_VARNO	0
 #define INNER_ROWID_VARNO	1
-#define INNER_EGID_VARNO	2
+#define INNER_EREF_VARNO	2
 
 
 static bool incrDepth(NestLoopVLEState *node);
@@ -354,10 +354,10 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	initArray(&nlvstate->rowids,
 			  innerTupleDesc->attrs[INNER_ROWID_VARNO]->atttypid,
 			  nlvstate->nls.js.ps.ps_ExprContext);
-	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 4)
+	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 7)
 	{
 		initArray(&nlvstate->path,
-				  innerTupleDesc->attrs[INNER_EGID_VARNO]->atttypid,
+				  innerTupleDesc->attrs[INNER_EREF_VARNO]->atttypid,
 				  nlvstate->nls.js.ps.ps_ExprContext);
 		nlvstate->hasPath = true;
 	}
@@ -751,7 +751,7 @@ addInnerRowidAndGid(NestLoopVLEState *node, TupleTableSlot *slot)
 	Datum gid = (Datum) 0;
 
 	if (node->hasPath)
-		gid = slot->tts_values[INNER_EGID_VARNO];
+		gid = slot->tts_values[INNER_EREF_VARNO];
 
 	addRowidAndGid(node, slot->tts_values[INNER_ROWID_VARNO], gid);
 }
