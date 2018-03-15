@@ -376,12 +376,32 @@ ExecUpScanIndexOnlyScan(IndexOnlyScanState *node)
 void
 ExecDownScanIndexOnlyScan(IndexOnlyScanState *node)
 {
+	EState	   *estate = node->ss.ps.state;
 	IndexScanVLECtx *ctx;
 
 	if (node->cur_ctx == NULL)
 	{
+		IndexScanDesc scandesc;
+
+		scandesc = node->ioss_ScanDesc;
+		if (scandesc == NULL)
+		{
+			scandesc = index_beginscan(node->ss.ss_currentRelation,
+									   node->ioss_RelationDesc,
+									   estate->es_snapshot,
+									   node->ioss_NumScanKeys,
+									   node->ioss_NumOrderByKeys);
+
+			scandesc->xs_want_itup = true;
+
+			if (node->ioss_NumRuntimeKeys == 0 || node->ioss_RuntimeKeysReady)
+				index_rescan(scandesc,
+							 node->ioss_ScanKeys, node->ioss_NumScanKeys,
+							 node->ioss_OrderByKeys, node->ioss_NumOrderByKeys);
+		}
+
 		ctx = palloc(sizeof(*ctx));
-		ctx->iss_ScanDesc = node->ioss_ScanDesc;
+		ctx->iss_ScanDesc = scandesc;
 		dlist_push_tail(&node->vle_ctxs, &ctx->list);
 		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
 	}
@@ -394,8 +414,6 @@ ExecDownScanIndexOnlyScan(IndexOnlyScanState *node)
 	}
 	else
 	{
-		EState *estate = node->ss.ps.state;
-
 		node->ioss_ScanDesc = index_beginscan(
 				node->ss.ss_currentRelation, node->ioss_RelationDesc,
 				estate->es_snapshot, node->ioss_NumScanKeys,

@@ -653,12 +653,30 @@ ExecUpScanIndexScan(IndexScanState *node)
 void
 ExecDownScanIndexScan(IndexScanState *node)
 {
+	EState	   *estate = node->ss.ps.state;
 	IndexScanVLECtx *ctx;
 
 	if (node->cur_ctx == NULL)
 	{
+		IndexScanDesc scandesc;
+
+		scandesc = node->iss_ScanDesc;
+		if (scandesc == NULL)
+		{
+			scandesc = index_beginscan(node->ss.ss_currentRelation,
+									   node->iss_RelationDesc,
+									   estate->es_snapshot,
+									   node->iss_NumScanKeys,
+									   node->iss_NumOrderByKeys);
+
+			if (node->iss_NumRuntimeKeys == 0 || node->iss_RuntimeKeysReady)
+				index_rescan(scandesc,
+							 node->iss_ScanKeys, node->iss_NumScanKeys,
+							 node->iss_OrderByKeys, node->iss_NumOrderByKeys);
+		}
+
 		ctx = palloc(sizeof(*ctx));
-		ctx->iss_ScanDesc = node->iss_ScanDesc;
+		ctx->iss_ScanDesc = scandesc;
 		dlist_push_tail(&node->vle_ctxs, &ctx->list);
 		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
 	}
@@ -671,8 +689,6 @@ ExecDownScanIndexScan(IndexScanState *node)
 	}
 	else
 	{
-		EState *estate = node->ss.ps.state;
-
 		node->iss_ScanDesc = index_beginscan(
 				node->ss.ss_currentRelation, node->iss_RelationDesc,
 				estate->es_snapshot, node->iss_NumScanKeys,
