@@ -65,6 +65,8 @@ CREATE ()-[a:lib]->(), a=();
 CREATE a=(), a=();
 CREATE (:lib);
 CREATE ()-[:repo]->();
+CREATE (:ag_vertex);
+CREATE ()-[:ag_edge]->();
 
 CREATE (=null)-[:lib =null]->();
 CREATE TABLE t1 (prop jsonb);
@@ -1013,6 +1015,8 @@ MERGE (a)-[r:e1]->(b) MERGE (a)-[r:e1]->(b);
 MERGE (a)-[:e1]->(a:v1);
 MERGE (=10);
 MERGE ()-[:e1 =10]->();
+MERGE (:ag_vertex);
+MERGE ()-[:ag_edge]->();
 
 DROP GRAPH gm CASCADE;
 

@@ -3692,18 +3692,22 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 	if (create)
 	{
 		char	   *labname = getCypherName(cnode->label);
+		int			labloc = getCypherNameLoc(cnode->label);
 		Relation 	relation;
 		Node	   *vertex;
 
-		if (labname == NULL)
+		if (labname)
 		{
-			labname = AG_VERTEX;
+			if (strcmp(labname, AG_VERTEX) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("Vertices cannot be created on the default vertex label."),
+						 parser_errposition(pstate, labloc)));
+
+			createVertexLabelIfNotExist(pstate, labname, labloc);
 		}
 		else
-		{
-			createVertexLabelIfNotExist(pstate, labname,
-										getCypherNameLoc(cnode->label));
-		}
+			labname = AG_VERTEX;
 
 		/* lock the relation of the label and return it */
 		relation = openTargetLabel(pstate, labname);
@@ -3775,6 +3779,12 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 
 	type = linitial(crel->types);
 	typname = getCypherName(type);
+
+	if (strcmp(typname, AG_EDGE) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("Edges cannot be created on the default edge label."),
+				 parser_errposition(pstate, getCypherNameLoc(type))));
 
 	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
 
@@ -4355,6 +4365,7 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 	char	   *varname = getCypherName(cnode->variable);
 	int			varloc = getCypherNameLoc(cnode->variable);
 	char	   *labname = getCypherName(cnode->label);
+	int			labloc = getCypherNameLoc(cnode->label);
 	TargetEntry *te;
 	Relation 	relation;
 	Node	   *vertex = NULL;
@@ -4372,15 +4383,18 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 				 errmsg("duplicate variable \"%s\"", varname),
 				 parser_errposition(pstate, varloc)));
 
-	if (labname == NULL)
+	if (labname)
 	{
-		labname = AG_VERTEX;
+		if (strcmp(labname, AG_VERTEX) == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("Vertices cannot be created on the default vertex label."),
+					 parser_errposition(pstate, labloc)));
+
+		createVertexLabelIfNotExist(pstate, labname, labloc);
 	}
 	else
-	{
-		createVertexLabelIfNotExist(pstate, labname,
-									getCypherNameLoc(cnode->label));
-	}
+		labname = AG_VERTEX;
 
 	relation = openTargetLabel(pstate, labname);
 
@@ -4462,6 +4476,12 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 
 	type = linitial(crel->types);
 	typname = getCypherName(type);
+
+	if (strcmp(typname, AG_EDGE) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("Edges cannot be created on the default edge label."),
+				 parser_errposition(pstate, getCypherNameLoc(type))));
 
 	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
 
