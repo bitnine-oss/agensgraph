@@ -3738,8 +3738,15 @@ transformCreateNode(ParseState *pstate, CypherNode *cnode, List **targetList)
 		}
 		else
 		{
-			createVertexLabelIfNotExist(pstate, labname,
-										getCypherNameLoc(cnode->label));
+			int			labloc = getCypherNameLoc(cnode->label);
+
+			if (strcmp(labname, AG_VERTEX) == 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("specifying default label is not allowed"),
+						 parser_errposition(pstate, labloc)));
+
+			createVertexLabelIfNotExist(pstate, labname, labloc);
 		}
 
 		/* lock the relation of the label and return it */
@@ -3812,6 +3819,12 @@ transformCreateRel(ParseState *pstate, CypherRel *crel, List **targetList)
 
 	type = linitial(crel->types);
 	typname = getCypherName(type);
+
+	if (strcmp(typname, AG_EDGE) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("cannot create edge on default label"),
+				 parser_errposition(pstate, getCypherNameLoc(type))));
 
 	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
 
@@ -4415,8 +4428,15 @@ transformMergeNode(ParseState *pstate, CypherNode *cnode, bool singlenode,
 	}
 	else
 	{
-		createVertexLabelIfNotExist(pstate, labname,
-									getCypherNameLoc(cnode->label));
+		int			labloc = getCypherNameLoc(cnode->label);
+
+		if (strcmp(labname, AG_VERTEX) == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("specifying default label is not allowed"),
+					 parser_errposition(pstate, labloc)));
+
+		createVertexLabelIfNotExist(pstate, labname, labloc);
 	}
 
 	relation = openTargetLabel(pstate, labname);
@@ -4484,6 +4504,12 @@ transformMergeRel(ParseState *pstate, CypherRel *crel, List **targetList,
 
 	type = linitial(crel->types);
 	typname = getCypherName(type);
+
+	if (strcmp(typname, AG_EDGE) == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("cannot create edge on default label"),
+				 parser_errposition(pstate, getCypherNameLoc(type))));
 
 	createEdgeLabelIfNotExist(pstate, typname, getCypherNameLoc(type));
 
