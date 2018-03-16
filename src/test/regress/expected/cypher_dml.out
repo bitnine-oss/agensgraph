@@ -125,6 +125,14 @@ CREATE ()-[:repo]->();
 ERROR:  label "repo" is vertex label
 LINE 1: CREATE ()-[:repo]->();
                     ^
+CREATE (:ag_vertex);
+ERROR:  specifying default label is not allowed
+LINE 1: CREATE (:ag_vertex);
+                 ^
+CREATE ()-[:ag_edge]->();
+ERROR:  cannot create edge on default label
+LINE 1: CREATE ()-[:ag_edge]->();
+                    ^
 CREATE (=null)-[:lib =null]->();
 CREATE TABLE t1 (prop jsonb);
 CREATE (=(SELECT prop FROM t1))-[:lib =(SELECT prop FROM t1)]->();
@@ -2667,6 +2675,14 @@ MERGE (=10);
 ERROR:  jsonb object is expected for property map
 MERGE ()-[:e1 =10]->();
 ERROR:  jsonb object is expected for property map
+MERGE (:ag_vertex);
+ERROR:  specifying default label is not allowed
+LINE 1: MERGE (:ag_vertex);
+                ^
+MERGE ()-[:ag_edge]->();
+ERROR:  cannot create edge on default label
+LINE 1: MERGE ()-[:ag_edge]->();
+                   ^
 DROP GRAPH gm CASCADE;
 NOTICE:  drop cascades to 9 other objects
 DETAIL:  drop cascades to sequence gm.ag_label_seq
