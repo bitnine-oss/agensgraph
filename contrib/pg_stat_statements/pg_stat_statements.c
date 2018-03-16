@@ -2911,6 +2911,59 @@ JumbleExpr(pgssJumbleState *jstate, Node *node)
 				JumbleExpr(jstate, (Node *) err->arg);
 			}
 			break;
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+
+				JumbleExpr(jstate, (Node *) m->keyvals);
+			}
+			break;
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+
+				JumbleExpr(jstate, (Node *) cl->elems);
+			}
+			break;
+		case T_CypherListCompExpr:
+			{
+				CypherListCompExpr *clc = (CypherListCompExpr *) node;
+
+				JumbleExpr(jstate, (Node *) clc->list);
+				JumbleExpr(jstate, (Node *) clc->cond);
+				JumbleExpr(jstate, (Node *) clc->elem);
+			}
+			break;
+		case T_CypherListCompVar:
+			{
+				CypherListCompVar *clv = (CypherListCompVar *) node;
+
+				APP_JUMB_STRING(clv->varname);
+			}
+			break;
+		case T_CypherAccessExpr:
+			{
+				CypherAccessExpr *a = (CypherAccessExpr *) node;
+
+				JumbleExpr(jstate, (Node *) a->arg);
+				foreach(temp, a->path)
+				{
+					Node	   *elem = lfirst(temp);
+
+					if (IsA(elem, CypherIndices))
+					{
+						CypherIndices *cind = (CypherIndices *) elem;
+
+						JumbleExpr(jstate, (Node *) cind->lidx);
+						JumbleExpr(jstate, (Node *) cind->uidx);
+					}
+					else
+					{
+						JumbleExpr(jstate, elem);
+					}
+				}
+			}
+			break;
 		default:
 			/* Only a warning, since we can stumble along anyway */
 			elog(WARNING, "unrecognized node type: %d",
