@@ -171,41 +171,41 @@ MATCH (n) RETURN n.name, label(n), labels(n);
 DROP GRAPH vertex_labels_complex2 CASCADE;
 NOTICE:  drop cascades to 13 other objects
 DETAIL:  drop cascades to sequence vertex_labels_complex2.ag_label_seq
-drop cascades to label ag_vertex
-drop cascades to label ag_edge
-drop cascades to label a
-drop cascades to label b
-drop cascades to label c
-drop cascades to label d
-drop cascades to label e
-drop cascades to label f
-drop cascades to label g
-drop cascades to label h
-drop cascades to label i
-drop cascades to label j
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel a
+drop cascades to vlabel b
+drop cascades to vlabel c
+drop cascades to vlabel d
+drop cascades to vlabel e
+drop cascades to vlabel f
+drop cascades to vlabel g
+drop cascades to vlabel h
+drop cascades to vlabel i
+drop cascades to vlabel j
 DROP GRAPH vertex_labels_complex1 CASCADE;
 NOTICE:  drop cascades to 15 other objects
 DETAIL:  drop cascades to sequence vertex_labels_complex1.ag_label_seq
-drop cascades to label ag_vertex
-drop cascades to label ag_edge
-drop cascades to label a
-drop cascades to label b
-drop cascades to label c
-drop cascades to label d
-drop cascades to label e
-drop cascades to label f
-drop cascades to label g
-drop cascades to label h
-drop cascades to label i
-drop cascades to label j
-drop cascades to label k
-drop cascades to label l
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel a
+drop cascades to vlabel b
+drop cascades to vlabel c
+drop cascades to vlabel d
+drop cascades to vlabel e
+drop cascades to vlabel f
+drop cascades to vlabel g
+drop cascades to vlabel h
+drop cascades to vlabel i
+drop cascades to vlabel j
+drop cascades to vlabel k
+drop cascades to vlabel l
 DROP GRAPH vertex_labels_simple CASCADE;
 NOTICE:  drop cascades to 7 other objects
 DETAIL:  drop cascades to sequence vertex_labels_simple.ag_label_seq
-drop cascades to label ag_vertex
-drop cascades to label ag_edge
-drop cascades to label a
-drop cascades to label b
-drop cascades to label c
-drop cascades to label d
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel a
+drop cascades to vlabel b
+drop cascades to vlabel c
+drop cascades to vlabel d
