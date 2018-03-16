@@ -5,33 +5,25 @@
 #
 
 MODULES = pg_hint_plan
-HINTPLANVER = 1.2.0
+HINTPLANVER = 1.3.0
 
-REGRESS = init base_plan pg_hint_plan ut-init ut-A ut-S ut-J ut-L ut-G ut-R ut-fdw ut-W ut-fini
+REGRESS = init base_plan pg_hint_plan ut-init ut-A ut-S ut-J ut-L ut-G ut-R ut-fdw ut-W ut-T ut-fini
 
 REGRESSION_EXPECTED = expected/init.out expected/base_plan.out expected/pg_hint_plan.out expected/ut-A.out expected/ut-S.out expected/ut-J.out expected/ut-L.out expected/ut-G.out
 
 REGRESS_OPTS = --encoding=UTF8
 
 EXTENSION = pg_hint_plan
-DATA = pg_hint_plan--1.2.0.sql pg_hint_plan--1.1.3--1.2.0.sql
+DATA = pg_hint_plan--1.3.0.sql
 
 EXTRA_CLEAN = sql/ut-fdw.sql expected/ut-fdw.out RPMS
 
-ifdef USE_PGXS
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
-else
-subdir = contrib/pg_hint_plan
-top_builddir = ../..
-include $(top_builddir)/src/Makefile.global
-include $(top_srcdir)/contrib/contrib-global.mk
-override CPPFLAGS += -I$(top_srcdir)/src/pl/plpgsql/src
-endif
 
-STARBALL96 = pg_hint_plan96-$(HINTPLANVER).tar.gz
-STARBALLS = $(STARBALL96)
+STARBALL10 = pg_hint_plan10-$(HINTPLANVER).tar.gz
+STARBALLS = $(STARBALL10)
 
 TARSOURCES = Makefile *.c  *.h COPYRIGHT* \
 	pg_hint_plan--*.sql \
@@ -39,17 +31,11 @@ TARSOURCES = Makefile *.c  *.h COPYRIGHT* \
 	doc/* expected/*.out sql/*.sql sql/maskout.sh \
 	data/data.csv input/*.source output/*.source SPECS/*.spec
 
-UNAME = $(shell uname)
-
-ifeq ($(UNAME), Darwin)
-	LDFLAGS+=-Wl
-else
-	LDFLAGS+=-Wl,--build-id
-endif
+LDFLAGS+=-Wl,--build-id
 
 installcheck: $(REGRESSION_EXPECTED)
 
-rpms: rpm96
+rpms: rpm10
 
 # pg_hint_plan.c includes core.c and make_join_rel.c
 pg_hint_plan.o: core.c make_join_rel.c # pg_stat_statements.c
@@ -64,7 +50,7 @@ $(STARBALLS): $(TARSOURCES)
 	tar -chzf $@ $(addprefix $(subst .tar.gz,,$@)/, $^)
 	rm $(subst .tar.gz,,$@)
 
-rpm96: $(STARBALL96)
-	MAKE_ROOT=`pwd` rpmbuild -bb SPECS/pg_hint_plan96.spec
+rpm10: $(STARBALL10)
+	MAKE_ROOT=`pwd` rpmbuild -bb SPECS/pg_hint_plan10.spec
 
 
