@@ -910,6 +910,7 @@ Parallel()
 (21 rows)
 
 -- Hints on unhintable relations are just ignored
+\t
 /*+Parallel(p1 5 hard) Parallel(s1 3 hard) IndexScan(ft1) SeqScan(cte1)
   TidScan(fs1) IndexScan(t) IndexScan(*VALUES*) */
 EXPLAIN (COSTS false) SELECT id FROM p1_c1_c1 as s1 TABLESAMPLE SYSTEM(10)
@@ -934,8 +935,6 @@ Parallel(s1 3 hard)
 duplication hint:
 error hint:
 
-                                          QUERY PLAN                                           
------------------------------------------------------------------------------------------------
  Append
    ->  Result
          ->  Append
@@ -969,8 +968,8 @@ error hint:
    ->  Function Scan on pg_stat_statements
    ->  Subquery Scan on "*SELECT* 5"
          ->  Values Scan on "*VALUES*"
-(33 rows)
 
+\t
 ALTER SYSTEM SET session_preload_libraries TO DEFAULT;
 SELECT pg_reload_conf();
  pg_reload_conf 
