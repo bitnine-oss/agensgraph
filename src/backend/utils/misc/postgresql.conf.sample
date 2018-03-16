@@ -766,6 +766,10 @@
 					# text log.
 #pg_statsinfo.textlog_permission = 0600
 					# Permission mode for textlog file.
+#pg_statsinfo.enable_alert = on
+					# Off disables all alerts for this instance.
+#pg_statsinfo.target_server = ''
+					# Connection string for the observed instance. (*4)
 
 #pg_hint_plan.enable_hint = on
 					# Force planner to use plans specified in the hint comment
