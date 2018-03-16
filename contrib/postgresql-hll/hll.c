@@ -29,6 +29,9 @@
 #include <inttypes.h>
 #include "utils/array.h"
 #include "utils/bytea.h"
+#if (PG_VERSION_NUM >= 100000)
+#include "utils/fmgrprotos.h"
+#endif
 #include "utils/int8.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -554,7 +557,7 @@ check_metadata(multiset_t const * i_omp, multiset_t const * i_imp)
         ereport(ERROR,
                 (errcode(ERRCODE_DATA_EXCEPTION),
                  errmsg("explicit threshold does not match: "
-                        "source uses %ld and dest uses %ld",
+                        "source uses " INT64_FORMAT " and dest uses " INT64_FORMAT,
                         i_imp->ms_expthresh, i_omp->ms_expthresh)));
     }
 
@@ -674,9 +677,9 @@ multiset_tostring(multiset_t const * i_msp)
     // with the automatically determined value.
     //
     if (expthresh == -1)
-        snprintf(expbuf, sizeof(expbuf), "%ld(%ld)", expthresh, expval);
+        snprintf(expbuf, sizeof(expbuf), INT64_FORMAT "(%ld)", expthresh, expval);
     else
-        snprintf(expbuf, sizeof(expbuf), "%ld", expthresh);
+        snprintf(expbuf, sizeof(expbuf), INT64_FORMAT, expthresh);
 
     // Allocate an initial return buffer.
     len = 1024;
@@ -1771,7 +1774,7 @@ hll_typmod_out(PG_FUNCTION_ARGS)
     char * typmodstr;
 
     memset(buffer, '\0', sizeof(buffer));
-    snprintf(buffer, sizeof(buffer), "(%d,%d,%ld,%d)",
+    snprintf(buffer, sizeof(buffer), "(%d,%d," INT64_FORMAT ",%d)",
              log2m, regwidth, expthresh, sparseon);
 
     len = strlen(buffer) + 1;
@@ -1967,7 +1970,7 @@ multiset_card(multiset_t const * i_msp)
             else if (estimator <= large_estimator_cutoff)
                 retval = estimator;
             else
-                return (-1 * two_to_l) * log(1.0 - (estimator/two_to_l));
+                return (-1 * (int64_t)two_to_l) * log(1.0 - (estimator/two_to_l));
         }
         break;
 

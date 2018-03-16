@@ -361,7 +361,7 @@ Compatibility
 
 This module has been tested on:
 
-* **Postgres 9.0, 9.1, 9.2, 9.3**
+* **Postgres 9.0, 9.1, 9.2, 9.3, 9.4**
 
 If you end up needing to change something to get this running on another system, send us the diff and we'll try to work it in!
 

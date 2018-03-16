@@ -15,11 +15,13 @@
 MODULE_big = hll
 OBJS =		\
 			hll.o \
-			MurmurHash3.o
+			MurmurHash3.o \
+			$(NULL)
 
 EXTENSION = hll
 DATA =		\
-			hll--2.10.0.sql
+			hll--2.10.sql \
+			$(NULL)
 
 EXTRA_CLEAN += -r $(RPM_BUILD_ROOT)
 
@@ -34,13 +36,10 @@ endif
 
 SHLIB_LINK	+= -lstdc++
 
-ifdef USE_PGXS
+ifndef PG_CONFIG
 PG_CONFIG = pg_config
+endif
+
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
-else
-subdir = contrib/postgresql-hll
-top_builddir = ../..
-include $(top_builddir)/src/Makefile.global
-include $(top_srcdir)/contrib/contrib-global.mk
-endif
+
