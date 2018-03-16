@@ -319,6 +319,9 @@ add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
 	extra.mergeclause_list = NIL;
 	extra.sjinfo = sjinfo;
 	extra.param_source_rels = NULL;
+	extra.inner_unique = innerrel_is_unique(root, outerrel->relids, innerrel,
+											JOIN_CYPHER_MERGE, restrictlist,
+											false);
 
 	/*
 	 * Decide whether it's sensible to generate parameterized paths for this
@@ -392,6 +395,7 @@ add_paths_to_joinrel_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
 	extra.mergeclause_list = NIL;
 	extra.sjinfo = sjinfo;
 	extra.param_source_rels = NULL;
+	extra.inner_unique = false;
 
 	match_unsorted_outer_for_vle(root, joinrel, outerrel, innerrel, &extra);
 }
