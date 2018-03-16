@@ -12,7 +12,7 @@ STATSINFO Report (host: statsinfo, port: 5432)
 Database System ID   : 5807946214009601530
 Host                 : statsinfo
 Port                 : 5432
-PostgreSQL Version   : 8.4.0
+PostgreSQL Version   : 9.2.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
 Snapshot Duration    : 00:03:00
@@ -30,7 +30,7 @@ STATSINFO Report (host: statsinfo, port: 5433)
 Database System ID   : 5807946214009601531
 Host                 : statsinfo
 Port                 : 5433
-PostgreSQL Version   : 9.0.0
+PostgreSQL Version   : 9.3.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
 Snapshot Duration    : 00:03:00
@@ -48,7 +48,7 @@ STATSINFO Report (host: statsinfo, port: 5434)
 Database System ID   : 5807946214009601532
 Host                 : statsinfo
 Port                 : 5434
-PostgreSQL Version   : 9.1.0
+PostgreSQL Version   : 9.4.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
 Snapshot Duration    : 00:03:00
@@ -66,7 +66,7 @@ STATSINFO Report (host: statsinfo, port: 5435)
 Database System ID   : 5807946214009601533
 Host                 : statsinfo
 Port                 : 5435
-PostgreSQL Version   : 9.2.0
+PostgreSQL Version   : 9.5.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
 Snapshot Duration    : 00:03:00
@@ -84,25 +84,7 @@ STATSINFO Report (host: statsinfo, port: 5436)
 Database System ID   : 5807946214009601534
 Host                 : statsinfo
 Port                 : 5436
-PostgreSQL Version   : 9.3.0
-Snapshot Begin       : 2012-11-01 00:00:00
-Snapshot End         : 2012-11-01 00:03:00
-Snapshot Duration    : 00:03:00
-Total Database Size  : 26 MiB
-Total Commits        : 66970
-Total Rollbacks      : 0
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* Summary */
-----------------------------------------
-Database System ID   : 5807946214009601535
-Host                 : statsinfo
-Port                 : 5437
-PostgreSQL Version   : 9.4.0
+PostgreSQL Version   : 9.6.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
 Snapshot Duration    : 00:03:00
@@ -129,11 +111,11 @@ Cache Hit Ratio            : 100.0 %
 Block Read/s (disk+cache)  : 10394.122
 Block Read/s (disk)        : 3.333
 Rows Read/s                : 5709.183
-Temporary Files            : (N/A)
-Temporary Bytes            : (N/A)
-Deadlocks                  : (N/A)
-Block Read Time            : (N/A)
-Block Write Time           : (N/A)
+Temporary Files            : 1
+Temporary Bytes            : 8 MiB
+Deadlocks                  : 1
+Block Read Time            : 3337.718 ms
+Block Write Time           : 0.000 ms
 
 /** Transaction Statistics **/
 -----------------------------------
@@ -156,6 +138,7 @@ DateTime          Database                    Size
 -----------------------------------
 Database          Conflict Tablespace  Conflict Lock  Conflict Snapshot  Conflict Bufferpin  Conflict Deadlock
 -----------------------------------------------------------------------------------------------------------------
+postgres                            1              2                  3                   4                  5
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5433)
@@ -173,11 +156,11 @@ Cache Hit Ratio            : 100.0 %
 Block Read/s (disk+cache)  : 10394.122
 Block Read/s (disk)        : 3.333
 Rows Read/s                : 5709.183
-Temporary Files            : (N/A)
-Temporary Bytes            : (N/A)
-Deadlocks                  : (N/A)
-Block Read Time            : (N/A)
-Block Write Time           : (N/A)
+Temporary Files            : 1
+Temporary Bytes            : 8 MiB
+Deadlocks                  : 1
+Block Read Time            : 3337.718 ms
+Block Write Time           : 0.000 ms
 
 /** Transaction Statistics **/
 -----------------------------------
@@ -200,6 +183,7 @@ DateTime          Database                    Size
 -----------------------------------
 Database          Conflict Tablespace  Conflict Lock  Conflict Snapshot  Conflict Bufferpin  Conflict Deadlock
 -----------------------------------------------------------------------------------------------------------------
+postgres                            1              2                  3                   4                  5
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5434)
@@ -217,11 +201,11 @@ Cache Hit Ratio            : 100.0 %
 Block Read/s (disk+cache)  : 10394.122
 Block Read/s (disk)        : 3.333
 Rows Read/s                : 5709.183
-Temporary Files            : (N/A)
-Temporary Bytes            : (N/A)
-Deadlocks                  : (N/A)
-Block Read Time            : (N/A)
-Block Write Time           : (N/A)
+Temporary Files            : 1
+Temporary Bytes            : 8 MiB
+Deadlocks                  : 1
+Block Read Time            : 3337.718 ms
+Block Write Time           : 0.000 ms
 
 /** Transaction Statistics **/
 -----------------------------------
@@ -293,51 +277,6 @@ postgres                            1              2                  3         
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5436)
----------------------------------------------
-
-----------------------------------------
-/* Database Statistics */
-----------------------------------------
-Database Name              : postgres
-Database Size              : 26 MiB
-Database Size Increase     : 3 MiB
-Commit/s                   : 372.056
-Rollback/s                 : 0.000
-Cache Hit Ratio            : 100.0 %
-Block Read/s (disk+cache)  : 10394.122
-Block Read/s (disk)        : 3.333
-Rows Read/s                : 5709.183
-Temporary Files            : 1
-Temporary Bytes            : 8 MiB
-Deadlocks                  : 1
-Block Read Time            : 3337.718 ms
-Block Write Time           : 0.000 ms
-
-/** Transaction Statistics **/
------------------------------------
-DateTime          Database              Commit/s    Rollback/s
------------------------------------------------------------------
-2012-11-01 00:01  postgres               371.517         0.000
-2012-11-01 00:02  postgres               373.100         0.000
-2012-11-01 00:03  postgres               371.550         0.000
-
-/** Database Size **/
------------------------------------
-DateTime          Database                    Size
------------------------------------------------------
-2012-11-01 00:00  postgres              22.435 MiB
-2012-11-01 00:01  postgres              23.646 MiB
-2012-11-01 00:02  postgres              24.841 MiB
-2012-11-01 00:03  postgres              26.099 MiB
-
-/** Recovery Conflicts **/
------------------------------------
-Database          Conflict Tablespace  Conflict Lock  Conflict Snapshot  Conflict Bufferpin  Conflict Deadlock
------------------------------------------------------------------------------------------------------------------
-postgres                            1              2                  3                   4                  5
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
 ---------------------------------------------
 
 ----------------------------------------
@@ -416,6 +355,15 @@ DateTime                  Idle  Idle In Xact       Waiting       Running
 2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
 Average                  3.0 %        13.9 %        55.3 %        27.8 %
 
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 20.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 30.000 buffers/s
+Written Buffers By Backend (Average)  : 200.000 buffers/s
+Written Buffers By Backend (Maximum)  : 300.000 buffers/s
+Backend Executed fsync (Average)      : 2.000 sync/s
+Backend Executed fsync (Maximum)      : 3.000 sync/s
+
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5433)
 ---------------------------------------------
@@ -448,104 +396,17 @@ DateTime                  Idle  Idle In Xact       Waiting       Running
 2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
 Average                  3.0 %        13.9 %        55.3 %        27.8 %
 
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 20.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 30.000 buffers/s
+Written Buffers By Backend (Average)  : 200.000 buffers/s
+Written Buffers By Backend (Maximum)  : 300.000 buffers/s
+Backend Executed fsync (Average)      : 2.000 sync/s
+Backend Executed fsync (Maximum)      : 3.000 sync/s
+
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5434)
----------------------------------------------
-
-----------------------------------------
-/* Instance Activity */
-----------------------------------------
-
-/** WAL Statistics **/
------------------------------------
-WAL Write Total    : 52.399 MiB
-WAL Write Speed    : 0.291 MiB/s
-WAL Archive Total  : (N/A)
-WAL Archive Failed : (N/A)
-
------------------------------------
-DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
--------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:01  0/3B7C140          000000010000000000000003      12.504 MiB       0.208 MiB  (N/A)            
-2012-11-01 00:02  0/5635000          000000010000000000000005      26.722 MiB       0.445 MiB  (N/A)            
-2012-11-01 00:03  0/63614A8          000000010000000000000006      13.173 MiB       0.220 MiB  (N/A)            
-
-/** Instance Processes **/
------------------------------------
-DateTime                  Idle  Idle In Xact       Waiting       Running
----------------------------------------------------------------------------
-2012-11-01 00:00         3.6 %         3.6 %        60.7 %        32.1 %
-2012-11-01 00:01         6.3 %        20.8 %        52.1 %        20.8 %
-2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
-2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
-Average                  3.0 %        13.9 %        55.3 %        27.8 %
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5435)
----------------------------------------------
-
-----------------------------------------
-/* Instance Activity */
-----------------------------------------
-
-/** WAL Statistics **/
------------------------------------
-WAL Write Total    : 52.399 MiB
-WAL Write Speed    : 0.291 MiB/s
-WAL Archive Total  : (N/A)
-WAL Archive Failed : (N/A)
-
------------------------------------
-DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
--------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:01  0/3B7C140          000000010000000000000003      12.504 MiB       0.208 MiB  (N/A)            
-2012-11-01 00:02  0/5635000          000000010000000000000005      26.722 MiB       0.445 MiB  (N/A)            
-2012-11-01 00:03  0/63614A8          000000010000000000000006      13.173 MiB       0.220 MiB  (N/A)            
-
-/** Instance Processes **/
------------------------------------
-DateTime                  Idle  Idle In Xact       Waiting       Running
----------------------------------------------------------------------------
-2012-11-01 00:00         3.6 %         3.6 %        60.7 %        32.1 %
-2012-11-01 00:01         6.3 %        20.8 %        52.1 %        20.8 %
-2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
-2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
-Average                  3.0 %        13.9 %        55.3 %        27.8 %
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5436)
----------------------------------------------
-
-----------------------------------------
-/* Instance Activity */
-----------------------------------------
-
-/** WAL Statistics **/
------------------------------------
-WAL Write Total    : 52.399 MiB
-WAL Write Speed    : 0.291 MiB/s
-WAL Archive Total  : (N/A)
-WAL Archive Failed : (N/A)
-
------------------------------------
-DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
--------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:01  0/3B7C140          000000010000000000000003      12.504 MiB       0.208 MiB  (N/A)            
-2012-11-01 00:02  0/5635000          000000010000000000000005      26.722 MiB       0.445 MiB  (N/A)            
-2012-11-01 00:03  0/63614A8          000000010000000000000006      13.173 MiB       0.220 MiB  (N/A)            
-
-/** Instance Processes **/
------------------------------------
-DateTime                  Idle  Idle In Xact       Waiting       Running
----------------------------------------------------------------------------
-2012-11-01 00:00         3.6 %         3.6 %        60.7 %        32.1 %
-2012-11-01 00:01         6.3 %        20.8 %        52.1 %        20.8 %
-2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
-2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
-Average                  3.0 %        13.9 %        55.3 %        27.8 %
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
 ---------------------------------------------
 
 ----------------------------------------
@@ -575,6 +436,97 @@ DateTime                  Idle  Idle In Xact       Waiting       Running
 2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
 2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
 Average                  3.0 %        13.9 %        55.3 %        27.8 %
+
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 20.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 30.000 buffers/s
+Written Buffers By Backend (Average)  : 200.000 buffers/s
+Written Buffers By Backend (Maximum)  : 300.000 buffers/s
+Backend Executed fsync (Average)      : 2.000 sync/s
+Backend Executed fsync (Maximum)      : 3.000 sync/s
+
+---------------------------------------------
+STATSINFO Report (host: statsinfo, port: 5435)
+---------------------------------------------
+
+----------------------------------------
+/* Instance Activity */
+----------------------------------------
+
+/** WAL Statistics **/
+-----------------------------------
+WAL Write Total    : 52.399 MiB
+WAL Write Speed    : 0.291 MiB/s
+WAL Archive Total  : 4 file(s)
+WAL Archive Failed : 1 file(s)
+
+-----------------------------------
+DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
+-------------------------------------------------------------------------------------------------------------------
+2012-11-01 00:01  0/3B7C140          000000010000000000000003      12.504 MiB       0.208 MiB  000000010000000000000002
+2012-11-01 00:02  0/5635000          000000010000000000000005      26.722 MiB       0.445 MiB  000000010000000000000004
+2012-11-01 00:03  0/63614A8          000000010000000000000006      13.173 MiB       0.220 MiB  000000010000000000000005
+
+/** Instance Processes **/
+-----------------------------------
+DateTime                  Idle  Idle In Xact       Waiting       Running
+---------------------------------------------------------------------------
+2012-11-01 00:00         3.6 %         3.6 %        60.7 %        32.1 %
+2012-11-01 00:01         6.3 %        20.8 %        52.1 %        20.8 %
+2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
+2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
+Average                  3.0 %        13.9 %        55.3 %        27.8 %
+
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 20.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 30.000 buffers/s
+Written Buffers By Backend (Average)  : 200.000 buffers/s
+Written Buffers By Backend (Maximum)  : 300.000 buffers/s
+Backend Executed fsync (Average)      : 2.000 sync/s
+Backend Executed fsync (Maximum)      : 3.000 sync/s
+
+---------------------------------------------
+STATSINFO Report (host: statsinfo, port: 5436)
+---------------------------------------------
+
+----------------------------------------
+/* Instance Activity */
+----------------------------------------
+
+/** WAL Statistics **/
+-----------------------------------
+WAL Write Total    : 52.399 MiB
+WAL Write Speed    : 0.291 MiB/s
+WAL Archive Total  : 4 file(s)
+WAL Archive Failed : 1 file(s)
+
+-----------------------------------
+DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
+-------------------------------------------------------------------------------------------------------------------
+2012-11-01 00:01  0/3B7C140          000000010000000000000003      12.504 MiB       0.208 MiB  000000010000000000000002
+2012-11-01 00:02  0/5635000          000000010000000000000005      26.722 MiB       0.445 MiB  000000010000000000000004
+2012-11-01 00:03  0/63614A8          000000010000000000000006      13.173 MiB       0.220 MiB  000000010000000000000005
+
+/** Instance Processes **/
+-----------------------------------
+DateTime                  Idle  Idle In Xact       Waiting       Running
+---------------------------------------------------------------------------
+2012-11-01 00:00         3.6 %         3.6 %        60.7 %        32.1 %
+2012-11-01 00:01         6.3 %        20.8 %        52.1 %        20.8 %
+2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
+2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
+Average                  3.0 %        13.9 %        55.3 %        27.8 %
+
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 20.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 30.000 buffers/s
+Written Buffers By Backend (Average)  : 200.000 buffers/s
+Written Buffers By Backend (Maximum)  : 300.000 buffers/s
+Backend Executed fsync (Average)      : 2.000 sync/s
+Backend Executed fsync (Maximum)      : 3.000 sync/s
 
 exit: 0
 
@@ -774,45 +726,6 @@ DateTime               Memfree       Buffers        Cached          Swap        
 2012-11-01 00:02    145.65 MiB     25.67 MiB    643.79 MiB     65.86 MiB      5.20 MiB
 2012-11-01 00:03    139.82 MiB     25.82 MiB    646.54 MiB     65.86 MiB      0.58 MiB
 
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* OS Resource Usage */
-----------------------------------------
-
-/** CPU Usage + Load Average **/
------------------------------------
-DateTime              User    System      Idle    IOwait  Loadavg1  Loadavg5  Loadavg15
-------------------------------------------------------------------------------------------
-2012-11-01 00:01    37.7 %    14.7 %     0.1 %    47.5 %     0.940     0.390      0.690
-2012-11-01 00:02    30.9 %    12.1 %     0.0 %    57.0 %     1.320     0.600      0.740
-2012-11-01 00:03    32.4 %    12.3 %     0.1 %    55.2 %     1.200     0.700      0.770
-Average             33.7 %    13.0 %     0.1 %    53.2 %     1.153     0.563      0.733
-
-/** IO Usage **/
------------------------------------
-Device        Including TableSpaces       Total Read   Total Write    Total Read Time   Total Write Time  Current IO Queue    Total IO Time
-----------------------------------------------------------------------------------------------------------------------------------------------
-dm-2          {pg_default,pg_global}           0 MiB       665 MiB           11317 ms         6701892 ms            11.667       6713205 ms
-
------------------------------------
-DateTime          Device                   Read Size/s (Peak)            Write Size/s (Peak)   Read Time Rate  Write Time Rate
----------------------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:01  dm-2               2.47 KiB (   200.00 KiB)    3536.13 KiB (  4000.00 KiB)           17.1 %         1539.3 %
-2012-11-01 00:02  dm-2               0.00 KiB (     0.00 KiB)    4215.33 KiB (  5000.00 KiB)            0.0 %         7177.7 %
-2012-11-01 00:03  dm-2               0.13 KiB (   100.00 KiB)    3599.47 KiB (  3000.00 KiB)            1.7 %         2452.9 %
-
-/** Memory Usage **/
------------------------------------
-DateTime               Memfree       Buffers        Cached          Swap         Dirty
------------------------------------------------------------------------------------------
-2012-11-01 00:00    160.15 MiB     25.37 MiB    636.21 MiB     65.86 MiB      0.18 MiB
-2012-11-01 00:01    150.07 MiB     25.53 MiB    640.96 MiB     65.86 MiB      0.03 MiB
-2012-11-01 00:02    145.65 MiB     25.67 MiB    643.79 MiB     65.86 MiB      5.20 MiB
-2012-11-01 00:03    139.82 MiB     25.82 MiB    646.54 MiB     65.86 MiB      0.58 MiB
-
 exit: 0
 
 /**--- REPORTID: DiskUsage ---**/
@@ -936,30 +849,6 @@ postgres          public            pgbench_accounts        13 MiB            30
 postgres          public            pgbench_branches         0 MiB             2             0             0
 postgres          public            pgbench_tellers          0 MiB             0             0             0
 
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* Disk Usage */
-----------------------------------------
-
-/** Disk Usage per Tablespace **/
------------------------------------
-Tablespace        Location                          Device                Used         Avail      Remain
------------------------------------------------------------------------------------------------------------
-pg_default        /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
-pg_global         /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
-
-/** Disk Usage per Table **/
------------------------------------
-Database          Schema            Table                     Size   Table Reads   Index Reads   Toast Reads
----------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_history          4 MiB           429             0             0
-postgres          public            pgbench_accounts        13 MiB            30             0             0
-postgres          public            pgbench_branches         0 MiB             2             0             0
-postgres          public            pgbench_tellers          0 MiB             0             0             0
-
 exit: 0
 
 /**--- REPORTID: LongTransactions ---**/
@@ -970,7 +859,7 @@ STATSINFO Report (host: statsinfo, port: 5432)
 ----------------------------------------
 /* Long Transactions */
 ----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
+PID       Client Address             Xact Start    Duration  Query                           
 -----------------------------------------------------------------------------------------
 10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
 10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
@@ -984,7 +873,7 @@ STATSINFO Report (host: statsinfo, port: 5433)
 ----------------------------------------
 /* Long Transactions */
 ----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
+PID       Client Address             Xact Start    Duration  Query                           
 -----------------------------------------------------------------------------------------
 10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
 10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
@@ -998,7 +887,7 @@ STATSINFO Report (host: statsinfo, port: 5434)
 ----------------------------------------
 /* Long Transactions */
 ----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
+PID       Client Address             Xact Start    Duration  Query                           
 -----------------------------------------------------------------------------------------
 10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
 10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
@@ -1012,7 +901,7 @@ STATSINFO Report (host: statsinfo, port: 5435)
 ----------------------------------------
 /* Long Transactions */
 ----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
+PID       Client Address             Xact Start    Duration  Query                           
 -----------------------------------------------------------------------------------------
 10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
 10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
@@ -1026,21 +915,7 @@ STATSINFO Report (host: statsinfo, port: 5436)
 ----------------------------------------
 /* Long Transactions */
 ----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
------------------------------------------------------------------------------------------
-10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
-10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
-10591     127.0.0.1         2012-11-01 00:00:30     2.000 s  SELECT 2                        
-10590     127.0.0.1         2012-11-01 00:00:00     1.000 s  SELECT 1                        
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* Long Transactions */
-----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
+PID       Client Address             Xact Start    Duration  Query                           
 -----------------------------------------------------------------------------------------
 10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
 10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
@@ -1235,43 +1110,6 @@ Database          Schema            Table             Column             Correla
 postgres          public            pgbench_tellers   tid                     -0.357
 postgres          public            pgbench_accounts  aid                      0.951
 
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* Notable Tables */
-----------------------------------------
-
-/** Heavily Updated Tables **/
------------------------------------
-Database          Schema            Table              INSERT Rows   UPDATE Rows   DELETE Rows    Total Rows  HOT Ratio(%)
------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_branches             0         66535             0         66535         100.0
-postgres          public            pgbench_tellers              0         66534             0         66534         100.0
-postgres          public            pgbench_history          66533             0             0         66533           0.0
-postgres          public            pgbench_accounts             0         66533             0         66533          97.8
-
-/** Heavily Accessed Tables **/
------------------------------------
-Database          Schema            Table                Seq Scans     Read Rows  Read Rows/Scan  Cache Hit Ratio(%)
------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_tellers          81067        665330           8.207               100.0
-postgres          public            pgbench_branches        109143         66533           0.610               100.0
-
-/** Low Density Tables **/
------------------------------------
-Database          Schema            Table              Live Tuples   Logical Pages  Physical Pages  Logical Page Ratio(%)
-----------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts        100002            1640            1700                   96.5
-
-/** Fragmented Tables **/
------------------------------------
-Database          Schema            Table             Column             Correlation
----------------------------------------------------------------------------------------
-postgres          public            pgbench_tellers   tid                     -0.357
-postgres          public            pgbench_accounts  aid                      0.951
-
 exit: 0
 
 /**--- REPORTID: CheckpointActivity ---**/
@@ -1350,21 +1188,6 @@ Written Buffers Maximum  : 2404.000
 Write Duration Average   : 47.445 sec
 Write Duration Maximum   : 49.193 sec
 
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* Checkpoint Activity */
-----------------------------------------
-Total Checkpoints        : 2
-Checkpoints By Time      : 1
-Checkpoints By XLOG      : 1
-Written Buffers Average  : 2343.500
-Written Buffers Maximum  : 2404.000
-Write Duration Average   : 47.445 sec
-Write Duration Maximum   : 49.193 sec
-
 exit: 0
 
 /**--- REPORTID: AutovacuumActivity ---**/
@@ -1383,6 +1206,13 @@ Table                                Count  Removed Rows   Remain Rows   Remain 
 postgres.public.pgbench_tellers          2       207.000        19.500         (N/A)         0.500       0.000 s        0.000 s        0
 postgres.public.pgbench_branches         2         2.000         0.500         (N/A)         1.000       0.000 s        0.000 s        2
 postgres.public.pgbench_accounts         0         0.000         0.000         (N/A)         0.000       0.000 s        0.000 s        1
+
+/** Vacuum I/O Statistics (Average) **/
+-----------------------------------
+Table                               Page Hit   Page Miss  Page Dirty      Read Rate     Write Rate
+-----------------------------------------------------------------------------------------------------
+postgres.public.pgbench_branches      57.500       0.000       1.000    0.000 MiB/s   15.259 MiB/s
+postgres.public.pgbench_tellers       35.500       0.000       0.500    0.000 MiB/s    8.798 MiB/s
 
 /** Analyze Statistics **/
 -----------------------------------
@@ -1409,6 +1239,13 @@ postgres.public.pgbench_tellers          2       207.000        19.500         (
 postgres.public.pgbench_branches         2         2.000         0.500         (N/A)         1.000       0.000 s        0.000 s        2
 postgres.public.pgbench_accounts         0         0.000         0.000         (N/A)         0.000       0.000 s        0.000 s        1
 
+/** Vacuum I/O Statistics (Average) **/
+-----------------------------------
+Table                               Page Hit   Page Miss  Page Dirty      Read Rate     Write Rate
+-----------------------------------------------------------------------------------------------------
+postgres.public.pgbench_branches      57.500       0.000       1.000    0.000 MiB/s   15.259 MiB/s
+postgres.public.pgbench_tellers       35.500       0.000       0.500    0.000 MiB/s    8.798 MiB/s
+
 /** Analyze Statistics **/
 -----------------------------------
 Table                                Count  Duration(Total)    Duration(Avg)    Duration(Max)  Last Analyze Time    Cancels  Mod Rows(Max)
@@ -1430,18 +1267,25 @@ STATSINFO Report (host: statsinfo, port: 5434)
 -----------------------------------
 Table                                Count  Removed Rows   Remain Rows   Remain Dead   Index Scans      Duration  Duration(Max)  Cancels
 -------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_tellers          2       207.000        19.500         (N/A)         0.500       0.000 s        0.000 s        0
-postgres.public.pgbench_branches         2         2.000         0.500         (N/A)         1.000       0.000 s        0.000 s        2
-postgres.public.pgbench_accounts         0         0.000         0.000         (N/A)         0.000       0.000 s        0.000 s        1
+postgres.public.pgbench_tellers          2       207.000        19.500        30.000         0.500       0.000 s        0.000 s        0
+postgres.public.pgbench_branches         2         2.000         0.500        20.000         1.000       0.000 s        0.000 s        2
+postgres.public.pgbench_accounts         0         0.000         0.000         0.000         0.000       0.000 s        0.000 s        1
+
+/** Vacuum I/O Statistics (Average) **/
+-----------------------------------
+Table                               Page Hit   Page Miss  Page Dirty      Read Rate     Write Rate
+-----------------------------------------------------------------------------------------------------
+postgres.public.pgbench_branches      57.500       0.000       1.000    0.000 MiB/s   15.259 MiB/s
+postgres.public.pgbench_tellers       35.500       0.000       0.500    0.000 MiB/s    8.798 MiB/s
 
 /** Analyze Statistics **/
 -----------------------------------
 Table                                Count  Duration(Total)    Duration(Avg)    Duration(Max)  Last Analyze Time    Cancels  Mod Rows(Max)
 ---------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          (N/A)
-postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          (N/A)
-postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          (N/A)
-postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          (N/A)
+postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          40000
+postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          10000
+postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          20000
+postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          30000
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5435)
@@ -1455,9 +1299,9 @@ STATSINFO Report (host: statsinfo, port: 5435)
 -----------------------------------
 Table                                Count  Removed Rows   Remain Rows   Remain Dead   Index Scans      Duration  Duration(Max)  Cancels
 -------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_tellers          2       207.000        19.500         (N/A)         0.500       0.000 s        0.000 s        0
-postgres.public.pgbench_branches         2         2.000         0.500         (N/A)         1.000       0.000 s        0.000 s        2
-postgres.public.pgbench_accounts         0         0.000         0.000         (N/A)         0.000       0.000 s        0.000 s        1
+postgres.public.pgbench_tellers          2       207.000        19.500        30.000         0.500       0.000 s        0.000 s        0
+postgres.public.pgbench_branches         2         2.000         0.500        20.000         1.000       0.000 s        0.000 s        2
+postgres.public.pgbench_accounts         0         0.000         0.000         0.000         0.000       0.000 s        0.000 s        1
 
 /** Vacuum I/O Statistics (Average) **/
 -----------------------------------
@@ -1470,45 +1314,13 @@ postgres.public.pgbench_tellers       35.500       0.000       0.500    0.000 Mi
 -----------------------------------
 Table                                Count  Duration(Total)    Duration(Avg)    Duration(Max)  Last Analyze Time    Cancels  Mod Rows(Max)
 ---------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          (N/A)
-postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          (N/A)
-postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          (N/A)
-postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          (N/A)
+postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          40000
+postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          10000
+postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          20000
+postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          30000
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5436)
----------------------------------------------
-
-----------------------------------------
-/* Autovacuum Activity */
-----------------------------------------
-
-/** Vacuum Basic Statistics (Average) **/
------------------------------------
-Table                                Count  Removed Rows   Remain Rows   Remain Dead   Index Scans      Duration  Duration(Max)  Cancels
--------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_tellers          2       207.000        19.500         (N/A)         0.500       0.000 s        0.000 s        0
-postgres.public.pgbench_branches         2         2.000         0.500         (N/A)         1.000       0.000 s        0.000 s        2
-postgres.public.pgbench_accounts         0         0.000         0.000         (N/A)         0.000       0.000 s        0.000 s        1
-
-/** Vacuum I/O Statistics (Average) **/
------------------------------------
-Table                               Page Hit   Page Miss  Page Dirty      Read Rate     Write Rate
------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_branches      57.500       0.000       1.000    0.000 MiB/s   15.259 MiB/s
-postgres.public.pgbench_tellers       35.500       0.000       0.500    0.000 MiB/s    8.798 MiB/s
-
-/** Analyze Statistics **/
------------------------------------
-Table                                Count  Duration(Total)    Duration(Avg)    Duration(Max)  Last Analyze Time    Cancels  Mod Rows(Max)
----------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          (N/A)
-postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          (N/A)
-postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          (N/A)
-postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          (N/A)
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
 ---------------------------------------------
 
 ----------------------------------------
@@ -1560,9 +1372,9 @@ OID       Database          Schema            Function             Calls     Tot
 -----------------------------------
 User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time  Query
 ------------------------------------------------------------------------------------------------------------------------
-postgres          postgres             66463     331.375 sec      0.005 sec            (N/A)             (N/A)  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
-postgres          postgres             66463      85.370 sec      0.001 sec            (N/A)             (N/A)  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
-postgres          postgres             66463       5.554 sec      0.000 sec            (N/A)             (N/A)  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
+postgres          postgres             66463     331.375 sec      0.005 sec         0.000 ms          0.000 ms  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
+postgres          postgres             66463      85.370 sec      0.001 sec         0.000 ms          0.000 ms  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
+postgres          postgres             66463       5.554 sec      0.000 sec         0.026 ms          0.000 ms  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
 
 /** Plans **/
 -----------------------------------
@@ -1590,9 +1402,9 @@ OID       Database          Schema            Function             Calls     Tot
 -----------------------------------
 User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time  Query
 ------------------------------------------------------------------------------------------------------------------------
-postgres          postgres             66463     331.375 sec      0.005 sec            (N/A)             (N/A)  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
-postgres          postgres             66463      85.370 sec      0.001 sec            (N/A)             (N/A)  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
-postgres          postgres             66463       5.554 sec      0.000 sec            (N/A)             (N/A)  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
+postgres          postgres             66463     331.375 sec      0.005 sec         0.000 ms          0.000 ms  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
+postgres          postgres             66463      85.370 sec      0.001 sec         0.000 ms          0.000 ms  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
+postgres          postgres             66463       5.554 sec      0.000 sec         0.026 ms          0.000 ms  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
 
 /** Plans **/
 -----------------------------------
@@ -1620,9 +1432,9 @@ OID       Database          Schema            Function             Calls     Tot
 -----------------------------------
 User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time  Query
 ------------------------------------------------------------------------------------------------------------------------
-postgres          postgres             66463     331.375 sec      0.005 sec            (N/A)             (N/A)  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
-postgres          postgres             66463      85.370 sec      0.001 sec            (N/A)             (N/A)  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
-postgres          postgres             66463       5.554 sec      0.000 sec            (N/A)             (N/A)  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
+postgres          postgres             66463     331.375 sec      0.005 sec         0.000 ms          0.000 ms  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
+postgres          postgres             66463      85.370 sec      0.001 sec         0.000 ms          0.000 ms  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
+postgres          postgres             66463       5.554 sec      0.000 sec         0.026 ms          0.000 ms  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
 
 /** Plans **/
 -----------------------------------
@@ -1664,36 +1476,6 @@ Query ID    Plan ID     User              Database             Calls      Total 
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5436)
----------------------------------------------
-
-----------------------------------------
-/* Query Activity */
-----------------------------------------
-
-/** Functions **/
------------------------------------
-OID       Database          Schema            Function             Calls     Total Time     Self Time     Time/Call
-----------------------------------------------------------------------------------------------------------------------
-16392     postgres          statsinfo         sample                  36       0.300 ms      0.300 ms      0.008 ms
-
-/** Statements **/
------------------------------------
-User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time  Query
-------------------------------------------------------------------------------------------------------------------------
-postgres          postgres             66463     331.375 sec      0.005 sec         0.000 ms          0.000 ms  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
-postgres          postgres             66463      85.370 sec      0.001 sec         0.000 ms          0.000 ms  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
-postgres          postgres             66463       5.554 sec      0.000 sec         0.026 ms          0.000 ms  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
-
-/** Plans **/
------------------------------------
-Query ID    Plan ID     User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time
------------------------------------------------------------------------------------------------------------------------------------------
- 847103580  1970669142  postgres          postgres              1074       0.094 sec      0.000 sec         0.213 ms          0.000 ms
-1067368138  4132319976  postgres          postgres              1073       0.061 sec      0.000 sec         0.000 ms          0.000 ms
-1899262118   487339097  postgres          postgres              1074       0.048 sec      0.000 sec         0.000 ms          0.000 ms
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
 ---------------------------------------------
 
 ----------------------------------------
@@ -1815,24 +1597,6 @@ postgres                                              00:00:00        14769     
 UPDATE pgbench_tellers SET tbalance = tbalance + -3715 WHERE tid = 4;
 UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
 
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* Lock Conflicts */
-----------------------------------------
-Database          Schema            Relation          Duration  Blockee PID  Blocker PID  Blocker GID     
-Blockee Query
-Blocker Query
---------------------------------------------------------------------------------------------------------
-postgres                                              00:00:00        14768        14771                  
-UPDATE pgbench_branches SET bbalance = bbalance + -3145 WHERE bid = 1;
-UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
-postgres                                              00:00:00        14769        14771                  
-UPDATE pgbench_tellers SET tbalance = tbalance + -3715 WHERE tid = 4;
-UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
-
 exit: 0
 
 /**--- REPORTID: ReplicationActivity ---**/
@@ -1860,15 +1624,11 @@ Flush WAL Location    : 0/685E578 (000000010000000000000006)
 Replay WAL Location   : 0/685E578 (000000010000000000000006)
 Sync Priority         : 0
 Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5433)
@@ -1894,15 +1654,11 @@ Flush WAL Location    : 0/685E578 (000000010000000000000006)
 Replay WAL Location   : 0/685E578 (000000010000000000000006)
 Sync Priority         : 0
 Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5434)
@@ -1928,15 +1684,11 @@ Flush WAL Location    : 0/685E578 (000000010000000000000006)
 Replay WAL Location   : 0/685E578 (000000010000000000000006)
 Sync Priority         : 0
 Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5435)
@@ -1962,15 +1714,11 @@ Flush WAL Location    : 0/685E578 (000000010000000000000006)
 Replay WAL Location   : 0/685E578 (000000010000000000000006)
 Sync Priority         : 0
 Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5436)
@@ -1996,49 +1744,11 @@ Flush WAL Location    : 0/685E578 (000000010000000000000006)
 Replay WAL Location   : 0/685E578 (000000010000000000000006)
 Sync Priority         : 0
 Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* Replication Activity */
-----------------------------------------
-
-/** Current Replication Status **/
------------------------------------
-User Name             : postgres
-Application Name      : walreceiver
-Client Address        : 127.0.0.1
-Client Host           : 
-Client Port           : 58145
-Backend Start         : 2012-11-01 00:00:00
-WAL Sender State      : streaming
-Current WAL Location  : 0/685E818 (000000010000000000000006)
-Sent WAL Location     : 0/685E818 (000000010000000000000006)
-Write WAL Location    : 0/685E818 (000000010000000000000006)
-Flush WAL Location    : 0/685E578 (000000010000000000000006)
-Replay WAL Location   : 0/685E578 (000000010000000000000006)
-Sync Priority         : 0
-Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
 
 exit: 0
 
@@ -2089,17 +1799,6 @@ shared_buffers                    4096                              8kB     conf
 
 ---------------------------------------------
 STATSINFO Report (host: statsinfo, port: 5436)
----------------------------------------------
-
-----------------------------------------
-/* Setting Parameters */
-----------------------------------------
-Name                              Setting                           Unit    Source
--------------------------------------------------------------------------------------------------------
-shared_buffers                    4096                              8kB     configuration file
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
 ---------------------------------------------
 
 ----------------------------------------
@@ -2237,31 +1936,6 @@ postgres          public            pgbench_accounts_pkey  pgbench_accounts     
 postgres          public            pgbench_branches_pkey  pgbench_branches       0 MiB       0 MiB            0      0.000           0           29  bid
 postgres          public            pgbench_tellers_pkey  pgbench_tellers        0 MiB       0 MiB            0      0.000           0            3  tid
 
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* Schema Information */
-----------------------------------------
-
-/** Tables **/
------------------------------------
-Database          Schema            Table              Columns      Rows        Size   Size Incr  Table Scans  Index Scans
------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts         4    100002      13 MiB       0 MiB            0       133066
-postgres          public            pgbench_branches         3         1       0 MiB       0 MiB       109143            0
-postgres          public            pgbench_history          6     80338       4 MiB       3 MiB            0            0
-postgres          public            pgbench_tellers          4        10       0 MiB       0 MiB        81067            0
-
-/** Indexes **/
------------------------------------
-Database          Schema            Index             Table                   Size   Size Incr  Index Scans  Rows/Scan  Disk Reads  Cache Reads  Index Key
--------------------------------------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts_pkey  pgbench_accounts       2 MiB       0 MiB       133066      1.000           0       269814  aid
-postgres          public            pgbench_branches_pkey  pgbench_branches       0 MiB       0 MiB            0      0.000           0           29  bid
-postgres          public            pgbench_tellers_pkey  pgbench_tellers        0 MiB       0 MiB            0      0.000           0            3  tid
-
 exit: 0
 
 /**--- REPORTID: Alert ---**/
@@ -2330,19 +2004,6 @@ DateTime             Message
 2012-11-01 00:02:00  too many transactions in snapshots between '2012-11-01 00:01:00' and '2012-11-01 00:02:00' --- 1688 Transactions/sec (threshold = 1000 Transactions/sec)
 2012-11-01 00:02:00  dead tuple size exceeds threshold in snapshot '2012-11-01 00:02:00' --- 245.15 MiB (threshold = 100 MiB)
 
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* Alert */
-----------------------------------------
-DateTime             Message
---------------------------------------------------------------------------------
-2012-11-01 00:01:00  too many transactions in snapshots between '2012-11-01 00:00:00' and '2012-11-01 00:01:00' --- 1585 Transactions/sec (threshold = 1000 Transactions/sec)
-2012-11-01 00:02:00  too many transactions in snapshots between '2012-11-01 00:01:00' and '2012-11-01 00:02:00' --- 1688 Transactions/sec (threshold = 1000 Transactions/sec)
-2012-11-01 00:02:00  dead tuple size exceeds threshold in snapshot '2012-11-01 00:02:00' --- 245.15 MiB (threshold = 100 MiB)
-
 exit: 0
 
 /**--- REPORTID: Profiles ---**/
@@ -2396,16 +2057,6 @@ STATSINFO Report (host: statsinfo, port: 5436)
 Processing                        Executes
 ---------------------------------------------
 
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
----------------------------------------------
-
-----------------------------------------
-/* Profiles */
-----------------------------------------
-Processing                        Executes
----------------------------------------------
-
 exit: 0
 
 /**--- REPORTID: All ---**/
@@ -2419,991 +2070,6 @@ STATSINFO Report (host: statsinfo, port: 5432)
 Database System ID   : 5807946214009601530
 Host                 : statsinfo
 Port                 : 5432
-PostgreSQL Version   : 8.4.0
-Snapshot Begin       : 2012-11-01 00:00:00
-Snapshot End         : 2012-11-01 00:03:00
-Snapshot Duration    : 00:03:00
-Total Database Size  : 26 MiB
-Total Commits        : 66970
-Total Rollbacks      : 0
-
-/** Alert **/
------------------------------------
-DateTime             Message
---------------------------------------------------------------------------------
-2012-11-01 00:01:00  too many transactions in snapshots between '2012-11-01 00:00:00' and '2012-11-01 00:01:00' --- 1585 Transactions/sec (threshold = 1000 Transactions/sec)
-2012-11-01 00:02:00  too many transactions in snapshots between '2012-11-01 00:01:00' and '2012-11-01 00:02:00' --- 1688 Transactions/sec (threshold = 1000 Transactions/sec)
-2012-11-01 00:02:00  dead tuple size exceeds threshold in snapshot '2012-11-01 00:02:00' --- 245.15 MiB (threshold = 100 MiB)
-
-----------------------------------------
-/* Database Statistics */
-----------------------------------------
-Database Name              : postgres
-Database Size              : 26 MiB
-Database Size Increase     : 3 MiB
-Commit/s                   : 372.056
-Rollback/s                 : 0.000
-Cache Hit Ratio            : 100.0 %
-Block Read/s (disk+cache)  : 10394.122
-Block Read/s (disk)        : 3.333
-Rows Read/s                : 5709.183
-Temporary Files            : (N/A)
-Temporary Bytes            : (N/A)
-Deadlocks                  : (N/A)
-Block Read Time            : (N/A)
-Block Write Time           : (N/A)
-
-/** Transaction Statistics **/
------------------------------------
-DateTime          Database              Commit/s    Rollback/s
------------------------------------------------------------------
-2012-11-01 00:01  postgres               371.517         0.000
-2012-11-01 00:02  postgres               373.100         0.000
-2012-11-01 00:03  postgres               371.550         0.000
-
-/** Database Size **/
------------------------------------
-DateTime          Database                    Size
------------------------------------------------------
-2012-11-01 00:00  postgres              22.435 MiB
-2012-11-01 00:01  postgres              23.646 MiB
-2012-11-01 00:02  postgres              24.841 MiB
-2012-11-01 00:03  postgres              26.099 MiB
-
-/** Recovery Conflicts **/
------------------------------------
-Database          Conflict Tablespace  Conflict Lock  Conflict Snapshot  Conflict Bufferpin  Conflict Deadlock
------------------------------------------------------------------------------------------------------------------
-
-----------------------------------------
-/* Instance Activity */
-----------------------------------------
-
-/** WAL Statistics **/
------------------------------------
-WAL Write Total    : 52.399 MiB
-WAL Write Speed    : 0.291 MiB/s
-WAL Archive Total  : (N/A)
-WAL Archive Failed : (N/A)
-
------------------------------------
-DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
--------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:01  0/3B7C140          000000010000000000000003      12.504 MiB       0.208 MiB  (N/A)            
-2012-11-01 00:02  0/5635000          000000010000000000000005      26.722 MiB       0.445 MiB  (N/A)            
-2012-11-01 00:03  0/63614A8          000000010000000000000006      13.173 MiB       0.220 MiB  (N/A)            
-
-/** Instance Processes **/
------------------------------------
-DateTime                  Idle  Idle In Xact       Waiting       Running
----------------------------------------------------------------------------
-2012-11-01 00:00         3.6 %         3.6 %        60.7 %        32.1 %
-2012-11-01 00:01         6.3 %        20.8 %        52.1 %        20.8 %
-2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
-2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
-Average                  3.0 %        13.9 %        55.3 %        27.8 %
-
-----------------------------------------
-/* OS Resource Usage */
-----------------------------------------
-
-/** CPU Usage + Load Average **/
------------------------------------
-DateTime              User    System      Idle    IOwait  Loadavg1  Loadavg5  Loadavg15
-------------------------------------------------------------------------------------------
-2012-11-01 00:01    37.7 %    14.7 %     0.1 %    47.5 %     0.940     0.390      0.690
-2012-11-01 00:02    30.9 %    12.1 %     0.0 %    57.0 %     1.320     0.600      0.740
-2012-11-01 00:03    32.4 %    12.3 %     0.1 %    55.2 %     1.200     0.700      0.770
-Average             33.7 %    13.0 %     0.1 %    53.2 %     1.153     0.563      0.733
-
-/** IO Usage **/
------------------------------------
-Device        Including TableSpaces       Total Read   Total Write    Total Read Time   Total Write Time  Current IO Queue    Total IO Time
-----------------------------------------------------------------------------------------------------------------------------------------------
-dm-2          {pg_default,pg_global}           0 MiB       665 MiB           11317 ms         6701892 ms            11.667       6713205 ms
-
------------------------------------
-DateTime          Device                   Read Size/s (Peak)            Write Size/s (Peak)   Read Time Rate  Write Time Rate
----------------------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:01  dm-2               2.47 KiB (   200.00 KiB)    3536.13 KiB (  4000.00 KiB)           17.1 %         1539.3 %
-2012-11-01 00:02  dm-2               0.00 KiB (     0.00 KiB)    4215.33 KiB (  5000.00 KiB)            0.0 %         7177.7 %
-2012-11-01 00:03  dm-2               0.13 KiB (   100.00 KiB)    3599.47 KiB (  3000.00 KiB)            1.7 %         2452.9 %
-
-/** Memory Usage **/
------------------------------------
-DateTime               Memfree       Buffers        Cached          Swap         Dirty
------------------------------------------------------------------------------------------
-2012-11-01 00:00    160.15 MiB     25.37 MiB    636.21 MiB     65.86 MiB      0.18 MiB
-2012-11-01 00:01    150.07 MiB     25.53 MiB    640.96 MiB     65.86 MiB      0.03 MiB
-2012-11-01 00:02    145.65 MiB     25.67 MiB    643.79 MiB     65.86 MiB      5.20 MiB
-2012-11-01 00:03    139.82 MiB     25.82 MiB    646.54 MiB     65.86 MiB      0.58 MiB
-
-----------------------------------------
-/* Disk Usage */
-----------------------------------------
-
-/** Disk Usage per Tablespace **/
------------------------------------
-Tablespace        Location                          Device                Used         Avail      Remain
------------------------------------------------------------------------------------------------------------
-pg_default        /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
-pg_global         /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
-
-/** Disk Usage per Table **/
------------------------------------
-Database          Schema            Table                     Size   Table Reads   Index Reads   Toast Reads
----------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_history          4 MiB           429             0             0
-postgres          public            pgbench_accounts        13 MiB            30             0             0
-postgres          public            pgbench_branches         0 MiB             2             0             0
-postgres          public            pgbench_tellers          0 MiB             0             0             0
-
-----------------------------------------
-/* Long Transactions */
-----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
------------------------------------------------------------------------------------------
-10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
-10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
-10591     127.0.0.1         2012-11-01 00:00:30     2.000 s  SELECT 2                        
-10590     127.0.0.1         2012-11-01 00:00:00     1.000 s  SELECT 1                        
-
-----------------------------------------
-/* Notable Tables */
-----------------------------------------
-
-/** Heavily Updated Tables **/
------------------------------------
-Database          Schema            Table              INSERT Rows   UPDATE Rows   DELETE Rows    Total Rows  HOT Ratio(%)
------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_branches             0         66535             0         66535         100.0
-postgres          public            pgbench_tellers              0         66534             0         66534         100.0
-postgres          public            pgbench_history          66533             0             0         66533           0.0
-postgres          public            pgbench_accounts             0         66533             0         66533          97.8
-
-/** Heavily Accessed Tables **/
------------------------------------
-Database          Schema            Table                Seq Scans     Read Rows  Read Rows/Scan  Cache Hit Ratio(%)
------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_tellers          81067        665330           8.207               100.0
-postgres          public            pgbench_branches        109143         66533           0.610               100.0
-
-/** Low Density Tables **/
------------------------------------
-Database          Schema            Table              Live Tuples   Logical Pages  Physical Pages  Logical Page Ratio(%)
-----------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts        100002            1640            1700                   96.5
-
-/** Fragmented Tables **/
------------------------------------
-Database          Schema            Table             Column             Correlation
----------------------------------------------------------------------------------------
-postgres          public            pgbench_tellers   tid                     -0.357
-postgres          public            pgbench_accounts  aid                      0.951
-
-----------------------------------------
-/* Checkpoint Activity */
-----------------------------------------
-Total Checkpoints        : 2
-Checkpoints By Time      : 1
-Checkpoints By XLOG      : 1
-Written Buffers Average  : 2343.500
-Written Buffers Maximum  : 2404.000
-Write Duration Average   : 47.445 sec
-Write Duration Maximum   : 49.193 sec
-
-----------------------------------------
-/* Autovacuum Activity */
-----------------------------------------
-
-/** Vacuum Basic Statistics (Average) **/
------------------------------------
-Table                                Count  Removed Rows   Remain Rows   Remain Dead   Index Scans      Duration  Duration(Max)  Cancels
--------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_tellers          2       207.000        19.500         (N/A)         0.500       0.000 s        0.000 s        0
-postgres.public.pgbench_branches         2         2.000         0.500         (N/A)         1.000       0.000 s        0.000 s        2
-postgres.public.pgbench_accounts         0         0.000         0.000         (N/A)         0.000       0.000 s        0.000 s        1
-
-/** Analyze Statistics **/
------------------------------------
-Table                                Count  Duration(Total)    Duration(Avg)    Duration(Max)  Last Analyze Time    Cancels  Mod Rows(Max)
----------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          (N/A)
-postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          (N/A)
-postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          (N/A)
-postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          (N/A)
-
-----------------------------------------
-/* Query Activity */
-----------------------------------------
-
-/** Functions **/
------------------------------------
-OID       Database          Schema            Function             Calls     Total Time     Self Time     Time/Call
-----------------------------------------------------------------------------------------------------------------------
-16392     postgres          statsinfo         sample                  36       0.300 ms      0.300 ms      0.008 ms
-
-/** Statements **/
------------------------------------
-User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time  Query
-------------------------------------------------------------------------------------------------------------------------
-postgres          postgres             66463     331.375 sec      0.005 sec            (N/A)             (N/A)  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
-postgres          postgres             66463      85.370 sec      0.001 sec            (N/A)             (N/A)  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
-postgres          postgres             66463       5.554 sec      0.000 sec            (N/A)             (N/A)  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
-
-/** Plans **/
------------------------------------
-Query ID    Plan ID     User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time
------------------------------------------------------------------------------------------------------------------------------------------
- 847103580  1970669142  postgres          postgres              1074       0.094 sec      0.000 sec         0.213 ms          0.000 ms
-1067368138  4132319976  postgres          postgres              1073       0.061 sec      0.000 sec         0.000 ms          0.000 ms
-1899262118   487339097  postgres          postgres              1074       0.048 sec      0.000 sec         0.000 ms          0.000 ms
-
-----------------------------------------
-/* Lock Conflicts */
-----------------------------------------
-Database          Schema            Relation          Duration  Blockee PID  Blocker PID  Blocker GID     
-Blockee Query
-Blocker Query
---------------------------------------------------------------------------------------------------------
-postgres                                              00:00:00        14768        14771                  
-UPDATE pgbench_branches SET bbalance = bbalance + -3145 WHERE bid = 1;
-UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
-postgres                                              00:00:00        14769        14771                  
-UPDATE pgbench_tellers SET tbalance = tbalance + -3715 WHERE tid = 4;
-UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
-
-----------------------------------------
-/* Replication Activity */
-----------------------------------------
-
-/** Current Replication Status **/
------------------------------------
-User Name             : postgres
-Application Name      : walreceiver
-Client Address        : 127.0.0.1
-Client Host           : 
-Client Port           : 58145
-Backend Start         : 2012-11-01 00:00:00
-WAL Sender State      : streaming
-Current WAL Location  : 0/685E818 (000000010000000000000006)
-Sent WAL Location     : 0/685E818 (000000010000000000000006)
-Write WAL Location    : 0/685E818 (000000010000000000000006)
-Flush WAL Location    : 0/685E578 (000000010000000000000006)
-Replay WAL Location   : 0/685E578 (000000010000000000000006)
-Sync Priority         : 0
-Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
-
-----------------------------------------
-/* Setting Parameters */
-----------------------------------------
-Name                              Setting                           Unit    Source
--------------------------------------------------------------------------------------------------------
-shared_buffers                    4096                              8kB     configuration file
-
-----------------------------------------
-/* Schema Information */
-----------------------------------------
-
-/** Tables **/
------------------------------------
-Database          Schema            Table              Columns      Rows        Size   Size Incr  Table Scans  Index Scans
------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts         4    100002      13 MiB       0 MiB            0       133066
-postgres          public            pgbench_branches         3         1       0 MiB       0 MiB       109143            0
-postgres          public            pgbench_history          6     80338       4 MiB       3 MiB            0            0
-postgres          public            pgbench_tellers          4        10       0 MiB       0 MiB        81067            0
-
-/** Indexes **/
------------------------------------
-Database          Schema            Index             Table                   Size   Size Incr  Index Scans  Rows/Scan  Disk Reads  Cache Reads  Index Key
--------------------------------------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts_pkey  pgbench_accounts       2 MiB       0 MiB       133066      1.000           0       269814  aid
-postgres          public            pgbench_branches_pkey  pgbench_branches       0 MiB       0 MiB            0      0.000           0           29  bid
-postgres          public            pgbench_tellers_pkey  pgbench_tellers        0 MiB       0 MiB            0      0.000           0            3  tid
-
-----------------------------------------
-/* Profiles */
-----------------------------------------
-Processing                        Executes
----------------------------------------------
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5433)
----------------------------------------------
-
-----------------------------------------
-/* Summary */
-----------------------------------------
-Database System ID   : 5807946214009601531
-Host                 : statsinfo
-Port                 : 5433
-PostgreSQL Version   : 9.0.0
-Snapshot Begin       : 2012-11-01 00:00:00
-Snapshot End         : 2012-11-01 00:03:00
-Snapshot Duration    : 00:03:00
-Total Database Size  : 26 MiB
-Total Commits        : 66970
-Total Rollbacks      : 0
-
-/** Alert **/
------------------------------------
-DateTime             Message
---------------------------------------------------------------------------------
-2012-11-01 00:01:00  too many transactions in snapshots between '2012-11-01 00:00:00' and '2012-11-01 00:01:00' --- 1585 Transactions/sec (threshold = 1000 Transactions/sec)
-2012-11-01 00:02:00  too many transactions in snapshots between '2012-11-01 00:01:00' and '2012-11-01 00:02:00' --- 1688 Transactions/sec (threshold = 1000 Transactions/sec)
-2012-11-01 00:02:00  dead tuple size exceeds threshold in snapshot '2012-11-01 00:02:00' --- 245.15 MiB (threshold = 100 MiB)
-
-----------------------------------------
-/* Database Statistics */
-----------------------------------------
-Database Name              : postgres
-Database Size              : 26 MiB
-Database Size Increase     : 3 MiB
-Commit/s                   : 372.056
-Rollback/s                 : 0.000
-Cache Hit Ratio            : 100.0 %
-Block Read/s (disk+cache)  : 10394.122
-Block Read/s (disk)        : 3.333
-Rows Read/s                : 5709.183
-Temporary Files            : (N/A)
-Temporary Bytes            : (N/A)
-Deadlocks                  : (N/A)
-Block Read Time            : (N/A)
-Block Write Time           : (N/A)
-
-/** Transaction Statistics **/
------------------------------------
-DateTime          Database              Commit/s    Rollback/s
------------------------------------------------------------------
-2012-11-01 00:01  postgres               371.517         0.000
-2012-11-01 00:02  postgres               373.100         0.000
-2012-11-01 00:03  postgres               371.550         0.000
-
-/** Database Size **/
------------------------------------
-DateTime          Database                    Size
------------------------------------------------------
-2012-11-01 00:00  postgres              22.435 MiB
-2012-11-01 00:01  postgres              23.646 MiB
-2012-11-01 00:02  postgres              24.841 MiB
-2012-11-01 00:03  postgres              26.099 MiB
-
-/** Recovery Conflicts **/
------------------------------------
-Database          Conflict Tablespace  Conflict Lock  Conflict Snapshot  Conflict Bufferpin  Conflict Deadlock
------------------------------------------------------------------------------------------------------------------
-
-----------------------------------------
-/* Instance Activity */
-----------------------------------------
-
-/** WAL Statistics **/
------------------------------------
-WAL Write Total    : 52.399 MiB
-WAL Write Speed    : 0.291 MiB/s
-WAL Archive Total  : (N/A)
-WAL Archive Failed : (N/A)
-
------------------------------------
-DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
--------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:01  0/3B7C140          000000010000000000000003      12.504 MiB       0.208 MiB  (N/A)            
-2012-11-01 00:02  0/5635000          000000010000000000000005      26.722 MiB       0.445 MiB  (N/A)            
-2012-11-01 00:03  0/63614A8          000000010000000000000006      13.173 MiB       0.220 MiB  (N/A)            
-
-/** Instance Processes **/
------------------------------------
-DateTime                  Idle  Idle In Xact       Waiting       Running
----------------------------------------------------------------------------
-2012-11-01 00:00         3.6 %         3.6 %        60.7 %        32.1 %
-2012-11-01 00:01         6.3 %        20.8 %        52.1 %        20.8 %
-2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
-2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
-Average                  3.0 %        13.9 %        55.3 %        27.8 %
-
-----------------------------------------
-/* OS Resource Usage */
-----------------------------------------
-
-/** CPU Usage + Load Average **/
------------------------------------
-DateTime              User    System      Idle    IOwait  Loadavg1  Loadavg5  Loadavg15
-------------------------------------------------------------------------------------------
-2012-11-01 00:01    37.7 %    14.7 %     0.1 %    47.5 %     0.940     0.390      0.690
-2012-11-01 00:02    30.9 %    12.1 %     0.0 %    57.0 %     1.320     0.600      0.740
-2012-11-01 00:03    32.4 %    12.3 %     0.1 %    55.2 %     1.200     0.700      0.770
-Average             33.7 %    13.0 %     0.1 %    53.2 %     1.153     0.563      0.733
-
-/** IO Usage **/
------------------------------------
-Device        Including TableSpaces       Total Read   Total Write    Total Read Time   Total Write Time  Current IO Queue    Total IO Time
-----------------------------------------------------------------------------------------------------------------------------------------------
-dm-2          {pg_default,pg_global}           0 MiB       665 MiB           11317 ms         6701892 ms            11.667       6713205 ms
-
------------------------------------
-DateTime          Device                   Read Size/s (Peak)            Write Size/s (Peak)   Read Time Rate  Write Time Rate
----------------------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:01  dm-2               2.47 KiB (   200.00 KiB)    3536.13 KiB (  4000.00 KiB)           17.1 %         1539.3 %
-2012-11-01 00:02  dm-2               0.00 KiB (     0.00 KiB)    4215.33 KiB (  5000.00 KiB)            0.0 %         7177.7 %
-2012-11-01 00:03  dm-2               0.13 KiB (   100.00 KiB)    3599.47 KiB (  3000.00 KiB)            1.7 %         2452.9 %
-
-/** Memory Usage **/
------------------------------------
-DateTime               Memfree       Buffers        Cached          Swap         Dirty
------------------------------------------------------------------------------------------
-2012-11-01 00:00    160.15 MiB     25.37 MiB    636.21 MiB     65.86 MiB      0.18 MiB
-2012-11-01 00:01    150.07 MiB     25.53 MiB    640.96 MiB     65.86 MiB      0.03 MiB
-2012-11-01 00:02    145.65 MiB     25.67 MiB    643.79 MiB     65.86 MiB      5.20 MiB
-2012-11-01 00:03    139.82 MiB     25.82 MiB    646.54 MiB     65.86 MiB      0.58 MiB
-
-----------------------------------------
-/* Disk Usage */
-----------------------------------------
-
-/** Disk Usage per Tablespace **/
------------------------------------
-Tablespace        Location                          Device                Used         Avail      Remain
------------------------------------------------------------------------------------------------------------
-pg_default        /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
-pg_global         /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
-
-/** Disk Usage per Table **/
------------------------------------
-Database          Schema            Table                     Size   Table Reads   Index Reads   Toast Reads
----------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_history          4 MiB           429             0             0
-postgres          public            pgbench_accounts        13 MiB            30             0             0
-postgres          public            pgbench_branches         0 MiB             2             0             0
-postgres          public            pgbench_tellers          0 MiB             0             0             0
-
-----------------------------------------
-/* Long Transactions */
-----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
------------------------------------------------------------------------------------------
-10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
-10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
-10591     127.0.0.1         2012-11-01 00:00:30     2.000 s  SELECT 2                        
-10590     127.0.0.1         2012-11-01 00:00:00     1.000 s  SELECT 1                        
-
-----------------------------------------
-/* Notable Tables */
-----------------------------------------
-
-/** Heavily Updated Tables **/
------------------------------------
-Database          Schema            Table              INSERT Rows   UPDATE Rows   DELETE Rows    Total Rows  HOT Ratio(%)
------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_branches             0         66535             0         66535         100.0
-postgres          public            pgbench_tellers              0         66534             0         66534         100.0
-postgres          public            pgbench_history          66533             0             0         66533           0.0
-postgres          public            pgbench_accounts             0         66533             0         66533          97.8
-
-/** Heavily Accessed Tables **/
------------------------------------
-Database          Schema            Table                Seq Scans     Read Rows  Read Rows/Scan  Cache Hit Ratio(%)
------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_tellers          81067        665330           8.207               100.0
-postgres          public            pgbench_branches        109143         66533           0.610               100.0
-
-/** Low Density Tables **/
------------------------------------
-Database          Schema            Table              Live Tuples   Logical Pages  Physical Pages  Logical Page Ratio(%)
-----------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts        100002            1640            1700                   96.5
-
-/** Fragmented Tables **/
------------------------------------
-Database          Schema            Table             Column             Correlation
----------------------------------------------------------------------------------------
-postgres          public            pgbench_tellers   tid                     -0.357
-postgres          public            pgbench_accounts  aid                      0.951
-
-----------------------------------------
-/* Checkpoint Activity */
-----------------------------------------
-Total Checkpoints        : 2
-Checkpoints By Time      : 1
-Checkpoints By XLOG      : 1
-Written Buffers Average  : 2343.500
-Written Buffers Maximum  : 2404.000
-Write Duration Average   : 47.445 sec
-Write Duration Maximum   : 49.193 sec
-
-----------------------------------------
-/* Autovacuum Activity */
-----------------------------------------
-
-/** Vacuum Basic Statistics (Average) **/
------------------------------------
-Table                                Count  Removed Rows   Remain Rows   Remain Dead   Index Scans      Duration  Duration(Max)  Cancels
--------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_tellers          2       207.000        19.500         (N/A)         0.500       0.000 s        0.000 s        0
-postgres.public.pgbench_branches         2         2.000         0.500         (N/A)         1.000       0.000 s        0.000 s        2
-postgres.public.pgbench_accounts         0         0.000         0.000         (N/A)         0.000       0.000 s        0.000 s        1
-
-/** Analyze Statistics **/
------------------------------------
-Table                                Count  Duration(Total)    Duration(Avg)    Duration(Max)  Last Analyze Time    Cancels  Mod Rows(Max)
----------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          (N/A)
-postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          (N/A)
-postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          (N/A)
-postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          (N/A)
-
-----------------------------------------
-/* Query Activity */
-----------------------------------------
-
-/** Functions **/
------------------------------------
-OID       Database          Schema            Function             Calls     Total Time     Self Time     Time/Call
-----------------------------------------------------------------------------------------------------------------------
-16392     postgres          statsinfo         sample                  36       0.300 ms      0.300 ms      0.008 ms
-
-/** Statements **/
------------------------------------
-User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time  Query
-------------------------------------------------------------------------------------------------------------------------
-postgres          postgres             66463     331.375 sec      0.005 sec            (N/A)             (N/A)  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
-postgres          postgres             66463      85.370 sec      0.001 sec            (N/A)             (N/A)  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
-postgres          postgres             66463       5.554 sec      0.000 sec            (N/A)             (N/A)  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
-
-/** Plans **/
------------------------------------
-Query ID    Plan ID     User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time
------------------------------------------------------------------------------------------------------------------------------------------
- 847103580  1970669142  postgres          postgres              1074       0.094 sec      0.000 sec         0.213 ms          0.000 ms
-1067368138  4132319976  postgres          postgres              1073       0.061 sec      0.000 sec         0.000 ms          0.000 ms
-1899262118   487339097  postgres          postgres              1074       0.048 sec      0.000 sec         0.000 ms          0.000 ms
-
-----------------------------------------
-/* Lock Conflicts */
-----------------------------------------
-Database          Schema            Relation          Duration  Blockee PID  Blocker PID  Blocker GID     
-Blockee Query
-Blocker Query
---------------------------------------------------------------------------------------------------------
-postgres                                              00:00:00        14768        14771                  
-UPDATE pgbench_branches SET bbalance = bbalance + -3145 WHERE bid = 1;
-UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
-postgres                                              00:00:00        14769        14771                  
-UPDATE pgbench_tellers SET tbalance = tbalance + -3715 WHERE tid = 4;
-UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
-
-----------------------------------------
-/* Replication Activity */
-----------------------------------------
-
-/** Current Replication Status **/
------------------------------------
-User Name             : postgres
-Application Name      : walreceiver
-Client Address        : 127.0.0.1
-Client Host           : 
-Client Port           : 58145
-Backend Start         : 2012-11-01 00:00:00
-WAL Sender State      : streaming
-Current WAL Location  : 0/685E818 (000000010000000000000006)
-Sent WAL Location     : 0/685E818 (000000010000000000000006)
-Write WAL Location    : 0/685E818 (000000010000000000000006)
-Flush WAL Location    : 0/685E578 (000000010000000000000006)
-Replay WAL Location   : 0/685E578 (000000010000000000000006)
-Sync Priority         : 0
-Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
-
-----------------------------------------
-/* Setting Parameters */
-----------------------------------------
-Name                              Setting                           Unit    Source
--------------------------------------------------------------------------------------------------------
-shared_buffers                    4096                              8kB     configuration file
-
-----------------------------------------
-/* Schema Information */
-----------------------------------------
-
-/** Tables **/
------------------------------------
-Database          Schema            Table              Columns      Rows        Size   Size Incr  Table Scans  Index Scans
------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts         4    100002      13 MiB       0 MiB            0       133066
-postgres          public            pgbench_branches         3         1       0 MiB       0 MiB       109143            0
-postgres          public            pgbench_history          6     80338       4 MiB       3 MiB            0            0
-postgres          public            pgbench_tellers          4        10       0 MiB       0 MiB        81067            0
-
-/** Indexes **/
------------------------------------
-Database          Schema            Index             Table                   Size   Size Incr  Index Scans  Rows/Scan  Disk Reads  Cache Reads  Index Key
--------------------------------------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts_pkey  pgbench_accounts       2 MiB       0 MiB       133066      1.000           0       269814  aid
-postgres          public            pgbench_branches_pkey  pgbench_branches       0 MiB       0 MiB            0      0.000           0           29  bid
-postgres          public            pgbench_tellers_pkey  pgbench_tellers        0 MiB       0 MiB            0      0.000           0            3  tid
-
-----------------------------------------
-/* Profiles */
-----------------------------------------
-Processing                        Executes
----------------------------------------------
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5434)
----------------------------------------------
-
-----------------------------------------
-/* Summary */
-----------------------------------------
-Database System ID   : 5807946214009601532
-Host                 : statsinfo
-Port                 : 5434
-PostgreSQL Version   : 9.1.0
-Snapshot Begin       : 2012-11-01 00:00:00
-Snapshot End         : 2012-11-01 00:03:00
-Snapshot Duration    : 00:03:00
-Total Database Size  : 26 MiB
-Total Commits        : 66970
-Total Rollbacks      : 0
-
-/** Alert **/
------------------------------------
-DateTime             Message
---------------------------------------------------------------------------------
-2012-11-01 00:01:00  too many transactions in snapshots between '2012-11-01 00:00:00' and '2012-11-01 00:01:00' --- 1585 Transactions/sec (threshold = 1000 Transactions/sec)
-2012-11-01 00:02:00  too many transactions in snapshots between '2012-11-01 00:01:00' and '2012-11-01 00:02:00' --- 1688 Transactions/sec (threshold = 1000 Transactions/sec)
-2012-11-01 00:02:00  dead tuple size exceeds threshold in snapshot '2012-11-01 00:02:00' --- 245.15 MiB (threshold = 100 MiB)
-
-----------------------------------------
-/* Database Statistics */
-----------------------------------------
-Database Name              : postgres
-Database Size              : 26 MiB
-Database Size Increase     : 3 MiB
-Commit/s                   : 372.056
-Rollback/s                 : 0.000
-Cache Hit Ratio            : 100.0 %
-Block Read/s (disk+cache)  : 10394.122
-Block Read/s (disk)        : 3.333
-Rows Read/s                : 5709.183
-Temporary Files            : (N/A)
-Temporary Bytes            : (N/A)
-Deadlocks                  : (N/A)
-Block Read Time            : (N/A)
-Block Write Time           : (N/A)
-
-/** Transaction Statistics **/
------------------------------------
-DateTime          Database              Commit/s    Rollback/s
------------------------------------------------------------------
-2012-11-01 00:01  postgres               371.517         0.000
-2012-11-01 00:02  postgres               373.100         0.000
-2012-11-01 00:03  postgres               371.550         0.000
-
-/** Database Size **/
------------------------------------
-DateTime          Database                    Size
------------------------------------------------------
-2012-11-01 00:00  postgres              22.435 MiB
-2012-11-01 00:01  postgres              23.646 MiB
-2012-11-01 00:02  postgres              24.841 MiB
-2012-11-01 00:03  postgres              26.099 MiB
-
-/** Recovery Conflicts **/
------------------------------------
-Database          Conflict Tablespace  Conflict Lock  Conflict Snapshot  Conflict Bufferpin  Conflict Deadlock
------------------------------------------------------------------------------------------------------------------
-postgres                            1              2                  3                   4                  5
-
-----------------------------------------
-/* Instance Activity */
-----------------------------------------
-
-/** WAL Statistics **/
------------------------------------
-WAL Write Total    : 52.399 MiB
-WAL Write Speed    : 0.291 MiB/s
-WAL Archive Total  : (N/A)
-WAL Archive Failed : (N/A)
-
------------------------------------
-DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
--------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:01  0/3B7C140          000000010000000000000003      12.504 MiB       0.208 MiB  (N/A)            
-2012-11-01 00:02  0/5635000          000000010000000000000005      26.722 MiB       0.445 MiB  (N/A)            
-2012-11-01 00:03  0/63614A8          000000010000000000000006      13.173 MiB       0.220 MiB  (N/A)            
-
-/** Instance Processes **/
------------------------------------
-DateTime                  Idle  Idle In Xact       Waiting       Running
----------------------------------------------------------------------------
-2012-11-01 00:00         3.6 %         3.6 %        60.7 %        32.1 %
-2012-11-01 00:01         6.3 %        20.8 %        52.1 %        20.8 %
-2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
-2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
-Average                  3.0 %        13.9 %        55.3 %        27.8 %
-
-----------------------------------------
-/* OS Resource Usage */
-----------------------------------------
-
-/** CPU Usage + Load Average **/
------------------------------------
-DateTime              User    System      Idle    IOwait  Loadavg1  Loadavg5  Loadavg15
-------------------------------------------------------------------------------------------
-2012-11-01 00:01    37.7 %    14.7 %     0.1 %    47.5 %     0.940     0.390      0.690
-2012-11-01 00:02    30.9 %    12.1 %     0.0 %    57.0 %     1.320     0.600      0.740
-2012-11-01 00:03    32.4 %    12.3 %     0.1 %    55.2 %     1.200     0.700      0.770
-Average             33.7 %    13.0 %     0.1 %    53.2 %     1.153     0.563      0.733
-
-/** IO Usage **/
------------------------------------
-Device        Including TableSpaces       Total Read   Total Write    Total Read Time   Total Write Time  Current IO Queue    Total IO Time
-----------------------------------------------------------------------------------------------------------------------------------------------
-dm-2          {pg_default,pg_global}           0 MiB       665 MiB           11317 ms         6701892 ms            11.667       6713205 ms
-
------------------------------------
-DateTime          Device                   Read Size/s (Peak)            Write Size/s (Peak)   Read Time Rate  Write Time Rate
----------------------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:01  dm-2               2.47 KiB (   200.00 KiB)    3536.13 KiB (  4000.00 KiB)           17.1 %         1539.3 %
-2012-11-01 00:02  dm-2               0.00 KiB (     0.00 KiB)    4215.33 KiB (  5000.00 KiB)            0.0 %         7177.7 %
-2012-11-01 00:03  dm-2               0.13 KiB (   100.00 KiB)    3599.47 KiB (  3000.00 KiB)            1.7 %         2452.9 %
-
-/** Memory Usage **/
------------------------------------
-DateTime               Memfree       Buffers        Cached          Swap         Dirty
------------------------------------------------------------------------------------------
-2012-11-01 00:00    160.15 MiB     25.37 MiB    636.21 MiB     65.86 MiB      0.18 MiB
-2012-11-01 00:01    150.07 MiB     25.53 MiB    640.96 MiB     65.86 MiB      0.03 MiB
-2012-11-01 00:02    145.65 MiB     25.67 MiB    643.79 MiB     65.86 MiB      5.20 MiB
-2012-11-01 00:03    139.82 MiB     25.82 MiB    646.54 MiB     65.86 MiB      0.58 MiB
-
-----------------------------------------
-/* Disk Usage */
-----------------------------------------
-
-/** Disk Usage per Tablespace **/
------------------------------------
-Tablespace        Location                          Device                Used         Avail      Remain
------------------------------------------------------------------------------------------------------------
-pg_default        /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
-pg_global         /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
-
-/** Disk Usage per Table **/
------------------------------------
-Database          Schema            Table                     Size   Table Reads   Index Reads   Toast Reads
----------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_history          4 MiB           429             0             0
-postgres          public            pgbench_accounts        13 MiB            30             0             0
-postgres          public            pgbench_branches         0 MiB             2             0             0
-postgres          public            pgbench_tellers          0 MiB             0             0             0
-
-----------------------------------------
-/* Long Transactions */
-----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
------------------------------------------------------------------------------------------
-10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
-10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
-10591     127.0.0.1         2012-11-01 00:00:30     2.000 s  SELECT 2                        
-10590     127.0.0.1         2012-11-01 00:00:00     1.000 s  SELECT 1                        
-
-----------------------------------------
-/* Notable Tables */
-----------------------------------------
-
-/** Heavily Updated Tables **/
------------------------------------
-Database          Schema            Table              INSERT Rows   UPDATE Rows   DELETE Rows    Total Rows  HOT Ratio(%)
------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_branches             0         66535             0         66535         100.0
-postgres          public            pgbench_tellers              0         66534             0         66534         100.0
-postgres          public            pgbench_history          66533             0             0         66533           0.0
-postgres          public            pgbench_accounts             0         66533             0         66533          97.8
-
-/** Heavily Accessed Tables **/
------------------------------------
-Database          Schema            Table                Seq Scans     Read Rows  Read Rows/Scan  Cache Hit Ratio(%)
------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_tellers          81067        665330           8.207               100.0
-postgres          public            pgbench_branches        109143         66533           0.610               100.0
-
-/** Low Density Tables **/
------------------------------------
-Database          Schema            Table              Live Tuples   Logical Pages  Physical Pages  Logical Page Ratio(%)
-----------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts        100002            1640            1700                   96.5
-
-/** Fragmented Tables **/
------------------------------------
-Database          Schema            Table             Column             Correlation
----------------------------------------------------------------------------------------
-postgres          public            pgbench_tellers   tid                     -0.357
-postgres          public            pgbench_accounts  aid                      0.951
-
-----------------------------------------
-/* Checkpoint Activity */
-----------------------------------------
-Total Checkpoints        : 2
-Checkpoints By Time      : 1
-Checkpoints By XLOG      : 1
-Written Buffers Average  : 2343.500
-Written Buffers Maximum  : 2404.000
-Write Duration Average   : 47.445 sec
-Write Duration Maximum   : 49.193 sec
-
-----------------------------------------
-/* Autovacuum Activity */
-----------------------------------------
-
-/** Vacuum Basic Statistics (Average) **/
------------------------------------
-Table                                Count  Removed Rows   Remain Rows   Remain Dead   Index Scans      Duration  Duration(Max)  Cancels
--------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_tellers          2       207.000        19.500         (N/A)         0.500       0.000 s        0.000 s        0
-postgres.public.pgbench_branches         2         2.000         0.500         (N/A)         1.000       0.000 s        0.000 s        2
-postgres.public.pgbench_accounts         0         0.000         0.000         (N/A)         0.000       0.000 s        0.000 s        1
-
-/** Analyze Statistics **/
------------------------------------
-Table                                Count  Duration(Total)    Duration(Avg)    Duration(Max)  Last Analyze Time    Cancels  Mod Rows(Max)
----------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          (N/A)
-postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          (N/A)
-postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          (N/A)
-postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          (N/A)
-
-----------------------------------------
-/* Query Activity */
-----------------------------------------
-
-/** Functions **/
------------------------------------
-OID       Database          Schema            Function             Calls     Total Time     Self Time     Time/Call
-----------------------------------------------------------------------------------------------------------------------
-16392     postgres          statsinfo         sample                  36       0.300 ms      0.300 ms      0.008 ms
-
-/** Statements **/
------------------------------------
-User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time  Query
-------------------------------------------------------------------------------------------------------------------------
-postgres          postgres             66463     331.375 sec      0.005 sec            (N/A)             (N/A)  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
-postgres          postgres             66463      85.370 sec      0.001 sec            (N/A)             (N/A)  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
-postgres          postgres             66463       5.554 sec      0.000 sec            (N/A)             (N/A)  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
-
-/** Plans **/
------------------------------------
-Query ID    Plan ID     User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time
------------------------------------------------------------------------------------------------------------------------------------------
- 847103580  1970669142  postgres          postgres              1074       0.094 sec      0.000 sec         0.213 ms          0.000 ms
-1067368138  4132319976  postgres          postgres              1073       0.061 sec      0.000 sec         0.000 ms          0.000 ms
-1899262118   487339097  postgres          postgres              1074       0.048 sec      0.000 sec         0.000 ms          0.000 ms
-
-----------------------------------------
-/* Lock Conflicts */
-----------------------------------------
-Database          Schema            Relation          Duration  Blockee PID  Blocker PID  Blocker GID     
-Blockee Query
-Blocker Query
---------------------------------------------------------------------------------------------------------
-postgres                                              00:00:00        14768        14771                  
-UPDATE pgbench_branches SET bbalance = bbalance + -3145 WHERE bid = 1;
-UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
-postgres                                              00:00:00        14769        14771                  
-UPDATE pgbench_tellers SET tbalance = tbalance + -3715 WHERE tid = 4;
-UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
-
-----------------------------------------
-/* Replication Activity */
-----------------------------------------
-
-/** Current Replication Status **/
------------------------------------
-User Name             : postgres
-Application Name      : walreceiver
-Client Address        : 127.0.0.1
-Client Host           : 
-Client Port           : 58145
-Backend Start         : 2012-11-01 00:00:00
-WAL Sender State      : streaming
-Current WAL Location  : 0/685E818 (000000010000000000000006)
-Sent WAL Location     : 0/685E818 (000000010000000000000006)
-Write WAL Location    : 0/685E818 (000000010000000000000006)
-Flush WAL Location    : 0/685E578 (000000010000000000000006)
-Replay WAL Location   : 0/685E578 (000000010000000000000006)
-Sync Priority         : 0
-Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
-
-----------------------------------------
-/* Setting Parameters */
-----------------------------------------
-Name                              Setting                           Unit    Source
--------------------------------------------------------------------------------------------------------
-shared_buffers                    4096                              8kB     configuration file
-
-----------------------------------------
-/* Schema Information */
-----------------------------------------
-
-/** Tables **/
------------------------------------
-Database          Schema            Table              Columns      Rows        Size   Size Incr  Table Scans  Index Scans
------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts         4    100002      13 MiB       0 MiB            0       133066
-postgres          public            pgbench_branches         3         1       0 MiB       0 MiB       109143            0
-postgres          public            pgbench_history          6     80338       4 MiB       3 MiB            0            0
-postgres          public            pgbench_tellers          4        10       0 MiB       0 MiB        81067            0
-
-/** Indexes **/
------------------------------------
-Database          Schema            Index             Table                   Size   Size Incr  Index Scans  Rows/Scan  Disk Reads  Cache Reads  Index Key
--------------------------------------------------------------------------------------------------------------------------------------------------------------
-postgres          public            pgbench_accounts_pkey  pgbench_accounts       2 MiB       0 MiB       133066      1.000           0       269814  aid
-postgres          public            pgbench_branches_pkey  pgbench_branches       0 MiB       0 MiB            0      0.000           0           29  bid
-postgres          public            pgbench_tellers_pkey  pgbench_tellers        0 MiB       0 MiB            0      0.000           0            3  tid
-
-----------------------------------------
-/* Profiles */
-----------------------------------------
-Processing                        Executes
----------------------------------------------
-
----------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5435)
----------------------------------------------
-
-----------------------------------------
-/* Summary */
-----------------------------------------
-Database System ID   : 5807946214009601533
-Host                 : statsinfo
-Port                 : 5435
 PostgreSQL Version   : 9.2.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
@@ -3489,6 +2155,15 @@ DateTime                  Idle  Idle In Xact       Waiting       Running
 2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
 Average                  3.0 %        13.9 %        55.3 %        27.8 %
 
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 20.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 30.000 buffers/s
+Written Buffers By Backend (Average)  : 200.000 buffers/s
+Written Buffers By Backend (Maximum)  : 300.000 buffers/s
+Backend Executed fsync (Average)      : 2.000 sync/s
+Backend Executed fsync (Maximum)      : 3.000 sync/s
+
 ----------------------------------------
 /* OS Resource Usage */
 ----------------------------------------
@@ -3547,7 +2222,7 @@ postgres          public            pgbench_tellers          0 MiB             0
 ----------------------------------------
 /* Long Transactions */
 ----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
+PID       Client Address             Xact Start    Duration  Query                           
 -----------------------------------------------------------------------------------------
 10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
 10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
@@ -3686,15 +2361,11 @@ Flush WAL Location    : 0/685E578 (000000010000000000000006)
 Replay WAL Location   : 0/685E578 (000000010000000000000006)
 Sync Priority         : 0
 Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
 
 ----------------------------------------
 /* Setting Parameters */
@@ -3731,15 +2402,15 @@ Processing                        Executes
 ---------------------------------------------
 
 ---------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5436)
+STATSINFO Report (host: statsinfo, port: 5433)
 ---------------------------------------------
 
 ----------------------------------------
 /* Summary */
 ----------------------------------------
-Database System ID   : 5807946214009601534
+Database System ID   : 5807946214009601531
 Host                 : statsinfo
-Port                 : 5436
+Port                 : 5433
 PostgreSQL Version   : 9.3.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
@@ -3825,6 +2496,15 @@ DateTime                  Idle  Idle In Xact       Waiting       Running
 2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
 Average                  3.0 %        13.9 %        55.3 %        27.8 %
 
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 20.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 30.000 buffers/s
+Written Buffers By Backend (Average)  : 200.000 buffers/s
+Written Buffers By Backend (Maximum)  : 300.000 buffers/s
+Backend Executed fsync (Average)      : 2.000 sync/s
+Backend Executed fsync (Maximum)      : 3.000 sync/s
+
 ----------------------------------------
 /* OS Resource Usage */
 ----------------------------------------
@@ -3883,7 +2563,7 @@ postgres          public            pgbench_tellers          0 MiB             0
 ----------------------------------------
 /* Long Transactions */
 ----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
+PID       Client Address             Xact Start    Duration  Query                           
 -----------------------------------------------------------------------------------------
 10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
 10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
@@ -4022,15 +2702,11 @@ Flush WAL Location    : 0/685E578 (000000010000000000000006)
 Replay WAL Location   : 0/685E578 (000000010000000000000006)
 Sync Priority         : 0
 Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
 
 ----------------------------------------
 /* Setting Parameters */
@@ -4067,15 +2743,15 @@ Processing                        Executes
 ---------------------------------------------
 
 ---------------------------------------------
-STATSINFO Report (host: statsinfo, port: 5437)
+STATSINFO Report (host: statsinfo, port: 5434)
 ---------------------------------------------
 
 ----------------------------------------
 /* Summary */
 ----------------------------------------
-Database System ID   : 5807946214009601535
+Database System ID   : 5807946214009601532
 Host                 : statsinfo
-Port                 : 5437
+Port                 : 5434
 PostgreSQL Version   : 9.4.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
@@ -4161,6 +2837,15 @@ DateTime                  Idle  Idle In Xact       Waiting       Running
 2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
 Average                  3.0 %        13.9 %        55.3 %        27.8 %
 
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 20.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 30.000 buffers/s
+Written Buffers By Backend (Average)  : 200.000 buffers/s
+Written Buffers By Backend (Maximum)  : 300.000 buffers/s
+Backend Executed fsync (Average)      : 2.000 sync/s
+Backend Executed fsync (Maximum)      : 3.000 sync/s
+
 ----------------------------------------
 /* OS Resource Usage */
 ----------------------------------------
@@ -4219,7 +2904,7 @@ postgres          public            pgbench_tellers          0 MiB             0
 ----------------------------------------
 /* Long Transactions */
 ----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
+PID       Client Address             Xact Start    Duration  Query                           
 -----------------------------------------------------------------------------------------
 10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
 10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
@@ -4358,15 +3043,693 @@ Flush WAL Location    : 0/685E578 (000000010000000000000006)
 Replay WAL Location   : 0/685E578 (000000010000000000000006)
 Sync Priority         : 0
 Sync State            : async
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
 
-/** Replication Delays **/
+----------------------------------------
+/* Setting Parameters */
+----------------------------------------
+Name                              Setting                           Unit    Source
+-------------------------------------------------------------------------------------------------------
+shared_buffers                    4096                              8kB     configuration file
+
+----------------------------------------
+/* Schema Information */
+----------------------------------------
+
+/** Tables **/
 -----------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:01  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:02  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:03  127.0.0.1:58145              672 byte           672 byte
+Database          Schema            Table              Columns      Rows        Size   Size Incr  Table Scans  Index Scans
+-----------------------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_accounts         4    100002      13 MiB       0 MiB            0       133066
+postgres          public            pgbench_branches         3         1       0 MiB       0 MiB       109143            0
+postgres          public            pgbench_history          6     80338       4 MiB       3 MiB            0            0
+postgres          public            pgbench_tellers          4        10       0 MiB       0 MiB        81067            0
+
+/** Indexes **/
+-----------------------------------
+Database          Schema            Index             Table                   Size   Size Incr  Index Scans  Rows/Scan  Disk Reads  Cache Reads  Index Key
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_accounts_pkey  pgbench_accounts       2 MiB       0 MiB       133066      1.000           0       269814  aid
+postgres          public            pgbench_branches_pkey  pgbench_branches       0 MiB       0 MiB            0      0.000           0           29  bid
+postgres          public            pgbench_tellers_pkey  pgbench_tellers        0 MiB       0 MiB            0      0.000           0            3  tid
+
+----------------------------------------
+/* Profiles */
+----------------------------------------
+Processing                        Executes
+---------------------------------------------
+
+---------------------------------------------
+STATSINFO Report (host: statsinfo, port: 5435)
+---------------------------------------------
+
+----------------------------------------
+/* Summary */
+----------------------------------------
+Database System ID   : 5807946214009601533
+Host                 : statsinfo
+Port                 : 5435
+PostgreSQL Version   : 9.5.0
+Snapshot Begin       : 2012-11-01 00:00:00
+Snapshot End         : 2012-11-01 00:03:00
+Snapshot Duration    : 00:03:00
+Total Database Size  : 26 MiB
+Total Commits        : 66970
+Total Rollbacks      : 0
+
+/** Alert **/
+-----------------------------------
+DateTime             Message
+--------------------------------------------------------------------------------
+2012-11-01 00:01:00  too many transactions in snapshots between '2012-11-01 00:00:00' and '2012-11-01 00:01:00' --- 1585 Transactions/sec (threshold = 1000 Transactions/sec)
+2012-11-01 00:02:00  too many transactions in snapshots between '2012-11-01 00:01:00' and '2012-11-01 00:02:00' --- 1688 Transactions/sec (threshold = 1000 Transactions/sec)
+2012-11-01 00:02:00  dead tuple size exceeds threshold in snapshot '2012-11-01 00:02:00' --- 245.15 MiB (threshold = 100 MiB)
+
+----------------------------------------
+/* Database Statistics */
+----------------------------------------
+Database Name              : postgres
+Database Size              : 26 MiB
+Database Size Increase     : 3 MiB
+Commit/s                   : 372.056
+Rollback/s                 : 0.000
+Cache Hit Ratio            : 100.0 %
+Block Read/s (disk+cache)  : 10394.122
+Block Read/s (disk)        : 3.333
+Rows Read/s                : 5709.183
+Temporary Files            : 1
+Temporary Bytes            : 8 MiB
+Deadlocks                  : 1
+Block Read Time            : 3337.718 ms
+Block Write Time           : 0.000 ms
+
+/** Transaction Statistics **/
+-----------------------------------
+DateTime          Database              Commit/s    Rollback/s
+-----------------------------------------------------------------
+2012-11-01 00:01  postgres               371.517         0.000
+2012-11-01 00:02  postgres               373.100         0.000
+2012-11-01 00:03  postgres               371.550         0.000
+
+/** Database Size **/
+-----------------------------------
+DateTime          Database                    Size
+-----------------------------------------------------
+2012-11-01 00:00  postgres              22.435 MiB
+2012-11-01 00:01  postgres              23.646 MiB
+2012-11-01 00:02  postgres              24.841 MiB
+2012-11-01 00:03  postgres              26.099 MiB
+
+/** Recovery Conflicts **/
+-----------------------------------
+Database          Conflict Tablespace  Conflict Lock  Conflict Snapshot  Conflict Bufferpin  Conflict Deadlock
+-----------------------------------------------------------------------------------------------------------------
+postgres                            1              2                  3                   4                  5
+
+----------------------------------------
+/* Instance Activity */
+----------------------------------------
+
+/** WAL Statistics **/
+-----------------------------------
+WAL Write Total    : 52.399 MiB
+WAL Write Speed    : 0.291 MiB/s
+WAL Archive Total  : 4 file(s)
+WAL Archive Failed : 1 file(s)
+
+-----------------------------------
+DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
+-------------------------------------------------------------------------------------------------------------------
+2012-11-01 00:01  0/3B7C140          000000010000000000000003      12.504 MiB       0.208 MiB  000000010000000000000002
+2012-11-01 00:02  0/5635000          000000010000000000000005      26.722 MiB       0.445 MiB  000000010000000000000004
+2012-11-01 00:03  0/63614A8          000000010000000000000006      13.173 MiB       0.220 MiB  000000010000000000000005
+
+/** Instance Processes **/
+-----------------------------------
+DateTime                  Idle  Idle In Xact       Waiting       Running
+---------------------------------------------------------------------------
+2012-11-01 00:00         3.6 %         3.6 %        60.7 %        32.1 %
+2012-11-01 00:01         6.3 %        20.8 %        52.1 %        20.8 %
+2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
+2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
+Average                  3.0 %        13.9 %        55.3 %        27.8 %
+
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 20.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 30.000 buffers/s
+Written Buffers By Backend (Average)  : 200.000 buffers/s
+Written Buffers By Backend (Maximum)  : 300.000 buffers/s
+Backend Executed fsync (Average)      : 2.000 sync/s
+Backend Executed fsync (Maximum)      : 3.000 sync/s
+
+----------------------------------------
+/* OS Resource Usage */
+----------------------------------------
+
+/** CPU Usage + Load Average **/
+-----------------------------------
+DateTime              User    System      Idle    IOwait  Loadavg1  Loadavg5  Loadavg15
+------------------------------------------------------------------------------------------
+2012-11-01 00:01    37.7 %    14.7 %     0.1 %    47.5 %     0.940     0.390      0.690
+2012-11-01 00:02    30.9 %    12.1 %     0.0 %    57.0 %     1.320     0.600      0.740
+2012-11-01 00:03    32.4 %    12.3 %     0.1 %    55.2 %     1.200     0.700      0.770
+Average             33.7 %    13.0 %     0.1 %    53.2 %     1.153     0.563      0.733
+
+/** IO Usage **/
+-----------------------------------
+Device        Including TableSpaces       Total Read   Total Write    Total Read Time   Total Write Time  Current IO Queue    Total IO Time
+----------------------------------------------------------------------------------------------------------------------------------------------
+dm-2          {pg_default,pg_global}           0 MiB       665 MiB           11317 ms         6701892 ms            11.667       6713205 ms
+
+-----------------------------------
+DateTime          Device                   Read Size/s (Peak)            Write Size/s (Peak)   Read Time Rate  Write Time Rate
+---------------------------------------------------------------------------------------------------------------------------------
+2012-11-01 00:01  dm-2               2.47 KiB (   200.00 KiB)    3536.13 KiB (  4000.00 KiB)           17.1 %         1539.3 %
+2012-11-01 00:02  dm-2               0.00 KiB (     0.00 KiB)    4215.33 KiB (  5000.00 KiB)            0.0 %         7177.7 %
+2012-11-01 00:03  dm-2               0.13 KiB (   100.00 KiB)    3599.47 KiB (  3000.00 KiB)            1.7 %         2452.9 %
+
+/** Memory Usage **/
+-----------------------------------
+DateTime               Memfree       Buffers        Cached          Swap         Dirty
+-----------------------------------------------------------------------------------------
+2012-11-01 00:00    160.15 MiB     25.37 MiB    636.21 MiB     65.86 MiB      0.18 MiB
+2012-11-01 00:01    150.07 MiB     25.53 MiB    640.96 MiB     65.86 MiB      0.03 MiB
+2012-11-01 00:02    145.65 MiB     25.67 MiB    643.79 MiB     65.86 MiB      5.20 MiB
+2012-11-01 00:03    139.82 MiB     25.82 MiB    646.54 MiB     65.86 MiB      0.58 MiB
+
+----------------------------------------
+/* Disk Usage */
+----------------------------------------
+
+/** Disk Usage per Tablespace **/
+-----------------------------------
+Tablespace        Location                          Device                Used         Avail      Remain
+-----------------------------------------------------------------------------------------------------------
+pg_default        /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
+pg_global         /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
+
+/** Disk Usage per Table **/
+-----------------------------------
+Database          Schema            Table                     Size   Table Reads   Index Reads   Toast Reads
+---------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_history          4 MiB           429             0             0
+postgres          public            pgbench_accounts        13 MiB            30             0             0
+postgres          public            pgbench_branches         0 MiB             2             0             0
+postgres          public            pgbench_tellers          0 MiB             0             0             0
+
+----------------------------------------
+/* Long Transactions */
+----------------------------------------
+PID       Client Address             Xact Start    Duration  Query                           
+-----------------------------------------------------------------------------------------
+10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
+10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
+10591     127.0.0.1         2012-11-01 00:00:30     2.000 s  SELECT 2                        
+10590     127.0.0.1         2012-11-01 00:00:00     1.000 s  SELECT 1                        
+
+----------------------------------------
+/* Notable Tables */
+----------------------------------------
+
+/** Heavily Updated Tables **/
+-----------------------------------
+Database          Schema            Table              INSERT Rows   UPDATE Rows   DELETE Rows    Total Rows  HOT Ratio(%)
+-----------------------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_branches             0         66535             0         66535         100.0
+postgres          public            pgbench_tellers              0         66534             0         66534         100.0
+postgres          public            pgbench_history          66533             0             0         66533           0.0
+postgres          public            pgbench_accounts             0         66533             0         66533          97.8
+
+/** Heavily Accessed Tables **/
+-----------------------------------
+Database          Schema            Table                Seq Scans     Read Rows  Read Rows/Scan  Cache Hit Ratio(%)
+-----------------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_tellers          81067        665330           8.207               100.0
+postgres          public            pgbench_branches        109143         66533           0.610               100.0
+
+/** Low Density Tables **/
+-----------------------------------
+Database          Schema            Table              Live Tuples   Logical Pages  Physical Pages  Logical Page Ratio(%)
+----------------------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_accounts        100002            1640            1700                   96.5
+
+/** Fragmented Tables **/
+-----------------------------------
+Database          Schema            Table             Column             Correlation
+---------------------------------------------------------------------------------------
+postgres          public            pgbench_tellers   tid                     -0.357
+postgres          public            pgbench_accounts  aid                      0.951
+
+----------------------------------------
+/* Checkpoint Activity */
+----------------------------------------
+Total Checkpoints        : 2
+Checkpoints By Time      : 1
+Checkpoints By XLOG      : 1
+Written Buffers Average  : 2343.500
+Written Buffers Maximum  : 2404.000
+Write Duration Average   : 47.445 sec
+Write Duration Maximum   : 49.193 sec
+
+----------------------------------------
+/* Autovacuum Activity */
+----------------------------------------
+
+/** Vacuum Basic Statistics (Average) **/
+-----------------------------------
+Table                                Count  Removed Rows   Remain Rows   Remain Dead   Index Scans      Duration  Duration(Max)  Cancels
+-------------------------------------------------------------------------------------------------------------------------------------------
+postgres.public.pgbench_tellers          2       207.000        19.500        30.000         0.500       0.000 s        0.000 s        0
+postgres.public.pgbench_branches         2         2.000         0.500        20.000         1.000       0.000 s        0.000 s        2
+postgres.public.pgbench_accounts         0         0.000         0.000         0.000         0.000       0.000 s        0.000 s        1
+
+/** Vacuum I/O Statistics (Average) **/
+-----------------------------------
+Table                               Page Hit   Page Miss  Page Dirty      Read Rate     Write Rate
+-----------------------------------------------------------------------------------------------------
+postgres.public.pgbench_branches      57.500       0.000       1.000    0.000 MiB/s   15.259 MiB/s
+postgres.public.pgbench_tellers       35.500       0.000       0.500    0.000 MiB/s    8.798 MiB/s
+
+/** Analyze Statistics **/
+-----------------------------------
+Table                                Count  Duration(Total)    Duration(Avg)    Duration(Max)  Last Analyze Time    Cancels  Mod Rows(Max)
+---------------------------------------------------------------------------------------------------------------------------------------------
+postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          40000
+postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          10000
+postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          20000
+postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          30000
+
+----------------------------------------
+/* Query Activity */
+----------------------------------------
+
+/** Functions **/
+-----------------------------------
+OID       Database          Schema            Function             Calls     Total Time     Self Time     Time/Call
+----------------------------------------------------------------------------------------------------------------------
+16392     postgres          statsinfo         sample                  36       0.300 ms      0.300 ms      0.008 ms
+
+/** Statements **/
+-----------------------------------
+User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time  Query
+------------------------------------------------------------------------------------------------------------------------
+postgres          postgres             66463     331.375 sec      0.005 sec         0.000 ms          0.000 ms  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
+postgres          postgres             66463      85.370 sec      0.001 sec         0.000 ms          0.000 ms  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
+postgres          postgres             66463       5.554 sec      0.000 sec         0.026 ms          0.000 ms  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
+
+/** Plans **/
+-----------------------------------
+Query ID    Plan ID     User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time
+-----------------------------------------------------------------------------------------------------------------------------------------
+ 847103580  1970669142  postgres          postgres              1074       0.094 sec      0.000 sec         0.213 ms          0.000 ms
+1067368138  4132319976  postgres          postgres              1073       0.061 sec      0.000 sec         0.000 ms          0.000 ms
+1899262118   487339097  postgres          postgres              1074       0.048 sec      0.000 sec         0.000 ms          0.000 ms
+
+----------------------------------------
+/* Lock Conflicts */
+----------------------------------------
+Database          Schema            Relation          Duration  Blockee PID  Blocker PID  Blocker GID     
+Blockee Query
+Blocker Query
+--------------------------------------------------------------------------------------------------------
+postgres                                              00:00:00        14768        14771                  
+UPDATE pgbench_branches SET bbalance = bbalance + -3145 WHERE bid = 1;
+UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
+postgres                                              00:00:00        14769        14771                  
+UPDATE pgbench_tellers SET tbalance = tbalance + -3715 WHERE tid = 4;
+UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
+
+----------------------------------------
+/* Replication Activity */
+----------------------------------------
+
+/** Current Replication Status **/
+-----------------------------------
+User Name             : postgres
+Application Name      : walreceiver
+Client Address        : 127.0.0.1
+Client Host           : 
+Client Port           : 58145
+Backend Start         : 2012-11-01 00:00:00
+WAL Sender State      : streaming
+Current WAL Location  : 0/685E818 (000000010000000000000006)
+Sent WAL Location     : 0/685E818 (000000010000000000000006)
+Write WAL Location    : 0/685E818 (000000010000000000000006)
+Flush WAL Location    : 0/685E578 (000000010000000000000006)
+Replay WAL Location   : 0/685E578 (000000010000000000000006)
+Sync Priority         : 0
+Sync State            : async
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
+
+----------------------------------------
+/* Setting Parameters */
+----------------------------------------
+Name                              Setting                           Unit    Source
+-------------------------------------------------------------------------------------------------------
+shared_buffers                    4096                              8kB     configuration file
+
+----------------------------------------
+/* Schema Information */
+----------------------------------------
+
+/** Tables **/
+-----------------------------------
+Database          Schema            Table              Columns      Rows        Size   Size Incr  Table Scans  Index Scans
+-----------------------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_accounts         4    100002      13 MiB       0 MiB            0       133066
+postgres          public            pgbench_branches         3         1       0 MiB       0 MiB       109143            0
+postgres          public            pgbench_history          6     80338       4 MiB       3 MiB            0            0
+postgres          public            pgbench_tellers          4        10       0 MiB       0 MiB        81067            0
+
+/** Indexes **/
+-----------------------------------
+Database          Schema            Index             Table                   Size   Size Incr  Index Scans  Rows/Scan  Disk Reads  Cache Reads  Index Key
+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_accounts_pkey  pgbench_accounts       2 MiB       0 MiB       133066      1.000           0       269814  aid
+postgres          public            pgbench_branches_pkey  pgbench_branches       0 MiB       0 MiB            0      0.000           0           29  bid
+postgres          public            pgbench_tellers_pkey  pgbench_tellers        0 MiB       0 MiB            0      0.000           0            3  tid
+
+----------------------------------------
+/* Profiles */
+----------------------------------------
+Processing                        Executes
+---------------------------------------------
+
+---------------------------------------------
+STATSINFO Report (host: statsinfo, port: 5436)
+---------------------------------------------
+
+----------------------------------------
+/* Summary */
+----------------------------------------
+Database System ID   : 5807946214009601534
+Host                 : statsinfo
+Port                 : 5436
+PostgreSQL Version   : 9.6.0
+Snapshot Begin       : 2012-11-01 00:00:00
+Snapshot End         : 2012-11-01 00:03:00
+Snapshot Duration    : 00:03:00
+Total Database Size  : 26 MiB
+Total Commits        : 66970
+Total Rollbacks      : 0
+
+/** Alert **/
+-----------------------------------
+DateTime             Message
+--------------------------------------------------------------------------------
+2012-11-01 00:01:00  too many transactions in snapshots between '2012-11-01 00:00:00' and '2012-11-01 00:01:00' --- 1585 Transactions/sec (threshold = 1000 Transactions/sec)
+2012-11-01 00:02:00  too many transactions in snapshots between '2012-11-01 00:01:00' and '2012-11-01 00:02:00' --- 1688 Transactions/sec (threshold = 1000 Transactions/sec)
+2012-11-01 00:02:00  dead tuple size exceeds threshold in snapshot '2012-11-01 00:02:00' --- 245.15 MiB (threshold = 100 MiB)
+
+----------------------------------------
+/* Database Statistics */
+----------------------------------------
+Database Name              : postgres
+Database Size              : 26 MiB
+Database Size Increase     : 3 MiB
+Commit/s                   : 372.056
+Rollback/s                 : 0.000
+Cache Hit Ratio            : 100.0 %
+Block Read/s (disk+cache)  : 10394.122
+Block Read/s (disk)        : 3.333
+Rows Read/s                : 5709.183
+Temporary Files            : 1
+Temporary Bytes            : 8 MiB
+Deadlocks                  : 1
+Block Read Time            : 3337.718 ms
+Block Write Time           : 0.000 ms
+
+/** Transaction Statistics **/
+-----------------------------------
+DateTime          Database              Commit/s    Rollback/s
+-----------------------------------------------------------------
+2012-11-01 00:01  postgres               371.517         0.000
+2012-11-01 00:02  postgres               373.100         0.000
+2012-11-01 00:03  postgres               371.550         0.000
+
+/** Database Size **/
+-----------------------------------
+DateTime          Database                    Size
+-----------------------------------------------------
+2012-11-01 00:00  postgres              22.435 MiB
+2012-11-01 00:01  postgres              23.646 MiB
+2012-11-01 00:02  postgres              24.841 MiB
+2012-11-01 00:03  postgres              26.099 MiB
+
+/** Recovery Conflicts **/
+-----------------------------------
+Database          Conflict Tablespace  Conflict Lock  Conflict Snapshot  Conflict Bufferpin  Conflict Deadlock
+-----------------------------------------------------------------------------------------------------------------
+postgres                            1              2                  3                   4                  5
+
+----------------------------------------
+/* Instance Activity */
+----------------------------------------
+
+/** WAL Statistics **/
+-----------------------------------
+WAL Write Total    : 52.399 MiB
+WAL Write Speed    : 0.291 MiB/s
+WAL Archive Total  : 4 file(s)
+WAL Archive Failed : 1 file(s)
+
+-----------------------------------
+DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
+-------------------------------------------------------------------------------------------------------------------
+2012-11-01 00:01  0/3B7C140          000000010000000000000003      12.504 MiB       0.208 MiB  000000010000000000000002
+2012-11-01 00:02  0/5635000          000000010000000000000005      26.722 MiB       0.445 MiB  000000010000000000000004
+2012-11-01 00:03  0/63614A8          000000010000000000000006      13.173 MiB       0.220 MiB  000000010000000000000005
+
+/** Instance Processes **/
+-----------------------------------
+DateTime                  Idle  Idle In Xact       Waiting       Running
+---------------------------------------------------------------------------
+2012-11-01 00:00         3.6 %         3.6 %        60.7 %        32.1 %
+2012-11-01 00:01         6.3 %        20.8 %        52.1 %        20.8 %
+2012-11-01 00:02         0.0 %        14.6 %        56.3 %        29.2 %
+2012-11-01 00:03         2.1 %        16.7 %        52.1 %        29.2 %
+Average                  3.0 %        13.9 %        55.3 %        27.8 %
+
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 20.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 30.000 buffers/s
+Written Buffers By Backend (Average)  : 200.000 buffers/s
+Written Buffers By Backend (Maximum)  : 300.000 buffers/s
+Backend Executed fsync (Average)      : 2.000 sync/s
+Backend Executed fsync (Maximum)      : 3.000 sync/s
+
+----------------------------------------
+/* OS Resource Usage */
+----------------------------------------
+
+/** CPU Usage + Load Average **/
+-----------------------------------
+DateTime              User    System      Idle    IOwait  Loadavg1  Loadavg5  Loadavg15
+------------------------------------------------------------------------------------------
+2012-11-01 00:01    37.7 %    14.7 %     0.1 %    47.5 %     0.940     0.390      0.690
+2012-11-01 00:02    30.9 %    12.1 %     0.0 %    57.0 %     1.320     0.600      0.740
+2012-11-01 00:03    32.4 %    12.3 %     0.1 %    55.2 %     1.200     0.700      0.770
+Average             33.7 %    13.0 %     0.1 %    53.2 %     1.153     0.563      0.733
+
+/** IO Usage **/
+-----------------------------------
+Device        Including TableSpaces       Total Read   Total Write    Total Read Time   Total Write Time  Current IO Queue    Total IO Time
+----------------------------------------------------------------------------------------------------------------------------------------------
+dm-2          {pg_default,pg_global}           0 MiB       665 MiB           11317 ms         6701892 ms            11.667       6713205 ms
+
+-----------------------------------
+DateTime          Device                   Read Size/s (Peak)            Write Size/s (Peak)   Read Time Rate  Write Time Rate
+---------------------------------------------------------------------------------------------------------------------------------
+2012-11-01 00:01  dm-2               2.47 KiB (   200.00 KiB)    3536.13 KiB (  4000.00 KiB)           17.1 %         1539.3 %
+2012-11-01 00:02  dm-2               0.00 KiB (     0.00 KiB)    4215.33 KiB (  5000.00 KiB)            0.0 %         7177.7 %
+2012-11-01 00:03  dm-2               0.13 KiB (   100.00 KiB)    3599.47 KiB (  3000.00 KiB)            1.7 %         2452.9 %
+
+/** Memory Usage **/
+-----------------------------------
+DateTime               Memfree       Buffers        Cached          Swap         Dirty
+-----------------------------------------------------------------------------------------
+2012-11-01 00:00    160.15 MiB     25.37 MiB    636.21 MiB     65.86 MiB      0.18 MiB
+2012-11-01 00:01    150.07 MiB     25.53 MiB    640.96 MiB     65.86 MiB      0.03 MiB
+2012-11-01 00:02    145.65 MiB     25.67 MiB    643.79 MiB     65.86 MiB      5.20 MiB
+2012-11-01 00:03    139.82 MiB     25.82 MiB    646.54 MiB     65.86 MiB      0.58 MiB
+
+----------------------------------------
+/* Disk Usage */
+----------------------------------------
+
+/** Disk Usage per Tablespace **/
+-----------------------------------
+Tablespace        Location                          Device                Used         Avail      Remain
+-----------------------------------------------------------------------------------------------------------
+pg_default        /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
+pg_global         /var/pgdata                       253:2            22805 MiB     26106 MiB      53.4 %
+
+/** Disk Usage per Table **/
+-----------------------------------
+Database          Schema            Table                     Size   Table Reads   Index Reads   Toast Reads
+---------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_history          4 MiB           429             0             0
+postgres          public            pgbench_accounts        13 MiB            30             0             0
+postgres          public            pgbench_branches         0 MiB             2             0             0
+postgres          public            pgbench_tellers          0 MiB             0             0             0
+
+----------------------------------------
+/* Long Transactions */
+----------------------------------------
+PID       Client Address             Xact Start    Duration  Query                           
+-----------------------------------------------------------------------------------------
+10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
+10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
+10591     127.0.0.1         2012-11-01 00:00:30     2.000 s  SELECT 2                        
+10590     127.0.0.1         2012-11-01 00:00:00     1.000 s  SELECT 1                        
+
+----------------------------------------
+/* Notable Tables */
+----------------------------------------
+
+/** Heavily Updated Tables **/
+-----------------------------------
+Database          Schema            Table              INSERT Rows   UPDATE Rows   DELETE Rows    Total Rows  HOT Ratio(%)
+-----------------------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_branches             0         66535             0         66535         100.0
+postgres          public            pgbench_tellers              0         66534             0         66534         100.0
+postgres          public            pgbench_history          66533             0             0         66533           0.0
+postgres          public            pgbench_accounts             0         66533             0         66533          97.8
+
+/** Heavily Accessed Tables **/
+-----------------------------------
+Database          Schema            Table                Seq Scans     Read Rows  Read Rows/Scan  Cache Hit Ratio(%)
+-----------------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_tellers          81067        665330           8.207               100.0
+postgres          public            pgbench_branches        109143         66533           0.610               100.0
+
+/** Low Density Tables **/
+-----------------------------------
+Database          Schema            Table              Live Tuples   Logical Pages  Physical Pages  Logical Page Ratio(%)
+----------------------------------------------------------------------------------------------------------------------------
+postgres          public            pgbench_accounts        100002            1640            1700                   96.5
+
+/** Fragmented Tables **/
+-----------------------------------
+Database          Schema            Table             Column             Correlation
+---------------------------------------------------------------------------------------
+postgres          public            pgbench_tellers   tid                     -0.357
+postgres          public            pgbench_accounts  aid                      0.951
+
+----------------------------------------
+/* Checkpoint Activity */
+----------------------------------------
+Total Checkpoints        : 2
+Checkpoints By Time      : 1
+Checkpoints By XLOG      : 1
+Written Buffers Average  : 2343.500
+Written Buffers Maximum  : 2404.000
+Write Duration Average   : 47.445 sec
+Write Duration Maximum   : 49.193 sec
+
+----------------------------------------
+/* Autovacuum Activity */
+----------------------------------------
+
+/** Vacuum Basic Statistics (Average) **/
+-----------------------------------
+Table                                Count  Removed Rows   Remain Rows   Remain Dead   Index Scans      Duration  Duration(Max)  Cancels
+-------------------------------------------------------------------------------------------------------------------------------------------
+postgres.public.pgbench_tellers          2       207.000        19.500        30.000         0.500       0.000 s        0.000 s        0
+postgres.public.pgbench_branches         2         2.000         0.500        20.000         1.000       0.000 s        0.000 s        2
+postgres.public.pgbench_accounts         0         0.000         0.000         0.000         0.000       0.000 s        0.000 s        1
+
+/** Vacuum I/O Statistics (Average) **/
+-----------------------------------
+Table                               Page Hit   Page Miss  Page Dirty      Read Rate     Write Rate
+-----------------------------------------------------------------------------------------------------
+postgres.public.pgbench_branches      57.500       0.000       1.000    0.000 MiB/s   15.259 MiB/s
+postgres.public.pgbench_tellers       35.500       0.000       0.500    0.000 MiB/s    8.798 MiB/s
+
+/** Analyze Statistics **/
+-----------------------------------
+Table                                Count  Duration(Total)    Duration(Avg)    Duration(Max)  Last Analyze Time    Cancels  Mod Rows(Max)
+---------------------------------------------------------------------------------------------------------------------------------------------
+postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          40000
+postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          10000
+postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          20000
+postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          30000
+
+----------------------------------------
+/* Query Activity */
+----------------------------------------
+
+/** Functions **/
+-----------------------------------
+OID       Database          Schema            Function             Calls     Total Time     Self Time     Time/Call
+----------------------------------------------------------------------------------------------------------------------
+16392     postgres          statsinfo         sample                  36       0.300 ms      0.300 ms      0.008 ms
+
+/** Statements **/
+-----------------------------------
+User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time  Query
+------------------------------------------------------------------------------------------------------------------------
+postgres          postgres             66463     331.375 sec      0.005 sec         0.000 ms          0.000 ms  UPDATE pgbench_branches SET bbalance = bbalance + ? WHERE bid = ?;
+postgres          postgres             66463      85.370 sec      0.001 sec         0.000 ms          0.000 ms  UPDATE pgbench_tellers SET tbalance = tbalance + ? WHERE tid = ?;
+postgres          postgres             66463       5.554 sec      0.000 sec         0.026 ms          0.000 ms  UPDATE pgbench_accounts SET abalance = abalance + ? WHERE aid = ?;
+
+/** Plans **/
+-----------------------------------
+Query ID    Plan ID     User              Database             Calls      Total Time      Time/Call  Block Read Time  Block Write Time
+-----------------------------------------------------------------------------------------------------------------------------------------
+ 847103580  1970669142  postgres          postgres              1074       0.094 sec      0.000 sec         0.213 ms          0.000 ms
+1067368138  4132319976  postgres          postgres              1073       0.061 sec      0.000 sec         0.000 ms          0.000 ms
+1899262118   487339097  postgres          postgres              1074       0.048 sec      0.000 sec         0.000 ms          0.000 ms
+
+----------------------------------------
+/* Lock Conflicts */
+----------------------------------------
+Database          Schema            Relation          Duration  Blockee PID  Blocker PID  Blocker GID     
+Blockee Query
+Blocker Query
+--------------------------------------------------------------------------------------------------------
+postgres                                              00:00:00        14768        14771                  
+UPDATE pgbench_branches SET bbalance = bbalance + -3145 WHERE bid = 1;
+UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
+postgres                                              00:00:00        14769        14771                  
+UPDATE pgbench_tellers SET tbalance = tbalance + -3715 WHERE tid = 4;
+UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;
+
+----------------------------------------
+/* Replication Activity */
+----------------------------------------
+
+/** Current Replication Status **/
+-----------------------------------
+User Name             : postgres
+Application Name      : walreceiver
+Client Address        : 127.0.0.1
+Client Host           : 
+Client Port           : 58145
+Backend Start         : 2012-11-01 00:00:00
+WAL Sender State      : streaming
+Current WAL Location  : 0/685E818 (000000010000000000000006)
+Sent WAL Location     : 0/685E818 (000000010000000000000006)
+Write WAL Location    : 0/685E818 (000000010000000000000006)
+Flush WAL Location    : 0/685E578 (000000010000000000000006)
+Replay WAL Location   : 0/685E578 (000000010000000000000006)
+Sync Priority         : 0
+Sync State            : async
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
 
 ----------------------------------------
 /* Setting Parameters */
@@ -4415,7 +3778,7 @@ STATSINFO Report (host: statsinfo, port: 5432)
 Database System ID   : 5807946214009601530
 Host                 : statsinfo
 Port                 : 5432
-PostgreSQL Version   : 8.4.0
+PostgreSQL Version   : 9.2.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
 Snapshot Duration    : 00:03:00
@@ -4439,7 +3802,7 @@ STATSINFO Report (host: statsinfo, port: 5432)
 Database System ID   : 5807946214009601530
 Host                 : statsinfo
 Port                 : 5432
-PostgreSQL Version   : 8.4.0
+PostgreSQL Version   : 9.2.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:01:00
 Snapshot Duration    : 00:01:00
@@ -4460,7 +3823,7 @@ STATSINFO Report (host: statsinfo, port: 5432)
 Database System ID   : 5807946214009601530
 Host                 : statsinfo
 Port                 : 5432
-PostgreSQL Version   : 8.4.0
+PostgreSQL Version   : 9.2.0
 Snapshot Begin       : 2012-11-01 00:01:00
 Snapshot End         : 2012-11-01 00:02:00
 Snapshot Duration    : 00:01:00
@@ -4481,7 +3844,7 @@ STATSINFO Report (host: statsinfo, port: 5432)
 Database System ID   : 5807946214009601530
 Host                 : statsinfo
 Port                 : 5432
-PostgreSQL Version   : 8.4.0
+PostgreSQL Version   : 9.2.0
 Snapshot Begin       : 2012-11-01 00:02:00
 Snapshot End         : 2012-11-01 00:03:00
 Snapshot Duration    : 00:01:00
@@ -4502,7 +3865,7 @@ STATSINFO Report (host: statsinfo, port: 5432)
 Database System ID   : 5807946214009601530
 Host                 : statsinfo
 Port                 : 5432
-PostgreSQL Version   : 8.4.0
+PostgreSQL Version   : 9.2.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:01:00
 Snapshot Duration    : 00:01:00
@@ -4523,7 +3886,7 @@ STATSINFO Report (host: statsinfo, port: 5432)
 Database System ID   : 5807946214009601530
 Host                 : statsinfo
 Port                 : 5432
-PostgreSQL Version   : 8.4.0
+PostgreSQL Version   : 9.2.0
 Snapshot Begin       : 2012-11-01 00:01:00
 Snapshot End         : 2012-11-01 00:02:00
 Snapshot Duration    : 00:01:00
@@ -4544,7 +3907,7 @@ STATSINFO Report (host: statsinfo, port: 5432)
 Database System ID   : 5807946214009601530
 Host                 : statsinfo
 Port                 : 5432
-PostgreSQL Version   : 8.4.0
+PostgreSQL Version   : 9.2.0
 Snapshot Begin       : 2012-11-01 00:02:00
 Snapshot End         : 2012-11-01 00:03:00
 Snapshot Duration    : 00:01:00
@@ -4567,7 +3930,7 @@ STATSINFO Report (host: statsinfo, port: 5432)
 Database System ID   : 5807946214009601530
 Host                 : statsinfo
 Port                 : 5432
-PostgreSQL Version   : 8.4.0
+PostgreSQL Version   : 9.2.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
 Snapshot Duration    : 00:03:00
@@ -4588,7 +3951,7 @@ STATSINFO Report (host: statsinfo, port: 5433)
 Database System ID   : 5807946214009601531
 Host                 : statsinfo
 Port                 : 5433
-PostgreSQL Version   : 9.0.0
+PostgreSQL Version   : 9.3.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:03:00
 Snapshot Duration    : 00:03:00
@@ -4609,7 +3972,7 @@ STATSINFO Report (host: statsinfo, port: 5436)
 Database System ID   : 5807946214009601534
 Host                 : statsinfo
 Port                 : 5436
-PostgreSQL Version   : 9.3.0
+PostgreSQL Version   : 9.6.0
 Snapshot Begin       : 2012-11-01 00:00:00
 Snapshot End         : 2012-11-01 00:00:00
 Snapshot Duration    : 00:00:00
@@ -4674,15 +4037,15 @@ postgres                            1              2                  3         
 -----------------------------------
 WAL Write Total    : 52.399 MiB
 WAL Write Speed    : 0.000 MiB/s
-WAL Archive Total  : (N/A)
-WAL Archive Failed : (N/A)
+WAL Archive Total  : 4 file(s)
+WAL Archive Failed : 1 file(s)
 
 -----------------------------------
 DateTime          Location           Segment File                  Write Size    Write Size/s  Last Archived WAL
 -------------------------------------------------------------------------------------------------------------------
-2012-11-01 00:00  0/3B7C140          000000010000000000000003      12.504 MiB       0.000 MiB  (N/A)            
-2012-11-01 00:00  0/5635000          000000010000000000000005      26.722 MiB       0.000 MiB  (N/A)            
-2012-11-01 00:00  0/63614A8          000000010000000000000006      13.173 MiB       0.000 MiB  (N/A)            
+2012-11-01 00:00  0/3B7C140          000000010000000000000003      12.504 MiB       0.000 MiB  000000010000000000000002
+2012-11-01 00:00  0/5635000          000000010000000000000005      26.722 MiB       0.000 MiB  000000010000000000000004
+2012-11-01 00:00  0/63614A8          000000010000000000000006      13.173 MiB       0.000 MiB  000000010000000000000005
 
 /** Instance Processes **/
 -----------------------------------
@@ -4693,6 +4056,15 @@ DateTime                  Idle  Idle In Xact       Waiting       Running
 2012-11-01 00:00         0.0 %        14.6 %        56.3 %        29.2 %
 2012-11-01 00:00         2.1 %        16.7 %        52.1 %        29.2 %
 Average                  3.0 %        13.9 %        55.3 %        27.8 %
+
+/** BGWriter Statistics **/
+-----------------------------------
+Written Buffers By BGWriter (Average) : 0.000 buffers/s
+Written Buffers By BGWriter (Maximum) : 0.000 buffers/s
+Written Buffers By Backend (Average)  : 0.000 buffers/s
+Written Buffers By Backend (Maximum)  : 0.000 buffers/s
+Backend Executed fsync (Average)      : 0.000 sync/s
+Backend Executed fsync (Maximum)      : 0.000 sync/s
 
 ----------------------------------------
 /* OS Resource Usage */
@@ -4752,7 +4124,7 @@ postgres          public            pgbench_tellers          0 MiB             0
 ----------------------------------------
 /* Long Transactions */
 ----------------------------------------
-PID       Client Address          When To Start    Duration  Query                           
+PID       Client Address             Xact Start    Duration  Query                           
 -----------------------------------------------------------------------------------------
 10593     127.0.0.1         2012-11-01 00:02:30     4.000 s  SELECT 4                        
 10592     127.0.0.1         2012-11-01 00:01:30     3.000 s  SELECT 3                        
@@ -4811,9 +4183,9 @@ Write Duration Maximum   : 49.193 sec
 -----------------------------------
 Table                                Count  Removed Rows   Remain Rows   Remain Dead   Index Scans      Duration  Duration(Max)  Cancels
 -------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_tellers          2       207.000        19.500         (N/A)         0.500       0.000 s        0.000 s        0
-postgres.public.pgbench_branches         2         2.000         0.500         (N/A)         1.000       0.000 s        0.000 s        2
-postgres.public.pgbench_accounts         0         0.000         0.000         (N/A)         0.000       0.000 s        0.000 s        1
+postgres.public.pgbench_tellers          2       207.000        19.500        30.000         0.500       0.000 s        0.000 s        0
+postgres.public.pgbench_branches         2         2.000         0.500        20.000         1.000       0.000 s        0.000 s        2
+postgres.public.pgbench_accounts         0         0.000         0.000         0.000         0.000       0.000 s        0.000 s        1
 
 /** Vacuum I/O Statistics (Average) **/
 -----------------------------------
@@ -4826,10 +4198,10 @@ postgres.public.pgbench_tellers       35.500       0.000       0.500    0.000 Mi
 -----------------------------------
 Table                                Count  Duration(Total)    Duration(Avg)    Duration(Max)  Last Analyze Time    Cancels  Mod Rows(Max)
 ---------------------------------------------------------------------------------------------------------------------------------------------
-postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          (N/A)
-postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          (N/A)
-postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          (N/A)
-postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          (N/A)
+postgres.public.pgbench_branches         2          1.686 s          0.843 s          0.845 s  2012-11-01 00:01:30        2          40000
+postgres.public.pgbench_accounts         2          0.670 s          0.335 s          0.390 s  2012-11-01 00:01:30        1          10000
+postgres.public.pgbench_history          2          0.230 s          0.115 s          0.160 s  2012-11-01 00:01:30        0          20000
+postgres.public.pgbench_tellers          2          0.031 s          0.015 s          0.015 s  2012-11-01 00:01:30        0          30000
 
 ----------------------------------------
 /* Query Activity */
@@ -4891,15 +4263,11 @@ Flush WAL Location    : 0/685E578 (000000010000000000000006)
 Replay WAL Location   : 0/685E578 (000000010000000000000006)
 Sync Priority         : 0
 Sync State            : async
-
-/** Replication Delays **/
------------------------------------
-DateTime          Client               Flush Delay Size  Replay Delay Size 
------------------------------------------------------------------------------
-2012-11-01 00:00  127.0.0.1:58145           132824 byte        132824 byte
-2012-11-01 00:00  127.0.0.1:58145                0 byte           736 byte
-2012-11-01 00:00  127.0.0.1:58145             8568 byte          8568 byte
-2012-11-01 00:00  127.0.0.1:58145              672 byte           672 byte
+Replay Delay Average  : 35 KiB
+Replay Delay Peak     : 130 KiB
+Write Lag Time        : 00:00:10.000000
+Flush Lag Time        : 00:00:11.000000
+Replay Lag Time       : 00:00:12.000000
 
 ----------------------------------------
 /* Setting Parameters */

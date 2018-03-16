@@ -2,9 +2,617 @@
 
 <html lang="ja"><head>
 
-<title>pg_statsinfo</title>
+<title>pg_statsinfo 10</title>
 <link rel="home" title="pg_statsinfo" href="http://pgstatsinfo.sourceforge.net/index_ja.html">
-<link rel="stylesheet" type="text/css" href="style.css">
+<style type="text/css">
+<!--
+pre, dl, ol, p, blockquote { line-height:130%; }
+
+blockquote { margin-left:32px; }
+
+body,td {
+	color:black;
+	background-color:white;
+	margin-left:2%;
+	margin-right:2%;
+	font-size:100%;
+	font-family:verdana, arial, helvetica, Sans-Serif;
+}
+
+a:link {
+	color:#215dc6;
+	background-color:inherit;
+	text-decoration:none;
+}
+
+a:active {
+	color:#215dc6;
+	background-color:#CCDDEE;
+	text-decoration:none;
+}
+
+a:visited {
+	color:#a63d21;
+	background-color:inherit;
+	text-decoration:none;
+}
+
+a:hover {
+	color:#215dc6;
+	background-color:#CCDDEE;
+	text-decoration:underline;
+}
+
+h1, h2 {
+	font-family:verdana, arial, helvetica, Sans-Serif;
+	color:inherit;
+	background-color:#DDEEFF;
+	padding:.3em;
+	border:0px;
+	margin:0px 0px .5em 0px;
+}
+h3 {
+	font-family:verdana, arial, helvetica, Sans-Serif;
+	border-bottom:  3px solid #DDEEFF;
+	border-top:     1px solid #DDEEFF;
+	border-left:   10px solid #DDEEFF;
+	border-right:   5px solid #DDEEFF;
+
+	color:inherit;
+	background-color:#FFFFFF;
+	padding:.3em;
+	margin:0px 0px .5em 0px;
+}
+h4 {
+	font-family:verdana, arial, helvetica, Sans-Serif;
+	border-left:   18px solid #DDEEFF;
+
+	color:inherit;
+	background-color:#FFFFFF;
+	padding:.3em;
+	margin:0px 0px .5em 0px;
+}
+h5, h6 {
+	font-family:verdana, arial, helvetica, Sans-Serif;
+	color:inherit;
+	background-color:#DDEEFF;
+ 	padding:.3em;
+ 	border:0px;
+ 	margin:0px 0px .5em 0px;
+}
+
+h1.title {
+	font-size: 30px;
+	font-weight:bold;
+	background-color:transparent;
+	padding: 12px 0px 0px 0px;
+	border: 0px;
+	margin: 12px 0px 0px 0px;
+}
+
+dt {
+	font-weight:bold;
+	margin-top:1em;
+	margin-left:1em;
+}
+
+pre {
+	border-top:#DDDDEE 1px solid;
+	border-bottom:#888899 1px solid;
+	border-left:#DDDDEE 1px solid;
+	border-right:#888899 1px solid;
+	padding:.5em;
+	margin-left:1em;
+	margin-right:2em;
+	white-space:pre;
+	color:black;
+	background-color:#F0F8FF;
+}
+
+img {
+	border:none;
+	vertical-align:middle;
+}
+
+ul {
+	margin-top:.5em;
+	margin-bottom:.5em;
+	line-height:130%;
+}
+
+em { font-style:italic; }
+
+strong { font-weight:bold; }
+
+thead td.style_td,
+tfoot td.style_td {
+	color:inherit;
+	background-color:#D0D8E0;
+}
+thead th.style_th,
+tfoot th.style_th {
+	color:inherit;
+	background-color:#E0E8F0;
+}
+.style_table {
+	padding:0px;
+	border:0px;
+	margin:auto;
+	text-align:left;
+	color:inherit;
+	background-color:#ccd5dd;
+}
+.style_th {
+	padding:5px;
+	margin:1px;
+	text-align:center;
+	color:inherit;
+	background-color:#EEEEEE;
+}
+.style_td {
+	padding:5px;
+	margin:1px;
+	color:inherit;
+	background-color:#EEF5FF;
+}
+
+ul.list1 { list-style-type:disc; }
+ul.list2 { list-style-type:circle; }
+ul.list3 { list-style-type:square; }
+ol.list1 { list-style-type:decimal; }
+ol.list2 { list-style-type:lower-roman; }
+ol.list3 { list-style-type:lower-alpha; }
+
+div.ie5 { text-align:center; }
+
+span.noexists {
+	color:inherit;
+	background-color:#FFFACC;
+}
+
+.small { font-size:80%; }
+
+.super_index {
+	color:#DD3333;
+	background-color:inherit;
+	font-weight:bold;
+	font-size:60%;
+	vertical-align:super;
+}
+
+a.note_super {
+	color:#DD3333;
+	background-color:inherit;
+	font-weight:bold;
+	font-size:60%;
+	vertical-align:super;
+}
+
+div.jumpmenu {
+	font-size:60%;
+	text-align:right;
+}
+
+hr.full_hr {
+	border-style:ridge;
+	border-color:#333333;
+	border-width:1px 0px;
+}
+hr.note_hr {
+	width:90%;
+	border-style:ridge;
+	border-color:#333333;
+	border-width:1px 0px;
+	text-align:center;
+	margin:1em auto 0em auto;
+}
+
+span.size1 {
+	font-size:xx-small;
+	line-height:130%;
+	text-indent:0px;
+	display:inline;
+}
+span.size2 {
+	font-size:x-small;
+	line-height:130%;
+	text-indent:0px;
+	display:inline;
+}
+span.size3 {
+	font-size:small;
+	line-height:130%;
+	text-indent:0px;
+	display:inline;
+}
+span.size4 {
+	font-size:medium;
+	line-height:130%;
+	text-indent:0px;
+	display:inline;
+}
+span.size5 {
+	font-size:large;
+	line-height:130%;
+	text-indent:0px;
+	display:inline;
+}
+span.size6 {
+	font-size:x-large;
+	line-height:130%;
+	text-indent:0px;
+	display:inline;
+}
+span.size7 {
+	font-size:xx-large;
+	line-height:130%;
+	text-indent:0px;
+	display:inline;
+}
+
+/* html.php/catbody() */
+strong.word0 {
+	background-color:#FFFF66;
+	color:black;
+}
+strong.word1 {
+	background-color:#A0FFFF;
+	color:black;
+}
+strong.word2 {
+	background-color:#99FF99;
+	color:black;
+}
+strong.word3 {
+	background-color:#FF9999;
+	color:black;
+}
+strong.word4 {
+	background-color:#FF66FF;
+	color:black;
+}
+strong.word5 {
+	background-color:#880000;
+	color:white;
+}
+strong.word6 {
+	background-color:#00AA00;
+	color:white;
+}
+strong.word7 {
+	background-color:#886800;
+	color:white;
+}
+strong.word8 {
+	background-color:#004699;
+	color:white;
+}
+strong.word9 {
+	background-color:#990099;
+	color:white;
+}
+
+/* html.php/edit_form() */
+.edit_form { clear:both; }
+
+/* pukiwiki.skin.php */
+div#header {
+	padding:0px;
+	margin:0px;
+}
+
+div#navigator {
+	clear:both;
+	padding:4px 0px 0px 0px;
+	margin:0px;
+}
+
+td.menubar {
+	width:9em;
+	vertical-align:top;
+}
+
+div#menubar {
+	width:9em;
+	padding:0px;
+	margin:4px;
+	word-break:break-all;
+	font-size:90%;
+	overflow:hidden;
+}
+
+div#menubar ul {
+	margin:0px 0px 0px .5em;
+	padding:0px 0px 0px .5em;
+}
+
+div#menubar ul li { line-height:110%; }
+
+div#menubar h4 { font-size:110%; }
+
+div#body {
+	padding:0px;
+	margin:0px 0px 0px .5em;
+}
+
+div#note {
+	clear:both;
+	padding:0px;
+	margin:0px;
+}
+
+div#attach {
+	clear:both;
+	padding:0px;
+	margin:0px;
+}
+
+div#toolbar {
+	clear:both;
+	padding:0px;
+	margin:0px;
+	text-align:right;
+}
+
+div#lastmodified {
+	font-size:80%;
+	padding:0px;
+	margin:0px;
+}
+
+div#related {
+	font-size:80%;
+	padding:0px;
+	margin:16px 0px 0px 0px;
+}
+
+div#footer {
+	font-size:70%;
+	padding:0px;
+	margin:16px 0px 0px 0px;
+}
+
+div#banner {
+	float:right;
+	margin-top:24px;
+}
+
+div#preview {
+	color:inherit;
+	background-color:#F5F8FF;
+}
+
+img#logo {
+	float:left;
+	margin-right:20px;
+}
+
+/* aname.inc.php */
+.anchor {}
+.anchor_super {
+	font-size:xx-small;
+	vertical-align:super;
+}
+
+/* br.inc.php */
+br.spacer {}
+
+/* calendar*.inc.php */
+.style_calendar {
+	padding:0px;
+	border:0px;
+	margin:3px;
+	color:inherit;
+	background-color:#CCD5DD;
+	text-align:center;
+}
+.style_td_caltop {
+	padding:5px;
+	margin:1px;
+	color:inherit;
+	background-color:#EEF5FF;
+	font-size:80%;
+	text-align:center;
+}
+.style_td_today {
+	padding:5px;
+	margin:1px;
+	color:inherit;
+	background-color:#FFFFDD;
+	text-align:center;
+}
+.style_td_sat {
+	padding:5px;
+	margin:1px;
+	color:inherit;
+	background-color:#DDE5FF;
+	text-align:center;
+}
+.style_td_sun {
+	padding:5px;
+	margin:1px;
+	color:inherit;
+	background-color:#FFEEEE;
+	text-align:center;
+}
+.style_td_blank {
+	padding:5px;
+	margin:1px;
+	color:inherit;
+	background-color:#EEF5FF;
+	text-align:center;
+}
+.style_td_day {
+	padding:5px;
+	margin:1px;
+	color:inherit;
+	background-color:#EEF5FF;
+	text-align:center;
+}
+.style_td_week {
+	padding:5px;
+	margin:1px;
+	color:inherit;
+	background-color:#DDE5EE;
+	font-size:80%;
+	font-weight:bold;
+	text-align:center;
+}
+
+/* calendar_viewer.inc.php */
+div.calendar_viewer {
+	color:inherit;
+	background-color:inherit;
+	margin-top:20px;
+	margin-bottom:10px;
+	padding-bottom:10px;
+}
+span.calendar_viewer_left {
+	color:inherit;
+	background-color:inherit;
+	float:left;
+}
+span.calendar_viewer_right {
+	color:inherit;
+	background-color:inherit;
+	float:right;
+}
+
+/* clear.inc.php */
+.clear {
+	margin:0px;
+	clear:both;
+}
+
+/* counter.inc.php */
+div.counter { font-size:70%; }
+
+/* diff.inc.php */
+span.diff_added {
+	color:blue;
+	background-color:inherit;
+}
+
+span.diff_removed {
+	color:red;
+	background-color:inherit;
+}
+
+/* hr.inc.php */
+hr.short_line {
+	text-align:center;
+	width:80%;
+	border-style:solid;
+	border-color:#333333;
+	border-width:1px 0px;
+}
+
+/* include.inc.php */
+h5.side_label { text-align:center; }
+
+/* navi.inc.php */
+ul.navi {
+	margin:0px;
+	padding:0px;
+	text-align:center;
+}
+li.navi_none {
+	display:inline;
+	float:none;
+}
+li.navi_left {
+	display:inline;
+	float:left;
+	text-align:left;
+}
+li.navi_right {
+	display:inline;
+	float:right;
+	text-align:right;
+}
+
+/* new.inc.php */
+span.comment_date { font-size:x-small; }
+span.new1 {
+	color:red;
+	background-color:transparent;
+	font-size:x-small;
+}
+span.new5 {
+	color:green;
+	background-color:transparent;
+	font-size:xx-small;
+}
+
+/* popular.inc.php */
+span.counter { font-size:70%; }
+ul.popular_list {
+}
+
+/* recent.inc.php,showrss.inc.php */
+ul.recent_list {
+}
+
+/* ref.inc.php */
+div.img_margin {
+	margin-left:32px;
+	margin-right:32px;
+}
+
+/* vote.inc.php */
+td.vote_label {
+	color:inherit;
+	background-color:#FFCCCC;
+}
+td.vote_td1 {
+	color:inherit;
+	background-color:#DDE5FF;
+}
+td.vote_td2 {
+	color:inherit;
+	background-color:#EEF5FF;
+}
+
+table {
+	background: #f9f9f9;
+	border: 1px solid #aaa;
+	border-collapse: collapse;
+}
+
+th, td {
+	border: 1px solid #aaa;
+	padding: 0.2em;
+}
+
+thead th {
+	background: #f2f2f2;
+	text-align: center;
+}
+
+tbody th {
+	background: #f2f2f2;
+	text-align: left;
+}
+
+div.index {
+	float:right;
+	border:thin solid black;
+	background-color: white;
+	padding-top: 0.2em;
+	padding-bottom: 0.2em;
+	padding-left: 0em;
+	padding-right: 1em;
+	margin-left: 0.5em;
+}
+
+div.index ol { counter-reset: item; }
+div.index li { display: block; }
+div.index li:before {
+	content: counters(item, ".") ". ";
+	counter-increment: item;
+}
+//-->
+</style>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 </head><body>
 <div class="index">
@@ -32,7 +640,7 @@
       <li><a href="#snapshot">スナップショットの取得・削除</a></li>
       <li><a href="#log-route">サーバログの分配</a></li>
       <li><a href="#log-store">サーバログの蓄積</a></li>
-      <li><a href="#usage-alert">アラート機能の使い方</a></li>
+      <li><a href="#usage-alert">アラート機能の設定方法</a></li>
       <li><a href="#usage-cmdline">コマンドライン機能の使い方</a></li>
       <li><a href="#usage-maintenance">自動メンテナンス機能の使い方</a></li>
       <li><a href="#configuration">設定ファイル</a></li>
@@ -42,7 +650,7 @@
   <li><a href="#uninstall">アンインストール</a></li>
   <li><a href="#restrictions">使用上の注意と制約</a></li>
   <li><a href="#QA">よくあるQ&A</a></li>
-  <li><a href="#change">pg_statsinfo 3.1 からの変更点</a></li>
+  <li><a href="#change">pg_statsinfo 3.3 からの変更点</a></li>
   <li><a href="#details">詳細情報</a>
     <ol>
       <li><a href="#many-instances">複数の監視対象インスタンス</a></li>
@@ -55,14 +663,14 @@
   <li><a href="#seealso">関連項目</a></li>
 </ol>
 </div>
-<h1 id="pg_statsinfo">pg_statsinfo 3.2</h1>
+<h1 id="pg_statsinfo">pg_statsinfo 10</h1>
 <h2 id="name">pg_statsinfoとは？</h2>
 <p>
 PostgreSQL サーバの利用統計情報を定期的に収集・蓄積することで、DB設計やPostgreSQLの運用(日々の処理傾向の把握、
 性能劣化などの兆候や問題発生時の原因の把握等)に役立つツールです。<br>
 起動や終了、パラメータの設定は PostgreSQL と密に連携しており、手間をかけずに導入可能です。
 </p>
-<p>pg_statsinfo 3.1 からの変更点は<a href="#change">こちら</a>をご覧ください。</p>
+<p>pg_statsinfo 3.3 からの変更点は<a href="#change">こちら</a>をご覧ください。</p>
 
 <h2 id="description">機能概要</h2>
 <p>pg_statsinfo は、PostgreSQL サーバの統計情報や活動状況を一定の時間間隔毎に定期的に収集し蓄積する機能と、
@@ -71,7 +679,7 @@ PostgreSQL の出力するサーバログを解析することでSQLの性能情
 </p>
 
 <p>
-また、pg_statsinfo で収集した情報は <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter-ja.html">pg_stats_reporter</a>
+また、pg_statsinfo で収集した情報は <a href="http://pgstatsinfo.sourceforge.net/documents/reporter10/html/pg_stats_reporter-ja.html">pg_stats_reporter</a>
 を用いることでグラフィカルな形で解析・出力することがきます。
 </p>
 
@@ -107,7 +715,7 @@ PostgreSQL の出力するサーバログを解析することでSQLの性能情
 <p>スナップショットとして以下の統計情報を収集します。</p>
 <ul>
   <li><a href="http://www.postgresql.jp/document/current/html/monitoring-stats.html">統計情報コレクタ</a>が収集する全ての情報。挿入 / 更新 / 削除行数やバッファアクセス回数。</li>
-  <li>テーブルスペース、pg_xlog 領域、アーカイブログ領域のディスク使用量。</li>
+  <li>テーブルスペース、WAL領域、アーカイブログ領域のディスク使用量。</li>
   <li>ロングトランザクション化しているクエリ。</li>
   <li>バックエンドプロセスの状況。処理中、ロック待ち、トランザクション中の待機、アイドルのそれぞれで集計します。</li>
   <li>トランザクションログ(WAL)の出力量</li>
@@ -128,13 +736,13 @@ PostgreSQL の出力するサーバログを解析することでSQLの性能情
 </p>
 
 <h4>リポジトリDBのテーブル構成</h4>
-<p>リポジトリDBのテーブル構成に関しては、「<a href="files/pg_statsinfo_v3.2_repository_infomation.xls">pg_statsinfo v3.2 リポジトリDB構成</a>」を参照してください。</p>
+<p>リポジトリDBのテーブル構成に関しては、「<a href="http://pgstatsinfo.sourceforge.net/documents/statsinfo10/files/pg_statsinfo_v10_repository_infomation.xls">pg_statsinfo v10 リポジトリDB構成</a>」を参照してください。</p>
 
 <h3 id="features-log-route">サーバログ分配機能</h3>
 <p>PostgreSQL が出力するサーバログをCSVログ、テキストログ、syslog に分配して出力します。</p>
 <ul>
   <li>メッセージレベル (エラー種別) に応じたサーバログの分配。CSVログ、テキストログ、syslog に個別で出力閾値を設定できます。</li>
-  <li>テキストログのファイル名を固定。常に同じ名前 (デフォルト $PGDATA/pg_log/pg_statsinfo.log) で最新のサーバログを閲覧でき、ログ監視ソフトウェアとの連携が容易になります。</li>
+  <li>テキストログのファイル名を固定。常に同じ名前 (デフォルト pg_statsinfo.log) で最新のサーバログを閲覧でき、ログ監視ソフトウェアとの連携が容易になります。</li>
   <li>テキストログファイルのアクセス権の設定。テキストログのファイル権限を 600 以外にも設定できるため、運用が柔軟になります。</li>
   <li>テキストログ、syslog に出力されるサーバログのメッセージレベルを任意のレベルに変更可能。例えば、オペレーションミスなどで発生する ERROR レベルのログを INFO レベルに変更して出力できます。</li>
   <li>テキストログのフィルタリング設定。特定のユーザのサーバログをテキストログに出力しないようにすることができます。</li>
@@ -167,7 +775,7 @@ PostgreSQL の出力するサーバログを解析することでSQLの性能情
   <li>各テーブルに占める不要領域の割合 (%)</li>
   <li>クエリの平均レスポンス時間 (秒)</li>
   <li>クエリの最長レスポンス時間 (秒)</li>
-  <li>各テーブルの断片化率(correlation) (%)</li>
+  <li>各テーブルの相関係数(correlation)<sup>(*1)</sup> (%)</li>
   <li>バックエンドの最大数</li>
   <li>テーブルスペースのディスク空き容量 (%)</li>
   <li>ロードアベレージ</li>
@@ -176,7 +784,11 @@ PostgreSQL の出力するサーバログを解析することでSQLの性能情
 </ul>
 
 <p>
-(注1) テーブルの断片化率は、クラスタ化テーブル(クラスタインデックスが存在するテーブル)を対象に判定が行われます。
+(*1) テーブルの相関係数は、クラスタ化テーブル(クラスタインデックスが存在するテーブル)を対象に判定が行われます。
+</p>
+
+<p>
+各アラート項目のアラートメッセージの内容については「<a href="http://pgstatsinfo.sourceforge.net/documents/statsinfo10/files/pg_statsinfo_v10_report_infomation.xls">pg_statsinfo v10 レポート項目一覧</a>」をご覧ください。
 </p>
 
 <p>
@@ -201,9 +813,9 @@ PostgreSQL の出力するサーバログを解析することでSQLの性能情
 </ul>
 
 <p>
-簡易レポート機能が出力するレポートの項目については「<a href="files/pg_statsinfo_v3.2_report_infomation.xls">pg_statsinfo v3.2 レポート項目一覧</a>」をご覧ください。<br>
-なお、簡易レポート機能が出力するレポートの項目は <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter-ja.html">pg_stats_reporter</a> と同等です。<br>
-グラフを用いたグラフィカルなレポートを出力したい場合は <a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter-ja.html">pg_stats_reporter</a> を使用してください。
+簡易レポート機能が出力するレポートの項目については「<a href="http://pgstatsinfo.sourceforge.net/documents/statsinfo10/files/pg_statsinfo_v10_report_infomation.xls">pg_statsinfo v10 レポート項目一覧</a>」をご覧ください。<br>
+なお、簡易レポート機能が出力するレポートの項目は <a href="http://pgstatsinfo.sourceforge.net/documents/reporter10/html/pg_stats_reporter-ja.html">pg_stats_reporter</a> と同等です。<br>
+グラフを用いたグラフィカルなレポートを出力したい場合は <a href="http://pgstatsinfo.sourceforge.net/documents/reporter10/html/pg_stats_reporter-ja.html">pg_stats_reporter</a> を使用してください。
 </p>
 
 <h4>運用管理機能</h4>
@@ -245,19 +857,18 @@ pg_statsinfo の運用管理向けの操作を行うコマンドを提供しま�
 <h3 id="requirement">動作環境</h3>
 <dl>
   <dt>PostgreSQL</dt>
-  <dd>バージョン 9.1, 9.2, 9.3, 9.4, 9.5, 9.6</dd>
+  <dd>バージョン 10</dd>
   <dt>動作検証済みOS</dt>
-  <dd>RHEL 6.x (x86_64), CentOS 6.x (x86_64), RHEL 7.x (x86_64), CentOS 7.x (x86_64)</dd>
+  <dd>RHEL 7.x (x86_64), CentOS 7.x (x86_64)</dd>
 </dl>
-<p><b>(注1) リポジトリDBの PostgreSQL は、configureオプションに --with-libxml が指定されたビルドである必要があります。 (RPM版の PostgreSQL には --with-libxml が指定されています)</b></p>
 
 <h3 id="procedure">インストール手順</h3>
 
 <h4>RPM</h4>
-以下はPostgreSQL9.4のRHEL6のx86_64用のrpmをインストールする例です。
+以下はPostgreSQL10のRHEL7のx86_64用のrpmをインストールする例です。
 <pre>
 $ su
-# rpm -ivh pg_statsinfo-3.2.0-1.pg94.rhel6.x86_64.rpm
+# rpm -ivh pg_statsinfo-10.0-1.pg10.rhel7.x86_64.rpm
 </pre>
 
 <h4>source</h4>
@@ -265,8 +876,8 @@ $ su
 なお、pg_statsinfo の登録スクリプト (sql) を手動でインストールする必要はありません。
 監視対象インスタンス、リポジトリDB共に、初回起動時に必要に応じて エージェントがスキーマを自動的にインストールします。</p>
 <pre>
-$ tar xzvf pg_statsinfo-3.2.0.tar.gz
-$ cd pg_statsinfo-3.2.0
+$ tar xzvf pg_statsinfo-10.0.tar.gz
+$ cd pg_statsinfo-10.0
 $ make USE_PGXS=1
 $ su
 # make USE_PGXS=1 install
@@ -292,7 +903,6 @@ log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log' # ログファイル名を指定
 <pre>
 #推奨設定
 shared_preload_libraries = 'pg_statsinfo'       # 事前ロードを行う
-custom_variable_classes = 'pg_statsinfo'        # 独自変数クラス名を使用するための設定 (PostgreSQL 9.2以降では不要です)
 
 pg_statsinfo.snapshot_interval = 30min          # スナップショットの取得間隔
 pg_statsinfo.enable_maintenance = 'on'          # 自動メンテナンス設定
@@ -356,7 +966,7 @@ $ psql -d postgres -c "CREATE EXTENSION pg_stat_statements"
 
 <h4 id="pg_store_plans">クエリの実行計画の取得設定</h4>
 <p>
-PostgreSQL のバージョン 9.3 以上を使っている場合、監視対象インスタンスの postgres データベースに pg_store_plans をインストールすることで、クエリの実行計画もスナップショットとして収集できるようになります。<br>
+監視対象インスタンスの postgres データベースに pg_store_plans をインストールすることで、クエリの実行計画もスナップショットとして収集できるようになります。<br>
 利用する場合には、postgresql.conf の shared_preload_libraries に pg_store_plans を追加し、初回起動時に以下の手順で登録してください。 
 </p>
 <pre>
@@ -388,8 +998,7 @@ PostgreSQL の起動と連動して エージェントが自動的に起動し�
 <pre>$ pg_ctl start [OPTIONS]</pre>
 
 <p>終了も同様に、PostgresSQL サーバの終了に連動します。
-smart 以外の終了モード (fast, immediate) ではサーバログにエラーが出力される場合がありますが、正常な動作です。
-なお、PostgreSQL 9.5以降では終了モードのデフォルトが "fast" であることに注意してください。</p>
+smart 以外の終了モード (fast, immediate) ではサーバログにエラーが出力される場合がありますが、正常な動作です。</p>
 <pre>$ pg_ctl stop -m smart [OPTIONS]</pre>
 
 <p>また、PostgreSQL サーバを終了せずに エージェントのみを停止するには以下のコマンドを実行します。</p>
@@ -467,7 +1076,7 @@ pg_statsinfo には PostgreSQL のサーバログをフィルタリングによ�
 
 <p>ログファイルの出力例を以下に示します。</p>
 <pre>
-$ ls -l $PGDATA/pg_log
+$ ls -l $PGDATA/log
 -rw------- 1 postgres postgres 433644 Oct  1 23:59 postgresql-2013-10-01_000000.csv
 -rw------- 1 postgres postgres 322167 Oct  1 23:59 postgresql-2013-10-01_000000.log
 -rw------- 1 postgres postgres 425449 Oct  2 23:59 postgresql-2013-10-02_000000.csv
@@ -599,43 +1208,13 @@ pg_statsinfo.adjust_log_info = '42P01'</pre>
 自動メンテナンスの蓄積ログの削除はデフォルトが ON となっています。</p>
 <p>自動メンテナンス機能の使い方は<a href="#usage-maintenance">こちら</a>をご覧ください。</p>
 
-<h3 id="usage-alert">アラート機能の使い方</h3>
+<h3 id="usage-alert">アラート機能の設定方法</h3>
 <p>
-アラート機能は初回スナップショットが完了した監視対象インスタンスに対して自動的に有効になります。<br>
-初期状態のアラート条件(閾値)は、アラート設定テーブルのデフォルト値が適用されます。
+アラート条件(閾値)は、アラート設定テーブル(リポジトリDBの「statsrepo.alert」テーブル)で管理します。<br>
+各設定カラムの値を -1 に設定することで項目単位でアラートを無効にできます。
+</p>
 <p>
-
-<h4>アラート設定の変更</h4>
-<p>監視対象インスタンス毎に、アラート機能の有効／無効およびアラート条件(閾値)を変更することができます。<br>
-また、アラート条件(閾値)を「-1」に設定することで一部のアラート項目のみ無効とすることができます。<br><p>
-
-<p>アラート設定を変更するには、アラート設定テーブルから変更したいアラート項目のカラムの値を変更してください。<br>
-なお、アラート設定の変更を行うには、アラート設定を変更する監視対象インスタンスの初回スナップショットが完了している必要があることに注意してください。</p>
-
-<p>アラート設定を変更する際、監視対象インスタンスを選択するためにカラム「instid」を使用します。<br>
-当該カラムには監視対象インスタンス毎に割り当てられた識別子 (監視対象インスタンスID) を指定します。<br>
-監視対象インスタンスIDは、簡易レポート機能でスナップショットサイズ表示を実行することで確認できます。</p>
-
-設定例: 秒間ロールバック数の閾値を「3000」に変更する場合
-<pre>
-# UPDATE statsrepo.alert SET rollback_tps = 3000 WHERE instid = <変更対象の監視対象インスタンスID>
-</pre>
-
-設定例: 秒間ロールバック数のアラートを無効にする場合
-<pre>
-# UPDATE statsrepo.alert SET rollback_tps = -1 WHERE instid = <変更対象の監視対象インスタンスID>
-</pre>
-
-設定例: アラート機能を無効にする場合
-<pre>
-# UPDATE statsrepo.alert SET enable_alert = false WHERE instid = <変更対象の監視対象インスタンスID>
-</pre>
-
-<h4>アラート設定テーブル</h4>
-<p>
-アラート設定テーブルとはアラート機能の有効／無効および各種アラート条件(閾値)の設定を保存するテーブルです。<br>
-アラート設定テーブルは、リポジトリDBの「statsrepo.alert」テーブルです。<br>
-アラート設定テーブルのスキーマ構成は以下のとおりです。<br>
+アラート設定テーブルのスキーマ構成を以下に示します。
 </p>
 
 <table>
@@ -669,7 +1248,7 @@ pg_statsinfo.adjust_log_info = '42P01'</pre>
   <tr>
     <td>garbage_size</td>
     <td>bigint</td>
-    <td>20000</td>
+    <td>-1</td>
     <td>監視インスタンス中の不要領域のサイズ(MB)</td>
   </tr>
   <tr>
@@ -700,7 +1279,7 @@ pg_statsinfo.adjust_log_info = '42P01'</pre>
     <td>fragment_percent</td>
     <td>integer</td>
     <td>70</td>
-    <td>各テーブルの断片化率(correlation)(%)</td>
+    <td>各テーブルの相関係数(correlation)(%)</td>
   </tr>
   <tr>
     <td>backend_max</td>
@@ -754,15 +1333,26 @@ pg_statsinfo.adjust_log_info = '42P01'</pre>
     <td>enable_alert</td>
     <td>boolean</td>
     <td>true</td>
-    <td>アラート対象判定フラグ(TRUE: 有効、FALSE: 無効)
+    <td>false に設定するとこのインスタンスについてのアラートが無効になります。
 </td>
   </tr>
 </tbody>
 </table>
 
+<p>設定変更の例: 秒間ロールバック数の閾値を「3000」に変更する場合</p>
+<pre>
+# UPDATE statsrepo.alert SET rollback_tps = 3000 WHERE instid = <変更対象の監視対象インスタンスID>
+</pre>
+
 <p>
-アラート設定テーブルのタプルを削除しないでください。<br>
-タプルを削除した場合、削除したタプルに該当する監視対象インスタンスの設定ができなくなります。
+このテーブルの行を削除すると、該当する監視対象インスタンスのアラート機能が無効になります。このアラートを有効にするためには新たな行を挿入する必要があります。
+
+</p>
+
+<h4>アラート機能の無効化</h4>
+<p>
+<a href="#configuration">GUC 設定ファイル</a>の pg_statsinfo.enable_alert を
+false にすることでアラート機能全体を無効にできます。監視対象インスタンス単位での無効化はアラート設定テーブルの enable_alert カラムで行います。デフォルト値はどちらも true です。
 </p>
 
 <h3 id="usage-cmdline">コマンドライン機能の使い方</h3>
@@ -791,7 +1381,7 @@ $ pg_statsinfo  -r All -h localhost -d postgres -p 5432 -U postgres
   <dt>-r, --report=REPORTID</dt>
   <dd>レポート種別IDを指定します。</dd>
   <dd>レポート種別IDに指定できる値は以下のとおりです。</dd>
-  <dd>レポート種別IDとレポートの内容についての対応は「<a href="files/pg_statsinfo_v3.2_report_infomation.xls">pg_statsinfo v3.2 レポート項目一覧</a>」をご覧ください。</dd>
+  <dd>レポート種別IDとレポートの内容についての対応は「<a href="http://pgstatsinfo.sourceforge.net/documents/statsinfo10/files/pg_statsinfo_v10_report_infomation.xls">pg_statsinfo v10 レポート項目一覧</a>」をご覧ください。</dd>
   <dd>
     <ul>
       <li>Summary</li>
@@ -1131,7 +1721,7 @@ pg_statsinfo を利用するために必須のパラメータは以下です。
     <td>log_min_messages</td>
     <td>debug5 ~ log</td>
     <td>ログへ出力するメッセージレベル。
-        'log', pg_statsinfo.syslog_min_messages, pg_statsinfo.textlog_min_messages のいずれの設定よりも、より多くを出力するレベルを設定する必要があります。</td>
+        'log', pg_statsinfo.syslog_min_messages, pg_statsinfo.textlog_min_messages, pg_statsinfo.repolog_min_messages のいずれの設定よりも、より多くを出力するレベルを設定する必要があります。</td>
   </tr>
   <tr>
     <td>log_destination</td>
@@ -1174,8 +1764,7 @@ pg_statsinfo を利用するために確認が推奨されるパラメータは�
     <td>off</td>
     <td>ブロックの読み込みと書き込み時間に関する統計情報の収集設定。 
         ブロックの読み書きに関する統計情報を収集する場合は on を設定します。<br>
-        本パラメータを on に設定した場合、現時点の時刻をオペレーティングシステムに繰り返し問い合わせるので、プラットフォームによっては深刻な負荷の原因になる可能性がある点を留意してください。<br>
-        (本パラメータはPostgreSQL 9.2以降から指定可能です)</td>
+        本パラメータを on に設定した場合、現時点の時刻をオペレーティングシステムに繰り返し問い合わせるので、プラットフォームによっては深刻な負荷の原因になる可能性がある点を留意してください。</td>
   </tr>
   <tr>
     <td>log_checkpoints</td>
@@ -1189,7 +1778,7 @@ pg_statsinfo を利用するために確認が推奨されるパラメータは�
   </tr>
   <tr>
     <td>log_directory</td>
-    <td>'pg_log'</td>
+    <td>'log'</td>
     <td>CSVログおよびテキストログの出力先ディレクトリ。</td>
   </tr>
   <tr>
@@ -1212,13 +1801,6 @@ pg_statsinfo を利用するために確認が推奨されるパラメータは�
     <td>syslog_ident</td>
     <td>'postgres'</td>
     <td>syslog の indent文字列指定。</td>
-  </tr>
-  <tr>
-    <td>custom_variable_classes</td>
-    <td>(空文字)</td>
-    <td>独自変数クラス名の設定。<br>
-        PostgreSQL 9.1以前で利用する場合には 'pg_statsinfo' を指定してください。<br>
-        PostgreSQL 9.2以降で利用する場合は当パラメータの設定は不要です。<br>
   </tr>
   <tr>
     <td>pg_statsinfo.textlog_min_messages</td>
@@ -1311,32 +1893,32 @@ pg_statsinfo を利用するために確認が推奨されるパラメータは�
   <tr>
     <td>pg_statsinfo.adjust_log_info</td>
     <td>-</td>
-    <td>メッセージレベルを INFO に変更したい SQLSTATE 指定 <a href="#configuration-a5">(*5)</a></td>
+    <td>メッセージレベルを INFO に変更したい SQLSTATE をカンマ区切りで指定 <a href="#configuration-a5">(*5)</a></td>
   </tr>
   <tr>
     <td>pg_statsinfo.adjust_log_notice</td>
     <td>-</td>
-    <td>メッセージレベルを NOTICE に変更したい SQLSTATE を指定 <a href="#configuration-a5">(*5)</a></td>
+    <td>adjust_log_info と同様でメッセージレベルを NOTICE に変更</td>
   </tr>
   <tr>
     <td>pg_statsinfo.adjust_log_warning</td>
     <td>-</td>
-    <td>メッセージレベルを WARNING に変更したい SQLSTATE を指定 <a href="#configuration-a5">(*5)</a></td>
+    <td>adjust_log_info と同様でメッセージレベルを WARNING に変更</td>
   </tr>
   <tr>
     <td>pg_statsinfo.adjust_log_error</td>
     <td>-</td>
-    <td>メッセージレベルを ERROR に変更したい SQLSTATE を指定 <a href="#configuration-a5">(*5)</a></td>
+    <td>adjust_log_info と同様でメッセージレベルを ERROR に変更</td>
   </tr>
   <tr>
     <td>pg_statsinfo.adjust_log_log</td>
     <td>-</td>
-    <td>メッセージレベルを LOG に変更したい SQLSTATE を指定 <a href="#configuration-a5">(*5)</a></td>
+    <td>adjust_log_info と同様でメッセージレベルを LOG に変更</td>
   </tr>
   <tr>
     <td>pg_statsinfo.adjust_log_fatal</td>
     <td>-</td>
-    <td>メッセージレベルを FATAL に変更したい SQLSTATE を指定 <a href="#configuration-a5">(*5)</a></td>
+    <td>adjust_log_info と同様でメッセージレベルを FATAL に変更</td>
   </tr>
   <tr>
     <td>pg_statsinfo.enable_maintenance</td>
@@ -1396,6 +1978,18 @@ pg_statsinfo を利用するために確認が推奨されるパラメータは�
     <td>1min</td>
     <td>pg_statsinfoの制御ファイルの更新をストレージデバイスに同期書き出し(fsync)する間隔を設定します。</td>
   </tr>
+  <tr>
+    <td>pg_statsinfo.enable_alert</td>
+    <td>on</td>
+    <td>アラート機能の有効／無効を設定します。</td>
+  </tr>
+  <tr>
+    <td>pg_statsinfo.target_server</td>
+    <td>-</td>
+    <td>監視対象DBへの接続文字列 <a href="#configuration-a4">(*4)</a>。pg_statsinfoは統計情報収集などのために監視対象DBへ接続します。
+        デフォルトではこの接続にDBクラスタ作成時の初期ユーザおよび初期データベース(postgres)が使用されます。
+        この接続設定を変更する必要がある場合には当該パラメータを設定します。なお、ユーザを指定する場合はスーパユーザを指定する必要があることに注意してください。</td>
+  </tr>
 </tbody>
 </table>
 
@@ -1422,17 +2016,13 @@ log_line_prefix の値そのものは無視されることに注意して下さ�
 この他、libpq が使用する環境変数の影響を受けますので、「<a href="http://www.postgresql.jp/document/current/html/libpq-envars.html">環境変数</a>」も参照して下さい。
 </dd>
 <dd>
-リポジトリDBに接続する際にパスワードの入力待ちにならないようにする必要があります。
+パスワードの入力待ちにならないようにする必要があります。
 パスワード認証が必要な場合には、PostgreSQL インスタンス起動ユーザに <a href="http://www.postgresql.jp/document/current/html/libpq-pgpass.html">.pgpass</a> を設定し、パスワードの入力を自動化してください。
-なお、.pgpassを用いる場合、リポジトリDBへの接続文字列のホスト指定にhostaddrは使用しないで下さい。
+この際には、host を指定しない場合は hostaddr がホスト名として参照されます。詳細は「<a href="https://www.postgresql.jp/document/current/html/libpq-connect.html#libpq-paramkeywords">パラメータキーワード</a>」を参照してください。
 </dd>
 
 <dt id="configuration-a5">*5 : SQLSTATE 指定</dt>
-<dd>
-複数のログのメッセージレベルを変更したい場合には、SQLSTATE をカンマ区切りで指定します。
-</dd>
-<dd>
-例えば、SQLSTATE が '42P01' と '42P02' のメッセージレベルを INFO に変更したい場合、pg_statsinfo.adjust_log_info = '42P01,42P02' と指定します。
+<dd>SQLSTATE はSQL標準で規定される5文字の記号で、"42P01" のような形式の文字列です。複数のSQLSTATEを指定したい場合には、カンマ区切りで指定します。
 </dd>
 </dl>
 
@@ -1567,16 +2157,7 @@ repository=$ SET TIME ZONE '<u>PRC</u>'; select '2014/1/1 0:0:0 <u>CST</u>'::tim
 </pre>
 
 <dt>AUTOVACUUM/AUTOANALYZEのキャンセル原因クエリの収集に関する制限</dt>
-<dd>監視対象DBのPostgreSQLが以下のバージョン以降のマイナーリリースの場合、AUTOVACUUM/AUTOANALYZEのキャンセル原因クエリは収集されません。
-<ul>
-  <li>PostgreSQL 9.1.19</li>
-  <li>PostgreSQL 9.2.14</li>
-  <li>PostgreSQL 9.3.10</li>
-  <li>PostgreSQL 9.4.5</li>
-  <li>PostgreSQL 9.5.0</li>
-  <li>PostgreSQL 9.6.0</li>
-</ul>
-</dd>
+<dd>AUTOVACUUM/AUTOANALYZEのキャンセル原因クエリはlog_min_messagesをdebug1~debug5に設定した場合のみ収集されます。</dd>
 </dl>
 <br>
 
@@ -1593,7 +2174,7 @@ $psql -d postgres -c "SELECT * FROM statsrepo.snapshot WHERE COMMENT = 'test'"
 <h4>Q2. 取得したスナップショットはどのように使えばいいの？</h4>
 <p>
 pg_statsinfo の統計情報の取得機能は、その時点の統計情報をスナップショットとして定期的に取得する機能のみになります。
-取得した統計情報から、有益な情報を見たい場合は <a href="#features-cmdline">簡易レポート機能</a> を利用するか、<a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter-ja.html">pg_stats_reporter</a> をお使いください。
+取得した統計情報から、有益な情報を見たい場合は <a href="#features-cmdline">簡易レポート機能</a> を利用するか、<a href="http://pgstatsinfo.sourceforge.net/documents/reporter10/html/pg_stats_reporter-ja.html">pg_stats_reporter</a> をお使いください。
 </p>
 
 <h4>Q3. 自動メンテナンス機能のスナップショット削除が動作しません。</h4>
@@ -1707,26 +2288,33 @@ pg_store_plans が public 以外のスキーマにインストールされてい
 なお、スナップショット取得ではテーブルおよびインデックスに対してAccessShareLockを獲得するため、AccessExclusiveLockが獲得されているとスナップショット取得が遅延することがあります。
 </p>
 
-<h4>Q10. PostgreSQLのページサイズをデフォルト以外に変更した場合に使用できますか？</h4>
-<p>
-使用できます。ただし、変更したページサイズで計算された正しいレポートを作成するために、以下のSQLをリポジトリDBに対して実行する必要があります。
-</p>
-<pre>
-# CREATE OR REPLACE FUNCTION statsrepo.page_size() RETURNS integer AS 'SELECT <i><ページサイズ></i>' LANGUAGE sql IMMUTABLE;
-</pre>
-
-<h4>Q11. HA構成においてフェイルオーバが発生した場合に、フェイルオーバ前後でマスタのインスタンスIDが変わってしまいます。</h4>
+<h4>Q10. HA構成においてフェイルオーバが発生した場合に、フェイルオーバ前後でマスタのインスタンスIDが変わってしまいます。</h4>
 <p>
 pg_statsinfo は「インスタンスID」でインスタンスを識別します。インスタンスIDは監視対象サーバのホスト名、ポート番号とpg_controldata が表示するデータベースシステム識別子から生成されます。この中でマスタのホスト名はフェイルオーバーの際に変わることが普通なためこのようになります。
 </p>
 <br>
 
-<h2 id="change">pg_statsinfo 3.1 からの変更点</h2>
-<p>pg_statsinfo 3.1 からの変更点は以下の通りです。</p>
+<h2 id="change">pg_statsinfo 3.3 からの変更点</h2>
+<p>pg_statsinfo 3.3 からの変更点は以下の通りです。</p>
 <ul>
-  <li>PostgreSQL 9.5に対応</li>
-  <li>PostgreSQL 9.6に対応 (pg_statsinfo 3.2.2以降)</li>
-  <li>PostgreSQL 9.0がサポート対象外になりました</li>
+  <li>スナップショットに以下の情報を追加しました</li>
+  <ul>
+    <li>レプリケーション遅延時間</li>
+    <li>レプリケーションスロット</li>
+    <li>ロジカルレプリケーション</li>
+  </ul>
+  <li>テーブルの不要領域サイズのアラートをデフォルトで無効にしました</li>
+  <li>テーブル不要領域についてのアラートに関して、インスタンス全体の不要領域の割合の計算において、1000ページ未満の小さなテーブルを無視するようにしました</li>
+  <p>いままでもテーブル個別の不要領域のサイズ・割合では不要なアラートを抑止するため小さなテーブルを無視していました。ただしインスタンス全体の不要領域の絶対量においては引き続き全てのテーブルでの合計を使用します。これによりサイズが小さいインスタンスで性能への影響が小さい状況でのアラートが抑止されます。</p>
+  <li>アラート機能が出力するメッセージの一覧をマニュアルに追加しました</li>
+  <li>アラート機能が出力する下記のアラート項目のメッセージを変更しました</li>
+  <ul>
+    <li>クエリの平均レスポンス時間</li>
+    <li>クエリの最長レスポンス時間</li>
+  </ul>
+  <li>簡易レポートで、レポート期間内に接続のあったすべてのスタンバイの情報を表示するように変更しました</li>
+  <li>簡易レポートの「Current Replication Status」に、レプリケーション遅延時間を追加しました</li>
+  <li>本バージョンから pg_statsinfo は単一の PostgreSQL のメジャーバージョンのみをサポートします。pg_statsinfo 10 は PostgreSQL 10 のみをサポートします</li>
 </ul>
 <br>
 
@@ -1776,7 +2364,6 @@ pg_statsinfo は「インスタンスID」でインスタンスを識別しま�
 <ul>
   <li>リポジトリDBに接続できるか</li>
   <li>リポジトリDBに登録されている statsrepo スキーマのバージョンが正しいか</li>
-  <li>リポジトリDBの PostgreSQL が XML をサポートしているか (configure オプションに --with-libxml が指定されたビルドであるか)</li>
 </ul>
 
 <h4>フォールバックモードで無効化される機能</h4>
@@ -1808,10 +2395,6 @@ LOG:  pg_statsinfo: pg_statsinfo is starting in fallback mode
 # statsrepo スキーマのバージョンが合わない
 ERROR:  pg_statsinfo: incompatible statsrepo schema: version mismatch
 LOG:  pg_statsinfo: pg_statsinfo is starting in fallback mode
-
-# リポジトリDBの PostgreSQL が XML をサポートしていない
-ERROR:  pg_statsinfo: repository server must support XML feature. you need to rebuild PostgreSQL using "./configure --with-libxml"
-LOG:  pg_statsinfo: pg_statsinfo is starting in fallback mode
 </pre>
 
 <p>リポジトリDBの復旧に関する点検事項と対処方法を以下に示します。</p>
@@ -1826,10 +2409,6 @@ LOG:  pg_statsinfo: pg_statsinfo is starting in fallback mode
     <li>statsrepo スキーマを削除するか、リポジトリDBのデータベースを別に作成してください。</li>
   </ul>
   <dd>(正しいバージョンの statsrepo スキーマは設定リロード時に自動的に登録されます)</dd>
-  <dt>PostgreSQL が XML をサポートしていない場合</dt>
-  <ul>
-    <li>configure オプションに --with-libxml が指定されたビルドの PostgreSQL をインストールした後、リポジトリDBを再起動してください。</li>
-  </ul>
 </dl>
 
 <h3 id="systemtap">SystemTap 連携</h3>
@@ -1889,24 +2468,13 @@ pg_statsinfo は、この SystemTap が収集するプロファイリング情�
 <a href="http://www.postgresql.jp/document/current/html/monitoring-stats.html">統計情報コレクタ</a>,
 <a href="http://www.postgresql.jp/document/current/html/catalogs.html">システムカタログ</a>,
 <a href="http://www.postgresql.jp/document/current/html/pgstatstatements.html">pg_stat_statements</a>,
-<a href="http://pgstatsinfo.sourceforge.net/documents/reporter3.2/html/pg_stats_reporter-ja.html">pg_stats_reporter</a>
+<a href="http://pgstatsinfo.sourceforge.net/documents/reporter10/html/pg_stats_reporter-ja.html">pg_stats_reporter</a>
 <hr>
 <div class="navigation">
   <a href="http://pgstatsinfo.sourceforge.net/index_ja.html">Top</a> &gt;
-  <a href="http://pgstatsinfo.sourceforge.net/documents/statsinfo3.2/pg_statsinfo-ja.html">pg_statsinfo</a>
+  <a href="http://pgstatsinfo.sourceforge.net/documents/statsinfo10/pg_statsinfo-ja.html">pg_statsinfo</a>
 <div>
-<p class="footer">Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION</p>
-
-<script type="text/javascript">
-var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
-document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
-</script><script src="pg_statsinfo-ja_files/ga.js" type="text/javascript"></script>
-<script type="text/javascript">
-try{
-var pageTracker = _gat._getTracker("UA-10244036-6");
-pageTracker._trackPageview();
-} catch(err) {}
-</script>
+<p class="footer">Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION</p>
 </div></div></div></div></body></html>
 
 <style type="text/css">

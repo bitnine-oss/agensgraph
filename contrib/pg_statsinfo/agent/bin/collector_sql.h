@@ -1,7 +1,7 @@
 /*
  * collector_sql.h
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 #ifndef COLLECTOR_SQL_H
@@ -363,6 +363,8 @@ SELECT \
 	t.blockee_pid, \
 	t.blocker_pid, \
 	px.gid AS blocker_gid, \
+	sa.wait_event_type, \
+	sa.wait_event, \
 	(statement_timestamp() - sa.query_start)::interval(0), \
 	sa.query, \
 	CASE \
@@ -402,6 +404,8 @@ SELECT \
 	lb.pid AS blockee_pid, \
 	la.pid AS blocker_pid, \
 	la.gid AS blocker_gid, \
+	'(N/A)', \
+	'(N/A)', \
 	(statement_timestamp() - sb.query_start)::interval(0), \
 	sb." PG_STAT_ACTIVITY_ATTNAME_QUERY ", \
 	CASE \
@@ -433,6 +437,17 @@ WHERE \
 	sb.query_start < statement_timestamp() - current_setting('" GUC_PREFIX ".long_lock_threshold')::interval"
 #endif
 
+/* bgwriter */
+#define SQL_SELECT_BGWRITER "\
+SELECT \
+	buffers_clean, \
+	maxwritten_clean, \
+	buffers_backend, \
+	buffers_backend_fsync, \
+	buffers_alloc \
+FROM \
+	pg_stat_bgwriter"
+
 /* replication */
 #if PG_VERSION_NUM >= 90400
 #define SQL_SELECT_REPLICATION_BACKEND_XMIN		"backend_xmin"
@@ -440,6 +455,42 @@ WHERE \
 #define SQL_SELECT_REPLICATION_BACKEND_XMIN		"NULL"
 #endif
 
+#if PG_VERSION_NUM >= 100000
+#define SQL_SELECT_REPLICATION "\
+SELECT \
+	pid, \
+	usesysid, \
+	usename, \
+	application_name, \
+	client_addr, \
+	client_hostname, \
+	client_port, \
+	backend_start, \
+	backend_xmin, \
+	state, \
+	CASE WHEN pg_is_in_recovery() THEN \
+		pg_last_wal_receive_lsn() || ' (N/A)' ELSE \
+		pg_current_wal_lsn() || ' (' || pg_walfile_name(pg_current_wal_lsn()) || ')' END, \
+	CASE WHEN pg_is_in_recovery() THEN \
+		sent_lsn || ' (N/A)' ELSE \
+		sent_lsn || ' (' || pg_walfile_name(sent_lsn) || ')' END, \
+	CASE WHEN pg_is_in_recovery() THEN \
+		write_lsn || ' (N/A)' ELSE \
+		write_lsn || ' (' || pg_walfile_name(write_lsn) || ')' END, \
+	CASE WHEN pg_is_in_recovery() THEN \
+		flush_lsn || ' (N/A)' ELSE \
+		flush_lsn || ' (' || pg_walfile_name(flush_lsn) || ')' END, \
+	CASE WHEN pg_is_in_recovery() THEN \
+		replay_lsn || ' (N/A)' ELSE \
+		replay_lsn || ' (' || pg_walfile_name(replay_lsn) || ')' END, \
+	coalesce(write_lag, '00:00:00'), \
+	coalesce(flush_lag, '00:00:00'), \
+	coalesce(replay_lag, '00:00:00'), \
+	sync_priority, \
+	sync_state \
+FROM \
+	pg_stat_replication"
+#else
 #define SQL_SELECT_REPLICATION "\
 SELECT \
 	" PG_STAT_REPLICATION_ATTNAME_PID ", \
@@ -467,13 +518,41 @@ SELECT \
 	CASE WHEN pg_is_in_recovery() THEN \
 		replay_location || ' (N/A)' ELSE \
 		replay_location || ' (' || pg_xlogfile_name(replay_location) || ')' END, \
+	NULL, \
+	NULL, \
+	NULL, \
 	sync_priority, \
 	sync_state \
 FROM \
 	pg_stat_replication"
+#endif
+
+/* replication slot */
+#define SQL_SELECT_REPLICATION_SLOTS "\
+SELECT \
+	slot_name, \
+	plugin, \
+	slot_type, \
+	datoid, \
+	temporary, \
+	active, \
+	active_pid, \
+	xmin, \
+	catalog_xmin, \
+	restart_lsn, \
+	confirmed_flush_lsn \
+FROM \
+	pg_replication_slots"
 
 /* xlog */
-#if PG_VERSION_NUM >= 90000
+#if PG_VERSION_NUM >= 100000
+#define SQL_SELECT_XLOG "\
+SELECT \
+	pg_current_wal_lsn(), \
+	pg_walfile_name(pg_current_wal_lsn()) \
+WHERE \
+	NOT pg_is_in_recovery()"
+#elif PG_VERSION_NUM >= 90000
 #define SQL_SELECT_XLOG "\
 SELECT \
 	pg_current_xlog_location(), \

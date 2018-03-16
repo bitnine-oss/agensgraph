@@ -1,7 +1,7 @@
 /*
  * lib/libstatsinfo.c
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 #include "libstatsinfo.h"
@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <float.h>
 
 #include "access/hash.h"
 #include "access/heapam.h"
@@ -19,7 +20,6 @@
 #include "catalog/pg_control.h"
 #include "catalog/pg_tablespace.h"
 #include "funcapi.h"
-#include "libpq/ip.h"
 #include "libpq/pqsignal.h"
 #include "mb/pg_wchar.h"
 #include "regex/regex.h"
@@ -49,6 +49,18 @@
 
 #if PG_VERSION_NUM >= 90300
 #include "access/htup_details.h"
+#include "postmaster/bgworker.h"
+#endif
+
+#if PG_VERSION_NUM >= 90400
+#include "postmaster/bgworker_internals.h"
+#endif
+
+#if PG_VERSION_NUM >= 100000
+#include "common/ip.h"
+#include "utils/varlena.h"
+#else
+#include "libpq/ip.h"
 #endif
 
 #include "pgut/pgut-be.h"
@@ -70,6 +82,13 @@
 #define PROGRAM_NAME		"pg_statsinfo.exe"
 #endif
 
+#define TAKE_HOOK(func, replace) \
+	prev_##func##_hook = func##_hook; \
+	func##_hook = replace;
+
+#define RESTORE_HOOK(func) \
+	func##_hook = prev_##func##_hook;
+
 /*
  * known message formats
  */
@@ -90,7 +109,15 @@
 	"received SIGHUP, reloading configuration files"
 
 /* log_autovacuum_min_duration: vacuum */
-#if PG_VERSION_NUM >= 90600
+#if PG_VERSION_NUM >= 100000
+#define MSG_AUTOVACUUM \
+	"automatic vacuum of table \"%s.%s.%s\": index scans: %d\n" \
+	"pages: %d removed, %d remain, %d skipped due to pins, %u skipped frozen\n" \
+	"tuples: %.0f removed, %.0f remain, %.0f are dead but not yet removable, oldest xmin: %u\n" \
+	"buffer usage: %d hits, %d misses, %d dirtied\n" \
+	"avg read rate: %.3f %s, avg write rate: %.3f %s\n" \
+	"system usage: %s"
+#elif PG_VERSION_NUM >= 90600
 #define MSG_AUTOVACUUM \
 	"automatic vacuum of table \"%s.%s.%s\": index scans: %d\n" \
 	"pages: %d removed, %d remain, %d skipped due to pins, %u skipped frozen\n" \
@@ -139,7 +166,14 @@
 	"%s starting: %s"
 
 /* log_checkpoint: complete */
-#if PG_VERSION_NUM >= 90500
+#if PG_VERSION_NUM >= 100000
+#define MSG_CHECKPOINT_COMPLETE \
+	"checkpoint complete: wrote %d buffers (%.1f%%); " \
+	"%d WAL file(s) added, %d removed, %d recycled; " \
+	"write=%ld.%03d s, sync=%ld.%03d s, total=%ld.%03d s; " \
+	"sync files=%d, longest=%ld.%03d s, average=%ld.%03d s; " \
+	"distance=%d kB, estimate=%d kB"
+#elif PG_VERSION_NUM >= 90500
 #define MSG_CHECKPOINT_COMPLETE \
 	"checkpoint complete: wrote %d buffers (%.1f%%); " \
 	"%d transaction log file(s) added, %d removed, %d recycled; " \
@@ -160,7 +194,14 @@
 #endif
 
 /* log_restartpoint: complete */
-#if PG_VERSION_NUM >= 90500
+#if PG_VERSION_NUM >= 100000
+#define MSG_RESTARTPOINT_COMPLETE \
+	"restartpoint complete: wrote %d buffers (%.1f%%); " \
+	"%d WAL file(s) added, %d removed, %d recycled; " \
+	"write=%ld.%03d s, sync=%ld.%03d s, total=%ld.%03d s; " \
+	"sync files=%d, longest=%ld.%03d s, average=%ld.%03d s; " \
+	"distance=%d kB, estimate=%d kB"
+#elif PG_VERSION_NUM >= 90500
 #define MSG_RESTARTPOINT_COMPLETE \
 	"restartpoint complete: wrote %d buffers (%.1f%%); " \
 	"%d transaction log file(s) added, %d removed, %d recycled; " \
@@ -250,6 +291,47 @@ static const struct config_enum_entry server_message_level_options[] = {
 };
 #endif
 
+static const char *const RELOAD_PARAM_NAMES[] =
+{
+	"log_directory",
+	"log_error_verbosity",
+	"syslog_facility",
+	"syslog_ident",
+	GUC_PREFIX ".excluded_dbnames",
+	GUC_PREFIX ".excluded_schemas",
+	GUC_PREFIX ".stat_statements_max",
+	GUC_PREFIX ".stat_statements_exclude_users",
+	GUC_PREFIX ".repository_server",
+	GUC_PREFIX ".sampling_interval",
+	GUC_PREFIX ".snapshot_interval",
+	GUC_PREFIX ".syslog_line_prefix",
+	GUC_PREFIX ".syslog_min_messages",
+	GUC_PREFIX ".textlog_min_messages",
+	GUC_PREFIX ".textlog_filename",
+	GUC_PREFIX ".textlog_line_prefix",
+	GUC_PREFIX ".textlog_permission",
+	GUC_PREFIX ".repolog_min_messages",
+	GUC_PREFIX ".repolog_buffer",
+	GUC_PREFIX ".repolog_interval",
+	GUC_PREFIX ".adjust_log_level",
+	GUC_PREFIX ".adjust_log_info",
+	GUC_PREFIX ".adjust_log_notice",
+	GUC_PREFIX ".adjust_log_warning",
+	GUC_PREFIX ".adjust_log_error",
+	GUC_PREFIX ".adjust_log_log",
+	GUC_PREFIX ".adjust_log_fatal",
+	GUC_PREFIX ".textlog_nologging_users",
+	GUC_PREFIX ".repolog_nologging_users",
+	GUC_PREFIX ".enable_maintenance",
+	GUC_PREFIX ".maintenance_time",
+	GUC_PREFIX ".repository_keepday",
+	GUC_PREFIX ".repolog_keepday",
+	GUC_PREFIX ".log_maintenance_command",
+	GUC_PREFIX ".controlfile_fsync_interval",
+	GUC_PREFIX ".enable_alert",
+	GUC_PREFIX ".target_server"
+};
+
 static char	   *excluded_dbnames = NULL;
 static char	   *excluded_schemas = NULL;
 static char	   *repository_server = NULL;
@@ -283,6 +365,8 @@ static int		stat_statements_max = DEFAULT_STAT_STATEMENTS_MAX;
 static char	   *stat_statements_exclude_users = NULL;
 static int		long_transaction_max = DEFAULT_LONG_TRANSACTION_MAX;
 static int		controlfile_fsync_interval = DEFAULT_CONTROLFILE_FSYNC_INTERVAL;
+static bool		enable_alert = true;
+static char	   *target_server = NULL;
 
 /*---- Function declarations ----*/
 
@@ -399,16 +483,28 @@ typedef struct DiskStatsEntry
 	int16				overflow_dit;	/* overflow counter of rq_ticks */
 } DiskStatsEntry;
 
+/* structures for pg_statsinfo launcher state */
+typedef struct silSharedState
+{
+	LWLockId	lockid;
+	pid_t		pid;
+} silSharedState;
+
 static void StartStatsinfoLauncher(void);
+#if PG_VERSION_NUM >= 90300
+void StatsinfoLauncherMain(Datum main_arg);
+#else
 static void StatsinfoLauncherMain(void);
+#endif
+static void StatsinfoLauncherMainLoop(void);
 static void sil_sigusr1_handler(SIGNAL_ARGS);
 static void sil_sigusr2_handler(SIGNAL_ARGS);
+static void sil_sighup_handler(SIGNAL_ARGS);
 static void sil_sigchld_handler(SIGNAL_ARGS);
-static pid_t exec_background_process(char cmd[]);
+static pid_t exec_background_process(char cmd[], int *outStdin);
 static void sample_activity(void);
 static void sample_diskstats(void);
 static void parse_diskstats(HTAB *diskstats);
-static uint64 get_sysident(void);
 static void must_be_superuser(void);
 static int get_devinfo(const char *path, Datum values[], bool nulls[]);
 static char *get_archive_path(void);
@@ -450,15 +546,30 @@ static const char *assign_enable_maintenance(const char *newval, bool doit, GucS
 static const char *assign_maintenance_time(const char *newval, bool doit, GucSource source);
 #endif
 
+#if PG_VERSION_NUM >= 90200
+static void pg_statsinfo_emit_log_hook(ErrorData *edata);
+static bool is_log_level_output(int elevel, int log_min_level);
+static emit_log_hook_type	prev_emit_log_hook = NULL;
+#endif
+
+#if PG_VERSION_NUM >= 90300
+static void pg_statsinfo_shmem_startup_hook(void);
+static void silShmemInit(void);
+static Size silShmemSize(void);
+static void lookup_sil_state(void);
+static shmem_startup_hook_type	prev_shmem_startup_hook = NULL;
+#endif
+
 static Activity		 activity = { 0, 0, 0, 0, 0, 0 };
 static HTAB			*long_xacts = NULL;
 static HTAB			*diskstats = NULL;
 
 /* variables for pg_statsinfo launcher */
-static volatile bool	got_SIGCHLD = false;
-static volatile bool	got_SIGUSR1 = false;
-static volatile bool	got_SIGUSR2 = false;
-static pid_t			sil_pid = INVALID_PID;
+static volatile bool	 got_SIGCHLD = false;
+static volatile bool	 got_SIGUSR1 = false;
+static volatile bool	 got_SIGUSR2 = false;
+static volatile bool	 got_SIGHUP = false;
+static silSharedState	*sil_state = NULL;
 
 /*
  * statsinfo_sample - sample statistics for server instance.
@@ -478,11 +589,11 @@ static void
 sample_activity(void)
 {
 	TimestampTz	now;
-	int			backends;
-	int			idle;
-	int			idle_in_xact;
-	int			waiting;
-	int			running;
+	int			backends = 0;
+	int			idle = 0;
+	int			idle_in_xact = 0;
+	int			waiting = 0;
+	int			running = 0;
 	int			i;
 
 	if (!long_xacts)
@@ -501,10 +612,8 @@ sample_activity(void)
 	}
 
 	now = GetCurrentTimestamp();
-	backends = pgstat_fetch_stat_numbackends();
-	idle = idle_in_xact = waiting = running = 0;
 
-	for (i = 1; i <= backends; i++)
+	for (i = pgstat_fetch_stat_numbackends(); i > 0; i--)
 	{
 		PgBackendStatus    *be;
 		long				secs;
@@ -518,42 +627,46 @@ sample_activity(void)
 		be = pgstat_fetch_stat_beentry(i);
 		if (!be)
 			continue;
+
 		procpid = be->st_procpid;
 		if (procpid == 0)
 			continue;
-
+#if PG_VERSION_NUM >= 100000
+		/* ignore if not client backend */
+		if (be->st_backendType != B_BACKEND)
+			continue;
+#endif
 		/*
 		 * sample idle transactions
 		 */
 		if (procpid != MyProcPid)
 		{
+#if PG_VERSION_NUM >= 100000
+			uint32	classId;
+#endif
 #if PG_VERSION_NUM >= 90600
 			proc = BackendPidGetProc(procpid);
 			if (proc == NULL)
 				 continue;	/* This backend is dead */
+#if PG_VERSION_NUM >= 100000
+			classId = proc->wait_event_info & 0xFF000000;
+			if (classId == PG_WAIT_LWLOCK ||
+				classId == PG_WAIT_LOCK)
+#else
 			if (proc->wait_event_info != 0)
+#endif
 #else
 			if (be->st_waiting)
 #endif
-					waiting++;
-#if PG_VERSION_NUM >= 90200
+				waiting++;
 			else if (be->st_state == STATE_IDLE)
 				idle++;
 			else if (be->st_state == STATE_IDLEINTRANSACTION)
 				idle_in_xact++;
 			else if (be->st_state == STATE_RUNNING)
 				running++;
-#else
-			else if (be->st_activity[0] != '\0')
-			{
-				if (strcmp(be->st_activity, "<IDLE>") == 0)
-					idle++;
-				else if (strcmp(be->st_activity, "<IDLE> in transaction") == 0)
-					idle_in_xact++;
-				else
-					running++;
-			}
-#endif
+
+			backends++;
 		}
 
 		/*
@@ -608,8 +721,8 @@ sample_activity(void)
 	activity.waiting += waiting;
 	activity.running += running;
 
-	if (activity.max_backends < (backends - 1))
-		activity.max_backends = backends - 1;
+	if (activity.max_backends < backends)
+		activity.max_backends = backends;
 
 	activity.samples++;
 
@@ -1425,7 +1538,7 @@ _PG_init(void)
 							NULL,
 							NULL);
 
-		DefineCustomIntVariable(GUC_PREFIX ".long_transaction_max",
+	DefineCustomIntVariable(GUC_PREFIX ".long_transaction_max",
 							"Sets the max collection size of long transaction.",
 							NULL,
 							&long_transaction_max,
@@ -1437,6 +1550,28 @@ _PG_init(void)
 #if PG_VERSION_NUM >= 90100
 							NULL,
 #endif
+							NULL,
+							NULL);
+
+	DefineCustomBoolVariable(GUC_PREFIX ".enable_alert",
+							"Enable the alert function.",
+							NULL,
+							&enable_alert,
+							true,
+							PGC_SIGHUP,
+							GUC_SUPERUSER_ONLY,
+							NULL,
+							NULL,
+							NULL);
+
+	DefineCustomStringVariable(GUC_PREFIX ".target_server",
+							"Connection string for monitored database.",
+							NULL,
+							&target_server,
+							"",
+							PGC_SIGHUP,
+							GUC_SUPERUSER_ONLY,
+							NULL,
 							NULL,
 							NULL);
 
@@ -1490,6 +1625,22 @@ _PG_init(void)
 
 	/* Install xact_last_activity */
 	init_last_xact_activity();
+#if PG_VERSION_NUM >= 90200
+	/* Install emit_log_hook */
+	TAKE_HOOK(emit_log, pg_statsinfo_emit_log_hook);
+#endif
+
+#if PG_VERSION_NUM >= 90300
+	/* Request additional shared resources */
+	RequestAddinShmemSpace(silShmemSize());
+#if PG_VERSION_NUM >= 90600
+	RequestNamedLWLockTranche("pg_statsinfo", 1);
+#else
+	RequestAddinLWLocks(1);
+#endif
+	/* Install shmem_startup_hook */
+	TAKE_HOOK(shmem_startup, pg_statsinfo_shmem_startup_hook);
+#endif
 
 	/*
 	 * spawn pg_statsinfo launcher process if the first call
@@ -1506,6 +1657,14 @@ _PG_fini(void)
 {
 	/* Uninstall xact_last_activity */
 	fini_last_xact_activity();
+#if PG_VERSION_NUM >= 90200
+	/* Uninstall emit_log_hook */
+	RESTORE_HOOK(emit_log);
+#endif
+#if PG_VERSION_NUM >= 90300
+	/* Uninstall shmem_startup_hook */
+	RESTORE_HOOK(shmem_startup);
+#endif
 }
 
 /*
@@ -1542,7 +1701,7 @@ statsinfo_start(PG_FUNCTION_ARGS)
 	if (!is_shared_preload("pg_statsinfo"))
 		elog(ERROR, "pg_statsinfo is not preloaded as shared library");
 
-	Assert(sil_pid != INVALID_PID);
+	Assert(sil_state && sil_state->pid != INVALID_PID);
 
 	join_path_components(pid_file, DataDir, STATSINFO_LOCK_FILE);
 
@@ -1560,9 +1719,14 @@ statsinfo_start(PG_FUNCTION_ARGS)
 				pid_file, strerror(errno));
 	}
 
+#if PG_VERSION_NUM >= 90300
+	/* lookup the pg_statsinfo launcher state */
+	lookup_sil_state();
+#endif
+
 	/* send signal that instruct start the statsinfo background process */
-	if (kill(sil_pid, SIGUSR2) != 0)
-		elog(ERROR, "could not send start signal (PID %d): %m", sil_pid);
+	if (kill(sil_state->pid, SIGUSR2) != 0)
+		elog(ERROR, "could not send start signal (PID %d): %m", sil_state->pid);
 
 	elog(LOG, "waiting for pg_statsinfod to start");
 
@@ -1618,7 +1782,7 @@ statsinfo_stop(PG_FUNCTION_ARGS)
 	if (!is_shared_preload("pg_statsinfo"))
 		elog(ERROR, "pg_statsinfo is not preloaded as shared library");
 
-	Assert(sil_pid != INVALID_PID);
+	Assert(sil_state && sil_state->pid != INVALID_PID);
 
 	join_path_components(pid_file, DataDir, STATSINFO_LOCK_FILE);
 
@@ -1635,9 +1799,14 @@ statsinfo_stop(PG_FUNCTION_ARGS)
 		goto done;
 	}
 
+#if PG_VERSION_NUM >= 90300
+	/* lookup the pg_statsinfo launcher state */
+	lookup_sil_state();
+#endif
+
 	/* send signal that instruct stop the statsinfo background process */
-	if (kill(sil_pid, SIGUSR1) != 0)
-		elog(ERROR, "could not send stop signal (PID %d): %m", sil_pid);
+	if (kill(sil_state->pid, SIGUSR1) != 0)
+		elog(ERROR, "could not send stop signal (PID %d): %m", sil_state->pid);
 
 	elog(LOG, "waiting for pg_statsinfod to shut down");
 
@@ -1698,7 +1867,7 @@ statsinfo_restart(PG_FUNCTION_ARGS)
 	pg_usleep(500 * 1000);
 
 	/* spawn a new daemon process */
-	exec_background_process(cmd);
+	exec_background_process(cmd, NULL);
 
 	/*
 	 * return the command line for the new daemon; Note that we cannot
@@ -2369,6 +2538,15 @@ send_i32(int fd, const char *key, int value)
 }
 
 static bool
+send_u32(int fd, const char *key, int value)
+{
+	char	buf[32];
+
+	snprintf(buf, lengthof(buf), "%u", value);
+	return send_str(fd, key, buf);
+}
+
+static bool
 send_u64(int fd, const char *key, uint64 value)
 {
 	char	buf[32];
@@ -2377,16 +2555,62 @@ send_u64(int fd, const char *key, uint64 value)
 	return send_str(fd, key, buf);
 }
 
+static bool
+send_reload_params(int fd)
+{
+	int	 i;
+
+	for (i = 0; i < lengthof(RELOAD_PARAM_NAMES); i++)
+	{
+		if (!send_str(fd, RELOAD_PARAM_NAMES[i],
+				GetConfigOption(RELOAD_PARAM_NAMES[i], false)))
+			return false;
+	}
+
+	return true;
+}
+
 /*
- * StartStatsinfoLauncher - Main entry point for pg_statsinfo launcher process.
+ * StartStatsinfoLauncher - start pg_statsinfo launcher process.
  */
 static void
 StartStatsinfoLauncher(void)
 {
+#if PG_VERSION_NUM >= 90300
+	BackgroundWorker	worker;
+
+	/*
+	 * setup background worker
+	 */
+	snprintf(worker.bgw_name, BGW_MAXLEN, "pg_statsinfo launcher");
+	worker.bgw_flags = BGWORKER_SHMEM_ACCESS;
+	worker.bgw_start_time = BgWorkerStart_ConsistentState;
+	worker.bgw_restart_time = BGW_NEVER_RESTART;
+#if PG_VERSION_NUM < 90400
+	worker.bgw_main = StatsinfoLauncherMain;
+#else
+#if PG_VERSION_NUM < 100000
+	worker.bgw_main = NULL;
+#endif
+	snprintf(worker.bgw_library_name, BGW_MAXLEN, "pg_statsinfo");
+	snprintf(worker.bgw_function_name, BGW_MAXLEN, "StatsinfoLauncherMain");
+#endif
+	worker.bgw_main_arg = (Datum) NULL;
+#if PG_VERSION_NUM >= 90400
+	worker.bgw_notify_pid = 0;
+#endif
+#if PG_VERSION_NUM >= 90500
+	memset(&worker.bgw_extra, 0, BGW_EXTRALEN);
+#endif
+
+	RegisterBackgroundWorker(&worker);
+#else
+	pid_t	pid;
+
 	/*
 	 * invoke pg_statsinfo launcher processs
 	 */
-	switch ((sil_pid = fork_process()))
+	switch ((pid = fork_process()))
 	{
 		case -1:
 			ereport(LOG,
@@ -2400,27 +2624,50 @@ StartStatsinfoLauncher(void)
 			StatsinfoLauncherMain();
 			break;
 		default:
+			/* in parent process */
+			/* Initialize pg_statsinfo launcher state */
+			sil_state = malloc(sizeof(silSharedState));
+			sil_state->pid = pid;
 			break;
 	}
-
+#endif
 	return;
 }
 
-#define LAUNCH_RETRY_PERIOD		300	/* sec */
-#define LAUNCH_RETRY_MAX		5
-
 /*
- * StatsinfoLauncherMain - Main loop for the pg_statsinfo launcher process.
+ * StatsinfoLauncherMain - Main entry point for pg_statsinfo launcher process.
  */
+#if PG_VERSION_NUM >= 90300
+void
+StatsinfoLauncherMain(Datum main_arg)
+{
+	bool	found;
+
+	/* Establish signal handlers before unblocking signals */
+	pqsignal(SIGUSR1, sil_sigusr1_handler);
+	pqsignal(SIGUSR2, sil_sigusr2_handler);
+	pqsignal(SIGCHLD, sil_sigchld_handler);
+	pqsignal(SIGHUP, sil_sighup_handler);
+
+	/* setup the pg_statsinfo launcher state */
+	LWLockAcquire(sil_state->lockid, LW_EXCLUSIVE);
+	sil_state = ShmemInitStruct("pg_statsinfo",
+								silShmemSize(),
+								&found);
+	Assert(found);
+	sil_state->pid = MyProcPid;
+	LWLockRelease(sil_state->lockid);
+
+	/* We're now ready to receive signals */
+	BackgroundWorkerUnblockSignals();
+
+	/* main loop */
+	StatsinfoLauncherMainLoop();
+}
+#else
 static void
 StatsinfoLauncherMain(void)
 {
-	int			StatsinfoPID;
-	int			launch_retry = 0;
-	pg_time_t	launch_time;
-	char		cmd[MAXPGPATH];
-	bool		StartAgentNeeded = true;
-
 	/* we are postmaster subprocess now */
 	IsUnderPostmaster = true;
 
@@ -2430,16 +2677,13 @@ StatsinfoLauncherMain(void)
 	/* delay for the preparation of syslogger */
 	pg_usleep(1000000L);	/* 1s */
 
-	ereport(LOG,
-		(errmsg("pg_statsinfo launcher started")));
-
 	/* Set up signal handlers */
 	pqsignal(SIGUSR1, sil_sigusr1_handler);
 	pqsignal(SIGUSR2, sil_sigusr2_handler);
+	pqsignal(SIGHUP, sil_sighup_handler);
 	pqsignal(SIGCHLD, sil_sigchld_handler);
 
 	/* Reset some signals that are accepted by postmaster */
-	pqsignal(SIGHUP, SIG_DFL);
 	pqsignal(SIGINT, SIG_DFL);
 	pqsignal(SIGQUIT, SIG_DFL);
 	pqsignal(SIGTERM, SIG_DFL);
@@ -2452,8 +2696,32 @@ StatsinfoLauncherMain(void)
 	sigemptyset(&UnBlockSig);
 	PG_SETMASK(&UnBlockSig);
 
+	/* main loop */
+	StatsinfoLauncherMainLoop();
+}
+#endif
+
+#define LAUNCH_RETRY_PERIOD		300	/* sec */
+#define LAUNCH_RETRY_MAX		5
+
+/*
+ * StatsinfoLauncherMainLoop - Main loop for the pg_statsinfo launcher process.
+ */
+static void
+StatsinfoLauncherMainLoop(void)
+{
+	int			StatsinfoPID;
+	int			StatsinfoFD;
+	int			launch_retry = 0;
+	pg_time_t	launch_time;
+	char		cmd[MAXPGPATH];
+	bool		StartAgentNeeded = true;
+
+	ereport(LOG,
+		(errmsg("pg_statsinfo launcher started")));
+
 	/* launch a pg_statsinfod process */
-	StatsinfoPID = exec_background_process(cmd);
+	StatsinfoPID = exec_background_process(cmd, &StatsinfoFD);
 	launch_time = (pg_time_t) time(NULL);
 
 	for (;;)
@@ -2488,7 +2756,7 @@ StatsinfoLauncherMain(void)
 			ereport(LOG,
 				(errmsg("relaunch a pg_statsinfod process")));
 
-			StatsinfoPID = exec_background_process(cmd);
+			StatsinfoPID = exec_background_process(cmd, &StatsinfoFD);
 			launch_time = (pg_time_t) time(NULL);
 			launch_retry++;
 		}
@@ -2520,13 +2788,30 @@ StatsinfoLauncherMain(void)
 
 			if (StatsinfoPID == 0)
 			{
-				StatsinfoPID = exec_background_process(cmd);
+				StatsinfoPID = exec_background_process(cmd, &StatsinfoFD);
 				launch_time = (pg_time_t) time(NULL);
 				launch_retry = 0;
 			}
 			else	/* already running */
 				ereport(WARNING,
 					(errmsg("another pg_statsinfod might be running")));
+		}
+
+		/* reload configuration and send to pg_statsinfod */
+		if (got_SIGHUP)
+		{
+			got_SIGHUP = false;
+
+			/* reload configuration file */
+			ProcessConfigFile(PGC_SIGHUP);
+
+			/* send params to pg_statsinfod */
+			if (StatsinfoPID != 0)
+			{
+				send_reload_params(StatsinfoFD);
+				send_end(StatsinfoFD);
+				kill(StatsinfoPID, SIGHUP);
+			}
 		}
 
 		/* pg_statsinfod process died */
@@ -2538,6 +2823,9 @@ StatsinfoLauncherMain(void)
 
 			if (StatsinfoPID != 0)
 			{
+				/* close pipe  */
+				close(StatsinfoFD);
+
 				waitpid(StatsinfoPID, &status, WNOHANG);
 				StatsinfoPID = 0;
 
@@ -2575,20 +2863,24 @@ StatsinfoLauncherMain(void)
 	proc_exit(0);
 }
 
+#ifndef SizeofHeapTupleHeader
+#define SizeofHeapTupleHeader offsetof(HeapTupleHeaderData, t_bits)
+#endif
+
 /*
  * exec_background_process - Start statsinfo background process.
  */
 static pid_t
-exec_background_process(char cmd[])
+exec_background_process(char cmd[], int *outStdin)
 {
-	char		binpath[MAXPGPATH];
-	char		share_path[MAXPGPATH];
-	uint64		sysident;
-	int			fd;
-	pid_t		fpid;
-	pid_t		postmaster_pid = get_postmaster_pid();
-	pg_time_t	log_ts;
-	pg_tz	   *log_tz;
+	char			binpath[MAXPGPATH];
+	char			share_path[MAXPGPATH];
+	int				fd;
+	pid_t			fpid;
+	pid_t			postmaster_pid = get_postmaster_pid();
+	pg_time_t		log_ts;
+	pg_tz		   *log_tz;
+	ControlFileData	ctrl;
 
 	log_ts = (pg_time_t) time(NULL);
 	log_tz = pg_tzset(GetConfigOption("log_timezone", false));
@@ -2600,8 +2892,12 @@ exec_background_process(char cmd[])
 	/* $PGHOME/share */
 	get_share_path(my_exec_path, share_path);
 
-	/* ControlFile: system_identifier */
-	sysident = get_sysident();
+	/*
+	 * Read control file. We cannot retrieve it from "Control File" shared memory
+	 * because the shared memory might not be initialized yet.
+	 */
+	if (!readControlFile(&ctrl, DataDir))
+		elog(ERROR,  LOG_PREFIX "could not read control file: %m");
 
 	/* Make command line. Add postmaster pid only for ps display */
 	snprintf(cmd, MAXPGPATH, "%s/%s %d", binpath, PROGRAM_NAME, postmaster_pid);
@@ -2615,7 +2911,7 @@ exec_background_process(char cmd[])
 	}
 
 	/* send GUC variables to background process. */
-	if (!send_u64(fd, "instance_id", sysident) ||
+	if (!send_u64(fd, "instance_id", ctrl.system_identifier) ||
 		!send_i32(fd, "postmaster_pid", postmaster_pid) ||
 		!send_str(fd, "port", GetConfigOption("port", false)) ||
 		!send_str(fd, "server_version_num", GetConfigOption("server_version_num", false)) ||
@@ -2624,6 +2920,12 @@ exec_background_process(char cmd[])
 		!send_i32(fd, "server_encoding", GetDatabaseEncoding()) ||
 		!send_str(fd, "data_directory", DataDir) ||
 		!send_str(fd, "log_timezone", pg_localtime(&log_ts, log_tz)->tm_zone) ||
+		!send_u32(fd, "page_size", ctrl.blcksz) ||
+		!send_u32(fd, "xlog_seg_size", ctrl.xlog_seg_size) ||
+		!send_u32(fd, "page_header_size", MAXALIGN(SizeOfPageHeaderData)) ||
+		!send_u32(fd, "htup_header_size", MAXALIGN(SizeofHeapTupleHeader)) ||
+		!send_u32(fd, "item_id_size", sizeof(ItemIdData)) ||
+		!send_i32(fd, "sil_pid", getpid()) ||
 		!send_str(fd, ":debug", _("DEBUG")) ||
 		!send_str(fd, ":info", _("INFO")) ||
 		!send_str(fd, ":notice", _("NOTICE")) ||
@@ -2642,12 +2944,13 @@ exec_background_process(char cmd[])
 		!send_str(fd, ":checkpoint_starting", _(MSG_CHECKPOINT_STARTING)) ||
 		!send_str(fd, ":checkpoint_complete", _(MSG_CHECKPOINT_COMPLETE)) ||
 		!send_str(fd, ":restartpoint_complete", _(MSG_RESTARTPOINT_COMPLETE)) ||
+		!send_reload_params(fd) ||
 		!send_end(fd))
 	{
 		/* nothing to do */
 	}
-	close(fd);
 
+	*outStdin = fd;
 	return fpid;
 }
 
@@ -2672,20 +2975,11 @@ sil_sigchld_handler(SIGNAL_ARGS)
 	got_SIGCHLD = true;
 }
 
-/*
- * Read control file. We cannot retrieve it from "Control File" shared memory
- * because the shared memory might not be initialized yet.
- */
-static uint64
-get_sysident(void)
+/* SIGHUP: reload configuration */
+static void
+sil_sighup_handler(SIGNAL_ARGS)
 {
-	ControlFileData	ctrl;
-
-	if (!readControlFile(&ctrl, DataDir))
-		elog(ERROR,
-			LOG_PREFIX "could not read control file: %m");
-
-	return ctrl.system_identifier;
+	got_SIGHUP = true;
 }
 
 /*
@@ -2815,7 +3109,11 @@ statsinfo_tablespaces(PG_FUNCTION_ARGS)
 	heap_close(relation, AccessShareLock);
 
 	/* append pg_xlog if symlink */
+#if PG_VERSION_NUM >= 100000
+	join_path_components(pg_xlog, DataDir, "pg_wal");
+#else
 	join_path_components(pg_xlog, DataDir, "pg_xlog");
+#endif
 	if ((len = readlink(pg_xlog, location, lengthof(location))) > 0)
 	{
 		location[len] = '\0';
@@ -3795,3 +4093,149 @@ ds_match_fn(const void *key1, const void *key2, Size keysize)
 	else
 		return 1;
 }
+
+#if PG_VERSION_NUM >= 90200
+#if PG_VERSION_NUM >= 90600
+#define EDATA_MSGID(e) ((e)->message_id)
+#else
+#define EDATA_MSGID(e) ((e)->message)
+#endif
+/*
+ * pg_statsinfo_emit_log_hook - filtering by message level
+ */
+static void
+pg_statsinfo_emit_log_hook(ErrorData *edata)
+{
+	static char	*m = "sending cancel to blocking autovacuum PID";
+	static int	 recurse_level = 0;
+
+	if (recurse_level > 0)
+		return;
+
+	if (prev_emit_log_hook)
+		(*prev_emit_log_hook) (edata);
+
+	/* Dedicated message for the autovacuum cancel request */
+	recurse_level++;
+	if ((edata->elevel == DEBUG1 || edata->elevel == LOG) &&
+		strncmp(EDATA_MSGID(edata), m, strlen(m)) == 0)
+	{
+		int old_log_min_error_statement = log_min_error_statement;
+		log_min_error_statement = LOG;
+		ereport(LOG,
+			(errmsg(LOGMSG_AUTOVACUUM_CANCEL_REQUEST),
+			 errhint("%s", edata->message)));
+		log_min_error_statement = old_log_min_error_statement;
+	}
+
+	/*
+	 * Logging to csvlog higher than textlog_min_messages and
+	 * syslog_min_messages and repolog_min_messages.
+	 */
+	if (!is_log_level_output(edata->elevel, textlog_min_messages) &&
+		!is_log_level_output(edata->elevel, syslog_min_messages) &&
+		!is_log_level_output(edata->elevel, repolog_min_messages))
+		edata->output_to_server = false;
+	recurse_level--;
+}
+
+/*
+ * is_log_level_output - is elevel logically >= log_min_level?
+ *
+ * We use this for tests that should consider LOG to sort out-of-order,
+ * between ERROR and FATAL.  Generally this is the right thing for testing
+ * whether a message should go to the postmaster log, whereas a simple >=
+ * test is correct for testing whether the message should go to the client.
+ */
+static bool
+is_log_level_output(int elevel, int log_min_level)
+{
+	if (elevel == LOG || elevel == COMMERROR)
+	{
+		if (log_min_level == LOG || log_min_level <= ERROR)
+			return true;
+	}
+	else if (log_min_level == LOG)
+	{
+		/* elevel != LOG */
+		if (elevel >= FATAL)
+			return true;
+	}
+	/* Neither is LOG */
+	else if (elevel >= log_min_level)
+		return true;
+
+	return false;
+}
+#endif
+
+#if PG_VERSION_NUM >= 90300
+/*
+ * pg_statsinfo_shmem_startup_hook - allocate or attach to shared memory
+ */
+static void
+pg_statsinfo_shmem_startup_hook(void)
+{
+	if (prev_shmem_startup_hook)
+		prev_shmem_startup_hook();
+
+	/* create or attach to the shared memory state */
+	silShmemInit();
+
+	return;
+}
+
+/*
+ * silShmemInit -
+ *     allocate and initialize pg_statsinfo launcher-related shared memory
+ */
+static void
+silShmemInit(void)
+{
+	bool	found;
+
+	/* create or attach to the shared memory state */
+	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+	sil_state = ShmemInitStruct("pg_statsinfo",
+								silShmemSize(),
+								&found);
+	if (!found)
+	{
+		/* First time through ... */
+#if PG_VERSION_NUM >= 90600
+		sil_state->lockid = &(GetNamedLWLockTranche("pg_statsinfo"))->lock;
+#else
+		sil_state->lockid = LWLockAssign();
+#endif
+		sil_state->pid = INVALID_PID;
+	}
+	else
+		Assert(found);
+	LWLockRelease(AddinShmemInitLock);
+}
+
+/*
+ * silShmemSize - report shared memory space needed by silShmemInit
+ */
+static Size
+silShmemSize(void)
+{
+	return MAXALIGN(sizeof(silSharedState));
+}
+
+/*
+ * lookup_sil_state - lookup the pg_statsinfo launcher state from shared memory
+ */
+static void
+lookup_sil_state(void)
+{
+	bool	found;
+
+	/* lookup the pg_statsinfo launcher state with shared lock */
+	LWLockAcquire(sil_state->lockid, LW_SHARED);
+	sil_state = ShmemInitStruct("pg_statsinfo",
+								silShmemSize(),
+								&found);
+	LWLockRelease(sil_state->lockid);
+}
+#endif

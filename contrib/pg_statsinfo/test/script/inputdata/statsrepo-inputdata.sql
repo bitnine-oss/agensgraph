@@ -15,7 +15,7 @@ $$
 	--
 	-- Data for Name: instance; Type: TABLE DATA; Schema: statsrepo; Owner: postgres
 	--
-	INSERT INTO statsrepo.instance VALUES ($1, $2, $3, $4, $5, X'FF000000'::bigint);
+	INSERT INTO statsrepo.instance VALUES ($1, $2, $3, $4, $5, X'FF000000'::bigint, 8192, 24, 24, 4);
 
 	--
 	-- Data for Name: snapshot; Type: TABLE DATA; Schema: statsrepo; Owner: postgres
@@ -70,10 +70,18 @@ $$
 	--
 	-- Data for Name: autovacuum; Type: TABLE DATA; Schema: statsrepo; Owner: postgres
 	--
-	INSERT INTO statsrepo.autovacuum VALUES ($1, '2012-11-01 00:00:30+09', 'postgres', 'public', 'pgbench_branches', 1, 0, 6, 3, 1, 10, 56, 0, 2, 0, 30.5180000000000007, 0);
-	INSERT INTO statsrepo.autovacuum VALUES ($1, '2012-11-01 00:00:30+09', 'postgres', 'public', 'pgbench_tellers', 1, 0, 6, 300, 23, 20, 36, 0, 1, 0, 17.5960000000000001, 0);
-	INSERT INTO statsrepo.autovacuum VALUES ($1, '2012-11-01 00:01:30+09', 'postgres', 'public', 'pgbench_branches', 1, 0, 7, 1, 0, 30, 59, 0, 0, 0, 0, 0);
-	INSERT INTO statsrepo.autovacuum VALUES ($1, '2012-11-01 00:01:30+09', 'postgres', 'public', 'pgbench_tellers', 0, 0, 6, 114, 16, 40, 35, 0, 0, 0, 0, 0);
+	INSERT INTO statsrepo.autovacuum VALUES ($1, '2012-11-01 00:00:30+09', 'postgres', 'public', 'pgbench_branches', 1, 0, 6, 0, 3, 1, 10, 56, 0, 2, 0, 30.5180000000000007, 0);
+	INSERT INTO statsrepo.autovacuum VALUES ($1, '2012-11-01 00:00:30+09', 'postgres', 'public', 'pgbench_tellers', 1, 0, 6, 0, 300, 23, 20, 36, 0, 1, 0, 17.5960000000000001, 0);
+	INSERT INTO statsrepo.autovacuum VALUES ($1, '2012-11-01 00:01:30+09', 'postgres', 'public', 'pgbench_branches', 1, 0, 7, 0, 1, 0, 30, 59, 0, 0, 0, 0, 0);
+	INSERT INTO statsrepo.autovacuum VALUES ($1, '2012-11-01 00:01:30+09', 'postgres', 'public', 'pgbench_tellers', 0, 0, 6, 6, 114, 16, 40, 35, 0, 0, 0, 0, 0);
+
+	--
+	-- Data for Name: bgwriter; Type: TABLE DATA; Schema: statsrepo; Owner: postgres
+	--
+	INSERT INTO statsrepo.bgwriter VALUES ($6, 0, 0, 0, 0, 0);
+	INSERT INTO statsrepo.bgwriter VALUES ($6 + 1, 600, 6, 6000, 60, 60000);
+	INSERT INTO statsrepo.bgwriter VALUES ($6 + 2, 2400, 24, 24000, 240, 240000);
+	INSERT INTO statsrepo.bgwriter VALUES ($6 + 3, 3600, 36, 36000, 360, 360000);
 
 	--
 	-- Data for Name: autovacuum_cancel; Type: TABLE DATA; Schema: statsrepo; Owner: postgres
@@ -259,8 +267,8 @@ $$
 	--
 	-- Data for Name: lock; Type: TABLE DATA; Schema: statsrepo; Owner: postgres
 	--
-	INSERT INTO statsrepo.lock VALUES ($6 + 1, 'postgres', NULL, NULL, '', NULL, NULL, -1, 14768, 14771, NULL, '00:00:00', 'UPDATE pgbench_branches SET bbalance = bbalance + -3145 WHERE bid = 1;', 'UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;');
-	INSERT INTO statsrepo.lock VALUES ($6 + 2, 'postgres', NULL, NULL, '', NULL, NULL, -1, 14769, 14771, NULL, '00:00:00', 'UPDATE pgbench_tellers SET tbalance = tbalance + -3715 WHERE tid = 4;', 'UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;');
+	INSERT INTO statsrepo.lock VALUES ($6 + 1, 'postgres', NULL, NULL, '', NULL, NULL, -1, 14768, 14771, NULL, 'Lock', 'relation', '00:00:00', 'UPDATE pgbench_branches SET bbalance = bbalance + -3145 WHERE bid = 1;', 'UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;');
+	INSERT INTO statsrepo.lock VALUES ($6 + 2, 'postgres', NULL, NULL, '', NULL, NULL, -1, 14769, 14771, NULL, 'Lock', 'relation', '00:00:00', 'UPDATE pgbench_tellers SET tbalance = tbalance + -3715 WHERE tid = 4;', 'UPDATE pgbench_accounts SET abalance = abalance + -1975 WHERE aid = 65162;SELECT abalance FROM pgbench_accounts WHERE aid = 65162;UPDATE pgbench_tellers SET tbalance = tbalance + -1975 WHERE tid = 4;UPDATE pgbench_branches SET bbalance = bbalance + -1975 WHERE bid = 1;INSERT INTO pgbench_history (tid, bid, aid, delta, mtime) VALUES (4, 1, 65162, -1975, CURRENT_TI...;');
 
 	--
 	-- Data for Name: memory; Type: TABLE DATA; Schema: statsrepo; Owner: postgres
@@ -289,10 +297,10 @@ $$
 	--
 	-- Data for Name: replication; Type: TABLE DATA; Schema: statsrepo; Owner: postgres
 	--
-	INSERT INTO statsrepo.replication VALUES ($6, 14171, 10, 'postgres', 'walreceiver', '127.0.0.1', '', 58145, '2012-11-01 00:00:00+09', '100', 'streaming', '0/30206D8 (000000010000000000000003)', '0/30206D8 (000000010000000000000003)', '0/3000000 (000000010000000000000002)', '0/3000000 (000000010000000000000002)', '0/3000000 (000000010000000000000002)', 0, 'async');
-	INSERT INTO statsrepo.replication VALUES ($6 + 1, 14171, 10, 'postgres', 'walreceiver', '127.0.0.1', '', 58145, '2012-11-01 00:00:00+09', '200', 'streaming', '0/45E6680 (000000010000000000000004)', '0/45E6680 (000000010000000000000004)', '0/45E6680 (000000010000000000000004)', '0/45E6680 (000000010000000000000004)', '0/45E63A0 (000000010000000000000004)', 0, 'async');
-	INSERT INTO statsrepo.replication VALUES ($6 + 2, 14171, 10, 'postgres', 'walreceiver', '127.0.0.1', '', 58145, '2012-11-01 00:00:00+09', '300', 'streaming', '0/5402F60 (000000010000000000000005)', '0/5402F60 (000000010000000000000005)', '0/5402F60 (000000010000000000000005)', '0/5400DE8 (000000010000000000000005)', '0/5400DE8 (000000010000000000000005)', 0, 'async');
-	INSERT INTO statsrepo.replication VALUES ($6 + 3, 14171, 10, 'postgres', 'walreceiver', '127.0.0.1', '', 58145, '2012-11-01 00:00:00+09', '400', 'streaming', '0/685E818 (000000010000000000000006)', '0/685E818 (000000010000000000000006)', '0/685E818 (000000010000000000000006)', '0/685E578 (000000010000000000000006)', '0/685E578 (000000010000000000000006)', 0, 'async');
+	INSERT INTO statsrepo.replication VALUES ($6, 14171, 10, 'postgres', 'walreceiver', '127.0.0.1', '', 58145, '2012-11-01 00:00:00+09', '100', 'streaming', '0/30206D8 (000000010000000000000003)', '0/30206D8 (000000010000000000000003)', '0/3000000 (000000010000000000000002)', '0/3000000 (000000010000000000000002)', '0/3000000 (000000010000000000000002)', '00:00:01', '00:00:02', '00:00:03', 0, 'async');
+	INSERT INTO statsrepo.replication VALUES ($6 + 1, 14171, 10, 'postgres', 'walreceiver', '127.0.0.1', '', 58145, '2012-11-01 00:00:00+09', '200', 'streaming', '0/45E6680 (000000010000000000000004)', '0/45E6680 (000000010000000000000004)', '0/45E6680 (000000010000000000000004)', '0/45E6680 (000000010000000000000004)', '0/45E63A0 (000000010000000000000004)', '00:00:04', '00:00:05', '00:00:06', 0, 'async');
+	INSERT INTO statsrepo.replication VALUES ($6 + 2, 14171, 10, 'postgres', 'walreceiver', '127.0.0.1', '', 58145, '2012-11-01 00:00:00+09', '300', 'streaming', '0/5402F60 (000000010000000000000005)', '0/5402F60 (000000010000000000000005)', '0/5402F60 (000000010000000000000005)', '0/5400DE8 (000000010000000000000005)', '0/5400DE8 (000000010000000000000005)', '00:00:07', '00:00:08', '00:00:09', 0, 'async');
+	INSERT INTO statsrepo.replication VALUES ($6 + 3, 14171, 10, 'postgres', 'walreceiver', '127.0.0.1', '', 58145, '2012-11-01 00:00:00+09', '400', 'streaming', '0/685E818 (000000010000000000000006)', '0/685E818 (000000010000000000000006)', '0/685E818 (000000010000000000000006)', '0/685E578 (000000010000000000000006)', '0/685E578 (000000010000000000000006)', '00:00:10', '00:00:11', '00:00:12', 0, 'async');
 
 	--
 	-- Data for Name: role; Type: TABLE DATA; Schema: statsrepo; Owner: postgres

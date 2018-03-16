@@ -44,8 +44,7 @@ echo "/*---- Statistics collection function ----*/"
 get_snapshot
 
 echo "/**--- Statistics of database ---**/"
-if [ $(server_version) -ge 90200 ] ; then
-	send_query << EOF
+send_query << EOF
 SELECT
 	snapid,
 	name AS database,
@@ -78,75 +77,6 @@ WHERE
 ORDER BY
 	database;
 EOF
-elif [ $(server_version) -ge 90100 ] ; then
-	send_query << EOF
-SELECT
-	snapid,
-	name AS database,
-	CASE WHEN dbid IS NOT NULL THEN 'xxx' END AS dbid,
-	CASE WHEN size IS NOT NULL THEN 'xxx' END AS size,
-	CASE WHEN age IS NOT NULL THEN 'xxx' END AS age,
-	CASE WHEN xact_commit IS NOT NULL THEN 'xxx' END AS xact_commit,
-	CASE WHEN xact_rollback IS NOT NULL THEN 'xxx' END AS xact_rollback,
-	CASE WHEN blks_read IS NOT NULL THEN 'xxx' END AS blks_read,
-	CASE WHEN blks_hit IS NOT NULL THEN 'xxx' END AS blks_hit,
-	CASE WHEN tup_returned IS NOT NULL THEN 'xxx' END AS tup_returned,
-	CASE WHEN tup_fetched IS NOT NULL THEN 'xxx' END AS tup_fetched,
-	CASE WHEN tup_inserted IS NOT NULL THEN 'xxx' END AS tup_inserted,
-	CASE WHEN tup_updated IS NOT NULL THEN 'xxx' END AS tup_updated,
-	CASE WHEN tup_deleted IS NOT NULL THEN 'xxx' END AS tup_deleted,
-	CASE WHEN confl_tablespace IS NOT NULL THEN 'xxx' END AS confl_tablespace,
-	CASE WHEN confl_lock IS NOT NULL THEN 'xxx' END AS confl_lock,
-	CASE WHEN confl_snapshot IS NOT NULL THEN 'xxx' END AS confl_snapshot,
-	CASE WHEN confl_bufferpin IS NOT NULL THEN 'xxx' END AS confl_bufferpin,
-	CASE WHEN confl_deadlock IS NOT NULL THEN 'xxx' END AS confl_deadlock,
-	CASE WHEN temp_files IS NULL THEN '(N/A)' END AS temp_files,
-	CASE WHEN temp_bytes IS NULL THEN '(N/A)' END AS temp_bytes,
-	CASE WHEN deadlocks IS NULL THEN '(N/A)' END AS deadlocks,
-	CASE WHEN blk_read_time IS NULL THEN '(N/A)' END AS blk_read_time,
-	CASE WHEN blk_write_time IS NULL THEN '(N/A)' END AS blk_write_time
-FROM
-	statsrepo.database
-WHERE
-	snapid = (SELECT max(snapid) FROM statsrepo.snapshot)
-ORDER BY
-	database;
-EOF
-else
-	send_query << EOF
-SELECT
-	snapid,
-	name AS database,
-	CASE WHEN dbid IS NOT NULL THEN 'xxx' END AS dbid,
-	CASE WHEN size IS NOT NULL THEN 'xxx' END AS size,
-	CASE WHEN age IS NOT NULL THEN 'xxx' END AS age,
-	CASE WHEN xact_commit IS NOT NULL THEN 'xxx' END AS xact_commit,
-	CASE WHEN xact_rollback IS NOT NULL THEN 'xxx' END AS xact_rollback,
-	CASE WHEN blks_read IS NOT NULL THEN 'xxx' END AS blks_read,
-	CASE WHEN blks_hit IS NOT NULL THEN 'xxx' END AS blks_hit,
-	CASE WHEN tup_returned IS NOT NULL THEN 'xxx' END AS tup_returned,
-	CASE WHEN tup_fetched IS NOT NULL THEN 'xxx' END AS tup_fetched,
-	CASE WHEN tup_inserted IS NOT NULL THEN 'xxx' END AS tup_inserted,
-	CASE WHEN tup_updated IS NOT NULL THEN 'xxx' END AS tup_updated,
-	CASE WHEN tup_deleted IS NOT NULL THEN 'xxx' END AS tup_deleted,
-	CASE WHEN confl_tablespace IS NULL THEN '(N/A)' END AS confl_tablespace,
-	CASE WHEN confl_lock IS NULL THEN '(N/A)' END AS confl_lock,
-	CASE WHEN confl_snapshot IS NULL THEN '(N/A)' END AS confl_snapshot,
-	CASE WHEN confl_bufferpin IS NULL THEN '(N/A)' END AS confl_bufferpin,
-	CASE WHEN confl_deadlock IS NULL THEN '(N/A)' END AS confl_deadlock,
-	CASE WHEN temp_files IS NULL THEN '(N/A)' END AS temp_files,
-	CASE WHEN temp_bytes IS NULL THEN '(N/A)' END AS temp_bytes,
-	CASE WHEN deadlocks IS NULL THEN '(N/A)' END AS deadlocks,
-	CASE WHEN blk_read_time IS NULL THEN '(N/A)' END AS blk_read_time,
-	CASE WHEN blk_write_time IS NULL THEN '(N/A)' END AS blk_write_time
-FROM
-	statsrepo.database
-WHERE
-	snapid = (SELECT max(snapid) FROM statsrepo.snapshot)
-ORDER BY
-	database;
-EOF
-fi
 
 echo "/**--- Statistics of schema ---**/"
 send_query << EOF
@@ -529,29 +459,7 @@ EOF
 echo "/**--- Lock conflicts ---**/"
 echo "/***-- There is no lock conflicts --***/"
 get_snapshot
-send_query << EOF
-SELECT
-	snapid,
-	datname,
-	nspname,
-	CASE WHEN relname IS NOT NULL THEN 'xxx' END AS relname,
-	CASE WHEN blocker_appname IS NOT NULL THEN 'xxx' END AS blocker_appname,
-	CASE WHEN blocker_addr IS NOT NULL THEN 'xxx' END AS blocker_addr,
-	CASE WHEN blocker_hostname IS NOT NULL THEN 'xxx' END AS blocker_hostname,
-	CASE WHEN blocker_port IS NOT NULL THEN 'xxx' END AS blocker_port,
-	CASE WHEN blockee_pid IS NOT NULL THEN 'xxx' END AS blockee_pid,
-	CASE WHEN blocker_pid IS NOT NULL THEN 'xxx' END AS blocker_pid,
-	CASE WHEN blocker_gid IS NOT NULL THEN 'xxx' END AS blocker_gid,
-	CASE WHEN duration IS NOT NULL THEN 'xxx' END AS duration,
-	blockee_query,
-	blocker_query
-FROM
-	statsrepo.lock
-WHERE
-	snapid = (SELECT max(snapid) FROM statsrepo.snapshot)
-ORDER BY
-	datname, nspname, relname;
-EOF
+send_query -c "SELECT * FROM statsrepo.lock WHERE snapid = (SELECT max(snapid) FROM statsrepo.snapshot)"
 
 echo "/***-- There are lock conflicts --***/"
 psql db01 -Atq << EOF &
@@ -574,8 +482,7 @@ EOF
 sleep 1
 get_snapshot
 wait
-if [ $(server_version) -ge 90100 ] ; then
-	send_query << EOF
+send_query << EOF
 SELECT
 	snapid,
 	datname,
@@ -588,6 +495,8 @@ SELECT
 	CASE WHEN blockee_pid IS NOT NULL THEN 'xxx' END AS blockee_pid,
 	CASE WHEN blocker_pid IS NOT NULL THEN 'xxx' END AS blocker_pid,
 	CASE WHEN blocker_gid IS NOT NULL THEN 'xxx' END AS blocker_gid,
+	wait_event_type,
+	wait_event,
 	CASE WHEN duration IS NOT NULL THEN 'xxx' END AS duration,
 	blockee_query,
 	blocker_query
@@ -598,55 +507,6 @@ WHERE
 ORDER BY
 	datname, nspname, relname, blockee_query;
 EOF
-elif [ $(server_version) -ge 90000 ] ; then
-	send_query << EOF
-SELECT
-	snapid,
-	datname,
-	nspname,
-	CASE WHEN relname IS NOT NULL THEN 'xxx' END AS relname,
-	CASE WHEN blocker_appname IS NOT NULL THEN 'xxx' END AS blocker_appname,
-	CASE WHEN blocker_addr IS NOT NULL THEN 'xxx' END AS blocker_addr,
-	CASE WHEN blocker_hostname IS NULL THEN '(N/A)' END AS blocker_hostname,
-	CASE WHEN blocker_port IS NOT NULL THEN 'xxx' END AS blocker_port,
-	CASE WHEN blockee_pid IS NOT NULL THEN 'xxx' END AS blockee_pid,
-	CASE WHEN blocker_pid IS NOT NULL THEN 'xxx' END AS blocker_pid,
-	CASE WHEN blocker_gid IS NOT NULL THEN 'xxx' END AS blocker_gid,
-	CASE WHEN duration IS NOT NULL THEN 'xxx' END AS duration,
-	blockee_query,
-	blocker_query
-FROM
-	statsrepo.lock
-WHERE
-	snapid = (SELECT max(snapid) FROM statsrepo.snapshot)
-ORDER BY
-	datname, nspname, relname, blockee_query;
-EOF
-else
-	send_query << EOF
-SELECT
-	snapid,
-	datname,
-	nspname,
-	CASE WHEN relname IS NOT NULL THEN 'xxx' END AS relname,
-	CASE WHEN blocker_appname IS NULL THEN '(N/A)' END AS blocker_appname,
-	CASE WHEN blocker_addr IS NOT NULL THEN 'xxx' END AS blocker_addr,
-	CASE WHEN blocker_hostname IS NULL THEN '(N/A)' END AS blocker_hostname,
-	CASE WHEN blocker_port IS NOT NULL THEN 'xxx' END AS blocker_port,
-	CASE WHEN blockee_pid IS NOT NULL THEN 'xxx' END AS blockee_pid,
-	CASE WHEN blocker_pid IS NOT NULL THEN 'xxx' END AS blocker_pid,
-	CASE WHEN blocker_gid IS NOT NULL THEN 'xxx' END AS blocker_gid,
-	CASE WHEN duration IS NOT NULL THEN 'xxx' END AS duration,
-	blockee_query,
-	blocker_query
-FROM
-	statsrepo.lock
-WHERE
-	snapid = (SELECT max(snapid) FROM statsrepo.snapshot)
-ORDER BY
-	datname, nspname, relname, blockee_query;
-EOF
-fi
 
 echo "/**--- Statistics of WAL ---**/"
 echo "/***-- Monitored instance is a stand-alone configuration --***/"
@@ -666,7 +526,7 @@ echo "/***-- Monitored instance is a stand-alone configuration --***/"
 if [ $(server_version) -ge 90400 ] ; then
 	psql << EOF > /dev/null
 SELECT pg_stat_reset_shared('archiver');
-SELECT pg_switch_xlog();
+SELECT ${FUNCTION_PG_SWITCH_WAL};
 SELECT pg_sleep(1);
 EOF
 	get_snapshot
@@ -705,18 +565,13 @@ pg_statsinfo.stat_statements_exclude_users = '${PGUSER}'
 EOF
 pg_ctl restart -w -D ${PGDATA} -o "-p ${PGPORT}" > /dev/null
 sleep 3
-if [ $(server_version) -ge 90100 ] ; then
-	psql -c "CREATE EXTENSION pg_stat_statements"
-else
-	psql -f $(pg_config --sharedir)/contrib/pg_stat_statements.sql
-fi
+psql -c "CREATE EXTENSION pg_stat_statements"
 psql db01 -U user01 -At << EOF > /dev/null
 SELECT schema01.func01('yyy', 25);
 SELECT schema01.func01('zzz', 32);
 EOF
 get_snapshot
-if [ $(server_version) -ge 90200 ] ; then
-	send_query << EOF
+send_query << EOF
 SELECT
 	s.snapid,
 	d.name AS database,
@@ -750,77 +605,21 @@ WHERE
 ORDER BY
 	database, role, query;
 EOF
-elif [ $(server_version) -ge 90000 ] ; then
-	send_query << EOF
+
+echo "/**--- Statistics of BGWriter ---**/"
+send_query << EOF
 SELECT
-	s.snapid,
-	d.name AS database,
-	r.name AS role,
-	s.query,
-	s.calls,
-	CASE WHEN s.total_time IS NOT NULL THEN 'xxx' END AS total_time,
-	CASE WHEN s.rows IS NOT NULL THEN 'xxx' END AS rows,
-	CASE WHEN s.shared_blks_hit IS NOT NULL THEN 'xxx' END AS shared_blks_hit,
-	CASE WHEN s.shared_blks_read IS NOT NULL THEN 'xxx' END AS shared_blks_read,
-	CASE WHEN s.shared_blks_dirtied IS NULL THEN '(N/A)' END AS shared_blks_dirtied,
-	CASE WHEN s.shared_blks_written IS NOT NULL THEN 'xxx' END AS shared_blks_written,
-	CASE WHEN s.local_blks_hit IS NOT NULL THEN 'xxx' END AS local_blks_hit,
-	CASE WHEN s.local_blks_read IS NOT NULL THEN 'xxx' END AS local_blks_read,
-	CASE WHEN s.local_blks_dirtied IS NULL THEN '(N/A)' END AS local_blks_dirtied,
-	CASE WHEN s.local_blks_written IS NOT NULL THEN 'xxx' END AS local_blks_written,
-	CASE WHEN s.temp_blks_read IS NOT NULL THEN 'xxx' END AS temp_blks_read,
-	CASE WHEN s.temp_blks_written IS NOT NULL THEN 'xxx' END AS temp_blks_written,
-	CASE WHEN s.blk_read_time IS NULL THEN '(N/A)' END AS blk_read_time,
-	CASE WHEN s.blk_write_time IS NULL THEN '(N/A)' END AS blk_write_time
+	snapid,
+	CASE WHEN buffers_clean IS NOT NULL THEN 'xxx' END AS buffers_clean,
+	CASE WHEN maxwritten_clean IS NOT NULL THEN 'xxx' END AS maxwritten_clean,
+	CASE WHEN buffers_backend IS NOT NULL THEN 'xxx' END AS buffers_backend,
+	CASE WHEN buffers_backend_fsync IS NOT NULL THEN 'xxx' END AS buffers_backend_fsync,
+	CASE WHEN buffers_alloc IS NOT NULL THEN 'xxx' END AS buffers_alloc
 FROM
-	statsrepo.statement s,
-	statsrepo.database d,
-	statsrepo.role r
+	statsrepo.bgwriter
 WHERE
-	s.snapid = (SELECT max(snapid) FROM statsrepo.snapshot)
-	AND s.snapid = d.snapid
-	AND s.snapid = r.snapid
-	AND s.dbid = d.dbid
-	AND s.userid = r.userid
-ORDER BY
-	database, role, query;
+	snapid = (SELECT max(snapid) FROM statsrepo.snapshot);
 EOF
-else
-	send_query << EOF
-SELECT
-	s.snapid,
-	d.name AS database,
-	r.name AS role,
-	s.query,
-	s.calls,
-	CASE WHEN s.total_time IS NOT NULL THEN 'xxx' END AS total_time,
-	CASE WHEN s.rows IS NOT NULL THEN 'xxx' END AS rows,
-	CASE WHEN s.shared_blks_hit IS NULL THEN '(N/A)' END AS shared_blks_hit,
-	CASE WHEN s.shared_blks_read IS NULL THEN '(N/A)' END AS shared_blks_read,
-	CASE WHEN s.shared_blks_dirtied IS NULL THEN '(N/A)' END AS shared_blks_dirtied,
-	CASE WHEN s.shared_blks_written IS NULL THEN '(N/A)' END AS shared_blks_written,
-	CASE WHEN s.local_blks_hit IS NULL THEN '(N/A)' END AS local_blks_hit,
-	CASE WHEN s.local_blks_read IS NULL THEN '(N/A)' END AS local_blks_read,
-	CASE WHEN s.local_blks_dirtied IS NULL THEN '(N/A)' END AS local_blks_dirtied,
-	CASE WHEN s.local_blks_written IS NULL THEN '(N/A)' END AS local_blks_written,
-	CASE WHEN s.temp_blks_read IS NULL THEN '(N/A)' END AS temp_blks_read,
-	CASE WHEN s.temp_blks_written IS NULL THEN '(N/A)' END AS temp_blks_written,
-	CASE WHEN s.blk_read_time IS NULL THEN '(N/A)' END AS blk_read_time,
-	CASE WHEN s.blk_write_time IS NULL THEN '(N/A)' END AS blk_write_time
-FROM
-	statsrepo.statement s,
-	statsrepo.database d,
-	statsrepo.role r
-WHERE
-	s.snapid = (SELECT max(snapid) FROM statsrepo.snapshot)
-	AND s.snapid = d.snapid
-	AND s.snapid = r.snapid
-	AND s.dbid = d.dbid
-	AND s.userid = r.userid
-ORDER BY
-	database, role, query;
-EOF
-fi
 
 echo "/**--- Collect statistics after database crash recovery ---**/"
 psql -U user01 -d db01 -At << EOF

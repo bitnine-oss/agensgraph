@@ -1,0 +1,15 @@
+[10.0 <2018/01/25>]
+
+ * Replication delay time is added to snapshots.
+ * Replication slots are now recorded in snapshots.
+ * Logical recplication are now recorded as a part of replication connection information in snapshots. Only physical ones were recorded in previous versions.
+ * Alert for table dead space is now defaulted to off.
+ * Tables smaller than 1000 pages are now ignored in alert for instance-total
+   dead space ratio.
+ * Added alert message list to the documentation. (only in Japanese)
+ * Fixed the following two alert messages.
+   - Query average reponse time
+   - Query worst response time
+ * Show information of all standbys that had a connection during a report period in Current Replication Status.
+ * Added replication delay time in Current Replication Status.
+ * pg_statsinfo supports only one version of PostgreSQL from this version. pg_statsinfo 10 supports only PostgreSQL 10.

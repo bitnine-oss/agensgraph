@@ -107,12 +107,16 @@ vacuumdb: vacuuming database "template1"
 (5 rows)
 
 /**--- Role information ---**/
- snapid |       role        | userid 
---------+-------------------+--------
-      1 | pg_signal_backend | xxx
-      1 | postgres          | xxx
-      1 | user01            | xxx
-(3 rows)
+ snapid |         role         | userid 
+--------+----------------------+--------
+      1 | pg_monitor           | xxx
+      1 | pg_read_all_settings | xxx
+      1 | pg_read_all_stats    | xxx
+      1 | pg_signal_backend    | xxx
+      1 | pg_stat_scan_tables  | xxx
+      1 | postgres             | xxx
+      1 | user01               | xxx
+(7 rows)
 
 /**--- GUC setting ---**/
  snapid |       name        | setting | unit |       source       
@@ -147,15 +151,15 @@ DROP TABLE
 
 /**--- Lock conflicts ---**/
 /***-- There is no lock conflicts --***/
- snapid | datname | nspname | relname | blocker_appname | blocker_addr | blocker_hostname | blocker_port | blockee_pid | blocker_pid | blocker_gid | duration | blockee_query | blocker_query 
---------+---------+---------+---------+-----------------+--------------+------------------+--------------+-------------+-------------+-------------+----------+---------------+---------------
+ snapid | datname | nspname | relname | blocker_appname | blocker_addr | blocker_hostname | blocker_port | blockee_pid | blocker_pid | blocker_gid | wait_event_type | wait_event | duration | blockee_query | blocker_query 
+--------+---------+---------+---------+-----------------+--------------+------------------+--------------+-------------+-------------+-------------+-----------------+------------+----------+---------------+---------------
 (0 rows)
 
 /***-- There are lock conflicts --***/
- snapid | datname | nspname | relname | blocker_appname | blocker_addr | blocker_hostname | blocker_port | blockee_pid | blocker_pid | blocker_gid | duration |                       blockee_query                       |                    blocker_query                    
---------+---------+---------+---------+-----------------+--------------+------------------+--------------+-------------+-------------+-------------+----------+-----------------------------------------------------------+-----------------------------------------------------
-      6 | db01    |         | xxx     | xxx             |              |                  | xxx          | xxx         | xxx         |             | xxx      | LOCK TABLE schema01.tbl01 IN ACCESS SHARE MODE;           | LOCK TABLE schema01.tbl01 IN ACCESS EXCLUSIVE MODE;
-      6 | db01    |         | xxx     | xxx             |              |                  | xxx          | xxx         | xxx         |             | xxx      | LOCK TABLE schema01.tbl01 IN SHARE UPDATE EXCLUSIVE MODE; | LOCK TABLE schema01.tbl01 IN ACCESS EXCLUSIVE MODE;
+ snapid | datname | nspname | relname | blocker_appname | blocker_addr | blocker_hostname | blocker_port | blockee_pid | blocker_pid | blocker_gid | wait_event_type | wait_event | duration |                       blockee_query                       |                    blocker_query                    
+--------+---------+---------+---------+-----------------+--------------+------------------+--------------+-------------+-------------+-------------+-----------------+------------+----------+-----------------------------------------------------------+-----------------------------------------------------
+      6 | db01    |         | xxx     | xxx             |              |                  | xxx          | xxx         | xxx         |             | Lock            | relation   | xxx      | LOCK TABLE schema01.tbl01 IN ACCESS SHARE MODE;           | LOCK TABLE schema01.tbl01 IN ACCESS EXCLUSIVE MODE;
+      6 | db01    |         | xxx     | xxx             |              |                  | xxx          | xxx         | xxx         |             | Lock            | relation   | xxx      | LOCK TABLE schema01.tbl01 IN SHARE UPDATE EXCLUSIVE MODE; | LOCK TABLE schema01.tbl01 IN ACCESS EXCLUSIVE MODE;
 (2 rows)
 
 /**--- Statistics of WAL ---**/
@@ -174,8 +178,8 @@ DROP TABLE
 
 /**--- Statistics of replication ---**/
 /***-- Monitored instance is a stand-alone configuration --***/
- snapid | procpid | usesysid | usename | application_name | client_addr | client_hostname | client_port | backend_start | backend_xmin | state | current_location | sent_location | write_location | flush_location | replay_location | sync_priority | sync_state 
---------+---------+----------+---------+------------------+-------------+-----------------+-------------+---------------+--------------+-------+------------------+---------------+----------------+----------------+-----------------+---------------+------------
+ snapid | procpid | usesysid | usename | application_name | client_addr | client_hostname | client_port | backend_start | backend_xmin | state | current_location | sent_location | write_location | flush_location | replay_location | write_lag | flush_lag | replay_lag | sync_priority | sync_state 
+--------+---------+----------+---------+------------------+-------------+-----------------+-------------+---------------+--------------+-------+------------------+---------------+----------------+----------------+-----------------+-----------+-----------+------------+---------------+------------
 (0 rows)
 
 /**--- Statistics of query ---**/
@@ -186,9 +190,15 @@ DROP TABLE
 
 /***-- pg_stat_statements is installed --***/
 CREATE EXTENSION
- snapid | database |  role  |             query             | calls | total_time | rows | shared_blks_hit | shared_blks_read | shared_blks_dirtied | shared_blks_written | local_blks_hit | local_blks_read | local_blks_dirtied | local_blks_written | temp_blks_read | temp_blks_written | blk_read_time | blk_write_time 
---------+----------+--------+-------------------------------+-------+------------+------+-----------------+------------------+---------------------+---------------------+----------------+-----------------+--------------------+--------------------+----------------+-------------------+---------------+----------------
-      8 | db01     | user01 | SELECT schema01.func01(?, ?); |     2 | xxx        | xxx  | xxx             | xxx              | xxx                 | xxx                 | xxx            | xxx             | xxx                | xxx                | xxx            | xxx               | xxx           | xxx
+ snapid | database |  role  |             query              | calls | total_time | rows | shared_blks_hit | shared_blks_read | shared_blks_dirtied | shared_blks_written | local_blks_hit | local_blks_read | local_blks_dirtied | local_blks_written | temp_blks_read | temp_blks_written | blk_read_time | blk_write_time 
+--------+----------+--------+--------------------------------+-------+------------+------+-----------------+------------------+---------------------+---------------------+----------------+-----------------+--------------------+--------------------+----------------+-------------------+---------------+----------------
+      8 | db01     | user01 | SELECT schema01.func01($1, $2) |     2 | xxx        | xxx  | xxx             | xxx              | xxx                 | xxx                 | xxx            | xxx             | xxx                | xxx                | xxx            | xxx               | xxx           | xxx
+(1 row)
+
+/**--- Statistics of BGWriter ---**/
+ snapid | buffers_clean | maxwritten_clean | buffers_backend | buffers_backend_fsync | buffers_alloc 
+--------+---------------+------------------+-----------------+-----------------------+---------------
+      8 | xxx           | xxx              | xxx             | xxx                   | xxx
 (1 row)
 
 /**--- Collect statistics after database crash recovery ---**/

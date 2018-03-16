@@ -1,7 +1,7 @@
 /*
  * logger.c
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 #include "pg_statsinfod.h"
@@ -569,7 +569,15 @@ logger_parse(Logger *logger, const char *pg_log, bool only_routing)
 				}
 				continue;
 			}
-
+#if PG_VERSION_NUM >= 90200
+			/* autovacuum cancel request ? */
+			if (strcmp(log.message, LOGMSG_AUTOVACUUM_CANCEL_REQUEST) == 0)
+			{
+				if (!only_routing)
+					parse_autovacuum_cancel_request(&log);
+				continue;
+			}
+#endif
 #ifdef ADJUST_PERFORMANCE_MESSAGE_LEVEL
 			/* performance log? */
 			if ((my_textlog_min_messages > INFO ||
@@ -611,14 +619,14 @@ logger_parse(Logger *logger, const char *pg_log, bool only_routing)
 					parse_autovacuum(log.message, log.timestamp);
 					continue;
 				}
-
+#if PG_VERSION_NUM < 90300
 				/* setting parameters reloaded ? */
 				if (strcmp(log.message, msg_sighup) == 0)
 				{
-					server_reload_time = time(NULL) + RELOAD_DELAY;
+					kill(sil_pid, SIGHUP);
 					continue;
 				}
-
+#endif
 				/* shutdown ? */
 				if (strcmp(log.message, msg_shutdown) == 0)
 				{
@@ -635,7 +643,14 @@ logger_parse(Logger *logger, const char *pg_log, bool only_routing)
 					continue;
 				}
 			}
-
+#if PG_VERSION_NUM < 90200
+			/* autovacuum cancel request ? */
+			if (is_autovacuum_cancel_request(save_elevel, log.message))
+			{
+				parse_autovacuum_cancel_request(&log);
+				continue;
+			}
+#endif
 			/* autovacuum cancel ? */
 			if (is_autovacuum_cancel(save_elevel, log.message))
 			{

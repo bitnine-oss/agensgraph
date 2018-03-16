@@ -45,5 +45,5 @@ update_pgconfig ${PGDATA} "<guc_prefix>.log_maintenance_command" "'touch %l/ok'"
 update_pgconfig ${PGDATA} "<guc_prefix>.maintenance_time" "'${maintenance_time}'"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 sleep 10
-[ -f ${PGDATA}/pg_log/ok ] &&
+[ -f ${PGLOG_DIR}/ok ] &&
 	echo "log maintenance command called"

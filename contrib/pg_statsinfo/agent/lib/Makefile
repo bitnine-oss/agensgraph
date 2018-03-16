@@ -1,7 +1,7 @@
 #
 # pg_statsinfo: lib/Makefile
 #
-#    Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+#    Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
 #
 SRCS = \
 	libstatsinfo.c \

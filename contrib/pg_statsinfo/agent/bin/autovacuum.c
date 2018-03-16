@@ -1,7 +1,7 @@
 /*
  * autovacuum.c : parse auto-vacuum and auto-analyze messages
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 #include "pg_statsinfod.h"
@@ -9,7 +9,7 @@
 #define SQL_INSERT_AUTOVACUUM "\
 INSERT INTO statsrepo.autovacuum VALUES \
 ($1, $2::timestamptz - interval '1sec' * $17, \
- $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"
+ $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)"
 
 #define SQL_INSERT_AUTOANALYZE "\
 INSERT INTO statsrepo.autoanalyze VALUES \
@@ -24,8 +24,13 @@ INSERT INTO statsrepo.autoanalyze_cancel VALUES \
 ($1, $2, $3, $4, $5, $6)"
 
 /* pg_rusage (rusage is not localized) */
+#if PG_VERSION_NUM >= 100000
+#define MSG_RUSAGE \
+	"CPU: user: %f s, system: %f s, elapsed: %f s"
+#else
 #define MSG_RUSAGE \
 	"CPU %fs/%fu sec elapsed %f sec"
+#endif
 
 /* autovacuum cancel request */
 #define MSG_AUTOVACUUM_CANCEL_REQUEST \
@@ -35,7 +40,9 @@ INSERT INTO statsrepo.autoanalyze_cancel VALUES \
 #define MSG_AUTOVACUUM_CANCEL \
 	"canceling autovacuum task"
 
-#if PG_VERSION_NUM >= 90600
+#if PG_VERSION_NUM >= 100000
+#define NUM_AUTOVACUUM			20
+#elif PG_VERSION_NUM >= 90600
 #define NUM_AUTOVACUUM			19
 #elif PG_VERSION_NUM >= 90500
 #define NUM_AUTOVACUUM			18
@@ -145,14 +152,23 @@ parse_autovacuum(const char *message, const char *timestamp)
 bool
 is_autovacuum_cancel(int elevel, const char *message)
 {
-	/* autovacuum cancel request log */
-	if (elevel == LOG &&
-		match(message, MSG_AUTOVACUUM_CANCEL_REQUEST))
-		return true;
-
 	/* autovacuum cancel log */
 	if (elevel == ERROR &&
 		match(message, MSG_AUTOVACUUM_CANCEL))
+		return true;
+
+	return false;
+}
+
+/*
+ * is_autovacuum_cancel_request
+ */
+bool
+is_autovacuum_cancel_request(int elevel, const char *message)
+{
+	/* autovacuum cancel request log */
+	if ((elevel == LOG || elevel == DEBUG) &&
+		match(message, MSG_AUTOVACUUM_CANCEL_REQUEST))
 		return true;
 
 	return false;
@@ -164,57 +180,65 @@ is_autovacuum_cancel(int elevel, const char *message)
 bool
 parse_autovacuum_cancel(const Log *log)
 {
-	List	*params;
+	AutovacuumLog	*av;
+	AVCancelRequest	*entry;
+	List			*params;
 
-	if (match(log->message, MSG_AUTOVACUUM_CANCEL_REQUEST))
+	if ((params = capture(log->context,
+		"automatic %s of table \"%s.%s.%s\"", 4)) == NIL)
+		return false;	/* should not happen */
+
+	/* get the query that caused cancel */
+	entry = get_avc_request(log->pid);
+
+	av = pgut_new(AutovacuumLog);
+	av->base.type = QUEUE_AUTOVACUUM;
+	av->base.free = (QueueItemFree) Autovacuum_free;
+	av->base.exec = (QueueItemExec) AutovacuumCancel_exec;
+	strlcpy(av->finish, log->timestamp, lengthof(av->finish));
+	av->params = params;
+	if (entry)
 	{
-		AVCancelRequest	*new_entry;
-
-		/* remove old entries */
-		refresh_avc_request();
-
-		/* add a new entry of the cancel request */
-		if ((params = capture(log->message, MSG_AUTOVACUUM_CANCEL_REQUEST, 1)) == NIL)
-			return false;	/* should not happen */
-
-		new_entry = pgut_malloc(sizeof(AVCancelRequest));
-		new_entry->time = time(NULL);
-		new_entry->w_pid = pgut_strdup((char *) list_nth(params, 0));
-		new_entry->query = pgut_strdup(log->user_query);
-		list_free_deep(params);
-
-		put_avc_request(new_entry);
-	}
-	else if (match(log->message, MSG_AUTOVACUUM_CANCEL))
-	{
-		AutovacuumLog	*av;
-		AVCancelRequest	*entry;
-
-		if ((params = capture(log->context,
-			"automatic %s of table \"%s.%s.%s\"", 4)) == NIL)
-			return false;	/* should not happen */
-
-		/* get the query that caused cancel */
-		entry = get_avc_request(log->pid);
-
-		av = pgut_new(AutovacuumLog);
-		av->base.type = QUEUE_AUTOVACUUM;
-		av->base.free = (QueueItemFree) Autovacuum_free;
-		av->base.exec = (QueueItemExec) AutovacuumCancel_exec;
-		strlcpy(av->finish, log->timestamp, lengthof(av->finish));
-		av->params = params;
-		if (entry)
-		{
-			av->params = lappend(av->params, pgut_strdup(entry->query));
-			remove_avc_request(entry);
-		}
-		else
-			av->params = lappend(av->params, NULL);
-
-		writer_send((QueueItem *) av);
+		av->params = lappend(av->params, pgut_strdup(entry->query));
+		remove_avc_request(entry);
 	}
 	else
-		return false;
+		av->params = lappend(av->params, NULL);
+
+	writer_send((QueueItem *) av);
+
+	return true;
+}
+
+/*
+ * parse_autovacuum_cancel_request
+ */
+bool
+parse_autovacuum_cancel_request(const Log *log)
+{
+	AVCancelRequest	*new_entry;
+	List			*params;
+
+	/* remove old entries */
+	refresh_avc_request();
+
+	/* add a new entry of the cancel request */
+#if PG_VERSION_NUM >= 90200
+	if ((params = capture(log->hint,
+		MSG_AUTOVACUUM_CANCEL_REQUEST, 1)) == NIL)
+#else
+	if ((params = capture(log->message,
+		MSG_AUTOVACUUM_CANCEL_REQUEST, 1)) == NIL)
+#endif
+		return false;	/* should not happen */
+
+	new_entry = pgut_malloc(sizeof(AVCancelRequest));
+	new_entry->time = time(NULL);
+	new_entry->w_pid = pgut_strdup((char *) list_nth(params, 0));
+	new_entry->query = pgut_strdup(log->user_query);
+	list_free_deep(params);
+
+	put_avc_request(new_entry);
 
 	return true;
 }
@@ -232,7 +256,7 @@ Autovacuum_free(AutovacuumLog *av)
 static bool
 Autovacuum_exec(AutovacuumLog *av, PGconn *conn, const char *instid)
 {
-	const char	   *params[17];
+	const char	   *params[18];
 
 	elog(DEBUG2, "write (autovacuum)");
 	Assert(list_length(av->params) == NUM_AUTOVACUUM + NUM_RUSAGE);
@@ -247,49 +271,61 @@ Autovacuum_exec(AutovacuumLog *av, PGconn *conn, const char *instid)
 	params[5] = list_nth(av->params, 3);	/* index_scans */
 	params[6] = list_nth(av->params, 4);	/* page_removed */
 	params[7] = list_nth(av->params, 5);	/* page_remain */
-#if PG_VERSION_NUM >= 90600
+#if PG_VERSION_NUM >= 100000
 //	params[8] = list_nth(av->params, 6);	/* pinned_pages */
-//	params[9] = list_nth(av->params, 7);	/* frozenskipped_pages */
-	params[8] = list_nth(av->params, 8);	/* tup_removed */
-	params[9] = list_nth(av->params, 9);	/* tup_remain */
-	params[10] = list_nth(av->params, 10);	/* tup_dead */
-	params[11] = list_nth(av->params, 11);	/* page_hit */
-	params[12] = list_nth(av->params, 12);	/* page_miss */
-	params[13] = list_nth(av->params, 13);	/* page_dirty */
-	params[14] = list_nth(av->params, 14);	/* read_rate */
-	params[15] = list_nth(av->params, 16);	/* write_rate */
+	params[8] = list_nth(av->params, 7);	/* frozen_skipped_pages */
+	params[9] = list_nth(av->params, 8);	/* tup_removed */
+	params[10] = list_nth(av->params, 9);	/* tup_remain */
+	params[11] = list_nth(av->params, 10);	/* tup_dead */
+//	params[12] = list_nth(av->params, 11);	/* oldest_xmin */
+	params[12] = list_nth(av->params, 12);	/* page_hit */
+	params[13] = list_nth(av->params, 13);	/* page_miss */
+	params[14] = list_nth(av->params, 14);	/* page_dirty */
+	params[15] = list_nth(av->params, 15);	/* read_rate */
+	params[16] = list_nth(av->params, 17);	/* write_rate */
+#elif PG_VERSION_NUM >= 90600
+//	params[8] = list_nth(av->params, 6);	/* pinned_pages */
+	params[8] = list_nth(av->params, 7);	/* frozen_skipped_pages */
+	params[9] = list_nth(av->params, 8);	/* tup_removed */
+	params[10] = list_nth(av->params, 9);	/* tup_remain */
+	params[11] = list_nth(av->params, 10);	/* tup_dead */
+	params[12] = list_nth(av->params, 11);	/* page_hit */
+	params[13] = list_nth(av->params, 12);	/* page_miss */
+	params[14] = list_nth(av->params, 13);	/* page_dirty */
+	params[15] = list_nth(av->params, 14);	/* read_rate */
+	params[16] = list_nth(av->params, 16);	/* write_rate */
 #elif PG_VERSION_NUM >= 90500
 //	params[8] = list_nth(av->params, 6);	/* pinned_pages */
-	params[8] = list_nth(av->params, 7);	/* tup_removed */
-	params[9] = list_nth(av->params, 8);	/* tup_remain */
-	params[10] = list_nth(av->params, 9);	/* tup_dead */
-	params[11] = list_nth(av->params, 10);	/* page_hit */
-	params[12] = list_nth(av->params, 11);	/* page_miss */
-	params[13] = list_nth(av->params, 12);	/* page_dirty */
-	params[14] = list_nth(av->params, 13);	/* read_rate */
-	params[15] = list_nth(av->params, 15);	/* write_rate */
+	params[9] = list_nth(av->params, 7);	/* tup_removed */
+	params[10] = list_nth(av->params, 8);	/* tup_remain */
+	params[11] = list_nth(av->params, 9);	/* tup_dead */
+	params[12] = list_nth(av->params, 10);	/* page_hit */
+	params[13] = list_nth(av->params, 11);	/* page_miss */
+	params[14] = list_nth(av->params, 12);	/* page_dirty */
+	params[15] = list_nth(av->params, 13);	/* read_rate */
+	params[16] = list_nth(av->params, 15);	/* write_rate */
 #elif PG_VERSION_NUM >= 90400
-	params[8] = list_nth(av->params, 6);	/* tup_removed */
-	params[9] = list_nth(av->params, 7);	/* tup_remain */
-	params[10] = list_nth(av->params, 8);	/* tup_dead */
-	params[11] = list_nth(av->params, 9);	/* page_hit */
-	params[12] = list_nth(av->params, 10);	/* page_miss */
-	params[13] = list_nth(av->params, 11);	/* page_dirty */
-	params[14] = list_nth(av->params, 12);	/* read_rate */
-	params[15] = list_nth(av->params, 14);	/* write_rate */
+	params[9] = list_nth(av->params, 6);	/* tup_removed */
+	params[10] = list_nth(av->params, 7);	/* tup_remain */
+	params[11] = list_nth(av->params, 8);	/* tup_dead */
+	params[12] = list_nth(av->params, 9);	/* page_hit */
+	params[13] = list_nth(av->params, 10);	/* page_miss */
+	params[14] = list_nth(av->params, 11);	/* page_dirty */
+	params[15] = list_nth(av->params, 12);	/* read_rate */
+	params[16] = list_nth(av->params, 14);	/* write_rate */
 #elif PG_VERSION_NUM >= 90200
-	params[8] = list_nth(av->params, 6);	/* tup_removed */
-	params[9] = list_nth(av->params, 7);	/* tup_remain */
-	params[11] = list_nth(av->params, 8);	/* page_hit */
-	params[12] = list_nth(av->params, 9);	/* page_miss */
-	params[13] = list_nth(av->params, 10);	/* page_dirty */
-	params[14] = list_nth(av->params, 11);	/* read_rate */
-	params[15] = list_nth(av->params, 13);	/* write_rate */
+	params[9] = list_nth(av->params, 6);	/* tup_removed */
+	params[10] = list_nth(av->params, 7);	/* tup_remain */
+	params[12] = list_nth(av->params, 8);	/* page_hit */
+	params[13] = list_nth(av->params, 9);	/* page_miss */
+	params[14] = list_nth(av->params, 10);	/* page_dirty */
+	params[15] = list_nth(av->params, 11);	/* read_rate */
+	params[16] = list_nth(av->params, 13);	/* write_rate */
 #else
-	params[8] = list_nth(av->params, 6);	/* tup_removed */
-	params[9] = list_nth(av->params, 7);	/* tup_remain */
+	params[9] = list_nth(av->params, 6);	/* tup_removed */
+	params[10] = list_nth(av->params, 7);	/* tup_remain */
 #endif
-	params[16] = list_nth(av->params, NUM_AUTOVACUUM + 2);	/* duration */
+	params[17] = list_nth(av->params, NUM_AUTOVACUUM + 2);	/* duration */
 
 	return pgut_command(conn, SQL_INSERT_AUTOVACUUM,
 						lengthof(params), params) == PGRES_COMMAND_OK;

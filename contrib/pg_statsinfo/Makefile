@@ -1,7 +1,7 @@
 #
 # pg_statsinfo: Makefile
 #
-#    Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+#    Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
 #
 SUBDIRS = agent reporter
 REGTEST = \
@@ -32,7 +32,6 @@ include $(makefile_global)
 include $(top_srcdir)/contrib/contrib-global.mk
 endif
 
-ifeq ($(PORTNAME), linux)
 all install installdirs uninstall distprep clean distclean maintainer-clean:
 	@for dir in $(SUBDIRS); do \
 		$(MAKE) -C $$dir $@ || exit; \
@@ -40,7 +39,3 @@ all install installdirs uninstall distprep clean distclean maintainer-clean:
 
 installcheck:
 	( cd test && ./regress.sh $(REGTEST))
-else
-all install installdirs uninstall distprep clean distclean maintainer-clean: ;
-installcheck: ;
-endif

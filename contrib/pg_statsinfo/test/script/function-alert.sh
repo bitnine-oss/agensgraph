@@ -22,11 +22,7 @@ setup_repository ${REPOSITORY_DATA} ${REPOSITORY_USER} ${REPOSITORY_PORT} ${REPO
 echo "/*---- Initialize monitored instance ----*/"
 setup_dbcluster ${PGDATA} ${PGUSER} ${PGPORT} ${PGCONFIG} "" "" ""
 sleep 3
-if [ $(server_version) -ge 90100 ] ; then
-	psql -c "CREATE EXTENSION pg_stat_statements" > /dev/null
-else
-	psql -f $(pg_config --sharedir)/contrib/pg_stat_statements.sql > /dev/null
-fi
+psql -c "CREATE EXTENSION pg_stat_statements" > /dev/null
 
 get_snapshot
 send_query << EOF > /dev/null
@@ -60,7 +56,7 @@ EOF
 sleep ${ANALYZE_DELAY}
 get_snapshot
 sleep ${WRITE_DELAY}
-tail -n 1 ${PGDATA}/pg_log/pg_statsinfo.log |
+tail -n 1 ${PGLOG_DIR}/pg_statsinfo.log |
 sed "s/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\s[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}/xxx/g" |
 sed "s#--- .\+ Rollbacks/sec #--- xxx Rollbacks/sec #"
 send_query -c "UPDATE statsrepo.alert SET rollback_tps = -1" > /dev/null
@@ -76,7 +72,7 @@ EOF
 sleep ${ANALYZE_DELAY}
 get_snapshot
 sleep ${WRITE_DELAY}
-tail -n 1 ${PGDATA}/pg_log/pg_statsinfo.log |
+tail -n 1 ${PGLOG_DIR}/pg_statsinfo.log |
 sed "s/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\s[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}/xxx/g" |
 sed "s#--- .\+ Transactions/sec #--- xxx Transactions/sec #"
 send_query -c "UPDATE statsrepo.alert SET commit_tps = -1" > /dev/null
@@ -86,7 +82,7 @@ send_query -c "UPDATE statsrepo.alert SET response_avg = 0"
 psql -c "SELECT pg_sleep(1)" > /dev/null
 get_snapshot
 sleep ${WRITE_DELAY}
-tail -n 1 ${PGDATA}/pg_log/pg_statsinfo.log |
+tail -n 1 ${PGLOG_DIR}/pg_statsinfo.log |
 sed "s/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\s[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}/xxx/g" |
 sed "s/--- .\+ sec /--- xxx sec /"
 send_query -c "UPDATE statsrepo.alert SET response_avg = -1" > /dev/null
@@ -96,7 +92,7 @@ send_query -c "UPDATE statsrepo.alert SET response_worst = 0"
 psql -c "SELECT pg_sleep(1)" > /dev/null
 get_snapshot
 sleep ${WRITE_DELAY}
-tail -n 1 ${PGDATA}/pg_log/pg_statsinfo.log |
+tail -n 1 ${PGLOG_DIR}/pg_statsinfo.log |
 sed "s/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\s[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}/xxx/g" |
 sed "s/--- .\+ sec /--- xxx sec /"
 send_query -c "UPDATE statsrepo.alert SET response_worst = -1" > /dev/null
@@ -119,7 +115,7 @@ EOF
 sleep ${ANALYZE_DELAY}
 get_snapshot
 sleep ${WRITE_DELAY}
-tail -n 3 ${PGDATA}/pg_log/pg_statsinfo.log |
+tail -n 3 ${PGLOG_DIR}/pg_statsinfo.log |
 sed "s/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\s[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}/xxx/g" |
 sed "s/--- .\+ \(MiB\|%\) /--- xxx \1 /"
 send_query << EOF > /dev/null
@@ -144,7 +140,7 @@ EOF
 sleep ${ANALYZE_DELAY}
 get_snapshot
 sleep ${WRITE_DELAY}
-tail -n 1 ${PGDATA}/pg_log/pg_statsinfo.log |
+tail -n 1 ${PGLOG_DIR}/pg_statsinfo.log |
 sed "s/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\s[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}/xxx/g"
 send_query -c "UPDATE statsrepo.alert SET fragment_percent = -1" > /dev/null
 
@@ -153,7 +149,7 @@ send_query -c "UPDATE statsrepo.alert SET backend_max = 0"
 psql -c "SELECT pg_sleep(${SAMPLING_DELAY})" > /dev/null
 get_snapshot
 sleep ${WRITE_DELAY}
-tail -n 1 ${PGDATA}/pg_log/pg_statsinfo.log |
+tail -n 1 ${PGLOG_DIR}/pg_statsinfo.log |
 sed "s/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\s[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}/xxx/g"
 send_query -c "UPDATE statsrepo.alert SET backend_max = -1" > /dev/null
 
@@ -182,7 +178,7 @@ INSERT INTO statsrepo.replication VALUES (
 2, 2673, 10, 'postgres', 'sby', '127.0.0.1', NULL, 56442, '2013-01-01 00:00:00', '100', 'streaming',
 '0/C900000 (00000001000000000000000C)', '0/6400000 (000000010000000000000006)',
 '0/6400000 (000000010000000000000006)', '0/6400000 (000000010000000000000006)',
-'0/0 (000000010000000000000000)', 0, 'sync');
+'0/0 (000000010000000000000000)', '00:01:00', '00:02:00', '00:03:00', 0, 'sync');
 EOF
 send_query -c "SELECT * FROM statsrepo.alert(2)" | 
 sed "s/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\s[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}/xxx/g"

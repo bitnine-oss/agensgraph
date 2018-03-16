@@ -17,8 +17,6 @@ setup_dbcluster ${PGDATA} ${PGUSER} ${PGPORT} ${PGCONFIG} "" "" ""
 sleep 3
 createuser -SDRl user01
 createuser -SDRl user02
-[ $(server_version) -lt 90000 ] &&
-	createlang plpgsql
 psql << EOF
 CREATE TABLE tbl01 (id bigint);
 CREATE FUNCTION statsinfo.elog(text, text) RETURNS void AS
@@ -57,27 +55,27 @@ update_pgconfig ${PGDATA} "<guc_prefix>.textlog_filename" "'postgresql-statsinfo
 update_pgconfig ${PGDATA} "<guc_prefix>.textlog_permission" "0644"
 pg_ctl restart -w -D ${PGDATA} -o "-p ${PGPORT}" > /dev/null
 sleep 3
-stat -c "postgresql-statsinfo.log %A(%a)" ${PGDATA}/pg_log/postgresql-statsinfo.log
+stat -c "postgresql-statsinfo.log %A(%a)" ${PGLOG_DIR}/postgresql-statsinfo.log
 update_pgconfig ${PGDATA} "<guc_prefix>.textlog_filename" "'pg_statsinfo.log'"
 update_pgconfig ${PGDATA} "<guc_prefix>.textlog_permission" "0666"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -c "SELECT pg_rotate_logfile()" > /dev/null
 sleep ${WRITE_DELAY}
-stat -c "pg_statsinfo.log %A(%a)" ${PGDATA}/pg_log/pg_statsinfo.log
+stat -c "pg_statsinfo.log %A(%a)" ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Textlog routing (textlog_min_messages = disable) ---**/"
 update_pgconfig ${PGDATA} "<guc_prefix>.textlog_min_messages" "disable"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -c "SELECT statsinfo.elog('ALL', 'textlog routing test (disable)')" 2> /dev/null
 sleep ${WRITE_DELAY}
-grep "textlog routing test (disable)" ${PGDATA}/pg_log/pg_statsinfo.log
+grep "textlog routing test (disable)" ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Textlog routing (textlog_min_messages = error) ---**/"
 update_pgconfig ${PGDATA} "<guc_prefix>.textlog_min_messages" "error"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -c "SELECT statsinfo.elog('ALL', 'textlog routing test (error)')" 2> /dev/null
 sleep ${WRITE_DELAY}
-grep "textlog routing test (error)" ${PGDATA}/pg_log/pg_statsinfo.log
+grep "textlog routing test (error)" ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Textlog routing (adjust_log_level = off) ---**/"
 set_pgconfig ${PGCONFIG} ${PGDATA}
@@ -86,7 +84,7 @@ update_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_info" "'42P01'"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -c "SELECT * FROM xxx" > /dev/null 2>&1
 sleep ${WRITE_DELAY}
-tail -n 2 ${PGDATA}/pg_log/pg_statsinfo.log
+tail -n 2 ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Adjust log level (adjust_log_info = '42P01') ---**/"
 update_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_level" "on"
@@ -94,7 +92,7 @@ update_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_info" "'42P01'"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -c "SELECT * FROM xxx" > /dev/null 2>&1
 sleep ${WRITE_DELAY}
-tail -n 2 ${PGDATA}/pg_log/pg_statsinfo.log
+tail -n 2 ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Adjust log level (adjust_log_notice = '42P01') ---**/"
 delete_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_info"
@@ -102,7 +100,7 @@ update_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_notice" "'42P01'"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -c "SELECT * FROM xxx" > /dev/null 2>&1
 sleep ${WRITE_DELAY}
-tail -n 2 ${PGDATA}/pg_log/pg_statsinfo.log
+tail -n 2 ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Adjust log level (adjust_log_warning = '42P01') ---**/"
 delete_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_notice"
@@ -110,7 +108,7 @@ update_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_warning" "'42P01'"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -c "SELECT * FROM xxx" > /dev/null 2>&1
 sleep ${WRITE_DELAY}
-tail -n 2 ${PGDATA}/pg_log/pg_statsinfo.log
+tail -n 2 ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Adjust log level (adjust_log_error = '00000') ---**/"
 delete_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_warning"
@@ -119,7 +117,7 @@ update_pgconfig ${PGDATA} "log_statement" "'all'"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -c "SELECT 1" > /dev/null
 sleep ${WRITE_DELAY}
-tail -n 1 ${PGDATA}/pg_log/pg_statsinfo.log
+tail -n 1 ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Adjust log level (adjust_log_log = '42P01') ---**/"
 delete_pgconfig ${PGDATA} "log_statement"
@@ -128,7 +126,7 @@ update_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_log" "'42P01'"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -c "SELECT * FROM xxx" > /dev/null 2>&1
 sleep ${WRITE_DELAY}
-tail -n 2 ${PGDATA}/pg_log/pg_statsinfo.log
+tail -n 2 ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Adjust log level (adjust_log_fatal = '42P01') ---**/"
 delete_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_log"
@@ -136,7 +134,7 @@ update_pgconfig ${PGDATA} "<guc_prefix>.adjust_log_fatal" "'42P01'"
 pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -c "SELECT * FROM xxx" > /dev/null 2>&1
 sleep ${WRITE_DELAY}
-tail -n 2 ${PGDATA}/pg_log/pg_statsinfo.log
+tail -n 2 ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Sets the nologging filter (textlog_nologging_users = 'user01') ---**/"
 set_pgconfig ${PGCONFIG} ${PGDATA}
@@ -146,7 +144,7 @@ pg_ctl reload && sleep ${RELOAD_DELAY}
 psql -U ${PGUSER} -c "SELECT 1" > /dev/null
 psql -U user01 -c "SELECT 2" > /dev/null
 sleep ${WRITE_DELAY}
-tail -n 1 ${PGDATA}/pg_log/pg_statsinfo.log
+tail -n 1 ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Sets the nologging filter (textlog_nologging_users = 'user01, user02') ---**/"
 update_pgconfig ${PGDATA} "<guc_prefix>.textlog_nologging_users" "'user01, user02'"
@@ -155,7 +153,7 @@ psql -U ${PGUSER} -c "SELECT 1" > /dev/null
 psql -U user01 -c "SELECT 2" > /dev/null
 psql -U user02 -c "SELECT 3" > /dev/null
 sleep ${WRITE_DELAY}
-tail -n 1 ${PGDATA}/pg_log/pg_statsinfo.log
+tail -n 1 ${PGLOG_DIR}/pg_statsinfo.log
 
 echo "/**--- Collect the CHECKPOINT information ---**/"
 set_pgconfig ${PGCONFIG} ${PGDATA}
@@ -169,9 +167,10 @@ fi
 pg_ctl restart -w -D ${PGDATA} -o "-p ${PGPORT}" > /dev/null
 sleep 3
 psql -c "CHECKPOINT"
-psql -c "SELECT pg_switch_xlog()" > /dev/null
+psql -c "SELECT ${FUNCTION_PG_SWITCH_WAL}" > /dev/null
+sleep 5
 psql -c "INSERT INTO tbl01 VALUES (0)"
-sleep 35
+sleep 30
 send_query << EOF
 SELECT
 	instid,
@@ -219,57 +218,11 @@ EOF
 
 echo "/**--- Collect the AUTOVACUUM information ---**/"
 if [ $(server_version) -ge 90400 ] ; then
-	send_query << EOF
-SELECT
-	instid,
-	database,
-	schema,
-	"table",
-	CASE WHEN start IS NOT NULL THEN 'xxx' END AS start,
-	CASE WHEN index_scans IS NOT NULL THEN 'xxx' END AS index_scans,
-	CASE WHEN page_removed IS NOT NULL THEN 'xxx' END AS page_removed,
-	CASE WHEN page_remain IS NOT NULL THEN 'xxx' END AS page_remain,
-	CASE WHEN tup_removed IS NOT NULL THEN 'xxx' END AS tup_removed,
-	CASE WHEN tup_remain IS NOT NULL THEN 'xxx' END AS tup_remain,
-	CASE WHEN tup_dead IS NOT NULL THEN 'xxx' END AS tup_dead,
-	CASE WHEN page_hit IS NOT NULL THEN 'xxx' END AS page_hit,
-	CASE WHEN page_miss IS NOT NULL THEN 'xxx' END AS page_miss,
-	CASE WHEN page_dirty IS NOT NULL THEN 'xxx' END AS page_dirty,
-	CASE WHEN read_rate IS NOT NULL THEN 'xxx' END AS read_rate,
-	CASE WHEN write_rate IS NOT NULL THEN 'xxx' END AS write_rate,
-	CASE WHEN duration IS NOT NULL THEN 'xxx' END AS duration
-FROM
-	statsrepo.autovacuum
-ORDER BY
-	database, schema, "table";
-EOF
-elif [ $(server_version) -ge 90200 ] ; then
-	send_query << EOF
-SELECT
-	instid,
-	database,
-	schema,
-	"table",
-	CASE WHEN start IS NOT NULL THEN 'xxx' END AS start,
-	CASE WHEN index_scans IS NOT NULL THEN 'xxx' END AS index_scans,
-	CASE WHEN page_removed IS NOT NULL THEN 'xxx' END AS page_removed,
-	CASE WHEN page_remain IS NOT NULL THEN 'xxx' END AS page_remain,
-	CASE WHEN tup_removed IS NOT NULL THEN 'xxx' END AS tup_removed,
-	CASE WHEN tup_remain IS NOT NULL THEN 'xxx' END AS tup_remain,
-	CASE WHEN tup_dead IS NULL THEN '(N/A)' END AS tup_dead,
-	CASE WHEN page_hit IS NOT NULL THEN 'xxx' END AS page_hit,
-	CASE WHEN page_miss IS NOT NULL THEN 'xxx' END AS page_miss,
-	CASE WHEN page_dirty IS NOT NULL THEN 'xxx' END AS page_dirty,
-	CASE WHEN read_rate IS NOT NULL THEN 'xxx' END AS read_rate,
-	CASE WHEN write_rate IS NOT NULL THEN 'xxx' END AS write_rate,
-	CASE WHEN duration IS NOT NULL THEN 'xxx' END AS duration
-FROM
-	statsrepo.autovacuum
-ORDER BY
-	database, schema, "table";
-EOF
+	SELECT_TUP_DEAD="CASE WHEN tup_dead IS NOT NULL THEN 'xxx' END"
 else
-	send_query << EOF
+	SELECT_TUP_DEAD="CASE WHEN tup_dead IS NULL THEN '(N/A)' END"
+fi
+send_query << EOF
 SELECT
 	instid,
 	database,
@@ -281,21 +234,21 @@ SELECT
 	CASE WHEN page_remain IS NOT NULL THEN 'xxx' END AS page_remain,
 	CASE WHEN tup_removed IS NOT NULL THEN 'xxx' END AS tup_removed,
 	CASE WHEN tup_remain IS NOT NULL THEN 'xxx' END AS tup_remain,
-	CASE WHEN tup_dead IS NULL THEN '(N/A)' END AS tup_dead,
-	CASE WHEN page_hit IS NULL THEN '(N/A)' END AS page_hit,
-	CASE WHEN page_miss IS NULL THEN '(N/A)' END AS page_miss,
-	CASE WHEN page_dirty IS NULL THEN '(N/A)' END AS page_dirty,
-	CASE WHEN read_rate IS NULL THEN '(N/A)' END AS read_rate,
-	CASE WHEN write_rate IS NULL THEN '(N/A)' END AS write_rate,
+	${SELECT_TUP_DEAD} AS tup_dead,
+	CASE WHEN page_hit IS NOT NULL THEN 'xxx' END AS page_hit,
+	CASE WHEN page_miss IS NOT NULL THEN 'xxx' END AS page_miss,
+	CASE WHEN page_dirty IS NOT NULL THEN 'xxx' END AS page_dirty,
+	CASE WHEN read_rate IS NOT NULL THEN 'xxx' END AS read_rate,
+	CASE WHEN write_rate IS NOT NULL THEN 'xxx' END AS write_rate,
 	CASE WHEN duration IS NOT NULL THEN 'xxx' END AS duration
 FROM
 	statsrepo.autovacuum
 ORDER BY
 	database, schema, "table";
 EOF
-fi
 
 echo "/**--- Collect the cancelled AUTOVACUUM information ---**/"
+update_pgconfig ${PGDATA} "log_min_messages" "debug1"
 update_pgconfig ${PGDATA} "autovacuum_analyze_threshold" "2147483647"
 update_pgconfig ${PGDATA} "autovacuum_vacuum_threshold" "10000"
 update_pgconfig ${PGDATA} "autovacuum_vacuum_cost_delay" "100ms"
@@ -315,11 +268,7 @@ SELECT
 	t1.schema,
 	t1.table,
 	CASE WHEN
-		(t2.major_version = '901' AND t2.minor_version >= '19') OR
-		(t2.major_version = '902' AND t2.minor_version >= '14') OR
-		(t2.major_version = '903' AND t2.minor_version >= '10') OR
-		(t2.major_version = '904' AND t2.minor_version >= '05') OR
-		 t2.major_version >= '905'
+		t2.major_version = '901' AND t2.minor_version >= '19'
 	THEN
 		'(N/A)'
 	ELSE

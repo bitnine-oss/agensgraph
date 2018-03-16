@@ -18,6 +18,44 @@ REPOSITORY_CONFIG=${CONFIG_DIR}/postgresql-repository.conf
 REPOSITORY_USER=postgres
 REPOSITORY_PORT=57500
 
+function server_version()
+{
+	local version=""
+	local version_num=0
+	local token_num=0
+	local vmaj=0
+	local vmin=0
+	local vrev=0
+
+	version=$(postgres --version | sed 's/postgres\s(PostgreSQL)\s//')
+	token_num=$(echo ${version} | grep -o '\.' | wc -l)
+	if [ ${token_num} -eq 2 ] ; then
+		vmaj=$(echo ${version} | cut -d '.' -f 1)
+		vmin=$(echo ${version} | cut -d '.' -f 2)
+		vrev=$(echo ${version} | cut -d '.' -f 3)
+	elif [ ${token_num} -eq 1 ] ; then
+		vmaj=$(echo ${version} | cut -d '.' -f 1)
+		if [ ${vmaj} -ge 10 ] ; then
+			vrev=$(echo ${version} | cut -d '.' -f 2)
+		else
+			vmin=$(echo ${version} | cut -d '.' -f 2 | sed 's/\([0-9]\+\).*/\1/')
+		fi
+	else
+		vmaj=$(echo ${version} | cut -d '.' -f 1 | sed 's/\([0-9]\+\).*/\1/')
+	fi
+
+	version_num=$(expr \( 100 \* ${vmaj} + ${vmin} \) \* 100 + ${vrev})
+	echo ${version_num}
+}
+
+if [ $(server_version) -ge 100000 ] ; then
+	PGLOG_DIR=${PGDATA}/log
+	FUNCTION_PG_SWITCH_WAL="pg_switch_wal()"
+else
+	PGLOG_DIR=${PGDATA}/pg_log
+	FUNCTION_PG_SWITCH_WAL="pg_switch_xlog()"
+fi
+
 function setup_repository()
 {
 	local datadir=${1}
@@ -166,28 +204,6 @@ function delete_pgconfig()
 
 	buffer=$(grep -Pv "^\s*${param}\s*=.\+" ${datadir}/postgresql-statsinfo.conf)
 	echo "${buffer}" > ${datadir}/postgresql-statsinfo.conf
-}
-
-function server_version()
-{
-	local version=""
-	local version_num=0
-	local vmaj=
-	local vmin=
-	local vrev=
-
-	version=$(postgres --version | sed 's/postgres\s(PostgreSQL)\s//')
-	vmaj=$(echo ${version} | cut -d '.' -f 1)
-	vmin=$(echo ${version} | cut -d '.' -f 2)
-	vrev=$(echo ${version} | cut -d '.' -f 3)
-
-	if [ -x ${vrev} ] ; then
-		vmin=$(echo "${vmin}" | sed 's/\([0-9]\+\).*/\1/')
-		vrev=0
-	fi
-
-	version_num=$(expr \( 100 \* ${vmaj} + ${vmin} \) \* 100 + ${vrev})
-	echo ${version_num}
 }
 
 function do_snapshot()

@@ -9,8 +9,6 @@ $ gmake installcheck
 
 Requirements
 -------------------------------------
-* PostgreSQL should be a built using --with-libxml.
-
 * pg_stat_statements should be installed for PostgreSQL 8.4 or later.
 
 $ cd <postgresql-source>/contrib/pg_stat_statements

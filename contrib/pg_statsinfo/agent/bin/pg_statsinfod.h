@@ -2,7 +2,7 @@
  *
  * pg_statsinfod.h
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  *
  *-------------------------------------------------------------------------
  */
@@ -27,65 +27,9 @@
 #define SECS_PER_DAY		86400	/* seconds per day */
 
 #define STATSINFO_CONTROL_FILE		"pg_statsinfo.control"
-#define STATSINFO_CONTROL_VERSION	30200
+#define STATSINFO_CONTROL_VERSION	100000
 
-#define STATSREPO_SCHEMA_VERSION	30200
-
-/* read settings */
-#define SQL_SELECT_CUSTOM_SETTINGS "\
-SELECT \
-	t.name, \
-	s.setting \
-FROM \
-	(VALUES \
-		('log_directory'), \
-		('log_error_verbosity'), \
-		('syslog_facility'), \
-		('syslog_ident'), \
-		('" GUC_PREFIX ".syslog_min_messages'), \
-		('" GUC_PREFIX ".textlog_min_messages'), \
-		('" GUC_PREFIX ".textlog_filename'), \
-		('" GUC_PREFIX ".textlog_line_prefix'), \
-		('" GUC_PREFIX ".repolog_min_messages'), \
-		('" GUC_PREFIX ".repolog_buffer'), \
-		('" GUC_PREFIX ".repolog_interval'), \
-		('" GUC_PREFIX ".syslog_line_prefix'), \
-		('" GUC_PREFIX ".textlog_permission'), \
-		('" GUC_PREFIX ".excluded_dbnames'), \
-		('" GUC_PREFIX ".excluded_schemas'), \
-		('" GUC_PREFIX ".stat_statements_max'), \
-		('" GUC_PREFIX ".stat_statements_exclude_users'), \
-		('" GUC_PREFIX ".sampling_interval'), \
-		('" GUC_PREFIX ".snapshot_interval'), \
-		('" GUC_PREFIX ".repository_server'), \
-		('" GUC_PREFIX ".adjust_log_level'), \
-		('" GUC_PREFIX ".adjust_log_info'), \
-		('" GUC_PREFIX ".adjust_log_notice'), \
-		('" GUC_PREFIX ".adjust_log_warning'), \
-		('" GUC_PREFIX ".adjust_log_error'), \
-		('" GUC_PREFIX ".adjust_log_log'), \
-		('" GUC_PREFIX ".adjust_log_fatal'), \
-		('" GUC_PREFIX ".textlog_nologging_users'), \
-		('" GUC_PREFIX ".repolog_nologging_users'), \
-		('" GUC_PREFIX ".enable_maintenance'), \
-		('" GUC_PREFIX ".maintenance_time'), \
-		('" GUC_PREFIX ".repository_keepday'), \
-		('" GUC_PREFIX ".repolog_keepday'), \
-		('" GUC_PREFIX ".log_maintenance_command'), \
-		('" GUC_PREFIX ".controlfile_fsync_interval')) AS t(name) \
-	LEFT JOIN pg_settings s \
-	ON t.name = s.name"
-
-/* reworked from access/xlog_internal.h */
-#define XLogSegSize		((uint32) XLOG_SEG_SIZE)
-#if PG_VERSION_NUM >= 90300
-#define XLogSegsPerFile		(UINT64CONST(0x100000000) / XLogSegSize)
-#define XLOGFILESIZE_FORMAT	UINT64_FORMAT
-#else
-#define XLogSegsPerFile		(((uint32) 0xffffffff) / XLogSegSize)
-#define XLOGFILESIZE_FORMAT	"%u"
-#endif
-#define XLogFileSize	(XLogSegsPerFile * XLogSegSize)
+#define STATSREPO_SCHEMA_VERSION	100000
 
 /* number of columns of csvlog */
 #if PG_VERSION_NUM < 90000
@@ -148,6 +92,12 @@ extern int			server_version_num;
 extern char		   *server_version_string;
 extern int			server_encoding;
 extern char		   *log_timezone_name;
+extern int			page_size;
+extern int			xlog_seg_size;
+extern int			page_header_size;
+extern int			htup_header_size;
+extern int			item_id_size;
+extern pid_t		sil_pid;
 /*---- GUC variables (collector) -------*/
 extern char		   *data_directory;
 extern char		   *excluded_dbnames;
@@ -161,6 +111,8 @@ extern time_t		maintenance_time;
 extern int			repository_keepday;
 extern int			repolog_keepday;
 extern char		   *log_maintenance_command;
+extern bool			enable_alert;
+extern char		   *target_server;
 /*---- GUC variables (logger) ----------*/
 extern char		   *log_directory;
 extern char		   *log_error_verbosity;
@@ -216,10 +168,12 @@ extern pthread_t	th_collector;
 extern pthread_t	th_logger;
 extern pthread_t	th_writer;
 
+/* signal flag */
+extern volatile bool	got_SIGHUP;
+
 /* collector.c */
 extern pthread_mutex_t	reload_lock;
 extern pthread_mutex_t	maintenance_lock;
-extern volatile time_t	server_reload_time;
 extern volatile time_t	collector_reload_time;
 extern volatile char   *snapshot_requested;
 extern volatile char   *maintenance_requested;
@@ -323,7 +277,9 @@ extern bool parse_checkpoint(const char *message, const char *timestamp);
 extern bool is_autovacuum(const char *message);
 extern bool parse_autovacuum(const char *message, const char *timestamp);
 extern bool is_autovacuum_cancel(int elevel, const char *message);
+extern bool is_autovacuum_cancel_request(int elevel, const char *message);
 extern bool parse_autovacuum_cancel(const Log *log);
+extern bool parse_autovacuum_cancel_request(const Log *log);
 
 /* writer.c */
 extern void writer_init(void);

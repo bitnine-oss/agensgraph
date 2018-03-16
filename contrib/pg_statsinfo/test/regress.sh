@@ -4,41 +4,10 @@ SCRIPT_DIR="./script"
 RESULTS_DIR="./results"
 EXPECTED_DIR="./expected"
 
-function server_version()
-{
-	local version=""
-	local version_num=0
-	local vmaj=
-	local vmin=
-	local vrev=
-
-	version=$(postgres --version | sed 's/postgres\s(PostgreSQL)\s//')
-	vmaj=$(echo ${version} | cut -d '.' -f 1)
-	vmin=$(echo ${version} | cut -d '.' -f 2)
-	vrev=$(echo ${version} | cut -d '.' -f 3)
-
-	if [ -x ${vrev} ] ; then
-		vmin=$(echo "${vmin}" | sed 's/\([0-9]\+\).*/\1/')
-		vrev=0
-	fi
-
-	version_num=$(expr \( 100 \* ${vmaj} + ${vmin} \) \* 100 + ${vrev})
-	echo ${version_num}
-}
-
 function verify_libraries()
 {
 	local pkglibdir=$(pg_config --pkglibdir)
 	local failed=0
-
-	pg_config --configure | grep -q -- "--with-libxml"
-
-	if [ ${?} -eq 0 ] ; then
-		printf "%-35s ... ok\n" "PostgreSQL build with libxml"
-	else
-		printf "%-35s ... not installed\n" "PostgreSQL build with libxml"
-		failed=1
-	fi
 
 	if [ -f "${pkglibdir}/pg_statsinfo.so" -o \
 		 -f "${pkglibdir}/pgsql/pg_statsinfo.so" ] ; then
@@ -76,7 +45,7 @@ function do_test()
 
 		( eval "${script}" > "${result}" 2>&1 )
 
-		for expect in $(find "${EXPECTED_DIR}" -type f -regex ".*${regress}\(_[0-9]+\)?\.out\$" | sort)
+		for expect in $(find "${EXPECTED_DIR}" -type f -regex ".*${regress}\(_[0-9.-]+\)?\.out\$" | sort)
 		do
 			diff "${result}" "${expect}" > ${diff}
 
