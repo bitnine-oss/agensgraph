@@ -18,9 +18,17 @@ DATA = pg_hint_plan--1.3.0.sql
 
 EXTRA_CLEAN = sql/ut-fdw.sql expected/ut-fdw.out RPMS
 
+ifdef USE_PGXS
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
+else
+subdir = contrib/pg_hint_plan
+top_builddir = ../..
+include $(top_builddir)/src/Makefile.global
+include $(top_srcdir)/contrib/contrib-global.mk
+override CPPFLAGS += -I$(top_srcdir)/src/pl/plpgsql/src
+endif
 
 STARBALL10 = pg_hint_plan10-$(HINTPLANVER).tar.gz
 STARBALLS = $(STARBALL10)
@@ -31,7 +39,13 @@ TARSOURCES = Makefile *.c  *.h COPYRIGHT* \
 	doc/* expected/*.out sql/*.sql sql/maskout.sh \
 	data/data.csv input/*.source output/*.source SPECS/*.spec
 
-LDFLAGS+=-Wl,--build-id
+UNAME = $(shell uname)
+
+ifeq ($(UNAME), Darwin)
+	LDFLAGS+=-Wl
+else
+	LDFLAGS+=-Wl,--build-id
+endif
 
 installcheck: $(REGRESSION_EXPECTED)
 
