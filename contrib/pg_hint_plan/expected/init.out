@@ -185,6 +185,7 @@ SELECT * FROM settings;
  random_page_cost             | 4         | Query Tuning / Planner Cost Constants
  seq_page_cost                | 1         | Query Tuning / Planner Cost Constants
  enable_bitmapscan            | on        | Query Tuning / Planner Method Configuration
+ enable_eager                 | on        | Query Tuning / Planner Method Configuration
  enable_gathermerge           | on        | Query Tuning / Planner Method Configuration
  enable_hashagg               | on        | Query Tuning / Planner Method Configuration
  enable_hashjoin              | on        | Query Tuning / Planner Method Configuration
@@ -197,6 +198,6 @@ SELECT * FROM settings;
  enable_sort                  | on        | Query Tuning / Planner Method Configuration
  enable_tidscan               | on        | Query Tuning / Planner Method Configuration
  client_min_messages          | notice    | Reporting and Logging / When to Log
-(36 rows)
+(37 rows)
 
 ANALYZE;
