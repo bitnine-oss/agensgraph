@@ -638,8 +638,8 @@ MATCH (n:coll) RETURN n;
 DROP GRAPH test_cypher_expr CASCADE;
 NOTICE:  drop cascades to 6 other objects
 DETAIL:  drop cascades to sequence test_cypher_expr.ag_label_seq
-drop cascades to label ag_vertex
-drop cascades to label ag_edge
-drop cascades to label v0
-drop cascades to label v1
-drop cascades to label coll
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel v0
+drop cascades to vlabel v1
+drop cascades to vlabel coll

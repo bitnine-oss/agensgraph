@@ -28,11 +28,11 @@ CREATE PROPERTY INDEX ON regv1 ((name.first + name.last));
 CREATE PROPERTY INDEX ON regv1 (age);
 CREATE PROPERTY INDEX ON regv1 ((body.weight / body.height));
 \d g.regv1
-                                                    Table "g.regv1"
-   Column   |  Type   |                                           Modifiers                                            
-------------+---------+------------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                       Table "g.regv1"
+   Column   |  Type   | Collation | Nullable |                                    Default                                    
+------------+---------+-----------+----------+-------------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
     "regv1_age_idx" btree ((properties.'age'::text))
@@ -59,7 +59,6 @@ CREATE VLABEL regv1;
 CREATE PROPERTY INDEX ON regv1 (name);
 CREATE PROPERTY INDEX ON regv1 USING btree (name.first);
 CREATE PROPERTY INDEX ON regv1 USING hash (name.first);
-WARNING:  hash indexes are not WAL-logged and their use is discouraged
 CREATE PROPERTY INDEX ON regv1 USING brin (name.first);
 ERROR:  data type jsonb has no default operator class for access method "brin"
 HINT:  You must specify an operator class for the index or define a default operator class for the data type.
@@ -70,11 +69,11 @@ HINT:  You must specify an operator class for the index or define a default oper
 --CREATE PROPERTY INDEX ON regv1 USING gin ((self_intro::tsvector));
 --CREATE PROPERTY INDEX ON regv1 USING gist ((hobby::tsvector));
 \d g.regv1
-                                                    Table "g.regv1"
-   Column   |  Type   |                                           Modifiers                                            
-------------+---------+------------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                       Table "g.regv1"
+   Column   |  Type   | Collation | Nullable |                                    Default                                    
+------------+---------+-----------+----------+-------------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
     "regv1_first_idx" btree ((properties.'name'::text.'first'::text))
@@ -123,11 +122,11 @@ CREATE PROPERTY INDEX ON regv1 (name) TABLESPACE pg_default;
 CREATE PROPERTY INDEX ON regv1 (name.first) WITH (fillfactor = 80);
 CREATE PROPERTY INDEX ON regv1 (name.first) WHERE (name IS NOT NULL);
 \d g.regv1
-                                                    Table "g.regv1"
-   Column   |  Type   |                                           Modifiers                                            
-------------+---------+------------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                       Table "g.regv1"
+   Column   |  Type   | Collation | Nullable |                                    Default                                    
+------------+---------+-----------+----------+-------------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
     "regv1_first_idx" btree ((properties.'name'::text.'first'::text))
@@ -171,11 +170,11 @@ CREATE (:regv1 {id: 100});
 ERROR:  duplicate key value violates unique constraint "regv1_id_idx"
 DETAIL:  Key ((properties.'id'::text))=(100) already exists.
 \d g.regv1
-                                                    Table "g.regv1"
-   Column   |  Type   |                                           Modifiers                                            
-------------+---------+------------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                       Table "g.regv1"
+   Column   |  Type   | Collation | Nullable |                                    Default                                    
+------------+---------+-----------+----------+-------------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
     "regv1_id_idx" UNIQUE, btree ((properties.'id'::text))
@@ -212,11 +211,11 @@ CREATE (:regv1 {name: {first: 'agens', last: 'graph'}});
 ERROR:  duplicate key value violates unique constraint "regv1_first_last_idx"
 DETAIL:  Key ((properties.'name'::text.'first'::text), (properties.'name'::text.'last'::text))=("agens", "graph") already exists.
 \d g.regv1
-                                                    Table "g.regv1"
-   Column   |  Type   |                                           Modifiers                                            
-------------+---------+------------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                       Table "g.regv1"
+   Column   |  Type   | Collation | Nullable |                                    Default                                    
+------------+---------+-----------+----------+-------------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.regv1'::cstring), nextval('g.regv1_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "regv1_pkey" PRIMARY KEY, btree (id)
     "regv1_first_last_idx" UNIQUE, btree ((properties.'name'::text.'first'::text), (properties.'name'::text.'last'::text))
@@ -332,7 +331,7 @@ DROP VLABEL regv3;
 DROP GRAPH g CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to sequence g.ag_label_seq
-drop cascades to label ag_vertex
-drop cascades to label ag_edge
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
 RESET ROLE;
 DROP ROLE regressrole;

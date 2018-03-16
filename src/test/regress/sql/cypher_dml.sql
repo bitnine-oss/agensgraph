@@ -170,49 +170,49 @@ MATCH (A:vl1 {id:1}), (B:vl2 {id:2}) MERGE (A)-[:el1]->(B);
 MATCH (A:vl1 {id:1}), (C:vl3 {id:3}) MERGE (A)-[:el2]->(C);
 MATCH (B:vl2 {id:2}), (C:vl3 {id:3}) MERGE (B)-[:el3]->(C);
 
-MATCH(N:vl1) RETURN N;
-MATCH(N:vl2) RETURN N;
-MATCH(N:vl3) RETURN N;
-MATCH(N:vl1 ONLY) RETURN N;
-MATCH(N:vl2 ONLY) RETURN N;
-MATCH(N ONLY) RETURN N;
+MATCH (N:vl1) RETURN N;
+MATCH (N:vl2) RETURN N;
+MATCH (N:vl3) RETURN N;
+MATCH (N:vl1 ONLY) RETURN N;
+MATCH (N:vl2 ONLY) RETURN N;
+MATCH (N ONLY) RETURN N;
 
-MATCH(A)-[r:el1]->(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el2]->(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el3]->(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el1 ONLY]->(B)RETURN A.id,r,B.id;
-MATCH(A)-[r:el2 ONLY]->(B)RETURN A.id,r,B.id;
-MATCH(A)-[r ONLY]->(B) RETURN A.id,r,B.id;
+MATCH (A)-[r:el1]->(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el2]->(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el3]->(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el1 ONLY]->(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el2 ONLY]->(B) RETURN A.id, r, B.id;
+MATCH (A)-[r ONLY]->(B) RETURN A.id, r, B.id;
 
-MATCH(A)<-[r:el1]-(B) RETURN A.id,r,B.id;
-MATCH(A)<-[r:el2]-(B) RETURN A.id,r,B.id;
-MATCH(A)<-[r:el3]-(B) RETURN A.id,r,B.id;
-MATCH(A)<-[r:el1 ONLY]-(B)RETURN A.id,r,B.id;
-MATCH(A)<-[r:el2 ONLY]-(B)RETURN A.id,r,B.id;
+MATCH (A)<-[r:el1]-(B) RETURN A.id, r, B.id;
+MATCH (A)<-[r:el2]-(B) RETURN A.id, r, B.id;
+MATCH (A)<-[r:el3]-(B) RETURN A.id, r, B.id;
+MATCH (A)<-[r:el1 ONLY]-(B) RETURN A.id, r, B.id;
+MATCH (A)<-[r:el2 ONLY]-(B) RETURN A.id, r, B.id;
 
-MATCH(A)-[r:el1]-(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el2]-(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el3]-(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el1 ONLY]-(B)RETURN A.id,r,B.id;
-MATCH(A)-[r:el2 ONLY]-(B)RETURN A.id,r,B.id;
+MATCH (A)-[r:el1]-(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el2]-(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el3]-(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el1 ONLY]-(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el2 ONLY]-(B) RETURN A.id, r, B.id;
 
-MATCH(A)-[r:el1 *1..3]->(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el2 *1..3]->(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el3 *1..3]->(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el1 ONLY *1..3]->(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el2 ONLY *1..3]->(B) RETURN A.id,r,B.id;
+MATCH (A)-[r:el1 *1..3]->(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el2 *1..3]->(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el3 *1..3]->(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el1 ONLY *1..3]->(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el2 ONLY *1..3]->(B) RETURN A.id, r, B.id;
 
-MATCH(A)<-[r:el1 *1..3]-(B) RETURN A.id,r,B.id;
-MATCH(A)<-[r:el2 *1..3]-(B) RETURN A.id,r,B.id;
-MATCH(A)<-[r:el3 *1..3]-(B) RETURN A.id,r,B.id;
-MATCH(A)<-[r:el1 ONLY *1..3]-(B) RETURN A.id,r,B.id;
-MATCH(A)<-[r:el2 ONLY *1..3]-(B) RETURN A.id,r,B.id;
+MATCH (A)<-[r:el1 *1..3]-(B) RETURN A.id, r, B.id;
+MATCH (A)<-[r:el2 *1..3]-(B) RETURN A.id, r, B.id;
+MATCH (A)<-[r:el3 *1..3]-(B) RETURN A.id, r, B.id;
+MATCH (A)<-[r:el1 ONLY *1..3]-(B) RETURN A.id, r, B.id;
+MATCH (A)<-[r:el2 ONLY *1..3]-(B) RETURN A.id, r, B.id;
 
-MATCH(A)-[r:el1 *1..3]-(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el2 *1..3]-(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el3 *1..3]-(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el1 ONLY *1..3]-(B) RETURN A.id,r,B.id;
-MATCH(A)-[r:el2 ONLY *1..3]-(B) RETURN A.id,r,B.id;
+MATCH (A)-[r:el1 *1..3]-(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el2 *1..3]-(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el3 *1..3]-(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el1 ONLY *1..3]-(B) RETURN A.id, r, B.id;
+MATCH (A)-[r:el2 ONLY *1..3]-(B) RETURN A.id, r, B.id;
 
 MATCH (A:vl1) DETACH DELETE A;
 MATCH (B:vl2) DETACH DELETE B;

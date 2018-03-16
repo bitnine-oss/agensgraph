@@ -169,11 +169,11 @@ CREATE VLABEL tblspc TABLESPACE pg_default;
 -- DISABLE INDEX
 CREATE VLABEL vdi DISABLE INDEX;
 \d g.vdi
-                                                   Table "g.vdi"
-   Column   |  Type   |                                         Modifiers                                          
-------------+---------+--------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                      Table "g.vdi"
+   Column   |  Type   | Collation | Nullable |                                  Default                                  
+------------+---------+-----------+----------+---------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "vdi_pkey" PRIMARY KEY, btree (id) INVALID
 Inherits: g.ag_vertex
@@ -181,11 +181,11 @@ Inherits: g.ag_vertex
 -- REINDEX
 REINDEX VLABEL vdi;
 \d g.vdi
-                                                   Table "g.vdi"
-   Column   |  Type   |                                         Modifiers                                          
-------------+---------+--------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                      Table "g.vdi"
+   Column   |  Type   | Collation | Nullable |                                  Default                                  
+------------+---------+-----------+----------+---------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "vdi_pkey" PRIMARY KEY, btree (id)
 Inherits: g.ag_vertex
@@ -320,11 +320,11 @@ Inherits: g.ag_edge
 -- skip alter tablespace test, tablespace location must be an absolute path
 ALTER VLABEL v0 SET STORAGE external;
 \d+ g.v0
-                                                                      Table "g.v0"
-   Column   |  Type   |                                        Modifiers                                         | Storage  | Stats target | Description 
-------------+---------+------------------------------------------------------------------------------------------+----------+--------------+-------------
- id         | graphid | not null default graphid(graph_labid('g.v0'::cstring), nextval('g.v0_id_seq'::regclass)) | plain    |              | 
- properties | jsonb   | not null default jsonb_build_object()                                                    | external |              | 
+                                                                         Table "g.v0"
+   Column   |  Type   | Collation | Nullable |                                 Default                                 | Storage  | Stats target | Description 
+------------+---------+-----------+----------+-------------------------------------------------------------------------+----------+--------------+-------------
+ id         | graphid |           | not null | graphid(graph_labid('g.v0'::cstring), nextval('g.v0_id_seq'::regclass)) | plain    |              | 
+ properties | jsonb   |           | not null | jsonb_build_object()                                                    | external |              | 
 Indexes:
     "v0_pkey" PRIMARY KEY, btree (id)
 Inherits: g.ag_vertex
@@ -451,11 +451,11 @@ SELECT relpersistence FROM pg_class WHERE relname = 'v0';
 (1 row)
 
 \d g.v1
-                                                  Table "g.v1"
-   Column   |  Type   |                                        Modifiers                                         
-------------+---------+------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.v1'::cstring), nextval('g.v1_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                     Table "g.v1"
+   Column   |  Type   | Collation | Nullable |                                 Default                                 
+------------+---------+-----------+----------+-------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.v1'::cstring), nextval('g.v1_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
 Inherits: g.v00,
@@ -463,22 +463,22 @@ Inherits: g.v00,
 
 ALTER VLABEL v1 NO INHERIT v00;
 \d g.v1
-                                                  Table "g.v1"
-   Column   |  Type   |                                        Modifiers                                         
-------------+---------+------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.v1'::cstring), nextval('g.v1_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                     Table "g.v1"
+   Column   |  Type   | Collation | Nullable |                                 Default                                 
+------------+---------+-----------+----------+-------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.v1'::cstring), nextval('g.v1_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
 Inherits: g.v01
 
 ALTER VLABEL v1 INHERIT v00;
 \d g.v1
-                                                  Table "g.v1"
-   Column   |  Type   |                                        Modifiers                                         
-------------+---------+------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.v1'::cstring), nextval('g.v1_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                     Table "g.v1"
+   Column   |  Type   | Collation | Nullable |                                 Default                                 
+------------+---------+-----------+----------+-------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.v1'::cstring), nextval('g.v1_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
 Inherits: g.v01,
@@ -504,11 +504,11 @@ SELECT relreplident FROM pg_class WHERE relname = 'v0';
 ALTER VLABEL v0 REPLICA IDENTITY default;
 ALTER VLABEL vdi DISABLE INDEX;
 \d g.vdi
-                                                   Table "g.vdi"
-   Column   |  Type   |                                         Modifiers                                          
-------------+---------+--------------------------------------------------------------------------------------------
- id         | graphid | not null default graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
- properties | jsonb   | not null default jsonb_build_object()
+                                                      Table "g.vdi"
+   Column   |  Type   | Collation | Nullable |                                  Default                                  
+------------+---------+-----------+----------+---------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
+ properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "vdi_pkey" PRIMARY KEY, btree (id) INVALID
 Inherits: g.ag_vertex
@@ -522,11 +522,11 @@ NOTICE:  graph label "unknown" does not exist, skipping
 --
 -- wrong cases
 DROP TABLE g.v1;
-ERROR:  cannot drop table g.v1 because label v1 requires it
-HINT:  You can drop label v1 instead.
+ERROR:  cannot drop table g.v1 because vlabel v1 requires it
+HINT:  You can drop vlabel v1 instead.
 DROP TABLE g.e1;
-ERROR:  cannot drop table g.e1 because label e1 requires it
-HINT:  You can drop label e1 instead.
+ERROR:  cannot drop table g.e1 because elabel e1 requires it
+HINT:  You can drop elabel e1 instead.
 DROP VLABEL unknown;
 ERROR:  graph label "unknown" does not exist
 DROP ELABEL unknown;
@@ -544,18 +544,18 @@ ERROR:  DROP VLABEL cannot DROP edge label
 DROP ELABEL IF EXISTS v1;
 ERROR:  DROP ELABEL cannot DROP vertex label
 DROP VLABEL v0;
-ERROR:  cannot drop label v0 because other objects depend on it
-DETAIL:  label v00 depends on label v0
-label v01 depends on label v0
-label v1 depends on label v01
+ERROR:  cannot drop vlabel v0 because other objects depend on it
+DETAIL:  vlabel v00 depends on vlabel v0
+vlabel v01 depends on vlabel v0
+vlabel v1 depends on vlabel v01
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 DROP VLABEL v00;
-ERROR:  cannot drop label v00 because other objects depend on it
-DETAIL:  label v1 depends on label v00
+ERROR:  cannot drop vlabel v00 because other objects depend on it
+DETAIL:  vlabel v1 depends on vlabel v00
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 DROP ELABEL e0;
-ERROR:  cannot drop label e0 because other objects depend on it
-DETAIL:  label e01 depends on label e0
+ERROR:  cannot drop elabel e0 because other objects depend on it
+DETAIL:  elabel e01 depends on elabel e0
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 DROP VLABEL ag_vertex CASCADE;
 ERROR:  DROP base vertex label is prohibited
@@ -563,7 +563,7 @@ DROP ELABEL ag_edge CASCADE;
 ERROR:  DROP base edge label is prohibited
 -- drop all
 DROP VLABEL v01 CASCADE;
-NOTICE:  drop cascades to label v1
+NOTICE:  drop cascades to vlabel v1
 SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY 2, 1;
   labname  | labkind 
 -----------+---------
@@ -581,9 +581,9 @@ SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY 2, 1;
 (11 rows)
 
 DROP VLABEL v0 CASCADE;
-NOTICE:  drop cascades to label v00
+NOTICE:  drop cascades to vlabel v00
 DROP ELABEL e0 CASCADE;
-NOTICE:  drop cascades to label e01
+NOTICE:  drop cascades to elabel e01
 DROP ELABEL e1;
 SELECT labname, labkind FROM pg_catalog.ag_label;
   labname  | labkind 
