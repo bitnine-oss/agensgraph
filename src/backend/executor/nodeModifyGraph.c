@@ -945,9 +945,14 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		econtext->ecxt_scantuple = slot;
 		datum = ExecEvalExpr(e, econtext, &isNull, &isDone);
 		if (isNull)
-			ereport(ERROR,
+		{
+			ereport(NOTICE,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-					 errmsg("deleting NULL is not allowed")));
+					 errmsg("graph elements to delete must not be null.")));
+
+			continue;
+		}
+
 		if (isDone != ExprSingleResult)
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
