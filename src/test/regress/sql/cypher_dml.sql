@@ -727,6 +727,7 @@ MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
 --
 -- DELETE
 --
+
 MATCH (a) DELETE a;
 
 MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[1];
@@ -739,6 +740,20 @@ MATCH (a) DETACH DELETE a;
 MATCH (a) RETURN a;
 
 SELECT count(*) FROM agens.ag_edge;
+
+-- attempt to delete null object
+
+CREATE ({name: 'agensgraph'})-[:made_by]->({name: 'bitnine'});
+
+MATCH (a {name: 'agensgraph'}), (g {name: 'bitnine'})
+OPTIONAL MATCH (a)-[r:made_by]-(g)
+DELETE r;
+
+MATCH (a {name: 'agensgraph'}), (g {name: 'bitnine'})
+OPTIONAL MATCH (a)-[r:made_by]-(g)
+DELETE r;
+
+MATCH (a) DETACH DELETE a;
 
 --
 -- Uniqueness
