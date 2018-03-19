@@ -2159,6 +2159,16 @@ SELECT count(*) FROM agens.ag_edge;
      0
 (1 row)
 
+-- attempt to delete null object
+CREATE ({name: 'agensgraph'})-[:made_by]->({name: 'bitnine'});
+MATCH (a {name: 'agensgraph'}), (g {name: 'bitnine'})
+OPTIONAL MATCH (a)-[r:made_by]-(g)
+DELETE r;
+MATCH (a {name: 'agensgraph'}), (g {name: 'bitnine'})
+OPTIONAL MATCH (a)-[r:made_by]-(g)
+DELETE r;
+NOTICE:  skipping deletion of NULL graph element
+MATCH (a) DETACH DELETE a;
 --
 -- Uniqueness
 --
@@ -2925,7 +2935,7 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
-NOTICE:  drop cascades to 9 other objects
+NOTICE:  drop cascades to 10 other objects
 DETAIL:  drop cascades to sequence agens.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -2935,4 +2945,5 @@ drop cascades to vlabel vl3
 drop cascades to elabel el1
 drop cascades to elabel el2
 drop cascades to elabel el3
+drop cascades to elabel made_by
 DROP TABLE history;
