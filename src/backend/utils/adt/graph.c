@@ -80,6 +80,15 @@ graphid(PG_FUNCTION_ARGS)
 	uint64		locid = DatumGetUInt64(PG_GETARG_DATUM(1));
 	Graphid		id;
 
+	if(labid > GRAPHID_LABID_MAX)
+		ereport (ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Labid out of range.")));
+	if (locid > GRAPHID_LOCID_MAX)
+		ereport (ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Locid out of range.")));
+
 	GraphidSet(&id, labid, locid);
 
 	PG_RETURN_GRAPHID(id);
@@ -93,10 +102,16 @@ graphid_in(PG_FUNCTION_ARGS)
 	char	   *next;
 	char	   *endptr;
 	uint16		labid;
+	uint64		labidcheck;
 	uint64		locid;
 	Graphid		id;
 
 	errno = 0;
+	labidcheck = strtoul(str, &endptr, 10);
+	if(labidcheck > GRAPHID_LABID_MAX)
+		ereport (ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Labid out of range.")));
 	labid = strtoul(str, &endptr, 10);
 	if (errno != 0 || endptr == str || *endptr != GRAPHID_DELIM)
 		ereport(ERROR,
@@ -106,6 +121,10 @@ graphid_in(PG_FUNCTION_ARGS)
 	next = endptr + 1;
 #ifdef HAVE_STRTOLL
 	locid = strtoll(next, &endptr, 10);
+	if (locid > GRAPHID_LOCID_MAX)
+		ereport (ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("Locid out of range.")));
 	if (endptr == next || *endptr != '\0')
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
