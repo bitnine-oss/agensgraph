@@ -70,7 +70,7 @@ Building from the Source Code
 
 Documentation
 -------------
-* [Short Guide](http://bitnine.net/wp-content/uploads/manual/quick-guide-1-3.html)
+* [Short Guide](http://bitnine.net/documentations/quick-guide-1-3.html)
 
 License
 -------
