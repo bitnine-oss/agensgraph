@@ -77,20 +77,21 @@ static Datum graphid_minval(void);
 Datum
 graphid(PG_FUNCTION_ARGS)
 {
-	uint16		labid = PG_GETARG_UINT16(0);
-	uint64		locid = DatumGetUInt64(PG_GETARG_DATUM(1));
+	int32		labid_i4 = PG_GETARG_INT32(0);
+	int64		locid_i8 = PG_GETARG_INT64(1);
 	Graphid		id;
 
-	if (labid > GRAPHID_LABID_MAX)
+	if (labid_i4 < 0 || labid_i4 > (int32) GRAPHID_LABID_MAX)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("labid out of range")));
-	if (locid > GRAPHID_LOCID_MAX)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("locid out of range")));
+				 errmsg("labid out of range: %d", labid_i4)));
 
-	GraphidSet(&id, labid, locid);
+	if (locid_i8 < 0 || locid_i8 > (int64) GRAPHID_LOCID_MAX)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("locid out of range: " INT64_FORMAT, locid_i8)));
+
+	GraphidSet(&id, (uint16) labid_i4, (uint64) locid_i8);
 
 	PG_RETURN_GRAPHID(id);
 }
@@ -102,37 +103,33 @@ graphid_in(PG_FUNCTION_ARGS)
 	char	   *str = PG_GETARG_CSTRING(0);
 	char	   *next;
 	char	   *endptr;
+	unsigned long labid_ul;
 	uint16		labid;
-	uint64		labidcheck;
 	uint64		locid;
 	Graphid		id;
 
 	errno = 0;
-	labidcheck = strtoul(str, &endptr, 10);
-	if (labidcheck > GRAPHID_LABID_MAX)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("labid out of range")));
-	labid = strtoul(str, &endptr, 10);
+	labid_ul = strtoul(str, &endptr, 10);
 	if (errno != 0 || endptr == str || *endptr != GRAPHID_DELIM)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 				 errmsg("invalid input syntax for type graphid: \"%s\"", str)));
+	if (labid_ul > GRAPHID_LABID_MAX)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("labid out of range")));
+	labid = (uint16) labid_ul;
 
 	next = endptr + 1;
-#ifdef HAVE_STRTOLL
-	locid = strtoll(next, &endptr, 10);
+	locid = pg_strtouint64(next, &endptr, 10);
+	if (errno != 0 || endptr == next || *endptr != '\0')
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+				 errmsg("invalid input syntax for type graphid: \"%s\"", str)));
 	if (locid > GRAPHID_LOCID_MAX)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("locid out of range")));
-	if (endptr == next || *endptr != '\0')
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("invalid input syntax for type graphid: \"%s\"", str)));
-#else
-	locid = DatumGetUInt64(DirectFunctionCall1(int8in, CStringGetDatum(next)));
-#endif
 
 	GraphidSet(&id, labid, locid);
 
