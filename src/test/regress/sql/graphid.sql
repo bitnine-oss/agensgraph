@@ -2,6 +2,24 @@
 -- GRAPHID
 --
 
+-- graphid()
+
+SELECT graphid(-1, 0);
+SELECT graphid(0, -1);
+SELECT graphid(0, 0);
+SELECT graphid(65535, 281474976710655);
+SELECT graphid(65535, 281474976710656);
+SELECT graphid(65536, 281474976710655);
+
+-- graphid_in()
+
+SELECT '-1.0'::graphid;
+SELECT '0.-1'::graphid;
+SELECT '0.0'::graphid;
+SELECT '65535.281474976710655'::graphid;
+SELECT '65535.281474976710656'::graphid;
+SELECT '65536.281474976710655'::graphid;
+
 -- Insert and Operator
 
 CREATE TABLE GRAPHID_TBL(f1 graphid);
