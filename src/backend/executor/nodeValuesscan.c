@@ -4,7 +4,7 @@
  *	  Support routines for scanning Values lists
  *	  ("VALUES (...), (...), ..." in rangetable).
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -92,6 +92,7 @@ ValuesNext(ValuesScanState *node)
 	if (exprlist)
 	{
 		MemoryContext oldContext;
+		List	   *oldsubplans;
 		List	   *exprstatelist;
 		Datum	   *values;
 		bool	   *isnull;
@@ -115,12 +116,22 @@ ValuesNext(ValuesScanState *node)
 		oldContext = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
 		/*
-		 * Pass NULL, not my plan node, because we don't want anything in this
-		 * transient state linking into permanent state.  The only possibility
-		 * is a SubPlan, and there shouldn't be any (any subselects in the
-		 * VALUES list should be InitPlans).
+		 * The expressions might contain SubPlans (this is currently only
+		 * possible if there's a sub-select containing a LATERAL reference,
+		 * otherwise sub-selects in a VALUES list should be InitPlans). Those
+		 * subplans will want to hook themselves into our subPlan list, which
+		 * would result in a corrupted list after we delete the eval state. We
+		 * can work around this by saving and restoring the subPlan list.
+		 * (There's no need for the functionality that would be enabled by
+		 * having the list entries, since the SubPlans aren't going to be
+		 * re-executed anyway.)
 		 */
-		exprstatelist = (List *) ExecInitExpr((Expr *) exprlist, NULL);
+		oldsubplans = node->ss.ps.subPlan;
+		node->ss.ps.subPlan = NIL;
+
+		exprstatelist = ExecInitExprList(exprlist, &node->ss.ps);
+
+		node->ss.ps.subPlan = oldsubplans;
 
 		/* parser should have checked all sublists are the same length */
 		Assert(list_length(exprstatelist) == slot->tts_tupleDescriptor->natts);
@@ -140,8 +151,7 @@ ValuesNext(ValuesScanState *node)
 
 			values[resind] = ExecEvalExpr(estate,
 										  econtext,
-										  &isnull[resind],
-										  NULL);
+										  &isnull[resind]);
 
 			/*
 			 * We must force any R/W expanded datums to read-only state, in
@@ -186,9 +196,11 @@ ValuesRecheck(ValuesScanState *node, TupleTableSlot *slot)
  *		access method functions.
  * ----------------------------------------------------------------
  */
-TupleTableSlot *
-ExecValuesScan(ValuesScanState *node)
+static TupleTableSlot *
+ExecValuesScan(PlanState *pstate)
 {
+	ValuesScanState *node = castNode(ValuesScanState, pstate);
+
 	return ExecScan(&node->ss,
 					(ExecScanAccessMtd) ValuesNext,
 					(ExecScanRecheckMtd) ValuesRecheck);
@@ -219,6 +231,7 @@ ExecInitValuesScan(ValuesScan *node, EState *estate, int eflags)
 	scanstate = makeNode(ValuesScanState);
 	scanstate->ss.ps.plan = (Plan *) node;
 	scanstate->ss.ps.state = estate;
+	scanstate->ss.ps.ExecProcNode = ExecValuesScan;
 
 	/*
 	 * Miscellaneous initialization
@@ -243,12 +256,8 @@ ExecInitValuesScan(ValuesScan *node, EState *estate, int eflags)
 	/*
 	 * initialize child expressions
 	 */
-	scanstate->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.targetlist,
-					 (PlanState *) scanstate);
-	scanstate->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.qual,
-					 (PlanState *) scanstate);
+	scanstate->ss.ps.qual =
+		ExecInitQual(node->scan.plan.qual, (PlanState *) scanstate);
 
 	/*
 	 * get info about values list
@@ -271,8 +280,6 @@ ExecInitValuesScan(ValuesScan *node, EState *estate, int eflags)
 	{
 		scanstate->exprlists[i++] = (List *) lfirst(vtl);
 	}
-
-	scanstate->ss.ps.ps_TupFromTlist = false;
 
 	/*
 	 * Initialize result tuple type and projection info.

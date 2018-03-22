@@ -4,7 +4,7 @@
  * External declarations pertaining to backend/utils/misc/guc.c and
  * backend/utils/misc/guc-file.l
  *
- * Copyright (c) 2000-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2017, PostgreSQL Global Development Group
  * Written by Peter Eisentraut <peter_e@gmx.net>.
  *
  * src/include/utils/guc.h
@@ -212,13 +212,13 @@ typedef enum
 #define GUC_SUPERUSER_ONLY		0x0100	/* show only to superusers */
 #define GUC_IS_NAME				0x0200	/* limit string to NAMEDATALEN-1 */
 #define GUC_NOT_WHILE_SEC_REST	0x0400	/* can't set if security restricted */
-#define GUC_DISALLOW_IN_AUTO_FILE 0x0800		/* can't set in
-												 * PG_AUTOCONF_FILENAME */
+#define GUC_DISALLOW_IN_AUTO_FILE 0x0800	/* can't set in
+											 * PG_AUTOCONF_FILENAME */
 
 #define GUC_UNIT_KB				0x1000	/* value is in kilobytes */
 #define GUC_UNIT_BLOCKS			0x2000	/* value is in blocks */
 #define GUC_UNIT_XBLOCKS		0x3000	/* value is in xlog blocks */
-#define GUC_UNIT_XSEGS			0x4000	/* value is in xlog segments */
+#define GUC_UNIT_MB				0x4000	/* value is in megabytes */
 #define GUC_UNIT_MEMORY			0xF000	/* mask for size-related units */
 
 #define GUC_UNIT_MS			   0x10000	/* value is in milliseconds */
@@ -244,11 +244,11 @@ extern bool log_btree_build_stats;
 
 extern PGDLLIMPORT bool check_function_bodies;
 extern bool default_with_oids;
-extern bool SQL_inheritance;
+extern bool	session_auth_is_superuser;
 
 extern int	log_min_error_statement;
-extern int	log_min_messages;
-extern int	client_min_messages;
+extern PGDLLIMPORT int log_min_messages;
+extern PGDLLIMPORT int client_min_messages;
 extern int	log_min_duration_statement;
 extern int	log_temp_files;
 
@@ -257,12 +257,12 @@ extern int	temp_file_limit;
 extern int	num_temp_buffers;
 
 extern char *cluster_name;
-extern char *ConfigFileName;
+extern PGDLLIMPORT char *ConfigFileName;
 extern char *HbaFileName;
 extern char *IdentFileName;
 extern char *external_pid_file;
 
-extern char *application_name;
+extern PGDLLIMPORT char *application_name;
 
 extern int	tcp_keepalives_idle;
 extern int	tcp_keepalives_interval;
@@ -336,7 +336,7 @@ extern void DefineCustomEnumVariable(
 						 const char *long_desc,
 						 int *valueAddr,
 						 int bootValue,
-						 const struct config_enum_entry * options,
+						 const struct config_enum_entry *options,
 						 GucContext context,
 						 int flags,
 						 GucEnumCheckHook check_hook,
@@ -436,4 +436,4 @@ extern void assign_xlog_sync_method(int new_sync_method, void *extra);
 /* in catalog/ag_graph.c */
 extern bool check_graph_path(char **newval, void **extra, GucSource source);
 
-#endif   /* GUC_H */
+#endif							/* GUC_H */

@@ -27,6 +27,9 @@
 /* The normal alignment of `long long int', in bytes. */
 #undef ALIGNOF_LONG_LONG_INT
 
+/* The normal alignment of `PG_INT128_TYPE', in bytes. */
+#undef ALIGNOF_PG_INT128_TYPE
+
 /* The normal alignment of `short', in bytes. */
 #undef ALIGNOF_SHORT
 
@@ -104,6 +107,12 @@
 
 /* Define to 1 if you have the `class' function. */
 #undef HAVE_CLASS
+
+/* Define to 1 if you have the `clock_gettime' function. */
+#undef HAVE_CLOCK_GETTIME
+
+/* Define to 1 if your compiler handles computed gotos. */
+#undef HAVE_COMPUTED_GOTO
 
 /* Define to 1 if you have the <crtdefs.h> header file. */
 #undef HAVE_CRTDEFS_H
@@ -333,10 +342,6 @@
 /* Define to 1 if you have the `z' library (-lz). */
 #undef HAVE_LIBZ
 
-/* Define to 1 if constants of type 'long long int' should have the suffix LL.
-   */
-#undef HAVE_LL_CONSTANTS
-
 /* Define to 1 if the system has the type `locale_t'. */
 #undef HAVE_LOCALE_T
 
@@ -367,9 +372,6 @@
 /* Define to 1 if you have the `mkdtemp' function. */
 #undef HAVE_MKDTEMP
 
-/* Define to 1 if you have the <netinet/in.h> header file. */
-#undef HAVE_NETINET_IN_H
-
 /* Define to 1 if you have the <netinet/tcp.h> header file. */
 #undef HAVE_NETINET_TCP_H
 
@@ -394,6 +396,9 @@
 /* Define to 1 if you have the `posix_fadvise' function. */
 #undef HAVE_POSIX_FADVISE
 
+/* Define to 1 if you have the `posix_fallocate' function. */
+#undef HAVE_POSIX_FALLOCATE
+
 /* Define to 1 if the assembler supports PPC's LWARX mutex hint bit. */
 #undef HAVE_PPC_LWARX_MUTEX_HINT
 
@@ -411,9 +416,6 @@
 
 /* Have PTHREAD_PRIO_INHERIT. */
 #undef HAVE_PTHREAD_PRIO_INHERIT
-
-/* Define to 1 if you have the <pwd.h> header file. */
-#undef HAVE_PWD_H
 
 /* Define to 1 if you have the `random' function. */
 #undef HAVE_RANDOM
@@ -497,6 +499,9 @@
 /* Define to 1 if you have the `strlcpy' function. */
 #undef HAVE_STRLCPY
 
+/* Define to use have a strong random number source */
+#undef HAVE_STRONG_RANDOM
+
 /* Define to 1 if you have the `strtoll' function. */
 #undef HAVE_STRTOLL
 
@@ -551,14 +556,8 @@
 /* Define to 1 if you have the <sys/epoll.h> header file. */
 #undef HAVE_SYS_EPOLL_H
 
-/* Define to 1 if you have the <sys/ioctl.h> header file. */
-#undef HAVE_SYS_IOCTL_H
-
 /* Define to 1 if you have the <sys/ipc.h> header file. */
 #undef HAVE_SYS_IPC_H
-
-/* Define to 1 if you have the <sys/poll.h> header file. */
-#undef HAVE_SYS_POLL_H
 
 /* Define to 1 if you have the <sys/pstat.h> header file. */
 #undef HAVE_SYS_PSTAT_H
@@ -575,9 +574,6 @@
 /* Define to 1 if you have the <sys/shm.h> header file. */
 #undef HAVE_SYS_SHM_H
 
-/* Define to 1 if you have the <sys/socket.h> header file. */
-#undef HAVE_SYS_SOCKET_H
-
 /* Define to 1 if you have the <sys/sockio.h> header file. */
 #undef HAVE_SYS_SOCKIO_H
 
@@ -586,9 +582,6 @@
 
 /* Define to 1 if you have the <sys/tas.h> header file. */
 #undef HAVE_SYS_TAS_H
-
-/* Define to 1 if you have the <sys/time.h> header file. */
-#undef HAVE_SYS_TIME_H
 
 /* Define to 1 if you have the <sys/types.h> header file. */
 #undef HAVE_SYS_TYPES_H
@@ -608,6 +601,9 @@
 
 /* Define to 1 if you have the `towlower' function. */
 #undef HAVE_TOWLOWER
+
+/* Define to 1 if your compiler understands `typeof' or something similar. */
+#undef HAVE_TYPEOF
 
 /* Define to 1 if you have the external array `tzname'. */
 #undef HAVE_TZNAME
@@ -820,6 +816,9 @@
 /* Define to 1 to build with BSD Authentication support. (--with-bsd-auth) */
 #undef USE_BSD_AUTH
 
+/* Define to use /dev/urandom for random number generation */
+#undef USE_DEV_URANDOM
+
 /* Define to 1 if you want float4 values to be passed by value.
    (--enable-float4-byval) */
 #undef USE_FLOAT4_BYVAL
@@ -828,9 +827,8 @@
    (--enable-float8-byval) */
 #undef USE_FLOAT8_BYVAL
 
-/* Define to 1 if you want 64-bit integer timestamp and interval support.
-   (--enable-integer-datetimes) */
-#undef USE_INTEGER_DATETIMES
+/* Define to build with ICU support. (--with-icu) */
+#undef USE_ICU
 
 /* Define to 1 to build with LDAP support. (--with-ldap) */
 #undef USE_LDAP
@@ -847,6 +845,9 @@
 
 /* Define to build with OpenSSL support. (--with-openssl) */
 #undef USE_OPENSSL
+
+/* Define to use OpenSSL for random number generation */
+#undef USE_OPENSSL_RANDOM
 
 /* Define to 1 to build with PAM support. (--with-pam) */
 #undef USE_PAM
@@ -877,6 +878,9 @@
 
 /* Define to select unnamed POSIX semaphores. */
 #undef USE_UNNAMED_POSIX_SEMAPHORES
+
+/* Define to use native Windows API for random number generation */
+#undef USE_WIN32_RANDOM
 
 /* Define to select Win32-style semaphores. */
 #undef USE_WIN32_SEMAPHORES
@@ -934,6 +938,9 @@
 
 /* Define to empty if the C compiler does not understand signed types. */
 #undef signed
+
+/* Define to how the compiler spells `typeof'. */
+#undef typeof
 
 /* Define to the type of an unsigned integer type wide enough to hold a
    pointer, if such a type exists, and if the system does not define it. */

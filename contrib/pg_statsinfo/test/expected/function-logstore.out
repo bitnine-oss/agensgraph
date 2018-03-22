@@ -54,9 +54,9 @@ server signaled
 
 /**--- Adjust log level (adjust_log_error = '00000') ---**/
 server signaled
- elevel | sqlstate |       message       
---------+----------+---------------------
- ERROR  | 00000    | statement: SELECT 1
+ elevel | sqlstate |              message               
+--------+----------+------------------------------------
+ ERROR  | 00000    | statement: SELECT pg_backend_pid()
 (1 row)
 
 /**--- Adjust log level (adjust_log_log = '42P01') ---**/

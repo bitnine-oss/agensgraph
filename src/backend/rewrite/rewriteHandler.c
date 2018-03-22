@@ -3,7 +3,7 @@
  * rewriteHandler.c
  *		Primary module of query rewriter.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -21,6 +21,7 @@
 #include "postgres.h"
 
 #include "access/sysattr.h"
+#include "catalog/dependency.h"
 #include "catalog/pg_type.h"
 #include "commands/trigger.h"
 #include "foreign/fdwapi.h"
@@ -61,6 +62,7 @@ static Query *rewriteRuleAction(Query *parsetree,
 static List *adjustJoinTreeList(Query *parsetree, bool removert, int rt_index);
 static List *rewriteTargetListIU(List *targetList,
 					CmdType commandType,
+					OverridingKind override,
 					Relation target_relation,
 					int result_rti,
 					List **attrno_list);
@@ -70,8 +72,6 @@ static TargetEntry *process_matched_tle(TargetEntry *src_tle,
 static Node *get_assignment_input(Node *node);
 static void rewriteValuesRTE(RangeTblEntry *rte, Relation target_relation,
 				 List *attrnos);
-static void rewriteTargetListUD(Query *parsetree, RangeTblEntry *target_rte,
-					Relation target_relation);
 static void markQueryForLocking(Query *qry, Node *jtnode,
 					LockClauseStrength strength, LockWaitPolicy waitPolicy,
 					bool pushedDown);
@@ -258,7 +258,7 @@ AcquireRewriteLocks(Query *parsetree,
 				AcquireRewriteLocks(rte->subquery,
 									forExecute,
 									(forUpdatePushedDown ||
-							get_parse_rowmark(parsetree, rt_index) != NULL));
+									 get_parse_rowmark(parsetree, rt_index) != NULL));
 				break;
 
 			default:
@@ -349,8 +349,8 @@ rewriteRuleAction(Query *parsetree,
 	 * Make modifiable copies of rule action and qual (what we're passed are
 	 * the stored versions in the relcache; don't touch 'em!).
 	 */
-	rule_action = (Query *) copyObject(rule_action);
-	rule_qual = (Node *) copyObject(rule_qual);
+	rule_action = copyObject(rule_action);
+	rule_qual = copyObject(rule_qual);
 
 	/*
 	 * Acquire necessary locks and fix any deleted JOIN RTE entries.
@@ -408,7 +408,7 @@ rewriteRuleAction(Query *parsetree,
 	 * that rule action's rtable is separate and shares no substructure with
 	 * the main rtable.  Hence do a deep copy here.
 	 */
-	sub_action->rtable = list_concat((List *) copyObject(parsetree->rtable),
+	sub_action->rtable = list_concat(copyObject(parsetree->rtable),
 									 sub_action->rtable);
 
 	/*
@@ -433,6 +433,10 @@ rewriteRuleAction(Query *parsetree,
 					sub_action->hasSubLinks =
 						checkExprHasSubLink((Node *) rte->functions);
 					break;
+				case RTE_TABLEFUNC:
+					sub_action->hasSubLinks =
+						checkExprHasSubLink((Node *) rte->tablefunc);
+					break;
 				case RTE_VALUES:
 					sub_action->hasSubLinks =
 						checkExprHasSubLink((Node *) rte->values_lists);
@@ -445,6 +449,15 @@ rewriteRuleAction(Query *parsetree,
 				break;			/* no need to keep scanning rtable */
 		}
 	}
+
+	/*
+	 * Also, we might have absorbed some RTEs with RLS conditions into the
+	 * sub_action.  If so, mark it as hasRowSecurity, whether or not those
+	 * RTEs will be referenced after we finish rewriting.  (Note: currently
+	 * this is a no-op because RLS conditions aren't added till later, but it
+	 * seems like good future-proofing to do this anyway.)
+	 */
+	sub_action->hasRowSecurity |= parsetree->hasRowSecurity;
 
 	/*
 	 * Each rule action's jointree should be the main parsetree's jointree
@@ -585,7 +598,7 @@ rewriteRuleAction(Query *parsetree,
 		if (*returning_flag)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				   errmsg("cannot have RETURNING lists in multiple rules")));
+					 errmsg("cannot have RETURNING lists in multiple rules")));
 		*returning_flag = true;
 		rule_action->returningList = (List *)
 			ReplaceVarsFromTargetList((Node *) parsetree->returningList,
@@ -692,10 +705,18 @@ adjustJoinTreeList(Query *parsetree, bool removert, int rt_index)
  * rewritten targetlist: an integer list of the assigned-to attnums, in
  * order of the original tlist's non-junk entries.  This is needed for
  * processing VALUES RTEs.
+ *
+ * Note that for an inheritable UPDATE, this processing is only done once,
+ * using the parent relation as reference.  It must not do anything that
+ * will not be correct when transposed to the child relation(s).  (Step 4
+ * is incorrect by this light, since child relations might have different
+ * colun ordering, but the planner will fix things by re-sorting the tlist
+ * for each child.)
  */
 static List *
 rewriteTargetListIU(List *targetList,
 					CmdType commandType,
+					OverridingKind override,
 					Relation target_relation,
 					int result_rti,
 					List **attrno_list)
@@ -776,6 +797,7 @@ rewriteTargetListIU(List *targetList,
 	for (attrno = 1; attrno <= numattrs; attrno++)
 	{
 		TargetEntry *new_tle = new_tles[attrno - 1];
+		bool		apply_default;
 
 		att_tup = target_relation->rd_att->attrs[attrno - 1];
 
@@ -788,8 +810,37 @@ rewriteTargetListIU(List *targetList,
 		 * it's an INSERT and there's no tlist entry for the column, or the
 		 * tlist entry is a DEFAULT placeholder node.
 		 */
-		if ((new_tle == NULL && commandType == CMD_INSERT) ||
-			(new_tle && new_tle->expr && IsA(new_tle->expr, SetToDefault)))
+		apply_default = ((new_tle == NULL && commandType == CMD_INSERT) ||
+						 (new_tle && new_tle->expr && IsA(new_tle->expr, SetToDefault)));
+
+		if (commandType == CMD_INSERT)
+		{
+			if (att_tup->attidentity == ATTRIBUTE_IDENTITY_ALWAYS && !apply_default)
+			{
+				if (override != OVERRIDING_SYSTEM_VALUE)
+					ereport(ERROR,
+							(errcode(ERRCODE_GENERATED_ALWAYS),
+							 errmsg("cannot insert into column \"%s\"", NameStr(att_tup->attname)),
+							 errdetail("Column \"%s\" is an identity column defined as GENERATED ALWAYS.",
+									   NameStr(att_tup->attname)),
+							 errhint("Use OVERRIDING SYSTEM VALUE to override.")));
+			}
+
+			if (att_tup->attidentity == ATTRIBUTE_IDENTITY_BY_DEFAULT && override == OVERRIDING_USER_VALUE)
+				apply_default = true;
+		}
+
+		if (commandType == CMD_UPDATE)
+		{
+			if (att_tup->attidentity == ATTRIBUTE_IDENTITY_ALWAYS && new_tle && !apply_default)
+				ereport(ERROR,
+						(errcode(ERRCODE_GENERATED_ALWAYS),
+						 errmsg("column \"%s\" can only be updated to DEFAULT", NameStr(att_tup->attname)),
+						 errdetail("Column \"%s\" is an identity column defined as GENERATED ALWAYS.",
+								   NameStr(att_tup->attname))));
+		}
+
+		if (apply_default)
 		{
 			Node	   *new_expr;
 
@@ -878,6 +929,7 @@ process_matched_tle(TargetEntry *src_tle,
 					const char *attrName)
 {
 	TargetEntry *result;
+	CoerceToDomain *coerce_expr = NULL;
 	Node	   *src_expr;
 	Node	   *prior_expr;
 	Node	   *src_input;
@@ -914,10 +966,30 @@ process_matched_tle(TargetEntry *src_tle,
 	 * For FieldStore, instead of nesting we can generate a single
 	 * FieldStore with multiple target fields.  We must nest when
 	 * ArrayRefs are involved though.
+	 *
+	 * As a further complication, the destination column might be a domain,
+	 * resulting in each assignment containing a CoerceToDomain node over a
+	 * FieldStore or ArrayRef.  These should have matching target domains,
+	 * so we strip them and reconstitute a single CoerceToDomain over the
+	 * combined FieldStore/ArrayRef nodes.  (Notice that this has the result
+	 * that the domain's checks are applied only after we do all the field or
+	 * element updates, not after each one.  This is arguably desirable.)
 	 *----------
 	 */
 	src_expr = (Node *) src_tle->expr;
 	prior_expr = (Node *) prior_tle->expr;
+
+	if (src_expr && IsA(src_expr, CoerceToDomain) &&
+		prior_expr && IsA(prior_expr, CoerceToDomain) &&
+		((CoerceToDomain *) src_expr)->resulttype ==
+		((CoerceToDomain *) prior_expr)->resulttype)
+	{
+		/* we assume without checking that resulttypmod/resultcollid match */
+		coerce_expr = (CoerceToDomain *) src_expr;
+		src_expr = (Node *) ((CoerceToDomain *) src_expr)->arg;
+		prior_expr = (Node *) ((CoerceToDomain *) prior_expr)->arg;
+	}
+
 	src_input = get_assignment_input(src_expr);
 	prior_input = get_assignment_input(prior_expr);
 	if (src_input == NULL ||
@@ -986,6 +1058,16 @@ process_matched_tle(TargetEntry *src_tle,
 		newexpr = NULL;
 	}
 
+	if (coerce_expr)
+	{
+		/* put back the CoerceToDomain */
+		CoerceToDomain *newcoerce = makeNode(CoerceToDomain);
+
+		memcpy(newcoerce, coerce_expr, sizeof(CoerceToDomain));
+		newcoerce->arg = (Expr *) newexpr;
+		newexpr = (Node *) newcoerce;
+	}
+
 	result = flatCopyTargetEntry(src_tle);
 	result->expr = (Expr *) newexpr;
 	return result;
@@ -1030,6 +1112,16 @@ build_column_default(Relation rel, int attrno)
 	int32		atttypmod = att_tup->atttypmod;
 	Node	   *expr = NULL;
 	Oid			exprtype;
+
+	if (att_tup->attidentity)
+	{
+		NextValueExpr *nve = makeNode(NextValueExpr);
+
+		nve->seqid = getOwnedSequence(RelationGetRelid(rel), attrno);
+		nve->typeId = att_tup->atttypid;
+
+		return (Node *) nve;
+	}
 
 	/*
 	 * Scan to see if relation has a default for this column.
@@ -1086,7 +1178,7 @@ build_column_default(Relation rel, int attrno)
 						NameStr(att_tup->attname),
 						format_type_be(atttype),
 						format_type_be(exprtype)),
-			   errhint("You will need to rewrite or cast the expression.")));
+				 errhint("You will need to rewrite or cast the expression.")));
 
 	return expr;
 }
@@ -1206,14 +1298,15 @@ rewriteValuesRTE(RangeTblEntry *rte, Relation target_relation, List *attrnos)
  * This function adds a "junk" TLE that is needed to allow the executor to
  * find the original row for the update or delete.  When the target relation
  * is a regular table, the junk TLE emits the ctid attribute of the original
- * row.  When the target relation is a view, there is no ctid, so we instead
- * emit a whole-row Var that will contain the "old" values of the view row.
- * If it's a foreign table, we let the FDW decide what to add.
+ * row.  When the target relation is a foreign table, we let the FDW decide
+ * what to add.
  *
- * For UPDATE queries, this is applied after rewriteTargetListIU.  The
- * ordering isn't actually critical at the moment.
+ * We used to do this during RewriteQuery(), but now that inheritance trees
+ * can contain a mix of regular and foreign tables, we must postpone it till
+ * planning, after the inheritance tree has been expanded.  In that way we
+ * can do the right thing for each child table.
  */
-static void
+void
 rewriteTargetListUD(Query *parsetree, RangeTblEntry *target_rte,
 					Relation target_relation)
 {
@@ -1222,7 +1315,8 @@ rewriteTargetListUD(Query *parsetree, RangeTblEntry *target_rte,
 	TargetEntry *tle;
 
 	if (target_relation->rd_rel->relkind == RELKIND_RELATION ||
-		target_relation->rd_rel->relkind == RELKIND_MATVIEW)
+		target_relation->rd_rel->relkind == RELKIND_MATVIEW ||
+		target_relation->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
 	{
 		/*
 		 * Emit CTID so that executor can find the row to update or delete.
@@ -1269,19 +1363,6 @@ rewriteTargetListUD(Query *parsetree, RangeTblEntry *target_rte,
 
 			attrname = "wholerow";
 		}
-	}
-	else
-	{
-		/*
-		 * Emit whole-row Var so that executor will have the "old" view row to
-		 * pass to the INSTEAD OF trigger.
-		 */
-		var = makeWholeRowVar(target_rte,
-							  parsetree->resultRelation,
-							  0,
-							  false);
-
-		attrname = "wholerow";
 	}
 
 	if (var != NULL)
@@ -1343,7 +1424,7 @@ matchLocks(CmdType event,
 					oneLock->enabled == RULE_DISABLED)
 					continue;
 			}
-			else	/* ORIGIN or LOCAL ROLE */
+			else				/* ORIGIN or LOCAL ROLE */
 			{
 				if (oneLock->enabled == RULE_FIRES_ON_REPLICA ||
 					oneLock->enabled == RULE_DISABLED)
@@ -1409,6 +1490,8 @@ ApplyRetrieveRule(Query *parsetree,
 				 parsetree->commandType == CMD_DELETE)
 		{
 			RangeTblEntry *newrte;
+			Var		   *var;
+			TargetEntry *tle;
 
 			rte = rt_fetch(rt_index, parsetree->rtable);
 			newrte = copyObject(rte);
@@ -1438,6 +1521,20 @@ ApplyRetrieveRule(Query *parsetree,
 			parsetree->returningList = copyObject(parsetree->returningList);
 			ChangeVarNodes((Node *) parsetree->returningList, rt_index,
 						   parsetree->resultRelation, 0);
+
+			/*
+			 * To allow the executor to compute the original view row to pass
+			 * to the INSTEAD OF trigger, we add a resjunk whole-row Var
+			 * referencing the original RTE.  This will later get expanded
+			 * into a RowExpr computing all the OLD values of the view row.
+			 */
+			var = makeWholeRowVar(rte, rt_index, 0, false);
+			tle = makeTargetEntry((Expr *) var,
+								  list_length(parsetree->targetList) + 1,
+								  pstrdup("wholerow"),
+								  true);
+
+			parsetree->targetList = lappend(parsetree->targetList, tle);
 
 			/* Now, continue with expanding the original view RTE */
 		}
@@ -1644,7 +1741,7 @@ fireRIRrules(Query *parsetree, List *activeRIRs, bool forUpdatePushedDown)
 		{
 			rte->subquery = fireRIRrules(rte->subquery, activeRIRs,
 										 (forUpdatePushedDown ||
-							get_parse_rowmark(parsetree, rt_index) != NULL));
+										  get_parse_rowmark(parsetree, rt_index) != NULL));
 			continue;
 		}
 
@@ -1778,7 +1875,8 @@ fireRIRrules(Query *parsetree, List *activeRIRs, bool forUpdatePushedDown)
 
 		/* Only normal relations can have RLS policies */
 		if (rte->rtekind != RTE_RELATION ||
-			rte->relkind != RELKIND_RELATION)
+			(rte->relkind != RELKIND_RELATION &&
+			 rte->relkind != RELKIND_PARTITIONED_TABLE))
 			continue;
 
 		rel = heap_open(rte->relid, NoLock);
@@ -1835,16 +1933,16 @@ fireRIRrules(Query *parsetree, List *activeRIRs, bool forUpdatePushedDown)
 			}
 
 			/*
-			 * Add the new security quals to the start of the RTE's list so
-			 * that they get applied before any existing security quals (which
-			 * might have come from a user-written security barrier view, and
-			 * might contain malicious code).
+			 * Add the new security barrier quals to the start of the RTE's
+			 * list so that they get applied before any existing barrier quals
+			 * (which would have come from a security-barrier view, and should
+			 * get lower priority than RLS conditions on the table itself).
 			 */
 			rte->securityQuals = list_concat(securityQuals,
 											 rte->securityQuals);
 
 			parsetree->withCheckOptions = list_concat(withCheckOptions,
-												parsetree->withCheckOptions);
+													  parsetree->withCheckOptions);
 		}
 
 		/*
@@ -1883,7 +1981,7 @@ CopyAndAddInvertedQual(Query *parsetree,
 					   CmdType event)
 {
 	/* Don't scribble on the passed qual (it's in the relcache!) */
-	Node	   *new_qual = (Node *) copyObject(rule_qual);
+	Node	   *new_qual = copyObject(rule_qual);
 	acquireLocksOnSubLinks_context context;
 
 	context.for_execute = true;
@@ -2018,7 +2116,7 @@ fireRules(Query *parsetree,
 											returning_flag);
 
 			rule_action->querySource = qsrc;
-			rule_action->canSetTag = false;		/* might change later */
+			rule_action->canSetTag = false; /* might change later */
 
 			results = lappend(results, rule_action);
 		}
@@ -2221,7 +2319,7 @@ view_query_is_auto_updatable(Query *viewquery, bool check_cols)
 	if (viewquery->hasWindowFuncs)
 		return gettext_noop("Views that return window functions are not automatically updatable.");
 
-	if (expression_returns_set((Node *) viewquery->targetList))
+	if (viewquery->hasTargetSRFs)
 		return gettext_noop("Views that return set-returning functions are not automatically updatable.");
 
 	/*
@@ -2239,7 +2337,8 @@ view_query_is_auto_updatable(Query *viewquery, bool check_cols)
 	if (base_rte->rtekind != RTE_RELATION ||
 		(base_rte->relkind != RELKIND_RELATION &&
 		 base_rte->relkind != RELKIND_FOREIGN_TABLE &&
-		 base_rte->relkind != RELKIND_VIEW))
+		 base_rte->relkind != RELKIND_VIEW &&
+		 base_rte->relkind != RELKIND_PARTITIONED_TABLE))
 		return gettext_noop("Views that do not select from a single table or view are not automatically updatable.");
 
 	if (base_rte->tablesample)
@@ -2309,8 +2408,7 @@ view_cols_are_auto_updatable(Query *viewquery,
 	 * there should be a single base relation.
 	 */
 	Assert(list_length(viewquery->jointree->fromlist) == 1);
-	rtr = (RangeTblRef *) linitial(viewquery->jointree->fromlist);
-	Assert(IsA(rtr, RangeTblRef));
+	rtr = linitial_node(RangeTblRef, viewquery->jointree->fromlist);
 
 	/* Initialize the optional return values */
 	if (updatable_cols != NULL)
@@ -2396,7 +2494,8 @@ relation_is_updatable(Oid reloid,
 		return 0;
 
 	/* If the relation is a table, it is always updatable */
-	if (rel->rd_rel->relkind == RELKIND_RELATION)
+	if (rel->rd_rel->relkind == RELKIND_RELATION ||
+		rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
 	{
 		relation_close(rel, AccessShareLock);
 		return ALL_EVENTS;
@@ -2496,9 +2595,9 @@ relation_is_updatable(Oid reloid,
 				updatable_cols = bms_int_members(updatable_cols, include_cols);
 
 			if (bms_is_empty(updatable_cols))
-				auto_events = (1 << CMD_DELETE);		/* May support DELETE */
+				auto_events = (1 << CMD_DELETE);	/* May support DELETE */
 			else
-				auto_events = ALL_EVENTS;		/* May support all events */
+				auto_events = ALL_EVENTS;	/* May support all events */
 
 			/*
 			 * The base relation must also support these update commands.
@@ -2510,7 +2609,8 @@ relation_is_updatable(Oid reloid,
 			base_rte = rt_fetch(rtr->rtindex, viewquery->rtable);
 			Assert(base_rte->rtekind == RTE_RELATION);
 
-			if (base_rte->relkind != RELKIND_RELATION)
+			if (base_rte->relkind != RELKIND_RELATION &&
+				base_rte->relkind != RELKIND_PARTITIONED_TABLE)
 			{
 				baseoid = base_rte->relid;
 				include_cols = adjust_view_column_set(updatable_cols,
@@ -2562,15 +2662,14 @@ adjust_view_column_set(Bitmapset *cols, List *targetlist)
 
 			foreach(lc, targetlist)
 			{
-				TargetEntry *tle = (TargetEntry *) lfirst(lc);
+				TargetEntry *tle = lfirst_node(TargetEntry, lc);
 				Var		   *var;
 
 				if (tle->resjunk)
 					continue;
-				var = (Var *) tle->expr;
-				Assert(IsA(var, Var));
+				var = castNode(Var, tle->expr);
 				result = bms_add_member(result,
-						 var->varattno - FirstLowInvalidHeapAttributeNumber);
+										var->varattno - FirstLowInvalidHeapAttributeNumber);
 			}
 		}
 		else
@@ -2587,7 +2686,7 @@ adjust_view_column_set(Bitmapset *cols, List *targetlist)
 				Var		   *var = (Var *) tle->expr;
 
 				result = bms_add_member(result,
-						 var->varattno - FirstLowInvalidHeapAttributeNumber);
+										var->varattno - FirstLowInvalidHeapAttributeNumber);
 			}
 			else
 				elog(ERROR, "attribute number %d not found in view targetlist",
@@ -2691,7 +2790,7 @@ rewriteTargetView(Query *parsetree, Relation view)
 
 			if (!tle->resjunk)
 				modified_cols = bms_add_member(modified_cols,
-							tle->resno - FirstLowInvalidHeapAttributeNumber);
+											   tle->resno - FirstLowInvalidHeapAttributeNumber);
 		}
 
 		if (parsetree->onConflict)
@@ -2702,7 +2801,7 @@ rewriteTargetView(Query *parsetree, Relation view)
 
 				if (!tle->resjunk)
 					modified_cols = bms_add_member(modified_cols,
-							tle->resno - FirstLowInvalidHeapAttributeNumber);
+												   tle->resno - FirstLowInvalidHeapAttributeNumber);
 			}
 		}
 
@@ -2721,18 +2820,18 @@ rewriteTargetView(Query *parsetree, Relation view)
 				case CMD_INSERT:
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					errmsg("cannot insert into column \"%s\" of view \"%s\"",
-						   non_updatable_col,
-						   RelationGetRelationName(view)),
-						   errdetail_internal("%s", _(auto_update_detail))));
+							 errmsg("cannot insert into column \"%s\" of view \"%s\"",
+									non_updatable_col,
+									RelationGetRelationName(view)),
+							 errdetail_internal("%s", _(auto_update_detail))));
 					break;
 				case CMD_UPDATE:
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("cannot update column \"%s\" of view \"%s\"",
-								non_updatable_col,
-								RelationGetRelationName(view)),
-						   errdetail_internal("%s", _(auto_update_detail))));
+							 errmsg("cannot update column \"%s\" of view \"%s\"",
+									non_updatable_col,
+									RelationGetRelationName(view)),
+							 errdetail_internal("%s", _(auto_update_detail))));
 					break;
 				default:
 					elog(ERROR, "unrecognized CmdType: %d",
@@ -2750,8 +2849,7 @@ rewriteTargetView(Query *parsetree, Relation view)
 	 * view contains a single base relation.
 	 */
 	Assert(list_length(viewquery->jointree->fromlist) == 1);
-	rtr = (RangeTblRef *) linitial(viewquery->jointree->fromlist);
-	Assert(IsA(rtr, RangeTblRef));
+	rtr = linitial_node(RangeTblRef, viewquery->jointree->fromlist);
 
 	base_rt_index = rtr->rtindex;
 	base_rte = rt_fetch(base_rt_index, viewquery->rtable);
@@ -2878,26 +2976,6 @@ rewriteTargetView(Query *parsetree, Relation view)
 	view_rte->securityQuals = NIL;
 
 	/*
-	 * For UPDATE/DELETE, rewriteTargetListUD will have added a wholerow junk
-	 * TLE for the view to the end of the targetlist, which we no longer need.
-	 * Remove it to avoid unnecessary work when we process the targetlist.
-	 * Note that when we recurse through rewriteQuery a new junk TLE will be
-	 * added to allow the executor to find the proper row in the new target
-	 * relation.  (So, if we failed to do this, we might have multiple junk
-	 * TLEs with the same name, which would be disastrous.)
-	 */
-	if (parsetree->commandType != CMD_INSERT)
-	{
-		TargetEntry *tle = (TargetEntry *) llast(parsetree->targetList);
-
-		Assert(tle->resjunk);
-		Assert(IsA(tle->expr, Var) &&
-			   ((Var *) tle->expr)->varno == parsetree->resultRelation &&
-			   ((Var *) tle->expr)->varattno == 0);
-		parsetree->targetList = list_delete_ptr(parsetree->targetList, tle);
-	}
-
-	/*
 	 * Now update all Vars in the outer query that reference the view to
 	 * reference the appropriate column of the base relation instead.
 	 */
@@ -2957,9 +3035,9 @@ rewriteTargetView(Query *parsetree, Relation view)
 	 * only adjust their varnos to reference the new target (just the same as
 	 * we did with the view targetlist).
 	 *
-	 * Note that there is special-case handling for the quals of a security
-	 * barrier view, since they need to be kept separate from any
-	 * user-supplied quals, so these quals are kept on the new target RTE.
+	 * If it's a security-barrier view, its WHERE quals must be applied before
+	 * quals from the outer query, so we attach them to the RTE as security
+	 * barrier quals rather than adding them to the main WHERE clause.
 	 *
 	 * For INSERT, the view's quals can be ignored in the main query.
 	 */
@@ -2980,11 +3058,20 @@ rewriteTargetView(Query *parsetree, Relation view)
 		if (RelationIsSecurityView(view))
 		{
 			/*
+			 * The view's quals go in front of existing barrier quals: those
+			 * would have come from an outer level of security-barrier view,
+			 * and so must get evaluated later.
+			 *
 			 * Note: the parsetree has been mutated, so the new_rte pointer is
 			 * stale and needs to be re-computed.
 			 */
 			new_rte = rt_fetch(new_rt_index, parsetree->rtable);
 			new_rte->securityQuals = lcons(viewqual, new_rte->securityQuals);
+
+			/*
+			 * Do not set parsetree->hasRowSecurity, because these aren't RLS
+			 * conditions (they aren't affected by enabling/disabling RLS).
+			 */
 
 			/*
 			 * Make sure that the query is marked correctly if the added qual
@@ -3098,11 +3185,9 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 	 */
 	foreach(lc1, parsetree->cteList)
 	{
-		CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc1);
-		Query	   *ctequery = (Query *) cte->ctequery;
+		CommonTableExpr *cte = lfirst_node(CommonTableExpr, lc1);
+		Query	   *ctequery = castNode(Query, cte->ctequery);
 		List	   *newstuff;
-
-		Assert(IsA(ctequery, Query));
 
 		if (ctequery->commandType == CMD_SELECT)
 			continue;
@@ -3117,8 +3202,7 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 		if (list_length(newstuff) == 1)
 		{
 			/* Push the single Query back into the CTE node */
-			ctequery = (Query *) linitial(newstuff);
-			Assert(IsA(ctequery, Query));
+			ctequery = linitial_node(Query, newstuff);
 			/* WITH queries should never be canSetTag */
 			Assert(!ctequery->canSetTag);
 			cte->ctequery = (Node *) ctequery;
@@ -3213,9 +3297,10 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 
 				/* Process the main targetlist ... */
 				parsetree->targetList = rewriteTargetListIU(parsetree->targetList,
-													  parsetree->commandType,
+															parsetree->commandType,
+															parsetree->override,
 															rt_entry_relation,
-												   parsetree->resultRelation,
+															parsetree->resultRelation,
 															&attrnos);
 				/* ... and the VALUES expression lists */
 				rewriteValuesRTE(values_rte, rt_entry_relation, attrnos);
@@ -3226,6 +3311,7 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 				parsetree->targetList =
 					rewriteTargetListIU(parsetree->targetList,
 										parsetree->commandType,
+										parsetree->override,
 										rt_entry_relation,
 										parsetree->resultRelation, NULL);
 			}
@@ -3236,6 +3322,7 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 				parsetree->onConflict->onConflictSet =
 					rewriteTargetListIU(parsetree->onConflict->onConflictSet,
 										CMD_UPDATE,
+										parsetree->override,
 										rt_entry_relation,
 										parsetree->resultRelation,
 										NULL);
@@ -3245,13 +3332,14 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 		{
 			parsetree->targetList =
 				rewriteTargetListIU(parsetree->targetList,
-									parsetree->commandType, rt_entry_relation,
+									parsetree->commandType,
+									parsetree->override,
+									rt_entry_relation,
 									parsetree->resultRelation, NULL);
-			rewriteTargetListUD(parsetree, rt_entry, rt_entry_relation);
 		}
 		else if (event == CMD_DELETE)
 		{
-			rewriteTargetListUD(parsetree, rt_entry, rt_entry_relation);
+			/* Nothing to do here */
 		}
 		else
 			elog(ERROR, "unrecognized commandType: %d", (int) event);
@@ -3329,7 +3417,7 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 							 errmsg("infinite recursion detected in rules for relation \"%s\"",
-							   RelationGetRelationName(rt_entry_relation))));
+									RelationGetRelationName(rt_entry_relation))));
 			}
 
 			rev = (rewrite_event *) palloc(sizeof(rewrite_event));
@@ -3366,21 +3454,21 @@ RewriteQuery(Query *parsetree, List *rewrite_events)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("cannot perform INSERT RETURNING on relation \"%s\"",
-								 RelationGetRelationName(rt_entry_relation)),
+									RelationGetRelationName(rt_entry_relation)),
 							 errhint("You need an unconditional ON INSERT DO INSTEAD rule with a RETURNING clause.")));
 					break;
 				case CMD_UPDATE:
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("cannot perform UPDATE RETURNING on relation \"%s\"",
-								 RelationGetRelationName(rt_entry_relation)),
+									RelationGetRelationName(rt_entry_relation)),
 							 errhint("You need an unconditional ON UPDATE DO INSTEAD rule with a RETURNING clause.")));
 					break;
 				case CMD_DELETE:
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("cannot perform DELETE RETURNING on relation \"%s\"",
-								 RelationGetRelationName(rt_entry_relation)),
+									RelationGetRelationName(rt_entry_relation)),
 							 errhint("You need an unconditional ON DELETE DO INSTEAD rule with a RETURNING clause.")));
 					break;
 				default:

@@ -8,7 +8,7 @@
  * but also length coercion functions.
  *
  *
- * Copyright (c) 2002-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2017, PostgreSQL Global Development Group
  *
  * src/include/catalog/pg_cast.h
  *
@@ -52,8 +52,8 @@ typedef FormData_pg_cast *Form_pg_cast;
 
 typedef enum CoercionCodes
 {
-	COERCION_CODE_IMPLICIT = 'i',		/* coercion in context of expression */
-	COERCION_CODE_ASSIGNMENT = 'a',		/* coercion in context of assignment */
+	COERCION_CODE_IMPLICIT = 'i',	/* coercion in context of expression */
+	COERCION_CODE_ASSIGNMENT = 'a', /* coercion in context of assignment */
 	COERCION_CODE_EXPLICIT = 'e'	/* explicit cast operation */
 } CoercionCodes;
 
@@ -64,8 +64,8 @@ typedef enum CoercionCodes
  */
 typedef enum CoercionMethod
 {
-	COERCION_METHOD_FUNCTION = 'f',		/* use a function */
-	COERCION_METHOD_BINARY = 'b',		/* types are binary-compatible */
+	COERCION_METHOD_FUNCTION = 'f', /* use a function */
+	COERCION_METHOD_BINARY = 'b',	/* types are binary-compatible */
 	COERCION_METHOD_INOUT = 'i' /* use input/output functions */
 } CoercionMethod;
 
@@ -254,6 +254,14 @@ DATA(insert (	23	 18   78 e f ));
 /* pg_node_tree can be coerced to, but not from, text */
 DATA(insert (  194	 25    0 i b ));
 
+/* pg_ndistinct can be coerced to, but not from, bytea and text */
+DATA(insert (  3361  17    0 i b ));
+DATA(insert (  3361  25    0 i i ));
+
+/* pg_dependencies can be coerced to, but not from, bytea and text */
+DATA(insert (  3402  17    0 i b ));
+DATA(insert (  3402  25    0 i i ));
+
 /*
  * Datetime category
  */
@@ -302,6 +310,12 @@ DATA(insert (  604	718 1474 e f ));
 DATA(insert (  718	600 1416 e f ));
 DATA(insert (  718	603 1480 e f ));
 DATA(insert (  718	604 1544 e f ));
+
+/*
+ * MAC address category
+ */
+DATA(insert (  829	774    4123 i f ));
+DATA(insert (  774	829    4124 i f ));
 
 /*
  * INET category
@@ -393,4 +407,4 @@ DATA(insert ( 3802   23 7194 a f ));
 DATA(insert ( 3802 1700 7195 e f ));
 DATA(insert ( 3802  701 7196 e f ));
 
-#endif   /* PG_CAST_H */
+#endif							/* PG_CAST_H */

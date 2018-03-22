@@ -3,7 +3,7 @@
  * nodeBitmapIndexscan.c
  *	  Routines to support bitmapped index scans of relations
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -27,6 +27,19 @@
 #include "miscadmin.h"
 #include "utils/memutils.h"
 
+
+/* ----------------------------------------------------------------
+ *		ExecBitmapIndexScan
+ *
+ *		stub for pro forma compliance
+ * ----------------------------------------------------------------
+ */
+static TupleTableSlot *
+ExecBitmapIndexScan(PlanState *pstate)
+{
+	elog(ERROR, "BitmapIndexScan node does not support ExecProcNode call convention");
+	return NULL;
+}
 
 /* ----------------------------------------------------------------
  *		MultiExecBitmapIndexScan(node)
@@ -73,12 +86,14 @@ MultiExecBitmapIndexScan(BitmapIndexScanState *node)
 	if (node->biss_result)
 	{
 		tbm = node->biss_result;
-		node->biss_result = NULL;		/* reset for next time */
+		node->biss_result = NULL;	/* reset for next time */
 	}
 	else
 	{
 		/* XXX should we use less than work_mem for this? */
-		tbm = tbm_create(work_mem * 1024L);
+		tbm = tbm_create(work_mem * 1024L,
+						 ((BitmapIndexScan *) node->ss.ps.plan)->isshared ?
+						 node->ss.ps.state->es_query_dsa : NULL);
 	}
 
 	/*
@@ -206,6 +221,7 @@ ExecInitBitmapIndexScan(BitmapIndexScan *node, EState *estate, int eflags)
 	indexstate = makeNode(BitmapIndexScanState);
 	indexstate->ss.ps.plan = (Plan *) node;
 	indexstate->ss.ps.state = estate;
+	indexstate->ss.ps.ExecProcNode = ExecBitmapIndexScan;
 
 	/* normally we don't make the result bitmap till runtime */
 	indexstate->biss_result = NULL;
@@ -252,7 +268,7 @@ ExecInitBitmapIndexScan(BitmapIndexScan *node, EState *estate, int eflags)
 	 */
 	relistarget = ExecRelationIsTargetRelation(estate, node->scan.scanrelid);
 	indexstate->biss_RelationDesc = index_open(node->indexid,
-									 relistarget ? NoLock : AccessShareLock);
+											   relistarget ? NoLock : AccessShareLock);
 
 	/*
 	 * Initialize index-specific scan state

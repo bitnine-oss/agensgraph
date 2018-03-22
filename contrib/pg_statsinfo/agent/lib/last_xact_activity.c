@@ -2,7 +2,7 @@
  * lib/last_xact_activity.c
  *     Track statement execution in current/last transaction.
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 #include "postgres.h"
@@ -98,7 +98,12 @@ static statEntry *get_snapshot_entry(int beid);
 static Size buffer_size(int nbackends);
 #if PG_VERSION_NUM >= 90000
 static void myProcessUtility0(Node *parsetree, const char *queryString);
-#if PG_VERSION_NUM >= 90300
+#if PG_VERSION_NUM >= 100000
+static void myProcessUtility(PlannedStmt *pstmt, const char *queryString,
+			   ProcessUtilityContext context, ParamListInfo params,
+			   QueryEnvironment *queryEnv,
+			   DestReceiver *dest, char *completionTag);
+#elif PG_VERSION_NUM >= 90300
 static void myProcessUtility(Node *parsetree, const char *queryString,
 			   ProcessUtilityContext context, ParamListInfo params,
 			   DestReceiver *dest, char *completionTag);
@@ -410,7 +415,37 @@ myProcessUtility0(Node *parsetree, const char *queryString)
  *
  * Processing transaction state change.
  */
-#if PG_VERSION_NUM >= 90300
+#if PG_VERSION_NUM >= 100000
+static void
+myProcessUtility(PlannedStmt *pstmt, const char *queryString,
+				 ProcessUtilityContext context, ParamListInfo params,
+				 QueryEnvironment *queryEnv,
+				 DestReceiver *dest, char *completionTag)
+{
+	/*
+	 * Do my process before other hook runs.
+	 */
+	myProcessUtility0(pstmt->utilityStmt, queryString);
+
+	PG_TRY();
+	{
+		if (prev_ProcessUtility_hook)
+			prev_ProcessUtility_hook(pstmt, queryString, context, params,
+									 queryEnv, dest, completionTag);
+		else
+			standard_ProcessUtility(pstmt, queryString, context, params,
+									queryEnv, dest, completionTag);
+	}
+	PG_CATCH();
+	{
+		exit_transaction_if_needed();
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	exit_transaction_if_needed();
+}
+#elif PG_VERSION_NUM >= 90300
 static void
 myProcessUtility(Node *parsetree, const char *queryString,
 				 ProcessUtilityContext context, ParamListInfo params,

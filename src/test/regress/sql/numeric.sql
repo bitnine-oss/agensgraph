@@ -655,6 +655,14 @@ INSERT INTO fract_only VALUES (8, '0.00017');
 SELECT * FROM fract_only;
 DROP TABLE fract_only;
 
+-- Check inf/nan conversion behavior
+SELECT 'NaN'::float8::numeric;
+SELECT 'Infinity'::float8::numeric;
+SELECT '-Infinity'::float8::numeric;
+SELECT 'NaN'::float4::numeric;
+SELECT 'Infinity'::float4::numeric;
+SELECT '-Infinity'::float4::numeric;
+
 -- Simple check that ceil(), floor(), and round() work correctly
 CREATE TABLE ceil_floor_round (a numeric);
 INSERT INTO ceil_floor_round VALUES ('-5.5');
@@ -997,3 +1005,11 @@ select scale(1.12345);
 select scale(110123.12475871856128);
 select scale(-1123.12471856128);
 select scale(-13.000000000000000);
+
+--
+-- Tests for SUM()
+--
+
+-- cases that need carry propagation
+SELECT SUM(9999::numeric) FROM generate_series(1, 100000);
+SELECT SUM((-9999)::numeric) FROM generate_series(1, 100000);

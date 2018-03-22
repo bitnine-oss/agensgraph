@@ -3,7 +3,7 @@
  * lmgr.c
  *	  POSTGRES lock manager code
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -33,7 +33,7 @@
  * constraint violations.  It's theoretically possible that a backend sees a
  * tuple that was speculatively inserted by another backend, but before it has
  * started waiting on the token, the other backend completes its insertion,
- * and then then performs 2^32 unrelated insertions.  And after all that, the
+ * and then performs 2^32 unrelated insertions.  And after all that, the
  * first backend finally calls SpeculativeInsertionLockAcquire(), with the
  * intention of waiting for the first insertion to complete, but ends up
  * waiting for the latest unrelated insertion instead.  Even then, nothing
@@ -268,8 +268,8 @@ UnlockRelation(Relation relation, LOCKMODE lockmode)
 /*
  *		LockHasWaitersRelation
  *
- * This is a functiion to check if someone else is waiting on a
- * lock, we are currently holding.
+ * This is a function to check whether someone else is waiting for a
+ * lock which we are currently holding.
  */
 bool
 LockHasWaitersRelation(Relation relation, LOCKMODE lockmode)
@@ -557,6 +557,7 @@ XactLockTableWait(TransactionId xid, Relation rel, ItemPointer ctid,
 	LOCKTAG		tag;
 	XactLockTableWaitInfo info;
 	ErrorContextCallback callback;
+	bool		first = true;
 
 	/*
 	 * If an operation is specified, set up our verbose error context
@@ -590,7 +591,26 @@ XactLockTableWait(TransactionId xid, Relation rel, ItemPointer ctid,
 
 		if (!TransactionIdIsInProgress(xid))
 			break;
-		xid = SubTransGetParent(xid);
+
+		/*
+		 * If the Xid belonged to a subtransaction, then the lock would have
+		 * gone away as soon as it was finished; for correct tuple visibility,
+		 * the right action is to wait on its parent transaction to go away.
+		 * But instead of going levels up one by one, we can just wait for the
+		 * topmost transaction to finish with the same end result, which also
+		 * incurs less locktable traffic.
+		 *
+		 * Some uses of this function don't involve tuple visibility -- such
+		 * as when building snapshots for logical decoding.  It is possible to
+		 * see a transaction in ProcArray before it registers itself in the
+		 * locktable.  The topmost transaction in that case is the same xid,
+		 * so we try again after a short sleep.  (Don't sleep the first time
+		 * through, to avoid slowing down the normal case.)
+		 */
+		if (!first)
+			pg_usleep(1000L);
+		first = false;
+		xid = SubTransGetTopmostTransaction(xid);
 	}
 
 	if (oper != XLTW_None)
@@ -607,6 +627,7 @@ bool
 ConditionalXactLockTableWait(TransactionId xid)
 {
 	LOCKTAG		tag;
+	bool		first = true;
 
 	for (;;)
 	{
@@ -622,7 +643,12 @@ ConditionalXactLockTableWait(TransactionId xid)
 
 		if (!TransactionIdIsInProgress(xid))
 			break;
-		xid = SubTransGetParent(xid);
+
+		/* See XactLockTableWait about this case */
+		if (!first)
+			pg_usleep(1000L);
+		first = false;
+		xid = SubTransGetTopmostTransaction(xid);
 	}
 
 	return true;

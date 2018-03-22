@@ -4,6 +4,7 @@
     pg_finfo_*;
     _PG_fini;
     _PG_init;
+    StatsinfoLauncherMain;
     statsinfo_activity;
     statsinfo_cpustats;
     statsinfo_cpustats_noarg;

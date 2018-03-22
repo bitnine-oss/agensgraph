@@ -12,7 +12,7 @@
  *		reduce_outer_joins
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -45,7 +45,7 @@ typedef struct pullup_replace_vars_context
 	RangeTblEntry *target_rte;	/* RTE of subquery */
 	Relids		relids;			/* relids within subquery, as numbered after
 								 * pullup (set only if target_rte->lateral) */
-	bool	   *outer_hasSubLinks;		/* -> outer query's hasSubLinks */
+	bool	   *outer_hasSubLinks;	/* -> outer query's hasSubLinks */
 	int			varno;			/* varno of subquery */
 	bool		need_phvs;		/* do we need PlaceHolderVars? */
 	bool		wrap_non_vars;	/* do we need 'em on *all* non-Vars? */
@@ -270,7 +270,7 @@ pull_up_sublinks_jointree_recurse(PlannerInfo *root, Node *jtnode,
 				j->quals = pull_up_sublinks_qual_recurse(root, j->quals,
 														 &jtlink,
 														 bms_union(leftrelids,
-																rightrelids),
+																   rightrelids),
 														 NULL, NULL);
 				break;
 			case JOIN_LEFT:
@@ -468,7 +468,7 @@ pull_up_sublinks_qual_recurse(PlannerInfo *root, Node *node,
 			if (sublink->subLinkType == EXISTS_SUBLINK)
 			{
 				if ((j = convert_EXISTS_sublink_to_join(root, sublink, true,
-												   available_rels1)) != NULL)
+														available_rels1)) != NULL)
 				{
 					/* Yes; insert the new join node into the join tree */
 					j->larg = *jtlink1;
@@ -494,7 +494,7 @@ pull_up_sublinks_qual_recurse(PlannerInfo *root, Node *node,
 				}
 				if (available_rels2 != NULL &&
 					(j = convert_EXISTS_sublink_to_join(root, sublink, true,
-												   available_rels2)) != NULL)
+														available_rels2)) != NULL)
 				{
 					/* Yes; insert the new join node into the join tree */
 					j->larg = *jtlink2;
@@ -777,7 +777,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 		if (deletion_ok && !have_undeleted_child)
 		{
 			/* OK to delete this FromExpr entirely */
-			root->hasDeletedRTEs = true;		/* probably is set already */
+			root->hasDeletedRTEs = true;	/* probably is set already */
 			return NULL;
 		}
 	}
@@ -797,12 +797,12 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 				 */
 				j->larg = pull_up_subqueries_recurse(root, j->larg,
 													 lowest_outer_join,
-												   lowest_nulling_outer_join,
+													 lowest_nulling_outer_join,
 													 NULL,
 													 true);
 				j->rarg = pull_up_subqueries_recurse(root, j->rarg,
 													 lowest_outer_join,
-												   lowest_nulling_outer_join,
+													 lowest_nulling_outer_join,
 													 NULL,
 													 j->larg != NULL);
 				break;
@@ -812,7 +812,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 			case JOIN_CYPHER_MERGE:
 				j->larg = pull_up_subqueries_recurse(root, j->larg,
 													 j,
-												   lowest_nulling_outer_join,
+													 lowest_nulling_outer_join,
 													 NULL,
 													 false);
 				j->rarg = pull_up_subqueries_recurse(root, j->rarg,
@@ -841,7 +841,7 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 													 false);
 				j->rarg = pull_up_subqueries_recurse(root, j->rarg,
 													 j,
-												   lowest_nulling_outer_join,
+													 lowest_nulling_outer_join,
 													 NULL,
 													 false);
 				break;
@@ -920,6 +920,7 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	subroot->processed_tlist = NIL;
 	subroot->grouping_map = NULL;
 	subroot->minmax_aggs = NIL;
+	subroot->qual_security_level = 0;
 	subroot->hasInheritedTarget = false;
 	subroot->hasRecursion = false;
 	subroot->wt_param_id = -1;
@@ -1010,11 +1011,8 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 
 	/*
 	 * The subquery's targetlist items are now in the appropriate form to
-	 * insert into the top query, but if we are under an outer join then
-	 * non-nullable items and lateral references may have to be turned into
-	 * PlaceHolderVars.  If we are dealing with an appendrel member then
-	 * anything that's not a simple Var has to be turned into a
-	 * PlaceHolderVar.  Set up required context data for pullup_replace_vars.
+	 * insert into the top query, except that we may need to wrap them in
+	 * PlaceHolderVars.  Set up required context data for pullup_replace_vars.
 	 */
 	rvcontext.root = root;
 	rvcontext.targetlist = subquery->targetList;
@@ -1022,16 +1020,51 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	if (rte->lateral)
 		rvcontext.relids = get_relids_in_jointree((Node *) subquery->jointree,
 												  true);
-	else	/* won't need relids */
+	else						/* won't need relids */
 		rvcontext.relids = NULL;
 	rvcontext.outer_hasSubLinks = &parse->hasSubLinks;
 	rvcontext.varno = varno;
-	rvcontext.need_phvs = (lowest_nulling_outer_join != NULL ||
-						   containing_appendrel != NULL);
-	rvcontext.wrap_non_vars = (containing_appendrel != NULL);
+	/* these flags will be set below, if needed */
+	rvcontext.need_phvs = false;
+	rvcontext.wrap_non_vars = false;
 	/* initialize cache array with indexes 0 .. length(tlist) */
 	rvcontext.rv_cache = palloc0((list_length(subquery->targetList) + 1) *
 								 sizeof(Node *));
+
+	/*
+	 * If we are under an outer join then non-nullable items and lateral
+	 * references may have to be turned into PlaceHolderVars.
+	 */
+	if (lowest_nulling_outer_join != NULL)
+		rvcontext.need_phvs = true;
+
+	/*
+	 * If we are dealing with an appendrel member then anything that's not a
+	 * simple Var has to be turned into a PlaceHolderVar.  We force this to
+	 * ensure that what we pull up doesn't get merged into a surrounding
+	 * expression during later processing and then fail to match the
+	 * expression actually available from the appendrel.
+	 */
+	if (containing_appendrel != NULL)
+	{
+		rvcontext.need_phvs = true;
+		rvcontext.wrap_non_vars = true;
+	}
+
+	/*
+	 * If the parent query uses grouping sets, we need a PlaceHolderVar for
+	 * anything that's not a simple Var.  Again, this ensures that expressions
+	 * retain their separate identity so that they will match grouping set
+	 * columns when appropriate.  (It'd be sufficient to wrap values used in
+	 * grouping set columns, and do so only in non-aggregated portions of the
+	 * tlist and havingQual, but that would require a lot of infrastructure
+	 * that pullup_replace_vars hasn't currently got.)
+	 */
+	if (parse->groupingSets)
+	{
+		rvcontext.need_phvs = true;
+		rvcontext.wrap_non_vars = true;
+	}
 
 	/*
 	 * Replace all of the top query's references to the subquery's outputs
@@ -1139,10 +1172,12 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 				case RTE_SUBQUERY:
 				case RTE_FUNCTION:
 				case RTE_VALUES:
+				case RTE_TABLEFUNC:
 					child_rte->lateral = true;
 					break;
 				case RTE_JOIN:
 				case RTE_CTE:
+				case RTE_NAMEDTUPLESTORE:
 					/* these can't contain any lateral references */
 					break;
 			}
@@ -1209,9 +1244,12 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	 */
 	parse->hasSubLinks |= subquery->hasSubLinks;
 
+	/* If subquery had any RLS conditions, now main query does too */
+	parse->hasRowSecurity |= subquery->hasRowSecurity;
+
 	/*
-	 * subquery won't be pulled up if it hasAggs or hasWindowFuncs, so no work
-	 * needed on those flags
+	 * subquery won't be pulled up if it hasAggs, hasWindowFuncs, or
+	 * hasTargetSRFs, so no work needed on those flags
 	 */
 
 	/*
@@ -1429,8 +1467,7 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 	 */
 	if (!IsA(subquery, Query) ||
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_GRAPHWRITE) ||
-		subquery->utilityStmt != NULL)
+		 subquery->commandType != CMD_GRAPHWRITE))
 		elog(ERROR, "subquery is bogus");
 
 	if (subquery->commandType == CMD_GRAPHWRITE)
@@ -1445,8 +1482,8 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 		return false;
 
 	/*
-	 * Can't pull up a subquery involving grouping, aggregation, sorting,
-	 * limiting, or WITH.  (XXX WITH could possibly be allowed later)
+	 * Can't pull up a subquery involving grouping, aggregation, SRFs,
+	 * sorting, limiting, or WITH.  (XXX WITH could possibly be allowed later)
 	 *
 	 * We also don't pull up a subquery that has explicit FOR UPDATE/SHARE
 	 * clauses, because pullup would cause the locking to occur semantically
@@ -1456,6 +1493,7 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 	 */
 	if (subquery->hasAggs ||
 		subquery->hasWindowFuncs ||
+		subquery->hasTargetSRFs ||
 		subquery->groupClause ||
 		subquery->groupingSets ||
 		subquery->havingQual ||
@@ -1544,7 +1582,7 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 		}
 
 		if (jointree_contains_lateral_outer_refs((Node *) subquery->jointree,
-											  restricted, safe_upper_varnos))
+												 restricted, safe_upper_varnos))
 			return false;
 
 		/*
@@ -1568,15 +1606,6 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 				return false;
 		}
 	}
-
-	/*
-	 * Don't pull up a subquery that has any set-returning functions in its
-	 * targetlist.  Otherwise we might well wind up inserting set-returning
-	 * functions into places where they mustn't go, such as quals of higher
-	 * queries.  This also ensures deletion of an empty jointree is valid.
-	 */
-	if (expression_returns_set((Node *) subquery->targetList))
-		return false;
 
 	/*
 	 * Don't pull up a subquery that has any volatile functions in its
@@ -1623,7 +1652,7 @@ pull_up_simple_values(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte)
 	 * Need a modifiable copy of the VALUES list to hack on, just in case it's
 	 * multiply referenced.
 	 */
-	values_list = (List *) copyObject(linitial(rte->values_lists));
+	values_list = copyObject(linitial(rte->values_lists));
 
 	/*
 	 * The VALUES RTE can't contain any Vars of level zero, let alone any that
@@ -1777,15 +1806,13 @@ is_simple_union_all(Query *subquery)
 	/* Let's just make sure it's a valid subselect ... */
 	if (!IsA(subquery, Query) ||
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_GRAPHWRITE) ||
-		subquery->utilityStmt != NULL)
+		 subquery->commandType != CMD_GRAPHWRITE))
 		elog(ERROR, "subquery is bogus");
 
 	/* Is it a set-operation query at all? */
-	topop = (SetOperationStmt *) subquery->setOperations;
+	topop = castNode(SetOperationStmt, subquery->setOperations);
 	if (!topop)
 		return false;
-	Assert(IsA(topop, SetOperationStmt));
 
 	/* Can't handle ORDER BY, LIMIT/OFFSET, locking, or WITH */
 	if (subquery->sortClause ||
@@ -1999,6 +2026,11 @@ replace_vars_in_jointree(Node *jtnode,
 							pullup_replace_vars((Node *) rte->functions,
 												context);
 						break;
+					case RTE_TABLEFUNC:
+						rte->tablefunc = (TableFunc *)
+							pullup_replace_vars((Node *) rte->tablefunc,
+												context);
+						break;
 					case RTE_VALUES:
 						rte->values_lists = (List *)
 							pullup_replace_vars((Node *) rte->values_lists,
@@ -2006,6 +2038,7 @@ replace_vars_in_jointree(Node *jtnode,
 						break;
 					case RTE_JOIN:
 					case RTE_CTE:
+					case RTE_NAMEDTUPLESTORE:
 						/* these shouldn't be marked LATERAL */
 						Assert(false);
 						break;
@@ -2115,7 +2148,7 @@ pullup_replace_vars_callback(Var *var,
 				  &colnames, &fields);
 		/* Adjust the generated per-field Vars, but don't insert PHVs */
 		rcon->need_phvs = false;
-		context->sublevels_up = 0;		/* to match the expandRTE output */
+		context->sublevels_up = 0;	/* to match the expandRTE output */
 		fields = (List *) replace_rte_variables_mutator((Node *) fields,
 														context);
 		rcon->need_phvs = save_need_phvs;
@@ -2157,7 +2190,7 @@ pullup_replace_vars_callback(Var *var,
 				 varattno);
 
 		/* Make a copy of the tlist item to return */
-		newnode = copyObject(tle->expr);
+		newnode = (Node *) copyObject(tle->expr);
 
 		/* Insert PlaceHolderVar if needed */
 		if (rcon->need_phvs)
@@ -2212,7 +2245,7 @@ pullup_replace_vars_callback(Var *var,
 				 * level-zero var must belong to the subquery.
 				 */
 				if ((rcon->target_rte->lateral ?
-				   bms_overlap(pull_varnos((Node *) newnode), rcon->relids) :
+					 bms_overlap(pull_varnos((Node *) newnode), rcon->relids) :
 					 contain_vars_of_level((Node *) newnode, 0)) &&
 					!contain_nonstrict_functions((Node *) newnode))
 				{
@@ -2357,8 +2390,8 @@ flatten_simple_union_all(PlannerInfo *root)
 	RangeTblRef *rtr;
 
 	/* Shouldn't be called unless query has setops */
-	topop = (SetOperationStmt *) parse->setOperations;
-	Assert(topop && IsA(topop, SetOperationStmt));
+	topop = castNode(SetOperationStmt, parse->setOperations);
+	Assert(topop);
 
 	/* Can't optimize away a recursive UNION */
 	if (root->hasRecursion)
@@ -2769,7 +2802,7 @@ reduce_outer_joins_pass2(Node *jtnode,
 				{
 					/* OK to merge upper and local constraints */
 					local_nonnullable_rels = bms_add_members(local_nonnullable_rels,
-														   nonnullable_rels);
+															 nonnullable_rels);
 					local_nonnullable_vars = list_concat(local_nonnullable_vars,
 														 nonnullable_vars);
 					local_forced_null_vars = list_concat(local_forced_null_vars,
@@ -2814,7 +2847,7 @@ reduce_outer_joins_pass2(Node *jtnode,
 
 			if (right_state->contains_outer)
 			{
-				if (jointype != JOIN_FULL)		/* ie, INNER/LEFT/SEMI/ANTI */
+				if (jointype != JOIN_FULL)	/* ie, INNER/LEFT/SEMI/ANTI */
 				{
 					/* pass appropriate constraints, per comment above */
 					pass_nonnullable_rels = local_nonnullable_rels;

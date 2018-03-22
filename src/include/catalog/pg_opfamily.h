@@ -5,7 +5,7 @@
  *	  along with the relation's initial contents.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_opfamily.h
@@ -79,6 +79,7 @@ DATA(insert OID = 1974 (	403		network_ops		PGNSP PGUID ));
 #define NETWORK_BTREE_FAM_OID 1974
 DATA(insert OID = 1975 (	405		network_ops		PGNSP PGUID ));
 DATA(insert OID = 3550 (	783		network_ops		PGNSP PGUID ));
+DATA(insert OID = 3794 (	4000	network_ops		PGNSP PGUID ));
 DATA(insert OID = 1976 (	403		integer_ops		PGNSP PGUID ));
 #define INTEGER_BTREE_FAM_OID 1976
 DATA(insert OID = 1977 (	405		integer_ops		PGNSP PGUID ));
@@ -86,6 +87,8 @@ DATA(insert OID = 1982 (	403		interval_ops	PGNSP PGUID ));
 DATA(insert OID = 1983 (	405		interval_ops	PGNSP PGUID ));
 DATA(insert OID = 1984 (	403		macaddr_ops		PGNSP PGUID ));
 DATA(insert OID = 1985 (	405		macaddr_ops		PGNSP PGUID ));
+DATA(insert OID = 3371 (	403		macaddr8_ops	PGNSP PGUID ));
+DATA(insert OID = 3372 (	405		macaddr8_ops	PGNSP PGUID ));
 DATA(insert OID = 1986 (	403		name_ops		PGNSP PGUID ));
 #define NAME_BTREE_FAM_OID 1986
 DATA(insert OID = 1987 (	405		name_ops		PGNSP PGUID ));
@@ -116,7 +119,6 @@ DATA(insert OID = 2099 (	403		money_ops		PGNSP PGUID ));
 DATA(insert OID = 2222 (	405		bool_ops		PGNSP PGUID ));
 #define BOOL_HASH_FAM_OID 2222
 DATA(insert OID = 2223 (	405		bytea_ops		PGNSP PGUID ));
-DATA(insert OID = 2224 (	405		int2vector_ops	PGNSP PGUID ));
 DATA(insert OID = 2789 (	403		tid_ops			PGNSP PGUID ));
 DATA(insert OID = 2225 (	405		xid_ops			PGNSP PGUID ));
 DATA(insert OID = 2226 (	405		cid_ops			PGNSP PGUID ));
@@ -171,6 +173,7 @@ DATA(insert OID = 4070 (	3580	float_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4072 (	3580	abstime_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4073 (	3580	reltime_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4074 (	3580	macaddr_minmax_ops		PGNSP PGUID ));
+DATA(insert OID = 4109 (	3580	macaddr8_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4075 (	3580	network_minmax_ops		PGNSP PGUID ));
 DATA(insert OID = 4102 (	3580	network_inclusion_ops	PGNSP PGUID ));
 DATA(insert OID = 4076 (	3580	bpchar_minmax_ops		PGNSP PGUID ));
@@ -192,4 +195,4 @@ DATA(insert OID = 7105 ( 3580 graphid_minmax_ops    PGNSP PGUID ));
 
 DATA(insert OID = 7167 (  403 rowid_ops             PGNSP PGUID ));
 
-#endif   /* PG_OPFAMILY_H */
+#endif							/* PG_OPFAMILY_H */

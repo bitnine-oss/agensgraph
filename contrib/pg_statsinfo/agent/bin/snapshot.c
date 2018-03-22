@@ -1,7 +1,7 @@
 /*
  * snapshot.c:
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 #include "pg_statsinfod.h"
@@ -61,6 +61,7 @@ static const char *instance_gets[] =
 	SQL_SELECT_ROLE,
 	SQL_SELECT_PROFILE,
 	SQL_SELECT_LOCK,
+	SQL_SELECT_BGWRITER,
 #if PG_VERSION_NUM >= 90100
 	SQL_SELECT_REPLICATION,
 #endif
@@ -68,6 +69,7 @@ static const char *instance_gets[] =
 #if PG_VERSION_NUM >= 90400
 	SQL_SELECT_ARCHIVE,
 #endif
+	SQL_SELECT_REPLICATION_SLOTS,
 /*	SQL_SELECT_STATEMENT,	*/
 /*	SQL_SELECT_PLAN,		*/
 	NULL
@@ -86,6 +88,7 @@ static const char *instance_puts[] =
 	SQL_INSERT_ROLE,
 	SQL_INSERT_PROFILE,
 	SQL_INSERT_LOCK,
+	SQL_INSERT_BGWRITER,
 #if PG_VERSION_NUM >= 90100
 	SQL_INSERT_REPLICATION,
 #endif
@@ -93,6 +96,7 @@ static const char *instance_puts[] =
 #if PG_VERSION_NUM >= 90400
 	SQL_INSERT_ARCHIVE,
 #endif
+	SQL_INSERT_REPLICATION_SLOTS,
 	SQL_INSERT_STATEMENT,
 	SQL_INSERT_PLAN,
 	NULL
@@ -435,7 +439,7 @@ Snap_exec(Snap *snap, PGconn *conn, const char *instid)
 	/*
 	 * call statsrepo.alert(snapid) if exists
 	 */
-	if (has_statsrepo_alert(conn))
+	if (enable_alert && has_statsrepo_alert(conn))
 	{
 		elog(DEBUG2, "run alert(snapid=%s)", snapid);
 		alerts = pgut_execute(conn,

@@ -2,8 +2,8 @@
 #
 # Makefile for src/bin (client programs)
 #
-# Portions Copyright (c) 2017, Bitnine Inc.
-# Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+# Portions Copyright (c) 2018, Bitnine Inc.
+# Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/Makefile
@@ -24,12 +24,12 @@ SUBDIRS = \
 	pg_controldata \
 	pg_ctl \
 	pg_dump \
-	pg_resetxlog \
+	pg_resetwal \
 	pg_rewind \
 	pg_test_fsync \
 	pg_test_timing \
 	pg_upgrade \
-	pg_xlogdump \
+	pg_waldump \
 	pgbench \
 	psql \
 	scripts

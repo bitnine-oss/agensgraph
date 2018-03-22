@@ -1,7 +1,7 @@
 /*
  * pg_statsinfod.c
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 #include "pg_statsinfod.h"
@@ -9,7 +9,7 @@
 #include <fcntl.h>
 #include <sys/stat.h> 
 
-const char *PROGRAM_VERSION	= "3.2.3";
+const char *PROGRAM_VERSION	= "10.0";
 const char *PROGRAM_URL		= "http://pgstatsinfo.sourceforge.net/";
 const char *PROGRAM_EMAIL   = NULL;
 
@@ -29,6 +29,12 @@ int				server_version_num;		/* PG_VERSION_NUM */
 char		   *server_version_string;	/* PG_VERSION */
 int				server_encoding = -1;	/* server character encoding */
 char		   *log_timezone_name;
+int				page_size;				/* page size */
+int				xlog_seg_size;			/* size of each WAL segment */
+int				page_header_size;		/* page header size */
+int				htup_header_size;		/* tuple header size */
+int				item_id_size;			/* itemid size */
+pid_t			sil_pid;				/* pg_statsinfo launcher's pid */
 /*---- GUC variables (collector) -------*/
 char		   *data_directory;
 char		   *excluded_dbnames;
@@ -42,6 +48,8 @@ time_t			maintenance_time;
 int				repository_keepday;
 int				repolog_keepday;
 char		   *log_maintenance_command;
+bool			enable_alert;
+char		   *target_server;
 /*---- GUC variables (logger) ----------*/
 char		   *log_directory;
 char		   *log_error_verbosity;
@@ -102,6 +110,9 @@ pthread_t	th_writer;
 pthread_t	th_logger;
 pthread_t	th_logger_send;
 
+/* signal flag  */
+volatile bool	got_SIGHUP = false;
+
 static int help(void);
 static bool assign_int(const char *value, void *var);
 static bool assign_elevel(const char *value, void *var);
@@ -110,7 +121,6 @@ static bool assign_string(const char *value, void *var);
 static bool assign_bool(const char *value, void *var);
 static bool assign_time(const char *value, void *var);
 static bool assign_enable_maintenance(const char *value, void *var);
-static bool connect_test(const char *conninfo);
 static void readopt(void);
 static bool decode_time(const char *field, int *hour, int *min, int *sec);
 static int strtoi(const char *nptr, char **endptr, int base);
@@ -118,6 +128,8 @@ static bool execute_script(PGconn *conn, const char *script_file);
 static void create_lock_file(void);
 static void unlink_lock_file(void);
 static void load_control_file(ControlFile *ctrl);
+static void sighup_handler(SIGNAL_ARGS);
+static void check_agent_process(const char *lockfile);
 
 /* parameters */
 static struct ParamMap PARAM_MAP[] =
@@ -135,6 +147,12 @@ static struct ParamMap PARAM_MAP[] =
 	{"log_error_verbosity", assign_string, &log_error_verbosity},
 	{"syslog_facility", assign_syslog, &syslog_facility},
 	{"syslog_ident", assign_string, &syslog_ident},
+	{"page_size", assign_int, &page_size},
+	{"xlog_seg_size", assign_int, &xlog_seg_size},
+	{"page_header_size", assign_int, &page_header_size},
+	{"htup_header_size", assign_int, &htup_header_size},
+	{"item_id_size", assign_int, &item_id_size},
+	{"sil_pid", assign_int, &sil_pid},
 	{GUC_PREFIX ".excluded_dbnames", assign_string, &excluded_dbnames},
 	{GUC_PREFIX ".excluded_schemas", assign_string, &excluded_schemas},
 	{GUC_PREFIX ".stat_statements_max", assign_string, &stat_statements_max},
@@ -166,6 +184,8 @@ static struct ParamMap PARAM_MAP[] =
 	{GUC_PREFIX ".repolog_keepday", assign_int, &repolog_keepday},
 	{GUC_PREFIX ".log_maintenance_command", assign_string, &log_maintenance_command},
 	{GUC_PREFIX ".controlfile_fsync_interval", assign_int, &controlfile_fsync_interval},
+	{GUC_PREFIX ".enable_alert", assign_bool, &enable_alert},
+	{GUC_PREFIX ".target_server", assign_string, &target_server},
 	{":debug", assign_string, &msg_debug},
 	{":info", assign_string, &msg_info},
 	{":notice", assign_string, &msg_notice},
@@ -209,6 +229,13 @@ main(int argc, char *argv[])
 	/* stdin must be pipe from server */
 	if (isTTY(fileno(stdin)))
 		return help();
+
+	/* setup signal handler */
+	pqsignal(SIGHUP, sighup_handler);
+#if PG_VERSION_NUM >= 90300
+	pqsignal(SIGTERM, SIG_IGN);	/* for background worker */
+	pqsignal(SIGQUIT, SIG_IGN);	/* for background worker */
+#endif
 
 	/* read required parameters */
 	readopt();
@@ -336,7 +363,7 @@ str_to_elevel(const char *value)
 	if (msg_debug)
 	{
 		if (pg_strcasecmp(value, msg_debug) == 0)
-			return DEBUG2;
+			return DEBUG;
 		else if (pg_strcasecmp(value, msg_info) == 0)
 			return INFO;
 		else if (pg_strcasecmp(value, msg_notice) == 0)
@@ -644,57 +671,20 @@ assign_param(const char *name, const char *value)
 	return true;
 }
 
-static bool
-connect_test(const char *conninfo)
-{
-#if PG_VERSION_NUM >= 90100
-	return PQping(conninfo) == PQPING_OK;
-#else
-	PGconn			*conn;
-	ConnStatusType	 status;
-
-	conn = PQconnectdb(conninfo);
-	status = PQstatus(conn);
-	PQfinish(conn);
-	return status == CONNECTION_OK;
-#endif
-}
-
 /*
  * read required parameters.
  */
 static void
 readopt(void)
 {
-	PGconn		*conn;
-	PGresult	*res;
-	char		 conninfo[1024];
-
 	/* read required parameters from stdin */
 	readopt_from_file(stdin);
-	fclose(stdin);
 
 	Assert(postmaster_port);
 
-	snprintf(conninfo, lengthof(conninfo),
-		"dbname=%s port=%s options='-c log_statement=none'",
-		"postgres", postmaster_port);
-
-	/* wait until postmaster is ready to accept connection */
-	while (postmaster_is_alive())
-	{
-		if (connect_test(conninfo))
-			break;
-		sleep(1);	/* 1s */
-	}
-
-	/* read required parameters from db */
-	conn = pgut_connect(conninfo, NO, ERROR);
-	res = pgut_execute(conn, SQL_SELECT_CUSTOM_SETTINGS, 0, NULL);
-	readopt_from_db(res);
-
-	PQclear(res);
-	pgut_disconnect(conn);
+	if (!(enable_maintenance & MAINTENANCE_MODE_SNAPSHOT))
+		elog(NOTICE,
+			"automatic maintenance is disable. Please note the data size of the repository");
 }
 
 /*
@@ -961,68 +951,34 @@ create_lock_file(void)
 
 	join_path_components(lockfile, data_directory, STATSINFO_LOCK_FILE);
 
-	/* create the lockfile */
+	/* create the lock file */
 	fd = open(lockfile, O_WRONLY | O_CREAT | O_EXCL, 0600);
 	if (fd < 0)
 	{
-		FILE	*fp;
-		pid_t	 lock_si_pid;
-		pid_t	 lock_pg_pid;
-
 		if (errno != EEXIST && errno != EACCES)
 			ereport(FATAL,
 				(errcode_errno(),
 				 errmsg("could not create lock file \"%s\": %m", lockfile)));
 
 		/*
-		 * if lockfile already exists, do the check to avoid multiple boot.
-		 * and if another process still exists, terminate it.
+		 * if lock file already exists, do the check to avoid multiple boot.
+		 * and if previous process still alive, terminate it.
+		 * Note:
+		 * lock file is removed when the previous agent terminate.
+		 * so, create the lock file when after confirming
+		 * the previous agent terminate.
 		 */
-		fd = open(lockfile, O_RDWR, 0600);
+		check_agent_process(lockfile);
+
+		/* create the lock file */
+		fd = open(lockfile, O_WRONLY | O_CREAT, 0600);
 		if (fd < 0)
-		{
 			ereport(FATAL,
 				(errcode_errno(),
-				 errmsg("could not open lock file \"%s\": %m", lockfile)));
-		}
-
-		fp = fdopen(fd, "r+");
-		if (fp == NULL)
-			ereport(FATAL,
-				(errcode_errno(),
-				 errmsg("could not open lock file \"%s\": %m", lockfile)));
-
-		errno = 0;
-		if (fscanf(fp, "%d\n%d\n", &lock_si_pid, &lock_pg_pid) != 2)
-		{
-			if (errno == 0)
-				elog(FATAL, "bogus data in lock file \"%s\"", lockfile);
-			else
-				ereport(FATAL,
-					(errcode_errno(),
-					 errmsg("could not read lock file \"%s\": %m", lockfile)));
-		}
-
-		if (kill(lock_si_pid, 0) == 0)	/* process is alive */
-		{
-			/* check the postmaster PID */
-			if (lock_pg_pid == postmaster_pid)
-				elog(FATAL, "is another pg_statsinfod (PID %d) running",
-					lock_si_pid);
-
-			/* terminate the another process still exists */
-			elog(NOTICE, "terminate the another process still exists (PID %d)",
-				lock_si_pid);
-			if (kill(lock_si_pid, SIGKILL) != 0)
-				elog(ERROR, "could not send kill signal (PID %d): %m",
-					lock_si_pid);
-		}
-
-		/* reset the seek position in order to write the lock file */
-		lseek(fd, (off_t) 0, SEEK_SET);
+				 errmsg("could not create lock file \"%s\": %m", lockfile)));
 	}
 
-	/* write content to the lockfile */
+	/* write content to the lock file */
 	snprintf(buffer, sizeof(buffer), "%d\n%d\n", my_pid, postmaster_pid);
 
 	errno = 0;
@@ -1103,4 +1059,68 @@ load_control_file(ControlFile *ctrl)
 		if (!ReadControlFile(ctrl))
 			InitControlFile(ctrl);
 	}
+}
+
+static void
+sighup_handler(SIGNAL_ARGS)
+{
+	got_SIGHUP = true;
+}
+
+/*
+ * check the existence of the previous agent process
+ * and terminate it if still alive.
+ */
+static void
+check_agent_process(const char *lockfile)
+{
+	FILE	*fp;
+	pid_t	 lock_si_pid;
+	pid_t	 lock_pg_pid;
+	int		 retry;
+
+	/* read lock file */
+	fp = fopen(lockfile, "r");
+	if (fp == NULL)
+		ereport(FATAL,
+			(errcode_errno(),
+			 errmsg("could not open lock file \"%s\": %m", lockfile)));
+
+	errno = 0;
+	if (fscanf(fp, "%d\n%d\n", &lock_si_pid, &lock_pg_pid) != 2)
+	{
+		if (errno == 0)
+			elog(FATAL, "bogus data in lock file \"%s\"", lockfile);
+		else
+			ereport(FATAL,
+				(errcode_errno(),
+				 errmsg("could not read lock file \"%s\": %m", lockfile)));
+	}
+
+	fclose(fp);
+
+	if (kill(lock_si_pid, 0) != 0)	/* process is not alive */
+		return;
+
+	/* check the postmaster PID */
+	if (lock_pg_pid == postmaster_pid)
+		elog(FATAL, "is another pg_statsinfod (PID %d) running",
+			lock_si_pid);
+
+	/* terminate the another process still exists */
+	for (retry = 0; retry < 5; retry++)
+	{
+		usleep(200 * 1000);	/* 200ms */
+
+		if (kill(lock_si_pid, 0) != 0)	/* process is end */
+			return;
+	}
+
+	elog(NOTICE, "terminate the another process still exists (PID %d)",
+		lock_si_pid);
+	if (kill(lock_si_pid, SIGKILL) != 0)
+		elog(ERROR, "could not send kill signal (PID %d): %m",
+			lock_si_pid);
+
+	return;
 }

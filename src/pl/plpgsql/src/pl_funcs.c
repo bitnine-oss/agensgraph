@@ -3,7 +3,7 @@
  * pl_funcs.c		- Misc functions for the PL/pgSQL
  *			  procedural language
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -13,11 +13,13 @@
  *-------------------------------------------------------------------------
  */
 
-#include "plpgsql.h"
+#include "postgres.h"
 
 #include "parser/parser.h"
 #include "parser/scansup.h"
 #include "utils/memutils.h"
+
+#include "plpgsql.h"
 
 
 /* ----------
@@ -53,7 +55,7 @@ plpgsql_ns_init(void)
  * ----------
  */
 void
-plpgsql_ns_push(const char *label, enum PLpgSQL_label_types label_type)
+plpgsql_ns_push(const char *label, PLpgSQL_label_type label_type)
 {
 	if (label == NULL)
 		label = "";
@@ -91,7 +93,7 @@ plpgsql_ns_top(void)
  * ----------
  */
 void
-plpgsql_ns_additem(int itemtype, int itemno, const char *name)
+plpgsql_ns_additem(PLpgSQL_nsitem_type itemtype, int itemno, const char *name)
 {
 	PLpgSQL_nsitem *nse;
 
@@ -99,7 +101,7 @@ plpgsql_ns_additem(int itemtype, int itemno, const char *name)
 	/* first item added must be a label */
 	Assert(ns_top != NULL || itemtype == PLPGSQL_NSTYPE_LABEL);
 
-	nse = palloc(offsetof(PLpgSQL_nsitem, name) +strlen(name) + 1);
+	nse = palloc(offsetof(PLpgSQL_nsitem, name) + strlen(name) + 1);
 	nse->itemtype = itemtype;
 	nse->itemno = itemno;
 	nse->prev = ns_top;
@@ -267,7 +269,7 @@ plpgsql_ns_find_nearest_loop(PLpgSQL_nsitem *ns_cur)
 const char *
 plpgsql_stmt_typename(PLpgSQL_stmt *stmt)
 {
-	switch ((enum PLpgSQL_stmt_types) stmt->cmd_type)
+	switch (stmt->cmd_type)
 	{
 		case PLPGSQL_STMT_BLOCK:
 			return _("statement block");
@@ -327,7 +329,7 @@ plpgsql_stmt_typename(PLpgSQL_stmt *stmt)
  * GET DIAGNOSTICS item name as a string, for use in error messages etc.
  */
 const char *
-plpgsql_getdiag_kindname(int kind)
+plpgsql_getdiag_kindname(PLpgSQL_getdiag_kind kind)
 {
 	switch (kind)
 	{
@@ -403,7 +405,7 @@ static void free_expr(PLpgSQL_expr *expr);
 static void
 free_stmt(PLpgSQL_stmt *stmt)
 {
-	switch ((enum PLpgSQL_stmt_types) stmt->cmd_type)
+	switch (stmt->cmd_type)
 	{
 		case PLPGSQL_STMT_BLOCK:
 			free_block((PLpgSQL_stmt_block *) stmt);
@@ -827,7 +829,7 @@ static void
 dump_stmt(PLpgSQL_stmt *stmt)
 {
 	printf("%3d:", stmt->lineno);
-	switch ((enum PLpgSQL_stmt_types) stmt->cmd_type)
+	switch (stmt->cmd_type)
 	{
 		case PLPGSQL_STMT_BLOCK:
 			dump_block((PLpgSQL_stmt_block *) stmt);

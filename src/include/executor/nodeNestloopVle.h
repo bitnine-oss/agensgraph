@@ -13,7 +13,6 @@
 
 extern NestLoopVLEState *ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate,
 											 int eflags);
-extern TupleTableSlot *ExecNestLoopVLE(NestLoopVLEState *node);
 extern void ExecEndNestLoopVLE(NestLoopVLEState *node);
 extern void ExecReScanNestLoopVLE(NestLoopVLEState *node);
 

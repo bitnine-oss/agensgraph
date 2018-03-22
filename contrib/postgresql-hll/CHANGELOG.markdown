@@ -1,3 +1,11 @@
+2017-06-22
+==========
+v2.10.2 - Updated for PostgreSQL 10
+
+2016-09-22
+==========
+v2.10.1 - Updated for PostgreSQL 9.4 and 9.5.
+
 2014-01-10
 ==========
 v2.10.0 - Merged [PR #17](https://github.com/aggregateknowledge/postgresql-hll/pull/17), cleaned up compiler warnings and test cruft, added binary IO type for hll.

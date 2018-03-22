@@ -4,7 +4,7 @@
  *	  per-process shared memory data structures
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/proc.h
@@ -19,6 +19,7 @@
 #include "storage/latch.h"
 #include "storage/lock.h"
 #include "storage/pg_sema.h"
+#include "storage/proclist_types.h"
 
 /*
  * Each backend advertises up to PGPROC_MAX_CACHED_SUBXIDS TransactionIds
@@ -38,13 +39,23 @@ struct XidCache
 	TransactionId xids[PGPROC_MAX_CACHED_SUBXIDS];
 };
 
-/* Flags for PGXACT->vacuumFlags */
+/*
+ * Flags for PGXACT->vacuumFlags
+ *
+ * Note: If you modify these flags, you need to modify PROCARRAY_XXX flags
+ * in src/include/storage/procarray.h.
+ *
+ * PROC_RESERVED may later be assigned for use in vacuumFlags, but its value is
+ * used for PROCARRAY_SLOTS_XMIN in procarray.h, so GetOldestXmin won't be able
+ * to match and ignore processes with this flag set.
+ */
 #define		PROC_IS_AUTOVACUUM	0x01	/* is it an autovac worker? */
 #define		PROC_IN_VACUUM		0x02	/* currently running lazy vacuum */
 #define		PROC_IN_ANALYZE		0x04	/* currently running analyze */
 #define		PROC_VACUUM_FOR_WRAPAROUND	0x08	/* set by autovac only */
 #define		PROC_IN_LOGICAL_DECODING	0x10	/* currently doing logical
 												 * decoding outside xact */
+#define		PROC_RESERVED				0x20	/* reserved for procarray */
 
 /* flags reset at EOXact */
 #define		PROC_VACUUM_STATE_MASK \
@@ -86,7 +97,7 @@ struct PGPROC
 	SHM_QUEUE	links;			/* list link if process is in a list */
 	PGPROC	  **procgloballist; /* procglobal list that owns this PGPROC */
 
-	PGSemaphoreData sem;		/* ONE semaphore to sleep on */
+	PGSemaphore sem;			/* ONE semaphore to sleep on */
 	int			waitStatus;		/* STATUS_WAITING, STATUS_OK or STATUS_ERROR */
 
 	Latch		procLatch;		/* generic latch for process */
@@ -114,7 +125,10 @@ struct PGPROC
 	/* Info about LWLock the process is currently waiting for, if any. */
 	bool		lwWaiting;		/* true if waiting for an LW lock */
 	uint8		lwWaitMode;		/* lwlock mode being waited for */
-	dlist_node	lwWaitLink;		/* position in LW lock wait list */
+	proclist_node lwWaitLink;	/* position in LW lock wait list */
+
+	/* Support for condition variables. */
+	proclist_node cvWaitLink;	/* position in CV wait list */
 
 	/* Info about lock the process is currently waiting for, if any. */
 	/* waitLock and waitProcLock are NULL if not currently waiting. */
@@ -162,7 +176,7 @@ struct PGPROC
 
 	/* Lock manager data, recording fast-path locks taken by this backend. */
 	uint64		fpLockBits;		/* lock modes held for each fast-path slot */
-	Oid			fpRelId[FP_LOCK_SLOTS_PER_BACKEND];		/* slots for rel oids */
+	Oid			fpRelId[FP_LOCK_SLOTS_PER_BACKEND]; /* slots for rel oids */
 	bool		fpVXIDLock;		/* are we holding a fast-path VXID lock? */
 	LocalTransactionId fpLocalTransactionId;	/* lxid for fast-path VXID
 												 * lock */
@@ -172,7 +186,7 @@ struct PGPROC
 	 * leader to get the LWLock protecting these fields.
 	 */
 	PGPROC	   *lockGroupLeader;	/* lock group leader, if I'm a member */
-	dlist_head	lockGroupMembers;		/* list of members, if I'm a leader */
+	dlist_head	lockGroupMembers;	/* list of members, if I'm a leader */
 	dlist_node	lockGroupLink;	/* my member link, if I'm a member */
 };
 
@@ -241,9 +255,12 @@ typedef struct PROC_HDR
 	int			startupBufferPinWaitBufId;
 } PROC_HDR;
 
-extern PROC_HDR *ProcGlobal;
+extern PGDLLIMPORT PROC_HDR *ProcGlobal;
 
 extern PGPROC *PreparedXactProcs;
+
+/* Accessor for PGPROC given a pgprocno. */
+#define GetPGProcByNumber(n) (&ProcGlobal->allProcs[(n)])
 
 /*
  * We set aside some extra PGPROC structures for auxiliary processes,
@@ -255,9 +272,8 @@ extern PGPROC *PreparedXactProcs;
  */
 #define NUM_AUXILIARY_PROCS		4
 
-
 /* configurable options */
-extern int	DeadlockTimeout;
+extern PGDLLIMPORT int DeadlockTimeout;
 extern int	StatementTimeout;
 extern int	LockTimeout;
 extern int	IdleInTransactionSessionTimeout;
@@ -289,10 +305,12 @@ extern void CheckDeadLockAlert(void);
 extern bool IsWaitingForLock(void);
 extern void LockErrorCleanup(void);
 
-extern void ProcWaitForSignal(void);
+extern void ProcWaitForSignal(uint32 wait_event_info);
 extern void ProcSendSignal(int pid);
+
+extern PGPROC *AuxiliaryPidGetProc(int pid);
 
 extern void BecomeLockGroupLeader(void);
 extern bool BecomeLockGroupMember(PGPROC *leader, int pid);
 
-#endif   /* PROC_H */
+#endif							/* PROC_H */

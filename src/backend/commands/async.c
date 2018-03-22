@@ -3,7 +3,7 @@
  * async.c
  *	  Asynchronous notification: NOTIFY, LISTEN, UNLISTEN
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -137,7 +137,9 @@
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
+#include "utils/snapmgr.h"
 #include "utils/timestamp.h"
+#include "utils/tqual.h"
 
 
 /*
@@ -245,7 +247,7 @@ typedef struct AsyncQueueControl
 	QueuePosition head;			/* head points to the next free location */
 	QueuePosition tail;			/* the global tail is equivalent to the pos of
 								 * the "slowest" backend */
-	TimestampTz lastQueueFillWarn;		/* time of last queue-full msg */
+	TimestampTz lastQueueFillWarn;	/* time of last queue-full msg */
 	QueueBackendStatus backend[FLEXIBLE_ARRAY_MEMBER];
 	/* backend[0] is not used; used entries are from [1] to [MaxBackends] */
 } AsyncQueueControl;
@@ -265,7 +267,7 @@ static SlruCtlData AsyncCtlData;
 
 #define AsyncCtl					(&AsyncCtlData)
 #define QUEUE_PAGESIZE				BLCKSZ
-#define QUEUE_FULL_WARN_INTERVAL	5000		/* warn at most once every 5s */
+#define QUEUE_FULL_WARN_INTERVAL	5000	/* warn at most once every 5s */
 
 /*
  * slru.c currently assumes that all filenames are four characters of hex
@@ -291,7 +293,7 @@ static SlruCtlData AsyncCtlData;
  * (ie, have committed a LISTEN on).  It is a simple list of channel names,
  * allocated in TopMemoryContext.
  */
-static List *listenChannels = NIL;		/* list of C strings */
+static List *listenChannels = NIL;	/* list of C strings */
 
 /*
  * State for pending LISTEN/UNLISTEN actions consists of an ordered list of
@@ -316,7 +318,7 @@ typedef struct
 	char		channel[FLEXIBLE_ARRAY_MEMBER]; /* nul-terminated string */
 } ListenAction;
 
-static List *pendingActions = NIL;		/* list of ListenAction */
+static List *pendingActions = NIL;	/* list of ListenAction */
 
 static List *upperPendingActions = NIL; /* list of upper-xact lists */
 
@@ -342,9 +344,9 @@ typedef struct Notification
 	char	   *payload;		/* payload string (can be empty) */
 } Notification;
 
-static List *pendingNotifies = NIL;		/* list of Notifications */
+static List *pendingNotifies = NIL; /* list of Notifications */
 
-static List *upperPendingNotifies = NIL;		/* list of upper-xact lists */
+static List *upperPendingNotifies = NIL;	/* list of upper-xact lists */
 
 /*
  * Inbound notifications are initially processed by HandleNotifyInterrupt(),
@@ -387,7 +389,8 @@ static bool SignalBackends(void);
 static void asyncQueueReadAllNotifications(void);
 static bool asyncQueueProcessPageEntries(volatile QueuePosition *current,
 							 QueuePosition stop,
-							 char *page_buffer);
+							 char *page_buffer,
+							 Snapshot snapshot);
 static void asyncQueueAdvanceTail(void);
 static void ProcessIncomingNotify(void);
 static bool AsyncExistsPendingNotify(const char *channel, const char *payload);
@@ -798,7 +801,7 @@ PreCommit_Notify(void)
 		}
 	}
 
-	/* Queue any pending notifies */
+	/* Queue any pending notifies (must happen after the above) */
 	if (pendingNotifies)
 	{
 		ListCell   *nextNotify;
@@ -853,7 +856,7 @@ PreCommit_Notify(void)
 			if (asyncQueueIsFull())
 				ereport(ERROR,
 						(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-					  errmsg("too many notifications in the NOTIFY queue")));
+						 errmsg("too many notifications in the NOTIFY queue")));
 			nextNotify = asyncQueueAddEntries(nextNotify);
 			LWLockRelease(AsyncQueueLock);
 		}
@@ -987,7 +990,9 @@ Exec_ListenPreCommit(void)
 	 * have already committed before we started to LISTEN.
 	 *
 	 * Note that we are not yet listening on anything, so we won't deliver any
-	 * notification to the frontend.
+	 * notification to the frontend.  Also, although our transaction might
+	 * have executed NOTIFY, those message(s) aren't queued yet so we can't
+	 * see them in the queue.
 	 *
 	 * This will also advance the global tail pointer if possible.
 	 */
@@ -1184,7 +1189,7 @@ asyncQueueUnregister(void)
 {
 	bool		advanceTail;
 
-	Assert(listenChannels == NIL);		/* else caller error */
+	Assert(listenChannels == NIL);	/* else caller error */
 
 	if (!amRegisteredListener)	/* nothing to do */
 		return;
@@ -1636,7 +1641,7 @@ AtSubCommit_Notify(void)
 	List	   *parentPendingActions;
 	List	   *parentPendingNotifies;
 
-	parentPendingActions = (List *) linitial(upperPendingActions);
+	parentPendingActions = linitial_node(List, upperPendingActions);
 	upperPendingActions = list_delete_first(upperPendingActions);
 
 	Assert(list_length(upperPendingActions) ==
@@ -1647,7 +1652,7 @@ AtSubCommit_Notify(void)
 	 */
 	pendingActions = list_concat(parentPendingActions, pendingActions);
 
-	parentPendingNotifies = (List *) linitial(upperPendingNotifies);
+	parentPendingNotifies = linitial_node(List, upperPendingNotifies);
 	upperPendingNotifies = list_delete_first(upperPendingNotifies);
 
 	Assert(list_length(upperPendingNotifies) ==
@@ -1679,13 +1684,13 @@ AtSubAbort_Notify(void)
 	 */
 	while (list_length(upperPendingActions) > my_level - 2)
 	{
-		pendingActions = (List *) linitial(upperPendingActions);
+		pendingActions = linitial_node(List, upperPendingActions);
 		upperPendingActions = list_delete_first(upperPendingActions);
 	}
 
 	while (list_length(upperPendingNotifies) > my_level - 2)
 	{
-		pendingNotifies = (List *) linitial(upperPendingNotifies);
+		pendingNotifies = linitial_node(List, upperPendingNotifies);
 		upperPendingNotifies = list_delete_first(upperPendingNotifies);
 	}
 }
@@ -1744,6 +1749,7 @@ asyncQueueReadAllNotifications(void)
 	volatile QueuePosition pos;
 	QueuePosition oldpos;
 	QueuePosition head;
+	Snapshot	snapshot;
 	bool		advanceTail;
 
 	/* page_buffer must be adequately aligned, so use a union */
@@ -1766,6 +1772,9 @@ asyncQueueReadAllNotifications(void)
 		/* Nothing to do, we have read all notifications already. */
 		return;
 	}
+
+	/* Get snapshot we'll use to decide which xacts are still in progress */
+	snapshot = RegisterSnapshot(GetLatestSnapshot());
 
 	/*----------
 	 * Note that we deliver everything that we see in the queue and that
@@ -1825,7 +1834,7 @@ asyncQueueReadAllNotifications(void)
 				/* we only want to read as far as head */
 				copysize = QUEUE_POS_OFFSET(head) - curoffset;
 				if (copysize < 0)
-					copysize = 0;		/* just for safety */
+					copysize = 0;	/* just for safety */
 			}
 			else
 			{
@@ -1854,7 +1863,8 @@ asyncQueueReadAllNotifications(void)
 			 * while sending the notifications to the frontend.
 			 */
 			reachedStop = asyncQueueProcessPageEntries(&pos, head,
-													   page_buffer.buf);
+													   page_buffer.buf,
+													   snapshot);
 		} while (!reachedStop);
 	}
 	PG_CATCH();
@@ -1882,6 +1892,9 @@ asyncQueueReadAllNotifications(void)
 	/* If we were the laziest backend, try to advance the tail pointer */
 	if (advanceTail)
 		asyncQueueAdvanceTail();
+
+	/* Done with snapshot */
+	UnregisterSnapshot(snapshot);
 }
 
 /*
@@ -1903,7 +1916,8 @@ asyncQueueReadAllNotifications(void)
 static bool
 asyncQueueProcessPageEntries(volatile QueuePosition *current,
 							 QueuePosition stop,
-							 char *page_buffer)
+							 char *page_buffer,
+							 Snapshot snapshot)
 {
 	bool		reachedStop = false;
 	bool		reachedEndOfPage;
@@ -1928,7 +1942,7 @@ asyncQueueProcessPageEntries(volatile QueuePosition *current,
 		/* Ignore messages destined for other databases */
 		if (qe->dboid == MyDatabaseId)
 		{
-			if (TransactionIdIsInProgress(qe->xid))
+			if (XidInMVCCSnapshot(qe->xid, snapshot))
 			{
 				/*
 				 * The source transaction is still in progress, so we can't
@@ -1939,10 +1953,15 @@ asyncQueueProcessPageEntries(volatile QueuePosition *current,
 				 * this advance-then-back-up behavior when dealing with an
 				 * uncommitted message.)
 				 *
-				 * Note that we must test TransactionIdIsInProgress before we
-				 * test TransactionIdDidCommit, else we might return a message
-				 * from a transaction that is not yet visible to snapshots;
-				 * compare the comments at the head of tqual.c.
+				 * Note that we must test XidInMVCCSnapshot before we test
+				 * TransactionIdDidCommit, else we might return a message from
+				 * a transaction that is not yet visible to snapshots; compare
+				 * the comments at the head of tqual.c.
+				 *
+				 * Also, while our own xact won't be listed in the snapshot,
+				 * we need not check for TransactionIdIsCurrentTransactionId
+				 * because our transaction cannot (yet) have queued any
+				 * messages.
 				 */
 				*current = thisentry;
 				reachedStop = true;

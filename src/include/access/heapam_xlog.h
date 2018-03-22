@@ -4,7 +4,7 @@
  *	  POSTGRES heap access XLOG definitions.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/heapam_xlog.h
@@ -189,7 +189,7 @@ typedef struct xl_heap_update
 {
 	TransactionId old_xmax;		/* xmax of the old tuple */
 	OffsetNumber old_offnum;	/* old tuple's offset */
-	uint8		old_infobits_set;		/* infomask bits to set on old tuple */
+	uint8		old_infobits_set;	/* infomask bits to set on old tuple */
 	uint8		flags;
 	TransactionId new_xmax;		/* xmax of the new tuple */
 	OffsetNumber new_offnum;	/* new tuple's offset */
@@ -339,13 +339,7 @@ typedef struct xl_heap_new_cid
 	TransactionId top_xid;
 	CommandId	cmin;
 	CommandId	cmax;
-
-	/*
-	 * don't really need the combocid since we have the actual values right in
-	 * this struct, but the padding makes it free and its useful for
-	 * debugging.
-	 */
-	CommandId	combocid;
+	CommandId	combocid;		/* just for debugging */
 
 	/*
 	 * Store the relfilenode/ctid pair to facilitate lookups.
@@ -373,6 +367,7 @@ extern void HeapTupleHeaderAdvanceLatestRemovedXid(HeapTupleHeader tuple,
 extern void heap_redo(XLogReaderState *record);
 extern void heap_desc(StringInfo buf, XLogReaderState *record);
 extern const char *heap_identify(uint8 info);
+extern void heap_mask(char *pagedata, BlockNumber blkno);
 extern void heap2_redo(XLogReaderState *record);
 extern void heap2_desc(StringInfo buf, XLogReaderState *record);
 extern const char *heap2_identify(uint8 info);
@@ -389,6 +384,8 @@ extern XLogRecPtr log_heap_freeze(Relation reln, Buffer buffer,
 				TransactionId cutoff_xid, xl_heap_freeze_tuple *tuples,
 				int ntuples);
 extern bool heap_prepare_freeze_tuple(HeapTupleHeader tuple,
+						  TransactionId relfrozenxid,
+						  TransactionId relminmxid,
 						  TransactionId cutoff_xid,
 						  TransactionId cutoff_multi,
 						  xl_heap_freeze_tuple *frz,
@@ -398,4 +395,4 @@ extern void heap_execute_freeze_tuple(HeapTupleHeader tuple,
 extern XLogRecPtr log_heap_visible(RelFileNode rnode, Buffer heap_buffer,
 				 Buffer vm_buffer, TransactionId cutoff_xid, uint8 flags);
 
-#endif   /* HEAPAM_XLOG_H */
+#endif							/* HEAPAM_XLOG_H */

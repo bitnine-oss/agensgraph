@@ -3,7 +3,7 @@
  * tsvector_op.c
  *	  operations over tsvector
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -27,6 +27,7 @@
 #include "tsearch/ts_utils.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/regproc.h"
 #include "utils/rel.h"
 
 
@@ -322,7 +323,7 @@ tsvector_setweight_by_filter(PG_FUNCTION_ARGS)
 					 errmsg("lexeme array may not contain nulls")));
 
 		lex = VARDATA(dlexemes[i]);
-		lex_len = VARSIZE_ANY_EXHDR(dlexemes[i]);
+		lex_len = VARSIZE(dlexemes[i]) - VARHDRSZ;
 		lex_pos = tsvector_bsearch(tsout, lex, lex_len);
 
 		if (lex_pos >= 0 && (j = POSDATALEN(tsout, entry + lex_pos)) != 0)
@@ -410,7 +411,7 @@ tsvector_bsearch(const TSVector tsv, char *lexeme, int lexeme_len)
 			StopHigh = StopMiddle;
 		else if (cmp > 0)
 			StopLow = StopMiddle + 1;
-		else	/* found it */
+		else					/* found it */
 			return StopMiddle;
 	}
 
@@ -556,8 +557,8 @@ tsvector_delete_str(PG_FUNCTION_ARGS)
 {
 	TSVector	tsin = PG_GETARG_TSVECTOR(0),
 				tsout;
-	text	   *tlexeme = PG_GETARG_TEXT_P(1);
-	char	   *lexeme = VARDATA(tlexeme);
+	text	   *tlexeme = PG_GETARG_TEXT_PP(1);
+	char	   *lexeme = VARDATA_ANY(tlexeme);
 	int			lexeme_len = VARSIZE_ANY_EXHDR(tlexeme),
 				skip_index;
 
@@ -608,8 +609,8 @@ tsvector_delete_arr(PG_FUNCTION_ARGS)
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("lexeme array may not contain nulls")));
 
-		lex = VARDATA_ANY(dlexemes[i]);
-		lex_len = VARSIZE_ANY_EXHDR(dlexemes[i]);
+		lex = VARDATA(dlexemes[i]);
+		lex_len = VARSIZE(dlexemes[i]) - VARHDRSZ;
 		lex_pos = tsvector_bsearch(tsin, lex, lex_len);
 
 		if (lex_pos >= 0)
@@ -673,7 +674,7 @@ tsvector_unnest(PG_FUNCTION_ARGS)
 		Datum		values[3];
 
 		values[0] = PointerGetDatum(
-				  cstring_to_text_with_len(data + arrin[i].pos, arrin[i].len)
+									cstring_to_text_with_len(data + arrin[i].pos, arrin[i].len)
 			);
 
 		if (arrin[i].haspos)
@@ -696,14 +697,14 @@ tsvector_unnest(PG_FUNCTION_ARGS)
 				positions[j] = Int16GetDatum(WEP_GETPOS(posv->pos[j]));
 				weight = 'D' - WEP_GETWEIGHT(posv->pos[j]);
 				weights[j] = PointerGetDatum(
-										 cstring_to_text_with_len(&weight, 1)
+											 cstring_to_text_with_len(&weight, 1)
 					);
 			}
 
 			values[1] = PointerGetDatum(
-			  construct_array(positions, posv->npos, INT2OID, 2, true, 's'));
+										construct_array(positions, posv->npos, INT2OID, 2, true, 's'));
 			values[2] = PointerGetDatum(
-			  construct_array(weights, posv->npos, TEXTOID, -1, false, 'i'));
+										construct_array(weights, posv->npos, TEXTOID, -1, false, 'i'));
 		}
 		else
 		{
@@ -737,7 +738,7 @@ tsvector_to_array(PG_FUNCTION_ARGS)
 	for (i = 0; i < tsin->size; i++)
 	{
 		elements[i] = PointerGetDatum(
-		  cstring_to_text_with_len(STRPTR(tsin) + arrin[i].pos, arrin[i].len)
+									  cstring_to_text_with_len(STRPTR(tsin) + arrin[i].pos, arrin[i].len)
 			);
 	}
 
@@ -792,7 +793,7 @@ array_to_tsvector(PG_FUNCTION_ARGS)
 
 	/* Calculate space needed for surviving lexemes. */
 	for (i = 0; i < nitems; i++)
-		datalen += VARSIZE_ANY_EXHDR(dlexemes[i]);
+		datalen += VARSIZE(dlexemes[i]) - VARHDRSZ;
 	tslen = CALCDATASIZE(nitems, datalen);
 
 	/* Allocate and fill tsvector. */
@@ -804,8 +805,8 @@ array_to_tsvector(PG_FUNCTION_ARGS)
 	cur = STRPTR(tsout);
 	for (i = 0; i < nitems; i++)
 	{
-		char	   *lex = VARDATA_ANY(dlexemes[i]);
-		int			lex_len = VARSIZE_ANY_EXHDR(dlexemes[i]);
+		char	   *lex = VARDATA(dlexemes[i]);
+		int			lex_len = VARSIZE(dlexemes[i]) - VARHDRSZ;
 
 		memcpy(cur, lex, lex_len);
 		arrout[i].haspos = 0;
@@ -1057,7 +1058,7 @@ tsvector_concat(PG_FUNCTION_ARGS)
 					if (ptr2->haspos)
 						dataoff += add_pos(in2, ptr2, out, ptr, maxpos) * sizeof(WordEntryPos);
 				}
-				else	/* must have ptr2->haspos */
+				else			/* must have ptr2->haspos */
 				{
 					int			addlen = add_pos(in2, ptr2, out, ptr, maxpos);
 
@@ -1254,7 +1255,7 @@ checkclass_str(CHKVAL *chkval, WordEntry *entry, QueryOperand *val,
 				posvec_iter++;
 			}
 		}
-		else	/* data != NULL */
+		else					/* data != NULL */
 		{
 			data->npos = posvec->npos;
 			data->pos = posvec->pos;
@@ -1488,7 +1489,7 @@ TS_phrase_output(ExecPhraseData *data,
 			Lindex++;
 			Rindex++;
 		}
-		else	/* Lpos > Rpos */
+		else					/* Lpos > Rpos */
 		{
 			/* Rpos is not matched in Ldata, should we output it? */
 			if (emit & TSPO_R_ONLY)
@@ -2319,8 +2320,8 @@ ts_stat_sql(MemoryContext persistentContext, text *txt, text *ws)
 	{
 		char	   *buf;
 
-		buf = VARDATA(ws);
-		while (buf - VARDATA(ws) < VARSIZE(ws) - VARHDRSZ)
+		buf = VARDATA_ANY(ws);
+		while (buf - VARDATA_ANY(ws) < VARSIZE_ANY_EXHDR(ws))
 		{
 			if (pg_mblen(buf) == 1)
 			{
@@ -2383,7 +2384,7 @@ ts_stat1(PG_FUNCTION_ARGS)
 	if (SRF_IS_FIRSTCALL())
 	{
 		TSVectorStat *stat;
-		text	   *txt = PG_GETARG_TEXT_P(0);
+		text	   *txt = PG_GETARG_TEXT_PP(0);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		SPI_connect();
@@ -2408,8 +2409,8 @@ ts_stat2(PG_FUNCTION_ARGS)
 	if (SRF_IS_FIRSTCALL())
 	{
 		TSVectorStat *stat;
-		text	   *txt = PG_GETARG_TEXT_P(0);
-		text	   *ws = PG_GETARG_TEXT_P(1);
+		text	   *txt = PG_GETARG_TEXT_PP(0);
+		text	   *ws = PG_GETARG_TEXT_PP(1);
 
 		funcctx = SRF_FIRSTCALL_INIT();
 		SPI_connect();
@@ -2465,7 +2466,7 @@ tsvector_update_trigger(PG_FUNCTION_ARGS, bool config_column)
 	Oid			cfgId;
 
 	/* Check call context */
-	if (!CALLED_AS_TRIGGER(fcinfo))		/* internal error */
+	if (!CALLED_AS_TRIGGER(fcinfo)) /* internal error */
 		elog(ERROR, "tsvector_update_trigger: not fired by trigger manager");
 
 	trigdata = (TriggerData *) fcinfo->context;
@@ -2494,6 +2495,7 @@ tsvector_update_trigger(PG_FUNCTION_ARGS, bool config_column)
 				(errcode(ERRCODE_UNDEFINED_COLUMN),
 				 errmsg("tsvector column \"%s\" does not exist",
 						trigger->tgargs[0])));
+	/* This will effectively reject system columns, so no separate test: */
 	if (!IsBinaryCoercible(SPI_gettypeid(rel->rd_att, tsvector_attr_num),
 						   TSVECTOROID))
 		ereport(ERROR,
@@ -2568,37 +2570,24 @@ tsvector_update_trigger(PG_FUNCTION_ARGS, bool config_column)
 		if (isnull)
 			continue;
 
-		txt = DatumGetTextP(datum);
+		txt = DatumGetTextPP(datum);
 
-		parsetext(cfgId, &prs, VARDATA(txt), VARSIZE(txt) - VARHDRSZ);
+		parsetext(cfgId, &prs, VARDATA_ANY(txt), VARSIZE_ANY_EXHDR(txt));
 
 		if (txt != (text *) DatumGetPointer(datum))
 			pfree(txt);
 	}
 
 	/* make tsvector value */
-	if (prs.curwords)
-	{
-		datum = PointerGetDatum(make_tsvector(&prs));
-		rettuple = SPI_modifytuple(rel, rettuple, 1, &tsvector_attr_num,
-								   &datum, NULL);
-		pfree(DatumGetPointer(datum));
-	}
-	else
-	{
-		TSVector	out = palloc(CALCDATASIZE(0, 0));
+	datum = TSVectorGetDatum(make_tsvector(&prs));
+	isnull = false;
 
-		SET_VARSIZE(out, CALCDATASIZE(0, 0));
-		out->size = 0;
-		datum = PointerGetDatum(out);
-		rettuple = SPI_modifytuple(rel, rettuple, 1, &tsvector_attr_num,
-								   &datum, NULL);
-		pfree(prs.words);
-	}
+	/* and insert it into tuple */
+	rettuple = heap_modify_tuple_by_cols(rettuple, rel->rd_att,
+										 1, &tsvector_attr_num,
+										 &datum, &isnull);
 
-	if (rettuple == NULL)		/* internal error */
-		elog(ERROR, "tsvector_update_trigger: %d returned by SPI_modifytuple",
-			 SPI_result);
+	pfree(DatumGetPointer(datum));
 
 	return PointerGetDatum(rettuple);
 }

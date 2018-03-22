@@ -239,7 +239,7 @@ proj_path(DijkstraState *node)
 	edges = list_delete_cell(edges, null_edge, NULL);
 
 	projInfo = node->ps.ps_ProjInfo;
-	slot = projInfo->pi_slot;
+	slot = projInfo->pi_state.resultslot;
 	econtext = projInfo->pi_exprContext;
 
 	ExecClearTuple(slot);
@@ -274,7 +274,7 @@ compute_limit(DijkstraState *node)
 		Datum		val;
 		bool		is_null;
 
-		val = ExecEvalExprSwitchContext(node->limit, econtext, &is_null, NULL);
+		val = ExecEvalExprSwitchContext(node->limit, econtext, &is_null);
 		if (is_null)
 		{
 			node->max_n = 1;
@@ -294,15 +294,15 @@ compute_limit(DijkstraState *node)
 	}
 }
 
-TupleTableSlot *
-ExecDijkstra(DijkstraState *node)
+static TupleTableSlot *
+ExecDijkstra(PlanState *pstate)
 {
+	DijkstraState *node = castNode(DijkstraState, pstate);
 	Dijkstra   *dijkstra;
 	PlanState  *outerPlan;
 	ExprContext *econtext;
 	TupleTableSlot *outerTupleSlot;
 	bool		is_null;
-	ExprDoneCond is_done;
 	Datum		start_vid;
 	dijkstra_pq_entry *start_node;
 	Datum		end_vid;
@@ -330,11 +330,11 @@ ExecDijkstra(DijkstraState *node)
 
 	compute_limit(node);
 
-	start_vid = ExecEvalExpr(node->source, econtext, &is_null, &is_done);
+	start_vid = ExecEvalExpr(node->source, econtext, &is_null);
 	start_node = pq_add(node->pq, node->pq_mcxt, DatumGetGraphid(start_vid),
 						0.0);
 
-	end_vid = ExecEvalExpr(node->target, econtext, &is_null, &is_done);
+	end_vid = ExecEvalExpr(node->target, econtext, &is_null);
 	node->target_id = DatumGetGraphid(end_vid);
 
 	vertex = hash_search(node->visited_nodes, &start_node->to, HASH_ENTER,
@@ -441,6 +441,7 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	dstate = makeNode(DijkstraState);
 	dstate->ps.plan = (Plan *) node;
 	dstate->ps.state = estate;
+	dstate->ps.ExecProcNode = ExecDijkstra;
 
 	/*
 	 * Miscellaneous initialization
@@ -466,12 +467,6 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	dstate->limit = ExecInitExpr((Expr *) node->limit, (PlanState *) dstate);
 
 	/*
-	 * initialize child expressions
-	 */
-	dstate->ps.targetlist = (List *)
-		ExecInitExpr((Expr *) node->plan.targetlist, (PlanState *) dstate);
-
-	/*
 	 * initialize child nodes
 	 */
 	outerPlan = ExecInitNode(outerPlan(node), estate, eflags);
@@ -490,11 +485,6 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	ExecAssignProjectionInfo(&dstate->ps, NULL);
 
 	ExecSetSlotDescriptor(dstate->selfTupleSlot, ExecGetResultType(outerPlan));
-
-	/*
-	 * finally, wipe the current outer tuple clean.
-	 */
-	dstate->ps.ps_TupFromTlist = false;
 
 	return dstate;
 }

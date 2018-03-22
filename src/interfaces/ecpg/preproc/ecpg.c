@@ -1,12 +1,12 @@
 /* src/interfaces/ecpg/preproc/ecpg.c */
 
 /* Main for ecpg, the PostgreSQL embedded SQL precompiler. */
-/* Copyright (c) 1996-2016, PostgreSQL Global Development Group */
+/* Copyright (c) 1996-2017, PostgreSQL Global Development Group */
 
 #include "postgres_fe.h"
 
 #include <unistd.h>
-#include <string.h>
+
 #include "getopt_long.h"
 
 #include "extern.h"
@@ -51,7 +51,7 @@ help(const char *progname)
 	printf(_("  -I DIRECTORY   search DIRECTORY for include files\n"));
 	printf(_("  -o OUTFILE     write result to OUTFILE\n"));
 	printf(_("  -r OPTION      specify run-time behavior; OPTION can be:\n"
-	 "                 \"no_indicator\", \"prepare\", \"questionmarks\"\n"));
+			 "                 \"no_indicator\", \"prepare\", \"questionmarks\"\n"));
 	printf(_("  --regression   run in regression testing mode\n"));
 	printf(_("  -t             turn on autocommit of transactions\n"));
 	printf(_("  -V, --version  output version information, then exit\n"));
@@ -149,8 +149,7 @@ main(int argc, char *const argv[])
 		}
 		if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-V") == 0)
 		{
-			printf("ecpg (PostgreSQL %s) %d.%d.%d\n", PG_VERSION,
-				   MAJOR_VERSION, MINOR_VERSION, PATCHLEVEL);
+			printf("ecpg %s\n", PG_VERSION);
 			exit(0);
 		}
 	}
@@ -253,8 +252,9 @@ main(int argc, char *const argv[])
 
 	if (verbose)
 	{
-		fprintf(stderr, _("%s, the PostgreSQL embedded C preprocessor, version %d.%d.%d\n"),
-				progname, MAJOR_VERSION, MINOR_VERSION, PATCHLEVEL);
+		fprintf(stderr,
+				_("%s, the PostgreSQL embedded C preprocessor, version %s\n"),
+				progname, PG_VERSION);
 		fprintf(stderr, _("EXEC SQL INCLUDE ... search starts here:\n"));
 		for (ip = include_paths; ip != NULL; ip = ip->next)
 			fprintf(stderr, " %s\n", ip->path);
@@ -430,7 +430,7 @@ main(int argc, char *const argv[])
 				if (regression_mode)
 					fprintf(base_yyout, "/* Processed by ecpg (regression mode) */\n");
 				else
-					fprintf(base_yyout, "/* Processed by ecpg (%d.%d.%d) */\n", MAJOR_VERSION, MINOR_VERSION, PATCHLEVEL);
+					fprintf(base_yyout, "/* Processed by ecpg (%s) */\n", PG_VERSION);
 
 				if (header_mode == false)
 				{

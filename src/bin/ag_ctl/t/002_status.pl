@@ -22,4 +22,4 @@ system_or_bail 'ag_ctl', '-l', "$tempdir/logfile", '-D',
 command_exit_is([ 'ag_ctl', 'status', '-D', $node->data_dir ],
 	0, 'ag_ctl status with server running');
 
-system_or_bail 'ag_ctl', 'stop', '-D', $node->data_dir, '-m', 'fast';
+system_or_bail 'ag_ctl', 'stop', '-D', $node->data_dir;

@@ -4,7 +4,7 @@
  *	  prototypes for clauses.c.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/clauses.h
@@ -54,14 +54,14 @@ extern bool contain_window_function(Node *clause);
 extern WindowFuncLists *find_window_functions(Node *clause, Index maxWinRef);
 
 extern double expression_returns_set_rows(Node *clause);
-extern double tlist_returns_set_rows(List *tlist);
 
 extern bool contain_subplans(Node *clause);
 
 extern bool contain_mutable_functions(Node *clause);
 extern bool contain_volatile_functions(Node *clause);
 extern bool contain_volatile_functions_not_nextval(Node *clause);
-extern bool has_parallel_hazard(Node *node, bool allow_restricted);
+extern char max_parallel_hazard(Query *parse);
+extern bool is_parallel_safe(PlannerInfo *root, Node *node);
 extern bool contain_nonstrict_functions(Node *clause);
 extern bool contain_leaked_vars(Node *clause);
 
@@ -85,4 +85,4 @@ extern Node *estimate_expression_value(PlannerInfo *root, Node *node);
 extern Query *inline_set_returning_function(PlannerInfo *root,
 							  RangeTblEntry *rte);
 
-#endif   /* CLAUSES_H */
+#endif							/* CLAUSES_H */

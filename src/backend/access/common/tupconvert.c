@@ -9,7 +9,7 @@
  * executor's "junkfilter" routines, but these functions work on bare
  * HeapTuples rather than TupleTableSlots.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -138,12 +138,14 @@ convert_tuples_by_position(TupleDesc indesc,
 						   nincols, noutcols)));
 
 	/*
-	 * Check to see if the map is one-to-one and the tuple types are the same.
-	 * (We check the latter because if they're not, we want to do conversion
-	 * to inject the right OID into the tuple datum.)
+	 * Check to see if the map is one-to-one, in which case we need not do a
+	 * tuple conversion.  We must also insist that both tupdescs either
+	 * specify or don't specify an OID column, else we need a conversion to
+	 * add/remove space for that.  (For some callers, presence or absence of
+	 * an OID column perhaps would not really matter, but let's be safe.)
 	 */
 	if (indesc->natts == outdesc->natts &&
-		indesc->tdtypeid == outdesc->tdtypeid)
+		indesc->tdhasoid == outdesc->tdhasoid)
 	{
 		for (i = 0; i < n; i++)
 		{
@@ -186,7 +188,7 @@ convert_tuples_by_position(TupleDesc indesc,
 	n = indesc->natts + 1;		/* +1 for NULL */
 	map->invalues = (Datum *) palloc(n * sizeof(Datum));
 	map->inisnull = (bool *) palloc(n * sizeof(bool));
-	map->invalues[0] = (Datum) 0;		/* set up the NULL entry */
+	map->invalues[0] = (Datum) 0;	/* set up the NULL entry */
 	map->inisnull[0] = true;
 
 	return map;
@@ -214,12 +216,14 @@ convert_tuples_by_name(TupleDesc indesc,
 	attrMap = convert_tuples_by_name_map(indesc, outdesc, msg);
 
 	/*
-	 * Check to see if the map is one-to-one and the tuple types are the same.
-	 * (We check the latter because if they're not, we want to do conversion
-	 * to inject the right OID into the tuple datum.)
+	 * Check to see if the map is one-to-one, in which case we need not do a
+	 * tuple conversion.  We must also insist that both tupdescs either
+	 * specify or don't specify an OID column, else we need a conversion to
+	 * add/remove space for that.  (For some callers, presence or absence of
+	 * an OID column perhaps would not really matter, but let's be safe.)
 	 */
 	if (indesc->natts == outdesc->natts &&
-		indesc->tdtypeid == outdesc->tdtypeid)
+		indesc->tdhasoid == outdesc->tdhasoid)
 	{
 		same = true;
 		for (i = 0; i < n; i++)
@@ -263,7 +267,7 @@ convert_tuples_by_name(TupleDesc indesc,
 	n = indesc->natts + 1;		/* +1 for NULL */
 	map->invalues = (Datum *) palloc(n * sizeof(Datum));
 	map->inisnull = (bool *) palloc(n * sizeof(bool));
-	map->invalues[0] = (Datum) 0;		/* set up the NULL entry */
+	map->invalues[0] = (Datum) 0;	/* set up the NULL entry */
 	map->inisnull[0] = true;
 
 	return map;

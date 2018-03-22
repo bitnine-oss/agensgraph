@@ -4,7 +4,7 @@
  *	  prototypes for catalog/index.c.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/index.h
@@ -22,11 +22,11 @@
 
 /* Typedef for callback function for IndexBuildHeapScan */
 typedef void (*IndexBuildCallback) (Relation index,
-												HeapTuple htup,
-												Datum *values,
-												bool *isnull,
-												bool tupleIsAlive,
-												void *state);
+									HeapTuple htup,
+									Datum *values,
+									bool *isnull,
+									bool tupleIsAlive,
+									void *state);
 
 /* Action code for index_set_state_flags */
 typedef enum
@@ -133,4 +133,4 @@ extern Oid	IndexGetRelation(Oid indexId, bool missing_ok);
 
 extern bool DisableIndexLabel(Oid relid);
 
-#endif   /* INDEX_H */
+#endif							/* INDEX_H */

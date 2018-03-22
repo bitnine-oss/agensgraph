@@ -3,7 +3,7 @@
  * visibilitymap.c
  *	  bitmap for tracking visibility of heap tuples
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -592,7 +592,7 @@ vm_readbuf(Relation rel, BlockNumber blkno, bool extend)
 	{
 		if (smgrexists(rel->rd_smgr, VISIBILITYMAP_FORKNUM))
 			rel->rd_smgr->smgr_vm_nblocks = smgrnblocks(rel->rd_smgr,
-													  VISIBILITYMAP_FORKNUM);
+														VISIBILITYMAP_FORKNUM);
 		else
 			rel->rd_smgr->smgr_vm_nblocks = 0;
 	}

@@ -508,11 +508,11 @@ ERROR:  jsonb object is expected for property map
 DROP GRAPH eager_graph CASCADE;
 NOTICE:  drop cascades to 9 other objects
 DETAIL:  drop cascades to sequence eager_graph.ag_label_seq
-drop cascades to label ag_vertex
-drop cascades to label ag_edge
-drop cascades to label v1
-drop cascades to label v2
-drop cascades to label v3
-drop cascades to label v4
-drop cascades to label e1
-drop cascades to label e
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel v1
+drop cascades to vlabel v2
+drop cascades to vlabel v3
+drop cascades to vlabel v4
+drop cascades to elabel e1
+drop cascades to elabel e

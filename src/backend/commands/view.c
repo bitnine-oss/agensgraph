@@ -3,7 +3,7 @@
  * view.c
  *	  use rewrite rules to construct views
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -87,7 +87,7 @@ DefineVirtualRelation(RangeVar *relation, List *tlist, bool replace,
 			ColumnDef  *def = makeColumnDef(tle->resname,
 											exprType((Node *) tle->expr),
 											exprTypmod((Node *) tle->expr),
-										  exprCollation((Node *) tle->expr));
+											exprCollation((Node *) tle->expr));
 
 			/*
 			 * It's possible that the column is of a collatable type but the
@@ -250,7 +250,8 @@ DefineVirtualRelation(RangeVar *relation, List *tlist, bool replace,
 		 * view, so we don't need more code to complain if "replace" is
 		 * false).
 		 */
-		address = DefineRelation(createStmt, RELKIND_VIEW, InvalidOid, NULL);
+		address = DefineRelation(createStmt, RELKIND_VIEW, InvalidOid, NULL,
+								 NULL);
 		Assert(address.objectId != InvalidOid);
 
 		/* Make the new view relation visible */
@@ -294,9 +295,9 @@ checkViewTupleDesc(TupleDesc newdesc, TupleDesc olddesc)
 		if (strcmp(NameStr(newattr->attname), NameStr(oldattr->attname)) != 0)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-				 errmsg("cannot change name of view column \"%s\" to \"%s\"",
-						NameStr(oldattr->attname),
-						NameStr(newattr->attname))));
+					 errmsg("cannot change name of view column \"%s\" to \"%s\"",
+							NameStr(oldattr->attname),
+							NameStr(newattr->attname))));
 		/* XXX would it be safe to allow atttypmod to change?  Not sure */
 		if (newattr->atttypid != oldattr->atttypid ||
 			newattr->atttypmod != oldattr->atttypmod)
@@ -372,7 +373,7 @@ UpdateRangeTableOfViewParse(Oid viewOid, Query *viewParse)
 	 * Var node twice.  copyObject will expand any multiply-referenced subtree
 	 * into multiple copies.
 	 */
-	viewParse = (Query *) copyObject(viewParse);
+	viewParse = copyObject(viewParse);
 
 	/* Create a dummy ParseState for addRangeTableEntryForRelation */
 	pstate = make_parsestate(NULL);
@@ -413,8 +414,10 @@ UpdateRangeTableOfViewParse(Oid viewOid, Query *viewParse)
  *		Execute a CREATE VIEW command.
  */
 ObjectAddress
-DefineView(ViewStmt *stmt, const char *queryString)
+DefineView(ViewStmt *stmt, const char *queryString,
+		   int stmt_location, int stmt_len)
 {
+	RawStmt    *rawstmt;
 	Query	   *viewParse;
 	RangeVar   *view;
 	ListCell   *cell;
@@ -428,8 +431,12 @@ DefineView(ViewStmt *stmt, const char *queryString)
 	 * Since parse analysis scribbles on its input, copy the raw parse tree;
 	 * this ensures we don't corrupt a prepared statement, for example.
 	 */
-	viewParse = parse_analyze((Node *) copyObject(stmt->query),
-							  queryString, NULL, 0);
+	rawstmt = makeNode(RawStmt);
+	rawstmt->stmt = (Node *) copyObject(stmt->query);
+	rawstmt->stmt_location = stmt_location;
+	rawstmt->stmt_len = stmt_len;
+
+	viewParse = parse_analyze(rawstmt, queryString, NULL, 0, NULL);
 
 	/*
 	 * The grammar should ensure that the result is a single SELECT Query.
@@ -442,8 +449,7 @@ DefineView(ViewStmt *stmt, const char *queryString)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("views must not contain SELECT INTO")));
-	if (viewParse->commandType != CMD_SELECT ||
-		viewParse->utilityStmt != NULL)
+	if (viewParse->commandType != CMD_SELECT)
 		elog(ERROR, "unexpected parse analysis result");
 
 	/*
@@ -454,7 +460,7 @@ DefineView(ViewStmt *stmt, const char *queryString)
 	if (viewParse->hasModifyingCTE)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-		errmsg("views must not contain data-modifying statements in WITH")));
+				 errmsg("views must not contain data-modifying statements in WITH")));
 
 	/*
 	 * If the user specified the WITH CHECK OPTION, add it to the list of
@@ -463,11 +469,11 @@ DefineView(ViewStmt *stmt, const char *queryString)
 	if (stmt->withCheckOption == LOCAL_CHECK_OPTION)
 		stmt->options = lappend(stmt->options,
 								makeDefElem("check_option",
-											(Node *) makeString("local")));
+											(Node *) makeString("local"), -1));
 	else if (stmt->withCheckOption == CASCADED_CHECK_OPTION)
 		stmt->options = lappend(stmt->options,
 								makeDefElem("check_option",
-											(Node *) makeString("cascaded")));
+											(Node *) makeString("cascaded"), -1));
 
 	/*
 	 * Check that the view is auto-updatable if WITH CHECK OPTION was
@@ -510,9 +516,8 @@ DefineView(ViewStmt *stmt, const char *queryString)
 
 		foreach(targetList, viewParse->targetList)
 		{
-			TargetEntry *te = (TargetEntry *) lfirst(targetList);
+			TargetEntry *te = lfirst_node(TargetEntry, targetList);
 
-			Assert(IsA(te, TargetEntry));
 			/* junk columns don't get aliases */
 			if (te->resjunk)
 				continue;
@@ -533,7 +538,7 @@ DefineView(ViewStmt *stmt, const char *queryString)
 	if (stmt->view->relpersistence == RELPERSISTENCE_UNLOGGED)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-		errmsg("views cannot be unlogged because they do not have storage")));
+				 errmsg("views cannot be unlogged because they do not have storage")));
 
 	/*
 	 * If the user didn't explicitly ask for a temporary view, check whether
@@ -541,7 +546,7 @@ DefineView(ViewStmt *stmt, const char *queryString)
 	 * long as the CREATE command is consistent with that --- no explicit
 	 * schema name.
 	 */
-	view = copyObject(stmt->view);		/* don't corrupt original command */
+	view = copyObject(stmt->view);	/* don't corrupt original command */
 	if (view->relpersistence == RELPERSISTENCE_PERMANENT
 		&& isQueryUsingTempRelation(viewParse))
 	{

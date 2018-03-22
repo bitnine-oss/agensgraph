@@ -1,3 +1,6 @@
+test: read-only-anomaly
+test: read-only-anomaly-2
+test: read-only-anomaly-3
 test: read-write-unique
 test: read-write-unique-2
 test: read-write-unique-3
@@ -41,6 +44,7 @@ test: update-locked-tuple
 test: propagate-lock-delete
 test: tuplelock-conflict
 test: tuplelock-update
+test: freeze-the-dead
 test: nowait
 test: nowait-2
 test: nowait-3
@@ -51,9 +55,13 @@ test: skip-locked-2
 test: skip-locked-3
 test: skip-locked-4
 test: drop-index-concurrently-1
+test: multiple-cic
 test: alter-table-1
 test: alter-table-2
 test: alter-table-3
+test: alter-table-4
 test: create-trigger
+test: sequence-ddl
 test: async-notify
+test: vacuum-reltuples
 test: timeouts

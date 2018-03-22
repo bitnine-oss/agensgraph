@@ -3,7 +3,7 @@
  * nodeCustom.c
  *		Routines to handle execution of custom scan node
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * ------------------------------------------------------------------------
@@ -15,10 +15,15 @@
 #include "executor/nodeCustom.h"
 #include "nodes/execnodes.h"
 #include "nodes/plannodes.h"
+#include "miscadmin.h"
 #include "parser/parsetree.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
+
+
+static TupleTableSlot *ExecCustomScan(PlanState *pstate);
+
 
 CustomScanState *
 ExecInitCustomScan(CustomScan *cscan, EState *estate, int eflags)
@@ -35,8 +40,8 @@ ExecInitCustomScan(CustomScan *cscan, EState *estate, int eflags)
 	 * methods field correctly at this time.  Other standard fields should be
 	 * set to zero.
 	 */
-	css = (CustomScanState *) cscan->methods->CreateCustomScanState(cscan);
-	Assert(IsA(css, CustomScanState));
+	css = castNode(CustomScanState,
+				   cscan->methods->CreateCustomScanState(cscan));
 
 	/* ensure flags is filled correctly */
 	css->flags = cscan->flags;
@@ -44,19 +49,14 @@ ExecInitCustomScan(CustomScan *cscan, EState *estate, int eflags)
 	/* fill up fields of ScanState */
 	css->ss.ps.plan = &cscan->scan.plan;
 	css->ss.ps.state = estate;
+	css->ss.ps.ExecProcNode = ExecCustomScan;
 
 	/* create expression context for node */
 	ExecAssignExprContext(estate, &css->ss.ps);
 
-	css->ss.ps.ps_TupFromTlist = false;
-
 	/* initialize child expressions */
-	css->ss.ps.targetlist = (List *)
-		ExecInitExpr((Expr *) cscan->scan.plan.targetlist,
-					 (PlanState *) css);
-	css->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) cscan->scan.plan.qual,
-					 (PlanState *) css);
+	css->ss.ps.qual =
+		ExecInitQual(cscan->scan.plan.qual, (PlanState *) css);
 
 	/* tuple table initialization */
 	ExecInitScanTupleSlot(estate, &css->ss);
@@ -107,9 +107,13 @@ ExecInitCustomScan(CustomScan *cscan, EState *estate, int eflags)
 	return css;
 }
 
-TupleTableSlot *
-ExecCustomScan(CustomScanState *node)
+static TupleTableSlot *
+ExecCustomScan(PlanState *pstate)
 {
+	CustomScanState *node = castNode(CustomScanState, pstate);
+
+	CHECK_FOR_INTERRUPTS();
+
 	Assert(node->methods->ExecCustomScan != NULL);
 	return node->methods->ExecCustomScan(node);
 }
@@ -191,6 +195,21 @@ ExecCustomScanInitializeDSM(CustomScanState *node, ParallelContext *pcxt)
 }
 
 void
+ExecCustomScanReInitializeDSM(CustomScanState *node, ParallelContext *pcxt)
+{
+	const CustomExecMethods *methods = node->methods;
+
+	if (methods->ReInitializeDSMCustomScan)
+	{
+		int			plan_node_id = node->ss.ps.plan->plan_node_id;
+		void	   *coordinate;
+
+		coordinate = shm_toc_lookup(pcxt->toc, plan_node_id, false);
+		methods->ReInitializeDSMCustomScan(node, pcxt, coordinate);
+	}
+}
+
+void
 ExecCustomScanInitializeWorker(CustomScanState *node, shm_toc *toc)
 {
 	const CustomExecMethods *methods = node->methods;
@@ -200,7 +219,16 @@ ExecCustomScanInitializeWorker(CustomScanState *node, shm_toc *toc)
 		int			plan_node_id = node->ss.ps.plan->plan_node_id;
 		void	   *coordinate;
 
-		coordinate = shm_toc_lookup(toc, plan_node_id);
+		coordinate = shm_toc_lookup(toc, plan_node_id, false);
 		methods->InitializeWorkerCustomScan(node, toc, coordinate);
 	}
+}
+
+void
+ExecShutdownCustomScan(CustomScanState *node)
+{
+	const CustomExecMethods *methods = node->methods;
+
+	if (methods->ShutdownCustomScan)
+		methods->ShutdownCustomScan(node);
 }

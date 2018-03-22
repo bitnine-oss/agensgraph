@@ -104,9 +104,7 @@ InsertAgLabelTuple(Relation ag_label_desc, Oid laboid, RangeVar *label,
 
 	HeapTupleSetOid(tup, laboid);
 
-	simple_heap_insert(ag_label_desc, tup);
-
-	CatalogUpdateIndexes(ag_label_desc, tup);
+	CatalogTupleInsert(ag_label_desc, tup);
 
 	heap_freetuple(tup);
 }

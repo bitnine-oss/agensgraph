@@ -26,9 +26,7 @@ typedef struct GraphVertex
 	bool		create;			/* whether this vertex will be created or not */
 	Oid			relid;
 	Node	   *expr;
-	Node	   *qual;
 	ExprState  *es_expr;
-	ExprState  *es_qual;
 } GraphVertex;
 
 #define GRAPH_EDGE_DIR_NONE		0
@@ -42,9 +40,7 @@ typedef struct GraphEdge
 	AttrNumber	resno;
 	Oid			relid;
 	Node	   *expr;
-	Node	   *qual;
 	ExprState  *es_expr;
-	ExprState  *es_qual;
 } GraphEdge;
 
 typedef enum GSPKind

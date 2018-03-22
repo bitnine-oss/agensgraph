@@ -3,7 +3,7 @@
  * nodeLimit.c
  *	  Routines to handle limiting of query results where appropriate
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,6 +23,7 @@
 
 #include "executor/executor.h"
 #include "executor/nodeLimit.h"
+#include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 
 static void recompute_limits(LimitState *node);
@@ -36,12 +37,15 @@ static void pass_down_bound(LimitState *node, PlanState *child_node);
  *		filtering on the stream of tuples returned by a subplan.
  * ----------------------------------------------------------------
  */
-TupleTableSlot *				/* return: a tuple or NULL */
-ExecLimit(LimitState *node)
+static TupleTableSlot *			/* return: a tuple or NULL */
+ExecLimit(PlanState *pstate)
 {
+	LimitState *node = castNode(LimitState, pstate);
 	ScanDirection direction;
 	TupleTableSlot *slot;
 	PlanState  *outerPlan;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/*
 	 * get information from the node
@@ -239,8 +243,7 @@ recompute_limits(LimitState *node)
 	{
 		val = ExecEvalExprSwitchContext(node->limitOffset,
 										econtext,
-										&isNull,
-										NULL);
+										&isNull);
 		/* Interpret NULL offset as no offset */
 		if (isNull)
 			node->offset = 0;
@@ -249,8 +252,8 @@ recompute_limits(LimitState *node)
 			node->offset = DatumGetInt64(val);
 			if (node->offset < 0)
 				ereport(ERROR,
-				 (errcode(ERRCODE_INVALID_ROW_COUNT_IN_RESULT_OFFSET_CLAUSE),
-				  errmsg("OFFSET must not be negative")));
+						(errcode(ERRCODE_INVALID_ROW_COUNT_IN_RESULT_OFFSET_CLAUSE),
+						 errmsg("OFFSET must not be negative")));
 		}
 	}
 	else
@@ -263,8 +266,7 @@ recompute_limits(LimitState *node)
 	{
 		val = ExecEvalExprSwitchContext(node->limitCount,
 										econtext,
-										&isNull,
-										NULL);
+										&isNull);
 		/* Interpret NULL count as no count (LIMIT ALL) */
 		if (isNull)
 		{
@@ -346,18 +348,11 @@ pass_down_bound(LimitState *node, PlanState *child_node)
 	else if (IsA(child_node, ResultState))
 	{
 		/*
-		 * An extra consideration here is that if the Result is projecting a
-		 * targetlist that contains any SRFs, we can't assume that every input
-		 * tuple generates an output tuple, so a Sort underneath might need to
-		 * return more than N tuples to satisfy LIMIT N. So we cannot use
-		 * bounded sort.
-		 *
 		 * If Result supported qual checking, we'd have to punt on seeing a
-		 * qual, too.  Note that having a resconstantqual is not a
-		 * showstopper: if that fails we're not getting any rows at all.
+		 * qual.  Note that having a resconstantqual is not a showstopper: if
+		 * that fails we're not getting any rows at all.
 		 */
-		if (outerPlanState(child_node) &&
-			!expression_returns_set((Node *) child_node->plan->targetlist))
+		if (outerPlanState(child_node))
 			pass_down_bound(node, outerPlanState(child_node));
 	}
 }
@@ -384,6 +379,7 @@ ExecInitLimit(Limit *node, EState *estate, int eflags)
 	limitstate = makeNode(LimitState);
 	limitstate->ps.plan = (Plan *) node;
 	limitstate->ps.state = estate;
+	limitstate->ps.ExecProcNode = ExecLimit;
 
 	limitstate->lstate = LIMIT_INITIAL;
 

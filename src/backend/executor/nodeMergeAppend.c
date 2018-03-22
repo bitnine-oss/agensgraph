@@ -3,7 +3,7 @@
  * nodeMergeAppend.c
  *	  routines to handle MergeAppend nodes.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -40,8 +40,8 @@
 
 #include "executor/execdebug.h"
 #include "executor/nodeMergeAppend.h"
-
 #include "lib/binaryheap.h"
+#include "miscadmin.h"
 
 /*
  * We have one slot for each item in the heap array.  We use SlotNumber
@@ -50,6 +50,7 @@
  */
 typedef int32 SlotNumber;
 
+static TupleTableSlot *ExecMergeAppend(PlanState *pstate);
 static int	heap_compare_slots(Datum a, Datum b, void *arg);
 
 
@@ -72,6 +73,12 @@ ExecInitMergeAppend(MergeAppend *node, EState *estate, int eflags)
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
 	/*
+	 * Lock the non-leaf tables in the partition tree controlled by this node.
+	 * It's a no-op for non-partitioned parent tables.
+	 */
+	ExecLockNonLeafAppendTables(node->partitioned_rels, estate);
+
+	/*
 	 * Set up empty vector of subplan states
 	 */
 	nplans = list_length(node->mergeplans);
@@ -83,6 +90,7 @@ ExecInitMergeAppend(MergeAppend *node, EState *estate, int eflags)
 	 */
 	mergestate->ps.plan = (Plan *) node;
 	mergestate->ps.state = estate;
+	mergestate->ps.ExecProcNode = ExecMergeAppend;
 	mergestate->mergeplans = mergeplanstates;
 	mergestate->ms_nplans = nplans;
 
@@ -163,11 +171,14 @@ ExecInitMergeAppend(MergeAppend *node, EState *estate, int eflags)
  *		Handles iteration over multiple subplans.
  * ----------------------------------------------------------------
  */
-TupleTableSlot *
-ExecMergeAppend(MergeAppendState *node)
+static TupleTableSlot *
+ExecMergeAppend(PlanState *pstate)
 {
+	MergeAppendState *node = castNode(MergeAppendState, pstate);
 	TupleTableSlot *result;
 	SlotNumber	i;
+
+	CHECK_FOR_INTERRUPTS();
 
 	if (!node->ms_initialized)
 	{

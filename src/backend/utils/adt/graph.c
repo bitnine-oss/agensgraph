@@ -31,6 +31,7 @@
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/regproc.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
@@ -1091,7 +1092,6 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 	int			attnum = (evk == EVK_START ? Anum_edge_start : Anum_edge_end);
 	Datum		values[1];
 	Oid			argTypes[1] = {GRAPHIDOID};
-	bool		spi_pushed;
 	int			ret;
 	Datum		vertex;
 	bool		isnull;
@@ -1099,8 +1099,6 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 	snprintf(sqlcmd, sizeof(sqlcmd), querystr, get_graph_path(false));
 
 	values[0] = tuple_getattr(edge, attnum);
-
-	spi_pushed = SPI_push_conditional();
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -1122,8 +1120,6 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 
 	if (SPI_finish() != SPI_OK_FINISH)
 		elog(ERROR, "SPI_finish failed");
-
-	SPI_pop_conditional(spi_pushed);
 
 	return vertex;
 }

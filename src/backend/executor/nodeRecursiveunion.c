@@ -3,7 +3,11 @@
  * nodeRecursiveunion.c
  *	  routines to handle RecursiveUnion nodes.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * To implement UNION (without ALL), we need a hashtable that stores tuples
+ * already seen.  The hash key is computed from the grouping columns.
+ *
+ *
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,17 +23,6 @@
 #include "miscadmin.h"
 #include "utils/memutils.h"
 
-
-/*
- * To implement UNION (without ALL), we need a hashtable that stores tuples
- * already seen.  The hash key is computed from the grouping columns.
- */
-typedef struct RUHashEntryData *RUHashEntry;
-
-typedef struct RUHashEntryData
-{
-	TupleHashEntryData shared;	/* common header for hash table entries */
-}	RUHashEntryData;
 
 
 /*
@@ -48,9 +41,10 @@ build_hash_table(RecursiveUnionState *rustate)
 											 rustate->eqfunctions,
 											 rustate->hashfunctions,
 											 node->numGroups,
-											 sizeof(RUHashEntryData),
+											 0,
 											 rustate->tableContext,
-											 rustate->tempContext);
+											 rustate->tempContext,
+											 false);
 }
 
 
@@ -72,14 +66,17 @@ build_hash_table(RecursiveUnionState *rustate)
  * 2.6 go back to 2.2
  * ----------------------------------------------------------------
  */
-TupleTableSlot *
-ExecRecursiveUnion(RecursiveUnionState *node)
+static TupleTableSlot *
+ExecRecursiveUnion(PlanState *pstate)
 {
+	RecursiveUnionState *node = castNode(RecursiveUnionState, pstate);
 	PlanState  *outerPlan = outerPlanState(node);
 	PlanState  *innerPlan = innerPlanState(node);
 	RecursiveUnion *plan = (RecursiveUnion *) node->ps.plan;
 	TupleTableSlot *slot;
 	bool		isnew;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/* 1. Evaluate non-recursive term */
 	if (!node->recursing)
@@ -185,6 +182,7 @@ ExecInitRecursiveUnion(RecursiveUnion *node, EState *estate, int eflags)
 	rustate = makeNode(RecursiveUnionState);
 	rustate->ps.plan = (Plan *) node;
 	rustate->ps.state = estate;
+	rustate->ps.ExecProcNode = ExecRecursiveUnion;
 
 	rustate->eqfunctions = NULL;
 	rustate->hashfunctions = NULL;

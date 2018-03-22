@@ -3,13 +3,12 @@
  * libpq_fetch.c
  *	  Functions for fetching files from a remote server.
  *
- * Copyright (c) 2013-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2017, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
 #include "postgres_fe.h"
 
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -29,6 +28,7 @@
 #include "libpq-fe.h"
 #include "catalog/catalog.h"
 #include "catalog/pg_type.h"
+#include "fe_utils/connect.h"
 
 static PGconn *conn = NULL;
 
@@ -57,6 +57,12 @@ libpqConnect(const char *connstr)
 				 PQerrorMessage(conn));
 
 	pg_log(PG_PROGRESS, "connected to server\n");
+
+	res = PQexec(conn, ALWAYS_SECURE_SEARCH_PATH_SQL);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		pg_fatal("could not clear search_path: %s",
+				 PQresultErrorMessage(res));
+	PQclear(res);
 
 	/*
 	 * Check that the server is not in hot standby mode. There is no
@@ -121,7 +127,7 @@ run_simple_query(const char *sql)
 }
 
 /*
- * Calls pg_current_xlog_insert_location() function
+ * Calls pg_current_wal_insert_lsn() function
  */
 XLogRecPtr
 libpqGetCurrentXlogInsertLocation(void)
@@ -131,7 +137,7 @@ libpqGetCurrentXlogInsertLocation(void)
 	uint32		lo;
 	char	   *val;
 
-	val = run_simple_query("SELECT pg_current_xlog_insert_location()");
+	val = run_simple_query("SELECT pg_current_wal_insert_lsn()");
 
 	if (sscanf(val, "%X/%X", &hi, &lo) != 2)
 		pg_fatal("unrecognized result \"%s\" for current WAL insert location\n", val);
@@ -195,7 +201,7 @@ libpqProcessFileList(void)
 	for (i = 0; i < PQntuples(res); i++)
 	{
 		char	   *path = PQgetvalue(res, i, 0);
-		int			filesize = atoi(PQgetvalue(res, i, 1));
+		int64		filesize = atol(PQgetvalue(res, i, 1));
 		bool		isdir = (strcmp(PQgetvalue(res, i, 2), "t") == 0);
 		char	   *link_target = PQgetvalue(res, i, 3);
 		file_type_t type;
@@ -221,13 +227,35 @@ libpqProcessFileList(void)
 	PQclear(res);
 }
 
+/*
+ * Converts an int64 from network byte order to native format.
+ */
+static int64
+pg_recvint64(int64 value)
+{
+	union
+	{
+		int64		i64;
+		uint32		i32[2];
+	}			swap;
+	int64		result;
+
+	swap.i64 = value;
+
+	result = (uint32) ntohl(swap.i32[0]);
+	result <<= 32;
+	result |= (uint32) ntohl(swap.i32[1]);
+
+	return result;
+}
+
 /*----
  * Runs a query, which returns pieces of files from the remote source data
  * directory, and overwrites the corresponding parts of target files with
  * the received parts. The result set is expected to be of format:
  *
  * path		text	-- path in the data directory, e.g "base/1/123"
- * begin	int4	-- offset within the file
+ * begin	int8	-- offset within the file
  * chunk	bytea	-- file content
  *----
  */
@@ -248,7 +276,8 @@ receiveFileChunks(const char *sql)
 	{
 		char	   *filename;
 		int			filenamelen;
-		int			chunkoff;
+		int64		chunkoff;
+		char		chunkoff_str[32];
 		int			chunksize;
 		char	   *chunk;
 
@@ -270,8 +299,8 @@ receiveFileChunks(const char *sql)
 		if (PQnfields(res) != 3 || PQntuples(res) != 1)
 			pg_fatal("unexpected result set size while fetching remote files\n");
 
-		if (PQftype(res, 0) != TEXTOID &&
-			PQftype(res, 1) != INT4OID &&
+		if (PQftype(res, 0) != TEXTOID ||
+			PQftype(res, 1) != INT8OID ||
 			PQftype(res, 2) != BYTEAOID)
 		{
 			pg_fatal("unexpected data types in result set while fetching remote files: %u %u %u\n",
@@ -291,12 +320,12 @@ receiveFileChunks(const char *sql)
 			pg_fatal("unexpected null values in result while fetching remote files\n");
 		}
 
-		if (PQgetlength(res, 0, 1) != sizeof(int32))
+		if (PQgetlength(res, 0, 1) != sizeof(int64))
 			pg_fatal("unexpected result length while fetching remote files\n");
 
 		/* Read result set to local variables */
-		memcpy(&chunkoff, PQgetvalue(res, 0, 1), sizeof(int32));
-		chunkoff = ntohl(chunkoff);
+		memcpy(&chunkoff, PQgetvalue(res, 0, 1), sizeof(int64));
+		chunkoff = pg_recvint64(chunkoff);
 		chunksize = PQgetlength(res, 0, 2);
 
 		filenamelen = PQgetlength(res, 0, 0);
@@ -321,8 +350,13 @@ receiveFileChunks(const char *sql)
 			continue;
 		}
 
-		pg_log(PG_DEBUG, "received chunk for file \"%s\", offset %d, size %d\n",
-			   filename, chunkoff, chunksize);
+		/*
+		 * Separate step to keep platform-dependent format code out of
+		 * translatable strings.
+		 */
+		snprintf(chunkoff_str, sizeof(chunkoff_str), INT64_FORMAT, chunkoff);
+		pg_log(PG_DEBUG, "received chunk for file \"%s\", offset %s, size %d\n",
+			   filename, chunkoff_str, chunksize);
 
 		open_target_file(filename, false);
 
@@ -381,7 +415,7 @@ libpqGetFile(const char *filename, size_t *filesize)
  * function to actually fetch the data.
  */
 static void
-fetch_file_range(const char *path, unsigned int begin, unsigned int end)
+fetch_file_range(const char *path, uint64 begin, uint64 end)
 {
 	char		linebuf[MAXPGPATH + 23];
 
@@ -390,12 +424,13 @@ fetch_file_range(const char *path, unsigned int begin, unsigned int end)
 	{
 		unsigned int len;
 
+		/* Fine as long as CHUNKSIZE is not bigger than UINT32_MAX */
 		if (end - begin > CHUNKSIZE)
 			len = CHUNKSIZE;
 		else
-			len = end - begin;
+			len = (unsigned int) (end - begin);
 
-		snprintf(linebuf, sizeof(linebuf), "%s\t%u\t%u\n", path, begin, len);
+		snprintf(linebuf, sizeof(linebuf), "%s\t" UINT64_FORMAT "\t%u\n", path, begin, len);
 
 		if (PQputCopyData(conn, linebuf, strlen(linebuf)) != 1)
 			pg_fatal("could not send COPY data: %s",
@@ -420,7 +455,7 @@ libpq_executeFileMap(filemap_t *map)
 	 * First create a temporary table, and load it with the blocks that we
 	 * need to fetch.
 	 */
-	sql = "CREATE TEMPORARY TABLE fetchchunks(path text, begin int4, len int4);";
+	sql = "CREATE TEMPORARY TABLE fetchchunks(path text, begin int8, len int4);";
 	res = PQexec(conn, sql);
 
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
@@ -490,7 +525,7 @@ libpq_executeFileMap(filemap_t *map)
 	 * temporary table. Now, actually fetch all of those ranges.
 	 */
 	sql =
-		"SELECT path, begin, \n"
+		"SELECT path, begin,\n"
 		"  pg_read_binary_file(path, begin, len, true) AS chunk\n"
 		"FROM fetchchunks\n";
 

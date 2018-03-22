@@ -1,16 +1,16 @@
 # SPEC file for pg_statsinfo
-# Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+# Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
 
 # Original declaration for pg_statsinfo rpmbuild #
 
-%define _pgdir   /usr/pgsql-9.4
+%define _pgdir   /usr/pgsql-10
 %define _bindir  %{_pgdir}/bin
 %define _libdir  %{_pgdir}/lib
 %define _datadir %{_pgdir}/share
 
 ## Set general information for pg_statsinfo.
 Name:       pg_statsinfo
-Version:    3.2.3
+Version:    10.0
 Release:    1%{?dist}
 Summary:    Performance monitoring tool for PostgreSQL
 Group:      Applications/Databases
@@ -20,7 +20,7 @@ Source0:    %{name}-%{version}.tar.gz
 BuildRoot:  %{_tmppath}/%{name}-%{version}-%{release}-%(%{__id_u} -n)
 
 ## We use postgresql-devel package
-BuildRequires:  postgresql94-devel
+BuildRequires:  postgresql10-devel
 
 %description
 pg_statsinfo monitors an instance of PostgreSQL server and gather
@@ -72,6 +72,9 @@ rm -rf %{buildroot}
 %{_datadir}/contrib/uninstall_pg_statsrepo.sql
 %{_datadir}/contrib/pg_statsinfo.sql
 %{_datadir}/contrib/uninstall_pg_statsinfo.sql
+%doc doc/pg_statsinfo-ja.html
+%doc doc/pg_statsinfo.html
+%doc doc/image/
 
 ## Script to run just before installing the package
 %pre
@@ -82,8 +85,8 @@ if [ ${?} -eq 0 -a -n "${installed}" ] ; then
 	old_version=$(rpm -q --queryformat='%{VERSION}' "${installed}" 2>&1)
 	new_version='%{version}'
 
-	old_family=$(echo ${old_version} | sed 's/^\([0-9]\+\.[0-9]\+\)\.[0-9]\+$/\1/')
-	new_family=$(echo ${new_version} | sed 's/^\([0-9]\+\.[0-9]\+\)\.[0-9]\+$/\1/')
+	new_family=$(echo ${new_version} | cut -d '.' -f 1)
+	old_family=$(echo ${old_version} | cut -d '.' -f 1)
 
 	[ -z "${old_family}" ] && old_family="<unrecognized version ${old_version}>"
 	[ -z "${new_family}" ] && new_family="<bad package specification: version ${new_version}>"
@@ -115,23 +118,7 @@ EOF
 	fi
 fi
 
-# History of pg_statsinfo-v3.2 RPM.
+# History of pg_statsinfo-v10 RPM.
 %changelog
-* Fri Jan  27 2017 - NTT OSS Center 3.2.3-1
-- Fixed a bug that SEGV occurs when the backend terminate during sampling.
-* Thu Jan  19 2017 - NTT OSS Center 3.2.2-1
-- Supports PostgreSQL 9.6. No functional changes have been made.
-- Fixed a bug that an integer(bit flag) is displayed when the value of
-  pg_statsinfo.enable_maintenance is displayed with SHOW command.
-- For PostgreSQL 9.4 and later, fixes a bug that NULL is stored in
-  the "query" column of pg_stat_statements.
-- For PostgreSQL 9.3 and earlier, fixed a bug that QueryActivity Statements
-  are not displayed when pg_store_plans is not installed.
-* Thu Feb  18 2016 - NTT OSS Center 3.2.1-1
-- If the page size of the monitored database is other than the default(8192byte),
-  Add measures to ensure that correct report of "Low Density Tables".
-- Fixed a bug that pg_statsinfod's logs is write to both the textlog and console.
-- Fixed a typo in the error message (csvlog file "% s" not found or incurrect offset).
-- Fixed manual.
-* Wed Nov  18 2015 - NTT OSS Center 3.2.0-1
-- pg_statsinfo 3.2.0 released
+* Thu Jan  25 2018 - NTT OSS Center 10.0-1
+- pg_statsinfo 10.0 released

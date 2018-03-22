@@ -1,7 +1,7 @@
 /*
  * collector.c:
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 #include "pg_statsinfod.h"
@@ -15,17 +15,18 @@
 
 pthread_mutex_t	reload_lock;
 pthread_mutex_t	maintenance_lock;
-volatile time_t	server_reload_time;
 volatile time_t	collector_reload_time;
 volatile char  *snapshot_requested;
 volatile char  *maintenance_requested;
 
 static PGconn  *collector_conn = NULL;
 
-static bool reload_params(void);
+static void reload_params(void);
 static void do_sample(void);
 static void do_snapshot(char *comment);
 static void get_server_encoding(void);
+static void collector_disconnect(void);
+static bool extract_dbname(const char *conninfo, char *dbname, size_t size);
 
 void
 collector_init(void)
@@ -33,7 +34,7 @@ collector_init(void)
 	pthread_mutex_init(&reload_lock, NULL);
 	pthread_mutex_init(&maintenance_lock, NULL);
 
-	collector_reload_time = server_reload_time = time(NULL);
+	collector_reload_time = time(NULL);
 }
 
 /*
@@ -61,23 +62,14 @@ collector_main(void *arg)
 
 	while (shutdown_state < SHUTDOWN_REQUESTED)
 	{
-		time_t	reload_time;
-
 		now = time(NULL);
 
-		/*
-		 * Update settings if reloaded. Copy server_reload_time to the
-		 * local variable because the global variable could be updated
-		 * during reload. The value must be compared with now because
-		 * it could be a future time to wait for SIGHUP propagated.
-		 */
-		reload_time = server_reload_time;
-		if (collector_reload_time < reload_time && reload_time <= now)
+		/* reload configuration */
+		if (got_SIGHUP)
 		{
-			elog(DEBUG2, "collector reloads setting parameters");
-			if (reload_params())
-				collector_reload_time = reload_time;
-			now = time(NULL);
+			got_SIGHUP = false;
+			reload_params();
+			collector_reload_time = now;
 		}
 
 		/* sample */
@@ -184,48 +176,35 @@ collector_main(void *arg)
 		usleep(200 * 1000);	/* 200ms */
 	}
 
-	pgut_disconnect(collector_conn);
-	collector_conn = NULL;
+	collector_disconnect();
 	shutdown_progress(COLLECTOR_SHUTDOWN);
 
 	return NULL;
 }
 
-static bool
+static void
 reload_params(void)
 {
-	PGconn	   *conn;
-	PGresult   *res;
-	int			retry;
+	char	*prev_target_server;
 
-	for (retry = 0;
-		 shutdown_state < SHUTDOWN_REQUESTED && retry < DB_MAX_RETRY;
-		 delay(), retry++)
-	{
-		/* connect to postgres database and ensure functions are installed */
-		if ((conn = collector_connect(NULL)) == NULL)
-			continue;
+	pthread_mutex_lock(&reload_lock);
 
-		res = pgut_execute(conn, SQL_SELECT_CUSTOM_SETTINGS, 0, NULL);
-		if (PQresultStatus(res) != PGRES_TUPLES_OK)
-		{
-			PQclear(res);
-			continue;
-		}
+	prev_target_server = pgut_strdup(target_server);
 
-		pthread_mutex_lock(&reload_lock);
-		readopt_from_db(res);
-		pthread_mutex_unlock(&reload_lock);
-		PQclear(res);
+	/* read configuration from launcher */
+	readopt_from_file(stdin);
 
-		/* if already passed maintenance time, set one day after */
-		if (time(NULL) >= maintenance_time)
-			maintenance_time = maintenance_time + (1 * SECS_PER_DAY);
+	/* if already passed maintenance time, set one day after */
+	if (time(NULL) >= maintenance_time)
+		maintenance_time = maintenance_time + (1 * SECS_PER_DAY);
 
-		return true;	/* reloaded */
-	}
+	/* if the target_server has changed then disconnect current connection */
+	if (strcmp(target_server, prev_target_server) != 0)
+		collector_disconnect();
 
-	return false;
+	free(prev_target_server);
+
+	pthread_mutex_unlock(&reload_lock);
 }
 
 static void
@@ -307,18 +286,19 @@ get_server_encoding(void)
 PGconn *
 collector_connect(const char *db)
 {
-	char	   *pgdb;
-	char		info[1024];
-	const char *schema;
+	char		 dbname[NAMEDATALEN];
+	char		 info[1024];
+	const char	*schema;
 
 	if (db == NULL)
 	{
-		/* default connect */
-		db = "postgres";
+		if (!extract_dbname(target_server, dbname, sizeof(dbname)))
+				strncpy(dbname, "postgres", sizeof(dbname));	/* default database */
 		schema = "statsinfo";
 	}
 	else
 	{
+		strncpy(dbname, db, sizeof(dbname));
 		/* no schema required */
 		schema = NULL;
 	}
@@ -326,12 +306,11 @@ collector_connect(const char *db)
 	/* disconnect if need to connect another database */
 	if (collector_conn)
 	{
+		char	*pgdb;
+
 		pgdb = PQdb(collector_conn);
-		if (pgdb == NULL || strcmp(pgdb, db) != 0)
-		{
-			pgut_disconnect(collector_conn);
-			collector_conn = NULL;
-		}
+		if (pgdb == NULL || strcmp(pgdb, dbname) != 0)
+			collector_disconnect();
 	}
 	else
 	{
@@ -353,12 +332,46 @@ collector_connect(const char *db)
 		}
 	}
 
-#ifdef DEBUG
-	snprintf(info, lengthof(info),
-		"dbname=%s port=%s", db, postmaster_port);
+#ifdef DEBUG_MODE
+	snprintf(info, lengthof(info), "port=%s %s dbname=%s",
+		postmaster_port, target_server, dbname);
 #else
 	snprintf(info, lengthof(info),
-		"dbname=%s port=%s options='-c log_statement=none'", db, postmaster_port);
+		"port=%s %s dbname=%s options='-c log_statement=none'",
+		postmaster_port, target_server, dbname);
 #endif
 	return do_connect(&collector_conn, info, schema);
+}
+
+static void
+collector_disconnect(void)
+{
+	pgut_disconnect(collector_conn);
+	collector_conn = NULL;
+}
+
+static bool
+extract_dbname(const char *conninfo, char *dbname, size_t size)
+{
+	PQconninfoOption	*options;
+	PQconninfoOption	*option;
+
+	if ((options = PQconninfoParse(conninfo, NULL)) == NULL)
+		return false;
+
+	for (option = options; option->keyword != NULL; option++)
+	{
+		if (strcmp(option->keyword, "dbname") == 0)
+		{
+			if (option->val != NULL && option->val[0] != '\0')
+			{
+				strncpy(dbname, option->val, size);
+				PQconninfoFree(options);
+				return true;
+			}
+		}
+	}
+
+	PQconninfoFree(options);
+	return false;
 }

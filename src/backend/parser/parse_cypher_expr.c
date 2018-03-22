@@ -447,7 +447,7 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		field = lfirst(lf);
 
 		res = ParseFuncOrColumn(pstate, list_make1(field), list_make1(res),
-								NULL, location);
+								pstate->p_last_srf, NULL, location);
 		if (res == NULL)
 		{
 			ereport(ERROR,
@@ -508,7 +508,8 @@ filterAccessArg(ParseState *pstate, Node *expr, int location,
 		case EDGEOID:
 			return ParseFuncOrColumn(pstate,
 									 list_make1(makeString(AG_ELEM_PROP_MAP)),
-									 list_make1(expr), NULL, location);
+									 list_make1(expr), pstate->p_last_srf,
+									 NULL, location);
 		case JSONBOID:
 			return expr;
 
@@ -784,6 +785,7 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 {
 	Node	   *list;
 	Oid			type;
+	char	   *save_varname;
 	Node	   *cond;
 	Node	   *elem;
 	CypherListCompExpr *clcexpr;
@@ -796,13 +798,11 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 				 errmsg("jsonb is expected but %s", format_type_be(type)),
 				 parser_errposition(pstate, clc->location)));
 
+	save_varname = pstate->p_lc_varname;
 	pstate->p_lc_varname = clc->varname;
 	cond = transformCypherWhere(pstate, clc->cond, EXPR_KIND_WHERE);
-	pstate->p_lc_varname = NULL;
-
-	pstate->p_lc_varname = clc->varname;
 	elem = transformCypherExprRecurse(pstate, clc->elem);
-	pstate->p_lc_varname = NULL;
+	pstate->p_lc_varname = save_varname;
 	elem = coerce_to_jsonb(pstate, elem, "jsonb", true);
 
 	clcexpr = makeNode(CypherListCompExpr);
@@ -1013,7 +1013,8 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 		}
 	}
 
-	return ParseFuncOrColumn(pstate, fn->funcname, args, fn, fn->location);
+	return ParseFuncOrColumn(pstate, fn->funcname, args, pstate->p_last_srf,
+							 fn, fn->location);
 }
 
 static Node *
@@ -1102,6 +1103,7 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 		case EXPR_KIND_OFFSET:
 		case EXPR_KIND_RETURNING:
 		case EXPR_KIND_VALUES:
+		case EXPR_KIND_VALUES_SINGLE:
 		case EXPR_KIND_POLICY:
 			break;
 		case EXPR_KIND_CHECK_CONSTRAINT:
@@ -1127,6 +1129,9 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 		case EXPR_KIND_TRIGGER_WHEN:
 			err = _("cannot use subquery in trigger WHEN condition");
 			break;
+		case EXPR_KIND_PARTITION_EXPRESSION:
+			err = _("cannot use subquery in partition key expression");
+			break;
 	}
 	if (err)
 		ereport(ERROR,
@@ -1136,7 +1141,7 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 
 	pstate->p_hasSubLinks = true;
 
-	qry = parse_sub_analyze(sublink->subselect, pstate, NULL, false);
+	qry = parse_sub_analyze(sublink->subselect, pstate, NULL, false, true);
 	if (!IsA(qry, Query) ||
 		qry->commandType != CMD_SELECT ||
 		qry->utilityStmt != NULL)
@@ -1195,7 +1200,7 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 				break;
 
 			res = ParseFuncOrColumn(pstate, list_make1(i), list_make1(res),
-									NULL, location);
+									pstate->p_last_srf, NULL, location);
 			if (res == NULL)
 			{
 				ereport(ERROR,
@@ -1294,8 +1299,8 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 
 			cind = makeNode(CypherIndices);
 			cind->is_slice = ind->is_slice;
-			cind->lidx = lidx;
-			cind->uidx = uidx;
+			cind->lidx = (Expr *) lidx;
+			cind->uidx = (Expr *) uidx;
 
 			elem = (Node *) cind;
 		}
@@ -1339,7 +1344,7 @@ makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive)
 							 Int32GetDatum(1), false, true);
 
 	result = (Node *) make_op(pstate, list_make1(makeString("+")),
-							  result, one, -1);
+							  result, one, pstate->p_last_srf, -1);
 
 	return result;
 }
@@ -1386,7 +1391,8 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 		}
 	}
 
-	return (Node *) make_op(pstate, a->name, l, r, a->location);
+	return (Node *) make_op(pstate, a->name, l, r, pstate->p_last_srf,
+							a->location);
 }
 
 static Node *
@@ -1402,7 +1408,7 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 	r = coerce_to_jsonb(pstate, r, "jsonb", true);
 
 	return (Node *) make_op(pstate, list_make1(makeString("@>")), r, l,
-							a->location);
+							pstate->p_last_srf, a->location);
 }
 
 static Node *
@@ -1479,8 +1485,8 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname,
 		default:
 			return ParseFuncOrColumn(pstate,
 									 list_make1(makeString("to_jsonb")),
-									 list_make1(expr), NULL,
-									 exprLocation(expr));
+									 list_make1(expr), pstate->p_last_srf,
+									 NULL, exprLocation(expr));
 	}
 }
 
@@ -1611,16 +1617,17 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 				return NULL;
 			}
 
-			t = coerce_to_target_type(pstate, cind->uidx, exprType(cind->uidx),
-									  TEXTOID, -1, COERCION_ASSIGNMENT,
-									  COERCE_IMPLICIT_CAST, -1);
+			t = (Node *) cind->uidx;
+			t = coerce_to_target_type(pstate, t, exprType(t), TEXTOID, -1,
+									  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST,
+									  -1);
 			if (t == NULL)
 			{
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
 						 errmsg("path element must be text"),
 						 parser_errposition(pstate,
-											exprLocation(cind->uidx))));
+										exprLocation((Node *) cind->uidx))));
 				return NULL;
 			}
 
@@ -1761,7 +1768,7 @@ transformCypherOrderBy(ParseState *pstate, List *sortitems, List **targetlist)
 		}
 
 		sortgroups = addTargetToSortList(pstate, te, sortgroups, *targetlist,
-										 sortby, true);
+										 sortby);
 	}
 
 	return sortgroups;

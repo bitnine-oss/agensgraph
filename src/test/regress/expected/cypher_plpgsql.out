@@ -49,6 +49,6 @@ DROP FUNCTION udf_param(jsonb);
 DROP GRAPH udf CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to sequence udf.ag_label_seq
-drop cascades to label ag_vertex
-drop cascades to label ag_edge
-drop cascades to label v
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel v

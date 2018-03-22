@@ -2,7 +2,7 @@
  *
  * common.h
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  *
  *-------------------------------------------------------------------------
  */
@@ -29,6 +29,7 @@
 #endif
 
 /* Error level */
+#define DEBUG		DEBUG2
 #define ALERT		(PANIC + 1)
 #define DISABLE		(PANIC + 2)
 
@@ -39,10 +40,12 @@
 #define LOG_PREFIX	"pg_statsinfo: "
 
 /* manual snapshot log message */
-#define LOGMSG_SNAPSHOT		LOG_PREFIX "snapshot requested"
+#define LOGMSG_SNAPSHOT						LOG_PREFIX "snapshot requested"
 /* manual maintenance log message */
-#define LOGMSG_MAINTENANCE	LOG_PREFIX "maintenance requested"
-#define LOGMSG_RESTART		LOG_PREFIX "restart requested"
+#define LOGMSG_MAINTENANCE					LOG_PREFIX "maintenance requested"
+#define LOGMSG_RESTART						LOG_PREFIX "restart requested"
+/* statistics log message */
+#define LOGMSG_AUTOVACUUM_CANCEL_REQUEST	LOG_PREFIX "autovacuum cancel request"
 
 /* exit code for pg_statsinfod */
 #define STATSINFO_EXIT_SUCCESS		0x00

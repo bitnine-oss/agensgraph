@@ -3,7 +3,7 @@
  * copydir.c
  *	  copies a directory
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	While "xcopy /e /i /q" works fine for copying directories, on Windows XP
@@ -25,7 +25,7 @@
 #include "storage/copydir.h"
 #include "storage/fd.h"
 #include "miscadmin.h"
-
+#include "pgstat.h"
 
 /*
  * copydir: copy a directory
@@ -38,8 +38,8 @@ copydir(char *fromdir, char *todir, bool recurse)
 {
 	DIR		   *xldir;
 	struct dirent *xlde;
-	char		fromfile[MAXPGPATH];
-	char		tofile[MAXPGPATH];
+	char		fromfile[MAXPGPATH * 2];
+	char		tofile[MAXPGPATH * 2];
 
 	if (mkdir(todir, S_IRWXU) != 0)
 		ereport(ERROR,
@@ -63,8 +63,8 @@ copydir(char *fromdir, char *todir, bool recurse)
 			strcmp(xlde->d_name, "..") == 0)
 			continue;
 
-		snprintf(fromfile, MAXPGPATH, "%s/%s", fromdir, xlde->d_name);
-		snprintf(tofile, MAXPGPATH, "%s/%s", todir, xlde->d_name);
+		snprintf(fromfile, sizeof(fromfile), "%s/%s", fromdir, xlde->d_name);
+		snprintf(tofile, sizeof(tofile), "%s/%s", todir, xlde->d_name);
 
 		if (lstat(fromfile, &fst) < 0)
 			ereport(ERROR,
@@ -103,7 +103,7 @@ copydir(char *fromdir, char *todir, bool recurse)
 			strcmp(xlde->d_name, "..") == 0)
 			continue;
 
-		snprintf(tofile, MAXPGPATH, "%s/%s", todir, xlde->d_name);
+		snprintf(tofile, sizeof(tofile), "%s/%s", todir, xlde->d_name);
 
 		/*
 		 * We don't need to sync subdirectories here since the recursive
@@ -139,10 +139,24 @@ copy_file(char *fromfile, char *tofile)
 	int			dstfd;
 	int			nbytes;
 	off_t		offset;
+	off_t		flush_offset;
 
-	/* Use palloc to ensure we get a maxaligned buffer */
+	/* Size of copy buffer (read and write requests) */
 #define COPY_BUF_SIZE (8 * BLCKSZ)
 
+	/*
+	 * Size of data flush requests.  It seems beneficial on most platforms to
+	 * do this every 1MB or so.  But macOS, at least with early releases of
+	 * APFS, is really unfriendly to small mmap/msync requests, so there do it
+	 * only every 32MB.
+	 */
+#if defined(__darwin__)
+#define FLUSH_DISTANCE (32 * 1024 * 1024)
+#else
+#define FLUSH_DISTANCE (1024 * 1024)
+#endif
+
+	/* Use palloc to ensure we get a maxaligned buffer */
 	buffer = palloc(COPY_BUF_SIZE);
 
 	/*
@@ -164,12 +178,26 @@ copy_file(char *fromfile, char *tofile)
 	/*
 	 * Do the data copying.
 	 */
+	flush_offset = 0;
 	for (offset = 0;; offset += nbytes)
 	{
 		/* If we got a cancel signal during the copy of the file, quit */
 		CHECK_FOR_INTERRUPTS();
 
+		/*
+		 * We fsync the files later, but during the copy, flush them every so
+		 * often to avoid spamming the cache and hopefully get the kernel to
+		 * start writing them out before the fsync comes.
+		 */
+		if (offset - flush_offset >= FLUSH_DISTANCE)
+		{
+			pg_flush_data(dstfd, flush_offset, offset - flush_offset);
+			flush_offset = offset;
+		}
+
+		pgstat_report_wait_start(WAIT_EVENT_COPY_FILE_READ);
 		nbytes = read(srcfd, buffer, COPY_BUF_SIZE);
+		pgstat_report_wait_end();
 		if (nbytes < 0)
 			ereport(ERROR,
 					(errcode_for_file_access(),
@@ -177,8 +205,10 @@ copy_file(char *fromfile, char *tofile)
 		if (nbytes == 0)
 			break;
 		errno = 0;
+		pgstat_report_wait_start(WAIT_EVENT_COPY_FILE_WRITE);
 		if ((int) write(dstfd, buffer, nbytes) != nbytes)
 		{
+			pgstat_report_wait_end();
 			/* if write didn't set errno, assume problem is no disk space */
 			if (errno == 0)
 				errno = ENOSPC;
@@ -186,14 +216,11 @@ copy_file(char *fromfile, char *tofile)
 					(errcode_for_file_access(),
 					 errmsg("could not write to file \"%s\": %m", tofile)));
 		}
-
-		/*
-		 * We fsync the files later but first flush them to avoid spamming the
-		 * cache and hopefully get the kernel to start writing them out before
-		 * the fsync comes.
-		 */
-		pg_flush_data(dstfd, offset, nbytes);
+		pgstat_report_wait_end();
 	}
+
+	if (offset > flush_offset)
+		pg_flush_data(dstfd, flush_offset, offset - flush_offset);
 
 	if (CloseTransientFile(dstfd))
 		ereport(ERROR,

@@ -3,7 +3,7 @@
  *
  * Create a repository schema.
  *
- * Copyright (c) 2009-2017, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
+ * Copyright (c) 2009-2018, NIPPON TELEGRAPH AND TELEPHONE CORPORATION
  */
 
 -- Adjust this setting to control where the objects get created.
@@ -36,6 +36,10 @@ CREATE TABLE statsrepo.instance
 	port				integer NOT NULL,
 	pg_version			text,
 	xlog_file_size		bigint,
+	page_size			integer,
+	page_header_size	smallint,
+	htup_header_size	smallint,
+	item_id_size		smallint,
 	PRIMARY KEY (instid),
 	UNIQUE (name, hostname, port)
 );
@@ -333,23 +337,24 @@ CREATE INDEX statsrepo_function_idx ON statsrepo.function(snapid, dbid);
 
 CREATE TABLE statsrepo.autovacuum
 (
-	instid			bigint,
-	start			timestamptz,
-	database		text,
-	schema			text,
-	"table"			text,
-	index_scans		integer,
-	page_removed	integer,
-	page_remain		integer,
-	tup_removed		bigint,
-	tup_remain		bigint,
-	tup_dead		bigint,
-	page_hit		integer,
-	page_miss		integer,
-	page_dirty		integer,
-	read_rate		double precision,
-	write_rate		double precision,
-	duration		real,
+	instid					bigint,
+	start					timestamptz,
+	database				text,
+	schema					text,
+	"table"					text,
+	index_scans				integer,
+	page_removed			bigint,
+	page_remain				bigint,
+	frozen_skipped_pages	bigint,
+	tup_removed				bigint,
+	tup_remain				bigint,
+	tup_dead				bigint,
+	page_hit				integer,
+	page_miss				integer,
+	page_dirty				integer,
+	read_rate				double precision,
+	write_rate				double precision,
+	duration				real,
 	FOREIGN KEY (instid) REFERENCES statsrepo.instance (instid) ON DELETE CASCADE
 );
 CREATE INDEX statsrepo_autovacuum_idx ON statsrepo.autovacuum(instid, start);
@@ -491,9 +496,22 @@ CREATE TABLE statsrepo.lock
 	blockee_pid			integer,
 	blocker_pid			integer,
 	blocker_gid			text,
+	wait_event_type		text,
+	wait_event			text,
 	duration			interval,
 	blockee_query		text,
 	blocker_query		text,
+	FOREIGN KEY (snapid) REFERENCES statsrepo.snapshot (snapid) ON DELETE CASCADE
+);
+
+CREATE TABLE statsrepo.bgwriter
+(
+	snapid					bigint,
+	buffers_clean			bigint,
+	maxwritten_clean		bigint,
+	buffers_backend			bigint,
+	buffers_backend_fsync	bigint,
+	buffers_alloc			bigint,
 	FOREIGN KEY (snapid) REFERENCES statsrepo.snapshot (snapid) ON DELETE CASCADE
 );
 
@@ -515,8 +533,84 @@ CREATE TABLE statsrepo.replication
 	write_location		text,
 	flush_location		text,
 	replay_location		text,
+	write_lag			interval,
+	flush_lag			interval,
+	replay_lag			interval,
 	sync_priority		integer,
 	sync_state			text,
+	FOREIGN KEY (snapid) REFERENCES statsrepo.snapshot (snapid) ON DELETE CASCADE
+);
+
+CREATE TABLE statsrepo.replication_slots
+(
+	snapid					bigint,
+	slot_name				name,
+	plugin					name,
+	slot_type				text,
+	datoid					oid,
+	temporary				boolean,
+	active					boolean,
+	active_pid				integer,
+	xact_xmin				xid,
+	catalog_xmin			xid,
+	restart_lsn				pg_lsn,
+	confirmed_flush_lsn		pg_lsn,
+	FOREIGN KEY (snapid) REFERENCES statsrepo.snapshot (snapid) ON DELETE CASCADE
+);
+
+CREATE TABLE statsrepo.publication
+(
+	snapid			bigint,
+	dbid			oid,
+	pubid			oid,
+	pubname			name,
+	pubowner		oid,
+	puballtables	boolean,
+	pubinsert		boolean,
+	pubupdate		boolean,
+	pubdelete		boolean,
+	PRIMARY KEY (snapid, dbid, pubid),
+	FOREIGN KEY (snapid) REFERENCES statsrepo.snapshot (snapid) ON DELETE CASCADE
+);
+
+CREATE TABLE statsrepo.publication_tables
+(
+	snapid			bigint,
+	dbid			oid,
+	pubname			name,
+	schemaname		name,
+	tablename		name,
+	FOREIGN KEY (snapid) REFERENCES statsrepo.snapshot (snapid) ON DELETE CASCADE
+);
+
+CREATE TABLE statsrepo.subscription
+(
+	snapid					bigint,
+	subid					oid,
+	subdbid					oid,
+	subname					name,
+	subowner				oid,
+	subenabled				boolean,
+	subconninfo				text,
+	subslotname				name,
+	subsynccommit			text,
+	subpublications			text[],
+	PRIMARY KEY (snapid, subid),
+	FOREIGN KEY (snapid) REFERENCES statsrepo.snapshot (snapid) ON DELETE CASCADE
+);
+
+CREATE TABLE statsrepo.stat_subscription
+(
+	snapid					bigint,
+	subid					oid,
+	subname					name,
+	pid						integer,
+	relid					oid,
+	received_lsn			pg_lsn,
+	last_msg_send_time		timestamptz,
+	last_msg_receipt_time	timestamptz,
+	latest_end_lsn			pg_lsn,
+	latest_end_time			timestamptz,
 	FOREIGN KEY (snapid) REFERENCES statsrepo.snapshot (snapid) ON DELETE CASCADE
 );
 
@@ -609,12 +703,7 @@ LANGUAGE sql;
 
 -- get_version() - version of statsrepo schema
 CREATE FUNCTION statsrepo.get_version() RETURNS text AS
-'SELECT CAST(''30200'' AS TEXT)'
-LANGUAGE sql IMMUTABLE;
-
--- page_size() - page size of the monitored instance
-CREATE FUNCTION statsrepo.page_size() RETURNS integer AS
-'SELECT 8192'
+'SELECT CAST(''100000'' AS TEXT)'
 LANGUAGE sql IMMUTABLE;
 
 -- tps() - transaction per seconds
@@ -885,104 +974,6 @@ $$
 		LEFT JOIN pg_catalog.pg_class tc ON (c.reltoastrelid = tc.oid)
 	WHERE
 		c.oid = $1::regclass;
-$$
-LANGUAGE sql;
-
--- snapshot list
-CREATE FUNCTION statsrepo.get_snapshot_list(
-	IN  instid		bigint,
-	OUT snapid		bigint,
-	OUT check_box	xml,
-	OUT "timestamp"	timestamp(0),
-	OUT size		numeric,
-	OUT diff_size	numeric,
-	OUT commits		numeric(1000,3),
-	OUT	rollbacks	numeric(1000,3),
-	OUT comment		text
-) RETURNS SETOF record AS
-$$
-	SELECT
-		e.snapid,
-		xmlelement(	name input,
-					xmlattributes(	'checkbox' AS  type,
-									to_char(e.snapid, '00000') AS pos,
-									e.snapid AS value)
-					),
-		time::timestamp(0),
-		round(ed.size / 1024 / 1024, 0),
-		round((ed.size - sd.size) / 1024 / 1024, 0),
-		statsrepo.tps(ed.commits - sd.commits, time - time0),
-		statsrepo.tps(ed.rollbacks - sd.rollbacks, time - time0),
-		comment
-	FROM
-		(SELECT	*,
-				lag(snapid) OVER (ORDER BY snapid) AS snapid0,
-				lag(time) OVER (ORDER BY snapid) AS time0
-		FROM statsrepo.snapshot
-		WHERE instid = $1) e
-		LEFT JOIN
-			(SELECT	snapid,
-					sum(size) AS size,
-					sum(xact_commit) AS commits,
-					sum(xact_rollback) AS rollbacks
-			FROM statsrepo.database GROUP BY snapid) AS ed
-			ON ed.snapid = e.snapid
-		LEFT JOIN
-			(SELECT snapid,
-					sum(size) AS size,
-					sum(xact_commit) AS commits,
-					sum(xact_rollback) AS rollbacks
-			FROM statsrepo.database GROUP BY snapid) AS sd
-			ON sd.snapid = e.snapid0;
-$$
-LANGUAGE sql;
-
--- refine snapshot list
-CREATE FUNCTION statsrepo.get_snapshot_list_refine(
-	IN  begin_snapid	bigint,
-	OUT snapid			bigint,
-	OUT check_box		xml,
-	OUT "timestamp"		timestamp(0),
-	OUT size			numeric,
-	OUT diff_size		numeric,
-	OUT commits			numeric(1000,3),
-	OUT	rollbacks		numeric(1000,3),
-	OUT comment			text
-) RETURNS SETOF record AS
-$$
-	SELECT
-		e.snapid,
-		xmlelement(	name input,
-					xmlattributes(	'checkbox' AS  type,
-									to_char(e.snapid, '00000') AS pos,
-									e.snapid AS value)
-					),
-		time::timestamp(0),
-		round(ed.size / 1024 / 1024, 0),
-		round((ed.size - sd.size) / 1024 / 1024, 0),
-		statsrepo.tps(ed.commits - sd.commits, time - time0),
-		statsrepo.tps(ed.rollbacks - sd.rollbacks, time - time0),
-		comment
-	FROM
-		(SELECT	*,
-				lag(snapid) OVER (ORDER BY snapid) AS snapid0,
-				lag(time) OVER (ORDER BY snapid) AS time0
-		FROM statsrepo.snapshot
-		WHERE instid = (SELECT instid FROM statsrepo.snapshot WHERE snapid = $1)) e
-		LEFT JOIN
-			(SELECT	snapid,
-					sum(size) AS size,
-					sum(xact_commit) AS commits,
-					sum(xact_rollback) AS rollbacks
-			FROM statsrepo.database GROUP BY snapid) AS ed
-			ON ed.snapid = e.snapid
-		LEFT JOIN
-			(SELECT snapid,
-					sum(size) AS size,
-					sum(xact_commit) AS commits,
-					sum(xact_rollback) AS rollbacks
-			FROM statsrepo.database GROUP BY snapid) AS sd
-			ON sd.snapid = e.snapid0;
 $$
 LANGUAGE sql;
 
@@ -2128,14 +2119,16 @@ $$
 			t.schema, 
 	 		t.table, 
 			t.n_live_tup,
-			ceil(t.n_live_tup::real / ((statsrepo.page_size() - 24) * statsrepo.pg_fillfactor(t.reloptions, 0) / 100 /
-				(width + 28)))::bigint AS logical_pages,
-			(t.size + CASE t.toastrelid WHEN 0 THEN 0 ELSE tt.size END) / statsrepo.page_size() AS physical_pages
+			ceil(t.n_live_tup::real / ((i.page_size - i.page_header_size) * statsrepo.pg_fillfactor(t.reloptions, 0) / 100 /
+				(width + i.htup_header_size + i.item_id_size)))::bigint AS logical_pages,
+			(t.size + CASE t.toastrelid WHEN 0 THEN 0 ELSE tt.size END) / i.page_size AS physical_pages
 		 FROM
 		 	statsrepo.tables t
+		 	LEFT JOIN statsrepo.snapshot s ON t.snapid = s.snapid
+		 	LEFT JOIN statsrepo.instance i ON s.instid = i.instid
 		 	LEFT JOIN
 		 		(SELECT
-		 			snapid, dbid, tbl, sum(avg_width)::integer + 7 & ~7 AS width
+		 			snapid, dbid, tbl, (sum(avg_width)::integer + 7) & ~7 AS width
 				 FROM
 				 	statsrepo."column" 
 				 WHERE
@@ -2541,18 +2534,22 @@ CREATE FUNCTION statsrepo.get_query_activity_statements(
 $$
 DECLARE
 	pg_version_num	integer;
+	vmaj			integer;
+	vmin			integer;
+	vrev			integer;
 BEGIN
 	SELECT
-		CASE WHEN split_part(pg_version, '.', 3) != '' THEN
-			(split_part(pg_version, '.', 1)::integer * 100 +
-			 split_part(pg_version, '.', 2)::integer) * 100 +
-			 split_part(pg_version, '.', 3)::integer
-		ELSE
-			(split_part(pg_version, '.', 1)::integer * 100 +
-			 substring(split_part(pg_version, '.', 2) from '^\d+')::integer) * 100
-		END
-	INTO pg_version_num FROM statsrepo.instance
+		coalesce(substring(split_part(pg_version, '.', 1) from '^\d+')::integer, 0),
+		coalesce(substring(split_part(pg_version, '.', 2) from '^\d+')::integer, 0),
+		coalesce(substring(split_part(pg_version, '.', 3) from '^\d+')::integer, 0)
+	INTO vmaj, vmin, vrev FROM statsrepo.instance
 	WHERE instid = (SELECT instid FROM statsrepo.snapshot WHERE snapid = $1);
+
+	IF vmaj >= 10 THEN
+		pg_version_num := 100 * 100 * vmaj + vmin;
+	ELSE
+		pg_version_num := (100 * vmaj + vmin) * 100 + vrev;
+	END IF;
 
 	IF pg_version_num >= 90400 THEN
 		RETURN QUERY SELECT * FROM statsrepo.get_query_activity_statemets_body($1, $2);
@@ -2956,10 +2953,132 @@ $$
 $$
 LANGUAGE sql;
 
+-- generate information that corresponds to 'BGWriter Statistics'
+CREATE FUNCTION statsrepo.get_bgwriter_tendency(
+	IN snapid_begin				bigint,
+	IN snapid_end				bigint,
+	OUT "timestamp"				text,
+	OUT bgwriter_write_tps		numeric,
+	OUT backend_write_tps		numeric,
+	OUT backend_fsync_tps		numeric,
+	OUT bgwriter_stopscan_tps	numeric,
+	OUT buffer_alloc_tps		numeric
+) RETURNS SETOF record AS
+$$
+	SELECT
+		t.timestamp,
+		statsrepo.tps(t.bgwriter_write, t.duration),
+		statsrepo.tps(t.backend_write, t.duration),
+		statsrepo.tps(t.backend_fsync, t.duration),
+		statsrepo.tps(t.bgwriter_stopscan, t.duration),
+		statsrepo.tps(t.buffer_alloc, t.duration)
+	FROM
+	(
+		SELECT
+			s.snapid,
+			to_char(s.time, 'YYYY-MM-DD HH24:MI') AS timestamp,
+			b.buffers_clean - lag(b.buffers_clean) OVER w AS bgwriter_write,
+			b.buffers_backend - lag(b.buffers_backend) OVER w AS backend_write,
+			b.buffers_backend_fsync - lag(b.buffers_backend_fsync) OVER w AS backend_fsync,
+			b.maxwritten_clean - lag(b.maxwritten_clean) OVER w AS bgwriter_stopscan,
+			b.buffers_alloc - lag(b.buffers_alloc) OVER w AS buffer_alloc,
+			s.time - lag(s.time) OVER w AS duration
+		FROM
+			statsrepo.bgwriter b,
+			statsrepo.snapshot s
+		WHERE
+			b.snapid BETWEEN $1 AND $2
+			AND b.snapid = s.snapid
+			AND s.instid = (SELECT instid FROM statsrepo.snapshot WHERE snapid = $2)
+		WINDOW w AS (ORDER BY s.snapid)
+		ORDER BY
+			s.snapid
+	) t
+	WHERE
+		t.snapid > $1;
+$$
+LANGUAGE sql;
+
+-- generate information that corresponds to 'BGWriter Statistics'
+CREATE OR REPLACE FUNCTION statsrepo.get_bgwriter_stats(
+	IN snapid_begin				bigint,
+	IN snapid_end				bigint,
+	OUT bgwriter_write_avg		numeric,
+	OUT bgwriter_write_max		numeric,
+	OUT backend_write_avg		numeric,
+	OUT backend_write_max		numeric,
+	OUT backend_fsync_avg		numeric,
+	OUT backend_fsync_max		numeric,
+	OUT bgwriter_stopscan_avg	numeric,
+	OUT buffer_alloc_avg		numeric
+) RETURNS SETOF record AS
+$$
+	SELECT
+		round(avg(bgwriter_write_tps), 3),
+		round(max(bgwriter_write_tps), 3),
+		round(avg(backend_write_tps), 3),
+		round(max(backend_write_tps), 3),
+		round(avg(backend_fsync_tps), 3),
+		round(max(backend_fsync_tps), 3),
+		round(avg(bgwriter_stopscan_tps), 3),
+		round(avg(buffer_alloc_tps), 3)
+	FROM
+		statsrepo.get_bgwriter_tendency($1, $2);
+$$
+LANGUAGE sql;
+
+-- generate information that corresponds to 'Replication Delays'
+CREATE FUNCTION statsrepo.get_replication_delays(
+	IN snapid_begin			bigint,
+	IN snapid_end			bigint,
+	OUT snapid				bigint,
+	OUT "timestamp"			text,
+	OUT client_addr			inet,
+	OUT application_name	text,
+	OUT client				text,
+	OUT flush_delay_size	numeric,
+	OUT replay_delay_size	numeric,
+	OUT sync_state			text
+) RETURNS SETOF record AS
+$$
+	SELECT
+		s.snapid,
+		to_char(s.time, 'YYYY-MM-DD HH24:MI'),
+		r.client_addr,
+		r.application_name,
+		COALESCE(host(r.client_addr), 'local') || ':' || COALESCE(NULLIF(r.application_name, ''), '(none)') AS client,
+		statsrepo.xlog_location_diff(
+			split_part(r.current_location, ' ', 1),
+			split_part(r.flush_location, ' ', 1),
+			i.xlog_file_size),
+		statsrepo.xlog_location_diff(
+			split_part(r.current_location, ' ', 1),
+			split_part(r.replay_location, ' ', 1),
+			i.xlog_file_size),
+		r.sync_state
+	FROM
+		statsrepo.replication r LEFT JOIN statsrepo.replication_slots rs
+			ON rs.snapid = r.snapid AND rs.active_pid = r.procpid,
+		statsrepo.snapshot s,
+		statsrepo.instance i
+	WHERE
+		r.snapid = s.snapid
+		AND s.instid = i.instid
+		AND r.snapid BETWEEN $1 AND $2
+		AND s.instid = (SELECT instid FROM statsrepo.snapshot WHERE snapid = $2)
+		AND r.flush_location IS NOT NULL
+		AND r.replay_location IS NOT NULL
+		AND (rs.slot_name IS NULL OR rs.slot_type = 'physical')
+	ORDER BY
+		s.snapid, client;
+$$
+LANGUAGE sql;
+
 -- generate information that corresponds to 'Replication Activity'
 CREATE FUNCTION statsrepo.get_replication_activity(
 	IN snapid_begin			bigint,
 	IN snapid_end			bigint,
+	OUT snapshot_time		timestamp,
 	OUT usename				name,
 	OUT application_name	text,
 	OUT client_addr			inet,
@@ -2973,68 +3092,54 @@ CREATE FUNCTION statsrepo.get_replication_activity(
 	OUT flush_location		text,
 	OUT replay_location		text,
 	OUT sync_priority		integer,
-	OUT sync_state			text
+	OUT sync_state			text,
+	OUT replay_delay_avg	numeric,
+	OUT replay_delay_peak	numeric,
+	OUT write_lag_time		interval,
+	OUT flush_lag_time		interval,
+	OUT replay_lag_time		interval,
+	OUT priority_sortkey	integer
 ) RETURNS SETOF record AS
 $$
 	SELECT
-		usename,
-		application_name,
-		client_addr,
-		client_hostname,
-		client_port,
-		backend_start::timestamp(0),
-		state,
-		current_location,
-		sent_location,
-		write_location,
-		flush_location,
-		replay_location,
-		sync_priority,
-		sync_state
+		s.time::timestamp(0),
+		r.usename,
+		r.application_name,
+		r.client_addr,
+		r.client_hostname,
+		r.client_port,
+		r.backend_start::timestamp(0),
+		r.state,
+		r.current_location,
+		r.sent_location,
+		r.write_location,
+		r.flush_location,
+		r.replay_location,
+		r.sync_priority,
+		r.sync_state,
+		d.replay_delay_avg,
+		d.replay_delay_peak,
+		r.write_lag,
+		r.flush_lag,
+		r.replay_lag,
+		NULLIF(r.sync_priority, 0) AS priority_sortkey
 	FROM
-		statsrepo.replication
-	WHERE
-		snapid = $2
-$$
-LANGUAGE sql;
-
--- generate information that corresponds to 'Replication Delays'
-CREATE FUNCTION statsrepo.get_replication_delays(
-	IN snapid_begin			bigint,
-	IN snapid_end			bigint,
-	OUT "timestamp"			text,
-	OUT client				text,
-	OUT flush_delay_size	numeric,
-	OUT replay_delay_size	numeric,
-	OUT sync_state			text
-) RETURNS SETOF record AS
-$$
-	SELECT
-		to_char(s.time, 'YYYY-MM-DD HH24:MI'),
-		host(r.client_addr) || ':' || r.client_port AS client,
-		statsrepo.xlog_location_diff(
-			split_part(r.current_location, ' ', 1),
-			split_part(r.flush_location, ' ', 1),
-			i.xlog_file_size),
-		statsrepo.xlog_location_diff(
-			split_part(r.current_location, ' ', 1),
-			split_part(r.replay_location, ' ', 1),
-			i.xlog_file_size),
-		(SELECT sync_state FROM statsrepo.replication WHERE snapid = $2
-			AND client_addr = r.client_addr AND client_port = r.client_port)
-	FROM
-		statsrepo.replication r,
-		statsrepo.snapshot s,
-		statsrepo.instance i
-	WHERE
-		r.snapid = s.snapid
-		AND s.instid = i.instid
-		AND r.snapid BETWEEN $1 AND $2
-		AND s.instid = (SELECT instid FROM statsrepo.snapshot WHERE snapid = $2)
-		AND r.flush_location IS NOT NULL
-		AND r.replay_location IS NOT NULL
-	ORDER BY
-		s.snapid, client;
+		(SELECT
+			client_addr,
+			application_name,
+			max(snapid) AS snapid,
+			avg(replay_delay_size) AS replay_delay_avg,
+			max(replay_delay_size) AS replay_delay_peak
+		 FROM
+			statsrepo.get_replication_delays($1, $2)
+		 GROUP BY
+			client_addr, application_name) d
+		LEFT JOIN statsrepo.replication r
+			ON r.snapid = d.snapid
+			AND d.client_addr = r.client_addr
+			AND d.application_name = r.application_name
+		LEFT JOIN statsrepo.snapshot s ON s.snapid = d.snapid
+	ORDER BY d.snapid DESC, priority_sortkey ASC NULLS LAST;
 $$
 LANGUAGE sql;
 

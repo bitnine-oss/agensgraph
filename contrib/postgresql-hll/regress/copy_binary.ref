@@ -17,7 +17,6 @@ SELECT hll_cardinality(v1) FROM test_binary;
 (1 row)
 
 \COPY test_binary TO 'binary.dat' WITH (FORMAT "binary")
-COPY 1
 DELETE FROM test_binary;
 DELETE 1
 SELECT hll_cardinality(v1) FROM test_binary;
@@ -26,7 +25,6 @@ SELECT hll_cardinality(v1) FROM test_binary;
 (0 rows)
 
 \COPY test_binary FROM 'binary.dat' WITH (FORMAT "binary")
-COPY 1
 SELECT hll_cardinality(v1) FROM test_binary;
  hll_cardinality 
 -----------------

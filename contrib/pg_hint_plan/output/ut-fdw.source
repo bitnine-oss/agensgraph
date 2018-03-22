@@ -26,14 +26,15 @@ SELECT * FROM ft1;
 \t
 EXPLAIN (COSTS false) SELECT * FROM s1.t1, ft1 ft_1, ft1 ft_2 WHERE t1.c1 = ft_1.id AND t1.c1 = ft_2.id;
  Nested Loop
-   Join Filter: (t1.c1 = ft_2.id)
+   Join Filter: (ft_1.id = t1.c1)
    ->  Nested Loop
+         Join Filter: (ft_1.id = ft_2.id)
          ->  Foreign Scan on ft1 ft_1
                Foreign File: @abs_srcdir@/data/data.csv
-         ->  Index Scan using t1_i1 on t1
-               Index Cond: (c1 = ft_1.id)
-   ->  Foreign Scan on ft1 ft_2
-         Foreign File: @abs_srcdir@/data/data.csv
+         ->  Foreign Scan on ft1 ft_2
+               Foreign File: @abs_srcdir@/data/data.csv
+   ->  Index Scan using t1_i1 on t1
+         Index Cond: (c1 = ft_2.id)
 
 ----
 ---- No. S-1-5 object type for the hint
@@ -76,6 +77,7 @@ duplication hint:
 error hint:
 
  Nested Loop
+   Join Filter: (ft_1.id = t1.c1)
    ->  Merge Join
          Merge Cond: (ft_1.id = ft_2.id)
          ->  Sort
@@ -87,7 +89,7 @@ error hint:
                ->  Foreign Scan on ft1 ft_2
                      Foreign File: @abs_srcdir@/data/data.csv
    ->  Index Scan using t1_i1 on t1
-         Index Cond: (c1 = ft_1.id)
+         Index Cond: (c1 = ft_2.id)
 
 ----
 ---- No. L-1-6 object type for the hint
@@ -103,6 +105,7 @@ duplication hint:
 error hint:
 
  Nested Loop
+   Join Filter: (ft_1.id = t1.c1)
    ->  Nested Loop
          Join Filter: (ft_1.id = ft_2.id)
          ->  Foreign Scan on ft1 ft_1
@@ -110,7 +113,7 @@ error hint:
          ->  Foreign Scan on ft1 ft_2
                Foreign File: @abs_srcdir@/data/data.csv
    ->  Index Scan using t1_i1 on t1
-         Index Cond: (c1 = ft_1.id)
+         Index Cond: (c1 = ft_2.id)
 
 ----
 ---- No. R-1-6 object type for the hint
@@ -130,6 +133,7 @@ error hint:
 \o
 \! sql/maskout.sh results/ut-fdw.tmpout
  Nested Loop  (cost=xxx rows=1 width=xxx)
+   Join Filter: (ft_1.id = t1.c1)
    ->  Nested Loop  (cost=xxx rows=1 width=xxx)
          Join Filter: (ft_1.id = ft_2.id)
          ->  Foreign Scan on ft1 ft_1  (cost=xxx rows=1 width=xxx)
@@ -139,6 +143,6 @@ error hint:
                Foreign File: @abs_srcdir@/data/data.csv
                Foreign File Size: 42
    ->  Index Scan using t1_i1 on t1  (cost=xxx rows=1 width=xxx)
-         Index Cond: (c1 = ft_1.id)
+         Index Cond: (c1 = ft_2.id)
 
 \! rm results/ut-fdw.tmpout

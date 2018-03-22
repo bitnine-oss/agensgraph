@@ -4,7 +4,7 @@
  *	  routines to manage scans of inverted index relations
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -147,7 +147,7 @@ ginFillScanKey(GinScanOpaque so, OffsetNumber attnum,
 	key->nuserentries = nUserQueryValues;
 
 	key->scanEntry = (GinScanEntry *) palloc(sizeof(GinScanEntry) * nQueryValues);
-	key->entryRes = (bool *) palloc0(sizeof(bool) * nQueryValues);
+	key->entryRes = (GinTernaryValue *) palloc0(sizeof(GinTernaryValue) * nQueryValues);
 
 	key->query = query;
 	key->queryValues = queryValues;
@@ -310,11 +310,11 @@ ginNewScanKey(IndexScanDesc scan)
 		/* OK to call the extractQueryFn */
 		queryValues = (Datum *)
 			DatumGetPointer(FunctionCall7Coll(&so->ginstate.extractQueryFn[skey->sk_attno - 1],
-						   so->ginstate.supportCollation[skey->sk_attno - 1],
+											  so->ginstate.supportCollation[skey->sk_attno - 1],
 											  skey->sk_argument,
 											  PointerGetDatum(&nQueryValues),
-										   UInt16GetDatum(skey->sk_strategy),
-										   PointerGetDatum(&partial_matches),
+											  UInt16GetDatum(skey->sk_strategy),
+											  PointerGetDatum(&partial_matches),
 											  PointerGetDatum(&extra_data),
 											  PointerGetDatum(&nullFlags),
 											  PointerGetDatum(&searchMode)));
@@ -362,7 +362,7 @@ ginNewScanKey(IndexScanDesc scan)
 			{
 				if (nullFlags[j])
 				{
-					nullFlags[j] = true;		/* not any other nonzero value */
+					nullFlags[j] = true;	/* not any other nonzero value */
 					hasNullQuery = true;
 				}
 			}
