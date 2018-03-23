@@ -2903,6 +2903,67 @@ RETURN 'abc' =~ 'a(b{1})c';
 
 RETURN 'abc' =~ 1;
 ERROR:  Regular Expression Pattern: two string values expected but "abc", 1
+-- id matching
+CREATE GRAPH sm;
+SET GRAPH_PATH = sm;
+CREATE ();
+CREATE ();
+MATCH (n) WHERE id(n) = 1.1 RETURN n;
+        n         
+------------------
+ ag_vertex[1.1]{}
+(1 row)
+
+MATCH (n) WHERE id(n) > 1.1 RETURN n;
+        n         
+------------------
+ ag_vertex[1.2]{}
+(1 row)
+
+MATCH (n) WHERE id(n) < 1.2 RETURN n;
+        n         
+------------------
+ ag_vertex[1.1]{}
+(1 row)
+
+MATCH (n) WHERE id(n) >= 1.1 RETURN n;
+        n         
+------------------
+ ag_vertex[1.1]{}
+ ag_vertex[1.2]{}
+(2 rows)
+
+MATCH (n) WHERE id(n) <= 1.2 RETURN n;
+        n         
+------------------
+ ag_vertex[1.1]{}
+ ag_vertex[1.2]{}
+(2 rows)
+
+MATCH (n) WHERE id(n) <> 0.0 RETURN n;
+        n         
+------------------
+ ag_vertex[1.1]{}
+ ag_vertex[1.2]{}
+(2 rows)
+
+MATCH (n) WHERE id(n) = '1.1' RETURN n;
+        n         
+------------------
+ ag_vertex[1.1]{}
+(1 row)
+
+MATCH (n) WHERE id(n) = 65535.281474976710655 RETURN n;
+ n 
+---
+(0 rows)
+
+MATCH (n) WHERE id(n) = 65536.0 RETURN n;
+ERROR:  labid out of range
+MATCH (n) WHERE id(n) = 0.281474976710656 RETURN n;
+ERROR:  locid out of range
+MATCH (n) WHERE id(n) = -1.1 RETURN n;
+ERROR:  labid out of range
 -- cleanup
 DROP GRAPH np CASCADE;
 NOTICE:  drop cascades to 5 other objects
@@ -2944,6 +3005,11 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel person
 drop cascades to elabel knows
+DROP GRAPH sm CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence sm.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
 SET graph_path = agens;
 DROP VLABEL feature;
 DROP ELABEL supported;
