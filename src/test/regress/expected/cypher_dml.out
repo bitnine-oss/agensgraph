@@ -2984,11 +2984,11 @@ drop cascades to vlabel w
 DROP GRAPH p CASCADE;
 NOTICE:  drop cascades to 6 other objects
 DETAIL:  drop cascades to sequence p.ag_label_seq
-drop cascades to label ag_vertex
-drop cascades to label ag_edge
-drop cascades to label rel
-drop cascades to label multiple_update
-drop cascades to label person
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to elabel rel
+drop cascades to vlabel multiple_update
+drop cascades to vlabel person
 DROP GRAPH u CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to sequence u.ag_label_seq
