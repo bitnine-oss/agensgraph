@@ -407,7 +407,7 @@ DATA(insert ( 3802   23 7194 a f ));
 DATA(insert ( 3802 1700 7195 e f ));
 DATA(insert ( 3802  701 7196 e f ));
 
-/*jsonb to graphid */
+/* implicit coercion from jsonb to graphid */
 DATA(insert ( 3802 7002 7245 i f ));
 
-#endif   /* PG_CAST_H */
+#endif							/* PG_CAST_H */

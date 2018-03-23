@@ -32,7 +32,7 @@ extern Datum jsonb_int4(PG_FUNCTION_ARGS);
 extern Datum jsonb_numeric(PG_FUNCTION_ARGS);
 extern Datum jsonb_float8(PG_FUNCTION_ARGS);
 
-/* coercion between jsonb and graphid */
+/* coercion from jsonb to graphid */
 extern Datum jsonb_graphid(PG_FUNCTION_ARGS);
 
 #endif	/* CYPHER_OPS_H */

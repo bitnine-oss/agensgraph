@@ -5718,7 +5718,8 @@ DATA(insert OID = 7243 ( string_contains	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 
 DESCR("true if LHS contains RHS");
 DATA(insert OID = 7244 ( string_regex		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "3802 3802" _null_ _null_ _null_ _null_ _null_ jsonb_string_regex _null_ _null_ _null_ ));
 DESCR("true if regex match");
-DATA(insert OID = 7245 ( jsonb_graphid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7002 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_graphid _null_ _null_ _null_ ));
+/* Cypher expressions - coercion from jsonb to graphid */
+DATA(insert OID = 7245 ( graphid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7002 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_graphid _null_ _null_ _null_ ));
 DESCR("convert jsonb to graphid");
 
 /*
