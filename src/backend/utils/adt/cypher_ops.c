@@ -13,6 +13,7 @@
 #include "utils/builtins.h"
 #include "utils/cypher_ops.h"
 #include "utils/datum.h"
+#include "utils/graph.h"
 #include "utils/jsonb.h"
 #include "utils/memutils.h"
 #include "utils/numeric.h"
@@ -432,4 +433,53 @@ jsonb_num(Jsonb *j, PGFunction f)
 			 errmsg("%s cannot be converted to %s",
 					JsonbToCString(NULL, &j->root, VARSIZE(j)), type)));
 	return 0;
+}
+
+Datum
+jsonb_graphid(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *j = PG_GETARG_JSONB(0);
+
+	if (JB_ROOT_IS_SCALAR(j))
+	{
+		JsonbValue *jv;
+
+		jv = getIthJsonbValueFromContainer(&j->root, 0);
+		switch (jv->type)
+		{
+			case jbvNull:
+			case jbvBool:
+				break;
+			case jbvString:
+				{
+					Size		sz;
+					char	   *buf;
+
+					sz = sizeof(char) * (jv->val.string.len + 1);
+					buf = (char *) palloc(sz);
+
+					strncpy(buf, jv->val.string.val, jv->val.string.len);
+					buf[jv->val.string.len] = '\0';
+
+					PG_RETURN_DATUM(DirectFunctionCall1(graphid_in,
+														CStringGetDatum(buf)));
+				}
+			case jbvNumeric:
+				{
+					Datum		d;
+
+					d = DirectFunctionCall1(numeric_out,
+											NumericGetDatum(jv->val.numeric));
+
+					PG_RETURN_DATUM(DirectFunctionCall1(graphid_in, d));
+				}
+			default:
+				elog(ERROR, "unknown jsonb scalar type");
+		}
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+			 errmsg("%s cannot be converted to graphid",
+					JsonbToCString(NULL, &j->root, VARSIZE(j)))));
 }

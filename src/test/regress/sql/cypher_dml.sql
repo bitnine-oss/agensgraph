@@ -1035,7 +1035,9 @@ MERGE ()-[:ag_edge]->();
 
 DROP GRAPH gm CASCADE;
 
+--
 -- null properties
+--
 
 CREATE GRAPH np;
 SET GRAPH_PATH = np;
@@ -1115,8 +1117,26 @@ RETURN 'abc' =~ '(?i)A';
 RETURN 'abc' =~ 'a(b{1})c';
 RETURN 'abc' =~ 1;
 
+--
+-- graphid comparison
+--
+
+CREATE GRAPH gid;
+SET GRAPH_PATH = gid;
+
+CREATE ();
+CREATE ();
+
+MATCH (n) WHERE id(n) = '1.1' RETURN n;
+MATCH (n) WHERE id(n) > 1.1 RETURN n;
+MATCH (n) WHERE id(n) < '1.2' RETURN n;
+MATCH (n) WHERE id(n) >= 1.1 RETURN n;
+MATCH (n) WHERE id(n) <= 1.2 RETURN n;
+MATCH (n) WHERE id(n) <> 1.1 RETURN n;
+
 -- cleanup
 
+DROP GRAPH gid CASCADE;
 DROP GRAPH np CASCADE;
 DROP GRAPH p CASCADE;
 DROP GRAPH u CASCADE;
