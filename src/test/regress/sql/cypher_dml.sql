@@ -1035,7 +1035,9 @@ MERGE ()-[:ag_edge]->();
 
 DROP GRAPH gm CASCADE;
 
+--
 -- null properties
+--
 
 CREATE GRAPH np;
 SET GRAPH_PATH = np;
@@ -1115,34 +1117,31 @@ RETURN 'abc' =~ '(?i)A';
 RETURN 'abc' =~ 'a(b{1})c';
 RETURN 'abc' =~ 1;
 
--- id matching
+--
+-- graphid comparison
+--
 
-CREATE GRAPH sm;
-SET GRAPH_PATH = sm;
+CREATE GRAPH gid;
+SET GRAPH_PATH = gid;
 
 CREATE ();
 CREATE ();
 
-MATCH (n) WHERE id(n) = 1.1 RETURN n;
+MATCH (n) WHERE id(n) = '1.1' RETURN n;
 MATCH (n) WHERE id(n) > 1.1 RETURN n;
-MATCH (n) WHERE id(n) < 1.2 RETURN n;
+MATCH (n) WHERE id(n) < '1.2' RETURN n;
 MATCH (n) WHERE id(n) >= 1.1 RETURN n;
 MATCH (n) WHERE id(n) <= 1.2 RETURN n;
-MATCH (n) WHERE id(n) <> 0.0 RETURN n;
-MATCH (n) WHERE id(n) = '1.1' RETURN n;
-MATCH (n) WHERE id(n) = 65535.281474976710655 RETURN n;
-MATCH (n) WHERE id(n) = 65536.0 RETURN n;
-MATCH (n) WHERE id(n) = 0.281474976710656 RETURN n;
-MATCH (n) WHERE id(n) = -1.1 RETURN n;
+MATCH (n) WHERE id(n) <> 1.1 RETURN n;
 
 -- cleanup
 
+DROP GRAPH gid CASCADE;
 DROP GRAPH np CASCADE;
 DROP GRAPH p CASCADE;
 DROP GRAPH u CASCADE;
 DROP GRAPH t CASCADE;
 DROP GRAPH o CASCADE;
-DROP GRAPH sm CASCADE;
 
 SET graph_path = agens;
 

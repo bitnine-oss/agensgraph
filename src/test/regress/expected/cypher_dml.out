@@ -2694,7 +2694,9 @@ drop cascades to elabel e1
 drop cascades to vlabel person
 drop cascades to vlabel city
 drop cascades to elabel hometown
+--
 -- null properties
+--
 CREATE GRAPH np;
 SET GRAPH_PATH = np;
 SHOW allow_null_properties;
@@ -2903,12 +2905,14 @@ RETURN 'abc' =~ 'a(b{1})c';
 
 RETURN 'abc' =~ 1;
 ERROR:  Regular Expression Pattern: two string values expected but "abc", 1
--- id matching
-CREATE GRAPH sm;
-SET GRAPH_PATH = sm;
+--
+-- graphid comparison
+--
+CREATE GRAPH gid;
+SET GRAPH_PATH = gid;
 CREATE ();
 CREATE ();
-MATCH (n) WHERE id(n) = 1.1 RETURN n;
+MATCH (n) WHERE id(n) = '1.1' RETURN n;
         n         
 ------------------
  ag_vertex[1.1]{}
@@ -2920,7 +2924,7 @@ MATCH (n) WHERE id(n) > 1.1 RETURN n;
  ag_vertex[1.2]{}
 (1 row)
 
-MATCH (n) WHERE id(n) < 1.2 RETURN n;
+MATCH (n) WHERE id(n) < '1.2' RETURN n;
         n         
 ------------------
  ag_vertex[1.1]{}
@@ -2940,31 +2944,18 @@ MATCH (n) WHERE id(n) <= 1.2 RETURN n;
  ag_vertex[1.2]{}
 (2 rows)
 
-MATCH (n) WHERE id(n) <> 0.0 RETURN n;
+MATCH (n) WHERE id(n) <> 1.1 RETURN n;
         n         
 ------------------
- ag_vertex[1.1]{}
  ag_vertex[1.2]{}
-(2 rows)
-
-MATCH (n) WHERE id(n) = '1.1' RETURN n;
-        n         
-------------------
- ag_vertex[1.1]{}
 (1 row)
 
-MATCH (n) WHERE id(n) = 65535.281474976710655 RETURN n;
- n 
----
-(0 rows)
-
-MATCH (n) WHERE id(n) = 65536.0 RETURN n;
-ERROR:  labid out of range
-MATCH (n) WHERE id(n) = 0.281474976710656 RETURN n;
-ERROR:  locid out of range
-MATCH (n) WHERE id(n) = -1.1 RETURN n;
-ERROR:  labid out of range
 -- cleanup
+DROP GRAPH gid CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence gid.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
 DROP GRAPH np CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to sequence np.ag_label_seq
@@ -3005,11 +2996,6 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel person
 drop cascades to elabel knows
-DROP GRAPH sm CASCADE;
-NOTICE:  drop cascades to 3 other objects
-DETAIL:  drop cascades to sequence sm.ag_label_seq
-drop cascades to vlabel ag_vertex
-drop cascades to elabel ag_edge
 SET graph_path = agens;
 DROP VLABEL feature;
 DROP ELABEL supported;
