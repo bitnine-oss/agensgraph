@@ -51,6 +51,19 @@ SELECT '65536.281474976710655'::graphid;
 ERROR:  labid out of range
 LINE 1: SELECT '65536.281474976710655'::graphid;
                ^
+-- Coercion from jsonb to graphid
+SELECT '"1.1"'::jsonb::graphid;
+ graphid 
+---------
+ 1.1
+(1 row)
+
+SELECT '1.1'::jsonb::graphid;
+ graphid 
+---------
+ 1.1
+(1 row)
+
 -- Insert and Operator
 CREATE TABLE GRAPHID_TBL(f1 graphid);
 INSERT INTO GRAPHID_TBL(f1) VALUES ('0.0'::graphid);

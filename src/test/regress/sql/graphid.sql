@@ -20,6 +20,11 @@ SELECT '65535.281474976710655'::graphid;
 SELECT '65535.281474976710656'::graphid;
 SELECT '65536.281474976710655'::graphid;
 
+-- Coercion from jsonb to graphid
+
+SELECT '"1.1"'::jsonb::graphid;
+SELECT '1.1'::jsonb::graphid;
+
 -- Insert and Operator
 
 CREATE TABLE GRAPHID_TBL(f1 graphid);
