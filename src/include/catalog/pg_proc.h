@@ -5639,7 +5639,7 @@ DESCR("the first element in a list");
 DATA(insert OID = 7198 ( last		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_last _null_ _null_ _null_ ));
 DESCR("the last element in a list");
 DATA(insert OID = 7199 ( length		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_length _null_ _null_ _null_ ));
-DESCR("the length of a list");
+DESCR("the length of a list or a string");
 DATA(insert OID = 7200 ( toboolean	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 16 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_toboolean _null_ _null_ _null_ ));
 DESCR("convert the argument to a boolean");
 DATA(insert OID = 7203 ( keys		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_keys _null_ _null_ _null_ ));
