@@ -16920,10 +16920,10 @@ cypher_expr_func_subexpr:
 					clc->varname = $3;
 					clc->cond = $6;
 
-					n = makeFuncCall(SystemFuncName("jsonb_array_length"),
+					n = makeFuncCall(SystemFuncName("length"),
 									 list_make1(clc), @1);
 
-					m = makeFuncCall(SystemFuncName("jsonb_array_length"),
+					m = makeFuncCall(SystemFuncName("length"),
 									 list_make1($5), @1);
 
 					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=",
@@ -16939,10 +16939,8 @@ cypher_expr_func_subexpr:
 					clc->varname = $3;
 					clc->cond = $6;
 
-					n = makeFuncCall(SystemFuncName("jsonb_array_length"),
+					n = makeFuncCall(SystemFuncName("length"),
 									 list_make1(clc), @1);
-					n = makeFuncCall(SystemFuncName("to_jsonb"), list_make1(n),
-									 @1);
 
 					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">", (Node*) n,
 												   makeIntConst(0, -1), @1);
@@ -16984,10 +16982,8 @@ cypher_expr_func_subexpr:
 					clc->varname = $3;
 					clc->cond = $6;
 
-					n = makeFuncCall(SystemFuncName("jsonb_array_length"),
+					n = makeFuncCall(SystemFuncName("length"),
 									 list_make1(clc), @1);
-					n = makeFuncCall(SystemFuncName("to_jsonb"), list_make1(n),
-									 @1);
 
 					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node*) n,
 												   makeIntConst(0, -1), @1);
@@ -17002,10 +16998,8 @@ cypher_expr_func_subexpr:
 					clc->varname = $3;
 					clc->cond = $6;
 
-					n = makeFuncCall(SystemFuncName("jsonb_array_length"),
+					n = makeFuncCall(SystemFuncName("length"),
 									 list_make1(clc), @1);
-					n = makeFuncCall(SystemFuncName("to_jsonb"), list_make1(n),
-									 @1);
 
 					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node*) n,
 												   makeIntConst(1, -1), @1);
