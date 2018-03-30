@@ -156,7 +156,6 @@ static void
 InitScanRelation(SeqScanState *node, EState *estate, int eflags)
 {
 	Relation	currentRelation;
-	int			edgerefid;
 
 	/*
 	 * get the relation object id from the relid'th entry in the range table,
@@ -170,19 +169,6 @@ InitScanRelation(SeqScanState *node, EState *estate, int eflags)
 
 	/* and report the scan tuple slot's rowtype */
 	ExecAssignScanType(&node->ss, RelationGetDescr(currentRelation));
-
-	edgerefid = ((SeqScan *) node->ss.ps.plan)->edgerefid;
-	if (edgerefid != -1)
-	{
-		Relation edgerefrel = estate->es_edgerefrels[edgerefid];
-
-		Assert(edgerefid < estate->es_num_edgerefrels);
-
-		if (edgerefrel == InvalidRelation)
-			estate->es_edgerefrels[edgerefid] = currentRelation;
-		else
-			Assert(edgerefrel->rd_id == currentRelation->rd_id);
-	}
 }
 
 static void

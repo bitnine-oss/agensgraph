@@ -72,7 +72,6 @@
 #include "storage/bufmgr.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
-#include "utils/datum.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/timestamp.h"
@@ -154,8 +153,6 @@ static Datum ExecJustAssignInnerVar(ExprState *state, ExprContext *econtext, boo
 static Datum ExecJustAssignOuterVar(ExprState *state, ExprContext *econtext, bool *isnull);
 static Datum ExecJustAssignScanVar(ExprState *state, ExprContext *econtext, bool *isnull);
 
-static Datum deref_edgeref(Datum datum, bool isnull, Relation *edgerels,
-						   Snapshot snapshot, bool *resnull);
 static JsonbValue *cypher_access_object(JsonbContainer *container,
 										CypherAccessPathElem *pathelem);
 static JsonbValue *cypher_access_bin_array(JsonbValue *ajv,
@@ -379,9 +376,6 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		&&CASE_EEOP_WINDOW_FUNC,
 		&&CASE_EEOP_SUBPLAN,
 		&&CASE_EEOP_ALTERNATIVE_SUBPLAN,
-		&&CASE_EEOP_EDGEREF_PROP,
-		&&CASE_EEOP_EDGEREF_ROW,
-		&&CASE_EEOP_EDGEREF_ROWS,
 		&&CASE_EEOP_CYPHERMAPEXPR,
 		&&CASE_EEOP_CYPHERLISTEXPR,
 		&&CASE_EEOP_CYPHERLISTCOMP_BEGIN,
@@ -1530,27 +1524,6 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			/* too complex for an inline implementation */
 			ExecEvalAlternativeSubPlan(state, op, econtext);
-
-			EEO_NEXT();
-		}
-
-		EEO_CASE(EEOP_EDGEREF_PROP)
-		{
-			ExecEvalEdgeRefProp(state, op);
-
-			EEO_NEXT();
-		}
-
-		EEO_CASE(EEOP_EDGEREF_ROW)
-		{
-			ExecEvalEdgeRefRow(state, op);
-
-			EEO_NEXT();
-		}
-
-		EEO_CASE(EEOP_EDGEREF_ROWS)
-		{
-			ExecEvalEdgeRefRows(state, op);
 
 			EEO_NEXT();
 		}
@@ -3755,166 +3728,6 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 
 	*op->resvalue = PointerGetDatum(dtuple);
 	*op->resnull = false;
-}
-
-void
-ExecEvalEdgeRefProp(ExprState *state, ExprEvalStep *op)
-{
-	EdgeRef		eref;
-	Relation	rel;
-	HeapTupleData tup;
-	Buffer		buf;
-
-	if (*op->resnull)
-	{
-		*op->resvalue = (Datum) 0;
-		return;
-	}
-
-	eref = DatumGetEdgeRef(*op->resvalue);
-
-	rel = op->d.edgeref.edgerels[EdgeRefGetRelid(eref)];
-	ItemPointerSet(&tup.t_self,
-				   EdgeRefGetBlockNumber(eref),
-				   EdgeRefGetOffsetNumber(eref));
-	if (heap_fetch(rel, op->d.edgeref.snapshot, &tup, &buf, false, NULL))
-	{
-		*op->resvalue = heap_getattr(&tup, Anum_edge_properties,
-									 RelationGetDescr(rel), op->resnull);
-		if (*op->resnull)
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("NULL properties detected")));
-
-		ReleaseBuffer(buf);
-	}
-	else
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("failed to fetch edge")));
-	}
-}
-
-void
-ExecEvalEdgeRefRow(ExprState *state, ExprEvalStep *op)
-{
-	*op->resvalue = deref_edgeref(*op->resvalue, *op->resnull,
-								  op->d.edgeref.edgerels,
-								  op->d.edgeref.snapshot,
-								  op->resnull);
-}
-
-void
-ExecEvalEdgeRefRows(ExprState *state, ExprEvalStep *op)
-{
-	ArrayBuildState *edgearr_state;
-	ArrayType  *edgerefarr;
-	ArrayIterator edgerefarr_iter;
-	Datum		edgeref;
-	bool		isnull;
-
-	if (*op->resnull)
-	{
-		*op->resvalue = (Datum) 0;
-		return;
-	}
-
-	edgearr_state = initArrayResult(EDGEOID, CurrentMemoryContext, false);
-
-	edgerefarr = DatumGetArrayTypeP(*op->resvalue);
-	edgerefarr_iter = array_create_iterator(edgerefarr, 0, NULL);
-	while (array_iterate(edgerefarr_iter, &edgeref, &isnull))
-	{
-		Datum		edge;
-
-		if (isnull)
-		{
-			edge = (Datum) 0;
-		}
-		else
-		{
-			edge = deref_edgeref(edgeref, isnull, op->d.edgeref.edgerels,
-								 op->d.edgeref.snapshot, &isnull);
-		}
-
-		edgearr_state = accumArrayResult(edgearr_state, edge, isnull, EDGEOID,
-										 CurrentMemoryContext);
-	}
-	array_free_iterator(edgerefarr_iter);
-
-	*op->resvalue = makeArrayResult(edgearr_state, CurrentMemoryContext);
-	*op->resnull = false;
-}
-
-static Datum
-deref_edgeref(Datum datum, bool isnull, Relation *edgerels, Snapshot snapshot,
-			  bool *resnull)
-{
-	EdgeRef		edgeref;
-	Relation	rel;
-	HeapTupleData tup;
-	Buffer		buf;
-	Datum		edge;
-
-	if (isnull)
-	{
-		*resnull = true;
-		return (Datum) 0;
-	}
-
-	edgeref = DatumGetEdgeRef(datum);
-
-	rel = edgerels[EdgeRefGetRelid(edgeref)];
-	ItemPointerSet(&tup.t_self,
-				   EdgeRefGetBlockNumber(edgeref),
-				   EdgeRefGetOffsetNumber(edgeref));
-	if (heap_fetch(rel, snapshot, &tup, &buf, false, NULL))
-	{
-		bool		isnull;
-		Datum		id;
-		Datum		start;
-		Datum		end;
-		Datum		prop_map;
-		ItemPointer tid;
-
-		id = heap_getattr(&tup, Anum_edge_id,
-						  RelationGetDescr(rel), &isnull);
-		Assert(!isnull);
-		id = datumCopy(id, FLOAT8PASSBYVAL, 8);
-
-		start = heap_getattr(&tup, Anum_edge_start,
-							 RelationGetDescr(rel), &isnull);
-		Assert(!isnull);
-		start = datumCopy(start, FLOAT8PASSBYVAL, 8);
-
-		end = heap_getattr(&tup, Anum_edge_end,
-						   RelationGetDescr(rel), &isnull);
-		Assert(!isnull);
-		end = datumCopy(end, FLOAT8PASSBYVAL, 8);
-
-		prop_map = heap_getattr(&tup, Anum_edge_properties,
-								RelationGetDescr(rel), &isnull);
-		Assert(!isnull);
-		prop_map = datumCopy(prop_map, false, -1);
-
-		tid = palloc(sizeof(*tid));
-		ItemPointerCopy(&tup.t_self, tid);
-
-		ReleaseBuffer(buf);
-
-		edge = makeGraphEdgeDatum(id, start, end, prop_map,
-								  PointerGetDatum(tid));
-		*resnull = false;
-	}
-	else
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("failed to fetch edge")));
-	}
-
-	return edge;
 }
 
 void

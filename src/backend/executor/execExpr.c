@@ -72,9 +72,6 @@ static bool isAssignmentIndirectionExpr(Expr *expr);
 static void ExecInitCoerceToDomain(ExprEvalStep *scratch, CoerceToDomain *ctest,
 					   PlanState *parent, ExprState *state,
 					   Datum *resv, bool *resnull);
-static void ExecInitEdgeRef(Expr *node, ExprEvalOp opcode,
-							ExprEvalStep *scratch,
-							PlanState *parent, ExprState *state);
 static void ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
 							  PlanState *parent, ExprState *state);
 static void ExecInitCypherList(ExprEvalStep *scratch, CypherListExpr *listexpr,
@@ -2045,33 +2042,6 @@ ExecInitExprRec(Expr *node, PlanState *parent, ExprState *state,
 				break;
 			}
 
-		case T_EdgeRefProp:
-			{
-				EdgeRefProp *edgerefprop = (EdgeRefProp *) node;
-
-				ExecInitEdgeRef(edgerefprop->arg, EEOP_EDGEREF_PROP, &scratch,
-								parent, state);
-				break;
-			}
-
-		case T_EdgeRefRow:
-			{
-				EdgeRefRow *edgerefrow = (EdgeRefRow *) node;
-
-				ExecInitEdgeRef(edgerefrow->arg, EEOP_EDGEREF_ROW, &scratch,
-								parent, state);
-				break;
-			}
-
-		case T_EdgeRefRows:
-			{
-				EdgeRefRows *edgerefrows = (EdgeRefRows *) node;
-
-				ExecInitEdgeRef(edgerefrows->arg, EEOP_EDGEREF_ROWS, &scratch,
-								parent, state);
-				break;
-			}
-
 		case T_CypherMapExpr:
 			{
 				CypherMapExpr *mapexpr = (CypherMapExpr *) node;
@@ -2784,18 +2754,6 @@ ExecInitCoerceToDomain(ExprEvalStep *scratch, CoerceToDomain *ctest,
 				break;
 		}
 	}
-}
-
-static void
-ExecInitEdgeRef(Expr *node, ExprEvalOp opcode, ExprEvalStep *scratch,
-				PlanState *parent, ExprState *state)
-{
-	ExecInitExprRec(node, parent, state, scratch->resvalue, scratch->resnull);
-
-	scratch->opcode = opcode;
-	scratch->d.edgeref.edgerels = parent->state->es_edgerefrels;
-	scratch->d.edgeref.snapshot = parent->state->es_snapshot;
-	ExprEvalPushStep(state, scratch);
 }
 
 static void

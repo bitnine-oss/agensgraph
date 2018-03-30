@@ -178,7 +178,6 @@ transformExprRecurse(ParseState *pstate, Node *expr)
 	{
 		case T_ColumnRef:
 			result = transformColumnRef(pstate, (ColumnRef *) expr);
-			result = wrapEdgeRefTypes(pstate, result);
 			break;
 
 		case T_ParamRef:

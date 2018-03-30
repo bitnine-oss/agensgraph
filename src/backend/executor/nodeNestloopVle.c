@@ -32,13 +32,13 @@
 #include "utils/memutils.h"
 
 
-#define OUTER_START_VARNO 	0
-#define OUTER_BIND_VARNO	1
-#define OUTER_ROWIDS_VARNO	2
-#define OUTER_PATH_VARNO	3
-#define INNER_BIND_VARNO	0
-#define INNER_ROWID_VARNO	1
-#define INNER_EREF_VARNO	2
+#define OUTER_PREV_VARNO	0
+#define OUTER_CURR_VARNO	1
+#define OUTER_IDS_VARNO		2
+#define OUTER_EDGES_VARNO	3
+#define INNER_NEXT_VARNO	0
+#define INNER_ID_VARNO		1
+#define INNER_EDGE_VARNO	2
 
 
 static bool incrDepth(NestLoopVLEState *node);
@@ -60,9 +60,9 @@ static void clearArray(VLEArrayExpr *array);
 static void addElem(VLEArrayExpr *array, Datum elem);
 static void popElem(VLEArrayExpr *array);
 static bool hasElem(VLEArrayExpr *array, Datum elem);
-static void addOuterRowidAndGid(NestLoopVLEState *node, TupleTableSlot *slot);
-static void addInnerRowidAndGid(NestLoopVLEState *node, TupleTableSlot *slot);
-static void addRowidAndGid(NestLoopVLEState *node, Datum rowid, Datum gid);
+static void addOuterIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot);
+static void addInnerIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot);
+static void addIdAndEdge(NestLoopVLEState *node, Datum id, Datum edge);
 static void popRowidAndGid(NestLoopVLEState *node);
 
 
@@ -133,7 +133,7 @@ ExecNestLoopVLE(PlanState *pstate)
 					return NULL;
 				}
 
-				addOuterRowidAndGid(node, outerTupleSlot);
+				addOuterIdAndEdge(node, outerTupleSlot);
 			}
 
 			ENLV1_printf("saving new outer tuple information");
@@ -212,8 +212,8 @@ ExecNestLoopVLE(PlanState *pstate)
 		 */
 		ENLV1_printf("testing qualification");
 
-		if (!hasElem(&node->rowids,
-					 econtext->ecxt_innertuple->tts_values[INNER_ROWID_VARNO]))
+		if (!hasElem(&node->ids,
+					 econtext->ecxt_innertuple->tts_values[INNER_ID_VARNO]))
 		{
 			if (otherqual == NULL || ExecQual(otherqual, econtext))
 			{
@@ -228,14 +228,14 @@ ExecNestLoopVLE(PlanState *pstate)
 					storeStartAndBindVar(node, econtext->ecxt_outertuple);
 
 				/* set outertuple of ExprContext for projection */
-				econtext->ecxt_outertuple->tts_values[OUTER_BIND_VARNO]
-					= econtext->ecxt_innertuple->tts_values[INNER_BIND_VARNO];
-				econtext->ecxt_outertuple->tts_isnull[OUTER_BIND_VARNO]
-					= econtext->ecxt_innertuple->tts_isnull[INNER_BIND_VARNO];
+				econtext->ecxt_outertuple->tts_values[OUTER_CURR_VARNO]
+					= econtext->ecxt_innertuple->tts_values[INNER_NEXT_VARNO];
+				econtext->ecxt_outertuple->tts_isnull[OUTER_CURR_VARNO]
+					= econtext->ecxt_innertuple->tts_isnull[INNER_NEXT_VARNO];
 
 				result = ExecProject(node->nls.js.ps.ps_ProjInfo);
 
-				addInnerRowidAndGid(node, econtext->ecxt_innertuple);
+				addInnerIdAndEdge(node, econtext->ecxt_innertuple);
 
 				/* in both [x..y] and [x..] cases */
 				if (node->curhops >= nlv->minHops)
@@ -351,13 +351,13 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 
 	innerTupleDesc =
 			innerPlanState(nlvstate)->ps_ResultTupleSlot->tts_tupleDescriptor;
-	initArray(&nlvstate->rowids,
-			  innerTupleDesc->attrs[INNER_ROWID_VARNO]->atttypid,
+	initArray(&nlvstate->ids,
+			  innerTupleDesc->attrs[INNER_ID_VARNO]->atttypid,
 			  nlvstate->nls.js.ps.ps_ExprContext);
 	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 7)
 	{
-		initArray(&nlvstate->path,
-				  innerTupleDesc->attrs[INNER_EREF_VARNO]->atttypid,
+		initArray(&nlvstate->edges,
+				  innerTupleDesc->attrs[INNER_EDGE_VARNO]->atttypid,
 				  nlvstate->nls.js.ps.ps_ExprContext);
 		nlvstate->hasPath = true;
 	}
@@ -398,9 +398,9 @@ ExecEndNestLoopVLE(NestLoopVLEState *node)
 	ExecClearTuple(node->nls.js.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->selfTupleSlot);
 	clearVleCtxs(&node->vleCtxs);
-	clearArray(&node->rowids);
+	clearArray(&node->ids);
 	if (node->hasPath)
-		clearArray(&node->path);
+		clearArray(&node->edges);
 
 	/*
 	 * close down subplans
@@ -444,9 +444,9 @@ ExecReScanNestLoopVLE(NestLoopVLEState *node)
 	clearVleCtxs(&node->vleCtxs);
 	node->curCtx = NULL;
 
-	clearArray(&node->rowids);
+	clearArray(&node->ids);
 	if (node->hasPath)
-		clearArray(&node->path);
+		clearArray(&node->edges);
 }
 
 static bool
@@ -600,12 +600,12 @@ copyStartAndBindVar(TupleTableSlot *dst, TupleTableSlot *src)
 static void
 replaceResult(NestLoopVLEState *node, TupleTableSlot *slot)
 {
-	slot->tts_values[OUTER_ROWIDS_VARNO] = evalArray(&node->rowids);
-	slot->tts_isnull[OUTER_ROWIDS_VARNO] = false;
+	slot->tts_values[OUTER_IDS_VARNO] = evalArray(&node->ids);
+	slot->tts_isnull[OUTER_IDS_VARNO] = false;
 	if (node->hasPath)
 	{
-		slot->tts_values[OUTER_PATH_VARNO] = evalArray(&node->path);
-		slot->tts_isnull[OUTER_PATH_VARNO] = false;
+		slot->tts_values[OUTER_EDGES_VARNO] = evalArray(&node->edges);
+		slot->tts_isnull[OUTER_EDGES_VARNO] = false;
 	}
 }
 
@@ -709,7 +709,7 @@ hasElem(VLEArrayExpr *array, Datum elem)
 
 	for (i = 0; i < array->nelems; i++)
 	{
-		if (DatumGetBool(DirectFunctionCall2(rowid_eq,
+		if (DatumGetBool(DirectFunctionCall2(graphid_eq,
 											 array->elements[i], elem)))
 			return true;
 	}
@@ -718,58 +718,57 @@ hasElem(VLEArrayExpr *array, Datum elem)
 }
 
 static void
-addOuterRowidAndGid(NestLoopVLEState *node, TupleTableSlot *slot)
+addOuterIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot)
 {
 	Form_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
-	Datum		rowid = (Datum) 0;
-	Datum		gid = (Datum) 0;
+	Datum		id = (Datum) 0;
+	Datum		edge = (Datum) 0;
 	IntArray	upper;
 	bool		isNull;
 
 	upper.indx[0] = 1;
-	rowid = array_get_element(slot->tts_values[OUTER_ROWIDS_VARNO],
-							  1, upper.indx, attrs[OUTER_ROWIDS_VARNO]->attlen,
-							  node->rowids.elemlength, node->rowids.elembyval,
-							  node->rowids.elemalign, &isNull);
+	id = array_get_element(slot->tts_values[OUTER_IDS_VARNO],
+						   1, upper.indx, attrs[OUTER_IDS_VARNO]->attlen,
+						   node->ids.elemlength, node->ids.elembyval,
+						   node->ids.elemalign, &isNull);
 	if (isNull)
 		return;
 
 	if (node->hasPath)
-	{
-		gid = array_get_element(slot->tts_values[OUTER_PATH_VARNO],
-								1, upper.indx, attrs[OUTER_PATH_VARNO]->attlen,
-								node->path.elemlength, node->path.elembyval,
-								node->path.elemalign, &isNull);
-	}
+		edge = array_get_element(slot->tts_values[OUTER_EDGES_VARNO],
+								 1, upper.indx,
+								 attrs[OUTER_EDGES_VARNO]->attlen,
+								 node->edges.elemlength, node->edges.elembyval,
+								 node->edges.elemalign, &isNull);
 
-	addRowidAndGid(node, rowid, gid);
+	addIdAndEdge(node, id, edge);
 }
 
 static void
-addInnerRowidAndGid(NestLoopVLEState *node, TupleTableSlot *slot)
+addInnerIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot)
 {
-	Datum gid = (Datum) 0;
+	Datum edge = (Datum) 0;
 
 	if (node->hasPath)
-		gid = slot->tts_values[INNER_EREF_VARNO];
+		edge = slot->tts_values[INNER_EDGE_VARNO];
 
-	addRowidAndGid(node, slot->tts_values[INNER_ROWID_VARNO], gid);
+	addIdAndEdge(node, slot->tts_values[INNER_ID_VARNO], edge);
 }
 
 static void
-addRowidAndGid(NestLoopVLEState *node, Datum rowid, Datum gid)
+addIdAndEdge(NestLoopVLEState *node, Datum id, Datum edge)
 {
-	addElem(&node->rowids, datumCopy(rowid, node->rowids.elembyval,
-									 node->rowids.elemlength));
-	if (gid != (Datum) 0)
-		addElem(&node->path, datumCopy(gid, node->path.elembyval,
-									   node->path.elemlength));
+	addElem(&node->ids, datumCopy(id, node->ids.elembyval,
+								  node->ids.elemlength));
+	if (edge != (Datum) 0)
+		addElem(&node->edges, datumCopy(edge, node->edges.elembyval,
+										node->edges.elemlength));
 }
 
 static void
 popRowidAndGid(NestLoopVLEState *node)
 {
-	popElem(&node->rowids);
+	popElem(&node->ids);
 	if (node->hasPath)
-		popElem(&node->path);
+		popElem(&node->edges);
 }
