@@ -5073,14 +5073,21 @@ isNodeForRef(CypherNode *cnode)
 static Node *
 transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 {
-	Node *prop_map;
+	Node	   *prop_map;
+	Oid			type;
 
 	prop_map = transformCypherExpr(pstate, expr, exprKind);
-	if (exprType(prop_map) != JSONBOID)
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("property map must be of type jsonb"),
-				 parser_errposition(pstate, exprLocation(prop_map))));
+	type = exprType(prop_map);
+	if (type != JSONBOID && type_is_rowtype(type))
+	{
+		FuncCall   *to_jsonb;
+
+		to_jsonb = makeFuncCall(list_make1(makeString("to_jsonb")), NIL, -1);
+
+		prop_map = ParseFuncOrColumn(pstate, to_jsonb->funcname,
+									 list_make1(prop_map), pstate->p_last_srf,
+									 to_jsonb, -1);
+	}
 
 	if (exprKind == EXPR_KIND_INSERT_TARGET && !allow_null_properties)
 		prop_map = stripNullKeys(pstate, prop_map);

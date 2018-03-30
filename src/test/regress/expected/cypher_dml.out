@@ -3034,7 +3034,26 @@ MATCH (n) WHERE id(n) <> 1.1 RETURN n;
  ag_vertex[1.2]{}
 (1 row)
 
+--
+-- implicit load
+--
+CREATE GRAPH impload;
+SET GRAPH_PATH = impload;
+CREATE TABLE external_table (id int, name varchar(255));
+INSERT INTO external_table VALUES (1, '1');
+LOAD FROM external_table AS r CREATE (=r);
+MATCH (n) RETURN n;
+                  n                   
+--------------------------------------
+ ag_vertex[1.1]{"id": 1, "name": "1"}
+(1 row)
+
 -- cleanup
+DROP GRAPH impload CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence impload.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
 DROP GRAPH gid CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to sequence gid.ag_label_seq

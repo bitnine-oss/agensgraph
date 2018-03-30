@@ -1177,8 +1177,23 @@ MATCH (n) WHERE id(n) >= 1.1 RETURN n;
 MATCH (n) WHERE id(n) <= 1.2 RETURN n;
 MATCH (n) WHERE id(n) <> 1.1 RETURN n;
 
+--
+-- implicit load
+--
+
+CREATE GRAPH impload;
+SET GRAPH_PATH = impload;
+
+CREATE TABLE external_table (id int, name varchar(255));
+INSERT INTO external_table VALUES (1, '1');
+
+LOAD FROM external_table AS r CREATE (=r);
+
+MATCH (n) RETURN n;
+
 -- cleanup
 
+DROP GRAPH impload CASCADE;
 DROP GRAPH gid CASCADE;
 DROP GRAPH np CASCADE;
 DROP GRAPH p CASCADE;
