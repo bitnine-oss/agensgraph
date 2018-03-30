@@ -145,6 +145,30 @@ ExecSeqScan(PlanState *pstate)
 					(ExecScanRecheckMtd) SeqRecheck);
 }
 
+/* ----------------------------------------------------------------
+ *		InitScanRelation
+ *
+ *		Set up to access the scan relation.
+ * ----------------------------------------------------------------
+ */
+static void
+InitScanRelation(SeqScanState *node, EState *estate, int eflags)
+{
+	Relation	currentRelation;
+
+	/*
+	 * get the relation object id from the relid'th entry in the range table,
+	 * open that relation and acquire appropriate lock on it.
+	 */
+	currentRelation = ExecOpenScanRelation(estate,
+										   ((SeqScan *) node->ss.ps.plan)->scanrelid,
+										   eflags);
+
+	node->ss.ss_currentRelation = currentRelation;
+
+	/* and report the scan tuple slot's rowtype */
+	ExecAssignScanType(&node->ss, RelationGetDescr(currentRelation));
+}
 
 static void
 InitScanLabelSkipExpr(SeqScanState *node)

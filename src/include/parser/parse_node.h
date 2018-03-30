@@ -231,7 +231,6 @@ struct ParseState
 	uint32		p_nr_modify_clause;
 	List	   *p_target_labels;		/* relation Oid's of target labels */
 	char	   *p_delete_edges_resname;
-	bool		p_convert_edgeref;
 };
 
 /*

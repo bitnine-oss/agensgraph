@@ -8826,36 +8826,6 @@ get_rule_expr(Node *node, deparse_context *context,
 			}
 			break;
 
-		case T_EdgeRefProp:
-			{
-				EdgeRefProp *erp = (EdgeRefProp *) node;
-
-				appendStringInfoString(buf, "EDGEREFPROP(");
-				get_rule_expr((Node *) erp->arg, context, true);
-				appendStringInfoChar(buf, ')');
-			}
-			break;
-
-		case T_EdgeRefRow:
-			{
-				EdgeRefRow *err = (EdgeRefRow *) node;
-
-				appendStringInfoString(buf, "EDGEREFROW(");
-				get_rule_expr((Node *) err->arg, context, true);
-				appendStringInfoChar(buf, ')');
-			}
-			break;
-
-		case T_EdgeRefRows:
-			{
-				EdgeRefRows *err = (EdgeRefRows *) node;
-
-				appendStringInfoString(buf, "EDGEREFROWS(");
-				get_rule_expr((Node *) err->arg, context, true);
-				appendStringInfoChar(buf, ')');
-			}
-			break;
-
 		case T_CypherMapExpr:
 			{
 				CypherMapExpr *m = (CypherMapExpr *) node;

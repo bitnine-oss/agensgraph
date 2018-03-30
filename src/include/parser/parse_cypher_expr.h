@@ -20,10 +20,6 @@ extern Node *transformCypherExpr(ParseState *pstate, Node *expr,
 								 ParseExprKind exprKind);
 extern Node *transformCypherMapForSet(ParseState *pstate, Node *expr,
 									  List **pathelems, char **varname);
-/* edgeref functions */
-extern Node *wrapEdgeRef(Node *node);
-extern Node *wrapEdgeRefArray(Node *node);
-extern Node *wrapEdgeRefTypes(ParseState *pstate, Node *node);
 
 /* clause functions */
 extern Node *transformCypherWhere(ParseState *pstate, Node *clause,
@@ -39,7 +35,5 @@ extern List *transformItemList(ParseState *pstate, List *items,
 							   ParseExprKind exprKind);
 extern List *transformCypherExprList(ParseState *pstate, List *exprlist,
 									 ParseExprKind exprKind);
-extern void wrapEdgeRefTargetList(ParseState *pstate, List *targetList);
-extern void unwrapEdgeRefTargetList(List *targetList);
 
 #endif	/* PARSE_CYPHER_EXPR_H */

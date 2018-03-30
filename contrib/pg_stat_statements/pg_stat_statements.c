@@ -2890,27 +2890,6 @@ JumbleExpr(pgssJumbleState *jstate, Node *node)
 				JumbleExpr(jstate, (Node *) tsc->repeatable);
 			}
 			break;
-		case T_EdgeRefProp:
-			{
-				EdgeRefProp *erp = (EdgeRefProp *) node;
-
-				JumbleExpr(jstate, (Node *) erp->arg);
-			}
-			break;
-		case T_EdgeRefRow:
-			{
-				EdgeRefRow *err = (EdgeRefRow *) node;
-
-				JumbleExpr(jstate, (Node *) err->arg);
-			}
-			break;
-		case T_EdgeRefRows:
-			{
-				EdgeRefRows *err = (EdgeRefRows *) node;
-
-				JumbleExpr(jstate, (Node *) err->arg);
-			}
-			break;
 		case T_CypherMapExpr:
 			{
 				CypherMapExpr *m = (CypherMapExpr *) node;

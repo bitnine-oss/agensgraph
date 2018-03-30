@@ -103,8 +103,6 @@ _copyPlannedStmt(const PlannedStmt *from)
 	COPY_LOCATION_FIELD(stmt_location);
 	COPY_LOCATION_FIELD(stmt_len);
 
-	COPY_SCALAR_FIELD(nVlePaths);
-
 	return newnode;
 }
 
@@ -415,7 +413,6 @@ CopyScanFields(const Scan *from, Scan *newnode)
 	CopyPlanFields((const Plan *) from, (Plan *) newnode);
 
 	COPY_SCALAR_FIELD(scanrelid);
-	COPY_SCALAR_FIELD(edgerefid);
 }
 
 /*
@@ -2201,36 +2198,6 @@ _copyOnConflictExpr(const OnConflictExpr *from)
 	COPY_NODE_FIELD(onConflictWhere);
 	COPY_SCALAR_FIELD(exclRelIndex);
 	COPY_NODE_FIELD(exclRelTlist);
-
-	return newnode;
-}
-
-static EdgeRefProp *
-_copyEdgeRefProp(const EdgeRefProp *from)
-{
-	EdgeRefProp *newnode = makeNode(EdgeRefProp);
-
-	COPY_NODE_FIELD(arg);
-
-	return newnode;
-}
-
-static EdgeRefRow *
-_copyEdgeRefRow(const EdgeRefRow *from)
-{
-	EdgeRefRow *newnode = makeNode(EdgeRefRow);
-
-	COPY_NODE_FIELD(arg);
-
-	return newnode;
-}
-
-static EdgeRefRows *
-_copyEdgeRefRows(const EdgeRefRows *from)
-{
-	EdgeRefRows *newnode = makeNode(EdgeRefRows);
-
-	COPY_NODE_FIELD(arg);
 
 	return newnode;
 }
@@ -5569,15 +5536,6 @@ copyObjectImpl(const void *from)
 			break;
 		case T_OnConflictExpr:
 			retval = _copyOnConflictExpr(from);
-			break;
-		case T_EdgeRefProp:
-			retval = _copyEdgeRefProp(from);
-			break;
-		case T_EdgeRefRow:
-			retval = _copyEdgeRefRow(from);
-			break;
-		case T_EdgeRefRows:
-			retval = _copyEdgeRefRows(from);
 			break;
 		case T_CypherMapExpr:
 			retval = _copyCypherMapExpr(from);

@@ -74,13 +74,10 @@ static void ExecInitCoerceToDomain(ExprEvalStep *scratch, CoerceToDomain *ctest,
 					   ExprState *state,
 					   Datum *resv, bool *resnull);
 static void ExecBuildAggTransCall(ExprState *state, AggState *aggstate,
-					  ExprEvalStep *scratch,
-					  FunctionCallInfo fcinfo, AggStatePerTrans pertrans,
-					  int transno, int setno, int setoff, bool ishash);
+								  ExprEvalStep *scratch,
+								  FunctionCallInfo fcinfo, AggStatePerTrans pertrans,
+								  int transno, int setno, int setoff, bool ishash);
 
-static void ExecInitEdgeRef(Expr *node, ExprEvalOp opcode,
-							ExprEvalStep *scratch,
-							PlanState *parent, ExprState *state);
 static void ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
 							  PlanState *parent, ExprState *state);
 static void ExecInitCypherList(ExprEvalStep *scratch, CypherListExpr *listexpr,
@@ -2129,33 +2126,6 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				break;
 			}
 
-		case T_EdgeRefProp:
-			{
-				EdgeRefProp *edgerefprop = (EdgeRefProp *) node;
-
-				ExecInitEdgeRef(edgerefprop->arg, EEOP_EDGEREF_PROP, &scratch,
-								parent, state);
-				break;
-			}
-
-		case T_EdgeRefRow:
-			{
-				EdgeRefRow *edgerefrow = (EdgeRefRow *) node;
-
-				ExecInitEdgeRef(edgerefrow->arg, EEOP_EDGEREF_ROW, &scratch,
-								parent, state);
-				break;
-			}
-
-		case T_EdgeRefRows:
-			{
-				EdgeRefRows *edgerefrows = (EdgeRefRows *) node;
-
-				ExecInitEdgeRef(edgerefrows->arg, EEOP_EDGEREF_ROWS, &scratch,
-								parent, state);
-				break;
-			}
-
 		case T_CypherMapExpr:
 			{
 				CypherMapExpr *mapexpr = (CypherMapExpr *) node;
@@ -3425,18 +3395,6 @@ ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
 	ExecReadyExpr(state);
 
 	return state;
-}
-
-static void
-ExecInitEdgeRef(Expr *node, ExprEvalOp opcode, ExprEvalStep *scratch,
-				PlanState *parent, ExprState *state)
-{
-	ExecInitExprRec(node, parent, state, scratch->resvalue, scratch->resnull);
-
-	scratch->opcode = opcode;
-	scratch->d.edgeref.edgerels = parent->state->es_edgerefrels;
-	scratch->d.edgeref.snapshot = parent->state->es_snapshot;
-	ExprEvalPushStep(state, scratch);
 }
 
 static void

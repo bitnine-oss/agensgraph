@@ -259,15 +259,6 @@ exprType(const Node *expr)
 		case T_PlaceHolderVar:
 			type = exprType((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
-		case T_EdgeRefProp:
-			type = JSONBOID;
-			break;
-		case T_EdgeRefRow:
-			type = EDGEOID;
-			break;
-		case T_EdgeRefRows:
-			type = EDGEARRAYOID;
-			break;
 		case T_CypherMapExpr:
 			type = JSONBOID;
 			break;
@@ -516,10 +507,6 @@ exprTypmod(const Node *expr)
 			return ((const SetToDefault *) expr)->typeMod;
 		case T_PlaceHolderVar:
 			return exprTypmod((Node *) ((const PlaceHolderVar *) expr)->phexpr);
-		case T_EdgeRefProp:
-		case T_EdgeRefRow:
-		case T_EdgeRefRows:
-			return -1;
 		case T_CypherMapExpr:
 			return -1;
 		case T_CypherListExpr:
@@ -941,11 +928,6 @@ exprCollation(const Node *expr)
 		case T_PlaceHolderVar:
 			coll = exprCollation((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
-		case T_EdgeRefProp:
-		case T_EdgeRefRow:
-		case T_EdgeRefRows:
-			coll = InvalidOid;
-			break;
 		case T_CypherMapExpr:
 			coll = InvalidOid;
 			break;
@@ -1161,11 +1143,6 @@ exprSetCollation(Node *expr, Oid collation)
 		case T_NextValueExpr:
 			Assert(!OidIsValid(collation)); /* result is always an integer
 											 * type */
-			break;
-		case T_EdgeRefProp:
-		case T_EdgeRefRow:
-		case T_EdgeRefRows:
-			Assert(!OidIsValid(collation));
 			break;
 		case T_CypherMapExpr:
 			Assert(!OidIsValid(collation));
@@ -2321,15 +2298,6 @@ expression_tree_walker(Node *node,
 					return true;
 			}
 			break;
-		case T_EdgeRefProp:
-			return walker(((EdgeRefProp *) node)->arg, context);
-			break;
-		case T_EdgeRefRow:
-			return walker(((EdgeRefRow *) node)->arg, context);
-			break;
-		case T_EdgeRefRows:
-			return walker(((EdgeRefRows *) node)->arg, context);
-			break;
 		case T_CypherMapExpr:
 			{
 				CypherMapExpr *m = (CypherMapExpr *) node;
@@ -3218,36 +3186,6 @@ expression_tree_mutator(Node *node,
 				return (Node *) newnode;
 			}
 			break;
-		case T_EdgeRefProp:
-			{
-				EdgeRefProp *erf = (EdgeRefProp *) node;
-				EdgeRefProp *newnode;
-
-				FLATCOPY(newnode, erf, EdgeRefProp);
-				MUTATE(newnode->arg, erf->arg, Expr *);
-				return (Node *) newnode;
-			}
-			break;
-		case T_EdgeRefRow:
-			{
-				EdgeRefRow *err = (EdgeRefRow *) node;
-				EdgeRefRow *newnode;
-
-				FLATCOPY(newnode, err, EdgeRefRow);
-				MUTATE(newnode->arg, err->arg, Expr *);
-				return (Node *) newnode;
-			}
-			break;
-		case T_EdgeRefRows:
-			{
-				EdgeRefRows *err = (EdgeRefRows *) node;
-				EdgeRefRows *newnode;
-
-				FLATCOPY(newnode, err, EdgeRefRows);
-				MUTATE(newnode->arg, err->arg, Expr *);
-				return (Node *) newnode;
-			}
-			break;
 		case T_CypherMapExpr:
 			{
 				CypherMapExpr *m = (CypherMapExpr *) node;
@@ -3960,12 +3898,6 @@ raw_expression_tree_walker(Node *node,
 			break;
 		case T_CommonTableExpr:
 			return walker(((CommonTableExpr *) node)->ctequery, context);
-		case T_EdgeRefProp:
-			return walker(((EdgeRefProp *) node)->arg, context);
-		case T_EdgeRefRow:
-			return walker(((EdgeRefRow *) node)->arg, context);
-		case T_EdgeRefRows:
-			return walker(((EdgeRefRows *) node)->arg, context);
 		case T_CypherListComp:
 			{
 				CypherListComp *clc = (CypherListComp *) node;

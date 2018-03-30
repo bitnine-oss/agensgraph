@@ -816,30 +816,6 @@ _equalOnConflictExpr(const OnConflictExpr *a, const OnConflictExpr *b)
 }
 
 static bool
-_equalEdgeRefProp(const EdgeRefProp *a, const EdgeRefProp *b)
-{
-	COMPARE_NODE_FIELD(arg);
-
-	return true;
-}
-
-static bool
-_equalEdgeRefRow(const EdgeRefRow *a, const EdgeRefRow *b)
-{
-	COMPARE_NODE_FIELD(arg);
-
-	return true;
-}
-
-static bool
-_equalEdgeRefRows(const EdgeRefRows *a, const EdgeRefRows *b)
-{
-	COMPARE_NODE_FIELD(arg);
-
-	return true;
-}
-
-static bool
 _equalCypherMapExpr(const CypherMapExpr *a, const CypherMapExpr *b)
 {
 	COMPARE_NODE_FIELD(keyvals);
@@ -3578,15 +3554,6 @@ equal(const void *a, const void *b)
 			break;
 		case T_JoinExpr:
 			retval = _equalJoinExpr(a, b);
-			break;
-		case T_EdgeRefProp:
-			retval = _equalEdgeRefProp(a, b);
-			break;
-		case T_EdgeRefRow:
-			retval = _equalEdgeRefRow(a, b);
-			break;
-		case T_EdgeRefRows:
-			retval = _equalEdgeRefRows(a, b);
 			break;
 		case T_CypherMapExpr:
 			retval = _equalCypherMapExpr(a, b);

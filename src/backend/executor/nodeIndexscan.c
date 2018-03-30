@@ -1069,7 +1069,6 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 {
 	IndexScanState *indexstate;
 	Relation	currentRelation;
-	int			edgerefid;
 	bool		relistarget;
 
 	/*
@@ -1094,6 +1093,8 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 
 	indexstate->ss.ss_currentRelation = currentRelation;
 	indexstate->ss.ss_currentScanDesc = NULL;	/* no heap scan here */
+
+	InitScanLabelInfo((ScanState *) indexstate);
 
 	/*
 	 * get the scan type from the relation descriptor.

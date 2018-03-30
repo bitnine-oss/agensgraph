@@ -522,10 +522,6 @@ typedef struct EState
 
 	List	   *es_auxmodifytables; /* List of secondary ModifyTableStates */
 
-	/* VLE working state: */
-	int			es_num_edgerefrels;
-	Relation   *es_edgerefrels;
-
 	/*
 	 * this ExprContext is for per-output-tuple operations, such as constraint
 	 * checks and index-value computations.  It will be reset for each output
@@ -1721,8 +1717,8 @@ typedef struct NestLoopVLEState
 	bool		selfLoop;
 	bool		hasPath;
 	TupleTableSlot *selfTupleSlot;
-	VLEArrayExpr rowids;
-	VLEArrayExpr path;
+	VLEArrayExpr ids;
+	VLEArrayExpr edges;
 	dlist_head	vleCtxs;		/* list of NestLoopVLECtx */
 	dlist_node *curCtx;
 } NestLoopVLEState;

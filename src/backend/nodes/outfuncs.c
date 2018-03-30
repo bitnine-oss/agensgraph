@@ -287,8 +287,6 @@ _outPlannedStmt(StringInfo str, const PlannedStmt *node)
 	WRITE_NODE_FIELD(utilityStmt);
 	WRITE_LOCATION_FIELD(stmt_location);
 	WRITE_LOCATION_FIELD(stmt_len);
-
-	WRITE_BOOL_FIELD(nVlePaths);
 }
 
 /*
@@ -322,7 +320,6 @@ _outScanInfo(StringInfo str, const Scan *node)
 	_outPlanInfo(str, (const Plan *) node);
 
 	WRITE_UINT_FIELD(scanrelid);
-	WRITE_INT_FIELD(edgerefid);
 }
 
 /*
@@ -1763,30 +1760,6 @@ _outOnConflictExpr(StringInfo str, const OnConflictExpr *node)
 	WRITE_NODE_FIELD(onConflictWhere);
 	WRITE_INT_FIELD(exclRelIndex);
 	WRITE_NODE_FIELD(exclRelTlist);
-}
-
-static void
-_outEdgeRefProp(StringInfo str, const EdgeRefProp *node)
-{
-	WRITE_NODE_TYPE("EDGEREFPROP");
-
-	WRITE_NODE_FIELD(arg);
-}
-
-static void
-_outEdgeRefRow(StringInfo str, const EdgeRefRow *node)
-{
-	WRITE_NODE_TYPE("EDGEREFROW");
-
-	WRITE_NODE_FIELD(arg);
-}
-
-static void
-_outEdgeRefRows(StringInfo str, const EdgeRefRows *node)
-{
-	WRITE_NODE_TYPE("EDGEREFROWS");
-
-	WRITE_NODE_FIELD(arg);
 }
 
 static void
@@ -4397,15 +4370,6 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_OnConflictExpr:
 				_outOnConflictExpr(str, obj);
-				break;
-			case T_EdgeRefProp:
-				_outEdgeRefProp(str, obj);
-				break;
-			case T_EdgeRefRow:
-				_outEdgeRefRow(str, obj);
-				break;
-			case T_EdgeRefRows:
-				_outEdgeRefRows(str, obj);
 				break;
 			case T_CypherMapExpr:
 				_outCypherMapExpr(str, obj);
