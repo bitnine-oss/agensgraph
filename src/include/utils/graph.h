@@ -15,15 +15,17 @@
 #include "fmgr.h"
 #include "storage/itemptr.h"
 
-#define Natts_vertex			2
+#define Natts_vertex			3
 #define Anum_vertex_id			1
 #define Anum_vertex_properties	2
+#define Anum_vertex_tid			3
 
-#define Natts_edge				4
+#define Natts_edge				5
 #define Anum_edge_id			1
 #define Anum_edge_start			2
 #define Anum_edge_end			3
 #define Anum_edge_properties	4
+#define Anum_edge_tid			5
 
 #define Natts_graphpath			2
 #define Anum_graphpath_vertices	1
