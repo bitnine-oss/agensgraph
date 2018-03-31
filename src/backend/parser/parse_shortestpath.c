@@ -662,7 +662,9 @@ makeVerticesSubLink(void)
 
 	selsub = makeNode(SelectStmt);
 
-	vertex = makeRowExpr(list_make2(id, makeColumnRef1(AG_ELEM_PROP_MAP)),
+	vertex = makeRowExpr(list_make3(id,
+									makeColumnRef1(AG_ELEM_PROP_MAP),
+									makeColumnRef1("ctid")),
 						 "vertex");
 	selsub->targetList = list_make1(makeResTarget(vertex, NULL));
 
@@ -739,10 +741,11 @@ makeEdgesSubLink(CypherPath *cpath, bool is_dijkstra)
 
 	selsub = makeNode(SelectStmt);
 
-	edge = makeRowExpr(list_make4(id,
+	edge = makeRowExpr(list_make5(id,
 								  makeColumnRef1(AG_START_ID),
 								  makeColumnRef1(AG_END_ID),
-								  makeColumnRef1(AG_ELEM_PROP_MAP)),
+								  makeColumnRef1(AG_ELEM_PROP_MAP),
+								  makeColumnRef1("ctid")),
 					   "edge");
 	selsub->targetList = list_make1(makeResTarget(edge, NULL));
 
@@ -1363,6 +1366,8 @@ makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
 							   makeSimpleResTarget(AG_START_ID, "_start"));
 	lsel->targetList = lappend(lsel->targetList,
 							   makeSimpleResTarget(AG_END_ID, "_end"));
+	lsel->targetList = lappend(lsel->targetList,
+							   makeSimpleResTarget("ctid", NULL));
 	lsel->fromClause = list_make1(r);
 
 	rsel = copyObject(lsel);
@@ -1400,15 +1405,17 @@ makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
 	sel = makeNode(SelectStmt);
 	sel->fromClause = list_make1(sub_sel);
 
-	sel->targetList = list_make3(makeSimpleResTarget(AG_START_ID, NULL),
+	sel->targetList = list_make4(makeSimpleResTarget(AG_START_ID, NULL),
 								 makeSimpleResTarget(AG_END_ID, NULL),
-								 makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL));
+								 makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL),
+								 makeSimpleResTarget("ctid", NULL));
 	if (row_name != NULL)
 	{
-		row = makeRowExpr(list_make4(makeColumnRef1(AG_ELEM_LOCAL_ID),
+		row = makeRowExpr(list_make5(makeColumnRef1(AG_ELEM_LOCAL_ID),
 									 makeColumnRef1("_start"),
 									 makeColumnRef1("_end"),
-									 makeColumnRef1(AG_ELEM_PROP_MAP)),
+									 makeColumnRef1(AG_ELEM_PROP_MAP),
+									 makeColumnRef1("ctid")),
 						  "edge");
 		sel->targetList = lappend(sel->targetList,
 								  makeResTarget(row, row_name));
@@ -1433,17 +1440,19 @@ makeDijkstraEdge(char *elabel_name, char *row_name, CypherRel *crel)
 	r->inh = true;
 	sel->fromClause = list_make1(r);
 
-	sel->targetList = list_make3(makeSimpleResTarget(AG_START_ID, NULL),
+	sel->targetList = list_make4(makeSimpleResTarget(AG_START_ID, NULL),
 								 makeSimpleResTarget(AG_END_ID, NULL),
-								 makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL));
+								 makeSimpleResTarget(AG_ELEM_LOCAL_ID, NULL),
+								 makeSimpleResTarget("ctid", NULL));
 	if (row_name != NULL)
 	{
 		Node	   *row;
 
-		row = makeRowExpr(list_make4(makeColumnRef1(AG_ELEM_LOCAL_ID),
+		row = makeRowExpr(list_make5(makeColumnRef1(AG_ELEM_LOCAL_ID),
 									 makeColumnRef1(AG_START_ID),
 									 makeColumnRef1(AG_END_ID),
-									 makeColumnRef1(AG_ELEM_PROP_MAP)),
+									 makeColumnRef1(AG_ELEM_PROP_MAP),
+									 makeColumnRef1("ctid")),
 						  "edge");
 		sel->targetList = lappend(sel->targetList,
 								  makeResTarget(row, row_name));

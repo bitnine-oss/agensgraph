@@ -168,9 +168,9 @@ extern Datum getEdgePropDatum(Datum datum);
 extern void getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges);
 extern Datum makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges,
 								int nedges);
-extern Datum makeGraphVertexDatum(Datum id, Datum prop_map);
+extern Datum makeGraphVertexDatum(Datum id, Datum prop_map, Datum tid);
 extern Datum makeGraphEdgeDatum(Datum id, Datum start, Datum end,
-								Datum prop_map);
+								Datum prop_map, Datum tid);
 
 /* index support - BTree */
 extern Datum btgraphidcmp(PG_FUNCTION_ARGS);

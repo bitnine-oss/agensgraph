@@ -1102,7 +1102,7 @@ static Datum
 getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 {
 	const char *querystr =
-			"SELECT (" AG_ELEM_LOCAL_ID ", " AG_ELEM_PROP_MAP ")::vertex "
+			"SELECT (" AG_ELEM_LOCAL_ID ", " AG_ELEM_PROP_MAP ", NULL)::vertex "
 			"FROM \"%s\"." AG_VERTEX " WHERE " AG_ELEM_LOCAL_ID " = $1";
 	char		sqlcmd[256];
 	int			attnum = (evk == EVK_START ? Anum_edge_start : Anum_edge_end);
@@ -1251,7 +1251,6 @@ getVertexIdDatum(Datum datum)
 	return tuple_getattr(tuphdr, Anum_vertex_id);
 }
 
-
 Datum
 getVertexPropDatum(Datum datum)
 {
@@ -1350,15 +1349,18 @@ makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges, int nedges)
 }
 
 Datum
-makeGraphVertexDatum(Datum id, Datum prop_map)
+makeGraphVertexDatum(Datum id, Datum prop_map, Datum tid)
 {
 	Datum		values[Natts_vertex];
-	bool		isnull[Natts_vertex] = {false, false};
+	bool		isnull[Natts_vertex] = {false, false, false};
 	TupleDesc	tupDesc;
 	HeapTuple	vertex;
 
 	values[Anum_vertex_id - 1] = id;
 	values[Anum_vertex_properties - 1] = prop_map;
+	values[Anum_vertex_tid - 1] = tid;
+	if (tid == (Datum) 0)
+		isnull[Anum_vertex_tid - 1] = true;
 
 	tupDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
 	Assert(tupDesc->natts == Natts_vertex);
@@ -1371,10 +1373,10 @@ makeGraphVertexDatum(Datum id, Datum prop_map)
 }
 
 Datum
-makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop_map)
+makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop_map, Datum tid)
 {
 	Datum		values[Natts_edge];
-	bool		isnull[Natts_edge] = {false, false, false, false};
+	bool		isnull[Natts_edge] = {false, false, false, false, false};
 	TupleDesc	tupDesc;
 	HeapTuple	edge;
 
@@ -1382,6 +1384,9 @@ makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop_map)
 	values[Anum_edge_start - 1] = start;
 	values[Anum_edge_end - 1] = end;
 	values[Anum_edge_properties - 1] = prop_map;
+	values[Anum_edge_tid - 1] = tid;
+	if (tid == (Datum) 0)
+		isnull[Anum_edge_tid - 1] = true;
 
 	tupDesc = lookup_rowtype_tupdesc(EDGEOID, -1);
 	Assert(tupDesc->natts == Natts_edge);
