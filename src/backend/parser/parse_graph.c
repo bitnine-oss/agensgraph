@@ -297,7 +297,8 @@ static TargetEntry *findTarget(List *targetList, char *resname);
 /* expression - type */
 static Node *makeVertexExpr(ParseState *pstate, RangeTblEntry *rte,
 							int location);
-static Node *makeEdgeExpr(ParseState *pstate, RangeTblEntry *rte, int location);
+static Node *makeEdgeExpr(ParseState *pstate, CypherRel *crel,
+						  RangeTblEntry *rte, int location);
 static Node *makePathVertexExpr(ParseState *pstate, Node *obj);
 static Node *makeGraphpath(List *vertices, List *edges, int location);
 /* expression - common */
@@ -1414,7 +1415,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 				{
 					Assert(vertex != NULL);
 					pvs = lappend(pvs, makePathVertexExpr(pstate, vertex));
-					pes = lappend(pes, makeEdgeExpr(pstate, edge, -1));
+					pes = lappend(pes, makeEdgeExpr(pstate, crel, edge, -1));
 				}
 
 				prev_crel = crel;
@@ -1474,6 +1475,7 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 	bool		prop_constr;
 	Const	   *id;
 	Const	   *prop_map;
+	Const	   *tid;
 	Node	   *vertex;
 
 	/*
@@ -1655,7 +1657,8 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 
 	id = makeNullConst(GRAPHIDOID, -1, InvalidOid);
 	prop_map = makeNullConst(JSONBOID, -1, InvalidOid);
-	vertex = makeTypedRowExpr(list_make2(id, prop_map), VERTEXOID, varloc);
+	tid = makeNullConst(TIDOID, -1, InvalidOid);
+	vertex = makeTypedRowExpr(list_make3(id, prop_map, tid), VERTEXOID, varloc);
 	te = makeTargetEntry((Expr *) vertex,
 						 (AttrNumber) pstate->p_next_resno++,
 						 varname,
@@ -1745,7 +1748,7 @@ transformMatchSR(ParseState *pstate, CypherRel *crel, List **targetList,
 		resjunk = (varname == NULL);
 		resno = (resjunk ? InvalidAttrNumber : pstate->p_next_resno++);
 
-		te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, rte, varloc),
+		te = makeTargetEntry((Expr *) makeEdgeExpr(pstate, crel, rte, varloc),
 							 (AttrNumber) resno,
 							 alias->aliasname,
 							 resjunk);
@@ -5193,27 +5196,35 @@ makeVertexExpr(ParseState *pstate, RangeTblEntry *rte, int location)
 {
 	Node	   *id;
 	Node	   *prop_map;
+	Node	   *tid;
 
 	id = getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
 	prop_map = getColumnVar(pstate, rte, AG_ELEM_PROP_MAP);
+	tid = getSysColumnVar(pstate, rte, SelfItemPointerAttributeNumber);
 
-	return makeTypedRowExpr(list_make2(id, prop_map), VERTEXOID, location);
+	return makeTypedRowExpr(list_make3(id, prop_map, tid), VERTEXOID, location);
 }
 
 static Node *
-makeEdgeExpr(ParseState *pstate, RangeTblEntry *rte, int location)
+makeEdgeExpr(ParseState *pstate, CypherRel *crel, RangeTblEntry *rte,
+			 int location)
 {
 	Node	   *id;
 	Node	   *start;
 	Node	   *end;
 	Node	   *prop_map;
+	Node	   *tid;
 
 	id = getColumnVar(pstate, rte, AG_ELEM_LOCAL_ID);
 	start = getColumnVar(pstate, rte, AG_START_ID);
 	end = getColumnVar(pstate, rte, AG_END_ID);
 	prop_map = getColumnVar(pstate, rte, AG_ELEM_PROP_MAP);
+	if (crel->direction == CYPHER_REL_DIR_NONE)
+		tid = getColumnVar(pstate, rte, "ctid");
+	else
+		tid = getSysColumnVar(pstate, rte, SelfItemPointerAttributeNumber);
 
-	return makeTypedRowExpr(list_make4(id, start, end, prop_map),
+	return makeTypedRowExpr(list_make5(id, start, end, prop_map, tid),
 							EDGEOID, location);
 }
 

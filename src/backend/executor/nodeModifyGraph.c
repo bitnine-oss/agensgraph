@@ -792,7 +792,8 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	edge = makeGraphEdgeDatum(elemTupleSlot->tts_values[0],
 							  elemTupleSlot->tts_values[1],
 							  elemTupleSlot->tts_values[2],
-							  elemTupleSlot->tts_values[3]);
+							  elemTupleSlot->tts_values[3],
+							  PointerGetDatum(&tuple->t_self));
 
 	if (gedge->resno > 0)
 		setSlotValueByAttnum(slot, edge, gedge->resno);
@@ -1345,7 +1346,7 @@ makeModifiedElem(Datum elem, Oid elemtype, Datum id, Datum prop_map)
 {
 	if (elemtype == VERTEXOID)
 	{
-		return makeGraphVertexDatum(id, prop_map);
+		return makeGraphVertexDatum(id, prop_map, (Datum) 0);
 	}
 	else
 	{
@@ -1355,7 +1356,7 @@ makeModifiedElem(Datum elem, Oid elemtype, Datum id, Datum prop_map)
 		start = getEdgeStartDatum(elem);
 		end = getEdgeEndDatum(elem);
 
-		return makeGraphEdgeDatum(id, start, end, prop_map);
+		return makeGraphEdgeDatum(id, start, end, prop_map, (Datum) 0);
 	}
 }
 
@@ -1643,7 +1644,8 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	edge = makeGraphEdgeDatum(insertSlot->tts_values[0],
 							  insertSlot->tts_values[1],
 							  insertSlot->tts_values[2],
-							  insertSlot->tts_values[3]);
+							  insertSlot->tts_values[3],
+							  PointerGetDatum(&tuple->t_self));
 
 	if (gedge->resno > 0)
 		setSlotValueByAttnum(slot, edge, gedge->resno);
@@ -1904,7 +1906,7 @@ getVertexFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 	if (plan->operation == GWROP_DELETE)
 		return (Datum) NULL;
 	else
-		return makeGraphVertexDatum(gid, entry->val.properties);
+		return makeGraphVertexDatum(gid, entry->val.properties, (Datum) 0);
 }
 
 static Datum
@@ -1931,7 +1933,8 @@ getEdgeFinalPropMap(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 		start = getEdgeStartDatum(origin);
 		end = getEdgeEndDatum(origin);
 
-		return makeGraphEdgeDatum(gid, start, end, entry->val.properties);
+		return makeGraphEdgeDatum(gid, start, end, entry->val.properties,
+								  (Datum) 0);
 	}
 }
 
