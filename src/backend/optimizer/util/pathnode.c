@@ -3493,6 +3493,93 @@ reparameterize_path(PlannerInfo *root, Path *path,
 	return NULL;
 }
 
+ShortestpathPath *
+create_shortestpath_path(PlannerInfo *root,
+						 RelOptInfo *joinrel,
+						 JoinType jointype,
+						 JoinCostWorkspace *workspace,
+						 JoinPathExtraData *extra,
+						 Path *outer_path,
+						 Path *inner_path,
+						 List *restrict_clauses,
+						 List *pathkeys,
+						 Relids required_outer)
+{
+	Query            *parse = root->parse;
+	ShortestpathPath *pathnode = makeNode(ShortestpathPath);
+	Relids		      inner_req_outer = PATH_REQ_OUTER(inner_path);
+
+	/*
+	 * If the inner path is parameterized by the outer, we must drop any
+	 * restrict_clauses that are due to be moved into the inner path.  We have
+	 * to do this now, rather than postpone the work till createplan time,
+	 * because the restrict_clauses list can affect the size and cost
+	 * estimates for this path.
+	 */
+	if (bms_overlap(inner_req_outer, outer_path->parent->relids))
+	{
+		Relids		inner_and_outer = bms_union(inner_path->parent->relids,
+												inner_req_outer);
+		List	   *jclauses = NIL;
+		ListCell   *lc;
+
+		foreach(lc, restrict_clauses)
+		{
+			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+
+			if (!join_clause_is_movable_into(rinfo,
+											 inner_path->parent->relids,
+											 inner_and_outer))
+				jclauses = lappend(jclauses, rinfo);
+		}
+		restrict_clauses = jclauses;
+	}
+
+	pathnode->jpath.path.pathtype = T_Shortestpath;
+	pathnode->jpath.path.parent = joinrel;
+	pathnode->jpath.path.pathtarget = joinrel->reltarget;
+	pathnode->jpath.path.param_info =
+	get_joinrel_parampathinfo(root,
+							  joinrel,
+							  outer_path,
+							  inner_path,
+							  extra->sjinfo,
+							  required_outer,
+							  &restrict_clauses);
+	pathnode->jpath.path.parallel_aware = false;
+	pathnode->jpath.path.parallel_safe = joinrel->consider_parallel &&
+	outer_path->parallel_safe && inner_path->parallel_safe;
+	/* This is a foolish way to estimate parallel_workers, but for now... */
+	pathnode->jpath.path.parallel_workers = outer_path->parallel_workers;
+	pathnode->jpath.path.pathkeys = pathkeys;
+	pathnode->jpath.jointype = jointype;
+	pathnode->jpath.inner_unique = extra->inner_unique;
+	pathnode->jpath.outerjoinpath = outer_path;
+	pathnode->jpath.innerjoinpath = inner_path;
+	pathnode->jpath.joinrestrictinfo = restrict_clauses;
+	pathnode->jpath.minhops = extra->sjinfo->min_hops;
+	pathnode->jpath.maxhops = extra->sjinfo->max_hops;
+
+	pathnode->end_id_left = parse->shortestpathEndIdLeft;
+	pathnode->end_id_right = parse->shortestpathEndIdRight;
+	pathnode->tableoid_left = parse->shortestpathTableOidLeft;
+	pathnode->tableoid_right = parse->shortestpathTableOidRight;
+	pathnode->ctid_left = parse->shortestpathCtidLeft;
+	pathnode->ctid_right = parse->shortestpathCtidRight;
+	pathnode->source = parse->shortestpathSource;
+	pathnode->target = parse->shortestpathTarget;
+	pathnode->minhops = parse->shortestpathMinhops;
+	pathnode->maxhops = parse->shortestpathMaxhops;
+	pathnode->limit = parse->shortestpathLimit;
+
+	final_cost_nestloop(root,
+						(NestPath*)pathnode,
+						workspace,
+						extra);
+
+	return pathnode;
+}
+
 DijkstraPath *
 create_dijkstra_path(PlannerInfo *root,
 					 RelOptInfo *rel,

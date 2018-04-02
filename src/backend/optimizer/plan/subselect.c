@@ -2769,11 +2769,17 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 		case T_Unique:
 		case T_SetOp:
 		case T_Group:
+		case T_Hash2Side:
 			/* no node-type-specific fields need fixing */
 			break;
 
 		case T_ModifyGraph:
 			/* currently, this node does not consider params */
+			break;
+
+		case T_Shortestpath:
+			finalize_primnode(((Shortestpath *) plan)->source, &context);
+			finalize_primnode(((Shortestpath *) plan)->target, &context);
 			break;
 
 		case T_Dijkstra:

@@ -7,14 +7,17 @@
  * src/include/utils/dijkstra.h
  */
 
-#ifndef DIJKSTRA_H
-#define DIJKSTRA_H
+#ifndef SHORTESTPATH_H
+#define SHORTESTPATH_H
 
 #include "postgres.h"
 
 #include "fmgr.h"
 
+extern Datum shortestpath_graphids(PG_FUNCTION_ARGS);
+extern Datum shortestpath_rowids(PG_FUNCTION_ARGS);
+
 extern Datum dijkstra_vids(PG_FUNCTION_ARGS);
 extern Datum dijkstra_eids(PG_FUNCTION_ARGS);
 
-#endif	/* DIJKSTRA_H */
+#endif	/* SHORTESTPATH_H */

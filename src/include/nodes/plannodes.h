@@ -1070,6 +1070,34 @@ typedef struct ModifyGraph
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 } ModifyGraph;
 
+typedef struct Shortestpath
+{
+	Join		join;
+	List	   *hashclauses;
+	AttrNumber  end_id_left;
+	AttrNumber  end_id_right;
+	AttrNumber  tableoid_left;
+	AttrNumber  tableoid_right;
+	AttrNumber  ctid_left;
+	AttrNumber  ctid_right;
+	Node	   *source;
+	Node	   *target;
+	long        minhops;
+	long        maxhops;
+	long        limit;
+} Shortestpath;
+
+typedef struct Hash2Side
+{
+	Plan		plan;
+	Oid			skewTable;		/* outer join key's table OID, or InvalidOid */
+	AttrNumber	skewColumn;		/* outer join key's column #, or zero */
+	bool		skewInherit;	/* is outer join rel an inheritance tree? */
+	Oid			skewColType;	/* datatype of the outer key column */
+	int32		skewColTypmod;	/* typmod of the outer key column */
+	/* all other info is in the parent HashJoin node */
+} Hash2Side;
+
 typedef struct Dijkstra
 {
 	Plan		plan;
