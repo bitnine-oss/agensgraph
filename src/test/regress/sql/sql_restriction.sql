@@ -42,6 +42,11 @@ CREATE VLABEL v;
 ALTER TABLE g.v RENAME TO e;
 
 --
+-- TRUNCATE TABLE
+--
+TRUNCATE TABLE g.v;
+
+--
 -- TRIGGER
 --
 
