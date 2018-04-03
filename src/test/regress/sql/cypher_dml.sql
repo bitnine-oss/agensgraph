@@ -82,6 +82,8 @@ CREATE ELABEL e1;
 
 CREATE p=()-[:e1]->() RETURN p;
 
+CREATE (a {name:'agens'}), (b {name:a.name});
+
 DROP GRAPH g_create CASCADE;
 
 --
@@ -1000,7 +1002,7 @@ MATCH (a)-[]->(b)
 	SET b.no = to_jsonb(a.no::int + b.no::int)
 	CREATE (:v2 {ano:a.no}), (d:v2 {bno:b.no});
 
-MATCH (a:v2) RETURN properties(a);
+MATCH (a:v2) RETURN properties(a) ORDER BY properties;
 
 -- MATCH - DELETE - RETURN
 MATCH (a) DETACH DELETE a;
