@@ -3112,9 +3112,21 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 {
 	PQExpBuffer qry;
 <<<<<<< HEAD
+<<<<<<< HEAD
 	PQExpBuffer graphqry;
 	PGresult   *graphres;
 =======
+=======
+	static teSection oldsec = SECTION_NONE;
+
+	if (oldsec == SECTION_NONE && sec == SECTION_POST_DATA)
+	{
+		oldsec = sec;
+		if (AH->currSchema)
+			free(AH->currSchema);
+		AH->currSchema = NULL;
+	}
+>>>>>>> 42b3fb7... fix: Bug fix for pg_dump
 
 	if (!schemaName || *schemaName == '\0')
 		return;
@@ -3134,6 +3146,7 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 	if (strcmp(schemaName, "pg_catalog") != 0)
 		appendPQExpBufferStr(qry, ", pg_catalog");
 
+<<<<<<< HEAD
 	/* if it was graph, set graph_path too */
 	graphqry = createPQExpBuffer();
 	appendPQExpBuffer(graphqry,
@@ -3145,6 +3158,21 @@ _selectOutputSchema(ArchiveHandle *AH, const char *schemaName)
 	if (PQntuples(graphres) > 0)
 		appendPQExpBuffer(qry, ";\nSET graph_path = %s", fmtId(schemaName));
 =======
+=======
+	if (sec == SECTION_POST_DATA)
+	{
+		PQExpBuffer tmp;
+		PGresult   *res;
+
+		/* if the given schema is a graph, set graph_path too */
+
+		tmp = createPQExpBuffer();
+		appendPQExpBuffer(tmp,
+				"SELECT 1 FROM pg_catalog.ag_graph WHERE graphname = '%s'",
+				schemaName);
+		res = ExecuteSqlQuery(&AH->public, tmp->data, PGRES_TUPLES_OK);
+
+>>>>>>> 42b3fb7... fix: Bug fix for pg_dump
 		if (PQntuples(res) > 0)
 		{
 			appendPQExpBuffer(qry, ";\nSET graph_path = %s", fmtId(schemaName));
