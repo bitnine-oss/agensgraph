@@ -562,7 +562,7 @@ static Node *makeDijkstraPath(List *chain, Node *weight, Node *qual,
 /* Agens Graph */
 %type <node>	CreateGraphStmt CreateLabelStmt AlterLabelStmt alter_label_cmd
 				CreateConstraintStmt DropConstraintStmt
-				CreatePropertyIndexStmt DropPropertyIndexStmt
+				CreatePropertyIndexStmt
 %type <list>	alter_label_cmds prop_idx_params
 %type <str>		opt_constraint_name
 %type <ielem>	prop_idx_elem
@@ -908,7 +908,6 @@ stmt :
 			| DropOpFamilyStmt
 			| DropOwnedStmt
 			| DropPolicyStmt
-			| DropPropertyIndexStmt
 			| DropPLangStmt
 			| DropRuleStmt
 			| DropStmt
@@ -5737,6 +5736,7 @@ drop_type:	TABLE									{ $$ = OBJECT_TABLE; }
 			| GRAPH									{ $$ = OBJECT_GRAPH; }
 			| ELABEL								{ $$ = OBJECT_ELABEL; }
 			| VLABEL								{ $$ = OBJECT_VLABEL; }
+			| PROPERTY INDEX						{ $$ = OBJECT_PROPERTY_INDEX; }
 		;
 
 any_name_list:
@@ -14840,25 +14840,6 @@ prop_idx_elem:
 					$$->opclass = $5;
 					$$->ordering = $6;
 					$$->nulls_ordering = $7;
-				}
-		;
-
-DropPropertyIndexStmt:
-			DROP PROPERTY INDEX name opt_drop_behavior
-				{
-					DropPropertyIndexStmt *n = makeNode(DropPropertyIndexStmt);
-					n->idxname = $4;
-					n->behavior = $5;
-					n->missing_ok = FALSE;
-					$$ = (Node *)n;
-				}
-			| DROP PROPERTY INDEX IF_P EXISTS name opt_drop_behavior
-				{
-					DropPropertyIndexStmt *n = makeNode(DropPropertyIndexStmt);
-					n->idxname = $6;
-					n->behavior = $7;
-					n->missing_ok = TRUE;
-					$$ = (Node *)n;
 				}
 		;
 

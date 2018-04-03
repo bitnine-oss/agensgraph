@@ -345,6 +345,7 @@ ExecRenameStmt(RenameStmt *stmt)
 		case OBJECT_VIEW:
 		case OBJECT_MATVIEW:
 		case OBJECT_INDEX:
+		case OBJECT_PROPERTY_INDEX:
 		case OBJECT_FOREIGN_TABLE:
 			return RenameRelation(stmt);
 
