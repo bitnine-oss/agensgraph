@@ -76,7 +76,7 @@ CREATE (:regv1 {id: 100});
 \d g.regv1
 \dGv+ regv1
 \dGi
-DROP VLABEL regv1;
+DROP VLABEL regv1 CASCADE;
 
 -- Multi-column unique property index
 CREATE VLABEL regv1;
@@ -90,7 +90,7 @@ CREATE (:regv1 {name: {first: 'agens', last: 'graph'}});
 \d g.regv1
 \dGv+ regv1
 \dGi
-DROP VLABEL regv1;
+DROP VLABEL regv1 CASCADE;
 
 -- DROP PROPERTY INDEX
 CREATE VLABEL regv1;

@@ -25,6 +25,7 @@
 #include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_inherits_fn.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
@@ -32,6 +33,7 @@
 #include "commands/schemacmds.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
+#include "executor/spi.h"
 #include "nodes/params.h"
 #include "nodes/parsenodes.h"
 #include "parser/parse_utilcmd.h"
@@ -357,13 +359,11 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 static void
 AgInheritanceDependancy(Oid laboid, List *supers)
 {
-	int16		seq;
 	ListCell   *entry;
 
 	if (supers == NIL)
 		return;
 
-	seq = 1;
 	foreach(entry, supers)
 	{
 		Oid parentOid = lfirst_oid(entry);
@@ -377,8 +377,6 @@ AgInheritanceDependancy(Oid laboid, List *supers)
 		parentobject.objectId = parentOid;
 		parentobject.objectSubId = 0;
 		recordDependencyOn(&childobject, &parentobject, DEPENDENCY_NORMAL);
-
-		seq++;
 	}
 }
 
@@ -578,4 +576,94 @@ DisableIndexCommand(DisableIndexStmt *disableStmt)
 						relation->relname)));
 
 	return relid;
+}
+
+bool
+isEmptyLabel(char *label_name)
+{
+	int			ret;
+	StringInfoData sql;
+	bool		result = true;
+
+	initStringInfo(&sql);
+
+	appendStringInfo(&sql, "SELECT 1 FROM %s.%s LIMIT 1",
+					 quote_identifier(get_graph_path(false)),
+					 quote_identifier(label_name));
+
+	ret = SPI_connect();
+	if (ret != SPI_OK_CONNECT)
+		elog(ERROR, "isEmptyLabel: SPI_connect returned %d", ret);
+
+	ret = SPI_execute(sql.data, true, 1);
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "isEmptyLabel: SPI_execute returned %d: %s",
+			 ret, sql.data);
+
+	if (SPI_processed > 0)
+		result = false;
+
+	ret = SPI_finish();
+	if (ret != SPI_OK_FINISH)
+		elog(ERROR, "isEmptyLabel: SPI_finish returned %d", ret);
+
+	return result;
+}
+
+void
+deleteRelatedEdges(RangeVar *vlab)
+{
+	uint32		vlabid;
+	Oid			graphoid;
+	Oid			agedge;
+	ListCell   *lc;
+	List	   *edges = NIL;
+
+	graphoid = get_graph_path_oid();
+	vlabid = (uint32) get_labname_labid(vlab->relname, graphoid);
+
+	/* get all edge's relid */
+	agedge = get_laboid_relid(get_labname_laboid(AG_EDGE, graphoid));
+	edges = list_make1_oid(agedge);
+	edges = list_concat(edges, find_all_inheritors(agedge, NoLock, NULL));
+
+	foreach(lc, edges)
+	{
+		Oid			edgeoid = lfirst_oid(lc);
+		Relation	rel;
+		int			ret;
+		StringInfoData sql;
+
+		/* Hold the ShareLock to prevent DML on the edge label */
+		rel = try_relation_open(edgeoid, ShareLock);
+		if (rel == NULL)
+			continue;	/* not exist */
+
+		initStringInfo(&sql);
+
+		appendStringInfo(&sql, "DELETE FROM ONLY %s.%s WHERE "
+				"(start >= graphid(%u,0) AND"
+				" start <= graphid(%u," UINT64_FORMAT ")) OR "
+				"(\"end\" >= graphid(%u,0) AND"
+				" \"end\" <= graphid(%u," UINT64_FORMAT "))",
+				quote_identifier(get_graph_path(false)),
+				quote_identifier(RelationGetRelationName(rel)),
+				vlabid, vlabid, GRAPHID_LOCID_MAX,
+				vlabid, vlabid, GRAPHID_LOCID_MAX);
+
+		ret = SPI_connect();
+		if (ret != SPI_OK_CONNECT)
+			elog(ERROR, "deleteRelatedEdges: SPI_connect returned %d", ret);
+
+		ret = SPI_execute(sql.data, false, 0);
+		if (ret != SPI_OK_DELETE)
+			elog(ERROR, "deleteRelatedEdges: SPI_execute returned %d: %s",
+				 ret, sql.data);
+
+		ret = SPI_finish();
+		if (ret != SPI_OK_FINISH)
+			elog(ERROR, "deleteRelatedEdges: SPI_finish returned %d", ret);
+
+		relation_close(rel, ShareLock);
+	}
 }
