@@ -217,6 +217,18 @@ DROP ELABEL e0 CASCADE;
 DROP ELABEL e1;
 SELECT labname, labkind FROM pg_catalog.ag_label;
 
+-- drop label non-empty
+CREATE (a:test_v1)-[:test_e1]->(b:test_v2), (a)<-[:test_e2]-(b);
+
+DROP ELABEL test_e1;
+DROP ELABEL test_e2 CASCADE;
+DROP VLABEL test_v1;
+DROP VLABEL test_v2 CASCADE;
+
+MATCH (a:test_v1) DELETE (a);
+DROP VLABEL test_v1;
+DROP ELABEL test_e1;
+
 --
 -- CONSTRAINT
 --
@@ -235,7 +247,7 @@ CREATE (:regv1 {a: {b: 'c'}});
 CREATE (:regv1 {a: 'b'});
 CREATE (:regv1 {a: 'agens-graph'});
 
-DROP VLABEL regv1;
+DROP VLABEL regv1 CASCADE;
 
 -- expr unique constraint
 CREATE ELABEL rege1;
@@ -248,7 +260,7 @@ CREATE ()-[:rege1 {c: 'agens', d: 'graph'}]->();
 CREATE ()-[:rege1 {c: 'agens', d: 'rdb'}]->();
 CREATE ()-[:rege1 {c: 'agen', d: 'sgraph'}]->();
 
-DROP ELABEL rege1;
+DROP ELABEL rege1 CASCADE;
 
 -- simple not null constraint
 CREATE VLABEL regv2;
@@ -261,7 +273,7 @@ CREATE (:regv2 {age: 0});
 CREATE (:regv2 {age: 0, name: 'graph'});
 CREATE (:regv2 {name: NULL});
 
-DROP VLABEL regv2;
+DROP VLABEL regv2 CASCADE;
 
 -- multi not null constraint
 CREATE VLABEL regv3;
@@ -275,7 +287,7 @@ CREATE (:regv3 {name: {first: 'agens'}});
 CREATE (:regv3 {name: {last: 'graph'}});
 CREATE (:regv3 {name: {first: NULL, last: NULL}});
 
-DROP VLABEL regv3;
+DROP VLABEL regv3 CASCADE;
 
 -- simple check constraint
 CREATE ELABEL rege2;
@@ -288,7 +300,7 @@ CREATE ()-[:rege2 {a: 'agens', b: 'agens'}]->();
 CREATE ()-[:rege2 {a: 'agens', b: 'AGENS'}]->();
 CREATE ()-[:rege2 {a: 'agens', d: 'graph'}]->();
 
-DROP ELABEL rege2;
+DROP ELABEL rege2 CASCADE;
 
 -- expression check constraint
 CREATE VLABEL regv4;
@@ -301,7 +313,7 @@ CREATE (:regv4 {password: '123456789'});
 CREATE (:regv4 {password: '123456789012345'});
 CREATE (:regv4 {password: '1234567890123456'});
 
-DROP VLABEL regv4;
+DROP VLABEL regv4 CASCADE;
 
 -- IN check constraint
 CREATE ELABEL rege3;
@@ -314,7 +326,7 @@ CREATE ()-[:rege3 {type: 'love', name: 'graph'}]->();
 CREATE ()-[:rege3 {type: 'parents', name: 'AGENS'}]->();
 CREATE ()-[:rege3 {type: 'lover', name: 'GRAPH'}]->();
 
-DROP ELABEL rege3;
+DROP ELABEL rege3 CASCADE;
 
 -- case check constraint
 CREATE VLABEL regv5;
@@ -330,7 +342,7 @@ CREATE (:regv5 {id: ' AGENS '});
 CREATE (:regv5 {id: 'GRAPH'});
 CREATE (:regv5 {id: ' graph '});
 
-DROP VLABEL regv5;
+DROP VLABEL regv5 CASCADE;
 
 -- IS NULL constraint
 CREATE ELABEL rege4;
@@ -346,7 +358,7 @@ DROP CONSTRAINT rege4_name_isnull_constraint ON ag_edge;
 DROP CONSTRAINT ON rege4;
 DROP CONSTRAINT rege4_name_isnull_constraint ON rege4;
 
-DROP ELABEL rege4;
+DROP ELABEL rege4 CASCADE;
 
 -- Indirection constraint
 
@@ -359,7 +371,7 @@ CREATE (:regv7 {a: {b: [{c: 'd'}, {c: 'e'}]}});
 CREATE (:regv7 {a: {b: [{c: 'd'}, {e: 'e'}]}});
 CREATE (:regv7 {a: {b: [{d: 'd'}, {e: 'e'}]}});
 
-DROP VLABEL regv7;
+DROP VLABEL regv7 CASCADE;
 
 -- wrong case
 
@@ -369,7 +381,7 @@ CREATE CONSTRAINT ON regv8 ASSERT (SELECT * FROM graph.regv8).c IS NOT NULL;
 CREATE CONSTRAINT ON regv8 ASSERT (1).c IS NOT NULL;
 CREATE CONSTRAINT ON regv8 ASSERT ($1).c IS NOT NULL;
 
-DROP VLABEL regv8;
+DROP VLABEL regv8 CASCADE;
 
 --
 -- DROP GRAPH

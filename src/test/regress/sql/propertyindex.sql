@@ -23,6 +23,7 @@ CREATE PROPERTY INDEX ON regv1 (age);
 CREATE PROPERTY INDEX ON regv1 ((body.weight / body.height));
 
 \d g.regv1
+\dGi
 DROP VLABEL regv1;
 
 -- Check property name & access method type
@@ -40,6 +41,7 @@ CREATE PROPERTY INDEX ON regv1 USING gist (name);
 
 \d g.regv1
 \dGv+ regv1
+\dGi
 
 DROP VLABEL regv1;
 
@@ -61,6 +63,7 @@ CREATE PROPERTY INDEX ON regv1 (name.first) WHERE (name IS NOT NULL);
 
 \d g.regv1
 \dGv+ regv1
+\dGi
 DROP VLABEL regv1;
 
 -- Unique property index
@@ -72,7 +75,8 @@ CREATE (:regv1 {id: 100});
 
 \d g.regv1
 \dGv+ regv1
-DROP VLABEL regv1;
+\dGi
+DROP VLABEL regv1 CASCADE;
 
 -- Multi-column unique property index
 CREATE VLABEL regv1;
@@ -85,7 +89,8 @@ CREATE (:regv1 {name: {first: 'agens', last: 'graph'}});
 
 \d g.regv1
 \dGv+ regv1
-DROP VLABEL regv1;
+\dGi
+DROP VLABEL regv1 CASCADE;
 
 -- DROP PROPERTY INDEX
 CREATE VLABEL regv1;
@@ -113,10 +118,12 @@ CREATE VLABEL regv1;
 
 CREATE PROPERTY INDEX regv1_multi_col ON regv1 (name.first, name.middle, name.last);
 \dGv+ regv1
+\dGi
 DROP PROPERTY INDEX regv1_multi_col;
 
 CREATE PROPERTY INDEX regv1_multi_expr ON regv1 ((name.first + name.last), age);
 \dGv+ regv1
+\dGi
 DROP PROPERTY INDEX regv1_multi_expr;
 
 DROP VLABEL regv1;

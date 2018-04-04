@@ -16,6 +16,7 @@
 
 #include "access/heapam.h"
 #include "access/htup_details.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/dependency.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaddress.h"
@@ -28,6 +29,7 @@
 #include "parser/parse_type.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
 
 
@@ -101,9 +103,41 @@ RemoveObjects(DropStmt *stmt)
 						 errhint("Use DROP AGGREGATE to drop aggregate functions.")));
 		}
 
-		if (stmt->removeType == OBJECT_ELABEL ||
-			stmt->removeType == OBJECT_VLABEL)
-			CheckLabelType(stmt->removeType, address.objectId, "DROP");
+		if (stmt->removeType == OBJECT_VLABEL)
+		{
+			CheckLabelType(OBJECT_VLABEL, address.objectId, "DROP");
+
+			if (stmt->behavior == DROP_CASCADE)
+			{
+				deleteRelatedEdges(
+						makeRangeVarFromNameList(castNode(List, object)));
+			}
+			else
+			{
+				Assert(stmt->behavior == DROP_RESTRICT);
+
+				if (!isEmptyLabel(NameListToString(castNode(List, object))))
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("cannot drop %s because it is not empty.",
+									NameListToString(castNode(List, object)))));
+				}
+			}
+		}
+		else if (stmt->removeType == OBJECT_ELABEL)
+		{
+			CheckLabelType(OBJECT_ELABEL, address.objectId, "DROP");
+
+			if (stmt->behavior == DROP_RESTRICT &&
+				!isEmptyLabel(NameListToString(castNode(List, object))))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot drop %s because it is not empty.",
+								NameListToString(castNode(List, object)))));
+			}
+		}
 
 		/* Check permissions. */
 		namespaceId = get_object_namespace(&address);

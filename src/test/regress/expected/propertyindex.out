@@ -200,7 +200,7 @@ Inherits: g.ag_vertex
  g     | regv1     | regv1_id_idx | t      | regressrole | CREATE UNIQUE INDEX regv1_id_idx ON g.regv1 USING btree (id)
 (1 row)
 
-DROP VLABEL regv1;
+DROP VLABEL regv1 CASCADE;
 -- Multi-column unique property index
 CREATE VLABEL regv1;
 CREATE UNIQUE PROPERTY INDEX ON regv1 (name.first, name.last);
@@ -241,7 +241,7 @@ Inherits: g.ag_vertex
  g     | regv1     | regv1_first_last_idx | t      | regressrole | CREATE UNIQUE INDEX regv1_first_last_idx ON g.regv1 USING btree (name.first, name.last)
 (1 row)
 
-DROP VLABEL regv1;
+DROP VLABEL regv1 CASCADE;
 -- DROP PROPERTY INDEX
 CREATE VLABEL regv1;
 CREATE PROPERTY INDEX regv1_idx ON regv1 (name);
