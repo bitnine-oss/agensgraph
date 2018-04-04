@@ -791,7 +791,9 @@ static ObjectAddress get_object_address_publication_rel(List *object,
 static ObjectAddress get_object_address_defacl(List *object,
 						  bool missing_ok);
 static ObjectAddress get_object_address_graph(Value *object, bool missing_ok);
-static ObjectAddress get_object_address_label(List *object, bool missing_ok);
+static ObjectAddress get_object_address_label(List *object, Relation *relp,
+											  LOCKMODE lockmode,
+											  bool missing_ok);
 static const ObjectPropertyType *get_object_property_data(Oid class_id);
 
 static void getRelationDescription(StringInfo buffer, Oid relid);
@@ -1048,7 +1050,9 @@ get_object_address(ObjectType objtype, Node *object,
 				break;
 			case OBJECT_ELABEL:
 			case OBJECT_VLABEL:
-				address = get_object_address_label(castNode(List, object), missing_ok);
+				address = get_object_address_label(castNode(List, object),
+												   &relation, lockmode,
+												   missing_ok);
 				break;
 			default:
 				elog(ERROR, "unrecognized objtype: %d", (int) objtype);
@@ -1993,12 +1997,14 @@ get_object_address_graph(Value *object, bool missing_ok)
  * Find the ObjectAddress for a graph label
  */
 static ObjectAddress
-get_object_address_label(List *object, bool missing_ok)
+get_object_address_label(List *object, Relation *relp,
+						 LOCKMODE lockmode, bool missing_ok)
 {
 	ObjectAddress address;
 	Oid			graphid;
 	char	   *graphname;
 	char	   *labname;
+	List	   *tabnamelist;
 
 	switch (list_length(object))
 	{
@@ -2031,6 +2037,11 @@ get_object_address_label(List *object, bool missing_ok)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
 				 errmsg("graph label \"%s\" does not exist", labname)));
+
+	/* Hold the same level of lock on the table and get Relation. */
+	tabnamelist = list_make2(makeString(graphname), makeString(labname));
+	(void) get_relation_by_qualified_name(OBJECT_TABLE, tabnamelist,
+										  relp, lockmode, missing_ok);
 
 	return address;
 }
