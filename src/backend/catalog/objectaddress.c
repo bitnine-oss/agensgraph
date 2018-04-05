@@ -20,6 +20,7 @@
 #include "catalog/ag_graph.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
+#include "catalog/ag_labmeta.h"
 #include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/objectaddress.h"
@@ -3579,6 +3580,10 @@ getObjectDescription(const ObjectAddress *object)
 			getLabelDescription(&buffer, object->objectId);
 			break;
 
+		case OCLASS_LABMETA:
+			appendStringInfo(&buffer, _("labmeta "));
+			break;
+
 			/*
 			 * There's intentionally no default: case here; we want the
 			 * compiler to warn if a new OCLASS hasn't been handled above.
@@ -4085,6 +4090,10 @@ getObjectTypeDescription(const ObjectAddress *object)
 
 		case OCLASS_LABEL:
 			getLabelTypeDescription(&buffer, object->objectId);
+			break;
+
+		case OCLASS_LABMETA:
+			appendStringInfoString(&buffer, "labmeta");
 			break;
 
 			/*
@@ -5154,6 +5163,10 @@ getObjectIdentityParts(const ObjectAddress *object,
 
 		case OCLASS_LABEL:
 			getLabelIdentity(&buffer, object->objectId, objname);
+			break;
+
+		case OCLASS_LABMETA:
+			/* ??? */
 			break;
 
 			/*

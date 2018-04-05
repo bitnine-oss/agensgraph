@@ -19,6 +19,7 @@
 #include "catalog/ag_graph.h"
 #include "catalog/ag_label.h"
 #include "catalog/ag_label_fn.h"
+#include "catalog/ag_labmeta.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -179,7 +180,8 @@ static const Oid object_classes[] = {
 	SubscriptionRelationId,		/* OCLASS_SUBSCRIPTION */
 	TransformRelationId,		/* OCLASS_TRANSFORM */
 	GraphRelationId,			/* OCLASS_GRAPH */
-	LabelRelationId				/* OCLASS_LABEL */
+	LabelRelationId,			/* OCLASS_LABEL */
+	LabMetaRelationId			/* OCLASS_LABMETA */
 };
 
 
@@ -1294,6 +1296,9 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_LABEL:
 			label_drop_with_catalog(object->objectId);
 			break;
+
+		case OCLASS_LABMETA:
+			elog(ERROR, "metric objects cannot be deleted by doDeletion");
 
 			/*
 			 * There's intentionally no default: case here; we want the
@@ -2529,6 +2534,9 @@ getObjectClass(const ObjectAddress *object)
 
 		case LabelRelationId:
 			return OCLASS_LABEL;
+
+		case LabMetaRelationId:
+			return OCLASS_LABMETA;
 	}
 
 	/* shouldn't get here */

@@ -2004,6 +2004,9 @@ CommitTransaction(void)
 	 */
 	PreCommit_on_commit_actions();
 
+	/* AgStat must be processed during PreCommit phase */
+	AtEOXact_AgStat(true);
+
 	/* close large objects before lower-level cleanup */
 	AtEOXact_LargeObject(true);
 
@@ -2613,6 +2616,7 @@ AbortTransaction(void)
 		AtEOXact_Files();
 		AtEOXact_ComboCid();
 		AtEOXact_HashTables(false);
+		AtEOXact_AgStat(false);
 		AtEOXact_PgStat(false);
 		AtEOXact_ApplyLauncher(false);
 		pgstat_report_xact_timestamp(0);
@@ -4540,6 +4544,7 @@ CommitSubTransaction(void)
 	AtEOSubXact_Files(true, s->subTransactionId,
 					  s->parent->subTransactionId);
 	AtEOSubXact_HashTables(true, s->nestingLevel);
+	AtEOSubXact_AgStat(true, s->nestingLevel);
 	AtEOSubXact_PgStat(true, s->nestingLevel);
 	AtSubCommit_Snapshot(s->nestingLevel);
 
@@ -4693,6 +4698,7 @@ AbortSubTransaction(void)
 		AtEOSubXact_Files(false, s->subTransactionId,
 						  s->parent->subTransactionId);
 		AtEOSubXact_HashTables(false, s->nestingLevel);
+		AtEOSubXact_AgStat(false, s->nestingLevel);
 		AtEOSubXact_PgStat(false, s->nestingLevel);
 		AtSubAbort_Snapshot(s->nestingLevel);
 	}

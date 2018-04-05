@@ -34,6 +34,7 @@
 
 #include "pgstat.h"
 
+#include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/transam.h"
@@ -41,6 +42,9 @@
 #include "access/xact.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_proc.h"
+#include "catalog/ag_graph_fn.h"
+#include "catalog/ag_labmeta.h"
+#include "catalog/indexing.h"
 #include "common/ip.h"
 #include "libpq/libpq.h"
 #include "libpq/pqsignal.h"
@@ -61,11 +65,15 @@
 #include "storage/procsignal.h"
 #include "storage/sinvaladt.h"
 #include "utils/ascii.h"
+#include "utils/catcache.h"
+#include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
+#include "utils/lsyscache.h"
+#include "utils/syscache.h"
 #include "utils/timestamp.h"
 #include "utils/tqual.h"
 
@@ -105,6 +113,7 @@
 #define PGSTAT_TAB_HASH_SIZE	512
 #define PGSTAT_FUNCTION_HASH_SIZE	512
 
+#define AGSTAT_EDGE_HASH_SIZE	16
 
 /* ----------
  * Total number of backends including auxiliary
@@ -218,6 +227,15 @@ typedef struct PgStat_SubXactStatus
 
 static PgStat_SubXactStatus *pgStatXactStack = NULL;
 
+typedef struct AgStat_SubXactStatus
+{
+	HTAB	   *htab;
+	int			nest_level;		/* subtransaction nest level */
+	struct AgStat_SubXactStatus *prev;	/* higher-level subxact if any */
+} AgStat_SubXactStatus;
+
+static AgStat_SubXactStatus *agStatXactStack = NULL;
+
 static int	pgStatXactCommit = 0;
 static int	pgStatXactRollback = 0;
 PgStat_Counter pgStatBlockReadTime = 0;
@@ -243,6 +261,7 @@ typedef struct TwoPhasePgStatRecord
 static MemoryContext pgStatLocalContext = NULL;
 static HTAB *pgStatDBHash = NULL;
 
+static MemoryContext agStatContext = NULL;
 /* Status for backends including auxiliary */
 static LocalPgBackendStatus *localBackendStatusTable = NULL;
 
@@ -2041,7 +2060,6 @@ pgstat_update_heap_dead_tuples(Relation rel, int delta)
 	if (pgstat_info != NULL)
 		pgstat_info->t_counts.t_delta_dead_tuples -= delta;
 }
-
 
 /* ----------
  * AtEOXact_PgStat
@@ -5560,6 +5578,7 @@ pgstat_clear_snapshot(void)
 		MemoryContextDelete(pgStatLocalContext);
 
 	/* Reset variables */
+	agStatContext = NULL;
 	pgStatLocalContext = NULL;
 	pgStatDBHash = NULL;
 	localBackendStatusTable = NULL;
@@ -6273,4 +6292,402 @@ pgstat_db_requested(Oid databaseid)
 		return true;
 
 	return false;
+}
+
+
+/*
+ * get_agstat_stack_level - add a new (sub)transaction stack entry if needed
+ */
+static AgStat_SubXactStatus *
+get_agstat_stack_level(int nest_level)
+{
+	AgStat_SubXactStatus *xact_state;
+
+	xact_state = agStatXactStack;
+	if (xact_state == NULL || xact_state->nest_level != nest_level)
+	{
+		HASHCTL	hash_ctl;
+
+		if (agStatContext == NULL)
+			agStatContext = AllocSetContextCreate(TopTransactionContext,
+					"AGLABMETA context",
+					ALLOCSET_SMALL_SIZES);
+
+		/* push new subxactstatus to stack*/
+		xact_state = (AgStat_SubXactStatus *)
+			MemoryContextAlloc(agStatContext,
+							   sizeof(AgStat_SubXactStatus));
+		xact_state->nest_level = nest_level;
+		xact_state->prev = agStatXactStack;
+		agStatXactStack = xact_state;
+
+		/* initialize */
+		memset(&hash_ctl, 0, sizeof(hash_ctl));
+		hash_ctl.keysize = sizeof(AgStat_key);
+		hash_ctl.entrysize = sizeof(AgStat_LabMeta);
+		hash_ctl.hcxt = agStatContext;
+
+		xact_state->htab = hash_create("edge statistic of sub xact",
+									   AGSTAT_EDGE_HASH_SIZE,
+									   &hash_ctl,
+									   HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+	}
+	return xact_state;
+}
+
+void
+agstat_count_edge_create(Graphid edge, Graphid start, Graphid end)
+{
+
+	int		nest_level;
+	bool	found;
+	Labid	edgelab;
+	Labid	startlab;
+	Labid	endlab;
+
+	AgStat_key				key;
+	AgStat_LabMeta		   *labmeta;
+	AgStat_SubXactStatus   *xact_state;
+
+	nest_level = GetCurrentTransactionNestLevel();
+	xact_state = get_agstat_stack_level(nest_level);
+
+	edgelab = GraphidGetLabid(edge);
+	startlab = GraphidGetLabid(start);
+	endlab = GraphidGetLabid(end);
+
+	/* AgStat_key is 10 byte but aligned to 12 byte.
+	 * So last 2 byte can have garbage value.
+	 * It must be cleaned before use.*/
+	memset(&key, 0, sizeof(key));
+	key.graph = get_graph_path_oid();
+	key.edge = edgelab;
+	key.start = startlab;
+	key.end = endlab;
+
+	labmeta = (AgStat_LabMeta *) hash_search(xact_state->htab,
+											 (void *) &key,
+											 HASH_ENTER, &found);
+	if (found)
+		labmeta->edges_inserted++;
+	else
+	{
+		/* key is copied already */
+		labmeta->edges_inserted = 1;
+		labmeta->edges_deleted = 0;
+	}
+}
+
+void
+agstat_count_edge_delete(Graphid edge, Graphid start, Graphid end)
+{
+	int		nest_level;
+	bool	found;
+
+	AgStat_key				key;
+	AgStat_LabMeta		   *labmeta;
+	AgStat_SubXactStatus   *xact_state;
+
+	nest_level = GetCurrentTransactionNestLevel();
+	xact_state = get_agstat_stack_level(nest_level);
+
+	memset(&key, 0, sizeof(key));
+	key.graph = get_graph_path_oid();
+	key.edge = edge;
+	key.start = start;
+	key.end = end;
+
+	labmeta = (AgStat_LabMeta *) hash_search(xact_state->htab,
+											 (void *) &key,
+											 HASH_ENTER, &found);
+	if (found)
+		labmeta->edges_deleted++;
+	else
+	{
+		labmeta->key = key;
+		labmeta->edges_inserted = 0;
+		labmeta->edges_deleted = 1;
+	}
+}
+
+void
+agstat_drop_vlabel(const char *vlab)
+{
+	Relation	ag_labmeta;
+	HeapTuple	tup;
+	Oid			graph;
+	Labid		vlid;
+	ScanKeyData	key[2];
+	SysScanDesc	scan;
+
+	graph = get_graph_path_oid();
+	vlid = get_labname_labid(vlab, graph);
+
+	if (vlid == 0)
+		elog(ERROR, "Cannot find VLABEL %s", vlab);
+
+	ag_labmeta = heap_open(LabMetaRelationId, RowExclusiveLock);
+
+	/* delete tuple which start = vid */
+	ScanKeyInit(&key[0],
+			Anum_ag_labmeta_graph,
+			BTEqualStrategyNumber, F_OIDEQ,
+			ObjectIdGetDatum(graph));
+	ScanKeyInit(&key[1],
+			Anum_ag_labmeta_start,
+			BTEqualStrategyNumber, F_INT2EQ,
+			Int16GetDatum(vlid));
+
+	scan = systable_beginscan(ag_labmeta, LabMetaStartIndexId,
+							  true, NULL, 2, key);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+		CatalogTupleDelete(ag_labmeta, &tup->t_self);
+
+	systable_endscan(scan);
+
+	/* delete tuple which end = vid */
+	ScanKeyInit(&key[1],
+			Anum_ag_labmeta_end,
+			BTEqualStrategyNumber, F_INT2EQ,
+			Int16GetDatum(vlid));
+
+	scan = systable_beginscan(ag_labmeta, LabMetaEndIndexId,
+							  true, NULL, 2, key);
+
+	while (HeapTupleIsValid(tup = systable_getnext(scan)))
+	{
+		/* See simpe_heap_delete().
+		 * If this Tuple was already deleted above CatalogTupleDelete(),
+		 * HeapTupleSelfUpdated will be returned and it cause ERROR.
+		 * So HeapTupleSelfUpdated should be allowed this thime.
+		 * It's OK because we already get the RowExclusiveLock. */
+		HTSU_Result result;
+		HeapUpdateFailureData hufd;
+
+		result = heap_delete(ag_labmeta, &tup->t_self,
+							 GetCurrentCommandId(true), InvalidSnapshot,
+							 true /* wait for commit */ ,
+							 &hufd);
+		switch (result)
+		{
+			case HeapTupleSelfUpdated:
+				/* Tuple was deleted when vid = start, pass this. */
+				break;
+
+			case HeapTupleMayBeUpdated:
+				/* done successfully */
+				break;
+
+			case HeapTupleUpdated:
+				elog(ERROR, "tuple concurrently updated");
+				break;
+
+			default:
+				elog(ERROR, "unrecognized heap_delete status: %u", result);
+				break;
+		}
+	}
+
+	systable_endscan(scan);
+
+	heap_close(ag_labmeta, RowExclusiveLock);
+}
+
+void
+agstat_drop_elabel(const char *elab)
+{
+	Relation	ag_labmeta;
+	CatCList   *tuplist;
+	Oid			graph;
+	Labid		elid;
+	int			i;
+
+	graph = get_graph_path_oid();
+	elid = get_labname_labid(elab, graph);
+
+	if (elid == 0)
+		elog(ERROR, "Cannot find ELABEL %s", elab);
+
+	ag_labmeta = heap_open(LabMetaRelationId, RowExclusiveLock);
+
+	tuplist = SearchSysCacheList2(LABMETAFULL, graph, elid);
+
+	for (i = 0; i < tuplist->n_members; i++)
+	{
+		HeapTuple	tup = &tuplist->members[i]->tuple;
+
+		CatalogTupleDelete(ag_labmeta, &tup->t_self);
+	}
+
+	ReleaseCatCacheList(tuplist);
+	heap_close(ag_labmeta, RowExclusiveLock);
+}
+
+void
+agstat_drop_graph(const char *graphname)
+{
+	Relation	ag_labmeta;
+	CatCList   *tuplist;
+	Oid			graph;
+	int			i;
+
+	graph = get_graphname_oid(graphname);
+
+	ag_labmeta = heap_open(LabMetaRelationId, RowExclusiveLock);
+	tuplist = SearchSysCacheList1(LABMETAFULL, graph);
+
+	for (i = 0; i < tuplist->n_members; i++)
+	{
+		HeapTuple	tup = &tuplist->members[i]->tuple;
+
+		CatalogTupleDelete(ag_labmeta, &tup->t_self);
+	}
+
+	ReleaseCatCacheList(tuplist);
+	heap_close(ag_labmeta, RowExclusiveLock);
+}
+
+/* ----------
+ * AtEOXact_AgStat
+ *
+ *	Called from access/transam/xact.c at top-level transaction commit/abort.
+ * ----------
+ */
+void
+AtEOXact_AgStat(bool isCommit)
+{
+	AgStat_SubXactStatus *xact_state;
+
+	/*
+	 * Transfer transactional insert/update counts into the base tabstat
+	 * entries.  We don't bother to free any of the transactional state, since
+	 * it's all in TopTransactionContext and will go away anyway.
+	 */
+	xact_state = agStatXactStack;
+	if (xact_state != NULL && isCommit)
+	{
+		AgStat_LabMeta	*labmeta;
+		HASH_SEQ_STATUS  seq;
+		Relation		 ag_labmeta;
+		HeapTuple		 tup;
+
+		hash_seq_init(&seq, xact_state->htab);
+
+		ag_labmeta = heap_open(LabMetaRelationId, RowExclusiveLock);
+
+		while ((labmeta = hash_seq_search(&seq)) != NULL)
+		{
+			tup = SearchSysCache4(LABMETAFULL,
+								  labmeta->key.graph,
+								  labmeta->key.edge,
+								  labmeta->key.start,
+								  labmeta->key.end);
+
+			if (HeapTupleIsValid(tup))
+			{
+				Form_ag_labmeta metatup;
+
+				metatup = (Form_ag_labmeta) GETSTRUCT(tup);
+
+				metatup->edgecount += labmeta->edges_inserted;
+				metatup->edgecount -= labmeta->edges_deleted;
+
+				if (metatup->edgecount < 0)
+					elog(ERROR, "The edge count can not be less than 0.");
+
+				if (metatup->edgecount == 0)
+					CatalogTupleDelete(ag_labmeta, &tup->t_self);
+				else
+					CatalogTupleUpdate(ag_labmeta, &tup->t_self, tup);
+				ReleaseSysCache(tup);
+			}
+			else
+			{
+				Datum	values[Natts_ag_labmeta];
+				bool	isnull[Natts_ag_labmeta];
+				int		i;
+
+				for (i = 0; i < Natts_ag_labmeta; i++)
+				{
+					values[i] = (Datum) NULL;
+					isnull[i] = false;
+				}
+
+				values[Anum_ag_labmeta_graph -1] = ObjectIdGetDatum(get_graph_path_oid());
+				values[Anum_ag_labmeta_edge - 1] = Int16GetDatum(labmeta->key.edge);
+				values[Anum_ag_labmeta_start - 1] = Int16GetDatum(labmeta->key.start);
+				values[Anum_ag_labmeta_end - 1] = Int16GetDatum(labmeta->key.end);
+				values[Anum_ag_labmeta_edgecount - 1] = Int64GetDatum(labmeta->edges_inserted - labmeta->edges_deleted);
+
+				tup = heap_form_tuple(RelationGetDescr(ag_labmeta), values, isnull);
+
+				CatalogTupleInsert(ag_labmeta, tup);
+
+				heap_freetuple(tup);
+			}
+		}
+		heap_close(ag_labmeta, RowExclusiveLock);
+	}
+	agStatXactStack = NULL;
+}
+
+/* ----------
+ * AtEOSubXact_AgStat
+ *
+ *	Called from access/transam/xact.c at subtransaction commit/abort.
+ * ----------
+ */
+void
+AtEOSubXact_AgStat(bool isCommit, int nestDepth)
+{
+	AgStat_SubXactStatus *xact_state;
+	AgStat_SubXactStatus *upper;
+
+	/*
+	 * Transfer transactional insert/update counts into the next higher
+	 * subtransaction state.
+	 */
+	xact_state = agStatXactStack;
+	if (xact_state != NULL &&
+		xact_state->nest_level >= nestDepth)
+	{
+		AgStat_LabMeta *submeta;
+		AgStat_LabMeta *upperMeta;
+		HASH_SEQ_STATUS	seq;
+		bool			found;
+
+		/* delink xact_state from stack immediately to simplify reuse case */
+		agStatXactStack = upper = xact_state->prev;
+
+		Assert(upper);
+		Assert(upper->nest_level == nestDepth -1);
+
+		if (isCommit)
+		{
+			hash_seq_init(&seq, xact_state->htab);
+			while ((submeta = hash_seq_search(&seq)) != NULL)
+			{
+				upperMeta = hash_search(upper->htab,
+										(void *) &submeta->key,
+										HASH_ENTER, &found);
+
+				if (found)
+				{
+					upperMeta->edges_inserted += submeta->edges_inserted;
+					upperMeta->edges_deleted  += submeta->edges_deleted;
+				}
+				else
+				{
+					upperMeta->edges_inserted = submeta->edges_inserted;
+					upperMeta->edges_deleted  = submeta->edges_deleted;
+				}
+			}
+		}
+		else
+		{
+			/* Nothing to do if SubXact is Aborted. Just close hash.  */
+		}
+		pfree(xact_state);
+	}
 }
