@@ -22,6 +22,7 @@
 #include "nodes/graphnodes.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_relation.h"
+#include "pgstat.h"
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
 #include "utils/datum.h"
@@ -805,6 +806,8 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
+	agstat_count_edge_create(id, start, end);
+
 	return edge;
 }
 
@@ -969,6 +972,19 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 		Assert(type == EDGEOID);
 
 		estate->es_graphwrstats.deleteEdge++;
+	}
+
+	if (type == EDGEOID)
+	{
+		Graphid eid;
+		Graphid start;
+		Graphid end;
+
+		eid = GraphidGetLabid(getEdgeIdDatum(elem));
+		start = GraphidGetLabid(getEdgeStartDatum(elem));
+		end = GraphidGetLabid(getEdgeEndDatum(elem));
+
+		agstat_count_edge_delete(eid, start, end);
 	}
 
 	estate->es_result_relation_info = savedResultRelInfo;
@@ -1526,6 +1542,8 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	estate->es_graphwrstats.insertEdge++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
+
+	agstat_count_edge_create(GraphidGetDatum(getEdgeIdDatum(edge)), start, end);
 
 	return edge;
 }

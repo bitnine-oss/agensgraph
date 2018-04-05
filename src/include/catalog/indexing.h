@@ -373,6 +373,13 @@ DECLARE_UNIQUE_INDEX(ag_label_graph_labid_index, 7048, on ag_label using btree(g
 DECLARE_UNIQUE_INDEX(ag_label_relid_index, 7049, on ag_label using btree(relid oid_ops));
 #define LabelRelidIndexId 7049
 
+DECLARE_UNIQUE_INDEX(ag_labmeta_full_index, 7056, on ag_labmeta using btree(graph oid_ops, edge int2_ops, start int2_ops, "end" int2_ops));
+#define LabMetaFullIndexId 7056
+DECLARE_INDEX(ag_labmeta_start_index, 7057, on ag_labmeta using btree(graph oid_ops, start int2_ops));
+#define LabMetaStartIndexId 7057
+DECLARE_INDEX(ag_labmeta_end_index, 7058, on ag_labmeta using btree(graph oid_ops, "end" int2_ops));
+#define LabMetaEndIndexId 7058
+
 /* last step of initialization script: build the indexes declared above */
 BUILD_INDICES
 

@@ -24,6 +24,7 @@
 #include "access/sysattr.h"
 #include "catalog/ag_graph.h"
 #include "catalog/ag_label.h"
+#include "catalog/ag_labmeta.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_am.h"
@@ -550,6 +551,17 @@ static const struct cachedesc cacheinfo[] = {
 			0,
 			0,
 			0
+		},
+		64
+	},
+	{LabMetaRelationId,			/* LABMETAFULL */
+		LabMetaFullIndexId,
+		4,
+		{
+			Anum_ag_labmeta_graph,
+			Anum_ag_labmeta_edge,
+			Anum_ag_labmeta_start,
+			Anum_ag_labmeta_end
 		},
 		64
 	},

@@ -36,6 +36,6 @@ extern void DropConstraintCommand(DropConstraintStmt *constraintStmt,
 extern Oid DisableIndexCommand(DisableIndexStmt *disableStmt);
 
 extern bool isEmptyLabel(char *label_name);
-extern void deleteRelatedEdges(RangeVar *vlab);
+extern void deleteRelatedEdges(const char *vlab);
 
 #endif	/* GRAPHCMDS_H */

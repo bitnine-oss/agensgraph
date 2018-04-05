@@ -611,16 +611,16 @@ isEmptyLabel(char *label_name)
 }
 
 void
-deleteRelatedEdges(RangeVar *vlab)
+deleteRelatedEdges(const char *vlab)
 {
-	uint32		vlabid;
+	Labid		vlabid;
 	Oid			graphoid;
 	Oid			agedge;
 	ListCell   *lc;
 	List	   *edges = NIL;
 
 	graphoid = get_graph_path_oid();
-	vlabid = (uint32) get_labname_labid(vlab->relname, graphoid);
+	vlabid = get_labname_labid(vlab, graphoid);
 
 	/* get all edge's relid */
 	agedge = get_laboid_relid(get_labname_laboid(AG_EDGE, graphoid));
