@@ -5021,7 +5021,7 @@ verticesConcat(Node *vertices, Node *expr)
 /*
  * if DETACH
  *
- *     SELECT array_agg((id, NULL, NULL, NULL, ctid)::edge) AS <unique-name>
+ *     SELECT array_agg((id, start, edge, NULL, ctid)::edge) AS <unique-name>
  *     FROM ag_edge AS e, unnest(vertices) AS v
  *     WHERE e.start = v.id OR e.end = v.id
  *
@@ -5084,13 +5084,13 @@ makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
 	return (Node *) sel;
 }
 
-/* array_agg((id, NULL, NULL, NULL, ctid)::edge) */
+/* array_agg((id, start, end, NULL, ctid)::edge) */
 static Node *
 makeEdgesForDetach(void)
 {
 	Node	   *id;
-	A_Const	   *start;
-	A_Const	   *end;
+	Node	   *start;
+	Node	   *end;
 	A_Const	   *prop_map;
 	Node	   *tid;
 	RowExpr	   *edgerow;
@@ -5098,8 +5098,8 @@ makeEdgesForDetach(void)
 	FuncCall   *edges;
 
 	id = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_ELEM_ID));
-	start = makeNullAConst();
-	end = makeNullAConst();
+	start = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_START_ID));
+	end = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_END_ID));
 	prop_map = makeNullAConst();
 	tid = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, "ctid"));
 

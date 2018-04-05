@@ -653,6 +653,7 @@ AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,
 		case OCLASS_TRANSFORM:
 		case OCLASS_GRAPH:
 		case OCLASS_LABEL:
+		case OCLASS_LABMETA:
 			/* ignore object types that don't have schema-qualified names */
 			break;
 

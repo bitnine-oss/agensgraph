@@ -27,6 +27,7 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
+#include "pgstat.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
@@ -117,8 +118,11 @@ RemoveObjects(DropStmt *stmt)
 
 			if (stmt->behavior == DROP_CASCADE)
 			{
-				deleteRelatedEdges(
-						makeRangeVarFromNameList(castNode(List, object)));
+				RangeVar	*lab = makeRangeVarFromNameList(castNode(List, object));
+
+				deleteRelatedEdges(lab->relname);
+
+				agstat_drop_vlabel(lab->relname);
 			}
 			else
 			{
@@ -145,6 +149,17 @@ RemoveObjects(DropStmt *stmt)
 						 errmsg("cannot drop %s because it is not empty.",
 								NameListToString(castNode(List, object)))));
 			}
+			else
+			{
+				RangeVar	*lab = makeRangeVarFromNameList(castNode(List, object));
+
+				agstat_drop_elabel(lab->relname);
+			}
+		}
+		else if (stmt->removeType == OBJECT_GRAPH)
+		{
+			if (stmt->behavior == DROP_CASCADE)
+				agstat_drop_graph(strVal((Value *) object));
 		}
 
 		/* Check permissions. */
