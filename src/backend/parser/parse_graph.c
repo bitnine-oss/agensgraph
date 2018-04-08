@@ -5058,8 +5058,7 @@ find_var_target_walker(Node *node, find_target_label_context *context)
 		{
 			Query *qry = rte->subquery;
 			TargetEntry *te;
-
-			context->rtable = qry->rtable;
+			List	   *save_rtable;
 
 			te = (TargetEntry *) list_nth(qry->targetList,
 										  var->varattno - 1);
@@ -5101,8 +5100,13 @@ find_var_target_walker(Node *node, find_target_label_context *context)
 				}
 			}
 
+			save_rtable = context->rtable;
+			context->rtable = qry->rtable;
+
 			if (find_var_target_walker((Node *) te->expr, context))
 				return true;
+
+			context->rtable = save_rtable;
 		}
 		else if (rte->rtekind == RTE_JOIN)
 		{
