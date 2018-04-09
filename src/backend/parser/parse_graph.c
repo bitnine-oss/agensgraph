@@ -131,6 +131,7 @@ typedef struct
 	Query	   *qry;
 	int			sublevels_up;
 	bool		in_preserved;
+	AttrNumber	resno;
 	Oid		result;
 } find_target_label_context;
 
@@ -5069,51 +5070,16 @@ find_var_target_walker(Node *node, find_target_label_context *context)
 
 			te = get_tle_by_resno(subqry->targetList, var->varattno);
 
-			/*
-			 * The CREATE clause does not create an RTE for the target label.
-			 * Use the GraphXXX struct to get the relid of the target label.
-			 */
-			if (IsA(te->expr, RowExpr) && subqry->graph.writeOp == GWROP_CREATE)
-			{
-				GraphPath *gp = linitial(subqry->graph.pattern);
-				Node 	  *elem = list_nth(gp->chain, var->varattno -1);
-
-				if (IsA(elem, GraphVertex))
-				{
-					GraphVertex *vtx = (GraphVertex *) elem;
-
-					if (vtx->resno != var->varattno)
-						elog(ERROR, "could not find target element: varattno %d",
-							 var->varattno);
-
-					context->result = vtx->relid;
-
-					return true;
-				}
-				else
-				{
-					GraphEdge *edge = (GraphEdge *) elem;;
-
-					Assert(IsA(edge, GraphEdge));
-
-					if (edge->resno != var->varattno)
-						elog(ERROR, "could not find target element: varattno %d",
-							 var->varattno);
-
-					context->result = edge->relid;
-
-					return true;
-				}
-			}
-
 			context->qry = subqry;
 			context->sublevels_up++;
+			context->resno = te->resno;
 
 			if (find_var_target_walker((Node *) te->expr, context))
 				return true;
 
 			context->qry = qry;
 			context->sublevels_up--;
+			context->resno = InvalidAttrNumber;
 		}
 		else if (rte->rtekind == RTE_JOIN)
 		{
@@ -5128,6 +5094,55 @@ find_var_target_walker(Node *node, find_target_label_context *context)
 		else
 			elog(ERROR, "unexpected retekind(%d) in find_var_target_walker",
 				 rte->rtekind);
+
+		return false;
+	}
+
+	/*
+	 * For a CREATE clause, `transformCypherCreateClause()` does not create
+	 * RTE's for target labels. So, look through `qry->graph.pattern` to get
+	 * the relid of the target label.
+	 *
+	 * This code assumes that `RowExpr` appears only as root of the expression
+	 * in `TargetEntry` when `wrietOp` is `GWROP_CREATE`. This assumption is OK
+	 * because users cannot make `RowExpr` in Cypher.
+	 */
+	if (IsA(node, RowExpr) && qry->graph.writeOp == GWROP_CREATE)
+	{
+		GraphPath  *gpath;
+		ListCell   *le;
+
+		Assert(list_length(qry->graph.pattern) == 1);
+		gpath = linitial(qry->graph.pattern);
+
+		foreach(le, gpath->chain)
+		{
+			Node	   *elem = lfirst(le);
+
+			if (IsA(elem, GraphVertex))
+			{
+				GraphVertex *gvertex = (GraphVertex *) elem;
+
+				if (gvertex->resno == context->resno)
+				{
+					context->result = gvertex->relid;
+					return true;
+				}
+			}
+			else
+			{
+				GraphEdge  *gedge;
+
+				Assert(IsA(elem, GraphEdge));
+				gedge = (GraphEdge *) elem;
+
+				if (gedge->resno == context->resno)
+				{
+					context->result = gedge->relid;
+					return true;
+				}
+			}
+		}
 
 		return false;
 	}
@@ -5148,6 +5163,7 @@ findTargetLabel(Query *qry, Node *elem)
 	context.qry = qry;
 	context.sublevels_up = 0;
 	context.in_preserved = false;
+	context.resno = InvalidAttrNumber;
 	context.result = InvalidOid;
 
 	if (!find_var_target_walker(elem, &context))
