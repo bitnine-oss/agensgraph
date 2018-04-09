@@ -132,7 +132,7 @@ typedef struct
 	int			sublevels_up;
 	bool		in_preserved;
 	AttrNumber	resno;
-	Oid		result;
+	Oid			relid;
 } find_target_label_context;
 
 /* projection (RETURN and WITH) */
@@ -278,6 +278,12 @@ static Node *makeTargetForDetach(ParseState *pstate);
 static Node *makeVertexEdgesQual(ParseState *pstate,
 								 CypherDeleteClause *delete);
 
+/* graph write */
+static List *findAllModifiedLabels(Query *qry);
+static Oid find_target_label(Node *node, Query *qry);
+static bool find_target_label_walker(Node *node,
+									 find_target_label_context *ctx);
+
 /* common */
 static bool labelExist(ParseState *pstate, char *labname, int labloc,
 					   char labkind, bool throw);
@@ -320,12 +326,6 @@ static List *makeTargetListFromRTE(ParseState *pstate, RangeTblEntry *rte);
 static List *makeTargetListFromJoin(ParseState *pstate, RangeTblEntry *rte);
 static TargetEntry *makeWholeRowTarget(ParseState *pstate, RangeTblEntry *rte);
 static TargetEntry *findTarget(List *targetList, char *resname);
-
-/* Eager determination*/
-static List *findAllModifiedLabels(Query *qry);
-static Oid findTargetLabel(Query *qry, Node *elem);
-static bool find_var_target_walker(Node *node,
-								   find_target_label_context *context);
 
 /* expression - type */
 static Node *makeVertexExpr(ParseState *pstate, RangeTblEntry *rte,
@@ -4931,6 +4931,203 @@ transformMergeOnSet(ParseState *pstate, List *sets, RangeTblEntry *rte)
 	return list_concat(l_onmatch, l_oncreate);
 }
 
+static List *
+findAllModifiedLabels(Query *qry)
+{
+	List	   *label_oids = NIL;
+	ListCell   *lc;
+
+	/* DELETE */
+	if (qry->graph.exprs != NIL)
+	{
+		foreach(lc, qry->graph.exprs)
+		{
+			Node	   *del_target = lfirst(lc);
+
+			label_oids = lappend_oid(label_oids,
+									 find_target_label(del_target, qry));
+		}
+	}
+
+	/* SET and MERGE ON SET */
+	if (qry->graph.sets != NIL)
+	{
+		foreach(lc, qry->graph.sets)
+		{
+			GraphSetProp *gsp = lfirst(lc);
+
+			label_oids = lappend_oid(label_oids,
+									 find_target_label(gsp->elem, qry));
+		}
+	}
+
+	foreach(lc, label_oids)
+	{
+		Oid			relid = lfirst_oid(lc);
+		List	   *child_oids;
+
+		child_oids = find_all_inheritors(relid, AccessShareLock, NULL);
+		qry->graph.targets = list_union_oid(qry->graph.targets, child_oids);
+	}
+
+	return qry->graph.targets;
+}
+
+static Oid
+find_target_label(Node *node, Query *qry)
+{
+	find_target_label_context ctx;
+
+	ctx.qry = qry;
+	ctx.sublevels_up = 0;
+	ctx.in_preserved = false;
+	ctx.resno = InvalidAttrNumber;
+	ctx.relid = InvalidOid;
+
+	if (!find_target_label_walker(node, &ctx))
+		elog(ERROR, "cannot find target label");
+
+	Assert(ctx.relid != InvalidOid);
+	return ctx.relid;
+}
+
+static bool
+find_target_label_walker(Node *node, find_target_label_context *ctx)
+{
+	Query	   *qry = ctx->qry;
+
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Var))
+	{
+		Var		   *var = (Var *) node;
+		TargetEntry *te;
+		RangeTblEntry *rte;
+
+		/*
+		 * NOTE: This is related to how `ModifyGraph` does SET, and
+		 *       `FVR_PRESERVE_VAR_REF` flag. We need to fix this.
+		 */
+		if (qry->graph.writeOp == GWROP_SET &&
+			ctx->sublevels_up == 0 && !ctx->in_preserved)
+		{
+			te = get_tle_by_resno(qry->targetList, var->varattno);
+
+			ctx->in_preserved = true;
+
+			if (find_target_label_walker((Node *) te->expr, ctx))
+				return true;
+
+			ctx->in_preserved = false;
+		}
+
+		if (var->varno <= 0 || var->varno > list_length(qry->rtable))
+			elog(ERROR, "invalid varno %u", var->varno);
+		rte = rt_fetch(var->varno, qry->rtable);
+
+		/* whole-row Var */
+		if (var->varattno == InvalidAttrNumber)
+			return false;
+
+		if (rte->rtekind == RTE_RELATION)
+		{
+			ctx->relid = rte->relid;
+			return true;
+		}
+		else if (rte->rtekind == RTE_SUBQUERY)
+		{
+			Query	   *subqry = rte->subquery;
+
+			te = get_tle_by_resno(subqry->targetList, var->varattno);
+
+			ctx->qry = subqry;
+			ctx->sublevels_up++;
+			ctx->resno = te->resno;
+
+			if (find_target_label_walker((Node *) te->expr, ctx))
+				return true;
+
+			ctx->qry = qry;
+			ctx->sublevels_up--;
+			ctx->resno = InvalidAttrNumber;
+		}
+		else if (rte->rtekind == RTE_JOIN)
+		{
+			Node	   *joinvar;
+
+			if (var->varattno <= 0 ||
+				var->varattno > list_length(rte->joinaliasvars))
+				elog(ERROR, "invalid varattno %hd", var->varattno);
+
+			joinvar = list_nth(rte->joinaliasvars, var->varattno - 1);
+			if (find_target_label_walker(joinvar, ctx))
+				return true;
+		}
+		else
+		{
+			elog(ERROR, "unexpected retkind(%d) in find_target_label_walker()",
+				 rte->rtekind);
+		}
+
+		return false;
+	}
+
+	/*
+	 * For a CREATE clause, `transformCypherCreateClause()` does not create
+	 * RTE's for target labels. So, look through `qry->graph.pattern` to get
+	 * the relid of the target label.
+	 *
+	 * This code assumes that `RowExpr` appears only as root of the expression
+	 * in `TargetEntry` when `wrietOp` is `GWROP_CREATE`. This assumption is OK
+	 * because users cannot make `RowExpr` in Cypher.
+	 */
+	if (IsA(node, RowExpr) && qry->graph.writeOp == GWROP_CREATE)
+	{
+		GraphPath  *gpath;
+		ListCell   *le;
+
+		Assert(list_length(qry->graph.pattern) == 1);
+		gpath = linitial(qry->graph.pattern);
+
+		foreach(le, gpath->chain)
+		{
+			Node	   *elem = lfirst(le);
+
+			if (IsA(elem, GraphVertex))
+			{
+				GraphVertex *gvertex = (GraphVertex *) elem;
+
+				if (gvertex->resno == ctx->resno)
+				{
+					ctx->relid = gvertex->relid;
+					return true;
+				}
+			}
+			else
+			{
+				GraphEdge  *gedge;
+
+				Assert(IsA(elem, GraphEdge));
+				gedge = (GraphEdge *) elem;
+
+				if (gedge->resno == ctx->resno)
+				{
+					ctx->relid = gedge->relid;
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	if (expression_tree_walker(node, find_target_label_walker, ctx))
+		return true;
+
+	return false;
+}
+
 static bool
 labelExist(ParseState *pstate, char *labname, int labloc, char labkind,
 		   bool throw)
@@ -5007,215 +5204,6 @@ createLabelIfNotExist(ParseState *pstate, char *labname, int labloc,
 
 	if (SPI_finish() != SPI_OK_FINISH)
 		elog(ERROR, "SPI_finish failed");
-}
-
-/* Eager determine */
-static bool
-find_var_target_walker(Node *node, find_target_label_context *context)
-{
-	Query	   *qry = context->qry;
-
-	if (node == NULL)
-		return false;
-	if (IsA(node, Var))
-	{
-		Var		   *var = (Var *) node;
-		RangeTblEntry *rte;
-		TargetEntry *te;
-
-		/*
-		 * NOTE: This is related to how `ModifyGraph` does SET, and
-		 *       `FVR_PRESERVE_VAR_REF` flag. We need to fix this.
-		 */
-		if (qry->graph.writeOp == GWROP_SET &&
-			context->sublevels_up == 0 && !context->in_preserved)
-		{
-			te = get_tle_by_resno(qry->targetList, var->varattno);
-
-			context->in_preserved = true;
-
-			if (find_var_target_walker((Node *) te->expr, context))
-				return true;
-
-			context->in_preserved = false;
-		}
-
-		/* Find matching rtable entry, or complain if not found */
-		if (var->varno <= 0 || var->varno > list_length(qry->rtable))
-			elog(ERROR, "invalid varno %d", var->varno);
-		rte = rt_fetch(var->varno, qry->rtable);
-
-		/*
-		 * A whole-row Var references no specific columns, so adds no new
-		 * dependency.  (We assume that there is a whole-table dependency
-		 * arising from each underlying rangetable entry.  While we could
-		 * record such a dependency when finding a whole-row Var that
-		 * references a relation directly, it's quite unclear how to extend
-		 * that to whole-row Vars for JOINs, so it seems better to leave the
-		 * responsibility with the range table.  Note that this poses some
-		 * risks for identifying dependencies of stand-alone expressions:
-		 * whole-table references may need to be created separately.)
-		 */
-		if (var->varattno == InvalidAttrNumber)
-			return false;
-		if (rte->rtekind == RTE_RELATION)
-		{
-			context->result = rte->relid;
-
-			return true;
-		}
-		else if (rte->rtekind == RTE_SUBQUERY)
-		{
-			Query	   *subqry = rte->subquery;
-
-			te = get_tle_by_resno(subqry->targetList, var->varattno);
-
-			context->qry = subqry;
-			context->sublevels_up++;
-			context->resno = te->resno;
-
-			if (find_var_target_walker((Node *) te->expr, context))
-				return true;
-
-			context->qry = qry;
-			context->sublevels_up--;
-			context->resno = InvalidAttrNumber;
-		}
-		else if (rte->rtekind == RTE_JOIN)
-		{
-			if (var->varattno <= 0 ||
-				var->varattno > list_length(rte->joinaliasvars))
-				elog(ERROR, "invalid varattno %d", var->varattno);
-			if (find_var_target_walker((Node *) list_nth(rte->joinaliasvars,
-														 var->varattno - 1),
-									   context))
-				return true;
-		}
-		else
-			elog(ERROR, "unexpected retekind(%d) in find_var_target_walker",
-				 rte->rtekind);
-
-		return false;
-	}
-
-	/*
-	 * For a CREATE clause, `transformCypherCreateClause()` does not create
-	 * RTE's for target labels. So, look through `qry->graph.pattern` to get
-	 * the relid of the target label.
-	 *
-	 * This code assumes that `RowExpr` appears only as root of the expression
-	 * in `TargetEntry` when `wrietOp` is `GWROP_CREATE`. This assumption is OK
-	 * because users cannot make `RowExpr` in Cypher.
-	 */
-	if (IsA(node, RowExpr) && qry->graph.writeOp == GWROP_CREATE)
-	{
-		GraphPath  *gpath;
-		ListCell   *le;
-
-		Assert(list_length(qry->graph.pattern) == 1);
-		gpath = linitial(qry->graph.pattern);
-
-		foreach(le, gpath->chain)
-		{
-			Node	   *elem = lfirst(le);
-
-			if (IsA(elem, GraphVertex))
-			{
-				GraphVertex *gvertex = (GraphVertex *) elem;
-
-				if (gvertex->resno == context->resno)
-				{
-					context->result = gvertex->relid;
-					return true;
-				}
-			}
-			else
-			{
-				GraphEdge  *gedge;
-
-				Assert(IsA(elem, GraphEdge));
-				gedge = (GraphEdge *) elem;
-
-				if (gedge->resno == context->resno)
-				{
-					context->result = gedge->relid;
-					return true;
-				}
-			}
-		}
-
-		return false;
-	}
-
-	if (expression_tree_walker(node,
-							   find_var_target_walker,
-							   context))
-		return true;
-
-	return false;
-}
-
-static Oid
-findTargetLabel(Query *qry, Node *elem)
-{
-	find_target_label_context context;
-
-	context.qry = qry;
-	context.sublevels_up = 0;
-	context.in_preserved = false;
-	context.resno = InvalidAttrNumber;
-	context.result = InvalidOid;
-
-	if (!find_var_target_walker(elem, &context))
-		elog(ERROR, "cannot find target label");
-
-	return context.result;
-}
-
-static List *
-findAllModifiedLabels(Query *qry)
-{
-	List   *org_target = NIL;
-	ListCell  *lc;
-
-	/* DELETE */
-	if (qry->graph.exprs != NIL)
-	{
-		ListCell *lc;
-
-		foreach(lc, qry->graph.exprs)
-		{
-			Node *target_expr = (Node *)lfirst(lc);
-
-			org_target = lappend_oid(org_target,
-									 findTargetLabel(qry, target_expr));
-		}
-	}
-	/* SET, MERGE ON SET */
-	if (qry->graph.sets != NIL)
-	{
-		ListCell *ls;
-
-		foreach(ls, qry->graph.sets)
-		{
-			GraphSetProp *gsp = lfirst(ls);
-
-			org_target = lappend_oid(org_target,
-									 findTargetLabel(qry, gsp->elem));
-		}
-	}
-
-	foreach(lc, org_target)
-	{
-		Oid relid = lfirst_oid(lc);
-
-		qry->graph.targets = list_union_oid(qry->graph.targets,
-											find_all_inheritors(relid,
-																AccessShareLock,
-																NULL));
-	}
-
-	return qry->graph.targets;
 }
 
 static bool
