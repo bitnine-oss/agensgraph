@@ -128,8 +128,9 @@ typedef struct
 
 typedef struct
 {
-	List   *rtable;
-	List   *targetlist;
+	Query	   *qry;
+	int			sublevels_up;
+	bool		in_preserved;
 	Oid		result;
 } find_target_label_context;
 
@@ -5011,6 +5012,8 @@ createLabelIfNotExist(ParseState *pstate, char *labname, int labloc,
 static bool
 find_var_target_walker(Node *node, find_target_label_context *context)
 {
+	Query	   *qry = context->qry;
+
 	if (node == NULL)
 		return false;
 	if (IsA(node, Var))
@@ -5019,21 +5022,27 @@ find_var_target_walker(Node *node, find_target_label_context *context)
 		RangeTblEntry *rte;
 		TargetEntry *te;
 
-		if (context->targetlist != NIL)
+		/*
+		 * NOTE: This is related to how `ModifyGraph` does SET, and
+		 *       `FVR_PRESERVE_VAR_REF` flag. We need to fix this.
+		 */
+		if (qry->graph.writeOp == GWROP_SET &&
+			context->sublevels_up == 0 && !context->in_preserved)
 		{
-			te = (TargetEntry *) list_nth(context->targetlist,
-										  var->varattno - 1);
+			te = get_tle_by_resno(qry->targetList, var->varattno);
 
-			context->targetlist = NIL;
+			context->in_preserved = true;
 
 			if (find_var_target_walker((Node *) te->expr, context))
 				return true;
+
+			context->in_preserved = false;
 		}
 
 		/* Find matching rtable entry, or complain if not found */
-		if (var->varno <= 0 || var->varno > list_length(context->rtable))
+		if (var->varno <= 0 || var->varno > list_length(qry->rtable))
 			elog(ERROR, "invalid varno %d", var->varno);
-		rte = rt_fetch(var->varno, context->rtable);
+		rte = rt_fetch(var->varno, qry->rtable);
 
 		/*
 		 * A whole-row Var references no specific columns, so adds no new
@@ -5056,20 +5065,17 @@ find_var_target_walker(Node *node, find_target_label_context *context)
 		}
 		else if (rte->rtekind == RTE_SUBQUERY)
 		{
-			Query *qry = rte->subquery;
-			TargetEntry *te;
-			List	   *save_rtable;
+			Query	   *subqry = rte->subquery;
 
-			te = (TargetEntry *) list_nth(qry->targetList,
-										  var->varattno - 1);
+			te = get_tle_by_resno(subqry->targetList, var->varattno);
 
 			/*
 			 * The CREATE clause does not create an RTE for the target label.
 			 * Use the GraphXXX struct to get the relid of the target label.
 			 */
-			if (IsA(te->expr, RowExpr) && qry->graph.writeOp == GWROP_CREATE)
+			if (IsA(te->expr, RowExpr) && subqry->graph.writeOp == GWROP_CREATE)
 			{
-				GraphPath *gp = linitial(qry->graph.pattern);
+				GraphPath *gp = linitial(subqry->graph.pattern);
 				Node 	  *elem = list_nth(gp->chain, var->varattno -1);
 
 				if (IsA(elem, GraphVertex))
@@ -5100,13 +5106,14 @@ find_var_target_walker(Node *node, find_target_label_context *context)
 				}
 			}
 
-			save_rtable = context->rtable;
-			context->rtable = qry->rtable;
+			context->qry = subqry;
+			context->sublevels_up++;
 
 			if (find_var_target_walker((Node *) te->expr, context))
 				return true;
 
-			context->rtable = save_rtable;
+			context->qry = qry;
+			context->sublevels_up--;
 		}
 		else if (rte->rtekind == RTE_JOIN)
 		{
@@ -5138,9 +5145,10 @@ findTargetLabel(Query *qry, Node *elem)
 {
 	find_target_label_context context;
 
+	context.qry = qry;
+	context.sublevels_up = 0;
+	context.in_preserved = false;
 	context.result = InvalidOid;
-	context.rtable = qry->rtable;
-	context.targetlist = qry->targetList;
 
 	if (!find_var_target_walker(elem, &context))
 		elog(ERROR, "cannot find target label");
