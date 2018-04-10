@@ -3,6 +3,7 @@ ALTER SYSTEM SET session_preload_libraries TO 'pg_hint_plan';
 SET pg_hint_plan.enable_hint TO on;
 SET pg_hint_plan.debug_print TO on;
 SET client_min_messages TO LOG;
+SET work_mem = '16MB';
 
 
 CREATE TABLE s1.tl (a int);
