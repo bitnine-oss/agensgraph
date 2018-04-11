@@ -134,7 +134,6 @@ extern Datum _vertex_out(PG_FUNCTION_ARGS);
 extern Datum vertex_label(PG_FUNCTION_ARGS);
 extern Datum _vertex_length(PG_FUNCTION_ARGS);
 extern Datum vtojb(PG_FUNCTION_ARGS);
-extern Datum vtovid(PG_FUNCTION_ARGS);
 /* vertex - comparison */
 extern Datum vertex_eq(PG_FUNCTION_ARGS);
 extern Datum vertex_ne(PG_FUNCTION_ARGS);

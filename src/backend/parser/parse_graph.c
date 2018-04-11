@@ -68,7 +68,8 @@
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
 
-#define DETACH_VID_ALIAS		"vid"
+#define DELETE_VERTEX_ALIAS		"v"
+#define DELETE_EDGE_ALIAS		"e"
 
 bool		enable_eager = true;
 
@@ -939,14 +940,17 @@ transformDeleteJoinDetail(ParseState *pstate, CypherClause *clause)
 }
 
 /*
- * if not detach mode
- * SELECT FROM ag_edge, unnest(vertices[]::graphid[]) as vid
- * WHERE vid = start OR vid = end
+ * if DETACH
  *
- * if detach mode
- * SELECT array_agg((id, start, end, properties, ctid)::edge) as edges
- * FROM ag_edge, unnest(vertices[]::graphid[]) as vid
- * WHERE vid = start OR vid = end
+ *     SELECT array_agg((id, NULL, NULL, NULL, ctid)::edge) AS <unique-name>
+ *     FROM ag_edge AS e, unnest(vertices) AS v
+ *     WHERE e.start = v.id OR e.end = v.id
+ *
+ * else
+ *
+ *     SELECT
+ *     FROM ag_edge AS e, unnest(vertices) AS v
+ *     WHERE e.start = v.id OR e.end = v.id
  */
 static Node *
 makeSelectVertexEdges(ParseState *pstate, Node *vertices,
@@ -960,6 +964,7 @@ makeSelectVertexEdges(ParseState *pstate, Node *vertices,
 
 	agedge = makeRangeVar(get_graph_path(true), AG_EDGE, -1);
 	agedge->inh = true;
+	agedge->alias = makeAliasNoDup(DELETE_EDGE_ALIAS, NIL);
 
 	unnest = makeUnnestVertices(pstate, vertices);
 
@@ -986,9 +991,7 @@ makeSelectVertexEdges(ParseState *pstate, Node *vertices,
 	return (Node *) sel;
 }
 
-/*
- * vid = start OR vid = end
- */
+/* e.start = v.id OR e.end = v.id */
 static Node *
 makeVertexEdgesQual(ParseState *pstate, CypherDeleteClause *delete)
 {
@@ -999,9 +1002,9 @@ makeVertexEdgesQual(ParseState *pstate, CypherDeleteClause *delete)
 	A_Expr	   *eq_end;
 	BoolExpr   *or_expr;
 
-	start = makeColumnRef(genQualifiedName(NULL, AG_START_ID));
-	end = makeColumnRef(genQualifiedName(NULL, AG_END_ID));
-	vid = makeColumnRef(genQualifiedName(NULL, DETACH_VID_ALIAS));
+	start = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_START_ID));
+	end = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_END_ID));
+	vid = makeColumnRef(genQualifiedName(DELETE_VERTEX_ALIAS, AG_ELEM_ID));
 
 	eq_start = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) start, vid, -1);
 	eq_end = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) end, vid, -1);
@@ -1014,18 +1017,30 @@ makeVertexEdgesQual(ParseState *pstate, CypherDeleteClause *delete)
 	return (Node *) or_expr;
 }
 
-/* array_agg((id,start,end,properties,ctid)::edge) */
+/* array_agg((id, NULL, NULL, NULL, ctid)::edge) */
 static Node *
 makeTargetForDetach(ParseState *pstate)
 {
 	TypeCast *edge;
 	TypeName *edgetype;
 	RowExpr  *edgerow;
-	Node *id = makeColumnRef(genQualifiedName(NULL, AG_ELEM_ID));
-	Node *start = makeColumnRef(genQualifiedName(NULL, AG_START_ID));
-	Node *end = makeColumnRef(genQualifiedName(NULL, AG_END_ID));
-	Node *prop_map = makeColumnRef(genQualifiedName(NULL, AG_ELEM_PROP_MAP));
-	Node *tid = makeColumnRef(genQualifiedName(NULL, "ctid"));
+	Node *id = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_ELEM_ID));
+	A_Const *start;
+	A_Const *end;
+	A_Const *prop_map;
+	Node *tid = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, "ctid"));
+
+	start = makeNode(A_Const);
+	start->val.type = T_Null;
+	start->location = -1;
+
+	end = makeNode(A_Const);
+	end->val.type = T_Null;
+	end->location = -1;
+
+	prop_map = makeNode(A_Const);
+	prop_map->val.type = T_Null;
+	prop_map->location = -1;
 
 	edgerow = makeNode(RowExpr);
 	edgerow->args = list_make5(id, start, end, prop_map, tid);
@@ -1051,29 +1066,17 @@ static Node *
 makeUnnestVertices(ParseState *pstate, Node *vertices)
 {
 	FuncCall   *unnest;
-	TypeName   *castname;
-	TypeCast   *vids;
 	RangeFunction *rf;
 
-	/* unnest( vertices::graphid[] ) */
-	castname = makeNode(TypeName);
-	castname->names = list_make1(makeString("graphid"));
-	castname->typmods = NIL;
-	castname->typemod = -1;
-	castname->arrayBounds = list_make1_int(-1);
-	castname->location = -1;
-	vids = makeNode(TypeCast);
-	vids->arg = vertices;
-	vids->typeName = castname;
-	vids->location = -1;
 	unnest = makeFuncCall(list_make1(makeString("unnest")),
-						  list_make1(vids), -1);
+						  list_make1(vertices), -1);
+
 	rf = makeNode(RangeFunction);
 	rf->lateral = false;
 	rf->ordinality = false;
 	rf->is_rowsfrom = false;
 	rf->functions = list_make1(list_make2(unnest, NIL));
-	rf->alias = makeAliasNoDup(DETACH_VID_ALIAS, NIL);
+	rf->alias = makeAliasNoDup(DELETE_VERTEX_ALIAS, NIL);
 	rf->coldeflist = NIL;
 
 	return (Node *) rf;
