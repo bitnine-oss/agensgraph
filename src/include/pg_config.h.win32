@@ -581,6 +581,9 @@
 /* AgensGraph version as a string */
 #define AG_VERSION "1.4devel"
 
+/* AgensGraph Git revision as a string */
+#define AG_GIT_REVISION "not-available"
+
 /* The size of `long', as computed by sizeof. */
 #define SIZEOF_LONG 4
 
