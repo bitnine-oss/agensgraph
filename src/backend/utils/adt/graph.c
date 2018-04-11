@@ -629,14 +629,6 @@ vertex_eq(PG_FUNCTION_ARGS)
 }
 
 Datum
-vtovid(PG_FUNCTION_ARGS)
-{
-	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
-
-	PG_RETURN_DATUM(tuple_getattr(vertex, Anum_vertex_id));
-}
-
-Datum
 vertex_ne(PG_FUNCTION_ARGS)
 {
 	Datum		id1 = getVertexIdDatum(PG_GETARG_DATUM(0));
