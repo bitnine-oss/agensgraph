@@ -219,7 +219,6 @@ struct ParseState
 	 * Additional information for Cypher queries
 	 */
 	char	   *p_lc_varname;
-	char	   *p_delete_edges_name;
 	bool		p_is_match_quals;
 	bool		p_is_fp_processed;
 	List	   *p_node_info_list;		/* final shape of named nodes */
@@ -229,9 +228,10 @@ struct ParseState
 	List	   *p_future_vertices;		/* vertices to be resolved */
 	Node	   *p_resolved_qual;		/* qual of resolved future vertices */
 	bool		p_is_optional_match;
+	uint32		p_nr_modify_clause;
 	List	   *p_target_labels;		/* relation Oid's of target labels */
+	char	   *p_delete_edges_resname;
 	bool		p_convert_edgeref;
-	uint32		p_modify_clause_no;
 };
 
 /*
