@@ -2141,7 +2141,7 @@ MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
 MATCH (a) DELETE a;
 ERROR:  vertices with edges can not be removed.
 MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[1];
-ERROR:  Only direct variable reference is supported
+ERROR:  only direct variable reference is supported
 LINE 1: MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[1];
                                                       ^
 MATCH (a:repo) RETURN a.name AS a;
@@ -2154,7 +2154,7 @@ MATCH (a:repo) RETURN a.name AS a;
 (4 rows)
 
 MATCH ()-[a:doc]->() DETACH DELETE end_vertex(a);
-ERROR:  Only direct variable reference is supported
+ERROR:  only direct variable reference is supported
 LINE 1: MATCH ()-[a:doc]->() DETACH DELETE end_vertex(a);
                                            ^
 MATCH (a:repo) RETURN a.name AS a;

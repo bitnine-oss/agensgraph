@@ -247,9 +247,7 @@ static GraphSetProp *transformSetProp(ParseState *pstate, RangeTblEntry *rte,
 static GraphSetProp *findGraphSetProp(List *gsplist, char *varname);
 
 /* MERGE */
-static RangeTblEntry *transformMergeMatchSub(ParseState *pstate,
-											 CypherClause *clause);
-static Query *transformMergeMatch(ParseState *pstate, CypherClause *clause);
+static Query *transformMergeMatch(ParseState *pstate, Node *parseTree);
 static RangeTblEntry *transformMergeMatchJoin(ParseState *pstate,
 											  CypherClause *clause);
 static RangeTblEntry *transformNullSelect(ParseState *pstate);
@@ -265,19 +263,17 @@ static List *transformMergeOnSet(ParseState *pstate, List *sets,
 								 RangeTblEntry *rte);
 
 /* DELETE */
-static Node *appendVertexArray(ParseState *pstate, Node *vertices, Node *expr);
-static Node *concatVertexArray(ParseState *pstate, Node *vertices, Node *expr);
-static RangeTblEntry *transformDeleteSubquery(ParseState *pstate,
-										  CypherClause *clause);
-static Query *transformDeleteJoin(ParseState *pstate, CypherClause *clause);
-static RangeTblEntry *transformDeleteJoinDetail(ParseState *pstate,
-												CypherClause *clause);
-static Node *makeSelectVertexEdges(ParseState *pstate, Node *vertices,
-								   CypherDeleteClause *delete);
-static Node *makeUnnestVertices(ParseState *pstate, Node *vertices);
-static Node *makeTargetForDetach(ParseState *pstate);
-static Node *makeVertexEdgesQual(ParseState *pstate,
-								 CypherDeleteClause *delete);
+static Query *transformDeleteJoin(ParseState *pstate, Node *parseTree);
+static RangeTblEntry *transformDeleteJoinRTE(ParseState *pstate,
+											 CypherClause *clause);
+static A_ArrayExpr *verticesAppend(A_ArrayExpr *vertices, Node *expr);
+static Node *verticesConcat(Node *vertices, Node *expr);
+static Node *makeSelectEdgesVertices(Node *vertices,
+									 CypherDeleteClause *delete,
+									 char **edges_resname);
+static Node *makeEdgesForDetach(void);
+static RangeFunction *makeUnnestVertices(Node *vertices);
+static BoolExpr *makeEdgesVertexQual(void);
 
 /* graph write */
 static List *findAllModifiedLabels(Query *qry);
@@ -305,8 +301,12 @@ static Node *stripNullKeys(ParseState *pstate, Node *properties);
 static void assign_query_eager(Query *query);
 
 /* transform */
+typedef Query *(*TransformMethod) (ParseState *pstate, Node *parseTree);
 static RangeTblEntry *transformClause(ParseState *pstate, Node *clause);
+static RangeTblEntry *transformClauseBy(ParseState *pstate, Node *clause,
+										TransformMethod transform);
 static RangeTblEntry *transformClauseImpl(ParseState *pstate, Node *clause,
+										  TransformMethod transform,
 										  Alias *alias);
 static RangeTblEntry *incrementalJoinRTEs(ParseState *pstate, JoinType jointype,
 										  RangeTblEntry *l_rte,
@@ -346,13 +346,12 @@ static Alias *makeAliasOptUnique(char *aliasname);
 static Node *makeArrayExpr(Oid typarray, Oid typoid, List *elems);
 static Node *makeTypedRowExpr(List *args, Oid typoid, int location);
 static Node *qualAndExpr(Node *qual, Node *expr);
-static Node *makeFuncCallExpr(ParseState *pstate, char *funcname,
-						  List *args, int location);
 /* parse node */
 static ResTarget *makeSimpleResTarget(char *field, char *name);
 static ResTarget *makeResTarget(Node *val, char *name);
 static Node *makeColumnRef(List *fields);
 static Node *makeDummyEdgeRef(Node *ctid);
+static A_Const *makeNullAConst(void);
 static bool IsNullAConst(Node *arg);
 
 /* utils */
@@ -707,7 +706,7 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.pattern = transformCreatePattern(pstate, cpath,
 												&qry->targetList);
 	qry->graph.targets = pstate->p_target_labels;
-	qry->graph.modifyno = pstate->p_modify_clause_no++;
+	qry->graph.modifyno = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -742,13 +741,12 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.last = (pstate->parentParseState == NULL);
 	qry->graph.detach = detail->detach;
 
-	rte = transformDeleteSubquery(pstate, clause);
+	rte = transformClauseBy(pstate, (Node *) clause, transformDeleteJoin);
 
-	/* select all from previous clause */
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
 	qry->graph.exprs = transformCypherExprList(pstate, detail->exprs,
 											   EXPR_KIND_OTHER);
-	qry->graph.modifyno = pstate->p_modify_clause_no++;
+	qry->graph.modifyno = pstate->p_nr_modify_clause++;
 
 	/*
 	 * The edges of the vertices to remove are used only for removal,
@@ -756,10 +754,17 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	 */
 	if (detail->detach)
 	{
-		TargetEntry *te = (TargetEntry *) llast(qry->targetList);
+		TargetEntry *te;
 
-		if (strcmp(te->resname, pstate->p_delete_edges_name) == 0)
+		/* This assumes the edge array always comes last. */
+		te = llast(qry->targetList);
+
+		Assert(pstate->p_delete_edges_resname != NULL);
+
+		if (strcmp(te->resname, pstate->p_delete_edges_resname) == 0)
 			te->resjunk = true;
+
+		pstate->p_delete_edges_resname = NULL;
 	}
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
@@ -773,313 +778,6 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	findAllModifiedLabels(qry);
 
 	return qry;
-}
-
-static RangeTblEntry *
-transformDeleteSubquery(ParseState *pstate, CypherClause *clause)
-{
-	ParseState *childParseState;
-	Query	   *qry;
-	List	   *future_vertices;
-	Alias	   *alias;
-	int			rtindex;
-	RangeTblEntry *rte;
-
-	AssertArg(IsA(clause, CypherClause));
-
-	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
-	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
-
-	childParseState = make_parsestate(pstate);
-
-	qry = transformDeleteJoin(childParseState, clause);
-
-	future_vertices = childParseState->p_future_vertices;
-	pstate->p_delete_edges_name = childParseState->p_delete_edges_name;
-	if (childParseState->p_modify_clause_no != 0)
-		pstate->p_modify_clause_no = childParseState->p_modify_clause_no;
-
-	free_parsestate(childParseState);
-
-	pstate->p_expr_kind = EXPR_KIND_NONE;
-
-	if (!IsA(qry, Query) ||
-		(qry->commandType != CMD_SELECT &&
-		 qry->commandType != CMD_GRAPHWRITE) ||
-		qry->utilityStmt != NULL)
-		elog(ERROR, "unexpected command in previous clause");
-
-	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
-	rte = addRangeTableEntryForSubquery(pstate, qry, alias,
-										pstate->p_lateral_active, true);
-
-	rtindex = RTERangeTablePosn(pstate, rte, NULL);
-
-	future_vertices = removeResolvedFutureVertices(future_vertices);
-	future_vertices = adjustFutureVertices(future_vertices, rte, rtindex);
-	pstate->p_future_vertices = list_concat(pstate->p_future_vertices,
-											future_vertices);
-
-	addRTEtoJoinlist(pstate, rte, true);
-
-	return rte;
-}
-
-static Query *
-transformDeleteJoin(ParseState *pstate, CypherClause *clause)
-{
-	Query	   *qry;
-	RangeTblEntry *rte;
-
-	qry = makeNode(Query);
-	qry->commandType = CMD_SELECT;
-
-	rte = transformDeleteJoinDetail(pstate, clause);
-	if (rte->rtekind == RTE_JOIN)
-		qry->targetList = makeTargetListFromJoin(pstate, rte);
-	else if (rte->rtekind == RTE_SUBQUERY)
-		qry->targetList = makeTargetListFromRTE(pstate, rte);
-	else
-		elog(ERROR, "unexpected rtekind(%d) in delete.", rte->rtekind);
-
-	markTargetListOrigins(pstate, qry->targetList);
-
-	qry->rtable = pstate->p_rtable;
-	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
-	qry->hasSubLinks = pstate->p_hasSubLinks;
-
-	assign_query_collations(pstate, qry);
-
-	return qry;
-}
-
-/* See transformMatchOptional() */
-static RangeTblEntry *
-transformDeleteJoinDetail(ParseState *pstate, CypherClause *clause)
-{
-	CypherDeleteClause *detail = (CypherDeleteClause *) clause->detail;
-	Node	   *prevclause = clause->prev;
-	Node	   *vertices = NULL;
-	List	   *exprs;
-	ListCell   *le;
-	ListCell   *ld;
-	Node	   *qual;
-	Node	   *ag_edge;
-	RangeTblEntry *l_rte;
-	RangeTblEntry *r_rte;
-	JoinType	jointype = (detail->detach ? JOIN_CYPHER_DETACH
-										   : JOIN_CYPHER_DELETE);
-
-	if (prevclause == NULL)
-		elog(ERROR, "DELETE cannot come first.");
-
-	/*
-	 * Because targets of DELETE clause references the results of the previous
-	 * clause, the previous section must be analyzed first.
-	 */
-	l_rte = transformClause(pstate, prevclause);
-
-	exprs = transformCypherExprList(pstate, detail->exprs, EXPR_KIND_OTHER);
-	forboth(le, exprs, ld, detail->exprs)
-	{
-		Node	   *expr = lfirst(le);
-		Node	   *pexpr = lfirst(ld);
-		Oid			vartype;
-
-		if (!IsA(pexpr, ColumnRef))
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("Only direct variable reference is supported"),
-					 parser_errposition(pstate, exprLocation(expr))));
-
-		vartype = exprType(expr);
-		if (vartype == VERTEXOID)
-		{
-			vertices = appendVertexArray(pstate, vertices, pexpr);
-		}
-		else if (vartype == EDGEOID)
-		{
-			/* do nothing */
-		}
-		else if (vartype == GRAPHPATHOID)
-		{
-			Node *nodes;
-
-			nodes = makeFuncCallExpr(pstate, "nodes", list_make1(pexpr),
-									 exprLocation(pexpr));
-
-			vertices = concatVertexArray(pstate, vertices, nodes);
-		}
-		else
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("node, relationship, or path is expected"),
-					 parser_errposition(pstate, exprLocation(expr))));
-
-		/*
-		 * TODO: `expr` must contain one of the target variables
-		 *		 and it mustn't contain aggregate and SubLink's.
-		 */
-	}
-
-	if (vertices == NULL)
-		return l_rte;
-
-	pstate->p_lateral_active = true;
-
-	ag_edge = makeSelectVertexEdges(pstate, vertices, detail);
-	r_rte = transformClauseImpl(pstate, ag_edge,
-								makeAliasNoDup(CYPHER_DELETEJOIN_ALIAS, NIL));
-
-	pstate->p_lateral_active = false;
-
-	qual = makeBoolConst(true, false);
-
-	return incrementalJoinRTEs(pstate, jointype, l_rte, r_rte, qual,
-							   makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL));
-}
-
-/*
- * if DETACH
- *
- *     SELECT array_agg((id, NULL, NULL, NULL, ctid)::edge) AS <unique-name>
- *     FROM ag_edge AS e, unnest(vertices) AS v
- *     WHERE e.start = v.id OR e.end = v.id
- *
- * else
- *
- *     SELECT
- *     FROM ag_edge AS e, unnest(vertices) AS v
- *     WHERE e.start = v.id OR e.end = v.id
- */
-static Node *
-makeSelectVertexEdges(ParseState *pstate, Node *vertices,
-					  CypherDeleteClause *delete)
-{
-	RangeVar   *agedge;
-	Node	   *unnest;
-	SelectStmt *sel = NULL;
-
-	Assert(vertices != NULL);
-
-	agedge = makeRangeVar(get_graph_path(true), AG_EDGE, -1);
-	agedge->inh = true;
-	agedge->alias = makeAliasNoDup(DELETE_EDGE_ALIAS, NIL);
-
-	unnest = makeUnnestVertices(pstate, vertices);
-
-	sel = makeNode(SelectStmt);
-	sel->fromClause = list_make2(agedge, unnest);
-	sel->whereClause = makeVertexEdgesQual(pstate, delete);
-	if (delete->detach)
-	{
-		char *edges = genUniqueName();
-		Node *edgesExpr;
-
-		edgesExpr = makeTargetForDetach(pstate);
-		sel->targetList = list_make1(makeResTarget(edgesExpr, edges));
-
-		/* add delete target */
-		delete->exprs = lappend(delete->exprs,
-								makeColumnRef(genQualifiedName(NULL, edges)));
-
-		pstate->p_delete_edges_name = edges;
-	}
-	else
-		sel->targetList = NIL;
-
-	return (Node *) sel;
-}
-
-/* e.start = v.id OR e.end = v.id */
-static Node *
-makeVertexEdgesQual(ParseState *pstate, CypherDeleteClause *delete)
-{
-	Node	   *start;
-	Node	   *end;
-	Node	   *vid;
-	A_Expr	   *eq_start;
-	A_Expr	   *eq_end;
-	BoolExpr   *or_expr;
-
-	start = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_START_ID));
-	end = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_END_ID));
-	vid = makeColumnRef(genQualifiedName(DELETE_VERTEX_ALIAS, AG_ELEM_ID));
-
-	eq_start = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) start, vid, -1);
-	eq_end = makeSimpleA_Expr(AEXPR_OP, "=", (Node *) end, vid, -1);
-
-	or_expr = makeNode(BoolExpr);
-	or_expr->boolop = OR_EXPR;
-	or_expr->args = list_make2(eq_start, eq_end);
-	or_expr->location = -1;
-
-	return (Node *) or_expr;
-}
-
-/* array_agg((id, NULL, NULL, NULL, ctid)::edge) */
-static Node *
-makeTargetForDetach(ParseState *pstate)
-{
-	TypeCast *edge;
-	TypeName *edgetype;
-	RowExpr  *edgerow;
-	Node *id = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_ELEM_ID));
-	A_Const *start;
-	A_Const *end;
-	A_Const *prop_map;
-	Node *tid = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, "ctid"));
-
-	start = makeNode(A_Const);
-	start->val.type = T_Null;
-	start->location = -1;
-
-	end = makeNode(A_Const);
-	end->val.type = T_Null;
-	end->location = -1;
-
-	prop_map = makeNode(A_Const);
-	prop_map->val.type = T_Null;
-	prop_map->location = -1;
-
-	edgerow = makeNode(RowExpr);
-	edgerow->args = list_make5(id, start, end, prop_map, tid);
-	edgerow->row_typeid = 0;
-	edgerow->row_format = COERCE_IMPLICIT_CAST;
-	edgerow->location = -1;
-
-	edgetype = makeNode(TypeName);
-	edgetype->names = list_make1(makeString("edge"));
-	edgetype->typmods = NIL;
-	edgetype->typemod = -1;
-	edgetype->arrayBounds = NIL;
-	edgetype->location = -1;
-	edge = makeNode(TypeCast);
-	edge->arg = (Node *) edgerow;
-	edge->typeName = edgetype;
-	edge->location = -1;
-
-	return makeFuncCallExpr(pstate, "array_agg", list_make1(edge), -1);
-}
-
-static Node *
-makeUnnestVertices(ParseState *pstate, Node *vertices)
-{
-	FuncCall   *unnest;
-	RangeFunction *rf;
-
-	unnest = makeFuncCall(list_make1(makeString("unnest")),
-						  list_make1(vertices), -1);
-
-	rf = makeNode(RangeFunction);
-	rf->lateral = false;
-	rf->ordinality = false;
-	rf->is_rowsfrom = false;
-	rf->functions = list_make1(list_make2(unnest, NIL));
-	rf->alias = makeAliasNoDup(DELETE_VERTEX_ALIAS, NIL);
-	rf->coldeflist = NIL;
-
-	return (Node *) rf;
 }
 
 Query *
@@ -1115,7 +813,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 										  FVR_PRESERVE_VAR_REF);
 	}
 
-	qry->graph.modifyno = pstate->p_modify_clause_no++;
+	qry->graph.modifyno = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -1158,7 +856,7 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.writeOp = GWROP_MERGE;
 	qry->graph.last = (pstate->parentParseState == NULL);
 
-	rte = transformMergeMatchSub(pstate, clause);
+	rte = transformClauseBy(pstate, (Node *) clause, transformMergeMatch);
 	Assert(rte->rtekind == RTE_SUBQUERY);
 
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
@@ -1173,7 +871,7 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.targets = pstate->p_target_labels;
 
 	qry->graph.sets = transformMergeOnSet(pstate, detail->sets, rte);
-	qry->graph.modifyno = pstate->p_modify_clause_no++;
+	qry->graph.modifyno = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -1284,7 +982,8 @@ transformMatchOptional(ParseState *pstate, CypherClause *clause)
 	pstate->p_is_optional_match = true;
 
 	r_alias = makeAliasNoDup(CYPHER_OPTMATCH_ALIAS, NIL);
-	r_rte = transformClauseImpl(pstate, (Node *) clause, r_alias);
+	r_rte = transformClauseImpl(pstate, (Node *) clause, transformStmt,
+								r_alias);
 
 	pstate->p_is_optional_match = false;
 	pstate->p_lateral_active = false;
@@ -4525,61 +4224,12 @@ findGraphSetProp(List *gsplist, char *varname)
 	return NULL;
 }
 
-static RangeTblEntry *
-transformMergeMatchSub(ParseState *pstate, CypherClause *clause)
-{
-	ParseState *childParseState;
-	Query	   *qry;
-	List	   *future_vertices;
-	Alias	   *alias;
-	RangeTblEntry *rte;
-	int			rtindex;
-
-	AssertArg(IsA(clause, CypherClause));
-
-	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
-	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
-
-	childParseState = make_parsestate(pstate);
-
-	qry = transformMergeMatch(childParseState, clause);
-
-	future_vertices = childParseState->p_future_vertices;
-	if (childParseState->p_modify_clause_no != 0)
-		pstate->p_modify_clause_no = childParseState->p_modify_clause_no;
-
-	free_parsestate(childParseState);
-
-	pstate->p_expr_kind = EXPR_KIND_NONE;
-
-	if (!IsA(qry, Query) ||
-		(qry->commandType != CMD_SELECT &&
-		 qry->commandType != CMD_GRAPHWRITE) ||
-		qry->utilityStmt != NULL)
-		elog(ERROR, "unexpected command in previous clause");
-
-	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
-	rte = addRangeTableEntryForSubquery(pstate, qry, alias,
-										pstate->p_lateral_active, true);
-
-	rtindex = RTERangeTablePosn(pstate, rte, NULL);
-
-	future_vertices = removeResolvedFutureVertices(future_vertices);
-	future_vertices = adjustFutureVertices(future_vertices, rte, rtindex);
-	pstate->p_future_vertices = list_concat(pstate->p_future_vertices,
-											future_vertices);
-
-	addRTEtoJoinlist(pstate, rte, true);
-
-	return rte;
-}
-
 static Query *
-transformMergeMatch(ParseState *pstate, CypherClause *clause)
+transformMergeMatch(ParseState *pstate, Node *parseTree)
 {
+	CypherClause *clause = (CypherClause *) parseTree;
 	Query	   *qry;
 	RangeTblEntry *rte;
-	Node	   *qual = NULL;
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
@@ -4589,10 +4239,8 @@ transformMergeMatch(ParseState *pstate, CypherClause *clause)
 	qry->targetList = makeTargetListFromJoin(pstate, rte);
 	markTargetListOrigins(pstate, qry->targetList);
 
-	qual = qualAndExpr(qual, pstate->p_resolved_qual);
-
 	qry->rtable = pstate->p_rtable;
-	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
+	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
@@ -4622,7 +4270,7 @@ transformMergeMatchJoin(ParseState *pstate, CypherClause *clause)
 
 	r_alias = makeAliasNoDup(CYPHER_MERGEMATCH_ALIAS, NIL);
 	r_rte = transformClauseImpl(pstate, makeMatchForMerge(detail->pattern),
-								r_alias);
+								transformStmt, r_alias);
 
 	pstate->p_lateral_active = false;
 
@@ -4636,18 +4284,13 @@ transformMergeMatchJoin(ParseState *pstate, CypherClause *clause)
 static RangeTblEntry *
 transformNullSelect(ParseState *pstate)
 {
-	A_Const	   *nullconst;
 	ResTarget  *nullres;
 	SelectStmt *sel;
 	Alias	   *alias;
 	Query	   *qry;
 	RangeTblEntry *rte;
 
-	nullconst = makeNode(A_Const);
-	nullconst->val.type = T_Null;
-	nullconst->location = -1;
-
-	nullres = makeResTarget((Node *) nullconst, NULL);
+	nullres = makeResTarget((Node *) makeNullAConst(), NULL);
 
 	sel = makeNode(SelectStmt);
 	sel->targetList = list_make1(nullres);
@@ -4932,6 +4575,311 @@ transformMergeOnSet(ParseState *pstate, List *sets, RangeTblEntry *rte)
 									 l_onmatch);
 
 	return list_concat(l_onmatch, l_oncreate);
+}
+
+static Query *
+transformDeleteJoin(ParseState *pstate, Node *parseTree)
+{
+	CypherClause *clause = (CypherClause *) parseTree;
+	Query	   *qry;
+	RangeTblEntry *rte;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	rte = transformDeleteJoinRTE(pstate, clause);
+	if (rte->rtekind == RTE_JOIN)
+		qry->targetList = makeTargetListFromJoin(pstate, rte);
+	else if (rte->rtekind == RTE_SUBQUERY)
+		qry->targetList = makeTargetListFromRTE(pstate, rte);
+	else
+		elog(ERROR, "unexpected rtekind(%d) in DELETE", rte->rtekind);
+
+	markTargetListOrigins(pstate, qry->targetList);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
+
+	qry->hasSubLinks = pstate->p_hasSubLinks;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+/* See transformMatchOptional() */
+static RangeTblEntry *
+transformDeleteJoinRTE(ParseState *pstate, CypherClause *clause)
+{
+	CypherDeleteClause *detail = (CypherDeleteClause *) clause->detail;
+	RangeTblEntry *l_rte;
+	A_ArrayExpr *vertices_var = NULL;
+	Node	   *vertices_nodes = NULL;
+	Node	   *vertices;
+	List	   *exprs;
+	ListCell   *le;
+	ListCell   *lp;
+	char	   *edges_resname = NULL;
+	Node	   *sel_ag_edge;
+	Alias	   *r_alias;
+	Query	   *r_qry;
+	RangeTblEntry *r_rte;
+	JoinType	jointype;
+	Node	   *qual;
+	RangeTblEntry *jrte;
+
+	/*
+	 * Since targets of a DELETE clause refers the result of the previous
+	 * clause, it must be transformed first.
+	 */
+	l_rte = transformClause(pstate, clause->prev);
+
+	/* FIXME: `detail->exprs` is transformed twice */
+	exprs = transformCypherExprList(pstate, detail->exprs, EXPR_KIND_OTHER);
+	forboth(le, exprs, lp, detail->exprs)
+	{
+		Node	   *expr = lfirst(le);
+		Node	   *pexpr = lfirst(lp);
+		Oid			vartype;
+
+		if (!IsA(pexpr, ColumnRef))
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("only direct variable reference is supported"),
+					 parser_errposition(pstate, exprLocation(expr))));
+
+		vartype = exprType(expr);
+		if (vartype == VERTEXOID)
+		{
+			vertices_var = verticesAppend(vertices_var, pexpr);
+		}
+		else if (vartype == EDGEOID)
+		{
+			/* do nothing */
+		}
+		else if (vartype == GRAPHPATHOID)
+		{
+			FuncCall   *nodes;
+
+			nodes = makeFuncCall(list_make1(makeString("nodes")),
+								 list_make1(pexpr), -1);
+
+			vertices_nodes = verticesConcat(vertices_nodes, (Node *) nodes);
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("node, relationship, or path is expected"),
+					 parser_errposition(pstate, exprLocation(expr))));
+		}
+
+		/*
+		 * TODO: `expr` must contain one of the target variables
+		 *		 and it mustn't contain aggregate and SubLink's.
+		 */
+	}
+
+	vertices = verticesConcat((Node *) vertices_var, vertices_nodes);
+	if (vertices == NULL)
+		return l_rte;
+
+	sel_ag_edge = makeSelectEdgesVertices(vertices, detail, &edges_resname);
+	r_alias = makeAliasNoDup(CYPHER_DELETEJOIN_ALIAS, NIL);
+
+	pstate->p_lateral_active = true;
+	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
+	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
+
+	r_qry = parse_sub_analyze(sel_ag_edge, pstate, NULL,
+							  isLockedRefname(pstate, r_alias->aliasname),
+							  true);
+	Assert(r_qry->commandType == CMD_SELECT);
+
+	pstate->p_lateral_active = false;
+	pstate->p_expr_kind = EXPR_KIND_NONE;
+
+	r_rte = addRangeTableEntryForSubquery(pstate, r_qry, r_alias, true, true);
+
+	jointype = (detail->detach ? JOIN_CYPHER_DETACH : JOIN_CYPHER_DELETE);
+	qual = makeBoolConst(true, false);
+
+	jrte = incrementalJoinRTEs(pstate, jointype, l_rte, r_rte, qual,
+							   makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL));
+
+	pstate->p_delete_edges_resname = edges_resname;
+	return jrte;
+}
+
+static A_ArrayExpr *
+verticesAppend(A_ArrayExpr *vertices, Node *expr)
+{
+	if (vertices == NULL)
+	{
+		vertices = makeNode(A_ArrayExpr);
+		vertices->elements = list_make1(expr);
+		vertices->location = -1;
+	}
+	else
+	{
+		vertices->elements = lappend(vertices->elements, expr);
+	}
+
+	return vertices;
+}
+
+static Node *
+verticesConcat(Node *vertices, Node *expr)
+{
+	FuncCall   *arrcat;
+
+	if (vertices == NULL)
+		return expr;
+	if (expr == NULL)
+		return vertices;
+
+	arrcat = makeFuncCall(list_make1(makeString("array_cat")),
+						  list_make2(vertices, expr), -1);
+
+	return (Node *) arrcat;
+}
+
+/*
+ * if DETACH
+ *
+ *     SELECT array_agg((id, NULL, NULL, NULL, ctid)::edge) AS <unique-name>
+ *     FROM ag_edge AS e, unnest(vertices) AS v
+ *     WHERE e.start = v.id OR e.end = v.id
+ *
+ * else
+ *
+ *     SELECT
+ *     FROM ag_edge AS e, unnest(vertices) AS v
+ *     WHERE e.start = v.id OR e.end = v.id
+ */
+static Node *
+makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
+						char **edges_resname)
+{
+	List	   *targetlist = NIL;
+	RangeVar   *ag_edge;
+	RangeFunction *unnest;
+	SelectStmt *sel;
+
+	AssertArg(vertices != NULL);
+
+	if (delete->detach)
+	{
+		Node	   *edges;
+		char	   *edges_name;
+		Node	   *edges_col;
+
+		edges = makeEdgesForDetach();
+		edges_name = genUniqueName();
+		targetlist = list_make1(makeResTarget(edges, edges_name));
+
+		/* add delete target */
+		edges_col = makeColumnRef(genQualifiedName(NULL, edges_name));
+		delete->exprs = lappend(delete->exprs, edges_col);
+
+		*edges_resname = edges_name;
+	}
+
+	ag_edge = makeRangeVar(get_graph_path(true), AG_EDGE, -1);
+	ag_edge->inh = true;
+	ag_edge->alias = makeAliasNoDup(DELETE_EDGE_ALIAS, NIL);
+
+	unnest = makeUnnestVertices(vertices);
+
+	sel = makeNode(SelectStmt);
+	sel->targetList = targetlist;
+	sel->fromClause = list_make2(ag_edge, unnest);
+	sel->whereClause = (Node *) makeEdgesVertexQual();
+
+	return (Node *) sel;
+}
+
+/* array_agg((id, NULL, NULL, NULL, ctid)::edge) */
+static Node *
+makeEdgesForDetach(void)
+{
+	Node	   *id;
+	A_Const	   *start;
+	A_Const	   *end;
+	A_Const	   *prop_map;
+	Node	   *tid;
+	RowExpr	   *edgerow;
+	TypeCast   *edge;
+	FuncCall   *edges;
+
+	id = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_ELEM_ID));
+	start = makeNullAConst();
+	end = makeNullAConst();
+	prop_map = makeNullAConst();
+	tid = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, "ctid"));
+
+	edgerow = makeNode(RowExpr);
+	edgerow->args = list_make5(id, start, end, prop_map, tid);
+	edgerow->row_typeid = InvalidOid;
+	edgerow->colnames = NIL;
+	edgerow->row_format = COERCE_IMPLICIT_CAST;
+	edgerow->location = -1;
+
+	edge = makeNode(TypeCast);
+	edge->arg = (Node *) edgerow;
+	edge->typeName = makeTypeName("edge");
+	edge->location = -1;
+
+	edges = makeFuncCall(list_make1(makeString("array_agg")), list_make1(edge),
+						 -1);
+
+	return (Node *) edges;
+}
+
+static RangeFunction *
+makeUnnestVertices(Node *vertices)
+{
+	FuncCall   *unnest;
+	RangeFunction *rf;
+
+	unnest = makeFuncCall(list_make1(makeString("unnest")),
+						  list_make1(vertices), -1);
+
+	rf = makeNode(RangeFunction);
+	rf->lateral = false;
+	rf->ordinality = false;
+	rf->is_rowsfrom = false;
+	rf->functions = list_make1(list_make2(unnest, NIL));
+	rf->alias = makeAliasNoDup(DELETE_VERTEX_ALIAS, NIL);
+	rf->coldeflist = NIL;
+
+	return rf;
+}
+
+/* e.start = v.id OR e.end = v.id */
+static BoolExpr *
+makeEdgesVertexQual(void)
+{
+	Node	   *start;
+	Node	   *end;
+	Node	   *vid;
+	A_Expr	   *eq_start;
+	A_Expr	   *eq_end;
+	BoolExpr   *or_expr;
+
+	start = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_START_ID));
+	end = makeColumnRef(genQualifiedName(DELETE_EDGE_ALIAS, AG_END_ID));
+	vid = makeColumnRef(genQualifiedName(DELETE_VERTEX_ALIAS, AG_ELEM_ID));
+
+	eq_start = makeSimpleA_Expr(AEXPR_OP, "=", start, vid, -1);
+	eq_end = makeSimpleA_Expr(AEXPR_OP, "=", end, vid, -1);
+
+	or_expr = makeNode(BoolExpr);
+	or_expr->boolop = OR_EXPR;
+	or_expr->args = list_make2(eq_start, eq_end);
+	or_expr->location = -1;
+
+	return or_expr;
 }
 
 static List *
@@ -5238,7 +5186,6 @@ transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 static Node *
 stripNullKeys(ParseState *pstate, Node *properties)
 {
-
 	FuncCall *strip;
 
 	/* keys with NULL value is not allowed */
@@ -5309,28 +5256,36 @@ assign_query_eager(Query *query)
 		elog(ERROR, "eagerness plan is not allowed.");
 }
 
-
 static RangeTblEntry *
 transformClause(ParseState *pstate, Node *clause)
 {
-	Alias *alias;
+	return transformClauseBy(pstate, clause, transformStmt);
+}
+
+static RangeTblEntry *
+transformClauseBy(ParseState *pstate, Node *clause, TransformMethod transform)
+{
+	Alias	   *alias;
 	RangeTblEntry *rte;
 
 	alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
-	rte = transformClauseImpl(pstate, clause, alias);
+	rte = transformClauseImpl(pstate, clause, transform, alias);
 	addRTEtoJoinlist(pstate, rte, true);
 
 	return rte;
 }
 
 static RangeTblEntry *
-transformClauseImpl(ParseState *pstate, Node *clause, Alias *alias)
+transformClauseImpl(ParseState *pstate, Node *clause,
+					TransformMethod transform, Alias *alias)
 {
 	ParseState *childParseState;
 	Query	   *qry;
 	List	   *future_vertices;
 	RangeTblEntry *rte;
 	int			rtindex;
+
+	AssertArg(IsA(clause, CypherClause));
 
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
@@ -5340,12 +5295,13 @@ transformClauseImpl(ParseState *pstate, Node *clause, Alias *alias)
 	childParseState->p_is_fp_processed = pstate->p_is_fp_processed;
 	childParseState->p_is_optional_match = pstate->p_is_optional_match;
 
-	qry = transformStmt(childParseState, clause);
+	qry = transform(childParseState, clause);
 
-	if (childParseState->p_modify_clause_no != 0)
-		pstate->p_modify_clause_no = childParseState->p_modify_clause_no;
 	pstate->p_elem_quals = childParseState->p_elem_quals;
 	future_vertices = childParseState->p_future_vertices;
+	if (childParseState->p_nr_modify_clause > 0)
+		pstate->p_nr_modify_clause = childParseState->p_nr_modify_clause;
+	pstate->p_delete_edges_resname = childParseState->p_delete_edges_resname;
 
 	free_parsestate(childParseState);
 
@@ -5999,6 +5955,18 @@ makeDummyEdgeRef(Node *ctid)
 	return (Node *) edgeref;
 }
 
+static A_Const *
+makeNullAConst(void)
+{
+	A_Const	   *nullconst;
+
+	nullconst = makeNode(A_Const);
+	nullconst->val.type = T_Null;
+	nullconst->location = -1;
+
+	return nullconst;
+}
+
 static bool
 IsNullAConst(Node *arg)
 {
@@ -6026,50 +5994,4 @@ genUniqueName(void)
 	snprintf(data, sizeof(data), "<%010u>", seq++);
 
 	return pstrdup(data);
-}
-
-static Node *
-makeFuncCallExpr(ParseState *pstate, char *funcname, List *args, int location)
-{
-	FuncCall   *fc;
-
-	fc = makeFuncCall(list_make1(makeString(funcname)), args, location);
-
-	return (Node *) fc;
-}
-
-static Node *
-appendVertexArray(ParseState *pstate, Node *vertices, Node *expr)
-{
-	if (vertices)
-	{
-		vertices = makeFuncCallExpr(pstate, "array_append",
-									list_make2(vertices, expr),
-									exprLocation(expr));
-	}
-	else
-	{
-		A_ArrayExpr *array = makeNode(A_ArrayExpr);
-		array->elements = list_make1(expr);
-		array->location = -1;
-
-		vertices = (Node *) array;
-	}
-
-	return vertices;
-}
-
-static Node *
-concatVertexArray(ParseState *pstate, Node *vertices, Node *expr)
-{
-	if (vertices)
-	{
-		vertices = makeFuncCallExpr(pstate, "array_cat",
-									list_make2(vertices, expr),
-									exprLocation(expr));
-	}
-	else
-		vertices = (Node *) expr;
-
-	return vertices;
 }
