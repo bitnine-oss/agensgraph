@@ -1699,7 +1699,7 @@ typedef struct NestLoopState
 	bool		nl_NeedNewOuter;
 	bool		nl_MatchedOuter;
 	TupleTableSlot *nl_NullInnerTupleSlot;
-	CommandId	nl_mergematch_cid;
+	CommandId	nl_graphwrite_cid;
 } NestLoopState;
 
 typedef struct VLEArrayExpr
@@ -2288,7 +2288,7 @@ typedef struct ModifyGraphState
 								   with `es_prop_map` */
 	List	   *exprs;			/* expression state list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
-	HTAB	   *propTable;
+	HTAB	   *elemTable;
 	Tuplestorestate *tuplestorestate;
 } ModifyGraphState;
 

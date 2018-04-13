@@ -706,7 +706,7 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.pattern = transformCreatePattern(pstate, cpath,
 												&qry->targetList);
 	qry->graph.targets = pstate->p_target_labels;
-	qry->graph.modifyno = pstate->p_nr_modify_clause++;
+	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -746,7 +746,7 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
 	qry->graph.exprs = transformCypherExprList(pstate, detail->exprs,
 											   EXPR_KIND_OTHER);
-	qry->graph.modifyno = pstate->p_nr_modify_clause++;
+	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
 
 	/*
 	 * The edges of the vertices to remove are used only for removal,
@@ -813,7 +813,7 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 										  FVR_PRESERVE_VAR_REF);
 	}
 
-	qry->graph.modifyno = pstate->p_nr_modify_clause++;
+	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -871,7 +871,7 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.targets = pstate->p_target_labels;
 
 	qry->graph.sets = transformMergeOnSet(pstate, detail->sets, rte);
-	qry->graph.modifyno = pstate->p_nr_modify_clause++;
+	qry->graph.nr_modify = pstate->p_nr_modify_clause++;
 
 	qry->targetList = (List *) resolve_future_vertex(pstate,
 													 (Node *) qry->targetList,
@@ -2029,13 +2029,13 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out)
 	ResTarget  *end;
 	Node	   *l_rowids;
 	ResTarget  *rowids;
-	Node       *r_bind;
+	Node	   *r_bind;
 	ResTarget  *bind;
-	Node       *r_rowid;
+	Node	   *r_rowid;
 	ResTarget  *rowid;
 	List 	   *tlist;
-	Node       *left;
-	Node       *right;
+	Node	   *left;
+	Node	   *right;
 	Node	   *join;
 	SelectStmt *sel;
 
@@ -2092,7 +2092,7 @@ genVLESubselect(ParseState *pstate, CypherRel *crel, bool out)
 
 	if (out)
 	{
-		Node       *r_eref;
+		Node	   *r_eref;
 		ResTarget  *eref;
 
 		r_eref = makeColumnRef(genQualifiedName("r", VLE_COLNAME_EREF));
@@ -2299,7 +2299,7 @@ genVLERightChild(ParseState *pstate, CypherRel *crel, bool out)
 	FuncCall   *rowid;
 	List	   *tlist;
 	List	   *where_args = NIL;
-	SelectStmt     *sel;
+	SelectStmt *sel;
 	RangeSubselect *sub;
 
 	if (crel->direction == CYPHER_REL_DIR_LEFT)

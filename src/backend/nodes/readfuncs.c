@@ -284,11 +284,11 @@ _readQuery(void)
 
 	READ_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	READ_BOOL_FIELD(graph.last);
+	READ_NODE_FIELD(graph.targets);
+	READ_UINT_FIELD(graph.nr_modify);
 	READ_BOOL_FIELD(graph.detach);
 	READ_BOOL_FIELD(graph.eager);
-	READ_UINT_FIELD(graph.modifyno);
 	READ_NODE_FIELD(graph.pattern);
-	READ_NODE_FIELD(graph.targets);
 	READ_NODE_FIELD(graph.exprs);
 	READ_NODE_FIELD(graph.sets);
 

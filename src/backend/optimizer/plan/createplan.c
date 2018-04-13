@@ -4413,11 +4413,11 @@ create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
 
 	apply_tlist_labeling(subplan->targetlist, root->processed_tlist);
 
-	plan = make_modifygraph(root, best_path->canSetTag, best_path->last,
-							best_path->detach, best_path->eager,
-							best_path->operation, subplan, best_path->pattern,
-							best_path->targets,	best_path->exprs,
-							best_path->sets, best_path->modifyno);
+	plan = make_modifygraph(root, best_path->operation, best_path->canSetTag,
+							best_path->last, best_path->targets, subplan,
+							best_path->nr_modify, best_path->detach,
+							best_path->eagerness, best_path->pattern,
+							best_path->exprs, best_path->sets);
 
 	copy_generic_path_info(&plan->plan, &best_path->path);
 
@@ -6926,24 +6926,24 @@ is_projection_capable_plan(Plan *plan)
  *	  Build a ModifyGraph plan node
  */
 ModifyGraph *
-make_modifygraph(PlannerInfo *root, bool canSetTag, bool last, bool detach,
-				 bool eager, GraphWriteOp operation, Plan *subplan,
-				 List *pattern, List *targets, List *exprs, List *sets,
-				 uint32 modifyno)
+make_modifygraph(PlannerInfo *root, GraphWriteOp operation, bool canSetTag,
+				 bool last, List *targets, Plan *subplan, uint32 nr_modify,
+				 bool detach, bool eagerness, List *pattern, List *exprs,
+				 List *sets)
 {
 	ModifyGraph *node = makeNode(ModifyGraph);
 
+	node->operation = operation;
 	node->canSetTag = canSetTag;
 	node->last = last;
-	node->detach = detach;
-	node->eagerness = eager;
-	node->operation = operation;
-	node->subplan = subplan;
-	node->pattern = pattern;
 	node->targets = targets;
+	node->subplan = subplan;
+	node->nr_modify = nr_modify;
+	node->detach = detach;
+	node->eagerness = eagerness;
+	node->pattern = pattern;
 	node->exprs = exprs;
 	node->sets = sets;
-	node->modifyno = modifyno;
 
 	return node;
 }

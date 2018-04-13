@@ -955,7 +955,7 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 	{
 		{"enable_multiple_update", PGC_USERSET, QUERY_TUNING_METHOD,
-			gettext_noop("Enables the executor's multiple update a graph element."),
+			gettext_noop("Enables multiple update on the same graph element."),
 			NULL
 		},
 		&enable_multiple_update,
