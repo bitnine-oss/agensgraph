@@ -11,6 +11,8 @@
 
 #include "nodes/execnodes.h"
 
+extern bool enable_multiple_update;
+
 extern ModifyGraphState *ExecInitModifyGraph(ModifyGraph *mgplan,
 											 EState *estate, int eflags);
 extern void ExecEndModifyGraph(ModifyGraphState *mgstate);

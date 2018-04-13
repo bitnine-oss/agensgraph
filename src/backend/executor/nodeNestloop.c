@@ -25,6 +25,7 @@
 #include "executor/execdebug.h"
 #include "executor/nodeNestloop.h"
 #include "miscadmin.h"
+#include "utils/graph.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
 #include "utils/tqual.h"
@@ -102,7 +103,7 @@ ExecNestLoop(PlanState *pstate)
 
 	for (;;)
 	{
-		Snapshot svSnapshot = NULL;
+		CommandId svCid = InvalidCommandId;
 
 		/*
 		 * If we don't have an outer tuple, get the next one and reset the
@@ -162,22 +163,19 @@ ExecNestLoop(PlanState *pstate)
 		 */
 		ENL1_printf("getting new inner tuple");
 
-		if (node->js.jointype == JOIN_CYPHER_MERGE)
+		if (node->js.jointype == JOIN_CYPHER_MERGE ||
+			node->js.jointype == JOIN_CYPHER_DELETE ||
+			node->js.jointype == JOIN_CYPHER_DETACH)
 		{
-			/* Increase CommandId to scan modified tuples. */
-			while (node->nl_MergeMatchSnapshot->curcid <=
-												GetCurrentCommandId(false))
-				node->nl_MergeMatchSnapshot->curcid++;
-
-			svSnapshot = innerPlan->state->es_snapshot;
-			innerPlan->state->es_snapshot = node->nl_MergeMatchSnapshot;
+			svCid = innerPlan->state->es_snapshot->curcid;
+			innerPlan->state->es_snapshot->curcid = node->nl_mergematch_cid;
 		}
 
 		innerTupleSlot = ExecProcNode(innerPlan);
 		econtext->ecxt_innertuple = innerTupleSlot;
 
-		if (svSnapshot != NULL)
-			innerPlan->state->es_snapshot = svSnapshot;
+		if (svCid != InvalidCommandId)
+			innerPlan->state->es_snapshot->curcid = svCid;
 
 		if (TupIsNull(innerTupleSlot))
 		{
@@ -188,6 +186,8 @@ ExecNestLoop(PlanState *pstate)
 			if (!node->nl_MatchedOuter &&
 				(node->js.jointype == JOIN_LEFT ||
 				 node->js.jointype == JOIN_CYPHER_MERGE ||
+				 node->js.jointype == JOIN_CYPHER_DELETE ||
+				 node->js.jointype == JOIN_CYPHER_DETACH ||
 				 node->js.jointype == JOIN_ANTI))
 			{
 				/*
@@ -242,6 +242,9 @@ ExecNestLoop(PlanState *pstate)
 				continue;		/* return to top of loop */
 			}
 
+			if (node->js.jointype == JOIN_CYPHER_DELETE)
+				elog(ERROR, "vertices with edges can not be removed.");
+
 			/*
 			 * If we only need to join to the first matching inner tuple, then
 			 * consider returning this one, but after that continue with next
@@ -282,8 +285,8 @@ ExecNestLoop(PlanState *pstate)
 NestLoopState *
 ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 {
-	NestLoopState *nlstate;
-	Snapshot	svSnapshot = NULL;
+	NestLoopState  *nlstate;
+	CommandId		svCid = InvalidCommandId;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -330,24 +333,22 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	else
 		eflags &= ~EXEC_FLAG_REWIND;
 
-	if (node->join.jointype == JOIN_CYPHER_MERGE)
+	if (node->join.jointype == JOIN_CYPHER_MERGE ||
+		node->join.jointype == JOIN_CYPHER_DELETE ||
+		node->join.jointype == JOIN_CYPHER_DETACH)
 	{
-		Snapshot snapshot;
+		/* Modify the cid to see the graph pattern created by MERGE CREATE. */
+		nlstate->nl_mergematch_cid =
+						estate->es_snapshot->curcid + MODIFY_CID_NLJOIN_MATCH;
 
-		/* Modify the cid to see the pattern created by MERGE CREATE. */
-
-		snapshot = RegisterCopiedSnapshot(estate->es_snapshot);
-		snapshot->curcid = estate->es_output_cid + 1;
-		nlstate->nl_MergeMatchSnapshot = snapshot;
-
-		svSnapshot = estate->es_snapshot;
-		estate->es_snapshot = nlstate->nl_MergeMatchSnapshot;
+		svCid = estate->es_snapshot->curcid;
+		estate->es_snapshot->curcid = nlstate->nl_mergematch_cid;
 	}
 
 	innerPlanState(nlstate) = ExecInitNode(innerPlan(node), estate, eflags);
 
-	if (svSnapshot != NULL)
-		estate->es_snapshot = svSnapshot;
+	if (svCid != InvalidCommandId)
+		estate->es_snapshot->curcid = svCid;
 
 	/*
 	 * tuple table initialization
@@ -370,6 +371,8 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		case JOIN_LEFT:
 		case JOIN_ANTI:
 		case JOIN_CYPHER_MERGE:
+		case JOIN_CYPHER_DELETE:
+		case JOIN_CYPHER_DETACH:
 			nlstate->nl_NullInnerTupleSlot =
 				ExecInitNullTupleSlot(estate,
 									  ExecGetResultType(innerPlanState(nlstate)));
@@ -424,8 +427,6 @@ ExecEndNestLoop(NestLoopState *node)
 	 */
 	ExecEndNode(outerPlanState(node));
 	ExecEndNode(innerPlanState(node));
-
-	UnregisterSnapshot(node->nl_MergeMatchSnapshot);
 
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "node processing ended");

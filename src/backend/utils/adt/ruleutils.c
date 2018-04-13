@@ -10434,6 +10434,18 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 									 PRETTYINDENT_STD,
 									 PRETTYINDENT_JOIN);
 				break;
+			case JOIN_CYPHER_DELETE:
+				appendContextKeyword(context, " CYPHER DELETE JOIN ",
+									 -PRETTYINDENT_STD,
+									 PRETTYINDENT_STD,
+									 PRETTYINDENT_JOIN);
+				break;
+			case JOIN_CYPHER_DETACH:
+				appendContextKeyword(context, " CYPHER DETACH JOIN ",
+									 -PRETTYINDENT_STD,
+									 PRETTYINDENT_STD,
+									 PRETTYINDENT_JOIN);
+				break;
 			default:
 				elog(ERROR, "unrecognized join type: %d",
 					 (int) j->jointype);
