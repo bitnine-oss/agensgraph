@@ -1058,18 +1058,18 @@ typedef struct PlanInvalItem
 typedef struct ModifyGraph
 {
 	Plan		plan;
+	GraphWriteOp operation;
 	bool		canSetTag;
 	bool		last;			/* is this for the last clause? */
+	List	   *targets;		/* relation OID's of target labels */
+	Plan	   *subplan;		/* plan producing source data */
+	uint32		nr_modify;		/* number of clauses that modifies graph
+								   before this */
 	bool		detach;			/* DETACH DELETE */
 	bool		eagerness;		/* need eager mode? */
-	GraphWriteOp operation;
-	uint32		modifyno;		/* # of clauses between modifygraph clause */
-	Plan	   *subplan;		/* plan producing source data */
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
-	List	   *targets;		/* relation Oid's of target labels */
 	List	   *exprs;			/* expression list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
-
 } ModifyGraph;
 
 typedef struct Dijkstra

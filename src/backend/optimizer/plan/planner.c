@@ -2131,17 +2131,17 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 		if (parse->commandType == CMD_GRAPHWRITE && !inheritance_update)
 		{
 			path = (Path *) create_modifygraph_path(root, final_rel,
-													parse->canSetTag,
 													parse->graph.writeOp,
+													parse->canSetTag,
 													parse->graph.last,
+													parse->graph.targets,
+													path,
+													parse->graph.nr_modify,
 													parse->graph.detach,
 													parse->graph.eager,
-													path,
 													parse->graph.pattern,
-													parse->graph.targets,
 													parse->graph.exprs,
-													parse->graph.sets,
-													parse->graph.modifyno);
+													parse->graph.sets);
 		}
 		/*
 		 * If this is an INSERT/UPDATE/DELETE, and we're not being called from

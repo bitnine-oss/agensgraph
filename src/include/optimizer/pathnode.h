@@ -248,11 +248,10 @@ extern LimitPath *create_limit_path(PlannerInfo *root, RelOptInfo *rel,
 extern EagerPath *create_eager_path(RelOptInfo *rel, GraphWriteOp operation,
 				  Path *subpath);
 extern ModifyGraphPath *create_modifygraph_path(PlannerInfo *root,
-						RelOptInfo *rel, bool canSetTag,
-						GraphWriteOp operation, bool last, bool detach,
-						bool eager, Path *subpath, List *pattern,
-						List *targets, List *exprs, List *sets,
-						uint32 modifyno);
+						RelOptInfo *rel, GraphWriteOp operation,
+						bool canSetTag, bool last, List *targets,
+						Path *subpath, uint32 nr_modify, bool detach,
+						bool eager, List *pattern, List *exprs, List *sets);
 
 extern Path *reparameterize_path(PlannerInfo *root, Path *path,
 					Relids required_outer,

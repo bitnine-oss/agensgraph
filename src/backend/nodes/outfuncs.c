@@ -995,14 +995,15 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 
 	_outPlanInfo(str, (const Plan *) node);
 
-	WRITE_BOOL_FIELD(canSetTag);
 	WRITE_ENUM_FIELD(operation, GraphWriteOp);
+	WRITE_BOOL_FIELD(canSetTag);
 	WRITE_BOOL_FIELD(last);
-	WRITE_BOOL_FIELD(detach);
-	WRITE_UINT_FIELD(modifyno);
-	WRITE_NODE_FIELD(subplan);
-	WRITE_NODE_FIELD(pattern);
 	WRITE_NODE_FIELD(targets);
+	WRITE_NODE_FIELD(subplan);
+	WRITE_UINT_FIELD(nr_modify);
+	WRITE_BOOL_FIELD(detach);
+	WRITE_BOOL_FIELD(eagerness);
+	WRITE_NODE_FIELD(pattern);
 	WRITE_NODE_FIELD(exprs);
 	WRITE_NODE_FIELD(sets);
 }
@@ -3099,11 +3100,11 @@ _outQuery(StringInfo str, const Query *node)
 
 	WRITE_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	WRITE_BOOL_FIELD(graph.last);
+	WRITE_NODE_FIELD(graph.targets);
+	WRITE_UINT_FIELD(graph.nr_modify);
 	WRITE_BOOL_FIELD(graph.detach);
 	WRITE_BOOL_FIELD(graph.eager);
-	WRITE_UINT_FIELD(graph.modifyno);
 	WRITE_NODE_FIELD(graph.pattern);
-	WRITE_NODE_FIELD(graph.targets);
 	WRITE_NODE_FIELD(graph.exprs);
 	WRITE_NODE_FIELD(graph.sets);
 }

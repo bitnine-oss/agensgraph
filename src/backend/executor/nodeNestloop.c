@@ -23,9 +23,9 @@
 
 #include "access/xact.h"
 #include "executor/execdebug.h"
+#include "executor/nodeModifyGraph.h"
 #include "executor/nodeNestloop.h"
 #include "miscadmin.h"
-#include "utils/graph.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
 #include "utils/tqual.h"
@@ -103,7 +103,7 @@ ExecNestLoop(PlanState *pstate)
 
 	for (;;)
 	{
-		CommandId svCid = InvalidCommandId;
+		CommandId	svCid = InvalidCommandId;
 
 		/*
 		 * If we don't have an outer tuple, get the next one and reset the
@@ -168,7 +168,7 @@ ExecNestLoop(PlanState *pstate)
 			node->js.jointype == JOIN_CYPHER_DETACH)
 		{
 			svCid = innerPlan->state->es_snapshot->curcid;
-			innerPlan->state->es_snapshot->curcid = node->nl_mergematch_cid;
+			innerPlan->state->es_snapshot->curcid = node->nl_graphwrite_cid;
 		}
 
 		innerTupleSlot = ExecProcNode(innerPlan);
@@ -243,7 +243,7 @@ ExecNestLoop(PlanState *pstate)
 			}
 
 			if (node->js.jointype == JOIN_CYPHER_DELETE)
-				elog(ERROR, "vertices with edges can not be removed.");
+				elog(ERROR, "vertices with edges can not be removed");
 
 			/*
 			 * If we only need to join to the first matching inner tuple, then
@@ -285,8 +285,8 @@ ExecNestLoop(PlanState *pstate)
 NestLoopState *
 ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 {
-	NestLoopState  *nlstate;
-	CommandId		svCid = InvalidCommandId;
+	NestLoopState *nlstate;
+	CommandId	svCid = InvalidCommandId;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -337,12 +337,15 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		node->join.jointype == JOIN_CYPHER_DELETE ||
 		node->join.jointype == JOIN_CYPHER_DETACH)
 	{
-		/* Modify the cid to see the graph pattern created by MERGE CREATE. */
-		nlstate->nl_mergematch_cid =
+		/*
+		 * Modify the CID to see the graph pattern created by MERGE CREATE
+		 * or to not see it deleted by DELETE.
+		 */
+		nlstate->nl_graphwrite_cid =
 						estate->es_snapshot->curcid + MODIFY_CID_NLJOIN_MATCH;
 
 		svCid = estate->es_snapshot->curcid;
-		estate->es_snapshot->curcid = nlstate->nl_mergematch_cid;
+		estate->es_snapshot->curcid = nlstate->nl_graphwrite_cid;
 	}
 
 	innerPlanState(nlstate) = ExecInitNode(innerPlan(node), estate, eflags);

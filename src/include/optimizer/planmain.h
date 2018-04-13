@@ -55,11 +55,11 @@ extern ForeignScan *make_foreignscan(List *qptlist, List *qpqual,
 extern Plan *materialize_finished_plan(Plan *subplan);
 extern bool is_projection_capable_path(Path *path);
 extern bool is_projection_capable_plan(Plan *plan);
-extern ModifyGraph *make_modifygraph(PlannerInfo *root, bool canSetTag,
-						 bool last, bool detach, bool eager,
-						 GraphWriteOp operation, Plan *subplan, List *pattern,
-						 List *targets, List *exprs, List *sets,
-						 uint32 modifyno);
+extern ModifyGraph *make_modifygraph(PlannerInfo *root, GraphWriteOp operation,
+									 bool canSetTag, bool last, List *targets,
+									 Plan *subplan, uint32 nr_modify,
+									 bool detach, bool eagerness,
+									 List *pattern, List *exprs, List *sets);
 extern Dijkstra *make_dijkstra(PlannerInfo *root, List *tlist, Plan *subplan,
 							   AttrNumber weight, bool weight_out,
 							   AttrNumber end_id, AttrNumber edge_id,

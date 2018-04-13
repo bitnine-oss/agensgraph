@@ -758,7 +758,7 @@ typedef enum JoinType
 	JOIN_CYPHER_MERGE,
 	JOIN_VLE,
 
-	/* FOR CYPHER DELETE */
+	/* For Cypher DELETE */
 	JOIN_CYPHER_DELETE,
 	JOIN_CYPHER_DETACH
 

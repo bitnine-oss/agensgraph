@@ -921,9 +921,8 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			if (restriction_is_constant_false(restrictlist, false) &&
 				bms_is_subset(rel2->relids, sjinfo->syn_righthand))
 				mark_dummy_rel(rel2);
-
-			add_paths_for_cdelete(root, joinrel, sjinfo->jointype,
-								  rel1, rel2, sjinfo, restrictlist);
+			add_paths_for_cdelete(root, joinrel, rel1, rel2, sjinfo->jointype,
+								  sjinfo, restrictlist);
 			break;
 		default:
 			/* other values not expected here */

@@ -18,6 +18,7 @@
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
+#include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
@@ -2773,21 +2774,52 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 			break;
 
 		case T_ModifyGraph:
-		{
-			ModifyGraph *mgplan = (ModifyGraph *) plan;
+			{
+				ModifyGraph *mgplan = (ModifyGraph *) plan;
+				ListCell   *lc;
 
-			finalize_primnode((Node *) mgplan->pattern, &context);
-			finalize_primnode((Node *) mgplan->exprs, &context);
-			finalize_primnode((Node *) mgplan->sets, &context);
+				foreach(lc, mgplan->pattern)
+				{
+					GraphPath  *gpath = lfirst(lc);
+					ListCell   *le;
 
-			context.paramids =
-					bms_add_members(context.paramids,
-									finalize_plan(root,
-												  mgplan->subplan,
-												  gather_param,
-												  valid_params,
-												  scan_params));
-		}
+					foreach(le, gpath->chain)
+					{
+						Node	   *elem = lfirst(le);
+						Node	   *expr;
+
+						if (IsA(elem, GraphVertex))
+						{
+							expr = ((GraphVertex *) elem)->expr;
+						}
+						else
+						{
+							Assert(IsA(elem, GraphEdge));
+							expr = ((GraphEdge *) elem)->expr;
+						}
+
+						finalize_primnode(expr, &context);
+					}
+				}
+
+				finalize_primnode((Node *) mgplan->exprs, &context);
+
+				foreach(lc, mgplan->sets)
+				{
+					GraphSetProp *gsp = lfirst(lc);
+
+					finalize_primnode(gsp->elem, &context);
+					finalize_primnode(gsp->expr, &context);
+				}
+
+				context.paramids =
+						bms_add_members(context.paramids,
+										finalize_plan(root,
+													  mgplan->subplan,
+													  gather_param,
+													  valid_params,
+													  scan_params));
+			}
 			break;
 
 		case T_Dijkstra:

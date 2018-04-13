@@ -2139,7 +2139,7 @@ MATCH p=(a)-[:supported]->() RETURN properties(a) AS a ORDER BY a;
 -- DELETE
 --
 MATCH (a) DELETE a;
-ERROR:  vertices with edges can not be removed.
+ERROR:  vertices with edges can not be removed
 MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[1];
 ERROR:  only direct variable reference is supported
 LINE 1: MATCH p=()-[:lib]->() DETACH DELETE (vertices(p))[1];
@@ -2324,7 +2324,7 @@ CREATE (:multiple_update {no:1}), (:multiple_update {no:1});
 MATCH (a:multiple_update), (b:multiple_update)
 SET a.no = a.no + 1
 RETURN a.no;
-ERROR:  Graph element(4,1) has been SET multiple times.
+ERROR:  graph element(4,1) has been SET multiple times
 MATCH (a:multiple_update)
 RETURN a.no;
  no 

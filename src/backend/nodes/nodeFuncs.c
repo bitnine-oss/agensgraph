@@ -20,7 +20,6 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/execnodes.h"
-#include "nodes/graphnodes.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/relation.h"
 #include "utils/builtins.h"
@@ -2332,18 +2331,6 @@ expression_tree_walker(Node *node,
 			break;
 		case T_EdgeRefRows:
 			return walker(((EdgeRefRows *) node)->arg, context);
-			break;
-		case T_GraphPath:
-			return walker(((GraphPath *) node)->chain, context);
-		case T_GraphVertex:
-			return walker(((GraphVertex *) node)->expr, context);
-		case T_GraphEdge:
-			return walker(((GraphEdge *) node)->expr, context);
-		case T_GraphSetProp:
-			if (walker(((GraphSetProp*) node)->elem, context))
-				return true;
-			if (walker(((GraphSetProp*) node)->expr, context))
-				return true;
 			break;
 		case T_CypherMapExpr:
 			{

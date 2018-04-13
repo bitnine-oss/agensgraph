@@ -310,6 +310,7 @@ add_paths_to_joinrel(PlannerInfo *root,
 							   jointype, &extra);
 }
 
+/* See add_paths_to_joinrel() */
 void
 add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
 					 RelOptInfo *outerrel, RelOptInfo *innerrel,
@@ -326,29 +327,10 @@ add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
 											JOIN_CYPHER_MERGE, restrictlist,
 											false);
 
-	/*
-	 * Decide whether it's sensible to generate parameterized paths for this
-	 * joinrel, and if so, which relations such paths should require.  There
-	 * is usually no need to create a parameterized result path unless there
-	 * is a join order restriction that prevents joining one of our input rels
-	 * directly to the parameter source rel instead of joining to the other
-	 * input rel.  (But see allow_star_schema_join().)	This restriction
-	 * reduces the number of parameterized paths we have to deal with at
-	 * higher join levels, without compromising the quality of the resulting
-	 * plan.  We express the restriction as a Relids set that must overlap the
-	 * parameterization of any proposed join path.
-	 */
 	foreach(lc, root->join_info_list)
 	{
 		SpecialJoinInfo *sjinfo = (SpecialJoinInfo *) lfirst(lc);
 
-		/*
-		 * SJ is relevant to this join if we have some part of its RHS
-		 * (possibly not all of it), and haven't yet joined to its LHS.  (This
-		 * test is pretty simplistic, but should be sufficient considering the
-		 * join has already been proven legal.)  If the SJ is relevant, it
-		 * presents constraints for joining to anything not in its RHS.
-		 */
 		if (bms_overlap(joinrel->relids, sjinfo->min_righthand) &&
 			!bms_overlap(joinrel->relids, sjinfo->min_lefthand))
 			extra.param_source_rels = bms_join(extra.param_source_rels,
@@ -356,41 +338,23 @@ add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
 													 sjinfo->min_righthand));
 	}
 
-	/*
-	 * However, when a LATERAL subquery is involved, there will simply not be
-	 * any paths for the joinrel that aren't parameterized by whatever the
-	 * subquery is parameterized by, unless its parameterization is resolved
-	 * within the joinrel.  So we might as well allow additional dependencies
-	 * on whatever residual lateral dependencies the joinrel will have.
-	 */
 	extra.param_source_rels = bms_add_members(extra.param_source_rels,
 											  joinrel->lateral_relids);
 
-	/*
-	 * Consider paths where the outer relation need not be explicitly
-	 * sorted. This includes both nestloops and mergejoins where the outer
-	 * path is already ordered.  Again, skip this if we can't mergejoin.
-	 * (That's okay because we know that nestloop can't handle right/full
-	 * joins at all, so it wouldn't work in the prohibited cases either.)
-	 */
 	add_cyphermerge_path(root, joinrel, outerrel, innerrel, &extra);
 
-	/*
-	 * If inner and outer relations are foreign tables (or joins) belonging
-	 * to the same server and assigned to the same user to check access
-	 * permissions as, give the FDW a chance to push down joins.
-	 */
-	if (joinrel->fdwroutine &&
-		joinrel->fdwroutine->GetForeignJoinPaths)
+	if (joinrel->fdwroutine && joinrel->fdwroutine->GetForeignJoinPaths)
 		joinrel->fdwroutine->GetForeignJoinPaths(root, joinrel,
 												 outerrel, innerrel,
 												 JOIN_CYPHER_MERGE, &extra);
 }
 
+/* See add_paths_for_cmerge() */
 void
-add_paths_for_cdelete(PlannerInfo *root, RelOptInfo *joinrel, JoinType type,
+add_paths_for_cdelete(PlannerInfo *root, RelOptInfo *joinrel,
 					  RelOptInfo *outerrel, RelOptInfo *innerrel,
-					  SpecialJoinInfo *sjinfo, List *restrictlist)
+					  JoinType type, SpecialJoinInfo *sjinfo,
+					  List *restrictlist)
 {
 	JoinPathExtraData extra;
 	ListCell   *lc;
@@ -400,29 +364,10 @@ add_paths_for_cdelete(PlannerInfo *root, RelOptInfo *joinrel, JoinType type,
 	extra.sjinfo = sjinfo;
 	extra.param_source_rels = NULL;
 
-	/*
-	 * Decide whether it's sensible to generate parameterized paths for this
-	 * joinrel, and if so, which relations such paths should require.  There
-	 * is usually no need to create a parameterized result path unless there
-	 * is a join order restriction that prevents joining one of our input rels
-	 * directly to the parameter source rel instead of joining to the other
-	 * input rel.  (But see allow_star_schema_join().)	This restriction
-	 * reduces the number of parameterized paths we have to deal with at
-	 * higher join levels, without compromising the quality of the resulting
-	 * plan.  We express the restriction as a Relids set that must overlap the
-	 * parameterization of any proposed join path.
-	 */
 	foreach(lc, root->join_info_list)
 	{
 		SpecialJoinInfo *sjinfo = (SpecialJoinInfo *) lfirst(lc);
 
-		/*
-		 * SJ is relevant to this join if we have some part of its RHS
-		 * (possibly not all of it), and haven't yet joined to its LHS.  (This
-		 * test is pretty simplistic, but should be sufficient considering the
-		 * join has already been proven legal.)  If the SJ is relevant, it
-		 * presents constraints for joining to anything not in its RHS.
-		 */
 		if (bms_overlap(joinrel->relids, sjinfo->min_righthand) &&
 			!bms_overlap(joinrel->relids, sjinfo->min_lefthand))
 			extra.param_source_rels = bms_join(extra.param_source_rels,
@@ -430,32 +375,12 @@ add_paths_for_cdelete(PlannerInfo *root, RelOptInfo *joinrel, JoinType type,
 													 sjinfo->min_righthand));
 	}
 
-	/*
-	 * However, when a LATERAL subquery is involved, there will simply not be
-	 * any paths for the joinrel that aren't parameterized by whatever the
-	 * subquery is parameterized by, unless its parameterization is resolved
-	 * within the joinrel.  So we might as well allow additional dependencies
-	 * on whatever residual lateral dependencies the joinrel will have.
-	 */
 	extra.param_source_rels = bms_add_members(extra.param_source_rels,
 											  joinrel->lateral_relids);
 
-	/*
-	 * Consider paths where the outer relation need not be explicitly
-	 * sorted. This includes both nestloops and mergejoins where the outer
-	 * path is already ordered.  Again, skip this if we can't mergejoin.
-	 * (That's okay because we know that nestloop can't handle right/full
-	 * joins at all, so it wouldn't work in the prohibited cases either.)
-	 */
 	add_cypherdelete_path(root, joinrel, outerrel, innerrel, type, &extra);
 
-	/*
-	 * If inner and outer relations are foreign tables (or joins) belonging
-	 * to the same server and assigned to the same user to check access
-	 * permissions as, give the FDW a chance to push down joins.
-	 */
-	if (joinrel->fdwroutine &&
-		joinrel->fdwroutine->GetForeignJoinPaths)
+	if (joinrel->fdwroutine && joinrel->fdwroutine->GetForeignJoinPaths)
 		joinrel->fdwroutine->GetForeignJoinPaths(root, joinrel,
 												 outerrel, innerrel,
 												 type, &extra);
@@ -2133,8 +2058,10 @@ select_mergejoin_clauses(PlannerInfo *root,
 }
 
 /*
- * If CYPHER MERGE JOIN is explicitly specified,
+ * If Cypher MERGE join is explicitly specified,
  * no other join methods are considered.
+ *
+ * See match_unsorted_outer_for_vle().
  */
 static void
 add_cyphermerge_path(PlannerInfo *root, RelOptInfo *joinrel,
@@ -2149,26 +2076,12 @@ add_cyphermerge_path(PlannerInfo *root, RelOptInfo *joinrel,
 		List	   *merge_pathkeys;
 		ListCell   *lc2;
 
-		/*
-		 * We cannot use an outer path that is parameterized by the inner rel.
-		 */
 		if (PATH_PARAM_BY_REL(outerpath, innerrel))
 			continue;
 
-		/*
-		 * The result will have this sort order (even if it is implemented as
-		 * a nestloop, and even if some of the mergeclauses are implemented by
-		 * qpquals rather than as true mergeclauses):
-		 */
 		merge_pathkeys = build_join_pathkeys(root, joinrel, JOIN_CYPHER_MERGE,
 											 outerpath->pathkeys);
 
-		/*
-		 * Consider nestloop joins using this outer path and various
-		 * available paths for the inner relation.  We consider the
-		 * cheapest-total paths for each available parameterization of the
-		 * inner relation, including the unparameterized case.
-		 */
 		foreach(lc2, innerrel->cheapest_parameterized_paths)
 		{
 			Path	   *innerpath = (Path *) lfirst(lc2);
@@ -2183,22 +2096,16 @@ add_cyphermerge_path(PlannerInfo *root, RelOptInfo *joinrel,
 		}
 	}
 
-	/*
-	 * If the joinrel is parallel-safe and the join type supports nested
-	 * loops, we may be able to consider a partial nestloop plan.  However, we
-	 * can't handle JOIN_UNIQUE_OUTER, because the outer path will be partial,
-	 * and therefore we won't be able to properly guarantee uniqueness.  Nor
-	 * can we handle extra_lateral_rels, since partial paths must not be
-	 * parameterized.
-	 */
 	if (joinrel->consider_parallel && bms_is_empty(joinrel->lateral_relids))
 		consider_parallel_nestloop(root, joinrel, outerrel, innerrel,
 								   JOIN_CYPHER_MERGE, extra);
 }
 
 /*
- * If CYPHER DELETE/DETACH JOIN is explicitly specified,
+ * If Cypher DELETE/DETACH join is explicitly specified,
  * no other join methods are considered.
+ *
+ * See match_unsorted_outer_for_vle().
  */
 static void
 add_cypherdelete_path(PlannerInfo *root, RelOptInfo *joinrel,
@@ -2213,26 +2120,12 @@ add_cypherdelete_path(PlannerInfo *root, RelOptInfo *joinrel,
 		List	   *merge_pathkeys;
 		ListCell   *lc2;
 
-		/*
-		 * We cannot use an outer path that is parameterized by the inner rel.
-		 */
 		if (PATH_PARAM_BY_REL(outerpath, innerrel))
 			continue;
 
-		/*
-		 * The result will have this sort order (even if it is implemented as
-		 * a nestloop, and even if some of the mergeclauses are implemented by
-		 * qpquals rather than as true mergeclauses):
-		 */
 		merge_pathkeys = build_join_pathkeys(root, joinrel, type,
 											 outerpath->pathkeys);
 
-		/*
-		 * Consider nestloop joins using this outer path and various
-		 * available paths for the inner relation.  We consider the
-		 * cheapest-total paths for each available parameterization of the
-		 * inner relation, including the unparameterized case.
-		 */
 		foreach(lc2, innerrel->cheapest_parameterized_paths)
 		{
 			Path	   *innerpath = (Path *) lfirst(lc2);
@@ -2247,14 +2140,6 @@ add_cypherdelete_path(PlannerInfo *root, RelOptInfo *joinrel,
 		}
 	}
 
-	/*
-	 * If the joinrel is parallel-safe and the join type supports nested
-	 * loops, we may be able to consider a partial nestloop plan.  However, we
-	 * can't handle JOIN_UNIQUE_OUTER, because the outer path will be partial,
-	 * and therefore we won't be able to properly guarantee uniqueness.  Nor
-	 * can we handle extra_lateral_rels, since partial paths must not be
-	 * parameterized.
-	 */
 	if (joinrel->consider_parallel && bms_is_empty(joinrel->lateral_relids))
 		consider_parallel_nestloop(root, joinrel, outerrel, innerrel,
 								   type, extra);

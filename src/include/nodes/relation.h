@@ -1625,15 +1625,16 @@ typedef struct EagerPath
 typedef struct ModifyGraphPath
 {
 	Path		path;
+	GraphWriteOp operation;
 	bool		canSetTag;		/* do we set the command tag/es_processed? */
 	bool		last;			/* is this for the last clause? */
-	bool		detach;			/* DETACH DELETE */
-	bool		eager;			/* eagerness */
-	GraphWriteOp operation;		/* CREATE or DELETE */
-	uint32		modifyno;		/* # of clauses between modifygraph clause */
-	Path	   *subpath;		/* Path producing source data */
-	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
 	List	   *targets;		/* relation Oid's of target labels */
+	Path	   *subpath;		/* Path producing source data */
+	uint32		nr_modify;		/* number of clauses that modifies graph
+								   before this */
+	bool		detach;			/* DETACH DELETE */
+	bool		eagerness;
+	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
 	List	   *exprs;			/* expression list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 } ModifyGraphPath;
