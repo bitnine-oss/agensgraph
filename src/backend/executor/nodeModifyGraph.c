@@ -62,6 +62,7 @@ static Datum createEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
 /* DELETE */
 static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 									   TupleTableSlot *slot);
+static bool isDetachRequired(ModifyGraphState *mgstate);
 static void deleteElem(ModifyGraphState *mgstate, Datum elem,
 					   Datum id, Oid type);
 
@@ -792,6 +793,9 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 
 	ResetExprContext(econtext);
 
+	if (isDetachRequired(mgstate))
+		elog(ERROR, "vertices with edges can not be removed");
+
 	foreach(le, mgstate->exprs)
 	{
 		ExprState  *e = (ExprState *) lfirst(le);
@@ -832,6 +836,43 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 	}
 
 	return (plan->last ? NULL : slot);
+}
+
+/* tricky but efficient */
+static bool
+isDetachRequired(ModifyGraphState *mgstate)
+{
+	NestLoopState *nlstate;
+	ModifyGraph *plan;
+
+	/* no vertex in the target list of DELETE */
+	if (!IsA(mgstate->subplan, NestLoopState))
+		return false;
+
+	/*
+	 * The join may not be the join which retrieves edges connected to the
+	 * target vertices.
+	 */
+	nlstate = (NestLoopState *) mgstate->subplan;
+	if (nlstate->js.jointype != JOIN_CYPHER_DELETE)
+		return false;
+
+	/*
+	 * All the target edges will be deleted. There may be a chance that no
+	 * edge exists for the vertices in the current slot, but it doesn't
+	 * matter.
+	 */
+	plan = (ModifyGraph *) mgstate->ps.plan;
+	if (plan->detach)
+		return false;
+
+	/*
+	 * true: At least one edge exists for the target vertices in the current
+	 *       slot. (nl_MatchedOuter && !nl_NeedNewOuter)
+	 * false: No edge exists for the target vertices in the current slot.
+	 *        (!nl_MatchedOuter && nl_NeedNewOuter)
+	 */
+	return nlstate->nl_MatchedOuter;
 }
 
 static void

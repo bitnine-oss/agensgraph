@@ -4624,7 +4624,6 @@ transformDeleteJoinRTE(ParseState *pstate, CypherClause *clause)
 	Alias	   *r_alias;
 	Query	   *r_qry;
 	RangeTblEntry *r_rte;
-	JoinType	jointype;
 	Node	   *qual;
 	RangeTblEntry *jrte;
 
@@ -4701,10 +4700,9 @@ transformDeleteJoinRTE(ParseState *pstate, CypherClause *clause)
 
 	r_rte = addRangeTableEntryForSubquery(pstate, r_qry, r_alias, true, true);
 
-	jointype = (detail->detach ? JOIN_CYPHER_DETACH : JOIN_CYPHER_DELETE);
 	qual = makeBoolConst(true, false);
 
-	jrte = incrementalJoinRTEs(pstate, jointype, l_rte, r_rte, qual,
+	jrte = incrementalJoinRTEs(pstate, JOIN_CYPHER_DELETE, l_rte, r_rte, qual,
 							   makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL));
 
 	pstate->p_delete_edges_resname = edges_resname;
@@ -4753,7 +4751,7 @@ verticesConcat(Node *vertices, Node *expr)
  *
  * else
  *
- *     SELECT
+ *     SELECT NULL::edge
  *     FROM ag_edge AS e, unnest(vertices) AS v
  *     WHERE e.start = v.id OR e.end = v.id
  */
@@ -4783,6 +4781,17 @@ makeSelectEdgesVertices(Node *vertices, CypherDeleteClause *delete,
 		delete->exprs = lappend(delete->exprs, edges_col);
 
 		*edges_resname = edges_name;
+	}
+	else
+	{
+		TypeCast   *nulledge;
+
+		nulledge = makeNode(TypeCast);
+		nulledge->arg = (Node *) makeNullAConst();
+		nulledge->typeName = makeTypeName("edge");
+		nulledge->location = -1;
+
+		targetlist = list_make1(makeResTarget((Node *) nulledge, NULL));
 	}
 
 	ag_edge = makeRangeVar(get_graph_path(true), AG_EDGE, -1);

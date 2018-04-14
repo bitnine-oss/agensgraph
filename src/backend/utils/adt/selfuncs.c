@@ -2222,7 +2222,6 @@ eqjoinsel(PG_FUNCTION_ARGS)
 		case JOIN_FULL:
 		case JOIN_CYPHER_MERGE:
 		case JOIN_CYPHER_DELETE:
-		case JOIN_CYPHER_DETACH:
 		case JOIN_VLE:
 			selec = eqjoinsel_inner(operator, &vardata1, &vardata2);
 			break;

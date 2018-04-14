@@ -911,7 +911,6 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 										 sjinfo, restrictlist);
 			break;
 		case JOIN_CYPHER_DELETE:
-		case JOIN_CYPHER_DETACH:
 			if (is_dummy_rel(rel1) ||
 				restriction_is_constant_false(restrictlist, true))
 			{

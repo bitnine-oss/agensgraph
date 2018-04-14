@@ -1636,7 +1636,6 @@ buildMergedJoinVar(ParseState *pstate, JoinType jointype,
 			}
 		case JOIN_CYPHER_MERGE:
 		case JOIN_CYPHER_DELETE:
-		case JOIN_CYPHER_DETACH:
 		default:
 			elog(ERROR, "unrecognized join type: %d", (int) jointype);
 			res_node = NULL;	/* keep compiler quiet */

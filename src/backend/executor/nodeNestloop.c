@@ -164,8 +164,7 @@ ExecNestLoop(PlanState *pstate)
 		ENL1_printf("getting new inner tuple");
 
 		if (node->js.jointype == JOIN_CYPHER_MERGE ||
-			node->js.jointype == JOIN_CYPHER_DELETE ||
-			node->js.jointype == JOIN_CYPHER_DETACH)
+			node->js.jointype == JOIN_CYPHER_DELETE)
 		{
 			svCid = innerPlan->state->es_snapshot->curcid;
 			innerPlan->state->es_snapshot->curcid = node->nl_graphwrite_cid;
@@ -187,7 +186,6 @@ ExecNestLoop(PlanState *pstate)
 				(node->js.jointype == JOIN_LEFT ||
 				 node->js.jointype == JOIN_CYPHER_MERGE ||
 				 node->js.jointype == JOIN_CYPHER_DELETE ||
-				 node->js.jointype == JOIN_CYPHER_DETACH ||
 				 node->js.jointype == JOIN_ANTI))
 			{
 				/*
@@ -241,9 +239,6 @@ ExecNestLoop(PlanState *pstate)
 				node->nl_NeedNewOuter = true;
 				continue;		/* return to top of loop */
 			}
-
-			if (node->js.jointype == JOIN_CYPHER_DELETE)
-				elog(ERROR, "vertices with edges can not be removed");
 
 			/*
 			 * If we only need to join to the first matching inner tuple, then
@@ -334,8 +329,7 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		eflags &= ~EXEC_FLAG_REWIND;
 
 	if (node->join.jointype == JOIN_CYPHER_MERGE ||
-		node->join.jointype == JOIN_CYPHER_DELETE ||
-		node->join.jointype == JOIN_CYPHER_DETACH)
+		node->join.jointype == JOIN_CYPHER_DELETE)
 	{
 		/*
 		 * Modify the CID to see the graph pattern created by MERGE CREATE
@@ -375,7 +369,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		case JOIN_ANTI:
 		case JOIN_CYPHER_MERGE:
 		case JOIN_CYPHER_DELETE:
-		case JOIN_CYPHER_DETACH:
 			nlstate->nl_NullInnerTupleSlot =
 				ExecInitNullTupleSlot(estate,
 									  ExecGetResultType(innerPlanState(nlstate)));
