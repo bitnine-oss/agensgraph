@@ -4394,8 +4394,40 @@ deref_edgeref(Datum datum, bool isnull, Relation *edgerels, Snapshot snapshot,
 				   EdgeRefGetOffsetNumber(edgeref));
 	if (heap_fetch(rel, snapshot, &tup, &buf, false, NULL))
 	{
-		edge = heap_copy_tuple_as_datum(&tup, RelationGetDescr(rel));
+		bool		isnull;
+		Datum		id;
+		Datum		start;
+		Datum		end;
+		Datum		prop_map;
+		ItemPointer tid;
+
+		id = heap_getattr(&tup, Anum_edge_id,
+						  RelationGetDescr(rel), &isnull);
+		Assert(!isnull);
+		id = datumCopy(id, FLOAT8PASSBYVAL, 8);
+
+		start = heap_getattr(&tup, Anum_edge_start,
+							 RelationGetDescr(rel), &isnull);
+		Assert(!isnull);
+		start = datumCopy(start, FLOAT8PASSBYVAL, 8);
+
+		end = heap_getattr(&tup, Anum_edge_end,
+						   RelationGetDescr(rel), &isnull);
+		Assert(!isnull);
+		end = datumCopy(end, FLOAT8PASSBYVAL, 8);
+
+		prop_map = heap_getattr(&tup, Anum_edge_properties,
+								RelationGetDescr(rel), &isnull);
+		Assert(!isnull);
+		prop_map = datumCopy(prop_map, false, -1);
+
+		tid = palloc(sizeof(*tid));
+		ItemPointerCopy(&tup.t_self, tid);
+
 		ReleaseBuffer(buf);
+
+		edge = makeGraphEdgeDatum(id, start, end, prop_map,
+								  PointerGetDatum(tid));
 		*resnull = false;
 	}
 	else
