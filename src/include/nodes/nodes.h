@@ -765,7 +765,6 @@ typedef enum JoinType
 
 	/* For Cypher DELETE */
 	JOIN_CYPHER_DELETE,
-	JOIN_CYPHER_DETACH
 
 	/*
 	 * We might need additional join types someday.
@@ -793,7 +792,6 @@ typedef enum JoinType
 	   (1 << JOIN_RIGHT) | \
 	   (1 << JOIN_CYPHER_MERGE) | \
 	   (1 << JOIN_CYPHER_DELETE) | \
-	   (1 << JOIN_CYPHER_DETACH) | \
 	   (1 << JOIN_ANTI))) != 0)
 
 /*

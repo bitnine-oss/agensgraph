@@ -290,7 +290,6 @@ pull_up_sublinks_jointree_recurse(PlannerInfo *root, Node *jtnode,
 				break;
 			case JOIN_CYPHER_MERGE:
 			case JOIN_CYPHER_DELETE:
-			case JOIN_CYPHER_DETACH:
 				/* do nothing */
 				break;
 			default:
@@ -849,7 +848,6 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 				break;
 			case JOIN_VLE:
 			case JOIN_CYPHER_DELETE:
-			case JOIN_CYPHER_DETACH:
 				break;
 			default:
 				elog(ERROR, "unrecognized join type: %d",
@@ -2699,7 +2697,6 @@ reduce_outer_joins_pass2(Node *jtnode,
 				break;
 			case JOIN_CYPHER_MERGE:
 			case JOIN_CYPHER_DELETE:
-			case JOIN_CYPHER_DETACH:
 				/* do nothing */
 				break;
 			default:
