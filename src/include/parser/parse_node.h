@@ -227,7 +227,9 @@ struct ParseState
 	List	   *p_future_vertices;		/* vertices to be resolved */
 	Node	   *p_resolved_qual;		/* qual of resolved future vertices */
 	bool		p_is_optional_match;
+	uint32		p_nr_modify_clause;
 	List	   *p_target_labels;		/* relation Oid's of target labels */
+	char	   *p_delete_edges_resname;
 	bool		p_convert_edgeref;
 };
 

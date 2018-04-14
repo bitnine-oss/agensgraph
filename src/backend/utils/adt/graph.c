@@ -354,7 +354,7 @@ edgeref_in(PG_FUNCTION_ARGS)
 Datum
 edgeref_out(PG_FUNCTION_ARGS)
 {
-	EdgeRef	    eref = PG_GETARG_EDGEREF(0);
+	EdgeRef		eref = PG_GETARG_EDGEREF(0);
 	StringInfoData buf;
 	Oid			typiofunc;
 	bool		typisvarlena;
@@ -1102,7 +1102,7 @@ static Datum
 getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 {
 	const char *querystr =
-			"SELECT (" AG_ELEM_LOCAL_ID ", " AG_ELEM_PROP_MAP ")::vertex "
+			"SELECT (" AG_ELEM_LOCAL_ID ", " AG_ELEM_PROP_MAP ", NULL)::vertex "
 			"FROM \"%s\"." AG_VERTEX " WHERE " AG_ELEM_LOCAL_ID " = $1";
 	char		sqlcmd[256];
 	int			attnum = (evk == EVK_START ? Anum_edge_start : Anum_edge_end);
@@ -1119,7 +1119,7 @@ getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
-	ret = SPI_execute_with_args(sqlcmd, 2, argTypes, values, NULL, false, 0);
+	ret = SPI_execute_with_args(sqlcmd, 2, argTypes, values, NULL, true, 0);
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "SPI_execute failed: %s", sqlcmd);
 
@@ -1251,13 +1251,20 @@ getVertexIdDatum(Datum datum)
 	return tuple_getattr(tuphdr, Anum_vertex_id);
 }
 
-
 Datum
 getVertexPropDatum(Datum datum)
 {
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_vertex_properties);
+}
+
+Datum
+getVertexTidDatum(Datum datum)
+{
+	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	return tuple_getattr(tuphdr, Anum_vertex_tid);
 }
 
 Datum
@@ -1290,6 +1297,14 @@ getEdgePropDatum(Datum datum)
 	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
 
 	return tuple_getattr(tuphdr, Anum_edge_properties);
+}
+
+Datum
+getEdgeTidDatum(Datum datum)
+{
+	HeapTupleHeader	tuphdr = DatumGetHeapTupleHeader(datum);
+
+	return tuple_getattr(tuphdr, Anum_edge_tid);
 }
 
 void
@@ -1350,15 +1365,16 @@ makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges, int nedges)
 }
 
 Datum
-makeGraphVertexDatum(Datum id, Datum prop_map)
+makeGraphVertexDatum(Datum id, Datum prop_map, Datum tid)
 {
 	Datum		values[Natts_vertex];
-	bool		isnull[Natts_vertex] = {false, false};
+	bool		isnull[Natts_vertex] = {false, false, false};
 	TupleDesc	tupDesc;
 	HeapTuple	vertex;
 
 	values[Anum_vertex_id - 1] = id;
 	values[Anum_vertex_properties - 1] = prop_map;
+	values[Anum_vertex_tid - 1] = tid;
 
 	tupDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
 	Assert(tupDesc->natts == Natts_vertex);
@@ -1371,10 +1387,10 @@ makeGraphVertexDatum(Datum id, Datum prop_map)
 }
 
 Datum
-makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop_map)
+makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop_map, Datum tid)
 {
 	Datum		values[Natts_edge];
-	bool		isnull[Natts_edge] = {false, false, false, false};
+	bool		isnull[Natts_edge] = {false, false, false, false, false};
 	TupleDesc	tupDesc;
 	HeapTuple	edge;
 
@@ -1382,6 +1398,7 @@ makeGraphEdgeDatum(Datum id, Datum start, Datum end, Datum prop_map)
 	values[Anum_edge_start - 1] = start;
 	values[Anum_edge_end - 1] = end;
 	values[Anum_edge_properties - 1] = prop_map;
+	values[Anum_edge_tid - 1] = tid;
 
 	tupDesc = lookup_rowtype_tupdesc(EDGEOID, -1);
 	Assert(tupDesc->natts == Natts_edge);
