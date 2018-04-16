@@ -2115,6 +2115,16 @@ MATCH (a)-[]-(b) RETURN count(a) * count(a) AS a ORDER BY a;
  36
 (1 row)
 
+MATCH (a)-[]-(b) RETURN sum( count(a) ) AS a ORDER BY a;
+ERROR:  aggregate function calls cannot be nested
+LINE 1: MATCH (a)-[]-(b) RETURN sum( count(a) ) AS a ORDER BY a;
+                                     ^
+MATCH (a)-[]-(b) WITH count(a) AS a RETURN sum(a);
+ sum 
+-----
+   6
+(1 row)
+
 MATCH (a)-[]-(b) RETURN round( count(a) * count(a) ) AS a ORDER BY a;
  a  
 ----
@@ -2147,6 +2157,16 @@ MATCH (a)-[]-(b) RETURN round( count(a) * count(a) ) AS a, b.name AS b ORDER BY 
  1 | "agens-graph-odbc"
  9 | "agens-graph"
 (4 rows)
+
+MATCH (a)-[]-(b) RETURN sum( count(a) ), b.name AS a ORDER BY a;
+ERROR:  aggregate function calls cannot be nested
+LINE 1: MATCH (a)-[]-(b) RETURN sum( count(a) ), b.name AS a ORDER B...
+                                     ^
+MATCH (a)-[]-(b) WITH count(a) AS a, b.name AS b RETURN sum(a);
+ sum 
+-----
+   6
+(1 row)
 
 --
 -- EXISTS

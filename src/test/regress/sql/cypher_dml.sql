@@ -705,6 +705,10 @@ MATCH (a)-[]-(b) RETURN count(a) * 3 AS a ORDER BY a;
 
 MATCH (a)-[]-(b) RETURN count(a) * count(a) AS a ORDER BY a;
 
+MATCH (a)-[]-(b) RETURN sum( count(a) ) AS a ORDER BY a;
+
+MATCH (a)-[]-(b) WITH count(a) AS a RETURN sum(a);
+
 MATCH (a)-[]-(b) RETURN round( count(a) * count(a) ) AS a ORDER BY a;
 
 MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a, b;
@@ -712,6 +716,10 @@ MATCH (a)-[]-(b) RETURN count(a) AS a, b.name AS b ORDER BY a, b;
 MATCH (a)-[]-(b) RETURN count(a) * 3 AS a, b.name AS b ORDER BY a, b;
 
 MATCH (a)-[]-(b) RETURN round( count(a) * count(a) ) AS a, b.name AS b ORDER BY a, b;
+
+MATCH (a)-[]-(b) RETURN sum( count(a) ), b.name AS a ORDER BY a;
+
+MATCH (a)-[]-(b) WITH count(a) AS a, b.name AS b RETURN sum(a);
 
 --
 -- EXISTS
