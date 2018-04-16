@@ -1437,52 +1437,54 @@ WITH max(b.id) AS id, x AS x RETURN *;
 EXPLAIN VERBOSE
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(length(x)) AS x, b.id AS id RETURN *;
-                                                                                       QUERY PLAN                                                                                        
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- HashAggregate  (cost=394.60..396.60 rows=200 width=64)
-   Output: max((length(EDGEREFROWS(x.path)))::numeric), (b.properties.'id'::text)
-   Group Key: b.properties.'id'::text
-   ->  Nested Loop  (cost=200.52..391.24 rows=336 width=64)
-         Output: b.properties.'id'::text, x.path
-         ->  Seq Scan on t.person a  (cost=0.00..25.00 rows=6 width=8)
-               Output: a.id, a.properties
-               Filter: (a.properties.'id'::text = '1'::jsonb)
-         ->  Hash Join  (cost=200.52..227.58 rows=56 width=64)
-               Output: x.path, b.properties
-               Hash Cond: (b.id = x."end")
-               ->  Seq Scan on t.person b  (cost=0.00..22.00 rows=1200 width=40)
-                     Output: b.id, b.properties
-               ->  Hash  (cost=199.82..199.82 rows=56 width=40)
-                     Output: x.path, x."end"
-                     ->  Subquery Scan on x  (cost=0.00..199.82 rows=56 width=40)
+                                                                                          QUERY PLAN                                                                                           
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on _  (cost=394.60..398.60 rows=200 width=64)
+   Output: _.x, _.id
+   ->  HashAggregate  (cost=394.60..396.60 rows=200 width=96)
+         Output: max((length(EDGEREFROWS(x.path)))::numeric), b.properties.'id'::text, b.properties
+         Group Key: b.properties
+         ->  Nested Loop  (cost=200.52..391.24 rows=336 width=64)
+               Output: b.properties, x.path
+               ->  Seq Scan on t.person a  (cost=0.00..25.00 rows=6 width=8)
+                     Output: a.id, a.properties
+                     Filter: (a.properties.'id'::text = '1'::jsonb)
+               ->  Hash Join  (cost=200.52..227.58 rows=56 width=64)
+                     Output: x.path, b.properties
+                     Hash Cond: (b.id = x."end")
+                     ->  Seq Scan on t.person b  (cost=0.00..22.00 rows=1200 width=40)
+                           Output: b.id, b.properties
+                     ->  Hash  (cost=199.82..199.82 rows=56 width=40)
                            Output: x.path, x."end"
-                           ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=106)
-                                 Output: l.start, l."end", (ARRAY[rowid(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))]), r."end", (rowid(r.tableoid, r.ctid)), (edgeref(0, r.ctid))
-                                 ->  Result  (cost=0.00..24.77 rows=7 width=80)
-                                       Output: l.start, l."end", ARRAY[rowid(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
-                                       ->  Append  (cost=0.00..24.68 rows=7 width=34)
-                                             ->  Seq Scan on t.knows l  (cost=0.00..2.21 rows=1 width=34)
-                                                   Output: l.start, l."end", l.tableoid, l.ctid, edgeref(0, l.ctid)
-                                                   Filter: (l.start = a.id)
-                                             ->  Seq Scan on t.friendships  (cost=0.00..2.21 rows=1 width=34)
-                                                   Output: friendships.start, friendships."end", friendships.tableoid, friendships.ctid, edgeref(1, friendships.ctid)
-                                                   Filter: (friendships.start = a.id)
-                                             ->  Index Scan using familyship_start_idx on t.familyship  (cost=0.15..20.25 rows=5 width=34)
-                                                   Output: familyship.start, familyship."end", familyship.tableoid, familyship.ctid, edgeref(2, familyship.ctid)
-                                                   Index Cond: (familyship.start = a.id)
-                                 ->  Result  (cost=0.00..24.77 rows=7 width=26)
-                                       Output: r."end", rowid(r.tableoid, r.ctid), (edgeref(0, r.ctid))
-                                       ->  Append  (cost=0.00..24.68 rows=7 width=26)
-                                             ->  Seq Scan on t.knows r  (cost=0.00..2.21 rows=1 width=26)
-                                                   Output: r."end", r.tableoid, r.ctid, edgeref(0, r.ctid)
-                                                   Filter: ($1 = r.start)
-                                             ->  Seq Scan on t.friendships friendships_1  (cost=0.00..2.21 rows=1 width=26)
-                                                   Output: friendships_1."end", friendships_1.tableoid, friendships_1.ctid, edgeref(1, friendships_1.ctid)
-                                                   Filter: ($1 = friendships_1.start)
-                                             ->  Index Scan using familyship_start_idx on t.familyship familyship_1  (cost=0.15..20.25 rows=5 width=26)
-                                                   Output: familyship_1."end", familyship_1.tableoid, familyship_1.ctid, edgeref(2, familyship_1.ctid)
-                                                   Index Cond: ($1 = familyship_1.start)
-(43 rows)
+                           ->  Subquery Scan on x  (cost=0.00..199.82 rows=56 width=40)
+                                 Output: x.path, x."end"
+                                 ->  Nested Loop VLE [1..2]  (cost=0.00..199.26 rows=56 width=106)
+                                       Output: l.start, l."end", (ARRAY[rowid(l.tableoid, l.ctid)]), (ARRAY[(edgeref(0, l.ctid))]), r."end", (rowid(r.tableoid, r.ctid)), (edgeref(0, r.ctid))
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=80)
+                                             Output: l.start, l."end", ARRAY[rowid(l.tableoid, l.ctid)], ARRAY[(edgeref(0, l.ctid))]
+                                             ->  Append  (cost=0.00..24.68 rows=7 width=34)
+                                                   ->  Seq Scan on t.knows l  (cost=0.00..2.21 rows=1 width=34)
+                                                         Output: l.start, l."end", l.tableoid, l.ctid, edgeref(0, l.ctid)
+                                                         Filter: (l.start = a.id)
+                                                   ->  Seq Scan on t.friendships  (cost=0.00..2.21 rows=1 width=34)
+                                                         Output: friendships.start, friendships."end", friendships.tableoid, friendships.ctid, edgeref(1, friendships.ctid)
+                                                         Filter: (friendships.start = a.id)
+                                                   ->  Index Scan using familyship_start_idx on t.familyship  (cost=0.15..20.25 rows=5 width=34)
+                                                         Output: familyship.start, familyship."end", familyship.tableoid, familyship.ctid, edgeref(2, familyship.ctid)
+                                                         Index Cond: (familyship.start = a.id)
+                                       ->  Result  (cost=0.00..24.77 rows=7 width=26)
+                                             Output: r."end", rowid(r.tableoid, r.ctid), (edgeref(0, r.ctid))
+                                             ->  Append  (cost=0.00..24.68 rows=7 width=26)
+                                                   ->  Seq Scan on t.knows r  (cost=0.00..2.21 rows=1 width=26)
+                                                         Output: r."end", r.tableoid, r.ctid, edgeref(0, r.ctid)
+                                                         Filter: ($1 = r.start)
+                                                   ->  Seq Scan on t.friendships friendships_1  (cost=0.00..2.21 rows=1 width=26)
+                                                         Output: friendships_1."end", friendships_1.tableoid, friendships_1.ctid, edgeref(1, friendships_1.ctid)
+                                                         Filter: ($1 = friendships_1.start)
+                                                   ->  Index Scan using familyship_start_idx on t.familyship familyship_1  (cost=0.15..20.25 rows=5 width=26)
+                                                         Output: familyship_1."end", familyship_1.tableoid, familyship_1.ctid, edgeref(2, familyship_1.ctid)
+                                                         Index Cond: ($1 = familyship_1.start)
+(45 rows)
 
 EXPLAIN VERBOSE
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
