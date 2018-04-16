@@ -3655,19 +3655,7 @@ generateGroupClause(ParseState *pstate, List **targetlist, List *sortClause)
 		te = lfirst(lt);
 
 		factx.sublevels_up = 0;
-		if (find_agg_walker((Node *) te->expr, &factx))
-		{
-			if (!IsA(te->expr, Aggref))
-			{
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("aggregate must exist solely"),
-						 parser_errposition(pstate,
-											exprLocation((Node *) te->expr))));
-				return NIL;
-			}
-		}
-		else
+		if (!find_agg_walker((Node *) te->expr, &factx))
 		{
 			find_var_context fvctx;
 
