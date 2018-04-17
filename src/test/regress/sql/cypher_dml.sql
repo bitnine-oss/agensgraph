@@ -264,6 +264,21 @@ RETURN n.name AS n, type(r) AS r, p.name AS p,
        m.name AS m, type(s) AS s, q.name AS q
 ORDER BY n, p, m, q;
 
+OPTIONAL MATCH (n:person{name: 'unknown'})
+RETURN N;
+
+OPTIONAL MATCH (n:person{name: 'unknown'}) MATCH (m:person{name: 'someone'})
+RETURN n, m
+ORDER BY n, m;
+
+OPTIONAL MATCH (n:person{name: 'unknown'}) WITH n MATCH (m:person{name: 'someone'})
+RETURN n, m
+ORDER BY n, m;
+
+OPTIONAL MATCH (n:person{name: 'unknown'}) WITH n MATCH (m:person{name: 'unknown'})
+RETURN n, m
+ORDER BY n, m;
+
 -- Variable Length Relationship
 CREATE GRAPH t;
 SET graph_path = t;

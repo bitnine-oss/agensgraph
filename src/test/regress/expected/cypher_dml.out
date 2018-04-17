@@ -775,6 +775,33 @@ ORDER BY n, p, m, q;
  "someone"  |         |          | "somebody" |         | 
 (12 rows)
 
+OPTIONAL MATCH (n:person{name: 'unknown'})
+RETURN N;
+ n 
+---
+ 
+(1 row)
+
+OPTIONAL MATCH (n:person{name: 'unknown'}) MATCH (m:person{name: 'someone'})
+RETURN n, m
+ORDER BY n, m;
+ERROR:  Cypher match clauses cannot follow optional match clauses
+HINT:  Perhaps use a WITH clause between them.
+OPTIONAL MATCH (n:person{name: 'unknown'}) WITH n MATCH (m:person{name: 'someone'})
+RETURN n, m
+ORDER BY n, m;
+ n |               m                
+---+--------------------------------
+   | person[3.1]{"name": "someone"}
+(1 row)
+
+OPTIONAL MATCH (n:person{name: 'unknown'}) WITH n MATCH (m:person{name: 'unknown'})
+RETURN n, m
+ORDER BY n, m;
+ n | m 
+---+---
+(0 rows)
+
 -- Variable Length Relationship
 CREATE GRAPH t;
 SET graph_path = t;

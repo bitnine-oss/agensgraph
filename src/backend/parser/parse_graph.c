@@ -569,7 +569,7 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	 * since WHERE clause is part of MATCH,
 	 * transform OPTIONAL MATCH with its WHERE clause
 	 */
-	if (detail->optional && clause->prev != NULL)
+	if (detail->optional)
 	{
 		/*
 		 * NOTE: Should we return a single row with NULL values
@@ -583,6 +583,24 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	}
 	else
 	{
+		if (clause->prev != NULL)
+		{
+			/* Cypher match clauses cannot follow optional match clauses */
+			if (cypherClauseTag(clause->prev) == T_CypherMatchClause)
+			{
+				CypherClause *prev;
+				CypherMatchClause *detail;
+				prev = (CypherClause *) clause->prev;
+				detail = (CypherMatchClause *) prev->detail;
+				if (detail->optional)
+				{
+					ereport(ERROR,             (errcode(ERRCODE_SYNTAX_ERROR),
+		  errmsg("Cypher match clauses cannot follow optional match clauses"),
+						   errhint("Perhaps use a WITH clause between them.")));
+				}
+			}
+		}
+
 		if (!pstate->p_is_match_quals &&
 			(detail->where != NULL || hasPropConstr(detail->pattern)))
 		{
@@ -5426,7 +5444,10 @@ transformClauseImpl(ParseState *pstate, Node *clause,
 	RangeTblEntry *rte;
 	int			rtindex;
 
-	AssertArg(IsA(clause, CypherClause));
+	if (clause != NULL)
+	{
+		AssertArg(IsA(clause, CypherClause));
+	}
 
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
@@ -5436,7 +5457,19 @@ transformClauseImpl(ParseState *pstate, Node *clause,
 	childParseState->p_is_fp_processed = pstate->p_is_fp_processed;
 	childParseState->p_is_optional_match = pstate->p_is_optional_match;
 
-	qry = transform(childParseState, clause);
+	if (clause != NULL)
+	{
+		qry = transform(childParseState, clause);
+	}
+	else
+	{
+		/* Transform dummy for first optional match */
+		qry = makeNode(Query);
+		qry->commandType = CMD_SELECT;
+		qry->rtable = childParseState->p_rtable;
+		qry->jointree = makeFromExpr(childParseState->p_joinlist, NULL);
+		assign_query_collations(childParseState, qry);
+	}
 
 	pstate->p_elem_quals = childParseState->p_elem_quals;
 	future_vertices = childParseState->p_future_vertices;
