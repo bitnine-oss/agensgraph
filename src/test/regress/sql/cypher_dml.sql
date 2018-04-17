@@ -418,35 +418,35 @@ MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH x[0] AS x1, x[1] AS x2, length(x) AS l
 RETURN x1, x2, l;
 
-EXPLAIN VERBOSE
+EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
 
-EXPLAIN VERBOSE
+EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(b.id) AS id, x[0] AS x RETURN *;
 
-EXPLAIN VERBOSE
+EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH DISTINCT x AS path RETURN *;
 
-EXPLAIN VERBOSE
+EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(b.id) AS id, x AS x RETURN *;
 
-EXPLAIN VERBOSE
+EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(length(x)) AS x, b.id AS id RETURN *;
 
-EXPLAIN VERBOSE
+EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 RETURN x, x IS NOT NULL, x[0] IS NULL;
 
-EXPLAIN VERBOSE
+EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WHERE x[0] IS NOT NULL RETURN x[0];
 
-EXPLAIN VERBOSE
+EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM (
   MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
   WHERE x[0] IS NOT NULL RETURN x[0]
