@@ -1505,8 +1505,6 @@ _readPlannedStmt(void)
 	READ_LOCATION_FIELD(stmt_location);
 	READ_LOCATION_FIELD(stmt_len);
 
-	READ_BOOL_FIELD(nVlePaths);
-
 	READ_DONE();
 }
 
@@ -1710,7 +1708,6 @@ ReadCommonScan(Scan *local_node)
 	ReadCommonPlan(&local_node->plan);
 
 	READ_UINT_FIELD(scanrelid);
-	READ_INT_FIELD(edgerefid);
 }
 
 /*
@@ -2498,36 +2495,6 @@ _readGraphSetProp(void)
 	READ_DONE();
 }
 
-static EdgeRefProp *
-_readEdgeRefProp(void)
-{
-	READ_LOCALS(EdgeRefProp);
-
-	READ_NODE_FIELD(arg);
-
-	READ_DONE();
-}
-
-static EdgeRefRow *
-_readEdgeRefRow(void)
-{
-	READ_LOCALS(EdgeRefRow);
-
-	READ_NODE_FIELD(arg);
-
-	READ_DONE();
-}
-
-static EdgeRefRows *
-_readEdgeRefRows(void)
-{
-	READ_LOCALS(EdgeRefRows);
-
-	READ_NODE_FIELD(arg);
-
-	READ_DONE();
-}
-
 static CypherListComp *
 _readCypherListComp(void)
 {
@@ -2902,12 +2869,6 @@ parseNodeString(void)
 		return_value = _readGraphEdge();
 	else if (MATCH("GRAPHSETPROP", 12))
 		return_value = _readGraphSetProp();
-	else if (MATCH("EDGEREFPROP", 11))
-		return_value = _readEdgeRefProp();
-	else if (MATCH("EDGEREFROW", 10))
-		return_value = _readEdgeRefRow();
-	else if (MATCH("EDGEREFROWS", 11))
-		return_value = _readEdgeRefRows();
 	else if (MATCH("CYPHERLISTCOMP", 14))
 		return_value = _readCypherListComp();
 	else if (MATCH("CYPHERMAPEXPR", 13))

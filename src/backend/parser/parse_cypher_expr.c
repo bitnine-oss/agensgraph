@@ -95,7 +95,6 @@ transformCypherExpr(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 	pstate->p_expr_kind = exprKind;
 
 	result = transformCypherExprRecurse(pstate, expr);
-	result = wrapEdgeRefTypes(pstate, result);
 
 	pstate->p_expr_kind = sv_expr_kind;
 
@@ -493,17 +492,6 @@ filterAccessArg(ParseState *pstate, Node *expr, int location,
 
 	switch (exprtype)
 	{
-		case EDGEREFOID:
-			{
-				EdgeRefProp *erp;
-
-				erp = makeNode(EdgeRefProp);
-				erp->arg = (Expr *) expr;
-
-				return (Node *) erp;
-			}
-			break;
-
 		case VERTEXOID:
 		case EDGEOID:
 			return ParseFuncOrColumn(pstate,
@@ -974,7 +962,6 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 		Node	   *arg;
 
 		arg = transformCypherExprRecurse(pstate, lfirst(la));
-		arg = wrapEdgeRefTypes(pstate, arg);
 		if (is_num_agg)
 		{
 			Oid			argtype = exprType(arg);
@@ -1034,7 +1021,6 @@ transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c)
 		arg = lfirst(la);
 
 		newarg = transformCypherExprRecurse(pstate, arg);
-		newarg = wrapEdgeRefTypes(pstate, newarg);
 		if (exprType(newarg) == JSONBOID)
 			is_jsonb = true;
 
@@ -1464,8 +1450,6 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname,
 		case EDGEOID:
 		case GRAPHPATHARRAYOID:
 		case GRAPHPATHOID:
-		case EDGEREFARRAYOID:
-		case EDGEREFOID:
 			if (err)
 			{
 				ereport(ERROR,
@@ -1497,7 +1481,6 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 	ParseExprKind sv_expr_kind;
 	Node	   *aelem;
 	List	   *apath;
-	Node	   *origelem;
 	Node	   *elem;
 	Oid			elemtype;
 	char	   *resname = NULL;
@@ -1525,26 +1508,10 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 	}
 
 	/* examine what aelem is */
-	if (IsA(aelem, EdgeRefProp))
-	{
-		origelem = (Node *) ((EdgeRefProp *) aelem)->arg;
-		elem = wrapEdgeRef(origelem);
-	}
-	else if (IsA(aelem, EdgeRefRow))
-	{
-		origelem = (Node *) ((EdgeRefRow *) aelem)->arg;
-		elem = aelem;
-	}
-	else if (IsA(aelem, FieldSelect))
-	{
-		origelem = (Node *) ((FieldSelect *) aelem)->arg;
-		elem = origelem;
-	}
+	if (IsA(aelem, FieldSelect))
+		elem = (Node *) ((FieldSelect *) aelem)->arg;
 	else
-	{
-		origelem = aelem;
-		elem = origelem;
-	}
+		elem = aelem;
 
 	elemtype = exprType(elem);
 	if (elemtype != VERTEXOID && elemtype != EDGEOID)
@@ -1557,9 +1524,9 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 		return NULL;
 	}
 
-	if (IsA(origelem, Var))
+	if (IsA(elem, Var))
 	{
-		Var		   *var = (Var *) origelem;
+		Var		   *var = (Var *) elem;
 
 		if (var->varlevelsup == 0)
 		{
@@ -1638,49 +1605,6 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 	*pathelems = textlist;
 	*varname = resname;
 	return elem;
-}
-
-/*
- * edgeref functions
- */
-
-Node *
-wrapEdgeRef(Node *node)
-{
-	EdgeRefRow *newnode;
-
-	newnode = makeNode(EdgeRefRow);
-	newnode->arg = (Expr *) node;
-
-	return (Node *) newnode;
-}
-
-Node *
-wrapEdgeRefArray(Node *node)
-{
-	EdgeRefRows *newnode;
-
-	newnode = makeNode(EdgeRefRows);
-	newnode->arg = (Expr *) node;
-
-	return (Node *) newnode;
-}
-
-Node *
-wrapEdgeRefTypes(ParseState *pstate, Node *node)
-{
-	if (!pstate->p_convert_edgeref)
-		return node;
-
-	switch (exprType(node))
-	{
-		case EDGEREFOID:
-			return wrapEdgeRef(node);
-		case EDGEREFARRAYOID:
-			return wrapEdgeRefArray(node);
-		default:
-			return node;
-	}
 }
 
 /*
@@ -1871,43 +1795,4 @@ transformA_Star(ParseState *pstate, int location)
 				 parser_errposition(pstate, location)));
 
 	return targets;
-}
-
-void
-wrapEdgeRefTargetList(ParseState *pstate, List *targetList)
-{
-	ListCell   *lt;
-
-	foreach(lt, targetList)
-	{
-		TargetEntry *te = lfirst(lt);
-
-		te->expr = (Expr *) wrapEdgeRefTypes(pstate, (Node *) te->expr);
-	}
-}
-
-void
-unwrapEdgeRefTargetList(List *targetList)
-{
-	ListCell   *lt;
-
-	foreach(lt, targetList)
-	{
-		TargetEntry *te = lfirst(lt);
-
-		if (te->ressortgroupref != 0)
-			continue;
-
-		switch (nodeTag(te->expr))
-		{
-			case T_EdgeRefRow:
-				te->expr = ((EdgeRefRow *) te->expr)->arg;
-				break;
-			case T_EdgeRefRows:
-				te->expr = ((EdgeRefRows *) te->expr)->arg;
-				break;
-			default:
-				break;
-		}
-	}
 }

@@ -217,9 +217,6 @@ typedef enum ExprEvalOp
 	EEOP_SUBPLAN,
 	EEOP_ALTERNATIVE_SUBPLAN,
 
-	EEOP_EDGEREF_PROP,
-	EEOP_EDGEREF_ROW,
-	EEOP_EDGEREF_ROWS,
 	EEOP_CYPHERMAPEXPR,
 	EEOP_CYPHERLISTEXPR,
 	EEOP_CYPHERLISTCOMP_BEGIN,
@@ -581,12 +578,6 @@ typedef struct ExprEvalStep
 
 		struct
 		{
-			Relation   *edgerels;
-			Snapshot	snapshot;
-		}			edgeref;
-
-		struct
-		{
 			char	  **key_cstrings;
 			Datum	   *val_values;
 			bool	   *val_nulls;
@@ -736,9 +727,6 @@ extern void ExecEvalAlternativeSubPlan(ExprState *state, ExprEvalStep *op,
 						   ExprContext *econtext);
 extern void ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op,
 					ExprContext *econtext);
-extern void ExecEvalEdgeRefProp(ExprState *state, ExprEvalStep *op);
-extern void ExecEvalEdgeRefRow(ExprState *state, ExprEvalStep *op);
-extern void ExecEvalEdgeRefRows(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherMapExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherListExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherAccessExpr(ExprState *state, ExprEvalStep *op);

@@ -51,26 +51,6 @@ typedef uint64 Graphid;
 #define GRAPHID_LABID_MAX	PG_UINT16_MAX
 #define GRAPHID_LOCID_MAX	((UINT64CONST(1) << (32 + 16)) - 1)
 
-typedef uint64 EdgeRef;
-
-#define DatumGetEdgeRef(d)		((EdgeRef) DatumGetUInt64(d))
-#define EdgeRefGetDatum(p)		UInt64GetDatum(p)
-#define PG_GETARG_EDGEREF(x)	DatumGetEdgeRef(PG_GETARG_DATUM(x))
-#define PG_RETURN_EDGEREF(x)	return EdgeRefGetDatum(x)
-
-#define EdgeRefGetRelid(_ref)			((uint16) ((_ref) >> 48))
-#define EdgeRefGetBlockNumber(_ref)		((BlockNumber) ((_ref) >> 16))
-#define EdgeRefGetOffsetNumber(_ref)	((OffsetNumber) ((_ref) & 0xffff))
-
-#define EdgeRefSet(_ref, _relid, _ip) \
-	do { \
-		BlockNumber _blkno = ItemPointerGetBlockNumber(_ip); \
-		OffsetNumber _offset = ItemPointerGetOffsetNumber(_ip); \
-		(_ref) = (((uint64) (_relid)) << 48) | \
-				 (((uint64) (_blkno)) << 16) | \
-				 ((uint64) (_offset)); \
-	} while (0)
-
 typedef struct {
 	Oid			tableoid;
 	ItemPointerData tid;

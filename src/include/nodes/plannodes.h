@@ -96,8 +96,6 @@ typedef struct PlannedStmt
 	/* statement location in source string (copied from Query) */
 	int			stmt_location;	/* start location, or -1 if unknown */
 	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
-
-	int			nVlePaths;		/* number of path columns */
 } PlannedStmt;
 
 /* macro for fetching the Plan associated with a SubPlan node */
@@ -330,7 +328,6 @@ typedef struct Scan
 {
 	Plan		plan;
 	Index		scanrelid;		/* relid is index into the range table */
-	int			edgerefid;
 } Scan;
 
 /* ----------------
