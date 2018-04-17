@@ -190,13 +190,14 @@ typedef struct Query
 	struct {
 		GraphWriteOp writeOp;
 		bool		last;		/* is this for the last clause? */
+		List	   *targets;	/* relation Oid's of target labels */
+		uint32		nr_modify;	/* number of clauses that modifies graph
+								   before this */
 		bool		detach;		/* DETACH DELETE */
 		bool		eager;		/* Should it work with eager? */
 		List	   *pattern;	/* graph pattern (list of paths) for CREATE */
-		List	   *targets;	/* relation Oid's of target labels */
 		List	   *exprs;		/* expression list for DELETE */
 		List	   *sets;		/* expression list for SET/REMOVE */
-		Node	   *mergepattern;	/* graph path for MERGE */
 	}			graph;
 } Query;
 

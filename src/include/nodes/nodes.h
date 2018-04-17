@@ -756,7 +756,10 @@ typedef enum JoinType
 
 	/* This is similar to JOIN_LEFT but only for Cypher MERGE clause. */
 	JOIN_CYPHER_MERGE,
-	JOIN_VLE
+	JOIN_VLE,
+
+	/* For Cypher DELETE */
+	JOIN_CYPHER_DELETE,
 
 	/*
 	 * We might need additional join types someday.
@@ -783,6 +786,7 @@ typedef enum JoinType
 	   (1 << JOIN_FULL) | \
 	   (1 << JOIN_RIGHT) | \
 	   (1 << JOIN_CYPHER_MERGE) | \
+	   (1 << JOIN_CYPHER_DELETE) | \
 	   (1 << JOIN_ANTI))) != 0)
 
 /*

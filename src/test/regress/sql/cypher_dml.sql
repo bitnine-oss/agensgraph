@@ -849,6 +849,38 @@ SET a.val = b.val SET b.val = a.val;
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
 MATCH (a) DETACH DELETE (a);
 
+-- enable_multiple_update
+SET enable_multiple_update = false;
+CREATE (:multiple_update {no:1}), (:multiple_update {no:1});
+
+MATCH (a:multiple_update), (b:multiple_update)
+SET a.no = a.no + 1
+RETURN a.no;
+
+MATCH (a:multiple_update)
+RETURN a.no;
+
+MATCH (a:multiple_update)
+SET a.no = 5
+SET a.no = 6
+SET a.no = 7
+SET a.no = 8
+RETURN a.no;
+
+MATCH (a:multiple_update)
+RETURN a.no;
+
+SET enable_multiple_update = true;
+
+MATCH (a:multiple_update), (b:multiple_update)
+SET a.no = a.no + 1
+RETURN a.no;
+
+MATCH (a:multiple_update)
+RETURN a.no;
+
+MATCH (a) DETACH DELETE (a);
+
 -- += operator
 
 CREATE ({age: 10});
@@ -859,6 +891,16 @@ MATCH (a) RETURN properties(a);
 MATCH (a) SET a += NULL;
 MATCH (a) SET a.name += NULL;
 MATCH (a) SET a.name += 'someone';
+
+MATCH (a) DETACH DELETE (a);
+
+-- CREATE ... SET ...
+CREATE p=(a {no:1})-[r1:rel]->(b {no:2})-[r2:rel]->(c {no:3})
+SET a.no = 4, b.no = 5, c.no = 6
+SET r1.name = 'agens', r2.name = 'graph'
+RETURN properties(a), properties(r1), properties(b), properties(r2), properties(c);
+
+MATCH (a)-[r]->(b) RETURN a.no, r.name, b.no;
 
 MATCH (a) DETACH DELETE (a);
 
@@ -975,7 +1017,8 @@ MATCH (a:person)
 MERGE (b:city {name: a.bornin})
   ON CREATE SET b.population = 1
   ON MATCH SET b.population = b.population + 1;
-MATCH (c:city) RETURN properties(c);
+MATCH (c:city)
+RETURN c.name, c.population ORDER BY name;
 
 MATCH (a:person)
 MERGE (a)-[:hometown]->(b:city {name: a.bornin});
@@ -1009,7 +1052,7 @@ CREATE (c)-[:e1 {name: 'cd'}]->(d);
 
 MATCH (a {id: 2})-[]-(b {id: 1})
 MERGE (a)-[r:e1]-(b)
-RETURN r;
+RETURN properties(r);
 
 MATCH (a) DETACH DELETE a;
 

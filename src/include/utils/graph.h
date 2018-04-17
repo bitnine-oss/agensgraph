@@ -15,15 +15,17 @@
 #include "fmgr.h"
 #include "storage/itemptr.h"
 
-#define Natts_vertex			2
+#define Natts_vertex			3
 #define Anum_vertex_id			1
 #define Anum_vertex_properties	2
+#define Anum_vertex_tid			3
 
-#define Natts_edge				4
+#define Natts_edge				5
 #define Anum_edge_id			1
 #define Anum_edge_start			2
 #define Anum_edge_end			3
 #define Anum_edge_properties	4
+#define Anum_edge_tid			5
 
 #define Natts_graphpath			2
 #define Anum_graphpath_vertices	1
@@ -159,16 +161,18 @@ extern Datum vertex_labels(PG_FUNCTION_ARGS);
 /* support functions */
 extern Datum getVertexIdDatum(Datum datum);
 extern Datum getVertexPropDatum(Datum datum);
+extern Datum getVertexTidDatum(Datum datum);
 extern Datum getEdgeIdDatum(Datum datum);
 extern Datum getEdgeStartDatum(Datum datum);
 extern Datum getEdgeEndDatum(Datum datum);
 extern Datum getEdgePropDatum(Datum datum);
+extern Datum getEdgeTidDatum(Datum datum);
 extern void getGraphpathArrays(Datum graphpath, Datum *vertices, Datum *edges);
 extern Datum makeGraphpathDatum(Datum *vertices, int nvertices, Datum *edges,
 								int nedges);
-extern Datum makeGraphVertexDatum(Datum id, Datum prop_map);
+extern Datum makeGraphVertexDatum(Datum id, Datum prop_map, Datum tid);
 extern Datum makeGraphEdgeDatum(Datum id, Datum start, Datum end,
-								Datum prop_map);
+								Datum prop_map, Datum tid);
 
 /* index support - BTree */
 extern Datum btgraphidcmp(PG_FUNCTION_ARGS);
