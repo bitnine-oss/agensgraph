@@ -499,8 +499,15 @@ transformParamRef(ParseState *pstate, ParamRef *pref)
 
 	if (pstate->p_paramref_hook != NULL)
 	{
+		Oid			restype;
+
 		result = (*pstate->p_paramref_hook) (pstate, pref);
-		result = coerce_to_jsonb(pstate, result, "parameter", false);
+		restype = exprType(result);
+		if (restype == UNKNOWNOID)
+			result = coerce_type(pstate, result, restype, JSONBOID, -1,
+								 COERCION_IMPLICIT, COERCE_IMPLICIT_CAST, -1);
+		else
+			result = coerce_to_jsonb(pstate, result, "parameter", false);
 	}
 	else
 	{
@@ -1415,6 +1422,10 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname,
 
 	switch (exprType(expr))
 	{
+		case UNKNOWNOID:
+			elog(ERROR, "coercing UNKNOWNOID to JSONBOID cannot happen");
+			return NULL;
+
 		case GRAPHARRAYIDOID:
 		case GRAPHIDOID:
 		case VERTEXARRAYOID:
