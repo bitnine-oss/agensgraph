@@ -13423,6 +13423,28 @@ c_expr:		columnref								{ $$ = $1; }
 				  g->location = @1;
 				  $$ = (Node *)g;
 			  }
+			| cypher_read_with_parens			%prec UMINUS
+				{
+					SubLink *n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $1;
+					n->location = @1;
+					$$ = (Node *)n;
+				}
+			| EXISTS cypher_read_with_parens
+				{
+					SubLink *n = makeNode(SubLink);
+					n->subLinkType = EXISTS_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $2;
+					n->location = @1;
+					$$ = (Node *)n;
+				}
 		;
 
 func_application: func_name '(' ')'

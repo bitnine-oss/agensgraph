@@ -7,7 +7,11 @@
 
 DROP FUNCTION IF EXISTS udf_var(jsonb);
 DROP FUNCTION IF EXISTS udf_param(jsonb);
+DROP FUNCTION IF EXISTS udf_if();
+DROP FUNCTION IF EXISTS udf_if_exists();
+DROP FUNCTION IF EXISTS udf_if_not_exists();
 DROP GRAPH IF EXISTS udf CASCADE;
+DROP GRAPH IF EXISTS udf2 CASCADE;
 
 CREATE GRAPH udf;
 SET graph_path = udf;
@@ -44,9 +48,60 @@ $$ LANGUAGE plpgsql;
 
 RETURN udf_var(2);
 
+-- test if
+
+CREATE GRAPH udf2;
+SET GRAPH_PATH = udf2;
+
+CREATE (:people{name:'Anders'}) , (:people{name:'Bossman'});
+
+MATCH (a) , (b)
+WHERE (a.name = 'Anders' AND b.name = 'Bossman')
+CREATE (a)-[e:knows{type:'knows'}]->(b);
+
+CREATE OR REPLACE FUNCTION udf_if() RETURNS boolean AS $$
+BEGIN
+IF ( MATCH (a)-[b]->(c) WHERE a.name = 'Anders' AND c.name = 'Bossman' RETURN b.type ) THEN
+RETURN true;
+ELSE
+RETURN false;
+END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT udf_if();
+
+CREATE OR REPLACE FUNCTION udf_if_exists() RETURNS boolean AS $$
+BEGIN
+IF EXISTS ( MATCH (a)-[b]->(c) WHERE a.name = 'Anders' AND c.name = 'Bossman' RETURN b ) THEN
+RETURN true;
+ELSE
+RETURN false;
+END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT udf_if_exists();
+
+CREATE OR REPLACE FUNCTION udf_if_not_exists() RETURNS boolean AS $$
+BEGIN
+IF NOT EXISTS ( MATCH (a)-[b]->(c) WHERE a.name = 'Anders' AND c.name = 'Bossman' RETURN b ) THEN
+RETURN true;
+ELSE
+RETURN false;
+END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT udf_if_not_exists();
+
 
 -- teardown
 
 DROP FUNCTION udf_var(jsonb);
 DROP FUNCTION udf_param(jsonb);
+DROP FUNCTION udf_if();
+DROP FUNCTION udf_if_exists();
+DROP FUNCTION udf_if_not_exists();
 DROP GRAPH udf CASCADE;
+DROP GRAPH udf2 CASCADE;
