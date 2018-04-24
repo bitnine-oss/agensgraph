@@ -571,12 +571,6 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	 */
 	if (detail->optional)
 	{
-		/*
-		 * NOTE: Should we return a single row with NULL values
-		 *       if OPTIONAL MATCH is the first clause and
-		 *       there is no result that matches the pattern?
-		 */
-
 		rte = transformMatchOptional(pstate, clause);
 
 		qry->targetList = makeTargetListFromJoin(pstate, rte);
@@ -585,19 +579,19 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	{
 		if (clause->prev != NULL)
 		{
-			/* Cypher match clauses cannot follow optional match clauses */
+			/* MATCH clause cannot follow OPTIONAL MATCH clause */
 			if (cypherClauseTag(clause->prev) == T_CypherMatchClause)
 			{
 				CypherClause *prev;
-				CypherMatchClause *detail;
+				CypherMatchClause *prev_detail;
+
 				prev = (CypherClause *) clause->prev;
-				detail = (CypherMatchClause *) prev->detail;
-				if (detail->optional)
-				{
-					ereport(ERROR,             (errcode(ERRCODE_SYNTAX_ERROR),
-		  errmsg("Cypher match clauses cannot follow optional match clauses"),
-						   errhint("Perhaps use a WITH clause between them.")));
-				}
+				prev_detail = (CypherMatchClause *) prev->detail;
+				if (prev_detail->optional)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("MATCH right after OPTIONAL MATCH is not allowed"),
+							 errhint("Use a WITH clause between them")));
 			}
 		}
 
@@ -978,8 +972,32 @@ transformMatchOptional(ParseState *pstate, CypherClause *clause)
 	Node	   *qual;
 	Alias	   *alias;
 
-	/* transform LEFT */
-	l_rte = transformClause(pstate, clause->prev);
+	if (clause->prev == NULL)
+	{
+		Query	   *qry;
+		Alias	   *l_alias;
+
+		/*
+		 * To return NULL if OPTIONAL MATCH is the first clause and there is
+		 * no result that matches the pattern.
+		 */
+
+		qry = makeNode(Query);
+		qry->commandType = CMD_SELECT;
+		qry->rtable = NIL;
+		qry->jointree = makeFromExpr(NIL, NULL);
+
+		l_alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
+		l_rte = addRangeTableEntryForSubquery(pstate, qry, l_alias,
+											  pstate->p_lateral_active, true);
+
+		RTERangeTablePosn(pstate, l_rte, NULL);
+		addRTEtoJoinlist(pstate, l_rte, true);
+	}
+	else
+	{
+		l_rte = transformClause(pstate, clause->prev);
+	}
 
 	/*
 	 * Transform RIGHT. Prevent `clause` from being transformed infinitely.
@@ -5444,10 +5462,7 @@ transformClauseImpl(ParseState *pstate, Node *clause,
 	RangeTblEntry *rte;
 	int			rtindex;
 
-	if (clause != NULL)
-	{
-		AssertArg(IsA(clause, CypherClause));
-	}
+	AssertArg(IsA(clause, CypherClause));
 
 	Assert(pstate->p_expr_kind == EXPR_KIND_NONE);
 	pstate->p_expr_kind = EXPR_KIND_FROM_SUBSELECT;
@@ -5457,19 +5472,7 @@ transformClauseImpl(ParseState *pstate, Node *clause,
 	childParseState->p_is_fp_processed = pstate->p_is_fp_processed;
 	childParseState->p_is_optional_match = pstate->p_is_optional_match;
 
-	if (clause != NULL)
-	{
-		qry = transform(childParseState, clause);
-	}
-	else
-	{
-		/* Transform dummy for first optional match */
-		qry = makeNode(Query);
-		qry->commandType = CMD_SELECT;
-		qry->rtable = childParseState->p_rtable;
-		qry->jointree = makeFromExpr(childParseState->p_joinlist, NULL);
-		assign_query_collations(childParseState, qry);
-	}
+	qry = transform(childParseState, clause);
 
 	pstate->p_elem_quals = childParseState->p_elem_quals;
 	future_vertices = childParseState->p_future_vertices;

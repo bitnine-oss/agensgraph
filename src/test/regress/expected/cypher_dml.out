@@ -775,31 +775,28 @@ ORDER BY n, p, m, q;
  "someone"  |         |          | "somebody" |         | 
 (12 rows)
 
-OPTIONAL MATCH (n:person{name: 'unknown'})
-RETURN N;
- n 
----
+OPTIONAL MATCH (n:person {name: 'unknown'})
+RETURN n.name;
+ name 
+------
  
 (1 row)
 
-OPTIONAL MATCH (n:person{name: 'unknown'}) MATCH (m:person{name: 'someone'})
-RETURN n, m
-ORDER BY n, m;
-ERROR:  Cypher match clauses cannot follow optional match clauses
-HINT:  Perhaps use a WITH clause between them.
-OPTIONAL MATCH (n:person{name: 'unknown'}) WITH n MATCH (m:person{name: 'someone'})
-RETURN n, m
-ORDER BY n, m;
- n |               m                
----+--------------------------------
-   | person[3.1]{"name": "someone"}
+OPTIONAL MATCH (n:person {name: 'unknown'}) MATCH (m:person {name: 'someone'})
+RETURN n, m.name;
+ERROR:  MATCH right after OPTIONAL MATCH is not allowed
+HINT:  Use a WITH clause between them
+OPTIONAL MATCH (n:person {name: 'unknown'}) WITH n MATCH (m:person {name: 'someone'})
+RETURN n, m.name;
+ n |   name    
+---+-----------
+   | "someone"
 (1 row)
 
-OPTIONAL MATCH (n:person{name: 'unknown'}) WITH n MATCH (m:person{name: 'unknown'})
-RETURN n, m
-ORDER BY n, m;
- n | m 
----+---
+OPTIONAL MATCH (n:person {name: 'unknown'}) WITH n MATCH (m:person {name: 'unknown'})
+RETURN n, m.name;
+ n | name 
+---+------
 (0 rows)
 
 -- Variable Length Relationship
