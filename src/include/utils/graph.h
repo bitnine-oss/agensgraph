@@ -77,11 +77,6 @@ extern Datum graphid_gt(PG_FUNCTION_ARGS);
 extern Datum graphid_le(PG_FUNCTION_ARGS);
 extern Datum graphid_ge(PG_FUNCTION_ARGS);
 
-/* edgeref */
-extern Datum edgeref(PG_FUNCTION_ARGS);
-extern Datum edgeref_in(PG_FUNCTION_ARGS);
-extern Datum edgeref_out(PG_FUNCTION_ARGS);
-
 /* rowid */
 extern Datum rowid(PG_FUNCTION_ARGS);
 extern Datum rowid_in(PG_FUNCTION_ARGS);
