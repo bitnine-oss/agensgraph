@@ -596,6 +596,17 @@ SELECT labname, labkind FROM pg_catalog.ag_label;
  vdi       | v
 (6 rows)
 
+-- drop label non-empty
+CREATE (a:test_v1)-[:test_e1]->(b:test_v2), (a)<-[:test_e2]-(b);
+DROP ELABEL test_e1;
+ERROR:  cannot drop test_e1 because it is not empty.
+DROP ELABEL test_e2 CASCADE;
+DROP VLABEL test_v1;
+ERROR:  cannot drop test_v1 because it is not empty.
+DROP VLABEL test_v2 CASCADE;
+MATCH (a:test_v1) DELETE (a);
+DROP VLABEL test_v1;
+DROP ELABEL test_e1;
 --
 -- CONSTRAINT
 --
@@ -626,7 +637,7 @@ CREATE (:regv1 {a: 'b'});
 ERROR:  map or list is expected but scalar value
 CREATE (:regv1 {a: 'agens-graph'});
 ERROR:  map or list is expected but scalar value
-DROP VLABEL regv1;
+DROP VLABEL regv1 CASCADE;
 -- expr unique constraint
 CREATE ELABEL rege1;
 CREATE CONSTRAINT ON rege1 ASSERT c + d IS UNIQUE;
@@ -649,7 +660,7 @@ ERROR:  conflicting key value violates exclusion constraint "rege1_unique_constr
 CREATE ()-[:rege1 {c: 'agens', d: 'rdb'}]->();
 CREATE ()-[:rege1 {c: 'agen', d: 'sgraph'}]->();
 ERROR:  conflicting key value violates exclusion constraint "rege1_unique_constraint"
-DROP ELABEL rege1;
+DROP ELABEL rege1 CASCADE;
 -- simple not null constraint
 CREATE VLABEL regv2;
 CREATE CONSTRAINT ON regv2 ASSERT name IS NOT NULL;
@@ -672,7 +683,7 @@ ERROR:  new row for relation "regv2" violates check constraint "regv2_properties
 CREATE (:regv2 {age: 0, name: 'graph'});
 CREATE (:regv2 {name: NULL});
 ERROR:  new row for relation "regv2" violates check constraint "regv2_properties_check"
-DROP VLABEL regv2;
+DROP VLABEL regv2 CASCADE;
 -- multi not null constraint
 CREATE VLABEL regv3;
 CREATE CONSTRAINT ON regv3 ASSERT name.first IS NOT NULL AND name.last IS NOT NULL;
@@ -698,7 +709,7 @@ CREATE (:regv3 {name: {last: 'graph'}});
 ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
 CREATE (:regv3 {name: {first: NULL, last: NULL}});
 ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
-DROP VLABEL regv3;
+DROP VLABEL regv3 CASCADE;
 -- simple check constraint
 CREATE ELABEL rege2;
 CREATE CONSTRAINT ON rege2 ASSERT a != b;
@@ -720,7 +731,7 @@ CREATE ()-[:rege2 {a: 'agens', b: 'agens'}]->();
 ERROR:  new row for relation "rege2" violates check constraint "rege2_properties_check"
 CREATE ()-[:rege2 {a: 'agens', b: 'AGENS'}]->();
 CREATE ()-[:rege2 {a: 'agens', d: 'graph'}]->();
-DROP ELABEL rege2;
+DROP ELABEL rege2 CASCADE;
 -- expression check constraint
 CREATE VLABEL regv4;
 CREATE CONSTRAINT ON regv4 ASSERT (length(password) > 8 AND length(password) < 16);
@@ -743,7 +754,7 @@ CREATE (:regv4 {password: '123456789'});
 CREATE (:regv4 {password: '123456789012345'});
 CREATE (:regv4 {password: '1234567890123456'});
 ERROR:  new row for relation "regv4" violates check constraint "regv4_properties_check"
-DROP VLABEL regv4;
+DROP VLABEL regv4 CASCADE;
 -- IN check constraint
 CREATE ELABEL rege3;
 CREATE CONSTRAINT ON rege3 ASSERT type IN ['friend', 'lover', 'parent'];
@@ -766,7 +777,7 @@ ERROR:  new row for relation "rege3" violates check constraint "rege3_properties
 CREATE ()-[:rege3 {type: 'parents', name: 'AGENS'}]->();
 ERROR:  new row for relation "rege3" violates check constraint "rege3_properties_check"
 CREATE ()-[:rege3 {type: 'lover', name: 'GRAPH'}]->();
-DROP ELABEL rege3;
+DROP ELABEL rege3 CASCADE;
 -- case check constraint
 CREATE VLABEL regv5;
 CREATE CONSTRAINT ON regv5 ASSERT toLower(trim(id)) IS UNIQUE;
@@ -795,7 +806,7 @@ ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constr
 CREATE (:regv5 {id: 'GRAPH'});
 CREATE (:regv5 {id: ' graph '});
 ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
-DROP VLABEL regv5;
+DROP VLABEL regv5 CASCADE;
 -- IS NULL constraint
 CREATE ELABEL rege4;
 CREATE CONSTRAINT rege4_name_isnull_constraint ON rege4 ASSERT id IS NULL;
@@ -821,7 +832,7 @@ ERROR:  constraint "rege4_name_isnull_constraint" of relation "ag_edge" does not
 DROP CONSTRAINT ON rege4;
 ERROR:  syntax error at or near "ON" at character 17
 DROP CONSTRAINT rege4_name_isnull_constraint ON rege4;
-DROP ELABEL rege4;
+DROP ELABEL rege4 CASCADE;
 -- Indirection constraint
 CREATE VLABEL regv7;
 CREATE CONSTRAINT ON regv7 ASSERT a.b[0].c IS NOT NULL;
@@ -842,7 +853,7 @@ CREATE (:regv7 {a: {b: [{c: 'd'}, {c: 'e'}]}});
 CREATE (:regv7 {a: {b: [{c: 'd'}, {e: 'e'}]}});
 CREATE (:regv7 {a: {b: [{d: 'd'}, {e: 'e'}]}});
 ERROR:  new row for relation "regv7" violates check constraint "regv7_properties_check"
-DROP VLABEL regv7;
+DROP VLABEL regv7 CASCADE;
 -- wrong case
 CREATE VLABEL regv8;
 CREATE CONSTRAINT ON regv8 ASSERT (SELECT * FROM graph.regv8).c IS NOT NULL;
@@ -851,7 +862,7 @@ CREATE CONSTRAINT ON regv8 ASSERT (1).c IS NOT NULL;
 ERROR:  map or list is expected but scalar value
 CREATE CONSTRAINT ON regv8 ASSERT ($1).c IS NOT NULL;
 ERROR:  there is no parameter $1
-DROP VLABEL regv8;
+DROP VLABEL regv8 CASCADE;
 --
 -- DROP GRAPH
 --
