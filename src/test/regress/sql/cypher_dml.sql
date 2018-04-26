@@ -373,8 +373,6 @@ MATCH (a:person {id: 3}), (b:person {id: 1}) CREATE (a)-[:knows]->(b);
 
 MATCH (a:person {id: 1})-[x:knows*1..]->(b:person) RETURN a.id, b.id, x;
 
--- edgeref
-
 -- 1->2->3->4
 -- `->5
 MATCH (a:person {id: 3})-[k:knows]->(b:person {id: 1}) DELETE k;
