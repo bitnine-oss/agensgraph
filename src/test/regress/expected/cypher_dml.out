@@ -1139,7 +1139,6 @@ MATCH (a:person {id: 1})-[x:knows*1..]->(b:person) RETURN a.id, b.id, x;
  1  | 5  | [knows[6.4][5.1,5.5]{}]
 (6 rows)
 
--- edgeref
 -- 1->2->3->4
 -- `->5
 MATCH (a:person {id: 3})-[k:knows]->(b:person {id: 1}) DELETE k;
