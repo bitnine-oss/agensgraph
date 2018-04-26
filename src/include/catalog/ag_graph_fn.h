@@ -13,7 +13,7 @@
 #include "nodes/parsenodes.h"
 
 extern char *graph_path;
-extern bool DisableGraphDML;
+extern bool enableGraphDML;
 
 extern char *get_graph_path(bool lookup_cache);
 extern Oid get_graph_path_oid(void);

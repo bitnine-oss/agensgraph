@@ -655,10 +655,12 @@ deleteRelatedEdges(RangeVar *vlab)
 		if (ret != SPI_OK_CONNECT)
 			elog(ERROR, "deleteRelatedEdges: SPI_connect returned %d", ret);
 
+		enableGraphDML = true;
 		ret = SPI_execute(sql.data, false, 0);
 		if (ret != SPI_OK_DELETE)
 			elog(ERROR, "deleteRelatedEdges: SPI_execute returned %d: %s",
 				 ret, sql.data);
+		enableGraphDML = false;
 
 		ret = SPI_finish();
 		if (ret != SPI_OK_FINISH)
