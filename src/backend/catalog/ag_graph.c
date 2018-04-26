@@ -29,6 +29,7 @@
 
 /* a global variable for the GUC variable */
 char *graph_path = NULL;
+bool enableGraphDML = false;
 
 /* check_hook: validate new graph_path value */
 bool
