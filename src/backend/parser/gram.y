@@ -16227,6 +16227,30 @@ cypher_i_expr:
 						$$ = (Node *) n;
 					}
 				}
+			| cypher_i_expr STARTS WITH cypher_expr			%prec STARTS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_starts_with"),
+										list_make2($1, $4), @2);
+				}
+			| cypher_i_expr ENDS WITH cypher_expr			%prec ENDS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_ends_with"),
+										list_make2($1, $4), @2);
+				}
+			| cypher_i_expr CONTAINS cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_contains"),
+										list_make2($1, $3), @2);
+				}
+			| cypher_i_expr EQUALS_TILDE cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_regex"),
+										list_make2($1, $3), @2);
+				}
 			| cypher_i_expr IS NULL_P						%prec IS
 				{
 					NullTest   *n;
