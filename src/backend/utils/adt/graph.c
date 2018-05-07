@@ -64,9 +64,12 @@ static int graphid_cmp(FunctionCallInfo fcinfo);
 static Jsonb *int_to_jsonb(int i);
 static LabelOutData *cache_label(FmgrInfo *flinfo, uint16 labid);
 static void elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo);
+static void appendStringInfoDatumOut(StringInfo si, Datum d, bool isnull,
+									 FmgrInfo *out);
 static void get_elem_type_output(ArrayMetaState *state, Oid elem_type,
 								 MemoryContext mctx);
-static Datum array_iter_next_(array_iter *it, int idx, ArrayMetaState *state);
+static Datum array_iter_next_(array_iter *it, bool *isnull, int idx,
+							  ArrayMetaState *state);
 static void deform_tuple(HeapTupleHeader tuphdr, Datum *values, bool *isnull);
 static Datum tuple_getattr(HeapTupleHeader tuphdr, int attnum);
 static Datum getEdgeVertex(HeapTupleHeader edge, EdgeVertexKind evk);
@@ -757,7 +760,6 @@ elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo)
 	ArrayMetaState *my_extra;
 	int			nelems;
 	array_iter	it;
-	Datum		value;
 	int			i;
 
 	my_extra = (ArrayMetaState *) flinfo->fn_extra;
@@ -773,19 +775,27 @@ elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo)
 
 	appendStringInfoChar(si, '[');
 	array_iter_setup(&it, elems);
-	if (nelems > 0)
+	for (i = 0; i < nelems; i++)
 	{
-		value = array_iter_next_(&it, 0, my_extra);
-		appendStringInfoString(si, OutputFunctionCall(&my_extra->proc, value));
-	}
-	for (i = 1; i < nelems; i++)
-	{
-		appendStringInfoChar(si, delim);
+		bool		isnull;
+		Datum		value;
 
-		value = array_iter_next_(&it, i, my_extra);
-		appendStringInfoString(si, OutputFunctionCall(&my_extra->proc, value));
+		if (i > 0)
+			appendStringInfoChar(si, delim);
+
+		value = array_iter_next_(&it, &isnull, i, my_extra);
+		appendStringInfoDatumOut(si, value, isnull, &my_extra->proc);
 	}
 	appendStringInfoChar(si, ']');
+}
+
+static void
+appendStringInfoDatumOut(StringInfo si, Datum d, bool isnull, FmgrInfo *out)
+{
+	if (isnull)
+		appendBinaryStringInfo(si, "NULL", 4);
+	else
+		appendStringInfoString(si, OutputFunctionCall(out, d));
 }
 
 Datum
@@ -802,6 +812,7 @@ graphpath_out(PG_FUNCTION_ARGS)
 	StringInfoData si;
 	array_iter	it_v;
 	array_iter	it_e;
+	bool		isnull;
 	Datum		value;
 	int			i;
 
@@ -836,24 +847,21 @@ graphpath_out(PG_FUNCTION_ARGS)
 	array_iter_setup(&it_v, vertices);
 	array_iter_setup(&it_e, edges);
 
-	value = array_iter_next_(&it_v, 0, &my_extra->vertex);
-	appendStringInfoString(&si,
-			OutputFunctionCall(&my_extra->vertex.proc, value));
-
 	for (i = 0; i < nedges; i++)
 	{
-		appendStringInfoChar(&si, delim);
-
-		value = array_iter_next_(&it_e, i, &my_extra->edge);
-		appendStringInfoString(&si,
-				OutputFunctionCall(&my_extra->edge.proc, value));
+		value = array_iter_next_(&it_v, &isnull, i, &my_extra->vertex);
+		appendStringInfoDatumOut(&si, value, isnull, &my_extra->vertex.proc);
 
 		appendStringInfoChar(&si, delim);
 
-		value = array_iter_next_(&it_v, i + 1, &my_extra->vertex);
-		appendStringInfoString(&si,
-				OutputFunctionCall(&my_extra->vertex.proc, value));
+		value = array_iter_next_(&it_e, &isnull, i, &my_extra->edge);
+		appendStringInfoDatumOut(&si, value, isnull, &my_extra->edge.proc);
+
+		appendStringInfoChar(&si, delim);
 	}
+
+	value = array_iter_next_(&it_v, &isnull, i, &my_extra->vertex);
+	appendStringInfoDatumOut(&si, value, isnull, &my_extra->vertex.proc);
 
 	appendStringInfoChar(&si, ']');
 
@@ -870,16 +878,10 @@ get_elem_type_output(ArrayMetaState *state, Oid elem_type, MemoryContext mctx)
 }
 
 static Datum
-array_iter_next_(array_iter *it, int idx, ArrayMetaState *state)
+array_iter_next_(array_iter *it, bool *isnull, int idx, ArrayMetaState *state)
 {
-	bool		isnull;
-	Datum		value;
-
-	value = array_iter_next(it, &isnull, idx,
-							state->typlen, state->typbyval, state->typalign);
-	Assert(!isnull);
-
-	return value;
+	return array_iter_next(it, isnull, idx,
+						   state->typlen, state->typbyval, state->typalign);
 }
 
 Datum

@@ -26,6 +26,14 @@ RETURN (SELECT event FROM history WHERE year = 2016);
 SELECT * FROM (RETURN 3 + 4, 'hello' + ' agens') AS _(lucky, greeting);
 
 --
+-- _vertex, _edge, and graphpath with NULL values
+--
+
+SELECT ARRAY[NULL, NULL, NULL]::_vertex;
+SELECT ARRAY[NULL, NULL]::_edge;
+SELECT (ARRAY[NULL, NULL, NULL]::_vertex, ARRAY[NULL, NULL]::_edge)::graphpath;
+
+--
 -- CREATE
 --
 CREATE VLABEL repo;
