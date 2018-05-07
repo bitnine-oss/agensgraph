@@ -1132,6 +1132,7 @@ RETURN 'abc' STARTS WITH '';
 RETURN 'abc' STARTS WITH 'bc';
 RETURN 'abc' STARTS WITH 'abcd';
 RETURN 'abc' STARTS WITH 1;
+RETURN ['abc' STARTS WITH 'a'];
 
 -- ends with
 
@@ -1140,6 +1141,7 @@ RETURN 'abc' ENDS WITH '';
 RETURN 'abc' ENDS WITH 'ab';
 RETURN 'abc' ENDS WITH 'abcd';
 RETURN 'abc' ENDS WITH 1;
+RETURN ['abc' ENDS WITH 'c'];
 
 -- contains
 
@@ -1147,6 +1149,7 @@ RETURN 'abc' CONTAINS 'b';
 RETURN 'abc' CONTAINS '';
 RETURN 'abc' CONTAINS 'abcd';
 RETURN 'abc' CONTAINS 1;
+RETURN ['abc' CONTAINS 'b'];
 
 -- =~
 
@@ -1157,6 +1160,7 @@ RETURN 'abc' =~ 'abcd';
 RETURN 'abc' =~ '(?i)A';
 RETURN 'abc' =~ 'a(b{1})c';
 RETURN 'abc' =~ 1;
+RETURN ['abc' =~ 'abc'];
 
 --
 -- graphid comparison

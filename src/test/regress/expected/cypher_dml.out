@@ -2901,6 +2901,12 @@ RETURN 'abc' STARTS WITH 'abcd';
 
 RETURN 'abc' STARTS WITH 1;
 ERROR:  STARTS WITH: two string values expected but "abc", 1
+RETURN ['abc' STARTS WITH 'a'];
+ ?column? 
+----------
+ [true]
+(1 row)
+
 -- ends with
 RETURN 'abc' ENDS WITH 'c';
  string_ends_with 
@@ -2928,6 +2934,12 @@ RETURN 'abc' ENDS WITH 'abcd';
 
 RETURN 'abc' ENDS WITH 1;
 ERROR:  ENDS WITH: two string values expected but "abc", 1
+RETURN ['abc' ENDS WITH 'c'];
+ ?column? 
+----------
+ [true]
+(1 row)
+
 -- contains
 RETURN 'abc' CONTAINS 'b';
  string_contains 
@@ -2949,6 +2961,12 @@ RETURN 'abc' CONTAINS 'abcd';
 
 RETURN 'abc' CONTAINS 1;
 ERROR:  CONTAINS: two string values expected but "abc", 1
+RETURN ['abc' CONTAINS 'b'];
+ ?column? 
+----------
+ [true]
+(1 row)
+
 -- =~
 RETURN 'abc' =~ 'abc';
  string_regex 
@@ -2988,6 +3006,12 @@ RETURN 'abc' =~ 'a(b{1})c';
 
 RETURN 'abc' =~ 1;
 ERROR:  Regular Expression Pattern: two string values expected but "abc", 1
+RETURN ['abc' =~ 'abc'];
+ ?column? 
+----------
+ [true]
+(1 row)
+
 --
 -- graphid comparison
 --
