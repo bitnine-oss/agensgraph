@@ -38,6 +38,27 @@ SELECT * FROM (RETURN 3 + 4, 'hello' + ' agens') AS _(lucky, greeting);
 (1 row)
 
 --
+-- zero-length _vertex, _edge, and graphpath
+--
+SELECT ARRAY[]::_vertex;
+ array 
+-------
+ []
+(1 row)
+
+SELECT ARRAY[]::_edge;
+ array 
+-------
+ []
+(1 row)
+
+SELECT (ARRAY[]::_vertex, ARRAY[]::_edge)::graphpath;
+ row 
+-----
+ []
+(1 row)
+
+--
 -- _vertex, _edge, and graphpath with NULL values
 --
 SELECT ARRAY[NULL, NULL, NULL]::_vertex;

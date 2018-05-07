@@ -26,6 +26,14 @@ RETURN (SELECT event FROM history WHERE year = 2016);
 SELECT * FROM (RETURN 3 + 4, 'hello' + ' agens') AS _(lucky, greeting);
 
 --
+-- zero-length _vertex, _edge, and graphpath
+--
+
+SELECT ARRAY[]::_vertex;
+SELECT ARRAY[]::_edge;
+SELECT (ARRAY[]::_vertex, ARRAY[]::_edge)::graphpath;
+
+--
 -- _vertex, _edge, and graphpath with NULL values
 --
 

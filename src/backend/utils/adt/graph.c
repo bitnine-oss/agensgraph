@@ -772,6 +772,11 @@ elems_out_si(StringInfo si, AnyArrayType *elems, FmgrInfo *flinfo)
 	}
 
 	nelems = ArrayGetNItems(AARR_NDIM(elems), AARR_DIMS(elems));
+	if (nelems < 1)
+	{
+		appendBinaryStringInfo(si, "[]", 2);
+		return;
+	}
 
 	appendStringInfoChar(si, '[');
 	array_iter_setup(&it, elems);
@@ -806,9 +811,9 @@ graphpath_out(PG_FUNCTION_ARGS)
 	Datum		edges_datum;
 	AnyArrayType *vertices;
 	AnyArrayType *edges;
-	GraphpathOutData *my_extra;
 	int			nvertices;
 	int			nedges;
+	GraphpathOutData *my_extra;
 	StringInfoData si;
 	array_iter	it_v;
 	array_iter	it_e;
@@ -820,6 +825,16 @@ graphpath_out(PG_FUNCTION_ARGS)
 
 	vertices = DatumGetAnyArray(vertices_datum);
 	edges = DatumGetAnyArray(edges_datum);
+
+	nvertices = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices));
+	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
+	if (nvertices < 1)
+		PG_RETURN_CSTRING("[]");
+
+	if (nvertices != nedges + 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("the numbers of vertices and edges are mismatched")));
 
 	/* cache vertex/edge output information */
 	my_extra = (GraphpathOutData *) fcinfo->flinfo->fn_extra;
@@ -833,13 +848,6 @@ graphpath_out(PG_FUNCTION_ARGS)
 		get_elem_type_output(&my_extra->edge, AARR_ELEMTYPE(edges),
 							 fcinfo->flinfo->fn_mcxt);
 	}
-
-	nvertices = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices));
-	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
-	if (nvertices != nedges + 1)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("the numbers of vertices and edges are mismatched")));
 
 	initStringInfo(&si);
 	appendStringInfoChar(&si, '[');
