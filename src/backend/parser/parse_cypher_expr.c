@@ -675,8 +675,7 @@ stringToJsonb(ParseState *pstate, char *s, int location)
 
 	setup_parser_errposition_callback(&pcbstate, pstate, location);
 
-	j = DirectFunctionCall3(jsonb_in, CStringGetDatum(si.data),
-							ObjectIdGetDatum(InvalidOid), Int32GetDatum(-1));
+	j = DirectFunctionCall1(jsonb_in, CStringGetDatum(si.data));
 
 	cancel_parser_errposition_callback(&pcbstate);
 
