@@ -1453,7 +1453,7 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname,
 			elog(ERROR, "coercing UNKNOWNOID to JSONBOID cannot happen");
 			return NULL;
 
-		case GRAPHARRAYIDOID:
+		case GRAPHIDARRAYOID:
 		case GRAPHIDOID:
 		case VERTEXARRAYOID:
 		case VERTEXOID:
