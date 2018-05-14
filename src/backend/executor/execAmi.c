@@ -31,6 +31,7 @@
 #include "executor/nodeGroup.h"
 #include "executor/nodeGroup.h"
 #include "executor/nodeHash.h"
+#include "executor/nodeHash2Side.h"
 #include "executor/nodeHashjoin.h"
 #include "executor/nodeIndexonlyscan.h"
 #include "executor/nodeIndexscan.h"
@@ -49,6 +50,7 @@
 #include "executor/nodeSamplescan.h"
 #include "executor/nodeSeqscan.h"
 #include "executor/nodeSetOp.h"
+#include "executor/nodeShortestpath.h"
 #include "executor/nodeSort.h"
 #include "executor/nodeSubplan.h"
 #include "executor/nodeSubqueryscan.h"
@@ -289,6 +291,14 @@ ExecReScan(PlanState *node)
 
 		case T_LimitState:
 			ExecReScanLimit((LimitState *) node);
+			break;
+
+		case T_ShortestpathState:
+			ExecReScanShortestpath((ShortestpathState *) node);
+			break;
+
+		case T_Hash2SideState:
+			ExecReScanHash2Side((Hash2SideState *) node);
 			break;
 
 		case T_DijkstraState:

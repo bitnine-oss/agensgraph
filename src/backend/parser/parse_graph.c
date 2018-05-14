@@ -1150,18 +1150,14 @@ appendFindPathsResult(ParseState *pstate, List *fplist, List **targetList)
 	foreach(le, fplist)
 	{
 		CypherPath *p = lfirst(le);
+		CypherRel  *crel;
 		char	   *pathname;
+		char	   *edgename;
 		char	   *weightvar;
 		Query	   *fp;
 		Alias	   *alias;
 		RangeTblEntry *rte;
 		TargetEntry *te;
-
-		pathname = getCypherName(p->variable);
-		if (pathname == NULL)
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("a variable name of path must be provided")));
 
 		if (p->kind == CPATH_DIJKSTRA)
 			fp = transformDijkstraInMatch(pstate, p);
@@ -1172,20 +1168,40 @@ appendFindPathsResult(ParseState *pstate, List *fplist, List **targetList)
 		rte = addRangeTableEntryForSubquery(pstate, fp, alias, true, true);
 		addRTEtoJoinlist(pstate, rte, true);
 
-		te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, pathname),
-							 (AttrNumber) pstate->p_next_resno++,
-							 pathname,
-							 false);
-		*targetList = lappend(*targetList, te);
-
-		weightvar = getCypherName(p->weight_var);
-		if (weightvar != NULL)
+		pathname = getCypherName(p->variable);
+		if (pathname != NULL)
 		{
-			te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, weightvar),
+			te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, pathname),
 								 (AttrNumber) pstate->p_next_resno++,
-								 weightvar,
+								 pathname,
 								 false);
 			*targetList = lappend(*targetList, te);
+		}
+
+		if (p->kind == CPATH_DIJKSTRA)
+		{
+			weightvar = getCypherName(p->weight_var);
+			if (weightvar != NULL)
+			{
+				te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, weightvar),
+									 (AttrNumber) pstate->p_next_resno++,
+									 weightvar,
+									 false);
+				*targetList = lappend(*targetList, te);
+			}
+		}
+		else
+		{
+			crel = lsecond(p->chain);
+			if (crel->variable != NULL)
+			{
+				edgename = getCypherName(crel->variable);
+				te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, edgename),
+									 (AttrNumber) pstate->p_next_resno++,
+									 edgename,
+									 false);
+				*targetList = lappend(*targetList, te);
+			}
 		}
 	}
 }

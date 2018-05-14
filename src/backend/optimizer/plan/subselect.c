@@ -2787,7 +2787,7 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 		case T_Unique:
 		case T_SetOp:
 		case T_Group:
-		case T_Eager:
+		case T_Hash2Side:
 			/* no node-type-specific fields need fixing */
 			break;
 
@@ -2843,6 +2843,11 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 													  valid_params,
 													  scan_params));
 			}
+			break;
+
+		case T_Shortestpath:
+			finalize_primnode(((Shortestpath *) plan)->source, &context);
+			finalize_primnode(((Shortestpath *) plan)->target, &context);
 			break;
 
 		case T_Dijkstra:

@@ -267,6 +267,16 @@ extern Path *reparameterize_path(PlannerInfo *root, Path *path,
 extern Path *reparameterize_path_by_child(PlannerInfo *root, Path *path,
 							 RelOptInfo *child_rel);
 
+extern ShortestpathPath *create_shortestpath_path(PlannerInfo *root,
+												  RelOptInfo *joinrel,
+												  JoinType jointype,
+												  JoinCostWorkspace *workspace,
+												  JoinPathExtraData *extra,
+												  Path *outer_path,
+												  Path *inner_path,
+												  List *restrict_clauses,
+												  List *pathkeys,
+												  Relids required_outer);
 extern DijkstraPath *create_dijkstra_path(PlannerInfo *root, RelOptInfo *rel,
 										  Path *subpath,
 										  PathTarget *path_target,
