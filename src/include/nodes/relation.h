@@ -75,6 +75,7 @@ typedef enum UpperRelationKind
 	UPPERREL_WINDOW,			/* result of window functions, if any */
 	UPPERREL_DISTINCT,			/* result of "SELECT DISTINCT", if any */
 	UPPERREL_ORDERED,			/* result of ORDER BY, if any */
+	UPPERREL_SHORTESTPATH,		/* result of shortestpath */
 	UPPERREL_DIJKSTRA,			/* result of dijkstra */
 	UPPERREL_FINAL				/* result of any remaining top-level actions */
 	/* NB: UPPERREL_FINAL must be last enum entry; it's used to size arrays */
@@ -1635,6 +1636,22 @@ typedef struct ModifyGraphPath
 	List	   *exprs;			/* expression list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
 } ModifyGraphPath;
+
+typedef struct ShortestpathPath
+{
+	JoinPath	jpath;
+	Node	   *end_id_left;
+	Node	   *end_id_right;
+	Node	   *tableoid_left;
+	Node	   *tableoid_right;
+	Node	   *ctid_left;
+	Node	   *ctid_right;
+	Node	   *source;
+	Node	   *target;
+	long        minhops;
+	long        maxhops;
+	long        limit;
+} ShortestpathPath;
 
 typedef struct DijkstraPath
 {

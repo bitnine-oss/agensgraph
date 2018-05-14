@@ -2436,11 +2436,23 @@ query_tree_walker(Query *query,
 		return true;
 	if (walker(query->dijkstraEdgeId, context))
 		return true;
-	if (walker(query->dijkstraSource, context))
-		return true;
-	if (walker(query->dijkstraTarget, context))
-		return true;
 	if (walker(query->dijkstraLimit, context))
+		return true;
+	if (walker(query->shortestpathEndIdLeft, context))
+		return true;
+	if (walker(query->shortestpathEndIdRight, context))
+		return true;
+	if (walker(query->shortestpathTableOidLeft, context))
+		return true;
+	if (walker(query->shortestpathTableOidRight, context))
+		return true;
+	if (walker(query->shortestpathCtidLeft, context))
+		return true;
+	if (walker(query->shortestpathCtidRight, context))
+		return true;
+	if (walker(query->shortestpathSource, context))
+		return true;
+	if (walker(query->shortestpathTarget, context))
 		return true;
 	if (!(flags & QTW_IGNORE_CTE_SUBQUERIES))
 	{
@@ -3338,9 +3350,15 @@ query_tree_mutator(Query *query,
 	MUTATE(query->limitCount, query->limitCount, Node *);
 	MUTATE(query->dijkstraEndId, query->dijkstraEndId, Node *);
 	MUTATE(query->dijkstraEdgeId, query->dijkstraEdgeId, Node *);
-	MUTATE(query->dijkstraSource, query->dijkstraSource, Node *);
-	MUTATE(query->dijkstraTarget, query->dijkstraTarget, Node *);
 	MUTATE(query->dijkstraLimit, query->dijkstraLimit, Node *);
+	MUTATE(query->shortestpathEndIdLeft, query->shortestpathEndIdLeft, Node *);
+	MUTATE(query->shortestpathEndIdRight, query->shortestpathEndIdRight, Node *);
+	MUTATE(query->shortestpathTableOidLeft, query->shortestpathTableOidLeft, Node *);
+	MUTATE(query->shortestpathTableOidRight, query->shortestpathTableOidRight, Node *);
+	MUTATE(query->shortestpathCtidLeft, query->shortestpathCtidLeft, Node *);
+	MUTATE(query->shortestpathCtidRight, query->shortestpathCtidRight, Node *);
+	MUTATE(query->shortestpathSource, query->shortestpathSource, Node *);
+	MUTATE(query->shortestpathTarget, query->shortestpathTarget, Node *);
 	if (!(flags & QTW_IGNORE_CTE_SUBQUERIES))
 		MUTATE(query->cteList, query->cteList, List *);
 	else						/* else copy CTE list as-is */

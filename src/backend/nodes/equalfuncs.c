@@ -1071,9 +1071,18 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_SCALAR_FIELD(dijkstraWeightOut);
 	COMPARE_NODE_FIELD(dijkstraEndId);
 	COMPARE_NODE_FIELD(dijkstraEdgeId);
-	COMPARE_NODE_FIELD(dijkstraSource);
-	COMPARE_NODE_FIELD(dijkstraTarget);
 	COMPARE_NODE_FIELD(dijkstraLimit);
+	COMPARE_NODE_FIELD(shortestpathEndIdLeft);
+	COMPARE_NODE_FIELD(shortestpathEndIdRight);
+	COMPARE_NODE_FIELD(shortestpathTableOidLeft);
+	COMPARE_NODE_FIELD(shortestpathTableOidRight);
+	COMPARE_NODE_FIELD(shortestpathCtidLeft);
+	COMPARE_NODE_FIELD(shortestpathCtidRight);
+	COMPARE_NODE_FIELD(shortestpathSource);
+	COMPARE_NODE_FIELD(shortestpathTarget);
+	COMPARE_SCALAR_FIELD(shortestpathMinhops);
+	COMPARE_SCALAR_FIELD(shortestpathMaxhops);
+	COMPARE_SCALAR_FIELD(shortestpathLimit);
 
 	COMPARE_SCALAR_FIELD(graph.writeOp);
 	COMPARE_SCALAR_FIELD(graph.last);

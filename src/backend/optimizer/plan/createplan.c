@@ -44,6 +44,7 @@
 #include "parser/parsetree.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
+#include "catalog/pg_operator.h"
 
 
 /*
@@ -157,6 +158,8 @@ static ModifyGraph *create_modifygraph_plan(PlannerInfo *root,
 											ModifyGraphPath *best_path);
 static Dijkstra *create_dijkstra_plan(PlannerInfo *root,
 									  DijkstraPath *best_path);
+static Shortestpath *create_shortestpath_plan(PlannerInfo *root,
+											  ShortestpathPath *best_path);
 static Node *replace_nestloop_params(PlannerInfo *root, Node *expr);
 static Node *replace_nestloop_params_mutator(Node *node, PlannerInfo *root);
 static void process_subquery_nestloop_params(PlannerInfo *root,
@@ -290,6 +293,28 @@ static ModifyTable *make_modifytable(PlannerInfo *root,
 				 List *rowMarks, OnConflictExpr *onconflict, int epqParam);
 static GatherMerge *create_gather_merge_plan(PlannerInfo *root,
 						 GatherMergePath *best_path);
+static Shortestpath *make_shortestpath(List *tlist,
+									   List *hashclauses,
+									   Plan *lefttree,
+									   Plan *righttree,
+									   JoinType jointype,
+									   AttrNumber end_id_left,
+									   AttrNumber end_id_right,
+									   AttrNumber tableoid_left,
+									   AttrNumber tableoid_right,
+									   AttrNumber ctid_left,
+									   AttrNumber ctid_right,
+									   Node *source,
+									   Node *target,
+									   long minhops,
+									   long maxhops,
+									   long limit);
+static Hash2Side *make_hash2side(Plan *lefttree,
+								 Oid skewTable,
+								 AttrNumber skewColumn,
+								 bool skewInherit,
+								 Oid skewColType,
+								 int32 skewColTypmod);
 
 
 /*
@@ -499,6 +524,10 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 		case T_ModifyGraph:
 			plan = (Plan *) create_modifygraph_plan(root,
 												(ModifyGraphPath *) best_path);
+			break;
+		case T_Shortestpath:
+			plan = (Plan *) create_shortestpath_plan(root,
+													 (ShortestpathPath *) best_path);
 			break;
 		case T_Dijkstra:
 			plan = (Plan *) create_dijkstra_plan(root,
@@ -4262,6 +4291,201 @@ create_dijkstra_plan(PlannerInfo *root, DijkstraPath *best_path)
 	return plan;
 }
 
+static Shortestpath *
+create_shortestpath_plan(PlannerInfo *root,
+						 ShortestpathPath *best_path)
+{
+	Shortestpath *join_plan;
+	Hash2Side    *outer_hash;
+	Hash2Side    *inner_hash;
+	Plan         *outer_plan;
+	Plan         *inner_plan;
+	List         *tlist = build_path_tlist(root, &best_path->jpath.path);
+	List         *hashclauses;
+	Oid           skewTable = InvalidOid;
+	AttrNumber    skewColumn = InvalidAttrNumber;
+	bool          skewInherit = false;
+	Oid           skewColType = InvalidOid;
+	int32         skewColTypmod = -1;
+	List	     *sub_tlist;
+	TargetEntry  *tle_end_id_left;
+	TargetEntry  *tle_end_id_right;
+	TargetEntry  *tle_tableoid_left;
+	TargetEntry  *tle_tableoid_right;
+	TargetEntry  *tle_ctid_left;
+	TargetEntry  *tle_ctid_right;
+	AttrNumber	  end_id_left;
+	AttrNumber	  end_id_right;
+	AttrNumber	  tableoid_left;
+	AttrNumber	  tableoid_right;
+	AttrNumber	  ctid_left;
+	AttrNumber	  ctid_right;
+
+	/*
+	 * HashJoin can project, so we don't have to demand exact tlists from the
+	 * inputs.  However, it's best to request a small tlist from the inner
+	 * side, so that we aren't storing more data than necessary.  Likewise, if
+	 * we anticipate batching, request a small tlist from the outer side so
+	 * that we don't put extra data in the outer batch files.
+	 */
+	outer_plan = create_plan_recurse(root, best_path->jpath.outerjoinpath,
+									 CP_SMALL_TLIST);
+
+	inner_plan = create_plan_recurse(root, best_path->jpath.innerjoinpath,
+									 CP_SMALL_TLIST);
+
+	sub_tlist = outer_plan->targetlist;
+	tle_end_id_left = tlist_member((Expr *) best_path->end_id_left, sub_tlist);
+	end_id_left = tle_end_id_left->resno;
+	tle_tableoid_left = tlist_member((Expr *) best_path->tableoid_left, sub_tlist);
+	tableoid_left = tle_tableoid_left->resno;
+	tle_ctid_left = tlist_member((Expr *) best_path->ctid_left, sub_tlist);
+	ctid_left = tle_ctid_left->resno;
+	sub_tlist = inner_plan->targetlist;
+	tle_end_id_right = tlist_member((Expr *) best_path->end_id_right, sub_tlist);
+	end_id_right = tle_end_id_right->resno;
+	tle_tableoid_right = tlist_member((Expr *) best_path->tableoid_right, sub_tlist);
+	tableoid_right = tle_tableoid_right->resno;
+	tle_ctid_right = tlist_member((Expr *) best_path->ctid_right, sub_tlist);
+	ctid_right = tle_ctid_right->resno;
+
+	hashclauses = list_make1(make_opclause(OID_GRAPHID_EQ_OP,
+										   BOOLOID,
+										   false,
+										   tle_end_id_left->expr,
+										   tle_end_id_right->expr,
+										   InvalidOid,
+										   InvalidOid));
+
+	/*
+	 * If there is a single join clause and we can identify the outer variable
+	 * as a simple column reference, supply its identity for possible use in
+	 * skew optimization.  (Note: in principle we could do skew optimization
+	 * with multiple join clauses, but we'd have to be able to determine the
+	 * most common combinations of outer values, which we don't currently have
+	 * enough stats for.)
+	 */
+	skewTable = InvalidOid;
+	skewColumn = InvalidAttrNumber;
+	skewInherit = false;
+	skewColType = InvalidOid;
+	skewColTypmod = -1;
+	if (list_length(hashclauses) == 1)
+	{
+		OpExpr	   *clause = (OpExpr *) linitial(hashclauses);
+		Node	   *node;
+
+		Assert(is_opclause(clause));
+		node = (Node *) linitial(clause->args);
+		if (IsA(node, RelabelType))
+			node = (Node *) ((RelabelType *) node)->arg;
+		if (IsA(node, Var))
+		{
+			Var		   *var = (Var *) node;
+			RangeTblEntry *rte;
+
+			rte = root->simple_rte_array[var->varno];
+			if (rte->rtekind == RTE_RELATION)
+			{
+				skewTable = rte->relid;
+				skewColumn = var->varattno;
+				skewInherit = rte->inh;
+				skewColType = var->vartype;
+				skewColTypmod = var->vartypmod;
+			}
+		}
+	}
+
+	/*
+	 * Build the hash node and hash join node.
+	 */
+	inner_hash = make_hash2side(inner_plan,
+								skewTable,
+								skewColumn,
+								skewInherit,
+								skewColType,
+								skewColTypmod);
+
+	/*
+	 * If there is a single join clause and we can identify the outer variable
+	 * as a simple column reference, supply its identity for possible use in
+	 * skew optimization.  (Note: in principle we could do skew optimization
+	 * with multiple join clauses, but we'd have to be able to determine the
+	 * most common combinations of outer values, which we don't currently have
+	 * enough stats for.)
+	 */
+	skewTable = InvalidOid;
+	skewColumn = InvalidAttrNumber;
+	skewInherit = false;
+	skewColType = InvalidOid;
+	skewColTypmod = -1;
+	if (list_length(hashclauses) == 1)
+	{
+		OpExpr	   *clause = (OpExpr *) linitial(hashclauses);
+		Node	   *node;
+
+		Assert(is_opclause(clause));
+		node = (Node *) lsecond(clause->args);
+		if (IsA(node, RelabelType))
+			node = (Node *) ((RelabelType *) node)->arg;
+		if (IsA(node, Var))
+		{
+			Var		   *var = (Var *) node;
+			RangeTblEntry *rte;
+
+			rte = root->simple_rte_array[var->varno];
+			if (rte->rtekind == RTE_RELATION)
+			{
+				skewTable = rte->relid;
+				skewColumn = var->varattno;
+				skewInherit = rte->inh;
+				skewColType = var->vartype;
+				skewColTypmod = var->vartypmod;
+			}
+		}
+	}
+
+	/*
+	 * Build the hash node and hash join node.
+	 */
+	outer_hash = make_hash2side(outer_plan,
+								skewTable,
+								skewColumn,
+								skewInherit,
+								skewColType,
+								skewColTypmod);
+
+	/*
+	 * Set Hash node's startup & total costs equal to total cost of input
+	 * plan; this only affects EXPLAIN display not decisions.
+	 */
+	copy_plan_costsize(&inner_hash->plan, inner_plan);
+	inner_hash->plan.startup_cost = inner_hash->plan.total_cost;
+	copy_plan_costsize(&outer_hash->plan, outer_plan);
+	outer_hash->plan.startup_cost = outer_hash->plan.total_cost;
+
+	join_plan = make_shortestpath(tlist,
+								  hashclauses,
+								  (Plan*)outer_hash,
+								  (Plan*)inner_hash,
+								  best_path->jpath.jointype,
+								  end_id_left,
+								  end_id_right,
+								  tableoid_left,
+								  tableoid_right,
+								  ctid_left,
+								  ctid_right,
+								  best_path->source,
+								  best_path->target,
+								  best_path->minhops,
+								  best_path->maxhops,
+								  best_path->limit);
+
+	copy_generic_path_info(&join_plan->join.plan, &best_path->jpath.path);
+
+	return join_plan;
+}
+
 /*****************************************************************************
  *
  *	SUPPORTING ROUTINES
@@ -6735,6 +6959,78 @@ make_modifygraph(PlannerInfo *root, GraphWriteOp operation,
 	node->pattern = pattern;
 	node->exprs = exprs;
 	node->sets = sets;
+
+	return node;
+}
+
+Shortestpath *
+make_shortestpath(List *tlist,
+				  List *hashclauses,
+				  Plan *lefttree,
+				  Plan *righttree,
+				  JoinType jointype,
+				  AttrNumber end_id_left,
+				  AttrNumber end_id_right,
+				  AttrNumber tableoid_left,
+				  AttrNumber tableoid_right,
+				  AttrNumber ctid_left,
+				  AttrNumber ctid_right,
+				  Node *source,
+				  Node *target,
+				  long minhops,
+				  long maxhops,
+				  long limit)
+{
+	Shortestpath *node = makeNode(Shortestpath);
+	Plan	     *plan = &node->join.plan;
+
+	plan = &node->join.plan;
+	plan->targetlist = tlist;
+	plan->qual = NULL;
+	plan->lefttree = lefttree;
+	plan->righttree = righttree;
+	node->join.jointype = jointype;
+	node->join.joinqual = NULL;
+	node->hashclauses = hashclauses;
+
+	node->minhops = minhops;
+	node->maxhops = maxhops;
+	node->end_id_left = end_id_left;
+	node->end_id_right = end_id_right;
+	node->tableoid_left = tableoid_left;
+	node->tableoid_right = tableoid_right;
+	node->ctid_left = ctid_left;
+	node->ctid_right = ctid_right;
+	node->source = source;
+	node->target = target;
+	node->minhops = minhops;
+	node->maxhops = maxhops;
+	node->limit = limit;
+
+	return node;
+}
+
+Hash2Side *
+make_hash2side(Plan *lefttree,
+			   Oid skewTable,
+			   AttrNumber skewColumn,
+			   bool skewInherit,
+			   Oid skewColType,
+			   int32 skewColTypmod)
+{
+	Hash2Side  *node = makeNode(Hash2Side);
+	Plan	   *plan = &node->plan;
+
+	plan->targetlist = lefttree->targetlist;
+	plan->qual = NIL;
+	plan->lefttree = lefttree;
+	plan->righttree = NULL;
+
+	node->skewTable = skewTable;
+	node->skewColumn = skewColumn;
+	node->skewInherit = skewInherit;
+	node->skewColType = skewColType;
+	node->skewColTypmod = skewColTypmod;
 
 	return node;
 }

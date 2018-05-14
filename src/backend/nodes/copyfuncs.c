@@ -1180,6 +1180,64 @@ _copyModifyGraph(const ModifyGraph *from)
 	return newnode;
 }
 
+/*
+ * _copyShortestpath
+ */
+static Shortestpath *
+_copyShortestpath(const Shortestpath *from)
+{
+	Shortestpath *newnode = makeNode(Shortestpath);
+
+	/*
+	 * copy node superclass fields
+	 */
+	CopyJoinFields((const Join *) from, (Join *) newnode);
+
+	/*
+	 * copy remainder of node
+	 */
+	COPY_NODE_FIELD(hashclauses);
+
+	COPY_SCALAR_FIELD(end_id_left);
+	COPY_SCALAR_FIELD(end_id_right);
+	COPY_SCALAR_FIELD(tableoid_left);
+	COPY_SCALAR_FIELD(tableoid_right);
+	COPY_SCALAR_FIELD(ctid_left);
+	COPY_SCALAR_FIELD(ctid_right);
+	COPY_NODE_FIELD(source);
+	COPY_NODE_FIELD(target);
+	COPY_SCALAR_FIELD(minhops);
+	COPY_SCALAR_FIELD(maxhops);
+	COPY_SCALAR_FIELD(limit);
+
+	return newnode;
+}
+
+/*
+ * _copyHash2Side
+ */
+static Hash2Side *
+_copyHash2Side(const Hash2Side *from)
+{
+	Hash2Side *newnode = makeNode(Hash2Side);
+
+	/*
+	 * copy node superclass fields
+	 */
+	CopyPlanFields((const Plan *) from, (Plan *) newnode);
+
+	/*
+	 * copy remainder of node
+	 */
+	COPY_SCALAR_FIELD(skewTable);
+	COPY_SCALAR_FIELD(skewColumn);
+	COPY_SCALAR_FIELD(skewInherit);
+	COPY_SCALAR_FIELD(skewColType);
+	COPY_SCALAR_FIELD(skewColTypmod);
+
+	return newnode;
+}
+
 static Dijkstra *
 _copyDijkstra(const Dijkstra *from)
 {
@@ -3126,9 +3184,18 @@ _copyQuery(const Query *from)
 	COPY_SCALAR_FIELD(dijkstraWeightOut);
 	COPY_NODE_FIELD(dijkstraEndId);
 	COPY_NODE_FIELD(dijkstraEdgeId);
-	COPY_NODE_FIELD(dijkstraSource);
-	COPY_NODE_FIELD(dijkstraTarget);
 	COPY_NODE_FIELD(dijkstraLimit);
+	COPY_NODE_FIELD(shortestpathEndIdLeft);
+	COPY_NODE_FIELD(shortestpathEndIdRight);
+	COPY_NODE_FIELD(shortestpathTableOidLeft);
+	COPY_NODE_FIELD(shortestpathTableOidRight);
+	COPY_NODE_FIELD(shortestpathCtidLeft);
+	COPY_NODE_FIELD(shortestpathCtidRight);
+	COPY_NODE_FIELD(shortestpathSource);
+	COPY_NODE_FIELD(shortestpathTarget);
+	COPY_SCALAR_FIELD(shortestpathMinhops);
+	COPY_SCALAR_FIELD(shortestpathMaxhops);
+	COPY_SCALAR_FIELD(shortestpathLimit);
 
 	COPY_SCALAR_FIELD(graph.writeOp);
 	COPY_SCALAR_FIELD(graph.last);
@@ -5357,6 +5424,12 @@ copyObjectImpl(const void *from)
 			break;
 		case T_PlanInvalItem:
 			retval = _copyPlanInvalItem(from);
+			break;
+		case T_Shortestpath:
+			retval = _copyShortestpath(from);
+			break;
+		case T_Hash2Side:
+			retval = _copyHash2Side(from);
 			break;
 		case T_Dijkstra:
 			retval = _copyDijkstra(from);

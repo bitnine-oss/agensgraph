@@ -867,7 +867,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	/* Remove any redundant GROUP BY columns */
 	remove_useless_groupby_columns(root);
 
-	if (parse->dijkstraSource)
+	if (parse->shortestpathSource)
 	{
 		parse->dijkstraEndId = preprocess_expression(root,
 													 parse->dijkstraEndId,
@@ -875,15 +875,33 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		parse->dijkstraEdgeId = preprocess_expression(root,
 													  parse->dijkstraEdgeId,
 													  EXPRKIND_TARGET);
-		parse->dijkstraSource = preprocess_expression(root,
-													  parse->dijkstraSource,
-													  EXPRKIND_TARGET);
-		parse->dijkstraTarget = preprocess_expression(root,
-													  parse->dijkstraTarget,
-													  EXPRKIND_TARGET);
 		parse->dijkstraLimit = preprocess_expression(root,
 													 parse->dijkstraLimit,
 													 EXPRKIND_TARGET);
+		parse->shortestpathEndIdLeft = preprocess_expression(root,
+															 parse->shortestpathEndIdLeft,
+															 EXPRKIND_TARGET);
+		parse->shortestpathEndIdRight = preprocess_expression(root,
+															  parse->shortestpathEndIdRight,
+															  EXPRKIND_TARGET);
+		parse->shortestpathTableOidLeft = preprocess_expression(root,
+																parse->shortestpathTableOidLeft,
+																EXPRKIND_TARGET);
+		parse->shortestpathTableOidRight = preprocess_expression(root,
+																 parse->shortestpathTableOidRight,
+																 EXPRKIND_TARGET);
+		parse->shortestpathCtidLeft = preprocess_expression(root,
+															parse->shortestpathCtidLeft,
+															EXPRKIND_TARGET);
+		parse->shortestpathCtidRight = preprocess_expression(root,
+															 parse->shortestpathCtidRight,
+															 EXPRKIND_TARGET);
+		parse->shortestpathSource = preprocess_expression(root,
+														  parse->shortestpathSource,
+														  EXPRKIND_TARGET);
+		parse->shortestpathTarget = preprocess_expression(root,
+														  parse->shortestpathTarget,
+														  EXPRKIND_TARGET);
 	}
 
 	/*
@@ -1856,7 +1874,7 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 		else
 			scanjoin_target = grouping_target;
 
-		if (parse->dijkstraSource)
+		if (parse->shortestpathSource && parse->dijkstraEndId != NULL)
 		{
 			Assert(!have_grouping && activeWindows == NIL &&
 				   parse->sortClause == NIL && parse->distinctClause == NIL);
@@ -2066,8 +2084,7 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 								  final_targets_contain_srfs);
 	}
 
-	if (parse->dijkstraSource)
-	{
+	if (parse->shortestpathSource && parse->dijkstraEndId != NULL) {
 		current_rel = create_dijkstra_paths(root,
 											current_rel,
 											final_target,
@@ -2075,8 +2092,8 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 											parse->dijkstraWeightOut,
 											parse->dijkstraEndId,
 											parse->dijkstraEdgeId,
-											parse->dijkstraSource,
-											parse->dijkstraTarget,
+											parse->shortestpathSource,
+											parse->shortestpathTarget,
 											parse->dijkstraLimit);
 	}
 
@@ -5357,8 +5374,22 @@ make_dijkstra_input_target(PlannerInfo *root, PathTarget *final_target)
 	parse->dijkstraWeight = 1;
 	add_new_column_to_pathtarget(input_target,
 								 (Expr *) llast(final_target->exprs));
-	add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEndId);
-	add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEdgeId);
+	if ( parse->dijkstraEndId != NULL )
+	  add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEndId);
+	if ( parse->shortestpathEndIdLeft != NULL )
+	  add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathEndIdLeft);
+	if ( parse->dijkstraEdgeId != NULL )
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEdgeId);
+	if ( parse->shortestpathEndIdRight != NULL )
+	  add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathEndIdRight);
+	if ( parse->shortestpathTableOidLeft != NULL )
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathTableOidLeft);
+	if ( parse->shortestpathTableOidRight != NULL )
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathTableOidRight);
+	if ( parse->shortestpathCtidLeft != NULL )
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathCtidLeft);
+	if ( parse->shortestpathCtidRight != NULL )
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathCtidRight);
 
 	/* XXX this causes some redundant cost calculation ... */
 	return set_pathtarget_cost_width(root, input_target);

@@ -87,6 +87,8 @@ typedef enum NodeTag
 	T_Limit,
 	T_Eager,
 	T_ModifyGraph,
+	T_Shortestpath,
+	T_Hash2Side,
 	T_Dijkstra,
 	/* these aren't subclasses of Plan: */
 	T_NestLoopParam,
@@ -143,6 +145,8 @@ typedef enum NodeTag
 	T_LockRowsState,
 	T_LimitState,
 	T_ModifyGraphState,
+	T_ShortestpathState,
+	T_Hash2SideState,
 	T_DijkstraState,
 
 	/*
@@ -269,6 +273,7 @@ typedef enum NodeTag
 	T_LimitPath,
 	T_EagerPath,
 	T_ModifyGraphPath,
+	T_ShortestpathPath,
 	T_DijkstraPath,
 	/* these aren't subclasses of Path: */
 	T_EquivalenceClass,
