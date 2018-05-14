@@ -1100,18 +1100,30 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	Assert(parse->setOperations == NULL);
 	parse->havingQual = pullup_replace_vars(parse->havingQual, &rvcontext);
 
-	if (parse->dijkstraSource)
+	if (parse->shortestpathSource)
 	{
 		parse->dijkstraEndId = pullup_replace_vars(parse->dijkstraEndId,
 												   &rvcontext);
 		parse->dijkstraEdgeId = pullup_replace_vars(parse->dijkstraEdgeId,
 													&rvcontext);
-		parse->dijkstraSource = pullup_replace_vars(parse->dijkstraSource,
-													&rvcontext);
-		parse->dijkstraTarget = pullup_replace_vars(parse->dijkstraTarget,
-													&rvcontext);
 		parse->dijkstraLimit = pullup_replace_vars(parse->dijkstraLimit,
 												   &rvcontext);
+		parse->shortestpathEndIdLeft = pullup_replace_vars(parse->shortestpathEndIdLeft,
+														   &rvcontext);
+		parse->shortestpathEndIdRight = pullup_replace_vars(parse->shortestpathEndIdRight,
+															&rvcontext);
+		parse->shortestpathTableOidLeft = pullup_replace_vars(parse->shortestpathTableOidLeft,
+															  &rvcontext);
+		parse->shortestpathTableOidRight = pullup_replace_vars(parse->shortestpathTableOidRight,
+															   &rvcontext);
+		parse->shortestpathCtidLeft = pullup_replace_vars(parse->shortestpathCtidLeft,
+														  &rvcontext);
+		parse->shortestpathCtidRight = pullup_replace_vars(parse->shortestpathCtidRight,
+														   &rvcontext);
+		parse->shortestpathSource = pullup_replace_vars(parse->shortestpathSource,
+														&rvcontext);
+		parse->shortestpathTarget = pullup_replace_vars(parse->shortestpathTarget,
+														&rvcontext);
 	}
 
 	/*
@@ -1505,7 +1517,7 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 		subquery->limitCount ||
 		subquery->hasForUpdate ||
 		subquery->cteList ||
-		subquery->dijkstraSource)
+		subquery->shortestpathSource)
 		return false;
 
 	/*

@@ -2093,157 +2093,7 @@ MATCH (a {name:'AG-163'}) DELETE a RETURN *;
  
 (1 row)
 
--- AG-160
-CREATE ()-[:AG160]->();
-MATCH ()-[r:AG160]->() DETACH DELETE r;
 MATCH (a) DETACH DELETE a;
-CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
-MATCH (a)-[r:AG160]->(b)
-DELETE r
-DELETE a, b;
-MATCH ()-[]->() RETURN count(*);
- count 
--------
-     0
-(1 row)
-
-MATCH () RETURN count(*);
- count 
--------
-     0
-(1 row)
-
-CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
-MATCH (a)-[r:AG160]->(b)
-DELETE r, a
-DELETE b;
-MATCH ()-[]->() RETURN count(*);
- count 
--------
-     0
-(1 row)
-
-MATCH () RETURN count(*);
- count 
--------
-     0
-(1 row)
-
-CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
-MATCH (a {name:'ag-160 left'})-[r:AG160]->(b)
-DELETE r
-DELETE a, b;
-MATCH ()-[]->() RETURN count(*);
- count 
--------
-     0
-(1 row)
-
-MATCH () RETURN count(*);
- count 
--------
-     0
-(1 row)
-
--- AG-138
-CREATE ()-[:rel]->()-[:rel]->();
-MATCH (a)-[r:rel]->(b)
-DELETE a, b, r;
-MATCH (a) RETURN count(a);
- count 
--------
-     0
-(1 row)
-
-MATCH ()-[r:rel]->() RETURN count(r);
- count 
--------
-     0
-(1 row)
-
-CREATE ()-[:rel]->()-[:rel]->();
-MATCH (a)-[r:rel]->(b), (c), p=(d)
-DELETE a, b, r, c, d, p;
-MATCH (a) RETURN count(a);
- count 
--------
-     0
-(1 row)
-
-MATCH ()-[r:rel]->() RETURN count(r);
- count 
--------
-     0
-(1 row)
-
---AG-2 : failed DELETE graph path
-CREATE ()-[:rel]->()-[:rel]->();
-MATCH p = ()-[:rel]->(), ()-[r:rel]->()
-DELETE r
-RETURN *;
-ERROR:  cannot delete a edge in graphpath.
-MATCH p = ()-[:rel]->(), (a)-[:rel]->()
-DELETE a
-RETURN *;
-ERROR:  vertices with edges can not be removed
-MATCH p = ()-[:rel]->()
-DELETE p;
-MATCH (a) RETURN count(a);
- count 
--------
-     0
-(1 row)
-
-MATCH ()-[r:rel]->() RETURN count(r);
- count 
--------
-     0
-(1 row)
-
-CREATE ()-[:rel]->()-[:rel]->();
-MATCH p = ()-[:rel]->(), gp = ()-[:rel]->(), (a)
-DELETE p, gp, a;
-MATCH (a) RETURN count(a);
- count 
--------
-     0
-(1 row)
-
-MATCH ()-[r:rel]->() RETURN count(r);
- count 
--------
-     0
-(1 row)
-
--- AG-159
-CREATE (:v1), (:v2);
-MATCH p=(a:v1), (b:v2)
-DETACH DELETE a
-RETURN label(b);
- label 
--------
- "v2"
-(1 row)
-
-MATCH p=(a:v2)
-DELETE a
-RETURN p;
- p 
----
- 
-(1 row)
-
-CREATE (:v1);
-MATCH (a:v1)
-DELETE a
-DETACH DELETE a
-DELETE a;
-NOTICE:  skipping deletion of NULL graph element
-MATCH (a:v1) RETURN a;
- a 
----
-(0 rows)
-
 --
 -- Uniqueness
 --
@@ -3394,7 +3244,7 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
-NOTICE:  drop cascades to 14 other objects
+NOTICE:  drop cascades to 10 other objects
 DETAIL:  drop cascades to sequence agens.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -3405,8 +3255,4 @@ drop cascades to elabel el1
 drop cascades to elabel el2
 drop cascades to elabel el3
 drop cascades to elabel made_by
-drop cascades to elabel ag160
-drop cascades to elabel rel
-drop cascades to vlabel v1
-drop cascades to vlabel v2
 DROP TABLE history;

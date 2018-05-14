@@ -627,6 +627,7 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 		case T_NestLoopVLE:
 		case T_MergeJoin:
 		case T_HashJoin:
+		case T_Shortestpath:
 			set_join_references(root, (Join *) plan, rtoffset);
 			break;
 
@@ -640,6 +641,7 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 		case T_Sort:
 		case T_Unique:
 		case T_SetOp:
+		case T_Hash2Side:
 
 			/*
 			 * These plan types don't actually bother to evaluate their
@@ -1691,6 +1693,17 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 
 		hj->hashclauses = fix_join_expr(root,
 										hj->hashclauses,
+										outer_itlist,
+										inner_itlist,
+										(Index) 0,
+										rtoffset);
+	}
+	else if (IsA(join, Shortestpath))
+	{
+		Shortestpath *sp = (Shortestpath *) join;
+
+		sp->hashclauses = fix_join_expr(root,
+										sp->hashclauses,
 										outer_itlist,
 										inner_itlist,
 										(Index) 0,
