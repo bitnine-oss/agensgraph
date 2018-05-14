@@ -170,9 +170,21 @@ build_base_rel_tlists(PlannerInfo *root, List *final_tlist)
 
 	if (root->parse->dijkstraEndId)
 		add_extra_vars_to_targetlist(root, root->parse->dijkstraEndId);
-
 	if (root->parse->dijkstraEdgeId)
 		add_extra_vars_to_targetlist(root, root->parse->dijkstraEdgeId);
+
+	if (root->parse->shortestpathEndIdLeft)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpathEndIdLeft);
+	if (root->parse->shortestpathEndIdRight)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpathEndIdRight);
+	if (root->parse->shortestpathTableOidLeft)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpathTableOidLeft);
+	if (root->parse->shortestpathTableOidRight)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpathTableOidRight);
+	if (root->parse->shortestpathCtidLeft)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpathCtidLeft);
+	if (root->parse->shortestpathCtidRight)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpathCtidRight);
 }
 
 static void

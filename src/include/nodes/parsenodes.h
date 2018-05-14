@@ -184,9 +184,18 @@ typedef struct Query
 	bool		dijkstraWeightOut;
 	Node	   *dijkstraEndId;
 	Node	   *dijkstraEdgeId;
-	Node	   *dijkstraSource;
-	Node	   *dijkstraTarget;
 	Node	   *dijkstraLimit;
+	Node	   *shortestpathEndIdLeft;
+	Node	   *shortestpathEndIdRight;
+	Node	   *shortestpathTableOidLeft;
+	Node	   *shortestpathTableOidRight;
+	Node	   *shortestpathCtidLeft;
+	Node	   *shortestpathCtidRight;
+	Node	   *shortestpathSource;
+	Node	   *shortestpathTarget;
+	long        shortestpathMinhops;
+	long        shortestpathMaxhops;
+	long        shortestpathLimit;
 
 	struct {
 		GraphWriteOp writeOp;

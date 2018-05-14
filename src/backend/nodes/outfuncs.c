@@ -1006,6 +1006,42 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 }
 
 static void
+_outShortestpath(StringInfo str, const Shortestpath *node)
+{
+	WRITE_NODE_TYPE("SHORTESTPATH");
+
+	_outJoinPlanInfo(str, (const Join *) node);
+
+	WRITE_NODE_FIELD(hashclauses);
+
+	WRITE_INT_FIELD(end_id_left);
+	WRITE_INT_FIELD(end_id_right);
+	WRITE_INT_FIELD(tableoid_left);
+	WRITE_INT_FIELD(tableoid_right);
+	WRITE_INT_FIELD(ctid_left);
+	WRITE_INT_FIELD(ctid_right);
+	WRITE_NODE_FIELD(source);
+	WRITE_NODE_FIELD(target);
+	WRITE_LONG_FIELD(minhops);
+	WRITE_LONG_FIELD(maxhops);
+	WRITE_LONG_FIELD(limit);
+}
+
+static void
+_outHash2Side(StringInfo str, const Hash2Side *node)
+{
+	WRITE_NODE_TYPE("HASH2SIDE");
+
+	_outPlanInfo(str, (const Plan *) node);
+
+	WRITE_OID_FIELD(skewTable);
+	WRITE_INT_FIELD(skewColumn);
+	WRITE_BOOL_FIELD(skewInherit);
+	WRITE_OID_FIELD(skewColType);
+	WRITE_INT_FIELD(skewColTypmod);
+}
+
+static void
 _outDijkstra(StringInfo str, const Dijkstra *node)
 {
 	WRITE_NODE_TYPE("DIJKSTRA");
@@ -2249,7 +2285,7 @@ _outLimitPath(StringInfo str, const LimitPath *node)
 static void
 _outDijkstraPath(StringInfo str, const DijkstraPath *node)
 {
-	WRITE_NODE_TYPE("DIJKSTRA");
+	WRITE_NODE_TYPE("DIJKSTRAPATH");
 
 	_outPathInfo(str, (const Path *) node);
 
@@ -2280,6 +2316,26 @@ _outNestPath(StringInfo str, const NestPath *node)
 	WRITE_NODE_TYPE("NESTPATH");
 
 	_outJoinPathInfo(str, (const JoinPath *) node);
+}
+
+static void
+_outShortestpathPath(StringInfo str, const ShortestpathPath *node)
+{
+	WRITE_NODE_TYPE("SHORTESTPATHPATH");
+
+	_outNestPath(str, (const NestPath *) node);
+
+	WRITE_NODE_FIELD(end_id_left);
+	WRITE_NODE_FIELD(end_id_right);
+	WRITE_NODE_FIELD(tableoid_left);
+	WRITE_NODE_FIELD(tableoid_right);
+	WRITE_NODE_FIELD(ctid_left);
+	WRITE_NODE_FIELD(ctid_right);
+	WRITE_NODE_FIELD(source);
+	WRITE_NODE_FIELD(target);
+	WRITE_LONG_FIELD(minhops);
+	WRITE_LONG_FIELD(maxhops);
+	WRITE_LONG_FIELD(limit);
 }
 
 static void
@@ -3079,9 +3135,18 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_BOOL_FIELD(dijkstraWeightOut);
 	WRITE_NODE_FIELD(dijkstraEndId);
 	WRITE_NODE_FIELD(dijkstraEdgeId);
-	WRITE_NODE_FIELD(dijkstraSource);
-	WRITE_NODE_FIELD(dijkstraTarget);
 	WRITE_NODE_FIELD(dijkstraLimit);
+	WRITE_NODE_FIELD(shortestpathEndIdLeft);
+	WRITE_NODE_FIELD(shortestpathEndIdRight);
+	WRITE_NODE_FIELD(shortestpathTableOidLeft);
+	WRITE_NODE_FIELD(shortestpathTableOidRight);
+	WRITE_NODE_FIELD(shortestpathCtidLeft);
+	WRITE_NODE_FIELD(shortestpathCtidRight);
+	WRITE_NODE_FIELD(shortestpathSource);
+	WRITE_NODE_FIELD(shortestpathTarget);
+	WRITE_LONG_FIELD(shortestpathMinhops);
+	WRITE_LONG_FIELD(shortestpathMaxhops);
+	WRITE_LONG_FIELD(shortestpathLimit);
 
 	WRITE_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	WRITE_BOOL_FIELD(graph.last);
@@ -4197,6 +4262,12 @@ outNode(StringInfo str, const void *obj)
 			case T_ModifyGraph:
 				_outModifyGraph(str, obj);
 				break;
+			case T_Shortestpath:
+				_outShortestpath(str, obj);
+				break;
+			case T_Hash2Side:
+				_outHash2Side(str, obj);
+				break;
 			case T_Dijkstra:
 				_outDijkstra(str, obj);
 				break;
@@ -4469,6 +4540,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_LimitPath:
 				_outLimitPath(str, obj);
+				break;
+			case T_ShortestpathPath:
+				_outShortestpathPath(str, obj);
 				break;
 			case T_DijkstraPath:
 				_outDijkstraPath(str, obj);

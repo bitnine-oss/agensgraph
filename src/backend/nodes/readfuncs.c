@@ -272,9 +272,18 @@ _readQuery(void)
 	READ_BOOL_FIELD(dijkstraWeightOut);
 	READ_NODE_FIELD(dijkstraEndId);
 	READ_NODE_FIELD(dijkstraEdgeId);
-	READ_NODE_FIELD(dijkstraSource);
-	READ_NODE_FIELD(dijkstraTarget);
 	READ_NODE_FIELD(dijkstraLimit);
+	READ_NODE_FIELD(shortestpathEndIdLeft);
+	READ_NODE_FIELD(shortestpathEndIdRight);
+	READ_NODE_FIELD(shortestpathTableOidLeft);
+	READ_NODE_FIELD(shortestpathTableOidRight);
+	READ_NODE_FIELD(shortestpathCtidLeft);
+	READ_NODE_FIELD(shortestpathCtidRight);
+	READ_NODE_FIELD(shortestpathSource);
+	READ_NODE_FIELD(shortestpathTarget);
+	READ_LONG_FIELD(shortestpathMinhops);
+	READ_LONG_FIELD(shortestpathMaxhops);
+	READ_LONG_FIELD(shortestpathLimit);
 
 	READ_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	READ_BOOL_FIELD(graph.last);
@@ -2310,6 +2319,52 @@ _readLimit(void)
 	READ_DONE();
 }
 
+/*
+ * _readShortestpath
+ */
+static Shortestpath *
+_readShortestpath(void)
+{
+	READ_LOCALS(Shortestpath);
+
+	ReadCommonJoin(&local_node->join);
+
+	READ_NODE_FIELD(hashclauses);
+
+	READ_INT_FIELD(end_id_left);
+	READ_INT_FIELD(end_id_right);
+	READ_INT_FIELD(tableoid_left);
+	READ_INT_FIELD(tableoid_right);
+	READ_INT_FIELD(ctid_left);
+	READ_INT_FIELD(ctid_right);
+	READ_NODE_FIELD(source);
+	READ_NODE_FIELD(target);
+	READ_LONG_FIELD(minhops);
+	READ_LONG_FIELD(maxhops);
+	READ_LONG_FIELD(limit);
+
+	READ_DONE();
+}
+
+/*
+ * _readHash2Side
+ */
+static Hash2Side *
+_readHash2Side(void)
+{
+	READ_LOCALS(Hash2Side);
+
+	ReadCommonPlan(&local_node->plan);
+
+	READ_OID_FIELD(skewTable);
+	READ_INT_FIELD(skewColumn);
+	READ_BOOL_FIELD(skewInherit);
+	READ_OID_FIELD(skewColType);
+	READ_INT_FIELD(skewColTypmod);
+
+	READ_DONE();
+}
+
 static Dijkstra *
 _readDijkstra(void)
 {
@@ -2869,6 +2924,10 @@ parseNodeString(void)
 		return_value = _readLockRows();
 	else if (MATCH("LIMIT", 5))
 		return_value = _readLimit();
+	else if (MATCH("SHORTESTPATH", 12))
+		return_value = _readShortestpath();
+	else if (MATCH("HASH2SIDE", 9))
+		return_value = _readHash2Side();
 	else if (MATCH("DIJKSTRA", 8))
 		return_value = _readDijkstra();
 	else if (MATCH("NESTLOOPPARAM", 13))

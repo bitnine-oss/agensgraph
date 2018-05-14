@@ -2193,6 +2193,60 @@ typedef struct ModifyGraphState
 	Tuplestorestate *tuplestorestate;
 } ModifyGraphState;
 
+typedef struct Hash2SideState
+{
+	PlanState	    ps;        /* its first field is NodeTag */
+	HashJoinTable   keytable;  /* hash table for the recursion */
+	HashJoinTable   hashtable; /* hash table for the hashjoin */
+	List	       *hashkeys;  /* list of ExprState nodes */
+	/* hashkeys is same as parent's hj_InnerHashKeys */
+	TupleTableSlot *slot;
+	ExprState      *key;
+	PlanState      *spstate;
+	double          totalPaths;
+	long            hops;
+} Hash2SideState;
+
+typedef struct ShortestpathState
+{
+	JoinState        js;               /* its first field is NodeTag */
+	ExprState       *hashclauses;      /* list of ExprState nodes */
+	List            *sp_OuterHashKeys; /* list of ExprState nodes */
+	List            *sp_InnerHashKeys; /* list of ExprState nodes */
+	List            *sp_HashOperators; /* list of operator OIDs */
+	HashJoinTable    sp_KeyTable;
+	HashJoinTable    sp_OuterTable;
+	HashJoinTable    sp_HashTable;
+	uint32           sp_CurHashValue;
+	int              sp_CurBucketNo;
+	int              sp_CurSkewBucketNo;
+	HashJoinTuple    sp_CurTuple;
+	int              sp_CurKeyBatch;
+	int              sp_CurKeyIdx;
+	void            *sp_CurOuterChunks; /* HashMemoryChunk */
+	int              sp_CurOuterIdx;
+	TupleTableSlot  *sp_OuterTupleSlot;
+	TupleTableSlot  *sp_HashTupleSlot;
+	long             sp_Hops;
+	int              sp_RowidSize;
+	MinimalTuple     sp_GraphidTuple;
+	MinimalTuple     sp_OuterTuple;
+	unsigned char   *sp_Vertexids;
+	unsigned char   *sp_Edgeids;
+	int              sp_JoinState;
+	ExprState       *source;
+	ExprState       *target;
+	long             minhops;
+	long             maxhops;
+	long             limit;
+	Graphid          startVid;
+	Graphid          endVid;
+	long             hops;
+	long             numResults;
+	Hash2SideState  *outerNode;
+	Hash2SideState  *innerNode;
+} ShortestpathState;
+
 typedef struct DijkstraState
 {
 	PlanState 		ps;

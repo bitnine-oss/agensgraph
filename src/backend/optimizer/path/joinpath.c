@@ -450,6 +450,7 @@ try_nestloop_path(PlannerInfo *root,
 				  JoinType jointype,
 				  JoinPathExtraData *extra)
 {
+	Query      *parse = root->parse;
 	Relids		required_outer;
 	JoinCostWorkspace workspace;
 
@@ -490,17 +491,37 @@ try_nestloop_path(PlannerInfo *root,
 						  workspace.startup_cost, workspace.total_cost,
 						  pathkeys, required_outer))
 	{
-		add_path(joinrel, (Path *)
-				 create_nestloop_path(root,
-									  joinrel,
-									  jointype,
-									  &workspace,
-									  extra,
-									  outer_path,
-									  inner_path,
-									  extra->restrictlist,
-									  pathkeys,
-									  required_outer));
+		if (parse->shortestpathSource != NULL && parse->shortestpathEndIdLeft != NULL)
+		{
+			if ( joinrel->pathlist == NULL )
+			{
+				add_path(joinrel, (Path *)
+						 create_shortestpath_path(root,
+												  joinrel,
+												  jointype,
+												  &workspace,
+												  extra,
+												  outer_path,
+												  inner_path,
+												  extra->restrictlist,
+												  pathkeys,
+												  required_outer));
+			}
+		}
+		else
+		{
+			add_path(joinrel, (Path *)
+					 create_nestloop_path(root,
+										  joinrel,
+										  jointype,
+										  &workspace,
+										  extra,
+										  outer_path,
+										  inner_path,
+										  extra->restrictlist,
+										  pathkeys,
+										  required_outer));
+		}
 	}
 	else
 	{
@@ -1343,6 +1364,7 @@ match_unsorted_outer(PlannerInfo *root,
 					 JoinType jointype,
 					 JoinPathExtraData *extra)
 {
+	Query      *parse = root->parse;
 	JoinType	save_jointype = jointype;
 	bool		nestjoinOK;
 	bool		useallclauses;
@@ -1414,7 +1436,8 @@ match_unsorted_outer(PlannerInfo *root,
 		 * output anyway.
 		 * Subplan of NestLoopVLE does not allow to consider materializing.
 		 */
-		if (enable_material && inner_cheapest_total != NULL &&
+		if (parse->shortestpathSource == NULL &&
+			enable_material && inner_cheapest_total != NULL &&
 			!ExecMaterializesOutput(inner_cheapest_total->pathtype) &&
 			!root->hasVLEJoinRTE)
 			matpath = (Path *)
