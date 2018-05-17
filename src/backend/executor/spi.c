@@ -1546,6 +1546,8 @@ SPI_result_code_string(int code)
 			return "SPI_ERROR_REL_DUPLICATE";
 		case SPI_ERROR_REL_NOT_FOUND:
 			return "SPI_ERROR_REL_NOT_FOUND";
+		case SPI_ERROR_GRAPHWRITE:
+			return "SPI_ERROR_GRAPHWRITE";
 		case SPI_OK_CONNECT:
 			return "SPI_OK_CONNECT";
 		case SPI_OK_FINISH:
@@ -2066,6 +2068,12 @@ _SPI_execute_plan(SPIPlanPtr plan, ParamListInfo paramLI,
 					my_res = SPI_ERROR_TRANSACTION;
 					goto fail;
 				}
+			}
+
+			if (stmt->hasGraphwriteClause == true)
+			{
+				my_res = SPI_ERROR_GRAPHWRITE;
+				goto fail;
 			}
 
 			if (read_only && !CommandIsReadOnly(stmt))
