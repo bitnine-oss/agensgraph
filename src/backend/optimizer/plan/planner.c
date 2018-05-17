@@ -466,6 +466,7 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	result->utilityStmt = parse->utilityStmt;
 	result->stmt_location = parse->stmt_location;
 	result->stmt_len = parse->stmt_len;
+	result->hasGraphwriteClause = parse->hasGraphwriteClause;
 
 	return result;
 }
