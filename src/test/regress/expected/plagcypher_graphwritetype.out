@@ -14,6 +14,10 @@ drop function if exists func_merge();
 NOTICE:  function func_merge() does not exist, skipping
 drop function if exists func_remove();
 NOTICE:  function func_remove() does not exist, skipping
+drop function if exists func_complex1();
+NOTICE:  function func_complex1() does not exist, skipping
+drop function if exists func_complex2();
+NOTICE:  function func_complex2() does not exist, skipping
 create graph g4;
 set graph_path=g4;
 create (:person{name : 'Anders'}), (:person{name : 'Dilshad'}), (:person{name : 'Cesar'}), (:person{name : 'Becky'}), (:person{name : 'Filipa'}), (:person{name : 'Emil'});
@@ -222,16 +226,50 @@ match (a) return a;
  person[3.6]{"name": "Emil"}
 (6 rows)
 
-drop function if exists func_set();
+create vlabel v;
+create elabel e;
+create or replace function func_complex1() returns void as $$
+declare
+var1 edge;
+var2 edge;
+begin
+match (a:v) , (b:v) , (c:v)
+create (a)-[z:e {name:'edge1', id:'1'}]->(b)
+create (b)-[r:e {name:'edge2', id:'2'}]->(c)
+return z , r into var1 , var2;
+end;
+$$ language plagcypher;
+select func_complex1();
+ERROR:  cannot modify graph in PL/pgSQL
+CONTEXT:  PL/pgSQL function func_complex1() line 6 at SQL statement
+create or replace function func_complex2() returns void as $$
+declare
+var1 edge;
+begin
+match (a:v) , (b:v)
+merge (a)-[r:e {name:'edge' , id:'0'}]-(b)
+on create set r.created = true, r.matched = null
+on match set r.matched = true, r.created = null
+return r into var1;
+end;
+$$ language plagcypher;
+select func_complex2();
+ERROR:  cannot modify graph in PL/pgSQL
+CONTEXT:  PL/pgSQL function func_complex2() line 5 at SQL statement
+drop function if exists func_complex2();
+drop function if exists func_complex1();
 drop function if exists func_remove();
 drop function if exists func_merge();
+drop function if exists func_set();
 drop function if exists func_delete();
 drop function if exists func_create();
 drop graph if exists g4 cascade;
-NOTICE:  drop cascades to 6 other objects
+NOTICE:  drop cascades to 8 other objects
 DETAIL:  drop cascades to sequence g4.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel person
 drop cascades to elabel block
 drop cascades to elabel knows
+drop cascades to vlabel v
+drop cascades to elabel e

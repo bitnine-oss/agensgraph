@@ -307,6 +307,8 @@ static Node *transformPropMap(ParseState *pstate, Node *expr,
 							  ParseExprKind exprKind);
 static Node *stripNullKeys(ParseState *pstate, Node *properties);
 static void assign_query_eager(Query *query);
+#define existGraphwriteClause( prev , curr ) \
+	((prev == true || curr == true) ? true : false )
 
 /* transform */
 typedef Query *(*TransformMethod) (ParseState *pstate, Node *parseTree);
@@ -395,6 +397,8 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, false);
+
 	rte = transformClause(pstate, (Node *) clause);
 
 	qry->targetList = makeTargetListFromRTE(pstate, rte);
@@ -423,6 +427,8 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	if (qry->hasAggs)
 		parseCheckAggregates(pstate, qry);
 
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
 	assign_query_collations(pstate, qry);
 
 	return qry;
@@ -439,6 +445,8 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
+
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, false);
 
 	if (detail->where != NULL)
 	{
@@ -557,6 +565,8 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	if (qry->hasAggs)
 		parseCheckAggregates(pstate, qry);
 
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
 	assign_query_collations(pstate, qry);
 
 	return qry;
@@ -572,6 +582,8 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
+
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, false);
 
 	/*
 	 * since WHERE clause is part of MATCH,
@@ -671,6 +683,8 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
 	assign_query_collations(pstate, qry);
 
 	return qry;
@@ -708,6 +722,8 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.writeOp = GWROP_CREATE;
 	qry->graph.last = (pstate->parentParseState == NULL);
 
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, true);
+
 	if (clause->prev != NULL)
 	{
 		RangeTblEntry *rte;
@@ -731,6 +747,8 @@ transformCypherCreateClause(ParseState *pstate, CypherClause *clause)
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
+
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);
 
@@ -767,6 +785,8 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.writeOp = GWROP_DELETE;
 	qry->graph.last = (pstate->parentParseState == NULL);
 	qry->graph.detach = detail->detach;
+
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, true);
 
 	rte = transformClauseBy(pstate, (Node *) clause, transformDeleteJoin);
 
@@ -818,6 +838,8 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
 	assign_query_collations(pstate, qry);
 
 	assign_query_eager(qry);
@@ -843,6 +865,8 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	qry->commandType = CMD_GRAPHWRITE;
 	qry->graph.writeOp = GWROP_SET;
 	qry->graph.last = (pstate->parentParseState == NULL);
+
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, true);
 
 	rte = transformClause(pstate, clause->prev);
 
@@ -870,6 +894,8 @@ transformCypherSetClause(ParseState *pstate, CypherClause *clause)
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
+
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);
 	foreach(le, qry->graph.sets)
@@ -903,6 +929,8 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 	qry->graph.writeOp = GWROP_MERGE;
 	qry->graph.last = (pstate->parentParseState == NULL);
 
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, true);
+
 	rte = transformClauseBy(pstate, (Node *) clause, transformMergeMatch);
 	Assert(rte->rtekind == RTE_SUBQUERY);
 
@@ -930,6 +958,8 @@ transformCypherMergeClause(ParseState *pstate, CypherClause *clause)
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
 	assign_query_collations(pstate, qry);
 
 	assign_query_eager(qry);
@@ -951,6 +981,8 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, false);
+
 	if (clause->prev != NULL)
 	{
 		rte = transformClause(pstate, clause->prev);
@@ -971,6 +1003,8 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);
 
@@ -3828,6 +3862,8 @@ makeVertexRTE(ParseState *parentParseState, char *varname, char *labname)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, false);
+
 	r = makeRangeVar(get_graph_path(true), labname, -1);
 
 	rte = addRangeTableEntry(pstate, r, alias, true, true);
@@ -3843,6 +3879,8 @@ makeVertexRTE(ParseState *parentParseState, char *varname, char *labname)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);
 
@@ -4435,6 +4473,8 @@ transformMergeMatch(ParseState *pstate, Node *parseTree)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, false);
+
 	rte = transformMergeMatchJoin(pstate, clause);
 
 	qry->targetList = makeTargetListFromJoin(pstate, rte);
@@ -4444,6 +4484,8 @@ transformMergeMatch(ParseState *pstate, Node *parseTree)
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
+
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);
 
@@ -4788,6 +4830,8 @@ transformDeleteJoin(ParseState *pstate, Node *parseTree)
 	qry = makeNode(Query);
 	qry->commandType = CMD_SELECT;
 
+	pstate->p_hasGraphwriteClause = existGraphwriteClause(pstate->p_hasGraphwriteClause, false);
+
 	rte = transformDeleteJoinRTE(pstate, clause);
 	if (rte->rtekind == RTE_JOIN)
 		qry->targetList = makeTargetListFromJoin(pstate, rte);
@@ -4802,6 +4846,8 @@ transformDeleteJoin(ParseState *pstate, Node *parseTree)
 	qry->jointree = makeFromExpr(pstate->p_joinlist, pstate->p_resolved_qual);
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
+
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);
 
@@ -5732,6 +5778,7 @@ transformClauseImpl(ParseState *pstate, Node *clause,
 	if (childParseState->p_nr_modify_clause > 0)
 		pstate->p_nr_modify_clause = childParseState->p_nr_modify_clause;
 	pstate->p_delete_edges_resname = childParseState->p_delete_edges_resname;
+	pstate->p_hasGraphwriteClause = childParseState->p_hasGraphwriteClause;
 
 	free_parsestate(childParseState);
 

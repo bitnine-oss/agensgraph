@@ -10,6 +10,8 @@ drop function if exists func_delete();
 drop function if exists func_set();
 drop function if exists func_merge();
 drop function if exists func_remove();
+drop function if exists func_complex1();
+drop function if exists func_complex2();
 
 create graph g4;
 set graph_path=g4;
@@ -119,9 +121,42 @@ select func_remove();
 
 match (a) return a;
 
-drop function if exists func_set();
+create vlabel v;
+create elabel e;
+
+create or replace function func_complex1() returns void as $$
+declare
+var1 edge;
+var2 edge;
+begin
+match (a:v) , (b:v) , (c:v)
+create (a)-[z:e {name:'edge1', id:'1'}]->(b)
+create (b)-[r:e {name:'edge2', id:'2'}]->(c)
+return z , r into var1 , var2;
+end;
+$$ language plagcypher;
+
+select func_complex1();
+
+create or replace function func_complex2() returns void as $$
+declare
+var1 edge;
+begin
+match (a:v) , (b:v)
+merge (a)-[r:e {name:'edge' , id:'0'}]-(b)
+on create set r.created = true, r.matched = null
+on match set r.matched = true, r.created = null
+return r into var1;
+end;
+$$ language plagcypher;
+
+select func_complex2();
+
+drop function if exists func_complex2();
+drop function if exists func_complex1();
 drop function if exists func_remove();
 drop function if exists func_merge();
+drop function if exists func_set();
 drop function if exists func_delete();
 drop function if exists func_create();
 drop graph if exists g4 cascade;
