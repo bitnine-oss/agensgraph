@@ -112,6 +112,20 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 
 static char *preserve_downcasing_ident(char *ident);
 
+/*
+ * for cypher
+ */
+static  PLpgSQL_stmt    *make_execcypher_stmt(int firsttoken, int location);
+static  void             read_into_cypher_target(PLpgSQL_rec **rec,
+												PLpgSQL_row **row,
+												bool *strict);
+static  void             read_into_list(char *initial_name,
+										PLpgSQL_datum *initial_datum,
+										int initial_location,
+										PLpgSQL_datum **scalar,
+										PLpgSQL_rec **rec,
+										PLpgSQL_row **row);
+
 %}
 
 %expect 0
@@ -300,8 +314,10 @@ static char *preserve_downcasing_ident(char *ident);
 %token <keyword>	K_INTO
 %token <keyword>	K_IS
 %token <keyword>	K_LAST
+%token <keyword>    K_LOAD
 %token <keyword>	K_LOG
 %token <keyword>	K_LOOP
+%token <keyword>    K_MATCH
 %token <keyword>	K_MESSAGE
 %token <keyword>	K_MESSAGE_TEXT
 %token <keyword>	K_MOVE
@@ -1965,6 +1981,14 @@ stmt_execsql	: K_IMPORT
 							cword_is_not_variable(&($1), @1);
 						$$ = make_execsql_stmt(T_CWORD, @1);
 					}
+				| K_MATCH
+					{
+						$$ = make_execcypher_stmt(K_MATCH, @1 );
+					}
+				| K_LOAD
+					{
+						$$ = make_execcypher_stmt(K_LOAD, @1 );
+					}
 				;
 
 stmt_dynexecute : K_EXECUTE
@@ -2443,7 +2467,9 @@ unreserved_keyword	:
 				| K_INSERT
 				| K_IS
 				| K_LAST
+				| K_LOAD
 				| K_LOG
+				| K_MATCH
 				| K_MESSAGE
 				| K_MESSAGE_TEXT
 				| K_MOVE
@@ -4028,4 +4054,205 @@ preserve_downcasing_ident(char *ident)
 		ident = downcase_identifier(ident, strlen(ident), false, false);
 
 	return ident;
+}
+
+/*
+ * for cypher
+ */
+static PLpgSQL_stmt *
+make_execcypher_stmt(int firsttoken, int location)
+{
+	StringInfoData		ds;
+	IdentifierLookup	save_IdentifierLookup;
+	PLpgSQL_stmt_execsql *execcypher;
+	PLpgSQL_expr		*expr;
+	PLpgSQL_row			*row = NULL;
+	PLpgSQL_rec			*rec = NULL;
+	int					tok;
+	bool				have_into = false;
+	bool				have_strict = false;
+	int					into_start_loc = -1;
+	int					into_end_loc = -1;
+
+	initStringInfo(&ds);
+
+	/* special lookup mode for identifiers within the SQL text */
+	save_IdentifierLookup = plpgsql_IdentifierLookup;
+	plpgsql_IdentifierLookup = IDENTIFIER_LOOKUP_EXPR;
+
+	tok = firsttoken;
+	for (;;)
+	{
+		tok = yylex();
+		if (have_into && into_end_loc < 0)
+			into_end_loc = yylloc;		/* token after the INTO part */
+		if (tok == ';')
+			break;
+		if (tok == 0)
+			yyerror("unexpected end of function definition");
+		if (tok == K_INTO)
+		{
+			if (have_into)
+				yyerror("INTO specified more than once");
+			have_into = true;
+			into_start_loc = yylloc;
+			plpgsql_IdentifierLookup = IDENTIFIER_LOOKUP_NORMAL;
+			read_into_cypher_target(&rec, &row, &have_strict);
+			plpgsql_IdentifierLookup = IDENTIFIER_LOOKUP_EXPR;
+		}
+	}
+
+	plpgsql_IdentifierLookup = save_IdentifierLookup;
+
+	if (have_into)
+	{
+		plpgsql_append_source_text(&ds, location, into_start_loc);
+		appendStringInfoSpaces(&ds, into_end_loc - into_start_loc);
+		plpgsql_append_source_text(&ds, into_end_loc, yylloc);
+	}
+	else
+		plpgsql_append_source_text(&ds, location, yylloc);
+
+	while (ds.len > 0 && scanner_isspace(ds.data[ds.len - 1]))
+		ds.data[--ds.len] = '\0';
+
+	expr = palloc0(sizeof(PLpgSQL_expr));
+	expr->dtype			= PLPGSQL_DTYPE_EXPR;
+	expr->query			= pstrdup(ds.data);
+	expr->plan			= NULL;
+	expr->paramnos		= NULL;
+	expr->rwparam		= -1;
+	expr->ns			= plpgsql_ns_top();
+	pfree(ds.data);
+
+	check_sql_expr(expr->query, location, 0);    // query parsing - gram.y 호출
+
+	execcypher = palloc(sizeof(PLpgSQL_stmt_execsql));
+	execcypher->cmd_type = PLPGSQL_STMT_EXECSQL;
+	execcypher->lineno  = plpgsql_location_to_lineno(location);
+	execcypher->sqlstmt = expr;
+	execcypher->mod_stmt = false;
+	execcypher->into	 = have_into;
+	execcypher->strict	 = have_strict;
+	execcypher->rec	 = rec;
+	execcypher->row	 = row;
+
+	return (PLpgSQL_stmt *) execcypher;
+}
+
+static void
+read_into_cypher_target(PLpgSQL_rec **rec, PLpgSQL_row **row, bool *strict)
+{
+	int			tok;
+
+	/* Set default results */
+	*rec = NULL;
+	*row = NULL;
+	if (strict)
+		*strict = false;
+
+	tok = yylex();
+	if (strict && tok == K_STRICT)
+	{
+		*strict = true;
+		tok = yylex();
+	}
+
+	switch (tok)
+	{
+		case T_DATUM:
+			read_into_list(NameOfDatum(&(yylval.wdatum)),
+					yylval.wdatum.datum, yylloc,
+					NULL, rec, row);
+			break;
+
+		default:
+			/* just to give a better message than "syntax error" */
+			current_token_is_not_variable(tok);
+	}
+}
+
+static  void
+read_into_list(char *initial_name,
+			PLpgSQL_datum *initial_datum,
+			int initial_location,
+			PLpgSQL_datum **scalar,
+			PLpgSQL_rec **rec,
+			PLpgSQL_row **row)
+{
+	int				 nfields;
+	char			*fieldnames[1024];
+	int				 varnos[1024];
+	PLpgSQL_row		*auxrow;
+	int				 tok;
+
+	check_assignable(initial_datum, initial_location);
+	fieldnames[0] = initial_name;
+	varnos[0]	  = initial_datum->dno;
+	nfields		  = 1;
+
+	*rec = NULL;
+	*row = NULL;
+	if (scalar)
+		*scalar = NULL;
+
+	/*
+	 * save row or rec if list has only one field.
+	 */
+	if (initial_datum->dtype == PLPGSQL_DTYPE_ROW)
+		*row = (PLpgSQL_row *) initial_datum;
+	else if (initial_datum->dtype == PLPGSQL_DTYPE_REC)
+		*rec = (PLpgSQL_rec *) initial_datum;
+	else if (scalar != NULL)
+		*scalar = initial_datum;
+
+	while ((tok = yylex()) == ',')
+	{
+		/* Check for array overflow */
+		if (nfields >= 1024)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("too many INTO variables specified"),
+					 parser_errposition(yylloc)));
+
+		tok = yylex();
+		switch (tok)
+		{
+			case T_DATUM:
+				check_assignable(yylval.wdatum.datum, yylloc);
+				fieldnames[nfields] = NameOfDatum(&(yylval.wdatum));
+				varnos[nfields++]	= yylval.wdatum.datum->dno;
+				break;
+
+			default:
+				/* just to give a better message than "syntax error" */
+				current_token_is_not_variable(tok);
+		}
+	}
+
+	/*
+	 * We read an extra, non-comma token from yylex(), so push it
+	 * back onto the input stream
+	 */
+	plpgsql_push_back_token(tok);
+
+	auxrow = palloc(sizeof(PLpgSQL_row));
+	auxrow->dtype = PLPGSQL_DTYPE_ROW;
+	auxrow->refname = pstrdup("*internal*");
+	auxrow->lineno = plpgsql_location_to_lineno(initial_location);
+	auxrow->rowtupdesc = NULL;
+	auxrow->nfields = nfields;
+	auxrow->fieldnames = palloc(sizeof(char *) * nfields);
+	auxrow->varnos = palloc(sizeof(int) * nfields);
+	while (--nfields >= 0)
+	{
+		auxrow->fieldnames[nfields] = fieldnames[nfields];
+		auxrow->varnos[nfields] = varnos[nfields];
+	}
+
+	plpgsql_adddatum((PLpgSQL_datum *)auxrow);
+
+	/* result should not be rec */
+	*rec = NULL;
+	*row = auxrow;
 }

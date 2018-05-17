@@ -1,0 +1,7 @@
+# plagcypher extension
+comment = 'PL/agCypher procedural language'
+default_version = '0.1'
+module_pathname = '$libdir/plpgsql'
+relocatable = false
+schema = pg_catalog
+superuser = false
