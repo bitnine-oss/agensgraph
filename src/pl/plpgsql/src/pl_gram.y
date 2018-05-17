@@ -113,18 +113,18 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 static char *preserve_downcasing_ident(char *ident);
 
 /*
- * for cypher
+ * for Cypher
  */
-static  PLpgSQL_stmt    *make_execcypher_stmt(int firsttoken, int location);
-static  void             read_into_cypher_target(PLpgSQL_rec **rec,
+static	PLpgSQL_stmt	*make_execcypher_stmt(int firsttoken, int location);
+static	void			read_into_cypher_target(PLpgSQL_rec **rec,
 												PLpgSQL_row **row,
 												bool *strict);
-static  void             read_into_list(char *initial_name,
-										PLpgSQL_datum *initial_datum,
-										int initial_location,
-										PLpgSQL_datum **scalar,
-										PLpgSQL_rec **rec,
-										PLpgSQL_row **row);
+static	void			read_into_list(char *initial_name,
+									   PLpgSQL_datum *initial_datum,
+									   int initial_location,
+									   PLpgSQL_datum **scalar,
+									   PLpgSQL_rec **rec,
+									   PLpgSQL_row **row);
 
 %}
 
@@ -314,10 +314,10 @@ static  void             read_into_list(char *initial_name,
 %token <keyword>	K_INTO
 %token <keyword>	K_IS
 %token <keyword>	K_LAST
-%token <keyword>    K_LOAD
+%token <keyword>	K_LOAD
 %token <keyword>	K_LOG
 %token <keyword>	K_LOOP
-%token <keyword>    K_MATCH
+%token <keyword>	K_MATCH
 %token <keyword>	K_MESSAGE
 %token <keyword>	K_MESSAGE_TEXT
 %token <keyword>	K_MOVE
@@ -1983,11 +1983,11 @@ stmt_execsql	: K_IMPORT
 					}
 				| K_MATCH
 					{
-						$$ = make_execcypher_stmt(K_MATCH, @1 );
+						$$ = make_execcypher_stmt(K_MATCH, @1);
 					}
 				| K_LOAD
 					{
-						$$ = make_execcypher_stmt(K_LOAD, @1 );
+						$$ = make_execcypher_stmt(K_LOAD, @1);
 					}
 				;
 
@@ -4057,7 +4057,7 @@ preserve_downcasing_ident(char *ident)
 }
 
 /*
- * for cypher
+ * for Cypher
  */
 static PLpgSQL_stmt *
 make_execcypher_stmt(int firsttoken, int location)
@@ -4125,17 +4125,17 @@ make_execcypher_stmt(int firsttoken, int location)
 	expr->ns			= plpgsql_ns_top();
 	pfree(ds.data);
 
-	check_sql_expr(expr->query, location, 0);    // query parsing - gram.y 호출
+	check_sql_expr(expr->query, location, 0);
 
 	execcypher = palloc(sizeof(PLpgSQL_stmt_execsql));
 	execcypher->cmd_type = PLPGSQL_STMT_EXECSQL;
-	execcypher->lineno  = plpgsql_location_to_lineno(location);
-	execcypher->sqlstmt = expr;
+	execcypher->lineno   = plpgsql_location_to_lineno(location);
+	execcypher->sqlstmt  = expr;
 	execcypher->mod_stmt = false;
 	execcypher->into	 = have_into;
 	execcypher->strict	 = have_strict;
-	execcypher->rec	 = rec;
-	execcypher->row	 = row;
+	execcypher->rec	     = rec;
+	execcypher->row	     = row;
 
 	return (PLpgSQL_stmt *) execcypher;
 }
@@ -4172,7 +4172,7 @@ read_into_cypher_target(PLpgSQL_rec **rec, PLpgSQL_row **row, bool *strict)
 	}
 }
 
-static  void
+static void
 read_into_list(char *initial_name,
 			PLpgSQL_datum *initial_datum,
 			int initial_location,

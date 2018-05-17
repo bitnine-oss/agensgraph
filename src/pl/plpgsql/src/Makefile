@@ -22,7 +22,7 @@ rpath =
 OBJS = pl_gram.o pl_handler.o pl_comp.o pl_exec.o \
 	pl_funcs.o pl_scanner.o $(WIN32RES)
 
-DATA = plpgsql.control plpgsql--1.0.sql plpgsql--unpackaged--1.0.sql plagcypher.control plagcypher--0.1.sql plagcypher--unpackaged--0.1.sql
+DATA = plpgsql.control plpgsql--1.0.sql plpgsql--unpackaged--1.0.sql plagcypher.control plagcypher--0.1.sql
 
 all: all-lib
 
