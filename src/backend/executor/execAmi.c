@@ -327,6 +327,12 @@ ExecUpScan(PlanState *node)
 		case T_ResultState:
 			ExecUpScanResult((ResultState *) node);
 			break;
+		case T_NestLoopState:
+			{
+				ExecUpScan(node->lefttree);
+				ExecUpScan(node->righttree);
+			}
+			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			break;
@@ -352,6 +358,12 @@ ExecDownScan(PlanState *node)
 			break;
 		case T_ResultState:
 			ExecDownScanResult((ResultState *) node);
+			break;
+		case T_NestLoopState:
+			{
+				ExecDownScan(node->lefttree);
+				ExecDownScan(node->righttree);
+			}
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));

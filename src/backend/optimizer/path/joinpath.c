@@ -1412,9 +1412,11 @@ match_unsorted_outer(PlannerInfo *root,
 		 * Consider materializing the cheapest inner path, unless
 		 * enable_material is off or the path in question materializes its
 		 * output anyway.
+		 * Subplan of NestLoopVLE does not allow to consider materializing.
 		 */
 		if (enable_material && inner_cheapest_total != NULL &&
-			!ExecMaterializesOutput(inner_cheapest_total->pathtype))
+			!ExecMaterializesOutput(inner_cheapest_total->pathtype) &&
+			!root->hasVLEJoinRTE)
 			matpath = (Path *)
 				create_material_path(innerrel, inner_cheapest_total);
 	}
