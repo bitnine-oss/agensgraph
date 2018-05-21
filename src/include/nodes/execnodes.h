@@ -1715,10 +1715,12 @@ typedef struct NestLoopVLEState
 	NestLoopState nls;
 	int			curhops;
 	bool		selfLoop;
-	bool		hasPath;
+	bool		hasEdges;
+	bool		hasVertices;
 	TupleTableSlot *selfTupleSlot;
 	VLEArrayExpr ids;
 	VLEArrayExpr edges;
+	VLEArrayExpr vertices;
 	dlist_head	vleCtxs;		/* list of NestLoopVLECtx */
 	dlist_node *curCtx;
 } NestLoopVLEState;

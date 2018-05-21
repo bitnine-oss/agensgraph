@@ -329,6 +329,23 @@ RETURN d.sec AS d, length(z) AS z,
 MATCH (a:time)-[x*0..2]-(b)
 RETURN a.sec AS a, length(x) AS x, b.sec AS b;
 
+-- VLE with graph path
+MATCH p = (:time)-[:goes*0]->(:time)
+RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(relationships(p)[0]) AS rel;
+
+MATCH p = (:time)-[r:goes*0..2]->(:time)
+RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(vertices(p)[2]) AS third,
+	   id(nodes(p)[0]) = id(startnode(r[0])) AS check_start_of_first_edge,
+	   id(nodes(p)[1]) = id(endnode(r[0])) AS check_end_of_first_edge,
+	   id(nodes(p)[1]) = id(startnode(r[1])) AS check_start_of_second_edge,
+	   id(nodes(p)[2]) = id(endnode(r[1])) AS check_end_of_second_edge,
+	   length(edges(p));
+
+MATCH p = (:time)-[:goes*0]->(:time)-[:goes*2..4]->(:time)-[:goes*0]-(:time)
+RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(vertices(p)[2]) AS third,
+	   properties(nodes(p)[3]) AS fourth, properties(vertices(p)[4]) AS fifth, properties(vertices(p)[5]) AS sixth,
+	   length(edges(p));
+
 CREATE (:time {sec: 11})-[:goes {int: 1}]->
        (:time {sec: 12})-[:goes {int: 1}]->
        (:time {sec: 13})-[:goes {int: 2}]->

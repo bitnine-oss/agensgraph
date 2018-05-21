@@ -1027,6 +1027,83 @@ RETURN a.sec AS a, length(x) AS x, b.sec AS b;
  9 | 0 | 9
 (39 rows)
 
+-- VLE with graph path
+MATCH p = (:time)-[:goes*0]->(:time)
+RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(relationships(p)[0]) AS rel;
+   first    | second | rel 
+------------+--------+-----
+ {"sec": 1} |        | 
+ {"sec": 2} |        | 
+ {"sec": 3} |        | 
+ {"sec": 4} |        | 
+ {"sec": 5} |        | 
+ {"sec": 6} |        | 
+ {"sec": 7} |        | 
+ {"sec": 8} |        | 
+ {"sec": 9} |        | 
+(9 rows)
+
+MATCH p = (:time)-[r:goes*0..2]->(:time)
+RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(vertices(p)[2]) AS third,
+	   id(nodes(p)[0]) = id(startnode(r[0])) AS check_start_of_first_edge,
+	   id(nodes(p)[1]) = id(endnode(r[0])) AS check_end_of_first_edge,
+	   id(nodes(p)[1]) = id(startnode(r[1])) AS check_start_of_second_edge,
+	   id(nodes(p)[2]) = id(endnode(r[1])) AS check_end_of_second_edge,
+	   length(edges(p));
+   first    |   second   |   third    | check_start_of_first_edge | check_end_of_first_edge | check_start_of_second_edge | check_end_of_second_edge | length 
+------------+------------+------------+---------------------------+-------------------------+----------------------------+--------------------------+--------
+ {"sec": 1} |            |            |                           |                         |                            |                          | 0
+ {"sec": 1} | {"sec": 2} |            | t                         | t                       |                            |                          | 1
+ {"sec": 1} | {"sec": 2} | {"sec": 3} | t                         | t                       | t                          | t                        | 2
+ {"sec": 2} |            |            |                           |                         |                            |                          | 0
+ {"sec": 2} | {"sec": 3} |            | t                         | t                       |                            |                          | 1
+ {"sec": 2} | {"sec": 3} | {"sec": 4} | t                         | t                       | t                          | t                        | 2
+ {"sec": 3} |            |            |                           |                         |                            |                          | 0
+ {"sec": 3} | {"sec": 4} |            | t                         | t                       |                            |                          | 1
+ {"sec": 3} | {"sec": 4} | {"sec": 5} | t                         | t                       | t                          | t                        | 2
+ {"sec": 4} |            |            |                           |                         |                            |                          | 0
+ {"sec": 4} | {"sec": 5} |            | t                         | t                       |                            |                          | 1
+ {"sec": 4} | {"sec": 5} | {"sec": 6} | t                         | t                       | t                          | t                        | 2
+ {"sec": 5} |            |            |                           |                         |                            |                          | 0
+ {"sec": 5} | {"sec": 6} |            | t                         | t                       |                            |                          | 1
+ {"sec": 5} | {"sec": 6} | {"sec": 7} | t                         | t                       | t                          | t                        | 2
+ {"sec": 6} |            |            |                           |                         |                            |                          | 0
+ {"sec": 6} | {"sec": 7} |            | t                         | t                       |                            |                          | 1
+ {"sec": 6} | {"sec": 7} | {"sec": 8} | t                         | t                       | t                          | t                        | 2
+ {"sec": 7} |            |            |                           |                         |                            |                          | 0
+ {"sec": 7} | {"sec": 8} |            | t                         | t                       |                            |                          | 1
+ {"sec": 7} | {"sec": 8} | {"sec": 9} | t                         | t                       | t                          | t                        | 2
+ {"sec": 8} |            |            |                           |                         |                            |                          | 0
+ {"sec": 8} | {"sec": 9} |            | t                         | t                       |                            |                          | 1
+ {"sec": 9} |            |            |                           |                         |                            |                          | 0
+(24 rows)
+
+MATCH p = (:time)-[:goes*0]->(:time)-[:goes*2..4]->(:time)-[:goes*0]-(:time)
+RETURN properties(nodes(p)[0]) AS first, properties(vertices(p)[1]) AS second, properties(vertices(p)[2]) AS third,
+	   properties(nodes(p)[3]) AS fourth, properties(vertices(p)[4]) AS fifth, properties(vertices(p)[5]) AS sixth,
+	   length(edges(p));
+   first    |   second   |   third    |   fourth   |   fifth    | sixth | length 
+------------+------------+------------+------------+------------+-------+--------
+ {"sec": 1} | {"sec": 2} | {"sec": 3} |            |            |       | 2
+ {"sec": 1} | {"sec": 2} | {"sec": 3} | {"sec": 4} |            |       | 3
+ {"sec": 2} | {"sec": 3} | {"sec": 4} |            |            |       | 2
+ {"sec": 1} | {"sec": 2} | {"sec": 3} | {"sec": 4} | {"sec": 5} |       | 4
+ {"sec": 2} | {"sec": 3} | {"sec": 4} | {"sec": 5} |            |       | 3
+ {"sec": 3} | {"sec": 4} | {"sec": 5} |            |            |       | 2
+ {"sec": 2} | {"sec": 3} | {"sec": 4} | {"sec": 5} | {"sec": 6} |       | 4
+ {"sec": 3} | {"sec": 4} | {"sec": 5} | {"sec": 6} |            |       | 3
+ {"sec": 4} | {"sec": 5} | {"sec": 6} |            |            |       | 2
+ {"sec": 3} | {"sec": 4} | {"sec": 5} | {"sec": 6} | {"sec": 7} |       | 4
+ {"sec": 4} | {"sec": 5} | {"sec": 6} | {"sec": 7} |            |       | 3
+ {"sec": 5} | {"sec": 6} | {"sec": 7} |            |            |       | 2
+ {"sec": 4} | {"sec": 5} | {"sec": 6} | {"sec": 7} | {"sec": 8} |       | 4
+ {"sec": 5} | {"sec": 6} | {"sec": 7} | {"sec": 8} |            |       | 3
+ {"sec": 6} | {"sec": 7} | {"sec": 8} |            |            |       | 2
+ {"sec": 5} | {"sec": 6} | {"sec": 7} | {"sec": 8} | {"sec": 9} |       | 4
+ {"sec": 6} | {"sec": 7} | {"sec": 8} | {"sec": 9} |            |       | 3
+ {"sec": 7} | {"sec": 8} | {"sec": 9} |            |            |       | 2
+(18 rows)
+
 CREATE (:time {sec: 11})-[:goes {int: 1}]->
        (:time {sec: 12})-[:goes {int: 1}]->
        (:time {sec: 13})-[:goes {int: 2}]->
