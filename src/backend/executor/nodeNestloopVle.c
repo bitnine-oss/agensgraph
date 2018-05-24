@@ -64,6 +64,8 @@ static void addOuterIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot);
 static void addInnerIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot);
 static void addIdAndEdge(NestLoopVLEState *node, Datum id, Datum edge);
 static void popRowidAndGid(NestLoopVLEState *node);
+static TupleTableSlot *copyTupleTableSlot(TupleTableSlot *dstslot,
+										  TupleTableSlot *srcslot);
 
 
 static TupleTableSlot *
@@ -188,9 +190,13 @@ ExecNestLoopVLE(PlanState *pstate)
 			}
 			else
 			{
+				TupleTableSlot *prev_slot;
+
 				ENLV1_printf("no inner tuple, upscanning inner plan, looping");
 				ExecUpScan(innerPlan);
-				econtext->ecxt_outertuple = restoreStartAndBindVar(node);
+
+				prev_slot = restoreStartAndBindVar(node);
+				copyTupleTableSlot(econtext->ecxt_outertuple, prev_slot);
 				bindNestParam(nlv, econtext, econtext->ecxt_outertuple, NULL);
 			}
 
@@ -771,4 +777,20 @@ popRowidAndGid(NestLoopVLEState *node)
 	popElem(&node->ids);
 	if (node->hasPath)
 		popElem(&node->edges);
+}
+
+static TupleTableSlot *
+copyTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
+{
+	int natts = srcslot->tts_tupleDescriptor->natts;
+
+	ExecSetSlotDescriptor(dstslot, srcslot->tts_tupleDescriptor);
+
+	/* shallow copy */
+	memcpy(dstslot->tts_values, srcslot->tts_values, natts * sizeof(Datum));
+	memcpy(dstslot->tts_isnull, srcslot->tts_isnull, natts * sizeof(bool));
+
+	ExecStoreVirtualTuple(dstslot);
+
+	return dstslot;
 }
