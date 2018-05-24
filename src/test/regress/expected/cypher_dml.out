@@ -1791,7 +1791,60 @@ SELECT * FROM (
                                                    Index Cond: ($3 = familyship_3.start)
 (82 rows)
 
+-- AG-154, CS-34 : VLE returns incoreect result with sequential scan
+CREATE GRAPH AG154;
+SET graph_path = AG154;
+CREATE ({id:1})-[:rel]->({id:11});
+MATCH (a {id:11}) CREATE (a)-[:rel]->({id:111});
+MATCH (a {id:111}) CREATE (a)-[:rel]->({id:1111});
+MATCH (a {id:111}) CREATE (a)-[:rel]->({id:1112});
+MATCH (a {id:111}) CREATE (a)-[:rel]->({id:1113});
+MATCH (a {id:11}) CREATE (a)-[:rel]->({id:112});
+MATCH (a {id:112}) CREATE (a)-[:rel]->({id:1121});
+MATCH (a {id:112}) CREATE (a)-[:rel]->({id:1122});
+MATCH (a {id:11}) CREATE (a)-[:rel]->({id:113});
+MATCH (a {id:113}) CREATE (a)-[:rel]->({id:1131});
+MATCH (a {id:113}) CREATE (a)-[:rel]->({id:1132});
+SET enable_indexscan = f;
+SET enable_seqscan = t;
+MATCH ({id:1})-[r:rel*]->() RETURN length(r) AS len ORDER BY len;
+ len 
+-----
+ 1
+ 2
+ 2
+ 2
+ 3
+ 3
+ 3
+ 3
+ 3
+ 3
+ 3
+(11 rows)
+
+SET enable_indexscan = t;
+SET enable_seqscan = f;
+MATCH ({id:1})-[r:rel*]->() RETURN length(r) AS len ORDER BY len;
+ len 
+-----
+ 1
+ 2
+ 2
+ 2
+ 3
+ 3
+ 3
+ 3
+ 3
+ 3
+ 3
+(11 rows)
+
+SET enable_indexscan = default;
+SET enable_seqscan = default;
 -- shortestpath(), allshortestpaths()
+SET graph_path = t;
 CREATE OR REPLACE FUNCTION ids(vertex[]) RETURNS int[] AS $$
 DECLARE
   v vertex;
@@ -3242,6 +3295,12 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel person
 drop cascades to elabel knows
+DROP GRAPH AG154 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence ag154.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to elabel rel
 SET graph_path = agens;
 DROP VLABEL feature;
 DROP ELABEL supported;

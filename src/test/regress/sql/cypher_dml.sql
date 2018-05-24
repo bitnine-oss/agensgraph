@@ -265,7 +265,6 @@ RETURN n.name AS n, type(r) AS r, p.name AS p,
 ORDER BY n, p, m, q;
 
 -- Variable Length Relationship
-
 CREATE GRAPH t;
 SET graph_path = t;
 
@@ -488,7 +487,35 @@ SELECT * FROM (
   RETURN x[1]
 ) AS foo;
 
+-- AG-154, CS-34 : VLE returns incoreect result with sequential scan
+CREATE GRAPH AG154;
+SET graph_path = AG154;
+
+CREATE ({id:1})-[:rel]->({id:11});
+MATCH (a {id:11}) CREATE (a)-[:rel]->({id:111});
+MATCH (a {id:111}) CREATE (a)-[:rel]->({id:1111});
+MATCH (a {id:111}) CREATE (a)-[:rel]->({id:1112});
+MATCH (a {id:111}) CREATE (a)-[:rel]->({id:1113});
+MATCH (a {id:11}) CREATE (a)-[:rel]->({id:112});
+MATCH (a {id:112}) CREATE (a)-[:rel]->({id:1121});
+MATCH (a {id:112}) CREATE (a)-[:rel]->({id:1122});
+MATCH (a {id:11}) CREATE (a)-[:rel]->({id:113});
+MATCH (a {id:113}) CREATE (a)-[:rel]->({id:1131});
+MATCH (a {id:113}) CREATE (a)-[:rel]->({id:1132});
+
+SET enable_indexscan = f;
+SET enable_seqscan = t;
+MATCH ({id:1})-[r:rel*]->() RETURN length(r) AS len ORDER BY len;
+
+SET enable_indexscan = t;
+SET enable_seqscan = f;
+MATCH ({id:1})-[r:rel*]->() RETURN length(r) AS len ORDER BY len;
+
+SET enable_indexscan = default;
+SET enable_seqscan = default;
+
 -- shortestpath(), allshortestpaths()
+SET graph_path = t;
 
 CREATE OR REPLACE FUNCTION ids(vertex[]) RETURNS int[] AS $$
 DECLARE
@@ -1235,6 +1262,7 @@ DROP GRAPH p CASCADE;
 DROP GRAPH u CASCADE;
 DROP GRAPH t CASCADE;
 DROP GRAPH o CASCADE;
+DROP GRAPH AG154 CASCADE;
 
 SET graph_path = agens;
 
