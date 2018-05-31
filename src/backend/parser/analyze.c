@@ -3009,7 +3009,9 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 			case T_CypherCreateClause:
 				if (update_type == T_Invalid ||
 					update_type == T_CypherMergeClause)
+				{
 					update_type = T_CypherCreateClause;
+				}
 				if (read)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
@@ -3027,15 +3029,6 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 					update_type == T_CypherCreateClause)
 				{
 					update_type = T_CypherMergeClause;
-				}
-				else if (update_type == T_CypherMergeClause)
-				{
-					CypherMergeClause *detail = (CypherMergeClause *) clause->detail;
-
-					if (detail->sets != NIL)
-						ereport(ERROR,
-								(errcode(ERRCODE_SYNTAX_ERROR),
-								 errmsg("ON CREATE/MATCH SET between MERGE clauses is not allowed")));
 				}
 				if (read)
 					ereport(ERROR,
