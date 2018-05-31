@@ -107,6 +107,32 @@ SET a.no = a.no + 3;
 MATCH (a:v2) RETURN label(a) as label, a.no AS no ORDER BY label, no;
 MATCH (a:v2) DETACH DELETE a;
 
+-- MERGE - SET - MERGE
+MATCH (:v1)
+MERGE (a:v2 {no:1})
+	ON MATCH SET a.cnt = a.cnt + 1
+	ON CREATE SET a.cnt = 0
+MERGE (b:v2 {cnt:2})
+RETURN a=b;
+
+MATCH (a:v2) DETACH DELETE a;
+
+MATCH (a:v1)
+MERGE (b:v2 {no:a.no})
+	ON MATCH SET b.matched = true
+	ON CREATE SET b.created = true
+MERGE (c:v2 {no:4 - a.no})
+RETURN properties(b), properties(c);
+
+MATCH (a:v1)
+MERGE (b:v2 {no:a.no})
+	ON MATCH SET b.matched = true, b.created = NULL
+	ON CREATE SET b.created = true
+MERGE (c:v2 {no:4 - a.no})
+RETURN properties(b), properties(c);
+
+MATCH (a:v2) DETACH DELETE a;
+
 -- MERGE - DELETE
 MATCH (a:v1) CREATE (:v2 =properties(a));
 
@@ -370,8 +396,6 @@ MATCH (a) RETURN properties(a);
 
 -- wrong case
 MERGE (a:v1) MERGE (b:v2 {name: a.notexistent});
-MERGE (a:v1) ON MATCH SET a.matched = true
-MERGE (b:v2 {name: a.name});
 MERGE (a:v1) MATCH (b:v2 {name: a.name}) RETURN a, b;
 MERGE (a:v1) MERGE (b:v2 {name: a.name}) MERGE (a);
 MERGE (a)-[r]->(b);

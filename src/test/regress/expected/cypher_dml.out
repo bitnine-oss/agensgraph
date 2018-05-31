@@ -2903,9 +2903,6 @@ MATCH (a) RETURN properties(a);
 MATCH (a) DETACH DELETE a;
 -- wrong case
 MERGE (a:v1) MERGE (b:v2 {name: a.notexistent});
-MERGE (a:v1) ON MATCH SET a.matched = true
-MERGE (b:v2 {name: a.name});
-ERROR:  ON CREATE/MATCH SET between MERGE clauses is not allowed
 MERGE (a:v1) MATCH (b:v2 {name: a.name}) RETURN a, b;
 ERROR:  Cypher read clauses cannot follow update clauses
 MERGE (a:v1) MERGE (b:v2 {name: a.name}) MERGE (a);

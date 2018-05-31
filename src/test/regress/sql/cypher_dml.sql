@@ -1121,8 +1121,6 @@ MATCH (a) DETACH DELETE a;
 
 -- wrong case
 MERGE (a:v1) MERGE (b:v2 {name: a.notexistent});
-MERGE (a:v1) ON MATCH SET a.matched = true
-MERGE (b:v2 {name: a.name});
 MERGE (a:v1) MATCH (b:v2 {name: a.name}) RETURN a, b;
 MERGE (a:v1) MERGE (b:v2 {name: a.name}) MERGE (a);
 MERGE (a)-[r]->(b);
