@@ -32,13 +32,15 @@
 #include "utils/memutils.h"
 
 
-#define OUTER_PREV_VARNO	0
-#define OUTER_CURR_VARNO	1
-#define OUTER_IDS_VARNO		2
-#define OUTER_EDGES_VARNO	3
-#define INNER_NEXT_VARNO	0
-#define INNER_ID_VARNO		1
-#define INNER_EDGE_VARNO	2
+#define OUTER_PREV_VARNO		0
+#define OUTER_CURR_VARNO		1
+#define OUTER_IDS_VARNO			2
+#define OUTER_EDGES_VARNO		3
+#define OUTER_VERTICES_VARNO	4
+#define INNER_NEXT_VARNO		0
+#define INNER_ID_VARNO			1
+#define INNER_EDGE_VARNO		2
+#define INNER_VERTEX_VARNO		3
 
 
 static bool incrDepth(NestLoopVLEState *node);
@@ -61,7 +63,7 @@ static void addElem(VLEArrayExpr *array, Datum elem);
 static void popElem(VLEArrayExpr *array);
 static bool hasElem(VLEArrayExpr *array, Datum elem);
 static void addOuterIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot);
-static void addInnerIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot);
+static void addInnerElements(NestLoopVLEState *node, TupleTableSlot *slot);
 static void addIdAndEdge(NestLoopVLEState *node, Datum id, Datum edge);
 static void popRowidAndGid(NestLoopVLEState *node);
 
@@ -235,7 +237,7 @@ ExecNestLoopVLE(PlanState *pstate)
 
 				result = ExecProject(node->nls.js.ps.ps_ProjInfo);
 
-				addInnerIdAndEdge(node, econtext->ecxt_innertuple);
+				addInnerElements(node, econtext->ecxt_innertuple);
 
 				/* in both [x..y] and [x..] cases */
 				if (node->curhops >= nlv->minHops)
@@ -354,17 +356,25 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	initArray(&nlvstate->ids,
 			  innerTupleDesc->attrs[INNER_ID_VARNO]->atttypid,
 			  nlvstate->nls.js.ps.ps_ExprContext);
-	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 7)
+	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 9)
+	{
+		initArray(&nlvstate->vertices,
+				  innerTupleDesc->attrs[INNER_VERTEX_VARNO]->atttypid,
+				  nlvstate->nls.js.ps.ps_ExprContext);
+		nlvstate->hasVertices = true;
+	}
+	else
+		nlvstate->hasVertices = false;
+
+	if (list_length(nlvstate->nls.js.ps.plan->targetlist) >= 7)
 	{
 		initArray(&nlvstate->edges,
 				  innerTupleDesc->attrs[INNER_EDGE_VARNO]->atttypid,
 				  nlvstate->nls.js.ps.ps_ExprContext);
-		nlvstate->hasPath = true;
+		nlvstate->hasEdges = true;
 	}
 	else
-	{
-		nlvstate->hasPath = false;
-	}
+		nlvstate->hasEdges = false;
 
 	/*
 	 * finally, wipe the current outer tuple clean.
@@ -399,8 +409,10 @@ ExecEndNestLoopVLE(NestLoopVLEState *node)
 	ExecClearTuple(node->selfTupleSlot);
 	clearVleCtxs(&node->vleCtxs);
 	clearArray(&node->ids);
-	if (node->hasPath)
+	if (node->hasEdges)
 		clearArray(&node->edges);
+	if (node->hasVertices)
+		clearArray(&node->vertices);
 
 	/*
 	 * close down subplans
@@ -445,8 +457,10 @@ ExecReScanNestLoopVLE(NestLoopVLEState *node)
 	node->curCtx = NULL;
 
 	clearArray(&node->ids);
-	if (node->hasPath)
+	if (node->hasEdges)
 		clearArray(&node->edges);
+	if (node->hasVertices)
+		clearArray(&node->vertices);
 }
 
 static bool
@@ -602,10 +616,15 @@ replaceResult(NestLoopVLEState *node, TupleTableSlot *slot)
 {
 	slot->tts_values[OUTER_IDS_VARNO] = evalArray(&node->ids);
 	slot->tts_isnull[OUTER_IDS_VARNO] = false;
-	if (node->hasPath)
+	if (node->hasEdges)
 	{
 		slot->tts_values[OUTER_EDGES_VARNO] = evalArray(&node->edges);
 		slot->tts_isnull[OUTER_EDGES_VARNO] = false;
+	}
+	if (node->hasVertices)
+	{
+		slot->tts_values[OUTER_VERTICES_VARNO] = evalArray(&node->vertices);
+		slot->tts_isnull[OUTER_VERTICES_VARNO] = false;
 	}
 }
 
@@ -734,7 +753,7 @@ addOuterIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot)
 	if (isNull)
 		return;
 
-	if (node->hasPath)
+	if (node->hasEdges)
 		edge = array_get_element(slot->tts_values[OUTER_EDGES_VARNO],
 								 1, upper.indx,
 								 attrs[OUTER_EDGES_VARNO]->attlen,
@@ -745,14 +764,20 @@ addOuterIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot)
 }
 
 static void
-addInnerIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot)
+addInnerElements(NestLoopVLEState *node, TupleTableSlot *slot)
 {
 	Datum edge = (Datum) 0;
 
-	if (node->hasPath)
+	if (node->hasEdges)
 		edge = slot->tts_values[INNER_EDGE_VARNO];
 
 	addIdAndEdge(node, slot->tts_values[INNER_ID_VARNO], edge);
+
+	if (node->hasVertices)
+		addElem(&node->vertices,
+				datumCopy(slot->tts_values[INNER_VERTEX_VARNO],
+										   node->vertices.elembyval,
+										   node->vertices.elemlength));
 }
 
 static void
@@ -769,6 +794,8 @@ static void
 popRowidAndGid(NestLoopVLEState *node)
 {
 	popElem(&node->ids);
-	if (node->hasPath)
+	if (node->hasEdges)
 		popElem(&node->edges);
+	if (node->hasVertices)
+		popElem(&node->vertices);
 }
