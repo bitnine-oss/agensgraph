@@ -141,6 +141,48 @@ MATCH (a:v2) RETURN label(a) as label, a.no AS no ORDER BY label, no;
 (5 rows)
 
 MATCH (a:v2) DETACH DELETE a;
+-- MERGE - SET - MERGE
+MATCH (:v1)
+MERGE (a:v2 {no:1})
+	ON MATCH SET a.cnt = a.cnt + 1
+	ON CREATE SET a.cnt = 0
+MERGE (b:v2 {cnt:2})
+RETURN a=b;
+ ?column? 
+----------
+ t
+ t
+ t
+(3 rows)
+
+MATCH (a:v2) DETACH DELETE a;
+MATCH (a:v1)
+MERGE (b:v2 {no:a.no})
+	ON MATCH SET b.matched = true
+	ON CREATE SET b.created = true
+MERGE (c:v2 {no:4 - a.no})
+RETURN properties(b), properties(c);
+         properties         |         properties         
+----------------------------+----------------------------
+ {"no": 1, "created": true} | {"no": 3, "created": true}
+ {"no": 2, "created": true} | {"no": 2, "created": true}
+ {"no": 3, "created": true} | {"no": 1, "created": true}
+(3 rows)
+
+MATCH (a:v1)
+MERGE (b:v2 {no:a.no})
+	ON MATCH SET b.matched = true, b.created = NULL
+	ON CREATE SET b.created = true
+MERGE (c:v2 {no:4 - a.no})
+RETURN properties(b), properties(c);
+         properties         |         properties         
+----------------------------+----------------------------
+ {"no": 1, "matched": true} | {"no": 3, "matched": true}
+ {"no": 2, "matched": true} | {"no": 2, "matched": true}
+ {"no": 3, "matched": true} | {"no": 1, "matched": true}
+(3 rows)
+
+MATCH (a:v2) DETACH DELETE a;
 -- MERGE - DELETE
 MATCH (a:v1) CREATE (:v2 =properties(a));
 --SET enable_eager = false;
@@ -477,9 +519,6 @@ MATCH (a) RETURN properties(a);
 
 -- wrong case
 MERGE (a:v1) MERGE (b:v2 {name: a.notexistent});
-MERGE (a:v1) ON MATCH SET a.matched = true
-MERGE (b:v2 {name: a.name});
-ERROR:  ON CREATE/MATCH SET between MERGE clauses is not allowed
 MERGE (a:v1) MATCH (b:v2 {name: a.name}) RETURN a, b;
 ERROR:  Cypher read clauses cannot follow update clauses
 MERGE (a:v1) MERGE (b:v2 {name: a.name}) MERGE (a);
