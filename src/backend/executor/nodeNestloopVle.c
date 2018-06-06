@@ -821,3 +821,19 @@ copyTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
 
 	return dstslot;
 }
+
+static TupleTableSlot *
+copyTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
+{
+	int natts = srcslot->tts_tupleDescriptor->natts;
+
+	ExecSetSlotDescriptor(dstslot, srcslot->tts_tupleDescriptor);
+
+	/* shallow copy */
+	memcpy(dstslot->tts_values, srcslot->tts_values, natts * sizeof(Datum));
+	memcpy(dstslot->tts_isnull, srcslot->tts_isnull, natts * sizeof(bool));
+
+	ExecStoreVirtualTuple(dstslot);
+
+	return dstslot;
+}
