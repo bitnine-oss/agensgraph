@@ -42,6 +42,8 @@
 #include "access/attnum.h"
 #include "access/sysattr.h"
 #include "access/transam.h"
+#include "catalog/ag_graph.h"
+#include "catalog/ag_label.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_attribute.h"
 #include "catalog/pg_cast.h"
@@ -49,6 +51,7 @@
 #include "catalog/pg_default_acl.h"
 #include "catalog/pg_largeobject.h"
 #include "catalog/pg_largeobject_metadata.h"
+#include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
@@ -17582,10 +17585,6 @@ insertGraphCatalog(Archive *fout)
 	PGresult   *res;
 	int			ntuples;
 	int			tuple;
-	int			nspclass;
-	int			graphclass;
-	int			tabclass;
-	int			labclass;
 
 	q = createPQExpBuffer();
 
@@ -17601,26 +17600,15 @@ insertGraphCatalog(Archive *fout)
 				"WHERE nspname = '%s';\n",
 				PQgetvalue(res, tuple, 0));
 	}
+	PQclear(res);
 
 	/* restore dependency between pg_namespace and ag_graph */
-	res = ExecuteSqlQuery(fout,
-			"SELECT oid FROM pg_catalog.pg_class "
-			"WHERE relname = 'pg_namespace'",
-			PGRES_TUPLES_OK);
-	nspclass = atoi(PQgetvalue(res, 0, 0));
-
-	res = ExecuteSqlQuery(fout,
-			"SELECT oid FROM pg_catalog.pg_class "
-			"WHERE relname = 'ag_graph'",
-			PGRES_TUPLES_OK);
-	graphclass = atoi(PQgetvalue(res, 0, 0));
-
 	appendPQExpBuffer(q,
 			"INSERT INTO pg_catalog.pg_depend\n"
 			"(SELECT %d, nspid, 0, %d, oid, 0, 'i'\n"
 			"FROM pg_catalog.ag_graph);\n",
-			nspclass,
-			graphclass);
+			NamespaceRelationId,
+			GraphRelationId);
 
 	/* restore ag_label */
 	res = ExecuteSqlQuery(fout,
@@ -17643,28 +17631,15 @@ insertGraphCatalog(Archive *fout)
 				PQgetvalue(res, tuple, 3),
 				PQgetvalue(res, tuple, 0));
 	}
+	PQclear(res);
 
 	/* restore dependency between pg_class and ag_label */
-	res = ExecuteSqlQuery(fout,
-			"SELECT oid FROM pg_catalog.pg_class "
-			"WHERE relname = 'pg_class'",
-			PGRES_TUPLES_OK);
-	tabclass = atoi(PQgetvalue(res, 0, 0));
-
-	res = ExecuteSqlQuery(fout,
-			"SELECT oid FROM pg_catalog.pg_class "
-			"WHERE relname = 'ag_label'",
-			PGRES_TUPLES_OK);
-	labclass = atoi(PQgetvalue(res, 0, 0));
-
 	appendPQExpBuffer(q,
 			"INSERT INTO pg_catalog.pg_depend\n"
 			"(SELECT %d, relid, 0, %d, oid, 0, 'i'\n"
 			"FROM pg_catalog.ag_label);\n",
-			tabclass,
-			labclass);
-
-	PQclear(res);
+			RelationRelationId,
+			LabelRelationId);
 
 	ArchiveEntry(fout, nilCatalogId, createDumpId(), "Graph Catalog", NULL,
 				 NULL, "", false, "GRAPH", SECTION_DATA, q->data, "", NULL,
