@@ -2381,6 +2381,15 @@ OPTIONAL MATCH (a)-[r:made_by]-(g)
 DELETE r;
 NOTICE:  skipping deletion of NULL graph element
 MATCH (a) DETACH DELETE a;
+-- AG-163 : DELETE plan passes 'edge' variable to the next plan.
+CREATE ({name:'AG-163'});
+MATCH (a {name:'AG-163'}) DELETE a RETURN *;
+ a 
+---
+ 
+(1 row)
+
+MATCH (a) DETACH DELETE a;
 --
 -- Uniqueness
 --

@@ -827,6 +827,13 @@ DELETE r;
 
 MATCH (a) DETACH DELETE a;
 
+-- AG-163 : DELETE plan passes 'edge' variable to the next plan.
+CREATE ({name:'AG-163'});
+
+MATCH (a {name:'AG-163'}) DELETE a RETURN *;
+
+MATCH (a) DETACH DELETE a;
+
 --
 -- Uniqueness
 --

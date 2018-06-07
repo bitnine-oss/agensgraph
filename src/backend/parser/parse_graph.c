@@ -4858,6 +4858,19 @@ transformDeleteJoinRTE(ParseState *pstate, CypherClause *clause)
 							  true);
 	Assert(r_qry->commandType == CMD_SELECT);
 
+	/*
+	 * 'edge' variable is only used to determine if there is an edge
+	 * connected to the vertex.
+	 */
+	if (!detail->detach)
+	{
+		TargetEntry *edge;
+
+		Assert(list_length(r_qry->targetList) == 1);
+		edge = linitial_node(TargetEntry, r_qry->targetList);
+		edge->resjunk = true;
+	}
+
 	pstate->p_lateral_active = false;
 	pstate->p_expr_kind = EXPR_KIND_NONE;
 
