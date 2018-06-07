@@ -42,6 +42,8 @@
 #include "access/attnum.h"
 #include "access/sysattr.h"
 #include "access/transam.h"
+#include "catalog/ag_graph.h"
+#include "catalog/ag_label.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_attribute.h"
 #include "catalog/pg_cast.h"
@@ -49,6 +51,7 @@
 #include "catalog/pg_default_acl.h"
 #include "catalog/pg_largeobject.h"
 #include "catalog/pg_largeobject_metadata.h"
+#include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
@@ -17585,6 +17588,7 @@ insertGraphCatalog(Archive *fout)
 
 	q = createPQExpBuffer();
 
+	/* restore ag_graph */
 	res = ExecuteSqlQuery(fout, "SELECT graphname FROM pg_catalog.ag_graph",
 						  PGRES_TUPLES_OK);
 	ntuples = PQntuples(res);
@@ -17598,6 +17602,15 @@ insertGraphCatalog(Archive *fout)
 	}
 	PQclear(res);
 
+	/* restore dependency between pg_namespace and ag_graph */
+	appendPQExpBuffer(q,
+			"INSERT INTO pg_catalog.pg_depend\n"
+			"(SELECT %d, nspid, 0, %d, oid, 0, 'i'\n"
+			"FROM pg_catalog.ag_graph);\n",
+			NamespaceRelationId,
+			GraphRelationId);
+
+	/* restore ag_label */
 	res = ExecuteSqlQuery(fout,
 			"SELECT l.labname, l.labid, l.labkind, g.graphname "
 			"FROM pg_catalog.ag_graph g, pg_catalog.ag_label l "
@@ -17619,6 +17632,14 @@ insertGraphCatalog(Archive *fout)
 				PQgetvalue(res, tuple, 0));
 	}
 	PQclear(res);
+
+	/* restore dependency between pg_class and ag_label */
+	appendPQExpBuffer(q,
+			"INSERT INTO pg_catalog.pg_depend\n"
+			"(SELECT %d, relid, 0, %d, oid, 0, 'i'\n"
+			"FROM pg_catalog.ag_label);\n",
+			RelationRelationId,
+			LabelRelationId);
 
 	ArchiveEntry(fout, nilCatalogId, createDumpId(), "Graph Catalog", NULL,
 				 NULL, "", false, "GRAPH", SECTION_DATA, q->data, "", NULL,
