@@ -832,6 +832,11 @@ CREATE ({name:'AG-163'});
 
 MATCH (a {name:'AG-163'}) DELETE a RETURN *;
 
+-- AG-160
+CREATE ()-[:AG160]->();
+
+MATCH ()-[r:AG160]->() DETACH DELETE r;
+
 MATCH (a) DETACH DELETE a;
 
 --

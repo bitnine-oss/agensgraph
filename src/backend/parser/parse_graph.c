@@ -760,14 +760,12 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	 * The edges of the vertices to remove are used only for removal,
 	 * not for the next clause.
 	 */
-	if (detail->detach)
+	if (detail->detach && pstate->p_delete_edges_resname)
 	{
 		TargetEntry *te;
 
 		/* This assumes the edge array always comes last. */
 		te = llast(qry->targetList);
-
-		Assert(pstate->p_delete_edges_resname != NULL);
 
 		if (strcmp(te->resname, pstate->p_delete_edges_resname) == 0)
 			te->resjunk = true;
