@@ -12,6 +12,7 @@
 
 #include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/parallel.h"
 #include "access/xact.h"
 #include "catalog/ag_graph.h"
 #include "catalog/ag_graph_fn.h"
@@ -35,7 +36,7 @@ bool enableGraphDML = false;
 bool
 check_graph_path(char **newval, void **extra, GucSource source)
 {
-	if (IsTransactionState())
+	if (IsTransactionState() && !InitializingParallelWorker)
 	{
 		if (!OidIsValid(get_graphname_oid(*newval)))
 		{
