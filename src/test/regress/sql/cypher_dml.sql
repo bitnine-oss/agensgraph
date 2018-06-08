@@ -1273,6 +1273,23 @@ SET graph_path = srf;
 CREATE (:v {id: 1})-[:e]->(:v {id: 2});
 MATCH p=()-[]->() RETURN unnest(nodes(p)).id;
 
+-- AG-161
+CREATE GRAPH ag161;
+SET GRAPH_PATH = ag161;
+
+CREATE (:v1 {no:1});
+CREATE (:v2 {no:2});
+CREATE (:v3 {no:3});
+
+ALTER DATABASE regression SET GRAPH_PATH TO ag161;
+SET PARALLEL_SETUP_COST = 0;
+
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(a);
+MATCH (a) RETURN count(a);
+
+ALTER DATABASE regression SET GRAPH_PATH TO DEFAULT;
+DROP GRAPH ag161 CASCADE;
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;

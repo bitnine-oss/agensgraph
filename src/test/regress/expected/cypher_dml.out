@@ -3277,6 +3277,50 @@ MATCH p=()-[]->() RETURN unnest(nodes(p)).id;
  2
 (2 rows)
 
+-- AG-161
+CREATE GRAPH ag161;
+SET GRAPH_PATH = ag161;
+CREATE (:v1 {no:1});
+CREATE (:v2 {no:2});
+CREATE (:v3 {no:3});
+ALTER DATABASE regression SET GRAPH_PATH TO ag161;
+SET PARALLEL_SETUP_COST = 0;
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(a);
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ Finalize Aggregate
+   Output: count(ROW(a.id, a.properties, a.ctid)::vertex)
+   ->  Gather
+         Output: (PARTIAL count(ROW(a.id, a.properties, a.ctid)::vertex))
+         Workers Planned: 1
+         ->  Partial Aggregate
+               Output: PARTIAL count(ROW(a.id, a.properties, a.ctid)::vertex)
+               ->  Append
+                     ->  Parallel Seq Scan on ag161.ag_vertex a
+                           Output: a.id, a.properties, a.ctid
+                     ->  Parallel Seq Scan on ag161.v1 a_1
+                           Output: a_1.id, a_1.properties, a_1.ctid
+                     ->  Parallel Seq Scan on ag161.v2 a_2
+                           Output: a_2.id, a_2.properties, a_2.ctid
+                     ->  Parallel Seq Scan on ag161.v3 a_3
+                           Output: a_3.id, a_3.properties, a_3.ctid
+(16 rows)
+
+MATCH (a) RETURN count(a);
+ count 
+-------
+     3
+(1 row)
+
+ALTER DATABASE regression SET GRAPH_PATH TO DEFAULT;
+DROP GRAPH ag161 CASCADE;
+NOTICE:  drop cascades to 6 other objects
+DETAIL:  drop cascades to sequence ag161.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel v1
+drop cascades to vlabel v2
+drop cascades to vlabel v3
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
