@@ -69,8 +69,7 @@ static Node *transformCaseExpr(ParseState *pstate, CaseExpr *c);
 static Node *transformFuncCall(ParseState *pstate, FuncCall *fn);
 static Node *transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c);
 static Node *transformSubLink(ParseState *pstate, SubLink *sublink);
-static Node *transformIndirection(ParseState *pstate, Node *basenode,
-								  List *indirection);
+static Node *transformIndirection(ParseState *pstate, A_Indirection *indir);
 static Node *makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive);
 static Node *adjustListIndexType(ParseState *pstate, Node *idx);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
@@ -136,14 +135,7 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 		case T_SubLink:
 			return transformSubLink(pstate, (SubLink *) expr);
 		case T_A_Indirection:
-			{
-				A_Indirection *indir = (A_Indirection *) expr;
-				Node	   *basenode;
-
-				basenode = transformCypherExprRecurse(pstate, indir->arg);
-				return transformIndirection(pstate, basenode,
-											indir->indirection);
-			}
+			return transformIndirection(pstate, (A_Indirection *) expr);
 		case T_A_Expr:
 			{
 				A_Expr	   *a = (A_Expr *) expr;
@@ -930,6 +922,7 @@ static Node *
 transformFuncCall(ParseState *pstate, FuncCall *fn)
 {
 	bool		is_num_agg = false;
+	Node	   *last_srf;
 	ListCell   *la;
 	List	   *args = NIL;
 
@@ -962,6 +955,8 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 			is_num_agg = true;
 		}
 	}
+
+	last_srf = pstate->p_last_srf;
 
 	foreach(la, fn->args)
 	{
@@ -1006,8 +1001,8 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 		}
 	}
 
-	return ParseFuncOrColumn(pstate, fn->funcname, args, pstate->p_last_srf,
-							 fn, fn->location);
+	return ParseFuncOrColumn(pstate, fn->funcname, args, last_srf, fn,
+							 fn->location);
 }
 
 static Node *
@@ -1166,20 +1161,22 @@ transformSubLink(ParseState *pstate, SubLink *sublink)
 }
 
 static Node *
-transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
+transformIndirection(ParseState *pstate, A_Indirection *indir)
 {
-	int			location = exprLocation(basenode);
+	Node	   *last_srf = pstate->p_last_srf;
 	Node	   *res;
 	Oid			restype;
+	int			location;
 	ListCell   *li;
 	CypherAccessExpr *a;
 	List	   *path = NIL;
 
-	res = basenode;
+	res = transformCypherExprRecurse(pstate, indir->arg);
 	restype = exprType(res);
+	location = exprLocation(res);
 
 	/* record/composite or array type */
-	foreach(li, indirection)
+	foreach(li, indir->indirection)
 	{
 		Node	   *i = lfirst(li);
 
@@ -1192,7 +1189,7 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 				break;
 
 			res = ParseFuncOrColumn(pstate, list_make1(i), list_make1(res),
-									pstate->p_last_srf, NULL, location);
+									last_srf, NULL, location);
 			if (res == NULL)
 			{
 				ereport(ERROR,
@@ -1310,6 +1307,7 @@ transformIndirection(ParseState *pstate, Node *basenode, List *indirection)
 static Node *
 makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive)
 {
+	Node	   *last_srf = pstate->p_last_srf;
 	Node	   *idxexpr;
 	Node	   *result;
 	Node	   *one;
@@ -1336,7 +1334,7 @@ makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive)
 							 Int32GetDatum(1), false, true);
 
 	result = (Node *) make_op(pstate, list_make1(makeString("+")),
-							  result, one, pstate->p_last_srf, -1);
+							  result, one, last_srf, -1);
 
 	return result;
 }
@@ -1361,6 +1359,7 @@ adjustListIndexType(ParseState *pstate, Node *idx)
 static Node *
 transformAExprOp(ParseState *pstate, A_Expr *a)
 {
+	Node	   *last_srf = pstate->p_last_srf;
 	Node	   *l;
 	Node	   *r;
 
@@ -1383,13 +1382,13 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 		}
 	}
 
-	return (Node *) make_op(pstate, a->name, l, r, pstate->p_last_srf,
-							a->location);
+	return (Node *) make_op(pstate, a->name, l, r, last_srf, a->location);
 }
 
 static Node *
 transformAExprIn(ParseState *pstate, A_Expr *a)
 {
+	Node	   *last_srf = pstate->p_last_srf;
 	Node	   *l;
 	Node	   *r;
 
@@ -1400,7 +1399,7 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 	r = coerce_to_jsonb(pstate, r, "jsonb", true);
 
 	return (Node *) make_op(pstate, list_make1(makeString("@>")), r, l,
-							pstate->p_last_srf, a->location);
+							last_srf, a->location);
 }
 
 static Node *

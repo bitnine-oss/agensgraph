@@ -1263,8 +1263,19 @@ LOAD FROM external_table AS r CREATE (=r);
 
 MATCH (n) RETURN n;
 
+--
+-- SRF
+--
+
+CREATE GRAPH srf;
+SET graph_path = srf;
+
+CREATE (:v {id: 1})-[:e]->(:v {id: 2});
+MATCH p=()-[]->() RETURN unnest(nodes(p)).id;
+
 -- cleanup
 
+DROP GRAPH srf CASCADE;
 DROP GRAPH impload CASCADE;
 DROP GRAPH gid CASCADE;
 DROP GRAPH np CASCADE;

@@ -412,6 +412,7 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 	qry->hasAggs = pstate->p_hasAggs;
 	if (qry->hasAggs)
 		parseCheckAggregates(pstate, qry);
@@ -545,6 +546,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 	qry->hasAggs = pstate->p_hasAggs;
 	if (qry->hasAggs)
 		parseCheckAggregates(pstate, qry);

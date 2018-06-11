@@ -3264,7 +3264,27 @@ MATCH (n) RETURN n;
  ag_vertex[1.1]{"id": 1, "name": "1"}
 (1 row)
 
+--
+-- SRF
+--
+CREATE GRAPH srf;
+SET graph_path = srf;
+CREATE (:v {id: 1})-[:e]->(:v {id: 2});
+MATCH p=()-[]->() RETURN unnest(nodes(p)).id;
+ id 
+----
+ 1
+ 2
+(2 rows)
+
 -- cleanup
+DROP GRAPH srf CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence srf.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel v
+drop cascades to elabel e
 DROP GRAPH impload CASCADE;
 NOTICE:  drop cascades to 3 other objects
 DETAIL:  drop cascades to sequence impload.ag_label_seq
