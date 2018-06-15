@@ -15,31 +15,31 @@ SHOW graph_path;
  
 (1 row)
 
-CREATE GRAPH g;
+CREATE GRAPH ddl;
 SHOW graph_path;
  graph_path 
 ------------
- g
+ ddl
 (1 row)
 
-CREATE GRAPH g;
-ERROR:  graph "g" already exists
-CREATE GRAPH IF NOT EXISTS g;
-NOTICE:  graph "g" already exists, skipping
+CREATE GRAPH ddl;
+ERROR:  graph "ddl" already exists
+CREATE GRAPH IF NOT EXISTS ddl;
+NOTICE:  graph "ddl" already exists, skipping
 -- check default graph objects
 \dGl
              List of labels
  Graph |   Name    |  Type  |   Owner    
 -------+-----------+--------+------------
- g     | ag_edge   | edge   | graph_role
- g     | ag_vertex | vertex | graph_role
+ ddl   | ag_edge   | edge   | graph_role
+ ddl   | ag_vertex | vertex | graph_role
 (2 rows)
 
 --
 -- ALTER GRAPH
 --
 CREATE ROLE temp;
-ALTER GRAPH g RENAME TO p;
+ALTER GRAPH ddl RENAME TO p;
 \dG
   List of graphs
  Name |   Owner    
@@ -47,16 +47,16 @@ ALTER GRAPH g RENAME TO p;
  p    | graph_role
 (1 row)
 
-ALTER GRAPH p RENAME TO g;
-ALTER GRAPH g OWNER TO temp;
+ALTER GRAPH p RENAME TO ddl;
+ALTER GRAPH ddl OWNER TO temp;
 \dG
 List of graphs
  Name | Owner 
 ------+-------
- g    | temp
+ ddl  | temp
 (1 row)
 
-ALTER GRAPH g OWNER TO graph_role;
+ALTER GRAPH ddl OWNER TO graph_role;
 -- ALTER GRAPH IF EXISTS is not supported
 --
 -- SET graph_path
@@ -168,38 +168,38 @@ ORDER BY 1;
 CREATE VLABEL tblspc TABLESPACE pg_default;
 -- DISABLE INDEX
 CREATE VLABEL vdi DISABLE INDEX;
-\d g.vdi
-                                                      Table "g.vdi"
-   Column   |  Type   | Collation | Nullable |                                  Default                                  
-------------+---------+-----------+----------+---------------------------------------------------------------------------
- id         | graphid |           | not null | graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
+\d ddl.vdi
+                                                       Table "ddl.vdi"
+   Column   |  Type   | Collation | Nullable |                                    Default                                    
+------------+---------+-----------+----------+-------------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('ddl.vdi'::cstring), nextval('ddl.vdi_id_seq'::regclass))
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "vdi_pkey" PRIMARY KEY, btree (id) INVALID
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
 -- REINDEX
 REINDEX VLABEL vdi;
-\d g.vdi
-                                                      Table "g.vdi"
-   Column   |  Type   | Collation | Nullable |                                  Default                                  
-------------+---------+-----------+----------+---------------------------------------------------------------------------
- id         | graphid |           | not null | graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
+\d ddl.vdi
+                                                       Table "ddl.vdi"
+   Column   |  Type   | Collation | Nullable |                                    Default                                    
+------------+---------+-----------+----------+-------------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('ddl.vdi'::cstring), nextval('ddl.vdi_id_seq'::regclass))
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "vdi_pkey" PRIMARY KEY, btree (id)
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
 -- REINDEX wrong case
 REINDEX ELABEL vdi;
 ERROR:  REINDEX ELABEL cannot REINDEX vertex label
-REINDEX VLABEL g.vdi;
+REINDEX VLABEL ddl.vdi;
 ERROR:  syntax error at or near "."
-LINE 1: REINDEX VLABEL g.vdi;
-                        ^
+LINE 1: REINDEX VLABEL ddl.vdi;
+                          ^
 -- check default attstattarget of edge label
 SELECT attname, attstattarget FROM pg_attribute
-WHERE attrelid = 'g.e1'::regclass;
+WHERE attrelid = 'ddl.e1'::regclass;
   attname   | attstattarget 
 ------------+---------------
  tableoid   |             0
@@ -217,180 +217,180 @@ WHERE attrelid = 'g.e1'::regclass;
 --
 -- COMMENT and \dG commands
 --
-COMMENT ON GRAPH g IS 'a graph for regression tests';
+COMMENT ON GRAPH ddl IS 'a graph for regression tests';
 COMMENT ON VLABEL v1 IS 'multiple inheritance test';
 \dG+
                             List of graphs
  Name |   Owner    | Access privileges |         Description          
 ------+------------+-------------------+------------------------------
- g    | graph_role |                   | a graph for regression tests
+ ddl  | graph_role |                   | a graph for regression tests
 (1 row)
 
 \dGv+
-                                   List of labels
- Graph |   Name    |  Type  |   Owner    |    Size    |         Description          
--------+-----------+--------+------------+------------+------------------------------
- g     | ag_vertex | vertex | graph_role | 8192 bytes | base vertex label of graph g
- g     | stor      | vertex | graph_role | 8192 bytes | 
- g     | tblspc    | vertex | graph_role | 8192 bytes | 
- g     | unlog     | vertex | graph_role | 16 kB      | 
- g     | v0        | vertex | graph_role | 8192 bytes | 
- g     | v00       | vertex | graph_role | 8192 bytes | 
- g     | v01       | vertex | graph_role | 8192 bytes | 
- g     | v1        | vertex | graph_role | 8192 bytes | multiple inheritance test
- g     | vdi       | vertex | graph_role | 8192 bytes | 
+                                    List of labels
+ Graph |   Name    |  Type  |   Owner    |    Size    |          Description           
+-------+-----------+--------+------------+------------+--------------------------------
+ ddl   | ag_vertex | vertex | graph_role | 8192 bytes | base vertex label of graph ddl
+ ddl   | stor      | vertex | graph_role | 8192 bytes | 
+ ddl   | tblspc    | vertex | graph_role | 8192 bytes | 
+ ddl   | unlog     | vertex | graph_role | 16 kB      | 
+ ddl   | v0        | vertex | graph_role | 8192 bytes | 
+ ddl   | v00       | vertex | graph_role | 8192 bytes | 
+ ddl   | v01       | vertex | graph_role | 8192 bytes | 
+ ddl   | v1        | vertex | graph_role | 8192 bytes | multiple inheritance test
+ ddl   | vdi       | vertex | graph_role | 8192 bytes | 
 (9 rows)
 
-Vertex label "g.ag_vertex"
+Vertex label "ddl.ag_vertex"
 --
-Child labels: g.stor,
-              g.tblspc,
-              g.unlog,
-              g.v0,
-              g.vdi
+Child labels: ddl.stor,
+              ddl.tblspc,
+              ddl.unlog,
+              ddl.v0,
+              ddl.vdi
 
-Vertex label "g.stor"
+Vertex label "ddl.stor"
 --
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
-Vertex label "g.tblspc"
+Vertex label "ddl.tblspc"
 --
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
-Vertex label "g.unlog"
+Vertex label "ddl.unlog"
 --
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
-Vertex label "g.v0"
+Vertex label "ddl.v0"
 --
-Inherits: g.ag_vertex
-Child labels: g.v00,
-              g.v01
+Inherits: ddl.ag_vertex
+Child labels: ddl.v00,
+              ddl.v01
 
-Vertex label "g.v00"
+Vertex label "ddl.v00"
 --
-Inherits: g.v0
-Child labels: g.v1
+Inherits: ddl.v0
+Child labels: ddl.v1
 
-Vertex label "g.v01"
+Vertex label "ddl.v01"
 --
-Inherits: g.v0
-Child labels: g.v1
+Inherits: ddl.v0
+Child labels: ddl.v1
 
-Vertex label "g.v1"
+Vertex label "ddl.v1"
 --
-Inherits: g.v00,
-          g.v01
+Inherits: ddl.v00,
+          ddl.v01
 
-Vertex label "g.vdi"
+Vertex label "ddl.vdi"
 --
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
 \dGe+
-                                List of labels
- Graph |  Name   | Type |   Owner    |    Size    |        Description         
--------+---------+------+------------+------------+----------------------------
- g     | ag_edge | edge | graph_role | 8192 bytes | base edge label of graph g
- g     | e0      | edge | graph_role | 8192 bytes | 
- g     | e01     | edge | graph_role | 8192 bytes | 
- g     | e1      | edge | graph_role | 8192 bytes | 
+                                 List of labels
+ Graph |  Name   | Type |   Owner    |    Size    |         Description          
+-------+---------+------+------------+------------+------------------------------
+ ddl   | ag_edge | edge | graph_role | 8192 bytes | base edge label of graph ddl
+ ddl   | e0      | edge | graph_role | 8192 bytes | 
+ ddl   | e01     | edge | graph_role | 8192 bytes | 
+ ddl   | e1      | edge | graph_role | 8192 bytes | 
 (4 rows)
 
-Edge label "g.ag_edge"
+Edge label "ddl.ag_edge"
 --
-Child labels: g.e0,
-              g.e1
+Child labels: ddl.e0,
+              ddl.e1
 
-Edge label "g.e0"
+Edge label "ddl.e0"
 --
-Inherits: g.ag_edge
-Child labels: g.e01
+Inherits: ddl.ag_edge
+Child labels: ddl.e01
 
-Edge label "g.e01"
+Edge label "ddl.e01"
 --
-Inherits: g.e0
+Inherits: ddl.e0
 
-Edge label "g.e1"
+Edge label "ddl.e1"
 --
-Inherits: g.ag_edge
+Inherits: ddl.ag_edge
 
 --
 -- ALTER LABEL
 --
 -- skip alter tablespace test, tablespace location must be an absolute path
 ALTER VLABEL v0 SET STORAGE external;
-\d+ g.v0
-                                                                         Table "g.v0"
-   Column   |  Type   | Collation | Nullable |                                 Default                                 | Storage  | Stats target | Description 
-------------+---------+-----------+----------+-------------------------------------------------------------------------+----------+--------------+-------------
- id         | graphid |           | not null | graphid(graph_labid('g.v0'::cstring), nextval('g.v0_id_seq'::regclass)) | plain    |              | 
- properties | jsonb   |           | not null | jsonb_build_object()                                                    | external |              | 
+\d+ ddl.v0
+                                                                          Table "ddl.v0"
+   Column   |  Type   | Collation | Nullable |                                   Default                                   | Storage  | Stats target | Description 
+------------+---------+-----------+----------+-----------------------------------------------------------------------------+----------+--------------+-------------
+ id         | graphid |           | not null | graphid(graph_labid('ddl.v0'::cstring), nextval('ddl.v0_id_seq'::regclass)) | plain    |              | 
+ properties | jsonb   |           | not null | jsonb_build_object()                                                        | external |              | 
 Indexes:
     "v0_pkey" PRIMARY KEY, btree (id)
-Inherits: g.ag_vertex
-Child tables: g.v00,
-              g.v01
+Inherits: ddl.ag_vertex
+Child tables: ddl.v00,
+              ddl.v01
 
 ALTER VLABEL v0 RENAME TO vv;
 \dGv
              List of labels
  Graph |   Name    |  Type  |   Owner    
 -------+-----------+--------+------------
- g     | ag_vertex | vertex | graph_role
- g     | stor      | vertex | graph_role
- g     | tblspc    | vertex | graph_role
- g     | unlog     | vertex | graph_role
- g     | v00       | vertex | graph_role
- g     | v01       | vertex | graph_role
- g     | v1        | vertex | graph_role
- g     | vdi       | vertex | graph_role
- g     | vv        | vertex | graph_role
+ ddl   | ag_vertex | vertex | graph_role
+ ddl   | stor      | vertex | graph_role
+ ddl   | tblspc    | vertex | graph_role
+ ddl   | unlog     | vertex | graph_role
+ ddl   | v00       | vertex | graph_role
+ ddl   | v01       | vertex | graph_role
+ ddl   | v1        | vertex | graph_role
+ ddl   | vdi       | vertex | graph_role
+ ddl   | vv        | vertex | graph_role
 (9 rows)
 
-Vertex label "g.ag_vertex"
+Vertex label "ddl.ag_vertex"
 --
-Child labels: g.stor,
-              g.tblspc,
-              g.unlog,
-              g.vdi,
-              g.vv
+Child labels: ddl.stor,
+              ddl.tblspc,
+              ddl.unlog,
+              ddl.vdi,
+              ddl.vv
 
-Vertex label "g.stor"
+Vertex label "ddl.stor"
 --
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
-Vertex label "g.tblspc"
+Vertex label "ddl.tblspc"
 --
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
-Vertex label "g.unlog"
+Vertex label "ddl.unlog"
 --
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
-Vertex label "g.v00"
+Vertex label "ddl.v00"
 --
-Inherits: g.vv
-Child labels: g.v1
+Inherits: ddl.vv
+Child labels: ddl.v1
 
-Vertex label "g.v01"
+Vertex label "ddl.v01"
 --
-Inherits: g.vv
-Child labels: g.v1
+Inherits: ddl.vv
+Child labels: ddl.v1
 
-Vertex label "g.v1"
+Vertex label "ddl.v1"
 --
-Inherits: g.v00,
-          g.v01
+Inherits: ddl.v00,
+          ddl.v01
 
-Vertex label "g.vdi"
+Vertex label "ddl.vdi"
 --
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
-Vertex label "g.vv"
+Vertex label "ddl.vv"
 --
-Inherits: g.ag_vertex
-Child labels: g.v00,
-              g.v01
+Inherits: ddl.ag_vertex
+Child labels: ddl.v00,
+              ddl.v01
 
 ALTER VLABEL vv RENAME TO v0;
 SELECT relname, rolname FROM pg_class c, pg_roles r
@@ -410,21 +410,21 @@ WHERE relname = 'v0' AND c.relowner = r.oid;
 
 ALTER VLABEL v0 OWNER TO graph_role;
 DROP ROLE temp;
-SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
+SELECT indisclustered FROM pg_index WHERE indrelid = 'ddl.v0'::regclass;
  indisclustered 
 ----------------
  f
 (1 row)
 
 ALTER VLABEL v0 CLUSTER ON v0_pkey;
-SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass ORDER BY indexrelid;
+SELECT indisclustered FROM pg_index WHERE indrelid = 'ddl.v0'::regclass ORDER BY indexrelid;
  indisclustered 
 ----------------
  t
 (1 row)
 
 ALTER VLABEL v0 SET WITHOUT CLUSTER;
-SELECT indisclustered FROM pg_index WHERE indrelid = 'g.v0'::regclass;
+SELECT indisclustered FROM pg_index WHERE indrelid = 'ddl.v0'::regclass;
  indisclustered 
 ----------------
  f
@@ -450,39 +450,39 @@ SELECT relpersistence FROM pg_class WHERE relname = 'v0';
  p
 (1 row)
 
-\d g.v1
-                                                     Table "g.v1"
-   Column   |  Type   | Collation | Nullable |                                 Default                                 
-------------+---------+-----------+----------+-------------------------------------------------------------------------
- id         | graphid |           | not null | graphid(graph_labid('g.v1'::cstring), nextval('g.v1_id_seq'::regclass))
+\d ddl.v1
+                                                      Table "ddl.v1"
+   Column   |  Type   | Collation | Nullable |                                   Default                                   
+------------+---------+-----------+----------+-----------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('ddl.v1'::cstring), nextval('ddl.v1_id_seq'::regclass))
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
-Inherits: g.v00,
-          g.v01
+Inherits: ddl.v00,
+          ddl.v01
 
 ALTER VLABEL v1 NO INHERIT v00;
-\d g.v1
-                                                     Table "g.v1"
-   Column   |  Type   | Collation | Nullable |                                 Default                                 
-------------+---------+-----------+----------+-------------------------------------------------------------------------
- id         | graphid |           | not null | graphid(graph_labid('g.v1'::cstring), nextval('g.v1_id_seq'::regclass))
+\d ddl.v1
+                                                      Table "ddl.v1"
+   Column   |  Type   | Collation | Nullable |                                   Default                                   
+------------+---------+-----------+----------+-----------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('ddl.v1'::cstring), nextval('ddl.v1_id_seq'::regclass))
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
-Inherits: g.v01
+Inherits: ddl.v01
 
 ALTER VLABEL v1 INHERIT v00;
-\d g.v1
-                                                     Table "g.v1"
-   Column   |  Type   | Collation | Nullable |                                 Default                                 
-------------+---------+-----------+----------+-------------------------------------------------------------------------
- id         | graphid |           | not null | graphid(graph_labid('g.v1'::cstring), nextval('g.v1_id_seq'::regclass))
+\d ddl.v1
+                                                      Table "ddl.v1"
+   Column   |  Type   | Collation | Nullable |                                   Default                                   
+------------+---------+-----------+----------+-----------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('ddl.v1'::cstring), nextval('ddl.v1_id_seq'::regclass))
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "v1_pkey" PRIMARY KEY, btree (id)
-Inherits: g.v01,
-          g.v00
+Inherits: ddl.v01,
+          ddl.v00
 
 ALTER VLABEL v1 INHERIT ag_vertex;		--should fail
 ERROR:  cannot ALTER inheritance with base label
@@ -503,15 +503,15 @@ SELECT relreplident FROM pg_class WHERE relname = 'v0';
 
 ALTER VLABEL v0 REPLICA IDENTITY default;
 ALTER VLABEL vdi DISABLE INDEX;
-\d g.vdi
-                                                      Table "g.vdi"
-   Column   |  Type   | Collation | Nullable |                                  Default                                  
-------------+---------+-----------+----------+---------------------------------------------------------------------------
- id         | graphid |           | not null | graphid(graph_labid('g.vdi'::cstring), nextval('g.vdi_id_seq'::regclass))
+\d ddl.vdi
+                                                       Table "ddl.vdi"
+   Column   |  Type   | Collation | Nullable |                                    Default                                    
+------------+---------+-----------+----------+-------------------------------------------------------------------------------
+ id         | graphid |           | not null | graphid(graph_labid('ddl.vdi'::cstring), nextval('ddl.vdi_id_seq'::regclass))
  properties | jsonb   |           | not null | jsonb_build_object()
 Indexes:
     "vdi_pkey" PRIMARY KEY, btree (id) INVALID
-Inherits: g.ag_vertex
+Inherits: ddl.ag_vertex
 
 -- IF EXISTS
 ALTER VLABEL IF EXISTS v0 SET LOGGED;
@@ -521,11 +521,11 @@ NOTICE:  graph label "unknown" does not exist, skipping
 -- DROP LABEL
 --
 -- wrong cases
-DROP TABLE g.v1;
-ERROR:  cannot drop table g.v1 because vlabel v1 requires it
+DROP TABLE ddl.v1;
+ERROR:  cannot drop table ddl.v1 because vlabel v1 requires it
 HINT:  You can drop vlabel v1 instead.
-DROP TABLE g.e1;
-ERROR:  cannot drop table g.e1 because elabel e1 requires it
+DROP TABLE ddl.e1;
+ERROR:  cannot drop table ddl.e1 because elabel e1 requires it
 HINT:  You can drop elabel e1 instead.
 DROP VLABEL unknown;
 ERROR:  graph label "unknown" does not exist
@@ -618,14 +618,14 @@ CREATE CONSTRAINT ON regv1 ASSERT a.b IS UNIQUE;
                          List of labels
  Graph | Name  |  Type  |   Owner    |    Size    | Description 
 -------+-------+--------+------------+------------+-------------
- g     | regv1 | vertex | graph_role | 8192 bytes | 
+ ddl   | regv1 | vertex | graph_role | 8192 bytes | 
 (1 row)
 
-Vertex label "g.regv1"
+Vertex label "ddl.regv1"
 --
 Constraints:
-    "regv1_unique_constraint" UNIQUE USING btree (a.b)
-Inherits: g.ag_vertex
+    "regv1_unique_constraint" ASSERT (a.b) IS UNIQUE
+Inherits: ddl.ag_vertex
 
 CREATE (:regv1 {a: {b: 'agens', c: 'graph'}});
 CREATE (:regv1 {a: {b: 'agens', c: 'graph'}});
@@ -637,7 +637,6 @@ CREATE (:regv1 {a: 'b'});
 ERROR:  map or list is expected but scalar value
 CREATE (:regv1 {a: 'agens-graph'});
 ERROR:  map or list is expected but scalar value
-DROP VLABEL regv1 CASCADE;
 -- expr unique constraint
 CREATE ELABEL rege1;
 CREATE CONSTRAINT ON rege1 ASSERT c + d IS UNIQUE;
@@ -645,14 +644,14 @@ CREATE CONSTRAINT ON rege1 ASSERT c + d IS UNIQUE;
                         List of labels
  Graph | Name  | Type |   Owner    |    Size    | Description 
 -------+-------+------+------------+------------+-------------
- g     | rege1 | edge | graph_role | 8192 bytes | 
+ ddl   | rege1 | edge | graph_role | 8192 bytes | 
 (1 row)
 
-Edge label "g.rege1"
+Edge label "ddl.rege1"
 --
 Constraints:
-    "rege1_unique_constraint" UNIQUE USING btree (((c) + (d)))
-Inherits: g.ag_edge
+    "rege1_unique_constraint" ASSERT (((c) + (d))) IS UNIQUE
+Inherits: ddl.ag_edge
 
 CREATE ()-[:rege1 {c: 'agens', d: 'graph'}]->();
 CREATE ()-[:rege1 {c: 'agens', d: 'graph'}]->();
@@ -660,7 +659,6 @@ ERROR:  conflicting key value violates exclusion constraint "rege1_unique_constr
 CREATE ()-[:rege1 {c: 'agens', d: 'rdb'}]->();
 CREATE ()-[:rege1 {c: 'agen', d: 'sgraph'}]->();
 ERROR:  conflicting key value violates exclusion constraint "rege1_unique_constraint"
-DROP ELABEL rege1 CASCADE;
 -- simple not null constraint
 CREATE VLABEL regv2;
 CREATE CONSTRAINT ON regv2 ASSERT name IS NOT NULL;
@@ -668,14 +666,14 @@ CREATE CONSTRAINT ON regv2 ASSERT name IS NOT NULL;
                          List of labels
  Graph | Name  |  Type  |   Owner    |    Size    | Description 
 -------+-------+--------+------------+------------+-------------
- g     | regv2 | vertex | graph_role | 8192 bytes | 
+ ddl   | regv2 | vertex | graph_role | 8192 bytes | 
 (1 row)
 
-Vertex label "g.regv2"
+Vertex label "ddl.regv2"
 --
 Constraints:
-    "regv2_properties_check" CHECK ((name) IS NOT NULL)
-Inherits: g.ag_vertex
+    "regv2_properties_check" ASSERT ((name) IS NOT NULL)
+Inherits: ddl.ag_vertex
 
 CREATE (:regv2 {name: 'agens'});
 CREATE (:regv2 {age: 0});
@@ -683,7 +681,6 @@ ERROR:  new row for relation "regv2" violates check constraint "regv2_properties
 CREATE (:regv2 {age: 0, name: 'graph'});
 CREATE (:regv2 {name: NULL});
 ERROR:  new row for relation "regv2" violates check constraint "regv2_properties_check"
-DROP VLABEL regv2 CASCADE;
 -- multi not null constraint
 CREATE VLABEL regv3;
 CREATE CONSTRAINT ON regv3 ASSERT name.first IS NOT NULL AND name.last IS NOT NULL;
@@ -691,14 +688,14 @@ CREATE CONSTRAINT ON regv3 ASSERT name.first IS NOT NULL AND name.last IS NOT NU
                          List of labels
  Graph | Name  |  Type  |   Owner    |    Size    | Description 
 -------+-------+--------+------------+------------+-------------
- g     | regv3 | vertex | graph_role | 8192 bytes | 
+ ddl   | regv3 | vertex | graph_role | 8192 bytes | 
 (1 row)
 
-Vertex label "g.regv3"
+Vertex label "ddl.regv3"
 --
 Constraints:
-    "regv3_properties_check" CHECK ((name.first) IS NOT NULL AND (name.last) IS NOT NULL)
-Inherits: g.ag_vertex
+    "regv3_properties_check" ASSERT ((name.first) IS NOT NULL AND (name.last) IS NOT NULL)
+Inherits: ddl.ag_vertex
 
 CREATE (:regv3 {name: 'agens'});
 ERROR:  map or list is expected but scalar value
@@ -709,7 +706,6 @@ CREATE (:regv3 {name: {last: 'graph'}});
 ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
 CREATE (:regv3 {name: {first: NULL, last: NULL}});
 ERROR:  new row for relation "regv3" violates check constraint "regv3_properties_check"
-DROP VLABEL regv3 CASCADE;
 -- simple check constraint
 CREATE ELABEL rege2;
 CREATE CONSTRAINT ON rege2 ASSERT a != b;
@@ -717,21 +713,20 @@ CREATE CONSTRAINT ON rege2 ASSERT a != b;
                         List of labels
  Graph | Name  | Type |   Owner    |    Size    | Description 
 -------+-------+------+------------+------------+-------------
- g     | rege2 | edge | graph_role | 8192 bytes | 
+ ddl   | rege2 | edge | graph_role | 8192 bytes | 
 (1 row)
 
-Edge label "g.rege2"
+Edge label "ddl.rege2"
 --
 Constraints:
-    "rege2_properties_check" CHECK ((a) <> (b))
-Inherits: g.ag_edge
+    "rege2_properties_check" ASSERT ((a) <> (b))
+Inherits: ddl.ag_edge
 
 CREATE ()-[:rege2 {a: 'agens', b: 'graph'}]->();
 CREATE ()-[:rege2 {a: 'agens', b: 'agens'}]->();
 ERROR:  new row for relation "rege2" violates check constraint "rege2_properties_check"
 CREATE ()-[:rege2 {a: 'agens', b: 'AGENS'}]->();
 CREATE ()-[:rege2 {a: 'agens', d: 'graph'}]->();
-DROP ELABEL rege2 CASCADE;
 -- expression check constraint
 CREATE VLABEL regv4;
 CREATE CONSTRAINT ON regv4 ASSERT (length(password) > 8 AND length(password) < 16);
@@ -739,14 +734,14 @@ CREATE CONSTRAINT ON regv4 ASSERT (length(password) > 8 AND length(password) < 1
                          List of labels
  Graph | Name  |  Type  |   Owner    |    Size    | Description 
 -------+-------+--------+------------+------------+-------------
- g     | regv4 | vertex | graph_role | 8192 bytes | 
+ ddl   | regv4 | vertex | graph_role | 8192 bytes | 
 (1 row)
 
-Vertex label "g.regv4"
+Vertex label "ddl.regv4"
 --
 Constraints:
-    "regv4_properties_check" CHECK (length(password) > 8 AND length(password) < 16)
-Inherits: g.ag_vertex
+    "regv4_properties_check" ASSERT (length(password) > 8 AND length(password) < 16)
+Inherits: ddl.ag_vertex
 
 CREATE (:regv4 {password: '12345678'});
 ERROR:  new row for relation "regv4" violates check constraint "regv4_properties_check"
@@ -754,7 +749,6 @@ CREATE (:regv4 {password: '123456789'});
 CREATE (:regv4 {password: '123456789012345'});
 CREATE (:regv4 {password: '1234567890123456'});
 ERROR:  new row for relation "regv4" violates check constraint "regv4_properties_check"
-DROP VLABEL regv4 CASCADE;
 -- IN check constraint
 CREATE ELABEL rege3;
 CREATE CONSTRAINT ON rege3 ASSERT type IN ['friend', 'lover', 'parent'];
@@ -762,14 +756,14 @@ CREATE CONSTRAINT ON rege3 ASSERT type IN ['friend', 'lover', 'parent'];
                         List of labels
  Graph | Name  | Type |   Owner    |    Size    | Description 
 -------+-------+------+------------+------------+-------------
- g     | rege3 | edge | graph_role | 8192 bytes | 
+ ddl   | rege3 | edge | graph_role | 8192 bytes | 
 (1 row)
 
-Edge label "g.rege3"
+Edge label "ddl.rege3"
 --
 Constraints:
-    "rege3_properties_check" CHECK ((['friend', 'lover', 'parent']) @> (type))
-Inherits: g.ag_edge
+    "rege3_properties_check" ASSERT ((type) IN (['friend', 'lover', 'parent']))
+Inherits: ddl.ag_edge
 
 CREATE ()-[:rege3 {type: 'friend', name: 'agens'}]->();
 CREATE ()-[:rege3 {type: 'love', name: 'graph'}]->();
@@ -777,7 +771,6 @@ ERROR:  new row for relation "rege3" violates check constraint "rege3_properties
 CREATE ()-[:rege3 {type: 'parents', name: 'AGENS'}]->();
 ERROR:  new row for relation "rege3" violates check constraint "rege3_properties_check"
 CREATE ()-[:rege3 {type: 'lover', name: 'GRAPH'}]->();
-DROP ELABEL rege3 CASCADE;
 -- case check constraint
 CREATE VLABEL regv5;
 CREATE CONSTRAINT ON regv5 ASSERT toLower(trim(id)) IS UNIQUE;
@@ -785,14 +778,14 @@ CREATE CONSTRAINT ON regv5 ASSERT toLower(trim(id)) IS UNIQUE;
                          List of labels
  Graph | Name  |  Type  |   Owner    |    Size    | Description 
 -------+-------+--------+------------+------------+-------------
- g     | regv5 | vertex | graph_role | 8192 bytes | 
+ ddl   | regv5 | vertex | graph_role | 8192 bytes | 
 (1 row)
 
-Vertex label "g.regv5"
+Vertex label "ddl.regv5"
 --
 Constraints:
-    "regv5_unique_constraint" UNIQUE USING btree ((tolower("trim"(id))))
-Inherits: g.ag_vertex
+    "regv5_unique_constraint" ASSERT ((tolower("trim"(id)))) IS UNIQUE
+Inherits: ddl.ag_vertex
 
 CREATE (:regv5 {id: 'agens'});
 CREATE (:regv5 {id: ' agens'});
@@ -806,7 +799,6 @@ ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constr
 CREATE (:regv5 {id: 'GRAPH'});
 CREATE (:regv5 {id: ' graph '});
 ERROR:  conflicting key value violates exclusion constraint "regv5_unique_constraint"
-DROP VLABEL regv5 CASCADE;
 -- IS NULL constraint
 CREATE ELABEL rege4;
 CREATE CONSTRAINT rege4_name_isnull_constraint ON rege4 ASSERT id IS NULL;
@@ -814,14 +806,14 @@ CREATE CONSTRAINT rege4_name_isnull_constraint ON rege4 ASSERT id IS NULL;
                         List of labels
  Graph | Name  | Type |   Owner    |    Size    | Description 
 -------+-------+------+------------+------------+-------------
- g     | rege4 | edge | graph_role | 8192 bytes | 
+ ddl   | rege4 | edge | graph_role | 8192 bytes | 
 (1 row)
 
-Edge label "g.rege4"
+Edge label "ddl.rege4"
 --
 Constraints:
-    "rege4_name_isnull_constraint" CHECK ((id) IS NULL)
-Inherits: g.ag_edge
+    "rege4_name_isnull_constraint" ASSERT ((id) IS NULL)
+Inherits: ddl.ag_edge
 
 CREATE ()-[:rege4 {id: NULL, name: 'agens'}]->();
 CREATE ()-[:rege4 {id: 10, name: 'agens'}]->();
@@ -832,7 +824,6 @@ ERROR:  constraint "rege4_name_isnull_constraint" of relation "ag_edge" does not
 DROP CONSTRAINT ON rege4;
 ERROR:  syntax error at or near "ON" at character 17
 DROP CONSTRAINT rege4_name_isnull_constraint ON rege4;
-DROP ELABEL rege4 CASCADE;
 -- Indirection constraint
 CREATE VLABEL regv7;
 CREATE CONSTRAINT ON regv7 ASSERT a.b[0].c IS NOT NULL;
@@ -840,20 +831,19 @@ CREATE CONSTRAINT ON regv7 ASSERT a.b[0].c IS NOT NULL;
                          List of labels
  Graph | Name  |  Type  |   Owner    |    Size    | Description 
 -------+-------+--------+------------+------------+-------------
- g     | regv7 | vertex | graph_role | 8192 bytes | 
+ ddl   | regv7 | vertex | graph_role | 8192 bytes | 
 (1 row)
 
-Vertex label "g.regv7"
+Vertex label "ddl.regv7"
 --
 Constraints:
-    "regv7_properties_check" CHECK ((a.b[0].c) IS NOT NULL)
-Inherits: g.ag_vertex
+    "regv7_properties_check" ASSERT ((a.b[0].c) IS NOT NULL)
+Inherits: ddl.ag_vertex
 
 CREATE (:regv7 {a: {b: [{c: 'd'}, {c: 'e'}]}});
 CREATE (:regv7 {a: {b: [{c: 'd'}, {e: 'e'}]}});
 CREATE (:regv7 {a: {b: [{d: 'd'}, {e: 'e'}]}});
 ERROR:  new row for relation "regv7" violates check constraint "regv7_properties_check"
-DROP VLABEL regv7 CASCADE;
 -- wrong case
 CREATE VLABEL regv8;
 CREATE CONSTRAINT ON regv8 ASSERT (SELECT * FROM graph.regv8).c IS NOT NULL;
@@ -862,23 +852,14 @@ CREATE CONSTRAINT ON regv8 ASSERT (1).c IS NOT NULL;
 ERROR:  map or list is expected but scalar value
 CREATE CONSTRAINT ON regv8 ASSERT ($1).c IS NOT NULL;
 ERROR:  there is no parameter $1
-DROP VLABEL regv8 CASCADE;
 --
 -- DROP GRAPH
 --
-DROP GRAPH g;
-ERROR:  cannot drop graph g because other objects depend on it
-DROP GRAPH g CASCADE;
-NOTICE:  drop cascades to 7 other objects
-SELECT labname, labkind FROM ag_label;
- labname | labkind 
----------+---------
-(0 rows)
-
+DROP GRAPH ddl;
+ERROR:  cannot drop graph ddl because other objects depend on it
 DROP GRAPH unknown;
 ERROR:  graph "unknown" does not exist
 DROP GRAPH IF EXISTS unknown;
 NOTICE:  graph "unknown" does not exist, skipping
 -- teardown
 RESET ROLE;
-DROP ROLE graph_role;
