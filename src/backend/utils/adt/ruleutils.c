@@ -9099,8 +9099,6 @@ get_oper_expr(OpExpr *expr, deparse_context *context)
 		Node	   *arg2 = (Node *) lsecond(args);
 		char	   *oprname;
 
-		get_rule_expr_paren(arg1, context, true, (Node *) expr);
-
 		oprname = generate_operator_name(opno, exprType(arg1), exprType(arg2));
 		if (context->cypherexpr &&
 			(strcmp(oprname, "`+`") == 0 ||
@@ -9113,9 +9111,24 @@ get_oper_expr(OpExpr *expr, deparse_context *context)
 			oprname[2] = '\0';
 			oprname = oprname + 1;
 		}
-		appendStringInfo(buf, " %s ", oprname);
 
-		get_rule_expr_paren(arg2, context, true, (Node *) expr);
+		/* Switch '@>' to 'IN' and reverse order for Cypher expression */
+		if (context->cypherexpr && !strcmp(oprname, "@>"))
+		{
+			get_rule_expr_paren(arg2, context, true, (Node *) expr);
+
+			appendStringInfo(buf, " IN ");
+
+			get_rule_expr_paren(arg1, context, true, (Node *) expr);
+		}
+		else
+		{
+			get_rule_expr_paren(arg1, context, true, (Node *) expr);
+
+			appendStringInfo(buf, " %s ", oprname);
+
+			get_rule_expr_paren(arg2, context, true, (Node *) expr);
+		}
 	}
 	else
 	{
@@ -11486,8 +11499,7 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		 * Currently, must be EXCLUDE constraint.
 		 * And unique constraint uses EXCLUDE index.
 		 */
-		appendStringInfo(&buf, "UNIQUE USING %s (",
-						 quote_identifier(NameStr(amrec->amname)));
+		appendStringInfo(&buf, "ASSERT (");
 	}
 
 	/*
@@ -11562,6 +11574,9 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		}
 	}
 	appendStringInfoChar(&buf, ')');
+
+	if (isConstraint)
+		appendStringInfo(&buf, " IS UNIQUE");
 
 	/*
 	 * If it has options, append "WITH (options)"
@@ -11715,7 +11730,7 @@ ag_get_graphconstraintdef_worker(Oid constraintId, int prettyFlags,
 				consrc = deparse_prop_expression_pretty(expr, context,
 														prettyFlags);
 
-				appendStringInfo(&buf, "CHECK (%s)", consrc);
+				appendStringInfo(&buf, "ASSERT (%s)", consrc);
 				break;
 			}
 		/* Unique constraint on AgensGraph is implemented using exclude index */
