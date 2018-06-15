@@ -10,147 +10,138 @@ SET ROLE regressrole;
 --
 
 SHOW graph_path;
-CREATE GRAPH g;
+CREATE GRAPH propidx;
 SHOW graph_path;
 
 
-CREATE VLABEL regv1;
+CREATE VLABEL piv1;
 
-CREATE PROPERTY INDEX ON regv1 (name);
-CREATE PROPERTY INDEX ON regv1 (name.first, name.last);
-CREATE PROPERTY INDEX ON regv1 ((name.first + name.last));
-CREATE PROPERTY INDEX ON regv1 (age);
-CREATE PROPERTY INDEX ON regv1 ((body.weight / body.height));
+CREATE PROPERTY INDEX ON piv1 (name);
+CREATE PROPERTY INDEX ON piv1 (name.first, name.last);
+CREATE PROPERTY INDEX ON piv1 ((name.first + name.last));
+CREATE PROPERTY INDEX ON piv1 (age);
+CREATE PROPERTY INDEX ON piv1 ((body.weight / body.height));
 
-\d g.regv1
-\dGi
-DROP VLABEL regv1;
+\d propidx.piv1
+\dGi piv1*
 
 -- Check property name & access method type
-CREATE VLABEL regv1;
+CREATE VLABEL piv2;
 
-CREATE PROPERTY INDEX ON regv1 (name);
-CREATE PROPERTY INDEX ON regv1 USING btree (name.first);
-CREATE PROPERTY INDEX ON regv1 USING hash (name.first);
-CREATE PROPERTY INDEX ON regv1 USING brin (name.first);
-CREATE PROPERTY INDEX ON regv1 USING gin (name);
-CREATE PROPERTY INDEX ON regv1 USING gist (name);
+CREATE PROPERTY INDEX ON piv2 (name);
+CREATE PROPERTY INDEX ON piv2 USING btree (name.first);
+CREATE PROPERTY INDEX ON piv2 USING hash (name.first);
+CREATE PROPERTY INDEX ON piv2 USING brin (name.first);
+CREATE PROPERTY INDEX ON piv2 USING gin (name);
+CREATE PROPERTY INDEX ON piv2 USING gist (name);
 
---CREATE PROPERTY INDEX ON regv1 USING gin ((self_intro::tsvector));
---CREATE PROPERTY INDEX ON regv1 USING gist ((hobby::tsvector));
+--CREATE PROPERTY INDEX ON piv2 USING gin ((self_intro::tsvector));
+--CREATE PROPERTY INDEX ON piv2 USING gist ((hobby::tsvector));
 
-\d g.regv1
-\dGv+ regv1
-\dGi
-
-DROP VLABEL regv1;
+\d propidx.piv2
+\dGv+ piv2
+\dGi piv2*
 
 -- Concurrently build & if not exist
-CREATE VLABEL regv1;
+CREATE VLABEL piv3;
 
-CREATE PROPERTY INDEX CONCURRENTLY ON regv1 (name.first);
-CREATE PROPERTY INDEX IF NOT EXISTS regv1_first_idx ON regv1 (name.first);
+CREATE PROPERTY INDEX CONCURRENTLY ON piv3 (name.first);
+CREATE PROPERTY INDEX IF NOT EXISTS piv3_first_idx ON piv3 (name.first);
 
 -- Collation & Sort & NULL order
---CREATE PROPERTY INDEX ON regv1 (name.first COLLATE "C" ASC NULLS FIRST);
+--CREATE PROPERTY INDEX ON piv3 (name.first COLLATE "C" ASC NULLS FIRST);
 
 -- Tablespace
-CREATE PROPERTY INDEX ON regv1 (name) TABLESPACE pg_default;
+CREATE PROPERTY INDEX ON piv3 (name) TABLESPACE pg_default;
 
 -- Storage parameter & partial index
-CREATE PROPERTY INDEX ON regv1 (name.first) WITH (fillfactor = 80);
-CREATE PROPERTY INDEX ON regv1 (name.first) WHERE (name IS NOT NULL);
+CREATE PROPERTY INDEX ON piv3 (name.first) WITH (fillfactor = 80);
+CREATE PROPERTY INDEX ON piv3 (name.first) WHERE (name IS NOT NULL);
 
-\d g.regv1
-\dGv+ regv1
-\dGi
-DROP VLABEL regv1;
+\d propidx.piv3
+\dGv+ piv3
+\dGi piv3*
 
 -- Unique property index
-CREATE VLABEL regv1;
+CREATE VLABEL piv4;
 
-CREATE UNIQUE PROPERTY INDEX ON regv1 (id);
-CREATE (:regv1 {id: 100});
-CREATE (:regv1 {id: 100});
+CREATE UNIQUE PROPERTY INDEX ON piv4 (id);
+CREATE (:piv4 {id: 100});
+CREATE (:piv4 {id: 100});
 
-\d g.regv1
-\dGv+ regv1
-\dGi
-DROP VLABEL regv1 CASCADE;
+\d propidx.piv4
+\dGv+ piv4
+\dGi piv4*
 
 -- Multi-column unique property index
-CREATE VLABEL regv1;
+CREATE VLABEL piv5;
 
-CREATE UNIQUE PROPERTY INDEX ON regv1 (name.first, name.last);
-CREATE (:regv1 {name: {first: 'agens'}});
-CREATE (:regv1 {name: {first: 'agens'}});
-CREATE (:regv1 {name: {first: 'agens', last: 'graph'}});
-CREATE (:regv1 {name: {first: 'agens', last: 'graph'}});
+CREATE UNIQUE PROPERTY INDEX ON piv5 (name.first, name.last);
+CREATE (:piv5 {name: {first: 'agens'}});
+CREATE (:piv5 {name: {first: 'agens'}});
+CREATE (:piv5 {name: {first: 'agens', last: 'graph'}});
+CREATE (:piv5 {name: {first: 'agens', last: 'graph'}});
 
-\d g.regv1
-\dGv+ regv1
-\dGi
-DROP VLABEL regv1 CASCADE;
+\d propidx.piv5
+\dGv+ piv5
+\dGi piv5*
 
 -- DROP PROPERTY INDEX
-CREATE VLABEL regv1;
+CREATE VLABEL piv6;
 
-CREATE PROPERTY INDEX regv1_idx ON regv1 (name);
+CREATE PROPERTY INDEX piv6_idx ON piv6 (name);
 
-DROP PROPERTY INDEX regv1_idx;
-DROP PROPERTY INDEX IF EXISTS regv1_idx;
-DROP PROPERTY INDEX regv1_pkey;
+DROP PROPERTY INDEX piv6_idx;
+DROP PROPERTY INDEX IF EXISTS piv6_idx;
+DROP PROPERTY INDEX piv6_pkey;
 
-DROP VLABEL regv1;
+DROP VLABEL piv6;
 
-CREATE ELABEL rege1;
-CREATE PROPERTY INDEX rege1_idx ON rege1 (reltype);
+CREATE ELABEL pie1;
+CREATE PROPERTY INDEX pie1_idx ON pie1 (reltype);
 
-DROP PROPERTY INDEX rege1_idx;
-DROP PROPERTY INDEX IF EXISTS rege1_idx;
-DROP PROPERTY INDEX rege1_id_idx;
-DROP PROPERTY INDEX rege1_start_idx;
-DROP PROPERTY INDEX rege1_end_idx;
+DROP PROPERTY INDEX pie1_idx;
+DROP PROPERTY INDEX IF EXISTS pie1_idx;
+DROP PROPERTY INDEX pie1_id_idx;
+DROP PROPERTY INDEX pie1_start_idx;
+DROP PROPERTY INDEX pie1_end_idx;
 
-DROP ELABEL rege1;
+DROP ELABEL pie1;
 
-CREATE VLABEL regv1;
+CREATE VLABEL piv7;
 
-CREATE PROPERTY INDEX regv1_multi_col ON regv1 (name.first, name.middle, name.last);
-\dGv+ regv1
-\dGi
-DROP PROPERTY INDEX regv1_multi_col;
+CREATE PROPERTY INDEX piv7_multi_col ON piv7 (name.first, name.middle, name.last);
+\dGv+ piv7
+\dGi piv7*
+DROP PROPERTY INDEX piv7_multi_col;
 
-CREATE PROPERTY INDEX regv1_multi_expr ON regv1 ((name.first + name.last), age);
-\dGv+ regv1
-\dGi
-DROP PROPERTY INDEX regv1_multi_expr;
+CREATE PROPERTY INDEX piv7_multi_expr ON piv7 ((name.first + name.last), age);
+\dGv+ piv7
+\dGi piv7*
+DROP PROPERTY INDEX piv7_multi_expr;
 
-DROP VLABEL regv1;
+DROP VLABEL piv7;
 
 -- wrong case
-CREATE VLABEL regv2;
+CREATE VLABEL piv8;
 
-CREATE PROPERTY INDEX regv2_index_key1 ON regv2 (key1);
-CREATE PROPERTY INDEX regv2_index_key1 ON regv2 (key1);
+CREATE PROPERTY INDEX piv8_index_key1 ON piv8 (key1);
+CREATE PROPERTY INDEX piv8_index_key1 ON piv8 (key1);
 
 CREATE PROPERTY INDEX ON nonexsist_name (key1);
 
-DROP VLABEL regv2;
+DROP VLABEL piv8;
 
-CREATE VLABEL regv3;
+CREATE VLABEL piv9;
 
-CREATE PROPERTY INDEX regv3_property_index_key1 ON regv3 (key1);
-DROP INDEX g.regv3_property_index_key1;
+CREATE PROPERTY INDEX piv9_property_index_key1 ON piv9 (key1);
+DROP INDEX propidx.piv9_property_index_key1;
 
-CREATE INDEX regv3_index_key1 ON g.regv3 (properties);
-DROP PROPERTY INDEX regv3_index_key1;
+CREATE INDEX piv9_index_key1 ON propidx.piv9 (properties);
+DROP PROPERTY INDEX piv9_index_key1;
 
-DROP VLABEL regv3;
---
--- DROP GRAPH
---
-DROP GRAPH g CASCADE;
+DROP VLABEL piv9;
+
+-- teardown
 
 RESET ROLE;
-DROP ROLE regressrole;

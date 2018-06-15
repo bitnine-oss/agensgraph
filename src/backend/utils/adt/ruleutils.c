@@ -8968,7 +8968,7 @@ get_access_arg_expr(Node *node, deparse_context *context, bool showimplicit)
 
 	context->buf = buf;
 
-	if (strcmp(si.data, AG_ELEM_PROP_MAP) != 0)
+	if (strcmp(si.data, quote_identifier(AG_ELEM_PROP_MAP)) != 0)
 	{
 		appendBinaryStringInfo(buf, si.data, si.len);
 		return true;
@@ -9136,8 +9136,6 @@ get_oper_expr(OpExpr *expr, deparse_context *context)
 		Node	   *arg2 = (Node *) lsecond(args);
 		char	   *oprname;
 
-		get_rule_expr_paren(arg1, context, true, (Node *) expr);
-
 		oprname = generate_operator_name(opno, exprType(arg1), exprType(arg2));
 		if (context->cypherexpr &&
 			(strcmp(oprname, "`+`") == 0 ||
@@ -9150,9 +9148,24 @@ get_oper_expr(OpExpr *expr, deparse_context *context)
 			oprname[2] = '\0';
 			oprname = oprname + 1;
 		}
-		appendStringInfo(buf, " %s ", oprname);
 
-		get_rule_expr_paren(arg2, context, true, (Node *) expr);
+		/* Switch '@>' to 'IN' and reverse order for Cypher expression */
+		if (context->cypherexpr && !strcmp(oprname, "@>"))
+		{
+			get_rule_expr_paren(arg2, context, true, (Node *) expr);
+
+			appendStringInfo(buf, " IN ");
+
+			get_rule_expr_paren(arg1, context, true, (Node *) expr);
+		}
+		else
+		{
+			get_rule_expr_paren(arg1, context, true, (Node *) expr);
+
+			appendStringInfo(buf, " %s ", oprname);
+
+			get_rule_expr_paren(arg2, context, true, (Node *) expr);
+		}
 	}
 	else
 	{
@@ -11545,23 +11558,14 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 	 */
 	initStringInfo(&buf);
 
-	if (!isConstraint)
-	{
-		appendStringInfo(&buf, "CREATE %sINDEX %s ON %s USING %s (",
+	if (isConstraint)
+		appendStringInfo(&buf, "ASSERT (");
+	else
+		appendStringInfo(&buf, "CREATE %sPROPERTY INDEX %s ON %s USING %s (",
 						 idxrec->indisunique ? "UNIQUE " : "",
 						 quote_identifier(NameStr(idxrelrec->relname)),
 						 generate_relation_name(indrelid, NIL),
 						 quote_identifier(NameStr(amrec->amname)));
-	}
-	else
-	{
-		/*
-		 * Currently, must be EXCLUDE constraint.
-		 * And unique constraint uses EXCLUDE index.
-		 */
-		appendStringInfo(&buf, "UNIQUE USING %s (",
-						 quote_identifier(NameStr(amrec->amname)));
-	}
 
 	/*
 	 * Report the indexed attributes
@@ -11632,6 +11636,9 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 		}
 	}
 	appendStringInfoChar(&buf, ')');
+
+	if (isConstraint)
+		appendStringInfo(&buf, " IS UNIQUE");
 
 	/*
 	 * If it has options, append "WITH (options)"
@@ -11785,7 +11792,7 @@ ag_get_graphconstraintdef_worker(Oid constraintId, int prettyFlags,
 				consrc = deparse_prop_expression_pretty(expr, context,
 														prettyFlags);
 
-				appendStringInfo(&buf, "CHECK (%s)", consrc);
+				appendStringInfo(&buf, "ASSERT (%s)", consrc);
 				break;
 			}
 		/* Unique constraint on AgensGraph is implemented using exclude index */
