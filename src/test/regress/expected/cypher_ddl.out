@@ -624,7 +624,7 @@ CREATE CONSTRAINT ON regv1 ASSERT a.b IS UNIQUE;
 Vertex label "g.regv1"
 --
 Constraints:
-    "regv1_unique_constraint" UNIQUE USING btree (a.b)
+    "regv1_unique_constraint" ASSERT (a.b) IS UNIQUE
 Inherits: g.ag_vertex
 
 CREATE (:regv1 {a: {b: 'agens', c: 'graph'}});
@@ -651,7 +651,7 @@ CREATE CONSTRAINT ON rege1 ASSERT c + d IS UNIQUE;
 Edge label "g.rege1"
 --
 Constraints:
-    "rege1_unique_constraint" UNIQUE USING btree (((c) + (d)))
+    "rege1_unique_constraint" ASSERT (((c) + (d))) IS UNIQUE
 Inherits: g.ag_edge
 
 CREATE ()-[:rege1 {c: 'agens', d: 'graph'}]->();
@@ -674,7 +674,7 @@ CREATE CONSTRAINT ON regv2 ASSERT name IS NOT NULL;
 Vertex label "g.regv2"
 --
 Constraints:
-    "regv2_properties_check" CHECK ((name) IS NOT NULL)
+    "regv2_properties_check" ASSERT ((name) IS NOT NULL)
 Inherits: g.ag_vertex
 
 CREATE (:regv2 {name: 'agens'});
@@ -697,7 +697,7 @@ CREATE CONSTRAINT ON regv3 ASSERT name.first IS NOT NULL AND name.last IS NOT NU
 Vertex label "g.regv3"
 --
 Constraints:
-    "regv3_properties_check" CHECK ((name.first) IS NOT NULL AND (name.last) IS NOT NULL)
+    "regv3_properties_check" ASSERT ((name.first) IS NOT NULL AND (name.last) IS NOT NULL)
 Inherits: g.ag_vertex
 
 CREATE (:regv3 {name: 'agens'});
@@ -723,7 +723,7 @@ CREATE CONSTRAINT ON rege2 ASSERT a != b;
 Edge label "g.rege2"
 --
 Constraints:
-    "rege2_properties_check" CHECK ((a) <> (b))
+    "rege2_properties_check" ASSERT ((a) <> (b))
 Inherits: g.ag_edge
 
 CREATE ()-[:rege2 {a: 'agens', b: 'graph'}]->();
@@ -745,7 +745,7 @@ CREATE CONSTRAINT ON regv4 ASSERT (length(password) > 8 AND length(password) < 1
 Vertex label "g.regv4"
 --
 Constraints:
-    "regv4_properties_check" CHECK (length(password) > 8 AND length(password) < 16)
+    "regv4_properties_check" ASSERT (length(password) > 8 AND length(password) < 16)
 Inherits: g.ag_vertex
 
 CREATE (:regv4 {password: '12345678'});
@@ -768,7 +768,7 @@ CREATE CONSTRAINT ON rege3 ASSERT type IN ['friend', 'lover', 'parent'];
 Edge label "g.rege3"
 --
 Constraints:
-    "rege3_properties_check" CHECK ((['friend', 'lover', 'parent']) @> (type))
+    "rege3_properties_check" ASSERT ((type) IN (['friend', 'lover', 'parent']))
 Inherits: g.ag_edge
 
 CREATE ()-[:rege3 {type: 'friend', name: 'agens'}]->();
@@ -791,7 +791,7 @@ CREATE CONSTRAINT ON regv5 ASSERT toLower(trim(id)) IS UNIQUE;
 Vertex label "g.regv5"
 --
 Constraints:
-    "regv5_unique_constraint" UNIQUE USING btree ((tolower("trim"(id))))
+    "regv5_unique_constraint" ASSERT ((tolower("trim"(id)))) IS UNIQUE
 Inherits: g.ag_vertex
 
 CREATE (:regv5 {id: 'agens'});
@@ -820,7 +820,7 @@ CREATE CONSTRAINT rege4_name_isnull_constraint ON rege4 ASSERT id IS NULL;
 Edge label "g.rege4"
 --
 Constraints:
-    "rege4_name_isnull_constraint" CHECK ((id) IS NULL)
+    "rege4_name_isnull_constraint" ASSERT ((id) IS NULL)
 Inherits: g.ag_edge
 
 CREATE ()-[:rege4 {id: NULL, name: 'agens'}]->();
@@ -846,7 +846,7 @@ CREATE CONSTRAINT ON regv7 ASSERT a.b[0].c IS NOT NULL;
 Vertex label "g.regv7"
 --
 Constraints:
-    "regv7_properties_check" CHECK ((a.b[0].c) IS NOT NULL)
+    "regv7_properties_check" ASSERT ((a.b[0].c) IS NOT NULL)
 Inherits: g.ag_vertex
 
 CREATE (:regv7 {a: {b: [{c: 'd'}, {c: 'e'}]}});
