@@ -1510,3 +1510,187 @@ gin_compare_partial_graphid(FunctionCallInfo fcinfo)
 
 	PG_RETURN_INT32(res);
 }
+
+Datum
+vertex_send(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader vertex = PG_GETARG_HEAPTUPLEHEADER(0);
+	Datum		values[Natts_vertex];
+	bool		isnull[Natts_vertex];
+	Graphid		id;
+	Jsonb	   *prop_map;
+	LabelOutData *my_extra;
+	StringInfoData si;
+	char	   *labelname;
+	StringInfo	jtext = makeStringInfo();
+	StringInfoData graphIdStr;
+
+	deform_tuple(vertex, values, isnull);
+
+	if (isnull[Anum_vertex_id - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("id in vertex cannot be NULL")));
+	if (isnull[Anum_vertex_properties - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("properties in vertex cannot be NULL")));
+		
+	id = DatumGetGraphid(values[Anum_vertex_id - 1]);
+		
+	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
+    labelname = NameStr(my_extra->label);
+	
+	prop_map = DatumGetJsonb(values[Anum_vertex_properties - 1]);	
+	JsonbToCString(jtext, &prop_map->root, VARSIZE(prop_map));
+
+	initStringInfo(&graphIdStr);
+	appendStringInfo(&graphIdStr, "[" GRAPHID_FMTSTR "]",
+					 GraphidGetLabid(id), GraphidGetLocid(id));	
+		
+	pq_begintypsend(&si);
+	pq_sendbytes(&si, labelname,strlen(labelname));
+	pq_sendbytes(&si, graphIdStr.data,graphIdStr.len);
+	pq_sendtext(&si, jtext->data, jtext->len);
+	pfree(jtext->data);
+	pfree(jtext);
+	PG_RETURN_BYTEA_P(pq_endtypsend(&si));
+}
+
+Datum
+edge_send(PG_FUNCTION_ARGS)
+{
+	HeapTupleHeader edge = PG_GETARG_HEAPTUPLEHEADER(0);
+	Datum		values[Natts_edge];
+	bool		isnull[Natts_edge];
+	Graphid		id;
+	Jsonb	   *prop_map;
+	LabelOutData *my_extra;
+	StringInfoData si;
+	char	   *labelname;
+	StringInfo	jtext = makeStringInfo();
+	StringInfoData graphIdStr;
+	StringInfoData graphStartEndIdStr;
+
+	deform_tuple(edge, values, isnull);
+
+	if (isnull[Anum_edge_id - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("id in edge cannot be NULL")));
+	if (isnull[Anum_edge_start - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("start in edge cannot be NULL")));
+	if (isnull[Anum_edge_end - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("end in edge cannot be NULL")));
+	if (isnull[Anum_edge_properties - 1])
+		ereport(ERROR,
+				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+				 errmsg("properties in edge cannot be NULL")));
+
+	id = DatumGetGraphid(values[Anum_edge_id - 1]);
+
+	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
+	labelname = NameStr(my_extra->label);
+	
+	prop_map = DatumGetJsonb(values[Anum_edge_properties - 1]);
+	JsonbToCString(jtext, &prop_map->root, VARSIZE(prop_map));
+	
+	initStringInfo(&graphIdStr);
+	appendStringInfo(&graphIdStr, "[" GRAPHID_FMTSTR "]",
+					 GraphidGetLabid(id), GraphidGetLocid(id));	
+
+	initStringInfo(&graphStartEndIdStr);
+	appendStringInfoChar(&graphStartEndIdStr, '[');
+	graphid_out_si(&graphStartEndIdStr, values[Anum_edge_start - 1]);
+	appendStringInfoChar(&graphStartEndIdStr, ',');
+	graphid_out_si(&graphStartEndIdStr, values[Anum_edge_end - 1]);
+	appendStringInfoChar(&graphStartEndIdStr, ']');
+
+	pq_begintypsend(&si);
+	pq_sendbytes(&si, labelname,strlen(labelname));
+	pq_sendbytes(&si, graphIdStr.data,graphIdStr.len);
+	pq_sendbytes(&si, graphStartEndIdStr.data,graphStartEndIdStr.len);
+	pq_sendtext(&si, jtext->data, jtext->len);
+	pfree(jtext->data);
+	pfree(jtext);
+	PG_RETURN_BYTEA_P(pq_endtypsend(&si));
+}
+
+Datum
+graphpath_send(PG_FUNCTION_ARGS)
+{
+	const char	delim = ',';
+	Datum		vertices_datum;
+	Datum		edges_datum;
+	AnyArrayType *vertices;
+	AnyArrayType *edges;
+	int			nvertices;
+	int			nedges;
+	GraphpathOutData *my_extra;
+	StringInfoData si,sis;
+	array_iter	it_v;
+	array_iter	it_e;
+	bool		isnull;
+	Datum		value;
+	int			i;
+
+	getGraphpathArrays(PG_GETARG_DATUM(0), &vertices_datum, &edges_datum);
+
+	vertices = DatumGetAnyArray(vertices_datum);
+	edges = DatumGetAnyArray(edges_datum);
+
+	nvertices = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices));
+	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
+	if (nvertices < 1)
+		PG_RETURN_CSTRING("[]");
+
+	if (nvertices != nedges + 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("the numbers of vertices and edges are mismatched")));
+
+	/* cache vertex/edge output information */
+	my_extra = (GraphpathOutData *) fcinfo->flinfo->fn_extra;
+	if (my_extra == NULL)
+	{
+		fcinfo->flinfo->fn_extra = MemoryContextAlloc(fcinfo->flinfo->fn_mcxt,
+													  sizeof(*my_extra));
+		my_extra = (GraphpathOutData *) fcinfo->flinfo->fn_extra;
+		get_elem_type_output(&my_extra->vertex, AARR_ELEMTYPE(vertices),
+							 fcinfo->flinfo->fn_mcxt);
+		get_elem_type_output(&my_extra->edge, AARR_ELEMTYPE(edges),
+							 fcinfo->flinfo->fn_mcxt);
+	}
+
+	initStringInfo(&si);
+	appendStringInfoChar(&si, '[');
+
+	array_iter_setup(&it_v, vertices);
+	array_iter_setup(&it_e, edges);
+
+	for (i = 0; i < nedges; i++)
+	{
+		value = array_iter_next_(&it_v, &isnull, i, &my_extra->vertex);
+		appendStringInfoDatumOut(&si, value, isnull, &my_extra->vertex.proc);
+
+		appendStringInfoChar(&si, delim);
+
+		value = array_iter_next_(&it_e, &isnull, i, &my_extra->edge);
+		appendStringInfoDatumOut(&si, value, isnull, &my_extra->edge.proc);
+
+		appendStringInfoChar(&si, delim);
+	}
+
+	value = array_iter_next_(&it_v, &isnull, i, &my_extra->vertex);
+	appendStringInfoDatumOut(&si, value, isnull, &my_extra->vertex.proc);
+
+	appendStringInfoChar(&si, ']');
+
+	pq_begintypsend(&sis);
+	pq_sendbytes(&sis, si.data,si.len);
+	PG_RETURN_BYTEA_P(pq_endtypsend(&sis));
+}

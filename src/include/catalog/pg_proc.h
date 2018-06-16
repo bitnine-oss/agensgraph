@@ -5494,6 +5494,8 @@ DATA(insert OID = 7009 ( graph_labid	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 
 DESCR("I/O");
 DATA(insert OID = 7014 ( vertex_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7012" _null_ _null_ _null_ _null_ _null_ vertex_out _null_ _null_ _null_ ));
 DESCR("I/O");
+DATA(insert OID = 7015 ( vertex_send		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7012" _null_ _null_ _null_ _null_ _null_ vertex_send _null_ _null_ _null_ ));
+DESCR("I/O");
 DATA(insert OID = 7016 ( _vertex_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7011" _null_ _null_ _null_ _null_ _null_ _vertex_out _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7017 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "7012" _null_ _null_ _null_ _null_ _null_ vertex_label _null_ _null_ _null_ ));
@@ -5504,6 +5506,8 @@ DATA(insert OID = 7019 ( to_jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 38
 DESCR("convert vertex to jsonb");
 DATA(insert OID = 7024 ( edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_out _null_ _null_ _null_ ));
 DESCR("I/O");
+DATA(insert OID = 7025 ( edge_send		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7022" _null_ _null_ _null_ _null_ _null_ edge_send _null_ _null_ _null_ ));
+DESCR("I/O");
 DATA(insert OID = 7026 ( _edge_out		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7021" _null_ _null_ _null_ _null_ _null_ _edge_out _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7027 ( label			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "7022" _null_ _null_ _null_ _null_ _null_ edge_label _null_ _null_ _null_ ));
@@ -5513,6 +5517,8 @@ DESCR("get the length of edge array");
 DATA(insert OID = 7029 ( to_jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "7022" _null_ _null_ _null_ _null_ _null_ etojb _null_ _null_ _null_ ));
 DESCR("convert edge to jsonb");
 DATA(insert OID = 7034 ( graphpath_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_out _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 7035 ( graphpath_send		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_send _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7036 ( length			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "7031" _null_ _null_ _null_ _null_ _null_ _graphpath_length _null_ _null_ _null_ ));
 DESCR("get the length of graphpath array");
