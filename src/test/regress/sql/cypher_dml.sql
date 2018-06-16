@@ -264,6 +264,18 @@ RETURN n.name AS n, type(r) AS r, p.name AS p,
        m.name AS m, type(s) AS s, q.name AS q
 ORDER BY n, p, m, q;
 
+OPTIONAL MATCH (n:person {name: 'unknown'})
+RETURN n.name;
+
+OPTIONAL MATCH (n:person {name: 'unknown'}) MATCH (m:person {name: 'someone'})
+RETURN n, m.name;
+
+OPTIONAL MATCH (n:person {name: 'unknown'}) WITH n MATCH (m:person {name: 'someone'})
+RETURN n, m.name;
+
+OPTIONAL MATCH (n:person {name: 'unknown'}) WITH n MATCH (m:person {name: 'unknown'})
+RETURN n, m.name;
+
 -- Variable Length Relationship
 CREATE GRAPH t;
 SET graph_path = t;
@@ -1251,8 +1263,36 @@ LOAD FROM external_table AS r CREATE (=r);
 
 MATCH (n) RETURN n;
 
+--
+-- SRF
+--
+
+CREATE GRAPH srf;
+SET graph_path = srf;
+
+CREATE (:v {id: 1})-[:e]->(:v {id: 2});
+MATCH p=()-[]->() RETURN unnest(nodes(p)).id;
+
+-- AG-161
+CREATE GRAPH ag161;
+SET GRAPH_PATH = ag161;
+
+CREATE (:v1 {no:1});
+CREATE (:v2 {no:2});
+CREATE (:v3 {no:3});
+
+ALTER DATABASE regression SET GRAPH_PATH TO ag161;
+SET PARALLEL_SETUP_COST = 0;
+
+EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(a);
+MATCH (a) RETURN count(a);
+
+ALTER DATABASE regression SET GRAPH_PATH TO DEFAULT;
+DROP GRAPH ag161 CASCADE;
+
 -- cleanup
 
+DROP GRAPH srf CASCADE;
 DROP GRAPH impload CASCADE;
 DROP GRAPH gid CASCADE;
 DROP GRAPH np CASCADE;

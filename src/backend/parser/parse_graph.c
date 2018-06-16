@@ -412,6 +412,7 @@ transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 	qry->hasAggs = pstate->p_hasAggs;
 	if (qry->hasAggs)
 		parseCheckAggregates(pstate, qry);
@@ -545,6 +546,7 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 	qry->hasAggs = pstate->p_hasAggs;
 	if (qry->hasAggs)
 		parseCheckAggregates(pstate, qry);
@@ -569,20 +571,32 @@ transformCypherMatchClause(ParseState *pstate, CypherClause *clause)
 	 * since WHERE clause is part of MATCH,
 	 * transform OPTIONAL MATCH with its WHERE clause
 	 */
-	if (detail->optional && clause->prev != NULL)
+	if (detail->optional)
 	{
-		/*
-		 * NOTE: Should we return a single row with NULL values
-		 *       if OPTIONAL MATCH is the first clause and
-		 *       there is no result that matches the pattern?
-		 */
-
 		rte = transformMatchOptional(pstate, clause);
 
 		qry->targetList = makeTargetListFromJoin(pstate, rte);
 	}
 	else
 	{
+		if (clause->prev != NULL)
+		{
+			/* MATCH clause cannot follow OPTIONAL MATCH clause */
+			if (cypherClauseTag(clause->prev) == T_CypherMatchClause)
+			{
+				CypherClause *prev;
+				CypherMatchClause *prev_detail;
+
+				prev = (CypherClause *) clause->prev;
+				prev_detail = (CypherMatchClause *) prev->detail;
+				if (prev_detail->optional)
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("MATCH right after OPTIONAL MATCH is not allowed"),
+							 errhint("Use a WITH clause between them")));
+			}
+		}
+
 		if (!pstate->p_is_match_quals &&
 			(detail->where != NULL || hasPropConstr(detail->pattern)))
 		{
@@ -960,8 +974,32 @@ transformMatchOptional(ParseState *pstate, CypherClause *clause)
 	Node	   *qual;
 	Alias	   *alias;
 
-	/* transform LEFT */
-	l_rte = transformClause(pstate, clause->prev);
+	if (clause->prev == NULL)
+	{
+		Query	   *qry;
+		Alias	   *l_alias;
+
+		/*
+		 * To return NULL if OPTIONAL MATCH is the first clause and there is
+		 * no result that matches the pattern.
+		 */
+
+		qry = makeNode(Query);
+		qry->commandType = CMD_SELECT;
+		qry->rtable = NIL;
+		qry->jointree = makeFromExpr(NIL, NULL);
+
+		l_alias = makeAliasNoDup(CYPHER_SUBQUERY_ALIAS, NIL);
+		l_rte = addRangeTableEntryForSubquery(pstate, qry, l_alias,
+											  pstate->p_lateral_active, true);
+
+		RTERangeTablePosn(pstate, l_rte, NULL);
+		addRTEtoJoinlist(pstate, l_rte, true);
+	}
+	else
+	{
+		l_rte = transformClause(pstate, clause->prev);
+	}
 
 	/*
 	 * Transform RIGHT. Prevent `clause` from being transformed infinitely.
