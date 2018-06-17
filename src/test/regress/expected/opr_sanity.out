@@ -368,7 +368,8 @@ ORDER BY 1;
 ------+--------------
  2293 | cstring_out
  2501 | cstring_send
-(2 rows)
+ 7009 | graph_labid
+(3 rows)
 
 -- Likewise, look for functions that return cstring and aren't datatype output
 -- functions nor typmod output functions.
