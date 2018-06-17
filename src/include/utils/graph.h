@@ -95,6 +95,7 @@ extern Datum btrowidcmp(PG_FUNCTION_ARGS);
 
 /* vertex */
 extern Datum vertex_out(PG_FUNCTION_ARGS);
+extern Datum vertex_send(PG_FUNCTION_ARGS);
 extern Datum _vertex_out(PG_FUNCTION_ARGS);
 extern Datum vertex_label(PG_FUNCTION_ARGS);
 extern Datum _vertex_length(PG_FUNCTION_ARGS);
@@ -109,6 +110,7 @@ extern Datum vertex_ge(PG_FUNCTION_ARGS);
 
 /* edge */
 extern Datum edge_out(PG_FUNCTION_ARGS);
+extern Datum edge_send(PG_FUNCTION_ARGS);
 extern Datum _edge_out(PG_FUNCTION_ARGS);
 extern Datum edge_label(PG_FUNCTION_ARGS);
 extern Datum _edge_length(PG_FUNCTION_ARGS);
@@ -123,6 +125,7 @@ extern Datum edge_ge(PG_FUNCTION_ARGS);
 
 /* graphpath */
 extern Datum graphpath_out(PG_FUNCTION_ARGS);
+extern Datum graphpath_send(PG_FUNCTION_ARGS);
 extern Datum _graphpath_length(PG_FUNCTION_ARGS);
 extern Datum graphpath_length(PG_FUNCTION_ARGS);
 extern Datum graphpath_vertices(PG_FUNCTION_ARGS);

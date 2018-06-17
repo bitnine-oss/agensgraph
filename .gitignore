@@ -33,6 +33,10 @@ tags
 cscope.*
 *.swp
 
+*.rc
+
+win32ver.rc
+
 # Local excludes in root directory
 /GNUmakefile
 /config.cache
