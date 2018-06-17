@@ -326,7 +326,7 @@ WHERE p1.typsend = p2.oid AND NOT
  oid  | typname   | oid  | proname 
 ------+-----------+------+---------
  7012 | vertex    | 7015 | vertex_send
- 7022 | edge      | 7025 | edge_send
+ 7022 | edge	  | 7025 | edge_send
  7032 | graphpath | 7035 | graphpath_send
 (3 rows)
 
@@ -349,9 +349,8 @@ ORDER BY 1;
  c       | record_send
  c       | graphpath_send
  c       | vertex_send
- e       | enum_send
  r       | range_send
-(6 rows)
+(5 rows)
 
 -- Domains should have same typsend as their base types
 SELECT p1.oid, p1.typname, p2.oid, p2.typname

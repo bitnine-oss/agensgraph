@@ -386,10 +386,11 @@ ORDER BY 1;
 ------+--------------
  2292 | cstring_in
  2500 | cstring_recv
+ 3507 | enum_out
  7015 | vertex_send
  7025 | edge_send
  7035 | graphpath_send
-(5 rows)
+(6 rows)
 
 -- Check for length inconsistencies between the various argument-info arrays.
 SELECT p1.oid, p1.proname
