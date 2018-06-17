@@ -368,8 +368,7 @@ ORDER BY 1;
 ------+--------------
  2293 | cstring_out
  2501 | cstring_send
- 7009 | graph_labid
-(3 rows)
+(2 rows)
 
 -- Likewise, look for functions that return cstring and aren't datatype output
 -- functions nor typmod output functions.
@@ -386,7 +385,10 @@ ORDER BY 1;
 ------+--------------
  2292 | cstring_in
  2500 | cstring_recv
-(2 rows)
+ 7015 | vertex_send
+ 7025 | edge_send
+ 7035 | graphpath_send
+(5 rows)
 
 -- Check for length inconsistencies between the various argument-info arrays.
 SELECT p1.oid, p1.proname
