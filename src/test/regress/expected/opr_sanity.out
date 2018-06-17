@@ -382,15 +382,14 @@ WHERE  p1.prorettype = 'cstring'::regtype
     AND NOT EXISTS(SELECT 1 FROM pg_type WHERE typmodout = p1.oid)
     AND p1.oid != 'shell_out(opaque)'::regprocedure
 ORDER BY 1;
- oid  |   proname    
-------+--------------
+ oid  |    proname     
+------+----------------
  2292 | cstring_in
  2500 | cstring_recv
- 3507 | enum_out
  7015 | vertex_send
  7025 | edge_send
  7035 | graphpath_send
-(6 rows)
+(5 rows)
 
 -- Check for length inconsistencies between the various argument-info arrays.
 SELECT p1.oid, p1.proname
