@@ -773,6 +773,14 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 		pstate->p_delete_edges_resname = NULL;
 	}
 
+	qry->graph.exprs = (List *) resolve_future_vertex(pstate,
+													  (Node *) qry->graph.exprs,
+													  FVR_PRESERVE_VAR_REF);
+
+	qry->targetList = (List *) resolve_future_vertex(pstate,
+													 (Node *) qry->targetList,
+													 FVR_DONT_RESOLVE);
+
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
 
@@ -5143,7 +5151,8 @@ find_target_label_walker(Node *node, find_target_label_context *ctx)
 		 * NOTE: This is related to how `ModifyGraph` does SET, and
 		 *       `FVR_PRESERVE_VAR_REF` flag. We need to fix this.
 		 */
-		if (qry->graph.writeOp == GWROP_SET &&
+		if ((qry->graph.writeOp == GWROP_SET ||
+			 qry->graph.writeOp == GWROP_DELETE) &&
 			ctx->sublevels_up == 0 && !ctx->in_preserved)
 		{
 			te = get_tle_by_resno(qry->targetList, var->varattno);

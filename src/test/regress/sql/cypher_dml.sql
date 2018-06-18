@@ -839,6 +839,32 @@ MATCH ()-[r:AG160]->() DETACH DELETE r;
 
 MATCH (a) DETACH DELETE a;
 
+CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
+
+MATCH (a)-[r:AG160]->(b)
+DELETE r
+DELETE a, b;
+
+MATCH ()-[]->() RETURN count(*);
+MATCH () RETURN count(*);
+
+CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
+
+MATCH (a)-[r:AG160]->(b)
+DELETE r, a
+DELETE b;
+
+MATCH ()-[]->() RETURN count(*);
+MATCH () RETURN count(*);
+
+CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
+
+MATCH (a {name:'ag-160 left'})-[r:AG160]->(b)
+DELETE r
+DELETE a, b;
+
+MATCH ()-[]->() RETURN count(*);
+MATCH () RETURN count(*);
 --
 -- Uniqueness
 --
