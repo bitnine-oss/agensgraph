@@ -2390,6 +2390,24 @@ MATCH (a {name:'AG-163'}) DELETE a RETURN *;
 (1 row)
 
 MATCH (a) DETACH DELETE a;
+-- AG-159
+CREATE (:v1), (:v2);
+MATCH p=(a:v1), (b:v2)
+DETACH DELETE a
+RETURN label(b);
+ label 
+-------
+ "v2"
+(1 row)
+
+MATCH p=(a:v2)
+DELETE a
+RETURN p;
+ p 
+---
+ 
+(1 row)
+
 --
 -- Uniqueness
 --
@@ -3402,7 +3420,7 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
-NOTICE:  drop cascades to 10 other objects
+NOTICE:  drop cascades to 12 other objects
 DETAIL:  drop cascades to sequence agens.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -3413,4 +3431,6 @@ drop cascades to elabel el1
 drop cascades to elabel el2
 drop cascades to elabel el3
 drop cascades to elabel made_by
+drop cascades to vlabel v1
+drop cascades to vlabel v2
 DROP TABLE history;

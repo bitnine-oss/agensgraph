@@ -834,6 +834,17 @@ MATCH (a {name:'AG-163'}) DELETE a RETURN *;
 
 MATCH (a) DETACH DELETE a;
 
+-- AG-159
+CREATE (:v1), (:v2);
+
+MATCH p=(a:v1), (b:v2)
+DETACH DELETE a
+RETURN label(b);
+
+MATCH p=(a:v2)
+DELETE a
+RETURN p;
+
 --
 -- Uniqueness
 --
