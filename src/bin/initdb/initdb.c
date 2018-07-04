@@ -797,7 +797,7 @@ check_input(char *path)
 }
 
 /*
- * write out the PG_VERSION file in the data dir, or its subdirectory
+ * write out the PG_VERSION / AG_VERSION file in the data dir, or its subdirectory
  * if extrapath is not NULL
  */
 static void
@@ -805,7 +805,9 @@ write_version_file(char *extrapath)
 {
 	FILE	   *version_file;
 	char	   *path;
+	char		AGCompatibleVer[4];
 
+	/* write PG_VERSION */
 	if (extrapath == NULL)
 		path = psprintf("%s/PG_VERSION", pg_data);
 	else
@@ -818,6 +820,31 @@ write_version_file(char *extrapath)
 		exit_nicely();
 	}
 	if (fprintf(version_file, "%s\n", PG_MAJORVERSION) < 0 ||
+		fclose(version_file))
+	{
+		fprintf(stderr, _("%s: could not write file \"%s\": %s\n"),
+				progname, path, strerror(errno));
+		exit_nicely();
+	}
+	free(path);
+
+	/* write AG_VERSION */
+	if (extrapath == NULL)
+		path = psprintf("%s/AG_VERSION", pg_data);
+	else
+		path = psprintf("%s/%s/AG_VERSION", pg_data, extrapath);
+
+	if ((version_file = fopen(path, PG_BINARY_W)) == NULL)
+	{
+		fprintf(stderr, _("%s: could not open file \"%s\" for writing: %s\n"),
+				progname, path, strerror(errno));
+		exit_nicely();
+	}
+
+	/* The length 4 means 'x.x\0'
+	 * AgensGraph is not compatible when the minor version is different. */
+	StrNCpy(AGCompatibleVer, AG_VERSION, 4);
+	if (fprintf(version_file, "%s\n", AGCompatibleVer) < 0 ||
 		fclose(version_file))
 	{
 		fprintf(stderr, _("%s: could not write file \"%s\": %s\n"),
