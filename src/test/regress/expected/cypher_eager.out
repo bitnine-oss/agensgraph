@@ -474,7 +474,7 @@ MATCH (a)-[]->(b)
      a     |     b     
 -----------+-----------
  {"no": 1} | {"no": 3}
- {"no": 3} | {"no": 5}
+ {"no": 3} | {"no": 6}
 (2 rows)
 
 MATCH (a)-[]->(b)
@@ -482,19 +482,19 @@ MATCH (a)-[]->(b)
      a     |     b     
 -----------+-----------
  {"no": 1} | {"no": 3}
- {"no": 3} | {"no": 5}
+ {"no": 3} | {"no": 6}
 (2 rows)
 
 MATCH (a)-[]->(b)
   SET b.no = a.no + b.no
   CREATE (:v2 {ano: a.no}), (d:v2 {bno: b.no});
 MATCH (a:v2) RETURN properties(a);
- properties 
-------------
+ properties  
+-------------
  {"ano": 1}
  {"bno": 4}
  {"ano": 4}
- {"bno": 8}
+ {"bno": 10}
 (4 rows)
 
 -- MATCH - DELETE - RETURN

@@ -74,8 +74,7 @@ static TupleTableSlot *ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind,
 static TupleTableSlot *copyVirtualTupleTableSlot(TupleTableSlot *dstslot,
 												 TupleTableSlot *srcslot);
 static void findAndReflectNewestValue(ModifyGraphState *mgstate,
-									  ExprContext *econtext,
-									  GraphSetProp *gsp, Datum gid);
+									  TupleTableSlot *slot);
 static ItemPointer updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
 								  Datum gid, Datum elem_datum);
 static Datum makeModifiedElem(ExprContext *econtext, Datum elem, Oid elemtype,
@@ -97,9 +96,8 @@ static Datum createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge,
 static void enterSetPropTable(ModifyGraphState *mgstate, Oid type, Datum gid,
 							  Datum newelem);
 static void enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type);
-static Datum getVertexFinal(ModifyGraphState *mgstate, Datum origin,
-							Graphid gid);
-static Datum getEdgeFinal(ModifyGraphState *mgstate, Datum origin, Graphid gid);
+static Datum getVertexFinal(ModifyGraphState *mgstate, Datum origin);
+static Datum getEdgeFinal(ModifyGraphState *mgstate, Datum origin);
 static Datum getPathFinal(ModifyGraphState *node, Datum origin);
 static void reflectModifiedProp(ModifyGraphState *mgstate);
 
@@ -338,7 +336,6 @@ ExecModifyGraph(PlanState *pstate)
 		for (i = 0; i < natts; i++)
 		{
 			Oid			type;
-			Graphid		gid;
 			Datum		elem;
 
 			if (result->tts_isnull[i])
@@ -347,13 +344,11 @@ ExecModifyGraph(PlanState *pstate)
 			type = tupDesc->attrs[i]->atttypid;
 			if (type == VERTEXOID)
 			{
-				gid = getVertexIdDatum(result->tts_values[i]);
-				elem = getVertexFinal(mgstate, result->tts_values[i], gid);
+				elem = getVertexFinal(mgstate, result->tts_values[i]);
 			}
 			else if (type == EDGEOID)
 			{
-				gid = getEdgeIdDatum(result->tts_values[i]);
-				elem = getEdgeFinal(mgstate, result->tts_values[i], gid);
+				elem = getEdgeFinal(mgstate, result->tts_values[i]);
 			}
 			else if (type == GRAPHPATHOID)
 			{
@@ -1040,6 +1035,14 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 		/* store intermediate results in tuple memory context */
 		oldmctx = MemoryContextSwitchTo(econtext->ecxt_per_tuple_memory);
 
+		/*
+		 * Reflect newest value all types of scantuple
+		 * before evaluating expression.
+		 */
+		findAndReflectNewestValue(mgstate, econtext->ecxt_scantuple);
+		findAndReflectNewestValue(mgstate, econtext->ecxt_innertuple);
+		findAndReflectNewestValue(mgstate, econtext->ecxt_outertuple);
+
 		/* get original graph element */
 		elem_datum = ExecEvalExpr(gsp->es_elem, econtext, &isNull);
 		if (isNull)
@@ -1048,7 +1051,6 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 					 errmsg("updating NULL is not allowed")));
 
 		/* evaluate SET expression */
-
 		if (elemtype == VERTEXOID)
 		{
 			gid = getVertexIdDatum(elem_datum);
@@ -1062,7 +1064,6 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 			tid = getEdgeTidDatum(elem_datum);
 		}
 
-		findAndReflectNewestValue(mgstate, econtext, gsp, gid);
 		expr_datum = ExecEvalExpr(gsp->es_expr, econtext, &isNull);
 		if (isNull)
 			ereport(ERROR,
@@ -1102,25 +1103,39 @@ copyVirtualTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
 }
 
 static void
-findAndReflectNewestValue(ModifyGraphState *mgstate, ExprContext *econtext,
-						  GraphSetProp *gsp, Datum gid)
+findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
 {
-	ModifiedElemEntry *entry;
-	bool		found;
+	int			i;
 
-	if (mgstate->elemTable)
+	if (slot == NULL)
+		return;
+
+	for (i = 0; i < slot->tts_tupleDescriptor->natts; i++)
 	{
-		entry = hash_search(mgstate->elemTable, &gid, HASH_FIND, &found);
-		if (found)
+		Datum	finalValue;;
+
+		if (slot->tts_isnull[i] ||
+			slot->tts_tupleDescriptor->attrs[i]->attisdropped)
+			continue;
+
+		switch(slot->tts_tupleDescriptor->attrs[i]->atttypid)
 		{
-			/* reflect results */
-			setSlotValueByName(econtext->ecxt_scantuple,
-							   entry->elem_datum, gsp->variable);
-			setSlotValueByName(econtext->ecxt_innertuple,
-							   entry->elem_datum, gsp->variable);
-			setSlotValueByName(econtext->ecxt_outertuple,
-							   entry->elem_datum, gsp->variable);
+			case VERTEXOID:
+				finalValue = getVertexFinal(mgstate, slot->tts_values[i]);
+				break;
+			case EDGEOID:
+				finalValue = getEdgeFinal(mgstate, slot->tts_values[i]);
+				break;
+			case GRAPHPATHOID:
+				finalValue = getPathFinal(mgstate, slot->tts_values[i]);
+				break;
+			default:
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("expected node, relationship, or path")));
 		}
+
+		setSlotValueByAttnum(slot, finalValue, i + 1);
 	}
 }
 
@@ -1647,15 +1662,17 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 }
 
 static Datum
-getVertexFinal(ModifyGraphState *mgstate, Datum origin, Graphid gid)
+getVertexFinal(ModifyGraphState *mgstate, Datum origin)
 {
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
 	ModifiedElemEntry *entry;
+	Datum		gid = getVertexIdDatum(origin);
+	bool		found;
 
-	entry = hash_search(mgstate->elemTable, &gid, HASH_FIND, NULL);
+	entry = hash_search(mgstate->elemTable, &gid, HASH_FIND, &found);
 
 	/* unmodified vertex */
-	if (entry == NULL)
+	if (!found)
 		return origin;
 
 	if (plan->operation == GWROP_DELETE)
@@ -1665,15 +1682,17 @@ getVertexFinal(ModifyGraphState *mgstate, Datum origin, Graphid gid)
 }
 
 static Datum
-getEdgeFinal(ModifyGraphState *mgstate, Datum origin, Graphid gid)
+getEdgeFinal(ModifyGraphState *mgstate, Datum origin)
 {
 	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
+	Datum		gid = getEdgeIdDatum(origin);
+	bool		found;
 	ModifiedElemEntry *entry;
 
-	entry = hash_search(mgstate->elemTable, &gid, HASH_FIND, NULL);
+	entry = hash_search(mgstate->elemTable, &gid, HASH_FIND, &found);
 
 	/* unmodified edge */
-	if (entry == NULL)
+	if (!found)
 		return origin;
 
 	if (plan->operation == GWROP_DELETE)
@@ -1699,7 +1718,6 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 	array_iter	it;
 	int			i;
 	Datum		value;
-	Graphid		gid;
 	bool		isnull;
 	bool		modified = false;
 	bool		isdeleted = false;
@@ -1727,8 +1745,7 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 		value = array_iter_next(&it, &isnull, i, typlen, typbyval, typalign);
 		Assert(!isnull);
 
-		gid = getVertexIdDatum(value);
-		vertex = getVertexFinal(mgstate, value, gid);
+		vertex = getVertexFinal(mgstate, value);
 
 		if (vertex == (Datum) 0)
 		{
@@ -1757,8 +1774,7 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 		value = array_iter_next(&it, &isnull, i, typlen, typbyval, typalign);
 		Assert(!isnull);
 
-		gid = getEdgeIdDatum(value);
-		edge = getEdgeFinal(mgstate, value, gid);
+		edge = getEdgeFinal(mgstate, value);
 
 		if (edge == (Datum) 0)
 		{

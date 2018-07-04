@@ -2344,13 +2344,13 @@ SET a.age = a.age + 1, b.age = a.age + b.age
 RETURN properties(a) AS a, properties(b) AS b;
      a      |     b      
 ------------+------------
- {"age": 2} | {"age": 3}
+ {"age": 2} | {"age": 4}
 (1 row)
 
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
      a      |     b      
 ------------+------------
- {"age": 2} | {"age": 3}
+ {"age": 2} | {"age": 4}
 (1 row)
 
 MATCH (a) DETACH DELETE (a);
@@ -2360,7 +2360,7 @@ SET a.val = b.val, b.val = a.val;
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
      a      |     b      
 ------------+------------
- {"val": 2} | {"val": 1}
+ {"val": 2} | {"val": 2}
 (1 row)
 
 MATCH (a) DETACH DELETE (a);
