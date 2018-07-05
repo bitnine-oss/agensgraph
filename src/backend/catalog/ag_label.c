@@ -82,7 +82,7 @@ InsertAgLabelTuple(Relation ag_label_desc, Oid laboid, RangeVar *label,
 				   Oid relid, char labkind)
 {
 	Oid			graphid = get_graphname_oid(label->schemaname);
-	char	   *labname = label->relname;
+	char		labname[NAMEDATALEN]={'\0'};
 	int32		labid;
 	Datum		values[Natts_ag_label];
 	bool		nulls[Natts_ag_label];
@@ -91,9 +91,10 @@ InsertAgLabelTuple(Relation ag_label_desc, Oid laboid, RangeVar *label,
 	AssertArg(labkind == LABEL_KIND_VERTEX || labkind == LABEL_KIND_EDGE);
 
 	labid = (int32) GetNewLabelId(label->schemaname, graphid);
+	strcpy(labname, label->relname);
 
 	values[Anum_ag_label_labname - 1] = CStringGetDatum(labname);
-	values[Anum_ag_label_graphid - 1] = CStringGetDatum(graphid);
+	values[Anum_ag_label_graphid - 1] = ObjectIdGetDatum(graphid);
 	values[Anum_ag_label_labid - 1] = Int32GetDatum(labid);
 	values[Anum_ag_label_relid - 1] = ObjectIdGetDatum(relid);
 	values[Anum_ag_label_labkind - 1] = CharGetDatum(labkind);
