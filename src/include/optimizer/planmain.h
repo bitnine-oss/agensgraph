@@ -56,7 +56,7 @@ extern Plan *materialize_finished_plan(Plan *subplan);
 extern bool is_projection_capable_path(Path *path);
 extern bool is_projection_capable_plan(Plan *plan);
 extern ModifyGraph *make_modifygraph(PlannerInfo *root, GraphWriteOp operation,
-									 bool canSetTag, bool last, List *targets,
+									 bool last, List *targets,
 									 Plan *subplan, uint32 nr_modify,
 									 bool detach, bool eagerness,
 									 List *pattern, List *exprs, List *sets);

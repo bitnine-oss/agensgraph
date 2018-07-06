@@ -2802,7 +2802,12 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 					}
 				}
 
-				finalize_primnode((Node *) mgplan->exprs, &context);
+				foreach(lc, mgplan->exprs)
+				{
+					GraphDelElem *gde = lfirst(lc);
+
+					finalize_primnode(gde->elem, &context);
+				}
 
 				foreach(lc, mgplan->sets)
 				{

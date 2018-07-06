@@ -1056,7 +1056,6 @@ typedef struct ModifyGraph
 {
 	Plan		plan;
 	GraphWriteOp operation;
-	bool		canSetTag;
 	bool		last;			/* is this for the last clause? */
 	List	   *targets;		/* relation OID's of target labels */
 	Plan	   *subplan;		/* plan producing source data */
