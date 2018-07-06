@@ -2093,7 +2093,58 @@ MATCH (a {name:'AG-163'}) DELETE a RETURN *;
  
 (1 row)
 
+-- AG-160
+CREATE ()-[:AG160]->();
+MATCH ()-[r:AG160]->() DETACH DELETE r;
 MATCH (a) DETACH DELETE a;
+CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
+MATCH (a)-[r:AG160]->(b)
+DELETE r
+DELETE a, b;
+MATCH ()-[]->() RETURN count(*);
+ count 
+-------
+     0
+(1 row)
+
+MATCH () RETURN count(*);
+ count 
+-------
+     0
+(1 row)
+
+CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
+MATCH (a)-[r:AG160]->(b)
+DELETE r, a
+DELETE b;
+MATCH ()-[]->() RETURN count(*);
+ count 
+-------
+     0
+(1 row)
+
+MATCH () RETURN count(*);
+ count 
+-------
+     0
+(1 row)
+
+CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
+MATCH (a {name:'ag-160 left'})-[r:AG160]->(b)
+DELETE r
+DELETE a, b;
+MATCH ()-[]->() RETURN count(*);
+ count 
+-------
+     0
+(1 row)
+
+MATCH () RETURN count(*);
+ count 
+-------
+     0
+(1 row)
+
 --
 -- Uniqueness
 --
@@ -3244,7 +3295,7 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
-NOTICE:  drop cascades to 10 other objects
+NOTICE:  drop cascades to 11 other objects
 DETAIL:  drop cascades to sequence agens.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -3255,4 +3306,5 @@ drop cascades to elabel el1
 drop cascades to elabel el2
 drop cascades to elabel el3
 drop cascades to elabel made_by
+drop cascades to elabel ag160
 DROP TABLE history;
