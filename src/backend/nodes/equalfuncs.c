@@ -3247,6 +3247,15 @@ _equalGraphSetProp(const GraphSetProp *a, const GraphSetProp *b)
 	return true;
 }
 
+static bool
+_equalGraphDelElem(const GraphDelElem *a, const GraphDelElem *b)
+{
+	COMPARE_STRING_FIELD(variable);
+	COMPARE_NODE_FIELD(elem);
+
+	return true;
+}
+
 /*
  * Stuff from pg_list.h
  */
@@ -4163,6 +4172,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_GraphSetProp:
 			retval = _equalGraphSetProp(a, b);
+			break;
+		case T_GraphDelElem:
+			retval = _equalGraphDelElem(a, b);
 			break;
 
 		default:

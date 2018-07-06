@@ -2495,6 +2495,17 @@ _readGraphSetProp(void)
 	READ_DONE();
 }
 
+static GraphDelElem *
+_readGraphDelElem(void)
+{
+	READ_LOCALS(GraphDelElem);
+
+	READ_STRING_FIELD(variable);
+	READ_NODE_FIELD(elem);
+
+	READ_DONE();
+}
+
 static CypherListComp *
 _readCypherListComp(void)
 {
@@ -2869,6 +2880,8 @@ parseNodeString(void)
 		return_value = _readGraphEdge();
 	else if (MATCH("GRAPHSETPROP", 12))
 		return_value = _readGraphSetProp();
+	else if (MATCH("GRAPHDELELEM", 12))
+		return_value = _readGraphDelElem();
 	else if (MATCH("CYPHERLISTCOMP", 14))
 		return_value = _readCypherListComp();
 	else if (MATCH("CYPHERMAPEXPR", 13))
