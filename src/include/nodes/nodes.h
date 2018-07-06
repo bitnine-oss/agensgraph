@@ -552,7 +552,8 @@ typedef enum NodeTag
 	T_GraphPath = 1050,
 	T_GraphVertex,
 	T_GraphEdge,
-	T_GraphSetProp
+	T_GraphSetProp,
+	T_GraphDelElem
 } NodeTag;
 
 /*

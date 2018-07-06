@@ -2145,6 +2145,76 @@ MATCH () RETURN count(*);
      0
 (1 row)
 
+-- AG-138
+CREATE ()-[:rel]->()-[:rel]->();
+MATCH (a)-[r:rel]->(b)
+DELETE a, b, r;
+MATCH (a) RETURN count(a);
+ count 
+-------
+     0
+(1 row)
+
+MATCH ()-[r:rel]->() RETURN count(r);
+ count 
+-------
+     0
+(1 row)
+
+CREATE ()-[:rel]->()-[:rel]->();
+MATCH (a)-[r:rel]->(b), (c), p=(d)
+DELETE a, b, r, c, d, p;
+MATCH (a) RETURN count(a);
+ count 
+-------
+     0
+(1 row)
+
+MATCH ()-[r:rel]->() RETURN count(r);
+ count 
+-------
+     0
+(1 row)
+
+--AG-2 : failed DELETE graph path
+CREATE ()-[:rel]->()-[:rel]->();
+MATCH p = ()-[:rel]->(), ()-[r:rel]->()
+DELETE r
+RETURN *;
+ERROR:  cannot modify the element of graphpath.
+MATCH p = ()-[:rel]->(), (a)-[:rel]->()
+DELETE a
+RETURN *;
+ERROR:  cannot delete a vertex in a graphpath
+MATCH p = ()-[:rel]->()
+DELETE p;
+MATCH (a) RETURN count(a);
+ count 
+-------
+     0
+(1 row)
+
+MATCH ()-[r:rel]->() RETURN count(r);
+ count 
+-------
+     0
+(1 row)
+
+CREATE ()-[:rel]->()-[:rel]->();
+MATCH p = ()-[:rel]->(), gp = ()-[:rel]->(), (a)
+DELETE p, gp, a;
+MATCH (a) RETURN count(a);
+ count 
+-------
+     0
+(1 row)
+
+MATCH ()-[r:rel]->() RETURN count(r);
+ count 
+-------
+     0
+(1 row)
+
 --
 -- Uniqueness
 --
@@ -3295,7 +3365,7 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
-NOTICE:  drop cascades to 11 other objects
+NOTICE:  drop cascades to 12 other objects
 DETAIL:  drop cascades to sequence agens.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -3307,4 +3377,5 @@ drop cascades to elabel el2
 drop cascades to elabel el3
 drop cascades to elabel made_by
 drop cascades to elabel ag160
+drop cascades to elabel rel
 DROP TABLE history;

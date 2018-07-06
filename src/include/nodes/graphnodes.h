@@ -61,4 +61,12 @@ typedef struct GraphSetProp
 	ExprState  *es_expr;
 } GraphSetProp;
 
+typedef struct GraphDelElem
+{
+	NodeTag		type;
+	char	   *variable;
+	Node	   *elem;
+	ExprState  *es_elem;
+} GraphDelElem;
+
 #endif	/* GRAPHNODES_H */

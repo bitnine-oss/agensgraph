@@ -18,5 +18,7 @@
 #define AG_START_ID			"start"
 #define AG_END_ID			"end"
 #define AG_ELEM_PROP_MAP	"properties"
+#define AG_PATH_VERTICES	"vertices"
+#define AG_PATH_EDGES		"edges"
 
 #endif	/* AG_CONST_H */

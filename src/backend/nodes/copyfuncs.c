@@ -1175,7 +1175,6 @@ _copyModifyGraph(const ModifyGraph *from)
 	CopyPlanFields((const Plan *) from, (Plan *) newnode);
 
 	COPY_SCALAR_FIELD(operation);
-	COPY_SCALAR_FIELD(canSetTag);
 	COPY_SCALAR_FIELD(last);
 	COPY_NODE_FIELD(targets);
 	COPY_NODE_FIELD(subplan);
@@ -5097,6 +5096,17 @@ _copyGraphSetProp(const GraphSetProp *from)
 	return newnode;
 }
 
+static GraphDelElem *
+_copyGraphDelElem(const GraphDelElem *from)
+{
+	GraphDelElem *newnode = makeNode(GraphDelElem);
+
+	COPY_STRING_FIELD(variable);
+	COPY_NODE_FIELD(elem);
+
+	return newnode;
+}
+
 /* ****************************************************************
  *					pg_list.h copy functions
  * ****************************************************************
@@ -6197,6 +6207,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_GraphSetProp:
 			retval = _copyGraphSetProp(from);
+			break;
+		case T_GraphDelElem:
+			retval = _copyGraphDelElem(from);
 			break;
 
 			/*

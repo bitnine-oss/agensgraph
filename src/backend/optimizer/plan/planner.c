@@ -115,6 +115,7 @@ static Node *preprocess_expression(PlannerInfo *root, Node *expr, int kind);
 static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
 static void preprocess_graph_pattern(PlannerInfo *root, List *pattern);
 static void preprocess_graph_sets(PlannerInfo *root, List *sets);
+static void preprocess_graph_delete(PlannerInfo *root, List *exprs);
 static void inheritance_planner(PlannerInfo *root);
 static void grouping_planner(PlannerInfo *root, bool inheritance_update,
 				 double tuple_fraction);
@@ -851,6 +852,12 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		}
 	}
 
+	/* expressions for graph */
+	if (parse->graph.writeOp == GWROP_MERGE)
+		preprocess_graph_pattern(root, parse->graph.pattern);
+	preprocess_graph_delete(root, parse->graph.exprs);
+	preprocess_graph_sets(root, parse->graph.sets);
+
 	/*
 	 * In some cases we may want to transfer a HAVING clause into WHERE. We
 	 * cannot do so if the HAVING clause contains aggregates (obviously) or
@@ -1147,6 +1154,19 @@ preprocess_graph_sets(PlannerInfo *root, List *sets)
 
 		gsp->elem = preprocess_expression(root, gsp->elem, EXPRKIND_TARGET);
 		gsp->expr = preprocess_expression(root, gsp->expr, EXPRKIND_VALUES);
+	}
+}
+
+static void
+preprocess_graph_delete(PlannerInfo *root, List *exprs)
+{
+	ListCell *ls;
+
+	foreach(ls, exprs)
+	{
+		GraphDelElem *gde = lfirst(ls);
+
+		gde->elem = preprocess_expression(root, gde->elem, EXPRKIND_TARGET);
 	}
 }
 
@@ -2222,7 +2242,6 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 		{
 			path = (Path *) create_modifygraph_path(root, final_rel,
 													parse->graph.writeOp,
-													parse->canSetTag,
 													parse->graph.last,
 													parse->graph.targets,
 													path,

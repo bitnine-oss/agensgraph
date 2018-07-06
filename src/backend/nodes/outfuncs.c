@@ -1008,7 +1008,6 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 	_outPlanInfo(str, (const Plan *) node);
 
 	WRITE_ENUM_FIELD(operation, GraphWriteOp);
-	WRITE_BOOL_FIELD(canSetTag);
 	WRITE_BOOL_FIELD(last);
 	WRITE_NODE_FIELD(targets);
 	WRITE_NODE_FIELD(subplan);
@@ -4047,6 +4046,15 @@ _outGraphSetProp(StringInfo str, const GraphSetProp *node)
 	WRITE_NODE_FIELD(expr);
 }
 
+static void
+_outGraphDelElem(StringInfo str, const GraphDelElem *node)
+{
+	WRITE_NODE_TYPE("GRAPHDELELEM");
+
+	WRITE_STRING_FIELD(variable);
+	WRITE_NODE_FIELD(elem);
+}
+
 /*
  * outNode -
  *	  converts a Node into ascii string and append it to 'str'
@@ -4795,6 +4803,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_GraphSetProp:
 				_outGraphSetProp(str, obj);
+				break;
+			case T_GraphDelElem:
+				_outGraphDelElem(str, obj);
 				break;
 
 			default:

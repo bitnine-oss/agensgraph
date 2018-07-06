@@ -2269,15 +2269,12 @@ typedef struct LimitState
 typedef struct ModifyGraphState
 {
 	PlanState	ps;
-	bool		canSetTag;
 	bool		done;
 	bool		child_done;
 	bool		eagerness;
 	PlanState  *subplan;
 	TupleTableSlot *elemTupleSlot;	/* to insert vertex/edge */
 	Oid			graphid;
-	char	   *graphname;
-	uint16		edgeid;
 	int			numOldRtable;
 	ResultRelInfo *resultRelations;
 	int			numResultRelations;

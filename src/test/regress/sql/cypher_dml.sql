@@ -684,6 +684,51 @@ DELETE a, b;
 
 MATCH ()-[]->() RETURN count(*);
 MATCH () RETURN count(*);
+
+-- AG-138
+
+CREATE ()-[:rel]->()-[:rel]->();
+
+MATCH (a)-[r:rel]->(b)
+DELETE a, b, r;
+
+MATCH (a) RETURN count(a);
+MATCH ()-[r:rel]->() RETURN count(r);
+
+CREATE ()-[:rel]->()-[:rel]->();
+
+MATCH (a)-[r:rel]->(b), (c), p=(d)
+DELETE a, b, r, c, d, p;
+
+MATCH (a) RETURN count(a);
+MATCH ()-[r:rel]->() RETURN count(r);
+
+--AG-2 : failed DELETE graph path
+
+CREATE ()-[:rel]->()-[:rel]->();
+
+MATCH p = ()-[:rel]->(), ()-[r:rel]->()
+DELETE r
+RETURN *;
+
+MATCH p = ()-[:rel]->(), (a)-[:rel]->()
+DELETE a
+RETURN *;
+
+MATCH p = ()-[:rel]->()
+DELETE p;
+
+MATCH (a) RETURN count(a);
+MATCH ()-[r:rel]->() RETURN count(r);
+
+CREATE ()-[:rel]->()-[:rel]->();
+
+MATCH p = ()-[:rel]->(), gp = ()-[:rel]->(), (a)
+DELETE p, gp, a;
+
+MATCH (a) RETURN count(a);
+MATCH ()-[r:rel]->() RETURN count(r);
+
 --
 -- Uniqueness
 --

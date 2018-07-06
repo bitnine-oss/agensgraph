@@ -1724,7 +1724,6 @@ typedef struct ModifyGraphPath
 {
 	Path		path;
 	GraphWriteOp operation;
-	bool		canSetTag;		/* do we set the command tag/es_processed? */
 	bool		last;			/* is this for the last clause? */
 	List	   *targets;		/* relation Oid's of target labels */
 	Path	   *subpath;		/* Path producing source data */
