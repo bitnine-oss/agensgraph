@@ -760,20 +760,26 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 	 * The edges of the vertices to remove are used only for removal,
 	 * not for the next clause.
 	 */
-	if (detail->detach)
+	if (detail->detach && pstate->p_delete_edges_resname)
 	{
 		TargetEntry *te;
 
 		/* This assumes the edge array always comes last. */
 		te = llast(qry->targetList);
 
-		Assert(pstate->p_delete_edges_resname != NULL);
-
 		if (strcmp(te->resname, pstate->p_delete_edges_resname) == 0)
 			te->resjunk = true;
 
 		pstate->p_delete_edges_resname = NULL;
 	}
+
+	qry->graph.exprs = (List *) resolve_future_vertex(pstate,
+													  (Node *) qry->graph.exprs,
+													  FVR_PRESERVE_VAR_REF);
+
+	qry->targetList = (List *) resolve_future_vertex(pstate,
+													 (Node *) qry->targetList,
+													 FVR_DONT_RESOLVE);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
@@ -5145,7 +5151,8 @@ find_target_label_walker(Node *node, find_target_label_context *ctx)
 		 * NOTE: This is related to how `ModifyGraph` does SET, and
 		 *       `FVR_PRESERVE_VAR_REF` flag. We need to fix this.
 		 */
-		if (qry->graph.writeOp == GWROP_SET &&
+		if ((qry->graph.writeOp == GWROP_SET ||
+			 qry->graph.writeOp == GWROP_DELETE) &&
 			ctx->sublevels_up == 0 && !ctx->in_preserved)
 		{
 			te = get_tle_by_resno(qry->targetList, var->varattno);
