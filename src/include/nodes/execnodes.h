@@ -2281,7 +2281,7 @@ typedef struct ModifyGraphState
 	int			numOldRtable;
 	ResultRelInfo *resultRelations;
 	int			numResultRelations;
-	uint32		modify_cid;
+	CommandId	modify_cid;
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE
 								   with `es_prop_map` */
 	List	   *exprs;			/* expression state list for DELETE */

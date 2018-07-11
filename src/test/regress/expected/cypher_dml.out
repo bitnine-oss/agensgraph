@@ -3330,6 +3330,92 @@ drop cascades to elabel ag_edge
 drop cascades to vlabel v1
 drop cascades to vlabel v2
 drop cascades to vlabel v3
+-- AG-169, AG-170
+CREATE GRAPH ag170;
+SET GRAPH_PATH = ag170;
+BEGIN;
+CREATE (:foo {bar : 'a'});
+MATCH (a:foo {bar : 'a'}) RETURN properties(a);
+  properties  
+--------------
+ {"bar": "a"}
+(1 row)
+
+END;
+MATCH (a:foo {bar : 'a'})
+DELETE a
+RETURN count(*);
+ count 
+-------
+     1
+(1 row)
+
+BEGIN;
+CREATE (:foo {bar : 'a'});
+CREATE (:foo {bar : 'b'});
+MATCH (a:foo) RETURN properties(a);
+  properties  
+--------------
+ {"bar": "a"}
+ {"bar": "b"}
+(2 rows)
+
+END;
+MATCH (a:foo)
+DELETE a
+RETURN count(*);
+ count 
+-------
+     2
+(1 row)
+
+BEGIN;
+CREATE (a:foo {bar : 'a'})
+MERGE (b:foo {bar : 'b'})
+	ON CREATE SET b.bar = 'a';
+MATCH (a:foo) RETURN properties(a);
+  properties  
+--------------
+ {"bar": "a"}
+ {"bar": "a"}
+(2 rows)
+
+END;
+MATCH (a:foo)
+DELETE a
+RETURN count(*);
+ count 
+-------
+     2
+(1 row)
+
+\set AUTOCOMMIT OFF
+\echo :AUTOCOMMIT
+OFF
+CREATE (:foo {bar : 'a'});
+MATCH (a:foo {bar : 'a'}) RETURN count(*);
+ count 
+-------
+     1
+(1 row)
+
+COMMIT;
+MATCH (a:foo {bar : 'a'}) RETURN count(*);
+ count 
+-------
+     1
+(1 row)
+
+COMMIT;
+\set AUTOCOMMIT ON
+\echo :AUTOCOMMIT
+ON
+DROP GRAPH ag170 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence ag170.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel foo
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
