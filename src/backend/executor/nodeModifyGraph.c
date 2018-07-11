@@ -393,6 +393,7 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 	EState	   *estate = mgstate->ps.state;
 	ResultRelInfo *resultRelInfo;
 	int			i;
+	CommandId	used_cid;
 
 	if (mgstate->tuplestorestate != NULL)
 		tuplestore_end(mgstate->tuplestorestate);
@@ -423,6 +424,17 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 
 	ExecEndNode(mgstate->subplan);
 	ExecFreeExprContext(&mgstate->ps);
+
+	/*
+	 * ModifyGraph plan uses multi-level CommandId for supporting visibitliy
+	 * between cypher Clauses. Need to raise the cid to see the modifications
+	 * made by this ModifyGraph plan in the next command.
+	 */
+	used_cid = mgstate->modify_cid + MODIFY_CID_MAX;
+	while (used_cid > GetCurrentCommandId(true))
+	{
+		CommandCounterIncrement();
+	}
 }
 
 static void
