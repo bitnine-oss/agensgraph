@@ -1702,6 +1702,7 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 	Graphid		gid;
 	bool		isnull;
 	bool		modified = false;
+	bool		isdeleted = false;
 	Datum		result;
 
 	getGraphpathArrays(origin, &vertices_datum, &edges_datum);
@@ -1730,7 +1731,15 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 		vertex = getVertexFinal(mgstate, value, gid);
 
 		if (vertex == (Datum) 0)
-			elog(ERROR, "cannot delete a vertex in a graphpath");
+		{
+			if (i == 0)
+				isdeleted = true;
+
+			if (isdeleted)
+				continue;
+			else
+				elog(ERROR, "cannot delete a vertex in a graphpath");
+		}
 
 		if (vertex != value)
 			modified = true;
@@ -1752,7 +1761,12 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 		edge = getEdgeFinal(mgstate, value, gid);
 
 		if (edge == (Datum) 0)
-			elog(ERROR, "cannot modify the element of graphpath.");
+		{
+			if (isdeleted)
+				continue;
+			else
+				elog(ERROR, "cannot modify the element of graphpath.");
+		}
 
 		if (edge != value)
 			modified = true;
@@ -1760,7 +1774,9 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 		edges[i] = edge;
 	}
 
-	if (modified)
+	if (isdeleted)
+		result = (Datum) 0;
+	else if (modified)
 		result = makeGraphpathDatum(vertices, nvertices, edges, nedges);
 	else
 		result = origin;
