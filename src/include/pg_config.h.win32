@@ -580,6 +580,7 @@
 
 /* AgensGraph version as a string */
 #define AG_VERSION "1.4devel"
+#define AG_COMP_VERSION "1.4"
 
 /* AgensGraph Git revision as a string */
 #define AG_GIT_REVISION "not-available"

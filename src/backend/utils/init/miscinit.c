@@ -1347,6 +1347,11 @@ RecheckDataDirLockFile(void)
  *				Version checking support
  *-------------------------------------------------------------------------
  */
+/*
+ * ValidateAgVersion() is always called by ValidatePgVersion().
+ * Because seperated call could make human mistake
+ * and renaming ValidatePgVersion() can cause future merge confilct.
+ */
 void ValidateAgVersion(const char *path);
 
 /*
@@ -1409,7 +1414,7 @@ ValidatePgVersion(const char *path)
 						   "which is not compatible with this version %s.",
 						   file_version_string, my_version_string)));
 
-	/* We should validate AgensGraph Version too */
+	/* AG_VERSION must be validated too */
 	ValidateAgVersion(path);
 }
 
@@ -1419,12 +1424,7 @@ ValidateAgVersion(const char *path)
 {
 	char		full_path[MAXPGPATH];
 	FILE	   *file;
-	char		file_ver[64];
-	char		my_ver[4];
-
-	/* The length 4 means 'x.x\0'
-	 * AgensGraph is not compatible when the minor version is different. */
-	StrNCpy(my_ver, AG_VERSION, 4);
+	char		file_version_string[64];
 
 	snprintf(full_path, sizeof(full_path), "%s/AG_VERSION", path);
 
@@ -1443,9 +1443,9 @@ ValidateAgVersion(const char *path)
 					 errmsg("could not open file \"%s\": %m", full_path)));
 	}
 
-	file_ver[0] = '\0';
+	file_version_string[0] = '\0';
 
-	if (fscanf(file, "%63s", file_ver) != 1)
+	if (fscanf(file, "%63s", file_version_string) != 1)
 		ereport(FATAL,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("\"%s\" is not a valid data directory",
@@ -1456,13 +1456,13 @@ ValidateAgVersion(const char *path)
 
 	FreeFile(file);
 
-	if (strcmp(my_ver, file_ver))
+	if (strcmp(AG_COMP_VERSION, file_version_string))
 		ereport(FATAL,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("database files are incompatible with server"),
 				 errdetail("The data directory was initialized by AgensGraph version %s, "
 						   "which is not compatible with this version %s.",
-						   file_ver, my_ver)));
+						   file_version_string, AG_COMP_VERSION)));
 }
 
 /*-------------------------------------------------------------------------

@@ -805,7 +805,6 @@ write_version_file(char *extrapath)
 {
 	FILE	   *version_file;
 	char	   *path;
-	char		AGCompatibleVer[4];
 
 	/* write PG_VERSION */
 	if (extrapath == NULL)
@@ -841,10 +840,7 @@ write_version_file(char *extrapath)
 		exit_nicely();
 	}
 
-	/* The length 4 means 'x.x\0'
-	 * AgensGraph is not compatible when the minor version is different. */
-	StrNCpy(AGCompatibleVer, AG_VERSION, 4);
-	if (fprintf(version_file, "%s\n", AGCompatibleVer) < 0 ||
+	if (fprintf(version_file, "%s\n", AG_COMP_VERSION) < 0 ||
 		fclose(version_file))
 	{
 		fprintf(stderr, _("%s: could not write file \"%s\": %s\n"),
