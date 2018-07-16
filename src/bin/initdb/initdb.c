@@ -797,7 +797,7 @@ check_input(char *path)
 }
 
 /*
- * write out the PG_VERSION file in the data dir, or its subdirectory
+ * write out the PG_VERSION / AG_VERSION file in the data dir, or its subdirectory
  * if extrapath is not NULL
  */
 static void
@@ -806,6 +806,7 @@ write_version_file(const char *extrapath)
 	FILE	   *version_file;
 	char	   *path;
 
+	/* write PG_VERSION */
 	if (extrapath == NULL)
 		path = psprintf("%s/PG_VERSION", pg_data);
 	else
@@ -818,6 +819,28 @@ write_version_file(const char *extrapath)
 		exit_nicely();
 	}
 	if (fprintf(version_file, "%s\n", PG_MAJORVERSION) < 0 ||
+		fclose(version_file))
+	{
+		fprintf(stderr, _("%s: could not write file \"%s\": %s\n"),
+				progname, path, strerror(errno));
+		exit_nicely();
+	}
+	free(path);
+
+	/* write AG_VERSION */
+	if (extrapath == NULL)
+		path = psprintf("%s/AG_VERSION", pg_data);
+	else
+		path = psprintf("%s/%s/AG_VERSION", pg_data, extrapath);
+
+	if ((version_file = fopen(path, PG_BINARY_W)) == NULL)
+	{
+		fprintf(stderr, _("%s: could not open file \"%s\" for writing: %s\n"),
+				progname, path, strerror(errno));
+		exit_nicely();
+	}
+
+	if (fprintf(version_file, "%s\n", AG_COMP_VERSION) < 0 ||
 		fclose(version_file))
 	{
 		fprintf(stderr, _("%s: could not write file \"%s\": %s\n"),

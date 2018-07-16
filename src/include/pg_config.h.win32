@@ -587,6 +587,7 @@
 
 /* AgensGraph version as a string */
 #define AG_VERSION "1.4devel"
+#define AG_COMP_VERSION "1.4"
 
 /* The size of `long', as computed by sizeof. */
 #define SIZEOF_LONG 4
