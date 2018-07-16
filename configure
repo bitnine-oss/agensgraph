@@ -2772,6 +2772,11 @@ cat >>confdefs.h <<_ACEOF
 #define AG_VERSION "$AG_VERSION"
 _ACEOF
 
+AG_COMP_VERSION=1.4
+
+cat >>confdefs.h <<_ACEOF
+#define AG_COMP_VERSION "$AG_COMP_VERSION"
+_ACEOF
 
 AG_GIT_REVISION=`git rev-parse HEAD`
 
