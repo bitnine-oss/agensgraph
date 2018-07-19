@@ -827,6 +827,13 @@ DELETE r;
 
 MATCH (a) DETACH DELETE a;
 
+-- AG-163 : DELETE plan passes 'edge' variable to the next plan.
+CREATE ({name:'AG-163'});
+
+MATCH (a {name:'AG-163'}) DELETE a RETURN *;
+
+MATCH (a) DETACH DELETE a;
+
 --
 -- Uniqueness
 --
@@ -1289,6 +1296,59 @@ MATCH (a) RETURN count(a);
 
 ALTER DATABASE regression SET GRAPH_PATH TO DEFAULT;
 DROP GRAPH ag161 CASCADE;
+
+-- AG-169, AG-170
+CREATE GRAPH ag170;
+SET GRAPH_PATH = ag170;
+
+BEGIN;
+CREATE (:foo {bar : 'a'});
+MATCH (a:foo {bar : 'a'}) RETURN properties(a);
+END;
+
+MATCH (a:foo {bar : 'a'})
+DELETE a
+RETURN count(*);
+
+BEGIN;
+CREATE (:foo {bar : 'a'});
+CREATE (:foo {bar : 'b'});
+MATCH (a:foo) RETURN properties(a);
+END;
+
+MATCH (a:foo)
+DELETE a
+RETURN count(*);
+
+BEGIN;
+CREATE (a:foo {bar : 'a'})
+MERGE (b:foo {bar : 'b'})
+	ON CREATE SET b.bar = 'a';
+MATCH (a:foo) RETURN properties(a);
+END;
+
+MATCH (a:foo)
+DELETE a
+RETURN count(*);
+
+\set AUTOCOMMIT OFF
+
+\echo :AUTOCOMMIT
+
+CREATE (:foo {bar : 'a'});
+MATCH (a:foo {bar : 'a'}) RETURN count(*);
+
+COMMIT;
+
+MATCH (a:foo {bar : 'a'}) RETURN count(*);
+
+COMMIT;
+
+\set AUTOCOMMIT ON
+
+\echo :AUTOCOMMIT
+
+DROP GRAPH ag170 CASCADE;
 
 -- cleanup
 

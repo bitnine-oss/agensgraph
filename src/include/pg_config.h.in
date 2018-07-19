@@ -762,6 +762,9 @@
 /* AgensGraph version as a string */
 #undef AG_VERSION
 
+/* AgensGraph compatible version as a string */
+#undef AG_COMP_VERSION
+
 /* AgensGraph Git revision as a string */
 #undef AG_GIT_REVISION
 
