@@ -3273,3 +3273,35 @@ get_relid_laboid(Oid relid)
 {
 	return GetSysCacheOid1(LABELRELID, ObjectIdGetDatum(relid));
 }
+
+Oid
+get_labid_typeoid(Oid graphid, uint16 labid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache2(LABELLABID,
+						 ObjectIdGetDatum(graphid),
+						 Int32GetDatum((int32) labid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		Oid labkind;
+
+		if (labtup->labkind == LABEL_KIND_VERTEX)
+			labkind = VERTEXOID;
+		else if (labtup->labkind == LABEL_KIND_EDGE)
+			labkind = EDGEOID;
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("Invalid label kind : %c", labtup->labkind)));
+
+		ReleaseSysCache(tp);
+		return labkind;
+	}
+	else
+	{
+		return InvalidOid;
+	}
+}
