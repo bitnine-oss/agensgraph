@@ -312,6 +312,28 @@ make_rels_by_clauseless_joins(PlannerInfo *root,
 	}
 }
 
+/* This function is used only by the join_is_legal function. */
+static bool
+is_graph_join_rel(RelOptInfo *rel)
+{
+	NestPath   *nlpath;
+
+	if (!(IS_JOIN_REL(rel)))
+		return false;
+
+	/* All of graph join is only used nestloop. */
+	if (!IsA(rel->cheapest_total_path, NestPath))
+		return false;
+	else
+	{
+		nlpath = castNode(NestPath, rel->cheapest_total_path);
+
+		if(IS_GRAPH_JOIN(nlpath->jointype))
+			return true;
+	}
+
+	return false;
+}
 
 /*
  * join_is_legal
@@ -337,6 +359,13 @@ join_is_legal(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 	bool		unique_ified;
 	bool		must_be_leftjoin;
 	ListCell   *l;
+
+	/*
+	 * Because graph joins must not change the join order, prevent to be
+	 * a sub-tree of another join.
+	 */
+	if (is_graph_join_rel(rel1) || is_graph_join_rel(rel2))
+		return false;
 
 	/*
 	 * Ensure output params are set on failure return.  This is just to
