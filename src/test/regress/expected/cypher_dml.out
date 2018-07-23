@@ -2185,7 +2185,7 @@ ERROR:  cannot modify the element of graphpath.
 MATCH p = ()-[:rel]->(), (a)-[:rel]->()
 DELETE a
 RETURN *;
-ERROR:  cannot delete a vertex in a graphpath
+ERROR:  vertices with edges can not be removed
 MATCH p = ()-[:rel]->()
 DELETE p;
 MATCH (a) RETURN count(a);
@@ -2213,6 +2213,24 @@ MATCH ()-[r:rel]->() RETURN count(r);
  count 
 -------
      0
+(1 row)
+
+-- AG-159
+CREATE (:v1), (:v2);
+MATCH p=(a:v1), (b:v2)
+DETACH DELETE a
+RETURN label(b);
+ label 
+-------
+ "v2"
+(1 row)
+
+MATCH p=(a:v2)
+DELETE a
+RETURN p;
+ p 
+---
+ 
 (1 row)
 
 --
@@ -3365,7 +3383,7 @@ DROP VLABEL repo;
 DROP ELABEL lib;
 DROP ELABEL doc;
 DROP GRAPH agens CASCADE;
-NOTICE:  drop cascades to 12 other objects
+NOTICE:  drop cascades to 14 other objects
 DETAIL:  drop cascades to sequence agens.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -3378,4 +3396,6 @@ drop cascades to elabel el3
 drop cascades to elabel made_by
 drop cascades to elabel ag160
 drop cascades to elabel rel
+drop cascades to vlabel v1
+drop cascades to vlabel v2
 DROP TABLE history;

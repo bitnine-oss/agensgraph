@@ -792,6 +792,12 @@ typedef enum JoinType
 	   (1 << JOIN_CYPHER_DELETE) | \
 	   (1 << JOIN_ANTI))) != 0)
 
+#define IS_GRAPH_JOIN(jointype) \
+	(((1 << (jointype)) & \
+	  ((1 << JOIN_CYPHER_MERGE) | \
+	   (1 << JOIN_VLE) | \
+	   (1 << JOIN_CYPHER_DELETE))) != 0)
+
 /*
  * AggStrategy -
  *	  overall execution strategies for Agg plan nodes
