@@ -5331,7 +5331,7 @@ createLabelIfNotExist(ParseState *pstate, char *labname, int labloc,
 	else
 		keyword = "ELABEL";
 
-	snprintf(sqlcmd, sizeof(sqlcmd), "CREATE %s %s", keyword, labname);
+	snprintf(sqlcmd, sizeof(sqlcmd), "CREATE %s \"%s\"", keyword, labname);
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
