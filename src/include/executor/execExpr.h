@@ -16,15 +16,12 @@
 
 #include "executor/nodeAgg.h"
 #include "nodes/execnodes.h"
+#include "utils/jsonb.h"
 
 /* forward references to avoid circularity */
 struct ExprEvalStep;
 struct ArrayRefState;
 struct CypherAccessPathElem;
-
-/* declarations to avoid including headers */
-typedef struct JsonbParseState JsonbParseState;
-typedef struct JsonbIterator JsonbIterator;
 
 /* Bits in ExprState->flags (see also execnodes.h for public flag bits): */
 /* expression's interpreter has been initialized */
