@@ -8931,7 +8931,7 @@ get_access_arg_expr(Node *node, deparse_context *context, bool showimplicit)
 
 	context->buf = buf;
 
-	if (strcmp(si.data, AG_ELEM_PROP_MAP) != 0)
+	if (strcmp(si.data, quote_identifier(AG_ELEM_PROP_MAP)) != 0)
 	{
 		appendBinaryStringInfo(buf, si.data, si.len);
 		return true;
