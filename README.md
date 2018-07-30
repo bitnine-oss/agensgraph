@@ -58,7 +58,7 @@ Building from the Source Code
         $ echo "export PATH=/path/to/agensgraph/bin:\$PATH" >> ~/.bashrc
         $ echo "export LD_LIBRARY_PATH=/path/to/agensgraph/lib:\$LD_LIBRARY_PATH" >> ~/.bashrc
         ```
-    * Build and install other contrib and external modules:
+    * OPTIONAL: Build and install AgensGraph along with other contrib and external modules (If you want to build AgensGraph alone, run make install. This command builds AgensGraph along with additional extensions):
         ```sh
         $ make install-world
         ```
