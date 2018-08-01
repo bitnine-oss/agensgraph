@@ -206,15 +206,20 @@ GetConnection(void)
 	if (conn_opts)
 		PQconninfoFree(conn_opts);
 
-	/* Set always-secure search path, so malicious users can't get control. */
-	if (dbname != NULL)
+	/*
+	 * Set always-secure search path, so malicious users can't get control.
+	 * The capacity to run normal SQL queries was added in PostgreSQL
+	 * 10, so the search path cannot be changed (by us or attackers) on
+	 * earlier versions.
+	 */
+	if (dbname != NULL && PQserverVersion(tmpconn) >= 100000)
 	{
 		PGresult   *res;
 
 		res = PQexec(tmpconn, ALWAYS_SECURE_SEARCH_PATH_SQL);
 		if (PQresultStatus(res) != PGRES_TUPLES_OK)
 		{
-			fprintf(stderr, _("%s: could not clear search_path: %s\n"),
+			fprintf(stderr, _("%s: could not clear search_path: %s"),
 					progname, PQerrorMessage(tmpconn));
 			PQclear(res);
 			PQfinish(tmpconn);

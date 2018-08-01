@@ -2761,6 +2761,8 @@ ForValues:
 partbound_datum:
 			Sconst			{ $$ = makeStringConst($1, @1); }
 			| NumericOnly	{ $$ = makeAConst($1, @1); }
+			| TRUE_P		{ $$ = makeStringConst(pstrdup("true"), @1); }
+			| FALSE_P		{ $$ = makeStringConst(pstrdup("false"), @1); }
 			| NULL_P		{ $$ = makeNullAConst(@1); }
 		;
 
@@ -3602,12 +3604,13 @@ TableLikeOptionList:
 		;
 
 TableLikeOption:
-				DEFAULTS			{ $$ = CREATE_TABLE_LIKE_DEFAULTS; }
+				COMMENTS			{ $$ = CREATE_TABLE_LIKE_COMMENTS; }
 				| CONSTRAINTS		{ $$ = CREATE_TABLE_LIKE_CONSTRAINTS; }
+				| DEFAULTS			{ $$ = CREATE_TABLE_LIKE_DEFAULTS; }
 				| IDENTITY_P		{ $$ = CREATE_TABLE_LIKE_IDENTITY; }
 				| INDEXES			{ $$ = CREATE_TABLE_LIKE_INDEXES; }
+				| STATISTICS		{ $$ = CREATE_TABLE_LIKE_STATISTICS; }
 				| STORAGE			{ $$ = CREATE_TABLE_LIKE_STORAGE; }
-				| COMMENTS			{ $$ = CREATE_TABLE_LIKE_COMMENTS; }
 				| ALL				{ $$ = CREATE_TABLE_LIKE_ALL; }
 		;
 

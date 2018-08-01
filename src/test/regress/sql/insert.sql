@@ -280,26 +280,26 @@ drop table mlparted5;
 create table key_desc (a int, b int) partition by list ((a+0));
 create table key_desc_1 partition of key_desc for values in (1) partition by range (b);
 
-create user someone_else;
-grant select (a) on key_desc_1 to someone_else;
-grant insert on key_desc to someone_else;
+create user regress_insert_other_user;
+grant select (a) on key_desc_1 to regress_insert_other_user;
+grant insert on key_desc to regress_insert_other_user;
 
-set role someone_else;
+set role regress_insert_other_user;
 -- no key description is shown
 insert into key_desc values (1, 1);
 
 reset role;
-grant select (b) on key_desc_1 to someone_else;
-set role someone_else;
+grant select (b) on key_desc_1 to regress_insert_other_user;
+set role regress_insert_other_user;
 -- key description (b)=(1) is now shown
 insert into key_desc values (1, 1);
 
 -- key description is not shown if key contains expression
 insert into key_desc values (2, 1);
 reset role;
-revoke all on key_desc from someone_else;
-revoke all on key_desc_1 from someone_else;
-drop role someone_else;
+revoke all on key_desc from regress_insert_other_user;
+revoke all on key_desc_1 from regress_insert_other_user;
+drop role regress_insert_other_user;
 drop table key_desc, key_desc_1;
 
 -- test minvalue/maxvalue restrictions
@@ -377,6 +377,29 @@ drop role regress_coldesc_role;
 drop table inserttest3;
 drop table brtrigpartcon;
 drop function brtrigpartcon1trigf();
+
+-- check that "do nothing" BR triggers work with tuple-routing (this checks
+-- that estate->es_result_relation_info is appropriately set/reset for each
+-- routed tuple)
+create table donothingbrtrig_test (a int, b text) partition by list (a);
+create table donothingbrtrig_test1 (b text, a int);
+create table donothingbrtrig_test2 (c text, b text, a int);
+alter table donothingbrtrig_test2 drop column c;
+create or replace function donothingbrtrig_func() returns trigger as $$begin raise notice 'b: %', new.b; return NULL; end$$ language plpgsql;
+create trigger donothingbrtrig1 before insert on donothingbrtrig_test1 for each row execute procedure donothingbrtrig_func();
+create trigger donothingbrtrig2 before insert on donothingbrtrig_test2 for each row execute procedure donothingbrtrig_func();
+alter table donothingbrtrig_test attach partition donothingbrtrig_test1 for values in (1);
+alter table donothingbrtrig_test attach partition donothingbrtrig_test2 for values in (2);
+insert into donothingbrtrig_test values (1, 'foo'), (2, 'bar');
+copy donothingbrtrig_test from stdout;
+1	baz
+2	qux
+\.
+select tableoid::regclass, * from donothingbrtrig_test;
+
+-- cleanup
+drop table donothingbrtrig_test;
+drop function donothingbrtrig_func();
 
 -- check multi-column range partitioning with minvalue/maxvalue constraints
 create table mcrparted (a text, b int) partition by range(a, b);

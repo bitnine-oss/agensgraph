@@ -215,7 +215,7 @@ SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY 2, 1;
 DROP VLABEL v0 CASCADE;
 DROP ELABEL e0 CASCADE;
 DROP ELABEL e1;
-SELECT labname, labkind FROM pg_catalog.ag_label;
+SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY 2, 1;
 
 -- drop label non-empty
 CREATE (a:test_v1)-[:test_e1]->(b:test_v2), (a)<-[:test_e2]-(b);
