@@ -446,6 +446,22 @@ funny_dup17(PG_FUNCTION_ARGS)
 	return PointerGetDatum(tuple);
 }
 
+PG_FUNCTION_INFO_V1(trigger_return_old);
+
+Datum
+trigger_return_old(PG_FUNCTION_ARGS)
+{
+	TriggerData *trigdata = (TriggerData *) fcinfo->context;
+	HeapTuple	tuple;
+
+	if (!CALLED_AS_TRIGGER(fcinfo))
+		elog(ERROR, "trigger_return_old: not fired by trigger manager");
+
+	tuple = trigdata->tg_trigtuple;
+
+	return PointerGetDatum(tuple);
+}
+
 #define TTDUMMY_INFINITY	999999
 
 static SPIPlanPtr splan = NULL;
@@ -865,7 +881,6 @@ wait_pid(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
-#ifndef PG_HAVE_ATOMIC_FLAG_SIMULATION
 static void
 test_atomic_flag(void)
 {
@@ -895,7 +910,6 @@ test_atomic_flag(void)
 
 	pg_atomic_clear_flag(&flag);
 }
-#endif							/* PG_HAVE_ATOMIC_FLAG_SIMULATION */
 
 static void
 test_atomic_uint32(void)
@@ -1078,19 +1092,7 @@ PG_FUNCTION_INFO_V1(test_atomic_ops);
 Datum
 test_atomic_ops(PG_FUNCTION_ARGS)
 {
-	/* ---
-	 * Can't run the test under the semaphore emulation, it doesn't handle
-	 * checking two edge cases well:
-	 * - pg_atomic_unlocked_test_flag() always returns true
-	 * - locking a already locked flag blocks
-	 * it seems better to not test the semaphore fallback here, than weaken
-	 * the checks for the other cases. The semaphore code will be the same
-	 * everywhere, whereas the efficient implementations wont.
-	 * ---
-	 */
-#ifndef PG_HAVE_ATOMIC_FLAG_SIMULATION
 	test_atomic_flag();
-#endif
 
 	test_atomic_uint32();
 

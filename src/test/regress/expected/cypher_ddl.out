@@ -585,14 +585,14 @@ NOTICE:  drop cascades to vlabel v00
 DROP ELABEL e0 CASCADE;
 NOTICE:  drop cascades to elabel e01
 DROP ELABEL e1;
-SELECT labname, labkind FROM pg_catalog.ag_label;
+SELECT labname, labkind FROM pg_catalog.ag_label ORDER BY 2, 1;
   labname  | labkind 
 -----------+---------
- ag_vertex | v
  ag_edge   | e
- unlog     | v
+ ag_vertex | v
  stor      | v
  tblspc    | v
+ unlog     | v
  vdi       | v
 (6 rows)
 
