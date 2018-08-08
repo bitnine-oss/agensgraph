@@ -2522,6 +2522,19 @@ _readCypherListComp(void)
 	READ_DONE();
 }
 
+static CypherTypeCast *
+_readCypherTypeCast(void)
+{
+	READ_LOCALS(CypherTypeCast);
+
+	READ_OID_FIELD(type);
+	READ_ENUM_FIELD(cform, CoercionForm);
+	READ_NODE_FIELD(arg);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
 static CypherMapExpr *
 _readCypherMapExpr(void)
 {
@@ -2886,6 +2899,8 @@ parseNodeString(void)
 		return_value = _readGraphDelElem();
 	else if (MATCH("CYPHERLISTCOMP", 14))
 		return_value = _readCypherListComp();
+	else if (MATCH("CYPHERTYPECAST", 14))
+		return_value = _readCypherTypeCast();
 	else if (MATCH("CYPHERMAPEXPR", 13))
 		return_value = _readCypherMapExpr();
 	else if (MATCH("CYPHERLISTEXPR", 14))

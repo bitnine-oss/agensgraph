@@ -2194,6 +2194,19 @@ _copyOnConflictExpr(const OnConflictExpr *from)
 	return newnode;
 }
 
+static CypherTypeCast *
+_copyCypherTypeCast(const CypherTypeCast *from)
+{
+	CypherTypeCast *newnode = makeNode(CypherTypeCast);
+
+	COPY_SCALAR_FIELD(type);
+	COPY_SCALAR_FIELD(cform);
+	COPY_NODE_FIELD(arg);
+	COPY_LOCATION_FIELD(location);
+
+	return newnode;
+}
+
 static CypherMapExpr *
 _copyCypherMapExpr(const CypherMapExpr *from)
 {
@@ -5504,6 +5517,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_OnConflictExpr:
 			retval = _copyOnConflictExpr(from);
+			break;
+		case T_CypherTypeCast:
+			retval = _copyCypherTypeCast(from);
 			break;
 		case T_CypherMapExpr:
 			retval = _copyCypherMapExpr(from);

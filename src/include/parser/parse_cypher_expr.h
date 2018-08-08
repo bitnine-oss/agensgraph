@@ -21,6 +21,11 @@ extern Node *transformCypherExpr(ParseState *pstate, Node *expr,
 extern Node *transformCypherMapForSet(ParseState *pstate, Node *expr,
 									  List **pathelems, char **varname);
 
+/* coerce functions */
+extern Node *coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp,
+						 int32 otypmod, CoercionContext cctx,
+						 CoercionForm cform, int loc);
+
 /* clause functions */
 extern Node *transformCypherWhere(ParseState *pstate, Node *clause,
 								  ParseExprKind exprKind);
@@ -33,6 +38,7 @@ extern List *transformCypherOrderBy(ParseState *pstate, List *orderlist,
 /* item list functions */
 extern List *transformItemList(ParseState *pstate, List *items,
 							   ParseExprKind exprKind);
+extern void resolveItemList(ParseState *pstate, List *items);
 extern List *transformCypherExprList(ParseState *pstate, List *exprlist,
 									 ParseExprKind exprKind);
 

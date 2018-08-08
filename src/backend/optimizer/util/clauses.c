@@ -3572,6 +3572,28 @@ eval_const_expressions_mutator(Node *node,
 													  context);
 			}
 			break;
+		case T_CypherTypeCast:
+			{
+				CypherTypeCast *tc = (CypherTypeCast *) node;
+				Node	   *newarg;
+				CypherTypeCast *newtc;
+
+				newarg = eval_const_expressions_mutator((Node *) tc->arg,
+														context);
+
+				newtc = makeNode(CypherTypeCast);
+				newtc->type = tc->type;
+				newtc->cform = tc->cform;
+				newtc->arg = (Expr *) newarg;
+				newtc->location = tc->location;
+
+				if (IsA(newarg, Const))
+					return (Node *) evaluate_expr((Expr *) newtc, newtc->type,
+												  -1, InvalidOid);
+
+				return (Node *) newtc;
+			}
+			break;
 		case T_CypherMapExpr:
 			{
 				CypherMapExpr *m = (CypherMapExpr *) node;
@@ -3605,6 +3627,7 @@ eval_const_expressions_mutator(Node *node,
 
 				newm = makeNode(CypherMapExpr);
 				newm->keyvals = newkeyvals;
+				newm->location = m->location;
 
 				/* it is safe to reduce this CypherMapExpr */
 				if (all_const)
@@ -3635,6 +3658,7 @@ eval_const_expressions_mutator(Node *node,
 
 				newcl = makeNode(CypherListExpr);
 				newcl->elems = newelems;
+				newcl->location = cl->location;
 
 				if (all_const)
 					return (Node *) evaluate_expr((Expr *) newcl, JSONBOID, -1,
@@ -3652,6 +3676,7 @@ eval_const_expressions_mutator(Node *node,
 				newclc->varname = pstrdup(clc->varname);
 				newclc->cond = clc->cond;
 				newclc->elem = clc->elem;
+				newclc->location = clc->location;
 				return (Node *) newclc;
 			}
 		case T_CypherAccessExpr:
