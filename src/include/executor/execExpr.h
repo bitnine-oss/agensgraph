@@ -214,6 +214,7 @@ typedef enum ExprEvalOp
 	EEOP_SUBPLAN,
 	EEOP_ALTERNATIVE_SUBPLAN,
 
+	EEOP_CYPHERTYPECAST,
 	EEOP_CYPHERMAPEXPR,
 	EEOP_CYPHERLISTEXPR,
 	EEOP_CYPHERLISTCOMP_BEGIN,
@@ -575,6 +576,11 @@ typedef struct ExprEvalStep
 
 		struct
 		{
+			FunctionCallInfo fcinfo_data_in;
+		}			cyphertypecast;
+
+		struct
+		{
 			char	  **key_cstrings;
 			Datum	   *val_values;
 			bool	   *val_nulls;
@@ -724,6 +730,7 @@ extern void ExecEvalAlternativeSubPlan(ExprState *state, ExprEvalStep *op,
 						   ExprContext *econtext);
 extern void ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op,
 					ExprContext *econtext);
+extern void ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherMapExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherListExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherAccessExpr(ExprState *state, ExprEvalStep *op);

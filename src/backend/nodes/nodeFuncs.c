@@ -260,6 +260,9 @@ exprType(const Node *expr)
 		case T_PlaceHolderVar:
 			type = exprType((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
+		case T_CypherTypeCast:
+			type = ((const CypherTypeCast *) expr)->type;
+			break;
 		case T_CypherMapExpr:
 			type = JSONBOID;
 			break;
@@ -508,6 +511,8 @@ exprTypmod(const Node *expr)
 			return ((const SetToDefault *) expr)->typeMod;
 		case T_PlaceHolderVar:
 			return exprTypmod((Node *) ((const PlaceHolderVar *) expr)->phexpr);
+		case T_CypherTypeCast:
+			return -1;
 		case T_CypherMapExpr:
 			return -1;
 		case T_CypherListExpr:
@@ -929,6 +934,9 @@ exprCollation(const Node *expr)
 		case T_PlaceHolderVar:
 			coll = exprCollation((Node *) ((const PlaceHolderVar *) expr)->phexpr);
 			break;
+		case T_CypherTypeCast:
+			coll = InvalidOid;
+			break;
 		case T_CypherMapExpr:
 			coll = InvalidOid;
 			break;
@@ -1144,6 +1152,9 @@ exprSetCollation(Node *expr, Oid collation)
 		case T_NextValueExpr:
 			Assert(!OidIsValid(collation)); /* result is always an integer
 											 * type */
+			break;
+		case T_CypherTypeCast:
+			/* XXX: Don't care for now */
 			break;
 		case T_CypherMapExpr:
 			Assert(!OidIsValid(collation));
@@ -1599,6 +1610,9 @@ exprLocation(const Node *expr)
 			break;
 		case T_PartitionRangeDatum:
 			loc = ((const PartitionRangeDatum *) expr)->location;
+			break;
+		case T_CypherTypeCast:
+			loc = ((const CypherTypeCast *) expr)->location;
 			break;
 		case T_CypherMapExpr:
 			{
@@ -2297,6 +2311,14 @@ expression_tree_walker(Node *node,
 				if (walker(tf->colexprs, context))
 					return true;
 				if (walker(tf->coldefexprs, context))
+					return true;
+			}
+			break;
+		case T_CypherTypeCast:
+			{
+				CypherTypeCast *tc = (CypherTypeCast *) node;
+
+				if (expression_tree_walker((Node *) tc->arg, walker, context))
 					return true;
 			}
 			break;
@@ -3184,6 +3206,16 @@ expression_tree_mutator(Node *node,
 				MUTATE(newnode->rowexpr, tf->rowexpr, Node *);
 				MUTATE(newnode->colexprs, tf->colexprs, List *);
 				MUTATE(newnode->coldefexprs, tf->coldefexprs, List *);
+				return (Node *) newnode;
+			}
+			break;
+		case T_CypherTypeCast:
+			{
+				CypherTypeCast *tc = (CypherTypeCast *) node;
+				CypherTypeCast *newnode;
+
+				FLATCOPY(newnode, tc, CypherTypeCast);
+				MUTATE(newnode->arg, tc->arg, Expr *);
 				return (Node *) newnode;
 			}
 			break;

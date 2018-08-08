@@ -72,6 +72,8 @@ static bool isAssignmentIndirectionExpr(Expr *expr);
 static void ExecInitCoerceToDomain(ExprEvalStep *scratch, CoerceToDomain *ctest,
 					   PlanState *parent, ExprState *state,
 					   Datum *resv, bool *resnull);
+static void ExecInitCypherTypeCast(ExprEvalStep *scratch, CypherTypeCast *tc,
+								   PlanState *parent, ExprState *state);
 static void ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
 							  PlanState *parent, ExprState *state);
 static void ExecInitCypherList(ExprEvalStep *scratch, CypherListExpr *listexpr,
@@ -2042,6 +2044,14 @@ ExecInitExprRec(Expr *node, PlanState *parent, ExprState *state,
 				break;
 			}
 
+		case T_CypherTypeCast:
+			{
+				CypherTypeCast *tc = (CypherTypeCast *) node;
+
+				ExecInitCypherTypeCast(&scratch, tc, parent, state);
+				break;
+			}
+
 		case T_CypherMapExpr:
 			{
 				CypherMapExpr *mapexpr = (CypherMapExpr *) node;
@@ -2754,6 +2764,45 @@ ExecInitCoerceToDomain(ExprEvalStep *scratch, CoerceToDomain *ctest,
 				break;
 		}
 	}
+}
+
+static void
+ExecInitCypherTypeCast(ExprEvalStep *scratch, CypherTypeCast *tc,
+					   PlanState *parent, ExprState *state)
+{
+	FmgrInfo   *finfo_in;
+	FunctionCallInfo fcinfo_data_in;
+	Oid			infunc;
+	Oid			typinparam;
+
+	Assert(exprType((Node *) tc->arg) == JSONBOID);
+
+	ExecInitExprRec(tc->arg, parent, state,
+					scratch->resvalue, scratch->resnull);
+
+	finfo_in = palloc0(sizeof(FmgrInfo));
+	fcinfo_data_in = palloc0(sizeof(FunctionCallInfoData));
+
+	getTypeInputInfo(tc->type, &infunc, &typinparam);
+
+	fmgr_info(infunc, finfo_in);
+	fmgr_info_set_expr((Node *) tc, finfo_in);
+
+	InitFunctionCallInfoData(*fcinfo_data_in, finfo_in, 3, InvalidOid,
+							 NULL, NULL);
+
+	/*
+	 * The datum for the first argument will be filled every time when this
+	 * expression is executed by calling ExecEvalCypherTypeCast().
+	 */
+	fcinfo_data_in->arg[1] = ObjectIdGetDatum(typinparam);
+	fcinfo_data_in->argnull[1] = false;
+	fcinfo_data_in->arg[2] = Int32GetDatum(-1);
+	fcinfo_data_in->argnull[2] = false;
+
+	scratch->opcode = EEOP_CYPHERTYPECAST;
+	scratch->d.cyphertypecast.fcinfo_data_in = fcinfo_data_in;
+	ExprEvalPushStep(state, scratch);
 }
 
 static void

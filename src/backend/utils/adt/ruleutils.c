@@ -8799,6 +8799,30 @@ get_rule_expr(Node *node, deparse_context *context,
 			get_tablefunc((TableFunc *) node, context, showimplicit);
 			break;
 
+		case T_CypherTypeCast:
+			{
+				CypherTypeCast *tc = (CypherTypeCast *) node;
+
+				switch (tc->cform)
+				{
+					case COERCE_IMPLICIT_CAST:
+						get_rule_expr_paren((Node *) tc->arg, context,
+											showimplicit, node);
+						break;
+
+					case COERCE_EXPLICIT_CAST:
+						get_coercion_expr((Node *) tc->arg, context, tc->type,
+										  -1, node);
+						break;
+
+					case COERCE_EXPLICIT_CALL:
+					default:
+						elog(ERROR, "unexpected CoercionForm: %d", tc->cform);
+						break;
+				}
+			}
+			break;
+
 		case T_CypherMapExpr:
 			{
 				CypherMapExpr *m = (CypherMapExpr *) node;
@@ -8816,14 +8840,14 @@ get_rule_expr(Node *node, deparse_context *context,
 					e = lfirst(le);
 					le = lnext(le);
 
-					get_rule_expr((Node *) e, context, true);
+					get_rule_expr((Node *) e, context, false);
 
 					appendBinaryStringInfo(buf, ": ", 2);
 
 					e = lfirst(le);
 					le = lnext(le);
 
-					get_rule_expr((Node *) e, context, true);
+					get_rule_expr((Node *) e, context, false);
 
 					sep = ", ";
 				}
@@ -8836,7 +8860,7 @@ get_rule_expr(Node *node, deparse_context *context,
 				CypherListExpr *cl = (CypherListExpr *) node;
 
 				appendStringInfoChar(buf, '[');
-				get_rule_expr((Node *) cl->elems, context, true);
+				get_rule_expr((Node *) cl->elems, context, false);
 				appendStringInfoChar(buf, ']');
 			}
 			break;
@@ -8847,16 +8871,16 @@ get_rule_expr(Node *node, deparse_context *context,
 
 				appendStringInfoChar(buf, '[');
 				appendStringInfo(buf, "%s IN ", clc->varname);
-				get_rule_expr((Node *) clc->list, context, true);
+				get_rule_expr((Node *) clc->list, context, false);
 				if (clc->cond != NULL)
 				{
 					appendBinaryStringInfo(buf, " WHERE ", 7);
-					get_rule_expr((Node *) clc->cond, context, true);
+					get_rule_expr((Node *) clc->cond, context, false);
 				}
 				if (clc->elem != NULL)
 				{
 					appendBinaryStringInfo(buf, " | ", 3);
-					get_rule_expr((Node *) clc->elem, context, true);
+					get_rule_expr((Node *) clc->elem, context, false);
 				}
 				appendStringInfoChar(buf, ']');
 			}
@@ -8876,7 +8900,7 @@ get_rule_expr(Node *node, deparse_context *context,
 				bool		dot;
 				ListCell   *le;
 
-				dot = get_access_arg_expr((Node *) a->arg, context, true);
+				dot = get_access_arg_expr((Node *) a->arg, context, false);
 
 				foreach(le, a->path)
 				{
@@ -8890,10 +8914,10 @@ get_rule_expr(Node *node, deparse_context *context,
 
 						if (cind->is_slice)
 						{
-							get_rule_expr((Node *) cind->lidx, context, true);
+							get_rule_expr((Node *) cind->lidx, context, false);
 							appendBinaryStringInfo(buf, "..", 2);
 						}
-						get_pathelem_expr((Node *) cind->uidx, context, true);
+						get_pathelem_expr((Node *) cind->uidx, context, false);
 
 						appendStringInfoChar(buf, ']');
 					}
@@ -8904,7 +8928,7 @@ get_rule_expr(Node *node, deparse_context *context,
 						else
 							dot = true;
 
-						get_pathelem_expr(e, context, true);
+						get_pathelem_expr(e, context, false);
 					}
 				}
 			}
@@ -8924,7 +8948,7 @@ get_access_arg_expr(Node *node, deparse_context *context, bool showimplicit)
 
 	if (!context->cypherexpr)
 	{
-		get_rule_expr(node, context, true);
+		get_rule_expr(node, context, showimplicit);
 		return true;
 	}
 
@@ -8933,7 +8957,7 @@ get_access_arg_expr(Node *node, deparse_context *context, bool showimplicit)
 	buf = context->buf;
 	context->buf = &si;
 
-	get_rule_expr(node, context, true);
+	get_rule_expr(node, context, showimplicit);
 
 	context->buf = buf;
 
@@ -8954,7 +8978,7 @@ get_pathelem_expr(Node *node, deparse_context *context, bool showimplicit)
 
 	if (!context->cypherexpr)
 	{
-		get_rule_expr(node, context, true);
+		get_rule_expr(node, context, showimplicit);
 		return;
 	}
 
@@ -8963,7 +8987,7 @@ get_pathelem_expr(Node *node, deparse_context *context, bool showimplicit)
 	buf = context->buf;
 	context->buf = &si;
 
-	get_rule_expr(node, context, true);
+	get_rule_expr(node, context, showimplicit);
 
 	context->buf = buf;
 

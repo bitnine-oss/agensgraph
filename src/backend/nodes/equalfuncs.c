@@ -818,6 +818,17 @@ _equalOnConflictExpr(const OnConflictExpr *a, const OnConflictExpr *b)
 }
 
 static bool
+_equalCypherTypeCast(const CypherTypeCast *a, const CypherTypeCast *b)
+{
+	COMPARE_SCALAR_FIELD(type);
+	COMPARE_COERCIONFORM_FIELD(cform);
+	COMPARE_NODE_FIELD(arg);
+	COMPARE_LOCATION_FIELD(location);
+
+	return true;
+}
+
+static bool
 _equalCypherMapExpr(const CypherMapExpr *a, const CypherMapExpr *b)
 {
 	COMPARE_NODE_FIELD(keyvals);
@@ -3527,6 +3538,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_JoinExpr:
 			retval = _equalJoinExpr(a, b);
+			break;
+		case T_CypherTypeCast:
+			retval = _equalCypherTypeCast(a, b);
 			break;
 		case T_CypherMapExpr:
 			retval = _equalCypherMapExpr(a, b);

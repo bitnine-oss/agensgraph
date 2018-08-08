@@ -376,6 +376,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		&&CASE_EEOP_WINDOW_FUNC,
 		&&CASE_EEOP_SUBPLAN,
 		&&CASE_EEOP_ALTERNATIVE_SUBPLAN,
+		&&CASE_EEOP_CYPHERTYPECAST,
 		&&CASE_EEOP_CYPHERMAPEXPR,
 		&&CASE_EEOP_CYPHERLISTEXPR,
 		&&CASE_EEOP_CYPHERLISTCOMP_BEGIN,
@@ -1524,6 +1525,13 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			/* too complex for an inline implementation */
 			ExecEvalAlternativeSubPlan(state, op, econtext);
+
+			EEO_NEXT();
+		}
+
+		EEO_CASE(EEOP_CYPHERTYPECAST)
+		{
+			ExecEvalCypherTypeCast(state, op);
 
 			EEO_NEXT();
 		}
@@ -3727,6 +3735,57 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 	HeapTupleHeaderSetTypMod(dtuple, op->d.wholerow.tupdesc->tdtypmod);
 
 	*op->resvalue = PointerGetDatum(dtuple);
+	*op->resnull = false;
+}
+
+void
+ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
+{
+	Jsonb	   *argjb;
+	JsonbValue *jv;
+	char	   *str;
+	FunctionCallInfo fcinfo_data_in;
+
+	if (*op->resnull)
+		return;
+
+	argjb = DatumGetJsonb(*op->resvalue);
+	if (!JB_ROOT_IS_SCALAR(argjb))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("cannot cast ... (not scalar)")));
+		return;
+	}
+
+	jv = getIthJsonbValueFromContainer(&argjb->root, 0);
+	switch (jv->type)
+	{
+		case jbvNull:
+			*op->resvalue = (Datum) 0;
+			*op->resnull = true;
+			return;
+
+		case jbvString:
+			str = jv->val.string.val;
+			break;
+
+		case jbvNumeric:
+		case jbvBool:
+			str = JsonbToCString(NULL, &argjb->root, VARSIZE(argjb));
+			break;
+
+		default:
+			elog(ERROR, "cannot happen");
+			return;
+	}
+
+	fcinfo_data_in = op->d.cyphertypecast.fcinfo_data_in;
+	fcinfo_data_in->arg[0] = PointerGetDatum(str);
+	fcinfo_data_in->argnull[0] = false;
+
+	fcinfo_data_in->isnull = false;
+	*op->resvalue = FunctionCallInvoke(fcinfo_data_in);
 	*op->resnull = false;
 }
 

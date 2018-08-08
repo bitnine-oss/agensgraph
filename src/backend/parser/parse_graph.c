@@ -549,6 +549,8 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 	qual = qualAndExpr(qual, pstate->p_resolved_qual);
 
+	resolveItemList(pstate, qry->targetList);
+
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);
 
@@ -3302,9 +3304,8 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 			rval = transformCypherExpr(ctx->pstate, v, EXPR_KIND_WHERE);
 			rvaltype = exprType(rval);
 			rvalloc = exprLocation(rval);
-			rval = coerce_to_target_type(ctx->pstate, rval, rvaltype, JSONBOID,
-										 -1, COERCION_ASSIGNMENT,
-										 COERCE_IMPLICIT_CAST, -1);
+			rval = coerce_expr(ctx->pstate, rval, rvaltype, JSONBOID, -1,
+							   COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
 			if (rval == NULL)
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -4273,9 +4274,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	 */
 	expr = transformCypherExpr(pstate, sp->expr, EXPR_KIND_UPDATE_SOURCE);
 	exprtype = exprType(expr);
-	expr = coerce_to_target_type(pstate, expr, exprtype, JSONBOID, -1,
-								 COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST,
-								 -1);
+	expr = coerce_expr(pstate, expr, exprtype, JSONBOID, -1,
+					   COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
 	if (expr == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -5567,20 +5567,10 @@ static Node *
 transformPropMap(ParseState *pstate, Node *expr, ParseExprKind exprKind)
 {
 	Node	   *prop_map;
-	Oid			type;
 
 	prop_map = transformCypherExpr(pstate, expr, exprKind);
-	type = exprType(prop_map);
-	if (type != JSONBOID && type_is_rowtype(type))
-	{
-		FuncCall   *to_jsonb;
-
-		to_jsonb = makeFuncCall(list_make1(makeString("to_jsonb")), NIL, -1);
-
-		prop_map = ParseFuncOrColumn(pstate, to_jsonb->funcname,
-									 list_make1(prop_map), pstate->p_last_srf,
-									 to_jsonb, -1);
-	}
+	prop_map = coerce_expr(pstate, prop_map, exprType(prop_map), JSONBOID, -1,
+						   COERCION_IMPLICIT, COERCE_IMPLICIT_CAST, -1);
 
 	if (exprKind == EXPR_KIND_INSERT_TARGET && !allow_null_properties)
 		prop_map = stripNullKeys(pstate, prop_map);
