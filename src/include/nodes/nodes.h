@@ -199,6 +199,7 @@ typedef enum NodeTag
 	T_FromExpr,
 	T_OnConflictExpr,
 	T_IntoClause,
+	T_CypherTypeCast,
 	T_CypherMapExpr,
 	T_CypherListExpr,
 	T_CypherListCompExpr,

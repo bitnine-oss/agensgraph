@@ -20,10 +20,10 @@ SELECT '65535.281474976710655'::graphid;
 SELECT '65535.281474976710656'::graphid;
 SELECT '65536.281474976710655'::graphid;
 
--- Coercion from jsonb to graphid
+-- Coercion from unknown and numeric to graphid
 
-SELECT '"1.1"'::jsonb::graphid;
-SELECT '1.1'::jsonb::graphid;
+SELECT '1.1'::graphid;
+SELECT 1.1::graphid;
 
 -- Insert and Operator
 

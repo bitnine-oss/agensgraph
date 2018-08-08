@@ -740,7 +740,7 @@ CREATE CONSTRAINT ON regv4 ASSERT (length(password) > 8 AND length(password) < 1
 Vertex label "ddl.regv4"
 --
 Constraints:
-    "regv4_properties_check" ASSERT (length(password) > 8 AND length(password) < 16)
+    "regv4_properties_check" ASSERT (length(password) > to_jsonb(8) AND length(password) < to_jsonb(16))
 Inherits: ddl.ag_vertex
 
 CREATE (:regv4 {password: '12345678'});
@@ -837,7 +837,7 @@ CREATE CONSTRAINT ON regv7 ASSERT a.b[0].c IS NOT NULL;
 Vertex label "ddl.regv7"
 --
 Constraints:
-    "regv7_properties_check" ASSERT ((a.b[0].c) IS NOT NULL)
+    "regv7_properties_check" ASSERT ((a.b[to_jsonb(0)].c) IS NOT NULL)
 Inherits: ddl.ag_vertex
 
 CREATE (:regv7 {a: {b: [{c: 'd'}, {c: 'e'}]}});
@@ -849,7 +849,7 @@ CREATE VLABEL regv8;
 CREATE CONSTRAINT ON regv8 ASSERT (SELECT * FROM graph.regv8).c IS NOT NULL;
 ERROR:  cannot use subquery in check constraint
 CREATE CONSTRAINT ON regv8 ASSERT (1).c IS NOT NULL;
-ERROR:  map or list is expected but scalar value
+ERROR:  map or list is expected but integer
 CREATE CONSTRAINT ON regv8 ASSERT ($1).c IS NOT NULL;
 ERROR:  there is no parameter $1
 --

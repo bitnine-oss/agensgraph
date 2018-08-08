@@ -16,13 +16,13 @@ CREATE GRAPH agens;
 RETURN 3 + 4, 'hello' + ' agens';
  ?column? |   ?column?    
 ----------+---------------
- 7        | "hello agens"
+        7 | "hello agens"
 (1 row)
 
 RETURN 3 + 4 AS lucky, 'hello' + ' agens' AS greeting;
  lucky |   greeting    
 -------+---------------
- 7     | "hello agens"
+     7 | "hello agens"
 (1 row)
 
 RETURN (SELECT event FROM history WHERE year = 2016);
@@ -34,7 +34,7 @@ RETURN (SELECT event FROM history WHERE year = 2016);
 SELECT * FROM (RETURN 3 + 4, 'hello' + ' agens') AS _(lucky, greeting);
  lucky |   greeting    
 -------+---------------
- 7     | "hello agens"
+     7 | "hello agens"
 (1 row)
 
 --
@@ -1380,7 +1380,7 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
                Output: x.edges[1], x.edges[2]
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
-                     Filter: (a.properties.'id'::text = '1'::jsonb)
+                     Filter: (a.properties.'id'::text = to_jsonb(1))
                ->  Hash Join
                      Output: x.edges
                      Hash Cond: (b.id = x."end")
@@ -1420,7 +1420,7 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
-WITH max(b.id) AS id, x[0] AS x RETURN *;
+WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
                                                                                                                                              QUERY PLAN                                                                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
@@ -1433,7 +1433,7 @@ WITH max(b.id) AS id, x[0] AS x RETURN *;
                Output: x.edges[1], b.properties
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
-                     Filter: (a.properties.'id'::text = '1'::jsonb)
+                     Filter: (a.properties.'id'::text = to_jsonb(1))
                ->  Hash Join
                      Output: x.edges, b.properties
                      Hash Cond: (b.id = x."end")
@@ -1485,7 +1485,7 @@ WITH DISTINCT x AS path RETURN *;
                Output: x.edges
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
-                     Filter: (a.properties.'id'::text = '1'::jsonb)
+                     Filter: (a.properties.'id'::text = to_jsonb(1))
                ->  Hash Join
                      Output: x.edges
                      Hash Cond: (b.id = x."end")
@@ -1525,7 +1525,7 @@ WITH DISTINCT x AS path RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
-WITH max(b.id) AS id, x AS x RETURN *;
+WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                                                                                                                              QUERY PLAN                                                                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  GroupAggregate
@@ -1538,7 +1538,7 @@ WITH max(b.id) AS id, x AS x RETURN *;
                Output: x.edges, b.properties
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
-                     Filter: (a.properties.'id'::text = '1'::jsonb)
+                     Filter: (a.properties.'id'::text = to_jsonb(1))
                ->  Hash Join
                      Output: x.edges, b.properties
                      Hash Cond: (b.id = x."end")
@@ -1578,7 +1578,7 @@ WITH max(b.id) AS id, x AS x RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
-WITH max(length(x)) AS x, b.id AS id RETURN *;
+WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                                                                                                                           QUERY PLAN                                                                                                                                           
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  HashAggregate
@@ -1588,7 +1588,7 @@ WITH max(length(x)) AS x, b.id AS id RETURN *;
          Output: b.properties.'id'::text, x.edges
          ->  Seq Scan on t.person a
                Output: a.id, a.properties
-               Filter: (a.properties.'id'::text = '1'::jsonb)
+               Filter: (a.properties.'id'::text = to_jsonb(1))
          ->  Hash Join
                Output: x.edges, b.properties
                Hash Cond: (b.id = x."end")
@@ -1635,7 +1635,7 @@ RETURN x, x IS NOT NULL, x[0] IS NULL;
    Output: x.edges, (x.edges IS NOT NULL), (x.edges[1] IS NOT DISTINCT FROM NULL)
    ->  Seq Scan on t.person a
          Output: a.id, a.properties
-         Filter: (a.properties.'id'::text = '1'::jsonb)
+         Filter: (a.properties.'id'::text = to_jsonb(1))
    ->  Hash Join
          Output: x.edges
          Hash Cond: (b.id = x."end")
@@ -1682,7 +1682,7 @@ WHERE x[0] IS NOT NULL RETURN x[0];
    Output: x.edges[1]
    ->  Seq Scan on t.person a
          Output: a.id, a.properties
-         Filter: (a.properties.'id'::text = '1'::jsonb)
+         Filter: (a.properties.'id'::text = to_jsonb(1))
    ->  Hash Join
          Output: x.edges
          Hash Cond: (b.id = x."end")
@@ -1736,7 +1736,7 @@ SELECT * FROM (
          Output: x.edges[1]
          ->  Seq Scan on t.person a
                Output: a.id, a.properties
-               Filter: (a.properties.'id'::text = '1'::jsonb)
+               Filter: (a.properties.'id'::text = to_jsonb(1))
          ->  Hash Join
                Output: x.edges
                Hash Cond: (b.id = x."end")
@@ -1777,7 +1777,7 @@ SELECT * FROM (
          Output: x_1.edges[2]
          ->  Seq Scan on t.person a_1
                Output: a_1.id, a_1.properties
-               Filter: (a_1.properties.'id'::text = '1'::jsonb)
+               Filter: (a_1.properties.'id'::text = to_jsonb(1))
          ->  Hash Join
                Output: x_1.edges
                Hash Cond: (b_1.id = x_1."end")

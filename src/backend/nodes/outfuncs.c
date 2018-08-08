@@ -1763,6 +1763,17 @@ _outOnConflictExpr(StringInfo str, const OnConflictExpr *node)
 }
 
 static void
+_outCypherTypeCast(StringInfo str, const CypherTypeCast *node)
+{
+	WRITE_NODE_TYPE("CYPHERTYPECAST");
+
+	WRITE_OID_FIELD(type);
+	WRITE_ENUM_FIELD(cform, CoercionForm);
+	WRITE_NODE_FIELD(arg);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
 _outCypherMapExpr(StringInfo str, const CypherMapExpr *node)
 {
 	WRITE_NODE_TYPE("CYPHERMAPEXPR");
@@ -4380,6 +4391,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_OnConflictExpr:
 				_outOnConflictExpr(str, obj);
+				break;
+			case T_CypherTypeCast:
+				_outCypherTypeCast(str, obj);
 				break;
 			case T_CypherMapExpr:
 				_outCypherMapExpr(str, obj);

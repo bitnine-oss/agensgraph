@@ -4,18 +4,100 @@
 -- Set up
 CREATE GRAPH test_cypher_expr;
 SET graph_path = test_cypher_expr;
--- Numeric, string, and boolean literal
-RETURN '"', '\"', '\\"', 17, true, false;
- ?column? | ?column? | ?column? | ?column? | bool | bool 
-----------+----------+----------+----------+------+------
- "\""     | "\""     | "\\\""   | 17       | t    | f
+-- String (jsonb)
+RETURN '"', '\"', '\\', '\/', '\b', '\f', '\n', '\r', '\t';
+ ?column? | ?column? | ?column? | ?column? | ?column? | ?column? | ?column? | ?column? | ?column? 
+----------+----------+----------+----------+----------+----------+----------+----------+----------
+ "\""     | "\""     | "\\"     | "/"      | "\b"     | "\f"     | "\n"     | "\r"     | "\t"
 (1 row)
 
--- Octal and hexadecimal literal
-RETURN 021, 0x11, 0X11;
- ?column? | ?column? | ?column? 
-----------+----------+----------
- 17       | 17       | 17
+-- Decimal (int4, int8, numeric)
+RETURN -2147483648, 2147483647;
+  ?column?   |  ?column?  
+-------------+------------
+ -2147483648 | 2147483647
+(1 row)
+
+RETURN -9223372036854775808, 9223372036854775807;
+       ?column?       |      ?column?       
+----------------------+---------------------
+ -9223372036854775808 | 9223372036854775807
+(1 row)
+
+RETURN -9223372036854775809, 9223372036854775808;
+       ?column?       |      ?column?       
+----------------------+---------------------
+ -9223372036854775809 | 9223372036854775808
+(1 row)
+
+-- Hexadecimal (int4)
+RETURN -0x7fffffff, 0x7fffffff;
+  ?column?   |  ?column?  
+-------------+------------
+ -2147483647 | 2147483647
+(1 row)
+
+-- Octal (int4)
+RETURN -017777777777, 017777777777;
+  ?column?   |  ?column?  
+-------------+------------
+ -2147483647 | 2147483647
+(1 row)
+
+-- Float (numeric)
+RETURN 3.14, -3.14, 6.02E23;
+ ?column? | ?column? |         ?column?         
+----------+----------+--------------------------
+     3.14 |    -3.14 | 602000000000000000000000
+(1 row)
+
+-- true, false, null
+RETURN true, false, null;
+ bool | bool | ?column? 
+------+------+----------
+ t    | f    | 
+(1 row)
+
+-- String (text)
+RETURN '"'::text, '\"'::text, '\\'::text, '\/'::text,
+       '\b'::text, '\f'::text, '\n'::text, '\r'::text, '\t'::text;
+ text | text | text | text | text | text | text | text |   text   
+------+------+------+------+------+------+------+------+----------
+ "    | "    | \    | /    | \x08 | \x0C |     +| \r   |         
+      |      |      |      |      |      |      |      | 
+(1 row)
+
+-- Parameter - UNKNOWNOID::jsonb (string)
+PREPARE tmp AS RETURN $1;
+EXECUTE tmp ('"\""');
+ ?column? 
+----------
+ "\""
+(1 row)
+
+DEALLOCATE tmp;
+-- Parameter - UNKNOWNOID::text
+PREPARE tmp AS RETURN $1::text;
+EXECUTE tmp ('\"');
+ text 
+------
+ \"
+(1 row)
+
+DEALLOCATE tmp;
+-- ::bool
+RETURN ''::jsonb::bool, 0::jsonb::bool, false::jsonb::bool,
+       []::bool, {}::bool;
+ bool | bool | bool | bool | bool 
+------+------+------+------+------
+ f    | f    | f    | f    | f
+(1 row)
+
+RETURN 's'::jsonb::bool, 1::jsonb::bool, true::jsonb::bool,
+       [0]::bool, {p: 0}::bool;
+ bool | bool | bool | bool | bool 
+------+------+------+------+------
+ t    | t    | t    | t    | t
 (1 row)
 
 -- List and map literal
@@ -43,7 +125,7 @@ RETURN '1' + '1', '1' + 1, 1 + '1';
 RETURN 1 + 1, 1 - 1, 2 * 2, 2 / 2, 2 % 2, 2 ^ 2, +1, -1;
  ?column? | ?column? | ?column? | ?column? | ?column? | ?column? | ?column? | ?column? 
 ----------+----------+----------+----------+----------+----------+----------+----------
- 2        | 0        | 4        | 1        | 0        | 4        | 1        | -1
+        2 |        0 |        4 |        1 |        0 | 4        |        1 |       -1
 (1 row)
 
 -- List concatenation
@@ -634,12 +716,21 @@ MATCH (n:coll) RETURN n;
  coll[5.1]{"l": "agensgraph", "u": "AGENSGRAPH", "name": "AgensGraph"}
 (1 row)
 
+-- Text matching
+CREATE (:ts {v: 'a fat cat sat on a mat and ate a fat rat'::tsvector});
+MATCH (n:ts) WHERE n.v::tsvector @@ 'cat & rat'::tsquery RETURN n;
+                                 n                                  
+--------------------------------------------------------------------
+ ts[6.1]{"v": "'a' 'and' 'ate' 'cat' 'fat' 'mat' 'on' 'rat' 'sat'"}
+(1 row)
+
 -- Tear down
 DROP GRAPH test_cypher_expr CASCADE;
-NOTICE:  drop cascades to 6 other objects
+NOTICE:  drop cascades to 7 other objects
 DETAIL:  drop cascades to sequence test_cypher_expr.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel v0
 drop cascades to vlabel v1
 drop cascades to vlabel coll
+drop cascades to vlabel ts

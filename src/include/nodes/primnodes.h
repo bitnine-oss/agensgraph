@@ -1513,6 +1513,15 @@ typedef struct OnConflictExpr
  * Cypher Query Language
  */
 
+typedef struct CypherTypeCast
+{
+	Expr		xpr;
+	Oid			type;
+	CoercionForm cform;
+	Expr	   *arg;
+	int			location;
+} CypherTypeCast;
+
 typedef struct CypherMapExpr
 {
 	Expr		xpr;

@@ -468,7 +468,7 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
-WITH max(b.id) AS id, x[0] AS x RETURN *;
+WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -476,11 +476,11 @@ WITH DISTINCT x AS path RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
-WITH max(b.id) AS id, x AS x RETURN *;
+WITH max(b.id::"numeric") AS id, x AS x RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
-WITH max(length(x)) AS x, b.id AS id RETURN *;
+WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)

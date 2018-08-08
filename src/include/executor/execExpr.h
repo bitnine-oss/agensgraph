@@ -233,6 +233,7 @@ typedef enum ExprEvalOp
 	EEOP_AGG_ORDERED_TRANS_DATUM,
 	EEOP_AGG_ORDERED_TRANS_TUPLE,
 
+	EEOP_CYPHERTYPECAST,
 	EEOP_CYPHERMAPEXPR,
 	EEOP_CYPHERLISTEXPR,
 	EEOP_CYPHERLISTCOMP_BEGIN,
@@ -650,6 +651,11 @@ typedef struct ExprEvalStep
 
 		struct
 		{
+			FunctionCallInfo fcinfo_data_in;
+		}			cyphertypecast;
+
+		struct
+		{
 			char	  **key_cstrings;
 			Datum	   *val_values;
 			bool	   *val_nulls;
@@ -817,6 +823,7 @@ extern void ExecEvalAggOrderedTransDatum(ExprState *state, ExprEvalStep *op,
 extern void ExecEvalAggOrderedTransTuple(ExprState *state, ExprEvalStep *op,
 							 ExprContext *econtext);
 
+extern void ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherMapExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherListExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalCypherAccessExpr(ExprState *state, ExprEvalStep *op);

@@ -40,11 +40,10 @@
 #include "parser/parse_oper.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
+#include "parser/parse_type.h"
 #include "utils/builtins.h"
-#include "utils/int8.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
-#include "utils/numeric.h"
 
 static Node *transformCypherExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref);
@@ -57,17 +56,24 @@ static Node *transformFields(ParseState *pstate, Node *basenode, List *fields,
 static Node *filterAccessArg(ParseState *pstate, Node *expr, int location,
 							 const char *types);
 static Node *transformParamRef(ParseState *pstate, ParamRef *pref);
-static Node *transformA_Const(ParseState *pstate, A_Const *a_con);
-static Datum integerToJsonb(ParseState *pstate, int64 i, int location);
-static Datum floatToJsonb(ParseState *pstate, char *f, int location);
-static Jsonb *numericToJsonb(Numeric n);
-static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *transformTypeCast(ParseState *pstate, TypeCast *tc);
 static Node *transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m);
 static Node *transformCypherListExpr(ParseState *pstate, CypherListExpr *cl);
 static Node *transformCypherListComp(ParseState *pstate, CypherListComp * clc);
 static Node *transformCaseExpr(ParseState *pstate, CaseExpr *c);
 static Node *transformFuncCall(ParseState *pstate, FuncCall *fn);
+static List *preprocess_func_args(ParseState *pstate, FuncCall *fn);
+static FuncCandidateList func_get_best_candidate(ParseState *pstate,
+												 FuncCall *fn, int nargs,
+												 Oid argtypes[FUNC_MAX_ARGS]);
+static int func_match_argtypes_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
+									 FuncCandidateList raw_candidates,
+									 FuncCandidateList *candidates);
+static FuncCandidateList func_select_candidate_jsonb(int nargs,
+		Oid argtypes[FUNC_MAX_ARGS], FuncCandidateList candidates);
+static List *fucn_get_best_args(ParseState *pstate, List *args,
+								Oid argtypes[FUNC_MAX_ARGS],
+								FuncCandidateList candidate);
 static Node *transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c);
 static Node *transformIndirection(ParseState *pstate, A_Indirection *indir);
 static Node *makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive);
@@ -75,12 +81,15 @@ static Node *adjustListIndexType(ParseState *pstate, Node *idx);
 static Node *transformAExprOp(ParseState *pstate, A_Expr *a);
 static Node *transformAExprIn(ParseState *pstate, A_Expr *a);
 static Node *transformBoolExpr(ParseState *pstate, BoolExpr *b);
+static Node *coerce_unknown_const(ParseState *pstate, Node *expr, Oid ityp,
+								  Oid otyp);
+static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *coerce_to_jsonb(ParseState *pstate, Node *expr,
-							 const char *targetname, bool err);
+							 const char *targetname);
 
 static List *transformA_Star(ParseState *pstate, int location);
 
-/* GUC variable (enable/disable null properties) */
+/* GUC variable (allow/disallow null properties) */
 bool		allow_null_properties = false;
 
 Node *
@@ -115,7 +124,12 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 		case T_ParamRef:
 			return transformParamRef(pstate, (ParamRef *) expr);
 		case T_A_Const:
-			return transformA_Const(pstate, (A_Const *) expr);
+			{
+				A_Const	   *a_con = (A_Const *) expr;
+				Value	   *value = &a_con->val;
+
+				return (Node *) make_const(pstate, value, a_con->location);
+			}
 		case T_TypeCast:
 			return transformTypeCast(pstate, (TypeCast *) expr);
 		case T_CypherMapExpr:
@@ -181,10 +195,9 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 
 /*
  * Because we have to check all the cases of variable references (Cypher
- * variables and variables in ancestor queries if the Cypher query is the
- * subquery) for each level of ParseState, logic and functions in original
- * transformColumnRef() are properly modified, refactored, and then integrated
- * into one.
+ * variables and variables in ancestor queries) for each level of ParseState,
+ * logic and functions in the original transformColumnRef() are properly
+ * modified, refactored, and then integrated into one.
  */
 static Node *
 transformColumnRef(ParseState *pstate, ColumnRef *cref)
@@ -199,7 +212,7 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 	Node	   *field4 = NULL;
 	Oid			nspid2 = InvalidOid;
 	ParseState *pstate_up;
-	int			nindir = nfields - 1;
+	int			nmatched = 0;
 
 	/*
 	 * The iterator variable used in a list comprehension expression always
@@ -239,14 +252,25 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 	{
 		ListCell   *lni;
 
-		/* find the Var at the current level of ParseState */
+		/*
+		 * Find the Var at the current level of ParseState in a greedy fashion,
+		 * i.e., match as many identifiers as possible. This means that, when
+		 * a qualified name is given, resolving it as Var has higher priority
+		 * than resolving it as property access.
+		 *
+		 * For example, when `x.y` is given, and if `x.y` can be resolved as
+		 * <Column x, Property y> and <RTE x, Column y>, it will be resolved
+		 * as the later.
+		 *
+		 * This is because, in the above case, there is no way to refer to
+		 * <Column y> if it stops to resolve the name when <Column x> is found.
+		 * However, by using `x['y']`, <Property y> is still accessible.
+		 */
 
 		foreach(lni, pstate_up->p_namespace)
 		{
 			ParseNamespaceItem *nsitem = lfirst(lni);
 			RangeTblEntry *rte = nsitem->p_rte;
-			Oid			relid2;
-			Oid			relid3;
 
 			if (nsitem->p_lateral_only)
 			{
@@ -270,7 +294,7 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			{
 				node = scanRTEForVar(pstate, node, rte, strVal(field1),
 									 location);
-				nindir = 0;
+				nmatched = 1;
 			}
 
 			/*
@@ -286,33 +310,40 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 			{
 				node = scanRTEForVar(pstate, node, rte, strVal(field2),
 									 location);
-				nindir = 1;
+				nmatched = 2;
 			}
 
 			/* examine `field1.field2.field3` */
-			if (OidIsValid(nspid1) &&
-				OidIsValid(relid2 = get_relname_relid(strVal(field2),
-													  nspid1)) &&
-				rte->rtekind == RTE_RELATION &&
-				rte->relid == relid2 &&
-				rte->alias == NULL)
+			if (OidIsValid(nspid1))
 			{
-				node = scanRTEForVar(pstate, node, rte, strVal(field3),
-									 location);
-				nindir = 2;
+				Oid			relid2 = get_relname_relid(strVal(field2), nspid1);
+
+				if (OidIsValid(relid2) &&
+					rte->rtekind == RTE_RELATION &&
+					rte->relid == relid2 &&
+					rte->alias == NULL)
+				{
+
+					node = scanRTEForVar(pstate, node, rte, strVal(field3),
+										 location);
+					nmatched = 3;
+				}
 			}
 
 			/* examine `field1.field2.field3.field4` */
-			if (OidIsValid(nspid2) &&
-				OidIsValid(relid3 = get_relname_relid(strVal(field3),
-													  nspid2)) &&
-				rte->rtekind == RTE_RELATION &&
-				rte->relid == relid3 &&
-				rte->alias == NULL)
+			if (OidIsValid(nspid2))
 			{
-				node = scanRTEForVar(pstate, node, rte, strVal(field4),
-									 location);
-				nindir = 3;
+				Oid			relid3 = get_relname_relid(strVal(field3), nspid2);
+
+				if (OidIsValid(relid3) &&
+					rte->rtekind == RTE_RELATION &&
+					rte->relid == relid3 &&
+					rte->alias == NULL)
+				{
+					node = scanRTEForVar(pstate, node, rte, strVal(field4),
+										 location);
+					nmatched = 4;
+				}
 			}
 		}
 
@@ -330,7 +361,7 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 		if (node == NULL)
 		{
 			node = hookresult;
-			nindir = nfields;
+			nmatched = nfields;
 		}
 		else if (hookresult != NULL)
 		{
@@ -352,11 +383,12 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 		return NULL;
 	}
 
-	if (nindir + 1 < nfields)
+	/* use remaining fields of the given name as keys for property access */
+	if (nmatched < nfields)
 	{
 		List	   *newfields;
 
-		newfields = list_copy_tail(cref->fields, nindir + 1);
+		newfields = list_copy_tail(cref->fields, nmatched);
 
 		return transformFields(pstate, node, newfields, location);
 	}
@@ -439,9 +471,22 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 	/* record/composite type */
 	foreach(lf, fields)
 	{
-		if (restype == VERTEXOID || restype == EDGEOID ||
-			restype == GRAPHPATHOID)
+		/*
+		 * Redirect access to the attributes of `vertex`/`edge` type to
+		 * `properties` attribute of them by coercing them to `jsonb` later in
+		 * this function.
+		 */
+		if (restype == VERTEXOID || restype == EDGEOID)
 			break;
+
+		/*
+		 * Prevent access to the attributes of `graphpath` type directly.
+		 * Instead, users may call `nodes()` (or `vertices()`) and
+		 * `relationships()` (or `edges()`) to get them.
+		 */
+		if (restype == GRAPHPATHOID)
+			break;
+
 		if (!type_is_rowtype(restype))
 			break;
 
@@ -453,7 +498,7 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_UNDEFINED_COLUMN),
-					 errmsg("column \"%s\" not found in data type %s",
+					 errmsg("attribute \"%s\" not found in type %s",
 							strVal(field), format_type_be(restype)),
 					 parser_errposition(pstate, location)));
 			return NULL;
@@ -504,9 +549,11 @@ filterAccessArg(ParseState *pstate, Node *expr, int location,
 			return expr;
 
 		case JSONOID:
-			return coerce_to_target_type(pstate, expr, JSONOID,
-										 JSONBOID, -1, COERCION_EXPLICIT,
-										 COERCE_IMPLICIT_CAST, location);
+			expr = coerce_expr(pstate, expr, JSONOID, JSONBOID, -1,
+							   COERCION_EXPLICIT, COERCE_IMPLICIT_CAST,
+							   location);
+			Assert(expr != NULL);
+			return expr;
 
 		default:
 			ereport(ERROR,
@@ -524,21 +571,9 @@ transformParamRef(ParseState *pstate, ParamRef *pref)
 	Node	   *result;
 
 	if (pstate->p_paramref_hook != NULL)
-	{
-		Oid			restype;
-
 		result = (*pstate->p_paramref_hook) (pstate, pref);
-		restype = exprType(result);
-		if (restype == UNKNOWNOID)
-			result = coerce_type(pstate, result, restype, JSONBOID, -1,
-								 COERCION_IMPLICIT, COERCE_IMPLICIT_CAST, -1);
-		else
-			result = coerce_to_jsonb(pstate, result, "parameter", false);
-	}
 	else
-	{
 		result = NULL;
-	}
 
 	if (result == NULL)
 		ereport(ERROR,
@@ -550,166 +585,38 @@ transformParamRef(ParseState *pstate, ParamRef *pref)
 }
 
 static Node *
-transformA_Const(ParseState *pstate, A_Const *a_con)
-{
-	Value	   *value = &a_con->val;
-	int			location = a_con->location;
-	Datum		datum;
-	Const	   *con;
-
-	switch (nodeTag(value))
-	{
-		case T_Integer:
-			datum = integerToJsonb(pstate, (int64) intVal(value), location);
-			break;
-		case T_Float:
-			{
-				int64		i;
-
-				if (scanint8(strVal(value), true, &i))
-					datum = integerToJsonb(pstate, i, location);
-				else
-					datum = floatToJsonb(pstate, strVal(value), location);
-			}
-			break;
-		case T_String:
-			datum = stringToJsonb(pstate, strVal(value), location);
-			break;
-		case T_Null:
-			con = makeConst(JSONBOID, -1, InvalidOid, -1, 0, true, false);
-			con->location = location;
-			return (Node *) con;
-		default:
-			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(value));
-			return NULL;
-	}
-
-	con = makeConst(JSONBOID, -1, InvalidOid, -1, datum, false, false);
-	con->location = location;
-
-	return (Node *) con;
-}
-
-static Datum
-integerToJsonb(ParseState *pstate, int64 i, int location)
-{
-	ParseCallbackState pcbstate;
-	Datum		n;
-	Jsonb	   *j;
-
-	setup_parser_errposition_callback(&pcbstate, pstate, location);
-
-	n = DirectFunctionCall1(int8_numeric, Int64GetDatum(i));
-	j = numericToJsonb(DatumGetNumeric(n));
-
-	cancel_parser_errposition_callback(&pcbstate);
-
-	return JsonbGetDatum(j);
-}
-
-static Datum
-floatToJsonb(ParseState *pstate, char *f, int location)
-{
-	ParseCallbackState pcbstate;
-	Datum		n;
-	Jsonb	   *j;
-
-	setup_parser_errposition_callback(&pcbstate, pstate, location);
-
-	n = DirectFunctionCall3(numeric_in, CStringGetDatum(f),
-							ObjectIdGetDatum(InvalidOid), Int32GetDatum(-1));
-	j = numericToJsonb(DatumGetNumeric(n));
-
-	cancel_parser_errposition_callback(&pcbstate);
-
-	return JsonbGetDatum(j);
-}
-
-static Jsonb *
-numericToJsonb(Numeric n)
-{
-	JsonbValue	jv;
-
-	jv.type = jbvNumeric;
-	jv.val.numeric = n;
-
-	return JsonbValueToJsonb(&jv);
-}
-
-static Datum
-stringToJsonb(ParseState *pstate, char *s, int location)
-{
-	StringInfoData si;
-	const char *c;
-	bool		escape = false;
-	ParseCallbackState pcbstate;
-	Datum		j;
-
-	initStringInfo(&si);
-	appendStringInfoCharMacro(&si, '"');
-	for (c = s; *c != '\0'; c++)
-	{
-		if (escape)
-		{
-			appendStringInfoCharMacro(&si, *c);
-			escape = false;
-		}
-		else
-		{
-			switch (*c)
-			{
-				case '\\':
-					/* any character coming next will be escaped */
-					appendStringInfoCharMacro(&si, '\\');
-					escape = true;
-					break;
-				case '"':
-					/* Escape `"`. `"` and `\"` are the same as `\"`. */
-					appendStringInfoString(&si, "\\\"");
-					break;
-				default:
-					appendStringInfoCharMacro(&si, *c);
-					break;
-			}
-		}
-	}
-	appendStringInfoCharMacro(&si, '"');
-
-	setup_parser_errposition_callback(&pcbstate, pstate, location);
-
-	j = DirectFunctionCall1(jsonb_in, CStringGetDatum(si.data));
-
-	cancel_parser_errposition_callback(&pcbstate);
-
-	return j;
-}
-
-/*
- * This function assumes that TypeCast is for boolean constants only and
- * returns a bool value. The reason why it returns a bool value is that there
- * may be a chance to use the value as an argument of a boolean expression.
- * If the value is used as an argument of other expressions, it will be
- * converted into jsonb value implicitly.
- */
-static Node *
 transformTypeCast(ParseState *pstate, TypeCast *tc)
 {
-	A_Const	   *a_con;
-	Value	   *value;
-	bool		b;
-	Const	   *con;
+	Oid			otyp;
+	int32		otypmod;
+	Node	   *expr;
+	Oid			ityp;
+	int			loc;
+	Node	   *node;
 
-	Assert(IsA(tc->arg, A_Const));
-	a_con = (A_Const *) tc->arg;
-	value = &a_con->val;
+	typenameTypeIdAndMod(pstate, tc->typeName, &otyp, &otypmod);
 
-	Assert(IsA(value, String));
-	parse_bool(strVal(value), &b);
+	expr = transformCypherExprRecurse(pstate, tc->arg);
 
-	con = makeConst(BOOLOID, -1, InvalidOid, 1, BoolGetDatum(b), false, true);
-	con->location = a_con->location;
+	ityp = exprType(expr);
+	if (ityp == InvalidOid)
+		return expr;
 
-	return (Node *) con;
+	loc = tc->location;
+	if (loc < 0)
+		loc = tc->typeName->location;
+
+	node = coerce_expr(pstate, expr, ityp, otyp, otypmod,
+					   COERCION_EXPLICIT, COERCE_EXPLICIT_CAST, loc);
+	if (node == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_CANNOT_COERCE),
+				 errmsg("cannot cast type %s to %s",
+						format_type_be(ityp),
+						format_type_be(otyp)),
+				 parser_coercion_errposition(pstate, loc, expr)));
+
+	return node;
 }
 
 static Node *
@@ -735,7 +642,7 @@ transformCypherMapExpr(ParseState *pstate, CypherMapExpr *m)
 		le = lnext(le);
 
 		newv = transformCypherExprRecurse(pstate, v);
-		newv = coerce_to_jsonb(pstate, newv, "property value", true);
+		newv = coerce_to_jsonb(pstate, newv, "property value");
 
 		Assert(IsA(k, String));
 		newk = makeConst(TEXTOID, -1, DEFAULT_COLLATION_OID, -1,
@@ -764,7 +671,7 @@ transformCypherListExpr(ParseState *pstate, CypherListExpr *cl)
 		Node	   *newe;
 
 		newe = transformCypherExprRecurse(pstate, e);
-		newe = coerce_to_jsonb(pstate, newe, "list element", true);
+		newe = coerce_to_jsonb(pstate, newe, "list element");
 
 		newelems = lappend(newelems, newe);
 	}
@@ -799,7 +706,7 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 	cond = transformCypherWhere(pstate, clc->cond, EXPR_KIND_WHERE);
 	elem = transformCypherExprRecurse(pstate, clc->elem);
 	pstate->p_lc_varname = save_varname;
-	elem = coerce_to_jsonb(pstate, elem, "jsonb", true);
+	elem = coerce_to_jsonb(pstate, elem, "list comprehension result");
 
 	clcexpr = makeNode(CypherListCompExpr);
 	clcexpr->list = (Expr *) list;
@@ -895,10 +802,10 @@ transformCaseExpr(ParseState *pstate, CaseExpr *c)
 			w = lfirst(lw);
 
 			w->result = (Expr *) coerce_to_jsonb(pstate, (Node *) w->result,
-												 "jsonb", true);
+												 "CASE/WHEN value");
 		}
 
-		defresult = coerce_to_jsonb(pstate, defresult, "jsonb", true);
+		defresult = coerce_to_jsonb(pstate, defresult, "CASE/WHEN value");
 	}
 	else
 	{
@@ -931,10 +838,8 @@ transformCaseExpr(ParseState *pstate, CaseExpr *c)
 static Node *
 transformFuncCall(ParseState *pstate, FuncCall *fn)
 {
-	bool		is_num_agg = false;
-	Node	   *last_srf;
-	ListCell   *la;
-	List	   *args = NIL;
+	Node	   *last_srf = pstate->p_last_srf;
+	List	   *args;
 
 	if (list_length(fn->funcname) == 1)
 	{
@@ -942,77 +847,545 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 
 		funcname = strVal(linitial(fn->funcname));
 
-		if (strcmp(funcname, "avg") == 0 ||
-			strcmp(funcname, "max") == 0 ||
-			strcmp(funcname, "min") == 0 ||
-			strcmp(funcname, "sum") == 0)
-			is_num_agg = true;
-
 		if (strcmp(funcname, "collect") == 0)
-		{
 			fn->funcname = list_make1(makeString("jsonb_agg"));
-		}
 
 		if (strcmp(funcname, "stdev") == 0)
-		{
 			fn->funcname = list_make1(makeString("stddev_samp"));
-			is_num_agg = true;
-		}
 
 		if (strcmp(funcname, "stdevp") == 0)
-		{
 			fn->funcname = list_make1(makeString("stddev_pop"));
-			is_num_agg = true;
-		}
 	}
 
-	last_srf = pstate->p_last_srf;
+	args = preprocess_func_args(pstate, fn);
 
+	return ParseFuncOrColumn(pstate, fn->funcname, args, last_srf, fn,
+							 fn->location);
+}
+
+/*
+ * Assume jsonb arguments are property values and coerce them to the actual
+ * argument types of candidate functions.
+ */
+static List *
+preprocess_func_args(ParseState *pstate, FuncCall *fn)
+{
+	int			nargs;
+	bool		named;
+	ListCell   *la;
+	List	   *args = NIL;
+	Oid			argtype;
+	Oid			argtypes[FUNC_MAX_ARGS];
+	FuncCandidateList candidate;
+
+	if (list_length(fn->args) > FUNC_MAX_ARGS)
+		ereport(ERROR,
+				(errcode(ERRCODE_TOO_MANY_ARGUMENTS),
+				 errmsg("cannot pass more than %d arguments to a function",
+						FUNC_MAX_ARGS),
+				 parser_errposition(pstate, fn->location)));
+
+	Assert(fn->agg_filter == NULL && !fn->agg_within_group);
+
+	nargs = 0;
+	named = false;
 	foreach(la, fn->args)
 	{
 		Node	   *arg;
 
 		arg = transformCypherExprRecurse(pstate, lfirst(la));
-		if (is_num_agg)
-		{
-			Oid			argtype = exprType(arg);
-			int			argloc = exprLocation(arg);
-			Node	   *newarg;
+		if (IsA(arg, NamedArgExpr))
+			named = true;
 
-			newarg = coerce_to_target_type(pstate, arg, argtype,
-										   NUMERICOID, -1, COERCION_EXPLICIT,
-										   COERCE_IMPLICIT_CAST, argloc);
-			if (newarg == NULL)
-			{
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("%s cannot be converted to numeric",
-								format_type_be(argtype)),
-						 parser_errposition(pstate, argloc)));
-				return NULL;
-			}
+		argtype = exprType(arg);
 
-			arg = newarg;
-		}
+		Assert(!(IsA(arg, Param) && argtype == VOIDOID));
 
 		args = lappend(args, arg);
+		argtypes[nargs++] = exprType(arg);
 	}
 
-	if (fn->agg_within_group)
+	/* This function does not handle named arguments. */
+	if (named)
+		return args;
+
+	/* column projection */
+	if (nargs == 1 &&
+		fn->agg_order == NIL &&
+		!fn->agg_star &&
+		!fn->agg_distinct &&
+		fn->over == NULL &&
+		!fn->func_variadic &&
+		list_length(fn->funcname) == 1)
 	{
-		Assert(fn->agg_order != NIL);
+		argtype = argtypes[0];
+		if (argtype == RECORDOID || ISCOMPLEX(argtype))
+			return args;
+	}
 
-		foreach(la, fn->agg_order)
+	candidate = func_get_best_candidate(pstate, fn, nargs, argtypes);
+	if (candidate == NULL)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_FUNCTION),
+				 errmsg("function %s does not exist",
+						func_signature_string(fn->funcname, nargs, NIL,
+											  argtypes)),
+				 errhint("No function matches the given name and argument types. "
+						 "You might need to add explicit type casts."),
+				 parser_errposition(pstate, fn->location)));
+		return NIL;
+	}
+
+	return fucn_get_best_args(pstate, args, argtypes, candidate);
+}
+
+static FuncCandidateList
+func_get_best_candidate(ParseState *pstate, FuncCall *fn, int nargs,
+						Oid argtypes[FUNC_MAX_ARGS])
+{
+	FuncCandidateList raw_candidates;
+	FuncCandidateList best_candidate;
+	FuncCandidateList current_candidates;
+	int			ncandidates;
+
+	/* get all candidates */
+	raw_candidates = FuncnameGetCandidates(fn->funcname, nargs, NIL,
+										   false, false, false);
+
+	/* find exact match */
+	for (best_candidate = raw_candidates;
+		 best_candidate != NULL;
+		 best_candidate = best_candidate->next)
+	{
+		if (memcmp(argtypes, best_candidate->args, nargs * sizeof(Oid)) == 0)
+			break;
+	}
+	if (best_candidate != NULL)
+		return best_candidate;
+
+	ncandidates = func_match_argtypes_jsonb(nargs, argtypes, raw_candidates,
+											&current_candidates);
+	if (ncandidates == 1)
+	{
+		best_candidate = current_candidates;
+	}
+	else if (ncandidates > 1)
+	{
+		best_candidate = func_select_candidate_jsonb(nargs, argtypes,
+													 current_candidates);
+		if (best_candidate == NULL)
 		{
-			SortBy	   *arg = lfirst(la);
-
-			args = lappend(args, transformCypherExpr(pstate, arg->node,
-													 EXPR_KIND_ORDER_BY));
+			ereport(ERROR,
+					(errcode(ERRCODE_AMBIGUOUS_FUNCTION),
+					 errmsg("function %s is not unique",
+							func_signature_string(fn->funcname, nargs, NIL,
+												  argtypes)),
+					 errhint("Could not choose a best candidate function. "
+							 "You might need to add explicit type casts."),
+					 parser_errposition(pstate, fn->location)));
+			return NULL;
 		}
 	}
 
-	return ParseFuncOrColumn(pstate, fn->funcname, args, last_srf, fn,
-							 fn->location);
+	return best_candidate;
+}
+
+static int
+func_match_argtypes_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
+						  FuncCandidateList raw_candidates,
+						  FuncCandidateList *candidates)
+{
+	FuncCandidateList current_candidate;
+	FuncCandidateList next_candidate;
+	int			ncandidates = 0;
+
+	*candidates = NULL;
+
+	for (current_candidate = raw_candidates;
+		 current_candidate != NULL;
+		 current_candidate = next_candidate)
+	{
+		int			i;
+
+		next_candidate = current_candidate->next;
+
+		for (i = 0; i < nargs; i++)
+		{
+			/* jsonb can be coerced to any type by calling coerce_expr() */
+			if (argtypes[i] == JSONBOID)
+				continue;
+
+			/* any type can be coerced to jsonb */
+			if (current_candidate->args[i] == JSONBOID)
+				continue;
+
+			if (can_coerce_type(1, &argtypes[i], &current_candidate->args[i],
+								COERCION_IMPLICIT))
+				continue;
+
+			break;
+		}
+		if (i < nargs)
+			continue;
+
+		current_candidate->next = *candidates;
+		*candidates = current_candidate;
+		ncandidates++;
+	}
+
+	return ncandidates;
+}
+
+/* see func_select_candidate() */
+FuncCandidateList
+func_select_candidate_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
+							FuncCandidateList candidates)
+{
+	int			nunknowns;
+	int			i;
+	Oid			input_base_typeids[FUNC_MAX_ARGS];
+	FuncCandidateList current_candidate;
+	FuncCandidateList last_candidate;
+	int			ncandidates;
+	int			bestscore;
+	int			score;
+	Oid		   *current_typeids;
+	TYPCATEGORY slot_category[FUNC_MAX_ARGS];
+	bool		resolved_unknowns;
+	bool		slot_has_preferred_type[FUNC_MAX_ARGS];
+	TYPCATEGORY	current_category;
+	bool		current_is_preferred;
+	FuncCandidateList first_candidate;
+
+	nunknowns = 0;
+	for (i = 0; i < nargs; i++)
+	{
+		if (argtypes[i] != UNKNOWNOID)
+		{
+			input_base_typeids[i] = getBaseType(argtypes[i]);
+		}
+		else
+		{
+			input_base_typeids[i] = UNKNOWNOID;
+			nunknowns++;
+		}
+	}
+
+	last_candidate = NULL;
+	ncandidates = 0;
+	bestscore = 0;
+	for (current_candidate = candidates;
+		 current_candidate != NULL;
+		 current_candidate = current_candidate->next)
+	{
+		score = 0;
+		current_typeids = current_candidate->args;
+
+		for (i = 0; i < nargs; i++)
+		{
+			if (input_base_typeids[i] == UNKNOWNOID)
+				continue;
+
+			if (current_typeids[i] == input_base_typeids[i])
+				score += 1;
+		}
+
+		if (score > bestscore || last_candidate == NULL)
+		{
+			candidates = current_candidate;
+			last_candidate = current_candidate;
+			ncandidates = 1;
+			bestscore = score;
+		}
+		else if (score == bestscore)
+		{
+			last_candidate->next = current_candidate;
+			last_candidate = current_candidate;
+			ncandidates++;
+		}
+	}
+	if (last_candidate != NULL)
+		last_candidate->next = NULL;
+
+	if (ncandidates == 1)
+		return candidates;
+
+	for (i = 0; i < nargs; i++)
+		slot_category[i] = TypeCategory(input_base_typeids[i]);
+
+	last_candidate = NULL;
+	ncandidates = 0;
+	bestscore = 0;
+	for (current_candidate = candidates;
+		 current_candidate != NULL;
+		 current_candidate = current_candidate->next)
+	{
+		score = 0;
+		current_typeids = current_candidate->args;
+
+		for (i = 0; i < nargs; i++)
+		{
+			if (input_base_typeids[i] == UNKNOWNOID)
+				continue;
+
+			if (current_typeids[i] == input_base_typeids[i])
+			{
+				score += 5;
+			}
+			else if (IsPreferredType(slot_category[i], current_typeids[i]))
+			{
+				score += 4;
+			}
+			else if (input_base_typeids[i] == JSONBOID)
+			{
+				switch (current_typeids[i])
+				{
+					case BOOLOID:
+					case NUMERICOID:
+					case TEXTOID:
+						score += 3;
+						break;
+					case INT2OID:
+					case INT4OID:
+					case INT8OID:
+					case FLOAT4OID:
+					case FLOAT8OID:
+						score += 2;
+						break;
+					default:
+						score += 1;
+						break;
+				}
+			}
+			else if (current_typeids[i] == JSONBOID)
+			{
+				score += 3;
+			}
+		}
+
+		if (score > bestscore || last_candidate == NULL)
+		{
+			candidates = current_candidate;
+			last_candidate = current_candidate;
+			ncandidates = 1;
+			bestscore = score;
+		}
+		else if (score == bestscore)
+		{
+			last_candidate->next = current_candidate;
+			last_candidate = current_candidate;
+			ncandidates++;
+		}
+	}
+	if (last_candidate)
+		last_candidate->next = NULL;
+
+	if (ncandidates == 1)
+		return candidates;
+
+	if (nunknowns == 0)
+		return NULL;
+
+	resolved_unknowns = false;
+	for (i = 0; i < nargs; i++)
+	{
+		bool		have_conflict;
+
+		if (input_base_typeids[i] != UNKNOWNOID)
+			continue;
+
+		resolved_unknowns = true;
+
+		slot_category[i] = TYPCATEGORY_INVALID;
+		slot_has_preferred_type[i] = false;
+
+		have_conflict = false;
+
+		for (current_candidate = candidates;
+			 current_candidate != NULL;
+			 current_candidate = current_candidate->next)
+		{
+			current_typeids = current_candidate->args;
+
+			get_type_category_preferred(current_typeids[i],
+										&current_category,
+										&current_is_preferred);
+
+			if (slot_category[i] == TYPCATEGORY_INVALID)
+			{
+				slot_category[i] = current_category;
+				slot_has_preferred_type[i] = current_is_preferred;
+			}
+			else if (current_category == slot_category[i])
+			{
+				slot_has_preferred_type[i] |= current_is_preferred;
+			}
+			else
+			{
+				if (current_category == TYPCATEGORY_STRING)
+				{
+					slot_category[i] = current_category;
+					slot_has_preferred_type[i] = current_is_preferred;
+				}
+				else
+				{
+					have_conflict = true;
+				}
+			}
+		}
+		if (have_conflict && slot_category[i] != TYPCATEGORY_STRING)
+		{
+			resolved_unknowns = false;
+			break;
+		}
+	}
+
+	if (resolved_unknowns)
+	{
+		last_candidate = NULL;
+		first_candidate = candidates;
+		ncandidates = 0;
+
+		for (current_candidate = candidates;
+			 current_candidate != NULL;
+			 current_candidate = current_candidate->next)
+		{
+			bool		keepit = true;
+
+			current_typeids = current_candidate->args;
+			for (i = 0; i < nargs; i++)
+			{
+				if (input_base_typeids[i] != UNKNOWNOID)
+					continue;
+
+				get_type_category_preferred(current_typeids[i],
+											&current_category,
+											&current_is_preferred);
+
+				if (current_category != slot_category[i])
+				{
+					keepit = false;
+					break;
+				}
+				if (slot_has_preferred_type[i] && !current_is_preferred)
+				{
+					keepit = false;
+					break;
+				}
+			}
+			if (keepit)
+			{
+				last_candidate = current_candidate;
+				ncandidates++;
+			}
+			else
+			{
+				if (last_candidate == NULL)
+					first_candidate = current_candidate->next;
+				else
+					last_candidate->next = current_candidate->next;
+			}
+		}
+
+		if (last_candidate != NULL)
+		{
+			candidates = first_candidate;
+			last_candidate->next = NULL;
+		}
+
+		if (ncandidates == 1)
+			return candidates;
+	}
+
+	if (nunknowns < nargs)
+	{
+		Oid			known_type = UNKNOWNOID;
+
+		for (i = 0; i < nargs; i++)
+		{
+			if (input_base_typeids[i] == UNKNOWNOID)
+				continue;
+
+			if (known_type == UNKNOWNOID)
+			{
+				known_type = input_base_typeids[i];
+			}
+			else if (known_type != input_base_typeids[i])
+			{
+				known_type = UNKNOWNOID;
+				break;
+			}
+		}
+
+		if (known_type != UNKNOWNOID)
+		{
+			last_candidate = NULL;
+			ncandidates = 0;
+
+			for (current_candidate = candidates;
+				 current_candidate != NULL;
+				 current_candidate = current_candidate->next)
+			{
+				current_typeids = current_candidate->args;
+
+				for (i = 0; i < nargs; i++)
+				{
+					if (known_type == JSONBOID)
+						continue;
+
+					if (current_typeids[i] == JSONBOID)
+						continue;
+
+					if (can_coerce_type(1, &known_type, &current_typeids[i],
+										COERCION_IMPLICIT))
+						continue;
+
+					break;
+				}
+				if (i < nargs)
+					continue;
+
+				if (++ncandidates > 1)
+					break;
+
+				last_candidate = current_candidate;
+			}
+
+			if (ncandidates == 1)
+			{
+				last_candidate->next = NULL;
+
+				return last_candidate;
+			}
+		}
+	}
+
+	return NULL;
+}
+
+static List *
+fucn_get_best_args(ParseState *pstate, List *args, Oid argtypes[FUNC_MAX_ARGS],
+				   FuncCandidateList candidate)
+{
+	ListCell   *la;
+	int			i;
+	List	   *newargs = NIL;
+
+	i = 0;
+	foreach(la, args)
+	{
+		Node	   *arg = lfirst(la);
+
+		if (argtypes[i] == JSONBOID || candidate->args[i] == JSONBOID)
+			arg = coerce_expr(pstate, arg, argtypes[i], candidate->args[i], -1,
+							  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
+
+		newargs = lappend(newargs, arg);
+		i++;
+	}
+
+	return newargs;
 }
 
 static Node *
@@ -1048,7 +1421,7 @@ transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c)
 		arg = lfirst(la);
 
 		if (is_jsonb)
-			newarg = coerce_to_jsonb(pstate, arg, "jsonb", true);
+			newarg = coerce_to_jsonb(pstate, arg, "COALESCE value");
 		else
 			newarg = coerce_to_common_type(pstate, arg, coalescetype,
 										   "COALESCE");
@@ -1219,9 +1592,8 @@ makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive)
 	Assert(idx != NULL);
 
 	idxexpr = transformCypherExprRecurse(pstate, idx);
-	result = coerce_to_target_type(pstate, idxexpr, exprType(idxexpr),
-								   INT4OID, -1, COERCION_ASSIGNMENT,
-								   COERCE_IMPLICIT_CAST, -1);
+	result = coerce_expr(pstate, idxexpr, exprType(idxexpr), INT4OID, -1,
+						 COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
 	if (result == NULL)
 	{
 		ereport(ERROR,
@@ -1256,7 +1628,7 @@ adjustListIndexType(ParseState *pstate, Node *idx)
 		case JSONBOID:
 			return idx;
 		default:
-			return coerce_to_jsonb(pstate, idx, "list index", true);
+			return coerce_to_jsonb(pstate, idx, "list index");
 	}
 }
 
@@ -1273,6 +1645,8 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 	if (a->kind == AEXPR_OP && list_length(a->name) == 1)
 	{
 		const char *opname = strVal(linitial(a->name));
+		Oid			ltype = exprType(l);
+		Oid			rtype = exprType(r);
 
 		if (strcmp(opname, "`+`") == 0 ||
 			strcmp(opname, "`-`") == 0 ||
@@ -1281,8 +1655,62 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 			strcmp(opname, "`%`") == 0 ||
 			strcmp(opname, "`^`") == 0)
 		{
-			l = coerce_to_jsonb(pstate, l, "jsonb", true);
-			r = coerce_to_jsonb(pstate, r, "jsonb", true);
+			l = coerce_to_jsonb(pstate, l, "jsonb");
+			r = coerce_to_jsonb(pstate, r, "jsonb");
+
+			return (Node *) make_op(pstate, a->name, l, r, last_srf,
+									a->location);
+		}
+
+		if (strcmp(opname, "+") == 0 ||
+			strcmp(opname, "-") == 0 ||
+			strcmp(opname, "*") == 0 ||
+			strcmp(opname, "/") == 0 ||
+			strcmp(opname, "%") == 0 ||
+			strcmp(opname, "^") == 0)
+		{
+			if (ltype == JSONBOID || rtype == JSONBOID ||
+				!OidIsValid(LookupOperName(pstate, a->name, ltype, rtype,
+							true, a->location)))
+			{
+				char	   *newopname;
+
+				l = coerce_to_jsonb(pstate, l, "jsonb");
+				r = coerce_to_jsonb(pstate, r, "jsonb");
+
+				newopname = psprintf("`%s`", opname);
+				a->name = list_make1(makeString(newopname));
+
+				return (Node *) make_op(pstate, a->name, l, r, last_srf,
+										a->location);
+			}
+		}
+		else if (strcmp(opname, "=") == 0 ||
+			strcmp(opname, "<>") == 0 ||
+			strcmp(opname, "<") == 0 ||
+			strcmp(opname, ">") == 0 ||
+			strcmp(opname, "<=") == 0 ||
+			strcmp(opname, ">=") == 0)
+		{
+			if (ltype != InvalidOid && rtype == UNKNOWNOID)
+				rtype = ltype;
+			else if (ltype == UNKNOWNOID && rtype != InvalidOid)
+				ltype = rtype;
+
+			if (ltype == GRAPHIDOID || rtype == GRAPHIDOID)
+				return (Node *) make_op(pstate, a->name, l, r, last_srf,
+										a->location);
+
+			if (ltype == JSONBOID || rtype == JSONBOID ||
+				!OidIsValid(LookupOperName(pstate, a->name, ltype, rtype,
+							true, a->location)))
+			{
+				l = coerce_to_jsonb(pstate, l, "jsonb");
+				r = coerce_to_jsonb(pstate, r, "jsonb");
+
+				return (Node *) make_op(pstate, a->name, l, r, last_srf,
+										a->location);
+			}
 		}
 	}
 
@@ -1297,10 +1725,10 @@ transformAExprIn(ParseState *pstate, A_Expr *a)
 	Node	   *r;
 
 	l = transformCypherExprRecurse(pstate, a->lexpr);
-	l = coerce_to_jsonb(pstate, l, "jsonb", true);
+	l = coerce_to_jsonb(pstate, l, "jsonb");
 
 	r = transformCypherExprRecurse(pstate, a->rexpr);
-	r = coerce_to_jsonb(pstate, r, "jsonb", true);
+	r = coerce_to_jsonb(pstate, r, "jsonb");
 
 	return (Node *) make_op(pstate, list_make1(makeString("@>")), r, l,
 							last_srf, a->location);
@@ -1342,17 +1770,219 @@ transformBoolExpr(ParseState *pstate, BoolExpr *b)
 	return (Node *) makeBoolExpr(b->boolop, args, b->location);
 }
 
-static Node *
-coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname,
-				bool err)
+Node *
+coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
+			CoercionContext cctx, CoercionForm cform, int loc)
 {
+	Node	   *node;
+	Oid			btyp;
+	CypherTypeCast *tc;
+
 	if (expr == NULL)
 		return NULL;
 
-	switch (exprType(expr))
+	node = coerce_unknown_const(pstate, expr, ityp, otyp);
+	if (node != NULL)
+		return node;
+
+	btyp = getBaseType(otyp);
+
+	/*
+	 * Any type can be coerced to types that are in type category "string" via
+	 * IO function. However, the output result of jsonb string is double quoted
+	 * string, and it is not proper format for string types. So, handle this
+	 * case directly.
+	 */
+	if (ityp == JSONBOID && TypeCategory(btyp) == TYPCATEGORY_STRING)
 	{
-		case UNKNOWNOID:
-			elog(ERROR, "coercing UNKNOWNOID to JSONBOID cannot happen");
+		tc = makeNode(CypherTypeCast);
+		tc->type = otyp;
+		tc->cform = cform;
+		tc->arg = (Expr *) expr;
+		tc->location = loc;
+
+		return (Node *) tc;
+	}
+
+	/* UNKNOWNOID parameters will be handled by p_coerce_param_hook */
+	node = coerce_to_target_type(pstate, expr, ityp, otyp, otypmod,
+								 cctx, cform, loc);
+	if (node != NULL)
+		return node;
+
+	if (ityp == JSONBOID)
+	{
+		CypherTypeCast *tc;
+
+		if (OidIsValid(get_element_type(otyp)) ||
+			otyp == ANYARRAYOID ||
+			otyp == RECORDARRAYOID ||
+			type_is_rowtype(otyp))
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot cast type jsonb to %s",
+							format_type_be(otyp))));
+			return NULL;
+		}
+
+		switch (btyp)
+		{
+			/* There are type casting rules for these types. */
+			case BOOLOID:
+			case INT4OID:
+			case INT8OID:
+			case NUMERICOID:
+			case FLOAT8OID:
+				elog(ERROR, "unexpected type casting: jsonb to %s",
+					 format_type_be(btyp));
+				return NULL;
+			default:
+				break;
+		}
+
+		tc = makeNode(CypherTypeCast);
+		tc->type = btyp;
+		tc->cform = cform;
+		tc->arg = (Expr *) expr;
+		tc->location = loc;
+
+		return (Node *) tc;
+	}
+
+	if (otyp == JSONBOID)
+	{
+		Node	   *last_srf = pstate->p_last_srf;
+
+		return ParseFuncOrColumn(pstate, list_make1(makeString("to_jsonb")),
+								 list_make1(expr), last_srf, NULL, loc);
+	}
+
+	return NULL;
+}
+
+static Node *
+coerce_unknown_const(ParseState *pstate, Node *expr, Oid ityp, Oid otyp)
+{
+	Const	   *con;
+	char	   *s;
+	Datum		datum;
+	Oid			coll;
+	Const	   *newcon;
+
+	if (!IsA(expr, Const))
+		return NULL;
+
+	con = (Const *) expr;
+	if (con->constisnull)
+	{
+		/* This case will be handled later. NULL can be coerced to any type. */
+		return NULL;
+	}
+
+	if (ityp != UNKNOWNOID)
+	{
+		/* Other types will be handled later by calling coerce_type(). */
+		return NULL;
+	}
+
+	if (otyp == JSONBOID)
+	{
+		s = DatumGetCString(con->constvalue);
+		datum = stringToJsonb(pstate, s, con->location);
+		coll = InvalidOid;
+	}
+	else if (otyp == TEXTOID)
+	{
+		Jsonb	   *j;
+		JsonbValue *jv;
+		text	   *t;
+
+		s = DatumGetCString(con->constvalue);
+		datum = stringToJsonb(pstate, s, con->location);
+		j = DatumGetJsonb(datum);
+		Assert(JB_ROOT_IS_SCALAR(j));
+
+		jv = getIthJsonbValueFromContainer(&j->root, 0);
+		Assert(jv->type == jbvString);
+
+		t = cstring_to_text_with_len(jv->val.string.val, jv->val.string.len);
+
+		datum = PointerGetDatum(t);
+		coll = DEFAULT_COLLATION_OID;
+	}
+	else
+	{
+		/*
+		 * Other types will be handled later by calling coerce_type().
+		 * UNKNOWNOID can be coerced to any type using the input function of
+		 * the target type.
+		 */
+		return NULL;
+	}
+
+	newcon = makeConst(otyp, -1, coll, -1, datum, false, false);
+	newcon->location = con->location;
+
+	return (Node *) newcon;
+}
+
+static Datum
+stringToJsonb(ParseState *pstate, char *s, int location)
+{
+	StringInfoData si;
+	const char *c;
+	bool		escape = false;
+	ParseCallbackState pcbstate;
+	Datum		d;
+
+	initStringInfo(&si);
+	appendStringInfoCharMacro(&si, '"');
+	for (c = s; *c != '\0'; c++)
+	{
+		if (escape)
+		{
+			appendStringInfoCharMacro(&si, *c);
+			escape = false;
+		}
+		else
+		{
+			switch (*c)
+			{
+				case '\\':
+					/* any character coming next will be escaped */
+					appendStringInfoCharMacro(&si, '\\');
+					escape = true;
+					break;
+				case '"':
+					/* Escape `"`. `"` and `\"` are the same as `\"`. */
+					appendBinaryStringInfo(&si, "\\\"", 2);
+					break;
+				default:
+					appendStringInfoCharMacro(&si, *c);
+					break;
+			}
+		}
+	}
+	appendStringInfoCharMacro(&si, '"');
+
+	setup_parser_errposition_callback(&pcbstate, pstate, location);
+
+	d = DirectFunctionCall1(jsonb_in, CStringGetDatum(si.data));
+
+	cancel_parser_errposition_callback(&pcbstate);
+
+	return d;
+}
+
+static Node *
+coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname)
+{
+	Oid			type = exprType(expr);
+
+	switch (type)
+	{
+		case InvalidOid:
 			return NULL;
 
 		case GRAPHIDARRAYOID:
@@ -1363,27 +1993,29 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname,
 		case EDGEOID:
 		case GRAPHPATHARRAYOID:
 		case GRAPHPATHOID:
-			if (err)
-			{
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("graph object cannot be %s", targetname),
-						 parser_errposition(pstate, exprLocation(expr))));
-				return NULL;
-			}
-			else
-			{
-				return expr;
-			}
-
-		case JSONBOID:
-			return expr;
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("graph object cannot be %s", targetname),
+					 parser_errposition(pstate, exprLocation(expr))));
+			return NULL;
 
 		default:
-			return ParseFuncOrColumn(pstate,
-									 list_make1(makeString("to_jsonb")),
-									 list_make1(expr), pstate->p_last_srf,
-									 NULL, exprLocation(expr));
+			{
+				if (TypeCategory(getBaseType(type)) == TYPCATEGORY_STRING)
+				{
+					return ParseFuncOrColumn(pstate,
+											 list_make1(makeString("to_jsonb")),
+											 list_make1(expr),
+											 pstate->p_last_srf, NULL,
+											 exprLocation(expr));
+				}
+
+				expr = coerce_expr(pstate, expr, type, JSONBOID, -1,
+								   COERCION_EXPLICIT, COERCE_IMPLICIT_CAST,
+								   exprLocation(expr));
+				Assert(expr != NULL);
+				return expr;
+			}
 	}
 }
 
@@ -1653,6 +2285,28 @@ transformItemList(ParseState *pstate, List *items, ParseExprKind exprKind)
 	}
 
 	return targets;
+}
+
+void
+resolveItemList(ParseState *pstate, List *items)
+{
+	ListCell   *li;
+
+	foreach(li, items)
+	{
+		TargetEntry *te = lfirst(li);
+		Oid			restype = exprType((Node *) te->expr);
+
+		if (restype == UNKNOWNOID)
+		{
+			Node	   *node;
+
+			node = coerce_expr(pstate, (Node *) te->expr, restype, JSONBOID, -1,
+							   COERCION_IMPLICIT, COERCE_IMPLICIT_CAST, -1);
+			Assert(node != NULL);
+			te->expr = (Expr *) node;
+		}
+	}
 }
 
 List *

@@ -6,11 +6,42 @@
 CREATE GRAPH test_cypher_expr;
 SET graph_path = test_cypher_expr;
 
--- Numeric, string, and boolean literal
-RETURN '"', '\"', '\\"', 17, true, false;
+-- String (jsonb)
+RETURN '"', '\"', '\\', '\/', '\b', '\f', '\n', '\r', '\t';
 
--- Octal and hexadecimal literal
-RETURN 021, 0x11, 0X11;
+-- Decimal (int4, int8, numeric)
+RETURN -2147483648, 2147483647;
+RETURN -9223372036854775808, 9223372036854775807;
+RETURN -9223372036854775809, 9223372036854775808;
+-- Hexadecimal (int4)
+RETURN -0x7fffffff, 0x7fffffff;
+-- Octal (int4)
+RETURN -017777777777, 017777777777;
+-- Float (numeric)
+RETURN 3.14, -3.14, 6.02E23;
+
+-- true, false, null
+RETURN true, false, null;
+
+-- String (text)
+RETURN '"'::text, '\"'::text, '\\'::text, '\/'::text,
+       '\b'::text, '\f'::text, '\n'::text, '\r'::text, '\t'::text;
+
+-- Parameter - UNKNOWNOID::jsonb (string)
+PREPARE tmp AS RETURN $1;
+EXECUTE tmp ('"\""');
+DEALLOCATE tmp;
+
+-- Parameter - UNKNOWNOID::text
+PREPARE tmp AS RETURN $1::text;
+EXECUTE tmp ('\"');
+DEALLOCATE tmp;
+
+-- ::bool
+RETURN ''::jsonb::bool, 0::jsonb::bool, false::jsonb::bool,
+       []::bool, {}::bool;
+RETURN 's'::jsonb::bool, 1::jsonb::bool, true::jsonb::bool,
+       [0]::bool, {p: 0}::bool;
 
 -- List and map literal
 RETURN [7, 7.0, '"list\nliteral\"', true, false, NULL, [0, 1, 2], {p: 'p'}];
@@ -252,6 +283,11 @@ CREATE (:coll {name: 'AgensGraph'});
 MATCH (n:coll) SET n.l = tolower(n.name);
 MATCH (n:coll) SET n.u = toupper(n.name);
 MATCH (n:coll) RETURN n;
+
+-- Text matching
+
+CREATE (:ts {v: 'a fat cat sat on a mat and ate a fat rat'::tsvector});
+MATCH (n:ts) WHERE n.v::tsvector @@ 'cat & rat'::tsquery RETURN n;
 
 -- Tear down
 DROP GRAPH test_cypher_expr CASCADE;
