@@ -11485,22 +11485,14 @@ ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 	 */
 	initStringInfo(&buf);
 
-	if (!isConstraint)
-	{
+	if (isConstraint)
+		appendStringInfo(&buf, "ASSERT (");
+	else
 		appendStringInfo(&buf, "CREATE %sPROPERTY INDEX %s ON %s USING %s (",
 						 idxrec->indisunique ? "UNIQUE " : "",
 						 quote_identifier(NameStr(idxrelrec->relname)),
 						 quote_identifier(get_relation_name(indrelid)),
 						 quote_identifier(NameStr(amrec->amname)));
-	}
-	else
-	{
-		/*
-		 * Currently, must be EXCLUDE constraint.
-		 * And unique constraint uses EXCLUDE index.
-		 */
-		appendStringInfo(&buf, "ASSERT (");
-	}
 
 	/*
 	 * Report the indexed attributes

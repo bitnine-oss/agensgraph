@@ -7744,9 +7744,7 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 	int			ntups;
 	bool		hasdefaults;
 	bool		islab;
-	const char *pgfunc = "pg_get_constraintdef";
-	const char *agfunc = "ag_get_graphconstraintdef";
-	const char *getdef;
+	char	   *getdef;
 
 	for (i = 0; i < numTables; i++)
 	{
@@ -7770,12 +7768,12 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 		if (PQntuples(res) == 1)
 		{
 			islab = true;
-			getdef = agfunc;
+			getdef = "ag_get_graphconstraintdef";
 		}
 		else
 		{
 			islab = false;
-			getdef = pgfunc;
+			getdef = "pg_get_constraintdef";
 		}
 
 		PQclear(res);
