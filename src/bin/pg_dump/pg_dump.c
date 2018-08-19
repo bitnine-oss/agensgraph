@@ -285,6 +285,7 @@ static void appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 static char *get_synchronized_snapshot(Archive *fout);
 static void setupDumpWorker(Archive *AHX);
 static void insertGraphCatalog(Archive *fout);
+static void setGraphPath(PQExpBuffer q, char *gname);
 
 
 int
@@ -7742,6 +7743,8 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 	PGresult   *res;
 	int			ntups;
 	bool		hasdefaults;
+	bool		islab;
+	char	   *getdef;
 
 	for (i = 0; i < numTables; i++)
 	{
@@ -7754,6 +7757,26 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 		/* Don't bother with uninteresting tables, either */
 		if (!tbinfo->interesting)
 			continue;
+
+		/* Check if it's label or table */
+		resetPQExpBuffer(q);
+		appendPQExpBuffer(q,
+				"SELECT 1 FROM pg_catalog.ag_label l WHERE l.relid = '%u'",
+				tbinfo->dobj.catId.oid);
+
+		res = ExecuteSqlQuery(fout, q->data, PGRES_TUPLES_OK);
+		if (PQntuples(res) == 1)
+		{
+			islab = true;
+			getdef = "ag_get_graphconstraintdef";
+		}
+		else
+		{
+			islab = false;
+			getdef = "pg_get_constraintdef";
+		}
+
+		PQclear(res);
 
 		/* find all the user attributes and their types */
 
@@ -8064,12 +8087,13 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 				 * but it wasn't ever false for check constraints until 9.2).
 				 */
 				appendPQExpBuffer(q, "SELECT tableoid, oid, conname, "
-								  "pg_catalog.pg_get_constraintdef(oid) AS consrc, "
+								  "pg_catalog.%s(oid) AS consrc, "
 								  "conislocal, convalidated "
 								  "FROM pg_catalog.pg_constraint "
 								  "WHERE conrelid = '%u'::pg_catalog.oid "
 								  "   AND contype = 'c' "
 								  "ORDER BY conname",
+								  getdef,
 								  tbinfo->dobj.catId.oid);
 			}
 			else if (fout->remoteVersion >= 80400)
@@ -8137,7 +8161,10 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 				 * that potentially-violating existing data is loaded before
 				 * the constraint.
 				 */
-				constrs[j].separate = !validated;
+				if (islab)
+					constrs[j].separate = true;
+				else
+					constrs[j].separate = !validated;
 
 				constrs[j].dobj.dump = tbinfo->dobj.dump;
 
@@ -15631,7 +15658,6 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 	{
 		PQExpBuffer  isprop = createPQExpBuffer();
 		PGresult	*res;
-		char		*def;
 
 		if (dopt->binary_upgrade)
 			binary_upgrade_set_pg_class_oids(fout, q,
@@ -15650,33 +15676,26 @@ dumpIndex(Archive *fout, IndxInfo *indxinfo)
 			PGresult	*defres;
 
 			appendPQExpBuffer(getdef,
-					"SELECT ag_get_propindexdef('%s.%s'::regclass)",
-					indxinfo->dobj.namespace->dobj.name,
-					indxinfo->dobj.name);
+							  "SELECT ag_get_propindexdef(%u)",
+							  indxinfo->dobj.catId.oid);
 			defres = ExecuteSqlQuery(fout, getdef->data, PGRES_TUPLES_OK);
 
+			setGraphPath(q, tbinfo->dobj.namespace->dobj.name);
+
 			if (PQntuples(defres) == 1)
-			{
-				def = pg_strdup(PQgetvalue(defres, 0, 0));
-			}
+				appendPQExpBuffer(q, "%s;\n", PQgetvalue(defres, 0, 0));
 			else
-			{
 				exit_horribly(NULL, "Failed to ag_get_propindexdef()\n");
-			}
 
 			PQclear(defres);
 			destroyPQExpBuffer(getdef);
 		}
 		else
 		{
-			def = indxinfo->indexdef;
+			/* Plain secondary index */
+			appendPQExpBuffer(q, "%s;\n", indxinfo->indexdef);
 		}
 
-		/* Plain secondary index */
-		appendPQExpBuffer(q, "%s;\n", def);
-
-		if (PQntuples(res) == 1)
-			pg_free(def);
 		PQclear(res);
 		destroyPQExpBuffer(isprop);
 
@@ -15807,6 +15826,8 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 	PQExpBuffer q;
 	PQExpBuffer delq;
 	char	   *tag = NULL;
+	PGresult   *res;
+	bool		islab;
 
 	/* Skip if not to be dumped */
 	if (!coninfo->dobj.dump || dopt->dataOnly)
@@ -15814,6 +15835,25 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 
 	q = createPQExpBuffer();
 	delq = createPQExpBuffer();
+
+	/* Check if it's label or table */
+	if (tbinfo == NULL)
+		islab = false;
+	else
+	{
+		appendPQExpBuffer(q,
+				"SELECT 1 FROM pg_catalog.ag_label l WHERE l.relid = '%u'",
+				tbinfo->dobj.catId.oid);
+
+		res = ExecuteSqlQuery(fout, q->data, PGRES_TUPLES_OK);
+		if (PQntuples(res) == 1)
+			islab = true;
+		else
+			islab = false;
+		PQclear(res);
+
+		resetPQExpBuffer(q);
+	}
 
 	if (coninfo->contype == 'p' ||
 		coninfo->contype == 'u' ||
@@ -15833,51 +15873,81 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 			binary_upgrade_set_pg_class_oids(fout, q,
 											 indxinfo->dobj.catId.oid, true);
 
-		appendPQExpBuffer(q, "ALTER TABLE ONLY %s\n",
-						  fmtQualifiedDumpable(tbinfo));
-		appendPQExpBuffer(q, "    ADD CONSTRAINT %s ",
-						  fmtId(coninfo->dobj.name));
-
-		if (coninfo->condef)
+		/* Dump UNIQUE constraint in graph label */
+		if (islab && coninfo->contype == 'x')
 		{
-			/* pg_get_constraintdef should have provided everything */
-			appendPQExpBuffer(q, "%s;\n", coninfo->condef);
+			PQExpBuffer getdef = createPQExpBuffer();
+			PGresult   *defres;
+
+			appendPQExpBuffer(getdef,
+							  "SELECT ag_get_graphconstraintdef(%u)",
+							  coninfo->dobj.catId.oid);
+			defres = ExecuteSqlQuery(fout, getdef->data, PGRES_TUPLES_OK);
+
+			if (PQntuples(defres) == 1)
+			{
+				setGraphPath(q, tbinfo->dobj.namespace->dobj.name);
+
+				appendPQExpBuffer(q, "CREATE CONSTRAINT ON %s %s;\n",
+						tbinfo->dobj.name,
+						PQgetvalue(defres, 0, 0));
+			}
+			else
+			{
+				exit_horribly(NULL, "Failed to ag_get_graphconstraintdef()\n");
+			}
+			PQclear(defres);
+			destroyPQExpBuffer(getdef);
 		}
+		/* Dump other constraint in relational table */
 		else
 		{
-			appendPQExpBuffer(q, "%s (",
-							  coninfo->contype == 'p' ? "PRIMARY KEY" : "UNIQUE");
-			for (k = 0; k < indxinfo->indnkeys; k++)
+			appendPQExpBuffer(q, "ALTER TABLE ONLY %s\n",
+							  fmtQualifiedDumpable(tbinfo));
+			appendPQExpBuffer(q, "    ADD CONSTRAINT %s ",
+							  fmtId(coninfo->dobj.name));
+
+			if (coninfo->condef)
 			{
-				int			indkey = (int) indxinfo->indkeys[k];
-				const char *attname;
-
-				if (indkey == InvalidAttrNumber)
-					break;
-				attname = getAttrName(indkey, tbinfo);
-
-				appendPQExpBuffer(q, "%s%s",
-								  (k == 0) ? "" : ", ",
-								  fmtId(attname));
+				/* pg_get_constraintdef should have provided everything */
+				appendPQExpBuffer(q, "%s;\n", coninfo->condef);
 			}
-
-			appendPQExpBufferChar(q, ')');
-
-			if (nonemptyReloptions(indxinfo->indreloptions))
+			else
 			{
-				appendPQExpBufferStr(q, " WITH (");
-				appendReloptionsArrayAH(q, indxinfo->indreloptions, "", fout);
+				appendPQExpBuffer(q, "%s (",
+								  coninfo->contype == 'p' ? "PRIMARY KEY" : "UNIQUE");
+				for (k = 0; k < indxinfo->indnkeys; k++)
+				{
+					int			indkey = (int) indxinfo->indkeys[k];
+					const char *attname;
+
+					if (indkey == InvalidAttrNumber)
+						break;
+					attname = getAttrName(indkey, tbinfo);
+
+					appendPQExpBuffer(q, "%s%s",
+									  (k == 0) ? "" : ", ",
+									  fmtId(attname));
+				}
+
 				appendPQExpBufferChar(q, ')');
-			}
 
-			if (coninfo->condeferrable)
-			{
-				appendPQExpBufferStr(q, " DEFERRABLE");
-				if (coninfo->condeferred)
-					appendPQExpBufferStr(q, " INITIALLY DEFERRED");
-			}
+				if (nonemptyReloptions(indxinfo->indreloptions))
+				{
+					appendPQExpBufferStr(q, " WITH (");
+					appendReloptionsArrayAH(q, indxinfo->indreloptions, "", fout);
+					appendPQExpBufferChar(q, ')');
+				}
 
-			appendPQExpBufferStr(q, ";\n");
+				if (coninfo->condeferrable)
+				{
+					appendPQExpBufferStr(q, " DEFERRABLE");
+					if (coninfo->condeferred)
+						appendPQExpBufferStr(q, " INITIALLY DEFERRED");
+				}
+
+				appendPQExpBufferStr(q, ";\n");
+			}
 		}
 
 		/* If the index is clustered, we need to record that. */
@@ -15940,10 +16010,31 @@ dumpConstraint(Archive *fout, ConstraintInfo *coninfo)
 	}
 	else if (coninfo->contype == 'c' && tbinfo)
 	{
-		/* CHECK constraint on a table */
+		/* CHECK constraint on a graph label */
+		if (islab)
+		{
+			setGraphPath(q, tbinfo->dobj.namespace->dobj.name);
 
+			appendPQExpBuffer(q, "CREATE CONSTRAINT ON %s %s;\n",
+							  tbinfo->dobj.name,
+							  coninfo->condef);
+
+			tag = psprintf("%s %s", tbinfo->dobj.name, coninfo->dobj.name);
+
+			if (coninfo->dobj.dump & DUMP_COMPONENT_DEFINITION)
+				ArchiveEntry(fout, coninfo->dobj.catId, coninfo->dobj.dumpId,
+							 tag,
+							 tbinfo->dobj.namespace->dobj.name,
+							 NULL,
+							 tbinfo->rolname, false,
+							 "CHECK CONSTRAINT", SECTION_POST_DATA,
+							 q->data, "", NULL,
+							 NULL, 0,
+							 NULL, NULL);
+		}
+		/* CHECK constraint on a table */
 		/* Ignore if not to be dumped separately, or if it was inherited */
-		if (coninfo->separate && coninfo->conislocal)
+		else if (coninfo->separate && coninfo->conislocal)
 		{
 			/* not ONLY since we want it to propagate to children */
 			appendPQExpBuffer(q, "ALTER TABLE %s\n",
@@ -17646,4 +17737,16 @@ insertGraphCatalog(Archive *fout)
 				 NULL, 0, NULL, NULL);
 
 	destroyPQExpBuffer(q);
+}
+
+static void setGraphPath(PQExpBuffer q, char *gname)
+{
+	/* graph_path to dump AgensGraph objects */
+	static char *currGraph = NULL;
+
+	if (currGraph && strcmp(currGraph, gname) == 0)
+		return;
+
+	appendPQExpBuffer(q, "SET graph_path = %s;\n", gname);
+	currGraph = gname;
 }
