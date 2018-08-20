@@ -1,0 +1,36 @@
+\c single
+--list all extension functions in public schema
+SELECT DISTINCT proname
+FROM pg_proc
+WHERE OID IN (
+    SELECT objid
+    FROM pg_catalog.pg_depend                                                                                                               WHERE   refclassid = 'pg_catalog.pg_extension'::pg_catalog.regclass AND
+    refobjid = (select oid from pg_extension where extname='timescaledb') AND
+    deptype = 'e' and classid = 'pg_catalog.pg_proc'::regclass
+) AND pronamespace = 'public'::regnamespace
+ORDER BY proname;
+             proname              
+----------------------------------
+ add_dimension
+ attach_tablespace
+ chunk_relation_size
+ chunk_relation_size_pretty
+ create_hypertable
+ detach_tablespace
+ detach_tablespaces
+ drop_chunks
+ first
+ histogram
+ hypertable_approximate_row_count
+ hypertable_relation_size
+ hypertable_relation_size_pretty
+ indexes_relation_size
+ indexes_relation_size_pretty
+ last
+ set_adaptive_chunking
+ set_chunk_time_interval
+ set_number_partitions
+ show_tablespaces
+ time_bucket
+(21 rows)
+

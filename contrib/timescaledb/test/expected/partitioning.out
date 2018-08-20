@@ -1,0 +1,339 @@
+CREATE TABLE part_legacy(time timestamptz, temp float, device int);
+SELECT create_hypertable('part_legacy', 'time', 'device', 2, partitioning_func => '_timescaledb_internal.get_partition_for_key');
+NOTICE:  adding not-null constraint to column "time"
+ create_hypertable 
+-------------------
+ 
+(1 row)
+
+-- Show legacy partitioning function is used
+SELECT * FROM _timescaledb_catalog.dimension;
+ id | hypertable_id | column_name |       column_type        | aligned | num_slices | partitioning_func_schema |   partitioning_func   | interval_length 
+----+---------------+-------------+--------------------------+---------+------------+--------------------------+-----------------------+-----------------
+  1 |             1 | time        | timestamp with time zone | t       |            |                          |                       |    604800000000
+  2 |             1 | device      | integer                  | f       |          2 | _timescaledb_internal    | get_partition_for_key |                
+(2 rows)
+
+INSERT INTO part_legacy VALUES ('2017-03-22T09:18:23', 23.4, 1);
+INSERT INTO part_legacy VALUES ('2017-03-22T09:18:23', 23.4, 76);
+VACUUM part_legacy;
+-- Show two chunks and CHECK constraint with cast
+SELECT * FROM test.show_constraintsp('_timescaledb_internal._hyper_1_%_chunk');
+                 Table                  |  Constraint  | Type | Columns  | Index |                                                                      Expr                                                                      | Deferrable | Deferred | Validated 
+----------------------------------------+--------------+------+----------+-------+------------------------------------------------------------------------------------------------------------------------------------------------+------------+----------+-----------
+ _timescaledb_internal._hyper_1_1_chunk | constraint_1 | c    | {time}   | -     | (("time" >= 'Wed Mar 15 17:00:00 2017 PDT'::timestamp with time zone) AND ("time" < 'Wed Mar 22 17:00:00 2017 PDT'::timestamp with time zone)) | f          | f        | t
+ _timescaledb_internal._hyper_1_1_chunk | constraint_2 | c    | {device} | -     | (_timescaledb_internal.get_partition_for_key(device) >= 1073741823)                                                                            | f          | f        | t
+ _timescaledb_internal._hyper_1_2_chunk | constraint_1 | c    | {time}   | -     | (("time" >= 'Wed Mar 15 17:00:00 2017 PDT'::timestamp with time zone) AND ("time" < 'Wed Mar 22 17:00:00 2017 PDT'::timestamp with time zone)) | f          | f        | t
+ _timescaledb_internal._hyper_1_2_chunk | constraint_3 | c    | {device} | -     | (_timescaledb_internal.get_partition_for_key(device) < 1073741823)                                                                             | f          | f        | t
+(4 rows)
+
+-- Make sure constraint exclusion works on device column
+EXPLAIN (verbose, costs off)
+SELECT * FROM part_legacy WHERE device = 1;
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on public.part_legacy
+         Output: part_legacy."time", part_legacy.temp, part_legacy.device
+         Filter: (part_legacy.device = 1)
+   ->  Seq Scan on _timescaledb_internal._hyper_1_1_chunk
+         Output: _hyper_1_1_chunk."time", _hyper_1_1_chunk.temp, _hyper_1_1_chunk.device
+         Filter: (_hyper_1_1_chunk.device = 1)
+(7 rows)
+
+CREATE TABLE part_new(time timestamptz, temp float, device int);
+SELECT create_hypertable('part_new', 'time', 'device', 2);
+NOTICE:  adding not-null constraint to column "time"
+ create_hypertable 
+-------------------
+ 
+(1 row)
+
+SELECT * FROM _timescaledb_catalog.dimension;
+ id | hypertable_id | column_name |       column_type        | aligned | num_slices | partitioning_func_schema |   partitioning_func   | interval_length 
+----+---------------+-------------+--------------------------+---------+------------+--------------------------+-----------------------+-----------------
+  1 |             1 | time        | timestamp with time zone | t       |            |                          |                       |    604800000000
+  2 |             1 | device      | integer                  | f       |          2 | _timescaledb_internal    | get_partition_for_key |                
+  3 |             2 | time        | timestamp with time zone | t       |            |                          |                       |    604800000000
+  4 |             2 | device      | integer                  | f       |          2 | _timescaledb_internal    | get_partition_hash    |                
+(4 rows)
+
+INSERT INTO part_new VALUES ('2017-03-22T09:18:23', 23.4, 1);
+INSERT INTO part_new VALUES ('2017-03-22T09:18:23', 23.4, 2);
+VACUUM part_new;
+-- Show two chunks and CHECK constraint without cast
+SELECT * FROM test.show_constraintsp('_timescaledb_internal._hyper_2_%_chunk');
+                 Table                  |  Constraint  | Type | Columns  | Index |                                                                      Expr                                                                      | Deferrable | Deferred | Validated 
+----------------------------------------+--------------+------+----------+-------+------------------------------------------------------------------------------------------------------------------------------------------------+------------+----------+-----------
+ _timescaledb_internal._hyper_2_3_chunk | constraint_4 | c    | {time}   | -     | (("time" >= 'Wed Mar 15 17:00:00 2017 PDT'::timestamp with time zone) AND ("time" < 'Wed Mar 22 17:00:00 2017 PDT'::timestamp with time zone)) | f          | f        | t
+ _timescaledb_internal._hyper_2_3_chunk | constraint_5 | c    | {device} | -     | (_timescaledb_internal.get_partition_hash(device) < 1073741823)                                                                                | f          | f        | t
+ _timescaledb_internal._hyper_2_4_chunk | constraint_4 | c    | {time}   | -     | (("time" >= 'Wed Mar 15 17:00:00 2017 PDT'::timestamp with time zone) AND ("time" < 'Wed Mar 22 17:00:00 2017 PDT'::timestamp with time zone)) | f          | f        | t
+ _timescaledb_internal._hyper_2_4_chunk | constraint_6 | c    | {device} | -     | (_timescaledb_internal.get_partition_hash(device) >= 1073741823)                                                                               | f          | f        | t
+(4 rows)
+
+-- Make sure constraint exclusion works on device column
+EXPLAIN (verbose, costs off)
+SELECT * FROM part_new WHERE device = 1;
+                                       QUERY PLAN                                        
+-----------------------------------------------------------------------------------------
+ Append
+   ->  Seq Scan on public.part_new
+         Output: part_new."time", part_new.temp, part_new.device
+         Filter: (part_new.device = 1)
+   ->  Seq Scan on _timescaledb_internal._hyper_2_3_chunk
+         Output: _hyper_2_3_chunk."time", _hyper_2_3_chunk.temp, _hyper_2_3_chunk.device
+         Filter: (_hyper_2_3_chunk.device = 1)
+(7 rows)
+
+CREATE TABLE part_new_convert1(time timestamptz, temp float8, device int);
+SELECT create_hypertable('part_new_convert1', 'time', 'temp', 2);
+NOTICE:  adding not-null constraint to column "time"
+ create_hypertable 
+-------------------
+ 
+(1 row)
+
+INSERT INTO part_new_convert1 VALUES ('2017-03-22T09:18:23', 1.0, 2);
+\set ON_ERROR_STOP 0
+-- Changing the type of a hash-partitioned column should not be supported
+ALTER TABLE part_new_convert1 ALTER COLUMN temp TYPE numeric;
+ERROR:  cannot change the type of a hash-partitioned column
+\set ON_ERROR_STOP 1
+-- Should be able to change if not hash partitioned though
+ALTER TABLE part_new_convert1 ALTER COLUMN time TYPE timestamp;
+SELECT * FROM test.show_columnsp('_timescaledb_internal._hyper_3_%_chunk');
+                Relation                | Kind | Column |         Column type         | Nullable 
+----------------------------------------+------+--------+-----------------------------+----------
+ _timescaledb_internal._hyper_3_5_chunk | r    | time   | timestamp without time zone | t
+ _timescaledb_internal._hyper_3_5_chunk | r    | temp   | double precision            | f
+ _timescaledb_internal._hyper_3_5_chunk | r    | device | integer                     | f
+(3 rows)
+
+CREATE TABLE part_add_dim(time timestamptz, temp float8, device int, location int);
+SELECT create_hypertable('part_add_dim', 'time', 'temp', 2);
+NOTICE:  adding not-null constraint to column "time"
+ create_hypertable 
+-------------------
+ 
+(1 row)
+
+\set ON_ERROR_STOP 0
+SELECT add_dimension('part_add_dim', 'location', 2, partitioning_func => 'bad_func');
+ERROR:  function "bad_func" does not exist at character 74
+\set ON_ERROR_STOP 1
+SELECT add_dimension('part_add_dim', 'location', 2, partitioning_func => '_timescaledb_internal.get_partition_for_key');
+ add_dimension 
+---------------
+ 
+(1 row)
+
+SELECT * FROM _timescaledb_catalog.dimension;
+ id | hypertable_id | column_name |         column_type         | aligned | num_slices | partitioning_func_schema |   partitioning_func   | interval_length 
+----+---------------+-------------+-----------------------------+---------+------------+--------------------------+-----------------------+-----------------
+  1 |             1 | time        | timestamp with time zone    | t       |            |                          |                       |    604800000000
+  2 |             1 | device      | integer                     | f       |          2 | _timescaledb_internal    | get_partition_for_key |                
+  3 |             2 | time        | timestamp with time zone    | t       |            |                          |                       |    604800000000
+  4 |             2 | device      | integer                     | f       |          2 | _timescaledb_internal    | get_partition_hash    |                
+  6 |             3 | temp        | double precision            | f       |          2 | _timescaledb_internal    | get_partition_hash    |                
+  5 |             3 | time        | timestamp without time zone | t       |            |                          |                       |    604800000000
+  7 |             4 | time        | timestamp with time zone    | t       |            |                          |                       |    604800000000
+  8 |             4 | temp        | double precision            | f       |          2 | _timescaledb_internal    | get_partition_hash    |                
+  9 |             4 | location    | integer                     | f       |          2 | _timescaledb_internal    | get_partition_for_key |                
+(9 rows)
+
+-- Test that we support custom SQL-based partitioning functions and
+-- that our native partitioning function handles function expressions
+-- as argument
+CREATE OR REPLACE FUNCTION custom_partfunc(source anyelement)
+    RETURNS INTEGER LANGUAGE PLPGSQL IMMUTABLE AS
+$BODY$
+DECLARE
+    retval INTEGER;
+BEGIN
+    retval = _timescaledb_internal.get_partition_hash(substring(source::text FROM '[A-za-z0-9 ]+'));
+    RAISE NOTICE 'hash value for % is %', source, retval;
+    RETURN retval;
+END
+$BODY$;
+CREATE TABLE part_custom_func(time timestamptz, temp float8, device text);
+SELECT create_hypertable('part_custom_func', 'time', 'device', 2, partitioning_func => 'custom_partfunc');
+NOTICE:  adding not-null constraint to column "time"
+ create_hypertable 
+-------------------
+ 
+(1 row)
+
+SELECT _timescaledb_internal.get_partition_hash(substring('dev1' FROM '[A-za-z0-9 ]+'));
+ get_partition_hash 
+--------------------
+         1129986420
+(1 row)
+
+SELECT _timescaledb_internal.get_partition_hash('dev1'::text);
+ get_partition_hash 
+--------------------
+         1129986420
+(1 row)
+
+SELECT _timescaledb_internal.get_partition_hash('dev7'::text);
+ get_partition_hash 
+--------------------
+          449729092
+(1 row)
+
+INSERT INTO part_custom_func VALUES ('2017-03-22T09:18:23', 23.4, 'dev1'),
+                                    ('2017-03-22T09:18:23', 23.4, 'dev7');
+NOTICE:  hash value for dev1 is 1129986420
+NOTICE:  hash value for dev1 is 1129986420
+NOTICE:  hash value for dev7 is 449729092
+NOTICE:  hash value for dev7 is 449729092
+SELECT * FROM test.show_subtables('part_custom_func');
+                 Child                  | Tablespace 
+----------------------------------------+------------
+ _timescaledb_internal._hyper_5_6_chunk | 
+ _timescaledb_internal._hyper_5_7_chunk | 
+(2 rows)
+
+-- This first test is slightly trivial, but segfaulted in old versions
+CREATE TYPE simpl AS (val1 int4);
+CREATE OR REPLACE FUNCTION simpl_type_hash(ANYELEMENT) RETURNS int4 AS $$
+    SELECT $1.val1;
+$$ LANGUAGE SQL IMMUTABLE;
+CREATE TABLE simpl_partition ("timestamp" TIMESTAMPTZ, object simpl);
+SELECT create_hypertable(
+    'simpl_partition',
+    'timestamp',
+    'object',
+    1000,
+    chunk_time_interval => interval '1 day',
+    partitioning_func=>'simpl_type_hash');
+NOTICE:  adding not-null constraint to column "timestamp"
+ create_hypertable 
+-------------------
+ 
+(1 row)
+
+INSERT INTO simpl_partition VALUES ('2017-03-22T09:18:23', ROW(1)::simpl);
+SELECT * from simpl_partition;
+          timestamp           | object 
+------------------------------+--------
+ Wed Mar 22 09:18:23 2017 PDT | (1)
+(1 row)
+
+-- Also test that the fix works when we have more chunks than allowed at once
+SET timescaledb.max_open_chunks_per_insert=1;
+INSERT INTO simpl_partition VALUES
+    ('2017-03-22T10:18:23', ROW(0)::simpl),
+    ('2017-03-22T10:18:23', ROW(1)::simpl),
+    ('2017-03-22T10:18:23', ROW(2)::simpl),
+    ('2017-03-22T10:18:23', ROW(3)::simpl),
+    ('2017-03-22T10:18:23', ROW(4)::simpl),
+    ('2017-03-22T10:18:23', ROW(5)::simpl);
+SET timescaledb.max_open_chunks_per_insert=default;
+SELECT * from simpl_partition;
+          timestamp           | object 
+------------------------------+--------
+ Wed Mar 22 09:18:23 2017 PDT | (1)
+ Wed Mar 22 10:18:23 2017 PDT | (0)
+ Wed Mar 22 10:18:23 2017 PDT | (1)
+ Wed Mar 22 10:18:23 2017 PDT | (2)
+ Wed Mar 22 10:18:23 2017 PDT | (3)
+ Wed Mar 22 10:18:23 2017 PDT | (4)
+ Wed Mar 22 10:18:23 2017 PDT | (5)
+(7 rows)
+
+-- Test that index creation is handled correctly.
+CREATE TABLE hyper_with_index(time timestamptz, temp float, device int);
+CREATE UNIQUE INDEX temp_index ON hyper_with_index(temp);
+\set ON_ERROR_STOP 0
+SELECT create_hypertable('hyper_with_index', 'time');
+NOTICE:  adding not-null constraint to column "time"
+ERROR:  cannot create a unique index without the column "time" (used in partitioning)
+SELECT create_hypertable('hyper_with_index', 'time', 'device', 2);
+NOTICE:  adding not-null constraint to column "time"
+ERROR:  cannot create a unique index without the column "time" (used in partitioning)
+SELECT create_hypertable('hyper_with_index', 'time', 'temp', 2);
+NOTICE:  adding not-null constraint to column "time"
+ERROR:  cannot create a unique index without the column "time" (used in partitioning)
+\set ON_ERROR_STOP 1
+DROP INDEX temp_index;
+CREATE UNIQUE INDEX time_index ON hyper_with_index(time);
+\set ON_ERROR_STOP 0
+-- should error because device not in index
+SELECT create_hypertable('hyper_with_index', 'time', 'device', 4);
+NOTICE:  adding not-null constraint to column "time"
+ERROR:  cannot create a unique index without the column "device" (used in partitioning)
+\set ON_ERROR_STOP 1
+SELECT create_hypertable('hyper_with_index', 'time');
+NOTICE:  adding not-null constraint to column "time"
+ create_hypertable 
+-------------------
+ 
+(1 row)
+
+-- make sure user created index is used.
+-- not using \d or \d+ because output syntax differs
+-- between postgres 9 and postgres 10.
+SELECT indexname FROM pg_indexes WHERE tablename = 'hyper_with_index';
+ indexname  
+------------
+ time_index
+(1 row)
+
+\set ON_ERROR_STOP 0
+SELECT add_dimension('hyper_with_index', 'device', 4);
+ERROR:  cannot create a unique index without the column "device" (used in partitioning)
+\set ON_ERROR_STOP 1
+DROP INDEX time_index;
+CREATE UNIQUE INDEX time_space_index ON hyper_with_index(time, device);
+SELECT add_dimension('hyper_with_index', 'device', 4);
+ add_dimension 
+---------------
+ 
+(1 row)
+
+CREATE TABLE hyper_with_primary(time TIMESTAMPTZ PRIMARY KEY, temp float, device int);
+\set ON_ERROR_STOP 0
+SELECT create_hypertable('hyper_with_primary', 'time', 'device', 4);
+ERROR:  cannot create a unique index without the column "device" (used in partitioning)
+\set ON_ERROR_STOP 1
+SELECT create_hypertable('hyper_with_primary', 'time');
+ create_hypertable 
+-------------------
+ 
+(1 row)
+
+\set ON_ERROR_STOP 0
+SELECT add_dimension('hyper_with_primary', 'device', 4);
+ERROR:  cannot create a unique index without the column "device" (used in partitioning)
+\set ON_ERROR_STOP 1
+-- NON-unique indexes can still be created
+CREATE INDEX temp_index ON hyper_with_index(temp);
+-- Make sure custom composite types are supported as dimensions
+CREATE TYPE TUPLE as (val1 int4, val2 int4);
+CREATE FUNCTION tuple_hash(value ANYELEMENT) RETURNS INT4
+LANGUAGE PLPGSQL IMMUTABLE AS
+$BODY$
+BEGIN
+    RAISE NOTICE 'custom hash value is: %', value.val1+value.val2;
+    RETURN value.val1+value.val2;
+END
+$BODY$;
+CREATE TABLE part_custom_dim (time TIMESTAMPTZ, combo TUPLE, device TEXT);
+\set ON_ERROR_STOP 0
+-- should fail because no partitioning function supplied and the given custom type
+-- has no default hash function
+SELECT create_hypertable('part_custom_dim', 'time', 'combo', 4);
+NOTICE:  adding not-null constraint to column "time"
+ERROR:  could not find hash function for type tuple
+\set ON_ERROR_STOP 1
+SELECT create_hypertable('part_custom_dim', 'time', 'combo', 4, partitioning_func=>'tuple_hash');
+NOTICE:  adding not-null constraint to column "time"
+ create_hypertable 
+-------------------
+ 
+(1 row)
+
+INSERT INTO part_custom_dim(time, combo) VALUES (now(), (1,2));
+NOTICE:  custom hash value is: 3
+NOTICE:  custom hash value is: 3
