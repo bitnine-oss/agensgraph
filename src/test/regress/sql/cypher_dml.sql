@@ -1350,6 +1350,34 @@ COMMIT;
 
 DROP GRAPH ag170 CASCADE;
 
+
+-- AG-183 Unable to prepare cypher statement
+CREATE graph ag183;
+SET graph_path TO ag183;
+
+CREATE VLABEL v;
+
+PREPARE stmt1 (text, int, bool) AS CREATE (:v {name: $1, age: $2, married: $3});
+PREPARE stmt2 (text, int, bool) AS MERGE (a:v {name: $1, age: $2, married: $3}) RETURN properties(a);
+
+EXECUTE stmt1 ('p1', 30, false);
+EXECUTE stmt2 ('p2', 40, false);
+EXECUTE stmt2 ('p2', 40, false);
+
+MATCH (a:v) RETURN properties(a);
+
+PREPARE stmt3 AS MATCH (a:v) SET a.age = a.age + 1 RETURN properties(a);
+EXECUTE stmt3;
+
+PREPARE stmt4 (text) AS MATCH (a {name:$1}) RETURN properties(a);
+EXECUTE stmt4 ('p1');
+
+PREPARE stmt5 (bool) AS MATCH (a {married:$1}) DELETE a;
+EXECUTE stmt5 (false);
+
+MATCH (a:v) RETURN properties(a);
+
+DROP GRAPH ag183 CASCADE;
 -- cleanup
 
 DROP GRAPH srf CASCADE;
