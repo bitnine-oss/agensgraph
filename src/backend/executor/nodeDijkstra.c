@@ -348,6 +348,7 @@ ExecDijkstra(PlanState *pstate)
 		dijkstra_pq_entry *min_pq_entry;
 		vnode	   *frontier;
 		int			paramno;
+		Datum		orig_param;
 		ParamExecData *prm;
 
 		min_pq_entry = (dijkstra_pq_entry *) pairingheap_remove_first(node->pq);
@@ -361,6 +362,7 @@ ExecDijkstra(PlanState *pstate)
 		paramno = ((Param *) node->source->expr)->paramid;
 
 		prm = &(econtext->ecxt_param_exec_vals[paramno]);
+		orig_param = prm->value;
 		prm->value = UInt64GetDatum(min_pq_entry->to);
 		outerPlan->chgParam = bms_add_member(outerPlan->chgParam, paramno);
 		ExecReScan(outerPlan);
@@ -419,6 +421,11 @@ ExecDijkstra(PlanState *pstate)
 				vnode_add_enode(neighbor, new_weight, eid_val, frontier);
 			}
 		}
+
+		/*
+		 * Parameter is also used in the parent plan, so it must be restored.
+		 */
+		prm->value = orig_param;
 	}
 
 	node->n = node->max_n;

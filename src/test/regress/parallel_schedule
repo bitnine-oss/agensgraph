@@ -123,7 +123,7 @@ test: event_trigger
 test: stats
 
 # run cypher dml test
-test: cypher_dml cypher_eager graphid
+test: cypher_dml cypher_shortestpath cypher_eager graphid
 
 # run cypher ddl test
 test: cypher_ddl
