@@ -3416,6 +3416,60 @@ DETAIL:  drop cascades to sequence ag170.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel foo
+-- AG-183 Unable to prepare cypher statement
+CREATE graph ag183;
+SET graph_path TO ag183;
+CREATE VLABEL v;
+PREPARE stmt1 (text, int, bool) AS CREATE (:v {name: $1, age: $2, married: $3});
+PREPARE stmt2 (text, int, bool) AS MERGE (a:v {name: $1, age: $2, married: $3}) RETURN properties(a);
+EXECUTE stmt1 ('p1', 30, false);
+EXECUTE stmt2 ('p2', 40, false);
+                 properties                  
+---------------------------------------------
+ {"age": 40, "name": "p2", "married": false}
+(1 row)
+
+EXECUTE stmt2 ('p2', 40, false);
+                 properties                  
+---------------------------------------------
+ {"age": 40, "name": "p2", "married": false}
+(1 row)
+
+MATCH (a:v) RETURN properties(a);
+                 properties                  
+---------------------------------------------
+ {"age": 30, "name": "p1", "married": false}
+ {"age": 40, "name": "p2", "married": false}
+(2 rows)
+
+PREPARE stmt3 AS MATCH (a:v) SET a.age = a.age + 1 RETURN properties(a);
+EXECUTE stmt3;
+                 properties                  
+---------------------------------------------
+ {"age": 31, "name": "p1", "married": false}
+ {"age": 41, "name": "p2", "married": false}
+(2 rows)
+
+PREPARE stmt4 (text) AS MATCH (a {name:$1}) RETURN properties(a);
+EXECUTE stmt4 ('p1');
+                 properties                  
+---------------------------------------------
+ {"age": 31, "name": "p1", "married": false}
+(1 row)
+
+PREPARE stmt5 (bool) AS MATCH (a {married:$1}) DELETE a;
+EXECUTE stmt5 (false);
+MATCH (a:v) RETURN properties(a);
+ properties 
+------------
+(0 rows)
+
+DROP GRAPH ag183 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence ag183.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel v
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
