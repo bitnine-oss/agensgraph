@@ -1,4 +1,0 @@
-/agent/bin/pg_statsinfod
-/agent/lib/pg_statsinfo.sql
-/reporter/pg_statsinfo
-/test/results/
