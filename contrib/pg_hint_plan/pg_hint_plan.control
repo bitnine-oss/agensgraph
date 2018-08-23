@@ -1,6 +1,0 @@
-# pg_hint_plan extension
-
-comment = ''
-default_version = '1.3.0'
-relocatable = false
-schema = hint_plan
