@@ -11,7 +11,7 @@ REGRESS = init base_plan pg_hint_plan ut-init ut-A ut-S ut-J ut-L ut-G ut-R ut-f
 
 REGRESSION_EXPECTED = expected/init.out expected/base_plan.out expected/pg_hint_plan.out expected/ut-A.out expected/ut-S.out expected/ut-J.out expected/ut-L.out expected/ut-G.out
 
-REGRESS_OPTS = --encoding=UTF8
+REGRESS_OPTS = --encoding=UTF8 --temp-config $(top_srcdir)/contrib/pg_stat_statements/pg_stat_statements.conf
 
 EXTENSION = pg_hint_plan
 DATA = pg_hint_plan--1.2.0.sql pg_hint_plan--1.1.3--1.2.0.sql

@@ -3334,6 +3334,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3345,7 +3346,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 SET pg_hint_plan.parse_messages TO error;
 /*+Set(enable_seqscan off)Set(geqo_threshold 100)SeqScan(t1)MergeJoin(t1 t2)NestLoop(t1 t1)*/
@@ -3378,6 +3379,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3389,7 +3391,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 /*+Set(enable_seqscan off)Set(geqo_threshold 100)SeqScan(t1)MergeJoin(t1 t2)*/
 EXPLAIN (COSTS false) SELECT * FROM s1.t1, s1.t2 WHERE t1.c1 = t2.c1;
@@ -3441,6 +3443,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3452,7 +3455,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 SET pg_hint_plan.parse_messages TO error;
 /*+Set(enable_seqscan off)Set(geqo_threshold 100)SeqScan(t1)MergeJoin(t1 t2)NestLoop(t1 t1)*/
@@ -3485,6 +3488,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3496,7 +3500,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 EXPLAIN (COSTS false) EXECUTE p1;
              QUERY PLAN             
@@ -3537,6 +3541,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3548,7 +3553,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 SET pg_hint_plan.parse_messages TO error;
 EXPLAIN (COSTS false) EXECUTE p2;
@@ -3612,6 +3617,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3623,7 +3629,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 -- No. A-12-1-4
 -- No. A-12-2-4
@@ -3653,6 +3659,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3664,7 +3671,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 SET pg_hint_plan.parse_messages TO error;
 EXPLAIN (COSTS false) EXECUTE p2;
@@ -3706,6 +3713,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3717,7 +3725,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 DEALLOCATE p1;
 SET pg_hint_plan.parse_messages TO LOG;
@@ -3774,6 +3782,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3785,7 +3794,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 /*+Set(enable_indexscan on)Set(geqo_threshold 100)IndexScan(t2)MergeJoin(t1 t2)Leading(t2 t1)*/
 EXPLAIN (COSTS false) SELECT * FROM s1.t1, s1.t2 WHERE t1.c1 = t2.c1;
@@ -3834,6 +3843,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3845,7 +3855,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 EXPLAIN (COSTS false) SELECT * FROM s1.t1, s1.t2 WHERE t1.c1 = t2.c1;
           QUERY PLAN          
@@ -3896,6 +3906,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3907,7 +3918,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 BEGIN;
 /*+Set(enable_indexscan on)Set(geqo_threshold 100)IndexScan(t2)MergeJoin(t1 t2)Leading(t2 t1)*/
@@ -3959,6 +3970,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -3970,7 +3982,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 EXPLAIN (COSTS false) SELECT * FROM s1.t1, s1.t2 WHERE t1.c1 = t2.c1;
           QUERY PLAN          
@@ -4022,6 +4034,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -4033,7 +4046,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | log
-(34 rows)
+(35 rows)
 
 /*+Set(enable_indexscan on)Set(geqo_threshold 100)IndexScan(t2)MergeJoin(t1 t2)Leading(t2 t1)*/
 EXPLAIN (COSTS false) SELECT * FROM s1.t1, s1.t2 WHERE t1.c1 = t2.c1;
@@ -4086,6 +4099,7 @@ SELECT name, setting FROM settings;
  random_page_cost           | 4
  seq_page_cost              | 1
  enable_bitmapscan          | on
+ enable_eager               | on
  enable_hashagg             | on
  enable_hashjoin            | on
  enable_indexonlyscan       | on
@@ -4097,7 +4111,7 @@ SELECT name, setting FROM settings;
  enable_sort                | on
  enable_tidscan             | on
  client_min_messages        | notice
-(34 rows)
+(35 rows)
 
 EXPLAIN (COSTS false) SELECT * FROM s1.t1, s1.t2 WHERE t1.c1 = t2.c1;
           QUERY PLAN          

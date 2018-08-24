@@ -3,6 +3,7 @@ ALTER SYSTEM SET session_preload_libraries TO 'pg_hint_plan';
 SET pg_hint_plan.enable_hint TO on;
 SET pg_hint_plan.debug_print TO on;
 SET client_min_messages TO LOG;
+SET work_mem = '16MB';
 CREATE TABLE s1.tl (a int);
 INSERT INTO s1.tl (SELECT a FROM generate_series(0, 100000) a);
 -- Queries on ordinary tables with default setting
@@ -912,15 +913,15 @@ Parallel(s1 3 hard)
 duplication hint:
 error hint:
 
-                                          QUERY PLAN                                           
------------------------------------------------------------------------------------------------
+                                            QUERY PLAN                                            
+--------------------------------------------------------------------------------------------------
  Append
    ->  Result
          ->  Append
                ->  Sample Scan on p1_c1_c1 s1
                      Sampling: system ('10'::real)
                ->  Foreign Scan on ft1
-                     Foreign File: /home/horiguti/work/pg_hint_plan/pg_hint_plan/data/data.csv
+                     Foreign File: /home/agens-dist/agensgraph/contrib/pg_hint_plan/data/data.csv
                ->  CTE Scan on cte1
                      CTE cte1
                        ->  Gather
