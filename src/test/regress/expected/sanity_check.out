@@ -16,6 +16,7 @@ a_star|f
 abstime_tbl|f
 ag_graph|t
 ag_label|t
+ag_labmeta|t
 aggtest|f
 array_index_op_test|t
 array_op_test|f
