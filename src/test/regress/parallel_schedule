@@ -125,12 +125,14 @@ test: stats
 # run cypher dml test
 test: cypher_dml cypher_shortestpath cypher_eager graphid
 
+# run aglabmeta
+test: aglabmeta
+
 # run cypher ddl test
 test: cypher_ddl
 
 # run cypher function test
 test: cypher_func cypher_plpgsql
-
 
 # run sql restriction test
 test: sql_restriction
