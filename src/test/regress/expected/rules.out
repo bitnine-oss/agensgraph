@@ -1283,6 +1283,20 @@ drop table cchild;
 -- temporarily disable fancy output, so view changes create less diff noise
 \a\t
 SELECT viewname, definition FROM pg_views WHERE schemaname <> 'information_schema' ORDER BY viewname;
+ag_labname_meta| SELECT ( SELECT ag_graph.graphname
+           FROM ag_graph
+          WHERE (ag_graph.oid = ag_labmeta.graph)) AS graphname,
+    ( SELECT ag_label.labname
+           FROM ag_label
+          WHERE ((ag_labmeta.start = ag_label.labid) AND (ag_labmeta.graph = ag_label.graphid))) AS start,
+    ( SELECT ag_label.labname
+           FROM ag_label
+          WHERE ((ag_labmeta.edge = ag_label.labid) AND (ag_labmeta.graph = ag_label.graphid))) AS edge,
+    ( SELECT ag_label.labname
+           FROM ag_label
+          WHERE ((ag_labmeta."end" = ag_label.labid) AND (ag_labmeta.graph = ag_label.graphid))) AS "end",
+    ag_labmeta.edgecount
+   FROM ag_labmeta;
 ag_property_indexes| SELECT n.nspname AS graphname,
     c.relname AS labelname,
     i.relname AS indexname,
