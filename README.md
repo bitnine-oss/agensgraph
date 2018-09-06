@@ -25,6 +25,11 @@ Building from the Source Code
         $ dnf install gcc glibc bison flex readline readline-devel zlib zlib-devel
         ```
 
+    * RHEL:
+        ```sh
+        $ yum install gcc glibc glib-common readline readline-devel zlib zlib-devel flex bison
+        ```
+
     * Ubuntu:
         ```sh
         $ sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison
