@@ -757,11 +757,9 @@ transformCypherDeleteClause(ParseState *pstate, CypherClause *clause)
 		CypherDeleteClause *prevDel = (CypherDeleteClause *) prev->detail;
 
 		if (prevDel->detach == detail->detach)
-		{
 			detail->exprs = list_concat(prevDel->exprs, detail->exprs);
 
-			clause->prev = prev->prev;
-		}
+		clause->prev = prev->prev;
 	}
 
 	qry = makeNode(Query);

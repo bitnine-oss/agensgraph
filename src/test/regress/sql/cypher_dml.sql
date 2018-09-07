@@ -740,6 +740,15 @@ MATCH p=(a:v2)
 DELETE a
 RETURN p;
 
+CREATE (:v1);
+
+MATCH (a:v1)
+DELETE a
+DETACH DELETE a
+DELETE a;
+
+MATCH (a:v1) RETURN a;
+
 --
 -- Uniqueness
 --
