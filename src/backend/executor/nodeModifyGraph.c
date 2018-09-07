@@ -66,7 +66,7 @@ static TupleTableSlot *ExecDeleteGraph(ModifyGraphState *mgstate,
 static bool isDetachRequired(ModifyGraphState *mgstate);
 static void deleteElem(ModifyGraphState *mgstate, Datum elem,
 					   Datum id, Oid type);
-static bool isEdgesOfPath(List *exprs, char *variable);
+static bool isEdgeArrayOfPath(List *exprs, char *variable);
 
 /* SET */
 static TupleTableSlot *ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind,
@@ -363,8 +363,8 @@ ExecModifyGraph(PlanState *pstate)
 				 * So, the graphpath must be passed to the next plan for
 				 * deleting vertex array of the graphpath.
 				 */
-				if (isEdgesOfPath(mgstate->exprs,
-								  NameStr(tupDesc->attrs[i]->attname)))
+				if (isEdgeArrayOfPath(mgstate->exprs,
+									  NameStr(tupDesc->attrs[i]->attname)))
 					continue;
 
 				elem = getPathFinal(mgstate, result->tts_values[i]);
@@ -973,19 +973,19 @@ deleteElem(ModifyGraphState *mgstate, Datum elem, Datum gid, Oid type)
 	 */
 
 	if (type == VERTEXOID)
-		estate->es_graphwrstats.deleteVertex += 1;
+		estate->es_graphwrstats.deleteVertex++;
 	else
 	{
 		Assert(type == EDGEOID);
 
-		estate->es_graphwrstats.deleteEdge += 1;
+		estate->es_graphwrstats.deleteEdge++;
 	}
 
 	estate->es_result_relation_info = savedResultRelInfo;
 }
 
 static bool
-isEdgesOfPath(List *exprs, char *variable)
+isEdgeArrayOfPath(List *exprs, char *variable)
 {
 	ListCell   *lc;
 
@@ -1738,7 +1738,7 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 			if (isdeleted)
 				continue;
 			else
-				elog(ERROR, "cannot delete a vertex in a graphpath");
+				elog(ERROR, "cannot delete a vertex in graphpath");
 		}
 
 		if (vertex != value)
@@ -1765,7 +1765,7 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 			if (isdeleted)
 				continue;
 			else
-				elog(ERROR, "cannot modify the element of graphpath.");
+				elog(ERROR, "cannot delete a edge in graphpath.");
 		}
 
 		if (edge != value)
