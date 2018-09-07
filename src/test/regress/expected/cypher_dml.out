@@ -2181,7 +2181,7 @@ CREATE ()-[:rel]->()-[:rel]->();
 MATCH p = ()-[:rel]->(), ()-[r:rel]->()
 DELETE r
 RETURN *;
-ERROR:  cannot modify the element of graphpath.
+ERROR:  cannot delete a edge in graphpath.
 MATCH p = ()-[:rel]->(), (a)-[:rel]->()
 DELETE a
 RETURN *;
@@ -2232,6 +2232,17 @@ RETURN p;
 ---
  
 (1 row)
+
+CREATE (:v1);
+MATCH (a:v1)
+DELETE a
+DETACH DELETE a
+DELETE a;
+NOTICE:  skipping deletion of NULL graph element
+MATCH (a:v1) RETURN a;
+ a 
+---
+(0 rows)
 
 --
 -- Uniqueness
