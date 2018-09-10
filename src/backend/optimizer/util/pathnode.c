@@ -3560,17 +3560,17 @@ create_shortestpath_path(PlannerInfo *root,
 	pathnode->jpath.minhops = extra->sjinfo->min_hops;
 	pathnode->jpath.maxhops = extra->sjinfo->max_hops;
 
-	pathnode->end_id_left = parse->shortestpathEndIdLeft;
-	pathnode->end_id_right = parse->shortestpathEndIdRight;
-	pathnode->tableoid_left = parse->shortestpathTableOidLeft;
-	pathnode->tableoid_right = parse->shortestpathTableOidRight;
-	pathnode->ctid_left = parse->shortestpathCtidLeft;
-	pathnode->ctid_right = parse->shortestpathCtidRight;
-	pathnode->source = parse->shortestpathSource;
-	pathnode->target = parse->shortestpathTarget;
-	pathnode->minhops = parse->shortestpathMinhops;
-	pathnode->maxhops = parse->shortestpathMaxhops;
-	pathnode->limit = parse->shortestpathLimit;
+	pathnode->source = parse->shortestpath.sourceInfo;
+	pathnode->target = parse->shortestpath.targetInfo;
+	pathnode->end_id_starttoend = parse->shortestpath.spEndId_starttoend;
+	pathnode->end_id_endtostart = parse->shortestpath.spEndId_endtostart;
+	pathnode->tableoid_starttoend = parse->shortestpath.spTableOid_starttoend;
+	pathnode->tableoid_endtostart = parse->shortestpath.spTableOid_endtostart;
+	pathnode->ctid_starttoend = parse->shortestpath.spCtid_starttoend;
+	pathnode->ctid_endtostart = parse->shortestpath.spCtid_endtostart;
+	pathnode->minhops = parse->shortestpath.spMinhops;
+	pathnode->maxhops = parse->shortestpath.spMaxhops;
+	pathnode->limit = parse->shortestpath.spLimit;
 
 	final_cost_nestloop(root,
 						(NestPath*)pathnode,

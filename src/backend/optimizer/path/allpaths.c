@@ -2994,7 +2994,7 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 	if (subquery->commandType == CMD_GRAPHWRITE)
 		return;
 
-	if (subquery->shortestpathSource)
+	if (subquery->shortestpath.sourceInfo)
 		return;
 
 	/*

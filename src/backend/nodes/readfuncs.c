@@ -267,22 +267,22 @@ _readQuery(void)
 	READ_LOCATION_FIELD(stmt_location);
 	READ_LOCATION_FIELD(stmt_len);
 
-	READ_INT_FIELD(dijkstraWeight);
-	READ_BOOL_FIELD(dijkstraWeightOut);
-	READ_NODE_FIELD(dijkstraEndId);
-	READ_NODE_FIELD(dijkstraEdgeId);
-	READ_NODE_FIELD(dijkstraLimit);
-	READ_NODE_FIELD(shortestpathEndIdLeft);
-	READ_NODE_FIELD(shortestpathEndIdRight);
-	READ_NODE_FIELD(shortestpathTableOidLeft);
-	READ_NODE_FIELD(shortestpathTableOidRight);
-	READ_NODE_FIELD(shortestpathCtidLeft);
-	READ_NODE_FIELD(shortestpathCtidRight);
-	READ_NODE_FIELD(shortestpathSource);
-	READ_NODE_FIELD(shortestpathTarget);
-	READ_LONG_FIELD(shortestpathMinhops);
-	READ_LONG_FIELD(shortestpathMaxhops);
-	READ_LONG_FIELD(shortestpathLimit);
+	READ_NODE_FIELD(shortestpath.sourceInfo);
+	READ_NODE_FIELD(shortestpath.targetInfo);
+	READ_INT_FIELD(shortestpath.dijkstraWeight);
+	READ_BOOL_FIELD(shortestpath.dijkstraWeightOut);
+	READ_NODE_FIELD(shortestpath.dijkstraEndId);
+	READ_NODE_FIELD(shortestpath.dijkstraEdgeId);
+	READ_NODE_FIELD(shortestpath.dijkstraLimit);
+	READ_NODE_FIELD(shortestpath.spEndId_starttoend);
+	READ_NODE_FIELD(shortestpath.spEndId_endtostart);
+	READ_NODE_FIELD(shortestpath.spTableOid_starttoend);
+	READ_NODE_FIELD(shortestpath.spTableOid_endtostart);
+	READ_NODE_FIELD(shortestpath.spCtid_starttoend);
+	READ_NODE_FIELD(shortestpath.spCtid_endtostart);
+	READ_LONG_FIELD(shortestpath.spMinhops);
+	READ_LONG_FIELD(shortestpath.spMaxhops);
+	READ_LONG_FIELD(shortestpath.spLimit);
 
 	READ_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	READ_BOOL_FIELD(graph.last);
@@ -2329,12 +2329,12 @@ _readShortestpath(void)
 
 	READ_NODE_FIELD(hashclauses);
 
-	READ_INT_FIELD(end_id_left);
-	READ_INT_FIELD(end_id_right);
-	READ_INT_FIELD(tableoid_left);
-	READ_INT_FIELD(tableoid_right);
-	READ_INT_FIELD(ctid_left);
-	READ_INT_FIELD(ctid_right);
+	READ_INT_FIELD(end_id_starttoend);
+	READ_INT_FIELD(end_id_endtostart);
+	READ_INT_FIELD(tableoid_starttoend);
+	READ_INT_FIELD(tableoid_endtostart);
+	READ_INT_FIELD(ctid_starttoend);
+	READ_INT_FIELD(ctid_endtostart);
 	READ_NODE_FIELD(source);
 	READ_NODE_FIELD(target);
 	READ_LONG_FIELD(minhops);

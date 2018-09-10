@@ -32,8 +32,6 @@ lib*.pc
 tags
 cscope.*
 *.swp
-*~
-.DS_Store
 
 # Local excludes in root directory
 /GNUmakefile
@@ -46,7 +44,6 @@ cscope.*
 /Release/
 /tmp_install/
 /doc/build/
-/agensgraph.xcodeproj/
 
 # Local excludes of install directories
 /bin/

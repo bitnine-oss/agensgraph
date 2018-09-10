@@ -2227,21 +2227,22 @@ typedef struct ShortestpathState
 	int              sp_CurOuterIdx;
 	TupleTableSlot  *sp_OuterTupleSlot;
 	TupleTableSlot  *sp_HashTupleSlot;
-	long             sp_Hops;
+	long             sp_OptimalHops;	 /* struct shrotestpath->maxhops * (N of 2) or
+											32 * (N of 2) */
 	int              sp_RowidSize;
 	MinimalTuple     sp_GraphidTuple;
 	MinimalTuple     sp_OuterTuple;
 	unsigned char   *sp_Vertexids;
 	unsigned char   *sp_Edgeids;
 	int              sp_JoinState;
-	ExprState       *source;
-	ExprState       *target;
-	long             minhops;
-	long             maxhops;
+	ExprState       *source;			/* first vertex expression */
+	ExprState       *target;			/* last vertex expression */
+	long             minhops;			/* minimum edge count */
+	long             maxhops;			/* maximum edge count */
 	long             limit;
 	Graphid          startVid;
 	Graphid          endVid;
-	long             hops;
+	long             currHops;
 	long             numResults;
 	Hash2SideState  *outerNode;
 	Hash2SideState  *innerNode;

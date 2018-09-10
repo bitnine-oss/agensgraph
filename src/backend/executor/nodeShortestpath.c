@@ -86,6 +86,8 @@ ExecShortestpath(PlanState *pstate)
 	uint32          hashvalue;
 	int             batchno;
 	bool            isNull;
+	Datum			startVid;
+	Datum			endVid;
 
 	/*
 	 * get information from Shortestpath node
@@ -125,10 +127,27 @@ ExecShortestpath(PlanState *pstate)
 				outerNode->hops = 0;
 				innerNode->hops = 0;
 
-				if (node->startVid == 0)
-					node->startVid = DatumGetGraphid(ExecEvalExpr(node->source, econtext, &isNull));
-				if (node->endVid == 0)
-					node->endVid = DatumGetGraphid(ExecEvalExpr(node->target, econtext, &isNull));
+				if (node->startVid == InvalidOid)
+				{
+					startVid = ExecEvalExpr(node->source, econtext, &isNull);
+					if (isNull)
+						ereport(ERROR,
+								(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+								 errmsg("start vertex cannot be NULL")));
+
+					node->startVid = DatumGetGraphid(startVid);
+				}
+
+				if (node->endVid == InvalidOid)
+				{
+					endVid = ExecEvalExpr(node->target, econtext, &isNull);
+					if (isNull)
+						ereport(ERROR,
+								(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
+								 errmsg("end vertex cannot be NULL")));
+
+					node->endVid = DatumGetGraphid(endVid);
+				}
 
 				node->sp_JoinState = SP_ROTATE_PLANSTATE;
 
@@ -184,26 +203,27 @@ ExecShortestpath(PlanState *pstate)
 
 			case SP_ROTATE_PLANSTATE:
 
-				if (node->numResults > 0 || node->hops >= node->maxhops ||
+				/* This loop is finished under the below condition. */
+				if (node->numResults > 0 || node->currHops >= node->maxhops ||
 					outerNode->totalPaths == 0 || innerNode->totalPaths == 0)
 				{
 					return NULL;
 				}
 
-				node->hops++;
-				if (node->hops >= node->sp_Hops)
+				node->currHops++;
+				if (node->currHops >= node->sp_OptimalHops)
 				{
-					node->sp_Hops *= 2;
+					node->sp_OptimalHops *= 2;
 					node->sp_OuterTuple = (MinimalTuple) repalloc(node->sp_OuterTuple,
 																  HJTUPLE_OVERHEAD +
 																  MAXALIGN(SizeofMinimalTupleHeader) +
 																  MAXALIGN(outerNode->ps.plan->plan_width *
-																		   node->sp_Hops +
+																		   node->sp_OptimalHops +
 																		   sizeof(Graphid)));
 					node->sp_Vertexids = (unsigned char *) repalloc(node->sp_Vertexids,
-																	sizeof(Graphid) * (node->sp_Hops + 1));
+																	sizeof(Graphid) * (node->sp_OptimalHops + 1));
 					node->sp_Edgeids = (unsigned char *) repalloc(node->sp_Edgeids,
-																  node->sp_RowidSize * node->sp_Hops);
+																  node->sp_RowidSize * node->sp_OptimalHops);
 				}
 
 				Assert(node->outerNode->hashtable != NULL &&
@@ -242,6 +262,7 @@ ExecShortestpath(PlanState *pstate)
 																 innerNode->hashtable->totalTuples,
 																 innerNode->totalPaths,
 																 innerNode->hops);
+							hashtable->spacePeak = innerNode->hashtable->spacePeak;
 							for (i = 0; i < innerNode->hashtable->nbatch; i++)
 							{
 								if (i != innerNode->hashtable->curbatch &&
@@ -270,6 +291,10 @@ ExecShortestpath(PlanState *pstate)
 										{
 											MinimalTuple tuple = ExecFetchSlotMinimalTuple(slot);
 											hashtable->totalTuples += 1;
+
+											/* sizeof(*tuple) + sizeof(Graphid) + node->sp_RowidSize isn't smaller than tuple->t_len.
+											   sizeof(*tuple) + sizeof(Graphid) + node->sp_RowidSize means path when it is bigger than tuple->t_len.
+											   so, Hash2SideState->totlPaths increases 1 */
 											if (tuple->t_len !=
 												sizeof(*tuple) + sizeof(Graphid) + node->sp_RowidSize)
 												innerNode->totalPaths += 1;
@@ -306,6 +331,9 @@ ExecShortestpath(PlanState *pstate)
 																				  NULL))
 												{
 													hashtable->totalTuples += 1;
+													/* sizeof(*tuple) + sizeof(Graphid) + node->sp_RowidSize isn't smaller than tuple->t_len.
+													   sizeof(*tuple) + sizeof(Graphid) + node->sp_RowidSize means path when it is bigger than tuple->t_len.
+													   so, Hash2SideState->totlPaths increases 1 */
 													if (tuple->t_len !=
 														sizeof(*tuple) + sizeof(Graphid) + node->sp_RowidSize)
 														innerNode->totalPaths += 1;
@@ -362,7 +390,8 @@ ExecShortestpath(PlanState *pstate)
 					node->sp_KeyTable = NULL;
 				}
 				outerNode->keytable = outerNode->hashtable;
-				if (hashtable->nbatch > 1){
+				if (hashtable->nbatch > 1)
+				{
 					outerNode->hashtable = ExecHash2SideTableClone(outerNode,
 																   node->sp_HashOperators,
 																   hashtable);
@@ -377,6 +406,7 @@ ExecShortestpath(PlanState *pstate)
 																	outerNode->totalPaths *
 																	outerNode->ps.plan->plan_rows,
 																	outerNode->hops);
+					outerNode->hashtable->spacePeak = outerNode->keytable->spacePeak;
 				}
 				node->sp_KeyTable = outerNode->keytable;
 				node->sp_OuterTable = outerNode->hashtable;
@@ -630,9 +660,9 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 	spstate->minhops    = node->minhops;
 	spstate->maxhops    = node->maxhops;
 	spstate->limit      = node->limit;
-	spstate->startVid   = 0;
-	spstate->endVid     = 0;
-	spstate->hops       = 0;
+	spstate->startVid   = InvalidOid;
+	spstate->endVid     = InvalidOid;
+	spstate->currHops       = 0;
 	spstate->numResults = 0;
 
 	/*
@@ -722,17 +752,17 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 	/* child Hash2Side node needs to evaluate inner hash keys, too */
 	((Hash2SideState *) innerPlanState(spstate))->hashkeys = rclauses;
 
-	spstate->sp_Hops = (node->maxhops < 32) ? node->maxhops : 32;
+	spstate->sp_OptimalHops = (node->maxhops < 32) ? node->maxhops : 32;
 	spstate->sp_RowidSize = outerNode->plan_width - sizeof(Graphid);
 	spstate->sp_GraphidTuple = (MinimalTuple) palloc(HJTUPLE_OVERHEAD +
 													 MAXALIGN(SizeofMinimalTupleHeader) +
 													 MAXALIGN(outerNode->plan_width));
 	spstate->sp_OuterTuple = (MinimalTuple) palloc(HJTUPLE_OVERHEAD +
 												   MAXALIGN(SizeofMinimalTupleHeader) +
-												   MAXALIGN(outerNode->plan_width * spstate->sp_Hops +
+												   MAXALIGN(outerNode->plan_width * spstate->sp_OptimalHops +
 															sizeof(Graphid)));
-	spstate->sp_Vertexids = (unsigned char *) palloc(sizeof(Graphid) * (spstate->sp_Hops + 1));
-	spstate->sp_Edgeids = (unsigned char *) palloc(spstate->sp_RowidSize * spstate->sp_Hops);
+	spstate->sp_Vertexids = (unsigned char *) palloc(sizeof(Graphid) * (spstate->sp_OptimalHops + 1));
+	spstate->sp_Edgeids = (unsigned char *) palloc(spstate->sp_RowidSize * spstate->sp_OptimalHops);
 
 	memset(spstate->sp_GraphidTuple, 0, sizeof(*(spstate->sp_GraphidTuple)) + outerNode->plan_width);
 	spstate->sp_GraphidTuple->t_len = sizeof(*(spstate->sp_GraphidTuple)) + outerNode->plan_width;
@@ -1418,12 +1448,12 @@ ExecReScanShortestpath(ShortestpathState *node)
 	if (node->js.ps.chgParam != NULL)
 	{
 		if (bms_is_member(((Param *) node->source->expr)->paramid, node->js.ps.chgParam))
-			node->startVid = 0;
+			node->startVid = InvalidOid;
 		if (bms_is_member(((Param *) node->target->expr)->paramid, node->js.ps.chgParam))
-			node->endVid = 0;
+			node->endVid = InvalidOid;
 	}
 
-	node->hops       = 0;
+	node->currHops   = 0;
 	node->numResults = 0;
 
 	node->outerNode = (Hash2SideState *)outerPlanState(node);

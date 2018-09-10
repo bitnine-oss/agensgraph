@@ -453,7 +453,7 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 	hashtable->innerBatchFile = NULL;
 	hashtable->outerBatchFile = NULL;
 	hashtable->spaceUsed = 0;
-	hashtable->spacePeak = 0;
+	hashtable->spacePeak = sourcetable->spacePeak;
 	hashtable->spaceAllowed = work_mem * 1024L;
 	hashtable->spaceUsedSkew = 0;
 	hashtable->spaceAllowedSkew =
@@ -681,11 +681,7 @@ ExecHash2SideTableDestroy(HashJoinTable hashtable)
 {
 	int			i;
 
-	/*
-	 * Make sure all the temp files are closed.  We skip batch 0, since it
-	 * can't have any temp files (and the arrays might not even exist if
-	 * nbatch is only 1).
-	 */
+	/* Make sure all the temp files are closed. */
 	for (i = 0; i < hashtable->nbatch; i++)
 	{
 		if (hashtable->innerBatchFile)

@@ -491,7 +491,7 @@ try_nestloop_path(PlannerInfo *root,
 						  workspace.startup_cost, workspace.total_cost,
 						  pathkeys, required_outer))
 	{
-		if (parse->shortestpathSource != NULL && parse->shortestpathEndIdLeft != NULL)
+		if (parse->shortestpath.sourceInfo != NULL && parse->shortestpath.spEndId_starttoend != NULL)
 		{
 			if ( joinrel->pathlist == NULL )
 			{
@@ -1364,7 +1364,6 @@ match_unsorted_outer(PlannerInfo *root,
 					 JoinType jointype,
 					 JoinPathExtraData *extra)
 {
-	Query      *parse = root->parse;
 	JoinType	save_jointype = jointype;
 	bool		nestjoinOK;
 	bool		useallclauses;

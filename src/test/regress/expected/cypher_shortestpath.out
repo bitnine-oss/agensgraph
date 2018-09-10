@@ -210,9 +210,11 @@ RETURN nodes(path);
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
       path=dijkstra((v1:v {id: 0})-[e:e]->(v2), e.weight)
 RETURN nodes(path);
-ERROR:  property constraint is not supported
-LINE 2:       path=dijkstra((v1:v {id: 0})-[e:e]->(v2), e.weight)
-                             ^
+                                       nodes                                       
+-----------------------------------------------------------------------------------
+ [v[5.1]{"id": 0},v[5.5]{"id": 4},v[5.2]{"id": 1},v[5.3]{"id": 2},v[5.4]{"id": 3}]
+(1 row)
+
 MATCH (v1:v {id: 0}), (v2:v {id: 3}),
       path=dijkstra((v1:v)-[e:e*1..]->(v2), e.weight)
 RETURN nodes(path);
@@ -349,6 +351,7 @@ SET client_min_messages TO WARNING;
 SET work_mem TO '1MB';
 DROP GRAPH IF EXISTS shortestpath CASCADE;
 create graph shortestpath;
+set graph_path = shortestpath;
 create vlabel vp;
 create vlabel vc inherits ( vp );
 create vlabel o;
@@ -14874,18 +14877,18 @@ match p = shortestpath( (s1:s{id:1})-[e:e*]->(s2:s{id:19}) ) return ids(nodes(p)
 (1 row)
 
 -- No Path Variable
+match shortestpath( (s1)-[:e]->(s2) ) return s1.id, s2.id;
+ERROR:  a variable name of path must be provided
+match shortestpath( (s1)-[e:e]->(s2) ) return s1.id, s2.id, e;
+ERROR:  a variable name of path must be provided
+match shortestpath( (s1)-[:e*]->(s2) ) return s1.id, s2.id;
+ERROR:  a variable name of path must be provided
+match shortestpath( (s1)-[e:e*]->(s2) ) return s1.id, s2.id, e;
+ERROR:  a variable name of path must be provided
 match shortestpath( (s1:s{id:1})-[:e*]->(s2:s{id:19}) ) return s1.id, s2.id;
- id | id 
-----+----
- 1  | 19
-(1 row)
-
+ERROR:  a variable name of path must be provided
 match shortestpath( (s1:s{id:1})-[e:e*]->(s2:s{id:19}) ) return s1.id, s2.id, e;
- id | id |                                                                                                                                                                                                                                                                                                                                                   e                                                                                                                                                                                                                                                                                                                                                    
-----+----+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- 1  | 19 | [e[12.1][6.1,6.2]{"id": "s:1->s:2"},e[12.2][6.2,6.3]{"id": "s:2->s:3"},e[12.3][6.3,6.4]{"id": "s:3->s:4"},e[12.4][6.4,6.5]{"id": "s:4->s:5"},e[12.5][6.5,6.6]{"id": "s:5->s:6"},e[12.6][6.6,6.7]{"id": "s:6->s:7"},e[12.7][6.7,6.8]{"id": "s:7->s:8"},e[12.8][6.8,6.9]{"id": "s:8->s:9"},e[12.9][6.9,6.10]{"id": "s:9->s:10"},e[12.10][6.10,6.11]{"id": "s:10->s:11"},e[12.11][6.11,6.12]{"id": "s:11->s:12"},e[12.12][6.12,6.13]{"id": "s:12->s:13"},e[12.13][6.13,6.14]{"id": "s:13->s:14"},e[12.14][6.14,6.15]{"id": "s:14->s:15"},e[12.15][6.15,6.16]{"id": "s:15->s:16"},e[12.16][6.16,6.17]{"id": "s:16->s:17"},e[12.17][6.17,6.18]{"id": "s:17->s:18"},e[12.18][6.18,6.19]{"id": "s:18->s:19"}]
-(1 row)
-
+ERROR:  a variable name of path must be provided
 -- Failure
 match p = shortestpath( (:o) ) return p;
 ERROR:  only one relationship is allowed
@@ -15246,11 +15249,11 @@ match p = shortestpath( (o1:o)<-[:e*0..]->(o2:o) ) where o1.id = 1 and o1.id = 1
                Output: o2.id, o2.properties, o2.ctid
          ->  Shortestpath VLE [0..]
                Output: shortestpath_graphids(), shortestpath_rowids()
-               Hash Cond: ("<0000000378>"."end" = "<0000000380>".start)
+               Hash Cond: ("<0000000375>"."end" = "<0000000377>".start)
                ->  Hash2Side
-                     Output: "<0000000378>"."end", "<0000000378>".ltableoid, "<0000000378>".lctid
-                     ->  Subquery Scan on "<0000000378>"
-                           Output: "<0000000378>"."end", "<0000000378>".ltableoid, "<0000000378>".lctid
+                     Output: "<0000000375>"."end", "<0000000375>".ltableoid, "<0000000375>".lctid
+                     ->  Subquery Scan on "<0000000375>"
+                           Output: "<0000000375>"."end", "<0000000375>".ltableoid, "<0000000375>".lctid
                            ->  Unique
                                  Output: e.start, e."end", e.tableoid, e.ctid
                                  ->  Sort
@@ -15264,9 +15267,9 @@ match p = shortestpath( (o1:o)<-[:e*0..]->(o2:o) ) where o1.id = 1 and o1.id = 1
                                                    Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
                                                    Index Cond: (e_1."end" = o1.id)
                ->  Hash2Side
-                     Output: "<0000000380>".start, "<0000000380>".ltableoid, "<0000000380>".lctid
-                     ->  Subquery Scan on "<0000000380>"
-                           Output: "<0000000380>".start, "<0000000380>".ltableoid, "<0000000380>".lctid
+                     Output: "<0000000377>".start, "<0000000377>".ltableoid, "<0000000377>".lctid
+                     ->  Subquery Scan on "<0000000377>"
+                           Output: "<0000000377>".start, "<0000000377>".ltableoid, "<0000000377>".lctid
                            ->  Unique
                                  Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
                                  ->  Sort
@@ -15341,11 +15344,11 @@ match p = shortestpath( (o1:o)<-[:e*1..]->(o2:o) ) where o1.id = 1 and o1.id = 1
                Output: o2.id, o2.properties, o2.ctid
          ->  Shortestpath VLE [1..]
                Output: shortestpath_graphids(), shortestpath_rowids()
-               Hash Cond: ("<0000000382>"."end" = "<0000000384>".start)
+               Hash Cond: ("<0000000379>"."end" = "<0000000381>".start)
                ->  Hash2Side
-                     Output: "<0000000382>"."end", "<0000000382>".ltableoid, "<0000000382>".lctid
-                     ->  Subquery Scan on "<0000000382>"
-                           Output: "<0000000382>"."end", "<0000000382>".ltableoid, "<0000000382>".lctid
+                     Output: "<0000000379>"."end", "<0000000379>".ltableoid, "<0000000379>".lctid
+                     ->  Subquery Scan on "<0000000379>"
+                           Output: "<0000000379>"."end", "<0000000379>".ltableoid, "<0000000379>".lctid
                            ->  Unique
                                  Output: e.start, e."end", e.tableoid, e.ctid
                                  ->  Sort
@@ -15359,9 +15362,9 @@ match p = shortestpath( (o1:o)<-[:e*1..]->(o2:o) ) where o1.id = 1 and o1.id = 1
                                                    Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
                                                    Index Cond: (e_1."end" = o1.id)
                ->  Hash2Side
-                     Output: "<0000000384>".start, "<0000000384>".ltableoid, "<0000000384>".lctid
-                     ->  Subquery Scan on "<0000000384>"
-                           Output: "<0000000384>".start, "<0000000384>".ltableoid, "<0000000384>".lctid
+                     Output: "<0000000381>".start, "<0000000381>".ltableoid, "<0000000381>".lctid
+                     ->  Subquery Scan on "<0000000381>"
+                           Output: "<0000000381>".start, "<0000000381>".ltableoid, "<0000000381>".lctid
                            ->  Unique
                                  Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
                                  ->  Sort
@@ -15436,11 +15439,11 @@ match p = shortestpath( (o1:o)<-[:e*0..1]->(o2:o) ) where o1.id = 1 and o1.id = 
                Output: o2.id, o2.properties, o2.ctid
          ->  Shortestpath VLE [0..1]
                Output: shortestpath_graphids(), shortestpath_rowids()
-               Hash Cond: ("<0000000386>"."end" = "<0000000388>".start)
+               Hash Cond: ("<0000000383>"."end" = "<0000000385>".start)
                ->  Hash2Side
-                     Output: "<0000000386>"."end", "<0000000386>".ltableoid, "<0000000386>".lctid
-                     ->  Subquery Scan on "<0000000386>"
-                           Output: "<0000000386>"."end", "<0000000386>".ltableoid, "<0000000386>".lctid
+                     Output: "<0000000383>"."end", "<0000000383>".ltableoid, "<0000000383>".lctid
+                     ->  Subquery Scan on "<0000000383>"
+                           Output: "<0000000383>"."end", "<0000000383>".ltableoid, "<0000000383>".lctid
                            ->  Unique
                                  Output: e.start, e."end", e.tableoid, e.ctid
                                  ->  Sort
@@ -15454,9 +15457,9 @@ match p = shortestpath( (o1:o)<-[:e*0..1]->(o2:o) ) where o1.id = 1 and o1.id = 
                                                    Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
                                                    Index Cond: (e_1."end" = o1.id)
                ->  Hash2Side
-                     Output: "<0000000388>".start, "<0000000388>".ltableoid, "<0000000388>".lctid
-                     ->  Subquery Scan on "<0000000388>"
-                           Output: "<0000000388>".start, "<0000000388>".ltableoid, "<0000000388>".lctid
+                     Output: "<0000000385>".start, "<0000000385>".ltableoid, "<0000000385>".lctid
+                     ->  Subquery Scan on "<0000000385>"
+                           Output: "<0000000385>".start, "<0000000385>".ltableoid, "<0000000385>".lctid
                            ->  Unique
                                  Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
                                  ->  Sort
@@ -15531,11 +15534,11 @@ match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 
                Output: o2.id, o2.properties, o2.ctid
          ->  Shortestpath VLE [1..2]
                Output: shortestpath_graphids(), shortestpath_rowids()
-               Hash Cond: ("<0000000390>"."end" = "<0000000392>".start)
+               Hash Cond: ("<0000000387>"."end" = "<0000000389>".start)
                ->  Hash2Side
-                     Output: "<0000000390>"."end", "<0000000390>".ltableoid, "<0000000390>".lctid
-                     ->  Subquery Scan on "<0000000390>"
-                           Output: "<0000000390>"."end", "<0000000390>".ltableoid, "<0000000390>".lctid
+                     Output: "<0000000387>"."end", "<0000000387>".ltableoid, "<0000000387>".lctid
+                     ->  Subquery Scan on "<0000000387>"
+                           Output: "<0000000387>"."end", "<0000000387>".ltableoid, "<0000000387>".lctid
                            ->  Unique
                                  Output: e.start, e."end", e.tableoid, e.ctid
                                  ->  Sort
@@ -15549,9 +15552,9 @@ match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 
                                                    Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
                                                    Index Cond: (e_1."end" = o1.id)
                ->  Hash2Side
-                     Output: "<0000000392>".start, "<0000000392>".ltableoid, "<0000000392>".lctid
-                     ->  Subquery Scan on "<0000000392>"
-                           Output: "<0000000392>".start, "<0000000392>".ltableoid, "<0000000392>".lctid
+                     Output: "<0000000389>".start, "<0000000389>".ltableoid, "<0000000389>".lctid
+                     ->  Subquery Scan on "<0000000389>"
+                           Output: "<0000000389>".start, "<0000000389>".ltableoid, "<0000000389>".lctid
                            ->  Unique
                                  Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
                                  ->  Sort
@@ -15625,7 +15628,7 @@ match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath
          ->  Seq Scan on shortestpath.s s2
                Output: s2.id, s2.properties
          SubPlan 5
-           ->  Subquery Scan on _d
+           ->  Subquery Scan on _spf
                  Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
                  ->  Shortestpath VLE [1..1]
                        Output: shortestpath_graphids(), shortestpath_rowids()
@@ -15645,7 +15648,7 @@ match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath
                          Output: array_agg((SubPlan 1))
                          ->  Function Scan on pg_catalog.unnest vid
                                Output: vid.vid
-                               Function Call: unnest(_d.vids)
+                               Function Call: unnest(_spf.vids)
                          SubPlan 1
                            ->  Result
                                  Output: ROW(ag_vertex.id, ag_vertex.properties, ag_vertex.ctid)::vertex
@@ -15679,7 +15682,7 @@ match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath
                          Output: array_agg((SubPlan 3))
                          ->  Function Scan on pg_catalog.unnest eid
                                Output: eid.eid
-                               Function Call: unnest(_d.eids)
+                               Function Call: unnest(_spf.eids)
                          SubPlan 3
                            ->  Tid Scan on shortestpath.e
                                  Output: ROW(e.id, e.start, e."end", e.properties, e.ctid)::edge

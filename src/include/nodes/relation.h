@@ -1640,12 +1640,12 @@ typedef struct ModifyGraphPath
 typedef struct ShortestpathPath
 {
 	JoinPath	jpath;
-	Node	   *end_id_left;
-	Node	   *end_id_right;
-	Node	   *tableoid_left;
-	Node	   *tableoid_right;
-	Node	   *ctid_left;
-	Node	   *ctid_right;
+	Node	   *end_id_starttoend;		/* end id when searching from start to end point of edge */
+	Node	   *end_id_endtostart;		/* end id when searching from end to start point of edge */
+	Node	   *tableoid_starttoend;	/* table oid when searching from start to end point of edge */
+	Node	   *tableoid_endtostart;	/* table oid when searching from end to start point of edge */
+	Node	   *ctid_starttoend;		/* ctid of when searching from start to end point of edge */
+	Node	   *ctid_endtostart;		/* ctid of when searching from start to end point of edge */
 	Node	   *source;
 	Node	   *target;
 	long        minhops;

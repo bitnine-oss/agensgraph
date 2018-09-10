@@ -211,6 +211,8 @@ SET work_mem TO '1MB';
 DROP GRAPH IF EXISTS shortestpath CASCADE;
 create graph shortestpath;
 
+set graph_path = shortestpath;
+
 create vlabel vp;
 create vlabel vc inherits ( vp );
 create vlabel o;
@@ -657,6 +659,10 @@ match p = shortestpath( (s1:s{id:1})-[e:e*]->(s2:s{id:19}) ) return ids(nodes(p)
 
 -- No Path Variable
 
+match shortestpath( (s1)-[:e]->(s2) ) return s1.id, s2.id;
+match shortestpath( (s1)-[e:e]->(s2) ) return s1.id, s2.id, e;
+match shortestpath( (s1)-[:e*]->(s2) ) return s1.id, s2.id;
+match shortestpath( (s1)-[e:e*]->(s2) ) return s1.id, s2.id, e;
 match shortestpath( (s1:s{id:1})-[:e*]->(s2:s{id:19}) ) return s1.id, s2.id;
 match shortestpath( (s1:s{id:1})-[e:e*]->(s2:s{id:19}) ) return s1.id, s2.id, e;
 

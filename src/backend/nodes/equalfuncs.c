@@ -1055,22 +1055,22 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_LOCATION_FIELD(stmt_location);
 	COMPARE_LOCATION_FIELD(stmt_len);
 
-	COMPARE_SCALAR_FIELD(dijkstraWeight);
-	COMPARE_SCALAR_FIELD(dijkstraWeightOut);
-	COMPARE_NODE_FIELD(dijkstraEndId);
-	COMPARE_NODE_FIELD(dijkstraEdgeId);
-	COMPARE_NODE_FIELD(dijkstraLimit);
-	COMPARE_NODE_FIELD(shortestpathEndIdLeft);
-	COMPARE_NODE_FIELD(shortestpathEndIdRight);
-	COMPARE_NODE_FIELD(shortestpathTableOidLeft);
-	COMPARE_NODE_FIELD(shortestpathTableOidRight);
-	COMPARE_NODE_FIELD(shortestpathCtidLeft);
-	COMPARE_NODE_FIELD(shortestpathCtidRight);
-	COMPARE_NODE_FIELD(shortestpathSource);
-	COMPARE_NODE_FIELD(shortestpathTarget);
-	COMPARE_SCALAR_FIELD(shortestpathMinhops);
-	COMPARE_SCALAR_FIELD(shortestpathMaxhops);
-	COMPARE_SCALAR_FIELD(shortestpathLimit);
+	COMPARE_NODE_FIELD(shortestpath.sourceInfo);
+	COMPARE_NODE_FIELD(shortestpath.targetInfo);
+	COMPARE_SCALAR_FIELD(shortestpath.dijkstraWeight);
+	COMPARE_SCALAR_FIELD(shortestpath.dijkstraWeightOut);
+	COMPARE_NODE_FIELD(shortestpath.dijkstraEndId);
+	COMPARE_NODE_FIELD(shortestpath.dijkstraEdgeId);
+	COMPARE_NODE_FIELD(shortestpath.dijkstraLimit);
+	COMPARE_NODE_FIELD(shortestpath.spEndId_starttoend);
+	COMPARE_NODE_FIELD(shortestpath.spEndId_endtostart);
+	COMPARE_NODE_FIELD(shortestpath.spTableOid_starttoend);
+	COMPARE_NODE_FIELD(shortestpath.spTableOid_endtostart);
+	COMPARE_NODE_FIELD(shortestpath.spCtid_starttoend);
+	COMPARE_NODE_FIELD(shortestpath.spCtid_endtostart);
+	COMPARE_SCALAR_FIELD(shortestpath.spMinhops);
+	COMPARE_SCALAR_FIELD(shortestpath.spMaxhops);
+	COMPARE_SCALAR_FIELD(shortestpath.spLimit);
 
 	COMPARE_SCALAR_FIELD(graph.writeOp);
 	COMPARE_SCALAR_FIELD(graph.last);

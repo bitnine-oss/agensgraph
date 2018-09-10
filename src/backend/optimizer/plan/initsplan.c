@@ -168,23 +168,23 @@ build_base_rel_tlists(PlannerInfo *root, List *final_tlist)
 	if (root->parse->havingQual)
 		add_extra_vars_to_targetlist(root, root->parse->havingQual);
 
-	if (root->parse->dijkstraEndId)
-		add_extra_vars_to_targetlist(root, root->parse->dijkstraEndId);
-	if (root->parse->dijkstraEdgeId)
-		add_extra_vars_to_targetlist(root, root->parse->dijkstraEdgeId);
+	if (root->parse->shortestpath.dijkstraEndId)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpath.dijkstraEndId);
+	if (root->parse->shortestpath.dijkstraEdgeId)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpath.dijkstraEdgeId);
 
-	if (root->parse->shortestpathEndIdLeft)
-		add_extra_vars_to_targetlist(root, root->parse->shortestpathEndIdLeft);
-	if (root->parse->shortestpathEndIdRight)
-		add_extra_vars_to_targetlist(root, root->parse->shortestpathEndIdRight);
-	if (root->parse->shortestpathTableOidLeft)
-		add_extra_vars_to_targetlist(root, root->parse->shortestpathTableOidLeft);
-	if (root->parse->shortestpathTableOidRight)
-		add_extra_vars_to_targetlist(root, root->parse->shortestpathTableOidRight);
-	if (root->parse->shortestpathCtidLeft)
-		add_extra_vars_to_targetlist(root, root->parse->shortestpathCtidLeft);
-	if (root->parse->shortestpathCtidRight)
-		add_extra_vars_to_targetlist(root, root->parse->shortestpathCtidRight);
+	if (root->parse->shortestpath.spEndId_starttoend)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpath.spEndId_starttoend);
+	if (root->parse->shortestpath.spEndId_endtostart)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpath.spEndId_endtostart);
+	if (root->parse->shortestpath.spTableOid_starttoend)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpath.spTableOid_starttoend);
+	if (root->parse->shortestpath.spTableOid_endtostart)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpath.spTableOid_endtostart);
+	if (root->parse->shortestpath.spCtid_starttoend)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpath.spCtid_starttoend);
+	if (root->parse->shortestpath.spCtid_endtostart)
+		add_extra_vars_to_targetlist(root, root->parse->shortestpath.spCtid_endtostart);
 }
 
 static void

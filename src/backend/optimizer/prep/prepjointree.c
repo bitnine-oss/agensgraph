@@ -1100,30 +1100,32 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	Assert(parse->setOperations == NULL);
 	parse->havingQual = pullup_replace_vars(parse->havingQual, &rvcontext);
 
-	if (parse->shortestpathSource)
+	if (parse->shortestpath.sourceInfo)
 	{
-		parse->dijkstraEndId = pullup_replace_vars(parse->dijkstraEndId,
+		parse->shortestpath.sourceInfo = pullup_replace_vars(parse->shortestpath.sourceInfo,
+														&rvcontext);
+		parse->shortestpath.targetInfo = pullup_replace_vars(parse->shortestpath.targetInfo,
+														&rvcontext);
+
+		parse->shortestpath.dijkstraEndId = pullup_replace_vars(parse->shortestpath.dijkstraEndId,
 												   &rvcontext);
-		parse->dijkstraEdgeId = pullup_replace_vars(parse->dijkstraEdgeId,
+		parse->shortestpath.dijkstraEdgeId = pullup_replace_vars(parse->shortestpath.dijkstraEdgeId,
 													&rvcontext);
-		parse->dijkstraLimit = pullup_replace_vars(parse->dijkstraLimit,
+		parse->shortestpath.dijkstraLimit = pullup_replace_vars(parse->shortestpath.dijkstraLimit,
 												   &rvcontext);
-		parse->shortestpathEndIdLeft = pullup_replace_vars(parse->shortestpathEndIdLeft,
-														   &rvcontext);
-		parse->shortestpathEndIdRight = pullup_replace_vars(parse->shortestpathEndIdRight,
-															&rvcontext);
-		parse->shortestpathTableOidLeft = pullup_replace_vars(parse->shortestpathTableOidLeft,
-															  &rvcontext);
-		parse->shortestpathTableOidRight = pullup_replace_vars(parse->shortestpathTableOidRight,
-															   &rvcontext);
-		parse->shortestpathCtidLeft = pullup_replace_vars(parse->shortestpathCtidLeft,
-														  &rvcontext);
-		parse->shortestpathCtidRight = pullup_replace_vars(parse->shortestpathCtidRight,
-														   &rvcontext);
-		parse->shortestpathSource = pullup_replace_vars(parse->shortestpathSource,
-														&rvcontext);
-		parse->shortestpathTarget = pullup_replace_vars(parse->shortestpathTarget,
-														&rvcontext);
+
+		parse->shortestpath.spEndId_starttoend = pullup_replace_vars(parse->shortestpath.spEndId_starttoend,
+																	&rvcontext);
+		parse->shortestpath.spEndId_endtostart = pullup_replace_vars(parse->shortestpath.spEndId_endtostart,
+																	&rvcontext);
+		parse->shortestpath.spTableOid_starttoend = pullup_replace_vars(parse->shortestpath.spTableOid_starttoend,
+																		&rvcontext);
+		parse->shortestpath.spTableOid_endtostart = pullup_replace_vars(parse->shortestpath.spTableOid_endtostart,
+																		&rvcontext);
+		parse->shortestpath.spCtid_starttoend = pullup_replace_vars(parse->shortestpath.spCtid_starttoend,
+																	&rvcontext);
+		parse->shortestpath.spCtid_endtostart = pullup_replace_vars(parse->shortestpath.spCtid_endtostart,
+																	&rvcontext);
 	}
 
 	/*
@@ -1517,7 +1519,7 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 		subquery->limitCount ||
 		subquery->hasForUpdate ||
 		subquery->cteList ||
-		subquery->shortestpathSource)
+		subquery->shortestpath.sourceInfo)
 		return false;
 
 	/*

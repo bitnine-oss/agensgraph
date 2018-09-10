@@ -179,22 +179,34 @@ typedef struct Query
 	int			stmt_location;	/* start location, or -1 if unknown */
 	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
 
-	int			dijkstraWeight;
-	bool		dijkstraWeightOut;
-	Node	   *dijkstraEndId;
-	Node	   *dijkstraEdgeId;
-	Node	   *dijkstraLimit;
-	Node	   *shortestpathEndIdLeft;
-	Node	   *shortestpathEndIdRight;
-	Node	   *shortestpathTableOidLeft;
-	Node	   *shortestpathTableOidRight;
-	Node	   *shortestpathCtidLeft;
-	Node	   *shortestpathCtidRight;
-	Node	   *shortestpathSource;
-	Node	   *shortestpathTarget;
-	long        shortestpathMinhops;
-	long        shortestpathMaxhops;
-	long        shortestpathLimit;
+	/* member for shortestpath algorithm like as dijkstra or bidirectional breadth first search algorithm
+	   dijkstra algorithm represent DIJKSTRA (id(source), id(target), LIMIT n, "end", id)
+	   bidirectional breadth first search algorithm represent SHORTESTPATH( id(source), id(target) ) */
+	struct {
+		/* use all algorithms */
+		Node	   *sourceInfo;				/* first vertex id of path */
+		Node	   *targetInfo;				/* last vertex if of path */
+
+		/* for dijkstra */
+		int			dijkstraWeight;
+		bool		dijkstraWeightOut;
+		Node	   *dijkstraEndId;
+		Node	   *dijkstraEdgeId;
+		Node	   *dijkstraLimit;
+
+		/* for bidirectional breadth first search algorithm */
+		Node	   *spEndId_starttoend;		/* end id when searching from start to end point of edge */
+		Node	   *spEndId_endtostart;		/* end id when searching from end to start point of edge */
+		Node	   *spTableOid_starttoend;	/* table oid when searching from start to end point of edge */
+		Node	   *spTableOid_endtostart;	/* table oid when searching from end to start point of edge */
+		Node	   *spCtid_starttoend;		/* ctid of when searching from start to end point of edge */
+		Node	   *spCtid_endtostart;		/* ctid of when searching from start to end point of edge */
+		long        spMinhops;				/* minimum edge count */
+		long        spMaxhops;				/* maximum edge count */
+		long        spLimit;				/* represent whether shortestpath( pattern ) or allshortestpaths( pattern)
+											   shortestpathLimit has 1 or LONG_MAX.
+											   1 means shorestpath( pattern ) and LONG_MAX meas allshorestpaths( pattern ) */
+	} shortestpath;
 
 	struct {
 		GraphWriteOp writeOp;

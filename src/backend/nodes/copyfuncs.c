@@ -1197,12 +1197,12 @@ _copyShortestpath(const Shortestpath *from)
 	 */
 	COPY_NODE_FIELD(hashclauses);
 
-	COPY_SCALAR_FIELD(end_id_left);
-	COPY_SCALAR_FIELD(end_id_right);
-	COPY_SCALAR_FIELD(tableoid_left);
-	COPY_SCALAR_FIELD(tableoid_right);
-	COPY_SCALAR_FIELD(ctid_left);
-	COPY_SCALAR_FIELD(ctid_right);
+	COPY_SCALAR_FIELD(end_id_starttoend);
+	COPY_SCALAR_FIELD(end_id_endtostart);
+	COPY_SCALAR_FIELD(tableoid_starttoend);
+	COPY_SCALAR_FIELD(tableoid_endtostart);
+	COPY_SCALAR_FIELD(ctid_starttoend);
+	COPY_SCALAR_FIELD(ctid_endtostart);
 	COPY_NODE_FIELD(source);
 	COPY_NODE_FIELD(target);
 	COPY_SCALAR_FIELD(minhops);
@@ -3165,22 +3165,22 @@ _copyQuery(const Query *from)
 	COPY_LOCATION_FIELD(stmt_location);
 	COPY_LOCATION_FIELD(stmt_len);
 
-	COPY_SCALAR_FIELD(dijkstraWeight);
-	COPY_SCALAR_FIELD(dijkstraWeightOut);
-	COPY_NODE_FIELD(dijkstraEndId);
-	COPY_NODE_FIELD(dijkstraEdgeId);
-	COPY_NODE_FIELD(dijkstraLimit);
-	COPY_NODE_FIELD(shortestpathEndIdLeft);
-	COPY_NODE_FIELD(shortestpathEndIdRight);
-	COPY_NODE_FIELD(shortestpathTableOidLeft);
-	COPY_NODE_FIELD(shortestpathTableOidRight);
-	COPY_NODE_FIELD(shortestpathCtidLeft);
-	COPY_NODE_FIELD(shortestpathCtidRight);
-	COPY_NODE_FIELD(shortestpathSource);
-	COPY_NODE_FIELD(shortestpathTarget);
-	COPY_SCALAR_FIELD(shortestpathMinhops);
-	COPY_SCALAR_FIELD(shortestpathMaxhops);
-	COPY_SCALAR_FIELD(shortestpathLimit);
+	COPY_NODE_FIELD(shortestpath.sourceInfo);
+	COPY_NODE_FIELD(shortestpath.targetInfo);
+	COPY_SCALAR_FIELD(shortestpath.dijkstraWeight);
+	COPY_SCALAR_FIELD(shortestpath.dijkstraWeightOut);
+	COPY_NODE_FIELD(shortestpath.dijkstraEndId);
+	COPY_NODE_FIELD(shortestpath.dijkstraEdgeId);
+	COPY_NODE_FIELD(shortestpath.dijkstraLimit);
+	COPY_NODE_FIELD(shortestpath.spEndId_starttoend);
+	COPY_NODE_FIELD(shortestpath.spEndId_endtostart);
+	COPY_NODE_FIELD(shortestpath.spTableOid_starttoend);
+	COPY_NODE_FIELD(shortestpath.spTableOid_endtostart);
+	COPY_NODE_FIELD(shortestpath.spCtid_starttoend);
+	COPY_NODE_FIELD(shortestpath.spCtid_endtostart);
+	COPY_SCALAR_FIELD(shortestpath.spMinhops);
+	COPY_SCALAR_FIELD(shortestpath.spMaxhops);
+	COPY_SCALAR_FIELD(shortestpath.spLimit);
 
 	COPY_SCALAR_FIELD(graph.writeOp);
 	COPY_SCALAR_FIELD(graph.last);

@@ -1138,6 +1138,12 @@ appendFindPathsResult(ParseState *pstate, List *fplist, List **targetList)
 		RangeTblEntry *rte;
 		TargetEntry *te;
 
+		pathname = getCypherName(p->variable);
+		if (pathname == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("a variable name of path must be provided")));
+
 		if (p->kind == CPATH_DIJKSTRA)
 			fp = transformDijkstraInMatch(pstate, p);
 		else
@@ -1147,15 +1153,11 @@ appendFindPathsResult(ParseState *pstate, List *fplist, List **targetList)
 		rte = addRangeTableEntryForSubquery(pstate, fp, alias, true, true);
 		addRTEtoJoinlist(pstate, rte, true);
 
-		pathname = getCypherName(p->variable);
-		if (pathname != NULL)
-		{
-			te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, pathname),
-								 (AttrNumber) pstate->p_next_resno++,
-								 pathname,
-								 false);
-			*targetList = lappend(*targetList, te);
-		}
+		te = makeTargetEntry((Expr *) getColumnVar(pstate, rte, pathname),
+				(AttrNumber) pstate->p_next_resno++,
+				pathname,
+				false);
+		*targetList = lappend(*targetList, te);
 
 		if (p->kind == CPATH_DIJKSTRA)
 		{

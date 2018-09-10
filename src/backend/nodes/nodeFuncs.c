@@ -2410,27 +2410,27 @@ query_tree_walker(Query *query,
 		return true;
 	if (walker(query->limitCount, context))
 		return true;
-	if (walker(query->dijkstraEndId, context))
+	if (walker(query->shortestpath.sourceInfo, context))
 		return true;
-	if (walker(query->dijkstraEdgeId, context))
+	if (walker(query->shortestpath.targetInfo, context))
 		return true;
-	if (walker(query->dijkstraLimit, context))
+	if (walker(query->shortestpath.dijkstraEndId, context))
 		return true;
-	if (walker(query->shortestpathEndIdLeft, context))
+	if (walker(query->shortestpath.dijkstraEdgeId, context))
 		return true;
-	if (walker(query->shortestpathEndIdRight, context))
+	if (walker(query->shortestpath.dijkstraLimit, context))
 		return true;
-	if (walker(query->shortestpathTableOidLeft, context))
+	if (walker(query->shortestpath.spEndId_starttoend, context))
 		return true;
-	if (walker(query->shortestpathTableOidRight, context))
+	if (walker(query->shortestpath.spEndId_endtostart, context))
 		return true;
-	if (walker(query->shortestpathCtidLeft, context))
+	if (walker(query->shortestpath.spTableOid_starttoend, context))
 		return true;
-	if (walker(query->shortestpathCtidRight, context))
+	if (walker(query->shortestpath.spTableOid_endtostart, context))
 		return true;
-	if (walker(query->shortestpathSource, context))
+	if (walker(query->shortestpath.spCtid_starttoend, context))
 		return true;
-	if (walker(query->shortestpathTarget, context))
+	if (walker(query->shortestpath.spCtid_endtostart, context))
 		return true;
 	if (!(flags & QTW_IGNORE_CTE_SUBQUERIES))
 	{
@@ -3316,17 +3316,17 @@ query_tree_mutator(Query *query,
 	MUTATE(query->havingQual, query->havingQual, Node *);
 	MUTATE(query->limitOffset, query->limitOffset, Node *);
 	MUTATE(query->limitCount, query->limitCount, Node *);
-	MUTATE(query->dijkstraEndId, query->dijkstraEndId, Node *);
-	MUTATE(query->dijkstraEdgeId, query->dijkstraEdgeId, Node *);
-	MUTATE(query->dijkstraLimit, query->dijkstraLimit, Node *);
-	MUTATE(query->shortestpathEndIdLeft, query->shortestpathEndIdLeft, Node *);
-	MUTATE(query->shortestpathEndIdRight, query->shortestpathEndIdRight, Node *);
-	MUTATE(query->shortestpathTableOidLeft, query->shortestpathTableOidLeft, Node *);
-	MUTATE(query->shortestpathTableOidRight, query->shortestpathTableOidRight, Node *);
-	MUTATE(query->shortestpathCtidLeft, query->shortestpathCtidLeft, Node *);
-	MUTATE(query->shortestpathCtidRight, query->shortestpathCtidRight, Node *);
-	MUTATE(query->shortestpathSource, query->shortestpathSource, Node *);
-	MUTATE(query->shortestpathTarget, query->shortestpathTarget, Node *);
+	MUTATE(query->shortestpath.sourceInfo, query->shortestpath.sourceInfo, Node *);
+	MUTATE(query->shortestpath.targetInfo, query->shortestpath.targetInfo, Node *);
+	MUTATE(query->shortestpath.dijkstraEndId, query->shortestpath.dijkstraEndId, Node *);
+	MUTATE(query->shortestpath.dijkstraEdgeId, query->shortestpath.dijkstraEdgeId, Node *);
+	MUTATE(query->shortestpath.dijkstraLimit, query->shortestpath.dijkstraLimit, Node *);
+	MUTATE(query->shortestpath.spEndId_starttoend, query->shortestpath.spEndId_starttoend, Node *);
+	MUTATE(query->shortestpath.spEndId_endtostart, query->shortestpath.spEndId_endtostart, Node *);
+	MUTATE(query->shortestpath.spTableOid_starttoend, query->shortestpath.spTableOid_starttoend, Node *);
+	MUTATE(query->shortestpath.spTableOid_endtostart, query->shortestpath.spTableOid_endtostart, Node *);
+	MUTATE(query->shortestpath.spCtid_starttoend, query->shortestpath.spCtid_starttoend, Node *);
+	MUTATE(query->shortestpath.spCtid_endtostart, query->shortestpath.spCtid_endtostart, Node *);
 	if (!(flags & QTW_IGNORE_CTE_SUBQUERIES))
 		MUTATE(query->cteList, query->cteList, List *);
 	else						/* else copy CTE list as-is */

@@ -1013,12 +1013,12 @@ _outShortestpath(StringInfo str, const Shortestpath *node)
 
 	WRITE_NODE_FIELD(hashclauses);
 
-	WRITE_INT_FIELD(end_id_left);
-	WRITE_INT_FIELD(end_id_right);
-	WRITE_INT_FIELD(tableoid_left);
-	WRITE_INT_FIELD(tableoid_right);
-	WRITE_INT_FIELD(ctid_left);
-	WRITE_INT_FIELD(ctid_right);
+	WRITE_INT_FIELD(end_id_starttoend);
+	WRITE_INT_FIELD(end_id_endtostart);
+	WRITE_INT_FIELD(tableoid_starttoend);
+	WRITE_INT_FIELD(tableoid_endtostart);
+	WRITE_INT_FIELD(ctid_starttoend);
+	WRITE_INT_FIELD(ctid_endtostart);
 	WRITE_NODE_FIELD(source);
 	WRITE_NODE_FIELD(target);
 	WRITE_LONG_FIELD(minhops);
@@ -2313,12 +2313,12 @@ _outShortestpathPath(StringInfo str, const ShortestpathPath *node)
 
 	_outNestPath(str, (const NestPath *) node);
 
-	WRITE_NODE_FIELD(end_id_left);
-	WRITE_NODE_FIELD(end_id_right);
-	WRITE_NODE_FIELD(tableoid_left);
-	WRITE_NODE_FIELD(tableoid_right);
-	WRITE_NODE_FIELD(ctid_left);
-	WRITE_NODE_FIELD(ctid_right);
+	WRITE_NODE_FIELD(end_id_starttoend);
+	WRITE_NODE_FIELD(end_id_endtostart);
+	WRITE_NODE_FIELD(tableoid_starttoend);
+	WRITE_NODE_FIELD(tableoid_endtostart);
+	WRITE_NODE_FIELD(ctid_starttoend);
+	WRITE_NODE_FIELD(ctid_endtostart);
 	WRITE_NODE_FIELD(source);
 	WRITE_NODE_FIELD(target);
 	WRITE_LONG_FIELD(minhops);
@@ -3118,22 +3118,22 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_LOCATION_FIELD(stmt_location);
 	WRITE_LOCATION_FIELD(stmt_len);
 
-	WRITE_INT_FIELD(dijkstraWeight);
-	WRITE_BOOL_FIELD(dijkstraWeightOut);
-	WRITE_NODE_FIELD(dijkstraEndId);
-	WRITE_NODE_FIELD(dijkstraEdgeId);
-	WRITE_NODE_FIELD(dijkstraLimit);
-	WRITE_NODE_FIELD(shortestpathEndIdLeft);
-	WRITE_NODE_FIELD(shortestpathEndIdRight);
-	WRITE_NODE_FIELD(shortestpathTableOidLeft);
-	WRITE_NODE_FIELD(shortestpathTableOidRight);
-	WRITE_NODE_FIELD(shortestpathCtidLeft);
-	WRITE_NODE_FIELD(shortestpathCtidRight);
-	WRITE_NODE_FIELD(shortestpathSource);
-	WRITE_NODE_FIELD(shortestpathTarget);
-	WRITE_LONG_FIELD(shortestpathMinhops);
-	WRITE_LONG_FIELD(shortestpathMaxhops);
-	WRITE_LONG_FIELD(shortestpathLimit);
+	WRITE_NODE_FIELD(shortestpath.sourceInfo);
+	WRITE_NODE_FIELD(shortestpath.targetInfo);
+	WRITE_INT_FIELD(shortestpath.dijkstraWeight);
+	WRITE_BOOL_FIELD(shortestpath.dijkstraWeightOut);
+	WRITE_NODE_FIELD(shortestpath.dijkstraEndId);
+	WRITE_NODE_FIELD(shortestpath.dijkstraEdgeId);
+	WRITE_NODE_FIELD(shortestpath.dijkstraLimit);
+	WRITE_NODE_FIELD(shortestpath.spEndId_starttoend);
+	WRITE_NODE_FIELD(shortestpath.spEndId_endtostart);
+	WRITE_NODE_FIELD(shortestpath.spTableOid_starttoend);
+	WRITE_NODE_FIELD(shortestpath.spTableOid_endtostart);
+	WRITE_NODE_FIELD(shortestpath.spCtid_starttoend);
+	WRITE_NODE_FIELD(shortestpath.spCtid_endtostart);
+	WRITE_LONG_FIELD(shortestpath.spMinhops);
+	WRITE_LONG_FIELD(shortestpath.spMaxhops);
+	WRITE_LONG_FIELD(shortestpath.spLimit);
 
 	WRITE_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	WRITE_BOOL_FIELD(graph.last);

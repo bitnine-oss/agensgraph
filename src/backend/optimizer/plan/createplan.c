@@ -298,12 +298,12 @@ static Shortestpath *make_shortestpath(List *tlist,
 									   Plan *lefttree,
 									   Plan *righttree,
 									   JoinType jointype,
-									   AttrNumber end_id_left,
-									   AttrNumber end_id_right,
-									   AttrNumber tableoid_left,
-									   AttrNumber tableoid_right,
-									   AttrNumber ctid_left,
-									   AttrNumber ctid_right,
+									   AttrNumber end_id_starttoend,
+									   AttrNumber end_id_endtostart,
+									   AttrNumber tableoid_starttoend,
+									   AttrNumber tableoid_endtostart,
+									   AttrNumber ctid_starttoend,
+									   AttrNumber ctid_endtostart,
 									   Node *source,
 									   Node *target,
 									   long minhops,
@@ -4308,18 +4308,18 @@ create_shortestpath_plan(PlannerInfo *root,
 	Oid           skewColType = InvalidOid;
 	int32         skewColTypmod = -1;
 	List	     *sub_tlist;
-	TargetEntry  *tle_end_id_left;
-	TargetEntry  *tle_end_id_right;
-	TargetEntry  *tle_tableoid_left;
-	TargetEntry  *tle_tableoid_right;
-	TargetEntry  *tle_ctid_left;
-	TargetEntry  *tle_ctid_right;
-	AttrNumber	  end_id_left;
-	AttrNumber	  end_id_right;
-	AttrNumber	  tableoid_left;
-	AttrNumber	  tableoid_right;
-	AttrNumber	  ctid_left;
-	AttrNumber	  ctid_right;
+	TargetEntry  *tle_end_id_starttoend;
+	TargetEntry  *tle_end_id_endtostart;
+	TargetEntry  *tle_tableoid_starttoend;
+	TargetEntry  *tle_tableoid_endtostart;
+	TargetEntry  *tle_ctid_starttoend;
+	TargetEntry  *tle_ctid_endtostart;
+	AttrNumber	  end_id_starttoend;
+	AttrNumber	  end_id_endtostart;
+	AttrNumber	  tableoid_starttoend;
+	AttrNumber	  tableoid_endtostart;
+	AttrNumber	  ctid_starttoend;
+	AttrNumber	  ctid_endtostart;
 
 	/*
 	 * HashJoin can project, so we don't have to demand exact tlists from the
@@ -4335,25 +4335,25 @@ create_shortestpath_plan(PlannerInfo *root,
 									 CP_SMALL_TLIST);
 
 	sub_tlist = outer_plan->targetlist;
-	tle_end_id_left = tlist_member((Expr *) best_path->end_id_left, sub_tlist);
-	end_id_left = tle_end_id_left->resno;
-	tle_tableoid_left = tlist_member((Expr *) best_path->tableoid_left, sub_tlist);
-	tableoid_left = tle_tableoid_left->resno;
-	tle_ctid_left = tlist_member((Expr *) best_path->ctid_left, sub_tlist);
-	ctid_left = tle_ctid_left->resno;
+	tle_end_id_starttoend = tlist_member((Expr *) best_path->end_id_starttoend, sub_tlist);
+	end_id_starttoend = tle_end_id_starttoend->resno;
+	tle_tableoid_starttoend = tlist_member((Expr *) best_path->tableoid_starttoend, sub_tlist);
+	tableoid_starttoend = tle_tableoid_starttoend->resno;
+	tle_ctid_starttoend = tlist_member((Expr *) best_path->ctid_starttoend, sub_tlist);
+	ctid_starttoend = tle_ctid_starttoend->resno;
 	sub_tlist = inner_plan->targetlist;
-	tle_end_id_right = tlist_member((Expr *) best_path->end_id_right, sub_tlist);
-	end_id_right = tle_end_id_right->resno;
-	tle_tableoid_right = tlist_member((Expr *) best_path->tableoid_right, sub_tlist);
-	tableoid_right = tle_tableoid_right->resno;
-	tle_ctid_right = tlist_member((Expr *) best_path->ctid_right, sub_tlist);
-	ctid_right = tle_ctid_right->resno;
+	tle_end_id_endtostart = tlist_member((Expr *) best_path->end_id_endtostart, sub_tlist);
+	end_id_endtostart = tle_end_id_endtostart->resno;
+	tle_tableoid_endtostart = tlist_member((Expr *) best_path->tableoid_endtostart, sub_tlist);
+	tableoid_endtostart = tle_tableoid_endtostart->resno;
+	tle_ctid_endtostart = tlist_member((Expr *) best_path->ctid_endtostart, sub_tlist);
+	ctid_endtostart = tle_ctid_endtostart->resno;
 
 	hashclauses = list_make1(make_opclause(OID_GRAPHID_EQ_OP,
 										   BOOLOID,
 										   false,
-										   tle_end_id_left->expr,
-										   tle_end_id_right->expr,
+										   tle_end_id_starttoend->expr,
+										   tle_end_id_endtostart->expr,
 										   InvalidOid,
 										   InvalidOid));
 
@@ -4469,12 +4469,12 @@ create_shortestpath_plan(PlannerInfo *root,
 								  (Plan*)outer_hash,
 								  (Plan*)inner_hash,
 								  best_path->jpath.jointype,
-								  end_id_left,
-								  end_id_right,
-								  tableoid_left,
-								  tableoid_right,
-								  ctid_left,
-								  ctid_right,
+								  end_id_starttoend,
+								  end_id_endtostart,
+								  tableoid_starttoend,
+								  tableoid_endtostart,
+								  ctid_starttoend,
+								  ctid_endtostart,
 								  best_path->source,
 								  best_path->target,
 								  best_path->minhops,
@@ -6969,12 +6969,12 @@ make_shortestpath(List *tlist,
 				  Plan *lefttree,
 				  Plan *righttree,
 				  JoinType jointype,
-				  AttrNumber end_id_left,
-				  AttrNumber end_id_right,
-				  AttrNumber tableoid_left,
-				  AttrNumber tableoid_right,
-				  AttrNumber ctid_left,
-				  AttrNumber ctid_right,
+				  AttrNumber end_id_starttoend,
+				  AttrNumber end_id_endtostart,
+				  AttrNumber tableoid_starttoend,
+				  AttrNumber tableoid_endtostart,
+				  AttrNumber ctid_starttoend,
+				  AttrNumber ctid_endtostart,
 				  Node *source,
 				  Node *target,
 				  long minhops,
@@ -6995,12 +6995,12 @@ make_shortestpath(List *tlist,
 
 	node->minhops = minhops;
 	node->maxhops = maxhops;
-	node->end_id_left = end_id_left;
-	node->end_id_right = end_id_right;
-	node->tableoid_left = tableoid_left;
-	node->tableoid_right = tableoid_right;
-	node->ctid_left = ctid_left;
-	node->ctid_right = ctid_right;
+	node->end_id_starttoend = end_id_starttoend;
+	node->end_id_endtostart = end_id_endtostart;
+	node->tableoid_starttoend = tableoid_starttoend;
+	node->tableoid_endtostart = tableoid_endtostart;
+	node->ctid_starttoend = ctid_starttoend;
+	node->ctid_endtostart = ctid_endtostart;
 	node->source = source;
 	node->target = target;
 	node->minhops = minhops;

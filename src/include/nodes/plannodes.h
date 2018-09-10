@@ -1072,12 +1072,12 @@ typedef struct Shortestpath
 {
 	Join		join;
 	List	   *hashclauses;
-	AttrNumber  end_id_left;
-	AttrNumber  end_id_right;
-	AttrNumber  tableoid_left;
-	AttrNumber  tableoid_right;
-	AttrNumber  ctid_left;
-	AttrNumber  ctid_right;
+	AttrNumber  end_id_starttoend;		/* end id when searching from start to end point of edge */
+	AttrNumber  end_id_endtostart;		/* end id when searching from end to start point of edge */
+	AttrNumber  tableoid_starttoend;	/* table oid when searching from start to end point of edge */
+	AttrNumber  tableoid_endtostart;	/* table oid when searching from end to start point of edge */
+	AttrNumber  ctid_starttoend;		/* ctid of when searching from start to end point of edge */
+	AttrNumber  ctid_endtostart;		/* ctid of when searching from start to end point of edge */
 	Node	   *source;
 	Node	   *target;
 	long        minhops;
