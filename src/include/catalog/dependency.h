@@ -167,11 +167,10 @@ typedef enum ObjectClass
 	OCLASS_SUBSCRIPTION,		/* pg_subscription */
 	OCLASS_TRANSFORM,			/* pg_transform */
 	OCLASS_GRAPH,				/* ag_graph */
-	OCLASS_LABEL,				/* ag_label */
-	OCLASS_LABMETA				/* ag_labmeta */
+	OCLASS_LABEL				/* ag_label */
 } ObjectClass;
 
-#define LAST_OCLASS		OCLASS_LABMETA
+#define LAST_OCLASS		OCLASS_LABEL
 
 /* flag bits for performDeletion/performMultipleDeletions: */
 #define PERFORM_DELETION_INTERNAL			0x0001	/* internal action */

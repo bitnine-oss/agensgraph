@@ -2004,7 +2004,9 @@ CommitTransaction(void)
 	 */
 	PreCommit_on_commit_actions();
 
-	/* AgStat must be processed during PreCommit phase */
+	/* The catalog ag_graphmeta is opened and modified during commit AgStat.
+	 * In the commit phase, any relation must not be opened.
+	 * So AgStat must be processed during the PreCommit phase */
 	AtEOXact_AgStat(true);
 
 	/* close large objects before lower-level cleanup */
