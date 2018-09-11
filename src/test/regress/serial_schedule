@@ -180,7 +180,7 @@ test: xml
 test: event_trigger
 test: stats
 test: graphid
-test: aglabmeta
+test: graphmeta
 test: cypher_expr
 test: cypher_dml
 test: cypher_shortestpath

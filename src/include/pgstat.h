@@ -134,33 +134,6 @@ typedef enum PgStat_Single_Reset_Type
  * Structures kept in backend local memory while accumulating counts
  * ------------------------------------------------------------
  */
-typedef struct AgStat_XactStatus
-{
-	HTAB	   *htab;
-
-	int			nest_level;		/* subtransaction nest level */
-	/* links to other structs for same relation: */
-	struct AgStat_XactStatus *upper;		/* next higher subxact if any */
-	/* structs of same subxact level are linked here: */
-	struct AgStat_XactStatus *next;		/* next of same subxact */
-} AgStat_XactStatus;
-
-typedef struct AgStat_key
-{
-	Oid		graph;
-	Labid	edge;
-	Labid	start;
-	Labid	end;
-} AgStat_key;
-
-typedef struct AgStat_LabMeta
-{
-	struct AgStat_key	key;
-
-	PgStat_Counter		edges_inserted;
-	PgStat_Counter		edges_deleted;
-} AgStat_LabMeta;
-
 /* ----------
  * PgStat_TableStatus			Per-table status within a backend
  *
@@ -1319,7 +1292,6 @@ extern void pgstat_count_heap_delete(Relation rel);
 extern void pgstat_count_truncate(Relation rel);
 extern void pgstat_update_heap_dead_tuples(Relation rel, int delta);
 
-extern void pgstat_count_heap_update(Relation rel, bool hot);
 extern void pgstat_init_function_usage(FunctionCallInfoData *fcinfo,
 						   PgStat_FunctionCallUsage *fcu);
 extern void pgstat_end_function_usage(PgStat_FunctionCallUsage *fcu,
@@ -1355,7 +1327,7 @@ extern int	pgstat_fetch_stat_numbackends(void);
 extern PgStat_ArchiverStats *pgstat_fetch_stat_archiver(void);
 extern PgStat_GlobalStats *pgstat_fetch_global(void);
 
-/* Functions to set up ag_labmeta for metric */
+/* Functions to set up ag_graphmeta for metric */
 extern void agstat_count_edge_create(Graphid edge, Graphid start, Graphid end);
 extern void agstat_count_edge_delete(Graphid edge, Graphid start, Graphid end);
 extern void agstat_drop_vlabel(const char *vlab);
