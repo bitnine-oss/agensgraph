@@ -1202,7 +1202,6 @@ EventTriggerSupportsObjectClass(ObjectClass objclass)
 		case OCLASS_TRANSFORM:
 		case OCLASS_GRAPH:
 		case OCLASS_LABEL:
-		case OCLASS_LABMETA:
 			return true;
 
 			/*

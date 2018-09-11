@@ -974,19 +974,6 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 		estate->es_graphwrstats.deleteEdge++;
 	}
 
-	if (type == EDGEOID)
-	{
-		Graphid eid;
-		Graphid start;
-		Graphid end;
-
-		eid = GraphidGetLabid(getEdgeIdDatum(elem));
-		start = GraphidGetLabid(getEdgeStartDatum(elem));
-		end = GraphidGetLabid(getEdgeEndDatum(elem));
-
-		agstat_count_edge_delete(eid, start, end);
-	}
-
 	estate->es_result_relation_info = savedResultRelInfo;
 }
 
@@ -1595,6 +1582,18 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 		entry = hash_search(mgstate->elemTable, &gid, HASH_ENTER, &found);
 		if (found)
 			return;
+		else
+		{
+			Graphid eid;
+			Graphid start;
+			Graphid end;
+
+			eid = GraphidGetLabid(gid);
+			start = GraphidGetLabid(getEdgeStartDatum(elem));
+			end = GraphidGetLabid(getEdgeEndDatum(elem));
+
+			agstat_count_edge_delete(eid, start, end);
+		}
 
 		entry->data.tid =
 				*((ItemPointer) DatumGetPointer(getEdgeTidDatum(elem)));
@@ -1658,6 +1657,18 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 			entry = hash_search(mgstate->elemTable, &gid, HASH_ENTER, &found);
 			if (found)
 				continue;
+			else
+			{
+				Graphid eid;
+				Graphid start;
+				Graphid end;
+
+				eid = GraphidGetLabid(gid);
+				start = GraphidGetLabid(getEdgeStartDatum(edge));
+				end = GraphidGetLabid(getEdgeEndDatum(edge));
+
+				agstat_count_edge_delete(eid, start, end);
+			}
 
 			entry->data.tid =
 					*((ItemPointer) DatumGetPointer(getEdgeTidDatum(edge)));

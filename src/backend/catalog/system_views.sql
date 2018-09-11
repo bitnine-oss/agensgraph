@@ -940,12 +940,12 @@ CREATE VIEW ag_property_indexes AS
     WHERE C.relkind = 'r' AND I.relkind = 'i' AND
         X.indisexclusion = false AND X.indexprs IS NOT NULL;
 
-CREATE VIEW ag_labname_meta AS
+CREATE VIEW ag_graphmeta_view AS
 	SELECT (SELECT graphname FROM ag_graph WHERE oid = graph),
        (SELECT labname FROM ag_label WHERE start = labid AND graph = graphid) AS start,
        (SELECT labname FROM ag_label WHERE edge = labid AND graph = graphid) AS edge,
        (SELECT labname FROM ag_label WHERE "end" = labid AND graph = graphid) AS end,
-       edgecount FROM ag_labmeta;
+       edgecount FROM ag_graphmeta;
 
 REVOKE ALL on pg_user_mapping FROM public;
 

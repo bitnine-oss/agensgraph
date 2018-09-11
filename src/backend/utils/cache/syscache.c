@@ -23,8 +23,8 @@
 #include "access/htup_details.h"
 #include "access/sysattr.h"
 #include "catalog/ag_graph.h"
+#include "catalog/ag_graphmeta.h"
 #include "catalog/ag_label.h"
-#include "catalog/ag_labmeta.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_am.h"
@@ -477,6 +477,17 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		4
 	},
+	{GraphMetaRelationId,			/* GRAPHMETAFULL */
+		GraphMetaFullIndexId,
+		4,
+		{
+			Anum_ag_graphmeta_graph,
+			Anum_ag_graphmeta_edge,
+			Anum_ag_graphmeta_start,
+			Anum_ag_graphmeta_end
+		},
+		64
+	},
 	{GraphRelationId,			/* GRAPHNAME */
 		GraphNameIndexId,
 		1,
@@ -551,17 +562,6 @@ static const struct cachedesc cacheinfo[] = {
 			0,
 			0,
 			0
-		},
-		64
-	},
-	{LabMetaRelationId,			/* LABMETAFULL */
-		LabMetaFullIndexId,
-		4,
-		{
-			Anum_ag_labmeta_graph,
-			Anum_ag_labmeta_edge,
-			Anum_ag_labmeta_start,
-			Anum_ag_labmeta_end
 		},
 		64
 	},

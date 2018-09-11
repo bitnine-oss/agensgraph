@@ -34,6 +34,8 @@
 typedef uint64 Graphid;
 typedef uint16 Labid;
 
+#define InvalidLabid			0
+
 #define DatumGetGraphid(d)		DatumGetUInt64(d)
 #define GraphidGetDatum(p)		UInt64GetDatum(p)
 #define PG_GETARG_GRAPHID(x)	DatumGetGraphid(PG_GETARG_DATUM(x))
