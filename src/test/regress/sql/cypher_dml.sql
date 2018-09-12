@@ -1293,6 +1293,21 @@ EXECUTE stmt5 (false);
 MATCH (a:v) RETURN properties(a);
 
 DROP GRAPH ag183 CASCADE;
+
+-- AG-189
+
+CREATE graph ag189;
+SET graph_path TO ag189;
+
+CREATE (vt1:TEST{name:'isaac', age:32});
+MATCH (vt1:TEST{name:'isaac'}) WITH vt1, vt1.age AS my_age
+SET vt1.age = my_age +1
+RETURN properties(vt1), my_age;
+
+MATCH (vt1:TEST)
+RETURN properties(vt1);
+
+DROP GRAPH ag189 CASCADE;
 -- cleanup
 
 DROP GRAPH srf CASCADE;

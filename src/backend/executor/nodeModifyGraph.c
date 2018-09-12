@@ -380,7 +380,7 @@ ExecModifyGraph(PlanState *pstate)
 			}
 			else
 			{
-				elog(ERROR, "Invalid graph element type %d.", type);
+				continue;
 			}
 
 			setSlotValueByAttnum(result, elem, i + 1);
@@ -1124,9 +1124,7 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
 				finalValue = getPathFinal(mgstate, slot->tts_values[i]);
 				break;
 			default:
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("expected node, relationship, or path")));
+				continue;
 		}
 
 		setSlotValueByAttnum(slot, finalValue, i + 1);
