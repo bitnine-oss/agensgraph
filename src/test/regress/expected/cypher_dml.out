@@ -3324,6 +3324,31 @@ DETAIL:  drop cascades to sequence ag183.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel v
+-- AG-189
+CREATE graph ag189;
+SET graph_path TO ag189;
+CREATE (vt1:TEST{name:'isaac', age:32});
+MATCH (vt1:TEST{name:'isaac'}) WITH vt1, vt1.age AS my_age
+SET vt1.age = my_age +1
+RETURN properties(vt1), my_age;
+          properties          | my_age 
+------------------------------+--------
+ {"age": 33, "name": "isaac"} | 32
+(1 row)
+
+MATCH (vt1:TEST)
+RETURN properties(vt1);
+          properties          
+------------------------------
+ {"age": 33, "name": "isaac"}
+(1 row)
+
+DROP GRAPH ag189 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence ag189.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel test
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
