@@ -116,14 +116,10 @@ static char *preserve_downcasing_ident(char *ident);
  * for Cypher
  */
 static	PLpgSQL_stmt	*make_execcypher_stmt(int firsttoken, int location);
-static	void			read_into_cypher_target(PLpgSQL_rec **rec,
-												PLpgSQL_row **row,
-												bool *strict);
+static	void			read_into_cypher_target(PLpgSQL_row **row, bool *strict);
 static	void			read_into_list(char *initial_name,
 									   PLpgSQL_datum *initial_datum,
 									   int initial_location,
-									   PLpgSQL_datum **scalar,
-									   PLpgSQL_rec **rec,
 									   PLpgSQL_row **row);
 
 %}
@@ -4067,7 +4063,6 @@ make_execcypher_stmt(int firsttoken, int location)
 	PLpgSQL_stmt_execsql *execcypher;
 	PLpgSQL_expr		*expr;
 	PLpgSQL_row			*row = NULL;
-	PLpgSQL_rec			*rec = NULL;
 	int					tok;
 	bool				have_into = false;
 	bool				have_strict = false;
@@ -4097,7 +4092,7 @@ make_execcypher_stmt(int firsttoken, int location)
 			have_into = true;
 			into_start_loc = yylloc;
 			plpgsql_IdentifierLookup = IDENTIFIER_LOOKUP_NORMAL;
-			read_into_cypher_target(&rec, &row, &have_strict);
+			read_into_cypher_target(&row, &have_strict);
 			plpgsql_IdentifierLookup = IDENTIFIER_LOOKUP_EXPR;
 		}
 	}
@@ -4134,19 +4129,18 @@ make_execcypher_stmt(int firsttoken, int location)
 	execcypher->mod_stmt = false;
 	execcypher->into	 = have_into;
 	execcypher->strict	 = have_strict;
-	execcypher->rec	     = rec;
+	execcypher->rec	     = NULL;			/* At read_into_cypher_target(), only the rowtype is returned. */
 	execcypher->row	     = row;
 
 	return (PLpgSQL_stmt *) execcypher;
 }
 
 static void
-read_into_cypher_target(PLpgSQL_rec **rec, PLpgSQL_row **row, bool *strict)
+read_into_cypher_target(PLpgSQL_row **row, bool *strict)
 {
 	int			tok;
 
 	/* Set default results */
-	*rec = NULL;
 	*row = NULL;
 	if (strict)
 		*strict = false;
@@ -4161,9 +4155,19 @@ read_into_cypher_target(PLpgSQL_rec **rec, PLpgSQL_row **row, bool *strict)
 	switch (tok)
 	{
 		case T_DATUM:
-			read_into_list(NameOfDatum(&(yylval.wdatum)),
-					yylval.wdatum.datum, yylloc,
-					NULL, rec, row);
+			if (yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_REC)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("record cannot be part of INTO list for cypher"),
+						 parser_errposition(yylloc)));
+			}
+			else
+			{
+				read_into_list(NameOfDatum(&(yylval.wdatum)),
+						yylval.wdatum.datum, yylloc,
+						row);
+			}
 			break;
 
 		default:
@@ -4176,8 +4180,6 @@ static void
 read_into_list(char *initial_name,
 			PLpgSQL_datum *initial_datum,
 			int initial_location,
-			PLpgSQL_datum **scalar,
-			PLpgSQL_rec **rec,
 			PLpgSQL_row **row)
 {
 	int				 nfields;
@@ -4186,25 +4188,12 @@ read_into_list(char *initial_name,
 	PLpgSQL_row		*auxrow;
 	int				 tok;
 
+	*row = NULL;
+
 	check_assignable(initial_datum, initial_location);
 	fieldnames[0] = initial_name;
 	varnos[0]	  = initial_datum->dno;
 	nfields		  = 1;
-
-	*rec = NULL;
-	*row = NULL;
-	if (scalar)
-		*scalar = NULL;
-
-	/*
-	 * save row or rec if list has only one field.
-	 */
-	if (initial_datum->dtype == PLPGSQL_DTYPE_ROW)
-		*row = (PLpgSQL_row *) initial_datum;
-	else if (initial_datum->dtype == PLPGSQL_DTYPE_REC)
-		*rec = (PLpgSQL_rec *) initial_datum;
-	else if (scalar != NULL)
-		*scalar = initial_datum;
 
 	while ((tok = yylex()) == ',')
 	{
@@ -4220,8 +4209,19 @@ read_into_list(char *initial_name,
 		{
 			case T_DATUM:
 				check_assignable(yylval.wdatum.datum, yylloc);
-				fieldnames[nfields] = NameOfDatum(&(yylval.wdatum));
-				varnos[nfields++]	= yylval.wdatum.datum->dno;
+
+				if (yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_REC)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("record cannot be part of INTO list for cypher"),
+							 parser_errposition(yylloc)));
+				}
+				else
+				{
+					fieldnames[nfields] = NameOfDatum(&(yylval.wdatum));
+					varnos[nfields++]	= yylval.wdatum.datum->dno;
+				}
 				break;
 
 			default:
@@ -4253,6 +4253,5 @@ read_into_list(char *initial_name,
 	plpgsql_adddatum((PLpgSQL_datum *)auxrow);
 
 	/* result should not be rec */
-	*rec = NULL;
 	*row = auxrow;
 }
