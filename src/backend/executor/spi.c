@@ -2070,7 +2070,7 @@ _SPI_execute_plan(SPIPlanPtr plan, ParamListInfo paramLI,
 				}
 			}
 
-			if (stmt->hasGraphwriteClause == 1)
+			if (stmt->hasGraphwriteClause == true)
 			{
 				my_res = SPI_ERROR_GRAPHWRITE;
 				goto fail;

@@ -3864,8 +3864,6 @@ makeVertexRTE(ParseState *parentParseState, char *varname, char *labname)
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
 
-	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
-
 	assign_query_collations(pstate, qry);
 
 	parentParseState->p_expr_kind = EXPR_KIND_NONE;
@@ -4827,8 +4825,6 @@ transformDeleteJoin(ParseState *pstate, Node *parseTree)
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
-	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
-
 	assign_query_collations(pstate, qry);
 
 	return qry;
@@ -4889,7 +4885,6 @@ transformDeleteEdges(ParseState *pstate, Node *parseTree)
 
 	qry->hasSubLinks = pstate->p_hasSubLinks;
 
-	pstate->p_hasGraphwriteClause = true;
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
 	assign_query_collations(pstate, qry);

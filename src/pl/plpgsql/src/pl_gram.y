@@ -4055,6 +4055,7 @@ preserve_downcasing_ident(char *ident)
 /*
  * for Cypher
  */
+/* see make_execsql_etmt() */
 static PLpgSQL_stmt *
 make_execcypher_stmt(int firsttoken, int location)
 {
@@ -4135,6 +4136,7 @@ make_execcypher_stmt(int firsttoken, int location)
 	return (PLpgSQL_stmt *) execcypher;
 }
 
+/* see read_into_target() */
 static void
 read_into_cypher_target(PLpgSQL_row **row, bool *strict)
 {
@@ -4176,6 +4178,11 @@ read_into_cypher_target(PLpgSQL_row **row, bool *strict)
 	}
 }
 
+/*
+ * see read_into_scalar_list().
+ * read_into_scalar_list() makes result row that constructs an only scalar type.
+ * But, this function makes result row that constructs vertex, edge, graphpath and graphid.
+ */
 static void
 read_into_list(char *initial_name,
 			PLpgSQL_datum *initial_datum,

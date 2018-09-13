@@ -135,7 +135,7 @@ test: cypher_ddl
 test: cypher_func cypher_plpgsql
 
 # run PL/agCypher test
-test: plagcypher_parameter plagcypher_returns plagcypher_variable plagcypher_graphwritetype
+test: plagcypher plagcypher_graphwritetype
 
 # run sql restriction test
 test: sql_restriction
