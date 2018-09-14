@@ -856,6 +856,7 @@ pg_plan_queries(List *querytrees, int cursorOptions, ParamListInfo boundParams)
 			stmt->utilityStmt = query->utilityStmt;
 			stmt->stmt_location = query->stmt_location;
 			stmt->stmt_len = query->stmt_len;
+			stmt->hasGraphwriteClause = false;
 		}
 		else
 		{

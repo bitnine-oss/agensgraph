@@ -1,0 +1,226 @@
+--
+-- PL/agCypher - Use Parameter
+--
+-- setup
+DROP GRAPH IF EXISTS g4 CASCADE;
+NOTICE:  graph "g4" does not exist, skipping
+DROP FUNCTION IF EXISTS func_create();
+NOTICE:  function func_create() does not exist, skipping
+DROP FUNCTION IF EXISTS func_delete();
+NOTICE:  function func_delete() does not exist, skipping
+DROP FUNCTION IF EXISTS func_set();
+NOTICE:  function func_set() does not exist, skipping
+DROP FUNCTION IF EXISTS func_merge();
+NOTICE:  function func_merge() does not exist, skipping
+DROP FUNCTION IF EXISTS func_remove();
+NOTICE:  function func_remove() does not exist, skipping
+DROP FUNCTION IF EXISTS func_complex1();
+NOTICE:  function func_complex1() does not exist, skipping
+DROP FUNCTION IF EXISTS func_complex2();
+NOTICE:  function func_complex2() does not exist, skipping
+CREATE GRAPH g4;
+SET GRAPH_PATH=g4;
+CREATE ELABEL block;
+CREATE (a:person{name : 'Anders'})-[:knows {name:'friend1'}]->(b:person{name : 'Dilshad'}),
+(a)-[:knows {name:'friend2'}]->(c:person{name : 'Cesar'}),
+(a)-[:knows {name:'friend3'}]->(d:person{name : 'Becky'}),
+(b)-[:knows {name:'friend4'}]->(:person{name : 'Filipa'}),
+(c)-[:knows {name:'friend5'}]->(e:person{name : 'Emil'}),
+(d)-[:knows {name:'friend6'}]->(e);
+-- test graphwrite type ( create )
+CREATE OR REPLACE FUNCTION func_create() RETURNS void AS $$
+BEGIN
+CREATE( :person{name : 'Bossman'} );
+END;
+$$ LANGUAGE plagcypher;
+MATCH (a) RETURN properties(a);
+     properties      
+---------------------
+ {"name": "Anders"}
+ {"name": "Dilshad"}
+ {"name": "Cesar"}
+ {"name": "Becky"}
+ {"name": "Filipa"}
+ {"name": "Emil"}
+(6 rows)
+
+SELECT func_create();
+ERROR:  cannot modify graph in PL/pgSQL
+CONTEXT:  PL/pgSQL function func_create() line 3 at SQL statement
+MATCH (a) RETURN properties(a);
+     properties      
+---------------------
+ {"name": "Anders"}
+ {"name": "Dilshad"}
+ {"name": "Cesar"}
+ {"name": "Becky"}
+ {"name": "Filipa"}
+ {"name": "Emil"}
+(6 rows)
+
+CREATE OR REPLACE FUNCTION func_delete() RETURNS void AS $$
+BEGIN
+MATCH (a)
+WHERE a.name = 'Becky'
+DELETE a;
+END;
+$$ LANGUAGE plagcypher;
+MATCH (a) RETURN properties(a);
+     properties      
+---------------------
+ {"name": "Anders"}
+ {"name": "Dilshad"}
+ {"name": "Cesar"}
+ {"name": "Becky"}
+ {"name": "Filipa"}
+ {"name": "Emil"}
+(6 rows)
+
+SELECT func_delete();
+ERROR:  cannot modify graph in PL/pgSQL
+CONTEXT:  PL/pgSQL function func_delete() line 3 at SQL statement
+MATCH (a) RETURN properties(a);
+     properties      
+---------------------
+ {"name": "Anders"}
+ {"name": "Dilshad"}
+ {"name": "Cesar"}
+ {"name": "Becky"}
+ {"name": "Filipa"}
+ {"name": "Emil"}
+(6 rows)
+
+CREATE OR REPLACE FUNCTION func_set() RETURNS void AS $$
+BEGIN
+MATCH (a)
+WHERE a.name = 'Becky'
+SET a.name = 'lucy';
+END;
+$$ LANGUAGE plagcypher;
+MATCH (a) RETURN properties(a);
+     properties      
+---------------------
+ {"name": "Anders"}
+ {"name": "Dilshad"}
+ {"name": "Cesar"}
+ {"name": "Becky"}
+ {"name": "Filipa"}
+ {"name": "Emil"}
+(6 rows)
+
+SELECT func_set();
+ERROR:  cannot modify graph in PL/pgSQL
+CONTEXT:  PL/pgSQL function func_set() line 3 at SQL statement
+MATCH (a) RETURN properties(a);
+     properties      
+---------------------
+ {"name": "Anders"}
+ {"name": "Dilshad"}
+ {"name": "Cesar"}
+ {"name": "Becky"}
+ {"name": "Filipa"}
+ {"name": "Emil"}
+(6 rows)
+
+CREATE OR REPLACE FUNCTION func_merge() RETURNS void AS $$
+BEGIN
+MATCH (a) , (b)
+WHERE a.name = 'Cesar' AND b.name = 'Filipa'
+MERGE (a)-[e:block {name:'block'}]->(b);
+END;
+$$ LANGUAGE plagcypher;
+MATCH (a)-[b]->(c)
+WHERE b.name = 'block'
+RETURN a , b , c;
+ a | b | c 
+---+---+---
+(0 rows)
+
+SELECT func_merge();
+ERROR:  cannot modify graph in PL/pgSQL
+CONTEXT:  PL/pgSQL function func_merge() line 3 at SQL statement
+MATCH (a)-[b]->(c)
+WHERE b.name = 'block'
+RETURN a , b , c;
+ a | b | c 
+---+---+---
+(0 rows)
+
+CREATE OR REPLACE FUNCTION func_remove() RETURNS void AS $$
+BEGIN
+MATCH (a)
+REMOVE a.name;
+END;
+$$ LANGUAGE plagcypher;
+MATCH (a) RETURN properties(a);
+     properties      
+---------------------
+ {"name": "Anders"}
+ {"name": "Dilshad"}
+ {"name": "Cesar"}
+ {"name": "Becky"}
+ {"name": "Filipa"}
+ {"name": "Emil"}
+(6 rows)
+
+SELECT func_remove();
+ERROR:  cannot modify graph in PL/pgSQL
+CONTEXT:  PL/pgSQL function func_remove() line 3 at SQL statement
+MATCH (a) RETURN properties(a);
+     properties      
+---------------------
+ {"name": "Anders"}
+ {"name": "Dilshad"}
+ {"name": "Cesar"}
+ {"name": "Becky"}
+ {"name": "Filipa"}
+ {"name": "Emil"}
+(6 rows)
+
+CREATE VLABEL v;
+CREATE ELABEL e;
+CREATE OR REPLACE FUNCTION func_complex1() RETURNS void AS $$
+DECLARE
+var1 edge;
+var2 edge;
+BEGIN
+MATCH (a:v) , (b:v) , (c:v)
+CREATE (a)-[z:e {name:'edge1', id:'1'}]->(b)
+CREATE (b)-[r:e {name:'edge2', id:'2'}]->(c)
+RETURN z , r INTO var1 , var2;
+END;
+$$ LANGUAGE plagcypher;
+SELECT func_complex1();
+ERROR:  cannot modify graph in PL/pgSQL
+CONTEXT:  PL/pgSQL function func_complex1() line 6 at SQL statement
+CREATE OR REPLACE FUNCTION func_complex2() RETURNS void AS $$
+DECLARE
+var1 edge;
+BEGIN
+MATCH (a:v) , (b:v)
+MERGE (a)-[r:e {name:'edge' , id:'0'}]-(b)
+ON CREATE SET r.created = true, r.matched = null
+ON MATCH SET r.matched = true, r.created = null
+RETURN r INTO var1;
+END;
+$$ LANGUAGE plagcypher;
+SELECT func_complex2();
+ERROR:  cannot modify graph in PL/pgSQL
+CONTEXT:  PL/pgSQL function func_complex2() line 5 at SQL statement
+DROP FUNCTION IF EXISTS func_complex2();
+DROP FUNCTION IF EXISTS func_complex1();
+DROP FUNCTION IF EXISTS func_remove();
+DROP FUNCTION IF EXISTS func_merge();
+DROP FUNCTION IF EXISTS func_set();
+DROP FUNCTION IF EXISTS func_delete();
+DROP FUNCTION IF EXISTS func_create();
+DROP GRAPH IF EXISTS g4 CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DETAIL:  drop cascades to sequence g4.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to elabel block
+drop cascades to vlabel person
+drop cascades to elabel knows
+drop cascades to vlabel v
+drop cascades to elabel e

@@ -187,6 +187,8 @@ test: cypher_shortestpath
 test: cypher_eager
 test: cypher_func
 test: cypher_plpgsql
+test: plagcypher
+test: plagcypher_graphwritetype
 test: sql_restriction
 test: cypher_ddl
 test: propertyindex
