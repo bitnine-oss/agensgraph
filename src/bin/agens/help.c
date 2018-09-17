@@ -27,6 +27,7 @@
 #include "input.h"
 #include "settings.h"
 #include "sql_help.h"
+#include "cypher_help.h"
 
 
 /*
@@ -495,6 +496,32 @@ helpSQL(const char *topic, unsigned short int pager)
 		}
 
 		ClosePager(output);
+
+		if (QL_MAX_CMD_LEN < CYPHER_MAX_CMD_LEN)
+		{
+			ncolumns = (screen_width - 3) / (CYPHER_MAX_CMD_LEN + 1);
+			ncolumns = Max(ncolumns, 1);
+		}
+		nrows = (CYPHER_HELP_COUNT + (ncolumns - 1)) / ncolumns;
+
+		output = PageOutput(nrows + 1, pager ? &(pset.popt.topt) : NULL);
+
+		fputs(_("Available Cypher help:\n"), output);
+
+		for (i = 0; i < nrows; i++)
+		{
+			fprintf(output, "  ");
+			for (j = 0; j < ncolumns - 1; j++)
+				fprintf(output, "%-*s",
+						QL_MAX_CMD_LEN + 1,
+						VALUE_OR_NULL(CYPHER_HELP[i + j * nrows].cmd));
+			if (i + j * nrows < CYPHER_HELP_COUNT)
+				fprintf(output, "%s",
+						VALUE_OR_NULL(CYPHER_HELP[i + j * nrows].cmd));
+			fputc('\n', output);
+		}
+
+		ClosePager(output);
 	}
 	else
 	{
@@ -550,6 +577,19 @@ helpSQL(const char *topic, unsigned short int pager)
 				}
 			}
 
+			for (i = 0; CYPHER_HELP[i].cmd; i++)
+			{
+				if (pg_strncasecmp(topic, CYPHER_HELP[i].cmd, len) == 0 ||
+					strcmp(topic, "*") == 0)
+				{
+					nl_count += 5 + CYPHER_HELP[i].nl_count;
+
+					/* If we have an exact match, exit.  Fixes \h SELECT */
+					if (pg_strcasecmp(topic, CYPHER_HELP[i].cmd) == 0)
+						break;
+				}
+			}
+
 			if (!output)
 				output = PageOutput(nl_count, pager ? &(pset.popt.topt) : NULL);
 
@@ -574,6 +614,28 @@ helpSQL(const char *topic, unsigned short int pager)
 						break;
 				}
 			}
+
+			for (i = 0; CYPHER_HELP[i].cmd; i++)
+			{
+				if (pg_strncasecmp(topic, CYPHER_HELP[i].cmd, len) == 0 ||
+					strcmp(topic, "*") == 0)
+				{
+					PQExpBufferData buffer;
+
+					initPQExpBuffer(&buffer);
+					CYPHER_HELP[i].syntaxfunc(&buffer);
+					help_found = true;
+					fprintf(output, _("Cypher Command: %s\n"
+									  "Description: %s\n"
+									  "Syntax:\n%s\n\n"),
+							CYPHER_HELP[i].cmd,
+							_(CYPHER_HELP[i].help),
+							buffer.data);
+					/* If we have an exact match, exit.  Fixes \h SELECT */
+					if (pg_strcasecmp(topic, CYPHER_HELP[i].cmd) == 0)
+						break;
+				}
+			}
 			if (help_found)		/* Don't keep trying if we got a match */
 				break;
 		}
@@ -584,8 +646,6 @@ helpSQL(const char *topic, unsigned short int pager)
 		ClosePager(output);
 	}
 }
-
-
 
 void
 print_copyright(void)
