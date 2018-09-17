@@ -26,6 +26,7 @@ OBJS=	command.o common.o conditional.o copy.o crosstabview.o \
 	describe.o help.o input.o large_obj.o mainloop.o \
 	prompt.o psqlscanslash.o sql_help.o startup.o stringutils.o \
 	tab-complete.o variables.o \
+	cypher_help.o \
 	$(WIN32RES)
 
 
