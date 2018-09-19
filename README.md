@@ -79,4 +79,4 @@ Documentation
 
 License
 -------
-* [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
+* [GNU Affero General Public License](https://www.gnu.org/licenses/agpl.html)
