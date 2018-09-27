@@ -199,6 +199,7 @@ ExecInitHash2Side(Hash2Side *node, EState *estate, int eflags)
 	hashstate->spstate = NULL;
 	hashstate->totalPaths = 0;
 	hashstate->hops = 0;
+	hashstate->spacePeak = 0;
 
 	/*
 	 * Miscellaneous initialization
@@ -276,7 +277,7 @@ ExecEndHash2Side(Hash2SideState *node)
  */
 HashJoinTable
 ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
-						 double ntuples, double npaths, long hops)
+						 double ntuples, double npaths, long hops, Size spacePeak)
 {
 	HashJoinTable hashtable;
 	Plan	   *outerNode;
@@ -331,7 +332,7 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 	hashtable->innerBatchFile = NULL;
 	hashtable->outerBatchFile = NULL;
 	hashtable->spaceUsed = 0;
-	hashtable->spacePeak = 0;
+	hashtable->spacePeak = spacePeak;
 	hashtable->spaceAllowed = work_mem * 1024L;
 	hashtable->spaceUsedSkew = 0;
 	hashtable->spaceAllowedSkew =
@@ -416,7 +417,7 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 
 HashJoinTable
 ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
-						HashJoinTable sourcetable)
+						HashJoinTable sourcetable, Size spacePeak)
 {
 	HashJoinTable  hashtable;
 	int			   nkeys;
@@ -453,7 +454,7 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 	hashtable->innerBatchFile = NULL;
 	hashtable->outerBatchFile = NULL;
 	hashtable->spaceUsed = 0;
-	hashtable->spacePeak = 0;
+	hashtable->spacePeak = spacePeak;
 	hashtable->spaceAllowed = work_mem * 1024L;
 	hashtable->spaceUsedSkew = 0;
 	hashtable->spaceAllowedSkew =
@@ -1308,11 +1309,15 @@ ExecReScanHash2Side(Hash2SideState *node)
 {
 	if (node->keytable)
 	{
+		if (node->keytable->spacePeak > node->spacePeak)
+			node->spacePeak = node->keytable->spacePeak;
 		ExecHash2SideTableDestroy(node->keytable);
 		node->keytable = NULL;
 	}
 	if (node->hashtable)
 	{
+		if (node->hashtable->spacePeak > node->spacePeak)
+			node->spacePeak = node->hashtable->spacePeak;
 		ExecHash2SideTableDestroy(node->hashtable);
 		node->hashtable = NULL;
 	}
