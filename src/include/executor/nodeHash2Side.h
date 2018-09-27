@@ -24,9 +24,9 @@ extern void ExecEndHash2Side(Hash2SideState *node);
 extern void ExecReScanHash2Side(Hash2SideState *node);
 
 extern HashJoinTable ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
-											  double ntuples, double npaths, long hops);
+											  double ntuples, double npaths, long hops, Size spacePeak);
 extern HashJoinTable ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
-											 HashJoinTable sourcetable);
+											 HashJoinTable sourcetable, Size spacePeak);
 extern void ExecHash2SideTableDestroy(HashJoinTable hashtable);
 extern void ExecHash2SideIncreaseNumBuckets(HashJoinTable hashtable, Hash2SideState *node);
 extern bool ExecHash2SideTableInsert(HashJoinTable hashtable,
