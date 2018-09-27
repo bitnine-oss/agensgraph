@@ -74,6 +74,103 @@ create (:s{id:18})
 create (:s{id:19});
 match (s1:s), (s2:s{id:s1.id+1})
 create (s1)-[:e{id:'s:'+s1.id+'->s:'+s2.id}]->(s2);
+-- No Labels
+match shortestpath( (a)-[b]->(c) ) return a.id as a, c.id as c order by a, c;
+ a  | c  
+----+----
+ 1  | 2
+ 1  | 2
+ 2  | 3
+ 3  | 4
+ 4  | 5
+ 5  | 6
+ 6  | 7
+ 7  | 8
+ 8  | 9
+ 9  | 10
+ 10 | 11
+ 11 | 12
+ 12 | 13
+ 13 | 14
+ 14 | 15
+ 15 | 16
+ 16 | 17
+ 17 | 18
+ 18 | 19
+(19 rows)
+
+match p = shortestpath( (a)-[b]->(c) ) return ids(nodes(p)) as p, a.id as a, c.id as c order by a, c;
+    p    | a  | c  
+---------+----+----
+ {1,2}   | 1  | 2
+ {1,2}   | 1  | 2
+ {2,3}   | 2  | 3
+ {3,4}   | 3  | 4
+ {4,5}   | 4  | 5
+ {5,6}   | 5  | 6
+ {6,7}   | 6  | 7
+ {7,8}   | 7  | 8
+ {8,9}   | 8  | 9
+ {9,10}  | 9  | 10
+ {10,11} | 10 | 11
+ {11,12} | 11 | 12
+ {12,13} | 12 | 13
+ {13,14} | 13 | 14
+ {14,15} | 14 | 15
+ {15,16} | 15 | 16
+ {16,17} | 16 | 17
+ {17,18} | 17 | 18
+ {18,19} | 18 | 19
+(19 rows)
+
+match allshortestpaths( (a)-[b]->(c) ) return a.id as a, c.id as c order by a, c;
+ a  | c  
+----+----
+ 1  | 2
+ 1  | 2
+ 2  | 3
+ 3  | 4
+ 4  | 5
+ 5  | 6
+ 6  | 7
+ 7  | 8
+ 8  | 9
+ 9  | 10
+ 10 | 11
+ 11 | 12
+ 12 | 13
+ 13 | 14
+ 14 | 15
+ 15 | 16
+ 16 | 17
+ 17 | 18
+ 18 | 19
+(19 rows)
+
+match p = allshortestpaths( (a)-[b]->(c) ) return ids(nodes(p)) as p, a.id as a, c.id as c order by a, c;
+    p    | a  | c  
+---------+----+----
+ {1,2}   | 1  | 2
+ {1,2}   | 1  | 2
+ {2,3}   | 2  | 3
+ {3,4}   | 3  | 4
+ {4,5}   | 4  | 5
+ {5,6}   | 5  | 6
+ {6,7}   | 6  | 7
+ {7,8}   | 7  | 8
+ {8,9}   | 8  | 9
+ {9,10}  | 9  | 10
+ {10,11} | 10 | 11
+ {11,12} | 11 | 12
+ {12,13} | 12 | 13
+ {13,14} | 13 | 14
+ {14,15} | 14 | 15
+ {15,16} | 15 | 16
+ {16,17} | 16 | 17
+ {17,18} | 17 | 18
+ {18,19} | 18 | 19
+(19 rows)
+
 -- Cycle
 match (o:o)
 create (:c{id:10+o.id})
@@ -14914,196 +15011,6 @@ match p = shortestpath( (o1:o)<-[:e*0..]->(o2:o) ) where o1.id = 1 and o1.id = 1
                Output: o2.id, o2.properties, o2.ctid
          ->  Shortestpath VLE [0..]
                Output: shortestpath_graphids(), shortestpath_rowids()
-               Hash Cond: ("<0000000328>"."end" = "<0000000330>".start)
-               ->  Hash2Side
-                     Output: "<0000000328>"."end", "<0000000328>".ltableoid, "<0000000328>".lctid
-                     ->  Subquery Scan on "<0000000328>"
-                           Output: "<0000000328>"."end", "<0000000328>".ltableoid, "<0000000328>".lctid
-                           ->  Unique
-                                 Output: e.start, e."end", e.tableoid, e.ctid
-                                 ->  Sort
-                                       Output: e.start, e."end", e.tableoid, e.ctid
-                                       Sort Key: e.start, e."end", e.tableoid, e.ctid
-                                       ->  Append
-                                             ->  Index Scan using e_start_idx on shortestpath.e
-                                                   Output: e.start, e."end", e.tableoid, e.ctid
-                                                   Index Cond: (e.start = o1.id)
-                                             ->  Index Scan using e_end_idx on shortestpath.e e_1
-                                                   Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
-                                                   Index Cond: (e_1."end" = o1.id)
-               ->  Hash2Side
-                     Output: "<0000000330>".start, "<0000000330>".ltableoid, "<0000000330>".lctid
-                     ->  Subquery Scan on "<0000000330>"
-                           Output: "<0000000330>".start, "<0000000330>".ltableoid, "<0000000330>".lctid
-                           ->  Unique
-                                 Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                 ->  Sort
-                                       Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                       Sort Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                       ->  Append
-                                             ->  Index Scan using e_end_idx on shortestpath.e e_2
-                                                   Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                                   Index Cond: (e_2."end" = o2.id)
-                                             ->  Index Scan using e_start_idx on shortestpath.e e_3
-                                                   Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
-                                                   Index Cond: (e_3.start = o2.id)
-   SubPlan 2
-     ->  Aggregate
-           Output: array_agg((SubPlan 1))
-           ->  Function Scan on pg_catalog.unnest vid
-                 Output: vid.vid
-                 Function Call: unnest((shortestpath_graphids()))
-           SubPlan 1
-             ->  Result
-                   Output: ROW(ag_vertex.id, ag_vertex.properties, ag_vertex.ctid)::vertex
-                   ->  Append
-                         ->  Seq Scan on shortestpath.ag_vertex
-                               Output: ag_vertex.id, ag_vertex.properties, ag_vertex.ctid
-                               Filter: (ag_vertex.id = vid.vid)
-                         ->  Seq Scan on shortestpath.vp
-                               Output: vp.id, vp.properties, vp.ctid
-                               Filter: (vp.id = vid.vid)
-                         ->  Seq Scan on shortestpath.o
-                               Output: o.id, o.properties, o.ctid
-                               Filter: (o.id = vid.vid)
-                         ->  Seq Scan on shortestpath.s
-                               Output: s.id, s.properties, s.ctid
-                               Filter: (s.id = vid.vid)
-                         ->  Seq Scan on shortestpath.c
-                               Output: c.id, c.properties, c.ctid
-                               Filter: (c.id = vid.vid)
-                         ->  Index Scan using l_pkey on shortestpath.l
-                               Output: l.id, l.properties, l.ctid
-                               Index Cond: (l.id = vid.vid)
-                         ->  Index Scan using r_pkey on shortestpath.r
-                               Output: r.id, r.properties, r.ctid
-                               Index Cond: (r.id = vid.vid)
-                         ->  Seq Scan on shortestpath.vc
-                               Output: vc.id, vc.properties, vc.ctid
-                               Filter: (vc.id = vid.vid)
-   SubPlan 4
-     ->  Aggregate
-           Output: array_agg((SubPlan 3))
-           ->  Function Scan on pg_catalog.unnest eid
-                 Output: eid.eid
-                 Function Call: unnest((shortestpath_rowids()))
-           SubPlan 3
-             ->  Tid Scan on shortestpath.e e_4
-                   Output: ROW(e_4.id, e_4.start, e_4."end", e_4.properties, e_4.ctid)::edge
-                   TID Cond: (e_4.ctid = rowid_ctid(eid.eid))
-                   Filter: (e_4.tableoid = rowid_tableoid(eid.eid))
-(89 rows)
-
-explain ( analyze false, verbose true, costs false, buffers false, timing false )
-match p = shortestpath( (o1:o)<-[:e*1..]->(o2:o) ) where o1.id = 1 and o1.id = 1 return p;
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
- Nested Loop
-   Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
-   ->  Seq Scan on shortestpath.o o1
-         Output: o1.id, o1.properties, o1.ctid
-         Filter: (o1.properties.'id'::text = '1'::jsonb)
-   ->  Nested Loop
-         Output: (shortestpath_graphids()), (shortestpath_rowids())
-         ->  Seq Scan on shortestpath.o o2
-               Output: o2.id, o2.properties, o2.ctid
-         ->  Shortestpath VLE [1..]
-               Output: shortestpath_graphids(), shortestpath_rowids()
-               Hash Cond: ("<0000000332>"."end" = "<0000000334>".start)
-               ->  Hash2Side
-                     Output: "<0000000332>"."end", "<0000000332>".ltableoid, "<0000000332>".lctid
-                     ->  Subquery Scan on "<0000000332>"
-                           Output: "<0000000332>"."end", "<0000000332>".ltableoid, "<0000000332>".lctid
-                           ->  Unique
-                                 Output: e.start, e."end", e.tableoid, e.ctid
-                                 ->  Sort
-                                       Output: e.start, e."end", e.tableoid, e.ctid
-                                       Sort Key: e.start, e."end", e.tableoid, e.ctid
-                                       ->  Append
-                                             ->  Index Scan using e_start_idx on shortestpath.e
-                                                   Output: e.start, e."end", e.tableoid, e.ctid
-                                                   Index Cond: (e.start = o1.id)
-                                             ->  Index Scan using e_end_idx on shortestpath.e e_1
-                                                   Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
-                                                   Index Cond: (e_1."end" = o1.id)
-               ->  Hash2Side
-                     Output: "<0000000334>".start, "<0000000334>".ltableoid, "<0000000334>".lctid
-                     ->  Subquery Scan on "<0000000334>"
-                           Output: "<0000000334>".start, "<0000000334>".ltableoid, "<0000000334>".lctid
-                           ->  Unique
-                                 Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                 ->  Sort
-                                       Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                       Sort Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                       ->  Append
-                                             ->  Index Scan using e_end_idx on shortestpath.e e_2
-                                                   Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
-                                                   Index Cond: (e_2."end" = o2.id)
-                                             ->  Index Scan using e_start_idx on shortestpath.e e_3
-                                                   Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
-                                                   Index Cond: (e_3.start = o2.id)
-   SubPlan 2
-     ->  Aggregate
-           Output: array_agg((SubPlan 1))
-           ->  Function Scan on pg_catalog.unnest vid
-                 Output: vid.vid
-                 Function Call: unnest((shortestpath_graphids()))
-           SubPlan 1
-             ->  Result
-                   Output: ROW(ag_vertex.id, ag_vertex.properties, ag_vertex.ctid)::vertex
-                   ->  Append
-                         ->  Seq Scan on shortestpath.ag_vertex
-                               Output: ag_vertex.id, ag_vertex.properties, ag_vertex.ctid
-                               Filter: (ag_vertex.id = vid.vid)
-                         ->  Seq Scan on shortestpath.vp
-                               Output: vp.id, vp.properties, vp.ctid
-                               Filter: (vp.id = vid.vid)
-                         ->  Seq Scan on shortestpath.o
-                               Output: o.id, o.properties, o.ctid
-                               Filter: (o.id = vid.vid)
-                         ->  Seq Scan on shortestpath.s
-                               Output: s.id, s.properties, s.ctid
-                               Filter: (s.id = vid.vid)
-                         ->  Seq Scan on shortestpath.c
-                               Output: c.id, c.properties, c.ctid
-                               Filter: (c.id = vid.vid)
-                         ->  Index Scan using l_pkey on shortestpath.l
-                               Output: l.id, l.properties, l.ctid
-                               Index Cond: (l.id = vid.vid)
-                         ->  Index Scan using r_pkey on shortestpath.r
-                               Output: r.id, r.properties, r.ctid
-                               Index Cond: (r.id = vid.vid)
-                         ->  Seq Scan on shortestpath.vc
-                               Output: vc.id, vc.properties, vc.ctid
-                               Filter: (vc.id = vid.vid)
-   SubPlan 4
-     ->  Aggregate
-           Output: array_agg((SubPlan 3))
-           ->  Function Scan on pg_catalog.unnest eid
-                 Output: eid.eid
-                 Function Call: unnest((shortestpath_rowids()))
-           SubPlan 3
-             ->  Tid Scan on shortestpath.e e_4
-                   Output: ROW(e_4.id, e_4.start, e_4."end", e_4.properties, e_4.ctid)::edge
-                   TID Cond: (e_4.ctid = rowid_ctid(eid.eid))
-                   Filter: (e_4.tableoid = rowid_tableoid(eid.eid))
-(89 rows)
-
-explain ( analyze false, verbose true, costs false, buffers false, timing false )
-match p = shortestpath( (o1:o)<-[:e*0..1]->(o2:o) ) where o1.id = 1 and o1.id = 1 return p;
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
- Nested Loop
-   Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
-   ->  Seq Scan on shortestpath.o o1
-         Output: o1.id, o1.properties, o1.ctid
-         Filter: (o1.properties.'id'::text = '1'::jsonb)
-   ->  Nested Loop
-         Output: (shortestpath_graphids()), (shortestpath_rowids())
-         ->  Seq Scan on shortestpath.o o2
-               Output: o2.id, o2.properties, o2.ctid
-         ->  Shortestpath VLE [0..1]
-               Output: shortestpath_graphids(), shortestpath_rowids()
                Hash Cond: ("<0000000336>"."end" = "<0000000338>".start)
                ->  Hash2Side
                      Output: "<0000000336>"."end", "<0000000336>".ltableoid, "<0000000336>".lctid
@@ -15185,7 +15092,7 @@ match p = shortestpath( (o1:o)<-[:e*0..1]->(o2:o) ) where o1.id = 1 and o1.id = 
 (89 rows)
 
 explain ( analyze false, verbose true, costs false, buffers false, timing false )
-match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 1 return p;
+match p = shortestpath( (o1:o)<-[:e*1..]->(o2:o) ) where o1.id = 1 and o1.id = 1 return p;
                                                QUERY PLAN                                               
 --------------------------------------------------------------------------------------------------------
  Nested Loop
@@ -15197,7 +15104,7 @@ match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 
          Output: (shortestpath_graphids()), (shortestpath_rowids())
          ->  Seq Scan on shortestpath.o o2
                Output: o2.id, o2.properties, o2.ctid
-         ->  Shortestpath VLE [1..2]
+         ->  Shortestpath VLE [1..]
                Output: shortestpath_graphids(), shortestpath_rowids()
                Hash Cond: ("<0000000340>"."end" = "<0000000342>".start)
                ->  Hash2Side
@@ -15220,6 +15127,196 @@ match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 
                      Output: "<0000000342>".start, "<0000000342>".ltableoid, "<0000000342>".lctid
                      ->  Subquery Scan on "<0000000342>"
                            Output: "<0000000342>".start, "<0000000342>".ltableoid, "<0000000342>".lctid
+                           ->  Unique
+                                 Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                 ->  Sort
+                                       Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       Sort Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_2
+                                                   Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                                   Index Cond: (e_2."end" = o2.id)
+                                             ->  Index Scan using e_start_idx on shortestpath.e e_3
+                                                   Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
+                                                   Index Cond: (e_3.start = o2.id)
+   SubPlan 2
+     ->  Aggregate
+           Output: array_agg((SubPlan 1))
+           ->  Function Scan on pg_catalog.unnest vid
+                 Output: vid.vid
+                 Function Call: unnest((shortestpath_graphids()))
+           SubPlan 1
+             ->  Result
+                   Output: ROW(ag_vertex.id, ag_vertex.properties, ag_vertex.ctid)::vertex
+                   ->  Append
+                         ->  Seq Scan on shortestpath.ag_vertex
+                               Output: ag_vertex.id, ag_vertex.properties, ag_vertex.ctid
+                               Filter: (ag_vertex.id = vid.vid)
+                         ->  Seq Scan on shortestpath.vp
+                               Output: vp.id, vp.properties, vp.ctid
+                               Filter: (vp.id = vid.vid)
+                         ->  Seq Scan on shortestpath.o
+                               Output: o.id, o.properties, o.ctid
+                               Filter: (o.id = vid.vid)
+                         ->  Seq Scan on shortestpath.s
+                               Output: s.id, s.properties, s.ctid
+                               Filter: (s.id = vid.vid)
+                         ->  Seq Scan on shortestpath.c
+                               Output: c.id, c.properties, c.ctid
+                               Filter: (c.id = vid.vid)
+                         ->  Index Scan using l_pkey on shortestpath.l
+                               Output: l.id, l.properties, l.ctid
+                               Index Cond: (l.id = vid.vid)
+                         ->  Index Scan using r_pkey on shortestpath.r
+                               Output: r.id, r.properties, r.ctid
+                               Index Cond: (r.id = vid.vid)
+                         ->  Seq Scan on shortestpath.vc
+                               Output: vc.id, vc.properties, vc.ctid
+                               Filter: (vc.id = vid.vid)
+   SubPlan 4
+     ->  Aggregate
+           Output: array_agg((SubPlan 3))
+           ->  Function Scan on pg_catalog.unnest eid
+                 Output: eid.eid
+                 Function Call: unnest((shortestpath_rowids()))
+           SubPlan 3
+             ->  Tid Scan on shortestpath.e e_4
+                   Output: ROW(e_4.id, e_4.start, e_4."end", e_4.properties, e_4.ctid)::edge
+                   TID Cond: (e_4.ctid = rowid_ctid(eid.eid))
+                   Filter: (e_4.tableoid = rowid_tableoid(eid.eid))
+(89 rows)
+
+explain ( analyze false, verbose true, costs false, buffers false, timing false )
+match p = shortestpath( (o1:o)<-[:e*0..1]->(o2:o) ) where o1.id = 1 and o1.id = 1 return p;
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
+   ->  Seq Scan on shortestpath.o o1
+         Output: o1.id, o1.properties, o1.ctid
+         Filter: (o1.properties.'id'::text = '1'::jsonb)
+   ->  Nested Loop
+         Output: (shortestpath_graphids()), (shortestpath_rowids())
+         ->  Seq Scan on shortestpath.o o2
+               Output: o2.id, o2.properties, o2.ctid
+         ->  Shortestpath VLE [0..1]
+               Output: shortestpath_graphids(), shortestpath_rowids()
+               Hash Cond: ("<0000000344>"."end" = "<0000000346>".start)
+               ->  Hash2Side
+                     Output: "<0000000344>"."end", "<0000000344>".ltableoid, "<0000000344>".lctid
+                     ->  Subquery Scan on "<0000000344>"
+                           Output: "<0000000344>"."end", "<0000000344>".ltableoid, "<0000000344>".lctid
+                           ->  Unique
+                                 Output: e.start, e."end", e.tableoid, e.ctid
+                                 ->  Sort
+                                       Output: e.start, e."end", e.tableoid, e.ctid
+                                       Sort Key: e.start, e."end", e.tableoid, e.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_start_idx on shortestpath.e
+                                                   Output: e.start, e."end", e.tableoid, e.ctid
+                                                   Index Cond: (e.start = o1.id)
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_1
+                                                   Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
+                                                   Index Cond: (e_1."end" = o1.id)
+               ->  Hash2Side
+                     Output: "<0000000346>".start, "<0000000346>".ltableoid, "<0000000346>".lctid
+                     ->  Subquery Scan on "<0000000346>"
+                           Output: "<0000000346>".start, "<0000000346>".ltableoid, "<0000000346>".lctid
+                           ->  Unique
+                                 Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                 ->  Sort
+                                       Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       Sort Key: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_2
+                                                   Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
+                                                   Index Cond: (e_2."end" = o2.id)
+                                             ->  Index Scan using e_start_idx on shortestpath.e e_3
+                                                   Output: e_3."end", e_3.start, e_3.tableoid, e_3.ctid
+                                                   Index Cond: (e_3.start = o2.id)
+   SubPlan 2
+     ->  Aggregate
+           Output: array_agg((SubPlan 1))
+           ->  Function Scan on pg_catalog.unnest vid
+                 Output: vid.vid
+                 Function Call: unnest((shortestpath_graphids()))
+           SubPlan 1
+             ->  Result
+                   Output: ROW(ag_vertex.id, ag_vertex.properties, ag_vertex.ctid)::vertex
+                   ->  Append
+                         ->  Seq Scan on shortestpath.ag_vertex
+                               Output: ag_vertex.id, ag_vertex.properties, ag_vertex.ctid
+                               Filter: (ag_vertex.id = vid.vid)
+                         ->  Seq Scan on shortestpath.vp
+                               Output: vp.id, vp.properties, vp.ctid
+                               Filter: (vp.id = vid.vid)
+                         ->  Seq Scan on shortestpath.o
+                               Output: o.id, o.properties, o.ctid
+                               Filter: (o.id = vid.vid)
+                         ->  Seq Scan on shortestpath.s
+                               Output: s.id, s.properties, s.ctid
+                               Filter: (s.id = vid.vid)
+                         ->  Seq Scan on shortestpath.c
+                               Output: c.id, c.properties, c.ctid
+                               Filter: (c.id = vid.vid)
+                         ->  Index Scan using l_pkey on shortestpath.l
+                               Output: l.id, l.properties, l.ctid
+                               Index Cond: (l.id = vid.vid)
+                         ->  Index Scan using r_pkey on shortestpath.r
+                               Output: r.id, r.properties, r.ctid
+                               Index Cond: (r.id = vid.vid)
+                         ->  Seq Scan on shortestpath.vc
+                               Output: vc.id, vc.properties, vc.ctid
+                               Filter: (vc.id = vid.vid)
+   SubPlan 4
+     ->  Aggregate
+           Output: array_agg((SubPlan 3))
+           ->  Function Scan on pg_catalog.unnest eid
+                 Output: eid.eid
+                 Function Call: unnest((shortestpath_rowids()))
+           SubPlan 3
+             ->  Tid Scan on shortestpath.e e_4
+                   Output: ROW(e_4.id, e_4.start, e_4."end", e_4.properties, e_4.ctid)::edge
+                   TID Cond: (e_4.ctid = rowid_ctid(eid.eid))
+                   Filter: (e_4.tableoid = rowid_tableoid(eid.eid))
+(89 rows)
+
+explain ( analyze false, verbose true, costs false, buffers false, timing false )
+match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 1 return p;
+                                               QUERY PLAN                                               
+--------------------------------------------------------------------------------------------------------
+ Nested Loop
+   Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
+   ->  Seq Scan on shortestpath.o o1
+         Output: o1.id, o1.properties, o1.ctid
+         Filter: (o1.properties.'id'::text = '1'::jsonb)
+   ->  Nested Loop
+         Output: (shortestpath_graphids()), (shortestpath_rowids())
+         ->  Seq Scan on shortestpath.o o2
+               Output: o2.id, o2.properties, o2.ctid
+         ->  Shortestpath VLE [1..2]
+               Output: shortestpath_graphids(), shortestpath_rowids()
+               Hash Cond: ("<0000000348>"."end" = "<0000000350>".start)
+               ->  Hash2Side
+                     Output: "<0000000348>"."end", "<0000000348>".ltableoid, "<0000000348>".lctid
+                     ->  Subquery Scan on "<0000000348>"
+                           Output: "<0000000348>"."end", "<0000000348>".ltableoid, "<0000000348>".lctid
+                           ->  Unique
+                                 Output: e.start, e."end", e.tableoid, e.ctid
+                                 ->  Sort
+                                       Output: e.start, e."end", e.tableoid, e.ctid
+                                       Sort Key: e.start, e."end", e.tableoid, e.ctid
+                                       ->  Append
+                                             ->  Index Scan using e_start_idx on shortestpath.e
+                                                   Output: e.start, e."end", e.tableoid, e.ctid
+                                                   Index Cond: (e.start = o1.id)
+                                             ->  Index Scan using e_end_idx on shortestpath.e e_1
+                                                   Output: e_1."end", e_1.start, e_1.tableoid, e_1.ctid
+                                                   Index Cond: (e_1."end" = o1.id)
+               ->  Hash2Side
+                     Output: "<0000000350>".start, "<0000000350>".ltableoid, "<0000000350>".lctid
+                     ->  Subquery Scan on "<0000000350>"
+                           Output: "<0000000350>".start, "<0000000350>".ltableoid, "<0000000350>".lctid
                            ->  Unique
                                  Output: e_2.start, e_2."end", e_2.tableoid, e_2.ctid
                                  ->  Sort

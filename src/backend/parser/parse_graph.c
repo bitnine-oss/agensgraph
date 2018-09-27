@@ -1439,7 +1439,7 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			CypherPath *p = lfirst(lp);
 			char	   *pathname = getCypherName(p->variable);
 			int			pathloc = getCypherNameLoc(p->variable);
-			bool		out = (pathname != NULL);
+			bool		out;
 			TargetEntry *te;
 			ListCell   *le;
 			CypherNode *cnode;
@@ -1448,6 +1448,10 @@ transformComponents(ParseState *pstate, List *components, List **targetList)
 			RangeTblEntry *prev_edge = NULL;
 			Node	   *pvs = makeArrayExpr(VERTEXARRAYOID, VERTEXOID, NIL);
 			Node	   *pes = makeArrayExpr(EDGEARRAYOID, EDGEOID, NIL);
+
+			out = (pathname != NULL              ||
+				   p->kind  == CPATH_SHORTEST    ||
+				   p->kind  == CPATH_SHORTEST_ALL);
 
 			te = findTarget(*targetList, pathname);
 			if (te != NULL)
