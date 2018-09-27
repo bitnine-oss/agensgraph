@@ -2299,6 +2299,7 @@ typedef struct Hash2SideState
 	PlanState      *spstate;
 	double          totalPaths;
 	long            hops;
+	Size            spacePeak;
 } Hash2SideState;
 
 typedef struct ShortestpathState

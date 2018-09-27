@@ -50,6 +50,7 @@ create property index on l ( id );
 create property index on r ( id );
 create property index on e ( id );
 
+
 -- Inherit
 
 create (:vc{id:1})-[:ec]->(:vc{id:2});
@@ -476,6 +477,7 @@ match p = shortestpath( (s1:s{id:1})-[e:e*]->(s2:s{id:19}) ) return ids(nodes(p)
 
 match shortestpath( (s1:s{id:1})-[:e*]->(s2:s{id:19}) ) return s1.id, s2.id;
 match shortestpath( (s1:s{id:1})-[e:e*]->(s2:s{id:19}) ) return s1.id, s2.id, e;
+
 
 -- Failure
 

@@ -131,26 +131,13 @@ ExecShortestpath(PlanState *pstate)
 					node->endVid = DatumGetGraphid(ExecEvalExpr(node->target, econtext, &isNull));
 
 				node->sp_JoinState = SP_ROTATE_PLANSTATE;
-
-				if (node->minhops == 0 && node->startVid == node->endVid)
-				{
-					TupleTableSlot *result;
-					result = ExecShortestpathProject(node,
-													 (unsigned char *) (&(node->startVid)),
-													 0,
-													 (unsigned char *) (&(node->endVid)),
-													 0,
-													 sizeof(Graphid),
-													 node->sp_RowidSize);
-					node->numResults++;
-					return result;
-				}
-
+				
 				hashtable = ExecHash2SideTableCreate(outerNode,
 													 node->sp_HashOperators,
 													 1,
 													 1,
-													 outerNode->hops);
+													 outerNode->hops,
+													 outerNode->spacePeak);
 				hashvalue = hash_any((unsigned char *) &(node->startVid), sizeof(Graphid));
 				ExecHash2SideTableInsertGraphid(hashtable,
 												node->startVid,
@@ -166,7 +153,8 @@ ExecShortestpath(PlanState *pstate)
 													 node->sp_HashOperators,
 													 1,
 													 1,
-													 innerNode->hops);
+													 innerNode->hops,
+													 innerNode->spacePeak);
 				hashvalue = hash_any((unsigned char *) &(node->endVid), sizeof(Graphid));
 				ExecHash2SideTableInsertGraphid(hashtable,
 												node->endVid,
@@ -179,7 +167,21 @@ ExecShortestpath(PlanState *pstate)
 				innerNode->totalPaths += 1;
 				innerNode->hashtable = hashtable;
 				hashtable = NULL;
-
+				
+				if (node->minhops == 0 && node->startVid == node->endVid)
+				{
+					TupleTableSlot *result;
+					result = ExecShortestpathProject(node,
+													 (unsigned char *) (&(node->startVid)),
+													 0,
+													 (unsigned char *) (&(node->endVid)),
+													 0,
+													 sizeof(Graphid),
+													 node->sp_RowidSize);
+					node->numResults++;
+					return result;
+				}
+				
 				/* FALL THRU */
 
 			case SP_ROTATE_PLANSTATE:
@@ -219,6 +221,8 @@ ExecShortestpath(PlanState *pstate)
 					innerNode = node->innerNode;
 					if (innerNode->keytable)
 					{
+						if (innerNode->keytable->spacePeak > innerNode->spacePeak)
+							innerNode->spacePeak = innerNode->keytable->spacePeak;
 						ExecHash2SideTableDestroy(innerNode->keytable);
 						innerNode->keytable = NULL;
 					}
@@ -237,11 +241,14 @@ ExecShortestpath(PlanState *pstate)
 							nbuckets != innerNode->hashtable->nbuckets)
 						{
 							int i;
+							if (innerNode->hashtable->spacePeak > innerNode->spacePeak)
+								innerNode->spacePeak = innerNode->hashtable->spacePeak;
 							hashtable = ExecHash2SideTableCreate(innerNode,
 																 node->sp_HashOperators,
 																 innerNode->hashtable->totalTuples,
 																 innerNode->totalPaths,
-																 innerNode->hops);
+																 innerNode->hops,
+																 innerNode->spacePeak);
 							for (i = 0; i < innerNode->hashtable->nbatch; i++)
 							{
 								if (i != innerNode->hashtable->curbatch &&
@@ -327,6 +334,8 @@ ExecShortestpath(PlanState *pstate)
 							hashtable->spaceUsed += hashtable->nbuckets * sizeof(HashJoinTuple);
 							if (hashtable->spaceUsed > hashtable->spacePeak)
 								hashtable->spacePeak = hashtable->spaceUsed;
+							if (innerNode->hashtable->spacePeak > innerNode->spacePeak)
+								innerNode->spacePeak = innerNode->hashtable->spacePeak;
 							ExecHash2SideTableDestroy(innerNode->hashtable);
 							hashtable->growEnabled = false;
 							innerNode->hashtable = hashtable;
@@ -357,15 +366,20 @@ ExecShortestpath(PlanState *pstate)
 				outerNode->hops++;
 				if (outerNode->keytable)
 				{
+					if (outerNode->keytable->spacePeak > outerNode->spacePeak)
+						outerNode->spacePeak = outerNode->keytable->spacePeak;
 					ExecHash2SideTableDestroy(outerNode->keytable);
 					outerNode->keytable = NULL;
 					node->sp_KeyTable = NULL;
 				}
 				outerNode->keytable = outerNode->hashtable;
+				if (outerNode->keytable->spacePeak > outerNode->spacePeak)
+					outerNode->spacePeak = outerNode->keytable->spacePeak;
 				if (hashtable->nbatch > 1){
 					outerNode->hashtable = ExecHash2SideTableClone(outerNode,
 																   node->sp_HashOperators,
-																   hashtable);
+																   hashtable,
+																   outerNode->spacePeak);
 				}
 				else
 				{
@@ -376,7 +390,8 @@ ExecShortestpath(PlanState *pstate)
 																	outerNode->ps.plan->plan_rows,
 																	outerNode->totalPaths *
 																	outerNode->ps.plan->plan_rows,
-																	outerNode->hops);
+																	outerNode->hops,
+																	outerNode->spacePeak);
 				}
 				node->sp_KeyTable = outerNode->keytable;
 				node->sp_OuterTable = outerNode->hashtable;
