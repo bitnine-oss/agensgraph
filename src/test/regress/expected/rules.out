@@ -1305,7 +1305,7 @@ ag_property_indexes| SELECT n.nspname AS graphname,
     ag_get_propindexdef(i.oid) AS indexdef,
     pg_get_userbyid(c.relowner) AS owner,
     pg_size_pretty(pg_table_size((c.oid)::regclass)) AS size,
-    obj_description(c.oid, 'pg_class'::name) AS description
+    obj_description(i.oid, 'pg_class'::name) AS description
    FROM (((((pg_index x
      JOIN pg_class c ON ((c.oid = x.indrelid)))
      JOIN ag_label l ON ((x.indrelid = l.relid)))
