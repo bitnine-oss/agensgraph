@@ -50,7 +50,6 @@ create property index on l ( id );
 create property index on r ( id );
 create property index on e ( id );
 
-
 -- Inherit
 
 create (:vc{id:1})-[:ec]->(:vc{id:2});
@@ -93,6 +92,12 @@ create (:s{id:19});
 match (s1:s), (s2:s{id:s1.id+1})
 create (s1)-[:e{id:'s:'+s1.id+'->s:'+s2.id}]->(s2);
 
+-- No Labels
+
+match shortestpath( (a)-[b]->(c) ) return a.id as a, c.id as c order by a, c;
+match p = shortestpath( (a)-[b]->(c) ) return ids(nodes(p)) as p, a.id as a, c.id as c order by a, c;
+match allshortestpaths( (a)-[b]->(c) ) return a.id as a, c.id as c order by a, c;
+match p = allshortestpaths( (a)-[b]->(c) ) return ids(nodes(p)) as p, a.id as a, c.id as c order by a, c;
 
 -- Cycle
 
@@ -471,7 +476,6 @@ match p = shortestpath( (s1:s{id:1})-[e:e*]->(s2:s{id:19}) ) return ids(nodes(p)
 
 match shortestpath( (s1:s{id:1})-[:e*]->(s2:s{id:19}) ) return s1.id, s2.id;
 match shortestpath( (s1:s{id:1})-[e:e*]->(s2:s{id:19}) ) return s1.id, s2.id, e;
-
 
 -- Failure
 
