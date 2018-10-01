@@ -17691,15 +17691,15 @@ insertGraphCatalog(Archive *fout)
 	{
 		appendPQExpBuffer(q,
 				"INSERT INTO pg_catalog.ag_graph\n"
-				"SELECT nspname, oid FROM pg_catalog.pg_namespace\n"
-				"WHERE nspname = '%s';\n",
+				"(SELECT nspname, oid FROM pg_catalog.pg_namespace\n"
+				"WHERE nspname = '%s');\n",
 				PQgetvalue(res, tuple, 0));
 	}
 	PQclear(res);
 
 	/* restore dependency between pg_namespace and ag_graph */
 	appendPQExpBuffer(q,
-			"INSERT INTO pg_catalog.pg_depend\n"
+			"\nINSERT INTO pg_catalog.pg_depend\n"
 			"(SELECT %d, nspid, 0, %d, oid, 0, 'i'\n"
 			"FROM pg_catalog.ag_graph);\n",
 			NamespaceRelationId,
@@ -17716,11 +17716,11 @@ insertGraphCatalog(Archive *fout)
 	{
 		appendPQExpBuffer(q,
 				"INSERT INTO pg_catalog.ag_label\n"
-				"SELECT c.relname, g.oid, %d, c.oid, '%s'\n"
+				"(SELECT c.relname, g.oid, %d, c.oid, '%s'\n"
 				"FROM pg_catalog.ag_graph g\n"
 				"JOIN pg_catalog.pg_namespace n ON n.oid = g.nspid\n"
 				"JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid\n"
-				"WHERE g.graphname = '%s' AND c.relname = '%s';\n",
+				"WHERE g.graphname = '%s' AND c.relname = '%s');\n",
 				atoi(PQgetvalue(res, tuple, 1)),
 				PQgetvalue(res, tuple, 2),
 				PQgetvalue(res, tuple, 3),
@@ -17728,9 +17728,30 @@ insertGraphCatalog(Archive *fout)
 	}
 	PQclear(res);
 
+	/* restore ag_graphmeta */
+	res = ExecuteSqlQuery(fout,
+			"SELECT g.graphname, m.edge, m.start, m.end, m.edgecount\n"
+			"FROM pg_catalog.ag_graph g, pg_catalog.ag_graphmeta m\n"
+			"WHERE g.oid = m.graph;\n",
+			PGRES_TUPLES_OK);
+	ntuples = PQntuples(res);
+	for (tuple = 0; tuple < ntuples; tuple++)
+	{
+		appendPQExpBuffer(q,
+				"INSERT INTO pg_catalog.ag_graphmeta\n"
+				"(SELECT oid, %d, %d, %d, %d\n"
+				"FROM pg_catalog.ag_graph WHERE graphname = '%s');\n",
+				atoi(PQgetvalue(res, tuple, 1)),
+				atoi(PQgetvalue(res, tuple, 2)),
+				atoi(PQgetvalue(res, tuple, 3)),
+				atoi(PQgetvalue(res, tuple, 4)),
+				PQgetvalue(res, tuple, 0));
+	}
+	PQclear(res);
+
 	/* restore dependency between pg_class and ag_label */
 	appendPQExpBuffer(q,
-			"INSERT INTO pg_catalog.pg_depend\n"
+			"\nINSERT INTO pg_catalog.pg_depend\n"
 			"(SELECT %d, relid, 0, %d, oid, 0, 'i'\n"
 			"FROM pg_catalog.ag_label);\n",
 			RelationRelationId,
