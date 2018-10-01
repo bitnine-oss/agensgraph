@@ -18418,3 +18418,111 @@ appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 	if (!res)
 		write_msg(NULL, "WARNING: could not parse reloptions array\n");
 }
+
+/*
+ * insertGraphCatalog
+ *		insert into ag_graph & ag_label
+ *		to make graph object from RDB object
+ */
+static void
+insertGraphCatalog(Archive *fout)
+{
+	PQExpBuffer q;
+	PGresult   *res;
+	int			ntuples;
+	int			tuple;
+
+	q = createPQExpBuffer();
+
+	/* restore ag_graph */
+	res = ExecuteSqlQuery(fout, "SELECT graphname FROM pg_catalog.ag_graph",
+						  PGRES_TUPLES_OK);
+	ntuples = PQntuples(res);
+	for (tuple = 0; tuple < ntuples; tuple++)
+	{
+		appendPQExpBuffer(q,
+				"INSERT INTO pg_catalog.ag_graph\n"
+				"(SELECT nspname, oid FROM pg_catalog.pg_namespace\n"
+				"WHERE nspname = '%s');\n",
+				PQgetvalue(res, tuple, 0));
+	}
+	PQclear(res);
+
+	/* restore dependency between pg_namespace and ag_graph */
+	appendPQExpBuffer(q,
+			"\nINSERT INTO pg_catalog.pg_depend\n"
+			"(SELECT %d, nspid, 0, %d, oid, 0, 'i'\n"
+			"FROM pg_catalog.ag_graph);\n",
+			NamespaceRelationId,
+			GraphRelationId);
+
+	/* restore ag_label */
+	res = ExecuteSqlQuery(fout,
+			"SELECT l.labname, l.labid, l.labkind, g.graphname "
+			"FROM pg_catalog.ag_graph g, pg_catalog.ag_label l "
+			"WHERE g.oid = l.graphid",
+			PGRES_TUPLES_OK);
+	ntuples = PQntuples(res);
+	for (tuple = 0; tuple < ntuples; tuple++)
+	{
+		appendPQExpBuffer(q,
+				"INSERT INTO pg_catalog.ag_label\n"
+				"(SELECT c.relname, g.oid, %d, c.oid, '%s'\n"
+				"FROM pg_catalog.ag_graph g\n"
+				"JOIN pg_catalog.pg_namespace n ON n.oid = g.nspid\n"
+				"JOIN pg_catalog.pg_class c ON c.relnamespace = n.oid\n"
+				"WHERE g.graphname = '%s' AND c.relname = '%s');\n",
+				atoi(PQgetvalue(res, tuple, 1)),
+				PQgetvalue(res, tuple, 2),
+				PQgetvalue(res, tuple, 3),
+				PQgetvalue(res, tuple, 0));
+	}
+	PQclear(res);
+
+	/* restore ag_graphmeta */
+	res = ExecuteSqlQuery(fout,
+			"SELECT g.graphname, m.edge, m.start, m.end, m.edgecount\n"
+			"FROM pg_catalog.ag_graph g, pg_catalog.ag_graphmeta m\n"
+			"WHERE g.oid = m.graph;\n",
+			PGRES_TUPLES_OK);
+	ntuples = PQntuples(res);
+	for (tuple = 0; tuple < ntuples; tuple++)
+	{
+		appendPQExpBuffer(q,
+				"INSERT INTO pg_catalog.ag_graphmeta\n"
+				"(SELECT oid, %d, %d, %d, %d\n"
+				"FROM pg_catalog.ag_graph WHERE graphname = '%s');\n",
+				atoi(PQgetvalue(res, tuple, 1)),
+				atoi(PQgetvalue(res, tuple, 2)),
+				atoi(PQgetvalue(res, tuple, 3)),
+				atoi(PQgetvalue(res, tuple, 4)),
+				PQgetvalue(res, tuple, 0));
+	}
+	PQclear(res);
+
+	/* restore dependency between pg_class and ag_label */
+	appendPQExpBuffer(q,
+			"\nINSERT INTO pg_catalog.pg_depend\n"
+			"(SELECT %d, relid, 0, %d, oid, 0, 'i'\n"
+			"FROM pg_catalog.ag_label);\n",
+			RelationRelationId,
+			LabelRelationId);
+
+	ArchiveEntry(fout, nilCatalogId, createDumpId(), "Graph Catalog", NULL,
+				 NULL, "", false, "GRAPH", SECTION_DATA, q->data, "", NULL,
+				 NULL, 0, NULL, NULL);
+
+	destroyPQExpBuffer(q);
+}
+
+static void setGraphPath(PQExpBuffer q, char *gname)
+{
+	/* graph_path to dump AgensGraph objects */
+	static char *currGraph = NULL;
+
+	if (currGraph && strcmp(currGraph, gname) == 0)
+		return;
+
+	appendPQExpBuffer(q, "SET graph_path = %s;\n", gname);
+	currGraph = gname;
+}
