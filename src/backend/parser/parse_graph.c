@@ -245,8 +245,7 @@ static List *transformSetPropList(ParseState *pstate, RangeTblEntry *rte,
 								  bool is_remove, CSetKind kind, List *items);
 static GraphSetProp *transformSetProp(ParseState *pstate, RangeTblEntry *rte,
 									  CypherSetProp *sp, bool is_remove,
-									  CSetKind kind, List *gsplist);
-static GraphSetProp *findGraphSetProp(List *gsplist, char *varname);
+									  CSetKind kind);
 
 /* MERGE */
 static Query *transformMergeMatch(ParseState *pstate, Node *parseTree);
@@ -4234,12 +4233,9 @@ transformSetPropList(ParseState *pstate, RangeTblEntry *rte, bool is_remove,
 	foreach(li, items)
 	{
 		CypherSetProp *sp = lfirst(li);
-		GraphSetProp *gsp;
 
-		gsp = transformSetProp(pstate, rte, sp, is_remove, kind, gsplist);
-
-		if (gsp != NULL)
-			gsplist = lappend(gsplist, gsp);
+		gsplist = lappend(gsplist,
+						  transformSetProp(pstate, rte, sp, is_remove, kind));
 	}
 
 	return gsplist;
@@ -4247,7 +4243,7 @@ transformSetPropList(ParseState *pstate, RangeTblEntry *rte, bool is_remove,
 
 static GraphSetProp *
 transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
-				 bool is_remove, CSetKind kind, List *gsplist)
+				 bool is_remove, CSetKind kind)
 {
 	Node	   *elem;
 	List	   *pathelems;
@@ -4264,26 +4260,12 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		path = makeArrayExpr(TEXTARRAYOID, TEXTOID, pathelems);
 
 	/*
-	 * find the previously processed element with `varname`
-	 * to merge property assignments into one expression
+	 * Get the original property map of the element.
 	 */
-	gsp = findGraphSetProp(gsplist, varname);
-	if (gsp == NULL)
-	{
-		/*
-		 * It is the first time to handle the element.
-		 * Get the original property map of the element.
-		 */
-		prop_map = ParseFuncOrColumn(pstate,
-									 list_make1(makeString(AG_ELEM_PROP_MAP)),
-									 list_make1(elem), pstate->p_last_srf,
-									 NULL, -1);
-	}
-	else
-	{
-		/* use previously modified property map */
-		prop_map = gsp->expr;
-	}
+	prop_map = ParseFuncOrColumn(pstate,
+								 list_make1(makeString(AG_ELEM_PROP_MAP)),
+								 list_make1(elem), pstate->p_last_srf,
+								 NULL, -1);
 
 	/*
 	 * Transform the assigned property to get `expr` (RHS of the SET clause
@@ -4304,7 +4286,6 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	/*
 	 * make the modified property map
 	 */
-
 	if (path == NULL)	/* LHS is the property map itself */
 	{
 		if (IsNullAConst(sp->expr))
@@ -4406,43 +4387,13 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 			elog(ERROR, "unexpected CSetKind %d", kind);
 	}
 
-	if (gsp == NULL)
-	{
-		gsp = makeNode(GraphSetProp);
-		gsp->kind = gspkind;
-		gsp->variable = varname;
-		gsp->elem = elem;
-		gsp->expr = prop_map;
+	gsp = makeNode(GraphSetProp);
+	gsp->kind = gspkind;
+	gsp->variable = varname;
+	gsp->elem = elem;
+	gsp->expr = prop_map;
 
-		return gsp;
-	}
-	else
-	{
-		Assert(gsp->kind == gspkind);
-
-		gsp->expr = prop_map;
-
-		return NULL;
-	}
-}
-
-static GraphSetProp *
-findGraphSetProp(List *gsplist, char *varname)
-{
-	ListCell   *le;
-
-	if (varname == NULL)
-		return NULL;
-
-	foreach(le, gsplist)
-	{
-		GraphSetProp *gsp = lfirst(le);
-
-		if (strcmp(gsp->variable, varname) == 0)
-			return gsp;
-	}
-
-	return NULL;
+	return gsp;
 }
 
 static Query *
