@@ -2297,13 +2297,13 @@ MATCH (a) SET a.age = 11, a.age = a.age + 1
 RETURN properties(a);
  properties  
 -------------
- {"age": 11}
+ {"age": 12}
 (1 row)
 
 MATCH (a) RETURN properties(a);
  properties  
 -------------
- {"age": 11}
+ {"age": 12}
 (1 row)
 
 MATCH (a) DETACH DELETE (a);
