@@ -16016,7 +16016,21 @@ cypher_expr:
 				}
 			| cypher_expr IN_P cypher_expr
 				{
-					$$ = (Node *) makeSimpleA_Expr(AEXPR_IN, "=", $1, $3, @2);
+					if (IsA($3, SubLink))
+					{
+						SubLink	   *n;
+
+						n = (SubLink *) $3;
+						n->subLinkType = ANY_SUBLINK;
+						n->testexpr = $1;
+						n->location = @2;
+						$$ = (Node *) n;
+					}
+					else
+					{
+						$$ = (Node *) makeSimpleA_Expr(AEXPR_IN, "=", $1, $3,
+													   @2);
+					}
 				}
 			| cypher_expr STARTS WITH cypher_expr			%prec STARTS
 				{

@@ -35,6 +35,7 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_cypher_expr.h"
+#include "parser/parse_expr.h"
 #include "parser/parse_func.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_relation.h"
@@ -68,7 +69,6 @@ static Node *transformCypherListComp(ParseState *pstate, CypherListComp * clc);
 static Node *transformCaseExpr(ParseState *pstate, CaseExpr *c);
 static Node *transformFuncCall(ParseState *pstate, FuncCall *fn);
 static Node *transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c);
-static Node *transformSubLink(ParseState *pstate, SubLink *sublink);
 static Node *transformIndirection(ParseState *pstate, A_Indirection *indir);
 static Node *makeArrayIndex(ParseState *pstate, Node *idx, bool exclusive);
 static Node *adjustListIndexType(ParseState *pstate, Node *idx);
@@ -133,7 +133,17 @@ transformCypherExprRecurse(ParseState *pstate, Node *expr)
 		case T_CoalesceExpr:
 			return transformCoalesceExpr(pstate, (CoalesceExpr *) expr);
 		case T_SubLink:
-			return transformSubLink(pstate, (SubLink *) expr);
+			{
+				SubLink	   *sublink = (SubLink *) expr;
+				CypherGenericExpr *cexpr;
+
+				cexpr = makeNode(CypherGenericExpr);
+				cexpr->expr = sublink->testexpr;
+
+				sublink->testexpr = (Node *) cexpr;
+
+				return transformExpr(pstate, expr, pstate->p_expr_kind);
+			}
 		case T_A_Indirection:
 			return transformIndirection(pstate, (A_Indirection *) expr);
 		case T_A_Expr:
@@ -1052,112 +1062,6 @@ transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c)
 	newc->location = c->location;
 
 	return (Node *) newc;
-}
-
-static Node *
-transformSubLink(ParseState *pstate, SubLink *sublink)
-{
-	Query	   *qry;
-	const char *err;
-
-	err = NULL;
-	switch (pstate->p_expr_kind)
-	{
-		case EXPR_KIND_NONE:
-			Assert(EXPR_KIND_NONE);
-			break;
-		case EXPR_KIND_OTHER:
-			break;
-		case EXPR_KIND_JOIN_ON:
-		case EXPR_KIND_JOIN_USING:
-		case EXPR_KIND_FROM_SUBSELECT:
-		case EXPR_KIND_FROM_FUNCTION:
-		case EXPR_KIND_WHERE:
-		case EXPR_KIND_HAVING:
-		case EXPR_KIND_FILTER:
-		case EXPR_KIND_WINDOW_PARTITION:
-		case EXPR_KIND_WINDOW_ORDER:
-		case EXPR_KIND_WINDOW_FRAME_RANGE:
-		case EXPR_KIND_WINDOW_FRAME_ROWS:
-		case EXPR_KIND_SELECT_TARGET:
-		case EXPR_KIND_INSERT_TARGET:
-		case EXPR_KIND_UPDATE_SOURCE:
-		case EXPR_KIND_UPDATE_TARGET:
-		case EXPR_KIND_GROUP_BY:
-		case EXPR_KIND_ORDER_BY:
-		case EXPR_KIND_DISTINCT_ON:
-		case EXPR_KIND_LIMIT:
-		case EXPR_KIND_OFFSET:
-		case EXPR_KIND_RETURNING:
-		case EXPR_KIND_VALUES:
-		case EXPR_KIND_VALUES_SINGLE:
-		case EXPR_KIND_POLICY:
-			break;
-		case EXPR_KIND_CHECK_CONSTRAINT:
-		case EXPR_KIND_DOMAIN_CHECK:
-			err = _("cannot use subquery in check constraint");
-			break;
-		case EXPR_KIND_COLUMN_DEFAULT:
-		case EXPR_KIND_FUNCTION_DEFAULT:
-			err = _("cannot use subquery in DEFAULT expression");
-			break;
-		case EXPR_KIND_INDEX_EXPRESSION:
-			err = _("cannot use subquery in index expression");
-			break;
-		case EXPR_KIND_INDEX_PREDICATE:
-			err = _("cannot use subquery in index predicate");
-			break;
-		case EXPR_KIND_ALTER_COL_TRANSFORM:
-			err = _("cannot use subquery in transform expression");
-			break;
-		case EXPR_KIND_EXECUTE_PARAMETER:
-			err = _("cannot use subquery in EXECUTE parameter");
-			break;
-		case EXPR_KIND_TRIGGER_WHEN:
-			err = _("cannot use subquery in trigger WHEN condition");
-			break;
-		case EXPR_KIND_PARTITION_EXPRESSION:
-			err = _("cannot use subquery in partition key expression");
-			break;
-	}
-	if (err)
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg_internal("%s", err),
-				 parser_errposition(pstate, sublink->location)));
-
-	pstate->p_hasSubLinks = true;
-
-	qry = parse_sub_analyze(sublink->subselect, pstate, NULL, false, true);
-	if (!IsA(qry, Query) ||
-		qry->commandType != CMD_SELECT ||
-		qry->utilityStmt != NULL)
-		elog(ERROR, "unexpected non-SELECT command in SubLink");
-
-	sublink->subselect = (Node *) qry;
-
-	if (sublink->subLinkType == EXISTS_SUBLINK)
-	{
-		sublink->testexpr = NULL;
-		sublink->operName = NIL;
-	}
-	else if (sublink->subLinkType == EXPR_SUBLINK)
-	{
-		if (count_nonjunk_tlist_entries(qry->targetList) != 1)
-			ereport(ERROR,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("subquery must return only one column"),
-					 parser_errposition(pstate, sublink->location)));
-
-		sublink->testexpr = NULL;
-		sublink->operName = NIL;
-	}
-	else
-	{
-		elog(ERROR, "unexpected SubLinkType: %d", sublink->subLinkType);
-	}
-
-	return (Node *) sublink;
 }
 
 static Node *
