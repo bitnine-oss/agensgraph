@@ -89,6 +89,7 @@ typedef struct _SPI_plan
 	Oid		   *argtypes;		/* Argument types (NULL if nargs is 0) */
 	ParserSetupHook parserSetup;	/* alternative parameter spec method */
 	void	   *parserSetupArg;
+	bool		calledByPL;		/* called by PL module */
 } _SPI_plan;
 
 #endif							/* SPI_PRIV_H */

@@ -12,6 +12,8 @@ DROP FUNCTION IF EXISTS udf_if_exists();
 NOTICE:  function udf_if_exists() does not exist, skipping
 DROP FUNCTION IF EXISTS udf_if_not_exists();
 NOTICE:  function udf_if_not_exists() does not exist, skipping
+DROP FUNCTION IF EXISTS udf_graphwrite();
+NOTICE:  function udf_graphwrite() does not exist, skipping
 DROP GRAPH IF EXISTS udf CASCADE;
 NOTICE:  graph "udf" does not exist, skipping
 DROP GRAPH IF EXISTS udf2 CASCADE;
@@ -103,12 +105,43 @@ SELECT udf_if_not_exists();
  f
 (1 row)
 
+CREATE OR REPLACE FUNCTION udf_graphwrite() RETURNS edge AS $$
+DECLARE
+var1 edge;
+BEGIN
+CREATE (a:person{name : 'Anders'})-[:knows {name:'friend1'}]->(b:person{name : 'Dilshad'}),
+(a)-[:knows {name:'friend2'}]->(c:person{name : 'Cesar'}),
+(a)-[:knows {name:'friend3'}]->(d:person{name : 'Becky'}),
+(b)-[:knows {name:'friend4'}]->(:person{name : 'Filipa'}),
+(c)-[:knows {name:'friend5'}]->(e:person{name : 'Emil'});
+
+MATCH (a:person{name : 'Becky'}) , (b:person{name : 'Emil'})
+MERGE (a)-[r:knows {name:'friend6'}]-(b)
+ON CREATE SET r.created = true, r.matched = null
+ON MATCH SET r.matched = true, r.created = null
+RETURN r INTO var1;
+
+RETURN var1;
+END;
+$$ LANGUAGE plpgsql;
+SELECT udf_graphwrite();
+ERROR:  cannot modify graph in PL/pgSQL
+CONTEXT:  PL/pgSQL function udf_graphwrite() line 5 at SQL statement
+SET ALLOW_GRAPHWRITE_TYPE = true;
+SELECT udf_graphwrite();
+                     udf_graphwrite                      
+---------------------------------------------------------
+ knows[4.7][6.4,6.6]{"name": "friend6", "created": true}
+(1 row)
+
+SET ALLOW_GRAPHWRITE_TYPE = false;
 -- teardown
 DROP FUNCTION udf_var(jsonb);
 DROP FUNCTION udf_param(jsonb);
 DROP FUNCTION udf_if();
 DROP FUNCTION udf_if_exists();
 DROP FUNCTION udf_if_not_exists();
+DROP FUNCTION udf_graphwrite();
 DROP GRAPH udf CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to sequence udf.ag_label_seq
@@ -116,9 +149,10 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel v
 DROP GRAPH udf2 CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 6 other objects
 DETAIL:  drop cascades to sequence udf2.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel people
 drop cascades to elabel knows
+drop cascades to vlabel person

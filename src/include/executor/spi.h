@@ -18,6 +18,8 @@
 #include "nodes/parsenodes.h"
 #include "utils/portal.h"
 
+/* GUC variable (enable/disable to exeucte the graphwrite type from pl module) */
+extern bool allow_graphwrite_type;
 
 typedef struct SPITupleTable
 {
@@ -65,6 +67,7 @@ typedef struct _SPI_plan *SPIPlanPtr;
 #define SPI_OK_REL_REGISTER		15
 #define SPI_OK_REL_UNREGISTER	16
 #define SPI_OK_TD_REGISTER		17
+#define SPI_OK_GRAPHWRITE		18
 
 /* These used to be functions, now just no-ops for backwards compatibility */
 #define SPI_push()	((void) 0)
@@ -159,5 +162,7 @@ extern int	SPI_register_trigger_data(TriggerData *tdata);
 
 extern void AtEOXact_SPI(bool isCommit);
 extern void AtEOSubXact_SPI(bool isCommit, SubTransactionId mySubid);
+
+extern void SPI_calledByPL(SPIPlanPtr plan);
 
 #endif							/* SPI_H */

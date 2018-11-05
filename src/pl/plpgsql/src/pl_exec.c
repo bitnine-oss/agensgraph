@@ -3591,6 +3591,7 @@ exec_prepare_plan(PLpgSQL_execstate *estate,
 					 expr->query, SPI_result_code_string(SPI_result));
 		}
 	}
+	SPI_calledByPL(plan);
 	SPI_keepplan(plan);
 	expr->plan = plan;
 
@@ -3720,6 +3721,15 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 			 * return the row count either), so just set it to false.
 			 */
 			exec_set_found(estate, false);
+			break;
+
+		case SPI_OK_GRAPHWRITE:
+			Assert(allow_graphwrite_type);
+			/*
+			 * The command is to execute graphwrite type from pl module.
+			 * But this command is only executed
+			 * when allow_graphwrite_type (GUC variable) is true.
+			 */
 			break;
 
 			/* Some SPI errors deserve specific error messages */

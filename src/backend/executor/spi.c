@@ -35,6 +35,8 @@
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
+/* GUC variable (enable/disable to exeucte the graphwrite type from pl module) */
+bool allow_graphwrite_type = false;
 
 uint64		SPI_processed = 0;
 Oid			SPI_lastoid = InvalidOid;
@@ -322,6 +324,7 @@ SPI_execute(const char *src, bool read_only, long tcount)
 	memset(&plan, 0, sizeof(_SPI_plan));
 	plan.magic = _SPI_PLAN_MAGIC;
 	plan.cursor_options = CURSOR_OPT_PARALLEL_OK;
+	plan.calledByPL = false;
 
 	_SPI_prepare_oneshot_plan(src, &plan);
 
@@ -470,6 +473,7 @@ SPI_execute_with_args(const char *src,
 	plan.argtypes = argtypes;
 	plan.parserSetup = NULL;
 	plan.parserSetupArg = NULL;
+	plan.calledByPL = false;
 
 	paramLI = _SPI_convert_params(nargs, argtypes,
 								  Values, Nulls);
@@ -514,6 +518,7 @@ SPI_prepare_cursor(const char *src, int nargs, Oid *argtypes,
 	plan.argtypes = argtypes;
 	plan.parserSetup = NULL;
 	plan.parserSetupArg = NULL;
+	plan.calledByPL = false;
 
 	_SPI_prepare_plan(src, &plan);
 
@@ -551,6 +556,7 @@ SPI_prepare_params(const char *src,
 	plan.argtypes = NULL;
 	plan.parserSetup = parserSetup;
 	plan.parserSetupArg = parserSetupArg;
+	plan.calledByPL = false;
 
 	_SPI_prepare_plan(src, &plan);
 
@@ -1086,6 +1092,7 @@ SPI_cursor_open_with_args(const char *name,
 	plan.argtypes = argtypes;
 	plan.parserSetup = NULL;
 	plan.parserSetupArg = NULL;
+	plan.calledByPL = false;
 
 	/* build transient ParamListInfo in executor context */
 	paramLI = _SPI_convert_params(nargs, argtypes,
@@ -1580,6 +1587,8 @@ SPI_result_code_string(int code)
 			return "SPI_OK_REL_REGISTER";
 		case SPI_OK_REL_UNREGISTER:
 			return "SPI_OK_REL_UNREGISTER";
+		case SPI_OK_GRAPHWRITE:
+			return "SPI_OK_GRAPHWRITE";
 	}
 	/* Unrecognized code ... return something useful ... */
 	sprintf(buf, "Unrecognized SPI code %d", code);
@@ -2070,7 +2079,8 @@ _SPI_execute_plan(SPIPlanPtr plan, ParamListInfo paramLI,
 				}
 			}
 
-			if (stmt->hasGraphwriteClause == true)
+			if (stmt->hasGraphwriteClause == true &&
+				!(allow_graphwrite_type && plan->calledByPL))
 			{
 				my_res = SPI_ERROR_GRAPHWRITE;
 				goto fail;
@@ -2320,6 +2330,10 @@ _SPI_pquery(QueryDesc *queryDesc, bool fire_triggers, uint64 tcount)
 				res = SPI_OK_UPDATE_RETURNING;
 			else
 				res = SPI_OK_UPDATE;
+			break;
+		case CMD_GRAPHWRITE:
+			Assert(allow_graphwrite_type);
+			res = SPI_OK_GRAPHWRITE;
 			break;
 		default:
 			return SPI_ERROR_OPUNKNOWN;
@@ -2572,6 +2586,7 @@ _SPI_make_plan_non_temp(SPIPlanPtr plan)
 		newplan->argtypes = NULL;
 	newplan->parserSetup = plan->parserSetup;
 	newplan->parserSetupArg = plan->parserSetupArg;
+	newplan->calledByPL = plan->calledByPL;
 
 	/*
 	 * Reparent all the CachedPlanSources into the procedure context.  In
@@ -2639,6 +2654,7 @@ _SPI_save_plan(SPIPlanPtr plan)
 		newplan->argtypes = NULL;
 	newplan->parserSetup = plan->parserSetup;
 	newplan->parserSetupArg = plan->parserSetupArg;
+	newplan->calledByPL = plan->calledByPL;
 
 	/* Copy all the plancache entries */
 	foreach(lc, plan->plancache_list)
@@ -2798,4 +2814,10 @@ SPI_register_trigger_data(TriggerData *tdata)
 	}
 
 	return SPI_OK_TD_REGISTER;
+}
+
+void
+SPI_calledByPL(SPIPlanPtr plan)
+{
+	plan->calledByPL = true;
 }

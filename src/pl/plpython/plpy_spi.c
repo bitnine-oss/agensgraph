@@ -148,6 +148,8 @@ PLy_spi_prepare(PyObject *self, PyObject *args)
 			elog(ERROR, "SPI_prepare failed: %s",
 				 SPI_result_code_string(SPI_result));
 
+		SPI_calledByPL(plan->plan);
+
 		/* transfer plan from procCxt to topCxt */
 		if (SPI_keepplan(plan->plan))
 			elog(ERROR, "SPI_keepplan failed");

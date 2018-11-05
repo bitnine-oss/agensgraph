@@ -43,6 +43,7 @@
 #include "commands/variable.h"
 #include "commands/trigger.h"
 #include "executor/nodeModifyGraph.h"
+#include "executor/spi.h"
 #include "funcapi.h"
 #include "libpq/auth.h"
 #include "libpq/be-fsstubs.h"
@@ -1713,6 +1714,16 @@ static struct config_bool ConfigureNamesBool[] =
 			NULL
 		},
 		&allow_null_properties,
+		false,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"allow_graphwrite_type", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
+			gettext_noop("Enables to execute the graphwrite type from pl module."),
+			NULL
+		},
+		&allow_graphwrite_type,
 		false,
 		NULL, NULL, NULL
 	},

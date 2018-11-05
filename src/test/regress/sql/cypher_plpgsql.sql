@@ -10,6 +10,7 @@ DROP FUNCTION IF EXISTS udf_param(jsonb);
 DROP FUNCTION IF EXISTS udf_if();
 DROP FUNCTION IF EXISTS udf_if_exists();
 DROP FUNCTION IF EXISTS udf_if_not_exists();
+DROP FUNCTION IF EXISTS udf_graphwrite();
 DROP GRAPH IF EXISTS udf CASCADE;
 DROP GRAPH IF EXISTS udf2 CASCADE;
 
@@ -95,6 +96,33 @@ $$ LANGUAGE plpgsql;
 
 SELECT udf_if_not_exists();
 
+CREATE OR REPLACE FUNCTION udf_graphwrite() RETURNS edge AS $$
+DECLARE
+var1 edge;
+BEGIN
+CREATE (a:person{name : 'Anders'})-[:knows {name:'friend1'}]->(b:person{name : 'Dilshad'}),
+(a)-[:knows {name:'friend2'}]->(c:person{name : 'Cesar'}),
+(a)-[:knows {name:'friend3'}]->(d:person{name : 'Becky'}),
+(b)-[:knows {name:'friend4'}]->(:person{name : 'Filipa'}),
+(c)-[:knows {name:'friend5'}]->(e:person{name : 'Emil'});
+
+MATCH (a:person{name : 'Becky'}) , (b:person{name : 'Emil'})
+MERGE (a)-[r:knows {name:'friend6'}]-(b)
+ON CREATE SET r.created = true, r.matched = null
+ON MATCH SET r.matched = true, r.created = null
+RETURN r INTO var1;
+
+RETURN var1;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT udf_graphwrite();
+
+SET ALLOW_GRAPHWRITE_TYPE = true;
+
+SELECT udf_graphwrite();
+
+SET ALLOW_GRAPHWRITE_TYPE = false;
 
 -- teardown
 
@@ -103,5 +131,6 @@ DROP FUNCTION udf_param(jsonb);
 DROP FUNCTION udf_if();
 DROP FUNCTION udf_if_exists();
 DROP FUNCTION udf_if_not_exists();
+DROP FUNCTION udf_graphwrite();
 DROP GRAPH udf CASCADE;
 DROP GRAPH udf2 CASCADE;
