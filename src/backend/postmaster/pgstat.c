@@ -6650,42 +6650,51 @@ AtEOSubXact_AgStat(bool isCommit, int nestDepth)
 	if (xact_state != NULL &&
 		xact_state->nest_level >= nestDepth)
 	{
-		AgStat_GraphMeta *submeta;
-		AgStat_GraphMeta *upperMeta;
-		HASH_SEQ_STATUS	seq;
-		bool			found;
-
-		/* delink xact_state from stack immediately to simplify reuse case */
-		agStatXactStack = upper = xact_state->prev;
-
-		Assert(upper);
-		Assert(upper->nest_level == nestDepth -1);
+		upper = xact_state->prev;
 
 		if (isCommit)
 		{
-			hash_seq_init(&seq, xact_state->htab);
-			while ((submeta = hash_seq_search(&seq)) != NULL)
+			if (upper && upper->nest_level == nestDepth - 1)
 			{
-				upperMeta = hash_search(upper->htab,
-										(void *) &submeta->key,
-										HASH_ENTER, &found);
+				AgStat_GraphMeta *submeta;
+				AgStat_GraphMeta *upperMeta;
+				HASH_SEQ_STATUS	seq;
+				bool			found;
 
-				if (found)
+				hash_seq_init(&seq, xact_state->htab);
+				while ((submeta = hash_seq_search(&seq)) != NULL)
 				{
-					upperMeta->edges_inserted += submeta->edges_inserted;
-					upperMeta->edges_deleted  += submeta->edges_deleted;
+					upperMeta = hash_search(upper->htab,
+											(void *) &submeta->key,
+											HASH_ENTER, &found);
+
+					if (found)
+					{
+						upperMeta->edges_inserted += submeta->edges_inserted;
+						upperMeta->edges_deleted  += submeta->edges_deleted;
+					}
+					else
+					{
+						upperMeta->edges_inserted = submeta->edges_inserted;
+						upperMeta->edges_deleted  = submeta->edges_deleted;
+					}
 				}
-				else
-				{
-					upperMeta->edges_inserted = submeta->edges_inserted;
-					upperMeta->edges_deleted  = submeta->edges_deleted;
-				}
+				/* pop stack and merge stat */
+				agStatXactStack = upper;
+				pfree(xact_state);
+			}
+			else
+			{
+				/* Recycle if there is no upper state */
+				xact_state->nest_level--;
+				agStatXactStack = xact_state;
 			}
 		}
-		else
+		else /* isAbort */
 		{
-			/* Nothing to do if SubXact is Aborted. Just close hash.  */
+			/* pop stack and free mem */
+			agStatXactStack = upper;
+			pfree(xact_state);
 		}
-		pfree(xact_state);
 	}
 }
