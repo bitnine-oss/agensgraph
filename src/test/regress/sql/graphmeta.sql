@@ -129,6 +129,27 @@ BEGIN;
 COMMIT;
 
 SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+
+-- If main transcantion was READ ONLY
+BEGIN;
+	SAVEPOINT sv1;
+	CREATE (:dog)-[:likes]->(:cat);
+	ROLLBACK TO SAVEPOINT sv1;
+	CREATE (:human)-[:love]->(:dog);
+COMMIT;
+
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+
+BEGIN;
+	SAVEPOINT sv1;
+	SAVEPOINT sv2;
+	CREATE (:dog)-[:likes]->(:cat);
+	RELEASE SAVEPOINT sv2;
+	ROLLBACK TO SAVEPOINT sv1;
+	CREATE (:human)-[:love]->(:dog);
+COMMIT;
+
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 -- cleanup
 
 DROP GRAPH graphmeta CASCADE;
