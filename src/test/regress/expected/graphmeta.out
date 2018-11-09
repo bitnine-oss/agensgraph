@@ -187,6 +187,33 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
 -----------+-------+------+-----+-----------
 (0 rows)
 
+-- If main transcantion was READ ONLY
+BEGIN;
+	SAVEPOINT sv1;
+	CREATE (:dog)-[:likes]->(:cat);
+	ROLLBACK TO SAVEPOINT sv1;
+	CREATE (:human)-[:love]->(:dog);
+COMMIT;
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ graphmeta | human | love | dog |         1
+(1 row)
+
+BEGIN;
+	SAVEPOINT sv1;
+	SAVEPOINT sv2;
+	CREATE (:dog)-[:likes]->(:cat);
+	RELEASE SAVEPOINT sv2;
+	ROLLBACK TO SAVEPOINT sv1;
+	CREATE (:human)-[:love]->(:dog);
+COMMIT;
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+ graphmeta | human | love | dog |         2
+(1 row)
+
 -- cleanup
 DROP GRAPH graphmeta CASCADE;
 NOTICE:  drop cascades to 9 other objects
