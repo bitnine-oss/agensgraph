@@ -188,6 +188,7 @@ if "$MAKE" -C "$oldsrc" installcheck; then
 	fi
 
 	pg_dumpall --no-sync -f "$temp_root"/dump1.sql || pg_dumpall1_status=$?
+	agens -d regression -c "SELECT * FROM ag_graphmeta_view" -o "$temp_root"/meta1.out
 
 	if [ "$newsrc" != "$oldsrc" ]; then
 		# update references to old source tree's regress.so etc
@@ -238,6 +239,7 @@ case $testhost in
 esac
 
 pg_dumpall --no-sync -f "$temp_root"/dump2.sql || pg_dumpall2_status=$?
+agens -d regression -c "SELECT * FROM ag_graphmeta_view" -o "$temp_root"/meta2.out
 pg_ctl -m fast stop
 
 # no need to echo commands anymore
@@ -254,8 +256,16 @@ case $testhost in
 	*)	    sh ./delete_old_cluster.sh ;;
 esac
 
+if diff "$temp_root"/meta1.out "$temp_root"/meta2.out >/dev/null; then
+	echo "GRAPH META PASSED"
+else
+	echo "Files $temp_root/meta1.out and $temp_root/meta2.out differ"
+	echo "graphmetas were not identical"
+	exit 1
+fi
+
 if diff "$temp_root"/dump1.sql "$temp_root"/dump2.sql >/dev/null; then
-	echo PASSED
+	echo "DUMP PASSED"
 	exit 0
 else
 	echo "Files $temp_root/dump1.sql and $temp_root/dump2.sql differ"
