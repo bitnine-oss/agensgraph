@@ -3715,6 +3715,7 @@ _outGraphSetProp(StringInfo str, const GraphSetProp *node)
 	WRITE_STRING_FIELD(variable);
 	WRITE_NODE_FIELD(elem);
 	WRITE_NODE_FIELD(expr);
+	WRITE_INT_FIELD(cnt_merged);
 }
 
 

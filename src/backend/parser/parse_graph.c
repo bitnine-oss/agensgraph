@@ -67,6 +67,8 @@
 #define EDGE_UNION_START_ID		"_start"
 #define EDGE_UNION_END_ID		"_end"
 
+#define EXPRESSION_MERGE_LIMIT	10
+
 bool		enable_eager = true;
 
 typedef struct
@@ -3982,6 +3984,13 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	}
 	else
 	{
+		/* AG-206 Fatal occurs when use multiple SET clauses */
+		if (gsp->cnt_merged > EXPRESSION_MERGE_LIMIT)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("can not use more than (%d) expressions for the same object.",
+							EXPRESSION_MERGE_LIMIT)));
+
 		/* use previously modified property map */
 		prop_map = gsp->expr;
 	}
@@ -4104,6 +4113,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		gsp->variable = varname;
 		gsp->elem = elem;
 		gsp->expr = prop_map;
+		gsp->cnt_merged = 0;
 
 		return gsp;
 	}
@@ -4112,6 +4122,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 		Assert(gsp->kind == gspkind);
 
 		gsp->expr = prop_map;
+		gsp->cnt_merged++;
 
 		return NULL;
 	}

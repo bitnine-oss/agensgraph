@@ -2359,6 +2359,7 @@ _readGraphSetProp(void)
 	READ_STRING_FIELD(variable);
 	READ_NODE_FIELD(elem);
 	READ_NODE_FIELD(expr);
+	READ_INT_FIELD(cnt_merged);
 
 	READ_DONE();
 }
