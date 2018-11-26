@@ -862,6 +862,20 @@ SET a.val = b.val SET b.val = a.val;
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
 MATCH (a) DETACH DELETE (a);
 
+-- AG-206
+CREATE ({val: 1});
+
+MATCH (a)
+SET a.val1 = 1, a.val2 = 2, a.val3 = 3, a.val4 = 4, a.val5 = 5,
+	a.val6 = 6, a.val7 = 7, a.val8 = 8, a.val9 = 9, a.val10 = 10;
+MATCH (a) RETURN properties(a);
+
+MATCH (a)
+SET a.val1 = 1, a.val2 = 2, a.val3 = 3, a.val4 = 4, a.val5 = 5,
+	a.val6 = 6, a.val7 = 7, a.val8 = 8, a.val9 = 9, a.val10 = 10,
+	a.val11 = 11, a.val12 = 12, a.val13 = 13, a.val14 = 14, a.val15 = 15;
+MATCH (a) DETACH DELETE (a);
+
 -- += operator
 
 CREATE ({age: 10});
@@ -891,10 +905,10 @@ CREATE ({name: 'bitnine'});
 CREATE ({age: 10});
 MATCH (a) SET a.age = a.age + 1
 RETURN properties(a);
-MATCH (a) RETURN properties(a);
+MATCH (a) RETURN properties(a) AS a ORDER BY a;
 
 MATCH (a) SET a.age = 2017 - a.undefined_attr;
-MATCH (a) RETURN properties(a);
+MATCH (a) RETURN properties(a) AS a ORDER BY a;;
 
 -- working with NULL
 CREATE VLABEL person;

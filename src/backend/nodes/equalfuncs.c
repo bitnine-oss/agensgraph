@@ -3019,6 +3019,7 @@ _equalGraphSetProp(const GraphSetProp *a, const GraphSetProp *b)
 	COMPARE_STRING_FIELD(variable);
 	COMPARE_NODE_FIELD(elem);
 	COMPARE_NODE_FIELD(expr);
+	COMPARE_SCALAR_FIELD(cnt_merged);
 
 	return true;
 }

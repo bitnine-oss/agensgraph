@@ -63,6 +63,7 @@ typedef struct GraphSetProp
 	Node	   *expr;			/* expression of value */
 	ExprState  *es_elem;
 	ExprState  *es_expr;
+	uint32		cnt_merged;
 } GraphSetProp;
 
 #endif	/* GRAPHNODES_H */
