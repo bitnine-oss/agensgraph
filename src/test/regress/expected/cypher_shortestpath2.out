@@ -14711,10 +14711,10 @@ match p = shortestpath( (o1:o)-[:e]->(o2:o) ) where o1.id = 1 and o2.id = 1 retu
          Output: o1.id, o1.properties, o1.ctid, o2.id, o2.properties, o2.ctid
          ->  Seq Scan on shortestpath.o o1
                Output: o1.id, o1.properties, o1.ctid
-               Filter: (o1.properties.'id'::text = '1'::jsonb)
+               Filter: (o1.properties.'id'::text = to_jsonb(1))
          ->  Seq Scan on shortestpath.o o2
                Output: o2.id, o2.properties, o2.ctid
-               Filter: (o2.properties.'id'::text = '1'::jsonb)
+               Filter: (o2.properties.'id'::text = to_jsonb(1))
    ->  Shortestpath VLE [1..1]
          Output: shortestpath_graphids(), shortestpath_rowids()
          Hash Cond: (e."end" = e_1.start)
@@ -14783,7 +14783,7 @@ match p = allshortestpaths( (o1:o)-[:e*0..]->(o2:o) ) where o1.id = 1 and o1.id 
    Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
    ->  Seq Scan on shortestpath.o o1
          Output: o1.id, o1.properties, o1.ctid
-         Filter: (o1.properties.'id'::text = '1'::jsonb)
+         Filter: (o1.properties.'id'::text = to_jsonb(1))
    ->  Nested Loop
          Output: (shortestpath_graphids()), (shortestpath_rowids())
          ->  Seq Scan on shortestpath.o o2
@@ -14858,10 +14858,10 @@ match (o1:o{id:1}), (o2:o{id:1}) match p = shortestpath( (o1)-[:e]->(o2) ) retur
          Output: o1.id, o1.properties, o1.ctid, o2.id, o2.properties, o2.ctid
          ->  Seq Scan on shortestpath.o o1
                Output: o1.id, o1.properties, o1.ctid
-               Filter: (o1.properties.'id'::text = '1'::jsonb)
+               Filter: (o1.properties.'id'::text = to_jsonb(1))
          ->  Seq Scan on shortestpath.o o2
                Output: o2.id, o2.properties, o2.ctid
-               Filter: (o2.properties.'id'::text = '1'::jsonb)
+               Filter: (o2.properties.'id'::text = to_jsonb(1))
    ->  Shortestpath VLE [1..1]
          Output: shortestpath_graphids(), shortestpath_rowids()
          Hash Cond: (e."end" = e_1.start)
@@ -14932,10 +14932,10 @@ match (o1:o), (o2:o) match p = shortestpath( (o1)-[:e]->(o2) ) where o1.id = 1 a
          Output: o1.id, o1.properties, o1.ctid, o2.id, o2.properties, o2.ctid
          ->  Seq Scan on shortestpath.o o1
                Output: o1.id, o1.properties, o1.ctid
-               Filter: (o1.properties.'id'::text = '1'::jsonb)
+               Filter: (o1.properties.'id'::text = to_jsonb(1))
          ->  Seq Scan on shortestpath.o o2
                Output: o2.id, o2.properties, o2.ctid
-               Filter: (o2.properties.'id'::text = '1'::jsonb)
+               Filter: (o2.properties.'id'::text = to_jsonb(1))
    ->  Shortestpath VLE [1..1]
          Output: shortestpath_graphids(), shortestpath_rowids()
          Hash Cond: (e."end" = e_1.start)
@@ -15004,7 +15004,7 @@ match p = shortestpath( (o1:o)<-[:e*0..]->(o2:o) ) where o1.id = 1 and o1.id = 1
    Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
    ->  Seq Scan on shortestpath.o o1
          Output: o1.id, o1.properties, o1.ctid
-         Filter: (o1.properties.'id'::text = '1'::jsonb)
+         Filter: (o1.properties.'id'::text = to_jsonb(1))
    ->  Nested Loop
          Output: (shortestpath_graphids()), (shortestpath_rowids())
          ->  Seq Scan on shortestpath.o o2
@@ -15099,7 +15099,7 @@ match p = shortestpath( (o1:o)<-[:e*1..]->(o2:o) ) where o1.id = 1 and o1.id = 1
    Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
    ->  Seq Scan on shortestpath.o o1
          Output: o1.id, o1.properties, o1.ctid
-         Filter: (o1.properties.'id'::text = '1'::jsonb)
+         Filter: (o1.properties.'id'::text = to_jsonb(1))
    ->  Nested Loop
          Output: (shortestpath_graphids()), (shortestpath_rowids())
          ->  Seq Scan on shortestpath.o o2
@@ -15194,7 +15194,7 @@ match p = shortestpath( (o1:o)<-[:e*0..1]->(o2:o) ) where o1.id = 1 and o1.id = 
    Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
    ->  Seq Scan on shortestpath.o o1
          Output: o1.id, o1.properties, o1.ctid
-         Filter: (o1.properties.'id'::text = '1'::jsonb)
+         Filter: (o1.properties.'id'::text = to_jsonb(1))
    ->  Nested Loop
          Output: (shortestpath_graphids()), (shortestpath_rowids())
          ->  Seq Scan on shortestpath.o o2
@@ -15289,7 +15289,7 @@ match p = shortestpath( (o1:o)<-[:e*1..2]->(o2:o) ) where o1.id = 1 and o1.id = 
    Output: ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath
    ->  Seq Scan on shortestpath.o o1
          Output: o1.id, o1.properties, o1.ctid
-         Filter: (o1.properties.'id'::text = '1'::jsonb)
+         Filter: (o1.properties.'id'::text = to_jsonb(1))
    ->  Nested Loop
          Output: (shortestpath_graphids()), (shortestpath_rowids())
          ->  Seq Scan on shortestpath.o o2
@@ -15454,8 +15454,8 @@ match (s1:s), (s2:s) return s1.id as s1id, s2.id as s2id, ids(nodes(shortestpath
 
 explain ( analyze false, verbose true, costs false, buffers false, timing false )
 match (c1:c), (c2:c) where c1.id >= 11 and c1.id <= 19 and c2.id >= 11 and c2.id <= 19 return c1.id as c1id, c2.id as c2id, allshortestpaths((c1)-[:e*]->(c2)) order by c1id, c2id;
-                                                   QUERY PLAN                                                    
------------------------------------------------------------------------------------------------------------------
+                                                    QUERY PLAN                                                     
+-------------------------------------------------------------------------------------------------------------------
  Sort
    Output: (c1.properties.'id'::text), (c2.properties.'id'::text), ((SubPlan 5))
    Sort Key: (c1.properties.'id'::text), (c2.properties.'id'::text)
@@ -15463,10 +15463,10 @@ match (c1:c), (c2:c) where c1.id >= 11 and c1.id <= 19 and c2.id >= 11 and c2.id
          Output: c1.properties.'id'::text, c2.properties.'id'::text, (SubPlan 5)
          ->  Seq Scan on shortestpath.c c1
                Output: c1.id, c1.properties
-               Filter: ((c1.properties.'id'::text >= '11'::jsonb) AND (c1.properties.'id'::text <= '19'::jsonb))
+               Filter: ((c1.properties.'id'::text >= to_jsonb(11)) AND (c1.properties.'id'::text <= to_jsonb(19)))
          ->  Seq Scan on shortestpath.c c2
                Output: c2.id, c2.properties
-               Filter: ((c2.properties.'id'::text >= '11'::jsonb) AND (c2.properties.'id'::text <= '19'::jsonb))
+               Filter: ((c2.properties.'id'::text >= to_jsonb(11)) AND (c2.properties.'id'::text <= to_jsonb(19)))
          SubPlan 5
            ->  Aggregate
                  Output: array_agg(ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath)
@@ -15538,10 +15538,10 @@ match (l1:l), (l2:l) where l1.id = 1 and l2.id = 111111 return l1.id as l1id, l2
    Output: l1.properties.'id'::text, l2.properties.'id'::text, (SubPlan 5)
    ->  Index Scan using l_id_idx on shortestpath.l l1
          Output: l1.id, l1.properties
-         Index Cond: (l1.properties.'id'::text = '1'::jsonb)
+         Index Cond: (l1.properties.'id'::text = to_jsonb(1))
    ->  Index Scan using l_id_idx on shortestpath.l l2
          Output: l2.id, l2.properties
-         Index Cond: (l2.properties.'id'::text = '111111'::jsonb)
+         Index Cond: (l2.properties.'id'::text = to_jsonb(111111))
    SubPlan 5
      ->  Aggregate
            Output: array_agg(ROW((SubPlan 2), COALESCE((SubPlan 4), '[]'::edge[]))::graphpath)
