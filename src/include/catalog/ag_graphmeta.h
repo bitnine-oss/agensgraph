@@ -19,6 +19,7 @@
 #define AG_GRAPHMETA_H
 
 #include "catalog/genbki.h"
+#include "pgstat.h"
 
 /* ----------------
  *		ag_graphmeta definition.  cpp turns this into
@@ -52,7 +53,23 @@ typedef FormData_ag_graphmeta *Form_ag_graphmeta;
 #define Anum_ag_graphmeta_graph		1
 #define Anum_ag_graphmeta_edge		2
 #define Anum_ag_graphmeta_start		3
-#define Anum_ag_graphmeta_end			4
+#define Anum_ag_graphmeta_end		4
 #define Anum_ag_graphmeta_edgecount	5
+
+typedef struct AgStat_key
+{
+	Oid		graph;
+	Labid	edge;
+	Labid	start;
+	Labid	end;
+} AgStat_key;
+
+typedef struct AgStat_GraphMeta
+{
+	struct AgStat_key	key;
+
+	PgStat_Counter		edges_inserted;
+	PgStat_Counter		edges_deleted;
+} AgStat_GraphMeta;
 
 #endif   /* AG_GRAPHMETA_H */

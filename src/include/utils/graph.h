@@ -162,4 +162,7 @@ extern Datum gin_extract_query_graphid(PG_FUNCTION_ARGS);
 extern Datum gin_consistent_graphid(PG_FUNCTION_ARGS);
 extern Datum gin_compare_partial_graphid(PG_FUNCTION_ARGS);
 
+/* graph meta */
+extern Datum regather_graphmeta(PG_FUNCTION_ARGS);
+
 #endif	/* GRAPH_H */

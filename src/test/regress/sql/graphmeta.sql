@@ -3,6 +3,7 @@
 --
 CREATE GRAPH graphmeta;
 SET graph_path = graphmeta;
+SET auto_gather_graphmeta = true;
 
 -- create edge
 
@@ -150,6 +151,23 @@ BEGIN;
 COMMIT;
 
 SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+
+-- regather_graphmeta()
+MATCH (a) DETACH DELETE a;
+SET auto_gather_graphmeta = false;
+
+CREATE (:human)-[:know]->(:human {age:1});
+MERGE (:human)-[:know]->(:human {age:2});
+MERGE (:human)-[:know]->(:human {age:3});
+CREATE (:dog)-[:follow]->(:human);
+CREATE (:dog)-[:likes]->(:dog);
+
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+
+SELECT regather_graphmeta();
+
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+
 -- cleanup
 
 DROP GRAPH graphmeta CASCADE;
