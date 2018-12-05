@@ -1110,6 +1110,7 @@ extern PGDLLIMPORT int pgstat_track_activity_query_size;
 extern char *pgstat_stat_directory;
 extern char *pgstat_stat_tmpname;
 extern char *pgstat_stat_filename;
+extern bool auto_gather_graphmeta;
 
 /*
  * BgWriter statistics counters are updated directly by bgwriter and bufmgr

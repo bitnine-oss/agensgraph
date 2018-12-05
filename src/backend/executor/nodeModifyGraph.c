@@ -35,6 +35,7 @@
 #include "utils/typcache.h"
 
 bool		enable_multiple_update = true;
+bool		auto_gather_graphmeta = false;
 
 /* hash entry */
 typedef struct ModifiedElemEntry
@@ -806,7 +807,8 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
-	agstat_count_edge_create(id, start, end);
+	if (auto_gather_graphmeta)
+		agstat_count_edge_create(id, start, end);
 
 	return edge;
 }
@@ -1530,7 +1532,8 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
-	agstat_count_edge_create(GraphidGetDatum(getEdgeIdDatum(edge)), start, end);
+	if (auto_gather_graphmeta)
+		agstat_count_edge_create(GraphidGetDatum(getEdgeIdDatum(edge)), start, end);
 
 	return edge;
 }
@@ -1592,7 +1595,8 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 			start = GraphidGetLabid(getEdgeStartDatum(elem));
 			end = GraphidGetLabid(getEdgeEndDatum(elem));
 
-			agstat_count_edge_delete(eid, start, end);
+			if (auto_gather_graphmeta)
+				agstat_count_edge_delete(eid, start, end);
 		}
 
 		entry->data.tid =
@@ -1667,7 +1671,8 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 				start = GraphidGetLabid(getEdgeStartDatum(edge));
 				end = GraphidGetLabid(getEdgeEndDatum(edge));
 
-				agstat_count_edge_delete(eid, start, end);
+				if (auto_gather_graphmeta)
+					agstat_count_edge_delete(eid, start, end);
 			}
 
 			entry->data.tid =
