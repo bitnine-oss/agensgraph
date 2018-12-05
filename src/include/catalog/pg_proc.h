@@ -5522,6 +5522,8 @@ DATA(insert OID = 7038 ( vertices		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 70
 DESCR("get vertices in graphpath");
 DATA(insert OID = 7039 ( edges			PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7021 "7032" _null_ _null_ _null_ _null_ _null_ graphpath_edges _null_ _null_ _null_ ));
 DESCR("get edges in graphpath");
+DATA(insert OID = 7059 ( regather_graphmeta	PGNSP PGUID 12 1 0 0 0 f f f f t f v u 0 0 16 "" _null_ _null_ _null_ _null_ _null_ regather_graphmeta _null_ _null_ _null_ ));
+DESCR("reset metatable and gather meta from graph");
 DATA(insert OID = 7070 ( start_vertex	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_start_vertex _null_ _null_ _null_ ));
 DESCR("get the start vertex of edge");
 DATA(insert OID = 7071 ( end_vertex		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7012 "7022" _null_ _null_ _null_ _null_ _null_ edge_end_vertex _null_ _null_ _null_ ));

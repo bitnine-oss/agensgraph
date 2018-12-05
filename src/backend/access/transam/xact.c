@@ -2007,7 +2007,8 @@ CommitTransaction(void)
 	/* The catalog ag_graphmeta is opened and modified during commit AgStat.
 	 * In the commit phase, any relation must not be opened.
 	 * So AgStat must be processed during the PreCommit phase */
-	AtEOXact_AgStat(true);
+	if (auto_gather_graphmeta)
+		AtEOXact_AgStat(true);
 
 	/* close large objects before lower-level cleanup */
 	AtEOXact_LargeObject(true);
@@ -2618,7 +2619,8 @@ AbortTransaction(void)
 		AtEOXact_Files();
 		AtEOXact_ComboCid();
 		AtEOXact_HashTables(false);
-		AtEOXact_AgStat(false);
+		if (auto_gather_graphmeta)
+			AtEOXact_AgStat(false);
 		AtEOXact_PgStat(false);
 		AtEOXact_ApplyLauncher(false);
 		pgstat_report_xact_timestamp(0);

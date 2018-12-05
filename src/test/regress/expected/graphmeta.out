@@ -3,6 +3,7 @@
 --
 CREATE GRAPH graphmeta;
 SET graph_path = graphmeta;
+SET auto_gather_graphmeta = true;
 -- create edge
 CREATE (:human)-[:know]->(:human {age:1});
 MERGE (:human)-[:know]->(:human {age:2});
@@ -214,9 +215,36 @@ SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
  graphmeta | human | love | dog |         2
 (1 row)
 
+-- regather_graphmeta()
+MATCH (a) DETACH DELETE a;
+SET auto_gather_graphmeta = false;
+CREATE (:human)-[:know]->(:human {age:1});
+MERGE (:human)-[:know]->(:human {age:2});
+MERGE (:human)-[:know]->(:human {age:3});
+CREATE (:dog)-[:follow]->(:human);
+CREATE (:dog)-[:likes]->(:dog);
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start | edge | end | edgecount 
+-----------+-------+------+-----+-----------
+(0 rows)
+
+SELECT regather_graphmeta();
+ regather_graphmeta 
+--------------------
+ t
+(1 row)
+
+SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
+ graphname | start |  edge  |  end  | edgecount 
+-----------+-------+--------+-------+-----------
+ graphmeta | dog   | follow | human |         1
+ graphmeta | dog   | likes  | dog   |         1
+ graphmeta | human | know   | human |         3
+(3 rows)
+
 -- cleanup
 DROP GRAPH graphmeta CASCADE;
-NOTICE:  drop cascades to 9 other objects
+NOTICE:  drop cascades to 10 other objects
 DETAIL:  drop cascades to sequence graphmeta.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
@@ -226,3 +254,4 @@ drop cascades to vlabel human
 drop cascades to elabel love
 drop cascades to elabel likes
 drop cascades to vlabel cat
+drop cascades to elabel know

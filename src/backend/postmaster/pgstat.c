@@ -244,22 +244,6 @@ typedef struct AgStat_SubXactStatus
 
 static AgStat_SubXactStatus *agStatXactStack = NULL;
 
-typedef struct AgStat_key
-{
-	Oid		graph;
-	Labid	edge;
-	Labid	start;
-	Labid	end;
-} AgStat_key;
-
-typedef struct AgStat_GraphMeta
-{
-	struct AgStat_key	key;
-
-	PgStat_Counter		edges_inserted;
-	PgStat_Counter		edges_deleted;
-} AgStat_GraphMeta;
-
 static int	pgStatXactCommit = 0;
 static int	pgStatXactRollback = 0;
 PgStat_Counter pgStatBlockReadTime = 0;
@@ -6612,7 +6596,7 @@ AtEOXact_AgStat(bool isCommit)
 					isnull[i] = false;
 				}
 
-				values[Anum_ag_graphmeta_graph -1] = ObjectIdGetDatum(get_graph_path_oid());
+				values[Anum_ag_graphmeta_graph -1] = ObjectIdGetDatum(graphmeta->key.graph);
 				values[Anum_ag_graphmeta_edge - 1] = Int16GetDatum(graphmeta->key.edge);
 				values[Anum_ag_graphmeta_start - 1] = Int16GetDatum(graphmeta->key.start);
 				values[Anum_ag_graphmeta_end - 1] = Int16GetDatum(graphmeta->key.end);
