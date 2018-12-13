@@ -549,7 +549,8 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 	qual = qualAndExpr(qual, pstate->p_resolved_qual);
 
-	resolveItemList(pstate, qry->targetList);
+	if (detail->kind == CP_RETURN)
+		resolveItemList(pstate, qry->targetList);
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, qual);

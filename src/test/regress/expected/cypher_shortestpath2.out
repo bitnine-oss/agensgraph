@@ -14502,7 +14502,7 @@ match (r1:r), (r2:r) where r1.id = 1 and r2.id = 11111 return r1.id as r1id, r2.
 match p = allshortestpaths( (l1:l)-[:e*]->(r2:r) ) where l1.id = 8 and r2.id = 8 return l1.id as l1id, r2.id as r2id, count(p) order by l1id, r2id;
  l1id | r2id | count 
 ------+------+-------
- 8    | 8    |  6561
+ 8    | 8    | 6561
 (1 row)
 
 match p = allshortestpaths( (l1:l)<-[:e*]-(r2:r) ) where l1.id = 8 and r2.id = 8 return l1.id as l1id, r2.id as r2id, count(p) order by l1id, r2id;
@@ -14513,13 +14513,13 @@ match p = allshortestpaths( (l1:l)<-[:e*]-(r2:r) ) where l1.id = 8 and r2.id = 8
 match p = allshortestpaths( (l1:l)-[:e*]-(r2:r) ) where l1.id = 8 and r2.id = 8 return l1.id as l1id, r2.id as r2id, count(p) order by l1id, r2id;
  l1id | r2id | count 
 ------+------+-------
- 8    | 8    |  6561
+ 8    | 8    | 6561
 (1 row)
 
 match p = allshortestpaths( (r1:l)-[:e*]->(l2:r) ) where r1.id = 88888 and l2.id = 99999 return r1.id as r1id, l2.id as l2id, count(p) order by r1id, l2id;
  r1id  | l2id  | count 
 -------+-------+-------
- 88888 | 99999 |     1
+ 88888 | 99999 | 1
 (1 row)
 
 match p = allshortestpaths( (r1:l)<-[:e*]-(l2:r) ) where r1.id = 88888 and l2.id = 99999 return r1.id as r1id, l2.id as l2id, count(p) order by r1id, l2id;
@@ -14530,13 +14530,13 @@ match p = allshortestpaths( (r1:l)<-[:e*]-(l2:r) ) where r1.id = 88888 and l2.id
 match p = allshortestpaths( (r1:l)-[:e*]-(l2:r) ) where r1.id = 88888 and l2.id = 99999 return r1.id as r1id, l2.id as l2id, count(p) order by r1id, l2id;
  r1id  | l2id  | count 
 -------+-------+-------
- 88888 | 99999 |     1
+ 88888 | 99999 | 1
 (1 row)
 
 match p = allshortestpaths( (l1:l)-[:e*]->(r2:r) ) where l1.id = 888 and r2.id = 999 return l1.id as l1id, r2.id as r2id, count(p) order by l1id, r2id;
  l1id | r2id | count 
 ------+------+-------
- 888  | 999  |  6561
+ 888  | 999  | 6561
 (1 row)
 
 match p = allshortestpaths( (l1:l)<-[:e*]-(r2:r) ) where l1.id = 888 and r2.id = 999 return l1.id as l1id, r2.id as r2id, count(p) order by l1id, r2id;
@@ -14547,7 +14547,7 @@ match p = allshortestpaths( (l1:l)<-[:e*]-(r2:r) ) where l1.id = 888 and r2.id =
 match p = allshortestpaths( (l1:l)-[:e*]-(r2:r) ) where l1.id = 888 and r2.id = 999 return l1.id as l1id, r2.id as r2id, count(p) order by l1id, r2id;
  l1id | r2id | count 
 ------+------+-------
- 888  | 999  |  6561
+ 888  | 999  | 6561
 (1 row)
 
 -- Filter

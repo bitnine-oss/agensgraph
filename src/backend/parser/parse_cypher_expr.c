@@ -86,6 +86,8 @@ static Node *coerce_unknown_const(ParseState *pstate, Node *expr, Oid ityp,
 static Datum stringToJsonb(ParseState *pstate, char *s, int location);
 static Node *coerce_to_jsonb(ParseState *pstate, Node *expr,
 							 const char *targetname);
+static bool is_graph_type(Oid type);
+static Node *coerce_all_to_jsonb(ParseState *pstate, Node *expr);
 
 static List *transformA_Star(ParseState *pstate, int location);
 
@@ -1980,11 +1982,26 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname)
 {
 	Oid			type = exprType(expr);
 
+	if (type == InvalidOid)
+		return NULL;
+
+	if (is_graph_type(type))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("graph object cannot be %s", targetname),
+				 parser_errposition(pstate, exprLocation(expr))));
+		return NULL;
+	}
+
+	return coerce_all_to_jsonb(pstate, expr);
+}
+
+static bool
+is_graph_type(Oid type)
+{
 	switch (type)
 	{
-		case InvalidOid:
-			return NULL;
-
 		case GRAPHIDARRAYOID:
 		case GRAPHIDOID:
 		case VERTEXARRAYOID:
@@ -1993,30 +2010,32 @@ coerce_to_jsonb(ParseState *pstate, Node *expr, const char *targetname)
 		case EDGEOID:
 		case GRAPHPATHARRAYOID:
 		case GRAPHPATHOID:
-			ereport(ERROR,
-					(errcode(ERRCODE_DATATYPE_MISMATCH),
-					 errmsg("graph object cannot be %s", targetname),
-					 parser_errposition(pstate, exprLocation(expr))));
-			return NULL;
+			return true;
 
 		default:
-			{
-				if (TypeCategory(getBaseType(type)) == TYPCATEGORY_STRING)
-				{
-					return ParseFuncOrColumn(pstate,
-											 list_make1(makeString("to_jsonb")),
-											 list_make1(expr),
-											 pstate->p_last_srf, NULL,
-											 exprLocation(expr));
-				}
-
-				expr = coerce_expr(pstate, expr, type, JSONBOID, -1,
-								   COERCION_EXPLICIT, COERCE_IMPLICIT_CAST,
-								   exprLocation(expr));
-				Assert(expr != NULL);
-				return expr;
-			}
+			return false;
 	}
+}
+
+static Node *
+coerce_all_to_jsonb(ParseState *pstate, Node *expr)
+{
+	Oid			type = exprType(expr);
+
+	if (TypeCategory(getBaseType(type)) == TYPCATEGORY_STRING)
+	{
+		return ParseFuncOrColumn(pstate,
+								 list_make1(makeString("to_jsonb")),
+								 list_make1(expr),
+								 pstate->p_last_srf, NULL,
+								 exprLocation(expr));
+	}
+
+	expr = coerce_expr(pstate, expr, type, JSONBOID, -1,
+					   COERCION_EXPLICIT, COERCE_IMPLICIT_CAST,
+					   exprLocation(expr));
+	Assert(expr != NULL);
+	return expr;
 }
 
 Node *
@@ -2297,15 +2316,12 @@ resolveItemList(ParseState *pstate, List *items)
 		TargetEntry *te = lfirst(li);
 		Oid			restype = exprType((Node *) te->expr);
 
-		if (restype == UNKNOWNOID)
-		{
-			Node	   *node;
+		if (restype == BOOLOID ||
+			is_graph_type(restype) ||
+			type_is_array(restype))
+			continue;
 
-			node = coerce_expr(pstate, (Node *) te->expr, restype, JSONBOID, -1,
-							   COERCION_IMPLICIT, COERCE_IMPLICIT_CAST, -1);
-			Assert(node != NULL);
-			te->expr = (Expr *) node;
-		}
+		te->expr = (Expr *) coerce_all_to_jsonb(pstate, (Node *) te->expr);
 	}
 }
 

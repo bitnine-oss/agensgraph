@@ -48,7 +48,7 @@ RETURN -017777777777, 017777777777;
 RETURN 3.14, -3.14, 6.02E23;
  ?column? | ?column? |         ?column?         
 ----------+----------+--------------------------
-     3.14 |    -3.14 | 602000000000000000000000
+ 3.14     | -3.14    | 602000000000000000000000
 (1 row)
 
 -- true, false, null
@@ -61,10 +61,9 @@ RETURN true, false, null;
 -- String (text)
 RETURN '"'::text, '\"'::text, '\\'::text, '\/'::text,
        '\b'::text, '\f'::text, '\n'::text, '\r'::text, '\t'::text;
- text | text | text | text | text | text | text | text |   text   
-------+------+------+------+------+------+------+------+----------
- "    | "    | \    | /    | \x08 | \x0C |     +| \r   |         
-      |      |      |      |      |      |      |      | 
+ text | text | text | text | text | text | text | text | text 
+------+------+------+------+------+------+------+------+------
+ "\"" | "\"" | "\\" | "/"  | "\b" | "\f" | "\n" | "\r" | "\t"
 (1 row)
 
 -- Parameter - UNKNOWNOID::jsonb (string)
@@ -79,9 +78,9 @@ DEALLOCATE tmp;
 -- Parameter - UNKNOWNOID::text
 PREPARE tmp AS RETURN $1::text;
 EXECUTE tmp ('\"');
- text 
-------
- \"
+  text  
+--------
+ "\\\""
 (1 row)
 
 DEALLOCATE tmp;
@@ -125,7 +124,7 @@ RETURN '1' + '1', '1' + 1, 1 + '1';
 RETURN 1 + 1, 1 - 1, 2 * 2, 2 / 2, 2 % 2, 2 ^ 2, +1, -1;
  ?column? | ?column? | ?column? | ?column? | ?column? | ?column? | ?column? | ?column? 
 ----------+----------+----------+----------+----------+----------+----------+----------
-        2 |        0 |        4 |        1 |        0 | 4        |        1 |       -1
+ 2        | 0        | 4        | 1        | 0        | 4        | 1        | -1
 (1 row)
 
 -- List concatenation
@@ -459,61 +458,61 @@ MATCH (n:v0) RETURN n.o.z IS NULL, n.l[5] IS NOT NULL;
 MATCH (n:v0) WHERE n.t.i RETURN COUNT(*);
  count 
 -------
-     1
+ 1
 (1 row)
 
 MATCH (n:v0) WHERE n.t.s RETURN COUNT(*);
  count 
 -------
-     1
+ 1
 (1 row)
 
 MATCH (n:v0) WHERE n.t.b RETURN COUNT(*);
  count 
 -------
-     1
+ 1
 (1 row)
 
 MATCH (n:v0) WHERE n.t.l RETURN COUNT(*);
  count 
 -------
-     1
+ 1
 (1 row)
 
 MATCH (n:v0) WHERE n.t.o RETURN COUNT(*);
  count 
 -------
-     1
+ 1
 (1 row)
 
 MATCH (n:v0) WHERE n.f.i RETURN COUNT(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH (n:v0) WHERE n.f.s RETURN COUNT(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH (n:v0) WHERE n.f.b RETURN COUNT(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH (n:v0) WHERE n.f.l RETURN COUNT(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH (n:v0) WHERE n.f.o RETURN COUNT(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 -- Case expression
