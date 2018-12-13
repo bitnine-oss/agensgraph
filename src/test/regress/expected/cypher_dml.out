@@ -16,25 +16,25 @@ CREATE GRAPH agens;
 RETURN 3 + 4, 'hello' + ' agens';
  ?column? |   ?column?    
 ----------+---------------
-        7 | "hello agens"
+ 7        | "hello agens"
 (1 row)
 
 RETURN 3 + 4 AS lucky, 'hello' + ' agens' AS greeting;
  lucky |   greeting    
 -------+---------------
-     7 | "hello agens"
+ 7     | "hello agens"
 (1 row)
 
 RETURN (SELECT event FROM history WHERE year = 2016);
- event 
--------
- Graph
+  event  
+---------
+ "Graph"
 (1 row)
 
 SELECT * FROM (RETURN 3 + 4, 'hello' + ' agens') AS _(lucky, greeting);
  lucky |   greeting    
 -------+---------------
-     7 | "hello agens"
+ 7     | "hello agens"
 (1 row)
 
 --
@@ -1421,55 +1421,57 @@ WITH x[0] AS x1, x[1] AS x2 ORDER BY x2 RETURN x1;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(b.id::"numeric") AS id, x[0] AS x RETURN *;
-                                                                                                                                             QUERY PLAN                                                                                                                                              
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
-   Output: max((b.properties.'id'::text)::numeric), (x.edges[1])
-   Group Key: (x.edges[1])
-   ->  Sort
-         Output: (x.edges[1]), b.properties
-         Sort Key: (x.edges[1])
-         ->  Nested Loop
-               Output: x.edges[1], b.properties
-               ->  Seq Scan on t.person a
-                     Output: a.id, a.properties
-                     Filter: (a.properties.'id'::text = to_jsonb(1))
-               ->  Hash Join
-                     Output: x.edges, b.properties
-                     Hash Cond: (b.id = x."end")
-                     ->  Seq Scan on t.person b
-                           Output: b.id, b.properties
-                     ->  Hash
-                           Output: x.edges, x."end"
-                           ->  Subquery Scan on x
+                                                                                                                                                QUERY PLAN                                                                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on _
+   Output: to_jsonb(_.id), _.x
+   ->  GroupAggregate
+         Output: max((b.properties.'id'::text)::numeric), (x.edges[1])
+         Group Key: (x.edges[1])
+         ->  Sort
+               Output: (x.edges[1]), b.properties
+               Sort Key: (x.edges[1])
+               ->  Nested Loop
+                     Output: x.edges[1], b.properties
+                     ->  Seq Scan on t.person a
+                           Output: a.id, a.properties
+                           Filter: (a.properties.'id'::text = to_jsonb(1))
+                     ->  Hash Join
+                           Output: x.edges, b.properties
+                           Hash Cond: (b.id = x."end")
+                           ->  Seq Scan on t.person b
+                                 Output: b.id, b.properties
+                           ->  Hash
                                  Output: x.edges, x."end"
-                                 ->  Nested Loop VLE [1..2]
-                                       Output: knows.start, knows."end", (ARRAY[knows.id]), (ARRAY[ROW(knows.id, knows.start, knows."end", knows.properties, knows.ctid)::edge]), knows_1."end", knows_1.id, (ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge)
-                                       ->  Result
-                                             Output: knows.start, knows."end", ARRAY[knows.id], ARRAY[ROW(knows.id, knows.start, knows."end", knows.properties, knows.ctid)::edge]
-                                             ->  Append
-                                                   ->  Seq Scan on t.knows
-                                                         Output: knows.start, knows."end", knows.id, knows.properties, knows.ctid
-                                                         Filter: (a.id = knows.start)
-                                                   ->  Seq Scan on t.friendships
-                                                         Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
-                                                         Filter: (a.id = friendships.start)
-                                                   ->  Index Scan using familyship_start_idx on t.familyship
-                                                         Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                         Index Cond: (a.id = familyship.start)
-                                       ->  Result
-                                             Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
-                                             ->  Append
-                                                   ->  Seq Scan on t.knows knows_1
-                                                         Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
-                                                         Filter: ($1 = knows_1.start)
-                                                   ->  Seq Scan on t.friendships friendships_1
-                                                         Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
-                                                         Filter: ($1 = friendships_1.start)
-                                                   ->  Index Scan using familyship_start_idx on t.familyship familyship_1
-                                                         Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                         Index Cond: ($1 = familyship_1.start)
-(46 rows)
+                                 ->  Subquery Scan on x
+                                       Output: x.edges, x."end"
+                                       ->  Nested Loop VLE [1..2]
+                                             Output: knows.start, knows."end", (ARRAY[knows.id]), (ARRAY[ROW(knows.id, knows.start, knows."end", knows.properties, knows.ctid)::edge]), knows_1."end", knows_1.id, (ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge)
+                                             ->  Result
+                                                   Output: knows.start, knows."end", ARRAY[knows.id], ARRAY[ROW(knows.id, knows.start, knows."end", knows.properties, knows.ctid)::edge]
+                                                   ->  Append
+                                                         ->  Seq Scan on t.knows
+                                                               Output: knows.start, knows."end", knows.id, knows.properties, knows.ctid
+                                                               Filter: (a.id = knows.start)
+                                                         ->  Seq Scan on t.friendships
+                                                               Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
+                                                               Filter: (a.id = friendships.start)
+                                                         ->  Index Scan using familyship_start_idx on t.familyship
+                                                               Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
+                                                               Index Cond: (a.id = familyship.start)
+                                             ->  Result
+                                                   Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
+                                                   ->  Append
+                                                         ->  Seq Scan on t.knows knows_1
+                                                               Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
+                                                               Filter: ($1 = knows_1.start)
+                                                         ->  Seq Scan on t.friendships friendships_1
+                                                               Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
+                                                               Filter: ($1 = friendships_1.start)
+                                                         ->  Index Scan using familyship_start_idx on t.familyship familyship_1
+                                                               Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
+                                                               Index Cond: ($1 = familyship_1.start)
+(48 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -1526,16 +1528,70 @@ WITH DISTINCT x AS path RETURN *;
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
 WITH max(b.id::"numeric") AS id, x AS x RETURN *;
+                                                                                                                                                QUERY PLAN                                                                                                                                                 
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Subquery Scan on _
+   Output: to_jsonb(_.id), _.x
+   ->  GroupAggregate
+         Output: max((b.properties.'id'::text)::numeric), x.edges
+         Group Key: x.edges
+         ->  Sort
+               Output: x.edges, b.properties
+               Sort Key: x.edges
+               ->  Nested Loop
+                     Output: x.edges, b.properties
+                     ->  Seq Scan on t.person a
+                           Output: a.id, a.properties
+                           Filter: (a.properties.'id'::text = to_jsonb(1))
+                     ->  Hash Join
+                           Output: x.edges, b.properties
+                           Hash Cond: (b.id = x."end")
+                           ->  Seq Scan on t.person b
+                                 Output: b.id, b.properties
+                           ->  Hash
+                                 Output: x.edges, x."end"
+                                 ->  Subquery Scan on x
+                                       Output: x.edges, x."end"
+                                       ->  Nested Loop VLE [1..2]
+                                             Output: knows.start, knows."end", (ARRAY[knows.id]), (ARRAY[ROW(knows.id, knows.start, knows."end", knows.properties, knows.ctid)::edge]), knows_1."end", knows_1.id, (ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge)
+                                             ->  Result
+                                                   Output: knows.start, knows."end", ARRAY[knows.id], ARRAY[ROW(knows.id, knows.start, knows."end", knows.properties, knows.ctid)::edge]
+                                                   ->  Append
+                                                         ->  Seq Scan on t.knows
+                                                               Output: knows.start, knows."end", knows.id, knows.properties, knows.ctid
+                                                               Filter: (a.id = knows.start)
+                                                         ->  Seq Scan on t.friendships
+                                                               Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
+                                                               Filter: (a.id = friendships.start)
+                                                         ->  Index Scan using familyship_start_idx on t.familyship
+                                                               Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
+                                                               Index Cond: (a.id = familyship.start)
+                                             ->  Result
+                                                   Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
+                                                   ->  Append
+                                                         ->  Seq Scan on t.knows knows_1
+                                                               Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
+                                                               Filter: ($1 = knows_1.start)
+                                                         ->  Seq Scan on t.friendships friendships_1
+                                                               Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
+                                                               Filter: ($1 = friendships_1.start)
+                                                         ->  Index Scan using familyship_start_idx on t.familyship familyship_1
+                                                               Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
+                                                               Index Cond: ($1 = familyship_1.start)
+(48 rows)
+
+EXPLAIN (VERBOSE, COSTS OFF)
+MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
+WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
                                                                                                                                              QUERY PLAN                                                                                                                                              
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- GroupAggregate
-   Output: max((b.properties.'id'::text)::numeric), x.edges
-   Group Key: x.edges
-   ->  Sort
-         Output: x.edges, b.properties
-         Sort Key: x.edges
+ Subquery Scan on _
+   Output: to_jsonb(_.x), _.id
+   ->  HashAggregate
+         Output: max((length(x.edges))::numeric), (b.properties.'id'::text)
+         Group Key: b.properties.'id'::text
          ->  Nested Loop
-               Output: x.edges, b.properties
+               Output: b.properties.'id'::text, x.edges
                ->  Seq Scan on t.person a
                      Output: a.id, a.properties
                      Filter: (a.properties.'id'::text = to_jsonb(1))
@@ -1574,57 +1630,7 @@ WITH max(b.id::"numeric") AS id, x AS x RETURN *;
                                                    ->  Index Scan using familyship_start_idx on t.familyship familyship_1
                                                          Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
                                                          Index Cond: ($1 = familyship_1.start)
-(46 rows)
-
-EXPLAIN (VERBOSE, COSTS OFF)
-MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
-WITH max(length(x)::"numeric") AS x, b.id AS id RETURN *;
-                                                                                                                                          QUERY PLAN                                                                                                                                           
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- HashAggregate
-   Output: max((length(x.edges))::numeric), (b.properties.'id'::text)
-   Group Key: b.properties.'id'::text
-   ->  Nested Loop
-         Output: b.properties.'id'::text, x.edges
-         ->  Seq Scan on t.person a
-               Output: a.id, a.properties
-               Filter: (a.properties.'id'::text = to_jsonb(1))
-         ->  Hash Join
-               Output: x.edges, b.properties
-               Hash Cond: (b.id = x."end")
-               ->  Seq Scan on t.person b
-                     Output: b.id, b.properties
-               ->  Hash
-                     Output: x.edges, x."end"
-                     ->  Subquery Scan on x
-                           Output: x.edges, x."end"
-                           ->  Nested Loop VLE [1..2]
-                                 Output: knows.start, knows."end", (ARRAY[knows.id]), (ARRAY[ROW(knows.id, knows.start, knows."end", knows.properties, knows.ctid)::edge]), knows_1."end", knows_1.id, (ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge)
-                                 ->  Result
-                                       Output: knows.start, knows."end", ARRAY[knows.id], ARRAY[ROW(knows.id, knows.start, knows."end", knows.properties, knows.ctid)::edge]
-                                       ->  Append
-                                             ->  Seq Scan on t.knows
-                                                   Output: knows.start, knows."end", knows.id, knows.properties, knows.ctid
-                                                   Filter: (a.id = knows.start)
-                                             ->  Seq Scan on t.friendships
-                                                   Output: friendships.start, friendships."end", friendships.id, friendships.properties, friendships.ctid
-                                                   Filter: (a.id = friendships.start)
-                                             ->  Index Scan using familyship_start_idx on t.familyship
-                                                   Output: familyship.start, familyship."end", familyship.id, familyship.properties, familyship.ctid
-                                                   Index Cond: (a.id = familyship.start)
-                                 ->  Result
-                                       Output: knows_1."end", knows_1.id, ROW(knows_1.id, knows_1.start, knows_1."end", knows_1.properties, knows_1.ctid)::edge
-                                       ->  Append
-                                             ->  Seq Scan on t.knows knows_1
-                                                   Output: knows_1."end", knows_1.id, knows_1.start, knows_1.properties, knows_1.ctid
-                                                   Filter: ($1 = knows_1.start)
-                                             ->  Seq Scan on t.friendships friendships_1
-                                                   Output: friendships_1."end", friendships_1.id, friendships_1.start, friendships_1.properties, friendships_1.ctid
-                                                   Filter: ($1 = friendships_1.start)
-                                             ->  Index Scan using familyship_start_idx on t.familyship familyship_1
-                                                   Output: familyship_1."end", familyship_1.id, familyship_1.start, familyship_1.properties, familyship_1.ctid
-                                                   Index Cond: ($1 = familyship_1.start)
-(43 rows)
+(45 rows)
 
 EXPLAIN (VERBOSE, COSTS OFF)
 MATCH (a:person {id: 1})-[x:knows*1..2]->(b:person)
@@ -2104,13 +2110,13 @@ DELETE a, b;
 MATCH ()-[]->() RETURN count(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH () RETURN count(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
@@ -2120,13 +2126,13 @@ DELETE b;
 MATCH ()-[]->() RETURN count(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH () RETURN count(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 CREATE ({name:'ag-160 left'})-[:AG160]->({name:'ag-160 right'});
@@ -2136,13 +2142,13 @@ DELETE a, b;
 MATCH ()-[]->() RETURN count(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH () RETURN count(*);
  count 
 -------
-     0
+ 0
 (1 row)
 
 -- AG-138
@@ -2152,13 +2158,13 @@ DELETE a, b, r;
 MATCH (a) RETURN count(a);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH ()-[r:rel]->() RETURN count(r);
  count 
 -------
-     0
+ 0
 (1 row)
 
 CREATE ()-[:rel]->()-[:rel]->();
@@ -2167,13 +2173,13 @@ DELETE a, b, r, c, d, p;
 MATCH (a) RETURN count(a);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH ()-[r:rel]->() RETURN count(r);
  count 
 -------
-     0
+ 0
 (1 row)
 
 --AG-2 : failed DELETE graph path
@@ -2191,13 +2197,13 @@ DELETE p;
 MATCH (a) RETURN count(a);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH ()-[r:rel]->() RETURN count(r);
  count 
 -------
-     0
+ 0
 (1 row)
 
 CREATE ()-[:rel]->()-[:rel]->();
@@ -2206,13 +2212,13 @@ DELETE p, gp, a;
 MATCH (a) RETURN count(a);
  count 
 -------
-     0
+ 0
 (1 row)
 
 MATCH ()-[r:rel]->() RETURN count(r);
  count 
 -------
-     0
+ 0
 (1 row)
 
 -- AG-159
@@ -2647,7 +2653,7 @@ MERGE (a)-[r2:e1]->(b)
 MATCH p=(a)-[r:e1 {created: true}]->(b) RETURN count(p);
  count 
 -------
-     0
+ 0
 (1 row)
 
 CREATE (:v1 {name: 'v1-1'});
@@ -2661,7 +2667,7 @@ MATCH (a:v1 {name: 'v1-1'})-[r]->(b) RETURN properties(a), properties(b);
 MATCH (a:v1 {name: 'v1-1'}) RETURN count(a);
  count 
 -------
-     2
+ 2
 (1 row)
 
 MATCH (a:v1 {name: 'v1-1'}) DETACH DELETE a;
@@ -2678,7 +2684,7 @@ MATCH (a:v1 {name: 'v1-1'})-[r]->(b) RETURN properties(a), properties(b);
 MATCH (a:v1 {name: 'v1-1'}) RETURN count(a);
  count 
 -------
-     1
+ 1
 (1 row)
 
 MATCH (a:v1 {name: 'v1-1'}) DETACH DELETE a;
@@ -2710,7 +2716,7 @@ MERGE (a)-[:hometown]->(b:city {name: a.bornin});
 MATCH (:city)<-[r]-(:person) RETURN count(r);
  count 
 -------
-     6
+ 6
 (1 row)
 
 MATCH (a:city) DETACH DELETE a;
@@ -2768,7 +2774,7 @@ CREATE p=(a)-[r:e1 {name: a.name + b.name}]->(b)
 RETURN properties(a), properties(r), properties(b), count(p);
      properties      |          properties           |       properties       | count 
 ---------------------+-------------------------------+------------------------+-------
- {"name": "bitnine"} | {"name": "bitnineAgensGraph"} | {"name": "AgensGraph"} |     1
+ {"name": "bitnine"} | {"name": "bitnineAgensGraph"} | {"name": "AgensGraph"} | 1
 (1 row)
 
 MERGE (a {name: 'bitnine'})
@@ -3152,7 +3158,7 @@ EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(a);
                                   QUERY PLAN                                  
 ------------------------------------------------------------------------------
  Finalize Aggregate
-   Output: count(ROW(a.id, a.properties, a.ctid)::vertex)
+   Output: to_jsonb(count(ROW(a.id, a.properties, a.ctid)::vertex))
    ->  Gather
          Output: (PARTIAL count(ROW(a.id, a.properties, a.ctid)::vertex))
          Workers Planned: 1
@@ -3172,7 +3178,7 @@ EXPLAIN (VERBOSE, COSTS OFF) MATCH (a) RETURN count(a);
 MATCH (a) RETURN count(a);
  count 
 -------
-     3
+ 3
 (1 row)
 
 ALTER DATABASE regression SET GRAPH_PATH TO DEFAULT;
@@ -3201,7 +3207,7 @@ DELETE a
 RETURN count(*);
  count 
 -------
-     1
+ 1
 (1 row)
 
 BEGIN;
@@ -3220,7 +3226,7 @@ DELETE a
 RETURN count(*);
  count 
 -------
-     2
+ 2
 (1 row)
 
 BEGIN;
@@ -3240,7 +3246,7 @@ DELETE a
 RETURN count(*);
  count 
 -------
-     2
+ 2
 (1 row)
 
 \set AUTOCOMMIT OFF
@@ -3250,14 +3256,14 @@ CREATE (:foo {bar : 'a'});
 MATCH (a:foo {bar : 'a'}) RETURN count(*);
  count 
 -------
-     1
+ 1
 (1 row)
 
 COMMIT;
 MATCH (a:foo {bar : 'a'}) RETURN count(*);
  count 
 -------
-     1
+ 1
 (1 row)
 
 COMMIT;
