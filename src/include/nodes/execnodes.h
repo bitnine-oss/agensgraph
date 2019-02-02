@@ -1045,15 +1045,9 @@ struct AppendState
 	Size		pstate_len;		/* size of parallel coordination info */
 	bool		(*choose_next_subplan) (AppendState *);
 
-	dlist_head  vle_ctxs;		/* list of AppendVLECtx */
-	dlist_node *cur_ctx;
+	dlist_head  ctxs_head;		/* list of AppendContext */
+	dlist_node *prev_ctx_node;
 } AppendState;
-
-typedef struct AppendVLECtx
-{
-	dlist_node	list;
-	int			as_whichplan;
-} AppendVLECtx;
 
 /* ----------------
  *	 MergeAppendState information
@@ -1172,15 +1166,9 @@ typedef struct SeqScanState
 	ScanState	ss;				/* its first field is NodeTag */
 	Size		pscan_len;		/* size of parallel heap scan descriptor */
 
-	dlist_head  vle_ctxs;		/* list of SeqScanVLECtx */
-	dlist_node *cur_ctx;
+	dlist_head	ctxs_head;		/* list of SeqScanContext */
+	dlist_node *prev_ctx_node;
 } SeqScanState;
-
-typedef struct SeqScanVLECtx
-{
-	dlist_node	list;
-	HeapScanDesc ss_currentScanDesc;
-} SeqScanVLECtx;
 
 /* ----------------
  *	 SampleScanState information
@@ -1263,8 +1251,9 @@ typedef struct IndexScanState
 	ExprContext *iss_RuntimeContext;
 	Relation	iss_RelationDesc;
 	IndexScanDesc iss_ScanDesc;
-	dlist_head  vle_ctxs;		/* list of IndexScanVLECtx */
-	dlist_node *cur_ctx;
+
+	dlist_head	ctxs_head;		/* list of IndexScanContext */
+	dlist_node *prev_ctx_node;
 
 	/* These are needed for re-checking ORDER BY expr ordering */
 	pairingheap *iss_ReorderQueue;
@@ -1277,11 +1266,12 @@ typedef struct IndexScanState
 	Size		iss_PscanLen;
 } IndexScanState;
 
-typedef struct IndexScanVLECtx
+typedef struct IndexScanContext
 {
 	dlist_node	list;
-	IndexScanDesc iss_ScanDesc;
-} IndexScanVLECtx;
+	Bitmapset  *chgParam;
+	IndexScanDesc scanDesc;
+} IndexScanContext;
 
 /* ----------------
  *	 IndexOnlyScanState information
@@ -1320,8 +1310,8 @@ typedef struct IndexOnlyScanState
 	long		ioss_HeapFetches;
 	Size		ioss_PscanLen;
 
-	dlist_head  vle_ctxs;		/* list of IndexScanVLECtx */
-	dlist_node *cur_ctx;
+	dlist_head	ctxs_head;		/* list of IndexScanContext */
+	dlist_node *prev_ctx_node;
 } IndexOnlyScanState;
 
 /* ----------------
@@ -1698,38 +1688,16 @@ typedef struct NestLoopState
 	CommandId	nl_graphwrite_cid;
 } NestLoopState;
 
-typedef struct VLEArrayExpr
-{
-	Oid			element_typeid; /* common type of array elements */
-	int16		elemlength;		/* typlen of the array element type */
-	bool		elembyval;		/* is the element type pass-by-value? */
-	char		elemalign;		/* typalign of the element type */
-	int			nelems;
-	int			telems;
-	Datum	   *elements;
-	ExprContext *econtext;
-} VLEArrayExpr;
-
 typedef struct NestLoopVLEState
 {
 	NestLoopState nls;
 	int			curhops;
-	bool		selfLoop;
-	bool		hasEdges;
-	bool		hasVertices;
-	TupleTableSlot *selfTupleSlot;
-	VLEArrayExpr ids;
-	VLEArrayExpr edges;
-	VLEArrayExpr vertices;
-	dlist_head	vleCtxs;		/* list of NestLoopVLECtx */
-	dlist_node *curCtx;
+	ArrayBuildState *eids;		/* edge IDs for the current result row */
+	ArrayBuildState *edges;		/* edges for the current result row */
+	ArrayBuildState *vertices;	/* vertices for the current result row */
+	dlist_head	ctxs_head;		/* list of NestLoopVLEContext */
+	dlist_node *prev_ctx_node;
 } NestLoopVLEState;
-
-typedef struct NestLoopVLECtx
-{
-	dlist_node list;
-	TupleTableSlot *slot;
-} NestLoopVLECtx;
 
 
 /* ----------------

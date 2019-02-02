@@ -72,7 +72,8 @@ static void reorderqueue_push(IndexScanState *node, HeapTuple tuple,
 static HeapTuple reorderqueue_pop(IndexScanState *node);
 
 /* for agensgraph */
-static void InitScanLabelSkipIdx(IndexScanState *node);
+static IndexScanContext *getCurrentContext(IndexScanState *node, bool create);
+static void initScanLabelSkipIdx(IndexScanState *node);
 
 
 /* ----------------------------------------------------------------
@@ -631,7 +632,7 @@ ExecReScanIndexScan(IndexScanState *node)
 	}
 
 	/* reset index scan */
-	if (node->iss_ScanDesc)
+	if (node->iss_ScanDesc && !node->ss.ss_skipLabelScan)
 		index_rescan(node->iss_ScanDesc,
 					 node->iss_ScanKeys, node->iss_NumScanKeys,
 					 node->iss_OrderByKeys, node->iss_NumOrderByKeys);
@@ -641,64 +642,93 @@ ExecReScanIndexScan(IndexScanState *node)
 }
 
 void
-ExecUpScanIndexScan(IndexScanState *node)
+ExecNextIndexScanContext(IndexScanState *node)
 {
-	IndexScanVLECtx *ctx;
+	IndexScanContext *ctx;
 
-	node->cur_ctx = dlist_prev_node(&node->vle_ctxs, node->cur_ctx);
-	ctx = dlist_container(IndexScanVLECtx, list, node->cur_ctx);
-	node->iss_ScanDesc = ctx->iss_ScanDesc;
-}
+	/* store the current context */
+	ctx = getCurrentContext(node, true);
+	ctx->chgParam = node->ss.ps.chgParam;
+	ctx->scanDesc = node->iss_ScanDesc;
 
-void
-ExecDownScanIndexScan(IndexScanState *node)
-{
-	EState	   *estate = node->ss.ps.state;
-	IndexScanVLECtx *ctx;
+	/* make the current context previous context */
+	node->prev_ctx_node = &ctx->list;
 
-	if (node->cur_ctx == NULL)
+	ctx = getCurrentContext(node, false);
+	if (ctx == NULL)
 	{
-		IndexScanDesc scandesc;
-
-		scandesc = node->iss_ScanDesc;
-		if (scandesc == NULL)
-		{
-			scandesc = index_beginscan(node->ss.ss_currentRelation,
-									   node->iss_RelationDesc,
-									   estate->es_snapshot,
-									   node->iss_NumScanKeys,
-									   node->iss_NumOrderByKeys);
-
-			if (node->iss_NumRuntimeKeys == 0 || node->iss_RuntimeKeysReady)
-				index_rescan(scandesc,
-							 node->iss_ScanKeys, node->iss_NumScanKeys,
-							 node->iss_OrderByKeys, node->iss_NumOrderByKeys);
-		}
-
-		ctx = palloc(sizeof(*ctx));
-		ctx->iss_ScanDesc = scandesc;
-		dlist_push_tail(&node->vle_ctxs, &ctx->list);
-		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
-	}
-
-	if (dlist_has_next(&node->vle_ctxs, node->cur_ctx))
-	{
-		node->cur_ctx = dlist_next_node(&node->vle_ctxs, node->cur_ctx);
-		ctx = dlist_container(IndexScanVLECtx, list, node->cur_ctx);
-		node->iss_ScanDesc = ctx->iss_ScanDesc;
+		/* if there is no current context, initialize the current scan */
+		node->ss.ps.chgParam = NULL;
+		node->iss_ScanDesc = NULL;
 	}
 	else
 	{
-		node->iss_ScanDesc = index_beginscan(
-				node->ss.ss_currentRelation, node->iss_RelationDesc,
-				estate->es_snapshot, node->iss_NumScanKeys,
-				node->iss_NumOrderByKeys);
+		/* if there is the current context already, use it */
 
-		ctx = (IndexScanVLECtx *) palloc(sizeof(IndexScanVLECtx));
-		ctx->iss_ScanDesc = node->iss_ScanDesc;
-		dlist_push_tail(&node->vle_ctxs, &ctx->list);
-		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+		Assert(ctx->chgParam == NULL);
+		node->ss.ps.chgParam = NULL;
+
+		/* ctx->scanDesc can be NULL if ss_skipLabelScan */
+		node->iss_ScanDesc = ctx->scanDesc;
 	}
+}
+
+void
+ExecPrevIndexScanContext(IndexScanState *node)
+{
+	IndexScanContext *ctx;
+	dlist_node *ctx_node;
+
+	/*
+	 * Store the current iss_ScanDesc. It will be reused when the current scan
+	 * is re-scanned next time.
+	 */
+	ctx = getCurrentContext(node, true);
+	Assert(node->ss.ps.chgParam == NULL);
+	ctx->chgParam = NULL;
+	ctx->scanDesc = node->iss_ScanDesc;
+
+	/* make the previous scan current scan */
+	ctx_node = node->prev_ctx_node;
+	Assert(ctx_node != &node->ctxs_head.head);
+
+	if (dlist_has_prev(&node->ctxs_head, ctx_node))
+		node->prev_ctx_node = dlist_prev_node(&node->ctxs_head, ctx_node);
+	else
+		node->prev_ctx_node = &node->ctxs_head.head;
+
+	/* restore */
+	ctx = dlist_container(IndexScanContext, list, ctx_node);
+	node->ss.ps.chgParam = ctx->chgParam;
+	node->iss_ScanDesc = ctx->scanDesc;
+}
+
+static IndexScanContext *
+getCurrentContext(IndexScanState *node, bool create)
+{
+	IndexScanContext *ctx;
+
+	if (dlist_has_next(&node->ctxs_head, node->prev_ctx_node))
+	{
+		dlist_node *ctx_node;
+
+		ctx_node = dlist_next_node(&node->ctxs_head, node->prev_ctx_node);
+		ctx = dlist_container(IndexScanContext, list, ctx_node);
+	}
+	else if (create)
+	{
+		ctx = palloc(sizeof(*ctx));
+		ctx->chgParam = NULL;
+		ctx->scanDesc = NULL;
+
+		dlist_push_tail(&node->ctxs_head, &ctx->list);
+	}
+	else
+	{
+		ctx = NULL;
+	}
+
+	return ctx;
 }
 
 /*
@@ -897,7 +927,6 @@ ExecEndIndexScan(IndexScanState *node)
 	Relation	indexRelationDesc;
 	IndexScanDesc indexScanDesc;
 	Relation	relation;
-	dlist_mutable_iter miter;
 
 	/*
 	 * extract information from the node
@@ -921,25 +950,30 @@ ExecEndIndexScan(IndexScanState *node)
 	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
-	/*
-	 * close the index relation (no-op if we didn't open it)
-	 */
-	dlist_foreach_modify(miter, &node->vle_ctxs)
+	if (!dlist_is_empty(&node->ctxs_head))
 	{
-		IndexScanVLECtx *ctx;
+		dlist_node *ctx_node;
+		IndexScanContext *ctx;
+		dlist_mutable_iter iter;
 
-		ctx = dlist_container(IndexScanVLECtx, list, miter.cur);
-		dlist_delete(miter.cur);
-
-		if (miter.cur != node->cur_ctx)
-		{
-			if (ctx->iss_ScanDesc)
-				index_endscan(ctx->iss_ScanDesc);
-		}
-
+		/* indexScanDesc is the most recent value. Ignore the first context. */
+		ctx_node = dlist_pop_head_node(&node->ctxs_head);
+		ctx = dlist_container(IndexScanContext, list, ctx_node);
 		pfree(ctx);
+
+		dlist_foreach_modify(iter, &node->ctxs_head)
+		{
+			dlist_delete(iter.cur);
+
+			ctx = dlist_container(IndexScanContext, list, iter.cur);
+
+			if (ctx->scanDesc != NULL)
+				index_endscan(ctx->scanDesc);
+
+			pfree(ctx);
+		}
 	}
-	node->cur_ctx = NULL;
+	node->prev_ctx_node = &node->ctxs_head.head;
 
 	if (indexScanDesc)
 		index_endscan(indexScanDesc);
@@ -1018,7 +1052,7 @@ ExecIndexRestrPos(IndexScanState *node)
 }
 
 static void
-InitScanLabelSkipIdx(IndexScanState *node)
+initScanLabelSkipIdx(IndexScanState *node)
 {
 	Relation	index = node->iss_RelationDesc;
 	int			i;
@@ -1166,7 +1200,7 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 						   NULL);
 
 	if (indexstate->ss.ss_isLabel)
-		InitScanLabelSkipIdx(indexstate);
+		initScanLabelSkipIdx(indexstate);
 
 	/*
 	 * any ORDER BY exprs have to be turned into scankeys in the same way
@@ -1258,8 +1292,8 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 		indexstate->iss_RuntimeContext = NULL;
 	}
 
-	dlist_init(&indexstate->vle_ctxs);
-	indexstate->cur_ctx = NULL;
+	dlist_init(&indexstate->ctxs_head);
+	indexstate->prev_ctx_node = &indexstate->ctxs_head.head;
 
 	/*
 	 * all done.

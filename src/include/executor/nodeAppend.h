@@ -25,4 +25,7 @@ extern void ExecAppendInitializeDSM(AppendState *node, ParallelContext *pcxt);
 extern void ExecAppendReInitializeDSM(AppendState *node, ParallelContext *pcxt);
 extern void ExecAppendInitializeWorker(AppendState *node, ParallelWorkerContext *pwcxt);
 
+extern void ExecNextAppendContext(AppendState *node);
+extern void ExecPrevAppendContext(AppendState *node);
+
 #endif							/* NODEAPPEND_H */

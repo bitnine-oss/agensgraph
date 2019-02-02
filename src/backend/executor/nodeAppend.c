@@ -62,6 +62,13 @@
 #include "lib/ilist.h"
 #include "miscadmin.h"
 
+typedef struct AppendContext
+{
+	dlist_node	list;
+	int			whichplan;
+} AppendContext;
+
+
 /* Shared state for parallel-aware Append. */
 struct ParallelAppendState
 {
@@ -166,8 +173,8 @@ ExecInitAppend(Append *node, EState *estate, int eflags)
 	/* If parallel-aware, this will be overridden later. */
 	appendstate->choose_next_subplan = choose_next_subplan_locally;
 
-	dlist_init(&appendstate->vle_ctxs);
-	appendstate->cur_ctx = NULL;
+	dlist_init(&appendstate->ctxs_head);
+	appendstate->prev_ctx_node = &appendstate->ctxs_head.head;
 
 	return appendstate;
 }
@@ -236,7 +243,7 @@ ExecEndAppend(AppendState *node)
 	PlanState **appendplans;
 	int			nplans;
 	int			i;
-	dlist_mutable_iter miter;
+	dlist_mutable_iter iter;
 
 	/*
 	 * get information from the node
@@ -250,15 +257,16 @@ ExecEndAppend(AppendState *node)
 	for (i = 0; i < nplans; i++)
 		ExecEndNode(appendplans[i]);
 
-	dlist_foreach_modify(miter, &node->vle_ctxs)
+	dlist_foreach_modify(iter, &node->ctxs_head)
 	{
-		AppendVLECtx *ctx;
+		AppendContext *ctx;
 
-		ctx = dlist_container(AppendVLECtx, list, miter.cur);
-		dlist_delete(miter.cur);
+		dlist_delete(iter.cur);
+
+		ctx = dlist_container(AppendContext, list, iter.cur);
 		pfree(ctx);
 	}
-	node->cur_ctx = NULL;
+	node->prev_ctx_node = &node->ctxs_head.head;
 }
 
 void
@@ -281,7 +289,7 @@ ExecReScanAppend(AppendState *node)
 		 * If chgParam of subnode is not null then plan will be re-scanned by
 		 * first ExecProcNode.
 		 */
-		if (node->ps.state->es_forceReScan || subnode->chgParam == NULL)
+		if (subnode->chgParam == NULL)
 			ExecReScan(subnode);
 	}
 
@@ -542,48 +550,65 @@ choose_next_subplan_for_worker(AppendState *node)
 }
 
 void
-ExecUpScanAppend(AppendState *node)
+ExecNextAppendContext(AppendState *node)
 {
-	AppendVLECtx *ctx;
-	int i;
+	dlist_node *ctx_node;
+	AppendContext *ctx;
+	int			i;
 
-	ctx = dlist_container(AppendVLECtx, list, node->cur_ctx);
-	node->as_whichplan = ctx->as_whichplan;
-	if (dlist_has_prev(&node->vle_ctxs, node->cur_ctx))
-		node->cur_ctx = dlist_prev_node(&node->vle_ctxs, node->cur_ctx);
-	else
-		node->cur_ctx = NULL;
-
-	for (i = 0; i < node->as_nplans; i++)
-		ExecUpScan(node->appendplans[i]);
-}
-
-void
-ExecDownScanAppend(AppendState *node)
-{
-	AppendVLECtx *ctx;
-	int i;
-
-	if (node->cur_ctx != NULL && dlist_has_next(&node->vle_ctxs, node->cur_ctx))
+	/* get the current context */
+	if (dlist_has_next(&node->ctxs_head, node->prev_ctx_node))
 	{
-		node->cur_ctx = dlist_next_node(&node->vle_ctxs, node->cur_ctx);
-		ctx = dlist_container(AppendVLECtx, list, node->cur_ctx);
-		ctx->as_whichplan = node->as_whichplan;
-	}
-	else if (node->cur_ctx == NULL && !dlist_is_empty(&node->vle_ctxs))
-	{
-		node->cur_ctx = dlist_head_node(&node->vle_ctxs);
-		ctx = dlist_container(AppendVLECtx, list, node->cur_ctx);
-		ctx->as_whichplan = node->as_whichplan;
+		ctx_node = dlist_next_node(&node->ctxs_head, node->prev_ctx_node);
+		ctx = dlist_container(AppendContext, list, ctx_node);
 	}
 	else
 	{
 		ctx = palloc(sizeof(*ctx));
-		ctx->as_whichplan = node->as_whichplan;
-		dlist_push_tail(&node->vle_ctxs, &ctx->list);
-		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+		ctx_node = &ctx->list;
+
+		dlist_push_tail(&node->ctxs_head, ctx_node);
 	}
 
+	ctx->whichplan = node->as_whichplan;
+
+	/* make the current context previous context */
+	node->prev_ctx_node = ctx_node;
+
+	/*
+	 * We don't have to restore the current as_whichplan because it is an
+	 * integer value and will be initialized when the current Append is
+	 * re-scanned next time.
+	 */
+
 	for (i = 0; i < node->as_nplans; i++)
-		ExecDownScan(node->appendplans[i]);
+		ExecNextContext(node->appendplans[i]);
+}
+
+void
+ExecPrevAppendContext(AppendState *node)
+{
+	dlist_node *ctx_node;
+	AppendContext *ctx;
+	int			i;
+
+	/*
+	 * We don't have to store the current as_whichplan because of the same
+	 * reason above.
+	 */
+
+	/* make the previous context current context */
+	ctx_node = node->prev_ctx_node;
+	Assert(ctx_node != &node->ctxs_head.head);
+
+	if (dlist_has_prev(&node->ctxs_head, ctx_node))
+		node->prev_ctx_node = dlist_prev_node(&node->ctxs_head, ctx_node);
+	else
+		node->prev_ctx_node = &node->ctxs_head.head;
+
+	ctx = dlist_container(AppendContext, list, ctx_node);
+	node->as_whichplan = ctx->whichplan;
+
+	for (i = 0; i < node->as_nplans; i++)
+		ExecPrevContext(node->appendplans[i]);
 }

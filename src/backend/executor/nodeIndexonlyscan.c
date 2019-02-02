@@ -46,6 +46,9 @@ static TupleTableSlot *IndexOnlyNext(IndexOnlyScanState *node);
 static void StoreIndexTuple(TupleTableSlot *slot, IndexTuple itup,
 				TupleDesc itupdesc);
 
+static IndexScanContext *getCurrentContext(IndexOnlyScanState *node,
+										   bool create);
+
 
 /* ----------------------------------------------------------------
  *		IndexOnlyNext
@@ -364,67 +367,93 @@ ExecReScanIndexOnlyScan(IndexOnlyScanState *node)
 }
 
 void
-ExecUpScanIndexOnlyScan(IndexOnlyScanState *node)
+ExecNextIndexOnlyScanContext(IndexOnlyScanState *node)
 {
-	IndexScanVLECtx *ctx;
+	IndexScanContext *ctx;
 
-	node->cur_ctx = dlist_prev_node(&node->vle_ctxs, node->cur_ctx);
-	ctx = dlist_container(IndexScanVLECtx, list, node->cur_ctx);
-	node->ioss_ScanDesc = ctx->iss_ScanDesc;
-}
+	/* store the current context */
+	ctx = getCurrentContext(node, true);
+	ctx->chgParam = node->ss.ps.chgParam;
+	ctx->scanDesc = node->ioss_ScanDesc;
 
-void
-ExecDownScanIndexOnlyScan(IndexOnlyScanState *node)
-{
-	EState	   *estate = node->ss.ps.state;
-	IndexScanVLECtx *ctx;
+	/* make the current context previous context */
+	node->prev_ctx_node = &ctx->list;
 
-	if (node->cur_ctx == NULL)
+	ctx = getCurrentContext(node, false);
+	if (ctx == NULL)
 	{
-		IndexScanDesc scandesc;
-
-		scandesc = node->ioss_ScanDesc;
-		if (scandesc == NULL)
-		{
-			scandesc = index_beginscan(node->ss.ss_currentRelation,
-									   node->ioss_RelationDesc,
-									   estate->es_snapshot,
-									   node->ioss_NumScanKeys,
-									   node->ioss_NumOrderByKeys);
-
-			scandesc->xs_want_itup = true;
-
-			if (node->ioss_NumRuntimeKeys == 0 || node->ioss_RuntimeKeysReady)
-				index_rescan(scandesc,
-							 node->ioss_ScanKeys, node->ioss_NumScanKeys,
-							 node->ioss_OrderByKeys, node->ioss_NumOrderByKeys);
-		}
-
-		ctx = palloc(sizeof(*ctx));
-		ctx->iss_ScanDesc = scandesc;
-		dlist_push_tail(&node->vle_ctxs, &ctx->list);
-		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
-	}
-
-	if (dlist_has_next(&node->vle_ctxs, node->cur_ctx))
-	{
-		node->cur_ctx = dlist_next_node(&node->vle_ctxs, node->cur_ctx);
-		ctx = dlist_container(IndexScanVLECtx, list, node->cur_ctx);
-		node->ioss_ScanDesc = ctx->iss_ScanDesc;
+		/* if there is no current context, initialize the current scan */
+		node->ss.ps.chgParam = NULL;
+		node->ioss_ScanDesc = NULL;
 	}
 	else
 	{
-		node->ioss_ScanDesc = index_beginscan(
-				node->ss.ss_currentRelation, node->ioss_RelationDesc,
-				estate->es_snapshot, node->ioss_NumScanKeys,
-				node->ioss_NumOrderByKeys);
-		node->ioss_ScanDesc->xs_want_itup = true;
+		/* if there is the current context already, use it */
 
-		ctx = palloc(sizeof(*ctx));
-		ctx->iss_ScanDesc = node->ioss_ScanDesc;
-		dlist_push_tail(&node->vle_ctxs, &ctx->list);
-		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+		Assert(ctx->chgParam == NULL);
+		node->ss.ps.chgParam = NULL;
+
+		/* ctx->scanDesc can be NULL if ss_skipLabelScan */
+		node->ioss_ScanDesc = ctx->scanDesc;
 	}
+}
+
+void
+ExecPrevIndexOnlyScanContext(IndexOnlyScanState *node)
+{
+	IndexScanContext *ctx;
+	dlist_node *ctx_node;
+
+	/*
+	 * Store the current ioss_ScanDesc. It will be reused when the current scan
+	 * is re-scanned next time.
+	 */
+	ctx = getCurrentContext(node, true);
+	Assert(node->ss.ps.chgParam == NULL);
+	ctx->chgParam = NULL;
+	ctx->scanDesc = node->ioss_ScanDesc;
+
+	/* make the previous scan current scan */
+	ctx_node = node->prev_ctx_node;
+	Assert(ctx_node != &node->ctxs_head.head);
+
+	if (dlist_has_prev(&node->ctxs_head, ctx_node))
+		node->prev_ctx_node = dlist_prev_node(&node->ctxs_head, ctx_node);
+	else
+		node->prev_ctx_node = &node->ctxs_head.head;
+
+	/* restore */
+	ctx = dlist_container(IndexScanContext, list, ctx_node);
+	node->ss.ps.chgParam = ctx->chgParam;
+	node->ioss_ScanDesc = ctx->scanDesc;
+}
+
+static IndexScanContext *
+getCurrentContext(IndexOnlyScanState *node, bool create)
+{
+	IndexScanContext *ctx;
+
+	if (dlist_has_next(&node->ctxs_head, node->prev_ctx_node))
+	{
+		dlist_node *ctx_node;
+
+		ctx_node = dlist_next_node(&node->ctxs_head, node->prev_ctx_node);
+		ctx = dlist_container(IndexScanContext, list, ctx_node);
+	}
+	else if (create)
+	{
+		ctx = palloc(sizeof(*ctx));
+		ctx->chgParam = NULL;
+		ctx->scanDesc = NULL;
+
+		dlist_push_tail(&node->ctxs_head, &ctx->list);
+	}
+	else
+	{
+		ctx = NULL;
+	}
+
+	return ctx;
 }
 
 /* ----------------------------------------------------------------
@@ -437,7 +466,6 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 	Relation	indexRelationDesc;
 	IndexScanDesc indexScanDesc;
 	Relation	relation;
-	dlist_mutable_iter miter;
 
 	/*
 	 * extract information from the node
@@ -468,25 +496,30 @@ ExecEndIndexOnlyScan(IndexOnlyScanState *node)
 	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
-	/*
-	 * close the index relation (no-op if we didn't open it)
-	 */
-	dlist_foreach_modify(miter, &node->vle_ctxs)
+	if (!dlist_is_empty(&node->ctxs_head))
 	{
-		IndexScanVLECtx *ctx;
+		dlist_node *ctx_node;
+		IndexScanContext *ctx;
+		dlist_mutable_iter iter;
 
-		ctx = dlist_container(IndexScanVLECtx, list, miter.cur);
-		dlist_delete(miter.cur);
-
-		if (miter.cur != node->cur_ctx)
-		{
-			if (ctx->iss_ScanDesc)
-				index_endscan(ctx->iss_ScanDesc);
-		}
-
+		/* indexScanDesc is the most recent value. Ignore the first context. */
+		ctx_node = dlist_pop_head_node(&node->ctxs_head);
+		ctx = dlist_container(IndexScanContext, list, ctx_node);
 		pfree(ctx);
+
+		dlist_foreach_modify(iter, &node->ctxs_head)
+		{
+			dlist_delete(iter.cur);
+
+			ctx = dlist_container(IndexScanContext, list, iter.cur);
+
+			if (ctx->scanDesc != NULL)
+				index_endscan(ctx->scanDesc);
+
+			pfree(ctx);
+		}
 	}
-	node->cur_ctx = NULL;
+	node->prev_ctx_node = &node->ctxs_head.head;
 
 	if (indexScanDesc)
 		index_endscan(indexScanDesc);
@@ -709,8 +742,8 @@ ExecInitIndexOnlyScan(IndexOnlyScan *node, EState *estate, int eflags)
 		indexstate->ioss_RuntimeContext = NULL;
 	}
 
-	dlist_init(&indexstate->vle_ctxs);
-	indexstate->cur_ctx = NULL;
+	dlist_init(&indexstate->ctxs_head);
+	indexstate->prev_ctx_node = &indexstate->ctxs_head.head;
 
 	/*
 	 * all done.

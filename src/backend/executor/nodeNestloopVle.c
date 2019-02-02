@@ -32,42 +32,46 @@
 #include "utils/memutils.h"
 
 
-#define OUTER_PREV_VARNO		0
-#define OUTER_CURR_VARNO		1
-#define OUTER_IDS_VARNO			2
+#define OUTER_PREV_VID_VARNO	0
+#define OUTER_CURR_VID_VARNO	1
+#define OUTER_EIDS_VARNO		2
 #define OUTER_EDGES_VARNO		3
 #define OUTER_VERTICES_VARNO	4
-#define INNER_NEXT_VARNO		0
-#define INNER_ID_VARNO			1
+#define INNER_NEXT_VID_VARNO	0
+#define INNER_EID_VARNO			1
 #define INNER_EDGE_VARNO		2
 #define INNER_VERTEX_VARNO		3
 
 
-static bool incrDepth(NestLoopVLEState *node);
-static bool decrDepth(NestLoopVLEState *node);
-static bool isMaxDepth(NestLoopVLEState *node);
-static void bindNestParam(NestLoopVLE *nlv,
-						  ExprContext *econtext,
-						  TupleTableSlot *outerTupleSlot,
-						  PlanState *innerPlan);
-static TupleTableSlot *restoreStartAndBindVar(NestLoopVLEState *node);
-static void storeStartAndBindVar(NestLoopVLEState *node,
-								 TupleTableSlot *outerTupleSlot);
-static void clearVleCtxs(dlist_head *vleCtxs);
-static void copyStartAndBindVar(TupleTableSlot *dst, TupleTableSlot *src);
-static void replaceResult(NestLoopVLEState *node, TupleTableSlot *slot);
-static void initArray(VLEArrayExpr *array, Oid typid, ExprContext *econtext);
-static Datum evalArray(VLEArrayExpr *array);
-static void clearArray(VLEArrayExpr *array);
-static void addElem(VLEArrayExpr *array, Datum elem);
-static void popElem(VLEArrayExpr *array);
-static bool hasElem(VLEArrayExpr *array, Datum elem);
-static void addOuterIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot);
-static void addInnerElements(NestLoopVLEState *node, TupleTableSlot *slot);
-static void addIdAndEdge(NestLoopVLEState *node, Datum id, Datum edge);
-static void popRowidAndGid(NestLoopVLEState *node);
-static TupleTableSlot *copyTupleTableSlot(TupleTableSlot *dstslot,
-										  TupleTableSlot *srcslot);
+typedef struct NestLoopVLEContext
+{
+	dlist_node	list;
+	Datum		outer_var_datum;
+	bool		outer_var_isnull;
+} NestLoopVLEContext;
+
+
+/* hops */
+static int getInitialCurhops(NestLoopVLE *node);
+static bool canFollowEdge(NestLoopVLEState *node);
+static bool needResult(NestLoopVLEState *node);
+/* result values */
+static void pushPathElementOuter(NestLoopVLEState *node, TupleTableSlot *slot);
+static void pushPathElementInner(NestLoopVLEState *node, TupleTableSlot *slot);
+static void popPathElement(NestLoopVLEState *node);
+/* additional ArrayBuildState operations */
+static bool arrayResultHas(ArrayBuildState *astate, Datum elem);
+static void arrayResultPop(ArrayBuildState *astate);
+static void arrayResultClear(ArrayBuildState *astate);
+/* context */
+static void storeOuterVar(NestLoopVLEState *node, TupleTableSlot *slot);
+static void restoreOuterVar(NestLoopVLEState *node, TupleTableSlot *slot);
+static void setNextOuterVar(TupleTableSlot *outer_slot,
+							TupleTableSlot *inner_slot);
+static void fetchOuterVars(NestLoopVLE *nlv, ExprContext *econtext,
+						  TupleTableSlot *outerTupleSlot, PlanState *innerPlan);
+/* result slot */
+static void adjustResult(NestLoopVLEState *node, TupleTableSlot *slot);
 
 
 static TupleTableSlot *
@@ -79,10 +83,8 @@ ExecNestLoopVLE(PlanState *pstate)
 	PlanState  *outerPlan;
 	TupleTableSlot *outerTupleSlot;
 	TupleTableSlot *innerTupleSlot;
-	TupleTableSlot *selfTupleSlot;
 	ExprState  *otherqual;
 	ExprContext *econtext;
-	TupleTableSlot *result;
 
 	CHECK_FOR_INTERRUPTS();
 
@@ -93,10 +95,17 @@ ExecNestLoopVLE(PlanState *pstate)
 
 	nlv = (NestLoopVLE *) node->nls.js.ps.plan;
 	otherqual = node->nls.js.ps.qual;
+
+	/*
+	 * outerPlan is only for;
+	 * 1) the first edge in the path if node->curhops == 1
+	 * 2) the first vertex in the path if node->curhops == 0
+	 */
 	outerPlan = outerPlanState(node);
+	/* innerPlan is for the rest of <vertex, edge> pairs in the path. */
 	innerPlan = innerPlanState(node);
+
 	econtext = node->nls.js.ps.ps_ExprContext;
-	selfTupleSlot = node->selfTupleSlot;
 
 	/*
 	 * Reset per-tuple memory context to free any expression evaluation
@@ -110,6 +119,13 @@ ExecNestLoopVLE(PlanState *pstate)
 	 */
 	ENLV1_printf("entering main loop");
 
+	/*
+	 *      outer              inner               inner         ...
+	 *
+	 * prev  ids  curr |          id  next |          id  next |
+	 *   -----------   |   () ----------   |   () ----------   | ...
+	 *      edges      | vertex  edge      | vertex  edge      |
+	 */
 	for (;;)
 	{
 		/*
@@ -118,59 +134,80 @@ ExecNestLoopVLE(PlanState *pstate)
 		 */
 		if (node->nls.nl_NeedNewOuter)
 		{
-			if (node->selfLoop)
-			{
-				ENLV1_printf("getting new self outer tuple");
-				outerTupleSlot = selfTupleSlot;
-			}
-			else
-			{
-				ENLV1_printf("getting new outer tuple");
-				outerTupleSlot = ExecProcNode(outerPlan);
-				/*
-				 * if there are no more outer tuples,
-				 * then the join is complete..
-				 */
-				if (TupIsNull(outerTupleSlot))
-				{
-					ENLV1_printf("no outer tuple, ending join");
-					return NULL;
-				}
+			ENL1_printf("getting new outer tuple");
+			outerTupleSlot = ExecProcNode(outerPlan);
 
-				addOuterIdAndEdge(node, outerTupleSlot);
+			/*
+			 * if there are no more outer tuples, then the join is complete..
+			 */
+			if (TupIsNull(outerTupleSlot))
+			{
+				ENLV1_printf("no outer tuple, ending join");
+				return NULL;
 			}
 
-			ENLV1_printf("saving new outer tuple information");
-			econtext->ecxt_outertuple = outerTupleSlot;
-
-			result = NULL;
-
-			/* in the case that minHops is 0 or 1 (starting point) */
-			if (!node->selfLoop && (node->curhops >= nlv->minHops))
-				result = outerTupleSlot;
-
-			if (incrDepth(node))
+			if (canFollowEdge(node))
 			{
+				ENLV1_printf("saving new outer tuple information");
+				econtext->ecxt_outertuple = outerTupleSlot;
 				node->nls.nl_NeedNewOuter = false;
 
-				bindNestParam(nlv, econtext, outerTupleSlot, innerPlan);
+				/*
+				 * Store eid to guarantee edge-uniqueness, and edge to generate
+				 * edge array for each result.
+				 */
+				pushPathElementOuter(node, outerTupleSlot);
+
+				fetchOuterVars(nlv, econtext, outerTupleSlot, innerPlan);
 
 				/*
 				 * now rescan the inner plan
 				 */
-				if (node->selfLoop)
-				{
-					ENLV1_printf("downscanning inner plan");
-					ExecDownScan(innerPlan);
-				}
 				ENLV1_printf("rescanning inner plan");
-				node->nls.js.ps.state->es_forceReScan = true;
 				ExecReScan(innerPlan);
-				node->nls.js.ps.state->es_forceReScan = false;
-			}
 
-			if (result != NULL)
-				return result;
+				/*
+				 * in the case that <curhops, minHops> is either <0, 0> or
+				 * <1, 1> (which is the starting point)
+				 */
+				if (needResult(node))
+				{
+					node->curhops++;
+
+					/*
+					 * It is safe to return outerTupleSlot instead of
+					 * ps_ResultTupleSlot because the upper plan will only
+					 * access the first 3~5 columns of ps_ResultTupleSlot
+					 * which is the same with those of outerTupleSlot.
+					 */
+					return outerTupleSlot;
+				}
+				else
+				{
+					node->curhops++;
+				}
+			}
+			else
+			{
+				/*
+				 * Here is only for the case that <curhops, minHops, maxHops>
+				 * is either <0, 0, 0> or <1, 1, 1>. innerPlan will never be
+				 * executed. (node->nls.nl_NeedNewOuter == true)
+				 */
+				Assert(node->curhops == nlv->minHops);
+				Assert(node->curhops == nlv->maxHops);
+
+				/* It is safe to return outerTupleSlot here too. */
+				return outerTupleSlot;
+			}
+		}
+		else
+		{
+			/*
+			 * Inner loop will use this outer tuple to access the outer
+			 * variable and make a result.
+			 */
+			outerTupleSlot = econtext->ecxt_outertuple;
 		}
 
 		/*
@@ -179,36 +216,44 @@ ExecNestLoopVLE(PlanState *pstate)
 		ENLV1_printf("getting new inner tuple");
 
 		innerTupleSlot = ExecProcNode(innerPlan);
+		econtext->ecxt_innertuple = innerTupleSlot;
 
 		if (TupIsNull(innerTupleSlot))
 		{
-			decrDepth(node);
-			popRowidAndGid(node);
-			if (node->curCtx == NULL)
+			if (node->curhops == getInitialCurhops(nlv) + 1)
 			{
 				ENLV1_printf("no inner tuple, need new outer tuple");
 				node->nls.nl_NeedNewOuter = true;
-				node->selfLoop = false;
 			}
 			else
 			{
-				TupleTableSlot *prev_slot;
+				ENLV1_printf("no inner tuple, go to previous inner plan");
 
-				ENLV1_printf("no inner tuple, upscanning inner plan, looping");
-				ExecUpScan(innerPlan);
+				ExecPrevContext(innerPlan);
 
-				prev_slot = restoreStartAndBindVar(node);
-				copyTupleTableSlot(econtext->ecxt_outertuple, prev_slot);
-				bindNestParam(nlv, econtext, econtext->ecxt_outertuple, NULL);
+				restoreOuterVar(node, outerTupleSlot);
+
+				/*
+				 * We do this at here so that the remaning scans for the
+				 * previous edge can use the right outer variable. We don't
+				 * pass innerPlan because chgParam's are properly managed by
+				 * ExecProcNode() and ExecNextContext()/ExecPrevContext().
+				 * The remaning scans will see chgParam's for them and be able
+				 * to determine whether they have to re-scan or not.
+				 */
+				fetchOuterVars(nlv, econtext, outerTupleSlot, NULL);
 			}
 
+			popPathElement(node);
+
+			node->curhops--;
+
 			/*
-			 * Otherwise just return to top of loop for a new outer tuple.
+			 * return to top of loop for a new outer tuple or inner tuple of
+			 * the previous edge.
 			 */
 			continue;
 		}
-
-		econtext->ecxt_innertuple = innerTupleSlot;
 
 		/*
 		 * at this point we have a new pair of inner and outer tuples so we
@@ -220,48 +265,137 @@ ExecNestLoopVLE(PlanState *pstate)
 		 */
 		ENLV1_printf("testing qualification");
 
-		if (!hasElem(&node->ids,
-					 econtext->ecxt_innertuple->tts_values[INNER_ID_VARNO]))
+		if (!arrayResultHas(node->eids,
+							innerTupleSlot->tts_values[INNER_EID_VARNO]))
 		{
-			if (otherqual == NULL || ExecQual(otherqual, econtext))
+			if (ExecQual(otherqual, econtext))
 			{
+				TupleTableSlot *result;
+
 				/*
 				 * qualification was satisfied so we project and return the
 				 * slot containing the result tuple using ExecProject().
 				 */
 				ENLV1_printf("qualification succeeded, projecting tuple");
 
-				/* store current context before modifying outertuple */
-				if (!isMaxDepth(node))
-					storeStartAndBindVar(node, econtext->ecxt_outertuple);
-
-				/* set outertuple of ExprContext for projection */
-				econtext->ecxt_outertuple->tts_values[OUTER_CURR_VARNO]
-					= econtext->ecxt_innertuple->tts_values[INNER_NEXT_VARNO];
-				econtext->ecxt_outertuple->tts_isnull[OUTER_CURR_VARNO]
-					= econtext->ecxt_innertuple->tts_isnull[INNER_NEXT_VARNO];
-
-				result = ExecProject(node->nls.js.ps.ps_ProjInfo);
-
-				addInnerElements(node, econtext->ecxt_innertuple);
-
-				/* in both [x..y] and [x..] cases */
-				if (node->curhops >= nlv->minHops)
-					replaceResult(node, result);
-
-				if (isMaxDepth(node))
+				if (canFollowEdge(node))
 				{
-					popRowidAndGid(node);
+					/*
+					 * Store eid to guarantee edge-uniqueness, and edge/vertex
+					 * to generate edge/vertex array for each result.
+					 */
+					pushPathElementInner(node, innerTupleSlot);
+
+					/*
+					 * Store the current outer variable so that the remaining
+					 * scans for the current edge can use it later.
+					 * SeqScan uses it for each tuple. Index(Only)Scan uses it
+					 * when runtime keys are evaluated while re-scanning.
+					 *
+					 * See fetchOuterVars() and ExecIndexEvalRuntimeKeys().
+					 */
+					storeOuterVar(node, outerTupleSlot);
+
+					/*
+					 * Set the outer variable to the next vid so that;
+					 * 1) ExecProject() can use the value of
+					 *    INNER_NEXT_VID_VARNO for OUTER_CURR_VID_VARNO.
+					 * 2) innerScan for the next edge can use it.
+					 */
+					setNextOuterVar(outerTupleSlot, innerTupleSlot);
+
+					/*
+					 * The result will have outerTupleSlot + innerTupleSlot.
+					 *
+					 * If innerScan is re-scanned for the next edge,
+					 * ecxt_per_tuple_memory in Index(Only)Scan is reset.
+					 * This means that the values in the slot from the
+					 * innerPlan will be no longer valid after the reset.
+					 * So, we should project the result at here.
+					 */
+					if (needResult(node))
+						result = ExecProject(node->nls.js.ps.ps_ProjInfo);
+					else
+						result = NULL;
+
+					ExecNextContext(innerPlan);
+
+					fetchOuterVars(nlv, econtext, outerTupleSlot, innerPlan);
+
+					/*
+					 * now rescan the inner plan
+					 *
+					 * For now, there are three kinds of innerPlan.
+					 *
+					 * 1. scan0 (SeqScan|IndexScan|IndexOnlyScan)
+					 *
+					 * ExecReScan(innerPlan) re-scans scan0 immediately if a
+					 * scan descriptor for it already exists. If not, the first
+					 * ExecProcNode(innerPlan) will re-scan it.
+					 *
+					 * 2. Result (may not exist depending on queries)
+					 *      Append (label hierarchy)
+					 *        scan0
+					 *        scan1 *
+					 *        scan2
+					 *
+					 * ExecReScan(innerPlan) does not re-scan scan0~2 because
+					 * re-scaning Result/Append does not re-scan their subplans
+					 * immediately. Instead, the first ExecProcNode() over
+					 * scan0~2 will re-scan them if their chgParam is set.
+					 * (Although ExecReScan() over them is called by calling
+					 * ExecProcNode(), it considers the condition described at
+					 * 1 above.)
+					 *
+					 * Let's assume that we need to get the next edge of the
+					 * current edge while scanning scan1.
+					 * a. ExecNextContext(innerPlan) stores the scan context of
+					 *    the current edge which is now previous edge.
+					 * b. fetchOuterVars() fetchs outer variables and then sets
+					 *    chgParam for Result/Append.
+					 * c. ExecReScan(innerPlan) and future
+					 *    ExecProcNode(innerPlan) calls eventually unset all
+					 *    the chgParam's.
+					 * d. ExecPrevContext(innerPlan) restores the scan context
+					 *    of the previous edge.
+					 * If we don't care about chgParam's, the first
+					 * ExecProcNode(scan2) will not be re-scanned because its
+					 * chgParam is unset.
+					 * This is why storing/restoring chgParam's is important.
+					 *
+					 * 3. NestLoop (if vertices have to be returned)
+					 *      <the same with 1 or 2 above, for vertices>
+					 *      <the same with 1 or 2 above, for edges>
+					 */
+					ENLV1_printf("rescanning inner plan");
+					ExecReScan(innerPlan);
+
+					node->curhops++;
+
+					if (result != NULL)
+					{
+						adjustResult(node, result);
+						return result;
+					}
 				}
 				else
 				{
-					copyStartAndBindVar(selfTupleSlot, result);
-					node->nls.nl_NeedNewOuter = true;
-					node->selfLoop = true;
-				}
+					/* NOTE: Can we eliminate edge/vertex copy here? */
+					pushPathElementInner(node, innerTupleSlot);
 
-				if (node->curhops >= nlv->minHops)
+					/*
+					 * It is okay not to store the current outer variable
+					 * because it is already fetched.
+					 */
+					setNextOuterVar(outerTupleSlot, innerTupleSlot);
+
+					result = ExecProject(node->nls.js.ps.ps_ProjInfo);
+					adjustResult(node, result);
+
+					popPathElement(node);
+
 					return result;
+				}
 			}
 			else
 			{
@@ -290,7 +424,8 @@ NestLoopVLEState *
 ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 {
 	NestLoopVLEState *nlvstate;
-	TupleDesc innerTupleDesc;
+	TupleDesc	innerTupleDesc;
+	Oid			element_type;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -339,7 +474,6 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	 * tuple table initialization
 	 */
 	ExecInitResultTupleSlot(estate, &nlvstate->nls.js.ps);
-	nlvstate->selfTupleSlot = ExecInitExtraTupleSlot(estate);
 
 	if (node->nl.join.jointype != JOIN_VLE)
 		elog(ERROR, "unrecognized join type: %d", (int) node->nl.join.jointype);
@@ -350,37 +484,35 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	ExecAssignResultTypeFromTL(&nlvstate->nls.js.ps);
 	ExecAssignProjectionInfo(&nlvstate->nls.js.ps, NULL);
 
-	ExecSetSlotDescriptor(
-			nlvstate->selfTupleSlot,
-			nlvstate->nls.js.ps.ps_ResultTupleSlot->tts_tupleDescriptor);
-
-	nlvstate->selfLoop = false;
-	nlvstate->curhops = (node->minHops == 0) ? 0 : 1;
+	nlvstate->curhops = getInitialCurhops(node);
 
 	innerTupleDesc =
 			innerPlanState(nlvstate)->ps_ResultTupleSlot->tts_tupleDescriptor;
-	initArray(&nlvstate->ids,
-			  innerTupleDesc->attrs[INNER_ID_VARNO]->atttypid,
-			  nlvstate->nls.js.ps.ps_ExprContext);
-	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 9)
-	{
-		initArray(&nlvstate->vertices,
-				  innerTupleDesc->attrs[INNER_VERTEX_VARNO]->atttypid,
-				  nlvstate->nls.js.ps.ps_ExprContext);
-		nlvstate->hasVertices = true;
-	}
-	else
-		nlvstate->hasVertices = false;
-
+	element_type = innerTupleDesc->attrs[INNER_EID_VARNO]->atttypid;
+	nlvstate->eids = initArrayResult(element_type, CurrentMemoryContext, false);
+	/*
+	 * {prev, curr, ids | next, id} + {edges | edge}
+	 * See genVLESubselect().
+	 */
 	if (list_length(nlvstate->nls.js.ps.plan->targetlist) >= 7)
 	{
-		initArray(&nlvstate->edges,
-				  innerTupleDesc->attrs[INNER_EDGE_VARNO]->atttypid,
-				  nlvstate->nls.js.ps.ps_ExprContext);
-		nlvstate->hasEdges = true;
+		element_type = innerTupleDesc->attrs[INNER_EDGE_VARNO]->atttypid;
+		nlvstate->edges = initArrayResult(element_type, CurrentMemoryContext,
+										  false);
 	}
-	else
-		nlvstate->hasEdges = false;
+	/*
+	 * {prev, curr, ids, edges | next, id, edge} + {vertices | vertex}
+	 * See genVLESubselect().
+	 */
+	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 9)
+	{
+		element_type = innerTupleDesc->attrs[INNER_VERTEX_VARNO]->atttypid;
+		nlvstate->vertices = initArrayResult(element_type, CurrentMemoryContext,
+											 false);
+	}
+
+	dlist_init(&nlvstate->ctxs_head);
+	nlvstate->prev_ctx_node = &nlvstate->ctxs_head.head;
 
 	/*
 	 * finally, wipe the current outer tuple clean.
@@ -401,6 +533,8 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 void
 ExecEndNestLoopVLE(NestLoopVLEState *node)
 {
+	dlist_mutable_iter iter;
+
 	NLV1_printf("ExecEndNestLoopVLE: %s\n", "ending node processing");
 
 	/*
@@ -412,13 +546,23 @@ ExecEndNestLoopVLE(NestLoopVLEState *node)
 	 * clean out the tuple table
 	 */
 	ExecClearTuple(node->nls.js.ps.ps_ResultTupleSlot);
-	ExecClearTuple(node->selfTupleSlot);
-	clearVleCtxs(&node->vleCtxs);
-	clearArray(&node->ids);
-	if (node->hasEdges)
-		clearArray(&node->edges);
-	if (node->hasVertices)
-		clearArray(&node->vertices);
+
+	arrayResultClear(node->eids);
+	if (node->edges != NULL)
+		arrayResultClear(node->edges);
+	if (node->vertices != NULL)
+		arrayResultClear(node->vertices);
+
+	dlist_foreach_modify(iter, &node->ctxs_head)
+	{
+		NestLoopVLEContext *ctx;
+
+		dlist_delete(iter.cur);
+
+		ctx = dlist_container(NestLoopVLEContext, list, iter.cur);
+		pfree(ctx);
+	}
+	node->prev_ctx_node = &node->ctxs_head.head;
 
 	/*
 	 * close down subplans
@@ -452,65 +596,224 @@ ExecReScanNestLoopVLE(NestLoopVLEState *node)
 	 */
 
 	node->nls.nl_NeedNewOuter = true;
-	node->selfLoop = false;
-	if (((NestLoopVLE *) node->nls.js.ps.plan)->minHops == 0)
-		node->curhops = 0;
+
+	node->curhops = getInitialCurhops((NestLoopVLE *) node->nls.js.ps.plan);
+
+	arrayResultClear(node->eids);
+	if (node->edges != NULL)
+		arrayResultClear(node->edges);
+	if (node->vertices != NULL)
+		arrayResultClear(node->vertices);
+
+	node->prev_ctx_node = &node->ctxs_head.head;
+}
+
+static int
+getInitialCurhops(NestLoopVLE *node)
+{
+	return node->minHops == 0 ? 0 : 1;
+}
+
+static bool
+canFollowEdge(NestLoopVLEState *node)
+{
+	NestLoopVLE *nlv = (NestLoopVLE *) node->nls.js.ps.plan;
+
+	/* infinite (-1) */
+	if (nlv->maxHops < 0)
+		return true;
+
+	if (node->curhops < nlv->maxHops)
+		return true;
+
+	return false;
+}
+
+static bool
+needResult(NestLoopVLEState *node)
+{
+	NestLoopVLE *nlv = (NestLoopVLE *) node->nls.js.ps.plan;
+
+	return node->curhops >= nlv->minHops;
+}
+
+static void
+pushPathElementOuter(NestLoopVLEState *node, TupleTableSlot *slot)
+{
+	Form_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
+	IntArray	upper;
+	Datum		value;
+	bool		isnull;
+
+	/* zero-length VLE does not have the first edge and its ID in outerPlan */
+	if (node->curhops == 0)
+		return;
+
+	upper.indx[0] = 1;
+
+	value = array_get_element(slot->tts_values[OUTER_EIDS_VARNO],
+							  1, upper.indx, attrs[OUTER_EIDS_VARNO]->attlen,
+							  node->eids->typlen, node->eids->typbyval,
+							  node->eids->typalign, &isnull);
+	Assert(!isnull);
+	accumArrayResult(node->eids, value, isnull, node->eids->element_type,
+					 CurrentMemoryContext);
+
+	if (node->edges != NULL)
+	{
+		value = array_get_element(slot->tts_values[OUTER_EDGES_VARNO],
+								  1, upper.indx,
+								  attrs[OUTER_EDGES_VARNO]->attlen,
+								  node->edges->typlen, node->edges->typbyval,
+								  node->edges->typalign, &isnull);
+		Assert(!isnull);
+		accumArrayResult(node->edges, value, isnull, node->edges->element_type,
+						 CurrentMemoryContext);
+	}
+}
+
+static void
+pushPathElementInner(NestLoopVLEState *node, TupleTableSlot *slot)
+{
+	Form_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
+
+	accumArrayResult(node->eids, slot->tts_values[INNER_EID_VARNO],
+					 slot->tts_isnull[INNER_EID_VARNO],
+					 attrs[INNER_EID_VARNO]->atttypid,
+					 CurrentMemoryContext);
+	if (node->edges != NULL)
+		accumArrayResult(node->edges, slot->tts_values[INNER_EDGE_VARNO],
+						 slot->tts_isnull[INNER_EDGE_VARNO],
+						 attrs[INNER_EDGE_VARNO]->atttypid,
+						 CurrentMemoryContext);
+	if (node->vertices != NULL)
+		accumArrayResult(node->vertices, slot->tts_values[INNER_VERTEX_VARNO],
+						 slot->tts_isnull[INNER_VERTEX_VARNO],
+						 attrs[INNER_VERTEX_VARNO]->atttypid,
+						 CurrentMemoryContext);
+}
+
+static void
+popPathElement(NestLoopVLEState *node)
+{
+	arrayResultPop(node->eids);
+	if (node->edges != NULL)
+		arrayResultPop(node->edges);
+	if (node->vertices != NULL)
+		arrayResultPop(node->vertices);
+}
+
+static bool
+arrayResultHas(ArrayBuildState *astate, Datum elem)
+{
+	int			i;
+
+	for (i = 0; i < astate->nelems; i++)
+	{
+		Datum		d;
+
+		/*
+		 * Here, we assume that graphid_eq() does not allocate memory, and
+		 * those two values are not NULL.
+		 */
+		d = DirectFunctionCall2(graphid_eq, astate->dvalues[i], elem);
+		if (DatumGetBool(d))
+			return true;
+	}
+
+	return false;
+}
+
+static void
+arrayResultPop(ArrayBuildState *astate)
+{
+	if (astate->nelems > 0)
+	{
+		astate->nelems--;
+		if (!astate->typbyval)
+			pfree(DatumGetPointer(astate->dvalues[astate->nelems]));
+	}
+}
+
+static void
+arrayResultClear(ArrayBuildState *astate)
+{
+	if (!astate->typbyval)
+	{
+		int			i;
+
+		for (i = 0; i < astate->nelems; i++)
+			pfree(DatumGetPointer(astate->dvalues[i]));
+	}
+
+	astate->nelems = 0;
+}
+
+static void
+storeOuterVar(NestLoopVLEState *node, TupleTableSlot *slot)
+{
+	dlist_node *ctx_node;
+	NestLoopVLEContext *ctx;
+
+	if (dlist_has_next(&node->ctxs_head, node->prev_ctx_node))
+	{
+		ctx_node = dlist_next_node(&node->ctxs_head, node->prev_ctx_node);
+		ctx = dlist_container(NestLoopVLEContext, list, ctx_node);
+	}
 	else
-		node->curhops = 1;
+	{
+		ctx = palloc(sizeof(*ctx));
+		ctx_node = &ctx->list;
 
-	ExecClearTuple(node->selfTupleSlot);
-	clearVleCtxs(&node->vleCtxs);
-	node->curCtx = NULL;
+		dlist_push_tail(&node->ctxs_head, ctx_node);
+	}
 
-	clearArray(&node->ids);
-	if (node->hasEdges)
-		clearArray(&node->edges);
-	if (node->hasVertices)
-		clearArray(&node->vertices);
+	/* here, we assume that the outer variable is graphid which is typbyval */
+	ctx->outer_var_datum = slot->tts_values[OUTER_CURR_VID_VARNO];
+	ctx->outer_var_isnull = slot->tts_isnull[OUTER_CURR_VID_VARNO];
+
+	node->prev_ctx_node = ctx_node;
 }
 
-static bool
-incrDepth(NestLoopVLEState *node)
+static void
+restoreOuterVar(NestLoopVLEState *node, TupleTableSlot *slot)
 {
-	NestLoopVLE *nlv = (NestLoopVLE *) node->nls.js.ps.plan;
+	dlist_node *ctx_node;
+	NestLoopVLEContext *ctx;
 
-	if (nlv->maxHops != -1 && node->curhops >= nlv->maxHops)
-		return false;
-	node->curhops++;
-	return true;
+	ctx_node = node->prev_ctx_node;
+	Assert(ctx_node != &node->ctxs_head.head);
+
+	if (dlist_has_prev(&node->ctxs_head, ctx_node))
+		node->prev_ctx_node = dlist_prev_node(&node->ctxs_head, ctx_node);
+	else
+		node->prev_ctx_node = &node->ctxs_head.head;
+
+	ctx = dlist_container(NestLoopVLEContext, list, ctx_node);
+	/* here, we assume that the outer variable is graphid which is typbyval */
+	slot->tts_values[OUTER_CURR_VID_VARNO] = ctx->outer_var_datum;
+	slot->tts_isnull[OUTER_CURR_VID_VARNO] = ctx->outer_var_isnull;
 }
 
-static bool
-decrDepth(NestLoopVLEState *node)
+static void
+setNextOuterVar(TupleTableSlot *outer_slot, TupleTableSlot *inner_slot)
 {
-	NestLoopVLE *nlv = (NestLoopVLE *) node->nls.js.ps.plan;
-	int base = (nlv->minHops == 0) ? 0 : 1;
-
-	if (node->curhops <= base)
-		return false;
-	node->curhops--;
-	return true;
-}
-
-static bool
-isMaxDepth(NestLoopVLEState *node)
-{
-	NestLoopVLE *nlv = (NestLoopVLE *) node->nls.js.ps.plan;
-
-	return (node->curhops == nlv->maxHops);
+	/* here, we assume that the outer variable is graphid which is typbyval */
+	outer_slot->tts_values[OUTER_CURR_VID_VARNO]
+			= inner_slot->tts_values[INNER_NEXT_VID_VARNO];
+	outer_slot->tts_isnull[OUTER_CURR_VID_VARNO]
+			= inner_slot->tts_isnull[INNER_NEXT_VID_VARNO];
 }
 
 /*
- * fetch the values of any outer Vars that must be passed to the
- * inner scan, and store them in the appropriate PARAM_EXEC slots.
+ * fetch the values of any outer Vars that must be passed to the inner scan,
+ * and store them in the appropriate PARAM_EXEC slots.
  */
 static void
-bindNestParam(NestLoopVLE *nlv,
-			  ExprContext *econtext,
-			  TupleTableSlot *outerTupleSlot,
-			  PlanState *innerPlan)
+fetchOuterVars(NestLoopVLE *nlv, ExprContext *econtext,
+			   TupleTableSlot *outerTupleSlot, PlanState *innerPlan)
 {
-	ListCell *lc;
+	ListCell   *lc;
 
 	foreach(lc, nlv->nl.nestParams)
 	{
@@ -532,292 +835,33 @@ bindNestParam(NestLoopVLE *nlv,
 	}
 }
 
-static TupleTableSlot *
-restoreStartAndBindVar(NestLoopVLEState *node)
-{
-	NestLoopVLECtx *ctx;
-
-	ctx = dlist_container(NestLoopVLECtx, list, node->curCtx);
-	if (dlist_has_prev(&node->vleCtxs, node->curCtx))
-		node->curCtx = dlist_prev_node(&node->vleCtxs, node->curCtx);
-	else
-		node->curCtx = NULL;
-
-	return ctx->slot;
-}
-
+/*
+ * The following attributes from outerTupleSlot are invalid when it is created.
+ *
+ * OUTER_EIDS_VARNO
+ * OUTER_EDGES_VARNO
+ * OUTER_VERTICES_VARNO
+ *
+ * This function replaces the values with proper values of the current hop.
+ */
 static void
-storeStartAndBindVar(NestLoopVLEState *node, TupleTableSlot *outerTupleSlot)
+adjustResult(NestLoopVLEState *node, TupleTableSlot *slot)
 {
-	NestLoopVLECtx *ctx;
+	ExprContext *econtext = node->nls.js.ps.ps_ExprContext;
+	MemoryContext tupmctx = econtext->ecxt_per_tuple_memory;
 
-	if (node->curCtx != NULL && dlist_has_next(&node->vleCtxs, node->curCtx))
+	slot->tts_values[OUTER_EIDS_VARNO] = makeArrayResult(node->eids, tupmctx);
+	slot->tts_isnull[OUTER_EIDS_VARNO] = false;
+	if (node->edges != NULL)
 	{
-		node->curCtx = dlist_next_node(&node->vleCtxs, node->curCtx);
-		ctx = dlist_container(NestLoopVLECtx, list, node->curCtx);
-		copyStartAndBindVar(ctx->slot, outerTupleSlot);
-	}
-	else if (node->curCtx == NULL && !dlist_is_empty(&node->vleCtxs))
-	{
-		node->curCtx = dlist_head_node(&node->vleCtxs);
-		ctx = dlist_container(NestLoopVLECtx, list, node->curCtx);
-		copyStartAndBindVar(ctx->slot, outerTupleSlot);
-	}
-	else
-	{
-		ctx = palloc(sizeof(*ctx));
-		ctx->slot = MakeSingleTupleTableSlot(
-				outerTupleSlot->tts_tupleDescriptor);
-		copyStartAndBindVar(ctx->slot, outerTupleSlot);
-		dlist_push_tail(&node->vleCtxs, &ctx->list);
-		node->curCtx = dlist_tail_node(&node->vleCtxs);
-	}
-}
-
-static void
-clearVleCtxs(dlist_head *vleCtxs)
-{
-	dlist_mutable_iter miter;
-
-	dlist_foreach_modify(miter, vleCtxs)
-	{
-		NestLoopVLECtx *ctx = dlist_container(NestLoopVLECtx, list, miter.cur);
-
-		dlist_delete(miter.cur);
-		ExecDropSingleTupleTableSlot(ctx->slot);
-		pfree(ctx);
-	}
-	dlist_init(vleCtxs);
-}
-
-static void
-copyStartAndBindVar(TupleTableSlot *dst, TupleTableSlot *src)
-{
-	Form_pg_attribute *attrs = src->tts_tupleDescriptor->attrs;
-	int i;
-
-	Assert(src->tts_tupleDescriptor->natts > 2);
-
-	ExecClearTuple(dst);
-	for (i = 0; i < 2; ++i)
-	{
-		if (src->tts_isnull[i])
-		{
-			dst->tts_values[i] = (Datum) 0;
-			dst->tts_isnull[i] = true;
-		}
-		else
-		{
-			dst->tts_values[i] = datumCopy(src->tts_values[i],
-										   attrs[i]->attbyval,
-										   attrs[i]->attlen);
-			dst->tts_isnull[i] = false;
-		}
-	}
-	ExecStoreVirtualTuple(dst);
-}
-
-static void
-replaceResult(NestLoopVLEState *node, TupleTableSlot *slot)
-{
-	slot->tts_values[OUTER_IDS_VARNO] = evalArray(&node->ids);
-	slot->tts_isnull[OUTER_IDS_VARNO] = false;
-	if (node->hasEdges)
-	{
-		slot->tts_values[OUTER_EDGES_VARNO] = evalArray(&node->edges);
+		slot->tts_values[OUTER_EDGES_VARNO] = makeArrayResult(node->edges,
+															  tupmctx);
 		slot->tts_isnull[OUTER_EDGES_VARNO] = false;
 	}
-	if (node->hasVertices)
+	if (node->vertices != NULL)
 	{
-		slot->tts_values[OUTER_VERTICES_VARNO] = evalArray(&node->vertices);
+		slot->tts_values[OUTER_VERTICES_VARNO] = makeArrayResult(node->vertices,
+																 tupmctx);
 		slot->tts_isnull[OUTER_VERTICES_VARNO] = false;
 	}
-}
-
-#define VLEARRAY_INIT_SIZE 10
-#define VLEARRAY_INCR_SIZE 10
-
-static void
-initArray(VLEArrayExpr *array, Oid typid, ExprContext *econtext)
-{
-	array->element_typeid = typid;
-	get_typlenbyvalalign(array->element_typeid,
-						 &array->elemlength,
-						 &array->elembyval,
-						 &array->elemalign);
-	array->telems = VLEARRAY_INIT_SIZE;
-	array->elements = palloc(sizeof(Datum) * array->telems);
-	array->nelems = 0;
-	array->econtext = econtext;
-}
-
-static Datum
-evalArray(VLEArrayExpr *array)
-{
-	MemoryContext oldContext;
-	Datum	   *values;
-	bool	   *nulls;
-	int			i;
-	int			dims[1];
-	int			lbs[1];
-	ArrayType  *result;
-
-	if (array->nelems == 0)
-		return PointerGetDatum(construct_empty_array(array->element_typeid));
-
-	oldContext = MemoryContextSwitchTo(array->econtext->ecxt_per_tuple_memory);
-
-	values = palloc(array->nelems * sizeof(*values));
-	nulls = palloc(array->nelems * sizeof(*nulls));
-	for (i = 0; i < array->nelems; i++)
-	{
-		values[i] = array->elements[i];
-		nulls[i] = false;
-	}
-
-	dims[0] = array->nelems;
-	lbs[0] = 1;
-
-	result = construct_md_array(values, nulls, 1, dims, lbs,
-								array->element_typeid,
-								array->elemlength,
-								array->elembyval,
-								array->elemalign);
-
-	MemoryContextSwitchTo(oldContext);
-
-	return PointerGetDatum(result);
-}
-
-static void
-clearArray(VLEArrayExpr *array)
-{
-	if (!array->elembyval)
-	{
-		int i;
-
-		for (i = 0; i < array->nelems; i++)
-			pfree(DatumGetPointer(array->elements[i]));
-	}
-
-	array->nelems = 0;
-}
-
-static void
-addElem(VLEArrayExpr *array, Datum elem)
-{
-	if (array->nelems >= array->telems)
-	{
-		array->telems += VLEARRAY_INCR_SIZE;
-		array->elements = repalloc(array->elements,
-								   sizeof(Datum) * array->telems);
-	}
-
-	array->elements[array->nelems++] = elem;
-}
-
-static void
-popElem(VLEArrayExpr *array)
-{
-	if (array->nelems > 0)
-	{
-		array->nelems--;
-		if (!array->elembyval)
-			pfree(DatumGetPointer(array->elements[array->nelems]));
-	}
-}
-
-static bool
-hasElem(VLEArrayExpr *array, Datum elem)
-{
-	int i;
-
-	for (i = 0; i < array->nelems; i++)
-	{
-		if (DatumGetBool(DirectFunctionCall2(graphid_eq,
-											 array->elements[i], elem)))
-			return true;
-	}
-
-	return false;
-}
-
-static void
-addOuterIdAndEdge(NestLoopVLEState *node, TupleTableSlot *slot)
-{
-	Form_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
-	Datum		id = (Datum) 0;
-	Datum		edge = (Datum) 0;
-	IntArray	upper;
-	bool		isNull;
-
-	upper.indx[0] = 1;
-	id = array_get_element(slot->tts_values[OUTER_IDS_VARNO],
-						   1, upper.indx, attrs[OUTER_IDS_VARNO]->attlen,
-						   node->ids.elemlength, node->ids.elembyval,
-						   node->ids.elemalign, &isNull);
-	if (isNull)
-		return;
-
-	if (node->hasEdges)
-		edge = array_get_element(slot->tts_values[OUTER_EDGES_VARNO],
-								 1, upper.indx,
-								 attrs[OUTER_EDGES_VARNO]->attlen,
-								 node->edges.elemlength, node->edges.elembyval,
-								 node->edges.elemalign, &isNull);
-
-	addIdAndEdge(node, id, edge);
-}
-
-static void
-addInnerElements(NestLoopVLEState *node, TupleTableSlot *slot)
-{
-	Datum edge = (Datum) 0;
-
-	if (node->hasEdges)
-		edge = slot->tts_values[INNER_EDGE_VARNO];
-
-	addIdAndEdge(node, slot->tts_values[INNER_ID_VARNO], edge);
-
-	if (node->hasVertices)
-		addElem(&node->vertices,
-				datumCopy(slot->tts_values[INNER_VERTEX_VARNO],
-										   node->vertices.elembyval,
-										   node->vertices.elemlength));
-}
-
-static void
-addIdAndEdge(NestLoopVLEState *node, Datum id, Datum edge)
-{
-	addElem(&node->ids, datumCopy(id, node->ids.elembyval,
-								  node->ids.elemlength));
-	if (edge != (Datum) 0)
-		addElem(&node->edges, datumCopy(edge, node->edges.elembyval,
-										node->edges.elemlength));
-}
-
-static void
-popRowidAndGid(NestLoopVLEState *node)
-{
-	popElem(&node->ids);
-	if (node->hasEdges)
-		popElem(&node->edges);
-	if (node->hasVertices)
-		popElem(&node->vertices);
-}
-
-static TupleTableSlot *
-copyTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
-{
-	int natts = srcslot->tts_tupleDescriptor->natts;
-
-	ExecSetSlotDescriptor(dstslot, srcslot->tts_tupleDescriptor);
-
-	/* shallow copy */
-	memcpy(dstslot->tts_values, srcslot->tts_values, natts * sizeof(Datum));
-	memcpy(dstslot->tts_isnull, srcslot->tts_isnull, natts * sizeof(bool));
-
-	ExecStoreVirtualTuple(dstslot);
-
-	return dstslot;
 }
