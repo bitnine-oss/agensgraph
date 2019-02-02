@@ -318,29 +318,29 @@ ExecReScan(PlanState *node)
 }
 
 void
-ExecUpScan(PlanState *node)
+ExecNextContext(PlanState *node)
 {
 	switch (nodeTag(node))
 	{
-		case T_AppendState:
-			ExecUpScanAppend((AppendState *) node);
+		case T_SeqScanState:
+			ExecNextSeqScanContext((SeqScanState *) node);
 			break;
 		case T_IndexScanState:
-			ExecUpScanIndexScan((IndexScanState *) node);
+			ExecNextIndexScanContext((IndexScanState *) node);
 			break;
 		case T_IndexOnlyScanState:
-			ExecUpScanIndexOnlyScan((IndexOnlyScanState *) node);
+			ExecNextIndexOnlyScanContext((IndexOnlyScanState *) node);
 			break;
-		case T_SeqScanState:
-			ExecUpScanSeqScan((SeqScanState *) node);
+		case T_AppendState:
+			ExecNextAppendContext((AppendState *) node);
 			break;
 		case T_ResultState:
-			ExecUpScanResult((ResultState *) node);
+			ExecNextResultContext((ResultState *) node);
 			break;
 		case T_NestLoopState:
 			{
-				ExecUpScan(node->lefttree);
-				ExecUpScan(node->righttree);
+				ExecNextContext(node->lefttree);
+				ExecNextContext(node->righttree);
 			}
 			break;
 		default:
@@ -350,29 +350,29 @@ ExecUpScan(PlanState *node)
 }
 
 void
-ExecDownScan(PlanState *node)
+ExecPrevContext(PlanState *node)
 {
 	switch (nodeTag(node))
 	{
-		case T_AppendState:
-			ExecDownScanAppend((AppendState *) node);
+		case T_SeqScanState:
+			ExecPrevSeqScanContext((SeqScanState *) node);
 			break;
 		case T_IndexScanState:
-			ExecDownScanIndexScan((IndexScanState *) node);
+			ExecPrevIndexScanContext((IndexScanState *) node);
 			break;
 		case T_IndexOnlyScanState:
-			ExecDownScanIndexOnlyScan((IndexOnlyScanState *) node);
+			ExecPrevIndexOnlyScanContext((IndexOnlyScanState *) node);
 			break;
-		case T_SeqScanState:
-			ExecDownScanSeqScan((SeqScanState *) node);
+		case T_AppendState:
+			ExecPrevAppendContext((AppendState *) node);
 			break;
 		case T_ResultState:
-			ExecDownScanResult((ResultState *) node);
+			ExecPrevResultContext((ResultState *) node);
 			break;
 		case T_NestLoopState:
 			{
-				ExecDownScan(node->lefttree);
-				ExecDownScan(node->righttree);
+				ExecPrevContext(node->lefttree);
+				ExecPrevContext(node->righttree);
 			}
 			break;
 		default:

@@ -36,12 +36,20 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
+typedef struct SeqScanContext
+{
+	dlist_node	list;
+	Bitmapset  *chgParam;
+	HeapScanDesc scanDesc;
+} SeqScanContext;
+
 static void InitScanRelation(SeqScanState *node, EState *estate, int eflags);
 static TupleTableSlot *SeqNext(SeqScanState *node);
 
-static void InitScanLabelSkipExpr(SeqScanState *node);
-static ExprState *GetScanLabelSkipExpr(SeqScanState *node, Expr *opexpr);
-static bool IsGraphidColumn(SeqScanState *node, Node *expr);
+static void initScanLabelSkipExpr(SeqScanState *node);
+static ExprState *getScanLabelSkipExpr(SeqScanState *node, Expr *opexpr);
+static bool isGraphidColumn(SeqScanState *node, Node *expr);
+static SeqScanContext *getCurrentContext(SeqScanState *node, bool create);
 
 /* ----------------------------------------------------------------
  *						Scan Support
@@ -172,7 +180,7 @@ InitScanRelation(SeqScanState *node, EState *estate, int eflags)
 }
 
 static void
-InitScanLabelSkipExpr(SeqScanState *node)
+initScanLabelSkipExpr(SeqScanState *node)
 {
 	List	   *qual = node->ss.ps.plan->qual;
 	ListCell   *la;
@@ -196,7 +204,7 @@ InitScanLabelSkipExpr(SeqScanState *node)
 
 		/* expr is of the form `graphid = graphid` */
 
-		xstate = GetScanLabelSkipExpr(node, expr);
+		xstate = getScanLabelSkipExpr(node, expr);
 		if (xstate == NULL)
 			continue;
 
@@ -206,15 +214,15 @@ InitScanLabelSkipExpr(SeqScanState *node)
 }
 
 static ExprState *
-GetScanLabelSkipExpr(SeqScanState *node, Expr *opexpr)
+getScanLabelSkipExpr(SeqScanState *node, Expr *opexpr)
 {
 	Node	   *left = get_leftop(opexpr);
 	Node	   *right = get_rightop(opexpr);
 	Node	   *expr;
 
-	if (IsGraphidColumn(node, left))
+	if (isGraphidColumn(node, left))
 		expr = right;
-	else if (IsGraphidColumn(node, right))
+	else if (isGraphidColumn(node, right))
 		expr = left;
 	else
 		return NULL;
@@ -227,7 +235,7 @@ GetScanLabelSkipExpr(SeqScanState *node, Expr *opexpr)
 }
 
 static bool
-IsGraphidColumn(SeqScanState *node, Node *expr)
+isGraphidColumn(SeqScanState *node, Node *expr)
 {
 	Var *var = (Var *) expr;
 
@@ -287,7 +295,7 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 
 	InitScanLabelInfo((ScanState *) scanstate);
 	if (scanstate->ss.ss_isLabel)
-		InitScanLabelSkipExpr(scanstate);
+		initScanLabelSkipExpr(scanstate);
 
 	/*
 	 * Initialize result tuple type and projection info.
@@ -295,8 +303,8 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	ExecAssignResultTypeFromTL(&scanstate->ss.ps);
 	ExecAssignScanProjectionInfo(&scanstate->ss);
 
-	dlist_init(&scanstate->vle_ctxs);
-	scanstate->cur_ctx = NULL;
+	dlist_init(&scanstate->ctxs_head);
+	scanstate->prev_ctx_node = &scanstate->ctxs_head.head;
 
 	return scanstate;
 }
@@ -312,7 +320,6 @@ ExecEndSeqScan(SeqScanState *node)
 {
 	Relation	relation;
 	HeapScanDesc scanDesc;
-	dlist_mutable_iter miter;
 
 	/*
 	 * get information from node
@@ -331,25 +338,30 @@ ExecEndSeqScan(SeqScanState *node)
 	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
-	/*
-	 * close heap scan
-	 */
-	dlist_foreach_modify(miter, &node->vle_ctxs)
+	if (!dlist_is_empty(&node->ctxs_head))
 	{
-		SeqScanVLECtx *ctx;
+		dlist_node *ctx_node;
+		SeqScanContext *ctx;
+		dlist_mutable_iter iter;
 
-		ctx = dlist_container(SeqScanVLECtx, list, miter.cur);
-		dlist_delete(miter.cur);
-
-		if (miter.cur != node->cur_ctx)
-		{
-			if (ctx->ss_currentScanDesc != NULL)
-				heap_endscan(ctx->ss_currentScanDesc);
-		}
-
+		/* scanDesc is the most recent value. Ignore the first context. */
+		ctx_node = dlist_pop_head_node(&node->ctxs_head);
+		ctx = dlist_container(SeqScanContext, list, ctx_node);
 		pfree(ctx);
+
+		dlist_foreach_modify(iter, &node->ctxs_head)
+		{
+			dlist_delete(iter.cur);
+
+			ctx = dlist_container(SeqScanContext, list, iter.cur);
+
+			if (ctx->scanDesc != NULL)
+				heap_endscan(ctx->scanDesc);
+
+			pfree(ctx);
+		}
 	}
-	node->cur_ctx = NULL;
+	node->prev_ctx_node = &node->ctxs_head.head;
 
 	if (scanDesc != NULL)
 		heap_endscan(scanDesc);
@@ -407,7 +419,7 @@ ExecReScanSeqScan(SeqScanState *node)
 
 	scan = node->ss.ss_currentScanDesc;
 
-	if (scan != NULL)
+	if (scan != NULL && !node->ss.ss_skipLabelScan)
 		heap_rescan(scan,		/* scan desc */
 					NULL);		/* new scan keys */
 
@@ -415,49 +427,93 @@ ExecReScanSeqScan(SeqScanState *node)
 }
 
 void
-ExecUpScanSeqScan(SeqScanState *node)
+ExecNextSeqScanContext(SeqScanState *node)
 {
-	SeqScanVLECtx *ctx;
+	SeqScanContext *ctx;
 
-	node->cur_ctx = dlist_prev_node(&node->vle_ctxs, node->cur_ctx);
-	ctx = dlist_container(SeqScanVLECtx, list, node->cur_ctx);
-	node->ss.ss_currentScanDesc = ctx->ss_currentScanDesc;
-}
+	/* store the current context */
+	ctx = getCurrentContext(node, true);
+	ctx->chgParam = node->ss.ps.chgParam;
+	ctx->scanDesc = node->ss.ss_currentScanDesc;
 
-void
-ExecDownScanSeqScan(SeqScanState *node)
-{
-	EState *estate = node->ss.ps.state;
-	SeqScanVLECtx *ctx;
+	/* make the current context previous context */
+	node->prev_ctx_node = &ctx->list;
 
-	if (node->cur_ctx == NULL)
+	ctx = getCurrentContext(node, false);
+	if (ctx == NULL)
 	{
-		if (node->ss.ss_currentScanDesc == NULL)
-			node->ss.ss_currentScanDesc = heap_beginscan(
-					node->ss.ss_currentRelation, estate->es_snapshot, 0, NULL);
-
-		ctx = palloc(sizeof(*ctx));
-		ctx->ss_currentScanDesc = node->ss.ss_currentScanDesc;
-		dlist_push_tail(&node->vle_ctxs, &ctx->list);
-		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
-	}
-
-	if (dlist_has_next(&node->vle_ctxs, node->cur_ctx))
-	{
-		node->cur_ctx = dlist_next_node(&node->vle_ctxs, node->cur_ctx);
-		ctx = dlist_container(SeqScanVLECtx, list, node->cur_ctx);
-		node->ss.ss_currentScanDesc = ctx->ss_currentScanDesc;
+		/* if there is no current context, initialize the current scan */
+		node->ss.ps.chgParam = NULL;
+		node->ss.ss_currentScanDesc = NULL;
 	}
 	else
 	{
-		node->ss.ss_currentScanDesc = heap_beginscan(
-				node->ss.ss_currentRelation, estate->es_snapshot, 0, NULL);
+		/* if there is the current context already, use it */
 
-		ctx = palloc(sizeof(*ctx));
-		ctx->ss_currentScanDesc = node->ss.ss_currentScanDesc;
-		dlist_push_tail(&node->vle_ctxs, &ctx->list);
-		node->cur_ctx = dlist_tail_node(&node->vle_ctxs);
+		Assert(ctx->chgParam == NULL);
+		node->ss.ps.chgParam = NULL;
+
+		/* ctx->scanDesc can be NULL if ss_skipLabelScan */
+		node->ss.ss_currentScanDesc = ctx->scanDesc;
 	}
+}
+
+void
+ExecPrevSeqScanContext(SeqScanState *node)
+{
+	SeqScanContext *ctx;
+	dlist_node *ctx_node;
+
+	/*
+	 * Store the current ss_currentScanDesc. It will be reused when the current
+	 * scan is re-scanned next time.
+	 */
+	ctx = getCurrentContext(node, true);
+	Assert(node->ss.ps.chgParam == NULL);
+	ctx->chgParam = NULL;
+	ctx->scanDesc = node->ss.ss_currentScanDesc;
+
+	/* make the previous context current context */
+	ctx_node = node->prev_ctx_node;
+	Assert(ctx_node != &node->ctxs_head.head);
+
+	if (dlist_has_prev(&node->ctxs_head, ctx_node))
+		node->prev_ctx_node = dlist_prev_node(&node->ctxs_head, ctx_node);
+	else
+		node->prev_ctx_node = &node->ctxs_head.head;
+
+	/* restore */
+	ctx = dlist_container(SeqScanContext, list, ctx_node);
+	node->ss.ps.chgParam = ctx->chgParam;
+	node->ss.ss_currentScanDesc = ctx->scanDesc;
+}
+
+static SeqScanContext *
+getCurrentContext(SeqScanState *node, bool create)
+{
+	SeqScanContext *ctx;
+
+	if (dlist_has_next(&node->ctxs_head, node->prev_ctx_node))
+	{
+		dlist_node *ctx_node;
+
+		ctx_node = dlist_next_node(&node->ctxs_head, node->prev_ctx_node);
+		ctx = dlist_container(SeqScanContext, list, ctx_node);
+	}
+	else if (create)
+	{
+		ctx = palloc(sizeof(*ctx));
+		ctx->chgParam = NULL;
+		ctx->scanDesc = NULL;
+
+		dlist_push_tail(&node->ctxs_head, &ctx->list);
+	}
+	else
+	{
+		ctx = NULL;
+	}
+
+	return ctx;
 }
 
 /* ----------------------------------------------------------------
