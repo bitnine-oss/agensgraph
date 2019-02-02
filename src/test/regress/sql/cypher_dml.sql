@@ -499,9 +499,10 @@ SELECT * FROM (
   RETURN x[1]
 ) AS foo;
 
--- AG-154, CS-34 : VLE returns incoreect result with sequential scan
-CREATE GRAPH AG154;
-SET graph_path = AG154;
+-- AG-154, CS-34 - VLE returns incoreect result with sequential scan
+
+CREATE GRAPH ag154;
+SET graph_path = ag154;
 
 CREATE ({id:1})-[:rel]->({id:11});
 MATCH (a {id:11}) CREATE (a)-[:rel]->({id:111});
@@ -525,6 +526,17 @@ MATCH ({id:1})-[r:rel*]->() RETURN length(r) AS len ORDER BY len;
 
 SET enable_indexscan = default;
 SET enable_seqscan = default;
+
+-- AG-216 VLE throws "btree index keys must be ordered by attribute"
+
+CREATE GRAPH ag216;
+SET graph_path = ag216;
+
+CREATE (:v1)-[:e]->(:v2)-[:e]->(:v3);
+
+SET enable_seqscan = off;
+MATCH p=(:v1)-[*]->(:v3) RETURN p;
+SET enable_seqscan = on;
 
 SET graph_path = agens;
 
@@ -1308,6 +1320,7 @@ MATCH (vt1:TEST)
 RETURN properties(vt1);
 
 DROP GRAPH ag189 CASCADE;
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;
@@ -1316,9 +1329,10 @@ DROP GRAPH gid CASCADE;
 DROP GRAPH np CASCADE;
 DROP GRAPH p CASCADE;
 DROP GRAPH u CASCADE;
+DROP GRAPH ag216 CASCADE;
+DROP GRAPH ag154 CASCADE;
 DROP GRAPH t CASCADE;
 DROP GRAPH o CASCADE;
-DROP GRAPH AG154 CASCADE;
 
 SET graph_path = agens;
 

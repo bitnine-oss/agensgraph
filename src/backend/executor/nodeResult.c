@@ -271,22 +271,21 @@ ExecReScanResult(ResultState *node)
 	 * If chgParam of subnode is not null then plan will be re-scanned by
 	 * first ExecProcNode.
 	 */
-	if (node->ps.state->es_forceReScan ||
-		(node->ps.lefttree &&
-		 node->ps.lefttree->chgParam == NULL))
+	if (node->ps.lefttree &&
+		node->ps.lefttree->chgParam == NULL)
 		ExecReScan(node->ps.lefttree);
 }
 
 void
-ExecUpScanResult(ResultState *node)
+ExecNextResultContext(ResultState *node)
 {
-	if (node->ps.lefttree)
-		ExecUpScan(node->ps.lefttree);
+	if (node->ps.lefttree != NULL)
+		ExecNextContext(node->ps.lefttree);
 }
 
 void
-ExecDownScanResult(ResultState *node)
+ExecPrevResultContext(ResultState *node)
 {
-	if (node->ps.lefttree)
-		ExecDownScan(node->ps.lefttree);
+	if (node->ps.lefttree != NULL)
+		ExecPrevContext(node->ps.lefttree);
 }

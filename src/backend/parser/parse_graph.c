@@ -2478,7 +2478,7 @@ genVLELeftChild(ParseState *pstate, CypherRel *crel, bool out, bool pathout)
 /*
  * CYPHER_REL_DIR_NONE
  *
- *     SELECT l._end AS next, r.id,
+ *     SELECT r._end AS next, r.id,
  *            (r.id, r.start, r."end", r.properties, r.ctid)::edge AS edge,
  *            (vtx.id, vtx.properties, vtx.ctid)::vertex AS vertex
  *     FROM <edge label with additional _start and _end columns> AS r,
