@@ -584,8 +584,8 @@
 #define PG_VERSION_STR "Uninitialized version string (win32)"
 
 /* AgensGraph version as a string */
-#define AG_VERSION "1.4devel"
-#define AG_COMP_VERSION "1.4"
+#define AG_VERSION "2.2devel"
+#define AG_COMP_VERSION "2.1"
 
 /* AgensGraph Git revision as a string */
 #define AG_GIT_REVISION "not-available"
