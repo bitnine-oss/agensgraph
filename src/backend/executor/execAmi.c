@@ -338,10 +338,7 @@ ExecNextContext(PlanState *node)
 			ExecNextResultContext((ResultState *) node);
 			break;
 		case T_NestLoopState:
-			{
-				ExecNextContext(node->lefttree);
-				ExecNextContext(node->righttree);
-			}
+			ExecNextNestLoopContext((NestLoopState *) node);
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
@@ -370,10 +367,7 @@ ExecPrevContext(PlanState *node)
 			ExecPrevResultContext((ResultState *) node);
 			break;
 		case T_NestLoopState:
-			{
-				ExecPrevContext(node->lefttree);
-				ExecPrevContext(node->righttree);
-			}
+			ExecPrevNestLoopContext((NestLoopState *) node);
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));

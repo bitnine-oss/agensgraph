@@ -1661,6 +1661,9 @@ typedef struct NestLoopState
 	bool		nl_NeedNewOuter;
 	bool		nl_MatchedOuter;
 	TupleTableSlot *nl_NullInnerTupleSlot;
+
+	dlist_head	ctxs_head;		/* list of NestLoopContext */
+	dlist_node *prev_ctx_node;
 	CommandId	nl_graphwrite_cid;
 } NestLoopState;
 

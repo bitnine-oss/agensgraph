@@ -538,6 +538,19 @@ SET enable_seqscan = off;
 MATCH p=(:v1)-[*]->(:v3) RETURN p;
 SET enable_seqscan = on;
 
+CREATE GRAPH ag216a;
+SET graph_path = ag216a;
+
+CREATE (n:v1)-[:e1]->(:v2 {lv: 1}), (n)-[:e1]->(:v2 {lv: 1});
+
+MATCH (n:v2)
+CREATE (n)-[:e2]->(:v2 {lv: 2}), (n)-[:e2]->(:v2 {lv: 2});
+
+MATCH (n:v2 {lv: 2})
+CREATE (n)-[:e3]->(:v3), (n)-[:e3]->(:v3);
+
+MATCH p=(:v1)-[*3]->() RETURN p;
+
 SET graph_path = agens;
 
 --
@@ -1329,6 +1342,7 @@ DROP GRAPH gid CASCADE;
 DROP GRAPH np CASCADE;
 DROP GRAPH p CASCADE;
 DROP GRAPH u CASCADE;
+DROP GRAPH ag216a CASCADE;
 DROP GRAPH ag216 CASCADE;
 DROP GRAPH ag154 CASCADE;
 DROP GRAPH t CASCADE;
