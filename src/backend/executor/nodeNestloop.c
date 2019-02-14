@@ -31,6 +31,14 @@
 #include "utils/tqual.h"
 
 
+typedef struct NestLoopContext
+{
+	dlist_node	list;
+	TupleTableSlot *outer_tupleslot;
+	HeapTuple	outer_tuple;
+} NestLoopContext;
+
+
 /* ----------------------------------------------------------------
  *		ExecNestLoop(node)
  *
@@ -384,6 +392,9 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	ExecAssignResultTypeFromTL(&nlstate->js.ps);
 	ExecAssignProjectionInfo(&nlstate->js.ps, NULL);
 
+	dlist_init(&nlstate->ctxs_head);
+	nlstate->prev_ctx_node = &nlstate->ctxs_head.head;
+
 	/*
 	 * finally, wipe the current outer tuple clean.
 	 */
@@ -405,6 +416,8 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 void
 ExecEndNestLoop(NestLoopState *node)
 {
+	dlist_mutable_iter iter;
+
 	NL1_printf("ExecEndNestLoop: %s\n",
 			   "ending node processing");
 
@@ -417,6 +430,17 @@ ExecEndNestLoop(NestLoopState *node)
 	 * clean out the tuple table
 	 */
 	ExecClearTuple(node->js.ps.ps_ResultTupleSlot);
+
+	dlist_foreach_modify(iter, &node->ctxs_head)
+	{
+		NestLoopContext *ctx;
+
+		dlist_delete(iter.cur);
+
+		ctx = dlist_container(NestLoopContext, list, iter.cur);
+		pfree(ctx);
+	}
+	node->prev_ctx_node = &node->ctxs_head.head;
 
 	/*
 	 * close down subplans
@@ -452,4 +476,151 @@ ExecReScanNestLoop(NestLoopState *node)
 
 	node->nl_NeedNewOuter = true;
 	node->nl_MatchedOuter = false;
+}
+
+void
+ExecNextNestLoopContext(NestLoopState *node)
+{
+	ExprContext *econtext = node->js.ps.ps_ExprContext;
+	dlist_node *ctx_node;
+	NestLoopContext *ctx;
+	TupleTableSlot *slot;
+
+	/*
+	 * This nested loop is supposed to be for vertex-edge join to get vertices
+	 * for graphpath results, and that means it is the top most (and only)
+	 * innerPlan of NestLoopVLE. Since it is already executed at this point,
+	 * its chgParam is already NULL. So, we don't need to manage chgParam.
+	 */
+	Assert(node->js.ps.chgParam == NULL);
+	Assert(node->js.jointype == JOIN_INNER);
+
+	/* get the current context */
+	if (dlist_has_next(&node->ctxs_head, node->prev_ctx_node))
+	{
+		ctx_node = dlist_next_node(&node->ctxs_head, node->prev_ctx_node);
+		ctx = dlist_container(NestLoopContext, list, ctx_node);
+	}
+	else
+	{
+		ctx = palloc(sizeof(*ctx));
+		ctx_node = &ctx->list;
+
+		dlist_push_tail(&node->ctxs_head, ctx_node);
+	}
+
+	slot = econtext->ecxt_outertuple;
+	if (TTS_HAS_PHYSICAL_TUPLE(slot) && slot->tts_tuple == ctx->outer_tuple)
+	{
+		/*
+		 * If tts_tuple is the same with the stored one, remove it from the
+		 * slot to keep this copy from ExecStoreTuple()/ExecClearTuple() in
+		 * the next nested loop.
+		 *
+		 * This can happen when there is a matched result with the tuple.
+		 */
+		slot->tts_isempty = true;
+		slot->tts_tuple = NULL;
+		slot->tts_shouldFree = false;
+	}
+	else
+	{
+		/*
+		 * Keep the latest outer tuple slot to 1) set ecxt_outertuple to it
+		 * later when continuing the current nested loop after the end of the
+		 * next nested loop, and 2) use the original slot rather than a
+		 * temporary slot that requires extra resources.
+		 * We get the slot through ecxt_outertuple instead of
+		 * outerPlanState(node)->ps_ResultTupleSlot because
+		 * outerPlanState(node) can be AppendState.
+		 */
+		ctx->outer_tupleslot = slot;
+		/*
+		 * We need to copy and store the current outer tuple here because;
+		 * 1) there might be a chance to unpin the underlying buffer that the
+		 *    slot relies on while doing ExecStoreTuple() in the next nested
+		 *    loop, and
+		 * 2) when continuing the current nested loop later, the inner plan
+		 *    needs the right outer variables that are in the slot.
+		 * The tuple has to be stored in CurrentMemoryContext.
+		 */
+		ctx->outer_tuple = ExecCopySlotTuple(slot);
+	}
+	/*
+	 * We don't need to care about the inner plan and nl_NeedNewOuter because
+	 * the next execution of the current nested loop must execute the inner
+	 * plan.
+	 */
+
+	/* make the current context previous context */
+	node->prev_ctx_node = ctx_node;
+
+	/*
+	 * We don't have to restore the current outer tuple slot because it will be
+	 * filled with values of the first scan result of the outer plan.
+	 */
+
+	ExecNextContext(outerPlanState(node));
+	ExecNextContext(innerPlanState(node));
+
+	node->nl_NeedNewOuter = true;
+}
+
+void
+ExecPrevNestLoopContext(NestLoopState *node)
+{
+	NestLoop   *nl = (NestLoop *) node->js.ps.plan;
+	ExprContext *econtext = node->js.ps.ps_ExprContext;
+	dlist_node *ctx_node;
+	NestLoopContext *ctx;
+	TupleTableSlot *slot;
+	ListCell   *lc;
+
+	/*
+	 * We don't have to store the current outer tuple slot because of the same
+	 * reason above.
+	 */
+
+	/* make the previous context current context */
+	ctx_node = node->prev_ctx_node;
+	Assert(ctx_node != &node->ctxs_head.head);
+
+	if (dlist_has_prev(&node->ctxs_head, ctx_node))
+		node->prev_ctx_node = dlist_prev_node(&node->ctxs_head, ctx_node);
+	else
+		node->prev_ctx_node = &node->ctxs_head.head;
+
+	ctx = dlist_container(NestLoopContext, list, ctx_node);
+	slot = ctx->outer_tupleslot;
+	econtext->ecxt_outertuple = slot;
+	/*
+	 * Pass true to shouldFree here because the tuple must be freed when
+	 * ExecStoreTuple(), ExecClearTuple(), or ExecResetTupleTable() is called.
+	 */
+	ExecStoreTuple(ctx->outer_tuple, slot, InvalidBuffer, true);
+	/* restore outer variables */
+	foreach(lc, nl->nestParams)
+	{
+		NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);
+		int			paramno = nlp->paramno;
+		ParamExecData *prm;
+
+		prm = &(econtext->ecxt_param_exec_vals[paramno]);
+		/* Param value should be an OUTER_VAR var */
+		Assert(IsA(nlp->paramval, Var));
+		Assert(nlp->paramval->varno == OUTER_VAR);
+		Assert(nlp->paramval->varattno > 0);
+		prm->value = slot_getattr(slot,
+								  nlp->paramval->varattno,
+								  &(prm->isnull));
+	}
+
+	ExecPrevContext(outerPlanState(node));
+	ExecPrevContext(innerPlanState(node));
+
+	/*
+	 * The next execution of the current nested loop must execute the inner
+	 * plan.
+	 */
+	node->nl_NeedNewOuter = false;
 }
