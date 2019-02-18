@@ -1061,6 +1061,28 @@ pqSaveParameterStatus(PGconn *conn, const char *name, const char *value)
 		else
 			conn->sversion = 0; /* unknown */
 	}
+	else if (strcmp(name, "agversion") == 0)
+	{
+		int			cnt;
+		int			vmaj,
+					vmin,
+					vrev;
+
+		cnt = sscanf(value, "%d.%d.%d", &vmaj, &vmin, &vrev);
+
+		if (cnt == 3)
+		{
+			/* default style, e.g. 2.1.0 */
+			conn->agversion = (100 * vmaj + vmin) * 100 + vrev;
+		}
+		else if (cnt == 2)
+		{
+			/* e.g. 2.2devel*/
+			conn->agversion = (100 * vmaj + vmin) * 100;
+		}
+		else
+			conn->agversion = 0; /* unknown */
+	}
 }
 
 

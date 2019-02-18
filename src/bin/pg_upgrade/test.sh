@@ -189,8 +189,9 @@ if "$MAKE" -C "$oldsrc" installcheck; then
 		psql -X -d regression -c "$fix_sql;" || psql_fix_sql_status=$?
 	fi
 
-	pg_dumpall --no-sync -f "$temp_root"/dump1.sql || pg_dumpall1_status=$?
+	agens -d regression -c "SELECT regather_graphmeta()"
 	agens -d regression -c "SELECT * FROM ag_graphmeta_view" -o "$temp_root"/meta1.out
+	pg_dumpall --no-sync -f "$temp_root"/dump1.sql || pg_dumpall1_status=$?
 
 	if [ "$newsrc" != "$oldsrc" ]; then
 		# update references to old source tree's regress.so etc
