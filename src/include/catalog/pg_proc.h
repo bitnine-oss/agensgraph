@@ -5566,6 +5566,9 @@ DATA(insert OID = 7110 ( ag_get_propindexdef		PGNSP PGUID 12 1 0 0 0 f f f f t f
 DESCR("describe property index");
 DATA(insert OID = 7111 ( ag_get_graphconstraintdef	PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 25 "26" _null_ _null_ _null_ _null_ _null_ ag_get_graphconstraintdef _null_ _null_ _null_ ));
 DESCR("describe constraint");
+/* get ag version */
+DATA(insert OID =  7112 (  agversion		   PGNSP PGUID 12 1 0 0 0 f f f f t f s s 0 0 25 "" _null_ _null_ _null_ _null_ _null_ ag_version _null_ _null_ _null_ ));
+DESCR("AgensGraph version string");
 /* vertex comparison */
 DATA(insert OID = 7130 ( vertex_eq		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7012 7012" _null_ _null_ _null_ _null_ _null_ vertex_eq _null_ _null_ _null_ ));
 DATA(insert OID = 7131 ( vertex_ne		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 16 "7012 7012" _null_ _null_ _null_ _null_ _null_ vertex_ne _null_ _null_ _null_ ));

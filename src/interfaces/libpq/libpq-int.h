@@ -403,6 +403,7 @@ struct pg_conn
 	SockAddr	raddr;			/* Remote address */
 	ProtocolVersion pversion;	/* FE/BE protocol version in use */
 	int			sversion;		/* server version, e.g. 70401 for 7.4.1 */
+	int			agversion;		/* server version, e.g. 20101 for 2.1.1 */
 	bool		auth_req_received;	/* true if any type of auth req received */
 	bool		password_needed;	/* true if server demanded a password */
 	bool		pgpassfile_used;	/* true if password is from pgpassfile */

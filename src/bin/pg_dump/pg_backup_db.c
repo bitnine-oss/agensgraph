@@ -47,6 +47,11 @@ _check_database_version(ArchiveHandle *AH)
 
 	AH->public.remoteVersionStr = pg_strdup(remoteversion_str);
 	AH->public.remoteVersion = remoteversion;
+	/*
+	 * Do not error check agVersion
+	 * because before v2.1.1 agversion was not exist.
+	 */
+	AH->public.agVersion = PQagVersion(AH->connection);
 	if (!AH->archiveRemoteVersion)
 		AH->archiveRemoteVersion = AH->public.remoteVersionStr;
 

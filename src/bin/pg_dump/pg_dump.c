@@ -17728,26 +17728,29 @@ insertGraphCatalog(Archive *fout)
 	}
 	PQclear(res);
 
-	/* restore ag_graphmeta */
-	res = ExecuteSqlQuery(fout,
-			"SELECT g.graphname, m.edge, m.start, m.end, m.edgecount\n"
-			"FROM pg_catalog.ag_graph g, pg_catalog.ag_graphmeta m\n"
-			"WHERE g.oid = m.graph;\n",
-			PGRES_TUPLES_OK);
-	ntuples = PQntuples(res);
-	for (tuple = 0; tuple < ntuples; tuple++)
+	/* before v2.0.0 the catalog ag_graphmeta was not exist. */
+	if (fout->agVersion >= 20000)
 	{
-		appendPQExpBuffer(q,
-				"INSERT INTO pg_catalog.ag_graphmeta\n"
-				"(SELECT oid, %d, %d, %d, %d\n"
-				"FROM pg_catalog.ag_graph WHERE graphname = '%s');\n",
-				atoi(PQgetvalue(res, tuple, 1)),
-				atoi(PQgetvalue(res, tuple, 2)),
-				atoi(PQgetvalue(res, tuple, 3)),
-				atoi(PQgetvalue(res, tuple, 4)),
-				PQgetvalue(res, tuple, 0));
+		res = ExecuteSqlQuery(fout,
+				"SELECT g.graphname, m.edge, m.start, m.end, m.edgecount\n"
+				"FROM pg_catalog.ag_graph g, pg_catalog.ag_graphmeta m\n"
+				"WHERE g.oid = m.graph;\n",
+				PGRES_TUPLES_OK);
+		ntuples = PQntuples(res);
+		for (tuple = 0; tuple < ntuples; tuple++)
+		{
+			appendPQExpBuffer(q,
+					"INSERT INTO pg_catalog.ag_graphmeta\n"
+					"(SELECT oid, %d, %d, %d, %d\n"
+					"FROM pg_catalog.ag_graph WHERE graphname = '%s');\n",
+					atoi(PQgetvalue(res, tuple, 1)),
+					atoi(PQgetvalue(res, tuple, 2)),
+					atoi(PQgetvalue(res, tuple, 3)),
+					atoi(PQgetvalue(res, tuple, 4)),
+					PQgetvalue(res, tuple, 0));
+		}
+		PQclear(res);
 	}
-	PQclear(res);
 
 	/* restore dependency between pg_class and ag_label */
 	appendPQExpBuffer(q,
