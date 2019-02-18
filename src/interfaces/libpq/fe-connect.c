@@ -6102,6 +6102,16 @@ PQserverVersion(const PGconn *conn)
 	return conn->sversion;
 }
 
+int
+PQagVersion(const PGconn *conn)
+{
+	if (!conn)
+		return 0;
+	if (conn->status == CONNECTION_BAD)
+		return 0;
+	return conn->agversion;
+}
+
 char *
 PQerrorMessage(const PGconn *conn)
 {
