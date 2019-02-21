@@ -37,6 +37,7 @@ jsonb_add(PG_FUNCTION_ARGS)
 	char	   *buf;
 	Datum		n;
 	char	   *nstr;
+	Size		nlen;
 
 	if (!(JB_ROOT_IS_SCALAR(l) && JB_ROOT_IS_SCALAR(r)))
 	{
@@ -59,12 +60,11 @@ jsonb_add(PG_FUNCTION_ARGS)
 	if (ljv->type == jbvString && rjv->type == jbvString)
 	{
 		len = ljv->val.string.len + rjv->val.string.len;
-		buf = palloc(len + 1);
+		buf = palloc(len);
 
 		strncpy(buf, ljv->val.string.val, ljv->val.string.len);
 		strncpy(buf + ljv->val.string.len,
 				rjv->val.string.val, rjv->val.string.len);
-		buf[len] = '\0';
 
 		jv.type = jbvString;
 		jv.val.string.len = len;
@@ -77,12 +77,13 @@ jsonb_add(PG_FUNCTION_ARGS)
 		n = DirectFunctionCall1(numeric_out,
 								NumericGetDatum(rjv->val.numeric));
 		nstr = DatumGetCString(n);
+		nlen = strlen(nstr);
 
-		len = ljv->val.string.len + strlen(nstr);
-		buf = palloc(len + 1);
+		len = ljv->val.string.len + nlen;
+		buf = palloc(len);
 
 		strncpy(buf, ljv->val.string.val, ljv->val.string.len);
-		strcpy(buf + ljv->val.string.len, nstr);
+		strncpy(buf + ljv->val.string.len, nstr, nlen);
 
 		jv.type = jbvString;
 		jv.val.string.len = len;
@@ -92,19 +93,16 @@ jsonb_add(PG_FUNCTION_ARGS)
 	}
 	else if (ljv->type == jbvNumeric && rjv->type == jbvString)
 	{
-		Size		nlen;
-
 		n = DirectFunctionCall1(numeric_out,
 								NumericGetDatum(ljv->val.numeric));
 		nstr = DatumGetCString(n);
 		nlen = strlen(nstr);
 
 		len = nlen + rjv->val.string.len;
-		buf = palloc(len + 1);
+		buf = palloc(len);
 
-		strcpy(buf, nstr);
+		strncpy(buf, nstr, nlen);
 		strncpy(buf + nlen, rjv->val.string.val, rjv->val.string.len);
-		buf[len] = '\0';
 
 		jv.type = jbvString;
 		jv.val.string.len = len;
