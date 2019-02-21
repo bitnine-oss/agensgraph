@@ -3767,7 +3767,7 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 			return;
 
 		case jbvString:
-			str = jv->val.string.val;
+			str = pnstrdup(jv->val.string.val, jv->val.string.len);
 			break;
 
 		case jbvNumeric:
