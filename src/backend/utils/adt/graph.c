@@ -216,8 +216,8 @@ graph_labid(PG_FUNCTION_ARGS)
 static int
 graphid_cmp(FunctionCallInfo fcinfo)
 {
-	Graphid	   id1 = PG_GETARG_GRAPHID(0);
-	Graphid	   id2 = PG_GETARG_GRAPHID(1);
+	Graphid		id1 = PG_GETARG_GRAPHID(0);
+	Graphid		id2 = PG_GETARG_GRAPHID(1);
 
 	if (id1 < id2)
 		return -1;
@@ -1347,6 +1347,15 @@ graphid_hash(PG_FUNCTION_ARGS)
 	StaticAssertStmt(sizeof(id) == 8, "the size of graphid must be 8");
 
 	return hash_any((unsigned char *) &id, sizeof(id));
+}
+
+/* HASHPROC (1) */
+Datum
+vertex_hash(PG_FUNCTION_ARGS)
+{
+	Datum id = getVertexIdDatum(PG_GETARG_DATUM(0));
+
+	PG_RETURN_DATUM(DirectFunctionCall1(graphid_hash, id));
 }
 
 /*
