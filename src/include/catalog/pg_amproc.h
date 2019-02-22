@@ -556,6 +556,12 @@ DATA(insert ( 7105 7002 7002  3 3385 ));
 DATA(insert ( 7105 7002 7002  4 3386 ));
 
 /*
+ * graphid_ops
+ */
+/* Hash */
+DATA(insert ( 7106 7012 7012  1 7107 ));
+
+/*
  * rowid_ops
  */
 /* BTree */

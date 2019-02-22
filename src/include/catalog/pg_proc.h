@@ -5561,6 +5561,9 @@ DATA(insert OID = 7102 ( gin_consistent_graphid		PGNSP PGUID 12 1 0 0 0 f f f f 
 DESCR("GIN graphid support");
 DATA(insert OID = 7103 ( gin_compare_partial_graphid PGNSP PGUID 12 1 0 0 0 f f f f t f i s 4 0 23 "7002 7002 21 2281" _null_ _null_ _null_ _null_ _null_ gin_compare_partial_graphid _null_ _null_ _null_ ));
 DESCR("GIN graphid support");
+/* Hash for vertex */
+DATA(insert OID = 7107 ( vertex_hash	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 23 "7012" _null_ _null_ _null_ _null_ _null_ vertex_hash _null_ _null_ _null_ ));
+DESCR("hash");
 /* describe labels */
 DATA(insert OID = 7110 ( ag_get_propindexdef		PGNSP PGUID 12 1 0 0 0 f f f f t f s s 1 0 25 "26" _null_ _null_ _null_ _null_ _null_ ag_get_propindexdef _null_ _null_ _null_ ));
 DESCR("describe property index");

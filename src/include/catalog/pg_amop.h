@@ -1187,6 +1187,12 @@ DATA(insert ( 7105 7002 7002  4 s 7092 3580 0 ));
 DATA(insert ( 7105 7002 7002  5 s 7090 3580 0 ));
 
 /*
+ * vertex_ops
+ */
+/* Hash */
+DATA(insert ( 7106 7012 7012  1 s 7136  405 0 ));
+
+/*
  * rowid_ops
  */
 /* BTree */
