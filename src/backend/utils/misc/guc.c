@@ -521,6 +521,7 @@ static bool data_checksums;
 static int	wal_segment_size;
 static bool integer_datetimes;
 static bool assert_enabled;
+static char *agversion_string;
 
 /* should be static, but commands/variable.c needs to get at this */
 char	   *role_string;
@@ -3365,6 +3366,18 @@ static struct config_string ConfigureNamesString[] =
 		},
 		&server_version_string,
 		PG_VERSION,
+		NULL, NULL, NULL
+	},
+
+	{
+		/* Can't be set in postgresql.conf */
+		{"agversion", PGC_INTERNAL, PRESET_OPTIONS,
+			gettext_noop("Shows the AgensGraph server version."),
+			NULL,
+			GUC_REPORT | GUC_NOT_IN_SAMPLE | GUC_DISALLOW_IN_FILE
+		},
+		&agversion_string,
+		AG_VERSION,
 		NULL, NULL, NULL
 	},
 
