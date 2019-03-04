@@ -71,6 +71,11 @@ static int func_match_argtypes_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 									 FuncCandidateList *candidates);
 static FuncCandidateList func_select_candidate_jsonb(int nargs,
 		Oid argtypes[FUNC_MAX_ARGS], FuncCandidateList candidates);
+static int cypher_match_function(int matchDepth, int nargs,
+		Oid *input_base_typeids, TYPCATEGORY *slot_category,
+		FuncCandidateList *candidates);
+static bool cypher_match_function_criteria(int matchDepth, Oid inputBaseType,
+		Oid currentType, TYPCATEGORY slotCategory);
 static List *fucn_get_best_args(ParseState *pstate, List *args,
 								Oid argtypes[FUNC_MAX_ARGS],
 								FuncCandidateList candidate);
@@ -1047,11 +1052,10 @@ func_select_candidate_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 	int			nunknowns;
 	int			i;
 	Oid			input_base_typeids[FUNC_MAX_ARGS];
+	int			matchDepth = 0;
+	int			ncandidates;
 	FuncCandidateList current_candidate;
 	FuncCandidateList last_candidate;
-	int			ncandidates;
-	int			bestscore;
-	int			score;
 	Oid		   *current_typeids;
 	TYPCATEGORY slot_category[FUNC_MAX_ARGS];
 	bool		resolved_unknowns;
@@ -1074,117 +1078,18 @@ func_select_candidate_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 		}
 	}
 
-	last_candidate = NULL;
-	ncandidates = 0;
-	bestscore = 0;
-	for (current_candidate = candidates;
-		 current_candidate != NULL;
-		 current_candidate = current_candidate->next)
-	{
-		score = 0;
-		current_typeids = current_candidate->args;
-
-		for (i = 0; i < nargs; i++)
-		{
-			if (input_base_typeids[i] == UNKNOWNOID)
-				continue;
-
-			if (current_typeids[i] == input_base_typeids[i])
-				score += 1;
-		}
-
-		if (score > bestscore || last_candidate == NULL)
-		{
-			candidates = current_candidate;
-			last_candidate = current_candidate;
-			ncandidates = 1;
-			bestscore = score;
-		}
-		else if (score == bestscore)
-		{
-			last_candidate->next = current_candidate;
-			last_candidate = current_candidate;
-			ncandidates++;
-		}
-	}
-	if (last_candidate != NULL)
-		last_candidate->next = NULL;
-
-	if (ncandidates == 1)
-		return candidates;
-
 	for (i = 0; i < nargs; i++)
 		slot_category[i] = TypeCategory(input_base_typeids[i]);
 
-	last_candidate = NULL;
-	ncandidates = 0;
-	bestscore = 0;
-	for (current_candidate = candidates;
-		 current_candidate != NULL;
-		 current_candidate = current_candidate->next)
+	/* find our candidates */
+	for (matchDepth = 1; matchDepth <= 6; matchDepth++)
 	{
-		score = 0;
-		current_typeids = current_candidate->args;
-
-		for (i = 0; i < nargs; i++)
-		{
-			if (input_base_typeids[i] == UNKNOWNOID)
-				continue;
-
-			if (current_typeids[i] == input_base_typeids[i])
-			{
-				score += 5;
-			}
-			else if (IsPreferredType(slot_category[i], current_typeids[i]))
-			{
-				score += 4;
-			}
-			else if (input_base_typeids[i] == JSONBOID)
-			{
-				switch (current_typeids[i])
-				{
-					case BOOLOID:
-					case NUMERICOID:
-					case TEXTOID:
-						score += 3;
-						break;
-					case INT2OID:
-					case INT4OID:
-					case INT8OID:
-					case FLOAT4OID:
-					case FLOAT8OID:
-						score += 2;
-						break;
-					default:
-						score += 1;
-						break;
-				}
-			}
-			else if (current_typeids[i] == JSONBOID)
-			{
-				score += 3;
-			}
-		}
-
-		if (score > bestscore || last_candidate == NULL)
-		{
-			candidates = current_candidate;
-			last_candidate = current_candidate;
-			ncandidates = 1;
-			bestscore = score;
-		}
-		else if (score == bestscore)
-		{
-			last_candidate->next = current_candidate;
-			last_candidate = current_candidate;
-			ncandidates++;
-		}
+		ncandidates = cypher_match_function(matchDepth, nargs,
+											input_base_typeids, slot_category,
+											&candidates);
+		if (ncandidates == 1)
+			return candidates;
 	}
-	if (last_candidate)
-		last_candidate->next = NULL;
-
-	if (ncandidates == 1)
-		return candidates;
 
 	if (nunknowns == 0)
 		return NULL;
@@ -1366,6 +1271,134 @@ func_select_candidate_jsonb(int nargs, Oid argtypes[FUNC_MAX_ARGS],
 	return NULL;
 }
 
+/*
+ * Function to run the criteria match against the candidate list.
+ * The candidates list IS MODIFIED by this function (filtered down).
+ * The function returns the number of candidates found.
+ */
+static int
+cypher_match_function(int matchDepth, int nargs, Oid *input_base_typeids,
+					  TYPCATEGORY *slot_category, FuncCandidateList *candidates)
+{
+	int			ncandidates = 0;
+	int			bestmatch = 0;
+	FuncCandidateList current_candidate = NULL;
+	FuncCandidateList last_candidate = NULL;
+
+	/* loop through candidate list by following the next pointer */
+	for (current_candidate = *candidates;
+		 current_candidate != NULL;
+		 current_candidate = current_candidate->next)
+	{
+		Oid		   *current_typeids;
+		int			i;
+		int			nmatches = 0;
+
+		current_typeids = current_candidate->args;
+		/* loop through the arguments and check for matches */
+		for (i = 0; i < nargs; i++)
+		{
+			if (input_base_typeids[i] == UNKNOWNOID)
+				continue;
+
+			if (cypher_match_function_criteria(matchDepth,
+											   input_base_typeids[i],
+											   current_typeids[i],
+											   slot_category[i]))
+				nmatches++;
+		}
+
+		if (nmatches > bestmatch || last_candidate == NULL)
+		{
+			*candidates = current_candidate;
+			last_candidate = current_candidate;
+			ncandidates = 1;
+			bestmatch = nmatches;
+		}
+		else if (nmatches == bestmatch)
+		{
+			last_candidate->next = current_candidate;
+			last_candidate = current_candidate;
+			ncandidates++;
+		}
+	}
+
+	/* make sure that the end of the list is terminated */
+	if (last_candidate != NULL)
+		last_candidate->next = NULL;
+
+	return ncandidates;
+}
+
+/*
+ * Function to match a specific criteria, given a specific number of
+ * conditions to match. It will return true if a match is found, false
+ * otherwise. The larger the include value is, the more conditions it will
+ * test for. The conditions higher up in function have more weight than
+ * those lower.
+ */
+static bool
+cypher_match_function_criteria(int matchDepth, Oid inputBaseType,
+							   Oid currentType, TYPCATEGORY slotCategory)
+{
+	/* if the match depth is out of range, which shouldn't happen, fail */
+	if (matchDepth < 1 || matchDepth > 6)
+	{
+		elog(ERROR, "Invalid matchDepth value [%d] for cypher_match_function_criteria",
+			 matchDepth);
+		/* elog ERROR aborts, it will never get here */
+		return false;
+	}
+
+	/* check for exact match */
+	if (currentType == inputBaseType)
+		return true;
+
+	/* check for preferred match */
+	if (matchDepth >= 2 &&
+		IsPreferredType(slotCategory, currentType))
+		return true;
+
+	/*
+	 * we prioritized NUMERICOID over TEXTOID and BOOLOID due to ambiguity
+	 * in matching aggregate functions for jsonb types.
+	 */
+	if (matchDepth >= 3 &&
+		(inputBaseType == JSONBOID && currentType == NUMERICOID))
+		return true;
+
+	/*
+	 * we prioritize BOOLOID, TEXOID, and JSONBOID over the rest as JSONB
+	 * has those types as primitive types
+	 */
+	if (matchDepth >= 4 &&
+		((inputBaseType == JSONBOID &&
+		  (currentType == BOOLOID || currentType == TEXTOID)) ||
+		 currentType == JSONBOID))
+		return true;
+
+	/*
+	 * the following types are also number in JSON but they have lower priority
+	 * than above types because jsonb stores number using numeric type
+	 * internally and this means that we need to type-cast numeric type to
+	 * those types.
+	 */
+	if (matchDepth >= 5 &&
+		(inputBaseType == JSONBOID &&
+		 (currentType == INT2OID || currentType == INT4OID ||
+		  currentType == INT8OID || currentType == FLOAT4OID ||
+		  currentType == FLOAT8OID)))
+		return true;
+
+	/* we can type-cast jsonb type to any type through CypherTypeCast */
+	if (matchDepth >= 6 &&
+		inputBaseType == JSONBOID)
+		return true;
+
+	/* none found */
+	return false;
+}
+
 static List *
 fucn_get_best_args(ParseState *pstate, List *args, Oid argtypes[FUNC_MAX_ARGS],
 				   FuncCandidateList candidate)
@@ -1381,7 +1414,7 @@ fucn_get_best_args(ParseState *pstate, List *args, Oid argtypes[FUNC_MAX_ARGS],
 
 		if (argtypes[i] == JSONBOID || candidate->args[i] == JSONBOID)
 			arg = coerce_expr(pstate, arg, argtypes[i], candidate->args[i], -1,
-							  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
+							  COERCION_EXPLICIT, COERCE_IMPLICIT_CAST, -1);
 
 		newargs = lappend(newargs, arg);
 		i++;
