@@ -1102,9 +1102,8 @@ WHERE p1.oprcanhash AND NOT EXISTS
          amopopr = p1.oid AND amopstrategy = 1);
  oid  | oprname 
 ------+---------
- 7136 | =
  7148 | =
-(2 rows)
+(1 row)
 
 -- And the converse.
 SELECT p1.oid, p1.oprname, p.amopfamily
