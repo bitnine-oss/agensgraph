@@ -191,3 +191,4 @@ test: cypher_plpgsql
 test: cypher_shortestpath2
 test: sql_restriction
 test: propertyindex
+test: cypher_substring
