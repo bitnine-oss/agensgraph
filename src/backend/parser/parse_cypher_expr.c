@@ -76,7 +76,7 @@ static int cypher_match_function(int matchDepth, int nargs,
 		FuncCandidateList *candidates);
 static bool cypher_match_function_criteria(int matchDepth, Oid inputBaseType,
 		Oid currentType, TYPCATEGORY slotCategory);
-static List *fucn_get_best_args(ParseState *pstate, List *args,
+static List *func_get_best_args(ParseState *pstate, List *args,
 								Oid argtypes[FUNC_MAX_ARGS],
 								FuncCandidateList candidate);
 static Node *transformCoalesceExpr(ParseState *pstate, CoalesceExpr *c);
@@ -877,6 +877,7 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 static List *
 preprocess_func_args(ParseState *pstate, FuncCall *fn)
 {
+	bool		isSubstr = false;
 	int			nargs;
 	bool		named;
 	ListCell   *la;
@@ -894,11 +895,40 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 
 	Assert(fn->agg_filter == NULL && !fn->agg_within_group);
 
+	/* test if this is the substring function */
+	if (strcmp(strVal(llast(fn->funcname)), "substring") == 0)
+		isSubstr = true;
+
 	nargs = 0;
 	named = false;
 	foreach(la, fn->args)
 	{
 		Node	   *arg;
+
+		/*
+		 * If this is second argument of the substring function, adjust it
+		 * by adding 1 to it because
+		 *
+		 * 1) Cypher substring uses 0-based index.
+		 * 2) text version of substring uses 1-based index.
+		 * 3) we will always use text version of substring function.
+		 *
+		 * NOTE: Remove this code when we define a rule for selecting a
+		 *       function with given arguments.
+		 */
+		if (isSubstr && nargs == 1)
+		{
+			A_Const	   *aconst = makeNode(A_Const);
+
+			/* constant value 1 */
+			aconst->val.type = T_Integer;
+			aconst->val.val.ival = 1;
+			aconst->location = -1;
+
+			/* replace the second argument with `second_arg + 1` */
+			la->data.ptr_value = makeSimpleA_Expr(AEXPR_OP, "+", lfirst(la),
+												  (Node *) aconst, -1);
+		}
 
 		arg = transformCypherExprRecurse(pstate, lfirst(la));
 		if (IsA(arg, NamedArgExpr))
@@ -944,7 +974,7 @@ preprocess_func_args(ParseState *pstate, FuncCall *fn)
 		return NIL;
 	}
 
-	return fucn_get_best_args(pstate, args, argtypes, candidate);
+	return func_get_best_args(pstate, args, argtypes, candidate);
 }
 
 static FuncCandidateList
@@ -954,11 +984,41 @@ func_get_best_candidate(ParseState *pstate, FuncCall *fn, int nargs,
 	FuncCandidateList raw_candidates;
 	FuncCandidateList best_candidate;
 	FuncCandidateList current_candidates;
+	FuncCandidateList previous_candidate;
 	int			ncandidates;
 
 	/* get all candidates */
 	raw_candidates = FuncnameGetCandidates(fn->funcname, nargs, NIL,
 										   false, false, false);
+
+	/*
+	 * Added to remove jsonb version of substring (jsonb_substr*) from the list
+	 * of candidates if the function is substring.
+	 *
+	 * NOTE: Remove this code when we define a rule for selecting a function
+	 *       with given arguments.
+	 */
+	if (strcmp(strVal(llast(fn->funcname)), "substring") == 0)
+	{
+		for (best_candidate = raw_candidates, previous_candidate = NULL;
+			 best_candidate != NULL;
+			 best_candidate = best_candidate->next)
+		{
+			/* if this is a jsonb substring function OID */
+			if (best_candidate->oid == 7235 || best_candidate->oid == 7236)
+			{
+				/* we are at the head of the list */
+				if (best_candidate == raw_candidates)
+					raw_candidates = best_candidate->next;
+				else
+					previous_candidate->next = best_candidate->next;
+			}
+			else
+			{
+				previous_candidate = best_candidate;
+			}
+		}
+	}
 
 	/* find exact match */
 	for (best_candidate = raw_candidates;
@@ -1400,7 +1460,7 @@ cypher_match_function_criteria(int matchDepth, Oid inputBaseType,
 }
 
 static List *
-fucn_get_best_args(ParseState *pstate, List *args, Oid argtypes[FUNC_MAX_ARGS],
+func_get_best_args(ParseState *pstate, List *args, Oid argtypes[FUNC_MAX_ARGS],
 				   FuncCandidateList candidate)
 {
 	ListCell   *la;
