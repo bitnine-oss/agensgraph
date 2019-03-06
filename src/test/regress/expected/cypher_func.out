@@ -209,3 +209,49 @@ drop cascades to vlabel a
 drop cascades to vlabel b
 drop cascades to vlabel c
 drop cascades to vlabel d
+-- Added test for AG249, use ln() for all log() calls
+-- Create initial graph
+CREATE GRAPH ag249_log_to_ln;
+SET graph_path = ag249_log;
+ERROR:  invalid value for parameter "graph_path": "ag249_log"
+DETAIL:  graph "ag249_log" does not exist.
+CREATE VLABEL numbers;
+CREATE (:numbers {string: '10', numeric: 10});
+-- These should fail as there is no rule to cast from string to numeric
+MATCH (u:numbers) RETURN log(u.string);
+ERROR:  "10" cannot be converted to numeric
+MATCH (u:numbers) RETURN ln(u.string);
+ERROR:  "10" cannot be converted to numeric
+MATCH (u:numbers) RETURN log10(u.string);
+ERROR:  log10(): number is expected but "10"
+-- Check that log() == ln() != log10
+MATCH (u:numbers) RETURN log(u.numeric), ln(u.numeric), log10(u.numeric);
+         ln         |         ln         |       log10        
+--------------------+--------------------+--------------------
+ 2.3025850929940457 | 2.3025850929940457 | 1.0000000000000000
+(1 row)
+
+-- Check with a string constant
+RETURN log('10'), ln('10'), log10('10');
+ERROR:  log10(): number is expected but "10"
+-- Check with a numeric constant;
+RETURN log(10), ln(10), log10(10);
+        ln        |        ln        |       log10        
+------------------+------------------+--------------------
+ 2.30258509299405 | 2.30258509299405 | 1.0000000000000000
+(1 row)
+
+-- Check hybrid query
+return log10(10), (select log(10));
+       log10        | log 
+--------------------+-----
+ 1.0000000000000000 | 1
+(1 row)
+
+-- cleanup
+DROP GRAPH ag249_log_to_ln CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence ag249_log_to_ln.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel numbers
