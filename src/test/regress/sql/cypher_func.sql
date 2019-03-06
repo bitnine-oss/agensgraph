@@ -121,3 +121,30 @@ MATCH (n) RETURN n.name, label(n), labels(n);
 DROP GRAPH vertex_labels_complex2 CASCADE;
 DROP GRAPH vertex_labels_complex1 CASCADE;
 DROP GRAPH vertex_labels_simple CASCADE;
+
+-- Added test for AG249, use ln() for all log() calls
+-- Create initial graph
+CREATE GRAPH ag249_log_to_ln;
+SET graph_path = ag249_log;
+CREATE VLABEL numbers;
+CREATE (:numbers {string: '10', numeric: 10});
+
+-- These should fail as there is no rule to cast from string to numeric
+MATCH (u:numbers) RETURN log(u.string);
+MATCH (u:numbers) RETURN ln(u.string);
+MATCH (u:numbers) RETURN log10(u.string);
+
+-- Check that log() == ln() != log10
+MATCH (u:numbers) RETURN log(u.numeric), ln(u.numeric), log10(u.numeric);
+
+-- Check with a string constant
+RETURN log('10'), ln('10'), log10('10');
+
+-- Check with a numeric constant;
+RETURN log(10), ln(10), log10(10);
+
+-- Check hybrid query
+return log10(10), (select log(10));
+
+-- cleanup
+DROP GRAPH ag249_log_to_ln CASCADE;
