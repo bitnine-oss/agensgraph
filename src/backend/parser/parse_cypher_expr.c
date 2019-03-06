@@ -862,6 +862,10 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 
 		if (strcmp(funcname, "stdevp") == 0)
 			fn->funcname = list_make1(makeString("stddev_pop"));
+
+		/* translate log() into ln() for cypher queries */
+		if (strcmp(funcname, "log") == 0)
+			fn->funcname = list_make1(makeString("ln"));
 	}
 
 	args = preprocess_func_args(pstate, fn);
