@@ -762,7 +762,7 @@ CREATE CONSTRAINT ON rege3 ASSERT type IN ['friend', 'lover', 'parent'];
 Edge label "ddl.rege3"
 --
 Constraints:
-    "rege3_properties_check" ASSERT ((type) IN (['friend', 'lover', 'parent']))
+    "rege3_properties_check" ASSERT ((type) = ANY (ARRAY['friend', 'lover', 'parent']))
 Inherits: ddl.ag_edge
 
 CREATE ()-[:rege3 {type: 'friend', name: 'agens'}]->();

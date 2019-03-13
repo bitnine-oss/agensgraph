@@ -1824,18 +1824,134 @@ transformAExprOp(ParseState *pstate, A_Expr *a)
 static Node *
 transformAExprIn(ParseState *pstate, A_Expr *a)
 {
-	Node	   *last_srf = pstate->p_last_srf;
-	Node	   *l;
-	Node	   *r;
+	Node	   *result = NULL;
+	Node	   *lexpr;
+	Node	   *rexpr;
+	List	   *rexprs;
+	List	   *rvars;
+	List	   *rnonvars;
+	ListCell   *l;
 
-	l = transformCypherExprRecurse(pstate, a->lexpr);
-	l = coerce_to_jsonb(pstate, l, "jsonb");
+	lexpr = transformCypherExprRecurse(pstate, a->lexpr);
+	lexpr = coerce_to_jsonb(pstate, lexpr, "jsonb");
 
-	r = transformCypherExprRecurse(pstate, a->rexpr);
-	r = coerce_to_jsonb(pstate, r, "jsonb");
+	rexpr = transformCypherExprRecurse(pstate, a->rexpr);
 
-	return (Node *) make_op(pstate, list_make1(makeString("@>")), r, l,
-							last_srf, a->location);
+	rexprs = rvars = rnonvars = NIL;
+
+	switch (nodeTag(rexpr))
+	{
+		case T_CypherListExpr:
+			foreach(l, ((CypherListExpr *) rexpr)->elems)
+			{
+				Node	   *elem = lfirst(l);
+
+				rexprs = lappend(rexprs, elem);
+				if (contain_vars_of_level(elem, 0))
+					rvars = lappend(rvars, elem);
+				else
+					rnonvars = lappend(rnonvars, elem);
+			}
+			break;
+		case T_CypherAccessExpr:
+		case T_Var:
+			result = (Node *) make_op(pstate, list_make1(makeString("@>")),
+									  rexpr, lexpr, pstate->p_last_srf,
+									  a->location);
+			break;
+		default:
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("CypherList is expected but %s",
+							format_type_be(exprType(rexpr))),
+					 parser_errposition(pstate, exprLocation(a->rexpr))));
+			break;
+	}
+
+	/*
+	 * ScalarArrayOpExpr is only going to be useful if there's more than one
+	 * non-Var righthand item.
+	 */
+	if (list_length(rnonvars) > 1)
+	{
+		List	   *allexprs;
+		Oid			scalar_type;
+		Oid			array_type;
+
+		/*
+		 * Try to select a common type for the array elements.  Note that
+		 * since the LHS' type is first in the list, it will be preferred when
+		 * there is doubt (eg, when all the RHS items are unknown literals).
+		 *
+		 * Note: use list_concat here not lcons, to avoid damaging rnonvars.
+		 */
+		allexprs = list_concat(list_make1(lexpr), rnonvars);
+		scalar_type = select_common_type(pstate, allexprs, NULL, NULL);
+
+		/*
+		 * Do we have an array type to use?  Aside from the case where there
+		 * isn't one, we don't risk using ScalarArrayOpExpr when the common
+		 * type is RECORD, because the RowExpr comparison logic below can cope
+		 * with some cases of non-identical row types.
+		 */
+		if (OidIsValid(scalar_type) && scalar_type != RECORDOID)
+			array_type = get_array_type(scalar_type);
+		else
+			array_type = InvalidOid;
+		if (array_type != InvalidOid)
+		{
+			/*
+			 * OK: coerce all the right-hand non-Var inputs to the common type
+			 * and build an ArrayExpr for them.
+			 */
+			List	   *aexprs;
+			ArrayExpr  *newa;
+
+			aexprs = NIL;
+			foreach(l, rnonvars)
+			{
+				Node	   *rexpr = (Node *) lfirst(l);
+
+				rexpr = coerce_to_common_type(pstate, rexpr, scalar_type, "IN");
+				aexprs = lappend(aexprs, rexpr);
+			}
+			newa = makeNode(ArrayExpr);
+			newa->array_typeid = array_type;
+			/* array_collid will be set by parse_collate.c */
+			newa->element_typeid = scalar_type;
+			newa->elements = aexprs;
+			newa->multidims = false;
+			newa->location = -1;
+
+			result = (Node *) make_scalar_array_op(pstate, a->name, true, lexpr,
+												   (Node *) newa, a->location);
+
+			/* Consider only the Vars (if any) in the loop below */
+			rexprs = rvars;
+		}
+	}
+
+	/*
+	 * Must do it the hard way, ie, with a boolean expression tree.
+	 */
+	foreach(l, rexprs)
+	{
+		Node	   *rexpr = (Node *) lfirst(l);
+		Node	   *cmp;
+
+		/* Ordinary scalar operator */
+		cmp = (Node *) make_op(pstate, a->name, copyObject(lexpr), rexpr,
+							   pstate->p_last_srf, a->location);
+
+		cmp = coerce_to_boolean(pstate, cmp, "IN");
+		if (result == NULL)
+			result = cmp;
+		else
+			result = (Node *) makeBoolExpr(OR_EXPR, list_make2(result, cmp),
+										   a->location);
+	}
+
+	return result;
 }
 
 static Node *
