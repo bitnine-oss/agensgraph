@@ -552,6 +552,95 @@ MATCH (n:v0) WITH n.l[0] AS i RETURN [(i IN [0, 1, 2, 3, 4]), true];
  [false, true]
 (1 row)
 
+CREATE (:v2 {i: 0}), (:v2 {i: 1}), (:v2 {i: 2}), (:v2 {i: 3}),
+       (:v2 {i: 4}), (:v2 {i: 5}), (:v2 {i: 6}), (:v2 {i: 7}),
+       (:v2 {i: 8}), (:v2 {i: 9}), (:v2 {i: 10}), (:v2 {i: 11}),
+       (:v2 {i: 12}), (:v2 {i: 13}), (:v2 {i: 14}), (:v2 {i: 15});
+CREATE (:v2 {i: 7, name: 'seven'}), (:v2 {i: 9, name: 'nine'});
+CREATE PROPERTY INDEX ON v2 (i);
+-- check grammar
+RETURN 1 IN 1;
+ERROR:  CypherList is expected but integer
+LINE 1: RETURN 1 IN 1;
+                    ^
+RETURN 1 IN [1];
+ ?column? 
+----------
+ t
+(1 row)
+
+-- SubLink
+CREATE TABLE t1 (i int);
+INSERT INTO t1 VALUES (1), (2), (3);
+MATCH (n:v2) WHERE n.i IN (SELECT to_jsonb(i) FROM t1)
+RETURN count(n);
+ count 
+-------
+ 3
+(1 row)
+
+-- plan : index scan
+SET enable_seqscan = off;
+EXPLAIN (costs off)
+  MATCH (n:v2) WHERE n.i IN [1, 2, 3]
+  RETURN n;
+                                        QUERY PLAN                                         
+-------------------------------------------------------------------------------------------
+ Index Scan using v2_i_idx on v2 n
+   Index Cond: (properties.'i'::text = ANY (ARRAY[to_jsonb(1), to_jsonb(2), to_jsonb(3)]))
+(2 rows)
+
+EXPLAIN (costs off)
+  MATCH (n1:v2 {name: 'seven'}), (n2:v2 {name: 'nine'})
+  MATCH (n:v2) WHERE n.i IN [n1.i, 8, n2.i]
+  RETURN n;
+                                                                              QUERY PLAN                                                                              
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Seq Scan on v2 n1
+               Filter: (properties.'name'::text = '"seven"'::jsonb)
+         ->  Seq Scan on v2 n2
+               Filter: (properties.'name'::text = '"nine"'::jsonb)
+   ->  Bitmap Heap Scan on v2 n
+         Recheck Cond: ((properties.'i'::text = n1.properties.'i'::text) OR (properties.'i'::text = to_jsonb(8)) OR (properties.'i'::text = n2.properties.'i'::text))
+         ->  BitmapOr
+               ->  Bitmap Index Scan on v2_i_idx
+                     Index Cond: (properties.'i'::text = n1.properties.'i'::text)
+               ->  Bitmap Index Scan on v2_i_idx
+                     Index Cond: (properties.'i'::text = to_jsonb(8))
+               ->  Bitmap Index Scan on v2_i_idx
+                     Index Cond: (properties.'i'::text = n2.properties.'i'::text)
+(15 rows)
+
+SET enable_seqscan = on;
+-- plan : seq scan
+CREATE (:v3 {a: [1, 2, 3, 4, 5, 6, 7, 8, 9]});
+EXPLAIN (costs off)
+  MATCH (n1:v2), (n2:v3) WHERE n1.i IN n2.a
+  RETURN n1;
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ Nested Loop
+   Join Filter: (n2.properties.'a'::text @> n1.properties.'i'::text)
+   ->  Seq Scan on v3 n2
+   ->  Materialize
+         ->  Seq Scan on v2 n1
+(5 rows)
+
+EXPLAIN (costs off)
+  MATCH (n2:v3) WITH n2.a AS a
+  MATCH (n1:v2) WHERE n1.i IN a
+  RETURN n1;
+                             QUERY PLAN                              
+---------------------------------------------------------------------
+ Nested Loop
+   Join Filter: (n2.properties.'a'::text @> n1.properties.'i'::text)
+   ->  Seq Scan on v3 n2
+   ->  Materialize
+         ->  Seq Scan on v2 n1
+(5 rows)
+
 -- List comprehension
 RETURN [x IN [0, 1, 2, 3, 4]];
     ?column?     
@@ -712,7 +801,7 @@ MATCH (n:coll) SET n.u = toupper(n.name);
 MATCH (n:coll) RETURN n;
                                    n                                   
 -----------------------------------------------------------------------
- coll[5.1]{"l": "agensgraph", "u": "AGENSGRAPH", "name": "AgensGraph"}
+ coll[7.1]{"l": "agensgraph", "u": "AGENSGRAPH", "name": "AgensGraph"}
 (1 row)
 
 -- Text matching
@@ -720,16 +809,19 @@ CREATE (:ts {v: 'a fat cat sat on a mat and ate a fat rat'::tsvector});
 MATCH (n:ts) WHERE n.v::tsvector @@ 'cat & rat'::tsquery RETURN n;
                                  n                                  
 --------------------------------------------------------------------
- ts[6.1]{"v": "'a' 'and' 'ate' 'cat' 'fat' 'mat' 'on' 'rat' 'sat'"}
+ ts[8.1]{"v": "'a' 'and' 'ate' 'cat' 'fat' 'mat' 'on' 'rat' 'sat'"}
 (1 row)
 
 -- Tear down
+DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
-NOTICE:  drop cascades to 7 other objects
+NOTICE:  drop cascades to 9 other objects
 DETAIL:  drop cascades to sequence test_cypher_expr.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel v0
 drop cascades to vlabel v1
+drop cascades to vlabel v2
+drop cascades to vlabel v3
 drop cascades to vlabel coll
 drop cascades to vlabel ts

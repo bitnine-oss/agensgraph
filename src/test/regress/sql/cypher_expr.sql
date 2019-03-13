@@ -242,10 +242,49 @@ RETURN CASE n.i WHEN 0 THEN true ELSE false END,
        CASE WHEN n.i = 0 THEN true ELSE false END;
 
 -- IN expression
+
 MATCH (n:v0) RETURN true IN n.l;
 MATCH (n:v0) RETURN 0 IN n.l;
 MATCH (n:v0) RETURN NULL IN n.l;
 MATCH (n:v0) WITH n.l[0] AS i RETURN [(i IN [0, 1, 2, 3, 4]), true];
+
+CREATE (:v2 {i: 0}), (:v2 {i: 1}), (:v2 {i: 2}), (:v2 {i: 3}),
+       (:v2 {i: 4}), (:v2 {i: 5}), (:v2 {i: 6}), (:v2 {i: 7}),
+       (:v2 {i: 8}), (:v2 {i: 9}), (:v2 {i: 10}), (:v2 {i: 11}),
+       (:v2 {i: 12}), (:v2 {i: 13}), (:v2 {i: 14}), (:v2 {i: 15});
+CREATE (:v2 {i: 7, name: 'seven'}), (:v2 {i: 9, name: 'nine'});
+CREATE PROPERTY INDEX ON v2 (i);
+
+-- check grammar
+RETURN 1 IN 1;
+RETURN 1 IN [1];
+
+-- SubLink
+CREATE TABLE t1 (i int);
+INSERT INTO t1 VALUES (1), (2), (3);
+MATCH (n:v2) WHERE n.i IN (SELECT to_jsonb(i) FROM t1)
+RETURN count(n);
+
+-- plan : index scan
+SET enable_seqscan = off;
+EXPLAIN (costs off)
+  MATCH (n:v2) WHERE n.i IN [1, 2, 3]
+  RETURN n;
+EXPLAIN (costs off)
+  MATCH (n1:v2 {name: 'seven'}), (n2:v2 {name: 'nine'})
+  MATCH (n:v2) WHERE n.i IN [n1.i, 8, n2.i]
+  RETURN n;
+SET enable_seqscan = on;
+
+-- plan : seq scan
+CREATE (:v3 {a: [1, 2, 3, 4, 5, 6, 7, 8, 9]});
+EXPLAIN (costs off)
+  MATCH (n1:v2), (n2:v3) WHERE n1.i IN n2.a
+  RETURN n1;
+EXPLAIN (costs off)
+  MATCH (n2:v3) WITH n2.a AS a
+  MATCH (n1:v2) WHERE n1.i IN a
+  RETURN n1;
 
 -- List comprehension
 RETURN [x IN [0, 1, 2, 3, 4]];
@@ -290,4 +329,5 @@ CREATE (:ts {v: 'a fat cat sat on a mat and ate a fat rat'::tsvector});
 MATCH (n:ts) WHERE n.v::tsvector @@ 'cat & rat'::tsquery RETURN n;
 
 -- Tear down
+DROP TABLE t1;
 DROP GRAPH test_cypher_expr CASCADE;
