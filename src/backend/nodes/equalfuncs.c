@@ -820,6 +820,14 @@ _equalCypherTypeCast(const CypherTypeCast *a, const CypherTypeCast *b)
 {
 	COMPARE_SCALAR_FIELD(type);
 	COMPARE_COERCIONFORM_FIELD(cform);
+	/*
+	 * The following fields were purposely left out-
+	 *
+	 * cctx field is how the function came into existance. This is
+	 * unnecessary for comparisons.
+	 *
+	 * typcategory field is built from the type field - it's superfluous.
+	 */
 	COMPARE_NODE_FIELD(arg);
 	COMPARE_LOCATION_FIELD(location);
 

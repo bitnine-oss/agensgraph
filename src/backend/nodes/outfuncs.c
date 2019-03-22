@@ -1805,6 +1805,8 @@ _outCypherTypeCast(StringInfo str, const CypherTypeCast *node)
 
 	WRITE_OID_FIELD(type);
 	WRITE_ENUM_FIELD(cform, CoercionForm);
+	WRITE_ENUM_FIELD(cctx, CoercionContext);
+	WRITE_CHAR_FIELD(typcategory);
 	WRITE_NODE_FIELD(arg);
 	WRITE_LOCATION_FIELD(location);
 }

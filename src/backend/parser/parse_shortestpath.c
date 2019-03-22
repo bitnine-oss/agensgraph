@@ -1363,9 +1363,8 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	{
 		Node	   *weight;
 
-		weight = coerce_to_target_type(pstate, target, wtype, FLOAT8OID, -1,
-									   COERCION_EXPLICIT, COERCE_EXPLICIT_CAST,
-									   -1);
+		weight = coerce_expr(pstate, target, wtype, FLOAT8OID, -1,
+							 COERCION_EXPLICIT, COERCE_EXPLICIT_CAST, -1);
 		if (weight == NULL)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),

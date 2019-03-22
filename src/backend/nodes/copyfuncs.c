@@ -2267,6 +2267,8 @@ _copyCypherTypeCast(const CypherTypeCast *from)
 
 	COPY_SCALAR_FIELD(type);
 	COPY_SCALAR_FIELD(cform);
+	COPY_SCALAR_FIELD(cctx);
+	COPY_SCALAR_FIELD(typcategory);
 	COPY_NODE_FIELD(arg);
 	COPY_LOCATION_FIELD(location);
 

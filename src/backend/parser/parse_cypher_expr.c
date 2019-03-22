@@ -95,6 +95,11 @@ static bool is_graph_type(Oid type);
 static Node *coerce_all_to_jsonb(ParseState *pstate, Node *expr);
 
 static List *transformA_Star(ParseState *pstate, int location);
+static Node *build_cypher_cast_expr(Node *expr, Oid otyp,
+									CoercionContext cctx,
+									CoercionForm cform, int loc);
+static Node *coerce_cypher_arg_to_boolean(ParseState *pstate, Node *node,
+										  const char *constructName);
 
 /* GUC variable (allow/disallow null properties) */
 bool		allow_null_properties = false;
@@ -771,7 +776,7 @@ transformCaseExpr(ParseState *pstate, CaseExpr *c)
 											  (Node *) placeholder, rexpr,
 											  w->location);
 		expr = transformCypherExprRecurse(pstate, rexpr);
-		expr = coerce_to_boolean(pstate, expr, "CASE/WHEN");
+		expr = coerce_cypher_arg_to_boolean(pstate, expr, "CASE/WHEN");
 
 		result = transformCypherExprRecurse(pstate, (Node *) w->result);
 		if (exprType(result) == JSONBOID)
@@ -1478,7 +1483,7 @@ func_get_best_args(ParseState *pstate, List *args, Oid argtypes[FUNC_MAX_ARGS],
 
 		if (argtypes[i] == JSONBOID || candidate->args[i] == JSONBOID)
 			arg = coerce_expr(pstate, arg, argtypes[i], candidate->args[i], -1,
-							  COERCION_EXPLICIT, COERCE_IMPLICIT_CAST, -1);
+							  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
 
 		newargs = lappend(newargs, arg);
 		i++;
@@ -1861,7 +1866,7 @@ transformBoolExpr(ParseState *pstate, BoolExpr *b)
 		Node	   *arg = lfirst(la);
 
 		arg = transformCypherExprRecurse(pstate, arg);
-		arg = coerce_to_boolean(pstate, arg, opname);
+		arg = coerce_cypher_arg_to_boolean(pstate, arg, opname);
 
 		args = lappend(args, arg);
 	}
@@ -1869,95 +1874,107 @@ transformBoolExpr(ParseState *pstate, BoolExpr *b)
 	return (Node *) makeBoolExpr(b->boolop, args, b->location);
 }
 
+/*
+ * Helper function to build a CypherTypeCast node.
+ *
+ * Note: expr is expected to be non NULL.
+ *
+ * Note: coercion context and type category were added for runtime
+ * type casting.
+ */
+static Node *
+build_cypher_cast_expr(Node *expr, Oid otyp, CoercionContext cctx,
+					   CoercionForm cform, int loc)
+{
+	CypherTypeCast *tc;
+	Oid			obtyp;
+
+	/* validate input */
+	Assert(expr != NULL);
+
+	obtyp = getBaseType(otyp);
+	tc = makeNode(CypherTypeCast);
+	tc->type = obtyp;
+	tc->cctx = cctx;
+	tc->cform = cform;
+	tc->typcategory = TypeCategory(obtyp);
+	tc->arg = (Expr *) expr;
+	tc->location = loc;
+
+	return (Node *) tc;
+}
+
 Node *
 coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 			CoercionContext cctx, CoercionForm cform, int loc)
 {
 	Node	   *node;
-	Oid			btyp;
-	CypherTypeCast *tc;
 
-	if (expr == NULL)
-		return NULL;
+	/* return expr if it is already coerced or null */
+	if (ityp == otyp || expr == NULL)
+		return expr;
 
 	node = coerce_unknown_const(pstate, expr, ityp, otyp);
 	if (node != NULL)
 		return node;
 
-	btyp = getBaseType(otyp);
+	/*
+	 * Process JSONBOID input and output types here EXCLUDING:
+	 * JSONOID    -> JSONBOID
+	 * JSONBOID   -> JSONOID
+	 * VERTEXOID  -> JSONBOID
+	 * EDGEOID    -> JSONBOID
+	 * UNKNOWNOID -> JSONBOID
+	 * We need to let postgres process these.
+	 */
+	if (ityp != JSONOID && otyp != JSONOID &&
+		ityp != VERTEXOID && ityp != EDGEOID &&
+		ityp != UNKNOWNOID)
+	{
+		if (ityp == JSONBOID)
+		{
+			if (OidIsValid(get_element_type(otyp)) ||
+				otyp == ANYARRAYOID ||
+				otyp == RECORDARRAYOID ||
+				type_is_rowtype(otyp))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot cast type jsonb to %s",
+						 format_type_be(otyp))));
+				return NULL;
+			}
+
+			/*
+			 * Cast our JSONBOID types here, exec phase will do the rest.
+			 * Note: The output of a jsonb string is double quoted (not a
+			 * proper format for strings). We defer this to the execution
+			 * phase of the cypher type cast.
+			 */
+
+			return build_cypher_cast_expr(expr, otyp, cctx, cform, loc);
+		}
+
+		/* Catch cypher to_jsonb casts here */
+		if (otyp == JSONBOID)
+		{
+			Node	   *last_srf = pstate->p_last_srf;
+
+			return ParseFuncOrColumn(pstate,
+									 list_make1(makeString("to_jsonb")),
+									 list_make1(expr), last_srf, NULL, loc);
+		}
+	}
 
 	/*
-	 * Any type can be coerced to types that are in type category "string" via
-	 * IO function. However, the output result of jsonb string is double quoted
-	 * string, and it is not proper format for string types. So, handle this
-	 * case directly.
+	 * UNKNOWNOID parameters will be handled by p_coerce_param_hook
+	 * Note: We need coerce_to_target_type done last to make sure that
+	 * cypher JSONBOID casts happen before any postgres JSONBOID casts.
+	 * In the event any get added to postgres in the future.
 	 */
-	if (ityp == JSONBOID && TypeCategory(btyp) == TYPCATEGORY_STRING)
-	{
-		tc = makeNode(CypherTypeCast);
-		tc->type = otyp;
-		tc->cform = cform;
-		tc->arg = (Expr *) expr;
-		tc->location = loc;
-
-		return (Node *) tc;
-	}
-
-	/* UNKNOWNOID parameters will be handled by p_coerce_param_hook */
-	node = coerce_to_target_type(pstate, expr, ityp, otyp, otypmod,
-								 cctx, cform, loc);
-	if (node != NULL)
-		return node;
-
-	if (ityp == JSONBOID)
-	{
-		CypherTypeCast *tc;
-
-		if (OidIsValid(get_element_type(otyp)) ||
-			otyp == ANYARRAYOID ||
-			otyp == RECORDARRAYOID ||
-			type_is_rowtype(otyp))
-		{
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("cannot cast type jsonb to %s",
-							format_type_be(otyp))));
-			return NULL;
-		}
-
-		switch (btyp)
-		{
-			/* There are type casting rules for these types. */
-			case BOOLOID:
-			case INT4OID:
-			case INT8OID:
-			case NUMERICOID:
-			case FLOAT8OID:
-				elog(ERROR, "unexpected type casting: jsonb to %s",
-					 format_type_be(btyp));
-				return NULL;
-			default:
-				break;
-		}
-
-		tc = makeNode(CypherTypeCast);
-		tc->type = btyp;
-		tc->cform = cform;
-		tc->arg = (Expr *) expr;
-		tc->location = loc;
-
-		return (Node *) tc;
-	}
-
-	if (otyp == JSONBOID)
-	{
-		Node	   *last_srf = pstate->p_last_srf;
-
-		return ParseFuncOrColumn(pstate, list_make1(makeString("to_jsonb")),
-								 list_make1(expr), last_srf, NULL, loc);
-	}
-
-	return NULL;
+	node = coerce_to_target_type(pstate, expr, ityp, otyp, otypmod, cctx,
+								 cform, loc);
+	return node;
 }
 
 static Node *
@@ -2269,6 +2286,54 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 }
 
 /*
+ * coerce_cypher_arg_to_boolean()
+ *      Coerce an argument of a construct that requires boolean input
+ *      (AND, OR, NOT, etc).  Also check that input is not a set.
+ *
+ * Returns the possibly-transformed node tree.
+ *
+ * As with coerce_type, pstate may be NULL if no special unknown-Param
+ * processing is wanted.
+ */
+static Node *
+coerce_cypher_arg_to_boolean(ParseState *pstate, Node *node,
+							 const char *constructName)
+{
+	Oid			inputTypeId = exprType(node);
+
+	if (inputTypeId != BOOLOID)
+	{
+		Node		*newnode;
+
+		newnode = coerce_expr(pstate, node, inputTypeId, BOOLOID, -1,
+							  COERCION_ASSIGNMENT, COERCE_IMPLICIT_CAST, -1);
+		if (newnode == NULL)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+			/* translator: first %s is name of a SQL construct, eg WHERE */
+					 errmsg("argument of %s must be type %s, not type %s",
+							constructName, "boolean",
+							format_type_be(inputTypeId)),
+							parser_errposition(pstate, exprLocation(node))));
+		}
+		node = newnode;
+	}
+
+	if (expression_returns_set(node))
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+		/* translator: %s is name of a SQL construct, eg WHERE */
+				 errmsg("argument of %s must not return a set",
+						constructName),
+						parser_errposition(pstate, exprLocation(node))));
+	}
+
+	return node;
+}
+
+/*
  * clause functions
  */
 
@@ -2282,7 +2347,7 @@ transformCypherWhere(ParseState *pstate, Node *clause, ParseExprKind exprKind)
 
 	qual = transformCypherExpr(pstate, clause, exprKind);
 
-	qual = coerce_to_boolean(pstate, qual, "WHERE");
+	qual = coerce_cypher_arg_to_boolean(pstate, qual, "WHERE");
 
 	return qual;
 }

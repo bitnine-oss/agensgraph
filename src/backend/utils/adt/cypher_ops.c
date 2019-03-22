@@ -22,7 +22,6 @@ static Jsonb *jnumber_op(PGFunction f, Jsonb *l, Jsonb *r);
 static Jsonb *numeric_to_jnumber(Numeric n);
 static void ereport_op(PGFunction f, Jsonb *l, Jsonb *r);
 static void ereport_op_str(const char *op, Jsonb *l, Jsonb *r);
-static Datum get_numeric_0_datum(void);
 static Datum jsonb_num(Jsonb *j, PGFunction f);
 
 Datum
@@ -285,64 +284,6 @@ ereport_op_str(const char *op, Jsonb *l, Jsonb *r)
 	ereport(ERROR,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg(msgfmt, lstr, op, rstr)));
-}
-
-Datum
-jsonb_bool(PG_FUNCTION_ARGS)
-{
-	Jsonb	   *j = PG_GETARG_JSONB(0);
-
-	if (JB_ROOT_IS_SCALAR(j))
-	{
-		JsonbValue *jv;
-
-		jv = getIthJsonbValueFromContainer(&j->root, 0);
-		switch (jv->type)
-		{
-			case jbvNull:
-				PG_RETURN_NULL();
-			case jbvString:
-				PG_RETURN_BOOL(jv->val.string.len > 0);
-			case jbvNumeric:
-				{
-					Datum		b;
-
-					if (numeric_is_nan(jv->val.numeric))
-						PG_RETURN_BOOL(false);
-
-					b = DirectFunctionCall2(numeric_ne,
-											NumericGetDatum(jv->val.numeric),
-											get_numeric_0_datum());
-					PG_RETURN_DATUM(b);
-				}
-			case jbvBool:
-				PG_RETURN_BOOL(jv->val.boolean);
-			default:
-				elog(ERROR, "unknown jsonb scalar type");
-		}
-	}
-
-	Assert(JB_ROOT_IS_OBJECT(j) || JB_ROOT_IS_ARRAY(j));
-	PG_RETURN_BOOL(JB_ROOT_COUNT(j) > 0);
-}
-
-static Datum
-get_numeric_0_datum(void)
-{
-	static Datum n = 0;
-
-	if (n == 0)
-	{
-		MemoryContext oldMemoryContext;
-
-		oldMemoryContext = MemoryContextSwitchTo(TopMemoryContext);
-
-		n = DirectFunctionCall1(int8_numeric, Int64GetDatum(0));
-
-		MemoryContextSwitchTo(oldMemoryContext);
-	}
-
-	return n;
 }
 
 Datum
