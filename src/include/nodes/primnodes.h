@@ -21,7 +21,6 @@
 #include "nodes/bitmapset.h"
 #include "nodes/pg_list.h"
 
-
 /* ----------------------------------------------------------------
  *						node definitions
  * ----------------------------------------------------------------
@@ -1504,12 +1503,14 @@ typedef struct OnConflictExpr
 /*
  * Cypher Query Language
  */
-
 typedef struct CypherTypeCast
 {
 	Expr		xpr;
 	Oid			type;
+	/* add coercion context and type category for runtime type casting */
+	CoercionContext cctx;
 	CoercionForm cform;
+	char		typcategory;
 	Expr	   *arg;
 	int			location;
 } CypherTypeCast;

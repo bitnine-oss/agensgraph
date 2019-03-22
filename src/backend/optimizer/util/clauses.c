@@ -3580,10 +3580,12 @@ eval_const_expressions_mutator(Node *node,
 
 				newarg = eval_const_expressions_mutator((Node *) tc->arg,
 														context);
-
 				newtc = makeNode(CypherTypeCast);
 				newtc->type = tc->type;
+				/* add cctx and typcategory for runtime type casting */
+				newtc->cctx = tc->cctx;
 				newtc->cform = tc->cform;
+				newtc->typcategory = tc->typcategory;
 				newtc->arg = (Expr *) newarg;
 				newtc->location = tc->location;
 

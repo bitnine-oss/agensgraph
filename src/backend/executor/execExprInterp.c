@@ -66,6 +66,7 @@
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
+#include "parser/parse_coerce.h"
 #include "parser/parse_cypher_expr.h"
 #include "parser/parsetree.h"
 #include "pgstat.h"
@@ -77,6 +78,9 @@
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
+
+/* added for TopMemoryContext */
+#include "utils/memutils.h"
 
 
 /*
@@ -162,7 +166,7 @@ static JsonbValue *cypher_access_mem_array(JsonbValue *ajv,
 static int cypher_access_range(CypherIndexResult *cidxres, const int nelems,
 							   const int defidx);
 static int cypher_access_index(CypherIndexResult *cidxres, const int nelems);
-
+static Datum get_numeric_0_datum(void);
 
 /*
  * Prepare ExprState for interpreted execution.
@@ -3738,6 +3742,29 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 	*op->resnull = false;
 }
 
+/*
+ * helper function to provide a constant numeric ZERO datum,
+ * lazy initialized.
+ */
+static Datum
+get_numeric_0_datum(void)
+{
+	static Datum ZERO = 0;
+
+	if (ZERO == 0)
+	{
+		MemoryContext oldMemoryContext;
+
+		oldMemoryContext = MemoryContextSwitchTo(TopMemoryContext);
+
+		ZERO = DirectFunctionCall1(int8_numeric, Int64GetDatum(0));
+
+		MemoryContextSwitchTo(oldMemoryContext);
+	}
+
+	return ZERO;
+}
+
 void
 ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 {
@@ -3745,42 +3772,141 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 	JsonbValue *jv;
 	char	   *str;
 	FunctionCallInfo fcinfo_data_in;
+	CypherTypeCast *cfn_expr;
+	Oid			typeCastOid;
+	TYPCATEGORY typcategory;
+	CoercionContext cctx;
+
+	/* validate input */
+	Assert(op != NULL);
 
 	if (*op->resnull)
 		return;
 
 	argjb = DatumGetJsonb(*op->resvalue);
+
+	fcinfo_data_in = op->d.cyphertypecast.fcinfo_data_in;
+	Assert(fcinfo_data_in != NULL);
+
+	cfn_expr = (CypherTypeCast *) fcinfo_data_in->flinfo->fn_expr;
+	Assert(cfn_expr != NULL);
+
+	typeCastOid = fcinfo_data_in->arg[1];
+	typcategory = cfn_expr->typcategory;
+	cctx = cfn_expr->cctx;
+
+	/*
+	 * if the jsonb value is not a scalar, check to see if the
+	 * type cast is to boolean
+	 */
 	if (!JB_ROOT_IS_SCALAR(argjb))
 	{
-		ereport(ERROR,
-				(errcode(ERRCODE_DATATYPE_MISMATCH),
-				 errmsg("cannot cast ... (not scalar)")));
+		if (typcategory == TYPCATEGORY_BOOLEAN)
+		{
+			Assert(JB_ROOT_IS_OBJECT(argjb) || JB_ROOT_IS_ARRAY(argjb));
+			*op->resvalue = BoolGetDatum(JB_ROOT_COUNT(argjb) > 0);
+			*op->resnull = false;
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("cannot cast ... (not scalar)")));
+		}
 		return;
 	}
 
+	/*
+	 * get the jsonb value and switch on its type to determine if the
+	 * cast is appropriate. Note: We always allow explicit casts.
+	 */
 	jv = getIthJsonbValueFromContainer(&argjb->root, 0);
 	switch (jv->type)
 	{
 		case jbvNull:
+			/* Null can be cast into all others */
 			*op->resvalue = (Datum) 0;
 			*op->resnull = true;
 			return;
 
 		case jbvString:
-			str = pnstrdup(jv->val.string.val, jv->val.string.len);
+			/* string to boolean cast */
+			if (typcategory == TYPCATEGORY_BOOLEAN)
+			{
+				*op->resvalue = BoolGetDatum(jv->val.string.len > 0);
+				*op->resnull = false;
+				return;
+			}
+
+			/* string to string and explicit casts */
+			if (typcategory == TYPCATEGORY_STRING ||
+				cctx == COERCION_EXPLICIT)
+				str = pnstrdup(jv->val.string.val, jv->val.string.len);
+			else
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_CANNOT_COERCE),
+						 errmsg("cannot cast %s (jsonb type string) to %s",
+								JsonbToCString(NULL, &argjb->root,
+											   VARSIZE(argjb)),
+								format_type_be(typeCastOid))));
+			}
 			break;
 
 		case jbvNumeric:
+			/* numeric to boolean casts */
+			if (typcategory == TYPCATEGORY_BOOLEAN)
+			{
+				if (numeric_is_nan(jv->val.numeric))
+					*op->resvalue = BoolGetDatum(false);
+				else
+				{
+					Datum		d;
+					d = DirectFunctionCall2(numeric_ne, get_numeric_0_datum(),
+											NumericGetDatum(jv->val.numeric));
+					*op->resvalue = BoolGetDatum(d);
+				}
+				*op->resnull = false;
+				return;
+			}
+
+			/* numeric to numeric and explicit casts */
+			if (typcategory == TYPCATEGORY_NUMERIC ||
+				cctx == COERCION_EXPLICIT)
+				str = JsonbToCString(NULL, &argjb->root, VARSIZE(argjb));
+			else
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_CANNOT_COERCE),
+						 errmsg("cannot cast %s (jsonb type numeric) to %s",
+								JsonbToCString(NULL, &argjb->root,
+											   VARSIZE(argjb)),
+								format_type_be(typeCastOid))));
+
+			}
+			break;
+
 		case jbvBool:
-			str = JsonbToCString(NULL, &argjb->root, VARSIZE(argjb));
+			/* check for boolean category or explicit cast */
+			if (typcategory == TYPCATEGORY_BOOLEAN ||
+				cctx == COERCION_EXPLICIT)
+				str = JsonbToCString(NULL, &argjb->root, VARSIZE(argjb));
+			else
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_CANNOT_COERCE),
+						 errmsg("cannot cast %s (jsonb type bool) to %s",
+								JsonbToCString(NULL, &argjb->root,
+											   VARSIZE(argjb)),
+								format_type_be(typeCastOid))));
+			}
 			break;
 
 		default:
-			elog(ERROR, "cannot happen");
+			elog(ERROR, "unknown jsonb scalar type");
 			return;
 	}
 
-	fcinfo_data_in = op->d.cyphertypecast.fcinfo_data_in;
 	fcinfo_data_in->arg[0] = PointerGetDatum(str);
 	fcinfo_data_in->argnull[0] = false;
 

@@ -125,7 +125,7 @@ DROP GRAPH vertex_labels_simple CASCADE;
 -- Added test for AG249, use ln() for all log() calls
 -- Create initial graph
 CREATE GRAPH ag249_log_to_ln;
-SET graph_path = ag249_log;
+SET graph_path = ag249_log_to_ln;
 CREATE VLABEL numbers;
 CREATE (:numbers {string: '10', numeric: 10});
 

@@ -2584,6 +2584,8 @@ _readCypherTypeCast(void)
 
 	READ_OID_FIELD(type);
 	READ_ENUM_FIELD(cform, CoercionForm);
+	READ_ENUM_FIELD(cctx, CoercionContext);
+	READ_CHAR_FIELD(typcategory);
 	READ_NODE_FIELD(arg);
 	READ_LOCATION_FIELD(location);
 
