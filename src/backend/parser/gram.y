@@ -652,6 +652,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 %type <node>	cypher_return cypher_with
 				cypher_skip_opt cypher_limit_opt cypher_where cypher_where_opt
+				cypher_unwind
 %type <list>	cypher_return_items cypher_distinct_opt
 				cypher_order_by_opt cypher_sort_items
 %type <target>	cypher_return_item
@@ -777,7 +778,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 	TRUNCATE TRUSTED TYPE_P TYPES_P
 
 	UNBOUNDED UNCOMMITTED UNENCRYPTED UNION UNIQUE UNKNOWN UNLISTEN UNLOGGED
-	UNTIL UPDATE USER USING
+	UNTIL UNWIND UPDATE USER USING
 
 	VACUUM VALID VALIDATE VALIDATOR VALUE_P VALUES VARCHAR VARIADIC VARYING
 	VERBOSE VERSION_P VIEW VIEWS VLABEL VOLATILE
@@ -15706,6 +15707,7 @@ reserved_keyword:
 			| TRUE_P
 			| UNION
 			| UNIQUE
+			| UNWIND
 			| USER
 			| USING
 			| VARIADIC
@@ -16148,6 +16150,7 @@ cypher_clause_head:
 			| cypher_create
 			| cypher_merge
 			| cypher_load
+			| cypher_unwind
 		;
 
 cypher_clause:
@@ -16215,6 +16218,14 @@ cypher_read:
 					n->detail = $1;
 					$$ = (Node *) n;
 				}
+			| cypher_unwind
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
 			| cypher_read cypher_read_clauses
 				{
 					CypherClause *n;
@@ -16230,6 +16241,7 @@ cypher_read_clauses:
 			cypher_match
 			| cypher_with
 			| cypher_load
+			| cypher_unwind
 		;
 
 cypher_expr:
@@ -18163,6 +18175,23 @@ cypher_load:
 					n = makeNode(CypherLoadClause);
 					n->relation = $3;
 					n->relation->alias = alias;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_unwind:
+			UNWIND cypher_expr AS ColLabel
+				{
+					ResTarget  *res;
+					CypherUnwindClause *n;
+
+					res = makeNode(ResTarget);
+					res->name = $4;
+					res->val = (Node *) $2;
+					res->location = @2;
+
+					n = makeNode(CypherUnwindClause);
+					n->target = res;
 					$$ = (Node *) n;
 				}
 		;

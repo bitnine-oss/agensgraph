@@ -515,6 +515,7 @@ typedef enum NodeTag
 	T_CypherSetClause,
 	T_CypherMergeClause,
 	T_CypherLoadClause,
+	T_CypherUnwindClause,
 	T_CypherPath,
 	T_CypherNode,
 	T_CypherRel,
@@ -555,7 +556,7 @@ typedef enum NodeTag
 	/*
 	 * TAGS FOR GRAPH NODES (graphnodes.h)
 	 */
-	T_GraphPath = 1050,
+	T_GraphPath,
 	T_GraphVertex,
 	T_GraphEdge,
 	T_GraphSetProp,

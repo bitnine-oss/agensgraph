@@ -1334,6 +1334,22 @@ RETURN properties(vt1);
 
 DROP GRAPH ag189 CASCADE;
 
+--
+-- UNWIND
+--
+
+UNWIND [1, 2, 3] AS i RETURN i;
+
+CREATE GRAPH test_unwind;
+CREATE ({a: [1, 2, 3]}), ({a: [4, 5, 6]});
+MATCH (n) WITH n.a AS a UNWIND a AS i RETURN *;
+DROP GRAPH test_unwind CASCADE;
+
+PREPARE t(_jsonb) AS UNWIND $1 AS i UNWIND i.a AS j UNWIND j AS k RETURN k;
+EXECUTE t(ARRAY['{"a": [[1, 2], [3, 4]]}'::jsonb,
+                '{"a": [[5, 6], [7, 8]]}'::jsonb]);
+DEALLOCATE t;
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;

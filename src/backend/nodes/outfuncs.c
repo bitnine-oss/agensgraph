@@ -4034,6 +4034,14 @@ _outCypherLoadClause(StringInfo str, const CypherLoadClause *node)
 }
 
 static void
+_outCypherUnwindClause(StringInfo str, const CypherUnwindClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERUNWINDCLAUSE");
+
+	WRITE_NODE_FIELD(target);
+}
+
+static void
 _outCypherPath(StringInfo str, const CypherPath *node)
 {
 	WRITE_NODE_TYPE("CYPHERPATH");
@@ -4870,6 +4878,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_CypherLoadClause:
 				_outCypherLoadClause(str, obj);
+				break;
+			case T_CypherUnwindClause:
+				_outCypherUnwindClause(str, obj);
 				break;
 			case T_CypherPath:
 				_outCypherPath(str, obj);

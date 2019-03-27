@@ -999,6 +999,108 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 	return qry;
 }
 
+Query *
+transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherUnwindClause *detail = (CypherUnwindClause *) clause->detail;
+	Query	   *qry;
+	ResTarget  *target;
+	int			targetloc;
+	Node	   *expr;
+	Oid			type;
+	char	   *funcname = NULL;
+	FuncCall   *unwind;
+	ParseExprKind sv_expr_kind;
+	Node	   *last_srf;
+	Node	   *funcexpr;
+	TargetEntry *te;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	/*
+	 * Get all the target variables from the previous clause and add them to
+	 * this query as target variables so that next clauses can access them.
+	 */
+	if (clause->prev != NULL)
+	{
+		RangeTblEntry *rte;
+
+		rte = transformClause(pstate, clause->prev);
+
+		qry->targetList = makeTargetListFromRTE(pstate, rte);
+	}
+
+	target = detail->target;
+	targetloc = exprLocation((Node *) target);
+
+	/*
+	 * If the name (e.g. "n" in "UNWNID v AS n") is the same with the name of
+	 * targets from the previous clause, throw an error.
+	 *
+	 * e.g. MATCH (n)-[]->(m) UNWIND n.a AS m ...
+	 *                     ^                ^
+	 */
+	if (findTarget(qry->targetList, target->name) != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_ALIAS),
+				 errmsg("duplicate variable \"%s\"", target->name),
+				 parser_errposition(pstate, targetloc)));
+
+	expr = transformCypherExpr(pstate, target->val, EXPR_KIND_SELECT_TARGET);
+	type = exprType(expr);
+	if (type == JSONBOID)
+	{
+		/*
+		 * Only jsonb array works. It throws an error for all other types.
+		 * This is the best because we don't know the actual value in the jsonb
+		 * value at this point.
+		 */
+		funcname = "jsonb_array_elements";
+	}
+	else if (type_is_array(type))
+	{
+		funcname = "unnest";
+	}
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("expression must be jsonb or array, but %s",
+						format_type_be(type)),
+				 parser_errposition(pstate, targetloc)));
+	}
+	unwind = makeFuncCall(list_make1(makeString(funcname)), NIL, -1);
+
+	/*
+	 * The logic here is the same with the one in transformTargetEntry().
+	 * We cannot use this function because we already transformed the target
+	 * expression above to get the type of it.
+	 */
+	sv_expr_kind = pstate->p_expr_kind;
+	pstate->p_expr_kind = EXPR_KIND_SELECT_TARGET;
+	last_srf = pstate->p_last_srf;
+	funcexpr = ParseFuncOrColumn(pstate, unwind->funcname, list_make1(expr),
+								 last_srf, unwind, targetloc);
+	pstate->p_expr_kind = sv_expr_kind;
+	te = makeTargetEntry((Expr *) funcexpr,
+						 (AttrNumber) pstate->p_next_resno++,
+						 target->name, false);
+
+	qry->targetList = lappend(qry->targetList, te);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
+
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
 /* check whether resulting columns have a name or not */
 static void
 checkNameInItems(ParseState *pstate, List *items, List *targetList)
