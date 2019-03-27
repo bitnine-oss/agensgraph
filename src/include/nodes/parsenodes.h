@@ -3667,18 +3667,24 @@ typedef struct CypherSetClause
 	List	   *items;
 } CypherSetClause;
 
-typedef struct CypherLoadClause
-{
-	NodeTag		type;
-	RangeVar   *relation;	/* a relation to load */
-} CypherLoadClause;
-
 typedef struct CypherMergeClause
 {
 	NodeTag		type;
 	List	   *pattern;
 	List	   *sets;
 } CypherMergeClause;
+
+typedef struct CypherLoadClause
+{
+	NodeTag		type;
+	RangeVar   *relation;	/* a relation to load */
+} CypherLoadClause;
+
+typedef struct CypherUnwindClause
+{
+	NodeTag		type;
+	ResTarget  *target;
+} CypherUnwindClause;
 
 typedef enum CPathKind
 {

@@ -3038,6 +3038,9 @@ transformCypherStmt(ParseState *pstate, CypherStmt *stmt)
 			case T_CypherLoadClause:
 				read = true;
 				break;
+			case T_CypherUnwindClause:
+				read = true;
+				break;
 			default:
 				elog(ERROR, "unrecognized Cypher clause type: %d", type);
 				break;
@@ -3076,6 +3079,9 @@ transformCypherClause(ParseState *pstate, CypherClause *clause)
 			break;
 		case T_CypherLoadClause:
 			qry = transformCypherLoadClause(pstate, clause);
+			break;
+		case T_CypherUnwindClause:
+			qry = transformCypherUnwindClause(pstate, clause);
 			break;
 		default:
 			elog(ERROR, "unrecognized Cypher clause type: %d",

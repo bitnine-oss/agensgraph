@@ -3184,6 +3184,15 @@ _equalCypherLoadClause(const CypherLoadClause *a, const CypherLoadClause *b)
 }
 
 static bool
+_equalCypherUnwindClause(const CypherUnwindClause *a,
+						 const CypherUnwindClause *b)
+{
+	COMPARE_NODE_FIELD(target);
+
+	return true;
+}
+
+static bool
 _equalCypherPath(const CypherPath *a, const CypherPath *b)
 {
 	COMPARE_SCALAR_FIELD(kind);
@@ -4173,6 +4182,9 @@ equal(const void *a, const void *b)
 			break;
 		case T_CypherLoadClause:
 			retval = _equalCypherLoadClause(a, b);
+			break;
+		case T_CypherUnwindClause:
+			retval = _equalCypherUnwindClause(a, b);
 			break;
 		case T_CypherPath:
 			retval = _equalCypherPath(a, b);

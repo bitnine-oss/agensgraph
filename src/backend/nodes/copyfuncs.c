@@ -5024,6 +5024,16 @@ _copyCypherLoadClause(const CypherLoadClause *from)
 	return newnode;
 }
 
+static CypherUnwindClause *
+_copyCypherUnwindClause(const CypherUnwindClause *from)
+{
+	CypherUnwindClause *newnode = makeNode(CypherUnwindClause);
+
+	COPY_NODE_FIELD(target);
+
+	return newnode;
+}
+
 static CypherPath *
 _copyCypherPath(const CypherPath *from)
 {
@@ -6219,6 +6229,9 @@ copyObjectImpl(const void *from)
 			break;
 		case T_CypherLoadClause:
 			retval = _copyCypherLoadClause(from);
+			break;
+		case T_CypherUnwindClause:
+			retval = _copyCypherUnwindClause(from);
 			break;
 		case T_CypherPath:
 			retval = _copyCypherPath(from);

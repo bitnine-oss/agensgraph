@@ -3387,6 +3387,51 @@ DETAIL:  drop cascades to sequence ag189.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel test
+--
+-- UNWIND
+--
+UNWIND [1, 2, 3] AS i RETURN i;
+ i 
+---
+ 1
+ 2
+ 3
+(3 rows)
+
+CREATE GRAPH test_unwind;
+CREATE ({a: [1, 2, 3]}), ({a: [4, 5, 6]});
+MATCH (n) WITH n.a AS a UNWIND a AS i RETURN *;
+     a     | i 
+-----------+---
+ [1, 2, 3] | 1
+ [1, 2, 3] | 2
+ [1, 2, 3] | 3
+ [4, 5, 6] | 4
+ [4, 5, 6] | 5
+ [4, 5, 6] | 6
+(6 rows)
+
+DROP GRAPH test_unwind CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence test_unwind.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+PREPARE t(_jsonb) AS UNWIND $1 AS i UNWIND i.a AS j UNWIND j AS k RETURN k;
+EXECUTE t(ARRAY['{"a": [[1, 2], [3, 4]]}'::jsonb,
+                '{"a": [[5, 6], [7, 8]]}'::jsonb]);
+ k 
+---
+ 1
+ 2
+ 3
+ 4
+ 5
+ 6
+ 7
+ 8
+(8 rows)
+
+DEALLOCATE t;
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
