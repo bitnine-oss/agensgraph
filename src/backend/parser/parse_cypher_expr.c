@@ -1925,16 +1925,18 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 	 * VERTEXOID  -> JSONBOID
 	 * EDGEOID    -> JSONBOID
 	 * UNKNOWNOID -> JSONBOID
+	 * JSONBOID   -> ANY*OID  ANYOID & (IsPolymorphicType)
 	 * We need to let postgres process these.
 	 */
 	if (ityp != JSONOID && otyp != JSONOID &&
 		ityp != VERTEXOID && ityp != EDGEOID &&
-		ityp != UNKNOWNOID)
+		ityp != UNKNOWNOID &&
+		otyp != ANYOID &&
+		!IsPolymorphicType(otyp))
 	{
 		if (ityp == JSONBOID)
 		{
 			if (OidIsValid(get_element_type(otyp)) ||
-				otyp == ANYARRAYOID ||
 				otyp == RECORDARRAYOID ||
 				type_is_rowtype(otyp))
 			{
