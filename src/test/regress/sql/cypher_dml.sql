@@ -1334,6 +1334,65 @@ RETURN properties(vt1);
 
 DROP GRAPH ag189 CASCADE;
 
+-- AG-121
+-- IN expression
+
+CREATE graph ag121;
+
+-- data generation
+
+CREATE (:person {age:1});
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+CREATE (:person {age:7, name:'AAA'});
+CREATE (:person {age:9, name:'BBB'});
+
+CREATE property INDEX ON person (age);
+
+-- check grammar
+RETURN 1 IN 1;
+RETURN 1 IN [1];
+
+-- sublink
+CREATE TABLE t1(i1 int);
+INSERT INTO t1 VALUES(1);
+INSERT INTO t1 VALUES(2);
+INSERT INTO t1 VALUES(3);
+
+MATCH (n:person) WHERE n.age IN (select to_jsonb(i1) FROM tmp) RETURN count(n);
+
+DROP TABLE t1;
+
+-- plan : index scan
+EXPLAIN (costs off)
+	MATCH (n:person) WHERE n.age IN [1,2,3] RETURN n;
+EXPLAIN (costs off)
+	MATCH (p:person {name:'AAA'}), (t:person {name:'BBB'})
+	MATCH (n:person) WHERE n.age IN [p.age, 11, t.age] RETURN n;
+-- plan : seq scan
+CREATE (:age {youth:[1,2,3,4,5,6,7,8,9]});
+
+EXPLAIN (costs off)
+	MATCH (n:person), (b:age) WHERE n.age IN b.youth RETURN n;
+
+EXPLAIN (costs off)
+	MATCH (a:age) WITH a.youth as youth
+	MATCH (n:person) WHERE n.age in youth RETURN n;
+
+DROP GRAPH ag121 CASCADE;
+
 -- cleanup
 
 DROP GRAPH srf CASCADE;

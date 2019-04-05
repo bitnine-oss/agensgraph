@@ -3387,6 +3387,115 @@ DETAIL:  drop cascades to sequence ag189.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel test
+-- AG-121
+-- IN expression
+CREATE graph ag121;
+-- data generation
+CREATE (:person {age:1});
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+MATCH (n:person) CREATE (m:person) SET m.age = n.age+1;
+CREATE (:person {age:7, name:'AAA'});
+CREATE (:person {age:9, name:'BBB'});
+CREATE property INDEX ON person (age);
+-- check grammar
+RETURN 1 IN 1;
+ERROR:  CypherList is expected but integer
+LINE 1: RETURN 1 IN 1;
+                    ^
+RETURN 1 IN [1];
+ ?column? 
+----------
+ t
+(1 row)
+
+-- sublink
+CREATE TABLE t1(i1 int);
+INSERT INTO t1 VALUES(1);
+INSERT INTO t1 VALUES(2);
+INSERT INTO t1 VALUES(3);
+MATCH (n:person) WHERE n.age IN (select to_jsonb(i1) FROM tmp) RETURN count(n);
+ERROR:  relation "tmp" does not exist
+LINE 1: ...:person) WHERE n.age IN (select to_jsonb(i1) FROM tmp) RETUR...
+                                                             ^
+DROP TABLE t1;
+-- plan : index scan
+EXPLAIN (costs off)
+	MATCH (n:person) WHERE n.age IN [1,2,3] RETURN n;
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Bitmap Heap Scan on person n
+   Recheck Cond: (properties.'age'::text = ANY (ARRAY[to_jsonb(1), to_jsonb(2), to_jsonb(3)]))
+   ->  Bitmap Index Scan on person_age_idx
+         Index Cond: (properties.'age'::text = ANY (ARRAY[to_jsonb(1), to_jsonb(2), to_jsonb(3)]))
+(4 rows)
+
+EXPLAIN (costs off)
+	MATCH (p:person {name:'AAA'}), (t:person {name:'BBB'})
+	MATCH (n:person) WHERE n.age IN [p.age, 11, t.age] RETURN n;
+                                                                                  QUERY PLAN                                                                                   
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Nested Loop
+   ->  Nested Loop
+         ->  Seq Scan on person p
+               Filter: (properties.'name'::text = '"AAA"'::jsonb)
+         ->  Materialize
+               ->  Seq Scan on person t
+                     Filter: (properties.'name'::text = '"BBB"'::jsonb)
+   ->  Bitmap Heap Scan on person n
+         Recheck Cond: ((properties.'age'::text = p.properties.'age'::text) OR (properties.'age'::text = to_jsonb(11)) OR (properties.'age'::text = t.properties.'age'::text))
+         ->  BitmapOr
+               ->  Bitmap Index Scan on person_age_idx
+                     Index Cond: (properties.'age'::text = p.properties.'age'::text)
+               ->  Bitmap Index Scan on person_age_idx
+                     Index Cond: (properties.'age'::text = to_jsonb(11))
+               ->  Bitmap Index Scan on person_age_idx
+                     Index Cond: (properties.'age'::text = t.properties.'age'::text)
+(16 rows)
+
+-- plan : seq scan
+CREATE (:age {youth:[1,2,3,4,5,6,7,8,9]});
+EXPLAIN (costs off)
+	MATCH (n:person), (b:age) WHERE n.age IN b.youth RETURN n;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Nested Loop
+   Join Filter: (b.properties.'youth'::text @> n.properties.'age'::text)
+   ->  Seq Scan on person n
+   ->  Materialize
+         ->  Seq Scan on age b
+(5 rows)
+
+EXPLAIN (costs off)
+	MATCH (a:age) WITH a.youth as youth
+	MATCH (n:person) WHERE n.age in youth RETURN n;
+                               QUERY PLAN                                
+-------------------------------------------------------------------------
+ Nested Loop
+   Join Filter: (a.properties.'youth'::text @> n.properties.'age'::text)
+   ->  Seq Scan on person n
+   ->  Materialize
+         ->  Seq Scan on age a
+(5 rows)
+
+DROP GRAPH ag121 CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence ag121.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel person
+drop cascades to vlabel age
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
