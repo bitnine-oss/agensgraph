@@ -2179,6 +2179,10 @@ typedef struct Hash2SideState
 	double          totalPaths;
 	long            hops;
 	Size            spacePeak;
+	bool			isFieldSelect;	/* Track FieldSelect exprs */
+	Param		   *correctedParam;	/* Needed to correct FieldSelect exprs */
+	HeapTuple		vertexRow;		/* For reusing the vertexRow */
+	TupleDesc		tupleDesc;		/* Tuple descriptor for above vertexRow */
 } Hash2SideState;
 
 typedef struct ShortestpathState
