@@ -29,6 +29,8 @@
 #include "utils/memutils.h"
 #include "utils/graph.h"
 
+#include "utils/typcache.h"
+#include "funcapi.h"
 
 /*
  * States of the ExecShortestpath state machine
@@ -58,6 +60,9 @@ static TupleTableSlot *ExecShortestpathProject(ShortestpathState *node,
 											   long               lenInnerids,
 											   int                sizeGraphid,
 											   int                sizeRowid);
+static HeapTuple replace_vertexRow_graphid(TupleDesc tupleDesc,
+										   HeapTuple vertexRow,
+										   Datum graphid);
 
 /* ----------------------------------------------------------------
  *		ExecShortestpath
@@ -131,7 +136,7 @@ ExecShortestpath(PlanState *pstate)
 					node->endVid = DatumGetGraphid(ExecEvalExpr(node->target, econtext, &isNull));
 
 				node->sp_JoinState = SP_ROTATE_PLANSTATE;
-				
+
 				hashtable = ExecHash2SideTableCreate(outerNode,
 													 node->sp_HashOperators,
 													 1,
@@ -167,7 +172,7 @@ ExecShortestpath(PlanState *pstate)
 				innerNode->totalPaths += 1;
 				innerNode->hashtable = hashtable;
 				hashtable = NULL;
-				
+
 				if (node->minhops == 0 && node->startVid == node->endVid)
 				{
 					TupleTableSlot *result;
@@ -181,7 +186,7 @@ ExecShortestpath(PlanState *pstate)
 					node->numResults++;
 					return result;
 				}
-				
+
 				/* FALL THRU */
 
 			case SP_ROTATE_PLANSTATE:
@@ -610,6 +615,10 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 	List	   *rclauses;
 	List	   *hoperators;
 	ListCell   *l;
+	Hash2SideState *outerH2SNode;
+	Hash2SideState *innerH2SNode;
+	HeapTuple		vertexRow = NULL;
+	TupleDesc		tupleDesc = NULL;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -759,6 +768,56 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 	spstate->outerNode = (Hash2SideState *)outerPlanState(spstate);
 	spstate->innerNode = (Hash2SideState *)innerPlanState(spstate);
 
+	outerH2SNode = spstate->outerNode;
+	innerH2SNode = spstate->innerNode;
+
+	/*
+	 * Shortestpath was originally written without expectations that the
+	 * start and end nodes might reside in FieldSelect expressions. This
+	 * code is to address that deficit. Additionally, it is added here to
+	 * help with memory conservation by providing two vertex rows that
+	 * can reused - one for the start, the other for the end.
+	 */
+	if (IsA(outerH2SNode->key->expr, FieldSelect) ||
+		IsA(innerH2SNode->key->expr, FieldSelect))
+	{
+		Datum		values[Natts_vertex] = {0, 0, 0};
+		bool		isnull[Natts_vertex] = {false, true, true};
+
+		tupleDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
+		Assert(tupleDesc->natts == Natts_vertex);
+
+		vertexRow = heap_form_tuple(tupleDesc, values, isnull);
+	}
+
+	if (IsA(outerH2SNode->key->expr, FieldSelect))
+	{
+		FieldSelect		*fs = (FieldSelect *) outerH2SNode->key->expr;
+		outerH2SNode->isFieldSelect = true;
+		outerH2SNode->correctedParam = (Param *) (fs->arg);
+	}
+	else
+	{
+		outerH2SNode->isFieldSelect = false;
+		outerH2SNode->correctedParam = (Param *) outerH2SNode->key->expr;
+	}
+	outerH2SNode->vertexRow = vertexRow;
+	outerH2SNode->tupleDesc =  tupleDesc;
+
+	if (IsA(innerH2SNode->key->expr, FieldSelect))
+	{
+		FieldSelect		*fs = (FieldSelect *) innerH2SNode->key->expr;
+		innerH2SNode->isFieldSelect = true;
+		innerH2SNode->correctedParam = (Param *) (fs->arg);
+	}
+	else
+	{
+		innerH2SNode->isFieldSelect = false;
+		innerH2SNode->correctedParam = (Param *) innerH2SNode->key->expr;
+	}
+	innerH2SNode->vertexRow = vertexRow;
+	innerH2SNode->tupleDesc = tupleDesc;
+
 	return spstate;
 }
 
@@ -771,6 +830,18 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 void
 ExecEndShortestpath(ShortestpathState *node)
 {
+	/* Release the tuple descriptor in the Hash2SideState nodes */
+	if (node->outerNode->tupleDesc)
+		ReleaseTupleDesc(node->outerNode->tupleDesc);
+	else if (node->innerNode->tupleDesc)
+		ReleaseTupleDesc(node->innerNode->tupleDesc);
+
+	/* Release the vertexRow container in the Hash2SideState nodes */
+	if (node->outerNode->vertexRow)
+		heap_freetuple(node->outerNode->vertexRow);
+	else if (node->innerNode->vertexRow)
+		heap_freetuple(node->innerNode->vertexRow);
+
 	/*
 	 * Free the exprcontext
 	 */
@@ -870,6 +941,38 @@ ExecShortestpathProcOuterNode(PlanState *node, ShortestpathState *spstate)
 	return slot;
 }
 
+/*
+ * Helper function to replace the graphid portion of a vertex
+ * row. It requires the vertex row and tuple descriptor be non NULL and
+ * the attbyval attribute be set. It returns a pointer to the updated
+ * vertex row as a HeapTuple on conclusion.
+ */
+static HeapTuple
+replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
+						  Datum graphid)
+{
+	HeapTupleHeader	vheader;
+	Form_pg_attribute attribute;
+	char			*vgdata;
+
+	/* Verify input constraints */
+	Assert(tupleDesc != NULL);
+	Assert(vertexRow != NULL);
+
+	attribute = tupleDesc->attrs[Anum_vertex_id-1];
+
+	/* This function only works for element 1, graphid, by value */
+	Assert(attribute->attbyval);
+
+	vheader = vertexRow->t_data;
+	vgdata = (char *) vheader + vheader->t_hoff;
+	vgdata = (char *) att_align_nominal(vgdata, attribute->attalign);
+
+	store_att_byval(vgdata, graphid, attribute->attlen);
+
+	return vertexRow;
+}
+
 static bool
 ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate)
 {
@@ -901,18 +1004,20 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 				int              hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 				int              paramno;
 				ParamExecData   *prm;
+				Graphid			*graphid;
 
 				keytable->spaceUsed -= hashTupleSize;
 
 				/* next tuple in this chunk */
 				spstate->sp_CurKeyIdx += MAXALIGN(hashTupleSize);
 
-				if (*((Graphid*)(tuple+1)) == 0) continue;
+				graphid = (Graphid *) (tuple+1);
+				if (*graphid == 0) continue;
 				if ((node->hops > 1 &&
 					 tuple->t_len == sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize))
 				{
 					ExecHash2SideTableInsertGraphid(spstate->sp_OuterTable,
-													*((Graphid*)(tuple+1)),
+													*graphid,
 													hashTuple->hashvalue,
 													node,
 													spstate,
@@ -927,9 +1032,19 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 					   tuple + 1,
 					   tuple->t_len - sizeof(*tuple));
 				spstate->sp_OuterTuple->t_len += sizeof(Graphid) + spstate->sp_RowidSize;
-				paramno = ((Param *) node->key->expr)->paramid;
+				paramno = node->correctedParam->paramid;
 				prm = &(spstate->js.ps.ps_ExprContext->ecxt_param_exec_vals[paramno]);
-				prm->value = *((Graphid*)(tuple+1));
+
+				if (node->isFieldSelect)
+				{
+					node->vertexRow = replace_vertexRow_graphid(node->tupleDesc,
+																node->vertexRow,
+																*graphid);
+					prm->value = HeapTupleGetDatum(node->vertexRow);
+				}
+				else
+					prm->value = *graphid;
+
 				outerPlanState(node)->chgParam = bms_add_member(outerPlanState(node)->chgParam,
 																paramno);
 				ExecReScan(outerPlanState(node));
@@ -937,7 +1052,7 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 				if (node->hops > 1)
 				{
 					ExecHash2SideTableInsertGraphid(spstate->sp_OuterTable,
-													*((Graphid*)(tuple+1)),
+													*graphid,
 													hashTuple->hashvalue,
 													node,
 													spstate,
@@ -960,13 +1075,15 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 				MinimalTuple   tuple = ExecFetchSlotMinimalTuple(slot);
 				int            paramno;
 				ParamExecData *prm;
+				Graphid		   *graphid;
 
-				if (*((Graphid*)(tuple+1)) == 0) continue;
+				graphid = (Graphid *) (tuple+1);
+				if (*graphid == 0) continue;
 				if ((node->hops > 1 &&
 					 tuple->t_len == sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize))
 				{
 					ExecHash2SideTableInsertGraphid(spstate->sp_OuterTable,
-													*((Graphid*)(tuple+1)),
+													*graphid,
 													hashvalue,
 													node,
 													spstate,
@@ -981,9 +1098,19 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 					   tuple + 1,
 					   tuple->t_len - sizeof(*tuple));
 				spstate->sp_OuterTuple->t_len += sizeof(Graphid) + spstate->sp_RowidSize;
-				paramno = ((Param *) node->key->expr)->paramid;
+				paramno = node->correctedParam->paramid;
 				prm = &(spstate->js.ps.ps_ExprContext->ecxt_param_exec_vals[paramno]);
-				prm->value = *((Graphid*)(tuple+1));
+
+				if (node->isFieldSelect)
+				{
+					node->vertexRow = replace_vertexRow_graphid(node->tupleDesc,
+																node->vertexRow,
+																*graphid);
+					prm->value = HeapTupleGetDatum(node->vertexRow);
+				}
+				else
+					prm->value = *graphid;
+
 				outerPlanState(node)->chgParam = bms_add_member(outerPlanState(node)->chgParam,
 																paramno);
 				ExecReScan(outerPlanState(node));
@@ -991,7 +1118,7 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 				if (node->hops > 1)
 				{
 					ExecHash2SideTableInsertGraphid(spstate->sp_OuterTable,
-													*((Graphid*)(tuple+1)),
+													*graphid,
 													hashvalue,
 													node,
 													spstate,
@@ -1432,9 +1559,21 @@ ExecReScanShortestpath(ShortestpathState *node)
 
 	if (node->js.ps.chgParam != NULL)
 	{
-		if (bms_is_member(((Param *) node->source->expr)->paramid, node->js.ps.chgParam))
+		Param *sParam = (Param *) node->source->expr;
+		Param *tParam = (Param *) node->target->expr;
+
+		/*
+		 * If we have FieldSelect expressions grab the Param expression
+		 * from the FieldSelect's arg value.
+		 */
+		if (IsA(sParam, FieldSelect))
+			sParam = ((Param *) ((FieldSelect *)sParam)->arg);
+		if (IsA(tParam, FieldSelect))
+			tParam = ((Param *) ((FieldSelect *)tParam)->arg);
+
+		if (bms_is_member(sParam->paramid, node->js.ps.chgParam))
 			node->startVid = 0;
-		if (bms_is_member(((Param *) node->target->expr)->paramid, node->js.ps.chgParam))
+		if (bms_is_member(tParam->paramid, node->js.ps.chgParam))
 			node->endVid = 0;
 	}
 
