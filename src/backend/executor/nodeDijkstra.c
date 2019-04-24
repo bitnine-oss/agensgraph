@@ -25,6 +25,7 @@
 #include "executor/executor.h"
 #include "executor/nodeDijkstra.h"
 #include "executor/tuptable.h"
+#include "funcapi.h"
 #include "lib/pairingheap.h"
 #include "nodes/execnodes.h"
 #include "nodes/memnodes.h"
@@ -32,6 +33,7 @@
 #include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/typcache.h"
 
 typedef struct vnode
 {
@@ -47,6 +49,9 @@ typedef struct enode
 	vnode	   *prev;
 } enode;
 
+static HeapTuple replace_vertexRow_graphid(TupleDesc tupleDesc,
+										   HeapTuple vertexRow,
+										   Datum graphid);
 static enode *
 new_enode(Graphid id, vnode *prev)
 {
@@ -294,6 +299,38 @@ compute_limit(DijkstraState *node)
 	}
 }
 
+/*
+ * Helper function to replace the graphid portion of a vertex
+ * row. It requires the vertex row and tuple descriptor be non NULL and
+ * the attbyval attribute be set. It returns a pointer to the updated
+ * vertex row as a HeapTuple on conclusion.
+ */
+static HeapTuple
+replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
+						  Datum graphid)
+{
+	HeapTupleHeader	vheader;
+	Form_pg_attribute attribute;
+	char			*vgdata;
+
+	/* Verify input constraints */
+	Assert(tupleDesc != NULL);
+	Assert(vertexRow != NULL);
+
+	attribute = tupleDesc->attrs[Anum_vertex_id-1];
+
+	/* This function only works for element 1, graphid, by value */
+	Assert(attribute->attbyval);
+
+	vheader = vertexRow->t_data;
+	vgdata = (char *) vheader + vheader->t_hoff;
+	vgdata = (char *) att_align_nominal(vgdata, attribute->attalign);
+
+	store_att_byval(vgdata, graphid, attribute->attlen);
+
+	return vertexRow;
+}
+
 static TupleTableSlot *
 ExecDijkstra(PlanState *pstate)
 {
@@ -359,11 +396,25 @@ ExecDijkstra(PlanState *pstate)
 										 &min_pq_entry->to, HASH_FIND, &found);
 		Assert(found);
 
-		paramno = ((Param *) node->source->expr)->paramid;
+		if (IsA(node->source->expr, FieldSelect))
+			paramno = ((Param *) ((FieldSelect *) node->source->expr)->arg)->paramid;
+		else
+			paramno = ((Param *) node->source->expr)->paramid;
 
 		prm = &(econtext->ecxt_param_exec_vals[paramno]);
 		orig_param = prm->value;
-		prm->value = UInt64GetDatum(min_pq_entry->to);
+
+		if (IsA(node->source->expr, FieldSelect))
+		{
+			HeapTuple vertexRow;
+			vertexRow = replace_vertexRow_graphid(node->tupleDesc,
+												  node->vertexRow,
+												  min_pq_entry->to);
+			prm->value = HeapTupleGetDatum(vertexRow);
+		}
+		else
+			prm->value = UInt64GetDatum(min_pq_entry->to);
+
 		outerPlan->chgParam = bms_add_member(outerPlan->chgParam, paramno);
 		ExecReScan(outerPlan);
 
@@ -485,6 +536,31 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	ExecInitResultTupleSlot(estate, &dstate->ps);
 	dstate->selfTupleSlot = ExecInitExtraTupleSlot(estate);
 
+
+	/*
+	 * ExecDijkstra was originally written without expectations that the
+	 * source node might reside in a FieldSelect expression. This code
+	 * is to address that deficit. Additionally, it is added here to
+	 * help with memory conservation by providing a vertex row and the
+	 * tuple descriptor for that vertex row for reuse.
+	 */
+	if (IsA(node->source, FieldSelect))
+	{
+		Datum       values[Natts_vertex] = {0, 0, 0};
+		bool        isnull[Natts_vertex] = {false, true, true};
+		TupleDesc	tupleDesc = lookup_rowtype_tupdesc(VERTEXOID, -1);
+
+		Assert(tupleDesc->natts == Natts_vertex);
+
+		dstate->tupleDesc = tupleDesc;
+		dstate->vertexRow = heap_form_tuple(tupleDesc, values, isnull);
+	}
+	else
+	{
+		dstate->tupleDesc = NULL;
+		dstate->vertexRow = NULL;
+	}
+
 	/*
 	 * initialize tuple type and projection info
 	 */
@@ -499,6 +575,14 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 void
 ExecEndDijkstra(DijkstraState *node)
 {
+	/* Release the tuple descriptor in the DijkstraState node */
+	if (node->tupleDesc)
+		ReleaseTupleDesc(node->tupleDesc);
+
+	/* Release the vertexRow container in the DijkstraState node */
+	if (node->vertexRow)
+		heap_freetuple(node->vertexRow);
+
 	/*
 	 * Free the exprcontext
 	 */

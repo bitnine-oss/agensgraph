@@ -2239,6 +2239,8 @@ typedef struct DijkstraState
 	Graphid 		target_id;
 	bool			is_executed;
 	TupleTableSlot *selfTupleSlot;
+	HeapTuple		vertexRow;		/* pointer to hold reusable vertex row */
+	TupleDesc		tupleDesc;		/* pointer to vertex row's tuple descr */
 } DijkstraState;
 
 #endif							/* EXECNODES_H */
