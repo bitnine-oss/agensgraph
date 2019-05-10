@@ -3387,6 +3387,99 @@ DETAIL:  drop cascades to sequence ag189.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel test
+-- LIMIT clause causes VLE relations to crash, issue AG-254
+CREATE GRAPH asterisk;
+CREATE VLABEL vertex;
+CREATE ELABEL edge;
+CREATE (a0:vertex {name: 'A'})
+CREATE (b0:vertex {name: 'B'})
+CREATE (q0:vertex {name: 'Q'})
+CREATE (x0:vertex {name: 'X'})
+MERGE (a0)-[:edge]->(b0)
+MERGE (q0)-[:edge]->(a0)
+MERGE (b0)-[:edge]->(q0)
+MERGE (a0)-[:edge]->(x0)
+MERGE (x0)-[:edge]->(b0);
+-- 4 row set
+MATCH p=((u:vertex {name: 'A'})-[*]->(v:vertex {name: 'B'}))
+RETURN p LIMIT 4; --crash
+                                                                                                                                p                                                                                                                                 
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"},edge[4.3][3.2,3.3]{},vertex[3.3]{"name": "Q"},edge[4.2][3.3,3.1]{},vertex[3.1]{"name": "A"},edge[4.4][3.1,3.4]{},vertex[3.4]{"name": "X"},edge[4.5][3.4,3.2]{},vertex[3.2]{"name": "B"}]
+ [vertex[3.1]{"name": "A"},edge[4.4][3.1,3.4]{},vertex[3.4]{"name": "X"},edge[4.5][3.4,3.2]{},vertex[3.2]{"name": "B"}]
+ [vertex[3.1]{"name": "A"},edge[4.4][3.1,3.4]{},vertex[3.4]{"name": "X"},edge[4.5][3.4,3.2]{},vertex[3.2]{"name": "B"},edge[4.3][3.2,3.3]{},vertex[3.3]{"name": "Q"},edge[4.2][3.3,3.1]{},vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"}]
+(4 rows)
+
+-- 22 row set
+MATCH p=((u)-[*0..3]->(v)) RETURN p LIMIT 0; --no crash (nc)
+ p 
+---
+(0 rows)
+
+MATCH p=((u)-[*0..3]->(v)) RETURN p LIMIT 1; --nc
+             p              
+----------------------------
+ [vertex[3.1]{"name": "A"}]
+(1 row)
+
+MATCH p=((u)-[*0..3]->(v)) RETURN p LIMIT 4; --nc/memory corrupted (mem)
+                                                                                  p                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ [vertex[3.1]{"name": "A"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"},edge[4.3][3.2,3.3]{},vertex[3.3]{"name": "Q"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"},edge[4.3][3.2,3.3]{},vertex[3.3]{"name": "Q"},edge[4.2][3.3,3.1]{},vertex[3.1]{"name": "A"}]
+(4 rows)
+
+MATCH p=((u)-[*0..3]->(v)) RETURN p LIMIT 5; --crash
+                                                                                  p                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ [vertex[3.1]{"name": "A"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"},edge[4.3][3.2,3.3]{},vertex[3.3]{"name": "Q"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"},edge[4.3][3.2,3.3]{},vertex[3.3]{"name": "Q"},edge[4.2][3.3,3.1]{},vertex[3.1]{"name": "A"}]
+ [vertex[3.1]{"name": "A"},edge[4.4][3.1,3.4]{},vertex[3.4]{"name": "X"}]
+(5 rows)
+
+-- 18 row set
+MATCH p=((u)-[*..3]->(v)) RETURN p LIMIT 0; -- nc
+ p 
+---
+(0 rows)
+
+MATCH p=((u)-[*..3]->(v)) RETURN p LIMIT 1; -- nc
+                                    p                                     
+--------------------------------------------------------------------------
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"}]
+(1 row)
+
+MATCH p=((u)-[*..3]->(v)) RETURN p LIMIT 4; -- nc/mem
+                                                                                  p                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"},edge[4.3][3.2,3.3]{},vertex[3.3]{"name": "Q"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"},edge[4.3][3.2,3.3]{},vertex[3.3]{"name": "Q"},edge[4.2][3.3,3.1]{},vertex[3.1]{"name": "A"}]
+ [vertex[3.1]{"name": "A"},edge[4.4][3.1,3.4]{},vertex[3.4]{"name": "X"}]
+(4 rows)
+
+MATCH p=((u)-[*..3]->(v)) RETURN p LIMIT 5; -- crash
+                                                                                  p                                                                                   
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"},edge[4.3][3.2,3.3]{},vertex[3.3]{"name": "Q"}]
+ [vertex[3.1]{"name": "A"},edge[4.1][3.1,3.2]{},vertex[3.2]{"name": "B"},edge[4.3][3.2,3.3]{},vertex[3.3]{"name": "Q"},edge[4.2][3.3,3.1]{},vertex[3.1]{"name": "A"}]
+ [vertex[3.1]{"name": "A"},edge[4.4][3.1,3.4]{},vertex[3.4]{"name": "X"}]
+ [vertex[3.1]{"name": "A"},edge[4.4][3.1,3.4]{},vertex[3.4]{"name": "X"},edge[4.5][3.4,3.2]{},vertex[3.2]{"name": "B"}]
+(5 rows)
+
+DROP GRAPH asterisk CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence asterisk.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel vertex
+drop cascades to elabel edge
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects
