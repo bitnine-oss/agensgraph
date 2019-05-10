@@ -534,6 +534,8 @@ void
 ExecEndNestLoopVLE(NestLoopVLEState *node)
 {
 	dlist_mutable_iter iter;
+	int			ctx_depth;
+	NestLoopVLE *nlv = (NestLoopVLE *) node->nls.js.ps.plan;
 
 	NLV1_printf("ExecEndNestLoopVLE: %s\n", "ending node processing");
 
@@ -563,6 +565,23 @@ ExecEndNestLoopVLE(NestLoopVLEState *node)
 		pfree(ctx);
 	}
 	node->prev_ctx_node = &node->ctxs_head.head;
+
+	/*
+	 * Back out our context stack, if necessary. It is important to note that
+	 * the context depth is calculated only to make it easier to follow. It is
+	 * built from the fact that curhops can start from 0 or 1 and that for
+	 * the first two increments, it does NOT push a context on the stack.
+	 * Therefore, if curhops started at 0, we need to subtract 1 from the
+	 * current value, otherwise we subtract 2. Note that negative values for
+	 * depth equate to a zero depth.
+	 */
+
+	ctx_depth = node->curhops - (getInitialCurhops(nlv)+1);
+	while (ctx_depth > 0)
+	{
+		ExecPrevContext(innerPlanState(node));
+		ctx_depth--;
+	}
 
 	/*
 	 * close down subplans
