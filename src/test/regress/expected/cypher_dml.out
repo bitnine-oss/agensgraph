@@ -3436,6 +3436,8 @@ DEALLOCATE t;
 CREATE GRAPH asterisk;
 CREATE VLABEL vertex;
 CREATE ELABEL edge;
+CREATE VLABEL city; -- additional VLABELs cause crashes (used or not)
+CREATE ELABEL road; -- additional ELABELs cause crashes (used or not)
 CREATE (a0:vertex {name: 'A'})
 CREATE (b0:vertex {name: 'B'})
 CREATE (q0:vertex {name: 'Q'})
@@ -3519,12 +3521,14 @@ MATCH p=((u)-[*..3]->(v)) RETURN p LIMIT 5; -- crash
 (5 rows)
 
 DROP GRAPH asterisk CASCADE;
-NOTICE:  drop cascades to 5 other objects
+NOTICE:  drop cascades to 7 other objects
 DETAIL:  drop cascades to sequence asterisk.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel vertex
 drop cascades to elabel edge
+drop cascades to vlabel city
+drop cascades to elabel road
 -- cleanup
 DROP GRAPH srf CASCADE;
 NOTICE:  drop cascades to 5 other objects

@@ -1357,6 +1357,9 @@ CREATE GRAPH asterisk;
 CREATE VLABEL vertex;
 CREATE ELABEL edge;
 
+CREATE VLABEL city; -- additional VLABELs cause crashes (used or not)
+CREATE ELABEL road; -- additional ELABELs cause crashes (used or not)
+
 CREATE (a0:vertex {name: 'A'})
 CREATE (b0:vertex {name: 'B'})
 CREATE (q0:vertex {name: 'Q'})
