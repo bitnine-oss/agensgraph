@@ -45,6 +45,7 @@
 #include "parser/parsetree.h"
 #include "rewrite/rewriteHandler.h"
 #include "utils/builtins.h"
+#include "utils/fmgroids.h"
 #include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -361,6 +362,7 @@ static bool IsNullAConst(Node *arg);
 
 /* utils */
 static char *genUniqueName(void);
+static List *repairTargetListCollations(List *targetList);
 
 Query *
 transformCypherSubPattern(ParseState *pstate, CypherSubPattern *subpat)
@@ -565,7 +567,56 @@ transformCypherProjection(ParseState *pstate, CypherClause *clause)
 
 	assign_query_collations(pstate, qry);
 
+	qry->targetList = repairTargetListCollations(qry->targetList);
+
 	return qry;
+}
+
+/*
+ * Helper function to repair the collations due to the to_jsonb cast
+ * after the creation of the group clause. If this function is passed a
+ * NULL, it will return a NULL.
+ */
+static List *
+repairTargetListCollations(List *targetList)
+{
+	ListCell	*ls;
+
+	/*
+	 * Iterate through the targetList, looking for FuncExprs, skipping
+	 * everything else.
+	 */
+	foreach(ls, targetList)
+	{
+		Node		*expr = lfirst(ls);
+
+		if (nodeTag(expr) != T_TargetEntry)
+			continue;
+
+		expr = (Node *) ((TargetEntry *) expr)->expr;
+
+		if (expr == NULL)
+			continue;
+
+		/*
+		 * Once we find a FuncExpr, check to see if it is a to_jsonb
+		 * cast. If it is, then we need to copy the inputcollid to the
+		 * funccollid, provided the funccollid value is InvalidOid.
+		 */
+		if (nodeTag(expr) == T_FuncExpr)
+		{
+			FuncExpr	*fexpr = (FuncExpr *) expr;
+
+			if (fexpr->funcid != F_TO_JSONB)
+				continue;
+
+			if (fexpr->funccollid == InvalidOid &&
+				fexpr->inputcollid != InvalidOid)
+				fexpr->funccollid = fexpr->inputcollid;
+		}
+	}
+
+	return targetList;
 }
 
 Query *
