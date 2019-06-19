@@ -140,11 +140,6 @@ CreateExecutorState(void)
 
 	estate->es_processed = 0;
 	estate->es_lastoid = InvalidOid;
-	estate->es_graphwrstats.insertVertex = UINT_MAX;
-	estate->es_graphwrstats.insertEdge = UINT_MAX;
-	estate->es_graphwrstats.deleteVertex = UINT_MAX;
-	estate->es_graphwrstats.deleteEdge = UINT_MAX;
-	estate->es_graphwrstats.updateProperty = UINT_MAX;
 
 	estate->es_top_eflags = 0;
 	estate->es_instrument = 0;

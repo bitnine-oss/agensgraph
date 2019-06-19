@@ -60,10 +60,9 @@ static uint64 DoPortalRunFetch(Portal portal,
 				 DestReceiver *dest);
 static void DoPortalRewind(Portal portal);
 
-static void appendGraphWriteTag(char *tagbuf, GraphWriteStats *graphwrstats);
-static int appendAnyTag(char *tagbuf, int pos, const char *tag,
-						uint32 nprocessed, bool delim);
 
+/* global variable - see postgres.c */
+extern GraphWriteStats graphWriteStats;
 
 /*
  * CreateQueryDesc
@@ -119,7 +118,6 @@ FreeQueryDesc(QueryDesc *qdesc)
 	/* Only the QueryDesc itself need be freed */
 	pfree(qdesc);
 }
-
 
 /*
  * ProcessQuery
@@ -178,8 +176,6 @@ ProcessQuery(PlannedStmt *plan,
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 						 "SELECT " UINT64_FORMAT,
 						 queryDesc->estate->es_processed);
-				appendGraphWriteTag(completionTag,
-									&queryDesc->estate->es_graphwrstats);
 				break;
 			case CMD_INSERT:
 				if (queryDesc->estate->es_processed == 1)
@@ -201,8 +197,15 @@ ProcessQuery(PlannedStmt *plan,
 						 queryDesc->estate->es_processed);
 				break;
 			case CMD_GRAPHWRITE:
-				appendGraphWriteTag(completionTag,
-									&queryDesc->estate->es_graphwrstats);
+				{
+					uint64		sum = graphWriteStats.insertVertex +
+									  graphWriteStats.insertEdge +
+									  graphWriteStats.deleteVertex +
+									  graphWriteStats.deleteEdge +
+									  graphWriteStats.updateProperty;
+					snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+							 "UPDATE " UINT64_FORMAT, sum);
+				}
 				break;
 			default:
 				strcpy(completionTag, "???");
@@ -797,12 +800,8 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 					}
 					else if (strcmp(portal->commandTag, "CYPHER") == 0)
 					{
-						QueryDesc *qd = PortalGetQueryDesc(portal);
-
 						snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 								 "SELECT " UINT64_FORMAT, nprocessed);
-						appendGraphWriteTag(completionTag,
-											&qd->estate->es_graphwrstats);
 					}
 					else
 					{
@@ -1731,59 +1730,4 @@ DoPortalRewind(Portal portal)
 	portal->atStart = true;
 	portal->atEnd = false;
 	portal->portalPos = 0;
-}
-
-static void
-appendGraphWriteTag(char *tagbuf, GraphWriteStats *graphwrstats)
-{
-	int			pos = strlen(tagbuf);
-	int			opn;
-
-	if (graphwrstats->insertVertex == UINT_MAX &&
-		graphwrstats->insertEdge == UINT_MAX &&
-		graphwrstats->deleteVertex == UINT_MAX &&
-		graphwrstats->deleteEdge == UINT_MAX &&
-		graphwrstats->updateProperty == UINT_MAX)
-		return;
-
-	if (pos < COMPLETION_TAG_BUFSIZE)
-		pos += snprintf(tagbuf + pos, COMPLETION_TAG_BUFSIZE - pos,
-						(pos > 0) ? ", GRAPH WRITE (" : "GRAPH WRITE (");
-	opn = pos;
-
-	pos = appendAnyTag(tagbuf, pos, "INSERT VERTEX",
-					   graphwrstats->insertVertex, pos > opn);
-	pos = appendAnyTag(tagbuf, pos, "INSERT EDGE",
-					   graphwrstats->insertEdge, pos > opn);
-	pos = appendAnyTag(tagbuf, pos, "DELETE VERTEX",
-					   graphwrstats->deleteVertex, pos > opn);
-	pos = appendAnyTag(tagbuf, pos, "DELETE EDGE",
-					   graphwrstats->deleteEdge, pos > opn);
-	pos = appendAnyTag(tagbuf, pos, "UPDATE PROPERTY",
-					   graphwrstats->updateProperty, pos > opn);
-
-	if (pos < COMPLETION_TAG_BUFSIZE - 1)
-	{
-		tagbuf[pos] = ')';
-		tagbuf[pos + 1] = '\0';
-	}
-}
-
-static int
-appendAnyTag(char *tagbuf, int pos, const char *tag, uint32 nprocessed,
-			 bool delim)
-{
-	const char *fmt = delim ? ", %s %u" : "%s %u";
-	int			len;
-
-	if (pos >= COMPLETION_TAG_BUFSIZE)
-		return pos;
-
-	if (nprocessed == UINT_MAX)
-		return pos;
-
-	len = snprintf(tagbuf + pos, COMPLETION_TAG_BUFSIZE - pos, fmt,
-				   tag, nprocessed);
-
-	return pos + len;
 }

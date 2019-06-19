@@ -5724,6 +5724,9 @@ DESCR("true if regex match");
 /* Cypher expressions - coercion from numeric to graphid */
 DATA(insert OID = 7245 ( graphid	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7002 "1700" _null_ _null_ _null_ _null_ _null_ numeric_graphid _null_ _null_ _null_ ));
 DESCR("convert numeric to graphid");
+/* Cypher utility SRF to provide graph write statistics */
+DATA(insert OID = 7246 (  get_last_graph_write_stats	PGNSP PGUID 12 10 400 0 0 f f f f t t s s 0 0 2249 "" "{20,20,20,20,20}" "{o,o,o,o,o}" "{insertedvertices,insertededges,deletedvertices,deletededges,updatedproperties}" _null_ _null_ get_last_graph_write_stats _null_ _null_ _null_ ));
+DESCR("last graph write statistics");
 
 /*
  * Symbolic values for provolatile column: these indicate whether the result
