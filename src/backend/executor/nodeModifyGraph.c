@@ -115,6 +115,9 @@ static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 static void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
 static Datum *makeDatumArray(ExprContext *econtext, int len);
 
+/* global variable - see postgres.c */
+extern GraphWriteStats graphWriteStats;
+
 ModifyGraphState *
 ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 {
@@ -449,27 +452,25 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 static void
 initGraphWRStats(ModifyGraphState *mgstate, GraphWriteOp op)
 {
-	EState *estate = mgstate->ps.state;
-
 	if (mgstate->pattern != NIL)
 	{
 		Assert(op == GWROP_CREATE || op == GWROP_MERGE);
 
-		estate->es_graphwrstats.insertVertex = 0;
-		estate->es_graphwrstats.insertEdge = 0;
+		graphWriteStats.insertVertex = 0;
+		graphWriteStats.insertEdge = 0;
 	}
 	if (mgstate->exprs != NIL)
 	{
 		Assert(op == GWROP_DELETE);
 
-		estate->es_graphwrstats.deleteVertex = 0;
-		estate->es_graphwrstats.deleteEdge = 0;
+		graphWriteStats.deleteVertex = 0;
+		graphWriteStats.deleteEdge = 0;
 	}
 	if (mgstate->sets != NIL)
 	{
 		Assert(op == GWROP_SET || op == GWROP_MERGE);
 
-		estate->es_graphwrstats.updateProperty = 0;
+		graphWriteStats.updateProperty = 0;
 	}
 }
 
@@ -734,7 +735,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	if (gvertex->resno > 0)
 		setSlotValueByAttnum(slot, vertex, gvertex->resno);
 
-	estate->es_graphwrstats.insertVertex++;
+	graphWriteStats.insertVertex++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -803,7 +804,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	if (gedge->resno > 0)
 		setSlotValueByAttnum(slot, edge, gedge->resno);
 
-	estate->es_graphwrstats.insertEdge++;
+	graphWriteStats.insertEdge++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -968,12 +969,12 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 	 */
 
 	if (type == VERTEXOID)
-		estate->es_graphwrstats.deleteVertex++;
+		graphWriteStats.deleteVertex++;
 	else
 	{
 		Assert(type == EDGEOID);
 
-		estate->es_graphwrstats.deleteEdge++;
+		graphWriteStats.deleteEdge++;
 	}
 
 	estate->es_result_relation_info = savedResultRelInfo;
@@ -1225,7 +1226,7 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self),
 							  estate, false, NULL, NIL);
 
-	estate->es_graphwrstats.updateProperty++;
+	graphWriteStats.updateProperty++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -1455,7 +1456,7 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	if (gvertex->resno > 0)
 		setSlotValueByAttnum(slot, vertex, gvertex->resno);
 
-	estate->es_graphwrstats.insertVertex++;
+	graphWriteStats.insertVertex++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -1528,7 +1529,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	if (gedge->resno > 0)
 		setSlotValueByAttnum(slot, edge, gedge->resno);
 
-	estate->es_graphwrstats.insertEdge++;
+	graphWriteStats.insertEdge++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 

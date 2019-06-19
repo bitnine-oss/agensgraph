@@ -100,6 +100,9 @@ static char *ExecBuildSlotValueDescription(Oid reloid,
 static void EvalPlanQualStart(EPQState *epqstate, EState *parentestate,
 				  Plan *planTree);
 
+/* global variable - see postgres.c */
+extern GraphWriteStats graphWriteStats;
+
 /*
  * Note that GetUpdatedColumns() also exists in commands/trigger.c.  There does
  * not appear to be any good header to put it into, given the structures that
@@ -240,6 +243,20 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			elog(ERROR, "unrecognized operation code: %d",
 				 (int) queryDesc->operation);
 			break;
+	}
+
+	/*
+	 * Initialize the global variable graphWriteStats iff this is a Cypher
+	 * graph write (insert, delete, or update property). Currently only
+	 * the above query types will reset these values.
+	 */
+	if (queryDesc->operation == CMD_GRAPHWRITE)
+	{
+		graphWriteStats.insertVertex = 0;
+		graphWriteStats.insertEdge = 0;
+		graphWriteStats.deleteVertex = 0;
+		graphWriteStats.deleteEdge = 0;
+		graphWriteStats.updateProperty = 0;
 	}
 
 	/*

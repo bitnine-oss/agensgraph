@@ -71,7 +71,7 @@
 
 
 /* buffer size to use for command completion tags */
-#define COMPLETION_TAG_BUFSIZE	256
+#define COMPLETION_TAG_BUFSIZE 64
 
 
 /* ----------------

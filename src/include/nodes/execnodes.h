@@ -510,7 +510,6 @@ typedef struct EState
 
 	uint64		es_processed;	/* # of tuples processed */
 	Oid			es_lastoid;		/* last oid processed (by INSERT) */
-	GraphWriteStats es_graphwrstats;	/* # of graph writes */
 
 	int			es_top_eflags;	/* eflags passed to ExecutorStart */
 	int			es_instrument;	/* OR of InstrumentOption flags */

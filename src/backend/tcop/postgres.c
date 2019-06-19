@@ -98,7 +98,8 @@ int			max_stack_depth = 100;
 /* wait N seconds to allow attach from a debugger */
 int			PostAuthDelay = 0;
 
-
+/* Global variable to hold the graph write statistics */
+GraphWriteStats graphWriteStats;
 
 /* ----------------
  *		private variables
