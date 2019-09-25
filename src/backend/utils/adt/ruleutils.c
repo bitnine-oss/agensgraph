@@ -7809,11 +7809,18 @@ get_rule_expr(Node *node, deparse_context *context,
 				if (!PRETTY_PAREN(context))
 					appendStringInfoChar(buf, '(');
 				get_rule_expr_paren(arg1, context, true, node);
-				appendStringInfo(buf, " %s %s (",
-								 generate_operator_name(expr->opno,
-														exprType(arg1),
-														get_base_element_type(exprType(arg2))),
-								 expr->useOr ? "ANY" : "ALL");
+				if (context->cypherexpr)
+				{
+					appendStringInfo(buf, " IN (");
+				}
+				else
+				{
+					appendStringInfo(buf, " %s %s (",
+									 generate_operator_name(expr->opno,
+															exprType(arg1),
+															get_base_element_type(exprType(arg2))),
+									 expr->useOr ? "ANY" : "ALL");
+					}
 				get_rule_expr_paren(arg2, context, true, node);
 
 				/*
@@ -8179,7 +8186,10 @@ get_rule_expr(Node *node, deparse_context *context,
 			{
 				ArrayExpr  *arrayexpr = (ArrayExpr *) node;
 
-				appendStringInfoString(buf, "ARRAY[");
+				if (context->cypherexpr)
+					appendStringInfoString(buf, "[");
+				else
+					appendStringInfoString(buf, "ARRAY[");
 				get_rule_expr((Node *) arrayexpr->elements, context, true);
 				appendStringInfoChar(buf, ']');
 
