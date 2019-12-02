@@ -1112,7 +1112,8 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
 
 	for (i = 0; i < slot->tts_tupleDescriptor->natts; i++)
 	{
-		Datum	finalValue;;
+		Datum	finalValue;
+		Datum	copyValue;
 
 		if (slot->tts_isnull[i] ||
 			slot->tts_tupleDescriptor->attrs[i]->attisdropped)
@@ -1133,7 +1134,20 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
 				continue;
 		}
 
-		setSlotValueByAttnum(slot, finalValue, i + 1);
+		/*
+		 * Make a copy of finalValue to avoid the slot's copy getting freed
+		 * when the mgstate->elemTable hash table entries are indepenently
+		 * freed.
+		 */
+		copyValue = datumCopy(finalValue, false, -1);
+		/*
+		 * Free the copy of finalValue that we've previously stored in
+		 * the slot.
+		 */
+		if (finalValue != slot->tts_values[i])
+			pfree(slot->tts_values[i]);
+
+		setSlotValueByAttnum(slot, copyValue, i + 1);
 	}
 }
 
