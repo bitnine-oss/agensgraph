@@ -410,7 +410,14 @@ ExecPrevIndexOnlyScanContext(IndexOnlyScanState *node)
 	 * is re-scanned next time.
 	 */
 	ctx = getCurrentContext(node, true);
-	Assert(node->ss.ps.chgParam == NULL);
+
+	/* if chgParam is not NULL, free it now */
+	if (node->ss.ps.chgParam != NULL)
+	{
+		bms_free(node->ss.ps.chgParam);
+		node->ss.ps.chgParam = NULL;
+	}
+
 	ctx->chgParam = NULL;
 	ctx->scanDesc = node->ioss_ScanDesc;
 
