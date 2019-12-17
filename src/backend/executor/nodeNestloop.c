@@ -581,6 +581,13 @@ ExecPrevNestLoopContext(NestLoopState *node)
 	 * reason above.
 	 */
 
+	/* if chgParam is not NULL, free it now */
+	if (node->js.ps.chgParam != NULL)
+	{
+		bms_free(node->js.ps.chgParam);
+		node->js.ps.chgParam = NULL;
+	}
+
 	/* make the previous context current context */
 	ctx_node = node->prev_ctx_node;
 	Assert(ctx_node != &node->ctxs_head.head);

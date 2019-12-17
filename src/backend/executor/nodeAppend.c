@@ -373,6 +373,13 @@ ExecPrevAppendContext(AppendState *node)
 	 * reason above.
 	 */
 
+	/* if chgParam is not NULL, free it now */
+	if (node->ps.chgParam != NULL)
+	{
+		bms_free(node->ps.chgParam);
+		node->ps.chgParam = NULL;
+	}
+
 	/* make the previous context current context */
 	ctx_node = node->prev_ctx_node;
 	Assert(ctx_node != &node->ctxs_head.head);
