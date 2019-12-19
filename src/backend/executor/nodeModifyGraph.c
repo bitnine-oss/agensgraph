@@ -79,7 +79,8 @@ static TupleTableSlot *ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind,
 static TupleTableSlot *copyVirtualTupleTableSlot(TupleTableSlot *dstslot,
 												 TupleTableSlot *srcslot);
 static void findAndReflectNewestValue(ModifyGraphState *mgstate,
-									  TupleTableSlot *slot);
+									  TupleTableSlot *slot,
+									  bool free_slot);
 static ItemPointer updateElemProp(ModifyGraphState *mgstate, Oid elemtype,
 								  Datum gid, Datum elem_datum);
 static Datum makeModifiedElem(Datum elem, Oid elemtype,
@@ -1004,6 +1005,7 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 	ExprContext *econtext = mgstate->ps.ps_ExprContext;
 	ListCell   *ls;
 	TupleTableSlot *result = mgstate->ps.ps_ResultTupleSlot;
+	bool		free_slot = false;
 
 	/*
 	 * The results of previous clauses should be preserved.
@@ -1040,9 +1042,9 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 		 * Reflect newest value all types of scantuple
 		 * before evaluating expression.
 		 */
-		findAndReflectNewestValue(mgstate, econtext->ecxt_scantuple);
-		findAndReflectNewestValue(mgstate, econtext->ecxt_innertuple);
-		findAndReflectNewestValue(mgstate, econtext->ecxt_outertuple);
+		findAndReflectNewestValue(mgstate, econtext->ecxt_scantuple, free_slot);
+		findAndReflectNewestValue(mgstate, econtext->ecxt_innertuple, free_slot);
+		findAndReflectNewestValue(mgstate, econtext->ecxt_outertuple, free_slot);
 
 		/* get original graph element */
 		elem_datum = ExecEvalExpr(gsp->es_elem, econtext, &isNull);
@@ -1081,6 +1083,11 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 			updateElemProp(mgstate, elemtype, gid, newelem);
 
 		setSlotValueByName(result, newelem, gsp->variable);
+		/*
+		 * we have made it through the first iteration, it is okay to start
+		 * freeing our slot copies in findAndReflectNewestValue.
+		 */
+		free_slot = true;
 	}
 
 	return (plan->last ? NULL : result);
@@ -1103,7 +1110,8 @@ copyVirtualTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
 }
 
 static void
-findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
+findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot,
+						  bool free_slot)
 {
 	int			i;
 
@@ -1144,7 +1152,9 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		 * Free the copy of finalValue that we've previously stored in
 		 * the slot.
 		 */
-		if (finalValue != slot->tts_values[i])
+		if (free_slot &&
+			enable_multiple_update &&
+			(finalValue != slot->tts_values[i]))
 			pfree(slot->tts_values[i]);
 
 		setSlotValueByAttnum(slot, copyValue, i + 1);
