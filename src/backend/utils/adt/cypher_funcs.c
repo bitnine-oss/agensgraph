@@ -899,12 +899,10 @@ FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo)
 
 	for (i = 0; i < fcjinfo->nargs; i++)
 	{
-		fcinfo.arg[i] = jsonb_to_datum(fcjinfo->args[i], fcjinfo->argtypes[i]);
-		if (fcinfo.arg[i] == 0)
-		{
+		if (!JB_ROOT_IS_SCALAR(fcjinfo->args[i]))
 			ereport_invalid_jsonb_param(fcjinfo);
-			return NULL;
-		}
+
+		fcinfo.arg[i] = jsonb_to_datum(fcjinfo->args[i], fcjinfo->argtypes[i]);
 		fcinfo.argnull[i] = false;
 	}
 
@@ -917,9 +915,7 @@ static Datum
 jsonb_to_datum(Jsonb *j, Oid type)
 {
 	JsonbValue *jv;
-
-	if (!JB_ROOT_IS_SCALAR(j))
-		return 0;
+	Datum		retval = NULL;
 
 	jv = getIthJsonbValueFromContainer(&j->root, 0);
 
@@ -927,7 +923,7 @@ jsonb_to_datum(Jsonb *j, Oid type)
 	{
 		case INT4OID:
 			if (jv->type == jbvNumeric && is_numeric_integer(jv->val.numeric))
-				return DirectFunctionCall1(numeric_int4,
+				retval = DirectFunctionCall1(numeric_int4,
 										   NumericGetDatum(jv->val.numeric));
 			break;
 		case TEXTOID:
@@ -937,24 +933,23 @@ jsonb_to_datum(Jsonb *j, Oid type)
 
 				t = cstring_to_text_with_len(jv->val.string.val,
 											 jv->val.string.len);
-				return PointerGetDatum(t);
+				retval = PointerGetDatum(t);
 			}
 			break;
 		case FLOAT8OID:
 			if (jv->type == jbvNumeric)
-				return DirectFunctionCall1(numeric_float8,
+				retval = DirectFunctionCall1(numeric_float8,
 										   NumericGetDatum(jv->val.numeric));
 			break;
 		case NUMERICOID:
 			if (jv->type == jbvNumeric)
-				return NumericGetDatum(jv->val.numeric);
+				retval = NumericGetDatum(jv->val.numeric);
 			break;
 		default:
 			elog(ERROR, "unexpected type: %s", format_type_be(type));
-			return 0;
 	}
 
-	return 0;
+	return retval;
 }
 
 static bool

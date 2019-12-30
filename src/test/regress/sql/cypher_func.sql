@@ -176,3 +176,12 @@ SELECT * FROM get_last_graph_write_stats();
 
 -- cleanup
 DROP GRAPH ag222 CASCADE;
+
+-- Added test for AG-283
+CREATE GRAPH AG283;
+
+CREATE ({name: 'arc 0', degree: 0});
+MATCH (v) RETURN radians(v.degree);
+
+-- cleanup
+DROP GRAPH AG283 CASCADE;
