@@ -148,3 +148,12 @@ return log10(10), (select log(10));
 
 -- cleanup
 DROP GRAPH ag249_log_to_ln CASCADE;
+
+-- Added test for AG-283
+CREATE GRAPH AG283;
+
+CREATE ({name: 'arc 0', degree: 0});
+MATCH (v) RETURN radians(v.degree);
+
+-- cleanup
+DROP GRAPH AG283 CASCADE;
