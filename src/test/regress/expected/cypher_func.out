@@ -300,3 +300,18 @@ drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel vertices
 drop cascades to elabel edges
+-- Added test for AG-283
+CREATE GRAPH AG283;
+CREATE ({name: 'arc 0', degree: 0});
+MATCH (v) RETURN radians(v.degree);
+ radians 
+---------
+ 0
+(1 row)
+
+-- cleanup
+DROP GRAPH AG283 CASCADE;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to sequence ag283.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
