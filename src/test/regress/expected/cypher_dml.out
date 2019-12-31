@@ -2412,13 +2412,21 @@ MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
 (1 row)
 
 MATCH (a) DETACH DELETE (a);
+-- special multiple set from a bug (AG-279) - this should be successful
+CREATE (:bug_AG279 {"a1234567890123456789": 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "b1234567890123456789": 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "c1234567890123456789": 'ccccccccccccccccccccccccccccccc', "d1234567890123456789": '123456789012345678901234', "e1234567890123456789": 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', "f": '12345678901234567890123456789012345678901234567'});
+MATCH (v:bug_AG279) return v;
+                                                                                                                                                                                                                                        v                                                                                                                                                                                                                                        
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ bug_ag279[4.1]{"f": "12345678901234567890123456789012345678901234567", "a1234567890123456789": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b1234567890123456789": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "c1234567890123456789": "ccccccccccccccccccccccccccccccc", "d1234567890123456789": "123456789012345678901234", "e1234567890123456789": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}
+(1 row)
+
 -- enable_multiple_update
 SET enable_multiple_update = false;
 CREATE (:multiple_update {no:1}), (:multiple_update {no:1});
 MATCH (a:multiple_update), (b:multiple_update)
 SET a.no = a.no + 1
 RETURN a.no;
-ERROR:  graph element(4,1) has been SET multiple times
+ERROR:  graph element(5,1) has been SET multiple times
 MATCH (a:multiple_update)
 RETURN a.no;
  no 
@@ -3555,11 +3563,12 @@ drop cascades to elabel ag_edge
 drop cascades to vlabel v
 drop cascades to vlabel w
 DROP GRAPH p CASCADE;
-NOTICE:  drop cascades to 6 other objects
+NOTICE:  drop cascades to 7 other objects
 DETAIL:  drop cascades to sequence p.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to elabel rel
+drop cascades to vlabel bug_ag279
 drop cascades to vlabel multiple_update
 drop cascades to vlabel person
 DROP GRAPH u CASCADE;
