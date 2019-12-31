@@ -851,6 +851,10 @@ SET a.val = b.val SET b.val = a.val;
 MATCH (a)-[]->(b) RETURN properties(a) AS a, properties(b) AS b;
 MATCH (a) DETACH DELETE (a);
 
+-- special multiple set from a bug (AG-279) - this should be successful
+CREATE (:bug_AG279 {"a1234567890123456789": 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "b1234567890123456789": 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "c1234567890123456789": 'ccccccccccccccccccccccccccccccc', "d1234567890123456789": '123456789012345678901234', "e1234567890123456789": 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', "f": '12345678901234567890123456789012345678901234567'});
+MATCH (v:bug_AG279) return v;
+
 -- enable_multiple_update
 SET enable_multiple_update = false;
 CREATE (:multiple_update {no:1}), (:multiple_update {no:1});
