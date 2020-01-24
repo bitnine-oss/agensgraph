@@ -1018,6 +1018,8 @@ _outModifyGraph(StringInfo str, const ModifyGraph *node)
 	WRITE_NODE_FIELD(pattern);
 	WRITE_NODE_FIELD(exprs);
 	WRITE_NODE_FIELD(sets);
+	WRITE_INT_FIELD(ert_base_index);
+	WRITE_INT_FIELD(ert_rtes_added);
 }
 
 static void

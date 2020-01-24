@@ -7009,6 +7009,8 @@ make_modifygraph(PlannerInfo *root, GraphWriteOp operation,
 	node->pattern = pattern;
 	node->exprs = exprs;
 	node->sets = sets;
+	node->ert_base_index = -1;
+	node->ert_rtes_added = -1;
 
 	return node;
 }
