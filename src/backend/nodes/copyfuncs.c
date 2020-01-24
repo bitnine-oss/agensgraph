@@ -1176,7 +1176,8 @@ _copyModifyGraph(const ModifyGraph *from)
 	COPY_NODE_FIELD(pattern);
 	COPY_NODE_FIELD(exprs);
 	COPY_NODE_FIELD(sets);
-
+	COPY_SCALAR_FIELD(ert_base_index);
+	COPY_SCALAR_FIELD(ert_rtes_added);
 	return newnode;
 }
 

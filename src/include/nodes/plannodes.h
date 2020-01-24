@@ -1068,6 +1068,8 @@ typedef struct ModifyGraph
 	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
 	List	   *exprs;			/* expression list for DELETE */
 	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
+	int			ert_base_index;	/* base index into the es_range_table */
+	int			ert_rtes_added;	/* number of RTEs added to es_range_table */
 } ModifyGraph;
 
 typedef struct Shortestpath

@@ -915,7 +915,7 @@ static Datum
 jsonb_to_datum(Jsonb *j, Oid type)
 {
 	JsonbValue *jv;
-	Datum		retval = NULL;
+	Datum		retval = 0;
 
 	jv = getIthJsonbValueFromContainer(&j->root, 0);
 

@@ -124,6 +124,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 {
 	ModifyGraphState *mgstate;
 	CommandId	svCid;
+	int			numResultRelInfo;
 
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -165,40 +166,119 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	mgstate->pattern = ExecInitGraphPattern(mgplan->pattern, mgstate);
 
+	/* Check to see if we have RTEs to add to the es_range_table. */
+	numResultRelInfo = list_length(mgplan->targets);
 	if (mgplan->targets != NIL)
 	{
-		int			numResultRelInfo = list_length(mgplan->targets);
 		ResultRelInfo *resultRelInfos;
 		ParseState *pstate;
 		ResultRelInfo *resultRelInfo;
 		ListCell   *lt;
+		/*
+		 * RTEs need to be added to the es_range_table using the
+		 * proper memory context due to cached plans. So, we need to
+		 * retrieve the context of the ModifyGraph plan and use that
+		 * for adding RTEs.
+		 */
+		MemoryContext rtemctx = GetMemoryChunkContext((void *) mgplan);
 
+		/* Allocate our stuff in the Executor memory context. */
 		resultRelInfos = palloc(numResultRelInfo * sizeof(*resultRelInfos));
-
-		pstate = make_parsestate(NULL);
 		resultRelInfo = resultRelInfos;
+		pstate = make_parsestate(NULL);
+
+		/*
+		 * If we added RTEs to the es_range_table, but not all of them,
+		 * free and truncate the es_range_table from this point. This will
+		 * not effect parent plans, as they would not have added RTEs yet.
+		 */
+		if (mgplan->ert_rtes_added != numResultRelInfo &&
+			mgplan->ert_rtes_added != -1 &&
+			mgplan->ert_base_index != -1)
+		{
+			int			index = -1;
+
+			for (lt = list_head(estate->es_range_table); lt != NULL;)
+			{
+				RangeTblEntry *es_rte = lfirst(lt);
+				ListCell	  *next = lnext(lt);
+
+				index++;
+
+				if (index < mgplan->ert_base_index)
+					continue;
+				pfree(es_rte);
+				pfree(lt);
+				lt = next;
+			}
+
+			list_truncate(estate->es_range_table, mgplan->ert_base_index);
+			mgstate->numOldRtable = list_length(estate->es_range_table);
+		}
+
+		/* save the es_range_table index where we start adding our RTEs */
+		if (mgplan->ert_base_index == -1)
+			mgplan->ert_base_index = list_length(estate->es_range_table);
+
+		/* Process each new RTE to add. */
 		foreach(lt, mgplan->targets)
 		{
 			Oid			relid = lfirst_oid(lt);
-			Relation	relation;
-			RangeTblEntry *rte;
+			int			index = 1;
+			/* open relation in Executor context */
+			Relation	relation = heap_open(relid, RowExclusiveLock);
 
-			relation = heap_open(relid, RowExclusiveLock);
+			/* Switch to the memory context for building RTEs */
+			MemoryContext oldmctx = MemoryContextSwitchTo(rtemctx);
 
-			rte = addRangeTableEntryForRelation(pstate, relation,
-												NULL, false, false);
-			rte->requiredPerms = ACL_INSERT;
-			estate->es_range_table = lappend(estate->es_range_table, rte);
+			/*
+			 * If the ert_base_index is equal to numOldRtable then we need
+			 * to add our RTEs to the end of the es_range_table. Otherwise,
+			 * we just need to link the resultRels to their RTEs. In the later
+			 * case we don't need to search the es_range_table for our RTEs
+			 * because we already know the order and the base offset.
+			 */
+			if (mgplan->ert_base_index == mgstate->numOldRtable)
+			{
+				RangeTblEntry *our_rte = addRangeTableEntryForRelation(pstate,
+											relation, NULL, false, false);
+
+				/*
+				 * remove the cell containing the RTE from pstate and reset
+				 * the list p_rtable to NIL
+				 */
+				list_free(pstate->p_rtable);
+				pstate->p_rtable = NIL;
+
+				our_rte->requiredPerms = ACL_INSERT;
+
+				/* Now add in our RTE */
+				estate->es_range_table = lappend(estate->es_range_table, our_rte);
+
+				/* increment the number of RTEs we've added */
+				if (mgplan->ert_rtes_added == -1)
+					mgplan->ert_rtes_added = 1;
+				else
+					mgplan->ert_rtes_added++;
+			}
+
+			/*
+			 * Now switch back to the Executor context to finish building
+			 * our structures. We need to do this so that our stuff gets
+			 * cleaned up after an abrupt exit, at the end of the Executor
+			 * context, or in ExecEndModifyGraph.
+			 */
+			MemoryContextSwitchTo(oldmctx);
 
 			InitResultRelInfo(resultRelInfo,
 							  relation,
-							  list_length(estate->es_range_table),
+							  (mgplan->ert_base_index + index),
 							  NULL,
 							  estate->es_instrument);
 
 			ExecOpenIndices(resultRelInfo, false);
-
 			resultRelInfo++;
+			index++;
 		}
 
 		mgstate->resultRelations = resultRelInfos;
@@ -403,7 +483,6 @@ ExecModifyGraph(PlanState *pstate)
 void
 ExecEndModifyGraph(ModifyGraphState *mgstate)
 {
-	EState	   *estate = mgstate->ps.state;
 	ResultRelInfo *resultRelInfo;
 	int			i;
 	CommandId	used_cid;
@@ -423,12 +502,6 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 
 		resultRelInfo++;
 	}
-
-	/*
-	 * PlannedStmt can be used as a cached plan,
-	 * so remove the rtables added to this run.
-	 */
-	list_truncate(estate->es_range_table, mgstate->numOldRtable);
 
 	/*
 	 * clean out the tuple table
@@ -1155,7 +1228,7 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot,
 		if (free_slot &&
 			enable_multiple_update &&
 			(finalValue != slot->tts_values[i]))
-			pfree(slot->tts_values[i]);
+			pfree(DatumGetPointer(slot->tts_values[i]));
 
 		setSlotValueByAttnum(slot, copyValue, i + 1);
 	}
