@@ -1676,7 +1676,6 @@ dumpDbRoleConfig(PGconn *conn)
 	destroyPQExpBuffer(buf);
 }
 
-
 /*
  * Helper function for dumpXXXConfig().
  */
@@ -1688,6 +1687,10 @@ makeAlterConfigCommand(PGconn *conn, const char *arrayitem,
 	char	   *pos;
 	char	   *mine;
 	PQExpBuffer buf;
+
+	// skip the graph path until the graph information has been imported
+	if(isGraphPathConfig(arrayitem))
+		return;
 
 	mine = pg_strdup(arrayitem);
 	pos = strchr(mine, '=');
@@ -1704,7 +1707,6 @@ makeAlterConfigCommand(PGconn *conn, const char *arrayitem,
 	if (type2 != NULL && name2 != NULL)
 		appendPQExpBuffer(buf, "IN %s %s ", type2, fmtId(name2));
 	appendPQExpBuffer(buf, "SET %s TO ", fmtId(mine));
-
 	/*
 	 * Variables that are marked GUC_LIST_QUOTE were already fully quoted by
 	 * flatten_set_variable_args() before they were put into the setconfig

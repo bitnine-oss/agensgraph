@@ -869,3 +869,60 @@ variable_is_guc_list_quote(const char *name)
 	else
 		return false;
 }
+
+/*
+ * Checks the passed configuration option, to determine if it is the graph_path
+ * configuration option. format: graph_path=path, possibly string quoted.
+ */
+bool
+isGraphPathConfig(const char *config)
+{
+	char *pos;
+	char *mine;
+	bool isGraphPath;
+
+	mine = pg_strdup(config);
+	pos = strchr(mine, '=');
+	if (pos == NULL)
+	{
+		free(mine);
+		return false;
+	}
+
+	if (*mine == '"' || *mine == '\'')
+		mine++;
+
+	*pos = 0;
+	isGraphPath = strcmp(mine, "graph_path") == 0;
+	free(mine);
+	return isGraphPath;
+}
+
+/*
+ * Extracts the value of a configuration options
+ * Format: config_value=config_value, possibly string quoted
+ */
+char *
+extractConfigValue(const char *config)
+{
+	char *pos;
+	char *mine;
+	char *return_value;
+
+	mine = pg_strdup(config);
+	pos = strchr(mine, '=');
+	if (pos == NULL)
+	{
+		free(mine);
+		return NULL;
+	}
+
+	if (pos[strlen(pos) - 1] == '"' || pos[strlen(pos) - 1] == '\'')
+		pos[strlen(pos) - 1] = '\0';
+
+	*pos = 0;
+	return_value = pg_strdup(pos + 1);
+	free(mine);
+
+	return return_value;
+}

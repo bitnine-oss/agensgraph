@@ -286,7 +286,11 @@ static char *get_synchronized_snapshot(Archive *fout);
 static void setupDumpWorker(Archive *AHX);
 static void insertGraphCatalog(Archive *fout);
 static void setGraphPath(PQExpBuffer q, char *gname);
-
+static void dumpDatabaseGraphPath(Archive *fout, const char *dbname);
+static void makeAlterGraphPathConfigCommand(Archive *fout,PGconn *conn,
+						const char *arrayitem,
+						const char *name);
+static const char *extractDatabaseName(const char *name);
 
 int
 main(int argc, char **argv)
@@ -857,6 +861,9 @@ main(int argc, char **argv)
 	/* Now the rearrangeable objects. */
 	for (i = 0; i < numObjs; i++)
 		dumpDumpableObject(fout, dobjs[i]);
+
+	/* Add the Graph_Path. */
+	dumpDatabaseGraphPath(fout, extractDatabaseName(dopt.dbname));
 
 	/*
 	 * Set up options info to ensure we dump what we want.
@@ -17666,6 +17673,94 @@ appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 								fout->std_strings);
 	if (!res)
 		write_msg(NULL, "WARNING: could not parse reloptions array\n");
+}
+
+/*
+ * extract the database name from the command line arguements.
+ * Note: database is a required command line arguement
+ */
+static const char *
+extractDatabaseName(const char *name)
+{
+	char *pos;
+
+	pos = strchr(name, '=');
+
+	return pos + 1;
+}
+
+/*
+ * Creates the ALTER DATABASE command that will setup the GRAPH_PATH
+ * configuration option. See makeAlterConfigCommand
+ */
+static void
+makeAlterGraphPathConfigCommand(Archive *fout, PGconn *conn,
+							const char *graph_path,
+							const char *name)
+{
+	char *graph_name;
+	PQExpBuffer buf;
+
+	graph_name = extractConfigValue(graph_path);
+	buf = createPQExpBuffer();
+
+	appendPQExpBuffer(buf, "ALTER DATABASE %s SET GRAPH_PATH TO ", fmtId(name));
+	appendStringLiteralConn(buf, graph_name, conn);
+	appendPQExpBufferStr(buf, ";\n");
+
+	ArchiveEntry(fout, nilCatalogId, createDumpId(), "Graph Path", NULL,
+				NULL, "", false, "GRAPH", SECTION_DATA, buf->data, "", NULL,
+				NULL, 0, NULL, NULL);
+
+	destroyPQExpBuffer(buf);
+	free(graph_name);
+}
+
+/*
+ * Dump database-specific graph_path configuration
+ *
+ * This must be done here, because when database-specific configurations are
+ * exported, ag_catalog has not been setup and the GRAPH_PATH configuration
+ * option requires ag_graph to have data inserted in it.
+ */
+static void
+dumpDatabaseGraphPath(Archive *fout, const char *dbname)
+{
+	PGconn *conn = GetConnection(fout);
+	PQExpBuffer buf = createPQExpBuffer();
+	int count = 1;
+
+	for (;;)
+	{
+		PGresult *res;
+
+		printfPQExpBuffer(buf, "SELECT setconfig[%d] FROM pg_db_role_setting "
+					"WHERE setrole = 0 AND setdatabase = (SELECT oid FROM pg_database WHERE datname = '%s');",
+					count, dbname);
+
+		res = ExecuteSqlQuery(fout, buf->data, PGRES_TUPLES_OK);
+		if (PQntuples(res) == 1 && !PQgetisnull(res, 0, 0))
+		{
+			char *configuration = PQgetvalue(res, 0, 0);
+
+			if (!isGraphPathConfig(configuration))
+			{
+				count++;
+				continue;
+			}
+
+			makeAlterGraphPathConfigCommand(fout, conn, configuration, dbname);
+			PQclear(res);
+			count++;
+		}
+		else
+		{
+			PQclear(res);
+			break;
+		}
+	}
+
+	destroyPQExpBuffer(buf);
 }
 
 /*

@@ -57,5 +57,7 @@ extern void buildACLQueries(PQExpBuffer acl_subquery, PQExpBuffer racl_subquery,
 				const char *obj_kind, bool binary_upgrade);
 
 extern bool variable_is_guc_list_quote(const char *name);
+extern bool isGraphPathConfig(const char *config);
+extern char *extractConfigValue(const char *config);
 
 #endif							/* DUMPUTILS_H */
