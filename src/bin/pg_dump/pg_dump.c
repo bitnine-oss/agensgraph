@@ -863,7 +863,7 @@ main(int argc, char **argv)
 		dumpDumpableObject(fout, dobjs[i]);
 
 	/* Add the Graph_Path. */
-	dumpDatabaseGraphPath(fout, extractDatabaseName(dopt.dbname));
+	dumpDatabaseGraphPath(fout, dopt.dbname);
 
 	/*
 	 * Set up options info to ensure we dump what we want.
