@@ -586,7 +586,7 @@
 #define PG_VERSION_STR "Uninitialized version string (win32)"
 
 /* AgensGraph version as a string */
-#define AG_VERSION "2.2devel"
+#define AG_VERSION "2.1.3"
 #define AG_COMP_VERSION "2.1"
 
 /* The size of `long', as computed by sizeof. */
