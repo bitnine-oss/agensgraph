@@ -311,6 +311,33 @@ jsonb_int4(PG_FUNCTION_ARGS)
 }
 
 Datum
+jsonb_bool(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *j = PG_GETARG_JSONB(0);
+
+	if (JB_ROOT_IS_SCALAR(j))
+	{
+		JsonbValue *jv;
+
+		jv = getIthJsonbValueFromContainer(&j->root, 0);
+		if (jv->type == jbvBool)
+		{
+			Datum		n;
+
+			n = BoolGetDatum(jv->val.boolean);
+
+			return n;
+		}
+	}
+
+	ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					errmsg("%s cannot be converted to %s",
+						   JsonbToCString(NULL, &j->root, VARSIZE(j)), "boolean")));
+	return 0;
+}
+
+Datum
 jsonb_numeric(PG_FUNCTION_ARGS)
 {
 	Jsonb	   *j = PG_GETARG_JSONB(0);

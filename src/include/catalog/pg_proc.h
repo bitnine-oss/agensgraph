@@ -5625,6 +5625,8 @@ DATA(insert OID = 7185 ( jsonb_pow		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 3
 DATA(insert OID = 7187 ( jsonb_uplus	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_uplus _null_ _null_ _null_ ));
 DATA(insert OID = 7189 ( jsonb_uminus	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_uminus _null_ _null_ _null_ ));
 /* Cypher expressions - coercions between jsonb and bool */
+DATA(insert OID = 7191 ( bool		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 16 "3802" _null_ _null_ _null_ _null_ _null_ jsonb_bool _null_ _null_ _null_ ));
+DESCR("convert jsonb to bool");
 DATA(insert OID = 7192 ( jsonb		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 3802 "16" _null_ _null_ _null_ _null_ _null_ bool_jsonb _null_ _null_ _null_ ));
 DESCR("convert bool to jsonb");
 /* Cypher expressions - coercion from jsonb to int8/int4/numeric/float */
