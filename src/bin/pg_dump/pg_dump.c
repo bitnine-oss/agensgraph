@@ -286,7 +286,7 @@ static char *get_synchronized_snapshot(Archive *fout);
 static void setupDumpWorker(Archive *AHX);
 static void insertGraphCatalog(Archive *fout);
 static void setGraphPath(PQExpBuffer q, char *gname);
-static void dumpDatabaseGraphPath(Archive *fout, const char *dbname);
+static void dumpDatabaseGraphPath(Archive *fout);
 static void makeAlterGraphPathConfigCommand(Archive *fout,PGconn *conn,
 						const char *arrayitem,
 						const char *name);
@@ -863,7 +863,7 @@ main(int argc, char **argv)
 		dumpDumpableObject(fout, dobjs[i]);
 
 	/* Add the Graph_Path. */
-	dumpDatabaseGraphPath(fout, dopt.dbname);
+	dumpDatabaseGraphPath(fout);
 
 	/*
 	 * Set up options info to ensure we dump what we want.
@@ -17724,19 +17724,23 @@ makeAlterGraphPathConfigCommand(Archive *fout, PGconn *conn,
  * option requires ag_graph to have data inserted in it.
  */
 static void
-dumpDatabaseGraphPath(Archive *fout, const char *dbname)
+dumpDatabaseGraphPath(Archive *fout)
 {
 	PGconn *conn = GetConnection(fout);
+	const char *datname = PQdb(conn);
 	PQExpBuffer buf = createPQExpBuffer();
 	int count = 1;
 
 	for (;;)
 	{
 		PGresult *res;
+		resetPQExpBuffer(buf);
+		appendPQExpBuffer(buf, "SELECT setconfig[%d] FROM pg_db_role_setting "
+					"WHERE setrole = 0 AND setdatabase = (SELECT oid FROM pg_database WHERE datname = ",
+					count);
 
-		printfPQExpBuffer(buf, "SELECT setconfig[%d] FROM pg_db_role_setting "
-					"WHERE setrole = 0 AND setdatabase = (SELECT oid FROM pg_database WHERE datname = '%s');",
-					count, dbname);
+		appendStringLiteralAH(buf, datname, fout);
+		appendPQExpBuffer(buf, ")");
 
 		res = ExecuteSqlQuery(fout, buf->data, PGRES_TUPLES_OK);
 		if (PQntuples(res) == 1 && !PQgetisnull(res, 0, 0))
@@ -17749,7 +17753,7 @@ dumpDatabaseGraphPath(Archive *fout, const char *dbname)
 				continue;
 			}
 
-			makeAlterGraphPathConfigCommand(fout, conn, configuration, dbname);
+			makeAlterGraphPathConfigCommand(fout, conn, configuration, datname);
 			PQclear(res);
 			count++;
 		}
