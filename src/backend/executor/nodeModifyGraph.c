@@ -134,8 +134,9 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->ps.ExecProcNode = ExecModifyGraph;
 
 	/* Tuple desc for result is the same as the subplan. */
-    ExecInitResultTupleSlotTL(estate, &mgstate->ps);
-
+	TupleTableSlot *slot = ExecAllocTableSlot(&estate->es_tupleTable, NULL);
+	mgstate->ps.ps_ResultTupleSlot = slot;
+	ExecSetSlotDescriptor(slot, ExecTypeFromTL(mgplan->subplan->targetlist, false));
 	ExecAssignExprContext(estate, &mgstate->ps);
 
 	mgstate->done = false;
@@ -407,9 +408,7 @@ ExecModifyGraph(PlanState *pstate)
 
 		/* don't care about scan direction */
 		result = mgstate->ps.ps_ResultTupleSlot;
-		
-		// TODO: Figure out, why calling this method
-		// tuplestore_gettupleslot(mgstate->tuplestorestate, true, false, result);
+		tuplestore_gettupleslot(mgstate->tuplestorestate, true, false, result);
 
 		if (TupIsNull(result))
 			return result;
