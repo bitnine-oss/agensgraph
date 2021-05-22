@@ -4523,7 +4523,8 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 
 			set = makeFuncCall(list_make1(makeString("jsonb_set")), NIL, -1);
 			set_prop = ParseFuncOrColumn(pstate, set->funcname,
-										 list_make3(prop_map, path, expr),
+										 list_make4(prop_map, path, expr,
+                                                    makeBoolConst(true, false)),
 										 pstate->p_last_srf, set, false, -1);
 
 			/*
