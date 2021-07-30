@@ -9322,20 +9322,24 @@ get_oper_expr(OpExpr *expr, deparse_context *context)
             if (!strcmp(oprname, "@>"))
             {
                 get_rule_expr_paren(arg2, context, true, (Node *) expr);
-
                 appendStringInfo(buf, " IN ");
-
                 get_rule_expr_paren(arg1, context, true, (Node *) expr);
+            }
+            else
+            {
+            	get_rule_expr_paren(arg1, context, true, (Node *) expr);
+            	appendStringInfo(buf, " %s ", oprname);
+            	get_rule_expr_paren(arg2, context, true, (Node *) expr);
             }
         }
 		else
 		{
-            get_rule_expr_paren(arg1, context, true, (Node *) expr);
-            appendStringInfo(buf, " %s ",
-                             generate_operator_name(opno,
-                                                    exprType(arg1),
-                                                    exprType(arg2)));
-            get_rule_expr_paren(arg2, context, true, (Node *) expr);
+			get_rule_expr_paren(arg1, context, true, (Node *) expr);
+			appendStringInfo(buf, " %s ",
+							 generate_operator_name(opno,
+													exprType(arg1),
+													exprType(arg2)));
+			get_rule_expr_paren(arg2, context, true, (Node *) expr);
 		}
 	}
 	else
