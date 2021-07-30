@@ -1656,26 +1656,6 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 
 	{
-		{"case_sensitive_ident", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
-			gettext_noop("Use case-sensitive identifiers."),
-			NULL
-		},
-		&case_sensitive_ident,
-		false,
-		NULL, NULL, NULL
-	},
-
-	{
-		{"case_compat_type_func", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
-			gettext_noop("If case_sensitive_ident is on, use case-insensitive identifiers for type and function names."),
-			NULL
-		},
-		&case_compat_type_func,
-		false,
-		NULL, NULL, NULL
-	},
-
-	{
 		{"synchronize_seqscans", PGC_USERSET, COMPAT_OPTIONS_PREVIOUS,
 			gettext_noop("Enable synchronized sequential scans."),
 			NULL
@@ -1885,7 +1865,6 @@ static struct config_bool ConfigureNamesBool[] =
 		false,
 		NULL, NULL, NULL
 	},
-
 	{
 		{"allow_null_properties", PGC_USERSET, COMPAT_OPTIONS_CLIENT,
 			gettext_noop("Enables the insertion of null properties into vertices and edges"),
@@ -1895,7 +1874,6 @@ static struct config_bool ConfigureNamesBool[] =
 		false,
 		NULL, NULL, NULL
 	},
-
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, false, NULL, NULL, NULL
@@ -2193,7 +2171,6 @@ static struct config_int ConfigureNamesInt[] =
 		100, 100, MAX_KILOBYTES,
 		check_max_stack_depth, assign_max_stack_depth, NULL
 	},
-
 	{
 		{"eager_mem", PGC_USERSET, RESOURCES_MEM,
 			gettext_noop("Sets the maximum memory to be used for eager plan."),
@@ -2204,7 +2181,6 @@ static struct config_int ConfigureNamesInt[] =
 		4096, 1024, MAX_KILOBYTES,
 		NULL, NULL, NULL
 	},
-
 	{
 		{"temp_file_limit", PGC_SUSET, RESOURCES_DISK,
 			gettext_noop("Limits the total size of all temporary files used by each process."),
@@ -3591,7 +3567,6 @@ static struct config_string ConfigureNamesString[] =
 		PG_VERSION,
 		NULL, NULL, NULL
 	},
-
 	{
 		/* Can't be set in postgresql.conf */
 		{"agversion", PGC_INTERNAL, PRESET_OPTIONS,
@@ -3603,7 +3578,6 @@ static struct config_string ConfigureNamesString[] =
 		AG_VERSION,
 		NULL, NULL, NULL
 	},
-
 	{
 		/* Not for general use --- used by SET ROLE */
 		{"role", PGC_USERSET, UNGROUPED,
@@ -3977,7 +3951,6 @@ static struct config_string ConfigureNamesString[] =
 		"llvmjit",
 		NULL, NULL, NULL
 	},
-
 	{
 		{"graph_path", PGC_USERSET, CLIENT_CONN_STATEMENT,
 			gettext_noop("Sets the graph search path for all names."),
@@ -3988,7 +3961,6 @@ static struct config_string ConfigureNamesString[] =
 		"",
 		check_graph_path, NULL, NULL
 	},
-
 	/* End-of-list marker */
 	{
 		{NULL, 0, 0, NULL, NULL}, NULL, NULL, NULL, NULL, NULL

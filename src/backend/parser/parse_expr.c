@@ -613,33 +613,8 @@ transformColumnRef(ParseState *pstate, ColumnRef *cref)
 										   &levels_up);
 				if (rte == NULL)
 				{
-					char *_relname;
-
-					if (!case_sensitive_ident)
-					{
-						crerr = CRERR_NO_RTE;
-						break;
-					}
-
-					/*
-					 * FIXME: Try to find hard-coded magic variables using
-					 *        downcased identifier. This is buggy and ugly but
-					 *        results minimum code changes.
-					 */
-
-					_relname = downcase_identifier(relname, strlen(relname),
-												   false, false);
-					if (strcmp(_relname, "excluded") == 0 ||
-						strcmp(_relname, "new") == 0 ||
-						strcmp(_relname, "old") == 0)
-						rte = refnameRangeTblEntry(pstate, nspname, _relname,
-												   cref->location,
-												   &levels_up);
-					if (rte == NULL)
-					{
-						crerr = CRERR_NO_RTE;
-						break;
-					}
+					crerr = CRERR_NO_RTE;
+					break;
 				}
 
 				/* Whole-row reference? */
