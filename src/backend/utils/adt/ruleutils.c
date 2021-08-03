@@ -479,9 +479,12 @@ static bool get_access_arg_expr(Node *node, deparse_context *context,
                                 bool showimplicit);
 static void get_pathelem_expr(Node *node, deparse_context *context,
                               bool showimplicit);
-static bool is_ident(const char *str, int len);
+static bool is_ident(const char *str, const int len);
 static char *ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
 										int prettyFlags, bool missing_ok);
+static char *ag_get_graphconstraintdef_worker(Oid constraintId,
+											  int prettyFlags,
+											  bool missing_ok);
 static char *deparse_prop_expression_pretty(Node *expr, List *dpcontext,
 											int prettyFlags);
 static void get_jsonb_scalar(JsonbValue *scalar, deparse_context *context);
@@ -11965,12 +11968,163 @@ ag_get_graphconstraintdef(PG_FUNCTION_ARGS)
 
 	prettyFlags = PRETTYFLAG_PAREN | PRETTYFLAG_INDENT;
 
-	res = pg_get_constraintdef_worker(constraintId, false, prettyFlags, true);
+	res = ag_get_graphconstraintdef_worker(constraintId, prettyFlags, true);
 
 	if (res == NULL)
 		PG_RETURN_NULL();
 
 	PG_RETURN_TEXT_P(string_to_text(res));
+}
+
+/*
+ * Based on pg_get_constraintdef_worker()
+ */
+static char *
+ag_get_graphconstraintdef_worker(Oid constraintId, int prettyFlags,
+								 bool missing_ok)
+{
+	HeapTuple	tup;
+	Form_pg_constraint conForm;
+	StringInfoData buf;
+	SysScanDesc scandesc;
+	ScanKeyData scankey[1];
+	Snapshot	snapshot = RegisterSnapshot(GetTransactionSnapshot());
+	Relation	relation = heap_open(ConstraintRelationId, AccessShareLock);
+
+	ScanKeyInit(&scankey[0],
+				ObjectIdAttributeNumber,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(constraintId));
+
+	scandesc = systable_beginscan(relation,
+								  ConstraintOidIndexId,
+								  true,
+								  snapshot,
+								  1,
+								  scankey);
+
+	/*
+	 * We later use the tuple with SysCacheGetAttr() as if we had obtained it
+	 * via SearchSysCache, which works fine.
+	 */
+	tup = systable_getnext(scandesc);
+
+	UnregisterSnapshot(snapshot);
+
+	if (!HeapTupleIsValid(tup))
+	{
+		if (missing_ok)
+		{
+			systable_endscan(scandesc);
+			heap_close(relation, AccessShareLock);
+			return NULL;
+		}
+		elog(ERROR, "cache lookup failed for constraint %u", constraintId);
+	}
+
+	conForm = (Form_pg_constraint) GETSTRUCT(tup);
+
+	initStringInfo(&buf);
+
+	switch (conForm->contype)
+	{
+		case CONSTRAINT_CHECK:
+			{
+				Datum		val;
+				bool		isnull;
+				char	   *conbin;
+				char	   *consrc;
+				Node	   *expr;
+				List	   *context;
+
+				/* Fetch constraint expression in parsetree form */
+				val = SysCacheGetAttr(CONSTROID, tup,
+									  Anum_pg_constraint_conbin, &isnull);
+				if (isnull)
+					elog(ERROR, "null conbin for constraint %u",
+						 constraintId);
+
+				conbin = TextDatumGetCString(val);
+				expr = stringToNode(conbin);
+
+				/* Set up deparsing context for Var nodes in constraint */
+				if (conForm->conrelid != InvalidOid)
+				{
+					/* relation constraint */
+					context = deparse_context_for(get_relation_name(conForm->conrelid),
+												  conForm->conrelid);
+				}
+				else
+				{
+					/* domain constraint --- can't have Vars */
+					context = NIL;
+				}
+
+				consrc = deparse_prop_expression_pretty(expr, context,
+														prettyFlags);
+
+				appendStringInfo(&buf, "ASSERT (%s)", consrc);
+				break;
+			}
+		/* Unique constraint on AgensGraph is implemented using exclude index */
+		case CONSTRAINT_EXCLUSION:
+			{
+				Oid			indexOid = conForm->conindid;
+				Datum		val;
+				bool		isnull;
+				Datum	   *elems;
+				int			nElems;
+				int			i;
+				Oid		   *operators;
+
+				/* Extract operator OIDs from the pg_constraint tuple */
+				val = SysCacheGetAttr(CONSTROID, tup,
+									  Anum_pg_constraint_conexclop,
+									  &isnull);
+				if (isnull)
+					elog(ERROR, "null conexclop for constraint %u",
+						 constraintId);
+
+				deconstruct_array(DatumGetArrayTypeP(val),
+								  OIDOID, sizeof(Oid), true, 'i',
+								  &elems, NULL, &nElems);
+
+				operators = (Oid *) palloc(nElems * sizeof(Oid));
+				for (i = 0; i < nElems; i++)
+					operators[i] = DatumGetObjectId(elems[i]);
+
+				/* pg_get_indexdef_worker does the rest */
+				/* suppress tablespace because pg_dump wants it that way */
+				appendStringInfoString(&buf,
+									   ag_get_propindexdef_worker(indexOid,
+																  operators,
+																  prettyFlags,
+																  false));
+				break;
+			}
+		case CONSTRAINT_FOREIGN:
+		case CONSTRAINT_PRIMARY:
+		case CONSTRAINT_UNIQUE:
+		case CONSTRAINT_TRIGGER:
+			elog(ERROR, "invalid graph constraint type '%c'", conForm->contype);
+			break;
+		default:
+			elog(ERROR, "invalid constraint type \"%c\"", conForm->contype);
+			break;
+	}
+
+	if (conForm->condeferrable)
+		appendStringInfoString(&buf, " DEFERRABLE");
+	if (conForm->condeferred)
+		appendStringInfoString(&buf, " INITIALLY DEFERRED");
+	if (!conForm->convalidated)
+		appendStringInfoString(&buf, " NOT VALID");
+
+	/* Cleanup */
+	systable_endscan(scandesc);
+	heap_close(relation, AccessShareLock);
+
+	return buf.data;
 }
 
 /*
