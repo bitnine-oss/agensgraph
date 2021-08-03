@@ -901,6 +901,12 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		}
 	}
 
+	/* expressions for graph */
+	if (parse->graph.writeOp == GWROP_MERGE)
+		preprocess_graph_pattern(root, parse->graph.pattern);
+	preprocess_graph_delete(root, parse->graph.exprs);
+	preprocess_graph_sets(root, parse->graph.sets);
+
 	/*
 	 * In some cases we may want to transfer a HAVING clause into WHERE. We
 	 * cannot do so if the HAVING clause contains aggregates (obviously) or
