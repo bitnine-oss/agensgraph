@@ -1370,7 +1370,7 @@ dense_alloc(HashJoinTable hashtable, Size size)
 	{
 		/* allocate new chunk and put it at the beginning of the list */
 		newChunk = (HashMemoryChunk) MemoryContextAlloc(hashtable->batchCxt,
-														HASH_CHUNK_HEADER_SIZE + size);
+														HASH_CHUNK_HEADER_SIZE + HASH_CHUNK_SIZE);
 
 		newChunk->maxlen = HASH_CHUNK_SIZE;
 		newChunk->used = size;
