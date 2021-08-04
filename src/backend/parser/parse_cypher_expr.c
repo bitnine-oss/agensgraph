@@ -856,20 +856,18 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 	if (list_length(fn->funcname) == 1)
 	{
 		char	   *funcname;
-
 		funcname = strVal(linitial(fn->funcname));
 
 		if (strcmp(funcname, "collect") == 0)
 			fn->funcname = list_make1(makeString("jsonb_agg"));
-
-		if (strcmp(funcname, "stdev") == 0)
+		else if (strcmp(funcname, "stdev") == 0)
 			fn->funcname = list_make1(makeString("stddev_samp"));
-
-		if (strcmp(funcname, "stdevp") == 0)
+		else if (strcmp(funcname, "stdevp") == 0)
 			fn->funcname = list_make1(makeString("stddev_pop"));
-
+		else if (strcmp(funcname, "sin") == 0)
+			fn->funcname = list_make1(makeString("jsonb_sin"));
 		/* translate log() into ln() for cypher queries */
-		if (strcmp(funcname, "log") == 0)
+		else if (strcmp(funcname, "log") == 0)
 			fn->funcname = list_make1(makeString("ln"));
 	}
 

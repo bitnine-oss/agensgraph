@@ -10534,7 +10534,7 @@
   proname => 'radians', prorettype => 'jsonb', proargtypes => 'jsonb',
   prosrc => 'jsonb_radians' },
 { oid => '7226', descr => 'sine',
-  proname => 'sin', prorettype => 'jsonb', proargtypes => 'jsonb',
+  proname => 'jsonb_sin', prorettype => 'jsonb', proargtypes => 'jsonb',
   prosrc => 'jsonb_sin' },
 { oid => '7227', descr => 'tangent',
   proname => 'tan', prorettype => 'jsonb', proargtypes => 'jsonb',
