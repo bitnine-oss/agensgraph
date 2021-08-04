@@ -2125,7 +2125,7 @@ build_datatype(HeapTuple typeTup, int32 typmod,
 		/* we can short-circuit looking up base types if it's not varlena */
 		typ->typisarray = (typeStruct->typlen == -1 &&
 						   typeStruct->typstorage != 'p' &&
-				 OidIsValid(get_base_element_type(typeStruct->typbasetype)));
+						   OidIsValid(get_base_element_type(typeStruct->typbasetype)));
 	}
 	else
 		typ->typisarray = false;
