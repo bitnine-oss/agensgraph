@@ -3,7 +3,7 @@
  * statscmds.c
  *	  Commands for creating and altering extended statistics objects
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,11 +15,13 @@
 #include "postgres.h"
 
 #include "access/relscan.h"
+#include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_statistic_ext.h"
+#include "commands/comment.h"
 #include "commands/defrem.h"
 #include "miscadmin.h"
 #include "statistics/statistics.h"
@@ -121,8 +123,15 @@ CreateStatistics(CreateStatsStmt *stmt)
 
 		/* You must own the relation to create stats on it */
 		if (!pg_class_ownercheck(RelationGetRelid(rel), stxowner))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_CLASS,
+			aclcheck_error(ACLCHECK_NOT_OWNER, get_relkind_objtype(rel->rd_rel->relkind),
 						   RelationGetRelationName(rel));
+
+		/* Creating statistics on system catalogs is not allowed */
+		if (!allowSystemTableMods && IsSystemRelation(rel))
+			ereport(ERROR,
+					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+					 errmsg("permission denied: \"%s\" is a system catalog",
+							RelationGetRelationName(rel))));
 	}
 
 	Assert(rel);
@@ -132,7 +141,8 @@ CreateStatistics(CreateStatsStmt *stmt)
 	 * If the node has a name, split it up and determine creation namespace.
 	 * If not (a possibility not considered by the grammar, but one which can
 	 * occur via the "CREATE TABLE ... (LIKE)" command), then we put the
-	 * object in the same namespace as the relation, and cons up a name for it.
+	 * object in the same namespace as the relation, and cons up a name for
+	 * it.
 	 */
 	if (stmt->defnames)
 		namespaceId = QualifiedNameGetCreationNamespace(stmt->defnames,
@@ -361,6 +371,11 @@ CreateStatistics(CreateStatsStmt *stmt)
 	 * STATISTICS, which is more work than it seems worth.
 	 */
 
+	/* Add any requested comment */
+	if (stmt->stxcomment != NULL)
+		CreateComments(statoid, StatisticExtRelationId, 0,
+					   stmt->stxcomment);
+
 	/* Return stats object's address */
 	return myself;
 }
@@ -456,7 +471,7 @@ ChooseExtendedStatisticName(const char *name1, const char *name2,
 
 	for (;;)
 	{
-		Oid		existingstats;
+		Oid			existingstats;
 
 		stxname = makeObjectName(name1, name2, modlabel);
 
@@ -494,7 +509,7 @@ ChooseExtendedStatisticNameAddition(List *exprs)
 	buf[0] = '\0';
 	foreach(lc, exprs)
 	{
-		ColumnRef *cref = (ColumnRef *) lfirst(lc);
+		ColumnRef  *cref = (ColumnRef *) lfirst(lc);
 		const char *name;
 
 		/* It should be one of these, but just skip if it happens not to be */

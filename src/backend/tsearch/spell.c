@@ -3,7 +3,7 @@
  * spell.c
  *		Normalizing word with ISpell
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * Ispell dictionary
  * -----------------
@@ -195,14 +195,14 @@ static char *VoidString = "";
 static int
 cmpspell(const void *s1, const void *s2)
 {
-	return (strcmp((*(SPELL *const *) s1)->word, (*(SPELL *const *) s2)->word));
+	return strcmp((*(SPELL *const *) s1)->word, (*(SPELL *const *) s2)->word);
 }
 
 static int
 cmpspellaffix(const void *s1, const void *s2)
 {
-	return (strcmp((*(SPELL *const *) s1)->p.flag,
-				   (*(SPELL *const *) s2)->p.flag));
+	return strcmp((*(SPELL *const *) s1)->p.flag,
+				  (*(SPELL *const *) s2)->p.flag);
 }
 
 static int
@@ -450,13 +450,15 @@ getNextFlagFromString(IspellDict *Conf, char **sflagset, char *sflag)
  * otherwise returns false.
  */
 static bool
-IsAffixFlagInUse(IspellDict *Conf, int affix, char *affixflag)
+IsAffixFlagInUse(IspellDict *Conf, int affix, const char *affixflag)
 {
 	char	   *flagcur;
 	char		flag[BUFSIZ];
 
 	if (*affixflag == 0)
 		return true;
+
+	Assert(affix < Conf->nAffixData);
 
 	flagcur = Conf->AffixData[affix];
 
@@ -596,7 +598,7 @@ NIImportDictionary(IspellDict *Conf, const char *filename)
  * Returns 1 if the word was found in the prefix tree, else returns 0.
  */
 static int
-FindWord(IspellDict *Conf, const char *word, char *affixflag, int flag)
+FindWord(IspellDict *Conf, const char *word, const char *affixflag, int flag)
 {
 	SPNode	   *node = Conf->Dictionary;
 	SPNodeData *StopLow,
@@ -776,7 +778,7 @@ NIAddAffix(IspellDict *Conf, const char *flag, char flagflags, const char *mask,
  *
  * The buffer at "next" must be of size BUFSIZ; we truncate the input to fit.
  *
- * Returns TRUE if we found a field, FALSE if not.
+ * Returns true if we found a field, false if not.
  */
 static bool
 get_nextfield(char **str, char *next)
@@ -1160,15 +1162,18 @@ getAffixFlagSet(IspellDict *Conf, char *s)
 					(errcode(ERRCODE_CONFIG_FILE_ERROR),
 					 errmsg("invalid affix alias \"%s\"", s)));
 
-		if (curaffix > 0 && curaffix <= Conf->nAffixData)
+		if (curaffix > 0 && curaffix < Conf->nAffixData)
 
 			/*
 			 * Do not subtract 1 from curaffix because empty string was added
 			 * in NIImportOOAffixes
 			 */
 			return Conf->AffixData[curaffix];
-		else
-			return VoidString;
+		else if (curaffix > Conf->nAffixData)
+			ereport(ERROR,
+					(errcode(ERRCODE_CONFIG_FILE_ERROR),
+					 errmsg("invalid affix alias \"%s\"", s)));
+		return VoidString;
 	}
 	else
 		return s;
@@ -1303,7 +1308,7 @@ NIImportOOAffixes(IspellDict *Conf, const char *filename)
 			{
 				Conf->useFlagAliases = true;
 				naffix = atoi(sflag);
-				if (naffix == 0)
+				if (naffix <= 0)
 					ereport(ERROR,
 							(errcode(ERRCODE_CONFIG_FILE_ERROR),
 							 errmsg("invalid number of flag vector aliases")));
@@ -1318,7 +1323,7 @@ NIImportOOAffixes(IspellDict *Conf, const char *filename)
 				Conf->AffixData[curaffix] = VoidString;
 				curaffix++;
 			}
-			/* Other lines is aliases */
+			/* Other lines are aliases */
 			else
 			{
 				if (curaffix < naffix)
@@ -1326,6 +1331,11 @@ NIImportOOAffixes(IspellDict *Conf, const char *filename)
 					Conf->AffixData[curaffix] = cpstrdup(Conf, sflag);
 					curaffix++;
 				}
+				else
+					ereport(ERROR,
+							(errcode(ERRCODE_CONFIG_FILE_ERROR),
+							 errmsg("number of aliases exceeds specified number %d",
+									naffix - 1)));
 			}
 			goto nextline;
 		}
@@ -1556,6 +1566,8 @@ MergeAffix(IspellDict *Conf, int a1, int a2)
 {
 	char	  **ptr;
 
+	Assert(a1 < Conf->nAffixData && a2 < Conf->nAffixData);
+
 	/* Do not merge affix flags if one of affix flags is empty */
 	if (*Conf->AffixData[a1] == '\0')
 		return a2;
@@ -1598,9 +1610,10 @@ MergeAffix(IspellDict *Conf, int a1, int a2)
 static uint32
 makeCompoundFlags(IspellDict *Conf, int affix)
 {
-	char	   *str = Conf->AffixData[affix];
+	Assert(affix < Conf->nAffixData);
 
-	return (getCompoundAffixFlagValue(Conf, str) & FF_COMPOUNDFLAGMASK);
+	return (getCompoundAffixFlagValue(Conf, Conf->AffixData[affix]) &
+			FF_COMPOUNDFLAGMASK);
 }
 
 /*
@@ -1716,6 +1729,16 @@ NISortDictionary(IspellDict *Conf)
 			{
 				curaffix = strtol(Conf->Spell[i]->p.flag, &end, 10);
 				if (Conf->Spell[i]->p.flag == end || errno == ERANGE)
+					ereport(ERROR,
+							(errcode(ERRCODE_CONFIG_FILE_ERROR),
+							 errmsg("invalid affix alias \"%s\"",
+									Conf->Spell[i]->p.flag)));
+				if (curaffix < 0 || curaffix >= Conf->nAffixData)
+					ereport(ERROR,
+							(errcode(ERRCODE_CONFIG_FILE_ERROR),
+							 errmsg("invalid affix alias \"%s\"",
+									Conf->Spell[i]->p.flag)));
+				if (*end != '\0' && !t_isdigit(end) && !t_isspace(end))
 					ereport(ERROR,
 							(errcode(ERRCODE_CONFIG_FILE_ERROR),
 							 errmsg("invalid affix alias \"%s\"",
@@ -2242,9 +2265,9 @@ NormalizeSubWord(IspellDict *Conf, char *word, int flag)
 	if (cur == forms)
 	{
 		pfree(forms);
-		return (NULL);
+		return NULL;
 	}
-	return (forms);
+	return forms;
 }
 
 typedef struct SplitVar

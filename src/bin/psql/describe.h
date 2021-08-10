@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
  * src/bin/psql/describe.h
  */
@@ -111,4 +111,13 @@ bool		describePublications(const char *pattern);
 /* \dRs */
 bool		describeSubscriptions(const char *pattern, bool verbose);
 
-#endif							/* DESCRIBE_H */
+/* AgensGraph */
+/* \dG */
+extern bool listGraphs(const char *pattern, bool verbose);
+
+/* \dGl, \dGv, \dGe */
+extern bool listLabels(const char *pattern, bool verbose, char labkind);
+
+/* \dGi */
+extern bool listGraphIndexes(const char *pattern, bool verbose);
+#endif   /* DESCRIBE_H */

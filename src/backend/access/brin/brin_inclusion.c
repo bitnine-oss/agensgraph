@@ -16,7 +16,7 @@
  * writing is the INET type, where IPv6 values cannot be merged with IPv4
  * values.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -161,7 +161,7 @@ brin_inclusion_add_value(PG_FUNCTION_ARGS)
 	}
 
 	attno = column->bv_attno;
-	attr = bdesc->bd_tupdesc->attrs[attno - 1];
+	attr = TupleDescAttr(bdesc->bd_tupdesc, attno - 1);
 
 	/*
 	 * If the recorded value is null, copy the new value (which we know to be
@@ -235,8 +235,14 @@ brin_inclusion_add_value(PG_FUNCTION_ARGS)
 	Assert(finfo != NULL);
 	result = FunctionCall2Coll(finfo, colloid,
 							   column->bv_values[INCLUSION_UNION], newval);
-	if (!attr->attbyval)
+	if (!attr->attbyval &&
+		DatumGetPointer(result) != DatumGetPointer(column->bv_values[INCLUSION_UNION]))
+	{
 		pfree(DatumGetPointer(column->bv_values[INCLUSION_UNION]));
+
+		if (result == newval)
+			result = datumCopy(result, attr->attbyval, attr->attlen);
+	}
 	column->bv_values[INCLUSION_UNION] = result;
 
 	PG_RETURN_BOOL(true);
@@ -520,7 +526,7 @@ brin_inclusion_union(PG_FUNCTION_ARGS)
 		PG_RETURN_VOID();
 
 	attno = col_a->bv_attno;
-	attr = bdesc->bd_tupdesc->attrs[attno - 1];
+	attr = TupleDescAttr(bdesc->bd_tupdesc, attno - 1);
 
 	/*
 	 * Adjust "allnulls".  If A doesn't have values, just copy the values from
@@ -574,8 +580,14 @@ brin_inclusion_union(PG_FUNCTION_ARGS)
 	result = FunctionCall2Coll(finfo, colloid,
 							   col_a->bv_values[INCLUSION_UNION],
 							   col_b->bv_values[INCLUSION_UNION]);
-	if (!attr->attbyval)
+	if (!attr->attbyval &&
+		DatumGetPointer(result) != DatumGetPointer(col_a->bv_values[INCLUSION_UNION]))
+	{
 		pfree(DatumGetPointer(col_a->bv_values[INCLUSION_UNION]));
+
+		if (result == col_b->bv_values[INCLUSION_UNION])
+			result = datumCopy(result, attr->attbyval, attr->attlen);
+	}
 	col_a->bv_values[INCLUSION_UNION] = result;
 
 	PG_RETURN_VOID();
@@ -679,7 +691,7 @@ inclusion_get_strategy_procinfo(BrinDesc *bdesc, uint16 attno, Oid subtype,
 		bool		isNull;
 
 		opfamily = bdesc->bd_index->rd_opfamily[attno - 1];
-		attr = bdesc->bd_tupdesc->attrs[attno - 1];
+		attr = TupleDescAttr(bdesc->bd_tupdesc, attno - 1);
 		tuple = SearchSysCache4(AMOPSTRATEGY, ObjectIdGetDatum(opfamily),
 								ObjectIdGetDatum(attr->atttypid),
 								ObjectIdGetDatum(subtype),

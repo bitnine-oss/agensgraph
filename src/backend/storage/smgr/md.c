@@ -10,7 +10,7 @@
  * It doesn't matter whether the bits are on spinning rust or some other
  * storage technology.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -26,8 +26,8 @@
 #include <sys/file.h>
 
 #include "miscadmin.h"
+#include "access/xlogutils.h"
 #include "access/xlog.h"
-#include "catalog/catalog.h"
 #include "pgstat.h"
 #include "portability/instr_time.h"
 #include "postmaster/bgwriter.h"
@@ -304,7 +304,7 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 
 	path = relpath(reln->smgr_rnode, forkNum);
 
-	fd = PathNameOpenFile(path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY, 0600);
+	fd = PathNameOpenFile(path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY);
 
 	if (fd < 0)
 	{
@@ -317,7 +317,7 @@ mdcreate(SMgrRelation reln, ForkNumber forkNum, bool isRedo)
 		 * already, even if isRedo is not set.  (See also mdopen)
 		 */
 		if (isRedo || IsBootstrapProcessingMode())
-			fd = PathNameOpenFile(path, O_RDWR | PG_BINARY, 0600);
+			fd = PathNameOpenFile(path, O_RDWR | PG_BINARY);
 		if (fd < 0)
 		{
 			/* be sure to report the error reported by create, not open */
@@ -406,6 +406,41 @@ mdunlink(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 		mdunlinkfork(rnode, forkNum, isRedo);
 }
 
+/*
+ * Truncate a file to release disk space.
+ */
+static int
+do_truncate(const char *path)
+{
+	int			save_errno;
+	int			ret;
+	int			fd;
+
+	/* truncate(2) would be easier here, but Windows hasn't got it */
+	fd = OpenTransientFile(path, O_RDWR | PG_BINARY);
+	if (fd >= 0)
+	{
+		ret = ftruncate(fd, 0);
+		save_errno = errno;
+		CloseTransientFile(fd);
+		errno = save_errno;
+	}
+	else
+		ret = -1;
+
+	/* Log a warning here to avoid repetition in callers. */
+	if (ret < 0 && errno != ENOENT)
+	{
+		save_errno = errno;
+		ereport(WARNING,
+				(errcode_for_file_access(),
+				 errmsg("could not truncate file \"%s\": %m", path)));
+		errno = save_errno;
+	}
+
+	return ret;
+}
+
 static void
 mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 {
@@ -419,33 +454,28 @@ mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 	 */
 	if (isRedo || forkNum != MAIN_FORKNUM || RelFileNodeBackendIsTemp(rnode))
 	{
-		ret = unlink(path);
-		if (ret < 0 && errno != ENOENT)
-			ereport(WARNING,
-					(errcode_for_file_access(),
-					 errmsg("could not remove file \"%s\": %m", path)));
+		if (!RelFileNodeBackendIsTemp(rnode))
+		{
+			/* Prevent other backends' fds from holding on to the disk space */
+			ret = do_truncate(path);
+		}
+		else
+			ret = 0;
+
+		/* Next unlink the file, unless it was already found to be missing */
+		if (ret == 0 || errno != ENOENT)
+		{
+			ret = unlink(path);
+			if (ret < 0 && errno != ENOENT)
+				ereport(WARNING,
+						(errcode_for_file_access(),
+						 errmsg("could not remove file \"%s\": %m", path)));
+		}
 	}
 	else
 	{
-		/* truncate(2) would be easier here, but Windows hasn't got it */
-		int			fd;
-
-		fd = OpenTransientFile(path, O_RDWR | PG_BINARY, 0);
-		if (fd >= 0)
-		{
-			int			save_errno;
-
-			ret = ftruncate(fd, 0);
-			save_errno = errno;
-			CloseTransientFile(fd);
-			errno = save_errno;
-		}
-		else
-			ret = -1;
-		if (ret < 0 && errno != ENOENT)
-			ereport(WARNING,
-					(errcode_for_file_access(),
-					 errmsg("could not truncate file \"%s\": %m", path)));
+		/* Prevent other backends' fds from holding on to the disk space */
+		ret = do_truncate(path);
 
 		/* Register request to unlink first segment later */
 		register_unlink(rnode);
@@ -466,6 +496,17 @@ mdunlinkfork(RelFileNodeBackend rnode, ForkNumber forkNum, bool isRedo)
 		for (segno = 1;; segno++)
 		{
 			sprintf(segpath, "%s.%u", path, segno);
+
+			if (!RelFileNodeBackendIsTemp(rnode))
+			{
+				/*
+				 * Prevent other backends' fds from holding on to the disk
+				 * space.
+				 */
+				if (do_truncate(segpath) < 0 && errno == ENOENT)
+					break;
+			}
+
 			if (unlink(segpath) < 0)
 			{
 				/* ENOENT is expected after the last segment... */
@@ -583,7 +624,7 @@ mdopen(SMgrRelation reln, ForkNumber forknum, int behavior)
 
 	path = relpath(reln->smgr_rnode, forknum);
 
-	fd = PathNameOpenFile(path, O_RDWR | PG_BINARY, 0600);
+	fd = PathNameOpenFile(path, O_RDWR | PG_BINARY);
 
 	if (fd < 0)
 	{
@@ -594,7 +635,7 @@ mdopen(SMgrRelation reln, ForkNumber forknum, int behavior)
 		 * substitute for mdcreate() in bootstrap mode only. (See mdcreate)
 		 */
 		if (IsBootstrapProcessingMode())
-			fd = PathNameOpenFile(path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY, 0600);
+			fd = PathNameOpenFile(path, O_RDWR | O_CREAT | O_EXCL | PG_BINARY);
 		if (fd < 0)
 		{
 			if ((behavior & EXTENSION_RETURN_NULL) &&
@@ -638,18 +679,10 @@ mdclose(SMgrRelation reln, ForkNumber forknum)
 	{
 		MdfdVec    *v = &reln->md_seg_fds[forknum][nopensegs - 1];
 
-		/* if not closed already */
-		if (v->mdfd_vfd >= 0)
-		{
-			FileClose(v->mdfd_vfd);
-			v->mdfd_vfd = -1;
-		}
-
+		FileClose(v->mdfd_vfd);
+		_fdvec_resize(reln, forknum, nopensegs - 1);
 		nopensegs--;
 	}
-
-	/* resize just once, avoids pointless reallocations */
-	_fdvec_resize(reln, forknum, 0);
 }
 
 /*
@@ -1039,7 +1072,7 @@ mdimmedsync(SMgrRelation reln, ForkNumber forknum)
 		MdfdVec    *v = &reln->md_seg_fds[forknum][segno - 1];
 
 		if (FileSync(v->mdfd_vfd, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
-			ereport(ERROR,
+			ereport(data_sync_elevel(ERROR),
 					(errcode_for_file_access(),
 					 errmsg("could not fsync file \"%s\": %m",
 							FilePathName(v->mdfd_vfd))));
@@ -1150,10 +1183,8 @@ mdsync(void)
 		 * The bitmap manipulations are slightly tricky, because we can call
 		 * AbsorbFsyncRequests() inside the loop and that could result in
 		 * bms_add_member() modifying and even re-palloc'ing the bitmapsets.
-		 * This is okay because we unlink each bitmapset from the hashtable
-		 * entry before scanning it.  That means that any incoming fsync
-		 * requests will be processed now if they reach the table before we
-		 * begin to scan their fork.
+		 * So we detach it, but if we fail we'll merge it with any new
+		 * requests that have arrived in the meantime.
 		 */
 		for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
 		{
@@ -1163,7 +1194,8 @@ mdsync(void)
 			entry->requests[forknum] = NULL;
 			entry->canceled[forknum] = false;
 
-			while ((segno = bms_first_member(requests)) >= 0)
+			segno = -1;
+			while ((segno = bms_next_member(requests, segno)) >= 0)
 			{
 				int			failures;
 
@@ -1244,6 +1276,7 @@ mdsync(void)
 							longest = elapsed;
 						total_elapsed += elapsed;
 						processed++;
+						requests = bms_del_member(requests, segno);
 						if (log_checkpoints)
 							elog(DEBUG1, "checkpoint sync: number=%d file=%s time=%.3f msec",
 								 processed,
@@ -1272,10 +1305,23 @@ mdsync(void)
 					 */
 					if (!FILE_POSSIBLY_DELETED(errno) ||
 						failures > 0)
-						ereport(ERROR,
+					{
+						Bitmapset  *new_requests;
+
+						/*
+						 * We need to merge these unsatisfied requests with
+						 * any others that have arrived since we started.
+						 */
+						new_requests = entry->requests[forknum];
+						entry->requests[forknum] =
+							bms_join(new_requests, requests);
+
+						errno = save_errno;
+						ereport(data_sync_elevel(ERROR),
 								(errcode_for_file_access(),
 								 errmsg("could not fsync file \"%s\": %m",
 										path)));
+					}
 					else
 						ereport(DEBUG1,
 								(errcode_for_file_access(),
@@ -1445,7 +1491,7 @@ register_dirty_segment(SMgrRelation reln, ForkNumber forknum, MdfdVec *seg)
 				(errmsg("could not forward fsync request because request queue is full")));
 
 		if (FileSync(seg->mdfd_vfd, WAIT_EVENT_DATA_FILE_SYNC) < 0)
-			ereport(ERROR,
+			ereport(data_sync_elevel(ERROR),
 					(errcode_for_file_access(),
 					 errmsg("could not fsync file \"%s\": %m",
 							FilePathName(seg->mdfd_vfd))));
@@ -1704,6 +1750,37 @@ ForgetDatabaseFsyncRequests(Oid dbid)
 	}
 }
 
+/*
+ * DropRelationFiles -- drop files of all given relations
+ */
+void
+DropRelationFiles(RelFileNode *delrels, int ndelrels, bool isRedo)
+{
+	SMgrRelation *srels;
+	int			i;
+
+	srels = palloc(sizeof(SMgrRelation) * ndelrels);
+	for (i = 0; i < ndelrels; i++)
+	{
+		SMgrRelation srel = smgropen(delrels[i], InvalidBackendId);
+
+		if (isRedo)
+		{
+			ForkNumber	fork;
+
+			for (fork = 0; fork <= MAX_FORKNUM; fork++)
+				XLogDropRelation(delrels[i], fork);
+		}
+		srels[i] = srel;
+	}
+
+	smgrdounlinkall(srels, ndelrels, isRedo);
+
+	for (i = 0; i < ndelrels; i++)
+		smgrclose(srels[i]);
+	pfree(srels);
+}
+
 
 /*
  *	_fdvec_resize() -- Resize the fork's open segments array
@@ -1729,10 +1806,10 @@ _fdvec_resize(SMgrRelation reln,
 	else
 	{
 		/*
-		 * It doesn't seem worthwhile complicating the code by having a more
-		 * aggressive growth strategy here; the number of segments doesn't
-		 * grow that fast, and the memory context internally will sometimes
-		 * avoid doing an actual reallocation.
+		 * It doesn't seem worthwhile complicating the code to amortize
+		 * repalloc() calls.  Those are far faster than PathNameOpenFile() or
+		 * FileClose(), and the memory context internally will sometimes avoid
+		 * doing an actual reallocation.
 		 */
 		reln->md_seg_fds[forknum] =
 			repalloc(reln->md_seg_fds[forknum],
@@ -1780,7 +1857,7 @@ _mdfd_openseg(SMgrRelation reln, ForkNumber forknum, BlockNumber segno,
 	fullpath = _mdfd_segpath(reln, forknum, segno);
 
 	/* open the file */
-	fd = PathNameOpenFile(fullpath, O_RDWR | PG_BINARY | oflags, 0600);
+	fd = PathNameOpenFile(fullpath, O_RDWR | PG_BINARY | oflags);
 
 	pfree(fullpath);
 

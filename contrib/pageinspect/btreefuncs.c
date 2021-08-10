@@ -511,7 +511,7 @@ bt_metap(PG_FUNCTION_ARGS)
 	BTMetaPageData *metad;
 	TupleDesc	tupleDesc;
 	int			j;
-	char	   *values[6];
+	char	   *values[8];
 	Buffer		buffer;
 	Page		page;
 	HeapTuple	tuple;
@@ -555,6 +555,26 @@ bt_metap(PG_FUNCTION_ARGS)
 	values[j++] = psprintf("%d", metad->btm_level);
 	values[j++] = psprintf("%d", metad->btm_fastroot);
 	values[j++] = psprintf("%d", metad->btm_fastlevel);
+
+	/*
+	 * Get values of extended metadata if available, use default values
+	 * otherwise.
+	 */
+	if (metad->btm_version == BTREE_VERSION)
+	{
+		/*
+		 * kludge: btm_oldest_btpo_xact is declared as int4, which is wrong.
+		 * We should at least avoid raising an error when its value happens to
+		 * exceed PG_INT32_MAX, though.
+		 */
+		values[j++] = psprintf("%d", (int) metad->btm_oldest_btpo_xact);
+		values[j++] = psprintf("%f", metad->btm_last_cleanup_num_heap_tuples);
+	}
+	else
+	{
+		values[j++] = "0";
+		values[j++] = "-1";
+	}
 
 	tuple = BuildTupleFromCStrings(TupleDescGetAttInMetadata(tupleDesc),
 								   values);

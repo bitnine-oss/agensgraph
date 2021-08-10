@@ -14,7 +14,7 @@
  * only one ID number.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/pg_shmem.h
@@ -30,7 +30,7 @@ typedef struct PGShmemHeader	/* standard header for all Postgres shmem */
 {
 	int32		magic;			/* magic # to identify Postgres segments */
 #define PGShmemMagic  679834894
-	pid_t		creatorPID;		/* PID of creating process */
+	pid_t		creatorPID;		/* PID of creating process (set but unread) */
 	Size		totalsize;		/* total size of segment */
 	Size		freeoffset;		/* offset to first free space */
 	dsm_handle	dsm_control;	/* ID of dynamic shared memory control seg */
@@ -56,6 +56,7 @@ typedef enum
 extern unsigned long UsedShmemSegID;
 #else
 extern HANDLE UsedShmemSegID;
+extern void *ShmemProtectiveRegion;
 #endif
 extern void *UsedShmemSegAddr;
 
@@ -64,8 +65,8 @@ extern void PGSharedMemoryReAttach(void);
 extern void PGSharedMemoryNoReAttach(void);
 #endif
 
-extern PGShmemHeader *PGSharedMemoryCreate(Size size, bool makePrivate,
-					 int port, PGShmemHeader **shim);
+extern PGShmemHeader *PGSharedMemoryCreate(Size size, int port,
+					 PGShmemHeader **shim);
 extern bool PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2);
 extern void PGSharedMemoryDetach(void);
 

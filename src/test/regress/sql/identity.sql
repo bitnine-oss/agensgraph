@@ -183,7 +183,7 @@ INSERT INTO itest6 DEFAULT VALUES;
 INSERT INTO itest6 DEFAULT VALUES;
 SELECT * FROM itest6;
 
-SELECT table_name, column_name, is_identity, identity_generation FROM information_schema.columns WHERE table_name = 'itest6';
+SELECT table_name, column_name, is_identity, identity_generation FROM information_schema.columns WHERE table_name = 'itest6' ORDER BY 1, 2;
 
 ALTER TABLE itest6 ALTER COLUMN b SET INCREMENT BY 2;  -- fail, not identity
 
@@ -221,15 +221,15 @@ ALTER TABLE itest7 ALTER COLUMN a RESTART;
 ALTER TABLE itest7 ALTER COLUMN a DROP IDENTITY;
 
 -- privileges
-CREATE USER regress_user1;
+CREATE USER regress_identity_user1;
 CREATE TABLE itest8 (a int GENERATED ALWAYS AS IDENTITY, b text);
-GRANT SELECT, INSERT ON itest8 TO regress_user1;
-SET ROLE regress_user1;
+GRANT SELECT, INSERT ON itest8 TO regress_identity_user1;
+SET ROLE regress_identity_user1;
 INSERT INTO itest8 DEFAULT VALUES;
 SELECT * FROM itest8;
 RESET ROLE;
 DROP TABLE itest8;
-DROP USER regress_user1;
+DROP USER regress_identity_user1;
 
 
 -- typed tables (currently not supported)

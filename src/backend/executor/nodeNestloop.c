@@ -3,7 +3,7 @@
  * nodeNestloop.c
  *	  routines to support nest-loop joins
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -313,15 +313,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &nlstate->js.ps);
 
 	/*
-	 * initialize child expressions
-	 */
-	nlstate->js.ps.qual =
-		ExecInitQual(node->join.plan.qual, (PlanState *) nlstate);
-	nlstate->js.jointype = node->join.jointype;
-	nlstate->js.joinqual =
-		ExecInitQual(node->join.joinqual, (PlanState *) nlstate);
-
-	/*
 	 * initialize child nodes
 	 *
 	 * If we have no parameters to pass into the inner rel from the outer,
@@ -356,9 +347,19 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		estate->es_snapshot->curcid = svCid;
 
 	/*
-	 * tuple table initialization
+	 * Initialize result slot, type and projection.
 	 */
-	ExecInitResultTupleSlot(estate, &nlstate->js.ps);
+	ExecInitResultTupleSlotTL(estate, &nlstate->js.ps);
+	ExecAssignProjectionInfo(&nlstate->js.ps, NULL);
+
+	/*
+	 * initialize child expressions
+	 */
+	nlstate->js.ps.qual =
+		ExecInitQual(node->join.plan.qual, (PlanState *) nlstate);
+	nlstate->js.jointype = node->join.jointype;
+	nlstate->js.joinqual =
+		ExecInitQual(node->join.joinqual, (PlanState *) nlstate);
 
 	/*
 	 * detect whether we need only consider the first matching inner tuple
@@ -386,15 +387,11 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 				 (int) node->join.jointype);
 	}
 
-	/*
-	 * initialize tuple type and projection info
-	 */
-	ExecAssignResultTypeFromTL(&nlstate->js.ps);
-	ExecAssignProjectionInfo(&nlstate->js.ps, NULL);
-
-	dlist_init(&nlstate->ctxs_head);
-	nlstate->prev_ctx_node = &nlstate->ctxs_head.head;
-
+    /*
+     * initialize tuple type and projection info
+     */
+    dlist_init(&nlstate->ctxs_head);
+    nlstate->prev_ctx_node = &nlstate->ctxs_head.head;
 	/*
 	 * finally, wipe the current outer tuple clean.
 	 */

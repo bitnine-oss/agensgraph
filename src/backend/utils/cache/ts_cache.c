@@ -17,7 +17,7 @@
  * any database access.
  *
  *
- * Copyright (c) 2006-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2006-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/cache/ts_cache.c
@@ -38,6 +38,7 @@
 #include "catalog/pg_ts_parser.h"
 #include "catalog/pg_ts_template.h"
 #include "commands/defrem.h"
+#include "miscadmin.h"
 #include "tsearch/ts_cache.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
@@ -295,14 +296,18 @@ lookup_ts_dictionary_cache(Oid dictId)
 
 			/* Create private memory context the first time through */
 			saveCtx = AllocSetContextCreate(CacheMemoryContext,
-											NameStr(dict->dictname),
+											"TS dictionary",
 											ALLOCSET_SMALL_SIZES);
+			MemoryContextCopyAndSetIdentifier(saveCtx, NameStr(dict->dictname));
 		}
 		else
 		{
 			/* Clear the existing entry's private context */
 			saveCtx = entry->dictCtx;
-			MemoryContextResetAndDeleteChildren(saveCtx);
+			/* Don't let context's ident pointer dangle while we reset it */
+			MemoryContextSetIdentifier(saveCtx, NULL);
+			MemoryContextReset(saveCtx);
+			MemoryContextCopyAndSetIdentifier(saveCtx, NameStr(dict->dictname));
 		}
 
 		MemSet(entry, 0, sizeof(TSDictionaryCacheEntry));
@@ -587,10 +592,11 @@ bool
 check_TSCurrentConfig(char **newval, void **extra, GucSource source)
 {
 	/*
-	 * If we aren't inside a transaction, we cannot do database access so
-	 * cannot verify the config name.  Must accept it on faith.
+	 * If we aren't inside a transaction, or connected to a database, we
+	 * cannot do the catalog accesses necessary to verify the config name.
+	 * Must accept it on faith.
 	 */
-	if (IsTransactionState())
+	if (IsTransactionState() && MyDatabaseId != InvalidOid)
 	{
 		Oid			cfgId;
 		HeapTuple	tuple;

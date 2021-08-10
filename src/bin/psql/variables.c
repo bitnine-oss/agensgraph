@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
  * src/bin/psql/variables.c
  */
@@ -246,10 +246,10 @@ SetVariable(VariableSpace space, const char *name, const char *value)
 			bool		confirmed;
 
 			if (current->substitute_hook)
-				new_value = (*current->substitute_hook) (new_value);
+				new_value = current->substitute_hook(new_value);
 
 			if (current->assign_hook)
-				confirmed = (*current->assign_hook) (new_value);
+				confirmed = current->assign_hook(new_value);
 			else
 				confirmed = true;
 
@@ -358,6 +358,32 @@ SetVariableHooks(VariableSpace space, const char *name,
 		current->value = (*shook) (current->value);
 	if (ahook)
 		(void) (*ahook) (current->value);
+}
+
+/*
+ * Return true iff the named variable has substitute and/or assign hook
+ * functions.
+ */
+bool
+VariableHasHook(VariableSpace space, const char *name)
+{
+	struct _variable *current;
+
+	Assert(space);
+	Assert(name);
+
+	for (current = space->next; current; current = current->next)
+	{
+		int			cmp = strcmp(current->name, name);
+
+		if (cmp == 0)
+			return (current->substitute_hook != NULL ||
+					current->assign_hook != NULL);
+		if (cmp > 0)
+			break;				/* it's not there */
+	}
+
+	return false;
 }
 
 /*

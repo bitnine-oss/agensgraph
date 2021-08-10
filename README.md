@@ -45,8 +45,8 @@ Building from the Source Code
     ```sh
     $ ./configure --prefix=$(pwd)
     ```
-    >By default, `make install` will install all the files in `/usr/local/pgsql/bin`, `/usr/local/pgsql/lib` etc.  You want to specify an installation prefix to the current library.
-    > If `configure` doesn't find any header with an error message, you can use `--with-includes=/path/to/headers` option.
+   >By default, `make install` will install all the files in `/usr/local/pgsql/bin`, `/usr/local/pgsql/lib` etc.  You want to specify an installation prefix to the current library.
+   > If `configure` doesn't find any header with an error message, you can use `--with-includes=/path/to/headers` option.
 
 4. Build & install AgensGraph:
     * Build and install AgensGraph engine
@@ -58,7 +58,7 @@ Building from the Source Code
         ```sh
         $ . ag-env.sh
         ```
-        OR, if you installed AgensGraph elsewhere, you can also do so by editing your `/.bashrc` file (`/.bash_profile` on macOS) with the following command:
+      OR, if you installed AgensGraph elsewhere, you can also do so by editing your `/.bashrc` file (`/.bash_profile` on macOS) with the following command:
         ```sh
         $ echo "export PATH=/path/to/agensgraph/bin:\$PATH" >> ~/.bashrc
         $ echo "export LD_LIBRARY_PATH=/path/to/agensgraph/lib:\$LD_LIBRARY_PATH" >> ~/.bashrc

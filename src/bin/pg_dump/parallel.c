@@ -4,7 +4,7 @@
  *
  *	Parallel support for pg_dump and pg_restore
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -42,6 +42,7 @@
  *
  * In the master process, the workerStatus field for each worker has one of
  * the following values:
+ *		WRKR_NOT_STARTED: we've not yet forked this worker
  *		WRKR_IDLE: it's waiting for a command
  *		WRKR_WORKING: it's working on a command
  *		WRKR_TERMINATED: process ended
@@ -63,7 +64,9 @@
 
 #include "parallel.h"
 #include "pg_backup_utils.h"
+
 #include "fe_utils/string_utils.h"
+#include "port/pg_bswap.h"
 
 /* Mnemonic macros for indexing the fd array returned by pipe(2) */
 #define PIPE_READ							0
@@ -74,10 +77,14 @@
 /* Worker process statuses */
 typedef enum
 {
+	WRKR_NOT_STARTED = 0,
 	WRKR_IDLE,
 	WRKR_WORKING,
 	WRKR_TERMINATED
 } T_WorkerStatus;
+
+#define WORKER_IS_RUNNING(workerStatus) \
+	((workerStatus) == WRKR_IDLE || (workerStatus) == WRKR_WORKING)
 
 /*
  * Private per-parallel-worker state (typedef for this is in parallel.h).
@@ -228,19 +235,6 @@ static char *readMessageFromPipe(int fd);
 
 
 /*
- * Shutdown callback to clean up socket access
- */
-#ifdef WIN32
-static void
-shutdown_parallel_dump_utils(int code, void *unused)
-{
-	/* Call the cleanup function only from the main thread */
-	if (mainThreadId == GetCurrentThreadId())
-		WSACleanup();
-}
-#endif
-
-/*
  * Initialize parallel dump support --- should be called early in process
  * startup.  (Currently, this is called whether or not we intend parallel
  * activity.)
@@ -265,8 +259,7 @@ init_parallel_dump_utils(void)
 			fprintf(stderr, _("%s: WSAStartup failed: %d\n"), progname, err);
 			exit_nicely(1);
 		}
-		/* ... and arrange to shut it down at exit */
-		on_exit_nicely(shutdown_parallel_dump_utils, NULL);
+
 		parallel_init_done = true;
 	}
 #endif
@@ -415,7 +408,9 @@ ShutdownWorkersHard(ParallelState *pstate)
 
 	/*
 	 * Close our write end of the sockets so that any workers waiting for
-	 * commands know they can exit.
+	 * commands know they can exit.  (Note: some of the pipeWrite fields might
+	 * still be zero, if we failed to initialize all the workers.  Hence, just
+	 * ignore errors here.)
 	 */
 	for (i = 0; i < pstate->numWorkers; i++)
 		closesocket(pstate->parallelSlot[i].pipeWrite);
@@ -489,7 +484,7 @@ WaitForTerminatingWorkers(ParallelState *pstate)
 
 		for (j = 0; j < pstate->numWorkers; j++)
 		{
-			if (pstate->parallelSlot[j].workerStatus != WRKR_TERMINATED)
+			if (WORKER_IS_RUNNING(pstate->parallelSlot[j].workerStatus))
 			{
 				lpHandles[nrun] = (HANDLE) pstate->parallelSlot[j].hThread;
 				nrun++;
@@ -609,8 +604,11 @@ sigTermHandler(SIGNAL_ARGS)
 		write_stderr("terminated by user\n");
 	}
 
-	/* And die. */
-	exit(1);
+	/*
+	 * And die, using _exit() not exit() because the latter will invoke atexit
+	 * handlers that can fail if we interrupted related code.
+	 */
+	_exit(1);
 }
 
 /*
@@ -922,6 +920,7 @@ ParallelBackupStart(ArchiveHandle *AH)
 	if (AH->public.numWorkers == 1)
 		return pstate;
 
+	/* Create status arrays, being sure to initialize all fields to 0 */
 	pstate->te = (TocEntry **)
 		pg_malloc0(pstate->numWorkers * sizeof(TocEntry *));
 	pstate->parallelSlot = (ParallelSlot *)
@@ -971,13 +970,6 @@ ParallelBackupStart(ArchiveHandle *AH)
 						  "could not create communication channels: %s\n",
 						  strerror(errno));
 
-		pstate->te[i] = NULL;	/* just for safety */
-
-		slot->workerStatus = WRKR_IDLE;
-		slot->AH = NULL;
-		slot->callback = NULL;
-		slot->callback_data = NULL;
-
 		/* master's ends of the pipes */
 		slot->pipeRead = pipeWM[PIPE_READ];
 		slot->pipeWrite = pipeMW[PIPE_WRITE];
@@ -995,6 +987,7 @@ ParallelBackupStart(ArchiveHandle *AH)
 		handle = _beginthreadex(NULL, 0, (void *) &init_spawned_worker_win32,
 								wi, 0, &(slot->threadId));
 		slot->hThread = handle;
+		slot->workerStatus = WRKR_IDLE;
 #else							/* !WIN32 */
 		pid = fork();
 		if (pid == 0)
@@ -1039,6 +1032,7 @@ ParallelBackupStart(ArchiveHandle *AH)
 
 		/* In Master after successful fork */
 		slot->pid = pid;
+		slot->workerStatus = WRKR_IDLE;
 
 		/* close read end of Master -> Worker */
 		closesocket(pipeMW[PIPE_READ]);
@@ -1268,7 +1262,7 @@ GetIdleWorker(ParallelState *pstate)
 }
 
 /*
- * Return true iff every worker is in the WRKR_TERMINATED state.
+ * Return true iff no worker is running.
  */
 static bool
 HasEveryWorkerTerminated(ParallelState *pstate)
@@ -1277,7 +1271,7 @@ HasEveryWorkerTerminated(ParallelState *pstate)
 
 	for (i = 0; i < pstate->numWorkers; i++)
 	{
-		if (pstate->parallelSlot[i].workerStatus != WRKR_TERMINATED)
+		if (WORKER_IS_RUNNING(pstate->parallelSlot[i].workerStatus))
 			return false;
 	}
 	return true;
@@ -1332,7 +1326,7 @@ lockTableForWorker(ArchiveHandle *AH, TocEntry *te)
 
 	query = createPQExpBuffer();
 
-	qualId = fmtQualifiedId(AH->public.remoteVersion, te->namespace, te->tag);
+	qualId = fmtQualifiedId(te->namespace, te->tag);
 
 	appendPQExpBuffer(query, "LOCK TABLE %s IN ACCESS SHARE MODE NOWAIT",
 					  qualId);
@@ -1613,7 +1607,7 @@ getMessageFromWorker(ParallelState *pstate, bool do_wait, int *worker)
 	FD_ZERO(&workerset);
 	for (i = 0; i < pstate->numWorkers; i++)
 	{
-		if (pstate->parallelSlot[i].workerStatus == WRKR_TERMINATED)
+		if (!WORKER_IS_RUNNING(pstate->parallelSlot[i].workerStatus))
 			continue;
 		FD_SET(pstate->parallelSlot[i].pipeRead, &workerset);
 		if (pstate->parallelSlot[i].pipeRead > maxFd)
@@ -1638,6 +1632,8 @@ getMessageFromWorker(ParallelState *pstate, bool do_wait, int *worker)
 	{
 		char	   *msg;
 
+		if (!WORKER_IS_RUNNING(pstate->parallelSlot[i].workerStatus))
+			continue;
 		if (!FD_ISSET(pstate->parallelSlot[i].pipeRead, &workerset))
 			continue;
 
@@ -1764,8 +1760,8 @@ pgpipe(int handles[2])
 
 	memset((void *) &serv_addr, 0, sizeof(serv_addr));
 	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(0);
-	serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	serv_addr.sin_port = pg_hton16(0);
+	serv_addr.sin_addr.s_addr = pg_hton32(INADDR_LOOPBACK);
 	if (bind(s, (SOCKADDR *) &serv_addr, len) == SOCKET_ERROR)
 	{
 		write_msg(modulename, "pgpipe: could not bind: error code %d\n",

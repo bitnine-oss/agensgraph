@@ -12,7 +12,7 @@
  *		reduce_outer_joins
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -649,9 +649,9 @@ pull_up_subqueries(PlannerInfo *root)
  * This forces use of the PlaceHolderVar mechanism for all non-Var targetlist
  * items, and puts some additional restrictions on what can be pulled up.
  *
- * deletion_ok is TRUE if the caller can cope with us returning NULL for a
+ * deletion_ok is true if the caller can cope with us returning NULL for a
  * deletable leaf node (for example, a VALUES RTE that could be pulled up).
- * If it's FALSE, we'll avoid pullup in such cases.
+ * If it's false, we'll avoid pullup in such cases.
  *
  * A tricky aspect of this code is that if we pull up a subquery we have
  * to replace Vars that reference the subquery's outputs throughout the
@@ -923,7 +923,7 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	subroot->grouping_map = NULL;
 	subroot->minmax_aggs = NIL;
 	subroot->qual_security_level = 0;
-	subroot->hasInheritedTarget = false;
+	subroot->inhTargetKind = INHKIND_NONE;
 	subroot->hasRecursion = false;
 	subroot->wt_param_id = -1;
 	subroot->non_recursive_path = NULL;
@@ -1469,7 +1469,7 @@ make_setop_translation_list(Query *query, Index newvarno,
  * (Note subquery is not necessarily equal to rte->subquery; it could be a
  * processed copy of that.)
  * lowest_outer_join is the lowest outer join above the subquery, or NULL.
- * deletion_ok is TRUE if it'd be okay to delete the subquery entirely.
+ * deletion_ok is true if it'd be okay to delete the subquery entirely.
  */
 static bool
 is_simple_subquery(Query *subquery, RangeTblEntry *rte,
@@ -1481,7 +1481,7 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 	 */
 	if (!IsA(subquery, Query) ||
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_GRAPHWRITE))
+		subquery->commandType != CMD_GRAPHWRITE))
 		elog(ERROR, "subquery is bogus");
 
 	if (subquery->commandType == CMD_GRAPHWRITE)
@@ -1530,7 +1530,7 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 
 	/*
 	 * Don't pull up a subquery with an empty jointree, unless it has no quals
-	 * and deletion_ok is TRUE and we're not underneath an outer join.
+	 * and deletion_ok is true and we're not underneath an outer join.
 	 *
 	 * query_planner() will correctly generate a Result plan for a jointree
 	 * that's totally empty, but we can't cope with an empty FromExpr
@@ -1754,7 +1754,7 @@ pull_up_simple_values(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte)
  *	  to pull up into the parent query.
  *
  * rte is the RTE_VALUES RangeTblEntry to check.
- * deletion_ok is TRUE if it'd be okay to delete the VALUES RTE entirely.
+ * deletion_ok is true if it'd be okay to delete the VALUES RTE entirely.
  */
 static bool
 is_simple_values(PlannerInfo *root, RangeTblEntry *rte, bool deletion_ok)
@@ -1762,7 +1762,7 @@ is_simple_values(PlannerInfo *root, RangeTblEntry *rte, bool deletion_ok)
 	Assert(rte->rtekind == RTE_VALUES);
 
 	/*
-	 * We can only pull up a VALUES RTE if deletion_ok is TRUE.  It's
+	 * We can only pull up a VALUES RTE if deletion_ok is true.  It's
 	 * basically the same case as a sub-select with empty FROM list; see
 	 * comments in is_simple_subquery().
 	 */
@@ -1820,7 +1820,7 @@ is_simple_union_all(Query *subquery)
 	/* Let's just make sure it's a valid subselect ... */
 	if (!IsA(subquery, Query) ||
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_GRAPHWRITE))
+		subquery->commandType != CMD_GRAPHWRITE))
 		elog(ERROR, "subquery is bogus");
 
 	/* Is it a set-operation query at all? */
@@ -1918,7 +1918,7 @@ is_safe_append_member(Query *subquery)
  *
  * If restricted is false, all level-1 Vars are allowed (but we still must
  * search the jointree, since it might contain outer joins below which there
- * will be restrictions).  If restricted is true, return TRUE when any qual
+ * will be restrictions).  If restricted is true, return true when any qual
  * in the jointree contains level-1 Vars coming from outside the rels listed
  * in safe_upper_varnos.
  */

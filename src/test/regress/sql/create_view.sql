@@ -24,6 +24,18 @@ COMMENT ON VIEW noview IS 'no view';
 COMMENT ON VIEW toyemp IS 'is a view';
 COMMENT ON VIEW toyemp IS NULL;
 
+-- These views are left around mainly to exercise special cases in pg_dump.
+
+CREATE TABLE view_base_table (key int PRIMARY KEY, data varchar(20));
+
+CREATE VIEW key_dependent_view AS
+   SELECT * FROM view_base_table GROUP BY key;
+
+ALTER TABLE view_base_table DROP CONSTRAINT view_base_table_pkey;  -- fails
+
+CREATE VIEW key_dependent_view_no_cols AS
+   SELECT FROM view_base_table GROUP BY key HAVING length(data) > 0;
+
 --
 -- CREATE OR REPLACE VIEW
 --
@@ -89,7 +101,7 @@ CREATE VIEW temp_view_test.v2 AS SELECT * FROM base_table;
 -- should fail
 CREATE VIEW temp_view_test.v3_temp AS SELECT * FROM temp_table;
 -- should fail
-CREATE SCHEMA test_schema
+CREATE SCHEMA test_view_schema
     CREATE TEMP VIEW testview AS SELECT 1;
 
 -- joins: if any of the join relations are temporary, the view
@@ -306,6 +318,15 @@ ALTER TABLE tmp1 RENAME TO tx1;
 \d+ aliased_view_2
 \d+ aliased_view_3
 \d+ aliased_view_4
+
+-- Test aliasing of joins
+
+create view view_of_joins as
+select * from
+  (select * from (tbl1 cross join tbl2) same) ss,
+  (tbl3 cross join tbl4) same;
+
+\d+ view_of_joins
 
 -- Test view decompilation in the face of column addition/deletion/renaming
 

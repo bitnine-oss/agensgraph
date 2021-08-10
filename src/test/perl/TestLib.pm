@@ -11,21 +11,28 @@ use strict;
 use warnings;
 
 use Config;
+use Cwd;
 use Exporter 'import';
+use Fcntl qw(:mode);
 use File::Basename;
+use File::Find;
 use File::Spec;
+use File::stat qw(stat);
 use File::Temp ();
 use IPC::Run;
 use SimpleTee;
 
-# specify a recent enough version of Test::More  to support the note() function
-use Test::More 0.82;
+# specify a recent enough version of Test::More to support the done_testing() function
+use Test::More 0.87;
 
 our @EXPORT = qw(
   generate_ascii_string
   slurp_dir
   slurp_file
   append_to_file
+  check_mode_recursive
+  chmod_recursive
+  check_pg_config
   system_or_bail
   system_log
   run_log
@@ -39,6 +46,7 @@ our @EXPORT = qw(
   command_like
   command_like_safe
   command_fails_like
+  command_checks_all
 
   $windows_os
 );
@@ -65,10 +73,15 @@ BEGIN
 	delete $ENV{PGPORT};
 	delete $ENV{PGHOST};
 
-	$ENV{PGAPPNAME} = $0;
+	$ENV{PGAPPNAME} = basename($0);
 
 	# Must be set early
 	$windows_os = $Config{osname} eq 'MSWin32' || $Config{osname} eq 'msys';
+	if ($windows_os)
+	{
+		require Win32API::File;
+		Win32API::File->import(qw(createFile OsFHandleOpen CloseHandle));
+	}
 }
 
 INIT
@@ -121,8 +134,13 @@ INIT
 END
 {
 
-	# Preserve temporary directory for this test on failure
-	$File::Temp::KEEP_ALL = 1 unless all_tests_passing();
+	# Test files have several ways of causing prove_check to fail:
+	# 1. Exit with a non-zero status.
+	# 2. Call ok(0) or similar, indicating that a constituent test failed.
+	# 3. Deviate from the planned number of tests.
+	#
+	# Preserve temporary directories after (1) and after (2).
+	$File::Temp::KEEP_ALL = 1 unless $? == 0 && all_tests_passing();
 }
 
 sub all_tests_passing
@@ -156,6 +174,39 @@ sub tempdir_short
 	return File::Temp::tempdir(CLEANUP => 1);
 }
 
+# Translate a Perl file name to a host file name.  Currently, this is a no-op
+# except for the case of Perl=msys and host=mingw32.  The subject need not
+# exist, but its parent directory must exist.
+sub perl2host
+{
+	my ($subject) = @_;
+	return $subject unless $Config{osname} eq 'msys';
+	my $here = cwd;
+	my $leaf;
+	if (chdir $subject)
+	{
+		$leaf = '';
+	}
+	else
+	{
+		$leaf = '/' . basename $subject;
+		my $parent = dirname $subject;
+		chdir $parent or die "could not chdir \"$parent\": $!";
+	}
+
+	# this odd way of calling 'pwd -W' is the only way that seems to work.
+	my $dir = qx{sh -c "pwd -W"};
+	chomp $dir;
+	chdir $here;
+	return $dir . $leaf;
+}
+
+# For backward compatibility only.
+sub real_dir
+{
+	return perl2host(@_);
+}
+
 sub system_log
 {
 	print("# Running: " . join(" ", @_) . "\n");
@@ -168,6 +219,7 @@ sub system_or_bail
 	{
 		BAIL_OUT("system $_[0] failed");
 	}
+	return;
 }
 
 sub run_log
@@ -203,11 +255,25 @@ sub slurp_file
 {
 	my ($filename) = @_;
 	local $/;
-	open(my $in, '<', $filename)
-	  or die "could not read \"$filename\": $!";
-	my $contents = <$in>;
-	close $in;
-	$contents =~ s/\r//g if $Config{osname} eq 'msys';
+	my $contents;
+	if ($Config{osname} ne 'MSWin32')
+	{
+		open(my $in, '<', $filename)
+		  or die "could not read \"$filename\": $!";
+		$contents = <$in>;
+		close $in;
+	}
+	else
+	{
+		my $fHandle = createFile($filename, "r", "rwd")
+		  or die "could not open \"$filename\": $^E";
+		OsFHandleOpen(my $fh = IO::Handle->new(), $fHandle, 'r')
+		  or die "could not read \"$filename\": $^E\n";
+		$contents = <$fh>;
+		CloseHandle($fHandle)
+		  or die "could not close \"$filename\": $^E\n";
+	}
+	$contents =~ s/\r\n/\n/g if $Config{osname} eq 'msys';
 	return $contents;
 }
 
@@ -218,6 +284,134 @@ sub append_to_file
 	  or die "could not write \"$filename\": $!";
 	print $fh $str;
 	close $fh;
+	return;
+}
+
+# Check that all file/dir modes in a directory match the expected values,
+# ignoring the mode of any specified files.
+sub check_mode_recursive
+{
+	my ($dir, $expected_dir_mode, $expected_file_mode, $ignore_list) = @_;
+
+	# Result defaults to true
+	my $result = 1;
+
+	find(
+		{
+			follow_fast => 1,
+			wanted      => sub {
+				# Is file in the ignore list?
+				foreach my $ignore ($ignore_list ? @{$ignore_list} : [])
+				{
+					if ("$dir/$ignore" eq $File::Find::name)
+					{
+						return;
+					}
+				}
+
+				# Allow ENOENT.  A running server can delete files, such as
+				# those in pg_stat.  Other stat() failures are fatal.
+				my $file_stat = stat($File::Find::name);
+				unless (defined($file_stat))
+				{
+					my $is_ENOENT = $!{ENOENT};
+					my $msg = "unable to stat $File::Find::name: $!";
+					if ($is_ENOENT)
+					{
+						warn $msg;
+						return;
+					}
+					else
+					{
+						die $msg;
+					}
+				}
+
+				my $file_mode = S_IMODE($file_stat->mode);
+
+				# Is this a file?
+				if (S_ISREG($file_stat->mode))
+				{
+					if ($file_mode != $expected_file_mode)
+					{
+						print(
+							*STDERR,
+							sprintf("$File::Find::name mode must be %04o\n",
+								$expected_file_mode));
+
+						$result = 0;
+						return;
+					}
+				}
+
+				# Else a directory?
+				elsif (S_ISDIR($file_stat->mode))
+				{
+					if ($file_mode != $expected_dir_mode)
+					{
+						print(
+							*STDERR,
+							sprintf("$File::Find::name mode must be %04o\n",
+								$expected_dir_mode));
+
+						$result = 0;
+						return;
+					}
+				}
+
+				# Else something we can't handle
+				else
+				{
+					die "unknown file type for $File::Find::name";
+				}
+			}
+		},
+		$dir);
+
+	return $result;
+}
+
+# Change mode recursively on a directory
+sub chmod_recursive
+{
+	my ($dir, $dir_mode, $file_mode) = @_;
+
+	find(
+		{
+			follow_fast => 1,
+			wanted      => sub {
+				my $file_stat = stat($File::Find::name);
+
+				if (defined($file_stat))
+				{
+					chmod(
+						S_ISDIR($file_stat->mode) ? $dir_mode : $file_mode,
+						$File::Find::name
+					) or die "unable to chmod $File::Find::name";
+				}
+			}
+		},
+		$dir);
+	return;
+}
+
+# Check presence of a given regexp within pg_config.h for the installation
+# where tests are running, returning a match status result depending on
+# that.
+sub check_pg_config
+{
+	my ($regexp) = @_;
+	my ($stdout, $stderr);
+	my $result = IPC::Run::run [ 'pg_config', '--includedir' ], '>',
+	  \$stdout, '2>', \$stderr
+	  or die "could not execute pg_config";
+	chomp($stdout);
+	$stdout =~ s/\r$//;
+
+	open my $pg_config_h, '<', "$stdout/pg_config.h" or die "$!";
+	my $match = (grep { /^$regexp/ } <$pg_config_h>);
+	close $pg_config_h;
+	return $match;
 }
 
 #
@@ -228,6 +422,7 @@ sub command_ok
 	my ($cmd, $test_name) = @_;
 	my $result = run_log($cmd);
 	ok($result, $test_name);
+	return;
 }
 
 sub command_fails
@@ -235,6 +430,7 @@ sub command_fails
 	my ($cmd, $test_name) = @_;
 	my $result = run_log($cmd);
 	ok(!$result, $test_name);
+	return;
 }
 
 sub command_exit_is
@@ -256,6 +452,7 @@ sub command_exit_is
 	  ? ($h->full_results)[0]
 	  : $h->result(0);
 	is($result, $expected, $test_name);
+	return;
 }
 
 sub program_help_ok
@@ -268,6 +465,7 @@ sub program_help_ok
 	ok($result, "$cmd --help exit code 0");
 	isnt($stdout, '', "$cmd --help goes to stdout");
 	is($stderr, '', "$cmd --help nothing to stderr");
+	return;
 }
 
 sub program_version_ok
@@ -280,6 +478,7 @@ sub program_version_ok
 	ok($result, "$cmd --version exit code 0");
 	isnt($stdout, '', "$cmd --version goes to stdout");
 	is($stderr, '', "$cmd --version nothing to stderr");
+	return;
 }
 
 sub program_options_handling_ok
@@ -292,6 +491,7 @@ sub program_options_handling_ok
 	  '2>', \$stderr;
 	ok(!$result, "$cmd with invalid option nonzero exit code");
 	isnt($stderr, '', "$cmd with invalid option prints error message");
+	return;
 }
 
 sub command_like
@@ -303,6 +503,7 @@ sub command_like
 	ok($result, "$test_name: exit code 0");
 	is($stderr, '', "$test_name: no stderr");
 	like($stdout, $expected_stdout, "$test_name: matches");
+	return;
 }
 
 sub command_like_safe
@@ -322,6 +523,7 @@ sub command_like_safe
 	ok($result, "$test_name: exit code 0");
 	is($stderr, '', "$test_name: no stderr");
 	like($stdout, $expected_stdout, "$test_name: matches");
+	return;
 }
 
 sub command_fails_like
@@ -332,6 +534,48 @@ sub command_fails_like
 	my $result = IPC::Run::run $cmd, '>', \$stdout, '2>', \$stderr;
 	ok(!$result, "$test_name: exit code not 0");
 	like($stderr, $expected_stderr, "$test_name: matches");
+	return;
+}
+
+# Run a command and check its status and outputs.
+# The 5 arguments are:
+# - cmd: ref to list for command, options and arguments to run
+# - ret: expected exit status
+# - out: ref to list of re to be checked against stdout (all must match)
+# - err: ref to list of re to be checked against stderr (all must match)
+# - test_name: name of test
+sub command_checks_all
+{
+	my ($cmd, $expected_ret, $out, $err, $test_name) = @_;
+
+	# run command
+	my ($stdout, $stderr);
+	print("# Running: " . join(" ", @{$cmd}) . "\n");
+	IPC::Run::run($cmd, '>', \$stdout, '2>', \$stderr);
+
+	# See http://perldoc.perl.org/perlvar.html#%24CHILD_ERROR
+	my $ret = $?;
+	die "command exited with signal " . ($ret & 127)
+	  if $ret & 127;
+	$ret = $ret >> 8;
+
+	# check status
+	ok($ret == $expected_ret,
+		"$test_name status (got $ret vs expected $expected_ret)");
+
+	# check stdout
+	for my $re (@$out)
+	{
+		like($stdout, $re, "$test_name stdout /$re/");
+	}
+
+	# check stderr
+	for my $re (@$err)
+	{
+		like($stderr, $re, "$test_name stderr /$re/");
+	}
+
+	return;
 }
 
 1;

@@ -335,7 +335,7 @@ tarOpen(ArchiveHandle *AH, const char *filename, char mode)
 	TAR_MEMBER *tm;
 
 #ifdef HAVE_LIBZ
-	char		fmode[10];
+	char		fmode[14];
 #endif
 
 	if (mode == 'r')
@@ -1096,12 +1096,16 @@ _tarAddFile(ArchiveHandle *AH, TAR_MEMBER *th)
 	/*
 	 * Find file len & go back to start.
 	 */
-	fseeko(tmp, 0, SEEK_END);
+	if (fseeko(tmp, 0, SEEK_END) != 0)
+		exit_horribly(modulename, "error during file seek: %s\n",
+					  strerror(errno));
 	th->fileLen = ftello(tmp);
 	if (th->fileLen < 0)
 		exit_horribly(modulename, "could not determine seek position in archive file: %s\n",
 					  strerror(errno));
-	fseeko(tmp, 0, SEEK_SET);
+	if (fseeko(tmp, 0, SEEK_SET) != 0)
+		exit_horribly(modulename, "error during file seek: %s\n",
+					  strerror(errno));
 
 	_tarWriteHeader(th);
 

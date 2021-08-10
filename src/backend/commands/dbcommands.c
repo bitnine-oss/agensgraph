@@ -8,7 +8,7 @@
  * stepping on each others' toes.  Formerly we used table-level locks
  * on pg_database, but that's too coarse-grained.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -422,7 +422,7 @@ createdb(ParseState *pstate, const CreatedbStmt *stmt)
 		aclresult = pg_tablespace_aclcheck(dst_deftablespace, GetUserId(),
 										   ACL_CREATE);
 		if (aclresult != ACLCHECK_OK)
-			aclcheck_error(aclresult, ACL_KIND_TABLESPACE,
+			aclcheck_error(aclresult, OBJECT_TABLESPACE,
 						   tablespacename);
 
 		/* pg_global must never be the default tablespace */
@@ -822,7 +822,7 @@ dropdb(const char *dbname, bool missing_ok)
 	 * Permission checks
 	 */
 	if (!pg_database_ownercheck(db_id, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 					   dbname);
 
 	/* DROP hook for the database being removed */
@@ -857,8 +857,8 @@ dropdb(const char *dbname, bool missing_ok)
 				(errcode(ERRCODE_OBJECT_IN_USE),
 				 errmsg("database \"%s\" is used by an active logical replication slot",
 						dbname),
-				 errdetail_plural("There is %d active slot",
-								  "There are %d active slots",
+				 errdetail_plural("There is %d active slot.",
+								  "There are %d active slots.",
 								  nslots_active, nslots_active)));
 	}
 
@@ -997,7 +997,7 @@ RenameDatabase(const char *oldname, const char *newname)
 
 	/* must be owner */
 	if (!pg_database_ownercheck(db_id, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 					   oldname);
 
 	/* must have createdb rights */
@@ -1112,7 +1112,7 @@ movedb(const char *dbname, const char *tblspcname)
 	 * Permission checks
 	 */
 	if (!pg_database_ownercheck(db_id, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 					   dbname);
 
 	/*
@@ -1134,7 +1134,7 @@ movedb(const char *dbname, const char *tblspcname)
 	aclresult = pg_tablespace_aclcheck(dst_tblspcoid, GetUserId(),
 									   ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_TABLESPACE,
+		aclcheck_error(aclresult, OBJECT_TABLESPACE,
 					   tblspcname);
 
 	/*
@@ -1476,7 +1476,7 @@ AlterDatabase(ParseState *pstate, AlterDatabaseStmt *stmt, bool isTopLevel)
 							dtablespace->defname),
 					 parser_errposition(pstate, dtablespace->location)));
 		/* this case isn't allowed within a transaction block */
-		PreventTransactionChain(isTopLevel, "ALTER DATABASE SET TABLESPACE");
+		PreventInTransactionBlock(isTopLevel, "ALTER DATABASE SET TABLESPACE");
 		movedb(stmt->dbname, defGetString(dtablespace));
 		return InvalidOid;
 	}
@@ -1515,7 +1515,7 @@ AlterDatabase(ParseState *pstate, AlterDatabaseStmt *stmt, bool isTopLevel)
 	dboid = HeapTupleGetOid(tuple);
 
 	if (!pg_database_ownercheck(HeapTupleGetOid(tuple), GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 					   stmt->dbname);
 
 	/*
@@ -1583,7 +1583,7 @@ AlterDatabaseSet(AlterDatabaseSetStmt *stmt)
 	shdepLockAndCheckObject(DatabaseRelationId, datid);
 
 	if (!pg_database_ownercheck(datid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 					   stmt->dbname);
 
 	AlterSetting(datid, InvalidOid, stmt->setstmt);
@@ -1646,7 +1646,7 @@ AlterDatabaseOwner(const char *dbname, Oid newOwnerId)
 
 		/* Otherwise, must be owner of the existing object */
 		if (!pg_database_ownercheck(HeapTupleGetOid(tuple), GetUserId()))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_DATABASE,
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_DATABASE,
 						   dbname);
 
 		/* Must be able to become new owner */
@@ -1718,8 +1718,8 @@ AlterDatabaseOwner(const char *dbname, Oid newOwnerId)
 /*
  * Look up info about the database named "name".  If the database exists,
  * obtain the specified lock type on it, fill in any of the remaining
- * parameters that aren't NULL, and return TRUE.  If no such database,
- * return FALSE.
+ * parameters that aren't NULL, and return true.  If no such database,
+ * return false.
  */
 static bool
 get_db_info(const char *name, LOCKMODE lockmode,
@@ -1923,7 +1923,7 @@ remove_dbtablespaces(Oid db_id)
 
 /*
  * Check for existing files that conflict with a proposed new DB OID;
- * return TRUE if there are any
+ * return true if there are any
  *
  * If there were a subdirectory in any tablespace matching the proposed new
  * OID, we'd get a create failure due to the duplicate name ... and then we'd

@@ -263,6 +263,12 @@ SELECT ts_lexize('hunspell_long', 'unbook');
  {book}
 (1 row)
 
+SELECT ts_lexize('hunspell_long', 'booked');
+ ts_lexize 
+-----------
+ {book}
+(1 row)
+
 SELECT ts_lexize('hunspell_long', 'footklubber');
    ts_lexize    
 ----------------
@@ -281,10 +287,22 @@ SELECT ts_lexize('hunspell_long', 'ballyklubber');
  {ball,klubber}
 (1 row)
 
+SELECT ts_lexize('hunspell_long', 'ballsklubber');
+   ts_lexize    
+----------------
+ {ball,klubber}
+(1 row)
+
 SELECT ts_lexize('hunspell_long', 'footballyklubber');
       ts_lexize      
 ---------------------
  {foot,ball,klubber}
+(1 row)
+
+SELECT ts_lexize('hunspell_long', 'ex-machina');
+   ts_lexize   
+---------------
+ {ex-,machina}
 (1 row)
 
 -- Test ISpell dictionary with hunspell affix file with FLAG num parameter
@@ -294,6 +312,12 @@ CREATE TEXT SEARCH DICTIONARY hunspell_num (
                         AffFile=hunspell_sample_num
 );
 SELECT ts_lexize('hunspell_num', 'skies');
+ ts_lexize 
+-----------
+ {sky}
+(1 row)
+
+SELECT ts_lexize('hunspell_num', 'sk');
  ts_lexize 
 -----------
  {sky}
@@ -359,6 +383,12 @@ SELECT ts_lexize('hunspell_num', 'unbook');
  {book}
 (1 row)
 
+SELECT ts_lexize('hunspell_num', 'booked');
+ ts_lexize 
+-----------
+ {book}
+(1 row)
+
 SELECT ts_lexize('hunspell_num', 'footklubber');
    ts_lexize    
 ----------------
@@ -383,6 +413,40 @@ SELECT ts_lexize('hunspell_num', 'footballyklubber');
  {foot,ball,klubber}
 (1 row)
 
+-- Test suitability of affix and dict files
+CREATE TEXT SEARCH DICTIONARY hunspell_err (
+						Template=ispell,
+						DictFile=ispell_sample,
+						AffFile=hunspell_sample_long
+);
+ERROR:  invalid affix alias "GJUS"
+CREATE TEXT SEARCH DICTIONARY hunspell_err (
+						Template=ispell,
+						DictFile=ispell_sample,
+						AffFile=hunspell_sample_num
+);
+ERROR:  invalid affix flag "SZ\"
+CREATE TEXT SEARCH DICTIONARY hunspell_invalid_1 (
+						Template=ispell,
+						DictFile=hunspell_sample_long,
+						AffFile=ispell_sample
+);
+CREATE TEXT SEARCH DICTIONARY hunspell_invalid_2 (
+						Template=ispell,
+						DictFile=hunspell_sample_long,
+						AffFile=hunspell_sample_num
+);
+CREATE TEXT SEARCH DICTIONARY hunspell_invalid_3 (
+						Template=ispell,
+						DictFile=hunspell_sample_num,
+						AffFile=ispell_sample
+);
+CREATE TEXT SEARCH DICTIONARY hunspell_err (
+						Template=ispell,
+						DictFile=hunspell_sample_num,
+						AffFile=hunspell_sample_long
+);
+ERROR:  invalid affix alias "302,301,202,303"
 -- Synonym dictionary
 CREATE TEXT SEARCH DICTIONARY synonym (
 						Template=synonym,
@@ -580,3 +644,11 @@ SELECT to_tsvector('thesaurus_tst', 'Booking tickets is looking like a booking a
  'card':3,10 'invit':2,9 'like':6 'look':5 'order':1,8
 (1 row)
 
+-- invalid: non-lowercase quoted identifiers
+CREATE TEXT SEARCH DICTIONARY tsdict_case
+(
+	Template = ispell,
+	"DictFile" = ispell_sample,
+	"AffFile" = ispell_sample
+);
+ERROR:  unrecognized Ispell parameter: "DictFile"

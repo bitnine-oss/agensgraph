@@ -3,7 +3,7 @@
  * tsginidx.c
  *	 GIN support functions for tsvector_ops
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -210,6 +210,11 @@ checkcondition_gin(void *checkval, QueryOperand *val, ExecPhraseData *data)
 
 /*
  * Evaluate tsquery boolean expression using ternary logic.
+ *
+ * Note: the reason we can't use TS_execute() for this is that its API
+ * for the checkcondition callback doesn't allow a MAYBE result to be
+ * returned, but we might have MAYBEs in the gcv->check array.
+ * Perhaps we should change that API.
  */
 static GinTernaryValue
 TS_execute_ternary(GinChkVal *gcv, QueryItem *curitem, bool in_phrase)
@@ -230,9 +235,19 @@ TS_execute_ternary(GinChkVal *gcv, QueryItem *curitem, bool in_phrase)
 	switch (curitem->qoperator.oper)
 	{
 		case OP_NOT:
-			/* In phrase search, always return MAYBE since we lack positions */
+
+			/*
+			 * Below a phrase search, force NOT's result to MAYBE.  We cannot
+			 * invert a TRUE result from the subexpression to FALSE, since
+			 * TRUE only says that the subexpression matches somewhere, not
+			 * that it matches everywhere, so there might be positions where
+			 * the NOT will match.  We could invert FALSE to TRUE, but there's
+			 * little point in distinguishing TRUE from MAYBE, since a recheck
+			 * will have been forced already.
+			 */
 			if (in_phrase)
 				return GIN_MAYBE;
+
 			result = TS_execute_ternary(gcv, curitem + 1, in_phrase);
 			if (result == GIN_MAYBE)
 				return result;
@@ -242,7 +257,8 @@ TS_execute_ternary(GinChkVal *gcv, QueryItem *curitem, bool in_phrase)
 
 			/*
 			 * GIN doesn't contain any information about positions, so treat
-			 * OP_PHRASE as OP_AND with recheck requirement
+			 * OP_PHRASE as OP_AND with recheck requirement, and always
+			 * reporting MAYBE not TRUE.
 			 */
 			*(gcv->need_recheck) = true;
 			/* Pass down in_phrase == true in case there's a NOT below */
@@ -258,7 +274,8 @@ TS_execute_ternary(GinChkVal *gcv, QueryItem *curitem, bool in_phrase)
 			val2 = TS_execute_ternary(gcv, curitem + 1, in_phrase);
 			if (val2 == GIN_FALSE)
 				return GIN_FALSE;
-			if (val1 == GIN_TRUE && val2 == GIN_TRUE)
+			if (val1 == GIN_TRUE && val2 == GIN_TRUE &&
+				curitem->qoperator.oper != OP_PHRASE)
 				return GIN_TRUE;
 			else
 				return GIN_MAYBE;
@@ -295,7 +312,7 @@ gin_tsquery_consistent(PG_FUNCTION_ARGS)
 	/* int32	nkeys = PG_GETARG_INT32(3); */
 	Pointer    *extra_data = (Pointer *) PG_GETARG_POINTER(4);
 	bool	   *recheck = (bool *) PG_GETARG_POINTER(5);
-	bool		res = FALSE;
+	bool		res = false;
 
 	/* Initially assume query doesn't require recheck */
 	*recheck = false;
@@ -309,7 +326,9 @@ gin_tsquery_consistent(PG_FUNCTION_ARGS)
 		 * query.
 		 */
 		gcv.first_item = GETQUERY(query);
-		gcv.check = check;
+		StaticAssertStmt(sizeof(GinTernaryValue) == sizeof(bool),
+						 "sizes of GinTernaryValue and bool are not equal");
+		gcv.check = (GinTernaryValue *) check;
 		gcv.map_item_operand = (int *) (extra_data[0]);
 		gcv.need_recheck = recheck;
 

@@ -3,7 +3,7 @@ doc/src/sgml/ref/vacuumdb.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="APP-VACUUMDB">
+<refentry id="app-vacuumdb">
  <indexterm zone="app-vacuumdb">
   <primary>vacuumdb</primary>
  </indexterm>
@@ -28,8 +28,8 @@ PostgreSQL documentation
    <arg choice="plain" rep="repeat">
     <arg choice="opt">
      <group choice="plain">
-      <arg choice="plain"><option>--table</option></arg>
       <arg choice="plain"><option>-t</option></arg>
+      <arg choice="plain"><option>--table</option></arg>
      </group>
      <replaceable>table</replaceable>
      <arg choice="opt">( <replaceable class="parameter">column</replaceable> [,...] )</arg>
@@ -44,8 +44,8 @@ PostgreSQL documentation
    <arg rep="repeat"><replaceable>connection-option</replaceable></arg>
    <arg rep="repeat"><replaceable>option</replaceable></arg>
    <group choice="plain">
-    <arg choice="plain"><option>--all</option></arg>
     <arg choice="plain"><option>-a</option></arg>
+    <arg choice="plain"><option>--all</option></arg>
    </group>
   </cmdsynopsis>
  </refsynopsisdiv>
@@ -62,7 +62,7 @@ PostgreSQL documentation
 
   <para>
    <application>vacuumdb</application> is a wrapper around the SQL
-   command <xref linkend="SQL-VACUUM">.
+   command <xref linkend="sql-vacuum"/>.
    There is no effective difference between vacuuming and analyzing
    databases via this utility and via other methods for accessing the
    server.
@@ -88,23 +88,26 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option><optional>-d</> <replaceable class="parameter">dbname</replaceable></option></term>
-      <term><option><optional>--dbname=</><replaceable class="parameter">dbname</replaceable></option></term>
+      <term><option><optional>-d</optional> <replaceable class="parameter">dbname</replaceable></option></term>
+      <term><option><optional>--dbname=</optional><replaceable class="parameter">dbname</replaceable></option></term>
       <listitem>
        <para>
-        Specifies the name of the database to be cleaned or analyzed.
-        If this is not specified and <option>-a</option> (or
-        <option>--all</option>) is not used, the database name is read
+        Specifies the name of the database to be cleaned or analyzed,
+        when <option>-a</option>/<option>--all</option> is not used.
+        If this is not specified, the database name is read
         from the environment variable <envar>PGDATABASE</envar>.  If
         that is not set, the user name specified for the connection is
-        used.
+        used.  The <replaceable>dbname</replaceable> can be a <link
+        linkend="libpq-connstring">connection string</link>.  If so,
+        connection string parameters will override any conflicting command
+        line options.
        </para>
       </listitem>
      </varlistentry>
 
      <varlistentry>
-      <term><option>-e</></term>
-      <term><option>--echo</></term>
+      <term><option>-e</option></term>
+      <term><option>--echo</option></term>
       <listitem>
        <para>
         Echo the commands that <application>vacuumdb</application> generates
@@ -146,7 +149,7 @@ PostgreSQL documentation
        <para>
         <application>vacuumdb</application> will open
         <replaceable class="parameter">njobs</replaceable> connections to the
-        database, so make sure your <xref linkend="guc-max-connections">
+        database, so make sure your <xref linkend="guc-max-connections"/>
         setting is high enough to accommodate all connections.
        </para>
        <para>
@@ -158,8 +161,8 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>-q</></term>
-      <term><option>--quiet</></term>
+      <term><option>-q</option></term>
+      <term><option>--quiet</option></term>
       <listitem>
        <para>
         Do not display progress messages.
@@ -176,7 +179,7 @@ PostgreSQL documentation
         Column names can be specified only in conjunction with
         the <option>--analyze</option> or <option>--analyze-only</option> options.
         Multiple tables can be vacuumed by writing multiple
-        <option>-t</> switches.
+        <option>-t</option> switches.
        </para>
        <tip>
         <para>
@@ -198,8 +201,8 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-       <term><option>-V</></term>
-       <term><option>--version</></term>
+       <term><option>-V</option></term>
+       <term><option>--version</option></term>
        <listitem>
        <para>
        Print the <application>vacuumdb</application> version and exit.
@@ -248,8 +251,8 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-       <term><option>-?</></term>
-       <term><option>--help</></term>
+       <term><option>-?</option></term>
+       <term><option>--help</option></term>
        <listitem>
        <para>
        Show help about <application>vacuumdb</application> command line
@@ -266,8 +269,8 @@ PostgreSQL documentation
     the following command-line arguments for connection parameters:
     <variablelist>
      <varlistentry>
-      <term><option>-h <replaceable class="parameter">host</replaceable></></term>
-      <term><option>--host=<replaceable class="parameter">host</replaceable></></term>
+      <term><option>-h <replaceable class="parameter">host</replaceable></option></term>
+      <term><option>--host=<replaceable class="parameter">host</replaceable></option></term>
       <listitem>
        <para>
         Specifies the host name of the machine on which the server
@@ -278,8 +281,8 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>-p <replaceable class="parameter">port</replaceable></></term>
-      <term><option>--port=<replaceable class="parameter">port</replaceable></></term>
+      <term><option>-p <replaceable class="parameter">port</replaceable></option></term>
+      <term><option>--port=<replaceable class="parameter">port</replaceable></option></term>
       <listitem>
        <para>
         Specifies the TCP port or local Unix domain socket file
@@ -290,8 +293,8 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>-U <replaceable class="parameter">username</replaceable></></term>
-      <term><option>--username=<replaceable class="parameter">username</replaceable></></term>
+      <term><option>-U <replaceable class="parameter">username</replaceable></option></term>
+      <term><option>--username=<replaceable class="parameter">username</replaceable></option></term>
       <listitem>
        <para>
         User name to connect as.
@@ -300,8 +303,8 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>-w</></term>
-      <term><option>--no-password</></term>
+      <term><option>-w</option></term>
+      <term><option>--no-password</option></term>
       <listitem>
        <para>
         Never issue a password prompt.  If the server requires
@@ -315,8 +318,8 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>-W</></term>
-      <term><option>--password</></term>
+      <term><option>-W</option></term>
+      <term><option>--password</option></term>
       <listitem>
        <para>
         Force <application>vacuumdb</application> to prompt for a
@@ -329,20 +332,26 @@ PostgreSQL documentation
         for a password if the server demands password authentication.
         However, <application>vacuumdb</application> will waste a
         connection attempt finding out that the server wants a password.
-        In some cases it is worth typing <option>-W</> to avoid the extra
+        In some cases it is worth typing <option>-W</option> to avoid the extra
         connection attempt.
        </para>
       </listitem>
      </varlistentry>
 
      <varlistentry>
-      <term><option>--maintenance-db=<replaceable class="parameter">dbname</replaceable></></term>
+      <term><option>--maintenance-db=<replaceable class="parameter">dbname</replaceable></option></term>
       <listitem>
        <para>
-         Specifies the name of the database to connect to discover what other
-         databases should be vacuumed. If not specified, the
-         <literal>postgres</literal> database will be used,
-         and if that does not exist, <literal>template1</literal> will be used.
+        Specifies the name of the database to connect to to discover which
+        databases should be vacuumed,
+        when <option>-a</option>/<option>--all</option> is used.
+        If not specified, the <literal>postgres</literal> database will be used,
+        or if that does not exist, <literal>template1</literal> will be used.
+        This can be a <link linkend="libpq-connstring">connection
+        string</link>.  If so, connection string parameters will override any
+        conflicting command line options.  Also, connection string parameters
+        other than the database name itself will be re-used when connecting
+        to other databases.
        </para>
       </listitem>
      </varlistentry>
@@ -370,9 +379,9 @@ PostgreSQL documentation
   </variablelist>
 
   <para>
-   This utility, like most other <productname>PostgreSQL</> utilities,
-   also uses the environment variables supported by <application>libpq</>
-   (see <xref linkend="libpq-envars">).
+   This utility, like most other <productname>PostgreSQL</productname> utilities,
+   also uses the environment variables supported by <application>libpq</application>
+   (see <xref linkend="libpq-envars"/>).
   </para>
 
  </refsect1>
@@ -382,8 +391,8 @@ PostgreSQL documentation
   <title>Diagnostics</title>
 
   <para>
-   In case of difficulty, see <xref linkend="SQL-VACUUM">
-   and <xref linkend="APP-PSQL"> for
+   In case of difficulty, see <xref linkend="sql-vacuum"/>
+   and <xref linkend="app-psql"/> for
    discussions of potential problems and error messages.
    The database server must be running at the
    targeted host.  Also, any default connection settings and environment
@@ -401,8 +410,8 @@ PostgreSQL documentation
    <application>vacuumdb</application> might need to connect several
    times to the <productname>PostgreSQL</productname> server, asking
    for a password each time. It is convenient to have a
-   <filename>~/.pgpass</> file in such cases. See <xref
-   linkend="libpq-pgpass"> for more information.
+   <filename>~/.pgpass</filename> file in such cases. See <xref
+   linkend="libpq-pgpass"/> for more information.
   </para>
  </refsect1>
 
@@ -439,7 +448,7 @@ PostgreSQL documentation
   <title>See Also</title>
 
   <simplelist type="inline">
-   <member><xref linkend="sql-vacuum"></member>
+   <member><xref linkend="sql-vacuum"/></member>
   </simplelist>
  </refsect1>
 

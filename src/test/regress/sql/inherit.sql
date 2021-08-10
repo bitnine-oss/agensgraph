@@ -97,6 +97,21 @@ SELECT relname, d.* FROM ONLY d, pg_class where d.tableoid = pg_class.oid;
 CREATE TEMP TABLE z (b TEXT, PRIMARY KEY(aa, b)) inherits (a);
 INSERT INTO z VALUES (NULL, 'text'); -- should fail
 
+-- Check inherited UPDATE with all children excluded
+create table some_tab (a int, b int);
+create table some_tab_child () inherits (some_tab);
+insert into some_tab_child values(1,2);
+
+explain (verbose, costs off)
+update some_tab set a = a + 1 where false;
+update some_tab set a = a + 1 where false;
+explain (verbose, costs off)
+update some_tab set a = a + 1 where false returning b, a;
+update some_tab set a = a + 1 where false returning b, a;
+table some_tab;
+
+drop table some_tab cascade;
+
 -- Check UPDATE with inherited target and an inherited source table
 create temp table foo(f1 int, f2 int);
 create temp table foo2(f3 int) inherits (foo);
@@ -153,7 +168,27 @@ from
 where parted_tab.a = ss.a;
 select tableoid::regclass::text as relname, parted_tab.* from parted_tab order by 1,2;
 
+-- modifies partition key, but no rows will actually be updated
+explain update parted_tab set a = 2 where false;
+
 drop table parted_tab;
+
+-- Check UPDATE with multi-level partitioned inherited target
+create table mlparted_tab (a int, b char, c text) partition by list (a);
+create table mlparted_tab_part1 partition of mlparted_tab for values in (1);
+create table mlparted_tab_part2 partition of mlparted_tab for values in (2) partition by list (b);
+create table mlparted_tab_part3 partition of mlparted_tab for values in (3);
+create table mlparted_tab_part2a partition of mlparted_tab_part2 for values in ('a');
+create table mlparted_tab_part2b partition of mlparted_tab_part2 for values in ('b');
+insert into mlparted_tab values (1, 'a'), (2, 'a'), (2, 'b'), (3, 'a');
+
+update mlparted_tab mlp set c = 'xxx'
+from
+  (select a from some_tab union all select a+1 from some_tab) ss (a)
+where (mlp.a = ss.a and mlp.b = 'b') or mlp.a = 3;
+select tableoid::regclass::text as relname, mlparted_tab.* from mlparted_tab order by 1,2;
+
+drop table mlparted_tab;
 drop table some_tab cascade;
 
 /* Test multiple inheritance of column defaults */
@@ -172,6 +207,15 @@ DROP TABLE firstparent, secondparent, jointchild, thirdparent, otherchild;
 insert into d values('test','one','two','three');
 alter table a alter column aa type integer using bit_length(aa);
 select * from d;
+
+-- The above verified that we can change the type of a multiply-inherited
+-- column; but we should reject that if any definition was inherited from
+-- an unrelated parent.
+create temp table parent1(f1 int, f2 int);
+create temp table parent2(f1 int, f3 bigint);
+create temp table childtab(f4 int) inherits(parent1, parent2);
+alter table parent1 alter column f1 type bigint;  -- fail, conflict w/parent2
+alter table parent1 alter column f2 type bigint;  -- ok
 
 -- check that oid column is handled properly during alter table inherit
 create table oid_parent (a int) with oids;
@@ -392,6 +436,18 @@ DROP TABLE test_foreign_constraints_inh;
 DROP TABLE test_foreign_constraints;
 DROP TABLE test_primary_constraints;
 
+-- Test foreign key behavior
+create table inh_fk_1 (a int primary key);
+insert into inh_fk_1 values (1), (2), (3);
+create table inh_fk_2 (x int primary key, y int references inh_fk_1 on delete cascade);
+insert into inh_fk_2 values (11, 1), (22, 2), (33, 3);
+create table inh_fk_2_child () inherits (inh_fk_2);
+insert into inh_fk_2_child values (111, 1), (222, 2);
+delete from inh_fk_1 where a = 1;
+select * from inh_fk_1 order by 1;
+select * from inh_fk_2 order by 1, 2;
+drop table inh_fk_1, inh_fk_2, inh_fk_2_child;
+
 -- Test that parent and child CHECK constraints can be created in either order
 create table p1(f1 int);
 create table p1_c1() inherits(p1);
@@ -491,11 +547,13 @@ select min(1-id) from matest0;
 reset enable_indexscan;
 
 set enable_seqscan = off;  -- plan with fewest seqscans should be merge
+set enable_parallel_append = off; -- Don't let parallel-append interfere
 explain (verbose, costs off) select * from matest0 order by 1-id;
 select * from matest0 order by 1-id;
 explain (verbose, costs off) select min(1-id) from matest0;
 select min(1-id) from matest0;
 reset enable_seqscan;
+reset enable_parallel_append;
 
 drop table matest0 cascade;
 
@@ -659,19 +717,20 @@ drop table range_list_parted;
 -- check that constraint exclusion is able to cope with the partition
 -- constraint emitted for multi-column range partitioned tables
 create table mcrparted (a int, b int, c int) partition by range (a, abs(b), c);
+create table mcrparted_def partition of mcrparted default;
 create table mcrparted0 partition of mcrparted for values from (minvalue, minvalue, minvalue) to (1, 1, 1);
 create table mcrparted1 partition of mcrparted for values from (1, 1, 1) to (10, 5, 10);
 create table mcrparted2 partition of mcrparted for values from (10, 5, 10) to (10, 10, 10);
 create table mcrparted3 partition of mcrparted for values from (11, 1, 1) to (20, 10, 10);
 create table mcrparted4 partition of mcrparted for values from (20, 10, 10) to (20, 20, 20);
 create table mcrparted5 partition of mcrparted for values from (20, 20, 20) to (maxvalue, maxvalue, maxvalue);
-explain (costs off) select * from mcrparted where a = 0;	-- scans mcrparted0
-explain (costs off) select * from mcrparted where a = 10 and abs(b) < 5;	-- scans mcrparted1
-explain (costs off) select * from mcrparted where a = 10 and abs(b) = 5;	-- scans mcrparted1, mcrparted2
+explain (costs off) select * from mcrparted where a = 0;	-- scans mcrparted0, mcrparted_def
+explain (costs off) select * from mcrparted where a = 10 and abs(b) < 5;	-- scans mcrparted1, mcrparted_def
+explain (costs off) select * from mcrparted where a = 10 and abs(b) = 5;	-- scans mcrparted1, mcrparted2, mcrparted_def
 explain (costs off) select * from mcrparted where abs(b) = 5;	-- scans all partitions
 explain (costs off) select * from mcrparted where a > -1;	-- scans all partitions
 explain (costs off) select * from mcrparted where a = 20 and abs(b) = 10 and c > 10;	-- scans mcrparted4
-explain (costs off) select * from mcrparted where a = 20 and c > 20; -- scans mcrparted3, mcrparte4, mcrparte5
+explain (costs off) select * from mcrparted where a = 20 and c > 20; -- scans mcrparted3, mcrparte4, mcrparte5, mcrparted_def
 drop table mcrparted;
 
 -- check that partitioned table Appends cope with being referenced in
@@ -683,3 +742,144 @@ insert into parted_minmax values (1,'12345');
 explain (costs off) select min(a), max(a) from parted_minmax where b = '12345';
 select min(a), max(a) from parted_minmax where b = '12345';
 drop table parted_minmax;
+
+-- Check that we allow access to a child table's statistics when the user
+-- has permissions only for the parent table.
+create table permtest_parent (a int, b text, c text) partition by list (a);
+create table permtest_child (b text, c text, a int) partition by list (b);
+create table permtest_grandchild (c text, b text, a int);
+alter table permtest_child attach partition permtest_grandchild for values in ('a');
+alter table permtest_parent attach partition permtest_child for values in (1);
+create index on permtest_parent (left(c, 3));
+insert into permtest_parent
+  select 1, 'a', left(md5(i::text), 5) from generate_series(0, 100) i;
+analyze permtest_parent;
+create role regress_no_child_access;
+revoke all on permtest_grandchild from regress_no_child_access;
+grant select on permtest_parent to regress_no_child_access;
+set session authorization regress_no_child_access;
+-- without stats access, these queries would produce hash join plans:
+explain (costs off)
+  select * from permtest_parent p1 inner join permtest_parent p2
+  on p1.a = p2.a and p1.c ~ 'a1$';
+explain (costs off)
+  select * from permtest_parent p1 inner join permtest_parent p2
+  on p1.a = p2.a and left(p1.c, 3) ~ 'a1$';
+reset session authorization;
+revoke all on permtest_parent from regress_no_child_access;
+grant select(a,c) on permtest_parent to regress_no_child_access;
+set session authorization regress_no_child_access;
+explain (costs off)
+  select p2.a, p1.c from permtest_parent p1 inner join permtest_parent p2
+  on p1.a = p2.a and p1.c ~ 'a1$';
+-- we will not have access to the expression index's stats here:
+explain (costs off)
+  select p2.a, p1.c from permtest_parent p1 inner join permtest_parent p2
+  on p1.a = p2.a and left(p1.c, 3) ~ 'a1$';
+reset session authorization;
+revoke all on permtest_parent from regress_no_child_access;
+drop role regress_no_child_access;
+drop table permtest_parent;
+
+-- Verify that constraint errors across partition root / child are
+-- handled correctly (Bug #16293)
+CREATE TABLE errtst_parent (
+    partid int not null,
+    shdata int not null,
+    data int NOT NULL DEFAULT 0,
+    CONSTRAINT shdata_small CHECK(shdata < 3)
+) PARTITION BY RANGE (partid);
+
+-- fast defaults lead to attribute mapping being used in one
+-- direction, but not the other
+CREATE TABLE errtst_child_fastdef (
+    partid int not null,
+    shdata int not null,
+    CONSTRAINT shdata_small CHECK(shdata < 3)
+);
+
+-- no remapping in either direction necessary
+CREATE TABLE errtst_child_plaindef (
+    partid int not null,
+    shdata int not null,
+    data int NOT NULL DEFAULT 0,
+    CONSTRAINT shdata_small CHECK(shdata < 3),
+    CHECK(data < 10)
+);
+
+-- remapping in both direction
+CREATE TABLE errtst_child_reorder (
+    data int NOT NULL DEFAULT 0,
+    shdata int not null,
+    partid int not null,
+    CONSTRAINT shdata_small CHECK(shdata < 3),
+    CHECK(data < 10)
+);
+
+ALTER TABLE errtst_child_fastdef ADD COLUMN data int NOT NULL DEFAULT 0;
+ALTER TABLE errtst_child_fastdef ADD CONSTRAINT errtest_child_fastdef_data_check CHECK (data < 10);
+
+ALTER TABLE errtst_parent ATTACH PARTITION errtst_child_fastdef FOR VALUES FROM (0) TO (10);
+ALTER TABLE errtst_parent ATTACH PARTITION errtst_child_plaindef FOR VALUES FROM (10) TO (20);
+ALTER TABLE errtst_parent ATTACH PARTITION errtst_child_reorder FOR VALUES FROM (20) TO (30);
+
+-- insert without child check constraint error
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ( '0', '1', '5');
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ('10', '1', '5');
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ('20', '1', '5');
+
+-- insert with child check constraint error
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ( '0', '1', '10');
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ('10', '1', '10');
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ('20', '1', '10');
+
+-- insert with child not null constraint error
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ( '0', '1', NULL);
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ('10', '1', NULL);
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ('20', '1', NULL);
+
+-- insert with shared check constraint error
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ( '0', '5', '5');
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ('10', '5', '5');
+INSERT INTO errtst_parent(partid, shdata, data) VALUES ('20', '5', '5');
+
+-- within partition update without child check constraint violation
+BEGIN;
+UPDATE errtst_parent SET data = data + 1 WHERE partid = 0;
+UPDATE errtst_parent SET data = data + 1 WHERE partid = 10;
+UPDATE errtst_parent SET data = data + 1 WHERE partid = 20;
+ROLLBACK;
+
+-- within partition update with child check constraint violation
+UPDATE errtst_parent SET data = data + 10 WHERE partid = 0;
+UPDATE errtst_parent SET data = data + 10 WHERE partid = 10;
+UPDATE errtst_parent SET data = data + 10 WHERE partid = 20;
+
+-- direct leaf partition update, without partition id violation
+BEGIN;
+UPDATE errtst_child_fastdef SET partid = 1 WHERE partid = 0;
+UPDATE errtst_child_plaindef SET partid = 11 WHERE partid = 10;
+UPDATE errtst_child_reorder SET partid = 21 WHERE partid = 20;
+ROLLBACK;
+
+-- direct leaf partition update, with partition id violation
+UPDATE errtst_child_fastdef SET partid = partid + 10 WHERE partid = 0;
+UPDATE errtst_child_plaindef SET partid = partid + 10 WHERE partid = 10;
+UPDATE errtst_child_reorder SET partid = partid + 10 WHERE partid = 20;
+
+-- partition move, without child check constraint violation
+BEGIN;
+UPDATE errtst_parent SET partid = 10, data = data + 1 WHERE partid = 0;
+UPDATE errtst_parent SET partid = 20, data = data + 1 WHERE partid = 10;
+UPDATE errtst_parent SET partid = 0, data = data + 1 WHERE partid = 20;
+ROLLBACK;
+
+-- partition move, with child check constraint violation
+UPDATE errtst_parent SET partid = 10, data = data + 10 WHERE partid = 0;
+UPDATE errtst_parent SET partid = 20, data = data + 10 WHERE partid = 10;
+UPDATE errtst_parent SET partid = 0, data = data + 10 WHERE partid = 20;
+
+-- partition move, without target partition
+UPDATE errtst_parent SET partid = 30, data = data + 10 WHERE partid = 20;
+
+DROP TABLE errtst_parent;

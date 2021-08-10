@@ -7,7 +7,7 @@
  * for debug printouts, because that's more flexible than printf().
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/execdebug.h
@@ -93,20 +93,6 @@
 #define NLV1_printf(s, a)
 #define ENLV1_printf(message)
 #endif   /* EXEC_NESTLOOPVLEDEBUG */
-
-/* ----------------
- *		exec eval / target list debugging defines
- * ----------------
- */
-#ifdef EXEC_EVALDEBUG
-#define EV_nodeDisplay(l)				nodeDisplay(l)
-#define EV_printf(s)					printf(s)
-#define EV1_printf(s, a)				printf(s, a)
-#else
-#define EV_nodeDisplay(l)
-#define EV_printf(s)
-#define EV1_printf(s, a)
-#endif   /* EXEC_EVALDEBUG */
 
 /* ----------------
  *		sort node debugging defines

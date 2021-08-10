@@ -9,7 +9,7 @@
  */
 #include "postgres_fe.h"
 
-#include "catalog/pg_class.h"
+#include "catalog/pg_class_d.h"
 
 #include "fe_utils/connect.h"
 #include "libpq-fe.h"
@@ -320,7 +320,7 @@ sql_conn(struct options *my_opts)
 	if (PQstatus(conn) == CONNECTION_BAD)
 	{
 		fprintf(stderr, "%s: could not connect to database %s: %s",
-				"oid2name", my_opts->dbname, PQerrorMessage(conn));
+				"oid2name", PQdb(conn) ? PQdb(conn) : "", PQerrorMessage(conn));
 		PQfinish(conn);
 		exit(1);
 	}

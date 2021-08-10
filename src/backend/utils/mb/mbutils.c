@@ -23,7 +23,7 @@
  * the result is validly encoded according to the destination encoding.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -40,17 +40,6 @@
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
-
-/*
- * When converting strings between different encodings, we assume that space
- * for converted result is 4-to-1 growth in the worst case. The rate for
- * currently supported encoding pairs are within 3 (SJIS JIS X0201 half width
- * kanna -> UTF8 is the worst case).  So "4" should be enough for the moment.
- *
- * Note that this is not the same as the maximum character width in any
- * particular encoding.
- */
-#define MAX_CONVERSION_GROWTH  4
 
 /*
  * We maintain a simple linked list caching the fmgr lookup info for the
@@ -368,16 +357,24 @@ pg_do_encoding_conversion(unsigned char *src, int len,
 						pg_encoding_to_char(dest_encoding))));
 
 	/*
-	 * Allocate space for conversion result, being wary of integer overflow
+	 * Allocate space for conversion result, being wary of integer overflow.
+	 *
+	 * len * MAX_CONVERSION_GROWTH is typically a vast overestimate of the
+	 * required space, so it might exceed MaxAllocSize even though the result
+	 * would actually fit.  We do not want to hand back a result string that
+	 * exceeds MaxAllocSize, because callers might not cope gracefully --- but
+	 * if we just allocate more than that, and don't use it, that's fine.
 	 */
-	if ((Size) len >= (MaxAllocSize / (Size) MAX_CONVERSION_GROWTH))
+	if ((Size) len >= (MaxAllocHugeSize / (Size) MAX_CONVERSION_GROWTH))
 		ereport(ERROR,
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg("out of memory"),
 				 errdetail("String of %d bytes is too long for encoding conversion.",
 						   len)));
 
-	result = palloc(len * MAX_CONVERSION_GROWTH + 1);
+	result = (unsigned char *)
+		MemoryContextAllocHuge(CurrentMemoryContext,
+							   (Size) len * MAX_CONVERSION_GROWTH + 1);
 
 	OidFunctionCall5(proc,
 					 Int32GetDatum(src_encoding),
@@ -385,6 +382,26 @@ pg_do_encoding_conversion(unsigned char *src, int len,
 					 CStringGetDatum(src),
 					 CStringGetDatum(result),
 					 Int32GetDatum(len));
+
+	/*
+	 * If the result is large, it's worth repalloc'ing to release any extra
+	 * space we asked for.  The cutoff here is somewhat arbitrary, but we
+	 * *must* check when len * MAX_CONVERSION_GROWTH exceeds MaxAllocSize.
+	 */
+	if (len > 1000000)
+	{
+		Size		resultlen = strlen((char *) result);
+
+		if (resultlen >= MaxAllocSize)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("out of memory"),
+					 errdetail("String of %d bytes is too long for encoding conversion.",
+							   len)));
+
+		result = (unsigned char *) repalloc(result, resultlen + 1);
+	}
+
 	return result;
 }
 
@@ -701,16 +718,19 @@ perform_default_encoding_conversion(const char *src, int len,
 		return (char *) src;
 
 	/*
-	 * Allocate space for conversion result, being wary of integer overflow
+	 * Allocate space for conversion result, being wary of integer overflow.
+	 * See comments in pg_do_encoding_conversion.
 	 */
-	if ((Size) len >= (MaxAllocSize / (Size) MAX_CONVERSION_GROWTH))
+	if ((Size) len >= (MaxAllocHugeSize / (Size) MAX_CONVERSION_GROWTH))
 		ereport(ERROR,
 				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
 				 errmsg("out of memory"),
 				 errdetail("String of %d bytes is too long for encoding conversion.",
 						   len)));
 
-	result = palloc(len * MAX_CONVERSION_GROWTH + 1);
+	result = (char *)
+		MemoryContextAllocHuge(CurrentMemoryContext,
+							   (Size) len * MAX_CONVERSION_GROWTH + 1);
 
 	FunctionCall5(flinfo,
 				  Int32GetDatum(src_encoding),
@@ -718,6 +738,25 @@ perform_default_encoding_conversion(const char *src, int len,
 				  CStringGetDatum(src),
 				  CStringGetDatum(result),
 				  Int32GetDatum(len));
+
+	/*
+	 * Release extra space if there might be a lot --- see comments in
+	 * pg_do_encoding_conversion.
+	 */
+	if (len > 1000000)
+	{
+		Size		resultlen = strlen(result);
+
+		if (resultlen >= MaxAllocSize)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("out of memory"),
+					 errdetail("String of %d bytes is too long for encoding conversion.",
+							   len)));
+
+		result = (char *) repalloc(result, resultlen + 1);
+	}
+
 	return result;
 }
 
@@ -726,14 +765,14 @@ perform_default_encoding_conversion(const char *src, int len,
 int
 pg_mb2wchar(const char *from, pg_wchar *to)
 {
-	return (*pg_wchar_table[DatabaseEncoding->encoding].mb2wchar_with_len) ((const unsigned char *) from, to, strlen(from));
+	return pg_wchar_table[DatabaseEncoding->encoding].mb2wchar_with_len((const unsigned char *) from, to, strlen(from));
 }
 
 /* convert a multibyte string to a wchar with a limited length */
 int
 pg_mb2wchar_with_len(const char *from, pg_wchar *to, int len)
 {
-	return (*pg_wchar_table[DatabaseEncoding->encoding].mb2wchar_with_len) ((const unsigned char *) from, to, len);
+	return pg_wchar_table[DatabaseEncoding->encoding].mb2wchar_with_len((const unsigned char *) from, to, len);
 }
 
 /* same, with any encoding */
@@ -741,21 +780,21 @@ int
 pg_encoding_mb2wchar_with_len(int encoding,
 							  const char *from, pg_wchar *to, int len)
 {
-	return (*pg_wchar_table[encoding].mb2wchar_with_len) ((const unsigned char *) from, to, len);
+	return pg_wchar_table[encoding].mb2wchar_with_len((const unsigned char *) from, to, len);
 }
 
 /* convert a wchar string to a multibyte */
 int
 pg_wchar2mb(const pg_wchar *from, char *to)
 {
-	return (*pg_wchar_table[DatabaseEncoding->encoding].wchar2mb_with_len) (from, (unsigned char *) to, pg_wchar_strlen(from));
+	return pg_wchar_table[DatabaseEncoding->encoding].wchar2mb_with_len(from, (unsigned char *) to, pg_wchar_strlen(from));
 }
 
 /* convert a wchar string to a multibyte with a limited length */
 int
 pg_wchar2mb_with_len(const pg_wchar *from, char *to, int len)
 {
-	return (*pg_wchar_table[DatabaseEncoding->encoding].wchar2mb_with_len) (from, (unsigned char *) to, len);
+	return pg_wchar_table[DatabaseEncoding->encoding].wchar2mb_with_len(from, (unsigned char *) to, len);
 }
 
 /* same, with any encoding */
@@ -763,21 +802,21 @@ int
 pg_encoding_wchar2mb_with_len(int encoding,
 							  const pg_wchar *from, char *to, int len)
 {
-	return (*pg_wchar_table[encoding].wchar2mb_with_len) (from, (unsigned char *) to, len);
+	return pg_wchar_table[encoding].wchar2mb_with_len(from, (unsigned char *) to, len);
 }
 
 /* returns the byte length of a multibyte character */
 int
 pg_mblen(const char *mbstr)
 {
-	return ((*pg_wchar_table[DatabaseEncoding->encoding].mblen) ((const unsigned char *) mbstr));
+	return pg_wchar_table[DatabaseEncoding->encoding].mblen((const unsigned char *) mbstr);
 }
 
 /* returns the display length of a multibyte character */
 int
 pg_dsplen(const char *mbstr)
 {
-	return ((*pg_wchar_table[DatabaseEncoding->encoding].dsplen) ((const unsigned char *) mbstr));
+	return pg_wchar_table[DatabaseEncoding->encoding].dsplen((const unsigned char *) mbstr);
 }
 
 /* returns the length (counted in wchars) of a multibyte string */
@@ -1057,11 +1096,16 @@ GetMessageEncoding(void)
 WCHAR *
 pgwin32_message_to_UTF16(const char *str, int len, int *utf16len)
 {
+	int			msgenc = GetMessageEncoding();
 	WCHAR	   *utf16;
 	int			dstlen;
 	UINT		codepage;
 
-	codepage = pg_enc2name_tbl[GetMessageEncoding()].codepage;
+	if (msgenc == PG_SQL_ASCII)
+		/* No conversion is possible, and SQL_ASCII is never utf16. */
+		return NULL;
+
+	codepage = pg_enc2name_tbl[msgenc].codepage;
 
 	/*
 	 * Use MultiByteToWideChar directly if there is a corresponding codepage,
@@ -1086,7 +1130,7 @@ pgwin32_message_to_UTF16(const char *str, int len, int *utf16len)
 		{
 			utf8 = (char *) pg_do_encoding_conversion((unsigned char *) str,
 													  len,
-													  GetMessageEncoding(),
+													  msgenc,
 													  PG_UTF8);
 			if (utf8 != str)
 				len = strlen(utf8);

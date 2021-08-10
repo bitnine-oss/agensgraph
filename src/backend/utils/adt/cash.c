@@ -22,6 +22,7 @@
 #include <ctype.h>
 #include <math.h>
 
+#include "common/int.h"
 #include "libpq/pqformat.h"
 #include "utils/builtins.h"
 #include "utils/cash.h"
@@ -199,19 +200,20 @@ cash_in(PG_FUNCTION_ARGS)
 
 	for (; *s; s++)
 	{
-		/* we look for digits as long as we have found less */
-		/* than the required number of decimal places */
+		/*
+		 * We look for digits as long as we have found less than the required
+		 * number of decimal places.
+		 */
 		if (isdigit((unsigned char) *s) && (!seen_dot || dec < fpoint))
 		{
-			Cash		newvalue = (value * 10) - (*s - '0');
+			int8		digit = *s - '0';
 
-			if (newvalue / 10 != value)
+			if (pg_mul_s64_overflow(value, 10, &value) ||
+				pg_sub_s64_overflow(value, digit, &value))
 				ereport(ERROR,
 						(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 						 errmsg("value \"%s\" is out of range for type %s",
 								str, "money")));
-
-			value = newvalue;
 
 			if (seen_dot)
 				dec++;
@@ -230,26 +232,23 @@ cash_in(PG_FUNCTION_ARGS)
 
 	/* round off if there's another digit */
 	if (isdigit((unsigned char) *s) && *s >= '5')
-		value--;				/* remember we build the value in the negative */
-
-	if (value > 0)
-		ereport(ERROR,
-				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				 errmsg("value \"%s\" is out of range for type %s",
-						str, "money")));
-
-	/* adjust for less than required decimal places */
-	for (; dec < fpoint; dec++)
 	{
-		Cash		newvalue = value * 10;
-
-		if (newvalue / 10 != value)
+		/* remember we build the value in the negative */
+		if (pg_sub_s64_overflow(value, 1, &value))
 			ereport(ERROR,
 					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 					 errmsg("value \"%s\" is out of range for type %s",
 							str, "money")));
+	}
 
-		value = newvalue;
+	/* adjust for less than required decimal places */
+	for (; dec < fpoint; dec++)
+	{
+		if (pg_mul_s64_overflow(value, 10, &value))
+			ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("value \"%s\" is out of range for type %s",
+							str, "money")));
 	}
 
 	/*
@@ -285,12 +284,12 @@ cash_in(PG_FUNCTION_ARGS)
 	 */
 	if (sgn > 0)
 	{
-		result = -value;
-		if (result < 0)
+		if (value == PG_INT64_MIN)
 			ereport(ERROR,
 					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 					 errmsg("value \"%s\" is out of range for type %s",
 							str, "money")));
+		result = -value;
 	}
 	else
 		result = value;
@@ -1033,13 +1032,8 @@ Datum
 cash_numeric(PG_FUNCTION_ARGS)
 {
 	Cash		money = PG_GETARG_CASH(0);
-	Numeric		result;
+	Datum		result;
 	int			fpoint;
-	int64		scale;
-	int			i;
-	Datum		amount;
-	Datum		numeric_scale;
-	Datum		quotient;
 	struct lconv *lconvert = PGLC_localeconv();
 
 	/* see comments about frac_digits in cash_in() */
@@ -1047,22 +1041,45 @@ cash_numeric(PG_FUNCTION_ARGS)
 	if (fpoint < 0 || fpoint > 10)
 		fpoint = 2;
 
-	/* compute required scale factor */
-	scale = 1;
-	for (i = 0; i < fpoint; i++)
-		scale *= 10;
+	/* convert the integral money value to numeric */
+	result = DirectFunctionCall1(int8_numeric, Int64GetDatum(money));
 
-	/* form the result as money / scale */
-	amount = DirectFunctionCall1(int8_numeric, Int64GetDatum(money));
-	numeric_scale = DirectFunctionCall1(int8_numeric, Int64GetDatum(scale));
-	quotient = DirectFunctionCall2(numeric_div, amount, numeric_scale);
+	/* scale appropriately, if needed */
+	if (fpoint > 0)
+	{
+		int64		scale;
+		int			i;
+		Datum		numeric_scale;
+		Datum		quotient;
 
-	/* forcibly round to exactly the intended number of digits */
-	result = DatumGetNumeric(DirectFunctionCall2(numeric_round,
-												 quotient,
-												 Int32GetDatum(fpoint)));
+		/* compute required scale factor */
+		scale = 1;
+		for (i = 0; i < fpoint; i++)
+			scale *= 10;
+		numeric_scale = DirectFunctionCall1(int8_numeric,
+											Int64GetDatum(scale));
 
-	PG_RETURN_NUMERIC(result);
+		/*
+		 * Given integral inputs approaching INT64_MAX, select_div_scale()
+		 * might choose a result scale of zero, causing loss of fractional
+		 * digits in the quotient.  We can ensure an exact result by setting
+		 * the dscale of either input to be at least as large as the desired
+		 * result scale.  numeric_round() will do that for us.
+		 */
+		numeric_scale = DirectFunctionCall2(numeric_round,
+											numeric_scale,
+											Int32GetDatum(fpoint));
+
+		/* Now we can safely divide ... */
+		quotient = DirectFunctionCall2(numeric_div, result, numeric_scale);
+
+		/* ... and forcibly round to exactly the intended number of digits */
+		result = DirectFunctionCall2(numeric_round,
+									 quotient,
+									 Int32GetDatum(fpoint));
+	}
+
+	PG_RETURN_DATUM(result);
 }
 
 /* numeric_cash()

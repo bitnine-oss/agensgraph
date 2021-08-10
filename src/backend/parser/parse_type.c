@@ -3,7 +3,7 @@
  * parse_type.c
  *		handle type operations for parser
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -33,6 +33,18 @@ static int32 typenameTypeMod(ParseState *pstate, const TypeName *typeName,
 
 /*
  * LookupTypeName
+ *		Wrapper for typical case.
+ */
+Type
+LookupTypeName(ParseState *pstate, const TypeName *typeName,
+			   int32 *typmod_p, bool missing_ok)
+{
+	return LookupTypeNameExtended(pstate,
+								  typeName, typmod_p, true, missing_ok);
+}
+
+/*
+ * LookupTypeNameExtended
  *		Given a TypeName object, lookup the pg_type syscache entry of the type.
  *		Returns NULL if no such type can be found.  If the type is found,
  *		the typmod value represented in the TypeName struct is computed and
@@ -51,11 +63,17 @@ static int32 typenameTypeMod(ParseState *pstate, const TypeName *typeName,
  * found but is a shell, and there is typmod decoration, an error will be
  * thrown --- this is intentional.
  *
+ * If temp_ok is false, ignore types in the temporary namespace.  Pass false
+ * when the caller will decide, using goodness of fit criteria, whether the
+ * typeName is actually a type or something else.  If typeName always denotes
+ * a type (or denotes nothing), pass true.
+ *
  * pstate is only used for error location info, and may be NULL.
  */
 Type
-LookupTypeName(ParseState *pstate, const TypeName *typeName,
-			   int32 *typmod_p, bool missing_ok)
+LookupTypeNameExtended(ParseState *pstate,
+					   const TypeName *typeName, int32 *typmod_p,
+					   bool temp_ok, bool missing_ok)
 {
 	Oid			typoid;
 	HeapTuple	tup;
@@ -172,7 +190,7 @@ LookupTypeName(ParseState *pstate, const TypeName *typeName,
 		else
 		{
 			/* Unqualified type name, so search the search path */
-			typoid = TypenameGetTypid(typname);
+			typoid = TypenameGetTypidExtended(typname, temp_ok);
 		}
 
 		/* If an array reference, return the array type instead */
@@ -641,7 +659,10 @@ stringTypeDatum(Type tp, char *string, int32 atttypmod)
 	return OidInputFunctionCall(typinput, string, typioparam, atttypmod);
 }
 
-/* given a typeid, return the type's typrelid (associated relation, if any) */
+/*
+ * Given a typeid, return the type's typrelid (associated relation), if any.
+ * Returns InvalidOid if type is not a composite type.
+ */
 Oid
 typeidTypeRelid(Oid type_id)
 {
@@ -652,8 +673,39 @@ typeidTypeRelid(Oid type_id)
 	typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(type_id));
 	if (!HeapTupleIsValid(typeTuple))
 		elog(ERROR, "cache lookup failed for type %u", type_id);
-
 	type = (Form_pg_type) GETSTRUCT(typeTuple);
+	result = type->typrelid;
+	ReleaseSysCache(typeTuple);
+	return result;
+}
+
+/*
+ * Given a typeid, return the type's typrelid (associated relation), if any.
+ * Returns InvalidOid if type is not a composite type or a domain over one.
+ * This is the same as typeidTypeRelid(getBaseType(type_id)), but faster.
+ */
+Oid
+typeOrDomainTypeRelid(Oid type_id)
+{
+	HeapTuple	typeTuple;
+	Form_pg_type type;
+	Oid			result;
+
+	for (;;)
+	{
+		typeTuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(type_id));
+		if (!HeapTupleIsValid(typeTuple))
+			elog(ERROR, "cache lookup failed for type %u", type_id);
+		type = (Form_pg_type) GETSTRUCT(typeTuple);
+		if (type->typtype != TYPTYPE_DOMAIN)
+		{
+			/* Not a domain, so done looking through domains */
+			break;
+		}
+		/* It is a domain, so examine the base type instead */
+		type_id = type->typbasetype;
+		ReleaseSysCache(typeTuple);
+	}
 	result = type->typrelid;
 	ReleaseSysCache(typeTuple);
 	return result;

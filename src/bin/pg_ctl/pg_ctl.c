@@ -2,20 +2,12 @@
  *
  * pg_ctl --- start/stops/restarts the PostgreSQL server
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * src/bin/pg_ctl/pg_ctl.c
  *
  *-------------------------------------------------------------------------
  */
-
-#ifdef WIN32
-/*
- * Need this to get defines for restricted tokens and jobs. And it
- * has to be set before any header from the Win32 API is loaded.
- */
-#define _WIN32_WINNT 0x0501
-#endif
 
 #include "postgres_fe.h"
 
@@ -33,6 +25,7 @@
 
 #include "catalog/pg_control.h"
 #include "common/controldata_utils.h"
+#include "common/file_perm.h"
 #include "getopt_long.h"
 #include "utils/pidfile.h"
 
@@ -152,6 +145,7 @@ static void WINAPI pgwin32_ServiceHandler(DWORD);
 static void WINAPI pgwin32_ServiceMain(DWORD, LPTSTR *);
 static void pgwin32_doRunAsService(void);
 static int	CreateRestrictedProcess(char *cmd, PROCESS_INFORMATION *processInfo, bool as_service);
+static PTOKEN_PRIVILEGES GetPrivilegesToDelete(HANDLE hToken);
 #endif
 
 static pgpid_t get_pgpid(bool is_status_request);
@@ -965,7 +959,7 @@ do_restart(void)
 		write_stderr(_("%s: PID file \"%s\" does not exist\n"),
 					 progname, pid_file);
 		write_stderr(_("Is server running?\n"));
-		write_stderr(_("starting server anyway\n"));
+		write_stderr(_("trying to start server anyway\n"));
 		do_start();
 		return;
 	}
@@ -1617,6 +1611,160 @@ pgwin32_doRunAsService(void)
 	}
 }
 
+/*
+ * Call GetTokenInformation() on a token and return a dynamically sized
+ * buffer with the information in it. This buffer must be free():d by
+ * the calling function!
+ */
+static bool
+pgwin32_get_dynamic_tokeninfo(HANDLE token, TOKEN_INFORMATION_CLASS class,
+							  char **InfoBuffer, char *errbuf, int errsize)
+{
+	DWORD		InfoBufferSize;
+
+	if (GetTokenInformation(token, class, NULL, 0, &InfoBufferSize))
+	{
+		snprintf(errbuf, errsize, "could not get token information: got zero size\n");
+		return false;
+	}
+
+	if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+	{
+		snprintf(errbuf, errsize, "could not get token information: error code %lu\n",
+				 GetLastError());
+		return false;
+	}
+
+	*InfoBuffer = malloc(InfoBufferSize);
+	if (*InfoBuffer == NULL)
+	{
+		snprintf(errbuf, errsize, "could not allocate %d bytes for token information\n",
+				 (int) InfoBufferSize);
+		return false;
+	}
+
+	if (!GetTokenInformation(token, class, *InfoBuffer,
+							 InfoBufferSize, &InfoBufferSize))
+	{
+		snprintf(errbuf, errsize, "could not get token information: error code %lu\n",
+				 GetLastError());
+		return false;
+	}
+
+	return true;
+}
+
+/*
+ * We consider ourselves running as a service if one of the following is
+ * true:
+ *
+ * 1) We are running as Local System (only used by services)
+ * 2) Our token contains SECURITY_SERVICE_RID (automatically added to the
+ *	  process token by the SCM when starting a service)
+ *
+ * Return values:
+ *	 0 = Not service
+ *	 1 = Service
+ *	-1 = Error
+ *
+ * Note: we can't report errors via write_stderr (because that calls this)
+ * We are therefore reduced to writing directly on stderr, which sucks, but
+ * we have few alternatives.
+ */
+int
+pgwin32_is_service(void)
+{
+	static int	_is_service = -1;
+	HANDLE		AccessToken;
+	char	   *InfoBuffer = NULL;
+	char		errbuf[256];
+	PTOKEN_GROUPS Groups;
+	PTOKEN_USER User;
+	PSID		ServiceSid;
+	PSID		LocalSystemSid;
+	SID_IDENTIFIER_AUTHORITY NtAuthority = {SECURITY_NT_AUTHORITY};
+	UINT		x;
+
+	/* Only check the first time */
+	if (_is_service != -1)
+		return _is_service;
+
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_READ, &AccessToken))
+	{
+		fprintf(stderr, "could not open process token: error code %lu\n",
+				GetLastError());
+		return -1;
+	}
+
+	/* First check for local system */
+	if (!pgwin32_get_dynamic_tokeninfo(AccessToken, TokenUser, &InfoBuffer,
+									   errbuf, sizeof(errbuf)))
+	{
+		fprintf(stderr, "%s", errbuf);
+		return -1;
+	}
+
+	User = (PTOKEN_USER) InfoBuffer;
+
+	if (!AllocateAndInitializeSid(&NtAuthority, 1,
+							  SECURITY_LOCAL_SYSTEM_RID, 0, 0, 0, 0, 0, 0, 0,
+								  &LocalSystemSid))
+	{
+		fprintf(stderr, "could not get SID for local system account\n");
+		CloseHandle(AccessToken);
+		return -1;
+	}
+
+	if (EqualSid(LocalSystemSid, User->User.Sid))
+	{
+		FreeSid(LocalSystemSid);
+		free(InfoBuffer);
+		CloseHandle(AccessToken);
+		_is_service = 1;
+		return _is_service;
+	}
+
+	FreeSid(LocalSystemSid);
+	free(InfoBuffer);
+
+	/* Now check for group SID */
+	if (!pgwin32_get_dynamic_tokeninfo(AccessToken, TokenGroups, &InfoBuffer,
+									   errbuf, sizeof(errbuf)))
+	{
+		fprintf(stderr, "%s", errbuf);
+		return -1;
+	}
+
+	Groups = (PTOKEN_GROUPS) InfoBuffer;
+
+	if (!AllocateAndInitializeSid(&NtAuthority, 1,
+								  SECURITY_SERVICE_RID, 0, 0, 0, 0, 0, 0, 0,
+								  &ServiceSid))
+	{
+		fprintf(stderr, "could not get SID for service group\n");
+		free(InfoBuffer);
+		CloseHandle(AccessToken);
+		return -1;
+	}
+
+	_is_service = 0;
+	for (x = 0; x < Groups->GroupCount; x++)
+	{
+		if (EqualSid(ServiceSid, Groups->Groups[x].Sid))
+		{
+			_is_service = 1;
+			break;
+		}
+	}
+
+	free(InfoBuffer);
+	FreeSid(ServiceSid);
+
+	CloseHandle(AccessToken);
+
+	return _is_service;
+}
+
 
 /*
  * Mingw headers are incomplete, and so are the libraries. So we have to load
@@ -1630,11 +1778,6 @@ typedef HANDLE (WINAPI * __CreateJobObject) (LPSECURITY_ATTRIBUTES, LPCTSTR);
 typedef BOOL (WINAPI * __SetInformationJobObject) (HANDLE, JOBOBJECTINFOCLASS, LPVOID, DWORD);
 typedef BOOL (WINAPI * __AssignProcessToJobObject) (HANDLE, HANDLE);
 typedef BOOL (WINAPI * __QueryInformationJobObject) (HANDLE, JOBOBJECTINFOCLASS, LPVOID, DWORD, LPDWORD);
-
-/* Windows API define missing from some versions of MingW headers */
-#ifndef  DISABLE_MAX_PRIVILEGE
-#define DISABLE_MAX_PRIVILEGE	0x1
-#endif
 
 /*
  * Create a restricted token, a job object sandbox, and execute the specified
@@ -1658,6 +1801,7 @@ CreateRestrictedProcess(char *cmd, PROCESS_INFORMATION *processInfo, bool as_ser
 	HANDLE		restrictedToken;
 	SID_IDENTIFIER_AUTHORITY NtAuthority = {SECURITY_NT_AUTHORITY};
 	SID_AND_ATTRIBUTES dropSids[2];
+	PTOKEN_PRIVILEGES delPrivs;
 
 	/* Functions loaded dynamically */
 	__CreateRestrictedToken _CreateRestrictedToken = NULL;
@@ -1716,14 +1860,21 @@ CreateRestrictedProcess(char *cmd, PROCESS_INFORMATION *processInfo, bool as_ser
 		return 0;
 	}
 
+	/* Get list of privileges to remove */
+	delPrivs = GetPrivilegesToDelete(origToken);
+	if (delPrivs == NULL)
+		/* Error message already printed */
+		return 0;
+
 	b = _CreateRestrictedToken(origToken,
-							   DISABLE_MAX_PRIVILEGE,
+							   0,
 							   sizeof(dropSids) / sizeof(dropSids[0]),
 							   dropSids,
-							   0, NULL,
+							   delPrivs->PrivilegeCount, delPrivs->Privileges,
 							   0, NULL,
 							   &restrictedToken);
 
+	free(delPrivs);
 	FreeSid(dropSids[1].Sid);
 	FreeSid(dropSids[0].Sid);
 	CloseHandle(origToken);
@@ -1840,6 +1991,66 @@ CreateRestrictedProcess(char *cmd, PROCESS_INFORMATION *processInfo, bool as_ser
 	 */
 	return r;
 }
+
+/*
+ * Get a list of privileges to delete from the access token. We delete all privileges
+ * except SeLockMemoryPrivilege which is needed to use large pages, and
+ * SeChangeNotifyPrivilege which is enabled by default in DISABLE_MAX_PRIVILEGE.
+ */
+static PTOKEN_PRIVILEGES
+GetPrivilegesToDelete(HANDLE hToken)
+{
+	int			i,
+				j;
+	DWORD		length;
+	PTOKEN_PRIVILEGES tokenPrivs;
+	LUID		luidLockPages;
+	LUID		luidChangeNotify;
+
+	if (!LookupPrivilegeValue(NULL, SE_LOCK_MEMORY_NAME, &luidLockPages) ||
+		!LookupPrivilegeValue(NULL, SE_CHANGE_NOTIFY_NAME, &luidChangeNotify))
+	{
+		write_stderr(_("%s: could not get LUIDs for privileges: error code %lu\n"),
+					 progname, (unsigned long) GetLastError());
+		return NULL;
+	}
+
+	if (!GetTokenInformation(hToken, TokenPrivileges, NULL, 0, &length) &&
+		GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+	{
+		write_stderr(_("%s: could not get token information: error code %lu\n"),
+					 progname, (unsigned long) GetLastError());
+		return NULL;
+	}
+
+	tokenPrivs = (PTOKEN_PRIVILEGES) malloc(length);
+	if (tokenPrivs == NULL)
+	{
+		write_stderr(_("%s: out of memory\n"), progname);
+		return NULL;
+	}
+
+	if (!GetTokenInformation(hToken, TokenPrivileges, tokenPrivs, length, &length))
+	{
+		write_stderr(_("%s: could not get token information: error code %lu\n"),
+					 progname, (unsigned long) GetLastError());
+		free(tokenPrivs);
+		return NULL;
+	}
+
+	for (i = 0; i < tokenPrivs->PrivilegeCount; i++)
+	{
+		if (memcmp(&tokenPrivs->Privileges[i].Luid, &luidLockPages, sizeof(LUID)) == 0 ||
+			memcmp(&tokenPrivs->Privileges[i].Luid, &luidChangeNotify, sizeof(LUID)) == 0)
+		{
+			for (j = i; j < tokenPrivs->PrivilegeCount - 1; j++)
+				tokenPrivs->Privileges[j] = tokenPrivs->Privileges[j + 1];
+			tokenPrivs->PrivilegeCount--;
+		}
+	}
+
+	return tokenPrivs;
+}
 #endif							/* WIN32 */
 
 static void
@@ -1903,7 +2114,7 @@ do_help(void)
 	printf(_("  immediate   quit without complete shutdown; will lead to recovery on restart\n"));
 
 	printf(_("\nAllowed signal names for kill:\n"));
-	printf("  ABRT HUP INT QUIT TERM USR1 USR2\n");
+	printf("  ABRT HUP INT KILL QUIT TERM USR1 USR2\n");
 
 #ifdef WIN32
 	printf(_("\nOptions for register and unregister:\n"));
@@ -1961,11 +2172,8 @@ set_sig(char *signame)
 		sig = SIGQUIT;
 	else if (strcmp(signame, "ABRT") == 0)
 		sig = SIGABRT;
-#if 0
-	/* probably should NOT provide SIGKILL */
 	else if (strcmp(signame, "KILL") == 0)
 		sig = SIGKILL;
-#endif
 	else if (strcmp(signame, "TERM") == 0)
 		sig = SIGTERM;
 	else if (strcmp(signame, "USR1") == 0)
@@ -2118,7 +2326,8 @@ main(int argc, char **argv)
 	 */
 	argv0 = argv[0];
 
-	umask(S_IRWXG | S_IRWXO);
+	/* Set restrictive mode mask until PGDATA permissions are checked */
+	umask(PG_MODE_MASK_OWNER);
 
 	/* support --help and --version even if invoked as root */
 	if (argc > 1)
@@ -2353,6 +2562,16 @@ main(int argc, char **argv)
 		snprintf(version_file, MAXPGPATH, "%s/PG_VERSION", pg_data);
 		snprintf(pid_file, MAXPGPATH, "%s/postmaster.pid", pg_data);
 		snprintf(backup_file, MAXPGPATH, "%s/backup_label", pg_data);
+
+		/*
+		 * Set mask based on PGDATA permissions,
+		 *
+		 * Don't error here if the data directory cannot be stat'd. This is
+		 * handled differently based on the command and we don't want to
+		 * interfere with that logic.
+		 */
+		if (GetDataDirectoryCreatePerm(pg_data))
+			umask(pg_mode_mask);
 	}
 
 	switch (ctl_command)
