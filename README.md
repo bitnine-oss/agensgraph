@@ -82,6 +82,10 @@ AGViewer : https://github.com/bitnine-oss/AGViewer.git
 This is a visualization tool. After AgensGraph Installation You can use this tool to use the visualization features.
 Follow the instructions on the link to run it. Under Connect to Database , select database type as "AgensGraph"
 
+TODO
+----
+- revert `ag_ctl`, `agens` commands.
+
 License
 -------
 * [Apache License 2.0](http://www.apache.org/licenses/LICENSE-2.0)
