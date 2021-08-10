@@ -208,20 +208,19 @@ ExecInitHash2Side(Hash2Side *node, EState *estate, int eflags)
 	 */
 	ExecAssignExprContext(estate, &hashstate->ps);
 
-	/*
-	 * initialize child nodes
-	 */
-	outerPlanState(hashstate) = ExecInitNode(outerPlan(node), estate, eflags);
-
 	ExecInitResultTupleSlotTL(estate, &hashstate->ps);
-
-	hashstate->ps.ps_ProjInfo = NULL;
-
 	/*
 	 * initialize child expressions
 	 */
 	hashstate->ps.qual =
 		ExecInitQual(node->plan.qual, (PlanState *) hashstate);
+
+	/*
+	 * initialize child nodes
+	 */
+	outerPlanState(hashstate) = ExecInitNode(outerPlan(node), estate, eflags);
+
+	hashstate->ps.ps_ProjInfo = NULL;
 
 	return hashstate;
 }
@@ -299,8 +298,7 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 	 * Initialize the hash table control block.
 	 *
 	 * The hashtable control block is just palloc'd from the executor's
-	 * per-query memory context.  Everything else should be kept inside the
-	 * subsidiary hashCxt or batchCxt.
+	 * per-query memory context.
 	 */
 	hashtable = (HashJoinTable) palloc(sizeof(HashJoinTableData));
 	hashtable->nbuckets = nbuckets;
@@ -339,22 +337,6 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 #endif
 
 	/*
-	 * Create temporary memory contexts in which to keep the hashtable working
-	 * storage.  See notes in executor/hashjoin.h.
-	 */
-	hashtable->hashCxt = AllocSetContextCreate(CurrentMemoryContext,
-											   "Hash2SideTableContext",
-											   ALLOCSET_DEFAULT_SIZES);
-
-	hashtable->batchCxt = AllocSetContextCreate(hashtable->hashCxt,
-												"Hash2SideBatchContext",
-												ALLOCSET_DEFAULT_SIZES);
-
-	/* Allocate data that will live for the life of the hashjoin */
-
-	oldcxt = MemoryContextSwitchTo(hashtable->hashCxt);
-
-	/*
 	 * Get info about the hash functions to be used for each hash key. Also
 	 * remember whether the join operators are strict.
 	 */
@@ -379,6 +361,22 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 		hashtable->hashStrict[i] = op_strict(hashop);
 		i++;
 	}
+
+	/*
+	 * Create temporary memory contexts in which to keep the hashtable working
+	 * storage.  See notes in executor/hashjoin.h.
+	 */
+	hashtable->hashCxt = AllocSetContextCreate(CurrentMemoryContext,
+											   "Hash2SideTableContext",
+											   ALLOCSET_DEFAULT_SIZES);
+
+	hashtable->batchCxt = AllocSetContextCreate(hashtable->hashCxt,
+												"Hash2SideBatchContext",
+												ALLOCSET_DEFAULT_SIZES);
+
+	/* Allocate data that will live for the life of the hashjoin */
+
+	oldcxt = MemoryContextSwitchTo(hashtable->hashCxt);
 
 	if (nbatch > 1)
 	{
@@ -422,8 +420,7 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 	 * Initialize the hash table control block.
 	 *
 	 * The hashtable control block is just palloc'd from the executor's
-	 * per-query memory context.  Everything else should be kept inside the
-	 * subsidiary hashCxt or batchCxt.
+	 * per-query memory context.
 	 */
 	hashtable = (HashJoinTable) palloc(sizeof(HashJoinTableData));
 	hashtable->nbuckets = sourcetable->nbuckets;
@@ -462,22 +459,6 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 #endif
 
 	/*
-	 * Create temporary memory contexts in which to keep the hashtable working
-	 * storage.  See notes in executor/hashjoin.h.
-	 */
-	hashtable->hashCxt = AllocSetContextCreate(CurrentMemoryContext,
-											   "Hash2SideTableContext",
-											   ALLOCSET_DEFAULT_SIZES);
-
-	hashtable->batchCxt = AllocSetContextCreate(hashtable->hashCxt,
-												"Hash2SideBatchContext",
-												ALLOCSET_DEFAULT_SIZES);
-
-	/* Allocate data that will live for the life of the hashjoin */
-
-	oldcxt = MemoryContextSwitchTo(hashtable->hashCxt);
-
-	/*
 	 * Get info about the hash functions to be used for each hash key. Also
 	 * remember whether the join operators are strict.
 	 */
@@ -502,6 +483,22 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 		hashtable->hashStrict[i] = op_strict(hashop);
 		i++;
 	}
+
+	/*
+	 * Create temporary memory contexts in which to keep the hashtable working
+	 * storage.  See notes in executor/hashjoin.h.
+	 */
+	hashtable->hashCxt = AllocSetContextCreate(CurrentMemoryContext,
+											   "Hash2SideTableContext",
+											   ALLOCSET_DEFAULT_SIZES);
+
+	hashtable->batchCxt = AllocSetContextCreate(hashtable->hashCxt,
+												"Hash2SideBatchContext",
+												ALLOCSET_DEFAULT_SIZES);
+
+	/* Allocate data that will live for the life of the hashjoin */
+
+	oldcxt = MemoryContextSwitchTo(hashtable->hashCxt);
 
 	if (hashtable->nbatch > 1)
 	{
@@ -1155,15 +1152,6 @@ ExecHash2SideTableInsertGraphid(HashJoinTable hashtable,
 }
 
 /*
- * Rotate the bits of "word" to the right by n bits.
- */
-static inline uint32
-pg_rotate_right32(uint32 word, int n)
-{
-	return (word >> n) | (word << (sizeof(word) * BITS_PER_BYTE - n));
-}
-
-/*
  * ExecHash2SideGetBucketAndBatch
  *		Determine the bucket number and batch number for a hash value
  *
@@ -1172,7 +1160,7 @@ pg_rotate_right32(uint32 word, int n)
  * chains), and must only cause the batch number to remain the same or
  * increase.  Our algorithm is
  *		bucketno = hashvalue MOD nbuckets
- *		batchno = ROR(hashvalue, log2_nbuckets) MOD nbatch
+ *		batchno = (hashvalue DIV nbuckets) MOD nbatch
  * where nbuckets and nbatch are both expected to be powers of 2, so we can
  * do the computations by shifting and masking.  (This assumes that all hash
  * functions are good about randomizing all their output bits, else we are
@@ -1184,11 +1172,7 @@ pg_rotate_right32(uint32 word, int n)
  * number the way we do here).
  *
  * nbatch is always a power of 2; we increase it only by doubling it.  This
- * effectively adds one more bit to the top of the batchno.  In very large
- * joins, we might run out of bits to add, so we do this by rotating the hash
- * value.  This causes batchno to steal bits from bucketno when the number of
- * virtual buckets exceeds 2^32.  It's better to have longer bucket chains
- * than to lose the ability to divide batches.
+ * effectively adds one more bit to the top of the batchno.
  */
 void
 ExecHash2SideGetBucketAndBatch(HashJoinTable hashtable,
@@ -1203,8 +1187,7 @@ ExecHash2SideGetBucketAndBatch(HashJoinTable hashtable,
 	{
 		/* we can do MOD by masking, DIV by shifting */
 		*bucketno = hashvalue & (nbuckets - 1);
-		*batchno = pg_rotate_right32(hashvalue,
-									 hashtable->log2_nbuckets) & (nbatch - 1);
+		*batchno = (hashvalue >> hashtable->log2_nbuckets) & (nbatch - 1);
 	}
 	else
 	{
@@ -1259,10 +1242,13 @@ ExecScanHash2SideBucket(Hash2SideState *node,
 											 false);	/* do not pfree */
 			econtext->ecxt_innertuple = inntuple;
 
+			/* reset temp memory each time to avoid leaks from qual expr */
+			ResetExprContext(econtext);
+
 			if ((node->hops < 1 ||
 				 tuple->t_len != sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize))
 			{
-				if (ExecQualAndReset(spclauses, econtext))
+				if (ExecQual(spclauses, econtext))
 				{
 					spstate->sp_CurTuple = hashTuple;
 					return true;
@@ -1351,8 +1337,8 @@ dense_alloc(HashJoinTable hashtable, Size size)
 		newChunk = (HashMemoryChunk) MemoryContextAlloc(hashtable->batchCxt,
 		                                                HASH_CHUNK_HEADER_SIZE + size);
 		newChunk->maxlen = size;
-		newChunk->used = size;
-		newChunk->ntuples = 1;
+		newChunk->used = 0;
+		newChunk->ntuples = 0;
 
 		/*
 		 * Add this chunk to the list after the first existing chunk, so that
@@ -1368,6 +1354,9 @@ dense_alloc(HashJoinTable hashtable, Size size)
 			newChunk->next.unshared = hashtable->chunks;
 			hashtable->chunks = newChunk;
 		}
+
+		newChunk->used += size;
+		newChunk->ntuples += 1;
 
 		return HASH_CHUNK_DATA(newChunk);
 	}
