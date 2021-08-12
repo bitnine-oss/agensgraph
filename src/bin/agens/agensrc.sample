@@ -1,0 +1,8 @@
+--
+--	system-wide agens configuration file
+--
+--  This file is read before the .agensrc file in the user's home directory.
+--
+--  Copy this to your installation's sysconf directory and rename it agensrc.
+--  The sysconf directory can be identified via "pg_config --sysconfdir".
+--

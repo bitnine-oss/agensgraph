@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/help.c
+ * src/bin/agens/help.c
  */
 #include "postgres_fe.h"
 
@@ -70,7 +70,7 @@ usage(unsigned short int pager)
 	 */
 	output = PageOutput(61, pager ? &(pset.popt.topt) : NULL);
 
-	fprintf(output, _("psql is the PostgreSQL interactive terminal.\n\n"));
+	fprintf(output, _("agens is the AgensGraph interactive terminal.\n\n"));
 	fprintf(output, _("Usage:\n"));
 	fprintf(output, _("  psql [OPTION]... [DBNAME [USERNAME]]\n\n"));
 
@@ -87,7 +87,7 @@ usage(unsigned short int pager)
 					  "                           set psql variable NAME to VALUE\n"
 					  "                           (e.g., -v ON_ERROR_STOP=1)\n"));
 	fprintf(output, _("  -V, --version            output version information, then exit\n"));
-	fprintf(output, _("  -X, --no-psqlrc          do not read startup file (~/.psqlrc)\n"));
+	fprintf(output, _("  -X, --no-agensrc          do not read startup file (~/.agensrc)\n"));
 	fprintf(output, _("  -1 (\"one\"), --single-transaction\n"
 					  "                           execute as a single transaction (if non-interactive)\n"));
 	fprintf(output, _("  -?, --help[=options]     show this help, then exit\n"));
@@ -167,7 +167,7 @@ slashUsage(unsigned short int pager)
 	 * Use "psql --help=commands | wc" to count correctly.  It's okay to count
 	 * the USE_READLINE line even in builds without that.
 	 */
-	output = PageOutput(125, pager ? &(pset.popt.topt) : NULL);
+	output = PageOutput(129, pager ? &(pset.popt.topt) : NULL);
 
 	fprintf(output, _("General\n"));
 	fprintf(output, _("  \\copyright             show PostgreSQL usage and distribution terms\n"));
@@ -241,6 +241,11 @@ slashUsage(unsigned short int pager)
 	fprintf(output, _("  \\dFp[+] [PATTERN]      list text search parsers\n"));
 	fprintf(output, _("  \\dFt[+] [PATTERN]      list text search templates\n"));
 	fprintf(output, _("  \\dg[S+] [PATTERN]      list roles\n"));
+	fprintf(output, _("  \\dG[+]  [PATTERN]      list graphs\n"));
+	fprintf(output, _("  \\dGe[+]  [PATTERN]     list graph edge labels\n"));
+	fprintf(output, _("  \\dGl[+]  [PATTERN]     list graph labels\n"));
+	fprintf(output, _("  \\dGv[+]  [PATTERN]     list graph vertex labels\n"));
+	fprintf(output, _("  \\dGi[+]  [PATTERN]     list graph property indexes\n"));
 	fprintf(output, _("  \\di[S+] [PATTERN]      list indexes\n"));
 	fprintf(output, _("  \\dl                    list large objects, same as \\lo_list\n"));
 	fprintf(output, _("  \\dL[S+] [PATTERN]      list procedural languages\n"));

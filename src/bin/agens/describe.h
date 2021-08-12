@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/describe.h
+ * src/bin/agens/describe.h
  */
 #ifndef DESCRIBE_H
 #define DESCRIBE_H
@@ -111,4 +111,13 @@ bool		describePublications(const char *pattern);
 /* \dRs */
 bool		describeSubscriptions(const char *pattern, bool verbose);
 
-#endif							/* DESCRIBE_H */
+/* AgensGraph */
+/* \dG */
+extern bool listGraphs(const char *pattern, bool verbose);
+
+/* \dGl, \dGv, \dGe */
+extern bool listLabels(const char *pattern, bool verbose, char labkind);
+
+/* \dGi */
+extern bool listGraphIndexes(const char *pattern, bool verbose);
+#endif   /* DESCRIBE_H */

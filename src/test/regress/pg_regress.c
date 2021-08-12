@@ -1104,7 +1104,7 @@ psql_command(const char *database, const char *query,...)
 
 	/* And now we can build and execute the shell command */
 	snprintf(psql_cmd, sizeof(psql_cmd),
-			 "\"%s%spsql\" -X -c \"%s\" \"%s\"",
+			 "\"%s%sagens\" -X -c \"%s\" \"%s\"",
 			 bindir ? bindir : "",
 			 bindir ? "/" : "",
 			 query_escaped,
@@ -2337,7 +2337,7 @@ regression_main(int argc, char *argv[], init_function ifunc, test_function tfunc
 		 * Check if there is a postmaster running already.
 		 */
 		snprintf(buf2, sizeof(buf2),
-				 "\"%s%spsql\" -X postgres <%s 2>%s",
+				 "\"%s%sagens\" -X postgres <%s 2>%s",
 				 bindir ? bindir : "",
 				 bindir ? "/" : "",
 				 DEVNULL, DEVNULL);

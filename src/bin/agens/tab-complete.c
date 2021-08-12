@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/tab-complete.c
+ * src/bin/agens/tab-complete.c
  */
 
 /*----------------------------------------------------------------------
@@ -1939,22 +1939,22 @@ psql_completion(const char *text, int start, int end)
 		COMPLETE_WITH_CONST("SCHEMA");
 	/* ALTER DEFAULT PRIVILEGES FOR ROLE|USER ... */
 	else if (Matches6("ALTER", "DEFAULT", "PRIVILEGES", "FOR", "ROLE|USER",
-					  MatchAny))
+				MatchAny))
 		COMPLETE_WITH_LIST3("GRANT", "REVOKE", "IN SCHEMA");
 	/* ALTER DEFAULT PRIVILEGES IN SCHEMA ... */
 	else if (Matches6("ALTER", "DEFAULT", "PRIVILEGES", "IN", "SCHEMA",
-					  MatchAny))
+				MatchAny))
 		COMPLETE_WITH_LIST3("GRANT", "REVOKE", "FOR ROLE");
 	/* ALTER DEFAULT PRIVILEGES IN SCHEMA ... FOR */
 	else if (Matches7("ALTER", "DEFAULT", "PRIVILEGES", "IN", "SCHEMA",
-					  MatchAny, "FOR"))
+				MatchAny, "FOR"))
 		COMPLETE_WITH_CONST("ROLE");
 	/* ALTER DEFAULT PRIVILEGES FOR ROLE|USER ... IN SCHEMA ... */
 	/* ALTER DEFAULT PRIVILEGES IN SCHEMA ... FOR ROLE|USER ... */
 	else if (Matches9("ALTER", "DEFAULT", "PRIVILEGES", "FOR", "ROLE|USER",
-					  MatchAny, "IN", "SCHEMA", MatchAny) ||
+					MatchAny, "IN", "SCHEMA", MatchAny) ||
 			 Matches9("ALTER", "DEFAULT", "PRIVILEGES", "IN", "SCHEMA",
-					  MatchAny, "FOR", "ROLE|USER", MatchAny))
+					MatchAny, "FOR", "ROLE|USER", MatchAny))
 		COMPLETE_WITH_LIST2("GRANT", "REVOKE");
 	/* ALTER DOMAIN <name> */
 	else if (Matches3("ALTER", "DOMAIN", MatchAny))
@@ -3249,7 +3249,7 @@ psql_completion(const char *text, int start, int end)
 			 (HeadMatches1("REVOKE") && TailMatches1("FROM")))
 		COMPLETE_WITH_QUERY(Query_for_list_of_grant_roles);
 	/* Complete "ALTER DEFAULT PRIVILEGES ... GRANT/REVOKE ... TO/FROM */
-	else if (HeadMatches3("ALTER", "DEFAULT", "PRIVILEGES") && TailMatches1("TO|FROM"))
+	else if (HeadMatches3("ALTER","DEFAULT", "PRIVILEGES") && TailMatches1("TO|FROM"))
 		COMPLETE_WITH_QUERY(Query_for_list_of_grant_roles);
 	/* Complete "GRANT/REVOKE ... ON * *" with TO/FROM */
 	else if (HeadMatches1("GRANT") && TailMatches3("ON", MatchAny, MatchAny))
