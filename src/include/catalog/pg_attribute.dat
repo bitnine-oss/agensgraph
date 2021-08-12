@@ -43,10 +43,10 @@
   attalign => 's', attnotnull => 'f', attcollation => '0' },
 { attrelid => '7030', attname => 'vertices', atttypid => '7011', attlen => '-1',
   attnum => '1', attndims => '1', attbyval => 'f', attstorage => 'x',
-  attalign => 'i', attnotnull => 'f', attcollation => '0' },
+  attalign => 'd', attnotnull => 'f', attcollation => '0' },
 { attrelid => '7030', attname => 'edges', atttypid => '7021', attlen => '-1',
   attnum => '2', attndims => '1', attbyval => 'f', attstorage => 'x',
-  attalign => 'i', attnotnull => 'f', attcollation => '0' },
+  attalign => 'd', attnotnull => 'f', attcollation => '0' },
 
 
 
