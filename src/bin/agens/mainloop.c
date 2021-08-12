@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/mainloop.c
+ * src/bin/agens/mainloop.c
  */
 #include "postgres_fe.h"
 #include "mainloop.h"

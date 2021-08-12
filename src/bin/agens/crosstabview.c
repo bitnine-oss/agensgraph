@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/crosstabview.c
+ * src/bin/agens/crosstabview.c
  */
 #include "postgres_fe.h"
 

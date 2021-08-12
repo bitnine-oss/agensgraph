@@ -1,5 +1,5 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Support for the various \d ("describe") commands.  Note that the current
  * expectation is that all functions in this file will succeed when working
@@ -8,7 +8,7 @@
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/describe.c
+ * src/bin/agens/describe.c
  */
 #include "postgres_fe.h"
 

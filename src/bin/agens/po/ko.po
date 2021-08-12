@@ -2100,10 +2100,10 @@ msgstr "%s\n"
 #: help.c:73
 #, c-format
 msgid ""
-"psql is the PostgreSQL interactive terminal.\n"
+"agens is the AgensGraph interactive terminal.\n"
 "\n"
 msgstr ""
-"psql은 PostgreSQL 대화식 터미널입니다.\n"
+"agens은 AgensGraph 대화식 터미널입니다.\n"
 "\n"
 
 #: help.c:74 help.c:345 help.c:419 help.c:462

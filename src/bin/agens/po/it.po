@@ -2121,10 +2121,10 @@ msgstr "%s\n"
 #: help.c:73
 #, c-format
 msgid ""
-"psql is the PostgreSQL interactive terminal.\n"
+"agens is the AgensGraph interactive terminal.\n"
 "\n"
 msgstr ""
-"psql è il terminale interattivo per PostgreSQL.\n"
+"agens è il terminale interattivo per AgensGraph.\n"
 "\n"
 
 #: help.c:74 help.c:345 help.c:419 help.c:462
@@ -2188,8 +2188,8 @@ msgstr "  -V, --version            mostra informazioni sulla versione ed esci\n"
 
 #: help.c:90
 #, c-format
-msgid "  -X, --no-psqlrc          do not read startup file (~/.psqlrc)\n"
-msgstr "  -X, --no-psqlrc          non leggere il file di avvio (~/.psqlrc)\n"
+msgid "  -X, --no-agensrc          do not read startup file (~/.agensrc)\n"
+msgstr "  -X, --no-agensrc          non leggere il file di avvio (~/.agensrc)\n"
 
 #: help.c:91
 #, c-format

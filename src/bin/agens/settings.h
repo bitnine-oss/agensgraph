@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/settings.h
+ * src/bin/agens/settings.h
  */
 #ifndef SETTINGS_H
 #define SETTINGS_H

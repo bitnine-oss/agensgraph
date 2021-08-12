@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/startup.c
+ * src/bin/agens/startup.c
  */
 #include "postgres_fe.h"
 
@@ -33,11 +33,11 @@
 PsqlSettings pset;
 
 #ifndef WIN32
-#define SYSPSQLRC	"psqlrc"
-#define PSQLRC		".psqlrc"
+#define SYSPSQLRC	"agensrc"
+#define PSQLRC		".agensrc"
 #else
-#define SYSPSQLRC	"psqlrc"
-#define PSQLRC		"psqlrc.conf"
+#define SYSPSQLRC	"agensrc"
+#define PSQLRC		"agensrc.conf"
 #endif
 
 /*

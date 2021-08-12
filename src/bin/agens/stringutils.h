@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/stringutils.h
+ * src/bin/agens/stringutils.h
  */
 #ifndef STRINGUTILS_H
 #define STRINGUTILS_H

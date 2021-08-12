@@ -1,5 +1,5 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
@@ -8,7 +8,7 @@
  * name and a string value.  The value can't be NULL, or more precisely
  * that's not distinguishable from the variable being unset.
  *
- * src/bin/psql/variables.h
+ * src/bin/agens/variables.h
  */
 #ifndef VARIABLES_H
 #define VARIABLES_H

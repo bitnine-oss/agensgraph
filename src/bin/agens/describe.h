@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/describe.h
+ * src/bin/agens/describe.h
  */
 #ifndef DESCRIBE_H
 #define DESCRIBE_H

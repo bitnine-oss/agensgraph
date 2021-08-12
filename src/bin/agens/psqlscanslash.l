@@ -12,7 +12,7 @@
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/bin/psql/psqlscanslash.l
+ *	  src/bin/agens/psqlscanslash.l
  *
  *-------------------------------------------------------------------------
  */

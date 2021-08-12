@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
  * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/help.c
+ * src/bin/agens/help.c
  */
 #include "postgres_fe.h"
 
@@ -70,7 +70,7 @@ usage(unsigned short int pager)
 	 */
 	output = PageOutput(61, pager ? &(pset.popt.topt) : NULL);
 
-	fprintf(output, _("psql is the PostgreSQL interactive terminal.\n\n"));
+	fprintf(output, _("agens is the AgensGraph interactive terminal.\n\n"));
 	fprintf(output, _("Usage:\n"));
 	fprintf(output, _("  psql [OPTION]... [DBNAME [USERNAME]]\n\n"));
 
@@ -87,7 +87,7 @@ usage(unsigned short int pager)
 					  "                           set psql variable NAME to VALUE\n"
 					  "                           (e.g., -v ON_ERROR_STOP=1)\n"));
 	fprintf(output, _("  -V, --version            output version information, then exit\n"));
-	fprintf(output, _("  -X, --no-psqlrc          do not read startup file (~/.psqlrc)\n"));
+	fprintf(output, _("  -X, --no-agensrc          do not read startup file (~/.agensrc)\n"));
 	fprintf(output, _("  -1 (\"one\"), --single-transaction\n"
 					  "                           execute as a single transaction (if non-interactive)\n"));
 	fprintf(output, _("  -?, --help[=options]     show this help, then exit\n"));

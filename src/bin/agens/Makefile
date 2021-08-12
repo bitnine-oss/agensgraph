@@ -1,18 +1,18 @@
 #-------------------------------------------------------------------------
 #
-# Makefile for src/bin/psql
+# Makefile for src/bin/agens
 #
 # Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
-# src/bin/psql/Makefile
+# src/bin/agens/Makefile
 #
 #-------------------------------------------------------------------------
 
-PGFILEDESC = "psql - the PostgreSQL interactive terminal"
+PGFILEDESC = "agens - the AgensGraph interactive terminal"
 PGAPPICON=win32
 
-subdir = src/bin/psql
+subdir = src/bin/agens
 top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
@@ -28,9 +28,9 @@ OBJS=	command.o common.o copy.o crosstabview.o \
 	$(WIN32RES)
 
 
-all: psql
+all: agens
 
-psql: $(OBJS) | submake-libpq submake-libpgport submake-libpgfeutils
+agens: $(OBJS) | submake-libpq submake-libpgport submake-libpgfeutils
 	$(CC) $(CFLAGS) $(OBJS) $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@$(X)
 
 help.o: sql_help.h
@@ -49,17 +49,17 @@ psqlscanslash.c: FLEX_FIX_WARNING=yes
 distprep: sql_help.h sql_help.c psqlscanslash.c
 
 install: all installdirs
-	$(INSTALL_PROGRAM) psql$(X) '$(DESTDIR)$(bindir)/psql$(X)'
-	$(INSTALL_DATA) $(srcdir)/psqlrc.sample '$(DESTDIR)$(datadir)/psqlrc.sample'
+	$(INSTALL_PROGRAM) agens$(X) '$(DESTDIR)$(bindir)/agens$(X)'
+	$(INSTALL_DATA) $(srcdir)/agensrc.sample '$(DESTDIR)$(datadir)/agensrc.sample'
 
 installdirs:
 	$(MKDIR_P) '$(DESTDIR)$(bindir)' '$(DESTDIR)$(datadir)'
 
 uninstall:
-	rm -f '$(DESTDIR)$(bindir)/psql$(X)' '$(DESTDIR)$(datadir)/psqlrc.sample'
+	rm -f '$(DESTDIR)$(bindir)/agens$(X)' '$(DESTDIR)$(datadir)/agensrc.sample'
 
 clean distclean:
-	rm -f psql$(X) $(OBJS) lex.backup
+	rm -f agens$(X) $(OBJS) lex.backup
 
 # files removed here are supposed to be in the distribution tarball,
 # so do not clean them in the clean/distclean rules
