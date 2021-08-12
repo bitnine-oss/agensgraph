@@ -9806,7 +9806,14 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 
 		case BITOID:
 		case VARBITOID:
-			appendStringInfo(buf, "B'%s'", extval);
+			if (context->cypherexpr)
+			{
+				appendStringInfo(buf, "B'%s'", extval);
+			}
+			else
+			{
+				simple_quote_literal(buf, extval);
+			}
 			break;
 
 		case BOOLOID:
@@ -9881,10 +9888,12 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 							elog(ERROR, "unknown jsonb iterator token type");
 					}
 				}
-
-				break;
 			}
-
+			else
+			{
+				simple_quote_literal(buf, extval);
+			}
+			break;
 		default:
 			simple_quote_literal(buf, extval);
 			break;
