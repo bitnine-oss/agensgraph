@@ -1280,7 +1280,7 @@ process_integer_literal(const char *token, YYSTYPE *lval)
 	char	   *endptr;
 
 	errno = 0;
-	val = strtoint(token, &endptr, 10);
+	val = strtoint(token, &endptr, 0);
 	if (*endptr != '\0' || errno == ERANGE)
 	{
 		/* integer too large, treat it as a float */
