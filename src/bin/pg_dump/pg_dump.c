@@ -8280,6 +8280,26 @@ getTableAttrs(Archive *fout, TableInfo *tblinfo, int numTables)
 		if (!tbinfo->interesting)
 			continue;
 
+		/* Check if it's label or table */
+		resetPQExpBuffer(q);
+		appendPQExpBuffer(q,
+						  "SELECT 1 FROM pg_catalog.ag_label l WHERE l.relid = '%u'",
+						  tbinfo->dobj.catId.oid);
+
+		res = ExecuteSqlQuery(fout, q->data, PGRES_TUPLES_OK);
+		if (PQntuples(res) == 1)
+		{
+			islab = true;
+			getdef = "ag_get_graphconstraintdef";
+		}
+		else
+		{
+			islab = false;
+			getdef = "pg_get_constraintdef";
+		}
+
+		PQclear(res);
+
 		/* find all the user attributes and their types */
 
 		/*
