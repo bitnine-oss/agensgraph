@@ -862,30 +862,6 @@ exec_command_d(PsqlScanState scan_state, bool active_branch, const char *cmd)
 			case 'y':			/* Event Triggers */
 				success = listEventTriggers(pattern, show_verbose);
 				break;
-			case 'G':
-				switch (cmd[2])
-				{
-					case '\0':
-					case '+':
-						success = listGraphs(pattern, show_verbose);
-						break;
-					case 'l':
-						success = listLabels(pattern, show_verbose, '\0');
-						break;
-					case 'v':
-						success = listLabels(pattern, show_verbose, 'v');
-						break;
-					case 'e':
-						success = listLabels(pattern, show_verbose, 'e');
-						break;
-					case 'i':
-						success = listGraphIndexes(pattern, show_verbose);
-						break;
-					default:
-						status = PSQL_CMD_UNKNOWN;
-						break;
-				}
-				break;
 			default:
 				status = PSQL_CMD_UNKNOWN;
 		}

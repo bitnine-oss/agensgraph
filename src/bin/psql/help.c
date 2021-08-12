@@ -167,7 +167,7 @@ slashUsage(unsigned short int pager)
 	 * Use "psql --help=commands | wc" to count correctly.  It's okay to count
 	 * the USE_READLINE line even in builds without that.
 	 */
-	output = PageOutput(129, pager ? &(pset.popt.topt) : NULL);
+	output = PageOutput(125, pager ? &(pset.popt.topt) : NULL);
 
 	fprintf(output, _("General\n"));
 	fprintf(output, _("  \\copyright             show PostgreSQL usage and distribution terms\n"));
@@ -241,11 +241,6 @@ slashUsage(unsigned short int pager)
 	fprintf(output, _("  \\dFp[+] [PATTERN]      list text search parsers\n"));
 	fprintf(output, _("  \\dFt[+] [PATTERN]      list text search templates\n"));
 	fprintf(output, _("  \\dg[S+] [PATTERN]      list roles\n"));
-	fprintf(output, _("  \\dG[+]  [PATTERN]      list graphs\n"));
-	fprintf(output, _("  \\dGe[+]  [PATTERN]     list graph edge labels\n"));
-	fprintf(output, _("  \\dGl[+]  [PATTERN]     list graph labels\n"));
-	fprintf(output, _("  \\dGv[+]  [PATTERN]     list graph vertex labels\n"));
-	fprintf(output, _("  \\dGi[+]  [PATTERN]     list graph property indexes\n"));
 	fprintf(output, _("  \\di[S+] [PATTERN]      list indexes\n"));
 	fprintf(output, _("  \\dl                    list large objects, same as \\lo_list\n"));
 	fprintf(output, _("  \\dL[S+] [PATTERN]      list procedural languages\n"));
