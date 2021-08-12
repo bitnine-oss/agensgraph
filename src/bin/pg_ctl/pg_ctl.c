@@ -2529,7 +2529,9 @@ main(int argc, char **argv)
 	}
 
 	/* Note we put any -D switch into the env var above */
-	pg_config = getenv("PGDATA");
+	pg_config = getenv("AGDATA");
+	if (!pg_config)
+		pg_config = getenv("PGDATA");
 	if (pg_config)
 	{
 		pg_config = pg_strdup(pg_config);

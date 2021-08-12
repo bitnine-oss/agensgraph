@@ -33,6 +33,7 @@ pg_ctl: $(OBJS) | submake-libpgport $(SUBMAKE_LIBPQ)
 
 install: all installdirs
 	$(INSTALL_PROGRAM) pg_ctl$(X) '$(DESTDIR)$(bindir)/pg_ctl$(X)'
+	$(INSTALL_PROGRAM) pg_ctl$(X) '$(DESTDIR)$(bindir)/ag_ctl$(X)'
 
 installdirs:
 	$(MKDIR_P) '$(DESTDIR)$(bindir)'
