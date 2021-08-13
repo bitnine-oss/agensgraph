@@ -9804,18 +9804,6 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 			}
 			break;
 
-		case BITOID:
-		case VARBITOID:
-			if (context->cypherexpr)
-			{
-				appendStringInfo(buf, "B'%s'", extval);
-			}
-			else
-			{
-				simple_quote_literal(buf, extval);
-			}
-			break;
-
 		case BOOLOID:
 			if (strcmp(extval, "t") == 0)
 				appendStringInfoString(buf, "true");
