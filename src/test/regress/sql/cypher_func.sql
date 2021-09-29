@@ -183,5 +183,7 @@ CREATE GRAPH AG283;
 CREATE ({name: 'arc 0', degree: 0});
 MATCH (v) RETURN radians(v.degree);
 
+RETURN toBoolean('TRUE');
+
 -- cleanup
 DROP GRAPH AG283 CASCADE;
