@@ -1611,160 +1611,6 @@ pgwin32_doRunAsService(void)
 	}
 }
 
-/*
- * Call GetTokenInformation() on a token and return a dynamically sized
- * buffer with the information in it. This buffer must be free():d by
- * the calling function!
- */
-static bool
-pgwin32_get_dynamic_tokeninfo(HANDLE token, TOKEN_INFORMATION_CLASS class,
-							  char **InfoBuffer, char *errbuf, int errsize)
-{
-	DWORD		InfoBufferSize;
-
-	if (GetTokenInformation(token, class, NULL, 0, &InfoBufferSize))
-	{
-		snprintf(errbuf, errsize, "could not get token information: got zero size\n");
-		return false;
-	}
-
-	if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-	{
-		snprintf(errbuf, errsize, "could not get token information: error code %lu\n",
-				 GetLastError());
-		return false;
-	}
-
-	*InfoBuffer = malloc(InfoBufferSize);
-	if (*InfoBuffer == NULL)
-	{
-		snprintf(errbuf, errsize, "could not allocate %d bytes for token information\n",
-				 (int) InfoBufferSize);
-		return false;
-	}
-
-	if (!GetTokenInformation(token, class, *InfoBuffer,
-							 InfoBufferSize, &InfoBufferSize))
-	{
-		snprintf(errbuf, errsize, "could not get token information: error code %lu\n",
-				 GetLastError());
-		return false;
-	}
-
-	return true;
-}
-
-/*
- * We consider ourselves running as a service if one of the following is
- * true:
- *
- * 1) We are running as Local System (only used by services)
- * 2) Our token contains SECURITY_SERVICE_RID (automatically added to the
- *	  process token by the SCM when starting a service)
- *
- * Return values:
- *	 0 = Not service
- *	 1 = Service
- *	-1 = Error
- *
- * Note: we can't report errors via write_stderr (because that calls this)
- * We are therefore reduced to writing directly on stderr, which sucks, but
- * we have few alternatives.
- */
-int
-pgwin32_is_service(void)
-{
-	static int	_is_service = -1;
-	HANDLE		AccessToken;
-	char	   *InfoBuffer = NULL;
-	char		errbuf[256];
-	PTOKEN_GROUPS Groups;
-	PTOKEN_USER User;
-	PSID		ServiceSid;
-	PSID		LocalSystemSid;
-	SID_IDENTIFIER_AUTHORITY NtAuthority = {SECURITY_NT_AUTHORITY};
-	UINT		x;
-
-	/* Only check the first time */
-	if (_is_service != -1)
-		return _is_service;
-
-	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_READ, &AccessToken))
-	{
-		fprintf(stderr, "could not open process token: error code %lu\n",
-				GetLastError());
-		return -1;
-	}
-
-	/* First check for local system */
-	if (!pgwin32_get_dynamic_tokeninfo(AccessToken, TokenUser, &InfoBuffer,
-									   errbuf, sizeof(errbuf)))
-	{
-		fprintf(stderr, "%s", errbuf);
-		return -1;
-	}
-
-	User = (PTOKEN_USER) InfoBuffer;
-
-	if (!AllocateAndInitializeSid(&NtAuthority, 1,
-							  SECURITY_LOCAL_SYSTEM_RID, 0, 0, 0, 0, 0, 0, 0,
-								  &LocalSystemSid))
-	{
-		fprintf(stderr, "could not get SID for local system account\n");
-		CloseHandle(AccessToken);
-		return -1;
-	}
-
-	if (EqualSid(LocalSystemSid, User->User.Sid))
-	{
-		FreeSid(LocalSystemSid);
-		free(InfoBuffer);
-		CloseHandle(AccessToken);
-		_is_service = 1;
-		return _is_service;
-	}
-
-	FreeSid(LocalSystemSid);
-	free(InfoBuffer);
-
-	/* Now check for group SID */
-	if (!pgwin32_get_dynamic_tokeninfo(AccessToken, TokenGroups, &InfoBuffer,
-									   errbuf, sizeof(errbuf)))
-	{
-		fprintf(stderr, "%s", errbuf);
-		return -1;
-	}
-
-	Groups = (PTOKEN_GROUPS) InfoBuffer;
-
-	if (!AllocateAndInitializeSid(&NtAuthority, 1,
-								  SECURITY_SERVICE_RID, 0, 0, 0, 0, 0, 0, 0,
-								  &ServiceSid))
-	{
-		fprintf(stderr, "could not get SID for service group\n");
-		free(InfoBuffer);
-		CloseHandle(AccessToken);
-		return -1;
-	}
-
-	_is_service = 0;
-	for (x = 0; x < Groups->GroupCount; x++)
-	{
-		if (EqualSid(ServiceSid, Groups->Groups[x].Sid))
-		{
-			_is_service = 1;
-			break;
-		}
-	}
-
-	free(InfoBuffer);
-	FreeSid(ServiceSid);
-
-	CloseHandle(AccessToken);
-
-	return _is_service;
-}
-
 
 /*
  * Mingw headers are incomplete, and so are the libraries. So we have to load
@@ -2529,9 +2375,30 @@ main(int argc, char **argv)
 	}
 
 	/* Note we put any -D switch into the env var above */
-	pg_config = getenv("AGDATA");
-	if (!pg_config)
-		pg_config = getenv("PGDATA");
+	pg_config = getenv("PGDATA");
+	if (pg_config == NULL)
+	{
+		char	   *agdata_D;
+		char	   *env_var;
+
+		agdata_D = getenv("AGDATA");
+
+		if(agdata_D != NULL)
+		{
+			canonicalize_path(agdata_D);
+			env_var = psprintf("PGDATA=%s", agdata_D);
+			putenv(env_var);
+
+			/*
+			 * We could pass PGDATA just in an environment
+			 * variable but we do -D too for clearer postmaster
+			 * 'ps' display
+			 */
+			pgdata_opt = psprintf("-D \"%s\" ", agdata_D);
+			pg_config = getenv("PGDATA");
+		}
+	}
+
 	if (pg_config)
 	{
 		pg_config = pg_strdup(pg_config);
