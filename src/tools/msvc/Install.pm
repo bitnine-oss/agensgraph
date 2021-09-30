@@ -25,7 +25,7 @@ my @client_program_files = (
 	'libpgtypes',     'libpq',      'pg_basebackup', 'pg_config',
 	'pg_dump',        'pg_dumpall', 'pg_isready',    'pg_receivewal',
 	'pg_recvlogical', 'pg_restore', 'psql',          'reindexdb',
-	'vacuumdb',       @client_contribs);
+	'vacuumdb',       'agens',      @client_contribs);
 
 sub lcopy
 {
