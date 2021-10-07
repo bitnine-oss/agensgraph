@@ -402,21 +402,45 @@ ERROR:  invalid expression: {} ^ []
 RETURN {} ^ {};
 ERROR:  invalid expression: {} ^ {}
 RETURN +'';
-ERROR:  invalid expression: +""
+ERROR:  operator does not exist: `+` jsonb
+LINE 1: RETURN +'';
+               ^
+HINT:  No operator matches the given name and argument type. You might need to add an explicit type cast.
 RETURN +false;
-ERROR:  invalid expression: +false
+ERROR:  operator does not exist: `+` jsonb
+LINE 1: RETURN +false;
+               ^
+HINT:  No operator matches the given name and argument type. You might need to add an explicit type cast.
 RETURN +[];
-ERROR:  invalid expression: +[]
+ERROR:  operator does not exist: `+` jsonb
+LINE 1: RETURN +[];
+               ^
+HINT:  No operator matches the given name and argument type. You might need to add an explicit type cast.
 RETURN +{};
-ERROR:  invalid expression: +{}
+ERROR:  operator does not exist: `+` jsonb
+LINE 1: RETURN +{};
+               ^
+HINT:  No operator matches the given name and argument type. You might need to add an explicit type cast.
 RETURN -'';
-ERROR:  invalid expression: -""
+ERROR:  operator does not exist: `-` jsonb
+LINE 1: RETURN -'';
+               ^
+HINT:  No operator matches the given name and argument type. You might need to add an explicit type cast.
 RETURN -false;
-ERROR:  invalid expression: -false
+ERROR:  operator does not exist: `-` jsonb
+LINE 1: RETURN -false;
+               ^
+HINT:  No operator matches the given name and argument type. You might need to add an explicit type cast.
 RETURN -[];
-ERROR:  invalid expression: -[]
+ERROR:  operator does not exist: `-` jsonb
+LINE 1: RETURN -[];
+               ^
+HINT:  No operator matches the given name and argument type. You might need to add an explicit type cast.
 RETURN -{};
-ERROR:  invalid expression: -{}
+ERROR:  operator does not exist: `-` jsonb
+LINE 1: RETURN -{};
+               ^
+HINT:  No operator matches the given name and argument type. You might need to add an explicit type cast.
 CREATE (:v0 {
   o: {i: 7, r: 7.0, s: '"map\nliteral\"', t: true, f: false, 'z': NULL,
       '\n': '\n'},

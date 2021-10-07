@@ -3,7 +3,7 @@
  * logicalrelation.h
  *	  Relation definitions for logical replication relation mapping.
  *
- * Portions Copyright (c) 2016-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2018, PostgreSQL Global Development Group
  *
  * src/include/replication/logicalrelation.h
  *
@@ -18,14 +18,16 @@ typedef struct LogicalRepRelMapEntry
 {
 	LogicalRepRelation remoterel;	/* key is remoterel.remoteid */
 
-	/* Mapping to local relation, filled as needed. */
+	/* Mapping to local relation. */
 	Oid			localreloid;	/* local relation id */
-	Relation	localrel;		/* relcache entry */
+	Relation	localrel;		/* relcache entry (NULL when closed) */
 	AttrNumber *attrmap;		/* map of local attributes to remote ones */
 	bool		updatable;		/* Can apply updates/deletes? */
 
 	/* Sync state. */
 	char		state;
+	/* Validity flag ... inserted here to avoid ABI break in back branches. */
+	bool		localrelvalid;
 	XLogRecPtr	statelsn;
 } LogicalRepRelMapEntry;
 

@@ -3,7 +3,7 @@
  * pg_recvlogical.c - receive data from a logical decoding slot in a streaming
  *					  fashion and write it to a local file.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/pg_recvlogical.c
@@ -23,6 +23,7 @@
 #include "streamutil.h"
 
 #include "access/xlog_internal.h"
+#include "common/file_perm.h"
 #include "common/fe_memutils.h"
 #include "getopt_long.h"
 #include "libpq-fe.h"
@@ -64,7 +65,7 @@ static XLogRecPtr output_fsync_lsn = InvalidXLogRecPtr;
 
 static void usage(void);
 static void StreamLogicalLog(void);
-static void disconnect_and_exit(int code);
+static void disconnect_and_exit(int code) pg_attribute_noreturn();
 static bool flushAndSendFeedback(PGconn *conn, TimestampTz *now);
 static void prepareToTerminate(PGconn *conn, XLogRecPtr endpos,
 				   bool keepalive, XLogRecPtr lsn);
@@ -121,13 +122,13 @@ sendFeedback(PGconn *conn, TimestampTz now, bool force, bool replyRequested)
 	int			len = 0;
 
 	/*
-	 * we normally don't want to send superfluous feedbacks, but if it's
+	 * we normally don't want to send superfluous feedback, but if it's
 	 * because of a timeout we need to, otherwise wal_sender_timeout will kill
 	 * us.
 	 */
 	if (!force &&
 		last_written_lsn == output_written_lsn &&
-		last_fsync_lsn != output_fsync_lsn)
+		last_fsync_lsn == output_fsync_lsn)
 		return true;
 
 	if (verbose)
@@ -604,14 +605,40 @@ StreamLogicalLog(void)
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) == PGRES_COPY_OUT)
 	{
+		PQclear(res);
+
 		/*
 		 * We're doing a client-initiated clean exit and have sent CopyDone to
-		 * the server. We've already sent replay confirmation and fsync'd so
-		 * we can just clean up the connection now.
+		 * the server. Drain any messages, so we don't miss a last-minute
+		 * ErrorResponse. The walsender stops generating XLogData records once
+		 * it sees CopyDone, so expect this to finish quickly. After CopyDone,
+		 * it's too late for sendFeedback(), even if this were to take a long
+		 * time. Hence, use synchronous-mode PQgetCopyData().
 		 */
-		goto error;
+		while (1)
+		{
+			int			r;
+
+			if (copybuf != NULL)
+			{
+				PQfreemem(copybuf);
+				copybuf = NULL;
+			}
+			r = PQgetCopyData(conn, &copybuf, 0);
+			if (r == -1)
+				break;
+			if (r == -2)
+			{
+				fprintf(stderr, _("%s: could not read COPY data: %s"),
+						progname, PQerrorMessage(conn));
+				time_to_abort = false;	/* unclean exit */
+				goto error;
+			}
+		}
+
+		res = PQgetResult(conn);
 	}
-	else if (PQresultStatus(res) != PGRES_COMMAND_OK)
+	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
 		fprintf(stderr,
 				_("%s: unexpected termination of replication stream: %s"),
@@ -959,6 +986,16 @@ main(int argc, char **argv)
 		disconnect_and_exit(1);
 	}
 
+	/*
+	 * Set umask so that directories/files are created with the same
+	 * permissions as directories/files in the source data directory.
+	 *
+	 * pg_mode_mask is set to owner-only by default and then updated in
+	 * GetConnection() where we get the mode from the server-side with
+	 * RetrieveDataDirCreatePerm() and then call SetDataDirectoryCreatePerm().
+	 */
+	umask(pg_mode_mask);
+
 	/* Drop a replication slot. */
 	if (do_drop_slot)
 	{
@@ -979,8 +1016,8 @@ main(int argc, char **argv)
 					_("%s: creating replication slot \"%s\"\n"),
 					progname, replication_slot);
 
-		if (!CreateReplicationSlot(conn, replication_slot, plugin,
-								   false, slot_exists_ok))
+		if (!CreateReplicationSlot(conn, replication_slot, plugin, false,
+								   false, false, slot_exists_ok))
 			disconnect_and_exit(1);
 		startpos = InvalidXLogRecPtr;
 	}
@@ -1037,7 +1074,7 @@ flushAndSendFeedback(PGconn *conn, TimestampTz *now)
 }
 
 /*
- * Try to inform the server about of upcoming demise, but don't wait around or
+ * Try to inform the server about our upcoming demise, but don't wait around or
  * retry on failure.
  */
 static void

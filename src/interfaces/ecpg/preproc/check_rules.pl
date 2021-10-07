@@ -1,9 +1,9 @@
 #!/usr/bin/perl
 # src/interfaces/ecpg/preproc/check_rules.pl
-# test parser generater for ecpg
-# call with backend parser as stdin
+# test parser generator for ecpg
+# call with backend grammar as stdin
 #
-# Copyright (c) 2009-2017, PostgreSQL Global Development Group
+# Copyright (c) 2009-2018, PostgreSQL Global Development Group
 #
 # Written by Michael Meskes <meskes@postgresql.org>
 #            Andy Colson <andy@squeakycode.net>
@@ -39,7 +39,7 @@ my %replace_line = (
 	'ExecuteStmtEXECUTEnameexecute_param_clause' =>
 	  'EXECUTE prepared_name execute_param_clause execute_rest',
 
-'ExecuteStmtCREATEOptTempTABLEcreate_as_targetASEXECUTEnameexecute_param_clause'
+	'ExecuteStmtCREATEOptTempTABLEcreate_as_targetASEXECUTEnameexecute_param_clause'
 	  => 'CREATE OptTemp TABLE create_as_target AS EXECUTE prepared_name execute_param_clause',
 
 	'PrepareStmtPREPAREnameprep_type_clauseASPreparableStmt' =>
@@ -47,6 +47,7 @@ my %replace_line = (
 
 my $block        = '';
 my $yaccmode     = 0;
+my $in_rule      = 0;
 my $brace_indent = 0;
 my (@arr, %found);
 my $comment     = 0;
@@ -131,10 +132,14 @@ while (<$parser_fh>)
 			$found{$block} = 1;
 			$cc++;
 			$block = '';
+			$in_rule = 0 if $arr[$fieldIndexer] eq ';';
 		}
 		elsif (($arr[$fieldIndexer] =~ '[A-Za-z0-9]+:')
 			|| $arr[ $fieldIndexer + 1 ] eq ':')
 		{
+			die "unterminated rule at grammar line $.\n"
+			  if $in_rule;
+			$in_rule     = 1;
 			$non_term_id = $arr[$fieldIndexer];
 			$non_term_id =~ tr/://d;
 		}
@@ -144,6 +149,9 @@ while (<$parser_fh>)
 		}
 	}
 }
+
+die "unterminated rule at end of grammar\n"
+  if $in_rule;
 
 close $parser_fh;
 if ($verbose)

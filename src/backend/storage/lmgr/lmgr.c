@@ -3,7 +3,7 @@
  * lmgr.c
  *	  POSTGRES lock manager code
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -105,11 +105,12 @@ void
 LockRelationOid(Oid relid, LOCKMODE lockmode)
 {
 	LOCKTAG		tag;
+	LOCALLOCK  *locallock;
 	LockAcquireResult res;
 
 	SetLocktagRelationOid(&tag, relid);
 
-	res = LockAcquire(&tag, lockmode, false, false);
+	res = LockAcquireExtended(&tag, lockmode, false, false, true, &locallock);
 
 	/*
 	 * Now that we have the lock, check for invalidation messages, so that we
@@ -120,16 +121,25 @@ LockRelationOid(Oid relid, LOCKMODE lockmode)
 	 * relcache entry in an undesirable way.  (In the case where our own xact
 	 * modifies the rel, the relcache update happens via
 	 * CommandCounterIncrement, not here.)
+	 *
+	 * However, in corner cases where code acts on tables (usually catalogs)
+	 * recursively, we might get here while still processing invalidation
+	 * messages in some outer execution of this function or a sibling.  The
+	 * "cleared" status of the lock tells us whether we really are done
+	 * absorbing relevant inval messages.
 	 */
-	if (res != LOCKACQUIRE_ALREADY_HELD)
+	if (res != LOCKACQUIRE_ALREADY_CLEAR)
+	{
 		AcceptInvalidationMessages();
+		MarkLockClear(locallock);
+	}
 }
 
 /*
  *		ConditionalLockRelationOid
  *
  * As above, but only lock if we can get the lock without blocking.
- * Returns TRUE iff the lock was acquired.
+ * Returns true iff the lock was acquired.
  *
  * NOTE: we do not currently need conditional versions of all the
  * LockXXX routines in this file, but they could easily be added if needed.
@@ -138,11 +148,12 @@ bool
 ConditionalLockRelationOid(Oid relid, LOCKMODE lockmode)
 {
 	LOCKTAG		tag;
+	LOCALLOCK  *locallock;
 	LockAcquireResult res;
 
 	SetLocktagRelationOid(&tag, relid);
 
-	res = LockAcquire(&tag, lockmode, false, true);
+	res = LockAcquireExtended(&tag, lockmode, false, true, true, &locallock);
 
 	if (res == LOCKACQUIRE_NOT_AVAIL)
 		return false;
@@ -151,8 +162,11 @@ ConditionalLockRelationOid(Oid relid, LOCKMODE lockmode)
 	 * Now that we have the lock, check for invalidation messages; see notes
 	 * in LockRelationOid.
 	 */
-	if (res != LOCKACQUIRE_ALREADY_HELD)
+	if (res != LOCKACQUIRE_ALREADY_CLEAR)
+	{
 		AcceptInvalidationMessages();
+		MarkLockClear(locallock);
+	}
 
 	return true;
 }
@@ -199,20 +213,24 @@ void
 LockRelation(Relation relation, LOCKMODE lockmode)
 {
 	LOCKTAG		tag;
+	LOCALLOCK  *locallock;
 	LockAcquireResult res;
 
 	SET_LOCKTAG_RELATION(tag,
 						 relation->rd_lockInfo.lockRelId.dbId,
 						 relation->rd_lockInfo.lockRelId.relId);
 
-	res = LockAcquire(&tag, lockmode, false, false);
+	res = LockAcquireExtended(&tag, lockmode, false, false, true, &locallock);
 
 	/*
 	 * Now that we have the lock, check for invalidation messages; see notes
 	 * in LockRelationOid.
 	 */
-	if (res != LOCKACQUIRE_ALREADY_HELD)
+	if (res != LOCKACQUIRE_ALREADY_CLEAR)
+	{
 		AcceptInvalidationMessages();
+		MarkLockClear(locallock);
+	}
 }
 
 /*
@@ -226,13 +244,14 @@ bool
 ConditionalLockRelation(Relation relation, LOCKMODE lockmode)
 {
 	LOCKTAG		tag;
+	LOCALLOCK  *locallock;
 	LockAcquireResult res;
 
 	SET_LOCKTAG_RELATION(tag,
 						 relation->rd_lockInfo.lockRelId.dbId,
 						 relation->rd_lockInfo.lockRelId.relId);
 
-	res = LockAcquire(&tag, lockmode, false, true);
+	res = LockAcquireExtended(&tag, lockmode, false, true, true, &locallock);
 
 	if (res == LOCKACQUIRE_NOT_AVAIL)
 		return false;
@@ -241,8 +260,11 @@ ConditionalLockRelation(Relation relation, LOCKMODE lockmode)
 	 * Now that we have the lock, check for invalidation messages; see notes
 	 * in LockRelationOid.
 	 */
-	if (res != LOCKACQUIRE_ALREADY_HELD)
+	if (res != LOCKACQUIRE_ALREADY_CLEAR)
+	{
 		AcceptInvalidationMessages();
+		MarkLockClear(locallock);
+	}
 
 	return true;
 }
@@ -344,7 +366,7 @@ LockRelationForExtension(Relation relation, LOCKMODE lockmode)
  *		ConditionalLockRelationForExtension
  *
  * As above, but only lock if we can get the lock without blocking.
- * Returns TRUE iff the lock was acquired.
+ * Returns true iff the lock was acquired.
  */
 bool
 ConditionalLockRelationForExtension(Relation relation, LOCKMODE lockmode)
@@ -391,6 +413,21 @@ UnlockRelationForExtension(Relation relation, LOCKMODE lockmode)
 }
 
 /*
+ *		LockDatabaseFrozenIds
+ *
+ * This allows one backend per database to execute vac_update_datfrozenxid().
+ */
+void
+LockDatabaseFrozenIds(LOCKMODE lockmode)
+{
+	LOCKTAG		tag;
+
+	SET_LOCKTAG_DATABASE_FROZEN_IDS(tag, MyDatabaseId);
+
+	(void) LockAcquire(&tag, lockmode, false, false);
+}
+
+/*
  *		LockPage
  *
  * Obtain a page-level lock.  This is currently used by some index access
@@ -413,7 +450,7 @@ LockPage(Relation relation, BlockNumber blkno, LOCKMODE lockmode)
  *		ConditionalLockPage
  *
  * As above, but only lock if we can get the lock without blocking.
- * Returns TRUE iff the lock was acquired.
+ * Returns true iff the lock was acquired.
  */
 bool
 ConditionalLockPage(Relation relation, BlockNumber blkno, LOCKMODE lockmode)
@@ -469,7 +506,7 @@ LockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode)
  *		ConditionalLockTuple
  *
  * As above, but only lock if we can get the lock without blocking.
- * Returns TRUE iff the lock was acquired.
+ * Returns true iff the lock was acquired.
  */
 bool
 ConditionalLockTuple(Relation relation, ItemPointer tid, LOCKMODE lockmode)
@@ -621,7 +658,7 @@ XactLockTableWait(TransactionId xid, Relation rel, ItemPointer ctid,
  *		ConditionalXactLockTableWait
  *
  * As above, but only lock if we can get the lock without blocking.
- * Returns TRUE if the lock was acquired.
+ * Returns true if the lock was acquired.
  */
 bool
 ConditionalXactLockTableWait(TransactionId xid)
@@ -809,8 +846,7 @@ WaitForLockersMultiple(List *locktags, LOCKMODE lockmode)
 
 	/*
 	 * Note: GetLockConflicts() never reports our own xid, hence we need not
-	 * check for that.  Also, prepared xacts are not reported, which is fine
-	 * since they certainly aren't going to do anything anymore.
+	 * check for that.  Also, prepared xacts are reported and awaited.
 	 */
 
 	/* Finally wait for each such transaction to complete */
@@ -991,6 +1027,11 @@ DescribeLockTag(StringInfo buf, const LOCKTAG *tag)
 			appendStringInfo(buf,
 							 _("extension of relation %u of database %u"),
 							 tag->locktag_field2,
+							 tag->locktag_field1);
+			break;
+		case LOCKTAG_DATABASE_FROZEN_IDS:
+			appendStringInfo(buf,
+							 _("pg_database.datfrozenxid of database %u"),
 							 tag->locktag_field1);
 			break;
 		case LOCKTAG_PAGE:

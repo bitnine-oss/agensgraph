@@ -99,7 +99,7 @@ MultiExecHash2Side(Hash2SideState *node)
 				/* so, let's scan through the old chunks, and all tuples in each chunk */
 				while (oldchunks != NULL)
 				{
-					HashMemoryChunk nextchunk = oldchunks->next;
+					HashMemoryChunk nextchunk = oldchunks->next.unshared;
 
 					/* position within the buffer (up to oldchunks->used) */
 					size_t		idx = 0;
@@ -107,7 +107,7 @@ MultiExecHash2Side(Hash2SideState *node)
 					/* process all tuples stored in this chunk (and then free it) */
 					while (idx < oldchunks->used)
 					{
-						HashJoinTuple hashTuple = (HashJoinTuple) (oldchunks->data + idx);
+						HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + idx);
 						MinimalTuple  tuple = HJTUPLE_MINTUPLE(hashTuple);
 						int           hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 
@@ -208,11 +208,7 @@ ExecInitHash2Side(Hash2Side *node, EState *estate, int eflags)
 	 */
 	ExecAssignExprContext(estate, &hashstate->ps);
 
-	/*
-	 * initialize our result slot
-	 */
-	ExecInitResultTupleSlot(estate, &hashstate->ps);
-
+	ExecInitResultTupleSlotTL(estate, &hashstate->ps);
 	/*
 	 * initialize child expressions
 	 */
@@ -224,11 +220,6 @@ ExecInitHash2Side(Hash2Side *node, EState *estate, int eflags)
 	 */
 	outerPlanState(hashstate) = ExecInitNode(outerPlan(node), estate, eflags);
 
-	/*
-	 * initialize tuple type. no need to initialize projection info because
-	 * this node doesn't do projections
-	 */
-	ExecAssignResultTypeFromTL(&hashstate->ps);
 	hashstate->ps.ps_ProjInfo = NULL;
 
 	return hashstate;
@@ -315,7 +306,7 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 	hashtable->nbuckets_optimal = nbuckets;
 	hashtable->log2_nbuckets = log2_nbuckets;
 	hashtable->log2_nbuckets_optimal = log2_nbuckets;
-	hashtable->buckets = NULL;
+	hashtable->buckets.unshared = NULL;
 	hashtable->keepNulls = false;
 	hashtable->skewEnabled = false;
 	hashtable->skewBucket = NULL;
@@ -407,7 +398,7 @@ ExecHash2SideTableCreate(Hash2SideState *node, List *hashOperators,
 	 */
 	MemoryContextSwitchTo(hashtable->batchCxt);
 
-	hashtable->buckets = (HashJoinTuple *)
+	hashtable->buckets.unshared = (HashJoinTuple *)
 		palloc0(nbuckets * sizeof(HashJoinTuple));
 
 	MemoryContextSwitchTo(oldcxt);
@@ -437,7 +428,7 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 	hashtable->nbuckets_optimal = sourcetable->nbuckets;
 	hashtable->log2_nbuckets = sourcetable->log2_nbuckets;
 	hashtable->log2_nbuckets_optimal = sourcetable->log2_nbuckets;
-	hashtable->buckets = NULL;
+	hashtable->buckets.unshared = NULL;
 	hashtable->keepNulls = false;
 	hashtable->skewEnabled = false;
 	hashtable->skewBucket = NULL;
@@ -529,7 +520,7 @@ ExecHash2SideTableClone(Hash2SideState *node, List *hashOperators,
 	 */
 	MemoryContextSwitchTo(hashtable->batchCxt);
 
-	hashtable->buckets = (HashJoinTuple *)
+	hashtable->buckets.unshared = (HashJoinTuple *)
 		palloc0(hashtable->nbuckets * sizeof(HashJoinTuple));
 
 	MemoryContextSwitchTo(oldcxt);
@@ -787,7 +778,7 @@ ExecHash2SideIncreaseNumBatches(HashJoinTable hashtable)
 		hashtable->nbuckets = hashtable->nbuckets_optimal;
 		hashtable->log2_nbuckets = hashtable->log2_nbuckets_optimal;
 
-		hashtable->buckets = repalloc(hashtable->buckets,
+		hashtable->buckets.unshared = repalloc(hashtable->buckets.unshared,
 									  sizeof(HashJoinTuple) * hashtable->nbuckets);
 	}
 
@@ -796,14 +787,14 @@ ExecHash2SideIncreaseNumBatches(HashJoinTable hashtable)
 	 * buckets now and not have to keep track which tuples in the buckets have
 	 * already been processed. We will free the old chunks as we go.
 	 */
-	memset(hashtable->buckets, 0, sizeof(HashJoinTuple) * hashtable->nbuckets);
+	memset(hashtable->buckets.unshared, 0, sizeof(HashJoinTuple) * hashtable->nbuckets);
 	oldchunks = hashtable->chunks;
 	hashtable->chunks = NULL;
 
 	/* so, let's scan through the old chunks, and all tuples in each chunk */
 	while (oldchunks != NULL)
 	{
-		HashMemoryChunk nextchunk = oldchunks->next;
+		HashMemoryChunk nextchunk = oldchunks->next.unshared;
 
 		/* position within the buffer (up to oldchunks->used) */
 		size_t		idx = 0;
@@ -811,7 +802,7 @@ ExecHash2SideIncreaseNumBatches(HashJoinTable hashtable)
 		/* process all tuples stored in this chunk (and then free it) */
 		while (idx < oldchunks->used)
 		{
-			HashJoinTuple hashTuple = (HashJoinTuple) (oldchunks->data + idx);
+			HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + idx);
 			MinimalTuple tuple = HJTUPLE_MINTUPLE(hashTuple);
 			int			hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 			int			bucketno;
@@ -830,8 +821,8 @@ ExecHash2SideIncreaseNumBatches(HashJoinTable hashtable)
 				memcpy(copyTuple, hashTuple, hashTupleSize);
 
 				/* and add it back to the appropriate bucket */
-				copyTuple->next = hashtable->buckets[bucketno];
-				hashtable->buckets[bucketno] = copyTuple;
+				copyTuple->next.unshared = hashtable->buckets.unshared[bucketno];
+				hashtable->buckets.unshared[bucketno] = copyTuple;
 			}
 			else
 			{
@@ -913,21 +904,21 @@ ExecHash2SideIncreaseNumBuckets(HashJoinTable hashtable, Hash2SideState *node)
 	 * ExecHash2SideIncreaseNumBatches, but without all the copying into new
 	 * chunks)
 	 */
-	hashtable->buckets =
-		(HashJoinTuple *) repalloc(hashtable->buckets,
+	hashtable->buckets.unshared =
+		(HashJoinTuple *) repalloc(hashtable->buckets.unshared,
 								   hashtable->nbuckets * sizeof(HashJoinTuple));
 
-	memset(hashtable->buckets, 0, hashtable->nbuckets * sizeof(HashJoinTuple));
+	memset(hashtable->buckets.unshared, 0, hashtable->nbuckets * sizeof(HashJoinTuple));
 
 	/* scan through all tuples in all chunks to rebuild the hash table */
-	for (chunk = hashtable->chunks; chunk != NULL; chunk = chunk->next)
+	for (chunk = hashtable->chunks; chunk != NULL; chunk = chunk->next.unshared)
 	{
 		/* process all tuples stored in this chunk */
 		size_t		idx = 0;
 
 		while (idx < chunk->used)
 		{
-			HashJoinTuple hashTuple = (HashJoinTuple) (chunk->data + idx);
+			HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(chunk) + idx);
 			MinimalTuple  tuple = HJTUPLE_MINTUPLE(hashTuple);
 			HashJoinTuple cursorTuple;
 			MinimalTuple  body;
@@ -944,9 +935,9 @@ ExecHash2SideIncreaseNumBuckets(HashJoinTable hashtable, Hash2SideState *node)
 
 				if (tuple->t_len != sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize)
 				{
-					for (cursorTuple = hashtable->buckets[bucketno];
+					for (cursorTuple = hashtable->buckets.unshared[bucketno];
 						 cursorTuple != NULL;
-						 cursorTuple = cursorTuple->next)
+						 cursorTuple = cursorTuple->next.unshared)
 					{
 						body = HJTUPLE_MINTUPLE(cursorTuple);
 						if ((spstate->limit == 1 ||
@@ -963,25 +954,25 @@ ExecHash2SideIncreaseNumBuckets(HashJoinTable hashtable, Hash2SideState *node)
 				}
 
 				/* add the tuple to the proper bucket */
-				hashTuple->next = hashtable->buckets[bucketno];
-				hashtable->buckets[bucketno] = hashTuple;
+				hashTuple->next.unshared = hashtable->buckets.unshared[bucketno];
+				hashtable->buckets.unshared[bucketno] = hashTuple;
 
 				if (tuple->t_len == sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize)
 				{
-					cursorTuple = hashtable->buckets[bucketno];
-					while (cursorTuple->next != NULL)
+					cursorTuple = hashtable->buckets.unshared[bucketno];
+					while (cursorTuple->next.unshared != NULL)
 					{
-						body = HJTUPLE_MINTUPLE(cursorTuple->next);
+						body = HJTUPLE_MINTUPLE(cursorTuple->next.unshared);
 						if (*((Graphid*)(body+1)) == *((Graphid*)(tuple+1)))
 						{
 							hashtable->totalTuples -= 1;
 							if (body->t_len != sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize)
 								node->totalPaths -= 1;
 							*((Graphid*)(body+1)) = 0;
-							cursorTuple->next = cursorTuple->next->next;
+							cursorTuple->next = cursorTuple->next.unshared->next;
 							continue;
 						}
-						cursorTuple = cursorTuple->next;
+						cursorTuple = cursorTuple->next.unshared;
 					}
 				}
 			}
@@ -1049,9 +1040,9 @@ ExecHash2SideTableInsertTuple(HashJoinTable hashtable,
 
 		if (tuple->t_len != sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize)
 		{
-			for (hashTuple = hashtable->buckets[bucketno];
+			for (hashTuple = hashtable->buckets.unshared[bucketno];
 				 hashTuple != NULL;
-				 hashTuple = hashTuple->next)
+				 hashTuple = hashTuple->next.unshared)
 			{
 				body = HJTUPLE_MINTUPLE(hashTuple);
 				if ((spstate->limit == 1 ||
@@ -1079,25 +1070,25 @@ ExecHash2SideTableInsertTuple(HashJoinTable hashtable,
 		HeapTupleHeaderClearMatch(HJTUPLE_MINTUPLE(hashTuple));
 
 		/* Push it onto the front of the bucket's list */
-		hashTuple->next = hashtable->buckets[bucketno];
-		hashtable->buckets[bucketno] = hashTuple;
+		hashTuple->next.unshared = hashtable->buckets.unshared[bucketno];
+		hashtable->buckets.unshared[bucketno] = hashTuple;
 
 		if (tuple->t_len == sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize)
 		{
-			hashTuple = hashtable->buckets[bucketno];
-			while (hashTuple->next != NULL)
+			hashTuple = hashtable->buckets.unshared[bucketno];
+			while (hashTuple->next.unshared != NULL)
 			{
-				body = HJTUPLE_MINTUPLE(hashTuple->next);
+				body = HJTUPLE_MINTUPLE(hashTuple->next.unshared);
 				if (*((Graphid*)(body+1)) == *((Graphid*)(tuple+1)))
 				{
 					hashtable->totalTuples -= 1;
 					if (body->t_len != sizeof(*tuple) + sizeof(Graphid) + spstate->sp_RowidSize)
 						node->totalPaths -= 1;
 					*((Graphid*)(body+1)) = 0;
-					hashTuple->next = hashTuple->next->next;
+					hashTuple->next = hashTuple->next.unshared->next;
 					continue;
 				}
-				hashTuple = hashTuple->next;
+				hashTuple = hashTuple->next.unshared;
 			}
 		}
 
@@ -1233,9 +1224,9 @@ ExecScanHash2SideBucket(Hash2SideState *node,
 	 * otherwise scan the standard hashtable bucket.
 	 */
 	if (hashTuple != NULL)
-		hashTuple = hashTuple->next;
+		hashTuple = hashTuple->next.unshared;
 	else
-		hashTuple = hashtable->buckets[spstate->sp_CurBucketNo];
+		hashTuple = hashtable->buckets.unshared[spstate->sp_CurBucketNo];
 
 	while (hashTuple != NULL)
 	{
@@ -1265,7 +1256,7 @@ ExecScanHash2SideBucket(Hash2SideState *node,
 			}
 		}
 
-		hashTuple = hashTuple->next;
+		hashTuple = hashTuple->next.unshared;
 	}
 
 	/*
@@ -1293,7 +1284,7 @@ ExecHash2SideTableReset(HashJoinTable hashtable)
 	oldcxt = MemoryContextSwitchTo(hashtable->batchCxt);
 
 	/* Reallocate and reinitialize the hash bucket headers. */
-	hashtable->buckets = (HashJoinTuple *)
+	hashtable->buckets.unshared = (HashJoinTuple *)
 		palloc0(nbuckets * sizeof(HashJoinTuple));
 
 	hashtable->spaceUsed = 0;
@@ -1344,7 +1335,7 @@ dense_alloc(HashJoinTable hashtable, Size size)
 	{
 		/* allocate new chunk and put it at the beginning of the list */
 		newChunk = (HashMemoryChunk) MemoryContextAlloc(hashtable->batchCxt,
-														offsetof(HashMemoryChunkData, data) + size);
+		                                                HASH_CHUNK_HEADER_SIZE + size);
 		newChunk->maxlen = size;
 		newChunk->used = 0;
 		newChunk->ntuples = 0;
@@ -1356,18 +1347,18 @@ dense_alloc(HashJoinTable hashtable, Size size)
 		if (hashtable->chunks != NULL)
 		{
 			newChunk->next = hashtable->chunks->next;
-			hashtable->chunks->next = newChunk;
+			hashtable->chunks->next.unshared = newChunk;
 		}
 		else
 		{
-			newChunk->next = hashtable->chunks;
+			newChunk->next.unshared = hashtable->chunks;
 			hashtable->chunks = newChunk;
 		}
 
 		newChunk->used += size;
 		newChunk->ntuples += 1;
 
-		return newChunk->data;
+		return HASH_CHUNK_DATA(newChunk);
 	}
 
 	/*
@@ -1379,20 +1370,20 @@ dense_alloc(HashJoinTable hashtable, Size size)
 	{
 		/* allocate new chunk and put it at the beginning of the list */
 		newChunk = (HashMemoryChunk) MemoryContextAlloc(hashtable->batchCxt,
-														offsetof(HashMemoryChunkData, data) + HASH_CHUNK_SIZE);
+														HASH_CHUNK_HEADER_SIZE + HASH_CHUNK_SIZE);
 
 		newChunk->maxlen = HASH_CHUNK_SIZE;
 		newChunk->used = size;
 		newChunk->ntuples = 1;
 
-		newChunk->next = hashtable->chunks;
+		newChunk->next.unshared = hashtable->chunks;
 		hashtable->chunks = newChunk;
 
-		return newChunk->data;
+		return HASH_CHUNK_DATA(newChunk);
 	}
 
 	/* There is enough space in the current chunk, let's add the tuple */
-	ptr = hashtable->chunks->data + hashtable->chunks->used;
+	ptr = HASH_CHUNK_DATA(hashtable->chunks) + hashtable->chunks->used;
 	hashtable->chunks->used += size;
 	hashtable->chunks->ntuples += 1;
 

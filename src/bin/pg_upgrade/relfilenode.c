@@ -3,7 +3,7 @@
  *
  *	relfilenode functions
  *
- *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2018, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/relfilenode.c
  */
 
@@ -12,7 +12,7 @@
 #include "pg_upgrade.h"
 
 #include <sys/stat.h>
-#include "catalog/pg_class.h"
+#include "catalog/pg_class_d.h"
 #include "access/transam.h"
 
 
@@ -160,16 +160,12 @@ transfer_single_new_db(FileNameMap *maps, int size, char *old_tablespace)
 			/* transfer primary file */
 			transfer_relfile(&maps[mapnum], "", vm_must_add_frozenbit);
 
-			/* fsm/vm files added in PG 8.4 */
-			if (GET_MAJOR_VERSION(old_cluster.major_version) >= 804)
-			{
-				/*
-				 * Copy/link any fsm and vm files, if they exist
-				 */
-				transfer_relfile(&maps[mapnum], "_fsm", vm_must_add_frozenbit);
-				if (vm_crashsafe_match)
-					transfer_relfile(&maps[mapnum], "_vm", vm_must_add_frozenbit);
-			}
+			/*
+			 * Copy/link any fsm and vm files, if they exist
+			 */
+			transfer_relfile(&maps[mapnum], "_fsm", vm_must_add_frozenbit);
+			if (vm_crashsafe_match)
+				transfer_relfile(&maps[mapnum], "_vm", vm_must_add_frozenbit);
 		}
 	}
 }
@@ -194,7 +190,7 @@ transfer_relfile(FileNameMap *map, const char *type_suffix, bool vm_must_add_fro
 	/*
 	 * Now copy/link any related segments as well. Remember, PG breaks large
 	 * files into 1GB segments, the first segment has no extension, subsequent
-	 * segments are named relfilenode.1, relfilenode.2, relfilenode.3. copied.
+	 * segments are named relfilenode.1, relfilenode.2, relfilenode.3.
 	 */
 	for (segno = 0;; segno++)
 	{

@@ -43,7 +43,7 @@
  * before switching to the other state or activating a different read pointer.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -515,7 +515,7 @@ tuplestore_select_read_pointer(Tuplestorestate *state, int ptr)
 								SEEK_SET) != 0)
 					ereport(ERROR,
 							(errcode_for_file_access(),
-							 errmsg("could not seek in tuplestore temporary file: %m")));
+							 errmsg("could not seek in tuplestore temporary file")));
 			}
 			else
 			{
@@ -525,7 +525,7 @@ tuplestore_select_read_pointer(Tuplestorestate *state, int ptr)
 								SEEK_SET) != 0)
 					ereport(ERROR,
 							(errcode_for_file_access(),
-							 errmsg("could not seek in tuplestore temporary file: %m")));
+							 errmsg("could not seek in tuplestore temporary file")));
 			}
 			break;
 		default:
@@ -562,7 +562,7 @@ tuplestore_ateof(Tuplestorestate *state)
 /*
  * Grow the memtuples[] array, if possible within our memory constraint.  We
  * must not exceed INT_MAX tuples in memory or the caller-provided memory
- * limit.  Return TRUE if we were able to enlarge the array, FALSE if not.
+ * limit.  Return true if we were able to enlarge the array, false if not.
  *
  * Normally, at each increment we double the size of the array.  When doing
  * that would exceed a limit, we attempt one last, smaller increase (and then
@@ -866,7 +866,7 @@ tuplestore_puttuple_common(Tuplestorestate *state, void *tuple)
 							SEEK_SET) != 0)
 				ereport(ERROR,
 						(errcode_for_file_access(),
-						 errmsg("could not seek in tuplestore temporary file: %m")));
+						 errmsg("could not seek in tuplestore temporary file")));
 			state->status = TSS_WRITEFILE;
 
 			/*
@@ -970,9 +970,9 @@ tuplestore_gettuple(Tuplestorestate *state, bool forward,
 								SEEK_SET) != 0)
 					ereport(ERROR,
 							(errcode_for_file_access(),
-							 errmsg("could not seek in tuplestore temporary file: %m")));
+							 errmsg("could not seek in tuplestore temporary file")));
 			state->status = TSS_READFILE;
-			/* FALL THRU into READFILE case */
+			/* FALLTHROUGH */
 
 		case TSS_READFILE:
 			*should_free = true;
@@ -1034,7 +1034,7 @@ tuplestore_gettuple(Tuplestorestate *state, bool forward,
 									SEEK_CUR) != 0)
 						ereport(ERROR,
 								(errcode_for_file_access(),
-								 errmsg("could not seek in tuplestore temporary file: %m")));
+								 errmsg("could not seek in tuplestore temporary file")));
 					Assert(!state->truncated);
 					return NULL;
 				}
@@ -1051,7 +1051,7 @@ tuplestore_gettuple(Tuplestorestate *state, bool forward,
 							SEEK_CUR) != 0)
 				ereport(ERROR,
 						(errcode_for_file_access(),
-						 errmsg("could not seek in tuplestore temporary file: %m")));
+						 errmsg("could not seek in tuplestore temporary file")));
 			tup = READTUP(state, tuplen);
 			return tup;
 
@@ -1064,12 +1064,12 @@ tuplestore_gettuple(Tuplestorestate *state, bool forward,
 /*
  * tuplestore_gettupleslot - exported function to fetch a MinimalTuple
  *
- * If successful, put tuple in slot and return TRUE; else, clear the slot
- * and return FALSE.
+ * If successful, put tuple in slot and return true; else, clear the slot
+ * and return false.
  *
- * If copy is TRUE, the slot receives a copied tuple (allocated in current
+ * If copy is true, the slot receives a copied tuple (allocated in current
  * memory context) that will stay valid regardless of future manipulations of
- * the tuplestore's state.  If copy is FALSE, the slot may just receive a
+ * the tuplestore's state.  If copy is false, the slot may just receive a
  * pointer to a tuple held within the tuplestore.  The latter is more
  * efficient but the slot contents may be corrupted if additional writes to
  * the tuplestore occur.  (If using tuplestore_trim, see comments therein.)
@@ -1129,7 +1129,7 @@ tuplestore_advance(Tuplestorestate *state, bool forward)
 /*
  * Advance over N tuples in either forward or back direction,
  * without returning any data.  N<=0 is a no-op.
- * Returns TRUE if successful, FALSE if ran out of tuples.
+ * Returns true if successful, false if ran out of tuples.
  */
 bool
 tuplestore_skiptuples(Tuplestorestate *state, int64 ntuples, bool forward)
@@ -1253,7 +1253,7 @@ tuplestore_rescan(Tuplestorestate *state)
 			if (BufFileSeek(state->myfile, 0, 0L, SEEK_SET) != 0)
 				ereport(ERROR,
 						(errcode_for_file_access(),
-						 errmsg("could not seek in tuplestore temporary file: %m")));
+						 errmsg("could not seek in tuplestore temporary file")));
 			break;
 		default:
 			elog(ERROR, "invalid tuplestore state");
@@ -1318,7 +1318,7 @@ tuplestore_copy_read_pointer(Tuplestorestate *state,
 									SEEK_SET) != 0)
 						ereport(ERROR,
 								(errcode_for_file_access(),
-								 errmsg("could not seek in tuplestore temporary file: %m")));
+								 errmsg("could not seek in tuplestore temporary file")));
 				}
 				else
 				{
@@ -1327,7 +1327,7 @@ tuplestore_copy_read_pointer(Tuplestorestate *state,
 									SEEK_SET) != 0)
 						ereport(ERROR,
 								(errcode_for_file_access(),
-								 errmsg("could not seek in tuplestore temporary file: %m")));
+								 errmsg("could not seek in tuplestore temporary file")));
 				}
 			}
 			else if (srcptr == state->activeptr)
@@ -1474,7 +1474,8 @@ getlen(Tuplestorestate *state, bool eofOK)
 	if (nbytes != 0 || !eofOK)
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not read from tuplestore temporary file: %m")));
+				 errmsg("could not read from tuplestore temporary file: read only %zu of %zu bytes",
+						nbytes, sizeof(len))));
 	return 0;
 }
 
@@ -1511,22 +1512,10 @@ writetup_heap(Tuplestorestate *state, void *tup)
 	/* total on-disk footprint: */
 	unsigned int tuplen = tupbodylen + sizeof(int);
 
-	if (BufFileWrite(state->myfile, (void *) &tuplen,
-					 sizeof(tuplen)) != sizeof(tuplen))
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not write to tuplestore temporary file: %m")));
-	if (BufFileWrite(state->myfile, (void *) tupbody,
-					 tupbodylen) != (size_t) tupbodylen)
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not write to tuplestore temporary file: %m")));
+	BufFileWrite(state->myfile, (void *) &tuplen, sizeof(tuplen));
+	BufFileWrite(state->myfile, (void *) tupbody, tupbodylen);
 	if (state->backward)		/* need trailing length word? */
-		if (BufFileWrite(state->myfile, (void *) &tuplen,
-						 sizeof(tuplen)) != sizeof(tuplen))
-			ereport(ERROR,
-					(errcode_for_file_access(),
-					 errmsg("could not write to tuplestore temporary file: %m")));
+		BufFileWrite(state->myfile, (void *) &tuplen, sizeof(tuplen));
 
 	FREEMEM(state, GetMemoryChunkSpace(tuple));
 	heap_free_minimal_tuple(tuple);
@@ -1539,20 +1528,25 @@ readtup_heap(Tuplestorestate *state, unsigned int len)
 	unsigned int tuplen = tupbodylen + MINIMAL_TUPLE_DATA_OFFSET;
 	MinimalTuple tuple = (MinimalTuple) palloc(tuplen);
 	char	   *tupbody = (char *) tuple + MINIMAL_TUPLE_DATA_OFFSET;
+	size_t		nread;
 
 	USEMEM(state, GetMemoryChunkSpace(tuple));
 	/* read in the tuple proper */
 	tuple->t_len = tuplen;
-	if (BufFileRead(state->myfile, (void *) tupbody,
-					tupbodylen) != (size_t) tupbodylen)
+	nread = BufFileRead(state->myfile, (void *) tupbody, tupbodylen);
+	if (nread != (size_t) tupbodylen)
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not read from tuplestore temporary file: %m")));
+				 errmsg("could not read from tuplestore temporary file: read only %zu of %zu bytes",
+						nread, (size_t) tupbodylen)));
 	if (state->backward)		/* need trailing length word? */
-		if (BufFileRead(state->myfile, (void *) &tuplen,
-						sizeof(tuplen)) != sizeof(tuplen))
+	{
+		nread = BufFileRead(state->myfile, (void *) &tuplen, sizeof(tuplen));
+		if (nread != sizeof(tuplen))
 			ereport(ERROR,
 					(errcode_for_file_access(),
-					 errmsg("could not read from tuplestore temporary file: %m")));
+					 errmsg("could not read from tuplestore temporary file: read only %zu of %zu bytes",
+							nread, sizeof(tuplen))));
+	}
 	return (void *) tuple;
 }

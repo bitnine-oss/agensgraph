@@ -127,7 +127,7 @@
  *		- Protects both PredXact and SerializableXidHash.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -318,11 +318,9 @@ static SlruCtlData OldSerXidSlruCtlData;
 #define OLDSERXID_ENTRIESPERPAGE	(OLDSERXID_PAGESIZE / OLDSERXID_ENTRYSIZE)
 
 /*
- * Set maximum pages based on the lesser of the number needed to track all
- * transactions and the maximum that SLRU supports.
+ * Set maximum pages based on the number needed to track all transactions.
  */
-#define OLDSERXID_MAX_PAGE			Min(SLRU_PAGES_PER_SEGMENT * 0x10000 - 1, \
-										(MaxTransactionId) / OLDSERXID_ENTRIESPERPAGE)
+#define OLDSERXID_MAX_PAGE			(MaxTransactionId / OLDSERXID_ENTRIESPERPAGE)
 
 #define OldSerXidNextPage(page) (((page) >= OLDSERXID_MAX_PAGE) ? 0 : (page) + 1)
 
@@ -330,15 +328,13 @@ static SlruCtlData OldSerXidSlruCtlData;
 	(OldSerXidSlruCtl->shared->page_buffer[slotno] + \
 	((((uint32) (xid)) % OLDSERXID_ENTRIESPERPAGE) * OLDSERXID_ENTRYSIZE))))
 
-#define OldSerXidPage(xid)	((((uint32) (xid)) / OLDSERXID_ENTRIESPERPAGE) % (OLDSERXID_MAX_PAGE + 1))
-#define OldSerXidSegment(page)	((page) / SLRU_PAGES_PER_SEGMENT)
+#define OldSerXidPage(xid)	(((uint32) (xid)) / OLDSERXID_ENTRIESPERPAGE)
 
 typedef struct OldSerXidControlData
 {
 	int			headPage;		/* newest initialized page */
 	TransactionId headXid;		/* newest valid Xid in the SLRU */
 	TransactionId tailXid;		/* oldest xmin we might be interested in */
-	bool		warningIssued;	/* have we issued SLRU wrap-around warning? */
 }			OldSerXidControlData;
 
 typedef struct OldSerXidControlData *OldSerXidControl;
@@ -426,7 +422,7 @@ static void SetPossibleUnsafeConflict(SERIALIZABLEXACT *roXact, SERIALIZABLEXACT
 static void ReleaseRWConflict(RWConflict conflict);
 static void FlagSxactUnsafe(SERIALIZABLEXACT *sxact);
 
-static bool OldSerXidPagePrecedesLogically(int p, int q);
+static bool OldSerXidPagePrecedesLogically(int page1, int page2);
 static void OldSerXidInit(void);
 static void OldSerXidAdd(TransactionId xid, SerCommitSeqNo minConflictCommitSeqNo);
 static SerCommitSeqNo OldSerXidGetMinConflictCommitSeqNo(TransactionId xid);
@@ -493,8 +489,8 @@ PredicateLockingNeededForRelation(Relation relation)
  * as RO-safe since the last call, we release all predicate locks and reset
  * MySerializableXact. That makes subsequent calls to return quickly.
  *
- * This is marked as 'inline' to make to eliminate the function call overhead
- * in the common case that serialization is not needed.
+ * This is marked as 'inline' to eliminate the function call overhead in the
+ * common case that serialization is not needed.
  */
 static inline bool
 SerializationNeededForRead(Relation relation, Snapshot snapshot)
@@ -770,28 +766,80 @@ FlagSxactUnsafe(SERIALIZABLEXACT *sxact)
 /*------------------------------------------------------------------------*/
 
 /*
- * We will work on the page range of 0..OLDSERXID_MAX_PAGE.
- * Compares using wraparound logic, as is required by slru.c.
+ * Decide whether an OldSerXid page number is "older" for truncation purposes.
+ * Analogous to CLOGPagePrecedes().
  */
 static bool
-OldSerXidPagePrecedesLogically(int p, int q)
+OldSerXidPagePrecedesLogically(int page1, int page2)
 {
-	int			diff;
+	TransactionId xid1;
+	TransactionId xid2;
+
+	xid1 = ((TransactionId) page1) * OLDSERXID_ENTRIESPERPAGE;
+	xid1 += FirstNormalTransactionId + 1;
+	xid2 = ((TransactionId) page2) * OLDSERXID_ENTRIESPERPAGE;
+	xid2 += FirstNormalTransactionId + 1;
+
+	return (TransactionIdPrecedes(xid1, xid2) &&
+			TransactionIdPrecedes(xid1, xid2 + OLDSERXID_ENTRIESPERPAGE - 1));
+}
+
+#ifdef USE_ASSERT_CHECKING
+static void
+OldSerXidPagePrecedesLogicallyUnitTests(void)
+{
+	int			per_page = OLDSERXID_ENTRIESPERPAGE,
+				offset = per_page / 2;
+	int			newestPage,
+				oldestPage,
+				headPage,
+				targetPage;
+	TransactionId newestXact,
+				oldestXact;
+
+	/* GetNewTransactionId() has assigned the last XID it can safely use. */
+	newestPage = 2 * SLRU_PAGES_PER_SEGMENT - 1;	/* nothing special */
+	newestXact = newestPage * per_page + offset;
+	Assert(newestXact / per_page == newestPage);
+	oldestXact = newestXact + 1;
+	oldestXact -= 1U << 31;
+	oldestPage = oldestXact / per_page;
 
 	/*
-	 * We have to compare modulo (OLDSERXID_MAX_PAGE+1)/2.  Both inputs should
-	 * be in the range 0..OLDSERXID_MAX_PAGE.
+	 * In this scenario, the SLRU headPage pertains to the last ~1000 XIDs
+	 * assigned.  oldestXact finishes, ~2B XIDs having elapsed since it
+	 * started.  Further transactions cause us to summarize oldestXact to
+	 * tailPage.  Function must return false so OldSerXidAdd() doesn't zero
+	 * tailPage (which may contain entries for other old, recently-finished
+	 * XIDs) and half the SLRU.  Reaching this requires burning ~2B XIDs in
+	 * single-user mode, a negligible possibility.
 	 */
-	Assert(p >= 0 && p <= OLDSERXID_MAX_PAGE);
-	Assert(q >= 0 && q <= OLDSERXID_MAX_PAGE);
+	headPage = newestPage;
+	targetPage = oldestPage;
+	Assert(!OldSerXidPagePrecedesLogically(headPage, targetPage));
 
-	diff = p - q;
-	if (diff >= ((OLDSERXID_MAX_PAGE + 1) / 2))
-		diff -= OLDSERXID_MAX_PAGE + 1;
-	else if (diff < -((int) (OLDSERXID_MAX_PAGE + 1) / 2))
-		diff += OLDSERXID_MAX_PAGE + 1;
-	return diff < 0;
+	/*
+	 * In this scenario, the SLRU headPage pertains to oldestXact.  We're
+	 * summarizing an XID near newestXact.  (Assume few other XIDs used
+	 * SERIALIZABLE, hence the minimal headPage advancement.  Assume
+	 * oldestXact was long-running and only recently reached the SLRU.)
+	 * Function must return true to make OldSerXidAdd() create targetPage.
+	 *
+	 * Today's implementation mishandles this case, but it doesn't matter
+	 * enough to fix.  Verify that the defect affects just one page by
+	 * asserting correct treatment of its prior page.  Reaching this case
+	 * requires burning ~2B XIDs in single-user mode, a negligible
+	 * possibility.  Moreover, if it does happen, the consequence would be
+	 * mild, namely a new transaction failing in SimpleLruReadPage().
+	 */
+	headPage = oldestPage;
+	targetPage = newestPage;
+	Assert(OldSerXidPagePrecedesLogically(headPage, targetPage - 1));
+#if 0
+	Assert(OldSerXidPagePrecedesLogically(headPage, targetPage));
+#endif
 }
+#endif
 
 /*
  * Initialize for the tracking of old serializable committed xids.
@@ -810,6 +858,10 @@ OldSerXidInit(void)
 				  LWTRANCHE_OLDSERXID_BUFFERS);
 	/* Override default assumption that writes should be fsync'd */
 	OldSerXidSlruCtl->do_fsync = false;
+#ifdef USE_ASSERT_CHECKING
+	OldSerXidPagePrecedesLogicallyUnitTests();
+#endif
+	SlruPagePrecedesUnitTests(OldSerXidSlruCtl, OLDSERXID_ENTRIESPERPAGE);
 
 	/*
 	 * Create or attach to the OldSerXidControl structure.
@@ -826,7 +878,6 @@ OldSerXidInit(void)
 		oldSerXidControl->headPage = -1;
 		oldSerXidControl->headXid = InvalidTransactionId;
 		oldSerXidControl->tailXid = InvalidTransactionId;
-		oldSerXidControl->warningIssued = false;
 	}
 }
 
@@ -881,47 +932,6 @@ OldSerXidAdd(TransactionId xid, SerCommitSeqNo minConflictCommitSeqNo)
 		oldSerXidControl->headXid = xid;
 	if (isNewPage)
 		oldSerXidControl->headPage = targetPage;
-
-	/*
-	 * Give a warning if we're about to run out of SLRU pages.
-	 *
-	 * slru.c has a maximum of 64k segments, with 32 (SLRU_PAGES_PER_SEGMENT)
-	 * pages each. We need to store a 64-bit integer for each Xid, and with
-	 * default 8k block size, 65536*32 pages is only enough to cover 2^30
-	 * XIDs. If we're about to hit that limit and wrap around, warn the user.
-	 *
-	 * To avoid spamming the user, we only give one warning when we've used 1
-	 * billion XIDs, and stay silent until the situation is fixed and the
-	 * number of XIDs used falls below 800 million again.
-	 *
-	 * XXX: We have no safeguard to actually *prevent* the wrap-around,
-	 * though. All you get is a warning.
-	 */
-	if (oldSerXidControl->warningIssued)
-	{
-		TransactionId lowWatermark;
-
-		lowWatermark = tailXid + 800000000;
-		if (lowWatermark < FirstNormalTransactionId)
-			lowWatermark = FirstNormalTransactionId;
-		if (TransactionIdPrecedes(xid, lowWatermark))
-			oldSerXidControl->warningIssued = false;
-	}
-	else
-	{
-		TransactionId highWatermark;
-
-		highWatermark = tailXid + 1000000000;
-		if (highWatermark < FirstNormalTransactionId)
-			highWatermark = FirstNormalTransactionId;
-		if (TransactionIdFollows(xid, highWatermark))
-		{
-			oldSerXidControl->warningIssued = true;
-			ereport(WARNING,
-					(errmsg("memory for serializable conflict tracking is nearly exhausted"),
-					 errhint("There might be an idle transaction or a forgotten prepared transaction causing this.")));
-		}
-	}
 
 	if (isNewPage)
 	{
@@ -1060,7 +1070,7 @@ CheckPointPredicate(void)
 	}
 	else
 	{
-		/*
+		/*----------
 		 * The SLRU is no longer needed. Truncate to head before we set head
 		 * invalid.
 		 *
@@ -1069,6 +1079,25 @@ CheckPointPredicate(void)
 		 * that we leave behind will appear to be new again. In that case it
 		 * won't be removed until XID horizon advances enough to make it
 		 * current again.
+		 *
+		 * XXX: This should happen in vac_truncate_clog(), not in checkpoints.
+		 * Consider this scenario, starting from a system with no in-progress
+		 * transactions and VACUUM FREEZE having maximized oldestXact:
+		 * - Start a SERIALIZABLE transaction.
+		 * - Start, finish, and summarize a SERIALIZABLE transaction, creating
+		 *   one SLRU page.
+		 * - Consume XIDs to reach xidStopLimit.
+		 * - Finish all transactions.  Due to the long-running SERIALIZABLE
+		 *   transaction, earlier checkpoints did not touch headPage.  The
+		 *   next checkpoint will change it, but that checkpoint happens after
+		 *   the end of the scenario.
+		 * - VACUUM to advance XID limits.
+		 * - Consume ~2M XIDs, crossing the former xidWrapLimit.
+		 * - Start, finish, and summarize a SERIALIZABLE transaction.
+		 *   OldSerXidAdd() declines to create the targetPage, because
+		 *   headPage is not regarded as in the past relative to that
+		 *   targetPage.  The transaction instigating the summarize fails in
+		 *   SimpleLruReadPage().
 		 */
 		tailPage = oldSerXidControl->headPage;
 		oldSerXidControl->headPage = -1;
@@ -3971,6 +4000,10 @@ CheckForSerializableConflictOut(bool visible, Relation relation,
 	 * while it is visible to us.  The "visible" bool indicates whether the
 	 * tuple is visible to us, while HeapTupleSatisfiesVacuum checks what else
 	 * is going on with it.
+	 *
+	 * In the event of a concurrently inserted tuple that also happens to have
+	 * been concurrently updated (by a separate transaction), the xmin of the
+	 * tuple will be used -- not the updater's xid.
 	 */
 	htsvResult = HeapTupleSatisfiesVacuum(tuple, TransactionXmin, buffer);
 	switch (htsvResult)
@@ -3981,17 +4014,24 @@ CheckForSerializableConflictOut(bool visible, Relation relation,
 			xid = HeapTupleHeaderGetXmin(tuple->t_data);
 			break;
 		case HEAPTUPLE_RECENTLY_DEAD:
-			if (!visible)
-				return;
-			xid = HeapTupleHeaderGetUpdateXid(tuple->t_data);
-			break;
 		case HEAPTUPLE_DELETE_IN_PROGRESS:
-			xid = HeapTupleHeaderGetUpdateXid(tuple->t_data);
+			if (visible)
+				xid = HeapTupleHeaderGetUpdateXid(tuple->t_data);
+			else
+				xid = HeapTupleHeaderGetXmin(tuple->t_data);
+
+			if (TransactionIdPrecedes(xid, TransactionXmin))
+			{
+				/* This is like the HEAPTUPLE_DEAD case */
+				Assert(!visible);
+				return;
+			}
 			break;
 		case HEAPTUPLE_INSERT_IN_PROGRESS:
 			xid = HeapTupleHeaderGetXmin(tuple->t_data);
 			break;
 		case HEAPTUPLE_DEAD:
+			Assert(!visible);
 			return;
 		default:
 

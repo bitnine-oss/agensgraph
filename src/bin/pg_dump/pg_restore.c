@@ -71,6 +71,7 @@ main(int argc, char **argv)
 	static int	no_data_for_failed_tables = 0;
 	static int	outputNoTablespaces = 0;
 	static int	use_setsessauth = 0;
+	static int	no_comments = 0;
 	static int	no_publications = 0;
 	static int	no_security_labels = 0;
 	static int	no_subscriptions = 0;
@@ -119,6 +120,7 @@ main(int argc, char **argv)
 		{"section", required_argument, NULL, 3},
 		{"strict-names", no_argument, &strict_names, 1},
 		{"use-set-session-authorization", no_argument, &use_setsessauth, 1},
+		{"no-comments", no_argument, &no_comments, 1},
 		{"no-publications", no_argument, &no_publications, 1},
 		{"no-security-labels", no_argument, &no_security_labels, 1},
 		{"no-subscriptions", no_argument, &no_subscriptions, 1},
@@ -163,7 +165,7 @@ main(int argc, char **argv)
 				opts->createDB = 1;
 				break;
 			case 'd':
-				opts->dbname = pg_strdup(optarg);
+				opts->cparams.dbname = pg_strdup(optarg);
 				break;
 			case 'e':
 				opts->exit_on_error = true;
@@ -177,7 +179,7 @@ main(int argc, char **argv)
 				break;
 			case 'h':
 				if (strlen(optarg) != 0)
-					opts->pghost = pg_strdup(optarg);
+					opts->cparams.pghost = pg_strdup(optarg);
 				break;
 
 			case 'j':			/* number of restore jobs */
@@ -206,7 +208,7 @@ main(int argc, char **argv)
 
 			case 'p':
 				if (strlen(optarg) != 0)
-					opts->pgport = pg_strdup(optarg);
+					opts->cparams.pgport = pg_strdup(optarg);
 				break;
 			case 'R':
 				/* no-op, still accepted for backwards compatibility */
@@ -240,7 +242,7 @@ main(int argc, char **argv)
 				break;
 
 			case 'U':
-				opts->username = pg_strdup(optarg);
+				opts->cparams.username = pg_strdup(optarg);
 				break;
 
 			case 'v':			/* verbose */
@@ -248,11 +250,11 @@ main(int argc, char **argv)
 				break;
 
 			case 'w':
-				opts->promptPassword = TRI_NO;
+				opts->cparams.promptPassword = TRI_NO;
 				break;
 
 			case 'W':
-				opts->promptPassword = TRI_YES;
+				opts->cparams.promptPassword = TRI_YES;
 				break;
 
 			case 'x':			/* skip ACL dump */
@@ -302,7 +304,7 @@ main(int argc, char **argv)
 	}
 
 	/* Should get at most one of -d and -f, else user is confused */
-	if (opts->dbname)
+	if (opts->cparams.dbname)
 	{
 		if (opts->filename)
 		{
@@ -358,6 +360,7 @@ main(int argc, char **argv)
 	opts->noDataForFailedTables = no_data_for_failed_tables;
 	opts->noTablespace = outputNoTablespaces;
 	opts->use_setsessauth = use_setsessauth;
+	opts->no_comments = no_comments;
 	opts->no_publications = no_publications;
 	opts->no_security_labels = no_security_labels;
 	opts->no_subscriptions = no_subscriptions;
@@ -451,7 +454,7 @@ usage(const char *progname)
 
 	printf(_("\nGeneral options:\n"));
 	printf(_("  -d, --dbname=NAME        connect to database name\n"));
-	printf(_("  -f, --file=FILENAME      output file name\n"));
+	printf(_("  -f, --file=FILENAME      output file name (- for stdout)\n"));
 	printf(_("  -F, --format=c|d|t       backup file format (should be automatic)\n"));
 	printf(_("  -l, --list               print summarized TOC of the archive\n"));
 	printf(_("  -v, --verbose            verbose mode\n"));
@@ -480,6 +483,7 @@ usage(const char *progname)
 	printf(_("  --disable-triggers           disable triggers during data-only restore\n"));
 	printf(_("  --enable-row-security        enable row security\n"));
 	printf(_("  --if-exists                  use IF EXISTS when dropping objects\n"));
+	printf(_("  --no-comments                do not restore comments\n"));
 	printf(_("  --no-data-for-failed-tables  do not restore data of tables that could not be\n"
 			 "                               created\n"));
 	printf(_("  --no-publications            do not restore publications\n"));
@@ -502,7 +506,7 @@ usage(const char *progname)
 	printf(_("  --role=ROLENAME          do SET ROLE before restore\n"));
 
 	printf(_("\n"
-			 "The options -I, -n, -P, -t, -T, and --section can be combined and specified\n"
+			 "The options -I, -n, -N, -P, -t, -T, and --section can be combined and specified\n"
 			 "multiple times to select multiple objects.\n"));
 	printf(_("\nIf no input file name is supplied, then standard input is used.\n\n"));
 	printf(_("Report bugs to <pgsql-bugs@postgresql.org>.\n"));

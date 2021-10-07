@@ -2,7 +2,7 @@
  *
  * createdb
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/createdb.c
@@ -50,6 +50,7 @@ main(int argc, char *argv[])
 	char	   *port = NULL;
 	char	   *username = NULL;
 	enum trivalue prompt_password = TRI_DEFAULT;
+	ConnParams	cparams;
 	bool		echo = false;
 	char	   *owner = NULL;
 	char	   *tablespace = NULL;
@@ -177,6 +178,19 @@ main(int argc, char *argv[])
 			dbname = get_user_name_or_exit(progname);
 	}
 
+	/* No point in trying to use postgres db when creating postgres db. */
+	if (maintenance_db == NULL && strcmp(dbname, "postgres") == 0)
+		maintenance_db = "template1";
+
+	cparams.dbname = maintenance_db;
+	cparams.pghost = host;
+	cparams.pgport = port;
+	cparams.pguser = username;
+	cparams.prompt_password = prompt_password;
+	cparams.override_dbname = NULL;
+
+	conn = connectMaintenanceDatabase(&cparams, progname, echo);
+
 	initPQExpBuffer(&sql);
 
 	appendPQExpBuffer(&sql, "CREATE DATABASE %s",
@@ -187,22 +201,24 @@ main(int argc, char *argv[])
 	if (tablespace)
 		appendPQExpBuffer(&sql, " TABLESPACE %s", fmtId(tablespace));
 	if (encoding)
-		appendPQExpBuffer(&sql, " ENCODING '%s'", encoding);
+	{
+		appendPQExpBufferStr(&sql, " ENCODING ");
+		appendStringLiteralConn(&sql, encoding, conn);
+	}
 	if (template)
 		appendPQExpBuffer(&sql, " TEMPLATE %s", fmtId(template));
 	if (lc_collate)
-		appendPQExpBuffer(&sql, " LC_COLLATE '%s'", lc_collate);
+	{
+		appendPQExpBufferStr(&sql, " LC_COLLATE ");
+		appendStringLiteralConn(&sql, lc_collate, conn);
+	}
 	if (lc_ctype)
-		appendPQExpBuffer(&sql, " LC_CTYPE '%s'", lc_ctype);
+	{
+		appendPQExpBufferStr(&sql, " LC_CTYPE ");
+		appendStringLiteralConn(&sql, lc_ctype, conn);
+	}
 
 	appendPQExpBufferChar(&sql, ';');
-
-	/* No point in trying to use postgres db when creating postgres db. */
-	if (maintenance_db == NULL && strcmp(dbname, "postgres") == 0)
-		maintenance_db = "template1";
-
-	conn = connectMaintenanceDatabase(maintenance_db, host, port, username,
-									  prompt_password, progname, echo);
 
 	if (echo)
 		printf("%s\n", sql.data);
@@ -248,7 +264,7 @@ main(int argc, char *argv[])
 static void
 help(const char *progname)
 {
-	printf(_("%s creates an AgensGraph database.\n\n"), progname);
+	printf(_("%s creates a PostgreSQL database.\n\n"), progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]... [DBNAME] [DESCRIPTION]\n"), progname);
 	printf(_("\nOptions:\n"));
@@ -270,4 +286,5 @@ help(const char *progname)
 	printf(_("  -W, --password               force password prompt\n"));
 	printf(_("  --maintenance-db=DBNAME      alternate maintenance database\n"));
 	printf(_("\nBy default, a database with the same name as the current user is created.\n"));
+	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
 }

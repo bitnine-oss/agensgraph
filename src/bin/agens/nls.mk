@@ -1,6 +1,6 @@
 # src/bin/agens/nls.mk
 CATALOG_NAME     = agens
-AVAIL_LANGUAGES  =
+AVAIL_LANGUAGES  = de es fr he it ja ko pl pt_BR ru sv tr zh_CN
 GETTEXT_FILES    = command.c common.c copy.c crosstabview.c help.c input.c large_obj.c \
                    mainloop.c psqlscanslash.c startup.c \
                    describe.c sql_help.h sql_help.c \

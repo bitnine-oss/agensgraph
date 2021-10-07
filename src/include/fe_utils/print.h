@@ -3,7 +3,7 @@
  * Query-result printing support for frontend code
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/fe_utils/print.h
@@ -178,7 +178,6 @@ extern volatile bool cancel_pressed;
 extern const printTextFormat pg_asciiformat;
 extern const printTextFormat pg_asciiformat_old;
 extern printTextFormat pg_utf8format;	/* ideally would be const, but... */
-
 
 extern void disable_sigpipe_trap(void);
 extern void restore_sigpipe_trap(void);

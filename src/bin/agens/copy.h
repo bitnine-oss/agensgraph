@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/copy.h
+ * src/bin/agens/copy.h
  */
 #ifndef COPY_H
 #define COPY_H

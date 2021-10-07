@@ -3,7 +3,7 @@
  *
  *	server-side function support
  *
- *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2018, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/function.c
  */
 
@@ -12,7 +12,7 @@
 #include "pg_upgrade.h"
 
 #include "access/transam.h"
-#include "catalog/pg_language.h"
+#include "catalog/pg_language_d.h"
 
 
 /*
@@ -86,7 +86,7 @@ get_loadable_libraries(void)
 		 * http://archives.postgresql.org/pgsql-hackers/2012-03/msg01101.php
 		 * http://archives.postgresql.org/pgsql-bugs/2012-05/msg00206.php
 		 */
-		if (GET_MAJOR_VERSION(old_cluster.major_version) < 901)
+		if (GET_MAJOR_VERSION(old_cluster.major_version) <= 900)
 		{
 			PGresult   *res;
 
@@ -232,7 +232,7 @@ check_loadable_libraries(void)
 		 * for languages, and does not help with function shared objects, so
 		 * we just do a general fix.
 		 */
-		if (GET_MAJOR_VERSION(old_cluster.major_version) < 901 &&
+		if (GET_MAJOR_VERSION(old_cluster.major_version) <= 900 &&
 			strcmp(lib, "$libdir/plpython") == 0)
 		{
 			lib = "$libdir/plpython2";

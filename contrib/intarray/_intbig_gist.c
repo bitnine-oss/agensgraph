@@ -168,7 +168,7 @@ g_intbig_compress(PG_FUNCTION_ARGS)
 		retval = (GISTENTRY *) palloc(sizeof(GISTENTRY));
 		gistentryinit(*retval, PointerGetDatum(res),
 					  entry->rel, entry->page,
-					  entry->offset, FALSE);
+					  entry->offset, false);
 
 		if (in != DatumGetArrayTypeP(entry->key))
 			pfree(in);
@@ -195,7 +195,7 @@ g_intbig_compress(PG_FUNCTION_ARGS)
 		retval = (GISTENTRY *) palloc(sizeof(GISTENTRY));
 		gistentryinit(*retval, PointerGetDatum(res),
 					  entry->rel, entry->page,
-					  entry->offset, FALSE);
+					  entry->offset, false);
 
 		PG_RETURN_POINTER(retval);
 	}
@@ -591,10 +591,16 @@ g_intbig_consistent(PG_FUNCTION_ARGS)
 				}
 			}
 			else
-				retval = _intbig_overlap((GISTTYPE *) DatumGetPointer(entry->key), query);
+			{
+				/*
+				 * Unfortunately, because empty arrays could be anywhere in
+				 * the index, we must search the whole tree.
+				 */
+				retval = true;
+			}
 			break;
 		default:
-			retval = FALSE;
+			retval = false;
 	}
 	PG_FREE_IF_COPY(query, 1);
 	PG_RETURN_BOOL(retval);

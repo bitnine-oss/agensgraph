@@ -3,7 +3,7 @@
  * nodeFuncs.h
  *		Various general-purpose manipulations of Node trees
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/nodeFuncs.h
@@ -24,6 +24,7 @@
 #define QTW_IGNORE_RANGE_TABLE		0x08	/* skip rangetable entirely */
 #define QTW_EXAMINE_RTES			0x10	/* examine RTEs */
 #define QTW_DONT_COPY_QUERY			0x20	/* do not copy top Query */
+#define QTW_EXAMINE_SORTGROUP		0x80	/* include SortGroupNode lists */
 
 /* callback function for check_functions_in_node */
 typedef bool (*check_function_callback) (Oid func_id, void *context);

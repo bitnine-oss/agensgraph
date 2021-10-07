@@ -3,7 +3,7 @@
  * libpq_fetch.c
  *	  Functions for fetching files from a remote server.
  *
- * Copyright (c) 2013-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2018, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -14,10 +14,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-/* for ntohl/htonl */
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
 #include "pg_rewind.h"
 #include "datapagemap.h"
 #include "fetch.h"
@@ -26,8 +22,9 @@
 #include "logging.h"
 
 #include "libpq-fe.h"
-#include "catalog/catalog.h"
-#include "catalog/pg_type.h"
+#include "catalog/pg_type_d.h"
+#include "fe_utils/connect.h"
+#include "port/pg_bswap.h"
 #include "fe_utils/connect.h"
 
 static PGconn *conn = NULL;
@@ -44,6 +41,7 @@ static PGconn *conn = NULL;
 static void receiveFileChunks(const char *sql);
 static void execute_pagemap(datapagemap_t *pagemap, const char *path);
 static char *run_simple_query(const char *sql);
+static void run_simple_command(const char *sql);
 
 void
 libpqConnect(const char *connstr)
@@ -53,10 +51,14 @@ libpqConnect(const char *connstr)
 
 	conn = PQconnectdb(connstr);
 	if (PQstatus(conn) == CONNECTION_BAD)
-		pg_fatal("could not connect to server: %s",
-				 PQerrorMessage(conn));
+		pg_fatal("%s", PQerrorMessage(conn));
 
 	pg_log(PG_PROGRESS, "connected to server\n");
+
+	/* disable all types of timeouts */
+	run_simple_command("SET statement_timeout = 0");
+	run_simple_command("SET lock_timeout = 0");
+	run_simple_command("SET idle_in_transaction_session_timeout = 0");
 
 	res = PQexec(conn, ALWAYS_SECURE_SEARCH_PATH_SQL);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
@@ -92,11 +94,7 @@ libpqConnect(const char *connstr)
 	 * replication, and replication isn't working for some reason, we don't
 	 * want to get stuck, waiting for it to start working again.
 	 */
-	res = PQexec(conn, "SET synchronous_commit = off");
-	if (PQresultStatus(res) != PGRES_COMMAND_OK)
-		pg_fatal("could not set up connection context: %s",
-				 PQresultErrorMessage(res));
-	PQclear(res);
+	run_simple_command("SET synchronous_commit = off");
 }
 
 /*
@@ -124,6 +122,24 @@ run_simple_query(const char *sql)
 	PQclear(res);
 
 	return result;
+}
+
+/*
+ * Runs a command.
+ * In the event of a failure, exit immediately.
+ */
+static void
+run_simple_command(const char *sql)
+{
+	PGresult   *res;
+
+	res = PQexec(conn, sql);
+
+	if (PQresultStatus(res) != PGRES_COMMAND_OK)
+		pg_fatal("error running query (%s) in source server: %s",
+				 sql, PQresultErrorMessage(res));
+
+	PQclear(res);
 }
 
 /*
@@ -200,13 +216,13 @@ libpqProcessFileList(void)
 	/* Read result to local variables */
 	for (i = 0; i < PQntuples(res); i++)
 	{
-		char	   *path = PQgetvalue(res, i, 0);
-		int64		filesize = atol(PQgetvalue(res, i, 1));
-		bool		isdir = (strcmp(PQgetvalue(res, i, 2), "t") == 0);
-		char	   *link_target = PQgetvalue(res, i, 3);
+		char	   *path;
+		int64		filesize;
+		bool		isdir;
+		char	   *link_target;
 		file_type_t type;
 
-		if (PQgetisnull(res, 0, 1))
+		if (PQgetisnull(res, i, 1))
 		{
 			/*
 			 * The file was removed from the server while the query was
@@ -214,6 +230,11 @@ libpqProcessFileList(void)
 			 */
 			continue;
 		}
+
+		path = PQgetvalue(res, i, 0);
+		filesize = atol(PQgetvalue(res, i, 1));
+		isdir = (strcmp(PQgetvalue(res, i, 2), "t") == 0);
+		link_target = PQgetvalue(res, i, 3);
 
 		if (link_target[0])
 			type = FILE_TYPE_SYMLINK;
@@ -225,28 +246,6 @@ libpqProcessFileList(void)
 		process_source_file(path, type, filesize, link_target);
 	}
 	PQclear(res);
-}
-
-/*
- * Converts an int64 from network byte order to native format.
- */
-static int64
-pg_recvint64(int64 value)
-{
-	union
-	{
-		int64		i64;
-		uint32		i32[2];
-	}			swap;
-	int64		result;
-
-	swap.i64 = value;
-
-	result = (uint32) ntohl(swap.i32[0]);
-	result <<= 32;
-	result |= (uint32) ntohl(swap.i32[1]);
-
-	return result;
 }
 
 /*----
@@ -325,7 +324,7 @@ receiveFileChunks(const char *sql)
 
 		/* Read result set to local variables */
 		memcpy(&chunkoff, PQgetvalue(res, 0, 1), sizeof(int64));
-		chunkoff = pg_recvint64(chunkoff);
+		chunkoff = pg_ntoh64(chunkoff);
 		chunksize = PQgetlength(res, 0, 2);
 
 		filenamelen = PQgetlength(res, 0, 0);
@@ -346,7 +345,7 @@ receiveFileChunks(const char *sql)
 		if (PQgetisnull(res, 0, 2))
 		{
 			pg_log(PG_DEBUG,
-				   "received null value for chunk for file \"%s\", file has been deleted\n",
+			  "received null value for chunk for file \"%s\", file has been deleted\n",
 				   filename);
 			remove_target_file(filename, true);
 			pg_free(filename);
@@ -460,12 +459,7 @@ libpq_executeFileMap(filemap_t *map)
 	 * need to fetch.
 	 */
 	sql = "CREATE TEMPORARY TABLE fetchchunks(path text, begin int8, len int4);";
-	res = PQexec(conn, sql);
-
-	if (PQresultStatus(res) != PGRES_COMMAND_OK)
-		pg_fatal("could not create temporary table: %s",
-				 PQresultErrorMessage(res));
-	PQclear(res);
+	run_simple_command(sql);
 
 	sql = "COPY fetchchunks FROM STDIN";
 	res = PQexec(conn, sql);

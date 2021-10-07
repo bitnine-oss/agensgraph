@@ -181,7 +181,7 @@ BEGIN;
 	CREATE (:dog)-[:likes]->(:ball);
 	RELEASE SAVEPOINT sv1;
 	ROLLBACK TO SAVEPOINT sv2;
-ERROR:  no such savepoint
+ERROR:  savepoint "sv2" does not exist
 COMMIT;
 SELECT * FROM ag_graphmeta_view ORDER BY start, edge, "end";
  graphname | start | edge | end | edgecount 

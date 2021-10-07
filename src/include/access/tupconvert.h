@@ -4,7 +4,7 @@
  *	  Tuple conversion support.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/tupconvert.h
@@ -16,6 +16,7 @@
 
 #include "access/htup.h"
 #include "access/tupdesc.h"
+#include "nodes/bitmapset.h"
 
 
 typedef struct TupleConversionMap
@@ -43,6 +44,7 @@ extern AttrNumber *convert_tuples_by_name_map(TupleDesc indesc,
 						   const char *msg);
 
 extern HeapTuple do_convert_tuple(HeapTuple tuple, TupleConversionMap *map);
+extern Bitmapset *execute_attr_map_cols(Bitmapset *inbitmap, TupleConversionMap *map);
 
 extern void free_conversion_map(TupleConversionMap *map);
 

@@ -5,7 +5,7 @@
  * Assorted utility functions to work on files.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/common/file_utils.c
@@ -299,7 +299,7 @@ fsync_fname(const char *fname, bool isdir, const char *progname)
 	 * Some OSes don't allow us to fsync directories at all, so we can ignore
 	 * those errors. Anything else needs to be reported.
 	 */
-	if (returncode != 0 && !(isdir && errno == EBADF))
+	if (returncode != 0 && !(isdir && (errno == EBADF || errno == EINVAL)))
 	{
 		fprintf(stderr, _("%s: could not fsync file \"%s\": %s\n"),
 				progname, fname, strerror(errno));

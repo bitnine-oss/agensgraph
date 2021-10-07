@@ -3,8 +3,7 @@
  * nodeFuncs.c
  *		Various general-purpose manipulations of Node trees
  *
- * Portions Copyright (c) 2018, Bitnine Inc.
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -31,7 +30,7 @@ static int	leftmostLoc(int loc1, int loc2);
 static bool fix_opfuncids_walker(Node *node, void *context);
 static bool planstate_walk_subplans(List *plans, bool (*walker) (),
 									void *context);
-static bool planstate_walk_members(List *plans, PlanState **planstates,
+static bool planstate_walk_members(PlanState **planstates, int nplans,
 					   bool (*walker) (), void *context);
 
 
@@ -694,7 +693,7 @@ strip_implicit_coercions(Node *node)
  *	  Test whether an expression returns a set result.
  *
  * Because we use expression_tree_walker(), this can also be applied to
- * whole targetlists; it'll produce TRUE if any one of the tlist items
+ * whole targetlists; it'll produce true if any one of the tlist items
  * returns a set.
  */
 bool
@@ -1727,9 +1726,9 @@ set_sa_opfuncid(ScalarArrayOpExpr *opexpr)
  *	check_functions_in_node -
  *	  apply checker() to each function OID contained in given expression node
  *
- * Returns TRUE if the checker() function does; for nodes representing more
- * than one function call, returns TRUE if the checker() function does so
- * for any of those functions.  Returns FALSE if node does not invoke any
+ * Returns true if the checker() function does; for nodes representing more
+ * than one function call, returns true if the checker() function does so
+ * for any of those functions.  Returns false if node does not invoke any
  * SQL-visible function.  Caller must not pass node == NULL.
  *
  * This function examines only the given node; it does not recurse into any
@@ -1809,15 +1808,6 @@ check_functions_in_node(Node *node, check_function_callback checker,
 				getTypeOutputInfo(exprType((Node *) expr->arg),
 								  &iofunc, &typisvarlena);
 				if (checker(iofunc, context))
-					return true;
-			}
-			break;
-		case T_ArrayCoerceExpr:
-			{
-				ArrayCoerceExpr *expr = (ArrayCoerceExpr *) node;
-
-				if (OidIsValid(expr->elemfuncid) &&
-					checker(expr->elemfuncid, context))
 					return true;
 			}
 			break;
@@ -2118,7 +2108,15 @@ expression_tree_walker(Node *node,
 		case T_CoerceViaIO:
 			return walker(((CoerceViaIO *) node)->arg, context);
 		case T_ArrayCoerceExpr:
-			return walker(((ArrayCoerceExpr *) node)->arg, context);
+			{
+				ArrayCoerceExpr *acoerce = (ArrayCoerceExpr *) node;
+
+				if (walker(acoerce->arg, context))
+					return true;
+				if (walker(acoerce->elemexpr, context))
+					return true;
+			}
+			break;
 		case T_ConvertRowtypeExpr:
 			return walker(((ConvertRowtypeExpr *) node)->arg, context);
 		case T_CollateExpr:
@@ -2241,6 +2239,17 @@ expression_tree_walker(Node *node,
 				if (walker(onconflict->exclRelTlist, context))
 					return true;
 			}
+			break;
+		case T_PartitionPruneStepOp:
+			{
+				PartitionPruneStepOp *opstep = (PartitionPruneStepOp *) node;
+
+				if (walker((Node *) opstep->exprs, context))
+					return true;
+			}
+			break;
+		case T_PartitionPruneStepCombine:
+			/* no expression subnodes */
 			break;
 		case T_JoinExpr:
 			{
@@ -2414,6 +2423,13 @@ query_tree_walker(Query *query,
 {
 	Assert(query != NULL && IsA(query, Query));
 
+	/*
+	 * We don't walk any utilityStmt here. However, we can't easily assert
+	 * that it is absent, since there are at least two code paths by which
+	 * action statements from CREATE RULE end up here, and NOTIFY is allowed
+	 * in a rule action.
+	 */
+
 	if (walker((Node *) query->targetList, context))
 		return true;
 	if (walker((Node *) query->withCheckOptions, context))
@@ -2454,6 +2470,54 @@ query_tree_walker(Query *query,
 		return true;
 	if (walker(query->shortestpathTarget, context))
 		return true;
+
+	/*
+	 * Most callers aren't interested in SortGroupClause nodes since those
+	 * don't contain actual expressions. However they do contain OIDs which
+	 * may be needed by dependency walkers etc.
+	 */
+	if ((flags & QTW_EXAMINE_SORTGROUP))
+	{
+		if (walker((Node *) query->groupClause, context))
+			return true;
+		if (walker((Node *) query->windowClause, context))
+			return true;
+		if (walker((Node *) query->sortClause, context))
+			return true;
+		if (walker((Node *) query->distinctClause, context))
+			return true;
+	}
+	else
+	{
+		/*
+		 * But we need to walk the expressions under WindowClause nodes even
+		 * if we're not interested in SortGroupClause nodes.
+		 */
+		ListCell   *lc;
+
+		foreach(lc, query->windowClause)
+		{
+			WindowClause *wc = lfirst_node(WindowClause, lc);
+
+			if (walker(wc->startOffset, context))
+				return true;
+			if (walker(wc->endOffset, context))
+				return true;
+		}
+	}
+
+	/*
+	 * groupingSets and rowMarks are not walked:
+	 *
+	 * groupingSets contain only ressortgrouprefs (integers) which are
+	 * meaningless without the corresponding groupClause or tlist.
+	 * Accordingly, any walker that needs to care about them needs to handle
+	 * them itself in its Query processing.
+	 *
+	 * rowMarks is not walked because it contains only rangetable indexes (and
+	 * flags etc.) and therefore should be handled at Query level similarly.
+	 */
+
 	if (!(flags & QTW_IGNORE_CTE_SUBQUERIES))
 	{
 		if (walker((Node *) query->cteList, context))
@@ -2891,6 +2955,7 @@ expression_tree_mutator(Node *node,
 
 				FLATCOPY(newnode, acoerce, ArrayCoerceExpr);
 				MUTATE(newnode->arg, acoerce->arg, Expr *);
+				MUTATE(newnode->elemexpr, acoerce->elemexpr, Expr *);
 				return (Node *) newnode;
 			}
 			break;
@@ -3118,6 +3183,20 @@ expression_tree_mutator(Node *node,
 				return (Node *) newnode;
 			}
 			break;
+		case T_PartitionPruneStepOp:
+			{
+				PartitionPruneStepOp *opstep = (PartitionPruneStepOp *) node;
+				PartitionPruneStepOp *newnode;
+
+				FLATCOPY(newnode, opstep, PartitionPruneStepOp);
+				MUTATE(newnode->exprs, opstep->exprs, List *);
+
+				return (Node *) newnode;
+			}
+			break;
+		case T_PartitionPruneStepCombine:
+			/* no expression sub-nodes */
+			return (Node *) copyObject(node);
 		case T_JoinExpr:
 			{
 				JoinExpr   *join = (JoinExpr *) node;
@@ -3359,6 +3438,56 @@ query_tree_mutator(Query *query,
 	MUTATE(query->shortestpathCtidRight, query->shortestpathCtidRight, Node *);
 	MUTATE(query->shortestpathSource, query->shortestpathSource, Node *);
 	MUTATE(query->shortestpathTarget, query->shortestpathTarget, Node *);
+
+	/*
+	 * Most callers aren't interested in SortGroupClause nodes since those
+	 * don't contain actual expressions. However they do contain OIDs, which
+	 * may be of interest to some mutators.
+	 */
+
+	if ((flags & QTW_EXAMINE_SORTGROUP))
+	{
+		MUTATE(query->groupClause, query->groupClause, List *);
+		MUTATE(query->windowClause, query->windowClause, List *);
+		MUTATE(query->sortClause, query->sortClause, List *);
+		MUTATE(query->distinctClause, query->distinctClause, List *);
+	}
+	else
+	{
+		/*
+		 * But we need to mutate the expressions under WindowClause nodes even
+		 * if we're not interested in SortGroupClause nodes.
+		 */
+		List	   *resultlist;
+		ListCell   *temp;
+
+		resultlist = NIL;
+		foreach(temp, query->windowClause)
+		{
+			WindowClause *wc = lfirst_node(WindowClause, temp);
+			WindowClause *newnode;
+
+			FLATCOPY(newnode, wc, WindowClause);
+			MUTATE(newnode->startOffset, wc->startOffset, Node *);
+			MUTATE(newnode->endOffset, wc->endOffset, Node *);
+
+			resultlist = lappend(resultlist, (Node *) newnode);
+		}
+		query->windowClause = resultlist;
+	}
+
+	/*
+	 * groupingSets and rowMarks are not mutated:
+	 *
+	 * groupingSets contain only ressortgroup refs (integers) which are
+	 * meaningless without the groupClause or tlist. Accordingly, any mutator
+	 * that needs to care about them needs to handle them itself in its Query
+	 * processing.
+	 *
+	 * rowMarks contains only rangetable indexes (and flags etc.) and
+	 * therefore should be handled at Query level similarly.
+	 */
+
 	if (!(flags & QTW_IGNORE_CTE_SUBQUERIES))
 		MUTATE(query->cteList, query->cteList, List *);
 	else						/* else copy CTE list as-is */
@@ -4007,6 +4136,9 @@ planstate_tree_walker(PlanState *planstate,
 	Plan	   *plan = planstate->plan;
 	ListCell   *lc;
 
+	/* Guard against stack overflow due to overly complex plan trees */
+	check_stack_depth();
+
 	/* initPlan-s */
 	if (planstate_walk_subplans(planstate->initPlan, walker, context))
 		return true;
@@ -4029,32 +4161,32 @@ planstate_tree_walker(PlanState *planstate,
 	switch (nodeTag(plan))
 	{
 		case T_ModifyTable:
-			if (planstate_walk_members(((ModifyTable *) plan)->plans,
-									   ((ModifyTableState *) planstate)->mt_plans,
+			if (planstate_walk_members(((ModifyTableState *) planstate)->mt_plans,
+									   ((ModifyTableState *) planstate)->mt_nplans,
 									   walker, context))
 				return true;
 			break;
 		case T_Append:
-			if (planstate_walk_members(((Append *) plan)->appendplans,
-									   ((AppendState *) planstate)->appendplans,
+			if (planstate_walk_members(((AppendState *) planstate)->appendplans,
+									   ((AppendState *) planstate)->as_nplans,
 									   walker, context))
 				return true;
 			break;
 		case T_MergeAppend:
-			if (planstate_walk_members(((MergeAppend *) plan)->mergeplans,
-									   ((MergeAppendState *) planstate)->mergeplans,
+			if (planstate_walk_members(((MergeAppendState *) planstate)->mergeplans,
+									   ((MergeAppendState *) planstate)->ms_nplans,
 									   walker, context))
 				return true;
 			break;
 		case T_BitmapAnd:
-			if (planstate_walk_members(((BitmapAnd *) plan)->bitmapplans,
-									   ((BitmapAndState *) planstate)->bitmapplans,
+			if (planstate_walk_members(((BitmapAndState *) planstate)->bitmapplans,
+									   ((BitmapAndState *) planstate)->nplans,
 									   walker, context))
 				return true;
 			break;
 		case T_BitmapOr:
-			if (planstate_walk_members(((BitmapOr *) plan)->bitmapplans,
-									   ((BitmapOrState *) planstate)->bitmapplans,
+			if (planstate_walk_members(((BitmapOrState *) planstate)->bitmapplans,
+									   ((BitmapOrState *) planstate)->nplans,
 									   walker, context))
 				return true;
 			break;
@@ -4104,15 +4236,11 @@ planstate_walk_subplans(List *plans,
 /*
  * Walk the constituent plans of a ModifyTable, Append, MergeAppend,
  * BitmapAnd, or BitmapOr node.
- *
- * Note: we don't actually need to examine the Plan list members, but
- * we need the list in order to determine the length of the PlanState array.
  */
 static bool
-planstate_walk_members(List *plans, PlanState **planstates,
+planstate_walk_members(PlanState **planstates, int nplans,
 					   bool (*walker) (), void *context)
 {
-	int			nplans = list_length(plans);
 	int			j;
 
 	for (j = 0; j < nplans; j++)

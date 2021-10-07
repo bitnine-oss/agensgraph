@@ -394,17 +394,17 @@ select q2, sql_if(q2 > 0, q2, q2 + 1) from int8_tbl;
 
 -- another sort of polymorphic aggregate
 
-CREATE AGGREGATE array_cat_accum (anyarray)
+CREATE AGGREGATE array_larger_accum (anyarray)
 (
-    sfunc = array_cat,
+    sfunc = array_larger,
     stype = anyarray,
     initcond = '{}'
 );
 
-SELECT array_cat_accum(i)
+SELECT array_larger_accum(i)
 FROM (VALUES (ARRAY[1,2]), (ARRAY[3,4])) as t(i);
 
-SELECT array_cat_accum(i)
+SELECT array_larger_accum(i)
 FROM (VALUES (ARRAY[row(1,2),row(3,4)]), (ARRAY[row(5,6),row(7,8)])) as t(i);
 
 -- another kind of polymorphic aggregate
@@ -445,6 +445,9 @@ create aggregate build_group(int8, integer) (
 
 -- check proper resolution of data types for polymorphic transfn/finalfn
 
+create function first_el_transfn(anyarray, anyelement) returns anyarray as
+'select $1 || $2' language sql immutable;
+
 create function first_el(anyarray) returns anyelement as
 'select $1[1]' language sql strict immutable;
 
@@ -455,7 +458,7 @@ create aggregate first_el_agg_f8(float8) (
 );
 
 create aggregate first_el_agg_any(anyelement) (
-  SFUNC = array_append,
+  SFUNC = first_el_transfn,
   STYPE = anyarray,
   FINALFUNC = first_el
 );
@@ -734,18 +737,18 @@ $$ language sql;
 drop function dfunc(varchar, numeric);
 
 --fail, named parameters are not unique
-create function testfoo(a int, a int) returns int as $$ select 1;$$ language sql;
-create function testfoo(int, out a int, out a int) returns int as $$ select 1;$$ language sql;
-create function testfoo(out a int, inout a int) returns int as $$ select 1;$$ language sql;
-create function testfoo(a int, inout a int) returns int as $$ select 1;$$ language sql;
+create function testpolym(a int, a int) returns int as $$ select 1;$$ language sql;
+create function testpolym(int, out a int, out a int) returns int as $$ select 1;$$ language sql;
+create function testpolym(out a int, inout a int) returns int as $$ select 1;$$ language sql;
+create function testpolym(a int, inout a int) returns int as $$ select 1;$$ language sql;
 
 -- valid
-create function testfoo(a int, out a int) returns int as $$ select $1;$$ language sql;
-select testfoo(37);
-drop function testfoo(int);
-create function testfoo(a int) returns table(a int) as $$ select $1;$$ language sql;
-select * from testfoo(37);
-drop function testfoo(int);
+create function testpolym(a int, out a int) returns int as $$ select $1;$$ language sql;
+select testpolym(37);
+drop function testpolym(int);
+create function testpolym(a int) returns table(a int) as $$ select $1;$$ language sql;
+select * from testpolym(37);
+drop function testpolym(int);
 
 -- test polymorphic params and defaults
 create function dfunc(a anyelement, b anyelement = null, flag bool = true)
@@ -785,6 +788,21 @@ select dfunc('a'::text, 'b', flag => false); -- mixed notation
 select dfunc('a'::text, 'b', true); -- full positional notation
 select dfunc('a'::text, 'b', flag => true); -- mixed notation
 
+-- this tests lexer edge cases around =>
+select dfunc(a =>-1);
+select dfunc(a =>+1);
+select dfunc(a =>/**/1);
+select dfunc(a =>--comment to be removed by psql
+  1);
+-- need DO to protect the -- from psql
+do $$
+  declare r integer;
+  begin
+    select dfunc(a=>-- comment
+      1) into r;
+    raise info 'r = %', r;
+  end;
+$$;
 
 -- check reverse-listing of named-arg calls
 CREATE VIEW dfview AS

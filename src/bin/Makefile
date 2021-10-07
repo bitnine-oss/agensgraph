@@ -2,8 +2,7 @@
 #
 # Makefile for src/bin (client programs)
 #
-# Portions Copyright (c) 2018, Bitnine Inc.
-# Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/Makefile
@@ -15,8 +14,6 @@ top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 
 SUBDIRS = \
-	ag_ctl \
-	agens \
 	initdb \
 	pg_archivecleanup \
 	pg_basebackup \
@@ -29,10 +26,12 @@ SUBDIRS = \
 	pg_test_fsync \
 	pg_test_timing \
 	pg_upgrade \
+	pg_verify_checksums \
 	pg_waldump \
 	pgbench \
 	psql \
-	scripts
+	scripts \
+	agens
 
 ifeq ($(PORTNAME), win32)
 SUBDIRS += pgevent

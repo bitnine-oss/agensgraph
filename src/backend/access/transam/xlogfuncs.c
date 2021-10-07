@@ -7,7 +7,7 @@
  * This file contains WAL control and information functions.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xlogfuncs.c
@@ -20,7 +20,6 @@
 #include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "access/xlogutils.h"
-#include "catalog/catalog.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "miscadmin.h"
@@ -44,18 +43,6 @@ static StringInfo label_file;
 static StringInfo tblspc_map_file;
 
 /*
- * Called when the backend exits with a running non-exclusive base backup,
- * to clean up state.
- */
-static void
-nonexclusive_base_backup_cleanup(int code, Datum arg)
-{
-	do_pg_abort_backup();
-	ereport(WARNING,
-			(errmsg("aborting backup due to backend exiting before pg_stop_backup was called")));
-}
-
-/*
  * pg_start_backup: set up for taking an on-line backup dump
  *
  * Essentially what this does is to create a backup label file in $PGDATA,
@@ -75,7 +62,6 @@ pg_start_backup(PG_FUNCTION_ARGS)
 	bool		exclusive = PG_GETARG_BOOL(2);
 	char	   *backupidstr;
 	XLogRecPtr	startpoint;
-	DIR		   *dir;
 	SessionBackupState status = get_backup_status();
 
 	backupidstr = text_to_cstring(backupid);
@@ -85,16 +71,10 @@ pg_start_backup(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("a backup is already in progress in this session")));
 
-	/* Make sure we can open the directory with tablespaces in it */
-	dir = AllocateDir("pg_tblspc");
-	if (!dir)
-		ereport(ERROR,
-				(errmsg("could not open directory \"%s\": %m", "pg_tblspc")));
-
 	if (exclusive)
 	{
 		startpoint = do_pg_start_backup(backupidstr, fast, NULL, NULL,
-										dir, NULL, NULL, false, true);
+										NULL, NULL, false, true);
 	}
 	else
 	{
@@ -109,13 +89,11 @@ pg_start_backup(PG_FUNCTION_ARGS)
 		tblspc_map_file = makeStringInfo();
 		MemoryContextSwitchTo(oldcontext);
 
+		register_persistent_abort_backup_handler();
+
 		startpoint = do_pg_start_backup(backupidstr, fast, NULL, label_file,
-										dir, NULL, tblspc_map_file, false, true);
-
-		before_shmem_exit(nonexclusive_base_backup_cleanup, (Datum) 0);
+										NULL, tblspc_map_file, false, true);
 	}
-
-	FreeDir(dir);
 
 	PG_RETURN_LSN(startpoint);
 }
@@ -256,7 +234,6 @@ pg_stop_backup_v2(PG_FUNCTION_ARGS)
 		 * and tablespace map so they can be written to disk by the caller.
 		 */
 		stoppoint = do_pg_stop_backup(label_file->data, waitforarchive, NULL);
-		cancel_before_shmem_exit(nonexclusive_base_backup_cleanup, (Datum) 0);
 
 		values[1] = CStringGetTextDatum(label_file->data);
 		values[2] = CStringGetTextDatum(tblspc_map_file->data);
@@ -489,8 +466,8 @@ pg_walfile_name_offset(PG_FUNCTION_ARGS)
 	/*
 	 * xlogfilename
 	 */
-	XLByteToPrevSeg(locationpoint, xlogsegno);
-	XLogFileName(xlogfilename, ThisTimeLineID, xlogsegno);
+	XLByteToPrevSeg(locationpoint, xlogsegno, wal_segment_size);
+	XLogFileName(xlogfilename, ThisTimeLineID, xlogsegno, wal_segment_size);
 
 	values[0] = CStringGetTextDatum(xlogfilename);
 	isnull[0] = false;
@@ -498,7 +475,7 @@ pg_walfile_name_offset(PG_FUNCTION_ARGS)
 	/*
 	 * offset
 	 */
-	xrecoff = locationpoint % XLogSegSize;
+	xrecoff = XLogSegmentOffset(locationpoint, wal_segment_size);
 
 	values[1] = UInt32GetDatum(xrecoff);
 	isnull[1] = false;
@@ -530,8 +507,8 @@ pg_walfile_name(PG_FUNCTION_ARGS)
 				 errmsg("recovery is in progress"),
 				 errhint("pg_walfile_name() cannot be executed during recovery.")));
 
-	XLByteToPrevSeg(locationpoint, xlogsegno);
-	XLogFileName(xlogfilename, ThisTimeLineID, xlogsegno);
+	XLByteToPrevSeg(locationpoint, xlogsegno, wal_segment_size);
+	XLogFileName(xlogfilename, ThisTimeLineID, xlogsegno, wal_segment_size);
 
 	PG_RETURN_TEXT_P(cstring_to_text(xlogfilename));
 }

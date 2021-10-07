@@ -4,7 +4,7 @@
  *	  Routines to support inter-object dependencies.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -30,11 +30,8 @@
 #include "catalog/pg_authid.h"
 #include "catalog/pg_cast.h"
 #include "catalog/pg_collation.h"
-#include "catalog/pg_collation_fn.h"
 #include "catalog/pg_constraint.h"
-#include "catalog/pg_constraint_fn.h"
 #include "catalog/pg_conversion.h"
-#include "catalog/pg_conversion_fn.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_default_acl.h"
 #include "catalog/pg_depend.h"
@@ -197,8 +194,6 @@ static void reportDependentObjects(const ObjectAddresses *targetObjects,
 static void deleteOneObject(const ObjectAddress *object,
 				Relation *depRel, int32 flags);
 static void doDeletion(const ObjectAddress *object, int flags);
-static void AcquireDeletionLock(const ObjectAddress *object, int flags);
-static void ReleaseDeletionLock(const ObjectAddress *object);
 static bool find_expr_references_walker(Node *node,
 							find_expr_references_context *context);
 static void eliminate_duplicate_dependencies(ObjectAddresses *addrs);
@@ -532,6 +527,7 @@ findDependentObjects(const ObjectAddress *object,
 				ObjectIdGetDatum(object->objectId));
 	if (object->objectSubId != 0)
 	{
+		/* Consider only dependencies of this sub-object */
 		ScanKeyInit(&key[2],
 					Anum_pg_depend_objsubid,
 					BTEqualStrategyNumber, F_INT4EQ,
@@ -539,7 +535,10 @@ findDependentObjects(const ObjectAddress *object,
 		nkeys = 3;
 	}
 	else
+	{
+		/* Consider dependencies of this object and any sub-objects it has */
 		nkeys = 2;
+	}
 
 	scan = systable_beginscan(*depRel, DependDependerIndexId, true,
 							  NULL, nkeys, key);
@@ -551,6 +550,18 @@ findDependentObjects(const ObjectAddress *object,
 		otherObject.classId = foundDep->refclassid;
 		otherObject.objectId = foundDep->refobjid;
 		otherObject.objectSubId = foundDep->refobjsubid;
+
+		/*
+		 * When scanning dependencies of a whole object, we may find rows
+		 * linking sub-objects of the object to the object itself.  (Normally,
+		 * such a dependency is implicit, but we must make explicit ones in
+		 * some cases involving partitioning.)  We must ignore such rows to
+		 * avoid infinite recursion.
+		 */
+		if (otherObject.classId == object->classId &&
+			otherObject.objectId == object->objectId &&
+			object->objectSubId == 0)
+			continue;
 
 		switch (foundDep->deptype)
 		{
@@ -588,6 +599,7 @@ findDependentObjects(const ObjectAddress *object,
 				/* FALL THRU */
 
 			case DEPENDENCY_INTERNAL:
+			case DEPENDENCY_INTERNAL_AUTO:
 
 				/*
 				 * This object is part of the internal implementation of
@@ -639,6 +651,14 @@ findDependentObjects(const ObjectAddress *object,
 				 * transform this deletion request into a delete of this
 				 * owning object.
 				 *
+				 * For INTERNAL_AUTO dependencies, we don't enforce this; in
+				 * other words, we don't follow the links back to the owning
+				 * object.
+				 */
+				if (foundDep->deptype == DEPENDENCY_INTERNAL_AUTO)
+					break;
+
+				/*
 				 * First, release caller's lock on this object and get
 				 * deletion lock on the owning object.  (We must release
 				 * caller's lock to avoid deadlock against a concurrent
@@ -681,6 +701,7 @@ findDependentObjects(const ObjectAddress *object,
 				/* And we're done here. */
 				systable_endscan(scan);
 				return;
+
 			case DEPENDENCY_PIN:
 
 				/*
@@ -739,6 +760,16 @@ findDependentObjects(const ObjectAddress *object,
 		otherObject.objectSubId = foundDep->objsubid;
 
 		/*
+		 * If what we found is a sub-object of the current object, just ignore
+		 * it.  (Normally, such a dependency is implicit, but we must make
+		 * explicit ones in some cases involving partitioning.)
+		 */
+		if (otherObject.classId == object->classId &&
+			otherObject.objectId == object->objectId &&
+			object->objectSubId == 0)
+			continue;
+
+		/*
 		 * Must lock the dependent object before recursing to it.
 		 */
 		AcquireDeletionLock(&otherObject, 0);
@@ -768,6 +799,7 @@ findDependentObjects(const ObjectAddress *object,
 			case DEPENDENCY_AUTO_EXTENSION:
 				subflags = DEPFLAG_AUTO;
 				break;
+			case DEPENDENCY_INTERNAL_AUTO:
 			case DEPENDENCY_INTERNAL:
 				subflags = DEPFLAG_INTERNAL;
 				break;
@@ -1115,7 +1147,8 @@ doDeletion(const ObjectAddress *object, int flags)
 			{
 				char		relKind = get_rel_relkind(object->objectId);
 
-				if (relKind == RELKIND_INDEX)
+				if (relKind == RELKIND_INDEX ||
+					relKind == RELKIND_PARTITIONED_INDEX)
 				{
 					bool		concurrent = ((flags & PERFORM_DELETION_CONCURRENTLY) != 0);
 
@@ -1286,7 +1319,6 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_SUBSCRIPTION:
 			elog(ERROR, "global objects cannot be deleted by doDeletion");
 			break;
-
 		case OCLASS_GRAPH:
 			RemoveGraphById(object->objectId);
 			break;
@@ -1305,11 +1337,14 @@ doDeletion(const ObjectAddress *object, int flags)
 /*
  * AcquireDeletionLock - acquire a suitable lock for deleting an object
  *
+ * Accepts the same flags as performDeletion (though currently only
+ * PERFORM_DELETION_CONCURRENTLY does anything).
+ *
  * We use LockRelation for relations, LockDatabaseObject for everything
- * else.  Note that dependency.c is not concerned with deleting any kind of
- * shared-across-databases object, so we have no need for LockSharedObject.
+ * else.  Shared-across-databases objects are not currently supported
+ * because no caller cares, but could be modified to use LockSharedObject.
  */
-static void
+void
 AcquireDeletionLock(const ObjectAddress *object, int flags)
 {
 	if (object->classId == RelationRelationId)
@@ -1335,8 +1370,10 @@ AcquireDeletionLock(const ObjectAddress *object, int flags)
 
 /*
  * ReleaseDeletionLock - release an object deletion lock
+ *
+ * Companion to AcquireDeletionLock.
  */
-static void
+void
 ReleaseDeletionLock(const ObjectAddress *object)
 {
 	if (object->classId == RelationRelationId)
@@ -1393,8 +1430,10 @@ recordDependencyOnExpr(const ObjectAddress *depender,
  * As above, but only one relation is expected to be referenced (with
  * varno = 1 and varlevelsup = 0).  Pass the relation OID instead of a
  * range table.  An additional frammish is that dependencies on that
- * relation (or its component columns) will be marked with 'self_behavior',
- * whereas 'behavior' is used for everything else.
+ * relation's component columns will be marked with 'self_behavior',
+ * whereas 'behavior' is used for everything else; also, if 'reverse_self'
+ * is true, those dependencies are reversed so that the columns are made
+ * to depend on the table not vice versa.
  *
  * NOTE: the caller should ensure that a whole-table dependency on the
  * specified relation is created separately, if one is needed.  In particular,
@@ -1407,7 +1446,7 @@ recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 								Node *expr, Oid relId,
 								DependencyType behavior,
 								DependencyType self_behavior,
-								bool ignore_self)
+								bool reverse_self)
 {
 	find_expr_references_context context;
 	RangeTblEntry rte;
@@ -1430,7 +1469,8 @@ recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 	eliminate_duplicate_dependencies(context.addrs);
 
 	/* Separate self-dependencies if necessary */
-	if (behavior != self_behavior && context.addrs->numrefs > 0)
+	if ((behavior != self_behavior || reverse_self) &&
+		context.addrs->numrefs > 0)
 	{
 		ObjectAddresses *self_addrs;
 		ObjectAddress *outobj;
@@ -1461,11 +1501,23 @@ recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 		}
 		context.addrs->numrefs = outrefs;
 
-		/* Record the self-dependencies */
-		if (!ignore_self)
+		/* Record the self-dependencies with the appropriate direction */
+		if (!reverse_self)
 			recordMultipleDependencies(depender,
 									   self_addrs->refs, self_addrs->numrefs,
 									   self_behavior);
+		else
+		{
+			/* Can't use recordMultipleDependencies, so do it the hard way */
+			int			selfref;
+
+			for (selfref = 0; selfref < self_addrs->numrefs; selfref++)
+			{
+				ObjectAddress *thisobj = self_addrs->refs + selfref;
+
+				recordDependencyOn(thisobj, depender, self_behavior);
+			}
+		}
 
 		free_object_addresses(self_addrs);
 	}
@@ -1730,7 +1782,7 @@ find_expr_references_walker(Node *node,
 	else if (IsA(node, FieldSelect))
 	{
 		FieldSelect *fselect = (FieldSelect *) node;
-		Oid			argtype = exprType((Node *) fselect->arg);
+		Oid			argtype = getBaseType(exprType((Node *) fselect->arg));
 		Oid			reltype = get_typ_typrelid(argtype);
 
 		/*
@@ -1802,11 +1854,14 @@ find_expr_references_walker(Node *node,
 	{
 		ArrayCoerceExpr *acoerce = (ArrayCoerceExpr *) node;
 
-		if (OidIsValid(acoerce->elemfuncid))
-			add_object_address(OCLASS_PROC, acoerce->elemfuncid, 0,
-							   context->addrs);
+		/* as above, depend on type */
 		add_object_address(OCLASS_TYPE, acoerce->resulttype, 0,
 						   context->addrs);
+		/* the collation might not be referenced anywhere else, either */
+		if (OidIsValid(acoerce->resultcollid) &&
+			acoerce->resultcollid != DEFAULT_COLLATION_OID)
+			add_object_address(OCLASS_COLLATION, acoerce->resultcollid, 0,
+							   context->addrs);
 		/* fall through to examine arguments */
 	}
 	else if (IsA(node, ConvertRowtypeExpr))
@@ -1881,6 +1936,22 @@ find_expr_references_walker(Node *node,
 			add_object_address(OCLASS_OPERATOR, sgc->sortop, 0,
 							   context->addrs);
 		return false;
+	}
+	else if (IsA(node, WindowClause))
+	{
+		WindowClause *wc = (WindowClause *) node;
+
+		if (OidIsValid(wc->startInRangeFunc))
+			add_object_address(OCLASS_PROC, wc->startInRangeFunc, 0,
+							   context->addrs);
+		if (OidIsValid(wc->endInRangeFunc))
+			add_object_address(OCLASS_PROC, wc->endInRangeFunc, 0,
+							   context->addrs);
+		if (OidIsValid(wc->inRangeColl) &&
+			wc->inRangeColl != DEFAULT_COLLATION_OID)
+			add_object_address(OCLASS_COLLATION, wc->inRangeColl, 0,
+							   context->addrs);
+		/* fall through to examine substructure */
 	}
 	else if (IsA(node, Query))
 	{
@@ -1958,18 +2029,13 @@ find_expr_references_walker(Node *node,
 							   context->addrs);
 		}
 
-		/* query_tree_walker ignores ORDER BY etc, but we need those opers */
-		find_expr_references_walker((Node *) query->sortClause, context);
-		find_expr_references_walker((Node *) query->groupClause, context);
-		find_expr_references_walker((Node *) query->windowClause, context);
-		find_expr_references_walker((Node *) query->distinctClause, context);
-
 		/* Examine substructure of query */
 		context->rtables = lcons(query->rtable, context->rtables);
 		result = query_tree_walker(query,
 								   find_expr_references_walker,
 								   (void *) context,
-								   QTW_IGNORE_JOINALIASES);
+								   QTW_IGNORE_JOINALIASES |
+								   QTW_EXAMINE_SORTGROUP);
 		context->rtables = list_delete_first(context->rtables);
 		return result;
 	}
@@ -1997,6 +2063,28 @@ find_expr_references_walker(Node *node,
 							   context->addrs);
 		}
 		foreach(ct, rtfunc->funccolcollations)
+		{
+			Oid			collid = lfirst_oid(ct);
+
+			if (OidIsValid(collid) && collid != DEFAULT_COLLATION_OID)
+				add_object_address(OCLASS_COLLATION, collid, 0,
+								   context->addrs);
+		}
+	}
+	else if (IsA(node, TableFunc))
+	{
+		TableFunc  *tf = (TableFunc *) node;
+		ListCell   *ct;
+
+		/*
+		 * Add refs for the datatypes and collations used in the TableFunc.
+		 */
+		foreach(ct, tf->coltypes)
+		{
+			add_object_address(OCLASS_TYPE, lfirst_oid(ct), 0,
+							   context->addrs);
+		}
+		foreach(ct, tf->colcollations)
 		{
 			Oid			collid = lfirst_oid(ct);
 

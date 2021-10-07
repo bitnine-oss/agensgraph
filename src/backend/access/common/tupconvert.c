@@ -9,7 +9,7 @@
  * executor's "junkfilter" routines, but these functions work on bare
  * HeapTuples rather than TupleTableSlots.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -21,6 +21,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/sysattr.h"
 #include "access/tupconvert.h"
 #include "utils/builtins.h"
 
@@ -84,7 +85,7 @@ convert_tuples_by_position(TupleDesc indesc,
 	same = true;
 	for (i = 0; i < n; i++)
 	{
-		Form_pg_attribute att = outdesc->attrs[i];
+		Form_pg_attribute att = TupleDescAttr(outdesc, i);
 		Oid			atttypid;
 		int32		atttypmod;
 
@@ -95,7 +96,7 @@ convert_tuples_by_position(TupleDesc indesc,
 		atttypmod = att->atttypmod;
 		for (; j < indesc->natts; j++)
 		{
-			att = indesc->attrs[j];
+			att = TupleDescAttr(indesc, j);
 			if (att->attisdropped)
 				continue;
 			nincols++;
@@ -122,7 +123,7 @@ convert_tuples_by_position(TupleDesc indesc,
 	/* Check for unused input columns */
 	for (; j < indesc->natts; j++)
 	{
-		if (indesc->attrs[j]->attisdropped)
+		if (TupleDescAttr(indesc, j)->attisdropped)
 			continue;
 		nincols++;
 		same = false;			/* we'll complain below */
@@ -149,6 +150,19 @@ convert_tuples_by_position(TupleDesc indesc,
 	{
 		for (i = 0; i < n; i++)
 		{
+			Form_pg_attribute inatt = TupleDescAttr(indesc, i);
+			Form_pg_attribute outatt = TupleDescAttr(outdesc, i);
+
+			/*
+			 * If the input column has a missing attribute, we need a
+			 * conversion.
+			 */
+			if (inatt->atthasmissing)
+			{
+				same = false;
+				break;
+			}
+
 			if (attrMap[i] == (i + 1))
 				continue;
 
@@ -158,9 +172,9 @@ convert_tuples_by_position(TupleDesc indesc,
 			 * must agree.
 			 */
 			if (attrMap[i] == 0 &&
-				indesc->attrs[i]->attisdropped &&
-				indesc->attrs[i]->attlen == outdesc->attrs[i]->attlen &&
-				indesc->attrs[i]->attalign == outdesc->attrs[i]->attalign)
+				inatt->attisdropped &&
+				inatt->attlen == outatt->attlen &&
+				inatt->attalign == outatt->attalign)
 				continue;
 
 			same = false;
@@ -228,6 +242,19 @@ convert_tuples_by_name(TupleDesc indesc,
 		same = true;
 		for (i = 0; i < n; i++)
 		{
+			Form_pg_attribute inatt = TupleDescAttr(indesc, i);
+			Form_pg_attribute outatt = TupleDescAttr(outdesc, i);
+
+			/*
+			 * If the input column has a missing attribute, we need a
+			 * conversion.
+			 */
+			if (inatt->atthasmissing)
+			{
+				same = false;
+				break;
+			}
+
 			if (attrMap[i] == (i + 1))
 				continue;
 
@@ -237,9 +264,9 @@ convert_tuples_by_name(TupleDesc indesc,
 			 * must agree.
 			 */
 			if (attrMap[i] == 0 &&
-				indesc->attrs[i]->attisdropped &&
-				indesc->attrs[i]->attlen == outdesc->attrs[i]->attlen &&
-				indesc->attrs[i]->attalign == outdesc->attrs[i]->attalign)
+				inatt->attisdropped &&
+				inatt->attlen == outatt->attlen &&
+				inatt->attalign == outatt->attalign)
 				continue;
 
 			same = false;
@@ -292,26 +319,27 @@ convert_tuples_by_name_map(TupleDesc indesc,
 	attrMap = (AttrNumber *) palloc0(n * sizeof(AttrNumber));
 	for (i = 0; i < n; i++)
 	{
-		Form_pg_attribute att = outdesc->attrs[i];
+		Form_pg_attribute outatt = TupleDescAttr(outdesc, i);
 		char	   *attname;
 		Oid			atttypid;
 		int32		atttypmod;
 		int			j;
 
-		if (att->attisdropped)
+		if (outatt->attisdropped)
 			continue;			/* attrMap[i] is already 0 */
-		attname = NameStr(att->attname);
-		atttypid = att->atttypid;
-		atttypmod = att->atttypmod;
+		attname = NameStr(outatt->attname);
+		atttypid = outatt->atttypid;
+		atttypmod = outatt->atttypmod;
 		for (j = 0; j < indesc->natts; j++)
 		{
-			att = indesc->attrs[j];
-			if (att->attisdropped)
+			Form_pg_attribute inatt = TupleDescAttr(indesc, j);
+
+			if (inatt->attisdropped)
 				continue;
-			if (strcmp(attname, NameStr(att->attname)) == 0)
+			if (strcmp(attname, NameStr(inatt->attname)) == 0)
 			{
 				/* Found it, check type */
-				if (atttypid != att->atttypid || atttypmod != att->atttypmod)
+				if (atttypid != inatt->atttypid || atttypmod != inatt->atttypmod)
 					ereport(ERROR,
 							(errcode(ERRCODE_DATATYPE_MISMATCH),
 							 errmsg_internal("%s", _(msg)),
@@ -372,6 +400,59 @@ do_convert_tuple(HeapTuple tuple, TupleConversionMap *map)
 	 * Now form the new tuple.
 	 */
 	return heap_form_tuple(map->outdesc, outvalues, outisnull);
+}
+
+/*
+ * Perform conversion of bitmap of columns according to the map.
+ *
+ * The input and output bitmaps are offset by
+ * FirstLowInvalidHeapAttributeNumber to accommodate system cols, like the
+ * column-bitmaps in RangeTblEntry.
+ */
+Bitmapset *
+execute_attr_map_cols(Bitmapset *in_cols, TupleConversionMap *map)
+{
+	AttrNumber *attrMap = map->attrMap;
+	int			maplen = map->outdesc->natts;
+	Bitmapset  *out_cols;
+	int			out_attnum;
+
+	/* fast path for the common trivial case */
+	if (in_cols == NULL)
+		return NULL;
+
+	/*
+	 * For each output column, check which input column it corresponds to.
+	 */
+	out_cols = NULL;
+
+	for (out_attnum = FirstLowInvalidHeapAttributeNumber + 1;
+		 out_attnum <= maplen;
+		 out_attnum++)
+	{
+		int			in_attnum;
+
+		if (out_attnum < 0)
+		{
+			/* System column. No mapping. */
+			in_attnum = out_attnum;
+		}
+		else if (out_attnum == 0)
+			continue;
+		else
+		{
+			/* normal user column */
+			in_attnum = attrMap[out_attnum - 1];
+
+			if (in_attnum == 0)
+				continue;
+		}
+
+		if (bms_is_member(in_attnum - FirstLowInvalidHeapAttributeNumber, in_cols))
+			out_cols = bms_add_member(out_cols, out_attnum - FirstLowInvalidHeapAttributeNumber);
+	}
+
+	return out_cols;
 }
 
 /*

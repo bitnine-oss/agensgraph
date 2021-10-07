@@ -431,7 +431,7 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 
 	/* vids */
 	fc = makeFuncCall(list_make1(makeString("shortestpath_graphids")), NIL, -1);
-	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf, fc, -1);
+	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf, fc, false, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "vids", false);
@@ -439,7 +439,7 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 
 	/* eids */
 	fc = makeFuncCall(list_make1(makeString("shortestpath_rowids")), NIL, -1);
-	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf, fc, -1);
+	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf, fc, false, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "eids", false);
@@ -1340,7 +1340,7 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	/* vids */
 	fc = makeFuncCall(list_make1(makeString("dijkstra_vids")), NIL, -1);
 	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
-							   fc, -1);
+							   fc, false, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "vids", false);
@@ -1349,7 +1349,7 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	/* eids */
 	fc = makeFuncCall(list_make1(makeString("dijkstra_eids")), NIL, -1);
 	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
-							   fc, -1);
+							   fc, false, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "eids", false);

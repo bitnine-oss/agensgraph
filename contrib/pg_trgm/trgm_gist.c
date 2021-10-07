@@ -106,7 +106,7 @@ gtrgm_compress(PG_FUNCTION_ARGS)
 		retval = (GISTENTRY *) palloc(sizeof(GISTENTRY));
 		gistentryinit(*retval, PointerGetDatum(res),
 					  entry->rel, entry->page,
-					  entry->offset, FALSE);
+					  entry->offset, false);
 	}
 	else if (ISSIGNKEY(DatumGetPointer(entry->key)) &&
 			 !ISALLTRUE(DatumGetPointer(entry->key)))
@@ -130,7 +130,7 @@ gtrgm_compress(PG_FUNCTION_ARGS)
 		retval = (GISTENTRY *) palloc(sizeof(GISTENTRY));
 		gistentryinit(*retval, PointerGetDatum(res),
 					  entry->rel, entry->page,
-					  entry->offset, FALSE);
+					  entry->offset, false);
 	}
 	PG_RETURN_POINTER(retval);
 }
@@ -221,6 +221,7 @@ gtrgm_consistent(PG_FUNCTION_ARGS)
 		{
 			case SimilarityStrategyNumber:
 			case WordSimilarityStrategyNumber:
+			case StrictWordSimilarityStrategyNumber:
 				qtrg = generate_trgm(VARDATA(query),
 									 querysize - VARHDRSZ);
 				break;
@@ -290,10 +291,15 @@ gtrgm_consistent(PG_FUNCTION_ARGS)
 	{
 		case SimilarityStrategyNumber:
 		case WordSimilarityStrategyNumber:
-			/* Similarity search is exact. Word similarity search is inexact */
-			*recheck = (strategy == WordSimilarityStrategyNumber);
-			nlimit = (strategy == SimilarityStrategyNumber) ?
-				similarity_threshold : word_similarity_threshold;
+		case StrictWordSimilarityStrategyNumber:
+
+			/*
+			 * Similarity search is exact. (Strict) word similarity search is
+			 * inexact
+			 */
+			*recheck = (strategy != SimilarityStrategyNumber);
+
+			nlimit = index_strategy_get_limit(strategy);
 
 			if (GIST_LEAF(entry))
 			{					/* all leafs contains orig trgm */
@@ -468,7 +474,9 @@ gtrgm_distance(PG_FUNCTION_ARGS)
 	{
 		case DistanceStrategyNumber:
 		case WordDistanceStrategyNumber:
-			*recheck = strategy == WordDistanceStrategyNumber;
+		case StrictWordDistanceStrategyNumber:
+			/* Only plain trigram distance is exact */
+			*recheck = (strategy != DistanceStrategyNumber);
 			if (GIST_LEAF(entry))
 			{					/* all leafs contains orig trgm */
 
@@ -775,7 +783,7 @@ Datum
 gtrgm_picksplit(PG_FUNCTION_ARGS)
 {
 	GistEntryVector *entryvec = (GistEntryVector *) PG_GETARG_POINTER(0);
-	OffsetNumber maxoff = entryvec->n - 2;
+	OffsetNumber maxoff = entryvec->n - 1;
 	GIST_SPLITVEC *v = (GIST_SPLITVEC *) PG_GETARG_POINTER(1);
 	OffsetNumber k,
 				j;
@@ -798,7 +806,7 @@ gtrgm_picksplit(PG_FUNCTION_ARGS)
 	SPLITCOST  *costvector;
 
 	/* cache the sign data for each existing item */
-	cache = (CACHESIGN *) palloc(sizeof(CACHESIGN) * (maxoff + 2));
+	cache = (CACHESIGN *) palloc(sizeof(CACHESIGN) * (maxoff + 1));
 	for (k = FirstOffsetNumber; k <= maxoff; k = OffsetNumberNext(k))
 		fillcache(&cache[k], GETENTRY(entryvec, k));
 
@@ -825,7 +833,7 @@ gtrgm_picksplit(PG_FUNCTION_ARGS)
 	}
 
 	/* initialize the result vectors */
-	nbytes = (maxoff + 2) * sizeof(OffsetNumber);
+	nbytes = maxoff * sizeof(OffsetNumber);
 	v->spl_left = left = (OffsetNumber *) palloc(nbytes);
 	v->spl_right = right = (OffsetNumber *) palloc(nbytes);
 	v->spl_nleft = 0;
@@ -861,8 +869,7 @@ gtrgm_picksplit(PG_FUNCTION_ARGS)
 
 	union_l = GETSIGN(datum_l);
 	union_r = GETSIGN(datum_r);
-	maxoff = OffsetNumberNext(maxoff);
-	fillcache(&cache[maxoff], GETENTRY(entryvec, maxoff));
+
 	/* sort before ... */
 	costvector = (SPLITCOST *) palloc(sizeof(SPLITCOST) * maxoff);
 	for (j = FirstOffsetNumber; j <= maxoff; j = OffsetNumberNext(j))
@@ -948,7 +955,6 @@ gtrgm_picksplit(PG_FUNCTION_ARGS)
 		}
 	}
 
-	*right = *left = FirstOffsetNumber;
 	v->spl_ldatum = PointerGetDatum(datum_l);
 	v->spl_rdatum = PointerGetDatum(datum_r);
 

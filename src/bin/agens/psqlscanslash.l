@@ -8,18 +8,18 @@
  *
  * See fe_utils/psqlscan_int.h for additional commentary.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/bin/psql/psqlscanslash.l
+ *	  src/bin/agens/psqlscanslash.l
  *
  *-------------------------------------------------------------------------
  */
 #include "postgres_fe.h"
 
 #include "psqlscanslash.h"
-#include "conditional.h"
+#include "fe_utils/conditional.h"
 
 #include "libpq-fe.h"
 }
@@ -66,6 +66,8 @@ static void evaluate_backtick(PsqlScanState state);
  */
 extern int	slash_yyget_column(yyscan_t yyscanner);
 extern void slash_yyset_column(int column_no, yyscan_t yyscanner);
+
+/* LCOV_EXCL_START */
 
 %}
 
@@ -281,6 +283,10 @@ other			.
 					unquoted_option_chars = 0;
 				}
 
+:\{\?{variable_char}+\}	{
+					psqlscan_test_variable(cur_state, yytext, yyleng);
+				}
+
 :'{variable_char}*	{
 					/* Throw back everything but the colon */
 					yyless(1);
@@ -289,6 +295,20 @@ other			.
 				}
 
 :\"{variable_char}*	{
+					/* Throw back everything but the colon */
+					yyless(1);
+					unquoted_option_chars++;
+					ECHO;
+				}
+
+:\{\?{variable_char}*	{
+					/* Throw back everything but the colon */
+					yyless(1);
+					unquoted_option_chars++;
+					ECHO;
+				}
+
+:\{		{
 					/* Throw back everything but the colon */
 					yyless(1);
 					unquoted_option_chars++;
@@ -449,6 +469,8 @@ other			.
 				}
 
 %%
+
+/* LCOV_EXCL_STOP */
 
 /*
  * Scan the command name of a psql backslash command.  This should be called
@@ -754,7 +776,7 @@ evaluate_backtick(PsqlScanState state)
 
 	initPQExpBuffer(&cmd_output);
 
-	fd = popen(cmd, PG_BINARY_R);
+	fd = popen(cmd, "r");
 	if (!fd)
 	{
 		state->callbacks->write_error("%s: %s\n", cmd, strerror(errno));
@@ -795,7 +817,7 @@ evaluate_backtick(PsqlScanState state)
 	/* If no error, transfer result to output_buf */
 	if (!error)
 	{
-		/* strip any trailing newline */
+		/* strip any trailing newline (but only one) */
 		if (cmd_output.len > 0 &&
 			cmd_output.data[cmd_output.len - 1] == '\n')
 			cmd_output.len--;

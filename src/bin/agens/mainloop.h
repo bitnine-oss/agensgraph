@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/mainloop.h
+ * src/bin/agens/mainloop.h
  */
 #ifndef MAINLOOP_H
 #define MAINLOOP_H

@@ -3,7 +3,7 @@
  * connection.c
  *		  Connection management functions for postgres_fdw
  *
- * Portions Copyright (c) 2012-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2018, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/connection.c
@@ -75,7 +75,7 @@ static bool xact_got_connection = false;
 /* prototypes of private functions */
 static PGconn *connect_pg_server(ForeignServer *server, UserMapping *user);
 static void disconnect_pg_server(ConnCacheEntry *entry);
-static void check_conn_params(const char **keywords, const char **values);
+static void check_conn_params(const char **keywords, const char **values, UserMapping *user);
 static void configure_remote_session(PGconn *conn);
 static void do_sql_command(PGconn *conn, const char *sql);
 static void begin_remote_xact(ConnCacheEntry *entry);
@@ -261,7 +261,7 @@ connect_pg_server(ForeignServer *server, UserMapping *user)
 		keywords[n] = values[n] = NULL;
 
 		/* verify connection parameters and make connection */
-		check_conn_params(keywords, values);
+		check_conn_params(keywords, values, user);
 
 		conn = PQconnectdbParams(keywords, values, false);
 		if (!conn || PQstatus(conn) != CONNECTION_OK)
@@ -276,7 +276,7 @@ connect_pg_server(ForeignServer *server, UserMapping *user)
 		 * otherwise, he's piggybacking on the postgres server's user
 		 * identity. See also dblink_security_check() in contrib/dblink.
 		 */
-		if (!superuser() && !PQconnectionUsedPassword(conn))
+		if (!superuser_arg(user->userid) && !PQconnectionUsedPassword(conn))
 			ereport(ERROR,
 					(errcode(ERRCODE_S_R_E_PROHIBITED_SQL_STATEMENT_ATTEMPTED),
 					 errmsg("password is required"),
@@ -322,12 +322,12 @@ disconnect_pg_server(ConnCacheEntry *entry)
  * contrib/dblink.)
  */
 static void
-check_conn_params(const char **keywords, const char **values)
+check_conn_params(const char **keywords, const char **values, UserMapping *user)
 {
 	int			i;
 
 	/* no check required if superuser */
-	if (superuser())
+	if (superuser_arg(user->userid))
 		return;
 
 	/* ok if params contain a non-empty password */
@@ -630,7 +630,7 @@ pgfdw_report_error(int elevel, PGresult *res, PGconn *conn,
 				 message_detail ? errdetail_internal("%s", message_detail) : 0,
 				 message_hint ? errhint("%s", message_hint) : 0,
 				 message_context ? errcontext("%s", message_context) : 0,
-				 sql ? errcontext("Remote SQL command: %s", sql) : 0));
+				 sql ? errcontext("remote SQL command: %s", sql) : 0));
 	}
 	PG_CATCH();
 	{
@@ -645,6 +645,10 @@ pgfdw_report_error(int elevel, PGresult *res, PGconn *conn,
 
 /*
  * pgfdw_xact_callback --- cleanup at main-transaction end.
+ *
+ * This runs just late enough that it must not enter user-defined code
+ * locally.  (Entering such code on the remote side is fine.  Its remote
+ * COMMIT TRANSACTION may run deferred triggers.)
  */
 static void
 pgfdw_xact_callback(XactEvent event, void *arg)
@@ -719,17 +723,17 @@ pgfdw_xact_callback(XactEvent event, void *arg)
 				case XACT_EVENT_PRE_PREPARE:
 
 					/*
-					 * We disallow remote transactions that modified anything,
-					 * since it's not very reasonable to hold them open until
-					 * the prepared transaction is committed.  For the moment,
-					 * throw error unconditionally; later we might allow
-					 * read-only cases.  Note that the error will cause us to
-					 * come right back here with event == XACT_EVENT_ABORT, so
-					 * we'll clean up the connection state at that point.
+					 * We disallow any remote transactions, since it's not
+					 * very reasonable to hold them open until the prepared
+					 * transaction is committed.  For the moment, throw error
+					 * unconditionally; later we might allow read-only cases.
+					 * Note that the error will cause us to come right back
+					 * here with event == XACT_EVENT_ABORT, so we'll clean up
+					 * the connection state at that point.
 					 */
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("cannot prepare a transaction that modified remote tables")));
+							 errmsg("cannot PREPARE a transaction that has operated on postgres_fdw foreign tables")));
 					break;
 				case XACT_EVENT_PARALLEL_COMMIT:
 				case XACT_EVENT_COMMIT:
@@ -807,12 +811,14 @@ pgfdw_xact_callback(XactEvent event, void *arg)
 		entry->xact_depth = 0;
 
 		/*
-		 * If the connection isn't in a good idle state, discard it to
-		 * recover. Next GetConnection will open a new connection.
+		 * If the connection isn't in a good idle state or it is marked as
+		 * invalid, then discard it to recover. Next GetConnection will open a
+		 * new connection.
 		 */
 		if (PQstatus(entry->conn) != CONNECTION_OK ||
 			PQtransactionStatus(entry->conn) != PQTRANS_IDLE ||
-			entry->changing_xact_state)
+			entry->changing_xact_state ||
+			entry->invalidated)
 		{
 			elog(DEBUG3, "discarding connection %p", entry->conn);
 			disconnect_pg_server(entry);
@@ -936,9 +942,12 @@ pgfdw_subxact_callback(SubXactEvent event, SubTransactionId mySubid,
  * Connection invalidation callback function
  *
  * After a change to a pg_foreign_server or pg_user_mapping catalog entry,
- * mark connections depending on that entry as needing to be remade.
- * We can't immediately destroy them, since they might be in the midst of
- * a transaction, but we'll remake them at the next opportunity.
+ * close connections depending on that entry immediately if current transaction
+ * has not used those connections yet. Otherwise, mark those connections as
+ * invalid and then make pgfdw_xact_callback() close them at the end of current
+ * transaction, since they cannot be closed in the midst of the transaction
+ * using them. Closed connections will be remade at the next opportunity if
+ * necessary.
  *
  * Although most cache invalidation callbacks blow away all the related stuff
  * regardless of the given hashvalue, connections are expensive enough that
@@ -969,7 +978,21 @@ pgfdw_inval_callback(Datum arg, int cacheid, uint32 hashvalue)
 			 entry->server_hashvalue == hashvalue) ||
 			(cacheid == USERMAPPINGOID &&
 			 entry->mapping_hashvalue == hashvalue))
-			entry->invalidated = true;
+		{
+			/*
+			 * Close the connection immediately if it's not used yet in this
+			 * transaction. Otherwise mark it as invalid so that
+			 * pgfdw_xact_callback() can close it at the end of this
+			 * transaction.
+			 */
+			if (entry->xact_depth == 0)
+			{
+				elog(DEBUG3, "discarding connection %p", entry->conn);
+				disconnect_pg_server(entry);
+			}
+			else
+				entry->invalidated = true;
+		}
 	}
 }
 
@@ -1135,20 +1158,15 @@ pgfdw_get_cleanup_result(PGconn *conn, TimestampTz endtime, PGresult **result)
 			{
 				int			wc;
 				TimestampTz now = GetCurrentTimestamp();
-				long		secs;
-				int			microsecs;
 				long		cur_timeout;
 
 				/* If timeout has expired, give up, else get sleep time. */
-				if (now >= endtime)
+				cur_timeout = TimestampDifferenceMilliseconds(now, endtime);
+				if (cur_timeout <= 0)
 				{
 					timed_out = true;
 					goto exit;
 				}
-				TimestampDifference(now, endtime, &secs, &microsecs);
-
-				/* To protect against clock skew, limit sleep to one minute. */
-				cur_timeout = Min(60000, secs * USECS_PER_SEC + microsecs);
 
 				/* Sleep until there's something to do */
 				wc = WaitLatchOrSocket(MyLatch,

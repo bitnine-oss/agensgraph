@@ -11,9 +11,9 @@ include $(top_builddir)/src/Makefile.global
 # keep this list arranged alphabetically or it gets to be a mess
 OBJS = acl.o amutils.o arrayfuncs.o array_expanded.o array_selfuncs.o \
 	array_typanalyze.o array_userfuncs.o arrayutils.o ascii.o \
-	bool.o cash.o char.o cypher_funcs.o cypher_ops.o \
+	bool.o cash.o char.o cryptohashes.o \
 	date.o datetime.o datum.o dbsize.o domains.o \
-	encode.o enum.o expandeddatum.o \
+	encode.o enum.o expandeddatum.o expandedrecord.o \
 	float.o format_type.o formatting.o genfile.o \
 	geo_ops.o geo_selfuncs.o geo_spgist.o inet_cidr_ntop.o inet_net_pton.o \
 	int.o int8.o json.o jsonb.o jsonb_gin.o jsonb_op.o jsonb_util.o \
@@ -25,13 +25,13 @@ OBJS = acl.o amutils.o arrayfuncs.o array_expanded.o array_selfuncs.o \
 	pseudotypes.o quote.o rangetypes.o rangetypes_gist.o \
 	rangetypes_selfuncs.o rangetypes_spgist.o rangetypes_typanalyze.o \
 	regexp.o regproc.o ri_triggers.o rowtypes.o ruleutils.o \
-	selfuncs.o shortestpathfuncs.o tid.o timestamp.o trigfuncs.o \
+	selfuncs.o tid.o timestamp.o trigfuncs.o \
 	tsginidx.o tsgistidx.o tsquery.o tsquery_cleanup.o tsquery_gist.o \
 	tsquery_op.o tsquery_rewrite.o tsquery_util.o tsrank.o \
 	tsvector.o tsvector_op.o tsvector_parser.o \
 	txid.o uuid.o varbit.o varchar.o varlena.o version.o \
 	windowfuncs.o xid.o xml.o \
-	graph.o graphmeta.o
+	cypher_funcs.o cypher_ops.o graph.o graphmeta.o shortestpathfuncs.o
 
 like.o: like.c like_match.c
 

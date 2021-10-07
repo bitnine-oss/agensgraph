@@ -3,7 +3,7 @@
  * pgstatfuncs.c
  *	  Functions for accessing the statistics collector data
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -21,6 +21,7 @@
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "postmaster/bgworker_internals.h"
 #include "postmaster/postmaster.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
@@ -30,6 +31,8 @@
 #include "utils/timestamp.h"
 
 #define UINT32_ACCESS_ONCE(var)		 ((uint32)(*((volatile uint32 *)&(var))))
+
+#define HAS_PGSTAT_PERMISSIONS(role)	 (is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS) || has_privs_of_role(GetUserId(), role))
 
 /* Global bgwriter statistics, from bgwriter.c */
 extern PgStat_MsgBgWriter bgwriterStats;
@@ -512,7 +515,7 @@ pg_stat_get_progress_info(PG_FUNCTION_ARGS)
 		values[1] = ObjectIdGetDatum(beentry->st_databaseid);
 
 		/* show rest of the values including relid only to role members */
-		if (has_privs_of_role(GetUserId(), beentry->st_userid))
+		if (HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		{
 			values[2] = ObjectIdGetDatum(beentry->st_progress_command_target);
 			for (i = 0; i < PGSTAT_NUM_PROGRESS_PARAM; i++)
@@ -660,10 +663,10 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 		}
 
 		/* Values only available to role member or pg_read_all_stats */
-		if (has_privs_of_role(GetUserId(), beentry->st_userid) ||
-			is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS))
+		if (HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		{
 			SockAddr	zero_clientaddr;
+			char	   *clipped_activity;
 
 			switch (beentry->st_state)
 			{
@@ -690,7 +693,9 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 					break;
 			}
 
-			values[5] = CStringGetTextDatum(beentry->st_activity);
+			clipped_activity = pgstat_clip_activity(beentry->st_activity_raw);
+			values[5] = CStringGetTextDatum(clipped_activity);
+			pfree(clipped_activity);
 
 			proc = BackendPidGetProc(beentry->st_procpid);
 			if (proc != NULL)
@@ -732,7 +737,13 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 			else
 				nulls[7] = true;
 
-			if (beentry->st_xact_start_timestamp != 0)
+			/*
+			 * Don't expose transaction time for walsenders; it confuses
+			 * monitoring, particularly because we don't keep the time up-to-
+			 * date.
+			 */
+			if (beentry->st_xact_start_timestamp != 0 &&
+				beentry->st_backendType != B_WAL_SENDER)
 				values[8] = TimestampTzGetDatum(beentry->st_xact_start_timestamp);
 			else
 				nulls[8] = true;
@@ -809,7 +820,7 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 					 */
 					nulls[12] = true;
 					nulls[13] = true;
-					values[14] = DatumGetInt32(-1);
+					values[14] = Int32GetDatum(-1);
 				}
 				else
 				{
@@ -820,8 +831,19 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 				}
 			}
 			/* Add backend type */
-			values[17] =
-				CStringGetTextDatum(pgstat_get_backend_desc(beentry->st_backendType));
+			if (beentry->st_backendType == B_BG_WORKER)
+			{
+				const char *bgw_type;
+
+				bgw_type = GetBackgroundWorkerTypeByPid(beentry->st_procpid);
+				if (bgw_type)
+					values[17] = CStringGetTextDatum(bgw_type);
+				else
+					nulls[17] = true;
+			}
+			else
+				values[17] =
+					CStringGetTextDatum(pgstat_get_backend_desc(beentry->st_backendType));
 		}
 		else
 		{
@@ -906,17 +928,23 @@ pg_stat_get_backend_activity(PG_FUNCTION_ARGS)
 	int32		beid = PG_GETARG_INT32(0);
 	PgBackendStatus *beentry;
 	const char *activity;
+	char	   *clipped_activity;
+	text	   *ret;
 
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		activity = "<backend information not available>";
-	else if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		activity = "<insufficient privilege>";
-	else if (*(beentry->st_activity) == '\0')
+	else if (*(beentry->st_activity_raw) == '\0')
 		activity = "<command string not enabled>";
 	else
-		activity = beentry->st_activity;
+		activity = beentry->st_activity_raw;
 
-	PG_RETURN_TEXT_P(cstring_to_text(activity));
+	clipped_activity = pgstat_clip_activity(activity);
+	ret = cstring_to_text(activity);
+	pfree(clipped_activity);
+
+	PG_RETURN_TEXT_P(ret);
 }
 
 Datum
@@ -929,7 +957,7 @@ pg_stat_get_backend_wait_event_type(PG_FUNCTION_ARGS)
 
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		wait_event_type = "<backend information not available>";
-	else if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		wait_event_type = "<insufficient privilege>";
 	else if ((proc = BackendPidGetProc(beentry->st_procpid)) != NULL)
 		wait_event_type = pgstat_get_wait_event_type(proc->wait_event_info);
@@ -950,7 +978,7 @@ pg_stat_get_backend_wait_event(PG_FUNCTION_ARGS)
 
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		wait_event = "<backend information not available>";
-	else if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		wait_event = "<insufficient privilege>";
 	else if ((proc = BackendPidGetProc(beentry->st_procpid)) != NULL)
 		wait_event = pgstat_get_wait_event(proc->wait_event_info);
@@ -972,7 +1000,7 @@ pg_stat_get_backend_activity_start(PG_FUNCTION_ARGS)
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		PG_RETURN_NULL();
 
-	if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		PG_RETURN_NULL();
 
 	result = beentry->st_activity_start_timestamp;
@@ -998,7 +1026,7 @@ pg_stat_get_backend_xact_start(PG_FUNCTION_ARGS)
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		PG_RETURN_NULL();
 
-	if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		PG_RETURN_NULL();
 
 	result = beentry->st_xact_start_timestamp;
@@ -1020,7 +1048,7 @@ pg_stat_get_backend_start(PG_FUNCTION_ARGS)
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		PG_RETURN_NULL();
 
-	if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		PG_RETURN_NULL();
 
 	result = beentry->st_proc_start_timestamp;
@@ -1044,7 +1072,7 @@ pg_stat_get_backend_client_addr(PG_FUNCTION_ARGS)
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		PG_RETURN_NULL();
 
-	if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		PG_RETURN_NULL();
 
 	/* A zeroed client addr means we don't know */
@@ -1091,7 +1119,7 @@ pg_stat_get_backend_client_port(PG_FUNCTION_ARGS)
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		PG_RETURN_NULL();
 
-	if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		PG_RETURN_NULL();
 
 	/* A zeroed client addr means we don't know */

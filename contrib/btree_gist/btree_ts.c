@@ -230,7 +230,7 @@ gbt_tstz_compress(PG_FUNCTION_ARGS)
 		r->lower = r->upper = gmt;
 		gistentryinit(*retval, PointerGetDatum(r),
 					  entry->rel, entry->page,
-					  entry->offset, FALSE);
+					  entry->offset, false);
 	}
 	else
 		retval = entry;
@@ -344,12 +344,13 @@ gbt_ts_union(PG_FUNCTION_ARGS)
 }
 
 
-#define penalty_check_max_float(val) do { \
+#define penalty_check_max_float(val) \
+	do { \
 		if ( val > FLT_MAX ) \
 				val = FLT_MAX; \
 		if ( val < -FLT_MAX ) \
 				val = -FLT_MAX; \
-} while(false);
+	} while (0)
 
 
 Datum

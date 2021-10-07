@@ -5,7 +5,7 @@
  *	  strategy.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/buf_internals.h
@@ -204,7 +204,7 @@ typedef struct BufferDesc
  * Note that local buffer descriptors aren't forced to be aligned - as there's
  * no concurrent access to those it's unlikely to be beneficial.
  *
- * We use 64bit as the cache line size here, because that's the most common
+ * We use a 64-byte cache line size here, because that's the most common
  * size. Making it bigger would be a waste of memory. Even if running on a
  * platform with either 32 or 128 byte line sizes, it's good to align to
  * boundaries and avoid false sharing.
@@ -317,6 +317,7 @@ extern void StrategyNotifyBgWriter(int bgwprocno);
 
 extern Size StrategyShmemSize(void);
 extern void StrategyInitialize(bool init);
+extern bool have_free_buffer(void);
 
 /* buf_table.c */
 extern Size BufTableShmemSize(int size);

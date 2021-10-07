@@ -472,25 +472,21 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 		eflags &= ~EXEC_FLAG_REWIND;
 	innerPlanState(nlvstate) = ExecInitNode(innerPlan(node), estate, eflags);
 
-	/*
-	 * tuple table initialization
-	 */
-	ExecInitResultTupleSlot(estate, &nlvstate->nls.js.ps);
 
 	if (node->nl.join.jointype != JOIN_VLE)
 		elog(ERROR, "unrecognized join type: %d", (int) node->nl.join.jointype);
 
 	/*
-	 * initialize tuple type and projection info
+	 * tuple table initialization / initialize tuple type and projection info
 	 */
-	ExecAssignResultTypeFromTL(&nlvstate->nls.js.ps);
+    ExecInitResultTupleSlotTL(estate, &nlvstate->nls.js.ps);
 	ExecAssignProjectionInfo(&nlvstate->nls.js.ps, NULL);
 
 	nlvstate->curhops = getInitialCurhops(node);
 
 	innerTupleDesc =
 			innerPlanState(nlvstate)->ps_ResultTupleSlot->tts_tupleDescriptor;
-	element_type = innerTupleDesc->attrs[INNER_EID_VARNO]->atttypid;
+	element_type = innerTupleDesc->attrs[INNER_EID_VARNO].atttypid;
 	nlvstate->eids = initArrayResult(element_type, CurrentMemoryContext, false);
 	/*
 	 * {prev, curr, ids | next, id} + {edges | edge}
@@ -498,7 +494,7 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	 */
 	if (list_length(nlvstate->nls.js.ps.plan->targetlist) >= 7)
 	{
-		element_type = innerTupleDesc->attrs[INNER_EDGE_VARNO]->atttypid;
+		element_type = innerTupleDesc->attrs[INNER_EDGE_VARNO].atttypid;
 		nlvstate->edges = initArrayResult(element_type, CurrentMemoryContext,
 										  false);
 	}
@@ -508,7 +504,7 @@ ExecInitNestLoopVLE(NestLoopVLE *node, EState *estate, int eflags)
 	 */
 	if (list_length(nlvstate->nls.js.ps.plan->targetlist) == 9)
 	{
-		element_type = innerTupleDesc->attrs[INNER_VERTEX_VARNO]->atttypid;
+		element_type = innerTupleDesc->attrs[INNER_VERTEX_VARNO].atttypid;
 		nlvstate->vertices = initArrayResult(element_type, CurrentMemoryContext,
 											 false);
 	}
@@ -728,21 +724,23 @@ needResult(NestLoopVLEState *node)
 static void
 pushPathElementOuter(NestLoopVLEState *node, TupleTableSlot *slot)
 {
-	Form_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
+    FormData_pg_attribute* attrs = slot->tts_tupleDescriptor->attrs;
 	IntArray	upper;
 	Datum		value;
 	bool		isnull;
-
 	/* zero-length VLE does not have the first edge and its ID in outerPlan */
 	if (node->curhops == 0)
 		return;
 
 	upper.indx[0] = 1;
-
 	value = array_get_element(slot->tts_values[OUTER_EIDS_VARNO],
-							  1, upper.indx, attrs[OUTER_EIDS_VARNO]->attlen,
-							  node->eids->typlen, node->eids->typbyval,
-							  node->eids->typalign, &isnull);
+							  1,
+							  upper.indx,
+							  attrs[OUTER_EIDS_VARNO].attlen,
+							  node->eids->typlen,
+							  node->eids->typbyval,
+							  node->eids->typalign,
+							  &isnull);
 	Assert(!isnull);
 	accumArrayResult(node->eids, value, isnull, node->eids->element_type,
 					 CurrentMemoryContext);
@@ -751,7 +749,7 @@ pushPathElementOuter(NestLoopVLEState *node, TupleTableSlot *slot)
 	{
 		value = array_get_element(slot->tts_values[OUTER_EDGES_VARNO],
 								  1, upper.indx,
-								  attrs[OUTER_EDGES_VARNO]->attlen,
+								  attrs[OUTER_EDGES_VARNO].attlen,
 								  node->edges->typlen, node->edges->typbyval,
 								  node->edges->typalign, &isnull);
 		Assert(!isnull);
@@ -763,21 +761,21 @@ pushPathElementOuter(NestLoopVLEState *node, TupleTableSlot *slot)
 static void
 pushPathElementInner(NestLoopVLEState *node, TupleTableSlot *slot)
 {
-	Form_pg_attribute *attrs = slot->tts_tupleDescriptor->attrs;
+    FormData_pg_attribute* attrs = slot->tts_tupleDescriptor->attrs;
 
 	accumArrayResult(node->eids, slot->tts_values[INNER_EID_VARNO],
 					 slot->tts_isnull[INNER_EID_VARNO],
-					 attrs[INNER_EID_VARNO]->atttypid,
+					 attrs[INNER_EID_VARNO].atttypid,
 					 CurrentMemoryContext);
 	if (node->edges != NULL)
 		accumArrayResult(node->edges, slot->tts_values[INNER_EDGE_VARNO],
 						 slot->tts_isnull[INNER_EDGE_VARNO],
-						 attrs[INNER_EDGE_VARNO]->atttypid,
+						 attrs[INNER_EDGE_VARNO].atttypid,
 						 CurrentMemoryContext);
 	if (node->vertices != NULL)
 		accumArrayResult(node->vertices, slot->tts_values[INNER_VERTEX_VARNO],
 						 slot->tts_isnull[INNER_VERTEX_VARNO],
-						 attrs[INNER_VERTEX_VARNO]->atttypid,
+						 attrs[INNER_VERTEX_VARNO].atttypid,
 						 CurrentMemoryContext);
 }
 

@@ -26,7 +26,7 @@
  * restart needs to be forced.)
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -150,7 +150,6 @@ double		CheckPointCompletionTarget = 0.5;
  * Flags set by interrupt handlers for later service in the main loop.
  */
 static volatile sig_atomic_t got_SIGHUP = false;
-static volatile sig_atomic_t checkpoint_requested = false;
 static volatile sig_atomic_t shutdown_requested = false;
 
 /*
@@ -282,7 +281,7 @@ CheckpointerMain(void)
 		/* we needn't bother with the other ResourceOwnerRelease phases */
 		AtEOXact_Buffers(false);
 		AtEOXact_SMgr();
-		AtEOXact_Files();
+		AtEOXact_Files(false);
 		AtEOXact_HashTables(false);
 
 		/* Warn any waiting backends that the checkpoint failed. */
@@ -382,12 +381,6 @@ CheckpointerMain(void)
 			 */
 			UpdateSharedMemoryConfig();
 		}
-		if (checkpoint_requested)
-		{
-			checkpoint_requested = false;
-			do_checkpoint = true;
-			BgWriterStats.m_requested_checkpoints++;
-		}
 		if (shutdown_requested)
 		{
 			/*
@@ -399,6 +392,17 @@ CheckpointerMain(void)
 			ShutdownXLOG(0, 0);
 			/* Normal exit from the checkpointer is here */
 			proc_exit(0);		/* done */
+		}
+
+		/*
+		 * Detect a pending checkpoint request by checking whether the flags
+		 * word in shared memory is nonzero.  We shouldn't need to acquire the
+		 * ckpt_lck for this.
+		 */
+		if (((volatile CheckpointerShmemStruct *) CheckpointerShmem)->ckpt_flags)
+		{
+			do_checkpoint = true;
+			BgWriterStats.m_requested_checkpoints++;
 		}
 
 		/*
@@ -624,7 +628,7 @@ CheckArchiveTimeout(void)
 			 * If the returned pointer points exactly to a segment boundary,
 			 * assume nothing happened.
 			 */
-			if ((switchpoint % XLogSegSize) != 0)
+			if (XLogSegmentOffset(switchpoint, wal_segment_size) != 0)
 				elog(DEBUG1, "write-ahead log switch forced (archive_timeout=%d)",
 					 XLogArchiveTimeout);
 		}
@@ -645,17 +649,14 @@ CheckArchiveTimeout(void)
 static bool
 ImmediateCheckpointRequested(void)
 {
-	if (checkpoint_requested)
-	{
-		volatile CheckpointerShmemStruct *cps = CheckpointerShmem;
+	volatile CheckpointerShmemStruct *cps = CheckpointerShmem;
 
-		/*
-		 * We don't need to acquire the ckpt_lck in this case because we're
-		 * only looking at a single flag bit.
-		 */
-		if (cps->ckpt_flags & CHECKPOINT_IMMEDIATE)
-			return true;
-	}
+	/*
+	 * We don't need to acquire the ckpt_lck in this case because we're only
+	 * looking at a single flag bit.
+	 */
+	if (cps->ckpt_flags & CHECKPOINT_IMMEDIATE)
+		return true;
 	return false;
 }
 
@@ -782,7 +783,8 @@ IsCheckpointOnSchedule(double progress)
 		recptr = GetXLogReplayRecPtr(NULL);
 	else
 		recptr = GetInsertRecPtr();
-	elapsed_xlogs = (((double) (recptr - ckpt_start_recptr)) / XLogSegSize) / CheckPointSegments;
+	elapsed_xlogs = (((double) (recptr - ckpt_start_recptr)) /
+					 wal_segment_size) / CheckPointSegments;
 
 	if (progress < elapsed_xlogs)
 	{
@@ -822,27 +824,21 @@ IsCheckpointOnSchedule(double progress)
 static void
 chkpt_quickdie(SIGNAL_ARGS)
 {
-	PG_SETMASK(&BlockSig);
-
 	/*
-	 * We DO NOT want to run proc_exit() callbacks -- we're here because
-	 * shared memory may be corrupted, so we don't want to try to clean up our
-	 * transaction.  Just nail the windows shut and get out of town.  Now that
-	 * there's an atexit callback to prevent third-party code from breaking
-	 * things by calling exit() directly, we have to reset the callbacks
-	 * explicitly to make this work as intended.
-	 */
-	on_exit_reset();
-
-	/*
-	 * Note we do exit(2) not exit(0).  This is to force the postmaster into a
-	 * system reset cycle if some idiot DBA sends a manual SIGQUIT to a random
+	 * We DO NOT want to run proc_exit() or atexit() callbacks -- we're here
+	 * because shared memory may be corrupted, so we don't want to try to
+	 * clean up our transaction.  Just nail the windows shut and get out of
+	 * town.  The callbacks wouldn't be safe to run from a signal handler,
+	 * anyway.
+	 *
+	 * Note we do _exit(2) not _exit(0).  This is to force the postmaster into
+	 * a system reset cycle if someone sends a manual SIGQUIT to a random
 	 * backend.  This is necessary precisely because we don't clean up our
 	 * shared memory state.  (The "dead man switch" mechanism in pmsignal.c
 	 * should ensure the postmaster sees this as a crash, too, but no harm in
 	 * being doubly sure.)
 	 */
-	exit(2);
+	_exit(2);
 }
 
 /* SIGHUP: set flag to re-read config file at next convenient time */
@@ -863,7 +859,10 @@ ReqCheckpointHandler(SIGNAL_ARGS)
 {
 	int			save_errno = errno;
 
-	checkpoint_requested = true;
+	/*
+	 * The signalling process should have set ckpt_flags nonzero, so all we
+	 * need do is ensure that our main loop gets kicked out of any wait.
+	 */
 	SetLatch(MyLatch);
 
 	errno = save_errno;
@@ -1002,31 +1001,35 @@ RequestCheckpoint(int flags)
 
 	old_failed = CheckpointerShmem->ckpt_failed;
 	old_started = CheckpointerShmem->ckpt_started;
-	CheckpointerShmem->ckpt_flags |= flags;
+	CheckpointerShmem->ckpt_flags |= (flags | CHECKPOINT_REQUESTED);
 
 	SpinLockRelease(&CheckpointerShmem->ckpt_lck);
 
 	/*
 	 * Send signal to request checkpoint.  It's possible that the checkpointer
 	 * hasn't started yet, or is in process of restarting, so we will retry a
-	 * few times if needed.  Also, if not told to wait for the checkpoint to
-	 * occur, we consider failure to send the signal to be nonfatal and merely
-	 * LOG it.
+	 * few times if needed.  (Actually, more than a few times, since on slow
+	 * or overloaded buildfarm machines, it's been observed that the
+	 * checkpointer can take several seconds to start.)  However, if not told
+	 * to wait for the checkpoint to occur, we consider failure to send the
+	 * signal to be nonfatal and merely LOG it.  The checkpointer should see
+	 * the request when it does start, with or without getting a signal.
 	 */
+#define MAX_SIGNAL_TRIES 600	/* max wait 60.0 sec */
 	for (ntries = 0;; ntries++)
 	{
 		if (CheckpointerShmem->checkpointer_pid == 0)
 		{
-			if (ntries >= 20)	/* max wait 2.0 sec */
+			if (ntries >= MAX_SIGNAL_TRIES || !(flags & CHECKPOINT_WAIT))
 			{
 				elog((flags & CHECKPOINT_WAIT) ? ERROR : LOG,
-					 "could not request checkpoint because checkpointer not running");
+					 "could not signal for checkpoint: checkpointer is not running");
 				break;
 			}
 		}
 		else if (kill(CheckpointerShmem->checkpointer_pid, SIGINT) != 0)
 		{
-			if (ntries >= 20)	/* max wait 2.0 sec */
+			if (ntries >= MAX_SIGNAL_TRIES || !(flags & CHECKPOINT_WAIT))
 			{
 				elog((flags & CHECKPOINT_WAIT) ? ERROR : LOG,
 					 "could not signal for checkpoint: %m");

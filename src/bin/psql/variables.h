@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
  * This implements a sort of variable repository.  One could also think of it
  * as a cheap version of an associative array.  Each variable has a string
@@ -90,6 +90,7 @@ bool		DeleteVariable(VariableSpace space, const char *name);
 void SetVariableHooks(VariableSpace space, const char *name,
 				 VariableSubstituteHook shook,
 				 VariableAssignHook ahook);
+bool		VariableHasHook(VariableSpace space, const char *name);
 
 void		PsqlVarEnumError(const char *name, const char *value, const char *suggestions);
 

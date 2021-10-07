@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/psqlscanslash.h
+ * src/bin/agens/psqlscanslash.h
  */
 #ifndef PSQLSCANSLASH_H
 #define PSQLSCANSLASH_H

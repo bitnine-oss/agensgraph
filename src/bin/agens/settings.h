@@ -1,9 +1,9 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/settings.h
+ * src/bin/agens/settings.h
  */
 #ifndef SETTINGS_H
 #define SETTINGS_H
@@ -93,7 +93,8 @@ typedef struct _psqlSettings
 	char	   *gfname;			/* one-shot file output argument for \g */
 	bool		g_expanded;		/* one-shot expanded output requested via \gx */
 	char	   *gset_prefix;	/* one-shot prefix argument for \gset */
-	bool		gexec_flag;		/* one-shot flag to execute query's results */
+	bool		gdesc_flag;		/* one-shot request to describe query results */
+	bool		gexec_flag;		/* one-shot request to execute query results */
 	bool		crosstab_flag;	/* one-shot request to crosstab results */
 	char	   *ctv_args[4];	/* \crosstabview arguments */
 

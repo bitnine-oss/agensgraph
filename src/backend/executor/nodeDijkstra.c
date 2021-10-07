@@ -317,7 +317,7 @@ replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
 	Assert(tupleDesc != NULL);
 	Assert(vertexRow != NULL);
 
-	attribute = tupleDesc->attrs[Anum_vertex_id-1];
+	attribute = TupleDescAttr(tupleDesc, Anum_vertex_id-1);
 
 	/* This function only works for element 1, graphid, by value */
 	Assert(attribute->attbyval);
@@ -533,8 +533,8 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	/*
 	 * tuple table initialization
 	 */
-	ExecInitResultTupleSlot(estate, &dstate->ps);
-	dstate->selfTupleSlot = ExecInitExtraTupleSlot(estate);
+	ExecInitResultTupleSlotTL(estate, &dstate->ps);
+	dstate->selfTupleSlot = ExecInitExtraTupleSlot(estate, NULL);
 
 
 	/*
@@ -564,7 +564,6 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	/*
 	 * initialize tuple type and projection info
 	 */
-	ExecAssignResultTypeFromTL(&dstate->ps);
 	ExecAssignProjectionInfo(&dstate->ps, NULL);
 
 	ExecSetSlotDescriptor(dstate->selfTupleSlot, ExecGetResultType(outerPlan));

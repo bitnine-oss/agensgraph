@@ -12,7 +12,7 @@
  * postgresql.conf and recovery.conf.  An extension also has an installation
  * script file, containing SQL commands to create the extension's objects.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -838,9 +838,21 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 								 GUC_ACTION_SAVE, true, 0, false);
 
 	/*
-	 * Set up the search path to contain the target schema, then the schemas
-	 * of any prerequisite extensions, and nothing else.  In particular this
-	 * makes the target schema be the default creation target namespace.
+	 * Similarly disable check_function_bodies, to ensure that SQL functions
+	 * won't be parsed during creation.
+	 */
+	if (check_function_bodies)
+		(void) set_config_option("check_function_bodies", "off",
+								 PGC_USERSET, PGC_S_SESSION,
+								 GUC_ACTION_SAVE, true, 0, false);
+
+	/*
+	 * Set up the search path to have the target schema first, making it be
+	 * the default creation target namespace.  Then add the schemas of any
+	 * prerequisite extensions, unless they are in pg_catalog which would be
+	 * searched anyway.  (Listing pg_catalog explicitly in a non-first
+	 * position would be bad for security.)  Finally add pg_temp to ensure
+	 * that temp objects can't take precedence over others.
 	 *
 	 * Note: it might look tempting to use PushOverrideSearchPath for this,
 	 * but we cannot do that.  We have to actually set the search_path GUC in
@@ -854,9 +866,10 @@ execute_extension_script(Oid extensionOid, ExtensionControlFile *control,
 		Oid			reqschema = lfirst_oid(lc);
 		char	   *reqname = get_namespace_name(reqschema);
 
-		if (reqname)
+		if (reqname && strcmp(reqname, "pg_catalog") != 0)
 			appendStringInfo(&pathbuf, ", %s", quote_identifier(reqname));
 	}
+	appendStringInfoString(&pathbuf, ", pg_temp");
 
 	(void) set_config_option("search_path", pathbuf.data,
 							 PGC_USERSET, PGC_S_SESSION,
@@ -1266,8 +1279,8 @@ find_install_path(List *evi_list, ExtensionVersionInfo *evi_target,
 static ObjectAddress
 CreateExtensionInternal(char *extensionName,
 						char *schemaName,
-						char *versionName,
-						char *oldVersionName,
+						const char *versionName,
+						const char *oldVersionName,
 						bool cascade,
 						List *parents,
 						bool is_create)
@@ -1473,6 +1486,13 @@ CreateExtensionInternal(char *extensionName,
 
 		list_free(search_path);
 	}
+
+	/*
+	 * Make note if a temporary namespace has been accessed in this
+	 * transaction.
+	 */
+	if (isTempNamespace(schemaOid))
+		MyXactFlags |= XACT_FLAGS_ACCESSEDTEMPNAMESPACE;
 
 	/*
 	 * We don't check creation rights on the target namespace here.  If the
@@ -2704,13 +2724,13 @@ AlterExtensionNamespace(const char *extensionName, const char *newschema, Oid *o
 	 * check ownership of the individual member objects ...
 	 */
 	if (!pg_extension_ownercheck(extensionOid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_EXTENSION,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_EXTENSION,
 					   extensionName);
 
 	/* Permission check: must have creation rights in target namespace */
 	aclresult = pg_namespace_aclcheck(nspOid, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE, newschema);
+		aclcheck_error(aclresult, OBJECT_SCHEMA, newschema);
 
 	/*
 	 * If the schema is currently a member of the extension, disallow moving
@@ -2924,7 +2944,7 @@ ExecAlterExtensionStmt(ParseState *pstate, AlterExtensionStmt *stmt)
 
 	/* Permission check: must own extension */
 	if (!pg_extension_ownercheck(extensionOid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_EXTENSION,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_EXTENSION,
 					   stmt->extname);
 
 	/*
@@ -3182,7 +3202,7 @@ ExecAlterExtensionContentsStmt(AlterExtensionContentsStmt *stmt,
 
 	/* Permission check: must own extension */
 	if (!pg_extension_ownercheck(extension.objectId, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_EXTENSION,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_EXTENSION,
 					   stmt->extname);
 
 	/*

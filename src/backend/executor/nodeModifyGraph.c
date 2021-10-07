@@ -134,10 +134,9 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->ps.ExecProcNode = ExecModifyGraph;
 
 	/* Tuple desc for result is the same as the subplan. */
-	ExecInitResultTupleSlot(estate, &mgstate->ps);
-	ExecAssignResultType(&mgstate->ps,
-						 ExecTypeFromTL(mgplan->subplan->targetlist, false));
-
+	TupleTableSlot *slot = ExecAllocTableSlot(&estate->es_tupleTable, NULL);
+	mgstate->ps.ps_ResultTupleSlot = slot;
+	ExecSetSlotDescriptor(slot, ExecTypeFromTL(mgplan->subplan->targetlist, false));
 	ExecAssignExprContext(estate, &mgstate->ps);
 
 	mgstate->done = false;
@@ -159,7 +158,7 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	estate->es_snapshot->curcid = svCid;
 
-	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate);
+	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate, NULL);
 
 	mgstate->graphid = get_graph_path_oid();
 	mgstate->numOldRtable = list_length(estate->es_range_table);
@@ -430,7 +429,7 @@ ExecModifyGraph(PlanState *pstate)
 			if (result->tts_isnull[i])
 				continue;
 
-			type = tupDesc->attrs[i]->atttypid;
+			type = tupDesc->attrs[i].atttypid;
 			if (type == VERTEXOID)
 			{
 				elem = getVertexFinal(mgstate, result->tts_values[i]);
@@ -448,7 +447,7 @@ ExecModifyGraph(PlanState *pstate)
 				 * deleting vertex array of the graphpath.
 				 */
 				if (isEdgeArrayOfPath(mgstate->exprs,
-									  NameStr(tupDesc->attrs[i]->attname)))
+									  NameStr(tupDesc->attrs[i].attname)))
 					continue;
 
 				elem = getPathFinal(mgstate, result->tts_values[i]);
@@ -759,7 +758,7 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	vertex = findVertex(slot, gvertex, vid);
 
 	vertexProp = getVertexPropDatum(vertex);
-	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(vertexProp)))
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonbP(vertexProp)))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("jsonb object is expected for property map")));
@@ -837,7 +836,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Assert(edge != (Datum) 0);
 
 	edgeProp = getEdgePropDatum(edge);
-	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(edgeProp)))
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonbP(edgeProp)))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("jsonb object is expected for property map")));
@@ -945,7 +944,7 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		 * vertex array of the graphpath.
 		 */
 		if (type == EDGEARRAYOID &&
-			tupDesc->attrs[attno - 1]->atttypid == GRAPHPATHOID)
+			tupDesc->attrs[attno - 1].atttypid == GRAPHPATHOID)
 			continue;
 
 		setSlotValueByAttnum(slot, (Datum) 0, attno);
@@ -1013,7 +1012,7 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 	/* see ExecDelete() */
 	result = heap_delete(resultRelationDesc, tid,
 						 mgstate->modify_cid + MODIFY_CID_OUTPUT,
-						 estate->es_crosscheck_snapshot, true, &hufd);
+						 estate->es_crosscheck_snapshot, true, &hufd, false);
 	switch (result)
 	{
 		case HeapTupleSelfUpdated:
@@ -1197,10 +1196,10 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot,
 		Datum	copyValue;
 
 		if (slot->tts_isnull[i] ||
-			slot->tts_tupleDescriptor->attrs[i]->attisdropped)
+			slot->tts_tupleDescriptor->attrs[i].attisdropped)
 			continue;
 
-		switch(slot->tts_tupleDescriptor->attrs[i]->atttypid)
+		switch(slot->tts_tupleDescriptor->attrs[i].atttypid)
 		{
 			case VERTEXOID:
 				finalValue = getVertexFinal(mgstate, slot->tts_values[i]);
@@ -1517,7 +1516,7 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	*vid = DatumGetGraphid(vertexId);
 
 	vertexProp = getVertexPropDatum(vertex);
-	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(vertexProp)))
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonbP(vertexProp)))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("jsonb object is expected for property map")));
@@ -1585,7 +1584,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 				 errmsg("NULL is not allowed in MERGE")));
 
 	edgeProp = getEdgePropDatum(edge);
-	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(edgeProp)))
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonbP(edgeProp)))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("jsonb object is expected for property map")));
@@ -1712,7 +1711,7 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 		Datum		vtx;
 		bool		isnull;
 
-		vertices = DatumGetAnyArray(elem);
+		vertices = DatumGetAnyArrayP(elem);
 		nvertices = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices));
 
 		get_typlenbyvalalign(AARR_ELEMTYPE(vertices), &typlen,
@@ -1744,7 +1743,7 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 		Datum		edge;
 		bool		isnull;
 
-		edges = DatumGetAnyArray(elem);
+		edges = DatumGetAnyArrayP(elem);
 		nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
 
 		get_typlenbyvalalign(AARR_ELEMTYPE(edges), &typlen,
@@ -1847,8 +1846,8 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 
 	getGraphpathArrays(origin, &vertices_datum, &edges_datum);
 
-	arrVertices = DatumGetAnyArray(vertices_datum);
-	arrEdges = DatumGetAnyArray(edges_datum);
+	arrVertices = DatumGetAnyArrayP(vertices_datum);
+	arrEdges = DatumGetAnyArrayP(edges_datum);
 
 	nvertices = ArrayGetNItems(AARR_NDIM(arrVertices), AARR_DIMS(arrVertices));
 	nedges = ArrayGetNItems(AARR_NDIM(arrEdges), AARR_DIMS(arrEdges));
@@ -2041,9 +2040,9 @@ findAttrInSlotByName(TupleTableSlot *slot, char *name)
 
 	for (i = 0; i < tupDesc->natts; i++)
 	{
-		if (namestrcmp(&(tupDesc->attrs[i]->attname), name) == 0 &&
-			!tupDesc->attrs[i]->attisdropped)
-			return tupDesc->attrs[i]->attnum;
+		if (namestrcmp(&(tupDesc->attrs[i].attname), name) == 0 &&
+			!tupDesc->attrs[i].attisdropped)
+			return tupDesc->attrs[i].attnum;
 	}
 
 	ereport(ERROR,

@@ -3,7 +3,7 @@
  * pg_rewind.c
  *	  Synchronizes a PostgreSQL data directory to a new timeline
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -24,6 +24,7 @@
 #include "access/xlog_internal.h"
 #include "catalog/catversion.h"
 #include "catalog/pg_control.h"
+#include "common/file_perm.h"
 #include "common/restricted_token.h"
 #include "getopt_long.h"
 #include "storage/bufpage.h"
@@ -44,6 +45,7 @@ static ControlFileData ControlFile_target;
 static ControlFileData ControlFile_source;
 
 const char *progname;
+int			WalSegSz;
 
 /* Configuration options */
 char	   *datadir_target = NULL;
@@ -97,6 +99,7 @@ main(int argc, char **argv)
 	XLogRecPtr	chkptrec;
 	TimeLineID	chkpttli;
 	XLogRecPtr	chkptredo;
+	XLogRecPtr	target_wal_endrec;
 	size_t		size;
 	char	   *buffer;
 	bool		rewind_needed;
@@ -196,10 +199,21 @@ main(int argc, char **argv)
 		fprintf(stderr, _("cannot be executed by \"root\"\n"));
 		fprintf(stderr, _("You must run %s as the PostgreSQL superuser.\n"),
 				progname);
+		exit(1);
 	}
 #endif
 
 	get_restricted_token(progname);
+
+	/* Set mask based on PGDATA permissions */
+	if (!GetDataDirectoryCreatePerm(datadir_target))
+	{
+		fprintf(stderr, _("%s: could not read permissions of directory \"%s\": %s\n"),
+				progname, datadir_target, strerror(errno));
+		exit(1);
+	}
+
+	umask(pg_mode_mask);
 
 	/* Connect to remote server */
 	if (connstr_source)
@@ -227,42 +241,56 @@ main(int argc, char **argv)
 	{
 		printf(_("source and target cluster are on the same timeline\n"));
 		rewind_needed = false;
+		target_wal_endrec = 0;
 	}
 	else
 	{
+		XLogRecPtr	chkptendrec;
+
 		findCommonAncestorTimeline(&divergerec, &lastcommontliIndex);
 		printf(_("servers diverged at WAL location %X/%X on timeline %u\n"),
 			   (uint32) (divergerec >> 32), (uint32) divergerec,
 			   targetHistory[lastcommontliIndex].tli);
 
 		/*
-		 * Check for the possibility that the target is in fact a direct
-		 * ancestor of the source. In that case, there is no divergent history
-		 * in the target that needs rewinding.
+		 * Determine the end-of-WAL on the target.
+		 *
+		 * The WAL ends at the last shutdown checkpoint, or at
+		 * minRecoveryPoint if it was a standby. (If we supported rewinding a
+		 * server that was not shut down cleanly, we would need to replay
+		 * until we reach the first invalid record, like crash recovery does.)
 		 */
-		if (ControlFile_target.checkPoint >= divergerec)
+
+		/* read the checkpoint record on the target to see where it ends. */
+		chkptendrec = readOneRecord(datadir_target,
+									ControlFile_target.checkPoint,
+									targetNentries - 1);
+
+		if (ControlFile_target.minRecoveryPoint > chkptendrec)
+		{
+			target_wal_endrec = ControlFile_target.minRecoveryPoint;
+		}
+		else
+		{
+			target_wal_endrec = chkptendrec;
+		}
+
+		/*
+		 * Check for the possibility that the target is in fact a direct 
+		 * ancestor of the source. In that case, there is no divergent history
+		 * in the
+		  target that needs rewinding.
+		 */
+		if (target_wal_endrec > divergerec)
 		{
 			rewind_needed = true;
 		}
 		else
 		{
-			XLogRecPtr	chkptendrec;
+			/* the last common checkpoint record must be part of target WAL */
+			Assert(target_wal_endrec == divergerec);
 
-			/* Read the checkpoint record on the target to see where it ends. */
-			chkptendrec = readOneRecord(datadir_target,
-										ControlFile_target.checkPoint,
-										targetNentries - 1);
-
-			/*
-			 * If the histories diverged exactly at the end of the shutdown
-			 * checkpoint record on the target, there are no WAL records in
-			 * the target that don't belong in the source's history, and no
-			 * rewind is needed.
-			 */
-			if (chkptendrec == divergerec)
-				rewind_needed = false;
-			else
-				rewind_needed = true;
+			rewind_needed = false;
 		}
 	}
 
@@ -291,13 +319,11 @@ main(int argc, char **argv)
 	/*
 	 * Read the target WAL from last checkpoint before the point of fork, to
 	 * extract all the pages that were modified on the target cluster after
-	 * the fork. We can stop reading after reaching the final shutdown record.
-	 * XXX: If we supported rewinding a server that was not shut down cleanly,
-	 * we would need to replay until the end of WAL here.
+	 * the fork.
 	 */
 	pg_log(PG_PROGRESS, "reading WAL in target\n");
 	extractPageMap(datadir_target, chkptrec, lastcommontliIndex,
-				   ControlFile_target.checkPoint);
+				   target_wal_endrec);
 	filemap_finalize();
 
 	if (showprogress)
@@ -466,7 +492,7 @@ getTimelineHistory(ControlFileData *controlFile, int *nentries)
 		else if (controlFile == &ControlFile_target)
 			histfile = slurpFile(datadir_target, path, NULL);
 		else
-			pg_fatal("invalid control file");
+			pg_fatal("invalid control file\n");
 
 		history = rewind_parseTimeLineHistory(histfile, tli, nentries);
 		pg_free(histfile);
@@ -572,8 +598,8 @@ createBackupLabel(XLogRecPtr startpoint, TimeLineID starttli, XLogRecPtr checkpo
 	char		buf[1000];
 	int			len;
 
-	XLByteToSeg(startpoint, startsegno);
-	XLogFileName(xlogfilename, starttli, startsegno);
+	XLByteToSeg(startpoint, startsegno, WalSegSz);
+	XLogFileName(xlogfilename, starttli, startsegno, WalSegSz);
 
 	/*
 	 * Construct backup label file
@@ -630,6 +656,15 @@ digestControlFile(ControlFileData *ControlFile, char *src, size_t size)
 				 (int) size, PG_CONTROL_FILE_SIZE);
 
 	memcpy(ControlFile, src, sizeof(ControlFileData));
+
+	/* set and validate WalSegSz */
+	WalSegSz = ControlFile->xlog_seg_size;
+
+	if (!IsValidWalSegSize(WalSegSz))
+		pg_fatal(ngettext("WAL segment size must be a power of two between 1 MB and 1 GB, but the control file specifies %d byte\n",
+						  "WAL segment size must be a power of two between 1 MB and 1 GB, but the control file specifies %d bytes\n",
+						  WalSegSz),
+				 WalSegSz);
 
 	/* Additional checks on control file */
 	checkControlFile(ControlFile);

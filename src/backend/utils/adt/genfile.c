@@ -4,7 +4,7 @@
  *		Functions for direct access to files
  *
  *
- * Copyright (c) 2004-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2004-2018, PostgreSQL Global Development Group
  *
  * Author: Andreas Pflug <pgadmin@pse-consulting.de>
  *
@@ -22,6 +22,7 @@
 
 #include "access/htup_details.h"
 #include "access/xlog_internal.h"
+#include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "mb/pg_wchar.h"
@@ -32,19 +33,18 @@
 #include "utils/memutils.h"
 #include "utils/timestamp.h"
 
-typedef struct
-{
-	char	   *location;
-	DIR		   *dirdesc;
-	bool		include_dot_dirs;
-} directory_fctx;
-
 
 /*
  * Convert a "text" filename argument to C string, and check it's allowable.
  *
  * Filename may be absolute or relative to the DataDir, but we only allow
  * absolute paths that match DataDir or Log_directory.
+ *
+ * This does a privilege check against the 'pg_read_server_files' role, so
+ * this function is really only appropriate for callers who are only checking
+ * 'read' access.  Do not use this function if you are looking for a check
+ * for 'write' or 'program' access without updating it to access the type
+ * of check as an argument and checking the appropriate role membership.
  */
 static char *
 convert_and_check_filename(text *arg)
@@ -54,6 +54,15 @@ convert_and_check_filename(text *arg)
 	filename = text_to_cstring(arg);
 	canonicalize_path(filename);	/* filename can change length here */
 
+	/*
+	 * Members of the 'pg_read_server_files' role are allowed to access any
+	 * files on the server as the PG user, so no need to do any further checks
+	 * here.
+	 */
+	if (is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_SERVER_FILES))
+		return filename;
+
+	/* User isn't a member of the default role, so check if it's allowable */
 	if (is_absolute_path(filename))
 	{
 		/* Disallow '/a/b/data/..' */
@@ -94,33 +103,11 @@ read_binary_file(const char *filename, int64 seek_offset, int64 bytes_to_read,
 				 bool missing_ok)
 {
 	bytea	   *buf;
-	size_t		nbytes;
+	size_t		nbytes = 0;
 	FILE	   *file;
 
-	if (bytes_to_read < 0)
-	{
-		if (seek_offset < 0)
-			bytes_to_read = -seek_offset;
-		else
-		{
-			struct stat fst;
-
-			if (stat(filename, &fst) < 0)
-			{
-				if (missing_ok && errno == ENOENT)
-					return NULL;
-				else
-					ereport(ERROR,
-							(errcode_for_file_access(),
-							 errmsg("could not stat file \"%s\": %m", filename)));
-			}
-
-			bytes_to_read = fst.st_size - seek_offset;
-		}
-	}
-
-	/* not sure why anyone thought that int64 length was a good idea */
-	if (bytes_to_read > (MaxAllocSize - VARHDRSZ))
+	/* clamp request size to what we can actually deliver */
+	if (bytes_to_read > (int64) (MaxAllocSize - VARHDRSZ))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("requested length too large")));
@@ -142,9 +129,67 @@ read_binary_file(const char *filename, int64 seek_offset, int64 bytes_to_read,
 				(errcode_for_file_access(),
 				 errmsg("could not seek in file \"%s\": %m", filename)));
 
-	buf = (bytea *) palloc((Size) bytes_to_read + VARHDRSZ);
+	if (bytes_to_read >= 0)
+	{
+		/* If passed explicit read size just do it */
+		buf = (bytea *) palloc((Size) bytes_to_read + VARHDRSZ);
 
-	nbytes = fread(VARDATA(buf), 1, (size_t) bytes_to_read, file);
+		nbytes = fread(VARDATA(buf), 1, (size_t) bytes_to_read, file);
+	}
+	else
+	{
+		/* Negative read size, read rest of file */
+		StringInfoData sbuf;
+
+		initStringInfo(&sbuf);
+		/* Leave room in the buffer for the varlena length word */
+		sbuf.len += VARHDRSZ;
+		Assert(sbuf.len < sbuf.maxlen);
+
+		while (!(feof(file) || ferror(file)))
+		{
+			size_t		rbytes;
+
+			/* Minimum amount to read at a time */
+#define MIN_READ_SIZE 4096
+
+			/*
+			 * If not at end of file, and sbuf.len is equal to
+			 * MaxAllocSize - 1, then either the file is too large, or
+			 * there is nothing left to read. Attempt to read one more
+			 * byte to see if the end of file has been reached. If not,
+			 * the file is too large; we'd rather give the error message
+			 * for that ourselves.
+			 */
+			if (sbuf.len == MaxAllocSize - 1)
+			{
+				char	rbuf[1];
+
+				if (fread(rbuf, 1, 1, file) != 0 || !feof(file))
+					ereport(ERROR,
+							(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+							 errmsg("file length too large")));
+				else
+					break;
+			}
+
+			/* OK, ensure that we can read at least MIN_READ_SIZE */
+			enlargeStringInfo(&sbuf, MIN_READ_SIZE);
+
+			/*
+			 * stringinfo.c likes to allocate in powers of 2, so it's likely
+			 * that much more space is available than we asked for.  Use all
+			 * of it, rather than making more fread calls than necessary.
+			 */
+			rbytes = fread(sbuf.data + sbuf.len, 1,
+						   (size_t) (sbuf.maxlen - sbuf.len - 1), file);
+			sbuf.len += rbytes;
+			nbytes += rbytes;
+		}
+
+		/* Now we can commandeer the stringinfo's buffer as the result */
+		buf = (bytea *) sbuf.data;
+	}
 
 	if (ferror(file))
 		ereport(ERROR,
@@ -184,6 +229,8 @@ read_text_file(const char *filename, int64 seek_offset, int64 bytes_to_read,
 
 /*
  * Read a section of a file, returning it as text
+ *
+ * This function is kept to support adminpack 1.0.
  */
 Datum
 pg_read_file(PG_FUNCTION_ARGS)
@@ -198,7 +245,47 @@ pg_read_file(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to read files"))));
+				 (errmsg("must be superuser to read files with adminpack 1.0"),
+				  errhint("Consider using pg_file_read(), which is part of core, instead."))));
+
+	/* handle optional arguments */
+	if (PG_NARGS() >= 3)
+	{
+		seek_offset = PG_GETARG_INT64(1);
+		bytes_to_read = PG_GETARG_INT64(2);
+
+		if (bytes_to_read < 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("requested length cannot be negative")));
+	}
+	if (PG_NARGS() >= 4)
+		missing_ok = PG_GETARG_BOOL(3);
+
+	filename = convert_and_check_filename(filename_t);
+
+	result = read_text_file(filename, seek_offset, bytes_to_read, missing_ok);
+	if (result)
+		PG_RETURN_TEXT_P(result);
+	else
+		PG_RETURN_NULL();
+}
+
+/*
+ * Read a section of a file, returning it as text
+ *
+ * No superuser check done here- instead privileges are handled by the
+ * GRANT system.
+ */
+Datum
+pg_read_file_v2(PG_FUNCTION_ARGS)
+{
+	text	   *filename_t = PG_GETARG_TEXT_PP(0);
+	int64		seek_offset = 0;
+	int64		bytes_to_read = -1;
+	bool		missing_ok = false;
+	char	   *filename;
+	text	   *result;
 
 	/* handle optional arguments */
 	if (PG_NARGS() >= 3)
@@ -236,11 +323,6 @@ pg_read_binary_file(PG_FUNCTION_ARGS)
 	char	   *filename;
 	bytea	   *result;
 
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to read files"))));
-
 	/* handle optional arguments */
 	if (PG_NARGS() >= 3)
 	{
@@ -267,7 +349,7 @@ pg_read_binary_file(PG_FUNCTION_ARGS)
 
 
 /*
- * Wrapper functions for the 1 and 3 argument variants of pg_read_file()
+ * Wrapper functions for the 1 and 3 argument variants of pg_read_file_v2()
  * and pg_binary_read_file().
  *
  * These are necessary to pass the sanity check in opr_sanity, which checks
@@ -277,13 +359,13 @@ pg_read_binary_file(PG_FUNCTION_ARGS)
 Datum
 pg_read_file_off_len(PG_FUNCTION_ARGS)
 {
-	return pg_read_file(fcinfo);
+	return pg_read_file_v2(fcinfo);
 }
 
 Datum
 pg_read_file_all(PG_FUNCTION_ARGS)
 {
-	return pg_read_file(fcinfo);
+	return pg_read_file_v2(fcinfo);
 }
 
 Datum
@@ -312,11 +394,6 @@ pg_stat_file(PG_FUNCTION_ARGS)
 	HeapTuple	tuple;
 	TupleDesc	tupdesc;
 	bool		missing_ok = false;
-
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to get file information"))));
 
 	/* check the optional argument */
 	if (PG_NARGS() == 2)
@@ -394,72 +471,79 @@ pg_stat_file_1arg(PG_FUNCTION_ARGS)
 Datum
 pg_ls_dir(PG_FUNCTION_ARGS)
 {
-	FuncCallContext *funcctx;
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	char	   *location;
+	bool		missing_ok = false;
+	bool		include_dot_dirs = false;
+	bool		randomAccess;
+	TupleDesc	tupdesc;
+	Tuplestorestate *tupstore;
+	DIR		   *dirdesc;
 	struct dirent *de;
-	directory_fctx *fctx;
 	MemoryContext oldcontext;
 
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to get directory listings"))));
+	location = convert_and_check_filename(PG_GETARG_TEXT_PP(0));
 
-	if (SRF_IS_FIRSTCALL())
+	/* check the optional arguments */
+	if (PG_NARGS() == 3)
 	{
-		bool		missing_ok = false;
-		bool		include_dot_dirs = false;
-
-		/* check the optional arguments */
-		if (PG_NARGS() == 3)
-		{
-			if (!PG_ARGISNULL(1))
-				missing_ok = PG_GETARG_BOOL(1);
-			if (!PG_ARGISNULL(2))
-				include_dot_dirs = PG_GETARG_BOOL(2);
-		}
-
-		funcctx = SRF_FIRSTCALL_INIT();
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-
-		fctx = palloc(sizeof(directory_fctx));
-		fctx->location = convert_and_check_filename(PG_GETARG_TEXT_PP(0));
-
-		fctx->include_dot_dirs = include_dot_dirs;
-		fctx->dirdesc = AllocateDir(fctx->location);
-
-		if (!fctx->dirdesc)
-		{
-			if (missing_ok && errno == ENOENT)
-			{
-				MemoryContextSwitchTo(oldcontext);
-				SRF_RETURN_DONE(funcctx);
-			}
-			else
-				ereport(ERROR,
-						(errcode_for_file_access(),
-						 errmsg("could not open directory \"%s\": %m",
-								fctx->location)));
-		}
-		funcctx->user_fctx = fctx;
-		MemoryContextSwitchTo(oldcontext);
+		if (!PG_ARGISNULL(1))
+			missing_ok = PG_GETARG_BOOL(1);
+		if (!PG_ARGISNULL(2))
+			include_dot_dirs = PG_GETARG_BOOL(2);
 	}
 
-	funcctx = SRF_PERCALL_SETUP();
-	fctx = (directory_fctx *) funcctx->user_fctx;
+	/* check to see if caller supports us returning a tuplestore */
+	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("set-valued function called in context that cannot accept a set")));
+	if (!(rsinfo->allowedModes & SFRM_Materialize))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("materialize mode required, but it is not allowed in this context")));
 
-	while ((de = ReadDir(fctx->dirdesc, fctx->location)) != NULL)
+	/* The tupdesc and tuplestore must be created in ecxt_per_query_memory */
+	oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
+
+	tupdesc = CreateTemplateTupleDesc(1, false);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pg_ls_dir", TEXTOID, -1, 0);
+
+	randomAccess = (rsinfo->allowedModes & SFRM_Materialize_Random) != 0;
+	tupstore = tuplestore_begin_heap(randomAccess, false, work_mem);
+	rsinfo->returnMode = SFRM_Materialize;
+	rsinfo->setResult = tupstore;
+	rsinfo->setDesc = tupdesc;
+
+	MemoryContextSwitchTo(oldcontext);
+
+	dirdesc = AllocateDir(location);
+	if (!dirdesc)
 	{
-		if (!fctx->include_dot_dirs &&
+		/* Return empty tuplestore if appropriate */
+		if (missing_ok && errno == ENOENT)
+			return (Datum) 0;
+		/* Otherwise, we can let ReadDir() throw the error */
+	}
+
+	while ((de = ReadDir(dirdesc, location)) != NULL)
+	{
+		Datum		values[1];
+		bool		nulls[1];
+
+		if (!include_dot_dirs &&
 			(strcmp(de->d_name, ".") == 0 ||
 			 strcmp(de->d_name, "..") == 0))
 			continue;
 
-		SRF_RETURN_NEXT(funcctx, CStringGetTextDatum(de->d_name));
+		values[0] = CStringGetTextDatum(de->d_name);
+		nulls[0] = false;
+
+		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 	}
 
-	FreeDir(fctx->dirdesc);
-
-	SRF_RETURN_DONE(funcctx);
+	FreeDir(dirdesc);
+	return (Datum) 0;
 }
 
 /*
@@ -475,67 +559,72 @@ pg_ls_dir_1arg(PG_FUNCTION_ARGS)
 	return pg_ls_dir(fcinfo);
 }
 
-/* Generic function to return a directory listing of files */
+/*
+ * Generic function to return a directory listing of files.
+ */
 static Datum
-pg_ls_dir_files(FunctionCallInfo fcinfo, char *dir)
+pg_ls_dir_files(FunctionCallInfo fcinfo, const char *dir)
 {
-	FuncCallContext *funcctx;
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	bool		randomAccess;
+	TupleDesc	tupdesc;
+	Tuplestorestate *tupstore;
+	DIR		   *dirdesc;
 	struct dirent *de;
-	directory_fctx *fctx;
+	MemoryContext oldcontext;
 
-	if (SRF_IS_FIRSTCALL())
-	{
-		MemoryContext oldcontext;
-		TupleDesc	tupdesc;
+	/* check to see if caller supports us returning a tuplestore */
+	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("set-valued function called in context that cannot accept a set")));
+	if (!(rsinfo->allowedModes & SFRM_Materialize))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("materialize mode required, but it is not allowed in this context")));
 
-		funcctx = SRF_FIRSTCALL_INIT();
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+	/* The tupdesc and tuplestore must be created in ecxt_per_query_memory */
+	oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
 
-		fctx = palloc(sizeof(directory_fctx));
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		elog(ERROR, "return type must be a row type");
 
-		tupdesc = CreateTemplateTupleDesc(3, false);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "name",
-						   TEXTOID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "size",
-						   INT8OID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 3, "modification",
-						   TIMESTAMPTZOID, -1, 0);
-		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+	randomAccess = (rsinfo->allowedModes & SFRM_Materialize_Random) != 0;
+	tupstore = tuplestore_begin_heap(randomAccess, false, work_mem);
+	rsinfo->returnMode = SFRM_Materialize;
+	rsinfo->setResult = tupstore;
+	rsinfo->setDesc = tupdesc;
 
-		fctx->location = pstrdup(dir);
-		fctx->dirdesc = AllocateDir(fctx->location);
+	MemoryContextSwitchTo(oldcontext);
 
-		if (!fctx->dirdesc)
-			ereport(ERROR,
-					(errcode_for_file_access(),
-					 errmsg("could not read directory \"%s\": %m",
-							fctx->location)));
-
-		funcctx->user_fctx = fctx;
-		MemoryContextSwitchTo(oldcontext);
-	}
-
-	funcctx = SRF_PERCALL_SETUP();
-	fctx = (directory_fctx *) funcctx->user_fctx;
-
-	while ((de = ReadDir(fctx->dirdesc, fctx->location)) != NULL)
+	/*
+	 * Now walk the directory.  Note that we must do this within a single SRF
+	 * call, not leave the directory open across multiple calls, since we
+	 * can't count on the SRF being run to completion.
+	 */
+	dirdesc = AllocateDir(dir);
+	while ((de = ReadDir(dirdesc, dir)) != NULL)
 	{
 		Datum		values[3];
 		bool		nulls[3];
 		char		path[MAXPGPATH * 2];
 		struct stat attrib;
-		HeapTuple	tuple;
 
 		/* Skip hidden files */
 		if (de->d_name[0] == '.')
 			continue;
 
 		/* Get the file info */
-		snprintf(path, sizeof(path), "%s/%s", fctx->location, de->d_name);
+		snprintf(path, sizeof(path), "%s/%s", dir, de->d_name);
 		if (stat(path, &attrib) < 0)
+		{
+			/* Ignore concurrently-deleted files, else complain */
+			if (errno == ENOENT)
+				continue;
 			ereport(ERROR,
 					(errcode_for_file_access(),
-					 errmsg("could not stat directory \"%s\": %m", dir)));
+					 errmsg("could not stat file \"%s\": %m", path)));
+		}
 
 		/* Ignore anything but regular files */
 		if (!S_ISREG(attrib.st_mode))
@@ -546,12 +635,11 @@ pg_ls_dir_files(FunctionCallInfo fcinfo, char *dir)
 		values[2] = TimestampTzGetDatum(time_t_to_timestamptz(attrib.st_mtime));
 		memset(nulls, 0, sizeof(nulls));
 
-		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
-		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
 	}
 
-	FreeDir(fctx->dirdesc);
-	SRF_RETURN_DONE(funcctx);
+	FreeDir(dirdesc);
+	return (Datum) 0;
 }
 
 /* Function to return the list of files in the log directory */

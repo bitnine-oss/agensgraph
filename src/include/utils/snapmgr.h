@@ -3,7 +3,7 @@
  * snapmgr.h
  *	  POSTGRES snapshot manager
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/snapmgr.h
@@ -40,7 +40,6 @@
 	 RelationNeedsWAL(rel) \
   && !IsCatalogRelation(rel) \
   && !RelationIsAccessibleInLogicalDecoding(rel) \
-  && !RelationHasUnloggedIndex(rel) \
 )
 
 #define EarlyPruningEnabled(rel) (old_snapshot_threshold >= 0 && RelationAllowsEarlyPruning(rel))

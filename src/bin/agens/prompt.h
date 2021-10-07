@@ -1,16 +1,16 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/prompt.h
+ * src/bin/agens/prompt.h
  */
 #ifndef PROMPT_H
 #define PROMPT_H
 
 /* enum promptStatus_t is now defined by psqlscan.h */
 #include "fe_utils/psqlscan.h"
-#include "conditional.h"
+#include "fe_utils/conditional.h"
 
 char	   *get_prompt(promptStatus_t status, ConditionalStack cstack);
 

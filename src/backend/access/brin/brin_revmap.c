@@ -12,7 +12,7 @@
  * the metapage.  When the revmap needs to be expanded, all tuples on the
  * regular BRIN page at that block (if any) are moved out of the way.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -282,10 +282,17 @@ brinGetTupleForHeapBlock(BrinRevmap *revmap, BlockNumber heapBlk,
 		/* If we land on a revmap page, start over */
 		if (BRIN_IS_REGULAR_PAGE(page))
 		{
+			/*
+			 * If the offset number is greater than what's in the page, it's
+			 * possible that the range was desummarized concurrently. Just
+			 * return NULL to handle that case.
+			 */
 			if (*off > PageGetMaxOffsetNumber(page))
-				ereport(ERROR,
-						(errcode(ERRCODE_INDEX_CORRUPTED),
-						 errmsg_internal("corrupted BRIN index: inconsistent range map")));
+			{
+				LockBuffer(*buf, BUFFER_LOCK_UNLOCK);
+				return NULL;
+			}
+
 			lp = PageGetItemId(page, *off);
 			if (ItemIdIsUsed(lp))
 			{
@@ -315,7 +322,7 @@ brinGetTupleForHeapBlock(BrinRevmap *revmap, BlockNumber heapBlk,
  *
  * Index must be locked in ShareUpdateExclusiveLock mode.
  *
- * Return FALSE if caller should retry.
+ * Return false if caller should retry.
  */
 bool
 brinRevmapDesummarizeRange(Relation idxrel, BlockNumber heapBlk)
@@ -333,7 +340,6 @@ brinRevmapDesummarizeRange(Relation idxrel, BlockNumber heapBlk)
 	OffsetNumber revmapOffset;
 	OffsetNumber regOffset;
 	ItemId		lp;
-	BrinTuple  *tup;
 
 	revmap = brinRevmapInitialize(idxrel, &pagesPerRange, NULL);
 
@@ -365,6 +371,10 @@ brinRevmapDesummarizeRange(Relation idxrel, BlockNumber heapBlk)
 	regBuf = ReadBuffer(idxrel, ItemPointerGetBlockNumber(iptr));
 	LockBuffer(regBuf, BUFFER_LOCK_EXCLUSIVE);
 	regPg = BufferGetPage(regBuf);
+	/*
+	 * We're only removing data, not reading it, so there's no need to
+	 * TestForOldSnapshot here.
+	 */
 
 	/* if this is no longer a regular page, tell caller to start over */
 	if (!BRIN_IS_REGULAR_PAGE(regPg))
@@ -386,23 +396,13 @@ brinRevmapDesummarizeRange(Relation idxrel, BlockNumber heapBlk)
 		ereport(ERROR,
 				(errcode(ERRCODE_INDEX_CORRUPTED),
 				 errmsg("corrupted BRIN index: inconsistent range map")));
-	tup = (BrinTuple *) PageGetItem(regPg, lp);
-	/* XXX apply sanity checks?  Might as well delete a bogus tuple ... */
 
 	/*
-	 * We're only removing data, not reading it, so there's no need to
-	 * TestForOldSnapshot here.
+	 * Placeholder tuples only appear during unfinished summarization, and we
+	 * hold ShareUpdateExclusiveLock, so this function cannot run concurrently
+	 * with that.  So any placeholder tuples that exist are leftovers from a
+	 * crashed or aborted summarization; remove them silently.
 	 */
-
-	/*
-	 * Because of SUE lock, this function shouldn't run concurrently with
-	 * summarization.  Placeholder tuples can only exist as leftovers from
-	 * crashed summarization, so if we detect any, we complain but proceed.
-	 */
-	if (BrinTupleIsPlaceholder(tup))
-		ereport(WARNING,
-				(errmsg("leftover placeholder tuple detected in BRIN index \"%s\", deleting",
-						RelationGetRelationName(idxrel))));
 
 	START_CRIT_SECTION();
 
@@ -615,7 +615,7 @@ revmap_physical_extend(BrinRevmap *revmap)
 
 	/*
 	 * Ok, we have now locked the metapage and the target block. Re-initialize
-	 * it as a revmap page.
+	 * the target block as a revmap page, and update the metapage.
 	 */
 	START_CRIT_SECTION();
 
@@ -624,6 +624,17 @@ revmap_physical_extend(BrinRevmap *revmap)
 	MarkBufferDirty(buf);
 
 	metadata->lastRevmapPage = mapBlk;
+
+	/*
+	 * Set pd_lower just past the end of the metadata.  This is essential,
+	 * because without doing so, metadata will be lost if xlog.c compresses
+	 * the page.  (We must do this here because pre-v11 versions of PG did not
+	 * set the metapage's pd_lower correctly, so a pg_upgraded index might
+	 * contain the wrong value.)
+	 */
+	((PageHeader) metapage)->pd_lower =
+		((char *) metadata + sizeof(BrinMetaPageData)) - (char *) metapage;
+
 	MarkBufferDirty(revmap->rm_metaBuf);
 
 	if (RelationNeedsWAL(revmap->rm_irel))
@@ -635,7 +646,7 @@ revmap_physical_extend(BrinRevmap *revmap)
 
 		XLogBeginInsert();
 		XLogRegisterData((char *) &xlrec, SizeOfBrinRevmapExtend);
-		XLogRegisterBuffer(0, revmap->rm_metaBuf, 0);
+		XLogRegisterBuffer(0, revmap->rm_metaBuf, REGBUF_STANDARD);
 
 		XLogRegisterBuffer(1, buf, REGBUF_WILL_INIT);
 

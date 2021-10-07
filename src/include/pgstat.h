@@ -3,7 +3,7 @@
  *
  *	Definitions for the PostgreSQL statistics collector daemon.
  *
- *	Copyright (c) 2001-2017, PostgreSQL Global Development Group
+ *	Copyright (c) 2001-2018, PostgreSQL Global Development Group
  *
  *	src/include/pgstat.h
  * ----------
@@ -801,6 +801,21 @@ typedef enum
 	WAIT_EVENT_BGWORKER_STARTUP,
 	WAIT_EVENT_BTREE_PAGE,
 	WAIT_EVENT_EXECUTE_GATHER,
+	WAIT_EVENT_HASH_BATCH_ALLOCATING,
+	WAIT_EVENT_HASH_BATCH_ELECTING,
+	WAIT_EVENT_HASH_BATCH_LOADING,
+	WAIT_EVENT_HASH_BUILD_ALLOCATING,
+	WAIT_EVENT_HASH_BUILD_ELECTING,
+	WAIT_EVENT_HASH_BUILD_HASHING_INNER,
+	WAIT_EVENT_HASH_BUILD_HASHING_OUTER,
+	WAIT_EVENT_HASH_GROW_BATCHES_ELECTING,
+	WAIT_EVENT_HASH_GROW_BATCHES_FINISHING,
+	WAIT_EVENT_HASH_GROW_BATCHES_REPARTITIONING,
+	WAIT_EVENT_HASH_GROW_BATCHES_ALLOCATING,
+	WAIT_EVENT_HASH_GROW_BATCHES_DECIDING,
+	WAIT_EVENT_HASH_GROW_BUCKETS_ELECTING,
+	WAIT_EVENT_HASH_GROW_BUCKETS_REINSERTING,
+	WAIT_EVENT_HASH_GROW_BUCKETS_ALLOCATING,
 	WAIT_EVENT_LOGICAL_SYNC_DATA,
 	WAIT_EVENT_LOGICAL_SYNC_STATE_CHANGE,
 	WAIT_EVENT_MQ_INTERNAL,
@@ -809,7 +824,9 @@ typedef enum
 	WAIT_EVENT_MQ_SEND,
 	WAIT_EVENT_PARALLEL_FINISH,
 	WAIT_EVENT_PARALLEL_BITMAP_SCAN,
+	WAIT_EVENT_PARALLEL_CREATE_INDEX_SCAN,
 	WAIT_EVENT_PROCARRAY_GROUP_UPDATE,
+	WAIT_EVENT_CLOG_GROUP_UPDATE,
 	WAIT_EVENT_REPLICATION_ORIGIN_DROP,
 	WAIT_EVENT_REPLICATION_SLOT_DROP,
 	WAIT_EVENT_SAFE_SNAPSHOT,
@@ -964,11 +981,12 @@ typedef struct PgBackendStatus
 	 * the copy is valid; otherwise start over.  This makes updates cheap
 	 * while reads are potentially expensive, but that's the tradeoff we want.
 	 *
-	 * The above protocol needs the memory barriers to ensure that the
-	 * apparent order of execution is as it desires. Otherwise, for example,
-	 * the CPU might rearrange the code so that st_changecount is incremented
-	 * twice before the modification on a machine with weak memory ordering.
-	 * This surprising result can lead to bugs.
+	 * The above protocol needs memory barriers to ensure that the apparent
+	 * order of execution is as it desires.  Otherwise, for example, the CPU
+	 * might rearrange the code so that st_changecount is incremented twice
+	 * before the modification on a machine with weak memory ordering.  Hence,
+	 * use the macros defined below for manipulating st_changecount, rather
+	 * than touching it directly.
 	 */
 	int			st_changecount;
 
@@ -1000,8 +1018,14 @@ typedef struct PgBackendStatus
 	/* application name; MUST be null-terminated */
 	char	   *st_appname;
 
-	/* current command string; MUST be null-terminated */
-	char	   *st_activity;
+	/*
+	 * Current command string; MUST be null-terminated. Note that this string
+	 * possibly is truncated in the middle of a multi-byte character. As
+	 * activity strings are stored more frequently than read, that allows to
+	 * move the cost of correct truncation to the display side. Use
+	 * pgstat_clip_activity() to truncate correctly.
+	 */
+	char	   *st_activity_raw;
 
 	/*
 	 * Command progress reporting.  Any command which wishes can advertise
@@ -1018,41 +1042,75 @@ typedef struct PgBackendStatus
 } PgBackendStatus;
 
 /*
- * Macros to load and store st_changecount with the memory barriers.
+ * Macros to load and store st_changecount with appropriate memory barriers.
  *
- * pgstat_increment_changecount_before() and
- * pgstat_increment_changecount_after() need to be called before and after
- * PgBackendStatus entries are modified, respectively. This makes sure that
- * st_changecount is incremented around the modification.
+ * Use PGSTAT_BEGIN_WRITE_ACTIVITY() before, and PGSTAT_END_WRITE_ACTIVITY()
+ * after, modifying the current process's PgBackendStatus data.  Note that,
+ * since there is no mechanism for cleaning up st_changecount after an error,
+ * THESE MACROS FORM A CRITICAL SECTION.  Any error between them will be
+ * promoted to PANIC, causing a database restart to clean up shared memory!
+ * Hence, keep the critical section as short and straight-line as possible.
+ * Aside from being safer, that minimizes the window in which readers will
+ * have to loop.
  *
- * Also pgstat_save_changecount_before() and pgstat_save_changecount_after()
- * need to be called before and after PgBackendStatus entries are copied into
- * private memory, respectively.
+ * Reader logic should follow this sketch:
+ *
+ *		for (;;)
+ *		{
+ *			int before_ct, after_ct;
+ *
+ *			pgstat_begin_read_activity(beentry, before_ct);
+ *			... copy beentry data to local memory ...
+ *			pgstat_end_read_activity(beentry, after_ct);
+ *			if (pgstat_read_activity_complete(before_ct, after_ct))
+ *				break;
+ *			CHECK_FOR_INTERRUPTS();
+ *		}
+ *
+ * For extra safety, we generally use volatile beentry pointers, although
+ * the memory barriers should theoretically be sufficient.
  */
-#define pgstat_increment_changecount_before(beentry)	\
-	do {	\
-		beentry->st_changecount++;	\
+#define PGSTAT_BEGIN_WRITE_ACTIVITY(beentry) \
+	do { \
+		START_CRIT_SECTION(); \
+		(beentry)->st_changecount++; \
 		pg_write_barrier(); \
 	} while (0)
 
+#define PGSTAT_END_WRITE_ACTIVITY(beentry) \
+	do { \
+		pg_write_barrier(); \
+		(beentry)->st_changecount++; \
+		Assert(((beentry)->st_changecount & 1) == 0); \
+		END_CRIT_SECTION(); \
+	} while (0)
+
+#define pgstat_begin_read_activity(beentry, before_changecount) \
+	do { \
+		(before_changecount) = (beentry)->st_changecount; \
+		pg_read_barrier(); \
+	} while (0)
+
+#define pgstat_end_read_activity(beentry, after_changecount) \
+	do { \
+		pg_read_barrier(); \
+		(after_changecount) = (beentry)->st_changecount; \
+	} while (0)
+
+#define pgstat_read_activity_complete(before_changecount, after_changecount) \
+	((before_changecount) == (after_changecount) && \
+	 ((before_changecount) & 1) == 0)
+
+/* deprecated names for above macros; these are gone in v12 */
+#define pgstat_increment_changecount_before(beentry) \
+	PGSTAT_BEGIN_WRITE_ACTIVITY(beentry)
 #define pgstat_increment_changecount_after(beentry) \
-	do {	\
-		pg_write_barrier(); \
-		beentry->st_changecount++;	\
-		Assert((beentry->st_changecount & 1) == 0); \
-	} while (0)
+	PGSTAT_END_WRITE_ACTIVITY(beentry)
+#define pgstat_save_changecount_before(beentry, save_changecount) \
+	pgstat_begin_read_activity(beentry, save_changecount)
+#define pgstat_save_changecount_after(beentry, save_changecount) \
+	pgstat_end_read_activity(beentry, save_changecount)
 
-#define pgstat_save_changecount_before(beentry, save_changecount)	\
-	do {	\
-		save_changecount = beentry->st_changecount; \
-		pg_read_barrier();	\
-	} while (0)
-
-#define pgstat_save_changecount_after(beentry, save_changecount)	\
-	do {	\
-		pg_read_barrier();	\
-		save_changecount = beentry->st_changecount; \
-	} while (0)
 
 /* ----------
  * LocalPgBackendStatus
@@ -1103,9 +1161,9 @@ typedef struct PgStat_FunctionCallUsage
  * GUC parameters
  * ----------
  */
-extern bool pgstat_track_activities;
-extern bool pgstat_track_counts;
-extern int	pgstat_track_functions;
+extern PGDLLIMPORT bool pgstat_track_activities;
+extern PGDLLIMPORT bool pgstat_track_counts;
+extern PGDLLIMPORT int pgstat_track_functions;
 extern PGDLLIMPORT int pgstat_track_activity_query_size;
 extern char *pgstat_stat_directory;
 extern char *pgstat_stat_tmpname;
@@ -1190,6 +1248,8 @@ extern PgStat_TableStatus *find_tabstat_entry(Oid rel_id);
 extern PgStat_BackendFunctionEntry *find_funcstat_entry(Oid func_id);
 
 extern void pgstat_initstats(Relation rel);
+
+extern char *pgstat_clip_activity(const char *raw_activity);
 
 /* ----------
  * pgstat_report_wait_start() -
@@ -1298,7 +1358,7 @@ extern void pgstat_init_function_usage(FunctionCallInfoData *fcinfo,
 extern void pgstat_end_function_usage(PgStat_FunctionCallUsage *fcu,
 						  bool finalize);
 
-extern void AtEOXact_PgStat(bool isCommit);
+extern void AtEOXact_PgStat(bool isCommit, bool parallel);
 extern void AtEOSubXact_PgStat(bool isCommit, int nestDepth);
 extern void AtEOXact_AgStat(bool isCommit);
 extern void AtEOSubXact_AgStat(bool isCommit, int nestDepth);

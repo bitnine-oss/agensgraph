@@ -3,7 +3,7 @@
  * timestamp.c
  *	  Functions for the built-in SQL types "timestamp" and "interval".
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -33,6 +33,7 @@
 #include "parser/scansup.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/date.h"
 #include "utils/datetime.h"
 
 /*
@@ -572,18 +573,8 @@ make_timestamp_internal(int year, int month, int day,
 
 	date = date2j(tm.tm_year, tm.tm_mon, tm.tm_mday) - POSTGRES_EPOCH_JDATE;
 
-	/*
-	 * This should match the checks in DecodeTimeOnly, except that since we're
-	 * dealing with a float "sec" value, we also explicitly reject NaN.  (An
-	 * infinity input should get rejected by the range comparisons, but we
-	 * can't be sure how those will treat a NaN.)
-	 */
-	if (hour < 0 || min < 0 || min > MINS_PER_HOUR - 1 ||
-		isnan(sec) ||
-		sec < 0 || sec > SECS_PER_MINUTE ||
-		hour > HOURS_PER_DAY ||
-	/* test for > 24:00:00 */
-		(hour == HOURS_PER_DAY && (min > 0 || sec > 0)))
+	/* Check for time overflow */
+	if (float_time_overflows(hour, min, sec))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATETIME_FIELD_OVERFLOW),
 				 errmsg("time field value out of range: %d:%02d:%02g",
@@ -591,7 +582,7 @@ make_timestamp_internal(int year, int month, int day,
 
 	/* This should match tm2time */
 	time = (((hour * MINS_PER_HOUR + min) * SECS_PER_MINUTE)
-			* USECS_PER_SEC) + rint(sec * USECS_PER_SEC);
+			* USECS_PER_SEC) + (int64) rint(sec * USECS_PER_SEC);
 
 	result = date * USECS_PER_DAY + time;
 	/* check for major overflow */
@@ -1009,8 +1000,8 @@ interval_send(PG_FUNCTION_ARGS)
 
 	pq_begintypsend(&buf);
 	pq_sendint64(&buf, interval->time);
-	pq_sendint(&buf, interval->day, sizeof(interval->day));
-	pq_sendint(&buf, interval->month, sizeof(interval->month));
+	pq_sendint32(&buf, interval->day);
+	pq_sendint32(&buf, interval->month);
 	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
 
@@ -1613,12 +1604,14 @@ GetSQLLocalTimestamp(int32 typmod)
  * TimestampDifference -- convert the difference between two timestamps
  *		into integer seconds and microseconds
  *
+ * This is typically used to calculate a wait timeout for select(2),
+ * which explains the otherwise-odd choice of output format.
+ *
  * Both inputs must be ordinary finite timestamps (in current usage,
  * they'll be results from GetCurrentTimestamp()).
  *
- * We expect start_time <= stop_time.  If not, we return zeros; for current
- * callers there is no need to be tense about which way division rounds on
- * negative inputs.
+ * We expect start_time <= stop_time.  If not, we return zeros,
+ * since then we're already past the previously determined stop_time.
  */
 void
 TimestampDifference(TimestampTz start_time, TimestampTz stop_time,
@@ -1636,6 +1629,36 @@ TimestampDifference(TimestampTz start_time, TimestampTz stop_time,
 		*secs = (long) (diff / USECS_PER_SEC);
 		*microsecs = (int) (diff % USECS_PER_SEC);
 	}
+}
+
+/*
+ * TimestampDifferenceMilliseconds -- convert the difference between two
+ * 		timestamps into integer milliseconds
+ *
+ * This is typically used to calculate a wait timeout for WaitLatch()
+ * or a related function.  The choice of "long" as the result type
+ * is to harmonize with that.  It is caller's responsibility that the
+ * input timestamps not be so far apart as to risk overflow of "long"
+ * (which'd happen at about 25 days on machines with 32-bit "long").
+ *
+ * Both inputs must be ordinary finite timestamps (in current usage,
+ * they'll be results from GetCurrentTimestamp()).
+ *
+ * We expect start_time <= stop_time.  If not, we return zero,
+ * since then we're already past the previously determined stop_time.
+ *
+ * Note we round up any fractional millisecond, since waiting for just
+ * less than the intended timeout is undesirable.
+ */
+long
+TimestampDifferenceMilliseconds(TimestampTz start_time, TimestampTz stop_time)
+{
+	TimestampTz diff = stop_time - start_time;
+
+	if (diff <= 0)
+		return 0;
+	else
+		return (long) ((diff + 999) / 1000);
 }
 
 /*
@@ -1988,6 +2011,9 @@ GetEpochTime(struct pg_tm *tm)
 
 	t0 = pg_gmtime(&epoch);
 
+	if (t0 == NULL)
+		elog(ERROR, "could not convert epoch to timestamp: %m");
+
 	tm->tm_year = t0->tm_year;
 	tm->tm_mon = t0->tm_mon;
 	tm->tm_mday = t0->tm_mday;
@@ -2113,6 +2139,11 @@ timestamp_hash(PG_FUNCTION_ARGS)
 	return hashint8(fcinfo);
 }
 
+Datum
+timestamp_hash_extended(PG_FUNCTION_ARGS)
+{
+	return hashint8extended(fcinfo);
+}
 
 /*
  * Cross-type comparison functions for timestamp vs timestamptz
@@ -2417,6 +2448,20 @@ interval_hash(PG_FUNCTION_ARGS)
 	span64 = int128_to_int64(span);
 
 	return DirectFunctionCall1(hashint8, Int64GetDatumFast(span64));
+}
+
+Datum
+interval_hash_extended(PG_FUNCTION_ARGS)
+{
+	Interval   *interval = PG_GETARG_INTERVAL_P(0);
+	INT128		span = interval_cmp_value(interval);
+	int64		span64;
+
+	/* Same approach as interval_hash */
+	span64 = int128_to_int64(span);
+
+	return DirectFunctionCall2(hashint8extended, Int64GetDatumFast(span64),
+							   PG_GETARG_DATUM(1));
 }
 
 /* overlaps_timestamp() --- implements the SQL OVERLAPS operator.
@@ -3178,7 +3223,7 @@ interval_mul(PG_FUNCTION_ARGS)
 	/* cascade units down */
 	result->day += (int32) month_remainder_days;
 	result_double = rint(span->time * factor + sec_remainder * USECS_PER_SEC);
-	if (result_double > PG_INT64_MAX || result_double < PG_INT64_MIN)
+	if (isnan(result_double) || !FLOAT8_FITS_IN_INT64(result_double))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
 				 errmsg("interval out of range")));
@@ -3238,6 +3283,110 @@ interval_div(PG_FUNCTION_ARGS)
 
 	PG_RETURN_INTERVAL_P(result);
 }
+
+
+/*
+ * in_range support functions for timestamps and intervals.
+ *
+ * Per SQL spec, we support these with interval as the offset type.
+ * The spec's restriction that the offset not be negative is a bit hard to
+ * decipher for intervals, but we choose to interpret it the same as our
+ * interval comparison operators would.
+ */
+
+Datum
+in_range_timestamptz_interval(PG_FUNCTION_ARGS)
+{
+	TimestampTz val = PG_GETARG_TIMESTAMPTZ(0);
+	TimestampTz base = PG_GETARG_TIMESTAMPTZ(1);
+	Interval   *offset = PG_GETARG_INTERVAL_P(2);
+	bool		sub = PG_GETARG_BOOL(3);
+	bool		less = PG_GETARG_BOOL(4);
+	TimestampTz sum;
+
+	if (int128_compare(interval_cmp_value(offset), int64_to_int128(0)) < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PRECEDING_OR_FOLLOWING_SIZE),
+				 errmsg("invalid preceding or following size in window function")));
+
+	/* We don't currently bother to avoid overflow hazards here */
+	if (sub)
+		sum = DatumGetTimestampTz(DirectFunctionCall2(timestamptz_mi_interval,
+													  TimestampTzGetDatum(base),
+													  IntervalPGetDatum(offset)));
+	else
+		sum = DatumGetTimestampTz(DirectFunctionCall2(timestamptz_pl_interval,
+													  TimestampTzGetDatum(base),
+													  IntervalPGetDatum(offset)));
+
+	if (less)
+		PG_RETURN_BOOL(val <= sum);
+	else
+		PG_RETURN_BOOL(val >= sum);
+}
+
+Datum
+in_range_timestamp_interval(PG_FUNCTION_ARGS)
+{
+	Timestamp	val = PG_GETARG_TIMESTAMP(0);
+	Timestamp	base = PG_GETARG_TIMESTAMP(1);
+	Interval   *offset = PG_GETARG_INTERVAL_P(2);
+	bool		sub = PG_GETARG_BOOL(3);
+	bool		less = PG_GETARG_BOOL(4);
+	Timestamp	sum;
+
+	if (int128_compare(interval_cmp_value(offset), int64_to_int128(0)) < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PRECEDING_OR_FOLLOWING_SIZE),
+				 errmsg("invalid preceding or following size in window function")));
+
+	/* We don't currently bother to avoid overflow hazards here */
+	if (sub)
+		sum = DatumGetTimestamp(DirectFunctionCall2(timestamp_mi_interval,
+													TimestampGetDatum(base),
+													IntervalPGetDatum(offset)));
+	else
+		sum = DatumGetTimestamp(DirectFunctionCall2(timestamp_pl_interval,
+													TimestampGetDatum(base),
+													IntervalPGetDatum(offset)));
+
+	if (less)
+		PG_RETURN_BOOL(val <= sum);
+	else
+		PG_RETURN_BOOL(val >= sum);
+}
+
+Datum
+in_range_interval_interval(PG_FUNCTION_ARGS)
+{
+	Interval   *val = PG_GETARG_INTERVAL_P(0);
+	Interval   *base = PG_GETARG_INTERVAL_P(1);
+	Interval   *offset = PG_GETARG_INTERVAL_P(2);
+	bool		sub = PG_GETARG_BOOL(3);
+	bool		less = PG_GETARG_BOOL(4);
+	Interval   *sum;
+
+	if (int128_compare(interval_cmp_value(offset), int64_to_int128(0)) < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PRECEDING_OR_FOLLOWING_SIZE),
+				 errmsg("invalid preceding or following size in window function")));
+
+	/* We don't currently bother to avoid overflow hazards here */
+	if (sub)
+		sum = DatumGetIntervalP(DirectFunctionCall2(interval_mi,
+													IntervalPGetDatum(base),
+													IntervalPGetDatum(offset)));
+	else
+		sum = DatumGetIntervalP(DirectFunctionCall2(interval_pl,
+													IntervalPGetDatum(base),
+													IntervalPGetDatum(offset)));
+
+	if (less)
+		PG_RETURN_BOOL(interval_cmp_internal(val, sum) <= 0);
+	else
+		PG_RETURN_BOOL(interval_cmp_internal(val, sum) >= 0);
+}
+
 
 /*
  * interval_accum, interval_accum_inv, and interval_avg implement the
@@ -3707,12 +3856,14 @@ timestamp_trunc(PG_FUNCTION_ARGS)
 					tm->tm_year = ((tm->tm_year + 999) / 1000) * 1000 - 999;
 				else
 					tm->tm_year = -((999 - (tm->tm_year - 1)) / 1000) * 1000 + 1;
+				/* FALL THRU */
 			case DTK_CENTURY:
 				/* see comments in timestamptz_trunc */
 				if (tm->tm_year > 0)
 					tm->tm_year = ((tm->tm_year + 99) / 100) * 100 - 99;
 				else
 					tm->tm_year = -((99 - (tm->tm_year - 1)) / 100) * 100 + 1;
+				/* FALL THRU */
 			case DTK_DECADE:
 				/* see comments in timestamptz_trunc */
 				if (val != DTK_MILLENNIUM && val != DTK_CENTURY)
@@ -3722,18 +3873,25 @@ timestamp_trunc(PG_FUNCTION_ARGS)
 					else
 						tm->tm_year = -((8 - (tm->tm_year - 1)) / 10) * 10;
 				}
+				/* FALL THRU */
 			case DTK_YEAR:
 				tm->tm_mon = 1;
+				/* FALL THRU */
 			case DTK_QUARTER:
 				tm->tm_mon = (3 * ((tm->tm_mon - 1) / 3)) + 1;
+				/* FALL THRU */
 			case DTK_MONTH:
 				tm->tm_mday = 1;
+				/* FALL THRU */
 			case DTK_DAY:
 				tm->tm_hour = 0;
+				/* FALL THRU */
 			case DTK_HOUR:
 				tm->tm_min = 0;
+				/* FALL THRU */
 			case DTK_MINUTE:
 				tm->tm_sec = 0;
+				/* FALL THRU */
 			case DTK_SECOND:
 				fsec = 0;
 				break;
@@ -3949,28 +4107,36 @@ interval_trunc(PG_FUNCTION_ARGS)
 		{
 			switch (val)
 			{
-					/* fall through */
 				case DTK_MILLENNIUM:
 					/* caution: C division may have negative remainder */
 					tm->tm_year = (tm->tm_year / 1000) * 1000;
+					/* FALL THRU */
 				case DTK_CENTURY:
 					/* caution: C division may have negative remainder */
 					tm->tm_year = (tm->tm_year / 100) * 100;
+					/* FALL THRU */
 				case DTK_DECADE:
 					/* caution: C division may have negative remainder */
 					tm->tm_year = (tm->tm_year / 10) * 10;
+					/* FALL THRU */
 				case DTK_YEAR:
 					tm->tm_mon = 0;
+					/* FALL THRU */
 				case DTK_QUARTER:
 					tm->tm_mon = 3 * (tm->tm_mon / 3);
+					/* FALL THRU */
 				case DTK_MONTH:
 					tm->tm_mday = 0;
+					/* FALL THRU */
 				case DTK_DAY:
 					tm->tm_hour = 0;
+					/* FALL THRU */
 				case DTK_HOUR:
 					tm->tm_min = 0;
+					/* FALL THRU */
 				case DTK_MINUTE:
 					tm->tm_sec = 0;
+					/* FALL THRU */
 				case DTK_SECOND:
 					fsec = 0;
 					break;
@@ -4122,6 +4288,7 @@ date2isoweek(int year, int mon, int mday)
 /* date2isoyear()
  *
  *	Returns ISO 8601 year number.
+ *	Note: zero or negative results follow the year-zero-exists convention.
  */
 int
 date2isoyear(int year, int mon, int mday)
@@ -4396,24 +4563,19 @@ timestamp_part(PG_FUNCTION_ARGS)
 
 			case DTK_ISOYEAR:
 				result = date2isoyear(tm->tm_year, tm->tm_mon, tm->tm_mday);
+				/* Adjust BC years */
+				if (result <= 0)
+					result -= 1;
 				break;
 
 			case DTK_DOW:
 			case DTK_ISODOW:
-				if (timestamp2tm(timestamp, NULL, tm, &fsec, NULL, NULL) != 0)
-					ereport(ERROR,
-							(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
-							 errmsg("timestamp out of range")));
 				result = j2day(date2j(tm->tm_year, tm->tm_mon, tm->tm_mday));
 				if (val == DTK_ISODOW && result == 0)
 					result = 7;
 				break;
 
 			case DTK_DOY:
-				if (timestamp2tm(timestamp, NULL, tm, &fsec, NULL, NULL) != 0)
-					ereport(ERROR,
-							(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
-							 errmsg("timestamp out of range")));
 				result = (date2j(tm->tm_year, tm->tm_mon, tm->tm_mday)
 						  - date2j(tm->tm_year, 1, 1) + 1);
 				break;
@@ -4600,24 +4762,19 @@ timestamptz_part(PG_FUNCTION_ARGS)
 
 			case DTK_ISOYEAR:
 				result = date2isoyear(tm->tm_year, tm->tm_mon, tm->tm_mday);
+				/* Adjust BC years */
+				if (result <= 0)
+					result -= 1;
 				break;
 
 			case DTK_DOW:
 			case DTK_ISODOW:
-				if (timestamp2tm(timestamp, &tz, tm, &fsec, NULL, NULL) != 0)
-					ereport(ERROR,
-							(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
-							 errmsg("timestamp out of range")));
 				result = j2day(date2j(tm->tm_year, tm->tm_mon, tm->tm_mday));
 				if (val == DTK_ISODOW && result == 0)
 					result = 7;
 				break;
 
 			case DTK_DOY:
-				if (timestamp2tm(timestamp, &tz, tm, &fsec, NULL, NULL) != 0)
-					ereport(ERROR,
-							(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
-							 errmsg("timestamp out of range")));
 				result = (date2j(tm->tm_year, tm->tm_mon, tm->tm_mday)
 						  - date2j(tm->tm_year, 1, 1) + 1);
 				break;

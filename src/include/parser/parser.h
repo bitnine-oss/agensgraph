@@ -5,7 +5,7 @@
  *
  * This is the external API for the raw lexing/parsing functions.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parser.h
@@ -29,10 +29,6 @@ typedef enum
 extern int	backslash_quote;
 extern bool escape_string_warning;
 extern PGDLLIMPORT bool standard_conforming_strings;
-extern PGDLLIMPORT bool case_sensitive_ident;
-
-/* GUC variables in gram.y */
-extern bool case_compat_type_func;
 
 
 /* Primary entry point for the raw parsing functions */

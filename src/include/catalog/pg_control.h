@@ -5,7 +5,7 @@
  *	  However, we define it here so that the format is documented.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_control.h
@@ -21,7 +21,7 @@
 
 
 /* Version identifier for this pg_control format */
-#define PG_CONTROL_VERSION	1002
+#define PG_CONTROL_VERSION	1100
 
 /* Nonce key length, see below */
 #define MOCK_AUTH_NONCE_LEN		32
@@ -76,6 +76,7 @@ typedef struct CheckPoint
 #define XLOG_END_OF_RECOVERY			0x90
 #define XLOG_FPI_FOR_HINT				0xA0
 #define XLOG_FPI						0xB0
+#define XLOG_FPI_MULTI					0xC0
 
 
 /*
@@ -127,7 +128,6 @@ typedef struct ControlFileData
 	DBState		state;			/* see enum above */
 	pg_time_t	time;			/* time stamp of last pg_control update */
 	XLogRecPtr	checkPoint;		/* last check point record ptr */
-	XLogRecPtr	prevCheckPoint; /* previous check point record ptr */
 
 	CheckPoint	checkPointCopy; /* copy of last check point record */
 

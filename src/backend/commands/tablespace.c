@@ -35,7 +35,7 @@
  * and munge the system catalogs of the new database.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -68,6 +68,7 @@
 #include "commands/seclabel.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
+#include "common/file_perm.h"
 #include "miscadmin.h"
 #include "postmaster/bgwriter.h"
 #include "storage/fd.h"
@@ -151,7 +152,7 @@ TablespaceCreateDbspace(Oid spcNode, Oid dbNode, bool isRedo)
 			else
 			{
 				/* Directory creation failed? */
-				if (mkdir(dir, S_IRWXU) < 0)
+				if (MakePGDirectory(dir) < 0)
 				{
 					char	   *parentdir;
 
@@ -173,7 +174,7 @@ TablespaceCreateDbspace(Oid spcNode, Oid dbNode, bool isRedo)
 					get_parent_directory(parentdir);
 					get_parent_directory(parentdir);
 					/* Can't create parent and it doesn't already exist? */
-					if (mkdir(parentdir, S_IRWXU) < 0 && errno != EEXIST)
+					if (MakePGDirectory(parentdir) < 0 && errno != EEXIST)
 						ereport(ERROR,
 								(errcode_for_file_access(),
 								 errmsg("could not create directory \"%s\": %m",
@@ -184,7 +185,7 @@ TablespaceCreateDbspace(Oid spcNode, Oid dbNode, bool isRedo)
 					parentdir = pstrdup(dir);
 					get_parent_directory(parentdir);
 					/* Can't create parent and it doesn't already exist? */
-					if (mkdir(parentdir, S_IRWXU) < 0 && errno != EEXIST)
+					if (MakePGDirectory(parentdir) < 0 && errno != EEXIST)
 						ereport(ERROR,
 								(errcode_for_file_access(),
 								 errmsg("could not create directory \"%s\": %m",
@@ -192,7 +193,7 @@ TablespaceCreateDbspace(Oid spcNode, Oid dbNode, bool isRedo)
 					pfree(parentdir);
 
 					/* Create database directory */
-					if (mkdir(dir, S_IRWXU) < 0)
+					if (MakePGDirectory(dir) < 0)
 						ereport(ERROR,
 								(errcode_for_file_access(),
 								 errmsg("could not create directory \"%s\": %m",
@@ -279,7 +280,8 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 	/*
 	 * Check that location isn't too long. Remember that we're going to append
 	 * 'PG_XXX/<dboid>/<relid>_<fork>.<nnn>'.  FYI, we never actually
-	 * reference the whole path here, but mkdir() uses the first two parts.
+	 * reference the whole path here, but MakePGDirectory() uses the first two
+	 * parts.
 	 */
 	if (strlen(location) + 1 + strlen(TABLESPACE_VERSION_DIRECTORY) + 1 +
 		OIDCHARS + 1 + OIDCHARS + 1 + FORKNAMECHARS + 1 + OIDCHARS > MAXPGPATH)
@@ -406,6 +408,8 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 	HeapTuple	tuple;
 	ScanKeyData entry[1];
 	Oid			tablespaceoid;
+	char	   *detail;
+	char	   *detail_log;
 
 	/*
 	 * Find the target tuple
@@ -444,14 +448,24 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 
 	/* Must be tablespace owner */
 	if (!pg_tablespace_ownercheck(tablespaceoid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_TABLESPACE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_TABLESPACE,
 					   tablespacename);
 
 	/* Disallow drop of the standard tablespaces, even by superuser */
 	if (tablespaceoid == GLOBALTABLESPACE_OID ||
 		tablespaceoid == DEFAULTTABLESPACE_OID)
-		aclcheck_error(ACLCHECK_NO_PRIV, ACL_KIND_TABLESPACE,
+		aclcheck_error(ACLCHECK_NO_PRIV, OBJECT_TABLESPACE,
 					   tablespacename);
+
+	/* Check for pg_shdepend entries depending on this tablespace */
+	if (checkSharedDependencies(TableSpaceRelationId, tablespaceoid,
+								&detail, &detail_log))
+		ereport(ERROR,
+				(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+				 errmsg("tablespace \"%s\" cannot be dropped because some objects depend on it",
+						tablespacename),
+				 errdetail_internal("%s", detail),
+				 errdetail_log("%s", detail_log)));
 
 	/* DROP hook for the tablespace being removed */
 	InvokeObjectDropHook(TableSpaceRelationId, tablespaceoid, 0);
@@ -574,7 +588,7 @@ create_tablespace_directories(const char *location, const Oid tablespaceoid)
 	 * Attempt to coerce target directory to safe permissions.  If this fails,
 	 * it doesn't exist or has the wrong owner.
 	 */
-	if (chmod(location, S_IRWXU) != 0)
+	if (chmod(location, pg_dir_create_mode) != 0)
 	{
 		if (errno == ENOENT)
 			ereport(ERROR,
@@ -599,7 +613,7 @@ create_tablespace_directories(const char *location, const Oid tablespaceoid)
 		if (stat(location_with_version_dir, &st) == 0 && S_ISDIR(st.st_mode))
 		{
 			if (!rmtree(location_with_version_dir, true))
-				/* If this failed, mkdir() below is going to error. */
+				/* If this failed, MakePGDirectory() below is going to error. */
 				ereport(WARNING,
 						(errmsg("some useless files may be left behind in old database directory \"%s\"",
 								location_with_version_dir)));
@@ -610,7 +624,7 @@ create_tablespace_directories(const char *location, const Oid tablespaceoid)
 	 * The creation of the version directory prevents more than one tablespace
 	 * in a single location.
 	 */
-	if (mkdir(location_with_version_dir, S_IRWXU) < 0)
+	if (MakePGDirectory(location_with_version_dir) < 0)
 	{
 		if (errno == EEXIST)
 			ereport(ERROR,
@@ -655,7 +669,7 @@ create_tablespace_directories(const char *location, const Oid tablespaceoid)
  * does not justify throwing an error that would require manual intervention
  * to get the database running again.
  *
- * Returns TRUE if successful, FALSE if some subdirectory is not empty
+ * Returns true if successful, false if some subdirectory is not empty
  */
 static bool
 destroy_tablespace_directories(Oid tablespaceoid, bool redo)
@@ -941,7 +955,7 @@ RenameTableSpace(const char *oldname, const char *newname)
 
 	/* Must be owner */
 	if (!pg_tablespace_ownercheck(HeapTupleGetOid(newtuple), GetUserId()))
-		aclcheck_error(ACLCHECK_NO_PRIV, ACL_KIND_TABLESPACE, oldname);
+		aclcheck_error(ACLCHECK_NO_PRIV, OBJECT_TABLESPACE, oldname);
 
 	/* Validate new name */
 	if (!allowSystemTableMods && IsReservedName(newname))
@@ -1017,7 +1031,7 @@ AlterTableSpaceOptions(AlterTableSpaceOptionsStmt *stmt)
 
 	/* Must be owner of the existing object */
 	if (!pg_tablespace_ownercheck(HeapTupleGetOid(tup), GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_TABLESPACE,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_TABLESPACE,
 					   stmt->tablespacename);
 
 	/* Generate new proposed spcoptions (text array) */
@@ -1062,10 +1076,11 @@ bool
 check_default_tablespace(char **newval, void **extra, GucSource source)
 {
 	/*
-	 * If we aren't inside a transaction, we cannot do database access so
-	 * cannot verify the name.  Must accept the value on faith.
+	 * If we aren't inside a transaction, or connected to a database, we
+	 * cannot do the catalog accesses necessary to verify the name.  Must
+	 * accept the value on faith.
 	 */
-	if (IsTransactionState())
+	if (IsTransactionState() && MyDatabaseId != InvalidOid)
 	{
 		if (**newval != '\0' &&
 			!OidIsValid(get_tablespace_oid(*newval, true)))
@@ -1148,6 +1163,7 @@ GetDefaultTablespace(char relpersistence)
 
 typedef struct
 {
+	/* Array of OIDs to be passed to SetTempTablespaces() */
 	int			numSpcs;
 	Oid			tblSpcs[FLEXIBLE_ARRAY_MEMBER];
 } temp_tablespaces_extra;
@@ -1173,11 +1189,12 @@ check_temp_tablespaces(char **newval, void **extra, GucSource source)
 	}
 
 	/*
-	 * If we aren't inside a transaction, we cannot do database access so
-	 * cannot verify the individual names.  Must accept the list on faith.
+	 * If we aren't inside a transaction, or connected to a database, we
+	 * cannot do the catalog accesses necessary to verify the name.  Must
+	 * accept the value on faith.
 	 * Fortunately, there's then also no need to pass the data to fd.c.
 	 */
-	if (IsTransactionState())
+	if (IsTransactionState() && MyDatabaseId != InvalidOid)
 	{
 		temp_tablespaces_extra *myextra;
 		Oid		   *tblSpcs;
@@ -1196,6 +1213,7 @@ check_temp_tablespaces(char **newval, void **extra, GucSource source)
 			/* Allow an empty string (signifying database default) */
 			if (curname[0] == '\0')
 			{
+				/* InvalidOid signifies database's default tablespace */
 				tblSpcs[numSpcs++] = InvalidOid;
 				continue;
 			}
@@ -1222,6 +1240,7 @@ check_temp_tablespaces(char **newval, void **extra, GucSource source)
 			 */
 			if (curoid == MyDatabaseTableSpace)
 			{
+				/* InvalidOid signifies database's default tablespace */
 				tblSpcs[numSpcs++] = InvalidOid;
 				continue;
 			}
@@ -1232,7 +1251,7 @@ check_temp_tablespaces(char **newval, void **extra, GucSource source)
 			if (aclresult != ACLCHECK_OK)
 			{
 				if (source >= PGC_S_INTERACTIVE)
-					aclcheck_error(aclresult, ACL_KIND_TABLESPACE, curname);
+					aclcheck_error(aclresult, OBJECT_TABLESPACE, curname);
 				continue;
 			}
 
@@ -1332,6 +1351,7 @@ PrepareTempTablespaces(void)
 		/* Allow an empty string (signifying database default) */
 		if (curname[0] == '\0')
 		{
+			/* InvalidOid signifies database's default tablespace */
 			tblSpcs[numSpcs++] = InvalidOid;
 			continue;
 		}
@@ -1350,6 +1370,7 @@ PrepareTempTablespaces(void)
 		 */
 		if (curoid == MyDatabaseTableSpace)
 		{
+			/* InvalidOid signifies database's default tablespace */
 			tblSpcs[numSpcs++] = InvalidOid;
 			continue;
 		}

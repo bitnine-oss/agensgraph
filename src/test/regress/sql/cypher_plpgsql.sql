@@ -61,7 +61,7 @@ CREATE (a)-[e:knows{type:'knows'}]->(b);
 
 CREATE OR REPLACE FUNCTION udf_if() RETURNS boolean AS $$
 BEGIN
-IF ( MATCH (a)-[b]->(c) WHERE a.name = 'Anders' AND c.name = 'Bossman' RETURN b.type ) THEN
+IF ( MATCH (a)-[b]->(c) WHERE a.name = 'Anders' AND c.name = 'Bossman' RETURN b.type = 'knows' ) THEN
 RETURN true;
 ELSE
 RETURN false;

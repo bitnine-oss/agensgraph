@@ -110,7 +110,12 @@ SELECT SUBSTRING('1234567890' FROM 3) = '34567890' AS "34567890";
 
 SELECT SUBSTRING('1234567890' FROM 4 FOR 3) = '456' AS "456";
 
--- T581 regular expression substring (with SQL99's bizarre regexp syntax)
+-- test overflow cases
+SELECT SUBSTRING('string' FROM 2 FOR 2147483646) AS "tring";
+SELECT SUBSTRING('string' FROM -10 FOR 2147483646) AS "string";
+SELECT SUBSTRING('string' FROM -10 FOR -2147483646) AS "error";
+
+-- T581 regular expression substring (with SQL's bizarre regexp syntax)
 SELECT SUBSTRING('abcdefg' FROM 'a#"(b_d)#"%' FOR '#') AS "bcd";
 
 -- No match should return NULL
@@ -188,6 +193,9 @@ SELECT regexp_split_to_array('the quick brown fox jumps over the lazy dog', 'nom
 SELECT regexp_split_to_array('123456','1');
 SELECT regexp_split_to_array('123456','6');
 SELECT regexp_split_to_array('123456','.');
+SELECT regexp_split_to_array('123456','');
+SELECT regexp_split_to_array('123456','(?:)');
+SELECT regexp_split_to_array('1','');
 -- errors
 SELECT foo, length(foo) FROM regexp_split_to_table('thE QUick bROWn FOx jUMPs ovEr The lazy dOG', 'e', 'zippy') AS foo;
 SELECT regexp_split_to_array('thE QUick bROWn FOx jUMPs ovEr The lazy dOG', 'e', 'iz');
@@ -366,6 +374,23 @@ SELECT substr(f1, 99995) from toasttest;
 -- string length
 SELECT substr(f1, 99995, 10) from toasttest;
 
+TRUNCATE TABLE toasttest;
+INSERT INTO toasttest values (repeat('1234567890',300));
+INSERT INTO toasttest values (repeat('1234567890',300));
+INSERT INTO toasttest values (repeat('1234567890',300));
+INSERT INTO toasttest values (repeat('1234567890',300));
+-- expect >0 blocks
+select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
+
+TRUNCATE TABLE toasttest;
+ALTER TABLE toasttest set (toast_tuple_target = 4080);
+INSERT INTO toasttest values (repeat('1234567890',300));
+INSERT INTO toasttest values (repeat('1234567890',300));
+INSERT INTO toasttest values (repeat('1234567890',300));
+INSERT INTO toasttest values (repeat('1234567890',300));
+-- expect 0 blocks
+select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
+
 DROP TABLE toasttest;
 
 --
@@ -490,6 +515,46 @@ select md5('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'::byt
 select md5('12345678901234567890123456789012345678901234567890123456789012345678901234567890'::bytea) = '57edf4a22be3c955ac49da2e2107b67a' AS "TRUE";
 
 --
+-- SHA-2
+--
+SET bytea_output TO hex;
+
+SELECT sha224('');
+SELECT sha224('The quick brown fox jumps over the lazy dog.');
+
+SELECT sha256('');
+SELECT sha256('The quick brown fox jumps over the lazy dog.');
+
+SELECT sha384('');
+SELECT sha384('The quick brown fox jumps over the lazy dog.');
+
+SELECT sha512('');
+SELECT sha512('The quick brown fox jumps over the lazy dog.');
+
+--
+-- encode/decode
+--
+SELECT encode('\x1234567890abcdef00', 'hex');
+SELECT decode('1234567890abcdef00', 'hex');
+SELECT encode(('\x' || repeat('1234567890abcdef0001', 7))::bytea, 'base64');
+SELECT decode(encode(('\x' || repeat('1234567890abcdef0001', 7))::bytea,
+                     'base64'), 'base64');
+SELECT encode('\x1234567890abcdef00', 'escape');
+SELECT decode(encode('\x1234567890abcdef00', 'escape'), 'escape');
+
+--
+-- get_bit/set_bit etc
+--
+SELECT get_bit('\x1234567890abcdef00'::bytea, 43);
+SELECT get_bit('\x1234567890abcdef00'::bytea, 99);  -- error
+SELECT set_bit('\x1234567890abcdef00'::bytea, 43, 0);
+SELECT set_bit('\x1234567890abcdef00'::bytea, 99, 0);  -- error
+SELECT get_byte('\x1234567890abcdef00'::bytea, 3);
+SELECT get_byte('\x1234567890abcdef00'::bytea, 99);  -- error
+SELECT set_byte('\x1234567890abcdef00'::bytea, 7, 11);
+SELECT set_byte('\x1234567890abcdef00'::bytea, 99, 11);  -- error
+
+--
 -- test behavior of escape_string_warning and standard_conforming_strings options
 --
 set escape_string_warning = off;
@@ -523,6 +588,7 @@ select 'a\\bcd' as f1, 'a\\b\'cd' as f2, 'a\\b\'''cd' as f3, 'abcd\\'   as f4, '
 --
 -- Additional string functions
 --
+SET bytea_output TO escape;
 
 SELECT initcap('hi THOMAS');
 
@@ -551,6 +617,12 @@ SELECT chr(0);
 
 SELECT repeat('Pg', 4);
 SELECT repeat('Pg', -4);
+
+SELECT SUBSTRING('1234567890'::bytea FROM 3) "34567890";
+SELECT SUBSTRING('1234567890'::bytea FROM 4 FOR 3) AS "456";
+SELECT SUBSTRING('string'::bytea FROM 2 FOR 2147483646) AS "tring";
+SELECT SUBSTRING('string'::bytea FROM -10 FOR 2147483646) AS "string";
+SELECT SUBSTRING('string'::bytea FROM -10 FOR -2147483646) AS "error";
 
 SELECT trim(E'\\000'::bytea from E'\\000Tom\\000'::bytea);
 SELECT btrim(E'\\000trim\\000'::bytea, E'\\000'::bytea);

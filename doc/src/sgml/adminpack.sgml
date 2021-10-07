@@ -1,0 +1,119 @@
+<!-- doc/src/sgml/adminpack.sgml -->
+
+<sect1 id="adminpack" xreflabel="adminpack">
+ <title>adminpack</title>
+
+ <indexterm zone="adminpack">
+  <primary>adminpack</primary>
+ </indexterm>
+
+ <para>
+  <filename>adminpack</filename> provides a number of support functions which
+  <application>pgAdmin</application> and other administration and management tools can
+  use to provide additional functionality, such as remote management
+  of server log files.
+  Use of all these functions is only allowed to the superuser by default but may be
+  allowed to other users by using the <command>GRANT</command> command.
+ </para>
+
+ <para>
+  The functions shown in <xref linkend="functions-adminpack-table"/> provide
+  write access to files on the machine hosting the server.  (See also the
+  functions in <xref linkend="functions-admin-genfile-table"/>, which
+  provide read-only access.)
+  Only files within the database cluster directory can be accessed, unless the
+  user is a superuser or given one of the pg_read_server_files, or pg_write_server_files
+  roles, as appropriate for the function, but either a relative or absolute path is
+  allowable.
+ </para>
+
+ <table id="functions-adminpack-table">
+  <title><filename>adminpack</filename> Functions</title>
+  <tgroup cols="3">
+   <thead>
+    <row><entry>Name</entry> <entry>Return Type</entry> <entry>Description</entry>
+    </row>
+   </thead>
+
+   <tbody>
+    <row>
+     <entry><function>pg_catalog.pg_file_write(filename text, data text, append boolean)</function></entry>
+     <entry><type>bigint</type></entry>
+     <entry>
+      Write, or append to, a text file
+     </entry>
+    </row>
+    <row>
+     <entry><function>pg_catalog.pg_file_rename(oldname text, newname text <optional>, archivename text</optional>)</function></entry>
+     <entry><type>boolean</type></entry>
+     <entry>
+      Rename a file
+     </entry>
+    </row>
+    <row>
+     <entry><function>pg_catalog.pg_file_unlink(filename text)</function></entry>
+     <entry><type>boolean</type></entry>
+     <entry>
+      Remove a file
+     </entry>
+    </row>
+    <row>
+     <entry><function>pg_catalog.pg_logdir_ls()</function></entry>
+     <entry><type>setof record</type></entry>
+     <entry>
+      List the log files in the <varname>log_directory</varname> directory
+     </entry>
+    </row>
+   </tbody>
+  </tgroup>
+ </table>
+
+ <indexterm>
+  <primary>pg_file_write</primary>
+ </indexterm>
+ <para>
+  <function>pg_file_write</function> writes the specified <parameter>data</parameter> into
+  the file named by <parameter>filename</parameter>.  If <parameter>append</parameter> is
+  false, the file must not already exist.  If <parameter>append</parameter> is true,
+  the file can already exist, and will be appended to if so.
+  Returns the number of bytes written.
+ </para>
+
+ <indexterm>
+  <primary>pg_file_rename</primary>
+ </indexterm>
+ <para>
+  <function>pg_file_rename</function> renames a file.  If <parameter>archivename</parameter>
+  is omitted or NULL, it simply renames <parameter>oldname</parameter>
+  to <parameter>newname</parameter> (which must not already exist).
+  If <parameter>archivename</parameter> is provided, it first
+  renames <parameter>newname</parameter> to <parameter>archivename</parameter> (which must
+  not already exist), and then renames <parameter>oldname</parameter>
+  to <parameter>newname</parameter>.  In event of failure of the second rename step,
+  it will try to rename <parameter>archivename</parameter> back
+  to <parameter>newname</parameter> before reporting the error.
+  Returns true on success, false if the source file(s) are not present or
+  not writable; other cases throw errors.
+ </para>
+
+ <indexterm>
+  <primary>pg_file_unlink</primary>
+ </indexterm>
+ <para>
+  <function>pg_file_unlink</function> removes the specified file.
+  Returns true on success, false if the specified file is not present
+  or the <function>unlink()</function> call fails; other cases throw errors.
+ </para>
+
+ <indexterm>
+  <primary>pg_logdir_ls</primary>
+ </indexterm>
+ <para>
+  <function>pg_logdir_ls</function> returns the start timestamps and path
+  names of all the log files in the <xref linkend="guc-log-directory"/>
+  directory.  The <xref linkend="guc-log-filename"/> parameter must have its
+  default setting (<literal>postgresql-%Y-%m-%d_%H%M%S.log</literal>) to use this
+  function.
+ </para>
+
+</sect1>

@@ -74,7 +74,7 @@ typedef struct
 	(*(result)) += (float) ( ((double)(tmp)) / ( (double)(tmp) + ( ((double)(oupper))*0.49F - ((double)(olower))*0.49F ) ) ); \
 	(*(result)) *= (FLT_MAX / (((GISTENTRY *) PG_GETARG_POINTER(0))->rel->rd_att->natts + 1)); \
   } \
-} while (0);
+} while (0)
 
 
 /*
@@ -88,8 +88,6 @@ typedef struct
 	 (ivp)->month * (30.0 * SECS_PER_DAY))
 
 #define GET_FLOAT_DISTANCE(t, arg1, arg2)	Abs( ((float8) *((const t *) (arg1))) - ((float8) *((const t *) (arg2))) )
-
-#define SAMESIGN(a,b)	(((a) < 0) == ((b) < 0))
 
 /*
  * check to see if a float4/8 val has underflowed or overflowed

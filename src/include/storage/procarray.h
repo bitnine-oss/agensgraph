@@ -4,7 +4,7 @@
  *	  POSTGRES process array definitions.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/procarray.h
@@ -105,6 +105,8 @@ extern VirtualTransactionId *GetCurrentVirtualXIDs(TransactionId limitXmin,
 					  int *nvxids);
 extern VirtualTransactionId *GetConflictingVirtualXIDs(TransactionId limitXmin, Oid dbOid);
 extern pid_t CancelVirtualTransaction(VirtualTransactionId vxid, ProcSignalReason sigmode);
+extern pid_t SignalVirtualTransaction(VirtualTransactionId vxid, ProcSignalReason sigmode,
+									  bool conflictPending);
 
 extern bool MinimumActiveBackends(int min);
 extern int	CountDBBackends(Oid databaseid);

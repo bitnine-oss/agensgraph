@@ -1,16 +1,16 @@
 /*
- * psql - the PostgreSQL interactive terminal
+ * agens - the AgensGraph interactive terminal
  *
- * Copyright (c) 2000-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2018, PostgreSQL Global Development Group
  *
- * src/bin/psql/command.h
+ * src/bin/agens/command.h
  */
 #ifndef COMMAND_H
 #define COMMAND_H
 
 #include "fe_utils/print.h"
 #include "fe_utils/psqlscan.h"
-#include "conditional.h"
+#include "fe_utils/conditional.h"
 
 
 typedef enum _backslashResult

@@ -4,7 +4,7 @@
  *	  prototypes for functions in backend/catalog/namespace.c
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/namespace.h
@@ -38,6 +38,16 @@ typedef struct _FuncCandidateList
 }		   *FuncCandidateList;
 
 /*
+ * Result of checkTempNamespaceStatus
+ */
+typedef enum TempNamespaceStatus
+{
+	TEMP_NAMESPACE_NOT_TEMP,	/* nonexistent, or non-temp namespace */
+	TEMP_NAMESPACE_IDLE,		/* exists, belongs to no active session */
+	TEMP_NAMESPACE_IN_USE		/* belongs to some active session */
+} TempNamespaceStatus;
+
+/*
  *	Structure for xxxOverrideSearchPath functions
  */
 typedef struct OverrideSearchPath
@@ -47,14 +57,25 @@ typedef struct OverrideSearchPath
 	bool		addTemp;		/* implicitly prepend temp schema? */
 } OverrideSearchPath;
 
+/*
+ * Option flag bits for RangeVarGetRelidExtended().
+ */
+typedef enum RVROption
+{
+	RVR_MISSING_OK = 1 << 0,	/* don't error if relation doesn't exist */
+	RVR_NOWAIT = 1 << 1,		/* error if relation cannot be locked */
+	RVR_SKIP_LOCKED = 1 << 2	/* skip if relation cannot be locked */
+} RVROption;
+
 typedef void (*RangeVarGetRelidCallback) (const RangeVar *relation, Oid relId,
 										  Oid oldRelId, void *callback_arg);
 
 #define RangeVarGetRelid(relation, lockmode, missing_ok) \
-	RangeVarGetRelidExtended(relation, lockmode, missing_ok, false, NULL, NULL)
+	RangeVarGetRelidExtended(relation, lockmode, \
+							 (missing_ok) ? RVR_MISSING_OK : 0, NULL, NULL)
 
 extern Oid RangeVarGetRelidExtended(const RangeVar *relation,
-						 LOCKMODE lockmode, bool missing_ok, bool nowait,
+						 LOCKMODE lockmode, uint32 flags,
 						 RangeVarGetRelidCallback callback,
 						 void *callback_arg);
 extern Oid	RangeVarGetCreationNamespace(const RangeVar *newRelation);
@@ -66,6 +87,7 @@ extern Oid	RelnameGetRelid(const char *relname);
 extern bool RelationIsVisible(Oid relid);
 
 extern Oid	TypenameGetTypid(const char *typname);
+extern Oid	TypenameGetTypidExtended(const char *typname, bool temp_ok);
 extern bool TypeIsVisible(Oid typid);
 
 extern FuncCandidateList FuncnameGetCandidates(List *names,
@@ -126,6 +148,8 @@ extern bool isTempToastNamespace(Oid namespaceId);
 extern bool isTempOrTempToastNamespace(Oid namespaceId);
 extern bool isAnyTempNamespace(Oid namespaceId);
 extern bool isOtherTempNamespace(Oid namespaceId);
+extern TempNamespaceStatus checkTempNamespaceStatus(Oid namespaceId);
+extern bool isTempNamespaceInUse(Oid namespaceId);
 extern int	GetTempNamespaceBackendId(Oid namespaceId);
 extern Oid	GetTempToastNamespace(void);
 extern void GetTempNamespaceState(Oid *tempNamespaceId,

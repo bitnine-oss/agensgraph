@@ -25,7 +25,7 @@
 #include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
 #include "catalog/pg_class.h"
-#include "catalog/pg_inherits_fn.h"
+#include "catalog/pg_inherits.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
@@ -564,8 +564,8 @@ DisableIndexCommand(DisableIndexStmt *disableStmt)
 	Oid			relid;
 	RangeVar   *relation = disableStmt->relation;
 
-	relid = RangeVarGetRelidExtended(relation, ShareLock, false, false,
-									 RangeVarCallbackOwnsTable, NULL);
+	relid = RangeVarGetRelidExtended(relation, ShareLock, 0, RangeVarCallbackOwnsTable,
+	                                 NULL);
 
 	if (!RangeVarIsLabel(relation))
 		elog(ERROR, "invalid DISABLE INDEX");

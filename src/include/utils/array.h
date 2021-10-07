@@ -51,7 +51,7 @@
  * arrays holding the elements.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/array.h
@@ -63,6 +63,10 @@
 
 #include "fmgr.h"
 #include "utils/expandeddatum.h"
+
+/* avoid including execnodes.h here */
+struct ExprState;
+struct ExprContext;
 
 
 /*
@@ -153,7 +157,10 @@ typedef struct ExpandedArrayHeader
 
 /*
  * Functions that can handle either a "flat" varlena array or an expanded
- * array use this union to work with their input.
+ * array use this union to work with their input.  Don't refer to "flt";
+ * instead, cast to ArrayType.  This struct nominally requires 8-byte
+ * alignment on 64-bit, but it's often used for an ArrayType having 4-byte
+ * alignment.  UBSan complains about referencing "flt" in such cases.
  */
 typedef union AnyArrayType
 {
@@ -252,7 +259,7 @@ typedef struct ArrayIteratorData *ArrayIterator;
 #define PG_RETURN_EXPANDED_ARRAY(x)  PG_RETURN_DATUM(EOHPGetRWDatum(&(x)->hdr))
 
 /* fmgr macros for AnyArrayType (ie, get either varlena or expanded form) */
-#define PG_GETARG_ANY_ARRAY(n)	DatumGetAnyArray(PG_GETARG_DATUM(n))
+#define PG_GETARG_ANY_ARRAY_P(n)	DatumGetAnyArrayP(PG_GETARG_DATUM(n))
 
 /*
  * Access macros for varlena array header fields.
@@ -307,17 +314,21 @@ typedef struct ArrayIteratorData *ArrayIterator;
  * Macros for working with AnyArrayType inputs.  Beware multiple references!
  */
 #define AARR_NDIM(a) \
-	(VARATT_IS_EXPANDED_HEADER(a) ? (a)->xpn.ndims : ARR_NDIM(&(a)->flt))
+	(VARATT_IS_EXPANDED_HEADER(a) ? \
+	 (a)->xpn.ndims : ARR_NDIM((ArrayType *) (a)))
 #define AARR_HASNULL(a) \
 	(VARATT_IS_EXPANDED_HEADER(a) ? \
 	 ((a)->xpn.dvalues != NULL ? (a)->xpn.dnulls != NULL : ARR_HASNULL((a)->xpn.fvalue)) : \
-	 ARR_HASNULL(&(a)->flt))
+	 ARR_HASNULL((ArrayType *) (a)))
 #define AARR_ELEMTYPE(a) \
-	(VARATT_IS_EXPANDED_HEADER(a) ? (a)->xpn.element_type : ARR_ELEMTYPE(&(a)->flt))
+	(VARATT_IS_EXPANDED_HEADER(a) ? \
+	 (a)->xpn.element_type : ARR_ELEMTYPE((ArrayType *) (a)))
 #define AARR_DIMS(a) \
-	(VARATT_IS_EXPANDED_HEADER(a) ? (a)->xpn.dims : ARR_DIMS(&(a)->flt))
+	(VARATT_IS_EXPANDED_HEADER(a) ? \
+	 (a)->xpn.dims : ARR_DIMS((ArrayType *) (a)))
 #define AARR_LBOUND(a) \
-	(VARATT_IS_EXPANDED_HEADER(a) ? (a)->xpn.lbound : ARR_LBOUND(&(a)->flt))
+	(VARATT_IS_EXPANDED_HEADER(a) ? \
+	 (a)->xpn.lbound : ARR_LBOUND((ArrayType *) (a)))
 
 
 /*
@@ -360,8 +371,9 @@ extern ArrayType *array_set(ArrayType *array, int nSubscripts, int *indx,
 		  Datum dataValue, bool isNull,
 		  int arraytyplen, int elmlen, bool elmbyval, char elmalign);
 
-extern Datum array_map(FunctionCallInfo fcinfo, Oid retType,
-		  ArrayMapState *amstate);
+extern Datum array_map(Datum arrayd,
+		  struct ExprState *exprstate, struct ExprContext *econtext,
+		  Oid retType, ArrayMapState *amstate);
 
 extern void array_bitmap_copy(bits8 *destbitmap, int destoffset,
 				  const bits8 *srcbitmap, int srcoffset,
@@ -440,7 +452,7 @@ extern Datum expand_array(Datum arraydatum, MemoryContext parentcontext,
 extern ExpandedArrayHeader *DatumGetExpandedArray(Datum d);
 extern ExpandedArrayHeader *DatumGetExpandedArrayX(Datum d,
 					   ArrayMetaState *metacache);
-extern AnyArrayType *DatumGetAnyArray(Datum d);
+extern AnyArrayType *DatumGetAnyArrayP(Datum d);
 extern void deconstruct_expanded_array(ExpandedArrayHeader *eah);
 
 #endif							/* ARRAY_H */

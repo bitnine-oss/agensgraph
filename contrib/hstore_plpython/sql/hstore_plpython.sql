@@ -40,15 +40,18 @@ SELECT test1arr(array['aa=>bb, cc=>NULL'::hstore, 'dd=>ee']);
 
 
 -- test python -> hstore
-CREATE FUNCTION test2() RETURNS hstore
+CREATE FUNCTION test2(a int, b text) RETURNS hstore
 LANGUAGE plpythonu
 TRANSFORM FOR TYPE hstore
 AS $$
-val = {'a': 1, 'b': 'boo', 'c': None}
+val = {'a': a, 'b': b, 'c': None}
 return val
 $$;
 
-SELECT test2();
+SELECT test2(1, 'boo');
+
+--- test ruleutils
+\sf test2
 
 
 -- test python -> hstore[]
@@ -60,7 +63,21 @@ val = [{'a': 1, 'b': 'boo', 'c': None}, {'d': 2}]
 return val
 $$;
 
- SELECT test2arr();
+SELECT test2arr();
+
+
+-- test python -> domain over hstore
+CREATE DOMAIN hstore_foo AS hstore CHECK(VALUE ? 'foo');
+
+CREATE FUNCTION test2dom(fn text) RETURNS hstore_foo
+LANGUAGE plpythonu
+TRANSFORM FOR TYPE hstore
+AS $$
+return {'a': 1, fn: 'boo', 'c': None}
+$$;
+
+SELECT test2dom('foo');
+SELECT test2dom('bar');  -- fail
 
 
 -- test as part of prepare/execute

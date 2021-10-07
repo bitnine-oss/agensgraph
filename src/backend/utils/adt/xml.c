@@ -4,7 +4,7 @@
  *	  XML data type support.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/utils/adt/xml.c
@@ -140,13 +140,14 @@ static int parse_xml_decl(const xmlChar *str, size_t *lenp,
 			   xmlChar **version, xmlChar **encoding, int *standalone);
 static bool print_xml_decl(StringInfo buf, const xmlChar *version,
 			   pg_enc encoding, int standalone);
+static bool xml_doctype_in_content(const xmlChar *str);
 static xmlDocPtr xml_parse(text *data, XmlOptionType xmloption_arg,
 		  bool preserve_whitespace, int encoding);
 static text *xml_xmlnodetoxmltype(xmlNodePtr cur, PgXmlErrorContext *xmlerrcxt);
 static int xml_xpathobjtoxmlarray(xmlXPathObjectPtr xpathobj,
 					   ArrayBuildState *astate,
 					   PgXmlErrorContext *xmlerrcxt);
-static xmlChar *pg_xmlCharStrndup(char *str, size_t len);
+static xmlChar *pg_xmlCharStrndup(const char *str, size_t len);
 #endif							/* USE_LIBXML */
 
 static void xmldata_root_element_start(StringInfo result, const char *eltname,
@@ -192,11 +193,11 @@ typedef struct XmlTableBuilderData
 
 static void XmlTableInitOpaque(struct TableFuncScanState *state, int natts);
 static void XmlTableSetDocument(struct TableFuncScanState *state, Datum value);
-static void XmlTableSetNamespace(struct TableFuncScanState *state, char *name,
-					 char *uri);
-static void XmlTableSetRowFilter(struct TableFuncScanState *state, char *path);
+static void XmlTableSetNamespace(struct TableFuncScanState *state, const char *name,
+					 const char *uri);
+static void XmlTableSetRowFilter(struct TableFuncScanState *state, const char *path);
 static void XmlTableSetColumnFilter(struct TableFuncScanState *state,
-						char *path, int colnum);
+						const char *path, int colnum);
 static bool XmlTableFetchRow(struct TableFuncScanState *state);
 static Datum XmlTableGetValue(struct TableFuncScanState *state, int colnum,
 				 Oid typid, int32 typmod, bool *isnull);
@@ -765,7 +766,7 @@ xmlparse(text *data, XmlOptionType xmloption_arg, bool preserve_whitespace)
 
 
 xmltype *
-xmlpi(char *target, text *arg, bool arg_is_null, bool *result_is_null)
+xmlpi(const char *target, text *arg, bool arg_is_null, bool *result_is_null)
 {
 #ifdef USE_LIBXML
 	xmltype    *result;
@@ -1164,7 +1165,7 @@ xml_pnstrdup(const xmlChar *str, size_t len)
 
 /* Ditto, except input is char* */
 static xmlChar *
-pg_xmlCharStrndup(char *str, size_t len)
+pg_xmlCharStrndup(const char *str, size_t len)
 {
 	xmlChar    *result;
 
@@ -1212,8 +1213,15 @@ parse_xml_decl(const xmlChar *str, size_t *lenp,
 	if (xmlStrncmp(p, (xmlChar *) "<?xml", 5) != 0)
 		goto finished;
 
-	/* if next char is name char, it's a PI like <?xml-stylesheet ...?> */
-	utf8len = strlen((const char *) (p + 5));
+	/*
+	 * If next char is a name char, it's a PI like <?xml-stylesheet ...?>
+	 * rather than an XMLDecl, so we have done what we came to do and found no
+	 * XMLDecl.
+	 *
+	 * We need an input length value for xmlGetUTF8Char, but there's no need
+	 * to count the whole document size, so use strnlen not strlen.
+	 */
+	utf8len = strnlen((const char *) (p + 5), MAX_MULTIBYTE_CHAR_LEN);
 	utf8char = xmlGetUTF8Char(p + 5, &utf8len);
 	if (PG_XMLISNAMECHAR(utf8char))
 		goto finished;
@@ -1384,6 +1392,84 @@ print_xml_decl(StringInfo buf, const xmlChar *version,
 		return false;
 }
 
+/*
+ * Test whether an input that is to be parsed as CONTENT contains a DTD.
+ *
+ * The SQL/XML:2003 definition of CONTENT ("XMLDecl? content") is not
+ * satisfied by a document with a DTD, which is a bit of a wart, as it means
+ * the CONTENT type is not a proper superset of DOCUMENT.  SQL/XML:2006 and
+ * later fix that, by redefining content with reference to the "more
+ * permissive" Document Node of the XQuery/XPath Data Model, such that any
+ * DOCUMENT value is indeed also a CONTENT value.  That definition is more
+ * useful, as CONTENT becomes usable for parsing input of unknown form (think
+ * pg_restore).
+ *
+ * As used below in parse_xml when parsing for CONTENT, libxml does not give
+ * us the 2006+ behavior, but only the 2003; it will choke if the input has
+ * a DTD.  But we can provide the 2006+ definition of CONTENT easily enough,
+ * by detecting this case first and simply doing the parse as DOCUMENT.
+ *
+ * A DTD can be found arbitrarily far in, but that would be a contrived case;
+ * it will ordinarily start within a few dozen characters.  The only things
+ * that can precede it are an XMLDecl (here, the caller will have called
+ * parse_xml_decl already), whitespace, comments, and processing instructions.
+ * This function need only return true if it sees a valid sequence of such
+ * things leading to <!DOCTYPE.  It can simply return false in any other
+ * cases, including malformed input; that will mean the input gets parsed as
+ * CONTENT as originally planned, with libxml reporting any errors.
+ *
+ * This is only to be called from xml_parse, when pg_xml_init has already
+ * been called.  The input is already in UTF8 encoding.
+ */
+static bool
+xml_doctype_in_content(const xmlChar *str)
+{
+	const xmlChar *p = str;
+
+	for (;;)
+	{
+		const xmlChar *e;
+
+		SKIP_XML_SPACE(p);
+		if (*p != '<')
+			return false;
+		p++;
+
+		if (*p == '!')
+		{
+			p++;
+
+			/* if we see <!DOCTYPE, we can return true */
+			if (xmlStrncmp(p, (xmlChar *) "DOCTYPE", 7) == 0)
+				return true;
+
+			/* otherwise, if it's not a comment, fail */
+			if (xmlStrncmp(p, (xmlChar *) "--", 2) != 0)
+				return false;
+			/* find end of comment: find -- and a > must follow */
+			p = xmlStrstr(p + 2, (xmlChar *) "--");
+			if (!p || p[2] != '>')
+				return false;
+			/* advance over comment, and keep scanning */
+			p += 3;
+			continue;
+		}
+
+		/* otherwise, if it's not a PI <?target something?>, fail */
+		if (*p != '?')
+			return false;
+		p++;
+
+		/* find end of PI (the string ?> is forbidden within a PI) */
+		e = xmlStrstr(p, (xmlChar *) "?>");
+		if (!e)
+			return false;
+
+		/* advance over PI, keep scanning */
+		p = e + 2;
+	}
+}
+
 
 /*
  * Convert a C string to XML internal representation
@@ -1419,6 +1505,12 @@ xml_parse(text *data, XmlOptionType xmloption_arg, bool preserve_whitespace,
 	/* Use a TRY block to ensure we clean up correctly */
 	PG_TRY();
 	{
+		bool		parse_as_document = false;
+		int			res_code;
+		size_t		count = 0;
+		xmlChar    *version = NULL;
+		int			standalone = 0;
+
 		xmlInitParser();
 
 		ctxt = xmlNewParserCtxt();
@@ -1426,7 +1518,25 @@ xml_parse(text *data, XmlOptionType xmloption_arg, bool preserve_whitespace,
 			xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
 						"could not allocate parser context");
 
+		/* Decide whether to parse as document or content */
 		if (xmloption_arg == XMLOPTION_DOCUMENT)
+			parse_as_document = true;
+		else
+		{
+			/* Parse and skip over the XML declaration, if any */
+			res_code = parse_xml_decl(utf8string,
+									  &count, &version, NULL, &standalone);
+			if (res_code != 0)
+				xml_ereport_by_code(ERROR, ERRCODE_INVALID_XML_CONTENT,
+									"invalid XML content: invalid XML declaration",
+									res_code);
+
+			/* Is there a DOCTYPE element? */
+			if (xml_doctype_in_content(utf8string + count))
+				parse_as_document = true;
+		}
+
+		if (parse_as_document)
 		{
 			/*
 			 * Note, that here we try to apply DTD defaults
@@ -1441,23 +1551,18 @@ xml_parse(text *data, XmlOptionType xmloption_arg, bool preserve_whitespace,
 								 XML_PARSE_NOENT | XML_PARSE_DTDATTR
 								 | (preserve_whitespace ? 0 : XML_PARSE_NOBLANKS));
 			if (doc == NULL || xmlerrcxt->err_occurred)
-				xml_ereport(xmlerrcxt, ERROR, ERRCODE_INVALID_XML_DOCUMENT,
-							"invalid XML document");
+			{
+				/* Use original option to decide which error code to throw */
+				if (xmloption_arg == XMLOPTION_DOCUMENT)
+					xml_ereport(xmlerrcxt, ERROR, ERRCODE_INVALID_XML_DOCUMENT,
+								"invalid XML document");
+				else
+					xml_ereport(xmlerrcxt, ERROR, ERRCODE_INVALID_XML_CONTENT,
+								"invalid XML content");
+			}
 		}
 		else
 		{
-			int			res_code;
-			size_t		count;
-			xmlChar    *version;
-			int			standalone;
-
-			res_code = parse_xml_decl(utf8string,
-									  &count, &version, NULL, &standalone);
-			if (res_code != 0)
-				xml_ereport_by_code(ERROR, ERRCODE_INVALID_XML_CONTENT,
-									"invalid XML content: invalid XML declaration",
-									res_code);
-
 			doc = xmlNewDoc(version);
 			Assert(doc->encoding == NULL);
 			doc->encoding = xmlStrdup((const xmlChar *) "UTF-8");
@@ -1696,7 +1801,10 @@ xml_errorHandler(void *data, xmlErrorPtr error)
 		appendStringInfo(errorBuf, "line %d: ", error->line);
 	if (name != NULL)
 		appendStringInfo(errorBuf, "element %s: ", name);
-	appendStringInfoString(errorBuf, error->message);
+	if (error->message != NULL)
+		appendStringInfoString(errorBuf, error->message);
+	else
+		appendStringInfoString(errorBuf, "(no message provided)");
 
 	/*
 	 * Append context information to errorBuf.
@@ -1850,7 +1958,7 @@ appendStringInfoLineSeparator(StringInfo str)
  * Convert one char in the current server encoding to a Unicode codepoint.
  */
 static pg_wchar
-sqlchar_to_unicode(char *s)
+sqlchar_to_unicode(const char *s)
 {
 	char	   *utf8string;
 	pg_wchar	ret[2];			/* need space for trailing zero */
@@ -1894,12 +2002,12 @@ is_valid_xml_namechar(pg_wchar c)
  * Map SQL identifier to XML name; see SQL/XML:2008 section 9.1.
  */
 char *
-map_sql_identifier_to_xml_name(char *ident, bool fully_escaped,
+map_sql_identifier_to_xml_name(const char *ident, bool fully_escaped,
 							   bool escape_period)
 {
 #ifdef USE_LIBXML
 	StringInfoData buf;
-	char	   *p;
+	const char *p;
 
 	/*
 	 * SQL/XML doesn't make use of this case anywhere, so it's probably a
@@ -1970,10 +2078,10 @@ unicode_to_sqlchar(pg_wchar c)
  * Map XML name to SQL identifier; see SQL/XML:2008 section 9.3.
  */
 char *
-map_xml_name_to_sql_identifier(char *name)
+map_xml_name_to_sql_identifier(const char *name)
 {
 	StringInfoData buf;
-	char	   *p;
+	const char *p;
 
 	initStringInfo(&buf);
 
@@ -3009,7 +3117,7 @@ database_to_xml_and_xmlschema(PG_FUNCTION_ARGS)
  * 9.2.
  */
 static char *
-map_multipart_sql_identifier_to_xml_name(char *a, char *b, char *c, char *d)
+map_multipart_sql_identifier_to_xml_name(const char *a, const char *b, const char *c, const char *d)
 {
 	StringInfoData result;
 
@@ -3099,13 +3207,15 @@ map_sql_table_to_xmlschema(TupleDesc tupdesc, Oid relid, bool nulls,
 
 	for (i = 0; i < tupdesc->natts; i++)
 	{
-		if (tupdesc->attrs[i]->attisdropped)
+		Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+
+		if (att->attisdropped)
 			continue;
 		appendStringInfo(&result,
 						 "    <xsd:element name=\"%s\" type=\"%s\"%s></xsd:element>\n",
-						 map_sql_identifier_to_xml_name(NameStr(tupdesc->attrs[i]->attname),
+						 map_sql_identifier_to_xml_name(NameStr(att->attname),
 														true, false),
-						 map_sql_type_to_xml_name(tupdesc->attrs[i]->atttypid, -1),
+						 map_sql_type_to_xml_name(att->atttypid, -1),
 						 nulls ? " nillable=\"true\"" : " minOccurs=\"0\"");
 	}
 
@@ -3392,10 +3502,11 @@ map_sql_typecoll_to_xmlschema_types(List *tupdesc_list)
 
 		for (i = 0; i < tupdesc->natts; i++)
 		{
-			if (tupdesc->attrs[i]->attisdropped)
+			Form_pg_attribute att = TupleDescAttr(tupdesc, i);
+
+			if (att->attisdropped)
 				continue;
-			uniquetypes = list_append_unique_oid(uniquetypes,
-												 tupdesc->attrs[i]->atttypid);
+			uniquetypes = list_append_unique_oid(uniquetypes, att->atttypid);
 		}
 	}
 
@@ -3458,8 +3569,8 @@ map_sql_type_to_xmlschema_type(Oid typeoid, int typmod)
 			case BPCHAROID:
 			case VARCHAROID:
 			case TEXTOID:
-				appendStringInfo(&result,
-								 "  <xsd:restriction base=\"xsd:string\">\n");
+				appendStringInfoString(&result,
+									   "  <xsd:restriction base=\"xsd:string\">\n");
 				if (typmod != -1)
 					appendStringInfo(&result,
 									 "    <xsd:maxLength value=\"%d\"/>\n",
@@ -3931,10 +4042,7 @@ xpath_internal(text *xpath_expr_text, xmltype *data, ArrayType *namespaces,
 		if (xpathctx == NULL || xmlerrcxt->err_occurred)
 			xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
 						"could not allocate XPath context");
-		xpathctx->node = xmlDocGetRootElement(doc);
-		if (xpathctx->node == NULL || xmlerrcxt->err_occurred)
-			xml_ereport(xmlerrcxt, ERROR, ERRCODE_INTERNAL_ERROR,
-						"could not find root XML element");
+		xpathctx->node = (xmlNodePtr) doc;
 
 		/* register namespaces, if any */
 		if (ns_count > 0)
@@ -4273,10 +4381,7 @@ XmlTableSetDocument(TableFuncScanState *state, Datum value)
 		if (xpathcxt == NULL || xtCxt->xmlerrcxt->err_occurred)
 			xml_ereport(xtCxt->xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
 						"could not allocate XPath context");
-		xpathcxt->node = xmlDocGetRootElement(doc);
-		if (xpathcxt->node == NULL || xtCxt->xmlerrcxt->err_occurred)
-			xml_ereport(xtCxt->xmlerrcxt, ERROR, ERRCODE_INTERNAL_ERROR,
-						"could not find root XML element");
+		xpathcxt->node = (xmlNodePtr) doc;
 	}
 	PG_CATCH();
 	{
@@ -4301,7 +4406,7 @@ XmlTableSetDocument(TableFuncScanState *state, Datum value)
  *		Add a namespace declaration
  */
 static void
-XmlTableSetNamespace(TableFuncScanState *state, char *name, char *uri)
+XmlTableSetNamespace(TableFuncScanState *state, const char *name, const char *uri)
 {
 #ifdef USE_LIBXML
 	XmlTableBuilderData *xtCxt;
@@ -4327,7 +4432,7 @@ XmlTableSetNamespace(TableFuncScanState *state, char *name, char *uri)
  *		Install the row-filter Xpath expression.
  */
 static void
-XmlTableSetRowFilter(TableFuncScanState *state, char *path)
+XmlTableSetRowFilter(TableFuncScanState *state, const char *path)
 {
 #ifdef USE_LIBXML
 	XmlTableBuilderData *xtCxt;
@@ -4356,7 +4461,7 @@ XmlTableSetRowFilter(TableFuncScanState *state, char *path)
  *		Install the column-filter Xpath expression, for the given column.
  */
 static void
-XmlTableSetColumnFilter(TableFuncScanState *state, char *path, int colnum)
+XmlTableSetColumnFilter(TableFuncScanState *state, const char *path, int colnum)
 {
 #ifdef USE_LIBXML
 	XmlTableBuilderData *xtCxt;
@@ -4385,7 +4490,7 @@ XmlTableSetColumnFilter(TableFuncScanState *state, char *path, int colnum)
 /*
  * XmlTableFetchRow
  *		Prepare the next "current" tuple for upcoming GetValue calls.
- *		Returns FALSE if the row-filter expression returned no more rows.
+ *		Returns false if the row-filter expression returned no more rows.
  */
 static bool
 XmlTableFetchRow(TableFuncScanState *state)
@@ -4505,11 +4610,26 @@ XmlTableGetValue(TableFuncScanState *state, int colnum,
 			else if (count == 1)
 			{
 				xmlChar    *str;
+				xmlNodePtr	node;
 
-				str = xmlNodeListGetString(xtCxt->doc,
-										   xpathobj->nodesetval->nodeTab[0]->xmlChildrenNode,
-										   1);
+				node = xpathobj->nodesetval->nodeTab[0];
+				if (node->type == XML_NAMESPACE_DECL)
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("XMLTABLE cannot cast a namespace node to a non-XML result type")));
 
+				/*
+				 * Most nodes (elements and even attributes) store their data
+				 * in children nodes. If they don't have children nodes, it
+				 * means that they are empty (e.g. <element/>). Text nodes and
+				 * CDATA sections are an exception: they don't have children
+				 * but have content in the Text/CDATA node itself.
+				 */
+				if (node->type != XML_CDATA_SECTION_NODE &&
+					node->type != XML_TEXT_NODE)
+					node = node->xmlChildrenNode;
+
+				str = xmlNodeListGetString(xtCxt->doc, node, 1);
 				if (str != NULL)
 				{
 					PG_TRY();
@@ -4526,13 +4646,7 @@ XmlTableGetValue(TableFuncScanState *state, int colnum,
 				}
 				else
 				{
-					/*
-					 * This line ensure mapping of empty tags to PostgreSQL
-					 * value. Usually we would to map a empty tag to empty
-					 * string. But this mapping can create empty string when
-					 * user doesn't expect it - when empty tag is enforced by
-					 * libxml2 - when user uses a text() function for example.
-					 */
+					/* Ensure mapping of empty tags to PostgreSQL values. */
 					cstr = "";
 				}
 			}

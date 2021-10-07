@@ -60,7 +60,7 @@ WHERE (a.name = 'Anders' AND b.name = 'Bossman')
 CREATE (a)-[e:knows{type:'knows'}]->(b);
 CREATE OR REPLACE FUNCTION udf_if() RETURNS boolean AS $$
 BEGIN
-IF ( MATCH (a)-[b]->(c) WHERE a.name = 'Anders' AND c.name = 'Bossman' RETURN b.type ) THEN
+IF ( MATCH (a)-[b]->(c) WHERE a.name = 'Anders' AND c.name = 'Bossman' RETURN b.type = 'knows' ) THEN
 RETURN true;
 ELSE
 RETURN false;
@@ -70,8 +70,11 @@ $$ LANGUAGE plpgsql;
 -- This test originally worked due to a side effect of having a cast from jsonb
 -- to boolean. That cast has been removed, so now this will fail as expected.
 SELECT udf_if();
-ERROR:  invalid input syntax for type boolean: ""knows""
-CONTEXT:  PL/pgSQL function udf_if() line 3 at IF
+ udf_if 
+--------
+ t
+(1 row)
+
 CREATE OR REPLACE FUNCTION udf_if_exists() RETURNS boolean AS $$
 BEGIN
 IF EXISTS ( MATCH (a)-[b]->(c) WHERE a.name = 'Anders' AND c.name = 'Bossman' RETURN b ) THEN
