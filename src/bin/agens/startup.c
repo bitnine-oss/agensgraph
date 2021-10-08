@@ -789,7 +789,7 @@ process_psqlrc_file(char *filename)
 static void
 showVersion(void)
 {
-	puts("psql (PostgreSQL) " PG_VERSION);
+	puts("agens (AgensGraph) " AG_VERSION);
 }
 
 
