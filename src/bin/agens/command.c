@@ -3301,12 +3301,13 @@ connection_warnings(bool in_startup)
 				server_version = sverbuf;
 			}
 
-			printf(_("%s (%s, server %s)\n"),
-				   pset.progname, PG_VERSION, server_version);
+			printf(_("%s (AgensGraph %s, Based on PostgreSQL %s, server %s)\n"),
+				   pset.progname, AG_VERSION, PG_VERSION, server_version);
 		}
 		/* For version match, only print psql banner on startup. */
 		else if (in_startup)
-			printf("%s (%s)\n", pset.progname, PG_VERSION);
+			printf("%s (AgensGraph %s, based on PostgreSQL %s)\n", pset.progname,
+				   AG_VERSION, PG_VERSION);
 
 		if (pset.sversion / 100 > client_ver / 100)
 			printf(_("WARNING: %s major version %s, server major version %s.\n"
