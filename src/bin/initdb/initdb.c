@@ -3399,7 +3399,8 @@ main(int argc, char *argv[])
 	canonicalize_path(pg_ctl_path);
 	get_parent_directory(pg_ctl_path);
 	/* ... and tag on pg_ctl instead */
-	join_path_components(pg_ctl_path, pg_ctl_path, "pg_ctl");
+	/* No reason to change name instead pg_ctl. this is shitty reason. */
+	join_path_components(pg_ctl_path, pg_ctl_path, "ag_ctl");
 
 	/* path to pg_ctl, properly quoted */
 	appendShellString(start_db_cmd, pg_ctl_path);
