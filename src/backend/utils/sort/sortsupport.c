@@ -23,16 +23,6 @@
 #include "utils/rel.h"
 #include "utils/sortsupport.h"
 
-
-/* Info needed to use an old-style comparison function as a sort comparator */
-typedef struct
-{
-	FmgrInfo	flinfo;			/* lookup data for comparison function */
-	FunctionCallInfoBaseData fcinfo;	/* reusable callinfo structure */
-} SortShimExtra;
-
-#define SizeForSortShimExtra(nargs) (offsetof(SortShimExtra, fcinfo) + SizeForFunctionCallInfo(nargs))
-
 /*
  * Shim function for calling an old-style comparator
  *
@@ -40,7 +30,7 @@ typedef struct
  * we assume that the FunctionCallInfoBaseData was already mostly set up by
  * PrepareSortSupportComparisonShim.
  */
-static int
+int
 comparison_shim(Datum x, Datum y, SortSupport ssup)
 {
 	SortShimExtra *extra = (SortShimExtra *) ssup->ssup_extra;
