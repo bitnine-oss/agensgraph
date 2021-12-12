@@ -191,6 +191,22 @@ FullTransactionIdAdvance(FullTransactionId *dest)
 #define FirstBootstrapObjectId	12000
 #define FirstNormalObjectId		16384
 
+#define COMMITSEQNO_INPROGRESS	UINT64CONST(0x0)
+#define COMMITSEQNO_NON_DELETED	UINT64CONST(0x1)
+#define COMMITSEQNO_ABORTED		UINT64CONST(0x2)
+#define COMMITSEQNO_FROZEN		UINT64CONST(0x3)
+#define COMMITSEQNO_COMMITTING	UINT64CONST(0x4)
+#define COMMITSEQNO_FIRST_NORMAL UINT64CONST(0x5)
+#define COMMITSEQNO_MAX_NORMAL UINT64CONST(0x7FFFFFFFFFFFFFFF)
+
+#define COMMITSEQNO_IS_INPROGRESS(csn) ((csn) == COMMITSEQNO_INPROGRESS || (csn) == COMMITSEQNO_NON_DELETED)
+#define COMMITSEQNO_IS_NON_DELETED(csn) ((csn) == COMMITSEQNO_NON_DELETED)
+#define COMMITSEQNO_IS_ABORTED(csn) ((csn) == COMMITSEQNO_ABORTED)
+#define COMMITSEQNO_IS_FROZEN(csn) ((csn) == COMMITSEQNO_FROZEN)
+#define COMMITSEQNO_IS_NORMAL(csn) ((csn) >= COMMITSEQNO_FIRST_NORMAL)
+#define COMMITSEQNO_IS_COMMITTING(csn) ((csn) == COMMITSEQNO_COMMITTING)
+#define COMMITSEQNO_IS_COMMITTED(csn) ((csn) >= COMMITSEQNO_FROZEN)
+
 /*
  * VariableCache is a data structure in shared memory that is used to track
  * OID and XID assignment state.  For largely historical reasons, there is

@@ -572,7 +572,7 @@ typedef double float8;
 
 /*
  * Oid, RegProcedure, TransactionId, SubTransactionId, MultiXactId,
- * CommandId
+ * CommandId, CommitSeqNo
  */
 
 /* typedef Oid is in postgres_ext.h */
@@ -602,6 +602,8 @@ typedef uint32 CommandId;
 
 #define FirstCommandId	((CommandId) 0)
 #define InvalidCommandId	(~(CommandId)0)
+
+typedef uint64 CommitSeqNo;
 
 
 /* ----------------
