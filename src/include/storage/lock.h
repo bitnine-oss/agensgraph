@@ -129,6 +129,7 @@ typedef uint16 LOCKMETHODID;
 /* These identify the known lock methods */
 #define DEFAULT_LOCKMETHOD	1
 #define USER_LOCKMETHOD		2
+#define NO_LOG_LOCKMETHOD	255 /* Skip logging of AccessExclusiveLock */
 
 /*
  * LOCKTAG is the key information needed to look up a LOCK item in the
