@@ -241,6 +241,7 @@ RI_FKey_check(TriggerData *trigdata)
 	TupleTableSlot *newslot;
 	RI_QueryKey qkey;
 	SPIPlanPtr	qplan;
+	Relation	rel = trigdata->tg_relation;
 
 	riinfo = ri_FetchConstraintInfo(trigdata->tg_trigger,
 									trigdata->tg_relation, false);
@@ -258,8 +259,17 @@ RI_FKey_check(TriggerData *trigdata)
 	 * and lock on the buffer to call HeapTupleSatisfiesVisibility.  Caller
 	 * should be holding pin, but not lock.
 	 */
-	if (!table_tuple_satisfies_snapshot(trigdata->tg_relation, newslot, SnapshotSelf))
-		return PointerGetDatum(NULL);
+
+	if (!table_has_extended_am(rel))
+	{
+		if (!table_tuple_satisfies_snapshot(rel, newslot, SnapshotSelf))
+			return PointerGetDatum(NULL);
+	}
+	else
+	{
+		if (!table_extended_tuple_refetch_row_version(rel, newslot))
+			return PointerGetDatum(NULL);
+	}
 
 	/*
 	 * Get the relation descriptors of the FK and PK tables.
@@ -1267,12 +1277,18 @@ RI_FKey_fk_upd_check_required(Trigger *trigger, Relation fk_rel,
 	 * not do anything; so we had better do the UPDATE check.  (We could skip
 	 * this if we knew the INSERT trigger already fired, but there is no easy
 	 * way to know that.)
+	 *
+	 * ExtendedTableAmRoutine does't invalidate INSERT RI trigger after UPDATE.
+	 * So, this check is not needed.
 	 */
-	xminDatum = slot_getsysattr(oldslot, MinTransactionIdAttributeNumber, &isnull);
-	Assert(!isnull);
-	xmin = DatumGetTransactionId(xminDatum);
-	if (TransactionIdIsCurrentTransactionId(xmin))
-		return true;
+	if (!table_has_extended_am(fk_rel))
+	{
+		xminDatum = slot_getsysattr(oldslot, MinTransactionIdAttributeNumber, &isnull);
+		Assert(!isnull);
+		xmin = DatumGetTransactionId(xminDatum);
+		if (TransactionIdIsCurrentTransactionId(xmin))
+			return true;
+	}
 
 	/* If all old and new key values are equal, no check is needed */
 	if (ri_KeysEqual(fk_rel, oldslot, newslot, riinfo, false))

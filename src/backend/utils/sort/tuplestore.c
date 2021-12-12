@@ -1101,6 +1101,36 @@ tuplestore_gettupleslot(Tuplestorestate *state, bool forward,
 }
 
 /*
+ * Same as tuplestore_gettupleslot(), but foces tuple storage to slot.  Thus,
+ * it can work with slot types different than minimal tuple.
+ */
+bool
+tuplestore_force_gettupleslot(Tuplestorestate *state, bool forward,
+							  bool copy, TupleTableSlot *slot)
+{
+	MinimalTuple tuple;
+	bool		should_free;
+
+	tuple = (MinimalTuple) tuplestore_gettuple(state, forward, &should_free);
+
+	if (tuple)
+	{
+		if (copy && !should_free)
+		{
+			tuple = heap_copy_minimal_tuple(tuple);
+			should_free = true;
+		}
+		ExecForceStoreMinimalTuple(tuple, slot, should_free);
+		return true;
+	}
+	else
+	{
+		ExecClearTuple(slot);
+		return false;
+	}
+}
+
+/*
  * tuplestore_advance - exported function to adjust position without fetching
  *
  * We could optimize this case to avoid palloc/pfree overhead, but for the

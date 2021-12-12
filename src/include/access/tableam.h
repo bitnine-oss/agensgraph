@@ -20,6 +20,8 @@
 #include "access/relscan.h"
 #include "access/sdir.h"
 #include "access/xact.h"
+#include "nodes/execnodes.h"
+#include "storage/bufmgr.h"
 #include "utils/guc.h"
 #include "utils/rel.h"
 #include "utils/snapshot.h"
@@ -38,6 +40,16 @@ struct SampleScanState;
 struct TBMIterateResult;
 struct VacuumParams;
 struct ValidateIndexState;
+
+typedef int (*AcquireSampleRowsFunc) (Relation relation, int elevel,
+									  HeapTuple *rows, int targrows,
+									  double *totalrows,
+									  double *totaldeadrows);
+
+/* in commands/analyze.c */
+extern int acquire_sample_rows(Relation onerel, int elevel,
+							   HeapTuple *rows, int targrows,
+							   double *totalrows, double *totaldeadrows);
 
 /*
  * Bitmask values for the flags argument to the scan_begin callback.
@@ -2071,5 +2083,301 @@ extern const TableAmRoutine *GetTableAmRoutine(Oid amhandler);
 extern const TableAmRoutine *GetHeapamTableAmRoutine(void);
 extern bool check_default_table_access_method(char **newval, void **extra,
 											  GucSource source);
+
+typedef struct ExtendedTableAmRoutine
+{
+	TableAmRoutine tableam;
+
+	/*
+	 * Can not be done by a TableAmRoutine.
+	 */
+
+	RowRefType	(*get_row_ref_type) (Relation rel);
+
+
+	void		(*tuple_insert) (Relation rel, TupleTableSlot *slot,
+								 EState *estate,
+								 CommandId cid, int options,
+								 struct BulkInsertStateData *bistate);
+
+	TupleTableSlot* (*tuple_insert_on_conflict) (ModifyTableState *mstate,
+												 EState *estate,
+												 ResultRelInfo *rinfo,
+												 TupleTableSlot *slot);
+
+	void		(*multi_insert) (Relation rel, TupleTableSlot **slots,
+								 int nslots, EState *estate,
+								 CommandId cid, int options, struct BulkInsertStateData *bistate);
+
+	TM_Result	(*tuple_delete) (ModifyTableState *mstate,
+								 ResultRelInfo *resultRelInfo,
+								 EState *estate,
+								 Datum tupleid,
+								 TupleTableSlot *returningSlot,
+								 CommandId cid,
+								 Snapshot snapshot,
+								 Snapshot crosscheck,
+								 bool wait,
+								 TM_FailureData *tmfd,
+								 bool changingPart);
+
+	TM_Result	(*tuple_update) (ModifyTableState *mstate,
+								 ResultRelInfo *resultRelInfo,
+								 EState *estate,
+								 Datum tupleid,
+								 TupleTableSlot *slot,
+								 CommandId cid,
+								 Snapshot snapshot,
+								 Snapshot crosscheck,
+								 bool wait,
+								 TM_FailureData *tmfd,
+								 LockTupleMode *lockmode,
+								 bool *update_indexes);
+
+	/* see table_tuple_lock() for reference about parameters */
+	TM_Result	(*tuple_lock) (Relation rel,
+							   Datum tupleid,
+							   Snapshot snapshot,
+							   TupleTableSlot *slot,
+							   CommandId cid,
+							   LockTupleMode mode,
+							   LockWaitPolicy wait_policy,
+							   uint8 flags,
+							   TM_FailureData *tmfd);
+
+	void		(*analyze_table) (Relation relation,
+								  AcquireSampleRowsFunc *func,
+								  BlockNumber *totalpages);
+
+	void		(*init_modify) (ModifyTableState *mstate,
+								ResultRelInfo *rinfo);
+
+	bool		(*tuple_fetch_row_version) (Relation rel,
+											Datum tupleid,
+											Snapshot snapshot,
+											TupleTableSlot *slot);
+
+	bool		(*tuple_refetch_row_version) (Relation rel,
+											  TupleTableSlot *slot);
+
+	bool		(*rewrite_table) (Relation old_rel);
+
+	void		(*free_rd_amcache) (Relation rel);
+} ExtendedTableAmRoutine;
+
+
+/*
+ * Check if table has extended table access method routine.
+ */
+static inline bool
+table_has_extended_am(Relation rel)
+{
+	return rel->rd_tableam && IsA(rel->rd_tableam, ExtendedTableAmRoutine);
+}
+
+static inline RowRefType
+table_get_row_ref_type(Relation rel)
+{
+	if (table_has_extended_am(rel))
+	{
+		ExtendedTableAmRoutine *extendedRoutine;
+		extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+		return extendedRoutine->get_row_ref_type(rel);
+	}
+	else
+	{
+		return ROW_REF_TID;
+	}
+}
+
+static inline void
+table_extended_tuple_insert(Relation rel, TupleTableSlot *slot,
+							EState *estate,
+							CommandId cid, int options,
+							struct BulkInsertStateData *bistate)
+{
+	ExtendedTableAmRoutine *extendedRoutine;
+
+	Assert(table_has_extended_am(rel));
+	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+	extendedRoutine->tuple_insert(rel, slot, estate, cid,
+								  options, bistate);
+}
+
+static inline TupleTableSlot *
+table_extended_tuple_insert_on_conflict(ModifyTableState *mstate,
+										EState *estate,
+										ResultRelInfo *rinfo,
+										TupleTableSlot *slot)
+{
+	Relation		rel = rinfo->ri_RelationDesc;
+	ExtendedTableAmRoutine *extendedRoutine;
+
+	Assert(table_has_extended_am(rel));
+	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+	return extendedRoutine->tuple_insert_on_conflict(mstate, estate,
+													 rinfo, slot);
+}
+
+static inline void
+table_extended_multi_insert(Relation rel, TupleTableSlot **slots,
+							int nslots, EState *estate,
+							CommandId cid, int options,
+							struct BulkInsertStateData *bistate)
+{
+	ExtendedTableAmRoutine *extendedRoutine;
+
+	Assert(table_has_extended_am(rel));
+	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+	extendedRoutine->multi_insert(rel, slots, nslots, estate,
+								  cid, options, bistate);
+}
+
+static inline TM_Result
+table_extended_tuple_delete(ModifyTableState *mstate,
+							ResultRelInfo *resultRelInfo,
+							EState *estate,
+							Datum tupleid,
+							TupleTableSlot *returningSlot,
+							CommandId cid,
+							Snapshot snapshot,
+							Snapshot crosscheck,
+							bool wait,
+							TM_FailureData *tmfd,
+							bool changingPart)
+{
+	Relation		rel = resultRelInfo->ri_RelationDesc;
+	ExtendedTableAmRoutine *extendedRoutine;
+
+	Assert(table_has_extended_am(rel));
+	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+	return extendedRoutine->tuple_delete(mstate, resultRelInfo, estate, tupleid,
+										 returningSlot, cid, snapshot,
+										 crosscheck, wait, tmfd, changingPart);
+}
+
+static inline TM_Result
+table_extended_tuple_update(ModifyTableState *mstate,
+							ResultRelInfo *resultRelInfo,
+							EState *estate,
+							Datum tupleid,
+							TupleTableSlot *slot,
+							CommandId cid,
+							Snapshot snapshot,
+							Snapshot crosscheck,
+							bool wait,
+							TM_FailureData *tmfd,
+							LockTupleMode *lockmode,
+							bool *update_indexes)
+{
+	Relation		rel = resultRelInfo->ri_RelationDesc;
+	ExtendedTableAmRoutine *extendedRoutine;
+
+	Assert(table_has_extended_am(rel));
+	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+	return extendedRoutine->tuple_update(mstate, resultRelInfo, estate, tupleid,
+										 slot, cid, snapshot, crosscheck, wait,
+										 tmfd, lockmode, update_indexes);
+}
+
+static inline TM_Result
+table_extended_tuple_lock(Relation rel,
+						  Datum tupleid,
+						  Snapshot snapshot,
+						  TupleTableSlot *slot,
+						  CommandId cid,
+						  LockTupleMode mode,
+						  LockWaitPolicy wait_policy,
+						  uint8 flags,
+						  TM_FailureData *tmfd)
+{
+	ExtendedTableAmRoutine *extendedRoutine;
+
+	Assert(table_has_extended_am(rel));
+	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+	return extendedRoutine->tuple_lock(rel, tupleid, snapshot, slot,
+									   cid, mode, wait_policy, flags, tmfd);
+}
+
+static inline void
+table_extended_init_modify(ModifyTableState *mstate,
+						   ResultRelInfo *rinfo)
+{
+	Relation		rel = rinfo->ri_RelationDesc;
+	ExtendedTableAmRoutine *extendedRoutine;
+
+	Assert(table_has_extended_am(rel));
+	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+	extendedRoutine->init_modify(mstate, rinfo);
+}
+
+static inline bool
+table_extended_tuple_fetch_row_version(Relation rel,
+									   Datum tupleid,
+									   Snapshot snapshot,
+									   TupleTableSlot *slot)
+{
+	if (!table_has_extended_am(rel))
+	{
+		return table_tuple_fetch_row_version(rel, DatumGetItemPointer(tupleid),
+											 snapshot, slot);
+	}
+	else
+	{
+		ExtendedTableAmRoutine *extendedRoutine;
+		extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+		return extendedRoutine->tuple_fetch_row_version(rel, tupleid,
+														snapshot, slot);
+	}
+}
+
+static inline bool
+table_extended_tuple_refetch_row_version(Relation rel,
+										 TupleTableSlot *slot)
+{
+	ExtendedTableAmRoutine *extendedRoutine;
+
+	Assert(table_has_extended_am(rel));
+	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+	return extendedRoutine->tuple_refetch_row_version(rel, slot);
+}
+
+static inline bool
+table_extended_rewrite_table(Relation old_rel)
+{
+	ExtendedTableAmRoutine *extendedRoutine;
+
+	Assert(table_has_extended_am(old_rel));
+	extendedRoutine = (ExtendedTableAmRoutine *) old_rel->rd_tableam;
+	return extendedRoutine->rewrite_table(old_rel);
+}
+
+static inline void
+table_extended_free_rd_amcache(Relation rel)
+{
+	ExtendedTableAmRoutine *extendedRoutine;
+
+	Assert(table_has_extended_am(rel));
+	extendedRoutine = (ExtendedTableAmRoutine *) rel->rd_tableam;
+	return extendedRoutine->free_rd_amcache(rel);
+}
+
+static inline void
+table_extended_analyze(Relation relation,
+					   AcquireSampleRowsFunc *func,
+					   BlockNumber *totalpages)
+{
+	if (table_has_extended_am(relation))
+	{
+		ExtendedTableAmRoutine *extendedRoutine;
+		extendedRoutine = (ExtendedTableAmRoutine *) relation->rd_tableam;
+		extendedRoutine->analyze_table(relation, func, totalpages);
+	}
+	else
+	{
+		*func = acquire_sample_rows;
+		*totalpages = RelationGetNumberOfBlocks(relation);
+	}
+}
 
 #endif							/* TABLEAM_H */

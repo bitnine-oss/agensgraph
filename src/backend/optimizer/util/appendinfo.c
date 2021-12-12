@@ -16,6 +16,7 @@
 
 #include "access/htup_details.h"
 #include "access/table.h"
+#include "access/tableam.h"
 #include "foreign/fdwapi.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -868,16 +869,34 @@ add_row_identity_columns(PlannerInfo *root, Index rtindex,
 		relkind == RELKIND_MATVIEW ||
 		relkind == RELKIND_PARTITIONED_TABLE)
 	{
+		RowRefType refType = ROW_REF_TID;
+
+		refType = table_get_row_ref_type(target_relation);
+
 		/*
 		 * Emit CTID so that executor can find the row to update or delete.
 		 */
-		var = makeVar(rtindex,
-					  SelfItemPointerAttributeNumber,
-					  TIDOID,
-					  -1,
-					  InvalidOid,
-					  0);
-		add_row_identity_var(root, var, rtindex, "ctid");
+		if (refType == ROW_REF_TID)
+		{
+			var = makeVar(rtindex,
+						  SelfItemPointerAttributeNumber,
+						  TIDOID,
+						  -1,
+						  InvalidOid,
+						  0);
+			add_row_identity_var(root, var, rtindex, "ctid");
+		}
+		else
+		{
+			Assert(refType == ROW_REF_ROWID);
+			var = makeVar(rtindex,
+						  RowIdAttributeNumber,
+						  BYTEAOID,
+						  -1,
+						  InvalidOid,
+						  0);
+			add_row_identity_var(root, var, rtindex, "rowid");
+		}
 	}
 	else if (relkind == RELKIND_FOREIGN_TABLE)
 	{

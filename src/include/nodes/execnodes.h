@@ -415,6 +415,8 @@ typedef struct ResultRelInfo
 	/* relation descriptor for result relation */
 	Relation	ri_RelationDesc;
 
+	RowRefType	ri_RowRefType;
+
 	/* # of indices existing on result relation */
 	int			ri_NumIndices;
 
@@ -689,6 +691,7 @@ typedef struct ExecRowMark
 	Index		prti;			/* parent range table index, if child */
 	Index		rowmarkId;		/* unique identifier for resjunk columns */
 	RowMarkType markType;		/* see enum in nodes/plannodes.h */
+	RowRefType	refType;
 	LockClauseStrength strength;	/* LockingClause's strength, or LCS_NONE */
 	LockWaitPolicy waitPolicy;	/* NOWAIT and SKIP LOCKED */
 	bool		ermActive;		/* is this mark relevant for current tuple? */

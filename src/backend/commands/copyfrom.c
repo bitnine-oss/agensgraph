@@ -309,6 +309,7 @@ CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
 	int			nused = buffer->nused;
 	ResultRelInfo *resultRelInfo = buffer->resultRelInfo;
 	TupleTableSlot **slots = buffer->slots;
+	bool		isExtendedRoutine;
 
 	/*
 	 * Print error context information correctly, if one of the operations
@@ -317,17 +318,32 @@ CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
 	cstate->line_buf_valid = false;
 	save_cur_lineno = cstate->cur_lineno;
 
+	isExtendedRoutine = table_has_extended_am(resultRelInfo->ri_RelationDesc);
+
 	/*
 	 * table_multi_insert may leak memory, so switch to short-lived memory
 	 * context before calling it.
 	 */
 	oldcontext = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-	table_multi_insert(resultRelInfo->ri_RelationDesc,
-					   slots,
-					   nused,
-					   mycid,
-					   ti_options,
-					   buffer->bistate);
+	if (isExtendedRoutine)
+	{
+		table_extended_multi_insert(resultRelInfo->ri_RelationDesc,
+									slots,
+									nused,
+									estate,
+									mycid,
+									ti_options,
+									buffer->bistate);
+	}
+	else
+	{
+		table_multi_insert(resultRelInfo->ri_RelationDesc,
+						   slots,
+						   nused,
+						   mycid,
+						   ti_options,
+						   buffer->bistate);
+	}
 	MemoryContextSwitchTo(oldcontext);
 
 	for (i = 0; i < nused; i++)
@@ -336,7 +352,7 @@ CopyMultiInsertBufferFlush(CopyMultiInsertInfo *miinfo,
 		 * If there are any indexes, update them for all the inserted tuples,
 		 * and run AFTER ROW INSERT triggers.
 		 */
-		if (resultRelInfo->ri_NumIndices > 0)
+		if (resultRelInfo->ri_NumIndices > 0 && !isExtendedRoutine)
 		{
 			List	   *recheckIndexes;
 

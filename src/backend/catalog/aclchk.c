@@ -1568,7 +1568,7 @@ expand_all_col_privileges(Oid table_oid, Form_pg_class classForm,
 	AttrNumber	curr_att;
 
 	Assert(classForm->relnatts - FirstLowInvalidHeapAttributeNumber < num_col_privileges);
-	for (curr_att = FirstLowInvalidHeapAttributeNumber + 1;
+	for (curr_att = FirstLowInvalidHeapAttributeNumber + 2;
 		 curr_att <= classForm->relnatts;
 		 curr_att++)
 	{

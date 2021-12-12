@@ -39,7 +39,8 @@ GetTableAmRoutine(Oid amhandler)
 	datum = OidFunctionCall0(amhandler);
 	routine = (TableAmRoutine *) DatumGetPointer(datum);
 
-	if (routine == NULL || !IsA(routine, TableAmRoutine))
+	if (routine == NULL || (!IsA(routine, TableAmRoutine) &&
+		!IsA(routine, ExtendedTableAmRoutine)))
 		elog(ERROR, "table access method handler %u did not return a TableAmRoutine struct",
 			 amhandler);
 

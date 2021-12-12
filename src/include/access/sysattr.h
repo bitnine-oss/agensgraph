@@ -24,6 +24,7 @@
 #define MaxTransactionIdAttributeNumber			(-4)
 #define MaxCommandIdAttributeNumber				(-5)
 #define TableOidAttributeNumber					(-6)
-#define FirstLowInvalidHeapAttributeNumber		(-7)
+#define RowIdAttributeNumber					(-7)
+#define FirstLowInvalidHeapAttributeNumber		(-8)
 
 #endif							/* SYSATTR_H */

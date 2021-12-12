@@ -84,7 +84,7 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 	LOCKMODE	lockmode;
 	PlanRowMark *oldrc;
 	bool		old_isParent = false;
-	int			old_allMarkTypes = 0;
+	int			old_allRefTypes = 0;
 
 	Assert(rte->inh);			/* else caller error */
 
@@ -124,8 +124,8 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 	{
 		old_isParent = oldrc->isParent;
 		oldrc->isParent = true;
-		/* Save initial value of allMarkTypes before children add to it */
-		old_allMarkTypes = oldrc->allMarkTypes;
+		/* Save initial value of allRefTypes before children add to it */
+		old_allRefTypes = oldrc->allRefTypes;
 	}
 
 	/* Scan the inheritance set and expand it */
@@ -226,15 +226,15 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 	 */
 	if (oldrc)
 	{
-		int			new_allMarkTypes = oldrc->allMarkTypes;
+		int			new_allRefTypes = oldrc->allRefTypes;
 		Var		   *var;
 		TargetEntry *tle;
 		char		resname[32];
 		List	   *newvars = NIL;
 
 		/* Add TID junk Var if needed, unless we had it already */
-		if (new_allMarkTypes & ~(1 << ROW_MARK_COPY) &&
-			!(old_allMarkTypes & ~(1 << ROW_MARK_COPY)))
+		if (new_allRefTypes & (1 << ROW_REF_TID) &&
+			!(old_allRefTypes & (1 << ROW_REF_TID)))
 		{
 			/* Need to fetch TID */
 			var = makeVar(oldrc->rti,
@@ -253,14 +253,32 @@ expand_inherited_rtentry(PlannerInfo *root, RelOptInfo *rel,
 		}
 
 		/* Add whole-row junk Var if needed, unless we had it already */
-		if ((new_allMarkTypes & (1 << ROW_MARK_COPY)) &&
-			!(old_allMarkTypes & (1 << ROW_MARK_COPY)))
+		if ((new_allRefTypes & (1 << ROW_REF_COPY)) &&
+			!(old_allRefTypes & (1 << ROW_REF_COPY)))
 		{
 			var = makeWholeRowVar(planner_rt_fetch(oldrc->rti, root),
 								  oldrc->rti,
 								  0,
 								  false);
 			snprintf(resname, sizeof(resname), "wholerow%u", oldrc->rowmarkId);
+			tle = makeTargetEntry((Expr *) var,
+								  list_length(root->processed_tlist) + 1,
+								  pstrdup(resname),
+								  true);
+			root->processed_tlist = lappend(root->processed_tlist, tle);
+			newvars = lappend(newvars, var);
+		}
+
+		if ((new_allRefTypes & (1 << ROW_REF_ROWID)) &&
+			!(old_allRefTypes & (1 << ROW_REF_ROWID)))
+		{
+			var = makeVar(oldrc->rti,
+						  RowIdAttributeNumber,
+						  BYTEAOID,
+						  -1,
+						  InvalidOid,
+						  0);
+			snprintf(resname, sizeof(resname), "rowid%u", oldrc->rowmarkId);
 			tle = makeTargetEntry((Expr *) var,
 								  list_length(root->processed_tlist) + 1,
 								  pstrdup(resname),
@@ -423,7 +441,7 @@ expand_partitioned_rtentry(PlannerInfo *root, RelOptInfo *relinfo,
  * where the hierarchy is flattened during RTE expansion.)
  *
  * PlanRowMarks still carry the top-parent's RTI, and the top-parent's
- * allMarkTypes field still accumulates values from all descendents.
+ * allRefTypes field still accumulates values from all descendents.
  *
  * "parentrte" and "parentRTindex" are immediate parent's RTE and
  * RTI. "top_parentrc" is top parent's PlanRowMark.
@@ -583,14 +601,16 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 	if (top_parentrc)
 	{
 		PlanRowMark *childrc = makeNode(PlanRowMark);
+		RowRefType refType;
 
 		childrc->rti = childRTindex;
 		childrc->prti = top_parentrc->rti;
 		childrc->rowmarkId = top_parentrc->rowmarkId;
 		/* Reselect rowmark type, because relkind might not match parent */
 		childrc->markType = select_rowmark_type(childrte,
-												top_parentrc->strength);
-		childrc->allMarkTypes = (1 << childrc->markType);
+												top_parentrc->strength,
+												&refType);
+		childrc->allRefTypes = (1 << refType);
 		childrc->strength = top_parentrc->strength;
 		childrc->waitPolicy = top_parentrc->waitPolicy;
 
@@ -601,8 +621,8 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 		 */
 		childrc->isParent = (childrte->relkind == RELKIND_PARTITIONED_TABLE);
 
-		/* Include child's rowmark type in top parent's allMarkTypes */
-		top_parentrc->allMarkTypes |= childrc->allMarkTypes;
+		/* Include child's rowmark type in top parent's allRefTypes */
+		top_parentrc->allRefTypes |= childrc->allRefTypes;
 
 		root->rowMarks = lappend(root->rowMarks, childrc);
 	}

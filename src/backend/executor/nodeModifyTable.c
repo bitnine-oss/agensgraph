@@ -606,6 +606,7 @@ ExecInsert(ModifyTableState *mtstate,
 	OnConflictAction onconflict = node->onConflictAction;
 	PartitionTupleRouting *proute = mtstate->mt_partition_tuple_routing;
 	MemoryContext oldContext;
+	bool		isExtendedRoutine;
 
 	/*
 	 * If the input result relation is a partitioned table, find the leaf
@@ -624,6 +625,7 @@ ExecInsert(ModifyTableState *mtstate,
 	ExecMaterializeSlot(slot);
 
 	resultRelationDesc = resultRelInfo->ri_RelationDesc;
+	isExtendedRoutine = table_has_extended_am(resultRelationDesc);
 
 	/*
 	 * Open the table's indexes, if we have not done so already, so that we
@@ -812,7 +814,8 @@ ExecInsert(ModifyTableState *mtstate,
 			  resultRelInfo->ri_TrigDesc->trig_insert_before_row)))
 			ExecPartitionCheck(resultRelInfo, slot, estate, true);
 
-		if (onconflict != ONCONFLICT_NONE && resultRelInfo->ri_NumIndices > 0)
+		if (onconflict != ONCONFLICT_NONE && resultRelInfo->ri_NumIndices > 0 &&
+			!isExtendedRoutine)
 		{
 			/* Perform a speculative insertion. */
 			uint32		specToken;
@@ -928,6 +931,21 @@ ExecInsert(ModifyTableState *mtstate,
 
 			/* Since there was no insertion conflict, we're done */
 		}
+		else if (onconflict != ONCONFLICT_NONE &&
+				 resultRelInfo->ri_NumIndices > 0 &&
+				 isExtendedRoutine)
+		{
+			slot = table_extended_tuple_insert_on_conflict(mtstate, estate,
+														   resultRelInfo, slot);
+
+			if (slot == NULL)
+				return NULL;
+		}
+		else if (isExtendedRoutine)
+		{
+			table_extended_tuple_insert(resultRelationDesc, slot, estate,
+										estate->es_output_cid, 0, NULL);
+		}
 		else
 		{
 			/* insert the tuple normally */
@@ -956,7 +974,7 @@ ExecInsert(ModifyTableState *mtstate,
 	if (mtstate->operation == CMD_UPDATE && mtstate->mt_transition_capture
 		&& mtstate->mt_transition_capture->tcs_update_new_table)
 	{
-		ExecARUpdateTriggers(estate, resultRelInfo, NULL,
+		ExecARUpdateTriggers(estate, resultRelInfo, PointerGetDatum(NULL),
 							 NULL,
 							 slot,
 							 NULL,
@@ -1080,7 +1098,7 @@ ExecBatchInsert(ModifyTableState *mtstate,
 static TupleTableSlot *
 ExecDelete(ModifyTableState *mtstate,
 		   ResultRelInfo *resultRelInfo,
-		   ItemPointer tupleid,
+		   Datum tupleid,
 		   HeapTuple oldtuple,
 		   TupleTableSlot *planSlot,
 		   EPQState *epqstate,
@@ -1107,7 +1125,8 @@ ExecDelete(ModifyTableState *mtstate,
 		bool		dodelete;
 
 		dodelete = ExecBRDeleteTriggers(estate, epqstate, resultRelInfo,
-										tupleid, oldtuple, epqreturnslot);
+										tupleid, oldtuple,
+										epqreturnslot);
 
 		if (!dodelete)			/* "do nothing" */
 			return NULL;
@@ -1163,13 +1182,31 @@ ExecDelete(ModifyTableState *mtstate,
 		 * mode transactions.
 		 */
 ldelete:;
-		result = table_tuple_delete(resultRelationDesc, tupleid,
-									estate->es_output_cid,
-									estate->es_snapshot,
-									estate->es_crosscheck_snapshot,
-									true /* wait for commit */ ,
-									&tmfd,
-									changingPart);
+
+		if (!table_has_extended_am(resultRelationDesc))
+		{
+			result = table_tuple_delete(resultRelationDesc,
+										DatumGetItemPointer(tupleid),
+										estate->es_output_cid,
+										estate->es_snapshot,
+										estate->es_crosscheck_snapshot,
+										true /* wait for commit */ ,
+										&tmfd,
+										changingPart);
+		}
+		else
+		{
+			if (resultRelInfo->ri_projectReturning)
+				slot = ExecGetReturningSlot(estate, resultRelInfo);
+			result = table_extended_tuple_delete(mtstate, resultRelInfo, estate,
+												 tupleid, slot,
+												 estate->es_output_cid,
+												 estate->es_snapshot,
+												 estate->es_crosscheck_snapshot,
+												 true /* wait for commit */ ,
+												 &tmfd,
+												 changingPart);
+		}
 
 		switch (result)
 		{
@@ -1229,7 +1266,8 @@ ldelete:;
 					inputslot = EvalPlanQualSlot(epqstate, resultRelationDesc,
 												 resultRelInfo->ri_RangeTableIndex);
 
-					result = table_tuple_lock(resultRelationDesc, tupleid,
+					result = table_tuple_lock(resultRelationDesc,
+											  DatumGetItemPointer(tupleid),
 											  estate->es_snapshot,
 											  inputslot, estate->es_output_cid,
 											  LockTupleExclusive, LockWaitBlock,
@@ -1361,7 +1399,8 @@ ldelete:;
 	}
 
 	/* AFTER ROW DELETE Triggers */
-	ExecARDeleteTriggers(estate, resultRelInfo, tupleid, oldtuple,
+	ExecARDeleteTriggers(estate, resultRelInfo,
+						 tupleid, oldtuple,
 						 ar_delete_trig_tcs);
 
 	/* Process RETURNING if present and if requested */
@@ -1373,7 +1412,8 @@ ldelete:;
 		 */
 		TupleTableSlot *rslot;
 
-		if (resultRelInfo->ri_FdwRoutine)
+		if (resultRelInfo->ri_FdwRoutine ||
+			table_has_extended_am(resultRelationDesc))
 		{
 			/* FDW must have provided a slot containing the deleted row */
 			Assert(!TupIsNull(slot));
@@ -1387,8 +1427,9 @@ ldelete:;
 			}
 			else
 			{
-				if (!table_tuple_fetch_row_version(resultRelationDesc, tupleid,
-												   SnapshotAny, slot))
+				if (!table_extended_tuple_fetch_row_version(resultRelationDesc,
+															tupleid,
+															SnapshotAny, slot))
 					elog(ERROR, "failed to fetch deleted tuple for DELETE RETURNING");
 			}
 		}
@@ -1429,7 +1470,7 @@ ldelete:;
 static bool
 ExecCrossPartitionUpdate(ModifyTableState *mtstate,
 						 ResultRelInfo *resultRelInfo,
-						 ItemPointer tupleid, HeapTuple oldtuple,
+						 Datum tupleid, HeapTuple oldtuple,
 						 TupleTableSlot *slot, TupleTableSlot *planSlot,
 						 EPQState *epqstate, bool canSetTag,
 						 TupleTableSlot **retry_slot,
@@ -1533,10 +1574,10 @@ ExecCrossPartitionUpdate(ModifyTableState *mtstate,
 			if (unlikely(!resultRelInfo->ri_projectNewInfoValid))
 				ExecInitUpdateProjection(mtstate, resultRelInfo);
 			oldSlot = resultRelInfo->ri_oldTupleSlot;
-			if (!table_tuple_fetch_row_version(resultRelInfo->ri_RelationDesc,
-											   tupleid,
-											   SnapshotAny,
-											   oldSlot))
+			if (!table_extended_tuple_fetch_row_version(resultRelInfo->ri_RelationDesc,
+														tupleid,
+														SnapshotAny,
+														oldSlot))
 				elog(ERROR, "failed to fetch tuple being updated");
 			*retry_slot = ExecGetUpdateNewTuple(resultRelInfo, epqslot,
 												oldSlot);
@@ -1600,7 +1641,7 @@ ExecCrossPartitionUpdate(ModifyTableState *mtstate,
 static TupleTableSlot *
 ExecUpdate(ModifyTableState *mtstate,
 		   ResultRelInfo *resultRelInfo,
-		   ItemPointer tupleid,
+		   Datum tupleid,
 		   HeapTuple oldtuple,
 		   TupleTableSlot *slot,
 		   TupleTableSlot *planSlot,
@@ -1736,6 +1777,7 @@ lreplace:;
 								 resultRelInfo, slot, estate);
 		}
 
+ex_partition_constraint_failed:
 		/*
 		 * If a partition check failed, try to move the row into the right
 		 * partition.
@@ -1784,12 +1826,37 @@ lreplace:;
 		 * needed for referential integrity updates in transaction-snapshot
 		 * mode transactions.
 		 */
-		result = table_tuple_update(resultRelationDesc, tupleid, slot,
-									estate->es_output_cid,
-									estate->es_snapshot,
-									estate->es_crosscheck_snapshot,
-									true /* wait for commit */ ,
-									&tmfd, &lockmode, &update_indexes);
+		if (!table_has_extended_am(resultRelationDesc))
+		{
+			result = table_tuple_update(resultRelationDesc,
+										DatumGetItemPointer(tupleid),
+										slot,
+										estate->es_output_cid,
+										estate->es_snapshot,
+										estate->es_crosscheck_snapshot,
+										true /* wait for commit */ ,
+										&tmfd, &lockmode, &update_indexes);
+		}
+		else
+		{
+			result = table_extended_tuple_update(mtstate, resultRelInfo, estate,
+												 tupleid,
+												 slot,
+												 estate->es_output_cid,
+												 estate->es_snapshot,
+												 estate->es_crosscheck_snapshot,
+												 true /* wait for commit */ ,
+												 &tmfd, &lockmode, &update_indexes);
+			if (result == TM_Updated)
+			{
+				/*
+				 * table_extended_tuple_update() returns TM_Updated iff
+				 * partition constraint failed.
+				 */
+				partition_constraint_failed = true;
+				goto ex_partition_constraint_failed;
+			}
+		}
 
 		switch (result)
 		{
@@ -1848,7 +1915,8 @@ lreplace:;
 					inputslot = EvalPlanQualSlot(epqstate, resultRelationDesc,
 												 resultRelInfo->ri_RangeTableIndex);
 
-					result = table_tuple_lock(resultRelationDesc, tupleid,
+					result = table_tuple_lock(resultRelationDesc,
+											  DatumGetItemPointer(tupleid),
 											  estate->es_snapshot,
 											  inputslot, estate->es_output_cid,
 											  lockmode, LockWaitBlock,
@@ -1875,7 +1943,7 @@ lreplace:;
 							/* Fetch the most recent version of old tuple. */
 							oldSlot = resultRelInfo->ri_oldTupleSlot;
 							if (!table_tuple_fetch_row_version(resultRelationDesc,
-															   tupleid,
+															   DatumGetItemPointer(tupleid),
 															   SnapshotAny,
 															   oldSlot))
 								elog(ERROR, "failed to fetch tuple being updated");
@@ -1942,8 +2010,8 @@ lreplace:;
 		(estate->es_processed)++;
 
 	/* AFTER ROW UPDATE Triggers */
-	ExecARUpdateTriggers(estate, resultRelInfo, tupleid, oldtuple, slot,
-						 recheckIndexes,
+	ExecARUpdateTriggers(estate, resultRelInfo,
+						 tupleid, oldtuple, slot, recheckIndexes,
 						 mtstate->operation == CMD_INSERT ?
 						 mtstate->mt_oc_transition_capture :
 						 mtstate->mt_transition_capture);
@@ -2174,7 +2242,7 @@ ExecOnConflictUpdate(ModifyTableState *mtstate,
 	 */
 
 	/* Execute UPDATE with projection */
-	*returning = ExecUpdate(mtstate, resultRelInfo, conflictTid, NULL,
+	*returning = ExecUpdate(mtstate, resultRelInfo, PointerGetDatum(conflictTid), NULL,
 							resultRelInfo->ri_onConflict->oc_ProjSlot,
 							planSlot,
 							&mtstate->mt_epqstate, mtstate->ps.state,
@@ -2356,7 +2424,7 @@ ExecModifyTable(PlanState *pstate)
 	TupleTableSlot *slot;
 	TupleTableSlot *planSlot;
 	TupleTableSlot *oldSlot;
-	ItemPointer tupleid;
+	Datum		tupleid;
 	ItemPointerData tuple_ctid;
 	HeapTupleData oldtupdata;
 	HeapTuple	oldtuple;
@@ -2406,6 +2474,8 @@ ExecModifyTable(PlanState *pstate)
 	 */
 	for (;;)
 	{
+		RowRefType	refType;
+
 		/*
 		 * Reset the per-output-tuple exprcontext.  This is needed because
 		 * triggers expect to use that context as workspace.  It's a bit ugly
@@ -2473,7 +2543,8 @@ ExecModifyTable(PlanState *pstate)
 		EvalPlanQualSetSlot(&node->mt_epqstate, planSlot);
 		slot = planSlot;
 
-		tupleid = NULL;
+		refType = resultRelInfo->ri_RowRefType;
+		tupleid = PointerGetDatum(NULL);
 		oldtuple = NULL;
 
 		/*
@@ -2499,13 +2570,23 @@ ExecModifyTable(PlanState *pstate)
 				datum = ExecGetJunkAttribute(slot,
 											 resultRelInfo->ri_RowIdAttNo,
 											 &isNull);
-				/* shouldn't ever get a null result... */
-				if (isNull)
-					elog(ERROR, "ctid is NULL");
 
-				tupleid = (ItemPointer) DatumGetPointer(datum);
-				tuple_ctid = *tupleid;	/* be sure we don't free ctid!! */
-				tupleid = &tuple_ctid;
+				if (refType == ROW_REF_TID)
+				{
+						/* shouldn't ever get a null result... */
+					if (isNull)
+						elog(ERROR, "ctid is NULL");
+
+					tuple_ctid = *((ItemPointer) DatumGetPointer(datum));	/* be sure we don't free ctid!! */
+					tupleid = PointerGetDatum(&tuple_ctid);
+				}
+				else
+				{
+					Assert(refType == ROW_REF_ROWID);
+					tupleid = datumCopy(datum, false, -1);
+					if (isNull)
+						elog(ERROR, "rowid is NULL");
+				}
 			}
 
 			/*
@@ -2581,10 +2662,10 @@ ExecModifyTable(PlanState *pstate)
 					/* Fetch the most recent version of old tuple. */
 					Relation	relation = resultRelInfo->ri_RelationDesc;
 
-					Assert(tupleid != NULL);
-					if (!table_tuple_fetch_row_version(relation, tupleid,
-													   SnapshotAny,
-													   oldSlot))
+					if (!table_extended_tuple_fetch_row_version(relation,
+																tupleid,
+																SnapshotAny,
+																oldSlot))
 						elog(ERROR, "failed to fetch tuple being updated");
 				}
 				slot = ExecGetUpdateNewTuple(resultRelInfo, planSlot,
@@ -2607,6 +2688,9 @@ ExecModifyTable(PlanState *pstate)
 				elog(ERROR, "unknown operation");
 				break;
 		}
+
+		if (refType == ROW_REF_ROWID && DatumGetPointer(tupleid) != NULL)
+			pfree(DatumGetPointer(tupleid));
 
 		/*
 		 * If we got a RETURNING result, return it to caller.  We'll continue
@@ -2823,6 +2907,9 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	for (i = 0; i < nrels; i++)
 	{
 		resultRelInfo = &mtstate->resultRelInfo[i];
+		rel = resultRelInfo->ri_RelationDesc;
+
+		resultRelInfo->ri_RowRefType = table_get_row_ref_type(rel);
 
 		/* Let FDWs init themselves for foreign-table result rels */
 		if (!resultRelInfo->ri_usesFdwDirectModify &&
@@ -2853,10 +2940,20 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 				relkind == RELKIND_MATVIEW ||
 				relkind == RELKIND_PARTITIONED_TABLE)
 			{
-				resultRelInfo->ri_RowIdAttNo =
-					ExecFindJunkAttributeInTlist(subplan->targetlist, "ctid");
-				if (!AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo))
-					elog(ERROR, "could not find junk ctid column");
+				if (resultRelInfo->ri_RowRefType == ROW_REF_TID)
+				{
+					resultRelInfo->ri_RowIdAttNo =
+						ExecFindJunkAttributeInTlist(subplan->targetlist, "ctid");
+					if (!AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo))
+						elog(ERROR, "could not find junk ctid column");
+				}
+				else
+				{
+					resultRelInfo->ri_RowIdAttNo =
+						ExecFindJunkAttributeInTlist(subplan->targetlist, "rowid");
+					if (!AttributeNumberIsValid(resultRelInfo->ri_RowIdAttNo))
+						elog(ERROR, "could not find junk rowid column");
+				}
 			}
 			else if (relkind == RELKIND_FOREIGN_TABLE)
 			{
@@ -3141,6 +3238,16 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 			resultRelInfo->ri_BatchSize = 1;
 	}
 
+	{
+		for (i = 0; i < nrels; i++)
+		{
+			resultRelInfo = &mtstate->resultRelInfo[i];
+			rel = resultRelInfo->ri_RelationDesc;
+			if (table_has_extended_am(rel))
+				table_extended_init_modify(mtstate, resultRelInfo);
+		}
+	}
+
 	/*
 	 * Lastly, if this is not the primary (canSetTag) ModifyTable node, add it
 	 * to estate->es_auxmodifytables so that it will be run to completion by
@@ -3153,6 +3260,8 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	if (!mtstate->canSetTag)
 		estate->es_auxmodifytables = lcons(mtstate,
 										   estate->es_auxmodifytables);
+
+
 
 	return mtstate;
 }

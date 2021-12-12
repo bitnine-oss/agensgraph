@@ -204,6 +204,17 @@ pg_strtok(int *length)
 	return ret_str;
 }
 
+bool
+pg_str_hasfield(void)
+{
+	const char *local_str = pg_strtok_ptr;
+
+	while (*local_str == ' ' || *local_str == '\n' || *local_str == '\t')
+		local_str++;
+
+	return (*local_str == ':');
+}
+
 /*
  * debackslash -
  *	  create a palloc'd string holding the given token.

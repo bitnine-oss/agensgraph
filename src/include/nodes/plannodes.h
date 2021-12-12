@@ -1118,7 +1118,7 @@ typedef enum RowMarkType
  * child relations will also have entries with isParent = true.  The child
  * entries have rti == child rel's RT index and prti == top parent's RT index,
  * and can therefore be recognized as children by the fact that prti != rti.
- * The parent's allMarkTypes field gets the OR of (1<<markType) across all
+ * The parent's allRefTypes field gets the OR of (1<<refType) across all
  * its children (this definition allows children to use different markTypes).
  *
  * The planner also adds resjunk output columns to the plan that carry
@@ -1146,7 +1146,7 @@ typedef struct PlanRowMark
 	Index		prti;			/* range table index of parent relation */
 	Index		rowmarkId;		/* unique identifier for resjunk columns */
 	RowMarkType markType;		/* see enum above */
-	int			allMarkTypes;	/* OR of (1<<markType) for all children */
+	int			allRefTypes;	/* OR of (1<<refType) for all children */
 	LockClauseStrength strength;	/* LockingClause's strength, or LCS_NONE */
 	LockWaitPolicy waitPolicy;	/* NOWAIT and SKIP LOCKED options */
 	bool		isParent;		/* true if this is a "dummy" parent entry */

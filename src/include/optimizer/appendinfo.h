@@ -47,4 +47,9 @@ extern void add_row_identity_columns(PlannerInfo *root, Index rtindex,
 									 Relation target_relation);
 extern void distribute_row_identity_vars(PlannerInfo *root);
 
+typedef bool (*UpdateTargetsHook)(PlannerInfo *root, Index rtindex,
+								  RangeTblEntry *target_rte,
+								  Relation target_relation);
+extern UpdateTargetsHook UpdateTargets_hook;
+
 #endif							/* APPENDINFO_H */

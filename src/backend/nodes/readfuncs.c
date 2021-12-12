@@ -108,6 +108,19 @@
 	token = pg_strtok(&length);		/* get field value */ \
 	local_node->fldname = (enumtype) atoi(token)
 
+/* Read an optional enumerated-type field that was written as an integer code */
+#define READ_ENUM_FIELD_OPT(fldname, enumtype, defval) \
+	if (pg_str_hasfield()) \
+	{ \
+		token = pg_strtok(&length);		/* skip :fldname */ \
+		token = pg_strtok(&length);		/* get field value */ \
+		local_node->fldname = (enumtype) atoi(token); \
+	} \
+	else \
+	{ \
+		local_node->fldname = defval; \
+	}
+
 /* Read a float field */
 #define READ_FLOAT_FIELD(fldname) \
 	token = pg_strtok(&length);		/* skip :fldname */ \
@@ -1546,6 +1559,11 @@ _readRangeTblEntry(void)
 	READ_BITMAPSET_FIELD(extraUpdatedCols);
 	READ_NODE_FIELD(securityQuals);
 
+	if (local_node->rtekind == RTE_RELATION)
+	{
+		READ_ENUM_FIELD_OPT(reftype, RowRefType, ROW_REF_TID);
+	}
+
 	READ_DONE();
 }
 
@@ -2639,7 +2657,7 @@ _readPlanRowMark(void)
 	READ_UINT_FIELD(prti);
 	READ_UINT_FIELD(rowmarkId);
 	READ_ENUM_FIELD(markType, RowMarkType);
-	READ_INT_FIELD(allMarkTypes);
+	READ_INT_FIELD(allRefTypes);
 	READ_ENUM_FIELD(strength, LockClauseStrength);
 	READ_ENUM_FIELD(waitPolicy, LockWaitPolicy);
 	READ_BOOL_FIELD(isParent);

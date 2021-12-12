@@ -150,7 +150,7 @@ preprocess_targetlist(PlannerInfo *root)
 		if (rc->rti != rc->prti)
 			continue;
 
-		if (rc->allMarkTypes & ~(1 << ROW_MARK_COPY))
+		if (rc->allRefTypes & (1 << ROW_REF_TID))
 		{
 			/* Need to fetch TID */
 			var = makeVar(rc->rti,
@@ -166,7 +166,23 @@ preprocess_targetlist(PlannerInfo *root)
 								  true);
 			tlist = lappend(tlist, tle);
 		}
-		if (rc->allMarkTypes & (1 << ROW_MARK_COPY))
+		if (rc->allRefTypes & (1 << ROW_REF_ROWID))
+		{
+			/* Need to fetch TID */
+			var = makeVar(rc->rti,
+						  RowIdAttributeNumber,
+						  BYTEAOID,
+						  -1,
+						  InvalidOid,
+						  0);
+			snprintf(resname, sizeof(resname), "rowid%u", rc->rowmarkId);
+			tle = makeTargetEntry((Expr *) var,
+								  list_length(tlist) + 1,
+								  pstrdup(resname),
+								  true);
+			tlist = lappend(tlist, tle);
+		}
+		if (rc->allRefTypes & (1 << ROW_REF_COPY))
 		{
 			/* Need the whole row as a junk var */
 			var = makeWholeRowVar(rt_fetch(rc->rti, range_table),

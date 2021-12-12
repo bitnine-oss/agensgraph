@@ -21,6 +21,7 @@
 #include "nodes/bitmapset.h"
 #include "nodes/pg_list.h"
 
+
 /* ----------------------------------------------------------------
  *						node definitions
  * ----------------------------------------------------------------
@@ -1643,5 +1644,12 @@ typedef struct CypherIndices
 	Expr	   *lidx;
 	Expr	   *uidx;
 } CypherIndices;
+
+typedef enum RowRefType
+{
+	ROW_REF_TID,
+	ROW_REF_ROWID,
+	ROW_REF_COPY
+} RowRefType;
 
 #endif							/* PRIMNODES_H */

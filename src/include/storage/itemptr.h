@@ -195,6 +195,8 @@ typedef ItemPointerData *ItemPointer;
 #define ItemPointerSetMovedPartitions(pointer) \
 	ItemPointerSet((pointer), MovedPartitionsBlockNumber, MovedPartitionsOffsetNumber)
 
+#define DatumGetItemPointer(X)	 ((ItemPointer) DatumGetPointer(X))
+
 /* ----------------
  *		externs
  * ----------------
