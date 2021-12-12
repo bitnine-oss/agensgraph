@@ -626,6 +626,27 @@ GetLockMethodLocalHash(void)
 #endif
 
 /*
+ * Returns true if any LOCKMODE lock with given locktag exist in LocalMethodLocalHash.
+ */
+bool
+DoLocalLockExist(const LOCKTAG *locktag)
+{
+	HASH_SEQ_STATUS scan_status;
+	LOCALLOCK* locallock;
+
+	hash_seq_init(&scan_status, LockMethodLocalHash);
+	while ((locallock = (LOCALLOCK *) hash_seq_search(&scan_status)) != NULL)
+	{
+		if (memcmp(&locallock->tag.lock, locktag, sizeof(LOCKTAG)) == 0)
+		{
+			hash_seq_term(&scan_status);
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
  * LockHasWaiters -- look up 'locktag' and check if releasing this
  *		lock would wake up other processes waiting for it.
  */

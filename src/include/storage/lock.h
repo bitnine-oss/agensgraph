@@ -543,6 +543,7 @@ extern LockMethod GetLocksMethodTable(const LOCK *lock);
 extern LockMethod GetLockTagsMethodTable(const LOCKTAG *locktag);
 extern uint32 LockTagHashCode(const LOCKTAG *locktag);
 extern bool DoLockModesConflict(LOCKMODE mode1, LOCKMODE mode2);
+extern bool DoLocalLockExist(const LOCKTAG *locktag);
 extern LockAcquireResult LockAcquire(const LOCKTAG *locktag,
 									 LOCKMODE lockmode,
 									 bool sessionLock,
