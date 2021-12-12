@@ -161,6 +161,7 @@ static int	width_bucket_array_variable(Datum operand,
 										Oid collation,
 										TypeCacheEntry *typentry);
 
+type_elements_cmp_hook_type type_elements_cmp_hook = NULL;
 
 /*
  * array_in :
@@ -3811,13 +3812,21 @@ array_cmp(FunctionCallInfo fcinfo)
 	if (typentry == NULL ||
 		typentry->type_id != element_type)
 	{
-		typentry = lookup_type_cache(element_type,
-									 TYPECACHE_CMP_PROC_FINFO);
-		if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
-			ereport(ERROR,
+		if (type_elements_cmp_hook)
+			typentry = type_elements_cmp_hook(element_type,
+											  fcinfo->flinfo->fn_mcxt);
+		if (!typentry)
+		{
+			typentry =
+				lookup_type_cache(element_type, TYPECACHE_CMP_PROC_FINFO);
+			if (!OidIsValid(typentry->cmp_proc_finfo.fn_oid))
+				ereport(
+					ERROR,
 					(errcode(ERRCODE_UNDEFINED_FUNCTION),
-					 errmsg("could not identify a comparison function for type %s",
-							format_type_be(element_type))));
+					 errmsg(
+						 "could not identify a comparison function for type %s",
+						 format_type_be(element_type))));
+		}
 		fcinfo->flinfo->fn_extra = (void *) typentry;
 	}
 	typlen = typentry->typlen;

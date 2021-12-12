@@ -45,4 +45,7 @@ extern const Oid fmgr_last_builtin_oid; /* highest function OID in table */
 #define InvalidOidBuiltinMapping PG_UINT16_MAX
 extern const uint16 fmgr_builtin_oid_index[];
 
+extern const FmgrBuiltin *fmgr_isbuiltin(Oid id);
+extern const FmgrBuiltin *fmgr_lookupByName(const char *name);
+
 #endif							/* FMGRTAB_H */

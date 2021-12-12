@@ -71,7 +71,7 @@ extern Datum fmgr_security_definer(PG_FUNCTION_ARGS);
  * or name, but search by Oid is much faster.
  */
 
-static const FmgrBuiltin *
+const FmgrBuiltin *
 fmgr_isbuiltin(Oid id)
 {
 	uint16		index;
@@ -96,7 +96,7 @@ fmgr_isbuiltin(Oid id)
  * the array with the same name, but they should all point to the same
  * routine.
  */
-static const FmgrBuiltin *
+const FmgrBuiltin *
 fmgr_lookupByName(const char *name)
 {
 	int			i;

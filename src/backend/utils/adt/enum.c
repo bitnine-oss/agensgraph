@@ -27,6 +27,8 @@
 #include "utils/typcache.h"
 
 
+enum_cmp_internal_hook_type enum_cmp_internal_hook = NULL;
+
 static Oid	enum_endpoint(Oid enumtypoid, ScanDirection direction);
 static ArrayType *enum_range_internal(Oid enumtypoid, Oid lower, Oid upper);
 
@@ -271,6 +273,10 @@ enum_cmp_internal(Oid arg1, Oid arg2, FunctionCallInfo fcinfo)
 
 	/* Locate the typcache entry for the enum type */
 	tcache = (TypeCacheEntry *) fcinfo->flinfo->fn_extra;
+
+	if (tcache == NULL && enum_cmp_internal_hook)
+		tcache = enum_cmp_internal_hook(arg1,
+										fcinfo->flinfo->fn_mcxt);
 	if (tcache == NULL)
 	{
 		HeapTuple	enum_tup;

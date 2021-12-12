@@ -206,4 +206,21 @@ extern void SharedRecordTypmodRegistryInit(SharedRecordTypmodRegistry *,
 
 extern void SharedRecordTypmodRegistryAttach(SharedRecordTypmodRegistry *);
 
+typedef TypeCacheEntry *(*type_elements_cmp_hook_type)(Oid elemtype,
+													   MemoryContext mcxt);
+/* used in array_cmp and record_cmp for array elements and record fields */
+extern PGDLLIMPORT type_elements_cmp_hook_type type_elements_cmp_hook;
+
+typedef TupleDesc (*record_cmp_hook_type)(Oid type_id, MemoryContext mcxt);
+extern PGDLLIMPORT record_cmp_hook_type record_cmp_hook;
+
+extern void load_enum_cache_data(TypeCacheEntry *tcache);
+typedef TypeCacheEntry *(*enum_cmp_internal_hook_type)(Oid enum_oid,
+													   MemoryContext mcxt);
+extern PGDLLIMPORT enum_cmp_internal_hook_type enum_cmp_internal_hook;
+typedef TypeCacheEntry *(*range_cmp_hook_type)(FunctionCallInfo fcinfo,
+											   Oid rngtypid,
+											   MemoryContext mcxt);
+extern PGDLLIMPORT range_cmp_hook_type range_cmp_hook;
+
 #endif							/* TYPCACHE_H */
