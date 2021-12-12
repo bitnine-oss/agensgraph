@@ -41,6 +41,8 @@
   && !RelationIsAccessibleInLogicalDecoding(rel) \
 )
 
+typedef void (*snapshot_hook_type) (Snapshot snapshot);
+
 #define EarlyPruningEnabled(rel) (old_snapshot_threshold >= 0 && RelationAllowsEarlyPruning(rel))
 
 /* GUC variables */
@@ -118,7 +120,7 @@ extern void PushActiveSnapshotWithLevel(Snapshot snapshot, int snap_level);
 extern void PushCopiedSnapshot(Snapshot snapshot);
 extern void UpdateActiveSnapshotCommandId(void);
 extern void PopActiveSnapshot(void);
-extern Snapshot GetActiveSnapshot(void);
+extern PGDLLIMPORT Snapshot GetActiveSnapshot(void);
 extern bool ActiveSnapshotSet(void);
 
 extern Snapshot RegisterSnapshot(Snapshot snapshot);
@@ -175,5 +177,11 @@ extern Size EstimateSnapshotSpace(Snapshot snapshot);
 extern void SerializeSnapshot(Snapshot snapshot, char *start_address);
 extern Snapshot RestoreSnapshot(char *start_address);
 extern void RestoreTransactionSnapshot(Snapshot snapshot, void *source_pgproc);
+
+typedef void (*reset_xmin_hook_type) (void);
+
+extern snapshot_hook_type snapshot_register_hook;
+extern snapshot_hook_type snapshot_deregister_hook;
+extern reset_xmin_hook_type reset_xmin_hook;
 
 #endif							/* SNAPMGR_H */

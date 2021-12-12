@@ -257,6 +257,7 @@ struct PGPROC
 	bool		fpVXIDLock;		/* are we holding a fast-path VXID lock? */
 	LocalTransactionId fpLocalTransactionId;	/* lxid for fast-path VXID
 												 * lock */
+	CommitSeqNo	lastCommittedCSN;
 
 	/*
 	 * Support for lock groups.  Use LockHashPartitionLockByProc on the group

@@ -206,6 +206,7 @@ typedef struct TransactionStateData
 	int			parallelModeLevel;	/* Enter/ExitParallelMode counter */
 	bool		chain;			/* start a new block after this one */
 	bool		assigned;		/* assigned to top-level XID */
+	CommitSeqNo	csn;
 	struct TransactionStateData *parent;	/* back link to parent */
 } TransactionStateData;
 
@@ -239,6 +240,7 @@ static TransactionStateData TopTransactionStateData = {
 	.state = TRANS_DEFAULT,
 	.blockState = TBLOCK_DEFAULT,
 	.assigned = false,
+	.csn = COMMITSEQNO_INPROGRESS
 };
 
 /*
@@ -1937,6 +1939,7 @@ StartTransaction(void)
 	 */
 	s->state = TRANS_START;
 	s->fullTransactionId = InvalidFullTransactionId;	/* until assigned */
+	s->csn = COMMITSEQNO_INPROGRESS;
 
 	/* Determine if statements are logged in this transaction */
 	xact_is_sampled = log_xact_sample_rate != 0 &&
@@ -2219,7 +2222,9 @@ CommitTransaction(void)
 	 * must be done _before_ releasing locks we hold and _after_
 	 * RecordTransactionCommit.
 	 */
+	MyProc->lastCommittedCSN = s->csn;
 	ProcArrayEndTransaction(MyProc, latestXid);
+	s->csn = MyProc->lastCommittedCSN;
 
 	/*
 	 * This is all post-commit cleanup.  Note that if an error is raised here,
@@ -6168,4 +6173,10 @@ MarkSubTransactionAssigned(void)
 	Assert(IsSubTransactionAssignmentPending());
 
 	CurrentTransactionState->assigned = true;
+}
+
+CommitSeqNo
+GetCurrentCSN(void)
+{
+	return TopTransactionStateData.csn;
 }

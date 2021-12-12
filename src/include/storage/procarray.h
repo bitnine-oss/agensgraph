@@ -98,4 +98,6 @@ extern void ProcArraySetReplicationSlotXmin(TransactionId xmin,
 extern void ProcArrayGetReplicationSlotXmin(TransactionId *xmin,
 											TransactionId *catalog_xmin);
 
+extern snapshot_hook_type snapshot_hook;
+
 #endif							/* PROCARRAY_H */

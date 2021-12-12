@@ -145,6 +145,7 @@ extern TimeLineID recoveryTargetTLIRequested;
 extern TimeLineID recoveryTargetTLI;
 
 extern int	CheckPointSegments;
+extern CommitSeqNo startupCommitSeqNo;
 
 /* option set locally in startup process only when signal files exist */
 extern bool StandbyModeRequested;
