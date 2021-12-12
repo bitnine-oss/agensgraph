@@ -34,6 +34,8 @@ extern XLogRecPtr LogLogicalMessage(const char *prefix, const char *message,
 
 /* RMGR API*/
 #define XLOG_LOGICAL_MESSAGE	0x00
+
+extern void	(*logicalmsg_redo_hook)(XLogReaderState *record);
 void		logicalmsg_redo(XLogReaderState *record);
 void		logicalmsg_desc(StringInfo buf, XLogReaderState *record);
 const char *logicalmsg_identify(uint8 info);

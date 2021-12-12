@@ -404,4 +404,15 @@ extern SessionBackupState get_backup_status(void);
 /* files to signal promotion to primary */
 #define PROMOTE_SIGNAL_FILE		"promote"
 
+typedef void (*CheckPoint_hook_type) (XLogRecPtr checkPointRedo, int flags);
+extern PGDLLIMPORT CheckPoint_hook_type CheckPoint_hook;
+extern double CheckPointProgress;
+typedef void (*after_checkpoint_cleanup_hook_type)(XLogRecPtr checkPointRedo,
+												   int flags);
+extern PGDLLIMPORT after_checkpoint_cleanup_hook_type
+	after_checkpoint_cleanup_hook;
+
+extern void (*RedoStartHook) (void);
+extern void (*RedoFinishHook) (bool cleanup);
+
 #endif							/* XLOG_H */

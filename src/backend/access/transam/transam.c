@@ -22,6 +22,7 @@
 #include "access/clog.h"
 #include "access/subtrans.h"
 #include "access/transam.h"
+#include "storage/proc.h"
 #include "utils/snapmgr.h"
 
 /*

@@ -73,6 +73,8 @@ LogLogicalMessage(const char *prefix, const char *message, size_t size,
 	return XLogInsert(RM_LOGICALMSG_ID, XLOG_LOGICAL_MESSAGE);
 }
 
+void	(*logicalmsg_redo_hook)(XLogReaderState *record) = NULL;
+
 /*
  * Redo is basically just noop for logical decoding messages.
  */
@@ -80,6 +82,9 @@ void
 logicalmsg_redo(XLogReaderState *record)
 {
 	uint8		info = XLogRecGetInfo(record) & ~XLR_INFO_MASK;
+
+	if (logicalmsg_redo_hook != NULL)
+		logicalmsg_redo_hook(record);
 
 	if (info != XLOG_LOGICAL_MESSAGE)
 		elog(PANIC, "logicalmsg_redo: unknown op code %u", info);
