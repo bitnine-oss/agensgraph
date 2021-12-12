@@ -1401,6 +1401,25 @@ CacheInvalidateRelcacheByRelid(Oid relid)
 	ReleaseSysCache(tup);
 }
 
+/*
+ * CacheInvalidateRelcacheByDbidRelid
+ */
+void
+CacheInvalidateRelcacheByDbidRelid(Oid dbid, Oid relid)
+{
+	SharedInvalidationMessage msg;
+
+	PrepareInvalidationState();
+
+	msg.rc.id = SHAREDINVALRELCACHE_ID;
+	msg.rc.dbId = dbid;
+	msg.rc.relId = relid;
+	/* check AddCatcacheInvalidationMessage() for an explanation */
+	VALGRIND_MAKE_MEM_DEFINED(&msg, sizeof(msg));
+
+	SendSharedInvalidMessages(&msg, 1);
+}
+
 
 /*
  * CacheInvalidateSmgr
