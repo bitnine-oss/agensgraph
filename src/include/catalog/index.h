@@ -214,4 +214,6 @@ itemptr_decode(ItemPointer itemptr, int64 encoded)
 /* for agensgraph */
 extern bool DisableIndexLabel(Oid relid);
 
+extern void index_update_stats(Relation rel, bool hasindex, double reltuples);
+
 #endif							/* INDEX_H */

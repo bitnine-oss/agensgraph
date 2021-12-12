@@ -65,9 +65,6 @@ static void report_triggers(ResultRelInfo *rInfo, bool show_relname,
 							ExplainState *es);
 static double elapsed_time(instr_time *starttime);
 static bool ExplainPreScanNode(PlanState *planstate, Bitmapset **rels_used);
-static void ExplainNode(PlanState *planstate, List *ancestors,
-						const char *relationship, const char *plan_name,
-						ExplainState *es);
 static void show_plan_tlist(PlanState *planstate, List *ancestors,
 							ExplainState *es);
 static void show_expression(Node *node, const char *qlabel,
@@ -76,9 +73,6 @@ static void show_expression(Node *node, const char *qlabel,
 static void show_qual(List *qual, const char *qlabel,
 					  PlanState *planstate, List *ancestors,
 					  bool useprefix, ExplainState *es);
-static void show_scan_qual(List *qual, const char *qlabel,
-						   PlanState *planstate, List *ancestors,
-						   ExplainState *es);
 static void show_upper_qual(List *qual, const char *qlabel,
 							PlanState *planstate, List *ancestors,
 							ExplainState *es);
@@ -115,8 +109,6 @@ static void show_memoize_info(MemoizeState *mstate, List *ancestors,
 static void show_hashagg_info(AggState *hashstate, ExplainState *es);
 static void show_tidbitmap_info(BitmapHeapScanState *planstate,
 								ExplainState *es);
-static void show_instrumentation_count(const char *qlabel, int which,
-									   PlanState *planstate, ExplainState *es);
 static void show_foreignscan_info(ForeignScanState *fsstate, ExplainState *es);
 static void show_eval_params(Bitmapset *bms_params, ExplainState *es);
 static const char *explain_get_index_name(Oid indexId);
@@ -1144,7 +1136,7 @@ ExplainPreScanNode(PlanState *planstate, Bitmapset **rels_used)
  * to the nesting depth of logical output groups, and therefore is controlled
  * by ExplainOpenGroup/ExplainCloseGroup.
  */
-static void
+void
 ExplainNode(PlanState *planstate, List *ancestors,
 			const char *relationship, const char *plan_name,
 			ExplainState *es)
@@ -2421,7 +2413,7 @@ show_qual(List *qual, const char *qlabel,
 /*
  * Show a qualifier expression for a scan plan node
  */
-static void
+void
 show_scan_qual(List *qual, const char *qlabel,
 			   PlanState *planstate, List *ancestors,
 			   ExplainState *es)
@@ -3572,7 +3564,7 @@ show_tidbitmap_info(BitmapHeapScanState *planstate, ExplainState *es)
  *
  * "which" identifies which instrumentation counter to print
  */
-static void
+void
 show_instrumentation_count(const char *qlabel, int which,
 						   PlanState *planstate, ExplainState *es)
 {

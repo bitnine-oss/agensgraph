@@ -48,14 +48,6 @@ typedef enum
 	ST_ANYSCAN					/* either is okay */
 } ScanTypeControl;
 
-/* Data structure for collecting qual clauses that match an index */
-typedef struct
-{
-	bool		nonempty;		/* True if lists are not all empty */
-	/* Lists of IndexClause nodes, one list per index column */
-	List	   *indexclauses[INDEX_MAX_KEYS];
-} IndexClauseSet;
-
 /* Per-path data used within choose_bitmap_and() */
 typedef struct
 {
@@ -132,9 +124,6 @@ static double adjust_rowcount_for_semijoins(PlannerInfo *root,
 											Index outer_relid,
 											double rowcount);
 static double approximate_joinrel_size(PlannerInfo *root, Relids relids);
-static void match_restriction_clauses_to_index(PlannerInfo *root,
-											   IndexOptInfo *index,
-											   IndexClauseSet *clauseset);
 static void match_join_clauses_to_index(PlannerInfo *root,
 										RelOptInfo *rel, IndexOptInfo *index,
 										IndexClauseSet *clauseset,
@@ -2082,7 +2071,7 @@ approximate_joinrel_size(PlannerInfo *root, Relids relids)
  *	  Identify restriction clauses for the rel that match the index.
  *	  Matching clauses are added to *clauseset.
  */
-static void
+void
 match_restriction_clauses_to_index(PlannerInfo *root,
 								   IndexOptInfo *index,
 								   IndexClauseSet *clauseset)

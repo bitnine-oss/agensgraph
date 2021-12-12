@@ -39,6 +39,11 @@ extern void preprocess_minmax_aggregates(PlannerInfo *root);
  * prototypes for plan/createplan.c
  */
 extern Plan *create_plan(PlannerInfo *root, Path *best_path);
+extern List *order_qual_clauses(PlannerInfo *root, List *clauses);
+extern void fix_indexqual_references(PlannerInfo *root, IndexPath *index_path,
+									 List **stripped_indexquals_p,
+									 List **fixed_indexquals_p);
+extern Node *replace_nestloop_params(PlannerInfo *root, Node *expr);
 extern ForeignScan *make_foreignscan(List *qptlist, List *qpqual,
 									 Index scanrelid, List *fdw_exprs, List *fdw_private,
 									 List *fdw_scan_tlist, List *fdw_recheck_quals,
