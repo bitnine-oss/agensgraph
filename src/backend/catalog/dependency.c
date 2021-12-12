@@ -231,6 +231,7 @@ deleteObjectsInList(ObjectAddresses *targetObjects, Relation *depRel,
 					int flags)
 {
 	int			i;
+	bool		*depends_on_relation;
 
 	/*
 	 * Keep track of objects for event triggers, if necessary.
@@ -258,6 +259,33 @@ deleteObjectsInList(ObjectAddresses *targetObjects, Relation *depRel,
 		}
 	}
 
+	depends_on_relation = palloc0(sizeof(bool) * targetObjects->numrefs);
+
+	for (i = targetObjects->numrefs - 1; i >= 0; i--)
+	{
+		ObjectAddressExtra *thisextra = targetObjects->extras + i;
+		int j;
+
+		if (thisextra->dependee.classId == RelationRelationId &&
+			thisextra->dependee.objectSubId == 0)
+		{
+			depends_on_relation[i] = true;
+			continue;
+		}
+
+		for (j = i + 1; j < targetObjects->numrefs; j++)
+		{
+			ObjectAddress *depobj = targetObjects->refs + j;
+			if (depobj->classId == thisextra->dependee.classId &&
+				depobj->objectId == thisextra->dependee.objectId &&
+				depobj->objectSubId == thisextra->dependee.objectSubId)
+			{
+				depends_on_relation[i] = depends_on_relation[j];
+				break;
+			}
+		}
+	}
+
 	/*
 	 * Delete all the objects in the proper order, except that if told to, we
 	 * should skip the original object(s).
@@ -266,13 +294,19 @@ deleteObjectsInList(ObjectAddresses *targetObjects, Relation *depRel,
 	{
 		ObjectAddress *thisobj = targetObjects->refs + i;
 		ObjectAddressExtra *thisextra = targetObjects->extras + i;
+		int temp_flags = flags;
 
 		if ((flags & PERFORM_DELETION_SKIP_ORIGINAL) &&
 			(thisextra->flags & DEPFLAG_ORIGINAL))
 			continue;
 
-		deleteOneObject(thisobj, depRel, flags);
+		if (depends_on_relation[i])
+			temp_flags |= PERFORM_DELETION_OF_RELATION;
+
+		deleteOneObject(thisobj, depRel, temp_flags);
 	}
+
+	pfree(depends_on_relation);
 }
 
 /*
