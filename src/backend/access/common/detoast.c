@@ -26,7 +26,6 @@ static struct varlena *toast_fetch_datum(struct varlena *attr);
 static struct varlena *toast_fetch_datum_slice(struct varlena *attr,
 											   int32 sliceoffset,
 											   int32 slicelength);
-static struct varlena *toast_decompress_datum(struct varlena *attr);
 static struct varlena *toast_decompress_datum_slice(struct varlena *attr, int32 slicelength);
 
 /* ----------
@@ -332,6 +331,20 @@ detoast_attr_slice(struct varlena *attr,
 	return result;
 }
 
+static ToastFunc o_detoast_func = NULL;
+
+void
+register_o_detoast_func(ToastFunc func)
+{
+	o_detoast_func = func;
+}
+
+void
+deregister_o_detoast_func()
+{
+	o_detoast_func = NULL;
+}
+
 /* ----------
  * toast_fetch_datum -
  *
@@ -349,6 +362,17 @@ toast_fetch_datum(struct varlena *attr)
 
 	if (!VARATT_IS_EXTERNAL_ONDISK(attr))
 		elog(ERROR, "toast_fetch_datum shouldn't be called for non-ondisk datums");
+
+	if (VARATT_IS_EXTERNAL_ORIOLEDB(attr))
+	{
+		if (o_detoast_func != NULL)
+		{
+			result = o_detoast_func(attr);
+			if (result == NULL)
+				elog(ERROR, "unexpected NULL detoast result");
+			return result;
+		}
+	}
 
 	/* Must copy to access aligned fields */
 	VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
@@ -467,7 +491,7 @@ toast_fetch_datum_slice(struct varlena *attr, int32 sliceoffset,
  *
  * Decompress a compressed version of a varlena datum
  */
-static struct varlena *
+struct varlena *
 toast_decompress_datum(struct varlena *attr)
 {
 	ToastCompressionId cmid;
@@ -549,8 +573,14 @@ toast_raw_datum_size(Datum value)
 
 	if (VARATT_IS_EXTERNAL_ONDISK(attr))
 	{
-		/* va_rawsize is the size of the original datum -- including header */
 		struct varatt_external toast_pointer;
+
+		if (VARATT_IS_EXTERNAL_ORIOLEDB(attr))
+		{
+			OToastExternal *toasted = (OToastExternal*) VARDATA_EXTERNAL(attr);
+			return toasted->raw_size + VARHDRSZ;
+		}
+		/* va_rawsize is the size of the original datum -- including header */
 
 		VARATT_EXTERNAL_GET_POINTER(toast_pointer, attr);
 		result = toast_pointer.va_rawsize;

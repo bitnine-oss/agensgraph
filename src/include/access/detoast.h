@@ -64,6 +64,13 @@ extern struct varlena *detoast_attr_slice(struct varlena *attr,
 										  int32 slicelength);
 
 /* ----------
+ * toast_decompress_datum -
+ *
+ * Decompress a compressed version of a varlena datum
+ */
+extern struct varlena *toast_decompress_datum(struct varlena *attr);
+
+/* ----------
  * toast_raw_datum_size -
  *
  *	Return the raw (detoasted) size of a varlena datum
@@ -78,5 +85,12 @@ extern Size toast_raw_datum_size(Datum value);
  * ----------
  */
 extern Size toast_datum_size(Datum value);
+
+/*
+ * for in_memory module
+ */
+typedef struct varlena* (*ToastFunc) (struct varlena *attr);
+extern void register_o_detoast_func(ToastFunc func);
+extern void deregister_o_detoast_func(void);
 
 #endif							/* DETOAST_H */
