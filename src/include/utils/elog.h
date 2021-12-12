@@ -453,4 +453,10 @@ extern void set_syslog_parameters(const char *ident, int facility);
  */
 extern void write_stderr(const char *fmt,...) pg_attribute_printf(1, 2);
 
+typedef void (*CustomErrorCleanupHookType) (void);
+
+extern CustomErrorCleanupHookType CustomErrorCleanupHook;
+
+extern void CustomErrorCleanup(void);
+
 #endif							/* ELOG_H */

@@ -161,6 +161,7 @@ WalWriterMain(void)
 		 * about in walwriter, but we do have LWLocks, and perhaps buffers?
 		 */
 		LWLockReleaseAll();
+		CustomErrorCleanup();
 		ConditionVariableCancelSleep();
 		pgstat_report_wait_end();
 		AbortBufferIO();

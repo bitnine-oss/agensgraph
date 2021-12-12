@@ -530,6 +530,7 @@ AutoVacLauncherMain(int argc, char *argv[])
 		 * transaction.
 		 */
 		LWLockReleaseAll();
+		CustomErrorCleanup();
 		pgstat_report_wait_end();
 		AbortBufferIO();
 		UnlockBuffers();
