@@ -31,6 +31,10 @@ typedef void (*set_rel_pathlist_hook_type) (PlannerInfo *root,
 											Index rti,
 											RangeTblEntry *rte);
 extern PGDLLIMPORT set_rel_pathlist_hook_type set_rel_pathlist_hook;
+typedef bool (*set_plain_rel_pathlist_hook_type)(PlannerInfo *root,
+												 RelOptInfo *rel,
+												 RangeTblEntry *rte);
+extern PGDLLIMPORT set_plain_rel_pathlist_hook_type set_plain_rel_pathlist_hook;
 
 /* Hook for plugins to get control in add_paths_to_joinrel() */
 typedef void (*set_join_pathlist_hook_type) (PlannerInfo *root,
