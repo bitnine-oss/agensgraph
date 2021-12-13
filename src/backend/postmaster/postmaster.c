@@ -574,6 +574,12 @@ int			postmaster_alive_fds[2] = {-1, -1};
 HANDLE		PostmasterHandle;
 #endif
 
+bool
+IsFatalError(void)
+{
+	return FatalError;
+}
+
 /*
  * Postmaster main entry point
  */
