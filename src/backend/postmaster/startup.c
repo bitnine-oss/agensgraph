@@ -58,6 +58,8 @@ static volatile sig_atomic_t promote_signaled = false;
  */
 static volatile sig_atomic_t in_restore_command = false;
 
+HandleStartupProcInterrupts_hook_type HandleStartupProcInterrupts_hook = NULL;
+
 /* Signal handlers */
 static void StartupProcTriggerHandler(SIGNAL_ARGS);
 static void StartupProcSigHupHandler(SIGNAL_ARGS);
@@ -151,6 +153,9 @@ HandleStartupProcInterrupts(void)
 #ifdef POSTMASTER_POLL_RATE_LIMIT
 	static uint32 postmaster_poll_count = 0;
 #endif
+
+	if (HandleStartupProcInterrupts_hook)
+		HandleStartupProcInterrupts_hook();
 
 	/*
 	 * Process any requests or signals received recently.

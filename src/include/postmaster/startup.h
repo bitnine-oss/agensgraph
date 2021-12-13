@@ -12,6 +12,10 @@
 #ifndef _STARTUP_H
 #define _STARTUP_H
 
+typedef void (*HandleStartupProcInterrupts_hook_type)(void);
+
+extern HandleStartupProcInterrupts_hook_type HandleStartupProcInterrupts_hook;
+
 extern void HandleStartupProcInterrupts(void);
 extern void StartupProcessMain(void) pg_attribute_noreturn();
 extern void PreRestoreCommand(void);
