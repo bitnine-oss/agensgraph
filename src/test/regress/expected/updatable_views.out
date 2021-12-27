@@ -2309,9 +2309,6 @@ INSERT INTO t12
 SELECT i,i,'t12','{1,2}'::int[] FROM generate_series(1,10) g(i);
 ANALYZE t12;
 CREATE TABLE t111 () INHERITS (t11, t12);
-NOTICE:  merging multiple inherited definitions of column "a"
-NOTICE:  merging multiple inherited definitions of column "b"
-NOTICE:  merging multiple inherited definitions of column "c"
 CREATE INDEX t111_a_idx ON t111(a);
 INSERT INTO t111
 SELECT i,i,'t111','t111d','{1,1,1}'::int[] FROM generate_series(1,10) g(i);

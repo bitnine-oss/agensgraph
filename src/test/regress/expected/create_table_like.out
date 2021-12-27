@@ -342,8 +342,6 @@ CREATE TABLE ctlt12_comments (LIKE ctlt1 INCLUDING COMMENTS, LIKE ctlt2 INCLUDIN
  c      | text |           |          |         | extended |              | C
 
 CREATE TABLE ctlt1_inh (LIKE ctlt1 INCLUDING CONSTRAINTS INCLUDING COMMENTS) INHERITS (ctlt1);
-NOTICE:  merging column "a" with inherited definition
-NOTICE:  merging column "b" with inherited definition
 NOTICE:  merging constraint "ctlt1_a_check" with inherited definition
 \d+ ctlt1_inh
                                 Table "public.ctlt1_inh"
@@ -362,7 +360,6 @@ SELECT description FROM pg_description, pg_constraint c WHERE classoid = 'pg_con
 (1 row)
 
 CREATE TABLE ctlt13_inh () INHERITS (ctlt1, ctlt3);
-NOTICE:  merging multiple inherited definitions of column "a"
 \d+ ctlt13_inh
                                Table "public.ctlt13_inh"
  Column | Type | Collation | Nullable | Default | Storage  | Stats target | Description 
@@ -378,7 +375,6 @@ Inherits: ctlt1,
           ctlt3
 
 CREATE TABLE ctlt13_like (LIKE ctlt3 INCLUDING CONSTRAINTS INCLUDING INDEXES INCLUDING COMMENTS INCLUDING STORAGE) INHERITS (ctlt1);
-NOTICE:  merging column "a" with inherited definition
 \d+ ctlt13_like
                                Table "public.ctlt13_like"
  Column | Type | Collation | Nullable | Default | Storage  | Stats target | Description 
@@ -430,11 +426,9 @@ SELECT s.stxname, objsubid, description FROM pg_description, pg_statistic_ext s 
 (1 row)
 
 CREATE TABLE inh_error1 () INHERITS (ctlt1, ctlt4);
-NOTICE:  merging multiple inherited definitions of column "a"
 ERROR:  inherited column "a" has a storage parameter conflict
 DETAIL:  MAIN versus EXTENDED
 CREATE TABLE inh_error2 (LIKE ctlt4 INCLUDING STORAGE) INHERITS (ctlt1);
-NOTICE:  merging column "a" with inherited definition
 ERROR:  column "a" has a storage parameter conflict
 DETAIL:  MAIN versus EXTENDED
 -- Check that LIKE isn't confused by a system catalog of the same name

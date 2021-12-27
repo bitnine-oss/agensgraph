@@ -290,7 +290,6 @@ Check constraints:
     "con1" CHECK (a > 0)
 
 CREATE TABLE constraint_rename_test2 (a int CONSTRAINT con1 CHECK (a > 0), d int) INHERITS (constraint_rename_test);
-NOTICE:  merging column "a" with inherited definition
 NOTICE:  merging constraint "con1" with inherited definition
 \d constraint_rename_test2
       Table "public.constraint_rename_test2"
@@ -1535,7 +1534,6 @@ drop table parent;
 -- check error cases for inheritance column merging
 create table parent (a float8, b numeric(10,4), c text collate "C");
 create table child (a float4) inherits (parent); -- fail
-NOTICE:  merging column "a" with inherited definition
 ERROR:  column "a" has a type conflict
 DETAIL:  double precision versus real
 create table child (b decimal(10,7)) inherits (parent); -- fail
@@ -1549,8 +1547,6 @@ DETAIL:  User-specified column moved to the position of the inherited column.
 ERROR:  column "c" has a collation conflict
 DETAIL:  "C" versus "POSIX"
 create table child (a double precision, b decimal(10,4)) inherits (parent);
-NOTICE:  merging column "a" with inherited definition
-NOTICE:  merging column "b" with inherited definition
 drop table child;
 drop table parent;
 -- test copy in/out
@@ -1633,7 +1629,6 @@ ERROR:  column must be added to child tables too
 -- Test corner cases in dropping of inherited columns
 create table p1 (f1 int, f2 int);
 create table c1 (f1 int not null) inherits(p1);
-NOTICE:  merging column "f1" with inherited definition
 -- should be rejected since c1.f1 is inherited
 alter table c1 drop column f1;
 ERROR:  cannot drop inherited column "f1"
@@ -1679,7 +1674,6 @@ drop table p1 cascade;
 NOTICE:  drop cascades to table c1
 create table p1 (f1 int, f2 int);
 create table c1 (f1 int not null) inherits(p1);
-NOTICE:  merging column "f1" with inherited definition
 -- should be rejected since c1.f1 is inherited
 alter table c1 drop column f1;
 ERROR:  cannot drop inherited column "f1"
@@ -1691,7 +1685,6 @@ NOTICE:  drop cascades to table c1
 create table p1(id int, name text);
 create table p2(id2 int, name text, height int);
 create table c1(age int) inherits(p1,p2);
-NOTICE:  merging multiple inherited definitions of column "name"
 create table gc1() inherits (c1);
 select relname, attname, attinhcount, attislocal
 from pg_class join pg_attribute on (pg_class.oid = pg_attribute.attrelid)

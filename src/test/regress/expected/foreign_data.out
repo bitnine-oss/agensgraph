@@ -1456,9 +1456,6 @@ CREATE FOREIGN TABLE ft3 (
 	c3 date
 ) INHERITS(ft2)
   SERVER s0;
-NOTICE:  merging column "c1" with inherited definition
-NOTICE:  merging column "c2" with inherited definition
-NOTICE:  merging column "c3" with inherited definition
 \d+ ft2
                                        Foreign table "public.ft2"
  Column |  Type   | Collation | Nullable | Default | FDW options | Storage  | Stats target | Description 

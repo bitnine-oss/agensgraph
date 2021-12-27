@@ -2750,11 +2750,8 @@ drop table rules_fooview;
 create table id (id serial primary key, name text);
 -- currently, must respecify PKEY for each inherited subtable
 create table test_1 (id integer primary key) inherits (id);
-NOTICE:  merging column "id" with inherited definition
 create table test_2 (id integer primary key) inherits (id);
-NOTICE:  merging column "id" with inherited definition
 create table test_3 (id integer primary key) inherits (id);
-NOTICE:  merging column "id" with inherited definition
 insert into test_1 (name) values ('Test 1');
 insert into test_1 (name) values ('Test 2');
 insert into test_2 (name) values ('Test 3');

@@ -343,7 +343,6 @@ CREATE TABLE itest7a (b text) INHERITS (itest7);
 -- make column identity in child table
 CREATE TABLE itest7b (a int);
 CREATE TABLE itest7c (a int GENERATED ALWAYS AS IDENTITY) INHERITS (itest7b);
-NOTICE:  merging column "a" with inherited definition
 INSERT INTO itest7c DEFAULT VALUES;
 SELECT * FROM itest7c;
  a 

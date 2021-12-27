@@ -5,8 +5,6 @@ CREATE TABLE a (aa TEXT);
 CREATE TABLE b (bb TEXT) INHERITS (a);
 CREATE TABLE c (cc TEXT) INHERITS (a);
 CREATE TABLE d (dd TEXT) INHERITS (b,c,a);
-NOTICE:  merging multiple inherited definitions of column "aa"
-NOTICE:  merging multiple inherited definitions of column "aa"
 INSERT INTO a(aa) VALUES('aaa');
 INSERT INTO a(aa) VALUES('aaaa');
 INSERT INTO a(aa) VALUES('aaaaa');
@@ -703,16 +701,12 @@ NOTICE:  drop cascades to table some_tab_child
 CREATE TABLE firstparent (tomorrow date default now()::date + 1);
 CREATE TABLE secondparent (tomorrow date default  now() :: date  +  1);
 CREATE TABLE jointchild () INHERITS (firstparent, secondparent);  -- ok
-NOTICE:  merging multiple inherited definitions of column "tomorrow"
 CREATE TABLE thirdparent (tomorrow date default now()::date - 1);
 CREATE TABLE otherchild () INHERITS (firstparent, thirdparent);  -- not ok
-NOTICE:  merging multiple inherited definitions of column "tomorrow"
 ERROR:  column "tomorrow" inherits conflicting default values
 HINT:  To resolve the conflict, specify a default explicitly.
 CREATE TABLE otherchild (tomorrow date default now())
   INHERITS (firstparent, thirdparent);  -- ok, child resolves ambiguous default
-NOTICE:  merging multiple inherited definitions of column "tomorrow"
-NOTICE:  merging column "tomorrow" with inherited definition
 DROP TABLE firstparent, secondparent, jointchild, thirdparent, otherchild;
 -- Test changing the type of inherited columns
 insert into d values('test','one','two','three');
@@ -729,7 +723,6 @@ select * from d;
 create temp table parent1(f1 int, f2 int);
 create temp table parent2(f1 int, f3 bigint);
 create temp table childtab(f4 int) inherits(parent1, parent2);
-NOTICE:  merging multiple inherited definitions of column "f1"
 alter table parent1 alter column f1 type bigint;  -- fail, conflict w/parent2
 ERROR:  cannot alter inherited column "f1" of relation "childtab"
 alter table parent1 alter column f2 type bigint;  -- ok
@@ -776,7 +769,6 @@ NOTICE:  drop cascades to table c1
 create table base (i integer);
 create table derived () inherits (base);
 create table more_derived (like derived, b int) inherits (derived);
-NOTICE:  merging column "i" with inherited definition
 insert into derived (i) values (0);
 select derived::base from derived;
  derived 
@@ -896,7 +888,6 @@ drop table bc;
 drop table ac;
 create table ac (a int constraint check_a check (a <> 0));
 create table bc (a int constraint check_a check (a <> 0), b int constraint check_b check (b <> 0)) inherits (ac);
-NOTICE:  merging column "a" with inherited definition
 NOTICE:  merging constraint "check_a" with inherited definition
 select pc.relname, pgc.conname, pgc.contype, pgc.conislocal, pgc.coninhcount, pg_get_expr(pgc.conbin, pc.oid) as consrc from pg_class as pc inner join pg_constraint as pgc on (pgc.conrelid = pc.oid) where pc.relname in ('ac', 'bc') order by 1,2;
  relname | conname | contype | conislocal | coninhcount |  consrc  
@@ -963,9 +954,6 @@ Inherits: p1,
           p2
 
 create table c3 (f4 int) inherits(c1,c2);
-NOTICE:  merging multiple inherited definitions of column "f1"
-NOTICE:  merging multiple inherited definitions of column "f2"
-NOTICE:  merging multiple inherited definitions of column "f3"
 \d c3
                  Table "public.c3"
  Column |  Type   | Collation | Nullable | Default 
@@ -1001,8 +989,6 @@ Check constraints:
 Inherits: pp1
 
 create table cc2(f4 float) inherits(pp1,cc1);
-NOTICE:  merging multiple inherited definitions of column "f1"
-NOTICE:  merging multiple inherited definitions of column "a1"
 \d cc2
                      Table "public.cc2"
  Column |       Type       | Collation | Nullable | Default 
@@ -1044,7 +1030,6 @@ drop cascades to table cc2
 CREATE TABLE inht1 (a int, b int);
 CREATE TABLE inhs1 (b int, c int);
 CREATE TABLE inhts (d int) INHERITS (inht1, inhs1);
-NOTICE:  merging multiple inherited definitions of column "b"
 ALTER TABLE inht1 RENAME a TO aa;
 ALTER TABLE inht1 RENAME b TO bb;                -- to be failed
 ERROR:  cannot rename inherited column "b"
@@ -1067,8 +1052,6 @@ DROP TABLE inhts;
 CREATE TABLE inht2 (x int) INHERITS (inht1);
 CREATE TABLE inht3 (y int) INHERITS (inht1);
 CREATE TABLE inht4 (z int) INHERITS (inht2, inht3);
-NOTICE:  merging multiple inherited definitions of column "aa"
-NOTICE:  merging multiple inherited definitions of column "b"
 ALTER TABLE inht1 RENAME aa TO aaa;
 \d+ inht4
                                    Table "public.inht4"
@@ -1083,7 +1066,6 @@ Inherits: inht2,
           inht3
 
 CREATE TABLE inhts (d int) INHERITS (inht2, inhs1);
-NOTICE:  merging multiple inherited definitions of column "b"
 ALTER TABLE inht1 RENAME aaa TO aaaa;
 ALTER TABLE inht1 RENAME b TO bb;                -- to be failed
 ERROR:  cannot rename inherited column "b"
@@ -1388,11 +1370,8 @@ drop cascades to table patest2
 --
 create table matest0 (id serial primary key, name text);
 create table matest1 (id integer primary key) inherits (matest0);
-NOTICE:  merging column "id" with inherited definition
 create table matest2 (id integer primary key) inherits (matest0);
-NOTICE:  merging column "id" with inherited definition
 create table matest3 (id integer primary key) inherits (matest0);
-NOTICE:  merging column "id" with inherited definition
 create index matest0i on matest0 ((1-id));
 create index matest1i on matest1 ((1-id));
 -- create index matest2i on matest2 ((1-id));  -- intentionally missing
