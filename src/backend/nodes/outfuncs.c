@@ -33,7 +33,9 @@
 #include "miscadmin.h"
 #include "nodes/extensible.h"
 #include "nodes/pathnodes.h"
+#include "nodes/graphnodes.h"
 #include "nodes/plannodes.h"
+#include "access/relation.h"
 #include "utils/datum.h"
 #include "utils/rel.h"
 
@@ -319,6 +321,7 @@ _outPlannedStmt(StringInfo str, const PlannedStmt *node)
 	WRITE_NODE_FIELD(utilityStmt);
 	WRITE_LOCATION_FIELD(stmt_location);
 	WRITE_LOCATION_FIELD(stmt_len);
+	WRITE_BOOL_FIELD(hasGraphwriteClause);
 }
 
 /*
@@ -734,6 +737,19 @@ _outNestLoop(StringInfo str, const NestLoop *node)
 }
 
 static void
+_outNestLoopVLE(StringInfo str, const NestLoopVLE *node)
+{
+	WRITE_NODE_TYPE("NESTLOOPVLE");
+
+	_outJoinPlanInfo(str, (const Join *) node);
+
+	WRITE_NODE_FIELD(nl.nestParams);
+
+	WRITE_INT_FIELD(minHops);
+	WRITE_INT_FIELD(maxHops);
+}
+
+static void
 _outMergeJoin(StringInfo str, const MergeJoin *node)
 {
 	int			numCols;
@@ -911,6 +927,79 @@ _outLimit(StringInfo str, const Limit *node)
 
 	WRITE_NODE_FIELD(limitOffset);
 	WRITE_NODE_FIELD(limitCount);
+}
+
+static void
+_outModifyGraph(StringInfo str, const ModifyGraph *node)
+{
+	WRITE_NODE_TYPE("MODIFYGRAPH");
+
+	_outPlanInfo(str, (const Plan *) node);
+
+	WRITE_ENUM_FIELD(operation, GraphWriteOp);
+	WRITE_BOOL_FIELD(last);
+	WRITE_NODE_FIELD(targets);
+	WRITE_NODE_FIELD(subplan);
+	WRITE_UINT_FIELD(nr_modify);
+	WRITE_BOOL_FIELD(detach);
+	WRITE_BOOL_FIELD(eagerness);
+	WRITE_NODE_FIELD(pattern);
+	WRITE_NODE_FIELD(exprs);
+	WRITE_NODE_FIELD(sets);
+	WRITE_INT_FIELD(ert_base_index);
+	WRITE_INT_FIELD(ert_rtes_added);
+}
+
+static void
+_outShortestpath(StringInfo str, const Shortestpath *node)
+{
+	WRITE_NODE_TYPE("SHORTESTPATH");
+
+	_outJoinPlanInfo(str, (const Join *) node);
+
+	WRITE_NODE_FIELD(hashclauses);
+
+	WRITE_INT_FIELD(end_id_left);
+	WRITE_INT_FIELD(end_id_right);
+	WRITE_INT_FIELD(tableoid_left);
+	WRITE_INT_FIELD(tableoid_right);
+	WRITE_INT_FIELD(ctid_left);
+	WRITE_INT_FIELD(ctid_right);
+	WRITE_NODE_FIELD(source);
+	WRITE_NODE_FIELD(target);
+	WRITE_LONG_FIELD(minhops);
+	WRITE_LONG_FIELD(maxhops);
+	WRITE_LONG_FIELD(limit);
+}
+
+static void
+_outHash2Side(StringInfo str, const Hash2Side *node)
+{
+	WRITE_NODE_TYPE("HASH2SIDE");
+
+	_outPlanInfo(str, (const Plan *) node);
+
+	WRITE_OID_FIELD(skewTable);
+	WRITE_INT_FIELD(skewColumn);
+	WRITE_BOOL_FIELD(skewInherit);
+	WRITE_OID_FIELD(skewColType);
+	WRITE_INT_FIELD(skewColTypmod);
+}
+
+static void
+_outDijkstra(StringInfo str, const Dijkstra *node)
+{
+	WRITE_NODE_TYPE("DIJKSTRA");
+
+	_outPlanInfo(str, (const Plan *) node);
+
+	WRITE_INT_FIELD(weight);
+	WRITE_BOOL_FIELD(weight_out);
+	WRITE_INT_FIELD(end_id);
+	WRITE_INT_FIELD(edge_id);
+	WRITE_NODE_FIELD(source);
+	WRITE_NODE_FIELD(target);
+	WRITE_NODE_FIELD(limit);
 }
 
 static void
@@ -1658,6 +1747,8 @@ _outJoinExpr(StringInfo str, const JoinExpr *node)
 	WRITE_NODE_FIELD(quals);
 	WRITE_NODE_FIELD(alias);
 	WRITE_INT_FIELD(rtindex);
+	WRITE_INT_FIELD(minHops);
+	WRITE_INT_FIELD(maxHops);
 }
 
 static void
@@ -1683,6 +1774,78 @@ _outOnConflictExpr(StringInfo str, const OnConflictExpr *node)
 	WRITE_INT_FIELD(exclRelIndex);
 	WRITE_NODE_FIELD(exclRelTlist);
 }
+
+static void
+_outCypherTypeCast(StringInfo str, const CypherTypeCast *node)
+{
+	WRITE_NODE_TYPE("CYPHERTYPECAST");
+
+	WRITE_OID_FIELD(type);
+	WRITE_ENUM_FIELD(cform, CoercionForm);
+	WRITE_ENUM_FIELD(cctx, CoercionContext);
+	WRITE_CHAR_FIELD(typcategory);
+	WRITE_NODE_FIELD(arg);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outCypherMapExpr(StringInfo str, const CypherMapExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERMAPEXPR");
+
+	WRITE_NODE_FIELD(keyvals);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outCypherListExpr(StringInfo str, const CypherListExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERLISTEXPR");
+
+	WRITE_NODE_FIELD(elems);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outCypherListCompExpr(StringInfo str, const CypherListCompExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERLISTCOMPEXPR");
+
+	WRITE_NODE_FIELD(list);
+	WRITE_STRING_FIELD(varname);
+	WRITE_NODE_FIELD(cond);
+	WRITE_NODE_FIELD(elem);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outCypherListCompVar(StringInfo str, const CypherListCompVar *node)
+{
+	WRITE_NODE_TYPE("CYPHERLISTCOMPVAR");
+
+	WRITE_STRING_FIELD(varname);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outCypherAccessExpr(StringInfo str, const CypherAccessExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERACCESSEXPR");
+
+	WRITE_NODE_FIELD(arg);
+	WRITE_NODE_FIELD(path);
+}
+
+static void
+_outCypherIndices(StringInfo str, const CypherIndices *node)
+{
+	WRITE_NODE_TYPE("CYPHERINDICES");
+
+	WRITE_BOOL_FIELD(is_slice);
+	WRITE_NODE_FIELD(lidx);
+	WRITE_NODE_FIELD(uidx);
+}
+
 
 /*****************************************************************************
  *
@@ -1735,6 +1898,8 @@ _outJoinPathInfo(StringInfo str, const JoinPath *node)
 	WRITE_NODE_FIELD(outerjoinpath);
 	WRITE_NODE_FIELD(innerjoinpath);
 	WRITE_NODE_FIELD(joinrestrictinfo);
+	WRITE_INT_FIELD(minhops);
+	WRITE_INT_FIELD(maxhops);
 }
 
 static void
@@ -2062,6 +2227,7 @@ _outRecursiveUnionPath(StringInfo str, const RecursiveUnionPath *node)
 	WRITE_NODE_FIELD(distinctList);
 	WRITE_INT_FIELD(wtParam);
 	WRITE_FLOAT_FIELD(numGroups, "%.0f");
+	WRITE_INT_FIELD(maxDepth);
 }
 
 static void
@@ -2111,6 +2277,23 @@ _outLimitPath(StringInfo str, const LimitPath *node)
 }
 
 static void
+_outDijkstraPath(StringInfo str, const DijkstraPath *node)
+{
+	WRITE_NODE_TYPE("DIJKSTRAPATH");
+
+	_outPathInfo(str, (const Path *) node);
+
+	WRITE_NODE_FIELD(subpath);
+	WRITE_BOOL_FIELD(weight_out);
+	WRITE_INT_FIELD(weight);
+	WRITE_NODE_FIELD(end_id);
+	WRITE_NODE_FIELD(edge_id);
+	WRITE_NODE_FIELD(source);
+	WRITE_NODE_FIELD(target);
+	WRITE_NODE_FIELD(limit);
+}
+
+static void
 _outGatherMergePath(StringInfo str, const GatherMergePath *node)
 {
 	WRITE_NODE_TYPE("GATHERMERGEPATH");
@@ -2127,6 +2310,26 @@ _outNestPath(StringInfo str, const NestPath *node)
 	WRITE_NODE_TYPE("NESTPATH");
 
 	_outJoinPathInfo(str, (const JoinPath *) node);
+}
+
+static void
+_outShortestpathPath(StringInfo str, const ShortestpathPath *node)
+{
+	WRITE_NODE_TYPE("SHORTESTPATHPATH");
+
+	_outNestPath(str, (const NestPath *) node);
+
+	WRITE_NODE_FIELD(end_id_left);
+	WRITE_NODE_FIELD(end_id_right);
+	WRITE_NODE_FIELD(tableoid_left);
+	WRITE_NODE_FIELD(tableoid_right);
+	WRITE_NODE_FIELD(ctid_left);
+	WRITE_NODE_FIELD(ctid_right);
+	WRITE_NODE_FIELD(source);
+	WRITE_NODE_FIELD(target);
+	WRITE_LONG_FIELD(minhops);
+	WRITE_LONG_FIELD(maxhops);
+	WRITE_LONG_FIELD(limit);
 }
 
 static void
@@ -2495,6 +2698,8 @@ _outSpecialJoinInfo(StringInfo str, const SpecialJoinInfo *node)
 	WRITE_BOOL_FIELD(semi_can_hash);
 	WRITE_NODE_FIELD(semi_operators);
 	WRITE_NODE_FIELD(semi_rhs_exprs);
+	WRITE_INT_FIELD(min_hops);
+	WRITE_INT_FIELD(max_hops);
 }
 
 static void
@@ -2875,6 +3080,8 @@ _outQuery(StringInfo str, const Query *node)
 		switch (nodeTag(node->utilityStmt))
 		{
 			case T_CreateStmt:
+			case T_CreateLabelStmt:
+			case T_CreatePropertyIndexStmt:
 			case T_IndexStmt:
 			case T_NotifyStmt:
 			case T_DeclareCursorStmt:
@@ -2898,6 +3105,7 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_BOOL_FIELD(hasModifyingCTE);
 	WRITE_BOOL_FIELD(hasForUpdate);
 	WRITE_BOOL_FIELD(hasRowSecurity);
+	WRITE_BOOL_FIELD(hasGraphwriteClause);
 	WRITE_NODE_FIELD(cteList);
 	WRITE_NODE_FIELD(rtable);
 	WRITE_NODE_FIELD(jointree);
@@ -2919,6 +3127,38 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_NODE_FIELD(withCheckOptions);
 	WRITE_LOCATION_FIELD(stmt_location);
 	WRITE_LOCATION_FIELD(stmt_len);
+
+	/*
+	 * AgensGraph
+	 */
+	
+	WRITE_INT_FIELD(dijkstraWeight);
+	WRITE_BOOL_FIELD(dijkstraWeightOut);
+	WRITE_NODE_FIELD(dijkstraEndId);
+	WRITE_NODE_FIELD(dijkstraEdgeId);
+	WRITE_NODE_FIELD(dijkstraLimit);
+	
+	WRITE_NODE_FIELD(shortestpathEndIdLeft);
+	WRITE_NODE_FIELD(shortestpathEndIdRight);
+	WRITE_NODE_FIELD(shortestpathTableOidLeft);
+	WRITE_NODE_FIELD(shortestpathTableOidRight);
+	WRITE_NODE_FIELD(shortestpathCtidLeft);
+	WRITE_NODE_FIELD(shortestpathCtidRight);
+	WRITE_NODE_FIELD(shortestpathSource);
+	WRITE_NODE_FIELD(shortestpathTarget);
+	WRITE_LONG_FIELD(shortestpathMinhops);
+	WRITE_LONG_FIELD(shortestpathMaxhops);
+	WRITE_LONG_FIELD(shortestpathLimit);
+
+	WRITE_ENUM_FIELD(graph.writeOp, GraphWriteOp);
+	WRITE_BOOL_FIELD(graph.last);
+	WRITE_NODE_FIELD(graph.targets);
+	WRITE_UINT_FIELD(graph.nr_modify);
+	WRITE_BOOL_FIELD(graph.detach);
+	WRITE_BOOL_FIELD(graph.eager);
+	WRITE_NODE_FIELD(graph.pattern);
+	WRITE_NODE_FIELD(graph.exprs);
+	WRITE_NODE_FIELD(graph.sets);
 }
 
 static void
@@ -3013,6 +3253,8 @@ _outCommonTableExpr(StringInfo str, const CommonTableExpr *node)
 	WRITE_NODE_FIELD(ctecoltypes);
 	WRITE_NODE_FIELD(ctecoltypmods);
 	WRITE_NODE_FIELD(ctecolcollations);
+	WRITE_INT_FIELD(maxdepth);
+	WRITE_INT_FIELD(ctestop);
 }
 
 static void
@@ -3028,6 +3270,8 @@ _outSetOperationStmt(StringInfo str, const SetOperationStmt *node)
 	WRITE_NODE_FIELD(colTypmods);
 	WRITE_NODE_FIELD(colCollations);
 	WRITE_NODE_FIELD(groupClauses);
+	WRITE_INT_FIELD(maxDepth);
+	WRITE_BOOL_FIELD(shortestpath);
 }
 
 static void
@@ -3051,6 +3295,7 @@ _outRangeTblEntry(StringInfo str, const RangeTblEntry *node)
 		case RTE_SUBQUERY:
 			WRITE_NODE_FIELD(subquery);
 			WRITE_BOOL_FIELD(security_barrier);
+			WRITE_BOOL_FIELD(isVLE);
 			break;
 		case RTE_JOIN:
 			WRITE_ENUM_FIELD(jointype, JoinType);
@@ -3618,6 +3863,288 @@ _outPartitionRangeDatum(StringInfo str, const PartitionRangeDatum *node)
 	WRITE_NODE_FIELD(value);
 	WRITE_LOCATION_FIELD(location);
 }
+static void
+_outCreateLabelStmt(StringInfo str, const CreateLabelStmt *node)
+{
+	WRITE_NODE_TYPE("CREATELABELSTMT");
+
+	WRITE_NODE_FIELD(relation);
+	WRITE_NODE_FIELD(inhRelations);
+	WRITE_ENUM_FIELD(labelKind, LabelKind);
+	WRITE_NODE_FIELD(options);
+	WRITE_STRING_FIELD(tablespacename);
+	WRITE_BOOL_FIELD(if_not_exists);
+}
+
+static void
+_outCreateConstraintStmt(StringInfo str, const CreateConstraintStmt *node)
+{
+	WRITE_NODE_TYPE("CREATECONSTRAINTSTMT");
+
+	WRITE_ENUM_FIELD(contype, ConstrType);
+	WRITE_NODE_FIELD(graphlabel);
+	WRITE_STRING_FIELD(conname);
+	WRITE_NODE_FIELD(expr);
+}
+
+static void
+_outDropConstraintStmt(StringInfo str, const DropConstraintStmt *node)
+{
+	WRITE_NODE_TYPE("DROPCONSTRAINTSTMT");
+
+	WRITE_NODE_FIELD(graphlabel);
+	WRITE_STRING_FIELD(conname);
+}
+
+static void
+_outCreatePropertyIndexStmt(StringInfo str, const CreatePropertyIndexStmt *node)
+{
+	WRITE_NODE_TYPE("CREATEPROPERTYINDEXSTMT");
+
+	WRITE_STRING_FIELD(idxname);
+	WRITE_NODE_FIELD(relation);
+	WRITE_STRING_FIELD(accessMethod);
+	WRITE_STRING_FIELD(tableSpace);
+	WRITE_NODE_FIELD(indexParams);
+	WRITE_NODE_FIELD(options);
+	WRITE_NODE_FIELD(whereClause);
+	WRITE_NODE_FIELD(excludeOpNames);
+	WRITE_STRING_FIELD(idxcomment);
+	WRITE_OID_FIELD(indexOid);
+	WRITE_OID_FIELD(oldNode);
+	WRITE_BOOL_FIELD(unique);
+	WRITE_BOOL_FIELD(primary);
+	WRITE_BOOL_FIELD(isconstraint);
+	WRITE_BOOL_FIELD(deferrable);
+	WRITE_BOOL_FIELD(initdeferred);
+	WRITE_BOOL_FIELD(transformed);
+	WRITE_BOOL_FIELD(concurrent);
+	WRITE_BOOL_FIELD(if_not_exists);
+}
+
+static void
+_outCypherStmt(StringInfo str, const CypherStmt *node)
+{
+	WRITE_NODE_TYPE("CYPHER");
+
+	WRITE_NODE_FIELD(last);
+}
+
+static void
+_outCypherListComp(StringInfo str, const CypherListComp *node)
+{
+	WRITE_NODE_TYPE("CYPHERLISTCOMP");
+
+	WRITE_NODE_FIELD(list);
+	WRITE_STRING_FIELD(varname);
+	WRITE_NODE_FIELD(cond);
+	WRITE_NODE_FIELD(elem);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outCypherGenericExpr(StringInfo str, const CypherGenericExpr *node)
+{
+	WRITE_NODE_TYPE("CYPHERGENERICEXPR");
+
+	WRITE_NODE_FIELD(expr);
+}
+
+static void
+_outCypherSubPattern(StringInfo str, const CypherSubPattern *node)
+{
+	WRITE_NODE_TYPE("CYPHERSUBPATTERN");
+
+	WRITE_ENUM_FIELD(kind, CSPKind);
+	WRITE_NODE_FIELD(pattern);
+}
+
+static void
+_outCypherClause(StringInfo str, const CypherClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERCLAUSE");
+
+	WRITE_NODE_FIELD(detail);
+	WRITE_NODE_FIELD(prev);
+}
+
+static void
+_outCypherMatchClause(StringInfo str, const CypherMatchClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERMATCHCLAUSE");
+
+	WRITE_NODE_FIELD(pattern);
+	WRITE_NODE_FIELD(where);
+	WRITE_BOOL_FIELD(optional);
+}
+
+static void
+_outCypherProjection(StringInfo str, const CypherProjection *node)
+{
+	WRITE_NODE_TYPE("CYPHERPROJECTION");
+
+	WRITE_ENUM_FIELD(kind, CPKind);
+	WRITE_NODE_FIELD(distinct);
+	WRITE_NODE_FIELD(items);
+	WRITE_NODE_FIELD(order);
+	WRITE_NODE_FIELD(skip);
+	WRITE_NODE_FIELD(limit);
+	WRITE_NODE_FIELD(where);
+}
+
+static void
+_outCypherCreateClause(StringInfo str, const CypherCreateClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERCREATECLAUSE");
+
+	WRITE_NODE_FIELD(pattern);
+}
+
+static void
+_outCypherDeleteClause(StringInfo str, const CypherDeleteClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERDELETECLAUSE");
+
+	WRITE_BOOL_FIELD(detach);
+	WRITE_NODE_FIELD(exprs);
+}
+
+static void
+_outCypherSetClause(StringInfo str, const CypherSetClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERSETCLAUSE");
+
+	WRITE_BOOL_FIELD(is_remove);
+	WRITE_ENUM_FIELD(kind, CSetKind);
+	WRITE_NODE_FIELD(items);
+}
+
+static void
+_outCypherMergeClause(StringInfo str, const CypherMergeClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERMERGECLAUSE");
+
+	WRITE_NODE_FIELD(pattern);
+	WRITE_NODE_FIELD(sets);
+}
+
+static void
+_outCypherLoadClause(StringInfo str, const CypherLoadClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERLOADCLAUSE");
+
+	WRITE_NODE_FIELD(relation);
+}
+
+static void
+_outCypherUnwindClause(StringInfo str, const CypherUnwindClause *node)
+{
+	WRITE_NODE_TYPE("CYPHERUNWINDCLAUSE");
+
+	WRITE_NODE_FIELD(target);
+}
+
+static void
+_outCypherPath(StringInfo str, const CypherPath *node)
+{
+	WRITE_NODE_TYPE("CYPHERPATH");
+
+	WRITE_ENUM_FIELD(kind, CPathKind);
+	WRITE_NODE_FIELD(variable);
+	WRITE_NODE_FIELD(chain);
+}
+
+static void
+_outCypherNode(StringInfo str, const CypherNode *node)
+{
+	WRITE_NODE_TYPE("CYPHERNODE");
+
+	WRITE_NODE_FIELD(variable);
+	WRITE_NODE_FIELD(label);
+	WRITE_BOOL_FIELD(only);
+	WRITE_NODE_FIELD(prop_map);
+}
+
+static void
+_outCypherRel(StringInfo str, const CypherRel *node)
+{
+	WRITE_NODE_TYPE("CYPHERREL");
+
+	WRITE_INT_FIELD(direction);
+	WRITE_NODE_FIELD(variable);
+	WRITE_NODE_FIELD(types);
+	WRITE_BOOL_FIELD(only);
+	WRITE_NODE_FIELD(varlen);
+}
+
+static void
+_outCypherName(StringInfo str, const CypherName *node)
+{
+	WRITE_NODE_TYPE("CYPHERNAME");
+
+	WRITE_STRING_FIELD(name);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outCypherSetProp(StringInfo str, const CypherSetProp *node)
+{
+	WRITE_NODE_TYPE("CYPHERSETPROP");
+
+	WRITE_NODE_FIELD(prop);
+	WRITE_NODE_FIELD(expr);
+}
+
+static void
+_outGraphPath(StringInfo str, const GraphPath *node)
+{
+	WRITE_NODE_TYPE("GRAPHPATH");
+
+	WRITE_STRING_FIELD(variable);
+	WRITE_NODE_FIELD(chain);
+}
+
+static void
+_outGraphVertex(StringInfo str, const GraphVertex *node)
+{
+	WRITE_NODE_TYPE("GRAPHVERTEX");
+
+	WRITE_INT_FIELD(resno);
+	WRITE_BOOL_FIELD(create);
+	WRITE_OID_FIELD(relid);
+	WRITE_NODE_FIELD(expr);
+}
+
+static void
+_outGraphEdge(StringInfo str, const GraphEdge *node)
+{
+	WRITE_NODE_TYPE("GRAPHEDGE");
+
+	WRITE_INT_FIELD(direction);
+	WRITE_INT_FIELD(resno);
+	WRITE_OID_FIELD(relid);
+	WRITE_NODE_FIELD(expr);
+}
+
+static void
+_outGraphSetProp(StringInfo str, const GraphSetProp *node)
+{
+	WRITE_NODE_TYPE("GRAPHSETPROP");
+
+	WRITE_ENUM_FIELD(kind, GSPKind);
+	WRITE_STRING_FIELD(variable);
+	WRITE_NODE_FIELD(elem);
+	WRITE_NODE_FIELD(expr);
+}
+
+static void
+_outGraphDelElem(StringInfo str, const GraphDelElem *node)
+{
+	WRITE_NODE_TYPE("GRAPHDELELEM");
+
+	WRITE_STRING_FIELD(variable);
+	WRITE_NODE_FIELD(elem);
+}
 
 /*
  * outNode -
@@ -3739,6 +4266,9 @@ outNode(StringInfo str, const void *obj)
 			case T_NestLoop:
 				_outNestLoop(str, obj);
 				break;
+			case T_NestLoopVLE:
+				_outNestLoopVLE(str, obj);
+				break;
 			case T_MergeJoin:
 				_outMergeJoin(str, obj);
 				break;
@@ -3774,6 +4304,18 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_Limit:
 				_outLimit(str, obj);
+				break;
+			case T_ModifyGraph:
+				_outModifyGraph(str, obj);
+				break;
+			case T_Shortestpath:
+				_outShortestpath(str, obj);
+				break;
+			case T_Hash2Side:
+				_outHash2Side(str, obj);
+				break;
+			case T_Dijkstra:
+				_outDijkstra(str, obj);
 				break;
 			case T_NestLoopParam:
 				_outNestLoopParam(str, obj);
@@ -3949,6 +4491,27 @@ outNode(StringInfo str, const void *obj)
 			case T_OnConflictExpr:
 				_outOnConflictExpr(str, obj);
 				break;
+			case T_CypherTypeCast:
+				_outCypherTypeCast(str, obj);
+				break;
+			case T_CypherMapExpr:
+				_outCypherMapExpr(str, obj);
+				break;
+			case T_CypherListExpr:
+				_outCypherListExpr(str, obj);
+				break;
+			case T_CypherListCompExpr:
+				_outCypherListCompExpr(str, obj);
+				break;
+			case T_CypherListCompVar:
+				_outCypherListCompVar(str, obj);
+				break;
+			case T_CypherAccessExpr:
+				_outCypherAccessExpr(str, obj);
+				break;
+			case T_CypherIndices:
+				_outCypherIndices(str, obj);
+				break;
 			case T_Path:
 				_outPath(str, obj);
 				break;
@@ -4035,6 +4598,12 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_LimitPath:
 				_outLimitPath(str, obj);
+				break;
+			case T_ShortestpathPath:
+				_outShortestpathPath(str, obj);
+				break;
+			case T_DijkstraPath:
+				_outDijkstraPath(str, obj);
 				break;
 			case T_GatherMergePath:
 				_outGatherMergePath(str, obj);
@@ -4278,6 +4847,89 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_PartitionRangeDatum:
 				_outPartitionRangeDatum(str, obj);
+				break;
+
+			case T_CreateLabelStmt:
+				_outCreateLabelStmt(str, obj);
+				break;
+			case T_CreateConstraintStmt:
+				_outCreateConstraintStmt(str, obj);
+				break;
+			case T_DropConstraintStmt:
+				_outDropConstraintStmt(str, obj);
+				break;
+			case T_CreatePropertyIndexStmt:
+				_outCreatePropertyIndexStmt(str, obj);
+				break;
+			case T_CypherStmt:
+				_outCypherStmt(str, obj);
+				break;
+			case T_CypherListComp:
+				_outCypherListComp(str, obj);
+				break;
+			case T_CypherGenericExpr:
+				_outCypherGenericExpr(str, obj);
+				break;
+			case T_CypherSubPattern:
+				_outCypherSubPattern(str, obj);
+				break;
+			case T_CypherClause:
+				_outCypherClause(str, obj);
+				break;
+			case T_CypherMatchClause:
+				_outCypherMatchClause(str, obj);
+				break;
+			case T_CypherProjection:
+				_outCypherProjection(str, obj);
+				break;
+			case T_CypherCreateClause:
+				_outCypherCreateClause(str, obj);
+				break;
+			case T_CypherDeleteClause:
+				_outCypherDeleteClause(str, obj);
+				break;
+			case T_CypherSetClause:
+				_outCypherSetClause(str, obj);
+				break;
+			case T_CypherMergeClause:
+				_outCypherMergeClause(str, obj);
+				break;
+			case T_CypherLoadClause:
+				_outCypherLoadClause(str, obj);
+				break;
+			case T_CypherUnwindClause:
+				_outCypherUnwindClause(str, obj);
+				break;
+			case T_CypherPath:
+				_outCypherPath(str, obj);
+				break;
+			case T_CypherNode:
+				_outCypherNode(str, obj);
+				break;
+			case T_CypherRel:
+				_outCypherRel(str, obj);
+				break;
+			case T_CypherName:
+				_outCypherName(str, obj);
+				break;
+			case T_CypherSetProp:
+				_outCypherSetProp(str, obj);
+				break;
+
+			case T_GraphPath:
+				_outGraphPath(str, obj);
+				break;
+			case T_GraphVertex:
+				_outGraphVertex(str, obj);
+				break;
+			case T_GraphEdge:
+				_outGraphEdge(str, obj);
+				break;
+			case T_GraphSetProp:
+				_outGraphSetProp(str, obj);
+				break;
+			case T_GraphDelElem:
+				_outGraphDelElem(str, obj);
 				break;
 
 			default:

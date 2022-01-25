@@ -38,6 +38,15 @@ PGAC_ARG_REQ(with, extra-version, [STRING], [append STRING to version],
              [PG_VERSION="$PACKAGE_VERSION"])
 AC_DEFINE_UNQUOTED(PG_VERSION, "$PG_VERSION", [PostgreSQL version as a string])
 
+[AG_VERSION=2.1.3]
+AC_DEFINE_UNQUOTED(AG_VERSION, "$AG_VERSION", [AgensGraph version as a string])
+
+[AG_COMP_VERSION=2.1]
+AC_DEFINE_UNQUOTED(AG_COMP_VERSION, "$AG_COMP_VERSION", [AgensGraph compatible version as a string])
+
+[AG_GIT_REVISION=`git rev-parse HEAD`]
+AC_DEFINE_UNQUOTED(AG_GIT_REVISION, "$AG_GIT_REVISION", [AgensGraph Git revisionas a string])
+
 AC_CANONICAL_HOST
 
 template=
@@ -1146,6 +1155,10 @@ PTHREAD_LIBS=
 
 AC_SUBST(PTHREAD_CFLAGS)
 AC_SUBST(PTHREAD_LIBS)
+
+if test "$PORTNAME" = "linux" ; then
+  AC_DEFINE(USE_PG_STATSINFO, 1, [Define to 1 if pg_statsinfo is available.])
+fi
 
 
 ##

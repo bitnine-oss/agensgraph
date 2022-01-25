@@ -79,6 +79,36 @@
 #endif							/* EXEC_NESTLOOPDEBUG */
 
 /* ----------------
+ *		nest loop vle debugging defines
+ * ----------------
+ */
+#ifdef EXEC_NESTLOOPVLEDEBUG
+#define NLV_nodeDisplay(l)				nodeDisplay(l)
+#define NLV_printf(s)					printf(s)
+#define NLV1_printf(s, a)				printf(s, a)
+#define ENLV1_printf(message)			printf("ExecNestLoopVLE: %s\n", message)
+#else
+#define NLV_nodeDisplay(l)
+#define NLV_printf(s)
+#define NLV1_printf(s, a)
+#define ENLV1_printf(message)
+#endif   /* EXEC_NESTLOOPVLEDEBUG */
+
+/* ----------------
+ *		exec eval / target list debugging defines
+ * ----------------
+ */
+#ifdef EXEC_EVALDEBUG
+#define EV_nodeDisplay(l)				nodeDisplay(l)
+#define EV_printf(s)					printf(s)
+#define EV1_printf(s, a)				printf(s, a)
+#else
+#define EV_nodeDisplay(l)
+#define EV_printf(s)
+#define EV1_printf(s, a)
+#endif   /* EXEC_EVALDEBUG */
+
+/* ----------------
  *		sort node debugging defines
  * ----------------
  */

@@ -141,7 +141,7 @@ CATALOG(pg_attribute,1249,AttributeRelationId) BKI_BOOTSTRAP BKI_ROWTYPE_OID(75,
 	char		attidentity BKI_DEFAULT('\0');
 
 	/* One of the ATTRIBUTE_GENERATED_* constants below, or '\0' */
-	char		attgenerated BKI_DEFAULT('\0');
+	char        attgenerated BKI_DEFAULT('\0');
 
 	/* Is dropped (ie, logically invisible) or not */
 	bool		attisdropped BKI_DEFAULT(f);
@@ -203,9 +203,7 @@ typedef FormData_pg_attribute *Form_pg_attribute;
 
 #define		  ATTRIBUTE_IDENTITY_ALWAYS		'a'
 #define		  ATTRIBUTE_IDENTITY_BY_DEFAULT 'd'
-
-#define		  ATTRIBUTE_GENERATED_STORED	's'
-
+#define		  ATTRIBUTE_GENERATED_STORED    's'
 #endif							/* EXPOSE_TO_CLIENT_CODE */
 
 #endif							/* PG_ATTRIBUTE_H */

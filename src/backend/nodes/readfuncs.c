@@ -35,6 +35,7 @@
 #include "fmgr.h"
 #include "miscadmin.h"
 #include "nodes/extensible.h"
+#include "nodes/graphnodes.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
 #include "nodes/readfuncs.h"
@@ -263,6 +264,7 @@ _readQuery(void)
 	READ_BOOL_FIELD(hasModifyingCTE);
 	READ_BOOL_FIELD(hasForUpdate);
 	READ_BOOL_FIELD(hasRowSecurity);
+	READ_BOOL_FIELD(hasGraphwriteClause);
 	READ_NODE_FIELD(cteList);
 	READ_NODE_FIELD(rtable);
 	READ_NODE_FIELD(jointree);
@@ -284,6 +286,33 @@ _readQuery(void)
 	READ_NODE_FIELD(withCheckOptions);
 	READ_LOCATION_FIELD(stmt_location);
 	READ_LOCATION_FIELD(stmt_len);
+
+	READ_INT_FIELD(dijkstraWeight);
+	READ_BOOL_FIELD(dijkstraWeightOut);
+	READ_NODE_FIELD(dijkstraEndId);
+	READ_NODE_FIELD(dijkstraEdgeId);
+	READ_NODE_FIELD(dijkstraLimit);
+	READ_NODE_FIELD(shortestpathEndIdLeft);
+	READ_NODE_FIELD(shortestpathEndIdRight);
+	READ_NODE_FIELD(shortestpathTableOidLeft);
+	READ_NODE_FIELD(shortestpathTableOidRight);
+	READ_NODE_FIELD(shortestpathCtidLeft);
+	READ_NODE_FIELD(shortestpathCtidRight);
+	READ_NODE_FIELD(shortestpathSource);
+	READ_NODE_FIELD(shortestpathTarget);
+	READ_LONG_FIELD(shortestpathMinhops);
+	READ_LONG_FIELD(shortestpathMaxhops);
+	READ_LONG_FIELD(shortestpathLimit);
+
+	READ_ENUM_FIELD(graph.writeOp, GraphWriteOp);
+	READ_BOOL_FIELD(graph.last);
+	READ_NODE_FIELD(graph.targets);
+	READ_UINT_FIELD(graph.nr_modify);
+	READ_BOOL_FIELD(graph.detach);
+	READ_BOOL_FIELD(graph.eager);
+	READ_NODE_FIELD(graph.pattern);
+	READ_NODE_FIELD(graph.exprs);
+	READ_NODE_FIELD(graph.sets);
 
 	READ_DONE();
 }
@@ -427,6 +456,8 @@ _readCommonTableExpr(void)
 	READ_NODE_FIELD(ctecoltypes);
 	READ_NODE_FIELD(ctecoltypmods);
 	READ_NODE_FIELD(ctecolcollations);
+	READ_INT_FIELD(maxdepth);
+	READ_BOOL_FIELD(ctestop);
 
 	READ_DONE();
 }
@@ -447,6 +478,8 @@ _readSetOperationStmt(void)
 	READ_NODE_FIELD(colTypmods);
 	READ_NODE_FIELD(colCollations);
 	READ_NODE_FIELD(groupClauses);
+	READ_INT_FIELD(maxDepth);
+	READ_BOOL_FIELD(shortestpath);
 
 	READ_DONE();
 }
@@ -1304,6 +1337,8 @@ _readJoinExpr(void)
 	READ_NODE_FIELD(quals);
 	READ_NODE_FIELD(alias);
 	READ_INT_FIELD(rtindex);
+	READ_INT_FIELD(minHops);
+	READ_INT_FIELD(maxHops);
 
 	READ_DONE();
 }
@@ -1370,6 +1405,7 @@ _readRangeTblEntry(void)
 		case RTE_SUBQUERY:
 			READ_NODE_FIELD(subquery);
 			READ_BOOL_FIELD(security_barrier);
+			READ_BOOL_FIELD(isVLE);
 			break;
 		case RTE_JOIN:
 			READ_ENUM_FIELD(jointype, JoinType);
@@ -1521,6 +1557,7 @@ _readPlannedStmt(void)
 	READ_NODE_FIELD(utilityStmt);
 	READ_LOCATION_FIELD(stmt_location);
 	READ_LOCATION_FIELD(stmt_len);
+	READ_BOOL_FIELD(hasGraphwriteClause);
 
 	READ_DONE();
 }
@@ -1680,6 +1717,7 @@ _readRecursiveUnion(void)
 	READ_OID_ARRAY(dupOperators, local_node->numCols);
 	READ_OID_ARRAY(dupCollations, local_node->numCols);
 	READ_LONG_FIELD(numGroups);
+	READ_INT_FIELD(maxDepth);
 
 	READ_DONE();
 }
@@ -1931,6 +1969,7 @@ _readCteScan(void)
 
 	READ_INT_FIELD(ctePlanId);
 	READ_INT_FIELD(cteParam);
+	READ_BOOL_FIELD(cteStop);
 
 	READ_DONE();
 }
@@ -2056,6 +2095,24 @@ _readNestLoop(void)
 	ReadCommonJoin(&local_node->join);
 
 	READ_NODE_FIELD(nestParams);
+
+	READ_DONE();
+}
+
+/*
+ * _readNestLoopVLE
+ */
+static NestLoopVLE *
+_readNestLoopVLE(void)
+{
+	READ_LOCALS(NestLoopVLE);
+
+	ReadCommonJoin(&local_node->nl.join);
+
+	READ_NODE_FIELD(nl.nestParams);
+
+	READ_INT_FIELD(minHops);
+	READ_INT_FIELD(maxHops);
 
 	READ_DONE();
 }
@@ -2342,6 +2399,70 @@ _readLimit(void)
 }
 
 /*
+ * _readShortestpath
+ */
+static Shortestpath *
+_readShortestpath(void)
+{
+	READ_LOCALS(Shortestpath);
+
+	ReadCommonJoin(&local_node->join);
+
+	READ_NODE_FIELD(hashclauses);
+
+	READ_INT_FIELD(end_id_left);
+	READ_INT_FIELD(end_id_right);
+	READ_INT_FIELD(tableoid_left);
+	READ_INT_FIELD(tableoid_right);
+	READ_INT_FIELD(ctid_left);
+	READ_INT_FIELD(ctid_right);
+	READ_NODE_FIELD(source);
+	READ_NODE_FIELD(target);
+	READ_LONG_FIELD(minhops);
+	READ_LONG_FIELD(maxhops);
+	READ_LONG_FIELD(limit);
+
+	READ_DONE();
+}
+
+/*
+ * _readHash2Side
+ */
+static Hash2Side *
+_readHash2Side(void)
+{
+	READ_LOCALS(Hash2Side);
+
+	ReadCommonPlan(&local_node->plan);
+
+	READ_OID_FIELD(skewTable);
+	READ_INT_FIELD(skewColumn);
+	READ_BOOL_FIELD(skewInherit);
+	READ_OID_FIELD(skewColType);
+	READ_INT_FIELD(skewColTypmod);
+
+	READ_DONE();
+}
+
+static Dijkstra *
+_readDijkstra(void)
+{
+	READ_LOCALS(Dijkstra);
+
+	ReadCommonPlan(&local_node->plan);
+
+	READ_INT_FIELD(weight);
+	READ_BOOL_FIELD(weight_out);
+	READ_INT_FIELD(end_id);
+	READ_INT_FIELD(edge_id);
+	READ_NODE_FIELD(source);
+	READ_NODE_FIELD(target);
+	READ_NODE_FIELD(limit);
+
+	READ_DONE();
+}
+
+/*
  * _readNestLoopParam
  */
 static NestLoopParam *
@@ -2511,6 +2632,166 @@ _readExtensibleNode(void)
 
 	/* deserialize the private fields */
 	methods->nodeRead(local_node);
+
+	READ_DONE();
+}
+
+static GraphPath *
+_readGraphPath(void)
+{
+	READ_LOCALS(GraphPath);
+
+	READ_STRING_FIELD(variable);
+	READ_NODE_FIELD(chain);
+
+	READ_DONE();
+}
+
+static GraphVertex *
+_readGraphVertex(void)
+{
+	READ_LOCALS(GraphVertex);
+
+	READ_INT_FIELD(resno);
+	READ_BOOL_FIELD(create);
+	READ_OID_FIELD(relid);
+	READ_NODE_FIELD(expr);
+
+	READ_DONE();
+}
+
+static GraphEdge *
+_readGraphEdge(void)
+{
+	READ_LOCALS(GraphEdge);
+
+	READ_INT_FIELD(direction);
+	READ_INT_FIELD(resno);
+	READ_OID_FIELD(relid);
+	READ_NODE_FIELD(expr);
+
+	READ_DONE();
+}
+
+static GraphSetProp *
+_readGraphSetProp(void)
+{
+	READ_LOCALS(GraphSetProp);
+
+	READ_ENUM_FIELD(kind, GSPKind);
+	READ_STRING_FIELD(variable);
+	READ_NODE_FIELD(elem);
+	READ_NODE_FIELD(expr);
+
+	READ_DONE();
+}
+
+static GraphDelElem *
+_readGraphDelElem(void)
+{
+	READ_LOCALS(GraphDelElem);
+
+	READ_STRING_FIELD(variable);
+	READ_NODE_FIELD(elem);
+
+	READ_DONE();
+}
+
+static CypherListComp *
+_readCypherListComp(void)
+{
+	READ_LOCALS(CypherListComp);
+
+	READ_NODE_FIELD(list);
+	READ_STRING_FIELD(varname);
+	READ_NODE_FIELD(cond);
+	READ_NODE_FIELD(elem);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static CypherTypeCast *
+_readCypherTypeCast(void)
+{
+	READ_LOCALS(CypherTypeCast);
+
+	READ_OID_FIELD(type);
+	READ_ENUM_FIELD(cform, CoercionForm);
+	READ_ENUM_FIELD(cctx, CoercionContext);
+	READ_CHAR_FIELD(typcategory);
+	READ_NODE_FIELD(arg);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static CypherMapExpr *
+_readCypherMapExpr(void)
+{
+	READ_LOCALS(CypherMapExpr);
+
+	READ_NODE_FIELD(keyvals);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static CypherListExpr *
+_readCypherListExpr(void)
+{
+	READ_LOCALS(CypherListExpr);
+
+	READ_NODE_FIELD(elems);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static CypherListCompExpr *
+_readCypherListCompExpr(void)
+{
+	READ_LOCALS(CypherListCompExpr);
+
+	READ_NODE_FIELD(list);
+	READ_STRING_FIELD(varname);
+	READ_NODE_FIELD(cond);
+	READ_NODE_FIELD(elem);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static CypherListCompVar *
+_readCypherListCompVar(void)
+{
+	READ_LOCALS(CypherListCompVar);
+
+	READ_STRING_FIELD(varname);
+	READ_LOCATION_FIELD(location);
+
+	READ_DONE();
+}
+
+static CypherAccessExpr *
+_readCypherAccessExpr(void)
+{
+	READ_LOCALS(CypherAccessExpr);
+
+	READ_NODE_FIELD(arg);
+	READ_NODE_FIELD(path);
+
+	READ_DONE();
+}
+
+static CypherIndices *
+_readCypherIndices(void)
+{
+	READ_LOCALS(CypherIndices);
+
+	READ_BOOL_FIELD(is_slice);
+	READ_NODE_FIELD(lidx);
+	READ_NODE_FIELD(uidx);
 
 	READ_DONE();
 }
@@ -2757,6 +3038,8 @@ parseNodeString(void)
 		return_value = _readJoin();
 	else if (MATCH("NESTLOOP", 8))
 		return_value = _readNestLoop();
+	else if (MATCH("NESTLOOPVLE", 11))
+		return_value = _readNestLoopVLE();
 	else if (MATCH("MERGEJOIN", 9))
 		return_value = _readMergeJoin();
 	else if (MATCH("HASHJOIN", 8))
@@ -2785,6 +3068,12 @@ parseNodeString(void)
 		return_value = _readLockRows();
 	else if (MATCH("LIMIT", 5))
 		return_value = _readLimit();
+	else if (MATCH("SHORTESTPATH", 12))
+		return_value = _readShortestpath();
+	else if (MATCH("HASH2SIDE", 9))
+		return_value = _readHash2Side();
+	else if (MATCH("DIJKSTRA", 8))
+		return_value = _readDijkstra();
 	else if (MATCH("NESTLOOPPARAM", 13))
 		return_value = _readNestLoopParam();
 	else if (MATCH("PLANROWMARK", 11))
@@ -2809,6 +3098,32 @@ parseNodeString(void)
 		return_value = _readPartitionBoundSpec();
 	else if (MATCH("PARTITIONRANGEDATUM", 19))
 		return_value = _readPartitionRangeDatum();
+	else if (MATCH("GRAPHPATH", 9))
+		return_value = _readGraphPath();
+	else if (MATCH("GRAPHVERTEX", 11))
+		return_value = _readGraphVertex();
+	else if (MATCH("GRAPHEDGE", 9))
+		return_value = _readGraphEdge();
+	else if (MATCH("GRAPHSETPROP", 12))
+		return_value = _readGraphSetProp();
+	else if (MATCH("GRAPHDELELEM", 12))
+		return_value = _readGraphDelElem();
+	else if (MATCH("CYPHERLISTCOMP", 14))
+		return_value = _readCypherListComp();
+	else if (MATCH("CYPHERTYPECAST", 14))
+		return_value = _readCypherTypeCast();
+	else if (MATCH("CYPHERMAPEXPR", 13))
+		return_value = _readCypherMapExpr();
+	else if (MATCH("CYPHERLISTEXPR", 14))
+		return_value = _readCypherListExpr();
+	else if (MATCH("CYPHERLISTCOMPEXPR", 18))
+		return_value = _readCypherListCompExpr();
+	else if (MATCH("CYPHERLISTCOMPVAR", 17))
+		return_value = _readCypherListCompVar();
+	else if (MATCH("CYPHERACCESSEXPR", 16))
+		return_value = _readCypherAccessExpr();
+	else if (MATCH("CYPHERINDICES", 13))
+		return_value = _readCypherIndices();
 	else
 	{
 		elog(ERROR, "badly formatted node string \"%.32s\"...", token);

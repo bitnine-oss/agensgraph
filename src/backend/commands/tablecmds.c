@@ -52,6 +52,7 @@
 #include "commands/comment.h"
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
+#include "commands/graphcmds.h"
 #include "commands/policy.h"
 #include "commands/sequence.h"
 #include "commands/tablecmds.h"
@@ -542,7 +543,11 @@ static void refuseDupeIndexAttach(Relation parentIdx, Relation partIdx,
 static List *GetParentedForeignKeyRefs(Relation partition);
 static void ATDetachCheckNoForeignKeyRefs(Relation partition);
 
-
+static void
+ATExecDisableIndex(Relation rel)
+{
+	DisableIndexLabel(rel->rd_id);
+}
 /* ----------------------------------------------------------------
  *		DefineRelation
  *				Creates a new relation.
@@ -1226,6 +1231,47 @@ DropErrorMsgWrongType(const char *relname, char wrongkind, char rightkind)
 			 (wentry->kind != '\0') ? errhint("%s", _(wentry->drophint_msg)) : 0));
 }
 
+static bool
+isPropertyIndex(Oid indexoid)
+{
+    Form_pg_index index;
+    HeapTuple   indexTuple;
+    bool        retval = true;
+    int         i;
+
+    /* Fetch pg_index tuple of source index. */
+    indexTuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexoid));
+    if (!HeapTupleIsValid(indexTuple))      /* should not happen */
+        elog(ERROR, "cache lookup failed for index %u", indexoid);
+    index = (Form_pg_index) GETSTRUCT(indexTuple);
+
+    /*
+     * If this index is a table for graph label and is an expressional index,
+     * decide this is property index.
+     */
+    if (!OidIsValid(get_relid_laboid(index->indrelid)))
+    {
+        retval = false;
+    }
+    else
+    {
+        for (i = 0; i < index->indnatts; i++)
+        {
+            if (index->indkey.values[i] != 0)
+            {
+                retval = false;
+                break;
+            }
+        }
+    }
+
+    ReleaseSysCache(indexTuple);
+    return retval;
+}
+
+
+
+
 /*
  * RemoveRelations
  *		Implements DROP TABLE, DROP INDEX, DROP SEQUENCE, DROP VIEW,
@@ -1292,7 +1338,9 @@ RemoveRelations(DropStmt *drop)
 		case OBJECT_FOREIGN_TABLE:
 			relkind = RELKIND_FOREIGN_TABLE;
 			break;
-
+        case OBJECT_PROPERTY_INDEX:
+            relkind = RELKIND_INDEX;
+            break;
 		default:
 			elog(ERROR, "unrecognized drop object type: %d",
 				 (int) drop->removeType);
@@ -1337,6 +1385,16 @@ RemoveRelations(DropStmt *drop)
 			DropErrorMsgNonExistent(rel, relkind, drop->missing_ok);
 			continue;
 		}
+
+        if (drop->removeType == OBJECT_PROPERTY_INDEX &&
+                        !isPropertyIndex(relOid))
+                        ereport(ERROR,
+                                        (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                                         errmsg("\"%s\" is not property index", rel->relname)));
+                if (drop->removeType == OBJECT_INDEX && isPropertyIndex(relOid))
+                        ereport(ERROR,
+                                        (errcode(ERRCODE_WRONG_OBJECT_TYPE),
+                                         errmsg("\"%s\" is property index", rel->relname)));
 
 		/*
 		 * Decide if concurrent mode needs to be used here or not.  The
@@ -1970,6 +2028,11 @@ truncate_check_rel(Oid relid, Form_pg_class reltuple)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("permission denied: \"%s\" is a system catalog",
 						relname)));
+
+	if (OidIsValid(get_relid_laboid(relid)))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot truncate label in graph schema")));
 }
 
 /*
@@ -2084,6 +2147,7 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 	List	   *constraints = NIL;
 	bool		have_bogus_defaults = false;
 	int			child_attno;
+    Oid         isLabel = -1;
 	static Node bogus_marker = {0}; /* marks conflicting defaults */
 	List	   *saved_schema = NIL;
 
@@ -2198,9 +2262,11 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 		ListCell   *lc1;
 		ListCell   *lc2;
 
+
 		/* caller already got lock */
 		relation = table_open(parent, NoLock);
-
+		if (isLabel <= 0)
+			isLabel = RelationIsLabel(relation);
 		/*
 		 * Check for active uses of the parent partitioned table in the
 		 * current transaction, such as being used in some manner by an
@@ -2315,7 +2381,8 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				 * Yes, try to merge the two column definitions. They must
 				 * have the same type, typmod, and collation.
 				 */
-				ereport(NOTICE,
+				if (isLabel <= 0)
+					ereport(NOTICE,
 						(errmsg("merging multiple inherited definitions of column \"%s\"",
 								attributeName)));
 				def = (ColumnDef *) list_nth(inhSchema, exist_attno - 1);
@@ -2583,10 +2650,13 @@ MergeAttributes(List *schema, List *supers, char relpersistence,
 				 * have the same type, typmod, and collation.
 				 */
 				if (exist_attno == schema_attno)
-					ereport(NOTICE,
-							(errmsg("merging column \"%s\" with inherited definition",
-									attributeName)));
-				else
+				{
+					if (isLabel <= 0)
+						ereport(NOTICE,
+							(errmsg("%d merging column \"%s\" with inherited definition",
+									isLabel, attributeName)));
+				}
+                else
 					ereport(NOTICE,
 							(errmsg("moving and merging column \"%s\" with inherited definition", attributeName),
 							 errdetail("User-specified column moved to the position of the inherited column.")));
@@ -3406,7 +3476,7 @@ RenameConstraint(RenameStmt *stmt)
 ObjectAddress
 RenameRelation(RenameStmt *stmt)
 {
-	bool		is_index = stmt->renameType == OBJECT_INDEX;
+	bool		is_index_stmt = stmt->renameType == OBJECT_INDEX;
 	Oid			relid;
 	ObjectAddress address;
 
@@ -3416,24 +3486,48 @@ RenameRelation(RenameStmt *stmt)
 	 * end of transaction.
 	 *
 	 * Lock level used here should match RenameRelationInternal, to avoid lock
-	 * escalation.
+	 * escalation.  However, because ALTER INDEX can be used with any relation
+	 * type, we mustn't believe without verification.
 	 */
-	relid = RangeVarGetRelidExtended(stmt->relation,
-									 is_index ? ShareUpdateExclusiveLock : AccessExclusiveLock,
-									 stmt->missing_ok ? RVR_MISSING_OK : 0,
-									 RangeVarCallbackForAlterRelation,
-									 (void *) stmt);
-
-	if (!OidIsValid(relid))
+	for (;;)
 	{
-		ereport(NOTICE,
-				(errmsg("relation \"%s\" does not exist, skipping",
-						stmt->relation->relname)));
-		return InvalidObjectAddress;
+		LOCKMODE	lockmode;
+		char		relkind;
+		bool		obj_is_index;
+
+		lockmode = is_index_stmt ? ShareUpdateExclusiveLock : AccessExclusiveLock;
+
+		relid = RangeVarGetRelidExtended(stmt->relation, lockmode,
+										 stmt->missing_ok ? RVR_MISSING_OK : 0,
+										 RangeVarCallbackForAlterRelation,
+										 (void *) stmt);
+
+		if (!OidIsValid(relid))
+		{
+			ereport(NOTICE,
+					(errmsg("relation \"%s\" does not exist, skipping",
+							stmt->relation->relname)));
+			return InvalidObjectAddress;
+		}
+
+		/*
+		 * We allow mismatched statement and object types (e.g., ALTER INDEX
+		 * to rename a table), but we might've used the wrong lock level.  If
+		 * that happens, retry with the correct lock level.  We don't bother
+		 * if we already acquired AccessExclusiveLock with an index, however.
+		 */
+		relkind = get_rel_relkind(relid);
+		obj_is_index = (relkind == RELKIND_INDEX ||
+						relkind == RELKIND_PARTITIONED_INDEX);
+		if (obj_is_index || is_index_stmt == obj_is_index)
+			break;
+
+		UnlockRelationOid(relid, lockmode);
+		is_index_stmt = obj_is_index;
 	}
 
 	/* Do the work */
-	RenameRelationInternal(relid, stmt->newname, false, is_index);
+	RenameRelationInternal(relid, stmt->newname, false, is_index_stmt);
 
 	ObjectAddressSet(address, RelationRelationId, relid);
 
@@ -3480,6 +3574,16 @@ RenameRelationInternal(Oid myrelid, const char *newrelname, bool is_internal, bo
 				(errcode(ERRCODE_DUPLICATE_TABLE),
 				 errmsg("relation \"%s\" already exists",
 						newrelname)));
+
+	/*
+	 * RenameRelation is careful not to believe the caller's idea of the
+	 * relation kind being handled.  We don't have to worry about this, but
+	 * let's not be totally oblivious to it.  We can process an index as
+	 * not-an-index, but not the other way around.
+	 */
+	Assert(!is_index ||
+		   is_index == (targetrelation->rd_rel->relkind == RELKIND_INDEX ||
+						targetrelation->rd_rel->relkind == RELKIND_PARTITIONED_INDEX));
 
 	/*
 	 * Update pg_class tuple with new relname.  (Scribbling on reltup is OK
@@ -3955,6 +4059,10 @@ AlterTableGetLockLevel(List *cmds)
 				cmd_lockmode = AccessExclusiveLock;
 				break;
 
+			case AT_DisableIndex:
+				cmd_lockmode = AccessShareLock;
+				break;
+
 			case AT_CheckNotNull:
 
 				/*
@@ -4306,6 +4414,10 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 			/* No command-specific prep needed */
 			pass = AT_PASS_MISC;
 			break;
+		case AT_DisableIndex:
+			ATSimplePermissions(rel, ATT_TABLE);
+			pass = AT_PASS_MISC;
+			break;
 		default:				/* oops */
 			elog(ERROR, "unrecognized alter table type: %d",
 				 (int) cmd->subtype);
@@ -4641,6 +4753,9 @@ ATExecCmd(List **wqueue, AlteredTableInfo *tab, Relation rel,
 			break;
 		case AT_GenericOptions:
 			ATExecGenericOptions(rel, (List *) cmd->def);
+			break;
+		case AT_DisableIndex:
+			ATExecDisableIndex(rel);
 			break;
 		case AT_AttachPartition:
 			if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
@@ -11276,6 +11391,8 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 			case OCLASS_PUBLICATION_REL:
 			case OCLASS_SUBSCRIPTION:
 			case OCLASS_TRANSFORM:
+			case OCLASS_GRAPH:
+			case OCLASS_LABEL:
 
 				/*
 				 * We don't expect any of these sorts of objects to depend on
@@ -14377,6 +14494,12 @@ relation_mark_replica_identity(Relation rel, char ri_type, Oid indexOid,
 			CatalogTupleUpdate(pg_index, &pg_index_tuple->t_self, pg_index_tuple);
 			InvokeObjectPostAlterHookArg(IndexRelationId, thisIndexOid, 0,
 										 InvalidOid, is_internal);
+			/*
+			 * Invalidate the relcache for the table, so that after we commit
+			 * all sessions will refresh the table's replica identity index
+			 * before attempting any UPDATE or DELETE on the table.
+			 */
+			CacheInvalidateRelcache(rel);
 		}
 		heap_freetuple(pg_index_tuple);
 	}
@@ -16341,6 +16464,22 @@ ATExecAttachPartition(List **wqueue, Relation rel, PartitionCmd *cmd)
 
 	ObjectAddressSet(address, RelationRelationId, RelationGetRelid(attachrel));
 
+	/*
+	 * If the partition we just attached is partitioned itself, invalidate
+	 * relcache for all descendent partitions too to ensure that their
+	 * rd_partcheck expression trees are rebuilt; partitions already locked
+	 * at the beginning of this function.
+	 */
+	if (attachrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+	{
+		ListCell *l;
+
+		foreach(l, attachrel_children)
+		{
+			CacheInvalidateRelcacheByRelid(lfirst_oid(l));
+		}
+	}
+
 	/* keep our lock until commit */
 	table_close(attachrel, NoLock);
 
@@ -16916,6 +17055,25 @@ ATExecDetachPartition(Relation rel, RangeVar *name)
 	 * included in its partition descriptor.
 	 */
 	CacheInvalidateRelcache(rel);
+
+	/*
+	 * If the partition we just detached is partitioned itself, invalidate
+	 * relcache for all descendent partitions too to ensure that their
+	 * rd_partcheck expression trees are rebuilt; must lock partitions
+	 * before doing so, using the same lockmode as what partRel has been
+	 * locked with by the caller.
+	 */
+	if (partRel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+	{
+		List   *children;
+
+		children = find_all_inheritors(RelationGetRelid(partRel),
+									   AccessExclusiveLock, NULL);
+		foreach(cell, children)
+		{
+			CacheInvalidateRelcacheByRelid(lfirst_oid(cell));
+		}
+	}
 
 	ObjectAddressSet(address, RelationRelationId, RelationGetRelid(partRel));
 

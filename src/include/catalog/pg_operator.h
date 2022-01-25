@@ -100,4 +100,12 @@ extern ObjectAddress makeOperatorDependencies(HeapTuple tuple, bool isUpdate);
 
 extern void OperatorUpd(Oid baseId, Oid commId, Oid negId, bool isDelete);
 
+#define OID_GRAPHID_EQ_OP 7087
+#define OID_VERTEX_EQ_OP  7136
+#define OID_VERTEX_NE_OP  7137
+#define OID_VERTEX_LT_OP  7138
+#define OID_VERTEX_GT_OP  7139
+#define OID_VERTEX_LE_OP  7140
+#define OID_VERTEX_GE_OP  7141
+
 #endif							/* PG_OPERATOR_H */

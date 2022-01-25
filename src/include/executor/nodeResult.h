@@ -21,5 +21,7 @@ extern void ExecEndResult(ResultState *node);
 extern void ExecResultMarkPos(ResultState *node);
 extern void ExecResultRestrPos(ResultState *node);
 extern void ExecReScanResult(ResultState *node);
+extern void ExecNextResultContext(ResultState *node);
+extern void ExecPrevResultContext(ResultState *node);
 
 #endif							/* NODERESULT_H */

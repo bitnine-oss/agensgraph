@@ -227,4 +227,11 @@
 { oid => '5008',
   opfmethod => 'spgist', opfname => 'poly_ops' },
 
+{ oid => '7093', opfmethod => 'btree', opfname => 'graphid_ops' },
+{ oid => '7096', opfmethod => 'hash', opfname => 'graphid_ops' },
+{ oid => '7098', opfmethod => 'gin', opfname => 'graphid_ops' },
+{ oid => '7105', opfmethod => 'brin', opfname => 'graphid_minmax_ops' },
+{ oid => '7106', opfmethod => 'hash', opfname => 'vertex_ops' },
+{ oid => '7167', opfmethod => 'btree', opfname => 'rowid_ops' },
+
 ]

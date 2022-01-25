@@ -49,11 +49,13 @@ my @contrib_excludes = (
 	'sepgsql',          'brin',
 	'test_extensions',  'test_misc',
 	'test_pg_dump',     'snapshot_too_old',
+	'pg_statsinfo',		'hadoop_fdw',
+	'pg_hint_plan',		'postgresql-hll',
 	'unsafe_tests');
 
 # Set of variables for frontend modules
 my $frontend_defines = { 'initdb' => 'FRONTEND' };
-my @frontend_uselibpq = ('pg_ctl', 'pg_upgrade', 'pgbench', 'psql', 'initdb');
+my @frontend_uselibpq = ('pg_ctl', 'pg_upgrade', 'pgbench', 'psql', 'initdb', 'ag_ctl', 'agens');
 my @frontend_uselibpgport = (
 	'pg_archivecleanup', 'pg_test_fsync',
 	'pg_test_timing',    'pg_upgrade',
@@ -73,6 +75,7 @@ my $frontend_extraincludes = {
 	'psql'   => ['src/backend']
 };
 my $frontend_extrasource = {
+	'agens' => ['src/bin/agens/psqlscanslash.l'],
 	'psql' => ['src/bin/psql/psqlscanslash.l'],
 	'pgbench' =>
 	  [ 'src/bin/pgbench/exprscan.l', 'src/bin/pgbench/exprparse.y' ]

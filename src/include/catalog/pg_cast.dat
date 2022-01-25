@@ -512,4 +512,12 @@
 { castsource => 'jsonb', casttarget => 'float8', castfunc => 'float8(jsonb)',
   castcontext => 'e', castmethod => 'f' },
 
+{ castsource => 'vertex', casttarget => 'jsonb', castfunc => 'to_jsonb(vertex)',
+  castcontext => 'i', castmethod => 'f' },
+{ castsource => 'edge', casttarget => 'jsonb', castfunc => 'to_jsonb(edge)',
+  castcontext => 'i', castmethod => 'f' },
+
+{ castsource => 'numeric', casttarget => 'graphid', castfunc => 'graphid(numeric)',
+  castcontext => 'i', castmethod => 'f' },
+
 ]

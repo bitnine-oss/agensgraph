@@ -29,6 +29,10 @@ typedef enum
 extern int	backslash_quote;
 extern bool escape_string_warning;
 extern PGDLLIMPORT bool standard_conforming_strings;
+extern PGDLLIMPORT bool case_sensitive_ident;
+
+/* GUC variables in gram.y */
+extern bool case_compat_type_func;
 
 
 /* Primary entry point for the raw parsing functions */

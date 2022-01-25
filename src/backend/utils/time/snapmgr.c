@@ -2348,3 +2348,14 @@ XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot)
 
 	return false;
 }
+
+/* See RegisterSnapshot() */
+Snapshot
+RegisterCopiedSnapshot(Snapshot snapshot)
+{
+	if (snapshot == InvalidSnapshot)
+		return InvalidSnapshot;
+
+	return RegisterSnapshotOnOwner(CopySnapshot(snapshot),
+								   CurrentResourceOwner);
+}

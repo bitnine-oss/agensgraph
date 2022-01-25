@@ -366,4 +366,25 @@ DECLARE_UNIQUE_INDEX(pg_subscription_subname_index, 6115, on pg_subscription usi
 DECLARE_UNIQUE_INDEX(pg_subscription_rel_srrelid_srsubid_index, 6117, on pg_subscription_rel using btree(srrelid oid_ops, srsubid oid_ops));
 #define SubscriptionRelSrrelidSrsubidIndexId 6117
 
+DECLARE_UNIQUE_INDEX(ag_graph_oid_index, 7041, on ag_graph using btree(oid oid_ops));
+#define GraphOidIndexId 7041
+DECLARE_UNIQUE_INDEX(ag_graph_graphname_index, 7042, on ag_graph using btree(graphname name_ops));
+#define GraphNameIndexId 7042
+
+DECLARE_UNIQUE_INDEX(ag_label_oid_index, 7046, on ag_label using btree(oid oid_ops));
+#define LabelOidIndexId 7046
+DECLARE_UNIQUE_INDEX(ag_label_labname_graph_index, 7047, on ag_label using btree(labname name_ops, graphid oid_ops));
+#define LabelNameGraphIndexId 7047
+DECLARE_UNIQUE_INDEX(ag_label_graph_labid_index, 7048, on ag_label using btree(graphid oid_ops, labid int4_ops));
+#define LabelGraphLabelIndexId 7048
+DECLARE_UNIQUE_INDEX(ag_label_relid_index, 7049, on ag_label using btree(relid oid_ops));
+#define LabelRelidIndexId 7049
+
+DECLARE_UNIQUE_INDEX(ag_graphmeta_full_index, 7056, on ag_graphmeta using btree(graph oid_ops, edge int2_ops, start int2_ops, "end" int2_ops));
+#define GraphMetaFullIndexId 7056
+DECLARE_INDEX(ag_graphmeta_start_index, 7057, on ag_graphmeta using btree(graph oid_ops, start int2_ops));
+#define GraphMetaStartIndexId 7057
+DECLARE_INDEX(ag_graphmeta_end_index, 7058, on ag_graphmeta using btree(graph oid_ops, "end" int2_ops));
+#define GraphMetaEndIndexId 7058
+
 #endif							/* INDEXING_H */

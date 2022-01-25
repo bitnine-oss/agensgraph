@@ -1615,6 +1615,7 @@ cost_recursive_union(Path *runion, Path *nrterm, Path *rterm)
 	Cost		startup_cost;
 	Cost		total_cost;
 	double		total_rows;
+	RecursiveUnionPath *rupath;
 
 	/* We probably have decent estimates for the non-recursive term */
 	startup_cost = nrterm->startup_cost;
@@ -1627,8 +1628,19 @@ cost_recursive_union(Path *runion, Path *nrterm, Path *rterm)
 	 * size of each one of them.  These are mighty shaky assumptions but it's
 	 * hard to see how to do better.
 	 */
-	total_cost += 10 * rterm->total_cost;
-	total_rows += 10 * rterm->rows;
+	rupath = (RecursiveUnionPath *) runion;
+    if (rupath->maxDepth > 0) 
+    {    
+        int loop = rupath->maxDepth - 1; 
+
+        total_cost += loop * rterm->total_cost;
+        total_rows += loop * rterm->rows;
+    }    
+    else 
+    {    
+        total_cost += DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT * rterm->total_cost;
+        total_rows += DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT * rterm->rows;
+    }
 
 	/*
 	 * Also charge cpu_tuple_cost per row to account for the costs of
@@ -2131,6 +2143,23 @@ cost_material(Path *path,
 
 		run_cost += seq_page_cost * npages;
 	}
+
+	path->startup_cost = startup_cost;
+	path->total_cost = startup_cost + run_cost;
+}
+
+/* FIXME */
+void
+cost_dijkstra(Path *path,
+			  Cost input_startup_cost, Cost input_total_cost,
+			  double tuples, int width)
+{
+	Cost		startup_cost = input_startup_cost;
+	Cost		run_cost = input_total_cost - input_startup_cost;
+
+	path->rows = tuples;
+
+	run_cost += 10 * cpu_operator_cost * tuples;
 
 	path->startup_cost = startup_cost;
 	path->total_cost = startup_cost + run_cost;
@@ -2641,6 +2670,16 @@ final_cost_nestloop(PlannerInfo *root, NestPath *path,
 			if (outer_unmatched_rows > 0)
 				run_cost += outer_unmatched_rows * inner_rescan_run_cost;
 		}
+	}
+	else if (path->jointype == JOIN_VLE)
+	{
+		SpecialJoinInfo *sjinfo = extra->sjinfo;
+		int			base = (sjinfo->min_hops > 0) ? 1 : 0;
+		int			max_hops = (sjinfo->max_hops == -1) ? 10 : sjinfo->max_hops;
+		int			inner_loop_cnt = max_hops - base;
+
+		ntuples = outer_path_rows +
+				  outer_path_rows * inner_path_rows * inner_loop_cnt;
 	}
 	else
 	{
@@ -4660,7 +4699,18 @@ calc_joinrel_size_estimate(PlannerInfo *root,
 			nrows = outer_rows * inner_rows * fkselec * jselec;
 			/* pselec not used */
 			break;
+		case JOIN_VLE:
+			{
+				int base = (sjinfo->min_hops > 0) ? 1 : 0;
+				int max_hops = (sjinfo->max_hops == -1) ? 10 : sjinfo->max_hops;
+				int inner_loop_cnt = max_hops - base;
+
+				nrows = outer_rows + outer_rows * inner_rows * inner_loop_cnt;
+			}
+			break;
 		case JOIN_LEFT:
+		case JOIN_CYPHER_MERGE:
+		case JOIN_CYPHER_DELETE:
 			nrows = outer_rows * inner_rows * fkselec * jselec;
 			if (nrows < outer_rows)
 				nrows = outer_rows;
@@ -5090,7 +5140,8 @@ set_values_size_estimates(PlannerInfo *root, RelOptInfo *rel)
  * We set the same fields as set_baserel_size_estimates.
  */
 void
-set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel, double cte_rows)
+set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel, double cte_rows,
+					   int iter_cnt)
 {
 	RangeTblEntry *rte;
 
@@ -5105,7 +5156,7 @@ set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel, double cte_rows)
 		 * In a self-reference, arbitrarily assume the average worktable size
 		 * is about 10 times the nonrecursive term's size.
 		 */
-		rel->tuples = 10 * cte_rows;
+		rel->tuples = iter_cnt * cte_rows;
 	}
 	else
 	{

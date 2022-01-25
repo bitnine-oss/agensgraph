@@ -84,7 +84,7 @@ SELECT
     2.0 AS two,
     'three' AS three,
     $1 AS four,
-    sin($2) as five,
+    sin($2::float8) as five,
     'foo'::varchar(4) as six,
     CURRENT_DATE AS now
 \gdesc

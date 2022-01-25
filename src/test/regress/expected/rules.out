@@ -1285,6 +1285,36 @@ drop table cchild;
 SELECT viewname, definition FROM pg_views
 WHERE schemaname IN ('pg_catalog', 'public')
 ORDER BY viewname;
+ag_graphmeta_view| SELECT ( SELECT ag_graph.graphname
+           FROM ag_graph
+          WHERE (ag_graph.oid = ag_graphmeta.graph)) AS graphname,
+    ( SELECT ag_label.labname
+           FROM ag_label
+          WHERE ((ag_graphmeta.start = ag_label.labid) AND (ag_graphmeta.graph = ag_label.graphid))) AS start,
+    ( SELECT ag_label.labname
+           FROM ag_label
+          WHERE ((ag_graphmeta.edge = ag_label.labid) AND (ag_graphmeta.graph = ag_label.graphid))) AS edge,
+    ( SELECT ag_label.labname
+           FROM ag_label
+          WHERE ((ag_graphmeta."end" = ag_label.labid) AND (ag_graphmeta.graph = ag_label.graphid))) AS "end",
+    ag_graphmeta.edgecount
+   FROM ag_graphmeta;
+ag_property_indexes| SELECT n.nspname AS graphname,
+    c.relname AS labelname,
+    i.relname AS indexname,
+    t.spcname AS tablespace,
+    x.indisunique AS "unique",
+    ag_get_propindexdef(i.oid) AS indexdef,
+    pg_get_userbyid(c.relowner) AS owner,
+    pg_size_pretty(pg_table_size((c.oid)::regclass)) AS size,
+    obj_description(i.oid, 'pg_class'::name) AS description
+   FROM (((((pg_index x
+     JOIN pg_class c ON ((c.oid = x.indrelid)))
+     JOIN ag_label l ON ((x.indrelid = l.relid)))
+     JOIN pg_class i ON ((i.oid = x.indexrelid)))
+     LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
+     LEFT JOIN pg_tablespace t ON ((t.oid = i.reltablespace)))
+  WHERE ((c.relkind = 'r'::"char") AND (i.relkind = 'i'::"char") AND (x.indisexclusion = false) AND (x.indexprs IS NOT NULL));
 iexit| SELECT ih.name,
     ih.thepath,
     interpt_pp(ih.thepath, r.thepath) AS exit

@@ -4267,6 +4267,11 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 					 errmsg("unsupported transaction command in PL/pgSQL")));
 			break;
 
+		case SPI_ERROR_GRAPHWRITE:
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot modify graph in PL/pgSQL")));
+
 		default:
 			elog(ERROR, "SPI_execute_plan_with_paramlist failed executing query \"%s\": %s",
 				 expr->query, SPI_result_code_string(rc));

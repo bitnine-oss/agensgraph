@@ -57,4 +57,16 @@ typedef FormData_pg_opfamily *Form_pg_opfamily;
 
 #endif							/* EXPOSE_TO_CLIENT_CODE */
 
+/* HAMID */
+#define GRAPHID_BTREE_FAM_OID 7093
+/* Ibrar DATA(insert OID = 7093 (  403 graphid_ops           PGNSP PGUID ));
+#define GRAPHID_BTREE_FAM_OID 7093
+DATA(insert OID = 7096 (  405 graphid_ops           PGNSP PGUID ));
+DATA(insert OID = 7098 ( 2742 graphid_ops           PGNSP PGUID ));
+DATA(insert OID = 7105 ( 3580 graphid_minmax_ops    PGNSP PGUID ));
+
+DATA(insert OID = 7106 (  405 vertex_ops            PGNSP PGUID ));
+
+DATA(insert OID = 7167 (  403 rowid_ops             PGNSP PGUID ));
+*/
 #endif							/* PG_OPFAMILY_H */

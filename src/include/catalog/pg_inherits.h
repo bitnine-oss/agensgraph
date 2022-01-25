@@ -45,6 +45,9 @@ typedef FormData_pg_inherits *Form_pg_inherits;
 
 
 extern List *find_inheritance_children(Oid parentrelId, LOCKMODE lockmode);
+extern List *find_inheritance_children_class(Oid classId, Oid parentrelId,
+											 LOCKMODE lockmode);
+
 extern List *find_all_inheritors(Oid parentrelId, LOCKMODE lockmode,
 								 List **parents);
 extern bool has_subclass(Oid relationId);
@@ -53,5 +56,6 @@ extern bool typeInheritsFrom(Oid subclassTypeId, Oid superclassTypeId);
 extern void StoreSingleInheritance(Oid relationId, Oid parentOid,
 								   int32 seqNumber);
 extern bool DeleteInheritsTuple(Oid inhrelid, Oid inhparent);
+extern List *find_all_ancestors(Oid childrelId, LOCKMODE lockmode);
 
 #endif							/* PG_INHERITS_H */

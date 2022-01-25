@@ -1508,6 +1508,164 @@ contain_leaked_vars_walker(Node *node, void *context)
 			 */
 			return false;
 
+		case T_CypherTypeCast:
+			{
+				CypherTypeCast *tc = (CypherTypeCast *) node;
+				Node	   *newarg;
+				CypherTypeCast *newtc;
+
+				newarg = eval_const_expressions_mutator((Node *) tc->arg,
+														context);
+				newtc = makeNode(CypherTypeCast);
+				newtc->type = tc->type;
+				/* add cctx and typcategory for runtime type casting */
+				newtc->cctx = tc->cctx;
+				newtc->cform = tc->cform;
+				newtc->typcategory = tc->typcategory;
+				newtc->arg = (Expr *) newarg;
+				newtc->location = tc->location;
+
+				if (IsA(newarg, Const))
+					return (Node *) evaluate_expr((Expr *) newtc, newtc->type,
+												  -1, InvalidOid);
+
+				return (Node *) newtc;
+			}
+			break;
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+				List	   *newkeyvals = NIL;
+				ListCell   *le;
+				bool		all_const = true;
+				CypherMapExpr *newm;
+
+				le = list_head(m->keyvals);
+				while (le != NULL)
+				{
+					Node	   *k;
+					Node	   *v;
+					Node	   *newv;
+					Node	   *newk;
+
+					k = lfirst(le);
+					le = lnext(le);
+					v = lfirst(le);
+					le = lnext(le);
+
+					newv = eval_const_expressions_mutator(v, context);
+					if (!IsA(newv, Const))
+						all_const = false;
+
+					newk = eval_const_expressions_mutator(k, context);
+					Assert(IsA(newk, Const));
+
+					newkeyvals = lappend(lappend(newkeyvals, newk), newv);
+				}
+
+				newm = makeNode(CypherMapExpr);
+				newm->keyvals = newkeyvals;
+				newm->location = m->location;
+
+				/* it is safe to reduce this CypherMapExpr */
+				if (all_const)
+					return (Node *) evaluate_expr((Expr *) newm, JSONBOID, -1,
+												  InvalidOid);
+
+				return (Node *) newm;
+			}
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+				List		*newelems = NIL;
+				ListCell	*le;
+				bool		all_const = true;
+				CypherListExpr *newcl;
+
+				foreach(le, cl->elems)
+				{
+					Node	   *e = lfirst(le);
+					Node	   *newe;
+
+					newe = eval_const_expressions_mutator(e, context);
+					if (!IsA(newe, Const))
+						all_const = false;
+
+					newelems = lappend(newelems, newe);
+				}
+
+				newcl = makeNode(CypherListExpr);
+				newcl->elems = newelems;
+				newcl->location = cl->location;
+
+				if (all_const)
+					return (Node *) evaluate_expr((Expr *) newcl, JSONBOID, -1,
+												  InvalidOid);
+
+				return (Node *) newcl;
+			}
+		case T_CypherListCompExpr:
+			{
+				CypherListCompExpr *clc = (CypherListCompExpr *) node;
+				CypherListCompExpr *newclc;
+
+				newclc = makeNode(CypherListCompExpr);
+				newclc->list = clc->list;
+				newclc->varname = pstrdup(clc->varname);
+				newclc->cond = clc->cond;
+				newclc->elem = clc->elem;
+				newclc->location = clc->location;
+				return (Node *) newclc;
+			}
+		case T_CypherAccessExpr:
+			{
+				CypherAccessExpr *a = (CypherAccessExpr *) node;
+				bool		all_const = true;
+				Node	   *newarg;
+				List	   *newpath = NIL;
+				ListCell   *le;
+				CypherAccessExpr *newa;
+
+				newarg = eval_const_expressions_mutator((Node *) a->arg,
+														context);
+				if (!IsA(newarg, Const))
+					all_const = false;
+
+				foreach(le, a->path)
+				{
+					Node	   *elem = lfirst(le);
+					Node	   *newelem;
+
+					newelem = eval_const_expressions_mutator(elem, context);
+					if (IsA(newelem, CypherIndices))
+					{
+						CypherIndices *cind = (CypherIndices *) newelem;
+
+						if (cind->lidx != NULL && !IsA(cind->lidx, Const))
+							all_const = false;
+						if (cind->uidx != NULL && !IsA(cind->uidx, Const))
+							all_const = false;
+					}
+					else
+					{
+						if (!IsA(newelem, Const))
+							all_const = false;
+					}
+
+					newpath = lappend(newpath, newelem);
+				}
+
+				newa = makeNode(CypherAccessExpr);
+				newa->arg = (Expr *) newarg;
+				newa->path = newpath;
+
+				if (all_const)
+					return (Node *) evaluate_expr((Expr *) newa, JSONBOID, -1,
+												  InvalidOid);
+
+				return (Node *) newa;
+			}
+
 		default:
 
 			/*

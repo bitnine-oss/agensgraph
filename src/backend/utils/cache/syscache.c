@@ -22,6 +22,9 @@
 
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "catalog/ag_graph.h"
+#include "catalog/ag_graphmeta.h"
+#include "catalog/ag_label.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_am.h"
@@ -475,11 +478,88 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		4
 	},
+	{GraphMetaRelationId,			/* GRAPHMETAFULL */
+		GraphMetaFullIndexId,
+		4,
+		{
+			Anum_ag_graphmeta_graph,
+			Anum_ag_graphmeta_edge,
+			Anum_ag_graphmeta_start,
+			Anum_ag_graphmeta_end
+		},
+		64
+	},
+	{GraphRelationId,			/* GRAPHNAME */
+		GraphNameIndexId,
+		1,
+		{
+			Anum_ag_graph_graphname,
+			0,
+			0,
+			0
+		},
+		4
+	},
+	{GraphRelationId,			/* GRAPHOID */
+		GraphOidIndexId,
+		1,
+		{
+			Anum_ag_graph_oid,
+			0,
+			0,
+			0
+		},
+		16
+	},
 	{IndexRelationId,			/* INDEXRELID */
 		IndexRelidIndexId,
 		1,
 		{
 			Anum_pg_index_indexrelid,
+			0,
+			0,
+			0
+		},
+		64
+	},
+	{LabelRelationId,			/* LABELGRAPHLABEL */
+		LabelGraphLabelIndexId,
+		2,
+		{
+			Anum_ag_label_graphid,
+			Anum_ag_label_labid,
+			0,
+			0
+		},
+		64
+	},
+	{LabelRelationId,			/* LABELNAMEGRAPH */
+		LabelNameGraphIndexId,
+		2,
+		{
+			Anum_ag_label_labname,
+			Anum_ag_label_graphid,
+			0,
+			0
+		},
+		128
+	},
+	{LabelRelationId,			/* LABELOID */
+		LabelOidIndexId,
+		1,
+		{
+			Anum_ag_label_oid,
+			0,
+			0,
+			0
+		},
+		64
+	},
+	{LabelRelationId,			/* LABELRELID */
+		LabelRelidIndexId,
+		1,
+		{
+			Anum_ag_label_relid,
 			0,
 			0,
 			0

@@ -122,6 +122,9 @@ int			work_mem = 1024;
 int			maintenance_work_mem = 16384;
 int			max_parallel_maintenance_workers = 2;
 
+/* AgensGraph */
+int			eager_mem = 4096;
+
 /*
  * Primary determinants of sizes of shared-memory structures.
  *

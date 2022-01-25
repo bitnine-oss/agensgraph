@@ -807,6 +807,7 @@ initialize_environment(void)
 		 */
 		/* PGCLIENTENCODING, see above */
 		unsetenv("PGCONNECT_TIMEOUT");
+		unsetenv("AGDATA");
 		unsetenv("PGDATA");
 		unsetenv("PGDATABASE");
 		unsetenv("PGGSSENCMODE");
@@ -1120,6 +1121,7 @@ psql_command(const char *database, const char *query,...)
 	char	   *s;
 	char	   *d;
 
+    printf("\n---------------------------%s\n", query);
 	/* Generate the query with insertion of sprintf arguments */
 	va_start(args, query);
 	vsnprintf(query_formatted, sizeof(query_formatted), query, args);

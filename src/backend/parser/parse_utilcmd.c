@@ -18,6 +18,7 @@
  *
  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2018, Bitnine Inc.
  *
  *	src/backend/parser/parse_utilcmd.c
  *
@@ -25,7 +26,7 @@
  */
 
 #include "postgres.h"
-
+#include "ag_const.h"
 #include "access/amapi.h"
 #include "access/htup_details.h"
 #include "access/relation.h"
@@ -42,8 +43,11 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_type.h"
+#include "catalog/ag_graph_fn.h"
+#include "catalog/ag_label.h"
 #include "commands/comment.h"
 #include "commands/defrem.h"
+#include "commands/graphcmds.h"
 #include "commands/sequence.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
@@ -55,6 +59,7 @@
 #include "parser/parse_clause.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
+#include "parser/parse_cypher_expr.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
@@ -64,6 +69,7 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/graph.h"
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/rel.h"
@@ -147,6 +153,16 @@ static Const *transformPartitionBoundValue(ParseState *pstate, Node *con,
 										   Oid partCollation);
 
 
+static List *makeVertexElements(void);
+static List *makeEdgeElements(void);
+static List *makeEdgeIndex(RangeVar *label);
+static bool isLabelKind(RangeVar *label, char labkind);
+static void transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col);
+static CommentStmt *makeComment(ObjectType type, RangeVar *name, char *desc);
+static Node *prop_ref_mutator(Node *node);
+static ObjectType getLabelObjectType(char *labname, Oid graphid);
+static bool figure_prop_index_colname_walker(Node *node, char **colname);
+
 /*
  * transformCreateStmt -
  *	  parse analysis for CREATE TABLE
@@ -223,6 +239,10 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	if (stmt->relation->schemaname == NULL
 		&& stmt->relation->relpersistence != RELPERSISTENCE_TEMP)
 		stmt->relation->schemaname = get_namespace_name(namespaceid);
+
+	if (stmt->relation->schemaname != NULL &&
+		OidIsValid(get_graphname_oid(stmt->relation->schemaname)))
+		elog(ERROR, "cannot create table in graph schema");
 
 	/* Set up CreateStmtContext */
 	cxt.pstate = pstate;
@@ -2859,6 +2879,9 @@ transformRuleStmt(RuleStmt *stmt, const char *queryString,
 	 */
 	rel = table_openrv(stmt->relation, AccessExclusiveLock);
 
+	if (OidIsValid(get_relid_laboid(rel->rd_id)))
+		elog(ERROR, "cannot create rule on graph label");
+
 	if (rel->rd_rel->relkind == RELKIND_MATVIEW)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -3167,6 +3190,11 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	bool		skipValidation = true;
 	AlterTableCmd *newcmd;
 	RangeTblEntry *rte;
+
+	if (OidIsValid(get_relid_laboid(relid)) &&
+		!superuser_arg(GetUserId()) &&
+		stmt->relkind == OBJECT_TABLE)
+		elog(ERROR, "only superuser can ALTER TABLE on graph label");
 
 	/*
 	 * We must not scribble on the passed-in AlterTableStmt, so copy it. (This
@@ -4254,4 +4282,990 @@ transformPartitionBoundValue(ParseState *pstate, Node *val,
 		elog(ERROR, "could not evaluate partition bound expression");
 
 	return (Const *) value;
+}
+
+/*
+ * transformCreateGraphStmt - analyzes the CREATE GRAPH statement
+ *
+ * See transformCreateSchemaStmt
+ */
+List *
+transformCreateGraphStmt(CreateGraphStmt *stmt)
+{
+	CreateSeqStmt *labseq;
+	CreateLabelStmt	*vertex;
+	CreateLabelStmt	*edge;
+
+	labseq = makeNode(CreateSeqStmt);
+	labseq->sequence = makeRangeVar(stmt->graphname, AG_LABEL_SEQ, -1);
+	labseq->options =
+			list_make2(makeDefElem("maxvalue", (Node *)
+								   makeInteger(GRAPHID_LABID_MAX), -1),
+					   makeDefElem("cycle", (Node *) makeInteger(true), -1));
+	labseq->ownerId = InvalidOid;
+	labseq->if_not_exists = false;
+
+	vertex = makeNode(CreateLabelStmt);
+	vertex->labelKind = LABEL_VERTEX;
+	vertex->relation = makeRangeVar(stmt->graphname, AG_VERTEX, -1);
+	vertex->inhRelations = NIL;
+
+	edge = makeNode(CreateLabelStmt);
+	edge->labelKind = LABEL_EDGE;
+	edge->relation = makeRangeVar(stmt->graphname, AG_EDGE, -1);
+	edge->inhRelations = NIL;
+
+	return list_make3(labseq, vertex, edge);
+}
+
+/*
+ * transformCreateLabelStmt - parse analysis for CREATE VLABEL/ELABEL
+ *
+ * This function is based on transformCreateStmt().
+ * Graph Labels have default inheritance, primary key, and sequence.
+ * But they are not written in statements.
+ * Thus this adds nodes for label statement.
+ */
+List *
+transformCreateLabelStmt(CreateLabelStmt *labelStmt, const char *queryString)
+{
+	RangeVar   *label;
+	char	   *graphname;
+	ParseState *pstate;
+	ParseCallbackState pcbstate;
+	Oid			existing_relid;
+	CreateStmt *stmt;
+	List	   *indexlist;
+	CreateStmtContext cxt;
+	ListCell   *elements;
+	char		descbuf[256];
+	char	   *labdesc;
+	char	   *tabdesc;
+	char	   *qname;
+	CommentStmt *comment;
+	List	   *save_alist;
+	List	   *result;
+
+	label = copyObject(labelStmt->relation);
+	/* set graph schema name, if not specified */
+	if (label->schemaname == NULL)
+		label->schemaname = get_graph_path(true);
+	graphname = label->schemaname;
+
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
+	setup_parser_errposition_callback(&pcbstate, pstate,
+									  label->location);
+	RangeVarGetAndCheckCreationNamespace(label, NoLock, &existing_relid);
+	cancel_parser_errposition_callback(&pcbstate);
+
+	/*
+	 * If the label already exists and the user specified "IF NOT EXISTS",
+	 * bail out with a NOTICE.
+	 */
+	if (OidIsValid(existing_relid))
+	{
+		if (labelStmt->if_not_exists)
+		{
+			ereport(NOTICE,
+					(errcode(ERRCODE_DUPLICATE_TABLE),
+					 errmsg("label \"%s\" already exists, skipping",
+							label->relname)));
+			return NIL;
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_TABLE),
+					 errmsg("label \"%s\" already exists", label->relname)));
+		}
+	}
+
+	/*
+	 * create CreateStmt for label
+	 */
+
+	stmt = makeNode(CreateStmt);
+
+	stmt->relation = label;
+	stmt->options = copyObject(labelStmt->options);
+	stmt->oncommit = ONCOMMIT_NOOP;
+	stmt->tablespacename = labelStmt->tablespacename;
+	stmt->if_not_exists = labelStmt->if_not_exists;
+
+	/* set appropriate table elements and indexes */
+	if (labelStmt->labelKind == LABEL_VERTEX)
+	{
+		stmt->tableElts = makeVertexElements();
+
+		indexlist = NIL;
+	}
+	else if (labelStmt->labelKind == LABEL_EDGE)
+	{
+		stmt->tableElts = makeEdgeElements();
+
+		indexlist = makeEdgeIndex(stmt->relation);
+	}
+	else
+	{
+		elog(ERROR, "unknown label type: %d", labelStmt->labelKind);
+	}
+
+	if (strcmp(labelStmt->relation->relname, AG_VERTEX) != 0 &&
+		strcmp(labelStmt->relation->relname, AG_EDGE) != 0)
+	{
+		/* inherit base vertex/edge */
+		if (labelStmt->inhRelations == NIL)
+		{
+			char *name;
+
+			name = (labelStmt->labelKind == LABEL_VERTEX ? AG_VERTEX : AG_EDGE);
+			stmt->inhRelations = list_make1(makeRangeVar(graphname, name, -1));
+		}
+		/* user requested inherit option */
+		else
+		{
+			ListCell *inhRel;
+
+			stmt->inhRelations = copyObject(labelStmt->inhRelations);
+
+			foreach(inhRel, stmt->inhRelations)
+			{
+				RangeVar *parent = (RangeVar *) lfirst(inhRel);
+
+				/* force schema */
+				if (parent->schemaname == NULL)
+				{
+					parent->schemaname = graphname;
+				}
+				else if (strcmp(parent->schemaname, graphname) != 0)
+				{
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+						 errmsg("parent graph label \"%s\" must be in the same graph path \"%s\"",
+								parent->relname, graphname)));
+				}
+
+				if (labelStmt->labelKind == LABEL_VERTEX &&
+					!isLabelKind(parent, LABEL_KIND_VERTEX))
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+							 errmsg("parent graph label \"%s\" is not vertex label.",
+									parent->relname)));
+				}
+
+				if (labelStmt->labelKind == LABEL_EDGE &&
+					!isLabelKind(parent, LABEL_KIND_EDGE))
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+							 errmsg("parent graph label \"%s\" is not edge label.",
+									parent->relname)));
+				}
+			}
+		}
+	}
+	else
+	{
+		if (labelStmt->inhRelations != NIL)
+			ereport(WARNING,
+					(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+					 errmsg("graph label \"%s\" is base label, inherit option is discarded",
+							stmt->relation->relname)));
+
+		stmt->inhRelations = NIL;
+	}
+
+	/*
+	 * process CreateStmt
+	 */
+
+	cxt.pstate = pstate;
+	cxt.stmtType = (labelStmt->labelKind == LABEL_VERTEX) ? "CREATE VLABEL"
+														  : "CREATE ELABEL";
+	cxt.relation = stmt->relation;
+	cxt.rel = NULL;
+	cxt.inhRelations = stmt->inhRelations;
+	cxt.isforeign = false;
+	cxt.isalter = false;
+	///cxt.hasoids = false;
+	cxt.columns = NIL;
+	cxt.ckconstraints = NIL;
+	cxt.fkconstraints = NIL;
+	cxt.ixconstraints = NIL;
+	//cxt.inh_indexes = NIL;
+	cxt.blist = NIL;
+	cxt.alist = NIL;
+	cxt.pkey = NULL;
+	cxt.ispartitioned = stmt->partspec != NULL;
+	cxt.partbound = stmt->partbound;
+	cxt.ofType = (stmt->ofTypename != NULL);
+
+	foreach(elements, stmt->tableElts)
+	{
+		Node *element = lfirst(elements);
+
+		switch (nodeTag(element))
+		{
+			case T_ColumnDef:
+				transformLabelIdDefinition(&cxt, (ColumnDef *) element);
+				transformColumnDefinition(&cxt, (ColumnDef *) element);
+				break;
+			case T_Constraint:
+				/* fall-through */
+			case T_TableLikeClause:
+				/* fall-through */
+			default:
+				elog(ERROR, "graph base label definition has columns only, element node type: %d",
+					 (int) nodeTag(element));
+		}
+	}
+
+	/* make descriptions for label and table */
+	if (strcmp(stmt->relation->relname, AG_VERTEX) == 0)
+	{
+		snprintf(descbuf, sizeof(descbuf), "base vertex label of graph %s",
+				 graphname);
+		labdesc = pstrdup(descbuf);
+		comment = makeComment(OBJECT_VLABEL, stmt->relation, labdesc);
+		cxt.alist = lappend(cxt.alist, comment);
+	}
+	else if (strcmp(labelStmt->relation->relname, AG_EDGE) == 0)
+	{
+		snprintf(descbuf, sizeof(descbuf), "base edge label of graph %s",
+				 graphname);
+		labdesc = pstrdup(descbuf);
+		comment = makeComment(OBJECT_ELABEL, stmt->relation, labdesc);
+		cxt.alist = lappend(cxt.alist, comment);
+	}
+	qname = quote_qualified_identifier(graphname, stmt->relation->relname);
+	snprintf(descbuf, sizeof(descbuf), "base table for graph label %s", qname);
+	tabdesc = pstrdup(descbuf);
+	comment = makeComment(OBJECT_TABLE, stmt->relation, tabdesc);
+	cxt.alist = lappend(cxt.alist, comment);
+
+	/* save original alist for indexes and constraints */
+	save_alist = cxt.alist;
+	cxt.alist = NULL;
+
+	transformIndexConstraints(&cxt);
+	cxt.alist = list_concat(cxt.alist, indexlist);
+	transformFKConstraints(&cxt, true, false);
+
+	/*
+	 * if `disable_index` is true
+	 * then set DisableIndexStmt after CREATE INDEX statements
+	 */
+	if (labelStmt->disable_index)
+	{
+		DisableIndexStmt *disable_idx_stmt;
+
+		disable_idx_stmt = makeNode(DisableIndexStmt);
+		disable_idx_stmt->relation = stmt->relation;
+		cxt.alist = lappend(cxt.alist, disable_idx_stmt);
+	}
+
+	stmt->tableElts = cxt.columns;
+	stmt->constraints = cxt.ckconstraints;
+
+	result = lappend(cxt.blist, stmt);
+	result = list_concat(result, cxt.alist);
+	result = list_concat(result, save_alist);
+
+	return result;
+}
+
+/* make table elements for base `vertex` table */
+static List *
+makeVertexElements(void)
+{
+	Constraint *pk = makeNode(Constraint);
+	ColumnDef  *id = makeNode(ColumnDef);
+	Constraint *notnull = makeNode(Constraint);
+	Constraint *jsonb_empty_obj = makeNode(Constraint);
+	List	   *constrs;
+	ColumnDef  *prop_map = makeNode(ColumnDef);
+
+	pk->contype = CONSTR_PRIMARY;
+	pk->location = -1;
+
+	id->colname = AG_ELEM_LOCAL_ID;
+	id->typeName = makeTypeName("graphid");
+	id->is_local = true;
+	id->constraints = list_make1(pk);
+	id->location = -1;
+
+	notnull->contype = CONSTR_NOTNULL;
+	notnull->location = -1;
+
+	jsonb_empty_obj->contype = CONSTR_DEFAULT;
+	jsonb_empty_obj->raw_expr = (Node *)
+			makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL, -1);
+	jsonb_empty_obj->location = -1;
+
+	constrs = list_make2(notnull, jsonb_empty_obj);
+
+	prop_map->colname = AG_ELEM_PROP_MAP;
+	prop_map->typeName = makeTypeName("jsonb");
+	prop_map->is_local = true;
+	prop_map->constraints = constrs;
+	prop_map->location = -1;
+
+	return list_make2(id, prop_map);
+}
+
+/* make table elements for base `edge` table */
+static List *
+makeEdgeElements(void)
+{
+	Constraint *notnull = makeNode(Constraint);
+	List	   *constrs;
+	ColumnDef  *id = makeNode(ColumnDef);
+	ColumnDef  *start = makeNode(ColumnDef);
+	ColumnDef  *end = makeNode(ColumnDef);
+	Constraint *jsonb_empty_obj = makeNode(Constraint);
+	ColumnDef  *prop_map = makeNode(ColumnDef);
+
+	notnull->contype = CONSTR_NOTNULL;
+	notnull->location = -1;
+
+	constrs = list_make1(notnull);
+
+	id->colname = AG_ELEM_LOCAL_ID;
+	id->typeName = makeTypeName("graphid");
+	id->is_local = true;
+	id->constraints = copyObject(constrs);
+	id->location = -1;
+
+	start->colname = AG_START_ID;
+	start->typeName = makeTypeName("graphid");
+	start->is_local = true;
+	start->constraints = copyObject(constrs);
+	start->location = -1;
+
+	end->colname = AG_END_ID;
+	end->typeName = makeTypeName("graphid");
+	end->is_local = true;
+	end->constraints = copyObject(constrs);
+	end->location = -1;
+
+	jsonb_empty_obj->contype = CONSTR_DEFAULT;
+	jsonb_empty_obj->raw_expr = (Node *)
+			makeFuncCall(list_make1(makeString("jsonb_build_object")), NIL, -1);
+	jsonb_empty_obj->location = -1;
+
+	constrs = lappend(constrs, jsonb_empty_obj);
+
+	prop_map->colname = AG_ELEM_PROP_MAP;
+	prop_map->typeName = makeTypeName("jsonb");
+	prop_map->is_local = true;
+	prop_map->constraints = constrs;
+	prop_map->location = -1;
+
+	return list_make4(id, start, end, prop_map);
+}
+
+static List *
+makeEdgeIndex(RangeVar *label)
+{
+	char	   *labname;
+	Oid			graphid;
+	IndexElem  *id_col;
+	IndexElem  *start_col;
+	IndexElem  *end_col;
+	IndexStmt  *edge_id_idx;
+	IndexStmt  *start_idx;
+	IndexStmt  *end_idx;
+
+	labname = label->relname;
+	graphid = RangeVarGetCreationNamespace(label);
+
+	/* make index elements */
+
+	id_col = makeNode(IndexElem);
+	id_col->name = AG_ELEM_LOCAL_ID;
+
+	start_col = makeNode(IndexElem);
+	start_col->name = AG_START_ID;
+
+	end_col = makeNode(IndexElem);
+	end_col->name = AG_END_ID;
+
+	/* make indexes */
+
+	edge_id_idx = makeNode(IndexStmt);
+	edge_id_idx->idxname = ChooseRelationName(labname, AG_ELEM_LOCAL_ID,
+											  "idx",graphid, true);
+	edge_id_idx->relation = copyObject(label);
+	edge_id_idx->accessMethod = "brin";
+	edge_id_idx->indexParams = list_make1(id_col);
+
+	start_idx = makeNode(IndexStmt);
+	start_idx->idxname = ChooseRelationName(labname, AG_START_ID,
+											"idx",0, true);
+	start_idx->relation = copyObject(label);
+	start_idx->accessMethod = "btree";
+	start_idx->indexParams = list_make2(start_col, end_col);
+
+	end_idx = makeNode(IndexStmt);
+	end_idx->idxname = ChooseRelationName(labname,AG_END_ID,
+										  "idx",0, true);
+	end_idx->relation = copyObject(label);
+	end_idx->accessMethod = "btree";
+	end_idx->indexParams = list_make2(end_col, start_col);
+
+	return list_make3(edge_id_idx, start_idx, end_idx);
+}
+
+static bool
+isLabelKind(RangeVar *label, char labkind)
+{
+	Oid graphid = get_graphname_oid(label->schemaname);
+
+	return (getLabelKind(label->relname, graphid) == labkind);
+}
+
+char
+getLabelKind(char *labname, Oid graphid)
+{
+	HeapTuple	tuple;
+	Form_ag_label labtup;
+	char		labkind;
+
+	tuple = SearchSysCache2(LABELNAMEGRAPH, PointerGetDatum(labname),
+							ObjectIdGetDatum(graphid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "label \"%s\" does not exist", labname);
+
+	labtup = (Form_ag_label) GETSTRUCT(tuple);
+	labkind = labtup->labkind;
+	Assert(labkind == LABEL_KIND_VERTEX || labkind == LABEL_KIND_EDGE);
+
+	ReleaseSysCache(tuple);
+
+	return labkind;
+}
+
+/* See transformColumnDefinition() */
+static void
+transformLabelIdDefinition(CreateStmtContext *cxt, ColumnDef *col)
+{
+	Oid			snamespaceid;
+	char	   *snamespace;
+	char	   *sname;
+	CreateSeqStmt *seqstmt;
+	DefElem	   *maxval;
+	List	   *attnamelist;
+	DefElem	   *ownedby;
+	AlterSeqStmt *altseqstmt;
+	char	   *qname;
+	A_Const	   *relname;
+	FuncCall   *fclabid;
+	A_Const	   *seqname;
+	TypeCast   *castseq;
+	FuncCall   *fcnextval;
+	FuncCall   *fcgraphid;
+	Constraint *defid;
+
+	if (strcmp(col->colname, AG_ELEM_LOCAL_ID) != 0)
+		return;
+
+	snamespaceid = RangeVarGetCreationNamespace(cxt->relation);
+	RangeVarAdjustRelationPersistence(cxt->relation, snamespaceid);
+
+	snamespace = get_namespace_name(snamespaceid);
+	sname = ChooseRelationName(cxt->relation->relname, AG_ELEM_LOCAL_ID,
+							   "seq", snamespaceid, true);
+
+	/* CREATE SEQUENCE before CREATE TABLE */
+
+	seqstmt = makeNode(CreateSeqStmt);
+	seqstmt->sequence = makeRangeVar(snamespace, sname, -1);
+	seqstmt->options = NIL;
+	seqstmt->ownerId = InvalidOid;
+
+	cxt->blist = lappend(cxt->blist, seqstmt);
+
+	/* ALTER SEQUENCE OWNED BY after CREATE TABLE */
+
+#ifdef HAVE_LONG_INT_64
+    maxval = makeDefElem("maxvalue", (Node *) makeFloat(psprintf(INT64_FORMAT, GRAPHID_LOCID_MAX)), -1);
+#else
+    {
+        char buf[32];
+
+        snprintf(buf, sizeof(buf), UINT64_FORMAT, GRAPHID_LOCID_MAX);
+        maxval = makeDefElem("maxvalue", (Node *) makeFloat(pstrdup(buf)), -1);
+    }
+#endif
+	attnamelist = list_make3(makeString(snamespace),
+							 makeString(cxt->relation->relname),
+							 makeString(AG_ELEM_LOCAL_ID));
+	ownedby = makeDefElem("owned_by", (Node *) attnamelist, -1);
+	altseqstmt = makeNode(AlterSeqStmt);
+	altseqstmt->sequence = makeRangeVar(snamespace, sname, -1);
+	altseqstmt->options = list_make2(maxval, ownedby);
+
+	cxt->alist = lappend(cxt->alist, altseqstmt);
+
+	/*
+	 * add DEFAULT constraint to the column
+	 *
+	 * graphid(graph_labid(`relname`), nextval(`seqname`::regclass))
+	 */
+
+	qname = quote_qualified_identifier(snamespace, cxt->relation->relname);
+	relname = makeNode(A_Const);
+	relname->val.type = T_String;
+	relname->val.val.str = qname;
+	relname->location = -1;
+	fclabid = makeFuncCall(SystemFuncName("graph_labid"),
+						   list_make1(relname), -1);
+	qname = quote_qualified_identifier(snamespace, sname);
+	seqname = makeNode(A_Const);
+	seqname->val.type = T_String;
+	seqname->val.val.str = qname;
+	seqname->location = -1;
+	castseq = makeNode(TypeCast);
+	castseq->typeName = SystemTypeName("regclass");
+	castseq->arg = (Node *) seqname;
+	castseq->location = -1;
+	fcnextval = makeFuncCall(SystemFuncName("nextval"),
+							 list_make1(castseq), -1);
+	fcgraphid = makeFuncCall(SystemFuncName("graphid"),
+							 list_make2(fclabid, fcnextval), -1);
+	defid = makeNode(Constraint);
+	defid->contype = CONSTR_DEFAULT;
+	defid->location = -1;
+	defid->raw_expr = (Node *) fcgraphid;
+
+	col->constraints = lappend(col->constraints, defid);
+}
+
+static CommentStmt *
+makeComment(ObjectType type, RangeVar *name, char *desc)
+{
+	CommentStmt *c;
+
+	c = makeNode(CommentStmt);
+	c->objtype = type;
+	c->object = (Node *) list_make2(makeString(name->schemaname),
+									makeString(name->relname));
+	c->comment = pstrdup(desc);
+
+	return c;
+}
+
+AlterTableStmt *
+transformAlterLabelStmt(AlterTableStmt *stmt)
+{
+	AlterTableStmt *result;
+	List	   *newcmds = NIL;
+	ListCell   *lcmd;
+	Oid			laboid;
+
+	result = makeNode(AlterTableStmt);
+	result->relation = makeRangeVar(get_graph_path(false),
+									stmt->relation->relname, 0);
+	result->relkind = stmt->relkind;
+	result->missing_ok = stmt->missing_ok;
+
+	laboid = get_labname_laboid(stmt->relation->relname, get_graph_path_oid());
+	if (!OidIsValid(laboid))
+	{
+		if (stmt->missing_ok)
+			ereport(NOTICE,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("graph label \"%s\" does not exist, skipping",
+							stmt->relation->relname)));
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("graph label \"%s\" does not exist",
+							stmt->relation->relname)));
+
+		return NULL;
+	}
+
+	CheckLabelType(stmt->relkind, laboid, "ALTER");
+
+	foreach(lcmd, stmt->cmds)
+	{
+		AlterTableCmd *cmd = (AlterTableCmd *) lfirst(lcmd);
+
+		switch (cmd->subtype)
+		{
+			case AT_SetStorage:
+				{
+					/* storage option is meaningless for graph id
+					 * so forced to graph property */
+					cmd->name = AG_ELEM_PROP_MAP;
+
+					newcmds = lappend(newcmds, cmd);
+					break;
+				}
+			case AT_AddInherit:
+			case AT_DropInherit:
+				{
+					RangeVar *par = (RangeVar *) cmd->def;
+
+					if (strcmp(par->relname, AG_VERTEX) == 0
+						|| strcmp(par->relname, AG_EDGE) == 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+								 errmsg("cannot ALTER inheritance with base label")));
+
+					par->schemaname = get_graph_path(false);
+
+					newcmds = lappend(newcmds, cmd);
+					break;
+				}
+			default:
+				newcmds = lappend(newcmds, cmd);
+				break;
+		}
+	}
+	result->cmds = newcmds;
+
+	return result;
+}
+
+/*
+ * transformCreateConstraintStmt - parse analysis for CREATE CONSTRAINT
+ *
+ * This function transforms a CreateConstraintStmt to a AlterTableStmt,
+ * and returns the AlterTableStmt.
+ */
+Node *
+transformCreateConstraintStmt(ParseState *pstate,
+							  CreateConstraintStmt *constraintStmt)
+{
+	RangeVar   *label;
+	ObjectType	objtype;
+	CypherGenericExpr *cexpr;
+	Node	   *propexpr;
+	Constraint *constr;
+	AlterTableCmd *atcmd;
+	AlterTableStmt *atstmt;
+
+	label = constraintStmt->graphlabel;
+	label->schemaname = get_graph_path(false);
+
+	objtype = getLabelObjectType(label->relname, get_graph_path_oid());
+
+	cexpr = makeNode(CypherGenericExpr);
+	cexpr->expr = prop_ref_mutator(constraintStmt->expr);
+
+	propexpr = (Node *) cexpr;
+
+	constr = makeNode(Constraint);
+	switch (constraintStmt->contype)
+	{
+		case CONSTR_CHECK:
+			{
+				constr->contype = constraintStmt->contype;
+				constr->conname = constraintStmt->conname;
+				constr->raw_expr = propexpr;
+				constr->initially_valid = true;
+			}
+			break;
+		case CONSTR_UNIQUE:
+			{
+				IndexElem  *uniqueElem;
+				List	   *equalOp;
+				List	   *excludeExpr;
+
+				/*
+				 * We cannot create UNIQUE constraints on expressions in
+				 * PostgreSQL. Instead, we can support the same functionality
+				 * through EXCLUDE.
+				 */
+
+				uniqueElem = makeNode(IndexElem);
+				uniqueElem->expr = propexpr;
+				equalOp = list_make1(makeString("="));
+				excludeExpr = list_make2(uniqueElem, equalOp);
+
+				constr->contype = CONSTR_EXCLUSION;
+				constr->access_method = DEFAULT_INDEX_TYPE;
+				constr->exclusions = list_make1(excludeExpr);
+				constr->conname = constraintStmt->conname;
+				if (constr->conname == NULL)
+				{
+					Oid nsid;
+
+					nsid = LookupNamespaceNoError(label->schemaname);
+					constr->conname = ChooseRelationName(label->relname,
+														 "unique",
+														 "constraint", nsid, true);
+				}
+			}
+			break;
+		default:
+			elog(ERROR, "unrecognized constraint type: %d",
+				 (int) constraintStmt->contype);
+	}
+
+	atcmd = makeNode(AlterTableCmd);
+	atcmd->subtype = AT_AddConstraint;
+	atcmd->def = (Node *) constr;
+
+	atstmt = makeNode(AlterTableStmt);
+	atstmt->relation = label;
+	atstmt->cmds = list_make1(atcmd);
+	atstmt->relkind = objtype;
+
+	return (Node *) atstmt;
+}
+
+/*
+ * transformDropConstraintStmt - parse analysis for DROP CONSTRAINT
+ *
+ * This function transforms a DropConstraintStmt to a AlterTableStmt,
+ * and returns the AlterTableStmt.
+ */
+Node *
+transformDropConstraintStmt(ParseState *pstate,
+							DropConstraintStmt *constraintStmt)
+{
+	RangeVar   *label;
+	ObjectType	objtype;
+	AlterTableCmd *atcmd;
+	AlterTableStmt *atstmt;
+
+	label = constraintStmt->graphlabel;
+	label->schemaname = get_graph_path(false);
+
+	objtype = getLabelObjectType(label->relname, get_graph_path_oid());
+
+	atcmd = makeNode(AlterTableCmd);
+	atcmd->subtype = AT_DropConstraint;
+	atcmd->name = constraintStmt->conname;
+	atcmd->behavior = DROP_RESTRICT;
+
+	atstmt = makeNode(AlterTableStmt);
+	atstmt->relation = label;
+	atstmt->cmds = list_make1(atcmd);
+	atstmt->relkind = objtype;
+
+	return (Node *) atstmt;
+}
+
+/*
+ * Change ColumnRef in `node` to an expression which is an indirection on
+ * AG_ELEM_PROP_MAP
+ */
+static Node *
+prop_ref_mutator(Node *node)
+{
+	if (node == NULL)
+		return NULL;
+
+	if (IsA(node, ColumnRef))
+	{
+		ColumnRef  *cref;
+
+		cref = castNode(ColumnRef, copyObject(node));
+		cref->fields = lcons(makeString(AG_ELEM_PROP_MAP), cref->fields);
+
+		return (Node *) cref;
+	}
+
+	return raw_expression_tree_mutator(node, prop_ref_mutator, NULL);
+}
+
+static ObjectType
+getLabelObjectType(char *labname, Oid graphid)
+{
+	char labkind = getLabelKind(labname, graphid);
+
+	if (labkind == LABEL_KIND_VERTEX)
+	{
+		return OBJECT_VLABEL;
+	}
+	else
+	{
+		Assert(labkind == LABEL_KIND_EDGE);
+
+		return OBJECT_ELABEL;
+	}
+}
+
+/*
+ * transformIndexStmt - parse analysis for CREATE PROPERTY INDEX
+ *
+ * This function is based on transformIndexStmt().
+ *
+ * Return an IndexStmt node using information from an PropertyIndexStmt.
+ */
+IndexStmt *
+transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
+								 const char *queryString)
+{
+	IndexStmt  *idxstmt;
+	ParseState *pstate;
+	ListCell   *l;
+	Relation	rel;
+	RangeTblEntry *rte;
+
+	Assert(!stmt->transformed);
+
+	idxstmt = (IndexStmt *) copyObject(stmt);
+	NodeSetTag(idxstmt, T_IndexStmt);
+
+	/* Set up pstate */
+	pstate = make_parsestate(NULL);
+	pstate->p_sourcetext = queryString;
+
+	/*
+	 * Put the parent table into the rtable so that the expressions can refer
+	 * to its fields without qualification.  Caller is responsible for locking
+	 * relation, but we still need to open it.
+	 */
+	rel = relation_open(relid, NoLock);
+	rte = addRangeTableEntryForRelation(pstate, rel, AccessShareLock, NULL, false, true);
+
+	/* no to join list, yes to namespaces */
+	addRTEtoQuery(pstate, rte, false, true, true);
+
+	/* take care of the where clause */
+	if (idxstmt->whereClause)
+	{
+		idxstmt->whereClause = prop_ref_mutator(idxstmt->whereClause);
+
+		idxstmt->whereClause = transformCypherWhere(pstate,
+													idxstmt->whereClause,
+													EXPR_KIND_INDEX_PREDICATE);
+
+		/* we have to fix its collations too */
+		assign_expr_collations(pstate, idxstmt->whereClause);
+	}
+
+	/* take care of any index expressions */
+	foreach(l, idxstmt->indexParams)
+	{
+		IndexElem  *ielem = (IndexElem *) lfirst(l);
+
+		if (ielem->expr == NULL || ielem->name != NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_SYNTAX_ERROR),
+					 errmsg("property index must have expressions")));
+
+		if (ielem->indexcolname == NULL)
+		{
+			char	   *colname;
+
+			/*
+			 * just fill indexcolname with a properly chosen name at here and
+			 * let ChooseIndexName() build the name of the index later
+			 */
+			if (figure_prop_index_colname_walker(ielem->expr, &colname))
+				ielem->indexcolname = colname;
+			else
+				ielem->indexcolname = FigureIndexColname(ielem->expr);
+		}
+
+		ielem->expr = prop_ref_mutator(ielem->expr);
+
+		/* Now do parse transformation of the expression */
+		ielem->expr = transformCypherExpr(pstate, ielem->expr,
+										  EXPR_KIND_INDEX_EXPRESSION);
+
+		/* We have to fix its collations too */
+		assign_expr_collations(pstate, ielem->expr);
+
+		/*
+		 * transformExpr() should have already rejected subqueries,
+		 * aggregates, and window functions, based on the EXPR_KIND_ for
+		 * an index expression.
+		 *
+		 * Also reject expressions returning sets; this is for consistency
+		 * with what transformWhereClause() checks for the predicate.
+		 * DefineIndex() will make more checks.
+		 */
+		if (expression_returns_set(ielem->expr))
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("property index expression cannot return a set")));
+	}
+
+	/*
+	 * Check that only the base rel is mentioned.  (This should be dead code
+	 * now that add_missing_from is history.)
+	 */
+	if (list_length(pstate->p_rtable) != 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
+				 errmsg("index expressions and predicates can refer only to the table being indexed")));
+
+	free_parsestate(pstate);
+
+	/* Close relation */
+	heap_close(rel, NoLock);
+
+	/* Mark statement as successfully transformed */
+	idxstmt->transformed = true;
+
+	return idxstmt;
+}
+
+/*
+ * Just return the last valid name in the fields of ColumnRef or
+ * in the indirection of A_Indirection.
+ * It will be the last path element of the indirection on properties.
+ */
+static bool
+figure_prop_index_colname_walker(Node *node, char **colname)
+{
+	char	   *fname = NULL;
+
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, A_Indirection))
+	{
+		A_Indirection *indir = (A_Indirection *) node;
+		ListCell   *li;
+
+		foreach(li, indir->indirection)
+		{
+			Node	   *i = lfirst(li);
+
+			if (IsA(i, String))
+			{
+				fname = strVal(i);
+			}
+			else
+			{
+				A_Indices  *ind = (A_Indices *) i;
+
+				Assert(IsA(i, A_Indices));
+
+				if (!ind->is_slice && IsA(ind->uidx, A_Const))
+					fname = strVal(&((A_Const *) ind->uidx)->val);
+			}
+		}
+		if (fname != NULL)
+		{
+			*colname = fname;
+			return true;
+		}
+
+		return figure_prop_index_colname_walker(indir->arg, colname);
+	}
+
+	if (IsA(node, ColumnRef))
+	{
+		fname = FigureIndexColname(node);
+		if (fname == NULL)
+			return false;
+
+		*colname = fname;
+		return true;
+	}
+
+	return raw_expression_tree_walker(node, figure_prop_index_colname_walker,
+									  colname);
 }

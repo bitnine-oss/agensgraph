@@ -50,6 +50,7 @@
 #include "access/table.h"
 #include "access/tableam.h"
 #include "access/transam.h"
+#include "catalog/ag_label.h"
 #include "executor/executor.h"
 #include "executor/execPartition.h"
 #include "jit/jit.h"
@@ -61,6 +62,7 @@
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
+#include "utils/syscache.h"
 #include "utils/typcache.h"
 
 
@@ -1277,4 +1279,32 @@ ExecGetAllUpdatedCols(ResultRelInfo *relinfo, EState *estate)
 {
 	return bms_union(ExecGetUpdatedCols(relinfo, estate),
 					 ExecGetExtraUpdatedCols(relinfo, estate));
+}
+
+/* set up to process the scan label */
+void
+InitScanLabelInfo(ScanState *node)
+{
+	Oid			relid;
+	HeapTuple	labtup;
+
+	AssertArg(node != NULL);
+
+	if (node->ss_currentRelation == NULL)
+		return;
+
+	relid = node->ss_currentRelation->rd_id;
+	labtup = SearchSysCache1(LABELRELID, ObjectIdGetDatum(relid));
+	if (HeapTupleIsValid(labtup))
+	{
+		Form_ag_label label = (Form_ag_label) GETSTRUCT(labtup);
+
+		if (label->labkind == LABEL_KIND_VERTEX)
+		{
+			node->ss_isLabel = true;
+			node->ss_labid = (uint16) label->labid;
+		}
+
+		ReleaseSysCache(labtup);
+	}
 }

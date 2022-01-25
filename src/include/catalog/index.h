@@ -196,4 +196,6 @@ itemptr_decode(ItemPointer itemptr, int64 encoded)
 	ItemPointerSet(itemptr, block, offset);
 }
 
+extern bool DisableIndexLabel(Oid relid);
+
 #endif							/* INDEX_H */

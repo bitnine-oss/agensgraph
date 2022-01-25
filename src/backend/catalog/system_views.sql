@@ -1048,6 +1048,32 @@ CREATE VIEW pg_user_mappings AS
         JOIN pg_foreign_server S ON (U.umserver = S.oid)
         LEFT JOIN pg_authid A ON (A.oid = U.umuser);
 
+CREATE VIEW ag_property_indexes AS
+    SELECT
+        N.nspname AS graphname,
+        C.relname AS labelname,
+        I.relname AS indexname,
+        T.spcname AS tablespace,
+        X.indisunique AS unique,
+        ag_get_propindexdef(I.oid) AS indexdef,
+        pg_get_userbyid(c.relowner) AS owner,
+        pg_size_pretty(pg_table_size(c.oid)) AS size,
+        obj_description(i.oid, 'pg_class') as description
+    FROM pg_index X JOIN pg_class C ON (C.oid = X.indrelid)
+        JOIN ag_label L ON (X.indrelid = L.relid)
+        JOIN pg_class I ON (I.oid = X.indexrelid)
+        LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
+        LEFT JOIN pg_tablespace T ON (T.oid = I.reltablespace)
+    WHERE C.relkind = 'r' AND I.relkind = 'i' AND
+        X.indisexclusion = false AND X.indexprs IS NOT NULL;
+
+CREATE VIEW ag_graphmeta_view AS
+	SELECT (SELECT graphname FROM ag_graph WHERE oid = graph),
+       (SELECT labname FROM ag_label WHERE start = labid AND graph = graphid) AS start,
+       (SELECT labname FROM ag_label WHERE edge = labid AND graph = graphid) AS edge,
+       (SELECT labname FROM ag_label WHERE "end" = labid AND graph = graphid) AS end,
+       edgecount FROM ag_graphmeta;
+
 REVOKE ALL on pg_user_mapping FROM public;
 
 CREATE VIEW pg_replication_origin_status AS

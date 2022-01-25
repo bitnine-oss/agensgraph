@@ -246,7 +246,8 @@ extern RecursiveUnionPath *create_recursiveunion_path(PlannerInfo *root,
 													  PathTarget *target,
 													  List *distinctList,
 													  int wtParam,
-													  double numGroups);
+													  double numGroups,
+													  int maxDepth);
 extern LockRowsPath *create_lockrows_path(PlannerInfo *root, RelOptInfo *rel,
 										  Path *subpath, List *rowMarks, int epqParam);
 extern ModifyTablePath *create_modifytable_path(PlannerInfo *root,
@@ -263,6 +264,13 @@ extern LimitPath *create_limit_path(PlannerInfo *root, RelOptInfo *rel,
 									Path *subpath,
 									Node *limitOffset, Node *limitCount,
 									int64 offset_est, int64 count_est);
+extern EagerPath *create_eager_path(RelOptInfo *rel, GraphWriteOp operation,
+				  					Path *subpath);
+extern ModifyGraphPath *create_modifygraph_path(PlannerInfo *root,
+												RelOptInfo *rel, GraphWriteOp operation,
+												bool last, List *targets, Path *subpath,
+												uint32 nr_modify, bool detach, bool eager,
+												List *pattern, List *exprs, List *sets);
 extern void adjust_limit_rows_costs(double *rows,
 									Cost *startup_cost, Cost *total_cost,
 									int64 offset_est, int64 count_est);
@@ -272,6 +280,23 @@ extern Path *reparameterize_path(PlannerInfo *root, Path *path,
 								 double loop_count);
 extern Path *reparameterize_path_by_child(PlannerInfo *root, Path *path,
 										  RelOptInfo *child_rel);
+extern ShortestpathPath *create_shortestpath_path(PlannerInfo *root,
+												  RelOptInfo *joinrel,
+												  JoinType jointype,
+												  JoinCostWorkspace *workspace,
+												  JoinPathExtraData *extra,
+												  Path *outer_path,
+												  Path *inner_path,
+												  List *restrict_clauses,
+												  List *pathkeys,
+												  Relids required_outer);
+extern DijkstraPath *create_dijkstra_path(PlannerInfo *root, RelOptInfo *rel,
+										  Path *subpath,
+										  PathTarget *path_target,
+										  int weight, bool weight_out,
+										  Node *end_id, Node *edge_id,
+										  Node *source, Node *target,
+										  Node *limit);
 
 /*
  * prototypes for relnode.c

@@ -47,6 +47,7 @@
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
+#include "commands/graphcmds.h"
 #include "commands/policy.h"
 #include "commands/proclang.h"
 #include "commands/publicationcmds.h"
@@ -344,16 +345,33 @@ ExecRenameStmt(RenameStmt *stmt)
 			return RenameRole(stmt->subname, stmt->newname);
 
 		case OBJECT_SCHEMA:
-			return RenameSchema(stmt->subname, stmt->newname);
+			{
+				if (OidIsValid(get_graphname_oid(stmt->subname)))
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+							 errmsg("cannot rename schema \"%s\"",
+									stmt->subname),
+							 errhint("Use RENAME GRAPH instead")));
+
+				return RenameSchema(stmt->subname, stmt->newname);
+			}
 
 		case OBJECT_TABLESPACE:
 			return RenameTableSpace(stmt->subname, stmt->newname);
 
 		case OBJECT_TABLE:
+			if (RangeVarIsLabel(stmt->relation))
+					ereport(ERROR,
+						(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+						 errmsg("cannot rename table \"%s\"",
+								stmt->relation->relname),
+						 errhint("Use rename label instead")));
+			/* fall through */
 		case OBJECT_SEQUENCE:
 		case OBJECT_VIEW:
 		case OBJECT_MATVIEW:
 		case OBJECT_INDEX:
+		case OBJECT_PROPERTY_INDEX:
 		case OBJECT_FOREIGN_TABLE:
 			return RenameRelation(stmt);
 
@@ -413,6 +431,12 @@ ExecRenameStmt(RenameStmt *stmt)
 
 				return address;
 			}
+
+		case OBJECT_GRAPH:
+			return RenameGraph(stmt->subname, stmt->newname);
+		case OBJECT_VLABEL:
+		case OBJECT_ELABEL:
+			return RenameLabel(stmt);
 
 		default:
 			elog(ERROR, "unrecognized rename stmt type: %d",
@@ -654,6 +678,8 @@ AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,
 		case OCLASS_PUBLICATION_REL:
 		case OCLASS_SUBSCRIPTION:
 		case OCLASS_TRANSFORM:
+		case OCLASS_GRAPH:
+		case OCLASS_LABEL:
 			/* ignore object types that don't have schema-qualified names */
 			break;
 
@@ -831,7 +857,17 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 			return AlterDatabaseOwner(strVal((Value *) stmt->object), newowner);
 
 		case OBJECT_SCHEMA:
-			return AlterSchemaOwner(strVal((Value *) stmt->object), newowner);
+			{
+				char *name = strVal((Value *) stmt->object);
+
+				if (OidIsValid(get_graphname_oid(name)))
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_SCHEMA_NAME),
+							 errmsg("cannot alter schema \"%s\"", name),
+							 errhint("Use ALTER GRAPH instead")));
+
+				return AlterSchemaOwner(name, newowner);
+			}
 
 		case OBJECT_TYPE:
 		case OBJECT_DOMAIN:		/* same as TYPE */
@@ -904,6 +940,18 @@ ExecAlterOwnerStmt(AlterOwnerStmt *stmt)
 				return address;
 			}
 			break;
+
+		case OBJECT_GRAPH:
+			{
+				char *name = strVal((Value *) stmt->object);
+
+				if (!OidIsValid(get_graphname_oid(name)))
+					ereport(ERROR,
+							(errcode(ERRCODE_UNDEFINED_SCHEMA),
+							 errmsg("graph \"%s\" does not exist", name)));
+
+				return AlterSchemaOwner(name, newowner);
+			}
 
 		default:
 			elog(ERROR, "unrecognized AlterOwnerStmt type: %d",

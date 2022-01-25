@@ -166,7 +166,7 @@ main(int argc, char *argv[])
 static void
 help(const char *progname)
 {
-	printf(_("%s removes a PostgreSQL role.\n\n"), progname);
+	printf(_("%s removes a AgensGraph role.\n\n"), progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]... [ROLENAME]\n"), progname);
 	printf(_("\nOptions:\n"));
@@ -182,5 +182,4 @@ help(const char *progname)
 	printf(_("  -U, --username=USERNAME   user name to connect as (not the one to drop)\n"));
 	printf(_("  -w, --no-password         never prompt for password\n"));
 	printf(_("  -W, --password            force password prompt\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
 }

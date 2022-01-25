@@ -67,4 +67,35 @@ CATALOG(pg_amproc,2603,AccessMethodProcedureRelationId)
  */
 typedef FormData_pg_amproc *Form_pg_amproc;
 
+/*
+ * graphid_ops
+ */
+/* BTree */
+//Ibrar DATA(insert ( 7093 7002 7002  1 7094 ));
+/* Hash */
+//DATA(insert ( 7096 7002 7002  1 7097 ));
+/* GIN (as BTree) */
+//DATA(insert ( 7098 7002 7002  1 7094 ));
+//DATA(insert ( 7098 7002 7002  2 7100 ));
+//DATA(insert ( 7098 7002 7002  3 7101 ));
+//DATA(insert ( 7098 7002 7002  4 7102 ));
+//DATA(insert ( 7098 7002 7002  5 7103 ));
+/* BRIN (minmax) */
+//DATA(insert ( 7105 7002 7002  1 3383 ));
+//DATA(insert ( 7105 7002 7002  2 3384 ));
+//DATA(insert ( 7105 7002 7002  3 3385 ));
+//DATA(insert ( 7105 7002 7002  4 3386 ));
+
+/*
+ * graphid_ops
+ */
+/* Hash */
+//DATA(insert ( 7106 7012 7012  1 7107 ));
+
+/*
+ * rowid_ops
+ */
+/* BTree */
+//DATA(insert ( 7167 7062 7062  1 7168 ));
+
 #endif							/* PG_AMPROC_H */

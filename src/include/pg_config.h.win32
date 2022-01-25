@@ -678,6 +678,13 @@
 /* The size of `bool', as computed by sizeof. */
 #define SIZEOF_BOOL 1
 
+/* AgensGraph version as a string */
+#define AG_VERSION "2.1.3"
+#define AG_COMP_VERSION "2.1"
+
+/* AgensGraph Git revision as a string */
+#define AG_GIT_REVISION "not-available"
+
 /* The size of `long', as computed by sizeof. */
 #define SIZEOF_LONG 4
 

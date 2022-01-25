@@ -20,6 +20,8 @@
 extern SeqScanState *ExecInitSeqScan(SeqScan *node, EState *estate, int eflags);
 extern void ExecEndSeqScan(SeqScanState *node);
 extern void ExecReScanSeqScan(SeqScanState *node);
+extern void ExecNextSeqScanContext(SeqScanState *node);
+extern void ExecPrevSeqScanContext(SeqScanState *node);
 
 /* parallel scan support */
 extern void ExecSeqScanEstimate(SeqScanState *node, ParallelContext *pcxt);

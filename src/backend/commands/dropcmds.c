@@ -15,6 +15,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "catalog/ag_graph_fn.h"
 #include "access/table.h"
 #include "access/xact.h"
 #include "catalog/dependency.h"
@@ -23,10 +24,13 @@
 #include "catalog/pg_class.h"
 #include "catalog/pg_proc.h"
 #include "commands/defrem.h"
+#include "commands/graphcmds.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
+#include "pgstat.h"
 #include "utils/builtins.h"
+#include "utils/rel.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 
@@ -99,6 +103,56 @@ RemoveObjects(DropStmt *stmt)
 						 errmsg("\"%s\" is an aggregate function",
 								NameListToString(castNode(ObjectWithArgs, object)->objname)),
 						 errhint("Use DROP AGGREGATE to drop aggregate functions.")));
+		}
+
+		if (stmt->removeType == OBJECT_VLABEL)
+		{
+			CheckLabelType(OBJECT_VLABEL, address.objectId, "DROP");
+
+			if (stmt->behavior == DROP_CASCADE)
+			{
+				RangeVar	*lab = makeRangeVarFromNameList(castNode(List, object));
+
+				deleteRelatedEdges(lab->relname);
+
+				agstat_drop_vlabel(lab->relname);
+			}
+			else
+			{
+				Assert(stmt->behavior == DROP_RESTRICT);
+
+				if (!isEmptyLabel(NameListToString(castNode(List, object))))
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("cannot drop %s because it is not empty.",
+									NameListToString(castNode(List, object)))));
+				}
+			}
+		}
+		else if (stmt->removeType == OBJECT_ELABEL)
+		{
+			CheckLabelType(OBJECT_ELABEL, address.objectId, "DROP");
+
+			if (stmt->behavior == DROP_RESTRICT &&
+				!isEmptyLabel(NameListToString(castNode(List, object))))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot drop %s because it is not empty.",
+								NameListToString(castNode(List, object)))));
+			}
+			else
+			{
+				RangeVar	*lab = makeRangeVarFromNameList(castNode(List, object));
+
+				agstat_drop_elabel(lab->relname);
+			}
+		}
+		else if (stmt->removeType == OBJECT_GRAPH)
+		{
+			if (stmt->behavior == DROP_CASCADE)
+				agstat_drop_graph(strVal((Value *) object));
 		}
 
 		/* Check permissions. */
@@ -479,6 +533,18 @@ does_not_exist_skipping(ObjectType objtype, Node *object)
 		case OBJECT_PUBLICATION:
 			msg = gettext_noop("publication \"%s\" does not exist, skipping");
 			name = strVal((Value *) object);
+			break;
+		case OBJECT_GRAPH:
+			msg = gettext_noop("graph \"%s\" does not exist, skipping");
+			name = strVal((Value *) object);
+			break;
+		case OBJECT_VLABEL:
+			msg = gettext_noop("vlabel \"%s\" does not exist, skipping");
+			name = NameListToString(castNode(List, object));
+			break;
+		case OBJECT_ELABEL:
+			msg = gettext_noop("elabel \"%s\" does not exist, skipping");
+			name = NameListToString(castNode(List, object));
 			break;
 		default:
 			elog(ERROR, "unrecognized object type: %d", (int) objtype);

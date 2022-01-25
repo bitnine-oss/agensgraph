@@ -21,6 +21,7 @@
 #include "catalog/pg_type.h"
 #include "executor/executor.h"
 #include "miscadmin.h"
+#include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "optimizer/clauses.h"
@@ -2594,6 +2595,7 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 			break;
 
 		case T_NestLoop:
+		case T_NestLoopVLE:
 			{
 				ListCell   *l;
 
@@ -2725,7 +2727,73 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 		case T_Unique:
 		case T_SetOp:
 		case T_Group:
+		case T_Hash2Side:
 			/* no node-type-specific fields need fixing */
+			break;
+
+		case T_ModifyGraph:
+			{
+				ModifyGraph *mgplan = (ModifyGraph *) plan;
+				ListCell   *lc;
+
+				foreach(lc, mgplan->pattern)
+				{
+					GraphPath  *gpath = lfirst(lc);
+					ListCell   *le;
+
+					foreach(le, gpath->chain)
+					{
+						Node	   *elem = lfirst(le);
+						Node	   *expr;
+
+						if (IsA(elem, GraphVertex))
+						{
+							expr = ((GraphVertex *) elem)->expr;
+						}
+						else
+						{
+							Assert(IsA(elem, GraphEdge));
+							expr = ((GraphEdge *) elem)->expr;
+						}
+
+						finalize_primnode(expr, &context);
+					}
+				}
+
+				foreach(lc, mgplan->exprs)
+				{
+					GraphDelElem *gde = lfirst(lc);
+
+					finalize_primnode(gde->elem, &context);
+				}
+
+				foreach(lc, mgplan->sets)
+				{
+					GraphSetProp *gsp = lfirst(lc);
+
+					finalize_primnode(gsp->elem, &context);
+					finalize_primnode(gsp->expr, &context);
+				}
+
+				context.paramids =
+						bms_add_members(context.paramids,
+										finalize_plan(root,
+													  mgplan->subplan,
+													  gather_param,
+													  valid_params,
+													  scan_params));
+			}
+			break;
+
+		case T_Shortestpath:
+			finalize_primnode(((Shortestpath *) plan)->source, &context);
+			finalize_primnode(((Shortestpath *) plan)->target, &context);
+			break;
+
+		case T_Dijkstra:
+			finalize_primnode(((Dijkstra *) plan)->source, &context);
+			finalize_primnode(((Dijkstra *) plan)->target, &context);
+			finalize_primnode(((Dijkstra *) plan)->limit, &context);
 			break;
 
 		default:

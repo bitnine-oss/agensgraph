@@ -100,6 +100,9 @@ static char *ExecBuildSlotValueDescription(Oid reloid,
 										   int maxfieldlen);
 static void EvalPlanQualStart(EPQState *epqstate, Plan *planTree);
 
+/* global variable - see postgres.c */
+extern GraphWriteStats graphWriteStats;
+
 /* end of local decls */
 
 
@@ -221,6 +224,7 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 		case CMD_INSERT:
 		case CMD_DELETE:
 		case CMD_UPDATE:
+		case CMD_GRAPHWRITE:
 			estate->es_output_cid = GetCurrentCommandId(true);
 			break;
 
@@ -228,6 +232,20 @@ standard_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			elog(ERROR, "unrecognized operation code: %d",
 				 (int) queryDesc->operation);
 			break;
+	}
+
+ 	/*
+	 * Initialize the global variable graphWriteStats iff this is a Cypher
+	 * graph write (insert, delete, or update property). Currently only
+	 * the above query types will reset these values.
+	 */
+	if (queryDesc->operation == CMD_GRAPHWRITE)
+	{
+		graphWriteStats.insertVertex = 0;
+		graphWriteStats.insertEdge = 0;
+		graphWriteStats.deleteVertex = 0;
+		graphWriteStats.deleteEdge = 0;
+		graphWriteStats.updateProperty = 0;
 	}
 
 	/*

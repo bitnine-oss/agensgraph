@@ -131,6 +131,7 @@ typedef struct Query
 	bool		hasModifyingCTE;	/* has INSERT/UPDATE/DELETE in WITH */
 	bool		hasForUpdate;	/* FOR [KEY] UPDATE/SHARE was specified */
 	bool		hasRowSecurity; /* rewriter has applied some RLS policy */
+	bool		hasGraphwriteClause; /* has modify graph type in whole statement */
 
 	List	   *cteList;		/* WITH list (of CommonTableExpr's) */
 
@@ -179,6 +180,36 @@ typedef struct Query
 	 */
 	int			stmt_location;	/* start location, or -1 if unknown */
 	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
+
+	int			dijkstraWeight;
+	bool		dijkstraWeightOut;
+	Node	   *dijkstraEndId;
+	Node	   *dijkstraEdgeId;
+	Node	   *dijkstraLimit;
+	Node	   *shortestpathEndIdLeft;
+	Node	   *shortestpathEndIdRight;
+	Node	   *shortestpathTableOidLeft;
+	Node	   *shortestpathTableOidRight;
+	Node	   *shortestpathCtidLeft;
+	Node	   *shortestpathCtidRight;
+	Node	   *shortestpathSource;
+	Node	   *shortestpathTarget;
+	long        shortestpathMinhops;
+	long        shortestpathMaxhops;
+	long        shortestpathLimit;
+
+	struct {
+		GraphWriteOp writeOp;
+		bool		last;		/* is this for the last clause? */
+		List	   *targets;	/* relation Oid's of target labels */
+		uint32		nr_modify;	/* number of clauses that modifies graph
+								   before this */
+		bool		detach;		/* DETACH DELETE */
+		bool		eager;		/* Should it work with eager? */
+		List	   *pattern;	/* graph pattern (list of paths) for CREATE */
+		List	   *exprs;		/* expression list for DELETE */
+		List	   *sets;		/* expression list for SET/REMOVE */
+	}			graph;
 } Query;
 
 
@@ -1013,6 +1044,7 @@ typedef struct RangeTblEntry
 	 */
 	Query	   *subquery;		/* the sub-query */
 	bool		security_barrier;	/* is from security_barrier view? */
+	bool		isVLE;
 
 	/*
 	 * Fields valid for a join RTE (else NULL/zero):
@@ -1443,6 +1475,8 @@ typedef struct CommonTableExpr
 	List	   *ctecoltypes;	/* OID list of output column type OIDs */
 	List	   *ctecoltypmods;	/* integer list of output column typmods */
 	List	   *ctecolcollations;	/* OID list of column collation OIDs */
+	int			maxdepth;		/* level of recursion */
+	bool		ctestop;
 } CommonTableExpr;
 
 /* Convenience macro to get the output tlist of a CTE's query */
@@ -1648,6 +1682,8 @@ typedef struct SetOperationStmt
 	List	   *colCollations;	/* OID list of output column collation OIDs */
 	List	   *groupClauses;	/* a list of SortGroupClause's */
 	/* groupClauses is NIL if UNION ALL, but must be set otherwise */
+	int			maxDepth;		/* level of recursion */
+	bool		shortestpath;
 } SetOperationStmt;
 
 
@@ -1687,13 +1723,16 @@ typedef enum ObjectType
 	OBJECT_DEFACL,
 	OBJECT_DOMAIN,
 	OBJECT_DOMCONSTRAINT,
+	OBJECT_ELABEL,
 	OBJECT_EVENT_TRIGGER,
 	OBJECT_EXTENSION,
 	OBJECT_FDW,
 	OBJECT_FOREIGN_SERVER,
 	OBJECT_FOREIGN_TABLE,
 	OBJECT_FUNCTION,
+	OBJECT_GRAPH,
 	OBJECT_INDEX,
+    OBJECT_LABEL,
 	OBJECT_LANGUAGE,
 	OBJECT_LARGEOBJECT,
 	OBJECT_MATVIEW,
@@ -1701,6 +1740,7 @@ typedef enum ObjectType
 	OBJECT_OPERATOR,
 	OBJECT_OPFAMILY,
 	OBJECT_POLICY,
+    OBJECT_PROPERTY_INDEX,
 	OBJECT_PROCEDURE,
 	OBJECT_PUBLICATION,
 	OBJECT_PUBLICATION_REL,
@@ -1722,7 +1762,8 @@ typedef enum ObjectType
 	OBJECT_TSTEMPLATE,
 	OBJECT_TYPE,
 	OBJECT_USER_MAPPING,
-	OBJECT_VIEW
+	OBJECT_VIEW,
+	OBJECT_VLABEL
 } ObjectType;
 
 /* ----------------------
@@ -1830,7 +1871,9 @@ typedef enum AlterTableType
 	AT_AddIdentity,				/* ADD IDENTITY */
 	AT_SetIdentity,				/* SET identity column options */
 	AT_DropIdentity,			/* DROP IDENTITY */
-	AT_CookedColumnDefault		/* add a pre-cooked column default */
+    AT_DisableIndex,             /* DISABLE INDEX for graph labels */
+
+    AT_CookedColumnDefault		/* add a pre-cooked column default */
 } AlterTableType;
 
 typedef struct ReplicaIdentityStmt
@@ -3315,7 +3358,9 @@ typedef enum ReindexObjectType
 	REINDEX_OBJECT_TABLE,		/* table or materialized view */
 	REINDEX_OBJECT_SCHEMA,		/* schema */
 	REINDEX_OBJECT_SYSTEM,		/* system catalogs */
-	REINDEX_OBJECT_DATABASE		/* database */
+	REINDEX_OBJECT_DATABASE,		/* database */
+	REINDEX_OBJECT_VLABEL,		/* vertex label of graph */
+	REINDEX_OBJECT_ELABEL		/* edge label of graph */
 } ReindexObjectType;
 
 typedef struct ReindexStmt
@@ -3526,5 +3571,293 @@ typedef struct DropSubscriptionStmt
 	bool		missing_ok;		/* Skip error if missing? */
 	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
 } DropSubscriptionStmt;
+
+
+/****************************************************************************
+ * Agens Graph related node structures
+ ****************************************************************************/
+
+/* CREATE GRAPH ... */
+typedef struct CreateGraphStmt
+{
+	NodeTag		type;
+	char	   *graphname;		/* the name of the graph to create */
+	RoleSpec   *authrole;		/* the owner of the created graph */
+	bool		if_not_exists;	/* just do nothing if graph already exists? */
+} CreateGraphStmt;
+
+typedef enum LabelKind
+{
+	LABEL_VERTEX,
+	LABEL_EDGE
+} LabelKind;
+
+/* CREATE VLABEL/ELABEL ... */
+typedef struct CreateLabelStmt
+{
+	NodeTag		type;
+	LabelKind	labelKind;		/* LABEL_VERTEX or LABEL_EDGE */
+	RangeVar   *relation;		/* relation to create */
+	List	   *inhRelations;	/* relations to inherit from */
+	List	   *options;		/* options from WITH clause */
+	char	   *tablespacename; /* table space to use, or NULL */
+	bool		if_not_exists;	/* just do nothing if it already exists? */
+	bool		disable_index;	/* create invalid and not ready index if true */
+} CreateLabelStmt;
+
+/* ALTER VLABEL/ELABEL ... */
+typedef struct AlterTableStmt AlterLabelStmt;
+
+/* CREATE CONSTRAINT ON ... */
+typedef struct CreateConstraintStmt
+{
+	NodeTag		type;
+	ConstrType	contype;		/* types of constraints */
+	RangeVar   *graphlabel;		/* label to constrain */
+	char	   *conname;		/* constraint name */
+	Node	   *expr;			/* JSON object or function expression */
+
+} CreateConstraintStmt;
+
+typedef struct DropConstraintStmt
+{
+	NodeTag		type;
+	RangeVar   *graphlabel;		/* label to constrain */
+	char	   *conname;
+} DropConstraintStmt;
+
+typedef struct IndexStmt CreatePropertyIndexStmt;
+
+typedef struct DropPropertyIndexStmt
+{
+	NodeTag		 type;
+	char	    *idxname;
+	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
+	bool		 missing_ok;	/* skip error if object is missing? */
+} DropPropertyIndexStmt;
+
+typedef struct DisableIndexStmt
+{
+	NodeTag		type;
+	RangeVar   *relation;		/* label to disable indices */
+} DisableIndexStmt;
+
+/****************************************************************************
+ * Cypher related node structures
+ ****************************************************************************/
+
+typedef struct CypherStmt
+{
+	NodeTag		type;
+	Node	   *last;		/* last Cypher clause in the statement */
+} CypherStmt;
+
+typedef struct CypherListComp
+{
+	NodeTag		type;
+	Node	   *list;
+	char	   *varname;
+	Node	   *cond;
+	Node	   *elem;
+	int			location;
+} CypherListComp;
+
+/*
+ * A simple wrapper for Cypher expressions which allows transformExpr() to
+ * handle Cypher expressions.
+ */
+typedef struct CypherGenericExpr
+{
+	NodeTag		type;
+	Node	   *expr;
+} CypherGenericExpr;
+
+typedef enum CSPKind
+{
+	CSP_EXISTS,
+	CSP_SIZE,
+	CSP_FINDPATH			/* shortestpath, allshortestpaths, dijkstra */
+} CSPKind;
+
+typedef struct CypherSubPattern
+{
+	NodeTag		type;
+	CSPKind		kind;
+	List	   *pattern;
+} CypherSubPattern;
+
+/*
+ * CypherClause - a wrapper for a Cypher clause
+ *
+ * `prev` refers a previous Cypher clause and we use it to transform the Cypher
+ * statement into a Query recursively. A previous Cypher clause is transformed
+ * into a subquery of the current Cypher clause.
+ */
+typedef struct CypherClause
+{
+	NodeTag		type;
+	Node	   *detail;		/* detailed information about this Cypher clause */
+	Node	   *prev;
+} CypherClause;
+
+#define cypherClauseTag(n)	nodeTag(((CypherClause *) (n))->detail)
+
+/* previous Cypher clause is transformed to RangeSubselect */
+typedef RangeSubselect RangePrevclause;
+
+typedef struct CypherMatchClause
+{
+	NodeTag		type;
+	List	   *pattern;
+	Node	   *where;		/* WHERE qualification */
+	bool		optional;	/* OPTIONAL MATCH */
+} CypherMatchClause;
+
+/* which clause is parsed as a CypherProjection */
+typedef enum CPKind
+{
+	CP_RETURN,
+	CP_WITH
+} CPKind;
+
+/* Cypher RETURN and WITH clauses use this */
+typedef struct CypherProjection
+{
+	NodeTag		type;
+	CPKind		kind;
+	List	   *distinct;	/* DISTINCT clause */
+	List	   *items;		/* list of return items (ResTarget) */
+	List	   *order;		/* a list of SortBy's */
+	Node	   *skip;		/* the number of result tuples to skip */
+	Node	   *limit;		/* the number of result tuples to return */
+	Node	   *where;
+} CypherProjection;
+
+#define cypherProjectionKind(n)	(((CypherProjection *) (n))->kind)
+
+typedef struct CypherCreateClause
+{
+	NodeTag		type;
+	List	   *pattern;
+} CypherCreateClause;
+
+typedef struct CypherDeleteClause
+{
+	NodeTag		type;
+	bool		detach;
+	List	   *exprs;
+} CypherDeleteClause;
+
+typedef enum CSetKind
+{
+	CSET_NORMAL,
+	CSET_ON_CREATE,
+	CSET_ON_MATCH
+} CSetKind;
+
+typedef struct CypherSetClause
+{
+	NodeTag		type;
+	bool		is_remove;
+	CSetKind	kind;
+	List	   *items;
+} CypherSetClause;
+
+typedef struct CypherMergeClause
+{
+	NodeTag		type;
+	List	   *pattern;
+	List	   *sets;
+} CypherMergeClause;
+
+typedef struct CypherLoadClause
+{
+	NodeTag		type;
+	RangeVar   *relation;	/* a relation to load */
+} CypherLoadClause;
+
+typedef struct CypherUnwindClause
+{
+	NodeTag		type;
+	ResTarget  *target;
+} CypherUnwindClause;
+
+typedef enum CPathKind
+{
+	CPATH_NORMAL,
+	CPATH_SHORTEST,
+	CPATH_SHORTEST_ALL,
+	CPATH_DIJKSTRA
+} CPathKind;
+
+typedef struct CypherPath
+{
+	NodeTag		type;
+	CPathKind	kind;
+	Node	   *variable;	/* CypherName */
+	List	   *chain;		/* node, relationship, node, ... */
+	/* Fields valid for Dijkstra */
+	Node	   *weight;
+	Node	   *qual;
+	Node	   *limit;
+	Node	   *weight_var;
+} CypherPath;
+
+typedef struct CypherNode
+{
+	NodeTag		type;
+	Node	   *variable;	/* CypherName */
+	Node	   *label;		/* CypherName */
+	bool		only;
+	Node	   *prop_map;	/* JSON object expression or string constant */
+} CypherNode;
+
+#define CYPHER_REL_DIR_NONE		0
+#define CYPHER_REL_DIR_LEFT		(1 << 0)
+#define CYPHER_REL_DIR_RIGHT	(1 << 1)
+
+typedef struct CypherRel
+{
+	NodeTag		type;
+	uint32		direction;	/* bitmask of directions (see above) */
+	Node	   *variable;	/* CypherName */
+	List	   *types;		/* ORed types */
+	bool		only;
+	Node	   *varlen;		/* variable length relationships (A_Indices) */
+	Node	   *prop_map;	/* JSON object expression or string constant */
+} CypherRel;
+
+typedef struct CypherName
+{
+	NodeTag		type;
+	char	   *name;
+	int			location;	/* token location, or -1 if unknown */
+} CypherName;
+
+inline static char *
+getCypherName(Node *n)
+{
+	if (n == NULL)
+		return NULL;
+	AssertArg(IsA(n, CypherName));
+	return ((CypherName *) n)->name;
+}
+
+inline static int
+getCypherNameLoc(Node *n)
+{
+	if (n == NULL)
+		return -1;
+	AssertArg(IsA(n, CypherName));
+	return ((CypherName *) n)->location;
+}
+
+typedef struct CypherSetProp
+{
+	NodeTag		type;
+	Node	   *prop;
+	Node	   *expr;
+	bool		add;
+} CypherSetProp;
 
 #endif							/* PARSENODES_H */

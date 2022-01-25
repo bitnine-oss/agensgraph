@@ -33,7 +33,8 @@ OBJS = acl.o amutils.o arrayfuncs.o array_expanded.o array_selfuncs.o \
 	tsquery_op.o tsquery_rewrite.o tsquery_util.o tsrank.o \
 	tsvector.o tsvector_op.o tsvector_parser.o \
 	txid.o uuid.o varbit.o varchar.o varlena.o version.o \
-	windowfuncs.o xid.o xml.o
+	windowfuncs.o xid.o xml.o graph.o graphmeta.o cypher_ops.o \
+        cypher_funcs.o shortestpathfuncs.o
 
 jsonpath_scan.c: FLEXFLAGS = -CF -p -p
 jsonpath_scan.c: FLEX_NO_BACKUP=yes

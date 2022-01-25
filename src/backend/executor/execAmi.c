@@ -23,6 +23,7 @@
 #include "executor/nodeBitmapOr.h"
 #include "executor/nodeCtescan.h"
 #include "executor/nodeCustom.h"
+#include "executor/nodeDijkstra.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeFunctionscan.h"
 #include "executor/nodeGather.h"
@@ -30,6 +31,7 @@
 #include "executor/nodeGroup.h"
 #include "executor/nodeGroup.h"
 #include "executor/nodeHash.h"
+#include "executor/nodeHash2Side.h"
 #include "executor/nodeHashjoin.h"
 #include "executor/nodeIndexonlyscan.h"
 #include "executor/nodeIndexscan.h"
@@ -41,12 +43,14 @@
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNamedtuplestorescan.h"
 #include "executor/nodeNestloop.h"
+#include "executor/nodeNestloopVle.h"
 #include "executor/nodeProjectSet.h"
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeSamplescan.h"
 #include "executor/nodeSeqscan.h"
 #include "executor/nodeSetOp.h"
+#include "executor/nodeShortestpath.h"
 #include "executor/nodeSort.h"
 #include "executor/nodeSubplan.h"
 #include "executor/nodeSubqueryscan.h"
@@ -238,6 +242,10 @@ ExecReScan(PlanState *node)
 			ExecReScanNestLoop((NestLoopState *) node);
 			break;
 
+		case T_NestLoopVLEState:
+			ExecReScanNestLoopVLE((NestLoopVLEState *) node);
+			break;
+
 		case T_MergeJoinState:
 			ExecReScanMergeJoin((MergeJoinState *) node);
 			break;
@@ -286,6 +294,18 @@ ExecReScan(PlanState *node)
 			ExecReScanLimit((LimitState *) node);
 			break;
 
+		case T_ShortestpathState:
+			ExecReScanShortestpath((ShortestpathState *) node);
+			break;
+
+		case T_Hash2SideState:
+			ExecReScanHash2Side((Hash2SideState *) node);
+			break;
+
+		case T_DijkstraState:
+			ExecReScanDijkstra((DijkstraState *) node);
+			break;
+
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			break;
@@ -295,6 +315,64 @@ ExecReScan(PlanState *node)
 	{
 		bms_free(node->chgParam);
 		node->chgParam = NULL;
+	}
+}
+
+void
+ExecNextContext(PlanState *node)
+{
+	switch (nodeTag(node))
+	{
+		case T_SeqScanState:
+			ExecNextSeqScanContext((SeqScanState *) node);
+			break;
+		case T_IndexScanState:
+			ExecNextIndexScanContext((IndexScanState *) node);
+			break;
+		case T_IndexOnlyScanState:
+			ExecNextIndexOnlyScanContext((IndexOnlyScanState *) node);
+			break;
+		case T_AppendState:
+			ExecNextAppendContext((AppendState *) node);
+			break;
+		case T_ResultState:
+			ExecNextResultContext((ResultState *) node);
+			break;
+		case T_NestLoopState:
+			ExecNextNestLoopContext((NestLoopState *) node);
+			break;
+		default:
+			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
+			break;
+	}
+}
+
+void
+ExecPrevContext(PlanState *node)
+{
+	switch (nodeTag(node))
+	{
+		case T_SeqScanState:
+			ExecPrevSeqScanContext((SeqScanState *) node);
+			break;
+		case T_IndexScanState:
+			ExecPrevIndexScanContext((IndexScanState *) node);
+			break;
+		case T_IndexOnlyScanState:
+			ExecPrevIndexOnlyScanContext((IndexOnlyScanState *) node);
+			break;
+		case T_AppendState:
+			ExecPrevAppendContext((AppendState *) node);
+			break;
+		case T_ResultState:
+			ExecPrevResultContext((ResultState *) node);
+			break;
+		case T_NestLoopState:
+			ExecPrevNestLoopContext((NestLoopState *) node);
+			break;
+		default:
+			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
+			break;
 	}
 }
 

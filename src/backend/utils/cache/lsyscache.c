@@ -19,6 +19,8 @@
 #include "access/htup_details.h"
 #include "access/nbtree.h"
 #include "bootstrap/bootstrap.h"
+#include "catalog/ag_graph.h"
+#include "catalog/ag_label.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_amop.h"
@@ -3322,4 +3324,203 @@ get_index_isclustered(Oid index_oid)
 	ReleaseSysCache(tuple);
 
 	return isclustered;
+}
+
+
+/*				---------- AG_GRAPH CACHE ----------				 */
+
+char *
+get_graphid_graphname(Oid graphid)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(GRAPHOID, ObjectIdGetDatum(graphid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_graph graphtup = (Form_ag_graph) GETSTRUCT(tp);
+		char	   *result;
+
+		result = pstrdup(NameStr(graphtup->graphname));
+		ReleaseSysCache(tp);
+		return result;
+	}
+	else
+	{
+		return NULL;
+	}
+}
+
+Oid
+get_graphname_oid(const char *graphname)
+{
+	return GetSysCacheOid1(GRAPHNAME, Anum_ag_graph_graphname - 1, PointerGetDatum(graphname));
+}
+
+/*				---------- AG_LABEL CACHE ----------				 */
+
+char *
+get_labid_labname(Oid graphid, uint16 labid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache2(LABELLABID,
+						 ObjectIdGetDatum(graphid),
+						 Int32GetDatum((int32) labid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		char *result;
+
+		result = pstrdup(NameStr(labtup->labname));
+		ReleaseSysCache(tp);
+		return result;
+	}
+	else
+	{
+		return NULL;
+	}
+}
+
+Oid
+get_labid_relid(Oid graphid, uint16 labid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache2(LABELLABID,
+						 ObjectIdGetDatum(graphid),
+						 Int32GetDatum((int32) labid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		Oid relid;
+
+		relid = labtup->relid;
+		ReleaseSysCache(tp);
+		return relid;
+	}
+	else
+	{
+		return InvalidOid;
+	}
+}
+
+bool
+labid_exists(Oid graphid, uint16 labid)
+{
+	return SearchSysCacheExists2(LABELLABID,
+								 ObjectIdGetDatum(graphid),
+								 Int32GetDatum((int32) labid));
+}
+
+/*
+ * get_labname_laboid
+ *		Given name of a label, look up the OID
+ *
+ * Returns InvalidOid if there is no such label.
+ */
+Oid
+get_labname_laboid(const char *labname, Oid graphid)
+{
+	return GetSysCacheOid2(LABELNAMEGRAPH,
+						   Anum_ag_label_oid,
+						   PointerGetDatum(labname),
+                           ObjectIdGetDatum(graphid));
+}
+
+uint16
+get_labname_labid(const char *labname, Oid graphid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache2(LABELNAMEGRAPH,
+						 PointerGetDatum(labname),
+						 ObjectIdGetDatum(graphid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		uint16 labid;
+
+		labid = (uint16) labtup->labid;
+		ReleaseSysCache(tp);
+		return labid;
+	}
+	else
+	{
+		return 0;
+	}
+}
+
+/*
+ * get_laboid_relid
+ *		Returns the table OID for a given label.
+ *
+ * Returns InvalidOid if there is no such label.
+ */
+Oid
+get_laboid_relid(Oid laboid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache1(LABELOID, ObjectIdGetDatum(laboid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		Oid relid;
+
+		relid = labtup->relid;
+		ReleaseSysCache(tp);
+		return relid;
+	}
+	else
+	{
+		return InvalidOid;
+	}
+}
+
+/*
+ * get_relid_laboid
+ *		Returns the label OID for a given relation.
+ *
+ * Returns InvalidOid if there is no such a label.
+ */
+Oid
+get_relid_laboid(Oid relid)
+{
+	return GetSysCacheOid1(LABELRELID, Anum_ag_label_oid, ObjectIdGetDatum(relid));
+}
+
+Oid
+get_labid_typeoid(Oid graphid, uint16 labid)
+{
+	HeapTuple tp;
+
+	tp = SearchSysCache2(LABELLABID,
+						 ObjectIdGetDatum(graphid),
+						 Int32GetDatum((int32) labid));
+
+	if (HeapTupleIsValid(tp))
+	{
+		Form_ag_label labtup = (Form_ag_label) GETSTRUCT(tp);
+		Oid labkind;
+
+		if (labtup->labkind == LABEL_KIND_VERTEX)
+			labkind = VERTEXOID;
+		else if (labtup->labkind == LABEL_KIND_EDGE)
+			labkind = EDGEOID;
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("Invalid label kind : %c", labtup->labkind)));
+
+		ReleaseSysCache(tp);
+		return labkind;
+	}
+	else
+	{
+		return InvalidOid;
+	}
 }

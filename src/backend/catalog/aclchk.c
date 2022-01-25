@@ -23,6 +23,8 @@
 #include "access/sysattr.h"
 #include "access/tableam.h"
 #include "access/xact.h"
+#include "catalog/ag_graph.h"
+#include "catalog/ag_label.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -3367,6 +3369,17 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 
 				switch (objtype)
 				{
+                     case OBJECT_VLABEL:
+                        msg = gettext_noop("permission denied for vlabel %s");
+                        break;
+                    case OBJECT_PROPERTY_INDEX:
+                        msg = gettext_noop("permission denied for object property index %s");
+                        break;
+
+                    case OBJECT_ELABEL:
+                        msg = gettext_noop("permission denied for elabel %s");
+                        break;
+
 					case OBJECT_AGGREGATE:
 						msg = gettext_noop("permission denied for aggregate %s");
 						break;
@@ -3466,6 +3479,12 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_VIEW:
 						msg = gettext_noop("permission denied for view %s");
 						break;
+					case OBJECT_GRAPH:
+						msg = gettext_noop("permission denied for graph %s");
+						break;
+					case OBJECT_LABEL:
+						msg = gettext_noop("permission denied for label %s");
+						break;
 						/* these currently aren't used */
 					case OBJECT_ACCESS_METHOD:
 					case OBJECT_AMOP:
@@ -3498,6 +3517,20 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 
 				switch (objtype)
 				{
+                                          /* these currently aren't used */
+                    case OBJECT_ELABEL:
+                        msg = gettext_noop("permission denied for elabel %s");
+                        break;
+                    case OBJECT_VLABEL:
+                        msg = gettext_noop("permission denied for vlabel %s");
+                        break;
+                    case OBJECT_GRAPH:
+                        msg = gettext_noop("permission denied for graph %s");
+                        break;
+                    case OBJECT_PROPERTY_INDEX:
+                        msg = gettext_noop("permission denied for object property index %s");
+                        break;
+
 					case OBJECT_AGGREGATE:
 						msg = gettext_noop("must be owner of aggregate %s");
 						break;
@@ -3604,6 +3637,9 @@ aclcheck_error(AclResult aclerr, ObjectType objtype,
 					case OBJECT_TABCONSTRAINT:
 					case OBJECT_TRIGGER:
 						msg = gettext_noop("must be owner of relation %s");
+						break;
+					case OBJECT_LABEL:
+						msg = gettext_noop("must be owner of label %s");
 						break;
 						/* these currently aren't used */
 					case OBJECT_ACCESS_METHOD:
@@ -6058,4 +6094,51 @@ recordExtensionInitPrivWorker(Oid objoid, Oid classoid, int objsubid, Acl *new_a
 	CommandCounterIncrement();
 
 	table_close(relation, RowExclusiveLock);
+}
+
+/*
+ * Ownership check for a graph (specified by OID).
+ */
+bool
+ag_graph_ownercheck(Oid graphid, Oid roleid)
+{
+	HeapTuple	tuple;
+	Oid			nspid;
+
+	/* Superusers bypass all permission checking. */
+	if (superuser_arg(roleid))
+		return true;
+
+	tuple = SearchSysCache1(GRAPHOID, ObjectIdGetDatum(graphid));
+	if (!HeapTupleIsValid(tuple))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_DATABASE),
+				 errmsg("graph with OID %u does not exist", graphid)));
+
+	nspid = ((Form_ag_graph) GETSTRUCT(tuple))->nspid;
+
+	ReleaseSysCache(tuple);
+
+	return pg_namespace_ownercheck(nspid, roleid);
+}
+
+/*
+ * Ownership check for a label (specified by OID).
+ */
+bool
+ag_label_ownercheck(Oid laboid, Oid roleid)
+{
+	Oid relid;
+
+	/* Superusers bypass all permission checking. */
+	if (superuser_arg(roleid))
+		return true;
+
+	relid = get_laboid_relid(laboid);
+	if (!OidIsValid(relid))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_DATABASE),
+				 errmsg("graph label with OID %u does not exist", laboid)));
+
+	return pg_class_ownercheck(relid, roleid);
 }

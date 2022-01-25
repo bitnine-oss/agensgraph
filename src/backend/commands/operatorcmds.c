@@ -47,6 +47,8 @@
 #include "parser/parse_func.h"
 #include "parser/parse_oper.h"
 #include "parser/parse_type.h"
+#include "parser/parser.h"
+#include "parser/scansup.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
@@ -428,6 +430,14 @@ AlterOperator(AlterOperatorStmt *stmt)
 	{
 		DefElem    *defel = (DefElem *) lfirst(pl);
 		List	   *param;
+		char	   *defname;
+
+		defname = defel->defname;
+		if (case_sensitive_ident)
+		{
+			defname = downcase_identifier(defname, strlen(defname), false,
+										  false);
+		}
 
 		if (defel->arg == NULL)
 			param = NIL;		/* NONE, removes the function */

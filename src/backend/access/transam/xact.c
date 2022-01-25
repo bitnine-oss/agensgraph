@@ -2109,6 +2109,13 @@ CommitTransaction(void)
 	 */
 	PreCommit_on_commit_actions();
 
+	/* The catalog ag_graphmeta is opened and modified during commit AgStat.
+	 * In the commit phase, any relation must not be opened.
+	 * So AgStat must be processed during the PreCommit phase
+	 */
+	if (auto_gather_graphmeta)
+		AtEOXact_AgStat(true);
+
 	/* close large objects before lower-level cleanup */
 	AtEOXact_LargeObject(true);
 
@@ -2733,6 +2740,8 @@ AbortTransaction(void)
 		AtEOXact_Files(false);
 		AtEOXact_ComboCid();
 		AtEOXact_HashTables(false);
+		if (auto_gather_graphmeta)
+			AtEOXact_AgStat(false);
 		AtEOXact_PgStat(false, is_parallel_worker);
 		AtEOXact_ApplyLauncher(false);
 		pgstat_report_xact_timestamp(0);
@@ -4859,6 +4868,7 @@ CommitSubTransaction(void)
 	AtEOSubXact_Files(true, s->subTransactionId,
 					  s->parent->subTransactionId);
 	AtEOSubXact_HashTables(true, s->nestingLevel);
+	AtEOSubXact_AgStat(true, s->nestingLevel);
 	AtEOSubXact_PgStat(true, s->nestingLevel);
 	AtSubCommit_Snapshot(s->nestingLevel);
 	AtEOSubXact_ApplyLauncher(true, s->nestingLevel);
@@ -5016,6 +5026,7 @@ AbortSubTransaction(void)
 		AtEOSubXact_Files(false, s->subTransactionId,
 						  s->parent->subTransactionId);
 		AtEOSubXact_HashTables(false, s->nestingLevel);
+		AtEOSubXact_AgStat(false, s->nestingLevel);
 		AtEOSubXact_PgStat(false, s->nestingLevel);
 		AtSubAbort_Snapshot(s->nestingLevel);
 		AtEOSubXact_ApplyLauncher(false, s->nestingLevel);

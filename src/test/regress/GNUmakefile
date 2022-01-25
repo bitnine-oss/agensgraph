@@ -137,6 +137,10 @@ check-tests: all tablespace-setup | temp-install
 installcheck: all tablespace-setup
 	$(pg_regress_installcheck) $(REGRESS_OPTS) --schedule=$(srcdir)/serial_schedule $(EXTRA_TESTS)
 
+installcheck-agens: all tablespace-setup
+	$(pg_regress_installcheck) $(REGRESS_OPTS) --schedule=$(srcdir)/serial_schedule_agens $(EXTRA_TESTS)
+
+
 installcheck-parallel: all tablespace-setup
 	$(pg_regress_installcheck) $(REGRESS_OPTS) --schedule=$(srcdir)/parallel_schedule $(MAXCONNOPT) $(EXTRA_TESTS)
 

@@ -3,6 +3,7 @@
  * event_trigger.c
  *	  PostgreSQL EVENT TRIGGER support code.
  *
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -96,10 +97,12 @@ static const event_trigger_support_data event_trigger_support[] = {
 	{"DATABASE", false},
 	{"DOMAIN", true},
 	{"EXTENSION", true},
+	{"ELABEL", true},
 	{"EVENT TRIGGER", false},
 	{"FOREIGN DATA WRAPPER", true},
 	{"FOREIGN TABLE", true},
 	{"FUNCTION", true},
+	{"GRAPH", true},
 	{"INDEX", true},
 	{"LANGUAGE", true},
 	{"MATERIALIZED VIEW", true},
@@ -108,6 +111,7 @@ static const event_trigger_support_data event_trigger_support[] = {
 	{"OPERATOR FAMILY", true},
 	{"POLICY", true},
 	{"PROCEDURE", true},
+	{"PROPERTY INDEX", true},
 	{"PUBLICATION", true},
 	{"ROLE", false},
 	{"ROUTINE", true},
@@ -128,6 +132,7 @@ static const event_trigger_support_data event_trigger_support[] = {
 	{"TYPE", true},
 	{"USER MAPPING", true},
 	{"VIEW", true},
+	{"VLABEL", true},
 	{NULL, false}
 };
 
@@ -297,6 +302,7 @@ check_ddl_tag(const char *tag)
 		pg_strcasecmp(tag, "REVOKE") == 0 ||
 		pg_strcasecmp(tag, "DROP OWNED") == 0 ||
 		pg_strcasecmp(tag, "IMPORT FOREIGN SCHEMA") == 0 ||
+		pg_strcasecmp(tag, "CYPHER") == 0 ||
 		pg_strcasecmp(tag, "SECURITY LABEL") == 0)
 		return EVENT_TRIGGER_COMMAND_TAG_OK;
 
@@ -352,7 +358,9 @@ static event_trigger_command_tag_check_result
 check_table_rewrite_ddl_tag(const char *tag)
 {
 	if (pg_strcasecmp(tag, "ALTER TABLE") == 0 ||
-		pg_strcasecmp(tag, "ALTER TYPE") == 0)
+		pg_strcasecmp(tag, "ALTER TYPE") == 0 ||
+		pg_strcasecmp(tag, "ALTER VLABEL") == 0 ||
+		pg_strcasecmp(tag, "ALTER ELABEL") == 0)
 		return EVENT_TRIGGER_COMMAND_TAG_OK;
 
 	return EVENT_TRIGGER_COMMAND_TAG_NOT_SUPPORTED;
@@ -1099,6 +1107,7 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 {
 	switch (obtype)
 	{
+        case OBJECT_LABEL:
 		case OBJECT_DATABASE:
 		case OBJECT_TABLESPACE:
 		case OBJECT_ROLE:
@@ -1107,6 +1116,13 @@ EventTriggerSupportsObjectType(ObjectType obtype)
 		case OBJECT_EVENT_TRIGGER:
 			/* no support for event triggers on event triggers */
 			return false;
+		case OBJECT_PROPERTY_INDEX:
+		case OBJECT_VLABEL:
+		case OBJECT_GRAPH:
+		case OBJECT_ELABEL:
+			/* no support for event trigger on graph object */
+			return false;
+
 		case OBJECT_ACCESS_METHOD:
 		case OBJECT_AGGREGATE:
 		case OBJECT_AMOP:
@@ -1215,6 +1231,8 @@ EventTriggerSupportsObjectClass(ObjectClass objclass)
 		case OCLASS_PUBLICATION_REL:
 		case OCLASS_SUBSCRIPTION:
 		case OCLASS_TRANSFORM:
+		case OCLASS_GRAPH:
+		case OCLASS_LABEL:
 			return true;
 
 			/*
@@ -2230,6 +2248,8 @@ stringify_grant_objtype(ObjectType objtype)
 {
 	switch (objtype)
 	{
+        case OBJECT_LABEL:
+            return "GRAPH";
 		case OBJECT_COLUMN:
 			return "COLUMN";
 		case OBJECT_TABLE:
@@ -2260,6 +2280,14 @@ stringify_grant_objtype(ObjectType objtype)
 			return "TABLESPACE";
 		case OBJECT_TYPE:
 			return "TYPE";
+		case OBJECT_GRAPH:
+			return "GRAPH";
+	   case OBJECT_PROPERTY_INDEX:
+			return "GRAPH PROPERTY INDEX";
+	   case OBJECT_VLABEL:
+			return "VERTEX LABEL";
+	   case OBJECT_ELABEL:
+			return "EDGE LABEL";
 			/* these currently aren't used */
 		case OBJECT_ACCESS_METHOD:
 		case OBJECT_AGGREGATE:
@@ -2312,6 +2340,8 @@ stringify_adefprivs_objtype(ObjectType objtype)
 {
 	switch (objtype)
 	{
+        case OBJECT_LABEL:
+			return "LABEL";
 		case OBJECT_COLUMN:
 			return "COLUMNS";
 		case OBJECT_TABLE:
@@ -2342,6 +2372,14 @@ stringify_adefprivs_objtype(ObjectType objtype)
 			return "TABLESPACES";
 		case OBJECT_TYPE:
 			return "TYPES";
+		case OBJECT_GRAPH:
+			return "GRAPH";
+		case OBJECT_PROPERTY_INDEX:
+			return "GRAPH PROPERTY INDEX";
+		case OBJECT_VLABEL:
+			return "VERTEX LABEL";
+		case OBJECT_ELABEL:
+            return "EDGE LABEL";
 			/* these currently aren't used */
 		case OBJECT_ACCESS_METHOD:
 		case OBJECT_AGGREGATE:

@@ -182,6 +182,9 @@ if "$MAKE" -C "$oldsrc" installcheck-parallel; then
 		psql -X -d regression -c "$fix_sql;" || psql_fix_sql_status=$?
 	fi
 
+	agens -d regression -c "SELECT regather_graphmeta()"
+	agens -d regression -c "SELECT * FROM ag_graphmeta_view" -o "$temp_root"/meta1.out
+
 	pg_dumpall --no-sync -f "$temp_root"/dump1.sql || pg_dumpall1_status=$?
 
 	if [ "$newsrc" != "$oldsrc" ]; then
@@ -219,6 +222,7 @@ if [ -n "$pg_dumpall1_status" ]; then
 fi
 
 PGDATA="$BASE_PGDATA"
+AGDATA="$PGDATA"
 
 standard_initdb 'initdb'
 
@@ -253,6 +257,7 @@ case $testhost in
 esac
 
 pg_dumpall --no-sync -f "$temp_root"/dump2.sql || pg_dumpall2_status=$?
+agens -d regression -c "SELECT * FROM ag_graphmeta_view" -o "$temp_root"/meta2.out
 pg_ctl -m fast stop
 
 if [ -n "$pg_dumpall2_status" ]; then
@@ -265,8 +270,17 @@ case $testhost in
 	*)	    sh ./delete_old_cluster.sh ;;
 esac
 
+if diff "$temp_root"/meta1.out "$temp_root"/meta2.out >/dev/null; then
+	echo "GRAPH META PASSED"
+else
+	echo "Files $temp_root/meta1.out and $temp_root/meta2.out differ"
+	echo "graphmetas were not identical"
+	exit 1
+fi
+
+
 if diff "$temp_root"/dump1.sql "$temp_root"/dump2.sql >/dev/null; then
-	echo PASSED
+	echo "DUMP PASSED"
 	exit 0
 else
 	echo "Files $temp_root/dump1.sql and $temp_root/dump2.sql differ"

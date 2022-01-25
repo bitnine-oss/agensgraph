@@ -120,3 +120,24 @@ test: fast_default
 
 # run stats by itself because its delay may be insufficient under heavy load
 test: stats
+
+# run cypher dml test
+test: cypher_dml cypher_shortestpath cypher_eager graphid
+
+# run graphmeta
+test: graphmeta
+
+# run cypher ddl test
+test: cypher_ddl
+
+# run cypher function test
+test: cypher_func cypher_plpgsql
+
+# run cypher shortestpath test
+#test: cypher_shortestpath2
+
+# run sql restriction test
+test: sql_restriction
+
+# run property index
+test: propertyindex

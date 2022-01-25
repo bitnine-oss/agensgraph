@@ -15,6 +15,8 @@
 
 #include "postgres.h"
 
+#include "parser/parser.h"
+#include "parser/scansup.h"
 #include "utils/memutils.h"
 
 #include "plpgsql.h"

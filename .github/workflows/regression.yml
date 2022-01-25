@@ -1,0 +1,25 @@
+name: regression
+
+on:
+  push:
+    branches: [ REL_12_STABLE.patch ]
+  pull_request:
+    branches: [ REL_12_STABLE.patch ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: configure --prefix=/home/runner/work/agensgraph/agensgraph/pgsql
+      run: ./configure --prefix=/home/runner/work/agensgraph/agensgraph/pgsql
+    - name: make install
+      run: make install
+    - name: initdb
+      run: /home/runner/work/agensgraph/agensgraph/pgsql/bin/initdb -D /home/runner/work/agensgraph/agensgraph/pgsql/data
+    - name: starting database
+      run:  /home/runner/work/agensgraph/agensgraph/pgsql/bin/pg_ctl -D /home/runner/work/agensgraph/agensgraph/pgsql/data start
+    - name: make installcheck
+      run: make installcheck

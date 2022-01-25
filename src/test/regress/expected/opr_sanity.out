@@ -373,7 +373,8 @@ ORDER BY 1;
 ------+--------------
  2293 | cstring_out
  2501 | cstring_send
-(2 rows)
+ 7009 | graph_labid
+(3 rows)
 
 -- Likewise, look for functions that return cstring and aren't datatype output
 -- functions nor typmod output functions.
@@ -1087,11 +1088,13 @@ ORDER BY 1, 2;
  @    | ~
  @@   | @@
  @@@  | @@@
+ `*`  | `*`
+ `+`  | `+`
  |    | |
  ~<=~ | ~>=~
  ~<~  | ~>~
  ~=   | ~=
-(30 rows)
+(32 rows)
 
 -- Likewise for negator pairs.
 SELECT DISTINCT o1.oprname AS op1, o2.oprname AS op2
@@ -1143,9 +1146,11 @@ WHERE p1.oprcanmerge AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree') AND
          amopopr = p1.oid AND amopstrategy = 3);
- oid | oprname 
------+---------
-(0 rows)
+ oid  | oprname 
+------+---------
+ 7136 | =
+ 7148 | =
+(2 rows)
 
 -- And the converse.
 SELECT p1.oid, p1.oprname, p.amopfamily
@@ -1165,9 +1170,10 @@ WHERE p1.oprcanhash AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'hash') AND
          amopopr = p1.oid AND amopstrategy = 1);
- oid | oprname 
------+---------
-(0 rows)
+ oid  | oprname 
+------+---------
+ 7148 | =
+(1 row)
 
 -- And the converse.
 SELECT p1.oid, p1.oprname, p.amopfamily
@@ -1300,9 +1306,41 @@ SELECT * FROM funcdescs
   WHERE prodesc IS DISTINCT FROM expecteddesc
     AND oprdesc NOT LIKE 'deprecated%'
     AND prodesc IS DISTINCT FROM oprdesc;
- p_oid | proname | o_oid | prodesc | expecteddesc | oprdesc 
--------+---------+-------+---------+--------------+---------
-(0 rows)
+ p_oid |   proname    | o_oid | prodesc |          expecteddesc          |        oprdesc        
+-------+--------------+-------+---------+--------------------------------+-----------------------
+  7081 | graphid_eq   |  7087 |         | implementation of = operator   | equal
+  7082 | graphid_ne   |  7088 |         | implementation of <> operator  | not equal
+  7083 | graphid_lt   |  7089 |         | implementation of < operator   | less than
+  7084 | graphid_gt   |  7090 |         | implementation of > operator   | greater than
+  7085 | graphid_le   |  7091 |         | implementation of <= operator  | less than or equal
+  7086 | graphid_ge   |  7092 |         | implementation of >= operator  | greater than or equal
+  7130 | vertex_eq    |  7136 |         | implementation of = operator   | equal
+  7131 | vertex_ne    |  7137 |         | implementation of <> operator  | not equal
+  7132 | vertex_lt    |  7138 |         | implementation of < operator   | less than
+  7133 | vertex_gt    |  7139 |         | implementation of > operator   | greater than
+  7134 | vertex_le    |  7140 |         | implementation of <= operator  | less than or equal
+  7135 | vertex_ge    |  7141 |         | implementation of >= operator  | greater than or equal
+  7142 | edge_eq      |  7148 |         | implementation of = operator   | equal
+  7143 | edge_ne      |  7149 |         | implementation of <> operator  | not equal
+  7144 | edge_lt      |  7150 |         | implementation of < operator   | less than
+  7145 | edge_gt      |  7151 |         | implementation of > operator   | greater than
+  7146 | edge_le      |  7152 |         | implementation of <= operator  | less than or equal
+  7147 | edge_ge      |  7153 |         | implementation of >= operator  | greater than or equal
+  7155 | rowid_eq     |  7161 |         | implementation of = operator   | equal
+  7156 | rowid_ne     |  7162 |         | implementation of <> operator  | not equal
+  7157 | rowid_lt     |  7163 |         | implementation of < operator   | less than
+  7158 | rowid_gt     |  7164 |         | implementation of > operator   | greater than
+  7159 | rowid_le     |  7165 |         | implementation of <= operator  | less than or equal
+  7160 | rowid_ge     |  7166 |         | implementation of >= operator  | greater than or equal
+  7175 | jsonb_add    |  7176 |         | implementation of `+` operator | add
+  7177 | jsonb_sub    |  7178 |         | implementation of `-` operator | subtract
+  7179 | jsonb_mul    |  7180 |         | implementation of `*` operator | multiply
+  7181 | jsonb_div    |  7182 |         | implementation of `/` operator | divide
+  7183 | jsonb_mod    |  7184 |         | implementation of `%` operator | modulus
+  7185 | jsonb_pow    |  7186 |         | implementation of `^` operator | exponentiation
+  7187 | jsonb_uplus  |  7188 |         | implementation of `+` operator | unary plus
+  7189 | jsonb_uminus |  7190 |         | implementation of `-` operator | negate
+(32 rows)
 
 -- Show all the operator-implementation functions that have their own
 -- comments.  This should happen only in cases where the function and
@@ -1335,7 +1373,39 @@ ORDER BY 1;
   3940 | jsonb_extract_path_text | get value from jsonb as text with path elements
   3951 | json_extract_path       | get value from json with path elements
   3953 | json_extract_path_text  | get value from json as text with path elements
-(9 rows)
+  7081 | graphid_eq              | 
+  7082 | graphid_ne              | 
+  7083 | graphid_lt              | 
+  7084 | graphid_gt              | 
+  7085 | graphid_le              | 
+  7086 | graphid_ge              | 
+  7130 | vertex_eq               | 
+  7131 | vertex_ne               | 
+  7132 | vertex_lt               | 
+  7133 | vertex_gt               | 
+  7134 | vertex_le               | 
+  7135 | vertex_ge               | 
+  7142 | edge_eq                 | 
+  7143 | edge_ne                 | 
+  7144 | edge_lt                 | 
+  7145 | edge_gt                 | 
+  7146 | edge_le                 | 
+  7147 | edge_ge                 | 
+  7155 | rowid_eq                | 
+  7156 | rowid_ne                | 
+  7157 | rowid_lt                | 
+  7158 | rowid_gt                | 
+  7159 | rowid_le                | 
+  7160 | rowid_ge                | 
+  7175 | jsonb_add               | 
+  7177 | jsonb_sub               | 
+  7179 | jsonb_mul               | 
+  7181 | jsonb_div               | 
+  7183 | jsonb_mod               | 
+  7185 | jsonb_pow               | 
+  7187 | jsonb_uplus             | 
+  7189 | jsonb_uminus            | 
+(41 rows)
 
 -- Operators that are commutator pairs should have identical volatility
 -- and leakproofness markings on their implementation functions.
@@ -1941,11 +2011,16 @@ ORDER BY 1, 2, 3;
         783 |           48 | <@
         783 |           68 | <@
        2742 |            1 | &&
+       2742 |            1 | <
        2742 |            1 | @@
+       2742 |            2 | <=
        2742 |            2 | @>
        2742 |            2 | @@@
        2742 |            3 | <@
+       2742 |            3 | =
        2742 |            4 | =
+       2742 |            4 | >=
+       2742 |            5 | >
        2742 |            7 | @>
        2742 |            9 | ?
        2742 |           10 | ?|
@@ -2017,7 +2092,7 @@ ORDER BY 1, 2, 3;
        4000 |           26 | >>
        4000 |           27 | >>=
        4000 |           28 | ^@
-(125 rows)
+(130 rows)
 
 -- Check that all opclass search operators have selectivity estimators.
 -- This is not absolutely required, but it seems a reasonable thing

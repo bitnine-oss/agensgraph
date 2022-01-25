@@ -1443,6 +1443,56 @@ RecheckDataDirLockFile(void)
  *				Version checking support
  *-------------------------------------------------------------------------
  */
+/*
+ * ValidateAgVersion() is always called by ValidatePgVersion().
+ * Because seperated call could make human mistake
+ * and renaming ValidatePgVersion() can cause future merge confilct.
+ */
+static void
+ValidateAgVersion(const char *path)
+{
+	char		full_path[MAXPGPATH];
+	FILE	   *file;
+	char		file_version_string[64];
+
+	snprintf(full_path, sizeof(full_path), "%s/PG_VERSION", path);
+
+	file = AllocateFile(full_path, "r");
+	if (!file)
+	{
+		if (errno == ENOENT)
+			ereport(FATAL,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("\"%s\" is not a valid data directoryX",
+							path),
+					 errdetail("File \"%s\" is missing.", full_path)));
+		else
+			ereport(FATAL,
+					(errcode_for_file_access(),
+					 errmsg("could not open file \"%s\": %m", full_path)));
+	}
+
+	file_version_string[0] = '\0';
+
+	if (fscanf(file, "%63s", file_version_string) != 1)
+		ereport(FATAL,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("\"%s\" is not a valid data directoryY",
+						path),
+				 errdetail("File \"%s\" does not contain valid data.",
+						   full_path),
+				 errhint("You might need to initdb.")));
+
+	FreeFile(file);
+
+	if (strcmp(PG_MAJORVERSION, file_version_string))
+		ereport(FATAL,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("database files are incompatible with server"),
+				 errdetail("The data directory was initialized by AgensGraph version %s, "
+						   "which is not compatible with this version %s.",
+						   file_version_string, PG_VERSION)));
+}
 
 /*
  * Determine whether the PG_VERSION file in directory `path' indicates
@@ -1472,7 +1522,7 @@ ValidatePgVersion(const char *path)
 		if (errno == ENOENT)
 			ereport(FATAL,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("\"%s\" is not a valid data directory",
+					 errmsg("\"%s\" is not a valid data directoryZ",
 							path),
 					 errdetail("File \"%s\" is missing.", full_path)));
 		else
@@ -1488,7 +1538,7 @@ ValidatePgVersion(const char *path)
 	if (ret != 1 || endptr == file_version_string)
 		ereport(FATAL,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("\"%s\" is not a valid data directory",
+				 errmsg("\"%s\" is not a valid data directoryA",
 						path),
 				 errdetail("File \"%s\" does not contain valid data.",
 						   full_path),
@@ -1503,6 +1553,9 @@ ValidatePgVersion(const char *path)
 				 errdetail("The data directory was initialized by PostgreSQL version %s, "
 						   "which is not compatible with this version %s.",
 						   file_version_string, my_version_string)));
+
+	/* AG_VERSION must be validated too */
+	ValidateAgVersion(path);
 }
 
 /*-------------------------------------------------------------------------

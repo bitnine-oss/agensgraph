@@ -81,12 +81,14 @@
 #include "executor/nodeBitmapOr.h"
 #include "executor/nodeCtescan.h"
 #include "executor/nodeCustom.h"
+#include "executor/nodeDijkstra.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeFunctionscan.h"
 #include "executor/nodeGather.h"
 #include "executor/nodeGatherMerge.h"
 #include "executor/nodeGroup.h"
 #include "executor/nodeHash.h"
+#include "executor/nodeHash2Side.h"
 #include "executor/nodeHashjoin.h"
 #include "executor/nodeIndexonlyscan.h"
 #include "executor/nodeIndexscan.h"
@@ -95,15 +97,19 @@
 #include "executor/nodeMaterial.h"
 #include "executor/nodeMergeAppend.h"
 #include "executor/nodeMergejoin.h"
+#include "executor/nodeModifyGraph.h"
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNamedtuplestorescan.h"
 #include "executor/nodeNestloop.h"
+#include "executor/nodeNestloopVle.h"
+#include "executor/nodeGather.h"
 #include "executor/nodeProjectSet.h"
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeSamplescan.h"
 #include "executor/nodeSeqscan.h"
 #include "executor/nodeSetOp.h"
+#include "executor/nodeShortestpath.h"
 #include "executor/nodeSort.h"
 #include "executor/nodeSubplan.h"
 #include "executor/nodeSubqueryscan.h"
@@ -200,6 +206,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 													estate, eflags);
 			break;
 
+		case T_ModifyGraph:
+			result = (PlanState *) ExecInitModifyGraph((ModifyGraph *) node,
+													   estate, eflags);
+			break;
+
 			/*
 			 * scan nodes
 			 */
@@ -291,6 +302,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 													estate, eflags);
 			break;
 
+		case T_NestLoopVLE:
+			result = (PlanState *) ExecInitNestLoopVLE((NestLoopVLE *) node,
+													   estate, eflags);
+			break;
+
 		case T_MergeJoin:
 			result = (PlanState *) ExecInitMergeJoin((MergeJoin *) node,
 													 estate, eflags);
@@ -362,6 +378,21 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 		case T_Limit:
 			result = (PlanState *) ExecInitLimit((Limit *) node,
 												 estate, eflags);
+			break;
+
+		case T_Shortestpath:
+			result = (PlanState *) ExecInitShortestpath((Shortestpath *) node,
+														estate, eflags);
+			break;
+
+		case T_Hash2Side:
+			result = (PlanState *) ExecInitHash2Side((Hash2Side *) node,
+													 estate, eflags);
+			break;
+
+		case T_Dijkstra:
+			result = (PlanState *) ExecInitDijkstra((Dijkstra *) node,
+													estate, eflags);
 			break;
 
 		default:
@@ -513,6 +544,10 @@ MultiExecProcNode(PlanState *node)
 			result = MultiExecBitmapOr((BitmapOrState *) node);
 			break;
 
+		case T_Hash2SideState:
+			result = MultiExecHash2Side((Hash2SideState *) node);
+			break;
+
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			result = NULL;
@@ -591,6 +626,10 @@ ExecEndNode(PlanState *node)
 
 		case T_BitmapOrState:
 			ExecEndBitmapOr((BitmapOrState *) node);
+			break;
+
+		case T_ModifyGraphState:
+			ExecEndModifyGraph((ModifyGraphState *) node);
 			break;
 
 			/*
@@ -675,6 +714,10 @@ ExecEndNode(PlanState *node)
 			ExecEndNestLoop((NestLoopState *) node);
 			break;
 
+		case T_NestLoopVLEState:
+			ExecEndNestLoopVLE((NestLoopVLEState *) node);
+			break;
+
 		case T_MergeJoinState:
 			ExecEndMergeJoin((MergeJoinState *) node);
 			break;
@@ -724,6 +767,18 @@ ExecEndNode(PlanState *node)
 
 		case T_LimitState:
 			ExecEndLimit((LimitState *) node);
+			break;
+
+		case T_ShortestpathState:
+			ExecEndShortestpath((ShortestpathState *) node);
+			break;
+
+		case T_Hash2SideState:
+			ExecEndHash2Side((Hash2SideState *) node);
+			break;
+
+		case T_DijkstraState:
+			ExecEndDijkstra((DijkstraState *) node);
 			break;
 
 		default:

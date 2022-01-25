@@ -40,6 +40,8 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "optimizer/clauses.h"
+#include "optimizer/planner.h"
 #include "optimizer/optimizer.h"
 #include "pgstat.h"
 #include "utils/builtins.h"
@@ -76,9 +78,27 @@ static void ExecInitCoerceToDomain(ExprEvalStep *scratch, CoerceToDomain *ctest,
 								   ExprState *state,
 								   Datum *resv, bool *resnull);
 static void ExecBuildAggTransCall(ExprState *state, AggState *aggstate,
-								  ExprEvalStep *scratch,
-								  FunctionCallInfo fcinfo, AggStatePerTrans pertrans,
-								  int transno, int setno, int setoff, bool ishash);
+					  ExprEvalStep *scratch,
+					  FunctionCallInfo fcinfo, AggStatePerTrans pertrans,
+					  int transno, int setno, int setoff, bool ishash);
+static void ExecInitCypherTypeCast(ExprEvalStep *scratch, CypherTypeCast *tc,
+								   ExprState *state);
+static void ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
+							  ExprState *state);
+static void ExecInitCypherList(ExprEvalStep *scratch, CypherListExpr *listexpr,
+							   ExprState *state);
+static void ExecInitCypherListComp(ExprEvalStep *scratch,
+								   CypherListCompExpr *listcompexpr,
+								   ExprState *state);
+static bool isIdentity(CypherListCompExpr *listcompexpr);
+static void initExprSaveIter(Expr *node, ExprEvalStep *next_step,
+							 ExprState *state,
+							 Datum *resv, bool *resnull);
+static void ExecInitCypherAccess(ExprEvalStep *scratch,
+								 CypherAccessExpr *accessexpr,
+								 ExprState *state);
+static void initCypherIndex(Expr *node, ExprState *state,
+							CypherIndexResult *cidxres);
 
 
 /*
@@ -2144,6 +2164,57 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				break;
 			}
 
+		case T_CypherTypeCast:
+			{
+				CypherTypeCast *tc = (CypherTypeCast *) node;
+
+				ExecInitCypherTypeCast(&scratch, tc, state);
+				break;
+			}
+
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *mapexpr = (CypherMapExpr *) node;
+
+				ExecInitCypherMap(&scratch, mapexpr, state);
+				break;
+			}
+
+		case T_CypherListExpr:
+			{
+				CypherListExpr *listexpr = (CypherListExpr *) node;
+
+				ExecInitCypherList(&scratch, listexpr, state);
+				break;
+			}
+
+		case T_CypherListCompExpr:
+			{
+				CypherListCompExpr *listcompexpr = (CypherListCompExpr *) node;
+
+				ExecInitCypherListComp(&scratch, listcompexpr, state);
+				break;
+			}
+
+		case T_CypherListCompVar:
+			{
+				scratch.opcode = EEOP_CYPHERLISTCOMP_VAR;
+				scratch.d.cypherlistcomp_var.elemvalue =
+					state->innermost_cypherlistcomp_iterval;
+				scratch.d.cypherlistcomp_var.elemnull =
+					state->innermost_cypherlistcomp_iternull;
+				ExprEvalPushStep(state, &scratch);
+				break;
+			}
+
+		case T_CypherAccessExpr:
+			{
+				CypherAccessExpr *accessexpr = (CypherAccessExpr *) node;
+
+				ExecInitCypherAccess(&scratch, accessexpr, state);
+				break;
+			}
+
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));
@@ -2768,11 +2839,14 @@ ExecInitSubscriptingRef(ExprEvalStep *scratch, SubscriptingRef *sbsref,
  * (We could use this in FieldStore too, but in that case passing the old
  * value is so cheap there's no need.)
  *
- * Note: it might seem that this needs to recurse, but it does not; the
- * CaseTestExpr, if any, will be directly the arg or refexpr of the top-level
- * node.  Nested-assignment situations give rise to expression trees in which
- * each level of assignment has its own CaseTestExpr, and the recursive
- * structure appears within the newvals or refassgnexpr field.
+ * Note: it might seem that this needs to recurse, but in most cases it does
+ * not; the CaseTestExpr, if any, will be directly the arg or refexpr of the
+ * top-level node.  Nested-assignment situations give rise to expression
+ * trees in which each level of assignment has its own CaseTestExpr, and the
+ * recursive structure appears within the newvals or refassgnexpr field.
+ * There is an exception, though: if the array is an array-of-domain, we will
+ * have a CoerceToDomain as the refassgnexpr, and we need to be able to look
+ * through that.
  */
 static bool
 isAssignmentIndirectionExpr(Expr *expr)
@@ -2792,6 +2866,12 @@ isAssignmentIndirectionExpr(Expr *expr)
 
 		if (sbsRef->refexpr && IsA(sbsRef->refexpr, CaseTestExpr))
 			return true;
+	}
+	else if (IsA(expr, CoerceToDomain))
+	{
+		CoerceToDomain *cd = (CoerceToDomain *) expr;
+
+		return isAssignmentIndirectionExpr(cd->arg);
 	}
 	return false;
 }
@@ -3494,4 +3574,338 @@ ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
 	ExecReadyExpr(state);
 
 	return state;
+}
+
+static void
+ExecInitCypherTypeCast(ExprEvalStep *scratch, CypherTypeCast *tc,
+					   ExprState *state)
+{
+	FmgrInfo   *finfo_in;
+	FunctionCallInfo fcinfo_data_in;
+	Oid			infunc;
+	Oid			typinparam;
+
+	Assert(exprType((Node *) tc->arg) == JSONBOID);
+
+	ExecInitExprRec(tc->arg, state,
+					scratch->resvalue, scratch->resnull);
+
+	finfo_in = palloc0(sizeof(FmgrInfo));
+	fcinfo_data_in = palloc0(SizeForFunctionCallInfo(2));
+
+	getTypeInputInfo(tc->type, &infunc, &typinparam);
+
+	fmgr_info(infunc, finfo_in);
+	fmgr_info_set_expr((Node *) tc, finfo_in);
+
+	InitFunctionCallInfoData(*fcinfo_data_in, finfo_in, 3, InvalidOid,
+							 NULL, NULL);
+
+	/*
+	 * The datum for the first argument will be filled every time when this
+	 * expression is executed by calling ExecEvalCypherTypeCast().
+	 */
+	fcinfo_data_in->args[1].value = ObjectIdGetDatum(typinparam);
+	fcinfo_data_in->args[1].isnull = false;
+	fcinfo_data_in->args[2].value = Int32GetDatum(-1);
+	fcinfo_data_in->args[2].isnull = false;
+
+	scratch->opcode = EEOP_CYPHERTYPECAST;
+	scratch->d.cyphertypecast.fcinfo_data_in = fcinfo_data_in;
+	ExprEvalPushStep(state, scratch);
+}
+
+static void
+ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
+				  ExprState *state)
+{
+	int			npairs = list_length(mapexpr->keyvals) / 2;
+	char	  **key_cstrings;
+	Datum	   *val_values;
+	bool	   *val_nulls;
+	int			i;
+	ListCell   *le;
+
+	key_cstrings = (char **) palloc(sizeof(char *) * npairs);
+	val_values = (Datum *) palloc(sizeof(Datum) * npairs);
+	val_nulls = (bool *) palloc(sizeof(bool) * npairs);
+
+	i = 0;
+	le = list_head(mapexpr->keyvals);
+	while (le != NULL)
+	{
+		Const	   *key;
+		Expr	   *val;
+
+		key = lfirst_node(Const, le);
+		le = lnext(le);
+
+		Assert(le != NULL);
+
+		val = (Expr *) lfirst(le);
+		le = lnext(le);
+
+		/*
+		 * Since all keys of jsonb objects are C strings, convert
+		 * the given key constant which is text to a corresponding
+		 * C string to avoid the same conversion for every
+		 * evaluation of the CypherMapExpr.
+		 */
+		Assert(key->consttype == TEXTOID && !key->constisnull);
+		key_cstrings[i] = TextDatumGetCString(key->constvalue);
+
+		Assert(exprType((Node *) val) == JSONBOID);
+		ExecInitExprRec(val, state,
+						&val_values[i], &val_nulls[i]);
+
+		i++;
+	}
+
+	scratch->opcode = EEOP_CYPHERMAPEXPR;
+	scratch->d.cyphermapexpr.key_cstrings = key_cstrings;
+	scratch->d.cyphermapexpr.val_values = val_values;
+	scratch->d.cyphermapexpr.val_nulls = val_nulls;
+	scratch->d.cyphermapexpr.npairs = npairs;
+	ExprEvalPushStep(state, scratch);
+}
+
+static void
+ExecInitCypherList(ExprEvalStep *scratch, CypherListExpr *listexpr,
+				   ExprState *state)
+{
+	int			nelems = list_length(listexpr->elems);
+	Datum	   *elemvalues;
+	bool	   *elemnulls;
+	int			i;
+	ListCell   *le;
+
+	elemvalues = (Datum *) palloc(sizeof(Datum) * nelems);
+	elemnulls = (bool *) palloc(sizeof(bool) * nelems);
+
+	i = 0;
+	foreach(le, listexpr->elems)
+	{
+		Expr	   *e = (Expr *) lfirst(le);
+
+		ExecInitExprRec(e, state,
+						&elemvalues[i], &elemnulls[i]);
+
+		i++;
+	}
+
+	scratch->opcode = EEOP_CYPHERLISTEXPR;
+	scratch->d.cypherlistexpr.elemvalues = elemvalues;
+	scratch->d.cypherlistexpr.elemnulls = elemnulls;
+	scratch->d.cypherlistexpr.nelems = nelems;
+	ExprEvalPushStep(state, scratch);
+}
+
+static void
+ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
+					   ExprState *state)
+{
+	ExprEvalStep null_step;
+	int			null_stepno;
+	ExprEvalStep begin_step;
+	ExprEvalStep init_step;
+	Datum	   *elem_resvalue;
+	bool	   *elem_resnull;
+	ExprEvalStep next_step;
+	int			next_stepno;
+	ExprEvalStep hasnext_step;
+	int			hasnext_stepno;
+	ExprEvalStep elem_step;
+	ExprEvalStep loop_step;
+	int			end_stepno;
+
+	Assert(exprType((Node *) listcompexpr->list) == JSONBOID);
+
+	ExecInitExprRec(listcompexpr->list, state,
+					scratch->resvalue, scratch->resnull);
+	if (isIdentity(listcompexpr))
+		return;
+
+	null_step.opcode = EEOP_JUMP_IF_NULL;
+	null_step.resvalue = scratch->resvalue;
+	null_step.resnull = scratch->resnull;
+	null_step.d.jump.jumpdone = -1;
+	ExprEvalPushStep(state, &null_step);
+	null_stepno = state->steps_len - 1;
+
+	begin_step.opcode = EEOP_CYPHERLISTCOMP_BEGIN;
+	begin_step.d.cypherlistcomp.liststate =
+		(JsonbParseState **) palloc(sizeof(JsonbParseState *));
+	ExprEvalPushStep(state, &begin_step);
+
+	init_step.opcode = EEOP_CYPHERLISTCOMP_ITER_INIT;
+	init_step.d.cypherlistcomp_iter.listvalue = scratch->resvalue;
+	init_step.d.cypherlistcomp_iter.listnull = scratch->resnull;
+	init_step.d.cypherlistcomp_iter.listiter =
+		(JsonbIterator **) palloc(sizeof(JsonbIterator *));
+	ExprEvalPushStep(state, &init_step);
+
+	elem_resvalue = (Datum *) palloc(sizeof(Datum));
+	elem_resnull = (bool *) palloc(sizeof(bool));
+
+	next_step.opcode = EEOP_CYPHERLISTCOMP_ITER_NEXT;
+	next_step.resvalue = elem_resvalue;
+	next_step.resnull = elem_resnull;
+	next_step.d.cypherlistcomp_iter.listiter =
+		init_step.d.cypherlistcomp_iter.listiter;
+	ExprEvalPushStep(state, &next_step);
+	next_stepno = state->steps_len - 1;
+
+	hasnext_step.opcode = EEOP_JUMP_IF_NULL;
+	hasnext_step.resvalue = next_step.resvalue;
+	hasnext_step.resnull = next_step.resnull;
+	hasnext_step.d.jump.jumpdone = -1;
+	ExprEvalPushStep(state, &hasnext_step);
+	hasnext_stepno = state->steps_len - 1;
+
+	if (listcompexpr->cond != NULL)
+	{
+		Datum	   *cond_resvalue;
+		bool	   *cond_resnull;
+		ExprEvalStep cond_step;
+
+		cond_resvalue = (Datum *) palloc(sizeof(Datum));
+		cond_resnull = (bool *) palloc(sizeof(bool));
+
+		initExprSaveIter(listcompexpr->cond, &next_step, state,
+						 cond_resvalue, cond_resnull);
+
+		cond_step.opcode = EEOP_JUMP_IF_NOT_TRUE;
+		cond_step.resvalue = cond_resvalue;
+		cond_step.resnull = cond_resnull;
+		cond_step.d.jump.jumpdone = next_stepno;
+		ExprEvalPushStep(state, &cond_step);
+	}
+
+	if (listcompexpr->elem != NULL)
+		initExprSaveIter(listcompexpr->elem, &next_step, state,
+						 elem_resvalue, elem_resnull);
+
+	elem_step.opcode = EEOP_CYPHERLISTCOMP_ELEM;
+	elem_step.d.cypherlistcomp.elemvalue = elem_resvalue;
+	elem_step.d.cypherlistcomp.elemnull = elem_resnull;
+	elem_step.d.cypherlistcomp.liststate =
+		begin_step.d.cypherlistcomp.liststate;
+	ExprEvalPushStep(state, &elem_step);
+
+	loop_step.opcode = EEOP_JUMP;
+	loop_step.d.jump.jumpdone = next_stepno;
+	ExprEvalPushStep(state, &loop_step);
+
+	scratch->opcode = EEOP_CYPHERLISTCOMP_END;
+	scratch->d.cypherlistcomp.liststate =
+		begin_step.d.cypherlistcomp.liststate;
+	ExprEvalPushStep(state, scratch);
+	end_stepno = state->steps_len - 1;
+
+	state->steps[hasnext_stepno].d.jump.jumpdone = end_stepno;
+	state->steps[null_stepno].d.jump.jumpdone = state->steps_len;
+}
+
+static bool
+isIdentity(CypherListCompExpr *listcompexpr)
+{
+	if (listcompexpr->cond != NULL)
+		return false;
+
+	if (listcompexpr->elem == NULL)
+		return true;
+
+	if (IsA(listcompexpr->elem, CypherListCompVar))
+	{
+		Assert(strcmp(((CypherListCompVar *) listcompexpr->elem)->varname,
+					  listcompexpr->varname) == 0);
+		return true;
+	}
+
+	return false;
+}
+
+static void
+initExprSaveIter(Expr *node, ExprEvalStep *next_step,
+				 ExprState *state,
+				 Datum *resv, bool *resnull)
+{
+	Datum	   *save_iterval;
+	bool	   *save_iternull;
+
+	save_iterval = state->innermost_cypherlistcomp_iterval;
+	save_iternull = state->innermost_cypherlistcomp_iternull;
+	state->innermost_cypherlistcomp_iterval = next_step->resvalue;
+	state->innermost_cypherlistcomp_iternull = next_step->resnull;
+
+	ExecInitExprRec(node, state, resv, resnull);
+
+	state->innermost_cypherlistcomp_iterval = save_iterval;
+	state->innermost_cypherlistcomp_iternull = save_iternull;
+}
+
+static void
+ExecInitCypherAccess(ExprEvalStep *scratch, CypherAccessExpr *accessexpr,
+					 ExprState *state)
+{
+	Datum	   *argvalue;
+	bool	   *argnull;
+	int			pathlen;
+	CypherAccessPathElem *path;
+	int			i;
+	ListCell   *le;
+
+	Assert(exprType((Node *) accessexpr->arg) == JSONBOID);
+
+	argvalue = (Datum *) palloc(sizeof(Datum));
+	argnull = (bool *) palloc(sizeof(bool));
+	ExecInitExprRec(accessexpr->arg, state, argvalue, argnull);
+
+	pathlen = list_length(accessexpr->path);
+	path = (CypherAccessPathElem *)
+		palloc(sizeof(CypherAccessPathElem) * pathlen);
+
+	i = 0;
+	foreach(le, accessexpr->path)
+	{
+		Node	   *node = lfirst(le);
+
+		if (IsA(node, CypherIndices))
+		{
+			CypherIndices *cind = (CypherIndices *) node;
+
+			path[i].is_slice = cind->is_slice;
+			initCypherIndex(cind->lidx, state, &path[i].lidx);
+			initCypherIndex(cind->uidx, state, &path[i].uidx);
+		}
+		else
+		{
+			path[i].is_slice = false;
+			MarkCypherIndexResultInvalid(&path[i].lidx);
+			initCypherIndex((Expr *) node, state, &path[i].uidx);
+		}
+
+		i++;
+	}
+
+	scratch->opcode = EEOP_CYPHERACCESSEXPR;
+	scratch->d.cypheraccessexpr.argvalue = argvalue;
+	scratch->d.cypheraccessexpr.argnull = argnull;
+	scratch->d.cypheraccessexpr.path = path;
+	scratch->d.cypheraccessexpr.pathlen = pathlen;
+	ExprEvalPushStep(state, scratch);
+}
+
+static void
+initCypherIndex(Expr *node, ExprState *state, CypherIndexResult *cidxres)
+{
+	if (node == NULL)
+	{
+		MarkCypherIndexResultInvalid(cidxres);
+	}
+	else
+	{
+		cidxres->type = exprType((Node *) node);
+		ExecInitExprRec(node, state, &cidxres->value, &cidxres->isnull);
+	}
 }

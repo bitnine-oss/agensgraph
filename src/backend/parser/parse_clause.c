@@ -1218,7 +1218,8 @@ transformFromClauseItem(ParseState *pstate, Node *n,
 		 * NB: this coding relies on the fact that list_concat is not
 		 * destructive to its second argument.
 		 */
-		lateral_ok = (j->jointype == JOIN_INNER || j->jointype == JOIN_LEFT);
+		lateral_ok = (j->jointype == JOIN_INNER || j->jointype == JOIN_LEFT ||
+					  j->jointype == JOIN_VLE);
 		setNamespaceLateralState(l_namespace, true, lateral_ok);
 
 		sv_namespace_length = list_length(pstate->p_namespace);
@@ -1601,6 +1602,8 @@ buildMergedJoinVar(ParseState *pstate, JoinType jointype,
 				res_node = (Node *) c;
 				break;
 			}
+		case JOIN_CYPHER_MERGE:
+		case JOIN_CYPHER_DELETE:
 		default:
 			elog(ERROR, "unrecognized join type: %d", (int) jointype);
 			res_node = NULL;	/* keep compiler quiet */
@@ -3650,4 +3653,208 @@ transformFrameOffset(ParseState *pstate, int frameOptions,
 	checkExprIsVarFree(pstate, node, constructName);
 
 	return node;
+}
+
+typedef struct
+{
+	int			sublevels_up;
+} find_var_context;
+
+static bool
+find_var_walker(Node *node, find_var_context *ctx)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Var))
+		return ((int) ((Var *) node)->varlevelsup == ctx->sublevels_up);
+
+	if (IsA(node, Query))
+	{
+		bool		result;
+
+		ctx->sublevels_up++;
+		result = query_tree_walker((Query *) node, find_var_walker, ctx, 0);
+		ctx->sublevels_up--;
+
+		return result;
+	}
+
+	return expression_tree_walker(node, find_var_walker, ctx);
+}
+
+typedef struct
+{
+	int			sublevels_up;
+} find_agg_context;
+
+static bool
+find_agg_walker(Node *node, find_agg_context *ctx)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, Aggref))
+	{
+		Aggref	   *agg = (Aggref *) node;
+		int			agglevelsup = (int) agg->agglevelsup;
+
+		if (agglevelsup == ctx->sublevels_up)
+		{
+			find_var_context fvctx;
+
+			fvctx.sublevels_up = ctx->sublevels_up;
+			if (find_var_walker((Node *) agg->args, &fvctx))
+				return true;
+			if (find_var_walker((Node *) agg->aggdirectargs, &fvctx))
+				return true;
+
+			return false;
+		}
+
+		if (agglevelsup > ctx->sublevels_up)
+			return false;
+	}
+
+	if (IsA(node, Query))
+	{
+		bool		result;
+
+		ctx->sublevels_up++;
+		result = query_tree_walker((Query *) node, find_agg_walker, ctx, 0);
+		ctx->sublevels_up--;
+
+		return result;
+	}
+
+	return expression_tree_walker(node, find_agg_walker, ctx);
+}
+
+static bool
+add_expr_to_group_exprs(Expr *expr, List **group_exprs)
+{
+	ListCell *le;
+
+	/* check duplication */
+	foreach(le, *group_exprs)
+	{
+		Expr	   *gexpr = lfirst(le);
+
+		if (equal(gexpr, expr))
+			return false;
+	}
+
+	*group_exprs = lappend(*group_exprs, expr);
+	return true;
+}
+
+/*
+ * Scan the target list for ungrouped variables (variables that are not within
+ * the arguments of aggregate functions). Generate transformed GROUP BY of the
+ * list of those variables.
+ */
+List *
+generateGroupClause(ParseState *pstate, List **targetlist, List *sortClause)
+{
+	ListCell   *lt;
+	TargetEntry *te;
+	List	   *group_exprs = NIL;
+	ListCell   *le;
+	List	   *group = NIL;
+
+	if (!pstate->p_hasAggs)
+		return NIL;
+
+	foreach(lt, *targetlist)
+	{
+		find_agg_context factx;
+
+		te = lfirst(lt);
+
+		factx.sublevels_up = 0;
+		if (find_agg_walker((Node *) te->expr, &factx))
+		{
+			if (!IsA(te->expr, Aggref))
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("aggregate must exist solely"),
+						 parser_errposition(pstate,
+											exprLocation((Node *) te->expr))));
+				return NIL;
+			}
+		}
+		else
+		{
+			find_var_context fvctx;
+
+			/*
+			 * If `te->expr` does not have aggregate functions and
+			 * it is not a constant expression, add it to GROUP BY.
+			 */
+
+			fvctx.sublevels_up = 0;
+			if (find_var_walker((Node *) te->expr, &fvctx))
+				add_expr_to_group_exprs(te->expr, &group_exprs);
+		}
+	}
+
+	foreach(le, group_exprs)
+	{
+		Expr	   *gexpr = lfirst(le);
+		bool		done;
+		ListCell   *ls;
+
+		/*
+		 * See findTargetlistEntrySQL99()
+		 */
+
+		/* find the TargetEntry which exactly has this expression */
+		foreach(lt, *targetlist)
+		{
+			Node	   *expr;
+
+			te = lfirst(lt);
+
+			expr = strip_implicit_coercions((Node *) te->expr);
+			if (equal(expr, gexpr))
+				break;
+		}
+
+		/* not found, make one and add it to the target list */
+		if (lt == NULL)
+		{
+			te = makeTargetEntry(copyObject(gexpr),
+								 (AttrNumber) pstate->p_next_resno++,
+								 NULL, true);
+
+			*targetlist = lappend(*targetlist, te);
+		}
+
+		/*
+		 * See transformGroupClauseExpr()
+		 */
+
+		if (targetIsInSortList(te, InvalidOid, group))
+			continue;
+
+		done = false;
+		foreach(ls, sortClause)
+		{
+			SortGroupClause *sc = lfirst(ls);
+
+			if (sc->tleSortGroupRef == te->ressortgroupref)
+			{
+				group = lappend(group, copyObject(sc));
+				done = true;
+				break;
+			}
+		}
+		if (done)
+			continue;
+
+		group = addTargetToGroupList(pstate, te, group, *targetlist, -1);
+	}
+
+	return group;
 }

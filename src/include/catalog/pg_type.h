@@ -344,4 +344,6 @@ extern char *makeArrayTypeName(const char *typeName, Oid typeNamespace);
 extern bool moveArrayTypeName(Oid typeOid, const char *typeName,
 							  Oid typeNamespace);
 
+#define VERTEXOID		7012
+#define EDGEOID			7022
 #endif							/* PG_TYPE_H */

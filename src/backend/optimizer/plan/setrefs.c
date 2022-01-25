@@ -101,6 +101,9 @@ static void set_foreignscan_references(PlannerInfo *root,
 static void set_customscan_references(PlannerInfo *root,
 									  CustomScan *cscan,
 									  int rtoffset);
+static void set_dijkstra_references(PlannerInfo *root,
+									Plan *plan,
+									int rtoffset);
 static Plan *set_append_references(PlannerInfo *root,
 								   Append *aplan,
 								   int rtoffset);
@@ -633,8 +636,10 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 			break;
 
 		case T_NestLoop:
+		case T_NestLoopVLE:
 		case T_MergeJoin:
 		case T_HashJoin:
+		case T_Shortestpath:
 			set_join_references(root, (Join *) plan, rtoffset);
 			break;
 
@@ -654,6 +659,7 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 		case T_Sort:
 		case T_Unique:
 		case T_SetOp:
+		case T_Hash2Side:
 
 			/*
 			 * These plan types don't actually bother to evaluate their
@@ -954,6 +960,16 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 											  rtoffset);
 				}
 			}
+			break;
+		case T_ModifyGraph:
+			{
+				ModifyGraph *splan = (ModifyGraph *) plan;
+
+				splan->subplan = set_plan_refs(root, splan->subplan, rtoffset);
+			}
+			break;
+		case T_Dijkstra:
+			set_dijkstra_references(root, plan, rtoffset);
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
@@ -1747,7 +1763,7 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 								   rtoffset);
 
 	/* Now do join-type-specific stuff */
-	if (IsA(join, NestLoop))
+	if (IsA(join, NestLoop) || IsA(join, NestLoopVLE))
 	{
 		NestLoop   *nl = (NestLoop *) join;
 		ListCell   *lc;
@@ -1798,6 +1814,17 @@ set_join_references(PlannerInfo *root, Join *join, int rtoffset)
 											   outer_itlist,
 											   OUTER_VAR,
 											   rtoffset);
+	}
+	else if (IsA(join, Shortestpath))
+	{
+		Shortestpath *sp = (Shortestpath *) join;
+
+		sp->hashclauses = fix_join_expr(root,
+										sp->hashclauses,
+										outer_itlist,
+										inner_itlist,
+										(Index) 0,
+										rtoffset);
 	}
 
 	/*
@@ -2840,3 +2867,22 @@ extract_query_dependencies_walker(Node *node, PlannerInfo *context)
 	return expression_tree_walker(node, extract_query_dependencies_walker,
 								  (void *) context);
 }
+
+static void
+set_dijkstra_references(PlannerInfo *root, Plan *plan, int rtoffset)
+{
+	Plan	   *subplan = plan->lefttree;
+	Dijkstra   *dijkstra = (Dijkstra *) plan;
+	indexed_tlist *subplan_itlist;
+
+	set_upper_references(root, plan, rtoffset);
+
+	subplan_itlist = build_tlist_index(subplan->targetlist);
+	dijkstra->source = fix_upper_expr(root, dijkstra->source, subplan_itlist,
+									  OUTER_VAR, rtoffset);
+	dijkstra->target = fix_upper_expr(root, dijkstra->target, subplan_itlist,
+									  OUTER_VAR, rtoffset);
+	dijkstra->limit = fix_upper_expr(root, dijkstra->limit, subplan_itlist,
+									 OUTER_VAR, rtoffset);
+}
+

@@ -61,8 +61,7 @@
  */
 
 /* these are in nodes/execnodes.h: */
-/* typedef struct HashJoinTupleData *HashJoinTuple; */
-/* typedef struct HashJoinTableData *HashJoinTable; */
+typedef struct HashJoinTupleData *HashJoinTuple;
 
 typedef struct HashJoinTupleData
 {

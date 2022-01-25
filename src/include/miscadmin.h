@@ -258,6 +258,9 @@ extern PGDLLIMPORT int work_mem;
 extern PGDLLIMPORT int maintenance_work_mem;
 extern PGDLLIMPORT int max_parallel_maintenance_workers;
 
+/* AgensGraph */
+extern PGDLLIMPORT int eager_mem;
+
 extern int	VacuumCostPageHit;
 extern int	VacuumCostPageMiss;
 extern int	VacuumCostPageDirty;

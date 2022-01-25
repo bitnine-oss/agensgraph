@@ -21,6 +21,7 @@
 
 #include "access/sysattr.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_type.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "nodes/extensible.h"
@@ -40,7 +41,9 @@
 #include "parser/parse_clause.h"
 #include "parser/parsetree.h"
 #include "partitioning/partprune.h"
+#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
+#include "catalog/pg_operator.h"
 
 
 /*
@@ -152,6 +155,12 @@ static CustomScan *create_customscan_plan(PlannerInfo *root,
 static NestLoop *create_nestloop_plan(PlannerInfo *root, NestPath *best_path);
 static MergeJoin *create_mergejoin_plan(PlannerInfo *root, MergePath *best_path);
 static HashJoin *create_hashjoin_plan(PlannerInfo *root, HashPath *best_path);
+static ModifyGraph *create_modifygraph_plan(PlannerInfo *root,
+											ModifyGraphPath *best_path);
+static Dijkstra *create_dijkstra_plan(PlannerInfo *root,
+									  DijkstraPath *best_path);
+static Shortestpath *create_shortestpath_plan(PlannerInfo *root,
+											  ShortestpathPath *best_path);
 static Node *replace_nestloop_params(PlannerInfo *root, Node *expr);
 static Node *replace_nestloop_params_mutator(Node *node, PlannerInfo *root);
 static void fix_indexqual_references(PlannerInfo *root, IndexPath *index_path,
@@ -212,13 +221,15 @@ static RecursiveUnion *make_recursive_union(List *tlist,
 											Plan *righttree,
 											int wtParam,
 											List *distinctList,
-											long numGroups);
+											long numGroups,
+											int maxDepth);
 static BitmapAnd *make_bitmap_and(List *bitmapplans);
 static BitmapOr *make_bitmap_or(List *bitmapplans);
 static NestLoop *make_nestloop(List *tlist,
 							   List *joinclauses, List *otherclauses, List *nestParams,
 							   Plan *lefttree, Plan *righttree,
-							   JoinType jointype, bool inner_unique);
+							   JoinType jointype, bool inner_unique,
+							   int minhops, int maxhops);
 static HashJoin *make_hashjoin(List *tlist,
 							   List *joinclauses, List *otherclauses,
 							   List *hashclauses,
@@ -292,6 +303,28 @@ static ModifyTable *make_modifytable(PlannerInfo *root,
 									 List *rowMarks, OnConflictExpr *onconflict, int epqParam);
 static GatherMerge *create_gather_merge_plan(PlannerInfo *root,
 											 GatherMergePath *best_path);
+static Shortestpath *make_shortestpath(List *tlist,
+									   List *hashclauses,
+									   Plan *lefttree,
+									   Plan *righttree,
+									   JoinType jointype,
+									   AttrNumber end_id_left,
+									   AttrNumber end_id_right,
+									   AttrNumber tableoid_left,
+									   AttrNumber tableoid_right,
+									   AttrNumber ctid_left,
+									   AttrNumber ctid_right,
+									   Node *source,
+									   Node *target,
+									   long minhops,
+									   long maxhops,
+									   long limit);
+static Hash2Side *make_hash2side(Plan *lefttree,
+								 Oid skewTable,
+								 AttrNumber skewColumn,
+								 bool skewInherit,
+								 Oid skewColType,
+								 int32 skewColTypmod);
 
 
 /*
@@ -331,7 +364,7 @@ create_plan(PlannerInfo *root, Path *best_path)
 	 * top-level tlist seen at execution time.  However, ModifyTable plan
 	 * nodes don't have a tlist matching the querytree targetlist.
 	 */
-	if (!IsA(plan, ModifyTable))
+	if (!IsA(plan, ModifyTable) && !IsA(plan, ModifyGraph))
 		apply_tlist_labeling(plan->targetlist, root->processed_tlist);
 
 	/*
@@ -505,6 +538,18 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 		case T_GatherMerge:
 			plan = (Plan *) create_gather_merge_plan(root,
 													 (GatherMergePath *) best_path);
+			break;
+		case T_ModifyGraph:
+			plan = (Plan *) create_modifygraph_plan(root,
+												(ModifyGraphPath *) best_path);
+			break;
+		case T_Shortestpath:
+			plan = (Plan *) create_shortestpath_plan(root,
+													 (ShortestpathPath *) best_path);
+			break;
+		case T_Dijkstra:
+			plan = (Plan *) create_dijkstra_plan(root,
+												 (DijkstraPath *) best_path);
 			break;
 		default:
 			elog(ERROR, "unrecognized node type: %d",
@@ -2543,7 +2588,8 @@ create_recursiveunion_plan(PlannerInfo *root, RecursiveUnionPath *best_path)
 								rightplan,
 								best_path->wtParam,
 								best_path->distinctList,
-								numGroups);
+								numGroups,
+								best_path->maxDepth);
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
 
@@ -3562,6 +3608,7 @@ create_ctescan_plan(PlannerInfo *root, Path *best_path,
 	Index		levelsup;
 	int			ndx;
 	ListCell   *lc;
+	bool		ctestop = false;
 
 	Assert(scan_relid > 0);
 	rte = planner_rt_fetch(scan_relid, root);
@@ -3591,7 +3638,10 @@ create_ctescan_plan(PlannerInfo *root, Path *best_path,
 		CommonTableExpr *cte = (CommonTableExpr *) lfirst(lc);
 
 		if (strcmp(cte->ctename, rte->ctename) == 0)
-			break;
+		{
+			ctestop = cte->ctestop;
+ 			break;
+		}
 		ndx++;
 	}
 	if (lc == NULL)				/* shouldn't happen */
@@ -3630,6 +3680,7 @@ create_ctescan_plan(PlannerInfo *root, Path *best_path,
 
 	scan_plan = make_ctescan(tlist, scan_clauses, scan_relid,
 							 plan_id, cte_param_id);
+	scan_plan->cteStop = ctestop;
 
 	copy_generic_path_info(&scan_plan->scan.plan, best_path);
 
@@ -4062,7 +4113,9 @@ create_nestloop_plan(PlannerInfo *root,
 							  outer_plan,
 							  inner_plan,
 							  best_path->jointype,
-							  best_path->inner_unique);
+							  best_path->inner_unique,
+							  best_path->minhops,
+							  best_path->maxhops);
 
 	copy_generic_path_info(&join_plan->join.plan, &best_path->path);
 
@@ -4549,6 +4602,249 @@ create_hashjoin_plan(PlannerInfo *root,
 	return join_plan;
 }
 
+static ModifyGraph *
+create_modifygraph_plan(PlannerInfo *root, ModifyGraphPath *best_path)
+{
+	ModifyGraph *plan;
+	Plan *subplan;
+
+	subplan = create_plan_recurse(root, best_path->subpath, CP_EXACT_TLIST);
+
+	apply_tlist_labeling(subplan->targetlist, root->processed_tlist);
+
+	plan = make_modifygraph(root, best_path->operation,
+							best_path->last, best_path->targets, subplan,
+							best_path->nr_modify, best_path->detach,
+							best_path->eagerness, best_path->pattern,
+							best_path->exprs, best_path->sets);
+
+	copy_generic_path_info(&plan->plan, &best_path->path);
+
+	return plan;
+}
+
+static Dijkstra *
+create_dijkstra_plan(PlannerInfo *root, DijkstraPath *best_path)
+{
+	Dijkstra   *plan;
+	Plan	   *subplan;
+	List	   *sub_tlist;
+	TargetEntry *tle;
+	AttrNumber	end_id;
+	AttrNumber	edge_id;
+
+	subplan = create_plan_recurse(root, best_path->subpath, CP_EXACT_TLIST);
+
+	sub_tlist = subplan->targetlist;
+	tle = tlist_member((Expr *) best_path->end_id, sub_tlist);
+	end_id = tle->resno;
+	tle = tlist_member((Expr *) best_path->edge_id, sub_tlist);
+	edge_id = tle->resno;
+
+	plan = make_dijkstra(root, build_path_tlist(root, &best_path->path),
+						 subplan, best_path->weight, best_path->weight_out,
+						 end_id, edge_id, best_path->source,
+						 best_path->target, best_path->limit);
+
+	copy_generic_path_info(&plan->plan, &best_path->path);
+
+	return plan;
+}
+
+static Shortestpath *
+create_shortestpath_plan(PlannerInfo *root,
+						 ShortestpathPath *best_path)
+{
+	Shortestpath *join_plan;
+	Hash2Side    *outer_hash;
+	Hash2Side    *inner_hash;
+	Plan         *outer_plan;
+	Plan         *inner_plan;
+	List         *tlist = build_path_tlist(root, &best_path->jpath.path);
+	List         *hashclauses;
+	Oid           skewTable = InvalidOid;
+	AttrNumber    skewColumn = InvalidAttrNumber;
+	bool          skewInherit = false;
+	Oid           skewColType = InvalidOid;
+	int32         skewColTypmod = -1;
+	List	     *sub_tlist;
+	TargetEntry  *tle_end_id_left;
+	TargetEntry  *tle_end_id_right;
+	TargetEntry  *tle_tableoid_left;
+	TargetEntry  *tle_tableoid_right;
+	TargetEntry  *tle_ctid_left;
+	TargetEntry  *tle_ctid_right;
+	AttrNumber	  end_id_left;
+	AttrNumber	  end_id_right;
+	AttrNumber	  tableoid_left;
+	AttrNumber	  tableoid_right;
+	AttrNumber	  ctid_left;
+	AttrNumber	  ctid_right;
+
+	/*
+	 * HashJoin can project, so we don't have to demand exact tlists from the
+	 * inputs.  However, it's best to request a small tlist from the inner
+	 * side, so that we aren't storing more data than necessary.  Likewise, if
+	 * we anticipate batching, request a small tlist from the outer side so
+	 * that we don't put extra data in the outer batch files.
+	 */
+	outer_plan = create_plan_recurse(root, best_path->jpath.outerjoinpath,
+									 CP_SMALL_TLIST);
+
+	inner_plan = create_plan_recurse(root, best_path->jpath.innerjoinpath,
+									 CP_SMALL_TLIST);
+
+	sub_tlist = outer_plan->targetlist;
+	tle_end_id_left = tlist_member((Expr *) best_path->end_id_left, sub_tlist);
+	end_id_left = tle_end_id_left->resno;
+	tle_tableoid_left = tlist_member((Expr *) best_path->tableoid_left, sub_tlist);
+	tableoid_left = tle_tableoid_left->resno;
+	tle_ctid_left = tlist_member((Expr *) best_path->ctid_left, sub_tlist);
+	ctid_left = tle_ctid_left->resno;
+	sub_tlist = inner_plan->targetlist;
+	tle_end_id_right = tlist_member((Expr *) best_path->end_id_right, sub_tlist);
+	end_id_right = tle_end_id_right->resno;
+	tle_tableoid_right = tlist_member((Expr *) best_path->tableoid_right, sub_tlist);
+	tableoid_right = tle_tableoid_right->resno;
+	tle_ctid_right = tlist_member((Expr *) best_path->ctid_right, sub_tlist);
+	ctid_right = tle_ctid_right->resno;
+
+	hashclauses = list_make1(make_opclause(OID_GRAPHID_EQ_OP,
+										   BOOLOID,
+										   false,
+										   tle_end_id_left->expr,
+										   tle_end_id_right->expr,
+										   InvalidOid,
+										   InvalidOid));
+
+	/*
+	 * If there is a single join clause and we can identify the outer variable
+	 * as a simple column reference, supply its identity for possible use in
+	 * skew optimization.  (Note: in principle we could do skew optimization
+	 * with multiple join clauses, but we'd have to be able to determine the
+	 * most common combinations of outer values, which we don't currently have
+	 * enough stats for.)
+	 */
+	skewTable = InvalidOid;
+	skewColumn = InvalidAttrNumber;
+	skewInherit = false;
+	skewColType = InvalidOid;
+	skewColTypmod = -1;
+	if (list_length(hashclauses) == 1)
+	{
+		OpExpr	   *clause = (OpExpr *) linitial(hashclauses);
+		Node	   *node;
+
+		Assert(is_opclause(clause));
+		node = (Node *) linitial(clause->args);
+		if (IsA(node, RelabelType))
+			node = (Node *) ((RelabelType *) node)->arg;
+		if (IsA(node, Var))
+		{
+			Var		   *var = (Var *) node;
+			RangeTblEntry *rte;
+
+			rte = root->simple_rte_array[var->varno];
+			if (rte->rtekind == RTE_RELATION)
+			{
+				skewTable = rte->relid;
+				skewColumn = var->varattno;
+				skewInherit = rte->inh;
+				skewColType = var->vartype;
+				skewColTypmod = var->vartypmod;
+			}
+		}
+	}
+
+	/*
+	 * Build the hash node and hash join node.
+	 */
+	inner_hash = make_hash2side(inner_plan,
+								skewTable,
+								skewColumn,
+								skewInherit,
+								skewColType,
+								skewColTypmod);
+
+	/*
+	 * If there is a single join clause and we can identify the outer variable
+	 * as a simple column reference, supply its identity for possible use in
+	 * skew optimization.  (Note: in principle we could do skew optimization
+	 * with multiple join clauses, but we'd have to be able to determine the
+	 * most common combinations of outer values, which we don't currently have
+	 * enough stats for.)
+	 */
+	skewTable = InvalidOid;
+	skewColumn = InvalidAttrNumber;
+	skewInherit = false;
+	skewColType = InvalidOid;
+	skewColTypmod = -1;
+	if (list_length(hashclauses) == 1)
+	{
+		OpExpr	   *clause = (OpExpr *) linitial(hashclauses);
+		Node	   *node;
+
+		Assert(is_opclause(clause));
+		node = (Node *) lsecond(clause->args);
+		if (IsA(node, RelabelType))
+			node = (Node *) ((RelabelType *) node)->arg;
+		if (IsA(node, Var))
+		{
+			Var		   *var = (Var *) node;
+			RangeTblEntry *rte;
+
+			rte = root->simple_rte_array[var->varno];
+			if (rte->rtekind == RTE_RELATION)
+			{
+				skewTable = rte->relid;
+				skewColumn = var->varattno;
+				skewInherit = rte->inh;
+				skewColType = var->vartype;
+				skewColTypmod = var->vartypmod;
+			}
+		}
+	}
+
+	/*
+	 * Build the hash node and hash join node.
+	 */
+	outer_hash = make_hash2side(outer_plan,
+								skewTable,
+								skewColumn,
+								skewInherit,
+								skewColType,
+								skewColTypmod);
+
+	/*
+	 * Set Hash node's startup & total costs equal to total cost of input
+	 * plan; this only affects EXPLAIN display not decisions.
+	 */
+	copy_plan_costsize(&inner_hash->plan, inner_plan);
+	inner_hash->plan.startup_cost = inner_hash->plan.total_cost;
+	copy_plan_costsize(&outer_hash->plan, outer_plan);
+	outer_hash->plan.startup_cost = outer_hash->plan.total_cost;
+
+	join_plan = make_shortestpath(tlist,
+								  hashclauses,
+								  (Plan*)outer_hash,
+								  (Plan*)inner_hash,
+								  best_path->jpath.jointype,
+								  end_id_left,
+								  end_id_right,
+								  tableoid_left,
+								  tableoid_right,
+								  ctid_left,
+								  ctid_right,
+								  best_path->source,
+								  best_path->target,
+								  best_path->minhops,
+								  best_path->maxhops,
+								  best_path->limit);
+
+	copy_generic_path_info(&join_plan->join.plan, &best_path->jpath.path);
+
+	return join_plan;
+}
 
 /*****************************************************************************
  *
@@ -5470,7 +5766,8 @@ make_recursive_union(List *tlist,
 					 Plan *righttree,
 					 int wtParam,
 					 List *distinctList,
-					 long numGroups)
+					 long numGroups,
+					 int maxDepth)
 {
 	RecursiveUnion *node = makeNode(RecursiveUnion);
 	Plan	   *plan = &node->plan;
@@ -5516,6 +5813,7 @@ make_recursive_union(List *tlist,
 		node->dupCollations = dupCollations;
 	}
 	node->numGroups = numGroups;
+	node->maxDepth = maxDepth;
 
 	return node;
 }
@@ -5558,21 +5856,36 @@ make_nestloop(List *tlist,
 			  Plan *lefttree,
 			  Plan *righttree,
 			  JoinType jointype,
-			  bool inner_unique)
+			  bool inner_unique,
+			  int minhops,
+			  int maxhops)
 {
-	NestLoop   *node = makeNode(NestLoop);
-	Plan	   *plan = &node->join.plan;
+    NestLoop   *node;
+    Plan       *plan;
 
-	plan->targetlist = tlist;
-	plan->qual = otherclauses;
-	plan->lefttree = lefttree;
-	plan->righttree = righttree;
-	node->join.jointype = jointype;
-	node->join.inner_unique = inner_unique;
-	node->join.joinqual = joinclauses;
-	node->nestParams = nestParams;
+    if (jointype == JOIN_VLE)
+    {
+        NestLoopVLE *vle = makeNode(NestLoopVLE);
 
-	return node;
+        vle->minHops = minhops;
+        vle->maxHops = maxhops;
+        node = &vle->nl;
+    }
+    else
+    {
+        node = makeNode(NestLoop);
+    }
+    plan = &node->join.plan;
+    plan->targetlist = tlist;
+    plan->qual = otherclauses;
+    plan->lefttree = lefttree;
+    plan->righttree = righttree;
+    node->join.jointype = jointype;
+    node->join.inner_unique = inner_unique;
+    node->join.joinqual = joinclauses;
+    node->nestParams = nestParams;
+
+    return node;
 }
 
 static HashJoin *
@@ -6837,4 +7150,128 @@ is_projection_capable_plan(Plan *plan)
 			break;
 	}
 	return true;
+}
+
+/*
+ * make_modifygraph
+ *	  Build a ModifyGraph plan node
+ */
+ModifyGraph *
+make_modifygraph(PlannerInfo *root, GraphWriteOp operation,
+				 bool last, List *targets, Plan *subplan, uint32 nr_modify,
+				 bool detach, bool eagerness, List *pattern, List *exprs,
+				 List *sets)
+{
+	ModifyGraph *node = makeNode(ModifyGraph);
+
+	node->operation = operation;
+	node->last = last;
+	node->targets = targets;
+	node->subplan = subplan;
+	node->nr_modify = nr_modify;
+	node->detach = detach;
+	node->eagerness = eagerness;
+	node->pattern = pattern;
+	node->exprs = exprs;
+	node->sets = sets;
+	node->ert_base_index = -1;
+	node->ert_rtes_added = -1;
+
+	return node;
+}
+
+Shortestpath *
+make_shortestpath(List *tlist,
+				  List *hashclauses,
+				  Plan *lefttree,
+				  Plan *righttree,
+				  JoinType jointype,
+				  AttrNumber end_id_left,
+				  AttrNumber end_id_right,
+				  AttrNumber tableoid_left,
+				  AttrNumber tableoid_right,
+				  AttrNumber ctid_left,
+				  AttrNumber ctid_right,
+				  Node *source,
+				  Node *target,
+				  long minhops,
+				  long maxhops,
+				  long limit)
+{
+	Shortestpath *node = makeNode(Shortestpath);
+	Plan	     *plan = &node->join.plan;
+
+	plan = &node->join.plan;
+	plan->targetlist = tlist;
+	plan->qual = NULL;
+	plan->lefttree = lefttree;
+	plan->righttree = righttree;
+	node->join.jointype = jointype;
+	node->join.joinqual = NULL;
+	node->hashclauses = hashclauses;
+
+	node->minhops = minhops;
+	node->maxhops = maxhops;
+	node->end_id_left = end_id_left;
+	node->end_id_right = end_id_right;
+	node->tableoid_left = tableoid_left;
+	node->tableoid_right = tableoid_right;
+	node->ctid_left = ctid_left;
+	node->ctid_right = ctid_right;
+	node->source = source;
+	node->target = target;
+	node->minhops = minhops;
+	node->maxhops = maxhops;
+	node->limit = limit;
+
+	return node;
+}
+
+Hash2Side *
+make_hash2side(Plan *lefttree,
+			   Oid skewTable,
+			   AttrNumber skewColumn,
+			   bool skewInherit,
+			   Oid skewColType,
+			   int32 skewColTypmod)
+{
+	Hash2Side  *node = makeNode(Hash2Side);
+	Plan	   *plan = &node->plan;
+
+	plan->targetlist = lefttree->targetlist;
+	plan->qual = NIL;
+	plan->lefttree = lefttree;
+	plan->righttree = NULL;
+
+	node->skewTable = skewTable;
+	node->skewColumn = skewColumn;
+	node->skewInherit = skewInherit;
+	node->skewColType = skewColType;
+	node->skewColTypmod = skewColTypmod;
+
+	return node;
+}
+
+Dijkstra *
+make_dijkstra(PlannerInfo *root, List *tlist, Plan *lefttree,
+			  AttrNumber weight, bool weight_out, AttrNumber end_id,
+			  AttrNumber edge_id, Node *source, Node *target, Node *limit)
+{
+	Dijkstra *node = makeNode(Dijkstra);
+	Plan	   *plan = &node->plan;
+
+	node->weight = weight;
+	node->weight_out = weight_out;
+	node->end_id = end_id;
+	node->edge_id = edge_id;
+	node->source = source;
+	node->target = target;
+	node->limit = limit;
+
+	plan->qual = NIL;
+	plan->targetlist = tlist;
+	plan->lefttree = lefttree;
+	plan->righttree = NULL;
+
+	return node;
 }

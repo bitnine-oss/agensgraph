@@ -44,7 +44,7 @@ static RangeTblEntry *scanNameSpaceForRefname(ParseState *pstate,
 											  const char *refname, int location);
 static RangeTblEntry *scanNameSpaceForRelid(ParseState *pstate, Oid relid,
 											int location);
-static void check_lateral_ref_ok(ParseState *pstate, ParseNamespaceItem *nsitem,
+void check_lateral_ref_ok(ParseState *pstate, ParseNamespaceItem *nsitem,
 								 int location);
 static void markRTEForSelectPriv(ParseState *pstate, RangeTblEntry *rte,
 								 int rtindex, AttrNumber col);
@@ -434,7 +434,7 @@ checkNameSpaceConflicts(ParseState *pstate, List *namespace1,
  *
  * Convenience subroutine to avoid multiple copies of a rather ugly ereport.
  */
-static void
+void
 check_lateral_ref_ok(ParseState *pstate, ParseNamespaceItem *nsitem,
 					 int location)
 {

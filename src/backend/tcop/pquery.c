@@ -18,6 +18,7 @@
 #include <limits.h>
 
 #include "access/xact.h"
+#include "catalog/ag_graph_fn.h"
 #include "commands/prepare.h"
 #include "executor/tstoreReceiver.h"
 #include "miscadmin.h"
@@ -59,6 +60,9 @@ static uint64 DoPortalRunFetch(Portal portal,
 							   DestReceiver *dest);
 static void DoPortalRewind(Portal portal);
 
+
+/* global variable - see postgres.c */
+extern GraphWriteStats graphWriteStats;
 
 /*
  * CreateQueryDesc
@@ -114,7 +118,6 @@ FreeQueryDesc(QueryDesc *qdesc)
 	/* Only the QueryDesc itself need be freed */
 	pfree(qdesc);
 }
-
 
 /*
  * ProcessQuery
@@ -190,6 +193,17 @@ ProcessQuery(PlannedStmt *plan,
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 						 "DELETE " UINT64_FORMAT,
 						 queryDesc->estate->es_processed);
+				break;
+			case CMD_GRAPHWRITE:
+				{
+					uint64		sum = graphWriteStats.insertVertex +
+									  graphWriteStats.insertEdge +
+									  graphWriteStats.deleteVertex +
+									  graphWriteStats.deleteEdge +
+									  graphWriteStats.updateProperty;
+					snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+							 "UPDATE " UINT64_FORMAT, sum);
+				}
 				break;
 			default:
 				strcpy(completionTag, "???");
@@ -784,10 +798,19 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 				if (completionTag && portal->commandTag)
 				{
 					if (strcmp(portal->commandTag, "SELECT") == 0)
+					{
 						snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 								 "SELECT " UINT64_FORMAT, nprocessed);
+					}
+					else if (strcmp(portal->commandTag, "CYPHER") == 0)
+					{
+						snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+								 "SELECT " UINT64_FORMAT, nprocessed);
+					}
 					else
+					{
 						strcpy(completionTag, portal->commandTag);
+					}
 				}
 
 				/* Mark portal not active */
@@ -833,6 +856,8 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 		else
 			CurrentResourceOwner = saveResourceOwner;
 		PortalContext = savePortalContext;
+
+		enableGraphDML = false;
 
 		PG_RE_THROW();
 	}

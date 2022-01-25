@@ -78,6 +78,8 @@ typedef enum UpperRelationKind
 	UPPERREL_WINDOW,			/* result of window functions, if any */
 	UPPERREL_DISTINCT,			/* result of "SELECT DISTINCT", if any */
 	UPPERREL_ORDERED,			/* result of ORDER BY, if any */
+	UPPERREL_SHORTESTPATH,		/* result of shortestpath */
+	UPPERREL_DIJKSTRA,			/* result of dijkstra */
 	UPPERREL_FINAL				/* result of any remaining top-level actions */
 	/* NB: UPPERREL_FINAL must be last enum entry; it's used to size arrays */
 } UpperRelationKind;
@@ -346,10 +348,12 @@ struct PlannerInfo
 	bool		hasPseudoConstantQuals; /* true if any RestrictInfo has
 										 * pseudoconstant = true */
 	bool		hasRecursion;	/* true if planning a recursive WITH item */
+	bool		hasVLEJoinRTE;  /* has VLE join or a child node of VLE join */	
 
 	/* These fields are used only when hasRecursion is true: */
 	int			wt_param_id;	/* PARAM_EXEC ID for the work table */
 	struct Path *non_recursive_path;	/* a path for non-recursive term */
+	int			max_hoop;		/* used to estimate worktable rows */
 
 	/* These fields are workspace for createplan.c */
 	Relids		curOuterRels;	/* outer rels above current node */
@@ -1494,6 +1498,9 @@ typedef struct JoinPath
 
 	List	   *joinrestrictinfo;	/* RestrictInfos to apply to join */
 
+	int			minhops;
+	int			maxhops;
+
 	/*
 	 * See the notes for RelOptInfo and ParamPathInfo to understand why
 	 * joinrestrictinfo is needed in JoinPath, and can't be merged into the
@@ -1743,6 +1750,7 @@ typedef struct RecursiveUnionPath
 	List	   *distinctList;	/* SortGroupClauses identifying target cols */
 	int			wtParam;		/* ID of Param representing work table */
 	double		numGroups;		/* estimated number of groups in input */
+	int			maxDepth;		/* level of recursion */
 } RecursiveUnionPath;
 
 /*
@@ -1792,6 +1800,63 @@ typedef struct LimitPath
 	Node	   *limitCount;		/* COUNT parameter, or NULL if none */
 } LimitPath;
 
+/*
+ * EagerPath represents use of a Eager plan node.
+ */
+typedef struct EagerPath
+{
+	Path		path;
+	Path	   *subpath;
+	List	   *modifiedlist;
+} EagerPath;
+
+/*
+ * ModifyGraphPath
+ */
+typedef struct ModifyGraphPath
+{
+	Path		path;
+	GraphWriteOp operation;
+	bool		last;			/* is this for the last clause? */
+	List	   *targets;		/* relation Oid's of target labels */
+	Path	   *subpath;		/* Path producing source data */
+	uint32		nr_modify;		/* number of clauses that modifies graph
+								   before this */
+	bool		detach;			/* DETACH DELETE */
+	bool		eagerness;
+	List	   *pattern;		/* graph pattern (list of paths) for CREATE */
+	List	   *exprs;			/* expression list for DELETE */
+	List	   *sets;			/* list of GraphSetProp's for SET/REMOVE */
+} ModifyGraphPath;
+
+typedef struct ShortestpathPath
+{
+	JoinPath	jpath;
+	Node	   *end_id_left;
+	Node	   *end_id_right;
+	Node	   *tableoid_left;
+	Node	   *tableoid_right;
+	Node	   *ctid_left;
+	Node	   *ctid_right;
+	Node	   *source;
+	Node	   *target;
+	long        minhops;
+	long        maxhops;
+	long        limit;
+} ShortestpathPath;
+
+typedef struct DijkstraPath
+{
+	Path 		path;
+	Path	   *subpath;
+	int	   		weight;
+	bool		weight_out;
+	Node	   *end_id;
+	Node	   *edge_id;
+	Node	   *source;
+	Node	   *target;
+	Node	   *limit;
+} DijkstraPath;
 
 /*
  * Restriction clause info.
@@ -2139,6 +2204,9 @@ struct SpecialJoinInfo
 	bool		semi_can_hash;	/* true if semi_operators are all hash */
 	List	   *semi_operators; /* OIDs of equality join operators */
 	List	   *semi_rhs_exprs; /* righthand-side expressions of these ops */
+	/* Fields for JOIN_VLE */
+	int			min_hops;
+	int			max_hops;
 };
 
 /*

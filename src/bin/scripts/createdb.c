@@ -262,7 +262,7 @@ main(int argc, char *argv[])
 static void
 help(const char *progname)
 {
-	printf(_("%s creates a PostgreSQL database.\n\n"), progname);
+	printf(_("%s creates a AgensGraph database.\n\n"), progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]... [DBNAME] [DESCRIPTION]\n"), progname);
 	printf(_("\nOptions:\n"));
@@ -284,5 +284,4 @@ help(const char *progname)
 	printf(_("  -W, --password               force password prompt\n"));
 	printf(_("  --maintenance-db=DBNAME      alternate maintenance database\n"));
 	printf(_("\nBy default, a database with the same name as the current user is created.\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
 }

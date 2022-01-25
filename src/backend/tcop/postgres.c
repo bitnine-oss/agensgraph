@@ -100,7 +100,8 @@ int			max_stack_depth = 100;
 /* wait N seconds to allow attach from a debugger */
 int			PostAuthDelay = 0;
 
-
+/* Global variable to hold the graph write statistics */
+GraphWriteStats graphWriteStats;
 
 /* ----------------
  *		private variables
@@ -962,6 +963,7 @@ pg_plan_queries(List *querytrees, int cursorOptions, ParamListInfo boundParams)
 			stmt->utilityStmt = query->utilityStmt;
 			stmt->stmt_location = query->stmt_location;
 			stmt->stmt_len = query->stmt_len;
+			stmt->hasGraphwriteClause = false;
 		}
 		else
 		{

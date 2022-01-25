@@ -111,6 +111,18 @@ static	PLpgSQL_expr	*read_cursor_args(PLpgSQL_var *cursor,
 static	List			*read_raise_options(void);
 static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 
+static char *preserve_downcasing_ident(char *ident);
+
+/*
+ * for Cypher
+ */
+static	PLpgSQL_stmt	*make_execcypher_stmt(int firsttoken, int location);
+static	void			read_into_cypher_target(PLpgSQL_row **row, bool *strict);
+static	void			read_into_list(char *initial_name,
+									   PLpgSQL_datum *initial_datum,
+									   int initial_location,
+									   PLpgSQL_row **row);
+
 %}
 
 %expect 0
@@ -306,8 +318,10 @@ static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 %token <keyword>	K_INTO
 %token <keyword>	K_IS
 %token <keyword>	K_LAST
+%token <keyword>	K_LOAD
 %token <keyword>	K_LOG
 %token <keyword>	K_LOOP
+%token <keyword>	K_MATCH
 %token <keyword>	K_MESSAGE
 %token <keyword>	K_MESSAGE_TEXT
 %token <keyword>	K_MOVE
@@ -1990,6 +2004,14 @@ stmt_execsql	: K_IMPORT
 							cword_is_not_variable(&($1), @1);
 						$$ = make_execsql_stmt(T_CWORD, @1);
 					}
+				| K_MATCH
+					{
+						$$ = make_execcypher_stmt(K_MATCH, @1);
+					}
+				| K_LOAD
+					{
+						$$ = make_execcypher_stmt(K_LOAD, @1);
+					}
 				;
 
 stmt_dynexecute : K_EXECUTE
@@ -2535,7 +2557,9 @@ unreserved_keyword	:
 				| K_INSERT
 				| K_IS
 				| K_LAST
+				| K_LOAD
 				| K_LOG
+				| K_MATCH
 				| K_MESSAGE
 				| K_MESSAGE_TEXT
 				| K_MOVE
@@ -4115,4 +4139,263 @@ make_case(int location, PLpgSQL_expr *t_expr,
 	}
 
 	return (PLpgSQL_stmt *) new;
+}
+
+/* downcase identifier for user convenience if case_sensitive_ident is on */
+static char *
+preserve_downcasing_ident(char *ident)
+{
+	if (case_sensitive_ident)
+		ident = downcase_identifier(ident, strlen(ident), false, false);
+
+	return ident;
+}
+
+/*
+ * for Cypher
+ */
+/* see make_execsql_etmt() */
+static PLpgSQL_stmt *
+make_execcypher_stmt(int firsttoken, int location)
+{
+	StringInfoData		ds;
+	IdentifierLookup	save_IdentifierLookup;
+	PLpgSQL_stmt_execsql *execcypher;
+	PLpgSQL_expr		*expr;
+	PLpgSQL_variable	*target = NULL;
+	int					tok;
+	int					prev_tok;
+	bool				have_into = false;
+	bool				have_strict = false;
+	int					into_start_loc = -1;
+	int					into_end_loc = -1;
+
+	initStringInfo(&ds);
+
+	/* special lookup mode for identifiers within the SQL text */
+	save_IdentifierLookup = plpgsql_IdentifierLookup;
+	plpgsql_IdentifierLookup = IDENTIFIER_LOOKUP_EXPR;
+
+	/*
+	 * Scan to the end of the SQL command.  Identify any INTO-variables
+	 * clause lurking within it, and parse that via read_into_target().
+	 *
+	 * Because INTO is sometimes used in the main SQL grammar, we have to be
+	 * careful not to take any such usage of INTO as a PL/pgSQL INTO clause.
+	 * There are currently three such cases:
+	 *
+	 * 1. SELECT ... INTO.  We don't care, we just override that with the
+	 * PL/pgSQL definition.
+	 *
+	 * 2. INSERT INTO.  This is relatively easy to recognize since the words
+	 * must appear adjacently; but we can't assume INSERT starts the command,
+	 * because it can appear in CREATE RULE or WITH.  Unfortunately, INSERT is
+	 * *not* fully reserved, so that means there is a chance of a false match;
+	 * but it's not very likely.
+	 *
+	 * 3. IMPORT FOREIGN SCHEMA ... INTO.  This is not allowed in CREATE RULE
+	 * or WITH, so we just check for IMPORT as the command's first token.
+	 * (If IMPORT FOREIGN SCHEMA returned data someone might wish to capture
+	 * with an INTO-variables clause, we'd have to work much harder here.)
+	 *
+	 * Fortunately, INTO is a fully reserved word in the main grammar, so
+	 * at least we need not worry about it appearing as an identifier.
+	 *
+	 * Any future additional uses of INTO in the main grammar will doubtless
+	 * break this logic again ... beware!
+	 */
+	tok = firsttoken;
+	for (;;)
+	{
+		prev_tok = tok;
+		tok = yylex();
+		if (have_into && into_end_loc < 0)
+			into_end_loc = yylloc;		/* token after the INTO part */
+		if (tok == ';')
+			break;
+		if (tok == 0)
+			yyerror("unexpected end of function definition");
+		if (tok == K_INTO)
+		{
+			if (prev_tok == K_INSERT)
+				continue;		/* INSERT INTO is not an INTO-target */
+			if (firsttoken == K_IMPORT)
+				continue;		/* IMPORT ... INTO is not an INTO-target */
+			if (have_into)
+				yyerror("INTO specified more than once");
+			have_into = true;
+			into_start_loc = yylloc;
+			plpgsql_IdentifierLookup = IDENTIFIER_LOOKUP_NORMAL;
+			read_into_cypher_target(&target, &have_strict);
+			plpgsql_IdentifierLookup = IDENTIFIER_LOOKUP_EXPR;
+		}
+	}
+
+	plpgsql_IdentifierLookup = save_IdentifierLookup;
+
+	if (have_into)
+	{
+		/*
+		 * Insert an appropriate number of spaces corresponding to the
+		 * INTO text, so that locations within the redacted SQL statement
+		 * still line up with those in the original source text.
+		 */
+		plpgsql_append_source_text(&ds, location, into_start_loc);
+		appendStringInfoSpaces(&ds, into_end_loc - into_start_loc);
+		plpgsql_append_source_text(&ds, into_end_loc, yylloc);
+	}
+	else
+		plpgsql_append_source_text(&ds, location, yylloc);
+
+	/* trim any trailing whitespace, for neatness */
+	while (ds.len > 0 && scanner_isspace(ds.data[ds.len - 1]))
+		ds.data[--ds.len] = '\0';
+
+	expr = palloc0(sizeof(PLpgSQL_expr));
+	expr->query			= pstrdup(ds.data);
+	expr->plan			= NULL;
+	expr->paramnos		= NULL;
+	expr->rwparam		= -1;
+	expr->ns			= plpgsql_ns_top();
+	pfree(ds.data);
+
+	check_sql_expr(expr->query, location, 0);
+
+	execcypher = palloc0(sizeof(PLpgSQL_stmt_execsql));
+	execcypher->cmd_type = PLPGSQL_STMT_EXECSQL;
+	execcypher->lineno  = plpgsql_location_to_lineno(location);
+	execcypher->stmtid  = ++plpgsql_curr_compile->nstatements;
+	execcypher->sqlstmt = expr;
+	execcypher->into	 = have_into;
+	execcypher->strict	 = have_strict;
+	execcypher->target	 = target;
+
+	return (PLpgSQL_stmt *) execcypher;
+}
+
+/* see read_into_target() */
+static void
+read_into_cypher_target(PLpgSQL_row **row, bool *strict)
+{
+	int			tok;
+
+	/* Set default results */
+	*row = NULL;
+	if (strict)
+		*strict = false;
+
+	tok = yylex();
+	if (strict && tok == K_STRICT)
+	{
+		*strict = true;
+		tok = yylex();
+	}
+
+	switch (tok)
+	{
+		case T_DATUM:
+			if (yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_REC)
+			{
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("record cannot be part of INTO list for cypher"),
+						 parser_errposition(yylloc)));
+			}
+			else
+			{
+				read_into_list(NameOfDatum(&(yylval.wdatum)),
+						yylval.wdatum.datum, yylloc,
+						row);
+			}
+			break;
+
+		default:
+			/* just to give a better message than "syntax error" */
+			current_token_is_not_variable(tok);
+	}
+}
+
+/*
+ * see read_into_scalar_list().
+ * read_into_scalar_list() makes result row that constructs an only scalar type.
+ * But, this function makes result row that constructs vertex, edge, graphpath and graphid.
+ */
+static void
+read_into_list(char *initial_name,
+			PLpgSQL_datum *initial_datum,
+			int initial_location,
+			PLpgSQL_row **row)
+{
+	int				 nfields;
+	char			*fieldnames[1024];
+	int				 varnos[1024];
+	PLpgSQL_row		*auxrow;
+	int				 tok;
+
+	*row = NULL;
+
+	check_assignable(initial_datum, initial_location);
+	fieldnames[0] = initial_name;
+	varnos[0]	  = initial_datum->dno;
+	nfields		  = 1;
+
+	while ((tok = yylex()) == ',')
+	{
+		/* Check for array overflow */
+		if (nfields >= 1024)
+			ereport(ERROR,
+					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+					 errmsg("too many INTO variables specified"),
+					 parser_errposition(yylloc)));
+
+		tok = yylex();
+		switch (tok)
+		{
+			case T_DATUM:
+				check_assignable(yylval.wdatum.datum, yylloc);
+
+				if (yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_REC)
+				{
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("record cannot be part of INTO list for cypher"),
+							 parser_errposition(yylloc)));
+				}
+				else
+				{
+					fieldnames[nfields] = NameOfDatum(&(yylval.wdatum));
+					varnos[nfields++]	= yylval.wdatum.datum->dno;
+				}
+				break;
+
+			default:
+				/* just to give a better message than "syntax error" */
+				current_token_is_not_variable(tok);
+		}
+	}
+
+	/*
+	 * We read an extra, non-comma token from yylex(), so push it
+	 * back onto the input stream
+	 */
+	plpgsql_push_back_token(tok);
+
+	auxrow = palloc(sizeof(PLpgSQL_row));
+	auxrow->dtype = PLPGSQL_DTYPE_ROW;
+	auxrow->refname = pstrdup("*internal*");
+	auxrow->lineno = plpgsql_location_to_lineno(initial_location);
+	auxrow->rowtupdesc = NULL;
+	auxrow->nfields = nfields;
+	auxrow->fieldnames = palloc(sizeof(char *) * nfields);
+	auxrow->varnos = palloc(sizeof(int) * nfields);
+	while (--nfields >= 0)
+	{
+		auxrow->fieldnames[nfields] = fieldnames[nfields];
+		auxrow->varnos[nfields] = varnos[nfields];
+	}
+
+	plpgsql_adddatum((PLpgSQL_datum *)auxrow);
+
+	/* result should not be rec */
+	*row = auxrow;
 }

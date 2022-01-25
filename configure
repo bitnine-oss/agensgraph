@@ -2847,6 +2847,25 @@ cat >>confdefs.h <<_ACEOF
 _ACEOF
 
 
+AG_VERSION=2.1.3
+
+cat >>confdefs.h <<_ACEOF
+#define AG_VERSION "$AG_VERSION"
+_ACEOF
+
+AG_COMP_VERSION=2.1
+
+cat >>confdefs.h <<_ACEOF
+#define AG_COMP_VERSION "$AG_COMP_VERSION"
+_ACEOF
+
+AG_GIT_REVISION=`git rev-parse HEAD`
+
+cat >>confdefs.h <<_ACEOF
+#define AG_GIT_REVISION "$AG_GIT_REVISION"
+_ACEOF
+
+
 # Make sure we can run config.sub.
 $SHELL "$ac_aux_dir/config.sub" sun4 >/dev/null 2>&1 ||
   as_fn_error $? "cannot run $SHELL $ac_aux_dir/config.sub" "$LINENO" 5
@@ -11007,6 +11026,12 @@ fi # fi
 
 
 
+
+if test "$PORTNAME" = "linux" ; then
+
+$as_echo "#define USE_PG_STATSINFO 1" >>confdefs.h
+
+fi
 
 
 ##

@@ -48,6 +48,15 @@ extern Plan *change_plan_targetlist(Plan *subplan, List *tlist,
 extern Plan *materialize_finished_plan(Plan *subplan);
 extern bool is_projection_capable_path(Path *path);
 extern bool is_projection_capable_plan(Plan *plan);
+extern ModifyGraph *make_modifygraph(PlannerInfo *root, GraphWriteOp operation,
+									 bool last, List *targets,
+									 Plan *subplan, uint32 nr_modify,
+									 bool detach, bool eagerness,
+									 List *pattern, List *exprs, List *sets);
+extern Dijkstra *make_dijkstra(PlannerInfo *root, List *tlist, Plan *subplan,
+							   AttrNumber weight, bool weight_out,
+							   AttrNumber end_id, AttrNumber edge_id,
+							   Node *source, Node *target, Node *limit);
 
 /* External use of these functions is deprecated: */
 extern Sort *make_sort_from_sortclauses(List *sortcls, Plan *lefttree);

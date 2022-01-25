@@ -4,6 +4,7 @@
  *		Internal definitions for parser
  *
  *
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -205,6 +206,7 @@ struct ParseState
 	bool		p_hasTargetSRFs;
 	bool		p_hasSubLinks;
 	bool		p_hasModifyingCTE;
+	bool		p_hasGraphwriteClause;
 
 	Node	   *p_last_srf;		/* most recent set-returning func/op found */
 
@@ -217,6 +219,23 @@ struct ParseState
 	ParseParamRefHook p_paramref_hook;
 	CoerceParamHook p_coerce_param_hook;
 	void	   *p_ref_hook_state;	/* common passthrough link for above */
+
+	/*
+	 * Additional information for Cypher queries
+	 */
+	char	   *p_lc_varname;
+	bool		p_is_match_quals;
+	bool		p_is_fp_processed;
+	List	   *p_node_info_list;		/* final shape of named nodes */
+	Node	   *p_vle_initial_vid;		/* initial vid for VLE */
+	RangeTblEntry *p_vle_initial_rte;	/* RTE of initial vid for VLE */
+	List	   *p_elem_quals;			/* quals of elements */
+	List	   *p_future_vertices;		/* vertices to be resolved */
+	Node	   *p_resolved_qual;		/* qual of resolved future vertices */
+	bool		p_is_optional_match;
+	uint32		p_nr_modify_clause;
+	List	   *p_target_labels;		/* relation Oid's of target labels */
+	char	   *p_delete_edges_resname;
 };
 
 /*

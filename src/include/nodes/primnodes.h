@@ -21,7 +21,6 @@
 #include "nodes/bitmapset.h"
 #include "nodes/pg_list.h"
 
-
 /* ----------------------------------------------------------------
  *						node definitions
  * ----------------------------------------------------------------
@@ -1479,6 +1478,8 @@ typedef struct JoinExpr
 	Node	   *quals;			/* qualifiers on join, if any */
 	Alias	   *alias;			/* user-written alias clause, if any */
 	int			rtindex;		/* RT index assigned for join, or 0 */
+	int         minHops;
+	int         maxHops;
 } JoinExpr;
 
 /*----------
@@ -1523,5 +1524,66 @@ typedef struct OnConflictExpr
 	int			exclRelIndex;	/* RT index of 'excluded' relation */
 	List	   *exclRelTlist;	/* tlist of the EXCLUDED pseudo relation */
 } OnConflictExpr;
+
+/*
+ * Cypher Query Language
+ */
+typedef struct CypherTypeCast
+{
+	Expr		xpr;
+	Oid			type;
+	/* add coercion context and type category for runtime type casting */
+	CoercionContext cctx;
+	CoercionForm cform;
+	char		typcategory;
+	Expr	   *arg;
+	int			location;
+} CypherTypeCast;
+
+typedef struct CypherMapExpr
+{
+	Expr		xpr;
+	List	   *keyvals;		/* key, value, key, value, ... */
+	int			location;
+} CypherMapExpr;
+
+typedef struct CypherListExpr
+{
+	Expr		xpr;
+	List	   *elems;
+	int 		location;
+} CypherListExpr;
+
+typedef struct CypherListCompExpr
+{
+	Expr		xpr;
+	Expr	   *list;
+	char	   *varname;
+	Expr	   *cond;
+	Expr	   *elem;
+	int			location;
+} CypherListCompExpr;
+
+typedef struct CypherListCompVar
+{
+	Expr		xpr;
+	char	   *varname;
+	int			location;
+} CypherListCompVar;
+
+typedef struct CypherAccessExpr
+{
+	Expr		xpr;
+	Expr	   *arg;
+	List	   *path;
+} CypherAccessExpr;
+
+typedef struct CypherIndices
+{
+	NodeTag		type;
+	bool		is_slice;
+	Expr	   *lidx;
+	Expr	   *uidx;
+} CypherIndices;
 
 #endif							/* PRIMNODES_H */

@@ -176,3 +176,4 @@ PQresultMemorySize        173
 PQhostaddr                174
 PQgssEncInUse             175
 PQgetgssctx               176
+PQagVersion               177

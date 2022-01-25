@@ -323,6 +323,28 @@ make_rels_by_clauseless_joins(PlannerInfo *root,
 	}
 }
 
+/* This function is used only by the join_is_legal function. */
+static bool
+is_graph_join_rel(RelOptInfo *rel)
+{
+	NestPath   *nlpath;
+
+	if (!(IS_JOIN_REL(rel)))
+		return false;
+
+	/* All of graph join is only used nestloop. */
+	if (!IsA(rel->cheapest_total_path, NestPath))
+		return false;
+	else
+	{
+		nlpath = castNode(NestPath, rel->cheapest_total_path);
+
+		if(IS_GRAPH_JOIN(nlpath->jointype))
+			return true;
+	}
+
+	return false;
+}
 
 /*
  * join_is_legal
@@ -348,6 +370,13 @@ join_is_legal(PlannerInfo *root, RelOptInfo *rel1, RelOptInfo *rel2,
 	bool		unique_ified;
 	bool		must_be_leftjoin;
 	ListCell   *l;
+
+	/*
+	 * Because graph joins must not change the join order, prevent to be
+	 * a sub-tree of another join.
+	 */
+	if (is_graph_join_rel(rel1) || is_graph_join_rel(rel2))
+		return false;
 
 	/*
 	 * Ensure output params are set on failure return.  This is just to
@@ -893,6 +922,42 @@ populate_joinrel_with_paths(PlannerInfo *root, RelOptInfo *rel1,
 			add_paths_to_joinrel(root, joinrel, rel1, rel2,
 								 JOIN_ANTI, sjinfo,
 								 restrictlist);
+			break;
+		case JOIN_CYPHER_MERGE:
+			if (is_dummy_rel(rel1) ||
+				restriction_is_constant_false(restrictlist, joinrel, true))
+			{
+				mark_dummy_rel(joinrel);
+				break;
+			}
+			if (restriction_is_constant_false(restrictlist, joinrel, false) &&
+				bms_is_subset(rel2->relids, sjinfo->syn_righthand))
+				mark_dummy_rel(rel2);
+			add_paths_for_cmerge(root, joinrel, rel1, rel2,
+								 sjinfo, restrictlist);
+			break;
+		case JOIN_VLE:
+			if (is_dummy_rel(rel1) || is_dummy_rel(rel2) ||
+				restriction_is_constant_false(restrictlist, joinrel, false))
+			{
+				mark_dummy_rel(joinrel);
+				break;
+			}
+			add_paths_to_joinrel_for_vle(root, joinrel, rel1, rel2,
+										 sjinfo, restrictlist);
+			break;
+		case JOIN_CYPHER_DELETE:
+			if (is_dummy_rel(rel1) ||
+				restriction_is_constant_false(restrictlist, joinrel, true))
+			{
+				mark_dummy_rel(joinrel);
+				break;
+			}
+			if (restriction_is_constant_false(restrictlist, joinrel, false) &&
+				bms_is_subset(rel2->relids, sjinfo->syn_righthand))
+				mark_dummy_rel(rel2);
+			add_paths_for_cdelete(root, joinrel, rel1, rel2, sjinfo->jointype,
+								  sjinfo, restrictlist);
 			break;
 		default:
 			/* other values not expected here */

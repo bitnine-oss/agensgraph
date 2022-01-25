@@ -247,6 +247,9 @@ static void write_version_file(const char *extrapath);
 static void set_null_conf(void);
 static void test_config_settings(void);
 static void setup_config(void);
+#ifdef USE_PG_STATSINFO
+static void setup_config_checkpoint(void);
+#endif
 static void bootstrap_template1(void);
 static void setup_auth(FILE *cmdfd);
 static void get_su_pwd(void);
@@ -839,7 +842,7 @@ check_input(char *path)
 }
 
 /*
- * write out the PG_VERSION file in the data dir, or its subdirectory
+ * write out the PG_VERSION / AG_VERSION file in the data dir, or its subdirectory
  * if extrapath is not NULL
  */
 static void
@@ -848,10 +851,11 @@ write_version_file(const char *extrapath)
 	FILE	   *version_file;
 	char	   *path;
 
-	if (extrapath == NULL)
-		path = psprintf("%s/PG_VERSION", pg_data);
-	else
-		path = psprintf("%s/%s/PG_VERSION", pg_data, extrapath);
+    /* write PG_VERSION */
+     if (extrapath == NULL)
+                path = psprintf("%s/PG_VERSION", pg_data);
+        else
+                path = psprintf("%s/%s/PG_VERSION", pg_data, extrapath);
 
 	if ((version_file = fopen(path, PG_BINARY_W)) == NULL)
 	{
@@ -1218,6 +1222,72 @@ setup_config(void)
 								  "password_encryption = scram-sha-256");
 	}
 
+	/* set shared preload libraries */
+#ifdef USE_PG_STATSINFO
+	conflines = replace_token(conflines,
+							"#shared_preload_libraries = ''",
+							"#shared_preload_libraries = "
+									"'pg_stat_statements,pg_statsinfo,"
+									"pg_hint_plan,hll'");
+#else
+	conflines = replace_token(conflines,
+							"#shared_preload_libraries = ''",
+							"#shared_preload_libraries = "
+									"'pg_stat_statements,pg_hint_plan,hll'");
+#endif
+
+	/* pg_stat_statements */
+	conflines = replace_token(conflines,
+							"#pg_stat_statements.max = 5000",
+							"pg_stat_statements.max = 10000");
+	conflines = replace_token(conflines,
+							"#pg_stat_statements.track = top",
+							"pg_stat_statements.track = all");
+
+#ifdef USE_PG_STATSINFO
+	/*
+	 * recommanded configuration for pg_statsinfo
+	 */
+
+	/* system parameters */
+	conflines = replace_token(conflines,
+							"#log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'",
+							"log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'");
+	conflines = replace_token(conflines,
+							"#log_min_messages = warning",
+							"log_min_messages = log");
+	conflines = replace_token(conflines,
+							"#log_autovacuum_min_duration = -1",
+							"log_autovacuum_min_duration = 0");
+	/* pg_statsinfo parameters */
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.enable_maintenance = 'on'",
+							"pg_statsinfo.enable_maintenance = 'on'");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.maintenance_time = '00:02:00'",
+							"pg_statsinfo.maintenance_time = '00:02:00'");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.repolog_keepday = 7",
+							"pg_statsinfo.repolog_keepday = 7");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.repository_keepday = 7",
+							"pg_statsinfo.repository_keepday = 7");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.snapshot_interval = 10min",
+							"pg_statsinfo.snapshot_interval = 30min");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.syslog_line_prefix = '%t %p '",
+							"pg_statsinfo.syslog_line_prefix = "
+									"'%t %p %c-%l %x %q(%u, %d, %r, %a) '");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.syslog_min_messages = disable",
+							"pg_statsinfo.syslog_min_messages = error");
+	conflines = replace_token(conflines,
+							"#pg_statsinfo.textlog_line_prefix = '%t %p '",
+							"pg_statsinfo.textlog_line_prefix = "
+									"'%t %p %c-%l %x %q(%u, %d, %r, %a) '");
+#endif
+
 	/*
 	 * If group access has been enabled for the cluster then it makes sense to
 	 * ensure that the log files also allow group access.  Otherwise a backup
@@ -1365,6 +1435,28 @@ setup_config(void)
 	check_ok();
 }
 
+#ifdef USE_PG_STATSINFO
+/*
+ * Set log_checkpoints after create db.
+ */
+static void
+setup_config_checkpoint(void)
+{
+	char	  **conflines;
+	char		path[MAXPGPATH];
+
+	conflines = readfile(conf_file);
+	conflines = replace_token(conflines,
+							"#log_checkpoints = off",
+							"log_checkpoints = on");
+
+	sprintf(path, "%s/postgresql.auto.conf", pg_data);
+
+	writefile(path, conflines);
+
+	free(conflines);
+}
+#endif
 
 /*
  * run the BKI script in bootstrap mode to create template1
@@ -2350,7 +2442,7 @@ setlocales(void)
 static void
 usage(const char *progname)
 {
-	printf(_("%s initializes a PostgreSQL database cluster.\n\n"), progname);
+	printf(_("%s initializes a AgensGraph database cluster.\n\n"), progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]... [DATADIR]\n"), progname);
 	printf(_("\nOptions:\n"));
@@ -2386,7 +2478,6 @@ usage(const char *progname)
 	printf(_("  -?, --help                show this help, then exit\n"));
 	printf(_("\nIf the data directory is not specified, the environment variable PGDATA\n"
 			 "is used.\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
 }
 
 static void
@@ -2445,11 +2536,15 @@ void
 setup_pgdata(void)
 {
 	char	   *pgdata_get_env,
-			   *pgdata_set_env;
+			   *pgdata_set_env,
+			   *agdata_set_env;
 
 	if (!pg_data)
 	{
-		pgdata_get_env = getenv("PGDATA");
+		pgdata_get_env = getenv("AGDATA");
+		if (!pgdata_get_env)
+			pgdata_get_env = getenv("PGDATA");
+
 		if (pgdata_get_env && strlen(pgdata_get_env))
 		{
 			/* PGDATA found */
@@ -2477,6 +2572,9 @@ setup_pgdata(void)
 	 */
 	pgdata_set_env = psprintf("PGDATA=%s", pg_data);
 	putenv(pgdata_set_env);
+
+	agdata_set_env = psprintf("AGDATA=%s", pg_data);
+	putenv(agdata_set_env);
 }
 
 
@@ -3015,6 +3113,10 @@ initialize_data_directory(void)
 
 	PG_CMD_CLOSE;
 
+#ifdef USE_PG_STATSINFO
+	setup_config_checkpoint();
+#endif
+
 	check_ok();
 }
 
@@ -3348,7 +3450,7 @@ main(int argc, char *argv[])
 	canonicalize_path(pg_ctl_path);
 	get_parent_directory(pg_ctl_path);
 	/* ... and tag on pg_ctl instead */
-	join_path_components(pg_ctl_path, pg_ctl_path, "pg_ctl");
+	join_path_components(pg_ctl_path, pg_ctl_path, "ag_ctl");
 
 	/* Convert the path to use native separators */
 	make_native_path(pg_ctl_path);

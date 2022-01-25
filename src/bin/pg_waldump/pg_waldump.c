@@ -276,7 +276,10 @@ identify_target_directory(XLogDumpPrivate *private, char *directory,
 			return;
 		}
 
-		datadir = getenv("PGDATA");
+		datadir = getenv("AGDATA");
+		if (datadir == NULL)
+			datadir = getenv("PGDATA");
+
 		/* $PGDATA / XLOGDIR */
 		if (datadir != NULL)
 		{

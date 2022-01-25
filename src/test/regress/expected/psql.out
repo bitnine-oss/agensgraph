@@ -137,7 +137,7 @@ SELECT
     2.0 AS two,
     'three' AS three,
     $1 AS four,
-    sin($2) as five,
+    sin($2::float8) as five,
     'foo'::varchar(4) as six,
     CURRENT_DATE AS now
 \gdesc
@@ -2658,6 +2658,7 @@ Owned by: public.psql_serial_tab.id
 \pset tuples_only true
 \df exp
  pg_catalog | exp  | double precision | double precision    | func
+ pg_catalog | exp  | jsonb            | jsonb               | func
  pg_catalog | exp  | numeric          | numeric             | func
 
 \pset tuples_only false
@@ -2685,6 +2686,12 @@ Type                | func
 --------------------+-----------------
 Schema              | pg_catalog
 Name                | exp
+Result data type    | jsonb
+Argument data types | jsonb
+Type                | func
+--------------------+-----------------
+Schema              | pg_catalog
+Name                | exp
 Result data type    | numeric
 Argument data types | numeric
 Type                | func
@@ -2704,6 +2711,7 @@ Owned by: public.psql_serial_tab.id
 \pset tuples_only true
 \df exp
 pg_catalog|exp|double precision|double precision|func
+pg_catalog|exp|jsonb|jsonb|func
 pg_catalog|exp|numeric|numeric|func
 \pset tuples_only false
 \pset expanded on
@@ -2729,6 +2737,12 @@ Type|func
 
 Schema|pg_catalog
 Name|exp
+Result data type|jsonb
+Argument data types|jsonb
+Type|func
+
+Schema|pg_catalog
+Name|exp
 Result data type|numeric
 Argument data types|numeric
 Type|func
@@ -2745,6 +2759,7 @@ Owned by: public.psql_serial_tab.id
 \pset tuples_only true
 \df exp
  pg_catalog | exp  | double precision | double precision    | func
+ pg_catalog | exp  | jsonb            | jsonb               | func
  pg_catalog | exp  | numeric          | numeric             | func
 
 \pset tuples_only false
@@ -2768,6 +2783,12 @@ Schema              | pg_catalog
 Name                | exp
 Result data type    | double precision
 Argument data types | double precision
+Type                | func
+--------------------+-----------------
+Schema              | pg_catalog
+Name                | exp
+Result data type    | jsonb
+Argument data types | jsonb
 Type                | func
 --------------------+-----------------
 Schema              | pg_catalog
@@ -2853,6 +2874,7 @@ Owned by: public.psql_serial_tab.id
 [cols="<l,<l,<l,<l,<l",frame="none"]
 |====
 |pg_catalog |exp |double precision |double precision |func
+|pg_catalog |exp |jsonb |jsonb |func
 |pg_catalog |exp |numeric |numeric |func
 |====
 \pset tuples_only false
@@ -2885,6 +2907,12 @@ Owned by: public.psql_serial_tab.id
 <l|Name <l|exp
 <l|Result data type <l|double precision
 <l|Argument data types <l|double precision
+<l|Type <l|func
+2+|
+<l|Schema <l|pg_catalog
+<l|Name <l|exp
+<l|Result data type <l|jsonb
+<l|Argument data types <l|jsonb
 <l|Type <l|func
 2+|
 <l|Schema <l|pg_catalog
@@ -2991,6 +3019,7 @@ integer,1,1,2147483647,1,no,1
 \pset tuples_only true
 \df exp
 pg_catalog,exp,double precision,double precision,func
+pg_catalog,exp,jsonb,jsonb,func
 pg_catalog,exp,numeric,numeric,func
 \pset tuples_only false
 \pset expanded on
@@ -3008,6 +3037,11 @@ Schema,pg_catalog
 Name,exp
 Result data type,double precision
 Argument data types,double precision
+Type,func
+Schema,pg_catalog
+Name,exp
+Result data type,jsonb
+Argument data types,jsonb
 Type,func
 Schema,pg_catalog
 Name,exp
@@ -3110,6 +3144,13 @@ select '\' as d1, '' as d2;
   <tr valign="top">
     <td align="left">pg_catalog</td>
     <td align="left">exp</td>
+    <td align="left">jsonb</td>
+    <td align="left">jsonb</td>
+    <td align="left">func</td>
+  </tr>
+  <tr valign="top">
+    <td align="left">pg_catalog</td>
+    <td align="left">exp</td>
     <td align="left">numeric</td>
     <td align="left">numeric</td>
     <td align="left">func</td>
@@ -3174,6 +3215,28 @@ select '\' as d1, '' as d2;
   <tr valign="top">
     <th>Argument data types</th>
     <td align="left">double precision</td>
+  </tr>
+  <tr valign="top">
+    <th>Type</th>
+    <td align="left">func</td>
+  </tr>
+
+  <tr><td colspan="2">&nbsp;</td></tr>
+  <tr valign="top">
+    <th>Schema</th>
+    <td align="left">pg_catalog</td>
+  </tr>
+  <tr valign="top">
+    <th>Name</th>
+    <td align="left">exp</td>
+  </tr>
+  <tr valign="top">
+    <th>Result data type</th>
+    <td align="left">jsonb</td>
+  </tr>
+  <tr valign="top">
+    <th>Argument data types</th>
+    <td align="left">jsonb</td>
   </tr>
   <tr valign="top">
     <th>Type</th>
@@ -3441,6 +3504,7 @@ integer & 1 & 1 & 2147483647 & 1 & no & 1 \\
 \df exp
 \begin{tabular}{l | l | l | l | l}
 pg\_catalog & exp & double precision & double precision & func \\
+pg\_catalog & exp & jsonb & jsonb & func \\
 pg\_catalog & exp & numeric & numeric & func \\
 \end{tabular}
 
@@ -3474,6 +3538,12 @@ Schema & pg\_catalog \\
 Name & exp \\
 Result data type & double precision \\
 Argument data types & double precision \\
+Type & func \\
+\hline
+Schema & pg\_catalog \\
+Name & exp \\
+Result data type & jsonb \\
+Argument data types & jsonb \\
 Type & func \\
 \hline
 Schema & pg\_catalog \\
@@ -3663,6 +3733,15 @@ deallocate q;
 &
 \raggedright{exp}
 &
+\raggedright{jsonb}
+&
+\raggedright{jsonb}
+&
+\raggedright{func} \tabularnewline
+\raggedright{pg\_catalog}
+&
+\raggedright{exp}
+&
 \raggedright{numeric}
 &
 \raggedright{numeric}
@@ -3698,6 +3777,12 @@ Schema & pg\_catalog \\
 Name & exp \\
 Result data type & double precision \\
 Argument data types & double precision \\
+Type & func \\
+\hline
+Schema & pg\_catalog \\
+Name & exp \\
+Result data type & jsonb \\
+Argument data types & jsonb \\
 Type & func \\
 \hline
 Schema & pg\_catalog \\
@@ -3982,6 +4067,7 @@ Owned by: public.psql_serial_tab.id
 center;
 l | l | l | l | l.
 pg_catalog	exp	double precision	double precision	func
+pg_catalog	exp	jsonb	jsonb	func
 pg_catalog	exp	numeric	numeric	func
 .TE
 .DS L
@@ -4023,6 +4109,12 @@ Schema	pg_catalog
 Name	exp
 Result data type	double precision
 Argument data types	double precision
+Type	func
+_
+Schema	pg_catalog
+Name	exp
+Result data type	jsonb
+Argument data types	jsonb
 Type	func
 _
 Schema	pg_catalog

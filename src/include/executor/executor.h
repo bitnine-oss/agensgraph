@@ -90,6 +90,8 @@ extern PGDLLIMPORT ExecutorCheckPerms_hook_type ExecutorCheckPerms_hook;
 struct Path;					/* avoid including pathnodes.h here */
 
 extern void ExecReScan(PlanState *node);
+extern void ExecNextContext(PlanState *node);
+extern void ExecPrevContext(PlanState *node);
 extern void ExecMarkPos(PlanState *node);
 extern void ExecRestrPos(PlanState *node);
 extern bool ExecSupportsMarkRestore(struct Path *pathnode);
@@ -489,6 +491,8 @@ extern void end_tup_output(TupOutputState *tstate);
 		pfree(DatumGetPointer(values_[0])); \
 	} while (0)
 
+
+extern void InitScanLabelInfo(ScanState *node);
 
 /*
  * prototypes from functions in execUtils.c

@@ -55,6 +55,9 @@ static void sort_inner_and_outer(PlannerInfo *root, RelOptInfo *joinrel,
 static void match_unsorted_outer(PlannerInfo *root, RelOptInfo *joinrel,
 								 RelOptInfo *outerrel, RelOptInfo *innerrel,
 								 JoinType jointype, JoinPathExtraData *extra);
+static void match_unsorted_outer_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
+										 RelOptInfo *outerrel, RelOptInfo *innerrel,
+										 JoinPathExtraData *extra);
 static void consider_parallel_nestloop(PlannerInfo *root,
 									   RelOptInfo *joinrel,
 									   RelOptInfo *outerrel,
@@ -88,6 +91,12 @@ static void generate_mergejoin_paths(PlannerInfo *root,
 									 Path *inner_cheapest_total,
 									 List *merge_pathkeys,
 									 bool is_partial);
+static void add_cyphermerge_path(PlannerInfo *root, RelOptInfo *joinrel,
+								 RelOptInfo *outerrel, RelOptInfo *innerrel,
+								 JoinPathExtraData *extra);
+static void add_cypherdelete_path(PlannerInfo *root, RelOptInfo *joinrel,
+								  RelOptInfo *outerrel, RelOptInfo *innerrel,
+								  JoinType type, JoinPathExtraData *extra);
 
 
 /*
@@ -326,6 +335,101 @@ add_paths_to_joinrel(PlannerInfo *root,
 							   jointype, &extra);
 }
 
+/* See add_paths_to_joinrel() */
+void
+add_paths_for_cmerge(PlannerInfo *root, RelOptInfo *joinrel,
+					 RelOptInfo *outerrel, RelOptInfo *innerrel,
+					 SpecialJoinInfo *sjinfo, List *restrictlist)
+{
+	JoinPathExtraData extra;
+	ListCell   *lc;
+
+	extra.restrictlist = restrictlist;
+	extra.mergeclause_list = NIL;
+	extra.sjinfo = sjinfo;
+	extra.param_source_rels = NULL;
+	extra.inner_unique = innerrel_is_unique(root, joinrel->relids, outerrel->relids, innerrel,
+											JOIN_CYPHER_MERGE, restrictlist,
+											false);
+
+	foreach(lc, root->join_info_list)
+	{
+		SpecialJoinInfo *sjinfo = (SpecialJoinInfo *) lfirst(lc);
+
+		if (bms_overlap(joinrel->relids, sjinfo->min_righthand) &&
+			!bms_overlap(joinrel->relids, sjinfo->min_lefthand))
+			extra.param_source_rels = bms_join(extra.param_source_rels,
+										   bms_difference(root->all_baserels,
+													 sjinfo->min_righthand));
+	}
+
+	extra.param_source_rels = bms_add_members(extra.param_source_rels,
+											  joinrel->lateral_relids);
+
+	add_cyphermerge_path(root, joinrel, outerrel, innerrel, &extra);
+
+	if (joinrel->fdwroutine && joinrel->fdwroutine->GetForeignJoinPaths)
+		joinrel->fdwroutine->GetForeignJoinPaths(root, joinrel,
+												 outerrel, innerrel,
+												 JOIN_CYPHER_MERGE, &extra);
+}
+
+/* See add_paths_for_cmerge() */
+void
+add_paths_for_cdelete(PlannerInfo *root, RelOptInfo *joinrel,
+					  RelOptInfo *outerrel, RelOptInfo *innerrel,
+					  JoinType type, SpecialJoinInfo *sjinfo,
+					  List *restrictlist)
+{
+	JoinPathExtraData extra;
+	ListCell   *lc;
+
+	extra.restrictlist = restrictlist;
+	extra.mergeclause_list = NIL;
+	extra.sjinfo = sjinfo;
+	extra.param_source_rels = NULL;
+	extra.inner_unique = innerrel_is_unique(root, joinrel->relids, outerrel->relids, innerrel,
+											JOIN_CYPHER_DELETE, restrictlist,
+											false);
+
+	foreach(lc, root->join_info_list)
+	{
+		SpecialJoinInfo *sjinfo = (SpecialJoinInfo *) lfirst(lc);
+
+		if (bms_overlap(joinrel->relids, sjinfo->min_righthand) &&
+			!bms_overlap(joinrel->relids, sjinfo->min_lefthand))
+			extra.param_source_rels = bms_join(extra.param_source_rels,
+										   bms_difference(root->all_baserels,
+													 sjinfo->min_righthand));
+	}
+
+	extra.param_source_rels = bms_add_members(extra.param_source_rels,
+											  joinrel->lateral_relids);
+
+	add_cypherdelete_path(root, joinrel, outerrel, innerrel, type, &extra);
+
+	if (joinrel->fdwroutine && joinrel->fdwroutine->GetForeignJoinPaths)
+		joinrel->fdwroutine->GetForeignJoinPaths(root, joinrel,
+												 outerrel, innerrel,
+												 type, &extra);
+}
+
+void
+add_paths_to_joinrel_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
+							 RelOptInfo *outerrel, RelOptInfo *innerrel,
+							 SpecialJoinInfo *sjinfo, List *restrictlist)
+{
+	JoinPathExtraData extra;
+
+	extra.restrictlist = restrictlist;
+	extra.mergeclause_list = NIL;
+	extra.sjinfo = sjinfo;
+	extra.param_source_rels = NULL;
+	extra.inner_unique = false;
+
+	match_unsorted_outer_for_vle(root, joinrel, outerrel, innerrel, &extra);
+}
+
 /*
  * We override the param_source_rels heuristic to accept nestloop paths in
  * which the outer rel satisfies some but not all of the inner path's
@@ -368,6 +472,7 @@ try_nestloop_path(PlannerInfo *root,
 				  JoinType jointype,
 				  JoinPathExtraData *extra)
 {
+	Query      *parse = root->parse;
 	Relids		required_outer;
 	JoinCostWorkspace workspace;
 	RelOptInfo *innerrel = inner_path->parent;
@@ -447,17 +552,37 @@ try_nestloop_path(PlannerInfo *root,
 			}
 		}
 
-		add_path(joinrel, (Path *)
-				 create_nestloop_path(root,
-									  joinrel,
-									  jointype,
-									  &workspace,
-									  extra,
-									  outer_path,
-									  inner_path,
-									  extra->restrictlist,
-									  pathkeys,
-									  required_outer));
+		if (parse->shortestpathSource != NULL && parse->shortestpathEndIdLeft != NULL)
+		{
+			if ( joinrel->pathlist == NULL )
+			{
+				add_path(joinrel, (Path *)
+						 create_shortestpath_path(root,
+												  joinrel,
+												  jointype,
+												  &workspace,
+												  extra,
+												  outer_path,
+												  inner_path,
+												  extra->restrictlist,
+												  pathkeys,
+												  required_outer));
+			}
+		}
+		else
+		{
+			add_path(joinrel, (Path *)
+					 create_nestloop_path(root,
+										  joinrel,
+										  jointype,
+										  &workspace,
+										  extra,
+										  outer_path,
+										  inner_path,
+										  extra->restrictlist,
+										  pathkeys,
+										  required_outer));
+		}
 	}
 	else
 	{
@@ -1335,6 +1460,7 @@ match_unsorted_outer(PlannerInfo *root,
 					 JoinType jointype,
 					 JoinPathExtraData *extra)
 {
+	Query      *parse = root->parse;
 	JoinType	save_jointype = jointype;
 	bool		nestjoinOK;
 	bool		useallclauses;
@@ -1404,11 +1530,13 @@ match_unsorted_outer(PlannerInfo *root,
 		 * Consider materializing the cheapest inner path, unless
 		 * enable_material is off or the path in question materializes its
 		 * output anyway.
+		 * Subplan of NestLoopVLE does not allow to consider materializing.
 		 */
-		if (enable_material && inner_cheapest_total != NULL &&
-			!ExecMaterializesOutput(inner_cheapest_total->pathtype))
-			matpath = (Path *)
-				create_material_path(innerrel, inner_cheapest_total);
+		if (parse->shortestpathSource == NULL &&
+			enable_material && inner_cheapest_total != NULL &&
+			!ExecMaterializesOutput(inner_cheapest_total->pathtype) &&
+			!root->hasVLEJoinRTE)
+				matpath = (Path *)create_material_path(innerrel, inner_cheapest_total);
 	}
 
 	foreach(lc1, outerrel->pathlist)
@@ -1658,6 +1786,54 @@ consider_parallel_nestloop(PlannerInfo *root,
 
 			try_partial_nestloop_path(root, joinrel, outerpath, innerpath,
 									  pathkeys, jointype, extra);
+		}
+	}
+}
+
+static void
+match_unsorted_outer_for_vle(PlannerInfo *root, RelOptInfo *joinrel,
+							 RelOptInfo *outerrel, RelOptInfo *innerrel,
+							 JoinPathExtraData *extra)
+{
+	ListCell   *lc1;
+
+	foreach(lc1, outerrel->pathlist)
+	{
+		Path	   *outerpath = (Path *) lfirst(lc1);
+		List	   *merge_pathkeys;
+		ListCell   *lc2;
+
+		/*
+		 * We cannot use an outer path that is parameterized by the inner rel.
+		 */
+		if (PATH_PARAM_BY_REL(outerpath, innerrel))
+			continue;
+
+		/*
+		 * The result will have this sort order (even if it is implemented as
+		 * a nestloop, and even if some of the mergeclauses are implemented by
+		 * qpquals rather than as true mergeclauses):
+		 */
+		merge_pathkeys = build_join_pathkeys(root, joinrel, JOIN_INNER,
+											 outerpath->pathkeys);
+
+		/*
+		 * Consider nestloop joins using this outer path and various
+		 * available paths for the inner relation.  We consider the
+		 * cheapest-total paths for each available parameterization of the
+		 * inner relation, including the unparameterized case.
+		 */
+		foreach(lc2, innerrel->cheapest_parameterized_paths)
+		{
+			Path	   *innerpath = (Path *) lfirst(lc2);
+
+			try_nestloop_path(root,
+							  joinrel,
+							  outerpath,
+							  innerpath,
+							  merge_pathkeys,
+							  JOIN_VLE,
+							  extra);
 		}
 	}
 }
@@ -2026,4 +2202,92 @@ select_mergejoin_clauses(PlannerInfo *root,
 	}
 
 	return result_list;
+}
+
+/*
+ * If Cypher MERGE join is explicitly specified,
+ * no other join methods are considered.
+ *
+ * See match_unsorted_outer_for_vle().
+ */
+static void
+add_cyphermerge_path(PlannerInfo *root, RelOptInfo *joinrel,
+					 RelOptInfo *outerrel, RelOptInfo *innerrel,
+					 JoinPathExtraData *extra)
+{
+	ListCell   *lc1;
+
+	foreach(lc1, outerrel->pathlist)
+	{
+		Path	   *outerpath = (Path *) lfirst(lc1);
+		List	   *merge_pathkeys;
+		ListCell   *lc2;
+
+		if (PATH_PARAM_BY_REL(outerpath, innerrel))
+			continue;
+
+		merge_pathkeys = build_join_pathkeys(root, joinrel, JOIN_CYPHER_MERGE,
+											 outerpath->pathkeys);
+
+		foreach(lc2, innerrel->cheapest_parameterized_paths)
+		{
+			Path	   *innerpath = (Path *) lfirst(lc2);
+
+			try_nestloop_path(root,
+							  joinrel,
+							  outerpath,
+							  innerpath,
+							  merge_pathkeys,
+							  JOIN_CYPHER_MERGE,
+							  extra);
+		}
+	}
+
+	if (joinrel->consider_parallel && bms_is_empty(joinrel->lateral_relids))
+		consider_parallel_nestloop(root, joinrel, outerrel, innerrel,
+								   JOIN_CYPHER_MERGE, extra);
+}
+
+/*
+ * If Cypher DELETE/DETACH join is explicitly specified,
+ * no other join methods are considered.
+ *
+ * See match_unsorted_outer_for_vle().
+ */
+static void
+add_cypherdelete_path(PlannerInfo *root, RelOptInfo *joinrel,
+					  RelOptInfo *outerrel, RelOptInfo *innerrel,
+					  JoinType type, JoinPathExtraData *extra)
+{
+	ListCell   *lc1;
+
+	foreach(lc1, outerrel->pathlist)
+	{
+		Path	   *outerpath = (Path *) lfirst(lc1);
+		List	   *merge_pathkeys;
+		ListCell   *lc2;
+
+		if (PATH_PARAM_BY_REL(outerpath, innerrel))
+			continue;
+
+		merge_pathkeys = build_join_pathkeys(root, joinrel, type,
+											 outerpath->pathkeys);
+
+		foreach(lc2, innerrel->cheapest_parameterized_paths)
+		{
+			Path	   *innerpath = (Path *) lfirst(lc2);
+
+			try_nestloop_path(root,
+							  joinrel,
+							  outerpath,
+							  innerpath,
+							  merge_pathkeys,
+							  type,
+							  extra);
+		}
+	}
+
+	if (joinrel->consider_parallel && bms_is_empty(joinrel->lateral_relids))
+		consider_parallel_nestloop(root, joinrel, outerrel, innerrel,
+								   type, extra);
 }

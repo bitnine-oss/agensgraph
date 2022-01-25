@@ -35,6 +35,7 @@
 #include "jit/jit.h"
 #include "lib/bipartite_match.h"
 #include "lib/knapsack.h"
+#include "nodes/graphnodes.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #ifdef OPTIMIZER_DEBUG
@@ -130,9 +131,12 @@ typedef struct
 /* Local functions */
 static Node *preprocess_expression(PlannerInfo *root, Node *expr, int kind);
 static void preprocess_qual_conditions(PlannerInfo *root, Node *jtnode);
+static void preprocess_graph_pattern(PlannerInfo *root, List *pattern);
+static void preprocess_graph_sets(PlannerInfo *root, List *sets);
+static void preprocess_graph_delete(PlannerInfo *root, List *exprs);
 static void inheritance_planner(PlannerInfo *root);
 static void grouping_planner(PlannerInfo *root, bool inheritance_update,
-							 double tuple_fraction);
+				 double tuple_fraction);
 static grouping_sets_data *preprocess_grouping_sets(PlannerInfo *root);
 static List *remap_to_groupclause_idx(List *groupClause, List *gsets,
 									  int *tleref_to_colnum_map);
@@ -146,9 +150,9 @@ static List *extract_rollup_sets(List *groupingSets);
 static List *reorder_grouping_sets(List *groupingSets, List *sortclause);
 static void standard_qp_callback(PlannerInfo *root, void *extra);
 static double get_number_of_groups(PlannerInfo *root,
-								   double path_rows,
-								   grouping_sets_data *gd,
-								   List *target_list);
+					 double path_rows,
+					 grouping_sets_data *gd,
+					 List *target_list);
 static RelOptInfo *create_grouping_paths(PlannerInfo *root,
 										 RelOptInfo *input_rel,
 										 PathTarget *target,
@@ -194,12 +198,21 @@ static void create_one_window_path(PlannerInfo *root,
 static RelOptInfo *create_distinct_paths(PlannerInfo *root,
 										 RelOptInfo *input_rel);
 static RelOptInfo *create_ordered_paths(PlannerInfo *root,
-										RelOptInfo *input_rel,
-										PathTarget *target,
-										bool target_parallel_safe,
-										double limit_tuples);
+					 RelOptInfo *input_rel,
+					 PathTarget *target,
+					 bool target_parallel_safe,
+					 double limit_tuples);
+static RelOptInfo *create_dijkstra_paths(PlannerInfo *root,
+										 RelOptInfo *input_rel,
+										 PathTarget *path_target,
+										 int weight, bool weight_out,
+										 Node *end_id, Node *egde_id,
+										 Node *source, Node *target,
+										 Node *limit);
 static PathTarget *make_group_input_target(PlannerInfo *root,
-										   PathTarget *final_target);
+						PathTarget *final_target);
+static PathTarget *make_dijkstra_input_target(PlannerInfo *root,
+											  PathTarget *final_target);
 static PathTarget *make_partial_grouping_target(PlannerInfo *root,
 												PathTarget *grouping_target,
 												Node *havingQual);
@@ -634,6 +647,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		root->wt_param_id = -1;
 	root->non_recursive_path = NULL;
 	root->partColsUpdated = false;
+	root->hasVLEJoinRTE = (parent_root ? parent_root->hasVLEJoinRTE : false);
 
 	/*
 	 * If there is a WITH list, process each WITH query and either convert it
@@ -720,6 +734,8 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 				root->hasJoinRTEs = true;
 				if (IS_OUTER_JOIN(rte->jointype))
 					hasOuterJoins = true;
+				if (rte->jointype == JOIN_VLE)
+					root->hasVLEJoinRTE = true;
 				break;
 			case RTE_RESULT:
 				hasResultRTEs = true;
@@ -920,7 +936,11 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 			rte->joinaliasvars = NIL;
 		}
 	}
-
+    /* expressions for graph */
+    if (parse->graph.writeOp == GWROP_MERGE)
+        preprocess_graph_pattern(root, parse->graph.pattern);
+    preprocess_graph_delete(root, parse->graph.exprs);
+    preprocess_graph_sets(root, parse->graph.sets);
 	/*
 	 * In some cases we may want to transfer a HAVING clause into WHERE. We
 	 * cannot do so if the HAVING clause contains aggregates (obviously) or
@@ -984,6 +1004,43 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 
 	/* Remove any redundant GROUP BY columns */
 	remove_useless_groupby_columns(root);
+
+	if (parse->shortestpathSource)
+	{
+		parse->dijkstraEndId = preprocess_expression(root,
+													 parse->dijkstraEndId,
+													 EXPRKIND_TARGET);
+		parse->dijkstraEdgeId = preprocess_expression(root,
+													  parse->dijkstraEdgeId,
+													  EXPRKIND_TARGET);
+		parse->dijkstraLimit = preprocess_expression(root,
+													 parse->dijkstraLimit,
+													 EXPRKIND_TARGET);
+		parse->shortestpathEndIdLeft = preprocess_expression(root,
+															 parse->shortestpathEndIdLeft,
+															 EXPRKIND_TARGET);
+		parse->shortestpathEndIdRight = preprocess_expression(root,
+															  parse->shortestpathEndIdRight,
+															  EXPRKIND_TARGET);
+		parse->shortestpathTableOidLeft = preprocess_expression(root,
+																parse->shortestpathTableOidLeft,
+																EXPRKIND_TARGET);
+		parse->shortestpathTableOidRight = preprocess_expression(root,
+																 parse->shortestpathTableOidRight,
+																 EXPRKIND_TARGET);
+		parse->shortestpathCtidLeft = preprocess_expression(root,
+															parse->shortestpathCtidLeft,
+															EXPRKIND_TARGET);
+		parse->shortestpathCtidRight = preprocess_expression(root,
+															 parse->shortestpathCtidRight,
+															 EXPRKIND_TARGET);
+		parse->shortestpathSource = preprocess_expression(root,
+														  parse->shortestpathSource,
+														  EXPRKIND_TARGET);
+		parse->shortestpathTarget = preprocess_expression(root,
+														  parse->shortestpathTarget,
+														  EXPRKIND_TARGET);
+	}
 
 	/*
 	 * If we have any outer joins, try to reduce them to plain inner joins.
@@ -1160,6 +1217,66 @@ preprocess_qual_conditions(PlannerInfo *root, Node *jtnode)
 	else
 		elog(ERROR, "unrecognized node type: %d",
 			 (int) nodeTag(jtnode));
+}
+
+static void
+preprocess_graph_pattern(PlannerInfo *root, List *pattern)
+{
+	GraphPath  *gpath;
+	ListCell   *le;
+
+	AssertArg(list_length(pattern) == 1);
+
+	gpath = linitial(pattern);
+
+	foreach(le, gpath->chain)
+	{
+		Node *elem = lfirst(le);
+
+		if (IsA(elem, GraphVertex))
+		{
+			GraphVertex *gvertex = (GraphVertex *) elem;
+
+			gvertex->expr = preprocess_expression(root, gvertex->expr,
+												  EXPRKIND_TARGET);
+		}
+		else
+		{
+			GraphEdge *gedge = (GraphEdge *) elem;
+
+			Assert(IsA(elem, GraphEdge));
+
+			gedge->expr = preprocess_expression(root, gedge->expr,
+												EXPRKIND_TARGET);
+		}
+	}
+}
+
+static void
+preprocess_graph_sets(PlannerInfo *root, List *sets)
+{
+	ListCell *ls;
+
+	foreach(ls, sets)
+	{
+		GraphSetProp *gsp = lfirst(ls);
+
+		gsp->elem = preprocess_expression(root, gsp->elem, EXPRKIND_TARGET);
+		gsp->expr = preprocess_expression(root, gsp->expr, EXPRKIND_VALUES);
+	}
+}
+
+static void
+preprocess_graph_delete(PlannerInfo *root, List *exprs)
+{
+	ListCell *ls;
+
+	foreach(ls, exprs)
+	{
+		GraphDelElem *gde = lfirst(ls);
+
+		gde->elem = preprocess_expression(root, gde->elem, EXPRKIND_TARGET);
+	}
 }
 
 /*
@@ -2117,6 +2234,13 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 			scanjoin_target_parallel_safe = grouping_target_parallel_safe;
 		}
 
+		if (parse->shortestpathSource && parse->dijkstraEndId != NULL)
+		{
+			Assert(!have_grouping && activeWindows == NIL &&
+				   parse->sortClause == NIL && parse->distinctClause == NIL);
+			scanjoin_target = make_dijkstra_input_target(root, final_target);
+		}
+
 		/*
 		 * If there are any SRFs in the targetlist, we must separate each of
 		 * these PathTargets into SRF-computing and SRF-free targets.  Replace
@@ -2254,6 +2378,19 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 								  final_targets_contain_srfs);
 	}
 
+	if (parse->shortestpathSource && parse->dijkstraEndId != NULL) {
+		current_rel = create_dijkstra_paths(root,
+											current_rel,
+											final_target,
+											parse->dijkstraWeight,
+											parse->dijkstraWeightOut,
+											parse->dijkstraEndId,
+											parse->dijkstraEdgeId,
+											parse->shortestpathSource,
+											parse->shortestpathTarget,
+											parse->dijkstraLimit);
+	}
+
 	/*
 	 * Now we are prepared to build the final-output upperrel.
 	 */
@@ -2312,11 +2449,25 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 											  offset_est, count_est);
 		}
 
+		if (parse->commandType == CMD_GRAPHWRITE && !inheritance_update)
+		{
+			path = (Path *) create_modifygraph_path(root, final_rel,
+													parse->graph.writeOp,
+													parse->graph.last,
+													parse->graph.targets,
+													path,
+													parse->graph.nr_modify,
+													parse->graph.detach,
+													parse->graph.eager,
+													parse->graph.pattern,
+													parse->graph.exprs,
+													parse->graph.sets);
+		}
 		/*
 		 * If this is an INSERT/UPDATE/DELETE, and we're not being called from
 		 * inheritance_planner, add the ModifyTable node.
 		 */
-		if (parse->commandType != CMD_SELECT && !inheritance_update)
+		else if (parse->commandType != CMD_SELECT && !inheritance_update)
 		{
 			Index		rootRelation;
 			List	   *withCheckOptionLists;
@@ -2385,7 +2536,7 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 	if (final_rel->consider_parallel && root->query_level > 1 &&
 		!limit_needed(parse))
 	{
-		Assert(!parse->rowMarks && parse->commandType == CMD_SELECT);
+		Assert(!parse->rowMarks && (parse->commandType == CMD_SELECT || parse->commandType == CMD_GRAPHWRITE));
 		foreach(lc, current_rel->partial_pathlist)
 		{
 			Path	   *partial_path = (Path *) lfirst(lc);
@@ -5063,6 +5214,60 @@ create_ordered_paths(PlannerInfo *root,
 	return ordered_rel;
 }
 
+static RelOptInfo *
+create_dijkstra_paths(PlannerInfo *root, RelOptInfo *input_rel,
+					  PathTarget *path_target, int weight, bool weight_out,
+					  Node *end_id, Node *edge_id, Node *source,
+					  Node *target, Node *limit)
+{
+	RelOptInfo *dijkstra_rel;
+	ListCell   *lc;
+
+	dijkstra_rel = fetch_upper_rel(root, UPPERREL_DIJKSTRA, NULL);
+
+	dijkstra_rel->consider_parallel = false;
+
+	/*
+	 * If the input rel belongs to a single FDW, so does the ordered_rel.
+	 */
+	dijkstra_rel->serverid = input_rel->serverid;
+	dijkstra_rel->userid = input_rel->userid;
+	dijkstra_rel->useridiscurrent = input_rel->useridiscurrent;
+	dijkstra_rel->fdwroutine = input_rel->fdwroutine;
+
+	foreach(lc, input_rel->pathlist)
+	{
+		Path	   *path = (Path *) lfirst(lc);
+
+		path = (Path *) create_dijkstra_path(root, dijkstra_rel, path,
+											 path_target, weight, weight_out,
+											 end_id, edge_id, source, target,
+											 limit);
+		add_path(dijkstra_rel, path);
+	}
+
+	/*
+	 * If there is an FDW that's responsible for all baserels of the query,
+	 * let it consider adding ForeignPaths.
+	 */
+	if (dijkstra_rel->fdwroutine &&
+		dijkstra_rel->fdwroutine->GetForeignUpperPaths)
+		dijkstra_rel->fdwroutine->GetForeignUpperPaths(root, UPPERREL_DIJKSTRA,
+													  input_rel, dijkstra_rel, NULL);
+
+	/* Let extensions possibly add some more paths */
+	if (create_upper_paths_hook)
+		(*create_upper_paths_hook) (root, UPPERREL_DIJKSTRA,
+									input_rel, dijkstra_rel, NULL);
+
+	/*
+	 * No need to bother with set_cheapest here; grouping_planner does not
+	 * need us to do it.
+	 */
+	Assert(dijkstra_rel->pathlist != NIL);
+
+	return dijkstra_rel;
+}
 
 /*
  * make_group_input_target
@@ -5157,6 +5362,43 @@ make_group_input_target(PlannerInfo *root, PathTarget *final_target)
 	/* clean up cruft */
 	list_free(non_group_vars);
 	list_free(non_group_cols);
+
+	/* XXX this causes some redundant cost calculation ... */
+	return set_pathtarget_cost_width(root, input_target);
+}
+
+static PathTarget *
+make_dijkstra_input_target(PlannerInfo *root, PathTarget *final_target)
+{
+	Query	   *parse = root->parse;
+	PathTarget *input_target;
+
+	/*
+	 * We must build a target containing all grouping columns, plus any other
+	 * Vars mentioned in the query's targetlist and HAVING qual.
+	 */
+	input_target = create_empty_pathtarget();
+
+	/* weight */
+	parse->dijkstraWeight = 1;
+	add_new_column_to_pathtarget(input_target,
+								 (Expr *) llast(final_target->exprs));
+	if ( parse->dijkstraEndId != NULL )
+	  add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEndId);
+	if ( parse->shortestpathEndIdLeft != NULL )
+	  add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathEndIdLeft);
+	if ( parse->dijkstraEdgeId != NULL )
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->dijkstraEdgeId);
+	if ( parse->shortestpathEndIdRight != NULL )
+	  add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathEndIdRight);
+	if ( parse->shortestpathTableOidLeft != NULL )
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathTableOidLeft);
+	if ( parse->shortestpathTableOidRight != NULL )
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathTableOidRight);
+	if ( parse->shortestpathCtidLeft != NULL )
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathCtidLeft);
+	if ( parse->shortestpathCtidRight != NULL )
+		add_new_column_to_pathtarget(input_target, (Expr *) parse->shortestpathCtidRight);
 
 	/* XXX this causes some redundant cost calculation ... */
 	return set_pathtarget_cost_width(root, input_target);

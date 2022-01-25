@@ -22,6 +22,7 @@
 #include "access/sysattr.h"
 #include "access/tableam.h"
 #include "access/xact.h"
+#include "catalog/ag_graph_fn.h"
 #include "catalog/catalog.h"
 #include "catalog/index.h"
 #include "catalog/indexing.h"
@@ -36,6 +37,7 @@
 #include "commands/dbcommands.h"
 #include "commands/defrem.h"
 #include "commands/event_trigger.h"
+#include "commands/graphcmds.h"
 #include "commands/progress.h"
 #include "commands/tablecmds.h"
 #include "commands/tablespace.h"
@@ -2547,6 +2549,33 @@ ReindexTable(RangeVar *relation, int options, bool concurrent)
 					(errmsg("table \"%s\" has no indexes to reindex",
 							relation->relname)));
 	}
+
+	return heapOid;
+}
+
+/*
+ * ReindexLabel
+ *		Recreate all indexes of the given label (and its toast table, if any)
+ */
+Oid
+ReindexLabel(RangeVar *relation, int options, ObjectType type)
+{
+	Oid heapOid;
+
+	relation->schemaname = get_graph_path(true);
+
+	/* the lock level used here should match that of reindex_relation() */
+	heapOid = RangeVarGetRelidExtended(relation, ShareLock, 0,
+									   RangeVarCallbackOwnsTable, NULL);
+
+	CheckLabelType(type, get_relid_laboid(heapOid), "REINDEX");
+
+	if (!reindex_relation(heapOid,
+						  (REINDEX_REL_PROCESS_TOAST |
+						   REINDEX_REL_CHECK_CONSTRAINTS),
+						  options))
+		ereport(NOTICE,
+				(errmsg("label \"%s\" has no index", relation->relname)));
 
 	return heapOid;
 }

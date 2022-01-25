@@ -6,6 +6,7 @@
  * gram.y
  *	  POSTGRESQL BISON rules/actions
  *
+ * Portions Copyright (c) 2018, Bitnine Inc.
  * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
@@ -60,6 +61,7 @@
 #include "parser/gramparse.h"
 #include "parser/parser.h"
 #include "parser/parse_expr.h"
+#include "parser/scansup.h"
 #include "storage/lmgr.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
@@ -135,6 +137,8 @@ typedef struct ImportQual
 #define CAS_NOT_VALID				0x10
 #define CAS_NO_INHERIT				0x20
 
+bool case_compat_type_func = false;
+
 
 #define parser_yyerror(msg)  scanner_yyerror(msg, yyscanner)
 #define parser_errposition(pos)  scanner_errposition(pos, yyscanner)
@@ -188,6 +192,13 @@ static void processCASbits(int cas_bits, int location, const char *constrType,
 			   bool *deferrable, bool *initdeferred, bool *not_valid,
 			   bool *no_inherit, core_yyscan_t yyscanner);
 static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
+static Node *makeCypherSetOp(SetOperation op, bool all, Node *larg, Node *rarg);
+static Node *wrapCypherWithSelect(Node *stmt);
+static List *downcase_namelist(List *namelist);
+static char *preserve_downcasing_ident(char *ident);
+static List *preserve_downcasing_namelist(List *namelist);
+static char *preserve_downcasing_type_func_name(char *name);
+static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 %}
 
@@ -244,6 +255,10 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	RoleSpec			*rolespec;
 }
 
+%type <node>    AlterLabelStmt alter_label_cmd
+        CreateConstraintStmt CreateGraphStmt CreateLabelStmt DropConstraintStmt
+		CreatePropertyIndexStmt
+
 %type <node>	stmt schema_stmt
 		AlterEventTrigStmt AlterCollationStmt
 		AlterDatabaseStmt AlterDatabaseSetStmt AlterDomainStmt AlterEnumStmt
@@ -283,6 +298,13 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 		CreateMatViewStmt RefreshMatViewStmt CreateAmStmt
 		CreatePublicationStmt AlterPublicationStmt
 		CreateSubscriptionStmt AlterSubscriptionStmt DropSubscriptionStmt
+
+/* Agens Graph */
+%type <list>	alter_label_cmds prop_idx_params
+%type <str>		opt_constraint_name
+%type <ielem>	prop_idx_elem
+%type <boolean> opt_disable_index
+%type <ival>	reindex_target_label
 
 %type <node>	select_no_parens select_with_parens select_clause
 				simple_select values_clause
@@ -590,6 +612,78 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <list>		hash_partbound
 %type <defelt>		hash_partbound_elem
 
+
+/*
+ * Cypher Query Language
+ */
+
+%type <node>	CypherStmt cypher_with_parens cypher_no_parens
+				cypher_clause_prev cypher_clause_head cypher_clause
+
+%type <node>	cypher_read_opt_parens cypher_read_with_parens cypher_read_stmt
+				cypher_read_opt cypher_read cypher_read_clauses
+
+%type <node>	cypher_expr cypher_i_expr cypher_w_expr cypher_c_expr
+				cypher_expr_opt cypher_expr_filter
+				cypher_expr_atom cypher_expr_literal
+				cypher_expr_param cypher_expr_var
+%type <list>	cypher_expr_comma_list
+%type <value>	cypher_expr_name
+%type <str>		cypher_expr_varname
+
+%type <node>	cypher_expr_map
+%type <list>	cypher_expr_map_keyvals
+%type <value>	cypher_expr_map_key cypher_expr_escaped_name
+
+%type <node>	cypher_expr_list cypher_expr_lc_where_opt cypher_expr_lc_res_opt
+%type <list>	cypher_expr_list_elems cypher_expr_list_elems_opt
+
+%type <node>	cypher_expr_case cypher_expr_case_when cypher_expr_case_default
+%type <list>	cypher_expr_case_when_list
+
+%type <node>	cypher_expr_func cypher_expr_func_norm cypher_expr_func_subexpr
+				cypher_expr_shortestpath
+
+%type <node>	cypher_expr_propref cypher_expr_indir_elem
+%type <list>	cypher_expr_indir_opt
+
+%type <list>	cypher_pattern cypher_anon_pattern
+				cypher_path cypher_path_chain
+				cypher_types cypher_types_opt
+%type <node>	cypher_pattern_part cypher_pattern_var cypher_anon_pattern_part
+				cypher_shortestpath cypher_dijkstra
+				cypher_node cypher_rel
+				cypher_var cypher_var_opt cypher_label_opt
+				cypher_varlen_opt cypher_range_opt cypher_range_idx
+				cypher_range_idx_opt cypher_prop_map_opt
+%type <str>		cypher_pattern_varname cypher_labelname
+%type <boolean>	cypher_rel_left cypher_rel_right
+
+%type <node>	cypher_return cypher_with
+				cypher_skip_opt cypher_limit_opt cypher_where cypher_where_opt
+				cypher_unwind
+%type <list>	cypher_return_items cypher_distinct_opt
+				cypher_order_by_opt cypher_sort_items
+%type <target>	cypher_return_item
+%type <sortby>	cypher_sort_item
+
+%type <node>	cypher_match
+%type <boolean>	cypher_optional_opt
+
+%type <node>	cypher_create
+
+%type <node>	cypher_delete
+%type <boolean>	cypher_detach_opt
+
+%type <node>	cypher_set cypher_setitem cypher_remove cypher_rmitem
+%type <list>	cypher_setitem_list cypher_rmitem_list
+
+%type <node>	cypher_merge cypher_merge_set
+%type <list>	cypher_merge_sets_opt cypher_merge_set_list
+
+%type <node>	cypher_load
+
+
 /*
  * Non-keyword token types.  These are hard-wired into the "flex" lexer.
  * They must be listed first so that their numeric codes do not depend on
@@ -598,11 +692,14 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  *
  * DOT_DOT is unused in the core SQL grammar, and so will always provoke
  * parse errors.  It is needed by PL/pgSQL.
+ *
+ * ADD_EQUALS is for Cypher SET clause.
  */
 %token <str>	IDENT FCONST SCONST BCONST XCONST Op
 %token <ival>	ICONST PARAM
 %token			TYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER
 %token			LESS_EQUALS GREATER_EQUALS NOT_EQUALS
+%token			ADD_EQUALS
 
 /*
  * If you want to make any keyword changes, update the keyword table in
@@ -613,8 +710,9 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 
 /* ordinary key words in alphabetical order */
 %token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
-	AGGREGATE ALL ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
-	ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
+	AGGREGATE ALL ALLSHORTESTPATHS ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY
+	ARRAY AS ASC
+	ASSERT ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
 	BOOLEAN_P BOTH BY
@@ -623,24 +721,24 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	CHARACTER CHARACTERISTICS CHECK CHECKPOINT CLASS CLOSE
 	CLUSTER COALESCE COLLATE COLLATION COLUMN COLUMNS COMMENT COMMENTS COMMIT
 	COMMITTED CONCURRENTLY CONFIGURATION CONFLICT CONNECTION CONSTRAINT
-	CONSTRAINTS CONTENT_P CONTINUE_P CONVERSION_P COPY COST CREATE
+	CONSTRAINTS CONTAINS CONTENT_P CONTINUE_P CONVERSION_P COPY COST CREATE
 	CROSS CSV CUBE CURRENT_P
 	CURRENT_CATALOG CURRENT_DATE CURRENT_ROLE CURRENT_SCHEMA
 	CURRENT_TIME CURRENT_TIMESTAMP CURRENT_USER CURSOR CYCLE
 
 	DATA_P DATABASE DAY_P DEALLOCATE DEC DECIMAL_P DECLARE DEFAULT DEFAULTS
 	DEFERRABLE DEFERRED DEFINER DELETE_P DELIMITER DELIMITERS DEPENDS DESC
-	DETACH DICTIONARY DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P
+	DETACH DICTIONARY DIJKSTRA DISABLE_P DISCARD DISTINCT DO DOCUMENT_P DOMAIN_P
 	DOUBLE_P DROP
 
-	EACH ELSE ENABLE_P ENCODING ENCRYPTED END_P ENUM_P ESCAPE EVENT EXCEPT
-	EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
+	EACH ELABEL ELSE ENABLE_P ENCODING ENCRYPTED END_P ENDS ENUM_P ESCAPE EVENT
+	EXCEPT EXCLUDE EXCLUDING EXCLUSIVE EXECUTE EXISTS EXPLAIN
 	EXTENSION EXTERNAL EXTRACT
 
 	FALSE_P FAMILY FETCH FILTER FIRST_P FLOAT_P FOLLOWING FOR
 	FORCE FOREIGN FORWARD FREEZE FROM FULL FUNCTION FUNCTIONS
 
-	GENERATED GLOBAL GRANT GRANTED GREATEST GROUP_P GROUPING GROUPS
+	GENERATED GLOBAL GRANT GRANTED GRAPH GREATEST GROUP_P GROUPING GROUPS
 
 	HANDLER HAVING HEADER_P HOLD HOUR_P
 
@@ -657,31 +755,32 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	LEADING LEAKPROOF LEAST LEFT LEVEL LIKE LIMIT LISTEN LOAD LOCAL
 	LOCALTIME LOCALTIMESTAMP LOCATION LOCK_P LOCKED LOGGED
 
-	MAPPING MATCH MATERIALIZED MAXVALUE METHOD MINUTE_P MINVALUE MODE MONTH_P MOVE
+	MAPPING MATCH MATERIALIZED MAXVALUE MERGE METHOD
+	MINUTE_P MINVALUE MODE MONTH_P MOVE
 
 	NAME_P NAMES NATIONAL NATURAL NCHAR NEW NEXT NO NONE
 	NOT NOTHING NOTIFY NOTNULL NOWAIT NULL_P NULLIF
 	NULLS_P NUMERIC
 
-	OBJECT_P OF OFF OFFSET OIDS OLD ON ONLY OPERATOR OPTION OPTIONS OR
+	OBJECT_P OF OFF OFFSET OIDS OLD ON ONLY OPERATOR OPTION OPTIONAL_P OPTIONS OR
 	ORDER ORDINALITY OTHERS OUT_P OUTER_P
 	OVER OVERLAPS OVERLAY OVERRIDING OWNED OWNER
 
 	PARALLEL PARSER PARTIAL PARTITION PASSING PASSWORD PLACING PLANS POLICY
 	POSITION PRECEDING PRECISION PRESERVE PREPARE PREPARED PRIMARY
-	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROCEDURES PROGRAM PUBLICATION
+	PRIOR PRIVILEGES PROCEDURAL PROCEDURE PROCEDURES PROPERTY PROGRAM PUBLICATION
 
 	QUOTE
 
 	RANGE READ REAL REASSIGN RECHECK RECURSIVE REF REFERENCES REFERENCING
-	REFRESH REINDEX RELATIVE_P RELEASE RENAME REPEATABLE REPLACE REPLICA
-	RESET RESTART RESTRICT RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK ROLLUP
+	REFRESH REINDEX RELATIVE_P RELEASE REMOVE RENAME REPEATABLE REPLACE REPLICA
+	RESET RESTART RESTRICT RETURN RETURNING RETURNS REVOKE RIGHT ROLE ROLLBACK ROLLUP
 	ROUTINE ROUTINES ROW ROWS RULE
 
 	SAVEPOINT SCHEMA SCHEMAS SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
-	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHOW
-	SIMILAR SIMPLE SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P
-	START STATEMENT STATISTICS STDIN STDOUT STORAGE STORED STRICT_P STRIP_P
+	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHORTESTPATH SHOW
+	SIMILAR SIMPLE SINGLE SIZE_P SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P
+	START STARTS STATEMENT STATISTICS STDIN STDOUT STORED STORAGE STRICT_P STRIP_P
 	SUBSCRIPTION SUBSTRING SUPPORT SYMMETRIC SYSID SYSTEM_P
 
 	TABLE TABLES TABLESAMPLE TABLESPACE TEMP TEMPLATE TEMPORARY TEXT_P THEN
@@ -690,10 +789,10 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 	TRUNCATE TRUSTED TYPE_P TYPES_P
 
 	UNBOUNDED UNCOMMITTED UNENCRYPTED UNION UNIQUE UNKNOWN UNLISTEN UNLOGGED
-	UNTIL UPDATE USER USING
+	UNTIL UNWIND UPDATE USER USING
 
 	VACUUM VALID VALIDATE VALIDATOR VALUE_P VALUES VARCHAR VARIADIC VARYING
-	VERBOSE VERSION_P VIEW VIEWS VOLATILE
+	VERBOSE VERSION_P VIEW VIEWS VLABEL VOLATILE
 
 	WHEN WHERE WHITESPACE_P WINDOW WITH WITHIN WITHOUT WORK WRAPPER WRITE
 
@@ -725,7 +824,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %left		AND
 %right		NOT
 %nonassoc	IS ISNULL NOTNULL	/* IS sets precedence for IS NULL, etc */
-%nonassoc	'<' '>' '=' LESS_EQUALS GREATER_EQUALS NOT_EQUALS
+%nonassoc	'<' '>' '=' LESS_EQUALS GREATER_EQUALS NOT_EQUALS ADD_EQUALS
 %nonassoc	BETWEEN IN_P LIKE ILIKE SIMILAR NOT_LA
 %nonassoc	ESCAPE			/* ESCAPE must be just above LIKE/ILIKE/SIMILAR */
 %left		POSTFIXOP		/* dummy for postfix Op rules */
@@ -755,9 +854,15 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
  * appear to cause UNBOUNDED to be treated differently from other unreserved
  * keywords anywhere else in the grammar, but it's definitely risky.  We can
  * blame any funny behavior of UNBOUNDED on the SQL standard, though.
+ *
+ * To support Cypher, the precedence of unreserved keywords, such as
+ * ALLSHORTESTPATHS, DELETE_P, DETACH, DIJKSTRA, LOAD, OPTIONAL_P, REMOVE,
+ * SHORTESTPATH, SINGLE, SIZE_P and SKIP, must be the same as that of IDENT.
  */
 %nonassoc	UNBOUNDED		/* ideally should have same precedence as IDENT */
 %nonassoc	IDENT GENERATED NULL_P PARTITION RANGE ROWS GROUPS PRECEDING FOLLOWING CUBE ROLLUP
+			ALLSHORTESTPATHS DELETE_P DETACH DIJKSTRA LOAD OPTIONAL_P REMOVE
+			SHORTESTPATH SINGLE SIZE_P SKIP
 %left		Op OPERATOR		/* multi-character ops and user-defined operators */
 %left		'+' '-'
 %left		'*' '/' '%'
@@ -766,6 +871,7 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %left		AT				/* sets precedence for AT TIME ZONE */
 %left		COLLATE
 %right		UMINUS
+%nonassoc	CONTAINS ENDS EQUALS_TILDE STARTS
 %left		'[' ']'
 %left		'(' ')'
 %left		TYPECAST
@@ -838,6 +944,7 @@ stmt :
 			| AlterForeignTableStmt
 			| AlterFunctionStmt
 			| AlterGroupStmt
+			| AlterLabelStmt
 			| AlterObjectDependsStmt
 			| AlterObjectSchemaStmt
 			| AlterOwnerStmt
@@ -867,6 +974,7 @@ stmt :
 			| CreateAsStmt
 			| CreateAssertionStmt
 			| CreateCastStmt
+			| CreateConstraintStmt
 			| CreateConversionStmt
 			| CreateDomainStmt
 			| CreateExtensionStmt
@@ -874,13 +982,16 @@ stmt :
 			| CreateForeignServerStmt
 			| CreateForeignTableStmt
 			| CreateFunctionStmt
+			| CreateGraphStmt
 			| CreateGroupStmt
+			| CreateLabelStmt
 			| CreateMatViewStmt
 			| CreateOpClassStmt
 			| CreateOpFamilyStmt
 			| CreatePublicationStmt
 			| AlterOpFamilyStmt
 			| CreatePolicyStmt
+			| CreatePropertyIndexStmt
 			| CreatePLangStmt
 			| CreateSchemaStmt
 			| CreateSeqStmt
@@ -895,6 +1006,7 @@ stmt :
 			| CreateUserStmt
 			| CreateUserMappingStmt
 			| CreatedbStmt
+			| CypherStmt
 			| DeallocateStmt
 			| DeclareCursorStmt
 			| DefineStmt
@@ -902,6 +1014,7 @@ stmt :
 			| DiscardStmt
 			| DoStmt
 			| DropCastStmt
+			| DropConstraintStmt
 			| DropOpClassStmt
 			| DropOpFamilyStmt
 			| DropOwnedStmt
@@ -1050,36 +1163,37 @@ AlterOptRoleElem:
 				}
 			| IDENT
 				{
+					char *ident = preserve_downcasing_ident($1);
 					/*
 					 * We handle identifiers that aren't parser keywords with
 					 * the following special-case codes, to avoid bloating the
 					 * size of the main parser.
 					 */
-					if (strcmp($1, "superuser") == 0)
+					if (strcmp(ident, "superuser") == 0)
 						$$ = makeDefElem("superuser", (Node *)makeInteger(true), @1);
-					else if (strcmp($1, "nosuperuser") == 0)
+					else if (strcmp(ident, "nosuperuser") == 0)
 						$$ = makeDefElem("superuser", (Node *)makeInteger(false), @1);
-					else if (strcmp($1, "createrole") == 0)
+					else if (strcmp(ident, "createrole") == 0)
 						$$ = makeDefElem("createrole", (Node *)makeInteger(true), @1);
-					else if (strcmp($1, "nocreaterole") == 0)
+					else if (strcmp(ident, "nocreaterole") == 0)
 						$$ = makeDefElem("createrole", (Node *)makeInteger(false), @1);
-					else if (strcmp($1, "replication") == 0)
+					else if (strcmp(ident, "replication") == 0)
 						$$ = makeDefElem("isreplication", (Node *)makeInteger(true), @1);
-					else if (strcmp($1, "noreplication") == 0)
+					else if (strcmp(ident, "noreplication") == 0)
 						$$ = makeDefElem("isreplication", (Node *)makeInteger(false), @1);
-					else if (strcmp($1, "createdb") == 0)
+					else if (strcmp(ident, "createdb") == 0)
 						$$ = makeDefElem("createdb", (Node *)makeInteger(true), @1);
-					else if (strcmp($1, "nocreatedb") == 0)
+					else if (strcmp(ident, "nocreatedb") == 0)
 						$$ = makeDefElem("createdb", (Node *)makeInteger(false), @1);
-					else if (strcmp($1, "login") == 0)
+					else if (strcmp(ident, "login") == 0)
 						$$ = makeDefElem("canlogin", (Node *)makeInteger(true), @1);
-					else if (strcmp($1, "nologin") == 0)
+					else if (strcmp(ident, "nologin") == 0)
 						$$ = makeDefElem("canlogin", (Node *)makeInteger(false), @1);
-					else if (strcmp($1, "bypassrls") == 0)
+					else if (strcmp(ident, "bypassrls") == 0)
 						$$ = makeDefElem("bypassrls", (Node *)makeInteger(true), @1);
-					else if (strcmp($1, "nobypassrls") == 0)
+					else if (strcmp(ident, "nobypassrls") == 0)
 						$$ = makeDefElem("bypassrls", (Node *)makeInteger(false), @1);
-					else if (strcmp($1, "noinherit") == 0)
+					else if (strcmp(ident, "noinherit") == 0)
 					{
 						/*
 						 * Note that INHERIT is a keyword, so it's handled by main parser, but
@@ -1090,7 +1204,7 @@ AlterOptRoleElem:
 					else
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
-								 errmsg("unrecognized role option \"%s\"", $1),
+								 errmsg("unrecognized role option \"%s\"", ident),
 									 parser_errposition(@1)));
 				}
 		;
@@ -2466,7 +2580,7 @@ alter_table_cmd:
 			| OF any_name
 				{
 					AlterTableCmd *n = makeNode(AlterTableCmd);
-					TypeName *def = makeTypeNameFromNameList($2);
+					TypeName *def = makeTypeNameFromNameList(preserve_downcasing_type_func_namelist($2));
 					def->location = @2;
 					n->subtype = AT_AddOf;
 					n->def = (Node *) def;
@@ -2806,7 +2920,7 @@ AlterCompositeTypeStmt:
 					AlterTableStmt *n = makeNode(AlterTableStmt);
 
 					/* can't use qualified_name, sigh */
-					n->relation = makeRangeVarFromAnyName($3, @3, yyscanner);
+					n->relation = makeRangeVarFromAnyName(preserve_downcasing_type_func_namelist($3), @3, yyscanner);
 					n->cmds = $4;
 					n->relkind = OBJECT_TYPE;
 					$$ = (Node *)n;
@@ -3094,12 +3208,13 @@ copy_generic_opt_list:
 copy_generic_opt_elem:
 			ColLabel copy_generic_opt_arg
 				{
-					$$ = makeDefElem($1, $2, @1);
+					char *name = preserve_downcasing_ident($1);
+					$$ = makeDefElem(name, $2, @1);
 				}
 		;
 
 copy_generic_opt_arg:
-			opt_boolean_or_string			{ $$ = (Node *) makeString($1); }
+			opt_boolean_or_string			{ $$ = (Node *) makeString(preserve_downcasing_ident($1)); }
 			| NumericOnly					{ $$ = (Node *) $1; }
 			| '*'							{ $$ = (Node *) makeNode(A_Star); }
 			| '(' copy_generic_opt_arg_list ')'		{ $$ = (Node *) $2; }
@@ -3178,7 +3293,7 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tableElts = $7;
 					n->inhRelations = NIL;
 					n->partspec = $8;
-					n->ofTypename = makeTypeNameFromNameList($6);
+					n->ofTypename = makeTypeNameFromNameList(preserve_downcasing_type_func_namelist($6));
 					n->ofTypename->location = @6;
 					n->constraints = NIL;
 					n->accessMethod = $9;
@@ -3198,7 +3313,7 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tableElts = $10;
 					n->inhRelations = NIL;
 					n->partspec = $11;
-					n->ofTypename = makeTypeNameFromNameList($9);
+					n->ofTypename = makeTypeNameFromNameList(preserve_downcasing_type_func_namelist($9));
 					n->ofTypename->location = @9;
 					n->constraints = NIL;
 					n->accessMethod = $12;
@@ -4276,7 +4391,7 @@ CreatePLangStmt:
 			{
 				CreatePLangStmt *n = makeNode(CreatePLangStmt);
 				n->replace = $2;
-				n->plname = $6;
+				n->plname = preserve_downcasing_ident($6);
 				/* parameters are all to be supplied by system */
 				n->plhandler = NIL;
 				n->plinline = NIL;
@@ -4289,7 +4404,7 @@ CreatePLangStmt:
 			{
 				CreatePLangStmt *n = makeNode(CreatePLangStmt);
 				n->replace = $2;
-				n->plname = $6;
+				n->plname = preserve_downcasing_ident($6);
 				n->plhandler = $8;
 				n->plinline = $9;
 				n->plvalidator = $10;
@@ -4308,8 +4423,16 @@ opt_trusted:
  * Work around by using simple names, instead.
  */
 handler_name:
-			name						{ $$ = list_make1(makeString($1)); }
-			| name attrs				{ $$ = lcons(makeString($1), $2); }
+			name
+				{
+					List *namelist = list_make1(makeString($1));
+					$$ = preserve_downcasing_type_func_namelist(namelist);
+				}
+			| name attrs
+				{
+					List *namelist = lcons(makeString($1), $2);
+					$$ = preserve_downcasing_type_func_namelist(namelist);
+				}
 		;
 
 opt_inline_handler:
@@ -4332,7 +4455,7 @@ DropPLangStmt:
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_LANGUAGE;
-					n->objects = list_make1(makeString($4));
+					n->objects = list_make1(makeString(preserve_downcasing_ident($4)));
 					n->behavior = $5;
 					n->missing_ok = false;
 					n->concurrent = false;
@@ -4342,7 +4465,7 @@ DropPLangStmt:
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_LANGUAGE;
-					n->objects = list_make1(makeString($6));
+					n->objects = list_make1(makeString(preserve_downcasing_ident($6)));
 					n->behavior = $7;
 					n->missing_ok = true;
 					n->concurrent = false;
@@ -4560,7 +4683,7 @@ AlterExtensionContentsStmt:
 					n->extname = $3;
 					n->action = $4;
 					n->objtype = OBJECT_LANGUAGE;
-					n->object = (Node *) makeString($7);
+					n->object = (Node *) makeString(preserve_downcasing_ident($7));
 					$$ = (Node *)n;
 				}
 			| ALTER EXTENSION name add_drop OPERATOR operator_with_argtypes
@@ -4731,7 +4854,7 @@ AlterExtensionContentsStmt:
 					n->extname = $3;
 					n->action = $4;
 					n->objtype = OBJECT_TRANSFORM;
-					n->object = (Node *) list_make2($7, makeString($9));
+					n->object = (Node *) list_make2($7, makeString(preserve_downcasing_ident($9)));
 					$$ = (Node *)n;
 				}
 			| ALTER EXTENSION name add_drop TYPE_P Typename
@@ -5591,7 +5714,7 @@ event_trigger_when_list:
 
 event_trigger_when_item:
 		ColId IN_P '(' event_trigger_value_list ')'
-			{ $$ = makeDefElem($1, (Node *) $4, @1); }
+			{ $$ = makeDefElem(preserve_downcasing_ident($1), (Node *) $4, @1); }
 		;
 
 event_trigger_value_list:
@@ -5618,6 +5741,2482 @@ enable_trigger:
 			| DISABLE_P					{ $$ = TRIGGER_DISABLED; }
 		;
 
+/*
+ * Agens Graph
+ */
+CreateGraphStmt:
+			CREATE GRAPH ColId AUTHORIZATION RoleSpec
+				{
+					CreateGraphStmt *n = makeNode(CreateGraphStmt);
+					n->graphname = $3;
+					n->authrole = $5;
+					n->if_not_exists = false;
+					$$ = (Node *) n;
+				}
+			| CREATE GRAPH ColId
+				{
+					CreateGraphStmt *n = makeNode(CreateGraphStmt);
+					n->graphname = $3;
+					n->authrole = NULL;
+					n->if_not_exists = false;
+					$$ = (Node *) n;
+				}
+			| CREATE GRAPH IF_P NOT EXISTS ColId AUTHORIZATION RoleSpec
+				{
+					CreateGraphStmt *n = makeNode(CreateGraphStmt);
+					n->graphname = $6;
+					n->authrole = $8;
+					n->if_not_exists = true;
+					$$ = (Node *) n;
+				}
+			| CREATE GRAPH IF_P NOT EXISTS ColId
+				{
+					CreateGraphStmt *n = makeNode(CreateGraphStmt);
+					n->graphname = $6;
+					n->authrole = NULL;
+					n->if_not_exists = true;
+					$$ = (Node *) n;
+				}
+		;
+
+CreateLabelStmt:
+			CREATE OptNoLog VLABEL name opt_disable_index
+			OptInherit opt_reloptions OptTableSpace
+				{
+					CreateLabelStmt *n = makeNode(CreateLabelStmt);
+					n->labelKind = LABEL_VERTEX;
+					n->relation = makeRangeVar(NULL, $4, -1);
+					n->relation->relpersistence = $2;
+					n->inhRelations = $6;
+					n->options = $7;
+					n->tablespacename = $8;
+					n->if_not_exists = false;
+					n->disable_index = $5;
+					$$ = (Node *)n;
+				}
+			| CREATE OptNoLog VLABEL IF_P NOT EXISTS name opt_disable_index
+			OptInherit opt_reloptions OptTableSpace
+				{
+					CreateLabelStmt *n = makeNode(CreateLabelStmt);
+					n->labelKind = LABEL_VERTEX;
+					n->relation = makeRangeVar(NULL, $7, -1);
+					n->relation->relpersistence = $2;
+					n->inhRelations = $9;
+					n->options = $10;
+					n->tablespacename = $11;
+					n->if_not_exists = true;
+					n->disable_index = $8;
+					$$ = (Node *)n;
+				}
+			| CREATE OptNoLog ELABEL name opt_disable_index
+			OptInherit opt_reloptions OptTableSpace
+				{
+					CreateLabelStmt *n = makeNode(CreateLabelStmt);
+					n->labelKind = LABEL_EDGE;
+					n->relation = makeRangeVar(NULL, $4, -1);
+					n->relation->relpersistence = $2;
+					n->inhRelations = $6;
+					n->options = $7;
+					n->tablespacename = $8;
+					n->if_not_exists = false;
+					n->disable_index = $5;
+					$$ = (Node *)n;
+				}
+			| CREATE OptNoLog ELABEL IF_P NOT EXISTS name opt_disable_index
+			OptInherit opt_reloptions OptTableSpace
+				{
+					CreateLabelStmt *n = makeNode(CreateLabelStmt);
+					n->labelKind = LABEL_EDGE;
+					n->relation = makeRangeVar(NULL, $7, -1);
+					n->relation->relpersistence = $2;
+					n->inhRelations = $9;
+					n->options = $10;
+					n->tablespacename = $11;
+					n->if_not_exists = true;
+					n->disable_index = $8;
+					$$ = (Node *)n;
+				}
+		;
+
+opt_disable_index:
+			DISABLE_P INDEX							{ $$ = true; }
+			| /*EMPTY*/								{ $$ = false; }
+		;
+
+AlterLabelStmt:
+			ALTER VLABEL name alter_label_cmds
+				{
+					AlterLabelStmt *n = makeNode(AlterLabelStmt);
+					n->relation = makeRangeVar(NULL, $3, -1);
+					n->cmds = $4;
+					n->relkind = OBJECT_VLABEL;
+					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER VLABEL IF_P EXISTS name alter_label_cmds
+				{
+					AlterLabelStmt *n = makeNode(AlterLabelStmt);
+					n->relation = makeRangeVar(NULL, $5, -1);
+					n->cmds = $6;
+					n->relkind = OBJECT_VLABEL;
+					n->missing_ok = true;
+					$$ = (Node *)n;
+				}
+			| ALTER ELABEL name alter_label_cmds
+				{
+					AlterLabelStmt *n = makeNode(AlterLabelStmt);
+					n->relation = makeRangeVar(NULL, $3, -1);
+					n->cmds = $4;
+					n->relkind = OBJECT_ELABEL;
+					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER ELABEL IF_P EXISTS name alter_label_cmds
+				{
+					AlterLabelStmt *n = makeNode(AlterLabelStmt);
+					n->relation = makeRangeVar(NULL, $5, -1);
+					n->cmds = $6;
+					n->relkind = OBJECT_ELABEL;
+					n->missing_ok = true;
+					$$ = (Node *)n;
+				}
+		;
+
+alter_label_cmds:
+			alter_label_cmd							{ $$ = list_make1($1); }
+			| alter_label_cmds ',' alter_label_cmd	{ $$ = lappend($1, $3); }
+		;
+
+alter_label_cmd:
+			/* ALTER VLABEL <name> SET STORAGE <storagemode> */
+			SET STORAGE ColId
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetStorage;
+					n->name = NULL;
+					n->def = (Node *) makeString($3);
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> OWNER TO RoleSpec */
+			| OWNER TO RoleSpec
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_ChangeOwner;
+					n->newowner = $3;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> SET TABLESPACE <tablespacename> */
+			| SET TABLESPACE name
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetTableSpace;
+					n->name = $3;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> CLUSTER ON <indexname> */
+			| CLUSTER ON name
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_ClusterOn;
+					n->name = $3;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> SET WITHOUT CLUSTER */
+			| SET WITHOUT CLUSTER
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_DropCluster;
+					n->name = NULL;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> SET LOGGED  */
+			| SET LOGGED
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetLogged;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> SET UNLOGGED  */
+			| SET UNLOGGED
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SetUnLogged;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> INHERIT <parent> */
+			| INHERIT qualified_name
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_AddInherit;
+					n->def = (Node *) $2;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> NO INHERIT <parent> */
+			| NO INHERIT qualified_name
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_DropInherit;
+					n->def = (Node *) $3;
+					$$ = (Node *)n;
+				}
+			/* ALTER VLABEL <name> REPLICA IDENTITY  */
+			| REPLICA IDENTITY_P replica_identity
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_ReplicaIdentity;
+					n->def = $3;
+					$$ = (Node *)n;
+				}
+			| DISABLE_P INDEX
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_DisableIndex;
+					$$ = (Node *)n;
+				}
+		;
+
+CreateConstraintStmt:
+			CREATE CONSTRAINT opt_constraint_name ON ColId ASSERT cypher_expr
+			IS UNIQUE
+				{
+					CreateConstraintStmt *n;
+
+					n = makeNode(CreateConstraintStmt);
+					n->graphlabel = makeRangeVar(NULL, $5, @5);
+					n->conname = $3;
+					n->contype = CONSTR_UNIQUE;
+					n->expr = $7;
+					$$ = (Node *) n;
+				}
+			| CREATE CONSTRAINT opt_constraint_name ON ColId ASSERT cypher_expr
+				{
+					CreateConstraintStmt *n;
+
+					n = makeNode(CreateConstraintStmt);
+					n->graphlabel = makeRangeVar(NULL, $5, @5);
+					n->conname = $3;
+					n->contype = CONSTR_CHECK;
+					n->expr = $7;
+					$$ = (Node *) n;
+				}
+		;
+
+DropConstraintStmt:
+			DROP CONSTRAINT name ON ColId
+				{
+					DropConstraintStmt *n = makeNode(DropConstraintStmt);
+					n->graphlabel = makeRangeVar(NULL, $5, @5);
+					n->conname = $3;
+					$$ = (Node *)n;
+				}
+		;
+
+opt_constraint_name:
+			name									{ $$ = $1; }
+			| /*EMPTY*/								{ $$ = NULL; }
+		;
+
+/*
+ * Note: We cannot put TABLESPACE clause after WHERE clause unless we are
+ *       willing to make TABLESPACE a fully reserved word.
+ */
+CreatePropertyIndexStmt:
+			CREATE opt_unique PROPERTY INDEX opt_concurrently opt_index_name
+			ON ColId access_method_clause '(' prop_idx_params ')'
+			opt_reloptions OptTableSpace where_clause
+				{
+					CreatePropertyIndexStmt *n;
+
+					n = makeNode(CreatePropertyIndexStmt);
+					n->unique = $2;
+					n->concurrent = $5;
+					n->idxname = $6;
+					n->relation = makeRangeVar(NULL, $8, @8);
+					n->accessMethod = $9;
+					n->indexParams = $11;
+					n->options = $13;
+					n->tableSpace = $14;
+					n->whereClause = $15;
+					n->excludeOpNames = NIL;
+					n->idxcomment = NULL;
+					n->indexOid = InvalidOid;
+					n->oldNode = InvalidOid;
+					n->primary = false;
+					n->isconstraint = false;
+					n->deferrable = false;
+					n->initdeferred = false;
+					n->transformed = false;
+					n->if_not_exists = false;
+					$$ = (Node *) n;
+				}
+			| CREATE opt_unique PROPERTY INDEX opt_concurrently IF_P NOT EXISTS
+			index_name ON ColId access_method_clause '(' prop_idx_params ')'
+			opt_reloptions OptTableSpace where_clause
+				{
+					CreatePropertyIndexStmt *n;
+
+					n = makeNode(CreatePropertyIndexStmt);
+					n->unique = $2;
+					n->concurrent = $5;
+					n->idxname = $9;
+					n->relation = makeRangeVar(NULL, $11, @11);
+					n->accessMethod = $12;
+					n->indexParams = $14;
+					n->options = $16;
+					n->tableSpace = $17;
+					n->whereClause = $18;
+					n->excludeOpNames = NIL;
+					n->idxcomment = NULL;
+					n->indexOid = InvalidOid;
+					n->oldNode = InvalidOid;
+					n->primary = false;
+					n->isconstraint = false;
+					n->deferrable = false;
+					n->initdeferred = false;
+					n->transformed = false;
+					n->if_not_exists = true;
+					$$ = (Node *) n;
+				}
+		;
+
+prop_idx_params:
+			prop_idx_elem							{ $$ = list_make1($1); }
+			| prop_idx_params ',' prop_idx_elem		{ $$ = lappend($1, $3); }
+		;
+
+/*
+ * Property index attributes can be either simple column references,
+ * or arbitrary expressions in parens.
+ */
+prop_idx_elem:
+			cypher_expr_propref
+			opt_collate opt_class opt_asc_desc opt_nulls_order
+				{
+					$$ = makeNode(IndexElem);
+					$$->name = NULL;
+					$$->expr = $1;
+					$$->indexcolname = NULL;
+					$$->collation = $2;
+					$$->opclass = $3;
+					$$->ordering = $4;
+					$$->nulls_ordering = $5;
+				}
+			| '(' cypher_expr ')'
+			opt_collate opt_class opt_asc_desc opt_nulls_order
+				{
+					$$ = makeNode(IndexElem);
+					$$->name = NULL;
+					$$->expr = $2;
+					$$->indexcolname = NULL;
+					$$->collation = $4;
+					$$->opclass = $5;
+					$$->ordering = $6;
+					$$->nulls_ordering = $7;
+				}
+		;
+
+/*
+ * Cypher Query Language
+ */
+
+CypherStmt:
+			cypher_no_parens
+			| cypher_with_parens
+		;
+
+cypher_with_parens:
+			'(' cypher_no_parens ')'			{ $$ = $2; }
+			| '(' cypher_with_parens ')'		{ $$ = $2; }
+		;
+
+cypher_no_parens:
+			cypher_clause_prev
+				{
+					CypherStmt *n;
+
+					n = makeNode(CypherStmt);
+					n->last = $1;
+					$$ = (Node *) n;
+				}
+			| CypherStmt UNION all_or_distinct CypherStmt
+					{ $$ = makeCypherSetOp(SETOP_UNION, $3, $1, $4); }
+			| CypherStmt INTERSECT all_or_distinct CypherStmt
+					{ $$ = makeCypherSetOp(SETOP_INTERSECT, $3, $1, $4); }
+			| CypherStmt EXCEPT all_or_distinct CypherStmt
+					{ $$ = makeCypherSetOp(SETOP_EXCEPT, $3, $1, $4); }
+		;
+
+cypher_clause_prev:
+			cypher_clause_head
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_clause_prev cypher_clause
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $2;
+					n->prev = $1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_clause_head:
+			cypher_match
+			| cypher_return
+			| cypher_create
+			| cypher_merge
+			| cypher_load
+			| cypher_unwind
+		;
+
+cypher_clause:
+			cypher_clause_head
+			| cypher_with
+			| cypher_delete
+			| cypher_set
+			| cypher_remove
+		;
+
+cypher_read_opt_parens:
+			cypher_read_stmt
+			| cypher_read_with_parens
+		;
+
+cypher_read_with_parens:
+			'(' cypher_read_stmt ')'				{ $$ = $2; }
+			| '(' cypher_read_with_parens ')'		{ $$ = $2; }
+		;
+
+cypher_read_stmt:
+			cypher_read_opt cypher_return
+				{
+					CypherClause *clause;
+					CypherStmt *n;
+
+					clause = makeNode(CypherClause);
+					clause->detail = $2;
+					clause->prev = $1;
+
+					n = makeNode(CypherStmt);
+					n->last = (Node *) clause;
+					$$ = (Node *) n;
+				}
+			| cypher_read_opt_parens UNION all_or_distinct
+			  cypher_read_opt_parens
+					{ $$ = makeCypherSetOp(SETOP_UNION, $3, $1, $4); }
+			| cypher_read_opt_parens INTERSECT all_or_distinct
+			  cypher_read_opt_parens
+					{ $$ = makeCypherSetOp(SETOP_INTERSECT, $3, $1, $4); }
+			| cypher_read_opt_parens EXCEPT all_or_distinct
+			  cypher_read_opt_parens
+					{ $$ = makeCypherSetOp(SETOP_EXCEPT, $3, $1, $4); }
+		;
+
+cypher_read_opt:
+			cypher_read
+			| /* EMPTY */		{ $$ = NULL; }
+		;
+
+cypher_read:
+			cypher_match
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_load
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_unwind
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_read cypher_read_clauses
+				{
+					CypherClause *n;
+
+					n = makeNode(CypherClause);
+					n->detail = $2;
+					n->prev = $1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_read_clauses:
+			cypher_match
+			| cypher_with
+			| cypher_load
+			| cypher_unwind
+		;
+
+cypher_expr:
+			cypher_expr OR cypher_expr
+					{ $$ = makeOrExpr($1, $3, @2); }
+			| cypher_expr AND cypher_expr
+					{ $$ = makeAndExpr($1, $3, @2); }
+			| NOT cypher_expr
+					{ $$ = makeNotExpr($2, @1); }
+			| cypher_expr '=' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", $1, $3, @2);
+				}
+			| cypher_expr NOT_EQUALS cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<>", $1, $3, @2);
+				}
+			| cypher_expr '<' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<", $1, $3, @2);
+				}
+			| cypher_expr '>' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">", $1, $3, @2);
+				}
+			| cypher_expr LESS_EQUALS cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<=", $1, $3, @2);
+				}
+			| cypher_expr GREATER_EQUALS cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=", $1, $3, @2);
+				}
+			| cypher_expr '+' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", $1, $3, @2);
+				}
+			| cypher_expr '-' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-", $1, $3, @2);
+				}
+			| cypher_expr '*' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "*", $1, $3, @2);
+				}
+			| cypher_expr '/' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "/", $1, $3, @2);
+				}
+			| cypher_expr '%' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "%", $1, $3, @2);
+				}
+			| cypher_expr '^' cypher_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "^", $1, $3, @2);
+				}
+			| '+' cypher_expr								%prec UMINUS
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", NULL, $2, @1);
+				}
+			| '-' cypher_expr								%prec UMINUS
+				{
+					if (IsA($2, A_Const))
+					{
+						A_Const	   *con = (A_Const *) $2;
+
+						if (con->val.type == T_Integer)
+						{
+							con->val.val.ival = -con->val.val.ival;
+							con->location = @1;
+							$$ = $2;
+						}
+						else if (con->val.type == T_Float)
+						{
+							doNegateFloat(&con->val);
+							con->location = @1;
+							$$ = $2;
+						}
+						else
+						{
+							$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
+														   NULL, $2, @1);
+						}
+					}
+					else
+					{
+						$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
+													   NULL, $2, @1);
+					}
+				}
+			| cypher_expr qual_Op cypher_expr				%prec Op
+					{ $$ = (Node *) makeA_Expr(AEXPR_OP, $2, $1, $3, @2); }
+			| qual_Op cypher_expr							%prec Op
+					{ $$ = (Node *) makeA_Expr(AEXPR_OP, $1, NULL, $2, @1); }
+			| cypher_expr qual_Op							%prec POSTFIXOP
+					{ $$ = (Node *) makeA_Expr(AEXPR_OP, $2, $1, NULL, @2); }
+			| cypher_expr '[' cypher_expr ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = false;
+					ind->lidx = NULL;
+					ind->uidx = $3;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, ind);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1(ind);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_expr '[' cypher_expr_opt DOT_DOT cypher_expr_opt ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = true;
+					ind->lidx = $3;
+					ind->uidx = $5;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, ind);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1(ind);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_expr IN_P cypher_expr
+				{
+					if (IsA($3, SubLink))
+					{
+						SubLink	   *n;
+
+						n = (SubLink *) $3;
+						n->subLinkType = ANY_SUBLINK;
+						n->testexpr = $1;
+						n->location = @2;
+						$$ = (Node *) n;
+					}
+					else
+					{
+						$$ = (Node *) makeSimpleA_Expr(AEXPR_IN, "=", $1, $3,
+													   @2);
+					}
+				}
+			| cypher_expr STARTS WITH cypher_expr			%prec STARTS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_starts_with"),
+										list_make2($1, $4), @2);
+				}
+			| cypher_expr ENDS WITH cypher_expr				%prec ENDS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_ends_with"),
+										list_make2($1, $4), @2);
+				}
+			| cypher_expr CONTAINS cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_contains"),
+										list_make2($1, $3), @2);
+				}
+			| cypher_expr EQUALS_TILDE cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_regex"),
+										list_make2($1, $3), @2);
+				}
+			| cypher_expr IS NULL_P							%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_expr IS NOT NULL_P						%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_expr TYPECAST type_function_name
+				{
+					TypeName   *n;
+
+					n = (TypeName *) makeTypeName($3);
+					n->location = @3;
+					$$ = makeTypeCast($1, n, @2);
+				}
+			| cypher_expr '.' cypher_expr_escaped_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_expr '.' cypher_expr_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, ColumnRef))
+					{
+						ColumnRef  *cref = (ColumnRef *) $1;
+
+						cref->fields = lappend(cref->fields, $3);
+						$$ = $1;
+					}
+					else if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_c_expr
+		;
+
+cypher_i_expr:
+			cypher_i_expr OR cypher_i_expr
+					{ $$ = makeOrExpr($1, $3, @2); }
+			| cypher_i_expr AND cypher_i_expr
+					{ $$ = makeAndExpr($1, $3, @2); }
+			| NOT cypher_i_expr
+					{ $$ = makeNotExpr($2, @1); }
+			| cypher_i_expr '=' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", $1, $3, @2);
+				}
+			| cypher_i_expr NOT_EQUALS cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<>", $1, $3, @2);
+				}
+			| cypher_i_expr '<' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<", $1, $3, @2);
+				}
+			| cypher_i_expr '>' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">", $1, $3, @2);
+				}
+			| cypher_i_expr LESS_EQUALS cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<=", $1, $3, @2);
+				}
+			| cypher_i_expr GREATER_EQUALS cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=", $1, $3, @2);
+				}
+			| cypher_i_expr '+' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", $1, $3, @2);
+				}
+			| cypher_i_expr '-' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-", $1, $3, @2);
+				}
+			| cypher_i_expr '*' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "*", $1, $3, @2);
+				}
+			| cypher_i_expr '/' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "/", $1, $3, @2);
+				}
+			| cypher_i_expr '%' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "%", $1, $3, @2);
+				}
+			| cypher_i_expr '^' cypher_i_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "^", $1, $3, @2);
+				}
+			| '+' cypher_i_expr								%prec UMINUS
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", NULL, $2, @1);
+				}
+			| '-' cypher_i_expr								%prec UMINUS
+				{
+					if (IsA($2, A_Const))
+					{
+						A_Const	   *con = (A_Const *) $2;
+
+						if (con->val.type == T_Integer)
+						{
+							con->val.val.ival = -con->val.val.ival;
+							con->location = @1;
+							$$ = $2;
+						}
+						else if (con->val.type == T_Float)
+						{
+							doNegateFloat(&con->val);
+							con->location = @1;
+							$$ = $2;
+						}
+						else
+						{
+							$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
+														   NULL, $2, @1);
+						}
+					}
+					else
+					{
+						$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
+													   NULL, $2, @1);
+					}
+				}
+			| cypher_i_expr qual_Op cypher_i_expr			%prec Op
+					{ $$ = (Node *) makeA_Expr(AEXPR_OP, $2, $1, $3, @2); }
+			| qual_Op cypher_i_expr							%prec Op
+					{ $$ = (Node *) makeA_Expr(AEXPR_OP, $1, NULL, $2, @1); }
+			| cypher_i_expr qual_Op							%prec POSTFIXOP
+					{ $$ = (Node *) makeA_Expr(AEXPR_OP, $2, $1, NULL, @2); }
+			| cypher_i_expr '[' cypher_expr ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = false;
+					ind->lidx = NULL;
+					ind->uidx = $3;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, ind);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1(ind);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_i_expr '[' cypher_expr_opt DOT_DOT cypher_expr_opt ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = true;
+					ind->lidx = $3;
+					ind->uidx = $5;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, ind);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1(ind);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_i_expr STARTS WITH cypher_expr			%prec STARTS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_starts_with"),
+										list_make2($1, $4), @2);
+				}
+			| cypher_i_expr ENDS WITH cypher_expr			%prec ENDS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_ends_with"),
+										list_make2($1, $4), @2);
+				}
+			| cypher_i_expr CONTAINS cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_contains"),
+										list_make2($1, $3), @2);
+				}
+			| cypher_i_expr EQUALS_TILDE cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_regex"),
+										list_make2($1, $3), @2);
+				}
+			| cypher_i_expr IS NULL_P						%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_i_expr IS NOT NULL_P					%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_i_expr TYPECAST type_function_name
+				{
+					TypeName   *n;
+
+					n = (TypeName *) makeTypeName($3);
+					n->location = @3;
+					$$ = makeTypeCast($1, n, @2);
+				}
+			| cypher_i_expr '.' cypher_expr_escaped_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_i_expr '.' cypher_expr_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, ColumnRef))
+					{
+						ColumnRef  *cref = (ColumnRef *) $1;
+
+						cref->fields = lappend(cref->fields, $3);
+						$$ = $1;
+					}
+					else if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_c_expr
+		;
+
+cypher_w_expr:
+			cypher_w_expr OR cypher_w_expr
+					{ $$ = makeOrExpr($1, $3, @2); }
+			| cypher_w_expr AND cypher_w_expr
+					{ $$ = makeAndExpr($1, $3, @2); }
+			| NOT cypher_w_expr
+					{ $$ = makeNotExpr($2, @1); }
+			| cypher_w_expr '=' cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", $1, $3, @2);
+				}
+			| cypher_w_expr NOT_EQUALS cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<>", $1, $3, @2);
+				}
+			| cypher_w_expr '<' cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<", $1, $3, @2);
+				}
+			| cypher_w_expr '>' cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">", $1, $3, @2);
+				}
+			| cypher_w_expr LESS_EQUALS cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "<=", $1, $3, @2);
+				}
+			| cypher_w_expr GREATER_EQUALS cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">=", $1, $3, @2);
+				}
+			| cypher_w_expr '+' cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", $1, $3, @2);
+				}
+			| cypher_w_expr '-' cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-", $1, $3, @2);
+				}
+			| cypher_w_expr '*' cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "*", $1, $3, @2);
+				}
+			| cypher_w_expr '/' cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "/", $1, $3, @2);
+				}
+			| cypher_w_expr '%' cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "%", $1, $3, @2);
+				}
+			| cypher_w_expr '^' cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "^", $1, $3, @2);
+				}
+			| '+' cypher_w_expr								%prec UMINUS
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "+", NULL, $2, @1);
+				}
+			| '-' cypher_w_expr								%prec UMINUS
+				{
+					if (IsA($2, A_Const))
+					{
+						A_Const	   *con = (A_Const *) $2;
+
+						if (con->val.type == T_Integer)
+						{
+							con->val.val.ival = -con->val.val.ival;
+							con->location = @1;
+							$$ = $2;
+						}
+						else if (con->val.type == T_Float)
+						{
+							doNegateFloat(&con->val);
+							con->location = @1;
+							$$ = $2;
+						}
+						else
+						{
+							$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
+														   NULL, $2, @1);
+						}
+					}
+					else
+					{
+						$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "-",
+													   NULL, $2, @1);
+					}
+				}
+			| cypher_w_expr '[' cypher_expr ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = false;
+					ind->lidx = NULL;
+					ind->uidx = $3;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, ind);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1(ind);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_w_expr '[' cypher_expr_opt DOT_DOT cypher_expr_opt ']'
+				{
+					A_Indices  *ind;
+					A_Indirection *n;
+
+					ind = makeNode(A_Indices);
+					ind->is_slice = true;
+					ind->lidx = $3;
+					ind->uidx = $5;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, ind);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1(ind);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_w_expr IN_P cypher_w_expr
+				{
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_IN, "=", $1, $3, @2);
+				}
+			| cypher_w_expr STARTS WITH cypher_expr			%prec STARTS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_starts_with"),
+										list_make2($1, $4), @2);
+				}
+			| cypher_w_expr ENDS WITH cypher_expr			%prec ENDS
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_ends_with"),
+										list_make2($1, $4), @2);
+				}
+			| cypher_w_expr CONTAINS cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_contains"),
+										list_make2($1, $3), @2);
+				}
+			| cypher_w_expr EQUALS_TILDE cypher_expr
+				{
+					$$ = (Node *) makeFuncCall(
+										SystemFuncName("string_regex"),
+										list_make2($1, $3), @2);
+				}
+			| cypher_w_expr IS NULL_P						%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_w_expr IS NOT NULL_P					%prec IS
+				{
+					NullTest   *n;
+
+					n = makeNode(NullTest);
+					n->arg = (Expr *) $1;
+					n->nulltesttype = IS_NOT_NULL;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| cypher_w_expr TYPECAST type_function_name
+				{
+					TypeName   *n;
+
+					n = (TypeName *) makeTypeName($3);
+					n->location = @3;
+					$$ = makeTypeCast($1, n, @2);
+				}
+			| cypher_w_expr '.' cypher_expr_escaped_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_w_expr '.' cypher_expr_name
+				{
+					A_Indirection *n;
+
+					if (IsA($1, ColumnRef))
+					{
+						ColumnRef  *cref = (ColumnRef *) $1;
+
+						cref->fields = lappend(cref->fields, $3);
+						$$ = $1;
+					}
+					else if (IsA($1, A_Indirection))
+					{
+						n = (A_Indirection *) $1;
+						n->indirection = lappend(n->indirection, $3);
+						$$ = $1;
+					}
+					else
+					{
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = list_make1($3);
+						$$ = (Node *) n;
+					}
+				}
+			| cypher_c_expr
+		;
+
+cypher_c_expr:
+			'(' cypher_expr ')'
+					{ $$ = $2; }
+			| cypher_expr_atom
+			| select_with_parens							%prec UMINUS
+				{
+					SubLink	   *n;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $1;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_opt:
+			cypher_expr
+			| /* EMPTY */		{ $$ = NULL; }
+		;
+
+cypher_expr_comma_list:
+			cypher_expr
+					{ $$ = list_make1($1); }
+			| cypher_expr_comma_list ',' cypher_expr
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_expr_name:
+			ColLabel		{ $$ = makeString($1); }
+		;
+
+cypher_expr_filter:
+			cypher_expr_varname IN_P cypher_expr cypher_expr_lc_where_opt
+				{
+					CypherListComp *lc;
+
+					lc = makeNode(CypherListComp);
+					lc->list = $3;
+					lc->varname = $1;
+					lc->cond = $4;
+					$$ = (Node *) lc;
+				}
+		;
+
+cypher_expr_lc_where_opt:
+			WHERE cypher_w_expr
+					{ $$ = $2; }
+			| /*EMPTY*/										%prec Op
+					{ $$ = NULL; }
+		;
+
+cypher_expr_atom:
+			cypher_expr_literal
+			| cypher_expr_param
+			| cypher_expr_case
+			| cypher_expr_func
+			| cypher_expr_var
+		;
+
+cypher_expr_literal:
+			Iconst					{ $$ = makeIntConst($1, @1); }
+			| FCONST				{ $$ = makeFloatConst($1, @1); }
+			| Sconst				{ $$ = makeStringConst($1, @1); }
+			| TRUE_P				{ $$ = makeBoolAConst(true, @1); }
+			| FALSE_P				{ $$ = makeBoolAConst(false, @1); }
+			| NULL_P				{ $$ = makeNullAConst(@1); }
+			| cypher_expr_map
+			| cypher_expr_list
+		;
+
+cypher_expr_map:
+			'{' cypher_expr_map_keyvals '}'
+				{
+					CypherMapExpr  *n;
+
+					n = makeNode(CypherMapExpr);
+					n->keyvals = $2;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_map_keyvals:
+			cypher_expr_map_key ':' cypher_expr
+					{ $$ = list_make2($1, $3); }
+			| cypher_expr_map_keyvals ',' cypher_expr_map_key ':' cypher_expr
+					{ $$ = lappend(lappend($1, $3), $5); }
+			| /* EMPTY */
+					{ $$ = NIL; }
+		;
+
+cypher_expr_map_key:
+			cypher_expr_escaped_name
+			| cypher_expr_name
+		;
+
+cypher_expr_escaped_name:
+			Sconst		{ $$ = makeString($1); }
+		;
+
+cypher_expr_list:
+			'[' cypher_expr_list_elems_opt ']'
+				{
+					CypherListExpr *n;
+
+					n = makeNode(CypherListExpr);
+					n->elems = $2;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| '[' cypher_expr_filter cypher_expr_lc_res_opt ']'
+				{
+					CypherListComp *lc = (CypherListComp *) $2;
+
+					lc->elem = $3;
+					lc->location = @1;
+					$$ = $2;
+				}
+		;
+
+cypher_expr_list_elems:
+			cypher_i_expr
+					{ $$ = list_make1($1); }
+			| cypher_expr_list_elems ',' cypher_expr
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_expr_list_elems_opt:
+			cypher_expr_list_elems
+			| /* EMPTY */				{ $$ = NIL; }
+		;
+
+cypher_expr_lc_res_opt:
+			Op cypher_expr
+				{
+					/* scanner treats | as an operator */
+					if (strcmp($1, "|") != 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("syntax error: | expected"),
+								 parser_errposition(@1)));
+
+					$$ = $2;
+				}
+			| /* EMPTY */
+					{ $$ = NULL; }
+		;
+
+cypher_expr_param:
+			PARAM
+				{
+					ParamRef   *p;
+
+					p = makeNode(ParamRef);
+					p->number = $1;
+					p->location = @1;
+					$$ = (Node *) p;
+				}
+		;
+
+cypher_expr_case:
+			CASE cypher_expr_opt cypher_expr_case_when_list
+			cypher_expr_case_default END_P
+				{
+					CaseExpr   *n;
+
+					n = makeNode(CaseExpr);
+					n->casetype = InvalidOid;
+					n->arg = (Expr *) $2;
+					n->args = $3;
+					n->defresult = (Expr *) $4;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_case_when_list:
+			cypher_expr_case_when
+					{ $$ = list_make1($1); }
+			| cypher_expr_case_when_list cypher_expr_case_when
+					{ $$ = lappend($1, $2); }
+		;
+
+cypher_expr_case_when:
+			WHEN cypher_expr THEN cypher_expr
+				{
+					CaseWhen   *n;
+
+					n = makeNode(CaseWhen);
+					n->expr = (Expr *) $2;
+					n->result = (Expr *) $4;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_case_default:
+			ELSE cypher_expr		{ $$ = $2; }
+			| /* EMPTY */			{ $$ = NULL; }
+		;
+
+cypher_expr_func:
+			cypher_expr_func_norm
+			| cypher_expr_func_subexpr
+		;
+
+cypher_expr_func_norm:
+			type_function_name '(' ')'
+				{
+					$$ = (Node *) makeFuncCall(list_make1(makeString($1)),
+											   NIL, @1);
+				}
+			| type_function_name '(' cypher_expr_comma_list ')'
+				{
+					$$ = (Node *) makeFuncCall(list_make1(makeString($1)),
+											   $3, @1);
+				}
+			| type_function_name '(' DISTINCT cypher_expr_comma_list ')'
+				{
+					FuncCall   *n;
+
+					n = makeFuncCall(list_make1(makeString($1)), $4, @1);
+					n->agg_distinct = true;
+					$$ = (Node *) n;
+				}
+			| type_function_name '(' '*' ')'
+				{
+					FuncCall   *n;
+
+					n = makeFuncCall(list_make1(makeString($1)), NIL, @1);
+					n->agg_star = true;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_func_subexpr:
+			cypher_expr_shortestpath
+				{
+					CypherSubPattern *sub;
+					SubLink	   *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_FINDPATH;
+					sub->pattern = list_make1($1);
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| ALL '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
+				{
+					CypherListComp *clc;
+					FuncCall   *n;
+					FuncCall   *m;
+
+					clc = makeNode(CypherListComp);
+					clc->list = $5;
+					clc->varname = $3;
+					clc->cond = $6;
+
+					n = makeFuncCall(SystemFuncName("length"),
+									 list_make1(clc), @1);
+
+					m = makeFuncCall(SystemFuncName("length"),
+									 list_make1($5), @1);
+
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=",
+												   (Node*) n, (Node*) m, @1);
+				}
+			| ANY '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
+				{
+					CypherListComp *clc;
+					FuncCall   *n;
+
+					clc = makeNode(CypherListComp);
+					clc->list = $5;
+					clc->varname = $3;
+					clc->cond = $6;
+
+					n = makeFuncCall(SystemFuncName("length"),
+									 list_make1(clc), @1);
+
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, ">", (Node*) n,
+												   makeIntConst(0, -1), @1);
+				}
+			| COALESCE '(' cypher_expr_comma_list ')'
+				{
+					CoalesceExpr *c;
+
+					c = makeNode(CoalesceExpr);
+					c->args = $3;
+					c->location = @1;
+					$$ = (Node *) c;
+				}
+			| EXISTS '(' cypher_anon_pattern ')'
+				{
+					CypherSubPattern *sub;
+					SubLink	   *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_EXISTS;
+					sub->pattern = $3;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXISTS_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| NONE '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
+				{
+					CypherListComp *clc;
+					FuncCall   *n;
+
+					clc = makeNode(CypherListComp);
+					clc->list = $5;
+					clc->varname = $3;
+					clc->cond = $6;
+
+					n = makeFuncCall(SystemFuncName("length"),
+									 list_make1(clc), @1);
+
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node*) n,
+												   makeIntConst(0, -1), @1);
+				}
+			| SINGLE '(' cypher_expr_varname IN_P cypher_expr cypher_where ')'
+				{
+					CypherListComp *clc;
+					FuncCall   *n;
+
+					clc = makeNode(CypherListComp);
+					clc->list = $5;
+					clc->varname = $3;
+					clc->cond = $6;
+
+					n = makeFuncCall(SystemFuncName("length"),
+									 list_make1(clc), @1);
+
+					$$ = (Node *) makeSimpleA_Expr(AEXPR_OP, "=", (Node*) n,
+												   makeIntConst(1, -1), @1);
+				}
+			| SIZE_P '(' cypher_anon_pattern ')'
+				{
+					CypherSubPattern *sub;
+					SubLink	   *n;
+
+					sub = makeNode(CypherSubPattern);
+					sub->kind = CSP_SIZE;
+					sub->pattern = $3;
+
+					n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = (Node *) sub;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+			| SUBSTRING '(' cypher_expr_comma_list ')'
+				{
+					if (list_length($3) < 2 || list_length($3) > 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_UNDEFINED_FUNCTION),
+								 errmsg("No function matches the given name and argument types."),
+								 parser_errposition(@1)));
+
+					$$ = (Node *) makeFuncCall(SystemFuncName("substring"), $3,
+											   @1);
+				}
+			| TRIM '(' cypher_expr ')'
+				{
+					$$ = (Node *) makeFuncCall(SystemFuncName("trim"),
+											   list_make1($3), @1);
+				}
+		;
+
+cypher_expr_shortestpath:
+			cypher_shortestpath
+			| cypher_dijkstra
+		;
+
+cypher_expr_var:
+			cypher_expr_varname
+				{
+					ColumnRef  *n;
+
+					n = makeNode(ColumnRef);
+					n->fields = list_make1(makeString($1));
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_expr_varname:
+			ColId
+		;
+
+cypher_expr_propref:
+			cypher_expr_var cypher_expr_indir_opt
+				{
+					if ($2 == NIL)
+					{
+						$$ = $1;
+					}
+					else
+					{
+						A_Indirection *n;
+
+						n = makeNode(A_Indirection);
+						n->arg = $1;
+						n->indirection = $2;
+						$$ = (Node *) n;
+					}
+				}
+		;
+
+cypher_expr_indir_opt:
+			cypher_expr_indir_opt cypher_expr_indir_elem
+					{ $$ = lappend($1, $2); }
+			| /* EMPTY */
+					{ $$ = NIL; }
+		;
+
+cypher_expr_indir_elem:
+			'.' cypher_expr_name
+					{ $$ = (Node *) $2; }
+			| '.' cypher_expr_escaped_name
+					{ $$ = (Node *) $2; }
+			| '[' cypher_expr ']'
+				{
+					A_Indices  *n;
+
+					n = makeNode(A_Indices);
+					n->is_slice = false;
+					n->lidx = NULL;
+					n->uidx = $2;
+					$$ = (Node *) n;
+				}
+			| '[' cypher_expr_opt DOT_DOT cypher_expr_opt ']'
+				{
+					A_Indices  *n;
+
+					n = makeNode(A_Indices);
+					n->is_slice = true;
+					n->lidx = $2;
+					n->uidx = $4;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_pattern:
+			cypher_pattern_part
+					{ $$ = list_make1($1); }
+			| cypher_pattern ',' cypher_pattern_part
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_pattern_part:
+			cypher_anon_pattern_part
+			| cypher_pattern_var '=' cypher_anon_pattern_part
+				{
+					CypherPath *n = (CypherPath *) $3;
+
+					n->variable = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_pattern_var '=' cypher_dijkstra
+				{
+					CypherPath *n = (CypherPath *) $3;
+
+					n->variable = $1;
+					$$ = (Node *) n;
+				}
+			| '(' cypher_pattern_var ',' cypher_var ')' '=' cypher_dijkstra
+				{
+					CypherPath *n = (CypherPath *) $7;
+
+					n->variable = $2;
+					n->weight_var = $4;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_pattern_var:
+			cypher_pattern_varname
+				{
+					CypherName *n;
+
+					n = makeNode(CypherName);
+					n->name = $1;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_pattern_varname:
+			IDENT						{ $$ = $1; }
+			| col_name_keyword			{ $$ = pstrdup($1); }
+			| type_func_name_keyword	{ $$ = pstrdup($1); }
+		;
+
+cypher_anon_pattern:
+			cypher_anon_pattern_part
+					{ $$ = list_make1($1); }
+			| cypher_anon_pattern ',' cypher_anon_pattern_part
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_anon_pattern_part:
+			cypher_path
+				{
+					CypherPath *n;
+
+					n = makeNode(CypherPath);
+					n->kind = CPATH_NORMAL;
+					n->chain = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_shortestpath
+		;
+
+cypher_path:
+			cypher_path_chain
+			| '(' cypher_path_chain ')'
+					{ $$ = $2; }
+		;
+
+cypher_shortestpath:
+			SHORTESTPATH '(' cypher_path_chain ')'
+				{
+					CypherPath *n;
+
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					n = makeNode(CypherPath);
+					n->kind = CPATH_SHORTEST;
+					n->chain = $3;
+					$$ = (Node *) n;
+				}
+			| ALLSHORTESTPATHS '(' cypher_path_chain ')'
+				{
+					CypherPath *n;
+
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					n = makeNode(CypherPath);
+					n->kind = CPATH_SHORTEST_ALL;
+					n->chain = $3;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_dijkstra:
+			DIJKSTRA '(' cypher_path_chain ',' cypher_expr ')'
+				{
+					CypherPath *n;
+
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					n = makeNode(CypherPath);
+					n->kind = CPATH_DIJKSTRA;
+					n->chain = $3;
+					n->weight = $5;
+					n->limit = makeIntConst(1, -1);
+					$$ = (Node *) n;
+				}
+			| DIJKSTRA '(' cypher_path_chain ','
+			cypher_expr ',' cypher_expr ')'
+				{
+					CypherPath *n;
+
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					n = makeNode(CypherPath);
+					n->kind = CPATH_DIJKSTRA;
+					n->chain = $3;
+					n->weight = $5;
+					n->qual = $7;
+					n->limit = makeIntConst(1, -1);
+					$$ = (Node *) n;
+				}
+			| DIJKSTRA '(' cypher_path_chain ','
+			cypher_expr ',' LIMIT cypher_expr ')'
+				{
+					CypherPath *n;
+
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					n = makeNode(CypherPath);
+					n->kind = CPATH_DIJKSTRA;
+					n->chain = $3;
+					n->weight = $5;
+					n->limit = $8;
+					$$ = (Node *) n;
+				}
+			| DIJKSTRA '(' cypher_path_chain ','
+			cypher_expr ',' cypher_expr ',' LIMIT cypher_expr ')'
+				{
+					CypherPath *n;
+
+					if (list_length($3) != 3)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("only one relationship is allowed"),
+								 parser_errposition(@3)));
+
+					n = makeNode(CypherPath);
+					n->kind = CPATH_DIJKSTRA;
+					n->chain = $3;
+					n->weight = $5;
+					n->qual = $7;
+					n->limit = $10;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_path_chain:
+			cypher_node
+					{ $$ = list_make1($1); }
+			| cypher_path_chain cypher_rel cypher_node
+					{ $$ = lappend(lappend($1, $2), $3); }
+		;
+
+cypher_node:
+			'(' cypher_var_opt cypher_label_opt cypher_prop_map_opt ')'
+				{
+					CypherNode *n;
+
+					n = makeNode(CypherNode);
+					n->variable = $2;
+					n->label = $3;
+					n->only = false;
+					n->prop_map = $4;
+					$$ = (Node *) n;
+				}
+			| '(' cypher_var_opt cypher_label_opt ONLY cypher_prop_map_opt ')'
+				{
+					CypherNode *n;
+
+					if ($3 == NULL)
+						ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("ONLY must have one label preceding it"),
+							 parser_errposition(@3)));
+
+					n = makeNode(CypherNode);
+					n->variable = $2;
+					n->label = $3;
+					n->only = true;
+					n->prop_map = $5;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_rel:
+			cypher_rel_left '[' cypher_var_opt
+			cypher_types_opt cypher_varlen_opt cypher_prop_map_opt
+			']' cypher_rel_right
+				{
+					CypherRel  *n;
+
+					n = makeNode(CypherRel);
+					if ($1)
+						n->direction |= CYPHER_REL_DIR_LEFT;
+					if ($8)
+						n->direction |= CYPHER_REL_DIR_RIGHT;
+					if ($1 && $8)
+						n->direction = CYPHER_REL_DIR_NONE;
+					n->variable = $3;
+					n->types = $4;
+					n->only = false;
+					n->varlen = $5;
+					n->prop_map = $6;
+					$$ = (Node *) n;
+				}
+			| cypher_rel_left '[' cypher_var_opt
+			cypher_types_opt ONLY cypher_varlen_opt cypher_prop_map_opt
+			']' cypher_rel_right
+				{
+					CypherRel  *n;
+
+					if ($4 == NULL)
+						ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("ONLY must have one label preceding it"),
+							 parser_errposition(@3)));
+
+					n = makeNode(CypherRel);
+					if ($1)
+						n->direction |= CYPHER_REL_DIR_LEFT;
+					if ($9)
+						n->direction |= CYPHER_REL_DIR_RIGHT;
+					if ($1 && $9)
+						n->direction = CYPHER_REL_DIR_NONE;
+					n->variable = $3;
+					n->types = $4;
+					n->only = true;
+					n->varlen = $6;
+					n->prop_map = $7;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_var:
+			cypher_expr_varname
+				{
+					CypherName *n;
+
+					n = makeNode(CypherName);
+					n->name = $1;
+					n->location = @1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_var_opt:
+			cypher_var
+			| /* EMPTY */		{ $$ = NULL; }
+		;
+
+cypher_label_opt:
+			':' cypher_labelname
+				{
+					CypherName *n;
+
+					n = makeNode(CypherName);
+					n->name = $2;
+					n->location = @2;
+					$$ = (Node *) n;
+				}
+			| /* EMPTY */
+					{ $$ = NULL; }
+		;
+
+cypher_labelname:
+			ColId
+		;
+
+cypher_rel_left:
+			'-'				{ $$ = false; }
+			| '<' '-'		{ $$ = true; }
+		;
+
+cypher_rel_right:
+			'-'
+					{ $$ = false; }
+			| Op
+				{
+					/*
+					 * This is tricky but the scanner treats -> as an operator.
+					 */
+					if (strcmp($1, "->") != 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("syntax error: -> expected"),
+								 parser_errposition(@1)));
+
+					$$ = true;
+				}
+		;
+
+cypher_types:
+			':' cypher_labelname
+				{
+					CypherName *n;
+
+					n = makeNode(CypherName);
+					n->name = $2;
+					n->location = @2;
+					$$ = list_make1(n);
+				}
+			| cypher_types Op cypher_labelname
+				{
+					CypherName *n;
+
+					/* this is also tricky */
+					if (strcmp($2, "|") != 0)
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("syntax error: | expected"),
+								 parser_errposition(@2)));
+
+					n = makeNode(CypherName);
+					n->name = $3;
+					n->location = @3;
+					$$ = lappend($1, n);
+				}
+		;
+
+cypher_types_opt:
+			cypher_types
+			| /* EMPTY */		{ $$ = NIL; }
+		;
+
+cypher_varlen_opt:
+			'*' cypher_range_opt
+				{
+					A_Indices *n = (A_Indices *) $2;
+
+					if (n->lidx == NULL)
+						n->lidx = makeIntConst(1, @2);
+
+					if (n->uidx != NULL)
+					{
+						A_Const	   *lidx = (A_Const *) n->lidx;
+						A_Const	   *uidx = (A_Const *) n->uidx;
+
+						if (lidx->val.val.ival > uidx->val.val.ival)
+							ereport(ERROR,
+									(errcode(ERRCODE_SYNTAX_ERROR),
+									 errmsg("invalid range"),
+									 parser_errposition(@2)));
+					}
+
+					$$ = (Node *) n;
+				}
+			| /* EMPTY */
+					{ $$ = NULL; }
+		;
+
+cypher_range_opt:
+			cypher_range_idx
+				{
+					A_Indices  *n;
+
+					n = makeNode(A_Indices);
+					n->lidx = copyObject($1);
+					n->uidx = $1;
+					$$ = (Node *) n;
+				}
+			| cypher_range_idx_opt DOT_DOT cypher_range_idx_opt
+				{
+					A_Indices  *n;
+
+					n = makeNode(A_Indices);
+					n->lidx = $1;
+					n->uidx = $3;
+					$$ = (Node *) n;
+				}
+			| /* EMPTY */
+					{ $$ = (Node *) makeNode(A_Indices); }
+		;
+
+cypher_range_idx:
+			Iconst		{ $$ = makeIntConst($1, @1); }
+		;
+
+cypher_range_idx_opt:
+			cypher_range_idx
+			| /* EMPTY */			{ $$ = NULL; }
+		;
+
+
+cypher_prop_map_opt:
+			cypher_expr_map
+			| cypher_expr_param
+			| '=' cypher_expr		{ $$ = $2; }
+			| /* EMPTY */			{ $$ = NULL; }
+		;
+
+cypher_return:
+			RETURN cypher_distinct_opt cypher_return_items
+			cypher_order_by_opt cypher_skip_opt cypher_limit_opt
+				{
+					CypherProjection *n;
+
+					n = makeNode(CypherProjection);
+					n->kind = CP_RETURN;
+					n->distinct = $2;
+					n->items = $3;
+					n->order = $4;
+					n->skip = $5;
+					n->limit = $6;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_with:
+			WITH cypher_distinct_opt cypher_return_items
+			cypher_order_by_opt cypher_skip_opt cypher_limit_opt
+			cypher_where_opt
+				{
+					CypherProjection *n;
+
+					n = makeNode(CypherProjection);
+					n->kind = CP_WITH;
+					n->distinct = $2;
+					n->items = $3;
+					n->order = $4;
+					n->skip = $5;
+					n->limit = $6;
+					n->where = $7;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_return_items:
+			cypher_return_item
+					{ $$ = list_make1($1); }
+			| cypher_return_items ',' cypher_return_item
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_return_item:
+			cypher_expr AS ColLabel
+				{
+					$$ = makeNode(ResTarget);
+					$$->name = $3;
+					$$->val = (Node *) $1;
+					$$->location = @1;
+				}
+			| cypher_expr
+				{
+					$$ = makeNode(ResTarget);
+					$$->val = (Node *) $1;
+					$$->location = @1;
+				}
+			| '*'
+				{
+					ColumnRef  *cref;
+
+					cref = makeNode(ColumnRef);
+					cref->fields = list_make1(makeNode(A_Star));
+					cref->location = @1;
+
+					$$ = makeNode(ResTarget);
+					$$->val = (Node *) cref;
+					$$->location = @1;
+				}
+		;
+
+cypher_distinct_opt:
+			DISTINCT			{ $$ = list_make1(NIL); }
+			| /* EMPTY */		{ $$ = NIL; }
+		;
+
+cypher_order_by_opt:
+			ORDER BY cypher_sort_items		{ $$ = $3; }
+			| /* EMPTY */					{ $$ = NIL; }
+		;
+
+cypher_sort_items:
+			cypher_sort_item
+					{ $$ = list_make1($1); }
+			| cypher_sort_items ',' cypher_sort_item
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_sort_item:
+			cypher_expr opt_asc_desc opt_nulls_order
+				{
+					$$ = makeNode(SortBy);
+					$$->node = $1;
+					$$->sortby_dir = $2;
+					$$->sortby_nulls = $3;
+					$$->useOp = NIL;
+					$$->location = -1;
+				}
+		;
+
+cypher_skip_opt:
+			SKIP cypher_expr		{ $$ = $2; }
+			| /* EMPTY */			{ $$ = NULL; }
+		;
+
+cypher_limit_opt:
+			LIMIT cypher_expr		{ $$ = $2; }
+			| /* EMPTY */			{ $$ = NULL; }
+		;
+
+cypher_where:
+			WHERE cypher_expr		{ $$ = $2; }
+		;
+
+cypher_where_opt:
+			cypher_where
+			| /*EMPTY*/			{ $$ = NULL; }
+		;
+
+cypher_match:
+			cypher_optional_opt MATCH cypher_pattern cypher_where_opt
+				{
+					CypherMatchClause *n;
+
+					n = makeNode(CypherMatchClause);
+					n->pattern = $3;
+					n->where = $4;
+					n->optional = $1;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_optional_opt:
+			OPTIONAL_P			{ $$ = true; }
+			| /* EMPTY */		{ $$ = false; }
+		;
+
+cypher_create:
+			CREATE cypher_pattern
+				{
+					CypherCreateClause *n;
+
+					n = makeNode(CypherCreateClause);
+					n->pattern = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_delete:
+			cypher_detach_opt DELETE_P cypher_expr_comma_list
+				{
+					CypherDeleteClause *n;
+
+					n = makeNode(CypherDeleteClause);
+					n->detach = $1;
+					n->exprs = $3;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_detach_opt:
+			DETACH				{ $$ = true; }
+			| /* EMPTY */		{ $$ = false; }
+		;
+
+cypher_set:	SET cypher_setitem_list
+				{
+					CypherSetClause *n;
+
+					n = makeNode(CypherSetClause);
+					n->is_remove = false;
+					n->kind = CSET_NORMAL;
+					n->items = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_setitem_list:
+			cypher_setitem
+					{ $$ = list_make1($1); }
+			| cypher_setitem_list ',' cypher_setitem
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_setitem:
+			cypher_expr '=' cypher_expr
+				{
+					CypherSetProp *n;
+
+					n = makeNode(CypherSetProp);
+					n->prop = $1;
+					n->expr = $3;
+					n->add = false;
+					$$ = (Node *) n;
+				}
+			| cypher_expr ADD_EQUALS cypher_expr
+				{
+					CypherSetProp *n;
+
+					n = makeNode(CypherSetProp);
+					n->prop = $1;
+					n->expr = $3;
+					n->add = true;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_remove:
+			REMOVE cypher_rmitem_list
+				{
+					CypherSetClause *n;
+
+					n = makeNode(CypherSetClause);
+					n->is_remove = true;
+					n->kind = CSET_NORMAL;
+					n->items = $2;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_rmitem_list:
+			cypher_rmitem
+					{ $$ = list_make1($1); }
+			| cypher_rmitem_list ',' cypher_rmitem
+					{ $$ = lappend($1, $3); }
+		;
+
+cypher_rmitem:
+			cypher_expr
+				{
+					CypherSetProp *n;
+
+					n = makeNode(CypherSetProp);
+					n->prop = $1;
+					n->expr = makeNullAConst(-1);
+					n->add = false;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_merge:
+			MERGE cypher_pattern_part cypher_merge_sets_opt
+				{
+					CypherMergeClause *n;
+
+					n = makeNode(CypherMergeClause);
+					n->pattern = list_make1($2);
+					n->sets = $3;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_merge_sets_opt:
+			cypher_merge_set_list		{ $$ = $1; }
+			| /* EMPTY */				{ $$ = NIL; }
+		;
+
+cypher_merge_set_list:
+			cypher_merge_set
+					{ $$ = list_make1($1); }
+			| cypher_merge_set_list cypher_merge_set
+					{ $$ = lappend($1, $2); }
+		;
+
+cypher_merge_set:
+			ON CREATE SET cypher_setitem_list
+				{
+					CypherSetClause *n;
+
+					n = makeNode(CypherSetClause);
+					n->is_remove = false;
+					n->kind = CSET_ON_CREATE;
+					n->items = $4;
+					$$ = (Node *) n;
+				}
+			| ON MATCH SET cypher_setitem_list
+				{
+					CypherSetClause *n;
+
+					n = makeNode(CypherSetClause);
+					n->is_remove = false;
+					n->kind = CSET_ON_MATCH;
+					n->items = $4;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_load:
+			LOAD FROM qualified_name AS cypher_expr_varname
+				{
+					Alias	   *alias;
+					CypherLoadClause *n;
+
+					alias = makeNode(Alias);
+					alias->aliasname = $5;
+
+					n = makeNode(CypherLoadClause);
+					n->relation = $3;
+					n->relation->alias = alias;
+					$$ = (Node *) n;
+				}
+		;
+
+cypher_unwind:
+			UNWIND cypher_expr AS ColLabel
+				{
+					ResTarget  *res;
+					CypherUnwindClause *n;
+
+					res = makeNode(ResTarget);
+					res->name = $4;
+					res->val = (Node *) $2;
+					res->location = @2;
+
+					n = makeNode(CypherUnwindClause);
+					n->target = res;
+					$$ = (Node *) n;
+				}
+		;
 /*****************************************************************************
  *
  *		QUERY :
@@ -5683,7 +8282,7 @@ DefineStmt:
 					DefineStmt *n = makeNode(DefineStmt);
 					n->kind = OBJECT_TYPE;
 					n->oldstyle = false;
-					n->defnames = $3;
+					n->defnames = preserve_downcasing_type_func_namelist($3);
 					n->args = NIL;
 					n->definition = $4;
 					$$ = (Node *)n;
@@ -5694,7 +8293,7 @@ DefineStmt:
 					DefineStmt *n = makeNode(DefineStmt);
 					n->kind = OBJECT_TYPE;
 					n->oldstyle = false;
-					n->defnames = $3;
+					n->defnames = preserve_downcasing_type_func_namelist($3);
 					n->args = NIL;
 					n->definition = NIL;
 					$$ = (Node *)n;
@@ -5704,21 +8303,21 @@ DefineStmt:
 					CompositeTypeStmt *n = makeNode(CompositeTypeStmt);
 
 					/* can't use qualified_name, sigh */
-					n->typevar = makeRangeVarFromAnyName($3, @3, yyscanner);
+					n->typevar = makeRangeVarFromAnyName(preserve_downcasing_type_func_namelist($3), @3, yyscanner);
 					n->coldeflist = $6;
 					$$ = (Node *)n;
 				}
 			| CREATE TYPE_P any_name AS ENUM_P '(' opt_enum_val_list ')'
 				{
 					CreateEnumStmt *n = makeNode(CreateEnumStmt);
-					n->typeName = $3;
+					n->typeName = preserve_downcasing_type_func_namelist($3);
 					n->vals = $7;
 					$$ = (Node *)n;
 				}
 			| CREATE TYPE_P any_name AS RANGE definition
 				{
 					CreateRangeStmt *n = makeNode(CreateRangeStmt);
-					n->typeName = $3;
+					n->typeName = preserve_downcasing_type_func_namelist($3);
 					n->params	= $6;
 					$$ = (Node *)n;
 				}
@@ -5863,7 +8462,7 @@ AlterEnumStmt:
 		ALTER TYPE_P any_name ADD_P VALUE_P opt_if_not_exists Sconst
 			{
 				AlterEnumStmt *n = makeNode(AlterEnumStmt);
-				n->typeName = $3;
+				n->typeName = preserve_downcasing_type_func_namelist($3);
 				n->oldVal = NULL;
 				n->newVal = $7;
 				n->newValNeighbor = NULL;
@@ -5874,7 +8473,7 @@ AlterEnumStmt:
 		 | ALTER TYPE_P any_name ADD_P VALUE_P opt_if_not_exists Sconst BEFORE Sconst
 			{
 				AlterEnumStmt *n = makeNode(AlterEnumStmt);
-				n->typeName = $3;
+				n->typeName = preserve_downcasing_type_func_namelist($3);
 				n->oldVal = NULL;
 				n->newVal = $7;
 				n->newValNeighbor = $9;
@@ -5885,7 +8484,7 @@ AlterEnumStmt:
 		 | ALTER TYPE_P any_name ADD_P VALUE_P opt_if_not_exists Sconst AFTER Sconst
 			{
 				AlterEnumStmt *n = makeNode(AlterEnumStmt);
-				n->typeName = $3;
+				n->typeName = preserve_downcasing_type_func_namelist($3);
 				n->oldVal = NULL;
 				n->newVal = $7;
 				n->newValNeighbor = $9;
@@ -6299,6 +8898,9 @@ drop_type_any_name:
 			| TEXT_P SEARCH DICTIONARY				{ $$ = OBJECT_TSDICTIONARY; }
 			| TEXT_P SEARCH TEMPLATE				{ $$ = OBJECT_TSTEMPLATE; }
 			| TEXT_P SEARCH CONFIGURATION			{ $$ = OBJECT_TSCONFIGURATION; }
+			| ELABEL								{ $$ = OBJECT_ELABEL; }
+			| VLABEL								{ $$ = OBJECT_VLABEL; }
+			| PROPERTY INDEX						{ $$ = OBJECT_PROPERTY_INDEX; }
 		;
 
 /* object types taking name_list */
@@ -6310,6 +8912,7 @@ drop_type_name:
 			| PUBLICATION							{ $$ = OBJECT_PUBLICATION; }
 			| SCHEMA								{ $$ = OBJECT_SCHEMA; }
 			| SERVER								{ $$ = OBJECT_FOREIGN_SERVER; }
+			| GRAPH									{ $$ = OBJECT_GRAPH; }
 		;
 
 /* object types attached to a table */
@@ -6507,7 +9110,7 @@ CommentStmt:
 				{
 					CommentStmt *n = makeNode(CommentStmt);
 					n->objtype = OBJECT_TRANSFORM;
-					n->object = (Node *) list_make2($5, makeString($7));
+					n->object = (Node *) list_make2($5, makeString(preserve_downcasing_ident($7)));
 					n->comment = $9;
 					$$ = (Node *) n;
 				}
@@ -6569,6 +9172,8 @@ comment_type_any_name:
 			| TEXT_P SEARCH DICTIONARY			{ $$ = OBJECT_TSDICTIONARY; }
 			| TEXT_P SEARCH PARSER				{ $$ = OBJECT_TSPARSER; }
 			| TEXT_P SEARCH TEMPLATE			{ $$ = OBJECT_TSTEMPLATE; }
+			| VLABEL							{ $$ = OBJECT_VLABEL; }
+			| ELABEL							{ $$ = OBJECT_ELABEL; }
 		;
 
 /* object types taking name */
@@ -6585,6 +9190,7 @@ comment_type_name:
 			| SERVER							{ $$ = OBJECT_FOREIGN_SERVER; }
 			| SUBSCRIPTION						{ $$ = OBJECT_SUBSCRIPTION; }
 			| TABLESPACE						{ $$ = OBJECT_TABLESPACE; }
+			| GRAPH								{ $$ = OBJECT_GRAPH; }
 		;
 
 comment_text:
@@ -6976,28 +9582,28 @@ privilege_list:	privilege							{ $$ = list_make1($1); }
 privilege:	SELECT opt_column_list
 			{
 				AccessPriv *n = makeNode(AccessPriv);
-				n->priv_name = pstrdup($1);
+				n->priv_name = preserve_downcasing_ident(pstrdup($1));
 				n->cols = $2;
 				$$ = n;
 			}
 		| REFERENCES opt_column_list
 			{
 				AccessPriv *n = makeNode(AccessPriv);
-				n->priv_name = pstrdup($1);
+				n->priv_name = preserve_downcasing_ident(pstrdup($1));
 				n->cols = $2;
 				$$ = n;
 			}
 		| CREATE opt_column_list
 			{
 				AccessPriv *n = makeNode(AccessPriv);
-				n->priv_name = pstrdup($1);
+				n->priv_name = preserve_downcasing_ident(pstrdup($1));
 				n->cols = $2;
 				$$ = n;
 			}
 		| ColId opt_column_list
 			{
 				AccessPriv *n = makeNode(AccessPriv);
-				n->priv_name = $1;
+				n->priv_name = preserve_downcasing_ident(pstrdup($1));
 				n->cols = $2;
 				$$ = n;
 			}
@@ -7093,7 +9699,7 @@ privilege_target:
 					PrivTarget *n = (PrivTarget *) palloc(sizeof(PrivTarget));
 					n->targtype = ACL_TARGET_OBJECT;
 					n->objtype = OBJECT_LANGUAGE;
-					n->objs = $2;
+					n->objs = preserve_downcasing_namelist($2);
 					$$ = n;
 				}
 			| LARGE_P OBJECT_P NumericOnly_list
@@ -7138,10 +9744,15 @@ privilege_target:
 				}
 			| ALL SEQUENCES IN_P SCHEMA name_list
 				{
+					ListCell *l;
 					PrivTarget *n = (PrivTarget *) palloc(sizeof(PrivTarget));
 					n->targtype = ACL_TARGET_ALL_IN_SCHEMA;
 					n->objtype = OBJECT_SEQUENCE;
 					n->objs = $5;
+                    foreach(l, n->objs)
+					{
+						preserve_downcasing_type_func_namelist(lfirst(l));
+					}
 					$$ = n;
 				}
 			| ALL FUNCTIONS IN_P SCHEMA name_list
@@ -7914,7 +10525,7 @@ createfunc_opt_item:
 				}
 			| LANGUAGE NonReservedWord_or_Sconst
 				{
-					$$ = makeDefElem("language", (Node *)makeString($2), @1);
+					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2)), @1);
 				}
 			| TRANSFORM transform_type_list
 				{
@@ -8207,7 +10818,7 @@ dostmt_opt_item:
 				}
 			| LANGUAGE NonReservedWord_or_Sconst
 				{
-					$$ = makeDefElem("language", (Node *)makeString($2), @1);
+					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2)), @1);
 				}
 		;
 
@@ -8286,7 +10897,7 @@ CreateTransformStmt: CREATE opt_or_replace TRANSFORM FOR Typename LANGUAGE name 
 					CreateTransformStmt *n = makeNode(CreateTransformStmt);
 					n->replace = $2;
 					n->type_name = $5;
-					n->lang = $7;
+					n->lang = preserve_downcasing_ident($7);
 					n->fromsql = linitial($9);
 					n->tosql = lsecond($9);
 					$$ = (Node *)n;
@@ -8316,7 +10927,7 @@ DropTransformStmt: DROP TRANSFORM opt_if_exists FOR Typename LANGUAGE name opt_d
 				{
 					DropStmt *n = makeNode(DropStmt);
 					n->removeType = OBJECT_TRANSFORM;
-					n->objects = list_make1(list_make2($5, makeString($7)));
+					n->objects = list_make1(list_make2($5, makeString(preserve_downcasing_ident($7))));
 					n->behavior = $8;
 					n->missing_ok = $3;
 					$$ = (Node *)n;
@@ -8372,6 +10983,24 @@ ReindexStmt:
 					n->options = $3;
 					$$ = (Node *)n;
 				}
+			| REINDEX reindex_target_label name
+				{
+					ReindexStmt *n = makeNode(ReindexStmt);
+					n->kind = $2;
+					n->relation = makeRangeVar(NULL, $3, -1);
+					n->name = NULL;
+					n->options = 0;
+					$$ = (Node *)n;
+				}
+			| REINDEX '(' reindex_option_list ')' reindex_target_label name
+				{
+					ReindexStmt *n = makeNode(ReindexStmt);
+					n->kind = $5;
+					n->relation = makeRangeVar(NULL, $6, -1);
+					n->name = NULL;
+					n->options = $3;
+					$$ = (Node *)n;
+				}
 		;
 reindex_target_type:
 			INDEX					{ $$ = REINDEX_OBJECT_INDEX; }
@@ -8388,6 +11017,10 @@ reindex_option_list:
 		;
 reindex_option_elem:
 			VERBOSE	{ $$ = REINDEXOPT_VERBOSE; }
+		;
+reindex_target_label:
+			VLABEL					{ $$ = REINDEX_OBJECT_VLABEL; }
+			| ELABEL				{ $$ = REINDEX_OBJECT_ELABEL; }
 		;
 
 /*****************************************************************************
@@ -8508,8 +11141,8 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_LANGUAGE;
-					n->object = (Node *) makeString($4);
-					n->newname = $7;
+					n->object = (Node *) makeString(preserve_downcasing_ident($4));
+					n->newname = preserve_downcasing_ident($7);
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
@@ -8915,8 +11548,8 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 				{
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_TYPE;
-					n->object = (Node *) $3;
-					n->newname = $6;
+					n->object = (Node *) preserve_downcasing_type_func_namelist($3);
+					n->newname = preserve_downcasing_type_func_name($6);
 					n->missing_ok = false;
 					$$ = (Node *)n;
 				}
@@ -8925,11 +11558,60 @@ RenameStmt: ALTER AGGREGATE aggregate_with_argtypes RENAME TO name
 					RenameStmt *n = makeNode(RenameStmt);
 					n->renameType = OBJECT_ATTRIBUTE;
 					n->relationType = OBJECT_TYPE;
-					n->relation = makeRangeVarFromAnyName($3, @3, yyscanner);
+					n->relation = makeRangeVarFromAnyName(preserve_downcasing_type_func_namelist($3), @3, yyscanner);
 					n->subname = $6;
 					n->newname = $8;
 					n->behavior = $9;
 					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER GRAPH name RENAME TO name
+				{
+					RenameStmt *n = makeNode(RenameStmt);
+					n->renameType = OBJECT_GRAPH;
+					n->subname = $3;
+					n->newname = $6;
+					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER VLABEL name RENAME TO name
+				{
+					RenameStmt *n = makeNode(RenameStmt);
+					n->renameType = OBJECT_VLABEL;
+					n->relation = makeRangeVar(NULL, $3, -1);
+					n->subname = NULL;
+					n->newname = $6;
+					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER VLABEL IF_P EXISTS name RENAME TO name
+				{
+					RenameStmt *n = makeNode(RenameStmt);
+					n->renameType = OBJECT_VLABEL;
+					n->relation = makeRangeVar(NULL, $5, -1);
+					n->subname = NULL;
+					n->newname = $8;
+					n->missing_ok = true;
+					$$ = (Node *)n;
+				}
+			| ALTER ELABEL name RENAME TO name
+				{
+					RenameStmt *n = makeNode(RenameStmt);
+					n->renameType = OBJECT_ELABEL;
+					n->relation = makeRangeVar(NULL, $3, -1);
+					n->subname = NULL;
+					n->newname = $6;
+					n->missing_ok = false;
+					$$ = (Node *)n;
+				}
+			| ALTER ELABEL IF_P EXISTS name RENAME TO name
+				{
+					RenameStmt *n = makeNode(RenameStmt);
+					n->renameType = OBJECT_ELABEL;
+					n->relation = makeRangeVar(NULL, $5, -1);
+					n->subname = NULL;
+					n->newname = $8;
+					n->missing_ok = true;
 					$$ = (Node *)n;
 				}
 		;
@@ -9245,7 +11927,7 @@ AlterObjectSchemaStmt:
 				{
 					AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt);
 					n->objectType = OBJECT_TYPE;
-					n->object = (Node *) $3;
+					n->object = (Node *) preserve_downcasing_type_func_namelist($3);
 					n->newschema = $6;
 					n->missing_ok = false;
 					$$ = (Node *)n;
@@ -9345,7 +12027,7 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 				{
 					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
 					n->objectType = OBJECT_LANGUAGE;
-					n->object = (Node *) makeString($4);
+					n->object = (Node *) makeString(preserve_downcasing_ident($4));
 					n->newowner = $7;
 					$$ = (Node *)n;
 				}
@@ -9409,7 +12091,7 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 				{
 					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
 					n->objectType = OBJECT_TYPE;
-					n->object = (Node *) $3;
+					n->object = (Node *) preserve_downcasing_type_func_namelist($3);
 					n->newowner = $6;
 					$$ = (Node *)n;
 				}
@@ -9481,6 +12163,14 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 				{
 					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
 					n->objectType = OBJECT_SUBSCRIPTION;
+					n->object = (Node *) makeString($3);
+					n->newowner = $6;
+					$$ = (Node *)n;
+				}
+			| ALTER GRAPH name OWNER TO RoleSpec
+				{
+					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
+					n->objectType = OBJECT_GRAPH;
 					n->object = (Node *) makeString($3);
 					n->newowner = $6;
 					$$ = (Node *)n;
@@ -10123,13 +12813,19 @@ createdb_opt_item:
  * exercising every such option, at least at the syntax level.
  */
 createdb_opt_name:
-			IDENT							{ $$ = $1; }
+			IDENT
+					{ $$ = preserve_downcasing_ident($1); }
 			| CONNECTION LIMIT				{ $$ = pstrdup("connection_limit"); }
-			| ENCODING						{ $$ = pstrdup($1); }
-			| LOCATION						{ $$ = pstrdup($1); }
-			| OWNER							{ $$ = pstrdup($1); }
-			| TABLESPACE					{ $$ = pstrdup($1); }
-			| TEMPLATE						{ $$ = pstrdup($1); }
+			| ENCODING
+					{ $$ = preserve_downcasing_ident(pstrdup($1)); }
+			| LOCATION
+					{ $$ = preserve_downcasing_ident(pstrdup($1)); }
+			| OWNER
+					{ $$ = preserve_downcasing_ident(pstrdup($1)); }
+			| TABLESPACE
+					{ $$ = preserve_downcasing_ident(pstrdup($1)); }
+			| TEMPLATE
+					{ $$ = preserve_downcasing_ident(pstrdup($1)); }
 		;
 
 /*
@@ -10440,7 +13136,7 @@ CreateConversionStmt:
 				n->conversion_name = $4;
 				n->for_encoding_name = $6;
 				n->to_encoding_name = $8;
-				n->func_name = $10;
+				n->func_name = preserve_downcasing_type_func_namelist($10);
 				n->def = $2;
 				$$ = (Node *)n;
 			}
@@ -10678,6 +13374,7 @@ ExplainableStmt:
 			| InsertStmt
 			| UpdateStmt
 			| DeleteStmt
+			| CypherStmt
 			| DeclareCursorStmt
 			| CreateAsStmt
 			| CreateMatViewStmt
@@ -10704,7 +13401,7 @@ explain_option_elem:
 		;
 
 explain_option_name:
-			NonReservedWord			{ $$ = $1; }
+			NonReservedWord			{ $$ = preserve_downcasing_ident($1); }
 			| analyze_keyword		{ $$ = "analyze"; }
 		;
 
@@ -10740,6 +13437,7 @@ PreparableStmt:
 			| InsertStmt
 			| UpdateStmt
 			| DeleteStmt					/* by default all are $$=$1 */
+			| CypherStmt
 		;
 
 /*****************************************************************************
@@ -11919,6 +14617,38 @@ table_ref:	relation_expr opt_alias_clause
 									 errmsg("subquery in FROM must have an alias"),
 									 errhint("For example, FROM (SELECT ...) [AS] foo."),
 									 parser_errposition(@2)));
+					}
+					$$ = (Node *) n;
+				}
+			| cypher_read_with_parens opt_alias_clause
+				{
+					RangeSubselect *n = makeNode(RangeSubselect);
+					n->lateral = false;
+					n->subquery = $1;
+					n->alias = $2;
+					if ($2 == NULL)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("Cypher in FROM must have an alias"),
+								 errhint("For example, FROM (...) [AS] foo."),
+								 parser_errposition(@1)));
+					}
+					$$ = (Node *) n;
+				}
+			| LATERAL_P cypher_read_with_parens opt_alias_clause
+				{
+					RangeSubselect *n = makeNode(RangeSubselect);
+					n->lateral = true;
+					n->subquery = $2;
+					n->alias = $3;
+					if ($3 == NULL)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_SYNTAX_ERROR),
+								 errmsg("Cypher in FROM must have an alias"),
+								 errhint("For example, FROM (...) [AS] foo."),
+								 parser_errposition(@2)));
 					}
 					$$ = (Node *) n;
 				}
@@ -13591,6 +16321,28 @@ c_expr:		columnref								{ $$ = $1; }
 				  g->location = @1;
 				  $$ = (Node *)g;
 			  }
+			| cypher_read_with_parens			%prec UMINUS
+				{
+					SubLink *n = makeNode(SubLink);
+					n->subLinkType = EXPR_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $1;
+					n->location = @1;
+					$$ = (Node *)n;
+				}
+			| EXISTS cypher_read_with_parens
+				{
+					SubLink *n = makeNode(SubLink);
+					n->subLinkType = EXISTS_SUBLINK;
+					n->subLinkId = 0;
+					n->testexpr = NULL;
+					n->operName = NIL;
+					n->subselect = $2;
+					n->location = @1;
+					$$ = (Node *)n;
+				}
 		;
 
 func_application: func_name '(' ')'
@@ -14769,10 +17521,11 @@ file_name:	Sconst									{ $$ = $1; };
 func_name:	type_function_name
 					{ $$ = list_make1(makeString($1)); }
 			| ColId indirection
-					{
-						$$ = check_func_name(lcons(makeString($1), $2),
-											 yyscanner);
-					}
+				{
+					List *namelist = check_func_name(lcons(makeString($1), $2),
+													 yyscanner);
+					$$ = preserve_downcasing_type_func_namelist(namelist);
+				}
 		;
 
 
@@ -14979,9 +17732,13 @@ ColId:		IDENT									{ $$ = $1; }
 
 /* Type/function identifier --- names that can be type or function names.
  */
-type_function_name:	IDENT							{ $$ = $1; }
-			| unreserved_keyword					{ $$ = pstrdup($1); }
-			| type_func_name_keyword				{ $$ = pstrdup($1); }
+type_function_name:	IDENT
+					{ $$ = preserve_downcasing_type_func_name($1); }
+			| unreserved_keyword
+					{ $$ = preserve_downcasing_type_func_name(pstrdup($1)); }
+			| type_func_name_keyword
+					{ $$ = preserve_downcasing_type_func_name(pstrdup($1)); }
+
 		;
 
 /* Any not-fully-reserved word --- these names can be, eg, role names.
@@ -15027,9 +17784,11 @@ unreserved_keyword:
 			| ADMIN
 			| AFTER
 			| AGGREGATE
+			| ALLSHORTESTPATHS
 			| ALSO
 			| ALTER
 			| ALWAYS
+			| ASSERT
 			| ASSERTION
 			| ASSIGNMENT
 			| AT
@@ -15060,6 +17819,7 @@ unreserved_keyword:
 			| CONFLICT
 			| CONNECTION
 			| CONSTRAINTS
+			| CONTAINS
 			| CONTENT_P
 			| CONTINUE_P
 			| CONVERSION_P
@@ -15084,6 +17844,7 @@ unreserved_keyword:
 			| DEPENDS
 			| DETACH
 			| DICTIONARY
+			| DIJKSTRA
 			| DISABLE_P
 			| DISCARD
 			| DOCUMENT_P
@@ -15091,9 +17852,11 @@ unreserved_keyword:
 			| DOUBLE_P
 			| DROP
 			| EACH
+			| ELABEL
 			| ENABLE_P
 			| ENCODING
 			| ENCRYPTED
+			| ENDS
 			| ENUM_P
 			| ESCAPE
 			| EVENT
@@ -15115,6 +17878,7 @@ unreserved_keyword:
 			| GENERATED
 			| GLOBAL
 			| GRANTED
+			| GRAPH
 			| GROUPS
 			| HANDLER
 			| HEADER_P
@@ -15155,7 +17919,6 @@ unreserved_keyword:
 			| LOCKED
 			| LOGGED
 			| MAPPING
-			| MATCH
 			| MATERIALIZED
 			| MAXVALUE
 			| METHOD
@@ -15180,6 +17943,7 @@ unreserved_keyword:
 			| OLD
 			| OPERATOR
 			| OPTION
+			| OPTIONAL_P
 			| OPTIONS
 			| ORDINALITY
 			| OTHERS
@@ -15205,6 +17969,7 @@ unreserved_keyword:
 			| PROCEDURE
 			| PROCEDURES
 			| PROGRAM
+			| PROPERTY
 			| PUBLICATION
 			| QUOTE
 			| RANGE
@@ -15218,6 +17983,7 @@ unreserved_keyword:
 			| REINDEX
 			| RELATIVE_P
 			| RELEASE
+			| REMOVE
 			| RENAME
 			| REPEATABLE
 			| REPLACE
@@ -15249,14 +18015,18 @@ unreserved_keyword:
 			| SET
 			| SETS
 			| SHARE
+			| SHORTESTPATH
 			| SHOW
 			| SIMPLE
+			| SINGLE
+			| SIZE_P
 			| SKIP
 			| SNAPSHOT
 			| SQL_P
 			| STABLE
 			| STANDALONE_P
 			| START
+			| STARTS
 			| STATEMENT
 			| STATISTICS
 			| STDIN
@@ -15300,6 +18070,7 @@ unreserved_keyword:
 			| VERSION_P
 			| VIEW
 			| VIEWS
+			| VLABEL
 			| VOLATILE
 			| WHITESPACE_P
 			| WITHIN
@@ -15467,6 +18238,8 @@ reserved_keyword:
 			| LIMIT
 			| LOCALTIME
 			| LOCALTIMESTAMP
+			| MATCH
+			| MERGE
 			| NOT
 			| NULL_P
 			| OFFSET
@@ -15477,6 +18250,7 @@ reserved_keyword:
 			| PLACING
 			| PRIMARY
 			| REFERENCES
+			| RETURN
 			| RETURNING
 			| SELECT
 			| SESSION_USER
@@ -15489,6 +18263,7 @@ reserved_keyword:
 			| TRUE_P
 			| UNION
 			| UNIQUE
+			| UNWIND
 			| USER
 			| USING
 			| VARIADIC
@@ -15589,6 +18364,106 @@ makeColumnRef(char *colname, List *indirection,
 	c->fields = lcons(makeString(colname), indirection);
 	return (Node *) c;
 }
+
+static Node *
+makeCypherSetOp(SetOperation op, bool all, Node *larg, Node *rarg)
+{
+	if (IsA(larg, CypherStmt))
+		larg = wrapCypherWithSelect(larg);
+	if (IsA(rarg, CypherStmt))
+		rarg = wrapCypherWithSelect(rarg);
+
+	return makeSetOp(op, all, larg, rarg);
+}
+
+static Node *
+wrapCypherWithSelect(Node *stmt)
+{
+	ColumnRef  *colref;
+	ResTarget  *target;
+	RangeSubselect *sub;
+	SelectStmt *select;
+
+	AssertArg(IsA(stmt, CypherStmt));
+
+	colref = makeNode(ColumnRef);
+	colref->fields = list_make1(makeNode(A_Star));
+	colref->location = -1;
+
+	target = makeNode(ResTarget);
+	target->val = (Node *) colref;
+	target->location = -1;
+
+	sub = makeNode(RangeSubselect);
+	sub->subquery = stmt;
+	/* CYPHER_SUBQUERY_ALIAS */
+	sub->alias = makeAlias("_", NIL);
+
+	select = makeNode(SelectStmt);
+	select->targetList = list_make1(target);
+	select->fromClause = list_make1(sub);
+
+	return (Node *) select;
+}
+
+static List *
+downcase_namelist(List *namelist)
+{
+	Value	   *objstrval = llast(namelist);
+	char	   *objname = strVal(objstrval);
+
+	objname = downcase_identifier(objname, strlen(objname), false, false);
+	objstrval->val.str = objname;
+
+	return namelist;
+}
+
+/* downcase identifier for user convenience if case_sensitive_ident is on */
+static char *
+preserve_downcasing_ident(char *ident)
+{
+	if (case_sensitive_ident)
+		ident = downcase_identifier(ident, strlen(ident), false, false);
+
+	return ident;
+}
+
+/* downcase name list for user convenience if case_sensitive_ident is on */
+static List *
+preserve_downcasing_namelist(List *namelist)
+{
+	if (case_sensitive_ident)
+		downcase_namelist(namelist);
+
+	return namelist;
+}
+
+/*
+ * downcase type/function name for user convenience
+ * if case_sensitive_ident and case_compat_type_func is on
+ */
+static char *
+preserve_downcasing_type_func_name(char *name)
+{
+	if (case_sensitive_ident && case_compat_type_func)
+		name = downcase_identifier(name, strlen(name), false, false);
+
+	return name;
+}
+
+/*
+ * downcase type/function name list for user convenience
+ * if case_sensitive_ident and case_compat_type_func is on
+ */
+static List *
+preserve_downcasing_type_func_namelist(List *namelist)
+{
+	if (case_sensitive_ident && case_compat_type_func)
+		downcase_namelist(namelist);
+
+	return namelist;
+}
+
 
 static Node *
 makeTypeCast(Node *arg, TypeName *typename, int location)

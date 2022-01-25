@@ -71,6 +71,10 @@ extern void generate_operator_clause(fmStringInfo buf,
 									 Oid opoid,
 									 const char *rightop, Oid rightoptype);
 
+/* agensgraph */
+extern Datum ag_get_propindexdef(PG_FUNCTION_ARGS);
+extern Datum ag_get_graphconstraintdef(PG_FUNCTION_ARGS);
+
 /* varchar.c */
 extern int	bpchartruelen(char *s, int len);
 

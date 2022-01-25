@@ -30,6 +30,7 @@
 #define DEFAULT_PARALLEL_SETUP_COST  1000.0
 
 #define DEFAULT_EFFECTIVE_CACHE_SIZE  524288	/* measured in pages */
+#define DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT 10
 
 typedef enum
 {
@@ -109,6 +110,9 @@ extern void cost_merge_append(Path *path, PlannerInfo *root,
 extern void cost_material(Path *path,
 						  Cost input_startup_cost, Cost input_total_cost,
 						  double tuples, int width);
+extern void cost_dijkstra(Path *path,
+			  Cost input_startup_cost, Cost input_total_cost,
+			  double tuples, int width);
 extern void cost_agg(Path *path, PlannerInfo *root,
 					 AggStrategy aggstrategy, const AggClauseCosts *aggcosts,
 					 int numGroupCols, double numGroups,
@@ -188,7 +192,7 @@ extern void set_subquery_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_function_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_values_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_cte_size_estimates(PlannerInfo *root, RelOptInfo *rel,
-								   double cte_rows);
+								   double cte_rows, int iter_cnt);
 extern void set_tablefunc_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_namedtuplestore_size_estimates(PlannerInfo *root, RelOptInfo *rel);
 extern void set_result_size_estimates(PlannerInfo *root, RelOptInfo *rel);

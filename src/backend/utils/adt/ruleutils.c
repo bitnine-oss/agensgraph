@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#include "ag_const.h"
 #include "access/amapi.h"
 #include "access/htup_details.h"
 #include "access/relation.h"
@@ -64,6 +65,8 @@
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/hsearch.h"
+#include "utils/json.h"
+#include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/rel.h"
@@ -119,6 +122,8 @@ typedef struct
 	bool		varprefix;		/* true to print prefixes on Vars */
 	ParseExprKind special_exprkind; /* set only for exprkinds needing special
 									 * handling */
+
+	bool		cypherexpr;		/* true if deparsing is for Cypher expr */
 } deparse_context;
 
 /*
@@ -469,6 +474,25 @@ static void add_cast_to(StringInfo buf, Oid typid);
 static char *generate_qualified_type_name(Oid typid);
 static text *string_to_text(char *str);
 static char *flatten_reloptions(Oid relid);
+static char *ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
+										int prettyFlags, bool missing_ok);
+static char *ag_get_graphconstraintdef_worker(Oid constraintId,
+											  int prettyFlags,
+											  bool missing_ok);
+static char *deparse_prop_expression_pretty(Node *expr, List *dpcontext,
+											int prettyFlags);
+
+
+
+
+
+
+static bool get_access_arg_expr(Node *node, deparse_context *context,
+                                bool showimplicit);
+static void get_pathelem_expr(Node *node, deparse_context *context,
+                                bool showimplicit);
+static bool is_ident(const char *str, const int len);
+static void get_jsonb_scalar(JsonbValue *scalar, deparse_context *context);
 
 #define only_marker(rte)  ((rte)->inh ? "" : "ONLY ")
 
@@ -1038,6 +1062,7 @@ pg_get_triggerdef_worker(Oid trigid, bool pretty)
 		context.wrapColumn = WRAP_COLUMN_DEFAULT;
 		context.indentLevel = PRETTYINDENT_STD;
 		context.special_exprkind = EXPR_KIND_NONE;
+		context.cypherexpr = false;
 
 		get_rule_expr(qual, &context, false);
 
@@ -3241,6 +3266,7 @@ deparse_expression_pretty(Node *expr, List *dpcontext,
 	context.wrapColumn = WRAP_COLUMN_DEFAULT;
 	context.indentLevel = startIndent;
 	context.special_exprkind = EXPR_KIND_NONE;
+	context.cypherexpr = false;
 
 	get_rule_expr(expr, &context, showimplicit);
 
@@ -4936,6 +4962,7 @@ make_ruledef(StringInfo buf, HeapTuple ruletup, TupleDesc rulettc,
 		context.wrapColumn = WRAP_COLUMN_DEFAULT;
 		context.indentLevel = PRETTYINDENT_STD;
 		context.special_exprkind = EXPR_KIND_NONE;
+		context.cypherexpr = false;
 
 		set_deparse_for_query(&dpns, query, NIL);
 
@@ -5098,6 +5125,7 @@ get_query_def(Query *query, StringInfo buf, List *parentnamespace,
 	context.wrapColumn = wrapColumn;
 	context.indentLevel = startIndent;
 	context.special_exprkind = EXPR_KIND_NONE;
+	context.cypherexpr = false;
 
 	set_deparse_for_query(&dpns, query, parentnamespace);
 
@@ -8015,11 +8043,18 @@ get_rule_expr(Node *node, deparse_context *context,
 				if (!PRETTY_PAREN(context))
 					appendStringInfoChar(buf, '(');
 				get_rule_expr_paren(arg1, context, true, node);
-				appendStringInfo(buf, " %s %s (",
-								 generate_operator_name(expr->opno,
-														exprType(arg1),
-														get_base_element_type(exprType(arg2))),
-								 expr->useOr ? "ANY" : "ALL");
+				if (context->cypherexpr)
+				{
+					appendStringInfo(buf, " IN (");
+				}
+				else
+				{
+					appendStringInfo(buf, " %s %s (",
+									 generate_operator_name(expr->opno,
+															exprType(arg1),
+															get_base_element_type(exprType(arg2))),
+									 expr->useOr ? "ANY" : "ALL");
+					}
 				get_rule_expr_paren(arg2, context, true, node);
 
 				/*
@@ -8386,7 +8421,10 @@ get_rule_expr(Node *node, deparse_context *context,
 			{
 				ArrayExpr  *arrayexpr = (ArrayExpr *) node;
 
-				appendStringInfoString(buf, "ARRAY[");
+				if (context->cypherexpr)
+					appendStringInfoString(buf, "[");
+				else
+					appendStringInfoString(buf, "ARRAY[");
 				get_rule_expr((Node *) arrayexpr->elements, context, true);
 				appendStringInfoChar(buf, ']');
 
@@ -9021,10 +9059,235 @@ get_rule_expr(Node *node, deparse_context *context,
 			get_tablefunc((TableFunc *) node, context, showimplicit);
 			break;
 
+		case T_CypherTypeCast:
+			{
+				CypherTypeCast *tc = (CypherTypeCast *) node;
+
+				switch (tc->cform)
+				{
+					case COERCE_IMPLICIT_CAST:
+						get_rule_expr_paren((Node *) tc->arg, context,
+											showimplicit, node);
+						break;
+
+					case COERCE_EXPLICIT_CAST:
+						get_coercion_expr((Node *) tc->arg, context, tc->type,
+										  -1, node);
+						break;
+
+					case COERCE_EXPLICIT_CALL:
+					default:
+						elog(ERROR, "unexpected CoercionForm: %d", tc->cform);
+						break;
+				}
+			}
+			break;
+
+		case T_CypherMapExpr:
+			{
+				CypherMapExpr *m = (CypherMapExpr *) node;
+				char	   *sep = "";
+				ListCell   *le;
+
+				appendStringInfoChar(buf, '{');
+				le = list_head(m->keyvals);
+				while (le != NULL)
+				{
+					Node	   *e;
+
+					appendStringInfoString(buf, sep);
+
+					e = lfirst(le);
+					le = lnext(le);
+
+					get_rule_expr((Node *) e, context, false);
+
+					appendBinaryStringInfo(buf, ": ", 2);
+
+					e = lfirst(le);
+					le = lnext(le);
+
+					get_rule_expr((Node *) e, context, false);
+
+					sep = ", ";
+				}
+				appendStringInfoChar(buf, '}');
+			}
+			break;
+
+		case T_CypherListExpr:
+			{
+				CypherListExpr *cl = (CypherListExpr *) node;
+
+				appendStringInfoChar(buf, '[');
+				get_rule_expr((Node *) cl->elems, context, false);
+				appendStringInfoChar(buf, ']');
+			}
+			break;
+
+		case T_CypherListCompExpr:
+			{
+				CypherListCompExpr *clc = (CypherListCompExpr *) node;
+
+				appendStringInfoChar(buf, '[');
+				appendStringInfo(buf, "%s IN ", clc->varname);
+				get_rule_expr((Node *) clc->list, context, false);
+				if (clc->cond != NULL)
+				{
+					appendBinaryStringInfo(buf, " WHERE ", 7);
+					get_rule_expr((Node *) clc->cond, context, false);
+				}
+				if (clc->elem != NULL)
+				{
+					appendBinaryStringInfo(buf, " | ", 3);
+					get_rule_expr((Node *) clc->elem, context, false);
+				}
+				appendStringInfoChar(buf, ']');
+			}
+			break;
+
+		case T_CypherListCompVar:
+			{
+				CypherListCompVar *clcvar = (CypherListCompVar *) node;
+
+				appendStringInfoString(buf, clcvar->varname);
+			}
+			break;
+
+		case T_CypherAccessExpr:
+			{
+				CypherAccessExpr *a = (CypherAccessExpr *) node;
+				bool		dot;
+				ListCell   *le;
+
+				dot = get_access_arg_expr((Node *) a->arg, context, false);
+
+				foreach(le, a->path)
+				{
+					Node	   *e = lfirst(le);
+
+					if (IsA(e, CypherIndices))
+					{
+						CypherIndices *cind = (CypherIndices *) e;
+
+						appendStringInfoChar(buf, '[');
+
+						if (cind->is_slice)
+						{
+							get_rule_expr((Node *) cind->lidx, context, false);
+							appendBinaryStringInfo(buf, "..", 2);
+						}
+						get_pathelem_expr((Node *) cind->uidx, context, false);
+
+						appendStringInfoChar(buf, ']');
+					}
+					else
+					{
+						if (dot)
+							appendStringInfoChar(buf, '.');
+						else
+							dot = true;
+
+						get_pathelem_expr(e, context, false);
+					}
+				}
+			}
+			break;
+
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			break;
 	}
+}
+
+static bool
+get_access_arg_expr(Node *node, deparse_context *context, bool showimplicit)
+{
+	StringInfoData si;
+	StringInfo	buf;
+
+	if (!context->cypherexpr)
+	{
+		get_rule_expr(node, context, showimplicit);
+		return true;
+	}
+
+	initStringInfo(&si);
+
+	buf = context->buf;
+	context->buf = &si;
+
+	get_rule_expr(node, context, showimplicit);
+
+	context->buf = buf;
+
+	if (strcmp(si.data, quote_identifier(AG_ELEM_PROP_MAP)) != 0)
+	{
+		appendBinaryStringInfo(buf, si.data, si.len);
+		return true;
+	}
+
+	return false;
+}
+
+static void
+get_pathelem_expr(Node *node, deparse_context *context, bool showimplicit)
+{
+	StringInfoData si;
+	StringInfo	buf;
+
+	if (!context->cypherexpr)
+	{
+		get_rule_expr(node, context, showimplicit);
+		return;
+	}
+
+	initStringInfo(&si);
+
+	buf = context->buf;
+	context->buf = &si;
+
+	get_rule_expr(node, context, showimplicit);
+
+	context->buf = buf;
+
+	if (si.len > 2 && si.data[0] == '\'' && si.data[si.len - 1] == '\'')
+	{
+		si.data[si.len - 1] = '\0';
+		if (is_ident(si.data + 1, si.len - 2))
+		{
+			appendBinaryStringInfo(buf, si.data + 1, si.len - 2);
+			return;
+		}
+		else
+		{
+			si.data[si.len -1] = '\'';
+		}
+	}
+
+	appendBinaryStringInfo(buf, si.data, si.len);
+}
+
+static bool
+is_ident(const char *str, const int len)
+{
+	int			i;
+
+	for (i = 0; i < len; i++)
+	{
+		char		c = str[i];
+
+		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			IS_HIGHBIT_SET(c) || c == '_')
+			continue;
+
+		if (i > 0 && ((c >= '0' && c <= '9') || c == '$'))
+			continue;
+
+		return false;
+	}
+
+	return true;
 }
 
 /*
@@ -9124,13 +9387,38 @@ get_oper_expr(OpExpr *expr, deparse_context *context)
 		/* binary operator */
 		Node	   *arg1 = (Node *) linitial(args);
 		Node	   *arg2 = (Node *) lsecond(args);
+		char	   *oprname;
 
-		get_rule_expr_paren(arg1, context, true, (Node *) expr);
-		appendStringInfo(buf, " %s ",
-						 generate_operator_name(opno,
-												exprType(arg1),
-												exprType(arg2)));
-		get_rule_expr_paren(arg2, context, true, (Node *) expr);
+		oprname = generate_operator_name(opno, exprType(arg1), exprType(arg2));
+		if (context->cypherexpr &&
+			(strcmp(oprname, "`+`") == 0 ||
+			 strcmp(oprname, "`-`") == 0 ||
+			 strcmp(oprname, "`*`") == 0 ||
+			 strcmp(oprname, "`/`") == 0 ||
+			 strcmp(oprname, "`%`") == 0 ||
+			 strcmp(oprname, "`^`") == 0))
+		{
+			oprname[2] = '\0';
+			oprname = oprname + 1;
+		}
+
+		/* Switch '@>' to 'IN' and reverse order for Cypher expression */
+		if (context->cypherexpr && !strcmp(oprname, "@>"))
+		{
+			get_rule_expr_paren(arg2, context, true, (Node *) expr);
+
+			appendStringInfo(buf, " IN ");
+
+			get_rule_expr_paren(arg1, context, true, (Node *) expr);
+		}
+		else
+		{
+			get_rule_expr_paren(arg1, context, true, (Node *) expr);
+
+			appendStringInfo(buf, " %s ", oprname);
+
+			get_rule_expr_paren(arg2, context, true, (Node *) expr);
+		}
 	}
 	else
 	{
@@ -9535,7 +9823,7 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 		 * about type when reparsing.
 		 */
 		appendStringInfoString(buf, "NULL");
-		if (showtype >= 0)
+		if (showtype >= 0 && !context->cypherexpr)
 		{
 			appendStringInfo(buf, "::%s",
 							 format_type_with_typemod(constval->consttype,
@@ -9598,6 +9886,75 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 				appendStringInfoString(buf, "false");
 			break;
 
+		case JSONBOID:
+			if (context->cypherexpr)
+			{
+				Jsonb	   *j = DatumGetJsonbP(constval->constvalue);
+				JsonbIterator *it;
+				bool		first = true;
+				bool		raw_scalar = false;
+
+				it = JsonbIteratorInit(&j->root);
+
+				for (;;)
+				{
+					JsonbValue	jv;
+					JsonbIteratorToken tok;
+
+					tok = JsonbIteratorNext(&it, &jv, false);
+					if (tok == WJB_DONE)
+						break;
+
+					switch (tok)
+					{
+						case WJB_KEY:
+							if (!first)
+								appendBinaryStringInfo(buf, ", ", 2);
+							get_jsonb_scalar(&jv, context);
+							appendBinaryStringInfo(buf, ": ", 2);
+							break;
+						case WJB_VALUE:
+							get_jsonb_scalar(&jv, context);
+							first = false;
+							break;
+						case WJB_ELEM:
+							if (!first)
+								appendBinaryStringInfo(buf, ", ", 2);
+							get_jsonb_scalar(&jv, context);
+							first = false;
+							break;
+						case WJB_BEGIN_ARRAY:
+							if (!first)
+								appendBinaryStringInfo(buf, ", ", 2);
+							if (jv.val.array.rawScalar)
+								raw_scalar = true;
+							else
+								appendStringInfoCharMacro(buf, '[');
+							first = true;
+							break;
+						case WJB_END_ARRAY:
+							if (!raw_scalar)
+								appendStringInfoCharMacro(buf, ']');
+							first = false;
+							break;
+						case WJB_BEGIN_OBJECT:
+							if (!first)
+								appendBinaryStringInfo(buf, ", ", 2);
+							appendStringInfoCharMacro(buf, '{');
+							first = true;
+							break;
+						case WJB_END_OBJECT:
+							appendStringInfoCharMacro(buf, '}');
+							first = false;
+							break;
+						default:
+							elog(ERROR, "unknown jsonb iterator token type");
+					}
+				}
+
+				break;
+			}
+
 		default:
 			simple_quote_literal(buf, extval);
 			break;
@@ -9635,7 +9992,7 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 			needlabel |= (constval->consttypmod >= 0);
 			break;
 		default:
-			needlabel = true;
+			needlabel = !context->cypherexpr;
 			break;
 	}
 	if (needlabel || showtype > 0)
@@ -9646,6 +10003,59 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 	get_const_collation(constval, context);
 }
 
+static void
+get_jsonb_scalar(JsonbValue *scalar, deparse_context *context)
+{
+	StringInfo	buf = context->buf;
+
+	switch (scalar->type)
+	{
+		case jbvNull:
+			appendBinaryStringInfo(buf, "null", 4);
+			break;
+		case jbvString:
+			{
+				StringInfoData si;
+				char	   *str;
+				const char *c;
+
+				initStringInfo(&si);
+				escape_json(&si, pnstrdup(scalar->val.string.val,
+										  scalar->val.string.len));
+				str = si.data;
+
+				str[strlen(str) - 1] = '\0';
+				appendStringInfoCharMacro(buf, '\'');
+				for (c = str + 1; *c != '\0'; c++)
+				{
+					if (*c == '\'')
+						appendStringInfoCharMacro(buf, '\'');
+					appendStringInfoCharMacro(buf, *c);
+				}
+				appendStringInfoCharMacro(buf, '\'');
+			}
+			break;
+		case jbvNumeric:
+			{
+				Datum		s;
+
+				s = DirectFunctionCall1(numeric_out,
+										NumericGetDatum(scalar->val.numeric));
+
+				appendStringInfoString(buf, DatumGetCString(s));
+			}
+			break;
+		case jbvBool:
+			if (scalar->val.boolean)
+				appendBinaryStringInfo(buf, "true", 4);
+			else
+				appendBinaryStringInfo(buf, "false", 5);
+			break;
+		default:
+			elog(ERROR, "unknown jsonb scalar type");
+	}
+}
+
 /*
  * helper for get_const_expr: append COLLATE if needed
  */
@@ -9654,7 +10064,7 @@ get_const_collation(Const *constval, deparse_context *context)
 {
 	StringInfo	buf = context->buf;
 
-	if (OidIsValid(constval->constcollid))
+	if (OidIsValid(constval->constcollid) && !context->cypherexpr)
 	{
 		Oid			typcollation = get_typcollation(constval->consttype);
 
@@ -10277,6 +10687,18 @@ get_from_clause_item(Node *jtnode, Query *query, deparse_context *context)
 				break;
 			case JOIN_RIGHT:
 				appendContextKeyword(context, " RIGHT JOIN ",
+									 -PRETTYINDENT_STD,
+									 PRETTYINDENT_STD,
+									 PRETTYINDENT_JOIN);
+				break;
+			case JOIN_CYPHER_MERGE:
+				appendContextKeyword(context, " CYPHER MERGE JOIN ",
+									 -PRETTYINDENT_STD,
+									 PRETTYINDENT_STD,
+									 PRETTYINDENT_JOIN);
+				break;
+			case JOIN_CYPHER_DELETE:
+				appendContextKeyword(context, " CYPHER DELETE JOIN ",
 									 -PRETTYINDENT_STD,
 									 PRETTYINDENT_STD,
 									 PRETTYINDENT_JOIN);
@@ -11316,4 +11738,472 @@ get_range_partbound_string(List *bound_datums)
 	appendStringInfoChar(buf, ')');
 
 	return buf->data;
+}
+
+/* ----------
+ * ag_get_propindexdef	- Get the definition of a property index
+ *
+ * Based on pg_get_indexdef()
+ * ----------
+ */
+Datum
+ag_get_propindexdef(PG_FUNCTION_ARGS)
+{
+	Oid			indexrelid = PG_GETARG_OID(0);
+	int			prettyFlags;
+	char	   *res;
+
+	prettyFlags = PRETTYFLAG_PAREN | PRETTYFLAG_INDENT;
+
+	res = ag_get_propindexdef_worker(indexrelid, NULL, prettyFlags, true);
+
+	if (res == NULL)
+		PG_RETURN_NULL();
+
+	PG_RETURN_TEXT_P(string_to_text(res));
+}
+
+/*
+ * Changes expressions of AG_PROP_ELEM to '.' expression.
+ * e.g. properties #>> '{a,b,c}'   ->   a.b.c
+ *
+ * Based on pg_get_indexdef_worker()
+ */
+static char *
+ag_get_propindexdef_worker(Oid indexrelid, const Oid *excludeOps,
+						   int prettyFlags, bool missing_ok)
+{
+	/* might want a separate isConstraint parameter later */
+	bool		isConstraint = (excludeOps != NULL);
+	HeapTuple	ht_idx;
+	HeapTuple	ht_idxrel;
+	HeapTuple	ht_am;
+	Form_pg_index idxrec;
+	Form_pg_class idxrelrec;
+	Form_pg_am	amrec;
+	IndexAmRoutine *amroutine;
+	List	   *indexprs;
+	ListCell   *indexpr_item;
+	List	   *context;
+	Oid			indrelid;
+	int			keyno;
+	Datum		indcollDatum;
+	Datum		indclassDatum;
+	Datum		indoptionDatum;
+	bool		isnull;
+	oidvector  *indcollation;
+	oidvector  *indclass;
+	int2vector *indoption;
+	StringInfoData buf;
+	char	   *str;
+	char	   *sep;
+
+	/*
+	 * Fetch the pg_index tuple by the Oid of the index
+	 */
+	ht_idx = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(indexrelid));
+	if (!HeapTupleIsValid(ht_idx))
+	{
+		if (missing_ok)
+			return NULL;
+		elog(ERROR, "cache lookup failed for index %u", indexrelid);
+	}
+	idxrec = (Form_pg_index) GETSTRUCT(ht_idx);
+
+	indrelid = idxrec->indrelid;
+	Assert(indexrelid == idxrec->indexrelid);
+
+	/* Must get indcollation, indclass, and indoption the hard way */
+	indcollDatum = SysCacheGetAttr(INDEXRELID, ht_idx,
+								   Anum_pg_index_indcollation, &isnull);
+	Assert(!isnull);
+	indcollation = (oidvector *) DatumGetPointer(indcollDatum);
+
+	indclassDatum = SysCacheGetAttr(INDEXRELID, ht_idx,
+									Anum_pg_index_indclass, &isnull);
+	Assert(!isnull);
+	indclass = (oidvector *) DatumGetPointer(indclassDatum);
+
+	indoptionDatum = SysCacheGetAttr(INDEXRELID, ht_idx,
+									 Anum_pg_index_indoption, &isnull);
+	Assert(!isnull);
+	indoption = (int2vector *) DatumGetPointer(indoptionDatum);
+
+	/*
+	 * Fetch the pg_class tuple of the index relation
+	 */
+	ht_idxrel = SearchSysCache1(RELOID, ObjectIdGetDatum(indexrelid));
+	if (!HeapTupleIsValid(ht_idxrel))
+		elog(ERROR, "cache lookup failed for relation %u", indexrelid);
+	idxrelrec = (Form_pg_class) GETSTRUCT(ht_idxrel);
+
+	if (!OidIsValid(get_relid_laboid(indrelid)))
+		elog(ERROR, "'%s' is not property index", NameStr(idxrelrec->relname));
+
+	/*
+	 * Fetch the pg_am tuple of the index' access method
+	 */
+	ht_am = SearchSysCache1(AMOID, ObjectIdGetDatum(idxrelrec->relam));
+	if (!HeapTupleIsValid(ht_am))
+		elog(ERROR, "cache lookup failed for access method %u",
+			 idxrelrec->relam);
+	amrec = (Form_pg_am) GETSTRUCT(ht_am);
+
+	/* Fetch the index AM's API struct */
+	amroutine = GetIndexAmRoutine(amrec->amhandler);
+
+	/* Get the index expressions. */
+	if (!heap_attisnull(ht_idx, Anum_pg_index_indexprs, NULL))
+	{
+		Datum		exprsDatum;
+		bool		isnull;
+		char	   *exprsString;
+
+		exprsDatum = SysCacheGetAttr(INDEXRELID, ht_idx,
+									 Anum_pg_index_indexprs, &isnull);
+		Assert(!isnull);
+		exprsString = TextDatumGetCString(exprsDatum);
+		indexprs = (List *) stringToNode(exprsString);
+		pfree(exprsString);
+	}
+	else
+		elog(ERROR, "property index '%s' must be expression index",
+			 NameStr(idxrelrec->relname));
+
+	indexpr_item = list_head(indexprs);
+
+	context = deparse_context_for(get_relation_name(indrelid), indrelid);
+
+	/*
+	 * Start the index definition.  Note that the index's name should never be
+	 * schema-qualified, but the indexed rel's name may be.
+	 */
+	initStringInfo(&buf);
+
+	if (isConstraint)
+		appendStringInfo(&buf, "ASSERT (");
+	else
+		appendStringInfo(&buf, "CREATE %sPROPERTY INDEX %s ON %s USING %s (",
+						 idxrec->indisunique ? "UNIQUE " : "",
+						 quote_identifier(NameStr(idxrelrec->relname)),
+						 quote_identifier(get_relation_name(indrelid)),
+						 quote_identifier(NameStr(amrec->amname)));
+
+	/*
+	 * Report the indexed attributes
+	 */
+	sep = "";
+	for (keyno = 0; keyno < idxrec->indnatts; keyno++)
+	{
+		AttrNumber	attnum = idxrec->indkey.values[keyno];
+		int16		opt = indoption->values[keyno];
+		Oid			keycoltype;
+		Oid			keycolcollation;
+		Node	   *indexkey;
+		Oid			indcoll;
+
+		appendStringInfoString(&buf, sep);
+		sep = ", ";
+
+		if (attnum != 0)
+			elog(ERROR, "invalid property index, attnum: %u", attnum);
+
+		if (indexpr_item == NULL)
+			elog(ERROR, "too few entries in indexprs list");
+		indexkey = (Node *) lfirst(indexpr_item);
+		indexpr_item = lnext(indexpr_item);
+		/* Deparse */
+		str = deparse_prop_expression_pretty(indexkey, context, prettyFlags);
+		if (IsA(indexkey, CypherAccessExpr))
+			appendStringInfo(&buf, "%s", str);
+		else
+			appendStringInfo(&buf, "(%s)", str);
+		keycoltype = exprType(indexkey);
+		keycolcollation = exprCollation(indexkey);
+
+		/* Add collation, if not default for column */
+		indcoll = indcollation->values[keyno];
+		if (OidIsValid(indcoll) && indcoll != keycolcollation)
+			appendStringInfo(&buf, " COLLATE %s",
+							 generate_collation_name((indcoll)));
+
+		/* Add the operator class name, if not default */
+		get_opclass_name(indclass->values[keyno], keycoltype, &buf);
+
+		/* Add options if relevant */
+		if (amroutine->amcanorder)
+		{
+			/* if it supports sort ordering, report DESC and NULLS opts */
+			if (opt & INDOPTION_DESC)
+			{
+				appendStringInfoString(&buf, " DESC");
+				/* NULLS FIRST is the default in this case */
+				if (!(opt & INDOPTION_NULLS_FIRST))
+					appendStringInfoString(&buf, " NULLS LAST");
+			}
+			else
+			{
+				if (opt & INDOPTION_NULLS_FIRST)
+					appendStringInfoString(&buf, " NULLS FIRST");
+			}
+		}
+
+		/* Add the exclusion operator if relevant */
+		if (excludeOps != NULL)
+		{
+			char *op;
+
+			op = generate_operator_name(excludeOps[keyno],
+										keycoltype, keycoltype);
+			if (strcmp(op, "=") != 0)
+				elog(ERROR, "invalid property index on '%s'",
+					 NameStr(idxrelrec->relname));
+		}
+	}
+	appendStringInfoChar(&buf, ')');
+
+	if (isConstraint)
+		appendStringInfo(&buf, " IS UNIQUE");
+
+	/*
+	 * If it has options, append "WITH (options)"
+	 */
+	str = flatten_reloptions(indexrelid);
+	if (str)
+	{
+		appendStringInfo(&buf, " WITH (%s)", str);
+		pfree(str);
+	}
+
+	/*
+	 * If it's a partial index, decompile and append the predicate
+	 */
+	if (!heap_attisnull(ht_idx, Anum_pg_index_indpred, NULL))
+	{
+		Node	   *node;
+		Datum		predDatum;
+		bool		isnull;
+		char	   *predString;
+
+		/* Convert text string to node tree */
+		predDatum = SysCacheGetAttr(INDEXRELID, ht_idx,
+									Anum_pg_index_indpred, &isnull);
+		Assert(!isnull);
+		predString = TextDatumGetCString(predDatum);
+		node = (Node *) stringToNode(predString);
+		pfree(predString);
+
+		/* Deparse */
+		str = deparse_prop_expression_pretty(node, context, prettyFlags);
+
+		if (isConstraint)
+			appendStringInfo(&buf, " WHERE (%s)", str);
+		else
+			appendStringInfo(&buf, " WHERE %s", str);
+	}
+
+	/* Clean up */
+	ReleaseSysCache(ht_idx);
+	ReleaseSysCache(ht_idxrel);
+	ReleaseSysCache(ht_am);
+
+	return buf.data;
+}
+
+/*
+ * Based on pg_get_constraintdef()
+ */
+Datum
+ag_get_graphconstraintdef(PG_FUNCTION_ARGS)
+{
+	Oid			constraintId = PG_GETARG_OID(0);
+	int			prettyFlags;
+	char	   *res;
+
+	prettyFlags = PRETTYFLAG_PAREN | PRETTYFLAG_INDENT;
+
+	res = ag_get_graphconstraintdef_worker(constraintId, prettyFlags, true);
+
+	if (res == NULL)
+		PG_RETURN_NULL();
+
+	PG_RETURN_TEXT_P(string_to_text(res));
+}
+
+/*
+ * Based on pg_get_constraintdef_worker()
+ */
+static char *
+ag_get_graphconstraintdef_worker(Oid constraintId, int prettyFlags,
+								 bool missing_ok)
+{
+	HeapTuple	tup;
+	Form_pg_constraint conForm;
+	StringInfoData buf;
+	SysScanDesc scandesc;
+	ScanKeyData scankey[1];
+	Snapshot	snapshot = RegisterSnapshot(GetTransactionSnapshot());
+	Relation	relation = heap_open(ConstraintRelationId, AccessShareLock);
+
+	ScanKeyInit(&scankey[0],
+				Anum_pg_constraint_oid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(constraintId));
+
+	scandesc = systable_beginscan(relation,
+								  ConstraintOidIndexId,
+								  true,
+								  snapshot,
+								  1,
+								  scankey);
+
+	/*
+	 * We later use the tuple with SysCacheGetAttr() as if we had obtained it
+	 * via SearchSysCache, which works fine.
+	 */
+	tup = systable_getnext(scandesc);
+
+	UnregisterSnapshot(snapshot);
+
+	if (!HeapTupleIsValid(tup))
+	{
+		if (missing_ok)
+		{
+			systable_endscan(scandesc);
+			heap_close(relation, AccessShareLock);
+			return NULL;
+		}
+		elog(ERROR, "cache lookup failed for constraint %u", constraintId);
+	}
+
+	conForm = (Form_pg_constraint) GETSTRUCT(tup);
+
+	initStringInfo(&buf);
+
+	switch (conForm->contype)
+	{
+		case CONSTRAINT_CHECK:
+			{
+				Datum		val;
+				bool		isnull;
+				char	   *conbin;
+				char	   *consrc;
+				Node	   *expr;
+				List	   *context;
+
+				/* Fetch constraint expression in parsetree form */
+				val = SysCacheGetAttr(CONSTROID, tup,
+									  Anum_pg_constraint_conbin, &isnull);
+				if (isnull)
+					elog(ERROR, "null conbin for constraint %u",
+						 constraintId);
+
+				conbin = TextDatumGetCString(val);
+				expr = stringToNode(conbin);
+
+				/* Set up deparsing context for Var nodes in constraint */
+				if (conForm->conrelid != InvalidOid)
+				{
+					/* relation constraint */
+					context = deparse_context_for(get_relation_name(conForm->conrelid),
+												  conForm->conrelid);
+				}
+				else
+				{
+					/* domain constraint --- can't have Vars */
+					context = NIL;
+				}
+
+				consrc = deparse_prop_expression_pretty(expr, context,
+														prettyFlags);
+
+				appendStringInfo(&buf, "ASSERT (%s)", consrc);
+				break;
+			}
+		/* Unique constraint on AgensGraph is implemented using exclude index */
+		case CONSTRAINT_EXCLUSION:
+			{
+				Oid			indexOid = conForm->conindid;
+				Datum		val;
+				bool		isnull;
+				Datum	   *elems;
+				int			nElems;
+				int			i;
+				Oid		   *operators;
+
+				/* Extract operator OIDs from the pg_constraint tuple */
+				val = SysCacheGetAttr(CONSTROID, tup,
+									  Anum_pg_constraint_conexclop,
+									  &isnull);
+				if (isnull)
+					elog(ERROR, "null conexclop for constraint %u",
+						 constraintId);
+
+				deconstruct_array(DatumGetArrayTypeP(val),
+								  OIDOID, sizeof(Oid), true, 'i',
+								  &elems, NULL, &nElems);
+
+				operators = (Oid *) palloc(nElems * sizeof(Oid));
+				for (i = 0; i < nElems; i++)
+					operators[i] = DatumGetObjectId(elems[i]);
+
+				/* pg_get_indexdef_worker does the rest */
+				/* suppress tablespace because pg_dump wants it that way */
+				appendStringInfoString(&buf,
+									   ag_get_propindexdef_worker(indexOid,
+																  operators,
+																  prettyFlags,
+																  false));
+				break;
+			}
+		case CONSTRAINT_FOREIGN:
+		case CONSTRAINT_PRIMARY:
+		case CONSTRAINT_UNIQUE:
+		case CONSTRAINT_TRIGGER:
+			elog(ERROR, "invalid graph constraint type '%c'", conForm->contype);
+			break;
+		default:
+			elog(ERROR, "invalid constraint type \"%c\"", conForm->contype);
+			break;
+	}
+
+	if (conForm->condeferrable)
+		appendStringInfoString(&buf, " DEFERRABLE");
+	if (conForm->condeferred)
+		appendStringInfoString(&buf, " INITIALLY DEFERRED");
+	if (!conForm->convalidated)
+		appendStringInfoString(&buf, " NOT VALID");
+
+	/* Cleanup */
+	systable_endscan(scandesc);
+	heap_close(relation, AccessShareLock);
+
+	return buf.data;
+}
+
+/*
+ * agens-graph utility for deparsing expressions
+ */
+static char *
+deparse_prop_expression_pretty(Node *expr, List *dpcontext, int prettyFlags)
+{
+	StringInfoData si;
+	deparse_context context;
+
+	initStringInfo(&si);
+
+	context.buf = &si;
+	context.namespaces = dpcontext;
+	context.windowClause = NIL;
+	context.windowTList = NIL;
+	context.varprefix = false;
+	context.prettyFlags = prettyFlags;
+	context.wrapColumn = WRAP_COLUMN_DEFAULT;
+	context.indentLevel = 0;
+	context.special_exprkind = EXPR_KIND_NONE;
+	context.cypherexpr = true;
+
+	get_rule_expr(expr, &context, false);
+
+	return si.data;
 }

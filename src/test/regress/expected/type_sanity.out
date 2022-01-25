@@ -197,7 +197,7 @@ WHERE p1.typinput = p2.oid AND p2.provolatile NOT IN ('i', 's');
 SELECT DISTINCT typtype, typinput
 FROM pg_type AS p1
 WHERE p1.typtype not in ('b', 'p')
-ORDER BY 1;
+ORDER BY 1, 2;
  typtype | typinput  
 ---------+-----------
  c       | record_in
@@ -242,13 +242,16 @@ WHERE p1.typoutput = p2.oid AND p2.provolatile NOT IN ('i', 's');
 SELECT DISTINCT typtype, typoutput
 FROM pg_type AS p1
 WHERE p1.typtype not in ('b', 'd', 'p')
-ORDER BY 1;
- typtype | typoutput  
----------+------------
+ORDER BY 1, 2;
+ typtype |   typoutput   
+---------+---------------
  c       | record_out
+ c       | vertex_out
+ c       | edge_out
+ c       | graphpath_out
  e       | enum_out
  r       | range_out
-(3 rows)
+(6 rows)
 
 -- Domains should have same typoutput as their base types
 SELECT p1.oid, p1.typname, p2.oid, p2.typname
