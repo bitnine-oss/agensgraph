@@ -134,7 +134,7 @@ test: cypher_ddl
 test: cypher_func cypher_plpgsql
 
 # run cypher shortestpath test
-#test: cypher_shortestpath2
+test: cypher_shortestpath2
 
 # run sql restriction test
 test: sql_restriction
