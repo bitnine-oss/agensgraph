@@ -4,7 +4,7 @@
  *	 Implementation of generic xlog records.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/generic_xlog.c
@@ -61,22 +61,19 @@ typedef struct
 /* State of generic xlog record construction */
 struct GenericXLogState
 {
-	/*
-	 * page's images. Should be first in this struct to have MAXALIGN'ed
-	 * images addresses, because some code working with pages directly aligns
-	 * addresses, not offsets from beginning of page
-	 */
-	char		images[MAX_GENERIC_XLOG_PAGES * BLCKSZ];
+	/* Info about each page, see above */
 	PageData	pages[MAX_GENERIC_XLOG_PAGES];
 	bool		isLogged;
+	/* Page images (properly aligned) */
+	PGAlignedBlock images[MAX_GENERIC_XLOG_PAGES];
 };
 
 static void writeFragment(PageData *pageData, OffsetNumber offset,
-			  OffsetNumber len, const char *data);
+						  OffsetNumber len, const char *data);
 static void computeRegionDelta(PageData *pageData,
-				   const char *curpage, const char *targetpage,
-				   int targetStart, int targetEnd,
-				   int validStart, int validEnd);
+							   const char *curpage, const char *targetpage,
+							   int targetStart, int targetEnd,
+							   int validStart, int validEnd);
 static void computeDelta(PageData *pageData, Page curpage, Page targetpage);
 static void applyPageRedo(Page page, const char *delta, Size deltaSize);
 
@@ -251,12 +248,12 @@ computeDelta(PageData *pageData, Page curpage, Page targetpage)
 #ifdef WAL_DEBUG
 	if (XLOG_DEBUG)
 	{
-		char		tmp[BLCKSZ];
+		PGAlignedBlock tmp;
 
-		memcpy(tmp, curpage, BLCKSZ);
-		applyPageRedo(tmp, pageData->delta, pageData->deltaLen);
-		if (memcmp(tmp, targetpage, targetLower) != 0 ||
-			memcmp(tmp + targetUpper, targetpage + targetUpper,
+		memcpy(tmp.data, curpage, BLCKSZ);
+		applyPageRedo(tmp.data, pageData->delta, pageData->deltaLen);
+		if (memcmp(tmp.data, targetpage, targetLower) != 0 ||
+			memcmp(tmp.data + targetUpper, targetpage + targetUpper,
 				   BLCKSZ - targetUpper) != 0)
 			elog(ERROR, "result of generic xlog apply does not match");
 	}
@@ -277,7 +274,7 @@ GenericXLogStart(Relation relation)
 
 	for (i = 0; i < MAX_GENERIC_XLOG_PAGES; i++)
 	{
-		state->pages[i].image = state->images + BLCKSZ * i;
+		state->pages[i].image = state->images[i].data;
 		state->pages[i].buffer = InvalidBuffer;
 	}
 

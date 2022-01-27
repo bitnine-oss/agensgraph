@@ -6,7 +6,7 @@
  * with the walreceiver process. Functions implementing walreceiver itself
  * are in walreceiver.c.
  *
- * Portions Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -234,8 +234,8 @@ RequestXLogStreaming(TimeLineID tli, XLogRecPtr recptr, const char *conninfo,
 	 * being created by XLOG streaming, which might cause trouble later on if
 	 * the segment is e.g archived.
 	 */
-	if (recptr % XLogSegSize != 0)
-		recptr -= recptr % XLogSegSize;
+	if (XLogSegmentOffset(recptr, wal_segment_size) != 0)
+		recptr -= XLogSegmentOffset(recptr, wal_segment_size);
 
 	SpinLockAcquire(&walrcv->mutex);
 
@@ -320,10 +320,6 @@ GetReplicationApplyDelay(void)
 	WalRcvData *walrcv = WalRcv;
 	XLogRecPtr	receivePtr;
 	XLogRecPtr	replayPtr;
-
-	long		secs;
-	int			usecs;
-
 	TimestampTz chunkReplayStartTime;
 
 	SpinLockAcquire(&walrcv->mutex);
@@ -340,11 +336,8 @@ GetReplicationApplyDelay(void)
 	if (chunkReplayStartTime == 0)
 		return -1;
 
-	TimestampDifference(chunkReplayStartTime,
-						GetCurrentTimestamp(),
-						&secs, &usecs);
-
-	return (((int) secs * 1000) + (usecs / 1000));
+	return TimestampDifferenceMilliseconds(chunkReplayStartTime,
+										   GetCurrentTimestamp());
 }
 
 /*
@@ -355,24 +348,14 @@ int
 GetReplicationTransferLatency(void)
 {
 	WalRcvData *walrcv = WalRcv;
-
 	TimestampTz lastMsgSendTime;
 	TimestampTz lastMsgReceiptTime;
-
-	long		secs = 0;
-	int			usecs = 0;
-	int			ms;
 
 	SpinLockAcquire(&walrcv->mutex);
 	lastMsgSendTime = walrcv->lastMsgSendTime;
 	lastMsgReceiptTime = walrcv->lastMsgReceiptTime;
 	SpinLockRelease(&walrcv->mutex);
 
-	TimestampDifference(lastMsgSendTime,
-						lastMsgReceiptTime,
-						&secs, &usecs);
-
-	ms = ((int) secs * 1000) + (usecs / 1000);
-
-	return ms;
+	return TimestampDifferenceMilliseconds(lastMsgSendTime,
+										   lastMsgReceiptTime);
 }

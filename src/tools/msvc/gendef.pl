@@ -1,7 +1,6 @@
 use strict;
 use warnings;
 use 5.8.0;
-use File::Spec::Functions qw(splitpath catpath);
 use List::Util qw(max);
 
 my @def;
@@ -11,16 +10,6 @@ my @def;
 #
 # src/tools/msvc/gendef.pl
 #
-
-sub dumpsyms
-{
-	my ($objfile, $symfile) = @_;
-	my ($symvol, $symdirs, $symbase) = splitpath($symfile);
-	my $tmpfile = catpath($symvol, $symdirs, "symbols.out");
-	system("dumpbin /symbols /out:$tmpfile $_ >NUL")
-	  && die "Could not call dumpbin";
-	rename($tmpfile, $symfile);
-}
 
 # Given a symbol file path, loops over its contents
 # and returns a list of symbols of interest as a dictionary
@@ -36,40 +25,40 @@ sub extract_syms
 	while (<$f>)
 	{
 
-	# Expected symbol lines look like:
-	#
-	# 0   1        2      3            4            5 6
-	# IDX SYMBOL   SECT   SYMTYPE      SYMSTATIC      SYMNAME
-	# ------------------------------------------------------------------------
-	# 02E 00000130 SECTA  notype       External     | _standbyState
-	# 02F 00000009 SECT9  notype       Static       | _LocalRecoveryInProgress
-	# 064 00000020 SECTC  notype ()    Static       | _XLogCheckBuffer
-	# 065 00000000 UNDEF  notype ()    External     | _BufferGetTag
-	#
-	# See http://msdn.microsoft.com/en-us/library/b842y285.aspx
-	#
-	# We're not interested in the symbol index or offset.
-	#
-	# SECT[ION] is only examined to see whether the symbol is defined in a
-	# COFF section of the local object file; if UNDEF, it's a symbol to be
-	# resolved at link time from another object so we can't export it.
-	#
-	# SYMTYPE is always notype for C symbols as there's no typeinfo and no
-	# way to get the symbol type from name (de)mangling. However, we care
-	# if "notype" is suffixed by "()" or not. The presence of () means the
-	# symbol is a function, the absence means it isn't.
-	#
-	# SYMSTATIC indicates whether it's a compilation-unit local "static"
-	# symbol ("Static"), or whether it's available for use from other
-	# compilation units ("External"). We export all symbols that aren't
-	# static as part of the whole program DLL interface to produce UNIX-like
-	# default linkage.
-	#
-	# SYMNAME is, obviously, the symbol name. The leading underscore
-	# indicates that the _cdecl calling convention is used. See
-	# http://www.unixwiz.net/techtips/win32-callconv.html
-	# http://www.codeproject.com/Articles/1388/Calling-Conventions-Demystified
-	#
+		# Expected symbol lines look like:
+		#
+		# 0   1        2      3            4            5 6
+		# IDX SYMBOL   SECT   SYMTYPE      SYMSTATIC      SYMNAME
+		# ------------------------------------------------------------------------
+		# 02E 00000130 SECTA  notype       External     | _standbyState
+		# 02F 00000009 SECT9  notype       Static       | _LocalRecoveryInProgress
+		# 064 00000020 SECTC  notype ()    Static       | _XLogCheckBuffer
+		# 065 00000000 UNDEF  notype ()    External     | _BufferGetTag
+		#
+		# See http://msdn.microsoft.com/en-us/library/b842y285.aspx
+		#
+		# We're not interested in the symbol index or offset.
+		#
+		# SECT[ION] is only examined to see whether the symbol is defined in a
+		# COFF section of the local object file; if UNDEF, it's a symbol to be
+		# resolved at link time from another object so we can't export it.
+		#
+		# SYMTYPE is always notype for C symbols as there's no typeinfo and no
+		# way to get the symbol type from name (de)mangling. However, we care
+		# if "notype" is suffixed by "()" or not. The presence of () means the
+		# symbol is a function, the absence means it isn't.
+		#
+		# SYMSTATIC indicates whether it's a compilation-unit local "static"
+		# symbol ("Static"), or whether it's available for use from other
+		# compilation units ("External"). We export all symbols that aren't
+		# static as part of the whole program DLL interface to produce UNIX-like
+		# default linkage.
+		#
+		# SYMNAME is, obviously, the symbol name. The leading underscore
+		# indicates that the _cdecl calling convention is used. See
+		# http://www.unixwiz.net/techtips/win32-callconv.html
+		# http://www.codeproject.com/Articles/1388/Calling-Conventions-Demystified
+		#
 		s/notype \(\)/func/g;
 		s/notype/data/g;
 
@@ -116,6 +105,7 @@ sub extract_syms
 		$def->{ $pieces[6] } = $pieces[3];
 	}
 	close($f);
+	return;
 }
 
 sub writedef
@@ -143,6 +133,7 @@ sub writedef
 		}
 	}
 	close($fh);
+	return;
 }
 
 
@@ -155,8 +146,8 @@ sub usage
 
 usage()
   unless scalar(@ARGV) == 2
-	  && (   ($ARGV[0] =~ /\\([^\\]+$)/)
-		  && ($ARGV[1] eq 'Win32' || $ARGV[1] eq 'x64'));
+  && ( ($ARGV[0] =~ /\\([^\\]+$)/)
+	&& ($ARGV[1] eq 'Win32' || $ARGV[1] eq 'x64'));
 my $defname  = uc $1;
 my $deffile  = "$ARGV[0]/$defname.def";
 my $platform = $ARGV[1];
@@ -174,15 +165,12 @@ print "Generating $defname.DEF from directory $ARGV[0], platform $platform\n";
 
 my %def = ();
 
-while (<$ARGV[0]/*.obj>)    ## no critic (RequireGlobFunction);
-{
-	my $objfile = $_;
-	my $symfile = $objfile;
-	$symfile =~ s/\.obj$/.sym/i;
-	dumpsyms($objfile, $symfile);
-	print ".";
-	extract_syms($symfile, \%def);
-}
+my $symfile = "$ARGV[0]/all.sym";
+my $tmpfile = "$ARGV[0]/tmp.sym";
+system("dumpbin /symbols /out:$tmpfile $ARGV[0]/*.obj >NUL")
+  && die "Could not call dumpbin";
+rename($tmpfile, $symfile);
+extract_syms($symfile, \%def);
 print "\n";
 
 writedef($deffile, $platform, \%def);

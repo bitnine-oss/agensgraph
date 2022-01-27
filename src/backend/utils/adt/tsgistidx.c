@@ -3,7 +3,7 @@
  * tsgistidx.c
  *	  GiST support functions for tsvector_ops
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -16,6 +16,7 @@
 
 #include "access/gist.h"
 #include "access/tuptoaster.h"
+#include "port/pg_bitutils.h"
 #include "tsearch/ts_utils.h"
 #include "utils/builtins.h"
 #include "utils/pg_crc.h"
@@ -70,26 +71,6 @@ typedef struct
 #define GETARR(x)	( (int32*)( (char*)(x)+GTHDRSIZE ) )
 #define ARRNELEM(x) ( ( VARSIZE(x) - GTHDRSIZE )/sizeof(int32) )
 
-/* Number of one-bits in an unsigned byte */
-static const uint8 number_of_ones[256] = {
-	0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4,
-	1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5,
-	1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5,
-	2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
-	1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5,
-	2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
-	2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
-	3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7,
-	1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5,
-	2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
-	2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
-	3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7,
-	2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6,
-	3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7,
-	3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7,
-	4, 5, 5, 6, 5, 6, 6, 7, 5, 6, 6, 7, 6, 7, 7, 8
-};
-
 static int32 sizebitvec(BITVECP sign);
 
 Datum
@@ -110,7 +91,7 @@ static int	outbuf_maxlen = 0;
 Datum
 gtsvectorout(PG_FUNCTION_ARGS)
 {
-	SignTSVector *key = (SignTSVector *) DatumGetPointer(PG_DETOAST_DATUM(PG_GETARG_POINTER(0)));
+	SignTSVector *key = (SignTSVector *) PG_DETOAST_DATUM(PG_GETARG_POINTER(0));
 	char	   *outbuf;
 
 	if (outbuf_maxlen == 0)
@@ -240,7 +221,7 @@ gtsvector_compress(PG_FUNCTION_ARGS)
 		retval = (GISTENTRY *) palloc(sizeof(GISTENTRY));
 		gistentryinit(*retval, PointerGetDatum(res),
 					  entry->rel, entry->page,
-					  entry->offset, FALSE);
+					  entry->offset, false);
 	}
 	else if (ISSIGNKEY(DatumGetPointer(entry->key)) &&
 			 !ISALLTRUE(DatumGetPointer(entry->key)))
@@ -264,7 +245,7 @@ gtsvector_compress(PG_FUNCTION_ARGS)
 		retval = (GISTENTRY *) palloc(sizeof(GISTENTRY));
 		gistentryinit(*retval, PointerGetDatum(res),
 					  entry->rel, entry->page,
-					  entry->offset, FALSE);
+					  entry->offset, false);
 	}
 	PG_RETURN_POINTER(retval);
 }
@@ -272,8 +253,12 @@ gtsvector_compress(PG_FUNCTION_ARGS)
 Datum
 gtsvector_decompress(PG_FUNCTION_ARGS)
 {
+	/*
+	 * We need to detoast the stored value, because the other gtsvector
+	 * support functions don't cope with toasted values.
+	 */
 	GISTENTRY  *entry = (GISTENTRY *) PG_GETARG_POINTER(0);
-	SignTSVector *key = (SignTSVector *) DatumGetPointer(PG_DETOAST_DATUM(entry->key));
+	SignTSVector *key = (SignTSVector *) PG_DETOAST_DATUM(entry->key);
 
 	if (key != (SignTSVector *) DatumGetPointer(entry->key))
 	{
@@ -281,7 +266,7 @@ gtsvector_decompress(PG_FUNCTION_ARGS)
 
 		gistentryinit(*retval, PointerGetDatum(key),
 					  entry->rel, entry->page,
-					  entry->offset, FALSE);
+					  entry->offset, false);
 
 		PG_RETURN_POINTER(retval);
 	}
@@ -317,14 +302,14 @@ checkcondition_arr(void *checkval, QueryOperand *val, ExecPhraseData *data)
 	{
 		StopMiddle = StopLow + (StopHigh - StopLow) / 2;
 		if (*StopMiddle == val->valcrc)
-			return (true);
+			return true;
 		else if (*StopMiddle < val->valcrc)
 			StopLow = StopMiddle + 1;
 		else
 			StopHigh = StopMiddle;
 	}
 
-	return (false);
+	return false;
 }
 
 static bool
@@ -499,12 +484,7 @@ gtsvector_same(PG_FUNCTION_ARGS)
 static int32
 sizebitvec(BITVECP sign)
 {
-	int32		size = 0,
-				i;
-
-	LOOPBYTE
-		size += number_of_ones[(unsigned char) sign[i]];
-	return size;
+	return pg_popcount(sign, SIGLEN);
 }
 
 static int
@@ -517,7 +497,8 @@ hemdistsign(BITVECP a, BITVECP b)
 	LOOPBYTE
 	{
 		diff = (unsigned char) (a[i] ^ b[i]);
-		dist += number_of_ones[diff];
+		/* Using the popcount functions here isn't likely to win */
+		dist += pg_number_of_ones[diff];
 	}
 	return dist;
 }

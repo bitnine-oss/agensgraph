@@ -8,7 +8,7 @@
  * special I/O conversion routines.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -43,7 +43,7 @@
 static char *format_operator_internal(Oid operator_oid, bool force_qualify);
 static char *format_procedure_internal(Oid procedure_oid, bool force_qualify);
 static void parseNameAndArgTypes(const char *string, bool allowNone,
-					 List **names, int *nargs, Oid *argtypes);
+								 List **names, int *nargs, Oid *argtypes);
 
 
 /*****************************************************************************
@@ -1728,7 +1728,7 @@ stringToQualifiedNameList(const char *string)
  * the argtypes array should be of size FUNC_MAX_ARGS).  The function or
  * operator name is returned to *names as a List of Strings.
  *
- * If allowNone is TRUE, accept "NONE" and return it as InvalidOid (this is
+ * If allowNone is true, accept "NONE" and return it as InvalidOid (this is
  * for unary operators).
  */
 static void

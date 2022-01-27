@@ -3,7 +3,7 @@
  * pg_proc.c
  *	  routines to support manipulation of the pg_proc relation
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,14 +15,15 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
+#include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_proc_fn.h"
 #include "catalog/pg_transform.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
@@ -49,10 +50,10 @@ typedef struct
 } parse_error_callback_arg;
 
 static void sql_function_parse_error_callback(void *arg);
-static int match_prosrc_to_query(const char *prosrc, const char *queryText,
-					  int cursorpos);
+static int	match_prosrc_to_query(const char *prosrc, const char *queryText,
+								  int cursorpos);
 static bool match_prosrc_to_literal(const char *prosrc, const char *literal,
-						int cursorpos, int *newcursorpos);
+									int cursorpos, int *newcursorpos);
 
 
 /* ----------------------------------------------------------------
@@ -60,7 +61,7 @@ static bool match_prosrc_to_literal(const char *prosrc, const char *literal,
  *
  * Note: allParameterTypes, parameterModes, parameterNames, trftypes, and proconfig
  * are either arrays of the proper types or NULL.  We declare them Datum,
- * not "ArrayType *", to avoid importing array.h into pg_proc_fn.h.
+ * not "ArrayType *", to avoid importing array.h into pg_proc.h.
  * ----------------------------------------------------------------
  */
 ObjectAddress
@@ -74,8 +75,7 @@ ProcedureCreate(const char *procedureName,
 				Oid languageValidator,
 				const char *prosrc,
 				const char *probin,
-				bool isAgg,
-				bool isWindowFunc,
+				char prokind,
 				bool security_definer,
 				bool isLeakProof,
 				bool isStrict,
@@ -88,6 +88,7 @@ ProcedureCreate(const char *procedureName,
 				List *parameterDefaults,
 				Datum trftypes,
 				Datum proconfig,
+				Oid prosupport,
 				float4 procost,
 				float4 prorows)
 {
@@ -110,7 +111,6 @@ ProcedureCreate(const char *procedureName,
 	bool		nulls[Natts_pg_proc];
 	Datum		values[Natts_pg_proc];
 	bool		replaces[Natts_pg_proc];
-	Oid			relid;
 	NameData	procname;
 	TupleDesc	tupDesc;
 	bool		is_update;
@@ -256,20 +256,6 @@ ProcedureCreate(const char *procedureName,
 				 errmsg("unsafe use of pseudo-type \"internal\""),
 				 errdetail("A function returning \"internal\" must have at least one \"internal\" argument.")));
 
-	/*
-	 * don't allow functions of complex types that have the same name as
-	 * existing attributes of the type
-	 */
-	if (parameterCount == 1 &&
-		OidIsValid(parameterTypes->values[0]) &&
-		(relid = typeidTypeRelid(parameterTypes->values[0])) != InvalidOid &&
-		get_attnum(relid, procedureName) != InvalidAttrNumber)
-		ereport(ERROR,
-				(errcode(ERRCODE_DUPLICATE_COLUMN),
-				 errmsg("\"%s\" is already an attribute of type %s",
-						procedureName,
-						format_type_be(parameterTypes->values[0]))));
-
 	if (paramModes != NULL)
 	{
 		/*
@@ -334,9 +320,8 @@ ProcedureCreate(const char *procedureName,
 	values[Anum_pg_proc_procost - 1] = Float4GetDatum(procost);
 	values[Anum_pg_proc_prorows - 1] = Float4GetDatum(prorows);
 	values[Anum_pg_proc_provariadic - 1] = ObjectIdGetDatum(variadicType);
-	values[Anum_pg_proc_protransform - 1] = ObjectIdGetDatum(InvalidOid);
-	values[Anum_pg_proc_proisagg - 1] = BoolGetDatum(isAgg);
-	values[Anum_pg_proc_proiswindow - 1] = BoolGetDatum(isWindowFunc);
+	values[Anum_pg_proc_prosupport - 1] = ObjectIdGetDatum(prosupport);
+	values[Anum_pg_proc_prokind - 1] = CharGetDatum(prokind);
 	values[Anum_pg_proc_prosecdef - 1] = BoolGetDatum(security_definer);
 	values[Anum_pg_proc_proleakproof - 1] = BoolGetDatum(isLeakProof);
 	values[Anum_pg_proc_proisstrict - 1] = BoolGetDatum(isStrict);
@@ -378,7 +363,7 @@ ProcedureCreate(const char *procedureName,
 		nulls[Anum_pg_proc_proconfig - 1] = true;
 	/* proacl will be determined later */
 
-	rel = heap_open(ProcedureRelationId, RowExclusiveLock);
+	rel = table_open(ProcedureRelationId, RowExclusiveLock);
 	tupDesc = RelationGetDescr(rel);
 
 	/* Check for pre-existing definition */
@@ -393,27 +378,59 @@ ProcedureCreate(const char *procedureName,
 		Form_pg_proc oldproc = (Form_pg_proc) GETSTRUCT(oldtup);
 		Datum		proargnames;
 		bool		isnull;
+		const char *dropcmd;
 
 		if (!replace)
 			ereport(ERROR,
 					(errcode(ERRCODE_DUPLICATE_FUNCTION),
 					 errmsg("function \"%s\" already exists with same argument types",
 							procedureName)));
-		if (!pg_proc_ownercheck(HeapTupleGetOid(oldtup), proowner))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_PROC,
+		if (!pg_proc_ownercheck(oldproc->oid, proowner))
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_FUNCTION,
 						   procedureName);
+
+		/* Not okay to change routine kind */
+		if (oldproc->prokind != prokind)
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("cannot change routine kind"),
+					 (oldproc->prokind == PROKIND_AGGREGATE ?
+					  errdetail("\"%s\" is an aggregate function.", procedureName) :
+					  oldproc->prokind == PROKIND_FUNCTION ?
+					  errdetail("\"%s\" is a function.", procedureName) :
+					  oldproc->prokind == PROKIND_PROCEDURE ?
+					  errdetail("\"%s\" is a procedure.", procedureName) :
+					  oldproc->prokind == PROKIND_WINDOW ?
+					  errdetail("\"%s\" is a window function.", procedureName) :
+					  0)));
+
+		dropcmd = (prokind == PROKIND_PROCEDURE ? "DROP PROCEDURE" :
+				   prokind == PROKIND_AGGREGATE ? "DROP AGGREGATE" :
+				   "DROP FUNCTION");
 
 		/*
 		 * Not okay to change the return type of the existing proc, since
 		 * existing rules, views, etc may depend on the return type.
+		 *
+		 * In case of a procedure, a changing return type means that whether
+		 * the procedure has output parameters was changed.  Since there is no
+		 * user visible return type, we produce a more specific error message.
 		 */
 		if (returnType != oldproc->prorettype ||
 			returnsSet != oldproc->proretset)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
-					 errmsg("cannot change return type of existing function"),
-					 errhint("Use DROP FUNCTION %s first.",
-							 format_procedure(HeapTupleGetOid(oldtup)))));
+					 prokind == PROKIND_PROCEDURE
+					 ? errmsg("cannot change whether a procedure has output parameters")
+					 : errmsg("cannot change return type of existing function"),
+
+			/*
+			 * translator: first %s is DROP FUNCTION, DROP PROCEDURE, or DROP
+			 * AGGREGATE
+			 */
+					 errhint("Use %s %s first.",
+							 dropcmd,
+							 format_procedure(oldproc->oid))));
 
 		/*
 		 * If it returns RECORD, check for possible change of record type
@@ -425,7 +442,8 @@ ProcedureCreate(const char *procedureName,
 			TupleDesc	newdesc;
 
 			olddesc = build_function_result_tupdesc_t(oldtup);
-			newdesc = build_function_result_tupdesc_d(allParameterTypes,
+			newdesc = build_function_result_tupdesc_d(prokind,
+													  allParameterTypes,
 													  parameterModes,
 													  parameterNames);
 			if (olddesc == NULL && newdesc == NULL)
@@ -436,8 +454,10 @@ ProcedureCreate(const char *procedureName,
 						(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 						 errmsg("cannot change return type of existing function"),
 						 errdetail("Row type defined by OUT parameters is different."),
-						 errhint("Use DROP FUNCTION %s first.",
-								 format_procedure(HeapTupleGetOid(oldtup)))));
+				/* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
+						 errhint("Use %s %s first.",
+								 dropcmd,
+								 format_procedure(oldproc->oid))));
 		}
 
 		/*
@@ -479,8 +499,10 @@ ProcedureCreate(const char *procedureName,
 							(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 							 errmsg("cannot change name of input parameter \"%s\"",
 									old_arg_names[j]),
-							 errhint("Use DROP FUNCTION %s first.",
-									 format_procedure(HeapTupleGetOid(oldtup)))));
+					/* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
+							 errhint("Use %s %s first.",
+									 dropcmd,
+									 format_procedure(oldproc->oid))));
 			}
 		}
 
@@ -503,8 +525,10 @@ ProcedureCreate(const char *procedureName,
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 						 errmsg("cannot remove parameter defaults from existing function"),
-						 errhint("Use DROP FUNCTION %s first.",
-								 format_procedure(HeapTupleGetOid(oldtup)))));
+				/* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
+						 errhint("Use %s %s first.",
+								 dropcmd,
+								 format_procedure(oldproc->oid))));
 
 			proargdefaults = SysCacheGetAttr(PROCNAMEARGSNSP, oldtup,
 											 Anum_pg_proc_proargdefaults,
@@ -529,44 +553,19 @@ ProcedureCreate(const char *procedureName,
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 							 errmsg("cannot change data type of existing parameter default value"),
-							 errhint("Use DROP FUNCTION %s first.",
-									 format_procedure(HeapTupleGetOid(oldtup)))));
+					/* translator: first %s is DROP FUNCTION or DROP PROCEDURE */
+							 errhint("Use %s %s first.",
+									 dropcmd,
+									 format_procedure(oldproc->oid))));
 				newlc = lnext(newlc);
 			}
 		}
 
-		/* Can't change aggregate or window-function status, either */
-		if (oldproc->proisagg != isAgg)
-		{
-			if (oldproc->proisagg)
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("function \"%s\" is an aggregate function",
-								procedureName)));
-			else
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("function \"%s\" is not an aggregate function",
-								procedureName)));
-		}
-		if (oldproc->proiswindow != isWindowFunc)
-		{
-			if (oldproc->proiswindow)
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("function \"%s\" is a window function",
-								procedureName)));
-			else
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("function \"%s\" is not a window function",
-								procedureName)));
-		}
-
 		/*
-		 * Do not change existing ownership or permissions, either.  Note
+		 * Do not change existing oid, ownership or permissions, either.  Note
 		 * dependency-update code below has to agree with this decision.
 		 */
+		replaces[Anum_pg_proc_oid - 1] = false;
 		replaces[Anum_pg_proc_proowner - 1] = false;
 		replaces[Anum_pg_proc_proacl - 1] = false;
 
@@ -580,22 +579,26 @@ ProcedureCreate(const char *procedureName,
 	else
 	{
 		/* Creating a new procedure */
+		Oid			newOid;
 
 		/* First, get default permissions and set up proacl */
-		proacl = get_user_default_acl(ACL_OBJECT_FUNCTION, proowner,
+		proacl = get_user_default_acl(OBJECT_FUNCTION, proowner,
 									  procNamespace);
 		if (proacl != NULL)
 			values[Anum_pg_proc_proacl - 1] = PointerGetDatum(proacl);
 		else
 			nulls[Anum_pg_proc_proacl - 1] = true;
 
+		newOid = GetNewOidWithIndex(rel, ProcedureOidIndexId,
+									Anum_pg_proc_oid);
+		values[Anum_pg_proc_oid - 1] = ObjectIdGetDatum(newOid);
 		tup = heap_form_tuple(tupDesc, values, nulls);
 		CatalogTupleInsert(rel, tup);
 		is_update = false;
 	}
 
 
-	retval = HeapTupleGetOid(tup);
+	retval = ((Form_pg_proc) GETSTRUCT(tup))->oid;
 
 	/*
 	 * Create dependencies for the new function.  If we are updating an
@@ -660,22 +663,23 @@ ProcedureCreate(const char *procedureName,
 		recordDependencyOnExpr(&myself, (Node *) parameterDefaults,
 							   NIL, DEPENDENCY_NORMAL);
 
+	/* dependency on support function, if any */
+	if (OidIsValid(prosupport))
+	{
+		referenced.classId = ProcedureRelationId;
+		referenced.objectId = prosupport;
+		referenced.objectSubId = 0;
+		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
+	}
+
 	/* dependency on owner */
 	if (!is_update)
 		recordDependencyOnOwner(ProcedureRelationId, retval, proowner);
 
 	/* dependency on any roles mentioned in ACL */
-	if (!is_update && proacl != NULL)
-	{
-		int			nnewmembers;
-		Oid		   *newmembers;
-
-		nnewmembers = aclmembers(proacl, &newmembers);
-		updateAclDependencies(ProcedureRelationId, retval, 0,
-							  proowner,
-							  0, NULL,
-							  nnewmembers, newmembers);
-	}
+	if (!is_update)
+		recordDependencyOnNewAcl(ProcedureRelationId, retval, 0,
+								 proowner, proacl);
 
 	/* dependency on extension */
 	recordDependencyOnCurrentExtension(&myself, is_update);
@@ -685,7 +689,7 @@ ProcedureCreate(const char *procedureName,
 	/* Post creation hook for new function */
 	InvokeObjectPostCreateHook(ProcedureRelationId, retval, 0);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	/* Verify function body */
 	if (OidIsValid(languageValidator))
@@ -940,6 +944,7 @@ fmgr_sql_validator(PG_FUNCTION_ARGS)
 											 querytree_sublist);
 			}
 
+			check_sql_fn_statements(querytree_list);
 			(void) check_sql_fn_retval(funcoid, proc->prorettype,
 									   querytree_list,
 									   NULL, NULL);

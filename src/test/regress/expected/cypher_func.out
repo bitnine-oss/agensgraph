@@ -212,40 +212,38 @@ drop cascades to vlabel d
 -- Added test for AG249, use ln() for all log() calls
 -- Create initial graph
 CREATE GRAPH ag249_log_to_ln;
-SET graph_path = ag249_log;
-ERROR:  invalid value for parameter "graph_path": "ag249_log"
-DETAIL:  graph "ag249_log" does not exist.
+SET graph_path = ag249_log_to_ln;
 CREATE VLABEL numbers;
 CREATE (:numbers {string: '10', numeric: 10});
 -- These should fail as there is no rule to cast from string to numeric
 MATCH (u:numbers) RETURN log(u.string);
-ERROR:  "10" cannot be converted to numeric
+ERROR:  cannot cast "10" (jsonb type string) to numeric
 MATCH (u:numbers) RETURN ln(u.string);
-ERROR:  "10" cannot be converted to numeric
+ERROR:  cannot cast "10" (jsonb type string) to numeric
 MATCH (u:numbers) RETURN log10(u.string);
 ERROR:  log10(): number is expected but "10"
 -- Check that log() == ln() != log10
 MATCH (u:numbers) RETURN log(u.numeric), ln(u.numeric), log10(u.numeric);
-         ln         |         ln         |       log10        
---------------------+--------------------+--------------------
- 2.3025850929940457 | 2.3025850929940457 | 1.0000000000000000
-(1 row)
-
+ERROR:  numeric field overflow
+DETAIL:  A field with precision 0, scale 60 must round to an absolute value less than 10^-60.
 -- Check with a string constant
 RETURN log('10'), ln('10'), log10('10');
-ERROR:  log10(): number is expected but "10"
+ERROR:  function log10(unknown) is not unique
+LINE 1: RETURN log('10'), ln('10'), log10('10');
+                                    ^
+HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
 -- Check with a numeric constant;
 RETURN log(10), ln(10), log10(10);
-        ln        |        ln        |       log10        
-------------------+------------------+--------------------
- 2.30258509299405 | 2.30258509299405 | 1.0000000000000000
+        ln         |        ln         | log10 
+-------------------+-------------------+-------
+ 2.302585092994046 | 2.302585092994046 | 1
 (1 row)
 
 -- Check hybrid query
 return log10(10), (select log(10));
-       log10        | log 
---------------------+-----
- 1.0000000000000000 | 1
+ log10 | log 
+-------+-----
+ 1     | 1
 (1 row)
 
 -- cleanup
@@ -255,6 +253,53 @@ DETAIL:  drop cascades to sequence ag249_log_to_ln.ag_label_seq
 drop cascades to vlabel ag_vertex
 drop cascades to elabel ag_edge
 drop cascades to vlabel numbers
+-- Added tests for AG222. These tests test the new function
+-- get_last_graph_write_stats(). Which is provided to allow
+-- access to statistics on the last graph write operation.
+CREATE GRAPH ag222;
+SET graph_path = ag222;
+CREATE VLABEL vertices;
+CREATE ELABEL edges;
+-- Should return only 2 inserted vertices and 1 inserted edge
+create (:vertices {name: 'Boston'})-[:edges]->(:vertices {name: 'Miami'});
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                2 |             1 |               0 |            0 |                 0
+(1 row)
+
+-- Should return only 2 updated properties
+MATCH (u:vertices) SET u.property = true;
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               0 |            0 |                 2
+(1 row)
+
+-- Should return only 1 deleted edge
+match (u:vertices)-[e:edges]-() delete e;
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               0 |            1 |                 0
+(1 row)
+
+-- Should return only 2 deleted vertices
+match (u) delete u;
+SELECT * FROM get_last_graph_write_stats();
+ insertedvertices | insertededges | deletedvertices | deletededges | updatedproperties 
+------------------+---------------+-----------------+--------------+-------------------
+                0 |             0 |               2 |            0 |                 0
+(1 row)
+
+-- cleanup
+DROP GRAPH ag222 CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence ag222.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel vertices
+drop cascades to elabel edges
 -- Added test for AG-283
 CREATE GRAPH AG283;
 CREATE ({name: 'arc 0', degree: 0});

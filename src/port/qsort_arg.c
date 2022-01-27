@@ -48,7 +48,7 @@
 
 
 static char *med3(char *a, char *b, char *c,
-	 qsort_arg_comparator cmp, void *arg);
+				  qsort_arg_comparator cmp, void *arg);
 static void swapfunc(char *, char *, size_t, int);
 
 /*
@@ -80,7 +80,7 @@ do {		\
 } while (0)
 
 #define SWAPINIT(a, es) swaptype = ((char *)(a) - (char *)0) % sizeof(long) || \
-	(es) % sizeof(long) ? 2 : (es) == sizeof(long)? 0 : 1;
+	(es) % sizeof(long) ? 2 : (es) == sizeof(long)? 0 : 1
 
 static void
 swapfunc(char *a, char *b, size_t n, int swaptype)

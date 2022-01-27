@@ -6,8 +6,10 @@
 
 #include "postgres.h"
 
+#include "access/xact.h"
 #include "mb/pg_wchar.h"
 #include "utils/builtins.h"
+#include "utils/snapmgr.h"
 
 #include "plpython.h"
 
@@ -15,6 +17,7 @@
 
 #include "plpy_cursorobject.h"
 #include "plpy_elog.h"
+#include "plpy_main.h"
 #include "plpy_planobject.h"
 #include "plpy_resultobject.h"
 #include "plpy_spi.h"
@@ -26,8 +29,8 @@ HTAB	   *PLy_spi_exceptions = NULL;
 
 static void PLy_add_exceptions(PyObject *plpy);
 static PyObject *PLy_create_exception(char *name,
-					 PyObject *base, PyObject *dict,
-					 const char *modname, PyObject *mod);
+									  PyObject *base, PyObject *dict,
+									  const char *modname, PyObject *mod);
 static void PLy_generate_spi_exceptions(PyObject *mod, PyObject *base);
 
 /* module functions */
@@ -41,6 +44,8 @@ static PyObject *PLy_fatal(PyObject *self, PyObject *args, PyObject *kw);
 static PyObject *PLy_quote_literal(PyObject *self, PyObject *args);
 static PyObject *PLy_quote_nullable(PyObject *self, PyObject *args);
 static PyObject *PLy_quote_ident(PyObject *self, PyObject *args);
+static PyObject *PLy_commit(PyObject *self, PyObject *args);
+static PyObject *PLy_rollback(PyObject *self, PyObject *args);
 
 
 /* A list of all known exceptions, generated from backend/utils/errcodes.txt */
@@ -95,6 +100,12 @@ static PyMethodDef PLy_methods[] = {
 	 */
 	{"cursor", PLy_cursor, METH_VARARGS, NULL},
 
+	/*
+	 * transaction control
+	 */
+	{"commit", PLy_commit, METH_NOARGS, NULL},
+	{"rollback", PLy_rollback, METH_NOARGS, NULL},
+
 	{NULL, NULL, 0, NULL}
 };
 
@@ -104,23 +115,17 @@ static PyMethodDef PLy_exc_methods[] = {
 
 #if PY_MAJOR_VERSION >= 3
 static PyModuleDef PLy_module = {
-	PyModuleDef_HEAD_INIT,		/* m_base */
-	"plpy",						/* m_name */
-	NULL,						/* m_doc */
-	-1,							/* m_size */
-	PLy_methods,				/* m_methods */
+	PyModuleDef_HEAD_INIT,
+	.m_name = "plpy",
+	.m_size = -1,
+	.m_methods = PLy_methods,
 };
 
 static PyModuleDef PLy_exc_module = {
-	PyModuleDef_HEAD_INIT,		/* m_base */
-	"spiexceptions",			/* m_name */
-	NULL,						/* m_doc */
-	-1,							/* m_size */
-	PLy_exc_methods,			/* m_methods */
-	NULL,						/* m_reload */
-	NULL,						/* m_traverse */
-	NULL,						/* m_clear */
-	NULL						/* m_free */
+	PyModuleDef_HEAD_INIT,
+	.m_name = "spiexceptions",
+	.m_size = -1,
+	.m_methods = PLy_exc_methods,
 };
 
 /*
@@ -233,7 +238,7 @@ PLy_create_exception(char *name, PyObject *base, PyObject *dict,
 
 	exc = PyErr_NewException(name, base, dict);
 	if (exc == NULL)
-		PLy_elog(ERROR, "could not create exception \"%s\"", name);
+		PLy_elog(ERROR, NULL);
 
 	/*
 	 * PyModule_AddObject does not add a refcount to the object, for some odd
@@ -268,7 +273,7 @@ PLy_generate_spi_exceptions(PyObject *mod, PyObject *base)
 		PyObject   *dict = PyDict_New();
 
 		if (dict == NULL)
-			PLy_elog(ERROR, "could not generate SPI exceptions");
+			PLy_elog(ERROR, NULL);
 
 		sqlstate = PyString_FromString(unpack_sql_state(exception_map[i].sqlstate));
 		if (sqlstate == NULL)
@@ -293,7 +298,7 @@ PLy_generate_spi_exceptions(PyObject *mod, PyObject *base)
  * don't confuse these with PLy_elog
  */
 static PyObject *PLy_output(volatile int level, PyObject *self,
-		   PyObject *args, PyObject *kw);
+							PyObject *args, PyObject *kw);
 
 static PyObject *
 PLy_debug(PyObject *self, PyObject *args, PyObject *kw)
@@ -575,6 +580,33 @@ PLy_output(volatile int level, PyObject *self, PyObject *args, PyObject *kw)
 	/*
 	 * return a legal object so the interpreter will continue on its merry way
 	 */
-	Py_INCREF(Py_None);
-	return Py_None;
+	Py_RETURN_NONE;
+}
+
+static PyObject *
+PLy_commit(PyObject *self, PyObject *args)
+{
+	PLyExecutionContext *exec_ctx = PLy_current_execution_context();
+
+	SPI_commit();
+	SPI_start_transaction();
+
+	/* was cleared at transaction end, reset pointer */
+	exec_ctx->scratch_ctx = NULL;
+
+	Py_RETURN_NONE;
+}
+
+static PyObject *
+PLy_rollback(PyObject *self, PyObject *args)
+{
+	PLyExecutionContext *exec_ctx = PLy_current_execution_context();
+
+	SPI_rollback();
+	SPI_start_transaction();
+
+	/* was cleared at transaction end, reset pointer */
+	exec_ctx->scratch_ctx = NULL;
+
+	Py_RETURN_NONE;
 }

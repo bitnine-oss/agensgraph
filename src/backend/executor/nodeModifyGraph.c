@@ -11,7 +11,9 @@
 #include "postgres.h"
 
 #include "ag_const.h"
+#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/pg_type.h"
@@ -33,6 +35,7 @@
 #include "utils/rel.h"
 #include "utils/tuplestore.h"
 #include "utils/typcache.h"
+
 
 bool		enable_multiple_update = true;
 bool		auto_gather_graphmeta = false;
@@ -116,12 +119,15 @@ static void setSlotValueByName(TupleTableSlot *slot, Datum value, char *name);
 static void setSlotValueByAttnum(TupleTableSlot *slot, Datum value, int attnum);
 static Datum *makeDatumArray(ExprContext *econtext, int len);
 
+/* global variable - see postgres.c */
+extern GraphWriteStats graphWriteStats;
+
 ModifyGraphState *
 ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 {
 	ModifyGraphState *mgstate;
-	CommandId	svCid;
-	int			numResultRelInfo;
+	CommandId   	svCid;
+	int			    numResultRelInfo;
 
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -129,19 +135,26 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 	mgstate->ps.plan = (Plan *) mgplan;
 	mgstate->ps.state = estate;
 	mgstate->ps.ExecProcNode = ExecModifyGraph;
+    mgstate->ps.ps_ProjInfo = NULL;
 
 	/* Tuple desc for result is the same as the subplan. */
-	ExecInitResultTupleSlot(estate, &mgstate->ps);
-	ExecAssignResultType(&mgstate->ps,
-						 ExecTypeFromTL(mgplan->subplan->targetlist, false));
 
-	ExecAssignExprContext(estate, &mgstate->ps);
+    mgstate->ps.ps_ResultTupleSlot = ExecAllocTableSlot(&estate->es_tupleTable,
+                                     NULL,
+                                     &TTSOpsMinimalTuple);
 
-	mgstate->done = false;
-	mgstate->child_done = false;
-	mgstate->eagerness = mgplan->eagerness;
-	mgstate->modify_cid = GetCurrentCommandId(false) +
-						  (mgplan->nr_modify * MODIFY_CID_MAX);
+	mgstate->ps.ps_ResultTupleDesc = ExecTypeFromTL(mgplan->subplan->targetlist);
+    ExecSetSlotDescriptor(mgstate->ps.ps_ResultTupleSlot, mgstate->ps.ps_ResultTupleDesc);
+ 
+    ExecAssignExprContext(estate, &mgstate->ps);
+
+    Assert(mgstate->ps.ps_ProjInfo == NULL);
+
+    mgstate->done = false;
+    mgstate->child_done = false;
+    mgstate->eagerness = mgplan->eagerness;
+    mgstate->modify_cid = GetCurrentCommandId(false) +
+                          (mgplan->nr_modify * MODIFY_CID_MAX);
 
 	/*
 	 * Pass the lower limit of the CID of the current clause to the previous
@@ -156,11 +169,10 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 	estate->es_snapshot->curcid = svCid;
 
-	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate);
-
+	/* Hamid - Might be an issue with here with tupleslot */
+	mgstate->elemTupleSlot = ExecInitExtraTupleSlot(estate, NULL, &TTSOpsMinimalTuple);
 	mgstate->graphid = get_graph_path_oid();
 	mgstate->numOldRtable = list_length(estate->es_range_table);
-
 	mgstate->pattern = ExecInitGraphPattern(mgplan->pattern, mgstate);
 
 	/* Check to see if we have RTEs to add to the es_range_table. */
@@ -215,8 +227,10 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 
 		/* save the es_range_table index where we start adding our RTEs */
 		if (mgplan->ert_base_index == -1)
-			mgplan->ert_base_index = list_length(estate->es_range_table);
-
+        {
+			mgplan->ert_base_index = list_length(estate->es_range_table) - 1;
+            if (mgplan->ert_base_index <= 0) mgplan->ert_base_index = 0;
+        }
 		/* Process each new RTE to add. */
 		foreach(lt, mgplan->targets)
 		{
@@ -238,7 +252,8 @@ ExecInitModifyGraph(ModifyGraph *mgplan, EState *estate, int eflags)
 			if (mgplan->ert_base_index == mgstate->numOldRtable)
 			{
 				RangeTblEntry *our_rte = addRangeTableEntryForRelation(pstate,
-											relation, NULL, false, false);
+											relation, RowExclusiveLock,
+											NULL, false, false);
 
 				/*
 				 * remove the cell containing the RTE from pstate and reset
@@ -321,8 +336,8 @@ static TupleTableSlot *
 ExecModifyGraph(PlanState *pstate)
 {
 	ModifyGraphState *mgstate = castNode(ModifyGraphState, pstate);
-	ModifyGraph *plan = (ModifyGraph *) mgstate->ps.plan;
-	EState	   *estate = mgstate->ps.state;
+	ModifyGraph      *plan = (ModifyGraph *) mgstate->ps.plan;
+	EState	         *estate = mgstate->ps.state;
 
 	if (mgstate->done)
 		return NULL;
@@ -336,11 +351,13 @@ ExecModifyGraph(PlanState *pstate)
 
 			/* ExecInsertIndexTuples() uses per-tuple context. Reset it here. */
 			ResetPerTupleExprContext(estate);
+			
+            //if (pstate->ps_ExprContext)
+            //    ResetExprContext(pstate->ps_ExprContext);
 
-			/* pass lower bound CID to subplan */
+            /* pass lower bound CID to subplan */
 			svCid = estate->es_snapshot->curcid;
-			estate->es_snapshot->curcid =
-							mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
+			estate->es_snapshot->curcid = mgstate->modify_cid + MODIFY_CID_LOWER_BOUND;
 
 			slot = ExecProcNode(mgstate->subplan);
 
@@ -427,7 +444,7 @@ ExecModifyGraph(PlanState *pstate)
 			if (result->tts_isnull[i])
 				continue;
 
-			type = tupDesc->attrs[i]->atttypid;
+			type = tupDesc->attrs[i].atttypid;
 			if (type == VERTEXOID)
 			{
 				elem = getVertexFinal(mgstate, result->tts_values[i]);
@@ -445,7 +462,7 @@ ExecModifyGraph(PlanState *pstate)
 				 * deleting vertex array of the graphpath.
 				 */
 				if (isEdgeArrayOfPath(mgstate->exprs,
-									  NameStr(tupDesc->attrs[i]->attname)))
+									  NameStr(tupDesc->attrs[i].attname)))
 					continue;
 
 				elem = getPathFinal(mgstate, result->tts_values[i]);
@@ -523,27 +540,25 @@ ExecEndModifyGraph(ModifyGraphState *mgstate)
 static void
 initGraphWRStats(ModifyGraphState *mgstate, GraphWriteOp op)
 {
-	EState *estate = mgstate->ps.state;
-
 	if (mgstate->pattern != NIL)
 	{
 		Assert(op == GWROP_CREATE || op == GWROP_MERGE);
 
-		estate->es_graphwrstats.insertVertex = 0;
-		estate->es_graphwrstats.insertEdge = 0;
+		graphWriteStats.insertVertex = 0;
+		graphWriteStats.insertEdge = 0;
 	}
 	if (mgstate->exprs != NIL)
 	{
 		Assert(op == GWROP_DELETE);
 
-		estate->es_graphwrstats.deleteVertex = 0;
-		estate->es_graphwrstats.deleteEdge = 0;
+		graphWriteStats.deleteVertex = 0;
+		graphWriteStats.deleteEdge = 0;
 	}
 	if (mgstate->sets != NIL)
 	{
 		Assert(op == GWROP_SET || op == GWROP_MERGE);
 
-		estate->es_graphwrstats.updateProperty = 0;
+		graphWriteStats.updateProperty = 0;
 	}
 }
 
@@ -749,16 +764,16 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	ResultRelInfo *savedResultRelInfo;
 	Datum		vertex;
 	Datum		vertexProp;
-	HeapTuple	tuple;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
+    Assert(resultRelInfo->ri_RelationDesc);
 	savedResultRelInfo = estate->es_result_relation_info;
 	estate->es_result_relation_info = resultRelInfo;
 
 	vertex = findVertex(slot, gvertex, vid);
 
 	vertexProp = getVertexPropDatum(vertex);
-	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(vertexProp)))
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonbP(vertexProp)))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("jsonb object is expected for property map")));
@@ -773,13 +788,16 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecMaterializeSlot(elemTupleSlot);
+	//tuple = ExecFetchSlotHeapTuple(elemTupleSlot, false, NULL);
+	/*tuple = */
+    ExecMaterializeSlot(elemTupleSlot);
 
 	/*
 	 * Constraints might reference the tableoid column, so initialize
 	 * t_tableOid before evaluating them.
 	 */
-	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	//tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	/*
 	 * Check the constraints of the tuple
@@ -787,28 +805,24 @@ createVertex(ModifyGraphState *mgstate, GraphVertex *gvertex, Graphid *vid,
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
-	/*
-	 * insert the tuple normally
-	 *
-	 * NOTE: heap_insert() returns the cid of the new tuple in the t_self.
-	 */
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
-				mgstate->modify_cid + MODIFY_CID_OUTPUT,
-				0, NULL);
+    /* insert the tuple normally */
+     table_tuple_insert(resultRelInfo->ri_RelationDesc, elemTupleSlot,
+                        mgstate->modify_cid + MODIFY_CID_OUTPUT,
+                        0, NULL);
 
 	/* insert index entries for the tuple */
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self), estate, false,
+		ExecInsertIndexTuples(elemTupleSlot, estate, false,
 							  NULL, NIL);
 
 	vertex = makeGraphVertexDatum(elemTupleSlot->tts_values[0],
 								  elemTupleSlot->tts_values[1],
-								  PointerGetDatum(&tuple->t_self));
+								  PointerGetDatum(&elemTupleSlot->tts_tid));
 
 	if (gvertex->resno > 0)
 		setSlotValueByAttnum(slot, vertex, gvertex->resno);
 
-	estate->es_graphwrstats.insertVertex++;
+	graphWriteStats.insertVertex++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -826,7 +840,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Graphid		id = 0;
 	Datum		edge;
 	Datum		edgeProp;
-	HeapTuple	tuple;
+	//HeapTuple	tuple;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -836,7 +850,7 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Assert(edge != (Datum) 0);
 
 	edgeProp = getEdgePropDatum(edge);
-	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(edgeProp)))
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonbP(edgeProp)))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("jsonb object is expected for property map")));
@@ -853,31 +867,32 @@ createEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecMaterializeSlot(elemTupleSlot);
-
-	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	ExecMaterializeSlot(elemTupleSlot);
+	//tuple = ExecFetchSlotHeapTuple(elemTupleSlot, true, NULL);
+elemTupleSlot->tts_tableOid  = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
-				mgstate->modify_cid + MODIFY_CID_OUTPUT,
-				0, NULL);
+
+     table_tuple_insert(resultRelInfo->ri_RelationDesc, elemTupleSlot,
+                        mgstate->modify_cid + MODIFY_CID_OUTPUT,
+                        0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self), estate, false,
+		ExecInsertIndexTuples(elemTupleSlot, estate, false,
 							  NULL, NIL);
 
 	edge = makeGraphEdgeDatum(elemTupleSlot->tts_values[0],
 							  elemTupleSlot->tts_values[1],
 							  elemTupleSlot->tts_values[2],
 							  elemTupleSlot->tts_values[3],
-							  PointerGetDatum(&tuple->t_self));
+							  PointerGetDatum(&elemTupleSlot->tts_tid));
 
 	if (gedge->resno > 0)
 		setSlotValueByAttnum(slot, edge, gedge->resno);
 
-	estate->es_graphwrstats.insertEdge++;
+	graphWriteStats.insertEdge++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -944,7 +959,7 @@ ExecDeleteGraph(ModifyGraphState *mgstate, TupleTableSlot *slot)
 		 * vertex array of the graphpath.
 		 */
 		if (type == EDGEARRAYOID &&
-			tupDesc->attrs[attno - 1]->atttypid == GRAPHPATHOID)
+			tupDesc->attrs[attno - 1].atttypid == GRAPHPATHOID)
 			continue;
 
 		setSlotValueByAttnum(slot, (Datum) 0, attno);
@@ -998,8 +1013,8 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 	ResultRelInfo *resultRelInfo;
 	ResultRelInfo *savedResultRelInfo;
 	Relation	resultRelationDesc;
-	HTSU_Result	result;
-	HeapUpdateFailureData hufd;
+	TM_Result	result;
+	TM_FailureData tmfd;
 
 	relid = get_labid_relid(mgstate->graphid,
 							GraphidGetLabid(DatumGetGraphid(gid)));
@@ -1010,21 +1025,25 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 	resultRelationDesc = resultRelInfo->ri_RelationDesc;
 
 	/* see ExecDelete() */
-	result = heap_delete(resultRelationDesc, tid,
-						 mgstate->modify_cid + MODIFY_CID_OUTPUT,
-						 estate->es_crosscheck_snapshot, true, &hufd);
+	result = table_tuple_delete(resultRelationDesc, tid,
+						 mgstate->modify_cid + MODIFY_CID_OUTPUT, estate->es_snapshot,
+						 estate->es_crosscheck_snapshot, true, &tmfd, false);
+
 	switch (result)
 	{
-		case HeapTupleSelfUpdated:
+		case TM_SelfModified:
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("modifying the same element more than once cannot happen")));
 			return;
 
-		case HeapTupleMayBeUpdated:
+		case TM_Ok:
 			break;
 
-		case HeapTupleUpdated:
+		case TM_BeingModified:
+			break;
+
+		case TM_Updated:
 			/* TODO: A solution to concurrent update is needed. */
 			ereport(ERROR,
 					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
@@ -1042,12 +1061,12 @@ deleteElem(ModifyGraphState *mgstate, Datum gid, ItemPointer tid, Oid type)
 	 */
 
 	if (type == VERTEXOID)
-		estate->es_graphwrstats.deleteVertex++;
+		graphWriteStats.deleteVertex++;
 	else
 	{
 		Assert(type == EDGEOID);
 
-		estate->es_graphwrstats.deleteEdge++;
+		graphWriteStats.deleteEdge++;
 	}
 
 	estate->es_result_relation_info = savedResultRelInfo;
@@ -1083,8 +1102,7 @@ ExecSetGraph(ModifyGraphState *mgstate, GSPKind kind, TupleTableSlot *slot)
 	 * The results of previous clauses should be preserved.
 	 * So, shallow copying is used.
 	 */
-	copyVirtualTupleTableSlot(result, slot);
-
+    copyVirtualTupleTableSlot(result, slot);
 	foreach(ls, mgstate->sets)
 	{
 		GraphSetProp *gsp = lfirst(ls);
@@ -1170,6 +1188,7 @@ copyVirtualTupleTableSlot(TupleTableSlot *dstslot, TupleTableSlot *srcslot)
 {
 	int natts = srcslot->tts_tupleDescriptor->natts;
 
+	ExecClearTuple(dstslot);
 	ExecSetSlotDescriptor(dstslot, srcslot->tts_tupleDescriptor);
 
 	/* shallow copy */
@@ -1196,10 +1215,10 @@ findAndReflectNewestValue(ModifyGraphState *mgstate, TupleTableSlot *slot,
 		Datum	copyValue;
 
 		if (slot->tts_isnull[i] ||
-			slot->tts_tupleDescriptor->attrs[i]->attisdropped)
+			slot->tts_tupleDescriptor->attrs[i].attisdropped)
 			continue;
 
-		switch(slot->tts_tupleDescriptor->attrs[i]->atttypid)
+		switch(slot->tts_tupleDescriptor->attrs[i].atttypid)
 		{
 			case VERTEXOID:
 				finalValue = getVertexFinal(mgstate, slot->tts_values[i]);
@@ -1242,13 +1261,13 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 	TupleTableSlot *elemTupleSlot = mgstate->elemTupleSlot;
 	Oid			relid;
 	ItemPointer	ctid;
-	HeapTuple	tuple;
 	ResultRelInfo *resultRelInfo;
 	ResultRelInfo *savedResultRelInfo;
 	Relation	resultRelationDesc;
 	LockTupleMode lockmode;
-	HTSU_Result	result;
-	HeapUpdateFailureData hufd;
+	TM_Result	result;
+	TM_FailureData tmfd;
+	bool update_indexes;
 
 	relid = get_labid_relid(mgstate->graphid,
 							GraphidGetLabid(DatumGetGraphid(gid)));
@@ -1287,28 +1306,38 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 		   elemTupleSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(elemTupleSlot);
 
-	tuple = ExecMaterializeSlot(elemTupleSlot);
-	tuple->t_tableOid = RelationGetRelid(resultRelationDesc);
+	ExecMaterializeSlot(elemTupleSlot);
+	elemTupleSlot->tts_tableOid = RelationGetRelid(resultRelationDesc);
 
 	if (resultRelationDesc->rd_att->constr)
 		ExecConstraints(resultRelInfo, elemTupleSlot, estate);
 
+    result = table_tuple_update(resultRelationDesc, ctid, elemTupleSlot,
+                                    mgstate->modify_cid + MODIFY_CID_SET,
+                                    estate->es_snapshot,
+                                    estate->es_crosscheck_snapshot,
+                                    true /* wait for commit */ ,
+                                    &tmfd, &lockmode, &update_indexes);
+	/*
 	result = heap_update(resultRelationDesc, ctid, tuple,
 						 mgstate->modify_cid + MODIFY_CID_SET,
 						 estate->es_crosscheck_snapshot,
-						 true, &hufd, &lockmode);
+						 true, &tmfd, &lockmode);
+	*/
 	switch (result)
 	{
-		case HeapTupleSelfUpdated:
+		case TM_SelfModified:
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("graph element(%hu," UINT64_FORMAT ") has been SET multiple times",
 							GraphidGetLabid(DatumGetGraphid(gid)),
 							GraphidGetLocid(DatumGetGraphid(gid)))));
 			break;
-		case HeapTupleMayBeUpdated:
+        case TM_Ok:
+            break;
+        case TM_BeingModified:
 			break;
-		case HeapTupleUpdated:
+		case TM_Updated:
 			/* TODO: A solution to concurrent update is needed. */
 			ereport(ERROR,
 					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
@@ -1318,15 +1347,15 @@ updateElemProp(ModifyGraphState *mgstate, Oid elemtype, Datum gid,
 			elog(ERROR, "unrecognized heap_update status: %u", result);
 	}
 
-	if (resultRelInfo->ri_NumIndices > 0 && !HeapTupleIsHeapOnly(tuple))
-		ExecInsertIndexTuples(elemTupleSlot, &(tuple->t_self),
-							  estate, false, NULL, NIL);
+	if (resultRelInfo->ri_NumIndices > 0 && update_indexes)
+		ExecInsertIndexTuples(elemTupleSlot, estate,
+							  false, NULL, NIL);
 
-	estate->es_graphwrstats.updateProperty++;
+	graphWriteStats.updateProperty++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
-	return &tuple->t_self;
+	return &elemTupleSlot->tts_tid;
 }
 
 static Datum
@@ -1500,7 +1529,6 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	Datum		vertexId;
 	Datum		vertexProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
-	HeapTuple	tuple;
 
 	resultRelInfo = getResultRelInfo(mgstate, gvertex->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -1516,7 +1544,7 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 	*vid = DatumGetGraphid(vertexId);
 
 	vertexProp = getVertexPropDatum(vertex);
-	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(vertexProp)))
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonbP(vertexProp)))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("jsonb object is expected for property map")));
@@ -1531,28 +1559,29 @@ createMergeVertex(ModifyGraphState *mgstate, GraphVertex *gvertex,
 		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(insertSlot);
 
-	tuple = ExecMaterializeSlot(insertSlot);
-	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	ExecMaterializeSlot(insertSlot);
+	
+	insertSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
-				mgstate->modify_cid + MODIFY_CID_OUTPUT,
-				0, NULL);
+     table_tuple_insert(resultRelInfo->ri_RelationDesc, insertSlot,
+                        mgstate->modify_cid + MODIFY_CID_OUTPUT,
+                        0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(insertSlot, &(tuple->t_self), estate, false,
+		ExecInsertIndexTuples(insertSlot, estate, false,
 							  NULL, NIL);
 
 	vertex = makeGraphVertexDatum(insertSlot->tts_values[0],
 								  insertSlot->tts_values[1],
-								  PointerGetDatum(&tuple->t_self));
+								  PointerGetDatum(&insertSlot->tts_tid));
 
 	if (gvertex->resno > 0)
 		setSlotValueByAttnum(slot, vertex, gvertex->resno);
 
-	estate->es_graphwrstats.insertVertex++;
+	graphWriteStats.insertVertex++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -1571,7 +1600,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 	Datum		edge;
 	Datum		edgeProp;
 	TupleTableSlot *insertSlot = mgstate->elemTupleSlot;
-	HeapTuple	tuple;
+	//HeapTuple	tuple;
 
 	resultRelInfo = getResultRelInfo(mgstate, gedge->relid);
 	savedResultRelInfo = estate->es_result_relation_info;
@@ -1584,7 +1613,7 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 				 errmsg("NULL is not allowed in MERGE")));
 
 	edgeProp = getEdgePropDatum(edge);
-	if (!JB_ROOT_IS_OBJECT(DatumGetJsonb(edgeProp)))
+	if (!JB_ROOT_IS_OBJECT(DatumGetJsonbP(edgeProp)))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("jsonb object is expected for property map")));
@@ -1601,31 +1630,32 @@ createMergeEdge(ModifyGraphState *mgstate, GraphEdge *gedge, Graphid start,
 		   insertSlot->tts_tupleDescriptor->natts * sizeof(bool));
 	ExecStoreVirtualTuple(insertSlot);
 
-	tuple = ExecMaterializeSlot(insertSlot);
+	/* HAMID - Need to review if we should pass a non-NULL value bool *shouldfree */
+	ExecMaterializeSlot(insertSlot);
 
-	tuple->t_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
+	insertSlot->tts_tableOid = RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	if (resultRelInfo->ri_RelationDesc->rd_att->constr != NULL)
 		ExecConstraints(resultRelInfo, insertSlot, estate);
 
-	heap_insert(resultRelInfo->ri_RelationDesc, tuple,
-				mgstate->modify_cid + MODIFY_CID_OUTPUT,
-				0, NULL);
+     table_tuple_insert(resultRelInfo->ri_RelationDesc, insertSlot,
+                        mgstate->modify_cid + MODIFY_CID_OUTPUT,
+                        0, NULL);
 
 	if (resultRelInfo->ri_NumIndices > 0)
-		ExecInsertIndexTuples(insertSlot, &(tuple->t_self), estate, false,
+		ExecInsertIndexTuples(insertSlot, estate, false,
 							  NULL, NIL);
 
 	edge = makeGraphEdgeDatum(insertSlot->tts_values[0],
 							  insertSlot->tts_values[1],
 							  insertSlot->tts_values[2],
 							  insertSlot->tts_values[3],
-							  PointerGetDatum(&tuple->t_self));
+							  PointerGetDatum(&insertSlot->tts_tid));
 
 	if (gedge->resno > 0)
 		setSlotValueByAttnum(slot, edge, gedge->resno);
 
-	estate->es_graphwrstats.insertEdge++;
+	graphWriteStats.insertEdge++;
 
 	estate->es_result_relation_info = savedResultRelInfo;
 
@@ -1711,7 +1741,7 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 		Datum		vtx;
 		bool		isnull;
 
-		vertices = DatumGetAnyArray(elem);
+		vertices = DatumGetAnyArrayP(elem);
 		nvertices = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices));
 
 		get_typlenbyvalalign(AARR_ELEMTYPE(vertices), &typlen,
@@ -1743,7 +1773,7 @@ enterDelPropTable(ModifyGraphState *mgstate, Datum elem, Oid type)
 		Datum		edge;
 		bool		isnull;
 
-		edges = DatumGetAnyArray(elem);
+		edges = DatumGetAnyArrayP(elem);
 		nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
 
 		get_typlenbyvalalign(AARR_ELEMTYPE(edges), &typlen,
@@ -1846,8 +1876,8 @@ getPathFinal(ModifyGraphState *mgstate, Datum origin)
 
 	getGraphpathArrays(origin, &vertices_datum, &edges_datum);
 
-	arrVertices = DatumGetAnyArray(vertices_datum);
-	arrEdges = DatumGetAnyArray(edges_datum);
+	arrVertices = DatumGetAnyArrayP(vertices_datum);
+	arrEdges = DatumGetAnyArrayP(edges_datum);
 
 	nvertices = ArrayGetNItems(AARR_NDIM(arrVertices), AARR_DIMS(arrVertices));
 	nedges = ArrayGetNItems(AARR_NDIM(arrEdges), AARR_DIMS(arrEdges));
@@ -1983,7 +2013,7 @@ getResultRelInfo(ModifyGraphState *mgstate, Oid relid)
 	for (i = 0; i < mgstate->numResultRelations; i++)
 	{
 		if (RelationGetRelid(resultRelInfo->ri_RelationDesc) == relid)
-			break;
+		    return resultRelInfo;
 
 		resultRelInfo++;
 	}
@@ -2040,9 +2070,9 @@ findAttrInSlotByName(TupleTableSlot *slot, char *name)
 
 	for (i = 0; i < tupDesc->natts; i++)
 	{
-		if (namestrcmp(&(tupDesc->attrs[i]->attname), name) == 0 &&
-			!tupDesc->attrs[i]->attisdropped)
-			return tupDesc->attrs[i]->attnum;
+		if (namestrcmp(&(tupDesc->attrs[i].attname), name) == 0 &&
+			!tupDesc->attrs[i].attisdropped)
+			return tupDesc->attrs[i].attnum;
 	}
 
 	ereport(ERROR,

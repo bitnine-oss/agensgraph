@@ -19,7 +19,7 @@
  * data across crashes.  During database startup, we simply force the
  * currently-active page of SUBTRANS to zeroes.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/subtrans.c
@@ -196,6 +196,7 @@ SUBTRANSShmemInit(void)
 				  LWTRANCHE_SUBTRANS_BUFFERS);
 	/* Override default assumption that writes should be fsync'd */
 	SubTransCtl->do_fsync = false;
+	SlruPagePrecedesUnitTests(SubTransCtl, SUBTRANS_XACTS_PER_PAGE);
 }
 
 /*
@@ -241,14 +242,15 @@ ZeroSUBTRANSPage(int pageno)
 
 /*
  * This must be called ONCE during postmaster or standalone-backend startup,
- * after StartupXLOG has initialized ShmemVariableCache->nextXid.
+ * after StartupXLOG has initialized ShmemVariableCache->nextFullXid.
  *
- * oldestActiveXID is the oldest XID of any prepared transaction, or nextXid
+ * oldestActiveXID is the oldest XID of any prepared transaction, or nextFullXid
  * if there are none.
  */
 void
 StartupSUBTRANS(TransactionId oldestActiveXID)
 {
+	FullTransactionId nextFullXid;
 	int			startPage;
 	int			endPage;
 
@@ -261,7 +263,8 @@ StartupSUBTRANS(TransactionId oldestActiveXID)
 	LWLockAcquire(SubtransControlLock, LW_EXCLUSIVE);
 
 	startPage = TransactionIdToPage(oldestActiveXID);
-	endPage = TransactionIdToPage(ShmemVariableCache->nextXid);
+	nextFullXid = ShmemVariableCache->nextFullXid;
+	endPage = TransactionIdToPage(XidFromFullTransactionId(nextFullXid));
 
 	while (startPage != endPage)
 	{
@@ -347,8 +350,8 @@ ExtendSUBTRANS(TransactionId newestXact)
 /*
  * Remove all SUBTRANS segments before the one holding the passed transaction ID
  *
- * This is normally called during checkpoint, with oldestXact being the
- * oldest TransactionXmin of any running transaction.
+ * oldestXact is the oldest TransactionXmin of any running transaction.  This
+ * is called only during checkpoint.
  */
 void
 TruncateSUBTRANS(TransactionId oldestXact)
@@ -371,13 +374,8 @@ TruncateSUBTRANS(TransactionId oldestXact)
 
 
 /*
- * Decide which of two SUBTRANS page numbers is "older" for truncation purposes.
- *
- * We need to use comparison of TransactionIds here in order to do the right
- * thing with wraparound XID arithmetic.  However, if we are asked about
- * page number zero, we don't want to hand InvalidTransactionId to
- * TransactionIdPrecedes: it'll get weird about permanent xact IDs.  So,
- * offset both xids by FirstNormalTransactionId to avoid that.
+ * Decide whether a SUBTRANS page number is "older" for truncation purposes.
+ * Analogous to CLOGPagePrecedes().
  */
 static bool
 SubTransPagePrecedes(int page1, int page2)
@@ -386,9 +384,10 @@ SubTransPagePrecedes(int page1, int page2)
 	TransactionId xid2;
 
 	xid1 = ((TransactionId) page1) * SUBTRANS_XACTS_PER_PAGE;
-	xid1 += FirstNormalTransactionId;
+	xid1 += FirstNormalTransactionId + 1;
 	xid2 = ((TransactionId) page2) * SUBTRANS_XACTS_PER_PAGE;
-	xid2 += FirstNormalTransactionId;
+	xid2 += FirstNormalTransactionId + 1;
 
-	return TransactionIdPrecedes(xid1, xid2);
+	return (TransactionIdPrecedes(xid1, xid2) &&
+			TransactionIdPrecedes(xid1, xid2 + SUBTRANS_XACTS_PER_PAGE - 1));
 }

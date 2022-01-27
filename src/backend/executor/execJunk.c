@@ -3,7 +3,7 @@
  * execJunk.c
  *	  Junk attribute support stuff....
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -53,24 +53,48 @@
  * Initialize the Junk filter.
  *
  * The source targetlist is passed in.  The output tuple descriptor is
- * built from the non-junk tlist entries, plus the passed specification
- * of whether to include room for an OID or not.
- * An optional resultSlot can be passed as well.
+ * built from the non-junk tlist entries.
+ * An optional resultSlot can be passed as well; otherwise, we create one.
  */
 JunkFilter *
-ExecInitJunkFilter(List *targetList, bool hasoid, TupleTableSlot *slot)
+ExecInitJunkFilter(List *targetList, TupleTableSlot *slot)
 {
-	JunkFilter *junkfilter;
 	TupleDesc	cleanTupType;
-	int			cleanLength;
-	AttrNumber *cleanMap;
-	ListCell   *t;
-	AttrNumber	cleanResno;
 
 	/*
 	 * Compute the tuple descriptor for the cleaned tuple.
 	 */
-	cleanTupType = ExecCleanTypeFromTL(targetList, hasoid);
+	cleanTupType = ExecCleanTypeFromTL(targetList);
+
+	/*
+	 * The rest is the same as ExecInitJunkFilterInsertion, ie, we want to map
+	 * every non-junk targetlist column into the output tuple.
+	 */
+	return ExecInitJunkFilterInsertion(targetList, cleanTupType, slot);
+}
+
+/*
+ * ExecInitJunkFilterInsertion
+ *
+ * Initialize a JunkFilter for insertions into a table.
+ *
+ * Here, we are given the target "clean" tuple descriptor rather than
+ * inferring it from the targetlist.  Although the target descriptor can
+ * contain deleted columns, that is not of concern here, since the targetlist
+ * should contain corresponding NULL constants (cf. ExecCheckPlanOutput).
+ * It is assumed that the caller has checked that the table's columns match up
+ * with the non-junk columns of the targetlist.
+ */
+JunkFilter *
+ExecInitJunkFilterInsertion(List *targetList,
+							TupleDesc cleanTupType,
+							TupleTableSlot *slot)
+{
+	JunkFilter *junkfilter;
+	int			cleanLength;
+	AttrNumber *cleanMap;
+	ListCell   *t;
+	AttrNumber	cleanResno;
 
 	/*
 	 * Use the given slot, or make a new slot if we weren't given one.
@@ -78,7 +102,7 @@ ExecInitJunkFilter(List *targetList, bool hasoid, TupleTableSlot *slot)
 	if (slot)
 		ExecSetSlotDescriptor(slot, cleanTupType);
 	else
-		slot = MakeSingleTupleTableSlot(cleanTupType);
+		slot = MakeSingleTupleTableSlot(cleanTupType, &TTSOpsVirtual);
 
 	/*
 	 * Now calculate the mapping between the original tuple's attributes and
@@ -94,17 +118,18 @@ ExecInitJunkFilter(List *targetList, bool hasoid, TupleTableSlot *slot)
 	if (cleanLength > 0)
 	{
 		cleanMap = (AttrNumber *) palloc(cleanLength * sizeof(AttrNumber));
-		cleanResno = 1;
+		cleanResno = 0;
 		foreach(t, targetList)
 		{
 			TargetEntry *tle = lfirst(t);
 
 			if (!tle->resjunk)
 			{
-				cleanMap[cleanResno - 1] = tle->resno;
+				cleanMap[cleanResno] = tle->resno;
 				cleanResno++;
 			}
 		}
+		Assert(cleanResno == cleanLength);
 	}
 	else
 		cleanMap = NULL;
@@ -149,7 +174,7 @@ ExecInitJunkFilterConversion(List *targetList,
 	if (slot)
 		ExecSetSlotDescriptor(slot, cleanTupType);
 	else
-		slot = MakeSingleTupleTableSlot(cleanTupType);
+		slot = MakeSingleTupleTableSlot(cleanTupType, &TTSOpsVirtual);
 
 	/*
 	 * Calculate the mapping between the original tuple's attributes and the
@@ -168,7 +193,7 @@ ExecInitJunkFilterConversion(List *targetList,
 		t = list_head(targetList);
 		for (i = 0; i < cleanLength; i++)
 		{
-			if (cleanTupType->attrs[i]->attisdropped)
+			if (TupleDescAttr(cleanTupType, i)->attisdropped)
 				continue;		/* map entry is already zero */
 			for (;;)
 			{

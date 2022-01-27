@@ -1,0 +1,22 @@
+name: build
+
+on:
+  push:
+    branches: [ REL_12_STABLE.patch ]
+  pull_request:
+    branches: [ REL_12_STABLE.patch ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: configure
+      run: ./configure
+      
+    - name: Install dependencies
+      run: make
+      

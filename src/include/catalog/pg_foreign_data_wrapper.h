@@ -1,18 +1,17 @@
 /*-------------------------------------------------------------------------
  *
  * pg_foreign_data_wrapper.h
- *	  definition of the system "foreign-data wrapper" relation (pg_foreign_data_wrapper)
- *	  along with the relation's initial contents.
+ *	  definition of the "foreign-data wrapper" system catalog (pg_foreign_data_wrapper)
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_foreign_data_wrapper.h
  *
  * NOTES
- *	  the genbki.pl script reads this file and generates .bki
- *	  information from the DATA() statements.
+ *	  The Catalog.pm module reads this file and derives schema
+ *	  information.
  *
  *-------------------------------------------------------------------------
  */
@@ -20,16 +19,16 @@
 #define PG_FOREIGN_DATA_WRAPPER_H
 
 #include "catalog/genbki.h"
+#include "catalog/pg_foreign_data_wrapper_d.h"
 
 /* ----------------
  *		pg_foreign_data_wrapper definition.  cpp turns this into
  *		typedef struct FormData_pg_foreign_data_wrapper
  * ----------------
  */
-#define ForeignDataWrapperRelationId	2328
-
-CATALOG(pg_foreign_data_wrapper,2328)
+CATALOG(pg_foreign_data_wrapper,2328,ForeignDataWrapperRelationId)
 {
+	Oid			oid;			/* oid */
 	NameData	fdwname;		/* foreign-data wrapper name */
 	Oid			fdwowner;		/* FDW owner */
 	Oid			fdwhandler;		/* handler function, or 0 if none */
@@ -42,23 +41,10 @@ CATALOG(pg_foreign_data_wrapper,2328)
 } FormData_pg_foreign_data_wrapper;
 
 /* ----------------
- *		Form_pg_fdw corresponds to a pointer to a tuple with
- *		the format of pg_fdw relation.
+ *		Form_pg_foreign_data_wrapper corresponds to a pointer to a tuple with
+ *		the format of pg_foreign_data_wrapper relation.
  * ----------------
  */
 typedef FormData_pg_foreign_data_wrapper *Form_pg_foreign_data_wrapper;
-
-/* ----------------
- *		compiler constants for pg_fdw
- * ----------------
- */
-
-#define Natts_pg_foreign_data_wrapper				6
-#define Anum_pg_foreign_data_wrapper_fdwname		1
-#define Anum_pg_foreign_data_wrapper_fdwowner		2
-#define Anum_pg_foreign_data_wrapper_fdwhandler		3
-#define Anum_pg_foreign_data_wrapper_fdwvalidator	4
-#define Anum_pg_foreign_data_wrapper_fdwacl			5
-#define Anum_pg_foreign_data_wrapper_fdwoptions		6
 
 #endif							/* PG_FOREIGN_DATA_WRAPPER_H */

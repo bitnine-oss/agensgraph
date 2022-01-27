@@ -21,7 +21,7 @@ typedef enum ModifyCid
 	MODIFY_CID_MAX
 } ModifyCid;
 
-extern bool enable_multiple_update;
+extern PGDLLIMPORT bool enable_multiple_update;
 
 extern ModifyGraphState *ExecInitModifyGraph(ModifyGraph *mgplan,
 											 EState *estate, int eflags);

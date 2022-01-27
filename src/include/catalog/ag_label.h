@@ -19,16 +19,15 @@
 #define AG_LABEL_H
 
 #include "catalog/genbki.h"
-
+#include "catalog/ag_label_d.h"
 /* ----------------
  *		ag_label definition.  cpp turns this into
  *		typedef struct FormData_ag_label
  * ----------------
  */
-#define LabelRelationId	7045
-
-CATALOG(ag_label,7045) BKI_SCHEMA_MACRO
+CATALOG(ag_label,7045,LabelRelationId) BKI_SCHEMA_MACRO
 {
+	Oid			oid;			/* oid */
 	NameData	labname;		/* label name */
 	Oid			graphid;		/* graph oid */
 	int32		labid;			/* label ID in a graph */
@@ -43,19 +42,7 @@ CATALOG(ag_label,7045) BKI_SCHEMA_MACRO
  */
 typedef FormData_ag_label *Form_ag_label;
 
-/* ----------------
- *		compiler constants for ag_label
- * ----------------
- */
-
-#define Natts_ag_label			5
-#define Anum_ag_label_labname	1
-#define Anum_ag_label_graphid	2
-#define Anum_ag_label_labid		3
-#define Anum_ag_label_relid		4
-#define Anum_ag_label_labkind	5
-
-#define LABEL_KIND_VERTEX	'v'
-#define LABEL_KIND_EDGE		'e'
+#define LABEL_KIND_VERTEX      'v'
+#define LABEL_KIND_EDGE        'e'
 
 #endif   /* AG_LABEL_H */

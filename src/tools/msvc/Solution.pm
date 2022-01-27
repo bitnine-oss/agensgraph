@@ -10,6 +10,8 @@ use strict;
 use warnings;
 use VSObjectFactory;
 
+no warnings qw(redefine);    ## no critic
+
 sub _new
 {
 	my $classname = shift;
@@ -23,7 +25,8 @@ sub _new
 		VisualStudioVersion        => undef,
 		MinimumVisualStudioVersion => undef,
 		vcver                      => undef,
-		platform                   => undef, };
+		platform                   => undef,
+	};
 	bless($self, $classname);
 
 	$self->DeterminePlatform();
@@ -52,11 +55,7 @@ sub _new
 	  unless $options->{wal_blocksize};    # undef or 0 means default
 	die "Bad wal_blocksize $options->{wal_blocksize}"
 	  unless grep { $_ == $options->{wal_blocksize} }
-		  (1, 2, 4, 8, 16, 32, 64);
-	$options->{wal_segsize} = 16
-	  unless $options->{wal_segsize};      # undef or 0 means default
-	die "Bad wal_segsize $options->{wal_segsize}"
-	  unless grep { $_ == $options->{wal_segsize} } (1, 2, 4, 8, 16, 32, 64);
+	  (1, 2, 4, 8, 16, 32, 64);
 
 	return $self;
 }
@@ -75,6 +74,7 @@ sub DeterminePlatform
 	$? >> 8 == 0 or die "cl command not found";
 	$self->{platform} = ($output =~ /^\/favor:<.+AMD64/m) ? 'x64' : 'Win32';
 	print "Detected hardware platform: $self->{platform}\n";
+	return;
 }
 
 # Return 1 if $oldfile is newer than $newfile, or if $newfile doesn't exist.
@@ -112,6 +112,36 @@ sub copyFile
 	}
 	close($i);
 	close($o);
+	return;
+}
+
+# Fetch version of OpenSSL based on a parsing of the command shipped with
+# the installer this build is linking to.  This returns as result an array
+# made of the three first digits of the OpenSSL version, which is enough
+# to decide which options to apply depending on the version of OpenSSL
+# linking with.
+sub GetOpenSSLVersion
+{
+	my $self = shift;
+
+	# Attempt to get OpenSSL version and location.  This assumes that
+	# openssl.exe is in the specified directory.
+	# Quote the .exe name in case it has spaces
+	my $opensslcmd =
+	  qq("$self->{options}->{openssl}\\bin\\openssl.exe" version 2>&1);
+	my $sslout = `$opensslcmd`;
+
+	$? >> 8 == 0
+	  or croak
+	  "Unable to determine OpenSSL version: The openssl.exe command wasn't found.";
+
+	if ($sslout =~ /(\d+)\.(\d+)\.(\d+)(\D)/m)
+	{
+		return ($1, $2, $3);
+	}
+
+	croak
+	  "Unable to determine OpenSSL version: The openssl.exe version could not be determined.";
 }
 
 sub GenerateFiles
@@ -145,6 +175,7 @@ sub GenerateFiles
 		$self->{revision} = $rev;
 	}
 
+
 	if (IsNewer("src/include/pg_config_os.h", "src/include/port/win32.h"))
 	{
 		print "Copying pg_config_os.h...\n";
@@ -164,7 +195,7 @@ sub GenerateFiles
 		{
 			s{PG_VERSION "[^"]+"}{PG_VERSION "$self->{strver}$extraver"};
 			s{PG_VERSION_NUM \d+}{PG_VERSION_NUM $self->{numver}};
-s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, compiled by Visual C++ build " CppAsString2(_MSC_VER) ", $bits-bit"};
+			s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, compiled by Visual C++ build " CppAsString2(_MSC_VER) ", $bits-bit"};
 			if ($self->{revision} ne '')
 			{
 				s{AG_GIT_REVISION "[^"]+"}{AG_GIT_REVISION "$self->{revision}"};
@@ -178,21 +209,17 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 		print $o "#ifndef IGNORE_CONFIGURED_SETTINGS\n";
 		print $o "#define USE_ASSERT_CHECKING 1\n"
 		  if ($self->{options}->{asserts});
-		print $o "#define USE_LDAP 1\n"    if ($self->{options}->{ldap});
-		print $o "#define HAVE_LIBZ 1\n"   if ($self->{options}->{zlib});
-		print $o "#define USE_OPENSSL 1\n" if ($self->{options}->{openssl});
-		print $o "#define ENABLE_NLS 1\n"  if ($self->{options}->{nls});
+		print $o "#define USE_LDAP 1\n"   if ($self->{options}->{ldap});
+		print $o "#define HAVE_LIBZ 1\n"  if ($self->{options}->{zlib});
+		print $o "#define ENABLE_NLS 1\n" if ($self->{options}->{nls});
 
 		print $o "#define BLCKSZ ", 1024 * $self->{options}->{blocksize},
 		  "\n";
 		print $o "#define RELSEG_SIZE ",
 		  (1024 / $self->{options}->{blocksize}) *
-		  $self->{options}->{segsize} *
-		  1024, "\n";
+		  $self->{options}->{segsize} * 1024, "\n";
 		print $o "#define XLOG_BLCKSZ ",
 		  1024 * $self->{options}->{wal_blocksize}, "\n";
-		print $o "#define XLOG_SEG_SIZE (", $self->{options}->{wal_segsize},
-		  " * 1024 * 1024)\n";
 
 		if ($self->{options}->{float4byval})
 		{
@@ -232,6 +259,21 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 		{
 			print $o "#define ENABLE_GSS 1\n";
 		}
+		if ($self->{options}->{openssl})
+		{
+			print $o "#define USE_OPENSSL 1\n";
+
+			my ($digit1, $digit2, $digit3) = $self->GetOpenSSLVersion();
+
+			# More symbols are needed with OpenSSL 1.1.0 and above.
+			if ($digit1 >= '1' && $digit2 >= '1' && $digit3 >= '0')
+			{
+				print $o "#define HAVE_ASN1_STRING_GET0_DATA 1\n";
+				print $o "#define HAVE_BIO_GET_DATA 1\n";
+				print $o "#define HAVE_BIO_METH_NEW 1\n";
+				print $o "#define HAVE_OPENSSL_INIT_SSL 1\n";
+			}
+		}
 		if ($self->{options}->{icu})
 		{
 			print $o "#define USE_ICU 1\n";
@@ -248,6 +290,14 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 		print $o "#endif /* IGNORE_CONFIGURED_SETTINGS */\n";
 		close($o);
 		close($i);
+	}
+
+	if (IsNewer('src/bin/agens/sql_help.h', 'src/bin/agens/create_help.pl'))
+	{
+		print "Generating sql_help.h...\n";
+		chdir('src/bin/agens');
+		system("perl create_help.pl ../../../doc/src/sgml/ref sql_help");
+		chdir('../../..');
 	}
 
 	if (IsNewer(
@@ -277,15 +327,22 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 		"src/interfaces/ecpg/pgtypeslib/exports.txt",
 		"LIBPGTYPES");
 
-	if (IsNewer(
-			'src/backend/utils/fmgrtab.c', 'src/include/catalog/pg_proc.h'))
+	chdir('src/backend/utils');
+	my $pg_proc_dat = '../../../src/include/catalog/pg_proc.dat';
+	if (   IsNewer('fmgr-stamp', 'Gen_fmgrtab.pl')
+		|| IsNewer('fmgr-stamp', '../catalog/Catalog.pm')
+		|| IsNewer('fmgr-stamp', $pg_proc_dat)
+		|| IsNewer('fmgr-stamp', '../../../src/include/access/transam.h'))
 	{
-		print "Generating fmgrtab.c, fmgroids.h, fmgrprotos.h...\n";
-		chdir('src/backend/utils');
 		system(
-"perl -I ../catalog Gen_fmgrtab.pl ../../../src/include/catalog/pg_proc.h");
-		chdir('../../..');
+			"perl -I ../catalog Gen_fmgrtab.pl --include-path ../../../src/include/ $pg_proc_dat"
+		);
+		open(my $f, '>', 'fmgr-stamp')
+		  || confess "Could not touch fmgr-stamp";
+		close($f);
 	}
+	chdir('../../..');
+
 	if (IsNewer(
 			'src/include/utils/fmgroids.h',
 			'src/backend/utils/fmgroids.h'))
@@ -321,18 +378,11 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 			'src/include/storage/lwlocknames.h');
 	}
 
-	if (IsNewer(
-			'src/include/dynloader.h', 'src/backend/port/dynloader/win32.h'))
-	{
-		copyFile('src/backend/port/dynloader/win32.h',
-			'src/include/dynloader.h');
-	}
-
 	if (IsNewer('src/include/utils/probes.h', 'src/backend/utils/probes.d'))
 	{
 		print "Generating probes.h...\n";
 		system(
-'perl src/backend/utils/Gen_dummy_probes.pl src/backend/utils/probes.d > src/include/utils/probes.h'
+			'perl src/backend/utils/Gen_dummy_probes.pl src/backend/utils/probes.d > src/include/utils/probes.h'
 		);
 	}
 
@@ -343,7 +393,7 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 	{
 		print "Generating spiexceptions.h...\n";
 		system(
-'perl src/pl/plpython/generate-spiexceptions.pl src/backend/utils/errcodes.txt > src/pl/plpython/spiexceptions.h'
+			'perl src/pl/plpython/generate-spiexceptions.pl src/backend/utils/errcodes.txt > src/pl/plpython/spiexceptions.h'
 		);
 	}
 
@@ -353,7 +403,7 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 	{
 		print "Generating errcodes.h...\n";
 		system(
-'perl src/backend/utils/generate-errcodes.pl src/backend/utils/errcodes.txt > src/backend/utils/errcodes.h'
+			'perl src/backend/utils/generate-errcodes.pl src/backend/utils/errcodes.txt > src/backend/utils/errcodes.h'
 		);
 		copyFile('src/backend/utils/errcodes.h',
 			'src/include/utils/errcodes.h');
@@ -365,7 +415,7 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 	{
 		print "Generating plerrcodes.h...\n";
 		system(
-'perl src/pl/plpgsql/src/generate-plerrcodes.pl src/backend/utils/errcodes.txt > src/pl/plpgsql/src/plerrcodes.h'
+			'perl src/pl/plpgsql/src/generate-plerrcodes.pl src/backend/utils/errcodes.txt > src/pl/plpgsql/src/plerrcodes.h'
 		);
 	}
 
@@ -375,7 +425,7 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 	{
 		print "Generating pltclerrcodes.h...\n";
 		system(
-'perl src/pl/tcl/generate-pltclerrcodes.pl src/backend/utils/errcodes.txt > src/pl/tcl/pltclerrcodes.h'
+			'perl src/pl/tcl/generate-pltclerrcodes.pl src/backend/utils/errcodes.txt > src/pl/tcl/pltclerrcodes.h'
 		);
 	}
 
@@ -385,7 +435,7 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 	{
 		print "Generating qsort_tuple.c...\n";
 		system(
-'perl src/backend/utils/sort/gen_qsort_tuple.pl > src/backend/utils/sort/qsort_tuple.c'
+			'perl src/backend/utils/sort/gen_qsort_tuple.pl > src/backend/utils/sort/qsort_tuple.c'
 		);
 	}
 
@@ -418,12 +468,49 @@ s{PG_VERSION_STR "[^"]+"}{PG_VERSION_STR "PostgreSQL $self->{strver}$extraver, c
 		chdir('../../..');
 	}
 
-	if (IsNewer('src/bin/agens/sql_help.h', 'src/bin/agens/create_help.pl'))
+	if (IsNewer('src/common/kwlist_d.h', 'src/include/parser/kwlist.h'))
 	{
-		print "Generating sql_help.h...\n";
-		chdir('src/bin/agens');
-		system("perl create_help.pl ../../../doc/src/sgml/ref sql_help");
-		chdir('../../..');
+		print "Generating kwlist_d.h...\n";
+		system(
+			'perl -I src/tools src/tools/gen_keywordlist.pl --extern -o src/common src/include/parser/kwlist.h'
+		);
+	}
+
+	if (IsNewer(
+			'src/pl/plpgsql/src/pl_reserved_kwlist_d.h',
+			'src/pl/plpgsql/src/pl_reserved_kwlist.h')
+		|| IsNewer(
+			'src/pl/plpgsql/src/pl_unreserved_kwlist_d.h',
+			'src/pl/plpgsql/src/pl_unreserved_kwlist.h'))
+	{
+		print
+		  "Generating pl_reserved_kwlist_d.h and pl_unreserved_kwlist_d.h...\n";
+		chdir('src/pl/plpgsql/src');
+		system(
+			'perl -I ../../../tools ../../../tools/gen_keywordlist.pl --varname ReservedPLKeywords pl_reserved_kwlist.h'
+		);
+		system(
+			'perl -I ../../../tools ../../../tools/gen_keywordlist.pl --varname UnreservedPLKeywords pl_unreserved_kwlist.h'
+		);
+		chdir('../../../..');
+	}
+
+	if (IsNewer(
+			'src/interfaces/ecpg/preproc/c_kwlist_d.h',
+			'src/interfaces/ecpg/preproc/c_kwlist.h')
+		|| IsNewer(
+			'src/interfaces/ecpg/preproc/ecpg_kwlist_d.h',
+			'src/interfaces/ecpg/preproc/ecpg_kwlist.h'))
+	{
+		print "Generating c_kwlist_d.h and ecpg_kwlist_d.h...\n";
+		chdir('src/interfaces/ecpg/preproc');
+		system(
+			'perl -I ../../../tools ../../../tools/gen_keywordlist.pl --varname ScanCKeywords --no-case-fold c_kwlist.h'
+		);
+		system(
+			'perl -I ../../../tools ../../../tools/gen_keywordlist.pl --varname ScanECPGKeywords ecpg_kwlist.h'
+		);
+		chdir('../../../..');
 	}
 
 	if (IsNewer(
@@ -477,28 +564,67 @@ EOF
 
 	my $mf = Project::read_file('src/backend/catalog/Makefile');
 	$mf =~ s{\\\r?\n}{}g;
-	$mf =~ /^POSTGRES_BKI_SRCS\s*:?=[^,]+,(.*)\)$/gm
-	  || croak "Could not find POSTGRES_BKI_SRCS in Makefile\n";
-	my @allbki = split /\s+/, $1;
-	foreach my $bki (@allbki)
+	$mf =~ /^CATALOG_HEADERS\s*:?=(.*)$/gm
+	  || croak "Could not find CATALOG_HEADERS in Makefile\n";
+	my @bki_srcs = split /\s+/, $1;
+	push @bki_srcs, 'toasting.h';
+	push @bki_srcs, 'indexing.h';
+	$mf =~ /^POSTGRES_BKI_DATA\s*:?=[^,]+,(.*)\)$/gm
+	  || croak "Could not find POSTGRES_BKI_DATA in Makefile\n";
+	my @bki_data = split /\s+/, $1;
+
+	my $need_genbki = 0;
+	foreach my $bki (@bki_srcs, @bki_data)
 	{
 		next if $bki eq "";
 		if (IsNewer(
-				'src/backend/catalog/postgres.bki',
+				'src/backend/catalog/bki-stamp',
 				"src/include/catalog/$bki"))
 		{
-			print "Generating postgres.bki and schemapg.h...\n";
-			chdir('src/backend/catalog');
-			my $bki_srcs = join(' ../../../src/include/catalog/', @allbki);
-			system(
-"perl genbki.pl -I../../../src/include/catalog --set-version=$self->{majorver} $bki_srcs"
-			);
-			chdir('../../..');
-			copyFile(
-				'src/backend/catalog/schemapg.h',
-				'src/include/catalog/schemapg.h');
+			$need_genbki = 1;
 			last;
 		}
+	}
+	$need_genbki = 1
+	  if IsNewer('src/backend/catalog/bki-stamp',
+		'src/backend/catalog/genbki.pl');
+	$need_genbki = 1
+	  if IsNewer('src/backend/catalog/bki-stamp',
+		'src/backend/catalog/Catalog.pm');
+	if ($need_genbki)
+	{
+		chdir('src/backend/catalog');
+		my $bki_srcs = join(' ../../../src/include/catalog/', @bki_srcs);
+		system(
+			"perl genbki.pl --include-path ../../../src/include/ --set-version=$self->{majorver} $bki_srcs"
+		);
+		open(my $f, '>', 'bki-stamp')
+		  || confess "Could not touch bki-stamp";
+		close($f);
+		chdir('../../..');
+	}
+
+	if (IsNewer(
+			'src/include/catalog/header-stamp',
+			'src/backend/catalog/bki-stamp'))
+	{
+		# Copy generated headers to include directory.
+		opendir(my $dh, 'src/backend/catalog/')
+		  || die "Can't opendir src/backend/catalog/ $!";
+		my @def_headers = grep { /pg_\w+_d\.h$/ } readdir($dh);
+		closedir $dh;
+		foreach my $def_header (@def_headers)
+		{
+			copyFile(
+				"src/backend/catalog/$def_header",
+				"src/include/catalog/$def_header");
+		}
+		copyFile(
+			'src/backend/catalog/schemapg.h',
+			'src/include/catalog/schemapg.h');
+		open(my $chs, '>', 'src/include/catalog/header-stamp')
+		  || confess "Could not touch header-stamp";
+		close($chs);
 	}
 
 	open(my $o, '>', "doc/src/sgml/version.sgml")
@@ -508,6 +634,7 @@ EOF
 <!ENTITY majorversion "$self->{majorver}">
 EOF
 	close($o);
+	return;
 }
 
 sub GenerateDefFile
@@ -530,6 +657,7 @@ sub GenerateDefFile
 		close($of);
 		close($if);
 	}
+	return;
 }
 
 sub AddProject
@@ -548,21 +676,70 @@ sub AddProject
 	if ($self->{options}->{openssl})
 	{
 		$proj->AddIncludeDir($self->{options}->{openssl} . '\include');
-		if (-e "$self->{options}->{openssl}/lib/VC/ssleay32MD.lib")
+		my ($digit1, $digit2, $digit3) = $self->GetOpenSSLVersion();
+
+		# Starting at version 1.1.0 the OpenSSL installers have
+		# changed their library names from:
+		# - libeay to libcrypto
+		# - ssleay to libssl
+		if ($digit1 >= '1' && $digit2 >= '1' && $digit3 >= '0')
 		{
-			$proj->AddLibrary(
-				$self->{options}->{openssl} . '\lib\VC\ssleay32.lib', 1);
-			$proj->AddLibrary(
-				$self->{options}->{openssl} . '\lib\VC\libeay32.lib', 1);
+			my $dbgsuffix;
+			my $libsslpath;
+			my $libcryptopath;
+
+			# The format name of the libraries is slightly
+			# different between the Win32 and Win64 platform, so
+			# adapt.
+			if (-e "$self->{options}->{openssl}/lib/VC/sslcrypto32MD.lib")
+			{
+				# Win32 here, with a debugging library set.
+				$dbgsuffix     = 1;
+				$libsslpath    = '\lib\VC\libssl32.lib';
+				$libcryptopath = '\lib\VC\libcrypto32.lib';
+			}
+			elsif (-e "$self->{options}->{openssl}/lib/VC/sslcrypto64MD.lib")
+			{
+				# Win64 here, with a debugging library set.
+				$dbgsuffix     = 1;
+				$libsslpath    = '\lib\VC\libssl64.lib';
+				$libcryptopath = '\lib\VC\libcrypto64.lib';
+			}
+			else
+			{
+				# On both Win32 and Win64 the same library
+				# names are used without a debugging context.
+				$dbgsuffix     = 0;
+				$libsslpath    = '\lib\libssl.lib';
+				$libcryptopath = '\lib\libcrypto.lib';
+			}
+
+			$proj->AddLibrary($self->{options}->{openssl} . $libsslpath,
+				$dbgsuffix);
+			$proj->AddLibrary($self->{options}->{openssl} . $libcryptopath,
+				$dbgsuffix);
 		}
 		else
 		{
-			# We don't expect the config-specific library to be here,
-			# so don't ask for it in last parameter
-			$proj->AddLibrary(
-				$self->{options}->{openssl} . '\lib\ssleay32.lib', 0);
-			$proj->AddLibrary(
-				$self->{options}->{openssl} . '\lib\libeay32.lib', 0);
+			# Choose which set of libraries to use depending on if
+			# debugging libraries are in place in the installer.
+			if (-e "$self->{options}->{openssl}/lib/VC/ssleay32MD.lib")
+			{
+				$proj->AddLibrary(
+					$self->{options}->{openssl} . '\lib\VC\ssleay32.lib', 1);
+				$proj->AddLibrary(
+					$self->{options}->{openssl} . '\lib\VC\libeay32.lib', 1);
+			}
+			else
+			{
+				# We don't expect the config-specific library
+				# to be here, so don't ask for it in last
+				# parameter.
+				$proj->AddLibrary(
+					$self->{options}->{openssl} . '\lib\ssleay32.lib', 0);
+				$proj->AddLibrary(
+					$self->{options}->{openssl} . '\lib\libeay32.lib', 0);
+			}
 		}
 	}
 	if ($self->{options}->{nls})
@@ -572,10 +749,26 @@ sub AddProject
 	}
 	if ($self->{options}->{gss})
 	{
-		$proj->AddIncludeDir($self->{options}->{gss} . '\inc\krb5');
-		$proj->AddLibrary($self->{options}->{gss} . '\lib\i386\krb5_32.lib');
-		$proj->AddLibrary($self->{options}->{gss} . '\lib\i386\comerr32.lib');
-		$proj->AddLibrary($self->{options}->{gss} . '\lib\i386\gssapi32.lib');
+		$proj->AddIncludeDir($self->{options}->{gss} . '\include');
+		$proj->AddIncludeDir($self->{options}->{gss} . '\include\krb5');
+		if ($self->{platform} eq 'Win32')
+		{
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\i386\krb5_32.lib');
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\i386\comerr32.lib');
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\i386\gssapi32.lib');
+		}
+		else
+		{
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\amd64\krb5_64.lib');
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\amd64\comerr64.lib');
+			$proj->AddLibrary(
+				$self->{options}->{gss} . '\lib\amd64\gssapi64.lib');
+		}
 	}
 	if ($self->{options}->{iconv})
 	{
@@ -702,6 +895,7 @@ EOF
 EndGlobal
 EOF
 	close($sln);
+	return;
 }
 
 sub GetFakeConfigure
@@ -724,102 +918,10 @@ sub GetFakeConfigure
 	$cfg .= ' --with-tcl'           if ($self->{options}->{tcl});
 	$cfg .= ' --with-perl'          if ($self->{options}->{perl});
 	$cfg .= ' --with-python'        if ($self->{options}->{python});
+	my $port = $self->{options}->{'--with-pgport'};
+	$cfg .= " --with-pgport=$port" if defined($port);
 
 	return $cfg;
-}
-
-package VS2005Solution;
-
-#
-# Package that encapsulates a Visual Studio 2005 solution file
-#
-
-use strict;
-use warnings;
-use base qw(Solution);
-
-sub new
-{
-	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
-	bless($self, $classname);
-
-	$self->{solutionFileVersion} = '9.00';
-	$self->{vcver}               = '8.00';
-	$self->{visualStudioName}    = 'Visual Studio 2005';
-
-	return $self;
-}
-
-package VS2008Solution;
-
-#
-# Package that encapsulates a Visual Studio 2008 solution file
-#
-
-use strict;
-use warnings;
-use base qw(Solution);
-
-sub new
-{
-	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
-	bless($self, $classname);
-
-	$self->{solutionFileVersion} = '10.00';
-	$self->{vcver}               = '9.00';
-	$self->{visualStudioName}    = 'Visual Studio 2008';
-
-	return $self;
-}
-
-package VS2010Solution;
-
-#
-# Package that encapsulates a Visual Studio 2010 solution file
-#
-
-use Carp;
-use strict;
-use warnings;
-use base qw(Solution);
-
-sub new
-{
-	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
-	bless($self, $classname);
-
-	$self->{solutionFileVersion} = '11.00';
-	$self->{vcver}               = '10.00';
-	$self->{visualStudioName}    = 'Visual Studio 2010';
-
-	return $self;
-}
-
-package VS2012Solution;
-
-#
-# Package that encapsulates a Visual Studio 2012 solution file
-#
-
-use Carp;
-use strict;
-use warnings;
-use base qw(Solution);
-
-sub new
-{
-	my $classname = shift;
-	my $self      = $classname->SUPER::_new(@_);
-	bless($self, $classname);
-
-	$self->{solutionFileVersion} = '12.00';
-	$self->{vcver}               = '11.00';
-	$self->{visualStudioName}    = 'Visual Studio 2012';
-
-	return $self;
 }
 
 package VS2013Solution;
@@ -832,6 +934,8 @@ use Carp;
 use strict;
 use warnings;
 use base qw(Solution);
+
+no warnings qw(redefine);    ## no critic
 
 sub new
 {
@@ -859,6 +963,8 @@ use strict;
 use warnings;
 use base qw(Solution);
 
+no warnings qw(redefine);    ## no critic
+
 sub new
 {
 	my $classname = shift;
@@ -885,6 +991,8 @@ use strict;
 use warnings;
 use base qw(Solution);
 
+no warnings qw(redefine);    ## no critic
+
 sub new
 {
 	my $classname = shift;
@@ -895,6 +1003,34 @@ sub new
 	$self->{vcver}                      = '15.00';
 	$self->{visualStudioName}           = 'Visual Studio 2017';
 	$self->{VisualStudioVersion}        = '15.0.26730.3';
+	$self->{MinimumVisualStudioVersion} = '10.0.40219.1';
+
+	return $self;
+}
+
+package VS2019Solution;
+
+#
+# Package that encapsulates a Visual Studio 2019 solution file
+#
+
+use Carp;
+use strict;
+use warnings;
+use base qw(Solution);
+
+no warnings qw(redefine);    ## no critic
+
+sub new
+{
+	my $classname = shift;
+	my $self      = $classname->SUPER::_new(@_);
+	bless($self, $classname);
+
+	$self->{solutionFileVersion}        = '12.00';
+	$self->{vcver}                      = '16.00';
+	$self->{visualStudioName}           = 'Visual Studio 2019';
+	$self->{VisualStudioVersion}        = '16.0.28729.10';
 	$self->{MinimumVisualStudioVersion} = '10.0.40219.1';
 
 	return $self;

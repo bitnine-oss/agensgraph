@@ -3,7 +3,7 @@
  * miscinit.c
  *	  miscellaneous initialization support stuff
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -32,6 +32,7 @@
 
 #include "access/htup_details.h"
 #include "catalog/pg_authid.h"
+#include "common/file_perm.h"
 #include "libpq/libpq.h"
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
@@ -42,10 +43,12 @@
 #include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/pg_shmem.h"
+#include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/pidfile.h"
 #include "utils/syscache.h"
@@ -85,6 +88,100 @@ SetDatabasePath(const char *path)
 	/* This should happen only once per process */
 	Assert(!DatabasePath);
 	DatabasePath = MemoryContextStrdup(TopMemoryContext, path);
+}
+
+/*
+ * Validate the proposed data directory.
+ *
+ * Also initialize file and directory create modes and mode mask.
+ */
+void
+checkDataDir(void)
+{
+	struct stat stat_buf;
+
+	Assert(DataDir);
+
+	if (stat(DataDir, &stat_buf) != 0)
+	{
+		if (errno == ENOENT)
+			ereport(FATAL,
+					(errcode_for_file_access(),
+					 errmsg("data directory \"%s\" does not exist",
+							DataDir)));
+		else
+			ereport(FATAL,
+					(errcode_for_file_access(),
+					 errmsg("could not read permissions of directory \"%s\": %m",
+							DataDir)));
+	}
+
+	/* eventual chdir would fail anyway, but let's test ... */
+	if (!S_ISDIR(stat_buf.st_mode))
+		ereport(FATAL,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("specified data directory \"%s\" is not a directory",
+						DataDir)));
+
+	/*
+	 * Check that the directory belongs to my userid; if not, reject.
+	 *
+	 * This check is an essential part of the interlock that prevents two
+	 * postmasters from starting in the same directory (see CreateLockFile()).
+	 * Do not remove or weaken it.
+	 *
+	 * XXX can we safely enable this check on Windows?
+	 */
+#if !defined(WIN32) && !defined(__CYGWIN__)
+	if (stat_buf.st_uid != geteuid())
+		ereport(FATAL,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("data directory \"%s\" has wrong ownership",
+						DataDir),
+				 errhint("The server must be started by the user that owns the data directory.")));
+#endif
+
+	/*
+	 * Check if the directory has correct permissions.  If not, reject.
+	 *
+	 * Only two possible modes are allowed, 0700 and 0750.  The latter mode
+	 * indicates that group read/execute should be allowed on all newly
+	 * created files and directories.
+	 *
+	 * XXX temporarily suppress check when on Windows, because there may not
+	 * be proper support for Unix-y file permissions.  Need to think of a
+	 * reasonable check to apply on Windows.
+	 */
+#if !defined(WIN32) && !defined(__CYGWIN__)
+	if (stat_buf.st_mode & PG_MODE_MASK_GROUP)
+		ereport(FATAL,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("data directory \"%s\" has invalid permissions",
+						DataDir),
+				 errdetail("Permissions should be u=rwx (0700) or u=rwx,g=rx (0750).")));
+#endif
+
+	/*
+	 * Reset creation modes and mask based on the mode of the data directory.
+	 *
+	 * The mask was set earlier in startup to disallow group permissions on
+	 * newly created files and directories.  However, if group read/execute
+	 * are present on the data directory then modify the create modes and mask
+	 * to allow group read/execute on newly created files and directories and
+	 * set the data_directory_mode GUC.
+	 *
+	 * Suppress when on Windows, because there may not be proper support for
+	 * Unix-y file permissions.
+	 */
+#if !defined(WIN32) && !defined(__CYGWIN__)
+	SetDataDirectoryCreatePerm(stat_buf.st_mode);
+
+	umask(pg_mode_mask);
+	data_directory_mode = pg_dir_create_mode;
+#endif
+
+	/* Check for PG_VERSION */
+	ValidatePgVersion(DataDir);
 }
 
 /*
@@ -177,9 +274,7 @@ InitPostmasterChild(void)
 {
 	IsUnderPostmaster = true;	/* we are a postmaster subprocess now */
 
-	MyProcPid = getpid();		/* reset MyProcPid */
-
-	MyStartTime = time(NULL);	/* set our start time in case we call elog */
+	InitProcessGlobals();
 
 	/*
 	 * make sure stderr is in binary mode before anything can possibly be
@@ -209,6 +304,9 @@ InitPostmasterChild(void)
 	if (setsid() < 0)
 		elog(FATAL, "setsid() failed: %m");
 #endif
+
+	/* Request a signal if the postmaster dies, if possible. */
+	PostmasterDeathSignalInit();
 }
 
 /*
@@ -221,9 +319,7 @@ InitStandaloneProcess(const char *argv0)
 {
 	Assert(!IsPostmasterEnvironment);
 
-	MyProcPid = getpid();		/* reset MyProcPid */
-
-	MyStartTime = time(NULL);	/* set our start time in case we call elog */
+	InitProcessGlobals();
 
 	/* Initialize process-local latch support */
 	InitializeLatchSupport();
@@ -495,6 +591,13 @@ InitializeSessionUserId(const char *rolename, Oid roleid)
 	/* call only once */
 	AssertState(!OidIsValid(AuthenticatedUserId));
 
+	/*
+	 * Make sure syscache entries are flushed for recent catalog changes. This
+	 * allows us to find roles that were created on-the-fly during
+	 * authentication.
+	 */
+	AcceptInvalidationMessages();
+
 	if (rolename != NULL)
 	{
 		roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(rolename));
@@ -513,7 +616,7 @@ InitializeSessionUserId(const char *rolename, Oid roleid)
 	}
 
 	rform = (Form_pg_authid) GETSTRUCT(roleTup);
-	roleid = HeapTupleGetOid(roleTup);
+	roleid = rform->oid;
 	rname = NameStr(rform->rolname);
 
 	AuthenticatedUserId = roleid;
@@ -719,7 +822,7 @@ GetUserNameFromId(Oid roleid, bool noerr)
  * ($DATADIR/postmaster.pid) and Unix-socket-file lockfiles ($SOCKFILE.lock).
  * Both kinds of files contain the same info initially, although we can add
  * more information to a data-directory lockfile after it's created, using
- * AddToDataDirLockFile().  See miscadmin.h for documentation of the contents
+ * AddToDataDirLockFile().  See pidfile.h for documentation of the contents
  * of these lockfiles.
  *
  * On successful lockfile creation, a proc_exit callback to remove the
@@ -828,10 +931,10 @@ CreateLockFile(const char *filename, bool amPostmaster,
 		/*
 		 * Try to create the lock file --- O_EXCL makes this atomic.
 		 *
-		 * Think not to make the file protection weaker than 0600.  See
+		 * Think not to make the file protection weaker than 0600/0640.  See
 		 * comments below.
 		 */
-		fd = open(filename, O_RDWR | O_CREAT | O_EXCL, 0600);
+		fd = open(filename, O_RDWR | O_CREAT | O_EXCL, pg_file_create_mode);
 		if (fd >= 0)
 			break;				/* Success; exit the retry loop */
 
@@ -848,7 +951,7 @@ CreateLockFile(const char *filename, bool amPostmaster,
 		 * Read the file to get the old owner's PID.  Note race condition
 		 * here: file might have been deleted since we tried to create it.
 		 */
-		fd = open(filename, O_RDONLY, 0600);
+		fd = open(filename, O_RDONLY, pg_file_create_mode);
 		if (fd < 0)
 		{
 			if (errno == ENOENT)
@@ -898,17 +1001,14 @@ CreateLockFile(const char *filename, bool amPostmaster,
 		 * implies that the existing process has a different userid than we
 		 * do, which means it cannot be a competing postmaster.  A postmaster
 		 * cannot successfully attach to a data directory owned by a userid
-		 * other than its own.  (This is now checked directly in
-		 * checkDataDir(), but has been true for a long time because of the
-		 * restriction that the data directory isn't group- or
-		 * world-accessible.)  Also, since we create the lockfiles mode 600,
-		 * we'd have failed above if the lockfile belonged to another userid
-		 * --- which means that whatever process kill() is reporting about
-		 * isn't the one that made the lockfile.  (NOTE: this last
-		 * consideration is the only one that keeps us from blowing away a
-		 * Unix socket file belonging to an instance of Postgres being run by
-		 * someone else, at least on machines where /tmp hasn't got a
-		 * stickybit.)
+		 * other than its own, as enforced in checkDataDir(). Also, since we
+		 * create the lockfiles mode 0600/0640, we'd have failed above if the
+		 * lockfile belonged to another userid --- which means that whatever
+		 * process kill() is reporting about isn't the one that made the
+		 * lockfile.  (NOTE: this last consideration is the only one that
+		 * keeps us from blowing away a Unix socket file belonging to an
+		 * instance of Postgres being run by someone else, at least on
+		 * machines where /tmp hasn't got a stickybit.)
 		 */
 		if (other_pid != my_pid && other_pid != my_p_pid &&
 			other_pid != my_gp_pid)
@@ -966,14 +1066,10 @@ CreateLockFile(const char *filename, bool amPostmaster,
 				if (PGSharedMemoryIsInUse(id1, id2))
 					ereport(FATAL,
 							(errcode(ERRCODE_LOCK_FILE_EXISTS),
-							 errmsg("pre-existing shared memory block "
-									"(key %lu, ID %lu) is still in use",
+							 errmsg("pre-existing shared memory block (key %lu, ID %lu) is still in use",
 									id1, id2),
-							 errhint("If you're sure there are no old "
-									 "server processes still running, remove "
-									 "the shared memory block "
-									 "or just delete the file \"%s\".",
-									 filename)));
+							 errhint("Terminate any old server processes associated with data directory \"%s\".",
+									 refName)));
 			}
 		}
 
@@ -993,7 +1089,7 @@ CreateLockFile(const char *filename, bool amPostmaster,
 	}
 
 	/*
-	 * Successfully created the file, now fill it.  See comment in miscadmin.h
+	 * Successfully created the file, now fill it.  See comment in pidfile.h
 	 * about the contents.  Note that we write the same first five lines into
 	 * both datadir and socket lockfiles; although more stuff may get added to
 	 * the datadir lockfile later.
@@ -1273,11 +1369,11 @@ AddToDataDirLockFile(int target_line, const char *str)
 
 /*
  * Recheck that the data directory lock file still exists with expected
- * content.  Return TRUE if the lock file appears OK, FALSE if it isn't.
+ * content.  Return true if the lock file appears OK, false if it isn't.
  *
  * We call this periodically in the postmaster.  The idea is that if the
  * lock file has been removed or replaced by another postmaster, we should
- * do a panic database shutdown.  Therefore, we should return TRUE if there
+ * do a panic database shutdown.  Therefore, we should return true if there
  * is any doubt: we do not want to cause a panic shutdown unnecessarily.
  * Transient failures like EINTR or ENFILE should not cause us to fail.
  * (If there really is something wrong, we'll detect it on a future recheck.)
@@ -1359,7 +1455,7 @@ ValidateAgVersion(const char *path)
 	FILE	   *file;
 	char		file_version_string[64];
 
-	snprintf(full_path, sizeof(full_path), "%s/AG_VERSION", path);
+	snprintf(full_path, sizeof(full_path), "%s/PG_VERSION", path);
 
 	file = AllocateFile(full_path, "r");
 	if (!file)
@@ -1367,7 +1463,7 @@ ValidateAgVersion(const char *path)
 		if (errno == ENOENT)
 			ereport(FATAL,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("\"%s\" is not a valid data directory",
+					 errmsg("\"%s\" is not a valid data directoryX",
 							path),
 					 errdetail("File \"%s\" is missing.", full_path)));
 		else
@@ -1381,7 +1477,7 @@ ValidateAgVersion(const char *path)
 	if (fscanf(file, "%63s", file_version_string) != 1)
 		ereport(FATAL,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("\"%s\" is not a valid data directory",
+				 errmsg("\"%s\" is not a valid data directoryY",
 						path),
 				 errdetail("File \"%s\" does not contain valid data.",
 						   full_path),
@@ -1389,13 +1485,13 @@ ValidateAgVersion(const char *path)
 
 	FreeFile(file);
 
-	if (strcmp(AG_COMP_VERSION, file_version_string))
+	if (strcmp(PG_MAJORVERSION, file_version_string))
 		ereport(FATAL,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("database files are incompatible with server"),
 				 errdetail("The data directory was initialized by AgensGraph version %s, "
 						   "which is not compatible with this version %s.",
-						   file_version_string, AG_COMP_VERSION)));
+						   file_version_string, PG_VERSION)));
 }
 
 /*
@@ -1426,7 +1522,7 @@ ValidatePgVersion(const char *path)
 		if (errno == ENOENT)
 			ereport(FATAL,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("\"%s\" is not a valid data directory",
+					 errmsg("\"%s\" is not a valid data directoryZ",
 							path),
 					 errdetail("File \"%s\" is missing.", full_path)));
 		else
@@ -1442,7 +1538,7 @@ ValidatePgVersion(const char *path)
 	if (ret != 1 || endptr == file_version_string)
 		ereport(FATAL,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("\"%s\" is not a valid data directory",
+				 errmsg("\"%s\" is not a valid data directoryA",
 						path),
 				 errdetail("File \"%s\" does not contain valid data.",
 						   full_path),

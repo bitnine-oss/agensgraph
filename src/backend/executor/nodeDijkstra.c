@@ -35,6 +35,7 @@
 #include "utils/memutils.h"
 #include "utils/typcache.h"
 
+
 typedef struct vnode
 {
 	Graphid		id;					/* hash key */
@@ -317,7 +318,7 @@ replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
 	Assert(tupleDesc != NULL);
 	Assert(vertexRow != NULL);
 
-	attribute = tupleDesc->attrs[Anum_vertex_id-1];
+	attribute = &(tupleDesc->attrs[Anum_vertex_id-1]);
 
 	/* This function only works for element 1, graphid, by value */
 	Assert(attribute->attbyval);
@@ -533,9 +534,8 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	/*
 	 * tuple table initialization
 	 */
-	ExecInitResultTupleSlot(estate, &dstate->ps);
-	dstate->selfTupleSlot = ExecInitExtraTupleSlot(estate);
-
+    ExecInitResultTupleSlotTL(&dstate->ps, &TTSOpsVirtual);
+	dstate->selfTupleSlot = ExecInitExtraTupleSlot(estate, dstate->tupleDesc, &TTSOpsVirtual);
 
 	/*
 	 * ExecDijkstra was originally written without expectations that the
@@ -564,9 +564,9 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	/*
 	 * initialize tuple type and projection info
 	 */
-	ExecAssignResultTypeFromTL(&dstate->ps);
-	ExecAssignProjectionInfo(&dstate->ps, NULL);
 
+    ExecInitResultTupleSlotTL(&dstate->ps, &TTSOpsHeapTuple);
+	ExecAssignProjectionInfo(&dstate->ps, NULL);
 	ExecSetSlotDescriptor(dstate->selfTupleSlot, ExecGetResultType(outerPlan));
 
 	return dstate;

@@ -3,7 +3,7 @@
  * view.c
  *	  use rewrite rules to construct views
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,7 +14,7 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
+#include "access/relation.h"
 #include "access/xact.h"
 #include "catalog/namespace.h"
 #include "commands/defrem.h"
@@ -43,11 +43,11 @@ static void checkViewTupleDesc(TupleDesc newdesc, TupleDesc olddesc);
  * are "local" and "cascaded".
  */
 void
-validateWithCheckOption(char *value)
+validateWithCheckOption(const char *value)
 {
 	if (value == NULL ||
-		(pg_strcasecmp(value, "local") != 0 &&
-		 pg_strcasecmp(value, "cascaded") != 0))
+		(strcmp(value, "local") != 0 &&
+		 strcmp(value, "cascaded") != 0))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -61,6 +61,8 @@ validateWithCheckOption(char *value)
  *
  * Create a view relation and use the rules system to store the query
  * for the view.
+ *
+ * EventTriggerAlterTableStart must have been called already.
  *---------------------------------------------------------------------
  */
 static ObjectAddress
@@ -108,11 +110,6 @@ DefineVirtualRelation(RangeVar *relation, List *tlist, bool replace,
 			attrList = lappend(attrList, def);
 		}
 	}
-
-	if (attrList == NIL)
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-				 errmsg("view must have at least one column")));
 
 	/*
 	 * Look up, check permissions on, and lock the creation namespace; also
@@ -186,6 +183,7 @@ DefineVirtualRelation(RangeVar *relation, List *tlist, bool replace,
 				atcmds = lappend(atcmds, atcmd);
 			}
 
+			/* EventTriggerAlterTableStart called by ProcessUtilitySlow */
 			AlterTableInternal(viewOid, atcmds, true);
 
 			/* Make the new view columns visible */
@@ -217,6 +215,7 @@ DefineVirtualRelation(RangeVar *relation, List *tlist, bool replace,
 		atcmd->def = (Node *) options;
 		atcmds = list_make1(atcmd);
 
+		/* EventTriggerAlterTableStart called by ProcessUtilitySlow */
 		AlterTableInternal(viewOid, atcmds, true);
 
 		ObjectAddressSet(address, RelationRelationId, viewOid);
@@ -279,12 +278,11 @@ checkViewTupleDesc(TupleDesc newdesc, TupleDesc olddesc)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 				 errmsg("cannot drop columns from view")));
-	/* we can ignore tdhasoid */
 
 	for (i = 0; i < olddesc->natts; i++)
 	{
-		Form_pg_attribute newattr = newdesc->attrs[i];
-		Form_pg_attribute oldattr = olddesc->attrs[i];
+		Form_pg_attribute newattr = TupleDescAttr(newdesc, i);
+		Form_pg_attribute oldattr = TupleDescAttr(olddesc, i);
 
 		/* XXX msg not right, but we don't support DROP COL on view anyway */
 		if (newattr->attisdropped != oldattr->attisdropped)
@@ -353,7 +351,7 @@ DefineViewRules(Oid viewOid, Query *viewParse, bool replace)
  * by 2...
  *
  * These extra RT entries are not actually used in the query,
- * except for run-time permission checking.
+ * except for run-time locking and permission checking.
  *---------------------------------------------------------------
  */
 static Query *
@@ -386,9 +384,11 @@ UpdateRangeTableOfViewParse(Oid viewOid, Query *viewParse)
 	 * OLD first, then NEW....
 	 */
 	rt_entry1 = addRangeTableEntryForRelation(pstate, viewRel,
+											  AccessShareLock,
 											  makeAlias("old", NIL),
 											  false, false);
 	rt_entry2 = addRangeTableEntryForRelation(pstate, viewRel,
+											  AccessShareLock,
 											  makeAlias("new", NIL),
 											  false, false);
 	/* Must override addRangeTableEntry's default access-check flags */
@@ -485,7 +485,7 @@ DefineView(ViewStmt *stmt, const char *queryString,
 	{
 		DefElem    *defel = (DefElem *) lfirst(cell);
 
-		if (pg_strcasecmp(defel->defname, "check_option") == 0)
+		if (strcmp(defel->defname, "check_option") == 0)
 			check_option = true;
 	}
 
@@ -502,7 +502,7 @@ DefineView(ViewStmt *stmt, const char *queryString,
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("WITH CHECK OPTION is supported only on automatically updatable views"),
-					 errhint("%s", view_updatable_error)));
+					 errhint("%s", _(view_updatable_error))));
 	}
 
 	/*

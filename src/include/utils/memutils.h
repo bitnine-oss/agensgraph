@@ -7,7 +7,7 @@
  *	  of the API of the memory management subsystem.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/memutils.h
@@ -76,20 +76,25 @@ extern void MemoryContextDelete(MemoryContext context);
 extern void MemoryContextResetOnly(MemoryContext context);
 extern void MemoryContextResetChildren(MemoryContext context);
 extern void MemoryContextDeleteChildren(MemoryContext context);
+extern void MemoryContextSetIdentifier(MemoryContext context, const char *id);
 extern void MemoryContextSetParent(MemoryContext context,
-					   MemoryContext new_parent);
+								   MemoryContext new_parent);
 extern Size GetMemoryChunkSpace(void *pointer);
 extern MemoryContext MemoryContextGetParent(MemoryContext context);
 extern bool MemoryContextIsEmpty(MemoryContext context);
 extern void MemoryContextStats(MemoryContext context);
 extern void MemoryContextStatsDetail(MemoryContext context, int max_children);
 extern void MemoryContextAllowInCriticalSection(MemoryContext context,
-									bool allow);
+												bool allow);
 
 #ifdef MEMORY_CONTEXT_CHECKING
 extern void MemoryContextCheck(MemoryContext context);
 #endif
 extern bool MemoryContextContains(MemoryContext context, void *pointer);
+
+/* Handy macro for copying and assigning context ID ... but note double eval */
+#define MemoryContextCopyAndSetIdentifier(cxt, id) \
+	MemoryContextSetIdentifier(cxt, MemoryContextStrdup(cxt, id))
 
 /*
  * GetMemoryChunkContext
@@ -132,10 +137,11 @@ GetMemoryChunkContext(void *pointer)
  * context creation.  It's intended to be called from context-type-
  * specific creation routines, and noplace else.
  */
-extern MemoryContext MemoryContextCreate(NodeTag tag, Size size,
-					MemoryContextMethods *methods,
-					MemoryContext parent,
-					const char *name);
+extern void MemoryContextCreate(MemoryContext node,
+								NodeTag tag,
+								const MemoryContextMethods *methods,
+								MemoryContext parent,
+								const char *name);
 
 
 /*
@@ -143,17 +149,37 @@ extern MemoryContext MemoryContextCreate(NodeTag tag, Size size,
  */
 
 /* aset.c */
-extern MemoryContext AllocSetContextCreate(MemoryContext parent,
-					  const char *name,
-					  Size minContextSize,
-					  Size initBlockSize,
-					  Size maxBlockSize);
+extern MemoryContext AllocSetContextCreateInternal(MemoryContext parent,
+												   const char *name,
+												   Size minContextSize,
+												   Size initBlockSize,
+												   Size maxBlockSize);
+
+/*
+ * This wrapper macro exists to check for non-constant strings used as context
+ * names; that's no longer supported.  (Use MemoryContextSetIdentifier if you
+ * want to provide a variable identifier.)
+ */
+#ifdef HAVE__BUILTIN_CONSTANT_P
+#define AllocSetContextCreate(parent, name, ...) \
+	(StaticAssertExpr(__builtin_constant_p(name), \
+					  "memory context names must be constant strings"), \
+	 AllocSetContextCreateInternal(parent, name, __VA_ARGS__))
+#else
+#define AllocSetContextCreate \
+	AllocSetContextCreateInternal
+#endif
 
 /* slab.c */
 extern MemoryContext SlabContextCreate(MemoryContext parent,
-				  const char *name,
-				  Size blockSize,
-				  Size chunkSize);
+									   const char *name,
+									   Size blockSize,
+									   Size chunkSize);
+
+/* generation.c */
+extern MemoryContext GenerationContextCreate(MemoryContext parent,
+											 const char *name,
+											 Size blockSize);
 
 /*
  * Recommended default alloc parameters, suitable for "ordinary" contexts

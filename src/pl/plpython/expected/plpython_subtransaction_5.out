@@ -43,7 +43,7 @@ SELECT * FROM subtransaction_tbl;
 
 TRUNCATE subtransaction_tbl;
 SELECT subtransaction_test('SPI');
-ERROR:  spiexceptions.InvalidTextRepresentation: invalid input syntax for integer: "oops"
+ERROR:  spiexceptions.InvalidTextRepresentation: invalid input syntax for type integer: "oops"
 LINE 1: INSERT INTO subtransaction_tbl VALUES ('oops')
                                                ^
 QUERY:  INSERT INTO subtransaction_tbl VALUES ('oops')
@@ -222,11 +222,14 @@ ERROR:  could not compile PL/Python function "subtransaction_enter_subtransactio
 DETAIL:  SyntaxError: invalid syntax (<string>, line 3)
 CREATE FUNCTION subtransaction_exit_subtransaction_in_with() RETURNS void
 AS $$
-with plpy.subtransaction() as s:
-    s.__exit__(None, None, None)
+try:
+    with plpy.subtransaction() as s:
+        s.__exit__(None, None, None)
+except ValueError, e:
+    raise ValueError(e)
 $$ LANGUAGE plpythonu;
 ERROR:  could not compile PL/Python function "subtransaction_exit_subtransaction_in_with"
-DETAIL:  SyntaxError: invalid syntax (<string>, line 3)
+DETAIL:  SyntaxError: invalid syntax (<string>, line 4)
 SELECT subtransaction_exit_without_enter();
 ERROR:  ValueError: this subtransaction has not been entered
 CONTEXT:  Traceback (most recent call last):

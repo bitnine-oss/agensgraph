@@ -66,14 +66,14 @@ scan_label(Oid relid, Oid graphid)
 	Relation	rel;
 	HeapTuple	tup;
 	Snapshot	snapshot;
-	HeapScanDesc scan;
+	TableScanDesc scan;
 
 	AgStat_key	key;
 	AgStat_GraphMeta   *meta_elem;
 
 	rel = heap_open(relid, AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
-	scan = heap_beginscan(rel, snapshot, 0, NULL);
+	scan = heap_beginscan(rel, snapshot, 0, NULL, NULL, 0);
 
 	memset(&key, 0, sizeof(key));
 
@@ -125,7 +125,7 @@ regather_graphmeta(PG_FUNCTION_ARGS)
 	Relation	rel;
 	HeapTuple	tup;
 	Snapshot	snapshot;
-	HeapScanDesc scan;
+	TableScanDesc scan;
 
 	if (auto_gather_graphmeta)
 	{
@@ -136,7 +136,8 @@ regather_graphmeta(PG_FUNCTION_ARGS)
 
 	rel = heap_open(LabelRelationId, AccessShareLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
-	scan = heap_beginscan(rel, snapshot, 0, NULL);
+
+	scan = heap_beginscan(rel, snapshot, 0, NULL, NULL, 0);
 
 	/* hash initialize */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
@@ -178,7 +179,7 @@ regather_graphmeta(PG_FUNCTION_ARGS)
 	/* delete meta */
 	rel = heap_open(GraphMetaRelationId, RowExclusiveLock);
 	snapshot = RegisterSnapshot(GetLatestSnapshot());
-	scan = heap_beginscan(rel, snapshot, 0, NULL);
+	scan = heap_beginscan(rel, snapshot, 0, NULL, NULL, 0);
 
 	while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 		simple_heap_delete(rel, &tup->t_self);

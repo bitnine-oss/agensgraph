@@ -19,6 +19,8 @@
 -- Helper functions to deal with cases where binary-coercible matches are
 -- allowed.
 -- This should match IsBinaryCoercible() in parse_coerce.c.
+-- It doesn't currently know about some cases, notably domains, anyelement,
+-- anynonarray, anyenum, or record, but it doesn't need to (yet).
 create function binary_coercible(oid, oid) returns bool as $$
 begin
   if $1 = $2 then return true; end if;
@@ -39,9 +41,11 @@ begin
   return false;
 end
 $$ language plpgsql strict stable;
--- This one ignores castcontext, so it considers only physical equivalence
--- and not whether the coercion can be invoked implicitly.
-create function physically_coercible(oid, oid) returns bool as $$
+-- This one ignores castcontext, so it will allow cases where an explicit
+-- (but still binary) cast would be required to convert the input type.
+-- We don't currently use this for any tests in this file, but it is a
+-- reasonable alternative definition for some scenarios.
+create function explicitly_binary_coercible(oid, oid) returns bool as $$
 begin
   if $1 = $2 then return true; end if;
   if EXISTS(select 1 from pg_catalog.pg_cast where
@@ -74,6 +78,7 @@ WHERE p1.prolang = 0 OR p1.prorettype = 0 OR
        0::oid = ANY (p1.proargtypes) OR
        procost <= 0 OR
        CASE WHEN proretset THEN prorows <= 0 ELSE prorows != 0 END OR
+       prokind NOT IN ('f', 'a', 'w', 'p') OR
        provolatile NOT IN ('i', 's', 'v') OR
        proparallel NOT IN ('s', 'r', 'u');
  oid | proname 
@@ -88,10 +93,10 @@ WHERE prosrc IS NULL OR prosrc = '' OR prosrc = '-';
 -----+---------
 (0 rows)
 
--- proiswindow shouldn't be set together with proisagg or proretset
+-- proretset should only be set for normal functions
 SELECT p1.oid, p1.proname
 FROM pg_proc AS p1
-WHERE proiswindow AND (proisagg OR proretset);
+WHERE proretset AND prokind != 'f';
  oid | proname 
 -----+---------
 (0 rows)
@@ -154,9 +159,9 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid < p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    (p1.proisagg = false OR p2.proisagg = false) AND
+    (p1.prokind != 'a' OR p2.prokind != 'a') AND
     (p1.prolang != p2.prolang OR
-     p1.proisagg != p2.proisagg OR
+     p1.prokind != p2.prokind OR
      p1.prosecdef != p2.prosecdef OR
      p1.proleakproof != p2.proleakproof OR
      p1.proisstrict != p2.proisstrict OR
@@ -182,7 +187,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     p1.prosrc NOT LIKE E'range\\_constructor_' AND
     p2.prosrc NOT LIKE E'range\\_constructor_' AND
     (p1.prorettype < p2.prorettype)
@@ -198,7 +203,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     p1.prosrc NOT LIKE E'range\\_constructor_' AND
     p2.prosrc NOT LIKE E'range\\_constructor_' AND
     (p1.proargtypes[0] < p2.proargtypes[0])
@@ -216,7 +221,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     p1.prosrc NOT LIKE E'range\\_constructor_' AND
     p2.prosrc NOT LIKE E'range\\_constructor_' AND
     (p1.proargtypes[1] < p2.proargtypes[1])
@@ -233,7 +238,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[2] < p2.proargtypes[2])
 ORDER BY 1, 2;
  proargtypes | proargtypes 
@@ -246,7 +251,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[3] < p2.proargtypes[3])
 ORDER BY 1, 2;
  proargtypes | proargtypes 
@@ -259,7 +264,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[4] < p2.proargtypes[4])
 ORDER BY 1, 2;
  proargtypes | proargtypes 
@@ -271,7 +276,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[5] < p2.proargtypes[5])
 ORDER BY 1, 2;
  proargtypes | proargtypes 
@@ -283,7 +288,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[6] < p2.proargtypes[6])
 ORDER BY 1, 2;
  proargtypes | proargtypes 
@@ -295,7 +300,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[7] < p2.proargtypes[7])
 ORDER BY 1, 2;
  proargtypes | proargtypes 
@@ -449,10 +454,10 @@ WHERE proallargtypes IS NOT NULL AND
 -----+---------+-------------+----------------+-------------
 (0 rows)
 
--- Check for protransform functions with the wrong signature
+-- Check for prosupport functions with the wrong signature
 SELECT p1.oid, p1.proname, p2.oid, p2.proname
 FROM pg_proc AS p1, pg_proc AS p2
-WHERE p2.oid = p1.protransform AND
+WHERE p2.oid = p1.prosupport AND
     (p2.prorettype != 'internal'::regtype OR p2.proretset OR p2.pronargs != 1
      OR p2.proargtypes[0] != 'internal'::regtype);
  oid | proname | oid | proname 
@@ -521,24 +526,20 @@ int24ge(smallint,integer)
 int42ge(integer,smallint)
 oideq(oid,oid)
 oidne(oid,oid)
-abstimeeq(abstime,abstime)
-abstimene(abstime,abstime)
-abstimelt(abstime,abstime)
-abstimegt(abstime,abstime)
-abstimele(abstime,abstime)
-abstimege(abstime,abstime)
-reltimeeq(reltime,reltime)
-reltimene(reltime,reltime)
-reltimelt(reltime,reltime)
-reltimegt(reltime,reltime)
-reltimele(reltime,reltime)
-reltimege(reltime,reltime)
-tintervalleneq(tinterval,reltime)
-tintervallenne(tinterval,reltime)
-tintervallenlt(tinterval,reltime)
-tintervallengt(tinterval,reltime)
-tintervallenle(tinterval,reltime)
-tintervallenge(tinterval,reltime)
+nameeqtext(name,text)
+namelttext(name,text)
+nameletext(name,text)
+namegetext(name,text)
+namegttext(name,text)
+namenetext(name,text)
+btnametextcmp(name,text)
+texteqname(text,name)
+textltname(text,name)
+textlename(text,name)
+textgename(text,name)
+textgtname(text,name)
+textnename(text,name)
+bttextnamecmp(text,name)
 float4eq(real,real)
 float4ne(real,real)
 float4lt(real,real)
@@ -563,6 +564,18 @@ float84lt(double precision,real)
 float84le(double precision,real)
 float84gt(double precision,real)
 float84ge(double precision,real)
+btint2cmp(smallint,smallint)
+btint4cmp(integer,integer)
+btfloat4cmp(real,real)
+btfloat8cmp(double precision,double precision)
+btoidcmp(oid,oid)
+btcharcmp("char","char")
+btnamecmp(name,name)
+bttextcmp(text,text)
+cash_cmp(money,money)
+btoidvectorcmp(oidvector,oidvector)
+text_larger(text,text)
+text_smaller(text,text)
 int8eq(bigint,bigint)
 int8ne(bigint,bigint)
 int8lt(bigint,bigint)
@@ -575,25 +588,31 @@ int84lt(bigint,integer)
 int84gt(bigint,integer)
 int84le(bigint,integer)
 int84ge(bigint,integer)
+oidvectorne(oidvector,oidvector)
 namelt(name,name)
 namele(name,name)
 namegt(name,name)
 namege(name,name)
 namene(name,name)
+oidvectorlt(oidvector,oidvector)
+oidvectorle(oidvector,oidvector)
+oidvectoreq(oidvector,oidvector)
+oidvectorge(oidvector,oidvector)
+oidvectorgt(oidvector,oidvector)
 oidlt(oid,oid)
 oidle(oid,oid)
-tintervaleq(tinterval,tinterval)
-tintervalne(tinterval,tinterval)
-tintervallt(tinterval,tinterval)
-tintervalgt(tinterval,tinterval)
-tintervalle(tinterval,tinterval)
-tintervalge(tinterval,tinterval)
+text_lt(text,text)
+text_le(text,text)
+text_gt(text,text)
+text_ge(text,text)
 macaddr_eq(macaddr,macaddr)
 macaddr_lt(macaddr,macaddr)
 macaddr_le(macaddr,macaddr)
 macaddr_gt(macaddr,macaddr)
 macaddr_ge(macaddr,macaddr)
 macaddr_ne(macaddr,macaddr)
+macaddr_cmp(macaddr,macaddr)
+btint8cmp(bigint,bigint)
 int48eq(integer,bigint)
 int48ne(integer,bigint)
 int48lt(integer,bigint)
@@ -612,20 +631,30 @@ network_le(inet,inet)
 network_gt(inet,inet)
 network_ge(inet,inet)
 network_ne(inet,inet)
+network_cmp(inet,inet)
 lseg_eq(lseg,lseg)
 bpchareq(character,character)
+bpcharlt(character,character)
+bpcharle(character,character)
+bpchargt(character,character)
+bpcharge(character,character)
 bpcharne(character,character)
+bpchar_larger(character,character)
+bpchar_smaller(character,character)
+bpcharcmp(character,character)
 date_eq(date,date)
 date_lt(date,date)
 date_le(date,date)
 date_gt(date,date)
 date_ge(date,date)
 date_ne(date,date)
+date_cmp(date,date)
 time_lt(time without time zone,time without time zone)
 time_le(time without time zone,time without time zone)
 time_gt(time without time zone,time without time zone)
 time_ge(time without time zone,time without time zone)
 time_ne(time without time zone,time without time zone)
+time_cmp(time without time zone,time without time zone)
 time_eq(time without time zone,time without time zone)
 timestamptz_eq(timestamp with time zone,timestamp with time zone)
 timestamptz_ne(timestamp with time zone,timestamp with time zone)
@@ -642,6 +671,8 @@ interval_gt(interval,interval)
 charlt("char","char")
 tidne(tid,tid)
 tideq(tid,tid)
+timestamptz_cmp(timestamp with time zone,timestamp with time zone)
+interval_cmp(interval,interval)
 xideqint4(xid,integer)
 timetz_eq(time with time zone,time with time zone)
 timetz_ne(time with time zone,time with time zone)
@@ -649,6 +680,7 @@ timetz_lt(time with time zone,time with time zone)
 timetz_le(time with time zone,time with time zone)
 timetz_ge(time with time zone,time with time zone)
 timetz_gt(time with time zone,time with time zone)
+timetz_cmp(time with time zone,time with time zone)
 circle_eq(circle,circle)
 circle_ne(circle,circle)
 circle_lt(circle,circle)
@@ -666,6 +698,7 @@ bitge(bit,bit)
 bitgt(bit,bit)
 bitle(bit,bit)
 bitlt(bit,bit)
+bitcmp(bit,bit)
 oidgt(oid,oid)
 oidge(oid,oid)
 varbiteq(bit varying,bit varying)
@@ -674,8 +707,10 @@ varbitge(bit varying,bit varying)
 varbitgt(bit varying,bit varying)
 varbitle(bit varying,bit varying)
 varbitlt(bit varying,bit varying)
+varbitcmp(bit varying,bit varying)
 boolle(boolean,boolean)
 boolge(boolean,boolean)
+btboolcmp(boolean,boolean)
 int28eq(smallint,bigint)
 int28ne(smallint,bigint)
 int28lt(smallint,bigint)
@@ -694,30 +729,67 @@ byteale(bytea,bytea)
 byteagt(bytea,bytea)
 byteage(bytea,bytea)
 byteane(bytea,bytea)
+byteacmp(bytea,bytea)
+timestamp_cmp(timestamp without time zone,timestamp without time zone)
 timestamp_eq(timestamp without time zone,timestamp without time zone)
 timestamp_ne(timestamp without time zone,timestamp without time zone)
 timestamp_lt(timestamp without time zone,timestamp without time zone)
 timestamp_le(timestamp without time zone,timestamp without time zone)
 timestamp_ge(timestamp without time zone,timestamp without time zone)
 timestamp_gt(timestamp without time zone,timestamp without time zone)
+text_pattern_lt(text,text)
+text_pattern_le(text,text)
+text_pattern_ge(text,text)
+text_pattern_gt(text,text)
+bttext_pattern_cmp(text,text)
+bpchar_pattern_lt(character,character)
+bpchar_pattern_le(character,character)
+bpchar_pattern_ge(character,character)
+bpchar_pattern_gt(character,character)
+btbpchar_pattern_cmp(character,character)
+btint48cmp(integer,bigint)
+btint84cmp(bigint,integer)
+btint24cmp(smallint,integer)
+btint42cmp(integer,smallint)
+btint28cmp(smallint,bigint)
+btint82cmp(bigint,smallint)
+btfloat48cmp(real,double precision)
+btfloat84cmp(double precision,real)
+md5(text)
+md5(bytea)
 tidgt(tid,tid)
 tidlt(tid,tid)
 tidge(tid,tid)
 tidle(tid,tid)
+bttidcmp(tid,tid)
 uuid_lt(uuid,uuid)
 uuid_le(uuid,uuid)
 uuid_eq(uuid,uuid)
 uuid_ge(uuid,uuid)
 uuid_gt(uuid,uuid)
 uuid_ne(uuid,uuid)
+uuid_cmp(uuid,uuid)
+pg_lsn_lt(pg_lsn,pg_lsn)
+pg_lsn_le(pg_lsn,pg_lsn)
+pg_lsn_eq(pg_lsn,pg_lsn)
+pg_lsn_ge(pg_lsn,pg_lsn)
+pg_lsn_gt(pg_lsn,pg_lsn)
+pg_lsn_ne(pg_lsn,pg_lsn)
+pg_lsn_cmp(pg_lsn,pg_lsn)
 xidneq(xid,xid)
 xidneqint4(xid,integer)
+sha224(bytea)
+sha256(bytea)
+sha384(bytea)
+sha512(bytea)
+starts_with(text,text)
 macaddr8_eq(macaddr8,macaddr8)
 macaddr8_lt(macaddr8,macaddr8)
 macaddr8_le(macaddr8,macaddr8)
 macaddr8_gt(macaddr8,macaddr8)
 macaddr8_ge(macaddr8,macaddr8)
 macaddr8_ne(macaddr8,macaddr8)
+macaddr8_cmp(macaddr8,macaddr8)
 -- restore normal output mode
 \a\t
 -- List of functions used by libpq's fe-lobj.c
@@ -775,8 +847,8 @@ SELECT *
 FROM pg_cast c
 WHERE castsource = 0 OR casttarget = 0 OR castcontext NOT IN ('e', 'a', 'i')
     OR castmethod NOT IN ('f', 'b' ,'i');
- castsource | casttarget | castfunc | castcontext | castmethod 
-------------+------------+----------+-------------+------------
+ oid | castsource | casttarget | castfunc | castcontext | castmethod 
+-----+------------+------------+----------+-------------+------------
 (0 rows)
 
 -- Check that castfunc is nonzero only for cast methods that need a function,
@@ -785,8 +857,8 @@ SELECT *
 FROM pg_cast c
 WHERE (castmethod = 'f' AND castfunc = 0)
    OR (castmethod IN ('b', 'i') AND castfunc <> 0);
- castsource | casttarget | castfunc | castcontext | castmethod 
-------------+------------+----------+-------------+------------
+ oid | castsource | casttarget | castfunc | castcontext | castmethod 
+-----+------------+------------+----------+-------------+------------
 (0 rows)
 
 -- Look for casts to/from the same type that aren't length coercion functions.
@@ -795,15 +867,15 @@ WHERE (castmethod = 'f' AND castfunc = 0)
 SELECT *
 FROM pg_cast c
 WHERE castsource = casttarget AND castfunc = 0;
- castsource | casttarget | castfunc | castcontext | castmethod 
-------------+------------+----------+-------------+------------
+ oid | castsource | casttarget | castfunc | castcontext | castmethod 
+-----+------------+------------+----------+-------------+------------
 (0 rows)
 
 SELECT c.*
 FROM pg_cast c, pg_proc p
 WHERE c.castfunc = p.oid AND p.pronargs < 2 AND castsource = casttarget;
- castsource | casttarget | castfunc | castcontext | castmethod 
-------------+------------+----------+-------------+------------
+ oid | castsource | casttarget | castfunc | castcontext | castmethod 
+-----+------------+------------+----------+-------------+------------
 (0 rows)
 
 -- Look for cast functions that don't have the right signature.  The
@@ -821,8 +893,8 @@ WHERE c.castfunc = p.oid AND
              OR (c.castsource = 'character'::regtype AND
                  p.proargtypes[0] = 'text'::regtype))
      OR NOT binary_coercible(p.prorettype, c.casttarget));
- castsource | casttarget | castfunc | castcontext | castmethod 
-------------+------------+----------+-------------+------------
+ oid | castsource | casttarget | castfunc | castcontext | castmethod 
+-----+------------+------------+----------+-------------+------------
 (0 rows)
 
 SELECT c.*
@@ -830,8 +902,8 @@ FROM pg_cast c, pg_proc p
 WHERE c.castfunc = p.oid AND
     ((p.pronargs > 1 AND p.proargtypes[1] != 'int4'::regtype) OR
      (p.pronargs > 2 AND p.proargtypes[2] != 'bool'::regtype));
- castsource | casttarget | castfunc | castcontext | castmethod 
-------------+------------+----------+-------------+------------
+ oid | castsource | casttarget | castfunc | castcontext | castmethod 
+-----+------------+------------+----------+-------------+------------
 (0 rows)
 
 -- Look for binary compatible casts that do not have the reverse
@@ -860,11 +932,12 @@ WHERE c.castmethod = 'b' AND
  pg_node_tree      | text              |        0 | i
  pg_ndistinct      | bytea             |        0 | i
  pg_dependencies   | bytea             |        0 | i
+ pg_mcv_list       | bytea             |        0 | i
  cidr              | inet              |        0 | i
  xml               | text              |        0 | a
  xml               | character varying |        0 | a
  xml               | character         |        0 | a
-(9 rows)
+(10 rows)
 
 -- **************** pg_conversion ****************
 -- Look for illegal values in pg_conversion fields.
@@ -1034,9 +1107,6 @@ ORDER BY 1, 2;
  !~*  | ~*
  !~~  | ~~
  !~~* | ~~*
- #<   | #>=
- #<=  | #>
- #<>  | #=
  *<   | *>=
  *<=  | *>
  *<>  | *=
@@ -1046,7 +1116,7 @@ ORDER BY 1, 2;
  <>   | ~=
  ~<=~ | ~>~
  ~<~  | ~>=~
-(16 rows)
+(13 rows)
 
 -- A mergejoinable or hashjoinable operator must be binary, must return
 -- boolean, and must have a commutator (itself, unless it's a cross-type
@@ -1102,9 +1172,8 @@ WHERE p1.oprcanhash AND NOT EXISTS
          amopopr = p1.oid AND amopstrategy = 1);
  oid  | oprname 
 ------+---------
- 7136 | =
  7148 | =
-(2 rows)
+(1 row)
 
 -- And the converse.
 SELECT p1.oid, p1.oprname, p.amopfamily
@@ -1215,7 +1284,7 @@ WHERE d.classoid IS NULL AND p1.oid <= 9999;
 
 -- Check that operators' underlying functions have suitable comments,
 -- namely 'implementation of XXX operator'.  (Note: it's not necessary to
--- put such comments into pg_proc.h; initdb will generate them as needed.)
+-- put such comments into pg_proc.dat; initdb will generate them as needed.)
 -- In some cases involving legacy names for operators, there are multiple
 -- operators referencing the same pg_proc entry, so ignore operators whose
 -- comments say they are deprecated.
@@ -1237,9 +1306,41 @@ SELECT * FROM funcdescs
   WHERE prodesc IS DISTINCT FROM expecteddesc
     AND oprdesc NOT LIKE 'deprecated%'
     AND prodesc IS DISTINCT FROM oprdesc;
- p_oid | proname | o_oid | prodesc | expecteddesc | oprdesc 
--------+---------+-------+---------+--------------+---------
-(0 rows)
+ p_oid |   proname    | o_oid | prodesc |          expecteddesc          |        oprdesc        
+-------+--------------+-------+---------+--------------------------------+-----------------------
+  7081 | graphid_eq   |  7087 |         | implementation of = operator   | equal
+  7082 | graphid_ne   |  7088 |         | implementation of <> operator  | not equal
+  7083 | graphid_lt   |  7089 |         | implementation of < operator   | less than
+  7084 | graphid_gt   |  7090 |         | implementation of > operator   | greater than
+  7085 | graphid_le   |  7091 |         | implementation of <= operator  | less than or equal
+  7086 | graphid_ge   |  7092 |         | implementation of >= operator  | greater than or equal
+  7130 | vertex_eq    |  7136 |         | implementation of = operator   | equal
+  7131 | vertex_ne    |  7137 |         | implementation of <> operator  | not equal
+  7132 | vertex_lt    |  7138 |         | implementation of < operator   | less than
+  7133 | vertex_gt    |  7139 |         | implementation of > operator   | greater than
+  7134 | vertex_le    |  7140 |         | implementation of <= operator  | less than or equal
+  7135 | vertex_ge    |  7141 |         | implementation of >= operator  | greater than or equal
+  7142 | edge_eq      |  7148 |         | implementation of = operator   | equal
+  7143 | edge_ne      |  7149 |         | implementation of <> operator  | not equal
+  7144 | edge_lt      |  7150 |         | implementation of < operator   | less than
+  7145 | edge_gt      |  7151 |         | implementation of > operator   | greater than
+  7146 | edge_le      |  7152 |         | implementation of <= operator  | less than or equal
+  7147 | edge_ge      |  7153 |         | implementation of >= operator  | greater than or equal
+  7155 | rowid_eq     |  7161 |         | implementation of = operator   | equal
+  7156 | rowid_ne     |  7162 |         | implementation of <> operator  | not equal
+  7157 | rowid_lt     |  7163 |         | implementation of < operator   | less than
+  7158 | rowid_gt     |  7164 |         | implementation of > operator   | greater than
+  7159 | rowid_le     |  7165 |         | implementation of <= operator  | less than or equal
+  7160 | rowid_ge     |  7166 |         | implementation of >= operator  | greater than or equal
+  7175 | jsonb_add    |  7176 |         | implementation of `+` operator | add
+  7177 | jsonb_sub    |  7178 |         | implementation of `-` operator | subtract
+  7179 | jsonb_mul    |  7180 |         | implementation of `*` operator | multiply
+  7181 | jsonb_div    |  7182 |         | implementation of `/` operator | divide
+  7183 | jsonb_mod    |  7184 |         | implementation of `%` operator | modulus
+  7185 | jsonb_pow    |  7186 |         | implementation of `^` operator | exponentiation
+  7187 | jsonb_uplus  |  7188 |         | implementation of `+` operator | unary plus
+  7189 | jsonb_uminus |  7190 |         | implementation of `-` operator | negate
+(32 rows)
 
 -- Show all the operator-implementation functions that have their own
 -- comments.  This should happen only in cases where the function and
@@ -1272,7 +1373,78 @@ ORDER BY 1;
   3940 | jsonb_extract_path_text | get value from jsonb as text with path elements
   3951 | json_extract_path       | get value from json with path elements
   3953 | json_extract_path_text  | get value from json as text with path elements
-(9 rows)
+  7081 | graphid_eq              | 
+  7082 | graphid_ne              | 
+  7083 | graphid_lt              | 
+  7084 | graphid_gt              | 
+  7085 | graphid_le              | 
+  7086 | graphid_ge              | 
+  7130 | vertex_eq               | 
+  7131 | vertex_ne               | 
+  7132 | vertex_lt               | 
+  7133 | vertex_gt               | 
+  7134 | vertex_le               | 
+  7135 | vertex_ge               | 
+  7142 | edge_eq                 | 
+  7143 | edge_ne                 | 
+  7144 | edge_lt                 | 
+  7145 | edge_gt                 | 
+  7146 | edge_le                 | 
+  7147 | edge_ge                 | 
+  7155 | rowid_eq                | 
+  7156 | rowid_ne                | 
+  7157 | rowid_lt                | 
+  7158 | rowid_gt                | 
+  7159 | rowid_le                | 
+  7160 | rowid_ge                | 
+  7175 | jsonb_add               | 
+  7177 | jsonb_sub               | 
+  7179 | jsonb_mul               | 
+  7181 | jsonb_div               | 
+  7183 | jsonb_mod               | 
+  7185 | jsonb_pow               | 
+  7187 | jsonb_uplus             | 
+  7189 | jsonb_uminus            | 
+(41 rows)
+
+-- Operators that are commutator pairs should have identical volatility
+-- and leakproofness markings on their implementation functions.
+SELECT o1.oid, o1.oprcode, o2.oid, o2.oprcode
+FROM pg_operator AS o1, pg_operator AS o2, pg_proc AS p1, pg_proc AS p2
+WHERE o1.oprcom = o2.oid AND p1.oid = o1.oprcode AND p2.oid = o2.oprcode AND
+    (p1.provolatile != p2.provolatile OR
+     p1.proleakproof != p2.proleakproof);
+ oid | oprcode | oid | oprcode 
+-----+---------+-----+---------
+(0 rows)
+
+-- Likewise for negator pairs.
+SELECT o1.oid, o1.oprcode, o2.oid, o2.oprcode
+FROM pg_operator AS o1, pg_operator AS o2, pg_proc AS p1, pg_proc AS p2
+WHERE o1.oprnegate = o2.oid AND p1.oid = o1.oprcode AND p2.oid = o2.oprcode AND
+    (p1.provolatile != p2.provolatile OR
+     p1.proleakproof != p2.proleakproof);
+ oid | oprcode | oid | oprcode 
+-----+---------+-----+---------
+(0 rows)
+
+-- Btree comparison operators' functions should have the same volatility
+-- and leakproofness markings as the associated comparison support function.
+SELECT pp.oid::regprocedure as proc, pp.provolatile as vp, pp.proleakproof as lp,
+       po.oid::regprocedure as opr, po.provolatile as vo, po.proleakproof as lo
+FROM pg_proc pp, pg_proc po, pg_operator o, pg_amproc ap, pg_amop ao
+WHERE pp.oid = ap.amproc AND po.oid = o.oprcode AND o.oid = ao.amopopr AND
+    ao.amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree') AND
+    ao.amopfamily = ap.amprocfamily AND
+    ao.amoplefttype = ap.amproclefttype AND
+    ao.amoprighttype = ap.amprocrighttype AND
+    ap.amprocnum = 1 AND
+    (pp.provolatile != po.provolatile OR
+     pp.proleakproof != po.proleakproof)
+ORDER BY 1;
+ proc | vp | lp | opr | vo | lo 
+------+----+----+-----+----+----
+(0 rows)
 
 -- **************** pg_aggregate ****************
 -- Look for illegal values in pg_aggregate fields.
@@ -1282,6 +1454,8 @@ WHERE aggfnoid = 0 OR aggtransfn = 0 OR
     aggkind NOT IN ('n', 'o', 'h') OR
     aggnumdirectargs < 0 OR
     (aggkind = 'n' AND aggnumdirectargs > 0) OR
+    aggfinalmodify NOT IN ('r', 's', 'w') OR
+    aggmfinalmodify NOT IN ('r', 's', 'w') OR
     aggtranstype = 0 OR aggtransspace < 0 OR aggmtransspace < 0;
  ctid | aggfnoid 
 ------+----------
@@ -1291,15 +1465,15 @@ WHERE aggfnoid = 0 OR aggtransfn = 0 OR
 SELECT a.aggfnoid::oid, p.proname
 FROM pg_aggregate as a, pg_proc as p
 WHERE a.aggfnoid = p.oid AND
-    (NOT p.proisagg OR p.proretset OR p.pronargs < a.aggnumdirectargs);
+    (p.prokind != 'a' OR p.proretset OR p.pronargs < a.aggnumdirectargs);
  aggfnoid | proname 
 ----------+---------
 (0 rows)
 
--- Make sure there are no proisagg pg_proc entries without matches.
+-- Make sure there are no prokind = PROKIND_AGGREGATE pg_proc entries without matches.
 SELECT oid, proname
 FROM pg_proc as p
-WHERE p.proisagg AND
+WHERE p.prokind = 'a' AND
     NOT EXISTS (SELECT 1 FROM pg_aggregate a WHERE a.aggfnoid = p.oid);
  oid | proname 
 -----+---------
@@ -1315,8 +1489,6 @@ WHERE a.aggfnoid = p.oid AND
 (0 rows)
 
 -- Cross-check transfn against its entry in pg_proc.
--- NOTE: use physically_coercible here, not binary_coercible, because
--- max and min on abstime are implemented using int4larger/int4smaller.
 SELECT a.aggfnoid::oid, p.proname, ptr.oid, ptr.proname
 FROM pg_aggregate AS a, pg_proc AS p, pg_proc AS ptr
 WHERE a.aggfnoid = p.oid AND
@@ -1325,15 +1497,16 @@ WHERE a.aggfnoid = p.oid AND
      OR NOT (ptr.pronargs =
              CASE WHEN a.aggkind = 'n' THEN p.pronargs + 1
              ELSE greatest(p.pronargs - a.aggnumdirectargs, 1) + 1 END)
-     OR NOT physically_coercible(ptr.prorettype, a.aggtranstype)
-     OR NOT physically_coercible(a.aggtranstype, ptr.proargtypes[0])
+     OR NOT binary_coercible(ptr.prorettype, a.aggtranstype)
+     OR NOT binary_coercible(a.aggtranstype, ptr.proargtypes[0])
      OR (p.pronargs > 0 AND
-         NOT physically_coercible(p.proargtypes[0], ptr.proargtypes[1]))
+         NOT binary_coercible(p.proargtypes[0], ptr.proargtypes[1]))
      OR (p.pronargs > 1 AND
-         NOT physically_coercible(p.proargtypes[1], ptr.proargtypes[2]))
+         NOT binary_coercible(p.proargtypes[1], ptr.proargtypes[2]))
      OR (p.pronargs > 2 AND
-         NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
+         NOT binary_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
+     OR (p.pronargs > 3)
     );
  aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
@@ -1355,7 +1528,8 @@ WHERE a.aggfnoid = p.oid AND
          NOT binary_coercible(p.proargtypes[1], pfn.proargtypes[2]))
      OR (pfn.pronargs > 3 AND
          NOT binary_coercible(p.proargtypes[2], pfn.proargtypes[3]))
-     -- we could carry the check further, but 3 args is enough for now
+     -- we could carry the check further, but 4 args is enough for now
+     OR (pfn.pronargs > 4)
     );
  aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
@@ -1411,15 +1585,16 @@ WHERE a.aggfnoid = p.oid AND
      OR NOT (ptr.pronargs =
              CASE WHEN a.aggkind = 'n' THEN p.pronargs + 1
              ELSE greatest(p.pronargs - a.aggnumdirectargs, 1) + 1 END)
-     OR NOT physically_coercible(ptr.prorettype, a.aggmtranstype)
-     OR NOT physically_coercible(a.aggmtranstype, ptr.proargtypes[0])
+     OR NOT binary_coercible(ptr.prorettype, a.aggmtranstype)
+     OR NOT binary_coercible(a.aggmtranstype, ptr.proargtypes[0])
      OR (p.pronargs > 0 AND
-         NOT physically_coercible(p.proargtypes[0], ptr.proargtypes[1]))
+         NOT binary_coercible(p.proargtypes[0], ptr.proargtypes[1]))
      OR (p.pronargs > 1 AND
-         NOT physically_coercible(p.proargtypes[1], ptr.proargtypes[2]))
+         NOT binary_coercible(p.proargtypes[1], ptr.proargtypes[2]))
      OR (p.pronargs > 2 AND
-         NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
+         NOT binary_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
+     OR (p.pronargs > 3)
     );
  aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
@@ -1434,15 +1609,16 @@ WHERE a.aggfnoid = p.oid AND
      OR NOT (ptr.pronargs =
              CASE WHEN a.aggkind = 'n' THEN p.pronargs + 1
              ELSE greatest(p.pronargs - a.aggnumdirectargs, 1) + 1 END)
-     OR NOT physically_coercible(ptr.prorettype, a.aggmtranstype)
-     OR NOT physically_coercible(a.aggmtranstype, ptr.proargtypes[0])
+     OR NOT binary_coercible(ptr.prorettype, a.aggmtranstype)
+     OR NOT binary_coercible(a.aggmtranstype, ptr.proargtypes[0])
      OR (p.pronargs > 0 AND
-         NOT physically_coercible(p.proargtypes[0], ptr.proargtypes[1]))
+         NOT binary_coercible(p.proargtypes[0], ptr.proargtypes[1]))
      OR (p.pronargs > 1 AND
-         NOT physically_coercible(p.proargtypes[1], ptr.proargtypes[2]))
+         NOT binary_coercible(p.proargtypes[1], ptr.proargtypes[2]))
      OR (p.pronargs > 2 AND
-         NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
+         NOT binary_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
+     OR (p.pronargs > 3)
     );
  aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
@@ -1464,7 +1640,8 @@ WHERE a.aggfnoid = p.oid AND
          NOT binary_coercible(p.proargtypes[1], pfn.proargtypes[2]))
      OR (pfn.pronargs > 3 AND
          NOT binary_coercible(p.proargtypes[2], pfn.proargtypes[3]))
-     -- we could carry the check further, but 3 args is enough for now
+     -- we could carry the check further, but 4 args is enough for now
+     OR (pfn.pronargs > 4)
     );
  aggfnoid | proname | oid | proname 
 ----------+---------+-----+---------
@@ -1496,15 +1673,13 @@ WHERE a.aggfnoid = p.oid AND
 
 -- Check that all combine functions have signature
 -- combine(transtype, transtype) returns transtype
--- NOTE: use physically_coercible here, not binary_coercible, because
--- max and min on abstime are implemented using int4larger/int4smaller.
 SELECT a.aggfnoid, p.proname
 FROM pg_aggregate as a, pg_proc as p
 WHERE a.aggcombinefn = p.oid AND
     (p.pronargs != 2 OR
      p.prorettype != p.proargtypes[0] OR
      p.prorettype != p.proargtypes[1] OR
-     NOT physically_coercible(a.aggtranstype, p.proargtypes[0]));
+     NOT binary_coercible(a.aggtranstype, p.proargtypes[0]));
  aggfnoid | proname 
 ----------+---------
 (0 rows)
@@ -1638,7 +1813,7 @@ ORDER BY 1, 2;
 SELECT p1.oid::regprocedure, p2.oid::regprocedure
 FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid < p2.oid AND p1.proname = p2.proname AND
-    p1.proisagg AND p2.proisagg AND
+    p1.prokind = 'a' AND p2.prokind = 'a' AND
     array_dims(p1.proargtypes) != array_dims(p2.proargtypes)
 ORDER BY 1;
      oid      |   oid   
@@ -1649,7 +1824,7 @@ ORDER BY 1;
 -- For the same reason, built-in aggregates with default arguments are no good.
 SELECT oid, proname
 FROM pg_proc AS p
-WHERE proisagg AND proargdefaults IS NOT NULL;
+WHERE prokind = 'a' AND proargdefaults IS NOT NULL;
  oid | proname 
 -----+---------
 (0 rows)
@@ -1659,7 +1834,7 @@ WHERE proisagg AND proargdefaults IS NOT NULL;
 -- that is not subject to the misplaced ORDER BY issue).
 SELECT p.oid, proname
 FROM pg_proc AS p JOIN pg_aggregate AS a ON a.aggfnoid = p.oid
-WHERE proisagg AND provariadic != 0 AND a.aggkind = 'n';
+WHERE prokind = 'a' AND provariadic != 0 AND a.aggkind = 'n';
  oid | proname 
 -----+---------
 (0 rows)
@@ -1671,6 +1846,16 @@ FROM pg_opfamily as p1
 WHERE p1.opfmethod = 0 OR p1.opfnamespace = 0;
  oid 
 -----
+(0 rows)
+
+-- Look for opfamilies having no opclasses.  While most validation of
+-- opfamilies is now handled by AM-specific amvalidate functions, that's
+-- driven from pg_opclass entries below, so an empty opfamily would not
+-- get noticed.
+SELECT oid, opfname FROM pg_opfamily f
+WHERE NOT EXISTS (SELECT 1 FROM pg_opclass WHERE opcfamily = f.oid);
+ oid | opfname 
+-----+---------
 (0 rows)
 
 -- **************** pg_opclass ****************
@@ -1718,11 +1903,24 @@ WHERE p1.amhandler = 0;
 -----+--------
 (0 rows)
 
--- Check for amhandler functions with the wrong signature
+-- Check for index amhandler functions with the wrong signature
 SELECT p1.oid, p1.amname, p2.oid, p2.proname
 FROM pg_am AS p1, pg_proc AS p2
-WHERE p2.oid = p1.amhandler AND
-    (p2.prorettype != 'index_am_handler'::regtype OR p2.proretset
+WHERE p2.oid = p1.amhandler AND p1.amtype = 'i' AND
+    (p2.prorettype != 'index_am_handler'::regtype
+     OR p2.proretset
+     OR p2.pronargs != 1
+     OR p2.proargtypes[0] != 'internal'::regtype);
+ oid | amname | oid | proname 
+-----+--------+-----+---------
+(0 rows)
+
+-- Check for table amhandler functions with the wrong signature
+SELECT p1.oid, p1.amname, p2.oid, p2.proname
+FROM pg_am AS p1, pg_proc AS p2
+WHERE p2.oid = p1.amhandler AND p1.amtype = 's' AND
+    (p2.prorettype != 'table_am_handler'::regtype
+     OR p2.proretset
      OR p2.pronargs != 1
      OR p2.proargtypes[0] != 'internal'::regtype);
  oid | amname | oid | proname 
@@ -1827,6 +2025,8 @@ ORDER BY 1, 2, 3;
        2742 |            9 | ?
        2742 |           10 | ?|
        2742 |           11 | ?&
+       2742 |           15 | @?
+       2742 |           16 | @@
        3580 |            1 | <
        3580 |            1 | <<
        3580 |            2 | &<
@@ -1878,6 +2078,7 @@ ORDER BY 1, 2, 3;
        4000 |           12 | <=
        4000 |           12 | |&>
        4000 |           14 | >=
+       4000 |           15 | <->
        4000 |           15 | >
        4000 |           16 | @>
        4000 |           18 | =
@@ -1890,7 +2091,8 @@ ORDER BY 1, 2, 3;
        4000 |           25 | <<=
        4000 |           26 | >>
        4000 |           27 | >>=
-(126 rows)
+       4000 |           28 | ^@
+(130 rows)
 
 -- Check that all opclass search operators have selectivity estimators.
 -- This is not absolutely required, but it seems a reasonable thing
@@ -2040,18 +2242,25 @@ ORDER BY 1;
 -- a representational error in pg_index, but simply wrong catalog design.
 -- It's bad because we expect to be able to clone template0 and assign the
 -- copy a different database collation.  It would especially not work for
--- shared catalogs.  Note that although text columns will show a collation
--- in indcollation, they're still okay to index with text_pattern_ops,
--- so allow that case.
+-- shared catalogs.
+SELECT relname, attname, attcollation
+FROM pg_class c, pg_attribute a
+WHERE c.oid = attrelid AND c.oid < 16384 AND
+    c.relkind != 'v' AND  -- we don't care about columns in views
+    attcollation != 0 AND
+    attcollation != (SELECT oid FROM pg_collation WHERE collname = 'C');
+ relname | attname | attcollation 
+---------+---------+--------------
+(0 rows)
+
+-- Double-check that collation-sensitive indexes have "C" collation, too.
 SELECT indexrelid::regclass, indrelid::regclass, iclass, icoll
 FROM (SELECT indexrelid, indrelid,
              unnest(indclass) as iclass, unnest(indcollation) as icoll
       FROM pg_index
       WHERE indrelid < 16384) ss
-WHERE icoll != 0 AND iclass !=
-    (SELECT oid FROM pg_opclass
-     WHERE opcname = 'text_pattern_ops' AND opcmethod =
-           (SELECT oid FROM pg_am WHERE amname = 'btree'));
+WHERE icoll != 0 AND
+    icoll != (SELECT oid FROM pg_collation WHERE collname = 'C');
  indexrelid | indrelid | iclass | icoll 
 ------------+----------+--------+-------
 (0 rows)

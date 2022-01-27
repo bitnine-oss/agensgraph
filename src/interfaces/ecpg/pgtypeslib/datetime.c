@@ -4,10 +4,9 @@
 
 #include <time.h>
 #include <ctype.h>
-#include <float.h>
 #include <limits.h>
 
-#include "extern.h"
+#include "pgtypeslib_extern.h"
 #include "dt.h"
 #include "pgtypes_error.h"
 #include "pgtypes_date.h"
@@ -59,7 +58,7 @@ PGTYPESdate_from_asc(char *str, char **endptr)
 	char	   *realptr;
 	char	  **ptr = (endptr != NULL) ? endptr : &realptr;
 
-	bool		EuroDates = FALSE;
+	bool		EuroDates = false;
 
 	errno = 0;
 	if (strlen(str) > MAXDATELEN)
@@ -105,7 +104,7 @@ PGTYPESdate_to_asc(date dDate)
 			   *tm = &tt;
 	char		buf[MAXDATELEN + 1];
 	int			DateStyle = 1;
-	bool		EuroDates = FALSE;
+	bool		EuroDates = false;
 
 	j2date(dDate + date2j(2000, 1, 1), &(tm->tm_year), &(tm->tm_mon), &(tm->tm_mday));
 	EncodeDateOnly(tm, DateStyle, buf, EuroDates);
@@ -329,7 +328,7 @@ PGTYPESdate_fmt_asc(date dDate, const char *fmtstring, char *outbuf)
 
 #define PGTYPES_DATE_MONTH_MAXLENGTH		20	/* probably even less  :-) */
 int
-PGTYPESdate_defmt_asc(date * d, const char *fmt, char *str)
+PGTYPESdate_defmt_asc(date * d, const char *fmt, const char *str)
 {
 	/*
 	 * token[2] = { 4,6 } means that token 2 starts at position 4 and ends at

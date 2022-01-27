@@ -3,7 +3,7 @@
  * fdwapi.h
  *	  API for foreign-data wrappers
  *
- * Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *
  * src/include/foreign/fdwapi.h
  *
@@ -14,7 +14,7 @@
 
 #include "access/parallel.h"
 #include "nodes/execnodes.h"
-#include "nodes/relation.h"
+#include "nodes/pathnodes.h"
 
 /* To avoid including explain.h here, reference ExplainState thus: */
 struct ExplainState;
@@ -62,7 +62,8 @@ typedef void (*GetForeignJoinPaths_function) (PlannerInfo *root,
 typedef void (*GetForeignUpperPaths_function) (PlannerInfo *root,
 											   UpperRelationKind stage,
 											   RelOptInfo *input_rel,
-											   RelOptInfo *output_rel);
+											   RelOptInfo *output_rel,
+											   void *extra);
 
 typedef void (*AddForeignUpdateTargets_function) (Query *parsetree,
 												  RangeTblEntry *target_rte,
@@ -97,6 +98,12 @@ typedef TupleTableSlot *(*ExecForeignDelete_function) (EState *estate,
 typedef void (*EndForeignModify_function) (EState *estate,
 										   ResultRelInfo *rinfo);
 
+typedef void (*BeginForeignInsert_function) (ModifyTableState *mtstate,
+											 ResultRelInfo *rinfo);
+
+typedef void (*EndForeignInsert_function) (EState *estate,
+										   ResultRelInfo *rinfo);
+
 typedef int (*IsForeignRelUpdatable_function) (Relation rel);
 
 typedef bool (*PlanDirectModify_function) (PlannerInfo *root,
@@ -114,10 +121,11 @@ typedef void (*EndDirectModify_function) (ForeignScanState *node);
 typedef RowMarkType (*GetForeignRowMarkType_function) (RangeTblEntry *rte,
 													   LockClauseStrength strength);
 
-typedef HeapTuple (*RefetchForeignRow_function) (EState *estate,
-												 ExecRowMark *erm,
-												 Datum rowid,
-												 bool *updated);
+typedef void (*RefetchForeignRow_function) (EState *estate,
+											ExecRowMark *erm,
+											Datum rowid,
+											TupleTableSlot *slot,
+											bool *updated);
 
 typedef void (*ExplainForeignScan_function) (ForeignScanState *node,
 											 struct ExplainState *es);
@@ -158,6 +166,9 @@ typedef void (*ShutdownForeignScan_function) (ForeignScanState *node);
 typedef bool (*IsForeignScanParallelSafe_function) (PlannerInfo *root,
 													RelOptInfo *rel,
 													RangeTblEntry *rte);
+typedef List *(*ReparameterizeForeignPathByChild_function) (PlannerInfo *root,
+															List *fdw_private,
+															RelOptInfo *child_rel);
 
 /*
  * FdwRoutine is the struct returned by a foreign-data wrapper's handler
@@ -201,6 +212,8 @@ typedef struct FdwRoutine
 	ExecForeignUpdate_function ExecForeignUpdate;
 	ExecForeignDelete_function ExecForeignDelete;
 	EndForeignModify_function EndForeignModify;
+	BeginForeignInsert_function BeginForeignInsert;
+	EndForeignInsert_function EndForeignInsert;
 	IsForeignRelUpdatable_function IsForeignRelUpdatable;
 	PlanDirectModify_function PlanDirectModify;
 	BeginDirectModify_function BeginDirectModify;
@@ -230,6 +243,9 @@ typedef struct FdwRoutine
 	ReInitializeDSMForeignScan_function ReInitializeDSMForeignScan;
 	InitializeWorkerForeignScan_function InitializeWorkerForeignScan;
 	ShutdownForeignScan_function ShutdownForeignScan;
+
+	/* Support functions for path reparameterization. */
+	ReparameterizeForeignPathByChild_function ReparameterizeForeignPathByChild;
 } FdwRoutine;
 
 
@@ -240,7 +256,7 @@ extern FdwRoutine *GetFdwRoutineByServerId(Oid serverid);
 extern FdwRoutine *GetFdwRoutineByRelId(Oid relid);
 extern FdwRoutine *GetFdwRoutineForRelation(Relation relation, bool makecopy);
 extern bool IsImportableForeignTable(const char *tablename,
-						 ImportForeignSchemaStmt *stmt);
+									 ImportForeignSchemaStmt *stmt);
 extern Path *GetExistingLocalJoinPath(RelOptInfo *joinrel);
 
 #endif							/* FDWAPI_H */

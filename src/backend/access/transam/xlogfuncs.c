@@ -7,7 +7,7 @@
  * This file contains WAL control and information functions.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xlogfuncs.c
@@ -16,14 +16,16 @@
  */
 #include "postgres.h"
 
+#include <unistd.h>
+
 #include "access/htup_details.h"
 #include "access/xlog.h"
 #include "access/xlog_internal.h"
 #include "access/xlogutils.h"
-#include "catalog/catalog.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "miscadmin.h"
+#include "pgstat.h"
 #include "replication/walreceiver.h"
 #include "storage/smgr.h"
 #include "utils/builtins.h"
@@ -42,18 +44,6 @@
  */
 static StringInfo label_file;
 static StringInfo tblspc_map_file;
-
-/*
- * Called when the backend exits with a running non-exclusive base backup,
- * to clean up state.
- */
-static void
-nonexclusive_base_backup_cleanup(int code, Datum arg)
-{
-	do_pg_abort_backup();
-	ereport(WARNING,
-			(errmsg("aborting backup due to backend exiting before pg_stop_backup was called")));
-}
 
 /*
  * pg_start_backup: set up for taking an on-line backup dump
@@ -75,7 +65,6 @@ pg_start_backup(PG_FUNCTION_ARGS)
 	bool		exclusive = PG_GETARG_BOOL(2);
 	char	   *backupidstr;
 	XLogRecPtr	startpoint;
-	DIR		   *dir;
 	SessionBackupState status = get_backup_status();
 
 	backupidstr = text_to_cstring(backupid);
@@ -85,16 +74,10 @@ pg_start_backup(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("a backup is already in progress in this session")));
 
-	/* Make sure we can open the directory with tablespaces in it */
-	dir = AllocateDir("pg_tblspc");
-	if (!dir)
-		ereport(ERROR,
-				(errmsg("could not open directory \"%s\": %m", "pg_tblspc")));
-
 	if (exclusive)
 	{
 		startpoint = do_pg_start_backup(backupidstr, fast, NULL, NULL,
-										dir, NULL, NULL, false, true);
+										NULL, NULL, false, true);
 	}
 	else
 	{
@@ -109,13 +92,11 @@ pg_start_backup(PG_FUNCTION_ARGS)
 		tblspc_map_file = makeStringInfo();
 		MemoryContextSwitchTo(oldcontext);
 
+		register_persistent_abort_backup_handler();
+
 		startpoint = do_pg_start_backup(backupidstr, fast, NULL, label_file,
-										dir, NULL, tblspc_map_file, false, true);
-
-		before_shmem_exit(nonexclusive_base_backup_cleanup, (Datum) 0);
+										NULL, tblspc_map_file, false, true);
 	}
-
-	FreeDir(dir);
 
 	PG_RETURN_LSN(startpoint);
 }
@@ -256,7 +237,6 @@ pg_stop_backup_v2(PG_FUNCTION_ARGS)
 		 * and tablespace map so they can be written to disk by the caller.
 		 */
 		stoppoint = do_pg_stop_backup(label_file->data, waitforarchive, NULL);
-		cancel_before_shmem_exit(nonexclusive_base_backup_cleanup, (Datum) 0);
 
 		values[1] = CStringGetTextDatum(label_file->data);
 		values[2] = CStringGetTextDatum(tblspc_map_file->data);
@@ -472,13 +452,14 @@ pg_walfile_name_offset(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("recovery is in progress"),
-				 errhint("pg_walfile_name_offset() cannot be executed during recovery.")));
+				 errhint("%s cannot be executed during recovery.",
+						 "pg_walfile_name_offset()")));
 
 	/*
 	 * Construct a tuple descriptor for the result row.  This must match this
 	 * function's pg_proc entry!
 	 */
-	resultTupleDesc = CreateTemplateTupleDesc(2, false);
+	resultTupleDesc = CreateTemplateTupleDesc(2);
 	TupleDescInitEntry(resultTupleDesc, (AttrNumber) 1, "file_name",
 					   TEXTOID, -1, 0);
 	TupleDescInitEntry(resultTupleDesc, (AttrNumber) 2, "file_offset",
@@ -489,8 +470,8 @@ pg_walfile_name_offset(PG_FUNCTION_ARGS)
 	/*
 	 * xlogfilename
 	 */
-	XLByteToPrevSeg(locationpoint, xlogsegno);
-	XLogFileName(xlogfilename, ThisTimeLineID, xlogsegno);
+	XLByteToPrevSeg(locationpoint, xlogsegno, wal_segment_size);
+	XLogFileName(xlogfilename, ThisTimeLineID, xlogsegno, wal_segment_size);
 
 	values[0] = CStringGetTextDatum(xlogfilename);
 	isnull[0] = false;
@@ -498,7 +479,7 @@ pg_walfile_name_offset(PG_FUNCTION_ARGS)
 	/*
 	 * offset
 	 */
-	xrecoff = locationpoint % XLogSegSize;
+	xrecoff = XLogSegmentOffset(locationpoint, wal_segment_size);
 
 	values[1] = UInt32GetDatum(xrecoff);
 	isnull[1] = false;
@@ -528,10 +509,11 @@ pg_walfile_name(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("recovery is in progress"),
-				 errhint("pg_walfile_name() cannot be executed during recovery.")));
+				 errhint("%s cannot be executed during recovery.",
+						 "pg_walfile_name()")));
 
-	XLByteToPrevSeg(locationpoint, xlogsegno);
-	XLogFileName(xlogfilename, ThisTimeLineID, xlogsegno);
+	XLByteToPrevSeg(locationpoint, xlogsegno, wal_segment_size);
+	XLogFileName(xlogfilename, ThisTimeLineID, xlogsegno, wal_segment_size);
 
 	PG_RETURN_TEXT_P(cstring_to_text(xlogfilename));
 }
@@ -706,4 +688,87 @@ pg_backup_start_time(PG_FUNCTION_ARGS)
 								Int32GetDatum(-1));
 
 	PG_RETURN_DATUM(xtime);
+}
+
+/*
+ * Promotes a standby server.
+ *
+ * A result of "true" means that promotion has been completed if "wait" is
+ * "true", or initiated if "wait" is false.
+ */
+Datum
+pg_promote(PG_FUNCTION_ARGS)
+{
+	bool		wait = PG_GETARG_BOOL(0);
+	int			wait_seconds = PG_GETARG_INT32(1);
+	FILE	   *promote_file;
+	int			i;
+
+	if (!RecoveryInProgress())
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("recovery is not in progress"),
+				 errhint("Recovery control functions can only be executed during recovery.")));
+
+	if (wait_seconds <= 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("\"wait_seconds\" must not be negative or zero")));
+
+	/* create the promote signal file */
+	promote_file = AllocateFile(PROMOTE_SIGNAL_FILE, "w");
+	if (!promote_file)
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not create file \"%s\": %m",
+						PROMOTE_SIGNAL_FILE)));
+
+	if (FreeFile(promote_file))
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not write file \"%s\": %m",
+						PROMOTE_SIGNAL_FILE)));
+
+	/* signal the postmaster */
+	if (kill(PostmasterPid, SIGUSR1) != 0)
+	{
+		ereport(WARNING,
+				(errmsg("failed to send signal to postmaster: %m")));
+		(void) unlink(PROMOTE_SIGNAL_FILE);
+		PG_RETURN_BOOL(false);
+	}
+
+	/* return immediately if waiting was not requested */
+	if (!wait)
+		PG_RETURN_BOOL(true);
+
+	/* wait for the amount of time wanted until promotion */
+#define WAITS_PER_SECOND 10
+	for (i = 0; i < WAITS_PER_SECOND * wait_seconds; i++)
+	{
+		int			rc;
+
+		ResetLatch(MyLatch);
+
+		if (!RecoveryInProgress())
+			PG_RETURN_BOOL(true);
+
+		CHECK_FOR_INTERRUPTS();
+
+		rc = WaitLatch(MyLatch,
+					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+					   1000L / WAITS_PER_SECOND,
+					   WAIT_EVENT_PROMOTE);
+
+		/*
+		 * Emergency bailout if postmaster has died.  This is to avoid the
+		 * necessity for manual cleanup of all postmaster children.
+		 */
+		if (rc & WL_POSTMASTER_DEATH)
+			PG_RETURN_BOOL(false);
+	}
+
+	ereport(WARNING,
+			(errmsg("server did not promote within %d seconds", wait_seconds)));
+	PG_RETURN_BOOL(false);
 }

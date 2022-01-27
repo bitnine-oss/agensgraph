@@ -3,7 +3,7 @@
  * fe-auth.c
  *	   The front-end (client) authorization routines
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -39,8 +39,8 @@
 #endif
 
 #include "common/md5.h"
+#include "common/scram-common.h"
 #include "libpq-fe.h"
-#include "libpq/scram.h"
 #include "fe-auth.h"
 
 
@@ -49,52 +49,7 @@
  * GSSAPI authentication system.
  */
 
-#if defined(WIN32) && !defined(_MSC_VER)
-/*
- * MIT Kerberos GSSAPI DLL doesn't properly export the symbols for MingW
- * that contain the OIDs required. Redefine here, values copied
- * from src/athena/auth/krb5/src/lib/gssapi/generic/gssapi_generic.c
- */
-static const gss_OID_desc GSS_C_NT_HOSTBASED_SERVICE_desc =
-{10, (void *) "\x2a\x86\x48\x86\xf7\x12\x01\x02\x01\x04"};
-static GSS_DLLIMP gss_OID GSS_C_NT_HOSTBASED_SERVICE = &GSS_C_NT_HOSTBASED_SERVICE_desc;
-#endif
-
-/*
- * Fetch all errors of a specific type and append to "str".
- */
-static void
-pg_GSS_error_int(PQExpBuffer str, const char *mprefix,
-				 OM_uint32 stat, int type)
-{
-	OM_uint32	lmin_s;
-	gss_buffer_desc lmsg;
-	OM_uint32	msg_ctx = 0;
-
-	do
-	{
-		gss_display_status(&lmin_s, stat, type,
-						   GSS_C_NO_OID, &msg_ctx, &lmsg);
-		appendPQExpBuffer(str, "%s: %s\n", mprefix, (char *) lmsg.value);
-		gss_release_buffer(&lmin_s, &lmsg);
-	} while (msg_ctx);
-}
-
-/*
- * GSSAPI errors contain two parts; put both into conn->errorMessage.
- */
-static void
-pg_GSS_error(const char *mprefix, PGconn *conn,
-			 OM_uint32 maj_stat, OM_uint32 min_stat)
-{
-	resetPQExpBuffer(&conn->errorMessage);
-
-	/* Fetch major error codes */
-	pg_GSS_error_int(&conn->errorMessage, mprefix, maj_stat, GSS_C_GSS_CODE);
-
-	/* Add the minor codes as well */
-	pg_GSS_error_int(&conn->errorMessage, mprefix, min_stat, GSS_C_MECH_CODE);
-}
+#include "fe-gssapi-common.h"
 
 /*
  * Continue GSS authentication with next token as needed.
@@ -195,11 +150,8 @@ pg_GSS_continue(PGconn *conn, int payloadlen)
 static int
 pg_GSS_startup(PGconn *conn, int payloadlen)
 {
-	OM_uint32	maj_stat,
-				min_stat;
-	int			maxlen;
-	gss_buffer_desc temp_gbuf;
-	char	   *host = PQhost(conn);
+	int			ret;
+	char	   *host = conn->connhost[conn->whichhost].host;
 
 	if (!(host && host[0] != '\0'))
 	{
@@ -215,33 +167,9 @@ pg_GSS_startup(PGconn *conn, int payloadlen)
 		return STATUS_ERROR;
 	}
 
-	/*
-	 * Import service principal name so the proper ticket can be acquired by
-	 * the GSSAPI system.
-	 */
-	maxlen = NI_MAXHOST + strlen(conn->krbsrvname) + 2;
-	temp_gbuf.value = (char *) malloc(maxlen);
-	if (!temp_gbuf.value)
-	{
-		printfPQExpBuffer(&conn->errorMessage,
-						  libpq_gettext("out of memory\n"));
-		return STATUS_ERROR;
-	}
-	snprintf(temp_gbuf.value, maxlen, "%s@%s",
-			 conn->krbsrvname, host);
-	temp_gbuf.length = strlen(temp_gbuf.value);
-
-	maj_stat = gss_import_name(&min_stat, &temp_gbuf,
-							   GSS_C_NT_HOSTBASED_SERVICE, &conn->gtarg_nam);
-	free(temp_gbuf.value);
-
-	if (maj_stat != GSS_S_COMPLETE)
-	{
-		pg_GSS_error(libpq_gettext("GSSAPI name import error"),
-					 conn,
-					 maj_stat, min_stat);
-		return STATUS_ERROR;
-	}
+	ret = pg_GSS_load_servicename(conn);
+	if (ret != STATUS_OK)
+		return ret;
 
 	/*
 	 * Initial packet is the same as a continuation packet with no initial
@@ -414,7 +342,7 @@ pg_SSPI_startup(PGconn *conn, int use_negotiate, int payloadlen)
 {
 	SECURITY_STATUS r;
 	TimeStamp	expire;
-	char	   *host = PQhost(conn);
+	char	   *host = conn->connhost[conn->whichhost].host;
 
 	if (conn->sspictx)
 	{
@@ -491,6 +419,7 @@ pg_SASL_init(PGconn *conn, int payloadlen)
 	bool		success;
 	const char *selected_mechanism;
 	PQExpBufferData mechanism_buf;
+	char	   *password;
 
 	initPQExpBuffer(&mechanism_buf);
 
@@ -504,7 +433,8 @@ pg_SASL_init(PGconn *conn, int payloadlen)
 	/*
 	 * Parse the list of SASL authentication mechanisms in the
 	 * AuthenticationSASL message, and select the best mechanism that we
-	 * support.  (Only SCRAM-SHA-256 is supported at the moment.)
+	 * support.  SCRAM-SHA-256-PLUS and SCRAM-SHA-256 are the only ones
+	 * supported at the moment, listed by order of decreasing importance.
 	 */
 	selected_mechanism = NULL;
 	for (;;)
@@ -523,35 +453,44 @@ pg_SASL_init(PGconn *conn, int payloadlen)
 			break;
 
 		/*
-		 * If we have already selected a mechanism, just skip through the rest
-		 * of the list.
+		 * Select the mechanism to use.  Pick SCRAM-SHA-256-PLUS over anything
+		 * else if a channel binding type is set and if the client supports
+		 * it. Pick SCRAM-SHA-256 if nothing else has already been picked.  If
+		 * we add more mechanisms, a more refined priority mechanism might
+		 * become necessary.
 		 */
-		if (selected_mechanism)
-			continue;
-
-		/*
-		 * Do we support this mechanism?
-		 */
-		if (strcmp(mechanism_buf.data, SCRAM_SHA_256_NAME) == 0)
+		if (strcmp(mechanism_buf.data, SCRAM_SHA_256_PLUS_NAME) == 0)
 		{
-			char	   *password;
-
-			conn->password_needed = true;
-			password = conn->connhost[conn->whichhost].password;
-			if (password == NULL)
-				password = conn->pgpass;
-			if (password == NULL || password[0] == '\0')
+			if (conn->ssl_in_use)
 			{
+				/*
+				 * The server has offered SCRAM-SHA-256-PLUS, which is only
+				 * supported by the client if a hash of the peer certificate
+				 * can be created.
+				 */
+#ifdef HAVE_PGTLS_GET_PEER_CERTIFICATE_HASH
+				selected_mechanism = SCRAM_SHA_256_PLUS_NAME;
+#endif
+			}
+			else
+			{
+				/*
+				 * The server offered SCRAM-SHA-256-PLUS, but the connection
+				 * is not SSL-encrypted. That's not sane. Perhaps SSL was
+				 * stripped by a proxy? There's no point in continuing,
+				 * because the server will reject the connection anyway if we
+				 * try authenticate without channel binding even though both
+				 * the client and server supported it. The SCRAM exchange
+				 * checks for that, to prevent downgrade attacks.
+				 */
 				printfPQExpBuffer(&conn->errorMessage,
-								  PQnoPasswordSupplied);
+								  libpq_gettext("server offered SCRAM-SHA-256-PLUS authentication over a non-SSL connection\n"));
 				goto error;
 			}
-
-			conn->sasl_state = pg_fe_scram_init(conn->pguser, password);
-			if (!conn->sasl_state)
-				goto oom_error;
-			selected_mechanism = SCRAM_SHA_256_NAME;
 		}
+		else if (strcmp(mechanism_buf.data, SCRAM_SHA_256_NAME) == 0 &&
+				 !selected_mechanism)
+			selected_mechanism = SCRAM_SHA_256_NAME;
 	}
 
 	if (!selected_mechanism)
@@ -561,11 +500,44 @@ pg_SASL_init(PGconn *conn, int payloadlen)
 		goto error;
 	}
 
+	/*
+	 * Now that the SASL mechanism has been chosen for the exchange,
+	 * initialize its state information.
+	 */
+
+	/*
+	 * First, select the password to use for the exchange, complaining if
+	 * there isn't one.  Currently, all supported SASL mechanisms require a
+	 * password, so we can just go ahead here without further distinction.
+	 */
+	conn->password_needed = true;
+	password = conn->connhost[conn->whichhost].password;
+	if (password == NULL)
+		password = conn->pgpass;
+	if (password == NULL || password[0] == '\0')
+	{
+		printfPQExpBuffer(&conn->errorMessage,
+						  PQnoPasswordSupplied);
+		goto error;
+	}
+
+	/*
+	 * Initialize the SASL state information with all the information gathered
+	 * during the initial exchange.
+	 *
+	 * Note: Only tls-unique is supported for the moment.
+	 */
+	conn->sasl_state = pg_fe_scram_init(conn,
+										password,
+										selected_mechanism);
+	if (!conn->sasl_state)
+		goto oom_error;
+
 	/* Get the mechanism-specific Initial Client Response, if any */
 	pg_fe_scram_exchange(conn->sasl_state,
 						 NULL, -1,
 						 &initialresponse, &initialresponselen,
-						 &done, &success, &conn->errorMessage);
+						 &done, &success);
 
 	if (done && !success)
 		goto error;
@@ -646,7 +618,7 @@ pg_SASL_continue(PGconn *conn, int payloadlen, bool final)
 	pg_fe_scram_exchange(conn->sasl_state,
 						 challenge, payloadlen,
 						 &output, &outputlen,
-						 &done, &success, &conn->errorMessage);
+						 &done, &success);
 	free(challenge);			/* don't need the input anymore */
 
 	if (final && !done)
@@ -722,11 +694,11 @@ pg_local_sendauth(PGconn *conn)
 
 	if (sendmsg(conn->sock, &msg, 0) == -1)
 	{
-		char		sebuf[256];
+		char		sebuf[PG_STRERROR_R_BUFLEN];
 
 		printfPQExpBuffer(&conn->errorMessage,
 						  "pg_local_sendauth: sendmsg: %s\n",
-						  pqStrerror(errno, sebuf, sizeof(sebuf)));
+						  strerror_r(errno, sebuf, sizeof(sebuf)));
 		return STATUS_ERROR;
 	}
 	return STATUS_OK;
@@ -745,7 +717,7 @@ pg_password_sendauth(PGconn *conn, const char *password, AuthRequest areq)
 	const char *pwd_to_send;
 	char		md5Salt[4];
 
-	/* Read the salt from the AuthenticationMD5 message. */
+	/* Read the salt from the AuthenticationMD5Password message. */
 	if (areq == AUTH_REQ_MD5)
 	{
 		if (pqGetnchar(md5Salt, 4, conn))
@@ -907,7 +879,7 @@ pg_fe_sendauth(AuthRequest areq, int payloadlen, PGconn *conn)
 		case AUTH_REQ_SSPI:
 
 			/*
-			 * SSPI has it's own startup message so libpq can decide which
+			 * SSPI has its own startup message so libpq can decide which
 			 * method to use. Indicate to pg_SSPI_startup that we want SSPI
 			 * negotiation instead of Kerberos.
 			 */
@@ -925,7 +897,7 @@ pg_fe_sendauth(AuthRequest areq, int payloadlen, PGconn *conn)
 			/*
 			 * No SSPI support. However, if we have GSSAPI but not SSPI
 			 * support, AUTH_REQ_SSPI will have been handled in the codepath
-			 * for AUTH_REQ_GSSAPI above, so don't duplicate the case label in
+			 * for AUTH_REQ_GSS above, so don't duplicate the case label in
 			 * that case.
 			 */
 #if !defined(ENABLE_GSS)
@@ -933,7 +905,7 @@ pg_fe_sendauth(AuthRequest areq, int payloadlen, PGconn *conn)
 			printfPQExpBuffer(&conn->errorMessage,
 							  libpq_gettext("SSPI authentication not supported\n"));
 			return STATUS_ERROR;
-#endif							/* !define(ENABLE_GSSAPI) */
+#endif							/* !define(ENABLE_GSS) */
 #endif							/* ENABLE_SSPI */
 
 
@@ -1064,7 +1036,7 @@ pg_fe_getauthname(PQExpBuffer errorMessage)
 			printfPQExpBuffer(errorMessage,
 							  libpq_gettext("could not look up local user ID %d: %s\n"),
 							  (int) user_id,
-							  pqStrerror(pwerr, pwdbuf, sizeof(pwdbuf)));
+							  strerror_r(pwerr, pwdbuf, sizeof(pwdbuf)));
 		else
 			printfPQExpBuffer(errorMessage,
 							  libpq_gettext("local user with ID %d does not exist\n"),

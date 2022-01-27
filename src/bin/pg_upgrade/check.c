@@ -3,13 +3,13 @@
  *
  *	server checks and output routines
  *
- *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/check.c
  */
 
 #include "postgres_fe.h"
 
-#include "catalog/pg_authid.h"
+#include "catalog/pg_authid_d.h"
 #include "fe_utils/string_utils.h"
 #include "mb/pg_wchar.h"
 #include "pg_upgrade.h"
@@ -23,9 +23,12 @@ static void check_is_install_user(ClusterInfo *cluster);
 static void check_proper_datallowconn(ClusterInfo *cluster);
 static void check_for_prepared_transactions(ClusterInfo *cluster);
 static void check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster);
+static void check_for_tables_with_oids(ClusterInfo *cluster);
+static void check_for_composite_data_type_usage(ClusterInfo *cluster);
 static void check_for_reg_data_type_usage(ClusterInfo *cluster);
 static void check_for_jsonb_9_4_usage(ClusterInfo *cluster);
 static void check_for_pg_role_prefix(ClusterInfo *cluster);
+static void check_for_new_tablespace_dir(ClusterInfo *new_cluster);
 static char *get_canonical_locale_name(int category, const char *locale);
 
 
@@ -97,8 +100,24 @@ check_and_dump_old_cluster(bool live_check)
 	check_is_install_user(&old_cluster);
 	check_proper_datallowconn(&old_cluster);
 	check_for_prepared_transactions(&old_cluster);
+	check_for_composite_data_type_usage(&old_cluster);
 	check_for_reg_data_type_usage(&old_cluster);
 	check_for_isn_and_int8_passing_mismatch(&old_cluster);
+
+	/*
+	 * Pre-PG 12 allowed tables to be declared WITH OIDS, which is not
+	 * supported anymore. Verify there are none, iff applicable.
+	 */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 1100)
+		check_for_tables_with_oids(&old_cluster);
+
+	/*
+	 * PG 12 changed the 'sql_identifier' type storage to be based on name,
+	 * not varchar, which breaks on-disk format for existing data. So we need
+	 * to prevent upgrade when used in user objects (tables, indexes, ...).
+	 */
+	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 1100)
+		old_11_check_for_sql_identifier_data_type_usage(&old_cluster);
 
 	/*
 	 * Pre-PG 10 allowed tables with 'unknown' type columns and non WAL logged
@@ -149,12 +168,23 @@ check_new_cluster(void)
 
 	check_loadable_libraries();
 
-	if (user_opts.transfer_mode == TRANSFER_MODE_LINK)
-		check_hard_link();
+	switch (user_opts.transfer_mode)
+	{
+		case TRANSFER_MODE_CLONE:
+			check_file_clone();
+			break;
+		case TRANSFER_MODE_COPY:
+			break;
+		case TRANSFER_MODE_LINK:
+			check_hard_link();
+			break;
+	}
 
 	check_is_install_user(&new_cluster);
 
 	check_for_prepared_transactions(&new_cluster);
+
+	check_for_new_tablespace_dir(&new_cluster);
 }
 
 
@@ -194,6 +224,8 @@ issue_warnings_and_set_wal_level(void)
 	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 906)
 		old_9_6_invalidate_hash_indexes(&new_cluster, false);
 
+	report_extension_updates(&new_cluster);
+
 	stop_postmaster(false);
 }
 
@@ -202,18 +234,10 @@ void
 output_completion_banner(char *analyze_script_file_name,
 						 char *deletion_script_file_name)
 {
-	/* Did we copy the free space files? */
-	if (GET_MAJOR_VERSION(old_cluster.major_version) >= 804)
-		pg_log(PG_REPORT,
-			   "Optimizer statistics are not transferred by pg_upgrade so,\n"
-			   "once you start the new server, consider running:\n"
-			   "    %s\n\n", analyze_script_file_name);
-	else
-		pg_log(PG_REPORT,
-			   "Optimizer statistics and free space information are not transferred\n"
-			   "by pg_upgrade so, once you start the new server, consider running:\n"
-			   "    %s\n\n", analyze_script_file_name);
-
+	pg_log(PG_REPORT,
+		   "Optimizer statistics are not transferred by pg_upgrade so,\n"
+		   "once you start the new server, consider running:\n"
+		   "    %s\n\n", analyze_script_file_name);
 
 	if (deletion_script_file_name)
 		pg_log(PG_REPORT,
@@ -280,7 +304,7 @@ check_cluster_compatibility(bool live_check)
 	check_control_data(&old_cluster.controldata, &new_cluster.controldata);
 
 	/* We read the real port number for PG >= 9.1 */
-	if (live_check && GET_MAJOR_VERSION(old_cluster.major_version) < 901 &&
+	if (live_check && GET_MAJOR_VERSION(old_cluster.major_version) <= 900 &&
 		old_cluster.port == DEF_PGUPORT)
 		pg_fatal("When checking a pre-PG 9.1 live old server, "
 				 "you must specify the old server's port number.\n");
@@ -382,8 +406,10 @@ check_new_cluster_is_empty(void)
 		{
 			/* pg_largeobject and its index should be skipped */
 			if (strcmp(rel_arr->rels[relnum].nspname, "pg_catalog") != 0)
-				pg_fatal("New cluster database \"%s\" is not empty\n",
-						 new_cluster.dbarr.dbs[dbnum].db_name);
+				pg_fatal("New cluster database \"%s\" is not empty: found relation \"%s.%s\"\n",
+						 new_cluster.dbarr.dbs[dbnum].db_name,
+						 rel_arr->rels[relnum].nspname,
+						 rel_arr->rels[relnum].relname);
 		}
 	}
 }
@@ -476,19 +502,12 @@ create_script_for_cluster_analyze(char **analyze_script_file_name)
 			ECHO_QUOTE, ECHO_QUOTE);
 	fprintf(script, "echo %sthis script and run:%s\n",
 			ECHO_QUOTE, ECHO_QUOTE);
-	fprintf(script, "echo %s    \"%s/vacuumdb\" %s--all %s%s\n", ECHO_QUOTE,
-			new_cluster.bindir, user_specification.data,
-	/* Did we copy the free space files? */
-			(GET_MAJOR_VERSION(old_cluster.major_version) >= 804) ?
-			"--analyze-only" : "--analyze", ECHO_QUOTE);
+	fprintf(script, "echo %s    \"%s/vacuumdb\" %s--all --analyze-only%s\n", ECHO_QUOTE,
+			new_cluster.bindir, user_specification.data, ECHO_QUOTE);
 	fprintf(script, "echo%s\n\n", ECHO_BLANK);
 
 	fprintf(script, "\"%s/vacuumdb\" %s--all --analyze-in-stages\n",
 			new_cluster.bindir, user_specification.data);
-	/* Did we copy the free space files? */
-	if (GET_MAJOR_VERSION(old_cluster.major_version) < 804)
-		fprintf(script, "\"%s/vacuumdb\" %s--all\n", new_cluster.bindir,
-				user_specification.data);
 
 	fprintf(script, "echo%s\n\n", ECHO_BLANK);
 	fprintf(script, "echo %sDone%s\n",
@@ -507,6 +526,44 @@ create_script_for_cluster_analyze(char **analyze_script_file_name)
 	check_ok();
 }
 
+
+/*
+ * A previous run of pg_upgrade might have failed and the new cluster
+ * directory recreated, but they might have forgotten to remove
+ * the new cluster's tablespace directories.  Therefore, check that
+ * new cluster tablespace directories do not already exist.  If
+ * they do, it would cause an error while restoring global objects.
+ * This allows the failure to be detected at check time, rather than
+ * during schema restore.
+ *
+ * Note, v8.4 has no tablespace_suffix, which is fine so long as the
+ * version being upgraded *to* has a suffix, since it's not allowed
+ * to pg_upgrade from a version to the same version if tablespaces are
+ * in use.
+ */
+static void
+check_for_new_tablespace_dir(ClusterInfo *new_cluster)
+{
+	int		tblnum;
+	char	new_tablespace_dir[MAXPGPATH];
+
+	prep_status("Checking for new cluster tablespace directories");
+
+	for (tblnum = 0; tblnum < os_info.num_old_tablespaces; tblnum++)
+	{
+		struct stat statbuf;
+
+		snprintf(new_tablespace_dir, MAXPGPATH, "%s%s",
+				os_info.old_tablespaces[tblnum],
+				new_cluster->tablespace_suffix);
+
+		if (stat(new_tablespace_dir, &statbuf) == 0 || errno != ENOENT)
+			pg_fatal("new cluster tablespace directory already exists: \"%s\"\n",
+					 new_tablespace_dir);
+	}
+
+	check_ok();
+}
 
 /*
  * create_script_for_old_cluster_deletion()
@@ -872,6 +929,140 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 
 
 /*
+ * Verify that no tables are declared WITH OIDS.
+ */
+static void
+check_for_tables_with_oids(ClusterInfo *cluster)
+{
+	int			dbnum;
+	FILE	   *script = NULL;
+	bool		found = false;
+	char		output_path[MAXPGPATH];
+
+	prep_status("Checking for tables WITH OIDS");
+
+	snprintf(output_path, sizeof(output_path),
+			 "tables_with_oids.txt");
+
+	/* Find any tables declared WITH OIDS */
+	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
+	{
+		PGresult   *res;
+		bool		db_used = false;
+		int			ntups;
+		int			rowno;
+		int			i_nspname,
+					i_relname;
+		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
+		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
+
+		res = executeQueryOrDie(conn,
+								"SELECT n.nspname, c.relname "
+								"FROM	pg_catalog.pg_class c, "
+								"		pg_catalog.pg_namespace n "
+								"WHERE	c.relnamespace = n.oid AND "
+								"		c.relhasoids AND"
+								"       n.nspname NOT IN ('pg_catalog')");
+
+		ntups = PQntuples(res);
+		i_nspname = PQfnumber(res, "nspname");
+		i_relname = PQfnumber(res, "relname");
+		for (rowno = 0; rowno < ntups; rowno++)
+		{
+			found = true;
+			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
+				pg_fatal("could not open file \"%s\": %s\n",
+						 output_path, strerror(errno));
+			if (!db_used)
+			{
+				fprintf(script, "Database: %s\n", active_db->db_name);
+				db_used = true;
+			}
+			fprintf(script, "  %s.%s\n",
+					PQgetvalue(res, rowno, i_nspname),
+					PQgetvalue(res, rowno, i_relname));
+		}
+
+		PQclear(res);
+
+		PQfinish(conn);
+	}
+
+	if (script)
+		fclose(script);
+
+	if (found)
+	{
+		pg_log(PG_REPORT, "fatal\n");
+		pg_fatal("Your installation contains tables declared WITH OIDS, which is not supported\n"
+				 "anymore. Consider removing the oid column using\n"
+				 "    ALTER TABLE ... SET WITHOUT OIDS;\n"
+				 "A list of tables with the problem is in the file:\n"
+				 "    %s\n\n", output_path);
+	}
+	else
+		check_ok();
+}
+
+
+/*
+ * check_for_composite_data_type_usage()
+ *	Check for system-defined composite types used in user tables.
+ *
+ *	The OIDs of rowtypes of system catalogs and information_schema views
+ *	can change across major versions; unlike user-defined types, we have
+ *	no mechanism for forcing them to be the same in the new cluster.
+ *	Hence, if any user table uses one, that's problematic for pg_upgrade.
+ */
+static void
+check_for_composite_data_type_usage(ClusterInfo *cluster)
+{
+	bool		found;
+	Oid			firstUserOid;
+	char		output_path[MAXPGPATH];
+	char	   *base_query;
+
+	prep_status("Checking for system-defined composite types in user tables");
+
+	snprintf(output_path, sizeof(output_path), "tables_using_composite.txt");
+
+	/*
+	 * Look for composite types that were made during initdb *or* belong to
+	 * information_schema; that's important in case information_schema was
+	 * dropped and reloaded.
+	 *
+	 * The cutoff OID here should match the source cluster's value of
+	 * FirstNormalObjectId.  We hardcode it rather than using that C #define
+	 * because, if that #define is ever changed, our own version's value is
+	 * NOT what to use.  Eventually we may need a test on the source cluster's
+	 * version to select the correct value.
+	 */
+	firstUserOid = 16384;
+
+	base_query = psprintf("SELECT t.oid FROM pg_catalog.pg_type t "
+						  "LEFT JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid "
+						  " WHERE typtype = 'c' AND (t.oid < %u OR nspname = 'information_schema')",
+						  firstUserOid);
+
+	found = check_for_data_types_usage(cluster, base_query, output_path);
+
+	free(base_query);
+
+	if (found)
+	{
+		pg_log(PG_REPORT, "fatal\n");
+		pg_fatal("Your installation contains system-defined composite type(s) in user tables.\n"
+				 "These type OIDs are not stable across PostgreSQL versions,\n"
+				 "so this cluster cannot currently be upgraded.  You can\n"
+				 "drop the problem columns and restart the upgrade.\n"
+				 "A list of the problem columns is in the file:\n"
+				 "    %s\n\n", output_path);
+	}
+	else
+		check_ok();
+}
+
+/*
  * check_for_reg_data_type_usage()
  *	pg_upgrade only preserves these system values:
  *		pg_class.oid
@@ -885,79 +1076,36 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 static void
 check_for_reg_data_type_usage(ClusterInfo *cluster)
 {
-	int			dbnum;
-	FILE	   *script = NULL;
-	bool		found = false;
+	bool		found;
 	char		output_path[MAXPGPATH];
 
 	prep_status("Checking for reg* data types in user tables");
 
 	snprintf(output_path, sizeof(output_path), "tables_using_reg.txt");
 
-	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
-	{
-		PGresult   *res;
-		bool		db_used = false;
-		int			ntups;
-		int			rowno;
-		int			i_nspname,
-					i_relname,
-					i_attname;
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-
-		/*
-		 * While several relkinds don't store any data, e.g. views, they can
-		 * be used to define data types of other columns, so we check all
-		 * relkinds.
-		 */
-		res = executeQueryOrDie(conn,
-								"SELECT n.nspname, c.relname, a.attname "
-								"FROM	pg_catalog.pg_class c, "
-								"		pg_catalog.pg_namespace n, "
-								"		pg_catalog.pg_attribute a "
-								"WHERE	c.oid = a.attrelid AND "
-								"		NOT a.attisdropped AND "
-								"		a.atttypid IN ( "
-								"			'pg_catalog.regproc'::pg_catalog.regtype, "
-								"			'pg_catalog.regprocedure'::pg_catalog.regtype, "
-								"			'pg_catalog.regoper'::pg_catalog.regtype, "
-								"			'pg_catalog.regoperator'::pg_catalog.regtype, "
-		/* regclass.oid is preserved, so 'regclass' is OK */
-		/* regtype.oid is preserved, so 'regtype' is OK */
-								"			'pg_catalog.regconfig'::pg_catalog.regtype, "
-								"			'pg_catalog.regdictionary'::pg_catalog.regtype) AND "
-								"		c.relnamespace = n.oid AND "
-								"		n.nspname NOT IN ('pg_catalog', 'information_schema')");
-
-		ntups = PQntuples(res);
-		i_nspname = PQfnumber(res, "nspname");
-		i_relname = PQfnumber(res, "relname");
-		i_attname = PQfnumber(res, "attname");
-		for (rowno = 0; rowno < ntups; rowno++)
-		{
-			found = true;
-			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %s\n",
-						 output_path, strerror(errno));
-			if (!db_used)
-			{
-				fprintf(script, "Database: %s\n", active_db->db_name);
-				db_used = true;
-			}
-			fprintf(script, "  %s.%s.%s\n",
-					PQgetvalue(res, rowno, i_nspname),
-					PQgetvalue(res, rowno, i_relname),
-					PQgetvalue(res, rowno, i_attname));
-		}
-
-		PQclear(res);
-
-		PQfinish(conn);
-	}
-
-	if (script)
-		fclose(script);
+	/*
+	 * Note: older servers will not have all of these reg* types, so we have
+	 * to write the query like this rather than depending on casts to regtype.
+	 */
+	found = check_for_data_types_usage(cluster,
+									   "SELECT oid FROM pg_catalog.pg_type t "
+									   "WHERE t.typnamespace = "
+									   "        (SELECT oid FROM pg_catalog.pg_namespace "
+									   "         WHERE nspname = 'pg_catalog') "
+									   "  AND t.typname IN ( "
+	/* pg_class.oid is preserved, so 'regclass' is OK */
+									   "           'regcollation', "
+									   "           'regconfig', "
+									   "           'regdictionary', "
+									   "           'regnamespace', "
+									   "           'regoper', "
+									   "           'regoperator', "
+									   "           'regproc', "
+									   "           'regprocedure' "
+	/* pg_authid.oid is preserved, so 'regrole' is OK */
+	/* pg_type.oid is (mostly) preserved, so 'regtype' is OK */
+									   "         )",
+									   output_path);
 
 	if (found)
 	{
@@ -982,75 +1130,13 @@ check_for_reg_data_type_usage(ClusterInfo *cluster)
 static void
 check_for_jsonb_9_4_usage(ClusterInfo *cluster)
 {
-	int			dbnum;
-	FILE	   *script = NULL;
-	bool		found = false;
 	char		output_path[MAXPGPATH];
 
 	prep_status("Checking for incompatible \"jsonb\" data type");
 
 	snprintf(output_path, sizeof(output_path), "tables_using_jsonb.txt");
 
-	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
-	{
-		PGresult   *res;
-		bool		db_used = false;
-		int			ntups;
-		int			rowno;
-		int			i_nspname,
-					i_relname,
-					i_attname;
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-
-		/*
-		 * While several relkinds don't store any data, e.g. views, they can
-		 * be used to define data types of other columns, so we check all
-		 * relkinds.
-		 */
-		res = executeQueryOrDie(conn,
-								"SELECT n.nspname, c.relname, a.attname "
-								"FROM	pg_catalog.pg_class c, "
-								"		pg_catalog.pg_namespace n, "
-								"		pg_catalog.pg_attribute a "
-								"WHERE	c.oid = a.attrelid AND "
-								"		NOT a.attisdropped AND "
-								"		a.atttypid = 'pg_catalog.jsonb'::pg_catalog.regtype AND "
-								"		c.relnamespace = n.oid AND "
-		/* exclude possible orphaned temp tables */
-								"		n.nspname !~ '^pg_temp_' AND "
-								"		n.nspname NOT IN ('pg_catalog', 'information_schema')");
-
-		ntups = PQntuples(res);
-		i_nspname = PQfnumber(res, "nspname");
-		i_relname = PQfnumber(res, "relname");
-		i_attname = PQfnumber(res, "attname");
-		for (rowno = 0; rowno < ntups; rowno++)
-		{
-			found = true;
-			if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-				pg_fatal("could not open file \"%s\": %s\n",
-						 output_path, strerror(errno));
-			if (!db_used)
-			{
-				fprintf(script, "Database: %s\n", active_db->db_name);
-				db_used = true;
-			}
-			fprintf(script, "  %s.%s.%s\n",
-					PQgetvalue(res, rowno, i_nspname),
-					PQgetvalue(res, rowno, i_relname),
-					PQgetvalue(res, rowno, i_attname));
-		}
-
-		PQclear(res);
-
-		PQfinish(conn);
-	}
-
-	if (script)
-		fclose(script);
-
-	if (found)
+	if (check_for_data_type_usage(cluster, "pg_catalog.jsonb", output_path))
 	{
 		pg_log(PG_REPORT, "fatal\n");
 		pg_fatal("Your installation contains the \"jsonb\" data type in user tables.\n"

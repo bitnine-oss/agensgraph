@@ -5,7 +5,7 @@
  *
  * See src/backend/utils/misc/README for design notes.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  *	  src/include/utils/guc_tables.h
  *
@@ -56,7 +56,8 @@ enum config_group
 	FILE_LOCATIONS,
 	CONN_AUTH,
 	CONN_AUTH_SETTINGS,
-	CONN_AUTH_SECURITY,
+	CONN_AUTH_AUTH,
+	CONN_AUTH_SSL,
 	RESOURCES,
 	RESOURCES_MEM,
 	RESOURCES_DISK,
@@ -68,6 +69,8 @@ enum config_group
 	WAL_SETTINGS,
 	WAL_CHECKPOINTS,
 	WAL_ARCHIVING,
+	WAL_ARCHIVE_RECOVERY,
+	WAL_RECOVERY_TARGET,
 	REPLICATION,
 	REPLICATION_SENDING,
 	REPLICATION_MASTER,
@@ -263,6 +266,7 @@ extern void build_guc_variables(void);
 /* search in enum options */
 extern const char *config_enum_lookup_by_value(struct config_enum *record, int val);
 extern bool config_enum_lookup_by_name(struct config_enum *record,
-						   const char *value, int *retval);
+									   const char *value, int *retval);
+extern struct config_generic **get_explain_guc_options(int *num);
 
 #endif							/* GUC_TABLES_H */

@@ -655,6 +655,20 @@ INSERT INTO fract_only VALUES (8, '0.00017');
 SELECT * FROM fract_only;
 DROP TABLE fract_only;
 
+-- Check conversion to integers
+SELECT (-9223372036854775808.5)::int8; -- should fail
+SELECT (-9223372036854775808.4)::int8; -- ok
+SELECT 9223372036854775807.4::int8; -- ok
+SELECT 9223372036854775807.5::int8; -- should fail
+SELECT (-2147483648.5)::int4; -- should fail
+SELECT (-2147483648.4)::int4; -- ok
+SELECT 2147483647.4::int4; -- ok
+SELECT 2147483647.5::int4; -- should fail
+SELECT (-32768.5)::int2; -- should fail
+SELECT (-32768.4)::int2; -- ok
+SELECT 32767.4::int2; -- ok
+SELECT 32767.5::int2; -- should fail
+
 -- Check inf/nan conversion behavior
 SELECT 'NaN'::float8::numeric;
 SELECT 'Infinity'::float8::numeric;
@@ -786,8 +800,29 @@ SELECT '' AS to_char_24, to_char('100'::numeric, 'FM999.9');
 SELECT '' AS to_char_25, to_char('100'::numeric, 'FM999.');
 SELECT '' AS to_char_26, to_char('100'::numeric, 'FM999');
 
+-- Check parsing of literal text in a format string
+SELECT '' AS to_char_27, to_char('100'::numeric, 'foo999');
+SELECT '' AS to_char_28, to_char('100'::numeric, 'f\oo999');
+SELECT '' AS to_char_29, to_char('100'::numeric, 'f\\oo999');
+SELECT '' AS to_char_30, to_char('100'::numeric, 'f\"oo999');
+SELECT '' AS to_char_31, to_char('100'::numeric, 'f\\"oo999');
+SELECT '' AS to_char_32, to_char('100'::numeric, 'f"ool"999');
+SELECT '' AS to_char_33, to_char('100'::numeric, 'f"\ool"999');
+SELECT '' AS to_char_34, to_char('100'::numeric, 'f"\\ool"999');
+SELECT '' AS to_char_35, to_char('100'::numeric, 'f"ool\"999');
+SELECT '' AS to_char_36, to_char('100'::numeric, 'f"ool\\"999');
+
+-- Test scientific notation with various exponents
+WITH v(exp) AS
+  (VALUES(-16379),(-16378),(-1234),(-789),(-45),(-5),(-4),(-3),(-2),(-1),(0),
+         (1),(2),(3),(4),(5),(38),(275),(2345),(45678),(131070),(131071))
+SELECT exp,
+  to_char(('1.2345e'||exp)::numeric, '9.999EEEE') as numeric
+FROM v;
+
 -- TO_NUMBER()
 --
+SET lc_numeric = 'C';
 SELECT '' AS to_number_1,  to_number('-34,338,492', '99G999G999');
 SELECT '' AS to_number_2,  to_number('-34,338,492.654,878', '99G999G999D999G999');
 SELECT '' AS to_number_3,  to_number('<564646.654564>', '999999.999999PR');
@@ -801,6 +836,16 @@ SELECT '' AS to_number_10, to_number('0', '99.99');
 SELECT '' AS to_number_11, to_number('.-01', 'S99.99');
 SELECT '' AS to_number_12, to_number('.01-', '99.99S');
 SELECT '' AS to_number_13, to_number(' . 0 1-', ' 9 9 . 9 9 S');
+SELECT '' AS to_number_14, to_number('34,50','999,99');
+SELECT '' AS to_number_15, to_number('123,000','999G');
+SELECT '' AS to_number_16, to_number('123456','999G999');
+SELECT '' AS to_number_17, to_number('$1234.56','L9,999.99');
+SELECT '' AS to_number_18, to_number('$1234.56','L99,999.99');
+SELECT '' AS to_number_19, to_number('$1,234.56','L99,999.99');
+SELECT '' AS to_number_20, to_number('1234.56','L99,999.99');
+SELECT '' AS to_number_21, to_number('1,234.56','L99,999.99');
+SELECT '' AS to_number_22, to_number('42nd', '99th');
+RESET lc_numeric;
 
 --
 -- Input syntax
@@ -841,6 +886,8 @@ select 4770999999999999999999999999999999999999999999999999999999999999999999999
 
 select 4769999999999999999999999999999999999999999999999999999999999999999999999999999999999999 * 9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999;
 
+select (0.1 - 2e-16383) * (0.1 - 3e-16383) = 0.01 as rounds_to_point_zero_one;
+
 --
 -- Test some corner cases for division
 --
@@ -873,10 +920,20 @@ select 3.789 ^ 21;
 select 3.789 ^ 35;
 select 1.2 ^ 345;
 select 0.12 ^ (-20);
+select 1.000000000123 ^ (-2147483648);
+select coalesce(nullif(0.9999999999 ^ 23300000000000, 0), 0) as rounds_to_zero;
 
 -- cases that used to error out
 select 0.12 ^ (-25);
 select 0.5678 ^ (-85);
+select coalesce(nullif(0.9999999999 ^ 70000000000000, 0), 0) as underflows;
+
+-- negative base to integer powers
+select (-1.0) ^ 2147483646;
+select (-1.0) ^ 2147483647;
+select (-1.0) ^ 2147483648;
+select (-1.0) ^ 1000000000000000;
+select (-1.0) ^ 1000000000000001;
 
 --
 -- Tests for raising to non-integer powers
@@ -887,6 +944,13 @@ select 0.0 ^ 0.0;
 select (-12.34) ^ 0.0;
 select 12.34 ^ 0.0;
 select 0.0 ^ 12.34;
+
+-- NaNs
+select 'NaN'::numeric ^ 'NaN'::numeric;
+select 'NaN'::numeric ^ 0;
+select 'NaN'::numeric ^ 1;
+select 0 ^ 'NaN'::numeric;
+select 1 ^ 'NaN'::numeric;
 
 -- invalid inputs
 select 0.0 ^ (-12.34);
@@ -909,6 +973,8 @@ select 1.234 ^ 5678;
 select exp(0.0);
 select exp(1.0);
 select exp(1.0::numeric(71,70));
+select coalesce(nullif(exp(-5000::numeric), 0), 0) as rounds_to_zero;
+select coalesce(nullif(exp(-10000::numeric), 0), 0) as underflows;
 
 -- cases that used to generate inaccurate results
 select exp(32.999);

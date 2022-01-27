@@ -3,7 +3,7 @@
  * wparser.c
  *		Standard interface to word parser
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -66,7 +66,7 @@ tt_setup_firstcall(FuncCallContext *funcctx, Oid prsid)
 															 (Datum) 0));
 	funcctx->user_fctx = (void *) st;
 
-	tupdesc = CreateTemplateTupleDesc(3, false);
+	tupdesc = CreateTemplateTupleDesc(3);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "tokid",
 					   INT4OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "alias",
@@ -212,7 +212,7 @@ prs_setup_firstcall(FuncCallContext *funcctx, Oid prsid, text *txt)
 	st->cur = 0;
 
 	funcctx->user_fctx = (void *) st;
-	tupdesc = CreateTemplateTupleDesc(2, false);
+	tupdesc = CreateTemplateTupleDesc(2);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "tokid",
 					   INT4OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "token",
@@ -383,7 +383,7 @@ Datum
 ts_headline_jsonb_byid_opt(PG_FUNCTION_ARGS)
 {
 	Oid			tsconfig = PG_GETARG_OID(0);
-	Jsonb	   *jb = PG_GETARG_JSONB(1);
+	Jsonb	   *jb = PG_GETARG_JSONB_P(1);
 	TSQuery		query = PG_GETARG_TSQUERY(2);
 	text	   *opt = (PG_NARGS() > 3 && PG_GETARG_POINTER(3)) ? PG_GETARG_TEXT_P(3) : NULL;
 	Jsonb	   *out;
@@ -424,7 +424,7 @@ ts_headline_jsonb_byid_opt(PG_FUNCTION_ARGS)
 		pfree(prs.stopsel);
 	}
 
-	PG_RETURN_JSONB(out);
+	PG_RETURN_JSONB_P(out);
 }
 
 Datum

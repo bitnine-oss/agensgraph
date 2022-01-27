@@ -1,0 +1,54 @@
+#----------------------------------------------------------------------
+#
+# pg_attribute.dat
+#    Initial contents of the pg_attribute system relation.
+#
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+# Portions Copyright (c) 1994, Regents of the University of California
+#
+# src/include/catalog/pg_attribute.dat
+#
+#----------------------------------------------------------------------
+
+[
+
+# genbki.pl.  Only "bootstrapped" relations need be included.
+
+# composite types
+
+# graph
+{ attrelid => '7010', attname => 'id', atttypid => '7002', attlen => '8',
+  attnum => '1', attndims => '0', attbyval => 'FLOAT8PASSBYVAL',
+  attstorage => 'p', attalign => 'd', attnotnull => 'f', attcollation => '0' },
+{ attrelid => '7010', attname => 'properties', atttypid => '3802',
+  attlen => '-1', attnum => '2', attndims => '0', attbyval => 'f',
+  attstorage => 'x', attalign => 'i', attnotnull => 'f', attcollation => '0' },
+{ attrelid => '7010', attname => 'tid', atttypid => '27', attlen => '6',
+  attnum => '3', attndims => '0', attbyval => 'f', attstorage => 'p',
+  attalign => 's', attnotnull => 'f', attcollation => '0' },
+{ attrelid => '7020', attname => 'id', atttypid => '7002', attlen => '8',
+  attnum => '1', attndims => '0', attbyval => 'FLOAT8PASSBYVAL',
+  attstorage => 'p', attalign => 'd', attnotnull => 'f', attcollation => '0' },
+{ attrelid => '7020', attname => 'start', atttypid => '7002', attlen => '8',
+  attnum => '2', attndims => '0', attbyval => 'FLOAT8PASSBYVAL',
+  attstorage => 'p', attalign => 'd', attnotnull => 'f', attcollation => '0' },
+{ attrelid => '7020', attname => 'end', atttypid => '7002', attlen => '8',
+  attnum => '3', attndims => '0', attbyval => 'FLOAT8PASSBYVAL',
+  attstorage => 'p', attalign => 'd', attnotnull => 'f', attcollation => '0' },
+{ attrelid => '7020', attname => 'properties', atttypid => '3802',
+  attlen => '-1', attnum => '4', attndims => '0', attbyval => 'f',
+  attstorage => 'x', attalign => 'i', attnotnull => 'f', attcollation => '0' },
+{ attrelid => '7020', attname => 'tid', atttypid => '27', attlen => '6',
+  attnum => '5', attndims => '0', attbyval => 'f', attstorage => 'p',
+  attalign => 's', attnotnull => 'f', attcollation => '0' },
+{ attrelid => '7030', attname => 'vertices', atttypid => '7011', attlen => '-1',
+  attnum => '1', attndims => '1', attbyval => 'f', attstorage => 'x',
+  attalign => 'd', attnotnull => 'f', attcollation => '0' },
+{ attrelid => '7030', attname => 'edges', atttypid => '7021', attlen => '-1',
+  attnum => '2', attndims => '1', attbyval => 'f', attstorage => 'x',
+  attalign => 'd', attnotnull => 'f', attcollation => '0' },
+
+
+
+
+]

@@ -4,7 +4,7 @@
  *
  * See src/backend/access/brin/README for details.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -19,8 +19,11 @@
 #include "access/brin_page.h"
 #include "access/brin_pageops.h"
 #include "access/brin_xlog.h"
+#include "access/relation.h"
 #include "access/reloptions.h"
 #include "access/relscan.h"
+#include "access/table.h"
+#include "access/tableam.h"
 #include "access/xloginsert.h"
 #include "catalog/index.h"
 #include "catalog/pg_am.h"
@@ -64,13 +67,13 @@ typedef struct BrinOpaque
 #define BRIN_ALL_BLOCKRANGES	InvalidBlockNumber
 
 static BrinBuildState *initialize_brin_buildstate(Relation idxRel,
-						   BrinRevmap *revmap, BlockNumber pagesPerRange);
+												  BrinRevmap *revmap, BlockNumber pagesPerRange);
 static void terminate_brin_buildstate(BrinBuildState *state);
 static void brinsummarize(Relation index, Relation heapRel, BlockNumber pageRange,
-			  bool include_partial, double *numSummarized, double *numExisting);
+						  bool include_partial, double *numSummarized, double *numExisting);
 static void form_and_insert_tuple(BrinBuildState *state);
 static void union_tuples(BrinDesc *bdesc, BrinMemTuple *a,
-			 BrinTuple *b);
+						 BrinTuple *b);
 static void brin_vacuum_scan(Relation idxrel, BufferAccessStrategy strategy);
 
 
@@ -97,6 +100,7 @@ brinhandler(PG_FUNCTION_ARGS)
 	amroutine->amclusterable = false;
 	amroutine->ampredlocks = false;
 	amroutine->amcanparallel = false;
+	amroutine->amcaninclude = false;
 	amroutine->amkeytype = InvalidOid;
 
 	amroutine->ambuild = brinbuild;
@@ -108,6 +112,7 @@ brinhandler(PG_FUNCTION_ARGS)
 	amroutine->amcostestimate = brincostestimate;
 	amroutine->amoptions = brinoptions;
 	amroutine->amproperty = NULL;
+	amroutine->ambuildphasename = NULL;
 	amroutine->amvalidate = brinvalidate;
 	amroutine->ambeginscan = brinbeginscan;
 	amroutine->amrescan = brinrescan;
@@ -188,7 +193,7 @@ brininsert(Relation idxRel, Datum *values, bool *nulls,
 										 NULL, BUFFER_LOCK_SHARE, NULL);
 			if (!lastPageTuple)
 			{
-				bool	recorded;
+				bool		recorded;
 
 				recorded = AutoVacuumRequestWork(AVW_BRINSummarizeRange,
 												 RelationGetRelid(idxRel),
@@ -387,9 +392,9 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	 * iterate on the revmap.
 	 */
 	heapOid = IndexGetRelation(RelationGetRelid(idxRel), false);
-	heapRel = heap_open(heapOid, AccessShareLock);
+	heapRel = table_open(heapOid, AccessShareLock);
 	nblocks = RelationGetNumberOfBlocks(heapRel);
-	heap_close(heapRel, AccessShareLock);
+	table_close(heapRel, AccessShareLock);
 
 	/*
 	 * Make room for the consistent support procedures of indexed columns.  We
@@ -483,7 +488,8 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 					 */
 					Assert((key->sk_flags & SK_ISNULL) ||
 						   (key->sk_collation ==
-							bdesc->bd_tupdesc->attrs[keyattno - 1]->attcollation));
+							TupleDescAttr(bdesc->bd_tupdesc,
+										  keyattno - 1)->attcollation));
 
 					/* First time this column? look up consistent function */
 					if (consistentFn[keyattno - 1].fn_oid == InvalidOid)
@@ -524,7 +530,7 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 			BlockNumber pageno;
 
 			for (pageno = heapBlk;
-				 pageno <= heapBlk + opaque->bo_pagesPerRange - 1;
+				 pageno <= Min(nblocks, heapBlk + opaque->bo_pagesPerRange) - 1;
 				 pageno++)
 			{
 				MemoryContextSwitchTo(oldcxt);
@@ -583,7 +589,7 @@ brinendscan(IndexScanDesc scan)
 }
 
 /*
- * Per-heap-tuple callback for IndexBuildHeapScan.
+ * Per-heap-tuple callback for table_index_build_scan.
  *
  * Note we don't worry about the page range at the end of the table here; it is
  * present in the build state struct after we're called the last time, but not
@@ -632,6 +638,7 @@ brinbuildCallback(Relation index,
 	{
 		FmgrInfo   *addValue;
 		BrinValues *col;
+		Form_pg_attribute attr = TupleDescAttr(state->bs_bdesc->bd_tupdesc, i);
 
 		col = &state->bs_dtuple->bt_columns[i];
 		addValue = index_getprocinfo(index, i + 1,
@@ -641,7 +648,7 @@ brinbuildCallback(Relation index,
 		 * Update dtuple state, if and as necessary.
 		 */
 		FunctionCall4Coll(addValue,
-						  state->bs_bdesc->bd_tupdesc->attrs[i]->attcollation,
+						  attr->attcollation,
 						  PointerGetDatum(state->bs_bdesc),
 						  PointerGetDatum(col),
 						  values[i], isnull[i]);
@@ -693,7 +700,7 @@ brinbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 
 		XLogBeginInsert();
 		XLogRegisterData((char *) &xlrec, SizeOfBrinCreateIdx);
-		XLogRegisterBuffer(0, meta, REGBUF_WILL_INIT);
+		XLogRegisterBuffer(0, meta, REGBUF_WILL_INIT | REGBUF_STANDARD);
 
 		recptr = XLogInsert(RM_BRIN_ID, XLOG_BRIN_CREATE_INDEX);
 
@@ -713,8 +720,8 @@ brinbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	 * Now scan the relation.  No syncscan allowed here because we want the
 	 * heap blocks in physical order.
 	 */
-	reltuples = IndexBuildHeapScan(heap, index, indexInfo, false,
-								   brinbuildCallback, (void *) state);
+	reltuples = table_index_build_scan(heap, index, indexInfo, false, true,
+									   brinbuildCallback, (void *) state, NULL);
 
 	/* process the final batch */
 	form_and_insert_tuple(state);
@@ -750,7 +757,7 @@ brinbuildempty(Relation index)
 	brin_metapage_init(BufferGetPage(metabuf), BrinGetPagesPerRange(index),
 					   BRIN_CURRENT_VERSION);
 	MarkBufferDirty(metabuf);
-	log_newpage_buffer(metabuf, false);
+	log_newpage_buffer(metabuf, true);
 	END_CRIT_SECTION();
 
 	UnlockReleaseBuffer(metabuf);
@@ -794,15 +801,15 @@ brinvacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats)
 	stats->num_pages = RelationGetNumberOfBlocks(info->index);
 	/* rest of stats is initialized by zeroing */
 
-	heapRel = heap_open(IndexGetRelation(RelationGetRelid(info->index), false),
-						AccessShareLock);
+	heapRel = table_open(IndexGetRelation(RelationGetRelid(info->index), false),
+						 AccessShareLock);
 
 	brin_vacuum_scan(info->index, info->strategy);
 
 	brinsummarize(info->index, heapRel, BRIN_ALL_BLOCKRANGES, false,
 				  &stats->num_index_tuples, &stats->num_index_tuples);
 
-	heap_close(heapRel, AccessShareLock);
+	table_close(heapRel, AccessShareLock);
 
 	return stats;
 }
@@ -868,6 +875,12 @@ brin_summarize_range(PG_FUNCTION_ARGS)
 	Relation	heapRel;
 	double		numSummarized = 0;
 
+	if (RecoveryInProgress())
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("recovery is in progress"),
+				 errhint("BRIN control functions cannot be executed during recovery.")));
+
 	if (heapBlk64 > BRIN_ALL_BLOCKRANGES || heapBlk64 < 0)
 	{
 		char	   *blk = psprintf(INT64_FORMAT, heapBlk64);
@@ -886,7 +899,7 @@ brin_summarize_range(PG_FUNCTION_ARGS)
 	 */
 	heapoid = IndexGetRelation(indexoid, true);
 	if (OidIsValid(heapoid))
-		heapRel = heap_open(heapoid, ShareUpdateExclusiveLock);
+		heapRel = table_open(heapoid, ShareUpdateExclusiveLock);
 	else
 		heapRel = NULL;
 
@@ -902,7 +915,7 @@ brin_summarize_range(PG_FUNCTION_ARGS)
 
 	/* User must own the index (comparable to privileges needed for VACUUM) */
 	if (!pg_class_ownercheck(indexoid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_CLASS,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX,
 					   RelationGetRelationName(indexRel));
 
 	/*
@@ -939,6 +952,12 @@ brin_desummarize_range(PG_FUNCTION_ARGS)
 	Relation	indexRel;
 	bool		done;
 
+	if (RecoveryInProgress())
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("recovery is in progress"),
+				 errhint("BRIN control functions cannot be executed during recovery.")));
+
 	if (heapBlk64 > MaxBlockNumber || heapBlk64 < 0)
 	{
 		char	   *blk = psprintf(INT64_FORMAT, heapBlk64);
@@ -957,7 +976,7 @@ brin_desummarize_range(PG_FUNCTION_ARGS)
 	 */
 	heapoid = IndexGetRelation(indexoid, true);
 	if (OidIsValid(heapoid))
-		heapRel = heap_open(heapoid, ShareUpdateExclusiveLock);
+		heapRel = table_open(heapoid, ShareUpdateExclusiveLock);
 	else
 		heapRel = NULL;
 
@@ -973,7 +992,7 @@ brin_desummarize_range(PG_FUNCTION_ARGS)
 
 	/* User must own the index (comparable to privileges needed for VACUUM) */
 	if (!pg_class_ownercheck(indexoid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_CLASS,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_INDEX,
 					   RelationGetRelationName(indexRel));
 
 	/*
@@ -1029,12 +1048,12 @@ brin_build_desc(Relation rel)
 	for (keyno = 0; keyno < tupdesc->natts; keyno++)
 	{
 		FmgrInfo   *opcInfoFn;
+		Form_pg_attribute attr = TupleDescAttr(tupdesc, keyno);
 
 		opcInfoFn = index_getprocinfo(rel, keyno + 1, BRIN_PROCNUM_OPCINFO);
 
 		opcinfo[keyno] = (BrinOpcInfo *)
-			DatumGetPointer(FunctionCall1(opcInfoFn,
-										  tupdesc->attrs[keyno]->atttypid));
+			DatumGetPointer(FunctionCall1(opcInfoFn, attr->atttypid));
 		totalstored += opcinfo[keyno]->oi_nstored;
 	}
 
@@ -1119,16 +1138,22 @@ initialize_brin_buildstate(Relation idxRel, BrinRevmap *revmap,
 static void
 terminate_brin_buildstate(BrinBuildState *state)
 {
-	/* release the last index buffer used */
+	/*
+	 * Release the last index buffer used.  We might as well ensure that
+	 * whatever free space remains in that page is available in FSM, too.
+	 */
 	if (!BufferIsInvalid(state->bs_currentInsertBuf))
 	{
 		Page		page;
+		Size		freespace;
+		BlockNumber blk;
 
 		page = BufferGetPage(state->bs_currentInsertBuf);
-		RecordPageWithFreeSpace(state->bs_irel,
-								BufferGetBlockNumber(state->bs_currentInsertBuf),
-								PageGetFreeSpace(page));
+		freespace = PageGetFreeSpace(page);
+		blk = BufferGetBlockNumber(state->bs_currentInsertBuf);
 		ReleaseBuffer(state->bs_currentInsertBuf);
+		RecordPageWithFreeSpace(state->bs_irel, blk, freespace);
+		FreeSpaceMapVacuumRange(state->bs_irel, blk, blk + 1);
 	}
 
 	brin_free_desc(state->bs_bdesc);
@@ -1207,13 +1232,14 @@ summarize_range(IndexInfo *indexInfo, BrinBuildState *state, Relation heapRel,
 	 * short of brinbuildCallback creating the new index entry.
 	 *
 	 * Note that it is critical we use the "any visible" mode of
-	 * IndexBuildHeapRangeScan here: otherwise, we would miss tuples inserted
-	 * by transactions that are still in progress, among other corner cases.
+	 * table_index_build_range_scan here: otherwise, we would miss tuples
+	 * inserted by transactions that are still in progress, among other corner
+	 * cases.
 	 */
 	state->bs_currRangeStart = heapBlk;
-	IndexBuildHeapRangeScan(heapRel, state->bs_irel, indexInfo, false, true,
-							heapBlk, scanNumBlks,
-							brinbuildCallback, (void *) state);
+	table_index_build_range_scan(heapRel, state->bs_irel, indexInfo, false, true, false,
+								 heapBlk, scanNumBlks,
+								 brinbuildCallback, (void *) state, NULL);
 
 	/*
 	 * Now we update the values obtained by the scan with the placeholder
@@ -1322,8 +1348,8 @@ brinsummarize(Relation index, Relation heapRel, BlockNumber pageRange,
 
 		/*
 		 * Unless requested to summarize even a partial range, go away now if
-		 * we think the next range is partial.  Caller would pass true when
-		 * it is typically run once bulk data loading is done
+		 * we think the next range is partial.  Caller would pass true when it
+		 * is typically run once bulk data loading is done
 		 * (brin_summarize_new_values), and false when it is typically the
 		 * result of arbitrarily-scheduled maintenance command (vacuuming).
 		 */
@@ -1443,14 +1469,15 @@ union_tuples(BrinDesc *bdesc, BrinMemTuple *a, BrinTuple *b)
 static void
 brin_vacuum_scan(Relation idxrel, BufferAccessStrategy strategy)
 {
-	bool		vacuum_fsm = false;
+	BlockNumber nblocks;
 	BlockNumber blkno;
 
 	/*
 	 * Scan the index in physical order, and clean up any possible mess in
 	 * each page.
 	 */
-	for (blkno = 0; blkno < RelationGetNumberOfBlocks(idxrel); blkno++)
+	nblocks = RelationGetNumberOfBlocks(idxrel);
+	for (blkno = 0; blkno < nblocks; blkno++)
 	{
 		Buffer		buf;
 
@@ -1459,15 +1486,15 @@ brin_vacuum_scan(Relation idxrel, BufferAccessStrategy strategy)
 		buf = ReadBufferExtended(idxrel, MAIN_FORKNUM, blkno,
 								 RBM_NORMAL, strategy);
 
-		vacuum_fsm |= brin_page_cleanup(idxrel, buf);
+		brin_page_cleanup(idxrel, buf);
 
 		ReleaseBuffer(buf);
 	}
 
 	/*
-	 * If we made any change to the FSM, make sure the new info is visible all
-	 * the way to the top.
+	 * Update all upper pages in the index's FSM, as well.  This ensures not
+	 * only that we propagate leaf-page FSM updates made by brin_page_cleanup,
+	 * but also that any pre-existing damage or out-of-dateness is repaired.
 	 */
-	if (vacuum_fsm)
-		FreeSpaceMapVacuum(idxrel);
+	FreeSpaceMapVacuum(idxrel);
 }

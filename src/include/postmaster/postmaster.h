@@ -3,7 +3,7 @@
  * postmaster.h
  *	  Exports from postmaster/postmaster.c.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/postmaster/postmaster.h
@@ -48,6 +48,7 @@ extern PGDLLIMPORT const char *progname;
 
 extern void PostmasterMain(int argc, char *argv[]) pg_attribute_noreturn();
 extern void ClosePostmasterPorts(bool am_syslogger);
+extern void InitProcessGlobals(void);
 
 extern int	MaxLivePostmasterChildren(void);
 

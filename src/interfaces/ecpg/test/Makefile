@@ -30,6 +30,7 @@ all install installdirs uninstall distprep:
 	$(MAKE) -C pgtypeslib $@
 	$(MAKE) -C preproc $@
 	$(MAKE) -C compat_informix $@
+	$(MAKE) -C compat_oracle $@
 	$(MAKE) -C thread $@
 
 clean distclean maintainer-clean:
@@ -38,6 +39,7 @@ clean distclean maintainer-clean:
 	$(MAKE) -C pgtypeslib $@
 	$(MAKE) -C preproc $@
 	$(MAKE) -C compat_informix $@
+	$(MAKE) -C compat_oracle $@
 	$(MAKE) -C thread $@
 	rm -rf tmp_check results log
 	rm -f pg_regress regression.diffs regression.out pg_regress_ecpg.o $(WIN32RES)
@@ -47,7 +49,7 @@ clean distclean maintainer-clean:
 all: pg_regress$(X)
 
 pg_regress$(X): pg_regress_ecpg.o $(WIN32RES) $(top_builddir)/src/test/regress/pg_regress.o
-	$(CC) $(CFLAGS) $(LDFLAGS) $(LDFLAGS_EX) $^ $(LIBS) -o $@
+	$(CC) $(CFLAGS) $^ $(LDFLAGS) $(LDFLAGS_EX) $(LIBS) -o $@
 
 $(top_builddir)/src/test/regress/pg_regress.o:
 	$(MAKE) -C $(dir $@) $(notdir $@)
@@ -66,7 +68,7 @@ $(top_builddir)/src/port/pg_config_paths.h: $(top_builddir)/src/Makefile.global
 # $(srcdir) to the build directory.
 
 ifdef VPATH
-remaining_files_src := $(wildcard $(srcdir)/*/*.pgc) $(wildcard $(srcdir)/expected/*.c) $(wildcard $(srcdir)/expected/*.stdout) $(wildcard $(srcdir)/expected/*.stderr) $(srcdir)/resultmap
+remaining_files_src := $(wildcard $(srcdir)/*/*.pgc) $(wildcard $(srcdir)/expected/*.c) $(wildcard $(srcdir)/expected/*.stdout) $(wildcard $(srcdir)/expected/*.stderr)
 remaining_files_build := $(patsubst $(srcdir)/%, $(abs_builddir)/%, $(remaining_files_src))
 
 all: $(remaining_files_build)

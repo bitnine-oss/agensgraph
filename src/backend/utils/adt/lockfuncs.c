@@ -3,7 +3,7 @@
  * lockfuncs.c
  *		Functions for SQL access to various lock-manager capabilities.
  *
- * Copyright (c) 2002-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/backend/utils/adt/lockfuncs.c
@@ -33,7 +33,8 @@ const char *const LockTagTypeNames[] = {
 	"speculative token",
 	"object",
 	"userlock",
-	"advisory"
+	"advisory",
+	"frozenid"
 };
 
 /* This must match enum PredicateLockTargetType (predicate_internals.h) */
@@ -101,7 +102,7 @@ pg_lock_status(PG_FUNCTION_ARGS)
 
 		/* build tupdesc for result tuples */
 		/* this had better match function's declaration in pg_proc.h */
-		tupdesc = CreateTemplateTupleDesc(NUM_LOCK_STATUS_COLUMNS, false);
+		tupdesc = CreateTemplateTupleDesc(NUM_LOCK_STATUS_COLUMNS);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "locktype",
 						   TEXTOID, -1, 0);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "database",
@@ -237,6 +238,17 @@ pg_lock_status(PG_FUNCTION_ARGS)
 			case LOCKTAG_RELATION_EXTEND:
 				values[1] = ObjectIdGetDatum(instance->locktag.locktag_field1);
 				values[2] = ObjectIdGetDatum(instance->locktag.locktag_field2);
+				nulls[3] = true;
+				nulls[4] = true;
+				nulls[5] = true;
+				nulls[6] = true;
+				nulls[7] = true;
+				nulls[8] = true;
+				nulls[9] = true;
+				break;
+			case LOCKTAG_DATABASE_FROZEN_IDS:
+				values[1] = ObjectIdGetDatum(instance->locktag.locktag_field1);
+				nulls[2] = true;
 				nulls[3] = true;
 				nulls[4] = true;
 				nulls[5] = true;

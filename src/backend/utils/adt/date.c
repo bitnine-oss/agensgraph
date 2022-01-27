@@ -3,7 +3,7 @@
  * date.c
  *	  implements DATE and TIME data types specified in SQL standard
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  *
@@ -18,18 +18,19 @@
 #include <ctype.h>
 #include <limits.h>
 #include <float.h>
+#include <math.h>
 #include <time.h>
 
-#include "access/hash.h"
 #include "access/xact.h"
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
+#include "nodes/supportnodes.h"
 #include "parser/scansup.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
 #include "utils/datetime.h"
-#include "utils/nabstime.h"
+#include "utils/hashutils.h"
 #include "utils/sortsupport.h"
 
 /*
@@ -41,8 +42,6 @@
 #endif
 
 
-static int	time2tm(TimeADT time, struct pg_tm *tm, fsec_t *fsec);
-static int	timetz2tm(TimeTzADT *time, struct pg_tm *tm, fsec_t *fsec, int *tzp);
 static int	tm2time(struct pg_tm *tm, fsec_t fsec, TimeADT *result);
 static int	tm2timetz(struct pg_tm *tm, fsec_t fsec, int tz, TimeTzADT *result);
 static void AdjustTimeForTypmod(TimeADT *time, int32 typmod);
@@ -140,14 +139,6 @@ date_in(PG_FUNCTION_ARGS)
 		case DTK_DATE:
 			break;
 
-		case DTK_CURRENT:
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("date/time value \"current\" is no longer supported")));
-
-			GetCurrentDateTime(tm);
-			break;
-
 		case DTK_EPOCH:
 			GetEpochTime(tm);
 			break;
@@ -239,7 +230,7 @@ date_send(PG_FUNCTION_ARGS)
 	StringInfoData buf;
 
 	pq_begintypsend(&buf);
-	pq_sendint(&buf, date, sizeof(date));
+	pq_sendint32(&buf, date);
 	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
 
@@ -1013,6 +1004,34 @@ timestamptz_cmp_date(PG_FUNCTION_ARGS)
 	PG_RETURN_INT32(timestamptz_cmp_internal(dt1, dt2));
 }
 
+/*
+ * in_range support function for date.
+ *
+ * We implement this by promoting the dates to timestamp (without time zone)
+ * and then using the timestamp-and-interval in_range function.
+ */
+Datum
+in_range_date_interval(PG_FUNCTION_ARGS)
+{
+	DateADT		val = PG_GETARG_DATEADT(0);
+	DateADT		base = PG_GETARG_DATEADT(1);
+	Interval   *offset = PG_GETARG_INTERVAL_P(2);
+	bool		sub = PG_GETARG_BOOL(3);
+	bool		less = PG_GETARG_BOOL(4);
+	Timestamp	valStamp;
+	Timestamp	baseStamp;
+
+	valStamp = date2timestamp(val);
+	baseStamp = date2timestamp(base);
+
+	return DirectFunctionCall5(in_range_timestamp_interval,
+							   TimestampGetDatum(valStamp),
+							   TimestampGetDatum(baseStamp),
+							   IntervalPGetDatum(offset),
+							   BoolGetDatum(sub),
+							   BoolGetDatum(less));
+}
+
 
 /* Add an interval to a date, giving a new date.
  * Must handle both positive and negative intervals.
@@ -1144,55 +1163,6 @@ timestamptz_date(PG_FUNCTION_ARGS)
 }
 
 
-/* abstime_date()
- * Convert abstime to date data type.
- */
-Datum
-abstime_date(PG_FUNCTION_ARGS)
-{
-	AbsoluteTime abstime = PG_GETARG_ABSOLUTETIME(0);
-	DateADT		result;
-	struct pg_tm tt,
-			   *tm = &tt;
-	int			tz;
-
-	switch (abstime)
-	{
-		case INVALID_ABSTIME:
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("cannot convert reserved abstime value to date")));
-			result = 0;			/* keep compiler quiet */
-			break;
-
-		case NOSTART_ABSTIME:
-			DATE_NOBEGIN(result);
-			break;
-
-		case NOEND_ABSTIME:
-			DATE_NOEND(result);
-			break;
-
-		default:
-			abstime2tm(abstime, &tz, tm, NULL);
-			/* Prevent overflow in Julian-day routines */
-			if (!IS_VALID_JULIAN(tm->tm_year, tm->tm_mon, tm->tm_mday))
-				ereport(ERROR,
-						(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
-						 errmsg("abstime out of range for date")));
-			result = date2j(tm->tm_year, tm->tm_mon, tm->tm_mday) - POSTGRES_EPOCH_JDATE;
-			/* Now check for just-out-of-range dates */
-			if (!IS_VALID_DATE(result))
-				ereport(ERROR,
-						(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
-						 errmsg("abstime out of range for date")));
-			break;
-	}
-
-	PG_RETURN_DATEADT(result);
-}
-
-
 /*****************************************************************************
  *	 Time ADT
  *****************************************************************************/
@@ -1242,6 +1212,65 @@ tm2time(struct pg_tm *tm, fsec_t fsec, TimeADT *result)
 	return 0;
 }
 
+/* time_overflows()
+ * Check to see if a broken-down time-of-day is out of range.
+ */
+bool
+time_overflows(int hour, int min, int sec, fsec_t fsec)
+{
+	/* Range-check the fields individually. */
+	if (hour < 0 || hour > HOURS_PER_DAY ||
+		min < 0 || min >= MINS_PER_HOUR ||
+		sec < 0 || sec > SECS_PER_MINUTE ||
+		fsec < 0 || fsec > USECS_PER_SEC)
+		return true;
+
+	/*
+	 * Because we allow, eg, hour = 24 or sec = 60, we must check separately
+	 * that the total time value doesn't exceed 24:00:00.
+	 */
+	if ((((((hour * MINS_PER_HOUR + min) * SECS_PER_MINUTE)
+		   + sec) * USECS_PER_SEC) + fsec) > USECS_PER_DAY)
+		return true;
+
+	return false;
+}
+
+/* float_time_overflows()
+ * Same, when we have seconds + fractional seconds as one "double" value.
+ */
+bool
+float_time_overflows(int hour, int min, double sec)
+{
+	/* Range-check the fields individually. */
+	if (hour < 0 || hour > HOURS_PER_DAY ||
+		min < 0 || min >= MINS_PER_HOUR)
+		return true;
+
+	/*
+	 * "sec", being double, requires extra care.  Cope with NaN, and round off
+	 * before applying the range check to avoid unexpected errors due to
+	 * imprecise input.  (We assume rint() behaves sanely with infinities.)
+	 */
+	if (isnan(sec))
+		return true;
+	sec = rint(sec * USECS_PER_SEC);
+	if (sec < 0 || sec > SECS_PER_MINUTE * USECS_PER_SEC)
+		return true;
+
+	/*
+	 * Because we allow, eg, hour = 24 or sec = 60, we must check separately
+	 * that the total time value doesn't exceed 24:00:00.  This must match the
+	 * way that callers will convert the fields to a time.
+	 */
+	if (((((hour * MINS_PER_HOUR + min) * SECS_PER_MINUTE)
+		  * USECS_PER_SEC) + (int64) sec) > USECS_PER_DAY)
+		return true;
+
+	return false;
+}
+
+
 /* time2tm()
  * Convert time data type to POSIX time structure.
  *
@@ -1249,7 +1278,7 @@ tm2time(struct pg_tm *tm, fsec_t fsec, TimeADT *result)
  * If out of this range, leave as UTC (in practice that could only happen
  * if pg_time_t is just 32 bits) - thomas 97/05/27
  */
-static int
+int
 time2tm(TimeADT time, struct pg_tm *tm, fsec_t *fsec)
 {
 	tm->tm_hour = time / USECS_PER_HOUR;
@@ -1346,12 +1375,8 @@ make_time(PG_FUNCTION_ARGS)
 	double		sec = PG_GETARG_FLOAT8(2);
 	TimeADT		time;
 
-	/* This should match the checks in DecodeTimeOnly */
-	if (tm_hour < 0 || tm_min < 0 || tm_min > MINS_PER_HOUR - 1 ||
-		sec < 0 || sec > SECS_PER_MINUTE ||
-		tm_hour > HOURS_PER_DAY ||
-	/* test for > 24:00:00 */
-		(tm_hour == HOURS_PER_DAY && (tm_min > 0 || sec > 0)))
+	/* Check for time overflow */
+	if (float_time_overflows(tm_hour, tm_min, sec))
 		ereport(ERROR,
 				(errcode(ERRCODE_DATETIME_FIELD_OVERFLOW),
 				 errmsg("time field value out of range: %d:%02d:%02g",
@@ -1359,21 +1384,31 @@ make_time(PG_FUNCTION_ARGS)
 
 	/* This should match tm2time */
 	time = (((tm_hour * MINS_PER_HOUR + tm_min) * SECS_PER_MINUTE)
-			* USECS_PER_SEC) + rint(sec * USECS_PER_SEC);
+			* USECS_PER_SEC) + (int64) rint(sec * USECS_PER_SEC);
 
 	PG_RETURN_TIMEADT(time);
 }
 
 
-/* time_transform()
- * Flatten calls to time_scale() and timetz_scale() that solely represent
- * increases in allowed precision.
+/* time_support()
+ *
+ * Planner support function for the time_scale() and timetz_scale()
+ * length coercion functions (we need not distinguish them here).
  */
 Datum
-time_transform(PG_FUNCTION_ARGS)
+time_support(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_POINTER(TemporalTransform(MAX_TIME_PRECISION,
-										(Node *) PG_GETARG_POINTER(0)));
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
+	Node	   *ret = NULL;
+
+	if (IsA(rawreq, SupportRequestSimplify))
+	{
+		SupportRequestSimplify *req = (SupportRequestSimplify *) rawreq;
+
+		ret = TemporalSimplify(MAX_TIME_PRECISION, (Node *) req->fcall);
+	}
+
+	PG_RETURN_POINTER(ret);
 }
 
 /* time_scale()
@@ -1395,7 +1430,7 @@ time_scale(PG_FUNCTION_ARGS)
 
 /* AdjustTimeForTypmod()
  * Force the precision of the time value to a specified value.
- * Uses *exactly* the same code as in AdjustTimestampForTypemod()
+ * Uses *exactly* the same code as in AdjustTimestampForTypmod()
  * but we make a separate copy because those types do not
  * have a fundamental tie together but rather a coincidence of
  * implementation. - thomas
@@ -1506,6 +1541,12 @@ Datum
 time_hash(PG_FUNCTION_ARGS)
 {
 	return hashint8(fcinfo);
+}
+
+Datum
+time_hash_extended(PG_FUNCTION_ARGS)
+{
+	return hashint8extended(fcinfo);
 }
 
 Datum
@@ -1838,6 +1879,45 @@ time_mi_interval(PG_FUNCTION_ARGS)
 	PG_RETURN_TIMEADT(result);
 }
 
+/*
+ * in_range support function for time.
+ */
+Datum
+in_range_time_interval(PG_FUNCTION_ARGS)
+{
+	TimeADT		val = PG_GETARG_TIMEADT(0);
+	TimeADT		base = PG_GETARG_TIMEADT(1);
+	Interval   *offset = PG_GETARG_INTERVAL_P(2);
+	bool		sub = PG_GETARG_BOOL(3);
+	bool		less = PG_GETARG_BOOL(4);
+	TimeADT		sum;
+
+	/*
+	 * Like time_pl_interval/time_mi_interval, we disregard the month and day
+	 * fields of the offset.  So our test for negative should too.
+	 */
+	if (offset->time < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PRECEDING_OR_FOLLOWING_SIZE),
+				 errmsg("invalid preceding or following size in window function")));
+
+	/*
+	 * We can't use time_pl_interval/time_mi_interval here, because their
+	 * wraparound behavior would give wrong (or at least undesirable) answers.
+	 * Fortunately the equivalent non-wrapping behavior is trivial, especially
+	 * since we don't worry about integer overflow.
+	 */
+	if (sub)
+		sum = base - offset->time;
+	else
+		sum = base + offset->time;
+
+	if (less)
+		PG_RETURN_BOOL(val <= sum);
+	else
+		PG_RETURN_BOOL(val >= sum);
+}
+
 
 /* time_part()
  * Extract specified field from time type.
@@ -2043,7 +2123,7 @@ timetz_send(PG_FUNCTION_ARGS)
 
 	pq_begintypsend(&buf);
 	pq_sendint64(&buf, time->time);
-	pq_sendint(&buf, time->zone, sizeof(time->zone));
+	pq_sendint32(&buf, time->zone);
 	PG_RETURN_BYTEA_P(pq_endtypsend(&buf));
 }
 
@@ -2067,7 +2147,7 @@ timetztypmodout(PG_FUNCTION_ARGS)
 /* timetz2tm()
  * Convert TIME WITH TIME ZONE data type to POSIX time structure.
  */
-static int
+int
 timetz2tm(TimeTzADT *time, struct pg_tm *tm, fsec_t *fsec, int *tzp)
 {
 	TimeOffset	trem = time->time;
@@ -2214,6 +2294,22 @@ timetz_hash(PG_FUNCTION_ARGS)
 }
 
 Datum
+timetz_hash_extended(PG_FUNCTION_ARGS)
+{
+	TimeTzADT  *key = PG_GETARG_TIMETZADT_P(0);
+	Datum		seed = PG_GETARG_DATUM(1);
+	uint64		thash;
+
+	/* Same approach as timetz_hash */
+	thash = DatumGetUInt64(DirectFunctionCall2(hashint8extended,
+											   Int64GetDatumFast(key->time),
+											   seed));
+	thash ^= DatumGetUInt64(hash_uint32_extended(key->zone,
+												 DatumGetInt64(seed)));
+	PG_RETURN_UINT64(thash);
+}
+
+Datum
 timetz_larger(PG_FUNCTION_ARGS)
 {
 	TimeTzADT  *time1 = PG_GETARG_TIMETZADT_P(0);
@@ -2283,6 +2379,46 @@ timetz_mi_interval(PG_FUNCTION_ARGS)
 	result->zone = time->zone;
 
 	PG_RETURN_TIMETZADT_P(result);
+}
+
+/*
+ * in_range support function for timetz.
+ */
+Datum
+in_range_timetz_interval(PG_FUNCTION_ARGS)
+{
+	TimeTzADT  *val = PG_GETARG_TIMETZADT_P(0);
+	TimeTzADT  *base = PG_GETARG_TIMETZADT_P(1);
+	Interval   *offset = PG_GETARG_INTERVAL_P(2);
+	bool		sub = PG_GETARG_BOOL(3);
+	bool		less = PG_GETARG_BOOL(4);
+	TimeTzADT	sum;
+
+	/*
+	 * Like timetz_pl_interval/timetz_mi_interval, we disregard the month and
+	 * day fields of the offset.  So our test for negative should too.
+	 */
+	if (offset->time < 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PRECEDING_OR_FOLLOWING_SIZE),
+				 errmsg("invalid preceding or following size in window function")));
+
+	/*
+	 * We can't use timetz_pl_interval/timetz_mi_interval here, because their
+	 * wraparound behavior would give wrong (or at least undesirable) answers.
+	 * Fortunately the equivalent non-wrapping behavior is trivial, especially
+	 * since we don't worry about integer overflow.
+	 */
+	if (sub)
+		sum.time = base->time - offset->time;
+	else
+		sum.time = base->time + offset->time;
+	sum.zone = base->zone;
+
+	if (less)
+		PG_RETURN_BOOL(timetz_cmp_internal(val, &sum) <= 0);
+	else
+		PG_RETURN_BOOL(timetz_cmp_internal(val, &sum) >= 0);
 }
 
 /* overlaps_timetz() --- implements the SQL OVERLAPS operator.

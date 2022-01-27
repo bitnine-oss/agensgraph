@@ -3,13 +3,14 @@
  * pg_visibility.c
  *	  display visibility map information and page-level visibility bits
  *
- * Copyright (c) 2016-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2019, PostgreSQL Global Development Group
  *
  *	  contrib/pg_visibility/pg_visibility.c
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
 
+#include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/visibilitymap.h"
 #include "catalog/pg_type.h"
@@ -20,6 +21,7 @@
 #include "storage/procarray.h"
 #include "storage/smgr.h"
 #include "utils/rel.h"
+#include "utils/snapmgr.h"
 
 PG_MODULE_MAGIC;
 
@@ -49,10 +51,10 @@ PG_FUNCTION_INFO_V1(pg_truncate_visibility_map);
 static TupleDesc pg_visibility_tupdesc(bool include_blkno, bool include_pd);
 static vbits *collect_visibility_data(Oid relid, bool include_pd);
 static corrupt_items *collect_corrupt_items(Oid relid, bool all_visible,
-					  bool all_frozen);
+											bool all_frozen);
 static void record_corrupt_item(corrupt_items *items, ItemPointer tid);
 static bool tuple_all_visible(HeapTuple tup, TransactionId OldestXmin,
-				  Buffer buffer);
+							  Buffer buffer);
 static void check_relation_relkind(Relation rel);
 
 /*
@@ -292,7 +294,7 @@ pg_visibility_map_summary(PG_FUNCTION_ARGS)
 		ReleaseBuffer(vmbuffer);
 	relation_close(rel, AccessShareLock);
 
-	tupdesc = CreateTemplateTupleDesc(2, false);
+	tupdesc = CreateTemplateTupleDesc(2);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "all_visible", INT8OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "all_frozen", INT8OID, -1, 0);
 	tupdesc = BlessTupleDesc(tupdesc);
@@ -447,7 +449,7 @@ pg_visibility_tupdesc(bool include_blkno, bool include_pd)
 		++maxattr;
 	if (include_pd)
 		++maxattr;
-	tupdesc = CreateTemplateTupleDesc(maxattr, false);
+	tupdesc = CreateTemplateTupleDesc(maxattr);
 	if (include_blkno)
 		TupleDescInitEntry(tupdesc, ++a, "blkno", INT8OID, -1, 0);
 	TupleDescInitEntry(tupdesc, ++a, "all_visible", BOOLOID, -1, 0);

@@ -2,8 +2,7 @@
 #
 # Makefile for src/bin (client programs)
 #
-# Portions Copyright (c) 2018, Bitnine Inc.
-# Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/Makefile
@@ -15,11 +14,12 @@ top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 
 SUBDIRS = \
-	ag_ctl \
-	agens \
+        ag_ctl \
+        agens \
 	initdb \
 	pg_archivecleanup \
 	pg_basebackup \
+	pg_checksums \
 	pg_config \
 	pg_controldata \
 	pg_ctl \

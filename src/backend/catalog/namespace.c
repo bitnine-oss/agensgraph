@@ -9,7 +9,7 @@
  * and implementing search-path-controlled searches.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -28,7 +28,6 @@
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_conversion.h"
-#include "catalog/pg_conversion_fn.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
@@ -48,7 +47,7 @@
 #include "parser/parse_func.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
-#include "storage/sinval.h"
+#include "storage/sinvaladt.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/catcache.h"
@@ -95,7 +94,7 @@
  * set up until the first attempt to create something in it.  (The reason for
  * klugery is that we can't create the temp namespace outside a transaction,
  * but initial GUC processing of search_path happens outside a transaction.)
- * activeTempCreationPending is TRUE if "pg_temp" appears first in the string
+ * activeTempCreationPending is true if "pg_temp" appears first in the string
  * but is not reflected in activeCreationNamespace because the namespace isn't
  * set up yet.
  *
@@ -136,7 +135,7 @@ static List *activeSearchPath = NIL;
 /* default place to create stuff; if InvalidOid, no default */
 static Oid	activeCreationNamespace = InvalidOid;
 
-/* if TRUE, activeCreationNamespace is wrong, it should be temp namespace */
+/* if true, activeCreationNamespace is wrong, it should be temp namespace */
 static bool activeTempCreationPending = false;
 
 /* These variables are the values last derived from namespace_search_path: */
@@ -193,36 +192,51 @@ char	   *namespace_search_path = NULL;
 
 /* Local functions */
 static void recomputeNamespacePath(void);
+static void AccessTempTableNamespace(bool force);
 static void InitTempTableNamespace(void);
 static void RemoveTempRelations(Oid tempNamespaceId);
 static void RemoveTempRelationsCallback(int code, Datum arg);
 static void NamespaceCallback(Datum arg, int cacheid, uint32 hashvalue);
 static bool MatchNamedCall(HeapTuple proctup, int nargs, List *argnames,
-			   int **argnumbers);
+						   int **argnumbers);
 
 
 /*
- * RangeVarGetRelid
+ * RangeVarGetRelidExtended
  *		Given a RangeVar describing an existing relation,
  *		select the proper namespace and look up the relation OID.
  *
- * If the schema or relation is not found, return InvalidOid if missing_ok
- * = true, otherwise raise an error.
+ * If the schema or relation is not found, return InvalidOid if flags contains
+ * RVR_MISSING_OK, otherwise raise an error.
  *
- * If nowait = true, throw an error if we'd have to wait for a lock.
+ * If flags contains RVR_NOWAIT, throw an error if we'd have to wait for a
+ * lock.
+ *
+ * If flags contains RVR_SKIP_LOCKED, return InvalidOid if we'd have to wait
+ * for a lock.
+ *
+ * flags cannot contain both RVR_NOWAIT and RVR_SKIP_LOCKED.
+ *
+ * Note that if RVR_MISSING_OK and RVR_SKIP_LOCKED are both specified, a
+ * return value of InvalidOid could either mean the relation is missing or it
+ * could not be locked.
  *
  * Callback allows caller to check permissions or acquire additional locks
  * prior to grabbing the relation lock.
  */
 Oid
 RangeVarGetRelidExtended(const RangeVar *relation, LOCKMODE lockmode,
-						 bool missing_ok, bool nowait,
+						 uint32 flags,
 						 RangeVarGetRelidCallback callback, void *callback_arg)
 {
 	uint64		inval_count;
 	Oid			relId;
 	Oid			oldRelId = InvalidOid;
 	bool		retry = false;
+	bool		missing_ok = (flags & RVR_MISSING_OK) != 0;
+
+	/* verify that flags do no conflict */
+	Assert(!((flags & RVR_NOWAIT) && (flags & RVR_SKIP_LOCKED)));
 
 	/*
 	 * We check the catalog name and then ignore it.
@@ -361,20 +375,24 @@ RangeVarGetRelidExtended(const RangeVar *relation, LOCKMODE lockmode,
 		 */
 		if (!OidIsValid(relId))
 			AcceptInvalidationMessages();
-		else if (!nowait)
+		else if (!(flags & (RVR_NOWAIT | RVR_SKIP_LOCKED)))
 			LockRelationOid(relId, lockmode);
 		else if (!ConditionalLockRelationOid(relId, lockmode))
 		{
+			int			elevel = (flags & RVR_SKIP_LOCKED) ? DEBUG1 : ERROR;
+
 			if (relation->schemaname)
-				ereport(ERROR,
+				ereport(elevel,
 						(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
 						 errmsg("could not obtain lock on relation \"%s.%s\"",
 								relation->schemaname, relation->relname)));
 			else
-				ereport(ERROR,
+				ereport(elevel,
 						(errcode(ERRCODE_LOCK_NOT_AVAILABLE),
 						 errmsg("could not obtain lock on relation \"%s\"",
 								relation->relname)));
+
+			return InvalidOid;
 		}
 
 		/*
@@ -392,15 +410,17 @@ RangeVarGetRelidExtended(const RangeVar *relation, LOCKMODE lockmode,
 		oldRelId = relId;
 	}
 
-	if (!OidIsValid(relId) && !missing_ok)
+	if (!OidIsValid(relId))
 	{
+		int			elevel = missing_ok ? DEBUG1 : ERROR;
+
 		if (relation->schemaname)
-			ereport(ERROR,
+			ereport(elevel,
 					(errcode(ERRCODE_UNDEFINED_TABLE),
 					 errmsg("relation \"%s.%s\" does not exist",
 							relation->schemaname, relation->relname)));
 		else
-			ereport(ERROR,
+			ereport(elevel,
 					(errcode(ERRCODE_UNDEFINED_TABLE),
 					 errmsg("relation \"%s\" does not exist",
 							relation->relname)));
@@ -440,9 +460,8 @@ RangeVarGetCreationNamespace(const RangeVar *newRelation)
 		/* check for pg_temp alias */
 		if (strcmp(newRelation->schemaname, "pg_temp") == 0)
 		{
-			/* Initialize temp namespace if first time through */
-			if (!OidIsValid(myTempNamespace))
-				InitTempTableNamespace();
+			/* Initialize temp namespace */
+			AccessTempTableNamespace(false);
 			return myTempNamespace;
 		}
 		/* use exact schema given */
@@ -451,9 +470,8 @@ RangeVarGetCreationNamespace(const RangeVar *newRelation)
 	}
 	else if (newRelation->relpersistence == RELPERSISTENCE_TEMP)
 	{
-		/* Initialize temp namespace if first time through */
-		if (!OidIsValid(myTempNamespace))
-			InitTempTableNamespace();
+		/* Initialize temp namespace */
+		AccessTempTableNamespace(false);
 		return myTempNamespace;
 	}
 	else
@@ -463,7 +481,7 @@ RangeVarGetCreationNamespace(const RangeVar *newRelation)
 		if (activeTempCreationPending)
 		{
 			/* Need to initialize temp namespace */
-			InitTempTableNamespace();
+			AccessTempTableNamespace(true);
 			return myTempNamespace;
 		}
 		namespaceId = activeCreationNamespace;
@@ -560,7 +578,7 @@ RangeVarGetAndCheckCreationNamespace(RangeVar *relation,
 		/* Check namespace permissions. */
 		aclresult = pg_namespace_aclcheck(nspid, GetUserId(), ACL_CREATE);
 		if (aclresult != ACLCHECK_OK)
-			aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+			aclcheck_error(aclresult, OBJECT_SCHEMA,
 						   get_namespace_name(nspid));
 
 		if (retry)
@@ -585,7 +603,7 @@ RangeVarGetAndCheckCreationNamespace(RangeVar *relation,
 		if (lockmode != NoLock && OidIsValid(relid))
 		{
 			if (!pg_class_ownercheck(relid, GetUserId()))
-				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_CLASS,
+				aclcheck_error(ACLCHECK_NOT_OWNER, get_relkind_objtype(get_rel_relkind(relid)),
 							   relation->relname);
 			if (relid != oldrelid)
 				LockRelationOid(relid, lockmode);
@@ -739,13 +757,23 @@ RelationIsVisible(Oid relid)
 
 /*
  * TypenameGetTypid
+ *		Wrapper for binary compatibility.
+ */
+Oid
+TypenameGetTypid(const char *typname)
+{
+	return TypenameGetTypidExtended(typname, true);
+}
+
+/*
+ * TypenameGetTypidExtended
  *		Try to resolve an unqualified datatype name.
  *		Returns OID if type found in search path, else InvalidOid.
  *
  * This is essentially the same as RelnameGetRelid.
  */
 Oid
-TypenameGetTypid(const char *typname)
+TypenameGetTypidExtended(const char *typname, bool temp_ok)
 {
 	Oid			typid;
 	ListCell   *l;
@@ -756,7 +784,10 @@ TypenameGetTypid(const char *typname)
 	{
 		Oid			namespaceId = lfirst_oid(l);
 
-		typid = GetSysCacheOid2(TYPENAMENSP,
+		if (!temp_ok && namespaceId == myTempNamespace)
+			continue;			/* do not look in temp namespace */
+
+		typid = GetSysCacheOid2(TYPENAMENSP, Anum_pg_type_oid,
 								PointerGetDatum(typname),
 								ObjectIdGetDatum(namespaceId));
 		if (OidIsValid(typid))
@@ -1065,7 +1096,7 @@ FuncnameGetCandidates(List *names, int nargs, List *argnames,
 			palloc(offsetof(struct _FuncCandidateList, args) +
 				   effective_nargs * sizeof(Oid));
 		newResult->pathpos = pathpos;
-		newResult->oid = HeapTupleGetOid(proctup);
+		newResult->oid = procform->oid;
 		newResult->nargs = effective_nargs;
 		newResult->argnumbers = argnumbers;
 		if (argnumbers)
@@ -1469,7 +1500,8 @@ OpernameGetOprid(List *names, Oid oprleft, Oid oprright)
 									  ObjectIdGetDatum(namespaceId));
 			if (HeapTupleIsValid(opertup))
 			{
-				Oid			result = HeapTupleGetOid(opertup);
+				Form_pg_operator operclass = (Form_pg_operator) GETSTRUCT(opertup);
+				Oid			result = operclass->oid;
 
 				ReleaseSysCache(opertup);
 				return result;
@@ -1514,7 +1546,7 @@ OpernameGetOprid(List *names, Oid oprleft, Oid oprright)
 
 			if (operform->oprnamespace == namespaceId)
 			{
-				Oid			result = HeapTupleGetOid(opertup);
+				Oid			result = operform->oid;
 
 				ReleaseSysCacheList(catlist);
 				return result;
@@ -1668,7 +1700,7 @@ OpernameGetCandidates(List *names, char oprkind, bool missing_schema_ok)
 						continue;	/* keep previous result */
 					/* replace previous result */
 					prevResult->pathpos = pathpos;
-					prevResult->oid = HeapTupleGetOid(opertup);
+					prevResult->oid = operform->oid;
 					continue;	/* args are same, of course */
 				}
 			}
@@ -1681,7 +1713,7 @@ OpernameGetCandidates(List *names, char oprkind, bool missing_schema_ok)
 		nextResult += SPACE_PER_OP;
 
 		newResult->pathpos = pathpos;
-		newResult->oid = HeapTupleGetOid(opertup);
+		newResult->oid = operform->oid;
 		newResult->nargs = 2;
 		newResult->nvargs = 0;
 		newResult->ndargs = 0;
@@ -1771,7 +1803,7 @@ OpclassnameGetOpcid(Oid amid, const char *opcname)
 		if (namespaceId == myTempNamespace)
 			continue;			/* do not look in temp namespace */
 
-		opcid = GetSysCacheOid3(CLAAMNAMENSP,
+		opcid = GetSysCacheOid3(CLAAMNAMENSP, Anum_pg_opclass_oid,
 								ObjectIdGetDatum(amid),
 								PointerGetDatum(opcname),
 								ObjectIdGetDatum(namespaceId));
@@ -1854,7 +1886,7 @@ OpfamilynameGetOpfid(Oid amid, const char *opfname)
 		if (namespaceId == myTempNamespace)
 			continue;			/* do not look in temp namespace */
 
-		opfid = GetSysCacheOid3(OPFAMILYAMNAMENSP,
+		opfid = GetSysCacheOid3(OPFAMILYAMNAMENSP, Anum_pg_opfamily_oid,
 								ObjectIdGetDatum(amid),
 								PointerGetDatum(opfname),
 								ObjectIdGetDatum(namespaceId));
@@ -1927,7 +1959,7 @@ lookup_collation(const char *collname, Oid collnamespace, int32 encoding)
 	Form_pg_collation collform;
 
 	/* Check for encoding-specific entry (exact match) */
-	collid = GetSysCacheOid3(COLLNAMEENCNSP,
+	collid = GetSysCacheOid3(COLLNAMEENCNSP, Anum_pg_collation_oid,
 							 PointerGetDatum(collname),
 							 Int32GetDatum(encoding),
 							 ObjectIdGetDatum(collnamespace));
@@ -1950,13 +1982,13 @@ lookup_collation(const char *collname, Oid collnamespace, int32 encoding)
 	if (collform->collprovider == COLLPROVIDER_ICU)
 	{
 		if (is_encoding_supported_by_icu(encoding))
-			collid = HeapTupleGetOid(colltup);
+			collid = collform->oid;
 		else
 			collid = InvalidOid;
 	}
 	else
 	{
-		collid = HeapTupleGetOid(colltup);
+		collid = collform->oid;
 	}
 	ReleaseSysCache(colltup);
 	return collid;
@@ -2070,7 +2102,7 @@ ConversionGetConid(const char *conname)
 		if (namespaceId == myTempNamespace)
 			continue;			/* do not look in temp namespace */
 
-		conid = GetSysCacheOid2(CONNAMENSP,
+		conid = GetSysCacheOid2(CONNAMENSP, Anum_pg_conversion_oid,
 								PointerGetDatum(conname),
 								ObjectIdGetDatum(namespaceId));
 		if (OidIsValid(conid))
@@ -2153,7 +2185,7 @@ get_statistics_object_oid(List *names, bool missing_ok)
 		if (missing_ok && !OidIsValid(namespaceId))
 			stats_oid = InvalidOid;
 		else
-			stats_oid = GetSysCacheOid2(STATEXTNAMENSP,
+			stats_oid = GetSysCacheOid2(STATEXTNAMENSP, Anum_pg_statistic_ext_oid,
 										PointerGetDatum(stats_name),
 										ObjectIdGetDatum(namespaceId));
 	}
@@ -2168,7 +2200,7 @@ get_statistics_object_oid(List *names, bool missing_ok)
 
 			if (namespaceId == myTempNamespace)
 				continue;		/* do not look in temp namespace */
-			stats_oid = GetSysCacheOid2(STATEXTNAMENSP,
+			stats_oid = GetSysCacheOid2(STATEXTNAMENSP, Anum_pg_statistic_ext_oid,
 										PointerGetDatum(stats_name),
 										ObjectIdGetDatum(namespaceId));
 			if (OidIsValid(stats_oid))
@@ -2275,7 +2307,7 @@ get_ts_parser_oid(List *names, bool missing_ok)
 		if (missing_ok && !OidIsValid(namespaceId))
 			prsoid = InvalidOid;
 		else
-			prsoid = GetSysCacheOid2(TSPARSERNAMENSP,
+			prsoid = GetSysCacheOid2(TSPARSERNAMENSP, Anum_pg_ts_parser_oid,
 									 PointerGetDatum(parser_name),
 									 ObjectIdGetDatum(namespaceId));
 	}
@@ -2291,7 +2323,7 @@ get_ts_parser_oid(List *names, bool missing_ok)
 			if (namespaceId == myTempNamespace)
 				continue;		/* do not look in temp namespace */
 
-			prsoid = GetSysCacheOid2(TSPARSERNAMENSP,
+			prsoid = GetSysCacheOid2(TSPARSERNAMENSP, Anum_pg_ts_parser_oid,
 									 PointerGetDatum(parser_name),
 									 ObjectIdGetDatum(namespaceId));
 			if (OidIsValid(prsoid))
@@ -2401,7 +2433,7 @@ get_ts_dict_oid(List *names, bool missing_ok)
 		if (missing_ok && !OidIsValid(namespaceId))
 			dictoid = InvalidOid;
 		else
-			dictoid = GetSysCacheOid2(TSDICTNAMENSP,
+			dictoid = GetSysCacheOid2(TSDICTNAMENSP, Anum_pg_ts_dict_oid,
 									  PointerGetDatum(dict_name),
 									  ObjectIdGetDatum(namespaceId));
 	}
@@ -2417,7 +2449,7 @@ get_ts_dict_oid(List *names, bool missing_ok)
 			if (namespaceId == myTempNamespace)
 				continue;		/* do not look in temp namespace */
 
-			dictoid = GetSysCacheOid2(TSDICTNAMENSP,
+			dictoid = GetSysCacheOid2(TSDICTNAMENSP, Anum_pg_ts_dict_oid,
 									  PointerGetDatum(dict_name),
 									  ObjectIdGetDatum(namespaceId));
 			if (OidIsValid(dictoid))
@@ -2528,7 +2560,7 @@ get_ts_template_oid(List *names, bool missing_ok)
 		if (missing_ok && !OidIsValid(namespaceId))
 			tmploid = InvalidOid;
 		else
-			tmploid = GetSysCacheOid2(TSTEMPLATENAMENSP,
+			tmploid = GetSysCacheOid2(TSTEMPLATENAMENSP, Anum_pg_ts_template_oid,
 									  PointerGetDatum(template_name),
 									  ObjectIdGetDatum(namespaceId));
 	}
@@ -2544,7 +2576,7 @@ get_ts_template_oid(List *names, bool missing_ok)
 			if (namespaceId == myTempNamespace)
 				continue;		/* do not look in temp namespace */
 
-			tmploid = GetSysCacheOid2(TSTEMPLATENAMENSP,
+			tmploid = GetSysCacheOid2(TSTEMPLATENAMENSP, Anum_pg_ts_template_oid,
 									  PointerGetDatum(template_name),
 									  ObjectIdGetDatum(namespaceId));
 			if (OidIsValid(tmploid))
@@ -2654,7 +2686,7 @@ get_ts_config_oid(List *names, bool missing_ok)
 		if (missing_ok && !OidIsValid(namespaceId))
 			cfgoid = InvalidOid;
 		else
-			cfgoid = GetSysCacheOid2(TSCONFIGNAMENSP,
+			cfgoid = GetSysCacheOid2(TSCONFIGNAMENSP, Anum_pg_ts_config_oid,
 									 PointerGetDatum(config_name),
 									 ObjectIdGetDatum(namespaceId));
 	}
@@ -2670,7 +2702,7 @@ get_ts_config_oid(List *names, bool missing_ok)
 			if (namespaceId == myTempNamespace)
 				continue;		/* do not look in temp namespace */
 
-			cfgoid = GetSysCacheOid2(TSCONFIGNAMENSP,
+			cfgoid = GetSysCacheOid2(TSCONFIGNAMENSP, Anum_pg_ts_config_oid,
 									 PointerGetDatum(config_name),
 									 ObjectIdGetDatum(namespaceId));
 			if (OidIsValid(cfgoid))
@@ -2874,7 +2906,7 @@ LookupExplicitNamespace(const char *nspname, bool missing_ok)
 
 	aclresult = pg_namespace_aclcheck(namespaceId, GetUserId(), ACL_USAGE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   nspname);
 	/* Schema search hook for this lookup */
 	InvokeNamespaceSearchHook(namespaceId, true);
@@ -2901,9 +2933,8 @@ LookupCreationNamespace(const char *nspname)
 	/* check for pg_temp alias */
 	if (strcmp(nspname, "pg_temp") == 0)
 	{
-		/* Initialize temp namespace if first time through */
-		if (!OidIsValid(myTempNamespace))
-			InitTempTableNamespace();
+		/* Initialize temp namespace */
+		AccessTempTableNamespace(false);
 		return myTempNamespace;
 	}
 
@@ -2911,7 +2942,7 @@ LookupCreationNamespace(const char *nspname)
 
 	aclresult = pg_namespace_aclcheck(namespaceId, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   nspname);
 
 	return namespaceId;
@@ -2966,9 +2997,8 @@ QualifiedNameGetCreationNamespace(List *names, char **objname_p)
 		/* check for pg_temp alias */
 		if (strcmp(schemaname, "pg_temp") == 0)
 		{
-			/* Initialize temp namespace if first time through */
-			if (!OidIsValid(myTempNamespace))
-				InitTempTableNamespace();
+			/* Initialize temp namespace */
+			AccessTempTableNamespace(false);
 			return myTempNamespace;
 		}
 		/* use exact schema given */
@@ -2982,7 +3012,7 @@ QualifiedNameGetCreationNamespace(List *names, char **objname_p)
 		if (activeTempCreationPending)
 		{
 			/* Need to initialize temp namespace */
-			InitTempTableNamespace();
+			AccessTempTableNamespace(true);
 			return myTempNamespace;
 		}
 		namespaceId = activeCreationNamespace;
@@ -3006,7 +3036,8 @@ get_namespace_oid(const char *nspname, bool missing_ok)
 {
 	Oid			oid;
 
-	oid = GetSysCacheOid1(NAMESPACENAME, CStringGetDatum(nspname));
+	oid = GetSysCacheOid1(NAMESPACENAME, Anum_pg_namespace_oid,
+						  CStringGetDatum(nspname));
 	if (!OidIsValid(oid) && !missing_ok)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_SCHEMA),
@@ -3183,6 +3214,56 @@ isOtherTempNamespace(Oid namespaceId)
 		return false;
 	/* Else, if it's any temp namespace, say "true" */
 	return isAnyTempNamespace(namespaceId);
+}
+
+/*
+ * checkTempNamespaceStatus - is the given namespace owned and actively used
+ * by a backend?
+ *
+ * Note: this can be used while scanning relations in pg_class to detect
+ * orphaned temporary tables or namespaces with a backend connected to a
+ * given database.  The result may be out of date quickly, so the caller
+ * must be careful how to handle this information.
+ */
+TempNamespaceStatus
+checkTempNamespaceStatus(Oid namespaceId)
+{
+	PGPROC	   *proc;
+	int			backendId;
+
+	Assert(OidIsValid(MyDatabaseId));
+
+	backendId = GetTempNamespaceBackendId(namespaceId);
+
+	/* No such namespace, or its name shows it's not temp? */
+	if (backendId == InvalidBackendId)
+		return TEMP_NAMESPACE_NOT_TEMP;
+
+	/* Is the backend alive? */
+	proc = BackendIdGetProc(backendId);
+	if (proc == NULL)
+		return TEMP_NAMESPACE_IDLE;
+
+	/* Is the backend connected to the same database we are looking at? */
+	if (proc->databaseId != MyDatabaseId)
+		return TEMP_NAMESPACE_IDLE;
+
+	/* Does the backend own the temporary namespace? */
+	if (proc->tempNamespaceId != namespaceId)
+		return TEMP_NAMESPACE_IDLE;
+
+	/* Yup, so namespace is busy */
+	return TEMP_NAMESPACE_IN_USE;
+}
+
+/*
+ * isTempNamespaceInUse - oversimplified, deprecated version of
+ * checkTempNamespaceStatus
+ */
+bool
+isTempNamespaceInUse(Oid namespaceId)
+{
+	return checkTempNamespaceStatus(namespaceId) == TEMP_NAMESPACE_IN_USE;
 }
 
 /*
@@ -3562,7 +3643,7 @@ get_conversion_oid(List *name, bool missing_ok)
 		if (missing_ok && !OidIsValid(namespaceId))
 			conoid = InvalidOid;
 		else
-			conoid = GetSysCacheOid2(CONNAMENSP,
+			conoid = GetSysCacheOid2(CONNAMENSP, Anum_pg_conversion_oid,
 									 PointerGetDatum(conversion_name),
 									 ObjectIdGetDatum(namespaceId));
 	}
@@ -3578,7 +3659,7 @@ get_conversion_oid(List *name, bool missing_ok)
 			if (namespaceId == myTempNamespace)
 				continue;		/* do not look in temp namespace */
 
-			conoid = GetSysCacheOid2(CONNAMENSP,
+			conoid = GetSysCacheOid2(CONNAMENSP, Anum_pg_conversion_oid,
 									 PointerGetDatum(conversion_name),
 									 ObjectIdGetDatum(namespaceId));
 			if (OidIsValid(conoid))
@@ -3772,6 +3853,38 @@ recomputeNamespacePath(void)
 }
 
 /*
+ * AccessTempTableNamespace
+ *		Provide access to a temporary namespace, potentially creating it
+ *		if not present yet.  This routine registers if the namespace gets
+ *		in use in this transaction.  'force' can be set to true to allow
+ *		the caller to enforce the creation of the temporary namespace for
+ *		use in this backend, which happens if its creation is pending.
+ */
+static void
+AccessTempTableNamespace(bool force)
+{
+	/*
+	 * Make note that this temporary namespace has been accessed in this
+	 * transaction.
+	 */
+	MyXactFlags |= XACT_FLAGS_ACCESSEDTEMPNAMESPACE;
+
+	/*
+	 * If the caller attempting to access a temporary schema expects the
+	 * creation of the namespace to be pending and should be enforced, then go
+	 * through the creation.
+	 */
+	if (!force && OidIsValid(myTempNamespace))
+		return;
+
+	/*
+	 * The temporary tablespace does not exist yet and is wanted, so
+	 * initialize it.
+	 */
+	InitTempTableNamespace();
+}
+
+/*
  * InitTempTableNamespace
  *		Initialize temp table namespace on first use in a particular backend
  */
@@ -3874,6 +3987,18 @@ InitTempTableNamespace(void)
 	myTempNamespace = namespaceId;
 	myTempToastNamespace = toastspaceId;
 
+	/*
+	 * Mark MyProc as owning this namespace which other processes can use to
+	 * decide if a temporary namespace is in use or not.  We assume that
+	 * assignment of namespaceId is an atomic operation.  Even if it is not,
+	 * the temporary relation which resulted in the creation of this temporary
+	 * namespace is still locked until the current transaction commits, and
+	 * its pg_namespace row is not visible yet.  However it does not matter:
+	 * this flag makes the namespace as being in use, so no objects created on
+	 * it would be removed concurrently.
+	 */
+	MyProc->tempNamespaceId = namespaceId;
+
 	/* It should not be done already. */
 	AssertState(myTempNamespaceSubID == InvalidSubTransactionId);
 	myTempNamespaceSubID = GetCurrentSubTransactionId();
@@ -3904,6 +4029,17 @@ AtEOXact_Namespace(bool isCommit, bool parallel)
 			myTempNamespace = InvalidOid;
 			myTempToastNamespace = InvalidOid;
 			baseSearchPathValid = false;	/* need to rebuild list */
+
+			/*
+			 * Reset the temporary namespace flag in MyProc.  We assume that
+			 * this operation is atomic.
+			 *
+			 * Because this transaction is aborting, the pg_namespace row is
+			 * not visible to anyone else anyway, but that doesn't matter:
+			 * it's not a problem if objects contained in this namespace are
+			 * removed concurrently.
+			 */
+			MyProc->tempNamespaceId = InvalidOid;
 		}
 		myTempNamespaceSubID = InvalidSubTransactionId;
 	}
@@ -3956,6 +4092,17 @@ AtEOSubXact_Namespace(bool isCommit, SubTransactionId mySubid,
 			myTempNamespace = InvalidOid;
 			myTempToastNamespace = InvalidOid;
 			baseSearchPathValid = false;	/* need to rebuild list */
+
+			/*
+			 * Reset the temporary namespace flag in MyProc.  We assume that
+			 * this operation is atomic.
+			 *
+			 * Because this subtransaction is aborting, the pg_namespace row
+			 * is not visible to anyone else anyway, but that doesn't matter:
+			 * it's not a problem if objects contained in this namespace are
+			 * removed concurrently.
+			 */
+			MyProc->tempNamespaceId = InvalidOid;
 		}
 	}
 
@@ -4180,7 +4327,7 @@ fetch_search_path(bool includeImplicit)
 	 */
 	if (activeTempCreationPending)
 	{
-		InitTempTableNamespace();
+		AccessTempTableNamespace(true);
 		recomputeNamespacePath();
 	}
 

@@ -6,7 +6,7 @@ use warnings;
 use File::Path qw(rmtree);
 use PostgresNode;
 use TestLib;
-use Test::More tests => 1;
+use Test::More tests => 2;
 
 $ENV{PGDATABASE} = 'postgres';
 
@@ -37,18 +37,22 @@ $node_master->safe_psql('postgres',
 $node_master->wait_for_catchup($node_standby_1, 'replay',
 	$node_master->lsn('write'));
 
-# Stop and remove master, and promote standby 1, switching it to a new timeline
+# Stop and remove master
 $node_master->teardown_node;
-$node_standby_1->promote;
+
+# promote standby 1 using "pg_promote", switching it to a new timeline
+my $psql_out = '';
+$node_standby_1->psql(
+	'postgres',
+	"SELECT pg_promote(wait_seconds => 300)",
+	stdout => \$psql_out);
+is($psql_out, 't', "promotion of standby with pg_promote");
 
 # Switch standby 2 to replay from standby 1
-rmtree($node_standby_2->data_dir . '/recovery.conf');
 my $connstr_1 = $node_standby_1->connstr;
 $node_standby_2->append_conf(
-	'recovery.conf', qq(
-primary_conninfo='$connstr_1 application_name=@{[$node_standby_2->name]}'
-standby_mode=on
-recovery_target_timeline='latest'
+	'postgresql.conf', qq(
+primary_conninfo='$connstr_1'
 ));
 $node_standby_2->restart;
 

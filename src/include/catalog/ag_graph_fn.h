@@ -12,7 +12,7 @@
 
 #include "nodes/parsenodes.h"
 
-extern char *graph_path;
+extern PGDLLIMPORT char *graph_path;
 extern bool enableGraphDML;
 
 extern char *get_graph_path(bool lookup_cache);

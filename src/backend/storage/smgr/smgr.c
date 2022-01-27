@@ -6,7 +6,7 @@
  *	  All file system operations in POSTGRES dispatch through these
  *	  routines.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,8 +18,10 @@
 #include "postgres.h"
 
 #include "commands/tablespace.h"
+#include "lib/ilist.h"
 #include "storage/bufmgr.h"
 #include "storage/ipc.h"
+#include "storage/md.h"
 #include "storage/smgr.h"
 #include "utils/hsearch.h"
 #include "utils/inval.h"
@@ -59,22 +61,29 @@ typedef struct f_smgr
 	void		(*smgr_truncate) (SMgrRelation reln, ForkNumber forknum,
 								  BlockNumber nblocks);
 	void		(*smgr_immedsync) (SMgrRelation reln, ForkNumber forknum);
-	void		(*smgr_pre_ckpt) (void);	/* may be NULL */
-	void		(*smgr_sync) (void);	/* may be NULL */
-	void		(*smgr_post_ckpt) (void);	/* may be NULL */
 } f_smgr;
-
 
 static const f_smgr smgrsw[] = {
 	/* magnetic disk */
-	{mdinit, NULL, mdclose, mdcreate, mdexists, mdunlink, mdextend,
-		mdprefetch, mdread, mdwrite, mdwriteback, mdnblocks, mdtruncate,
-		mdimmedsync, mdpreckpt, mdsync, mdpostckpt
+	{
+		.smgr_init = mdinit,
+		.smgr_shutdown = NULL,
+		.smgr_close = mdclose,
+		.smgr_create = mdcreate,
+		.smgr_exists = mdexists,
+		.smgr_unlink = mdunlink,
+		.smgr_extend = mdextend,
+		.smgr_prefetch = mdprefetch,
+		.smgr_read = mdread,
+		.smgr_write = mdwrite,
+		.smgr_writeback = mdwriteback,
+		.smgr_nblocks = mdnblocks,
+		.smgr_truncate = mdtruncate,
+		.smgr_immedsync = mdimmedsync,
 	}
 };
 
 static const int NSmgr = lengthof(smgrsw);
-
 
 /*
  * Each backend has a hashtable that stores all extant SMgrRelation objects.
@@ -82,12 +91,10 @@ static const int NSmgr = lengthof(smgrsw);
  */
 static HTAB *SMgrRelationHash = NULL;
 
-static SMgrRelation first_unowned_reln = NULL;
+static dlist_head unowned_relns;
 
 /* local function prototypes */
 static void smgrshutdown(int code, Datum arg);
-static void add_to_unowned_list(SMgrRelation reln);
-static void remove_from_unowned_list(SMgrRelation reln);
 
 
 /*
@@ -106,7 +113,7 @@ smgrinit(void)
 	for (i = 0; i < NSmgr; i++)
 	{
 		if (smgrsw[i].smgr_init)
-			(*(smgrsw[i].smgr_init)) ();
+			smgrsw[i].smgr_init();
 	}
 
 	/* register the shutdown proc */
@@ -124,7 +131,7 @@ smgrshutdown(int code, Datum arg)
 	for (i = 0; i < NSmgr; i++)
 	{
 		if (smgrsw[i].smgr_shutdown)
-			(*(smgrsw[i].smgr_shutdown)) ();
+			smgrsw[i].smgr_shutdown();
 	}
 }
 
@@ -150,7 +157,7 @@ smgropen(RelFileNode rnode, BackendId backend)
 		ctl.entrysize = sizeof(SMgrRelationData);
 		SMgrRelationHash = hash_create("smgr relation table", 400,
 									   &ctl, HASH_ELEM | HASH_BLOBS);
-		first_unowned_reln = NULL;
+		dlist_init(&unowned_relns);
 	}
 
 	/* Look up or create an entry */
@@ -177,7 +184,7 @@ smgropen(RelFileNode rnode, BackendId backend)
 			reln->md_num_open_segs[forknum] = 0;
 
 		/* it has no owner yet */
-		add_to_unowned_list(reln);
+		dlist_push_tail(&unowned_relns, &reln->node);
 	}
 
 	return reln;
@@ -207,7 +214,7 @@ smgrsetowner(SMgrRelation *owner, SMgrRelation reln)
 	if (reln->smgr_owner)
 		*(reln->smgr_owner) = NULL;
 	else
-		remove_from_unowned_list(reln);
+		dlist_delete(&reln->node);
 
 	/* Now establish the ownership relationship. */
 	reln->smgr_owner = owner;
@@ -231,53 +238,8 @@ smgrclearowner(SMgrRelation *owner, SMgrRelation reln)
 	/* unset our reference to the owner */
 	reln->smgr_owner = NULL;
 
-	add_to_unowned_list(reln);
-}
-
-/*
- * add_to_unowned_list -- link an SMgrRelation onto the unowned list
- *
- * Check remove_from_unowned_list()'s comments for performance
- * considerations.
- */
-static void
-add_to_unowned_list(SMgrRelation reln)
-{
-	/* place it at head of the list (to make smgrsetowner cheap) */
-	reln->next_unowned_reln = first_unowned_reln;
-	first_unowned_reln = reln;
-}
-
-/*
- * remove_from_unowned_list -- unlink an SMgrRelation from the unowned list
- *
- * If the reln is not present in the list, nothing happens.  Typically this
- * would be caller error, but there seems no reason to throw an error.
- *
- * In the worst case this could be rather slow; but in all the cases that seem
- * likely to be performance-critical, the reln being sought will actually be
- * first in the list.  Furthermore, the number of unowned relns touched in any
- * one transaction shouldn't be all that high typically.  So it doesn't seem
- * worth expending the additional space and management logic needed for a
- * doubly-linked list.
- */
-static void
-remove_from_unowned_list(SMgrRelation reln)
-{
-	SMgrRelation *link;
-	SMgrRelation cur;
-
-	for (link = &first_unowned_reln, cur = *link;
-		 cur != NULL;
-		 link = &cur->next_unowned_reln, cur = *link)
-	{
-		if (cur == reln)
-		{
-			*link = cur->next_unowned_reln;
-			cur->next_unowned_reln = NULL;
-			break;
-		}
-	}
+	/* add to list of unowned relations */
+	dlist_push_tail(&unowned_relns, &reln->node);
 }
 
 /*
@@ -286,7 +248,7 @@ remove_from_unowned_list(SMgrRelation reln)
 bool
 smgrexists(SMgrRelation reln, ForkNumber forknum)
 {
-	return (*(smgrsw[reln->smgr_which].smgr_exists)) (reln, forknum);
+	return smgrsw[reln->smgr_which].smgr_exists(reln, forknum);
 }
 
 /*
@@ -299,12 +261,12 @@ smgrclose(SMgrRelation reln)
 	ForkNumber	forknum;
 
 	for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
-		(*(smgrsw[reln->smgr_which].smgr_close)) (reln, forknum);
+		smgrsw[reln->smgr_which].smgr_close(reln, forknum);
 
 	owner = reln->smgr_owner;
 
 	if (!owner)
-		remove_from_unowned_list(reln);
+		dlist_delete(&reln->node);
 
 	if (hash_search(SMgrRelationHash,
 					(void *) &(reln->smgr_rnode),
@@ -395,7 +357,7 @@ smgrcreate(SMgrRelation reln, ForkNumber forknum, bool isRedo)
 							reln->smgr_rnode.node.dbNode,
 							isRedo);
 
-	(*(smgrsw[reln->smgr_which].smgr_create)) (reln, forknum, isRedo);
+	smgrsw[reln->smgr_which].smgr_create(reln, forknum, isRedo);
 }
 
 /*
@@ -419,7 +381,7 @@ smgrdounlink(SMgrRelation reln, bool isRedo)
 
 	/* Close the forks at smgr level */
 	for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
-		(*(smgrsw[which].smgr_close)) (reln, forknum);
+		smgrsw[which].smgr_close(reln, forknum);
 
 	/*
 	 * Get rid of any remaining buffers for the relation.  bufmgr will just
@@ -451,7 +413,7 @@ smgrdounlink(SMgrRelation reln, bool isRedo)
 	 * ERROR, because we've already decided to commit or abort the current
 	 * xact.
 	 */
-	(*(smgrsw[which].smgr_unlink)) (rnode, InvalidForkNumber, isRedo);
+	smgrsw[which].smgr_unlink(rnode, InvalidForkNumber, isRedo);
 }
 
 /*
@@ -491,7 +453,7 @@ smgrdounlinkall(SMgrRelation *rels, int nrels, bool isRedo)
 
 		/* Close the forks at smgr level */
 		for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
-			(*(smgrsw[which].smgr_close)) (rels[i], forknum);
+			smgrsw[which].smgr_close(rels[i], forknum);
 	}
 
 	/*
@@ -529,7 +491,7 @@ smgrdounlinkall(SMgrRelation *rels, int nrels, bool isRedo)
 		int			which = rels[i]->smgr_which;
 
 		for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
-			(*(smgrsw[which].smgr_unlink)) (rnodes[i], forknum, isRedo);
+			smgrsw[which].smgr_unlink(rnodes[i], forknum, isRedo);
 	}
 
 	pfree(rnodes);
@@ -552,7 +514,7 @@ smgrdounlinkfork(SMgrRelation reln, ForkNumber forknum, bool isRedo)
 	int			which = reln->smgr_which;
 
 	/* Close the fork at smgr level */
-	(*(smgrsw[which].smgr_close)) (reln, forknum);
+	smgrsw[which].smgr_close(reln, forknum);
 
 	/*
 	 * Get rid of any remaining buffers for the fork.  bufmgr will just drop
@@ -584,7 +546,7 @@ smgrdounlinkfork(SMgrRelation reln, ForkNumber forknum, bool isRedo)
 	 * ERROR, because we've already decided to commit or abort the current
 	 * xact.
 	 */
-	(*(smgrsw[which].smgr_unlink)) (rnode, forknum, isRedo);
+	smgrsw[which].smgr_unlink(rnode, forknum, isRedo);
 }
 
 /*
@@ -600,8 +562,8 @@ void
 smgrextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		   char *buffer, bool skipFsync)
 {
-	(*(smgrsw[reln->smgr_which].smgr_extend)) (reln, forknum, blocknum,
-											   buffer, skipFsync);
+	smgrsw[reln->smgr_which].smgr_extend(reln, forknum, blocknum,
+										 buffer, skipFsync);
 }
 
 /*
@@ -610,7 +572,7 @@ smgrextend(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 void
 smgrprefetch(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum)
 {
-	(*(smgrsw[reln->smgr_which].smgr_prefetch)) (reln, forknum, blocknum);
+	smgrsw[reln->smgr_which].smgr_prefetch(reln, forknum, blocknum);
 }
 
 /*
@@ -625,7 +587,7 @@ void
 smgrread(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		 char *buffer)
 {
-	(*(smgrsw[reln->smgr_which].smgr_read)) (reln, forknum, blocknum, buffer);
+	smgrsw[reln->smgr_which].smgr_read(reln, forknum, blocknum, buffer);
 }
 
 /*
@@ -647,8 +609,8 @@ void
 smgrwrite(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 		  char *buffer, bool skipFsync)
 {
-	(*(smgrsw[reln->smgr_which].smgr_write)) (reln, forknum, blocknum,
-											  buffer, skipFsync);
+	smgrsw[reln->smgr_which].smgr_write(reln, forknum, blocknum,
+										buffer, skipFsync);
 }
 
 
@@ -660,8 +622,8 @@ void
 smgrwriteback(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 			  BlockNumber nblocks)
 {
-	(*(smgrsw[reln->smgr_which].smgr_writeback)) (reln, forknum, blocknum,
-												  nblocks);
+	smgrsw[reln->smgr_which].smgr_writeback(reln, forknum, blocknum,
+											nblocks);
 }
 
 /*
@@ -671,7 +633,7 @@ smgrwriteback(SMgrRelation reln, ForkNumber forknum, BlockNumber blocknum,
 BlockNumber
 smgrnblocks(SMgrRelation reln, ForkNumber forknum)
 {
-	return (*(smgrsw[reln->smgr_which].smgr_nblocks)) (reln, forknum);
+	return smgrsw[reln->smgr_which].smgr_nblocks(reln, forknum);
 }
 
 /*
@@ -704,7 +666,7 @@ smgrtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 	/*
 	 * Do the truncation.
 	 */
-	(*(smgrsw[reln->smgr_which].smgr_truncate)) (reln, forknum, nblocks);
+	smgrsw[reln->smgr_which].smgr_truncate(reln, forknum, nblocks);
 }
 
 /*
@@ -733,53 +695,7 @@ smgrtruncate(SMgrRelation reln, ForkNumber forknum, BlockNumber nblocks)
 void
 smgrimmedsync(SMgrRelation reln, ForkNumber forknum)
 {
-	(*(smgrsw[reln->smgr_which].smgr_immedsync)) (reln, forknum);
-}
-
-
-/*
- *	smgrpreckpt() -- Prepare for checkpoint.
- */
-void
-smgrpreckpt(void)
-{
-	int			i;
-
-	for (i = 0; i < NSmgr; i++)
-	{
-		if (smgrsw[i].smgr_pre_ckpt)
-			(*(smgrsw[i].smgr_pre_ckpt)) ();
-	}
-}
-
-/*
- *	smgrsync() -- Sync files to disk during checkpoint.
- */
-void
-smgrsync(void)
-{
-	int			i;
-
-	for (i = 0; i < NSmgr; i++)
-	{
-		if (smgrsw[i].smgr_sync)
-			(*(smgrsw[i].smgr_sync)) ();
-	}
-}
-
-/*
- *	smgrpostckpt() -- Post-checkpoint cleanup.
- */
-void
-smgrpostckpt(void)
-{
-	int			i;
-
-	for (i = 0; i < NSmgr; i++)
-	{
-		if (smgrsw[i].smgr_post_ckpt)
-			(*(smgrsw[i].smgr_post_ckpt)) ();
-	}
+	smgrsw[reln->smgr_which].smgr_immedsync(reln, forknum);
 }
 
 /*
@@ -797,13 +713,19 @@ smgrpostckpt(void)
 void
 AtEOXact_SMgr(void)
 {
+	dlist_mutable_iter iter;
+
 	/*
 	 * Zap all unowned SMgrRelations.  We rely on smgrclose() to remove each
 	 * one from the list.
 	 */
-	while (first_unowned_reln != NULL)
+	dlist_foreach_modify(iter, &unowned_relns)
 	{
-		Assert(first_unowned_reln->smgr_owner == NULL);
-		smgrclose(first_unowned_reln);
+		SMgrRelation rel = dlist_container(SMgrRelationData, node,
+										   iter.cur);
+
+		Assert(rel->smgr_owner == NULL);
+
+		smgrclose(rel);
 	}
 }

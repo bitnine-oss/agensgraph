@@ -3,7 +3,7 @@
  * ip.c
  *	  IPv6-aware network access.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -39,14 +39,14 @@
 
 
 #ifdef	HAVE_UNIX_SOCKETS
-static int getaddrinfo_unix(const char *path,
-				 const struct addrinfo *hintsp,
-				 struct addrinfo **result);
+static int	getaddrinfo_unix(const char *path,
+							 const struct addrinfo *hintsp,
+							 struct addrinfo **result);
 
-static int getnameinfo_unix(const struct sockaddr_un *sa, int salen,
-				 char *node, int nodelen,
-				 char *service, int servicelen,
-				 int flags);
+static int	getnameinfo_unix(const struct sockaddr_un *sa, int salen,
+							 char *node, int nodelen,
+							 char *service, int servicelen,
+							 int flags);
 #endif
 
 
@@ -233,7 +233,7 @@ getnameinfo_unix(const struct sockaddr_un *sa, int salen,
 				 char *service, int servicelen,
 				 int flags)
 {
-	int			ret = -1;
+	int			ret;
 
 	/* Invalid arguments. */
 	if (sa == NULL || sa->sun_family != AF_UNIX ||
@@ -243,14 +243,14 @@ getnameinfo_unix(const struct sockaddr_un *sa, int salen,
 	if (node)
 	{
 		ret = snprintf(node, nodelen, "%s", "[local]");
-		if (ret == -1 || ret > nodelen)
+		if (ret < 0 || ret >= nodelen)
 			return EAI_MEMORY;
 	}
 
 	if (service)
 	{
 		ret = snprintf(service, servicelen, "%s", sa->sun_path);
-		if (ret == -1 || ret > servicelen)
+		if (ret < 0 || ret >= servicelen)
 			return EAI_MEMORY;
 	}
 

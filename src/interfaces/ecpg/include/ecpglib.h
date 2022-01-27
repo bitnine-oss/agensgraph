@@ -12,12 +12,6 @@
 #include "sqlca.h"
 #include <string.h>
 
-#ifdef ENABLE_NLS
-extern char *ecpg_gettext(const char *msgid) pg_attribute_format_arg(1);
-#else
-#define ecpg_gettext(x) (x)
-#endif
-
 #ifndef __cplusplus
 #ifndef bool
 #define bool char
@@ -80,7 +74,7 @@ bool		ECPGset_desc_header(int, const char *, int);
 bool		ECPGset_desc(int, const char *, int,...);
 
 void		ECPGset_noind_null(enum ECPGttype, void *);
-bool		ECPGis_noind_null(enum ECPGttype, void *);
+bool		ECPGis_noind_null(enum ECPGttype, const void *);
 bool		ECPGdescribe(int, int, bool, const char *, const char *,...);
 
 void		ECPGset_var(int, void *, int);

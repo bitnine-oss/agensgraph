@@ -6,17 +6,17 @@
 #include <ctype.h>
 #include <math.h>
 
-#include "extern.h"
+#include "pgtypeslib_extern.h"
 #include "dt.h"
 #include "pgtypes_timestamp.h"
 
-int			day_tab[2][13] = {
+const int	day_tab[2][13] = {
 	{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 0},
 {31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 0}};
 
 typedef long AbsoluteTime;
 
-static datetkn datetktbl[] = {
+static const datetkn datetktbl[] = {
 /*	text, token, lexval */
 	{EARLY, RESERV, DTK_EARLY}, /* "-infinity" reserved for "early time" */
 	{"acsst", DTZ, 37800},		/* Cent. Australia */
@@ -111,7 +111,6 @@ static datetkn datetktbl[] = {
 #endif
 	{"cot", TZ, -18000},		/* Columbia Time */
 	{"cst", TZ, -21600},		/* Central Standard Time */
-	{DCURRENT, RESERV, DTK_CURRENT},	/* "current" is always now */
 #if 0
 	cvst
 #endif
@@ -201,7 +200,6 @@ static datetkn datetktbl[] = {
 	idt							/* Israeli, Iran, Indian Daylight Time */
 #endif
 	{LATE, RESERV, DTK_LATE},	/* "infinity" reserved for "late time" */
-	{INVALID, RESERV, DTK_INVALID}, /* "invalid" reserved for bad time */
 	{"iot", TZ, 18000},			/* Indian Chagos Time */
 	{"irkst", DTZ, 32400},		/* Irkutsk Summer Time */
 	{"irkt", TZ, 28800},		/* Irkutsk Time */
@@ -372,7 +370,6 @@ static datetkn datetktbl[] = {
 #endif
 	{"ulast", DTZ, 32400},		/* Ulan Bator Summer Time */
 	{"ulat", TZ, 28800},		/* Ulan Bator Time */
-	{"undefined", RESERV, DTK_INVALID}, /* pre-v6.1 invalid time */
 	{"ut", TZ, 0},
 	{"utc", TZ, 0},
 	{"uyst", DTZ, -7200},		/* Uruguay Summer Time */
@@ -420,7 +417,7 @@ static datetkn datetktbl[] = {
 	{ZULU, TZ, 0},				/* UTC */
 };
 
-static datetkn deltatktbl[] = {
+static const datetkn deltatktbl[] = {
 	/* text, token, lexval */
 	{"@", IGNORE_DTF, 0},		/* postgres relative prefix */
 	{DAGO, AGO, 0},				/* "ago" indicates negative time offset */
@@ -440,7 +437,6 @@ static datetkn deltatktbl[] = {
 	{"hours", UNITS, DTK_HOUR}, /* "hours" relative */
 	{"hr", UNITS, DTK_HOUR},	/* "hour" relative */
 	{"hrs", UNITS, DTK_HOUR},	/* "hours" relative */
-	{INVALID, RESERV, DTK_INVALID}, /* reserved for invalid time */
 	{"m", UNITS, DTK_MINUTE},	/* "minute" relative */
 	{"microsecon", UNITS, DTK_MICROSEC},	/* "microsecond" relative */
 	{"mil", UNITS, DTK_MILLENNIUM}, /* "millennium" relative */
@@ -471,7 +467,6 @@ static datetkn deltatktbl[] = {
 	{DTIMEZONE, UNITS, DTK_TZ}, /* "timezone" time offset */
 	{"timezone_h", UNITS, DTK_TZ_HOUR}, /* timezone hour units */
 	{"timezone_m", UNITS, DTK_TZ_MINUTE},	/* timezone minutes units */
-	{"undefined", RESERV, DTK_INVALID}, /* pre-v6.1 invalid time */
 	{"us", UNITS, DTK_MICROSEC},	/* "microsecond" relative */
 	{"usec", UNITS, DTK_MICROSEC},	/* "microsecond" relative */
 	{DMICROSEC, UNITS, DTK_MICROSEC},	/* "microsecond" relative */
@@ -490,9 +485,9 @@ static datetkn deltatktbl[] = {
 static const unsigned int szdatetktbl = lengthof(datetktbl);
 static const unsigned int szdeltatktbl = lengthof(deltatktbl);
 
-static datetkn *datecache[MAXDATEFIELDS] = {NULL};
+static const datetkn *datecache[MAXDATEFIELDS] = {NULL};
 
-static datetkn *deltacache[MAXDATEFIELDS] = {NULL};
+static const datetkn *deltacache[MAXDATEFIELDS] = {NULL};
 
 char	   *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", NULL};
 
@@ -502,12 +497,12 @@ char	   *pgtypes_date_weekdays_short[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fr
 
 char	   *pgtypes_date_months[] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December", NULL};
 
-static datetkn *
-datebsearch(char *key, datetkn *base, unsigned int nel)
+static const datetkn *
+datebsearch(const char *key, const datetkn *base, unsigned int nel)
 {
 	if (nel > 0)
 	{
-		datetkn    *last = base + nel - 1,
+		const datetkn *last = base + nel - 1,
 				   *position;
 		int			result;
 
@@ -540,7 +535,7 @@ int
 DecodeUnits(int field, char *lowtoken, int *val)
 {
 	int			type;
-	datetkn    *tp;
+	const datetkn *tp;
 
 	/* use strncmp so that we match truncated tokens */
 	if (deltacache[field] != NULL &&
@@ -641,7 +636,7 @@ static int
 DecodeSpecial(int field, char *lowtoken, int *val)
 {
 	int			type;
-	datetkn    *tp;
+	const datetkn *tp;
 
 	/* use strncmp so that we match truncated tokens */
 	if (datecache[field] != NULL &&
@@ -671,11 +666,10 @@ DecodeSpecial(int field, char *lowtoken, int *val)
 /* EncodeDateOnly()
  * Encode date as local time.
  */
-int
+void
 EncodeDateOnly(struct tm *tm, int style, char *str, bool EuroDates)
 {
-	if (tm->tm_mon < 1 || tm->tm_mon > MONTHS_PER_YEAR)
-		return -1;
+	Assert(tm->tm_mon >= 1 && tm->tm_mon <= MONTHS_PER_YEAR);
 
 	switch (style)
 	{
@@ -723,9 +717,7 @@ EncodeDateOnly(struct tm *tm, int style, char *str, bool EuroDates)
 				sprintf(str + 5, "-%04d %s", -(tm->tm_year - 1), "BC");
 			break;
 	}
-
-	return TRUE;
-}								/* EncodeDateOnly() */
+}
 
 void
 TrimTrailingZeros(char *str)
@@ -758,7 +750,7 @@ TrimTrailingZeros(char *str)
  *	US - mm/dd/yyyy
  *	European - dd/mm/yyyy
  */
-int
+void
 EncodeDateTime(struct tm *tm, fsec_t fsec, bool print_tz, int tz, const char *tzn, int style, char *str, bool EuroDates)
 {
 	int			day,
@@ -836,7 +828,7 @@ EncodeDateTime(struct tm *tm, fsec_t fsec, bool print_tz, int tz, const char *tz
 			/*
 			 * Note: the uses of %.*s in this function would be risky if the
 			 * timezone names ever contain non-ASCII characters.  However, all
-			 * TZ abbreviations in the Olson database are plain ASCII.
+			 * TZ abbreviations in the IANA database are plain ASCII.
 			 */
 
 			if (print_tz)
@@ -951,9 +943,7 @@ EncodeDateTime(struct tm *tm, fsec_t fsec, bool print_tz, int tz, const char *tz
 			}
 			break;
 	}
-
-	return TRUE;
-}								/* EncodeDateTime() */
+}
 
 int
 GetEpochTime(struct tm *tm)
@@ -1094,7 +1084,7 @@ dt2time(double jd, int *hour, int *min, int *sec, fsec_t *fsec)
  */
 static int
 DecodeNumberField(int len, char *str, int fmask,
-				  int *tmask, struct tm *tm, fsec_t *fsec, int *is2digits)
+				  int *tmask, struct tm *tm, fsec_t *fsec, bool *is2digits)
 {
 	char	   *cp;
 
@@ -1149,7 +1139,7 @@ DecodeNumberField(int len, char *str, int fmask,
 			tm->tm_mon = atoi(str + 2);
 			*(str + 2) = '\0';
 			tm->tm_year = atoi(str + 0);
-			*is2digits = TRUE;
+			*is2digits = true;
 
 			return DTK_DATE;
 		}
@@ -1161,7 +1151,7 @@ DecodeNumberField(int len, char *str, int fmask,
 			*(str + 2) = '\0';
 			tm->tm_mon = 1;
 			tm->tm_year = atoi(str + 0);
-			*is2digits = TRUE;
+			*is2digits = true;
 
 			return DTK_DATE;
 		}
@@ -1204,7 +1194,7 @@ DecodeNumberField(int len, char *str, int fmask,
  */
 static int
 DecodeNumber(int flen, char *str, int fmask,
-			 int *tmask, struct tm *tm, fsec_t *fsec, int *is2digits, bool EuroDates)
+			 int *tmask, struct tm *tm, fsec_t *fsec, bool *is2digits, bool EuroDates)
 {
 	int			val;
 	char	   *cp;
@@ -1319,8 +1309,8 @@ DecodeDate(char *str, int fmask, int *tmask, struct tm *tm, bool EuroDates)
 	int			nf = 0;
 	int			i,
 				len;
-	int			bc = FALSE;
-	int			is2digits = FALSE;
+	bool		bc = false;
+	bool		is2digits = false;
 	int			type,
 				val,
 				dmask = 0;
@@ -1797,9 +1787,9 @@ DecodeDateTime(char **field, int *ftype, int nf,
 	int			i;
 	int			val;
 	int			mer = HR24;
-	int			haveTextMonth = FALSE;
-	int			is2digits = FALSE;
-	int			bc = FALSE;
+	bool		haveTextMonth = false;
+	bool		is2digits = false;
+	bool		bc = false;
 	int			t = 0;
 	int		   *tzp = &t;
 
@@ -2205,7 +2195,7 @@ DecodeDateTime(char **field, int *ftype, int nf,
 							tm->tm_mday = tm->tm_mon;
 							tmask = DTK_M(DAY);
 						}
-						haveTextMonth = TRUE;
+						haveTextMonth = true;
 						tm->tm_mon = val;
 						break;
 

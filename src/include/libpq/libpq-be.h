@@ -8,7 +8,7 @@
  *	  Structs that need to be client-visible are in pqcomm.h.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/libpq/libpq-be.h
@@ -71,7 +71,7 @@ typedef struct
 typedef enum CAC_state
 {
 	CAC_OK, CAC_STARTUP, CAC_SHUTDOWN, CAC_RECOVERY, CAC_TOOMANY,
-	CAC_WAITBACKUP
+	CAC_SUPERUSER
 } CAC_state;
 
 
@@ -86,6 +86,10 @@ typedef struct
 	gss_cred_id_t cred;			/* GSSAPI connection cred's */
 	gss_ctx_id_t ctx;			/* GSSAPI connection context */
 	gss_name_t	name;			/* GSSAPI client name */
+	char	   *princ;			/* GSSAPI Principal used for auth, NULL if
+								 * GSSAPI auth was not used */
+	bool		auth;			/* GSSAPI Authentication used */
+	bool		enc;			/* GSSAPI encryption in use */
 #endif
 } pg_gssinfo;
 #endif
@@ -139,19 +143,19 @@ typedef struct Port
 	List	   *guc_options;
 
 	/*
+	 * The startup packet application name, only used here for the "connection
+	 * authorized" log message. We shouldn't use this post-startup, instead
+	 * the GUC should be used as application can change it afterward.
+	 */
+	char	   *application_name;
+
+	/*
 	 * Information that needs to be held during the authentication cycle.
 	 */
 	HbaLine    *hba;
 
 	/*
-	 * Information that really has no business at all being in struct Port,
-	 * but since it gets used by elog.c in the same way as database_name and
-	 * other members of this struct, we may as well keep it here.
-	 */
-	TimestampTz SessionStartTime;	/* backend start time */
-
-	/*
-	 * TCP keepalive settings.
+	 * TCP keepalive and user timeout settings.
 	 *
 	 * default values are 0 if AF_UNIX or not yet known; current values are 0
 	 * if AF_UNIX or using the default. Also, -1 in a default value means we
@@ -160,15 +164,21 @@ typedef struct Port
 	int			default_keepalives_idle;
 	int			default_keepalives_interval;
 	int			default_keepalives_count;
+	int			default_tcp_user_timeout;
 	int			keepalives_idle;
 	int			keepalives_interval;
 	int			keepalives_count;
+	int			tcp_user_timeout;
 
+	/*
+	 * GSSAPI structures.
+	 */
 #if defined(ENABLE_GSS) || defined(ENABLE_SSPI)
 
 	/*
-	 * If GSSAPI is supported, store GSSAPI information. Otherwise, store a
-	 * NULL pointer to make sure offsets in the struct remain the same.
+	 * If GSSAPI is supported and used on this connection, store GSSAPI
+	 * information.  Even when GSSAPI is not compiled in, store a NULL pointer
+	 * to keep struct offsets the same (for extension ABI compatibility).
 	 */
 	pg_gssinfo *gss;
 #else
@@ -194,22 +204,103 @@ typedef struct Port
 
 #ifdef USE_SSL
 /*
+ *	Hardcoded DH parameters, used in ephemeral DH keying.  (See also
+ *	README.SSL for more details on EDH.)
+ *
+ *	If you want to create your own hardcoded DH parameters
+ *	for fun and profit, review "Assigned Number for SKIP
+ *	Protocols" (http://www.skip-vpn.org/spec/numbers.html)
+ *	for suggestions.
+ */
+#define FILE_DH2048 \
+"-----BEGIN DH PARAMETERS-----\n\
+MIIBCAKCAQEA9kJXtwh/CBdyorrWqULzBej5UxE5T7bxbrlLOCDaAadWoxTpj0BV\n\
+89AHxstDqZSt90xkhkn4DIO9ZekX1KHTUPj1WV/cdlJPPT2N286Z4VeSWc39uK50\n\
+T8X8dryDxUcwYc58yWb/Ffm7/ZFexwGq01uejaClcjrUGvC/RgBYK+X0iP1YTknb\n\
+zSC0neSRBzZrM2w4DUUdD3yIsxx8Wy2O9vPJI8BD8KVbGI2Ou1WMuF040zT9fBdX\n\
+Q6MdGGzeMyEstSr/POGxKUAYEY18hKcKctaGxAMZyAcpesqVDNmWn6vQClCbAkbT\n\
+CD1mpF1Bn5x8vYlLIhkmuquiXsNV6TILOwIBAg==\n\
+-----END DH PARAMETERS-----\n"
+
+/*
  * These functions are implemented by the glue code specific to each
  * SSL implementation (e.g. be-secure-openssl.c)
  */
+
+/*
+ * Initialize global SSL context.
+ *
+ * If isServerStart is true, report any errors as FATAL (so we don't return).
+ * Otherwise, log errors at LOG level and return -1 to indicate trouble,
+ * preserving the old SSL state if any.  Returns 0 if OK.
+ */
 extern int	be_tls_init(bool isServerStart);
+
+/*
+ * Destroy global SSL context, if any.
+ */
 extern void be_tls_destroy(void);
+
+/*
+ * Attempt to negotiate SSL connection.
+ */
 extern int	be_tls_open_server(Port *port);
+
+/*
+ * Close SSL connection.
+ */
 extern void be_tls_close(Port *port);
+
+/*
+ * Read data from a secure connection.
+ */
 extern ssize_t be_tls_read(Port *port, void *ptr, size_t len, int *waitfor);
+
+/*
+ * Write data to a secure connection.
+ */
 extern ssize_t be_tls_write(Port *port, void *ptr, size_t len, int *waitfor);
 
+/*
+ * Return information about the SSL connection.
+ */
 extern int	be_tls_get_cipher_bits(Port *port);
 extern bool be_tls_get_compression(Port *port);
-extern void be_tls_get_version(Port *port, char *ptr, size_t len);
-extern void be_tls_get_cipher(Port *port, char *ptr, size_t len);
-extern void be_tls_get_peerdn_name(Port *port, char *ptr, size_t len);
+extern const char *be_tls_get_version(Port *port);
+extern const char *be_tls_get_cipher(Port *port);
+extern void be_tls_get_peer_subject_name(Port *port, char *ptr, size_t len);
+extern void be_tls_get_peer_issuer_name(Port *port, char *ptr, size_t len);
+extern void be_tls_get_peer_serial(Port *port, char *ptr, size_t len);
+
+/*
+ * Get the server certificate hash for SCRAM channel binding type
+ * tls-server-end-point.
+ *
+ * The result is a palloc'd hash of the server certificate with its
+ * size, and NULL if there is no certificate available.
+ *
+ * This is not supported with old versions of OpenSSL that don't have
+ * the X509_get_signature_nid() function.
+ */
+#if defined(USE_OPENSSL) && defined(HAVE_X509_GET_SIGNATURE_NID)
+#define HAVE_BE_TLS_GET_CERTIFICATE_HASH
+extern char *be_tls_get_certificate_hash(Port *port, size_t *len);
 #endif
+
+#endif							/* USE_SSL */
+
+#ifdef ENABLE_GSS
+/*
+ * Return information about the GSSAPI authenticated connection
+ */
+extern bool be_gssapi_get_auth(Port *port);
+extern bool be_gssapi_get_enc(Port *port);
+extern const char *be_gssapi_get_princ(Port *port);
+
+/* Read and write to a GSSAPI-encrypted connection. */
+extern ssize_t be_gssapi_read(Port *port, void *ptr, size_t len);
+extern ssize_t be_gssapi_write(Port *port, void *ptr, size_t len);
+#endif							/* ENABLE_GSS */
 
 extern ProtocolVersion FrontendProtocol;
 
@@ -218,9 +309,11 @@ extern ProtocolVersion FrontendProtocol;
 extern int	pq_getkeepalivesidle(Port *port);
 extern int	pq_getkeepalivesinterval(Port *port);
 extern int	pq_getkeepalivescount(Port *port);
+extern int	pq_gettcpusertimeout(Port *port);
 
 extern int	pq_setkeepalivesidle(int idle, Port *port);
 extern int	pq_setkeepalivesinterval(int interval, Port *port);
 extern int	pq_setkeepalivescount(int count, Port *port);
+extern int	pq_settcpusertimeout(int timeout, Port *port);
 
 #endif							/* LIBPQ_BE_H */

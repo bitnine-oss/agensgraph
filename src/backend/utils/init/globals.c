@@ -3,7 +3,7 @@
  * globals.c
  *	  global variable declarations
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,6 +18,7 @@
  */
 #include "postgres.h"
 
+#include "common/file_perm.h"
 #include "libpq/libpq-be.h"
 #include "libpq/pqcomm.h"
 #include "miscadmin.h"
@@ -26,11 +27,11 @@
 
 ProtocolVersion FrontendProtocol;
 
-volatile bool InterruptPending = false;
-volatile bool QueryCancelPending = false;
-volatile bool ProcDiePending = false;
-volatile bool ClientConnectionLost = false;
-volatile bool IdleInTransactionSessionTimeoutPending = false;
+volatile sig_atomic_t InterruptPending = false;
+volatile sig_atomic_t QueryCancelPending = false;
+volatile sig_atomic_t ProcDiePending = false;
+volatile sig_atomic_t ClientConnectionLost = false;
+volatile sig_atomic_t IdleInTransactionSessionTimeoutPending = false;
 volatile sig_atomic_t ConfigReloadPending = false;
 volatile uint32 InterruptHoldoffCount = 0;
 volatile uint32 QueryCancelHoldoffCount = 0;
@@ -38,6 +39,7 @@ volatile uint32 CritSectionCount = 0;
 
 int			MyProcPid;
 pg_time_t	MyStartTime;
+TimestampTz MyStartTimestamp;
 struct Port *MyProcPort;
 int32		MyCancelKey;
 int			MyPMChildSlot;
@@ -58,6 +60,12 @@ struct Latch *MyLatch;
  * explicitly.
  */
 char	   *DataDir = NULL;
+
+/*
+ * Mode of the data directory.  The default is 0700 but it may be changed in
+ * checkDataDir() to 0750 if the data directory actually has that mode.
+ */
+int			data_directory_mode = PG_DIR_MODE_OWNER;
 
 char		OutputFileName[MAXPGPATH];	/* debugging output file */
 
@@ -112,8 +120,11 @@ bool		enableFsync = true;
 bool		allowSystemTableMods = false;
 int			work_mem = 1024;
 int			maintenance_work_mem = 16384;
-int			replacement_sort_tuples = 150000;
+int			max_parallel_maintenance_workers = 2;
+
+/* AgensGraph */
 int			eager_mem = 4096;
+
 /*
  * Primary determinants of sizes of shared-memory structures.
  *
@@ -130,7 +141,7 @@ int			VacuumCostPageHit = 1;	/* GUC parameters for vacuum */
 int			VacuumCostPageMiss = 10;
 int			VacuumCostPageDirty = 20;
 int			VacuumCostLimit = 200;
-int			VacuumCostDelay = 0;
+double		VacuumCostDelay = 0;
 
 int			VacuumPageHit = 0;
 int			VacuumPageMiss = 0;
@@ -138,3 +149,5 @@ int			VacuumPageDirty = 0;
 
 int			VacuumCostBalance = 0;	/* working state for vacuum */
 bool		VacuumCostActive = false;
+
+double		vacuum_cleanup_index_scale_factor;

@@ -3,7 +3,7 @@
  * pg_aggregate.c
  *	  routines to support manipulation of the pg_aggregate relation
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,15 +14,14 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_language.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_proc.h"
-#include "catalog/pg_proc_fn.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "parser/parse_coerce.h"
@@ -35,9 +34,9 @@
 #include "utils/syscache.h"
 
 
-static Oid lookup_agg_function(List *fnName, int nargs, Oid *input_types,
-					Oid variadicArgType,
-					Oid *rettype);
+static Oid	lookup_agg_function(List *fnName, int nargs, Oid *input_types,
+								Oid variadicArgType,
+								Oid *rettype);
 
 
 /*
@@ -46,6 +45,7 @@ static Oid lookup_agg_function(List *fnName, int nargs, Oid *input_types,
 ObjectAddress
 AggregateCreate(const char *aggName,
 				Oid aggNamespace,
+				bool replace,
 				char aggKind,
 				int numArgs,
 				int numDirectArgs,
@@ -65,6 +65,8 @@ AggregateCreate(const char *aggName,
 				List *aggmfinalfnName,
 				bool finalfnExtraArgs,
 				bool mfinalfnExtraArgs,
+				char finalfnModify,
+				char mfinalfnModify,
 				List *aggsortopName,
 				Oid aggTransType,
 				int32 aggTransSpace,
@@ -76,8 +78,10 @@ AggregateCreate(const char *aggName,
 {
 	Relation	aggdesc;
 	HeapTuple	tup;
+	HeapTuple	oldtup;
 	bool		nulls[Natts_pg_aggregate];
 	Datum		values[Natts_pg_aggregate];
+	bool		replaces[Natts_pg_aggregate];
 	Form_pg_proc proc;
 	Oid			transfn;
 	Oid			finalfn = InvalidOid;	/* can be omitted */
@@ -112,7 +116,7 @@ AggregateCreate(const char *aggName,
 		elog(ERROR, "aggregate must have a transition function");
 
 	if (numDirectArgs < 0 || numDirectArgs > numArgs)
-		elog(ERROR, "incorrect number of direct args for aggregate");
+		elog(ERROR, "incorrect number of direct arguments for aggregate");
 
 	/*
 	 * Aggregates can have at most FUNC_MAX_ARGS-1 args, else the transfn
@@ -409,16 +413,17 @@ AggregateCreate(const char *aggName,
 		Oid			combineType;
 
 		/*
-		 * Combine function must have 2 argument, each of which is the trans
-		 * type
+		 * Combine function must have 2 arguments, each of which is the trans
+		 * type.  VARIADIC doesn't affect it.
 		 */
 		fnArgs[0] = aggTransType;
 		fnArgs[1] = aggTransType;
 
-		combinefn = lookup_agg_function(aggcombinefnName, 2, fnArgs,
-										variadicArgType, &combineType);
+		combinefn = lookup_agg_function(aggcombinefnName, 2,
+										fnArgs, InvalidOid,
+										&combineType);
 
-		/* Ensure the return type matches the aggregates trans type */
+		/* Ensure the return type matches the aggregate's trans type */
 		if (combineType != aggTransType)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -428,14 +433,14 @@ AggregateCreate(const char *aggName,
 
 		/*
 		 * A combine function to combine INTERNAL states must accept nulls and
-		 * ensure that the returned state is in the correct memory context.
+		 * ensure that the returned state is in the correct memory context. We
+		 * cannot directly check the latter, but we can check the former.
 		 */
 		if (aggTransType == INTERNALOID && func_strict(combinefn))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 					 errmsg("combine function with transition type %s must not be declared STRICT",
 							format_type_be(aggTransType))));
-
 	}
 
 	/*
@@ -443,10 +448,11 @@ AggregateCreate(const char *aggName,
 	 */
 	if (aggserialfnName)
 	{
+		/* signature is always serialize(internal) returns bytea */
 		fnArgs[0] = INTERNALOID;
 
 		serialfn = lookup_agg_function(aggserialfnName, 1,
-									   fnArgs, variadicArgType,
+									   fnArgs, InvalidOid,
 									   &rettype);
 
 		if (rettype != BYTEAOID)
@@ -462,11 +468,12 @@ AggregateCreate(const char *aggName,
 	 */
 	if (aggdeserialfnName)
 	{
+		/* signature is always deserialize(bytea, internal) returns internal */
 		fnArgs[0] = BYTEAOID;
 		fnArgs[1] = INTERNALOID;	/* dummy argument for type safety */
 
 		deserialfn = lookup_agg_function(aggdeserialfnName, 2,
-										 fnArgs, variadicArgType,
+										 fnArgs, InvalidOid,
 										 &rettype);
 
 		if (rettype != INTERNALOID)
@@ -556,8 +563,8 @@ AggregateCreate(const char *aggName,
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
 					 errmsg("moving-aggregate implementation returns type %s, but plain implementation returns type %s",
-							format_type_be(aggmTransType),
-							format_type_be(aggTransType))));
+							format_type_be(rettype),
+							format_type_be(finaltype))));
 	}
 
 	/* handle sortop, if supplied */
@@ -605,7 +612,7 @@ AggregateCreate(const char *aggName,
 
 	myself = ProcedureCreate(aggName,
 							 aggNamespace,
-							 false, /* no replacement */
+							 replace,	/* maybe replacement */
 							 false, /* doesn't return a set */
 							 finaltype, /* returnType */
 							 GetUserId(),	/* proowner */
@@ -613,8 +620,7 @@ AggregateCreate(const char *aggName,
 							 InvalidOid,	/* no validator */
 							 "aggregate_dummy", /* placeholder proc */
 							 NULL,	/* probin */
-							 true,	/* isAgg */
-							 false, /* isWindowFunc */
+							 PROKIND_AGGREGATE,
 							 false, /* security invoker (currently not
 									 * definable for agg) */
 							 false, /* isLeakProof */
@@ -629,6 +635,7 @@ AggregateCreate(const char *aggName,
 							 parameterDefaults, /* parameterDefaults */
 							 PointerGetDatum(NULL), /* trftypes */
 							 PointerGetDatum(NULL), /* proconfig */
+							 InvalidOid,	/* no prosupport */
 							 1, /* procost */
 							 0);	/* prorows */
 	procOid = myself.objectId;
@@ -636,12 +643,15 @@ AggregateCreate(const char *aggName,
 	/*
 	 * Okay to create the pg_aggregate entry.
 	 */
+	aggdesc = table_open(AggregateRelationId, RowExclusiveLock);
+	tupDesc = aggdesc->rd_att;
 
 	/* initialize nulls and values */
 	for (i = 0; i < Natts_pg_aggregate; i++)
 	{
 		nulls[i] = false;
 		values[i] = (Datum) NULL;
+		replaces[i] = true;
 	}
 	values[Anum_pg_aggregate_aggfnoid - 1] = ObjectIdGetDatum(procOid);
 	values[Anum_pg_aggregate_aggkind - 1] = CharGetDatum(aggKind);
@@ -656,6 +666,8 @@ AggregateCreate(const char *aggName,
 	values[Anum_pg_aggregate_aggmfinalfn - 1] = ObjectIdGetDatum(mfinalfn);
 	values[Anum_pg_aggregate_aggfinalextra - 1] = BoolGetDatum(finalfnExtraArgs);
 	values[Anum_pg_aggregate_aggmfinalextra - 1] = BoolGetDatum(mfinalfnExtraArgs);
+	values[Anum_pg_aggregate_aggfinalmodify - 1] = CharGetDatum(finalfnModify);
+	values[Anum_pg_aggregate_aggmfinalmodify - 1] = CharGetDatum(mfinalfnModify);
 	values[Anum_pg_aggregate_aggsortop - 1] = ObjectIdGetDatum(sortop);
 	values[Anum_pg_aggregate_aggtranstype - 1] = ObjectIdGetDatum(aggTransType);
 	values[Anum_pg_aggregate_aggtransspace - 1] = Int32GetDatum(aggTransSpace);
@@ -670,19 +682,62 @@ AggregateCreate(const char *aggName,
 	else
 		nulls[Anum_pg_aggregate_aggminitval - 1] = true;
 
-	aggdesc = heap_open(AggregateRelationId, RowExclusiveLock);
-	tupDesc = aggdesc->rd_att;
+	if (replace)
+		oldtup = SearchSysCache1(AGGFNOID, ObjectIdGetDatum(procOid));
+	else
+		oldtup = NULL;
 
-	tup = heap_form_tuple(tupDesc, values, nulls);
-	CatalogTupleInsert(aggdesc, tup);
+	if (HeapTupleIsValid(oldtup))
+	{
+		Form_pg_aggregate oldagg = (Form_pg_aggregate) GETSTRUCT(oldtup);
 
-	heap_close(aggdesc, RowExclusiveLock);
+		/*
+		 * If we're replacing an existing entry, we need to validate that
+		 * we're not changing anything that would break callers. Specifically
+		 * we must not change aggkind or aggnumdirectargs, which affect how an
+		 * aggregate call is treated in parse analysis.
+		 */
+		if (aggKind != oldagg->aggkind)
+			ereport(ERROR,
+					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+					 errmsg("cannot change routine kind"),
+					 (oldagg->aggkind == AGGKIND_NORMAL ?
+					  errdetail("\"%s\" is an ordinary aggregate function.", aggName) :
+					  oldagg->aggkind == AGGKIND_ORDERED_SET ?
+					  errdetail("\"%s\" is an ordered-set aggregate.", aggName) :
+					  oldagg->aggkind == AGGKIND_HYPOTHETICAL ?
+					  errdetail("\"%s\" is a hypothetical-set aggregate.", aggName) :
+					  0)));
+		if (numDirectArgs != oldagg->aggnumdirectargs)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_FUNCTION_DEFINITION),
+					 errmsg("cannot change number of direct arguments of an aggregate function")));
+
+		replaces[Anum_pg_aggregate_aggfnoid - 1] = false;
+		replaces[Anum_pg_aggregate_aggkind - 1] = false;
+		replaces[Anum_pg_aggregate_aggnumdirectargs - 1] = false;
+
+		tup = heap_modify_tuple(oldtup, tupDesc, values, nulls, replaces);
+		CatalogTupleUpdate(aggdesc, &tup->t_self, tup);
+		ReleaseSysCache(oldtup);
+	}
+	else
+	{
+		tup = heap_form_tuple(tupDesc, values, nulls);
+		CatalogTupleInsert(aggdesc, tup);
+	}
+
+	table_close(aggdesc, RowExclusiveLock);
 
 	/*
 	 * Create dependencies for the aggregate (above and beyond those already
 	 * made by ProcedureCreate).  Note: we don't need an explicit dependency
 	 * on aggTransType since we depend on it indirectly through transfn.
 	 * Likewise for aggmTransType using the mtransfunc, if it exists.
+	 *
+	 * If we're replacing an existing definition, ProcedureCreate deleted all
+	 * our existing dependencies, so we have to do the same things here either
+	 * way.
 	 */
 
 	/* Depends on transition function */
@@ -768,7 +823,11 @@ AggregateCreate(const char *aggName,
 
 /*
  * lookup_agg_function
- * common code for finding transfn, invtransfn, finalfn, and combinefn
+ * common code for finding aggregate support functions
+ *
+ * fnName: possibly-schema-qualified function name
+ * nargs, input_types: expected function argument types
+ * variadicArgType: type of variadic argument if any, else InvalidOid
  *
  * Returns OID of function, and stores its return type into *rettype
  *
@@ -860,7 +919,7 @@ lookup_agg_function(List *fnName,
 	/* Check aggregate creator has permission to call the function */
 	aclresult = pg_proc_aclcheck(fnOid, GetUserId(), ACL_EXECUTE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_PROC, get_func_name(fnOid));
+		aclcheck_error(aclresult, OBJECT_FUNCTION, get_func_name(fnOid));
 
 	return fnOid;
 }

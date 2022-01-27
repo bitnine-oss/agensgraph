@@ -244,3 +244,86 @@ INSERT INTO truncparted VALUES (1, 'a');
 TRUNCATE ONLY truncparted;
 TRUNCATE truncparted;
 DROP TABLE truncparted;
+
+-- foreign key on partitioned table: partition key is referencing column.
+-- Make sure truncate did execute on all tables
+CREATE FUNCTION tp_ins_data() RETURNS void LANGUAGE plpgsql AS $$
+  BEGIN
+	INSERT INTO truncprim VALUES (1), (100), (150);
+	INSERT INTO truncpart VALUES (1), (100), (150);
+  END
+$$;
+CREATE FUNCTION tp_chk_data(OUT pktb regclass, OUT pkval int, OUT fktb regclass, OUT fkval int)
+  RETURNS SETOF record LANGUAGE plpgsql AS $$
+  BEGIN
+    RETURN QUERY SELECT
+      pk.tableoid::regclass, pk.a, fk.tableoid::regclass, fk.a
+    FROM truncprim pk FULL JOIN truncpart fk USING (a)
+    ORDER BY 2, 4;
+  END
+$$;
+CREATE TABLE truncprim (a int PRIMARY KEY);
+CREATE TABLE truncpart (a int REFERENCES truncprim)
+  PARTITION BY RANGE (a);
+CREATE TABLE truncpart_1 PARTITION OF truncpart FOR VALUES FROM (0) TO (100);
+CREATE TABLE truncpart_2 PARTITION OF truncpart FOR VALUES FROM (100) TO (200)
+  PARTITION BY RANGE (a);
+CREATE TABLE truncpart_2_1 PARTITION OF truncpart_2 FOR VALUES FROM (100) TO (150);
+CREATE TABLE truncpart_2_d PARTITION OF truncpart_2 DEFAULT;
+
+TRUNCATE TABLE truncprim;	-- should fail
+
+select tp_ins_data();
+-- should truncate everything
+TRUNCATE TABLE truncprim, truncpart;
+select * from tp_chk_data();
+
+select tp_ins_data();
+-- should truncate everything
+TRUNCATE TABLE truncprim CASCADE;
+SELECT * FROM tp_chk_data();
+
+SELECT tp_ins_data();
+-- should truncate all partitions
+TRUNCATE TABLE truncpart;
+SELECT * FROM tp_chk_data();
+DROP TABLE truncprim, truncpart;
+DROP FUNCTION tp_ins_data(), tp_chk_data();
+
+-- test cascade when referencing a partitioned table
+CREATE TABLE trunc_a (a INT PRIMARY KEY) PARTITION BY RANGE (a);
+CREATE TABLE trunc_a1 PARTITION OF trunc_a FOR VALUES FROM (0) TO (10);
+CREATE TABLE trunc_a2 PARTITION OF trunc_a FOR VALUES FROM (10) TO (20)
+  PARTITION BY RANGE (a);
+CREATE TABLE trunc_a21 PARTITION OF trunc_a2 FOR VALUES FROM (10) TO (12);
+CREATE TABLE trunc_a22 PARTITION OF trunc_a2 FOR VALUES FROM (12) TO (16);
+CREATE TABLE trunc_a2d PARTITION OF trunc_a2 DEFAULT;
+CREATE TABLE trunc_a3 PARTITION OF trunc_a FOR VALUES FROM (20) TO (30);
+INSERT INTO trunc_a VALUES (0), (5), (10), (15), (20), (25);
+
+-- truncate a partition cascading to a table
+CREATE TABLE ref_b (
+    b INT PRIMARY KEY,
+    a INT REFERENCES trunc_a(a) ON DELETE CASCADE
+);
+INSERT INTO ref_b VALUES (10, 0), (50, 5), (100, 10), (150, 15);
+
+TRUNCATE TABLE trunc_a1 CASCADE;
+SELECT a FROM ref_b;
+
+DROP TABLE ref_b;
+
+-- truncate a partition cascading to a partitioned table
+CREATE TABLE ref_c (
+    c INT PRIMARY KEY,
+    a INT REFERENCES trunc_a(a) ON DELETE CASCADE
+) PARTITION BY RANGE (c);
+CREATE TABLE ref_c1 PARTITION OF ref_c FOR VALUES FROM (100) TO (200);
+CREATE TABLE ref_c2 PARTITION OF ref_c FOR VALUES FROM (200) TO (300);
+INSERT INTO ref_c VALUES (100, 10), (150, 15), (200, 20), (250, 25);
+
+TRUNCATE TABLE trunc_a21 CASCADE;
+SELECT a as "from table ref_c" FROM ref_c;
+SELECT a as "from table trunc_a" FROM trunc_a ORDER BY a;
+
+DROP TABLE trunc_a, ref_c;

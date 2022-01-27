@@ -10,13 +10,21 @@
 
 #include "postgres.h"
 
+#include "access/attnum.h"
+#include "access/htup.h"
+#include "access/htup_details.h"
+#include "access/tupdesc.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
+#include "funcapi.h"
 #include "utils/builtins.h"
 #include "utils/cypher_funcs.h"
 #include "utils/jsonb.h"
 #include "utils/memutils.h"
 #include <string.h>
+
+/* global variable - see postgres.c*/
+extern GraphWriteStats graphWriteStats;
 
 static Datum get_numeric_10_datum(void);
 
@@ -42,7 +50,7 @@ static Jsonb *datum_to_jsonb(Datum d, Oid type);
 Datum
 jsonb_head(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 	JsonbValue *jv;
 
 	if (!JB_ROOT_IS_ARRAY(j) || JB_ROOT_IS_SCALAR(j))
@@ -55,13 +63,13 @@ jsonb_head(PG_FUNCTION_ARGS)
 	if (jv == NULL)
 		PG_RETURN_NULL();
 
-	PG_RETURN_JSONB(JsonbValueToJsonb(jv));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(jv));
 }
 
 Datum
 jsonb_last(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 	uint32		cnt;
 	JsonbValue *jv;
 
@@ -77,13 +85,13 @@ jsonb_last(PG_FUNCTION_ARGS)
 
 	jv = getIthJsonbValueFromContainer(&j->root, cnt - 1);
 
-	PG_RETURN_JSONB(JsonbValueToJsonb(jv));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(jv));
 }
 
 Datum
 jsonb_length(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 	int			cnt = -1;
 	Datum		n;
 	JsonbValue	jv;
@@ -111,13 +119,13 @@ jsonb_length(PG_FUNCTION_ARGS)
 	jv.type = jbvNumeric;
 	jv.val.numeric = DatumGetNumeric(n);
 
-	PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
 }
 
 Datum
 jsonb_toboolean(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 
 	if (JB_ROOT_IS_SCALAR(j))
 	{
@@ -147,7 +155,7 @@ jsonb_toboolean(PG_FUNCTION_ARGS)
 Datum
 jsonb_keys(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 	JsonbParseState *jpstate = NULL;
 	JsonbIterator *it;
 	JsonbValue	jv;
@@ -174,13 +182,13 @@ jsonb_keys(PG_FUNCTION_ARGS)
 
 	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
 
-	PG_RETURN_JSONB(JsonbValueToJsonb(ajv));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(ajv));
 }
 
 Datum
 jsonb_tail(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 	JsonbParseState *jpstate = NULL;
 	JsonbValue *ajv;
 
@@ -217,7 +225,7 @@ jsonb_tail(PG_FUNCTION_ARGS)
 
 	ajv = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
 
-	PG_RETURN_JSONB(JsonbValueToJsonb(ajv));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(ajv));
 }
 
 Datum
@@ -228,11 +236,11 @@ jsonb_abs(PG_FUNCTION_ARGS)
 	fcjinfo.fn = numeric_abs;
 	fcjinfo.funcname = "abs";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = NUMERICOID;
 	fcjinfo.rettype = NUMERICOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -243,11 +251,11 @@ jsonb_ceil(PG_FUNCTION_ARGS)
 	fcjinfo.fn = numeric_ceil;
 	fcjinfo.funcname = "ceil";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = NUMERICOID;
 	fcjinfo.rettype = NUMERICOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -258,11 +266,11 @@ jsonb_floor(PG_FUNCTION_ARGS)
 	fcjinfo.fn = numeric_floor;
 	fcjinfo.funcname = "floor";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = NUMERICOID;
 	fcjinfo.rettype = NUMERICOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -275,13 +283,13 @@ jsonb_rand(PG_FUNCTION_ARGS)
 	fcjinfo.nargs = 0;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
 jsonb_round(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 
 	if (JB_ROOT_IS_SCALAR(j))
 	{
@@ -300,7 +308,7 @@ jsonb_round(PG_FUNCTION_ARGS)
 			njv.type = jbvNumeric;
 			njv.val.numeric = DatumGetNumeric(n);
 
-			PG_RETURN_JSONB(JsonbValueToJsonb(&njv));
+			PG_RETURN_JSONB_P(JsonbValueToJsonb(&njv));
 		}
 	}
 
@@ -319,11 +327,11 @@ jsonb_sign(PG_FUNCTION_ARGS)
 	fcjinfo.fn = numeric_sign;
 	fcjinfo.funcname = "sign";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = NUMERICOID;
 	fcjinfo.rettype = NUMERICOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -334,11 +342,11 @@ jsonb_exp(PG_FUNCTION_ARGS)
 	fcjinfo.fn = numeric_exp;
 	fcjinfo.funcname = "exp";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = NUMERICOID;
 	fcjinfo.rettype = NUMERICOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -349,17 +357,17 @@ jsonb_log(PG_FUNCTION_ARGS)
 	fcjinfo.fn = numeric_ln;
 	fcjinfo.funcname = "log";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = NUMERICOID;
 	fcjinfo.rettype = NUMERICOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
 jsonb_log10(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 
 	if (JB_ROOT_IS_SCALAR(j))
 	{
@@ -377,7 +385,7 @@ jsonb_log10(PG_FUNCTION_ARGS)
 			njv.type = jbvNumeric;
 			njv.val.numeric = DatumGetNumeric(n);
 
-			PG_RETURN_JSONB(JsonbValueToJsonb(&njv));
+			PG_RETURN_JSONB_P(JsonbValueToJsonb(&njv));
 		}
 	}
 
@@ -415,11 +423,11 @@ jsonb_sqrt(PG_FUNCTION_ARGS)
 	fcjinfo.fn = numeric_sqrt;
 	fcjinfo.funcname = "sqrt";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = NUMERICOID;
 	fcjinfo.rettype = NUMERICOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -430,11 +438,11 @@ jsonb_acos(PG_FUNCTION_ARGS)
 	fcjinfo.fn = dacos;
 	fcjinfo.funcname = "acos";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = FLOAT8OID;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -445,11 +453,11 @@ jsonb_asin(PG_FUNCTION_ARGS)
 	fcjinfo.fn = dasin;
 	fcjinfo.funcname = "asin";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = FLOAT8OID;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -460,11 +468,11 @@ jsonb_atan(PG_FUNCTION_ARGS)
 	fcjinfo.fn = datan;
 	fcjinfo.funcname = "atan";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = FLOAT8OID;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -475,13 +483,13 @@ jsonb_atan2(PG_FUNCTION_ARGS)
 	fcjinfo.fn = datan2;
 	fcjinfo.funcname = "atan2";
 	fcjinfo.nargs = 2;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = FLOAT8OID;
-	fcjinfo.args[1] = PG_GETARG_JSONB(1);
+	fcjinfo.args[1] = PG_GETARG_JSONB_P(1);
 	fcjinfo.argtypes[1] = FLOAT8OID;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -492,11 +500,11 @@ jsonb_cos(PG_FUNCTION_ARGS)
 	fcjinfo.fn = dcos;
 	fcjinfo.funcname = "cos";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = FLOAT8OID;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -507,11 +515,11 @@ jsonb_cot(PG_FUNCTION_ARGS)
 	fcjinfo.fn = dcot;
 	fcjinfo.funcname = "cot";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = FLOAT8OID;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -522,11 +530,11 @@ jsonb_degrees(PG_FUNCTION_ARGS)
 	fcjinfo.fn = degrees;
 	fcjinfo.funcname = "degrees";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = FLOAT8OID;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -537,11 +545,11 @@ jsonb_radians(PG_FUNCTION_ARGS)
 	fcjinfo.fn = radians;
 	fcjinfo.funcname = "radians";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = FLOAT8OID;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -552,11 +560,11 @@ jsonb_sin(PG_FUNCTION_ARGS)
 	fcjinfo.fn = dsin;
 	fcjinfo.funcname = "sin";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = FLOAT8OID;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -567,11 +575,11 @@ jsonb_tan(PG_FUNCTION_ARGS)
 	fcjinfo.fn = dtan;
 	fcjinfo.funcname = "tan";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = FLOAT8OID;
 	fcjinfo.rettype = FLOAT8OID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -582,13 +590,13 @@ jsonb_left(PG_FUNCTION_ARGS)
 	fcjinfo.fn = text_left;
 	fcjinfo.funcname = "left";
 	fcjinfo.nargs = 2;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = TEXTOID;
-	fcjinfo.args[1] = PG_GETARG_JSONB(1);
+	fcjinfo.args[1] = PG_GETARG_JSONB_P(1);
 	fcjinfo.argtypes[1] = INT4OID;
 	fcjinfo.rettype = TEXTOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -599,11 +607,11 @@ jsonb_ltrim(PG_FUNCTION_ARGS)
 	fcjinfo.fn = ltrim1;
 	fcjinfo.funcname = "lTrim";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = TEXTOID;
 	fcjinfo.rettype = TEXTOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -614,15 +622,15 @@ jsonb_replace(PG_FUNCTION_ARGS)
 	fcjinfo.fn = replace_text;
 	fcjinfo.funcname = "replace";
 	fcjinfo.nargs = 3;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = TEXTOID;
-	fcjinfo.args[1] = PG_GETARG_JSONB(1);
+	fcjinfo.args[1] = PG_GETARG_JSONB_P(1);
 	fcjinfo.argtypes[1] = TEXTOID;
-	fcjinfo.args[2] = PG_GETARG_JSONB(2);
+	fcjinfo.args[2] = PG_GETARG_JSONB_P(2);
 	fcjinfo.argtypes[2] = TEXTOID;
 	fcjinfo.rettype = TEXTOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -633,11 +641,11 @@ jsonb_reverse(PG_FUNCTION_ARGS)
 	fcjinfo.fn = text_reverse;
 	fcjinfo.funcname = "reverse";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = TEXTOID;
 	fcjinfo.rettype = TEXTOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -648,13 +656,13 @@ jsonb_right(PG_FUNCTION_ARGS)
 	fcjinfo.fn = text_right;
 	fcjinfo.funcname = "right";
 	fcjinfo.nargs = 2;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = TEXTOID;
-	fcjinfo.args[1] = PG_GETARG_JSONB(1);
+	fcjinfo.args[1] = PG_GETARG_JSONB_P(1);
 	fcjinfo.argtypes[1] = INT4OID;
 	fcjinfo.rettype = TEXTOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -665,18 +673,18 @@ jsonb_rtrim(PG_FUNCTION_ARGS)
 	fcjinfo.fn = rtrim1;
 	fcjinfo.funcname = "rTrim";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = TEXTOID;
 	fcjinfo.rettype = TEXTOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
 jsonb_substr_no_len(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *sj = PG_GETARG_JSONB(0);
-	Jsonb	   *ij = PG_GETARG_JSONB(1);
+	Jsonb	   *sj = PG_GETARG_JSONB_P(0);
+	Jsonb	   *ij = PG_GETARG_JSONB_P(1);
 
 	if (JB_ROOT_IS_SCALAR(sj) && JB_ROOT_IS_SCALAR(ij))
 	{
@@ -706,7 +714,7 @@ jsonb_substr_no_len(PG_FUNCTION_ARGS)
 			rjv.val.string.val = TextDatumGetCString(r);
 			rjv.val.string.len = strlen(rjv.val.string.val);
 
-			PG_RETURN_JSONB(JsonbValueToJsonb(&rjv));
+			PG_RETURN_JSONB_P(JsonbValueToJsonb(&rjv));
 		}
 	}
 
@@ -721,9 +729,9 @@ jsonb_substr_no_len(PG_FUNCTION_ARGS)
 Datum
 jsonb_substr(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *sj = PG_GETARG_JSONB(0);
-	Jsonb	   *ij = PG_GETARG_JSONB(1);
-	Jsonb	   *lj = PG_GETARG_JSONB(2);
+	Jsonb	   *sj = PG_GETARG_JSONB_P(0);
+	Jsonb	   *ij = PG_GETARG_JSONB_P(1);
+	Jsonb	   *lj = PG_GETARG_JSONB_P(2);
 
 	if (JB_ROOT_IS_SCALAR(sj) &&
 		JB_ROOT_IS_SCALAR(ij) && JB_ROOT_IS_SCALAR(lj))
@@ -760,7 +768,7 @@ jsonb_substr(PG_FUNCTION_ARGS)
 			rjv.val.string.val = TextDatumGetCString(r);
 			rjv.val.string.len = strlen(rjv.val.string.val);
 
-			PG_RETURN_JSONB(JsonbValueToJsonb(&rjv));
+			PG_RETURN_JSONB_P(JsonbValueToJsonb(&rjv));
 		}
 	}
 
@@ -782,17 +790,17 @@ jsonb_tolower(PG_FUNCTION_ARGS)
 	fcjinfo.fn = lower;
 	fcjinfo.funcname = "toLower";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = TEXTOID;
 	fcjinfo.rettype = TEXTOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
 jsonb_tostring(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 
 	if (JB_ROOT_IS_SCALAR(j))
 	{
@@ -802,7 +810,7 @@ jsonb_tostring(PG_FUNCTION_ARGS)
 		jv = getIthJsonbValueFromContainer(&j->root, 0);
 		if (jv->type == jbvString)
 		{
-			PG_RETURN_JSONB(j);
+			PG_RETURN_JSONB_P(j);
 		}
 		else if (jv->type == jbvNumeric)
 		{
@@ -815,7 +823,7 @@ jsonb_tostring(PG_FUNCTION_ARGS)
 			sjv.val.string.val = DatumGetCString(s);
 			sjv.val.string.len = strlen(sjv.val.string.val);
 
-			PG_RETURN_JSONB(JsonbValueToJsonb(&sjv));
+			PG_RETURN_JSONB_P(JsonbValueToJsonb(&sjv));
 		}
 		else if (jv->type == jbvBool)
 		{
@@ -832,7 +840,7 @@ jsonb_tostring(PG_FUNCTION_ARGS)
 				sjv.val.string.val = "false";
 			}
 
-			PG_RETURN_JSONB(JsonbValueToJsonb(&sjv));
+			PG_RETURN_JSONB_P(JsonbValueToJsonb(&sjv));
 		}
 	}
 
@@ -851,11 +859,11 @@ jsonb_toupper(PG_FUNCTION_ARGS)
 	fcjinfo.fn = upper;
 	fcjinfo.funcname = "toUpper";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = TEXTOID;
 	fcjinfo.rettype = TEXTOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 Datum
@@ -866,17 +874,17 @@ jsonb_trim(PG_FUNCTION_ARGS)
 	fcjinfo.fn = btrim1;
 	fcjinfo.funcname = "trim";
 	fcjinfo.nargs = 1;
-	fcjinfo.args[0] = PG_GETARG_JSONB(0);
+	fcjinfo.args[0] = PG_GETARG_JSONB_P(0);
 	fcjinfo.argtypes[0] = TEXTOID;
 	fcjinfo.rettype = TEXTOID;
 
-	PG_RETURN_JSONB(FunctionCallJsonb(&fcjinfo));
+	PG_RETURN_JSONB_P(FunctionCallJsonb(&fcjinfo));
 }
 
 static Jsonb *
 FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo)
 {
-	FunctionCallInfoData fcinfo;
+	FunctionCallInfoBaseData fcinfo;
 	int			i;
 	Datum		result;
 
@@ -894,8 +902,8 @@ FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo)
 		if (!JB_ROOT_IS_SCALAR(fcjinfo->args[i]))
 			ereport_invalid_jsonb_param(fcjinfo);
 
-		fcinfo.arg[i] = jsonb_to_datum(fcjinfo->args[i], fcjinfo->argtypes[i]);
-		fcinfo.argnull[i] = false;
+		fcinfo.args[i].value = jsonb_to_datum(fcjinfo->args[i], fcjinfo->argtypes[i]);
+		fcinfo.args[i].isnull = false;
 	}
 
 	result = (*fcjinfo->fn) (&fcinfo);
@@ -1057,8 +1065,8 @@ datum_to_jsonb(Datum d, Oid type)
 Datum
 jsonb_string_starts_with(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *lj = PG_GETARG_JSONB(0);
-	Jsonb	   *rj = PG_GETARG_JSONB(1);
+	Jsonb	   *lj = PG_GETARG_JSONB_P(0);
+	Jsonb	   *rj = PG_GETARG_JSONB_P(1);
 
 	if (JB_ROOT_IS_SCALAR(lj) && JB_ROOT_IS_SCALAR(rj))
 	{
@@ -1093,8 +1101,8 @@ jsonb_string_starts_with(PG_FUNCTION_ARGS)
 Datum
 jsonb_string_ends_with(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *lj = PG_GETARG_JSONB(0);
-	Jsonb	   *rj = PG_GETARG_JSONB(1);
+	Jsonb	   *lj = PG_GETARG_JSONB_P(0);
+	Jsonb	   *rj = PG_GETARG_JSONB_P(1);
 
 	if (JB_ROOT_IS_SCALAR(lj) && JB_ROOT_IS_SCALAR(rj))
 	{
@@ -1129,8 +1137,8 @@ jsonb_string_ends_with(PG_FUNCTION_ARGS)
 Datum
 jsonb_string_contains(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *lj = PG_GETARG_JSONB(0);
-	Jsonb	   *rj = PG_GETARG_JSONB(1);
+	Jsonb	   *lj = PG_GETARG_JSONB_P(0);
+	Jsonb	   *rj = PG_GETARG_JSONB_P(1);
 
 	if (JB_ROOT_IS_SCALAR(lj) && JB_ROOT_IS_SCALAR(rj))
 	{
@@ -1169,8 +1177,8 @@ jsonb_string_contains(PG_FUNCTION_ARGS)
 Datum
 jsonb_string_regex(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *lj = PG_GETARG_JSONB(0);
-	Jsonb	   *rj = PG_GETARG_JSONB(1);
+	Jsonb	   *lj = PG_GETARG_JSONB_P(0);
+	Jsonb	   *rj = PG_GETARG_JSONB_P(1);
 
 	if (JB_ROOT_IS_SCALAR(lj) && JB_ROOT_IS_SCALAR(rj))
 	{
@@ -1205,4 +1213,74 @@ jsonb_string_regex(PG_FUNCTION_ARGS)
 					JsonbToCString(NULL, &lj->root, VARSIZE(lj)),
 					JsonbToCString(NULL, &rj->root, VARSIZE(rj)))));
 	PG_RETURN_NULL();
+}
+
+/*
+ * Function to return a row containing the columns for the respective values
+ * of insertVertex, insertEdge, deleteVertex, deleteEdge, and updateProperty.
+ * These values represent the status of the last Cypher graph write (insert,
+ * delete, and/or update properties). They are only reset prior to a Cypher
+ * graph write.
+ */
+Datum
+get_last_graph_write_stats(PG_FUNCTION_ARGS)
+{
+	FuncCallContext *funcctx;
+
+	if (SRF_IS_FIRSTCALL())
+	{
+		MemoryContext oldcontext;
+		TupleDesc	tupdesc;
+
+		funcctx = SRF_FIRSTCALL_INIT();
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+		tupdesc = CreateTemplateTupleDesc(5);
+
+		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "insertedvertices",
+						   INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "insertededges",
+						   INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 3, "deletedvertices",
+						   INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 4, "deletededges",
+						   INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 5, "updatedproperties",
+						   INT8OID, -1, 0);
+
+		funcctx->attinmeta = TupleDescGetAttInMetadata(tupdesc);
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	funcctx = SRF_PERCALL_SETUP();
+
+	if (funcctx->call_cntr < 1)
+	{
+		Datum		*dvalues;
+		bool		*nulls;
+		HeapTuple	tuple;
+		TupleDesc	tupdesc = funcctx->attinmeta->tupdesc;
+
+		dvalues = (Datum *) palloc(sizeof(Datum) * 5);
+		nulls = (bool *) palloc(sizeof(bool) * 5);
+
+		memset(dvalues, 0, sizeof(Datum) * 5);
+		memset(nulls, false, sizeof(bool) * 5);
+
+		dvalues[0] = Int64GetDatum(graphWriteStats.insertVertex);
+		dvalues[1] = Int64GetDatum(graphWriteStats.insertEdge);
+		dvalues[2] = Int64GetDatum(graphWriteStats.deleteVertex);
+		dvalues[3] = Int64GetDatum(graphWriteStats.deleteEdge);
+		dvalues[4] = Int64GetDatum(graphWriteStats.updateProperty);
+
+		tuple = heap_form_tuple(tupdesc, dvalues, nulls);
+
+		pfree(dvalues);
+		pfree(nulls);
+
+		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+	}
+
+	SRF_RETURN_DONE(funcctx);
 }

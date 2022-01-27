@@ -3,7 +3,7 @@
  * jsonb_util.c
  *	  converting between Jsonb and JsonbValues, and iterating.
  *
- * Copyright (c) 2014-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -13,10 +13,10 @@
  */
 #include "postgres.h"
 
-#include "access/hash.h"
 #include "catalog/pg_collation.h"
 #include "miscadmin.h"
 #include "utils/builtins.h"
+#include "utils/hashutils.h"
 #include "utils/jsonb.h"
 #include "utils/memutils.h"
 #include "utils/varlena.h"
@@ -34,8 +34,8 @@
 #define JSONB_MAX_PAIRS (Min(MaxAllocSize / sizeof(JsonbPair), JB_CMASK))
 
 static void fillJsonbValue(JsonbContainer *container, int index,
-			   char *base_addr, uint32 offset,
-			   JsonbValue *result);
+						   char *base_addr, uint32 offset,
+						   JsonbValue *result);
 static bool equalsJsonbScalarValue(JsonbValue *a, JsonbValue *b);
 static int	compareJsonbScalarValue(JsonbValue *a, JsonbValue *b);
 static Jsonb *convertToJsonb(JsonbValue *val);
@@ -59,8 +59,8 @@ static int	lengthCompareJsonbStringValue(const void *a, const void *b);
 static int	lengthCompareJsonbPair(const void *a, const void *b, void *arg);
 static void uniqueifyJsonbObject(JsonbValue *object);
 static JsonbValue *pushJsonbValueScalar(JsonbParseState **pstate,
-					 JsonbIteratorToken seq,
-					 JsonbValue *scalarVal);
+										JsonbIteratorToken seq,
+										JsonbValue *scalarVal);
 
 /*
  * Turn an in-memory JsonbValue into a Jsonb for on-disk storage.
@@ -901,7 +901,7 @@ iteratorFromContainer(JsonbContainer *container, JsonbIterator *parent)
 {
 	JsonbIterator *it;
 
-	it = palloc(sizeof(JsonbIterator));
+	it = palloc0(sizeof(JsonbIterator));
 	it->container = container;
 	it->parent = parent;
 	it->nElems = JsonContainerSize(container);
@@ -1250,6 +1250,49 @@ JsonbHashScalarValue(const JsonbValue *scalarVal, uint32 *hash)
 }
 
 /*
+ * Hash a value to a 64-bit value, with a seed. Otherwise, similar to
+ * JsonbHashScalarValue.
+ */
+void
+JsonbHashScalarValueExtended(const JsonbValue *scalarVal, uint64 *hash,
+							 uint64 seed)
+{
+	uint64		tmp;
+
+	switch (scalarVal->type)
+	{
+		case jbvNull:
+			tmp = seed + 0x01;
+			break;
+		case jbvString:
+			tmp = DatumGetUInt64(hash_any_extended((const unsigned char *) scalarVal->val.string.val,
+												   scalarVal->val.string.len,
+												   seed));
+			break;
+		case jbvNumeric:
+			tmp = DatumGetUInt64(DirectFunctionCall2(hash_numeric_extended,
+													 NumericGetDatum(scalarVal->val.numeric),
+													 UInt64GetDatum(seed)));
+			break;
+		case jbvBool:
+			if (seed)
+				tmp = DatumGetUInt64(DirectFunctionCall2(hashcharextended,
+														 BoolGetDatum(scalarVal->val.boolean),
+														 UInt64GetDatum(seed)));
+			else
+				tmp = scalarVal->val.boolean ? 0x02 : 0x04;
+
+			break;
+		default:
+			elog(ERROR, "invalid jsonb scalar type");
+			break;
+	}
+
+	*hash = ROTATE_HIGH_AND_LOW_32BITS(*hash);
+	*hash ^= tmp;
+}
+
+/*
  * Are two scalar JsonbValues of the same type a and b equal?
  */
 static bool
@@ -1275,7 +1318,7 @@ equalsJsonbScalarValue(JsonbValue *aScalar, JsonbValue *bScalar)
 		}
 	}
 	elog(ERROR, "jsonb scalar type mismatch");
-	return -1;
+	return false;
 }
 
 /*
@@ -1320,7 +1363,7 @@ compareJsonbScalarValue(JsonbValue *aScalar, JsonbValue *bScalar)
 
 
 /*
- * Functions for manipulating the resizeable buffer used by convertJsonb and
+ * Functions for manipulating the resizable buffer used by convertJsonb and
  * its subroutines.
  */
 

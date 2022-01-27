@@ -9,7 +9,7 @@
  *	  polluting the namespace with lots of stuff...
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/c.h
@@ -27,18 +27,19 @@
  *	  -------	------------------------------------------------
  *		0)		pg_config.h and standard system headers
  *		1)		compiler characteristics
- *		2)		bool, true, false, TRUE, FALSE, NULL
+ *		2)		bool, true, false
  *		3)		standard system types
  *		4)		IsValid macros for system types
- *		5)		offsetof, lengthof, endof, alignment
+ *		5)		offsetof, lengthof, alignment
  *		6)		assertions
  *		7)		widely useful macros
  *		8)		random stuff
  *		9)		system-specific hacks
  *
- * NOTE: since this file is included by both frontend and backend modules, it's
- * almost certainly wrong to put an "extern" declaration here.  typedefs and
- * macros are the kind of thing that might go here.
+ * NOTE: since this file is included by both frontend and backend modules,
+ * it's usually wrong to put an "extern" declaration here, unless it's
+ * ifdef'd so that it's seen in only one case or the other.
+ * typedefs and macros are the kind of thing that might go here.
  *
  *----------------------------------------------------------------
  */
@@ -52,32 +53,9 @@
 
 #include "pg_config.h"
 #include "pg_config_manual.h"	/* must be after pg_config.h */
-
-/*
- * We always rely on the WIN32 macro being set by our build system,
- * but _WIN32 is the compiler pre-defined macro. So make sure we define
- * WIN32 whenever _WIN32 is set, to facilitate standalone building.
- */
-#if defined(_WIN32) && !defined(WIN32)
-#define WIN32
-#endif
-
-#if !defined(WIN32) && !defined(__CYGWIN__) /* win32 includes further down */
 #include "pg_config_os.h"		/* must be before any system header files */
-#endif
 
-#if _MSC_VER >= 1400 || defined(HAVE_CRTDEFS_H)
-#define errcode __msvc_errcode
-#include <crtdefs.h>
-#undef errcode
-#endif
-
-/*
- * We have to include stdlib.h here because it defines many of these macros
- * on some platforms, and we only want our definitions used if stdlib.h doesn't
- * have its own.  The same goes for stddef and stdarg if present.
- */
-
+/* System header files that should be available everywhere in Postgres */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,11 +75,6 @@
 #include <locale.h>
 #ifdef ENABLE_NLS
 #include <libintl.h>
-#endif
-
-#if defined(WIN32) || defined(__CYGWIN__)
-/* We have to redefine some system functions after they are included above. */
-#include "pg_config_os.h"
 #endif
 
 
@@ -140,6 +113,18 @@
 #endif
 
 /*
+ * Place this macro before functions that should be allowed to make misaligned
+ * accesses.  Think twice before using it on non-x86-specific code!
+ * Testing can be done with "-fsanitize=alignment -fsanitize-trap=alignment"
+ * on clang, or "-fsanitize=alignment -fno-sanitize-recover=alignment" on gcc.
+ */
+#if __clang_major__ >= 7 || __GNUC__ >= 8
+#define pg_attribute_no_sanitize_alignment() __attribute__((no_sanitize("alignment")))
+#else
+#define pg_attribute_no_sanitize_alignment()
+#endif
+
+/*
  * Append PG_USED_FOR_ASSERTS_ONLY to definitions of variables that are only
  * used in assert-enabled builds, to avoid compiler warnings about unused
  * variables in assert-disabled builds.
@@ -172,6 +157,39 @@
  * if they are to be used.
  */
 #define pg_attribute_noreturn()
+#endif
+
+/*
+ * Use "pg_attribute_always_inline" in place of "inline" for functions that
+ * we wish to force inlining of, even when the compiler's heuristics would
+ * choose not to.  But, if possible, don't force inlining in unoptimized
+ * debug builds.
+ */
+#if (defined(__GNUC__) && __GNUC__ > 3 && defined(__OPTIMIZE__)) || defined(__SUNPRO_C) || defined(__IBMC__)
+/* GCC > 3, Sunpro and XLC support always_inline via __attribute__ */
+#define pg_attribute_always_inline __attribute__((always_inline)) inline
+#elif defined(_MSC_VER)
+/* MSVC has a special keyword for this */
+#define pg_attribute_always_inline __forceinline
+#else
+/* Otherwise, the best we can do is to say "inline" */
+#define pg_attribute_always_inline inline
+#endif
+
+/*
+ * Forcing a function not to be inlined can be useful if it's the slow path of
+ * a performance-critical function, or should be visible in profiles to allow
+ * for proper cost attribution.  Note that unlike the pg_attribute_XXX macros
+ * above, this should be placed before the function's return type and name.
+ */
+/* GCC, Sunpro and XLC support noinline via __attribute__ */
+#if (defined(__GNUC__) && __GNUC__ > 2) || defined(__SUNPRO_C) || defined(__IBMC__)
+#define pg_noinline __attribute__((noinline))
+/* msvc via declspec */
+#elif defined(_MSC_VER)
+#define pg_noinline __declspec(noinline)
+#else
+#define pg_noinline
 #endif
 
 /*
@@ -219,6 +237,39 @@
 #define CppConcat(x, y)			x##y
 
 /*
+ * VA_ARGS_NARGS
+ *		Returns the number of macro arguments it is passed.
+ *
+ * An empty argument still counts as an argument, so effectively, this is
+ * "one more than the number of commas in the argument list".
+ *
+ * This works for up to 63 arguments.  Internally, VA_ARGS_NARGS_() is passed
+ * 64+N arguments, and the C99 standard only requires macros to allow up to
+ * 127 arguments, so we can't portably go higher.  The implementation is
+ * pretty trivial: VA_ARGS_NARGS_() returns its 64th argument, and we set up
+ * the call so that that is the appropriate one of the list of constants.
+ * This idea is due to Laurent Deniau.
+ */
+#define VA_ARGS_NARGS(...) \
+	VA_ARGS_NARGS_(__VA_ARGS__, \
+				   63,62,61,60,                   \
+				   59,58,57,56,55,54,53,52,51,50, \
+				   49,48,47,46,45,44,43,42,41,40, \
+				   39,38,37,36,35,34,33,32,31,30, \
+				   29,28,27,26,25,24,23,22,21,20, \
+				   19,18,17,16,15,14,13,12,11,10, \
+				   9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+#define VA_ARGS_NARGS_( \
+	_01,_02,_03,_04,_05,_06,_07,_08,_09,_10, \
+	_11,_12,_13,_14,_15,_16,_17,_18,_19,_20, \
+	_21,_22,_23,_24,_25,_26,_27,_28,_29,_30, \
+	_31,_32,_33,_34,_35,_36,_37,_38,_39,_40, \
+	_41,_42,_43,_44,_45,_46,_47,_48,_49,_50, \
+	_51,_52,_53,_54,_55,_56,_57,_58,_59,_60, \
+	_61,_62,_63,  N, ...) \
+	(N)
+
+/*
  * dummyret is used to set return values in macros that use ?: to make
  * assignments.  gcc wants these to be void, other compilers like char
  */
@@ -241,7 +292,7 @@
 
 
 /* ----------------------------------------------------------------
- *				Section 2:	bool, true, false, TRUE, FALSE, NULL
+ *				Section 2:	bool, true, false
  * ----------------------------------------------------------------
  */
 
@@ -249,14 +300,24 @@
  * bool
  *		Boolean value, either true or false.
  *
- * XXX for C++ compilers, we assume the compiler has a compatible
- * built-in definition of bool.
+ * Use stdbool.h if available and its bool has size 1.  That's useful for
+ * better compiler and debugger output and for compatibility with third-party
+ * libraries.  But PostgreSQL currently cannot deal with bool of other sizes;
+ * there are static assertions around the code to prevent that.
+ *
+ * For C++ compilers, we assume the compiler has a compatible built-in
+ * definition of bool.
  */
 
 #ifndef __cplusplus
 
+#if defined(HAVE_STDBOOL_H) && SIZEOF_BOOL == 1
+#include <stdbool.h>
+#define USE_STDBOOL 1
+#else
+
 #ifndef bool
-typedef char bool;
+typedef unsigned char bool;
 #endif
 
 #ifndef true
@@ -267,25 +328,8 @@ typedef char bool;
 #define false	((bool) 0)
 #endif
 
+#endif
 #endif							/* not C++ */
-
-typedef bool *BoolPtr;
-
-#ifndef TRUE
-#define TRUE	1
-#endif
-
-#ifndef FALSE
-#define FALSE	0
-#endif
-
-/*
- * NULL
- *		Null pointer.
- */
-#ifndef NULL
-#define NULL	((void *) 0)
-#endif
 
 
 /* ----------------------------------------------------------------
@@ -382,15 +426,15 @@ typedef unsigned long long int uint64;
 
 typedef PG_INT128_TYPE int128
 #if defined(pg_attribute_aligned)
-pg_attribute_aligned(MAXIMUM_ALIGNOF)
+			pg_attribute_aligned(MAXIMUM_ALIGNOF)
 #endif
-;
+		   ;
 
 typedef unsigned PG_INT128_TYPE uint128
 #if defined(pg_attribute_aligned)
-pg_attribute_aligned(MAXIMUM_ALIGNOF)
+			pg_attribute_aligned(MAXIMUM_ALIGNOF)
 #endif
-;
+		   ;
 
 #endif
 #endif
@@ -609,7 +653,7 @@ typedef NameData *Name;
 
 
 /* ----------------------------------------------------------------
- *				Section 5:	offsetof, lengthof, endof, alignment
+ *				Section 5:	offsetof, lengthof, alignment
  * ----------------------------------------------------------------
  */
 /*
@@ -628,12 +672,6 @@ typedef NameData *Name;
  *		Number of elements in an array.
  */
 #define lengthof(array) (sizeof (array) / sizeof ((array)[0]))
-
-/*
- * endof
- *		Address of the element one past the last in an array.
- */
-#define endof(array)	(&(array)[lengthof(array)])
 
 /* ----------------
  * Alignment macros: align a length or address appropriately for a given type.
@@ -669,6 +707,7 @@ typedef NameData *Name;
 #define LONGALIGN_DOWN(LEN)		TYPEALIGN_DOWN(ALIGNOF_LONG, (LEN))
 #define DOUBLEALIGN_DOWN(LEN)	TYPEALIGN_DOWN(ALIGNOF_DOUBLE, (LEN))
 #define MAXALIGN_DOWN(LEN)		TYPEALIGN_DOWN(MAXIMUM_ALIGNOF, (LEN))
+#define BUFFERALIGN_DOWN(LEN)	TYPEALIGN_DOWN(ALIGNOF_BUFFER, (LEN))
 
 /*
  * The above macros will not work with types wider than uintptr_t, like with
@@ -766,6 +805,18 @@ typedef NameData *Name;
 #endif							/* USE_ASSERT_CHECKING && !FRONTEND */
 
 /*
+ * ExceptionalCondition is compiled into the backend whether or not
+ * USE_ASSERT_CHECKING is defined, so as to support use of extensions
+ * that are built with that #define with a backend that isn't.  Hence,
+ * we should declare it as long as !FRONTEND.
+ */
+#ifndef FRONTEND
+extern void ExceptionalCondition(const char *conditionName,
+								 const char *errorType,
+								 const char *fileName, int lineNumber) pg_attribute_noreturn();
+#endif
+
+/*
  * Macros to support compile-time assertion checks.
  *
  * If the "condition" (a compile-time-constant expression) evaluates to false,
@@ -779,17 +830,31 @@ typedef NameData *Name;
  * about a negative width for a struct bit-field.  This will not include a
  * helpful error message, but it beats not getting an error at all.
  */
+#ifndef __cplusplus
 #ifdef HAVE__STATIC_ASSERT
 #define StaticAssertStmt(condition, errmessage) \
 	do { _Static_assert(condition, errmessage); } while(0)
 #define StaticAssertExpr(condition, errmessage) \
-	({ StaticAssertStmt(condition, errmessage); true; })
+	((void) ({ StaticAssertStmt(condition, errmessage); true; }))
 #else							/* !HAVE__STATIC_ASSERT */
 #define StaticAssertStmt(condition, errmessage) \
 	((void) sizeof(struct { int static_assert_failure : (condition) ? 1 : -1; }))
 #define StaticAssertExpr(condition, errmessage) \
 	StaticAssertStmt(condition, errmessage)
 #endif							/* HAVE__STATIC_ASSERT */
+#else							/* C++ */
+#if defined(__cpp_static_assert) && __cpp_static_assert >= 200410
+#define StaticAssertStmt(condition, errmessage) \
+	static_assert(condition, errmessage)
+#define StaticAssertExpr(condition, errmessage) \
+	({ static_assert(condition, errmessage); })
+#else
+#define StaticAssertStmt(condition, errmessage) \
+	do { struct static_assert_struct { int static_assert_failure : (condition) ? 1 : -1; }; } while(0)
+#define StaticAssertExpr(condition, errmessage) \
+	((void) ({ StaticAssertStmt(condition, errmessage); }))
+#endif
+#endif							/* C++ */
 
 
 /*
@@ -808,14 +873,14 @@ typedef NameData *Name;
 	StaticAssertStmt(__builtin_types_compatible_p(__typeof__(varname), typename), \
 	CppAsString(varname) " does not have type " CppAsString(typename))
 #define AssertVariableIsOfTypeMacro(varname, typename) \
-	((void) StaticAssertExpr(__builtin_types_compatible_p(__typeof__(varname), typename), \
+	(StaticAssertExpr(__builtin_types_compatible_p(__typeof__(varname), typename), \
 	 CppAsString(varname) " does not have type " CppAsString(typename)))
 #else							/* !HAVE__BUILTIN_TYPES_COMPATIBLE_P */
 #define AssertVariableIsOfType(varname, typename) \
 	StaticAssertStmt(sizeof(varname) == sizeof(typename), \
 	CppAsString(varname) " does not have type " CppAsString(typename))
 #define AssertVariableIsOfTypeMacro(varname, typename) \
-	((void) StaticAssertExpr(sizeof(varname) == sizeof(typename),		\
+	(StaticAssertExpr(sizeof(varname) == sizeof(typename), \
 	 CppAsString(varname) " does not have type " CppAsString(typename)))
 #endif							/* HAVE__BUILTIN_TYPES_COMPATIBLE_P */
 
@@ -963,18 +1028,76 @@ typedef NameData *Name;
 			*_start++ = 0; \
 	} while (0)
 
+/*
+ * Macros for range-checking float values before converting to integer.
+ * We must be careful here that the boundary values are expressed exactly
+ * in the float domain.  PG_INTnn_MIN is an exact power of 2, so it will
+ * be represented exactly; but PG_INTnn_MAX isn't, and might get rounded
+ * off, so avoid using that.
+ * The input must be rounded to an integer beforehand, typically with rint(),
+ * else we might draw the wrong conclusion about close-to-the-limit values.
+ * These macros will do the right thing for Inf, but not necessarily for NaN,
+ * so check isnan(num) first if that's a possibility.
+ */
+#define FLOAT4_FITS_IN_INT16(num) \
+	((num) >= (float4) PG_INT16_MIN && (num) < -((float4) PG_INT16_MIN))
+#define FLOAT4_FITS_IN_INT32(num) \
+	((num) >= (float4) PG_INT32_MIN && (num) < -((float4) PG_INT32_MIN))
+#define FLOAT4_FITS_IN_INT64(num) \
+	((num) >= (float4) PG_INT64_MIN && (num) < -((float4) PG_INT64_MIN))
+#define FLOAT8_FITS_IN_INT16(num) \
+	((num) >= (float8) PG_INT16_MIN && (num) < -((float8) PG_INT16_MIN))
+#define FLOAT8_FITS_IN_INT32(num) \
+	((num) >= (float8) PG_INT32_MIN && (num) < -((float8) PG_INT32_MIN))
+#define FLOAT8_FITS_IN_INT64(num) \
+	((num) >= (float8) PG_INT64_MIN && (num) < -((float8) PG_INT64_MIN))
+
 
 /* ----------------------------------------------------------------
  *				Section 8:	random stuff
  * ----------------------------------------------------------------
  */
 
+/*
+ * Invert the sign of a qsort-style comparison result, ie, exchange negative
+ * and positive integer values, being careful not to get the wrong answer
+ * for INT_MIN.  The argument should be an integral variable.
+ */
+#define INVERT_COMPARE_RESULT(var) \
+	((var) = ((var) < 0) ? 1 : -(var))
+
+/*
+ * Use this, not "char buf[BLCKSZ]", to declare a field or local variable
+ * holding a page buffer, if that page might be accessed as a page and not
+ * just a string of bytes.  Otherwise the variable might be under-aligned,
+ * causing problems on alignment-picky hardware.  (In some places, we use
+ * this to declare buffers even though we only pass them to read() and
+ * write(), because copying to/from aligned buffers is usually faster than
+ * using unaligned buffers.)  We include both "double" and "int64" in the
+ * union to ensure that the compiler knows the value must be MAXALIGN'ed
+ * (cf. configure's computation of MAXIMUM_ALIGNOF).
+ */
+typedef union PGAlignedBlock
+{
+	char		data[BLCKSZ];
+	double		force_align_d;
+	int64		force_align_i64;
+} PGAlignedBlock;
+
+/* Same, but for an XLOG_BLCKSZ-sized buffer */
+typedef union PGAlignedXLogBlock
+{
+	char		data[XLOG_BLCKSZ];
+	double		force_align_d;
+	int64		force_align_i64;
+} PGAlignedXLogBlock;
+
 /* msb for char */
 #define HIGHBIT					(0x80)
 #define IS_HIGHBIT_SET(ch)		((unsigned char)(ch) & HIGHBIT)
 
 /*
- * Support macros for escaping strings.  escape_backslash should be TRUE
+ * Support macros for escaping strings.  escape_backslash should be true
  * if generating a non-standard-conforming string.  Prefixing a string
  * with ESCAPE_STRING_SYNTAX guarantees it is non-standard-conforming.
  * Beware of multiple evaluation of the "ch" argument!
@@ -1034,6 +1157,36 @@ typedef NameData *Name;
 #define PG_TEXTDOMAIN(domain) (domain "-" PG_MAJORVERSION)
 #endif
 
+/*
+ * Macro that allows to cast constness and volatile away from an expression, but doesn't
+ * allow changing the underlying type.  Enforcement of the latter
+ * currently only works for gcc like compilers.
+ *
+ * Please note IT IS NOT SAFE to cast constness away if the result will ever
+ * be modified (it would be undefined behaviour). Doing so anyway can cause
+ * compiler misoptimizations or runtime crashes (modifying readonly memory).
+ * It is only safe to use when the result will not be modified, but API
+ * design or language restrictions prevent you from declaring that
+ * (e.g. because a function returns both const and non-const variables).
+ *
+ * Note that this only works in function scope, not for global variables (it'd
+ * be nice, but not trivial, to improve that).
+ */
+#if defined(HAVE__BUILTIN_TYPES_COMPATIBLE_P)
+#define unconstify(underlying_type, expr) \
+	(StaticAssertExpr(__builtin_types_compatible_p(__typeof(expr), const underlying_type), \
+					  "wrong cast"), \
+	 (underlying_type) (expr))
+#define unvolatize(underlying_type, expr) \
+	(StaticAssertExpr(__builtin_types_compatible_p(__typeof(expr), volatile underlying_type), \
+					  "wrong cast"), \
+	 (underlying_type) (expr))
+#else
+#define unconstify(underlying_type, expr) \
+	((underlying_type) (expr))
+#define unvolatize(underlying_type, expr) \
+	((underlying_type) (expr))
+#endif
 
 /* ----------------------------------------------------------------
  *				Section 9: system-specific hacks
@@ -1068,13 +1221,40 @@ typedef NameData *Name;
  * standard C library.
  */
 
-#if !HAVE_DECL_SNPRINTF
-extern int	snprintf(char *str, size_t count, const char *fmt,...) pg_attribute_printf(3, 4);
+#if defined(HAVE_FDATASYNC) && !HAVE_DECL_FDATASYNC
+extern int	fdatasync(int fildes);
 #endif
 
-#if !HAVE_DECL_VSNPRINTF
-extern int	vsnprintf(char *str, size_t count, const char *fmt, va_list args);
+#ifdef HAVE_LONG_LONG_INT
+/* Older platforms may provide strto[u]ll functionality under other names */
+#if !defined(HAVE_STRTOLL) && defined(HAVE___STRTOLL)
+#define strtoll __strtoll
+#define HAVE_STRTOLL 1
 #endif
+
+#if !defined(HAVE_STRTOLL) && defined(HAVE_STRTOQ)
+#define strtoll strtoq
+#define HAVE_STRTOLL 1
+#endif
+
+#if !defined(HAVE_STRTOULL) && defined(HAVE___STRTOULL)
+#define strtoull __strtoull
+#define HAVE_STRTOULL 1
+#endif
+
+#if !defined(HAVE_STRTOULL) && defined(HAVE_STRTOUQ)
+#define strtoull strtouq
+#define HAVE_STRTOULL 1
+#endif
+
+#if defined(HAVE_STRTOLL) && !HAVE_DECL_STRTOLL
+extern long long strtoll(const char *str, char **endptr, int base);
+#endif
+
+#if defined(HAVE_STRTOULL) && !HAVE_DECL_STRTOULL
+extern unsigned long long strtoull(const char *str, char **endptr, int base);
+#endif
+#endif							/* HAVE_LONG_LONG_INT */
 
 #if !defined(HAVE_MEMMOVE) && !defined(memmove)
 #define memmove(d, s, c)		bcopy(s, d, c)
@@ -1110,30 +1290,6 @@ extern int	vsnprintf(char *str, size_t count, const char *fmt, va_list args);
 #define sigjmp_buf jmp_buf
 #define sigsetjmp(x,y) setjmp(x)
 #define siglongjmp longjmp
-#endif
-
-#if defined(HAVE_FDATASYNC) && !HAVE_DECL_FDATASYNC
-extern int	fdatasync(int fildes);
-#endif
-
-/* If strtoq() exists, rename it to the more standard strtoll() */
-#if defined(HAVE_LONG_LONG_INT_64) && !defined(HAVE_STRTOLL) && defined(HAVE_STRTOQ)
-#define strtoll strtoq
-#define HAVE_STRTOLL 1
-#endif
-
-/* If strtouq() exists, rename it to the more standard strtoull() */
-#if defined(HAVE_LONG_LONG_INT_64) && !defined(HAVE_STRTOULL) && defined(HAVE_STRTOUQ)
-#define strtoull strtouq
-#define HAVE_STRTOULL 1
-#endif
-
-/*
- * We assume if we have these two functions, we have their friends too, and
- * can use the wide-character functions.
- */
-#if defined(HAVE_WCSTOMBS) && defined(HAVE_TOWLOWER)
-#define USE_WIDE_UPPER_LOWER
 #endif
 
 /* EXEC_BACKEND defines */

@@ -7,7 +7,7 @@
  * it's all we need in, eg, pg_dump.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/fe_utils/simple_list.c
@@ -113,4 +113,25 @@ simple_string_list_not_touched(SimpleStringList *list)
 			return cell->val;
 	}
 	return NULL;
+}
+
+/*
+ * Append a pointer to the list.
+ *
+ * Caller must ensure that the pointer remains valid.
+ */
+void
+simple_ptr_list_append(SimplePtrList *list, void *ptr)
+{
+	SimplePtrListCell *cell;
+
+	cell = (SimplePtrListCell *) pg_malloc(sizeof(SimplePtrListCell));
+	cell->next = NULL;
+	cell->ptr = ptr;
+
+	if (list->tail)
+		list->tail->next = cell;
+	else
+		list->head = cell;
+	list->tail = cell;
 }

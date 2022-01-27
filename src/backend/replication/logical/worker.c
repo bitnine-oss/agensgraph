@@ -2,7 +2,7 @@
  * worker.c
  *	   PostgreSQL logical replication worker (apply)
  *
- * Copyright (c) 2016-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/worker.c
@@ -23,58 +23,46 @@
 
 #include "postgres.h"
 
-#include "miscadmin.h"
-#include "pgstat.h"
-#include "funcapi.h"
-
+#include "access/table.h"
+#include "access/tableam.h"
 #include "access/xact.h"
 #include "access/xlog_internal.h"
-
+#include "catalog/catalog.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_subscription_rel.h"
-
+#include "commands/tablecmds.h"
 #include "commands/trigger.h"
-
 #include "executor/executor.h"
 #include "executor/nodeModifyTable.h"
-
+#include "funcapi.h"
 #include "libpq/pqformat.h"
 #include "libpq/pqsignal.h"
-
 #include "mb/pg_wchar.h"
-
+#include "miscadmin.h"
 #include "nodes/makefuncs.h"
-
-#include "optimizer/planner.h"
-
-#include "parser/parse_relation.h"
-
+#include "optimizer/optimizer.h"
+#include "pgstat.h"
 #include "postmaster/bgworker.h"
 #include "postmaster/postmaster.h"
 #include "postmaster/walwriter.h"
-
 #include "replication/decode.h"
 #include "replication/logical.h"
 #include "replication/logicalproto.h"
 #include "replication/logicalrelation.h"
 #include "replication/logicalworker.h"
-#include "replication/reorderbuffer.h"
 #include "replication/origin.h"
+#include "replication/reorderbuffer.h"
 #include "replication/snapbuild.h"
 #include "replication/walreceiver.h"
 #include "replication/worker_internal.h"
-
 #include "rewrite/rewriteHandler.h"
-
 #include "storage/bufmgr.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
-
 #include "tcop/tcopprot.h"
-
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/datum.h"
@@ -83,9 +71,9 @@
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
-#include "utils/timeout.h"
-#include "utils/tqual.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/timeout.h"
 
 #define NAPTIME_PER_CYCLE 1000	/* max sleep time between cycles (1s) */
 
@@ -101,14 +89,13 @@ static dlist_head lsn_mapping = DLIST_STATIC_INIT(lsn_mapping);
 typedef struct SlotErrCallbackArg
 {
 	LogicalRepRelMapEntry *rel;
-	int			local_attnum;
 	int			remote_attnum;
 } SlotErrCallbackArg;
 
 static MemoryContext ApplyMessageContext = NULL;
 MemoryContext ApplyContext = NULL;
 
-WalReceiverConn *wrconn = NULL;
+WalReceiverConn *LogRepWorkerWalRcvConn = NULL;
 
 Subscription *MySubscription = NULL;
 bool		MySubscriptionValid = false;
@@ -150,30 +137,41 @@ should_apply_changes_for_rel(LogicalRepRelMapEntry *rel)
 }
 
 /*
- * Make sure that we started local transaction.
+ * Begin one step (one INSERT, UPDATE, etc) of a replication transaction.
  *
- * Also switches to ApplyMessageContext as necessary.
+ * Start a transaction, if this is the first step (else we keep using the
+ * existing transaction).
+ * Also provide a global snapshot and ensure we run in ApplyMessageContext.
  */
-static bool
-ensure_transaction(void)
+static void
+begin_replication_step(void)
 {
-	if (IsTransactionState())
+	SetCurrentStatementStartTimestamp();
+
+	if (!IsTransactionState())
 	{
-		SetCurrentStatementStartTimestamp();
-
-		if (CurrentMemoryContext != ApplyMessageContext)
-			MemoryContextSwitchTo(ApplyMessageContext);
-
-		return false;
+		StartTransactionCommand();
+		maybe_reread_subscription();
 	}
 
-	SetCurrentStatementStartTimestamp();
-	StartTransactionCommand();
-
-	maybe_reread_subscription();
+	PushActiveSnapshot(GetTransactionSnapshot());
 
 	MemoryContextSwitchTo(ApplyMessageContext);
-	return true;
+}
+
+/*
+ * Finish up one step of a replication transaction.
+ * Callers of begin_replication_step() must also call this.
+ *
+ * We don't close out the transaction here, but we should increment
+ * the command counter to make the effects of this step visible.
+ */
+static void
+end_replication_step(void)
+{
+	PopActiveSnapshot();
+
+	CommandCounterIncrement();
 }
 
 
@@ -196,7 +194,8 @@ create_estate_for_relation(LogicalRepRelMapEntry *rel)
 	rte->rtekind = RTE_RELATION;
 	rte->relid = RelationGetRelid(rel->localrel);
 	rte->relkind = rel->localrel->rd_rel->relkind;
-	estate->es_range_table = list_make1(rte);
+	rte->rellockmode = AccessShareLock;
+	ExecInitRangeTable(estate, list_make1(rte));
 
 	resultRelInfo = makeNode(ResultRelInfo);
 	InitResultRelInfo(resultRelInfo, rel->localrel, 1, NULL, 0);
@@ -207,14 +206,25 @@ create_estate_for_relation(LogicalRepRelMapEntry *rel)
 
 	estate->es_output_cid = GetCurrentCommandId(true);
 
-	/* Triggers might need a slot */
-	if (resultRelInfo->ri_TrigDesc)
-		estate->es_trig_tuple_slot = ExecInitExtraTupleSlot(estate);
-
 	/* Prepare to catch AFTER triggers. */
 	AfterTriggerBeginQuery();
 
 	return estate;
+}
+
+/*
+ * Finish any operations related to the executor state created by
+ * create_estate_for_relation().
+ */
+static void
+finish_estate(EState *estate)
+{
+	/* Handle any queued AFTER triggers. */
+	AfterTriggerEndQuery(estate);
+
+	/* Cleanup. */
+	ExecResetTupleTable(estate->es_tupleTable, false);
+	FreeExecutorState(estate);
 }
 
 /*
@@ -250,7 +260,7 @@ slot_fill_defaults(LogicalRepRelMapEntry *rel, EState *estate,
 	{
 		Expr	   *defexpr;
 
-		if (desc->attrs[attnum]->attisdropped)
+		if (TupleDescAttr(desc, attnum)->attisdropped || TupleDescAttr(desc, attnum)->attgenerated)
 			continue;
 
 		if (rel->attrmap[attnum] >= 0)
@@ -277,36 +287,23 @@ slot_fill_defaults(LogicalRepRelMapEntry *rel, EState *estate,
 }
 
 /*
- * Error callback to give more context info about type conversion failure.
+ * Error callback to give more context info about data conversion failures
+ * while reading data from the remote server.
  */
 static void
 slot_store_error_callback(void *arg)
 {
 	SlotErrCallbackArg *errarg = (SlotErrCallbackArg *) arg;
 	LogicalRepRelMapEntry *rel;
-	char	   *remotetypname;
-	Oid			remotetypoid,
-				localtypoid;
 
 	/* Nothing to do if remote attribute number is not set */
 	if (errarg->remote_attnum < 0)
 		return;
 
 	rel = errarg->rel;
-	remotetypoid = rel->remoterel.atttyps[errarg->remote_attnum];
-
-	/* Fetch remote type name from the LogicalRepTypMap cache */
-	remotetypname = logicalrep_typmap_gettypname(remotetypoid);
-
-	/* Fetch local type OID from the local sys cache */
-	localtypoid = get_atttype(rel->localreloid, errarg->local_attnum + 1);
-
-	errcontext("processing remote data for replication target relation \"%s.%s\" column \"%s\", "
-			   "remote type %s, local type %s",
+	errcontext("processing remote data for replication target relation \"%s.%s\" column \"%s\"",
 			   rel->remoterel.nspname, rel->remoterel.relname,
-			   rel->remoterel.attnames[errarg->remote_attnum],
-			   remotetypname,
-			   format_type_be(localtypoid));
+			   rel->remoterel.attnames[errarg->remote_attnum]);
 }
 
 /*
@@ -327,7 +324,6 @@ slot_store_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 
 	/* Push callback + info on the error context stack */
 	errarg.rel = rel;
-	errarg.local_attnum = -1;
 	errarg.remote_attnum = -1;
 	errcallback.callback = slot_store_error_callback;
 	errcallback.arg = (void *) &errarg;
@@ -337,7 +333,7 @@ slot_store_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 	/* Call the "in" function for each non-dropped attribute */
 	for (i = 0; i < natts; i++)
 	{
-		Form_pg_attribute att = slot->tts_tupleDescriptor->attrs[i];
+		Form_pg_attribute att = TupleDescAttr(slot->tts_tupleDescriptor, i);
 		int			remoteattnum = rel->attrmap[i];
 
 		if (!att->attisdropped && remoteattnum >= 0 &&
@@ -346,7 +342,6 @@ slot_store_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 			Oid			typinput;
 			Oid			typioparam;
 
-			errarg.local_attnum = i;
 			errarg.remote_attnum = remoteattnum;
 
 			getTypeInputInfo(att->atttypid, &typinput, &typioparam);
@@ -355,7 +350,6 @@ slot_store_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 									 typioparam, att->atttypmod);
 			slot->tts_isnull[i] = false;
 
-			errarg.local_attnum = -1;
 			errarg.remote_attnum = -1;
 		}
 		else
@@ -377,13 +371,19 @@ slot_store_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 }
 
 /*
- * Modify slot with user data provided as C strings.
+ * Replace selected columns with user data provided as C strings.
  * This is somewhat similar to heap_modify_tuple but also calls the type
- * input function on the user data as the input is the text representation
- * of the types.
+ * input functions on the user data.
+ * "slot" is filled with a copy of the tuple in "srcslot", with
+ * columns selected by the "replaces" array replaced with data values
+ * from "values".
+ * Caution: unreplaced pass-by-ref columns in "slot" will point into the
+ * storage for "srcslot".  This is OK for current usage, but someday we may
+ * need to materialize "slot" at the end to make it independent of "srcslot".
  */
 static void
-slot_modify_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
+slot_modify_cstrings(TupleTableSlot *slot, TupleTableSlot *srcslot,
+					 LogicalRepRelMapEntry *rel,
 					 char **values, bool *replaces)
 {
 	int			natts = slot->tts_tupleDescriptor->natts;
@@ -391,12 +391,20 @@ slot_modify_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 	SlotErrCallbackArg errarg;
 	ErrorContextCallback errcallback;
 
-	slot_getallattrs(slot);
+	/* We'll fill "slot" with a virtual tuple, so we must start with ... */
 	ExecClearTuple(slot);
 
-	/* Push callback + info on the error context stack */
+	/*
+	 * Copy all the column data from srcslot, so that we'll have valid values
+	 * for unreplaced columns.
+	 */
+	Assert(natts == srcslot->tts_tupleDescriptor->natts);
+	slot_getallattrs(srcslot);
+	memcpy(slot->tts_values, srcslot->tts_values, natts * sizeof(Datum));
+	memcpy(slot->tts_isnull, srcslot->tts_isnull, natts * sizeof(bool));
+
+	/* For error reporting, push callback + info on the error context stack */
 	errarg.rel = rel;
-	errarg.local_attnum = -1;
 	errarg.remote_attnum = -1;
 	errcallback.callback = slot_store_error_callback;
 	errcallback.arg = (void *) &errarg;
@@ -406,7 +414,7 @@ slot_modify_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 	/* Call the "in" function for each replaced attribute */
 	for (i = 0; i < natts; i++)
 	{
-		Form_pg_attribute att = slot->tts_tupleDescriptor->attrs[i];
+		Form_pg_attribute att = TupleDescAttr(slot->tts_tupleDescriptor, i);
 		int			remoteattnum = rel->attrmap[i];
 
 		if (remoteattnum < 0)
@@ -420,7 +428,6 @@ slot_modify_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 			Oid			typinput;
 			Oid			typioparam;
 
-			errarg.local_attnum = i;
 			errarg.remote_attnum = remoteattnum;
 
 			getTypeInputInfo(att->atttypid, &typinput, &typioparam);
@@ -429,7 +436,6 @@ slot_modify_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 									 typioparam, att->atttypmod);
 			slot->tts_isnull[i] = false;
 
-			errarg.local_attnum = -1;
 			errarg.remote_attnum = -1;
 		}
 		else
@@ -442,6 +448,7 @@ slot_modify_cstrings(TupleTableSlot *slot, LogicalRepRelMapEntry *rel,
 	/* Pop the error context stack */
 	error_context_stack = errcallback.previous;
 
+	/* And finally, declare that "slot" contains a valid virtual tuple */
 	ExecStoreVirtualTuple(slot);
 }
 
@@ -474,7 +481,14 @@ apply_handle_commit(StringInfo s)
 
 	logicalrep_read_commit(s, &commit_data);
 
-	Assert(commit_data.commit_lsn == remote_final_lsn);
+	if (commit_data.commit_lsn != remote_final_lsn)
+		ereport(ERROR,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg_internal("incorrect commit LSN %X/%X in commit message (expected %X/%X)",
+								 (uint32) (commit_data.commit_lsn >> 32),
+								 (uint32) commit_data.commit_lsn,
+								 (uint32) (remote_final_lsn >> 32),
+								 (uint32) remote_final_lsn)));
 
 	/* The synchronization worker runs in single transaction. */
 	if (IsTransactionState() && !am_tablesync_worker())
@@ -545,8 +559,7 @@ apply_handle_relation(StringInfo s)
 /*
  * Handle TYPE message.
  *
- * Note we don't do local mapping here, that's done when the type is
- * actually used.
+ * This is now vestigial; we read the info and discard it.
  */
 static void
 apply_handle_type(StringInfo s)
@@ -554,7 +567,6 @@ apply_handle_type(StringInfo s)
 	LogicalRepTyp typ;
 
 	logicalrep_read_typ(s, &typ);
-	logicalrep_typmap_update(&typ);
 }
 
 /*
@@ -588,7 +600,7 @@ apply_handle_insert(StringInfo s)
 	TupleTableSlot *remoteslot;
 	MemoryContext oldctx;
 
-	ensure_transaction();
+	begin_replication_step();
 
 	relid = logicalrep_read_insert(s, &newtup);
 	rel = logicalrep_rel_open(relid, RowExclusiveLock);
@@ -599,13 +611,15 @@ apply_handle_insert(StringInfo s)
 		 * transaction so it's safe to unlock it.
 		 */
 		logicalrep_rel_close(rel, RowExclusiveLock);
+		end_replication_step();
 		return;
 	}
 
 	/* Initialize the executor state. */
 	estate = create_estate_for_relation(rel);
-	remoteslot = ExecInitExtraTupleSlot(estate);
-	ExecSetSlotDescriptor(remoteslot, RelationGetDescr(rel->localrel));
+	remoteslot = ExecInitExtraTupleSlot(estate,
+										RelationGetDescr(rel->localrel),
+										&TTSOpsVirtual);
 
 	/* Process and store remote tuple in the slot */
 	oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
@@ -613,7 +627,6 @@ apply_handle_insert(StringInfo s)
 	slot_fill_defaults(rel, estate, remoteslot);
 	MemoryContextSwitchTo(oldctx);
 
-	PushActiveSnapshot(GetTransactionSnapshot());
 	ExecOpenIndices(estate->es_result_relation_info, false);
 
 	/* Do the insert. */
@@ -621,17 +634,12 @@ apply_handle_insert(StringInfo s)
 
 	/* Cleanup. */
 	ExecCloseIndices(estate->es_result_relation_info);
-	PopActiveSnapshot();
 
-	/* Handle queued AFTER triggers. */
-	AfterTriggerEndQuery(estate);
-
-	ExecResetTupleTable(estate->es_tupleTable, false);
-	FreeExecutorState(estate);
+	finish_estate(estate);
 
 	logicalrep_rel_close(rel, NoLock);
 
-	CommandCounterIncrement();
+	end_replication_step();
 }
 
 /*
@@ -685,10 +693,11 @@ apply_handle_update(StringInfo s)
 	bool		has_oldtup;
 	TupleTableSlot *localslot;
 	TupleTableSlot *remoteslot;
+	RangeTblEntry *target_rte;
 	bool		found;
 	MemoryContext oldctx;
 
-	ensure_transaction();
+	begin_replication_step();
 
 	relid = logicalrep_read_update(s, &has_oldtup, &oldtup,
 								   &newtup);
@@ -700,6 +709,7 @@ apply_handle_update(StringInfo s)
 		 * transaction so it's safe to unlock it.
 		 */
 		logicalrep_rel_close(rel, RowExclusiveLock);
+		end_replication_step();
 		return;
 	}
 
@@ -708,13 +718,38 @@ apply_handle_update(StringInfo s)
 
 	/* Initialize the executor state. */
 	estate = create_estate_for_relation(rel);
-	remoteslot = ExecInitExtraTupleSlot(estate);
-	ExecSetSlotDescriptor(remoteslot, RelationGetDescr(rel->localrel));
-	localslot = ExecInitExtraTupleSlot(estate);
-	ExecSetSlotDescriptor(localslot, RelationGetDescr(rel->localrel));
+	remoteslot = ExecInitExtraTupleSlot(estate,
+										RelationGetDescr(rel->localrel),
+										&TTSOpsVirtual);
+	localslot = table_slot_create(rel->localrel,
+								  &estate->es_tupleTable);
 	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1);
 
-	PushActiveSnapshot(GetTransactionSnapshot());
+	/*
+	 * Populate updatedCols so that per-column triggers can fire.  This could
+	 * include more columns than were actually changed on the publisher
+	 * because the logical replication protocol doesn't contain that
+	 * information.  But it would for example exclude columns that only exist
+	 * on the subscriber, since we are not touching those.
+	 */
+	target_rte = list_nth(estate->es_range_table, 0);
+	for (int i = 0; i < remoteslot->tts_tupleDescriptor->natts; i++)
+	{
+		Form_pg_attribute att = TupleDescAttr(remoteslot->tts_tupleDescriptor, i);
+		int			remoteattnum = rel->attrmap[i];
+
+		if (!att->attisdropped && remoteattnum >= 0)
+		{
+			if (newtup.changed[remoteattnum])
+				target_rte->updatedCols =
+					bms_add_member(target_rte->updatedCols,
+								   i + 1 - FirstLowInvalidHeapAttributeNumber);
+		}
+	}
+
+	/* Also populate extraUpdatedCols, in case we have generated columns */
+	fill_extraUpdatedCols(target_rte, rel->localrel);
+
 	ExecOpenIndices(estate->es_result_relation_info, false);
 
 	/* Build the search tuple. */
@@ -750,8 +785,8 @@ apply_handle_update(StringInfo s)
 	{
 		/* Process and store remote tuple in the slot */
 		oldctx = MemoryContextSwitchTo(GetPerTupleMemoryContext(estate));
-		ExecStoreTuple(localslot->tts_tuple, remoteslot, InvalidBuffer, false);
-		slot_modify_cstrings(remoteslot, rel, newtup.values, newtup.changed);
+		slot_modify_cstrings(remoteslot, localslot, rel,
+							 newtup.values, newtup.changed);
 		MemoryContextSwitchTo(oldctx);
 
 		EvalPlanQualSetSlot(&epqstate, remoteslot);
@@ -773,19 +808,14 @@ apply_handle_update(StringInfo s)
 	}
 
 	/* Cleanup. */
-	ExecCloseIndices(estate->es_result_relation_info);
-	PopActiveSnapshot();
-
-	/* Handle queued AFTER triggers. */
-	AfterTriggerEndQuery(estate);
-
 	EvalPlanQualEnd(&epqstate);
-	ExecResetTupleTable(estate->es_tupleTable, false);
-	FreeExecutorState(estate);
+	ExecCloseIndices(estate->es_result_relation_info);
+
+	finish_estate(estate);
 
 	logicalrep_rel_close(rel, NoLock);
 
-	CommandCounterIncrement();
+	end_replication_step();
 }
 
 /*
@@ -807,7 +837,7 @@ apply_handle_delete(StringInfo s)
 	bool		found;
 	MemoryContext oldctx;
 
-	ensure_transaction();
+	begin_replication_step();
 
 	relid = logicalrep_read_delete(s, &oldtup);
 	rel = logicalrep_rel_open(relid, RowExclusiveLock);
@@ -818,6 +848,7 @@ apply_handle_delete(StringInfo s)
 		 * transaction so it's safe to unlock it.
 		 */
 		logicalrep_rel_close(rel, RowExclusiveLock);
+		end_replication_step();
 		return;
 	}
 
@@ -826,13 +857,13 @@ apply_handle_delete(StringInfo s)
 
 	/* Initialize the executor state. */
 	estate = create_estate_for_relation(rel);
-	remoteslot = ExecInitExtraTupleSlot(estate);
-	ExecSetSlotDescriptor(remoteslot, RelationGetDescr(rel->localrel));
-	localslot = ExecInitExtraTupleSlot(estate);
-	ExecSetSlotDescriptor(localslot, RelationGetDescr(rel->localrel));
+	remoteslot = ExecInitExtraTupleSlot(estate,
+										RelationGetDescr(rel->localrel),
+										&TTSOpsVirtual);
+	localslot = table_slot_create(rel->localrel,
+								  &estate->es_tupleTable);
 	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1);
 
-	PushActiveSnapshot(GetTransactionSnapshot());
 	ExecOpenIndices(estate->es_result_relation_info, false);
 
 	/* Find the tuple using the replica identity index. */
@@ -866,26 +897,83 @@ apply_handle_delete(StringInfo s)
 	else
 	{
 		/* The tuple to be deleted could not be found. */
-		ereport(DEBUG1,
-				(errmsg("logical replication could not find row for delete "
-						"in replication target relation \"%s\"",
-						RelationGetRelationName(rel->localrel))));
+		elog(DEBUG1,
+			 "logical replication could not find row for delete "
+			 "in replication target relation \"%s\"",
+			 RelationGetRelationName(rel->localrel));
 	}
 
 	/* Cleanup. */
-	ExecCloseIndices(estate->es_result_relation_info);
-	PopActiveSnapshot();
-
-	/* Handle queued AFTER triggers. */
-	AfterTriggerEndQuery(estate);
-
 	EvalPlanQualEnd(&epqstate);
-	ExecResetTupleTable(estate->es_tupleTable, false);
-	FreeExecutorState(estate);
+	ExecCloseIndices(estate->es_result_relation_info);
+
+	finish_estate(estate);
 
 	logicalrep_rel_close(rel, NoLock);
 
-	CommandCounterIncrement();
+	end_replication_step();
+}
+
+/*
+ * Handle TRUNCATE message.
+ *
+ * TODO: FDW support
+ */
+static void
+apply_handle_truncate(StringInfo s)
+{
+	bool		cascade = false;
+	bool		restart_seqs = false;
+	List	   *remote_relids = NIL;
+	List	   *remote_rels = NIL;
+	List	   *rels = NIL;
+	List	   *relids = NIL;
+	List	   *relids_logged = NIL;
+	ListCell   *lc;
+	LOCKMODE	lockmode = AccessExclusiveLock;
+
+	begin_replication_step();
+
+	remote_relids = logicalrep_read_truncate(s, &cascade, &restart_seqs);
+
+	foreach(lc, remote_relids)
+	{
+		LogicalRepRelId relid = lfirst_oid(lc);
+		LogicalRepRelMapEntry *rel;
+
+		rel = logicalrep_rel_open(relid, lockmode);
+		if (!should_apply_changes_for_rel(rel))
+		{
+			/*
+			 * The relation can't become interesting in the middle of the
+			 * transaction so it's safe to unlock it.
+			 */
+			logicalrep_rel_close(rel, lockmode);
+			continue;
+		}
+
+		remote_rels = lappend(remote_rels, rel);
+		rels = lappend(rels, rel->localrel);
+		relids = lappend_oid(relids, rel->localreloid);
+		if (RelationIsLogicallyLogged(rel->localrel))
+			relids_logged = lappend_oid(relids_logged, rel->localreloid);
+	}
+
+	/*
+	 * Even if we used CASCADE on the upstream master we explicitly default to
+	 * replaying changes without further cascading. This might be later
+	 * changeable with a user specified option.
+	 */
+	ExecuteTruncateGuts(rels, relids, relids_logged, DROP_RESTRICT, restart_seqs);
+
+	foreach(lc, remote_rels)
+	{
+		LogicalRepRelMapEntry *rel = lfirst(lc);
+
+		logicalrep_rel_close(rel, NoLock);
+	}
+
+	end_replication_step();
 }
 
 
@@ -918,6 +1006,10 @@ apply_dispatch(StringInfo s)
 			/* DELETE */
 		case 'D':
 			apply_handle_delete(s);
+			break;
+			/* TRUNCATE */
+		case 'T':
+			apply_handle_truncate(s);
 			break;
 			/* RELATION */
 		case 'R':
@@ -1033,6 +1125,9 @@ UpdateWorkerStats(XLogRecPtr last_lsn, TimestampTz send_time, bool reply)
 static void
 LogicalRepApplyLoop(XLogRecPtr last_received)
 {
+	TimestampTz last_recv_timestamp = GetCurrentTimestamp();
+	bool		ping_sent = false;
+
 	/*
 	 * Init the ApplyMessageContext which we clean up after each replication
 	 * protocol message.
@@ -1044,6 +1139,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 	/* mark as idle, before starting to loop */
 	pgstat_report_activity(STATE_IDLE, NULL);
 
+	/* This outer loop iterates once per wait. */
 	for (;;)
 	{
 		pgsocket	fd = PGINVALID_SOCKET;
@@ -1051,19 +1147,17 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		int			len;
 		char	   *buf = NULL;
 		bool		endofstream = false;
-		TimestampTz last_recv_timestamp = GetCurrentTimestamp();
-		bool		ping_sent = false;
 		long		wait_time;
 
 		CHECK_FOR_INTERRUPTS();
 
 		MemoryContextSwitchTo(ApplyMessageContext);
 
-		len = walrcv_receive(wrconn, &buf, &fd);
+		len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
 
 		if (len != 0)
 		{
-			/* Process the data */
+			/* Loop to process all available data (without blocking). */
 			for (;;)
 			{
 				CHECK_FOR_INTERRUPTS();
@@ -1139,7 +1233,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 					MemoryContextReset(ApplyMessageContext);
 				}
 
-				len = walrcv_receive(wrconn, &buf, &fd);
+				len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
 			}
 		}
 
@@ -1169,7 +1263,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		{
 			TimeLineID	tli;
 
-			walrcv_endstreaming(wrconn, &tli);
+			walrcv_endstreaming(LogRepWorkerWalRcvConn, &tli);
 			break;
 		}
 
@@ -1187,13 +1281,9 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 
 		rc = WaitLatchOrSocket(MyLatch,
 							   WL_SOCKET_READABLE | WL_LATCH_SET |
-							   WL_TIMEOUT | WL_POSTMASTER_DEATH,
+							   WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
 							   fd, wait_time,
 							   WAIT_EVENT_LOGICAL_APPLY_MAIN);
-
-		/* Emergency bailout if postmaster has died */
-		if (rc & WL_POSTMASTER_DEATH)
-			proc_exit(1);
 
 		if (rc & WL_LATCH_SET)
 		{
@@ -1236,10 +1326,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 					ereport(ERROR,
 							(errmsg("terminating logical replication worker due to timeout")));
 
-				/*
-				 * We didn't receive anything new, for half of receiver
-				 * replication timeout. Ping the server.
-				 */
+				/* Check to see if it's time for a ping. */
 				if (!ping_sent)
 				{
 					timeout = TimestampTzPlusMilliseconds(last_recv_timestamp,
@@ -1339,7 +1426,8 @@ send_feedback(XLogRecPtr recvpos, bool force, bool requestReply)
 		 (uint32) (flushpos >> 32), (uint32) flushpos
 		);
 
-	walrcv_send(wrconn, reply_message->data, reply_message->len);
+	walrcv_send(LogRepWorkerWalRcvConn,
+				reply_message->data, reply_message->len);
 
 	if (recvpos > last_recvpos)
 		last_recvpos = recvpos;
@@ -1527,6 +1615,11 @@ ApplyWorkerMain(Datum main_arg)
 	pqsignal(SIGTERM, die);
 	BackgroundWorkerUnblockSignals();
 
+	/*
+	 * We don't currently need any ResourceOwner in a walreceiver process, but
+	 * if we did, we could call CreateAuxProcessResourceOwner here.
+	 */
+
 	/* Initialise stats to a sanish value */
 	MyLogicalRepWorker->last_send_time = MyLogicalRepWorker->last_recv_time =
 		MyLogicalRepWorker->reply_time = GetCurrentTimestamp();
@@ -1534,17 +1627,20 @@ ApplyWorkerMain(Datum main_arg)
 	/* Load the libpq-specific functions */
 	load_file("libpqwalreceiver", false);
 
-	Assert(CurrentResourceOwner == NULL);
-	CurrentResourceOwner = ResourceOwnerCreate(NULL,
-											   "logical replication apply");
-
 	/* Run as replica session replication role. */
 	SetConfigOption("session_replication_role", "replica",
 					PGC_SUSET, PGC_S_OVERRIDE);
 
 	/* Connect to our database. */
 	BackgroundWorkerInitializeConnectionByOid(MyLogicalRepWorker->dbid,
-											  MyLogicalRepWorker->userid);
+											  MyLogicalRepWorker->userid,
+											  0);
+
+	/*
+	 * Set always-secure search path, so malicious users can't redirect user
+	 * code (e.g. pg_index.indexprs).
+	 */
+	SetConfigOption("search_path", "", PGC_SUSET, PGC_S_OVERRIDE);
 
 	/* Load the subscription into persistent memory context. */
 	ApplyContext = AllocSetContextCreate(TopMemoryContext,
@@ -1552,13 +1648,19 @@ ApplyWorkerMain(Datum main_arg)
 										 ALLOCSET_DEFAULT_SIZES);
 	StartTransactionCommand();
 	oldctx = MemoryContextSwitchTo(ApplyContext);
-	MySubscription = GetSubscription(MyLogicalRepWorker->subid, false);
+
+	MySubscription = GetSubscription(MyLogicalRepWorker->subid, true);
+	if (!MySubscription)
+	{
+		ereport(LOG,
+				(errmsg("logical replication apply worker for subscription %u will not "
+						"start because the subscription was removed during startup",
+						MyLogicalRepWorker->subid)));
+		proc_exit(0);
+	}
+
 	MySubscriptionValid = true;
 	MemoryContextSwitchTo(oldctx);
-
-	/* Setup synchronous commit according to the user's wishes */
-	SetConfigOption("synchronous_commit", MySubscription->synccommit,
-					PGC_BACKEND, PGC_S_OVERRIDE);
 
 	if (!MySubscription->enabled)
 	{
@@ -1569,6 +1671,10 @@ ApplyWorkerMain(Datum main_arg)
 
 		proc_exit(0);
 	}
+
+	/* Setup synchronous commit according to the user's wishes */
+	SetConfigOption("synchronous_commit", MySubscription->synccommit,
+					PGC_BACKEND, PGC_S_OVERRIDE);
 
 	/* Keep us informed about subscription changes. */
 	CacheRegisterSyscacheCallback(SUBSCRIPTIONOID,
@@ -1610,7 +1716,6 @@ ApplyWorkerMain(Datum main_arg)
 		RepOriginId originid;
 		TimeLineID	startpointTLI;
 		char	   *err;
-		int			server_version;
 
 		myslotname = MySubscription->slotname;
 
@@ -1634,9 +1739,9 @@ ApplyWorkerMain(Datum main_arg)
 		origin_startpos = replorigin_session_get_progress(false);
 		CommitTransactionCommand();
 
-		wrconn = walrcv_connect(MySubscription->conninfo, true, MySubscription->name,
-								&err);
-		if (wrconn == NULL)
+		LogRepWorkerWalRcvConn = walrcv_connect(MySubscription->conninfo, true,
+												MySubscription->name, &err);
+		if (LogRepWorkerWalRcvConn == NULL)
 			ereport(ERROR,
 					(errmsg("could not connect to the publisher: %s", err)));
 
@@ -1644,9 +1749,7 @@ ApplyWorkerMain(Datum main_arg)
 		 * We don't really use the output identify_system for anything but it
 		 * does some initializations on the upstream so let's still call it.
 		 */
-		(void) walrcv_identify_system(wrconn, &startpointTLI,
-									  &server_version);
-
+		(void) walrcv_identify_system(LogRepWorkerWalRcvConn, &startpointTLI);
 	}
 
 	/*
@@ -1665,7 +1768,7 @@ ApplyWorkerMain(Datum main_arg)
 	options.proto.logical.publication_names = MySubscription->publications;
 
 	/* Start normal logical streaming replication. */
-	walrcv_startstreaming(wrconn, &options);
+	walrcv_startstreaming(LogRepWorkerWalRcvConn, &options);
 
 	/* Run the main loop. */
 	LogicalRepApplyLoop(origin_startpos);

@@ -3,7 +3,7 @@
  * pg_operator.c
  *	  routines to support manipulation of the pg_operator relation
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,16 +17,16 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
+#include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_operator.h"
-#include "catalog/pg_operator_fn.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
@@ -38,27 +38,27 @@
 #include "utils/syscache.h"
 
 
-static Oid OperatorGet(const char *operatorName,
-			Oid operatorNamespace,
-			Oid leftObjectId,
-			Oid rightObjectId,
-			bool *defined);
+static Oid	OperatorGet(const char *operatorName,
+						Oid operatorNamespace,
+						Oid leftObjectId,
+						Oid rightObjectId,
+						bool *defined);
 
-static Oid OperatorLookup(List *operatorName,
-			   Oid leftObjectId,
-			   Oid rightObjectId,
-			   bool *defined);
+static Oid	OperatorLookup(List *operatorName,
+						   Oid leftObjectId,
+						   Oid rightObjectId,
+						   bool *defined);
 
-static Oid OperatorShellMake(const char *operatorName,
-				  Oid operatorNamespace,
-				  Oid leftTypeId,
-				  Oid rightTypeId);
+static Oid	OperatorShellMake(const char *operatorName,
+							  Oid operatorNamespace,
+							  Oid leftTypeId,
+							  Oid rightTypeId);
 
-static Oid get_other_operator(List *otherOp,
-				   Oid otherLeftTypeId, Oid otherRightTypeId,
-				   const char *operatorName, Oid operatorNamespace,
-				   Oid leftTypeId, Oid rightTypeId,
-				   bool isCommutator);
+static Oid	get_other_operator(List *otherOp,
+							   Oid otherLeftTypeId, Oid otherRightTypeId,
+							   const char *operatorName, Oid operatorNamespace,
+							   Oid leftTypeId, Oid rightTypeId,
+							   bool isCommutator);
 
 
 /*
@@ -124,7 +124,7 @@ validOperatorName(const char *name)
  *		finds an operator given an exact specification (name, namespace,
  *		left and right type IDs).
  *
- *		*defined is set TRUE if defined (not a shell)
+ *		*defined is set true if defined (not a shell)
  */
 static Oid
 OperatorGet(const char *operatorName,
@@ -143,10 +143,10 @@ OperatorGet(const char *operatorName,
 						  ObjectIdGetDatum(operatorNamespace));
 	if (HeapTupleIsValid(tup))
 	{
-		RegProcedure oprcode = ((Form_pg_operator) GETSTRUCT(tup))->oprcode;
+		Form_pg_operator oprform = (Form_pg_operator) GETSTRUCT(tup);
 
-		operatorObjectId = HeapTupleGetOid(tup);
-		*defined = RegProcedureIsValid(oprcode);
+		operatorObjectId = oprform->oid;
+		*defined = RegProcedureIsValid(oprform->oprcode);
 		ReleaseSysCache(tup);
 	}
 	else
@@ -164,7 +164,7 @@ OperatorGet(const char *operatorName,
  *		looks up an operator given a possibly-qualified name and
  *		left and right type IDs.
  *
- *		*defined is set TRUE if defined (not a shell)
+ *		*defined is set true if defined (not a shell)
  */
 static Oid
 OperatorLookup(List *operatorName,
@@ -220,6 +220,12 @@ OperatorShellMake(const char *operatorName,
 						operatorName)));
 
 	/*
+	 * open pg_operator
+	 */
+	pg_operator_desc = table_open(OperatorRelationId, RowExclusiveLock);
+	tupDesc = pg_operator_desc->rd_att;
+
+	/*
 	 * initialize our *nulls and *values arrays
 	 */
 	for (i = 0; i < Natts_pg_operator; ++i)
@@ -232,6 +238,9 @@ OperatorShellMake(const char *operatorName,
 	 * initialize values[] with the operator name and input data types. Note
 	 * that oprcode is set to InvalidOid, indicating it's a shell.
 	 */
+	operatorObjectId = GetNewOidWithIndex(pg_operator_desc, OperatorOidIndexId,
+										  Anum_pg_operator_oid);
+	values[Anum_pg_operator_oid - 1] = ObjectIdGetDatum(operatorObjectId);
 	namestrcpy(&oname, operatorName);
 	values[Anum_pg_operator_oprname - 1] = NameGetDatum(&oname);
 	values[Anum_pg_operator_oprnamespace - 1] = ObjectIdGetDatum(operatorNamespace);
@@ -249,12 +258,6 @@ OperatorShellMake(const char *operatorName,
 	values[Anum_pg_operator_oprjoin - 1] = ObjectIdGetDatum(InvalidOid);
 
 	/*
-	 * open pg_operator
-	 */
-	pg_operator_desc = heap_open(OperatorRelationId, RowExclusiveLock);
-	tupDesc = pg_operator_desc->rd_att;
-
-	/*
 	 * create a new operator tuple
 	 */
 	tup = heap_form_tuple(tupDesc, values, nulls);
@@ -262,7 +265,7 @@ OperatorShellMake(const char *operatorName,
 	/*
 	 * insert our "shell" operator tuple
 	 */
-	operatorObjectId = CatalogTupleInsert(pg_operator_desc, tup);
+	CatalogTupleInsert(pg_operator_desc, tup);
 
 	/* Add dependencies for the entry */
 	makeOperatorDependencies(tup, false);
@@ -280,7 +283,7 @@ OperatorShellMake(const char *operatorName,
 	/*
 	 * close the operator relation and return the oid.
 	 */
-	heap_close(pg_operator_desc, RowExclusiveLock);
+	table_close(pg_operator_desc, RowExclusiveLock);
 
 	return operatorObjectId;
 }
@@ -425,7 +428,7 @@ OperatorCreate(const char *operatorName,
 	 */
 	if (OidIsValid(operatorObjectId) &&
 		!pg_oper_ownercheck(operatorObjectId, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_OPER,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_OPERATOR,
 					   operatorName);
 
 	/*
@@ -445,7 +448,7 @@ OperatorCreate(const char *operatorName,
 		/* Permission check: must own other operator */
 		if (OidIsValid(commutatorId) &&
 			!pg_oper_ownercheck(commutatorId, GetUserId()))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_OPER,
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_OPERATOR,
 						   NameListToString(commutatorName));
 
 		/*
@@ -470,7 +473,7 @@ OperatorCreate(const char *operatorName,
 		/* Permission check: must own other operator */
 		if (OidIsValid(negatorId) &&
 			!pg_oper_ownercheck(negatorId, GetUserId()))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_OPER,
+			aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_OPERATOR,
 						   NameListToString(negatorName));
 	}
 	else
@@ -503,7 +506,7 @@ OperatorCreate(const char *operatorName,
 	values[Anum_pg_operator_oprrest - 1] = ObjectIdGetDatum(restrictionId);
 	values[Anum_pg_operator_oprjoin - 1] = ObjectIdGetDatum(joinId);
 
-	pg_operator_desc = heap_open(OperatorRelationId, RowExclusiveLock);
+	pg_operator_desc = table_open(OperatorRelationId, RowExclusiveLock);
 
 	/*
 	 * If we are replacing an operator shell, update; else insert
@@ -518,6 +521,7 @@ OperatorCreate(const char *operatorName,
 			elog(ERROR, "cache lookup failed for operator %u",
 				 operatorObjectId);
 
+		replaces[Anum_pg_operator_oid - 1] = false;
 		tup = heap_modify_tuple(tup,
 								RelationGetDescr(pg_operator_desc),
 								values,
@@ -530,10 +534,15 @@ OperatorCreate(const char *operatorName,
 	{
 		isUpdate = false;
 
+		operatorObjectId = GetNewOidWithIndex(pg_operator_desc,
+											  OperatorOidIndexId,
+											  Anum_pg_operator_oid);
+		values[Anum_pg_operator_oid - 1] = ObjectIdGetDatum(operatorObjectId);
+
 		tup = heap_form_tuple(RelationGetDescr(pg_operator_desc),
 							  values, nulls);
 
-		operatorObjectId = CatalogTupleInsert(pg_operator_desc, tup);
+		CatalogTupleInsert(pg_operator_desc, tup);
 	}
 
 	/* Add dependencies for the entry */
@@ -542,7 +551,7 @@ OperatorCreate(const char *operatorName,
 	/* Post creation hook for new operator */
 	InvokeObjectPostCreateHook(OperatorRelationId, operatorObjectId, 0);
 
-	heap_close(pg_operator_desc, RowExclusiveLock);
+	table_close(pg_operator_desc, RowExclusiveLock);
 
 	/*
 	 * If a commutator and/or negator link is provided, update the other
@@ -618,7 +627,7 @@ get_other_operator(List *otherOp, Oid otherLeftTypeId, Oid otherRightTypeId,
 	aclresult = pg_namespace_aclcheck(otherNamespace, GetUserId(),
 									  ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(otherNamespace));
 
 	other_oid = OperatorShellMake(otherName,
@@ -657,7 +666,7 @@ OperatorUpd(Oid baseId, Oid commId, Oid negId, bool isDelete)
 		CommandCounterIncrement();
 
 	/* Open the relation. */
-	pg_operator_desc = heap_open(OperatorRelationId, RowExclusiveLock);
+	pg_operator_desc = table_open(OperatorRelationId, RowExclusiveLock);
 
 	/* Get a writable copy of the commutator's tuple. */
 	if (OidIsValid(commId))
@@ -749,7 +758,7 @@ OperatorUpd(Oid baseId, Oid commId, Oid negId, bool isDelete)
 	}
 
 	/* Close relation and release catalog lock. */
-	heap_close(pg_operator_desc, RowExclusiveLock);
+	table_close(pg_operator_desc, RowExclusiveLock);
 }
 
 /*
@@ -768,7 +777,7 @@ makeOperatorDependencies(HeapTuple tuple, bool isUpdate)
 				referenced;
 
 	myself.classId = OperatorRelationId;
-	myself.objectId = HeapTupleGetOid(tuple);
+	myself.objectId = oper->oid;
 	myself.objectSubId = 0;
 
 	/*
@@ -854,7 +863,7 @@ makeOperatorDependencies(HeapTuple tuple, bool isUpdate)
 	}
 
 	/* Dependency on owner */
-	recordDependencyOnOwner(OperatorRelationId, HeapTupleGetOid(tuple),
+	recordDependencyOnOwner(OperatorRelationId, oper->oid,
 							oper->oprowner);
 
 	/* Dependency on extension */

@@ -26,13 +26,13 @@ create unique index pkeys_i on pkeys (pkey1, pkey2);
 create trigger check_fkeys_pkey_exist
 	before insert or update on fkeys
 	for each row
-	execute procedure
+	execute function
 	check_primary_key ('fkey1', 'fkey2', 'pkeys', 'pkey1', 'pkey2');
 
 create trigger check_fkeys_pkey2_exist
 	before insert or update on fkeys
 	for each row
-	execute procedure check_primary_key ('fkey3', 'fkeys2', 'pkey23');
+	execute function check_primary_key ('fkey3', 'fkeys2', 'pkey23');
 
 --
 -- For fkeys2:
@@ -92,44 +92,16 @@ delete from pkeys where pkey1 = 40 and pkey2 = '4';
 update pkeys set pkey1 = 7, pkey2 = '70' where pkey1 = 50 and pkey2 = '5';
 update pkeys set pkey1 = 7, pkey2 = '70' where pkey1 = 10 and pkey2 = '1';
 
+SELECT trigger_name, event_manipulation, event_object_schema, event_object_table,
+       action_order, action_condition, action_orientation, action_timing,
+       action_reference_old_table, action_reference_new_table
+  FROM information_schema.triggers
+  WHERE event_object_table in ('pkeys', 'fkeys', 'fkeys2')
+  ORDER BY trigger_name COLLATE "C", 2;
+
 DROP TABLE pkeys;
 DROP TABLE fkeys;
 DROP TABLE fkeys2;
-
--- -- I've disabled the funny_dup17 test because the new semantics
--- -- of AFTER ROW triggers, which get now fired at the end of a
--- -- query always, cause funny_dup17 to enter an endless loop.
--- --
--- --      Jan
---
--- create table dup17 (x int4);
---
--- create trigger dup17_before
--- 	before insert on dup17
--- 	for each row
--- 	execute procedure
--- 	funny_dup17 ()
--- ;
---
--- insert into dup17 values (17);
--- select count(*) from dup17;
--- insert into dup17 values (17);
--- select count(*) from dup17;
---
--- drop trigger dup17_before on dup17;
---
--- create trigger dup17_after
--- 	after insert on dup17
--- 	for each row
--- 	execute procedure
--- 	funny_dup17 ()
--- ;
--- insert into dup17 values (13);
--- select count(*) from dup17 where x = 13;
--- insert into dup17 values (13);
--- select count(*) from dup17 where x = 13;
---
--- DROP TABLE dup17;
 
 -- Check behavior when trigger returns unmodified trigtuple
 create table trigtest (f1 int, f2 text);
@@ -143,6 +115,68 @@ select * from trigtest;
 update trigtest set f2 = f2 || 'bar';
 select * from trigtest;
 delete from trigtest;
+select * from trigtest;
+
+-- Also check what happens when such a trigger runs before or after others
+create function f1_times_10() returns trigger as
+$$ begin new.f1 := new.f1 * 10; return new; end $$ language plpgsql;
+
+create trigger trigger_alpha
+	before insert or update on trigtest
+	for each row execute procedure f1_times_10();
+
+insert into trigtest values(1, 'foo');
+select * from trigtest;
+update trigtest set f2 = f2 || 'bar';
+select * from trigtest;
+delete from trigtest;
+select * from trigtest;
+
+create trigger trigger_zed
+	before insert or update on trigtest
+	for each row execute procedure f1_times_10();
+
+insert into trigtest values(1, 'foo');
+select * from trigtest;
+update trigtest set f2 = f2 || 'bar';
+select * from trigtest;
+delete from trigtest;
+select * from trigtest;
+
+drop trigger trigger_alpha on trigtest;
+
+insert into trigtest values(1, 'foo');
+select * from trigtest;
+update trigtest set f2 = f2 || 'bar';
+select * from trigtest;
+delete from trigtest;
+select * from trigtest;
+
+drop table trigtest;
+
+-- Check behavior with an implicit column default, too (bug #16644)
+create table trigtest (
+  a integer,
+  b bool default true not null,
+  c text default 'xyzzy' not null);
+
+create trigger trigger_return_old
+	before insert or delete or update on trigtest
+	for each row execute procedure trigger_return_old();
+
+insert into trigtest values(1);
+select * from trigtest;
+
+alter table trigtest add column d integer default 42 not null;
+
+select * from trigtest;
+update trigtest set a = 2 where a = 1 returning *;
+select * from trigtest;
+
+alter table trigtest drop column b;
+
+select * from trigtest;
+update trigtest set a = 2 where a = 1 returning *;
 select * from trigtest;
 
 drop table trigtest;
@@ -295,6 +329,12 @@ CREATE TRIGGER insert_when BEFORE INSERT ON main_table
 FOR EACH STATEMENT WHEN (true) EXECUTE PROCEDURE trigger_func('insert_when');
 CREATE TRIGGER delete_when AFTER DELETE ON main_table
 FOR EACH STATEMENT WHEN (true) EXECUTE PROCEDURE trigger_func('delete_when');
+SELECT trigger_name, event_manipulation, event_object_schema, event_object_table,
+       action_order, action_condition, action_orientation, action_timing,
+       action_reference_old_table, action_reference_new_table
+  FROM information_schema.triggers
+  WHERE event_object_table IN ('main_table')
+  ORDER BY trigger_name COLLATE "C", 2;
 INSERT INTO main_table (a) VALUES (123), (456);
 COPY main_table FROM stdin;
 123	999
@@ -306,12 +346,28 @@ SELECT * FROM main_table ORDER BY a, b;
 SELECT pg_get_triggerdef(oid, true) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'modified_a';
 SELECT pg_get_triggerdef(oid, false) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'modified_a';
 SELECT pg_get_triggerdef(oid, true) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'modified_any';
-DROP TRIGGER modified_a ON main_table;
+
+-- Test RENAME TRIGGER
+ALTER TRIGGER modified_a ON main_table RENAME TO modified_modified_a;
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'modified_a';
+SELECT count(*) FROM pg_trigger WHERE tgrelid = 'main_table'::regclass AND tgname = 'modified_modified_a';
+
+DROP TRIGGER modified_modified_a ON main_table;
 DROP TRIGGER modified_any ON main_table;
 DROP TRIGGER insert_a ON main_table;
 DROP TRIGGER delete_a ON main_table;
 DROP TRIGGER insert_when ON main_table;
 DROP TRIGGER delete_when ON main_table;
+
+-- Test WHEN condition accessing system columns.
+create table table_with_oids(a int);
+insert into table_with_oids values (1);
+create trigger oid_unchanged_trig after update on table_with_oids
+	for each row
+	when (new.tableoid = old.tableoid AND new.tableoid <> 0)
+	execute procedure trigger_func('after_upd_oid_unchanged');
+update table_with_oids set a = a + 1;
+drop table table_with_oids;
 
 -- Test column-level triggers
 DROP TRIGGER after_upd_row_trig ON main_table;
@@ -417,6 +473,11 @@ alter table trigtest disable trigger user;
 insert into trigtest default values;
 alter table trigtest enable trigger trigtest_a_stmt_tg;
 insert into trigtest default values;
+set session_replication_role = replica;
+insert into trigtest default values;  -- does not trigger
+alter table trigtest enable always trigger trigtest_a_stmt_tg;
+insert into trigtest default values;  -- now it does
+reset session_replication_role;
 insert into trigtest2 values(1);
 insert into trigtest2 values(2);
 delete from trigtest where i=2;
@@ -589,21 +650,10 @@ CREATE TABLE min_updates_test (
 	f2 int,
 	f3 int);
 
-CREATE TABLE min_updates_test_oids (
-	f1	text,
-	f2 int,
-	f3 int) WITH OIDS;
-
 INSERT INTO min_updates_test VALUES ('a',1,2),('b','2',null);
-
-INSERT INTO min_updates_test_oids VALUES ('a',1,2),('b','2',null);
 
 CREATE TRIGGER z_min_update
 BEFORE UPDATE ON min_updates_test
-FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
-
-CREATE TRIGGER z_min_update
-BEFORE UPDATE ON min_updates_test_oids
 FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
 
 \set QUIET false
@@ -614,21 +664,11 @@ UPDATE min_updates_test SET f2 = f2 + 1;
 
 UPDATE min_updates_test SET f3 = 2 WHERE f3 is null;
 
-UPDATE min_updates_test_oids SET f1 = f1;
-
-UPDATE min_updates_test_oids SET f2 = f2 + 1;
-
-UPDATE min_updates_test_oids SET f3 = 2 WHERE f3 is null;
-
 \set QUIET true
 
 SELECT * FROM min_updates_test;
 
-SELECT * FROM min_updates_test_oids;
-
 DROP TABLE min_updates_test;
-
-DROP TABLE min_updates_test_oids;
 
 --
 -- Test triggers on views
@@ -1200,6 +1240,33 @@ drop function self_ref_trigger_ins_func();
 drop function self_ref_trigger_del_func();
 
 --
+-- Check that statement triggers work correctly even with all children excluded
+--
+
+create table stmt_trig_on_empty_upd (a int);
+create table stmt_trig_on_empty_upd1 () inherits (stmt_trig_on_empty_upd);
+create function update_stmt_notice() returns trigger as $$
+begin
+	raise notice 'updating %', TG_TABLE_NAME;
+	return null;
+end;
+$$ language plpgsql;
+create trigger before_stmt_trigger
+	before update on stmt_trig_on_empty_upd
+	execute procedure update_stmt_notice();
+create trigger before_stmt_trigger
+	before update on stmt_trig_on_empty_upd1
+	execute procedure update_stmt_notice();
+
+-- inherited no-op update
+update stmt_trig_on_empty_upd set a = a where false returning a+1 as aa;
+-- simple no-op update
+update stmt_trig_on_empty_upd1 set a = a where false returning a+1 as aa;
+
+drop table stmt_trig_on_empty_upd cascade;
+drop function update_stmt_notice();
+
+--
 -- Check that index creation (or DDL in general) is prohibited in a trigger
 --
 
@@ -1303,7 +1370,71 @@ drop view my_view;
 drop table my_table;
 
 --
--- Verify that per-statement triggers are fired for partitioned tables
+-- Verify cases that are unsupported with partitioned tables
+--
+create table parted_trig (a int) partition by list (a);
+create function trigger_nothing() returns trigger
+  language plpgsql as $$ begin end; $$;
+create trigger failed before insert or update or delete on parted_trig
+  for each row execute procedure trigger_nothing();
+create trigger failed instead of update on parted_trig
+  for each row execute procedure trigger_nothing();
+create trigger failed after update on parted_trig
+  referencing old table as old_table
+  for each row execute procedure trigger_nothing();
+drop table parted_trig;
+
+--
+-- Verify trigger creation for partitioned tables, and drop behavior
+--
+create table trigpart (a int, b int) partition by range (a);
+create table trigpart1 partition of trigpart for values from (0) to (1000);
+create trigger trg1 after insert on trigpart for each row execute procedure trigger_nothing();
+create table trigpart2 partition of trigpart for values from (1000) to (2000);
+create table trigpart3 (like trigpart);
+alter table trigpart attach partition trigpart3 for values from (2000) to (3000);
+create table trigpart4 partition of trigpart for values from (3000) to (4000) partition by range (a);
+create table trigpart41 partition of trigpart4 for values from (3000) to (3500);
+create table trigpart42 (like trigpart);
+alter table trigpart4 attach partition trigpart42 for values from (3500) to (4000);
+select tgrelid::regclass, tgname, tgfoid::regproc from pg_trigger
+  where tgrelid::regclass::text like 'trigpart%' order by tgrelid::regclass::text;
+drop trigger trg1 on trigpart1;	-- fail
+drop trigger trg1 on trigpart2;	-- fail
+drop trigger trg1 on trigpart3;	-- fail
+drop table trigpart2;			-- ok, trigger should be gone in that partition
+select tgrelid::regclass, tgname, tgfoid::regproc from pg_trigger
+  where tgrelid::regclass::text like 'trigpart%' order by tgrelid::regclass::text;
+drop trigger trg1 on trigpart;		-- ok, all gone
+select tgrelid::regclass, tgname, tgfoid::regproc from pg_trigger
+  where tgrelid::regclass::text like 'trigpart%' order by tgrelid::regclass::text;
+
+-- check detach behavior
+create trigger trg1 after insert on trigpart for each row execute procedure trigger_nothing();
+\d trigpart3
+alter table trigpart detach partition trigpart3;
+drop trigger trg1 on trigpart3; -- fail due to "does not exist"
+alter table trigpart detach partition trigpart4;
+drop trigger trg1 on trigpart41; -- fail due to "does not exist"
+drop table trigpart4;
+alter table trigpart attach partition trigpart3 for values from (2000) to (3000);
+alter table trigpart detach partition trigpart3;
+alter table trigpart attach partition trigpart3 for values from (2000) to (3000);
+drop table trigpart3;
+
+select tgrelid::regclass::text, tgname, tgfoid::regproc, tgenabled, tgisinternal from pg_trigger
+  where tgname ~ '^trg1' order by 1;
+create table trigpart3 (like trigpart);
+create trigger trg1 after insert on trigpart3 for each row execute procedure trigger_nothing();
+\d trigpart3
+alter table trigpart attach partition trigpart3 FOR VALUES FROM (2000) to (3000); -- fail
+drop table trigpart3;
+
+drop table trigpart;
+drop function trigger_nothing();
+
+--
+-- Verify that triggers are fired for partitioned tables
 --
 create table parted_stmt_trig (a int) partition by list (a);
 create table parted_stmt_trig1 partition of parted_stmt_trig for values in (1);
@@ -1315,7 +1446,7 @@ create table parted2_stmt_trig2 partition of parted2_stmt_trig for values in (2)
 
 create or replace function trigger_notice() returns trigger as $$
   begin
-    raise notice 'trigger on % % % for %', TG_TABLE_NAME, TG_WHEN, TG_OP, TG_LEVEL;
+    raise notice 'trigger % on % % % for %', TG_NAME, TG_TABLE_NAME, TG_WHEN, TG_OP, TG_LEVEL;
     if TG_LEVEL = 'ROW' then
        return NEW;
     end if;
@@ -1323,7 +1454,7 @@ create or replace function trigger_notice() returns trigger as $$
   end;
   $$ language plpgsql;
 
--- insert/update/delete statment-level triggers on the parent
+-- insert/update/delete statement-level triggers on the parent
 create trigger trig_ins_before before insert on parted_stmt_trig
   for each statement execute procedure trigger_notice();
 create trigger trig_ins_after after insert on parted_stmt_trig
@@ -1337,28 +1468,40 @@ create trigger trig_del_before before delete on parted_stmt_trig
 create trigger trig_del_after after delete on parted_stmt_trig
   for each statement execute procedure trigger_notice();
 
+-- insert/update/delete row-level triggers on the parent
+create trigger trig_ins_after_parent after insert on parted_stmt_trig
+  for each row execute procedure trigger_notice();
+create trigger trig_upd_after_parent after update on parted_stmt_trig
+  for each row execute procedure trigger_notice();
+create trigger trig_del_after_parent after delete on parted_stmt_trig
+  for each row execute procedure trigger_notice();
+
 -- insert/update/delete row-level triggers on the first partition
-create trigger trig_ins_before before insert on parted_stmt_trig1
+create trigger trig_ins_before_child before insert on parted_stmt_trig1
   for each row execute procedure trigger_notice();
-create trigger trig_ins_after after insert on parted_stmt_trig1
+create trigger trig_ins_after_child after insert on parted_stmt_trig1
   for each row execute procedure trigger_notice();
-create trigger trig_upd_before before update on parted_stmt_trig1
+create trigger trig_upd_before_child before update on parted_stmt_trig1
   for each row execute procedure trigger_notice();
-create trigger trig_upd_after after update on parted_stmt_trig1
+create trigger trig_upd_after_child after update on parted_stmt_trig1
+  for each row execute procedure trigger_notice();
+create trigger trig_del_before_child before delete on parted_stmt_trig1
+  for each row execute procedure trigger_notice();
+create trigger trig_del_after_child after delete on parted_stmt_trig1
   for each row execute procedure trigger_notice();
 
 -- insert/update/delete statement-level triggers on the parent
-create trigger trig_ins_before before insert on parted2_stmt_trig
+create trigger trig_ins_before_3 before insert on parted2_stmt_trig
   for each statement execute procedure trigger_notice();
-create trigger trig_ins_after after insert on parted2_stmt_trig
+create trigger trig_ins_after_3 after insert on parted2_stmt_trig
   for each statement execute procedure trigger_notice();
-create trigger trig_upd_before before update on parted2_stmt_trig
+create trigger trig_upd_before_3 before update on parted2_stmt_trig
   for each statement execute procedure trigger_notice();
-create trigger trig_upd_after after update on parted2_stmt_trig
+create trigger trig_upd_after_3 after update on parted2_stmt_trig
   for each statement execute procedure trigger_notice();
-create trigger trig_del_before before delete on parted2_stmt_trig
+create trigger trig_del_before_3 before delete on parted2_stmt_trig
   for each statement execute procedure trigger_notice();
-create trigger trig_del_after after delete on parted2_stmt_trig
+create trigger trig_del_after_3 after delete on parted2_stmt_trig
   for each statement execute procedure trigger_notice();
 
 with ins (a) as (
@@ -1382,7 +1525,272 @@ copy parted_stmt_trig1(a) from stdin;
 1
 \.
 
+-- Disabling a trigger in the parent table should disable children triggers too
+alter table parted_stmt_trig disable trigger trig_ins_after_parent;
+insert into parted_stmt_trig values (1);
+alter table parted_stmt_trig enable trigger trig_ins_after_parent;
+insert into parted_stmt_trig values (1);
+
 drop table parted_stmt_trig, parted2_stmt_trig;
+
+-- Verify that triggers fire in alphabetical order
+create table parted_trig (a int) partition by range (a);
+create table parted_trig_1 partition of parted_trig for values from (0) to (1000)
+   partition by range (a);
+create table parted_trig_1_1 partition of parted_trig_1 for values from (0) to (100);
+create table parted_trig_2 partition of parted_trig for values from (1000) to (2000);
+create trigger zzz after insert on parted_trig for each row execute procedure trigger_notice();
+create trigger mmm after insert on parted_trig_1_1 for each row execute procedure trigger_notice();
+create trigger aaa after insert on parted_trig_1 for each row execute procedure trigger_notice();
+create trigger bbb after insert on parted_trig for each row execute procedure trigger_notice();
+create trigger qqq after insert on parted_trig_1_1 for each row execute procedure trigger_notice();
+insert into parted_trig values (50), (1500);
+drop table parted_trig;
+
+-- Verify propagation of trigger arguments to partitions
+create table parted_trig (a int) partition by list (a);
+create table parted_trig1 partition of parted_trig for values in (1);
+create or replace function trigger_notice() returns trigger as $$
+  declare
+    arg1 text = TG_ARGV[0];
+    arg2 integer = TG_ARGV[1];
+  begin
+    raise notice 'trigger % on % % % for % args % %',
+		TG_NAME, TG_TABLE_NAME, TG_WHEN, TG_OP, TG_LEVEL, arg1, arg2;
+    return null;
+  end;
+  $$ language plpgsql;
+create trigger aaa after insert on parted_trig
+   for each row execute procedure trigger_notice('quirky', 1);
+
+-- Verify propagation of trigger arguments to partitions attached after creating trigger
+create table parted_trig2 partition of parted_trig for values in (2);
+create table parted_trig3 (like parted_trig);
+alter table parted_trig attach partition parted_trig3 for values in (3);
+insert into parted_trig values (1), (2), (3);
+drop table parted_trig;
+
+-- test irregular partitions (i.e., different column definitions),
+-- including that the WHEN clause works
+create function bark(text) returns bool language plpgsql immutable
+  as $$ begin raise notice '% <- woof!', $1; return true; end; $$;
+create or replace function trigger_notice_ab() returns trigger as $$
+  begin
+    raise notice 'trigger % on % % % for %: (a,b)=(%,%)',
+		TG_NAME, TG_TABLE_NAME, TG_WHEN, TG_OP, TG_LEVEL,
+		NEW.a, NEW.b;
+    if TG_LEVEL = 'ROW' then
+       return NEW;
+    end if;
+    return null;
+  end;
+  $$ language plpgsql;
+create table parted_irreg_ancestor (fd text, b text, fd2 int, fd3 int, a int)
+  partition by range (b);
+alter table parted_irreg_ancestor drop column fd,
+  drop column fd2, drop column fd3;
+create table parted_irreg (fd int, a int, fd2 int, b text)
+  partition by range (b);
+alter table parted_irreg drop column fd, drop column fd2;
+alter table parted_irreg_ancestor attach partition parted_irreg
+  for values from ('aaaa') to ('zzzz');
+create table parted1_irreg (b text, fd int, a int);
+alter table parted1_irreg drop column fd;
+alter table parted_irreg attach partition parted1_irreg
+  for values from ('aaaa') to ('bbbb');
+create trigger parted_trig after insert on parted_irreg
+  for each row execute procedure trigger_notice_ab();
+create trigger parted_trig_odd after insert on parted_irreg for each row
+  when (bark(new.b) AND new.a % 2 = 1) execute procedure trigger_notice_ab();
+-- we should hear barking for every insert, but parted_trig_odd only emits
+-- noise for odd values of a. parted_trig does it for all inserts.
+insert into parted_irreg values (1, 'aardvark'), (2, 'aanimals');
+insert into parted1_irreg values ('aardwolf', 2);
+insert into parted_irreg_ancestor values ('aasvogel', 3);
+drop table parted_irreg_ancestor;
+
+--
+-- Constraint triggers and partitioned tables
+create table parted_constr_ancestor (a int, b text)
+  partition by range (b);
+create table parted_constr (a int, b text)
+  partition by range (b);
+alter table parted_constr_ancestor attach partition parted_constr
+  for values from ('aaaa') to ('zzzz');
+create table parted1_constr (a int, b text);
+alter table parted_constr attach partition parted1_constr
+  for values from ('aaaa') to ('bbbb');
+create constraint trigger parted_trig after insert on parted_constr_ancestor
+  deferrable
+  for each row execute procedure trigger_notice_ab();
+create constraint trigger parted_trig_two after insert on parted_constr
+  deferrable initially deferred
+  for each row when (bark(new.b) AND new.a % 2 = 1)
+  execute procedure trigger_notice_ab();
+
+-- The immediate constraint is fired immediately; the WHEN clause of the
+-- deferred constraint is also called immediately.  The deferred constraint
+-- is fired at commit time.
+begin;
+insert into parted_constr values (1, 'aardvark');
+insert into parted1_constr values (2, 'aardwolf');
+insert into parted_constr_ancestor values (3, 'aasvogel');
+commit;
+
+-- The WHEN clause is immediate, and both constraint triggers are fired at
+-- commit time.
+begin;
+set constraints parted_trig deferred;
+insert into parted_constr values (1, 'aardvark');
+insert into parted1_constr values (2, 'aardwolf'), (3, 'aasvogel');
+commit;
+drop table parted_constr_ancestor;
+drop function bark(text);
+
+-- Test that the WHEN clause is set properly to partitions
+create table parted_trigger (a int, b text) partition by range (a);
+create table parted_trigger_1 partition of parted_trigger for values from (0) to (1000);
+create table parted_trigger_2 (drp int, a int, b text);
+alter table parted_trigger_2 drop column drp;
+alter table parted_trigger attach partition parted_trigger_2 for values from (1000) to (2000);
+create trigger parted_trigger after update on parted_trigger
+  for each row when (new.a % 2 = 1 and length(old.b) >= 2) execute procedure trigger_notice_ab();
+create table parted_trigger_3 (b text, a int) partition by range (length(b));
+create table parted_trigger_3_1 partition of parted_trigger_3 for values from (1) to (3);
+create table parted_trigger_3_2 partition of parted_trigger_3 for values from (3) to (5);
+alter table parted_trigger attach partition parted_trigger_3 for values from (2000) to (3000);
+insert into parted_trigger values
+    (0, 'a'), (1, 'bbb'), (2, 'bcd'), (3, 'c'),
+	(1000, 'c'), (1001, 'ddd'), (1002, 'efg'), (1003, 'f'),
+	(2000, 'e'), (2001, 'fff'), (2002, 'ghi'), (2003, 'h');
+update parted_trigger set a = a + 2; -- notice for odd 'a' values, long 'b' values
+drop table parted_trigger;
+
+-- try a constraint trigger, also
+create table parted_referenced (a int);
+create table unparted_trigger (a int, b text);	-- for comparison purposes
+create table parted_trigger (a int, b text) partition by range (a);
+create table parted_trigger_1 partition of parted_trigger for values from (0) to (1000);
+create table parted_trigger_2 (drp int, a int, b text);
+alter table parted_trigger_2 drop column drp;
+alter table parted_trigger attach partition parted_trigger_2 for values from (1000) to (2000);
+create constraint trigger parted_trigger after update on parted_trigger
+  from parted_referenced
+  for each row execute procedure trigger_notice_ab();
+create constraint trigger parted_trigger after update on unparted_trigger
+  from parted_referenced
+  for each row execute procedure trigger_notice_ab();
+create table parted_trigger_3 (b text, a int) partition by range (length(b));
+create table parted_trigger_3_1 partition of parted_trigger_3 for values from (1) to (3);
+create table parted_trigger_3_2 partition of parted_trigger_3 for values from (3) to (5);
+alter table parted_trigger attach partition parted_trigger_3 for values from (2000) to (3000);
+select tgname, conname, t.tgrelid::regclass, t.tgconstrrelid::regclass,
+  c.conrelid::regclass, c.confrelid::regclass
+  from pg_trigger t join pg_constraint c on (t.tgconstraint = c.oid)
+  where tgname = 'parted_trigger'
+  order by t.tgrelid::regclass::text;
+drop table parted_referenced, parted_trigger, unparted_trigger;
+
+-- verify that the "AFTER UPDATE OF columns" event is propagated correctly
+create table parted_trigger (a int, b text) partition by range (a);
+create table parted_trigger_1 partition of parted_trigger for values from (0) to (1000);
+create table parted_trigger_2 (drp int, a int, b text);
+alter table parted_trigger_2 drop column drp;
+alter table parted_trigger attach partition parted_trigger_2 for values from (1000) to (2000);
+create trigger parted_trigger after update of b on parted_trigger
+  for each row execute procedure trigger_notice_ab();
+create table parted_trigger_3 (b text, a int) partition by range (length(b));
+create table parted_trigger_3_1 partition of parted_trigger_3 for values from (1) to (4);
+create table parted_trigger_3_2 partition of parted_trigger_3 for values from (4) to (8);
+alter table parted_trigger attach partition parted_trigger_3 for values from (2000) to (3000);
+insert into parted_trigger values (0, 'a'), (1000, 'c'), (2000, 'e'), (2001, 'eeee');
+update parted_trigger set a = a + 2;	-- no notices here
+update parted_trigger set b = b || 'b';	-- all triggers should fire
+drop table parted_trigger;
+
+drop function trigger_notice_ab();
+
+-- Make sure we don't end up with unnecessary copies of triggers, when
+-- cloning them.
+create table trg_clone (a int) partition by range (a);
+create table trg_clone1 partition of trg_clone for values from (0) to (1000);
+alter table trg_clone add constraint uniq unique (a) deferrable;
+create table trg_clone2 partition of trg_clone for values from (1000) to (2000);
+create table trg_clone3 partition of trg_clone for values from (2000) to (3000)
+  partition by range (a);
+create table trg_clone_3_3 partition of trg_clone3 for values from (2000) to (2100);
+select tgrelid::regclass, count(*) from pg_trigger
+  where tgrelid::regclass in ('trg_clone', 'trg_clone1', 'trg_clone2',
+	'trg_clone3', 'trg_clone_3_3')
+  group by tgrelid::regclass order by tgrelid::regclass;
+drop table trg_clone;
+
+-- Test the interaction between ALTER TABLE .. DISABLE TRIGGER and
+-- both kinds of inheritance.  Historically, legacy inheritance has
+-- not recursed to children, so that behavior is preserved.
+create table parent (a int);
+create table child1 () inherits (parent);
+create function trig_nothing() returns trigger language plpgsql
+  as $$ begin return null; end $$;
+create trigger tg after insert on parent
+  for each row execute function trig_nothing();
+create trigger tg after insert on child1
+  for each row execute function trig_nothing();
+alter table parent disable trigger tg;
+select tgrelid::regclass, tgname, tgenabled from pg_trigger
+  where tgrelid in ('parent'::regclass, 'child1'::regclass)
+  order by tgrelid::regclass::text;
+alter table only parent enable always trigger tg;
+select tgrelid::regclass, tgname, tgenabled from pg_trigger
+  where tgrelid in ('parent'::regclass, 'child1'::regclass)
+  order by tgrelid::regclass::text;
+drop table parent, child1;
+
+create table parent (a int) partition by list (a);
+create table child1 partition of parent for values in (1);
+create trigger tg after insert on parent
+  for each row execute procedure trig_nothing();
+select tgrelid::regclass, tgname, tgenabled from pg_trigger
+  where tgrelid in ('parent'::regclass, 'child1'::regclass)
+  order by tgrelid::regclass::text;
+alter table only parent enable always trigger tg;
+select tgrelid::regclass, tgname, tgenabled from pg_trigger
+  where tgrelid in ('parent'::regclass, 'child1'::regclass)
+  order by tgrelid::regclass::text;
+drop table parent, child1;
+
+-- Verify that firing state propagates correctly on creation, too
+CREATE TABLE trgfire (i int) PARTITION BY RANGE (i);
+CREATE TABLE trgfire1 PARTITION OF trgfire FOR VALUES FROM (1) TO (10);
+CREATE OR REPLACE FUNCTION tgf() RETURNS trigger LANGUAGE plpgsql
+  AS $$ begin raise exception 'except'; end $$;
+CREATE TRIGGER tg AFTER INSERT ON trgfire FOR EACH ROW EXECUTE FUNCTION tgf();
+INSERT INTO trgfire VALUES (1);
+ALTER TABLE trgfire DISABLE TRIGGER tg;
+INSERT INTO trgfire VALUES (1);
+CREATE TABLE trgfire2 PARTITION OF trgfire FOR VALUES FROM (10) TO (20);
+INSERT INTO trgfire VALUES (11);
+CREATE TABLE trgfire3 (LIKE trgfire);
+ALTER TABLE trgfire ATTACH PARTITION trgfire3 FOR VALUES FROM (20) TO (30);
+INSERT INTO trgfire VALUES (21);
+CREATE TABLE trgfire4 PARTITION OF trgfire FOR VALUES FROM (30) TO (40) PARTITION BY LIST (i);
+CREATE TABLE trgfire4_30 PARTITION OF trgfire4 FOR VALUES IN (30);
+INSERT INTO trgfire VALUES (30);
+CREATE TABLE trgfire5 (LIKE trgfire) PARTITION BY LIST (i);
+CREATE TABLE trgfire5_40 PARTITION OF trgfire5 FOR VALUES IN (40);
+ALTER TABLE trgfire ATTACH PARTITION trgfire5 FOR VALUES FROM (40) TO (50);
+INSERT INTO trgfire VALUES (40);
+SELECT tgrelid::regclass, tgenabled FROM pg_trigger
+  WHERE tgrelid::regclass IN (SELECT oid from pg_class where relname LIKE 'trgfire%')
+  ORDER BY tgrelid::regclass::text;
+ALTER TABLE trgfire ENABLE TRIGGER tg;
+INSERT INTO trgfire VALUES (1);
+INSERT INTO trgfire VALUES (11);
+INSERT INTO trgfire VALUES (21);
+INSERT INTO trgfire VALUES (30);
+INSERT INTO trgfire VALUES (40);
+DROP TABLE trgfire;
+DROP FUNCTION tgf();
 
 --
 -- Test the interaction between transition tables and both kinds of
@@ -1425,7 +1833,7 @@ $$;
 --
 -- Verify behavior of statement triggers on partition hierarchy with
 -- transition tables.  Tuples should appear to each trigger in the
--- format of the the relation the trigger is attached to.
+-- format of the relation the trigger is attached to.
 --
 
 -- set up a partition hierarchy with some different TupleDescriptors
@@ -1482,6 +1890,13 @@ create trigger child3_update_trig
 create trigger child3_delete_trig
   after delete on child3 referencing old table as old_table
   for each statement execute procedure dump_delete();
+
+SELECT trigger_name, event_manipulation, event_object_schema, event_object_table,
+       action_order, action_condition, action_orientation, action_timing,
+       action_reference_old_table, action_reference_new_table
+  FROM information_schema.triggers
+  WHERE event_object_table IN ('parent', 'child1', 'child2', 'child3')
+  ORDER BY trigger_name COLLATE "C", 2;
 
 -- insert directly into children sees respective child-format tuples
 insert into child1 values ('AAA', 42);
@@ -1783,6 +2198,39 @@ insert into my_table values (3, 'CCC'), (4, 'DDD')
   update set b = my_table.b || ':' || excluded.b;
 
 --
+-- now using a partitioned table
+--
+
+create table iocdu_tt_parted (a int primary key, b text) partition by list (a);
+create table iocdu_tt_parted1 partition of iocdu_tt_parted for values in (1);
+create table iocdu_tt_parted2 partition of iocdu_tt_parted for values in (2);
+create table iocdu_tt_parted3 partition of iocdu_tt_parted for values in (3);
+create table iocdu_tt_parted4 partition of iocdu_tt_parted for values in (4);
+create trigger iocdu_tt_parted_insert_trig
+  after insert on iocdu_tt_parted referencing new table as new_table
+  for each statement execute procedure dump_insert();
+create trigger iocdu_tt_parted_update_trig
+  after update on iocdu_tt_parted referencing old table as old_table new table as new_table
+  for each statement execute procedure dump_update();
+
+-- inserts only
+insert into iocdu_tt_parted values (1, 'AAA'), (2, 'BBB')
+  on conflict (a) do
+  update set b = iocdu_tt_parted.b || ':' || excluded.b;
+
+-- mixture of inserts and updates
+insert into iocdu_tt_parted values (1, 'AAA'), (2, 'BBB'), (3, 'CCC'), (4, 'DDD')
+  on conflict (a) do
+  update set b = iocdu_tt_parted.b || ':' || excluded.b;
+
+-- updates only
+insert into iocdu_tt_parted values (3, 'CCC'), (4, 'DDD')
+  on conflict (a) do
+  update set b = iocdu_tt_parted.b || ':' || excluded.b;
+
+drop table iocdu_tt_parted;
+
+--
 -- Verify that you can't create a trigger with transition tables for
 -- more than one event.
 --
@@ -1880,3 +2328,83 @@ drop table self_ref;
 drop function dump_insert();
 drop function dump_update();
 drop function dump_delete();
+
+-- Leave around some objects for other tests
+create table trigger_parted (a int primary key) partition by list (a);
+create function trigger_parted_trigfunc() returns trigger language plpgsql as
+  $$ begin end; $$;
+create trigger aft_row after insert or update on trigger_parted
+  for each row execute function trigger_parted_trigfunc();
+create table trigger_parted_p1 partition of trigger_parted for values in (1)
+  partition by list (a);
+create table trigger_parted_p1_1 partition of trigger_parted_p1 for values in (1);
+create table trigger_parted_p2 partition of trigger_parted for values in (2)
+  partition by list (a);
+create table trigger_parted_p2_2 partition of trigger_parted_p2 for values in (2);
+alter table only trigger_parted_p2 disable trigger aft_row;
+alter table trigger_parted_p2_2 enable always trigger aft_row;
+
+-- verify transition table conversion slot's lifetime
+-- https://postgr.es/m/39a71864-b120-5a5c-8cc5-c632b6f16761@amazon.com
+create table convslot_test_parent (col1 text primary key);
+create table convslot_test_child (col1 text primary key,
+	foreign key (col1) references convslot_test_parent(col1) on delete cascade on update cascade
+);
+
+alter table convslot_test_child add column col2 text not null default 'tutu';
+insert into convslot_test_parent(col1) values ('1');
+insert into convslot_test_child(col1) values ('1');
+insert into convslot_test_parent(col1) values ('3');
+insert into convslot_test_child(col1) values ('3');
+
+create or replace function trigger_function1()
+returns trigger
+language plpgsql
+AS $$
+begin
+raise notice 'trigger = %, old_table = %',
+          TG_NAME,
+          (select string_agg(old_table::text, ', ' order by col1) from old_table);
+return null;
+end; $$;
+
+create or replace function trigger_function2()
+returns trigger
+language plpgsql
+AS $$
+begin
+raise notice 'trigger = %, new table = %',
+          TG_NAME,
+          (select string_agg(new_table::text, ', ' order by col1) from new_table);
+return null;
+end; $$;
+
+create trigger but_trigger after update on convslot_test_child
+referencing new table as new_table
+for each statement execute function trigger_function2();
+
+update convslot_test_parent set col1 = col1 || '1';
+
+create or replace function trigger_function3()
+returns trigger
+language plpgsql
+AS $$
+begin
+raise notice 'trigger = %, old_table = %, new table = %',
+          TG_NAME,
+          (select string_agg(old_table::text, ', ' order by col1) from old_table),
+          (select string_agg(new_table::text, ', ' order by col1) from new_table);
+return null;
+end; $$;
+
+create trigger but_trigger2 after update on convslot_test_child
+referencing old table as old_table new table as new_table
+for each statement execute function trigger_function3();
+update convslot_test_parent set col1 = col1 || '1';
+
+create trigger bdt_trigger after delete on convslot_test_child
+referencing old table as old_table
+for each statement execute function trigger_function1();
+delete from convslot_test_parent;
+
+drop table convslot_test_child, convslot_test_parent;

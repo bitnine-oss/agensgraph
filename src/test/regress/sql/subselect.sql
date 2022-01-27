@@ -99,8 +99,8 @@ SELECT *, pg_typeof(f1) FROM
 
 -- ... unless there's context to suggest differently
 
-explain verbose select '42' union all select '43';
-explain verbose select '42' union all select 43;
+explain (verbose, costs off) select '42' union all select '43';
+explain (verbose, costs off) select '42' union all select 43;
 
 -- check materialization of an initplan reference (bug #14524)
 explain (verbose, costs off)
@@ -436,10 +436,78 @@ insert into inner_7597 values(0, null);
 select * from outer_7597 where (f1, f2) not in (select * from inner_7597);
 
 --
+-- Similar test case using text that verifies that collation
+-- information is passed through by execTuplesEqual() in nodeSubplan.c
+-- (otherwise it would error in texteq())
+--
+
+create temp table outer_text (f1 text, f2 text);
+insert into outer_text values ('a', 'a');
+insert into outer_text values ('b', 'a');
+insert into outer_text values ('a', null);
+insert into outer_text values ('b', null);
+
+create temp table inner_text (c1 text, c2 text);
+insert into inner_text values ('a', null);
+insert into inner_text values ('123', '456');
+
+select * from outer_text where (f1, f2) not in (select * from inner_text);
+
+--
+-- Another test case for cross-type hashed subplans: comparison of
+-- inner-side values must be done with appropriate operator
+--
+
+explain (verbose, costs off)
+select 'foo'::text in (select 'bar'::name union all select 'bar'::name);
+
+select 'foo'::text in (select 'bar'::name union all select 'bar'::name);
+
+--
 -- Test case for premature memory release during hashing of subplan output
 --
 
 select '1'::text in (select '1'::name union all select '1'::name);
+
+--
+-- Test that we don't try to use a hashed subplan if the simplified
+-- testexpr isn't of the right shape
+--
+
+-- this fails by default, of course
+select * from int8_tbl where q1 in (select c1 from inner_text);
+
+begin;
+
+-- make an operator to allow it to succeed
+create function bogus_int8_text_eq(int8, text) returns boolean
+language sql as 'select $1::text = $2';
+
+create operator = (procedure=bogus_int8_text_eq, leftarg=int8, rightarg=text);
+
+explain (costs off)
+select * from int8_tbl where q1 in (select c1 from inner_text);
+select * from int8_tbl where q1 in (select c1 from inner_text);
+
+-- inlining of this function results in unusual number of hash clauses,
+-- which we can still cope with
+create or replace function bogus_int8_text_eq(int8, text) returns boolean
+language sql as 'select $1::text = $2 and $1::text = $2';
+
+explain (costs off)
+select * from int8_tbl where q1 in (select c1 from inner_text);
+select * from int8_tbl where q1 in (select c1 from inner_text);
+
+-- inlining of this function causes LHS and RHS to be switched,
+-- which we can't cope with, so hashing should be abandoned
+create or replace function bogus_int8_text_eq(int8, text) returns boolean
+language sql as 'select $2 = $1::text';
+
+explain (costs off)
+select * from int8_tbl where q1 in (select c1 from inner_text);
+select * from int8_tbl where q1 in (select c1 from inner_text);
+
+rollback;  -- to get rid of the bogus operator
 
 --
 -- Test case for planner bug with nested EXISTS handling
@@ -467,6 +535,80 @@ explain (verbose, costs off)
     (select (select random() where y=y) as x from (values(1),(2)) v(y)) ss;
 
 --
+-- Test rescan of a hashed subplan (the use of random() is to prevent the
+-- sub-select from being pulled up, which would result in not hashing)
+--
+explain (verbose, costs off)
+select sum(ss.tst::int) from
+  onek o cross join lateral (
+  select i.ten in (select f1 from int4_tbl where f1 <= o.hundred) as tst,
+         random() as r
+  from onek i where i.unique1 = o.unique1 ) ss
+where o.ten = 0;
+
+select sum(ss.tst::int) from
+  onek o cross join lateral (
+  select i.ten in (select f1 from int4_tbl where f1 <= o.hundred) as tst,
+         random() as r
+  from onek i where i.unique1 = o.unique1 ) ss
+where o.ten = 0;
+
+--
+-- Test rescan of a SetOp node
+--
+explain (costs off)
+select count(*) from
+  onek o cross join lateral (
+    select * from onek i1 where i1.unique1 = o.unique1
+    except
+    select * from onek i2 where i2.unique1 = o.unique2
+  ) ss
+where o.ten = 1;
+
+select count(*) from
+  onek o cross join lateral (
+    select * from onek i1 where i1.unique1 = o.unique1
+    except
+    select * from onek i2 where i2.unique1 = o.unique2
+  ) ss
+where o.ten = 1;
+
+--
+-- Test rescan of a RecursiveUnion node
+--
+explain (costs off)
+select sum(o.four), sum(ss.a) from
+  onek o cross join lateral (
+    with recursive x(a) as
+      (select o.four as a
+       union
+       select a + 1 from x
+       where a < 10)
+    select * from x
+  ) ss
+where o.ten = 1;
+
+select sum(o.four), sum(ss.a) from
+  onek o cross join lateral (
+    with recursive x(a) as
+      (select o.four as a
+       union
+       select a + 1 from x
+       where a < 10)
+    select * from x
+  ) ss
+where o.ten = 1;
+
+--
+-- Check we don't misoptimize a NOT IN where the subquery returns no rows.
+--
+create temp table notinouter (a int);
+create temp table notininner (b int not null);
+insert into notinouter values (null), (1);
+
+select * from notinouter where a not in (select b from notininner);
+
+--
 -- Check we behave sanely in corner case of empty SELECT list (bug #8648)
 --
 create temp table nocolumns();
@@ -481,6 +623,20 @@ select val.x
     values ((select s.i + 1)), (s.i + 101)
   ) as val(x)
 where s.i < 10 and (select val.x) < 110;
+
+-- another variant of that (bug #16213)
+explain (verbose, costs off)
+select * from
+(values
+  (3 not in (select * from (values (1), (2)) ss1)),
+  (false)
+) ss;
+
+select * from
+(values
+  (3 not in (select * from (values (1), (2)) ss1)),
+  (false)
+) ss;
 
 --
 -- Check sane behavior with nested IN SubLinks
@@ -498,9 +654,9 @@ select * from int4_tbl where
 --
 explain (verbose, costs off)
 select * from int4_tbl o where (f1, f1) in
-  (select f1, generate_series(1,2) / 10 g from int4_tbl i group by f1);
+  (select f1, generate_series(1,50) / 10 g from int4_tbl i group by f1);
 select * from int4_tbl o where (f1, f1) in
-  (select f1, generate_series(1,2) / 10 g from int4_tbl i group by f1);
+  (select f1, generate_series(1,50) / 10 g from int4_tbl i group by f1);
 
 --
 -- check for over-optimization of whole-row Var referencing an Append plan
@@ -511,6 +667,32 @@ select (select q from
           select 4,5,6.0 where f1 <= 0
          ) q )
 from int4_tbl;
+
+--
+-- Check for sane handling of a lateral reference in a subquery's quals
+-- (most of the complication here is to prevent the test case from being
+-- flattened too much)
+--
+explain (verbose, costs off)
+select * from
+    int4_tbl i4,
+    lateral (
+        select i4.f1 > 1 as b, 1 as id
+        from (select random() order by 1) as t1
+      union all
+        select true as b, 2 as id
+    ) as t2
+where b and f1 >= 0;
+
+select * from
+    int4_tbl i4,
+    lateral (
+        select i4.f1 > 1 as b, 1 as id
+        from (select random() order by 1) as t1
+      union all
+        select true as b, 2 as id
+    ) as t2
+where b and f1 >= 0;
 
 --
 -- Check that volatile quals aren't pushed down past a DISTINCT:
@@ -568,3 +750,153 @@ select * from
   where tattle(x, u);
 
 drop function tattle(x int, y int);
+
+--
+-- Test that LIMIT can be pushed to SORT through a subquery that just projects
+-- columns.  We check for that having happened by looking to see if EXPLAIN
+-- ANALYZE shows that a top-N sort was used.  We must suppress or filter away
+-- all the non-invariant parts of the EXPLAIN ANALYZE output.
+--
+create table sq_limit (pk int primary key, c1 int, c2 int);
+insert into sq_limit values
+    (1, 1, 1),
+    (2, 2, 2),
+    (3, 3, 3),
+    (4, 4, 4),
+    (5, 1, 1),
+    (6, 2, 2),
+    (7, 3, 3),
+    (8, 4, 4);
+
+create function explain_sq_limit() returns setof text language plpgsql as
+$$
+declare ln text;
+begin
+    for ln in
+        explain (analyze, summary off, timing off, costs off)
+        select * from (select pk,c2 from sq_limit order by c1,pk) as x limit 3
+    loop
+        ln := regexp_replace(ln, 'Memory: \S*',  'Memory: xxx');
+        -- this case might occur if force_parallel_mode is on:
+        ln := regexp_replace(ln, 'Worker 0:  Sort Method',  'Sort Method');
+        return next ln;
+    end loop;
+end;
+$$;
+
+select * from explain_sq_limit();
+
+select * from (select pk,c2 from sq_limit order by c1,pk) as x limit 3;
+
+drop function explain_sq_limit();
+
+drop table sq_limit;
+
+--
+-- Ensure that backward scan direction isn't propagated into
+-- expression subqueries (bug #15336)
+--
+
+begin;
+
+declare c1 scroll cursor for
+ select * from generate_series(1,4) i
+  where i <> all (values (2),(3));
+
+move forward all in c1;
+fetch backward all in c1;
+
+commit;
+
+--
+-- Tests for CTE inlining behavior
+--
+
+-- Basic subquery that can be inlined
+explain (verbose, costs off)
+with x as (select * from (select f1 from subselect_tbl) ss)
+select * from x where f1 = 1;
+
+-- Explicitly request materialization
+explain (verbose, costs off)
+with x as materialized (select * from (select f1 from subselect_tbl) ss)
+select * from x where f1 = 1;
+
+-- Stable functions are safe to inline
+explain (verbose, costs off)
+with x as (select * from (select f1, now() from subselect_tbl) ss)
+select * from x where f1 = 1;
+
+-- Volatile functions prevent inlining
+explain (verbose, costs off)
+with x as (select * from (select f1, random() from subselect_tbl) ss)
+select * from x where f1 = 1;
+
+-- SELECT FOR UPDATE cannot be inlined
+explain (verbose, costs off)
+with x as (select * from (select f1 from subselect_tbl for update) ss)
+select * from x where f1 = 1;
+
+-- Multiply-referenced CTEs are inlined only when requested
+explain (verbose, costs off)
+with x as (select * from (select f1, now() as n from subselect_tbl) ss)
+select * from x, x x2 where x.n = x2.n;
+
+explain (verbose, costs off)
+with x as not materialized (select * from (select f1, now() as n from subselect_tbl) ss)
+select * from x, x x2 where x.n = x2.n;
+
+-- Multiply-referenced CTEs can't be inlined if they contain outer self-refs
+explain (verbose, costs off)
+with recursive x(a) as
+  ((values ('a'), ('b'))
+   union all
+   (with z as not materialized (select * from x)
+    select z.a || z1.a as a from z cross join z as z1
+    where length(z.a || z1.a) < 5))
+select * from x;
+
+with recursive x(a) as
+  ((values ('a'), ('b'))
+   union all
+   (with z as not materialized (select * from x)
+    select z.a || z1.a as a from z cross join z as z1
+    where length(z.a || z1.a) < 5))
+select * from x;
+
+explain (verbose, costs off)
+with recursive x(a) as
+  ((values ('a'), ('b'))
+   union all
+   (with z as not materialized (select * from x)
+    select z.a || z.a as a from z
+    where length(z.a || z.a) < 5))
+select * from x;
+
+with recursive x(a) as
+  ((values ('a'), ('b'))
+   union all
+   (with z as not materialized (select * from x)
+    select z.a || z.a as a from z
+    where length(z.a || z.a) < 5))
+select * from x;
+
+-- Check handling of outer references
+explain (verbose, costs off)
+with x as (select * from int4_tbl)
+select * from (with y as (select * from x) select * from y) ss;
+
+explain (verbose, costs off)
+with x as materialized (select * from int4_tbl)
+select * from (with y as (select * from x) select * from y) ss;
+
+-- Ensure that we inline the currect CTE when there are
+-- multiple CTEs with the same name
+explain (verbose, costs off)
+with x as (select 1 as y)
+select * from (with x as (select 2 as y) select * from x) ss;
+
+-- Row marks are not pushed into CTEs
+explain (verbose, costs off)
+with x as (select * from subselect_tbl)
+select * from x for update;

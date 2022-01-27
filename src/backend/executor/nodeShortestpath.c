@@ -280,7 +280,8 @@ ExecShortestpath(PlanState *pstate)
 																	 node,
 																	 NULL))
 										{
-											MinimalTuple tuple = ExecFetchSlotMinimalTuple(slot);
+											bool shouldFree;
+											MinimalTuple tuple = ExecFetchSlotMinimalTuple(slot, &shouldFree);
 											hashtable->totalTuples += 1;
 											if (tuple->t_len !=
 												sizeof(*tuple) + sizeof(Graphid) + node->sp_RowidSize)
@@ -296,7 +297,7 @@ ExecShortestpath(PlanState *pstate)
 									/* so, let's scan through the old chunks, and all tuples in each chunk */
 									while (oldchunks != NULL)
 									{
-										HashMemoryChunk nextchunk = oldchunks->next;
+										HashMemoryChunk nextchunk = oldchunks->next.unshared;
 
 										/* position within the buffer (up to oldchunks->used) */
 										size_t		idx = 0;
@@ -304,7 +305,7 @@ ExecShortestpath(PlanState *pstate)
 										/* process all tuples stored in this chunk (and then free it) */
 										while (idx < oldchunks->used)
 										{
-											HashJoinTuple hashTuple = (HashJoinTuple) (oldchunks->data + idx);
+											HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + idx);
 											MinimalTuple  tuple = HJTUPLE_MINTUPLE(hashTuple);
 											int           hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 
@@ -422,11 +423,12 @@ ExecShortestpath(PlanState *pstate)
 					/*
 					 * We have to compute the tuple's hash value.
 					 */
+					bool shouldFree;
 					MemoryContext oldContext;
 					ExprContext *econtext = node->js.ps.ps_ExprContext;
 					econtext->ecxt_outertuple = outerTupleSlot;
 					oldContext = MemoryContextSwitchTo(outerTupleSlot->tts_mcxt);
-					outerTuple = ExecFetchSlotMinimalTuple(outerTupleSlot);
+					outerTuple = ExecFetchSlotMinimalTuple(outerTupleSlot, &shouldFree);
 					MemoryContextSwitchTo(oldContext);
 
 					memcpy(node->sp_OuterTuple + 1,
@@ -472,10 +474,11 @@ ExecShortestpath(PlanState *pstate)
 				/* FALL THRU */
 
 			case SP_NEED_NEW_OUTER:
-
+			{
 				/*
 				 * We don't have an outer tuple, try to get the next one
 				 */
+				bool shouldFree;
 				outerTupleSlot = ExecShortestpathOuterGetTuple(node, &hashvalue);
 				if (TupIsNull(outerTupleSlot))
 				{
@@ -483,7 +486,7 @@ ExecShortestpath(PlanState *pstate)
 					continue;
 				}
 
-				outerTuple = ExecFetchSlotMinimalTuple(outerTupleSlot);
+				outerTuple = ExecFetchSlotMinimalTuple(outerTupleSlot, &shouldFree);
 
 				/*
 				 * Find the corresponding bucket for this tuple in the main
@@ -498,7 +501,7 @@ ExecShortestpath(PlanState *pstate)
 				node->sp_JoinState = SP_SCAN_BUCKET;
 
 				/* FALL THRU */
-
+			}
 			case SP_SCAN_BUCKET:
 
 				/*
@@ -529,20 +532,21 @@ ExecShortestpath(PlanState *pstate)
 
 					if (otherqual == NULL || ExecQual(otherqual, econtext))
 					{
+						bool shouldFree;
 						TupleTableSlot *result;
 						int             outerHops;
 						int             innerHops;
 						if (outerPlanState(node) == (PlanState *) outerNode)
 						{
-							outerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_outertuple);
-							innerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_innertuple);
+							outerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_outertuple, &shouldFree);
+							innerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_innertuple, &shouldFree);
 							outerHops = outerNode->hops;
 							innerHops = innerNode->hops;
 						}
 						else
 						{
-							outerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_innertuple);
-							innerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_outertuple);
+							outerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_innertuple, &shouldFree);
+							innerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_outertuple, &shouldFree);
 							outerHops = innerNode->hops;
 							innerHops = outerNode->hops;
 						}
@@ -681,8 +685,9 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 	/*
 	 * tuple table initialization
 	 */
-	ExecInitResultTupleSlot(estate, &spstate->js.ps);
-	spstate->sp_OuterTupleSlot = ExecInitExtraTupleSlot(estate);
+	ExecInitResultTupleSlotTL(&spstate->js.ps, &TTSOpsMinimalTuple);
+	spstate->sp_OuterTupleSlot = ExecInitExtraTupleSlot(estate, NULL, &TTSOpsMinimalTuple);
+    ExecSetSlotDescriptor(spstate->sp_OuterTupleSlot, ExecGetResultType(outerPlanState(spstate)));
 
 	/*
 	 * now for some voodoo.  our temporary tuple slot is actually the result
@@ -703,7 +708,10 @@ ExecInitShortestpath(Shortestpath *node, EState *estate, int eflags)
 	/*
 	 * initialize tuple type and projection info
 	 */
-	ExecAssignResultTypeFromTL(&spstate->js.ps);
+	/*
+		HAMID
+		ExecAssignResultTypeFromTL(&spstate->js.ps);
+	*/
 	ExecAssignProjectionInfo(&spstate->js.ps, NULL);
 
 	ExecSetSlotDescriptor(spstate->sp_OuterTupleSlot,
@@ -890,13 +898,13 @@ ExecShortestpathOuterGetTuple(ShortestpathState *spstate, uint32 *hashvalue)
 	{
 		if (chunks->used <= spstate->sp_CurOuterIdx)
 		{
-			chunks = chunks->next;
+			chunks = chunks->next.unshared;
 			spstate->sp_CurOuterChunks = chunks;
 			spstate->sp_CurOuterIdx = 0;
 			continue;
 		}
 
-		hashTuple = (HashJoinTuple) (chunks->data + spstate->sp_CurOuterIdx);
+		hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(chunks) + spstate->sp_CurOuterIdx);
 		tuple = HJTUPLE_MINTUPLE(hashTuple);
 		spstate->sp_CurOuterIdx += MAXALIGN(HJTUPLE_OVERHEAD + tuple->t_len);
 
@@ -959,7 +967,7 @@ replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
 	Assert(tupleDesc != NULL);
 	Assert(vertexRow != NULL);
 
-	attribute = tupleDesc->attrs[Anum_vertex_id-1];
+	attribute = &(tupleDesc->attrs[Anum_vertex_id-1]);
 
 	/* This function only works for element 1, graphid, by value */
 	Assert(attribute->attbyval);
@@ -986,7 +994,7 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 			while (keytable->chunks != NULL)
 			{
 				HashMemoryChunk oldchunks = keytable->chunks;
-				HashMemoryChunk nextchunk = oldchunks->next;
+				HashMemoryChunk nextchunk = oldchunks->next.unshared;
 
 				if(spstate->sp_CurKeyIdx < oldchunks->used)
 				{
@@ -999,7 +1007,7 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 			if (keytable->chunks != NULL)
 			{
 				HashMemoryChunk  oldchunks = keytable->chunks;
-				HashJoinTuple    hashTuple = (HashJoinTuple) (oldchunks->data + spstate->sp_CurKeyIdx);
+				HashJoinTuple    hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + spstate->sp_CurKeyIdx);
 				MinimalTuple     tuple = HJTUPLE_MINTUPLE(hashTuple);
 				int              hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 				int              paramno;
@@ -1072,7 +1080,8 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 												 spstate->sp_OuterTupleSlot);
 			if (!TupIsNull(slot))
 			{
-				MinimalTuple   tuple = ExecFetchSlotMinimalTuple(slot);
+				bool shouldFree;
+				MinimalTuple   tuple = ExecFetchSlotMinimalTuple(slot, &shouldFree);
 				int            paramno;
 				ParamExecData *prm;
 				Graphid		   *graphid;
@@ -1188,7 +1197,7 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 			/* so, let's scan through the old chunks, and all tuples in each chunk */
 			while (oldchunks != NULL)
 			{
-				HashMemoryChunk nextchunk = oldchunks->next;
+				HashMemoryChunk nextchunk = oldchunks->next.unshared;
 
 				/* position within the buffer (up to oldchunks->used) */
 				size_t		idx = 0;
@@ -1196,7 +1205,7 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 				/* process all tuples stored in this chunk (and then free it) */
 				while (idx < oldchunks->used)
 				{
-					HashJoinTuple hashTuple = (HashJoinTuple) (oldchunks->data + idx);
+					HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + idx);
 					MinimalTuple  tuple = HJTUPLE_MINTUPLE(hashTuple);
 					int           hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 
@@ -1265,7 +1274,7 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 				/* so, let's scan through the old chunks, and all tuples in each chunk */
 				while (oldchunks != NULL)
 				{
-					HashMemoryChunk nextchunk = oldchunks->next;
+					HashMemoryChunk nextchunk = oldchunks->next.unshared;
 
 					/* position within the buffer (up to oldchunks->used) */
 					size_t		idx = 0;
@@ -1273,7 +1282,7 @@ ExecShortestpathNewBatch(ShortestpathState *spstate)
 					/* process all tuples stored in this chunk (and then free it) */
 					while (idx < oldchunks->used)
 					{
-						HashJoinTuple hashTuple = (HashJoinTuple) (oldchunks->data + idx);
+						HashJoinTuple hashTuple = (HashJoinTuple) (HASH_CHUNK_DATA(oldchunks) + idx);
 						MinimalTuple  tuple = HJTUPLE_MINTUPLE(hashTuple);
 						int           hashTupleSize = (HJTUPLE_OVERHEAD + tuple->t_len);
 

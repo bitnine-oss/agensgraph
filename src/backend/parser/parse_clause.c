@@ -3,7 +3,7 @@
  * parse_clause.c
  *	  handle clauses in parser
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,19 +17,21 @@
 
 #include "miscadmin.h"
 
-#include "access/heapam.h"
+#include "access/htup_details.h"
+#include "access/nbtree.h"
+#include "access/table.h"
 #include "access/tsmapi.h"
 #include "catalog/catalog.h"
 #include "catalog/heap.h"
 #include "catalog/pg_am.h"
+#include "catalog/pg_amproc.h"
 #include "catalog/pg_collation.h"
-#include "catalog/pg_constraint_fn.h"
+#include "catalog/pg_constraint.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "optimizer/tlist.h"
-#include "optimizer/var.h"
+#include "optimizer/optimizer.h"
 #include "parser/analyze.h"
 #include "parser/parsetree.h"
 #include "parser/parser.h"
@@ -43,8 +45,11 @@
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
 #include "rewrite/rewriteManip.h"
+#include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/catcache.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 #include "utils/rel.h"
 
 
@@ -52,50 +57,51 @@
 #define makeDefaultNSItem(rte)	makeNamespaceItem(rte, true, true, false, true)
 
 static void extractRemainingColumns(List *common_colnames,
-						List *src_colnames, List *src_colvars,
-						List **res_colnames, List **res_colvars);
+									List *src_colnames, List *src_colvars,
+									List **res_colnames, List **res_colvars);
 static Node *transformJoinUsingClause(ParseState *pstate,
-						 RangeTblEntry *leftRTE, RangeTblEntry *rightRTE,
-						 List *leftVars, List *rightVars);
+									  RangeTblEntry *leftRTE, RangeTblEntry *rightRTE,
+									  List *leftVars, List *rightVars);
 static Node *transformJoinOnClause(ParseState *pstate, JoinExpr *j,
-					  List *namespace);
+								   List *namespace);
 static RangeTblEntry *getRTEForSpecialRelationTypes(ParseState *pstate,
-							  RangeVar *rv);
+													RangeVar *rv);
 static RangeTblEntry *transformTableEntry(ParseState *pstate, RangeVar *r);
 static RangeTblEntry *transformRangeSubselect(ParseState *pstate,
-						RangeSubselect *r);
+											  RangeSubselect *r);
 static RangeTblEntry *transformRangeFunction(ParseState *pstate,
-					   RangeFunction *r);
+											 RangeFunction *r);
 static RangeTblEntry *transformRangeTableFunc(ParseState *pstate,
-						RangeTableFunc *t);
+											  RangeTableFunc *t);
 static TableSampleClause *transformRangeTableSample(ParseState *pstate,
-						  RangeTableSample *rts);
+													RangeTableSample *rts);
 static Node *transformFromClauseItem(ParseState *pstate, Node *n,
-						RangeTblEntry **top_rte, int *top_rti,
-						List **namespace);
+									 RangeTblEntry **top_rte, int *top_rti,
+									 List **namespace);
 static Node *buildMergedJoinVar(ParseState *pstate, JoinType jointype,
-				   Var *l_colvar, Var *r_colvar);
+								Var *l_colvar, Var *r_colvar);
 static ParseNamespaceItem *makeNamespaceItem(RangeTblEntry *rte,
-				  bool rel_visible, bool cols_visible,
-				  bool lateral_only, bool lateral_ok);
+											 bool rel_visible, bool cols_visible,
+											 bool lateral_only, bool lateral_ok);
 static void setNamespaceColumnVisibility(List *namespace, bool cols_visible);
 static void setNamespaceLateralState(List *namespace,
-						 bool lateral_only, bool lateral_ok);
+									 bool lateral_only, bool lateral_ok);
 static void checkExprIsVarFree(ParseState *pstate, Node *n,
-				   const char *constructName);
+							   const char *constructName);
 static TargetEntry *findTargetlistEntrySQL92(ParseState *pstate, Node *node,
-						 List **tlist, ParseExprKind exprKind);
+											 List **tlist, ParseExprKind exprKind);
 static TargetEntry *findTargetlistEntrySQL99(ParseState *pstate, Node *node,
-						 List **tlist, ParseExprKind exprKind);
-static int get_matching_location(int sortgroupref,
-					  List *sortgrouprefs, List *exprs);
+											 List **tlist, ParseExprKind exprKind);
+static int	get_matching_location(int sortgroupref,
+								  List *sortgrouprefs, List *exprs);
 static List *resolve_unique_index_expr(ParseState *pstate, InferClause *infer,
-						  Relation heapRel);
+									   Relation heapRel);
 static List *addTargetToGroupList(ParseState *pstate, TargetEntry *tle,
-					 List *grouplist, List *targetlist, int location);
+								  List *grouplist, List *targetlist, int location);
 static WindowClause *findWindowClause(List *wclist, const char *name);
 static Node *transformFrameOffset(ParseState *pstate, int frameOptions,
-					 Node *clause);
+								  Oid rangeopfamily, Oid rangeopcintype, Oid *inRangeFunc,
+								  Node *clause);
 
 
 /*
@@ -194,13 +200,13 @@ setTargetTable(ParseState *pstate, RangeVar *relation,
 
 	/* Close old target; this could only happen for multi-action rules */
 	if (pstate->p_target_relation != NULL)
-		heap_close(pstate->p_target_relation, NoLock);
+		table_close(pstate->p_target_relation, NoLock);
 
 	/*
 	 * Open target rel and grab suitable lock (which we will hold till end of
 	 * transaction).
 	 *
-	 * free_parsestate() will eventually do the corresponding heap_close(),
+	 * free_parsestate() will eventually do the corresponding table_close(),
 	 * but *not* release the lock.
 	 */
 	pstate->p_target_relation = parserOpenTable(pstate, relation,
@@ -210,6 +216,7 @@ setTargetTable(ParseState *pstate, RangeVar *relation,
 	 * Now build an RTE.
 	 */
 	rte = addRangeTableEntryForRelation(pstate, pstate->p_target_relation,
+										RowExclusiveLock,
 										relation->alias, inh, false);
 	pstate->p_target_rangetblentry = rte;
 
@@ -239,46 +246,6 @@ setTargetTable(ParseState *pstate, RangeVar *relation,
 		addRTEtoQuery(pstate, rte, true, true, true);
 
 	return rtindex;
-}
-
-/*
- * Given a relation-options list (of DefElems), return true iff the specified
- * table/result set should be created with OIDs. This needs to be done after
- * parsing the query string because the return value can depend upon the
- * default_with_oids GUC var.
- *
- * In some situations, we want to reject an OIDS option even if it's present.
- * That's (rather messily) handled here rather than reloptions.c, because that
- * code explicitly punts checking for oids to here.
- */
-bool
-interpretOidsOption(List *defList, bool allowOids)
-{
-	ListCell   *cell;
-
-	/* Scan list to see if OIDS was included */
-	foreach(cell, defList)
-	{
-		DefElem    *def = (DefElem *) lfirst(cell);
-
-		if (def->defnamespace == NULL &&
-			pg_strcasecmp(def->defname, "oids") == 0)
-		{
-			if (!allowOids)
-				ereport(ERROR,
-						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-						 errmsg("unrecognized parameter \"%s\"",
-								def->defname)));
-			return defGetBoolean(def);
-		}
-	}
-
-	/* Force no-OIDS result if caller disallows OIDS. */
-	if (!allowOids)
-		return false;
-
-	/* OIDS option was not specified, so use default. */
-	return default_with_oids;
 }
 
 /*
@@ -772,7 +739,7 @@ transformRangeTableFunc(ParseState *pstate, RangeTableFunc *rtf)
 	/* undef ordinality column number */
 	tf->ordinalitycol = -1;
 
-
+	/* Process column specs */
 	names = palloc(sizeof(char *) * list_length(rtf->columns));
 
 	colno = 0;
@@ -820,7 +787,7 @@ transformRangeTableFunc(ParseState *pstate, RangeTableFunc *rtf)
 		tf->coltypes = lappend_oid(tf->coltypes, typid);
 		tf->coltypmods = lappend_int(tf->coltypmods, typmod);
 		tf->colcollations = lappend_oid(tf->colcollations,
-										type_is_collatable(typid) ? DEFAULT_COLLATION_OID : InvalidOid);
+										get_typcollation(typid));
 
 		/* Transform the PATH and DEFAULT expressions */
 		if (rawc->colexpr)
@@ -893,15 +860,15 @@ transformRangeTableFunc(ParseState *pstate, RangeTableFunc *rtf)
 			{
 				foreach(lc2, ns_names)
 				{
-					char	   *name = strVal(lfirst(lc2));
+					Value	   *ns_node = (Value *) lfirst(lc2);
 
-					if (name == NULL)
+					if (ns_node == NULL)
 						continue;
-					if (strcmp(name, r->name) == 0)
+					if (strcmp(strVal(ns_node), r->name) == 0)
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
 								 errmsg("namespace name \"%s\" is not unique",
-										name),
+										r->name),
 								 parser_errposition(pstate, r->location)));
 				}
 			}
@@ -915,8 +882,9 @@ transformRangeTableFunc(ParseState *pstate, RangeTableFunc *rtf)
 				default_ns_seen = true;
 			}
 
-			/* Note the string may be NULL */
-			ns_names = lappend(ns_names, makeString(r->name));
+			/* We represent DEFAULT by a null pointer */
+			ns_names = lappend(ns_names,
+							   r->name ? makeString(r->name) : NULL);
 		}
 
 		tf->ns_uris = ns_uris;
@@ -2059,7 +2027,7 @@ findTargetlistEntrySQL99(ParseState *pstate, Node *node, List **tlist,
 
 	/*
 	 * If no matches, construct a new target entry which is appended to the
-	 * end of the target list.  This target is given resjunk = TRUE so that it
+	 * end of the target list.  This target is given resjunk = true so that it
 	 * will not be projected into the final tuple.
 	 */
 	target_result = transformTargetEntry(pstate, node, expr, exprKind,
@@ -2630,6 +2598,8 @@ transformWindowDefinitions(ParseState *pstate,
 		WindowClause *refwc = NULL;
 		List	   *partitionClause;
 		List	   *orderClause;
+		Oid			rangeopfamily = InvalidOid;
+		Oid			rangeopcintype = InvalidOid;
 		WindowClause *wc;
 
 		winref++;
@@ -2756,10 +2726,57 @@ transformWindowDefinitions(ParseState *pstate,
 					 parser_errposition(pstate, windef->location)));
 		}
 		wc->frameOptions = windef->frameOptions;
+
+		/*
+		 * RANGE offset PRECEDING/FOLLOWING requires exactly one ORDER BY
+		 * column; check that and get its sort opfamily info.
+		 */
+		if ((wc->frameOptions & FRAMEOPTION_RANGE) &&
+			(wc->frameOptions & (FRAMEOPTION_START_OFFSET |
+								 FRAMEOPTION_END_OFFSET)))
+		{
+			SortGroupClause *sortcl;
+			Node	   *sortkey;
+			int16		rangestrategy;
+
+			if (list_length(wc->orderClause) != 1)
+				ereport(ERROR,
+						(errcode(ERRCODE_WINDOWING_ERROR),
+						 errmsg("RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column"),
+						 parser_errposition(pstate, windef->location)));
+			sortcl = castNode(SortGroupClause, linitial(wc->orderClause));
+			sortkey = get_sortgroupclause_expr(sortcl, *targetlist);
+			/* Find the sort operator in pg_amop */
+			if (!get_ordering_op_properties(sortcl->sortop,
+											&rangeopfamily,
+											&rangeopcintype,
+											&rangestrategy))
+				elog(ERROR, "operator %u is not a valid ordering operator",
+					 sortcl->sortop);
+			/* Record properties of sort ordering */
+			wc->inRangeColl = exprCollation(sortkey);
+			wc->inRangeAsc = (rangestrategy == BTLessStrategyNumber);
+			wc->inRangeNullsFirst = sortcl->nulls_first;
+		}
+
+		/* Per spec, GROUPS mode requires an ORDER BY clause */
+		if (wc->frameOptions & FRAMEOPTION_GROUPS)
+		{
+			if (wc->orderClause == NIL)
+				ereport(ERROR,
+						(errcode(ERRCODE_WINDOWING_ERROR),
+						 errmsg("GROUPS mode requires an ORDER BY clause"),
+						 parser_errposition(pstate, windef->location)));
+		}
+
 		/* Process frame offset expressions */
 		wc->startOffset = transformFrameOffset(pstate, wc->frameOptions,
+											   rangeopfamily, rangeopcintype,
+											   &wc->startInRangeFunc,
 											   windef->startOffset);
 		wc->endOffset = transformFrameOffset(pstate, wc->frameOptions,
+											 rangeopfamily, rangeopcintype,
+											 &wc->endInRangeFunc,
 											 windef->endOffset);
 		wc->winref = winref;
 
@@ -3063,12 +3080,11 @@ resolve_unique_index_expr(ParseState *pstate, InferClause *infer,
 		}
 
 		/*
-		 * transformExpr() should have already rejected subqueries,
-		 * aggregates, and window functions, based on the EXPR_KIND_ for an
-		 * index expression.  Expressions returning sets won't have been
-		 * rejected, but don't bother doing so here; there should be no
-		 * available expression unique index to match any such expression
-		 * against anyway.
+		 * transformExpr() will reject subqueries, aggregates, window
+		 * functions, and SRFs, based on being passed
+		 * EXPR_KIND_INDEX_EXPRESSION.  So we needn't worry about those
+		 * further ... not that they would match any available index
+		 * expression anyway.
 		 */
 		pInfer->expr = transformExpr(pstate, parse, EXPR_KIND_INDEX_EXPRESSION);
 
@@ -3492,12 +3508,23 @@ findWindowClause(List *wclist, const char *name)
 /*
  * transformFrameOffset
  *		Process a window frame offset expression
+ *
+ * In RANGE mode, rangeopfamily is the sort opfamily for the input ORDER BY
+ * column, and rangeopcintype is the input data type the sort operator is
+ * registered with.  We expect the in_range function to be registered with
+ * that same type.  (In binary-compatible cases, it might be different from
+ * the input column's actual type, so we can't use that for the lookups.)
+ * We'll return the OID of the in_range function to *inRangeFunc.
  */
 static Node *
-transformFrameOffset(ParseState *pstate, int frameOptions, Node *clause)
+transformFrameOffset(ParseState *pstate, int frameOptions,
+					 Oid rangeopfamily, Oid rangeopcintype, Oid *inRangeFunc,
+					 Node *clause)
 {
 	const char *constructName = NULL;
 	Node	   *node;
+
+	*inRangeFunc = InvalidOid;	/* default result */
 
 	/* Quick exit if no offset expression */
 	if (clause == NULL)
@@ -3516,16 +3543,105 @@ transformFrameOffset(ParseState *pstate, int frameOptions, Node *clause)
 	}
 	else if (frameOptions & FRAMEOPTION_RANGE)
 	{
+		/*
+		 * We must look up the in_range support function that's to be used,
+		 * possibly choosing one of several, and coerce the "offset" value to
+		 * the appropriate input type.
+		 */
+		Oid			nodeType;
+		Oid			preferredType;
+		int			nfuncs = 0;
+		int			nmatches = 0;
+		Oid			selectedType = InvalidOid;
+		Oid			selectedFunc = InvalidOid;
+		CatCList   *proclist;
+		int			i;
+
 		/* Transform the raw expression tree */
 		node = transformExpr(pstate, clause, EXPR_KIND_WINDOW_FRAME_RANGE);
+		nodeType = exprType(node);
 
 		/*
-		 * this needs a lot of thought to decide how to support in the context
-		 * of Postgres' extensible datatype framework
+		 * If there are multiple candidates, we'll prefer the one that exactly
+		 * matches nodeType; or if nodeType is as yet unknown, prefer the one
+		 * that exactly matches the sort column type.  (The second rule is
+		 * like what we do for "known_type operator unknown".)
 		 */
+		preferredType = (nodeType != UNKNOWNOID) ? nodeType : rangeopcintype;
+
+		/* Find the in_range support functions applicable to this case */
+		proclist = SearchSysCacheList2(AMPROCNUM,
+									   ObjectIdGetDatum(rangeopfamily),
+									   ObjectIdGetDatum(rangeopcintype));
+		for (i = 0; i < proclist->n_members; i++)
+		{
+			HeapTuple	proctup = &proclist->members[i]->tuple;
+			Form_pg_amproc procform = (Form_pg_amproc) GETSTRUCT(proctup);
+
+			/* The search will find all support proc types; ignore others */
+			if (procform->amprocnum != BTINRANGE_PROC)
+				continue;
+			nfuncs++;
+
+			/* Ignore function if given value can't be coerced to that type */
+			if (!can_coerce_type(1, &nodeType, &procform->amprocrighttype,
+								 COERCION_IMPLICIT))
+				continue;
+			nmatches++;
+
+			/* Remember preferred match, or any match if didn't find that */
+			if (selectedType != preferredType)
+			{
+				selectedType = procform->amprocrighttype;
+				selectedFunc = procform->amproc;
+			}
+		}
+		ReleaseCatCacheList(proclist);
+
+		/*
+		 * Throw error if needed.  It seems worth taking the trouble to
+		 * distinguish "no support at all" from "you didn't match any
+		 * available offset type".
+		 */
+		if (nfuncs == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("RANGE with offset PRECEDING/FOLLOWING is not supported for column type %s",
+							format_type_be(rangeopcintype)),
+					 parser_errposition(pstate, exprLocation(node))));
+		if (nmatches == 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("RANGE with offset PRECEDING/FOLLOWING is not supported for column type %s and offset type %s",
+							format_type_be(rangeopcintype),
+							format_type_be(nodeType)),
+					 errhint("Cast the offset value to an appropriate type."),
+					 parser_errposition(pstate, exprLocation(node))));
+		if (nmatches != 1 && selectedType != preferredType)
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("RANGE with offset PRECEDING/FOLLOWING has multiple interpretations for column type %s and offset type %s",
+							format_type_be(rangeopcintype),
+							format_type_be(nodeType)),
+					 errhint("Cast the offset value to the exact intended type."),
+					 parser_errposition(pstate, exprLocation(node))));
+
+		/* OK, coerce the offset to the right type */
 		constructName = "RANGE";
-		/* error was already thrown by gram.y, this is just a backstop */
-		elog(ERROR, "window frame with value offset is not implemented");
+		node = coerce_to_specific_type(pstate, node,
+									   selectedType, constructName);
+		*inRangeFunc = selectedFunc;
+	}
+	else if (frameOptions & FRAMEOPTION_GROUPS)
+	{
+		/* Transform the raw expression tree */
+		node = transformExpr(pstate, clause, EXPR_KIND_WINDOW_FRAME_GROUPS);
+
+		/*
+		 * Like LIMIT clause, simply coerce to int8
+		 */
+		constructName = "GROUPS";
+		node = coerce_to_specific_type(pstate, node, INT8OID, constructName);
 	}
 	else
 	{

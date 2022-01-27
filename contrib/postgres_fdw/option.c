@@ -3,7 +3,7 @@
  * option.c
  *		  FDW option handling for postgres_fdw
  *
- * Portions Copyright (c) 2012-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/option.c
@@ -116,15 +116,18 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 		else if (strcmp(def->defname, "fdw_startup_cost") == 0 ||
 				 strcmp(def->defname, "fdw_tuple_cost") == 0)
 		{
-			/* these must have a non-negative numeric value */
+			/*
+			 * These must have a floating point value greater than or equal to
+			 * zero.
+			 */
 			double		val;
 			char	   *endp;
 
 			val = strtod(defGetString(def), &endp);
 			if (*endp || val < 0)
 				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("%s requires a non-negative numeric value",
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("\"%s\" must be a floating point value greater than or equal to zero",
 								def->defname)));
 		}
 		else if (strcmp(def->defname, "extensions") == 0)
@@ -139,8 +142,8 @@ postgres_fdw_validator(PG_FUNCTION_ARGS)
 			fetch_size = strtol(defGetString(def), NULL, 10);
 			if (fetch_size <= 0)
 				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("%s requires a non-negative integer value",
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("\"%s\" must be an integer value greater than zero",
 								def->defname)));
 		}
 	}
@@ -196,7 +199,7 @@ InitPgFdwOptions(void)
 		ereport(ERROR,
 				(errcode(ERRCODE_FDW_OUT_OF_MEMORY),
 				 errmsg("out of memory"),
-				 errdetail("could not get libpq's default connection options")));
+				 errdetail("Could not get libpq's default connection options.")));
 
 	/* Count how many libpq options are available. */
 	num_libpq_opts = 0;

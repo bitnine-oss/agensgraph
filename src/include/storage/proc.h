@@ -4,7 +4,7 @@
  *	  per-process shared memory data structures
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/proc.h
@@ -14,6 +14,7 @@
 #ifndef _PROC_H_
 #define _PROC_H_
 
+#include "access/clog.h"
 #include "access/xlogdefs.h"
 #include "lib/ilist.h"
 #include "storage/latch.h"
@@ -62,7 +63,7 @@ struct XidCache
 	(PROC_IN_VACUUM | PROC_IN_ANALYZE | PROC_VACUUM_FOR_WRAPAROUND)
 
 /*
- * We allow a small number of "weak" relation locks (AccesShareLock,
+ * We allow a small number of "weak" relation locks (AccessShareLock,
  * RowShareLock, RowExclusiveLock) to be recorded in the PGPROC structure
  * rather than the main lock table.  This eases contention on the lock
  * manager LWLocks.  See storage/lmgr/README for additional details.
@@ -112,6 +113,9 @@ struct PGPROC
 	BackendId	backendId;		/* This backend's backend ID (if assigned) */
 	Oid			databaseId;		/* OID of database this backend is using */
 	Oid			roleId;			/* OID of role using this backend */
+
+	Oid			tempNamespaceId;	/* OID of temp schema this backend is
+									 * using */
 
 	bool		isBackgroundWorker; /* true if background worker. */
 
@@ -170,6 +174,17 @@ struct PGPROC
 	TransactionId procArrayGroupMemberXid;
 
 	uint32		wait_event_info;	/* proc's wait information */
+
+	/* Support for group transaction status update. */
+	bool		clogGroupMember;	/* true, if member of clog group */
+	pg_atomic_uint32 clogGroupNext; /* next clog group member */
+	TransactionId clogGroupMemberXid;	/* transaction id of clog group member */
+	XidStatus	clogGroupMemberXidStatus;	/* transaction status of clog
+											 * group member */
+	int			clogGroupMemberPage;	/* clog page corresponding to
+										 * transaction id of clog group member */
+	XLogRecPtr	clogGroupMemberLsn; /* WAL location of commit record for clog
+									 * group member */
 
 	/* Per-backend LWLock.  Protects fields below (but not group fields). */
 	LWLock		backendLock;
@@ -240,8 +255,12 @@ typedef struct PROC_HDR
 	PGPROC	   *autovacFreeProcs;
 	/* Head of list of bgworker free PGPROC structures */
 	PGPROC	   *bgworkerFreeProcs;
+	/* Head of list of walsender free PGPROC structures */
+	PGPROC	   *walsenderFreeProcs;
 	/* First pgproc waiting for group XID clear */
 	pg_atomic_uint32 procArrayGroupFirst;
+	/* First pgproc waiting for group transaction status update */
+	pg_atomic_uint32 clogGroupFirst;
 	/* WALWriter process's latch */
 	Latch	   *walwriterLatch;
 	/* Checkpointer process's latch */
@@ -274,9 +293,9 @@ extern PGPROC *PreparedXactProcs;
 
 /* configurable options */
 extern PGDLLIMPORT int DeadlockTimeout;
-extern int	StatementTimeout;
-extern int	LockTimeout;
-extern int	IdleInTransactionSessionTimeout;
+extern PGDLLIMPORT int StatementTimeout;
+extern PGDLLIMPORT int LockTimeout;
+extern PGDLLIMPORT int IdleInTransactionSessionTimeout;
 extern bool log_lock_waits;
 
 

@@ -125,7 +125,7 @@ DROP GRAPH vertex_labels_simple CASCADE;
 -- Added test for AG249, use ln() for all log() calls
 -- Create initial graph
 CREATE GRAPH ag249_log_to_ln;
-SET graph_path = ag249_log;
+SET graph_path = ag249_log_to_ln;
 CREATE VLABEL numbers;
 CREATE (:numbers {string: '10', numeric: 10});
 
@@ -148,6 +148,34 @@ return log10(10), (select log(10));
 
 -- cleanup
 DROP GRAPH ag249_log_to_ln CASCADE;
+
+-- Added tests for AG222. These tests test the new function
+-- get_last_graph_write_stats(). Which is provided to allow
+-- access to statistics on the last graph write operation.
+CREATE GRAPH ag222;
+SET graph_path = ag222;
+
+CREATE VLABEL vertices;
+CREATE ELABEL edges;
+
+-- Should return only 2 inserted vertices and 1 inserted edge
+create (:vertices {name: 'Boston'})-[:edges]->(:vertices {name: 'Miami'});
+SELECT * FROM get_last_graph_write_stats();
+
+-- Should return only 2 updated properties
+MATCH (u:vertices) SET u.property = true;
+SELECT * FROM get_last_graph_write_stats();
+
+-- Should return only 1 deleted edge
+match (u:vertices)-[e:edges]-() delete e;
+SELECT * FROM get_last_graph_write_stats();
+
+-- Should return only 2 deleted vertices
+match (u) delete u;
+SELECT * FROM get_last_graph_write_stats();
+
+-- cleanup
+DROP GRAPH ag222 CASCADE;
 
 -- Added test for AG-283
 CREATE GRAPH AG283;

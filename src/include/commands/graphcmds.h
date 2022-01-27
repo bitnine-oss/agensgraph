@@ -25,6 +25,7 @@ extern void CheckLabelType(ObjectType type, Oid laboid, const char *command);
 extern void CheckInheritLabel(CreateStmt *stmt);
 
 extern bool RangeVarIsLabel(RangeVar *rel);
+extern bool RelationIsLabel(Relation rel);
 
 extern void CreateConstraintCommand(CreateConstraintStmt *constraintStmt,
 									const char *queryString, int stmt_location,

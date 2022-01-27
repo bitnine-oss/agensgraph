@@ -27,7 +27,7 @@
  * the backend's "backend/libpq" is quite separate from "interfaces/libpq".
  * All that remains is similarities of names to trap the unwary...
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/libpq/pqcomm.c
@@ -81,7 +81,6 @@
 #ifdef HAVE_NETINET_TCP_H
 #include <netinet/tcp.h>
 #endif
-#include <arpa/inet.h>
 #ifdef HAVE_UTIME_H
 #include <utime.h>
 #endif
@@ -92,6 +91,7 @@
 #include "common/ip.h"
 #include "libpq/libpq.h"
 #include "miscadmin.h"
+#include "port/pg_bswap.h"
 #include "storage/ipc.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
@@ -170,7 +170,7 @@ static int	Lock_AF_UNIX(char *unixSocketDir, char *unixSocketPath);
 static int	Setup_AF_UNIX(char *sock_path);
 #endif							/* HAVE_UNIX_SOCKETS */
 
-static PQcommMethods PqCommSocketMethods = {
+static const PQcommMethods PqCommSocketMethods = {
 	socket_comm_reset,
 	socket_flush,
 	socket_flush_if_writable,
@@ -181,7 +181,7 @@ static PQcommMethods PqCommSocketMethods = {
 	socket_endcopyout
 };
 
-PQcommMethods *PqCommMethods = &PqCommSocketMethods;
+const PQcommMethods *PqCommMethods = &PqCommSocketMethods;
 
 WaitEventSet *FeBeWaitSet;
 
@@ -258,29 +258,26 @@ socket_close(int code, Datum arg)
 	/* Nothing to do in a standalone backend, where MyProcPort is NULL. */
 	if (MyProcPort != NULL)
 	{
-#if defined(ENABLE_GSS) || defined(ENABLE_SSPI)
 #ifdef ENABLE_GSS
-		OM_uint32	min_s;
-
 		/*
 		 * Shutdown GSSAPI layer.  This section does nothing when interrupting
 		 * BackendInitialize(), because pg_GSS_recvauth() makes first use of
 		 * "ctx" and "cred".
+		 *
+		 * Note that we don't bother to free MyProcPort->gss, since we're
+		 * about to exit anyway.
 		 */
-		if (MyProcPort->gss->ctx != GSS_C_NO_CONTEXT)
-			gss_delete_sec_context(&min_s, &MyProcPort->gss->ctx, NULL);
+		if (MyProcPort->gss)
+		{
+			OM_uint32	min_s;
 
-		if (MyProcPort->gss->cred != GSS_C_NO_CREDENTIAL)
-			gss_release_cred(&min_s, &MyProcPort->gss->cred);
+			if (MyProcPort->gss->ctx != GSS_C_NO_CONTEXT)
+				gss_delete_sec_context(&min_s, &MyProcPort->gss->ctx, NULL);
+
+			if (MyProcPort->gss->cred != GSS_C_NO_CREDENTIAL)
+				gss_release_cred(&min_s, &MyProcPort->gss->cred);
+		}
 #endif							/* ENABLE_GSS */
-
-		/*
-		 * GSS and SSPI share the port->gss struct.  Since nowhere else does a
-		 * postmaster child free this, doing so is safe when interrupting
-		 * BackendInitialize().
-		 */
-		free(MyProcPort->gss);
-#endif							/* ENABLE_GSS || ENABLE_SSPI */
 
 		/*
 		 * Cleanly shut down SSL layer.  Nowhere else does a postmaster child
@@ -825,6 +822,7 @@ StreamConnection(pgsocket server_fd, Port *port)
 		(void) pq_setkeepalivesidle(tcp_keepalives_idle, port);
 		(void) pq_setkeepalivesinterval(tcp_keepalives_interval, port);
 		(void) pq_setkeepalivescount(tcp_keepalives_count, port);
+		(void) pq_settcpusertimeout(tcp_user_timeout, port);
 	}
 
 	return STATUS_OK;
@@ -914,7 +912,7 @@ RemoveSocketFiles(void)
 /* --------------------------------
  *			  socket_set_nonblocking - set socket blocking/non-blocking
  *
- * Sets the socket non-blocking if nonblocking is TRUE, or sets it
+ * Sets the socket non-blocking if nonblocking is true, or sets it
  * blocking otherwise.
  * --------------------------------
  */
@@ -1286,7 +1284,7 @@ pq_getmessage(StringInfo s, int maxlen)
 		return EOF;
 	}
 
-	len = ntohl(len);
+	len = pg_ntoh32(len);
 
 	if (len < 4 ||
 		(maxlen > 0 && len > maxlen))
@@ -1569,7 +1567,7 @@ socket_putmessage(char msgtype, const char *s, size_t len)
 	{
 		uint32		n32;
 
-		n32 = htonl((uint32) (len + 4));
+		n32 = pg_hton32((uint32) (len + 4));
 		if (internal_putbytes((char *) &n32, 4))
 			goto fail;
 	}
@@ -1920,6 +1918,78 @@ pq_setkeepalivescount(int count, Port *port)
 	if (count != 0)
 	{
 		elog(LOG, "setsockopt(%s) not supported", "TCP_KEEPCNT");
+		return STATUS_ERROR;
+	}
+#endif
+
+	return STATUS_OK;
+}
+
+int
+pq_gettcpusertimeout(Port *port)
+{
+#ifdef TCP_USER_TIMEOUT
+	if (port == NULL || IS_AF_UNIX(port->laddr.addr.ss_family))
+		return 0;
+
+	if (port->tcp_user_timeout != 0)
+		return port->tcp_user_timeout;
+
+	if (port->default_tcp_user_timeout == 0)
+	{
+		ACCEPT_TYPE_ARG3 size = sizeof(port->default_tcp_user_timeout);
+
+		if (getsockopt(port->sock, IPPROTO_TCP, TCP_USER_TIMEOUT,
+					   (char *) &port->default_tcp_user_timeout,
+					   &size) < 0)
+		{
+			elog(LOG, "getsockopt(%s) failed: %m", "TCP_USER_TIMEOUT");
+			port->default_tcp_user_timeout = -1;	/* don't know */
+		}
+	}
+
+	return port->default_tcp_user_timeout;
+#else
+	return 0;
+#endif
+}
+
+int
+pq_settcpusertimeout(int timeout, Port *port)
+{
+	if (port == NULL || IS_AF_UNIX(port->laddr.addr.ss_family))
+		return STATUS_OK;
+
+#ifdef TCP_USER_TIMEOUT
+	if (timeout == port->tcp_user_timeout)
+		return STATUS_OK;
+
+	if (port->default_tcp_user_timeout <= 0)
+	{
+		if (pq_gettcpusertimeout(port) < 0)
+		{
+			if (timeout == 0)
+				return STATUS_OK;	/* default is set but unknown */
+			else
+				return STATUS_ERROR;
+		}
+	}
+
+	if (timeout == 0)
+		timeout = port->default_tcp_user_timeout;
+
+	if (setsockopt(port->sock, IPPROTO_TCP, TCP_USER_TIMEOUT,
+				   (char *) &timeout, sizeof(timeout)) < 0)
+	{
+		elog(LOG, "setsockopt(%s) failed: %m", "TCP_USER_TIMEOUT");
+		return STATUS_ERROR;
+	}
+
+	port->tcp_user_timeout = timeout;
+#else
+	if (timeout != 0)
+	{
+		elog(LOG, "setsockopt(%s) not supported", "TCP_USER_TIMEOUT");
 		return STATUS_ERROR;
 	}
 #endif

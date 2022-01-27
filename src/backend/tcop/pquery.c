@@ -3,7 +3,7 @@
  * pquery.c
  *	  POSTGRES process query command code
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -37,33 +37,32 @@ Portal		ActivePortal = NULL;
 
 
 static void ProcessQuery(PlannedStmt *plan,
-			 const char *sourceText,
-			 ParamListInfo params,
-			 QueryEnvironment *queryEnv,
-			 DestReceiver *dest,
-			 char *completionTag);
+						 const char *sourceText,
+						 ParamListInfo params,
+						 QueryEnvironment *queryEnv,
+						 DestReceiver *dest,
+						 char *completionTag);
 static void FillPortalStore(Portal portal, bool isTopLevel);
 static uint64 RunFromStore(Portal portal, ScanDirection direction, uint64 count,
-			 DestReceiver *dest);
+						   DestReceiver *dest);
 static uint64 PortalRunSelect(Portal portal, bool forward, long count,
-				DestReceiver *dest);
+							  DestReceiver *dest);
 static void PortalRunUtility(Portal portal, PlannedStmt *pstmt,
-				 bool isTopLevel, bool setHoldSnapshot,
-				 DestReceiver *dest, char *completionTag);
+							 bool isTopLevel, bool setHoldSnapshot,
+							 DestReceiver *dest, char *completionTag);
 static void PortalRunMulti(Portal portal,
-			   bool isTopLevel, bool setHoldSnapshot,
-			   DestReceiver *dest, DestReceiver *altdest,
-			   char *completionTag);
+						   bool isTopLevel, bool setHoldSnapshot,
+						   DestReceiver *dest, DestReceiver *altdest,
+						   char *completionTag);
 static uint64 DoPortalRunFetch(Portal portal,
-				 FetchDirection fdirection,
-				 long count,
-				 DestReceiver *dest);
+							   FetchDirection fdirection,
+							   long count,
+							   DestReceiver *dest);
 static void DoPortalRewind(Portal portal);
 
-static void appendGraphWriteTag(char *tagbuf, GraphWriteStats *graphwrstats);
-static int appendAnyTag(char *tagbuf, int pos, const char *tag,
-						uint32 nprocessed, bool delim);
 
+/* global variable - see postgres.c */
+extern GraphWriteStats graphWriteStats;
 
 /*
  * CreateQueryDesc
@@ -119,7 +118,6 @@ FreeQueryDesc(QueryDesc *qdesc)
 	/* Only the QueryDesc itself need be freed */
 	pfree(qdesc);
 }
-
 
 /*
  * ProcessQuery
@@ -178,14 +176,10 @@ ProcessQuery(PlannedStmt *plan,
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 						 "SELECT " UINT64_FORMAT,
 						 queryDesc->estate->es_processed);
-				appendGraphWriteTag(completionTag,
-									&queryDesc->estate->es_graphwrstats);
 				break;
 			case CMD_INSERT:
-				if (queryDesc->estate->es_processed == 1)
-					lastOid = queryDesc->estate->es_lastoid;
-				else
-					lastOid = InvalidOid;
+				/* lastoid doesn't exist anymore */
+				lastOid = InvalidOid;
 				snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 						 "INSERT %u " UINT64_FORMAT,
 						 lastOid, queryDesc->estate->es_processed);
@@ -201,8 +195,15 @@ ProcessQuery(PlannedStmt *plan,
 						 queryDesc->estate->es_processed);
 				break;
 			case CMD_GRAPHWRITE:
-				appendGraphWriteTag(completionTag,
-									&queryDesc->estate->es_graphwrstats);
+				{
+					uint64		sum = graphWriteStats.insertVertex +
+									  graphWriteStats.insertEdge +
+									  graphWriteStats.deleteVertex +
+									  graphWriteStats.deleteEdge +
+									  graphWriteStats.updateProperty;
+					snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
+							 "UPDATE " UINT64_FORMAT, sum);
+				}
 				break;
 			default:
 				strcpy(completionTag, "???");
@@ -477,9 +478,9 @@ PortalStart(Portal portal, ParamListInfo params,
 		ActivePortal = portal;
 		if (portal->resowner)
 			CurrentResourceOwner = portal->resowner;
-		PortalContext = PortalGetHeapMemory(portal);
+		PortalContext = portal->portalContext;
 
-		oldContext = MemoryContextSwitchTo(PortalGetHeapMemory(portal));
+		oldContext = MemoryContextSwitchTo(PortalContext);
 
 		/* Must remember portal param list, if any */
 		portal->portalParams = params;
@@ -501,6 +502,13 @@ PortalStart(Portal portal, ParamListInfo params,
 					PushActiveSnapshot(snapshot);
 				else
 					PushActiveSnapshot(GetTransactionSnapshot());
+
+				/*
+				 * We could remember the snapshot in portal->portalSnapshot,
+				 * but presently there seems no need to, as this code path
+				 * cannot be used for non-atomic execution.  Hence there can't
+				 * be any commit/abort that might destroy the snapshot.
+				 */
 
 				/*
 				 * Create QueryDesc in portal's context; for the moment, set
@@ -562,8 +570,7 @@ PortalStart(Portal portal, ParamListInfo params,
 
 					pstmt = PortalGetPrimaryStmt(portal);
 					portal->tupDesc =
-						ExecCleanTypeFromTL(pstmt->planTree->targetlist,
-											false);
+						ExecCleanTypeFromTL(pstmt->planTree->targetlist);
 				}
 
 				/*
@@ -645,7 +652,7 @@ PortalSetResultFormat(Portal portal, int nFormats, int16 *formats)
 		return;
 	natts = portal->tupDesc->natts;
 	portal->formats = (int16 *)
-		MemoryContextAlloc(PortalGetHeapMemory(portal),
+		MemoryContextAlloc(portal->portalContext,
 						   natts * sizeof(int16));
 	if (nFormats > 1)
 	{
@@ -693,7 +700,7 @@ PortalSetResultFormat(Portal portal, int nFormats, int16 *formats)
  *		in which to store a command completion status string.
  *		May be NULL if caller doesn't want a status string.
  *
- * Returns TRUE if the portal's execution is complete, FALSE if it was
+ * Returns true if the portal's execution is complete, false if it was
  * suspended due to exhaustion of the count parameter.
  */
 bool
@@ -759,7 +766,7 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 		ActivePortal = portal;
 		if (portal->resowner)
 			CurrentResourceOwner = portal->resowner;
-		PortalContext = PortalGetHeapMemory(portal);
+		PortalContext = portal->portalContext;
 
 		MemoryContextSwitchTo(PortalContext);
 
@@ -797,12 +804,8 @@ PortalRun(Portal portal, long count, bool isTopLevel, bool run_once,
 					}
 					else if (strcmp(portal->commandTag, "CYPHER") == 0)
 					{
-						QueryDesc *qd = PortalGetQueryDesc(portal);
-
 						snprintf(completionTag, COMPLETION_TAG_BUFSIZE,
 								 "SELECT " UINT64_FORMAT, nprocessed);
-						appendGraphWriteTag(completionTag,
-											&qd->estate->es_graphwrstats);
 					}
 					else
 					{
@@ -911,7 +914,7 @@ PortalRunSelect(Portal portal,
 	 * NB: queryDesc will be NULL if we are fetching from a held cursor or a
 	 * completed utility query; can't use it in that path.
 	 */
-	queryDesc = PortalGetQueryDesc(portal);
+	queryDesc = portal->queryDesc;
 
 	/* Caller messed up if we have neither a ready query nor held data. */
 	Assert(queryDesc || portal->holdStore);
@@ -1075,7 +1078,7 @@ FillPortalStore(Portal portal, bool isTopLevel)
 	if (completionTag[0] != '\0')
 		portal->commandTag = pstrdup(completionTag);
 
-	(*treceiver->rDestroy) (treceiver);
+	treceiver->rDestroy(treceiver);
 }
 
 /*
@@ -1097,9 +1100,9 @@ RunFromStore(Portal portal, ScanDirection direction, uint64 count,
 	uint64		current_tuple_count = 0;
 	TupleTableSlot *slot;
 
-	slot = MakeSingleTupleTableSlot(portal->tupDesc);
+	slot = MakeSingleTupleTableSlot(portal->tupDesc, &TTSOpsMinimalTuple);
 
-	(*dest->rStartup) (dest, CMD_SELECT, portal->tupDesc);
+	dest->rStartup(dest, CMD_SELECT, portal->tupDesc);
 
 	if (ScanDirectionIsNoMovement(direction))
 	{
@@ -1129,7 +1132,7 @@ RunFromStore(Portal portal, ScanDirection direction, uint64 count,
 			 * has closed and no more tuples can be sent. If that's the case,
 			 * end the loop.
 			 */
-			if (!((*dest->receiveSlot) (slot, dest)))
+			if (!dest->receiveSlot(slot, dest))
 				break;
 
 			ExecClearTuple(slot);
@@ -1145,7 +1148,7 @@ RunFromStore(Portal portal, ScanDirection direction, uint64 count,
 		}
 	}
 
-	(*dest->rShutdown) (dest);
+	dest->rShutdown(dest);
 
 	ExecDropSingleTupleTableSlot(slot);
 
@@ -1161,45 +1164,26 @@ PortalRunUtility(Portal portal, PlannedStmt *pstmt,
 				 bool isTopLevel, bool setHoldSnapshot,
 				 DestReceiver *dest, char *completionTag)
 {
-	Node	   *utilityStmt = pstmt->utilityStmt;
-	Snapshot	snapshot;
-
 	/*
-	 * Set snapshot if utility stmt needs one.  Most reliable way to do this
-	 * seems to be to enumerate those that do not need one; this is a short
-	 * list.  Transaction control, LOCK, and SET must *not* set a snapshot
-	 * since they need to be executable at the start of a transaction-snapshot
-	 * mode transaction without freezing a snapshot.  By extension we allow
-	 * SHOW not to set a snapshot.  The other stmts listed are just efficiency
-	 * hacks.  Beware of listing anything that can modify the database --- if,
-	 * say, it has to update an index with expressions that invoke
-	 * user-defined functions, then it had better have a snapshot.
+	 * Set snapshot if utility stmt needs one.
 	 */
-	if (!(IsA(utilityStmt, TransactionStmt) ||
-		  IsA(utilityStmt, LockStmt) ||
-		  IsA(utilityStmt, VariableSetStmt) ||
-		  IsA(utilityStmt, VariableShowStmt) ||
-		  IsA(utilityStmt, ConstraintsSetStmt) ||
-	/* efficiency hacks from here down */
-		  IsA(utilityStmt, FetchStmt) ||
-		  IsA(utilityStmt, ListenStmt) ||
-		  IsA(utilityStmt, NotifyStmt) ||
-		  IsA(utilityStmt, UnlistenStmt) ||
-		  IsA(utilityStmt, CheckPointStmt)))
+	if (PlannedStmtRequiresSnapshot(pstmt))
 	{
-		snapshot = GetTransactionSnapshot();
+		Snapshot	snapshot = GetTransactionSnapshot();
+
 		/* If told to, register the snapshot we're using and save in portal */
 		if (setHoldSnapshot)
 		{
 			snapshot = RegisterSnapshot(snapshot);
 			portal->holdSnapshot = snapshot;
 		}
+		/* In any case, make the snapshot active and remember it in portal */
 		PushActiveSnapshot(snapshot);
 		/* PushActiveSnapshot might have copied the snapshot */
-		snapshot = GetActiveSnapshot();
+		portal->portalSnapshot = GetActiveSnapshot();
 	}
 	else
-		snapshot = NULL;
+		portal->portalSnapshot = NULL;
 
 	ProcessUtility(pstmt,
 				   portal->sourceText,
@@ -1210,16 +1194,20 @@ PortalRunUtility(Portal portal, PlannedStmt *pstmt,
 				   completionTag);
 
 	/* Some utility statements may change context on us */
-	MemoryContextSwitchTo(PortalGetHeapMemory(portal));
+	MemoryContextSwitchTo(portal->portalContext);
 
 	/*
-	 * Some utility commands may pop the ActiveSnapshot stack from under us,
-	 * so be careful to only pop the stack if our snapshot is still at the
-	 * top.
+	 * Some utility commands (e.g., VACUUM) pop the ActiveSnapshot stack from
+	 * under us, so don't complain if it's now empty.  Otherwise, our snapshot
+	 * should be the top one; pop it.  Note that this could be a different
+	 * snapshot from the one we made above; see EnsurePortalSnapshotExists.
 	 */
-	if (snapshot != NULL && ActiveSnapshotSet() &&
-		snapshot == GetActiveSnapshot())
+	if (portal->portalSnapshot != NULL && ActiveSnapshotSet())
+	{
+		Assert(portal->portalSnapshot == GetActiveSnapshot());
 		PopActiveSnapshot();
+	}
+	portal->portalSnapshot = NULL;
 }
 
 /*
@@ -1301,6 +1289,12 @@ PortalRunMulti(Portal portal,
 				 * from what holdSnapshot has.)
 				 */
 				PushCopiedSnapshot(snapshot);
+
+				/*
+				 * As for PORTAL_ONE_SELECT portals, it does not seem
+				 * necessary to maintain portal->portalSnapshot here.
+				 */
+
 				active_snapshot_set = true;
 			}
 			else
@@ -1360,18 +1354,29 @@ PortalRunMulti(Portal portal,
 		}
 
 		/*
+		 * Clear subsidiary contexts to recover temporary memory.
+		 */
+		Assert(portal->portalContext == CurrentMemoryContext);
+
+		MemoryContextDeleteChildren(portal->portalContext);
+
+		/*
+		 * Avoid crashing if portal->stmts has been reset.  This can only
+		 * occur if a CALL or DO utility statement executed an internal
+		 * COMMIT/ROLLBACK (cf PortalReleaseCachedPlan).  The CALL or DO must
+		 * have been the only statement in the portal, so there's nothing left
+		 * for us to do; but we don't want to dereference a now-dangling list
+		 * pointer.
+		 */
+		if (portal->stmts == NIL)
+			break;
+
+		/*
 		 * Increment command counter between queries, but not after the last
 		 * one.
 		 */
 		if (lnext(stmtlist_item) != NULL)
 			CommandCounterIncrement();
-
-		/*
-		 * Clear subsidiary contexts to recover temporary memory.
-		 */
-		Assert(PortalGetHeapMemory(portal) == CurrentMemoryContext);
-
-		MemoryContextDeleteChildren(PortalGetHeapMemory(portal));
 	}
 
 	/* Pop the snapshot if we pushed one. */
@@ -1450,7 +1455,7 @@ PortalRunFetch(Portal portal,
 		ActivePortal = portal;
 		if (portal->resowner)
 			CurrentResourceOwner = portal->resowner;
-		PortalContext = PortalGetHeapMemory(portal);
+		PortalContext = portal->portalContext;
 
 		oldContext = MemoryContextSwitchTo(PortalContext);
 
@@ -1720,7 +1725,7 @@ DoPortalRewind(Portal portal)
 	}
 
 	/* Rewind executor, if active */
-	queryDesc = PortalGetQueryDesc(portal);
+	queryDesc = portal->queryDesc;
 	if (queryDesc)
 	{
 		PushActiveSnapshot(queryDesc->snapshot);
@@ -1733,57 +1738,78 @@ DoPortalRewind(Portal portal)
 	portal->portalPos = 0;
 }
 
-static void
-appendGraphWriteTag(char *tagbuf, GraphWriteStats *graphwrstats)
+/*
+ * PlannedStmtRequiresSnapshot - what it says on the tin
+ */
+bool
+PlannedStmtRequiresSnapshot(PlannedStmt *pstmt)
 {
-	int			pos = strlen(tagbuf);
-	int			opn;
+	Node	   *utilityStmt = pstmt->utilityStmt;
 
-	if (graphwrstats->insertVertex == UINT_MAX &&
-		graphwrstats->insertEdge == UINT_MAX &&
-		graphwrstats->deleteVertex == UINT_MAX &&
-		graphwrstats->deleteEdge == UINT_MAX &&
-		graphwrstats->updateProperty == UINT_MAX)
-		return;
+	/* If it's not a utility statement, it definitely needs a snapshot */
+	if (utilityStmt == NULL)
+		return true;
 
-	if (pos < COMPLETION_TAG_BUFSIZE)
-		pos += snprintf(tagbuf + pos, COMPLETION_TAG_BUFSIZE - pos,
-						(pos > 0) ? ", GRAPH WRITE (" : "GRAPH WRITE (");
-	opn = pos;
+	/*
+	 * Most utility statements need a snapshot, and the default presumption
+	 * about new ones should be that they do too.  Hence, enumerate those that
+	 * do not need one.
+	 *
+	 * Transaction control, LOCK, and SET must *not* set a snapshot, since
+	 * they need to be executable at the start of a transaction-snapshot-mode
+	 * transaction without freezing a snapshot.  By extension we allow SHOW
+	 * not to set a snapshot.  The other stmts listed are just efficiency
+	 * hacks.  Beware of listing anything that can modify the database --- if,
+	 * say, it has to update an index with expressions that invoke
+	 * user-defined functions, then it had better have a snapshot.
+	 */
+	if (IsA(utilityStmt, TransactionStmt) ||
+		IsA(utilityStmt, LockStmt) ||
+		IsA(utilityStmt, VariableSetStmt) ||
+		IsA(utilityStmt, VariableShowStmt) ||
+		IsA(utilityStmt, ConstraintsSetStmt) ||
+	/* efficiency hacks from here down */
+		IsA(utilityStmt, FetchStmt) ||
+		IsA(utilityStmt, ListenStmt) ||
+		IsA(utilityStmt, NotifyStmt) ||
+		IsA(utilityStmt, UnlistenStmt) ||
+		IsA(utilityStmt, CheckPointStmt))
+		return false;
 
-	pos = appendAnyTag(tagbuf, pos, "INSERT VERTEX",
-					   graphwrstats->insertVertex, pos > opn);
-	pos = appendAnyTag(tagbuf, pos, "INSERT EDGE",
-					   graphwrstats->insertEdge, pos > opn);
-	pos = appendAnyTag(tagbuf, pos, "DELETE VERTEX",
-					   graphwrstats->deleteVertex, pos > opn);
-	pos = appendAnyTag(tagbuf, pos, "DELETE EDGE",
-					   graphwrstats->deleteEdge, pos > opn);
-	pos = appendAnyTag(tagbuf, pos, "UPDATE PROPERTY",
-					   graphwrstats->updateProperty, pos > opn);
-
-	if (pos < COMPLETION_TAG_BUFSIZE - 1)
-	{
-		tagbuf[pos] = ')';
-		tagbuf[pos + 1] = '\0';
-	}
+	return true;
 }
 
-static int
-appendAnyTag(char *tagbuf, int pos, const char *tag, uint32 nprocessed,
-			 bool delim)
+/*
+ * EnsurePortalSnapshotExists - recreate Portal-level snapshot, if needed
+ *
+ * Generally, we will have an active snapshot whenever we are executing
+ * inside a Portal, unless the Portal's query is one of the utility
+ * statements exempted from that rule (see PlannedStmtRequiresSnapshot).
+ * However, procedures and DO blocks can commit or abort the transaction,
+ * and thereby destroy all snapshots.  This function can be called to
+ * re-establish the Portal-level snapshot when none exists.
+ */
+void
+EnsurePortalSnapshotExists(void)
 {
-	const char *fmt = delim ? ", %s %u" : "%s %u";
-	int			len;
+	Portal		portal;
 
-	if (pos >= COMPLETION_TAG_BUFSIZE)
-		return pos;
+	/*
+	 * Nothing to do if a snapshot is set.  (We take it on faith that the
+	 * outermost active snapshot belongs to some Portal; or if there is no
+	 * Portal, it's somebody else's responsibility to manage things.)
+	 */
+	if (ActiveSnapshotSet())
+		return;
 
-	if (nprocessed == UINT_MAX)
-		return pos;
+	/* Otherwise, we'd better have an active Portal */
+	portal = ActivePortal;
+	if (unlikely(portal == NULL))
+		elog(ERROR, "cannot execute SQL without an outer snapshot or portal");
+	Assert(portal->portalSnapshot == NULL);
 
-	len = snprintf(tagbuf + pos, COMPLETION_TAG_BUFSIZE - pos, fmt,
-				   tag, nprocessed);
-
-	return pos + len;
+	/* Create a new snapshot and make it active */
+	PushActiveSnapshot(GetTransactionSnapshot());
+	/* PushActiveSnapshot might have copied the snapshot */
+	portal->portalSnapshot = GetActiveSnapshot();
 }

@@ -8,7 +8,7 @@
  *
  * See fe_utils/psqlscan_int.h for additional commentary.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -19,13 +19,16 @@
 #include "postgres_fe.h"
 
 #include "psqlscanslash.h"
-#include "conditional.h"
+#include "common/logging.h"
+#include "fe_utils/conditional.h"
 
 #include "libpq-fe.h"
 }
 
 %{
 #include "fe_utils/psqlscan_int.h"
+
+#define PQmblenBounded(s, e)  strnlen(s, PQmblen(s, e))
 
 /*
  * We must have a typedef YYSTYPE for yylex's first argument, but this lexer
@@ -66,6 +69,8 @@ static void evaluate_backtick(PsqlScanState state);
  */
 extern int	slash_yyget_column(yyscan_t yyscanner);
 extern void slash_yyset_column(int column_no, yyscan_t yyscanner);
+
+/* LCOV_EXCL_START */
 
 %}
 
@@ -281,6 +286,10 @@ other			.
 					unquoted_option_chars = 0;
 				}
 
+:\{\?{variable_char}+\}	{
+					psqlscan_test_variable(cur_state, yytext, yyleng);
+				}
+
 :'{variable_char}*	{
 					/* Throw back everything but the colon */
 					yyless(1);
@@ -289,6 +298,20 @@ other			.
 				}
 
 :\"{variable_char}*	{
+					/* Throw back everything but the colon */
+					yyless(1);
+					unquoted_option_chars++;
+					ECHO;
+				}
+
+:\{\?{variable_char}*	{
+					/* Throw back everything but the colon */
+					yyless(1);
+					unquoted_option_chars++;
+					ECHO;
+				}
+
+:\{		{
 					/* Throw back everything but the colon */
 					yyless(1);
 					unquoted_option_chars++;
@@ -449,6 +472,8 @@ other			.
 				}
 
 %%
+
+/* LCOV_EXCL_STOP */
 
 /*
  * Scan the command name of a psql backslash command.  This should be called
@@ -611,7 +636,7 @@ psql_scan_slash_option(PsqlScanState state,
 		case xslashbackquote:
 		case xslashdquote:
 			/* must have hit EOL inside quotes */
-			state->callbacks->write_error("unterminated quoted string\n");
+			pg_log_error("unterminated quoted string");
 			termPQExpBuffer(&mybuf);
 			return NULL;
 		case xslashwholeline:
@@ -730,7 +755,7 @@ dequote_downcase_identifier(char *str, bool downcase, int encoding)
 		{
 			if (downcase && !inquotes)
 				*cp = pg_tolower((unsigned char) *cp);
-			cp += PQmblen(cp, encoding);
+			cp += PQmblenBounded(cp, encoding);
 		}
 	}
 }
@@ -754,10 +779,10 @@ evaluate_backtick(PsqlScanState state)
 
 	initPQExpBuffer(&cmd_output);
 
-	fd = popen(cmd, PG_BINARY_R);
+	fd = popen(cmd, "r");
 	if (!fd)
 	{
-		state->callbacks->write_error("%s: %s\n", cmd, strerror(errno));
+		pg_log_error("%s: %m", cmd);
 		error = true;
 	}
 
@@ -768,7 +793,7 @@ evaluate_backtick(PsqlScanState state)
 			result = fread(buf, 1, sizeof(buf), fd);
 			if (ferror(fd))
 			{
-				state->callbacks->write_error("%s: %s\n", cmd, strerror(errno));
+				pg_log_error("%s: %m", cmd);
 				error = true;
 				break;
 			}
@@ -778,13 +803,13 @@ evaluate_backtick(PsqlScanState state)
 
 	if (fd && pclose(fd) == -1)
 	{
-		state->callbacks->write_error("%s: %s\n", cmd, strerror(errno));
+		pg_log_error("%s: %m", cmd);
 		error = true;
 	}
 
 	if (PQExpBufferDataBroken(cmd_output))
 	{
-		state->callbacks->write_error("%s: out of memory\n", cmd);
+		pg_log_error("%s: out of memory", cmd);
 		error = true;
 	}
 
@@ -795,7 +820,7 @@ evaluate_backtick(PsqlScanState state)
 	/* If no error, transfer result to output_buf */
 	if (!error)
 	{
-		/* strip any trailing newline */
+		/* strip any trailing newline (but only one) */
 		if (cmd_output.len > 0 &&
 			cmd_output.data[cmd_output.len - 1] == '\n')
 			cmd_output.len--;

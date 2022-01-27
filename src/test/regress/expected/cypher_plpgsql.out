@@ -67,12 +67,11 @@ RETURN false;
 END IF;
 END;
 $$ LANGUAGE plpgsql;
+-- This test originally worked due to a side effect of having a cast from jsonb
+-- to boolean. That cast has been removed, so now this will fail as expected.
 SELECT udf_if();
- udf_if 
---------
- t
-(1 row)
-
+ERROR:  invalid input syntax for type boolean: ""knows""
+CONTEXT:  PL/pgSQL function udf_if() line 3 at IF
 CREATE OR REPLACE FUNCTION udf_if_exists() RETURNS boolean AS $$
 BEGIN
 IF EXISTS ( MATCH (a)-[b]->(c) WHERE a.name = 'Anders' AND c.name = 'Bossman' RETURN b ) THEN

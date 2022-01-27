@@ -3,7 +3,7 @@
  * nodeMaterial.c
  *	  Routines to handle materialization nodes.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -146,10 +146,8 @@ ExecMaterial(PlanState *pstate)
 		if (tuplestorestate)
 			tuplestore_puttupleslot(tuplestorestate, outerslot);
 
-		/*
-		 * We can just return the subplan's returned tuple, without copying.
-		 */
-		return outerslot;
+		ExecCopySlot(slot, outerslot);
+		return slot;
 	}
 
 	/*
@@ -207,14 +205,6 @@ ExecInitMaterial(Material *node, EState *estate, int eflags)
 	 */
 
 	/*
-	 * tuple table initialization
-	 *
-	 * material nodes only return tuples from their materialized relation.
-	 */
-	ExecInitResultTupleSlot(estate, &matstate->ss.ps);
-	ExecInitScanTupleSlot(estate, &matstate->ss);
-
-	/*
 	 * initialize child nodes
 	 *
 	 * We shield the child node from the need to support REWIND, BACKWARD, or
@@ -226,12 +216,18 @@ ExecInitMaterial(Material *node, EState *estate, int eflags)
 	outerPlanState(matstate) = ExecInitNode(outerPlan, estate, eflags);
 
 	/*
-	 * initialize tuple type.  no need to initialize projection info because
-	 * this node doesn't do projections.
+	 * Initialize result type and slot. No need to initialize projection info
+	 * because this node doesn't do projections.
+	 *
+	 * material nodes only return tuples from their materialized relation.
 	 */
-	ExecAssignResultTypeFromTL(&matstate->ss.ps);
-	ExecAssignScanTypeFromOuterPlan(&matstate->ss);
+	ExecInitResultTupleSlotTL(&matstate->ss.ps, &TTSOpsMinimalTuple);
 	matstate->ss.ps.ps_ProjInfo = NULL;
+
+	/*
+	 * initialize tuple type.
+	 */
+	ExecCreateScanSlotFromOuterPlan(estate, &matstate->ss, &TTSOpsMinimalTuple);
 
 	return matstate;
 }

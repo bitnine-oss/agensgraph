@@ -4,7 +4,7 @@
  *	  Definitions for the SQL "date" and "time" types.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/date.h
@@ -17,7 +17,8 @@
 #include <math.h>
 
 #include "fmgr.h"
-
+#include "pgtime.h"
+#include "datatype/timestamp.h"
 
 typedef int32 DateADT;
 
@@ -73,5 +74,9 @@ extern void EncodeSpecialDate(DateADT dt, char *str);
 extern DateADT GetSQLCurrentDate(void);
 extern TimeTzADT *GetSQLCurrentTime(int32 typmod);
 extern TimeADT GetSQLLocalTime(int32 typmod);
+extern int	time2tm(TimeADT time, struct pg_tm *tm, fsec_t *fsec);
+extern int	timetz2tm(TimeTzADT *time, struct pg_tm *tm, fsec_t *fsec, int *tzp);
+extern bool time_overflows(int hour, int min, int sec, fsec_t fsec);
+extern bool float_time_overflows(int hour, int min, double sec);
 
 #endif							/* DATE_H */

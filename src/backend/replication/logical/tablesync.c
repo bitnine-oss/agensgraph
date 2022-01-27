@@ -2,7 +2,7 @@
  * tablesync.c
  *	  PostgreSQL logical replication
  *
- * Copyright (c) 2012-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/tablesync.c
@@ -88,6 +88,7 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 
+#include "access/table.h"
 #include "access/xact.h"
 
 #include "catalog/pg_subscription_rel.h"
@@ -159,7 +160,6 @@ finish_sync_worker(void)
 static bool
 wait_for_relation_state_change(Oid relid, char expected_state)
 {
-	int			rc;
 	char		state;
 
 	for (;;)
@@ -192,13 +192,9 @@ wait_for_relation_state_change(Oid relid, char expected_state)
 		if (!worker)
 			return false;
 
-		rc = WaitLatch(MyLatch,
-					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-					   1000L, WAIT_EVENT_LOGICAL_SYNC_STATE_CHANGE);
-
-		/* emergency bailout if postmaster has died */
-		if (rc & WL_POSTMASTER_DEATH)
-			proc_exit(1);
+		(void) WaitLatch(MyLatch,
+						 WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
+						 1000L, WAIT_EVENT_LOGICAL_SYNC_STATE_CHANGE);
 
 		ResetLatch(MyLatch);
 	}
@@ -250,12 +246,8 @@ wait_for_worker_state_change(char expected_state)
 		 * but use a timeout in case it dies without sending one.
 		 */
 		rc = WaitLatch(MyLatch,
-					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+					   WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
 					   1000L, WAIT_EVENT_LOGICAL_SYNC_STATE_CHANGE);
-
-		/* emergency bailout if postmaster has died */
-		if (rc & WL_POSTMASTER_DEATH)
-			proc_exit(1);
 
 		if (rc & WL_LATCH_SET)
 			ResetLatch(MyLatch);
@@ -298,13 +290,12 @@ process_syncing_tables_for_sync(XLogRecPtr current_lsn)
 
 		SpinLockRelease(&MyLogicalRepWorker->relmutex);
 
-		SetSubscriptionRelState(MyLogicalRepWorker->subid,
-								MyLogicalRepWorker->relid,
-								MyLogicalRepWorker->relstate,
-								MyLogicalRepWorker->relstate_lsn,
-								true);
+		UpdateSubscriptionRelState(MyLogicalRepWorker->subid,
+								   MyLogicalRepWorker->relid,
+								   MyLogicalRepWorker->relstate,
+								   MyLogicalRepWorker->relstate_lsn);
 
-		walrcv_endstreaming(wrconn, &tli);
+		walrcv_endstreaming(LogRepWorkerWalRcvConn, &tli);
 		finish_sync_worker();
 	}
 	else
@@ -427,9 +418,10 @@ process_syncing_tables_for_apply(XLogRecPtr current_lsn)
 					StartTransactionCommand();
 					started_tx = true;
 				}
-				SetSubscriptionRelState(MyLogicalRepWorker->subid,
-										rstate->relid, rstate->state,
-										rstate->lsn, true);
+
+				UpdateSubscriptionRelState(MyLogicalRepWorker->subid,
+										   rstate->relid, rstate->state,
+										   rstate->lsn);
 			}
 		}
 		else
@@ -593,14 +585,13 @@ copy_read_data(void *outbuf, int minread, int maxread)
 	while (maxread > 0 && bytesread < minread)
 	{
 		pgsocket	fd = PGINVALID_SOCKET;
-		int			rc;
 		int			len;
 		char	   *buf = NULL;
 
 		for (;;)
 		{
 			/* Try read the data. */
-			len = walrcv_receive(wrconn, &buf, &fd);
+			len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
 
 			CHECK_FOR_INTERRUPTS();
 
@@ -632,14 +623,10 @@ copy_read_data(void *outbuf, int minread, int maxread)
 		/*
 		 * Wait for more data or latch.
 		 */
-		rc = WaitLatchOrSocket(MyLatch,
-							   WL_SOCKET_READABLE | WL_LATCH_SET |
-							   WL_TIMEOUT | WL_POSTMASTER_DEATH,
-							   fd, 1000L, WAIT_EVENT_LOGICAL_SYNC_DATA);
-
-		/* Emergency bailout if postmaster has died */
-		if (rc & WL_POSTMASTER_DEATH)
-			proc_exit(1);
+		(void) WaitLatchOrSocket(MyLatch,
+								 WL_SOCKET_READABLE | WL_LATCH_SET |
+								 WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
+								 fd, 1000L, WAIT_EVENT_LOGICAL_SYNC_DATA);
 
 		ResetLatch(MyLatch);
 	}
@@ -678,14 +665,15 @@ fetch_remote_table_info(char *nspname, char *relname,
 					 "   AND c.relkind = 'r'",
 					 quote_literal_cstr(nspname),
 					 quote_literal_cstr(relname));
-	res = walrcv_exec(wrconn, cmd.data, 2, tableRow);
+	res = walrcv_exec(LogRepWorkerWalRcvConn, cmd.data,
+					  lengthof(tableRow), tableRow);
 
 	if (res->status != WALRCV_OK_TUPLES)
 		ereport(ERROR,
 				(errmsg("could not fetch table info for table \"%s.%s\" from publisher: %s",
 						nspname, relname, res->err)));
 
-	slot = MakeSingleTupleTableSlot(res->tupledesc);
+	slot = MakeSingleTupleTableSlot(res->tupledesc, &TTSOpsMinimalTuple);
 	if (!tuplestore_gettupleslot(res->tuplestore, true, false, slot))
 		ereport(ERROR,
 				(errmsg("table \"%s.%s\" not found on publisher",
@@ -710,11 +698,15 @@ fetch_remote_table_info(char *nspname, char *relname,
 					 "  LEFT JOIN pg_catalog.pg_index i"
 					 "       ON (i.indexrelid = pg_get_replica_identity_index(%u))"
 					 " WHERE a.attnum > 0::pg_catalog.int2"
-					 "   AND NOT a.attisdropped"
+					 "   AND NOT a.attisdropped %s"
 					 "   AND a.attrelid = %u"
 					 " ORDER BY a.attnum",
-					 lrel->remoteid, lrel->remoteid);
-	res = walrcv_exec(wrconn, cmd.data, 4, attrRow);
+					 lrel->remoteid,
+					 (walrcv_server_version(LogRepWorkerWalRcvConn) >= 120000 ?
+					  "AND a.attgenerated = ''" : ""),
+					 lrel->remoteid);
+	res = walrcv_exec(LogRepWorkerWalRcvConn, cmd.data,
+					  lengthof(attrRow), attrRow);
 
 	if (res->status != WALRCV_OK_TUPLES)
 		ereport(ERROR,
@@ -727,7 +719,7 @@ fetch_remote_table_info(char *nspname, char *relname,
 	lrel->attkeys = NULL;
 
 	natt = 0;
-	slot = MakeSingleTupleTableSlot(res->tupledesc);
+	slot = MakeSingleTupleTableSlot(res->tupledesc, &TTSOpsMinimalTuple);
 	while (tuplestore_gettupleslot(res->tuplestore, true, false, slot))
 	{
 		lrel->attnames[natt] =
@@ -784,7 +776,7 @@ copy_table(Relation rel)
 	initStringInfo(&cmd);
 	appendStringInfo(&cmd, "COPY %s TO STDOUT",
 					 quote_qualified_identifier(lrel.nspname, lrel.relname));
-	res = walrcv_exec(wrconn, cmd.data, 0, NULL);
+	res = walrcv_exec(LogRepWorkerWalRcvConn, cmd.data, 0, NULL);
 	pfree(cmd.data);
 	if (res->status != WALRCV_OK_COPY_OUT)
 		ereport(ERROR,
@@ -795,7 +787,8 @@ copy_table(Relation rel)
 	copybuf = makeStringInfo();
 
 	pstate = make_parsestate(NULL);
-	addRangeTableEntryForRelation(pstate, rel, NULL, false, false);
+	addRangeTableEntryForRelation(pstate, rel, AccessShareLock,
+								  NULL, false, false);
 
 	attnamelist = make_copy_attnamelist(relmapentry);
 	cstate = BeginCopyFrom(pstate, rel, NULL, false, copy_read_data, attnamelist, NIL);
@@ -850,8 +843,9 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 	 * application_name, so that it is different from the main apply worker,
 	 * so that synchronous replication can distinguish them.
 	 */
-	wrconn = walrcv_connect(MySubscription->conninfo, true, slotname, &err);
-	if (wrconn == NULL)
+	LogRepWorkerWalRcvConn = walrcv_connect(MySubscription->conninfo, true,
+											slotname, &err);
+	if (LogRepWorkerWalRcvConn == NULL)
 		ereport(ERROR,
 				(errmsg("could not connect to the publisher: %s", err)));
 
@@ -870,11 +864,10 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 
 				/* Update the state and make it visible to others. */
 				StartTransactionCommand();
-				SetSubscriptionRelState(MyLogicalRepWorker->subid,
-										MyLogicalRepWorker->relid,
-										MyLogicalRepWorker->relstate,
-										MyLogicalRepWorker->relstate_lsn,
-										true);
+				UpdateSubscriptionRelState(MyLogicalRepWorker->subid,
+										   MyLogicalRepWorker->relid,
+										   MyLogicalRepWorker->relstate,
+										   MyLogicalRepWorker->relstate_lsn);
 				CommitTransactionCommand();
 				pgstat_report_stat(false);
 
@@ -890,14 +883,14 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 				 * working and it has to open the relation in RowExclusiveLock
 				 * when remapping remote relation id to local one.
 				 */
-				rel = heap_open(MyLogicalRepWorker->relid, RowExclusiveLock);
+				rel = table_open(MyLogicalRepWorker->relid, RowExclusiveLock);
 
 				/*
 				 * Create a temporary slot for the sync process. We do this
 				 * inside the transaction so that we can use the snapshot made
 				 * by the slot to get existing data.
 				 */
-				res = walrcv_exec(wrconn,
+				res = walrcv_exec(LogRepWorkerWalRcvConn,
 								  "BEGIN READ ONLY ISOLATION LEVEL "
 								  "REPEATABLE READ", 0, NULL);
 				if (res->status != WALRCV_OK_COMMAND)
@@ -914,21 +907,21 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 				 * that is consistent with the lsn used by the slot to start
 				 * decoding.
 				 */
-				walrcv_create_slot(wrconn, slotname, true,
+				walrcv_create_slot(LogRepWorkerWalRcvConn, slotname, true,
 								   CRS_USE_SNAPSHOT, origin_startpos);
 
 				PushActiveSnapshot(GetTransactionSnapshot());
 				copy_table(rel);
 				PopActiveSnapshot();
 
-				res = walrcv_exec(wrconn, "COMMIT", 0, NULL);
+				res = walrcv_exec(LogRepWorkerWalRcvConn, "COMMIT", 0, NULL);
 				if (res->status != WALRCV_OK_COMMAND)
 					ereport(ERROR,
 							(errmsg("table copy could not finish transaction on publisher"),
 							 errdetail("The error was: %s", res->err)));
 				walrcv_clear_result(res);
 
-				heap_close(rel, NoLock);
+				table_close(rel, NoLock);
 
 				/* Make the copy visible. */
 				CommandCounterIncrement();
@@ -961,11 +954,10 @@ LogicalRepSyncTableStart(XLogRecPtr *origin_startpos)
 					 * Update the new state in catalog.  No need to bother
 					 * with the shmem state as we are exiting for good.
 					 */
-					SetSubscriptionRelState(MyLogicalRepWorker->subid,
-											MyLogicalRepWorker->relid,
-											SUBREL_STATE_SYNCDONE,
-											*origin_startpos,
-											true);
+					UpdateSubscriptionRelState(MyLogicalRepWorker->subid,
+											   MyLogicalRepWorker->relid,
+											   SUBREL_STATE_SYNCDONE,
+											   *origin_startpos);
 					finish_sync_worker();
 				}
 				break;

@@ -3,7 +3,7 @@
  * pg_enum.c
  *	  routines to support manipulation of the pg_enum relation
  *
- * Copyright (c) 2006-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2006-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -14,8 +14,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
@@ -28,12 +28,24 @@
 #include "utils/builtins.h"
 #include "utils/catcache.h"
 #include "utils/fmgroids.h"
+#include "utils/hsearch.h"
+#include "utils/memutils.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
 
 
 /* Potentially set by pg_upgrade_support functions */
 Oid			binary_upgrade_next_pg_enum_oid = InvalidOid;
+
+/*
+ * Hash table of enum value OIDs created during the current transaction by
+ * AddEnumLabel.  We disallow using these values until the transaction is
+ * committed; otherwise, they might get into indexes where we can't clean
+ * them up, and then if the transaction rolls back we have a broken index.
+ * (See comments for check_safe_enum_use() in enum.c.)  Values created by
+ * EnumValuesCreate are *not* blacklisted; we assume those are created during
+ * CREATE TYPE, so they can't go away unless the enum type itself does.
+ */
+static HTAB *enum_blacklist = NULL;
 
 static void RenumberEnumType(Relation pg_enum, HeapTuple *existing, int nelems);
 static int	sort_order_cmp(const void *p1, const void *p2);
@@ -66,7 +78,7 @@ EnumValuesCreate(Oid enumTypeOid, List *vals)
 	 * probably not worth trying harder.
 	 */
 
-	pg_enum = heap_open(EnumRelationId, RowExclusiveLock);
+	pg_enum = table_open(EnumRelationId, RowExclusiveLock);
 
 	/*
 	 * Allocate OIDs for the enum's members.
@@ -89,7 +101,8 @@ EnumValuesCreate(Oid enumTypeOid, List *vals)
 
 		do
 		{
-			new_oid = GetNewOid(pg_enum);
+			new_oid = GetNewOidWithIndex(pg_enum, EnumOidIndexId,
+										 Anum_pg_enum_oid);
 		} while (new_oid & 1);
 		oids[elemno] = new_oid;
 	}
@@ -116,13 +129,13 @@ EnumValuesCreate(Oid enumTypeOid, List *vals)
 					 errdetail("Labels must be %d characters or less.",
 							   NAMEDATALEN - 1)));
 
+		values[Anum_pg_enum_oid - 1] = ObjectIdGetDatum(oids[elemno]);
 		values[Anum_pg_enum_enumtypid - 1] = ObjectIdGetDatum(enumTypeOid);
 		values[Anum_pg_enum_enumsortorder - 1] = Float4GetDatum(elemno + 1);
 		namestrcpy(&enumlabel, lab);
 		values[Anum_pg_enum_enumlabel - 1] = NameGetDatum(&enumlabel);
 
 		tup = heap_form_tuple(RelationGetDescr(pg_enum), values, nulls);
-		HeapTupleSetOid(tup, oids[elemno]);
 
 		CatalogTupleInsert(pg_enum, tup);
 		heap_freetuple(tup);
@@ -132,7 +145,7 @@ EnumValuesCreate(Oid enumTypeOid, List *vals)
 
 	/* clean up */
 	pfree(oids);
-	heap_close(pg_enum, RowExclusiveLock);
+	table_close(pg_enum, RowExclusiveLock);
 }
 
 
@@ -148,7 +161,7 @@ EnumValuesDelete(Oid enumTypeOid)
 	SysScanDesc scan;
 	HeapTuple	tup;
 
-	pg_enum = heap_open(EnumRelationId, RowExclusiveLock);
+	pg_enum = table_open(EnumRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_enum_enumtypid,
@@ -165,9 +178,26 @@ EnumValuesDelete(Oid enumTypeOid)
 
 	systable_endscan(scan);
 
-	heap_close(pg_enum, RowExclusiveLock);
+	table_close(pg_enum, RowExclusiveLock);
 }
 
+/*
+ * Initialize the enum blacklist for this transaction.
+ */
+static void
+init_enum_blacklist(void)
+{
+	HASHCTL		hash_ctl;
+
+	memset(&hash_ctl, 0, sizeof(hash_ctl));
+	hash_ctl.keysize = sizeof(Oid);
+	hash_ctl.entrysize = sizeof(Oid);
+	hash_ctl.hcxt = TopTransactionContext;
+	enum_blacklist = hash_create("Enum value blacklist",
+								 32,
+								 &hash_ctl,
+								 HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+}
 
 /*
  * AddEnumLabel
@@ -238,7 +268,7 @@ AddEnumLabel(Oid enumTypeOid,
 							newVal)));
 	}
 
-	pg_enum = heap_open(EnumRelationId, RowExclusiveLock);
+	pg_enum = table_open(EnumRelationId, RowExclusiveLock);
 
 	/* If we have to renumber the existing members, we restart from here */
 restart:
@@ -376,7 +406,8 @@ restart:
 			bool		sorts_ok;
 
 			/* Get a new OID (different from all existing pg_enum tuples) */
-			newOid = GetNewOid(pg_enum);
+			newOid = GetNewOidWithIndex(pg_enum, EnumOidIndexId,
+										Anum_pg_enum_oid);
 
 			/*
 			 * Detect whether it sorts correctly relative to existing
@@ -389,7 +420,7 @@ restart:
 			{
 				HeapTuple	exists_tup = existing[i];
 				Form_pg_enum exists_en = (Form_pg_enum) GETSTRUCT(exists_tup);
-				Oid			exists_oid = HeapTupleGetOid(exists_tup);
+				Oid			exists_oid = exists_en->oid;
 
 				if (exists_oid & 1)
 					continue;	/* ignore odd Oids */
@@ -450,16 +481,23 @@ restart:
 
 	/* Create the new pg_enum entry */
 	memset(nulls, false, sizeof(nulls));
+	values[Anum_pg_enum_oid - 1] = ObjectIdGetDatum(newOid);
 	values[Anum_pg_enum_enumtypid - 1] = ObjectIdGetDatum(enumTypeOid);
 	values[Anum_pg_enum_enumsortorder - 1] = Float4GetDatum(newelemorder);
 	namestrcpy(&enumlabel, newVal);
 	values[Anum_pg_enum_enumlabel - 1] = NameGetDatum(&enumlabel);
 	enum_tup = heap_form_tuple(RelationGetDescr(pg_enum), values, nulls);
-	HeapTupleSetOid(enum_tup, newOid);
 	CatalogTupleInsert(pg_enum, enum_tup);
 	heap_freetuple(enum_tup);
 
-	heap_close(pg_enum, RowExclusiveLock);
+	table_close(pg_enum, RowExclusiveLock);
+
+	/* Set up the blacklist hash if not already done in this transaction */
+	if (enum_blacklist == NULL)
+		init_enum_blacklist();
+
+	/* Add the new value to the blacklist */
+	(void) hash_search(enum_blacklist, &newOid, HASH_ENTER, NULL);
 }
 
 
@@ -498,7 +536,7 @@ RenameEnumLabel(Oid enumTypeOid,
 	 */
 	LockDatabaseObject(TypeRelationId, enumTypeOid, 0, ExclusiveLock);
 
-	pg_enum = heap_open(EnumRelationId, RowExclusiveLock);
+	pg_enum = table_open(EnumRelationId, RowExclusiveLock);
 
 	/* Get the list of existing members of the enum */
 	list = SearchSysCacheList1(ENUMTYPOIDNAME,
@@ -543,7 +581,40 @@ RenameEnumLabel(Oid enumTypeOid,
 	CatalogTupleUpdate(pg_enum, &enum_tup->t_self, enum_tup);
 	heap_freetuple(enum_tup);
 
-	heap_close(pg_enum, RowExclusiveLock);
+	table_close(pg_enum, RowExclusiveLock);
+}
+
+
+/*
+ * Test if the given enum value is on the blacklist
+ */
+bool
+EnumBlacklisted(Oid enum_id)
+{
+	bool		found;
+
+	/* If we've made no blacklist table, all values are safe */
+	if (enum_blacklist == NULL)
+		return false;
+
+	/* Else, is it in the table? */
+	(void) hash_search(enum_blacklist, &enum_id, HASH_FIND, &found);
+	return found;
+}
+
+
+/*
+ * Clean up enum stuff after end of top-level transaction.
+ */
+void
+AtEOXact_Enum(void)
+{
+	/*
+	 * Reset the blacklist table, as all our enum values are now committed.
+	 * The memory will go away automatically when TopTransactionContext is
+	 * freed; it's sufficient to clear our pointer.
+	 */
+	enum_blacklist = NULL;
 }
 
 
@@ -619,4 +690,73 @@ sort_order_cmp(const void *p1, const void *p2)
 		return 1;
 	else
 		return 0;
+}
+
+Size
+EstimateEnumBlacklistSpace(void)
+{
+	size_t		entries;
+
+	if (enum_blacklist)
+		entries = hash_get_num_entries(enum_blacklist);
+	else
+		entries = 0;
+
+	/* Add one for the terminator. */
+	return sizeof(Oid) * (entries + 1);
+}
+
+void
+SerializeEnumBlacklist(void *space, Size size)
+{
+	Oid		   *serialized = (Oid *) space;
+
+	/*
+	 * Make sure the hash table hasn't changed in size since the caller
+	 * reserved the space.
+	 */
+	Assert(size == EstimateEnumBlacklistSpace());
+
+	/* Write out all the values from the hash table, if there is one. */
+	if (enum_blacklist)
+	{
+		HASH_SEQ_STATUS status;
+		Oid		   *value;
+
+		hash_seq_init(&status, enum_blacklist);
+		while ((value = (Oid *) hash_seq_search(&status)))
+			*serialized++ = *value;
+	}
+
+	/* Write out the terminator. */
+	*serialized = InvalidOid;
+
+	/*
+	 * Make sure the amount of space we actually used matches what was
+	 * estimated.
+	 */
+	Assert((char *) (serialized + 1) == ((char *) space) + size);
+}
+
+void
+RestoreEnumBlacklist(void *space)
+{
+	Oid		   *serialized = (Oid *) space;
+
+	Assert(!enum_blacklist);
+
+	/*
+	 * As a special case, if the list is empty then don't even bother to
+	 * create the hash table.  This is the usual case, since enum alteration
+	 * is expected to be rare.
+	 */
+	if (!OidIsValid(*serialized))
+		return;
+
+	/* Read all the values into a new hash table. */
+	init_enum_blacklist();
+	do
+	{
+		hash_search(enum_blacklist, serialized++, HASH_ENTER, NULL);
+	} while (OidIsValid(*serialized));
 }

@@ -6,7 +6,7 @@
  *	  message integrity and endpoint authentication.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -129,6 +129,14 @@ struct sigpipe_info
 /* ------------------------------------------------------------ */
 
 
+int
+PQsslInUse(PGconn *conn)
+{
+	if (!conn)
+		return 0;
+	return conn->ssl_in_use;
+}
+
 /*
  *	Exported function to allow application to tell us it's already
  *	initialized OpenSSL.
@@ -213,6 +221,13 @@ pqsecure_read(PGconn *conn, void *ptr, size_t len)
 	}
 	else
 #endif
+#ifdef ENABLE_GSS
+	if (conn->gssenc)
+	{
+		n = pg_GSS_read(conn, ptr, len);
+	}
+	else
+#endif
 	{
 		n = pqsecure_raw_read(conn, ptr, len);
 	}
@@ -225,7 +240,7 @@ pqsecure_raw_read(PGconn *conn, void *ptr, size_t len)
 {
 	ssize_t		n;
 	int			result_errno = 0;
-	char		sebuf[256];
+	char		sebuf[PG_STRERROR_R_BUFLEN];
 
 	n = recv(conn->sock, ptr, len, 0);
 
@@ -290,6 +305,13 @@ pqsecure_write(PGconn *conn, const void *ptr, size_t len)
 	}
 	else
 #endif
+#ifdef ENABLE_GSS
+	if (conn->gssenc)
+	{
+		n = pg_GSS_write(conn, ptr, len);
+	}
+	else
+#endif
 	{
 		n = pqsecure_raw_write(conn, ptr, len);
 	}
@@ -303,7 +325,7 @@ pqsecure_raw_write(PGconn *conn, const void *ptr, size_t len)
 	ssize_t		n;
 	int			flags = 0;
 	int			result_errno = 0;
-	char		sebuf[256];
+	char		sebuf[PG_STRERROR_R_BUFLEN];
 
 	DECLARE_SIGPIPE_INFO(spinfo);
 
@@ -352,9 +374,10 @@ retry_masked:
 			case EPIPE:
 				/* Set flag for EPIPE */
 				REMEMBER_EPIPE(spinfo, true);
-				/* FALL THRU */
 
 #ifdef ECONNRESET
+				/* FALL THRU */
+
 			case ECONNRESET:
 #endif
 				printfPQExpBuffer(&conn->errorMessage,
@@ -384,12 +407,6 @@ retry_masked:
 /* Dummy versions of SSL info functions, when built without SSL support */
 #ifndef USE_SSL
 
-int
-PQsslInUse(PGconn *conn)
-{
-	return 0;
-}
-
 void *
 PQgetssl(PGconn *conn)
 {
@@ -416,6 +433,23 @@ PQsslAttributeNames(PGconn *conn)
 	return result;
 }
 #endif							/* USE_SSL */
+
+/* Dummy version of GSSAPI information functions, when built without GSS support */
+#ifndef ENABLE_GSS
+
+void *
+PQgetgssctx(PGconn *conn)
+{
+	return NULL;
+}
+
+int
+PQgssEncInUse(PGconn *conn)
+{
+	return 0;
+}
+
+#endif							/* ENABLE_GSS */
 
 
 #if defined(ENABLE_THREAD_SAFETY) && !defined(WIN32)
@@ -465,10 +499,10 @@ pq_block_sigpipe(sigset_t *osigset, bool *sigpipe_pending)
  * As long as it doesn't queue multiple events, we're OK because the caller
  * can't tell the difference.
  *
- * The caller should say got_epipe = FALSE if it is certain that it
+ * The caller should say got_epipe = false if it is certain that it
  * didn't get an EPIPE error; in that case we'll skip the clear operation
  * and things are definitely OK, queuing or no.  If it got one or might have
- * gotten one, pass got_epipe = TRUE.
+ * gotten one, pass got_epipe = true.
  *
  * We do not want this to change errno, since if it did that could lose
  * the error code from a preceding send().  We essentially assume that if

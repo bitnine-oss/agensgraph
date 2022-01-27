@@ -4,7 +4,7 @@
  *
  * Routines to handle DML permission checks
  *
- * Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
@@ -18,7 +18,7 @@
 #include "catalog/dependency.h"
 #include "catalog/pg_attribute.h"
 #include "catalog/pg_class.h"
-#include "catalog/pg_inherits_fn.h"
+#include "catalog/pg_inherits.h"
 #include "commands/seclabel.h"
 #include "commands/tablecmds.h"
 #include "executor/executor.h"
@@ -31,9 +31,9 @@
 /*
  * fixup_whole_row_references
  *
- * When user reference a whole of row, it is equivalent to reference to
+ * When user references a whole-row Var, it is equivalent to referencing
  * all the user columns (not system columns). So, we need to fix up the
- * given bitmapset, if it contains a whole of the row reference.
+ * given bitmapset, if it contains a whole-row reference.
  */
 static Bitmapset *
 fixup_whole_row_references(Oid relOid, Bitmapset *columns)
@@ -44,7 +44,7 @@ fixup_whole_row_references(Oid relOid, Bitmapset *columns)
 	AttrNumber	attno;
 	int			index;
 
-	/* if no whole of row references, do not anything */
+	/* if no whole-row references, nothing to do */
 	index = InvalidAttrNumber - FirstLowInvalidHeapAttributeNumber;
 	if (!bms_is_member(index, columns))
 		return columns;
@@ -56,7 +56,7 @@ fixup_whole_row_references(Oid relOid, Bitmapset *columns)
 	natts = ((Form_pg_class) GETSTRUCT(tuple))->relnatts;
 	ReleaseSysCache(tuple);
 
-	/* fix up the given columns */
+	/* remove bit 0 from column set, add in all the non-dropped columns */
 	result = bms_copy(columns);
 	result = bms_del_member(result, index);
 
@@ -66,14 +66,13 @@ fixup_whole_row_references(Oid relOid, Bitmapset *columns)
 								ObjectIdGetDatum(relOid),
 								Int16GetDatum(attno));
 		if (!HeapTupleIsValid(tuple))
-			continue;
+			continue;			/* unexpected case, should we error? */
 
-		if (((Form_pg_attribute) GETSTRUCT(tuple))->attisdropped)
-			continue;
-
-		index = attno - FirstLowInvalidHeapAttributeNumber;
-
-		result = bms_add_member(result, index);
+		if (!((Form_pg_attribute) GETSTRUCT(tuple))->attisdropped)
+		{
+			index = attno - FirstLowInvalidHeapAttributeNumber;
+			result = bms_add_member(result, index);
+		}
 
 		ReleaseSysCache(tuple);
 	}
@@ -118,10 +117,7 @@ fixup_inherited_columns(Oid parentId, Oid childId, Bitmapset *columns)
 			continue;
 		}
 
-		attname = get_attname(parentId, attno);
-		if (!attname)
-			elog(ERROR, "cache lookup failed for attribute %d of relation %u",
-				 attno, parentId);
+		attname = get_attname(parentId, attno, false);
 		attno = get_attnum(childId, attname);
 		if (attno == InvalidAttrNumber)
 			elog(ERROR, "cache lookup failed for attribute %s of relation %u",
@@ -164,12 +160,10 @@ check_relation_privileges(Oid relOid,
 	 */
 	if (sepgsql_getenforce() > 0)
 	{
-		Oid			relnamespace = get_rel_namespace(relOid);
-
-		if (IsSystemNamespace(relnamespace) &&
-			(required & (SEPG_DB_TABLE__UPDATE |
+		if ((required & (SEPG_DB_TABLE__UPDATE |
 						 SEPG_DB_TABLE__INSERT |
-						 SEPG_DB_TABLE__DELETE)) != 0)
+						 SEPG_DB_TABLE__DELETE)) != 0 &&
+			IsCatalogRelationOid(relOid))
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 					 errmsg("SELinux: hardwired security policy violation")));

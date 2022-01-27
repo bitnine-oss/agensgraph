@@ -4,7 +4,6 @@
 #include "postgres_fe.h"
 
 #include <time.h>
-#include <float.h>
 #include <limits.h>
 #include <math.h>
 
@@ -12,7 +11,7 @@
 #error -ffast-math is known to break this code
 #endif
 
-#include "extern.h"
+#include "pgtypeslib_extern.h"
 #include "dt.h"
 #include "pgtypes_timestamp.h"
 #include "pgtypes_date.h"
@@ -192,7 +191,7 @@ timestamp2tm(timestamp dt, int *tzp, struct tm *tm, fsec_t *fsec, const char **t
 /* EncodeSpecialTimestamp()
  *	* Convert reserved timestamp data type to string.
  *	 */
-static int
+static void
 EncodeSpecialTimestamp(timestamp dt, char *str)
 {
 	if (TIMESTAMP_IS_NOBEGIN(dt))
@@ -200,10 +199,8 @@ EncodeSpecialTimestamp(timestamp dt, char *str)
 	else if (TIMESTAMP_IS_NOEND(dt))
 		strcpy(str, LATE);
 	else
-		return FALSE;
-
-	return TRUE;
-}								/* EncodeSpecialTimestamp() */
+		abort();				/* shouldn't happen */
+}
 
 timestamp
 PGTYPEStimestamp_from_asc(char *str, char **endptr)
@@ -224,14 +221,14 @@ PGTYPEStimestamp_from_asc(char *str, char **endptr)
 	if (strlen(str) > MAXDATELEN)
 	{
 		errno = PGTYPES_TS_BAD_TIMESTAMP;
-		return (noresult);
+		return noresult;
 	}
 
 	if (ParseDateTime(str, lowstr, field, ftype, &nf, ptr) != 0 ||
 		DecodeDateTime(field, ftype, nf, &dtype, tm, &fsec, 0) != 0)
 	{
 		errno = PGTYPES_TS_BAD_TIMESTAMP;
-		return (noresult);
+		return noresult;
 	}
 
 	switch (dtype)
@@ -240,7 +237,7 @@ PGTYPEStimestamp_from_asc(char *str, char **endptr)
 			if (tm2timestamp(tm, fsec, NULL, &result) != 0)
 			{
 				errno = PGTYPES_TS_BAD_TIMESTAMP;
-				return (noresult);
+				return noresult;
 			}
 			break;
 
@@ -256,13 +253,9 @@ PGTYPEStimestamp_from_asc(char *str, char **endptr)
 			TIMESTAMP_NOBEGIN(result);
 			break;
 
-		case DTK_INVALID:
-			errno = PGTYPES_TS_BAD_TIMESTAMP;
-			return (noresult);
-
 		default:
 			errno = PGTYPES_TS_BAD_TIMESTAMP;
-			return (noresult);
+			return noresult;
 	}
 
 	/* AdjustTimestampForTypmod(&result, typmod); */
@@ -343,13 +336,13 @@ dttofmtasc_replace(timestamp * ts, date dDate, int dow, struct tm *tm,
 					/* XXX should be locale aware */
 				case 'b':
 				case 'h':
-					replace_val.str_val = months[tm->tm_mon];
+					replace_val.str_val = months[tm->tm_mon - 1];
 					replace_type = PGTYPES_TYPE_STRING_CONSTANT;
 					break;
 					/* the full name of the month */
 					/* XXX should be locale aware */
 				case 'B':
-					replace_val.str_val = pgtypes_date_months[tm->tm_mon];
+					replace_val.str_val = pgtypes_date_months[tm->tm_mon - 1];
 					replace_type = PGTYPES_TYPE_STRING_CONSTANT;
 					break;
 
@@ -815,7 +808,7 @@ PGTYPEStimestamp_sub(timestamp * ts1, timestamp * ts2, interval * iv)
 }
 
 int
-PGTYPEStimestamp_defmt_asc(char *str, const char *fmt, timestamp * d)
+PGTYPEStimestamp_defmt_asc(const char *str, const char *fmt, timestamp * d)
 {
 	int			year,
 				month,

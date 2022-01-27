@@ -3,7 +3,7 @@ doc/src/sgml/ref/ecpg-ref.sgml
 PostgreSQL documentation
 -->
 
-<refentry id="APP-ECPG">
+<refentry id="app-ecpg">
  <indexterm zone="app-ecpg">
   <primary>ecpg</primary>
  </indexterm>
@@ -28,7 +28,7 @@ PostgreSQL documentation
  </refsynopsisdiv>
 
 
- <refsect1 id="APP-ECPG-description">
+ <refsect1 id="app-ecpg-description">
   <title>Description</title>
 
   <para>
@@ -41,17 +41,24 @@ PostgreSQL documentation
 
   <para>
    <command>ecpg</command> will convert each input file given on the
-   command line to the corresponding C output file.  Input files
-   preferably have the extension <filename>.pgc</filename>.
-   The extension will be replaced by <filename>.c</filename> to
-   determine the output file name.
-   The output file name can also be overridden using the
+   command line to the corresponding C output file.  If an input file
+   name does not have any extension, <filename>.pgc</filename> is
+   assumed.  The file's extension will be replaced
+   by <filename>.c</filename> to construct the output file name.
+   But the output file name can be overridden using the
    <option>-o</option> option.
   </para>
 
   <para>
+   If an input file name is just <literal>-</literal>,
+   <command>ecpg</command> reads the program from standard input
+   (and writes to standard output, unless that is overridden
+   with <option>-o</option>).
+  </para>
+
+  <para>
    This reference page does not describe the embedded SQL language.
-   See <xref linkend="ecpg"> for more information on that topic.
+   See <xref linkend="ecpg"/> for more information on that topic.
   </para>
  </refsect1>
 
@@ -79,8 +86,8 @@ PostgreSQL documentation
      <listitem>
       <para>
        Set a compatibility mode.  <replaceable>mode</replaceable> can
-       be <literal>INFORMIX</literal> or
-       <literal>INFORMIX_SE</literal>.
+       be <literal>INFORMIX</literal>,
+       <literal>INFORMIX_SE</literal>, or <literal>ORACLE</literal>.
       </para>
      </listitem>
     </varlistentry>
@@ -90,6 +97,19 @@ PostgreSQL documentation
      <listitem>
       <para>
        Define a C preprocessor symbol.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
+     <term><option>-h</option></term>
+     <listitem>
+      <para>
+       Process header files.  When this option is specified, the output file
+       extension becomes <literal>.h</literal> not <literal>.c</literal>,
+       and the default input file extension is <literal>.pgh</literal>
+       not <literal>.pgc</literal>.  Also, the <option>-c</option> option is
+       forced on.
       </para>
      </listitem>
     </varlistentry>
@@ -125,6 +145,7 @@ PostgreSQL documentation
       <para>
        Specifies that <command>ecpg</command> should write all
        its output to the given <replaceable>filename</replaceable>.
+       Write <literal>-o -</literal> to send all output to standard output.
       </para>
      </listitem>
     </varlistentry>
@@ -220,9 +241,9 @@ PostgreSQL documentation
 
   <para>
    When compiling the preprocessed C code files, the compiler needs to
-   be able to find the <application>ECPG</> header files in the
-   <productname>PostgreSQL</> include directory.  Therefore, you might
-   have to use the <option>-I</> option when invoking the compiler
+   be able to find the <application>ECPG</application> header files in the
+   <productname>PostgreSQL</productname> include directory.  Therefore, you might
+   have to use the <option>-I</option> option when invoking the compiler
    (e.g., <literal>-I/usr/local/pgsql/include</literal>).
   </para>
 
@@ -235,7 +256,7 @@ PostgreSQL documentation
   <para>
    The value of either of these directories that is appropriate for
    the installation can be found out using <xref
-   linkend="app-pgconfig">.
+   linkend="app-pgconfig"/>.
   </para>
  </refsect1>
 

@@ -6,7 +6,7 @@
  * and interpreting backend output.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/fe_utils/string_utils.c
@@ -104,11 +104,9 @@ fmtId(const char *rawid)
 		 * Note: ScanKeywordLookup() does case-insensitive comparison, but
 		 * that's fine, since we already know we have all-lower-case.
 		 */
-		const ScanKeyword *keyword = ScanKeywordLookup(rawid,
-													   ScanKeywords,
-													   NumScanKeywords);
+		int			kwnum = ScanKeywordLookup(rawid, &ScanKeywords);
 
-		if (keyword != NULL && keyword->category != UNRESERVED_KEYWORD)
+		if (kwnum >= 0 && ScanKeywordCategories[kwnum] != UNRESERVED_KEYWORD)
 			need_quotes = true;
 	}
 
@@ -138,8 +136,7 @@ fmtId(const char *rawid)
 }
 
 /*
- * fmtQualifiedId - convert a qualified name to the proper format for
- * the source database.
+ * fmtQualifiedId - construct a schema-qualified name, with quoting as needed.
  *
  * Like fmtId, use the result before calling again.
  *
@@ -147,13 +144,13 @@ fmtId(const char *rawid)
  * use that buffer until we're finished with calling fmtId().
  */
 const char *
-fmtQualifiedId(int remoteVersion, const char *schema, const char *id)
+fmtQualifiedId(const char *schema, const char *id)
 {
 	PQExpBuffer id_return;
 	PQExpBuffer lcl_pqexp = createPQExpBuffer();
 
-	/* Suppress schema name if fetching from pre-7.3 DB */
-	if (remoteVersion >= 70300 && schema && *schema)
+	/* Some callers might fail to provide a schema name */
+	if (schema && *schema)
 	{
 		appendPQExpBuffer(lcl_pqexp, "%s.", fmtId(schema));
 	}
@@ -544,8 +541,7 @@ appendShellStringNoError(PQExpBuffer buf, const char *str)
 
 /*
  * Append the given string to the buffer, with suitable quoting for passing
- * the string as a value, in a keyword/pair value in a libpq connection
- * string
+ * the string as a value in a keyword/value pair in a libpq connection string.
  */
 void
 appendConnStrVal(PQExpBuffer buf, const char *str)
@@ -959,6 +955,12 @@ processSQLNamePattern(PGconn *conn, PQExpBuffer buf, const char *pattern,
 	 * Now decide what we need to emit.  We may run under a hostile
 	 * search_path, so qualify EVERY name.  Note there will be a leading "^("
 	 * in the patterns in any case.
+	 *
+	 * We want the regex matches to use the database's default collation where
+	 * collation-sensitive behavior is required (for example, which characters
+	 * match '\w').  That happened by default before PG v12, but if the server
+	 * is >= v12 then we need to force it through explicit COLLATE clauses,
+	 * otherwise the "C" collation attached to "name" catalog columns wins.
 	 */
 	if (namebuf.len > 2)
 	{
@@ -974,16 +976,22 @@ processSQLNamePattern(PGconn *conn, PQExpBuffer buf, const char *pattern,
 				appendPQExpBuffer(buf,
 								  "(%s OPERATOR(pg_catalog.~) ", namevar);
 				appendStringLiteralConn(buf, namebuf.data, conn);
+				if (PQserverVersion(conn) >= 120000)
+					appendPQExpBufferStr(buf, " COLLATE pg_catalog.default");
 				appendPQExpBuffer(buf,
 								  "\n        OR %s OPERATOR(pg_catalog.~) ",
 								  altnamevar);
 				appendStringLiteralConn(buf, namebuf.data, conn);
+				if (PQserverVersion(conn) >= 120000)
+					appendPQExpBufferStr(buf, " COLLATE pg_catalog.default");
 				appendPQExpBufferStr(buf, ")\n");
 			}
 			else
 			{
 				appendPQExpBuffer(buf, "%s OPERATOR(pg_catalog.~) ", namevar);
 				appendStringLiteralConn(buf, namebuf.data, conn);
+				if (PQserverVersion(conn) >= 120000)
+					appendPQExpBufferStr(buf, " COLLATE pg_catalog.default");
 				appendPQExpBufferChar(buf, '\n');
 			}
 		}
@@ -1000,6 +1008,8 @@ processSQLNamePattern(PGconn *conn, PQExpBuffer buf, const char *pattern,
 			WHEREAND();
 			appendPQExpBuffer(buf, "%s OPERATOR(pg_catalog.~) ", schemavar);
 			appendStringLiteralConn(buf, schemabuf.data, conn);
+			if (PQserverVersion(conn) >= 120000)
+				appendPQExpBufferStr(buf, " COLLATE pg_catalog.default");
 			appendPQExpBufferChar(buf, '\n');
 		}
 	}

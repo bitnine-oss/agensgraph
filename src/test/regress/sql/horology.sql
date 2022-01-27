@@ -122,7 +122,8 @@ SELECT (timestamp with time zone 'tomorrow' = (timestamp with time zone 'yesterd
 SELECT (timestamp with time zone 'tomorrow' > 'now') as "True";
 
 -- timestamp with time zone, interval arithmetic around DST change
-SET TIME ZONE 'CST7CDT';
+-- (just for fun, let's use an intentionally nonstandard POSIX zone spec)
+SET TIME ZONE 'CST7CDT,M4.1.0,M10.5.0';
 SELECT timestamp with time zone '2005-04-02 12:00-07' + interval '1 day' as "Apr 3, 12:00";
 SELECT timestamp with time zone '2005-04-02 12:00-07' + interval '24 hours' as "Apr 3, 13:00";
 SELECT timestamp with time zone '2005-04-03 12:00-06' - interval '1 day' as "Apr 2, 12:00";
@@ -268,35 +269,6 @@ SELECT '' AS "226", d1.f1 AS timestamp1, d2.f1 AS timestamp2, d1.f1 - d2.f1 AS d
   ORDER BY timestamp1, timestamp2, difference;
 
 --
--- abstime, reltime arithmetic
---
-
-SELECT '' AS ten, ABSTIME_TBL.f1 AS abstime, RELTIME_TBL.f1 AS reltime
-    FROM ABSTIME_TBL, RELTIME_TBL
-   WHERE (ABSTIME_TBL.f1 + RELTIME_TBL.f1) < abstime 'Jan 14 14:00:00 1971'
-   ORDER BY abstime, reltime;
-
--- these four queries should return the same answer
--- the "infinity" and "-infinity" tuples in ABSTIME_TBL cannot be added and
--- therefore, should not show up in the results.
-
-SELECT '' AS three, * FROM ABSTIME_TBL
-  WHERE  (ABSTIME_TBL.f1 + reltime '@ 3 year')         -- +3 years
-    < abstime 'Jan 14 14:00:00 1977';
-
-SELECT '' AS three, * FROM ABSTIME_TBL
-   WHERE  (ABSTIME_TBL.f1 + reltime '@ 3 year ago')    -- -3 years
-     < abstime 'Jan 14 14:00:00 1971';
-
-SELECT '' AS three, * FROM ABSTIME_TBL
-   WHERE  (ABSTIME_TBL.f1 - reltime '@ 3 year')        -- -(+3) years
-    < abstime 'Jan 14 14:00:00 1971';
-
-SELECT '' AS three, * FROM ABSTIME_TBL
-   WHERE  (ABSTIME_TBL.f1 - reltime '@ 3 year ago')    -- -(-3) years
-     < abstime 'Jan 14 14:00:00 1977';
-
---
 -- Conversions
 --
 
@@ -304,27 +276,6 @@ SELECT '' AS "16", f1 AS "timestamp", date(f1) AS date
   FROM TEMP_TIMESTAMP
   WHERE f1 <> timestamp 'now'
   ORDER BY date, "timestamp";
-
-SELECT '' AS "16", f1 AS "timestamp", abstime(f1) AS abstime
-  FROM TEMP_TIMESTAMP
-  ORDER BY abstime;
-
-SELECT '' AS four, f1 AS abstime, date(f1) AS date
-  FROM ABSTIME_TBL
-  WHERE isfinite(f1) AND f1 <> abstime 'now'
-  ORDER BY date, abstime;
-
-SELECT '' AS two, d1 AS "timestamp", abstime(d1) AS abstime
-  FROM TIMESTAMP_TBL WHERE NOT isfinite(d1);
-
-SELECT '' AS three, f1 as abstime, cast(f1 as timestamp) AS "timestamp"
-  FROM ABSTIME_TBL WHERE NOT isfinite(f1);
-
-SELECT '' AS ten, f1 AS interval, reltime(f1) AS reltime
-  FROM INTERVAL_TBL;
-
-SELECT '' AS six, f1 as reltime, CAST(f1 AS interval) AS interval
-  FROM RELTIME_TBL;
 
 DROP TABLE TEMP_TIMESTAMP;
 
@@ -338,21 +289,15 @@ SHOW DateStyle;
 
 SELECT '' AS "64", d1 AS us_postgres FROM TIMESTAMP_TBL;
 
-SELECT '' AS seven, f1 AS us_postgres FROM ABSTIME_TBL;
-
 SET DateStyle TO 'US,ISO';
 
 SELECT '' AS "64", d1 AS us_iso FROM TIMESTAMP_TBL;
-
-SELECT '' AS seven, f1 AS us_iso FROM ABSTIME_TBL;
 
 SET DateStyle TO 'US,SQL';
 
 SHOW DateStyle;
 
 SELECT '' AS "64", d1 AS us_sql FROM TIMESTAMP_TBL;
-
-SELECT '' AS seven, f1 AS us_sql FROM ABSTIME_TBL;
 
 SET DateStyle TO 'European,Postgres';
 
@@ -364,23 +309,17 @@ SELECT count(*) as one FROM TIMESTAMP_TBL WHERE d1 = 'Jun 13 1957';
 
 SELECT '' AS "65", d1 AS european_postgres FROM TIMESTAMP_TBL;
 
-SELECT '' AS seven, f1 AS european_postgres FROM ABSTIME_TBL;
-
 SET DateStyle TO 'European,ISO';
 
 SHOW DateStyle;
 
 SELECT '' AS "65", d1 AS european_iso FROM TIMESTAMP_TBL;
 
-SELECT '' AS seven, f1 AS european_iso FROM ABSTIME_TBL;
-
 SET DateStyle TO 'European,SQL';
 
 SHOW DateStyle;
 
 SELECT '' AS "65", d1 AS european_sql FROM TIMESTAMP_TBL;
-
-SELECT '' AS seven, f1 AS european_sql FROM ABSTIME_TBL;
 
 RESET DateStyle;
 
@@ -392,15 +331,21 @@ SELECT to_timestamp('0097/Feb/16 --> 08:14:30', 'YYYY/Mon/DD --> HH:MI:SS');
 
 SELECT to_timestamp('97/2/16 8:14:30', 'FMYYYY/FMMM/FMDD FMHH:FMMI:FMSS');
 
+SELECT to_timestamp('2011$03!18 23_38_15', 'YYYY-MM-DD HH24:MI:SS');
+
 SELECT to_timestamp('1985 January 12', 'YYYY FMMonth DD');
 
+SELECT to_timestamp('1985 FMMonth 12', 'YYYY "FMMonth" DD');
+
+SELECT to_timestamp('1985 \ 12', 'YYYY \\ DD');
+
 SELECT to_timestamp('My birthday-> Year: 1976, Month: May, Day: 16',
-                    '"My birthday-> Year" YYYY, "Month:" FMMonth, "Day:" DD');
+                    '"My birthday-> Year:" YYYY, "Month:" FMMonth, "Day:" DD');
 
 SELECT to_timestamp('1,582nd VIII 21', 'Y,YYYth FMRM DD');
 
 SELECT to_timestamp('15 "text between quote marks" 98 54 45',
-                    E'HH24 "\\text between quote marks\\"" YY MI SS');
+                    E'HH24 "\\"text between quote marks\\"" YY MI SS');
 
 SELECT to_timestamp('05121445482000', 'MMDDHH24MISSYYYY');
 
@@ -408,12 +353,21 @@ SELECT to_timestamp('2000January09Sunday', 'YYYYFMMonthDDFMDay');
 
 SELECT to_timestamp('97/Feb/16', 'YYMonDD');
 
+SELECT to_timestamp('97/Feb/16', 'YY:Mon:DD');
+
+SELECT to_timestamp('97/Feb/16', 'FXYY:Mon:DD');
+
+SELECT to_timestamp('97/Feb/16', 'FXYY/Mon/DD');
+
 SELECT to_timestamp('19971116', 'YYYYMMDD');
 
 SELECT to_timestamp('20000-1116', 'YYYY-MMDD');
 
 SELECT to_timestamp('1997 AD 11 16', 'YYYY BC MM DD');
 SELECT to_timestamp('1997 BC 11 16', 'YYYY BC MM DD');
+
+SELECT to_timestamp('1997 A.D. 11 16', 'YYYY B.C. MM DD');
+SELECT to_timestamp('1997 B.C. 11 16', 'YYYY B.C. MM DD');
 
 SELECT to_timestamp('9-1116', 'Y-MMDD');
 
@@ -446,6 +400,34 @@ SELECT to_timestamp('  20050302', 'YYYYMMDD');
 SELECT to_timestamp('2011-12-18 11:38 AM', 'YYYY-MM-DD HH12:MI PM');
 SELECT to_timestamp('2011-12-18 11:38 PM', 'YYYY-MM-DD HH12:MI PM');
 
+SELECT to_timestamp('2011-12-18 11:38 A.M.', 'YYYY-MM-DD HH12:MI P.M.');
+SELECT to_timestamp('2011-12-18 11:38 P.M.', 'YYYY-MM-DD HH12:MI P.M.');
+
+SELECT to_timestamp('2011-12-18 11:38 +05',    'YYYY-MM-DD HH12:MI TZH');
+SELECT to_timestamp('2011-12-18 11:38 -05',    'YYYY-MM-DD HH12:MI TZH');
+SELECT to_timestamp('2011-12-18 11:38 +05:20', 'YYYY-MM-DD HH12:MI TZH:TZM');
+SELECT to_timestamp('2011-12-18 11:38 -05:20', 'YYYY-MM-DD HH12:MI TZH:TZM');
+SELECT to_timestamp('2011-12-18 11:38 20',     'YYYY-MM-DD HH12:MI TZM');
+
+SELECT to_timestamp('2011-12-18 11:38 PST', 'YYYY-MM-DD HH12:MI TZ');  -- NYI
+
+SELECT to_timestamp('2018-11-02 12:34:56.025', 'YYYY-MM-DD HH24:MI:SS.MS');
+
+SELECT to_date('1 4 1902', 'Q MM YYYY');  -- Q is ignored
+SELECT to_date('3 4 21 01', 'W MM CC YY');
+SELECT to_date('2458872', 'J');
+
+--
+-- Check handling of BC dates
+--
+
+SELECT to_date('44-02-01 BC','YYYY-MM-DD BC');
+SELECT to_date('-44-02-01','YYYY-MM-DD');
+SELECT to_date('-44-02-01 BC','YYYY-MM-DD BC');
+SELECT to_timestamp('44-02-01 11:12:13 BC','YYYY-MM-DD HH24:MI:SS BC');
+SELECT to_timestamp('-44-02-01 11:12:13','YYYY-MM-DD HH24:MI:SS');
+SELECT to_timestamp('-44-02-01 11:12:13 BC','YYYY-MM-DD HH24:MI:SS BC');
+
 --
 -- Check handling of multiple spaces in format and/or input
 --
@@ -458,6 +440,17 @@ SELECT to_timestamp('2011-12-18  23:38:15', 'YYYY-MM-DD HH24:MI:SS');
 SELECT to_timestamp('2011-12-18  23:38:15', 'YYYY-MM-DD  HH24:MI:SS');
 SELECT to_timestamp('2011-12-18  23:38:15', 'YYYY-MM-DD   HH24:MI:SS');
 
+SELECT to_timestamp('2000+   JUN', 'YYYY/MON');
+SELECT to_timestamp('  2000 +JUN', 'YYYY/MON');
+SELECT to_timestamp(' 2000 +JUN', 'YYYY//MON');
+SELECT to_timestamp('2000  +JUN', 'YYYY//MON');
+SELECT to_timestamp('2000 + JUN', 'YYYY MON');
+SELECT to_timestamp('2000 ++ JUN', 'YYYY  MON');
+SELECT to_timestamp('2000 + + JUN', 'YYYY  MON');
+SELECT to_timestamp('2000 + + JUN', 'YYYY   MON');
+SELECT to_timestamp('2000 -10', 'YYYY TZH');
+SELECT to_timestamp('2000 -10', 'YYYY  TZH');
+
 SELECT to_date('2011 12  18', 'YYYY MM DD');
 SELECT to_date('2011 12  18', 'YYYY MM  DD');
 SELECT to_date('2011 12  18', 'YYYY MM   DD');
@@ -465,6 +458,10 @@ SELECT to_date('2011 12  18', 'YYYY MM   DD');
 SELECT to_date('2011 12 18', 'YYYY  MM DD');
 SELECT to_date('2011  12 18', 'YYYY  MM DD');
 SELECT to_date('2011   12 18', 'YYYY  MM DD');
+
+SELECT to_date('2011 12 18', 'YYYYxMMxDD');
+SELECT to_date('2011x 12x 18', 'YYYYxMMxDD');
+SELECT to_date('2011 x12 x18', 'YYYYxMMxDD');
 
 --
 -- Check errors for some incorrect usages of to_timestamp() and to_date()
@@ -478,6 +475,11 @@ SELECT to_timestamp('19971', 'YYYYMMDD');
 
 -- Insufficient digit characters for a single node:
 SELECT to_timestamp('19971)24', 'YYYYMMDD');
+
+-- We don't accept full-length day or month names if short form is specified:
+SELECT to_timestamp('Friday 1-January-1999', 'DY DD MON YYYY');
+SELECT to_timestamp('Fri 1-January-1999', 'DY DD MON YYYY');
+SELECT to_timestamp('Fri 1-Jan-1999', 'DY DD MON YYYY');  -- ok
 
 -- Value clobbering:
 SELECT to_timestamp('1997-11-Jan-16', 'YYYY-MM-Mon-DD');
@@ -509,6 +511,7 @@ SELECT to_date('2015 366', 'YYYY DDD');
 SELECT to_date('2016 365', 'YYYY DDD');  -- ok
 SELECT to_date('2016 366', 'YYYY DDD');  -- ok
 SELECT to_date('2016 367', 'YYYY DDD');
+SELECT to_date('0000-02-01','YYYY-MM-DD');  -- allowed, though it shouldn't be
 
 --
 -- Check behavior with SQL-style fixed-GMT-offset time zone (cf bug #8572)

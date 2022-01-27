@@ -254,3 +254,18 @@ revoke select on ec0 from regress_user_ectest;
 revoke select on ec1 from regress_user_ectest;
 
 drop user regress_user_ectest;
+
+-- check that X=X is converted to X IS NOT NULL when appropriate
+explain (costs off)
+  select * from tenk1 where unique1 = unique1 and unique2 = unique2;
+
+-- this could be converted, but isn't at present
+explain (costs off)
+  select * from tenk1 where unique1 = unique1 or unique2 = unique2;
+
+-- check that we recognize equivalence with dummy domains in the way
+create temp table undername (f1 name, f2 int);
+create temp view overview as
+  select f1::information_schema.sql_identifier as sqli, f2 from undername;
+explain (costs off)  -- this should not require a sort
+  select * from overview where sqli = 'foo' order by sqli;

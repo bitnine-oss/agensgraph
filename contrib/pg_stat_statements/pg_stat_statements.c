@@ -21,7 +21,7 @@
  * as the collations of Vars and, most notably, the values of constants.
  *
  * This jumble is acquired at the end of parse analysis of each query, and
- * a 32-bit hash of it is stored into the query's Query.queryId field.
+ * a 64-bit hash of it is stored into the query's Query.queryId field.
  * The server then copies this value around, making it available in plan
  * tree(s) generated from the query.  The executor can then use this value
  * to blame query costs on the proper queryId.
@@ -48,7 +48,7 @@
  * in the file to be read or written while holding only shared lock.
  *
  *
- * Copyright (c) 2008-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2008-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pg_stat_statements/pg_stat_statements.c
@@ -61,7 +61,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "access/hash.h"
 #include "catalog/pg_authid.h"
 #include "executor/instrument.h"
 #include "funcapi.h"
@@ -76,7 +75,9 @@
 #include "storage/ipc.h"
 #include "storage/spin.h"
 #include "tcop/utility.h"
+#include "utils/acl.h"
 #include "utils/builtins.h"
+#include "utils/hashutils.h"
 #include "utils/memutils.h"
 
 PG_MODULE_MAGIC;
@@ -95,7 +96,7 @@ PG_MODULE_MAGIC;
 #define PGSS_TEXT_FILE	PG_STAT_TMP_DIR "/pgss_query_texts.stat"
 
 /* Magic number identifying the stats file format */
-static const uint32 PGSS_FILE_HEADER = 0x20140125;
+static const uint32 PGSS_FILE_HEADER = 0x20171004;
 
 /* PostgreSQL major version number, changes in which invalidate all entries */
 static const uint32 PGSS_PG_MAJOR_VERSION = PG_VERSION_NUM / 100;
@@ -125,12 +126,17 @@ typedef enum pgssVersion
 /*
  * Hashtable key that defines the identity of a hashtable entry.  We separate
  * queries by user and by database even if they are otherwise identical.
+ *
+ * Right now, this structure contains no padding.  If you add any, make sure
+ * to teach pgss_store() to zero the padding bytes.  Otherwise, things will
+ * break, because pgss_hash is created using HASH_BLOBS, and thus tag_hash
+ * is used to hash this.
  */
 typedef struct pgssHashKey
 {
 	Oid			userid;			/* user OID */
 	Oid			dbid;			/* database OID */
-	uint32		queryid;		/* query identifier */
+	uint64		queryid;		/* query identifier */
 } pgssHashKey;
 
 /*
@@ -284,6 +290,7 @@ void		_PG_init(void);
 void		_PG_fini(void);
 
 PG_FUNCTION_INFO_V1(pg_stat_statements_reset);
+PG_FUNCTION_INFO_V1(pg_stat_statements_reset_1_7);
 PG_FUNCTION_INFO_V1(pg_stat_statements_1_2);
 PG_FUNCTION_INFO_V1(pg_stat_statements_1_3);
 PG_FUNCTION_INFO_V1(pg_stat_statements);
@@ -293,47 +300,45 @@ static void pgss_shmem_shutdown(int code, Datum arg);
 static void pgss_post_parse_analyze(ParseState *pstate, Query *query);
 static void pgss_ExecutorStart(QueryDesc *queryDesc, int eflags);
 static void pgss_ExecutorRun(QueryDesc *queryDesc,
-				 ScanDirection direction,
-				 uint64 count, bool execute_once);
+							 ScanDirection direction,
+							 uint64 count, bool execute_once);
 static void pgss_ExecutorFinish(QueryDesc *queryDesc);
 static void pgss_ExecutorEnd(QueryDesc *queryDesc);
 static void pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
-					ProcessUtilityContext context, ParamListInfo params,
-					QueryEnvironment *queryEnv,
-					DestReceiver *dest, char *completionTag);
-static uint32 pgss_hash_fn(const void *key, Size keysize);
-static int	pgss_match_fn(const void *key1, const void *key2, Size keysize);
-static uint32 pgss_hash_string(const char *str, int len);
-static void pgss_store(const char *query, uint32 queryId,
-		   int query_location, int query_len,
-		   double total_time, uint64 rows,
-		   const BufferUsage *bufusage,
-		   pgssJumbleState *jstate);
+								ProcessUtilityContext context, ParamListInfo params,
+								QueryEnvironment *queryEnv,
+								DestReceiver *dest, char *completionTag);
+static uint64 pgss_hash_string(const char *str, int len);
+static void pgss_store(const char *query, uint64 queryId,
+					   int query_location, int query_len,
+					   double total_time, uint64 rows,
+					   const BufferUsage *bufusage,
+					   pgssJumbleState *jstate);
 static void pg_stat_statements_internal(FunctionCallInfo fcinfo,
-							pgssVersion api_version,
-							bool showtext);
+										pgssVersion api_version,
+										bool showtext);
 static Size pgss_memsize(void);
 static pgssEntry *entry_alloc(pgssHashKey *key, Size query_offset, int query_len,
-			int encoding, bool sticky);
+							  int encoding, bool sticky);
 static void entry_dealloc(void);
 static bool qtext_store(const char *query, int query_len,
-			Size *query_offset, int *gc_count);
+						Size *query_offset, int *gc_count);
 static char *qtext_load_file(Size *buffer_size);
 static char *qtext_fetch(Size query_offset, int query_len,
-			char *buffer, Size buffer_size);
+						 char *buffer, Size buffer_size);
 static bool need_gc_qtexts(void);
 static void gc_qtexts(void);
-static void entry_reset(void);
+static void entry_reset(Oid userid, Oid dbid, uint64 queryid);
 static void AppendJumble(pgssJumbleState *jstate,
-			 const unsigned char *item, Size size);
+						 const unsigned char *item, Size size);
 static void JumbleQuery(pgssJumbleState *jstate, Query *query);
 static void JumbleRangeTable(pgssJumbleState *jstate, List *rtable);
 static void JumbleExpr(pgssJumbleState *jstate, Node *node);
 static void RecordConstLocation(pgssJumbleState *jstate, int location);
 static char *generate_normalized_query(pgssJumbleState *jstate, const char *query,
-						  int query_loc, int *query_len_p, int encoding);
+									   int query_loc, int *query_len_p, int encoding);
 static void fill_in_constant_lengths(pgssJumbleState *jstate, const char *query,
-						 int query_loc);
+									 int query_loc);
 static int	comp_location(const void *a, const void *b);
 
 
@@ -500,12 +505,10 @@ pgss_shmem_startup(void)
 	memset(&info, 0, sizeof(info));
 	info.keysize = sizeof(pgssHashKey);
 	info.entrysize = sizeof(pgssEntry);
-	info.hash = pgss_hash_fn;
-	info.match = pgss_match_fn;
 	pgss_hash = ShmemInitHash("pg_stat_statements hash",
 							  pgss_max, pgss_max,
 							  &info,
-							  HASH_ELEM | HASH_FUNCTION | HASH_COMPARE);
+							  HASH_ELEM | HASH_BLOBS);
 
 	LWLockRelease(AddinShmemInitLock);
 
@@ -622,7 +625,7 @@ pgss_shmem_startup(void)
 
 	/*
 	 * Remove the persisted stats file so it's not included in
-	 * backups/replication slaves, etc.  A new file will be written on next
+	 * backups/replication standbys, etc.  A new file will be written on next
 	 * shutdown.
 	 *
 	 * Note: it's okay if the PGSS_TEXT_FILE is included in a basebackup,
@@ -640,19 +643,19 @@ pgss_shmem_startup(void)
 read_error:
 	ereport(LOG,
 			(errcode_for_file_access(),
-			 errmsg("could not read pg_stat_statement file \"%s\": %m",
+			 errmsg("could not read file \"%s\": %m",
 					PGSS_DUMP_FILE)));
 	goto fail;
 data_error:
 	ereport(LOG,
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("ignoring invalid data in pg_stat_statement file \"%s\"",
+			 errmsg("ignoring invalid data in file \"%s\"",
 					PGSS_DUMP_FILE)));
 	goto fail;
 write_error:
 	ereport(LOG,
 			(errcode_for_file_access(),
-			 errmsg("could not write pg_stat_statement file \"%s\": %m",
+			 errmsg("could not write file \"%s\": %m",
 					PGSS_TEXT_FILE)));
 fail:
 	if (buffer)
@@ -759,7 +762,7 @@ pgss_shmem_shutdown(int code, Datum arg)
 error:
 	ereport(LOG,
 			(errcode_for_file_access(),
-			 errmsg("could not write pg_stat_statement file \"%s\": %m",
+			 errmsg("could not write file \"%s\": %m",
 					PGSS_DUMP_FILE ".tmp")));
 	if (qbuffer)
 		free(qbuffer);
@@ -781,7 +784,7 @@ pgss_post_parse_analyze(ParseState *pstate, Query *query)
 		prev_post_parse_analyze_hook(pstate, query);
 
 	/* Assert we didn't do this already */
-	Assert(query->queryId == 0);
+	Assert(query->queryId == UINT64CONST(0));
 
 	/* Safety check... */
 	if (!pgss || !pgss_hash)
@@ -797,7 +800,7 @@ pgss_post_parse_analyze(ParseState *pstate, Query *query)
 	 */
 	if (query->utilityStmt)
 	{
-		query->queryId = 0;
+		query->queryId = UINT64CONST(0);
 		return;
 	}
 
@@ -812,14 +815,15 @@ pgss_post_parse_analyze(ParseState *pstate, Query *query)
 
 	/* Compute query ID and mark the Query node with it */
 	JumbleQuery(&jstate, query);
-	query->queryId = hash_any(jstate.jumble, jstate.jumble_len);
+	query->queryId =
+		DatumGetUInt64(hash_any_extended(jstate.jumble, jstate.jumble_len, 0));
 
 	/*
 	 * If we are unlucky enough to get a hash of zero, use 1 instead, to
 	 * prevent confusion with the utility-statement case.
 	 */
-	if (query->queryId == 0)
-		query->queryId = 1;
+	if (query->queryId == UINT64CONST(0))
+		query->queryId = UINT64CONST(1);
 
 	/*
 	 * If we were able to identify any ignorable constants, we immediately
@@ -855,7 +859,7 @@ pgss_ExecutorStart(QueryDesc *queryDesc, int eflags)
 	 * counting of optimizable statements that are directly contained in
 	 * utility statements.
 	 */
-	if (pgss_enabled() && queryDesc->plannedstmt->queryId != 0)
+	if (pgss_enabled() && queryDesc->plannedstmt->queryId != UINT64CONST(0))
 	{
 		/*
 		 * Set up to track total elapsed time in ExecutorRun.  Make sure the
@@ -926,9 +930,9 @@ pgss_ExecutorFinish(QueryDesc *queryDesc)
 static void
 pgss_ExecutorEnd(QueryDesc *queryDesc)
 {
-	uint32		queryId = queryDesc->plannedstmt->queryId;
+	uint64		queryId = queryDesc->plannedstmt->queryId;
 
-	if (queryId != 0 && queryDesc->totaltime && pgss_enabled())
+	if (queryId != UINT64CONST(0) && queryDesc->totaltime && pgss_enabled())
 	{
 		/*
 		 * Make sure stats accumulation is done.  (Note: it's okay if several
@@ -1070,44 +1074,15 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 }
 
 /*
- * Calculate hash value for a key
- */
-static uint32
-pgss_hash_fn(const void *key, Size keysize)
-{
-	const pgssHashKey *k = (const pgssHashKey *) key;
-
-	return hash_uint32((uint32) k->userid) ^
-		hash_uint32((uint32) k->dbid) ^
-		hash_uint32((uint32) k->queryid);
-}
-
-/*
- * Compare two keys - zero means match
- */
-static int
-pgss_match_fn(const void *key1, const void *key2, Size keysize)
-{
-	const pgssHashKey *k1 = (const pgssHashKey *) key1;
-	const pgssHashKey *k2 = (const pgssHashKey *) key2;
-
-	if (k1->userid == k2->userid &&
-		k1->dbid == k2->dbid &&
-		k1->queryid == k2->queryid)
-		return 0;
-	else
-		return 1;
-}
-
-/*
  * Given an arbitrarily long query string, produce a hash for the purposes of
  * identifying the query, without normalizing constants.  Used when hashing
  * utility statements.
  */
-static uint32
+static uint64
 pgss_hash_string(const char *str, int len)
 {
-	return hash_any((const unsigned char *) str, len);
+	return DatumGetUInt64(hash_any_extended((const unsigned char *) str,
+											len, 0));
 }
 
 /*
@@ -1121,7 +1096,7 @@ pgss_hash_string(const char *str, int len)
  * query string.  total_time, rows, bufusage are ignored in this case.
  */
 static void
-pgss_store(const char *query, uint32 queryId,
+pgss_store(const char *query, uint64 queryId,
 		   int query_location, int query_len,
 		   double total_time, uint64 rows,
 		   const BufferUsage *bufusage,
@@ -1173,8 +1148,18 @@ pgss_store(const char *query, uint32 queryId,
 	/*
 	 * For utility statements, we just hash the query string to get an ID.
 	 */
-	if (queryId == 0)
+	if (queryId == UINT64CONST(0))
+	{
 		queryId = pgss_hash_string(query, query_len);
+
+		/*
+		 * If we are unlucky enough to get a hash of zero(invalid), use
+		 * queryID as 2 instead, queryID 1 is already in use for normal
+		 * statements.
+		 */
+		if (queryId == UINT64CONST(0))
+			queryId = UINT64CONST(2);
+	}
 
 	/* Set up key for hashtable search */
 	key.userid = GetUserId();
@@ -1319,16 +1304,32 @@ done:
 }
 
 /*
- * Reset all statement statistics.
+ * Reset statement statistics corresponding to userid, dbid, and queryid.
+ */
+Datum
+pg_stat_statements_reset_1_7(PG_FUNCTION_ARGS)
+{
+	Oid			userid;
+	Oid			dbid;
+	uint64		queryid;
+
+	userid = PG_GETARG_OID(0);
+	dbid = PG_GETARG_OID(1);
+	queryid = (uint64) PG_GETARG_INT64(2);
+
+	entry_reset(userid, dbid, queryid);
+
+	PG_RETURN_VOID();
+}
+
+/*
+ * Reset statement statistics.
  */
 Datum
 pg_stat_statements_reset(PG_FUNCTION_ARGS)
 {
-	if (!pgss || !pgss_hash)
-		ereport(ERROR,
-				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-				 errmsg("pg_stat_statements must be loaded via shared_preload_libraries")));
-	entry_reset();
+	entry_reset(0, 0, 0);
+
 	PG_RETURN_VOID();
 }
 
@@ -1869,8 +1870,7 @@ qtext_store(const char *query, int query_len,
 	*query_offset = off;
 
 	/* Now write the data into the successfully-reserved part of the file */
-	fd = OpenTransientFile(PGSS_TEXT_FILE, O_RDWR | O_CREAT | PG_BINARY,
-						   S_IRUSR | S_IWUSR);
+	fd = OpenTransientFile(PGSS_TEXT_FILE, O_RDWR | O_CREAT | PG_BINARY);
 	if (fd < 0)
 		goto error;
 
@@ -1898,7 +1898,7 @@ qtext_store(const char *query, int query_len,
 error:
 	ereport(LOG,
 			(errcode_for_file_access(),
-			 errmsg("could not write pg_stat_statement file \"%s\": %m",
+			 errmsg("could not write file \"%s\": %m",
 					PGSS_TEXT_FILE)));
 
 	if (fd >= 0)
@@ -1934,13 +1934,13 @@ qtext_load_file(Size *buffer_size)
 	int			fd;
 	struct stat stat;
 
-	fd = OpenTransientFile(PGSS_TEXT_FILE, O_RDONLY | PG_BINARY, 0);
+	fd = OpenTransientFile(PGSS_TEXT_FILE, O_RDONLY | PG_BINARY);
 	if (fd < 0)
 	{
 		if (errno != ENOENT)
 			ereport(LOG,
 					(errcode_for_file_access(),
-					 errmsg("could not read pg_stat_statement file \"%s\": %m",
+					 errmsg("could not read file \"%s\": %m",
 							PGSS_TEXT_FILE)));
 		return NULL;
 	}
@@ -1950,7 +1950,7 @@ qtext_load_file(Size *buffer_size)
 	{
 		ereport(LOG,
 				(errcode_for_file_access(),
-				 errmsg("could not stat pg_stat_statement file \"%s\": %m",
+				 errmsg("could not stat file \"%s\": %m",
 						PGSS_TEXT_FILE)));
 		CloseTransientFile(fd);
 		return NULL;
@@ -1966,7 +1966,7 @@ qtext_load_file(Size *buffer_size)
 		ereport(LOG,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
 				 errmsg("out of memory"),
-				 errdetail("Could not allocate enough memory to read pg_stat_statement file \"%s\".",
+				 errdetail("Could not allocate enough memory to read file \"%s\".",
 						   PGSS_TEXT_FILE)));
 		CloseTransientFile(fd);
 		return NULL;
@@ -1985,14 +1985,17 @@ qtext_load_file(Size *buffer_size)
 		if (errno)
 			ereport(LOG,
 					(errcode_for_file_access(),
-					 errmsg("could not read pg_stat_statement file \"%s\": %m",
+					 errmsg("could not read file \"%s\": %m",
 							PGSS_TEXT_FILE)));
 		free(buf);
 		CloseTransientFile(fd);
 		return NULL;
 	}
 
-	CloseTransientFile(fd);
+	if (CloseTransientFile(fd))
+		ereport(LOG,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m", PGSS_TEXT_FILE)));
 
 	*buffer_size = stat.st_size;
 	return buf;
@@ -2115,7 +2118,7 @@ gc_qtexts(void)
 	{
 		ereport(LOG,
 				(errcode_for_file_access(),
-				 errmsg("could not write pg_stat_statement file \"%s\": %m",
+				 errmsg("could not write file \"%s\": %m",
 						PGSS_TEXT_FILE)));
 		goto gc_fail;
 	}
@@ -2145,7 +2148,7 @@ gc_qtexts(void)
 		{
 			ereport(LOG,
 					(errcode_for_file_access(),
-					 errmsg("could not write pg_stat_statement file \"%s\": %m",
+					 errmsg("could not write file \"%s\": %m",
 							PGSS_TEXT_FILE)));
 			hash_seq_term(&hash_seq);
 			goto gc_fail;
@@ -2163,14 +2166,14 @@ gc_qtexts(void)
 	if (ftruncate(fileno(qfile), extent) != 0)
 		ereport(LOG,
 				(errcode_for_file_access(),
-				 errmsg("could not truncate pg_stat_statement file \"%s\": %m",
+				 errmsg("could not truncate file \"%s\": %m",
 						PGSS_TEXT_FILE)));
 
 	if (FreeFile(qfile))
 	{
 		ereport(LOG,
 				(errcode_for_file_access(),
-				 errmsg("could not write pg_stat_statement file \"%s\": %m",
+				 errmsg("could not write file \"%s\": %m",
 						PGSS_TEXT_FILE)));
 		qfile = NULL;
 		goto gc_fail;
@@ -2230,7 +2233,7 @@ gc_fail:
 	if (qfile == NULL)
 		ereport(LOG,
 				(errcode_for_file_access(),
-				 errmsg("could not write new pg_stat_statement file \"%s\": %m",
+				 errmsg("could not recreate file \"%s\": %m",
 						PGSS_TEXT_FILE)));
 	else
 		FreeFile(qfile);
@@ -2256,22 +2259,67 @@ gc_fail:
 }
 
 /*
- * Release all entries.
+ * Release entries corresponding to parameters passed.
  */
 static void
-entry_reset(void)
+entry_reset(Oid userid, Oid dbid, uint64 queryid)
 {
 	HASH_SEQ_STATUS hash_seq;
 	pgssEntry  *entry;
 	FILE	   *qfile;
+	long		num_entries;
+	long		num_remove = 0;
+	pgssHashKey key;
+
+	if (!pgss || !pgss_hash)
+		ereport(ERROR,
+				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+				 errmsg("pg_stat_statements must be loaded via shared_preload_libraries")));
 
 	LWLockAcquire(pgss->lock, LW_EXCLUSIVE);
+	num_entries = hash_get_num_entries(pgss_hash);
 
-	hash_seq_init(&hash_seq, pgss_hash);
-	while ((entry = hash_seq_search(&hash_seq)) != NULL)
+	if (userid != 0 && dbid != 0 && queryid != UINT64CONST(0))
 	{
-		hash_search(pgss_hash, &entry->key, HASH_REMOVE, NULL);
+		/* If all the parameters are available, use the fast path. */
+		key.userid = userid;
+		key.dbid = dbid;
+		key.queryid = queryid;
+
+		/* Remove the key if exists */
+		entry = (pgssEntry *) hash_search(pgss_hash, &key, HASH_REMOVE, NULL);
+		if (entry)				/* found */
+			num_remove++;
 	}
+	else if (userid != 0 || dbid != 0 || queryid != UINT64CONST(0))
+	{
+		/* Remove entries corresponding to valid parameters. */
+		hash_seq_init(&hash_seq, pgss_hash);
+		while ((entry = hash_seq_search(&hash_seq)) != NULL)
+		{
+			if ((!userid || entry->key.userid == userid) &&
+				(!dbid || entry->key.dbid == dbid) &&
+				(!queryid || entry->key.queryid == queryid))
+			{
+				hash_search(pgss_hash, &entry->key, HASH_REMOVE, NULL);
+				num_remove++;
+			}
+		}
+	}
+	else
+	{
+		/* Remove all entries. */
+		hash_seq_init(&hash_seq, pgss_hash);
+		while ((entry = hash_seq_search(&hash_seq)) != NULL)
+		{
+			hash_search(pgss_hash, &entry->key, HASH_REMOVE, NULL);
+			num_remove++;
+		}
+	}
+
+	/* All entries are removed? */
+	if (num_entries != num_remove)
+		goto release_lock;
 
 	/*
 	 * Write new empty query file, perhaps even creating a new one to recover
@@ -2282,7 +2330,7 @@ entry_reset(void)
 	{
 		ereport(LOG,
 				(errcode_for_file_access(),
-				 errmsg("could not create pg_stat_statement file \"%s\": %m",
+				 errmsg("could not create file \"%s\": %m",
 						PGSS_TEXT_FILE)));
 		goto done;
 	}
@@ -2291,7 +2339,7 @@ entry_reset(void)
 	if (ftruncate(fileno(qfile), 0) != 0)
 		ereport(LOG,
 				(errcode_for_file_access(),
-				 errmsg("could not truncate pg_stat_statement file \"%s\": %m",
+				 errmsg("could not truncate file \"%s\": %m",
 						PGSS_TEXT_FILE)));
 
 	FreeFile(qfile);
@@ -2301,6 +2349,7 @@ done:
 	/* This counts as a query text garbage collection for our purposes */
 	record_gc_qtexts();
 
+release_lock:
 	LWLockRelease(pgss->lock);
 }
 
@@ -2325,8 +2374,10 @@ AppendJumble(pgssJumbleState *jstate, const unsigned char *item, Size size)
 
 		if (jumble_len >= JUMBLE_SIZE)
 		{
-			uint32		start_hash = hash_any(jumble, JUMBLE_SIZE);
+			uint64		start_hash;
 
+			start_hash = DatumGetUInt64(hash_any_extended(jumble,
+														  JUMBLE_SIZE, 0));
 			memcpy(jumble, &start_hash, sizeof(start_hash));
 			jumble_len = sizeof(start_hash);
 		}
@@ -2429,6 +2480,8 @@ JumbleRangeTable(pgssJumbleState *jstate, List *rtable)
 			case RTE_NAMEDTUPLESTORE:
 				APP_JUMB_STRING(rte->enrname);
 				break;
+			case RTE_RESULT:
+				break;
 			default:
 				elog(ERROR, "unrecognized RTE kind: %d", (int) rte->rtekind);
 				break;
@@ -2530,14 +2583,14 @@ JumbleExpr(pgssJumbleState *jstate, Node *node)
 				JumbleExpr(jstate, (Node *) expr->aggfilter);
 			}
 			break;
-		case T_ArrayRef:
+		case T_SubscriptingRef:
 			{
-				ArrayRef   *aref = (ArrayRef *) node;
+				SubscriptingRef *sbsref = (SubscriptingRef *) node;
 
-				JumbleExpr(jstate, (Node *) aref->refupperindexpr);
-				JumbleExpr(jstate, (Node *) aref->reflowerindexpr);
-				JumbleExpr(jstate, (Node *) aref->refexpr);
-				JumbleExpr(jstate, (Node *) aref->refassgnexpr);
+				JumbleExpr(jstate, (Node *) sbsref->refupperindexpr);
+				JumbleExpr(jstate, (Node *) sbsref->reflowerindexpr);
+				JumbleExpr(jstate, (Node *) sbsref->refexpr);
+				JumbleExpr(jstate, (Node *) sbsref->refassgnexpr);
 			}
 			break;
 		case T_FuncExpr:
@@ -2631,6 +2684,7 @@ JumbleExpr(pgssJumbleState *jstate, Node *node)
 
 				APP_JUMB(acexpr->resulttype);
 				JumbleExpr(jstate, (Node *) acexpr->arg);
+				JumbleExpr(jstate, (Node *) acexpr->elemexpr);
 			}
 			break;
 		case T_ConvertRowtypeExpr:
@@ -2877,6 +2931,7 @@ JumbleExpr(pgssJumbleState *jstate, Node *node)
 
 				/* we store the string name because RTE_CTE RTEs need it */
 				APP_JUMB_STRING(cte->ctename);
+				APP_JUMB(cte->ctematerialized);
 				JumbleQuery(jstate, castNode(Query, cte->ctequery));
 			}
 			break;
@@ -3152,8 +3207,8 @@ fill_in_constant_lengths(pgssJumbleState *jstate, const char *query,
 	/* initialize the flex scanner --- should match raw_parser() */
 	yyscanner = scanner_init(query,
 							 &yyextra,
-							 ScanKeywords,
-							 NumScanKeywords);
+							 &ScanKeywords,
+							 ScanKeywordTokens);
 
 	/* we don't want to re-emit any escape string warnings */
 	yyextra.escape_string_warning = false;

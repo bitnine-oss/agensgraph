@@ -9,7 +9,7 @@
  * though.)
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -54,6 +54,9 @@ static void StartupProcSigUsr1Handler(SIGNAL_ARGS);
 static void StartupProcTriggerHandler(SIGNAL_ARGS);
 static void StartupProcSigHupHandler(SIGNAL_ARGS);
 
+/* Callbacks */
+static void StartupProcExit(int code, Datum arg);
+
 
 /* --------------------------------
  *		signal handler routines
@@ -69,27 +72,21 @@ static void StartupProcSigHupHandler(SIGNAL_ARGS);
 static void
 startupproc_quickdie(SIGNAL_ARGS)
 {
-	PG_SETMASK(&BlockSig);
-
 	/*
-	 * We DO NOT want to run proc_exit() callbacks -- we're here because
-	 * shared memory may be corrupted, so we don't want to try to clean up our
-	 * transaction.  Just nail the windows shut and get out of town.  Now that
-	 * there's an atexit callback to prevent third-party code from breaking
-	 * things by calling exit() directly, we have to reset the callbacks
-	 * explicitly to make this work as intended.
-	 */
-	on_exit_reset();
-
-	/*
-	 * Note we do exit(2) not exit(0).  This is to force the postmaster into a
-	 * system reset cycle if some idiot DBA sends a manual SIGQUIT to a random
+	 * We DO NOT want to run proc_exit() or atexit() callbacks -- we're here
+	 * because shared memory may be corrupted, so we don't want to try to
+	 * clean up our transaction.  Just nail the windows shut and get out of
+	 * town.  The callbacks wouldn't be safe to run from a signal handler,
+	 * anyway.
+	 *
+	 * Note we do _exit(2) not _exit(0).  This is to force the postmaster into
+	 * a system reset cycle if someone sends a manual SIGQUIT to a random
 	 * backend.  This is necessary precisely because we don't clean up our
 	 * shared memory state.  (The "dead man switch" mechanism in pmsignal.c
 	 * should ensure the postmaster sees this as a crash, too, but no harm in
 	 * being doubly sure.)
 	 */
-	exit(2);
+	_exit(2);
 }
 
 
@@ -171,6 +168,19 @@ HandleStartupProcInterrupts(void)
 }
 
 
+/* --------------------------------
+ *		signal handler routines
+ * --------------------------------
+ */
+static void
+StartupProcExit(int code, Datum arg)
+{
+	/* Shutdown the recovery environment */
+	if (standbyState != STANDBY_DISABLED)
+		ShutdownRecoveryTransactionEnvironment();
+}
+
+
 /* ----------------------------------
  *	Startup Process main entry point
  * ----------------------------------
@@ -178,6 +188,9 @@ HandleStartupProcInterrupts(void)
 void
 StartupProcessMain(void)
 {
+	/* Arrange to clean up at startup process exit */
+	on_shmem_exit(StartupProcExit, 0);
+
 	/*
 	 * Properly accept or ignore signals the postmaster might send us.
 	 */
@@ -194,10 +207,6 @@ StartupProcessMain(void)
 	 * Reset some signals that are accepted by postmaster but not here
 	 */
 	pqsignal(SIGCHLD, SIG_DFL);
-	pqsignal(SIGTTIN, SIG_DFL);
-	pqsignal(SIGTTOU, SIG_DFL);
-	pqsignal(SIGCONT, SIG_DFL);
-	pqsignal(SIGWINCH, SIG_DFL);
 
 	/*
 	 * Register timeouts needed for standby mode

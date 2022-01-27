@@ -22,6 +22,8 @@
 -- allowed.
 
 -- This should match IsBinaryCoercible() in parse_coerce.c.
+-- It doesn't currently know about some cases, notably domains, anyelement,
+-- anynonarray, anyenum, or record, but it doesn't need to (yet).
 create function binary_coercible(oid, oid) returns bool as $$
 begin
   if $1 = $2 then return true; end if;
@@ -43,9 +45,11 @@ begin
 end
 $$ language plpgsql strict stable;
 
--- This one ignores castcontext, so it considers only physical equivalence
--- and not whether the coercion can be invoked implicitly.
-create function physically_coercible(oid, oid) returns bool as $$
+-- This one ignores castcontext, so it will allow cases where an explicit
+-- (but still binary) cast would be required to convert the input type.
+-- We don't currently use this for any tests in this file, but it is a
+-- reasonable alternative definition for some scenarios.
+create function explicitly_binary_coercible(oid, oid) returns bool as $$
 begin
   if $1 = $2 then return true; end if;
   if EXISTS(select 1 from pg_catalog.pg_cast where
@@ -82,6 +86,7 @@ WHERE p1.prolang = 0 OR p1.prorettype = 0 OR
        0::oid = ANY (p1.proargtypes) OR
        procost <= 0 OR
        CASE WHEN proretset THEN prorows <= 0 ELSE prorows != 0 END OR
+       prokind NOT IN ('f', 'a', 'w', 'p') OR
        provolatile NOT IN ('i', 's', 'v') OR
        proparallel NOT IN ('s', 'r', 'u');
 
@@ -90,10 +95,10 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1
 WHERE prosrc IS NULL OR prosrc = '' OR prosrc = '-';
 
--- proiswindow shouldn't be set together with proisagg or proretset
+-- proretset should only be set for normal functions
 SELECT p1.oid, p1.proname
 FROM pg_proc AS p1
-WHERE proiswindow AND (proisagg OR proretset);
+WHERE proretset AND prokind != 'f';
 
 -- currently, no built-in functions should be SECURITY DEFINER;
 -- this might change in future, but there will probably never be many.
@@ -140,9 +145,9 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid < p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    (p1.proisagg = false OR p2.proisagg = false) AND
+    (p1.prokind != 'a' OR p2.prokind != 'a') AND
     (p1.prolang != p2.prolang OR
-     p1.proisagg != p2.proisagg OR
+     p1.prokind != p2.prokind OR
      p1.prosecdef != p2.prosecdef OR
      p1.proleakproof != p2.proleakproof OR
      p1.proisstrict != p2.proisstrict OR
@@ -166,7 +171,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     p1.prosrc NOT LIKE E'range\\_constructor_' AND
     p2.prosrc NOT LIKE E'range\\_constructor_' AND
     (p1.prorettype < p2.prorettype)
@@ -177,7 +182,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     p1.prosrc NOT LIKE E'range\\_constructor_' AND
     p2.prosrc NOT LIKE E'range\\_constructor_' AND
     (p1.proargtypes[0] < p2.proargtypes[0])
@@ -188,7 +193,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     p1.prosrc NOT LIKE E'range\\_constructor_' AND
     p2.prosrc NOT LIKE E'range\\_constructor_' AND
     (p1.proargtypes[1] < p2.proargtypes[1])
@@ -199,7 +204,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[2] < p2.proargtypes[2])
 ORDER BY 1, 2;
 
@@ -208,7 +213,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[3] < p2.proargtypes[3])
 ORDER BY 1, 2;
 
@@ -217,7 +222,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[4] < p2.proargtypes[4])
 ORDER BY 1, 2;
 
@@ -226,7 +231,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[5] < p2.proargtypes[5])
 ORDER BY 1, 2;
 
@@ -235,7 +240,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[6] < p2.proargtypes[6])
 ORDER BY 1, 2;
 
@@ -244,7 +249,7 @@ FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid != p2.oid AND
     p1.prosrc = p2.prosrc AND
     p1.prolang = 12 AND p2.prolang = 12 AND
-    NOT p1.proisagg AND NOT p2.proisagg AND
+    p1.prokind != 'a' AND p2.prokind != 'a' AND
     (p1.proargtypes[7] < p2.proargtypes[7])
 ORDER BY 1, 2;
 
@@ -348,10 +353,10 @@ WHERE proallargtypes IS NOT NULL AND
         FROM generate_series(1, array_length(proallargtypes, 1)) g(i)
         WHERE proargmodes IS NULL OR proargmodes[i] IN ('i', 'b', 'v'));
 
--- Check for protransform functions with the wrong signature
+-- Check for prosupport functions with the wrong signature
 SELECT p1.oid, p1.proname, p2.oid, p2.proname
 FROM pg_proc AS p1, pg_proc AS p2
-WHERE p2.oid = p1.protransform AND
+WHERE p2.oid = p1.prosupport AND
     (p2.prorettype != 'internal'::regtype OR p2.proretset OR p2.pronargs != 1
      OR p2.proargtypes[0] != 'internal'::regtype);
 
@@ -740,7 +745,7 @@ WHERE d.classoid IS NULL AND p1.oid <= 9999;
 
 -- Check that operators' underlying functions have suitable comments,
 -- namely 'implementation of XXX operator'.  (Note: it's not necessary to
--- put such comments into pg_proc.h; initdb will generate them as needed.)
+-- put such comments into pg_proc.dat; initdb will generate them as needed.)
 -- In some cases involving legacy names for operators, there are multiple
 -- operators referencing the same pg_proc entry, so ignore operators whose
 -- comments say they are deprecated.
@@ -784,6 +789,36 @@ SELECT p_oid, proname, prodesc FROM funcdescs
     AND oprdesc NOT LIKE 'deprecated%'
 ORDER BY 1;
 
+-- Operators that are commutator pairs should have identical volatility
+-- and leakproofness markings on their implementation functions.
+SELECT o1.oid, o1.oprcode, o2.oid, o2.oprcode
+FROM pg_operator AS o1, pg_operator AS o2, pg_proc AS p1, pg_proc AS p2
+WHERE o1.oprcom = o2.oid AND p1.oid = o1.oprcode AND p2.oid = o2.oprcode AND
+    (p1.provolatile != p2.provolatile OR
+     p1.proleakproof != p2.proleakproof);
+
+-- Likewise for negator pairs.
+SELECT o1.oid, o1.oprcode, o2.oid, o2.oprcode
+FROM pg_operator AS o1, pg_operator AS o2, pg_proc AS p1, pg_proc AS p2
+WHERE o1.oprnegate = o2.oid AND p1.oid = o1.oprcode AND p2.oid = o2.oprcode AND
+    (p1.provolatile != p2.provolatile OR
+     p1.proleakproof != p2.proleakproof);
+
+-- Btree comparison operators' functions should have the same volatility
+-- and leakproofness markings as the associated comparison support function.
+SELECT pp.oid::regprocedure as proc, pp.provolatile as vp, pp.proleakproof as lp,
+       po.oid::regprocedure as opr, po.provolatile as vo, po.proleakproof as lo
+FROM pg_proc pp, pg_proc po, pg_operator o, pg_amproc ap, pg_amop ao
+WHERE pp.oid = ap.amproc AND po.oid = o.oprcode AND o.oid = ao.amopopr AND
+    ao.amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree') AND
+    ao.amopfamily = ap.amprocfamily AND
+    ao.amoplefttype = ap.amproclefttype AND
+    ao.amoprighttype = ap.amprocrighttype AND
+    ap.amprocnum = 1 AND
+    (pp.provolatile != po.provolatile OR
+     pp.proleakproof != po.proleakproof)
+ORDER BY 1;
+
 
 -- **************** pg_aggregate ****************
 
@@ -795,6 +830,8 @@ WHERE aggfnoid = 0 OR aggtransfn = 0 OR
     aggkind NOT IN ('n', 'o', 'h') OR
     aggnumdirectargs < 0 OR
     (aggkind = 'n' AND aggnumdirectargs > 0) OR
+    aggfinalmodify NOT IN ('r', 's', 'w') OR
+    aggmfinalmodify NOT IN ('r', 's', 'w') OR
     aggtranstype = 0 OR aggtransspace < 0 OR aggmtransspace < 0;
 
 -- Make sure the matching pg_proc entry is sensible, too.
@@ -802,13 +839,13 @@ WHERE aggfnoid = 0 OR aggtransfn = 0 OR
 SELECT a.aggfnoid::oid, p.proname
 FROM pg_aggregate as a, pg_proc as p
 WHERE a.aggfnoid = p.oid AND
-    (NOT p.proisagg OR p.proretset OR p.pronargs < a.aggnumdirectargs);
+    (p.prokind != 'a' OR p.proretset OR p.pronargs < a.aggnumdirectargs);
 
--- Make sure there are no proisagg pg_proc entries without matches.
+-- Make sure there are no prokind = PROKIND_AGGREGATE pg_proc entries without matches.
 
 SELECT oid, proname
 FROM pg_proc as p
-WHERE p.proisagg AND
+WHERE p.prokind = 'a' AND
     NOT EXISTS (SELECT 1 FROM pg_aggregate a WHERE a.aggfnoid = p.oid);
 
 -- If there is no finalfn then the output type must be the transtype.
@@ -819,8 +856,6 @@ WHERE a.aggfnoid = p.oid AND
     a.aggfinalfn = 0 AND p.prorettype != a.aggtranstype;
 
 -- Cross-check transfn against its entry in pg_proc.
--- NOTE: use physically_coercible here, not binary_coercible, because
--- max and min on abstime are implemented using int4larger/int4smaller.
 SELECT a.aggfnoid::oid, p.proname, ptr.oid, ptr.proname
 FROM pg_aggregate AS a, pg_proc AS p, pg_proc AS ptr
 WHERE a.aggfnoid = p.oid AND
@@ -829,15 +864,16 @@ WHERE a.aggfnoid = p.oid AND
      OR NOT (ptr.pronargs =
              CASE WHEN a.aggkind = 'n' THEN p.pronargs + 1
              ELSE greatest(p.pronargs - a.aggnumdirectargs, 1) + 1 END)
-     OR NOT physically_coercible(ptr.prorettype, a.aggtranstype)
-     OR NOT physically_coercible(a.aggtranstype, ptr.proargtypes[0])
+     OR NOT binary_coercible(ptr.prorettype, a.aggtranstype)
+     OR NOT binary_coercible(a.aggtranstype, ptr.proargtypes[0])
      OR (p.pronargs > 0 AND
-         NOT physically_coercible(p.proargtypes[0], ptr.proargtypes[1]))
+         NOT binary_coercible(p.proargtypes[0], ptr.proargtypes[1]))
      OR (p.pronargs > 1 AND
-         NOT physically_coercible(p.proargtypes[1], ptr.proargtypes[2]))
+         NOT binary_coercible(p.proargtypes[1], ptr.proargtypes[2]))
      OR (p.pronargs > 2 AND
-         NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
+         NOT binary_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
+     OR (p.pronargs > 3)
     );
 
 -- Cross-check finalfn (if present) against its entry in pg_proc.
@@ -857,7 +893,8 @@ WHERE a.aggfnoid = p.oid AND
          NOT binary_coercible(p.proargtypes[1], pfn.proargtypes[2]))
      OR (pfn.pronargs > 3 AND
          NOT binary_coercible(p.proargtypes[2], pfn.proargtypes[3]))
-     -- we could carry the check further, but 3 args is enough for now
+     -- we could carry the check further, but 4 args is enough for now
+     OR (pfn.pronargs > 4)
     );
 
 -- If transfn is strict then either initval should be non-NULL, or
@@ -901,15 +938,16 @@ WHERE a.aggfnoid = p.oid AND
      OR NOT (ptr.pronargs =
              CASE WHEN a.aggkind = 'n' THEN p.pronargs + 1
              ELSE greatest(p.pronargs - a.aggnumdirectargs, 1) + 1 END)
-     OR NOT physically_coercible(ptr.prorettype, a.aggmtranstype)
-     OR NOT physically_coercible(a.aggmtranstype, ptr.proargtypes[0])
+     OR NOT binary_coercible(ptr.prorettype, a.aggmtranstype)
+     OR NOT binary_coercible(a.aggmtranstype, ptr.proargtypes[0])
      OR (p.pronargs > 0 AND
-         NOT physically_coercible(p.proargtypes[0], ptr.proargtypes[1]))
+         NOT binary_coercible(p.proargtypes[0], ptr.proargtypes[1]))
      OR (p.pronargs > 1 AND
-         NOT physically_coercible(p.proargtypes[1], ptr.proargtypes[2]))
+         NOT binary_coercible(p.proargtypes[1], ptr.proargtypes[2]))
      OR (p.pronargs > 2 AND
-         NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
+         NOT binary_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
+     OR (p.pronargs > 3)
     );
 
 -- Cross-check minvtransfn (if present) against its entry in pg_proc.
@@ -921,15 +959,16 @@ WHERE a.aggfnoid = p.oid AND
      OR NOT (ptr.pronargs =
              CASE WHEN a.aggkind = 'n' THEN p.pronargs + 1
              ELSE greatest(p.pronargs - a.aggnumdirectargs, 1) + 1 END)
-     OR NOT physically_coercible(ptr.prorettype, a.aggmtranstype)
-     OR NOT physically_coercible(a.aggmtranstype, ptr.proargtypes[0])
+     OR NOT binary_coercible(ptr.prorettype, a.aggmtranstype)
+     OR NOT binary_coercible(a.aggmtranstype, ptr.proargtypes[0])
      OR (p.pronargs > 0 AND
-         NOT physically_coercible(p.proargtypes[0], ptr.proargtypes[1]))
+         NOT binary_coercible(p.proargtypes[0], ptr.proargtypes[1]))
      OR (p.pronargs > 1 AND
-         NOT physically_coercible(p.proargtypes[1], ptr.proargtypes[2]))
+         NOT binary_coercible(p.proargtypes[1], ptr.proargtypes[2]))
      OR (p.pronargs > 2 AND
-         NOT physically_coercible(p.proargtypes[2], ptr.proargtypes[3]))
+         NOT binary_coercible(p.proargtypes[2], ptr.proargtypes[3]))
      -- we could carry the check further, but 3 args is enough for now
+     OR (p.pronargs > 3)
     );
 
 -- Cross-check mfinalfn (if present) against its entry in pg_proc.
@@ -949,7 +988,8 @@ WHERE a.aggfnoid = p.oid AND
          NOT binary_coercible(p.proargtypes[1], pfn.proargtypes[2]))
      OR (pfn.pronargs > 3 AND
          NOT binary_coercible(p.proargtypes[2], pfn.proargtypes[3]))
-     -- we could carry the check further, but 3 args is enough for now
+     -- we could carry the check further, but 4 args is enough for now
+     OR (pfn.pronargs > 4)
     );
 
 -- If mtransfn is strict then either minitval should be non-NULL, or
@@ -974,8 +1014,6 @@ WHERE a.aggfnoid = p.oid AND
 
 -- Check that all combine functions have signature
 -- combine(transtype, transtype) returns transtype
--- NOTE: use physically_coercible here, not binary_coercible, because
--- max and min on abstime are implemented using int4larger/int4smaller.
 
 SELECT a.aggfnoid, p.proname
 FROM pg_aggregate as a, pg_proc as p
@@ -983,7 +1021,7 @@ WHERE a.aggcombinefn = p.oid AND
     (p.pronargs != 2 OR
      p.prorettype != p.proargtypes[0] OR
      p.prorettype != p.proargtypes[1] OR
-     NOT physically_coercible(a.aggtranstype, p.proargtypes[0]));
+     NOT binary_coercible(a.aggtranstype, p.proargtypes[0]));
 
 -- Check that no combine function for an INTERNAL transtype is strict.
 
@@ -1087,7 +1125,7 @@ ORDER BY 1, 2;
 SELECT p1.oid::regprocedure, p2.oid::regprocedure
 FROM pg_proc AS p1, pg_proc AS p2
 WHERE p1.oid < p2.oid AND p1.proname = p2.proname AND
-    p1.proisagg AND p2.proisagg AND
+    p1.prokind = 'a' AND p2.prokind = 'a' AND
     array_dims(p1.proargtypes) != array_dims(p2.proargtypes)
 ORDER BY 1;
 
@@ -1095,7 +1133,7 @@ ORDER BY 1;
 
 SELECT oid, proname
 FROM pg_proc AS p
-WHERE proisagg AND proargdefaults IS NOT NULL;
+WHERE prokind = 'a' AND proargdefaults IS NOT NULL;
 
 -- For the same reason, we avoid creating built-in variadic aggregates, except
 -- that variadic ordered-set aggregates are OK (since they have special syntax
@@ -1103,7 +1141,7 @@ WHERE proisagg AND proargdefaults IS NOT NULL;
 
 SELECT p.oid, proname
 FROM pg_proc AS p JOIN pg_aggregate AS a ON a.aggfnoid = p.oid
-WHERE proisagg AND provariadic != 0 AND a.aggkind = 'n';
+WHERE prokind = 'a' AND provariadic != 0 AND a.aggkind = 'n';
 
 
 -- **************** pg_opfamily ****************
@@ -1113,6 +1151,14 @@ WHERE proisagg AND provariadic != 0 AND a.aggkind = 'n';
 SELECT p1.oid
 FROM pg_opfamily as p1
 WHERE p1.opfmethod = 0 OR p1.opfnamespace = 0;
+
+-- Look for opfamilies having no opclasses.  While most validation of
+-- opfamilies is now handled by AM-specific amvalidate functions, that's
+-- driven from pg_opclass entries below, so an empty opfamily would not
+-- get noticed.
+
+SELECT oid, opfname FROM pg_opfamily f
+WHERE NOT EXISTS (SELECT 1 FROM pg_opclass WHERE opcfamily = f.oid);
 
 
 -- **************** pg_opclass ****************
@@ -1153,15 +1199,25 @@ SELECT p1.oid, p1.amname
 FROM pg_am AS p1
 WHERE p1.amhandler = 0;
 
--- Check for amhandler functions with the wrong signature
+-- Check for index amhandler functions with the wrong signature
 
 SELECT p1.oid, p1.amname, p2.oid, p2.proname
 FROM pg_am AS p1, pg_proc AS p2
-WHERE p2.oid = p1.amhandler AND
-    (p2.prorettype != 'index_am_handler'::regtype OR p2.proretset
+WHERE p2.oid = p1.amhandler AND p1.amtype = 'i' AND
+    (p2.prorettype != 'index_am_handler'::regtype
+     OR p2.proretset
      OR p2.pronargs != 1
      OR p2.proargtypes[0] != 'internal'::regtype);
 
+-- Check for table amhandler functions with the wrong signature
+
+SELECT p1.oid, p1.amname, p2.oid, p2.proname
+FROM pg_am AS p1, pg_proc AS p2
+WHERE p2.oid = p1.amhandler AND p1.amtype = 's' AND
+    (p2.prorettype != 'table_am_handler'::regtype
+     OR p2.proretset
+     OR p2.pronargs != 1
+     OR p2.proargtypes[0] != 'internal'::regtype);
 
 -- **************** pg_amop ****************
 
@@ -1317,16 +1373,21 @@ ORDER BY 1;
 -- a representational error in pg_index, but simply wrong catalog design.
 -- It's bad because we expect to be able to clone template0 and assign the
 -- copy a different database collation.  It would especially not work for
--- shared catalogs.  Note that although text columns will show a collation
--- in indcollation, they're still okay to index with text_pattern_ops,
--- so allow that case.
+-- shared catalogs.
+
+SELECT relname, attname, attcollation
+FROM pg_class c, pg_attribute a
+WHERE c.oid = attrelid AND c.oid < 16384 AND
+    c.relkind != 'v' AND  -- we don't care about columns in views
+    attcollation != 0 AND
+    attcollation != (SELECT oid FROM pg_collation WHERE collname = 'C');
+
+-- Double-check that collation-sensitive indexes have "C" collation, too.
 
 SELECT indexrelid::regclass, indrelid::regclass, iclass, icoll
 FROM (SELECT indexrelid, indrelid,
              unnest(indclass) as iclass, unnest(indcollation) as icoll
       FROM pg_index
       WHERE indrelid < 16384) ss
-WHERE icoll != 0 AND iclass !=
-    (SELECT oid FROM pg_opclass
-     WHERE opcname = 'text_pattern_ops' AND opcmethod =
-           (SELECT oid FROM pg_am WHERE amname = 'btree'));
+WHERE icoll != 0 AND
+    icoll != (SELECT oid FROM pg_collation WHERE collname = 'C');

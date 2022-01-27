@@ -25,11 +25,39 @@
 
 
 
+#line 1 "printf_hack.h"
 /*
+ * print_double(x) has the same effect as printf("%g", x), but is intended
+ * to produce the same formatting across all platforms.
+ */
+static void
+print_double(double x)
+{
+#ifdef WIN32
+	/* Change Windows' 3-digit exponents to look like everyone else's */
+	char		convert[128];
+	int			vallen;
 
-NOTE: This file has a different expect file for regression tests on MinGW32
+	sprintf(convert, "%g", x);
+	vallen = strlen(convert);
 
-*/
+	if (vallen >= 6 &&
+		convert[vallen - 5] == 'e' &&
+		convert[vallen - 3] == '0')
+	{
+		convert[vallen - 3] = convert[vallen - 2];
+		convert[vallen - 2] = convert[vallen - 1];
+		convert[vallen - 1] = '\0';
+	}
+
+	printf("%s", convert);
+#else
+	printf("%g", x);
+#endif
+}
+
+#line 9 "num_test2.pgc"
+
 
 
 char* nums[] = { "2E394", "-2", ".794", "3.44", "592.49E21", "-32.84e4",
@@ -77,21 +105,21 @@ main(void)
 
 		text = PGTYPESnumeric_to_asc(num, -1);
 		if (!text) check_errno();
-		printf("num[%d,1]: %s\n", i, text); free(text);
+		printf("num[%d,1]: %s\n", i, text); PGTYPESchar_free(text);
 		text = PGTYPESnumeric_to_asc(num, 0);
 		if (!text) check_errno();
-		printf("num[%d,2]: %s\n", i, text); free(text);
+		printf("num[%d,2]: %s\n", i, text); PGTYPESchar_free(text);
 		text = PGTYPESnumeric_to_asc(num, 1);
 		if (!text) check_errno();
-		printf("num[%d,3]: %s\n", i, text); free(text);
+		printf("num[%d,3]: %s\n", i, text); PGTYPESchar_free(text);
 		text = PGTYPESnumeric_to_asc(num, 2);
 		if (!text) check_errno();
-		printf("num[%d,4]: %s\n", i, text); free(text);
+		printf("num[%d,4]: %s\n", i, text); PGTYPESchar_free(text);
 
 		nin = PGTYPESnumeric_new();
 		text = PGTYPESnumeric_to_asc(nin, 2);
 		if (!text) check_errno();
-		printf("num[%d,5]: %s\n", i, text); free(text);
+		printf("num[%d,5]: %s\n", i, text); PGTYPESchar_free(text);
 
 		r = PGTYPESnumeric_to_long(num, &l);
 		if (r) check_errno();
@@ -103,7 +131,7 @@ main(void)
 			text = PGTYPESnumeric_to_asc(nin, 2);
 			q = PGTYPESnumeric_cmp(num, nin);
 			printf("num[%d,7]: %s (r: %d - cmp: %d)\n", i, text, r, q);
-			free(text);
+			PGTYPESchar_free(text);
 		}
 
 		r = PGTYPESnumeric_to_int(num, &k);
@@ -116,7 +144,7 @@ main(void)
 			text = PGTYPESnumeric_to_asc(nin, 2);
 			q = PGTYPESnumeric_cmp(num, nin);
 			printf("num[%d,9]: %s (r: %d - cmp: %d)\n", i, text, r, q);
-			free(text);
+			PGTYPESchar_free(text);
 		}
 
 		if (i != 6)
@@ -126,7 +154,9 @@ main(void)
 
 			r = PGTYPESnumeric_to_double(num, &d);
 			if (r) check_errno();
-			printf("num[%d,10]: %g (r: %d)\n", i, r?0.0:d, r);
+			printf("num[%d,10]: ", i);
+			print_double(r ? 0.0 : d);
+			printf(" (r: %d)\n", r);
 		}
 
 		/* do not test double to numeric because
@@ -147,7 +177,7 @@ main(void)
 			text = PGTYPESnumeric_to_asc(nin, 2);
 			q = PGTYPESnumeric_cmp(num, nin);
 			printf("num[%d,12]: %s (r: %d - cmp: %d)\n", i, text, r, q);
-			free(text);
+			PGTYPESchar_free(text);
 		}
 
 		PGTYPESdecimal_free(dec);
@@ -173,7 +203,7 @@ main(void)
 			{
 				text = PGTYPESnumeric_to_asc(a, 10);
 				printf("num[a,%d,%d]: %s\n", i, j, text);
-				free(text);
+				PGTYPESchar_free(text);
 			}
 			r = PGTYPESnumeric_sub(numarr[i], numarr[j], s);
 			if (r)
@@ -185,7 +215,7 @@ main(void)
 			{
 				text = PGTYPESnumeric_to_asc(s, 10);
 				printf("num[s,%d,%d]: %s\n", i, j, text);
-				free(text);
+				PGTYPESchar_free(text);
 			}
 			r = PGTYPESnumeric_mul(numarr[i], numarr[j], m);
 			if (r)
@@ -197,7 +227,7 @@ main(void)
 			{
 				text = PGTYPESnumeric_to_asc(m, 10);
 				printf("num[m,%d,%d]: %s\n", i, j, text);
-				free(text);
+				PGTYPESchar_free(text);
 			}
 			r = PGTYPESnumeric_div(numarr[i], numarr[j], d);
 			if (r)
@@ -209,7 +239,7 @@ main(void)
 			{
 				text = PGTYPESnumeric_to_asc(d, 10);
 				printf("num[d,%d,%d]: %s\n", i, j, text);
-				free(text);
+				PGTYPESchar_free(text);
 			}
 
 			PGTYPESnumeric_free(a);
@@ -223,12 +253,12 @@ main(void)
 	{
 		text = PGTYPESnumeric_to_asc(numarr[i], -1);
 		printf("%d: %s\n", i, text);
-		free(text);
+		PGTYPESchar_free(text);
 		PGTYPESnumeric_free(numarr[i]);
 	}
 	free(numarr);
 
-	return (0);
+	return 0;
 }
 
 static void

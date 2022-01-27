@@ -7,7 +7,7 @@
  * detection and resolution algorithms.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -79,15 +79,15 @@ typedef struct
 static bool DeadLockCheckRecurse(PGPROC *proc);
 static int	TestConfiguration(PGPROC *startProc);
 static bool FindLockCycle(PGPROC *checkProc,
-			  EDGE *softEdges, int *nSoftEdges);
+						  EDGE *softEdges, int *nSoftEdges);
 static bool FindLockCycleRecurse(PGPROC *checkProc, int depth,
-					 EDGE *softEdges, int *nSoftEdges);
+								 EDGE *softEdges, int *nSoftEdges);
 static bool FindLockCycleRecurseMember(PGPROC *checkProc,
-						   PGPROC *checkProcLeader,
-						   int depth, EDGE *softEdges, int *nSoftEdges);
+									   PGPROC *checkProcLeader,
+									   int depth, EDGE *softEdges, int *nSoftEdges);
 static bool ExpandConstraints(EDGE *constraints, int nConstraints);
 static bool TopoSort(LOCK *lock, EDGE *constraints, int nConstraints,
-		 PGPROC **ordering);
+					 PGPROC **ordering);
 
 #ifdef DEBUG_DEADLOCK
 static void PrintLockQueue(LOCK *lock, const char *info);
@@ -307,7 +307,7 @@ GetBlockingAutoVacuumPgproc(void)
  * by an outer level of recursion.  Add to this each possible solution
  * constraint for any cycle detected at this level.
  *
- * Returns TRUE if no solution exists.  Returns FALSE if a deadlock-free
+ * Returns true if no solution exists.  Returns false if a deadlock-free
  * state is attainable, in which case waitOrders[] shows the required
  * rearrangements of lock wait queues (if any).
  */
@@ -432,8 +432,8 @@ TestConfiguration(PGPROC *startProc)
  * FindLockCycle -- basic check for deadlock cycles
  *
  * Scan outward from the given proc to see if there is a cycle in the
- * waits-for graph that includes this proc.  Return TRUE if a cycle
- * is found, else FALSE.  If a cycle is found, we return a list of
+ * waits-for graph that includes this proc.  Return true if a cycle
+ * is found, else false.  If a cycle is found, we return a list of
  * the "soft edges", if any, included in the cycle.  These edges could
  * potentially be eliminated by rearranging wait queues.  We also fill
  * deadlockDetails[] with information about the detected cycle; this info
@@ -792,8 +792,8 @@ FindLockCycleRecurseMember(PGPROC *checkProc,
  * of nWaitOrders WAIT_ORDER structs in waitOrders[], with PGPROC array
  * workspace in waitOrderProcs[].
  *
- * Returns TRUE if able to build an ordering that satisfies all the
- * constraints, FALSE if not (there are contradictory constraints).
+ * Returns true if able to build an ordering that satisfies all the
+ * constraints, false if not (there are contradictory constraints).
  */
 static bool
 ExpandConstraints(EDGE *constraints,
@@ -864,8 +864,8 @@ ExpandConstraints(EDGE *constraints,
  * the "blocker" in the output array.  The EDGE array may well contain
  * edges associated with other locks; these should be ignored.
  *
- * Returns TRUE if able to build an ordering that satisfies all the
- * constraints, FALSE if not (there are contradictory constraints).
+ * Returns true if able to build an ordering that satisfies all the
+ * constraints, false if not (there are contradictory constraints).
  */
 static bool
 TopoSort(LOCK *lock,
@@ -922,6 +922,12 @@ TopoSort(LOCK *lock,
 		 * in the same lock group on the queue, set their number of
 		 * beforeConstraints to -1 to indicate that they should be emitted
 		 * with their groupmates rather than considered separately.
+		 *
+		 * In this loop and the similar one just below, it's critical that we
+		 * consistently select the same representative member of any one lock
+		 * group, so that all the constraints are associated with the same
+		 * proc, and the -1's are only associated with not-representative
+		 * members.  We select the last one in the topoProcs array.
 		 */
 		proc = constraints[i].waiter;
 		Assert(proc != NULL);
@@ -940,7 +946,6 @@ TopoSort(LOCK *lock,
 					Assert(beforeConstraints[j] <= 0);
 					beforeConstraints[j] = -1;
 				}
-				break;
 			}
 		}
 
@@ -977,6 +982,7 @@ TopoSort(LOCK *lock,
 		if (kk < 0)
 			continue;
 
+		Assert(beforeConstraints[jj] >= 0);
 		beforeConstraints[jj]++;	/* waiter must come before */
 		/* add this constraint to list of after-constraints for blocker */
 		constraints[i].pred = jj;

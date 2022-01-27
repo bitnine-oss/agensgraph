@@ -3,7 +3,7 @@
  * amcmds.c
  *	  Routines for SQL commands that manipulate access methods.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -13,8 +13,9 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
+#include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_am.h"
@@ -29,7 +30,7 @@
 #include "utils/syscache.h"
 
 
-static Oid	lookup_index_am_handler_func(List *handler_name, char amtype);
+static Oid	lookup_am_handler_func(List *handler_name, char amtype);
 static const char *get_am_type_string(char amtype);
 
 
@@ -49,7 +50,7 @@ CreateAccessMethod(CreateAmStmt *stmt)
 	Datum		values[Natts_pg_am];
 	HeapTuple	tup;
 
-	rel = heap_open(AccessMethodRelationId, RowExclusiveLock);
+	rel = table_open(AccessMethodRelationId, RowExclusiveLock);
 
 	/* Must be super user */
 	if (!superuser())
@@ -60,7 +61,8 @@ CreateAccessMethod(CreateAmStmt *stmt)
 				 errhint("Must be superuser to create an access method.")));
 
 	/* Check if name is used */
-	amoid = GetSysCacheOid1(AMNAME, CStringGetDatum(stmt->amname));
+	amoid = GetSysCacheOid1(AMNAME, Anum_pg_am_oid,
+							CStringGetDatum(stmt->amname));
 	if (OidIsValid(amoid))
 	{
 		ereport(ERROR,
@@ -72,7 +74,7 @@ CreateAccessMethod(CreateAmStmt *stmt)
 	/*
 	 * Get the handler function oid, verifying the AM type while at it.
 	 */
-	amhandler = lookup_index_am_handler_func(stmt->handler_name, stmt->amtype);
+	amhandler = lookup_am_handler_func(stmt->handler_name, stmt->amtype);
 
 	/*
 	 * Insert tuple into pg_am.
@@ -80,6 +82,8 @@ CreateAccessMethod(CreateAmStmt *stmt)
 	memset(values, 0, sizeof(values));
 	memset(nulls, false, sizeof(nulls));
 
+	amoid = GetNewOidWithIndex(rel, AmOidIndexId, Anum_pg_am_oid);
+	values[Anum_pg_am_oid - 1] = ObjectIdGetDatum(amoid);
 	values[Anum_pg_am_amname - 1] =
 		DirectFunctionCall1(namein, CStringGetDatum(stmt->amname));
 	values[Anum_pg_am_amhandler - 1] = ObjectIdGetDatum(amhandler);
@@ -87,7 +91,7 @@ CreateAccessMethod(CreateAmStmt *stmt)
 
 	tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
 
-	amoid = CatalogTupleInsert(rel, tup);
+	CatalogTupleInsert(rel, tup);
 	heap_freetuple(tup);
 
 	myself.classId = AccessMethodRelationId;
@@ -103,7 +107,7 @@ CreateAccessMethod(CreateAmStmt *stmt)
 
 	recordDependencyOnCurrentExtension(&myself, false);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 
 	return myself;
 }
@@ -122,7 +126,7 @@ RemoveAccessMethodById(Oid amOid)
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("must be superuser to drop access methods")));
 
-	relation = heap_open(AccessMethodRelationId, RowExclusiveLock);
+	relation = table_open(AccessMethodRelationId, RowExclusiveLock);
 
 	tup = SearchSysCache1(AMOID, ObjectIdGetDatum(amOid));
 	if (!HeapTupleIsValid(tup))
@@ -132,7 +136,7 @@ RemoveAccessMethodById(Oid amOid)
 
 	ReleaseSysCache(tup);
 
-	heap_close(relation, RowExclusiveLock);
+	table_close(relation, RowExclusiveLock);
 }
 
 /*
@@ -164,7 +168,7 @@ get_am_type_oid(const char *amname, char amtype, bool missing_ok)
 							NameStr(amform->amname),
 							get_am_type_string(amtype))));
 
-		oid = HeapTupleGetOid(tup);
+		oid = amform->oid;
 		ReleaseSysCache(tup);
 	}
 
@@ -183,6 +187,16 @@ Oid
 get_index_am_oid(const char *amname, bool missing_ok)
 {
 	return get_am_type_oid(amname, AMTYPE_INDEX, missing_ok);
+}
+
+/*
+ * get_table_am_oid - given an access method name, look up its OID
+ *		and verify it corresponds to an table AM.
+ */
+Oid
+get_table_am_oid(const char *amname, bool missing_ok)
+{
+	return get_am_type_oid(amname, AMTYPE_TABLE, missing_ok);
 }
 
 /*
@@ -225,6 +239,8 @@ get_am_type_string(char amtype)
 	{
 		case AMTYPE_INDEX:
 			return "INDEX";
+		case AMTYPE_TABLE:
+			return "TABLE";
 		default:
 			/* shouldn't happen */
 			elog(ERROR, "invalid access method type '%c'", amtype);
@@ -239,10 +255,11 @@ get_am_type_string(char amtype)
  * This function either return valid function Oid or throw an error.
  */
 static Oid
-lookup_index_am_handler_func(List *handler_name, char amtype)
+lookup_am_handler_func(List *handler_name, char amtype)
 {
 	Oid			handlerOid;
-	static const Oid funcargtypes[1] = {INTERNALOID};
+	Oid			funcargtypes[1] = {INTERNALOID};
+	Oid			expectedType = InvalidOid;
 
 	if (handler_name == NIL)
 		ereport(ERROR,
@@ -256,16 +273,21 @@ lookup_index_am_handler_func(List *handler_name, char amtype)
 	switch (amtype)
 	{
 		case AMTYPE_INDEX:
-			if (get_func_rettype(handlerOid) != INDEX_AM_HANDLEROID)
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("function %s must return type %s",
-								NameListToString(handler_name),
-								"index_am_handler")));
+			expectedType = INDEX_AM_HANDLEROID;
+			break;
+		case AMTYPE_TABLE:
+			expectedType = TABLE_AM_HANDLEROID;
 			break;
 		default:
 			elog(ERROR, "unrecognized access method type \"%c\"", amtype);
 	}
+
+	if (get_func_rettype(handlerOid) != expectedType)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("function %s must return type %s",
+						get_func_name(handlerOid),
+						format_type_extended(expectedType, -1, 0))));
 
 	return handlerOid;
 }

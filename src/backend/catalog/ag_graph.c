@@ -14,6 +14,7 @@
 #include "access/htup_details.h"
 #include "access/parallel.h"
 #include "access/xact.h"
+#include "catalog/catalog.h"
 #include "catalog/ag_graph.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/dependency.h"
@@ -27,6 +28,7 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "catalog/ag_graph_d.h"
 
 /* a global variable for the GUC variable */
 char *graph_path = NULL;
@@ -105,6 +107,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	ObjectAddress graphobj;
 	ObjectAddress schemaobj;
 	int			i;
+    Form_ag_graph gform;
 
 	AssertArg(graphName != NULL);
 
@@ -138,6 +141,7 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 	schemaoid = CreateSchemaCommand(schemaStmt, queryString,
 									stmt_location, stmt_len);
 
+
 	/* initialize nulls and values */
 	for (i = 0; i < Natts_ag_graph; i++)
 	{
@@ -145,16 +149,24 @@ GraphCreate(CreateGraphStmt *stmt, const char *queryString,
 		isnull[i] = false;
 	}
 	namestrcpy(&gname, graphName);
-	values[Anum_ag_graph_graphname - 1] = NameGetDatum(&gname);
+
+    graphdesc = heap_open(GraphRelationId, RowExclusiveLock);
+	tupDesc = graphdesc->rd_att;
+
+    graphoid = GetNewOidWithIndex(graphdesc,
+                                  GraphOidIndexId,
+                                  Anum_ag_graph_oid);
+
+    values[Anum_ag_graph_oid - 1] = graphoid;
+    values[Anum_ag_graph_graphname - 1] = NameGetDatum(&gname);
 	values[Anum_ag_graph_nspid - 1] = ObjectIdGetDatum(schemaoid);
 
-	graphdesc = heap_open(GraphRelationId, RowExclusiveLock);
-	tupDesc = graphdesc->rd_att;
 
 	tup = heap_form_tuple(tupDesc, values, isnull);
 
-	graphoid = CatalogTupleInsert(graphdesc, tup);
-	Assert(OidIsValid(graphoid));
+	CatalogTupleInsert(graphdesc, tup);
+
+    Assert(OidIsValid(graphoid));
 
 	heap_close(graphdesc, RowExclusiveLock);
 

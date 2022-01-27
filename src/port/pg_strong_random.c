@@ -6,7 +6,11 @@
  * Our definition of "strong" is that it's suitable for generating random
  * salts and query cancellation keys, during authentication.
  *
- * Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Note: this code is run quite early in postmaster and backend startup;
+ * therefore, even when built for backend, it cannot rely on backend
+ * infrastructure such as elog() or palloc().
+ *
+ * Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/port/pg_strong_random.c
@@ -14,11 +18,7 @@
  *-------------------------------------------------------------------------
  */
 
-#ifndef FRONTEND
-#include "postgres.h"
-#else
-#include "postgres_fe.h"
-#endif
+#include "c.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -44,7 +44,7 @@ static HCRYPTPROV hProvider = 0;
  * Read (random) bytes from a file.
  */
 static bool
-random_from_file(char *filename, void *buf, size_t len)
+random_from_file(const char *filename, void *buf, size_t len)
 {
 	int			f;
 	char	   *p = buf;
@@ -103,6 +103,35 @@ pg_strong_random(void *buf, size_t len)
 	 * When built with OpenSSL, use OpenSSL's RAND_bytes function.
 	 */
 #if defined(USE_OPENSSL_RANDOM)
+	int			i;
+
+	/*
+	 * Check that OpenSSL's CSPRNG has been sufficiently seeded, and if not
+	 * add more seed data using RAND_poll().  With some older versions of
+	 * OpenSSL, it may be necessary to call RAND_poll() a number of times.
+	 */
+#define NUM_RAND_POLL_RETRIES 8
+
+	for (i = 0; i < NUM_RAND_POLL_RETRIES; i++)
+	{
+		if (RAND_status() == 1)
+		{
+			/* The CSPRNG is sufficiently seeded */
+			break;
+		}
+
+		if (RAND_poll() == 0)
+		{
+			/*
+			 * RAND_poll() failed to generate any seed data, which means that
+			 * RAND_bytes() will probably fail.  For now, just fall through
+			 * and let that happen.  XXX: maybe we could seed it some other
+			 * way.
+			 */
+			break;
+		}
+	}
+
 	if (RAND_bytes(buf, len) == 1)
 		return true;
 	return false;

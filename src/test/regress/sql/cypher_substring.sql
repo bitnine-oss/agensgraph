@@ -14,7 +14,7 @@ MATCH (u:string) RETURN substring(u.sval, 1, 1);
 MATCH (u:string) RETURN substring(u.sval, 2, 1);
 MATCH (u:string) RETURN substring(u.sval, 3, 1);
 
--- Sanity check for cast to text
+-- Sanity check for cast to text -- this should fail now
 MATCH (u:string) RETURN substring(u.nval, 1, 1);
 
 -- Check Cypher substring(string, start) from graph
@@ -24,7 +24,7 @@ MATCH (u:string) RETURN substring(u.sval, 1);
 MATCH (u:string) RETURN substring(u.sval, 2);
 MATCH (u:string) RETURN substring(u.sval, 3);
 
--- Sanity check for cast to text
+-- Sanity check for cast to text -- this should fail now
 MATCH (u:string) RETURN substring(u.nval, 1);
 
 -- Check Cypher substring(string, start, length) from constant

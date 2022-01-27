@@ -3,7 +3,7 @@
  *
  *	controldata functions
  *
- *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/controldata.c
  */
 
@@ -44,6 +44,7 @@ get_control_data(ClusterInfo *cluster, bool live_check)
 	bool		got_oid = false;
 	bool		got_multi = false;
 	bool		got_oldestmulti = false;
+	bool		got_oldestxid = false;
 	bool		got_mxoff = false;
 	bool		got_nextxlogfile = false;
 	bool		got_float8_pass_by_value = false;
@@ -58,6 +59,7 @@ get_control_data(ClusterInfo *cluster, bool live_check)
 	bool		got_large_object = false;
 	bool		got_date_is_int = false;
 	bool		got_data_checksum_version = false;
+	bool		got_cluster_state = false;
 	char	   *lc_collate = NULL;
 	char	   *lc_ctype = NULL;
 	char	   *lc_monetary = NULL;
@@ -101,19 +103,85 @@ get_control_data(ClusterInfo *cluster, bool live_check)
 	pg_putenv("LC_MONETARY", NULL);
 	pg_putenv("LC_NUMERIC", NULL);
 	pg_putenv("LC_TIME", NULL);
-	pg_putenv("LANG",
 #ifndef WIN32
-			  NULL);
+	pg_putenv("LANG", NULL);
 #else
-	/* On Windows the default locale cannot be English, so force it */
-			  "en");
+	/* On Windows the default locale may not be English, so force it */
+	pg_putenv("LANG", "en");
 #endif
 	pg_putenv("LANGUAGE", NULL);
 	pg_putenv("LC_ALL", NULL);
 	pg_putenv("LC_MESSAGES", "C");
 
+	/*
+	 * Check for clean shutdown
+	 */
+	if (!live_check || cluster == &new_cluster)
+	{
+		/* only pg_controldata outputs the cluster state */
+		snprintf(cmd, sizeof(cmd), "\"%s/pg_controldata\" \"%s\"",
+				 cluster->bindir, cluster->pgdata);
+		fflush(stdout);
+		fflush(stderr);
+
+		if ((output = popen(cmd, "r")) == NULL)
+			pg_fatal("could not get control data using %s: %s\n",
+					 cmd, strerror(errno));
+
+		/* we have the result of cmd in "output". so parse it line by line now */
+		while (fgets(bufin, sizeof(bufin), output))
+		{
+			if ((p = strstr(bufin, "Database cluster state:")) != NULL)
+			{
+				p = strchr(p, ':');
+
+				if (p == NULL || strlen(p) <= 1)
+					pg_fatal("%d: database cluster state problem\n", __LINE__);
+
+				p++;			/* remove ':' char */
+
+				/*
+				 * We checked earlier for a postmaster lock file, and if we
+				 * found one, we tried to start/stop the server to replay the
+				 * WAL.  However, pg_ctl -m immediate doesn't leave a lock
+				 * file, but does require WAL replay, so we check here that
+				 * the server was shut down cleanly, from the controldata
+				 * perspective.
+				 */
+				/* remove leading spaces */
+				while (*p == ' ')
+					p++;
+				if (strcmp(p, "shut down in recovery\n") == 0)
+				{
+					if (cluster == &old_cluster)
+						pg_fatal("The source cluster was shut down while in recovery mode.  To upgrade, use \"rsync\" as documented or shut it down as a primary.\n");
+					else
+						pg_fatal("The target cluster was shut down while in recovery mode.  To upgrade, use \"rsync\" as documented or shut it down as a primary.\n");
+				}
+				else if (strcmp(p, "shut down\n") != 0)
+				{
+					if (cluster == &old_cluster)
+						pg_fatal("The source cluster was not shut down cleanly.\n");
+					else
+						pg_fatal("The target cluster was not shut down cleanly.\n");
+				}
+				got_cluster_state = true;
+			}
+		}
+
+		pclose(output);
+
+		if (!got_cluster_state)
+		{
+			if (cluster == &old_cluster)
+				pg_fatal("The source cluster lacks cluster state information:\n");
+			else
+				pg_fatal("The target cluster lacks cluster state information:\n");
+		}
+	}
+
 	/* pg_resetxlog has been renamed to pg_resetwal in version 10 */
-	if (GET_MAJOR_VERSION(cluster->bin_version) < 1000)
+	if (GET_MAJOR_VERSION(cluster->bin_version) <= 906)
 		resetwal_bin = "pg_resetxlog\" -n";
 	else
 		resetwal_bin = "pg_resetwal\" -n";
@@ -244,6 +312,17 @@ get_control_data(ClusterInfo *cluster, bool live_check)
 			p++;				/* remove ':' char */
 			cluster->controldata.chkpnt_nxtmulti = str2uint(p);
 			got_multi = true;
+		}
+		else if ((p = strstr(bufin, "Latest checkpoint's oldestXID:")) != NULL)
+		{
+			p = strchr(p, ':');
+
+			if (p == NULL || strlen(p) <= 1)
+				pg_fatal("%d: controldata retrieval problem\n", __LINE__);
+
+			p++;				/* remove ':' char */
+			cluster->controldata.chkpnt_oldstxid = str2uint(p);
+			got_oldestxid = true;
 		}
 		else if ((p = strstr(bufin, "Latest checkpoint's oldestMultiXid:")) != NULL)
 		{
@@ -463,7 +542,7 @@ get_control_data(ClusterInfo *cluster, bool live_check)
 
 	/* verify that we got all the mandatory pg_control data */
 	if (!got_xid || !got_oid ||
-		!got_multi ||
+		!got_multi || !got_oldestxid ||
 		(!got_oldestmulti &&
 		 cluster->controldata.cat_ver >= MULTIXACT_FORMATCHANGE_CAT_VER) ||
 		!got_mxoff || (!live_check && !got_nextxlogfile) ||
@@ -493,6 +572,9 @@ get_control_data(ClusterInfo *cluster, bool live_check)
 		if (!got_oldestmulti &&
 			cluster->controldata.cat_ver >= MULTIXACT_FORMATCHANGE_CAT_VER)
 			pg_log(PG_REPORT, "  latest checkpoint oldest MultiXactId\n");
+
+		if (!got_oldestxid)
+			pg_log(PG_REPORT, "  latest checkpoint oldestXID\n");
 
 		if (!got_mxoff)
 			pg_log(PG_REPORT, "  latest checkpoint next MultiXactOffset\n");

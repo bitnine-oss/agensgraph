@@ -1,13 +1,13 @@
 /*-------------------------------------------------------------------------
  *
- * evtcache.c
+ * evtcache.h
  *	  Special-purpose cache for event trigger data.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
- *	  src/backend/utils/cache/evtcache.c
+ *	  src/include/utils/evtcache.h
  *
  *-------------------------------------------------------------------------
  */

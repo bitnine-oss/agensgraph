@@ -42,7 +42,7 @@
  * catalog in a transaction. During normal operation this is achieved by using
  * CommandIds/cmin/cmax. The problem with that however is that for space
  * efficiency reasons only one value of that is stored
- * (c.f. combocid.c). Since ComboCids are only available in memory we log
+ * (cf. combocid.c). Since ComboCids are only available in memory we log
  * additional information which allows us to get the original (cmin, cmax)
  * pair during visibility checks. Check the reorderbuffer.c's comment above
  * ResolveCminCmaxDuringDecoding() for details.
@@ -107,7 +107,7 @@
  * is a convenient point to initialize replication from, which is why we
  * export a snapshot at that point, which *can* be used to read normal data.
  *
- * Copyright (c) 2012-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/snapbuild.c
@@ -136,7 +136,6 @@
 #include "utils/memutils.h"
 #include "utils/snapshot.h"
 #include "utils/snapmgr.h"
-#include "utils/tqual.h"
 
 #include "storage/block.h"		/* debugging output */
 #include "storage/fd.h"
@@ -376,7 +375,7 @@ static void
 SnapBuildFreeSnapshot(Snapshot snap)
 {
 	/* make sure we don't get passed an external snapshot */
-	Assert(snap->satisfies == HeapTupleSatisfiesHistoricMVCC);
+	Assert(snap->snapshot_type == SNAPSHOT_HISTORIC_MVCC);
 
 	/* make sure nobody modified our snapshot */
 	Assert(snap->curcid == FirstCommandId);
@@ -434,7 +433,7 @@ void
 SnapBuildSnapDecRefcount(Snapshot snap)
 {
 	/* make sure we don't get passed an external snapshot */
-	Assert(snap->satisfies == HeapTupleSatisfiesHistoricMVCC);
+	Assert(snap->snapshot_type == SNAPSHOT_HISTORIC_MVCC);
 
 	/* make sure nobody modified our snapshot */
 	Assert(snap->curcid == FirstCommandId);
@@ -476,7 +475,7 @@ SnapBuildBuildSnapshot(SnapBuild *builder)
 
 	snapshot = MemoryContextAllocZero(builder->context, ssize);
 
-	snapshot->satisfies = HeapTupleSatisfiesHistoricMVCC;
+	snapshot->snapshot_type = SNAPSHOT_HISTORIC_MVCC;
 
 	/*
 	 * We misuse the original meaning of SnapshotData's xip and subxip fields
@@ -617,6 +616,8 @@ SnapBuildInitialSnapshot(SnapBuild *builder)
 		TransactionIdAdvance(xid);
 	}
 
+	/* adjust remaining snapshot fields as needed */
+	snap->snapshot_type = SNAPSHOT_MVCC;
 	snap->xcnt = newxcnt;
 	snap->xip = newxip;
 
@@ -830,9 +831,9 @@ SnapBuildDistributeNewCatalogSnapshot(SnapBuild *builder, XLogRecPtr lsn)
 		 * all. We'll add a snapshot when the first change gets queued.
 		 *
 		 * NB: This works correctly even for subtransactions because
-		 * ReorderBufferCommitChild() takes care to pass the parent the base
-		 * snapshot, and while iterating the changequeue we'll get the change
-		 * from the subtxn.
+		 * ReorderBufferAssignChild() takes care to transfer the base snapshot
+		 * to the top-level transaction, and while iterating the changequeue
+		 * we'll get the change from the subtxn.
 		 */
 		if (!ReorderBufferXidHasBaseSnapshot(builder->reorder, txn->xid))
 			continue;
@@ -1074,7 +1075,7 @@ SnapBuildCommitTxn(SnapBuild *builder, XLogRecPtr lsn, TransactionId xid,
 		/* refcount of the snapshot builder for the new snapshot */
 		SnapBuildSnapIncRefcount(builder->snapshot);
 
-		/* add a new Snapshot to all currently running transactions */
+		/* add a new catalog snapshot to all currently running transactions */
 		SnapBuildDistributeNewCatalogSnapshot(builder, lsn);
 	}
 }
@@ -1094,6 +1095,7 @@ void
 SnapBuildProcessRunningXacts(SnapBuild *builder, XLogRecPtr lsn, xl_running_xacts *running)
 {
 	ReorderBufferTXN *txn;
+	TransactionId xmin;
 
 	/*
 	 * If we're not consistent yet, inspect the record to see whether it
@@ -1119,22 +1121,28 @@ SnapBuildProcessRunningXacts(SnapBuild *builder, XLogRecPtr lsn, xl_running_xact
 	 * NB: We only increase xmax when a catalog modifying transaction commits
 	 * (see SnapBuildCommitTxn).  Because of this, xmax can be lower than
 	 * xmin, which looks odd but is correct and actually more efficient, since
-	 * we hit fast paths in tqual.c.
+	 * we hit fast paths in heapam_visibility.c.
 	 */
 	builder->xmin = running->oldestRunningXid;
 
 	/* Remove transactions we don't need to keep track off anymore */
 	SnapBuildPurgeCommittedTxn(builder);
 
-	elog(DEBUG3, "xmin: %u, xmax: %u, oldestrunning: %u",
-		 builder->xmin, builder->xmax,
-		 running->oldestRunningXid);
-
 	/*
-	 * Increase shared memory limits, so vacuum can work on tuples we
-	 * prevented from being pruned till now.
+	 * Advance the xmin limit for the current replication slot, to allow
+	 * vacuum to clean up the tuples this slot has been protecting.
+	 *
+	 * The reorderbuffer might have an xmin among the currently running
+	 * snapshots; use it if so.  If not, we need only consider the snapshots
+	 * we'll produce later, which can't be less than the oldest running xid in
+	 * the record we're reading now.
 	 */
-	LogicalIncreaseXminForSlot(lsn, running->oldestRunningXid);
+	xmin = ReorderBufferGetOldestXmin(builder->reorder);
+	if (xmin == InvalidTransactionId)
+		xmin = running->oldestRunningXid;
+	elog(DEBUG3, "xmin: %u, xmax: %u, oldest running: %u, oldest xmin: %u",
+		 builder->xmin, builder->xmax, running->oldestRunningXid, xmin);
+	LogicalIncreaseXminForSlot(lsn, xmin);
 
 	/*
 	 * Also tell the slot where we can restart decoding from. We don't want to
@@ -1477,7 +1485,7 @@ static void
 SnapBuildSerialize(SnapBuild *builder, XLogRecPtr lsn)
 {
 	Size		needed_length;
-	SnapBuildOnDisk *ondisk;
+	SnapBuildOnDisk *ondisk = NULL;
 	char	   *ondisk_c;
 	int			fd;
 	char		tmppath[MAXPGPATH];
@@ -1515,7 +1523,8 @@ SnapBuildSerialize(SnapBuild *builder, XLogRecPtr lsn)
 
 	if (ret != 0 && errno != ENOENT)
 		ereport(ERROR,
-				(errmsg("could not stat file \"%s\": %m", path)));
+				(errcode_for_file_access(),
+				 errmsg("could not stat file \"%s\": %m", path)));
 
 	else if (ret == 0)
 	{
@@ -1557,7 +1566,7 @@ SnapBuildSerialize(SnapBuild *builder, XLogRecPtr lsn)
 	if (unlink(tmppath) != 0 && errno != ENOENT)
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not remove file \"%s\": %m", path)));
+				 errmsg("could not remove file \"%s\": %m", tmppath)));
 
 	needed_length = sizeof(SnapBuildOnDisk) +
 		sizeof(TransactionId) * builder->committed.xcnt;
@@ -1597,16 +1606,22 @@ SnapBuildSerialize(SnapBuild *builder, XLogRecPtr lsn)
 
 	/* we have valid data now, open tempfile and write it there */
 	fd = OpenTransientFile(tmppath,
-						   O_CREAT | O_EXCL | O_WRONLY | PG_BINARY,
-						   S_IRUSR | S_IWUSR);
+						   O_CREAT | O_EXCL | O_WRONLY | PG_BINARY);
 	if (fd < 0)
 		ereport(ERROR,
-				(errmsg("could not open file \"%s\": %m", path)));
+				(errcode_for_file_access(),
+				 errmsg("could not open file \"%s\": %m", tmppath)));
 
+	errno = 0;
 	pgstat_report_wait_start(WAIT_EVENT_SNAPBUILD_WRITE);
 	if ((write(fd, ondisk, needed_length)) != needed_length)
 	{
+		int			save_errno = errno;
+
 		CloseTransientFile(fd);
+
+		/* if write didn't set errno, assume problem is no disk space */
+		errno = save_errno ? save_errno : ENOSPC;
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not write to file \"%s\": %m", tmppath)));
@@ -1617,6 +1632,9 @@ SnapBuildSerialize(SnapBuild *builder, XLogRecPtr lsn)
 	 * fsync the file before renaming so that even if we crash after this we
 	 * have either a fully valid file or nothing.
 	 *
+	 * It's safe to just ERROR on fsync() here because we'll retry the whole
+	 * operation including the writes.
+	 *
 	 * TODO: Do the fsync() via checkpoints/restartpoints, doing it here has
 	 * some noticeable overhead since it's performed synchronously during
 	 * decoding?
@@ -1624,13 +1642,20 @@ SnapBuildSerialize(SnapBuild *builder, XLogRecPtr lsn)
 	pgstat_report_wait_start(WAIT_EVENT_SNAPBUILD_SYNC);
 	if (pg_fsync(fd) != 0)
 	{
+		int			save_errno = errno;
+
 		CloseTransientFile(fd);
+		errno = save_errno;
 		ereport(ERROR,
 				(errcode_for_file_access(),
 				 errmsg("could not fsync file \"%s\": %m", tmppath)));
 	}
 	pgstat_report_wait_end();
-	CloseTransientFile(fd);
+
+	if (CloseTransientFile(fd))
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m", tmppath)));
 
 	fsync_fname("pg_logical/snapshots", true);
 
@@ -1659,6 +1684,9 @@ SnapBuildSerialize(SnapBuild *builder, XLogRecPtr lsn)
 out:
 	ReorderBufferSetRestartPoint(builder->reorder,
 								 builder->last_serialized_snapshot);
+	/* be tidy */
+	if (ondisk)
+		pfree(ondisk);
 }
 
 /*
@@ -1682,7 +1710,7 @@ SnapBuildRestore(SnapBuild *builder, XLogRecPtr lsn)
 	sprintf(path, "pg_logical/snapshots/%X-%X.snap",
 			(uint32) (lsn >> 32), (uint32) lsn);
 
-	fd = OpenTransientFile(path, O_RDONLY | PG_BINARY, 0);
+	fd = OpenTransientFile(path, O_RDONLY | PG_BINARY);
 
 	if (fd < 0 && errno == ENOENT)
 		return false;
@@ -1709,21 +1737,35 @@ SnapBuildRestore(SnapBuild *builder, XLogRecPtr lsn)
 	pgstat_report_wait_end();
 	if (readBytes != SnapBuildOnDiskConstantSize)
 	{
+		int			save_errno = errno;
+
 		CloseTransientFile(fd);
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not read file \"%s\", read %d of %d: %m",
-						path, readBytes, (int) SnapBuildOnDiskConstantSize)));
+
+		if (readBytes < 0)
+		{
+			errno = save_errno;
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not read file \"%s\": %m", path)));
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not read file \"%s\": read %d of %zu",
+							path, readBytes,
+							(Size) SnapBuildOnDiskConstantSize)));
 	}
 
 	if (ondisk.magic != SNAPBUILD_MAGIC)
 		ereport(ERROR,
-				(errmsg("snapbuild state file \"%s\" has wrong magic number: %u instead of %u",
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg("snapbuild state file \"%s\" has wrong magic number: %u instead of %u",
 						path, ondisk.magic, SNAPBUILD_MAGIC)));
 
 	if (ondisk.version != SNAPBUILD_VERSION)
 		ereport(ERROR,
-				(errmsg("snapbuild state file \"%s\" has unsupported version: %u instead of %u",
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg("snapbuild state file \"%s\" has unsupported version: %u instead of %u",
 						path, ondisk.version, SNAPBUILD_VERSION)));
 
 	INIT_CRC32C(checksum);
@@ -1737,11 +1779,22 @@ SnapBuildRestore(SnapBuild *builder, XLogRecPtr lsn)
 	pgstat_report_wait_end();
 	if (readBytes != sizeof(SnapBuild))
 	{
+		int			save_errno = errno;
+
 		CloseTransientFile(fd);
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not read file \"%s\", read %d of %d: %m",
-						path, readBytes, (int) sizeof(SnapBuild))));
+
+		if (readBytes < 0)
+		{
+			errno = save_errno;
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not read file \"%s\": %m", path)));
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not read file \"%s\": read %d of %zu",
+							path, readBytes, sizeof(SnapBuild))));
 	}
 	COMP_CRC32C(checksum, &ondisk.builder, sizeof(SnapBuild));
 
@@ -1754,11 +1807,22 @@ SnapBuildRestore(SnapBuild *builder, XLogRecPtr lsn)
 	pgstat_report_wait_end();
 	if (readBytes != sz)
 	{
+		int			save_errno = errno;
+
 		CloseTransientFile(fd);
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not read file \"%s\", read %d of %d: %m",
-						path, readBytes, (int) sz)));
+
+		if (readBytes < 0)
+		{
+			errno = save_errno;
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not read file \"%s\": %m", path)));
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not read file \"%s\": read %d of %zu",
+							path, readBytes, sz)));
 	}
 	COMP_CRC32C(checksum, ondisk.builder.was_running.was_xip, sz);
 
@@ -1770,22 +1834,36 @@ SnapBuildRestore(SnapBuild *builder, XLogRecPtr lsn)
 	pgstat_report_wait_end();
 	if (readBytes != sz)
 	{
+		int			save_errno = errno;
+
 		CloseTransientFile(fd);
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not read file \"%s\", read %d of %d: %m",
-						path, readBytes, (int) sz)));
+
+		if (readBytes < 0)
+		{
+			errno = save_errno;
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("could not read file \"%s\": %m", path)));
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not read file \"%s\": read %d of %zu",
+							path, readBytes, sz)));
 	}
 	COMP_CRC32C(checksum, ondisk.builder.committed.xip, sz);
 
-	CloseTransientFile(fd);
+	if (CloseTransientFile(fd))
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m", path)));
 
 	FIN_CRC32C(checksum);
 
 	/* verify checksum of what we've read */
 	if (!EQ_CRC32C(checksum, ondisk.checksum))
 		ereport(ERROR,
-				(errcode_for_file_access(),
+				(errcode(ERRCODE_DATA_CORRUPTED),
 				 errmsg("checksum mismatch for snapbuild state file \"%s\": is %u, should be %u",
 						path, checksum, ondisk.checksum)));
 

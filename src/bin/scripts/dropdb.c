@@ -2,7 +2,7 @@
  *
  * dropdb
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/dropdb.c
@@ -12,6 +12,7 @@
 
 #include "postgres_fe.h"
 #include "common.h"
+#include "common/logging.h"
 #include "fe_utils/string_utils.h"
 
 
@@ -46,6 +47,7 @@ main(int argc, char *argv[])
 	char	   *port = NULL;
 	char	   *username = NULL;
 	enum trivalue prompt_password = TRI_DEFAULT;
+	ConnParams	cparams;
 	bool		echo = false;
 	bool		interactive = false;
 
@@ -54,6 +56,7 @@ main(int argc, char *argv[])
 	PGconn	   *conn;
 	PGresult   *result;
 
+	pg_logging_init(argv[0]);
 	progname = get_progname(argv[0]);
 	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pgscripts"));
 
@@ -99,15 +102,15 @@ main(int argc, char *argv[])
 	switch (argc - optind)
 	{
 		case 0:
-			fprintf(stderr, _("%s: missing required argument database name\n"), progname);
+			pg_log_error("missing required argument database name");
 			fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 			exit(1);
 		case 1:
 			dbname = argv[optind];
 			break;
 		default:
-			fprintf(stderr, _("%s: too many command-line arguments (first is \"%s\")\n"),
-					progname, argv[optind + 1]);
+			pg_log_error("too many command-line arguments (first is \"%s\")",
+						 argv[optind + 1]);
 			fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 			exit(1);
 	}
@@ -128,17 +131,21 @@ main(int argc, char *argv[])
 	if (maintenance_db == NULL && strcmp(dbname, "postgres") == 0)
 		maintenance_db = "template1";
 
-	conn = connectMaintenanceDatabase(maintenance_db,
-									  host, port, username, prompt_password,
-									  progname, echo);
+	cparams.dbname = maintenance_db;
+	cparams.pghost = host;
+	cparams.pgport = port;
+	cparams.pguser = username;
+	cparams.prompt_password = prompt_password;
+	cparams.override_dbname = NULL;
+
+	conn = connectMaintenanceDatabase(&cparams, progname, echo);
 
 	if (echo)
 		printf("%s\n", sql.data);
 	result = PQexec(conn, sql.data);
 	if (PQresultStatus(result) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, _("%s: database removal failed: %s"),
-				progname, PQerrorMessage(conn));
+		pg_log_error("database removal failed: %s", PQerrorMessage(conn));
 		PQfinish(conn);
 		exit(1);
 	}
@@ -152,7 +159,7 @@ main(int argc, char *argv[])
 static void
 help(const char *progname)
 {
-	printf(_("%s removes an AgensGraph database.\n\n"), progname);
+	printf(_("%s removes a AgensGraph database.\n\n"), progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]... DBNAME\n"), progname);
 	printf(_("\nOptions:\n"));

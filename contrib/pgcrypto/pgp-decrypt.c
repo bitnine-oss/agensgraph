@@ -132,7 +132,7 @@ pgp_parse_pkt_hdr(PullFilter *src, uint8 *tag, int *len_p, int allow_ctx)
 	int			res;
 	uint8	   *p;
 
-	/* EOF is normal here, thus we dont use GETBYTE */
+	/* EOF is normal here, thus we don't use GETBYTE */
 	res = pullf_read(src, 1, &p);
 	if (res < 0)
 		return res;
@@ -811,8 +811,8 @@ parse_literal_data(PGP_Context *ctx, MBuf *dst, PullFilter *pkt)
 }
 
 /* process_data_packets and parse_compressed_data call each other */
-static int process_data_packets(PGP_Context *ctx, MBuf *dst,
-					 PullFilter *src, int allow_compr, int need_mdc);
+static int	process_data_packets(PGP_Context *ctx, MBuf *dst,
+								 PullFilter *src, int allow_compr, int need_mdc);
 
 static int
 parse_compressed_data(PGP_Context *ctx, MBuf *dst, PullFilter *pkt)

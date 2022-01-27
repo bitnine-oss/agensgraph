@@ -3,7 +3,7 @@
  * passwordcheck.c
  *
  *
- * Copyright (c) 2009-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2009-2019, PostgreSQL Global Development Group
  *
  * Author: Laurenz Albe <laurenz.albe@wien.gv.at>
  *
@@ -26,10 +26,14 @@
 
 PG_MODULE_MAGIC;
 
+/* Saved hook value in case of unload */
+static check_password_hook_type prev_check_password_hook = NULL;
+
 /* passwords shorter than this will be rejected */
 #define MIN_PWD_LENGTH 8
 
 extern void _PG_init(void);
+extern void _PG_fini(void);
 
 /*
  * check_password
@@ -55,6 +59,11 @@ check_password(const char *username,
 			   Datum validuntil_time,
 			   bool validuntil_null)
 {
+	if (prev_check_password_hook)
+		prev_check_password_hook(username, shadow_pass,
+								 password_type, validuntil_time,
+								 validuntil_null);
+
 	if (password_type != PASSWORD_TYPE_PLAINTEXT)
 	{
 		/*
@@ -70,7 +79,7 @@ check_password(const char *username,
 		if (plain_crypt_verify(username, shadow_pass, username, &logdetail) == STATUS_OK)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("password must not contain user name")));
+					 errmsg("password must not equal user name")));
 	}
 	else
 	{
@@ -133,5 +142,16 @@ void
 _PG_init(void)
 {
 	/* activate password checks when the module is loaded */
+	prev_check_password_hook = check_password_hook;
 	check_password_hook = check_password;
+}
+
+/*
+ * Module unload function
+ */
+void
+_PG_fini(void)
+{
+	/* uninstall hook */
+	check_password_hook = prev_check_password_hook;
 }

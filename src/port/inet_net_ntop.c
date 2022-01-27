@@ -14,7 +14,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
  * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  *
- *	  src/backend/utils/adt/inet_net_ntop.c
+ *	  src/port/inet_net_ntop.c
  */
 
 #if defined(LIBC_SCCS) && !defined(lint)
@@ -54,9 +54,9 @@ static const char rcsid[] = "Id: inet_net_ntop.c,v 1.1.2.2 2004/03/09 09:17:27 m
 #endif
 
 static char *inet_net_ntop_ipv4(const u_char *src, int bits,
-				   char *dst, size_t size);
+								char *dst, size_t size);
 static char *inet_net_ntop_ipv6(const u_char *src, int bits,
-				   char *dst, size_t size);
+								char *dst, size_t size);
 
 
 /*

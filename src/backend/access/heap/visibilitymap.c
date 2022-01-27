@@ -3,7 +3,7 @@
  * visibilitymap.c
  *	  bitmap for tracking visibility of heap tuples
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -89,6 +89,7 @@
 #include "access/visibilitymap.h"
 #include "access/xlog.h"
 #include "miscadmin.h"
+#include "port/pg_bitutils.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/smgr.h"
@@ -115,43 +116,11 @@
 #define HEAPBLK_TO_MAPBYTE(x) (((x) % HEAPBLOCKS_PER_PAGE) / HEAPBLOCKS_PER_BYTE)
 #define HEAPBLK_TO_OFFSET(x) (((x) % HEAPBLOCKS_PER_BYTE) * BITS_PER_HEAPBLOCK)
 
-/* tables for fast counting of set bits for visible and frozen */
-static const uint8 number_of_ones_for_visible[256] = {
-	0, 1, 0, 1, 1, 2, 1, 2, 0, 1, 0, 1, 1, 2, 1, 2,
-	1, 2, 1, 2, 2, 3, 2, 3, 1, 2, 1, 2, 2, 3, 2, 3,
-	0, 1, 0, 1, 1, 2, 1, 2, 0, 1, 0, 1, 1, 2, 1, 2,
-	1, 2, 1, 2, 2, 3, 2, 3, 1, 2, 1, 2, 2, 3, 2, 3,
-	1, 2, 1, 2, 2, 3, 2, 3, 1, 2, 1, 2, 2, 3, 2, 3,
-	2, 3, 2, 3, 3, 4, 3, 4, 2, 3, 2, 3, 3, 4, 3, 4,
-	1, 2, 1, 2, 2, 3, 2, 3, 1, 2, 1, 2, 2, 3, 2, 3,
-	2, 3, 2, 3, 3, 4, 3, 4, 2, 3, 2, 3, 3, 4, 3, 4,
-	0, 1, 0, 1, 1, 2, 1, 2, 0, 1, 0, 1, 1, 2, 1, 2,
-	1, 2, 1, 2, 2, 3, 2, 3, 1, 2, 1, 2, 2, 3, 2, 3,
-	0, 1, 0, 1, 1, 2, 1, 2, 0, 1, 0, 1, 1, 2, 1, 2,
-	1, 2, 1, 2, 2, 3, 2, 3, 1, 2, 1, 2, 2, 3, 2, 3,
-	1, 2, 1, 2, 2, 3, 2, 3, 1, 2, 1, 2, 2, 3, 2, 3,
-	2, 3, 2, 3, 3, 4, 3, 4, 2, 3, 2, 3, 3, 4, 3, 4,
-	1, 2, 1, 2, 2, 3, 2, 3, 1, 2, 1, 2, 2, 3, 2, 3,
-	2, 3, 2, 3, 3, 4, 3, 4, 2, 3, 2, 3, 3, 4, 3, 4
-};
-static const uint8 number_of_ones_for_frozen[256] = {
-	0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 2,
-	0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 2,
-	1, 1, 2, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 3, 3,
-	1, 1, 2, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 3, 3,
-	0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 2,
-	0, 0, 1, 1, 0, 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 2,
-	1, 1, 2, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 3, 3,
-	1, 1, 2, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 3, 3,
-	1, 1, 2, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 3, 3,
-	1, 1, 2, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 3, 3,
-	2, 2, 3, 3, 2, 2, 3, 3, 3, 3, 4, 4, 3, 3, 4, 4,
-	2, 2, 3, 3, 2, 2, 3, 3, 3, 3, 4, 4, 3, 3, 4, 4,
-	1, 1, 2, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 3, 3,
-	1, 1, 2, 2, 1, 1, 2, 2, 2, 2, 3, 3, 2, 2, 3, 3,
-	2, 2, 3, 3, 2, 2, 3, 3, 3, 3, 4, 4, 3, 3, 4, 4,
-	2, 2, 3, 3, 2, 2, 3, 3, 3, 3, 4, 4, 3, 3, 4, 4
-};
+/* Masks for counting subsets of bits in the visibility map. */
+#define VISIBLE_MASK64	UINT64CONST(0x5555555555555555) /* The lower bit of each
+														 * bit pair */
+#define FROZEN_MASK64	UINT64CONST(0xaaaaaaaaaaaaaaaa) /* The upper bit of each
+														 * bit pair */
 
 /* prototypes for internal routines */
 static Buffer vm_readbuf(Relation rel, BlockNumber blkno, bool extend);
@@ -408,18 +377,16 @@ void
 visibilitymap_count(Relation rel, BlockNumber *all_visible, BlockNumber *all_frozen)
 {
 	BlockNumber mapBlock;
+	BlockNumber nvisible = 0;
+	BlockNumber nfrozen = 0;
 
 	/* all_visible must be specified */
 	Assert(all_visible);
 
-	*all_visible = 0;
-	if (all_frozen)
-		*all_frozen = 0;
-
 	for (mapBlock = 0;; mapBlock++)
 	{
 		Buffer		mapBuffer;
-		unsigned char *map;
+		uint64	   *map;
 		int			i;
 
 		/*
@@ -436,17 +403,30 @@ visibilitymap_count(Relation rel, BlockNumber *all_visible, BlockNumber *all_fro
 		 * immediately stale anyway if anyone is concurrently setting or
 		 * clearing bits, and we only really need an approximate value.
 		 */
-		map = (unsigned char *) PageGetContents(BufferGetPage(mapBuffer));
+		map = (uint64 *) PageGetContents(BufferGetPage(mapBuffer));
 
-		for (i = 0; i < MAPSIZE; i++)
+		StaticAssertStmt(MAPSIZE % sizeof(uint64) == 0,
+						 "unsupported MAPSIZE");
+		if (all_frozen == NULL)
 		{
-			*all_visible += number_of_ones_for_visible[map[i]];
-			if (all_frozen)
-				*all_frozen += number_of_ones_for_frozen[map[i]];
+			for (i = 0; i < MAPSIZE / sizeof(uint64); i++)
+				nvisible += pg_popcount64(map[i] & VISIBLE_MASK64);
+		}
+		else
+		{
+			for (i = 0; i < MAPSIZE / sizeof(uint64); i++)
+			{
+				nvisible += pg_popcount64(map[i] & VISIBLE_MASK64);
+				nfrozen += pg_popcount64(map[i] & FROZEN_MASK64);
+			}
 		}
 
 		ReleaseBuffer(mapBuffer);
 	}
+
+	*all_visible = nvisible;
+	if (all_frozen)
+		*all_frozen = nfrozen;
 }
 
 /*
@@ -610,11 +590,30 @@ vm_readbuf(Relation rel, BlockNumber blkno, bool extend)
 	 * Use ZERO_ON_ERROR mode, and initialize the page if necessary. It's
 	 * always safe to clear bits, so it's better to clear corrupt pages than
 	 * error out.
+	 *
+	 * The initialize-the-page part is trickier than it looks, because of the
+	 * possibility of multiple backends doing this concurrently, and our
+	 * desire to not uselessly take the buffer lock in the normal path where
+	 * the page is OK.  We must take the lock to initialize the page, so
+	 * recheck page newness after we have the lock, in case someone else
+	 * already did it.  Also, because we initially check PageIsNew with no
+	 * lock, it's possible to fall through and return the buffer while someone
+	 * else is still initializing the page (i.e., we might see pd_upper as set
+	 * but other page header fields are still zeroes).  This is harmless for
+	 * callers that will take a buffer lock themselves, but some callers
+	 * inspect the page without any lock at all.  The latter is OK only so
+	 * long as it doesn't depend on the page header having correct contents.
+	 * Current usage is safe because PageGetContents() does not require that.
 	 */
 	buf = ReadBufferExtended(rel, VISIBILITYMAP_FORKNUM, blkno,
 							 RBM_ZERO_ON_ERROR, NULL);
 	if (PageIsNew(BufferGetPage(buf)))
-		PageInit(BufferGetPage(buf), BLCKSZ, 0);
+	{
+		LockBuffer(buf, BUFFER_LOCK_EXCLUSIVE);
+		if (PageIsNew(BufferGetPage(buf)))
+			PageInit(BufferGetPage(buf), BLCKSZ, 0);
+		LockBuffer(buf, BUFFER_LOCK_UNLOCK);
+	}
 	return buf;
 }
 
@@ -626,10 +625,9 @@ static void
 vm_extend(Relation rel, BlockNumber vm_nblocks)
 {
 	BlockNumber vm_nblocks_now;
-	Page		pg;
+	PGAlignedBlock pg;
 
-	pg = (Page) palloc(BLCKSZ);
-	PageInit(pg, BLCKSZ, 0);
+	PageInit((Page) pg.data, BLCKSZ, 0);
 
 	/*
 	 * We use the relation extension lock to lock out other backends trying to
@@ -660,10 +658,10 @@ vm_extend(Relation rel, BlockNumber vm_nblocks)
 	/* Now extend the file */
 	while (vm_nblocks_now < vm_nblocks)
 	{
-		PageSetChecksumInplace(pg, vm_nblocks_now);
+		PageSetChecksumInplace((Page) pg.data, vm_nblocks_now);
 
 		smgrextend(rel->rd_smgr, VISIBILITYMAP_FORKNUM, vm_nblocks_now,
-				   (char *) pg, false);
+				   pg.data, false);
 		vm_nblocks_now++;
 	}
 
@@ -680,6 +678,4 @@ vm_extend(Relation rel, BlockNumber vm_nblocks)
 	rel->rd_smgr->smgr_vm_nblocks = vm_nblocks_now;
 
 	UnlockRelationForExtension(rel, ExclusiveLock);
-
-	pfree(pg);
 }

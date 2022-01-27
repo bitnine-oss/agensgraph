@@ -13,7 +13,7 @@
  * come from different tuples. In theory, the standard scalar selectivity
  * functions could be used with the combined histogram.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -26,14 +26,15 @@
 
 #include "catalog/pg_operator.h"
 #include "commands/vacuum.h"
-#include "utils/builtins.h"
+#include "utils/float.h"
+#include "utils/fmgrprotos.h"
 #include "utils/lsyscache.h"
 #include "utils/rangetypes.h"
 
 static int	float8_qsort_cmp(const void *a1, const void *a2);
 static int	range_bound_qsort_cmp(const void *a1, const void *a2, void *arg);
 static void compute_range_stats(VacAttrStats *stats,
-					AnalyzeAttrFetchFunc fetchfunc, int samplerows, double totalrows);
+								AnalyzeAttrFetchFunc fetchfunc, int samplerows, double totalrows);
 
 /*
  * range_typanalyze -- typanalyze function for range columns
@@ -144,7 +145,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 		total_width += VARSIZE_ANY(DatumGetPointer(value));
 
 		/* Get range and deserialize it for further analysis. */
-		range = DatumGetRangeType(value);
+		range = DatumGetRangeTypeP(value);
 		range_deserialize(typcache, range, &lower, &upper, &empty);
 
 		if (!empty)
@@ -319,6 +320,7 @@ compute_range_stats(VacAttrStats *stats, AnalyzeAttrFetchFunc fetchfunc,
 			num_hist = 0;
 		}
 		stats->staop[slot_idx] = Float8LessOperator;
+		stats->stacoll[slot_idx] = InvalidOid;
 		stats->stavalues[slot_idx] = length_hist_values;
 		stats->numvalues[slot_idx] = num_hist;
 		stats->statypid[slot_idx] = FLOAT8OID;

@@ -4,7 +4,7 @@
  *	  WAL replay logic for SP-GiST
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -70,38 +70,6 @@ addOrReplaceTuple(Page page, Item tuple, int size, OffsetNumber offset)
 	if (PageAddItem(page, tuple, size, offset, false, false) != offset)
 		elog(ERROR, "failed to add item of size %u to SPGiST index page",
 			 size);
-}
-
-static void
-spgRedoCreateIndex(XLogReaderState *record)
-{
-	XLogRecPtr	lsn = record->EndRecPtr;
-	Buffer		buffer;
-	Page		page;
-
-	buffer = XLogInitBufferForRedo(record, 0);
-	Assert(BufferGetBlockNumber(buffer) == SPGIST_METAPAGE_BLKNO);
-	page = (Page) BufferGetPage(buffer);
-	SpGistInitMetapage(page);
-	PageSetLSN(page, lsn);
-	MarkBufferDirty(buffer);
-	UnlockReleaseBuffer(buffer);
-
-	buffer = XLogInitBufferForRedo(record, 1);
-	Assert(BufferGetBlockNumber(buffer) == SPGIST_ROOT_BLKNO);
-	SpGistInitBuffer(buffer, SPGIST_LEAF);
-	page = (Page) BufferGetPage(buffer);
-	PageSetLSN(page, lsn);
-	MarkBufferDirty(buffer);
-	UnlockReleaseBuffer(buffer);
-
-	buffer = XLogInitBufferForRedo(record, 2);
-	Assert(BufferGetBlockNumber(buffer) == SPGIST_NULL_BLKNO);
-	SpGistInitBuffer(buffer, SPGIST_LEAF | SPGIST_NULLS);
-	page = (Page) BufferGetPage(buffer);
-	PageSetLSN(page, lsn);
-	MarkBufferDirty(buffer);
-	UnlockReleaseBuffer(buffer);
 }
 
 static void
@@ -976,9 +944,6 @@ spg_redo(XLogReaderState *record)
 	oldCxt = MemoryContextSwitchTo(opCtx);
 	switch (info)
 	{
-		case XLOG_SPGIST_CREATE_INDEX:
-			spgRedoCreateIndex(record);
-			break;
 		case XLOG_SPGIST_ADD_LEAF:
 			spgRedoAddLeaf(record);
 			break;
@@ -1033,15 +998,16 @@ void
 spg_mask(char *pagedata, BlockNumber blkno)
 {
 	Page		page = (Page) pagedata;
+	PageHeader	pagehdr = (PageHeader) page;
 
 	mask_page_lsn_and_checksum(page);
 
 	mask_page_hint_bits(page);
 
 	/*
-	 * Any SpGist page other than meta contains unused space which needs to be
-	 * masked.
+	 * Mask the unused space, but only if the page's pd_lower appears to have
+	 * been set correctly.
 	 */
-	if (!SpGistPageIsMeta(page))
+	if (pagehdr->pd_lower >= SizeOfPageHeaderData)
 		mask_unused_space(page);
 }

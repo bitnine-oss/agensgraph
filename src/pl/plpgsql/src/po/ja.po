@@ -1,169 +1,162 @@
-# LANGUAGE message translation file for plpgsql
-# Copyright (C) 2018 PostgreSQL Global Development Group
-# This file is distributed under the same license as the plpgsql (PostgreSQL) package.
-# HOTTA Michihde <hotta@net-newbie.com>, 2013.
+# Japanese message translation file for plpgsql
+# Copyright (C) 2019 PostgreSQL Global Development Group
+# This file is distributed under the same license as the pg_archivecleanup (PostgreSQL) package.
+# HOTTA Michihde <hotta@net-newbie.com>, 2013
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: plpgsql (PostgreSQL) 10\n"
-"Report-Msgid-Bugs-To: pgsql-bugs@postgresql.org\n"
-"POT-Creation-Date: 2018-01-26 13:56+0900\n"
-"PO-Revision-Date: 2018-02-13 09:35+0900\n"
-"Last-Translator: Michihide Hotta <hotta@net-newbie.com>\n"
-"Language-Team: Japan PostgreSQL Users Group <jpug-doc@ml.postgresql.jp>\n"
+"Project-Id-Version: plpgsql (PostgreSQL 12 beta 1)\n"
+"Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
+"POT-Creation-Date: 2019-06-11 11:34+0900\n"
+"PO-Revision-Date: 2019-06-11 13:38+0900\n"
+"Last-Translator: Kyotaro Horiguchi <horikyota.ntt@gmail.com>\n"
+"Language-Team: jpug-doc <jpug-doc@ml.postgresql.jp>\n"
 "Language: ja\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
-"X-Generator: Poedit 2.0.6\n"
+"X-Generator: Poedit 1.5.4\n"
 
-#: pl_comp.c:433 pl_handler.c:451
+#: pl_comp.c:436 pl_handler.c:461
 #, c-format
 msgid "PL/pgSQL functions cannot accept type %s"
 msgstr "PL/pgSQL 関数では %s 型は指定できません"
 
-#: pl_comp.c:514
+#: pl_comp.c:524
 #, c-format
 msgid "could not determine actual return type for polymorphic function \"%s\""
-msgstr ""
-"関数 \"%s\" が多様な形を持つため、実際の戻り値の型を特定できませんでした"
+msgstr "多相関数\"%s\"の実際の戻り値の型を特定できませんでした"
 
-#: pl_comp.c:544
+#: pl_comp.c:554
 #, c-format
 msgid "trigger functions can only be called as triggers"
 msgstr "トリガー関数はトリガーとしてのみコールできます"
 
-#: pl_comp.c:548 pl_handler.c:436
+#: pl_comp.c:558 pl_handler.c:445
 #, c-format
 msgid "PL/pgSQL functions cannot return type %s"
 msgstr "PL/pgSQL 関数は %s 型を返せません"
 
-#: pl_comp.c:589
+#: pl_comp.c:597
 #, c-format
 msgid "trigger functions cannot have declared arguments"
 msgstr "トリガー関数には引数を宣言できません"
 
-#: pl_comp.c:590
+#: pl_comp.c:598
 #, c-format
 msgid ""
 "The arguments of the trigger can be accessed through TG_NARGS and TG_ARGV "
 "instead."
 msgstr ""
-"その代わり、トリガーの引数には TG_NARGS と TG_ARGV を通してのみアクセスでき"
-"ます"
+"その代わり、トリガーの引数には TG_NARGS と TG_ARGV を通してのみアクセスできま"
+"す"
 
-#: pl_comp.c:692
+#: pl_comp.c:721
 #, c-format
 msgid "event trigger functions cannot have declared arguments"
 msgstr "イベントトリガー関数では引数を宣言できません"
 
-#: pl_comp.c:943
+#: pl_comp.c:980
 #, c-format
 msgid "compilation of PL/pgSQL function \"%s\" near line %d"
 msgstr "PL/pgSQL 関数 \"%s\" の %d 行目付近でのコンパイル"
 
-#: pl_comp.c:966
+#: pl_comp.c:1003
 #, c-format
 msgid "parameter name \"%s\" used more than once"
 msgstr "パラメータ \"%s\" が複数指定されました"
 
-#: pl_comp.c:1076
+#: pl_comp.c:1115
 #, c-format
 msgid "column reference \"%s\" is ambiguous"
 msgstr "列参照 \"%s\" が一意に特定できません"
 
-#: pl_comp.c:1078
+#: pl_comp.c:1117
 #, c-format
 msgid "It could refer to either a PL/pgSQL variable or a table column."
 msgstr ""
-"PL/pgSQL 変数もしくはテーブルのカラム名のどちらかを参照していた可能性があり"
-"ます。"
+"PL/pgSQL 変数もしくはテーブルのカラム名のどちらかを参照していた可能性がありま"
+"す。"
 
-#: pl_comp.c:1258 pl_comp.c:1286 pl_exec.c:4584 pl_exec.c:4913 pl_exec.c:4998
-#: pl_exec.c:5089
+#: pl_comp.c:1300 pl_exec.c:5106 pl_exec.c:5471 pl_exec.c:5558 pl_exec.c:5649
+#: pl_exec.c:6566
 #, c-format
 msgid "record \"%s\" has no field \"%s\""
 msgstr "レコード \"%s\" には項目 \"%s\" はありません"
 
-#: pl_comp.c:1818
+#: pl_comp.c:1765
 #, c-format
 msgid "relation \"%s\" does not exist"
 msgstr "リレーション \"%s\" がありません"
 
-#: pl_comp.c:1927
+#: pl_comp.c:1857
 #, c-format
 msgid "variable \"%s\" has pseudo-type %s"
 msgstr "変数 \"%s\" の型は擬似タイプ %s です"
 
-#: pl_comp.c:1995
-#, c-format
-msgid "relation \"%s\" is not a table"
-msgstr "リレーション \"%s\" はテーブルではありません"
-
-#: pl_comp.c:2155
+#: pl_comp.c:2037
 #, c-format
 msgid "type \"%s\" is only a shell"
 msgstr "型 \"%s\" はシェルでのみ使えます"
 
-#: pl_comp.c:2249 pl_comp.c:2302
+#: pl_comp.c:2134 pl_comp.c:2187
 #, c-format
 msgid "unrecognized exception condition \"%s\""
 msgstr "例外条件 \"%s\" が認識できません"
 
-#: pl_comp.c:2510
+#: pl_comp.c:2401
 #, c-format
 msgid ""
 "could not determine actual argument type for polymorphic function \"%s\""
-msgstr ""
-"関数 \"%s\" が多様な形を持つため、実際の引数の型を特定できませんでした"
+msgstr "多相関数\"%s\"の実際の引数の型を特定できませんでした"
 
-#: pl_exec.c:355 pl_exec.c:644 pl_exec.c:914
+#: pl_exec.c:475 pl_exec.c:887 pl_exec.c:1125
 msgid "during initialization of execution state"
 msgstr "実行状態の初期化の際"
 
-#: pl_exec.c:362
+#: pl_exec.c:481
 msgid "while storing call arguments into local variables"
 msgstr "引数をローカル変数に格納する際"
 
-#: pl_exec.c:447 pl_exec.c:796
+#: pl_exec.c:569 pl_exec.c:960
 msgid "during function entry"
 msgstr "関数に入る際"
 
-#: pl_exec.c:472
+#: pl_exec.c:594
 #, c-format
 msgid "control reached end of function without RETURN"
 msgstr "RETURN が現れる前に、制御が関数の終わりに達しました"
 
-#: pl_exec.c:479
+#: pl_exec.c:601
 msgid "while casting return value to function's return type"
 msgstr "戻り値を関数の戻り値の型へキャストする際に"
 
-#: pl_exec.c:492 pl_exec.c:3101
+#: pl_exec.c:614 pl_exec.c:3556
 #, c-format
 msgid "set-valued function called in context that cannot accept a set"
 msgstr ""
 "値の集合を受け付けないようなコンテキストで、集合値を返す関数が呼ばれました"
 
-#: pl_exec.c:530 pl_exec.c:2948
-msgid "returned record type does not match expected record type"
-msgstr "返されたレコードの型が期待するレコードの型と一致しません"
-
-#: pl_exec.c:585 pl_exec.c:825 pl_exec.c:949
+#: pl_exec.c:740 pl_exec.c:989 pl_exec.c:1150
 msgid "during function exit"
 msgstr "関数を抜ける際"
 
-#: pl_exec.c:821 pl_exec.c:945
+#: pl_exec.c:795 pl_exec.c:834 pl_exec.c:3401
+msgid "returned record type does not match expected record type"
+msgstr "返されたレコードの型が期待するレコードの型と一致しません"
+
+#: pl_exec.c:985 pl_exec.c:1146
 #, c-format
 msgid "control reached end of trigger procedure without RETURN"
 msgstr "RETURN が現れる前に、制御がトリガープロシージャの終わりに達しました"
 
-#: pl_exec.c:830
+#: pl_exec.c:994
 #, c-format
 msgid "trigger procedure cannot return a set"
 msgstr "トリガー手続きは集合値を返すことができません"
 
-#: pl_exec.c:852
+#: pl_exec.c:1033 pl_exec.c:1061
 msgid ""
 "returned row structure does not match the structure of the triggering table"
 msgstr "返された行の構造が、トリガーしているテーブルの構造とマッチしません"
@@ -171,251 +164,252 @@ msgstr "返された行の構造が、トリガーしているテーブルの構
 #. translator: last %s is a phrase such as "during statement block
 #. local variable initialization"
 #.
-#: pl_exec.c:997
+#: pl_exec.c:1198
 #, c-format
 msgid "PL/pgSQL function %s line %d %s"
-msgstr "PL/pgSQL 関数 %s の%d行目 %s"
+msgstr "PL/pgSQL関数%sの%d行目 %s"
 
 #. translator: last %s is a phrase such as "while storing call
 #. arguments into local variables"
 #.
-#: pl_exec.c:1008
+#: pl_exec.c:1209
 #, c-format
 msgid "PL/pgSQL function %s %s"
-msgstr "PL/pgSQL 関数 %s - %s"
+msgstr "PL/pgSQL関数%s - %s"
 
 #. translator: last %s is a plpgsql statement type name
-#: pl_exec.c:1016
+#: pl_exec.c:1217
 #, c-format
 msgid "PL/pgSQL function %s line %d at %s"
-msgstr "PL/pgSQL 関数 %s の%d行目 - %s"
+msgstr "PL/pgSQL関数%sの%d行目 - %s"
 
-#: pl_exec.c:1022
+#: pl_exec.c:1223
 #, c-format
 msgid "PL/pgSQL function %s"
-msgstr "PL/pgSQL 関数 %s"
+msgstr "PL/pgSQL関数 %s"
 
-#: pl_exec.c:1187
+#: pl_exec.c:1561
 msgid "during statement block local variable initialization"
 msgstr "ステートメントブロックでローカル変数を初期化中"
 
-#: pl_exec.c:1226
-#, c-format
-msgid "variable \"%s\" declared NOT NULL cannot default to NULL"
-msgstr ""
-"変数 \"%s\" は NOT NULL として宣言されているため、デフォルト値を NULL にする"
-"ことはできません"
-
-#: pl_exec.c:1277
+#: pl_exec.c:1659
 msgid "during statement block entry"
 msgstr "ステートメントブロックに入る際に"
 
-#: pl_exec.c:1309
+#: pl_exec.c:1691
 msgid "during statement block exit"
 msgstr "ステートメントブロックを抜ける際に"
 
-#: pl_exec.c:1351
+#: pl_exec.c:1729
 msgid "during exception cleanup"
 msgstr "例外をクリーンアップする際に"
 
-#: pl_exec.c:1717
+#: pl_exec.c:2225
+#, c-format
+#| msgid "argument %d is an output argument but is not writable"
+msgid ""
+"procedure parameter \"%s\" is an output parameter but corresponding argument "
+"is not writable"
+msgstr ""
+"プロシージャのパラメータ\"%s\"は出力パラメータですが対応する引数が書き込み不"
+"可です"
+
+#: pl_exec.c:2230
+#, c-format
+#| msgid "argument %d is an output argument but is not writable"
+msgid ""
+"procedure parameter %d is an output parameter but corresponding argument is "
+"not writable"
+msgstr ""
+"プロシージャのパラメータ%dは出力パラメータですが対応する引数が書き込み不可で"
+"す"
+
+#: pl_exec.c:2341
 #, c-format
 msgid "GET STACKED DIAGNOSTICS cannot be used outside an exception handler"
 msgstr "GET STACKED DIAGNOSTICS は例外ハンドラの外では使えません"
 
-#: pl_exec.c:1922
+#: pl_exec.c:2540
 #, c-format
 msgid "case not found"
 msgstr "case が見つかりません"
 
-#: pl_exec.c:1923
+#: pl_exec.c:2541
 #, c-format
 msgid "CASE statement is missing ELSE part."
 msgstr "CASE ステートメントに ELSE 部分がありません"
 
-#: pl_exec.c:2077
+#: pl_exec.c:2634
 #, c-format
 msgid "lower bound of FOR loop cannot be null"
 msgstr "FOR ループの下限を NULL にすることはできません"
 
-#: pl_exec.c:2093
+#: pl_exec.c:2650
 #, c-format
 msgid "upper bound of FOR loop cannot be null"
 msgstr "FOR ループの上限を NULL にすることはできません"
 
-#: pl_exec.c:2111
+#: pl_exec.c:2668
 #, c-format
 msgid "BY value of FOR loop cannot be null"
 msgstr "FOR ループにおける BY の値を NULL にすることはできません"
 
-#: pl_exec.c:2117
+#: pl_exec.c:2674
 #, c-format
 msgid "BY value of FOR loop must be greater than zero"
 msgstr "FOR ループにおける BY の値はゼロより大きくなければなりません"
 
-#: pl_exec.c:2294 pl_exec.c:4085
+#: pl_exec.c:2808 pl_exec.c:4530
 #, c-format
 msgid "cursor \"%s\" already in use"
 msgstr "カーソル \"%s\" はすでに使われています"
 
-#: pl_exec.c:2317 pl_exec.c:4150
+#: pl_exec.c:2831 pl_exec.c:4595
 #, c-format
 msgid "arguments given for cursor without arguments"
 msgstr "引数なしのカーソルに引数が与えられました"
 
-#: pl_exec.c:2336 pl_exec.c:4169
+#: pl_exec.c:2850 pl_exec.c:4614
 #, c-format
 msgid "arguments required for cursor"
 msgstr "カーソルには引数が必要です"
 
-#: pl_exec.c:2423
+#: pl_exec.c:2937
 #, c-format
 msgid "FOREACH expression must not be null"
 msgstr "FOREACH 式は NULL であってはなりません"
 
-#: pl_exec.c:2438
+#: pl_exec.c:2952
 #, c-format
 msgid "FOREACH expression must yield an array, not type %s"
 msgstr "FOREACH 式は %s 型ではなく配列を生成しなければなりません"
 
-#: pl_exec.c:2455
+#: pl_exec.c:2969
 #, c-format
 msgid "slice dimension (%d) is out of the valid range 0..%d"
 msgstr "配列の要素数 (%d) が有効範囲0から%dまでの間にありません"
 
-#: pl_exec.c:2482
+#: pl_exec.c:2996
 #, c-format
 msgid "FOREACH ... SLICE loop variable must be of an array type"
 msgstr "FOREACH ... SLICE ループ変数は配列型でなければなりません"
 
-#: pl_exec.c:2486
+#: pl_exec.c:3000
 #, c-format
 msgid "FOREACH loop variable must not be of an array type"
 msgstr "FOREACH ループ変数は配列型であってはなりません"
 
-#: pl_exec.c:2689 pl_exec.c:2771 pl_exec.c:2941
+#: pl_exec.c:3162 pl_exec.c:3219 pl_exec.c:3394
 #, c-format
 msgid ""
 "cannot return non-composite value from function returning composite type"
 msgstr "複合型を返す関数から複合型以外の値を返すことはできません"
 
-#: pl_exec.c:2815 pl_gram.y:3199
+#: pl_exec.c:3258 pl_gram.y:3305
 #, c-format
 msgid "cannot use RETURN NEXT in a non-SETOF function"
 msgstr "SETOF でない関数では RETURN NEXT は使えません"
 
-#: pl_exec.c:2849 pl_exec.c:2976
+#: pl_exec.c:3299 pl_exec.c:3431
 #, c-format
 msgid "wrong result type supplied in RETURN NEXT"
 msgstr "RETURN NEXT で指定されている結果の型が誤っています"
 
-#: pl_exec.c:2878 pl_exec.c:4572 pl_exec.c:4880 pl_exec.c:4906 pl_exec.c:4972
-#: pl_exec.c:4991 pl_exec.c:5059 pl_exec.c:5082
-#, c-format
-msgid "record \"%s\" is not assigned yet"
-msgstr "レコード \"%s\" にはまだ値が代入されていません"
-
-#: pl_exec.c:2880 pl_exec.c:4574 pl_exec.c:4882 pl_exec.c:4908 pl_exec.c:4974
-#: pl_exec.c:4993 pl_exec.c:5061 pl_exec.c:5084
-#, c-format
-msgid "The tuple structure of a not-yet-assigned record is indeterminate."
-msgstr "まだ代入されていないレコードのタプル構造は不定です"
-
-#: pl_exec.c:2887 pl_exec.c:2906
+#: pl_exec.c:3337 pl_exec.c:3358
 #, c-format
 msgid "wrong record type supplied in RETURN NEXT"
 msgstr "RETURN NEXT で指定されているレコードの型が誤っています"
 
-#: pl_exec.c:2995
+#: pl_exec.c:3450
 #, c-format
 msgid "RETURN NEXT must have a parameter"
 msgstr "RETURN NEXT にはパラメーターが必要です"
 
-#: pl_exec.c:3021 pl_gram.y:3261
+#: pl_exec.c:3476 pl_gram.y:3369
 #, c-format
 msgid "cannot use RETURN QUERY in a non-SETOF function"
 msgstr "SETOF でない関数では RETURN QUERY は使えません"
 
-#: pl_exec.c:3045
+#: pl_exec.c:3500
 msgid "structure of query does not match function result type"
 msgstr "問い合わせの構造が関数の結果の型と一致しません"
 
-#: pl_exec.c:3129 pl_exec.c:3267
+#: pl_exec.c:3584 pl_exec.c:3722
 #, c-format
 msgid "RAISE option already specified: %s"
 msgstr "RAISE オプションは既に指定されています: %s"
 
-#: pl_exec.c:3163
+#: pl_exec.c:3618
 #, c-format
 msgid "RAISE without parameters cannot be used outside an exception handler"
 msgstr "引数の無い RAISE は、例外ハンドラの外では使えません"
 
-#: pl_exec.c:3257
+#: pl_exec.c:3712
 #, c-format
 msgid "RAISE statement option cannot be null"
 msgstr "RAISE ステートメントのオプションには NULL は指定できません"
 
-#: pl_exec.c:3327
+#: pl_exec.c:3782
 #, c-format
 msgid "%s"
 msgstr "%s"
 
-#: pl_exec.c:3382
+#: pl_exec.c:3837
 #, c-format
 msgid "assertion failed"
 msgstr "アサーションに失敗"
 
-#: pl_exec.c:3583 pl_exec.c:3729 pl_exec.c:3919
+#: pl_exec.c:4179 pl_exec.c:4369
 #, c-format
 msgid "cannot COPY to/from client in PL/pgSQL"
 msgstr "PL/pgSQL 内では COPY to/from クライアントは使えません"
 
-#: pl_exec.c:3587 pl_exec.c:3733 pl_exec.c:3923
+#: pl_exec.c:4185
 #, c-format
-msgid "cannot begin/end transactions in PL/pgSQL"
-msgstr "PL/pgSQL 内ではトランザクションの開始／終了はできません"
+msgid "unsupported transaction command in PL/pgSQL"
+msgstr "PL/pgSQL 内ではサポートされないトランザクションコマンド"
 
-#: pl_exec.c:3588 pl_exec.c:3734 pl_exec.c:3924
-#, c-format
-msgid "Use a BEGIN block with an EXCEPTION clause instead."
-msgstr "代わりに EXCEPTION 句を伴う BEGIN ブロックを使用してください"
-
-#: pl_exec.c:3757 pl_exec.c:3948
+#: pl_exec.c:4208 pl_exec.c:4398
 #, c-format
 msgid "INTO used with a command that cannot return data"
 msgstr "データを返せないコマンドで INTO が使われました"
 
-#: pl_exec.c:3785 pl_exec.c:3976
+#: pl_exec.c:4231 pl_exec.c:4421
 #, c-format
 msgid "query returned no rows"
 msgstr "問い合わせは行を返しませんでした"
 
-#: pl_exec.c:3804 pl_exec.c:3995
+#: pl_exec.c:4253 pl_exec.c:4440
 #, c-format
 msgid "query returned more than one row"
 msgstr "問い合わせが複数の行を返しました"
 
-#: pl_exec.c:3821
+#: pl_exec.c:4255
+#, c-format
+msgid "Make sure the query returns a single row, or use LIMIT 1."
+msgstr "問い合わせを1行返却するようにするか、LIMIT 1 をつけてください。"
+
+#: pl_exec.c:4271
 #, c-format
 msgid "query has no destination for result data"
 msgstr "問い合わせに結果データの返却先が指定されていません"
 
-#: pl_exec.c:3822
+#: pl_exec.c:4272
 #, c-format
 msgid "If you want to discard the results of a SELECT, use PERFORM instead."
 msgstr "SELECT の結果を破棄したい場合、代わりに PERFORM を使ってください"
 
-#: pl_exec.c:3855 pl_exec.c:7317
+#: pl_exec.c:4305 pl_exec.c:8416
 #, c-format
 msgid "query string argument of EXECUTE is null"
 msgstr "EXECUTE の問い合わせ文字列の引数が NULL です"
 
-#: pl_exec.c:3911
+#: pl_exec.c:4361
 #, c-format
 msgid "EXECUTE of SELECT ... INTO is not implemented"
 msgstr "SELECT ... INTO の EXECUTE は実装されていません"
 
-#: pl_exec.c:3912
+#: pl_exec.c:4362
 #, c-format
 msgid ""
 "You might want to use EXECUTE ... INTO or EXECUTE CREATE TABLE ... AS "
@@ -423,71 +417,114 @@ msgid ""
 msgstr ""
 "代わりに EXECUTE ... INTO または EXECUTE CREATE TABLE ... AS が使えます。"
 
-#: pl_exec.c:4233 pl_exec.c:4329
+#: pl_exec.c:4375
+#, c-format
+msgid "EXECUTE of transaction commands is not implemented"
+msgstr "トランザクションコマンドのEXECUTEは実装されていません"
+
+#: pl_exec.c:4676 pl_exec.c:4764
 #, c-format
 msgid "cursor variable \"%s\" is null"
 msgstr "カーソル変数 \"%s\" が NULL です"
 
-#: pl_exec.c:4244 pl_exec.c:4340
+#: pl_exec.c:4687 pl_exec.c:4775
 #, c-format
 msgid "cursor \"%s\" does not exist"
 msgstr "カーソル \"%s\" は存在しません"
 
-#: pl_exec.c:4257
+#: pl_exec.c:4700
 #, c-format
 msgid "relative or absolute cursor position is null"
 msgstr "相対もしくは絶対カーソル位置が NULL です"
 
-#: pl_exec.c:4448
+#: pl_exec.c:4956 pl_exec.c:5051
 #, c-format
 msgid "null value cannot be assigned to variable \"%s\" declared NOT NULL"
 msgstr "NOT NULL として宣言された変数 \"%s\" には NULL を代入できません"
 
-#: pl_exec.c:4517
+#: pl_exec.c:5032
 #, c-format
 msgid "cannot assign non-composite value to a row variable"
 msgstr "複合型でない値を行変数に代入できません"
 
-#: pl_exec.c:4541
+#: pl_exec.c:5064
 #, c-format
 msgid "cannot assign non-composite value to a record variable"
 msgstr "複合型でない値をレコード変数に代入できません"
 
-#: pl_exec.c:4661
+#: pl_exec.c:5115
+#, c-format
+msgid "cannot assign to system column \"%s\""
+msgstr "システム列\"%s\"に代入できません"
+
+#: pl_exec.c:5179
 #, c-format
 msgid "number of array dimensions (%d) exceeds the maximum allowed (%d)"
 msgstr "配列の次元数(%d)が制限値(%d)を超えています"
 
-#: pl_exec.c:4693
+#: pl_exec.c:5211
 #, c-format
 msgid "subscripted object is not an array"
 msgstr "添字つきオブジェクトは配列ではありません"
 
-#: pl_exec.c:4731
+#: pl_exec.c:5249
 #, c-format
 msgid "array subscript in assignment must not be null"
 msgstr "代入における配列の添字が NULL であってはなりません"
 
-#: pl_exec.c:5198
+#: pl_exec.c:5756
 #, c-format
 msgid "query \"%s\" did not return data"
 msgstr "問い合わせ \"%s\" がデータを返しませんでした"
 
-#: pl_exec.c:5206
+#: pl_exec.c:5764
 #, c-format
 msgid "query \"%s\" returned %d column"
 msgid_plural "query \"%s\" returned %d columns"
 msgstr[0] "問い合わせ \"%s\" が %d 個の列を返しました"
 
-#: pl_exec.c:5233
+#: pl_exec.c:5792
 #, c-format
 msgid "query \"%s\" returned more than one row"
 msgstr "問い合わせ \"%s\" が複数の行を返しました"
 
-#: pl_exec.c:5301
+#: pl_exec.c:5855
 #, c-format
 msgid "query \"%s\" is not a SELECT"
 msgstr "問い合わせ \"%s\" が SELECT ではありません"
+
+#: pl_exec.c:6580 pl_exec.c:6620 pl_exec.c:6660
+#, c-format
+msgid ""
+"type of parameter %d (%s) does not match that when preparing the plan (%s)"
+msgstr "パラメータの型%d(%s)が実行計画(%s)を準備する時点と一致しません"
+
+#: pl_exec.c:6996 pl_exec.c:7030 pl_exec.c:7104 pl_exec.c:7130
+#, c-format
+msgid "number of source and target fields in assignment does not match"
+msgstr "代入のソースとターゲットのフィールド数が一致していません"
+
+#. translator: %s represents a name of an extra check
+#: pl_exec.c:6998 pl_exec.c:7032 pl_exec.c:7106 pl_exec.c:7132
+#, c-format
+msgid "%s check of %s is active."
+msgstr "%2$sの%1$sチェックが有効です。"
+
+#: pl_exec.c:7002 pl_exec.c:7036 pl_exec.c:7110 pl_exec.c:7136
+#, c-format
+#| msgid "Final statement must return exactly one column."
+msgid "Make sure the query returns the exact list of columns."
+msgstr "問い合わせはカラムの正確なリストを返却するようにしてください。"
+
+#: pl_exec.c:7518
+#, c-format
+msgid "record \"%s\" is not assigned yet"
+msgstr "レコード \"%s\" にはまだ値が代入されていません"
+
+#: pl_exec.c:7519
+#, c-format
+msgid "The tuple structure of a not-yet-assigned record is indeterminate."
+msgstr "まだ代入されていないレコードのタプル構造は不定です"
 
 #: pl_funcs.c:239
 msgid "statement block"
@@ -521,102 +558,93 @@ msgstr "SQL ステートメント"
 msgid "FOR over EXECUTE statement"
 msgstr "EXECUTE ステートメントを使った FOR"
 
-#: pl_gram.y:478
+#: pl_gram.y:489
 #, c-format
 msgid "block label must be placed before DECLARE, not after"
 msgstr "ブロックラベルは DECLARE の後ではなく前に置かなければなりません"
 
-#: pl_gram.y:498
+#: pl_gram.y:509
 #, c-format
 msgid "collations are not supported by type %s"
 msgstr "%s 型では照合順序はサポートされていません"
 
-#: pl_gram.y:513
+#: pl_gram.y:528
 #, c-format
-msgid "row or record variable cannot be CONSTANT"
-msgstr "行またはレコード変数は CONSTANT にはできません"
+msgid "variable \"%s\" must have a default value, since it's declared NOT NULL"
+msgstr ""
+"NOT NULL宣言されているため、変数\"%s\"はデフォルト値を持つ必要があります"
 
-#: pl_gram.y:523
-#, c-format
-msgid "row or record variable cannot be NOT NULL"
-msgstr "行またはレコード変数を NOT NULL にはできません"
-
-#: pl_gram.y:534
-#, c-format
-msgid "default value for row or record variable is not supported"
-msgstr "行またはレコード変数のデフォルト値指定はサポートされていません"
-
-#: pl_gram.y:679 pl_gram.y:694 pl_gram.y:720
+#: pl_gram.y:674 pl_gram.y:689 pl_gram.y:715
 #, c-format
 msgid "variable \"%s\" does not exist"
 msgstr "変数 \"%s\" は存在しません"
 
-#: pl_gram.y:738 pl_gram.y:766
+#: pl_gram.y:733 pl_gram.y:761
 msgid "duplicate declaration"
 msgstr "重複した宣言です。"
 
-#: pl_gram.y:749 pl_gram.y:777
+#: pl_gram.y:744 pl_gram.y:772
 #, c-format
 msgid "variable \"%s\" shadows a previously defined variable"
 msgstr "変数 \"%s\" が事前に定義された変数を不可視にしています"
 
-#: pl_gram.y:956
+#: pl_gram.y:992
 #, c-format
 msgid "diagnostics item %s is not allowed in GET STACKED DIAGNOSTICS"
 msgstr "GET STACKED DIAGNOSTICS では診断項目 %s は許可されていません"
 
-#: pl_gram.y:974
+#: pl_gram.y:1010
 #, c-format
 msgid "diagnostics item %s is not allowed in GET CURRENT DIAGNOSTICS"
 msgstr "GET CURRENT DIAGNOSTICS では診断項目 %s は許可されていません"
 
-#: pl_gram.y:1072
+#: pl_gram.y:1105
 msgid "unrecognized GET DIAGNOSTICS item"
 msgstr "GET DIAGNOSTICS 項目が認識できません"
 
-#: pl_gram.y:1082 pl_gram.y:3448
+#: pl_gram.y:1115 pl_gram.y:3549
 #, c-format
 msgid "\"%s\" is not a scalar variable"
 msgstr "\"%s\" はスカラー変数ではありません"
 
-#: pl_gram.y:1334 pl_gram.y:1528
+#: pl_gram.y:1369 pl_gram.y:1565
 #, c-format
 msgid ""
-"loop variable of loop over rows must be a record or row variable or list of "
-"scalar variables"
+"loop variable of loop over rows must be a record variable or list of scalar "
+"variables"
 msgstr ""
-"行をまたがるループのループ変数は、レコード、行変数、スカラー変数並びのいずれ"
-"かでなければなりません"
+"行に対するループでのループ変数は、レコード変数またはスカラー変数のリストでな"
+"ければなりません"
 
-#: pl_gram.y:1368
+#: pl_gram.y:1404
 #, c-format
 msgid "cursor FOR loop must have only one target variable"
 msgstr "カーソルを使った FOR ループには、ターゲット変数が１個だけ必要です"
 
-#: pl_gram.y:1375
+#: pl_gram.y:1411
 #, c-format
 msgid "cursor FOR loop must use a bound cursor variable"
 msgstr ""
-"カーソルを使った FOR ループでは、それに関連付けられたカーソル変数を使用しな"
-"ければなりません"
+"カーソルを使った FOR ループでは、それに関連付けられたカーソル変数を使用しなけ"
+"ればなりません"
 
-#: pl_gram.y:1459
+#: pl_gram.y:1498
 #, c-format
 msgid "integer FOR loop must have only one target variable"
 msgstr "整数を使った FOR ループには、ターゲット変数が１個だけ必要です"
 
-#: pl_gram.y:1495
+#: pl_gram.y:1535
 #, c-format
 msgid "cannot specify REVERSE in query FOR loop"
 msgstr "問い合わせを使った FOR ループの中では REVERSE は指定できません"
 
-#: pl_gram.y:1642
+#: pl_gram.y:1668
 #, c-format
 msgid "loop variable of FOREACH must be a known variable or list of variables"
 msgstr ""
 "FOREACH のループ変数は、既知の変数または変数のリストでなければなりません"
 
-#: pl_gram.y:1683
+#: pl_gram.y:1710
 #, c-format
 msgid ""
 "there is no label \"%s\" attached to any block or loop enclosing this "
@@ -625,206 +653,208 @@ msgstr ""
 "このステートメントを囲むブロックやループに割り当てられた \"%s\" というラベル"
 "はありません。"
 
-#: pl_gram.y:1691
+#: pl_gram.y:1718
 #, c-format
 msgid "block label \"%s\" cannot be used in CONTINUE"
 msgstr "ブロックラベル \"%s\" は CONTINUE の中では使えません。"
 
-#: pl_gram.y:1706
+#: pl_gram.y:1733
 #, c-format
 msgid "EXIT cannot be used outside a loop, unless it has a label"
 msgstr "ラベルのない EXIT は、ループの外では使えません"
 
-#: pl_gram.y:1707
+#: pl_gram.y:1734
 #, c-format
 msgid "CONTINUE cannot be used outside a loop"
 msgstr "CONTINUE はループの外では使えません"
 
-#: pl_gram.y:1731 pl_gram.y:1768 pl_gram.y:1816 pl_gram.y:2898 pl_gram.y:2983
-#: pl_gram.y:3094 pl_gram.y:3850
+#: pl_gram.y:1758 pl_gram.y:1796 pl_gram.y:1844 pl_gram.y:2994 pl_gram.y:3079
+#: pl_gram.y:3190 pl_gram.y:3950
 msgid "unexpected end of function definition"
 msgstr "予期しない関数定義の終端に達しました"
 
-#: pl_gram.y:1836 pl_gram.y:1860 pl_gram.y:1876 pl_gram.y:1882 pl_gram.y:2000
-#: pl_gram.y:2008 pl_gram.y:2022 pl_gram.y:2117 pl_gram.y:2304 pl_gram.y:2398
-#: pl_gram.y:2550 pl_gram.y:3691 pl_gram.y:3752 pl_gram.y:3831
+#: pl_gram.y:1864 pl_gram.y:1888 pl_gram.y:1904 pl_gram.y:1910 pl_gram.y:2029
+#: pl_gram.y:2037 pl_gram.y:2051 pl_gram.y:2146 pl_gram.y:2395 pl_gram.y:2489
+#: pl_gram.y:2648 pl_gram.y:3792 pl_gram.y:3853 pl_gram.y:3931
 msgid "syntax error"
 msgstr "構文エラー"
 
-#: pl_gram.y:1864 pl_gram.y:1866 pl_gram.y:2308 pl_gram.y:2310
+#: pl_gram.y:1892 pl_gram.y:1894 pl_gram.y:2399 pl_gram.y:2401
 msgid "invalid SQLSTATE code"
 msgstr "無効な SQLSTATE コードです"
 
-#: pl_gram.y:2064
+#: pl_gram.y:2094
 msgid "syntax error, expected \"FOR\""
 msgstr "構文エラー。\"FOR\" が現れるべきでした。"
 
-#: pl_gram.y:2126
+#: pl_gram.y:2155
 #, c-format
 msgid "FETCH statement cannot return multiple rows"
 msgstr "FETCH ステートメントは複数行を返せません"
 
-#: pl_gram.y:2188
+#: pl_gram.y:2279
 #, c-format
 msgid "cursor variable must be a simple variable"
 msgstr "カーソル変数は単純変数でなければなりません"
 
-#: pl_gram.y:2194
+#: pl_gram.y:2285
 #, c-format
 msgid "variable \"%s\" must be of type cursor or refcursor"
 msgstr "変数 \"%s\" は cursor 型または refcursor 型でなければなりません"
 
-#: pl_gram.y:2521 pl_gram.y:2532
+#: pl_gram.y:2619 pl_gram.y:2630
 #, c-format
 msgid "\"%s\" is not a known variable"
 msgstr "\"%s\" は既知の変数ではありません"
 
-#: pl_gram.y:2636 pl_gram.y:2646 pl_gram.y:2802
+#: pl_gram.y:2734 pl_gram.y:2744 pl_gram.y:2899
 msgid "mismatched parentheses"
 msgstr "括弧が対応していません"
 
-#: pl_gram.y:2650
+#: pl_gram.y:2748
 #, c-format
 msgid "missing \"%s\" at end of SQL expression"
 msgstr "SQL 表現式の終わりに \"%s\" がありません"
 
-#: pl_gram.y:2656
+#: pl_gram.y:2754
 #, c-format
 msgid "missing \"%s\" at end of SQL statement"
 msgstr "SQL ステートメントの終わりに \"%s\" がありません"
 
-#: pl_gram.y:2673
+#: pl_gram.y:2771
 msgid "missing expression"
 msgstr "表現式がありません"
 
-#: pl_gram.y:2675
+#: pl_gram.y:2773
 msgid "missing SQL statement"
 msgstr "SQL ステートメントがありません"
 
-#: pl_gram.y:2804
+#: pl_gram.y:2901
 msgid "incomplete data type declaration"
 msgstr "データ型の定義が不完全です"
 
-#: pl_gram.y:2827
+#: pl_gram.y:2924
 msgid "missing data type declaration"
 msgstr "データ型の定義がありません"
 
-#: pl_gram.y:2906
+#: pl_gram.y:3002
 msgid "INTO specified more than once"
 msgstr "INTO が複数回指定されています"
 
-#: pl_gram.y:3075
+#: pl_gram.y:3171
 msgid "expected FROM or IN"
 msgstr "FROM もしくは IN が来るべきでした"
 
-#: pl_gram.y:3135
+#: pl_gram.y:3232
 #, c-format
 msgid "RETURN cannot have a parameter in function returning set"
 msgstr "集合を返す関数では、RETURN にパラメータを指定できません"
 
-#: pl_gram.y:3136
+#: pl_gram.y:3233
 #, c-format
 msgid "Use RETURN NEXT or RETURN QUERY."
 msgstr "RETURN NEXT もしくは RETURN QUERY を使用してください"
 
-#: pl_gram.y:3144
+#: pl_gram.y:3243
 #, c-format
-msgid "RETURN cannot have a parameter in function with OUT parameters"
-msgstr "OUT パラメータのない関数では、RETURN にパラメータを指定できません"
+msgid "RETURN cannot have a parameter in a procedure"
+msgstr "プロシージャないのRETURNはパラメータを取ることができません"
 
-#: pl_gram.y:3153
+#: pl_gram.y:3248
 #, c-format
 msgid "RETURN cannot have a parameter in function returning void"
 msgstr "void を返す関数では、RETURN にパラメータを指定できません"
 
-#: pl_gram.y:3213
+#: pl_gram.y:3257
+#, c-format
+msgid "RETURN cannot have a parameter in function with OUT parameters"
+msgstr "OUT パラメータのない関数では、RETURN にパラメータを指定できません"
+
+#: pl_gram.y:3320
 #, c-format
 msgid "RETURN NEXT cannot have a parameter in function with OUT parameters"
-msgstr ""
-"OUT パラメータ付きの関数では、RETURN NEXT にパラメータを指定できません"
+msgstr "OUT パラメータ付きの関数では、RETURN NEXT にパラメータを指定できません"
 
-#: pl_gram.y:3317
+#: pl_gram.y:3428
 #, c-format
-msgid "\"%s\" is declared CONSTANT"
-msgstr "\"%s\" は定義済み CONSTANT です"
+msgid "variable \"%s\" is declared CONSTANT"
+msgstr "変数\"%s\" はCONSTANTとして定義されています"
 
-#: pl_gram.y:3379 pl_gram.y:3391
+#: pl_gram.y:3491
 #, c-format
-msgid "record or row variable cannot be part of multiple-item INTO list"
-msgstr ""
-"レコードもしくは行変数は、複数項目を持つ INTO リストの一部としては指定できま"
-"せん"
+msgid "record variable cannot be part of multiple-item INTO list"
+msgstr "レコード変数は、複数項目を持つ INTO リストでは使えません"
 
-#: pl_gram.y:3436
+#: pl_gram.y:3537
 #, c-format
 msgid "too many INTO variables specified"
 msgstr "INTO 変数の指定が多すぎます"
 
-#: pl_gram.y:3644
+#: pl_gram.y:3745
 #, c-format
 msgid "end label \"%s\" specified for unlabelled block"
 msgstr "ラベル無しブロックで終端ラベル \"%s\" が指定されました"
 
-#: pl_gram.y:3651
+#: pl_gram.y:3752
 #, c-format
 msgid "end label \"%s\" differs from block's label \"%s\""
 msgstr "終端ラベル \"%s\" がブロックのラベル \"%s\" と異なります"
 
-#: pl_gram.y:3686
+#: pl_gram.y:3787
 #, c-format
 msgid "cursor \"%s\" has no arguments"
 msgstr "カーソル \"%s\" に引数がありません"
 
-#: pl_gram.y:3700
+#: pl_gram.y:3801
 #, c-format
 msgid "cursor \"%s\" has arguments"
 msgstr "カーソル \"%s\" に引数がついています"
 
-#: pl_gram.y:3742
+#: pl_gram.y:3843
 #, c-format
 msgid "cursor \"%s\" has no argument named \"%s\""
 msgstr "カーソル \"%s\" に \"%s\" という名前の引数がありません"
 
-#: pl_gram.y:3762
+#: pl_gram.y:3863
 #, c-format
 msgid "value for parameter \"%s\" of cursor \"%s\" specified more than once"
 msgstr "カーソル \"%2$s\" のパラメータ \"%1$s\" の値が複数個指定されました"
 
-#: pl_gram.y:3787
+#: pl_gram.y:3888
 #, c-format
 msgid "not enough arguments for cursor \"%s\""
 msgstr "カーソル \"%s\" の引数が不足しています"
 
-#: pl_gram.y:3794
+#: pl_gram.y:3895
 #, c-format
 msgid "too many arguments for cursor \"%s\""
 msgstr "カーソル \"%s\" に対する引数が多すぎます"
 
-#: pl_gram.y:3882
+#: pl_gram.y:3982
 msgid "unrecognized RAISE statement option"
 msgstr "RAISE ステートメントのオプションを認識できません"
 
-#: pl_gram.y:3886
+#: pl_gram.y:3986
 msgid "syntax error, expected \"=\""
 msgstr "構文エラー。\"=\" を期待していました"
 
-#: pl_gram.y:3927
+#: pl_gram.y:4027
 #, c-format
 msgid "too many parameters specified for RAISE"
 msgstr "RAISE に指定されたパラメーターの数が多すぎます"
 
-#: pl_gram.y:3931
+#: pl_gram.y:4031
 #, c-format
 msgid "too few parameters specified for RAISE"
 msgstr "RAISE に指定されたパラメーターの数が足りません"
 
-#: pl_handler.c:154
+#: pl_handler.c:158
 msgid ""
 "Sets handling of conflicts between PL/pgSQL variable names and table column "
 "names."
 msgstr "PL/pgSQL 変数名とテーブルのカラム名の間の衝突時処理を設定します。"
 
-#: pl_handler.c:163
+#: pl_handler.c:167
 msgid ""
 "Print information about parameters in the DETAIL part of the error messages "
 "generated on INTO ... STRICT failures."
@@ -832,26 +862,46 @@ msgstr ""
 "INTO ... STRICT 失敗時に生成されたエラーメッセージの DETAIL 部分のパラメー"
 "ター情報を表示します。"
 
-#: pl_handler.c:171
+#: pl_handler.c:175
 msgid "Perform checks given in ASSERT statements."
 msgstr "ASSERT ステートメントで指定されたチェックを実行します。"
 
-#: pl_handler.c:179
+#: pl_handler.c:183
 msgid "List of programming constructs that should produce a warning."
 msgstr "生成されたプログラムの中で、警告を発生すべき部分の一覧です。"
 
-#: pl_handler.c:189
+#: pl_handler.c:193
 msgid "List of programming constructs that should produce an error."
 msgstr "生成されたプログラムの中で、エラーを発生すべき部分の一覧です。"
 
 #. translator: %s is typically the translation of "syntax error"
-#: pl_scanner.c:624
+#: pl_scanner.c:508
 #, c-format
 msgid "%s at end of input"
 msgstr "入力の最後で %s"
 
 #. translator: first %s is typically the translation of "syntax error"
-#: pl_scanner.c:640
+#: pl_scanner.c:524
 #, c-format
 msgid "%s at or near \"%s\""
 msgstr "\"%2$s\" もしくはその近辺で %1$s"
+
+#~ msgid "relation \"%s\" is not a table"
+#~ msgstr "リレーション \"%s\" はテーブルではありません"
+
+#~ msgid "variable \"%s\" declared NOT NULL cannot default to NULL"
+#~ msgstr ""
+#~ "変数 \"%s\" は NOT NULL として宣言されているため、デフォルト値を NULL にす"
+#~ "ることはできません"
+
+#~ msgid "Use a BEGIN block with an EXCEPTION clause instead."
+#~ msgstr "代わりに EXCEPTION 句を伴う BEGIN ブロックを使用してください"
+
+#~ msgid "row or record variable cannot be CONSTANT"
+#~ msgstr "行またはレコード変数は CONSTANT にはできません"
+
+#~ msgid "row or record variable cannot be NOT NULL"
+#~ msgstr "行またはレコード変数を NOT NULL にはできません"
+
+#~ msgid "default value for row or record variable is not supported"
+#~ msgstr "行またはレコード変数のデフォルト値指定はサポートされていません"

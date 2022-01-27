@@ -3,7 +3,7 @@
  * blinsert.c
  *		Bloom index build and insert functions.
  *
- * Copyright (c) 2016-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/bloom/blinsert.c
@@ -14,6 +14,7 @@
 
 #include "access/genam.h"
 #include "access/generic_xlog.h"
+#include "access/tableam.h"
 #include "catalog/index.h"
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
@@ -36,7 +37,7 @@ typedef struct
 	int64		indtuples;		/* total number of tuples indexed */
 	MemoryContext tmpCtx;		/* temporary memory context reset after each
 								 * tuple */
-	char		data[BLCKSZ];	/* cached page */
+	PGAlignedBlock data;		/* cached page */
 	int			count;			/* number of tuples in cached page */
 } BloomBuildState;
 
@@ -52,7 +53,7 @@ flushCachedPage(Relation index, BloomBuildState *buildstate)
 
 	state = GenericXLogStart(index);
 	page = GenericXLogRegisterBuffer(state, buffer, GENERIC_XLOG_FULL_IMAGE);
-	memcpy(page, buildstate->data, BLCKSZ);
+	memcpy(page, buildstate->data.data, BLCKSZ);
 	GenericXLogFinish(state);
 	UnlockReleaseBuffer(buffer);
 }
@@ -63,13 +64,13 @@ flushCachedPage(Relation index, BloomBuildState *buildstate)
 static void
 initCachedPage(BloomBuildState *buildstate)
 {
-	memset(buildstate->data, 0, BLCKSZ);
-	BloomInitPage(buildstate->data, 0);
+	memset(buildstate->data.data, 0, BLCKSZ);
+	BloomInitPage(buildstate->data.data, 0);
 	buildstate->count = 0;
 }
 
 /*
- * Per-tuple callback from IndexBuildHeapScan.
+ * Per-tuple callback for table_index_build_scan.
  */
 static void
 bloomBuildCallback(Relation index, HeapTuple htup, Datum *values,
@@ -84,7 +85,7 @@ bloomBuildCallback(Relation index, HeapTuple htup, Datum *values,
 	itup = BloomFormTuple(&buildstate->blstate, &htup->t_self, values, isnull);
 
 	/* Try to add next item to cached page */
-	if (BloomPageAddItem(&buildstate->blstate, buildstate->data, itup))
+	if (BloomPageAddItem(&buildstate->blstate, buildstate->data.data, itup))
 	{
 		/* Next item was added successfully */
 		buildstate->count++;
@@ -98,7 +99,7 @@ bloomBuildCallback(Relation index, HeapTuple htup, Datum *values,
 
 		initCachedPage(buildstate);
 
-		if (!BloomPageAddItem(&buildstate->blstate, buildstate->data, itup))
+		if (!BloomPageAddItem(&buildstate->blstate, buildstate->data.data, itup))
 		{
 			/* We shouldn't be here since we're inserting to the empty page */
 			elog(ERROR, "could not add new bloom tuple to empty page");
@@ -141,8 +142,9 @@ blbuild(Relation heap, Relation index, IndexInfo *indexInfo)
 	initCachedPage(&buildstate);
 
 	/* Do the heap scan */
-	reltuples = IndexBuildHeapScan(heap, index, indexInfo, true,
-								   bloomBuildCallback, (void *) &buildstate);
+	reltuples = table_index_build_scan(heap, index, indexInfo, true, true,
+									   bloomBuildCallback, (void *) &buildstate,
+									   NULL);
 
 	/* Flush last page if needed (it will be, unless heap was empty) */
 	if (buildstate.count > 0)
@@ -180,7 +182,7 @@ blbuildempty(Relation index)
 	smgrwrite(index->rd_smgr, INIT_FORKNUM, BLOOM_METAPAGE_BLKNO,
 			  (char *) metapage, true);
 	log_newpage(&index->rd_smgr->smgr_rnode.node, INIT_FORKNUM,
-				BLOOM_METAPAGE_BLKNO, metapage, false);
+				BLOOM_METAPAGE_BLKNO, metapage, true);
 
 	/*
 	 * An immediate sync is required even if we xlog'd the page, because the

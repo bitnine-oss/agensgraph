@@ -92,7 +92,7 @@ int main()
   if( threads == NULL )
     {
       fprintf(stderr, "Cannot alloc memory\n");
-      return( 1 );
+      return 1;
     }
   for( n = 0; n < nthreads; n++ )
     {
@@ -134,7 +134,7 @@ int main()
   else
     printf("ERROR: Failure - expecting %d rows, got %d.\n", nthreads * iterations, l_rows);
 
-  return( 0 );
+  return 0;
 }
 
 void *test_thread(void *arg)
@@ -154,12 +154,6 @@ void *test_thread(void *arg)
 #line 106 "thread_implicit.pgc"
 
 
-#ifdef WIN32
-#ifdef _MSC_VER                /* requires MSVC */
-	_configthreadlocale(_ENABLE_PER_THREAD_LOCALE);
-#endif
-#endif
-
   /* build up connection name, and connect to database */
 #ifndef _MSC_VER
   snprintf(l_connection, sizeof(l_connection), "thread_%03ld", threadnum);
@@ -167,24 +161,24 @@ void *test_thread(void *arg)
   _snprintf(l_connection, sizeof(l_connection), "thread_%03ld", threadnum);
 #endif
   /* exec sql whenever sqlerror  sqlprint ; */
-#line 120 "thread_implicit.pgc"
+#line 114 "thread_implicit.pgc"
 
   { ECPGconnect(__LINE__, 0, "ecpg1_regression" , NULL, NULL , l_connection, 0); 
-#line 121 "thread_implicit.pgc"
+#line 115 "thread_implicit.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 121 "thread_implicit.pgc"
+#line 115 "thread_implicit.pgc"
 
   if( sqlca.sqlcode != 0 )
     {
       printf("%s: ERROR: cannot connect to database!\n", l_connection);
-      return( NULL );
+      return NULL;
     }
   { ECPGtrans(__LINE__, NULL, "begin");
-#line 127 "thread_implicit.pgc"
+#line 121 "thread_implicit.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 127 "thread_implicit.pgc"
+#line 121 "thread_implicit.pgc"
 
 
   /* insert into test_thread table */
@@ -195,10 +189,10 @@ if (sqlca.sqlcode < 0) sqlprint();}
 	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, 
 	ECPGt_int,&(l_i),(long)1,(long)1,sizeof(int), 
 	ECPGt_NO_INDICATOR, NULL , 0L, 0L, 0L, ECPGt_EOIT, ECPGt_EORT);
-#line 132 "thread_implicit.pgc"
+#line 126 "thread_implicit.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 132 "thread_implicit.pgc"
+#line 126 "thread_implicit.pgc"
 
       if( sqlca.sqlcode != 0 )
 	printf("%s: ERROR: insert failed!\n", l_connection);
@@ -206,17 +200,17 @@ if (sqlca.sqlcode < 0) sqlprint();}
 
   /* all done */
   { ECPGtrans(__LINE__, NULL, "commit");
-#line 138 "thread_implicit.pgc"
+#line 132 "thread_implicit.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 138 "thread_implicit.pgc"
+#line 132 "thread_implicit.pgc"
 
   { ECPGdisconnect(__LINE__, l_connection);
-#line 139 "thread_implicit.pgc"
+#line 133 "thread_implicit.pgc"
 
 if (sqlca.sqlcode < 0) sqlprint();}
-#line 139 "thread_implicit.pgc"
+#line 133 "thread_implicit.pgc"
 
-  return( NULL );
+  return NULL;
 }
 #endif /* ENABLE_THREAD_SAFETY */

@@ -4,7 +4,7 @@
  *	  Private declarations for SP-GiST access method.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/spgist_private.h
@@ -18,6 +18,7 @@
 #include "access/spgist.h"
 #include "nodes/tidbitmap.h"
 #include "storage/buf.h"
+#include "utils/geo_decls.h"
 #include "utils/relcache.h"
 
 
@@ -119,7 +120,8 @@ typedef struct SpGistState
 {
 	spgConfigOut config;		/* filled in by opclass config method */
 
-	SpGistTypeDesc attType;		/* type of input data and leaf values */
+	SpGistTypeDesc attType;		/* type of values to be indexed/restored */
+	SpGistTypeDesc attLeafType; /* type of leaf-tuple values */
 	SpGistTypeDesc attPrefixType;	/* type of inner-tuple prefix values */
 	SpGistTypeDesc attLabelType;	/* type of node label values */
 
@@ -129,14 +131,35 @@ typedef struct SpGistState
 	bool		isBuild;		/* true if doing index build */
 } SpGistState;
 
+typedef struct SpGistSearchItem
+{
+	pairingheap_node phNode;	/* pairing heap node */
+	Datum		value;			/* value reconstructed from parent or
+								 * leafValue if heaptuple */
+	void	   *traversalValue; /* opclass-specific traverse value */
+	int			level;			/* level of items on this page */
+	ItemPointerData heapPtr;	/* heap info, if heap tuple */
+	bool		isNull;			/* SearchItem is NULL item */
+	bool		isLeaf;			/* SearchItem is heap item */
+	bool		recheck;		/* qual recheck is needed */
+	bool		recheckDistances;	/* distance recheck is needed */
+
+	/* array with numberOfOrderBys entries */
+	double		distances[FLEXIBLE_ARRAY_MEMBER];
+} SpGistSearchItem;
+
+#define SizeOfSpGistSearchItem(n_distances) \
+	(offsetof(SpGistSearchItem, distances) + sizeof(double) * (n_distances))
+
 /*
  * Private state of an index scan
  */
 typedef struct SpGistScanOpaqueData
 {
 	SpGistState state;			/* see above */
+	pairingheap *scanQueue;		/* queue of to be visited items */
 	MemoryContext tempCxt;		/* short-lived memory context */
-	MemoryContext traversalCxt; /* memory context for traversalValues */
+	MemoryContext traversalCxt; /* single scan lifetime memory context */
 
 	/* Control flags showing whether to search nulls and/or non-nulls */
 	bool		searchNulls;	/* scan matches (all) null entries */
@@ -145,9 +168,22 @@ typedef struct SpGistScanOpaqueData
 	/* Index quals to be passed to opclass (null-related quals removed) */
 	int			numberOfKeys;	/* number of index qualifier conditions */
 	ScanKey		keyData;		/* array of index qualifier descriptors */
+	int			numberOfOrderBys;	/* number of ordering operators */
+	int			numberOfNonNullOrderBys;	/* number of ordering operators
+											 * with non-NULL arguments */
+	ScanKey		orderByData;	/* array of ordering op descriptors */
+	Oid		   *orderByTypes;	/* array of ordering op return types */
+	int		   *nonNullOrderByOffsets;	/* array of offset of non-NULL
+										 * ordering keys in the original array */
+	Oid			indexCollation; /* collation of index column */
 
-	/* Stack of yet-to-be-visited pages */
-	List	   *scanStack;		/* List of ScanStackEntrys */
+	/* Opclass defined functions: */
+	FmgrInfo	innerConsistentFn;
+	FmgrInfo	leafConsistentFn;
+
+	/* Pre-allocated workspace arrays: */
+	double	   *zeroDistances;
+	double	   *infDistances;
 
 	/* These fields are only used in amgetbitmap scans: */
 	TIDBitmap  *tbm;			/* bitmap being filled */
@@ -160,7 +196,12 @@ typedef struct SpGistScanOpaqueData
 	int			iPtr;			/* index for scanning through same */
 	ItemPointerData heapPtrs[MaxIndexTuplesPerPage];	/* TIDs from cur page */
 	bool		recheck[MaxIndexTuplesPerPage]; /* their recheck flags */
+	bool		recheckDistances[MaxIndexTuplesPerPage];	/* distance recheck
+															 * flags */
 	HeapTuple	reconTups[MaxIndexTuplesPerPage];	/* reconstructed tuples */
+
+	/* distances (for recheck) */
+	IndexOrderByDistance *distances[MaxIndexTuplesPerPage];
 
 	/*
 	 * Note: using MaxIndexTuplesPerPage above is a bit hokey since
@@ -179,7 +220,8 @@ typedef struct SpGistCache
 {
 	spgConfigOut config;		/* filled in by opclass config method */
 
-	SpGistTypeDesc attType;		/* type of input data and leaf values */
+	SpGistTypeDesc attType;		/* type of values to be indexed/restored */
+	SpGistTypeDesc attLeafType; /* type of leaf-tuple values */
 	SpGistTypeDesc attPrefixType;	/* type of inner-tuple prefix values */
 	SpGistTypeDesc attLabelType;	/* type of node label values */
 
@@ -301,7 +343,7 @@ typedef SpGistLeafTupleData *SpGistLeafTuple;
 
 #define SGLTHDRSZ			MAXALIGN(sizeof(SpGistLeafTupleData))
 #define SGLTDATAPTR(x)		(((char *) (x)) + SGLTHDRSZ)
-#define SGLTDATUM(x, s)		((s)->attType.attbyval ? \
+#define SGLTDATUM(x, s)		((s)->attLeafType.attbyval ? \
 							 *(Datum *) SGLTDATAPTR(x) : \
 							 PointerGetDatum(SGLTDATAPTR(x)))
 
@@ -386,37 +428,45 @@ extern void initSpGistState(SpGistState *state, Relation index);
 extern Buffer SpGistNewBuffer(Relation index);
 extern void SpGistUpdateMetaPage(Relation index);
 extern Buffer SpGistGetBuffer(Relation index, int flags,
-				int needSpace, bool *isNew);
+							  int needSpace, bool *isNew);
 extern void SpGistSetLastUsedPage(Relation index, Buffer buffer);
 extern void SpGistInitPage(Page page, uint16 f);
 extern void SpGistInitBuffer(Buffer b, uint16 f);
 extern void SpGistInitMetapage(Page page);
 extern unsigned int SpGistGetTypeSize(SpGistTypeDesc *att, Datum datum);
 extern SpGistLeafTuple spgFormLeafTuple(SpGistState *state,
-				 ItemPointer heapPtr,
-				 Datum datum, bool isnull);
+										ItemPointer heapPtr,
+										Datum datum, bool isnull);
 extern SpGistNodeTuple spgFormNodeTuple(SpGistState *state,
-				 Datum label, bool isnull);
+										Datum label, bool isnull);
 extern SpGistInnerTuple spgFormInnerTuple(SpGistState *state,
-				  bool hasPrefix, Datum prefix,
-				  int nNodes, SpGistNodeTuple *nodes);
+										  bool hasPrefix, Datum prefix,
+										  int nNodes, SpGistNodeTuple *nodes);
 extern SpGistDeadTuple spgFormDeadTuple(SpGistState *state, int tupstate,
-				 BlockNumber blkno, OffsetNumber offnum);
+										BlockNumber blkno, OffsetNumber offnum);
 extern Datum *spgExtractNodeLabels(SpGistState *state,
-					 SpGistInnerTuple innerTuple);
+								   SpGistInnerTuple innerTuple);
 extern OffsetNumber SpGistPageAddNewItem(SpGistState *state, Page page,
-					 Item item, Size size,
-					 OffsetNumber *startOffset,
-					 bool errorOK);
+										 Item item, Size size,
+										 OffsetNumber *startOffset,
+										 bool errorOK);
+extern bool spgproperty(Oid index_oid, int attno,
+						IndexAMProperty prop, const char *propname,
+						bool *res, bool *isnull);
 
 /* spgdoinsert.c */
 extern void spgUpdateNodeLink(SpGistInnerTuple tup, int nodeN,
-				  BlockNumber blkno, OffsetNumber offset);
+							  BlockNumber blkno, OffsetNumber offset);
 extern void spgPageIndexMultiDelete(SpGistState *state, Page page,
-						OffsetNumber *itemnos, int nitems,
-						int firststate, int reststate,
-						BlockNumber blkno, OffsetNumber offnum);
+									OffsetNumber *itemnos, int nitems,
+									int firststate, int reststate,
+									BlockNumber blkno, OffsetNumber offnum);
 extern bool spgdoinsert(Relation index, SpGistState *state,
-			ItemPointer heapPtr, Datum datum, bool isnull);
+						ItemPointer heapPtr, Datum datum, bool isnull);
+
+/* spgproc.c */
+extern double *spg_key_orderbys_distances(Datum key, bool isLeaf,
+										  ScanKey orderbys, int norderbys);
+extern BOX *box_copy(BOX *orig);
 
 #endif							/* SPGIST_PRIVATE_H */

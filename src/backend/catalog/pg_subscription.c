@@ -3,7 +3,7 @@
  * pg_subscription.c
  *		replication subscriptions
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -19,6 +19,7 @@
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/tableam.h"
 #include "access/xact.h"
 
 #include "catalog/indexing.h"
@@ -123,7 +124,7 @@ CountDBSubscriptions(Oid dbid)
 	SysScanDesc scan;
 	HeapTuple	tup;
 
-	rel = heap_open(SubscriptionRelationId, RowExclusiveLock);
+	rel = table_open(SubscriptionRelationId, RowExclusiveLock);
 
 	ScanKeyInit(&scankey,
 				Anum_pg_subscription_subdbid,
@@ -138,7 +139,7 @@ CountDBSubscriptions(Oid dbid)
 
 	systable_endscan(scan);
 
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 
 	return nsubs;
 }
@@ -168,8 +169,8 @@ get_subscription_oid(const char *subname, bool missing_ok)
 {
 	Oid			oid;
 
-	oid = GetSysCacheOid2(SUBSCRIPTIONNAME, MyDatabaseId,
-						  CStringGetDatum(subname));
+	oid = GetSysCacheOid2(SUBSCRIPTIONNAME, Anum_pg_subscription_oid,
+						  MyDatabaseId, CStringGetDatum(subname));
 	if (!OidIsValid(oid) && !missing_ok)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
@@ -179,9 +180,12 @@ get_subscription_oid(const char *subname, bool missing_ok)
 
 /*
  * get_subscription_name - given a subscription OID, look up the name
+ *
+ * If missing_ok is false, throw an error if name not found.  If true, just
+ * return NULL.
  */
 char *
-get_subscription_name(Oid subid)
+get_subscription_name(Oid subid, bool missing_ok)
 {
 	HeapTuple	tup;
 	char	   *subname;
@@ -190,7 +194,11 @@ get_subscription_name(Oid subid)
 	tup = SearchSysCache1(SUBSCRIPTIONOID, ObjectIdGetDatum(subid));
 
 	if (!HeapTupleIsValid(tup))
-		elog(ERROR, "cache lookup failed for subscription %u", subid);
+	{
+		if (!missing_ok)
+			elog(ERROR, "cache lookup failed for subscription %u", subid);
+		return NULL;
+	}
 
 	subform = (Form_pg_subscription) GETSTRUCT(tup);
 	subname = pstrdup(NameStr(subform->subname));
@@ -227,91 +235,98 @@ textarray_to_stringlist(ArrayType *textarray)
 }
 
 /*
- * Set the state of a subscription table.
- *
- * If update_only is true and the record for given table doesn't exist, do
- * nothing.  This can be used to avoid inserting a new record that was deleted
- * by someone else.  Generally, subscription DDL commands should use false,
- * workers should use true.
- *
- * The insert-or-update logic in this function is not concurrency safe so it
- * might raise an error in rare circumstances.  But if we took a stronger lock
- * such as ShareRowExclusiveLock, we would risk more deadlocks.
+ * Add new state record for a subscription table.
  */
-Oid
-SetSubscriptionRelState(Oid subid, Oid relid, char state,
-						XLogRecPtr sublsn, bool update_only)
+void
+AddSubscriptionRelState(Oid subid, Oid relid, char state,
+						XLogRecPtr sublsn)
 {
 	Relation	rel;
 	HeapTuple	tup;
-	Oid			subrelid = InvalidOid;
 	bool		nulls[Natts_pg_subscription_rel];
 	Datum		values[Natts_pg_subscription_rel];
 
 	LockSharedObject(SubscriptionRelationId, subid, 0, AccessShareLock);
 
-	rel = heap_open(SubscriptionRelRelationId, RowExclusiveLock);
+	rel = table_open(SubscriptionRelRelationId, RowExclusiveLock);
 
 	/* Try finding existing mapping. */
 	tup = SearchSysCacheCopy2(SUBSCRIPTIONRELMAP,
 							  ObjectIdGetDatum(relid),
 							  ObjectIdGetDatum(subid));
+	if (HeapTupleIsValid(tup))
+		elog(ERROR, "subscription table %u in subscription %u already exists",
+			 relid, subid);
 
-	/*
-	 * If the record for given table does not exist yet create new record,
-	 * otherwise update the existing one.
-	 */
-	if (!HeapTupleIsValid(tup) && !update_only)
-	{
-		/* Form the tuple. */
-		memset(values, 0, sizeof(values));
-		memset(nulls, false, sizeof(nulls));
-		values[Anum_pg_subscription_rel_srsubid - 1] = ObjectIdGetDatum(subid);
-		values[Anum_pg_subscription_rel_srrelid - 1] = ObjectIdGetDatum(relid);
-		values[Anum_pg_subscription_rel_srsubstate - 1] = CharGetDatum(state);
-		if (sublsn != InvalidXLogRecPtr)
-			values[Anum_pg_subscription_rel_srsublsn - 1] = LSNGetDatum(sublsn);
-		else
-			nulls[Anum_pg_subscription_rel_srsublsn - 1] = true;
+	/* Form the tuple. */
+	memset(values, 0, sizeof(values));
+	memset(nulls, false, sizeof(nulls));
+	values[Anum_pg_subscription_rel_srsubid - 1] = ObjectIdGetDatum(subid);
+	values[Anum_pg_subscription_rel_srrelid - 1] = ObjectIdGetDatum(relid);
+	values[Anum_pg_subscription_rel_srsubstate - 1] = CharGetDatum(state);
+	if (sublsn != InvalidXLogRecPtr)
+		values[Anum_pg_subscription_rel_srsublsn - 1] = LSNGetDatum(sublsn);
+	else
+		nulls[Anum_pg_subscription_rel_srsublsn - 1] = true;
 
-		tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
+	tup = heap_form_tuple(RelationGetDescr(rel), values, nulls);
 
-		/* Insert tuple into catalog. */
-		subrelid = CatalogTupleInsert(rel, tup);
+	/* Insert tuple into catalog. */
+	CatalogTupleInsert(rel, tup);
 
-		heap_freetuple(tup);
-	}
-	else if (HeapTupleIsValid(tup))
-	{
-		bool		replaces[Natts_pg_subscription_rel];
-
-		/* Update the tuple. */
-		memset(values, 0, sizeof(values));
-		memset(nulls, false, sizeof(nulls));
-		memset(replaces, false, sizeof(replaces));
-
-		replaces[Anum_pg_subscription_rel_srsubstate - 1] = true;
-		values[Anum_pg_subscription_rel_srsubstate - 1] = CharGetDatum(state);
-
-		replaces[Anum_pg_subscription_rel_srsublsn - 1] = true;
-		if (sublsn != InvalidXLogRecPtr)
-			values[Anum_pg_subscription_rel_srsublsn - 1] = LSNGetDatum(sublsn);
-		else
-			nulls[Anum_pg_subscription_rel_srsublsn - 1] = true;
-
-		tup = heap_modify_tuple(tup, RelationGetDescr(rel), values, nulls,
-								replaces);
-
-		/* Update the catalog. */
-		CatalogTupleUpdate(rel, &tup->t_self, tup);
-
-		subrelid = HeapTupleGetOid(tup);
-	}
+	heap_freetuple(tup);
 
 	/* Cleanup. */
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
+}
 
-	return subrelid;
+/*
+ * Update the state of a subscription table.
+ */
+void
+UpdateSubscriptionRelState(Oid subid, Oid relid, char state,
+						   XLogRecPtr sublsn)
+{
+	Relation	rel;
+	HeapTuple	tup;
+	bool		nulls[Natts_pg_subscription_rel];
+	Datum		values[Natts_pg_subscription_rel];
+	bool		replaces[Natts_pg_subscription_rel];
+
+	LockSharedObject(SubscriptionRelationId, subid, 0, AccessShareLock);
+
+	rel = table_open(SubscriptionRelRelationId, RowExclusiveLock);
+
+	/* Try finding existing mapping. */
+	tup = SearchSysCacheCopy2(SUBSCRIPTIONRELMAP,
+							  ObjectIdGetDatum(relid),
+							  ObjectIdGetDatum(subid));
+	if (!HeapTupleIsValid(tup))
+		elog(ERROR, "subscription table %u in subscription %u does not exist",
+			 relid, subid);
+
+	/* Update the tuple. */
+	memset(values, 0, sizeof(values));
+	memset(nulls, false, sizeof(nulls));
+	memset(replaces, false, sizeof(replaces));
+
+	replaces[Anum_pg_subscription_rel_srsubstate - 1] = true;
+	values[Anum_pg_subscription_rel_srsubstate - 1] = CharGetDatum(state);
+
+	replaces[Anum_pg_subscription_rel_srsublsn - 1] = true;
+	if (sublsn != InvalidXLogRecPtr)
+		values[Anum_pg_subscription_rel_srsublsn - 1] = LSNGetDatum(sublsn);
+	else
+		nulls[Anum_pg_subscription_rel_srsublsn - 1] = true;
+
+	tup = heap_modify_tuple(tup, RelationGetDescr(rel), values, nulls,
+							replaces);
+
+	/* Update the catalog. */
+	CatalogTupleUpdate(rel, &tup->t_self, tup);
+
+	/* Cleanup. */
+	table_close(rel, NoLock);
 }
 
 /*
@@ -329,7 +344,7 @@ GetSubscriptionRelState(Oid subid, Oid relid, XLogRecPtr *sublsn,
 	bool		isnull;
 	Datum		d;
 
-	rel = heap_open(SubscriptionRelRelationId, AccessShareLock);
+	rel = table_open(SubscriptionRelRelationId, AccessShareLock);
 
 	/* Try finding the mapping. */
 	tup = SearchSysCache2(SUBSCRIPTIONRELMAP,
@@ -340,7 +355,7 @@ GetSubscriptionRelState(Oid subid, Oid relid, XLogRecPtr *sublsn,
 	{
 		if (missing_ok)
 		{
-			heap_close(rel, AccessShareLock);
+			table_close(rel, AccessShareLock);
 			*sublsn = InvalidXLogRecPtr;
 			return SUBREL_STATE_UNKNOWN;
 		}
@@ -363,7 +378,7 @@ GetSubscriptionRelState(Oid subid, Oid relid, XLogRecPtr *sublsn,
 
 	/* Cleanup */
 	ReleaseSysCache(tup);
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 
 	return substate;
 }
@@ -376,12 +391,12 @@ void
 RemoveSubscriptionRel(Oid subid, Oid relid)
 {
 	Relation	rel;
-	HeapScanDesc scan;
+	TableScanDesc scan;
 	ScanKeyData skey[2];
 	HeapTuple	tup;
 	int			nkeys = 0;
 
-	rel = heap_open(SubscriptionRelRelationId, RowExclusiveLock);
+	rel = table_open(SubscriptionRelRelationId, RowExclusiveLock);
 
 	if (OidIsValid(subid))
 	{
@@ -402,14 +417,14 @@ RemoveSubscriptionRel(Oid subid, Oid relid)
 	}
 
 	/* Do the search and delete what we found. */
-	scan = heap_beginscan_catalog(rel, nkeys, skey);
+	scan = table_beginscan_catalog(rel, nkeys, skey);
 	while (HeapTupleIsValid(tup = heap_getnext(scan, ForwardScanDirection)))
 	{
 		CatalogTupleDelete(rel, &tup->t_self);
 	}
-	heap_endscan(scan);
+	table_endscan(scan);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 
@@ -428,7 +443,7 @@ GetSubscriptionRelations(Oid subid)
 	ScanKeyData skey[2];
 	SysScanDesc scan;
 
-	rel = heap_open(SubscriptionRelRelationId, AccessShareLock);
+	rel = table_open(SubscriptionRelRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey[nkeys++],
 				Anum_pg_subscription_rel_srsubid,
@@ -442,20 +457,27 @@ GetSubscriptionRelations(Oid subid)
 	{
 		Form_pg_subscription_rel subrel;
 		SubscriptionRelState *relstate;
+		Datum		d;
+		bool		isnull;
 
 		subrel = (Form_pg_subscription_rel) GETSTRUCT(tup);
 
 		relstate = (SubscriptionRelState *) palloc(sizeof(SubscriptionRelState));
 		relstate->relid = subrel->srrelid;
 		relstate->state = subrel->srsubstate;
-		relstate->lsn = subrel->srsublsn;
+		d = SysCacheGetAttr(SUBSCRIPTIONRELMAP, tup,
+							Anum_pg_subscription_rel_srsublsn, &isnull);
+		if (isnull)
+			relstate->lsn = InvalidXLogRecPtr;
+		else
+			relstate->lsn = DatumGetLSN(d);
 
 		res = lappend(res, relstate);
 	}
 
 	/* Cleanup */
 	systable_endscan(scan);
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 
 	return res;
 }
@@ -475,7 +497,7 @@ GetSubscriptionNotReadyRelations(Oid subid)
 	ScanKeyData skey[2];
 	SysScanDesc scan;
 
-	rel = heap_open(SubscriptionRelRelationId, AccessShareLock);
+	rel = table_open(SubscriptionRelRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey[nkeys++],
 				Anum_pg_subscription_rel_srsubid,
@@ -494,20 +516,27 @@ GetSubscriptionNotReadyRelations(Oid subid)
 	{
 		Form_pg_subscription_rel subrel;
 		SubscriptionRelState *relstate;
+		Datum		d;
+		bool		isnull;
 
 		subrel = (Form_pg_subscription_rel) GETSTRUCT(tup);
 
 		relstate = (SubscriptionRelState *) palloc(sizeof(SubscriptionRelState));
 		relstate->relid = subrel->srrelid;
 		relstate->state = subrel->srsubstate;
-		relstate->lsn = subrel->srsublsn;
+		d = SysCacheGetAttr(SUBSCRIPTIONRELMAP, tup,
+							Anum_pg_subscription_rel_srsublsn, &isnull);
+		if (isnull)
+			relstate->lsn = InvalidXLogRecPtr;
+		else
+			relstate->lsn = DatumGetLSN(d);
 
 		res = lappend(res, relstate);
 	}
 
 	/* Cleanup */
 	systable_endscan(scan);
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 
 	return res;
 }

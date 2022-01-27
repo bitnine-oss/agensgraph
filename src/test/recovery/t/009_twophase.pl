@@ -4,7 +4,7 @@ use warnings;
 
 use PostgresNode;
 use TestLib;
-use Test::More tests => 20;
+use Test::More tests => 24;
 
 my $psql_out = '';
 my $psql_rc  = '';
@@ -20,6 +20,7 @@ sub configure_and_reload
 	));
 	$node->psql('postgres', "SELECT pg_reload_conf()", stdout => \$psql_out);
 	is($psql_out, 't', "reload node $name with $parameter");
+	return;
 }
 
 # Set up two nodes, which will alternately be master and replication standby.
@@ -228,10 +229,6 @@ is($psql_rc, '0', "Restore of prepared transaction on promoted standby");
 
 # restart old master as new standby
 $cur_standby->enable_streaming($cur_master);
-$cur_standby->append_conf(
-	'recovery.conf', qq(
-recovery_target_timeline='latest'
-));
 $cur_standby->start;
 
 ###############################################################################
@@ -266,10 +263,6 @@ is($psql_out, '1',
 
 # restart old master as new standby
 $cur_standby->enable_streaming($cur_master);
-$cur_standby->append_conf(
-	'recovery.conf', qq(
-recovery_target_timeline='latest'
-));
 $cur_standby->start;
 
 $cur_master->psql('postgres', "COMMIT PREPARED 'xact_009_11'");
@@ -306,10 +299,6 @@ is($psql_out, '1',
 
 # restart old master as new standby
 $cur_standby->enable_streaming($cur_master);
-$cur_standby->append_conf(
-	'recovery.conf', qq(
-recovery_target_timeline='latest'
-));
 $cur_standby->start;
 
 $cur_master->psql('postgres', "COMMIT PREPARED 'xact_009_12'");
@@ -333,9 +322,9 @@ $cur_master->psql(
 
 # Ensure that last transaction is replayed on standby.
 my $cur_master_lsn =
-	$cur_master->safe_psql('postgres', "SELECT pg_current_wal_lsn()");
+  $cur_master->safe_psql('postgres', "SELECT pg_current_wal_lsn()");
 my $caughtup_query =
-	"SELECT '$cur_master_lsn'::pg_lsn <= pg_last_wal_replay_lsn()";
+  "SELECT '$cur_master_lsn'::pg_lsn <= pg_last_wal_replay_lsn()";
 $cur_standby->poll_query_until('postgres', $caughtup_query)
   or die "Timed out while waiting for standby to catch up";
 
@@ -344,6 +333,60 @@ $cur_standby->psql(
 	"SELECT count(*) FROM t_009_tbl2",
 	stdout => \$psql_out);
 is($psql_out, '1', "Replay prepared transaction with DDL");
+
+###############################################################################
+# Check recovery of prepared transaction with DDL inside after a hard restart
+# of the master.
+###############################################################################
+
+$cur_master->psql(
+	'postgres', "
+	BEGIN;
+	CREATE TABLE t_009_tbl3 (id int, msg text);
+	SAVEPOINT s1;
+	INSERT INTO t_009_tbl3 VALUES (28, 'issued to ${cur_master_name}');
+	PREPARE TRANSACTION 'xact_009_14';
+	BEGIN;
+	CREATE TABLE t_009_tbl4 (id int, msg text);
+	SAVEPOINT s1;
+	INSERT INTO t_009_tbl4 VALUES (29, 'issued to ${cur_master_name}');
+	PREPARE TRANSACTION 'xact_009_15';");
+
+$cur_master->teardown_node;
+$cur_master->start;
+
+$psql_rc = $cur_master->psql('postgres', "COMMIT PREPARED 'xact_009_14'");
+is($psql_rc, '0', 'Commit prepared transaction after teardown');
+
+$psql_rc = $cur_master->psql('postgres', "ROLLBACK PREPARED 'xact_009_15'");
+is($psql_rc, '0', 'Rollback prepared transaction after teardown');
+
+###############################################################################
+# Check recovery of prepared transaction with DDL inside after a soft restart
+# of the master.
+###############################################################################
+
+$cur_master->psql(
+	'postgres', "
+	BEGIN;
+	CREATE TABLE t_009_tbl5 (id int, msg text);
+	SAVEPOINT s1;
+	INSERT INTO t_009_tbl5 VALUES (30, 'issued to ${cur_master_name}');
+	PREPARE TRANSACTION 'xact_009_16';
+	BEGIN;
+	CREATE TABLE t_009_tbl6 (id int, msg text);
+	SAVEPOINT s1;
+	INSERT INTO t_009_tbl6 VALUES (31, 'issued to ${cur_master_name}');
+	PREPARE TRANSACTION 'xact_009_17';");
+
+$cur_master->stop;
+$cur_master->start;
+
+$psql_rc = $cur_master->psql('postgres', "COMMIT PREPARED 'xact_009_16'");
+is($psql_rc, '0', 'Commit prepared transaction after restart');
+
+$psql_rc = $cur_master->psql('postgres', "ROLLBACK PREPARED 'xact_009_17'");
+is($psql_rc, '0', 'Rollback prepared transaction after restart');
 
 ###############################################################################
 # Verify expected data appears on both servers.

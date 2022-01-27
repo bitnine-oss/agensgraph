@@ -3,7 +3,7 @@
  * parse_target.c
  *	  handle target lists
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -36,37 +36,37 @@
 
 
 static void markTargetListOrigin(ParseState *pstate, TargetEntry *tle,
-					 Var *var, int levelsup);
+								 Var *var, int levelsup);
 static Node *transformAssignmentIndirection(ParseState *pstate,
-							   Node *basenode,
-							   const char *targetName,
-							   bool targetIsArray,
-							   Oid targetTypeId,
-							   int32 targetTypMod,
-							   Oid targetCollation,
-							   ListCell *indirection,
-							   Node *rhs,
-							   int location);
+											Node *basenode,
+											const char *targetName,
+											bool targetIsSubscripting,
+											Oid targetTypeId,
+											int32 targetTypMod,
+											Oid targetCollation,
+											ListCell *indirection,
+											Node *rhs,
+											int location);
 static Node *transformAssignmentSubscripts(ParseState *pstate,
-							  Node *basenode,
-							  const char *targetName,
-							  Oid targetTypeId,
-							  int32 targetTypMod,
-							  Oid targetCollation,
-							  List *subscripts,
-							  bool isSlice,
-							  ListCell *next_indirection,
-							  Node *rhs,
-							  int location);
+										   Node *basenode,
+										   const char *targetName,
+										   Oid targetTypeId,
+										   int32 targetTypMod,
+										   Oid targetCollation,
+										   List *subscripts,
+										   bool isSlice,
+										   ListCell *next_indirection,
+										   Node *rhs,
+										   int location);
 static List *ExpandColumnRefStar(ParseState *pstate, ColumnRef *cref,
-					bool make_target_entry);
+								 bool make_target_entry);
 static List *ExpandAllTables(ParseState *pstate, int location);
 static List *ExpandIndirectionStar(ParseState *pstate, A_Indirection *ind,
-					  bool make_target_entry, ParseExprKind exprKind);
+								   bool make_target_entry, ParseExprKind exprKind);
 static List *ExpandSingleTable(ParseState *pstate, RangeTblEntry *rte,
-				  int location, bool make_target_entry);
+							   int location, bool make_target_entry);
 static List *ExpandRowReference(ParseState *pstate, Node *expr,
-				   bool make_target_entry);
+								bool make_target_entry);
 static int	FigureColnameInternal(Node *node, char **name);
 
 
@@ -400,6 +400,7 @@ markTargetListOrigin(ParseState *pstate, TargetEntry *tle,
 		case RTE_VALUES:
 		case RTE_TABLEFUNC:
 		case RTE_NAMEDTUPLESTORE:
+		case RTE_RESULT:
 			/* not a simple relation, leave it unmarked */
 			break;
 		case RTE_CTE:
@@ -457,7 +458,7 @@ Expr *
 transformAssignedExpr(ParseState *pstate,
 					  Expr *expr,
 					  ParseExprKind exprKind,
-					  char *colname,
+					  const char *colname,
 					  int attrno,
 					  List *indirection,
 					  int location)
@@ -486,8 +487,8 @@ transformAssignedExpr(ParseState *pstate,
 						colname),
 				 parser_errposition(pstate, location)));
 	attrtype = attnumTypeId(rd, attrno);
-	attrtypmod = rd->rd_att->attrs[attrno - 1]->atttypmod;
-	attrcollation = rd->rd_att->attrs[attrno - 1]->attcollation;
+	attrtypmod = TupleDescAttr(rd->rd_att, attrno - 1)->atttypmod;
+	attrcollation = TupleDescAttr(rd->rd_att, attrno - 1)->attcollation;
 
 	/*
 	 * If the expression is a DEFAULT placeholder, insert the attribute's
@@ -656,7 +657,7 @@ updateTargetListEntry(ParseState *pstate,
  * needed.
  *
  * targetName is the name of the field or subfield we're assigning to, and
- * targetIsArray is true if we're subscripting it.  These are just for
+ * targetIsSubscripting is true if we're subscripting it.  These are just for
  * error reporting.
  *
  * targetTypeId, targetTypMod, targetCollation indicate the datatype and
@@ -678,7 +679,7 @@ static Node *
 transformAssignmentIndirection(ParseState *pstate,
 							   Node *basenode,
 							   const char *targetName,
-							   bool targetIsArray,
+							   bool targetIsSubscripting,
 							   Oid targetTypeId,
 							   int32 targetTypMod,
 							   Oid targetCollation,
@@ -693,7 +694,13 @@ transformAssignmentIndirection(ParseState *pstate,
 
 	if (indirection && !basenode)
 	{
-		/* Set up a substitution.  We reuse CaseTestExpr for this. */
+		/*
+		 * Set up a substitution.  We abuse CaseTestExpr for this.  It's safe
+		 * to do so because the only nodes that will be above the CaseTestExpr
+		 * in the finished expression will be FieldStore and SubscriptingRef
+		 * nodes. (There could be other stuff in the tree, but it will be
+		 * within other child fields of those node types.)
+		 */
 		CaseTestExpr *ctest = makeNode(CaseTestExpr);
 
 		ctest->typeId = targetTypeId;
@@ -727,6 +734,8 @@ transformAssignmentIndirection(ParseState *pstate,
 		else
 		{
 			FieldStore *fstore;
+			Oid			baseTypeId;
+			int32		baseTypeMod;
 			Oid			typrelid;
 			AttrNumber	attnum;
 			Oid			fieldTypeId;
@@ -754,7 +763,14 @@ transformAssignmentIndirection(ParseState *pstate,
 
 			/* No subscripts, so can process field selection here */
 
-			typrelid = typeidTypeRelid(targetTypeId);
+			/*
+			 * Look up the composite type, accounting for possibility that
+			 * what we are given is a domain over composite.
+			 */
+			baseTypeMod = targetTypMod;
+			baseTypeId = getBaseTypeAndTypmod(targetTypeId, &baseTypeMod);
+
+			typrelid = typeidTypeRelid(baseTypeId);
 			if (!typrelid)
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -798,7 +814,17 @@ transformAssignmentIndirection(ParseState *pstate,
 			fstore->arg = (Expr *) basenode;
 			fstore->newvals = list_make1(rhs);
 			fstore->fieldnums = list_make1_int(attnum);
-			fstore->resulttype = targetTypeId;
+			fstore->resulttype = baseTypeId;
+
+			/* If target is a domain, apply constraints */
+			if (baseTypeId != targetTypeId)
+				return coerce_to_domain((Node *) fstore,
+										baseTypeId, baseTypeMod,
+										targetTypeId,
+										COERCION_IMPLICIT,
+										COERCE_IMPLICIT_CAST,
+										location,
+										false);
 
 			return (Node *) fstore;
 		}
@@ -831,7 +857,7 @@ transformAssignmentIndirection(ParseState *pstate,
 								   -1);
 	if (result == NULL)
 	{
-		if (targetIsArray)
+		if (targetIsSubscripting)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),
 					 errmsg("array assignment to \"%s\" requires type %s"
@@ -857,7 +883,7 @@ transformAssignmentIndirection(ParseState *pstate,
 }
 
 /*
- * helper for transformAssignmentIndirection: process array assignment
+ * helper for transformAssignmentIndirection: process container assignment
  */
 static Node *
 transformAssignmentSubscripts(ParseState *pstate,
@@ -873,8 +899,8 @@ transformAssignmentSubscripts(ParseState *pstate,
 							  int location)
 {
 	Node	   *result;
-	Oid			arrayType;
-	int32		arrayTypMod;
+	Oid			containerType;
+	int32		containerTypMod;
 	Oid			elementTypeId;
 	Oid			typeNeeded;
 	Oid			collationNeeded;
@@ -882,46 +908,46 @@ transformAssignmentSubscripts(ParseState *pstate,
 	Assert(subscripts != NIL);
 
 	/* Identify the actual array type and element type involved */
-	arrayType = targetTypeId;
-	arrayTypMod = targetTypMod;
-	elementTypeId = transformArrayType(&arrayType, &arrayTypMod);
+	containerType = targetTypeId;
+	containerTypMod = targetTypMod;
+	elementTypeId = transformContainerType(&containerType, &containerTypMod);
 
 	/* Identify type that RHS must provide */
-	typeNeeded = isSlice ? arrayType : elementTypeId;
+	typeNeeded = isSlice ? containerType : elementTypeId;
 
 	/*
-	 * Array normally has same collation as elements, but there's an
-	 * exception: we might be subscripting a domain over an array type. In
+	 * container normally has same collation as elements, but there's an
+	 * exception: we might be subscripting a domain over a container type. In
 	 * that case use collation of the base type.
 	 */
-	if (arrayType == targetTypeId)
+	if (containerType == targetTypeId)
 		collationNeeded = targetCollation;
 	else
-		collationNeeded = get_typcollation(arrayType);
+		collationNeeded = get_typcollation(containerType);
 
-	/* recurse to create appropriate RHS for array assign */
+	/* recurse to create appropriate RHS for container assign */
 	rhs = transformAssignmentIndirection(pstate,
 										 NULL,
 										 targetName,
 										 true,
 										 typeNeeded,
-										 arrayTypMod,
+										 containerTypMod,
 										 collationNeeded,
 										 next_indirection,
 										 rhs,
 										 location);
 
 	/* process subscripts */
-	result = (Node *) transformArraySubscripts(pstate,
-											   basenode,
-											   arrayType,
-											   elementTypeId,
-											   arrayTypMod,
-											   subscripts,
-											   rhs);
+	result = (Node *) transformContainerSubscripts(pstate,
+												   basenode,
+												   containerType,
+												   elementTypeId,
+												   containerTypMod,
+												   subscripts,
+												   rhs);
 
-	/* If target was a domain over array, need to coerce up to the domain */
-	if (arrayType != targetTypeId)
+	/* If target was a domain over container, need to coerce up to the domain */
+	if (containerType != targetTypeId)
 	{
 		Oid			resulttype = exprType(result);
 
@@ -961,19 +987,22 @@ checkInsertTargets(ParseState *pstate, List *cols, List **attrnos)
 		/*
 		 * Generate default column list for INSERT.
 		 */
-		Form_pg_attribute *attr = pstate->p_target_relation->rd_att->attrs;
-		int			numcol = pstate->p_target_relation->rd_rel->relnatts;
+		int			numcol = RelationGetNumberOfAttributes(pstate->p_target_relation);
+
 		int			i;
 
 		for (i = 0; i < numcol; i++)
 		{
 			ResTarget  *col;
+			Form_pg_attribute attr;
 
-			if (attr[i]->attisdropped)
+			attr = TupleDescAttr(pstate->p_target_relation->rd_att, i);
+
+			if (attr->attisdropped)
 				continue;
 
 			col = makeNode(ResTarget);
-			col->name = pstrdup(NameStr(attr[i]->attname));
+			col->name = pstrdup(NameStr(attr->attname));
 			col->indirection = NIL;
 			col->val = NULL;
 			col->location = -1;
@@ -1108,7 +1137,7 @@ ExpandColumnRefStar(ParseState *pstate, ColumnRef *cref,
 		{
 			Node	   *node;
 
-			node = (*pstate->p_pre_columnref_hook) (pstate, cref);
+			node = pstate->p_pre_columnref_hook(pstate, cref);
 			if (node != NULL)
 				return ExpandRowReference(pstate, node, make_target_entry);
 		}
@@ -1181,8 +1210,8 @@ ExpandColumnRefStar(ParseState *pstate, ColumnRef *cref,
 		{
 			Node	   *node;
 
-			node = (*pstate->p_post_columnref_hook) (pstate, cref,
-													 (Node *) rte);
+			node = pstate->p_post_columnref_hook(pstate, cref,
+												 (Node *) rte);
 			if (node != NULL)
 			{
 				if (rte != NULL)
@@ -1405,29 +1434,25 @@ ExpandRowReference(ParseState *pstate, Node *expr,
 	 * (This can be pretty inefficient if the expression involves nontrivial
 	 * computation :-(.)
 	 *
-	 * Verify it's a composite type, and get the tupdesc.  We use
-	 * get_expr_result_type() because that can handle references to functions
-	 * returning anonymous record types.  If that fails, use
-	 * lookup_rowtype_tupdesc(), which will almost certainly fail as well, but
-	 * it will give an appropriate error message.
+	 * Verify it's a composite type, and get the tupdesc.
+	 * get_expr_result_tupdesc() handles this conveniently.
 	 *
 	 * If it's a Var of type RECORD, we have to work even harder: we have to
-	 * find what the Var refers to, and pass that to get_expr_result_type.
+	 * find what the Var refers to, and pass that to get_expr_result_tupdesc.
 	 * That task is handled by expandRecordVariable().
 	 */
 	if (IsA(expr, Var) &&
 		((Var *) expr)->vartype == RECORDOID)
 		tupleDesc = expandRecordVariable(pstate, (Var *) expr, 0);
-	else if (get_expr_result_type(expr, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
-		tupleDesc = lookup_rowtype_tupdesc_copy(exprType(expr),
-												exprTypmod(expr));
+	else
+		tupleDesc = get_expr_result_tupdesc(expr, false);
 	Assert(tupleDesc);
 
 	/* Generate a list of references to the individual fields */
 	numAttrs = tupleDesc->natts;
 	for (i = 0; i < numAttrs; i++)
 	{
-		Form_pg_attribute att = tupleDesc->attrs[i];
+		Form_pg_attribute att = TupleDescAttr(tupleDesc, i);
 		FieldSelect *fselect;
 
 		if (att->attisdropped)
@@ -1499,7 +1524,7 @@ expandRecordVariable(ParseState *pstate, Var *var, int levelsup)
 		expandRTE(rte, var->varno, 0, var->location, false,
 				  &names, &vars);
 
-		tupleDesc = CreateTemplateTupleDesc(list_length(vars), false);
+		tupleDesc = CreateTemplateTupleDesc(list_length(vars));
 		i = 1;
 		forboth(lname, names, lvar, vars)
 		{
@@ -1527,6 +1552,7 @@ expandRecordVariable(ParseState *pstate, Var *var, int levelsup)
 		case RTE_RELATION:
 		case RTE_VALUES:
 		case RTE_NAMEDTUPLESTORE:
+		case RTE_RESULT:
 
 			/*
 			 * This case should not occur: a column of a table, values list,
@@ -1628,15 +1654,9 @@ expandRecordVariable(ParseState *pstate, Var *var, int levelsup)
 
 	/*
 	 * We now have an expression we can't expand any more, so see if
-	 * get_expr_result_type() can do anything with it.  If not, pass to
-	 * lookup_rowtype_tupdesc() which will probably fail, but will give an
-	 * appropriate error message while failing.
+	 * get_expr_result_tupdesc() can do anything with it.
 	 */
-	if (get_expr_result_type(expr, NULL, &tupleDesc) != TYPEFUNC_COMPOSITE)
-		tupleDesc = lookup_rowtype_tupdesc_copy(exprType(expr),
-												exprTypmod(expr));
-
-	return tupleDesc;
+	return get_expr_result_tupdesc(expr, false);
 }
 
 

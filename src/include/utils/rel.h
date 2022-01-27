@@ -4,7 +4,7 @@
  *	  POSTGRES relation descriptor (a/k/a relcache entry) definitions.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/rel.h
@@ -47,36 +47,6 @@ typedef struct LockInfoData
 typedef LockInfoData *LockInfo;
 
 /*
- * Information about the partition key of a relation
- */
-typedef struct PartitionKeyData
-{
-	char		strategy;		/* partitioning strategy */
-	int16		partnatts;		/* number of columns in the partition key */
-	AttrNumber *partattrs;		/* attribute numbers of columns in the
-								 * partition key */
-	List	   *partexprs;		/* list of expressions in the partitioning
-								 * key, or NIL */
-
-	Oid		   *partopfamily;	/* OIDs of operator families */
-	Oid		   *partopcintype;	/* OIDs of opclass declared input data types */
-	FmgrInfo   *partsupfunc;	/* lookup info for support funcs */
-
-	/* Partitioning collation per attribute */
-	Oid		   *partcollation;
-
-	/* Type information per attribute */
-	Oid		   *parttypid;
-	int32	   *parttypmod;
-	int16	   *parttyplen;
-	bool	   *parttypbyval;
-	char	   *parttypalign;
-	Oid		   *parttypcoll;
-}			PartitionKeyData;
-
-typedef struct PartitionKeyData *PartitionKey;
-
-/*
  * Here are the contents of a relation cache entry.
  */
 
@@ -90,11 +60,11 @@ typedef struct RelationData
 	bool		rd_islocaltemp; /* rel is a temp rel of this session */
 	bool		rd_isnailed;	/* rel is nailed in cache */
 	bool		rd_isvalid;		/* relcache entry is valid */
-	char		rd_indexvalid;	/* state of rd_indexlist: 0 = not valid, 1 =
-								 * valid, 2 = temporarily forced */
+	bool		rd_indexvalid;	/* is rd_indexlist valid? (also rd_pkindex and
+								 * rd_replidindex) */
 	bool		rd_statvalid;	/* is rd_statlist valid? */
 
-	/*
+	/*----------
 	 * rd_createSubid is the ID of the highest subtransaction the rel has
 	 * survived into; or zero if the rel was not created in the current top
 	 * transaction.  This can be now be relied on, whereas previously it could
@@ -104,8 +74,13 @@ typedef struct RelationData
 	 * have forgotten changing it). rd_newRelfilenodeSubid can be forgotten
 	 * when a relation has multiple new relfilenodes within a single
 	 * transaction, with one of them occurring in a subsequently aborted
-	 * subtransaction, e.g. BEGIN; TRUNCATE t; SAVEPOINT save; TRUNCATE t;
-	 * ROLLBACK TO save; -- rd_newRelfilenode is now forgotten
+	 * subtransaction, e.g.
+	 *		BEGIN;
+	 *		TRUNCATE t;
+	 *		SAVEPOINT save;
+	 *		TRUNCATE t;
+	 *		ROLLBACK TO save;
+	 *		-- rd_newRelfilenodeSubid is now forgotten
 	 */
 	SubTransactionId rd_createSubid;	/* rel was created in current xact */
 	SubTransactionId rd_newRelfilenodeSubid;	/* new relfilenode assigned in
@@ -125,15 +100,16 @@ typedef struct RelationData
 	List	   *rd_fkeylist;	/* list of ForeignKeyCacheInfo (see below) */
 	bool		rd_fkeyvalid;	/* true if list has been computed */
 
-	MemoryContext rd_partkeycxt;	/* private memory cxt for the below */
 	struct PartitionKeyData *rd_partkey;	/* partition key, or NULL */
-	MemoryContext rd_pdcxt;		/* private context for partdesc */
+	MemoryContext rd_partkeycxt;	/* private context for rd_partkey, if any */
 	struct PartitionDescData *rd_partdesc;	/* partitions, or NULL */
+	MemoryContext rd_pdcxt;		/* private context for rd_partdesc, if any */
 	List	   *rd_partcheck;	/* partition CHECK quals */
+	bool		rd_partcheckvalid;	/* true if list has been computed */
+	MemoryContext rd_partcheckcxt;	/* private cxt for rd_partcheck, if any */
 
 	/* data managed by RelationGetIndexList: */
 	List	   *rd_indexlist;	/* list of OIDs of indexes on relation */
-	Oid			rd_oidindex;	/* OID of unique index on OID, if any */
 	Oid			rd_pkindex;		/* OID of primary key, if any */
 	Oid			rd_replidindex; /* OID of replica identity index, if any */
 
@@ -155,6 +131,20 @@ typedef struct RelationData
 	 */
 	bytea	   *rd_options;		/* parsed pg_class.reloptions */
 
+	/*
+	 * Oid of the handler for this relation. For an index this is a function
+	 * returning IndexAmRoutine, for table like relations a function returning
+	 * TableAmRoutine.  This is stored separately from rd_indam, rd_tableam as
+	 * its lookup requires syscache access, but during relcache bootstrap we
+	 * need to be able to initialize rd_tableam without syscache lookups.
+	 */
+	Oid			rd_amhandler;	/* OID of index AM's handler function */
+
+	/*
+	 * Table access method.
+	 */
+	const struct TableAmRoutine *rd_tableam;
+
 	/* These are non-NULL only for an index relation: */
 	Form_pg_index rd_index;		/* pg_index tuple describing this index */
 	/* use "struct" here to avoid needing to include htup.h: */
@@ -167,18 +157,10 @@ typedef struct RelationData
 	 * those with lefttype and righttype equal to the opclass's opcintype. The
 	 * arrays are indexed by support function number, which is a sufficient
 	 * identifier given that restriction.
-	 *
-	 * Note: rd_amcache is available for index AMs to cache private data about
-	 * an index.  This must be just a cache since it may get reset at any time
-	 * (in particular, it will get reset by a relcache inval message for the
-	 * index).  If used, it must point to a single memory chunk palloc'd in
-	 * rd_indexcxt.  A relcache reset will include freeing that chunk and
-	 * setting rd_amcache = NULL.
 	 */
-	Oid			rd_amhandler;	/* OID of index AM's handler function */
 	MemoryContext rd_indexcxt;	/* private memory cxt for this stuff */
 	/* use "struct" here to avoid needing to include amapi.h: */
-	struct IndexAmRoutine *rd_amroutine;	/* index AM's API struct */
+	struct IndexAmRoutine *rd_indam;	/* index AM's API struct */
 	Oid		   *rd_opfamily;	/* OIDs of op families for each index col */
 	Oid		   *rd_opcintype;	/* OIDs of opclass declared input data types */
 	RegProcedure *rd_support;	/* OIDs of support procedures */
@@ -189,8 +171,18 @@ typedef struct RelationData
 	Oid		   *rd_exclops;		/* OIDs of exclusion operators, if any */
 	Oid		   *rd_exclprocs;	/* OIDs of exclusion ops' procs, if any */
 	uint16	   *rd_exclstrats;	/* exclusion ops' strategy numbers, if any */
-	void	   *rd_amcache;		/* available for use by index AM */
 	Oid		   *rd_indcollation;	/* OIDs of index collations */
+
+	/*
+	 * rd_amcache is available for index and table AMs to cache private data
+	 * about the relation.  This must be just a cache since it may get reset
+	 * at any time (in particular, it will get reset by a relcache inval
+	 * message for the relation).  If used, it must point to a single memory
+	 * chunk palloc'd in CacheMemoryContext, or in rd_indexcxt for an index
+	 * relation.  A relcache reset will include freeing that chunk and setting
+	 * rd_amcache = NULL.
+	 */
+	void	   *rd_amcache;		/* available for use by index/table AM */
 
 	/*
 	 * foreign-table support
@@ -230,12 +222,13 @@ typedef struct RelationData
  * The per-FK-column arrays can be fixed-size because we allow at most
  * INDEX_MAX_KEYS columns in a foreign key constraint.
  *
- * Currently, we only cache fields of interest to the planner, but the
- * set of fields could be expanded in future.
+ * Currently, we mostly cache fields of interest to the planner, but the set
+ * of fields has already grown the constraint OID for other uses.
  */
 typedef struct ForeignKeyCacheInfo
 {
 	NodeTag		type;
+	Oid			conoid;			/* oid of the constraint itself */
 	Oid			conrelid;		/* relation constrained by the foreign key */
 	Oid			confrelid;		/* relation referenced by the foreign key */
 	int			nkeys;			/* number of columns in the foreign key */
@@ -260,7 +253,6 @@ typedef struct AutoVacOpts
 	bool		enabled;
 	int			vacuum_threshold;
 	int			analyze_threshold;
-	int			vacuum_cost_delay;
 	int			vacuum_cost_limit;
 	int			freeze_min_age;
 	int			freeze_max_age;
@@ -269,6 +261,7 @@ typedef struct AutoVacOpts
 	int			multixact_freeze_max_age;
 	int			multixact_freeze_table_age;
 	int			log_min_duration;
+	float8		vacuum_cost_delay;
 	float8		vacuum_scale_factor;
 	float8		analyze_scale_factor;
 } AutoVacOpts;
@@ -277,13 +270,26 @@ typedef struct StdRdOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	int			fillfactor;		/* page fill factor in percent (0..100) */
+	/* fraction of newly inserted tuples prior to trigger index cleanup */
+	float8		vacuum_cleanup_index_scale_factor;
+	int			toast_tuple_target; /* target for tuple toasting */
 	AutoVacOpts autovacuum;		/* autovacuum-related options */
 	bool		user_catalog_table; /* use as an additional catalog relation */
 	int			parallel_workers;	/* max number of parallel workers */
+	bool		vacuum_index_cleanup;	/* enables index vacuuming and cleanup */
+	bool		vacuum_truncate;	/* enables vacuum to truncate a relation */
 } StdRdOptions;
 
 #define HEAP_MIN_FILLFACTOR			10
 #define HEAP_DEFAULT_FILLFACTOR		100
+
+/*
+ * RelationGetToastTupleTarget
+ *		Returns the relation's toast_tuple_target.  Note multiple eval of argument!
+ */
+#define RelationGetToastTupleTarget(relation, defaulttarg) \
+	((relation)->rd_options ? \
+	 ((StdRdOptions *) (relation)->rd_options)->toast_tuple_target : (defaulttarg))
 
 /*
  * RelationGetFillFactor
@@ -417,9 +423,23 @@ typedef struct ViewOptions
 
 /*
  * RelationGetNumberOfAttributes
- *		Returns the number of attributes in a relation.
+ *		Returns the total number of attributes in a relation.
  */
 #define RelationGetNumberOfAttributes(relation) ((relation)->rd_rel->relnatts)
+
+/*
+ * IndexRelationGetNumberOfAttributes
+ *		Returns the number of attributes in an index.
+ */
+#define IndexRelationGetNumberOfAttributes(relation) \
+		((relation)->rd_index->indnatts)
+
+/*
+ * IndexRelationGetNumberOfKeyAttributes
+ *		Returns the number of key attributes in an index.
+ */
+#define IndexRelationGetNumberOfKeyAttributes(relation) \
+		((relation)->rd_index->indnkeyatts)
 
 /*
  * RelationGetDescr
@@ -445,13 +465,12 @@ typedef struct ViewOptions
 
 /*
  * RelationIsMapped
- *		True if the relation uses the relfilenode map.
- *
- * NB: this is only meaningful for relkinds that have storage, else it
- * will misleadingly say "true".
+ *		True if the relation uses the relfilenode map.  Note multiple eval
+ *		of argument!
  */
 #define RelationIsMapped(relation) \
-	((relation)->rd_rel->relfilenode == InvalidOid)
+	(RELKIND_HAS_STORAGE((relation)->rd_rel->relkind) && \
+	 ((relation)->rd_rel->relfilenode == InvalidOid))
 
 /*
  * RelationOpenSmgr
@@ -584,48 +603,6 @@ typedef struct ViewOptions
 #define RelationGetPartitionKey(relation) ((relation)->rd_partkey)
 
 /*
- * PartitionKey inquiry functions
- */
-static inline int
-get_partition_strategy(PartitionKey key)
-{
-	return key->strategy;
-}
-
-static inline int
-get_partition_natts(PartitionKey key)
-{
-	return key->partnatts;
-}
-
-static inline List *
-get_partition_exprs(PartitionKey key)
-{
-	return key->partexprs;
-}
-
-/*
- * PartitionKey inquiry functions - one column
- */
-static inline int16
-get_partition_col_attnum(PartitionKey key, int col)
-{
-	return key->partattrs[col];
-}
-
-static inline Oid
-get_partition_col_typid(PartitionKey key, int col)
-{
-	return key->parttypid[col];
-}
-
-static inline int32
-get_partition_col_typmod(PartitionKey key, int col)
-{
-	return key->parttypmod[col];
-}
-
-/*
  * RelationGetPartitionDesc
  *		Returns partition descriptor for a relation.
  */
@@ -634,7 +611,6 @@ get_partition_col_typmod(PartitionKey key, int col)
 /* routines in utils/cache/relcache.c */
 extern void RelationIncrementReferenceCount(Relation rel);
 extern void RelationDecrementReferenceCount(Relation rel);
-extern bool RelationHasUnloggedIndex(Relation rel);
 extern List *RelationGetRepsetList(Relation rel);
 
 #endif							/* REL_H */

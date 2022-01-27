@@ -1,6 +1,7 @@
 # Global excludes across all subdirectories
 *.o
 *.obj
+*.bc
 *.so
 *.so.[0-9]
 *.so.[0-9].[0-9]
@@ -21,19 +22,15 @@ objfiles.txt
 *.gcda
 *.gcov
 *.gcov.out
-lcov.info
+lcov*.info
 coverage/
+coverage-html-stamp
 *.vcproj
 *.vcxproj
-!win32ver.rc
+win32ver.rc
 *.exe
 lib*dll.def
 lib*.pc
-tags
-cscope.*
-*.swp
-*~
-.DS_Store
 
 # Local excludes in root directory
 /GNUmakefile
@@ -45,12 +42,3 @@ cscope.*
 /Debug/
 /Release/
 /tmp_install/
-/doc/build/
-/agensgraph.xcodeproj/
-
-# Local excludes of install directories
-/bin/
-/data/
-/include/
-/lib/
-/share/

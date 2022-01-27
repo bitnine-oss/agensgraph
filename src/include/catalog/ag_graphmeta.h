@@ -20,15 +20,15 @@
 
 #include "catalog/genbki.h"
 #include "pgstat.h"
+#include "catalog/ag_graphmeta_d.h"
 
 /* ----------------
  *		ag_graphmeta definition.  cpp turns this into
  *		typedef struct FormData_ag_graphmeta
  * ----------------
  */
-#define GraphMetaRelationId	7055
 
-CATALOG(ag_graphmeta,7055) BKI_SCHEMA_MACRO BKI_WITHOUT_OIDS
+CATALOG(ag_graphmeta,7055,GraphMetaRelationId) BKI_SCHEMA_MACRO
 {
 	Oid			graph;			/* graph oid */
 	int16		edge;			/* edge label id */
@@ -44,17 +44,6 @@ CATALOG(ag_graphmeta,7055) BKI_SCHEMA_MACRO BKI_WITHOUT_OIDS
  */
 typedef FormData_ag_graphmeta *Form_ag_graphmeta;
 
-/* ----------------
- *		compiler constants for ag_graphmeta
- * ----------------
- */
-
-#define Natts_ag_graphmeta			5
-#define Anum_ag_graphmeta_graph		1
-#define Anum_ag_graphmeta_edge		2
-#define Anum_ag_graphmeta_start		3
-#define Anum_ag_graphmeta_end		4
-#define Anum_ag_graphmeta_edgecount	5
 
 typedef struct AgStat_key
 {

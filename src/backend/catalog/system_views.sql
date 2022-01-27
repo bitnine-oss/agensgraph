@@ -1,7 +1,7 @@
 /*
  * PostgreSQL System Views
  *
- * Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  * src/backend/catalog/system_views.sql
  *
@@ -41,7 +41,7 @@ CREATE VIEW pg_shadow AS
         rolreplication AS userepl,
         rolbypassrls AS usebypassrls,
         rolpassword AS passwd,
-        rolvaliduntil::abstime AS valuntil,
+        rolvaliduntil AS valuntil,
         setconfig AS useconfig
     FROM pg_authid LEFT JOIN pg_db_role_setting s
     ON (pg_authid.oid = setrole AND setdatabase = 0)
@@ -162,7 +162,7 @@ CREATE VIEW pg_indexes AS
          JOIN pg_class I ON (I.oid = X.indexrelid)
          LEFT JOIN pg_namespace N ON (N.oid = C.relnamespace)
          LEFT JOIN pg_tablespace T ON (T.oid = I.reltablespace)
-    WHERE C.relkind IN ('r', 'm') AND I.relkind = 'i';
+    WHERE C.relkind IN ('r', 'm', 'p') AND I.relkind IN ('i', 'I');
 
 CREATE OR REPLACE VIEW pg_sequences AS
     SELECT
@@ -253,14 +253,55 @@ CREATE VIEW pg_stats WITH (security_barrier) AS
 
 REVOKE ALL on pg_statistic FROM public;
 
+CREATE VIEW pg_stats_ext WITH (security_barrier) AS
+    SELECT cn.nspname AS schemaname,
+           c.relname AS tablename,
+           sn.nspname AS statistics_schemaname,
+           s.stxname AS statistics_name,
+           pg_get_userbyid(s.stxowner) AS statistics_owner,
+           ( SELECT array_agg(a.attname ORDER BY a.attnum)
+             FROM unnest(s.stxkeys) k
+                  JOIN pg_attribute a
+                       ON (a.attrelid = s.stxrelid AND a.attnum = k)
+           ) AS attnames,
+           s.stxkind AS kinds,
+           sd.stxdndistinct AS n_distinct,
+           sd.stxddependencies AS dependencies,
+           m.most_common_vals,
+           m.most_common_val_nulls,
+           m.most_common_freqs,
+           m.most_common_base_freqs
+    FROM pg_statistic_ext s JOIN pg_class c ON (c.oid = s.stxrelid)
+         JOIN pg_statistic_ext_data sd ON (s.oid = sd.stxoid)
+         LEFT JOIN pg_namespace cn ON (cn.oid = c.relnamespace)
+         LEFT JOIN pg_namespace sn ON (sn.oid = s.stxnamespace)
+         LEFT JOIN LATERAL
+                   ( SELECT array_agg(values) AS most_common_vals,
+                            array_agg(nulls) AS most_common_val_nulls,
+                            array_agg(frequency) AS most_common_freqs,
+                            array_agg(base_frequency) AS most_common_base_freqs
+                     FROM pg_mcv_list_items(sd.stxdmcv)
+                   ) m ON sd.stxdmcv IS NOT NULL
+    WHERE NOT EXISTS
+              ( SELECT 1
+                FROM unnest(stxkeys) k
+                     JOIN pg_attribute a
+                          ON (a.attrelid = s.stxrelid AND a.attnum = k)
+                WHERE NOT has_column_privilege(c.oid, a.attnum, 'select') )
+    AND (c.relrowsecurity = false OR NOT row_security_active(c.oid));
+
+-- unprivileged users may read pg_statistic_ext but not pg_statistic_ext_data
+REVOKE ALL on pg_statistic_ext_data FROM public;
+
 CREATE VIEW pg_publication_tables AS
     SELECT
         P.pubname AS pubname,
         N.nspname AS schemaname,
         C.relname AS tablename
-    FROM pg_publication P, pg_class C
-         JOIN pg_namespace N ON (N.oid = C.relnamespace)
-    WHERE C.oid IN (SELECT relid FROM pg_get_publication_tables(P.pubname));
+    FROM pg_publication P,
+         LATERAL pg_get_publication_tables(P.pubname) GPT,
+         pg_class C JOIN pg_namespace N ON (N.oid = C.relnamespace)
+    WHERE C.oid = GPT.relid;
 
 CREATE VIEW pg_locks AS
     SELECT * FROM pg_lock_status() AS L;
@@ -293,178 +334,180 @@ CREATE VIEW pg_prepared_statements AS
 
 CREATE VIEW pg_seclabels AS
 SELECT
-	l.objoid, l.classoid, l.objsubid,
-	CASE WHEN rel.relkind IN ('r', 'p') THEN 'table'::text
-		 WHEN rel.relkind = 'v' THEN 'view'::text
-		 WHEN rel.relkind = 'm' THEN 'materialized view'::text
-		 WHEN rel.relkind = 'S' THEN 'sequence'::text
-		 WHEN rel.relkind = 'f' THEN 'foreign table'::text END AS objtype,
-	rel.relnamespace AS objnamespace,
-	CASE WHEN pg_table_is_visible(rel.oid)
-	     THEN quote_ident(rel.relname)
-	     ELSE quote_ident(nsp.nspname) || '.' || quote_ident(rel.relname)
-	     END AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, l.objsubid,
+    CASE WHEN rel.relkind IN ('r', 'p') THEN 'table'::text
+         WHEN rel.relkind = 'v' THEN 'view'::text
+         WHEN rel.relkind = 'm' THEN 'materialized view'::text
+         WHEN rel.relkind = 'S' THEN 'sequence'::text
+         WHEN rel.relkind = 'f' THEN 'foreign table'::text END AS objtype,
+    rel.relnamespace AS objnamespace,
+    CASE WHEN pg_table_is_visible(rel.oid)
+         THEN quote_ident(rel.relname)
+         ELSE quote_ident(nsp.nspname) || '.' || quote_ident(rel.relname)
+         END AS objname,
+    l.provider, l.label
 FROM
-	pg_seclabel l
-	JOIN pg_class rel ON l.classoid = rel.tableoid AND l.objoid = rel.oid
-	JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
+    pg_seclabel l
+    JOIN pg_class rel ON l.classoid = rel.tableoid AND l.objoid = rel.oid
+    JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
 WHERE
-	l.objsubid = 0
+    l.objsubid = 0
 UNION ALL
 SELECT
-	l.objoid, l.classoid, l.objsubid,
-	'column'::text AS objtype,
-	rel.relnamespace AS objnamespace,
-	CASE WHEN pg_table_is_visible(rel.oid)
-	     THEN quote_ident(rel.relname)
-	     ELSE quote_ident(nsp.nspname) || '.' || quote_ident(rel.relname)
-	     END || '.' || att.attname AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, l.objsubid,
+    'column'::text AS objtype,
+    rel.relnamespace AS objnamespace,
+    CASE WHEN pg_table_is_visible(rel.oid)
+         THEN quote_ident(rel.relname)
+         ELSE quote_ident(nsp.nspname) || '.' || quote_ident(rel.relname)
+         END || '.' || att.attname AS objname,
+    l.provider, l.label
 FROM
-	pg_seclabel l
-	JOIN pg_class rel ON l.classoid = rel.tableoid AND l.objoid = rel.oid
-	JOIN pg_attribute att
-	     ON rel.oid = att.attrelid AND l.objsubid = att.attnum
-	JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
+    pg_seclabel l
+    JOIN pg_class rel ON l.classoid = rel.tableoid AND l.objoid = rel.oid
+    JOIN pg_attribute att
+         ON rel.oid = att.attrelid AND l.objsubid = att.attnum
+    JOIN pg_namespace nsp ON rel.relnamespace = nsp.oid
 WHERE
-	l.objsubid != 0
+    l.objsubid != 0
 UNION ALL
 SELECT
-	l.objoid, l.classoid, l.objsubid,
-	CASE WHEN pro.proisagg = true THEN 'aggregate'::text
-	     WHEN pro.proisagg = false THEN 'function'::text
-	END AS objtype,
-	pro.pronamespace AS objnamespace,
-	CASE WHEN pg_function_is_visible(pro.oid)
-	     THEN quote_ident(pro.proname)
-	     ELSE quote_ident(nsp.nspname) || '.' || quote_ident(pro.proname)
-	END || '(' || pg_catalog.pg_get_function_arguments(pro.oid) || ')' AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, l.objsubid,
+    CASE pro.prokind
+            WHEN 'a' THEN 'aggregate'::text
+            WHEN 'f' THEN 'function'::text
+            WHEN 'p' THEN 'procedure'::text
+            WHEN 'w' THEN 'window'::text END AS objtype,
+    pro.pronamespace AS objnamespace,
+    CASE WHEN pg_function_is_visible(pro.oid)
+         THEN quote_ident(pro.proname)
+         ELSE quote_ident(nsp.nspname) || '.' || quote_ident(pro.proname)
+    END || '(' || pg_catalog.pg_get_function_arguments(pro.oid) || ')' AS objname,
+    l.provider, l.label
 FROM
-	pg_seclabel l
-	JOIN pg_proc pro ON l.classoid = pro.tableoid AND l.objoid = pro.oid
-	JOIN pg_namespace nsp ON pro.pronamespace = nsp.oid
+    pg_seclabel l
+    JOIN pg_proc pro ON l.classoid = pro.tableoid AND l.objoid = pro.oid
+    JOIN pg_namespace nsp ON pro.pronamespace = nsp.oid
 WHERE
-	l.objsubid = 0
+    l.objsubid = 0
 UNION ALL
 SELECT
-	l.objoid, l.classoid, l.objsubid,
-	CASE WHEN typ.typtype = 'd' THEN 'domain'::text
-	ELSE 'type'::text END AS objtype,
-	typ.typnamespace AS objnamespace,
-	CASE WHEN pg_type_is_visible(typ.oid)
-	THEN quote_ident(typ.typname)
-	ELSE quote_ident(nsp.nspname) || '.' || quote_ident(typ.typname)
-	END AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, l.objsubid,
+    CASE WHEN typ.typtype = 'd' THEN 'domain'::text
+    ELSE 'type'::text END AS objtype,
+    typ.typnamespace AS objnamespace,
+    CASE WHEN pg_type_is_visible(typ.oid)
+    THEN quote_ident(typ.typname)
+    ELSE quote_ident(nsp.nspname) || '.' || quote_ident(typ.typname)
+    END AS objname,
+    l.provider, l.label
 FROM
-	pg_seclabel l
-	JOIN pg_type typ ON l.classoid = typ.tableoid AND l.objoid = typ.oid
-	JOIN pg_namespace nsp ON typ.typnamespace = nsp.oid
+    pg_seclabel l
+    JOIN pg_type typ ON l.classoid = typ.tableoid AND l.objoid = typ.oid
+    JOIN pg_namespace nsp ON typ.typnamespace = nsp.oid
 WHERE
-	l.objsubid = 0
+    l.objsubid = 0
 UNION ALL
 SELECT
-	l.objoid, l.classoid, l.objsubid,
-	'large object'::text AS objtype,
-	NULL::oid AS objnamespace,
-	l.objoid::text AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, l.objsubid,
+    'large object'::text AS objtype,
+    NULL::oid AS objnamespace,
+    l.objoid::text AS objname,
+    l.provider, l.label
 FROM
-	pg_seclabel l
-	JOIN pg_largeobject_metadata lom ON l.objoid = lom.oid
+    pg_seclabel l
+    JOIN pg_largeobject_metadata lom ON l.objoid = lom.oid
 WHERE
-	l.classoid = 'pg_catalog.pg_largeobject'::regclass AND l.objsubid = 0
+    l.classoid = 'pg_catalog.pg_largeobject'::regclass AND l.objsubid = 0
 UNION ALL
 SELECT
-	l.objoid, l.classoid, l.objsubid,
-	'language'::text AS objtype,
-	NULL::oid AS objnamespace,
-	quote_ident(lan.lanname) AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, l.objsubid,
+    'language'::text AS objtype,
+    NULL::oid AS objnamespace,
+    quote_ident(lan.lanname) AS objname,
+    l.provider, l.label
 FROM
-	pg_seclabel l
-	JOIN pg_language lan ON l.classoid = lan.tableoid AND l.objoid = lan.oid
+    pg_seclabel l
+    JOIN pg_language lan ON l.classoid = lan.tableoid AND l.objoid = lan.oid
 WHERE
-	l.objsubid = 0
+    l.objsubid = 0
 UNION ALL
 SELECT
-	l.objoid, l.classoid, l.objsubid,
-	'schema'::text AS objtype,
-	nsp.oid AS objnamespace,
-	quote_ident(nsp.nspname) AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, l.objsubid,
+    'schema'::text AS objtype,
+    nsp.oid AS objnamespace,
+    quote_ident(nsp.nspname) AS objname,
+    l.provider, l.label
 FROM
-	pg_seclabel l
-	JOIN pg_namespace nsp ON l.classoid = nsp.tableoid AND l.objoid = nsp.oid
+    pg_seclabel l
+    JOIN pg_namespace nsp ON l.classoid = nsp.tableoid AND l.objoid = nsp.oid
 WHERE
-	l.objsubid = 0
+    l.objsubid = 0
 UNION ALL
 SELECT
-	l.objoid, l.classoid, l.objsubid,
-	'event trigger'::text AS objtype,
-	NULL::oid AS objnamespace,
-	quote_ident(evt.evtname) AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, l.objsubid,
+    'event trigger'::text AS objtype,
+    NULL::oid AS objnamespace,
+    quote_ident(evt.evtname) AS objname,
+    l.provider, l.label
 FROM
-	pg_seclabel l
-	JOIN pg_event_trigger evt ON l.classoid = evt.tableoid
-		AND l.objoid = evt.oid
+    pg_seclabel l
+    JOIN pg_event_trigger evt ON l.classoid = evt.tableoid
+        AND l.objoid = evt.oid
 WHERE
-	l.objsubid = 0
+    l.objsubid = 0
 UNION ALL
 SELECT
-	l.objoid, l.classoid, l.objsubid,
-	'publication'::text AS objtype,
-	NULL::oid AS objnamespace,
-	quote_ident(p.pubname) AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, l.objsubid,
+    'publication'::text AS objtype,
+    NULL::oid AS objnamespace,
+    quote_ident(p.pubname) AS objname,
+    l.provider, l.label
 FROM
-	pg_seclabel l
-	JOIN pg_publication p ON l.classoid = p.tableoid AND l.objoid = p.oid
+    pg_seclabel l
+    JOIN pg_publication p ON l.classoid = p.tableoid AND l.objoid = p.oid
 WHERE
-	l.objsubid = 0
+    l.objsubid = 0
 UNION ALL
 SELECT
-	l.objoid, l.classoid, 0::int4 AS objsubid,
-	'subscription'::text AS objtype,
-	NULL::oid AS objnamespace,
-	quote_ident(s.subname) AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, 0::int4 AS objsubid,
+    'subscription'::text AS objtype,
+    NULL::oid AS objnamespace,
+    quote_ident(s.subname) AS objname,
+    l.provider, l.label
 FROM
-	pg_shseclabel l
-	JOIN pg_subscription s ON l.classoid = s.tableoid AND l.objoid = s.oid
+    pg_shseclabel l
+    JOIN pg_subscription s ON l.classoid = s.tableoid AND l.objoid = s.oid
 UNION ALL
 SELECT
-	l.objoid, l.classoid, 0::int4 AS objsubid,
-	'database'::text AS objtype,
-	NULL::oid AS objnamespace,
-	quote_ident(dat.datname) AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, 0::int4 AS objsubid,
+    'database'::text AS objtype,
+    NULL::oid AS objnamespace,
+    quote_ident(dat.datname) AS objname,
+    l.provider, l.label
 FROM
-	pg_shseclabel l
-	JOIN pg_database dat ON l.classoid = dat.tableoid AND l.objoid = dat.oid
+    pg_shseclabel l
+    JOIN pg_database dat ON l.classoid = dat.tableoid AND l.objoid = dat.oid
 UNION ALL
 SELECT
-	l.objoid, l.classoid, 0::int4 AS objsubid,
-	'tablespace'::text AS objtype,
-	NULL::oid AS objnamespace,
-	quote_ident(spc.spcname) AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, 0::int4 AS objsubid,
+    'tablespace'::text AS objtype,
+    NULL::oid AS objnamespace,
+    quote_ident(spc.spcname) AS objname,
+    l.provider, l.label
 FROM
-	pg_shseclabel l
-	JOIN pg_tablespace spc ON l.classoid = spc.tableoid AND l.objoid = spc.oid
+    pg_shseclabel l
+    JOIN pg_tablespace spc ON l.classoid = spc.tableoid AND l.objoid = spc.oid
 UNION ALL
 SELECT
-	l.objoid, l.classoid, 0::int4 AS objsubid,
-	'role'::text AS objtype,
-	NULL::oid AS objnamespace,
-	quote_ident(rol.rolname) AS objname,
-	l.provider, l.label
+    l.objoid, l.classoid, 0::int4 AS objsubid,
+    'role'::text AS objtype,
+    NULL::oid AS objnamespace,
+    quote_ident(rol.rolname) AS objname,
+    l.provider, l.label
 FROM
-	pg_shseclabel l
-	JOIN pg_authid rol ON l.classoid = rol.tableoid AND l.objoid = rol.oid;
+    pg_shseclabel l
+    JOIN pg_authid rol ON l.classoid = rol.tableoid AND l.objoid = rol.oid;
 
 CREATE VIEW pg_settings AS
     SELECT * FROM pg_show_all_settings() AS A;
@@ -732,7 +775,8 @@ CREATE VIEW pg_stat_replication AS
             W.flush_lag,
             W.replay_lag,
             W.sync_priority,
-            W.sync_state
+            W.sync_state,
+            W.reply_time
     FROM pg_stat_get_activity(NULL) AS S
         JOIN pg_stat_get_wal_senders() AS W ON (S.pid = W.pid)
         LEFT JOIN pg_authid AS U ON (S.usesysid = U.oid);
@@ -750,6 +794,8 @@ CREATE VIEW pg_stat_wal_receiver AS
             s.latest_end_lsn,
             s.latest_end_time,
             s.slot_name,
+            s.sender_host,
+            s.sender_port,
             s.conninfo
     FROM pg_stat_get_wal_receiver() s
     WHERE s.pid IS NOT NULL;
@@ -777,7 +823,17 @@ CREATE VIEW pg_stat_ssl AS
             S.sslcipher AS cipher,
             S.sslbits AS bits,
             S.sslcompression AS compression,
-            S.sslclientdn AS clientdn
+            S.ssl_client_dn AS client_dn,
+            S.ssl_client_serial AS client_serial,
+            S.ssl_issuer_dn AS issuer_dn
+    FROM pg_stat_get_activity(NULL) AS S;
+
+CREATE VIEW pg_stat_gssapi AS
+    SELECT
+            S.pid,
+            S.gss_auth AS gss_authenticated,
+            S.gss_princ AS principal,
+            S.gss_enc AS encrypted
     FROM pg_stat_get_activity(NULL) AS S;
 
 CREATE VIEW pg_replication_slots AS
@@ -801,7 +857,10 @@ CREATE VIEW pg_stat_database AS
     SELECT
             D.oid AS datid,
             D.datname AS datname,
-            pg_stat_get_db_numbackends(D.oid) AS numbackends,
+                CASE
+                    WHEN (D.oid = (0)::oid) THEN 0
+                    ELSE pg_stat_get_db_numbackends(D.oid)
+                END AS numbackends,
             pg_stat_get_db_xact_commit(D.oid) AS xact_commit,
             pg_stat_get_db_xact_rollback(D.oid) AS xact_rollback,
             pg_stat_get_db_blocks_fetched(D.oid) -
@@ -816,10 +875,16 @@ CREATE VIEW pg_stat_database AS
             pg_stat_get_db_temp_files(D.oid) AS temp_files,
             pg_stat_get_db_temp_bytes(D.oid) AS temp_bytes,
             pg_stat_get_db_deadlocks(D.oid) AS deadlocks,
+            pg_stat_get_db_checksum_failures(D.oid) AS checksum_failures,
+            pg_stat_get_db_checksum_last_failure(D.oid) AS checksum_last_failure,
             pg_stat_get_db_blk_read_time(D.oid) AS blk_read_time,
             pg_stat_get_db_blk_write_time(D.oid) AS blk_write_time,
             pg_stat_get_db_stat_reset_time(D.oid) AS stats_reset
-    FROM pg_database D;
+    FROM (
+        SELECT 0 AS oid, NULL::name AS datname
+        UNION ALL
+        SELECT oid, datname FROM pg_database
+    ) D;
 
 CREATE VIEW pg_stat_database_conflicts AS
     SELECT
@@ -882,22 +947,84 @@ CREATE VIEW pg_stat_bgwriter AS
         pg_stat_get_bgwriter_stat_reset_time() AS stats_reset;
 
 CREATE VIEW pg_stat_progress_vacuum AS
-	SELECT
-		S.pid AS pid, S.datid AS datid, D.datname AS datname,
-		S.relid AS relid,
-		CASE S.param1 WHEN 0 THEN 'initializing'
-					  WHEN 1 THEN 'scanning heap'
-					  WHEN 2 THEN 'vacuuming indexes'
-					  WHEN 3 THEN 'vacuuming heap'
-					  WHEN 4 THEN 'cleaning up indexes'
-					  WHEN 5 THEN 'truncating heap'
-					  WHEN 6 THEN 'performing final cleanup'
-					  END AS phase,
-		S.param2 AS heap_blks_total, S.param3 AS heap_blks_scanned,
-		S.param4 AS heap_blks_vacuumed, S.param5 AS index_vacuum_count,
-		S.param6 AS max_dead_tuples, S.param7 AS num_dead_tuples
+    SELECT
+        S.pid AS pid, S.datid AS datid, D.datname AS datname,
+        S.relid AS relid,
+        CASE S.param1 WHEN 0 THEN 'initializing'
+                      WHEN 1 THEN 'scanning heap'
+                      WHEN 2 THEN 'vacuuming indexes'
+                      WHEN 3 THEN 'vacuuming heap'
+                      WHEN 4 THEN 'cleaning up indexes'
+                      WHEN 5 THEN 'truncating heap'
+                      WHEN 6 THEN 'performing final cleanup'
+                      END AS phase,
+        S.param2 AS heap_blks_total, S.param3 AS heap_blks_scanned,
+        S.param4 AS heap_blks_vacuumed, S.param5 AS index_vacuum_count,
+        S.param6 AS max_dead_tuples, S.param7 AS num_dead_tuples
     FROM pg_stat_get_progress_info('VACUUM') AS S
-		LEFT JOIN pg_database D ON S.datid = D.oid;
+        LEFT JOIN pg_database D ON S.datid = D.oid;
+
+CREATE VIEW pg_stat_progress_cluster AS
+    SELECT
+        S.pid AS pid,
+        S.datid AS datid,
+        D.datname AS datname,
+        S.relid AS relid,
+        CASE S.param1 WHEN 1 THEN 'CLUSTER'
+                      WHEN 2 THEN 'VACUUM FULL'
+                      END AS command,
+        CASE S.param2 WHEN 0 THEN 'initializing'
+                      WHEN 1 THEN 'seq scanning heap'
+                      WHEN 2 THEN 'index scanning heap'
+                      WHEN 3 THEN 'sorting tuples'
+                      WHEN 4 THEN 'writing new heap'
+                      WHEN 5 THEN 'swapping relation files'
+                      WHEN 6 THEN 'rebuilding index'
+                      WHEN 7 THEN 'performing final cleanup'
+                      END AS phase,
+        CAST(S.param3 AS oid) AS cluster_index_relid,
+        S.param4 AS heap_tuples_scanned,
+        S.param5 AS heap_tuples_written,
+        S.param6 AS heap_blks_total,
+        S.param7 AS heap_blks_scanned,
+        S.param8 AS index_rebuild_count
+    FROM pg_stat_get_progress_info('CLUSTER') AS S
+        LEFT JOIN pg_database D ON S.datid = D.oid;
+
+CREATE VIEW pg_stat_progress_create_index AS
+    SELECT
+        S.pid AS pid, S.datid AS datid, D.datname AS datname,
+        S.relid AS relid,
+        CAST(S.param7 AS oid) AS index_relid,
+        CASE S.param1 WHEN 1 THEN 'CREATE INDEX'
+                      WHEN 2 THEN 'CREATE INDEX CONCURRENTLY'
+                      WHEN 3 THEN 'REINDEX'
+                      WHEN 4 THEN 'REINDEX CONCURRENTLY'
+                      END AS command,
+        CASE S.param10 WHEN 0 THEN 'initializing'
+                       WHEN 1 THEN 'waiting for writers before build'
+                       WHEN 2 THEN 'building index' ||
+                           COALESCE((': ' || pg_indexam_progress_phasename(S.param9::oid, S.param11)),
+                                    '')
+                       WHEN 3 THEN 'waiting for writers before validation'
+                       WHEN 4 THEN 'index validation: scanning index'
+                       WHEN 5 THEN 'index validation: sorting tuples'
+                       WHEN 6 THEN 'index validation: scanning table'
+                       WHEN 7 THEN 'waiting for old snapshots'
+                       WHEN 8 THEN 'waiting for readers before marking dead'
+                       WHEN 9 THEN 'waiting for readers before dropping'
+                       END as phase,
+        S.param4 AS lockers_total,
+        S.param5 AS lockers_done,
+        S.param6 AS current_locker_pid,
+        S.param16 AS blocks_total,
+        S.param17 AS blocks_done,
+        S.param12 AS tuples_total,
+        S.param13 AS tuples_done,
+        S.param14 AS partitions_total,
+        S.param15 AS partitions_done
+    FROM pg_stat_get_progress_info('CREATE INDEX') AS S
+        LEFT JOIN pg_database D ON S.datid = D.oid;
 
 CREATE VIEW pg_user_mappings AS
     SELECT
@@ -1049,6 +1176,11 @@ CREATE OR REPLACE FUNCTION pg_stop_backup (
   RETURNS SETOF record STRICT VOLATILE LANGUAGE internal as 'pg_stop_backup_v2'
   PARALLEL RESTRICTED;
 
+CREATE OR REPLACE FUNCTION
+  pg_promote(wait boolean DEFAULT true, wait_seconds integer DEFAULT 60)
+  RETURNS boolean STRICT VOLATILE LANGUAGE INTERNAL AS 'pg_promote'
+  PARALLEL SAFE;
+
 -- legacy definition for compatibility with 9.3
 CREATE OR REPLACE FUNCTION
   json_populate_record(base anyelement, from_json json, use_json_as_text boolean DEFAULT false)
@@ -1103,7 +1235,7 @@ AS 'pg_create_physical_replication_slot';
 CREATE OR REPLACE FUNCTION pg_create_logical_replication_slot(
     IN slot_name name, IN plugin name,
     IN temporary boolean DEFAULT false,
-    OUT slot_name text, OUT lsn pg_lsn)
+    OUT slot_name name, OUT lsn pg_lsn)
 RETURNS RECORD
 LANGUAGE INTERNAL
 STRICT VOLATILE
@@ -1141,12 +1273,54 @@ LANGUAGE INTERNAL
 STRICT IMMUTABLE PARALLEL SAFE
 AS 'jsonb_insert';
 
+CREATE OR REPLACE FUNCTION
+  jsonb_path_exists(target jsonb, path jsonpath, vars jsonb DEFAULT '{}',
+                    silent boolean DEFAULT false)
+RETURNS boolean
+LANGUAGE INTERNAL
+STRICT IMMUTABLE PARALLEL SAFE
+AS 'jsonb_path_exists';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_path_match(target jsonb, path jsonpath, vars jsonb DEFAULT '{}',
+                   silent boolean DEFAULT false)
+RETURNS boolean
+LANGUAGE INTERNAL
+STRICT IMMUTABLE PARALLEL SAFE
+AS 'jsonb_path_match';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_path_query(target jsonb, path jsonpath, vars jsonb DEFAULT '{}',
+                   silent boolean DEFAULT false)
+RETURNS SETOF jsonb
+LANGUAGE INTERNAL
+STRICT IMMUTABLE PARALLEL SAFE
+AS 'jsonb_path_query';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_path_query_array(target jsonb, path jsonpath, vars jsonb DEFAULT '{}',
+                         silent boolean DEFAULT false)
+RETURNS jsonb
+LANGUAGE INTERNAL
+STRICT IMMUTABLE PARALLEL SAFE
+AS 'jsonb_path_query_array';
+
+CREATE OR REPLACE FUNCTION
+  jsonb_path_query_first(target jsonb, path jsonpath, vars jsonb DEFAULT '{}',
+                         silent boolean DEFAULT false)
+RETURNS jsonb
+LANGUAGE INTERNAL
+STRICT IMMUTABLE PARALLEL SAFE
+AS 'jsonb_path_query_first';
+
+--
 -- The default permissions for functions mean that anyone can execute them.
 -- A number of functions shouldn't be executable by just anyone, but rather
 -- than use explicit 'superuser()' checks in those functions, we use the GRANT
 -- system to REVOKE access to those functions at initdb time.  Administrators
 -- can later change who can access these functions, or leave them as only
 -- available to superuser / cluster owner, if they choose.
+--
 REVOKE EXECUTE ON FUNCTION pg_start_backup(text, boolean, boolean) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stop_backup() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stop_backup(boolean, boolean) FROM public;
@@ -1158,16 +1332,45 @@ REVOKE EXECUTE ON FUNCTION pg_rotate_logfile() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_reload_conf() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_current_logfile() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_current_logfile(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_promote(boolean, integer) FROM public;
 
 REVOKE EXECUTE ON FUNCTION pg_stat_reset() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stat_reset_shared(text) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_table_counters(oid) FROM public;
 REVOKE EXECUTE ON FUNCTION pg_stat_reset_single_function_counters(oid) FROM public;
 
+REVOKE EXECUTE ON FUNCTION lo_import(text) FROM public;
+REVOKE EXECUTE ON FUNCTION lo_import(text, oid) FROM public;
+REVOKE EXECUTE ON FUNCTION lo_export(oid, text) FROM public;
+
 REVOKE EXECUTE ON FUNCTION pg_ls_logdir() FROM public;
 REVOKE EXECUTE ON FUNCTION pg_ls_waldir() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_ls_archive_statusdir() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_ls_tmpdir() FROM public;
+REVOKE EXECUTE ON FUNCTION pg_ls_tmpdir(oid) FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_read_file(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_read_file(text,bigint,bigint) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_read_file(text,bigint,bigint,boolean) FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_read_binary_file(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_read_binary_file(text,bigint,bigint) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_read_binary_file(text,bigint,bigint,boolean) FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_stat_file(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_stat_file(text,boolean) FROM public;
+
+REVOKE EXECUTE ON FUNCTION pg_ls_dir(text) FROM public;
+REVOKE EXECUTE ON FUNCTION pg_ls_dir(text,boolean,boolean) FROM public;
+
+--
+-- We also set up some things as accessible to standard roles.
+--
 GRANT EXECUTE ON FUNCTION pg_ls_logdir() TO pg_monitor;
 GRANT EXECUTE ON FUNCTION pg_ls_waldir() TO pg_monitor;
+GRANT EXECUTE ON FUNCTION pg_ls_archive_statusdir() TO pg_monitor;
+GRANT EXECUTE ON FUNCTION pg_ls_tmpdir() TO pg_monitor;
+GRANT EXECUTE ON FUNCTION pg_ls_tmpdir(oid) TO pg_monitor;
 
 GRANT pg_read_all_settings TO pg_monitor;
 GRANT pg_read_all_stats TO pg_monitor;

@@ -3,7 +3,7 @@
  *
  * PostgreSQL write-ahead log manager
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/xlog.h
@@ -43,7 +43,7 @@ extern bool InRecovery;
 /*
  * Like InRecovery, standbyState is only valid in the startup process.
  * In all other processes it will have the value STANDBY_DISABLED (so
- * InHotStandby will read as FALSE).
+ * InHotStandby will read as false).
  *
  * In DISABLED state, we're performing crash recovery or hot standby was
  * disabled in postgresql.conf.
@@ -75,7 +75,7 @@ extern HotStandbyState standbyState;
 
 /*
  * Recovery target type.
- * Only set during a Point in Time recovery, not when standby_mode = on
+ * Only set during a Point in Time recovery, not when in standby mode.
  */
 typedef enum
 {
@@ -87,6 +87,16 @@ typedef enum
 	RECOVERY_TARGET_IMMEDIATE
 } RecoveryTargetType;
 
+/*
+ * Recovery target TimeLine goal
+ */
+typedef enum
+{
+	RECOVERY_TARGET_TIMELINE_CONTROLFILE,
+	RECOVERY_TARGET_TIMELINE_LATEST,
+	RECOVERY_TARGET_TIMELINE_NUMERIC
+} RecoveryTargetTimeLineGoal;
+
 extern XLogRecPtr ProcLastRecPtr;
 extern XLogRecPtr XactLastRecEnd;
 extern PGDLLIMPORT XLogRecPtr XactLastCommitEnd;
@@ -94,6 +104,7 @@ extern PGDLLIMPORT XLogRecPtr XactLastCommitEnd;
 extern bool reachedConsistency;
 
 /* these variables are GUC parameters related to XLOG */
+extern int	wal_segment_size;
 extern int	min_wal_size_mb;
 extern int	max_wal_size_mb;
 extern int	wal_keep_segments;
@@ -105,11 +116,36 @@ extern bool EnableHotStandby;
 extern bool fullPageWrites;
 extern bool wal_log_hints;
 extern bool wal_compression;
+extern bool wal_init_zero;
+extern bool wal_recycle;
 extern bool *wal_consistency_checking;
 extern char *wal_consistency_checking_string;
 extern bool log_checkpoints;
+extern char *recoveryRestoreCommand;
+extern char *recoveryEndCommand;
+extern char *archiveCleanupCommand;
+extern bool recoveryTargetInclusive;
+extern int	recoveryTargetAction;
+extern int	recovery_min_apply_delay;
+extern char *PrimaryConnInfo;
+extern char *PrimarySlotName;
+
+/* indirectly set via GUC system */
+extern TransactionId recoveryTargetXid;
+extern char *recovery_target_time_string;
+extern const char *recoveryTargetName;
+extern XLogRecPtr recoveryTargetLSN;
+extern RecoveryTargetType recoveryTarget;
+extern char *PromoteTriggerFile;
+extern RecoveryTargetTimeLineGoal recoveryTargetTimeLineGoal;
+extern TimeLineID recoveryTargetTLIRequested;
+extern TimeLineID recoveryTargetTLI;
 
 extern int	CheckPointSegments;
+
+/* option set locally in startup process only when signal files exist */
+extern bool StandbyModeRequested;
+extern bool StandbyMode;
 
 /* Archive modes */
 typedef enum ArchiveMode
@@ -127,6 +163,14 @@ typedef enum WalLevel
 	WAL_LEVEL_REPLICA,
 	WAL_LEVEL_LOGICAL
 } WalLevel;
+
+/* Recovery states */
+typedef enum RecoveryState
+{
+	RECOVERY_STATE_CRASH = 0,	/* crash recovery */
+	RECOVERY_STATE_ARCHIVE,		/* archive recovery */
+	RECOVERY_STATE_DONE			/* currently in production */
+} RecoveryState;
 
 extern PGDLLIMPORT int wal_level;
 
@@ -181,9 +225,10 @@ extern bool XLOG_DEBUG;
 										 * belonging to unlogged tables */
 /* These are important to RequestCheckpoint */
 #define CHECKPOINT_WAIT			0x0020	/* Wait for completion */
+#define CHECKPOINT_REQUESTED	0x0040	/* Checkpoint request has been made */
 /* These indicate the cause of a checkpoint request */
-#define CHECKPOINT_CAUSE_XLOG	0x0040	/* XLOG consumption */
-#define CHECKPOINT_CAUSE_TIME	0x0080	/* Elapsed time */
+#define CHECKPOINT_CAUSE_XLOG	0x0080	/* XLOG consumption */
+#define CHECKPOINT_CAUSE_TIME	0x0100	/* Elapsed time */
 
 /*
  * Flag bits for the record being inserted, set using XLogSetRecordFlags().
@@ -220,8 +265,8 @@ extern CheckpointStatsData CheckpointStats;
 struct XLogRecData;
 
 extern XLogRecPtr XLogInsertRecord(struct XLogRecData *rdata,
-				 XLogRecPtr fpw_lsn,
-				 uint8 flags);
+								   XLogRecPtr fpw_lsn,
+								   uint8 flags);
 extern void XLogFlush(XLogRecPtr RecPtr);
 extern bool XLogBackgroundFlush(void);
 extern bool XLogNeedsFlush(XLogRecPtr RecPtr);
@@ -240,6 +285,7 @@ extern const char *xlog_identify(uint8 info);
 extern void issue_xlog_fsync(int fd, XLogSegNo segno);
 
 extern bool RecoveryInProgress(void);
+extern RecoveryState GetRecoveryState(void);
 extern bool HotStandbyActive(void);
 extern bool HotStandbyActiveInReplay(void);
 extern bool XLogInsertAllowed(void);
@@ -261,6 +307,7 @@ extern XLogRecPtr GetFakeLSNForUnloggedRel(void);
 extern Size XLOGShmemSize(void);
 extern void XLOGShmemInit(void);
 extern void BootStrapXLOG(void);
+extern void LocalProcessControlFile(bool reset);
 extern void StartupXLOG(void);
 extern void ShutdownXLOG(int code, Datum arg);
 extern void InitXLOGAccess(void);
@@ -274,8 +321,8 @@ extern XLogRecPtr GetRedoRecPtr(void);
 extern XLogRecPtr GetInsertRecPtr(void);
 extern XLogRecPtr GetFlushRecPtr(void);
 extern XLogRecPtr GetLastImportantRecPtr(void);
-extern void GetNextXidAndEpoch(TransactionId *xid, uint32 *epoch);
 extern void RemovePromoteSignalFiles(void);
+extern void NotifySegmentsReadyForArchive(XLogRecPtr flushRecPtr);
 
 extern bool CheckPromoteSignal(void);
 extern void WakeupRecovery(void);
@@ -308,19 +355,26 @@ typedef enum SessionBackupState
 } SessionBackupState;
 
 extern XLogRecPtr do_pg_start_backup(const char *backupidstr, bool fast,
-				   TimeLineID *starttli_p, StringInfo labelfile, DIR *tblspcdir,
-				   List **tablespaces, StringInfo tblspcmapfile, bool infotbssize,
-				   bool needtblspcmapfile);
+									 TimeLineID *starttli_p, StringInfo labelfile,
+									 List **tablespaces, StringInfo tblspcmapfile, bool infotbssize,
+									 bool needtblspcmapfile);
 extern XLogRecPtr do_pg_stop_backup(char *labelfile, bool waitforarchive,
-				  TimeLineID *stoptli_p);
-extern void do_pg_abort_backup(void);
+									TimeLineID *stoptli_p);
+extern void do_pg_abort_backup(int code, Datum arg);
+extern void register_persistent_abort_backup_handler(void);
 extern SessionBackupState get_backup_status(void);
 
 /* File path names (all relative to $PGDATA) */
+#define RECOVERY_SIGNAL_FILE	"recovery.signal"
+#define STANDBY_SIGNAL_FILE		"standby.signal"
 #define BACKUP_LABEL_FILE		"backup_label"
 #define BACKUP_LABEL_OLD		"backup_label.old"
 
 #define TABLESPACE_MAP			"tablespace_map"
 #define TABLESPACE_MAP_OLD		"tablespace_map.old"
+
+/* files to signal promotion to primary */
+#define PROMOTE_SIGNAL_FILE		"promote"
+#define FALLBACK_PROMOTE_SIGNAL_FILE  "fallback_promote"
 
 #endif							/* XLOG_H */

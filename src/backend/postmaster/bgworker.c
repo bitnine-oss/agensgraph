@@ -2,7 +2,7 @@
  * bgworker.c
  *		POSTGRES pluggable background workers implementation
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/postmaster/bgworker.c
@@ -232,13 +232,15 @@ FindRegisteredWorkerBySlotNumber(int slotno)
 }
 
 /*
- * Notice changes to shared memory made by other backends.  This code
- * runs in the postmaster, so we must be very careful not to assume that
- * shared memory contents are sane.  Otherwise, a rogue backend could take
- * out the postmaster.
+ * Notice changes to shared memory made by other backends.
+ * Accept new worker requests only if allow_new_workers is true.
+ *
+ * This code runs in the postmaster, so we must be very careful not to assume
+ * that shared memory contents are sane.  Otherwise, a rogue backend could
+ * take out the postmaster.
  */
 void
-BackgroundWorkerStateChange(void)
+BackgroundWorkerStateChange(bool allow_new_workers)
 {
 	int			slotno;
 
@@ -299,6 +301,15 @@ BackgroundWorkerStateChange(void)
 		}
 
 		/*
+		 * If we aren't allowing new workers, then immediately mark it for
+		 * termination; the next stanza will take care of cleaning it up.
+		 * Doing this ensures that any process waiting for the worker will get
+		 * awoken, even though the worker will never be allowed to run.
+		 */
+		if (!allow_new_workers)
+			slot->terminate = true;
+
+		/*
 		 * If the worker is marked for termination, we don't need to add it to
 		 * the registered workers list; we can just free the slot. However, if
 		 * bgw_notify_pid is set, the process that registered the worker may
@@ -317,9 +328,11 @@ BackgroundWorkerStateChange(void)
 			notify_pid = slot->worker.bgw_notify_pid;
 			if ((slot->worker.bgw_flags & BGWORKER_CLASS_PARALLEL) != 0)
 				BackgroundWorkerData->parallel_terminate_count++;
-			pg_memory_barrier();
 			slot->pid = 0;
+
+			pg_memory_barrier();
 			slot->in_use = false;
+
 			if (notify_pid != 0)
 				kill(notify_pid, SIGUSR1);
 
@@ -344,6 +357,8 @@ BackgroundWorkerStateChange(void)
 		 */
 		ascii_safe_strlcpy(rw->rw_worker.bgw_name,
 						   slot->worker.bgw_name, BGW_MAXLEN);
+		ascii_safe_strlcpy(rw->rw_worker.bgw_type,
+						   slot->worker.bgw_type, BGW_MAXLEN);
 		ascii_safe_strlcpy(rw->rw_worker.bgw_library_name,
 						   slot->worker.bgw_library_name, BGW_MAXLEN);
 		ascii_safe_strlcpy(rw->rw_worker.bgw_function_name,
@@ -404,6 +419,8 @@ BackgroundWorkerStateChange(void)
  * points to it.  This convention allows deletion of workers during
  * searches of the worker list, and saves having to search the list again.
  *
+ * Caller is responsible for notifying bgw_notify_pid, if appropriate.
+ *
  * This function must be invoked only in the postmaster.
  */
 void
@@ -416,9 +433,16 @@ ForgetBackgroundWorker(slist_mutable_iter *cur)
 
 	Assert(rw->rw_shmem_slot < max_worker_processes);
 	slot = &BackgroundWorkerData->slot[rw->rw_shmem_slot];
+	Assert(slot->in_use);
+
+	/*
+	 * We need a memory barrier here to make sure that the update of
+	 * parallel_terminate_count completes before the store to in_use.
+	 */
 	if ((rw->rw_worker.bgw_flags & BGWORKER_CLASS_PARALLEL) != 0)
 		BackgroundWorkerData->parallel_terminate_count++;
 
+	pg_memory_barrier();
 	slot->in_use = false;
 
 	ereport(DEBUG1,
@@ -503,11 +527,54 @@ BackgroundWorkerStopNotifications(pid_t pid)
 }
 
 /*
+ * Cancel any not-yet-started worker requests that have waiting processes.
+ *
+ * This is called during a normal ("smart" or "fast") database shutdown.
+ * After this point, no new background workers will be started, so anything
+ * that might be waiting for them needs to be kicked off its wait.  We do
+ * that by cancelling the bgworker registration entirely, which is perhaps
+ * overkill, but since we're shutting down it does not matter whether the
+ * registration record sticks around.
+ *
+ * This function should only be called from the postmaster.
+ */
+void
+ForgetUnstartedBackgroundWorkers(void)
+{
+	slist_mutable_iter iter;
+
+	slist_foreach_modify(iter, &BackgroundWorkerList)
+	{
+		RegisteredBgWorker *rw;
+		BackgroundWorkerSlot *slot;
+
+		rw = slist_container(RegisteredBgWorker, rw_lnode, iter.cur);
+		Assert(rw->rw_shmem_slot < max_worker_processes);
+		slot = &BackgroundWorkerData->slot[rw->rw_shmem_slot];
+
+		/* If it's not yet started, and there's someone waiting ... */
+		if (slot->pid == InvalidPid &&
+			rw->rw_worker.bgw_notify_pid != 0)
+		{
+			/* ... then zap it, and notify the waiter */
+			int			notify_pid = rw->rw_worker.bgw_notify_pid;
+
+			ForgetBackgroundWorker(&iter);
+			if (notify_pid != 0)
+				kill(notify_pid, SIGUSR1);
+		}
+	}
+}
+
+/*
  * Reset background worker crash state.
  *
  * We assume that, after a crash-and-restart cycle, background workers without
  * the never-restart flag should be restarted immediately, instead of waiting
- * for bgw_restart_time to elapse.
+ * for bgw_restart_time to elapse.  On the other hand, workers with that flag
+ * should be forgotten immediately, since we won't ever restart them.
+ *
+ * This function should only be called from the postmaster.
  */
 void
 ResetBackgroundWorkerCrashTimes(void)
@@ -523,7 +590,7 @@ ResetBackgroundWorkerCrashTimes(void)
 		if (rw->rw_worker.bgw_restart_time == BGW_NEVER_RESTART)
 		{
 			/*
-			 * Workers marked BGW_NVER_RESTART shouldn't get relaunched after
+			 * Workers marked BGW_NEVER_RESTART shouldn't get relaunched after
 			 * the crash, so forget about them.  (If we wait until after the
 			 * crash to forget about them, and they are parallel workers,
 			 * parallel_terminate_count will get incremented after we've
@@ -547,6 +614,11 @@ ResetBackgroundWorkerCrashTimes(void)
 			 * resetting.
 			 */
 			rw->rw_crashed_at = 0;
+
+			/*
+			 * If there was anyone waiting for it, they're history.
+			 */
+			rw->rw_worker.bgw_notify_pid = 0;
 		}
 	}
 }
@@ -630,34 +702,33 @@ SanityCheckBackgroundWorker(BackgroundWorker *worker, int elevel)
 		return false;
 	}
 
+	/*
+	 * If bgw_type is not filled in, use bgw_name.
+	 */
+	if (strcmp(worker->bgw_type, "") == 0)
+		strcpy(worker->bgw_type, worker->bgw_name);
+
 	return true;
 }
 
 static void
 bgworker_quickdie(SIGNAL_ARGS)
 {
-	sigaddset(&BlockSig, SIGQUIT);	/* prevent nested calls */
-	PG_SETMASK(&BlockSig);
-
 	/*
-	 * We DO NOT want to run proc_exit() callbacks -- we're here because
-	 * shared memory may be corrupted, so we don't want to try to clean up our
-	 * transaction.  Just nail the windows shut and get out of town.  Now that
-	 * there's an atexit callback to prevent third-party code from breaking
-	 * things by calling exit() directly, we have to reset the callbacks
-	 * explicitly to make this work as intended.
-	 */
-	on_exit_reset();
-
-	/*
-	 * Note we do exit(2) not exit(0).  This is to force the postmaster into a
-	 * system reset cycle if some idiot DBA sends a manual SIGQUIT to a random
+	 * We DO NOT want to run proc_exit() or atexit() callbacks -- we're here
+	 * because shared memory may be corrupted, so we don't want to try to
+	 * clean up our transaction.  Just nail the windows shut and get out of
+	 * town.  The callbacks wouldn't be safe to run from a signal handler,
+	 * anyway.
+	 *
+	 * Note we do _exit(2) not _exit(0).  This is to force the postmaster into
+	 * a system reset cycle if someone sends a manual SIGQUIT to a random
 	 * backend.  This is necessary precisely because we don't clean up our
 	 * shared memory state.  (The "dead man switch" mechanism in pmsignal.c
 	 * should ensure the postmaster sees this as a crash, too, but no harm in
 	 * being doubly sure.)
 	 */
-	exit(2);
+	_exit(2);
 }
 
 /*
@@ -671,7 +742,7 @@ bgworker_die(SIGNAL_ARGS)
 	ereport(FATAL,
 			(errcode(ERRCODE_ADMIN_SHUTDOWN),
 			 errmsg("terminating background worker \"%s\" due to administrator command",
-					MyBgworkerEntry->bgw_name)));
+					MyBgworkerEntry->bgw_type)));
 }
 
 /*
@@ -700,7 +771,6 @@ void
 StartBackgroundWorker(void)
 {
 	sigjmp_buf	local_sigjmp_buf;
-	char		buf[MAXPGPATH];
 	BackgroundWorker *worker = MyBgworkerEntry;
 	bgworker_main_type entrypt;
 
@@ -710,8 +780,7 @@ StartBackgroundWorker(void)
 	IsBackgroundWorker = true;
 
 	/* Identify myself via ps */
-	snprintf(buf, MAXPGPATH, "bgworker: %s", worker->bgw_name);
-	init_ps_display(buf, "", "", "");
+	init_ps_display(worker->bgw_name, "", "", "");
 
 	/*
 	 * If we're not supposed to have shared memory access, then detach from
@@ -765,7 +834,7 @@ StartBackgroundWorker(void)
 	/*
 	 * If an exception is encountered, processing resumes here.
 	 *
-	 * See notes in postgres.c about the design of this coding.
+	 * We just need to clean up, report the error, and go away.
 	 */
 	if (sigsetjmp(local_sigjmp_buf, 1) != 0)
 	{
@@ -775,7 +844,14 @@ StartBackgroundWorker(void)
 		/* Prevent interrupts while cleaning up */
 		HOLD_INTERRUPTS();
 
-		/* Report the error to the server log */
+		/*
+		 * sigsetjmp will have blocked all signals, but we may need to accept
+		 * signals while communicating with our parallel leader.  Once we've
+		 * done HOLD_INTERRUPTS() it should be safe to unblock signals.
+		 */
+		BackgroundWorkerUnblockSignals();
+
+		/* Report the error to the parallel leader and the server log */
 		EmitErrorReport();
 
 		/*
@@ -1092,6 +1168,9 @@ GetBackgroundWorkerPid(BackgroundWorkerHandle *handle, pid_t *pidp)
  * returned.  However, if the postmaster has died, we give up and return
  * BGWH_POSTMASTER_DIED, since it that case we know that startup will not
  * take place.
+ *
+ * The caller *must* have set our PID as the worker's bgw_notify_pid,
+ * else we will not be awoken promptly when the worker's state changes.
  */
 BgwHandleStatus
 WaitForBackgroundWorkerStartup(BackgroundWorkerHandle *handle, pid_t *pidp)
@@ -1134,6 +1213,9 @@ WaitForBackgroundWorkerStartup(BackgroundWorkerHandle *handle, pid_t *pidp)
  * and then return BGWH_STOPPED.  However, if the postmaster has died, we give
  * up and return BGWH_POSTMASTER_DIED, because it's the postmaster that
  * notifies us when a worker's state changes.
+ *
+ * The caller *must* have set our PID as the worker's bgw_notify_pid,
+ * else we will not be awoken promptly when the worker's state changes.
  */
 BgwHandleStatus
 WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle)
@@ -1239,4 +1321,41 @@ LookupBackgroundWorkerFunction(const char *libraryname, const char *funcname)
 	/* Otherwise load from external library. */
 	return (bgworker_main_type)
 		load_external_function(libraryname, funcname, true, NULL);
+}
+
+/*
+ * Given a PID, get the bgw_type of the background worker.  Returns NULL if
+ * not a valid background worker.
+ *
+ * The return value is in static memory belonging to this function, so it has
+ * to be used before calling this function again.  This is so that the caller
+ * doesn't have to worry about the background worker locking protocol.
+ */
+const char *
+GetBackgroundWorkerTypeByPid(pid_t pid)
+{
+	int			slotno;
+	bool		found = false;
+	static char result[BGW_MAXLEN];
+
+	LWLockAcquire(BackgroundWorkerLock, LW_SHARED);
+
+	for (slotno = 0; slotno < BackgroundWorkerData->total_slots; slotno++)
+	{
+		BackgroundWorkerSlot *slot = &BackgroundWorkerData->slot[slotno];
+
+		if (slot->pid > 0 && slot->pid == pid)
+		{
+			strcpy(result, slot->worker.bgw_type);
+			found = true;
+			break;
+		}
+	}
+
+	LWLockRelease(BackgroundWorkerLock);
+
+	if (!found)
+		return NULL;
+
+	return result;
 }

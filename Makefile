@@ -15,7 +15,7 @@
 # a single-target, empty rule to make the other targets non-default.
 all:
 
-all check install installdirs installcheck installcheck-parallel uninstall clean distclean maintainer-clean dist distcheck world check-world install-world installcheck-world:
+all check install installdirs installcheck installcheck-agens installcheck-parallel uninstall clean distclean maintainer-clean dist distcheck world check-world install-world installcheck-world:
 	@if [ ! -f GNUmakefile ] ; then \
 	   echo "You need to run the 'configure' program first. See the file"; \
 	   echo "'INSTALL' for installation instructions." ; \
@@ -33,7 +33,7 @@ all check install installdirs installcheck installcheck-parallel uninstall clean
 	\
 	 if [ x"$${GMAKE+set}" = xset ]; then \
 	   echo "Using GNU make found at $${GMAKE}"; \
-	   unset MAKEFLAGS; unset MAKELEVEL; \
+	   unset MAKELEVEL; \
 	   $${GMAKE} $@ ; \
 	 else \
 	   echo "You must use GNU make to build PostgreSQL." ; \

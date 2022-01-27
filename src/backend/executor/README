@@ -45,13 +45,21 @@ Plan Trees and State Trees
 
 The plan tree delivered by the planner contains a tree of Plan nodes (struct
 types derived from struct Plan).  During executor startup we build a parallel
-tree of identical structure containing executor state nodes --- every plan
-node type has a corresponding executor state node type.  Each node in the
-state tree has a pointer to its corresponding node in the plan tree, plus
-executor state data as needed to implement that node type.  This arrangement
-allows the plan tree to be completely read-only so far as the executor is
-concerned: all data that is modified during execution is in the state tree.
-Read-only plan trees make life much simpler for plan caching and reuse.
+tree of identical structure containing executor state nodes --- generally,
+every plan node type has a corresponding executor state node type.  Each node
+in the state tree has a pointer to its corresponding node in the plan tree,
+plus executor state data as needed to implement that node type.  This
+arrangement allows the plan tree to be completely read-only so far as the
+executor is concerned: all data that is modified during execution is in the
+state tree.  Read-only plan trees make life much simpler for plan caching and
+reuse.
+
+A corresponding executor state node may not be created during executor startup
+if the executor determines that an entire subplan is not required due to
+execution time partition pruning determining that no matching records will be
+found there.  This currently only occurs for Append and MergeAppend nodes.  In
+this case the non-required subplans are ignored and the executor state's
+subnode array will become out of sequence to the plan's subplan list.
 
 Each Plan node may have expression trees associated with it, to represent
 its target list, qualification conditions, etc.  These trees are also
@@ -116,7 +124,7 @@ For example, "a + b" (one OpExpr, with two Var expressions) would be
 represented as two steps to fetch the Var values, and one step for the
 evaluation of the function underlying the + operator.  The steps for the
 Vars would have their resvalue/resnull pointing directly to the appropriate
-arg[] and argnull[] array elements in the FunctionCallInfoData struct that
+args[].value .isnull elements in the FunctionCallInfoBaseData struct that
 is used by the function evaluation step, thus avoiding extra work to copy
 the result values around.
 
@@ -137,7 +145,7 @@ sub-expressions.
 Each ExecInitExprRec() call has to specify where that subexpression's
 results are to be stored (via the resv/resnull parameters).  This allows
 the above scenario of evaluating a (sub-)expression directly into
-fcinfo->arg/argnull, but also requires some care: target Datum/isnull
+fcinfo->args[].value/isnull, but also requires some care: target Datum/isnull
 variables may not be shared with another ExecInitExprRec() unless the
 results are only needed by steps executing before further usages of those
 target Datum/isnull variables.  Due to the non-recursiveness of the
@@ -150,7 +158,7 @@ not enough space.  Because of that it is *not* allowed to point directly
 into any of the steps during expression initialization.  Therefore, the
 resv/resnull for a subexpression usually point to some storage that is
 palloc'd separately from the steps array.  For instance, the
-FunctionCallInfoData for a function call step is separately allocated
+FunctionCallInfoBaseData for a function call step is separately allocated
 rather than being part of the ExprEvalStep array.  The overall result
 of a complete expression is typically returned into the resvalue/resnull
 fields of the ExprState node itself.
@@ -243,6 +251,8 @@ This is a sketch of control flow for full query processing:
 		switch to per-query context to run ExecInitNode
 		AfterTriggerBeginQuery
 		ExecInitNode --- recursively scans plan tree
+			ExecInitNode
+				recurse into subsidiary nodes
 			CreateExprContext
 				creates per-tuple context
 			ExecInitExpr

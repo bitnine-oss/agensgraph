@@ -3,7 +3,7 @@
  * nodeNestloop.c
  *	  routines to support nest-loop joins
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,7 +28,9 @@
 #include "miscadmin.h"
 #include "utils/memutils.h"
 #include "utils/snapmgr.h"
+#if PG_VERSION_NUM < 120000
 #include "utils/tqual.h"
+#endif
 
 
 typedef struct NestLoopContext
@@ -178,9 +180,9 @@ ExecNestLoop(PlanState *pstate)
 			innerPlan->state->es_snapshot->curcid = node->nl_graphwrite_cid;
 		}
 
+
 		innerTupleSlot = ExecProcNode(innerPlan);
 		econtext->ecxt_innertuple = innerTupleSlot;
-
 		if (svCid != InvalidCommandId)
 			innerPlan->state->es_snapshot->curcid = svCid;
 
@@ -313,15 +315,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &nlstate->js.ps);
 
 	/*
-	 * initialize child expressions
-	 */
-	nlstate->js.ps.qual =
-		ExecInitQual(node->join.plan.qual, (PlanState *) nlstate);
-	nlstate->js.jointype = node->join.jointype;
-	nlstate->js.joinqual =
-		ExecInitQual(node->join.joinqual, (PlanState *) nlstate);
-
-	/*
 	 * initialize child nodes
 	 *
 	 * If we have no parameters to pass into the inner rel from the outer,
@@ -356,9 +349,19 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		estate->es_snapshot->curcid = svCid;
 
 	/*
-	 * tuple table initialization
+	 * Initialize result slot, type and projection.
 	 */
-	ExecInitResultTupleSlot(estate, &nlstate->js.ps);
+	ExecInitResultTupleSlotTL(&nlstate->js.ps, &TTSOpsVirtual);
+	ExecAssignProjectionInfo(&nlstate->js.ps, NULL);
+
+	/*
+	 * initialize child expressions
+	 */
+	nlstate->js.ps.qual =
+		ExecInitQual(node->join.plan.qual, (PlanState *) nlstate);
+	nlstate->js.jointype = node->join.jointype;
+	nlstate->js.joinqual =
+		ExecInitQual(node->join.joinqual, (PlanState *) nlstate);
 
 	/*
 	 * detect whether we need only consider the first matching inner tuple
@@ -379,18 +382,13 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 		case JOIN_CYPHER_DELETE:
 			nlstate->nl_NullInnerTupleSlot =
 				ExecInitNullTupleSlot(estate,
-									  ExecGetResultType(innerPlanState(nlstate)));
+									  ExecGetResultType(innerPlanState(nlstate)),
+									  &TTSOpsVirtual);
 			break;
 		default:
 			elog(ERROR, "unrecognized join type: %d",
 				 (int) node->join.jointype);
 	}
-
-	/*
-	 * initialize tuple type and projection info
-	 */
-	ExecAssignResultTypeFromTL(&nlstate->js.ps);
-	ExecAssignProjectionInfo(&nlstate->js.ps, NULL);
 
 	dlist_init(&nlstate->ctxs_head);
 	nlstate->prev_ctx_node = &nlstate->ctxs_head.head;
@@ -510,7 +508,7 @@ ExecNextNestLoopContext(NestLoopState *node)
 	}
 
 	slot = econtext->ecxt_outertuple;
-	if (TTS_HAS_PHYSICAL_TUPLE(slot) && slot->tts_tuple == ctx->outer_tuple)
+	if (TTS_IS_HEAPTUPLE(slot) && ((HeapTupleTableSlot *)slot)->tuple == ctx->outer_tuple)
 	{
 		/*
 		 * If tts_tuple is the same with the stored one, remove it from the
@@ -519,9 +517,9 @@ ExecNextNestLoopContext(NestLoopState *node)
 		 *
 		 * This can happen when there is a matched result with the tuple.
 		 */
-		slot->tts_isempty = true;
-		slot->tts_tuple = NULL;
-		slot->tts_shouldFree = false;
+		slot->tts_nvalid = 0;
+		slot->tts_flags |= TTS_FLAG_EMPTY;
+		ItemPointerSetInvalid(&slot->tts_tid);
 	}
 	else
 	{
@@ -544,7 +542,7 @@ ExecNextNestLoopContext(NestLoopState *node)
 		 *    needs the right outer variables that are in the slot.
 		 * The tuple has to be stored in CurrentMemoryContext.
 		 */
-		ctx->outer_tuple = ExecCopySlotTuple(slot);
+		ctx->outer_tuple = ExecCopySlotHeapTuple(slot);
 	}
 	/*
 	 * We don't need to care about the inner plan and nl_NeedNewOuter because
@@ -604,8 +602,9 @@ ExecPrevNestLoopContext(NestLoopState *node)
 	 * Pass true to shouldFree here because the tuple must be freed when
 	 * ExecStoreTuple(), ExecClearTuple(), or ExecResetTupleTable() is called.
 	 */
-	ExecStoreTuple(ctx->outer_tuple, slot, InvalidBuffer, true);
-	/* restore outer variables */
+	ExecForceStoreHeapTuple(ctx->outer_tuple, slot, true);
+
+    	/* restore outer variables */
 	foreach(lc, nl->nestParams)
 	{
 		NestLoopParam *nlp = (NestLoopParam *) lfirst(lc);

@@ -14,7 +14,7 @@
 #include "parser/parse_node.h"
 
 /* GUC variable (enable/disable null properties) */
-extern bool allow_null_properties;
+extern PGDLLIMPORT bool allow_null_properties;
 
 extern Node *transformCypherExpr(ParseState *pstate, Node *expr,
 								 ParseExprKind exprKind);

@@ -15,7 +15,7 @@
  * there's hardly any use case for using these without superuser-rights
  * anyway.
  *
- * Copyright (c) 2007-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pageinspect/heapfuncs.c
@@ -28,12 +28,27 @@
 #include "pageinspect.h"
 
 #include "access/htup_details.h"
+#include "access/relation.h"
 #include "funcapi.h"
+#include "catalog/pg_am_d.h"
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
+
+/*
+ * It's not supported to create tuples with oids anymore, but when pg_upgrade
+ * was used to upgrade from an older version, tuples might still have an
+ * oid. Seems worthwhile to display that.
+ */
+#define HeapTupleHeaderGetOidOld(tup) \
+( \
+	((tup)->t_infomask & HEAP_HASOID_OLD) ? \
+	   *((Oid *) ((char *)(tup) + (tup)->t_hoff - sizeof(Oid))) \
+	: \
+		InvalidOid \
+)
 
 
 /*
@@ -241,8 +256,8 @@ heap_page_items(PG_FUNCTION_ARGS)
 				else
 					nulls[11] = true;
 
-				if (tuphdr->t_infomask & HEAP_HASOID)
-					values[12] = HeapTupleHeaderGetOid(tuphdr);
+				if (tuphdr->t_infomask & HEAP_HASOID_OLD)
+					values[12] = HeapTupleHeaderGetOidOld(tuphdr);
 				else
 					nulls[12] = true;
 			}
@@ -298,12 +313,15 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 	TupleDesc	tupdesc;
 
 	/* Get tuple descriptor from relation OID */
-	rel = relation_open(relid, NoLock);
-	tupdesc = CreateTupleDescCopyConstr(rel->rd_att);
-	relation_close(rel, NoLock);
+	rel = relation_open(relid, AccessShareLock);
+	tupdesc = RelationGetDescr(rel);
 
 	raw_attrs = initArrayResult(BYTEAOID, CurrentMemoryContext, false);
 	nattrs = tupdesc->natts;
+
+	if (rel->rd_rel->relam != HEAP_TABLE_AM_OID)
+		ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						errmsg("only heap AM is supported")));
 
 	if (nattrs < (t_infomask2 & HEAP_NATTS_MASK))
 		ereport(ERROR,
@@ -316,8 +334,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 		bool		is_null;
 		bytea	   *attr_data = NULL;
 
-		attr = tupdesc->attrs[i];
-		is_null = (t_infomask & HEAP_HASNULL) && att_isnull(i, t_bits);
+		attr = TupleDescAttr(tupdesc, i);
 
 		/*
 		 * Tuple header can specify less attributes than tuple descriptor as
@@ -327,6 +344,8 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 		 */
 		if (i >= (t_infomask2 & HEAP_NATTS_MASK))
 			is_null = true;
+		else
+			is_null = (t_infomask & HEAP_HASNULL) && att_isnull(i, t_bits);
 
 		if (!is_null)
 		{
@@ -334,7 +353,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 
 			if (attr->attlen == -1)
 			{
-				off = att_align_pointer(off, tupdesc->attrs[i]->attalign, -1,
+				off = att_align_pointer(off, attr->attalign, -1,
 										tupdata + off);
 
 				/*
@@ -353,7 +372,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 			}
 			else
 			{
-				off = att_align_nominal(off, tupdesc->attrs[i]->attalign);
+				off = att_align_nominal(off, attr->attalign);
 				len = attr->attlen;
 			}
 
@@ -371,7 +390,7 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 				memcpy(VARDATA(attr_data), tupdata + off, len);
 			}
 
-			off = att_addlength_pointer(off, tupdesc->attrs[i]->attlen,
+			off = att_addlength_pointer(off, attr->attlen,
 										tupdata + off);
 		}
 
@@ -385,6 +404,8 @@ tuple_data_split_internal(Oid relid, char *tupdata,
 		ereport(ERROR,
 				(errcode(ERRCODE_DATA_CORRUPTED),
 				 errmsg("end of tuple reached without looking at all its data")));
+
+	relation_close(rel, AccessShareLock);
 
 	return makeArrayResult(raw_attrs, CurrentMemoryContext);
 }

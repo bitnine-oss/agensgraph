@@ -3,7 +3,7 @@
  * testlo64.c
  *	  test using large objects with libpq using 64-bit APIs
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -256,10 +256,10 @@ main(int argc, char **argv)
 		exit_nicely(conn);
 	}
 
-	/* Set always-secure search path, so malicous users can't take control. */
+	/* Set always-secure search path, so malicious users can't take control. */
 	res = PQexec(conn,
 				 "SELECT pg_catalog.set_config('search_path', '', false)");
-	if (PQresultStatus(res) != PGRES_COMMAND_OK)
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
 		fprintf(stderr, "SET failed: %s", PQerrorMessage(conn));
 		PQclear(res);

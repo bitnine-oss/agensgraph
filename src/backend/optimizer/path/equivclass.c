@@ -6,7 +6,7 @@
  * See src/backend/optimizer/README for discussion of EquivalenceClasses.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -22,47 +22,52 @@
 #include "catalog/pg_type.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "optimizer/appendinfo.h"
 #include "optimizer/clauses.h"
+#include "optimizer/optimizer.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "optimizer/planmain.h"
-#include "optimizer/prep.h"
-#include "optimizer/var.h"
+#include "optimizer/restrictinfo.h"
 #include "utils/lsyscache.h"
 
 
+/* source-code-compatibility hacks for pull_varnos() API change */
+#define pull_varnos(a,b) pull_varnos_new(a,b)
+#define make_restrictinfo(a,b,c,d,e,f,g,h,i) make_restrictinfo_new(a,b,c,d,e,f,g,h,i)
+
 static EquivalenceMember *add_eq_member(EquivalenceClass *ec,
-			  Expr *expr, Relids relids, Relids nullable_relids,
-			  bool is_child, Oid datatype);
+										Expr *expr, Relids relids, Relids nullable_relids,
+										bool is_child, Oid datatype);
 static void generate_base_implied_equalities_const(PlannerInfo *root,
-									   EquivalenceClass *ec);
+												   EquivalenceClass *ec);
 static void generate_base_implied_equalities_no_const(PlannerInfo *root,
-										  EquivalenceClass *ec);
+													  EquivalenceClass *ec);
 static void generate_base_implied_equalities_broken(PlannerInfo *root,
-										EquivalenceClass *ec);
+													EquivalenceClass *ec);
 static List *generate_join_implied_equalities_normal(PlannerInfo *root,
-										EquivalenceClass *ec,
-										Relids join_relids,
-										Relids outer_relids,
-										Relids inner_relids);
+													 EquivalenceClass *ec,
+													 Relids join_relids,
+													 Relids outer_relids,
+													 Relids inner_relids);
 static List *generate_join_implied_equalities_broken(PlannerInfo *root,
-										EquivalenceClass *ec,
-										Relids nominal_join_relids,
-										Relids outer_relids,
-										Relids nominal_inner_relids,
-										RelOptInfo *inner_rel);
-static Oid select_equality_operator(EquivalenceClass *ec,
-						 Oid lefttype, Oid righttype);
+													 EquivalenceClass *ec,
+													 Relids nominal_join_relids,
+													 Relids outer_relids,
+													 Relids nominal_inner_relids,
+													 RelOptInfo *inner_rel);
+static Oid	select_equality_operator(EquivalenceClass *ec,
+									 Oid lefttype, Oid righttype);
 static RestrictInfo *create_join_clause(PlannerInfo *root,
-				   EquivalenceClass *ec, Oid opno,
-				   EquivalenceMember *leftem,
-				   EquivalenceMember *rightem,
-				   EquivalenceClass *parent_ec);
+										EquivalenceClass *ec, Oid opno,
+										EquivalenceMember *leftem,
+										EquivalenceMember *rightem,
+										EquivalenceClass *parent_ec);
 static bool reconsider_outer_join_clause(PlannerInfo *root,
-							 RestrictInfo *rinfo,
-							 bool outer_on_left);
+										 RestrictInfo *rinfo,
+										 bool outer_on_left);
 static bool reconsider_full_join_clause(PlannerInfo *root,
-							RestrictInfo *rinfo);
+										RestrictInfo *rinfo);
 
 
 /*
@@ -71,8 +76,14 @@ static bool reconsider_full_join_clause(PlannerInfo *root,
  *	  any delay by an outer join, so its two sides can be considered equal
  *	  anywhere they are both computable; moreover that equality can be
  *	  extended transitively.  Record this knowledge in the EquivalenceClass
- *	  data structure.  Returns TRUE if successful, FALSE if not (in which
- *	  case caller should treat the clause as ordinary, not an equivalence).
+ *	  data structure, if applicable.  Returns true if successful, false if not
+ *	  (in which case caller should treat the clause as ordinary, not an
+ *	  equivalence).
+ *
+ * In some cases, although we cannot convert a clause into EquivalenceClass
+ * knowledge, we can still modify it to a more useful form than the original.
+ * Then, *p_restrictinfo will be replaced by a new RestrictInfo, which is what
+ * the caller should use for further processing.
  *
  * If below_outer_join is true, then the clause was found below the nullable
  * side of an outer join, so its sides might validly be both NULL rather than
@@ -104,9 +115,11 @@ static bool reconsider_full_join_clause(PlannerInfo *root,
  * memory context.
  */
 bool
-process_equivalence(PlannerInfo *root, RestrictInfo *restrictinfo,
+process_equivalence(PlannerInfo *root,
+					RestrictInfo **p_restrictinfo,
 					bool below_outer_join)
 {
+	RestrictInfo *restrictinfo = *p_restrictinfo;
 	Expr	   *clause = restrictinfo->clause;
 	Oid			opno,
 				collation,
@@ -154,16 +167,46 @@ process_equivalence(PlannerInfo *root, RestrictInfo *restrictinfo,
 									   collation);
 
 	/*
-	 * Reject clauses of the form X=X.  These are not as redundant as they
-	 * might seem at first glance: assuming the operator is strict, this is
-	 * really an expensive way to write X IS NOT NULL.  So we must not risk
-	 * just losing the clause, which would be possible if there is already a
-	 * single-element EquivalenceClass containing X.  The case is not common
-	 * enough to be worth contorting the EC machinery for, so just reject the
-	 * clause and let it be processed as a normal restriction clause.
+	 * Clauses of the form X=X cannot be translated into EquivalenceClasses.
+	 * We'd either end up with a single-entry EC, losing the knowledge that
+	 * the clause was present at all, or else make an EC with duplicate
+	 * entries, causing other issues.
 	 */
 	if (equal(item1, item2))
-		return false;			/* X=X is not a useful equivalence */
+	{
+		/*
+		 * If the operator is strict, then the clause can be treated as just
+		 * "X IS NOT NULL".  (Since we know we are considering a top-level
+		 * qual, we can ignore the difference between FALSE and NULL results.)
+		 * It's worth making the conversion because we'll typically get a much
+		 * better selectivity estimate than we would for X=X.
+		 *
+		 * If the operator is not strict, we can't be sure what it will do
+		 * with NULLs, so don't attempt to optimize it.
+		 */
+		set_opfuncid((OpExpr *) clause);
+		if (func_strict(((OpExpr *) clause)->opfuncid))
+		{
+			NullTest   *ntest = makeNode(NullTest);
+
+			ntest->arg = item1;
+			ntest->nulltesttype = IS_NOT_NULL;
+			ntest->argisrow = false;	/* correct even if composite arg */
+			ntest->location = -1;
+
+			*p_restrictinfo =
+				make_restrictinfo(root,
+								  (Expr *) ntest,
+								  restrictinfo->is_pushed_down,
+								  restrictinfo->outerjoin_delayed,
+								  restrictinfo->pseudoconstant,
+								  restrictinfo->security_level,
+								  NULL,
+								  restrictinfo->outer_relids,
+								  restrictinfo->nullable_relids);
+		}
+		return false;
+	}
 
 	/*
 	 * If below outer join, check for strictness, else reject.
@@ -447,10 +490,6 @@ process_equivalence(PlannerInfo *root, RestrictInfo *restrictinfo,
  * work to not label the collation at all in EC members, but this is risky
  * since some parts of the system expect exprCollation() to deliver the
  * right answer for a sort key.)
- *
- * Note this code assumes that the expression has already been through
- * eval_const_expressions, so there are no CollateExprs and no redundant
- * RelabelTypes.
  */
 Expr *
 canonicalize_ec_expression(Expr *expr, Oid req_type, Oid req_collation)
@@ -459,8 +498,9 @@ canonicalize_ec_expression(Expr *expr, Oid req_type, Oid req_collation)
 
 	/*
 	 * For a polymorphic-input-type opclass, just keep the same exposed type.
+	 * RECORD opclasses work like polymorphic-type ones for this purpose.
 	 */
-	if (IsPolymorphicType(req_type))
+	if (IsPolymorphicType(req_type) || req_type == RECORDOID)
 		req_type = expr_type;
 
 	/*
@@ -470,29 +510,24 @@ canonicalize_ec_expression(Expr *expr, Oid req_type, Oid req_collation)
 		exprCollation((Node *) expr) != req_collation)
 	{
 		/*
-		 * Strip any existing RelabelType, then add a new one if needed. This
-		 * is to preserve the invariant of no redundant RelabelTypes.
-		 *
-		 * If we have to change the exposed type of the stripped expression,
-		 * set typmod to -1 (since the new type may not have the same typmod
-		 * interpretation).  If we only have to change collation, preserve the
-		 * exposed typmod.
+		 * If we have to change the type of the expression, set typmod to -1,
+		 * since the new type may not have the same typmod interpretation.
+		 * When we only have to change collation, preserve the exposed typmod.
 		 */
-		while (expr && IsA(expr, RelabelType))
-			expr = (Expr *) ((RelabelType *) expr)->arg;
+		int32		req_typmod;
 
-		if (exprType((Node *) expr) != req_type)
-			expr = (Expr *) makeRelabelType(expr,
-											req_type,
-											-1,
-											req_collation,
-											COERCE_IMPLICIT_CAST);
-		else if (exprCollation((Node *) expr) != req_collation)
-			expr = (Expr *) makeRelabelType(expr,
-											req_type,
-											exprTypmod((Node *) expr),
-											req_collation,
-											COERCE_IMPLICIT_CAST);
+		if (expr_type != req_type)
+			req_typmod = -1;
+		else
+			req_typmod = exprTypmod((Node *) expr);
+
+		/*
+		 * Use applyRelabelType so that we preserve const-flatness.  This is
+		 * important since eval_const_expressions has already been applied.
+		 */
+		expr = (Expr *) applyRelabelType((Node *) expr,
+										 req_type, req_typmod, req_collation,
+										 COERCE_IMPLICIT_CAST, -1, false);
 	}
 
 	return expr;
@@ -564,8 +599,8 @@ add_eq_member(EquivalenceClass *ec, Expr *expr, Relids relids,
  * so for now we live with just reporting the first match.  See also
  * generate_implied_equalities_for_column and match_pathkeys_to_index.)
  *
- * If create_it is TRUE, we'll build a new EquivalenceClass when there is no
- * match.  If create_it is FALSE, we just return NULL when no match.
+ * If create_it is true, we'll build a new EquivalenceClass when there is no
+ * match.  If create_it is false, we just return NULL when no match.
  *
  * This can be used safely both before and after EquivalenceClass merging;
  * since it never causes merging it does not invalidate any existing ECs
@@ -598,12 +633,6 @@ get_eclass_for_sort_expr(PlannerInfo *root,
 	 * Ensure the expression exposes the correct type and collation.
 	 */
 	expr = canonicalize_ec_expression(expr, opcintype, collation);
-
-	/*
-	 * Get the precise set of nullable relids appearing in the expression.
-	 */
-	expr_relids = pull_varnos((Node *) expr);
-	nullable_relids = bms_intersect(nullable_relids, expr_relids);
 
 	/*
 	 * Scan through the existing EquivalenceClasses for a match
@@ -680,6 +709,12 @@ get_eclass_for_sort_expr(PlannerInfo *root,
 
 	if (newec->ec_has_volatile && sortref == 0) /* should not happen */
 		elog(ERROR, "volatile EquivalenceClass has no sortref");
+
+	/*
+	 * Get the precise set of nullable relids appearing in the expression.
+	 */
+	expr_relids = pull_varnos(root, (Node *) expr);
+	nullable_relids = bms_intersect(nullable_relids, expr_relids);
 
 	newem = add_eq_member(newec, copyObject(expr), expr_relids,
 						  nullable_relids, false, opcintype);
@@ -890,11 +925,10 @@ generate_base_implied_equalities_no_const(PlannerInfo *root,
 	/*
 	 * We scan the EC members once and track the last-seen member for each
 	 * base relation.  When we see another member of the same base relation,
-	 * we generate "prev_mem = cur_mem".  This results in the minimum number
-	 * of derived clauses, but it's possible that it will fail when a
-	 * different ordering would succeed.  XXX FIXME: use a UNION-FIND
-	 * algorithm similar to the way we build merged ECs.  (Use a list-of-lists
-	 * for each rel.)
+	 * we generate "prev_em = cur_em".  This results in the minimum number of
+	 * derived clauses, but it's possible that it will fail when a different
+	 * ordering would succeed.  XXX FIXME: use a UNION-FIND algorithm similar
+	 * to the way we build merged ECs.  (Use a list-of-lists for each rel.)
 	 */
 	prev_ems = (EquivalenceMember **)
 		palloc0(root->simple_rel_array_size * sizeof(EquivalenceMember *));
@@ -1329,7 +1363,8 @@ generate_join_implied_equalities_broken(PlannerInfo *root,
 	if (IS_OTHER_REL(inner_rel) && result != NIL)
 		result = (List *) adjust_appendrel_attrs_multilevel(root,
 															(Node *) result,
-															inner_rel);
+															inner_rel->relids,
+															inner_rel->top_parent_relids);
 
 	return result;
 }
@@ -1419,7 +1454,8 @@ create_join_clause(PlannerInfo *root,
 	 */
 	oldcontext = MemoryContextSwitchTo(root->planner_cxt);
 
-	rinfo = build_implied_join_equality(opno,
+	rinfo = build_implied_join_equality(root,
+										opno,
 										ec->ec_collation,
 										leftem->em_expr,
 										rightem->em_expr,
@@ -1636,7 +1672,7 @@ reconsider_outer_join_clauses(PlannerInfo *root)
 /*
  * reconsider_outer_join_clauses for a single LEFT/RIGHT JOIN clause
  *
- * Returns TRUE if we were able to propagate a constant through the clause.
+ * Returns true if we were able to propagate a constant through the clause.
  */
 static bool
 reconsider_outer_join_clause(PlannerInfo *root, RestrictInfo *rinfo,
@@ -1733,14 +1769,15 @@ reconsider_outer_join_clause(PlannerInfo *root, RestrictInfo *rinfo,
 											 cur_em->em_datatype);
 			if (!OidIsValid(eq_op))
 				continue;		/* can't generate equality */
-			newrinfo = build_implied_join_equality(eq_op,
+			newrinfo = build_implied_join_equality(root,
+												   eq_op,
 												   cur_ec->ec_collation,
 												   innervar,
 												   cur_em->em_expr,
 												   bms_copy(inner_relids),
 												   bms_copy(inner_nullable_relids),
 												   cur_ec->ec_min_security);
-			if (process_equivalence(root, newrinfo, true))
+			if (process_equivalence(root, &newrinfo, true))
 				match = true;
 		}
 
@@ -1761,7 +1798,7 @@ reconsider_outer_join_clause(PlannerInfo *root, RestrictInfo *rinfo,
 /*
  * reconsider_outer_join_clauses for a single FULL JOIN clause
  *
- * Returns TRUE if we were able to propagate a constant through the clause.
+ * Returns true if we were able to propagate a constant through the clause.
  */
 static bool
 reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
@@ -1876,14 +1913,15 @@ reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
 											 cur_em->em_datatype);
 			if (OidIsValid(eq_op))
 			{
-				newrinfo = build_implied_join_equality(eq_op,
+				newrinfo = build_implied_join_equality(root,
+													   eq_op,
 													   cur_ec->ec_collation,
 													   leftvar,
 													   cur_em->em_expr,
 													   bms_copy(left_relids),
 													   bms_copy(left_nullable_relids),
 													   cur_ec->ec_min_security);
-				if (process_equivalence(root, newrinfo, true))
+				if (process_equivalence(root, &newrinfo, true))
 					matchleft = true;
 			}
 			eq_op = select_equality_operator(cur_ec,
@@ -1891,14 +1929,15 @@ reconsider_full_join_clause(PlannerInfo *root, RestrictInfo *rinfo)
 											 cur_em->em_datatype);
 			if (OidIsValid(eq_op))
 			{
-				newrinfo = build_implied_join_equality(eq_op,
+				newrinfo = build_implied_join_equality(root,
+													   eq_op,
 													   cur_ec->ec_collation,
 													   rightvar,
 													   cur_em->em_expr,
 													   bms_copy(right_relids),
 													   bms_copy(right_nullable_relids),
 													   cur_ec->ec_min_security);
-				if (process_equivalence(root, newrinfo, true))
+				if (process_equivalence(root, &newrinfo, true))
 					matchright = true;
 			}
 		}
@@ -2012,6 +2051,14 @@ match_eclasses_to_foreign_key_col(PlannerInfo *root,
 			continue;
 		/* Note: it seems okay to match to "broken" eclasses here */
 
+		/*
+		 * If eclass visibly doesn't have members for both rels, there's no
+		 * need to grovel through the members.
+		 */
+		if (!bms_is_member(var1varno, ec->ec_relids) ||
+			!bms_is_member(var2varno, ec->ec_relids))
+			continue;
+
 		foreach(lc2, ec->ec_members)
 		{
 			EquivalenceMember *em = (EquivalenceMember *) lfirst(lc2);
@@ -2056,7 +2103,7 @@ match_eclasses_to_foreign_key_col(PlannerInfo *root,
 
 /*
  * add_child_rel_equivalences
- *	  Search for EC members that reference the parent_rel, and
+ *	  Search for EC members that reference the root parent of child_rel, and
  *	  add transformed members referencing the child_rel.
  *
  * Note that this function won't be called at all unless we have at least some
@@ -2064,6 +2111,12 @@ match_eclasses_to_foreign_key_col(PlannerInfo *root,
  *
  * parent_rel and child_rel could be derived from appinfo, but since the
  * caller has already computed them, we might as well just pass them in.
+ *
+ * The passed-in AppendRelInfo is not used when the parent_rel is not a
+ * top-level baserel, since it shows the mapping from the parent_rel but
+ * we need to translate EC expressions that refer to the top-level parent.
+ * Using it is faster than using adjust_appendrel_attrs_multilevel(), though,
+ * so we prefer it when we can.
  */
 void
 add_child_rel_equivalences(PlannerInfo *root,
@@ -2071,7 +2124,11 @@ add_child_rel_equivalences(PlannerInfo *root,
 						   RelOptInfo *parent_rel,
 						   RelOptInfo *child_rel)
 {
+	Relids		top_parent_relids = child_rel->top_parent_relids;
+	Relids		child_relids = child_rel->relids;
 	ListCell   *lc1;
+
+	Assert(IS_SIMPLE_REL(parent_rel));
 
 	foreach(lc1, root->eq_classes)
 	{
@@ -2087,11 +2144,10 @@ add_child_rel_equivalences(PlannerInfo *root,
 			continue;
 
 		/*
-		 * No point in searching if parent rel not mentioned in eclass; but we
-		 * can't tell that for sure if parent rel is itself a child.
+		 * No point in searching if child's topmost parent rel is not
+		 * mentioned in eclass.
 		 */
-		if (parent_rel->reloptkind == RELOPT_BASEREL &&
-			!bms_is_subset(parent_rel->relids, cur_ec->ec_relids))
+		if (!bms_is_subset(top_parent_relids, cur_ec->ec_relids))
 			continue;
 
 		foreach(lc2, cur_ec->ec_members)
@@ -2101,18 +2157,42 @@ add_child_rel_equivalences(PlannerInfo *root,
 			if (cur_em->em_is_const)
 				continue;		/* ignore consts here */
 
-			/* Does it reference parent_rel? */
-			if (bms_overlap(cur_em->em_relids, parent_rel->relids))
+			/*
+			 * We consider only original EC members here, not
+			 * already-transformed child members.  Otherwise, if some original
+			 * member expression references more than one appendrel, we'd get
+			 * an O(N^2) explosion of useless derived expressions for
+			 * combinations of children.  (But add_child_join_rel_equivalences
+			 * may add targeted combinations for partitionwise-join purposes.)
+			 */
+			if (cur_em->em_is_child)
+				continue;		/* ignore children here */
+
+			/* Does this member reference child's topmost parent rel? */
+			if (bms_overlap(cur_em->em_relids, top_parent_relids))
 			{
 				/* Yes, generate transformed child version */
 				Expr	   *child_expr;
 				Relids		new_relids;
 				Relids		new_nullable_relids;
 
-				child_expr = (Expr *)
-					adjust_appendrel_attrs(root,
-										   (Node *) cur_em->em_expr,
-										   appinfo);
+				if (parent_rel->reloptkind == RELOPT_BASEREL)
+				{
+					/* Simple single-level transformation */
+					child_expr = (Expr *)
+						adjust_appendrel_attrs(root,
+											   (Node *) cur_em->em_expr,
+											   1, &appinfo);
+				}
+				else
+				{
+					/* Must do multi-level transformation */
+					child_expr = (Expr *)
+						adjust_appendrel_attrs_multilevel(root,
+														  (Node *) cur_em->em_expr,
+														  child_relids,
+														  top_parent_relids);
+				}
 
 				/*
 				 * Transform em_relids to match.  Note we do *not* do
@@ -2121,20 +2201,20 @@ add_child_rel_equivalences(PlannerInfo *root,
 				 * don't want the child member to be marked as constant.
 				 */
 				new_relids = bms_difference(cur_em->em_relids,
-											parent_rel->relids);
-				new_relids = bms_add_members(new_relids, child_rel->relids);
+											top_parent_relids);
+				new_relids = bms_add_members(new_relids, child_relids);
 
 				/*
 				 * And likewise for nullable_relids.  Note this code assumes
 				 * parent and child relids are singletons.
 				 */
 				new_nullable_relids = cur_em->em_nullable_relids;
-				if (bms_overlap(new_nullable_relids, parent_rel->relids))
+				if (bms_overlap(new_nullable_relids, top_parent_relids))
 				{
 					new_nullable_relids = bms_difference(new_nullable_relids,
-														 parent_rel->relids);
+														 top_parent_relids);
 					new_nullable_relids = bms_add_members(new_nullable_relids,
-														  child_rel->relids);
+														  child_relids);
 				}
 
 				(void) add_eq_member(cur_ec, child_expr,
@@ -2143,6 +2223,139 @@ add_child_rel_equivalences(PlannerInfo *root,
 			}
 		}
 	}
+}
+
+/*
+ * add_child_join_rel_equivalences
+ *	  Like add_child_rel_equivalences(), but for joinrels
+ *
+ * Here we find the ECs relevant to the top parent joinrel and add transformed
+ * member expressions that refer to this child joinrel.
+ *
+ * Note that this function won't be called at all unless we have at least some
+ * reason to believe that the EC members it generates will be useful.
+ */
+void
+add_child_join_rel_equivalences(PlannerInfo *root,
+								int nappinfos, AppendRelInfo **appinfos,
+								RelOptInfo *parent_joinrel,
+								RelOptInfo *child_joinrel)
+{
+	Relids		top_parent_relids = child_joinrel->top_parent_relids;
+	Relids		child_relids = child_joinrel->relids;
+	MemoryContext oldcontext;
+	ListCell   *lc1;
+
+	Assert(IS_JOIN_REL(child_joinrel) && IS_JOIN_REL(parent_joinrel));
+
+	/*
+	 * If we're being called during GEQO join planning, we still have to
+	 * create any new EC members in the main planner context, to avoid having
+	 * a corrupt EC data structure after the GEQO context is reset.  This is
+	 * problematic since we'll leak memory across repeated GEQO cycles.  For
+	 * now, though, bloat is better than crash.  If it becomes a real issue
+	 * we'll have to do something to avoid generating duplicate EC members.
+	 */
+	oldcontext = MemoryContextSwitchTo(root->planner_cxt);
+
+	foreach(lc1, root->eq_classes)
+	{
+		EquivalenceClass *cur_ec = (EquivalenceClass *) lfirst(lc1);
+		ListCell   *lc2;
+
+		/*
+		 * If this EC contains a volatile expression, then generating child
+		 * EMs would be downright dangerous, so skip it.  We rely on a
+		 * volatile EC having only one EM.
+		 */
+		if (cur_ec->ec_has_volatile)
+			continue;
+
+		/*
+		 * No point in searching if child's topmost parent rel is not
+		 * mentioned in eclass.
+		 */
+		if (!bms_overlap(top_parent_relids, cur_ec->ec_relids))
+			continue;
+
+		foreach(lc2, cur_ec->ec_members)
+		{
+			EquivalenceMember *cur_em = (EquivalenceMember *) lfirst(lc2);
+
+			if (cur_em->em_is_const)
+				continue;		/* ignore consts here */
+
+			/*
+			 * We consider only original EC members here, not
+			 * already-transformed child members.
+			 */
+			if (cur_em->em_is_child)
+				continue;		/* ignore children here */
+
+			/*
+			 * We may ignore expressions that reference a single baserel,
+			 * because add_child_rel_equivalences should have handled them.
+			 */
+			if (bms_membership(cur_em->em_relids) != BMS_MULTIPLE)
+				continue;
+
+			/* Does this member reference child's topmost parent rel? */
+			if (bms_overlap(cur_em->em_relids, top_parent_relids))
+			{
+				/* Yes, generate transformed child version */
+				Expr	   *child_expr;
+				Relids		new_relids;
+				Relids		new_nullable_relids;
+
+				if (parent_joinrel->reloptkind == RELOPT_JOINREL)
+				{
+					/* Simple single-level transformation */
+					child_expr = (Expr *)
+						adjust_appendrel_attrs(root,
+											   (Node *) cur_em->em_expr,
+											   nappinfos, appinfos);
+				}
+				else
+				{
+					/* Must do multi-level transformation */
+					Assert(parent_joinrel->reloptkind == RELOPT_OTHER_JOINREL);
+					child_expr = (Expr *)
+						adjust_appendrel_attrs_multilevel(root,
+														  (Node *) cur_em->em_expr,
+														  child_relids,
+														  top_parent_relids);
+				}
+
+				/*
+				 * Transform em_relids to match.  Note we do *not* do
+				 * pull_varnos(child_expr) here, as for example the
+				 * transformation might have substituted a constant, but we
+				 * don't want the child member to be marked as constant.
+				 */
+				new_relids = bms_difference(cur_em->em_relids,
+											top_parent_relids);
+				new_relids = bms_add_members(new_relids, child_relids);
+
+				/*
+				 * For nullable_relids, we must selectively replace parent
+				 * nullable relids with child ones.
+				 */
+				new_nullable_relids = cur_em->em_nullable_relids;
+				if (bms_overlap(new_nullable_relids, top_parent_relids))
+					new_nullable_relids =
+						adjust_child_relids_multilevel(root,
+													   new_nullable_relids,
+													   child_relids,
+													   top_parent_relids);
+
+				(void) add_eq_member(cur_ec, child_expr,
+									 new_relids, new_nullable_relids,
+									 true, cur_em->em_datatype);
+			}
+		}
+	}
+
+	MemoryContextSwitchTo(oldcontext);
 }
 
 
@@ -2467,6 +2680,43 @@ is_redundant_derived_clause(RestrictInfo *rinfo, List *clauselist)
 
 		if (otherrinfo->parent_ec == parent_ec)
 			return true;
+	}
+
+	return false;
+}
+
+/*
+ * is_redundant_with_indexclauses
+ *		Test whether rinfo is redundant with any clause in the IndexClause
+ *		list.  Here, for convenience, we test both simple identity and
+ *		whether it is derived from the same EC as any member of the list.
+ */
+bool
+is_redundant_with_indexclauses(RestrictInfo *rinfo, List *indexclauses)
+{
+	EquivalenceClass *parent_ec = rinfo->parent_ec;
+	ListCell   *lc;
+
+	foreach(lc, indexclauses)
+	{
+		IndexClause *iclause = lfirst_node(IndexClause, lc);
+		RestrictInfo *otherrinfo = iclause->rinfo;
+
+		/* If indexclause is lossy, it won't enforce the condition exactly */
+		if (iclause->lossy)
+			continue;
+
+		/* Match if it's same clause (pointer equality should be enough) */
+		if (rinfo == otherrinfo)
+			return true;
+		/* Match if derived from same EC */
+		if (parent_ec && otherrinfo->parent_ec == parent_ec)
+			return true;
+
+		/*
+		 * No need to look at the derived clauses in iclause->indexquals; they
+		 * couldn't match if the parent clause didn't.
+		 */
 	}
 
 	return false;

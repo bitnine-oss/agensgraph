@@ -6,7 +6,7 @@
  *	  changes should be made with care.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/gist.h
@@ -16,6 +16,7 @@
 #ifndef GIST_H
 #define GIST_H
 
+#include "access/transam.h"
 #include "access/xlog.h"
 #include "access/xlogdefs.h"
 #include "storage/block.h"
@@ -48,6 +49,13 @@
 										 * but not deleted yet */
 
 typedef XLogRecPtr GistNSN;
+
+/*
+ * A bogus LSN / NSN value used during index build. Must be smaller than any
+ * real or fake unlogged LSN, so that after an index build finishes, all the
+ * splits are considered completed.
+ */
+#define GistBuildLSN	((XLogRecPtr) 1)
 
 /*
  * For on-disk compatibility with pre-9.3 servers, NSN is stored as two
@@ -133,8 +141,6 @@ typedef struct GISTENTRY
 #define GIST_LEAF(entry) (GistPageIsLeaf((entry)->page))
 
 #define GistPageIsDeleted(page) ( GistPageGetOpaque(page)->flags & F_DELETED)
-#define GistPageSetDeleted(page)	( GistPageGetOpaque(page)->flags |= F_DELETED)
-#define GistPageSetNonDeleted(page) ( GistPageGetOpaque(page)->flags &= ~F_DELETED)
 
 #define GistTuplesDeleted(page) ( GistPageGetOpaque(page)->flags & F_TUPLES_DELETED)
 #define GistMarkTuplesDeleted(page) ( GistPageGetOpaque(page)->flags |= F_TUPLES_DELETED)
@@ -150,6 +156,46 @@ typedef struct GISTENTRY
 
 #define GistPageGetNSN(page) ( PageXLogRecPtrGet(GistPageGetOpaque(page)->nsn))
 #define GistPageSetNSN(page, val) ( PageXLogRecPtrSet(GistPageGetOpaque(page)->nsn, val))
+
+
+/*
+ * On a deleted page, we store this struct. A deleted page doesn't contain any
+ * tuples, so we don't use the normal page layout with line pointers. Instead,
+ * this struct is stored right after the standard page header. pd_lower points
+ * to the end of this struct. If we add fields to this struct in the future, we
+ * can distinguish the old and new formats by pd_lower.
+ */
+typedef struct GISTDeletedPageContents
+{
+	/* last xid which could see the page in a scan */
+	FullTransactionId deleteXid;
+} GISTDeletedPageContents;
+
+static inline void
+GistPageSetDeleted(Page page, FullTransactionId deletexid)
+{
+	Assert(PageIsEmpty(page));
+
+	GistPageGetOpaque(page)->flags |= F_DELETED;
+	((PageHeader) page)->pd_lower = MAXALIGN(SizeOfPageHeaderData) + sizeof(GISTDeletedPageContents);
+
+	((GISTDeletedPageContents *) PageGetContents(page))->deleteXid = deletexid;
+}
+
+static inline FullTransactionId
+GistPageGetDeleteXid(Page page)
+{
+	Assert(GistPageIsDeleted(page));
+
+	/* Is the deleteXid field present? */
+	if (((PageHeader) page)->pd_lower >= MAXALIGN(SizeOfPageHeaderData) +
+		offsetof(GISTDeletedPageContents, deleteXid) + sizeof(FullTransactionId))
+	{
+		return ((GISTDeletedPageContents *) PageGetContents(page))->deleteXid;
+	}
+	else
+		return FullTransactionIdFromEpochAndXid(0, FirstNormalTransactionId);
+}
 
 /*
  * Vector of GISTENTRY structs; user-defined methods union and picksplit

@@ -14,11 +14,15 @@ include $(top_builddir)/src/Makefile.global
 
 # be-fsstubs is here for historical reasons, probably belongs elsewhere
 
-OBJS = be-fsstubs.o be-secure.o auth.o crypt.o hba.o ifaddr.o pqcomm.o \
+OBJS = be-fsstubs.o be-secure.o be-secure-common.o auth.o crypt.o hba.o ifaddr.o pqcomm.o \
        pqformat.o pqmq.o pqsignal.o auth-scram.o
 
 ifeq ($(with_openssl),yes)
 OBJS += be-secure-openssl.o
+endif
+
+ifeq ($(with_gssapi),yes)
+OBJS += be-gssapi-common.o be-secure-gssapi.o
 endif
 
 include $(top_srcdir)/src/backend/common.mk

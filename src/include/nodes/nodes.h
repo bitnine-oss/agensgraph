@@ -5,7 +5,7 @@
  *
  *
  * Portions Copyright (c) 2018, Bitnine Inc.
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/nodes.h
@@ -35,6 +35,7 @@ typedef enum NodeTag
 	T_ExprContext,
 	T_ProjectionInfo,
 	T_JunkFilter,
+	T_OnConflictSetState,
 	T_ResultRelInfo,
 	T_EState,
 	T_TupleTableSlot,
@@ -70,7 +71,6 @@ typedef enum NodeTag
 	T_CustomScan,
 	T_Join,
 	T_NestLoop,
-	T_NestLoopVLE,
 	T_MergeJoin,
 	T_HashJoin,
 	T_Material,
@@ -92,7 +92,12 @@ typedef enum NodeTag
 	T_Dijkstra,
 	/* these aren't subclasses of Plan: */
 	T_NestLoopParam,
+	T_NestLoopVLE,
 	T_PlanRowMark,
+	T_PartitionPruneInfo,
+	T_PartitionedRelPruneInfo,
+	T_PartitionPruneStepOp,
+	T_PartitionPruneStepCombine,
 	T_PlanInvalItem,
 
 	/*
@@ -162,7 +167,7 @@ typedef enum NodeTag
 	T_Aggref,
 	T_GroupingFunc,
 	T_WindowFunc,
-	T_ArrayRef,
+	T_SubscriptingRef,
 	T_FuncExpr,
 	T_NamedArgExpr,
 	T_OpExpr,
@@ -230,7 +235,7 @@ typedef enum NodeTag
 	T_DomainConstraintState,
 
 	/*
-	 * TAGS FOR PLANNER NODES (relation.h)
+	 * TAGS FOR PLANNER NODES (pathnodes.h)
 	 */
 	T_PlannerInfo,
 	T_PlannerGlobal,
@@ -252,7 +257,7 @@ typedef enum NodeTag
 	T_HashPath,
 	T_AppendPath,
 	T_MergeAppendPath,
-	T_ResultPath,
+	T_GroupResultPath,
 	T_MaterialPath,
 	T_UniquePath,
 	T_GatherPath,
@@ -281,10 +286,10 @@ typedef enum NodeTag
 	T_PathKey,
 	T_PathTarget,
 	T_RestrictInfo,
+	T_IndexClause,
 	T_PlaceHolderVar,
 	T_SpecialJoinInfo,
 	T_AppendRelInfo,
-	T_PartitionedChildRelInfo,
 	T_PlaceHolderInfo,
 	T_MinMaxAggInfo,
 	T_PlannerParamItem,
@@ -298,6 +303,7 @@ typedef enum NodeTag
 	T_MemoryContext,
 	T_AllocSetContext,
 	T_SlabContext,
+	T_GenerationContext,
 
 	/*
 	 * TAGS FOR VALUE NODES (value.h)
@@ -437,6 +443,7 @@ typedef enum NodeTag
 	T_DropSubscriptionStmt,
 	T_CreateStatsStmt,
 	T_AlterCollationStmt,
+	T_CallStmt,
 	T_CreateGraphStmt,
 	T_CreateLabelStmt,
 	T_AlterLabelStmt,
@@ -500,6 +507,7 @@ typedef enum NodeTag
 	T_PartitionBoundSpec,
 	T_PartitionRangeDatum,
 	T_PartitionCmd,
+	T_VacuumRelation,
 	T_CypherListComp,
 	T_CypherGenericExpr,
 	T_CypherSubPattern,
@@ -511,6 +519,7 @@ typedef enum NodeTag
 	T_CypherSetClause,
 	T_CypherMergeClause,
 	T_CypherLoadClause,
+	T_CypherUnwindClause,
 	T_CypherPath,
 	T_CypherNode,
 	T_CypherRel,
@@ -544,13 +553,20 @@ typedef enum NodeTag
 	T_InlineCodeBlock,			/* in nodes/parsenodes.h */
 	T_FdwRoutine,				/* in foreign/fdwapi.h */
 	T_IndexAmRoutine,			/* in access/amapi.h */
+	T_TableAmRoutine,			/* in access/tableam.h */
 	T_TsmRoutine,				/* in access/tsmapi.h */
 	T_ForeignKeyCacheInfo,		/* in utils/rel.h */
+	T_CallContext,				/* in nodes/parsenodes.h */
+	T_SupportRequestSimplify,	/* in nodes/supportnodes.h */
+	T_SupportRequestSelectivity,	/* in nodes/supportnodes.h */
+	T_SupportRequestCost,		/* in nodes/supportnodes.h */
+	T_SupportRequestRows,		/* in nodes/supportnodes.h */
+	T_SupportRequestIndexCondition,	/* in nodes/supportnodes.h */
 
 	/*
 	 * TAGS FOR GRAPH NODES (graphnodes.h)
 	 */
-	T_GraphPath = 1050,
+	T_GraphPath,
 	T_GraphVertex,
 	T_GraphEdge,
 	T_GraphSetProp,
@@ -650,16 +666,19 @@ struct StringInfoData;			/* not to include stringinfo.h here */
 extern void outNode(struct StringInfoData *str, const void *obj);
 extern void outToken(struct StringInfoData *str, const char *s);
 extern void outBitmapset(struct StringInfoData *str,
-			 const struct Bitmapset *bms);
+						 const struct Bitmapset *bms);
 extern void outDatum(struct StringInfoData *str, uintptr_t value,
-		 int typlen, bool typbyval);
+					 int typlen, bool typbyval);
 extern char *nodeToString(const void *obj);
 extern char *bmsToString(const struct Bitmapset *bms);
 
 /*
  * nodes/{readfuncs.c,read.c}
  */
-extern void *stringToNode(char *str);
+extern void *stringToNode(const char *str);
+#ifdef WRITE_READ_PARSE_PLAN_TREES
+extern void *stringToNodeWithLocations(const char *str);
+#endif
 extern struct Bitmapset *readBitmapset(void);
 extern uintptr_t readDatum(bool typbyval);
 extern bool *readBoolCols(int numCols);
@@ -755,7 +774,7 @@ typedef enum JoinType
 	 * These codes are used internally in the planner, but are not supported
 	 * by the executor (nor, indeed, by most of the planner).
 	 */
-	JOIN_UNIQUE_OUTER,			/* LHS path must be made unique */
+    JOIN_UNIQUE_OUTER,                      /* LHS path must be made unique */
 	JOIN_UNIQUE_INNER,			/* RHS path must be made unique */
 
 	/* This is similar to JOIN_LEFT but only for Cypher MERGE clause. */
@@ -799,11 +818,12 @@ typedef enum JoinType
 	   (1 << JOIN_VLE) | \
 	   (1 << JOIN_CYPHER_DELETE))) != 0)
 
+
 /*
  * AggStrategy -
  *	  overall execution strategies for Agg plan nodes
  *
- * This is needed in both plannodes.h and relation.h, so put it here...
+ * This is needed in both pathnodes.h and plannodes.h, so put it here...
  */
 typedef enum AggStrategy
 {
@@ -817,7 +837,7 @@ typedef enum AggStrategy
  * AggSplit -
  *	  splitting (partial aggregation) modes for Agg plan nodes
  *
- * This is needed in both plannodes.h and relation.h, so put it here...
+ * This is needed in both pathnodes.h and plannodes.h, so put it here...
  */
 
 /* Primitive options supported by nodeAgg.c: */
@@ -847,7 +867,7 @@ typedef enum AggSplit
  * SetOpCmd and SetOpStrategy -
  *	  overall semantics and execution strategies for SetOp plan nodes
  *
- * This is needed in both plannodes.h and relation.h, so put it here...
+ * This is needed in both pathnodes.h and plannodes.h, so put it here...
  */
 typedef enum SetOpCmd
 {
@@ -875,7 +895,6 @@ typedef enum OnConflictAction
 	ONCONFLICT_NOTHING,			/* ON CONFLICT ... DO NOTHING */
 	ONCONFLICT_UPDATE			/* ON CONFLICT ... DO UPDATE */
 } OnConflictAction;
-
 
 /*
  * GraphWriteOp - enums for type of operation when CMD_GRAPHWRITE

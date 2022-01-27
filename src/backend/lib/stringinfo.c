@@ -6,7 +6,7 @@
  * It can be used to buffer either ordinary C strings (null-terminated text)
  * or arbitrary binary data.  All storage is allocated with palloc().
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	  src/backend/lib/stringinfo.c
@@ -77,12 +77,15 @@ resetStringInfo(StringInfo str)
 void
 appendStringInfo(StringInfo str, const char *fmt,...)
 {
+	int			save_errno = errno;
+
 	for (;;)
 	{
 		va_list		args;
 		int			needed;
 
 		/* Try to format the data. */
+		errno = save_errno;
 		va_start(args, fmt);
 		needed = appendStringInfoVA(str, fmt, args);
 		va_end(args);
@@ -104,6 +107,9 @@ appendStringInfo(StringInfo str, const char *fmt,...)
  * of the space needed, without modifying str.  Typically the caller should
  * pass the return value to enlargeStringInfo() before trying again; see
  * appendStringInfo for standard usage pattern.
+ *
+ * Caution: callers must be sure to preserve their entry-time errno
+ * when looping, in case the fmt contains "%m".
  *
  * XXX This API is ugly, but there seems no alternative given the C spec's
  * restrictions on what can portably be done with va_list arguments: you have
@@ -202,7 +208,7 @@ appendStringInfoSpaces(StringInfo str, int count)
  * appendBinaryStringInfo
  *
  * Append arbitrary binary data to a StringInfo, allocating more space
- * if necessary.
+ * if necessary. Ensures that a trailing null byte is present.
  */
 void
 appendBinaryStringInfo(StringInfo str, const char *data, int datalen)
@@ -222,6 +228,25 @@ appendBinaryStringInfo(StringInfo str, const char *data, int datalen)
 	 * their input isn't null-terminated.)
 	 */
 	str->data[str->len] = '\0';
+}
+
+/*
+ * appendBinaryStringInfoNT
+ *
+ * Append arbitrary binary data to a StringInfo, allocating more space
+ * if necessary. Does not ensure a trailing null-byte exists.
+ */
+void
+appendBinaryStringInfoNT(StringInfo str, const char *data, int datalen)
+{
+	Assert(str != NULL);
+
+	/* Make more room if needed */
+	enlargeStringInfo(str, datalen);
+
+	/* OK, append the data */
+	memcpy(str->data + str->len, data, datalen);
+	str->len += datalen;
 }
 
 /*

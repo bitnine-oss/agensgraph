@@ -3,7 +3,7 @@
  * collationcmds.c
  *	  collation-related commands support code
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,15 +14,14 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_collation.h"
-#include "catalog/pg_collation_fn.h"
 #include "commands/alter.h"
 #include "commands/collationcmds.h"
 #include "commands/comment.h"
@@ -60,10 +59,12 @@ DefineCollation(ParseState *pstate, List *names, List *parameters, bool if_not_e
 	DefElem    *lccollateEl = NULL;
 	DefElem    *lcctypeEl = NULL;
 	DefElem    *providerEl = NULL;
+	DefElem    *deterministicEl = NULL;
 	DefElem    *versionEl = NULL;
 	char	   *collcollate = NULL;
 	char	   *collctype = NULL;
 	char	   *collproviderstr = NULL;
+	bool		collisdeterministic = true;
 	int			collencoding = 0;
 	char		collprovider = 0;
 	char	   *collversion = NULL;
@@ -74,7 +75,7 @@ DefineCollation(ParseState *pstate, List *names, List *parameters, bool if_not_e
 
 	aclresult = pg_namespace_aclcheck(collNamespace, GetUserId(), ACL_CREATE);
 	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, ACL_KIND_NAMESPACE,
+		aclcheck_error(aclresult, OBJECT_SCHEMA,
 					   get_namespace_name(collNamespace));
 
 	foreach(pl, parameters)
@@ -82,17 +83,19 @@ DefineCollation(ParseState *pstate, List *names, List *parameters, bool if_not_e
 		DefElem    *defel = lfirst_node(DefElem, pl);
 		DefElem   **defelp;
 
-		if (pg_strcasecmp(defel->defname, "from") == 0)
+		if (strcmp(defel->defname, "from") == 0)
 			defelp = &fromEl;
-		else if (pg_strcasecmp(defel->defname, "locale") == 0)
+		else if (strcmp(defel->defname, "locale") == 0)
 			defelp = &localeEl;
-		else if (pg_strcasecmp(defel->defname, "lc_collate") == 0)
+		else if (strcmp(defel->defname, "lc_collate") == 0)
 			defelp = &lccollateEl;
-		else if (pg_strcasecmp(defel->defname, "lc_ctype") == 0)
+		else if (strcmp(defel->defname, "lc_ctype") == 0)
 			defelp = &lcctypeEl;
-		else if (pg_strcasecmp(defel->defname, "provider") == 0)
+		else if (strcmp(defel->defname, "provider") == 0)
 			defelp = &providerEl;
-		else if (pg_strcasecmp(defel->defname, "version") == 0)
+		else if (strcmp(defel->defname, "deterministic") == 0)
+			defelp = &deterministicEl;
+		else if (strcmp(defel->defname, "version") == 0)
 			defelp = &versionEl;
 		else
 		{
@@ -126,6 +129,7 @@ DefineCollation(ParseState *pstate, List *names, List *parameters, bool if_not_e
 		collcollate = pstrdup(NameStr(((Form_pg_collation) GETSTRUCT(tp))->collcollate));
 		collctype = pstrdup(NameStr(((Form_pg_collation) GETSTRUCT(tp))->collctype));
 		collprovider = ((Form_pg_collation) GETSTRUCT(tp))->collprovider;
+		collisdeterministic = ((Form_pg_collation) GETSTRUCT(tp))->collisdeterministic;
 		collencoding = ((Form_pg_collation) GETSTRUCT(tp))->collencoding;
 
 		ReleaseSysCache(tp);
@@ -158,6 +162,9 @@ DefineCollation(ParseState *pstate, List *names, List *parameters, bool if_not_e
 	if (providerEl)
 		collproviderstr = defGetString(providerEl);
 
+	if (deterministicEl)
+		collisdeterministic = defGetBoolean(deterministicEl);
+
 	if (versionEl)
 		collversion = defGetString(versionEl);
 
@@ -186,6 +193,16 @@ DefineCollation(ParseState *pstate, List *names, List *parameters, bool if_not_e
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
 				 errmsg("parameter \"lc_ctype\" must be specified")));
 
+	/*
+	 * Nondeterministic collations are currently only supported with ICU
+	 * because that's the only case where it can actually make a difference.
+	 * So we can save writing the code for the other providers.
+	 */
+	if (!collisdeterministic && collprovider != COLLPROVIDER_ICU)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("nondeterministic collations not supported with this provider")));
+
 	if (!fromEl)
 	{
 		if (collprovider == COLLPROVIDER_ICU)
@@ -204,6 +221,7 @@ DefineCollation(ParseState *pstate, List *names, List *parameters, bool if_not_e
 							 collNamespace,
 							 GetUserId(),
 							 collprovider,
+							 collisdeterministic,
 							 collencoding,
 							 collcollate,
 							 collctype,
@@ -274,11 +292,11 @@ AlterCollation(AlterCollationStmt *stmt)
 	char	   *newversion;
 	ObjectAddress address;
 
-	rel = heap_open(CollationRelationId, RowExclusiveLock);
+	rel = table_open(CollationRelationId, RowExclusiveLock);
 	collOid = get_collation_oid(stmt->collname, false);
 
 	if (!pg_collation_ownercheck(collOid, GetUserId()))
-		aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_COLLATION,
+		aclcheck_error(ACLCHECK_NOT_OWNER, OBJECT_COLLATION,
 					   NameListToString(stmt->collname));
 
 	tup = SearchSysCacheCopy1(COLLOID, ObjectIdGetDatum(collOid));
@@ -326,7 +344,7 @@ AlterCollation(AlterCollationStmt *stmt)
 	ObjectAddressSet(address, CollationRelationId, collOid);
 
 	heap_freetuple(tup);
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 
 	return address;
 }
@@ -445,7 +463,7 @@ get_icu_language_tag(const char *localename)
 	UErrorCode	status;
 
 	status = U_ZERO_ERROR;
-	uloc_toLanguageTag(localename, buf, sizeof(buf), TRUE, &status);
+	uloc_toLanguageTag(localename, buf, sizeof(buf), true, &status);
 	if (U_FAILURE(status))
 		ereport(ERROR,
 				(errmsg("could not convert locale name \"%s\" to language tag: %s",
@@ -503,13 +521,15 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
 	Oid			nspid = PG_GETARG_OID(0);
 	int			ncreated = 0;
 
-	/* silence compiler warning if we have no locale implementation at all */
-	(void) nspid;
-
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 (errmsg("must be superuser to import system collations"))));
+
+	if (!SearchSysCacheExists1(NAMESPACEOID, ObjectIdGetDatum(nspid)))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_SCHEMA),
+				 errmsg("schema with OID %u does not exist", nspid)));
 
 	/* Load collations known to libc, using "locale -a" to enumerate them */
 #ifdef READ_LOCALE_A_OUTPUT
@@ -587,7 +607,7 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
 			 * about existing ones.
 			 */
 			collid = CollationCreate(localebuf, nspid, GetUserId(),
-									 COLLPROVIDER_LIBC, enc,
+									 COLLPROVIDER_LIBC, true, enc,
 									 localebuf, localebuf,
 									 get_collation_actual_version(COLLPROVIDER_LIBC, localebuf),
 									 true, true);
@@ -648,7 +668,7 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
 			int			enc = aliases[i].enc;
 
 			collid = CollationCreate(alias, nspid, GetUserId(),
-									 COLLPROVIDER_LIBC, enc,
+									 COLLPROVIDER_LIBC, true, enc,
 									 locale, locale,
 									 get_collation_actual_version(COLLPROVIDER_LIBC, locale),
 									 true, true);
@@ -710,7 +730,7 @@ pg_import_system_collations(PG_FUNCTION_ARGS)
 
 			collid = CollationCreate(psprintf("%s-x-icu", langtag),
 									 nspid, GetUserId(),
-									 COLLPROVIDER_ICU, -1,
+									 COLLPROVIDER_ICU, true, -1,
 									 collcollate, collcollate,
 									 get_collation_actual_version(COLLPROVIDER_ICU, collcollate),
 									 true, true);

@@ -3,7 +3,7 @@
  * nodeCtescan.c
  *	  routines to handle CteScan nodes.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -264,29 +264,24 @@ ExecInitCteScan(CteScan *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &scanstate->ss.ps);
 
 	/*
+	 * The scan tuple type (ie, the rowtype we expect to find in the work
+	 * table) is the same as the result rowtype of the CTE query.
+	 */
+	ExecInitScanTupleSlot(estate, &scanstate->ss,
+						  ExecGetResultType(scanstate->cteplanstate),
+						  &TTSOpsMinimalTuple);
+
+	/*
+	 * Initialize result type and projection.
+	 */
+	ExecInitResultTypeTL(&scanstate->ss.ps);
+	ExecAssignScanProjectionInfo(&scanstate->ss);
+
+	/*
 	 * initialize child expressions
 	 */
 	scanstate->ss.ps.qual =
 		ExecInitQual(node->scan.plan.qual, (PlanState *) scanstate);
-
-	/*
-	 * tuple table initialization
-	 */
-	ExecInitResultTupleSlot(estate, &scanstate->ss.ps);
-	ExecInitScanTupleSlot(estate, &scanstate->ss);
-
-	/*
-	 * The scan tuple type (ie, the rowtype we expect to find in the work
-	 * table) is the same as the result rowtype of the CTE query.
-	 */
-	ExecAssignScanType(&scanstate->ss,
-					   ExecGetResultType(scanstate->cteplanstate));
-
-	/*
-	 * Initialize result tuple type and projection info.
-	 */
-	ExecAssignResultTypeFromTL(&scanstate->ss.ps);
-	ExecAssignScanProjectionInfo(&scanstate->ss);
 
 	return scanstate;
 }
@@ -308,7 +303,8 @@ ExecEndCteScan(CteScanState *node)
 	/*
 	 * clean out the tuple table
 	 */
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
 	/*
@@ -332,7 +328,8 @@ ExecReScanCteScan(CteScanState *node)
 {
 	Tuplestorestate *tuplestorestate = node->leader->cte_table;
 
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 
 	ExecScanReScan(&node->ss);
 

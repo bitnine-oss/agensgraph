@@ -7,7 +7,7 @@
  * we need two sets of code.  Ought to look at trying to unify the cases.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -121,33 +121,39 @@ ExecInitSubqueryScan(SubqueryScan *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &subquerystate->ss.ps);
 
 	/*
-	 * initialize child expressions
-	 */
-	subquerystate->ss.ps.qual =
-		ExecInitQual(node->scan.plan.qual, (PlanState *) subquerystate);
-
-	/*
-	 * tuple table initialization
-	 */
-	ExecInitResultTupleSlot(estate, &subquerystate->ss.ps);
-	ExecInitScanTupleSlot(estate, &subquerystate->ss);
-
-	/*
 	 * initialize subquery
 	 */
 	subquerystate->subplan = ExecInitNode(node->subplan, estate, eflags);
 
 	/*
-	 * Initialize scan tuple type (needed by ExecAssignScanProjectionInfo)
+	 * Initialize scan slot and type (needed by ExecAssignScanProjectionInfo)
 	 */
-	ExecAssignScanType(&subquerystate->ss,
-					   ExecGetResultType(subquerystate->subplan));
+	ExecInitScanTupleSlot(estate, &subquerystate->ss,
+						  ExecGetResultType(subquerystate->subplan),
+						  ExecGetResultSlotOps(subquerystate->subplan, NULL));
 
 	/*
-	 * Initialize result tuple type and projection info.
+	 * The slot used as the scantuple isn't the slot above (outside of EPQ),
+	 * but the one from the node below.
 	 */
-	ExecAssignResultTypeFromTL(&subquerystate->ss.ps);
+	subquerystate->ss.ps.scanopsset = true;
+	subquerystate->ss.ps.scanops = ExecGetResultSlotOps(subquerystate->subplan,
+														&subquerystate->ss.ps.scanopsfixed);
+	subquerystate->ss.ps.resultopsset = true;
+	subquerystate->ss.ps.resultops = subquerystate->ss.ps.scanops;
+	subquerystate->ss.ps.resultopsfixed = subquerystate->ss.ps.scanopsfixed;
+
+	/*
+	 * Initialize result type and projection.
+	 */
+	ExecInitResultTypeTL(&subquerystate->ss.ps);
 	ExecAssignScanProjectionInfo(&subquerystate->ss);
+
+	/*
+	 * initialize child expressions
+	 */
+	subquerystate->ss.ps.qual =
+		ExecInitQual(node->scan.plan.qual, (PlanState *) subquerystate);
 
 	return subquerystate;
 }
@@ -169,7 +175,8 @@ ExecEndSubqueryScan(SubqueryScanState *node)
 	/*
 	 * clean out the upper tuple table
 	 */
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
 	/*

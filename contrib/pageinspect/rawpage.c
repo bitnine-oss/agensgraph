@@ -5,7 +5,7 @@
  *
  * Access-method specific inspection functions are in separate files.
  *
- * Copyright (c) 2007-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pageinspect/rawpage.c
@@ -18,7 +18,7 @@
 #include "pageinspect.h"
 
 #include "access/htup_details.h"
-#include "catalog/catalog.h"
+#include "access/relation.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
@@ -33,7 +33,7 @@
 PG_MODULE_MAGIC;
 
 static bytea *get_raw_page_internal(text *relname, ForkNumber forknum,
-					  BlockNumber blkno);
+									BlockNumber blkno);
 
 
 /*
@@ -103,7 +103,7 @@ get_raw_page_internal(text *relname, ForkNumber forknum, BlockNumber blkno)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use raw functions"))));
+				 (errmsg("must be superuser to use raw page functions"))));
 
 	relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
 	rel = relation_openrv(relrv, AccessShareLock);
@@ -128,6 +128,11 @@ get_raw_page_internal(text *relname, ForkNumber forknum, BlockNumber blkno)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("cannot get raw page from partitioned table \"%s\"",
+						RelationGetRelationName(rel))));
+	if (rel->rd_rel->relkind == RELKIND_PARTITIONED_INDEX)
+		ereport(ERROR,
+				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				 errmsg("cannot get raw page from partitioned index \"%s\"",
 						RelationGetRelationName(rel))));
 
 	/*
@@ -253,7 +258,7 @@ page_header(PG_FUNCTION_ARGS)
 	lsn = PageGetLSN(page);
 
 	/* pageinspect >= 1.2 uses pg_lsn instead of text for the LSN field. */
-	if (tupdesc->attrs[0]->atttypid == TEXTOID)
+	if (TupleDescAttr(tupdesc, 0)->atttypid == TEXTOID)
 	{
 		char		lsnchar[64];
 

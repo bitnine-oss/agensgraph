@@ -1,13 +1,13 @@
 /*
  * findoidjoins.c
  *
- * Copyright (c) 2002-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2019, PostgreSQL Global Development Group
  *
  * src/tools/findoidjoins/findoidjoins.c
  */
 #include "postgres_fe.h"
 
-#include "catalog/pg_class.h"
+#include "catalog/pg_class_d.h"
 
 #include "fe_utils/connect.h"
 #include "libpq-fe.h"
@@ -63,7 +63,9 @@ main(int argc, char **argv)
 					  "pg_catalog.pg_namespace n WHERE n.oid = c.relnamespace) AS nspname "
 					  "FROM pg_catalog.pg_class c "
 					  "WHERE c.relkind = " CppAsString2(RELKIND_RELATION)
-					  " AND c.relhasoids "
+					  " AND EXISTS(SELECT * FROM pg_attribute a"
+					  "            WHERE a.attrelid = c.oid AND a.attname = 'oid' "
+					  "                  AND a.atttypid = 'oid'::regtype)"
 					  "ORDER BY nspname, c.relname"
 		);
 

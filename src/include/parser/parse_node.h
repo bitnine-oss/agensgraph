@@ -5,7 +5,7 @@
  *
  *
  * Portions Copyright (c) 2018, Bitnine Inc.
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_node.h
@@ -46,6 +46,7 @@ typedef enum ParseExprKind
 	EXPR_KIND_WINDOW_ORDER,		/* window definition ORDER BY */
 	EXPR_KIND_WINDOW_FRAME_RANGE,	/* window frame clause with RANGE */
 	EXPR_KIND_WINDOW_FRAME_ROWS,	/* window frame clause with ROWS */
+	EXPR_KIND_WINDOW_FRAME_GROUPS,	/* window frame clause with GROUPS */
 	EXPR_KIND_SELECT_TARGET,	/* SELECT target list item */
 	EXPR_KIND_INSERT_TARGET,	/* INSERT target list item */
 	EXPR_KIND_UPDATE_SOURCE,	/* UPDATE assignment source item */
@@ -68,7 +69,11 @@ typedef enum ParseExprKind
 	EXPR_KIND_EXECUTE_PARAMETER,	/* parameter value in EXECUTE */
 	EXPR_KIND_TRIGGER_WHEN,		/* WHEN condition in CREATE TRIGGER */
 	EXPR_KIND_POLICY,			/* USING or WITH CHECK expr in policy */
-	EXPR_KIND_PARTITION_EXPRESSION	/* PARTITION BY expression */
+	EXPR_KIND_PARTITION_BOUND,	/* partition bound expression */
+	EXPR_KIND_PARTITION_EXPRESSION, /* PARTITION BY expression */
+	EXPR_KIND_CALL_ARGUMENT,	/* procedure argument in CALL */
+	EXPR_KIND_COPY_WHERE,		/* WHERE condition in COPY FROM */
+	EXPR_KIND_GENERATED_COLUMN, /* generation expression for a column */
 } ParseExprKind;
 
 
@@ -112,7 +117,7 @@ typedef Node *(*CoerceParamHook) (ParseState *pstate, Param *param,
  * namespace for table and column lookup.  (The RTEs listed here may be just
  * a subset of the whole rtable.  See ParseNamespaceItem comments below.)
  *
- * p_lateral_active: TRUE if we are currently parsing a LATERAL subexpression
+ * p_lateral_active: true if we are currently parsing a LATERAL subexpression
  * of this parse level.  This makes p_lateral_only namespace items visible,
  * whereas they are not visible when p_lateral_active is FALSE.
  *
@@ -283,19 +288,20 @@ extern void free_parsestate(ParseState *pstate);
 extern int	parser_errposition(ParseState *pstate, int location);
 
 extern void setup_parser_errposition_callback(ParseCallbackState *pcbstate,
-								  ParseState *pstate, int location);
+											  ParseState *pstate, int location);
 extern void cancel_parser_errposition_callback(ParseCallbackState *pcbstate);
 
 extern Var *make_var(ParseState *pstate, RangeTblEntry *rte, int attrno,
-		 int location);
-extern Oid	transformArrayType(Oid *arrayType, int32 *arrayTypmod);
-extern ArrayRef *transformArraySubscripts(ParseState *pstate,
-						 Node *arrayBase,
-						 Oid arrayType,
-						 Oid elementType,
-						 int32 arrayTypMod,
-						 List *indirection,
-						 Node *assignFrom);
+					 int location);
+extern Oid	transformContainerType(Oid *containerType, int32 *containerTypmod);
+
+extern SubscriptingRef *transformContainerSubscripts(ParseState *pstate,
+													 Node *containerBase,
+													 Oid containerType,
+													 Oid elementType,
+													 int32 containerTypMod,
+													 List *indirection,
+													 Node *assignFrom);
 extern Const *make_const(ParseState *pstate, Value *value, int location);
 
 #endif							/* PARSE_NODE_H */

@@ -3,7 +3,7 @@
  * nodeWorktablescan.c
  *	  routines to handle WorkTableScan nodes.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -157,21 +157,26 @@ ExecInitWorkTableScan(WorkTableScan *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &scanstate->ss.ps);
 
 	/*
+	 * tuple table initialization
+	 */
+	ExecInitResultTypeTL(&scanstate->ss.ps);
+
+	/* signal that return type is not yet known */
+	scanstate->ss.ps.resultopsset = true;
+	scanstate->ss.ps.resultopsfixed = false;
+
+	ExecInitScanTupleSlot(estate, &scanstate->ss, NULL, &TTSOpsMinimalTuple);
+
+	/*
 	 * initialize child expressions
 	 */
 	scanstate->ss.ps.qual =
 		ExecInitQual(node->scan.plan.qual, (PlanState *) scanstate);
 
 	/*
-	 * tuple table initialization
+	 * Do not yet initialize projection info, see ExecWorkTableScan() for
+	 * details.
 	 */
-	ExecInitResultTupleSlot(estate, &scanstate->ss.ps);
-	ExecInitScanTupleSlot(estate, &scanstate->ss);
-
-	/*
-	 * Initialize result tuple type, but not yet projection info.
-	 */
-	ExecAssignResultTypeFromTL(&scanstate->ss.ps);
 
 	return scanstate;
 }
@@ -193,7 +198,8 @@ ExecEndWorkTableScan(WorkTableScanState *node)
 	/*
 	 * clean out the tuple table
 	 */
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 }
 
@@ -206,7 +212,8 @@ ExecEndWorkTableScan(WorkTableScanState *node)
 void
 ExecReScanWorkTableScan(WorkTableScanState *node)
 {
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 
 	ExecScanReScan(&node->ss);
 

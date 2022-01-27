@@ -69,6 +69,8 @@ END IF;
 END;
 $$ LANGUAGE plpgsql;
 
+-- This test originally worked due to a side effect of having a cast from jsonb
+-- to boolean. That cast has been removed, so now this will fail as expected.
 SELECT udf_if();
 
 CREATE OR REPLACE FUNCTION udf_if_exists() RETURNS boolean AS $$

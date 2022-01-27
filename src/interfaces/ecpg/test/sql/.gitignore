@@ -2,10 +2,14 @@
 /array.c
 /binary
 /binary.c
+/bytea
+/bytea.c
 /code100
 /code100.c
 /copystdout
 /copystdout.c
+/createtableas
+/createtableas.c
 /define
 /define.c
 /desc
@@ -32,6 +36,8 @@
 /oldexec.c
 /parser
 /parser.c
+/prepareas
+/prepareas.c
 /quote
 /quote.c
 /show

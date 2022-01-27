@@ -1,14 +1,13 @@
 # contrib/spi/Makefile
 
-MODULES = autoinc insert_username moddatetime refint timetravel
+MODULES = autoinc insert_username moddatetime refint
 
-EXTENSION = autoinc insert_username moddatetime refint timetravel
+EXTENSION = autoinc insert_username moddatetime refint
 
 DATA = autoinc--1.0.sql autoinc--unpackaged--1.0.sql \
        insert_username--1.0.sql insert_username--unpackaged--1.0.sql \
        moddatetime--1.0.sql moddatetime--unpackaged--1.0.sql \
-       refint--1.0.sql refint--unpackaged--1.0.sql \
-       timetravel--1.0.sql timetravel--unpackaged--1.0.sql
+       refint--1.0.sql refint--unpackaged--1.0.sql
 PGFILEDESC = "spi - examples of using SPI and triggers"
 
 DOCS = $(addsuffix .example, $(MODULES))
@@ -16,8 +15,6 @@ DOCS = $(addsuffix .example, $(MODULES))
 # this is needed for the regression tests;
 # comment out if you want a quieter refint package for other uses
 PG_CPPFLAGS = -DREFINT_VERBOSE
-
-LDFLAGS_SL += -L$(top_builddir)/src/port -lpgport
 
 ifdef USE_PGXS
 PG_CONFIG = pg_config

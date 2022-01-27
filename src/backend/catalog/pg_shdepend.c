@@ -3,7 +3,7 @@
  * pg_shdepend.c
  *	  routines to support manipulation of the pg_shdepend relation
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,8 +15,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -59,13 +59,13 @@
 #include "commands/schemacmds.h"
 #include "commands/subscriptioncmds.h"
 #include "commands/tablecmds.h"
+#include "commands/tablespace.h"
 #include "commands/typecmds.h"
 #include "storage/lmgr.h"
 #include "miscadmin.h"
 #include "utils/acl.h"
 #include "utils/fmgroids.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
 
 
 typedef enum
@@ -75,26 +75,33 @@ typedef enum
 	REMOTE_OBJECT
 } SharedDependencyObjectType;
 
+typedef struct
+{
+	ObjectAddress object;
+	char		deptype;
+	SharedDependencyObjectType objtype;
+} ShDependObjectInfo;
+
 static void getOidListDiff(Oid *list1, int *nlist1, Oid *list2, int *nlist2);
 static Oid	classIdGetDbId(Oid classId);
 static void shdepChangeDep(Relation sdepRel,
-			   Oid classid, Oid objid, int32 objsubid,
-			   Oid refclassid, Oid refobjid,
-			   SharedDependencyType deptype);
+						   Oid classid, Oid objid, int32 objsubid,
+						   Oid refclassid, Oid refobjid,
+						   SharedDependencyType deptype);
 static void shdepAddDependency(Relation sdepRel,
-				   Oid classId, Oid objectId, int32 objsubId,
-				   Oid refclassId, Oid refobjId,
-				   SharedDependencyType deptype);
+							   Oid classId, Oid objectId, int32 objsubId,
+							   Oid refclassId, Oid refobjId,
+							   SharedDependencyType deptype);
 static void shdepDropDependency(Relation sdepRel,
-					Oid classId, Oid objectId, int32 objsubId,
-					bool drop_subobjects,
-					Oid refclassId, Oid refobjId,
-					SharedDependencyType deptype);
+								Oid classId, Oid objectId, int32 objsubId,
+								bool drop_subobjects,
+								Oid refclassId, Oid refobjId,
+								SharedDependencyType deptype);
 static void storeObjectDescription(StringInfo descs,
-					   SharedDependencyObjectType type,
-					   ObjectAddress *object,
-					   SharedDependencyType deptype,
-					   int count);
+								   SharedDependencyObjectType type,
+								   ObjectAddress *object,
+								   SharedDependencyType deptype,
+								   int count);
 static bool isSharedObjectPinned(Oid classId, Oid objectId, Relation sdepRel);
 
 
@@ -131,7 +138,7 @@ recordSharedDependencyOn(ObjectAddress *depender,
 	if (IsBootstrapProcessingMode())
 		return;
 
-	sdepRel = heap_open(SharedDependRelationId, RowExclusiveLock);
+	sdepRel = table_open(SharedDependRelationId, RowExclusiveLock);
 
 	/* If the referenced object is pinned, do nothing. */
 	if (!isSharedObjectPinned(referenced->classId, referenced->objectId,
@@ -143,7 +150,7 @@ recordSharedDependencyOn(ObjectAddress *depender,
 						   deptype);
 	}
 
-	heap_close(sdepRel, RowExclusiveLock);
+	table_close(sdepRel, RowExclusiveLock);
 }
 
 /*
@@ -181,11 +188,14 @@ recordDependencyOnOwner(Oid classId, Oid objectId, Oid owner)
  *
  * There must be no more than one existing entry for the given dependent
  * object and dependency type!	So in practice this can only be used for
- * updating SHARED_DEPENDENCY_OWNER entries, which should have that property.
+ * updating SHARED_DEPENDENCY_OWNER and SHARED_DEPENDENCY_TABLESPACE
+ * entries, which should have that property.
  *
  * If there is no previous entry, we assume it was referencing a PINned
  * object, so we create a new entry.  If the new referenced object is
  * PINned, we don't create an entry (and drop the old one, if any).
+ * (For tablespaces, we don't record dependencies in certain cases, so
+ * there are other possible reasons for entries to be missing.)
  *
  * sdepRel must be the pg_shdepend relation, already opened and suitably
  * locked.
@@ -305,7 +315,7 @@ changeDependencyOnOwner(Oid classId, Oid objectId, Oid newOwnerId)
 {
 	Relation	sdepRel;
 
-	sdepRel = heap_open(SharedDependRelationId, RowExclusiveLock);
+	sdepRel = table_open(SharedDependRelationId, RowExclusiveLock);
 
 	/* Adjust the SHARED_DEPENDENCY_OWNER entry */
 	shdepChangeDep(sdepRel,
@@ -336,7 +346,59 @@ changeDependencyOnOwner(Oid classId, Oid objectId, Oid newOwnerId)
 						AuthIdRelationId, newOwnerId,
 						SHARED_DEPENDENCY_ACL);
 
-	heap_close(sdepRel, RowExclusiveLock);
+	table_close(sdepRel, RowExclusiveLock);
+}
+
+/*
+ * recordDependencyOnTablespace
+ *
+ * A convenient wrapper of recordSharedDependencyOn -- register the specified
+ * tablespace as default for the given object.
+ *
+ * Note: it's the caller's responsibility to ensure that there isn't a
+ * tablespace entry for the object already.
+ */
+void
+recordDependencyOnTablespace(Oid classId, Oid objectId, Oid tablespace)
+{
+	ObjectAddress myself,
+				  referenced;
+
+	ObjectAddressSet(myself, classId, objectId);
+	ObjectAddressSet(referenced, TableSpaceRelationId, tablespace);
+
+	recordSharedDependencyOn(&myself, &referenced,
+							 SHARED_DEPENDENCY_TABLESPACE);
+}
+
+/*
+ * changeDependencyOnTablespace
+ *
+ * Update the shared dependencies to account for the new tablespace.
+ *
+ * Note: we don't need an objsubid argument because only whole objects
+ * have tablespaces.
+ */
+void
+changeDependencyOnTablespace(Oid classId, Oid objectId, Oid newTablespaceId)
+{
+	Relation	sdepRel;
+
+	sdepRel = table_open(SharedDependRelationId, RowExclusiveLock);
+
+	if (newTablespaceId != DEFAULTTABLESPACE_OID &&
+		newTablespaceId != InvalidOid)
+		shdepChangeDep(sdepRel,
+					   classId, objectId, 0,
+					   TableSpaceRelationId, newTablespaceId,
+					   SHARED_DEPENDENCY_TABLESPACE);
+	else
+		shdepDropDependency(sdepRel,
+							classId, objectId, 0, true,
+							InvalidOid, InvalidOid,
+							SHARED_DEPENDENCY_INVALID);
+
+	table_close(sdepRel, RowExclusiveLock);
 }
 
 /*
@@ -436,7 +498,7 @@ updateAclDependencies(Oid classId, Oid objectId, int32 objsubId,
 
 	if (noldmembers > 0 || nnewmembers > 0)
 	{
-		sdepRel = heap_open(SharedDependRelationId, RowExclusiveLock);
+		sdepRel = table_open(SharedDependRelationId, RowExclusiveLock);
 
 		/* Add new dependencies that weren't already present */
 		for (i = 0; i < nnewmembers; i++)
@@ -479,7 +541,7 @@ updateAclDependencies(Oid classId, Oid objectId, int32 objsubId,
 								SHARED_DEPENDENCY_ACL);
 		}
 
-		heap_close(sdepRel, RowExclusiveLock);
+		table_close(sdepRel, RowExclusiveLock);
 	}
 
 	if (oldmembers)
@@ -496,6 +558,56 @@ typedef struct
 	Oid			dbOid;
 	int			count;
 } remoteDep;
+
+/*
+ * qsort comparator for ShDependObjectInfo items
+ */
+static int
+shared_dependency_comparator(const void *a, const void *b)
+{
+	const ShDependObjectInfo *obja = (const ShDependObjectInfo *) a;
+	const ShDependObjectInfo *objb = (const ShDependObjectInfo *) b;
+
+	/*
+	 * Primary sort key is OID ascending.
+	 */
+	if (obja->object.objectId < objb->object.objectId)
+		return -1;
+	if (obja->object.objectId > objb->object.objectId)
+		return 1;
+
+	/*
+	 * Next sort on catalog ID, in case identical OIDs appear in different
+	 * catalogs.  Sort direction is pretty arbitrary here.
+	 */
+	if (obja->object.classId < objb->object.classId)
+		return -1;
+	if (obja->object.classId > objb->object.classId)
+		return 1;
+
+	/*
+	 * Sort on object subId.
+	 *
+	 * We sort the subId as an unsigned int so that 0 (the whole object) will
+	 * come first.
+	 */
+	if ((unsigned int) obja->object.objectSubId < (unsigned int) objb->object.objectSubId)
+		return -1;
+	if ((unsigned int) obja->object.objectSubId > (unsigned int) objb->object.objectSubId)
+		return 1;
+
+	/*
+	 * Last, sort on deptype, in case the same object has multiple dependency
+	 * types.  (Note that there's no need to consider objtype, as that's
+	 * determined by the catalog OID.)
+	 */
+	if (obja->deptype < objb->deptype)
+		return -1;
+	if (obja->deptype > objb->deptype)
+		return 1;
+
+	return 0;
+}
 
 /*
  * checkSharedDependencies
@@ -532,6 +644,9 @@ checkSharedDependencies(Oid classId, Oid objectId,
 	List	   *remDeps = NIL;
 	ListCell   *cell;
 	ObjectAddress object;
+	ShDependObjectInfo *objects;
+	int			numobjects;
+	int			allocedobjects;
 	StringInfoData descs;
 	StringInfoData alldescs;
 
@@ -539,13 +654,21 @@ checkSharedDependencies(Oid classId, Oid objectId,
 	 * We limit the number of dependencies reported to the client to
 	 * MAX_REPORTED_DEPS, since client software may not deal well with
 	 * enormous error strings.  The server log always gets a full report.
+	 *
+	 * For stability of regression test results, we sort local and shared
+	 * objects by OID before reporting them.  We don't worry about the order
+	 * in which other databases are reported, though.
 	 */
 #define MAX_REPORTED_DEPS 100
 
+	allocedobjects = 128;		/* arbitrary initial array size */
+	objects = (ShDependObjectInfo *)
+		palloc(allocedobjects * sizeof(ShDependObjectInfo));
+	numobjects = 0;
 	initStringInfo(&descs);
 	initStringInfo(&alldescs);
 
-	sdepRel = heap_open(SharedDependRelationId, AccessShareLock);
+	sdepRel = table_open(SharedDependRelationId, AccessShareLock);
 
 	ScanKeyInit(&key[0],
 				Anum_pg_shdepend_refclassid,
@@ -581,36 +704,26 @@ checkSharedDependencies(Oid classId, Oid objectId,
 
 		/*
 		 * If it's a dependency local to this database or it's a shared
-		 * object, describe it.
+		 * object, add it to the objects array.
 		 *
 		 * If it's a remote dependency, keep track of it so we can report the
 		 * number of them later.
 		 */
-		if (sdepForm->dbid == MyDatabaseId)
+		if (sdepForm->dbid == MyDatabaseId ||
+			sdepForm->dbid == InvalidOid)
 		{
-			if (numReportedDeps < MAX_REPORTED_DEPS)
+			if (numobjects >= allocedobjects)
 			{
-				numReportedDeps++;
-				storeObjectDescription(&descs, LOCAL_OBJECT, &object,
-									   sdepForm->deptype, 0);
+				allocedobjects *= 2;
+				objects = (ShDependObjectInfo *)
+					repalloc(objects,
+							 allocedobjects * sizeof(ShDependObjectInfo));
 			}
-			else
-				numNotReportedDeps++;
-			storeObjectDescription(&alldescs, LOCAL_OBJECT, &object,
-								   sdepForm->deptype, 0);
-		}
-		else if (sdepForm->dbid == InvalidOid)
-		{
-			if (numReportedDeps < MAX_REPORTED_DEPS)
-			{
-				numReportedDeps++;
-				storeObjectDescription(&descs, SHARED_OBJECT, &object,
-									   sdepForm->deptype, 0);
-			}
-			else
-				numNotReportedDeps++;
-			storeObjectDescription(&alldescs, SHARED_OBJECT, &object,
-								   sdepForm->deptype, 0);
+			objects[numobjects].object = object;
+			objects[numobjects].deptype = sdepForm->deptype;
+			objects[numobjects].objtype = (sdepForm->dbid == MyDatabaseId) ?
+				LOCAL_OBJECT : SHARED_OBJECT;
+			numobjects++;
 		}
 		else
 		{
@@ -646,7 +759,34 @@ checkSharedDependencies(Oid classId, Oid objectId,
 
 	systable_endscan(scan);
 
-	heap_close(sdepRel, AccessShareLock);
+	table_close(sdepRel, AccessShareLock);
+
+	/*
+	 * Sort and report local and shared objects.
+	 */
+	if (numobjects > 1)
+		qsort((void *) objects, numobjects,
+			  sizeof(ShDependObjectInfo), shared_dependency_comparator);
+
+	for (int i = 0; i < numobjects; i++)
+	{
+		if (numReportedDeps < MAX_REPORTED_DEPS)
+		{
+			numReportedDeps++;
+			storeObjectDescription(&descs,
+								   objects[i].objtype,
+								   &objects[i].object,
+								   objects[i].deptype,
+								   0);
+		}
+		else
+			numNotReportedDeps++;
+		storeObjectDescription(&alldescs,
+							   objects[i].objtype,
+							   &objects[i].object,
+							   objects[i].deptype,
+							   0);
+	}
 
 	/*
 	 * Summarize dependencies in remote databases.
@@ -671,6 +811,7 @@ checkSharedDependencies(Oid classId, Oid objectId,
 							   SHARED_DEPENDENCY_INVALID, dep->count);
 	}
 
+	pfree(objects);
 	list_free_deep(remDeps);
 
 	if (descs.len == 0)
@@ -720,7 +861,7 @@ copyTemplateDependencies(Oid templateDbId, Oid newDbId)
 	bool		nulls[Natts_pg_shdepend];
 	bool		replace[Natts_pg_shdepend];
 
-	sdepRel = heap_open(SharedDependRelationId, RowExclusiveLock);
+	sdepRel = table_open(SharedDependRelationId, RowExclusiveLock);
 	sdepDesc = RelationGetDescr(sdepRel);
 
 	indstate = CatalogOpenIndexes(sdepRel);
@@ -762,7 +903,7 @@ copyTemplateDependencies(Oid templateDbId, Oid newDbId)
 	systable_endscan(scan);
 
 	CatalogCloseIndexes(indstate);
-	heap_close(sdepRel, RowExclusiveLock);
+	table_close(sdepRel, RowExclusiveLock);
 }
 
 /*
@@ -779,7 +920,7 @@ dropDatabaseDependencies(Oid databaseId)
 	SysScanDesc scan;
 	HeapTuple	tup;
 
-	sdepRel = heap_open(SharedDependRelationId, RowExclusiveLock);
+	sdepRel = table_open(SharedDependRelationId, RowExclusiveLock);
 
 	/*
 	 * First, delete all the entries that have the database Oid in the dbid
@@ -806,7 +947,7 @@ dropDatabaseDependencies(Oid databaseId)
 						InvalidOid, InvalidOid,
 						SHARED_DEPENDENCY_INVALID);
 
-	heap_close(sdepRel, RowExclusiveLock);
+	table_close(sdepRel, RowExclusiveLock);
 }
 
 /*
@@ -824,14 +965,14 @@ deleteSharedDependencyRecordsFor(Oid classId, Oid objectId, int32 objectSubId)
 {
 	Relation	sdepRel;
 
-	sdepRel = heap_open(SharedDependRelationId, RowExclusiveLock);
+	sdepRel = table_open(SharedDependRelationId, RowExclusiveLock);
 
 	shdepDropDependency(sdepRel, classId, objectId, objectSubId,
 						(objectSubId == 0),
 						InvalidOid, InvalidOid,
 						SHARED_DEPENDENCY_INVALID);
 
-	heap_close(sdepRel, RowExclusiveLock);
+	table_close(sdepRel, RowExclusiveLock);
 }
 
 /*
@@ -999,13 +1140,6 @@ shdepLockAndCheckObject(Oid classId, Oid objectId)
 								objectId)));
 			break;
 
-			/*
-			 * Currently, this routine need not support any other shared
-			 * object types besides roles.  If we wanted to record explicit
-			 * dependencies on databases or tablespaces, we'd need code along
-			 * these lines:
-			 */
-#ifdef NOT_USED
 		case TableSpaceRelationId:
 			{
 				/* For lack of a syscache on pg_tablespace, do this: */
@@ -1019,7 +1153,6 @@ shdepLockAndCheckObject(Oid classId, Oid objectId)
 				pfree(tablespace);
 				break;
 			}
-#endif
 
 		case DatabaseRelationId:
 			{
@@ -1079,6 +1212,8 @@ storeObjectDescription(StringInfo descs,
 				appendStringInfo(descs, _("privileges for %s"), objdesc);
 			else if (deptype == SHARED_DEPENDENCY_POLICY)
 				appendStringInfo(descs, _("target of %s"), objdesc);
+			else if (deptype == SHARED_DEPENDENCY_TABLESPACE)
+				appendStringInfo(descs, _("tablespace for %s"), objdesc);
 			else
 				elog(ERROR, "unrecognized dependency type: %d",
 					 (int) deptype);
@@ -1173,7 +1308,7 @@ shdepDropOwned(List *roleids, DropBehavior behavior)
 	 * acquire RowExclusiveLock.  Better get that right now to avoid potential
 	 * deadlock failures.
 	 */
-	sdepRel = heap_open(SharedDependRelationId, RowExclusiveLock);
+	sdepRel = table_open(SharedDependRelationId, RowExclusiveLock);
 
 	/*
 	 * For each role, find the dependent objects and drop them using the
@@ -1240,7 +1375,10 @@ shdepDropOwned(List *roleids, DropBehavior behavior)
 											sdepForm->objid);
 					break;
 				case SHARED_DEPENDENCY_POLICY:
-					/* If unable to remove role from policy, remove policy. */
+					/*
+					 * Try to remove role from policy; if unable to, remove
+					 * policy.
+					 */
 					if (!RemoveRoleFromObjectPolicy(roleid,
 													sdepForm->classid,
 													sdepForm->objid))
@@ -1248,6 +1386,18 @@ shdepDropOwned(List *roleids, DropBehavior behavior)
 						obj.classId = sdepForm->classid;
 						obj.objectId = sdepForm->objid;
 						obj.objectSubId = sdepForm->objsubid;
+						/*
+						 * Acquire lock on object, then verify this dependency
+						 * is still relevant.  If not, the object might have
+						 * been dropped or the policy modified.  Ignore the
+						 * object in that case.
+						 */
+						AcquireDeletionLock(&obj, 0);
+						if (!systable_recheck_tuple(scan, tuple))
+						{
+							ReleaseDeletionLock(&obj);
+							break;
+						}
 						add_exact_object_address(&obj, deleteobjs);
 					}
 					break;
@@ -1258,6 +1408,13 @@ shdepDropOwned(List *roleids, DropBehavior behavior)
 						obj.classId = sdepForm->classid;
 						obj.objectId = sdepForm->objid;
 						obj.objectSubId = sdepForm->objsubid;
+						/* as above */
+						AcquireDeletionLock(&obj, 0);
+						if (!systable_recheck_tuple(scan, tuple))
+						{
+							ReleaseDeletionLock(&obj);
+							break;
+						}
 						add_exact_object_address(&obj, deleteobjs);
 					}
 					break;
@@ -1267,10 +1424,18 @@ shdepDropOwned(List *roleids, DropBehavior behavior)
 		systable_endscan(scan);
 	}
 
+	/*
+	 * For stability of deletion-report ordering, sort the objects into
+	 * approximate reverse creation order before deletion.  (This might also
+	 * make the deletion go a bit faster, since there's less chance of having
+	 * to rearrange the objects due to dependencies.)
+	 */
+	sort_object_addresses(deleteobjs);
+
 	/* the dependency mechanism does the actual work */
 	performMultipleDeletions(deleteobjs, behavior, 0);
 
-	heap_close(sdepRel, RowExclusiveLock);
+	table_close(sdepRel, RowExclusiveLock);
 
 	free_object_addresses(deleteobjs);
 }
@@ -1292,7 +1457,7 @@ shdepReassignOwned(List *roleids, Oid newrole)
 	 * acquire RowExclusiveLock.  Better get that right now to avoid potential
 	 * deadlock problems.
 	 */
-	sdepRel = heap_open(SharedDependRelationId, RowExclusiveLock);
+	sdepRel = table_open(SharedDependRelationId, RowExclusiveLock);
 
 	foreach(cell, roleids)
 	{
@@ -1428,12 +1593,12 @@ shdepReassignOwned(List *roleids, Oid newrole)
 						if (classId == LargeObjectRelationId)
 							classId = LargeObjectMetadataRelationId;
 
-						catalog = heap_open(classId, RowExclusiveLock);
+						catalog = table_open(classId, RowExclusiveLock);
 
 						AlterObjectOwner_internal(catalog, sdepForm->objid,
 												  newrole);
 
-						heap_close(catalog, NoLock);
+						table_close(catalog, NoLock);
 					}
 					break;
 
@@ -1448,5 +1613,5 @@ shdepReassignOwned(List *roleids, Oid newrole)
 		systable_endscan(scan);
 	}
 
-	heap_close(sdepRel, RowExclusiveLock);
+	table_close(sdepRel, RowExclusiveLock);
 }

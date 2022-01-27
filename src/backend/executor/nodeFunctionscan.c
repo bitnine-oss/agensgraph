@@ -3,7 +3,7 @@
  * nodeFunctionscan.c
  *	  Support routines for scanning RangeFunctions (functions in rangetable).
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -334,18 +334,6 @@ ExecInitFunctionScan(FunctionScan *node, EState *estate, int eflags)
 	 */
 	ExecAssignExprContext(estate, &scanstate->ss.ps);
 
-	/*
-	 * tuple table initialization
-	 */
-	ExecInitResultTupleSlot(estate, &scanstate->ss.ps);
-	ExecInitScanTupleSlot(estate, &scanstate->ss);
-
-	/*
-	 * initialize child expressions
-	 */
-	scanstate->ss.ps.qual =
-		ExecInitQual(node->scan.plan.qual, (PlanState *) scanstate);
-
 	scanstate->funcstates = palloc(nfuncs * sizeof(FunctionScanPerFuncState));
 
 	natts = 0;
@@ -383,7 +371,8 @@ ExecInitFunctionScan(FunctionScan *node, EState *estate, int eflags)
 											&funcrettype,
 											&tupdesc);
 
-		if (functypclass == TYPEFUNC_COMPOSITE)
+		if (functypclass == TYPEFUNC_COMPOSITE ||
+			functypclass == TYPEFUNC_COMPOSITE_DOMAIN)
 		{
 			/* Composite data type, e.g. a table's row type */
 			Assert(tupdesc);
@@ -394,7 +383,7 @@ ExecInitFunctionScan(FunctionScan *node, EState *estate, int eflags)
 		else if (functypclass == TYPEFUNC_SCALAR)
 		{
 			/* Base data type, i.e. scalar */
-			tupdesc = CreateTemplateTupleDesc(1, false);
+			tupdesc = CreateTemplateTupleDesc(1);
 			TupleDescInitEntry(tupdesc,
 							   (AttrNumber) 1,
 							   NULL,	/* don't care about the name here */
@@ -435,8 +424,8 @@ ExecInitFunctionScan(FunctionScan *node, EState *estate, int eflags)
 		 */
 		if (!scanstate->simple)
 		{
-			fs->func_slot = ExecInitExtraTupleSlot(estate);
-			ExecSetSlotDescriptor(fs->func_slot, fs->tupdesc);
+			fs->func_slot = ExecInitExtraTupleSlot(estate, fs->tupdesc,
+												   &TTSOpsMinimalTuple);
 		}
 		else
 			fs->func_slot = NULL;
@@ -465,7 +454,7 @@ ExecInitFunctionScan(FunctionScan *node, EState *estate, int eflags)
 		if (node->funcordinality)
 			natts++;
 
-		scan_tupdesc = CreateTemplateTupleDesc(natts, false);
+		scan_tupdesc = CreateTemplateTupleDesc(natts);
 
 		for (i = 0; i < nfuncs; i++)
 		{
@@ -491,13 +480,23 @@ ExecInitFunctionScan(FunctionScan *node, EState *estate, int eflags)
 		Assert(attno == natts);
 	}
 
-	ExecAssignScanType(&scanstate->ss, scan_tupdesc);
+	/*
+	 * Initialize scan slot and type.
+	 */
+	ExecInitScanTupleSlot(estate, &scanstate->ss, scan_tupdesc,
+						  &TTSOpsMinimalTuple);
 
 	/*
-	 * Initialize result tuple type and projection info.
+	 * Initialize result slot, type and projection.
 	 */
-	ExecAssignResultTypeFromTL(&scanstate->ss.ps);
+	ExecInitResultTypeTL(&scanstate->ss.ps);
 	ExecAssignScanProjectionInfo(&scanstate->ss);
+
+	/*
+	 * initialize child expressions
+	 */
+	scanstate->ss.ps.qual =
+		ExecInitQual(node->scan.plan.qual, (PlanState *) scanstate);
 
 	/*
 	 * Create a memory context that ExecMakeTableFunctionResult can use to
@@ -532,7 +531,8 @@ ExecEndFunctionScan(FunctionScanState *node)
 	/*
 	 * clean out the tuple table
 	 */
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	ExecClearTuple(node->ss.ss_ScanTupleSlot);
 
 	/*
@@ -566,7 +566,8 @@ ExecReScanFunctionScan(FunctionScanState *node)
 	int			i;
 	Bitmapset  *chgparam = node->ss.ps.chgParam;
 
-	ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
+	if (node->ss.ps.ps_ResultTupleSlot)
+		ExecClearTuple(node->ss.ps.ps_ResultTupleSlot);
 	for (i = 0; i < node->nfuncs; i++)
 	{
 		FunctionScanPerFuncState *fs = &node->funcstates[i];

@@ -34,7 +34,6 @@
 #include <ctype.h>
 
 #include "parser/scansup.h"
-#include "utils/backend_random.h"
 #include "utils/builtins.h"
 #include "utils/uuid.h"
 
@@ -47,7 +46,7 @@ PG_MODULE_MAGIC;
 /* private stuff */
 
 typedef int (*PFN) (const char *name, void **res);
-static void *find_provider(text *name, PFN pf, char *desc, int silent);
+static void *find_provider(text *name, PFN pf, const char *desc, int silent);
 
 /* SQL function: hash(bytea, text) returns bytea */
 PG_FUNCTION_INFO_V1(pg_digest);
@@ -423,7 +422,6 @@ PG_FUNCTION_INFO_V1(pg_random_bytes);
 Datum
 pg_random_bytes(PG_FUNCTION_ARGS)
 {
-#ifdef HAVE_STRONG_RANDOM
 	int			len = PG_GETARG_INT32(0);
 	bytea	   *res;
 
@@ -440,9 +438,6 @@ pg_random_bytes(PG_FUNCTION_ARGS)
 		px_THROW_ERROR(PXE_NO_RANDOM);
 
 	PG_RETURN_BYTEA_P(res);
-#else
-	px_THROW_ERROR(PXE_NO_RANDOM);
-#endif
 }
 
 /* SQL function: gen_random_uuid() returns uuid */
@@ -451,11 +446,10 @@ PG_FUNCTION_INFO_V1(pg_random_uuid);
 Datum
 pg_random_uuid(PG_FUNCTION_ARGS)
 {
-#ifdef HAVE_STRONG_RANDOM
 	uint8	   *buf = (uint8 *) palloc(UUID_LEN);
 
 	/* Generate random bits. */
-	if (!pg_backend_random((char *) buf, UUID_LEN))
+	if (!pg_strong_random(buf, UUID_LEN))
 		px_THROW_ERROR(PXE_NO_RANDOM);
 
 	/*
@@ -466,15 +460,12 @@ pg_random_uuid(PG_FUNCTION_ARGS)
 	buf[8] = (buf[8] & 0x3f) | 0x80;	/* "variant" field */
 
 	PG_RETURN_UUID_P((pg_uuid_t *) buf);
-#else
-	px_THROW_ERROR(PXE_NO_RANDOM);
-#endif
 }
 
 static void *
 find_provider(text *name,
 			  PFN provider_lookup,
-			  char *desc, int silent)
+			  const char *desc, int silent)
 {
 	void	   *res;
 	char	   *buf;

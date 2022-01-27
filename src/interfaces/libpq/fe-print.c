@@ -3,7 +3,7 @@
  * fe-print.c
  *	  functions for pretty-printing query results
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * These functions were formerly part of fe-exec.c, but they
@@ -36,19 +36,20 @@
 #include "libpq-fe.h"
 #include "libpq-int.h"
 
+#define PQmblenBounded(s, e)  strnlen(s, PQmblen(s, e))
 
-static void do_field(const PQprintOpt *po, const PGresult *res,
-		 const int i, const int j, const int fs_len,
-		 char **fields,
-		 const int nFields, const char **fieldNames,
-		 unsigned char *fieldNotNum, int *fieldMax,
-		 const int fieldMaxLen, FILE *fout);
+static bool do_field(const PQprintOpt *po, const PGresult *res,
+					 const int i, const int j, const int fs_len,
+					 char **fields,
+					 const int nFields, const char **fieldNames,
+					 unsigned char *fieldNotNum, int *fieldMax,
+					 const int fieldMaxLen, FILE *fout);
 static char *do_header(FILE *fout, const PQprintOpt *po, const int nFields,
-		  int *fieldMax, const char **fieldNames, unsigned char *fieldNotNum,
-		  const int fs_len, const PGresult *res);
+					   int *fieldMax, const char **fieldNames, unsigned char *fieldNotNum,
+					   const int fs_len, const PGresult *res);
 static void output_row(FILE *fout, const PQprintOpt *po, const int nFields, char **fields,
-		   unsigned char *fieldNotNum, int *fieldMax, char *border,
-		   const int row_index);
+					   unsigned char *fieldNotNum, int *fieldMax, char *border,
+					   const int row_index);
 static void fill(int length, int max, char filler, FILE *fp);
 
 /*
@@ -80,12 +81,12 @@ PQprint(FILE *fout, const PGresult *res, const PQprintOpt *po)
 		unsigned char *fieldNotNum = NULL;
 		char	   *border = NULL;
 		char	  **fields = NULL;
-		const char **fieldNames;
+		const char **fieldNames = NULL;
 		int			fieldMaxLen = 0;
 		int			numFieldName;
 		int			fs_len = strlen(po->fieldSep);
 		int			total_line_length = 0;
-		int			usePipe = 0;
+		bool		usePipe = false;
 		char	   *pagerenv;
 
 #if defined(ENABLE_THREAD_SAFETY) && !defined(WIN32)
@@ -108,20 +109,13 @@ PQprint(FILE *fout, const PGresult *res, const PQprintOpt *po)
 #endif
 
 		nTups = PQntuples(res);
-		if (!(fieldNames = (const char **) calloc(nFields, sizeof(char *))))
+		fieldNames = (const char **) calloc(nFields, sizeof(char *));
+		fieldNotNum = (unsigned char *) calloc(nFields, 1);
+		fieldMax = (int *) calloc(nFields, sizeof(int));
+		if (!fieldNames || !fieldNotNum || !fieldMax)
 		{
 			fprintf(stderr, libpq_gettext("out of memory\n"));
-			abort();
-		}
-		if (!(fieldNotNum = (unsigned char *) calloc(nFields, 1)))
-		{
-			fprintf(stderr, libpq_gettext("out of memory\n"));
-			abort();
-		}
-		if (!(fieldMax = (int *) calloc(nFields, sizeof(int))))
-		{
-			fprintf(stderr, libpq_gettext("out of memory\n"));
-			abort();
+			goto exit;
 		}
 		for (numFieldName = 0;
 			 po->fieldName && po->fieldName[numFieldName];
@@ -165,6 +159,13 @@ PQprint(FILE *fout, const PGresult *res, const PQprintOpt *po)
 			screen_size.ws_row = 24;
 			screen_size.ws_col = 80;
 #endif
+
+			/*
+			 * Since this function is no longer used by psql, we don't examine
+			 * PSQL_PAGER.  It's possible that the hypothetical external users
+			 * of the function would like that to happen, but in the name of
+			 * backwards compatibility, we'll stick to just examining PAGER.
+			 */
 			pagerenv = getenv("PAGER");
 			/* if PAGER is unset, empty or all-white-space, don't use pager */
 			if (pagerenv != NULL &&
@@ -183,7 +184,7 @@ PQprint(FILE *fout, const PGresult *res, const PQprintOpt *po)
 				fout = popen(pagerenv, "w");
 				if (fout)
 				{
-					usePipe = 1;
+					usePipe = true;
 #ifndef WIN32
 #ifdef ENABLE_THREAD_SAFETY
 					if (pq_block_sigpipe(&osigset, &sigpipe_pending) == 0)
@@ -200,10 +201,12 @@ PQprint(FILE *fout, const PGresult *res, const PQprintOpt *po)
 
 		if (!po->expanded && (po->align || po->html3))
 		{
-			if (!(fields = (char **) calloc(nFields * (nTups + 1), sizeof(char *))))
+			fields = (char **) calloc((size_t) nTups + 1,
+									  nFields * sizeof(char *));
+			if (!fields)
 			{
 				fprintf(stderr, libpq_gettext("out of memory\n"));
-				abort();
+				goto exit;
 			}
 		}
 		else if (po->header && !po->html3)
@@ -257,9 +260,12 @@ PQprint(FILE *fout, const PGresult *res, const PQprintOpt *po)
 					fprintf(fout, libpq_gettext("-- RECORD %d --\n"), i);
 			}
 			for (j = 0; j < nFields; j++)
-				do_field(po, res, i, j, fs_len, fields, nFields,
-						 fieldNames, fieldNotNum,
-						 fieldMax, fieldMaxLen, fout);
+			{
+				if (!do_field(po, res, i, j, fs_len, fields, nFields,
+							  fieldNames, fieldNotNum,
+							  fieldMax, fieldMaxLen, fout))
+					goto exit;
+			}
 			if (po->html3 && po->expanded)
 				fputs("</table>\n", fout);
 		}
@@ -290,16 +296,34 @@ PQprint(FILE *fout, const PGresult *res, const PQprintOpt *po)
 			for (i = 0; i < nTups; i++)
 				output_row(fout, po, nFields, fields,
 						   fieldNotNum, fieldMax, border, i);
-			free(fields);
-			if (border)
-				free(border);
 		}
 		if (po->header && !po->html3)
 			fprintf(fout, "(%d row%s)\n\n", PQntuples(res),
 					(PQntuples(res) == 1) ? "" : "s");
-		free(fieldMax);
-		free(fieldNotNum);
-		free((void *) fieldNames);
+		if (po->html3 && !po->expanded)
+			fputs("</table>\n", fout);
+
+exit:
+		if (fieldMax)
+			free(fieldMax);
+		if (fieldNotNum)
+			free(fieldNotNum);
+		if (border)
+			free(border);
+		if (fields)
+		{
+			/* if calloc succeeded, this shouldn't overflow size_t */
+			size_t		numfields = ((size_t) nTups + 1) * (size_t) nFields;
+
+			while (numfields-- > 0)
+			{
+				if (fields[numfields])
+					free(fields[numfields]);
+			}
+			free(fields);
+		}
+		if (fieldNames)
+			free((void *) fieldNames);
 		if (usePipe)
 		{
 #ifdef WIN32
@@ -316,13 +340,11 @@ PQprint(FILE *fout, const PGresult *res, const PQprintOpt *po)
 #endif							/* ENABLE_THREAD_SAFETY */
 #endif							/* WIN32 */
 		}
-		if (po->html3 && !po->expanded)
-			fputs("</table>\n", fout);
 	}
 }
 
 
-static void
+static bool
 do_field(const PQprintOpt *po, const PGresult *res,
 		 const int i, const int j, const int fs_len,
 		 char **fields,
@@ -358,7 +380,7 @@ do_field(const PQprintOpt *po, const PGresult *res,
 			/* Detect whether field contains non-numeric data */
 			char		ch = '0';
 
-			for (p = pval; *p; p += PQmblen(p, res->client_encoding))
+			for (p = pval; *p; p += PQmblenBounded(p, res->client_encoding))
 			{
 				ch = *p;
 				if (!((ch >= '0' && ch <= '9') ||
@@ -390,7 +412,7 @@ do_field(const PQprintOpt *po, const PGresult *res,
 			if (!(fields[i * nFields + j] = (char *) malloc(plen + 1)))
 			{
 				fprintf(stderr, libpq_gettext("out of memory\n"));
-				abort();
+				return false;
 			}
 			strcpy(fields[i * nFields + j], pval);
 		}
@@ -433,6 +455,7 @@ do_field(const PQprintOpt *po, const PGresult *res,
 			}
 		}
 	}
+	return true;
 }
 
 
@@ -460,7 +483,7 @@ do_header(FILE *fout, const PQprintOpt *po, const int nFields, int *fieldMax,
 		if (!border)
 		{
 			fprintf(stderr, libpq_gettext("out of memory\n"));
-			abort();
+			return NULL;
 		}
 		p = border;
 		if (po->standard)
@@ -551,8 +574,6 @@ output_row(FILE *fout, const PQprintOpt *po, const int nFields, char **fields,
 			if (po->standard || field_index + 1 < nFields)
 				fputs(po->fieldSep, fout);
 		}
-		if (p)
-			free(p);
 	}
 	if (po->html3)
 		fputs("</tr>", fout);
@@ -602,7 +623,7 @@ PQdisplayTuples(const PGresult *res,
 		if (!fLength)
 		{
 			fprintf(stderr, libpq_gettext("out of memory\n"));
-			abort();
+			return;
 		}
 
 		for (j = 0; j < nFields; j++)
@@ -700,7 +721,7 @@ PQprintTuples(const PGresult *res,
 			if (!tborder)
 			{
 				fprintf(stderr, libpq_gettext("out of memory\n"));
-				abort();
+				return;
 			}
 			for (i = 0; i < width; i++)
 				tborder[i] = '-';

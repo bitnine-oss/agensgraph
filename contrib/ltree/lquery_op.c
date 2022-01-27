@@ -8,6 +8,7 @@
 #include <ctype.h>
 
 #include "catalog/pg_collation.h"
+#include "miscadmin.h"
 #include "utils/formatting.h"
 #include "ltree.h"
 
@@ -50,7 +51,7 @@ getlexeme(char *start, char *end, int *len)
 }
 
 bool
-			compare_subnode(ltree_level *t, char *qn, int len, int (*cmpptr) (const char *, const char *, size_t), bool anyend)
+compare_subnode(ltree_level *t, char *qn, int len, int (*cmpptr) (const char *, const char *, size_t), bool anyend)
 {
 	char	   *endt = t->name + t->len;
 	char	   *endq = qn + len;
@@ -164,6 +165,12 @@ checkCond(lquery_level *curq, int query_numlevel, ltree_level *curt, int tree_nu
 	int			isok;
 	lquery_level *prevq = NULL;
 	ltree_level *prevt = NULL;
+
+	/* Since this function recurses, it could be driven to stack overflow */
+	check_stack_depth();
+
+	/* Pathological patterns could take awhile, too */
+	CHECK_FOR_INTERRUPTS();
 
 	if (SomeStack.muse)
 	{
@@ -302,8 +309,8 @@ checkCond(lquery_level *curq, int query_numlevel, ltree_level *curt, int tree_nu
 Datum
 ltq_regex(PG_FUNCTION_ARGS)
 {
-	ltree	   *tree = PG_GETARG_LTREE(0);
-	lquery	   *query = PG_GETARG_LQUERY(1);
+	ltree	   *tree = PG_GETARG_LTREE_P(0);
+	lquery	   *query = PG_GETARG_LQUERY_P(1);
 	bool		res = false;
 
 	if (query->flag & LQUERY_HASNOT)
@@ -338,7 +345,7 @@ ltq_rregex(PG_FUNCTION_ARGS)
 Datum
 lt_q_regex(PG_FUNCTION_ARGS)
 {
-	ltree	   *tree = PG_GETARG_LTREE(0);
+	ltree	   *tree = PG_GETARG_LTREE_P(0);
 	ArrayType  *_query = PG_GETARG_ARRAYTYPE_P(1);
 	lquery	   *query = (lquery *) ARR_DATA_PTR(_query);
 	bool		res = false;

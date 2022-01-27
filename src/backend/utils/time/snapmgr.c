@@ -35,7 +35,7 @@
  * stack is empty.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -48,6 +48,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "access/subtrans.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "access/xlog.h"
@@ -66,7 +67,6 @@
 #include "utils/resowner_private.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
 
 
 /*
@@ -141,9 +141,11 @@ static volatile OldSnapshotControlData *oldSnapshotControl;
  * These SnapshotData structs are static to simplify memory allocation
  * (see the hack in GetSnapshotData to avoid repeated malloc/free).
  */
-static SnapshotData CurrentSnapshotData = {HeapTupleSatisfiesMVCC};
-static SnapshotData SecondarySnapshotData = {HeapTupleSatisfiesMVCC};
-SnapshotData CatalogSnapshotData = {HeapTupleSatisfiesMVCC};
+static SnapshotData CurrentSnapshotData = {SNAPSHOT_MVCC};
+static SnapshotData SecondarySnapshotData = {SNAPSHOT_MVCC};
+SnapshotData CatalogSnapshotData = {SNAPSHOT_MVCC};
+SnapshotData SnapshotSelfData = {SNAPSHOT_SELF};
+SnapshotData SnapshotAnyData = {SNAPSHOT_ANY};
 
 /* Pointers to valid snapshots */
 static Snapshot CurrentSnapshot = NULL;
@@ -194,8 +196,8 @@ static ActiveSnapshotElt *OldestActiveSnapshot = NULL;
  * Currently registered Snapshots.  Ordered in a heap by xmin, so that we can
  * quickly find the one with lowest xmin, to advance our MyPgXact->xmin.
  */
-static int xmin_cmp(const pairingheap_node *a, const pairingheap_node *b,
-		 void *arg);
+static int	xmin_cmp(const pairingheap_node *a, const pairingheap_node *b,
+					 void *arg);
 
 static pairingheap RegisteredSnapshots = {&xmin_cmp, NULL, NULL};
 
@@ -955,6 +957,36 @@ xmin_cmp(const pairingheap_node *a, const pairingheap_node *b, void *arg)
 }
 
 /*
+ * Get current RecentGlobalXmin value, as a FullTransactionId.
+ */
+FullTransactionId
+GetFullRecentGlobalXmin(void)
+{
+	FullTransactionId nextxid_full;
+	uint32		nextxid_epoch;
+	TransactionId nextxid_xid;
+	uint32		epoch;
+
+	Assert(TransactionIdIsNormal(RecentGlobalXmin));
+
+	/*
+	 * Compute the epoch from the next XID's epoch. This relies on the fact
+	 * that RecentGlobalXmin must be within the 2 billion XID horizon from the
+	 * next XID.
+	 */
+	nextxid_full = ReadNextFullTransactionId();
+	nextxid_epoch = EpochFromFullTransactionId(nextxid_full);
+	nextxid_xid = XidFromFullTransactionId(nextxid_full);
+
+	if (RecentGlobalXmin > nextxid_xid)
+		epoch = nextxid_epoch - 1;
+	else
+		epoch = nextxid_epoch;
+
+	return FullTransactionIdFromEpochAndXid(epoch, RecentGlobalXmin);
+}
+
+/*
  * SnapshotResetXmin
  *
  * If there are no more snapshots, we can reset our PGXACT->xmin to InvalidXid.
@@ -1087,8 +1119,8 @@ AtEOXact_Snapshot(bool isCommit, bool resetXmin)
 		 * it's too late to abort the transaction, and (2) leaving a leaked
 		 * file around has little real consequence anyway.
 		 *
-		 * We also also need to remove the snapshots from RegisteredSnapshots
-		 * to prevent a warning below.
+		 * We also need to remove the snapshots from RegisteredSnapshots to
+		 * prevent a warning below.
 		 *
 		 * As with the FirstXactSnapshot, we don't need to free resources of
 		 * the snapshot iself as it will go away with the memory context.
@@ -1171,7 +1203,7 @@ ExportSnapshot(Snapshot snapshot)
 	char		pathtmp[MAXPGPATH];
 
 	/*
-	 * It's tempting to call RequireTransactionChain here, since it's not very
+	 * It's tempting to call RequireTransactionBlock here, since it's not very
 	 * useful to export a snapshot that will disappear immediately afterwards.
 	 * However, we haven't got enough information to do that, since we don't
 	 * know if we're at top level or not.  For example, we could be inside a
@@ -1507,6 +1539,8 @@ ImportSnapshot(const char *idstr)
 	src_isolevel = parseIntFromText("iso:", &filebuf, path);
 	src_readonly = parseIntFromText("ro:", &filebuf, path);
 
+	snapshot.snapshot_type = SNAPSHOT_MVCC;
+
 	snapshot.xmin = parseXidFromText("xmin:", &filebuf, path);
 	snapshot.xmax = parseXidFromText("xmax:", &filebuf, path);
 
@@ -1619,27 +1653,25 @@ DeleteAllExportedSnapshotFiles(void)
 	DIR		   *s_dir;
 	struct dirent *s_de;
 
-	if (!(s_dir = AllocateDir(SNAPSHOT_EXPORT_DIR)))
-	{
-		/*
-		 * We really should have that directory in a sane cluster setup. But
-		 * then again if we don't, it's not fatal enough to make it FATAL.
-		 * Since we're running in the postmaster, LOG is our best bet.
-		 */
-		elog(LOG, "could not open directory \"%s\": %m", SNAPSHOT_EXPORT_DIR);
-		return;
-	}
+	/*
+	 * Problems in reading the directory, or unlinking files, are reported at
+	 * LOG level.  Since we're running in the startup process, ERROR level
+	 * would prevent database start, and it's not important enough for that.
+	 */
+	s_dir = AllocateDir(SNAPSHOT_EXPORT_DIR);
 
-	while ((s_de = ReadDir(s_dir, SNAPSHOT_EXPORT_DIR)) != NULL)
+	while ((s_de = ReadDirExtended(s_dir, SNAPSHOT_EXPORT_DIR, LOG)) != NULL)
 	{
 		if (strcmp(s_de->d_name, ".") == 0 ||
 			strcmp(s_de->d_name, "..") == 0)
 			continue;
 
 		snprintf(buf, sizeof(buf), SNAPSHOT_EXPORT_DIR "/%s", s_de->d_name);
-		/* Again, unlink failure is not worthy of FATAL */
-		if (unlink(buf))
-			elog(LOG, "could not unlink file \"%s\": %m", buf);
+
+		if (unlink(buf) != 0)
+			ereport(LOG,
+					(errcode_for_file_access(),
+					 errmsg("could not remove file \"%s\": %m", buf)));
 	}
 
 	FreeDir(s_dir);
@@ -2048,7 +2080,7 @@ EstimateSnapshotSpace(Snapshot snap)
 	Size		size;
 
 	Assert(snap != InvalidSnapshot);
-	Assert(snap->satisfies == HeapTupleSatisfiesMVCC);
+	Assert(snap->snapshot_type == SNAPSHOT_MVCC);
 
 	/* We allocate any XID arrays needed in the same palloc block. */
 	size = add_size(sizeof(SerializedSnapshotData),
@@ -2145,7 +2177,7 @@ RestoreSnapshot(char *start_address)
 
 	/* Copy all required fields */
 	snapshot = (Snapshot) MemoryContextAlloc(TopTransactionContext, size);
-	snapshot->satisfies = HeapTupleSatisfiesMVCC;
+	snapshot->snapshot_type = SNAPSHOT_MVCC;
 	snapshot->xmin = serialized_snapshot.xmin;
 	snapshot->xmax = serialized_snapshot.xmax;
 	snapshot->xip = NULL;
@@ -2193,6 +2225,128 @@ void
 RestoreTransactionSnapshot(Snapshot snapshot, void *master_pgproc)
 {
 	SetTransactionSnapshot(snapshot, NULL, InvalidPid, master_pgproc);
+}
+
+/*
+ * XidInMVCCSnapshot
+ *		Is the given XID still-in-progress according to the snapshot?
+ *
+ * Note: GetSnapshotData never stores either top xid or subxids of our own
+ * backend into a snapshot, so these xids will not be reported as "running"
+ * by this function.  This is OK for current uses, because we always check
+ * TransactionIdIsCurrentTransactionId first, except when it's known the
+ * XID could not be ours anyway.
+ */
+bool
+XidInMVCCSnapshot(TransactionId xid, Snapshot snapshot)
+{
+	uint32		i;
+
+	/*
+	 * Make a quick range check to eliminate most XIDs without looking at the
+	 * xip arrays.  Note that this is OK even if we convert a subxact XID to
+	 * its parent below, because a subxact with XID < xmin has surely also got
+	 * a parent with XID < xmin, while one with XID >= xmax must belong to a
+	 * parent that was not yet committed at the time of this snapshot.
+	 */
+
+	/* Any xid < xmin is not in-progress */
+	if (TransactionIdPrecedes(xid, snapshot->xmin))
+		return false;
+	/* Any xid >= xmax is in-progress */
+	if (TransactionIdFollowsOrEquals(xid, snapshot->xmax))
+		return true;
+
+	/*
+	 * Snapshot information is stored slightly differently in snapshots taken
+	 * during recovery.
+	 */
+	if (!snapshot->takenDuringRecovery)
+	{
+		/*
+		 * If the snapshot contains full subxact data, the fastest way to
+		 * check things is just to compare the given XID against both subxact
+		 * XIDs and top-level XIDs.  If the snapshot overflowed, we have to
+		 * use pg_subtrans to convert a subxact XID to its parent XID, but
+		 * then we need only look at top-level XIDs not subxacts.
+		 */
+		if (!snapshot->suboverflowed)
+		{
+			/* we have full data, so search subxip */
+			int32		j;
+
+			for (j = 0; j < snapshot->subxcnt; j++)
+			{
+				if (TransactionIdEquals(xid, snapshot->subxip[j]))
+					return true;
+			}
+
+			/* not there, fall through to search xip[] */
+		}
+		else
+		{
+			/*
+			 * Snapshot overflowed, so convert xid to top-level.  This is safe
+			 * because we eliminated too-old XIDs above.
+			 */
+			xid = SubTransGetTopmostTransaction(xid);
+
+			/*
+			 * If xid was indeed a subxact, we might now have an xid < xmin,
+			 * so recheck to avoid an array scan.  No point in rechecking
+			 * xmax.
+			 */
+			if (TransactionIdPrecedes(xid, snapshot->xmin))
+				return false;
+		}
+
+		for (i = 0; i < snapshot->xcnt; i++)
+		{
+			if (TransactionIdEquals(xid, snapshot->xip[i]))
+				return true;
+		}
+	}
+	else
+	{
+		int32		j;
+
+		/*
+		 * In recovery we store all xids in the subxact array because it is by
+		 * far the bigger array, and we mostly don't know which xids are
+		 * top-level and which are subxacts. The xip array is empty.
+		 *
+		 * We start by searching subtrans, if we overflowed.
+		 */
+		if (snapshot->suboverflowed)
+		{
+			/*
+			 * Snapshot overflowed, so convert xid to top-level.  This is safe
+			 * because we eliminated too-old XIDs above.
+			 */
+			xid = SubTransGetTopmostTransaction(xid);
+
+			/*
+			 * If xid was indeed a subxact, we might now have an xid < xmin,
+			 * so recheck to avoid an array scan.  No point in rechecking
+			 * xmax.
+			 */
+			if (TransactionIdPrecedes(xid, snapshot->xmin))
+				return false;
+		}
+
+		/*
+		 * We now have either a top-level xid higher than xmin or an
+		 * indeterminate xid. We don't know whether it's top level or subxact
+		 * but it doesn't matter. If it's present, the xid is visible.
+		 */
+		for (j = 0; j < snapshot->subxcnt; j++)
+		{
+			if (TransactionIdEquals(xid, snapshot->subxip[j]))
+				return true;
+		}
+	}
+
+	return false;
 }
 
 /* See RegisterSnapshot() */

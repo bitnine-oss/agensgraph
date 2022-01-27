@@ -6,9 +6,9 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: pg_config-cs (PostgreSQL 9.3)\n"
-"Report-Msgid-Bugs-To: pgsql-bugs@postgresql.org\n"
-"POT-Creation-Date: 2013-03-17 18:46+0000\n"
-"PO-Revision-Date: 2013-04-28 19:26+0200\n"
+"Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
+"POT-Creation-Date: 2019-09-27 08:13+0000\n"
+"PO-Revision-Date: 2019-09-28 11:28+0200\n"
 "Last-Translator: Tomas Vondra <tv@fuzzy.cz>\n"
 "Language-Team: Czech <info@cspug.cx>\n"
 "Language: cs\n"
@@ -16,51 +16,56 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
-"X-Generator: Lokalize 1.5\n"
+"X-Generator: Poedit 2.2.3\n"
 
-#: ../../port/exec.c:127 ../../port/exec.c:241 ../../port/exec.c:284
+#: ../../common/config_info.c:130 ../../common/config_info.c:138
+#: ../../common/config_info.c:146 ../../common/config_info.c:154
+#: ../../common/config_info.c:162 ../../common/config_info.c:170
+#: ../../common/config_info.c:178 ../../common/config_info.c:186
+#: ../../common/config_info.c:194
+msgid "not recorded"
+msgstr "nezaznamenáno"
+
+#: ../../common/exec.c:138 ../../common/exec.c:255 ../../common/exec.c:301
 #, c-format
-msgid "could not identify current directory: %s"
-msgstr "nelze získat aktuální adresář: %s"
+msgid "could not identify current directory: %m"
+msgstr "nelze získat aktuální adresář: %m"
 
-#: ../../port/exec.c:146
+#: ../../common/exec.c:157
 #, c-format
 msgid "invalid binary \"%s\""
 msgstr "neplatný binární soubor\"%s\""
 
-#: ../../port/exec.c:195
+#: ../../common/exec.c:207
 #, c-format
 msgid "could not read binary \"%s\""
 msgstr "nelze číst binární soubor \"%s\""
 
-#: ../../port/exec.c:202
+#: ../../common/exec.c:215
 #, c-format
 msgid "could not find a \"%s\" to execute"
-msgstr "nelze najít spustitelný soubor \"%s\""
+msgstr "nelze najít soubor \"%s\" ke spuštění"
 
-#: ../../port/exec.c:257 ../../port/exec.c:293
+#: ../../common/exec.c:271 ../../common/exec.c:310
 #, c-format
-msgid "could not change directory to \"%s\": %s"
-msgstr "nelze změnit adresář na \"%s\" : %s"
+msgid "could not change directory to \"%s\": %m"
+msgstr "nelze změnit adresář na \"%s\" : %m"
 
-#: ../../port/exec.c:272
+#: ../../common/exec.c:288
 #, c-format
-msgid "could not read symbolic link \"%s\""
-msgstr "nelze číst symbolický link \"%s\""
+msgid "could not read symbolic link \"%s\": %m"
+msgstr "nelze přečíst symbolický odkaz \"%s\": %m"
 
-#: ../../port/exec.c:523
+#: ../../common/exec.c:541
 #, c-format
-msgid "pclose failed: %s"
-msgstr "volání pclose selhalo: %s"
+msgid "pclose failed: %m"
+msgstr "volání pclose selhalo: %m"
 
-#: pg_config.c:243 pg_config.c:259 pg_config.c:275 pg_config.c:291
-#: pg_config.c:307 pg_config.c:323 pg_config.c:339 pg_config.c:355
-#: pg_config.c:371
-#, c-format
-msgid "not recorded\n"
-msgstr "nezaznamenáno\n"
+#: ../../common/exec.c:670 ../../common/exec.c:715 ../../common/exec.c:807
+msgid "out of memory"
+msgstr "nedostatek paměti"
 
-#: pg_config.c:428
+#: pg_config.c:74
 #, c-format
 msgid ""
 "\n"
@@ -71,12 +76,12 @@ msgstr ""
 "%s poskytuje informace o nainstalované verzi PostgreSQL.\n"
 "\n"
 
-#: pg_config.c:429
+#: pg_config.c:75
 #, c-format
 msgid "Usage:\n"
 msgstr "Použití:\n"
 
-#: pg_config.c:430
+#: pg_config.c:76
 #, c-format
 msgid ""
 "  %s [OPTION]...\n"
@@ -85,93 +90,81 @@ msgstr ""
 "  %s [PŘEPÍNAČ]...\n"
 "\n"
 
-#: pg_config.c:431
+#: pg_config.c:77
 #, c-format
 msgid "Options:\n"
 msgstr "Přepínače:\n"
 
-#: pg_config.c:432
+#: pg_config.c:78
 #, c-format
 msgid "  --bindir              show location of user executables\n"
 msgstr "  --bindir              ukáže umístění spustitelných souborů\n"
 
-#: pg_config.c:433
+#: pg_config.c:79
 #, c-format
 msgid "  --docdir              show location of documentation files\n"
 msgstr "  --docdir              ukáže umístění souborů s dokumentací\n"
 
-#: pg_config.c:434
+#: pg_config.c:80
 #, c-format
 msgid "  --htmldir             show location of HTML documentation files\n"
 msgstr "  --htmldir             ukáže umístění souborl s HTML dokumentací\n"
 
-#: pg_config.c:435
+#: pg_config.c:81
 #, c-format
 msgid ""
 "  --includedir          show location of C header files of the client\n"
 "                        interfaces\n"
 msgstr ""
-"  --includedir         ukáže umístění C hlavičkových souborů klientských\n"
+"  --includedir          ukáže umístění C hlavičkových souborů klientských\n"
 "                        rozhraní\n"
 
-#: pg_config.c:437
+#: pg_config.c:83
 #, c-format
 msgid "  --pkgincludedir       show location of other C header files\n"
-msgstr ""
-"  --pkgincludedir       ukáže umístění dalších C hlavičkových souborů\n"
+msgstr "  --pkgincludedir       ukáže umístění dalších C hlavičkových souborů\n"
 
-#: pg_config.c:438
+#: pg_config.c:84
 #, c-format
-msgid ""
-"  --includedir-server   show location of C header files for the server\n"
-msgstr ""
-"  --includedir-server   ukáže umístění C hlavičkových souborů pro server\n"
+msgid "  --includedir-server   show location of C header files for the server\n"
+msgstr "  --includedir-server   ukáže umístění C hlavičkových souborů pro server\n"
 
-#: pg_config.c:439
+#: pg_config.c:85
 #, c-format
 msgid "  --libdir              show location of object code libraries\n"
 msgstr "  --libdir              ukáže umístění knihoven\n"
 
-#: pg_config.c:440
+#: pg_config.c:86
 #, c-format
 msgid "  --pkglibdir           show location of dynamically loadable modules\n"
 msgstr "  --pkglibdir           ukáže umístění dynamicky zaváděných modulů\n"
 
-#: pg_config.c:441
+#: pg_config.c:87
 #, c-format
 msgid "  --localedir           show location of locale support files\n"
 msgstr "  --localedir           ukáže umístění souborů pro podporu locale\n"
 
-#: pg_config.c:442
+#: pg_config.c:88
 #, c-format
 msgid "  --mandir              show location of manual pages\n"
-msgstr ""
-"  --mandir              ukáže umístění souborů s manuálovými stránkami\n"
+msgstr "  --mandir              ukáže umístění souborů s manuálovými stránkami\n"
 
-#: pg_config.c:443
+#: pg_config.c:89
 #, c-format
-msgid ""
-"  --sharedir            show location of architecture-independent support "
-"files\n"
-msgstr ""
-"  --sharedir            ukáže umístění podpůrných souborů nezávislých na "
-"architektuře\n"
+msgid "  --sharedir            show location of architecture-independent support files\n"
+msgstr "  --sharedir            ukáže umístění podpůrných souborů nezávislých na architektuře\n"
 
-#: pg_config.c:444
+#: pg_config.c:90
 #, c-format
-msgid ""
-"  --sysconfdir          show location of system-wide configuration files\n"
-msgstr ""
-"  --sysconfdir          ukáže umístění konfiguračních souborů platných pro "
-"celý systém\n"
+msgid "  --sysconfdir          show location of system-wide configuration files\n"
+msgstr "  --sysconfdir          ukáže umístění konfiguračních souborů platných pro celý systém\n"
 
-#: pg_config.c:445
+#: pg_config.c:91
 #, c-format
 msgid "  --pgxs                show location of extension makefile\n"
-msgstr ""
-"  --pgxs                ukáže umístění makefile souboru pro rozšíření\n"
+msgstr "  --pgxs                ukáže umístění makefile souboru pro rozšíření\n"
 
-#: pg_config.c:446
+#: pg_config.c:92
 #, c-format
 msgid ""
 "  --configure           show options given to \"configure\" script when\n"
@@ -180,79 +173,57 @@ msgstr ""
 "  --configure           ukáže přepínače použité pro \"configure\" skript ke\n"
 "                        kompilaci PostgreSQL\n"
 
-#: pg_config.c:448
+#: pg_config.c:94
 #, c-format
 msgid "  --cc                  show CC value used when PostgreSQL was built\n"
-msgstr ""
-"  --cc                  ukáže hodnotu CC použitou při buildu PostgreSQL\n"
+msgstr "  --cc                  ukáže hodnotu CC použitou při buildu PostgreSQL\n"
 
-#: pg_config.c:449
+#: pg_config.c:95
 #, c-format
-msgid ""
-"  --cppflags            show CPPFLAGS value used when PostgreSQL was built\n"
-msgstr ""
-"  --cppflags            ukáže hodnotu CPPFLAGS použitou při buildu "
-"PostgreSQL\n"
+msgid "  --cppflags            show CPPFLAGS value used when PostgreSQL was built\n"
+msgstr "  --cppflags            ukáže hodnotu CPPFLAGS použitou při buildu PostgreSQL\n"
 
-#: pg_config.c:450
+#: pg_config.c:96
 #, c-format
-msgid ""
-"  --cflags              show CFLAGS value used when PostgreSQL was built\n"
-msgstr ""
-"  --cflags              ukáže hodnotu CFLAGS použitou při buildu PostgreSQL\n"
+msgid "  --cflags              show CFLAGS value used when PostgreSQL was built\n"
+msgstr "  --cflags              ukáže hodnotu CFLAGS použitou při buildu PostgreSQL\n"
 
-#: pg_config.c:451
+#: pg_config.c:97
 #, c-format
-msgid ""
-"  --cflags_sl           show CFLAGS_SL value used when PostgreSQL was built\n"
-msgstr ""
-"  --cflags_sl           ukáže hodnotu CFLAGS_SL použitou při buildu "
-"PostgreSQL\n"
+msgid "  --cflags_sl           show CFLAGS_SL value used when PostgreSQL was built\n"
+msgstr "  --cflags_sl           ukáže hodnotu CFLAGS_SL použitou při buildu PostgreSQL\n"
 
-#: pg_config.c:452
+#: pg_config.c:98
 #, c-format
-msgid ""
-"  --ldflags             show LDFLAGS value used when PostgreSQL was built\n"
-msgstr ""
-"  --ldflags             ukáže hodnotu LDFLAGS použitou při buildu "
-"PostgreSQL\n"
+msgid "  --ldflags             show LDFLAGS value used when PostgreSQL was built\n"
+msgstr "  --ldflags             ukáže hodnotu LDFLAGS použitou při buildu PostgreSQL\n"
 
-#: pg_config.c:453
+#: pg_config.c:99
 #, c-format
-msgid ""
-"  --ldflags_ex          show LDFLAGS_EX value used when PostgreSQL was "
-"built\n"
-msgstr ""
-"  --ldflags_ex          ukáže hodnotu LDFLAGS_EX použitou při buildu "
-"PostgreSQL\n"
+msgid "  --ldflags_ex          show LDFLAGS_EX value used when PostgreSQL was built\n"
+msgstr "  --ldflags_ex          ukáže hodnotu LDFLAGS_EX použitou při buildu PostgreSQL\n"
 
-#: pg_config.c:454
+#: pg_config.c:100
 #, c-format
-msgid ""
-"  --ldflags_sl          show LDFLAGS_SL value used when PostgreSQL was "
-"built\n"
-msgstr ""
-"  --ldflags_sl          ukáže hodnotu LDFLAGS_SL použitou při buildu "
-"PostgreSQL\n"
+msgid "  --ldflags_sl          show LDFLAGS_SL value used when PostgreSQL was built\n"
+msgstr "  --ldflags_sl          ukáže hodnotu LDFLAGS_SL použitou při buildu PostgreSQL\n"
 
-#: pg_config.c:455
+#: pg_config.c:101
 #, c-format
-msgid ""
-"  --libs                show LIBS value used when PostgreSQL was built\n"
-msgstr ""
-"  --libs                ukáže hodnotu LIBS použitou při buildu PostgreSQL\n"
+msgid "  --libs                show LIBS value used when PostgreSQL was built\n"
+msgstr "  --libs                ukáže hodnotu LIBS použitou při buildu PostgreSQL\n"
 
-#: pg_config.c:456
+#: pg_config.c:102
 #, c-format
 msgid "  --version             show the PostgreSQL version\n"
 msgstr "  --version             ukáže verzi PostgreSQL\n"
 
-#: pg_config.c:457
+#: pg_config.c:103
 #, c-format
 msgid "  -?, --help            show this help, then exit\n"
 msgstr "  -?, --help            ukáže tuto nápovědu, a skončí\n"
 
-#: pg_config.c:458
+#: pg_config.c:104
 #, c-format
 msgid ""
 "\n"
@@ -263,37 +234,40 @@ msgstr ""
 "Bez argumentů jsou vypsány všechny známé položky.\n"
 "\n"
 
-#: pg_config.c:459
+#: pg_config.c:105
 #, c-format
-msgid "Report bugs to <pgsql-bugs@postgresql.org>.\n"
+msgid "Report bugs to <pgsql-bugs@lists.postgresql.org>.\n"
 msgstr "Oznámení o chybách zasílejte na <pgsql-bugs@postgresql.org>.\n"
 
-#: pg_config.c:465
+#: pg_config.c:111
 #, c-format
 msgid "Try \"%s --help\" for more information.\n"
 msgstr "Zkuste \"%s --help\" pro více informací.\n"
 
-#: pg_config.c:504
+#: pg_config.c:153
 #, c-format
 msgid "%s: could not find own program executable\n"
 msgstr "%s: nelze najít vlastní spustitelný soubor\n"
 
-#: pg_config.c:527
+#: pg_config.c:180
 #, c-format
 msgid "%s: invalid argument: %s\n"
 msgstr "%s: neplatný parametr: %s\n"
 
-#~ msgid "child process exited with exit code %d"
-#~ msgstr "potomek skončil s návratovým kódem %d"
-
-#~ msgid "child process was terminated by exception 0x%X"
-#~ msgstr "potomek byl ukončen vyjímkou 0x%X"
-
-#~ msgid "child process was terminated by signal %s"
-#~ msgstr "potomek byl ukončen signálem %s"
+#~ msgid "child process exited with unrecognized status %d"
+#~ msgstr "potomek skončil s nerozponaným stavem %d"
 
 #~ msgid "child process was terminated by signal %d"
 #~ msgstr "potomek byl ukončen signálem %d"
 
-#~ msgid "child process exited with unrecognized status %d"
-#~ msgstr "potomek skončil s nerozponaným stavem %d"
+#~ msgid "child process was terminated by signal %s"
+#~ msgstr "potomek byl ukončen signálem %s"
+
+#~ msgid "child process was terminated by exception 0x%X"
+#~ msgstr "potomek byl ukončen vyjímkou 0x%X"
+
+#~ msgid "child process exited with exit code %d"
+#~ msgstr "potomek skončil s návratovým kódem %d"
+
+#~ msgid "could not read symbolic link \"%s\""
+#~ msgstr "nelze číst symbolický link \"%s\""

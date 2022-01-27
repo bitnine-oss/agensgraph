@@ -55,7 +55,7 @@ static const chr *scanplain(struct vars *);
 static void onechr(struct vars *, chr, struct state *, struct state *);
 static void wordchrs(struct vars *);
 static void processlacon(struct vars *, struct state *, struct state *, int,
-			 struct state *, struct state *);
+						 struct state *, struct state *);
 static struct subre *subre(struct vars *, int, int, struct state *, struct state *);
 static void freesubre(struct vars *, struct subre *);
 static void freesrnode(struct vars *, struct subre *);
@@ -161,15 +161,15 @@ static int	push(struct nfa *, struct arc *, struct state **);
 static int	combine(struct arc *, struct arc *);
 static void fixempties(struct nfa *, FILE *);
 static struct state *emptyreachable(struct nfa *, struct state *,
-			   struct state *, struct arc **);
+									struct state *, struct arc **);
 static int	isconstraintarc(struct arc *);
 static int	hasconstraintout(struct state *);
 static void fixconstraintloops(struct nfa *, FILE *);
 static int	findconstraintloop(struct nfa *, struct state *);
 static void breakconstraintloop(struct nfa *, struct state *);
 static void clonesuccessorstates(struct nfa *, struct state *, struct state *,
-					 struct state *, struct arc *,
-					 char *, char *, int);
+								 struct state *, struct arc *,
+								 char *, char *, int);
 static void cleanup(struct nfa *);
 static void markreachable(struct nfa *, struct state *, struct state *, struct state *);
 static void markcanreach(struct nfa *, struct state *, struct state *, struct state *);
@@ -909,7 +909,8 @@ parseqatom(struct vars *v,
 			}
 			/* legal in EREs due to specification botch */
 			NOTE(REG_UPBOTCH);
-			/* fallthrough into case PLAIN */
+			/* fall through into case PLAIN */
+			/* FALLTHROUGH */
 		case PLAIN:
 			onechr(v, v->nextvalue, lp, rp);
 			okcolors(v->nfa, v->cm);
@@ -958,7 +959,7 @@ parseqatom(struct vars *v,
 			if (cap)
 			{
 				v->subs[subno] = atom;
-				t = subre(v, '(', atom->flags | CAP, lp, rp);
+				t = subre(v, '(', atom->flags | CAP, s, s2);
 				NOERR();
 				t->subno = subno;
 				t->left = atom;
@@ -1041,11 +1042,23 @@ parseqatom(struct vars *v,
 	/* annoying special case:  {0} or {0,0} cancels everything */
 	if (m == 0 && n == 0)
 	{
-		if (atom != NULL)
-			freesubre(v, atom);
-		if (atomtype == '(')
-			v->subs[subno] = NULL;
-		delsub(v->nfa, lp, rp);
+		/*
+		 * If we had capturing subexpression(s) within the atom, we don't want
+		 * to destroy them, because it's legal (if useless) to back-ref them
+		 * later.  Hence, just unlink the atom from lp/rp and then ignore it.
+		 */
+		if (atom != NULL && (atom->flags & CAP))
+		{
+			delsub(v->nfa, lp, atom->begin);
+			delsub(v->nfa, atom->end, rp);
+		}
+		else
+		{
+			/* Otherwise, we can clean up any subre infrastructure we made */
+			if (atom != NULL)
+				freesubre(v, atom);
+			delsub(v->nfa, lp, rp);
+		}
 		EMPTYARC(lp, rp);
 		return;
 	}
@@ -1154,7 +1167,10 @@ parseqatom(struct vars *v,
 		/* rest of branch can be strung starting from atom->end */
 		s2 = atom->end;
 	}
-	else if (m == 1 && n == 1)
+	else if (m == 1 && n == 1 &&
+			 (qprefer == 0 ||
+			  (atom->flags & (LONGER | SHORTER | MIXED)) == 0 ||
+			  qprefer == (atom->flags & (LONGER | SHORTER | MIXED))))
 	{
 		/* no/vacuous quantifier:  done */
 		EMPTYARC(s, atom->begin);	/* empty prefix */

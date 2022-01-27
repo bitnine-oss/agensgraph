@@ -5,8 +5,9 @@
 #ifndef PLPY_SPI_H
 #define PLPY_SPI_H
 
-#include "utils/palloc.h"
 #include "utils/resowner.h"
+
+#include "plpython.h"
 
 extern PyObject *PLy_spi_prepare(PyObject *self, PyObject *args);
 extern PyObject *PLy_spi_execute(PyObject *self, PyObject *args);

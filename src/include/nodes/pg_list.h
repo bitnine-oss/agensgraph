@@ -27,7 +27,7 @@
  * always be so; try to be careful to maintain the distinction.)
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/pg_list.h
@@ -205,6 +205,32 @@ list_length(const List *l)
 		 (cell1) != NULL && (cell2) != NULL && (cell3) != NULL;		\
 		 (cell1) = lnext(cell1), (cell2) = lnext(cell2), (cell3) = lnext(cell3))
 
+/*
+ * forfour -
+ *	  the same for four lists
+ */
+#define forfour(cell1, list1, cell2, list2, cell3, list3, cell4, list4) \
+	for ((cell1) = list_head(list1), (cell2) = list_head(list2), \
+		 (cell3) = list_head(list3), (cell4) = list_head(list4); \
+		 (cell1) != NULL && (cell2) != NULL && \
+		 (cell3) != NULL && (cell4) != NULL; \
+		 (cell1) = lnext(cell1), (cell2) = lnext(cell2), \
+		 (cell3) = lnext(cell3), (cell4) = lnext(cell4))
+
+/*
+ * forfive -
+ *	  the same for five lists
+ */
+#define forfive(cell1, list1, cell2, list2, cell3, list3, cell4, list4, cell5, list5) \
+	for ((cell1) = list_head(list1), (cell2) = list_head(list2), \
+		 (cell3) = list_head(list3), (cell4) = list_head(list4), \
+		 (cell5) = list_head(list5); \
+		 (cell1) != NULL && (cell2) != NULL && (cell3) != NULL && \
+		 (cell4) != NULL && (cell5) != NULL; \
+		 (cell1) = lnext(cell1), (cell2) = lnext(cell2), \
+		 (cell3) = lnext(cell3), (cell4) = lnext(cell4), \
+		 (cell5) = lnext(cell5))
+
 extern List *lappend(List *list, void *datum);
 extern List *lappend_int(List *list, int datum);
 extern List *lappend_oid(List *list, Oid datum);
@@ -268,6 +294,9 @@ extern void list_free_deep(List *list);
 
 extern List *list_copy(const List *list);
 extern List *list_copy_tail(const List *list, int nskip);
+
+typedef int (*list_qsort_comparator) (const void *a, const void *b);
+extern List *list_qsort(const List *list, list_qsort_comparator cmp);
 
 /*
  * To ease migration to the new list API, a set of compatibility

@@ -2086,7 +2086,7 @@ get_control_dbstate(void)
 {
 	DBState		ret;
 	bool		crc_ok;
-	ControlFileData *control_file_data = get_controlfile(pg_data, progname, &crc_ok);
+	ControlFileData *control_file_data = get_controlfile(pg_data, &crc_ok);
 
 	if (!crc_ok)
 	{

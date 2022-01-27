@@ -6,7 +6,7 @@
  *	   logical replication slots via SQL.
  *
  *
- * Copyright (c) 2012-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logicalfuncs.c
@@ -251,6 +251,7 @@ pg_logical_slot_get_changes_guts(FunctionCallInfo fcinfo, bool confirm, bool bin
 		/* restart at slot's confirmed_flush */
 		ctx = CreateDecodingContext(InvalidXLogRecPtr,
 									options,
+									false,
 									logical_read_local_xlog_page,
 									LogicalOutputPrepareWrite,
 									LogicalOutputWrite, NULL);
@@ -277,8 +278,6 @@ pg_logical_slot_get_changes_guts(FunctionCallInfo fcinfo, bool confirm, bool bin
 		 * accumulated into reorder buffers.
 		 */
 		startptr = MyReplicationSlot->data.restart_lsn;
-
-		CurrentResourceOwner = ResourceOwnerCreate(CurrentResourceOwner, "logical decoding");
 
 		/* invalidate non-timetravel entries */
 		InvalidateSystemCaches();
@@ -319,6 +318,11 @@ pg_logical_slot_get_changes_guts(FunctionCallInfo fcinfo, bool confirm, bool bin
 
 		tuplestore_donestoring(tupstore);
 
+		/*
+		 * Logical decoding could have clobbered CurrentResourceOwner during
+		 * transaction management, so restore the executor's value.  (This is
+		 * a kluge, but it's not worth cleaning up right now.)
+		 */
 		CurrentResourceOwner = old_resowner;
 
 		/*

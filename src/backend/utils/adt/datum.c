@@ -3,7 +3,7 @@
  * datum.c
  *	  POSTGRES Datum (abstract data type) manipulation routines.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -42,6 +42,8 @@
 
 #include "postgres.h"
 
+#include "access/tuptoaster.h"
+#include "fmgr.h"
 #include "utils/datum.h"
 #include "utils/expandeddatum.h"
 
@@ -252,6 +254,63 @@ datumIsEqual(Datum value1, Datum value2, bool typByVal, int typLen)
 }
 
 /*-------------------------------------------------------------------------
+ * datum_image_eq
+ *
+ * Compares two datums for identical contents, based on byte images.  Return
+ * true if the two datums are equal, false otherwise.
+ *-------------------------------------------------------------------------
+ */
+bool
+datum_image_eq(Datum value1, Datum value2, bool typByVal, int typLen)
+{
+	bool		result = true;
+
+	if (typByVal)
+	{
+		result = (value1 == value2);
+	}
+	else if (typLen > 0)
+	{
+		result = (memcmp(DatumGetPointer(value1),
+						 DatumGetPointer(value2),
+						 typLen) == 0);
+	}
+	else if (typLen == -1)
+	{
+		Size		len1,
+					len2;
+
+		len1 = toast_raw_datum_size(value1);
+		len2 = toast_raw_datum_size(value2);
+		/* No need to de-toast if lengths don't match. */
+		if (len1 != len2)
+			result = false;
+		else
+		{
+			struct varlena *arg1val;
+			struct varlena *arg2val;
+
+			arg1val = PG_DETOAST_DATUM_PACKED(value1);
+			arg2val = PG_DETOAST_DATUM_PACKED(value2);
+
+			result = (memcmp(VARDATA_ANY(arg1val),
+							 VARDATA_ANY(arg2val),
+							 len1 - VARHDRSZ) == 0);
+
+			/* Only free memory if it's a copy made here. */
+			if ((Pointer) arg1val != (Pointer) value1)
+				pfree(arg1val);
+			if ((Pointer) arg2val != (Pointer) value2)
+				pfree(arg2val);
+		}
+	}
+	else
+		elog(ERROR, "unexpected typLen: %d", typLen);
+
+	return result;
+}
+
+/*-------------------------------------------------------------------------
  * datumEstimateSpace
  *
  * Compute the amount of space that datumSerialize will require for a
@@ -338,8 +397,19 @@ datumSerialize(Datum value, bool isnull, bool typByVal, int typLen,
 		}
 		else if (eoh)
 		{
-			EOH_flatten_into(eoh, (void *) *start_address, header);
+			char	   *tmp;
+
+			/*
+			 * EOH_flatten_into expects the target address to be maxaligned,
+			 * so we can't store directly to *start_address.
+			 */
+			tmp = (char *) palloc(header);
+			EOH_flatten_into(eoh, (void *) tmp, header);
+			memcpy(*start_address, tmp, header);
 			*start_address += header;
+
+			/* be tidy. */
+			pfree(tmp);
 		}
 		else
 		{

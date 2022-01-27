@@ -17,7 +17,7 @@ if ($windows_os)
 }
 else
 {
-	plan tests => 8;
+	plan tests => 11;
 }
 
 
@@ -31,6 +31,7 @@ sub reset_pg_hba
 	unlink($node->data_dir . '/pg_hba.conf');
 	$node->append_conf('pg_hba.conf', "local all all $hba_method");
 	$node->reload;
+	return;
 }
 
 # Test access for a single role, useful to wrap all tests into one.
@@ -44,9 +45,12 @@ sub test_role
 
 	$status_string = 'success' if ($expected_res eq 0);
 
-	my $res = $node->psql('postgres', undef, extra_params => [ '-U', $role ]);
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
+	my $res = $node->psql('postgres', undef, extra_params => [ '-U', $role, '-w' ]);
 	is($res, $expected_res,
 		"authentication $status_string for method $method, role $role");
+	return;
 }
 
 # Initialize master node
@@ -57,10 +61,11 @@ $node->start;
 # Create 3 roles with different password methods for each one. The same
 # password is used for all of them.
 $node->safe_psql('postgres',
-"SET password_encryption='scram-sha-256'; CREATE ROLE scram_role LOGIN PASSWORD 'pass';"
+	"SET password_encryption='scram-sha-256'; CREATE ROLE scram_role LOGIN PASSWORD 'pass';"
 );
 $node->safe_psql('postgres',
-"SET password_encryption='md5'; CREATE ROLE md5_role LOGIN PASSWORD 'pass';");
+	"SET password_encryption='md5'; CREATE ROLE md5_role LOGIN PASSWORD 'pass';"
+);
 $ENV{"PGPASSWORD"} = 'pass';
 
 # For "trust" method, all users should be able to connect.
@@ -83,3 +88,26 @@ test_role($node, 'md5_role',   'scram-sha-256', 2);
 reset_pg_hba($node, 'md5');
 test_role($node, 'scram_role', 'md5', 0);
 test_role($node, 'md5_role',   'md5', 0);
+
+# Test .pgpass processing; but use a temp file, don't overwrite the real one!
+my $pgpassfile = "${TestLib::tmp_check}/pgpass";
+
+delete $ENV{"PGPASSWORD"};
+$ENV{"PGPASSFILE"} = $pgpassfile;
+
+unlink($pgpassfile);
+append_to_file($pgpassfile, qq!
+# This very long comment is just here to exercise handling of long lines in the file. This very long comment is just here to exercise handling of long lines in the file. This very long comment is just here to exercise handling of long lines in the file. This very long comment is just here to exercise handling of long lines in the file. This very long comment is just here to exercise handling of long lines in the file.
+*:*:postgres:scram_role:pass:this is not part of the password.
+!);
+chmod 0600, $pgpassfile or die;
+
+reset_pg_hba($node, 'password');
+test_role($node, 'scram_role', 'password from pgpass', 0);
+test_role($node, 'md5_role',   'password from pgpass', 2);
+
+append_to_file($pgpassfile, qq!
+*:*:*:md5_role:p\\ass
+!);
+
+test_role($node, 'md5_role',   'password from pgpass', 0);

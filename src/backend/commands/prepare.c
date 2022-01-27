@@ -7,7 +7,7 @@
  * accessed via the extended FE/BE query protocol.
  *
  *
- * Copyright (c) 2002-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/commands/prepare.c
@@ -47,7 +47,7 @@ static HTAB *prepared_queries = NULL;
 
 static void InitQueryHashTable(void);
 static ParamListInfo EvaluateParams(PreparedStatement *pstmt, List *params,
-			   const char *queryString, EState *estate);
+									const char *queryString, EState *estate);
 static Datum build_regtype_array(Oid *param_types, int num_params);
 
 /*
@@ -240,12 +240,23 @@ ExecuteQuery(ExecuteStmt *stmt, IntoClause *intoClause,
 	portal->visible = false;
 
 	/* Copy the plan's saved query string into the portal's memory */
-	query_string = MemoryContextStrdup(PortalGetHeapMemory(portal),
+	query_string = MemoryContextStrdup(portal->portalContext,
 									   entry->plansource->query_string);
 
 	/* Replan if needed, and increment plan refcount for portal */
 	cplan = GetCachedPlan(entry->plansource, paramLI, false, NULL);
 	plan_list = cplan->stmt_list;
+
+	/*
+	 * DO NOT add any logic that could possibly throw an error between
+	 * GetCachedPlan and PortalDefineQuery, or you'll leak the plan refcount.
+	 */
+	PortalDefineQuery(portal,
+					  NULL,
+					  query_string,
+					  entry->plansource->commandTag,
+					  plan_list,
+					  cplan);
 
 	/*
 	 * For CREATE TABLE ... AS EXECUTE, we must verify that the prepared
@@ -289,13 +300,6 @@ ExecuteQuery(ExecuteStmt *stmt, IntoClause *intoClause,
 		eflags = 0;
 		count = FETCH_ALL;
 	}
-
-	PortalDefineQuery(portal,
-					  NULL,
-					  query_string,
-					  entry->plansource->commandTag,
-					  plan_list,
-					  cplan);
 
 	/*
 	 * Run the portal as appropriate.
@@ -394,16 +398,7 @@ EvaluateParams(PreparedStatement *pstmt, List *params,
 	/* Prepare the expressions for execution */
 	exprstates = ExecPrepareExprList(params, estate);
 
-	paramLI = (ParamListInfo)
-		palloc(offsetof(ParamListInfoData, params) +
-			   num_params * sizeof(ParamExternData));
-	/* we have static list of params, so no hooks needed */
-	paramLI->paramFetch = NULL;
-	paramLI->paramFetchArg = NULL;
-	paramLI->parserSetup = NULL;
-	paramLI->parserSetupArg = NULL;
-	paramLI->numParams = num_params;
-	paramLI->paramMask = NULL;
+	paramLI = makeParamList(num_params);
 
 	i = 0;
 	foreach(l, exprstates)
@@ -734,7 +729,7 @@ pg_prepared_statement(PG_FUNCTION_ARGS)
 	 * build tupdesc for result tuples. This must match the definition of the
 	 * pg_prepared_statements view in system_views.sql
 	 */
-	tupdesc = CreateTemplateTupleDesc(5, false);
+	tupdesc = CreateTemplateTupleDesc(5);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "name",
 					   TEXTOID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "statement",

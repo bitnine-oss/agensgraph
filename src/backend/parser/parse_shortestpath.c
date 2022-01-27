@@ -16,7 +16,7 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/pg_list.h"
-#include "optimizer/var.h"
+#include "optimizer/optimizer.h"
 #include "parser/analyze.h"
 #include "parser/parse_agg.h"
 #include "parser/parse_clause.h"
@@ -431,7 +431,7 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 
 	/* vids */
 	fc = makeFuncCall(list_make1(makeString("shortestpath_graphids")), NIL, -1);
-	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf, fc, -1);
+	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf, fc, true, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "vids", false);
@@ -439,7 +439,7 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 
 	/* eids */
 	fc = makeFuncCall(list_make1(makeString("shortestpath_rowids")), NIL, -1);
-	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf, fc, -1);
+	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf, fc, true, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "eids", false);
@@ -1340,7 +1340,7 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	/* vids */
 	fc = makeFuncCall(list_make1(makeString("dijkstra_vids")), NIL, -1);
 	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
-							   fc, -1);
+							   fc, true, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "vids", false);
@@ -1349,7 +1349,7 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	/* eids */
 	fc = makeFuncCall(list_make1(makeString("dijkstra_eids")), NIL, -1);
 	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
-							   fc, -1);
+							   fc, true, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "eids", false);
@@ -1363,9 +1363,8 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	{
 		Node	   *weight;
 
-		weight = coerce_to_target_type(pstate, target, wtype, FLOAT8OID, -1,
-									   COERCION_EXPLICIT, COERCE_EXPLICIT_CAST,
-									   -1);
+		weight = coerce_expr(pstate, target, wtype, FLOAT8OID, -1,
+							 COERCION_EXPLICIT, COERCE_EXPLICIT_CAST, -1);
 		if (weight == NULL)
 			ereport(ERROR,
 					(errcode(ERRCODE_DATATYPE_MISMATCH),

@@ -2,7 +2,7 @@
  * logical.c
  *	   PostgreSQL logical decoding coordination
  *
- * Copyright (c) 2012-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/logical.c
@@ -55,16 +55,18 @@ typedef struct LogicalErrorCallbackState
 /* wrappers around output plugin callbacks */
 static void output_plugin_error_callback(void *arg);
 static void startup_cb_wrapper(LogicalDecodingContext *ctx, OutputPluginOptions *opt,
-				   bool is_init);
+							   bool is_init);
 static void shutdown_cb_wrapper(LogicalDecodingContext *ctx);
 static void begin_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn);
 static void commit_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
-				  XLogRecPtr commit_lsn);
+							  XLogRecPtr commit_lsn);
 static void change_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
-				  Relation relation, ReorderBufferChange *change);
+							  Relation relation, ReorderBufferChange *change);
+static void truncate_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
+								int nrelations, Relation relations[], ReorderBufferChange *change);
 static void message_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
-				   XLogRecPtr message_lsn, bool transactional,
-				   const char *prefix, Size message_size, const char *message);
+							   XLogRecPtr message_lsn, bool transactional,
+							   const char *prefix, Size message_size, const char *message);
 
 static void LoadOutputPlugin(OutputPluginCallbacks *callbacks, char *plugin);
 
@@ -76,6 +78,11 @@ void
 CheckLogicalDecodingRequirements(void)
 {
 	CheckSlotRequirements();
+
+	/*
+	 * NB: Adding a new requirement likely means that RestoreSlotFromDisk()
+	 * needs the same check.
+	 */
 
 	if (wal_level < WAL_LEVEL_LOGICAL)
 		ereport(ERROR,
@@ -107,7 +114,7 @@ CheckLogicalDecodingRequirements(void)
 }
 
 /*
- * Helper function for CreateInitialDecodingContext() and
+ * Helper function for CreateInitDecodingContext() and
  * CreateDecodingContext() performing common tasks.
  */
 static LogicalDecodingContext *
@@ -115,6 +122,7 @@ StartupDecodingContext(List *output_plugin_options,
 					   XLogRecPtr start_lsn,
 					   TransactionId xmin_horizon,
 					   bool need_full_snapshot,
+					   bool fast_forward,
 					   XLogPageReadCB read_page,
 					   LogicalOutputPluginWriterPrepareWrite prepare_write,
 					   LogicalOutputPluginWriterWrite do_write,
@@ -140,7 +148,8 @@ StartupDecodingContext(List *output_plugin_options,
 	 * (re-)load output plugins, so we detect a bad (removed) output plugin
 	 * now.
 	 */
-	LoadOutputPlugin(&ctx->callbacks, NameStr(slot->data.plugin));
+	if (!fast_forward)
+		LoadOutputPlugin(&ctx->callbacks, NameStr(slot->data.plugin));
 
 	/*
 	 * Now that the slot's xmin has been set, we can announce ourselves as a
@@ -163,13 +172,11 @@ StartupDecodingContext(List *output_plugin_options,
 
 	ctx->slot = slot;
 
-	ctx->reader = XLogReaderAllocate(read_page, ctx);
+	ctx->reader = XLogReaderAllocate(wal_segment_size, read_page, ctx);
 	if (!ctx->reader)
 		ereport(ERROR,
 				(errcode(ERRCODE_OUT_OF_MEMORY),
 				 errmsg("out of memory")));
-
-	ctx->reader->private_data = ctx;
 
 	ctx->reorder = ReorderBufferAllocate();
 	ctx->snapshot_builder =
@@ -181,6 +188,7 @@ StartupDecodingContext(List *output_plugin_options,
 	/* wrap output plugin callbacks, so we can add error context information */
 	ctx->reorder->begin = begin_cb_wrapper;
 	ctx->reorder->apply_change = change_cb_wrapper;
+	ctx->reorder->apply_truncate = truncate_cb_wrapper;
 	ctx->reorder->commit = commit_cb_wrapper;
 	ctx->reorder->message = message_cb_wrapper;
 
@@ -191,6 +199,8 @@ StartupDecodingContext(List *output_plugin_options,
 
 	ctx->output_plugin_options = output_plugin_options;
 
+	ctx->fast_forward = fast_forward;
+
 	MemoryContextSwitchTo(old_context);
 
 	return ctx;
@@ -199,11 +209,17 @@ StartupDecodingContext(List *output_plugin_options,
 /*
  * Create a new decoding context, for a new logical slot.
  *
- * plugin contains the name of the output plugin
- * output_plugin_options contains options passed to the output plugin
- * read_page, prepare_write, do_write, update_progress
- *		callbacks that have to be filled to perform the use-case dependent,
- *		actual, work.
+ * plugin -- contains the name of the output plugin
+ * output_plugin_options -- contains options passed to the output plugin
+ * need_full_snapshot -- if true, must obtain a snapshot able to read all
+ *		tables; if false, one that can read only catalogs is acceptable.
+ * restart_lsn -- if given as invalid, it's this routine's responsibility to
+ *		mark WAL as reserved by setting a convenient restart_lsn for the slot.
+ *		Otherwise, we set for decoding to start from the given LSN without
+ *		marking WAL reserved beforehand.  In that scenario, it's up to the
+ *		caller to guarantee that WAL remains available.
+ * read_page, prepare_write, do_write, update_progress --
+ *		callbacks that perform the use-case dependent, actual, work.
  *
  * Needs to be called while in a memory context that's at least as long lived
  * as the decoding context because further memory contexts will be created
@@ -216,6 +232,7 @@ LogicalDecodingContext *
 CreateInitDecodingContext(char *plugin,
 						  List *output_plugin_options,
 						  bool need_full_snapshot,
+						  XLogRecPtr restart_lsn,
 						  XLogPageReadCB read_page,
 						  LogicalOutputPluginWriterPrepareWrite prepare_write,
 						  LogicalOutputPluginWriterWrite do_write,
@@ -259,7 +276,14 @@ CreateInitDecodingContext(char *plugin,
 	StrNCpy(NameStr(slot->data.plugin), plugin, NAMEDATALEN);
 	SpinLockRelease(&slot->mutex);
 
-	ReplicationSlotReserveWal();
+	if (XLogRecPtrIsInvalid(restart_lsn))
+		ReplicationSlotReserveWal();
+	else
+	{
+		SpinLockAcquire(&slot->mutex);
+		slot->data.restart_lsn = restart_lsn;
+		SpinLockRelease(&slot->mutex);
+	}
 
 	/* ----
 	 * This is a bit tricky: We need to determine a safe xmin horizon to start
@@ -290,10 +314,12 @@ CreateInitDecodingContext(char *plugin,
 
 	xmin_horizon = GetOldestSafeDecodingTransactionId(!need_full_snapshot);
 
+	SpinLockAcquire(&slot->mutex);
 	slot->effective_catalog_xmin = xmin_horizon;
 	slot->data.catalog_xmin = xmin_horizon;
 	if (need_full_snapshot)
 		slot->effective_xmin = xmin_horizon;
+	SpinLockRelease(&slot->mutex);
 
 	ReplicationSlotsComputeRequiredXmin(true);
 
@@ -302,15 +328,18 @@ CreateInitDecodingContext(char *plugin,
 	ReplicationSlotMarkDirty();
 	ReplicationSlotSave();
 
-	ctx = StartupDecodingContext(NIL, InvalidXLogRecPtr, xmin_horizon,
-								 need_full_snapshot, read_page, prepare_write,
-								 do_write, update_progress);
+	ctx = StartupDecodingContext(NIL, restart_lsn, xmin_horizon,
+								 need_full_snapshot, false,
+								 read_page, prepare_write, do_write,
+								 update_progress);
 
 	/* call output plugin initialization callback */
 	old_context = MemoryContextSwitchTo(ctx->context);
 	if (ctx->callbacks.startup_cb != NULL)
 		startup_cb_wrapper(ctx, &ctx->options, true);
 	MemoryContextSwitchTo(old_context);
+
+	ctx->reorder->output_rewrites = ctx->options.receive_rewrites;
 
 	return ctx;
 }
@@ -326,7 +355,10 @@ CreateInitDecodingContext(char *plugin,
  *		that, see below).
  *
  * output_plugin_options
- *		contains options passed to the output plugin.
+ *		options passed to the output plugin.
+ *
+ * fast_forward
+ *		bypass the generation of logical changes.
  *
  * read_page, prepare_write, do_write, update_progress
  *		callbacks that have to be filled to perform the use-case dependent,
@@ -342,6 +374,7 @@ CreateInitDecodingContext(char *plugin,
 LogicalDecodingContext *
 CreateDecodingContext(XLogRecPtr start_lsn,
 					  List *output_plugin_options,
+					  bool fast_forward,
 					  XLogPageReadCB read_page,
 					  LogicalOutputPluginWriterPrepareWrite prepare_write,
 					  LogicalOutputPluginWriterWrite do_write,
@@ -395,8 +428,8 @@ CreateDecodingContext(XLogRecPtr start_lsn,
 
 	ctx = StartupDecodingContext(output_plugin_options,
 								 start_lsn, InvalidTransactionId, false,
-								 read_page, prepare_write, do_write,
-								 update_progress);
+								 fast_forward, read_page, prepare_write,
+								 do_write, update_progress);
 
 	/* call output plugin initialization callback */
 	old_context = MemoryContextSwitchTo(ctx->context);
@@ -404,10 +437,12 @@ CreateDecodingContext(XLogRecPtr start_lsn,
 		startup_cb_wrapper(ctx, &ctx->options, false);
 	MemoryContextSwitchTo(old_context);
 
+	ctx->reorder->output_rewrites = ctx->options.receive_rewrites;
+
 	ereport(LOG,
 			(errmsg("starting logical decoding for slot \"%s\"",
 					NameStr(slot->data.name)),
-			 errdetail("streaming transactions committing after %X/%X, reading WAL from %X/%X",
+			 errdetail("Streaming transactions committing after %X/%X, reading WAL from %X/%X.",
 					   (uint32) (slot->data.confirmed_flush >> 32),
 					   (uint32) slot->data.confirmed_flush,
 					   (uint32) (slot->data.restart_lsn >> 32),
@@ -432,13 +467,14 @@ void
 DecodingContextFindStartpoint(LogicalDecodingContext *ctx)
 {
 	XLogRecPtr	startptr;
+	ReplicationSlot *slot = ctx->slot;
 
 	/* Initialize from where to start reading WAL. */
-	startptr = ctx->slot->data.restart_lsn;
+	startptr = slot->data.restart_lsn;
 
 	elog(DEBUG1, "searching for logical decoding starting point, starting at %X/%X",
-		 (uint32) (ctx->slot->data.restart_lsn >> 32),
-		 (uint32) ctx->slot->data.restart_lsn);
+		 (uint32) (slot->data.restart_lsn >> 32),
+		 (uint32) slot->data.restart_lsn);
 
 	/* Wait for a consistent starting point */
 	for (;;)
@@ -464,7 +500,9 @@ DecodingContextFindStartpoint(LogicalDecodingContext *ctx)
 		CHECK_FOR_INTERRUPTS();
 	}
 
-	ctx->slot->data.confirmed_flush = ctx->reader->EndRecPtr;
+	SpinLockAcquire(&slot->mutex);
+	slot->data.confirmed_flush = ctx->reader->EndRecPtr;
+	SpinLockRelease(&slot->mutex);
 }
 
 /*
@@ -573,6 +611,8 @@ startup_cb_wrapper(LogicalDecodingContext *ctx, OutputPluginOptions *opt, bool i
 	LogicalErrorCallbackState state;
 	ErrorContextCallback errcallback;
 
+	Assert(!ctx->fast_forward);
+
 	/* Push callback + info on the error context stack */
 	state.ctx = ctx;
 	state.callback_name = "startup";
@@ -597,6 +637,8 @@ shutdown_cb_wrapper(LogicalDecodingContext *ctx)
 {
 	LogicalErrorCallbackState state;
 	ErrorContextCallback errcallback;
+
+	Assert(!ctx->fast_forward);
 
 	/* Push callback + info on the error context stack */
 	state.ctx = ctx;
@@ -629,6 +671,8 @@ begin_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn)
 	LogicalErrorCallbackState state;
 	ErrorContextCallback errcallback;
 
+	Assert(!ctx->fast_forward);
+
 	/* Push callback + info on the error context stack */
 	state.ctx = ctx;
 	state.callback_name = "begin";
@@ -657,6 +701,8 @@ commit_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 	LogicalDecodingContext *ctx = cache->private_data;
 	LogicalErrorCallbackState state;
 	ErrorContextCallback errcallback;
+
+	Assert(!ctx->fast_forward);
 
 	/* Push callback + info on the error context stack */
 	state.ctx = ctx;
@@ -687,6 +733,8 @@ change_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 	LogicalErrorCallbackState state;
 	ErrorContextCallback errcallback;
 
+	Assert(!ctx->fast_forward);
+
 	/* Push callback + info on the error context stack */
 	state.ctx = ctx;
 	state.callback_name = "change";
@@ -714,12 +762,54 @@ change_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 	error_context_stack = errcallback.previous;
 }
 
+static void
+truncate_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
+					int nrelations, Relation relations[], ReorderBufferChange *change)
+{
+	LogicalDecodingContext *ctx = cache->private_data;
+	LogicalErrorCallbackState state;
+	ErrorContextCallback errcallback;
+
+	Assert(!ctx->fast_forward);
+
+	if (!ctx->callbacks.truncate_cb)
+		return;
+
+	/* Push callback + info on the error context stack */
+	state.ctx = ctx;
+	state.callback_name = "truncate";
+	state.report_location = change->lsn;
+	errcallback.callback = output_plugin_error_callback;
+	errcallback.arg = (void *) &state;
+	errcallback.previous = error_context_stack;
+	error_context_stack = &errcallback;
+
+	/* set output state */
+	ctx->accept_writes = true;
+	ctx->write_xid = txn->xid;
+
+	/*
+	 * report this change's lsn so replies from clients can give an up2date
+	 * answer. This won't ever be enough (and shouldn't be!) to confirm
+	 * receipt of this transaction, but it might allow another transaction's
+	 * commit to be confirmed with one message.
+	 */
+	ctx->write_location = change->lsn;
+
+	ctx->callbacks.truncate_cb(ctx, txn, nrelations, relations, change);
+
+	/* Pop the error context stack */
+	error_context_stack = errcallback.previous;
+}
+
 bool
 filter_by_origin_cb_wrapper(LogicalDecodingContext *ctx, RepOriginId origin_id)
 {
 	LogicalErrorCallbackState state;
 	ErrorContextCallback errcallback;
 	bool		ret;
+
+	Assert(!ctx->fast_forward);
 
 	/* Push callback + info on the error context stack */
 	state.ctx = ctx;
@@ -750,6 +840,8 @@ message_cb_wrapper(ReorderBuffer *cache, ReorderBufferTXN *txn,
 	LogicalDecodingContext *ctx = cache->private_data;
 	LogicalErrorCallbackState state;
 	ErrorContextCallback errcallback;
+
+	Assert(!ctx->fast_forward);
 
 	if (ctx->callbacks.message_cb == NULL)
 		return;
@@ -838,7 +930,7 @@ LogicalIncreaseXminForSlot(XLogRecPtr current_lsn, TransactionId xmin)
  * Mark the minimal LSN (restart_lsn) we need to read to replay all
  * transactions that have not yet committed at current_lsn.
  *
- * Just like IncreaseRestartDecodingForSlot this only takes effect when the
+ * Just like LogicalIncreaseXminForSlot this only takes effect when the
  * client has confirmed to have received current_lsn.
  */
 void
@@ -882,6 +974,7 @@ LogicalIncreaseRestartDecodingForSlot(XLogRecPtr current_lsn, XLogRecPtr restart
 	{
 		slot->candidate_restart_valid = current_lsn;
 		slot->candidate_restart_lsn = restart_lsn;
+		SpinLockRelease(&slot->mutex);
 
 		elog(DEBUG1, "got new restart lsn %X/%X at %X/%X",
 			 (uint32) (restart_lsn >> 32), (uint32) restart_lsn,
@@ -889,18 +982,25 @@ LogicalIncreaseRestartDecodingForSlot(XLogRecPtr current_lsn, XLogRecPtr restart
 	}
 	else
 	{
+		XLogRecPtr	candidate_restart_lsn;
+		XLogRecPtr	candidate_restart_valid;
+		XLogRecPtr	confirmed_flush;
+
+		candidate_restart_lsn = slot->candidate_restart_lsn;
+		candidate_restart_valid = slot->candidate_restart_valid;
+		confirmed_flush = slot->data.confirmed_flush;
+		SpinLockRelease(&slot->mutex);
+
 		elog(DEBUG1, "failed to increase restart lsn: proposed %X/%X, after %X/%X, current candidate %X/%X, current after %X/%X, flushed up to %X/%X",
 			 (uint32) (restart_lsn >> 32), (uint32) restart_lsn,
 			 (uint32) (current_lsn >> 32), (uint32) current_lsn,
-			 (uint32) (slot->candidate_restart_lsn >> 32),
-			 (uint32) slot->candidate_restart_lsn,
-			 (uint32) (slot->candidate_restart_valid >> 32),
-			 (uint32) slot->candidate_restart_valid,
-			 (uint32) (slot->data.confirmed_flush >> 32),
-			 (uint32) slot->data.confirmed_flush
-			);
+			 (uint32) (candidate_restart_lsn >> 32),
+			 (uint32) candidate_restart_lsn,
+			 (uint32) (candidate_restart_valid >> 32),
+			 (uint32) candidate_restart_valid,
+			 (uint32) (confirmed_flush >> 32),
+			 (uint32) confirmed_flush);
 	}
-	SpinLockRelease(&slot->mutex);
 
 	/* candidates are already valid with the current flush position, apply */
 	if (updated_lsn)

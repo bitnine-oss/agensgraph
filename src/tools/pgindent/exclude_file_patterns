@@ -5,3 +5,6 @@
 /ecpg/test/expected/
 /snowball/libstemmer/
 /pl/plperl/ppport\.h$
+/jit/llvmjit\.h$
+/tmp_check/
+/tmp_install/

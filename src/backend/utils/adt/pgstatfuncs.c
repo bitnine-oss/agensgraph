@@ -3,7 +3,7 @@
  * pgstatfuncs.c
  *	  Functions for accessing the statistics collector data
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,12 +15,14 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/xlog.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
 #include "common/ip.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "postmaster/bgworker_internals.h"
 #include "postmaster/postmaster.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
@@ -30,6 +32,8 @@
 #include "utils/timestamp.h"
 
 #define UINT32_ACCESS_ONCE(var)		 ((uint32)(*((volatile uint32 *)&(var))))
+
+#define HAS_PGSTAT_PERMISSIONS(role)	 (is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS) || has_privs_of_role(GetUserId(), role))
 
 /* Global bgwriter statistics, from bgwriter.c */
 extern PgStat_MsgBgWriter bgwriterStats;
@@ -467,6 +471,10 @@ pg_stat_get_progress_info(PG_FUNCTION_ARGS)
 	/* Translate command name into command type code. */
 	if (pg_strcasecmp(cmd, "VACUUM") == 0)
 		cmdtype = PROGRESS_COMMAND_VACUUM;
+	else if (pg_strcasecmp(cmd, "CLUSTER") == 0)
+		cmdtype = PROGRESS_COMMAND_CLUSTER;
+	else if (pg_strcasecmp(cmd, "CREATE INDEX") == 0)
+		cmdtype = PROGRESS_COMMAND_CREATE_INDEX;
 	else
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -512,7 +520,7 @@ pg_stat_get_progress_info(PG_FUNCTION_ARGS)
 		values[1] = ObjectIdGetDatum(beentry->st_databaseid);
 
 		/* show rest of the values including relid only to role members */
-		if (has_privs_of_role(GetUserId(), beentry->st_userid))
+		if (HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		{
 			values[2] = ObjectIdGetDatum(beentry->st_progress_command_target);
 			for (i = 0; i < PGSTAT_NUM_PROGRESS_PARAM; i++)
@@ -540,7 +548,7 @@ pg_stat_get_progress_info(PG_FUNCTION_ARGS)
 Datum
 pg_stat_get_activity(PG_FUNCTION_ARGS)
 {
-#define PG_STAT_GET_ACTIVITY_COLS	24
+#define PG_STAT_GET_ACTIVITY_COLS	29
 	int			num_backends = pgstat_fetch_stat_numbackends();
 	int			curr_backend;
 	int			pid = PG_ARGISNULL(0) ? -1 : PG_GETARG_INT32(0);
@@ -644,26 +652,11 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 		else
 			nulls[16] = true;
 
-		if (beentry->st_ssl)
-		{
-			values[18] = BoolGetDatum(true);	/* ssl */
-			values[19] = CStringGetTextDatum(beentry->st_sslstatus->ssl_version);
-			values[20] = CStringGetTextDatum(beentry->st_sslstatus->ssl_cipher);
-			values[21] = Int32GetDatum(beentry->st_sslstatus->ssl_bits);
-			values[22] = BoolGetDatum(beentry->st_sslstatus->ssl_compression);
-			values[23] = CStringGetTextDatum(beentry->st_sslstatus->ssl_clientdn);
-		}
-		else
-		{
-			values[18] = BoolGetDatum(false);	/* ssl */
-			nulls[19] = nulls[20] = nulls[21] = nulls[22] = nulls[23] = true;
-		}
-
 		/* Values only available to role member or pg_read_all_stats */
-		if (has_privs_of_role(GetUserId(), beentry->st_userid) ||
-			is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS))
+		if (HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		{
 			SockAddr	zero_clientaddr;
+			char	   *clipped_activity;
 
 			switch (beentry->st_state)
 			{
@@ -690,7 +683,9 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 					break;
 			}
 
-			values[5] = CStringGetTextDatum(beentry->st_activity);
+			clipped_activity = pgstat_clip_activity(beentry->st_activity_raw);
+			values[5] = CStringGetTextDatum(clipped_activity);
+			pfree(clipped_activity);
 
 			proc = BackendPidGetProc(beentry->st_procpid);
 			if (proc != NULL)
@@ -732,7 +727,13 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 			else
 				nulls[7] = true;
 
-			if (beentry->st_xact_start_timestamp != 0)
+			/*
+			 * Don't expose transaction time for walsenders; it confuses
+			 * monitoring, particularly because we don't keep the time up-to-
+			 * date.
+			 */
+			if (beentry->st_xact_start_timestamp != 0 &&
+				beentry->st_backendType != B_WAL_SENDER)
 				values[8] = TimestampTzGetDatum(beentry->st_xact_start_timestamp);
 			else
 				nulls[8] = true;
@@ -809,7 +810,7 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 					 */
 					nulls[12] = true;
 					nulls[13] = true;
-					values[14] = DatumGetInt32(-1);
+					values[14] = Int32GetDatum(-1);
 				}
 				else
 				{
@@ -820,8 +821,67 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 				}
 			}
 			/* Add backend type */
-			values[17] =
-				CStringGetTextDatum(pgstat_get_backend_desc(beentry->st_backendType));
+			if (beentry->st_backendType == B_BG_WORKER)
+			{
+				const char *bgw_type;
+
+				bgw_type = GetBackgroundWorkerTypeByPid(beentry->st_procpid);
+				if (bgw_type)
+					values[17] = CStringGetTextDatum(bgw_type);
+				else
+					nulls[17] = true;
+			}
+			else
+				values[17] =
+					CStringGetTextDatum(pgstat_get_backend_desc(beentry->st_backendType));
+
+			/* SSL information */
+			if (beentry->st_ssl)
+			{
+				values[18] = BoolGetDatum(true);	/* ssl */
+				values[19] = CStringGetTextDatum(beentry->st_sslstatus->ssl_version);
+				values[20] = CStringGetTextDatum(beentry->st_sslstatus->ssl_cipher);
+				values[21] = Int32GetDatum(beentry->st_sslstatus->ssl_bits);
+				values[22] = BoolGetDatum(beentry->st_sslstatus->ssl_compression);
+
+				if (beentry->st_sslstatus->ssl_client_dn[0])
+					values[23] = CStringGetTextDatum(beentry->st_sslstatus->ssl_client_dn);
+				else
+					nulls[23] = true;
+
+				if (beentry->st_sslstatus->ssl_client_serial[0])
+					values[24] = DirectFunctionCall3(numeric_in,
+													 CStringGetDatum(beentry->st_sslstatus->ssl_client_serial),
+													 ObjectIdGetDatum(InvalidOid),
+													 Int32GetDatum(-1));
+				else
+					nulls[24] = true;
+
+				if (beentry->st_sslstatus->ssl_issuer_dn[0])
+					values[25] = CStringGetTextDatum(beentry->st_sslstatus->ssl_issuer_dn);
+				else
+					nulls[25] = true;
+			}
+			else
+			{
+				values[18] = BoolGetDatum(false);	/* ssl */
+				nulls[19] = nulls[20] = nulls[21] = nulls[22] = nulls[23] = nulls[24] = nulls[25] = true;
+			}
+
+			/* GSSAPI information */
+			if (beentry->st_gss)
+			{
+				values[26] = BoolGetDatum(beentry->st_gssstatus->gss_auth); /* gss_auth */
+				values[27] = CStringGetTextDatum(beentry->st_gssstatus->gss_princ);
+				values[28] = BoolGetDatum(beentry->st_gssstatus->gss_enc);	/* GSS Encryption in use */
+			}
+			else
+			{
+				values[26] = BoolGetDatum(false);	/* gss_auth */
+				nulls[27] = true;	/* No GSS principal */
+				values[28] = BoolGetDatum(false);	/* GSS Encryption not in
+													 * use */
+			}
 		}
 		else
 		{
@@ -838,6 +898,17 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
 			nulls[13] = true;
 			nulls[14] = true;
 			nulls[17] = true;
+			nulls[18] = true;
+			nulls[19] = true;
+			nulls[20] = true;
+			nulls[21] = true;
+			nulls[22] = true;
+			nulls[23] = true;
+			nulls[24] = true;
+			nulls[25] = true;
+			nulls[26] = true;
+			nulls[27] = true;
+			nulls[28] = true;
 		}
 
 		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
@@ -906,17 +977,23 @@ pg_stat_get_backend_activity(PG_FUNCTION_ARGS)
 	int32		beid = PG_GETARG_INT32(0);
 	PgBackendStatus *beentry;
 	const char *activity;
+	char	   *clipped_activity;
+	text	   *ret;
 
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		activity = "<backend information not available>";
-	else if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		activity = "<insufficient privilege>";
-	else if (*(beentry->st_activity) == '\0')
+	else if (*(beentry->st_activity_raw) == '\0')
 		activity = "<command string not enabled>";
 	else
-		activity = beentry->st_activity;
+		activity = beentry->st_activity_raw;
 
-	PG_RETURN_TEXT_P(cstring_to_text(activity));
+	clipped_activity = pgstat_clip_activity(activity);
+	ret = cstring_to_text(activity);
+	pfree(clipped_activity);
+
+	PG_RETURN_TEXT_P(ret);
 }
 
 Datum
@@ -929,7 +1006,7 @@ pg_stat_get_backend_wait_event_type(PG_FUNCTION_ARGS)
 
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		wait_event_type = "<backend information not available>";
-	else if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		wait_event_type = "<insufficient privilege>";
 	else if ((proc = BackendPidGetProc(beentry->st_procpid)) != NULL)
 		wait_event_type = pgstat_get_wait_event_type(proc->wait_event_info);
@@ -950,7 +1027,7 @@ pg_stat_get_backend_wait_event(PG_FUNCTION_ARGS)
 
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		wait_event = "<backend information not available>";
-	else if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		wait_event = "<insufficient privilege>";
 	else if ((proc = BackendPidGetProc(beentry->st_procpid)) != NULL)
 		wait_event = pgstat_get_wait_event(proc->wait_event_info);
@@ -972,7 +1049,7 @@ pg_stat_get_backend_activity_start(PG_FUNCTION_ARGS)
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		PG_RETURN_NULL();
 
-	if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		PG_RETURN_NULL();
 
 	result = beentry->st_activity_start_timestamp;
@@ -998,7 +1075,7 @@ pg_stat_get_backend_xact_start(PG_FUNCTION_ARGS)
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		PG_RETURN_NULL();
 
-	if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		PG_RETURN_NULL();
 
 	result = beentry->st_xact_start_timestamp;
@@ -1020,7 +1097,7 @@ pg_stat_get_backend_start(PG_FUNCTION_ARGS)
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		PG_RETURN_NULL();
 
-	if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		PG_RETURN_NULL();
 
 	result = beentry->st_proc_start_timestamp;
@@ -1044,7 +1121,7 @@ pg_stat_get_backend_client_addr(PG_FUNCTION_ARGS)
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		PG_RETURN_NULL();
 
-	if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		PG_RETURN_NULL();
 
 	/* A zeroed client addr means we don't know */
@@ -1091,7 +1168,7 @@ pg_stat_get_backend_client_port(PG_FUNCTION_ARGS)
 	if ((beentry = pgstat_fetch_stat_beentry(beid)) == NULL)
 		PG_RETURN_NULL();
 
-	if (!has_privs_of_role(GetUserId(), beentry->st_userid))
+	else if (!HAS_PGSTAT_PERMISSIONS(beentry->st_userid))
 		PG_RETURN_NULL();
 
 	/* A zeroed client addr means we don't know */
@@ -1448,6 +1525,45 @@ pg_stat_get_db_deadlocks(PG_FUNCTION_ARGS)
 		result = (int64) (dbentry->n_deadlocks);
 
 	PG_RETURN_INT64(result);
+}
+
+Datum
+pg_stat_get_db_checksum_failures(PG_FUNCTION_ARGS)
+{
+	Oid			dbid = PG_GETARG_OID(0);
+	int64		result;
+	PgStat_StatDBEntry *dbentry;
+
+	if (!DataChecksumsEnabled())
+		PG_RETURN_NULL();
+
+	if ((dbentry = pgstat_fetch_stat_dbentry(dbid)) == NULL)
+		result = 0;
+	else
+		result = (int64) (dbentry->n_checksum_failures);
+
+	PG_RETURN_INT64(result);
+}
+
+Datum
+pg_stat_get_db_checksum_last_failure(PG_FUNCTION_ARGS)
+{
+	Oid			dbid = PG_GETARG_OID(0);
+	TimestampTz result;
+	PgStat_StatDBEntry *dbentry;
+
+	if (!DataChecksumsEnabled())
+		PG_RETURN_NULL();
+
+	if ((dbentry = pgstat_fetch_stat_dbentry(dbid)) == NULL)
+		result = 0;
+	else
+		result = dbentry->last_checksum_failure;
+
+	if (result == 0)
+		PG_RETURN_NULL();
+	else
+		PG_RETURN_TIMESTAMPTZ(result);
 }
 
 Datum
@@ -1808,7 +1924,7 @@ pg_stat_get_archiver(PG_FUNCTION_ARGS)
 	MemSet(nulls, 0, sizeof(nulls));
 
 	/* Initialise attributes information in the tuple descriptor */
-	tupdesc = CreateTemplateTupleDesc(7, false);
+	tupdesc = CreateTemplateTupleDesc(7);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "archived_count",
 					   INT8OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "last_archived_wal",

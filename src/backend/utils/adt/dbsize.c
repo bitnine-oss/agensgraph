@@ -2,7 +2,7 @@
  * dbsize.c
  *		Database object size functions, and related inquiries
  *
- * Copyright (c) 2002-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/dbsize.c
@@ -13,8 +13,8 @@
 
 #include <sys/stat.h>
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/relation.h"
 #include "catalog/catalog.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
@@ -31,8 +31,8 @@
 #include "utils/relmapper.h"
 #include "utils/syscache.h"
 
-/* Divide by two and round towards positive infinity. */
-#define half_rounded(x)   (((x) + ((x) < 0 ? 0 : 1)) / 2)
+/* Divide by two and round away from zero */
+#define half_rounded(x)   (((x) + ((x) < 0 ? -1 : 1)) / 2)
 
 /* Return physical size of directory contents, or 0 if dir doesn't exist */
 static int64
@@ -86,7 +86,7 @@ calculate_database_size(Oid dbOid)
 	DIR		   *dirdesc;
 	struct dirent *direntry;
 	char		dirpath[MAXPGPATH];
-	char		pathname[MAXPGPATH + 12 + sizeof(TABLESPACE_VERSION_DIRECTORY)];
+	char		pathname[MAXPGPATH + 21 + sizeof(TABLESPACE_VERSION_DIRECTORY)];
 	AclResult	aclresult;
 
 	/*
@@ -97,7 +97,7 @@ calculate_database_size(Oid dbOid)
 	if (aclresult != ACLCHECK_OK &&
 		!is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_ALL_STATS))
 	{
-		aclcheck_error(aclresult, ACL_KIND_DATABASE,
+		aclcheck_error(aclresult, OBJECT_DATABASE,
 					   get_database_name(dbOid));
 	}
 
@@ -110,11 +110,6 @@ calculate_database_size(Oid dbOid)
 	/* Scan the non-default tablespaces */
 	snprintf(dirpath, MAXPGPATH, "pg_tblspc");
 	dirdesc = AllocateDir(dirpath);
-	if (!dirdesc)
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not open tablespace directory \"%s\": %m",
-						dirpath)));
 
 	while ((direntry = ReadDir(dirdesc, dirpath)) != NULL)
 	{
@@ -188,7 +183,7 @@ calculate_tablespace_size(Oid tblspcOid)
 	{
 		aclresult = pg_tablespace_aclcheck(tblspcOid, GetUserId(), ACL_CREATE);
 		if (aclresult != ACLCHECK_OK)
-			aclcheck_error(aclresult, ACL_KIND_TABLESPACE,
+			aclcheck_error(aclresult, OBJECT_TABLESPACE,
 						   get_tablespace_name(tblspcOid));
 	}
 
@@ -547,25 +542,29 @@ pg_size_pretty(PG_FUNCTION_ARGS)
 		snprintf(buf, sizeof(buf), INT64_FORMAT " bytes", size);
 	else
 	{
-		size >>= 9;				/* keep one extra bit for rounding */
+		/*
+		 * We use divide instead of bit shifting so that behavior matches for
+		 * both positive and negative size values.
+		 */
+		size /= (1 << 9);		/* keep one extra bit for rounding */
 		if (Abs(size) < limit2)
 			snprintf(buf, sizeof(buf), INT64_FORMAT " kB",
 					 half_rounded(size));
 		else
 		{
-			size >>= 10;
+			size /= (1 << 10);
 			if (Abs(size) < limit2)
 				snprintf(buf, sizeof(buf), INT64_FORMAT " MB",
 						 half_rounded(size));
 			else
 			{
-				size >>= 10;
+				size /= (1 << 10);
 				if (Abs(size) < limit2)
 					snprintf(buf, sizeof(buf), INT64_FORMAT " GB",
 							 half_rounded(size));
 				else
 				{
-					size >>= 10;
+					size /= (1 << 10);
 					snprintf(buf, sizeof(buf), INT64_FORMAT " TB",
 							 half_rounded(size));
 				}
@@ -634,15 +633,14 @@ numeric_half_rounded(Numeric n)
 }
 
 static Numeric
-numeric_shift_right(Numeric n, unsigned count)
+numeric_truncated_divide(Numeric n, int64 divisor)
 {
 	Datum		d = NumericGetDatum(n);
-	Datum		divisor_int64;
 	Datum		divisor_numeric;
 	Datum		result;
 
-	divisor_int64 = Int64GetDatum((int64) (1 << count));
-	divisor_numeric = DirectFunctionCall1(int8_numeric, divisor_int64);
+	divisor_numeric = DirectFunctionCall1(int8_numeric,
+										  Int64GetDatum(divisor));
 	result = DirectFunctionCall2(numeric_div_trunc, d, divisor_numeric);
 	return DatumGetNumeric(result);
 }
@@ -665,8 +663,8 @@ pg_size_pretty_numeric(PG_FUNCTION_ARGS)
 	else
 	{
 		/* keep one extra bit for rounding */
-		/* size >>= 9 */
-		size = numeric_shift_right(size, 9);
+		/* size /= (1 << 9) */
+		size = numeric_truncated_divide(size, 1 << 9);
 
 		if (numeric_is_less(numeric_absolute(size), limit2))
 		{
@@ -675,8 +673,9 @@ pg_size_pretty_numeric(PG_FUNCTION_ARGS)
 		}
 		else
 		{
-			/* size >>= 10 */
-			size = numeric_shift_right(size, 10);
+			/* size /= (1 << 10) */
+			size = numeric_truncated_divide(size, 1 << 10);
+
 			if (numeric_is_less(numeric_absolute(size), limit2))
 			{
 				size = numeric_half_rounded(size);
@@ -684,8 +683,8 @@ pg_size_pretty_numeric(PG_FUNCTION_ARGS)
 			}
 			else
 			{
-				/* size >>= 10 */
-				size = numeric_shift_right(size, 10);
+				/* size /= (1 << 10) */
+				size = numeric_truncated_divide(size, 1 << 10);
 
 				if (numeric_is_less(numeric_absolute(size), limit2))
 				{
@@ -694,8 +693,8 @@ pg_size_pretty_numeric(PG_FUNCTION_ARGS)
 				}
 				else
 				{
-					/* size >>= 10 */
-					size = numeric_shift_right(size, 10);
+					/* size /= (1 << 10) */
+					size = numeric_truncated_divide(size, 1 << 10);
 					size = numeric_half_rounded(size);
 					result = psprintf("%s TB", numeric_to_cstring(size));
 				}
@@ -926,7 +925,11 @@ pg_filenode_relation(PG_FUNCTION_ARGS)
 {
 	Oid			reltablespace = PG_GETARG_OID(0);
 	Oid			relfilenode = PG_GETARG_OID(1);
-	Oid			heaprel = InvalidOid;
+	Oid			heaprel;
+
+	/* test needed so RelidByRelfilenode doesn't misbehave */
+	if (!OidIsValid(relfilenode))
+		PG_RETURN_NULL();
 
 	heaprel = RelidByRelfilenode(reltablespace, relfilenode);
 

@@ -23,14 +23,16 @@ extern Datum jsonb_uplus(PG_FUNCTION_ARGS);
 extern Datum jsonb_uminus(PG_FUNCTION_ARGS);
 
 /* coercions between jsonb and bool */
-extern Datum jsonb_bool(PG_FUNCTION_ARGS);
-extern Datum bool_jsonb(PG_FUNCTION_ARGS);
+//extern Datum bool_jsonb(PG_FUNCTION_ARGS);
 
+/* Functions available in PG12 - Commented by Hamid */
 /* coercion from jsonb to int8/int4/numeric/float8 */
+/*
 extern Datum jsonb_int8(PG_FUNCTION_ARGS);
 extern Datum jsonb_int4(PG_FUNCTION_ARGS);
 extern Datum jsonb_numeric(PG_FUNCTION_ARGS);
 extern Datum jsonb_float8(PG_FUNCTION_ARGS);
+*/
 
 /* coercion from numeric to graphid */
 extern Datum numeric_graphid(PG_FUNCTION_ARGS);

@@ -3,7 +3,7 @@
  * adminpack.c
  *
  *
- * Copyright (c) 2002-2017, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2019, PostgreSQL Global Development Group
  *
  * Author: Andreas Pflug <pgadmin@pse-consulting.de>
  *
@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "catalog/pg_authid.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "miscadmin.h"
@@ -41,15 +42,18 @@
 PG_MODULE_MAGIC;
 
 PG_FUNCTION_INFO_V1(pg_file_write);
+PG_FUNCTION_INFO_V1(pg_file_write_v1_1);
 PG_FUNCTION_INFO_V1(pg_file_rename);
+PG_FUNCTION_INFO_V1(pg_file_rename_v1_1);
 PG_FUNCTION_INFO_V1(pg_file_unlink);
+PG_FUNCTION_INFO_V1(pg_file_unlink_v1_1);
 PG_FUNCTION_INFO_V1(pg_logdir_ls);
+PG_FUNCTION_INFO_V1(pg_logdir_ls_v1_1);
 
-typedef struct
-{
-	char	   *location;
-	DIR		   *dirdesc;
-} directory_fctx;
+static int64 pg_file_write_internal(text *file, text *data, bool replace);
+static bool pg_file_rename_internal(text *file1, text *file2, text *file3);
+static Datum pg_logdir_ls_internal(FunctionCallInfo fcinfo);
+
 
 /*-----------------------
  * some helper functions
@@ -68,6 +72,15 @@ convert_and_check_filename(text *arg, bool logAllowed)
 
 	canonicalize_path(filename);	/* filename can change length here */
 
+	/*
+	 * Members of the 'pg_write_server_files' role are allowed to access any
+	 * files on the server as the PG user, so no need to do any further checks
+	 * here.
+	 */
+	if (is_member_of_role(GetUserId(), DEFAULT_ROLE_WRITE_SERVER_FILES))
+		return filename;
+
+	/* User isn't a member of the default role, so check if it's allowable */
 	if (is_absolute_path(filename))
 	{
 		/* Disallow '/a/b/data/..' */
@@ -111,29 +124,70 @@ requireSuperuser(void)
 
 
 /* ------------------------------------
- * generic file handling functions
+ * pg_file_write - old version
+ *
+ * The superuser() check here must be kept as the library might be upgraded
+ * without the extension being upgraded, meaning that in pre-1.1 installations
+ * these functions could be called by any user.
  */
-
 Datum
 pg_file_write(PG_FUNCTION_ARGS)
 {
-	FILE	   *f;
-	char	   *filename;
-	text	   *data;
+	text	   *file = PG_GETARG_TEXT_PP(0);
+	text	   *data = PG_GETARG_TEXT_PP(1);
+	bool		replace = PG_GETARG_BOOL(2);
 	int64		count = 0;
 
 	requireSuperuser();
 
-	filename = convert_and_check_filename(PG_GETARG_TEXT_PP(0), false);
-	data = PG_GETARG_TEXT_PP(1);
+	count = pg_file_write_internal(file, data, replace);
 
-	if (!PG_GETARG_BOOL(2))
+	PG_RETURN_INT64(count);
+}
+
+/* ------------------------------------
+ * pg_file_write_v1_1 - Version 1.1
+ *
+ * As of adminpack version 1.1, we no longer need to check if the user
+ * is a superuser because we REVOKE EXECUTE on the function from PUBLIC.
+ * Users can then grant access to it based on their policies.
+ *
+ * Otherwise identical to pg_file_write (above).
+ */
+Datum
+pg_file_write_v1_1(PG_FUNCTION_ARGS)
+{
+	text	   *file = PG_GETARG_TEXT_PP(0);
+	text	   *data = PG_GETARG_TEXT_PP(1);
+	bool		replace = PG_GETARG_BOOL(2);
+	int64		count = 0;
+
+	count = pg_file_write_internal(file, data, replace);
+
+	PG_RETURN_INT64(count);
+}
+
+/* ------------------------------------
+ * pg_file_write_internal - Workhorse for pg_file_write functions.
+ *
+ * This handles the actual work for pg_file_write.
+ */
+static int64
+pg_file_write_internal(text *file, text *data, bool replace)
+{
+	FILE	   *f;
+	char	   *filename;
+	int64		count = 0;
+
+	filename = convert_and_check_filename(file, false);
+
+	if (!replace)
 	{
 		struct stat fst;
 
 		if (stat(filename, &fst) >= 0)
 			ereport(ERROR,
-					(ERRCODE_DUPLICATE_FILE,
+					(errcode(ERRCODE_DUPLICATE_FILE),
 					 errmsg("file \"%s\" exists", filename)));
 
 		f = AllocateFile(filename, "wb");
@@ -153,29 +207,95 @@ pg_file_write(PG_FUNCTION_ARGS)
 				(errcode_for_file_access(),
 				 errmsg("could not write file \"%s\": %m", filename)));
 
-	PG_RETURN_INT64(count);
+	return (count);
 }
 
-
+/* ------------------------------------
+ * pg_file_rename - old version
+ *
+ * The superuser() check here must be kept as the library might be upgraded
+ * without the extension being upgraded, meaning that in pre-1.1 installations
+ * these functions could be called by any user.
+ */
 Datum
 pg_file_rename(PG_FUNCTION_ARGS)
 {
-	char	   *fn1,
-			   *fn2,
-			   *fn3;
-	int			rc;
+	text	   *file1;
+	text	   *file2;
+	text	   *file3;
+	bool		result;
 
 	requireSuperuser();
 
 	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
 		PG_RETURN_NULL();
 
-	fn1 = convert_and_check_filename(PG_GETARG_TEXT_PP(0), false);
-	fn2 = convert_and_check_filename(PG_GETARG_TEXT_PP(1), false);
+	file1 = PG_GETARG_TEXT_PP(0);
+	file2 = PG_GETARG_TEXT_PP(1);
+
 	if (PG_ARGISNULL(2))
+		file3 = NULL;
+	else
+		file3 = PG_GETARG_TEXT_PP(2);
+
+	result = pg_file_rename_internal(file1, file2, file3);
+
+	PG_RETURN_BOOL(result);
+}
+
+/* ------------------------------------
+ * pg_file_rename_v1_1 - Version 1.1
+ *
+ * As of adminpack version 1.1, we no longer need to check if the user
+ * is a superuser because we REVOKE EXECUTE on the function from PUBLIC.
+ * Users can then grant access to it based on their policies.
+ *
+ * Otherwise identical to pg_file_write (above).
+ */
+Datum
+pg_file_rename_v1_1(PG_FUNCTION_ARGS)
+{
+	text	   *file1;
+	text	   *file2;
+	text	   *file3;
+	bool		result;
+
+	if (PG_ARGISNULL(0) || PG_ARGISNULL(1))
+		PG_RETURN_NULL();
+
+	file1 = PG_GETARG_TEXT_PP(0);
+	file2 = PG_GETARG_TEXT_PP(1);
+
+	if (PG_ARGISNULL(2))
+		file3 = NULL;
+	else
+		file3 = PG_GETARG_TEXT_PP(2);
+
+	result = pg_file_rename_internal(file1, file2, file3);
+
+	PG_RETURN_BOOL(result);
+}
+
+/* ------------------------------------
+ * pg_file_rename_internal - Workhorse for pg_file_rename functions.
+ *
+ * This handles the actual work for pg_file_rename.
+ */
+static bool
+pg_file_rename_internal(text *file1, text *file2, text *file3)
+{
+	char	   *fn1,
+			   *fn2,
+			   *fn3;
+	int			rc;
+
+	fn1 = convert_and_check_filename(file1, false);
+	fn2 = convert_and_check_filename(file2, false);
+
+	if (file3 == NULL)
 		fn3 = NULL;
 	else
-		fn3 = convert_and_check_filename(PG_GETARG_TEXT_PP(2), false);
+		fn3 = convert_and_check_filename(file3, false);
 
 	if (access(fn1, W_OK) < 0)
 	{
@@ -183,7 +303,7 @@ pg_file_rename(PG_FUNCTION_ARGS)
 				(errcode_for_file_access(),
 				 errmsg("file \"%s\" is not accessible: %m", fn1)));
 
-		PG_RETURN_BOOL(false);
+		return false;
 	}
 
 	if (fn3 && access(fn2, W_OK) < 0)
@@ -192,14 +312,14 @@ pg_file_rename(PG_FUNCTION_ARGS)
 				(errcode_for_file_access(),
 				 errmsg("file \"%s\" is not accessible: %m", fn2)));
 
-		PG_RETURN_BOOL(false);
+		return false;
 	}
 
 	rc = access(fn3 ? fn3 : fn2, W_OK);
 	if (rc >= 0 || errno != ENOENT)
 	{
 		ereport(ERROR,
-				(ERRCODE_DUPLICATE_FILE,
+				(errcode(ERRCODE_DUPLICATE_FILE),
 				 errmsg("cannot rename to target file \"%s\"",
 						fn3 ? fn3 : fn2)));
 	}
@@ -230,7 +350,7 @@ pg_file_rename(PG_FUNCTION_ARGS)
 			else
 			{
 				ereport(ERROR,
-						(ERRCODE_UNDEFINED_FILE,
+						(errcode(ERRCODE_UNDEFINED_FILE),
 						 errmsg("renaming \"%s\" to \"%s\" was reverted",
 								fn2, fn3)));
 			}
@@ -243,10 +363,17 @@ pg_file_rename(PG_FUNCTION_ARGS)
 				 errmsg("could not rename \"%s\" to \"%s\": %m", fn1, fn2)));
 	}
 
-	PG_RETURN_BOOL(true);
+	return true;
 }
 
 
+/* ------------------------------------
+ * pg_file_unlink - old version
+ *
+ * The superuser() check here must be kept as the library might be upgraded
+ * without the extension being upgraded, meaning that in pre-1.1 installations
+ * these functions could be called by any user.
+ */
 Datum
 pg_file_unlink(PG_FUNCTION_ARGS)
 {
@@ -278,58 +405,124 @@ pg_file_unlink(PG_FUNCTION_ARGS)
 }
 
 
+/* ------------------------------------
+ * pg_file_unlink_v1_1 - Version 1.1
+ *
+ * As of adminpack version 1.1, we no longer need to check if the user
+ * is a superuser because we REVOKE EXECUTE on the function from PUBLIC.
+ * Users can then grant access to it based on their policies.
+ *
+ * Otherwise identical to pg_file_unlink (above).
+ */
+Datum
+pg_file_unlink_v1_1(PG_FUNCTION_ARGS)
+{
+	char	   *filename;
+
+	filename = convert_and_check_filename(PG_GETARG_TEXT_PP(0), false);
+
+	if (access(filename, W_OK) < 0)
+	{
+		if (errno == ENOENT)
+			PG_RETURN_BOOL(false);
+		else
+			ereport(ERROR,
+					(errcode_for_file_access(),
+					 errmsg("file \"%s\" is not accessible: %m", filename)));
+	}
+
+	if (unlink(filename) < 0)
+	{
+		ereport(WARNING,
+				(errcode_for_file_access(),
+				 errmsg("could not unlink file \"%s\": %m", filename)));
+
+		PG_RETURN_BOOL(false);
+	}
+	PG_RETURN_BOOL(true);
+}
+
+/* ------------------------------------
+ * pg_logdir_ls - Old version
+ *
+ * The superuser() check here must be kept as the library might be upgraded
+ * without the extension being upgraded, meaning that in pre-1.1 installations
+ * these functions could be called by any user.
+ */
 Datum
 pg_logdir_ls(PG_FUNCTION_ARGS)
 {
-	FuncCallContext *funcctx;
-	struct dirent *de;
-	directory_fctx *fctx;
-
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 (errmsg("only superuser can list the log directory"))));
 
+	return (pg_logdir_ls_internal(fcinfo));
+}
+
+/* ------------------------------------
+ * pg_logdir_ls_v1_1 - Version 1.1
+ *
+ * As of adminpack version 1.1, we no longer need to check if the user
+ * is a superuser because we REVOKE EXECUTE on the function from PUBLIC.
+ * Users can then grant access to it based on their policies.
+ *
+ * Otherwise identical to pg_logdir_ls (above).
+ */
+Datum
+pg_logdir_ls_v1_1(PG_FUNCTION_ARGS)
+{
+	return (pg_logdir_ls_internal(fcinfo));
+}
+
+static Datum
+pg_logdir_ls_internal(FunctionCallInfo fcinfo)
+{
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	bool		randomAccess;
+	TupleDesc	tupdesc;
+	Tuplestorestate *tupstore;
+	AttInMetadata *attinmeta;
+	DIR		   *dirdesc;
+	struct dirent *de;
+	MemoryContext oldcontext;
+
 	if (strcmp(Log_filename, "postgresql-%Y-%m-%d_%H%M%S.log") != 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 (errmsg("the log_filename parameter must equal 'postgresql-%%Y-%%m-%%d_%%H%%M%%S.log'"))));
+				 errmsg("the log_filename parameter must equal 'postgresql-%%Y-%%m-%%d_%%H%%M%%S.log'")));
 
-	if (SRF_IS_FIRSTCALL())
-	{
-		MemoryContext oldcontext;
-		TupleDesc	tupdesc;
+	/* check to see if caller supports us returning a tuplestore */
+	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("set-valued function called in context that cannot accept a set")));
+	if (!(rsinfo->allowedModes & SFRM_Materialize))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 errmsg("materialize mode required, but it is not allowed in this context")));
 
-		funcctx = SRF_FIRSTCALL_INIT();
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+	/* The tupdesc and tuplestore must be created in ecxt_per_query_memory */
+	oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
 
-		fctx = palloc(sizeof(directory_fctx));
+	tupdesc = CreateTemplateTupleDesc(2);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "starttime",
+					   TIMESTAMPOID, -1, 0);
+	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "filename",
+					   TEXTOID, -1, 0);
 
-		tupdesc = CreateTemplateTupleDesc(2, false);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "starttime",
-						   TIMESTAMPOID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "filename",
-						   TEXTOID, -1, 0);
+	randomAccess = (rsinfo->allowedModes & SFRM_Materialize_Random) != 0;
+	tupstore = tuplestore_begin_heap(randomAccess, false, work_mem);
+	rsinfo->returnMode = SFRM_Materialize;
+	rsinfo->setResult = tupstore;
+	rsinfo->setDesc = tupdesc;
 
-		funcctx->attinmeta = TupleDescGetAttInMetadata(tupdesc);
+	MemoryContextSwitchTo(oldcontext);
 
-		fctx->location = pstrdup(Log_directory);
-		fctx->dirdesc = AllocateDir(fctx->location);
+	attinmeta = TupleDescGetAttInMetadata(tupdesc);
 
-		if (!fctx->dirdesc)
-			ereport(ERROR,
-					(errcode_for_file_access(),
-					 errmsg("could not read directory \"%s\": %m",
-							fctx->location)));
-
-		funcctx->user_fctx = fctx;
-		MemoryContextSwitchTo(oldcontext);
-	}
-
-	funcctx = SRF_PERCALL_SETUP();
-	fctx = (directory_fctx *) funcctx->user_fctx;
-
-	while ((de = ReadDir(fctx->dirdesc, fctx->location)) != NULL)
+	dirdesc = AllocateDir(Log_directory);
+	while ((de = ReadDir(dirdesc, Log_directory)) != NULL)
 	{
 		char	   *values[2];
 		HeapTuple	tuple;
@@ -366,13 +559,13 @@ pg_logdir_ls(PG_FUNCTION_ARGS)
 		/* Seems the timestamp is OK; prepare and return tuple */
 
 		values[0] = timestampbuf;
-		values[1] = psprintf("%s/%s", fctx->location, de->d_name);
+		values[1] = psprintf("%s/%s", Log_directory, de->d_name);
 
-		tuple = BuildTupleFromCStrings(funcctx->attinmeta, values);
+		tuple = BuildTupleFromCStrings(attinmeta, values);
 
-		SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+		tuplestore_puttuple(tupstore, tuple);
 	}
 
-	FreeDir(fctx->dirdesc);
-	SRF_RETURN_DONE(funcctx);
+	FreeDir(dirdesc);
+	return (Datum) 0;
 }

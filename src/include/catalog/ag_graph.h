@@ -19,16 +19,16 @@
 #define AG_GRAPH_H
 
 #include "catalog/genbki.h"
+#include "catalog/ag_graph_d.h"
 
 /* ----------------
  *		ag_graph definition.  cpp turns this into
  *		typedef struct FormData_ag_graph
  * ----------------
  */
-#define GraphRelationId	7040
-
-CATALOG(ag_graph,7040) BKI_SCHEMA_MACRO
+CATALOG(ag_graph,7040,GraphRelationId) BKI_SCHEMA_MACRO
 {
+	Oid			oid;			/* oid */
 	NameData	graphname;
 	Oid			nspid;
 } FormData_ag_graph;
@@ -39,14 +39,5 @@ CATALOG(ag_graph,7040) BKI_SCHEMA_MACRO
  * ----------------
  */
 typedef FormData_ag_graph *Form_ag_graph;
-
-/* ----------------
- *		compiler constants for ag_graph
- * ----------------
- */
-
-#define Natts_ag_graph					2
-#define Anum_ag_graph_graphname			1
-#define Anum_ag_graph_nspid				2
 
 #endif   /* AG_GRAPH_H */

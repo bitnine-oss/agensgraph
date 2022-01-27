@@ -3,7 +3,7 @@
  * reloptions.c
  *	  Core support for relation options (pg_class.reloptions)
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,6 +23,7 @@
 #include "access/nbtree.h"
 #include "access/reloptions.h"
 #include "access/spgist.h"
+#include "access/tuptoaster.h"
 #include "catalog/pg_type.h"
 #include "commands/defrem.h"
 #include "commands/tablespace.h"
@@ -51,9 +52,6 @@
  * (v) make sure the lock level is set correctly for that operation
  * (vi) don't forget to document the option
  *
- * Note that we don't handle "oids" in relOpts because it is handled by
- * interpretOidsOption().
- *
  * The default choice for any new option should be AccessExclusiveLock.
  * In some cases the lock level can be reduced from there, but the lock
  * level chosen should always conflict with itself to ensure that multiple
@@ -76,7 +74,7 @@
  * n_distinct options can be set at ShareUpdateExclusiveLock because they
  * are only used during ANALYZE, which uses a ShareUpdateExclusiveLock,
  * so the ANALYZE will not be affected by in-flight changes. Changing those
- * values has no affect until the next ANALYZE, so no need for stronger lock.
+ * values has no effect until the next ANALYZE, so no need for stronger lock.
  *
  * Planner-related parameters can be set with ShareUpdateExclusiveLock because
  * they only affect planning and not the correctness of the execution. Plans
@@ -88,6 +86,11 @@
  * Setting parallel_workers is safe, since it acts the same as
  * max_parallel_workers_per_gather which is a USERSET parameter that doesn't
  * affect existing plans or queries.
+ *
+ * vacuum_truncate can be set at ShareUpdateExclusiveLock because it
+ * is only used during VACUUM, which uses a ShareUpdateExclusiveLock,
+ * so the VACUUM will not be affected by in-flight changes. Changing its
+ * value has no effect until the next VACUUM, so no need for stronger lock.
  */
 
 static relopt_bool boolRelOpts[] =
@@ -136,6 +139,24 @@ static relopt_bool boolRelOpts[] =
 			AccessExclusiveLock
 		},
 		false
+	},
+	{
+		{
+			"vacuum_index_cleanup",
+			"Enables index vacuuming and index cleanup",
+			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
+			ShareUpdateExclusiveLock
+		},
+		true
+	},
+	{
+		{
+			"vacuum_truncate",
+			"Enables vacuum to truncate empty pages at the end of this table",
+			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
+			ShareUpdateExclusiveLock
+		},
+		true
 	},
 	/* list terminator */
 	{{NULL}}
@@ -213,15 +234,6 @@ static relopt_int intRelOpts[] =
 	},
 	{
 		{
-			"autovacuum_vacuum_cost_delay",
-			"Vacuum cost delay in milliseconds, for autovacuum",
-			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
-			ShareUpdateExclusiveLock
-		},
-		-1, 0, 100
-	},
-	{
-		{
 			"autovacuum_vacuum_cost_limit",
 			"Vacuum cost amount available before napping, for autovacuum",
 			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
@@ -292,6 +304,15 @@ static relopt_int intRelOpts[] =
 	},
 	{
 		{
+			"toast_tuple_target",
+			"Sets the target tuple length at which external columns will be toasted",
+			RELOPT_KIND_HEAP,
+			ShareUpdateExclusiveLock
+		},
+		TOAST_TUPLE_TARGET, 128, TOAST_TUPLE_TARGET_MAIN
+	},
+	{
+		{
 			"pages_per_range",
 			"Number of pages that each page range covers in a BRIN index",
 			RELOPT_KIND_BRIN,
@@ -336,6 +357,15 @@ static relopt_int intRelOpts[] =
 
 static relopt_real realRelOpts[] =
 {
+	{
+		{
+			"autovacuum_vacuum_cost_delay",
+			"Vacuum cost delay in milliseconds, for autovacuum",
+			RELOPT_KIND_HEAP | RELOPT_KIND_TOAST,
+			ShareUpdateExclusiveLock
+		},
+		-1, 0.0, 100.0
+	},
 	{
 		{
 			"autovacuum_vacuum_scale_factor",
@@ -390,6 +420,15 @@ static relopt_real realRelOpts[] =
 		},
 		0, -1.0, DBL_MAX
 	},
+	{
+		{
+			"vacuum_cleanup_index_scale_factor",
+			"Number of tuple inserts prior to index cleanup as a fraction of reltuples.",
+			RELOPT_KIND_BTREE,
+			ShareUpdateExclusiveLock
+		},
+		-1, 0.0, 1e10
+	},
 	/* list terminator */
 	{{NULL}}
 };
@@ -433,7 +472,7 @@ static bool need_initialization = true;
 
 static void initialize_reloptions(void);
 static void parse_one_reloption(relopt_value *option, char *text_str,
-					int text_len, bool validate);
+								int text_len, bool validate);
 
 /*
  * initialize_reloptions
@@ -582,7 +621,7 @@ add_reloption(relopt_gen *newoption)
  *		(for types other than string)
  */
 static relopt_gen *
-allocate_reloption(bits32 kinds, int type, char *name, char *desc)
+allocate_reloption(bits32 kinds, int type, const char *name, const char *desc)
 {
 	MemoryContext oldcxt;
 	size_t		size;
@@ -620,6 +659,13 @@ allocate_reloption(bits32 kinds, int type, char *name, char *desc)
 	newoption->namelen = strlen(name);
 	newoption->type = type;
 
+	/*
+	 * Set the default lock mode for this option.  There is no actual way
+	 * for a module to enforce it when declaring a custom relation option,
+	 * so just use the highest level, which is safe for all cases.
+	 */
+	newoption->lockmode = AccessExclusiveLock;
+
 	MemoryContextSwitchTo(oldcxt);
 
 	return newoption;
@@ -630,7 +676,7 @@ allocate_reloption(bits32 kinds, int type, char *name, char *desc)
  *		Add a new boolean reloption
  */
 void
-add_bool_reloption(bits32 kinds, char *name, char *desc, bool default_val)
+add_bool_reloption(bits32 kinds, const char *name, const char *desc, bool default_val)
 {
 	relopt_bool *newoption;
 
@@ -646,7 +692,7 @@ add_bool_reloption(bits32 kinds, char *name, char *desc, bool default_val)
  *		Add a new integer reloption
  */
 void
-add_int_reloption(bits32 kinds, char *name, char *desc, int default_val,
+add_int_reloption(bits32 kinds, const char *name, const char *desc, int default_val,
 				  int min_val, int max_val)
 {
 	relopt_int *newoption;
@@ -665,7 +711,7 @@ add_int_reloption(bits32 kinds, char *name, char *desc, int default_val,
  *		Add a new float reloption
  */
 void
-add_real_reloption(bits32 kinds, char *name, char *desc, double default_val,
+add_real_reloption(bits32 kinds, const char *name, const char *desc, double default_val,
 				   double min_val, double max_val)
 {
 	relopt_real *newoption;
@@ -689,7 +735,7 @@ add_real_reloption(bits32 kinds, char *name, char *desc, double default_val,
  * the validation.
  */
 void
-add_string_reloption(bits32 kinds, char *name, char *desc, char *default_val,
+add_string_reloption(bits32 kinds, const char *name, const char *desc, const char *default_val,
 					 validate_string_relopt validator)
 {
 	relopt_string *newoption;
@@ -729,8 +775,8 @@ add_string_reloption(bits32 kinds, char *name, char *desc, char *default_val,
  * reloptions value (possibly NULL), and we replace or remove entries
  * as needed.
  *
- * If ignoreOids is true, then we should ignore any occurrence of "oids"
- * in the list (it will be or has been handled by interpretOidsOption()).
+ * If acceptOidsOff is true, then we allow oids = false, but throw error when
+ * on. This is solely needed for backwards compatibility.
  *
  * Note that this is not responsible for determining whether the options
  * are valid, but it does check that namespaces for all the options given are
@@ -742,8 +788,8 @@ add_string_reloption(bits32 kinds, char *name, char *desc, char *default_val,
  * but we declare them as Datums to avoid including array.h in reloptions.h.
  */
 Datum
-transformRelOptions(Datum oldOptions, List *defList, char *namspace,
-					char *validnsps[], bool ignoreOids, bool isReset)
+transformRelOptions(Datum oldOptions, List *defList, const char *namspace,
+					char *validnsps[], bool acceptOidsOff, bool isReset)
 {
 	Datum		result;
 	ArrayBuildState *astate;
@@ -786,12 +832,12 @@ transformRelOptions(Datum oldOptions, List *defList, char *namspace,
 				}
 				else if (def->defnamespace == NULL)
 					continue;
-				else if (pg_strcasecmp(def->defnamespace, namspace) != 0)
+				else if (strcmp(def->defnamespace, namspace) != 0)
 					continue;
 
 				kw_len = strlen(def->defname);
 				if (text_len > kw_len && text_str[kw_len] == '=' &&
-					pg_strncasecmp(text_str, def->defname, kw_len) == 0)
+					strncmp(text_str, def->defname, kw_len) == 0)
 					break;
 			}
 			if (!cell)
@@ -839,8 +885,7 @@ transformRelOptions(Datum oldOptions, List *defList, char *namspace,
 				{
 					for (i = 0; validnsps[i]; i++)
 					{
-						if (pg_strcasecmp(def->defnamespace,
-										  validnsps[i]) == 0)
+						if (strcmp(def->defnamespace, validnsps[i]) == 0)
 						{
 							valid = true;
 							break;
@@ -855,9 +900,6 @@ transformRelOptions(Datum oldOptions, List *defList, char *namspace,
 									def->defnamespace)));
 			}
 
-			if (ignoreOids && pg_strcasecmp(def->defname, "oids") == 0)
-				continue;
-
 			/* ignore if not in the same namespace */
 			if (namspace == NULL)
 			{
@@ -866,7 +908,7 @@ transformRelOptions(Datum oldOptions, List *defList, char *namspace,
 			}
 			else if (def->defnamespace == NULL)
 				continue;
-			else if (pg_strcasecmp(def->defnamespace, namspace) != 0)
+			else if (strcmp(def->defnamespace, namspace) != 0)
 				continue;
 
 			/*
@@ -878,6 +920,24 @@ transformRelOptions(Datum oldOptions, List *defList, char *namspace,
 				value = defGetString(def);
 			else
 				value = "true";
+
+			/*
+			 * This is not a great place for this test, but there's no other
+			 * convenient place to filter the option out. As WITH (oids =
+			 * false) will be removed someday, this seems like an acceptable
+			 * amount of ugly.
+			 */
+			if (acceptOidsOff && def->defnamespace == NULL &&
+				strcmp(def->defname, "oids") == 0)
+			{
+				if (defGetBoolean(def))
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("tables declared WITH OIDS are not supported")));
+				/* skip over option, reloptions machinery doesn't know it */
+				continue;
+			}
+
 			len = VARHDRSZ + strlen(def->defname) + 1 + strlen(value);
 			/* +1 leaves room for sprintf's trailing null */
 			t = (text *) palloc(len + 1);
@@ -983,6 +1043,7 @@ extractRelOptions(HeapTuple tuple, TupleDesc tupdesc,
 			options = view_reloptions(datum, false);
 			break;
 		case RELKIND_INDEX:
+		case RELKIND_PARTITIONED_INDEX:
 			options = index_reloptions(amoptions, datum, false);
 			break;
 		case RELKIND_FOREIGN_TABLE:
@@ -1071,8 +1132,7 @@ parseRelOptions(Datum options, bool validate, relopt_kind kind,
 				int			kw_len = reloptions[j].gen->namelen;
 
 				if (text_len > kw_len && text_str[kw_len] == '=' &&
-					pg_strncasecmp(text_str, reloptions[j].gen->name,
-								   kw_len) == 0)
+					strncmp(text_str, reloptions[j].gen->name, kw_len) == 0)
 				{
 					parse_one_reloption(&reloptions[j], text_str, text_len,
 										validate);
@@ -1165,7 +1225,7 @@ parse_one_reloption(relopt_value *option, char *text_str, int text_len,
 			{
 				relopt_real *optreal = (relopt_real *) option->gen;
 
-				parsed = parse_real(value, &option->values.real_val);
+				parsed = parse_real(value, &option->values.real_val, 0, NULL);
 				if (validate && !parsed)
 					ereport(ERROR,
 							(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1251,7 +1311,7 @@ fillRelOptions(void *rdopts, Size basesize,
 
 		for (j = 0; j < numelems; j++)
 		{
-			if (pg_strcasecmp(options[i].gen->name, elems[j].optname) == 0)
+			if (strcmp(options[i].gen->name, elems[j].optname) == 0)
 			{
 				relopt_string *optstring;
 				char	   *itempos = ((char *) rdopts) + elems[j].offset;
@@ -1326,8 +1386,6 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_threshold)},
 		{"autovacuum_analyze_threshold", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, analyze_threshold)},
-		{"autovacuum_vacuum_cost_delay", RELOPT_TYPE_INT,
-		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_cost_delay)},
 		{"autovacuum_vacuum_cost_limit", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_cost_limit)},
 		{"autovacuum_freeze_min_age", RELOPT_TYPE_INT,
@@ -1344,6 +1402,10 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, multixact_freeze_table_age)},
 		{"log_autovacuum_min_duration", RELOPT_TYPE_INT,
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, log_min_duration)},
+		{"toast_tuple_target", RELOPT_TYPE_INT,
+		offsetof(StdRdOptions, toast_tuple_target)},
+		{"autovacuum_vacuum_cost_delay", RELOPT_TYPE_REAL,
+		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_cost_delay)},
 		{"autovacuum_vacuum_scale_factor", RELOPT_TYPE_REAL,
 		offsetof(StdRdOptions, autovacuum) + offsetof(AutoVacOpts, vacuum_scale_factor)},
 		{"autovacuum_analyze_scale_factor", RELOPT_TYPE_REAL,
@@ -1351,7 +1413,13 @@ default_reloptions(Datum reloptions, bool validate, relopt_kind kind)
 		{"user_catalog_table", RELOPT_TYPE_BOOL,
 		offsetof(StdRdOptions, user_catalog_table)},
 		{"parallel_workers", RELOPT_TYPE_INT,
-		offsetof(StdRdOptions, parallel_workers)}
+		offsetof(StdRdOptions, parallel_workers)},
+		{"vacuum_cleanup_index_scale_factor", RELOPT_TYPE_REAL,
+		offsetof(StdRdOptions, vacuum_cleanup_index_scale_factor)},
+		{"vacuum_index_cleanup", RELOPT_TYPE_BOOL,
+		offsetof(StdRdOptions, vacuum_index_cleanup)},
+		{"vacuum_truncate", RELOPT_TYPE_BOOL,
+		offsetof(StdRdOptions, vacuum_truncate)}
 	};
 
 	options = parseRelOptions(reloptions, validate, kind, &numoptions);
@@ -1543,9 +1611,9 @@ AlterTableGetRelOptionsLockLevel(List *defList)
 
 		for (i = 0; relOpts[i]; i++)
 		{
-			if (pg_strncasecmp(relOpts[i]->name,
-							   def->defname,
-							   relOpts[i]->namelen + 1) == 0)
+			if (strncmp(relOpts[i]->name,
+						def->defname,
+						relOpts[i]->namelen + 1) == 0)
 			{
 				if (lockmode < relOpts[i]->lockmode)
 					lockmode = relOpts[i]->lockmode;

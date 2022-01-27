@@ -10,9 +10,6 @@
 /* this must be first: */
 #include "postgres.h"
 
-/* Defined by Perl */
-#undef _
-
 /* perl stuff */
 #define PG_NEED_PERL_XSUB_H
 #include "plperl.h"
@@ -152,6 +149,15 @@ spi_spi_cursor_close(sv)
 		plperl_spi_cursor_close(cursor);
 		pfree(cursor);
 
+void
+spi_spi_commit()
+	CODE:
+		plperl_spi_commit();
+
+void
+spi_spi_rollback()
+	CODE:
+		plperl_spi_rollback();
 
 BOOT:
     items = 0;  /* avoid 'unused variable' warning */

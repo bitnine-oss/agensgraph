@@ -2,7 +2,7 @@
  *
  * rewriteManip.c
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -16,8 +16,8 @@
 #include "catalog/pg_type.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/pathnodes.h"
 #include "nodes/plannodes.h"
-#include "optimizer/clauses.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_relation.h"
 #include "parser/parsetree.h"
@@ -41,12 +41,12 @@ typedef struct
 } locate_windowfunc_context;
 
 static bool contain_aggs_of_level_walker(Node *node,
-							 contain_aggs_of_level_context *context);
+										 contain_aggs_of_level_context *context);
 static bool locate_agg_of_level_walker(Node *node,
-						   locate_agg_of_level_context *context);
+									   locate_agg_of_level_context *context);
 static bool contain_windowfuncs_walker(Node *node, void *context);
 static bool locate_windowfunc_walker(Node *node,
-						 locate_windowfunc_context *context);
+									 locate_windowfunc_context *context);
 static bool checkExprHasSubLink_walker(Node *node, void *context);
 static Relids offset_relid_set(Relids relids, int offset);
 static Relids adjust_relid_set(Relids relids, int oldrelid, int newrelid);
@@ -761,7 +761,7 @@ IncrementVarSublevelsUp_walker(Node *node,
 		result = query_tree_walker((Query *) node,
 								   IncrementVarSublevelsUp_walker,
 								   (void *) context,
-								   QTW_EXAMINE_RTES);
+								   QTW_EXAMINE_RTES_BEFORE);
 		context->min_sublevels_up--;
 		return result;
 	}
@@ -785,7 +785,7 @@ IncrementVarSublevelsUp(Node *node, int delta_sublevels_up,
 	query_or_expression_tree_walker(node,
 									IncrementVarSublevelsUp_walker,
 									(void *) &context,
-									QTW_EXAMINE_RTES);
+									QTW_EXAMINE_RTES_BEFORE);
 }
 
 /*
@@ -804,7 +804,7 @@ IncrementVarSublevelsUp_rtable(List *rtable, int delta_sublevels_up,
 	range_table_walker(rtable,
 					   IncrementVarSublevelsUp_walker,
 					   (void *) &context,
-					   QTW_EXAMINE_RTES);
+					   QTW_EXAMINE_RTES_BEFORE);
 }
 
 
@@ -1015,7 +1015,7 @@ AddQual(Query *parsetree, Node *qual)
 				 errmsg("conditional UNION/INTERSECT/EXCEPT statements are not implemented")));
 	}
 
-	/* INTERSECT want's the original, but we need to copy - Jan */
+	/* INTERSECT wants the original, but we need to copy - Jan */
 	copy = copyObject(qual);
 
 	parsetree->jointree->quals = make_and_qual(parsetree->jointree->quals,
@@ -1143,7 +1143,7 @@ replace_rte_variables_mutator(Node *node,
 			/* Found a matching variable, make the substitution */
 			Node	   *newnode;
 
-			newnode = (*context->callback) (var, context);
+			newnode = context->callback(var, context);
 			/* Detect if we are adding a sublink to query */
 			if (!context->inserted_sublink)
 				context->inserted_sublink = checkExprHasSubLink(newnode);
@@ -1203,9 +1203,11 @@ replace_rte_variables_mutator(Node *node,
  * appear in the expression.
  *
  * If the expression tree contains a whole-row Var for the target RTE,
- * *found_whole_row is returned as TRUE.  In addition, if to_rowtype is
- * not InvalidOid, we modify the Var's vartype and insert a ConvertRowTypeExpr
- * to map back to the orignal rowtype.  Callers that don't provide to_rowtype
+ * *found_whole_row is set to true.  In addition, if to_rowtype is
+ * not InvalidOid, we replace the Var with a Var of that vartype, inserting
+ * a ConvertRowtypeExpr to map back to the rowtype expected by the expression.
+ * (Therefore, to_rowtype had better be a child rowtype of the rowtype of the
+ * RTE we're changing references to.)  Callers that don't provide to_rowtype
  * should report an error if *found_row_type is true; we don't do that here
  * because we don't know exactly what wording for the error message would
  * be most appropriate.  The caller will be aware of the context.
@@ -1221,8 +1223,7 @@ typedef struct
 	int			sublevels_up;	/* (current) nesting depth */
 	const AttrNumber *attno_map;	/* map array for user attnos */
 	int			map_length;		/* number of entries in attno_map[] */
-	/* Target type when converting whole-row vars */
-	Oid			to_rowtype;
+	Oid			to_rowtype;		/* change whole-row Vars to this type */
 	bool	   *found_whole_row;	/* output flag */
 } map_variable_attnos_context;
 
@@ -1243,7 +1244,8 @@ map_variable_attnos_mutator(Node *node,
 			Var		   *newvar = (Var *) palloc(sizeof(Var));
 			int			attno = var->varattno;
 
-			*newvar = *var;
+			*newvar = *var;		/* initially copy all fields of the Var */
+
 			if (attno > 0)
 			{
 				/* user-defined column, replace attno */
@@ -1258,37 +1260,75 @@ map_variable_attnos_mutator(Node *node,
 				/* whole-row variable, warn caller */
 				*(context->found_whole_row) = true;
 
-				/* If the callers expects us to convert the same, do so. */
-				if (OidIsValid(context->to_rowtype))
+				/* If the caller expects us to convert the Var, do so. */
+				if (OidIsValid(context->to_rowtype) &&
+					context->to_rowtype != var->vartype)
 				{
-					/* No support for RECORDOID. */
+					ConvertRowtypeExpr *r;
+
+					/* This certainly won't work for a RECORD variable. */
 					Assert(var->vartype != RECORDOID);
 
-					/* Don't convert unless necessary. */
-					if (context->to_rowtype != var->vartype)
-					{
-						ConvertRowtypeExpr *r;
+					/* Var itself is changed to the requested type. */
+					newvar->vartype = context->to_rowtype;
 
-						/* Var itself is converted to the requested type. */
-						newvar->vartype = context->to_rowtype;
+					/*
+					 * Add a conversion node on top to convert back to the
+					 * original type expected by the expression.
+					 */
+					r = makeNode(ConvertRowtypeExpr);
+					r->arg = (Expr *) newvar;
+					r->resulttype = var->vartype;
+					r->convertformat = COERCE_IMPLICIT_CAST;
+					r->location = -1;
 
-						/*
-						 * And a conversion node on top to convert back to the
-						 * original type.
-						 */
-						r = makeNode(ConvertRowtypeExpr);
-						r->arg = (Expr *) newvar;
-						r->resulttype = var->vartype;
-						r->convertformat = COERCE_IMPLICIT_CAST;
-						r->location = -1;
-
-						return (Node *) r;
-					}
+					return (Node *) r;
 				}
 			}
 			return (Node *) newvar;
 		}
 		/* otherwise fall through to copy the var normally */
+	}
+	else if (IsA(node, ConvertRowtypeExpr))
+	{
+		ConvertRowtypeExpr *r = (ConvertRowtypeExpr *) node;
+		Var		   *var = (Var *) r->arg;
+
+		/*
+		 * If this is coercing a whole-row Var that we need to convert, then
+		 * just convert the Var without adding an extra ConvertRowtypeExpr.
+		 * Effectively we're simplifying var::parenttype::grandparenttype into
+		 * just var::grandparenttype.  This avoids building stacks of CREs if
+		 * this function is applied repeatedly.
+		 */
+		if (IsA(var, Var) &&
+			var->varno == context->target_varno &&
+			var->varlevelsup == context->sublevels_up &&
+			var->varattno == 0 &&
+			OidIsValid(context->to_rowtype) &&
+			context->to_rowtype != var->vartype)
+		{
+			ConvertRowtypeExpr *newnode;
+			Var		   *newvar = (Var *) palloc(sizeof(Var));
+
+			/* whole-row variable, warn caller */
+			*(context->found_whole_row) = true;
+
+			*newvar = *var;		/* initially copy all fields of the Var */
+
+			/* This certainly won't work for a RECORD variable. */
+			Assert(var->vartype != RECORDOID);
+
+			/* Var itself is changed to the requested type. */
+			newvar->vartype = context->to_rowtype;
+
+			newnode = (ConvertRowtypeExpr *) palloc(sizeof(ConvertRowtypeExpr));
+			*newnode = *r;		/* initially copy all fields of the CRE */
+			newnode->arg = (Expr *) newvar;
+
+			return (Node *) newnode;
+		}
+		/* otherwise fall through to process the expression normally */
 	}
 	else if (IsA(node, Query))
 	{
@@ -1429,9 +1469,9 @@ ReplaceVarsFromTargetList_callback(Var *var,
 															   var->varcollid),
 										InvalidOid, -1,
 										var->vartype,
+										COERCION_IMPLICIT,
 										COERCE_IMPLICIT_CAST,
 										-1,
-										false,
 										false);
 		}
 		elog(ERROR, "could not find replacement targetlist entry for attno %d",

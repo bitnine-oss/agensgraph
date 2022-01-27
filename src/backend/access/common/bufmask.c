@@ -5,12 +5,12 @@
  *	  in a page which can be different when the WAL is generated
  *	  and when the WAL is applied.
  *
- * Portions Copyright (c) 2016-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2016-2019, PostgreSQL Global Development Group
  *
  * Contains common routines required for masking a page.
  *
  * IDENTIFICATION
- *	  src/backend/storage/buffer/bufmask.c
+ *	  src/backend/access/common/bufmask.c
  *
  *-------------------------------------------------------------------------
  */

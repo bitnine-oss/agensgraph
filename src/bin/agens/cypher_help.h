@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2018 by Bitnine Global, Inc.
  *
- * src/bin/psql/cypher_help.h
+ * src/bin/agens/cypher_help.h
  */
 
 #ifndef CYPHER_HELP_H

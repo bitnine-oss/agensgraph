@@ -3,7 +3,7 @@
  *
  *	execution functions
  *
- *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/exec.c
  */
 
@@ -110,6 +110,7 @@ exec_prog(const char *log_file, const char *opt_log_file,
 	pg_log(PG_VERBOSE, "%s\n", cmd);
 
 #ifdef WIN32
+
 	/*
 	 * For some reason, Windows issues a file-in-use error if we write data to
 	 * the log file from a non-primary thread just before we create a
@@ -145,7 +146,7 @@ exec_prog(const char *log_file, const char *opt_log_file,
 #endif
 
 	if (log == NULL)
-		pg_fatal("could not write to log file \"%s\"\n", log_file);
+		pg_fatal("could not open log file \"%s\": %m\n", log_file);
 
 #ifdef WIN32
 	/* Are we printing "command:" before its output? */
@@ -191,6 +192,7 @@ exec_prog(const char *log_file, const char *opt_log_file,
 	}
 
 #ifndef WIN32
+
 	/*
 	 * We can't do this on Windows because it will keep the "pg_ctl start"
 	 * output filename open until the server stops, so we do the \n\n above on
@@ -199,7 +201,7 @@ exec_prog(const char *log_file, const char *opt_log_file,
 	 * log these commands to a third file, but that just adds complexity.
 	 */
 	if ((log = fopen(log_file, "a")) == NULL)
-		pg_fatal("could not write to log file \"%s\"\n", log_file);
+		pg_fatal("could not write to log file \"%s\": %m\n", log_file);
 	fprintf(log, "\n\n");
 	fclose(log);
 #endif
@@ -339,13 +341,13 @@ check_data_dir(ClusterInfo *cluster)
 	check_single_dir(pg_data, "pg_twophase");
 
 	/* pg_xlog has been renamed to pg_wal in v10 */
-	if (GET_MAJOR_VERSION(cluster->major_version) < 1000)
+	if (GET_MAJOR_VERSION(cluster->major_version) <= 906)
 		check_single_dir(pg_data, "pg_xlog");
 	else
 		check_single_dir(pg_data, "pg_wal");
 
 	/* pg_clog has been renamed to pg_xact in v10 */
-	if (GET_MAJOR_VERSION(cluster->major_version) < 1000)
+	if (GET_MAJOR_VERSION(cluster->major_version) <= 906)
 		check_single_dir(pg_data, "pg_clog");
 	else
 		check_single_dir(pg_data, "pg_xact");
@@ -384,7 +386,7 @@ check_bin_dir(ClusterInfo *cluster)
 	get_bin_version(cluster);
 
 	/* pg_resetxlog has been renamed to pg_resetwal in version 10 */
-	if (GET_MAJOR_VERSION(cluster->bin_version) < 1000)
+	if (GET_MAJOR_VERSION(cluster->bin_version) <= 906)
 		validate_exec(cluster->bindir, "pg_resetxlog");
 	else
 		validate_exec(cluster->bindir, "pg_resetwal");

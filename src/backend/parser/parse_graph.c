@@ -13,12 +13,13 @@
 #include "ag_const.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_collation.h"
-#include "catalog/pg_inherits_fn.h"
+#include "catalog/pg_inherits.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "executor/spi.h"
@@ -1042,6 +1043,108 @@ transformCypherLoadClause(ParseState *pstate, CypherClause *clause)
 
 	qry->rtable = pstate->p_rtable;
 	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
+
+	assign_query_collations(pstate, qry);
+
+	return qry;
+}
+
+Query *
+transformCypherUnwindClause(ParseState *pstate, CypherClause *clause)
+{
+	CypherUnwindClause *detail = (CypherUnwindClause *) clause->detail;
+	Query	   *qry;
+	ResTarget  *target;
+	int			targetloc;
+	Node	   *expr;
+	Oid			type;
+	char	   *funcname = NULL;
+	FuncCall   *unwind;
+	ParseExprKind sv_expr_kind;
+	Node	   *last_srf;
+	Node	   *funcexpr;
+	TargetEntry *te;
+
+	qry = makeNode(Query);
+	qry->commandType = CMD_SELECT;
+
+	/*
+	 * Get all the target variables from the previous clause and add them to
+	 * this query as target variables so that next clauses can access them.
+	 */
+	if (clause->prev != NULL)
+	{
+		RangeTblEntry *rte;
+
+		rte = transformClause(pstate, clause->prev);
+
+		qry->targetList = makeTargetListFromRTE(pstate, rte);
+	}
+
+	target = detail->target;
+	targetloc = exprLocation((Node *) target);
+
+	/*
+	 * If the name (e.g. "n" in "UNWNID v AS n") is the same with the name of
+	 * targets from the previous clause, throw an error.
+	 *
+	 * e.g. MATCH (n)-[]->(m) UNWIND n.a AS m ...
+	 *                     ^                ^
+	 */
+	if (findTarget(qry->targetList, target->name) != NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_ALIAS),
+				 errmsg("duplicate variable \"%s\"", target->name),
+				 parser_errposition(pstate, targetloc)));
+
+	expr = transformCypherExpr(pstate, target->val, EXPR_KIND_SELECT_TARGET);
+	type = exprType(expr);
+	if (type == JSONBOID)
+	{
+		/*
+		 * Only jsonb array works. It throws an error for all other types.
+		 * This is the best because we don't know the actual value in the jsonb
+		 * value at this point.
+		 */
+		funcname = "jsonb_array_elements";
+	}
+	else if (type_is_array(type))
+	{
+		funcname = "unnest";
+	}
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_DATATYPE_MISMATCH),
+				 errmsg("expression must be jsonb or array, but %s",
+						format_type_be(type)),
+				 parser_errposition(pstate, targetloc)));
+	}
+	unwind = makeFuncCall(list_make1(makeString(funcname)), NIL, -1);
+
+	/*
+	 * The logic here is the same with the one in transformTargetEntry().
+	 * We cannot use this function because we already transformed the target
+	 * expression above to get the type of it.
+	 */
+	sv_expr_kind = pstate->p_expr_kind;
+	pstate->p_expr_kind = EXPR_KIND_SELECT_TARGET;
+	last_srf = pstate->p_last_srf;
+	funcexpr = ParseFuncOrColumn(pstate, unwind->funcname, list_make1(expr),
+								 last_srf, unwind, false, targetloc);
+	pstate->p_expr_kind = sv_expr_kind;
+	te = makeTargetEntry((Expr *) funcexpr,
+						 (AttrNumber) pstate->p_next_resno++,
+						 target->name, false);
+
+	qry->targetList = lappend(qry->targetList, te);
+
+	qry->rtable = pstate->p_rtable;
+	qry->jointree = makeFromExpr(pstate->p_joinlist, NULL);
+
+	qry->hasTargetSRFs = pstate->p_hasTargetSRFs;
 
 	qry->hasGraphwriteClause = pstate->p_hasGraphwriteClause;
 
@@ -3190,7 +3293,7 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 
 			arg = ParseFuncOrColumn(pstate, arrpos->funcname,
 									list_make2(eidarr, eid1),
-									pstate->p_last_srf, arrpos, -1);
+									pstate->p_last_srf, arrpos, false, -1);
 
 			dupcond = makeNode(NullTest);
 			dupcond->arg = (Expr *) arg;
@@ -3217,7 +3320,7 @@ addQualUniqueEdges(ParseState *pstate, Node *qual, List *ueids, List *ueidarrs)
 
 			funcexpr = ParseFuncOrColumn(pstate, arroverlap->funcname,
 										 list_make2(eidarr1, eidarr2),
-										 pstate->p_last_srf, arroverlap, -1);
+										 pstate->p_last_srf, arroverlap, false, -1);
 
 			dupcond = (Node *) makeBoolExpr(NOT_EXPR, list_make1(funcexpr), -1);
 
@@ -3529,12 +3632,12 @@ hasGinOnProp(Oid relid)
 		Form_pg_index index;
 		int			attnum;
 
-		indexRel = index_open(indexoid, NoLock);
+		indexRel = index_open(indexoid, AccessShareLock);
 		index = indexRel->rd_index;
 
-		if (!IndexIsValid(index))
+		if (!index->indisvalid)
 		{
-			index_close(indexRel, NoLock);
+			index_close(indexRel, AccessShareLock);
 			continue;
 		}
 
@@ -3543,31 +3646,31 @@ hasGinOnProp(Oid relid)
 					HeapTupleHeaderGetXmin(indexRel->rd_indextuple->t_data),
 					TransactionXmin))
 		{
-			index_close(indexRel, NoLock);
+			index_close(indexRel, AccessShareLock);
 			continue;
 		}
 
 		if (indexRel->rd_rel->relam != GIN_AM_OID)
 		{
-			index_close(indexRel, NoLock);
+			index_close(indexRel, AccessShareLock);
 			continue;
 		}
 
 		attnum = attnameAttNum(rel, AG_ELEM_PROP_MAP, false);
 		if (attnum == InvalidAttrNumber)
 		{
-			index_close(indexRel, NoLock);
+			index_close(indexRel, AccessShareLock);
 			continue;
 		}
 
 		if (index->indkey.values[0] == attnum)
 		{
-			index_close(indexRel, NoLock);
+			index_close(indexRel, AccessShareLock);
 			ret = true;
 			break;
 		}
 
-		index_close(indexRel, NoLock);
+		index_close(indexRel, AccessShareLock);
 	}
 
 	list_free(indexoidlist);
@@ -3860,7 +3963,7 @@ resolveFutureVertex(ParseState *pstate, FutureVertex *fv, bool ignore_nullable)
 
 	sel_id = makeFuncCall(list_make1(makeString(AG_ELEM_ID)), NIL, -1);
 	id = ParseFuncOrColumn(pstate, sel_id->funcname, list_make1(vertex),
-						   pstate->p_last_srf, sel_id, -1);
+						   pstate->p_last_srf, sel_id, false, -1);
 
 	qual = (Node *) make_op(pstate, list_make1(makeString("=")), fv_id, id,
 							pstate->p_last_srf, -1);
@@ -4338,7 +4441,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 	prop_map = ParseFuncOrColumn(pstate,
 								 list_make1(makeString(AG_ELEM_PROP_MAP)),
 								 list_make1(elem), pstate->p_last_srf,
-								 NULL, -1);
+								 NULL, false, -1);
 
 	/*
 	 * Transform the assigned property to get `expr` (RHS of the SET clause
@@ -4375,7 +4478,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 								  -1);
 			prop_map = ParseFuncOrColumn(pstate, concat->funcname,
 										 list_make2(prop_map, expr),
-										 pstate->p_last_srf, concat, -1);
+										 pstate->p_last_srf, concat, false, -1);
 		}
 		else
 		{
@@ -4398,7 +4501,7 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 							  NIL, -1);
 		del_prop = ParseFuncOrColumn(pstate, delete->funcname,
 									 list_make2(prop_map, path),
-									 pstate->p_last_srf, delete, -1);
+									 pstate->p_last_srf, delete, false, -1);
 
 		if (IsNullAConst(sp->expr) && (!allow_null_properties || is_remove))
 		{
@@ -4421,8 +4524,9 @@ transformSetProp(ParseState *pstate, RangeTblEntry *rte, CypherSetProp *sp,
 
 			set = makeFuncCall(list_make1(makeString("jsonb_set")), NIL, -1);
 			set_prop = ParseFuncOrColumn(pstate, set->funcname,
-										 list_make3(prop_map, path, expr),
-										 pstate->p_last_srf, set, -1);
+										 list_make4(prop_map, path, expr,
+                                                    makeBoolConst(true, false)),
+										 pstate->p_last_srf, set, false, -1);
 
 			/*
 			 * The right operand can be null. In this case,
@@ -5659,7 +5763,7 @@ stripNullKeys(ParseState *pstate, Node *properties)
 	strip = makeFuncCall(list_make1(makeString("jsonb_strip_nulls")), NIL, -1);
 
 	return ParseFuncOrColumn(pstate, strip->funcname, list_make1(properties),
-							 pstate->p_last_srf, strip, -1);
+							 pstate->p_last_srf, strip, false, -1);
 
 }
 
@@ -6262,15 +6366,15 @@ getExprField(Expr *expr, char *fname)
 	Oid			typoid;
 	TupleDesc	tupdesc;
 	int			idx;
-	Form_pg_attribute attr = NULL;
 	FieldSelect *fselect;
+	Form_pg_attribute attr;
 
 	typoid = exprType((Node *) expr);
 
 	tupdesc = lookup_rowtype_tupdesc_copy(typoid, -1);
 	for (idx = 0; idx < tupdesc->natts; idx++)
 	{
-		attr = tupdesc->attrs[idx];
+		attr = TupleDescAttr(tupdesc, idx);
 
 		if (namestrcmp(&attr->attname, fname) == 0)
 			break;

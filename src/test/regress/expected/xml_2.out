@@ -512,6 +512,13 @@ LINE 1: EXECUTE foo ('bad');
 DETAIL:  line 1: Start tag expected, '<' not found
 bad
 ^
+SELECT xml '<!DOCTYPE a><a/><b/>';
+ERROR:  invalid XML document
+LINE 1: SELECT xml '<!DOCTYPE a><a/><b/>';
+                   ^
+DETAIL:  line 1: Extra content at the end of the document
+<!DOCTYPE a><a/><b/>
+                ^
 SET XML OPTION CONTENT;
 EXECUTE foo ('<bar/>');
   xmlconcat   
@@ -525,6 +532,45 @@ EXECUTE foo ('good');
  <foo/>good
 (1 row)
 
+SELECT xml '<!-- in SQL:2006+ a doc is content too--> <?y z?> <!DOCTYPE a><a/>';
+                                xml                                 
+--------------------------------------------------------------------
+ <!-- in SQL:2006+ a doc is content too--> <?y z?> <!DOCTYPE a><a/>
+(1 row)
+
+SELECT xml '<?xml version="1.0"?> <!-- hi--> <!DOCTYPE a><a/>';
+             xml              
+------------------------------
+  <!-- hi--> <!DOCTYPE a><a/>
+(1 row)
+
+SELECT xml '<!DOCTYPE a><a/>';
+       xml        
+------------------
+ <!DOCTYPE a><a/>
+(1 row)
+
+SELECT xml '<!-- hi--> oops <!DOCTYPE a><a/>';
+ERROR:  invalid XML content
+LINE 1: SELECT xml '<!-- hi--> oops <!DOCTYPE a><a/>';
+                   ^
+DETAIL:  line 1: StartTag: invalid element name
+<!-- hi--> oops <!DOCTYPE a><a/>
+                 ^
+SELECT xml '<!-- hi--> <oops/> <!DOCTYPE a><a/>';
+ERROR:  invalid XML content
+LINE 1: SELECT xml '<!-- hi--> <oops/> <!DOCTYPE a><a/>';
+                   ^
+DETAIL:  line 1: StartTag: invalid element name
+<!-- hi--> <oops/> <!DOCTYPE a><a/>
+                    ^
+SELECT xml '<!DOCTYPE a><a/><b/>';
+ERROR:  invalid XML content
+LINE 1: SELECT xml '<!DOCTYPE a><a/><b/>';
+                   ^
+DETAIL:  line 1: Extra content at the end of the document
+<!DOCTYPE a><a/><b/>
+                ^
 -- Test backwards parsing
 CREATE VIEW xmlview1 AS SELECT xmlcomment('test');
 CREATE VIEW xmlview2 AS SELECT xmlconcat('hello', 'you');
@@ -588,12 +634,9 @@ SELECT xpath('//loc:piece', '<local:data xmlns:local="http://127.0.0.1"><local:p
 (1 row)
 
 SELECT xpath('//loc:piece', '<local:data xmlns:local="http://127.0.0.1" xmlns="http://127.0.0.2"><local:piece id="1"><internal>number one</internal><internal2/></local:piece><local:piece id="2" /></local:data>', ARRAY[ARRAY['loc', 'http://127.0.0.1']]);
-                                        xpath                                         
---------------------------------------------------------------------------------------
- {"<local:piece xmlns:local=\"http://127.0.0.1\" xmlns=\"http://127.0.0.2\" id=\"1\">+
-   <internal>number one</internal>                                                   +
-   <internal2/>                                                                      +
- </local:piece>","<local:piece xmlns:local=\"http://127.0.0.1\" id=\"2\"/>"}
+                                                                                                   xpath                                                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"<local:piece xmlns:local=\"http://127.0.0.1\" xmlns=\"http://127.0.0.2\" id=\"1\"><internal>number one</internal><internal2/></local:piece>","<local:piece xmlns:local=\"http://127.0.0.1\" id=\"2\"/>"}
 (1 row)
 
 SELECT xpath('//b', '<a>one <b>two</b> three <b>etc</b></a>');
@@ -648,6 +691,12 @@ SELECT xpath('/nosuchtag', '<root/>');
  xpath 
 -------
  {}
+(1 row)
+
+SELECT xpath('root', '<root/>');
+   xpath   
+-----------
+ {<root/>}
 (1 row)
 
 -- Round-trip non-ASCII data through xpath().
@@ -1004,7 +1053,7 @@ SELECT  xmltable.*
                          PASSING data
                          COLUMNS id int PATH '@id',
                                   _id FOR ORDINALITY,
-                                  country_name text PATH 'COUNTRY_NAME' NOT NULL,
+                                  country_name text PATH 'COUNTRY_NAME/text()' NOT NULL,
                                   country_id text PATH 'COUNTRY_ID',
                                   region_id int PATH 'REGION_ID',
                                   size float PATH 'SIZE',
@@ -1026,7 +1075,7 @@ CREATE VIEW xmltableview1 AS SELECT  xmltable.*
                          PASSING data
                          COLUMNS id int PATH '@id',
                                   _id FOR ORDINALITY,
-                                  country_name text PATH 'COUNTRY_NAME' NOT NULL,
+                                  country_name text PATH 'COUNTRY_NAME/text()' NOT NULL,
                                   country_id text PATH 'COUNTRY_ID',
                                   region_id int PATH 'REGION_ID',
                                   size float PATH 'SIZE',
@@ -1055,7 +1104,7 @@ CREATE OR REPLACE VIEW public.xmltableview1 AS
     "xmltable".premier_name
    FROM ( SELECT xmldata.data
            FROM xmldata) x,
-    LATERAL XMLTABLE(('/ROWS/ROW'::text) PASSING (x.data) COLUMNS id integer PATH ('@id'::text), _id FOR ORDINALITY, country_name text PATH ('COUNTRY_NAME'::text) NOT NULL, country_id text PATH ('COUNTRY_ID'::text), region_id integer PATH ('REGION_ID'::text), size double precision PATH ('SIZE'::text), unit text PATH ('SIZE/@unit'::text), premier_name text DEFAULT ('not specified'::text) PATH ('PREMIER_NAME'::text))
+    LATERAL XMLTABLE(('/ROWS/ROW'::text) PASSING (x.data) COLUMNS id integer PATH ('@id'::text), _id FOR ORDINALITY, country_name text PATH ('COUNTRY_NAME/text()'::text) NOT NULL, country_id text PATH ('COUNTRY_ID'::text), region_id integer PATH ('REGION_ID'::text), size double precision PATH ('SIZE'::text), unit text PATH ('SIZE/@unit'::text), premier_name text DEFAULT ('not specified'::text) PATH ('PREMIER_NAME'::text))
 EXPLAIN (COSTS OFF) SELECT * FROM xmltableview1;
                QUERY PLAN                
 -----------------------------------------
@@ -1065,15 +1114,15 @@ EXPLAIN (COSTS OFF) SELECT * FROM xmltableview1;
 (3 rows)
 
 EXPLAIN (COSTS OFF, VERBOSE) SELECT * FROM xmltableview1;
-                                                                                                                                                                                                                        QUERY PLAN                                                                                                                                                                                                                         
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                            QUERY PLAN                                                                                                                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    Output: "xmltable".id, "xmltable"._id, "xmltable".country_name, "xmltable".country_id, "xmltable".region_id, "xmltable".size, "xmltable".unit, "xmltable".premier_name
    ->  Seq Scan on public.xmldata
          Output: xmldata.data
    ->  Table Function Scan on "xmltable"
          Output: "xmltable".id, "xmltable"._id, "xmltable".country_name, "xmltable".country_id, "xmltable".region_id, "xmltable".size, "xmltable".unit, "xmltable".premier_name
-         Table Function Call: XMLTABLE(('/ROWS/ROW'::text) PASSING (xmldata.data) COLUMNS id integer PATH ('@id'::text), _id FOR ORDINALITY, country_name text PATH ('COUNTRY_NAME'::text) NOT NULL, country_id text PATH ('COUNTRY_ID'::text), region_id integer PATH ('REGION_ID'::text), size double precision PATH ('SIZE'::text), unit text PATH ('SIZE/@unit'::text), premier_name text DEFAULT ('not specified'::text) PATH ('PREMIER_NAME'::text))
+         Table Function Call: XMLTABLE(('/ROWS/ROW'::text) PASSING (xmldata.data) COLUMNS id integer PATH ('@id'::text), _id FOR ORDINALITY, country_name text PATH ('COUNTRY_NAME/text()'::text) NOT NULL, country_id text PATH ('COUNTRY_ID'::text), region_id integer PATH ('REGION_ID'::text), size double precision PATH ('SIZE'::text), unit text PATH ('SIZE/@unit'::text), premier_name text DEFAULT ('not specified'::text) PATH ('PREMIER_NAME'::text))
 (7 rows)
 
 -- XMLNAMESPACES tests
@@ -1101,6 +1150,14 @@ SELECT * FROM XMLTABLE(XMLNAMESPACES(DEFAULT 'http://x.y'),
                       PASSING '<rows xmlns="http://x.y"><row><a>10</a></row></rows>'
                       COLUMNS a int PATH 'a');
 ERROR:  DEFAULT namespace is not supported
+SELECT * FROM XMLTABLE('.'
+                       PASSING '<foo/>'
+                       COLUMNS a text PATH 'foo/namespace::node()');
+                  a                   
+--------------------------------------
+ http://www.w3.org/XML/1998/namespace
+(1 row)
+
 -- used in prepare statements
 PREPARE pp AS
 SELECT  xmltable.*
@@ -1184,15 +1241,15 @@ SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan"
 (2 rows)
 
 SELECT * FROM xmltable('/root' passing '<root><element>a1a<!-- aaaa -->a2a<?aaaaa?> <!--z-->  bbbb<x>xxx</x>cccc</element></root>' COLUMNS element text);
-      element      
--------------------
- a1aa2a   bbbbcccc
+       element        
+----------------------
+ a1aa2a   bbbbxxxcccc
 (1 row)
 
 SELECT * FROM xmltable('/root' passing '<root><element>a1a<!-- aaaa -->a2a<?aaaaa?> <!--z-->  bbbb<x>xxx</x>cccc</element></root>' COLUMNS element text PATH 'element/text()'); -- should fail
 ERROR:  more than one value returned by column XPath expression
 -- CDATA test
-select * from xmltable('r' passing '<d><r><c><![CDATA[<hello> &"<>!<a>foo</a>]]></c></r><r><c>2</c></r></d>' columns c text);
+select * from xmltable('d/r' passing '<d><r><c><![CDATA[<hello> &"<>!<a>foo</a>]]></c></r><r><c>2</c></r></d>' columns c text);
             c            
 -------------------------
  <hello> &"<>!<a>foo</a>
@@ -1466,4 +1523,25 @@ SELECT xmltable.* FROM xmltest2, LATERAL xmltable(('/d/r/' || lower(_path) || 'c
  13
  14
 (4 rows)
+
+-- XPath result can be boolean or number too
+SELECT * FROM XMLTABLE('*' PASSING '<a>a</a>' COLUMNS a xml PATH '.', b text PATH '.', c text PATH '"hi"', d boolean PATH '. = "a"', e integer PATH 'string-length(.)');
+    a     | b | c  | d | e 
+----------+---+----+---+---
+ <a>a</a> | a | hi | t | 1
+(1 row)
+
+\x
+SELECT * FROM XMLTABLE('*' PASSING '<e>pre<!--c1--><?pi arg?><![CDATA[&ent1]]><n2>&amp;deep</n2>post</e>' COLUMNS x xml PATH 'node()', y xml PATH '/');
+-[ RECORD 1 ]-----------------------------------------------------------
+x | pre<!--c1--><?pi arg?><![CDATA[&ent1]]><n2>&amp;deep</n2>post
+y | <e>pre<!--c1--><?pi arg?><![CDATA[&ent1]]><n2>&amp;deep</n2>post</e>+
+  | 
+
+\x
+SELECT * FROM XMLTABLE('.' PASSING XMLELEMENT(NAME a) columns a varchar(20) PATH '"<foo/>"', b xml PATH '"<foo/>"');
+   a    |      b       
+--------+--------------
+ <foo/> | &lt;foo/&gt;
+(1 row)
 

@@ -1,7 +1,10 @@
 AgensGraph: Powerful Graph Database
 ====================================
 
-[![Build Status](https://travis-ci.org/bitnine-oss/agensgraph.svg?branch=master)](https://travis-ci.org/bitnine-oss/agensgraph)
+![Build](https://github.com/EngineeredVirus/agensgraph/workflows/build/badge.svg)
+![PostgreSQL-Regression](https://github.com/EngineeredVirus/agensgraph/workflows/regression/badge.svg)
+![AgensGraph-Regression](https://github.com/EngineeredVirus/agensgraph/workflows/AgensGraph-Regression/badge.svg)
+
 
 AgensGraph is a new generation multi-model graph database for the modern complex data environment. AgensGraph is a multi-model database, which supports the relational and graph data model at the same time that enables developers to integrate the legacy relational data model and the flexible graph data model in one database. AgensGraph supports ANSI-SQL and openCypher (http://www.opencypher.org). SQL queries and Cypher queries can be integrated into a single query in AgensGraph.
 
@@ -76,6 +79,11 @@ Building from the Source Code
 Documentation
 -------------
 * [Short Guide](http://bitnine.net/documentations/quick-guide-1-3.html)
+
+## Viewer Tools in AgensGraph
+AGViewer : https://github.com/bitnine-oss/AGViewer.git
+This is a visualization tool. After AgensGraph Installation You can use this tool to use the visualization features.
+Follow the instructions on the link to run it. Under Connect to Database , select database type as "AgensGraph"
 
 License
 -------

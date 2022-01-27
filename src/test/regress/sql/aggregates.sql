@@ -2,6 +2,9 @@
 -- AGGREGATES
 --
 
+-- avoid bit-exact output here because operations may not be bit-exact.
+SET extra_float_digits = 0;
+
 SELECT avg(four) AS avg_1 FROM onek;
 
 SELECT avg(a) AS avg_32 FROM aggtest WHERE a < 100;
@@ -36,8 +39,22 @@ SELECT var_samp(b::numeric) FROM aggtest;
 
 -- population variance is defined for a single tuple, sample variance
 -- is not
-SELECT var_pop(1.0), var_samp(2.0);
+SELECT var_pop(1.0::float8), var_samp(2.0::float8);
+SELECT stddev_pop(3.0::float8), stddev_samp(4.0::float8);
+SELECT var_pop('inf'::float8), var_samp('inf'::float8);
+SELECT stddev_pop('inf'::float8), stddev_samp('inf'::float8);
+SELECT var_pop('nan'::float8), var_samp('nan'::float8);
+SELECT stddev_pop('nan'::float8), stddev_samp('nan'::float8);
+SELECT var_pop(1.0::float4), var_samp(2.0::float4);
+SELECT stddev_pop(3.0::float4), stddev_samp(4.0::float4);
+SELECT var_pop('inf'::float4), var_samp('inf'::float4);
+SELECT stddev_pop('inf'::float4), stddev_samp('inf'::float4);
+SELECT var_pop('nan'::float4), var_samp('nan'::float4);
+SELECT stddev_pop('nan'::float4), stddev_samp('nan'::float4);
+SELECT var_pop(1.0::numeric), var_samp(2.0::numeric);
 SELECT stddev_pop(3.0::numeric), stddev_samp(4.0::numeric);
+SELECT var_pop('nan'::numeric), var_samp('nan'::numeric);
+SELECT stddev_pop('nan'::numeric), stddev_samp('nan'::numeric);
 
 -- verify correct results for null and NaN inputs
 select sum(null::int4) from generate_series(1,3);
@@ -51,6 +68,22 @@ select avg(null::float8) from generate_series(1,3);
 select sum('NaN'::numeric) from generate_series(1,3);
 select avg('NaN'::numeric) from generate_series(1,3);
 
+-- verify correct results for infinite inputs
+SELECT avg(x::float8), var_pop(x::float8)
+FROM (VALUES ('1'), ('infinity')) v(x);
+SELECT avg(x::float8), var_pop(x::float8)
+FROM (VALUES ('infinity'), ('1')) v(x);
+SELECT avg(x::float8), var_pop(x::float8)
+FROM (VALUES ('infinity'), ('infinity')) v(x);
+SELECT avg(x::float8), var_pop(x::float8)
+FROM (VALUES ('-infinity'), ('infinity')) v(x);
+
+-- test accuracy with a large input offset
+SELECT avg(x::float8), var_pop(x::float8)
+FROM (VALUES (100000003), (100000004), (100000006), (100000007)) v(x);
+SELECT avg(x::float8), var_pop(x::float8)
+FROM (VALUES (7000000000005), (7000000000007)) v(x);
+
 -- SQL2003 binary aggregates
 SELECT regr_count(b, a) FROM aggtest;
 SELECT regr_sxx(b, a) FROM aggtest;
@@ -62,6 +95,36 @@ SELECT regr_slope(b, a), regr_intercept(b, a) FROM aggtest;
 SELECT covar_pop(b, a), covar_samp(b, a) FROM aggtest;
 SELECT corr(b, a) FROM aggtest;
 
+-- check single-tuple behavior
+SELECT covar_pop(1::float8,2::float8), covar_samp(3::float8,4::float8);
+SELECT covar_pop(1::float8,'inf'::float8), covar_samp(3::float8,'inf'::float8);
+SELECT covar_pop(1::float8,'nan'::float8), covar_samp(3::float8,'nan'::float8);
+
+-- test accum and combine functions directly
+CREATE TABLE regr_test (x float8, y float8);
+INSERT INTO regr_test VALUES (10,150),(20,250),(30,350),(80,540),(100,200);
+SELECT count(*), sum(x), regr_sxx(y,x), sum(y),regr_syy(y,x), regr_sxy(y,x)
+FROM regr_test WHERE x IN (10,20,30,80);
+SELECT count(*), sum(x), regr_sxx(y,x), sum(y),regr_syy(y,x), regr_sxy(y,x)
+FROM regr_test;
+SELECT float8_accum('{4,140,2900}'::float8[], 100);
+SELECT float8_regr_accum('{4,140,2900,1290,83075,15050}'::float8[], 200, 100);
+SELECT count(*), sum(x), regr_sxx(y,x), sum(y),regr_syy(y,x), regr_sxy(y,x)
+FROM regr_test WHERE x IN (10,20,30);
+SELECT count(*), sum(x), regr_sxx(y,x), sum(y),regr_syy(y,x), regr_sxy(y,x)
+FROM regr_test WHERE x IN (80,100);
+SELECT float8_combine('{3,60,200}'::float8[], '{0,0,0}'::float8[]);
+SELECT float8_combine('{0,0,0}'::float8[], '{2,180,200}'::float8[]);
+SELECT float8_combine('{3,60,200}'::float8[], '{2,180,200}'::float8[]);
+SELECT float8_regr_combine('{3,60,200,750,20000,2000}'::float8[],
+                           '{0,0,0,0,0,0}'::float8[]);
+SELECT float8_regr_combine('{0,0,0,0,0,0}'::float8[],
+                           '{2,180,200,740,57800,-3400}'::float8[]);
+SELECT float8_regr_combine('{3,60,200,750,20000,2000}'::float8[],
+                           '{2,180,200,740,57800,-3400}'::float8[]);
+DROP TABLE regr_test;
+
+-- test count, distinct
 SELECT count(four) AS cnt_1000 FROM onek;
 SELECT count(DISTINCT four) AS cnt_4 FROM onek;
 
@@ -362,9 +425,31 @@ group by t1.a,t1.b,t1.c,t1.d,t2.x,t2.z;
 -- Cannot optimize when PK is deferrable
 explain (costs off) select * from t3 group by a,b,c;
 
-drop table t1;
+create temp table t1c () inherits (t1);
+
+-- Ensure we don't remove any columns when t1 has a child table
+explain (costs off) select * from t1 group by a,b,c,d;
+
+-- Okay to remove columns if we're only querying the parent.
+explain (costs off) select * from only t1 group by a,b,c,d;
+
+create temp table p_t1 (
+  a int,
+  b int,
+  c int,
+  d int,
+  primary key(a,b)
+) partition by list(a);
+create temp table p_t1_1 partition of p_t1 for values in(1);
+create temp table p_t1_2 partition of p_t1 for values in(2);
+
+-- Ensure we can remove non-PK columns for partitioned tables.
+explain (costs off) select * from p_t1 group by a,b,c,d;
+
+drop table t1 cascade;
 drop table t2;
 drop table t3;
+drop table p_t1;
 
 --
 -- Test combinations of DISTINCT and/or ORDER BY
@@ -560,6 +645,17 @@ select aggfns(distinct a,b,c order by a,c using ~<~,b) filter (where a > 1)
     from (values (1,3,'foo'),(0,null,null),(2,2,'bar'),(3,1,'baz')) v(a,b,c),
     generate_series(1,2) i;
 
+-- check handling of bare boolean Var in FILTER
+select max(0) filter (where b1) from bool_test;
+select (select max(0) filter (where b1)) from bool_test;
+
+-- check for correct detection of nested-aggregate errors in FILTER
+select max(unique1) filter (where sum(ten) > 0) from tenk1;
+select (select max(unique1) filter (where sum(ten) > 0) from int8_tbl) from tenk1;
+select max(unique1) filter (where bool_or(ten > 0)) from tenk1;
+select (select max(unique1) filter (where bool_or(ten > 0)) from int8_tbl) from tenk1;
+
+
 -- ordered-set aggregates
 
 select p, percentile_cont(p) within group (order by x::float8)
@@ -741,12 +837,18 @@ select my_avg(one) filter (where one > 1),my_sum(one) from (values(1),(3)) t(one
 -- this should not share the state due to different input columns.
 select my_avg(one),my_sum(two) from (values(1,2),(3,4)) t(one,two);
 
--- ideally these would share state, but we have to fix the OSAs first.
+-- exercise cases where OSAs share state
 select
   percentile_cont(0.5) within group (order by a),
   percentile_disc(0.5) within group (order by a)
 from (values(1::float8),(3),(5),(7)) t(a);
 
+select
+  percentile_cont(0.25) within group (order by a),
+  percentile_disc(0.5) within group (order by a)
+from (values(1::float8),(3),(5),(7)) t(a);
+
+-- these can't share state currently
 select
   rank(4) within group (order by a),
   dense_rank(4) within group (order by a)
@@ -855,12 +957,13 @@ BEGIN
     RETURN NULL;
 END$$;
 
-CREATE AGGREGATE balk(
-    BASETYPE = int4,
+CREATE AGGREGATE balk(int4)
+(
     SFUNC = balkifnull(int8, int4),
     STYPE = int8,
-    "PARALLEL" = SAFE,
-    INITCOND = '0');
+    PARALLEL = SAFE,
+    INITCOND = '0'
+);
 
 SELECT balk(hundred) FROM tenk1;
 
@@ -882,12 +985,12 @@ BEGIN
     RETURN NULL;
 END$$;
 
-CREATE AGGREGATE balk(
-    BASETYPE = int4,
+CREATE AGGREGATE balk(int4)
+(
     SFUNC = int4_sum(int8, int4),
     STYPE = int8,
     COMBINEFUNC = balkifnull(int8, int8),
-    "PARALLEL" = SAFE,
+    PARALLEL = SAFE,
     INITCOND = '0'
 );
 
@@ -900,3 +1003,71 @@ EXPLAIN (COSTS OFF) SELECT balk(hundred) FROM tenk1;
 SELECT balk(hundred) FROM tenk1;
 
 ROLLBACK;
+
+-- test coverage for aggregate combine/serial/deserial functions
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+
+SET parallel_setup_cost = 0;
+SET parallel_tuple_cost = 0;
+SET min_parallel_table_scan_size = 0;
+SET max_parallel_workers_per_gather = 4;
+SET parallel_leader_participation = off;
+SET enable_indexonlyscan = off;
+
+-- variance(int4) covers numeric_poly_combine
+-- sum(int8) covers int8_avg_combine
+-- regr_count(float8, float8) covers int8inc_float8_float8 and aggregates with > 1 arg
+EXPLAIN (COSTS OFF, VERBOSE)
+SELECT variance(unique1::int4), sum(unique1::int8), regr_count(unique1::float8, unique1::float8)
+FROM (SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1) u;
+
+SELECT variance(unique1::int4), sum(unique1::int8), regr_count(unique1::float8, unique1::float8)
+FROM (SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1) u;
+
+-- variance(int8) covers numeric_combine
+-- avg(numeric) covers numeric_avg_combine
+EXPLAIN (COSTS OFF, VERBOSE)
+SELECT variance(unique1::int8), avg(unique1::numeric)
+FROM (SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1) u;
+
+SELECT variance(unique1::int8), avg(unique1::numeric)
+FROM (SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1
+      UNION ALL SELECT * FROM tenk1) u;
+
+ROLLBACK;
+
+-- test coverage for dense_rank
+SELECT dense_rank(x) WITHIN GROUP (ORDER BY x) FROM (VALUES (1),(1),(2),(2),(3),(3)) v(x) GROUP BY (x) ORDER BY 1;
+
+
+-- Ensure that the STRICT checks for aggregates does not take NULLness
+-- of ORDER BY columns into account. See bug report around
+-- 2a505161-2727-2473-7c46-591ed108ac52@email.cz
+SELECT min(x ORDER BY y) FROM (VALUES(1, NULL)) AS d(x,y);
+SELECT min(x ORDER BY y) FROM (VALUES(1, 2)) AS d(x,y);
+
+-- check collation-sensitive matching between grouping expressions
+select v||'a', case v||'a' when 'aa' then 1 else 0 end, count(*)
+  from unnest(array['a','b']) u(v)
+ group by v||'a' order by 1;
+select v||'a', case when v||'a' = 'aa' then 1 else 0 end, count(*)
+  from unnest(array['a','b']) u(v)
+ group by v||'a' order by 1;
+
+-- Make sure that generation of HashAggregate for uniqification purposes
+-- does not lead to array overflow due to unexpected duplicate hash keys
+-- see CAFeeJoKKu0u+A_A9R9316djW-YW3-+Gtgvy3ju655qRHR3jtdA@mail.gmail.com
+explain (costs off)
+  select 1 from tenk1
+   where (hundred, thousand) in (select twothousand, twothousand from onek);

@@ -9,7 +9,7 @@
  * See utils/resowner/README for more info.
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,9 +20,12 @@
  */
 #include "postgres.h"
 
-#include "access/hash.h"
+#include "jit/jit.h"
+#include "storage/bufmgr.h"
+#include "storage/ipc.h"
 #include "storage/predicate.h"
 #include "storage/proc.h"
+#include "utils/hashutils.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/resowner_private.h"
@@ -124,6 +127,7 @@ typedef struct ResourceOwnerData
 	ResourceArray snapshotarr;	/* snapshot references */
 	ResourceArray filearr;		/* open temporary files */
 	ResourceArray dsmarr;		/* dynamic shmem segments */
+	ResourceArray jitarr;		/* JIT contexts */
 
 	/* We can remember up to MAX_RESOWNER_LOCKS references to local locks. */
 	int			nlocks;			/* number of owned locks */
@@ -138,6 +142,7 @@ typedef struct ResourceOwnerData
 ResourceOwner CurrentResourceOwner = NULL;
 ResourceOwner CurTransactionResourceOwner = NULL;
 ResourceOwner TopTransactionResourceOwner = NULL;
+ResourceOwner AuxProcessResourceOwner = NULL;
 
 /*
  * List of add-on callbacks for resource releasing
@@ -160,9 +165,10 @@ static bool ResourceArrayRemove(ResourceArray *resarr, Datum value);
 static bool ResourceArrayGetAny(ResourceArray *resarr, Datum *value);
 static void ResourceArrayFree(ResourceArray *resarr);
 static void ResourceOwnerReleaseInternal(ResourceOwner owner,
-							 ResourceReleasePhase phase,
-							 bool isCommit,
-							 bool isTopLevel);
+										 ResourceReleasePhase phase,
+										 bool isCommit,
+										 bool isTopLevel);
+static void ReleaseAuxProcessResourcesCallback(int code, Datum arg);
 static void PrintRelCacheLeakWarning(Relation rel);
 static void PrintPlanCacheLeakWarning(CachedPlan *plan);
 static void PrintTupleDescLeakWarning(TupleDesc tupdesc);
@@ -437,6 +443,7 @@ ResourceOwnerCreate(ResourceOwner parent, const char *name)
 	ResourceArrayInit(&(owner->snapshotarr), PointerGetDatum(NULL));
 	ResourceArrayInit(&(owner->filearr), FileGetDatum(-1));
 	ResourceArrayInit(&(owner->dsmarr), PointerGetDatum(NULL));
+	ResourceArrayInit(&(owner->jitarr), PointerGetDatum(NULL));
 
 	return owner;
 }
@@ -473,21 +480,8 @@ ResourceOwnerRelease(ResourceOwner owner,
 					 bool isCommit,
 					 bool isTopLevel)
 {
-	/* Rather than PG_TRY at every level of recursion, set it up once */
-	ResourceOwner save;
-
-	save = CurrentResourceOwner;
-	PG_TRY();
-	{
-		ResourceOwnerReleaseInternal(owner, phase, isCommit, isTopLevel);
-	}
-	PG_CATCH();
-	{
-		CurrentResourceOwner = save;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-	CurrentResourceOwner = save;
+	/* There's not currently any setup needed before recursing */
+	ResourceOwnerReleaseInternal(owner, phase, isCommit, isTopLevel);
 }
 
 static void
@@ -507,8 +501,7 @@ ResourceOwnerReleaseInternal(ResourceOwner owner,
 
 	/*
 	 * Make CurrentResourceOwner point to me, so that ReleaseBuffer etc don't
-	 * get confused.  We needn't PG_TRY here because the outermost level will
-	 * fix it on error abort.
+	 * get confused.
 	 */
 	save = CurrentResourceOwner;
 	CurrentResourceOwner = owner;
@@ -552,6 +545,14 @@ ResourceOwnerReleaseInternal(ResourceOwner owner,
 				PrintDSMLeakWarning(res);
 			dsm_detach(res);
 		}
+
+		/* Ditto for JIT contexts */
+		while (ResourceArrayGetAny(&(owner->jitarr), &foundres))
+		{
+			JitContext *context = (JitContext *) PointerGetDatum(foundres);
+
+			jit_release_context(context);
+		}
 	}
 	else if (phase == RESOURCE_RELEASE_LOCKS)
 	{
@@ -565,7 +566,7 @@ ResourceOwnerReleaseInternal(ResourceOwner owner,
 			if (owner == TopTransactionResourceOwner)
 			{
 				ProcReleaseLocks(isCommit);
-				ReleasePredicateLocks(isCommit);
+				ReleasePredicateLocks(isCommit, false);
 			}
 		}
 		else
@@ -672,7 +673,7 @@ ResourceOwnerReleaseInternal(ResourceOwner owner,
 
 	/* Let add-on modules get a chance too */
 	for (item = ResourceRelease_callbacks; item; item = item->next)
-		(*item->callback) (phase, isCommit, isTopLevel, item->arg);
+		item->callback(phase, isCommit, isTopLevel, item->arg);
 
 	CurrentResourceOwner = save;
 }
@@ -699,6 +700,7 @@ ResourceOwnerDelete(ResourceOwner owner)
 	Assert(owner->snapshotarr.nitems == 0);
 	Assert(owner->filearr.nitems == 0);
 	Assert(owner->dsmarr.nitems == 0);
+	Assert(owner->jitarr.nitems == 0);
 	Assert(owner->nlocks == 0 || owner->nlocks == MAX_RESOWNER_LOCKS + 1);
 
 	/*
@@ -725,6 +727,7 @@ ResourceOwnerDelete(ResourceOwner owner)
 	ResourceArrayFree(&(owner->snapshotarr));
 	ResourceArrayFree(&(owner->filearr));
 	ResourceArrayFree(&(owner->dsmarr));
+	ResourceArrayFree(&(owner->jitarr));
 
 	pfree(owner);
 }
@@ -824,6 +827,60 @@ UnregisterResourceReleaseCallback(ResourceReleaseCallback callback, void *arg)
 	}
 }
 
+/*
+ * Establish an AuxProcessResourceOwner for the current process.
+ */
+void
+CreateAuxProcessResourceOwner(void)
+{
+	Assert(AuxProcessResourceOwner == NULL);
+	Assert(CurrentResourceOwner == NULL);
+	AuxProcessResourceOwner = ResourceOwnerCreate(NULL, "AuxiliaryProcess");
+	CurrentResourceOwner = AuxProcessResourceOwner;
+
+	/*
+	 * Register a shmem-exit callback for cleanup of aux-process resource
+	 * owner.  (This needs to run after, e.g., ShutdownXLOG.)
+	 */
+	on_shmem_exit(ReleaseAuxProcessResourcesCallback, 0);
+
+}
+
+/*
+ * Convenience routine to release all resources tracked in
+ * AuxProcessResourceOwner (but that resowner is not destroyed here).
+ * Warn about leaked resources if isCommit is true.
+ */
+void
+ReleaseAuxProcessResources(bool isCommit)
+{
+	/*
+	 * At this writing, the only thing that could actually get released is
+	 * buffer pins; but we may as well do the full release protocol.
+	 */
+	ResourceOwnerRelease(AuxProcessResourceOwner,
+						 RESOURCE_RELEASE_BEFORE_LOCKS,
+						 isCommit, true);
+	ResourceOwnerRelease(AuxProcessResourceOwner,
+						 RESOURCE_RELEASE_LOCKS,
+						 isCommit, true);
+	ResourceOwnerRelease(AuxProcessResourceOwner,
+						 RESOURCE_RELEASE_AFTER_LOCKS,
+						 isCommit, true);
+}
+
+/*
+ * Shmem-exit callback for the same.
+ * Warn about leaked resources if process exit code is zero (ie normal).
+ */
+static void
+ReleaseAuxProcessResourcesCallback(int code, Datum arg)
+{
+	bool		isCommit = (code == 0);
+
+	ReleaseAuxProcessResources(isCommit);
+}
+
 
 /*
  * Make sure there is room for at least one more entry in a ResourceOwner's
@@ -831,15 +888,12 @@ UnregisterResourceReleaseCallback(ResourceReleaseCallback callback, void *arg)
  *
  * This is separate from actually inserting an entry because if we run out
  * of memory, it's critical to do so *before* acquiring the resource.
- *
- * We allow the case owner == NULL because the bufmgr is sometimes invoked
- * outside any transaction (for example, during WAL recovery).
  */
 void
 ResourceOwnerEnlargeBuffers(ResourceOwner owner)
 {
-	if (owner == NULL)
-		return;
+	/* We used to allow pinning buffers without a resowner, but no more */
+	Assert(owner != NULL);
 	ResourceArrayEnlarge(&(owner->bufferarr));
 }
 
@@ -847,29 +901,19 @@ ResourceOwnerEnlargeBuffers(ResourceOwner owner)
  * Remember that a buffer pin is owned by a ResourceOwner
  *
  * Caller must have previously done ResourceOwnerEnlargeBuffers()
- *
- * We allow the case owner == NULL because the bufmgr is sometimes invoked
- * outside any transaction (for example, during WAL recovery).
  */
 void
 ResourceOwnerRememberBuffer(ResourceOwner owner, Buffer buffer)
 {
-	if (owner == NULL)
-		return;
 	ResourceArrayAdd(&(owner->bufferarr), BufferGetDatum(buffer));
 }
 
 /*
  * Forget that a buffer pin is owned by a ResourceOwner
- *
- * We allow the case owner == NULL because the bufmgr is sometimes invoked
- * outside any transaction (for example, during WAL recovery).
  */
 void
 ResourceOwnerForgetBuffer(ResourceOwner owner, Buffer buffer)
 {
-	if (owner == NULL)
-		return;
 	if (!ResourceArrayRemove(&(owner->bufferarr), BufferGetDatum(buffer)))
 		elog(ERROR, "buffer %d is not owned by resource owner %s",
 			 buffer, owner->name);
@@ -1266,4 +1310,39 @@ PrintDSMLeakWarning(dsm_segment *seg)
 {
 	elog(WARNING, "dynamic shared memory leak: segment %u still referenced",
 		 dsm_segment_handle(seg));
+}
+
+/*
+ * Make sure there is room for at least one more entry in a ResourceOwner's
+ * JIT context reference array.
+ *
+ * This is separate from actually inserting an entry because if we run out of
+ * memory, it's critical to do so *before* acquiring the resource.
+ */
+void
+ResourceOwnerEnlargeJIT(ResourceOwner owner)
+{
+	ResourceArrayEnlarge(&(owner->jitarr));
+}
+
+/*
+ * Remember that a JIT context is owned by a ResourceOwner
+ *
+ * Caller must have previously done ResourceOwnerEnlargeJIT()
+ */
+void
+ResourceOwnerRememberJIT(ResourceOwner owner, Datum handle)
+{
+	ResourceArrayAdd(&(owner->jitarr), handle);
+}
+
+/*
+ * Forget that a JIT context is owned by a ResourceOwner
+ */
+void
+ResourceOwnerForgetJIT(ResourceOwner owner, Datum handle)
+{
+	if (!ResourceArrayRemove(&(owner->jitarr), handle))
+		elog(ERROR, "JIT context %p is not owned by resource owner %s",
+			 DatumGetPointer(handle), owner->name);
 }

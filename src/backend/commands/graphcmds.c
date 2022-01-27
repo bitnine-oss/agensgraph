@@ -7,9 +7,7 @@
  * IDENTIFICATION
  *	  src/backend/commands/graphcmds.c
  */
-
 #include "postgres.h"
-
 #include "ag_const.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
@@ -25,8 +23,9 @@
 #include "catalog/objectaccess.h"
 #include "catalog/objectaddress.h"
 #include "catalog/pg_class.h"
-#include "catalog/pg_inherits_fn.h"
+#include "catalog/pg_inherits.h"
 #include "catalog/pg_namespace.h"
+#include "catalog/pg_proc.h"
 #include "catalog/toasting.h"
 #include "commands/event_trigger.h"
 #include "commands/graphcmds.h"
@@ -138,7 +137,7 @@ RenameGraph(const char *oldname, const char *newname)
 	/* renamimg schema and graph should be processed in one lock */
 	RenameSchema(oldname, newname);
 
-	graphOid = HeapTupleGetOid(tup);
+	graphOid = ((Form_pg_proc) GETSTRUCT(tup))->oid;
 
 	/* Skip privilege and error check. It was already done in RenameSchema() */
 
@@ -146,7 +145,7 @@ RenameGraph(const char *oldname, const char *newname)
 	namestrcpy(&(((Form_ag_graph) GETSTRUCT(tup))->graphname), newname);
 	CatalogTupleUpdate(rel, &tup->t_self, tup);
 
-	InvokeObjectPostAlterHook(GraphRelationId, HeapTupleGetOid(tup), 0);
+	InvokeObjectPostAlterHook(GraphRelationId, ((Form_pg_proc) GETSTRUCT(tup))->oid, 0);
 
 	ObjectAddressSet(address, GraphRelationId, graphOid);
 
@@ -249,7 +248,7 @@ DefineLabel(CreateStmt *stmt, char labkind, const char *queryString)
 	 */
 
 	/* current implementation does not get tablespace name; so */
-	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence);
+	tablespaceId = GetDefaultTablespace(stmt->relation->relpersistence, false);
 
 	laboid = label_create_with_catalog(stmt->relation, reladdr.objectId,
 									   labkind, tablespaceId);
@@ -346,7 +345,7 @@ GetSuperOids(List *supers, char labkind, List **supOids)
 					 errmsg("invalid parent label with labkind '%c'",
 							labtup->labkind)));
 
-		parent_laboid = HeapTupleGetOid(tuple);
+		parent_laboid = ((Form_pg_proc) GETSTRUCT(tuple))->oid;
 		ReleaseSysCache(tuple);
 
 		parentOids = lappend_oid(parentOids, parent_laboid);
@@ -407,7 +406,7 @@ RenameLabel(RenameStmt *stmt)
 		return InvalidObjectAddress;
 	}
 
-	laboid = HeapTupleGetOid(tup);
+	laboid = ((Form_pg_proc) GETSTRUCT(tup))->oid;
 
 	CheckLabelType(stmt->renameType, laboid, "RENAME");
 
@@ -420,7 +419,7 @@ RenameLabel(RenameStmt *stmt)
 	namestrcpy(&(((Form_ag_label) GETSTRUCT(tup))->labname), stmt->newname);
 	CatalogTupleUpdate(rel, &tup->t_self, tup);
 
-	InvokeObjectPostAlterHook(LabelRelationId, HeapTupleGetOid(tup), 0);
+	InvokeObjectPostAlterHook(LabelRelationId, ((Form_pg_proc) GETSTRUCT(tup))->oid, 0);
 
 	ObjectAddressSet(address, LabelRelationId, laboid);
 
@@ -478,6 +477,25 @@ CheckInheritLabel(CreateStmt *stmt)
 					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 					 errmsg("invalid parent, table cannot inherit label")));
 	}
+}
+
+bool
+RelationIsLabel(Relation rel)
+{
+	Oid			nspid;
+	Oid			graphid;
+	HeapTuple	nsptuple;
+	Form_pg_namespace nspdata;
+
+	nspid = RelationGetNamespace(rel);
+	nsptuple = SearchSysCache1(NAMESPACEOID, ObjectIdGetDatum(nspid));
+	if (!HeapTupleIsValid(nsptuple))
+		elog(ERROR, "iicache lookup failed for label (OID=%u)", nspid);
+
+	nspdata = (Form_pg_namespace) GETSTRUCT(nsptuple);
+	graphid = get_graphname_oid(NameStr(nspdata->nspname));
+	ReleaseSysCache(nsptuple);
+	return labid_exists(graphid, RelationGetRelid(rel));
 }
 
 bool
@@ -564,7 +582,7 @@ DisableIndexCommand(DisableIndexStmt *disableStmt)
 	Oid			relid;
 	RangeVar   *relation = disableStmt->relation;
 
-	relid = RangeVarGetRelidExtended(relation, ShareLock, false, false,
+	relid = RangeVarGetRelidExtended(relation, ShareLock, RVR_MISSING_OK,
 									 RangeVarCallbackOwnsTable, NULL);
 
 	if (!RangeVarIsLabel(relation))

@@ -3,7 +3,7 @@
  *
  *	options functions
  *
- *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/option.c
  */
 
@@ -21,8 +21,9 @@
 
 
 static void usage(void);
-static void check_required_directory(char **dirpath, char **configpath,
-						 char *envVarName, char *cmdLineOption, char *description);
+static void check_required_directory(char **dirpath,
+									 const char *envVarName, bool useCwd,
+									 const char *cmdLineOption, const char *description);
 #define FIX_DEFAULT_READ_ONLY "-c default_transaction_read_only=false"
 
 
@@ -52,7 +53,10 @@ parseCommandLine(int argc, char *argv[])
 		{"link", no_argument, NULL, 'k'},
 		{"retain", no_argument, NULL, 'r'},
 		{"jobs", required_argument, NULL, 'j'},
+		{"socketdir", required_argument, NULL, 's'},
 		{"verbose", no_argument, NULL, 'v'},
+		{"clone", no_argument, NULL, 1},
+
 		{NULL, 0, NULL, 0}
 	};
 	int			option;			/* Command line option */
@@ -97,10 +101,7 @@ parseCommandLine(int argc, char *argv[])
 	if (os_user_effective_id == 0)
 		pg_fatal("%s: cannot be run as root\n", os_info.progname);
 
-	if ((log_opts.internal = fopen_priv(INTERNAL_LOG_FILE, "a")) == NULL)
-		pg_fatal("could not write to log file \"%s\"\n", INTERNAL_LOG_FILE);
-
-	while ((option = getopt_long(argc, argv, "d:D:b:B:cj:ko:O:p:P:rU:v",
+	while ((option = getopt_long(argc, argv, "d:D:b:B:cj:ko:O:p:P:rs:U:v",
 								 long_options, &optindex)) != -1)
 	{
 		switch (option)
@@ -119,12 +120,10 @@ parseCommandLine(int argc, char *argv[])
 
 			case 'd':
 				old_cluster.pgdata = pg_strdup(optarg);
-				old_cluster.pgconfig = pg_strdup(optarg);
 				break;
 
 			case 'D':
 				new_cluster.pgdata = pg_strdup(optarg);
-				new_cluster.pgconfig = pg_strdup(optarg);
 				break;
 
 			case 'j':
@@ -186,6 +185,10 @@ parseCommandLine(int argc, char *argv[])
 				log_opts.retain = true;
 				break;
 
+			case 's':
+				user_opts.socketdir = pg_strdup(optarg);
+				break;
+
 			case 'U':
 				pg_free(os_info.user);
 				os_info.user = pg_strdup(optarg);
@@ -199,22 +202,31 @@ parseCommandLine(int argc, char *argv[])
 				break;
 
 			case 'v':
-				pg_log(PG_REPORT, "Running in verbose mode\n");
 				log_opts.verbose = true;
 				break;
 
-			default:
-				pg_fatal("Try \"%s --help\" for more information.\n",
-						 os_info.progname);
+			case 1:
+				user_opts.transfer_mode = TRANSFER_MODE_CLONE;
 				break;
+
+			default:
+				fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
+						os_info.progname);
+				exit(1);
 		}
 	}
+
+	if ((log_opts.internal = fopen_priv(INTERNAL_LOG_FILE, "a")) == NULL)
+		pg_fatal("could not open log file \"%s\": %m\n", INTERNAL_LOG_FILE);
+
+	if (log_opts.verbose)
+		pg_log(PG_REPORT, "Running in verbose mode\n");
 
 	/* label start of upgrade in logfiles */
 	for (filename = output_files; *filename != NULL; filename++)
 	{
 		if ((fp = fopen_priv(*filename, "a")) == NULL)
-			pg_fatal("could not write to log file \"%s\"\n", *filename);
+			pg_fatal("could not write to log file \"%s\": %m\n", *filename);
 
 		/* Start with newline because we might be appending to a file. */
 		fprintf(fp, "\n"
@@ -238,14 +250,16 @@ parseCommandLine(int argc, char *argv[])
 		pg_putenv("PGOPTIONS", FIX_DEFAULT_READ_ONLY);
 
 	/* Get values from env if not already set */
-	check_required_directory(&old_cluster.bindir, NULL, "PGBINOLD", "-b",
-							 _("old cluster binaries reside"));
-	check_required_directory(&new_cluster.bindir, NULL, "PGBINNEW", "-B",
-							 _("new cluster binaries reside"));
-	check_required_directory(&old_cluster.pgdata, &old_cluster.pgconfig,
-							 "PGDATAOLD", "-d", _("old cluster data resides"));
-	check_required_directory(&new_cluster.pgdata, &new_cluster.pgconfig,
-							 "PGDATANEW", "-D", _("new cluster data resides"));
+	check_required_directory(&old_cluster.bindir, "PGBINOLD", false,
+							 "-b", _("old cluster binaries reside"));
+	check_required_directory(&new_cluster.bindir, "PGBINNEW", false,
+							 "-B", _("new cluster binaries reside"));
+	check_required_directory(&old_cluster.pgdata, "PGDATAOLD", false,
+							 "-d", _("old cluster data resides"));
+	check_required_directory(&new_cluster.pgdata, "PGDATANEW", false,
+							 "-D", _("new cluster data resides"));
+	check_required_directory(&user_opts.socketdir, "PGSOCKETDIR", true,
+							 "-s", _("sockets will be created"));
 
 #ifdef WIN32
 
@@ -283,16 +297,18 @@ usage(void)
 	printf(_("  -c, --check                   check clusters only, don't change any data\n"));
 	printf(_("  -d, --old-datadir=DATADIR     old cluster data directory\n"));
 	printf(_("  -D, --new-datadir=DATADIR     new cluster data directory\n"));
-	printf(_("  -j, --jobs                    number of simultaneous processes or threads to use\n"));
+	printf(_("  -j, --jobs=NUM                number of simultaneous processes or threads to use\n"));
 	printf(_("  -k, --link                    link instead of copying files to new cluster\n"));
 	printf(_("  -o, --old-options=OPTIONS     old cluster options to pass to the server\n"));
 	printf(_("  -O, --new-options=OPTIONS     new cluster options to pass to the server\n"));
 	printf(_("  -p, --old-port=PORT           old cluster port number (default %d)\n"), old_cluster.port);
 	printf(_("  -P, --new-port=PORT           new cluster port number (default %d)\n"), new_cluster.port);
 	printf(_("  -r, --retain                  retain SQL and log files after success\n"));
+	printf(_("  -s, --socketdir=DIR           socket directory to use (default current dir.)\n"));
 	printf(_("  -U, --username=NAME           cluster superuser (default \"%s\")\n"), os_info.user);
 	printf(_("  -v, --verbose                 enable verbose internal logging\n"));
 	printf(_("  -V, --version                 display version information, then exit\n"));
+	printf(_("  --clone                       clone instead of copying files to new cluster\n"));
 	printf(_("  -?, --help                    show this help, then exit\n"));
 	printf(_("\n"
 			 "Before running pg_upgrade you must:\n"
@@ -322,7 +338,7 @@ usage(void)
 			 "  C:\\> set PGBINNEW=newCluster/bin\n"
 			 "  C:\\> pg_upgrade\n"));
 #endif
-	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
+	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
 }
 
 
@@ -330,29 +346,32 @@ usage(void)
  * check_required_directory()
  *
  * Checks a directory option.
- *	dirpath		  - the directory name supplied on the command line
- *	configpath	  - optional configuration directory
+ *	dirpath		  - the directory name supplied on the command line, or NULL
  *	envVarName	  - the name of an environment variable to get if dirpath is NULL
- *	cmdLineOption - the command line option corresponds to this directory (-o, -O, -n, -N)
+ *	useCwd		  - true if OK to default to CWD
+ *	cmdLineOption - the command line option for this directory
  *	description   - a description of this directory option
  *
  * We use the last two arguments to construct a meaningful error message if the
  * user hasn't provided the required directory name.
  */
 static void
-check_required_directory(char **dirpath, char **configpath,
-						 char *envVarName, char *cmdLineOption,
-						 char *description)
+check_required_directory(char **dirpath, const char *envVarName, bool useCwd,
+						 const char *cmdLineOption, const char *description)
 {
 	if (*dirpath == NULL || strlen(*dirpath) == 0)
 	{
 		const char *envVar;
 
 		if ((envVar = getenv(envVarName)) && strlen(envVar))
-		{
 			*dirpath = pg_strdup(envVar);
-			if (configpath)
-				*configpath = pg_strdup(envVar);
+		else if (useCwd)
+		{
+			char		cwd[MAXPGPATH];
+
+			if (!getcwd(cwd, MAXPGPATH))
+				pg_fatal("could not determine current directory\n");
+			*dirpath = pg_strdup(cwd);
 		}
 		else
 			pg_fatal("You must identify the directory where the %s.\n"
@@ -361,16 +380,10 @@ check_required_directory(char **dirpath, char **configpath,
 	}
 
 	/*
-	 * Trim off any trailing path separators because we construct paths by
-	 * appending to this path.
+	 * Clean up the path, in particular trimming any trailing path separators,
+	 * because we construct paths by appending to this path.
 	 */
-#ifndef WIN32
-	if ((*dirpath)[strlen(*dirpath) - 1] == '/')
-#else
-	if ((*dirpath)[strlen(*dirpath) - 1] == '/' ||
-		(*dirpath)[strlen(*dirpath) - 1] == '\\')
-#endif
-		(*dirpath)[strlen(*dirpath) - 1] = 0;
+	canonicalize_path(*dirpath);
 }
 
 /*
@@ -379,6 +392,10 @@ check_required_directory(char **dirpath, char **configpath,
  * If a configuration-only directory was specified, find the real data dir
  * by querying the running server.  This has limited checking because we
  * can't check for a running server because we can't find postmaster.pid.
+ *
+ * On entry, cluster->pgdata has been set from command line or env variable,
+ * but cluster->pgconfig isn't set.  We fill both variables with corrected
+ * values.
  */
 void
 adjust_data_dir(ClusterInfo *cluster)
@@ -388,6 +405,9 @@ adjust_data_dir(ClusterInfo *cluster)
 				cmd_output[MAX_STRING];
 	FILE	   *fp,
 			   *output;
+
+	/* Initially assume config dir and data dir are the same */
+	cluster->pgconfig = pg_strdup(cluster->pgdata);
 
 	/* If there is no postgresql.conf, it can't be a config-only dir */
 	snprintf(filename, sizeof(filename), "%s/postgresql.conf", cluster->pgconfig);
@@ -455,12 +475,7 @@ get_sock_dir(ClusterInfo *cluster, bool live_check)
 	if (GET_MAJOR_VERSION(cluster->major_version) >= 901)
 	{
 		if (!live_check)
-		{
-			/* Use the current directory for the socket */
-			cluster->sockdir = pg_malloc(MAXPGPATH);
-			if (!getcwd(cluster->sockdir, MAXPGPATH))
-				pg_fatal("could not determine current directory\n");
-		}
+			cluster->sockdir = user_opts.socketdir;
 		else
 		{
 			/*

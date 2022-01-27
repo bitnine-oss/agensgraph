@@ -23,7 +23,8 @@
  *
  * See psqlscan_int.h for additional commentary.
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ *
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -33,12 +34,16 @@
  */
 #include "postgres_fe.h"
 
+#include "common/logging.h"
 #include "fe_utils/psqlscan.h"
 
 #include "libpq-fe.h"
 }
 
 %{
+
+/* LCOV_EXCL_START */
+
 #include "fe_utils/psqlscan_int.h"
 
 /*
@@ -126,8 +131,8 @@ extern void psql_yyset_column(int column_no, yyscan_t yyscanner);
 %x xc
 %x xd
 %x xh
-%x xe
 %x xq
+%x xe
 %x xdolq
 %x xui
 %x xuiend
@@ -149,7 +154,7 @@ extern void psql_yyset_column(int column_no, yyscan_t yyscanner);
  * XXX perhaps \f (formfeed) should be treated as a newline as well?
  *
  * XXX if you change the set of whitespace characters, fix scanner_isspace()
- * to agree, and see also the plpgsql lexer.
+ * to agree.
  */
 
 space			[ \t\n\r\f]
@@ -296,6 +301,15 @@ identifier		{ident_start}{ident_cont}*
 typecast		"::"
 dot_dot			\.\.
 colon_equals	":="
+
+/*
+ * These operator-like tokens (unlike the above ones) also match the {operator}
+ * rule, which means that they might be overridden by a longer match if they
+ * are followed by a comment start or a + or - character. Accordingly, if you
+ * add to this list, you must also add corresponding code to the {operator}
+ * block to return the correct token in such cases. (This is not needed in
+ * psqlscan.l since the token value is ignored there.)
+ */
 equals_greater	"=>"
 less_equals		"<="
 greater_equals	">="
@@ -391,14 +405,15 @@ other			.
 					ECHO;
 				}
 
-<xc>{xcstart}	{
+<xc>{
+{xcstart}		{
 					cur_state->xcdepth++;
 					/* Put back any characters past slash-star; see above */
 					yyless(2);
 					ECHO;
 				}
 
-<xc>{xcstop}	{
+{xcstop}		{
 					if (cur_state->xcdepth <= 0)
 						BEGIN(INITIAL);
 					else
@@ -406,17 +421,18 @@ other			.
 					ECHO;
 				}
 
-<xc>{xcinside}	{
+{xcinside}		{
 					ECHO;
 				}
 
-<xc>{op_chars}	{
+{op_chars}		{
 					ECHO;
 				}
 
-<xc>\*+			{
+\*+				{
 					ECHO;
 				}
+} /* <xc> */
 
 {xbstart}		{
 					BEGIN(xb);
@@ -679,7 +695,7 @@ other			.
 	 */
 
 "\\"[;:]		{
-					/* Force a semicolon or colon into the query buffer */
+					/* Force a semi-colon or colon into the query buffer */
 					psqlscan_emit(cur_state, yytext + 1, 1);
 				}
 
@@ -710,7 +726,7 @@ other			.
 						if (psqlscan_var_is_current_source(cur_state, varname))
 						{
 							/* Recursive expansion --- don't go there */
-							cur_state->callbacks->write_error("skipping recursive expansion of variable \"%s\"\n",
+							pg_log_warning("skipping recursive expansion of variable \"%s\"",
 															  varname);
 							/* Instead copy the string as is */
 							ECHO;
@@ -745,9 +761,13 @@ other			.
 											 PQUOTE_SQL_IDENT);
 				}
 
+:\{\?{variable_char}+\}	{
+					psqlscan_test_variable(cur_state, yytext, yyleng);
+				}
+
 	/*
 	 * These rules just avoid the need for scanner backup if one of the
-	 * two rules above fails to match completely.
+	 * three rules above fails to match completely.
 	 */
 
 :'{variable_char}*	{
@@ -757,6 +777,17 @@ other			.
 				}
 
 :\"{variable_char}*	{
+					/* Throw back everything but the colon */
+					yyless(1);
+					ECHO;
+				}
+
+:\{\?{variable_char}*	{
+					/* Throw back everything but the colon */
+					yyless(1);
+					ECHO;
+				}
+:\{	{
 					/* Throw back everything but the colon */
 					yyless(1);
 					ECHO;
@@ -800,20 +831,33 @@ other			.
 					 * to forbid operator names like '?-' that could not be
 					 * sequences of SQL operators.
 					 */
-					while (nchars > 1 &&
-						   (yytext[nchars - 1] == '+' ||
-							yytext[nchars - 1] == '-'))
+					if (nchars > 1 &&
+						(yytext[nchars - 1] == '+' ||
+						 yytext[nchars - 1] == '-'))
 					{
 						int			ic;
 
 						for (ic = nchars - 2; ic >= 0; ic--)
 						{
-							if (strchr("~!@#^&|`?%", yytext[ic]))
+							char c = yytext[ic];
+							if (c == '~' || c == '!' || c == '@' ||
+								c == '#' || c == '^' || c == '&' ||
+								c == '|' || c == '`' || c == '?' ||
+								c == '%')
 								break;
 						}
-						if (ic >= 0)
-							break; /* found a char that makes it OK */
-						nchars--; /* else remove the +/-, and check again */
+						if (ic < 0)
+						{
+							/*
+							 * didn't find a qualifying character, so remove
+							 * all trailing [+-]
+							 */
+							do {
+								nchars--;
+							} while (nchars > 1 &&
+								 (yytext[nchars - 1] == '+' ||
+								  yytext[nchars - 1] == '-'));
+						}
 					}
 
 					if (nchars < yyleng)
@@ -844,10 +888,9 @@ other			.
 				}
 {realfail1}		{
 					/*
-					 * throw back the [Ee], and treat as {decimal}.  Note
-					 * that it is possible the input is actually {integer},
-					 * but since this case will almost certainly lead to a
-					 * syntax error anyway, we don't bother to distinguish.
+					 * throw back the [Ee], and figure out whether what
+					 * remains is an {integer} or {decimal}.
+					 * (in psql, we don't actually care...)
 					 */
 					yyless(yyleng - 1);
 					ECHO;
@@ -883,6 +926,8 @@ other			.
 				}
 
 %%
+
+/* LCOV_EXCL_STOP */
 
 /*
  * Create a lexer working state struct.
@@ -1440,5 +1485,30 @@ psqlscan_escape_variable(PsqlScanState state, const char *txt, int len,
 	{
 		/* Emit original token as-is */
 		psqlscan_emit(state, txt, len);
+	}
+}
+
+void
+psqlscan_test_variable(PsqlScanState state, const char *txt, int len)
+{
+	char	*varname;
+	char	*value;
+
+	varname = psqlscan_extract_substring(state, txt + 3, len - 4);
+	if (state->callbacks->get_variable)
+		value = state->callbacks->get_variable(varname, PQUOTE_PLAIN,
+											   state->cb_passthrough);
+	else
+		value = NULL;
+	free(varname);
+
+	if (value != NULL)
+	{
+		psqlscan_emit(state, "TRUE", 4);
+		free(value);
+	}
+	else
+	{
+		psqlscan_emit(state, "FALSE", 5);
 	}
 }

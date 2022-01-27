@@ -54,7 +54,10 @@ declare relnm text;
 begin
 for relnm, reloid, shared in
   select relname, oid, relisshared from pg_class
-  where relhasoids and oid < 16384 order by 1
+  where EXISTS(
+      SELECT * FROM pg_attribute
+      WHERE attrelid = pg_class.oid AND attname = 'oid')
+    and relkind = 'r' and oid < 16384 order by 1
 loop
   execute 'select min(oid) from ' || relnm into lowoid;
   continue when lowoid is null or lowoid >= 16384;
@@ -72,3 +75,22 @@ loop
   end if;
 end loop;
 end$$;
+
+-- **************** pg_class ****************
+
+-- Look for system tables with varlena columns but no toast table. All
+-- system tables with toastable columns should have toast tables, with
+-- the following exceptions:
+-- 1. pg_class, pg_attribute, and pg_index, due to fear of recursive
+-- dependencies as toast tables depend on them.
+-- 2. pg_largeobject and pg_largeobject_metadata.  Large object catalogs
+-- and toast tables are mutually exclusive and large object data is handled
+-- as user data by pg_upgrade, which would cause failures.
+
+SELECT relname, attname, atttypid::regtype
+FROM pg_class c JOIN pg_attribute a ON c.oid = attrelid
+WHERE c.oid < 16384 AND
+      reltoastrelid = 0 AND
+      relkind = 'r' AND
+      attstorage != 'p'
+ORDER BY 1, 2;

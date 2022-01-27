@@ -4,7 +4,7 @@
  *		Common support routines for bin/scripts/
  *
  *
- * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/common.c
@@ -18,9 +18,12 @@
 #include <unistd.h>
 
 #include "common.h"
+#include "common/logging.h"
 #include "fe_utils/connect.h"
 #include "fe_utils/string_utils.h"
 
+
+#define PQmblenBounded(s, e)  strnlen(s, PQmblen(s, e))
 
 static PGcancel *volatile cancelConn = NULL;
 bool		CancelRequested = false;
@@ -57,7 +60,7 @@ handle_help_version_opts(int argc, char *argv[],
  * Make a database connection with the given parameters.
  *
  * An interactive password prompt is automatically issued if needed and
- * allowed by prompt_password.
+ * allowed by cparams->prompt_password.
  *
  * If allow_password_reuse is true, we will try to re-use any password
  * given during previous calls to this routine.  (Callers should not pass
@@ -65,9 +68,7 @@ handle_help_version_opts(int argc, char *argv[],
  * as before, else we might create password exposure hazards.)
  */
 PGconn *
-connectDatabase(const char *dbname, const char *pghost,
-				const char *pgport, const char *pguser,
-				enum trivalue prompt_password, const char *progname,
+connectDatabase(const ConnParams *cparams, const char *progname,
 				bool echo, bool fail_ok, bool allow_password_reuse)
 {
 	PGconn	   *conn;
@@ -75,10 +76,13 @@ connectDatabase(const char *dbname, const char *pghost,
 	static bool have_password = false;
 	static char password[100];
 
+	/* Callers must supply at least dbname; other params can be NULL */
+	Assert(cparams->dbname);
+
 	if (!allow_password_reuse)
 		have_password = false;
 
-	if (!have_password && prompt_password == TRI_YES)
+	if (cparams->prompt_password == TRI_YES && !have_password)
 	{
 		simple_prompt("Password: ", password, sizeof(password), false);
 		have_password = true;
@@ -90,31 +94,43 @@ connectDatabase(const char *dbname, const char *pghost,
 	 */
 	do
 	{
-		const char *keywords[7];
-		const char *values[7];
+		const char *keywords[8];
+		const char *values[8];
+		int			i = 0;
 
-		keywords[0] = "host";
-		values[0] = pghost;
-		keywords[1] = "port";
-		values[1] = pgport;
-		keywords[2] = "user";
-		values[2] = pguser;
-		keywords[3] = "password";
-		values[3] = have_password ? password : NULL;
-		keywords[4] = "dbname";
-		values[4] = dbname;
-		keywords[5] = "fallback_application_name";
-		values[5] = progname;
-		keywords[6] = NULL;
-		values[6] = NULL;
+		/*
+		 * If dbname is a connstring, its entries can override the other
+		 * values obtained from cparams; but in turn, override_dbname can
+		 * override the dbname component of it.
+		 */
+		keywords[i] = "host";
+		values[i++] = cparams->pghost;
+		keywords[i] = "port";
+		values[i++] = cparams->pgport;
+		keywords[i] = "user";
+		values[i++] = cparams->pguser;
+		keywords[i] = "password";
+		values[i++] = have_password ? password : NULL;
+		keywords[i] = "dbname";
+		values[i++] = cparams->dbname;
+		if (cparams->override_dbname)
+		{
+			keywords[i] = "dbname";
+			values[i++] = cparams->override_dbname;
+		}
+		keywords[i] = "fallback_application_name";
+		values[i++] = progname;
+		keywords[i] = NULL;
+		values[i++] = NULL;
+		Assert(i <= lengthof(keywords));
 
 		new_pass = false;
 		conn = PQconnectdbParams(keywords, values, true);
 
 		if (!conn)
 		{
-			fprintf(stderr, _("%s: could not connect to database %s: out of memory\n"),
-					progname, dbname);
+			pg_log_error("could not connect to database %s: out of memory",
+						 cparams->dbname);
 			exit(1);
 		}
 
@@ -123,7 +139,7 @@ connectDatabase(const char *dbname, const char *pghost,
 		 */
 		if (PQstatus(conn) == CONNECTION_BAD &&
 			PQconnectionNeedsPassword(conn) &&
-			prompt_password != TRI_NO)
+			cparams->prompt_password != TRI_NO)
 		{
 			PQfinish(conn);
 			simple_prompt("Password: ", password, sizeof(password), false);
@@ -140,41 +156,44 @@ connectDatabase(const char *dbname, const char *pghost,
 			PQfinish(conn);
 			return NULL;
 		}
-		fprintf(stderr, _("%s: could not connect to database %s: %s"),
-				progname, dbname, PQerrorMessage(conn));
+		pg_log_error("could not connect to database %s: %s",
+					 cparams->dbname, PQerrorMessage(conn));
 		exit(1);
 	}
 
-	if (PQserverVersion(conn) >= 70300)
-		PQclear(executeQuery(conn, ALWAYS_SECURE_SEARCH_PATH_SQL,
-							 progname, echo));
+	/* Start strict; callers may override this. */
+	PQclear(executeQuery(conn, ALWAYS_SECURE_SEARCH_PATH_SQL,
+						 progname, echo));
 
 	return conn;
 }
 
 /*
  * Try to connect to the appropriate maintenance database.
+ *
+ * This differs from connectDatabase only in that it has a rule for
+ * inserting a default "dbname" if none was given (which is why cparams
+ * is not const).  Note that cparams->dbname should typically come from
+ * a --maintenance-db command line parameter.
  */
 PGconn *
-connectMaintenanceDatabase(const char *maintenance_db,
-						   const char *pghost, const char *pgport,
-						   const char *pguser, enum trivalue prompt_password,
+connectMaintenanceDatabase(ConnParams *cparams,
 						   const char *progname, bool echo)
 {
 	PGconn	   *conn;
 
 	/* If a maintenance database name was specified, just connect to it. */
-	if (maintenance_db)
-		return connectDatabase(maintenance_db, pghost, pgport, pguser,
-							   prompt_password, progname, echo, false, false);
+	if (cparams->dbname)
+		return connectDatabase(cparams, progname, echo, false, false);
 
 	/* Otherwise, try postgres first and then template1. */
-	conn = connectDatabase("postgres", pghost, pgport, pguser, prompt_password,
-						   progname, echo, true, false);
+	cparams->dbname = "postgres";
+	conn = connectDatabase(cparams, progname, echo, true, false);
 	if (!conn)
-		conn = connectDatabase("template1", pghost, pgport, pguser,
-							   prompt_password, progname, echo, false, false);
-
+	{
+		cparams->dbname = "template1";
+		conn = connectDatabase(cparams, progname, echo, false, false);
+	}
 	return conn;
 }
 
@@ -193,10 +212,8 @@ executeQuery(PGconn *conn, const char *query, const char *progname, bool echo)
 	if (!res ||
 		PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
-		fprintf(stderr, _("%s: query failed: %s"),
-				progname, PQerrorMessage(conn));
-		fprintf(stderr, _("%s: query was: %s\n"),
-				progname, query);
+		pg_log_error("query failed: %s", PQerrorMessage(conn));
+		pg_log_info("query was: %s", query);
 		PQfinish(conn);
 		exit(1);
 	}
@@ -221,10 +238,8 @@ executeCommand(PGconn *conn, const char *query,
 	if (!res ||
 		PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, _("%s: query failed: %s"),
-				progname, PQerrorMessage(conn));
-		fprintf(stderr, _("%s: query was: %s\n"),
-				progname, query);
+		pg_log_error("query failed: %s", PQerrorMessage(conn));
+		pg_log_info("query was: %s", query);
 		PQfinish(conn);
 		exit(1);
 	}
@@ -265,9 +280,9 @@ executeMaintenanceCommand(PGconn *conn, const char *query, bool echo)
  * finish using them, pg_free(*table).  *columns is a pointer into "spec",
  * possibly to its NUL terminator.
  */
-static void
-split_table_columns_spec(const char *spec, int encoding,
-						 char **table, const char **columns)
+void
+splitTableColumnsSpec(const char *spec, int encoding,
+					  char **table, const char **columns)
 {
 	bool		inquotes = false;
 	const char *cp = spec;
@@ -287,7 +302,7 @@ split_table_columns_spec(const char *spec, int encoding,
 			cp++;
 		}
 		else
-			cp += PQmblen(cp, encoding);
+			cp += PQmblenBounded(cp, encoding);
 	}
 	*table = pg_strdup(spec);
 	(*table)[cp - spec] = '\0'; /* no strndup */
@@ -311,14 +326,7 @@ appendQualifiedRelation(PQExpBuffer buf, const char *spec,
 	PGresult   *res;
 	int			ntups;
 
-	/* Before 7.3, the concept of qualifying a name did not exist. */
-	if (PQserverVersion(conn) < 70300)
-	{
-		appendPQExpBufferStr(&sql, spec);
-		return;
-	}
-
-	split_table_columns_spec(spec, PQclientEncoding(conn), &table, &columns);
+	splitTableColumnsSpec(spec, PQclientEncoding(conn), &table, &columns);
 
 	/*
 	 * Query must remain ABSOLUTELY devoid of unqualified names.  This would
@@ -335,7 +343,7 @@ appendQualifiedRelation(PQExpBuffer buf, const char *spec,
 	appendStringLiteralConn(&sql, table, conn);
 	appendPQExpBufferStr(&sql, "::pg_catalog.regclass;");
 
-	executeCommand(conn, "RESET search_path", progname, echo);
+	executeCommand(conn, "RESET search_path;", progname, echo);
 
 	/*
 	 * One row is a typical result, as is a nonexistent relation ERROR.
@@ -347,17 +355,15 @@ appendQualifiedRelation(PQExpBuffer buf, const char *spec,
 	ntups = PQntuples(res);
 	if (ntups != 1)
 	{
-		fprintf(stderr,
-				ngettext("%s: query returned %d row instead of one: %s\n",
-						 "%s: query returned %d rows instead of one: %s\n",
-						 ntups),
-				progname, ntups, sql.data);
+		pg_log_error(ngettext("query returned %d row instead of one: %s",
+							  "query returned %d rows instead of one: %s",
+							  ntups),
+					 ntups, sql.data);
 		PQfinish(conn);
 		exit(1);
 	}
 	appendPQExpBufferStr(buf,
-						 fmtQualifiedId(PQserverVersion(conn),
-										PQgetvalue(res, 0, 1),
+						 fmtQualifiedId(PQgetvalue(res, 0, 1),
 										PQgetvalue(res, 0, 0)));
 	appendPQExpBufferStr(buf, columns);
 	PQclear(res);

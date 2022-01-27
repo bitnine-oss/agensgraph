@@ -13,7 +13,7 @@
 
 #include "parser/parse_node.h"
 
-extern bool enable_eager;
+extern PGDLLIMPORT bool enable_eager;
 
 extern Query *transformCypherSubPattern(ParseState *pstate,
 										CypherSubPattern *subpat);
@@ -31,5 +31,7 @@ extern Query *transformCypherMergeClause(ParseState *pstate,
 										 CypherClause *clause);
 extern Query *transformCypherLoadClause(ParseState *pstate,
 										CypherClause *clause);
+extern Query *transformCypherUnwindClause(ParseState *pstate,
+										  CypherClause *clause);
 
 #endif	/* PARSE_GRAPH_H */
