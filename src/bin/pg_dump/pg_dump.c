@@ -308,7 +308,6 @@ static void dumpDatabaseGraphPath(Archive *fout, const char *dbname);
 static void makeAlterGraphPathConfigCommand(Archive *fout,PGconn *conn,
                                             const char *arrayitem,
                                             const char *name);
-static const char *extractDatabaseName(const char *name);
 
 int
 main(int argc, char **argv)
@@ -18829,20 +18828,6 @@ appendReloptionsArrayAH(PQExpBuffer buffer, const char *reloptions,
 								fout->std_strings);
 	if (!res)
 		pg_log_warning("could not parse reloptions array");
-}
-
-/*
- * extract the database name from the command line arguements.
- * Note: database is a required command line arguement
- */
-static const char *
-extractDatabaseName(const char *name)
-{
-	char *pos;
-
-	pos = strchr(name, '=');
-
-	return pos + 1;
 }
 
 /*

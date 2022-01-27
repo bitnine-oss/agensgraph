@@ -475,7 +475,6 @@ void
 create_lateral_join_info(PlannerInfo *root)
 {
 	bool		found_laterals = false;
-	Relids		prev_parents PG_USED_FOR_ASSERTS_ONLY = NULL;
 	Index		rti;
 	ListCell   *lc;
 

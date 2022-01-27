@@ -111,13 +111,11 @@ static	PLpgSQL_expr	*read_cursor_args(PLpgSQL_var *cursor,
 static	List			*read_raise_options(void);
 static	void			check_raise_parameters(PLpgSQL_stmt_raise *stmt);
 
-static char *preserve_downcasing_ident(char *ident);
-
 /*
  * for Cypher
  */
 static	PLpgSQL_stmt	*make_execcypher_stmt(int firsttoken, int location);
-static	void			read_into_cypher_target(PLpgSQL_row **row, bool *strict);
+static	void			read_into_cypher_target(PLpgSQL_variable **target, bool *strict);
 static	void			read_into_list(char *initial_name,
 									   PLpgSQL_datum *initial_datum,
 									   int initial_location,
@@ -4141,16 +4139,6 @@ make_case(int location, PLpgSQL_expr *t_expr,
 	return (PLpgSQL_stmt *) new;
 }
 
-/* downcase identifier for user convenience if case_sensitive_ident is on */
-static char *
-preserve_downcasing_ident(char *ident)
-{
-	if (case_sensitive_ident)
-		ident = downcase_identifier(ident, strlen(ident), false, false);
-
-	return ident;
-}
-
 /*
  * for Cypher
  */
@@ -4275,12 +4263,12 @@ make_execcypher_stmt(int firsttoken, int location)
 
 /* see read_into_target() */
 static void
-read_into_cypher_target(PLpgSQL_row **row, bool *strict)
+read_into_cypher_target(PLpgSQL_variable **target, bool *strict)
 {
 	int			tok;
 
 	/* Set default results */
-	*row = NULL;
+	*target = NULL;
 	if (strict)
 		*strict = false;
 
@@ -4291,23 +4279,30 @@ read_into_cypher_target(PLpgSQL_row **row, bool *strict)
 		tok = yylex();
 	}
 
-	switch (tok)
-	{
-		case T_DATUM:
-			if (yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_REC)
-			{
-				ereport(ERROR,
-						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("record cannot be part of INTO list for cypher"),
-						 parser_errposition(yylloc)));
-			}
-			else
-			{
-				read_into_list(NameOfDatum(&(yylval.wdatum)),
-						yylval.wdatum.datum, yylloc,
-						row);
-			}
-			break;
+        switch (tok)
+        {
+                case T_DATUM:
+                        if (yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_ROW ||
+                                yylval.wdatum.datum->dtype == PLPGSQL_DTYPE_REC)
+                        {
+                                check_assignable(yylval.wdatum.datum, yylloc);
+                                *target = (PLpgSQL_variable *) yylval.wdatum.datum;
+
+                                if ((tok = yylex()) == ',')
+                                        ereport(ERROR,
+                                                        (errcode(ERRCODE_SYNTAX_ERROR),
+                                                         errmsg("record variable cannot be part of multiple-item INTO list for cypher"),
+                                                         parser_errposition(yylloc)));
+                                plpgsql_push_back_token(tok);
+                        }
+                        else
+                        {
+                                *target = (PLpgSQL_variable *)
+                                        read_into_scalar_list(NameOfDatum(&(yylval.wdatum)),
+                                                                                  yylval.wdatum.datum, yylloc);
+                        }
+                        break;
+
 
 		default:
 			/* just to give a better message than "syntax error" */
