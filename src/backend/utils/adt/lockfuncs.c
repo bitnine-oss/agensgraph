@@ -18,8 +18,11 @@
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "storage/predicate_internals.h"
+#include "storage/proc.h"
+#include "storage/procarray.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/wait_event.h"
 
 
 /*
@@ -600,6 +603,7 @@ pg_safe_snapshot_blocking_pids(PG_FUNCTION_ARGS)
 Datum
 pg_isolation_test_session_is_blocked(PG_FUNCTION_ARGS)
 {
+	PGPROC	   *blocked_proc;
 	int			blocked_pid = PG_GETARG_INT32(0);
 	ArrayType  *interesting_pids_a = PG_GETARG_ARRAYTYPE_P(1);
 	ArrayType  *blocking_pids_a;
@@ -658,6 +662,10 @@ pg_isolation_test_session_is_blocked(PG_FUNCTION_ARGS)
 	 * buffer and check if the number of safe snapshot blockers is non-zero.
 	 */
 	if (GetSafeSnapshotBlockingPids(blocked_pid, &dummy, 1) > 0)
+		PG_RETURN_BOOL(true);
+
+	blocked_proc = BackendPidGetProc(blocked_pid);
+	if ((blocked_proc->wait_event_info & 0xFF000000) == PG_WAIT_EXTENSION)
 		PG_RETURN_BOOL(true);
 
 	PG_RETURN_BOOL(false);
