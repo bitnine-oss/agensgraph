@@ -67,6 +67,7 @@ extern RBTree *rbt_create(Size node_size,
 						  void *arg);
 
 extern RBTNode *rbt_find(RBTree *rbt, const RBTNode *data);
+extern RBTNode *rbt_find_great_equal(RBTree *rbt, const RBTNode *data);
 extern RBTNode *rbt_leftmost(RBTree *rbt);
 
 extern RBTNode *rbt_insert(RBTree *rbt, const RBTNode *data, bool *isNew);
