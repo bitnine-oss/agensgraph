@@ -3591,7 +3591,7 @@ ExecInitCypherTypeCast(ExprEvalStep *scratch, CypherTypeCast *tc,
 					scratch->resvalue, scratch->resnull);
 
 	finfo_in = palloc0(sizeof(FmgrInfo));
-	fcinfo_data_in = palloc0(SizeForFunctionCallInfo(2));
+	fcinfo_data_in = palloc0(SizeForFunctionCallInfo(3));
 
 	getTypeInputInfo(tc->type, &infunc, &typinparam);
 
