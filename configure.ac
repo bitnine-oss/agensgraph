@@ -562,6 +562,10 @@ if test "$GCC" = yes -a "$ICC" = no; then
   if test -n "$NOT_THE_CFLAGS"; then
     CFLAGS="$CFLAGS -Wno-stringop-truncation"
   fi
+  if test x"$host_cpu" == x"aarch64"; then
+    PGAC_PROG_CC_CFLAGS_OPT([-moutline-atomics])
+    PGAC_PROG_CXX_CFLAGS_OPT([-moutline-atomics])
+  fi
 elif test "$ICC" = yes; then
   # Intel's compiler has a bug/misoptimization in checking for
   # division by NAN (NaN == 0), -mp1 fixes it, so add it to the CFLAGS.
