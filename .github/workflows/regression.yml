@@ -1,0 +1,26 @@
+name: regression
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: configure --prefix=/home/runner/work/agensgraph/agensgraph/pgsql
+        env:
+          CC: 'clang'
+          CXX: 'clang++'
+        run: ./configure --prefix=/home/runner/work/agensgraph/agensgraph/pgsql
+      - name: make install
+        run: make install -j$(nproc)
+      - name: initdb
+        run: /home/runner/work/agensgraph/agensgraph/pgsql/bin/initdb -D /home/runner/work/agensgraph/agensgraph/pgsql/data
+      - name: starting database
+        run: /home/runner/work/agensgraph/agensgraph/pgsql/bin/pg_ctl -D /home/runner/work/agensgraph/agensgraph/pgsql/data start
+      - name: make installcheck
+        run: make installcheck-parallel
