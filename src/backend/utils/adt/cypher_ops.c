@@ -175,7 +175,7 @@ jsonb_uminus(PG_FUNCTION_ARGS)
 static Jsonb *
 jnumber_op(PGFunction f, Jsonb *l, Jsonb *r)
 {
-	FunctionCallInfoBaseData fcinfo;
+	FunctionCallInfo fcinfo;
 	JsonbValue *jv;
 	Datum		n;
 
@@ -184,7 +184,8 @@ jnumber_op(PGFunction f, Jsonb *l, Jsonb *r)
 	if (!((l == NULL || JB_ROOT_IS_SCALAR(l)) && JB_ROOT_IS_SCALAR(r)))
 		ereport_op(f, l, r);
 
-	InitFunctionCallInfoData(fcinfo, NULL, 0, InvalidOid, NULL, NULL);
+	fcinfo = palloc0(SizeForFunctionCallInfo(2));
+	InitFunctionCallInfoData(*fcinfo, NULL, 0, InvalidOid, NULL, NULL);
 
 	if (l != NULL)
 	{
@@ -192,29 +193,29 @@ jnumber_op(PGFunction f, Jsonb *l, Jsonb *r)
 		if (jv->type != jbvNumeric)
 			ereport_op(f, l, r);
 
-		fcinfo.args[fcinfo.nargs].value = NumericGetDatum(jv->val.numeric);
-		fcinfo.args[fcinfo.nargs].isnull = false;
-		fcinfo.nargs++;
+		fcinfo->args[fcinfo->nargs].value = NumericGetDatum(jv->val.numeric);
+		fcinfo->args[fcinfo->nargs].isnull = false;
+		fcinfo->nargs++;
 	}
 
 	jv = getIthJsonbValueFromContainer(&r->root, 0);
 	if (jv->type != jbvNumeric)
 		ereport_op(f, l, r);
 
-	fcinfo.args[fcinfo.nargs].value = NumericGetDatum(jv->val.numeric);
-	fcinfo.args[fcinfo.nargs].isnull = false;
-	fcinfo.nargs++;
+	fcinfo->args[fcinfo->nargs].value = NumericGetDatum(jv->val.numeric);
+	fcinfo->args[fcinfo->nargs].isnull = false;
+	fcinfo->nargs++;
 
-	n = (*f) (&fcinfo);
-	if (fcinfo.isnull)
+	n = (*f) (fcinfo);
+	if (fcinfo->isnull)
 		elog(ERROR, "function %p returned NULL", (void *) f);
 
 	if (f == numeric_power || f == numeric_div)
 	{
 		int			s;
 
-		s = DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo.args[0].value)) +
-			DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo.args[1].value));
+		s = DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo->args[0].value)) +
+			DatumGetInt32(DirectFunctionCall1(numeric_scale, fcinfo->args[1].value));
 		if (s == 0)
 			n = DirectFunctionCall2(numeric_trunc, n, 0);
 	}
@@ -285,99 +286,6 @@ ereport_op_str(const char *op, Jsonb *l, Jsonb *r)
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg(msgfmt, lstr, op, rstr)));
 }
-
-/* Commented by Hamid - Duplicate symbol
- *
-
-Datum
-bool_jsonb(PG_FUNCTION_ARGS)
-{
-	bool		b = PG_GETARG_BOOL(0);
-	JsonbValue	jv;
-
-	jv.type = jbvBool;
-	jv.val.boolean = b;
-
-	PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
-}
-
-Datum
-jsonb_int8(PG_FUNCTION_ARGS)
-{
-	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB_P(0), numeric_int8));
-}
-
-Datum
-jsonb_int4(PG_FUNCTION_ARGS)
-{
-	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB_P(0), numeric_int4));
-}
-
-Datum
-jsonb_numeric(PG_FUNCTION_ARGS)
-{
-	Jsonb	   *j = PG_GETARG_JSONB_P(0);
-
-	if (JB_ROOT_IS_SCALAR(j))
-	{
-		JsonbValue *jv;
-
-		jv = getIthJsonbValueFromContainer(&j->root, 0);
-		if (jv->type == jbvNumeric)
-			PG_RETURN_DATUM(datumCopy(NumericGetDatum(jv->val.numeric), false,
-													  -1));
-	}
-
-	ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("%s cannot be converted to numeric",
-					JsonbToCString(NULL, &j->root, VARSIZE(j)))));
-	PG_RETURN_NULL();
-}
-
-Datum
-jsonb_float8(PG_FUNCTION_ARGS)
-{
-	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB_P(0), numeric_float8));
-}
-
-static Datum
-jsonb_num(Jsonb *j, PGFunction f)
-{
-	const char *type;
-
-	if (f == numeric_int8)
-		type = "int8";
-	else if (f == numeric_int4)
-		type = "int4";
-	else if (f == numeric_float8)
-		type = "float8";
-	else
-		elog(ERROR, "unexpected type");
-
-	if (JB_ROOT_IS_SCALAR(j))
-	{
-		JsonbValue *jv;
-
-		jv = getIthJsonbValueFromContainer(&j->root, 0);
-		if (jv->type == jbvNumeric)
-		{
-			Datum		n;
-
-			n = DirectFunctionCall1(f, NumericGetDatum(jv->val.numeric));
-
-			return n;
-		}
-	}
-
-	ereport(ERROR,
-			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-			 errmsg("%s cannot be converted to %s",
-					JsonbToCString(NULL, &j->root, VARSIZE(j)), type)));
-	return 0;
-}
-
-*/
 
 Datum
 numeric_graphid(PG_FUNCTION_ARGS)
