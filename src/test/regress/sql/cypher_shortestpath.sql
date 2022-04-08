@@ -41,15 +41,35 @@ MATCH (p:person), (f:person) WHERE p.id = 3
 RETURN ids(nodes(shortestpath((p)<-[:knows]-(f)))) AS ids;
 
 MATCH (p:person), (f:person) WHERE p.id = 3
-RETURN ids(nodes(shortestpath((p)-[:knows*]-(f)))) AS ids;
+RETURN ids(nodes(shortestpath((p)-[:knows*]->(f)))) AS ids;
 
-MATCH (p:person), (f:person), x=shortestpath((p)-[:knows*]-(f))
+MATCH (p:person), (f:person) WHERE p.id = 3
+RETURN ids(nodes(shortestpath((p)<-[:knows*]-(f)))) AS ids;
+
+MATCH (p:person), (f:person) WHERE p.id = 3
+RETURN p.id as pid, length(ids(nodes(shortestpath((p)-[:knows*]-(f))))), f.id as fid
+ORDER BY pid, fid;
+
+MATCH (p:person), (f:person), x=shortestpath((p)-[:knows*]->(f))
+WHERE p.id = 3
+RETURN ids(nodes(x)) AS ids;
+
+MATCH x=shortestpath((p:person)-[:knows*]->(f:person))
+WHERE p.id = 3
+RETURN ids(nodes(x)) AS ids;
+
+MATCH (p:person), (f:person), x=shortestpath((p)<-[:knows*]-(f))
+WHERE p.id = 3
+RETURN ids(nodes(x)) AS ids;
+
+MATCH x=shortestpath((p:person)<-[:knows*]-(f:person))
 WHERE p.id = 3
 RETURN ids(nodes(x)) AS ids;
 
 MATCH x=shortestpath((p:person)-[:knows*]-(f:person))
 WHERE p.id = 3
-RETURN ids(nodes(x)) AS ids;
+RETURN p.id as pid, f.id as fid, length(ids(nodes(x)))
+ORDER BY pid, fid;
 
 MATCH (p:person), (f:person) WHERE p.id = 3
 RETURN ids(nodes(shortestpath((p)-[:knows*0..1]-(f)))) AS ids;
