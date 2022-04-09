@@ -884,17 +884,17 @@ jsonb_trim(PG_FUNCTION_ARGS)
 static Jsonb *
 FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo)
 {
-	FunctionCallInfoBaseData fcinfo;
+	FunctionCallInfo fcinfo;
 	int			i;
 	Datum		result;
 
 	if (fcjinfo->nargs > FUNC_JSONB_MAX_ARGS)
 	{
 		elog(ERROR, "unexpected number of arguments: %d", fcjinfo->nargs);
-		return NULL;
 	}
 
-	InitFunctionCallInfoData(fcinfo, NULL, fcjinfo->nargs,
+	fcinfo = palloc0(SizeForFunctionCallInfo(fcjinfo->nargs));
+	InitFunctionCallInfoData(*fcinfo, NULL, fcjinfo->nargs,
 							 DEFAULT_COLLATION_OID, NULL, NULL);
 
 	for (i = 0; i < fcjinfo->nargs; i++)
@@ -902,11 +902,11 @@ FunctionCallJsonb(FunctionCallJsonbInfo *fcjinfo)
 		if (!JB_ROOT_IS_SCALAR(fcjinfo->args[i]))
 			ereport_invalid_jsonb_param(fcjinfo);
 
-		fcinfo.args[i].value = jsonb_to_datum(fcjinfo->args[i], fcjinfo->argtypes[i]);
-		fcinfo.args[i].isnull = false;
+		fcinfo->args[i].value = jsonb_to_datum(fcjinfo->args[i], fcjinfo->argtypes[i]);
+		fcinfo->args[i].isnull = false;
 	}
 
-	result = (*fcjinfo->fn) (&fcinfo);
+	result = (*fcjinfo->fn) (fcinfo);
 
 	return datum_to_jsonb(result, fcjinfo->rettype);
 }
