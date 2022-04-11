@@ -286,6 +286,11 @@ ExecShortestpath(PlanState *pstate)
 											if (tuple->t_len !=
 												sizeof(*tuple) + sizeof(Graphid) + node->sp_RowidSize)
 												innerNode->totalPaths += 1;
+
+											if (shouldFree)
+											{
+												heap_free_minimal_tuple(tuple);
+											}
 										}
 									}
 								}
@@ -437,6 +442,11 @@ ExecShortestpath(PlanState *pstate)
 
 					hashvalue = hash_any((unsigned char *) (outerTuple + 1), sizeof(Graphid));
 
+					if (shouldFree)
+					{
+						heap_free_minimal_tuple(outerTuple);
+					}
+
 					if (ExecHash2SideTableInsertTuple(outertable,
 													  node->sp_OuterTuple,
 													  hashvalue,
@@ -478,15 +488,12 @@ ExecShortestpath(PlanState *pstate)
 				/*
 				 * We don't have an outer tuple, try to get the next one
 				 */
-				bool shouldFree;
 				outerTupleSlot = ExecShortestpathOuterGetTuple(node, &hashvalue);
 				if (TupIsNull(outerTupleSlot))
 				{
 					node->sp_JoinState = SP_NEED_NEW_BATCH;
 					continue;
 				}
-
-				outerTuple = ExecFetchSlotMinimalTuple(outerTupleSlot, &shouldFree);
 
 				/*
 				 * Find the corresponding bucket for this tuple in the main
@@ -532,21 +539,21 @@ ExecShortestpath(PlanState *pstate)
 
 					if (otherqual == NULL || ExecQual(otherqual, econtext))
 					{
-						bool shouldFree;
+						bool outerShouldFree, innerShouldFree;
 						TupleTableSlot *result;
 						int             outerHops;
 						int             innerHops;
 						if (outerPlanState(node) == (PlanState *) outerNode)
 						{
-							outerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_outertuple, &shouldFree);
-							innerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_innertuple, &shouldFree);
+							outerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_outertuple, &outerShouldFree);
+							innerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_innertuple, &innerShouldFree);
 							outerHops = outerNode->hops;
 							innerHops = innerNode->hops;
 						}
 						else
 						{
-							outerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_innertuple, &shouldFree);
-							innerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_outertuple, &shouldFree);
+							outerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_innertuple, &outerShouldFree);
+							innerTuple = ExecFetchSlotMinimalTuple(econtext->ecxt_outertuple, &innerShouldFree);
 							outerHops = innerNode->hops;
 							innerHops = outerNode->hops;
 						}
@@ -557,6 +564,17 @@ ExecShortestpath(PlanState *pstate)
 														 innerHops,
 														 sizeof(Graphid),
 														 node->sp_RowidSize);
+
+						if (outerShouldFree)
+						{
+							heap_free_minimal_tuple(outerTuple);
+						}
+
+						if (innerShouldFree)
+						{
+							heap_free_minimal_tuple(innerTuple);
+						}
+
 						node->numResults++;
 						if (node->numResults >= node->limit)
 						{
@@ -967,7 +985,7 @@ replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
 	Assert(tupleDesc != NULL);
 	Assert(vertexRow != NULL);
 
-	attribute = &(tupleDesc->attrs[Anum_vertex_id-1]);
+	attribute = TupleDescAttr(tupleDesc, Anum_vertex_id - 1);
 
 	/* This function only works for element 1, graphid, by value */
 	Assert(attribute->attbyval);
@@ -1106,6 +1124,12 @@ ExecShortestpathRescanOuterNode(Hash2SideState *node, ShortestpathState *spstate
 					   sizeof(Graphid) + spstate->sp_RowidSize,
 					   tuple + 1,
 					   tuple->t_len - sizeof(*tuple));
+
+				if (shouldFree)
+				{
+					heap_free_minimal_tuple(tuple);
+				}
+
 				spstate->sp_OuterTuple->t_len += sizeof(Graphid) + spstate->sp_RowidSize;
 				paramno = node->correctedParam->paramid;
 				prm = &(spstate->js.ps.ps_ExprContext->ecxt_param_exec_vals[paramno]);
