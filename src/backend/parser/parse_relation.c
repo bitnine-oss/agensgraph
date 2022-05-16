@@ -3183,6 +3183,9 @@ get_rte_attribute_name(RangeTblEntry *rte, AttrNumber attnum)
 		attnum > 0 && attnum <= list_length(rte->alias->colnames))
 		return strVal(list_nth(rte->alias->colnames, attnum - 1));
 
+	if (attnum == RowIdAttributeNumber)
+		return "rowid";
+
 	/*
 	 * If the RTE is a relation, go to the system catalogs not the
 	 * eref->colnames list.  This is a little slower but it will give the
