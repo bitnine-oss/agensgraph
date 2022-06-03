@@ -608,7 +608,7 @@ repairTargetListCollations(List *targetList)
 		{
 			FuncExpr	*fexpr = (FuncExpr *) expr;
 
-			if (fexpr->funcid != F_TO_JSONB)
+			if (fexpr->funcid != F_CYPHER_TO_JSONB)
 				continue;
 
 			if (fexpr->funccollid == InvalidOid &&

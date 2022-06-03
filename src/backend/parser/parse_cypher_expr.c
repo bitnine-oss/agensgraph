@@ -41,10 +41,11 @@
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
-#include "utils/builtins.h"
-#include "utils/jsonb.h"
-#include "utils/lsyscache.h"
 #include "parser/parse_cypher_utils.h"
+#include "utils/lsyscache.h"
+#include "utils/builtins.h"
+#include "utils/fmgroids.h"
+#include "utils/jsonb.h"
 
 static Node *transformCypherExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref);
@@ -2064,9 +2065,9 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 		{
 			Node	   *last_srf = pstate->p_last_srf;
 
-			return ParseFuncOrColumn(pstate,
-									 list_make1(makeString("to_jsonb")),
-									 list_make1(expr), last_srf, NULL, false, loc);
+			return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
+										 list_make1(expr), InvalidOid,
+										 InvalidOid, COERCE_IMPLICIT_CAST);
 		}
 	}
 
@@ -2242,12 +2243,9 @@ coerce_all_to_jsonb(ParseState *pstate, Node *expr)
 
 	if (TypeCategory(getBaseType(type)) == TYPCATEGORY_STRING)
 	{
-		return ParseFuncOrColumn(pstate,
-								 list_make1(makeString("to_jsonb")),
-								 list_make1(expr),
-								 pstate->p_last_srf, NULL,
-								 false,
-		                         exprLocation(expr));
+		return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
+									 list_make1(expr), InvalidOid,
+									 InvalidOid, COERCE_IMPLICIT_CAST);
 	}
 
 	expr = coerce_expr(pstate, expr, type, JSONBOID, -1,
