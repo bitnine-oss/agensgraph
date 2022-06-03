@@ -608,18 +608,18 @@ SET enable_seqscan = off;
 EXPLAIN (costs off)
   MATCH (n:v2) WHERE n.i IN [1, 2, 3]
   RETURN n;
-                                        QUERY PLAN                                         
--------------------------------------------------------------------------------------------
+                           QUERY PLAN                            
+-----------------------------------------------------------------
  Index Scan using v2_i_idx on v2 n
-   Index Cond: (properties.'i'::text = ANY (ARRAY[to_jsonb(1), to_jsonb(2), to_jsonb(3)]))
+   Index Cond: (properties.'i'::text = ANY ('{1,2,3}'::jsonb[]))
 (2 rows)
 
 EXPLAIN (costs off)
   MATCH (n1:v2 {name: 'seven'}), (n2:v2 {name: 'nine'})
   MATCH (n:v2) WHERE n.i IN [n1.i, 8, n2.i]
   RETURN n;
-                                                                              QUERY PLAN                                                                              
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                             QUERY PLAN                                                                              
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Nested Loop
    ->  Nested Loop
          ->  Seq Scan on v2 n1
@@ -627,12 +627,12 @@ EXPLAIN (costs off)
          ->  Seq Scan on v2 n2
                Filter: (properties.'name'::text = '"nine"'::jsonb)
    ->  Bitmap Heap Scan on v2 n
-         Recheck Cond: ((properties.'i'::text = n1.properties.'i'::text) OR (properties.'i'::text = to_jsonb(8)) OR (properties.'i'::text = n2.properties.'i'::text))
+         Recheck Cond: ((properties.'i'::text = n1.properties.'i'::text) OR (properties.'i'::text = '8'::jsonb) OR (properties.'i'::text = n2.properties.'i'::text))
          ->  BitmapOr
                ->  Bitmap Index Scan on v2_i_idx
                      Index Cond: (properties.'i'::text = n1.properties.'i'::text)
                ->  Bitmap Index Scan on v2_i_idx
-                     Index Cond: (properties.'i'::text = to_jsonb(8))
+                     Index Cond: (properties.'i'::text = '8'::jsonb)
                ->  Bitmap Index Scan on v2_i_idx
                      Index Cond: (properties.'i'::text = n2.properties.'i'::text)
 (15 rows)
