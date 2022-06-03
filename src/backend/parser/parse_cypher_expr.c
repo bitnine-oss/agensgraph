@@ -44,6 +44,7 @@
 #include "utils/builtins.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
+#include "parser/parse_cypher_utils.h"
 
 static Node *transformCypherExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref);
@@ -475,7 +476,6 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 	ListCell   *lf;
 	Value	   *field;
 	List	   *path = NIL;
-	CypherAccessExpr *a;
 
 	res = basenode;
 	restype = exprType(res);
@@ -536,11 +536,7 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		path = lappend(path, elem);
 	}
 
-	a = makeNode(CypherAccessExpr);
-	a->arg = (Expr *) res;
-	a->path = path;
-
-	return (Node *) a;
+	return makeJsonbFuncAccessor(pstate, res, path);
 }
 
 static Node *
@@ -1547,7 +1543,6 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 	Oid			restype;
 	int			location;
 	ListCell   *li;
-	CypherAccessExpr *a;
 	List	   *path = NIL;
 
 	res = transformCypherExprRecurse(pstate, indir->arg);
@@ -1625,12 +1620,9 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 
 	res = filterAccessArg(pstate, res, location, "map or list");
 
-	if (IsA(res, CypherAccessExpr))
+	if (IsJsonbAccessor(res))
 	{
-		a = (CypherAccessExpr *) res;
-
-		res = (Node *) a->arg;
-		path = a->path;
+		getAccessorArguments(res, &res, &path);
 	}
 
 	for_each_cell(li, li)
@@ -1676,11 +1668,7 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 		path = lappend(path, elem);
 	}
 
-	a = makeNode(CypherAccessExpr);
-	a->arg = (Expr *) res;
-	a->path = path;
-
-	return (Node *) a;
+	return makeJsonbFuncAccessor(pstate, res, path);
 }
 
 static Node *
@@ -2289,12 +2277,9 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 
 	pstate->p_expr_kind = sv_expr_kind;
 
-	if (IsA(expr, CypherAccessExpr))
+	if (IsJsonbAccessor(expr))
 	{
-		CypherAccessExpr *a = (CypherAccessExpr *) expr;
-
-		aelem = (Node *) a->arg;
-		apath = a->path;
+		getAccessorArguments(expr, &aelem, &apath);
 	}
 	else
 	{

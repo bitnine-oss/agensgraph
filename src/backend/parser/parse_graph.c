@@ -10,9 +10,9 @@
 
 #include "postgres.h"
 
-#include "ag_const.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "ag_const.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/pg_am.h"
@@ -34,6 +34,7 @@
 #include "parser/parse_collate.h"
 #include "parser/parse_cte.h"
 #include "parser/parse_cypher_expr.h"
+#include "parser/parse_cypher_utils.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_func.h"
 #include "parser/parse_graph.h"
@@ -3463,17 +3464,13 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 		}
 		else
 		{
-			CypherAccessExpr *a;
 			Node	   *lval;
 			Node	   *rval;
 			Oid			rvaltype;
 			int			rvalloc;
 			Expr	   *expr;
 
-			a = makeNode(CypherAccessExpr);
-			a->arg = (Expr *) ctx->prop_map;
-			a->path = copyObject(ctx->pathelems);
-			lval = (Node *) a;
+			lval = (Node *) makeJsonbFuncAccessor(ctx->pstate, ctx->prop_map, copyObject(ctx->pathelems));
 
 			rval = transformCypherExpr(ctx->pstate, v, EXPR_KIND_WHERE);
 			rvaltype = exprType(rval);
