@@ -416,8 +416,26 @@ transformListCompColumnRef(ParseState *pstate, ColumnRef *cref, char *varname)
 	Node	   *field1 = linitial(cref->fields);
 	CypherListCompVar *clcvar;
 
+	/*
+	 * For PROPERTY INDEX, removes the access "properties" in ColumnRef
+	 * because it is granted with "properties" by default.
+	 *
+	 * i.e, properties->A => A
+	 */
+	if (pstate->p_expr_kind == EXPR_KIND_INDEX_EXPRESSION &&
+	    list_length(cref->fields) == 2)
+	{
+		field1 = llast(cref->fields);
+	}
+
 	if (strcmp(varname, strVal(field1)) != 0)
+	{
 		return NULL;
+	}
+	else if (pstate->p_expr_kind == EXPR_KIND_INDEX_EXPRESSION)
+	{
+		cref->fields = list_make1(varname);
+	}
 
 	clcvar = makeNode(CypherListCompVar);
 	clcvar->varname = pstrdup(varname);
@@ -712,7 +730,7 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 
 	save_varname = pstate->p_lc_varname;
 	pstate->p_lc_varname = clc->varname;
-	cond = transformCypherWhere(pstate, clc->cond, EXPR_KIND_WHERE);
+	cond = transformCypherWhere(pstate, clc->cond, pstate->p_expr_kind);
 	elem = transformCypherExprRecurse(pstate, clc->elem);
 	pstate->p_lc_varname = save_varname;
 	elem = coerce_to_jsonb(pstate, elem, "list comprehension result");
