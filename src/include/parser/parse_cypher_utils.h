@@ -15,5 +15,6 @@
 Node *makeJsonbFuncAccessor(ParseState *pstate, Node *expr, List *path);
 bool IsJsonbAccessor(Node *expr);
 void getAccessorArguments(Node *node, Node **expr, List **path);
+bool ConvertReservedColumnRefForIndex(Node *node, Oid relid);
 
 #endif
