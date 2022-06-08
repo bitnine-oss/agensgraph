@@ -16,11 +16,21 @@ jobs:
           CC: 'clang'
           CXX: 'clang++'
         run: ./configure --prefix=/home/runner/work/agensgraph/agensgraph/pgsql
+
       - name: make install
         run: make install -j$(nproc)
+
       - name: initdb
         run: /home/runner/work/agensgraph/agensgraph/pgsql/bin/initdb -D /home/runner/work/agensgraph/agensgraph/pgsql/data
+
       - name: starting database
         run: /home/runner/work/agensgraph/agensgraph/pgsql/bin/pg_ctl -D /home/runner/work/agensgraph/agensgraph/pgsql/data start
+
       - name: make installcheck
+        id: regress
+        continue-on-error: true
         run: make installcheck-parallel
+
+      - name: Check on failures
+        if: steps.regress.outcome != 'success'
+        run: cat src/test/regress/regression.diffs && exit 1

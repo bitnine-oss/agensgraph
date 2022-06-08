@@ -17,4 +17,10 @@ bool IsJsonbAccessor(Node *expr);
 void getAccessorArguments(Node *node, Node **expr, List **path);
 bool ConvertReservedColumnRefForIndex(Node *node, Oid relid);
 
+char *MakeIgnorePropertiesAlias(const char* alias);
+bool IsOriginalPropertiesAlias(const char* alias);
+
+List *expandRelAttrsForCypher(ParseState *pstate, RangeTblEntry *rte,
+							  int rtindex, int sublevels_up, int location);
+
 #endif

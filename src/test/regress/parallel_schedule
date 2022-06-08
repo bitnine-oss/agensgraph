@@ -129,6 +129,9 @@ test: stats
 # run cypher dml test
 test: cypher_dml cypher_shortestpath cypher_eager graphid
 
+# run cypher_expr
+test: cypher_expr
+
 # run graphmeta
 test: graphmeta
 

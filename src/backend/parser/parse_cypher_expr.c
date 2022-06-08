@@ -2647,8 +2647,8 @@ transformA_Star(ParseState *pstate, int location)
 		rtindex = RTERangeTablePosn(pstate, rte, NULL);
 
 		targets = list_concat(targets,
-							  expandRelAttrs(pstate, rte, rtindex, 0,
-											 location));
+							  expandRelAttrsForCypher(pstate, rte, rtindex, 0,
+													  location));
 	}
 
 	if (!visible)

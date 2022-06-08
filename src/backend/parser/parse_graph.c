@@ -1958,8 +1958,16 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 			}
 			else
 			{
+				TargetEntry *original_props;
 				addElemQual(pstate, te->resno, cnode->prop_map);
 				*targetList = lappend(*targetList, te);
+
+				original_props = makeTargetEntry(
+						(Expr *) getColumnVar(pstate, rte, AG_ELEM_PROP_MAP),
+						(AttrNumber) pstate->p_next_resno++,
+						MakeIgnorePropertiesAlias(alias->aliasname),
+						false);
+				*targetList = lappend(*targetList, original_props);
 			}
 		}
 
