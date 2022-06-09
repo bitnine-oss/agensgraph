@@ -1,0 +1,27 @@
+CREATE GRAPH cypher_dml2;
+CREATE VLABEL v1;
+EXPLAIN ( analyze false, verbose true, costs false, buffers false, timing false )
+MATCH (p:v1)
+return max(collect(p.name)) as col;
+ERROR:  aggregate function calls cannot be nested
+LINE 3: return max(collect(p.name)) as col;
+                   ^
+MATCH (p:v1)
+return max(collect(p.name)) as col;
+ERROR:  aggregate function calls cannot be nested
+LINE 2: return max(collect(p.name)) as col;
+                   ^
+MATCH (p:v1)
+with collect(p.name) as col
+RETURN max(col);
+ max 
+-----
+ 
+(1 row)
+
+DROP GRAPH cypher_dml2 CASCADE;
+NOTICE:  drop cascades to 4 other objects
+DETAIL:  drop cascades to sequence cypher_dml2.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel v1

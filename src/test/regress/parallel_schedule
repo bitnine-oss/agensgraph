@@ -122,7 +122,7 @@ test: fast_default
 test: stats
 
 # run cypher dml test
-test: cypher_dml cypher_shortestpath cypher_eager graphid
+test: cypher_dml cypher_dml2 cypher_shortestpath cypher_eager graphid
 
 # run graphmeta
 test: graphmeta
