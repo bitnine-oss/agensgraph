@@ -2327,7 +2327,7 @@ expression_tree_walker(Node *node,
 			{
 				CypherTypeCast *tc = (CypherTypeCast *) node;
 
-				if (expression_tree_walker((Node *) tc->arg, walker, context))
+				if (walker((Node *) tc->arg, context))
 					return true;
 			}
 			break;
