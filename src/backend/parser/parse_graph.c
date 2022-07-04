@@ -10,9 +10,9 @@
 
 #include "postgres.h"
 
-#include "ag_const.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "ag_const.h"
 #include "catalog/ag_graph_fn.h"
 #include "catalog/ag_label.h"
 #include "catalog/pg_am.h"
@@ -34,6 +34,7 @@
 #include "parser/parse_collate.h"
 #include "parser/parse_cte.h"
 #include "parser/parse_cypher_expr.h"
+#include "parser/parse_cypher_utils.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_func.h"
 #include "parser/parse_graph.h"
@@ -607,7 +608,7 @@ repairTargetListCollations(List *targetList)
 		{
 			FuncExpr	*fexpr = (FuncExpr *) expr;
 
-			if (fexpr->funcid != F_TO_JSONB)
+			if (fexpr->funcid != F_CYPHER_TO_JSONB)
 				continue;
 
 			if (fexpr->funccollid == InvalidOid &&
@@ -1957,8 +1958,16 @@ transformMatchNode(ParseState *pstate, CypherNode *cnode, bool force,
 			}
 			else
 			{
+				TargetEntry *original_props;
 				addElemQual(pstate, te->resno, cnode->prop_map);
 				*targetList = lappend(*targetList, te);
+
+				original_props = makeTargetEntry(
+						(Expr *) getColumnVar(pstate, rte, AG_ELEM_PROP_MAP),
+						(AttrNumber) pstate->p_next_resno++,
+						MakeIgnorePropertiesAlias(alias->aliasname),
+						false);
+				*targetList = lappend(*targetList, original_props);
 			}
 		}
 
@@ -3463,17 +3472,13 @@ transform_prop_constr_worker(Node *node, prop_constr_context *ctx)
 		}
 		else
 		{
-			CypherAccessExpr *a;
 			Node	   *lval;
 			Node	   *rval;
 			Oid			rvaltype;
 			int			rvalloc;
 			Expr	   *expr;
 
-			a = makeNode(CypherAccessExpr);
-			a->arg = (Expr *) ctx->prop_map;
-			a->path = copyObject(ctx->pathelems);
-			lval = (Node *) a;
+			lval = (Node *) makeJsonbFuncAccessor(ctx->pstate, ctx->prop_map, copyObject(ctx->pathelems));
 
 			rval = transformCypherExpr(ctx->pstate, v, EXPR_KIND_WHERE);
 			rvaltype = exprType(rval);

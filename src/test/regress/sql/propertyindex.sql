@@ -142,6 +142,32 @@ DROP PROPERTY INDEX piv9_index_key1;
 
 DROP VLABEL piv9;
 
+DROP GRAPH propidx CASCADE;
+CREATE GRAPH propidx;
+
+CREATE VLABEL v1;
+CREATE VLABEL v2;
+
+CREATE PROPERTY INDEX v2_index_excusers ON v2 ((any(excusers in metadata.'conditions'.'users'.'excuserscount' where excusers > 5)));
+
+\dGi v2*
+SELECT indexdef FROM pg_indexes WHERE tablename = 'v2' ORDER BY indexname;
+
+EXPLAIN ( analyze false, verbose true, costs false, buffers false, timing false )
+MATCH (a)-[]->(d1:v2)
+WHERE
+    any(excusers in d1.'metadata'.'conditions'.'users'.'excuserscount' where excusers > 5)
+RETURN d1;
+
+EXPLAIN ( analyze false, verbose true, costs false, buffers false, timing false )
+MATCH (a)
+OPTIONAL MATCH (a)-[]->(d1:v2)
+WHERE
+    any(excusers in d1.'metadata'.'conditions'.'users'.'excuserscount' where excusers > 5)
+RETURN d1;
+
+
 -- teardown
 
+DROP GRAPH propidx CASCADE;
 RESET ROLE;

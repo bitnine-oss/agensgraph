@@ -41,9 +41,11 @@
 #include "parser/parse_relation.h"
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
-#include "utils/builtins.h"
-#include "utils/jsonb.h"
+#include "parser/parse_cypher_utils.h"
 #include "utils/lsyscache.h"
+#include "utils/builtins.h"
+#include "utils/fmgroids.h"
+#include "utils/jsonb.h"
 
 static Node *transformCypherExprRecurse(ParseState *pstate, Node *expr);
 static Node *transformColumnRef(ParseState *pstate, ColumnRef *cref);
@@ -414,8 +416,26 @@ transformListCompColumnRef(ParseState *pstate, ColumnRef *cref, char *varname)
 	Node	   *field1 = linitial(cref->fields);
 	CypherListCompVar *clcvar;
 
+	/*
+	 * For PROPERTY INDEX, removes the access "properties" in ColumnRef
+	 * because it is granted with "properties" by default.
+	 *
+	 * i.e, properties->A => A
+	 */
+	if (pstate->p_expr_kind == EXPR_KIND_INDEX_EXPRESSION &&
+	    list_length(cref->fields) == 2)
+	{
+		field1 = llast(cref->fields);
+	}
+
 	if (strcmp(varname, strVal(field1)) != 0)
+	{
 		return NULL;
+	}
+	else if (pstate->p_expr_kind == EXPR_KIND_INDEX_EXPRESSION)
+	{
+		cref->fields = list_make1(varname);
+	}
 
 	clcvar = makeNode(CypherListCompVar);
 	clcvar->varname = pstrdup(varname);
@@ -475,7 +495,6 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 	ListCell   *lf;
 	Value	   *field;
 	List	   *path = NIL;
-	CypherAccessExpr *a;
 
 	res = basenode;
 	restype = exprType(res);
@@ -536,11 +555,7 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		path = lappend(path, elem);
 	}
 
-	a = makeNode(CypherAccessExpr);
-	a->arg = (Expr *) res;
-	a->path = path;
-
-	return (Node *) a;
+	return makeJsonbFuncAccessor(pstate, res, path);
 }
 
 static Node *
@@ -715,7 +730,7 @@ transformCypherListComp(ParseState *pstate, CypherListComp *clc)
 
 	save_varname = pstate->p_lc_varname;
 	pstate->p_lc_varname = clc->varname;
-	cond = transformCypherWhere(pstate, clc->cond, EXPR_KIND_WHERE);
+	cond = transformCypherWhere(pstate, clc->cond, pstate->p_expr_kind);
 	elem = transformCypherExprRecurse(pstate, clc->elem);
 	pstate->p_lc_varname = save_varname;
 	elem = coerce_to_jsonb(pstate, elem, "list comprehension result");
@@ -1547,7 +1562,6 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 	Oid			restype;
 	int			location;
 	ListCell   *li;
-	CypherAccessExpr *a;
 	List	   *path = NIL;
 
 	res = transformCypherExprRecurse(pstate, indir->arg);
@@ -1625,12 +1639,9 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 
 	res = filterAccessArg(pstate, res, location, "map or list");
 
-	if (IsA(res, CypherAccessExpr))
+	if (IsJsonbAccessor(res))
 	{
-		a = (CypherAccessExpr *) res;
-
-		res = (Node *) a->arg;
-		path = a->path;
+		getAccessorArguments(res, &res, &path);
 	}
 
 	for_each_cell(li, li)
@@ -1676,11 +1687,7 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 		path = lappend(path, elem);
 	}
 
-	a = makeNode(CypherAccessExpr);
-	a->arg = (Expr *) res;
-	a->path = path;
-
-	return (Node *) a;
+	return makeJsonbFuncAccessor(pstate, res, path);
 }
 
 static Node *
@@ -2076,9 +2083,9 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 		{
 			Node	   *last_srf = pstate->p_last_srf;
 
-			return ParseFuncOrColumn(pstate,
-									 list_make1(makeString("to_jsonb")),
-									 list_make1(expr), last_srf, NULL, false, loc);
+			return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
+										 list_make1(expr), InvalidOid,
+										 InvalidOid, COERCE_IMPLICIT_CAST);
 		}
 	}
 
@@ -2254,12 +2261,9 @@ coerce_all_to_jsonb(ParseState *pstate, Node *expr)
 
 	if (TypeCategory(getBaseType(type)) == TYPCATEGORY_STRING)
 	{
-		return ParseFuncOrColumn(pstate,
-								 list_make1(makeString("to_jsonb")),
-								 list_make1(expr),
-								 pstate->p_last_srf, NULL,
-								 false,
-		                         exprLocation(expr));
+		return (Node *) makeFuncExpr(F_CYPHER_TO_JSONB, JSONBOID,
+									 list_make1(expr), InvalidOid,
+									 InvalidOid, COERCE_IMPLICIT_CAST);
 	}
 
 	expr = coerce_expr(pstate, expr, type, JSONBOID, -1,
@@ -2289,12 +2293,9 @@ transformCypherMapForSet(ParseState *pstate, Node *expr, List **pathelems,
 
 	pstate->p_expr_kind = sv_expr_kind;
 
-	if (IsA(expr, CypherAccessExpr))
+	if (IsJsonbAccessor(expr))
 	{
-		CypherAccessExpr *a = (CypherAccessExpr *) expr;
-
-		aelem = (Node *) a->arg;
-		apath = a->path;
+		getAccessorArguments(expr, &aelem, &apath);
 	}
 	else
 	{
@@ -2646,8 +2647,8 @@ transformA_Star(ParseState *pstate, int location)
 		rtindex = RTERangeTablePosn(pstate, rte, NULL);
 
 		targets = list_concat(targets,
-							  expandRelAttrs(pstate, rte, rtindex, 0,
-											 location));
+							  expandRelAttrsForCypher(pstate, rte, rtindex, 0,
+													  location));
 	}
 
 	if (!visible)

@@ -74,6 +74,7 @@
 #include "utils/ruleutils.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
+#include "parser/parse_cypher_utils.h"
 
 
 /* State shared by transformCreateStmt and its subroutines */
@@ -4840,6 +4841,7 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 	ListCell   *l;
 	Relation	rel;
 	RangeTblEntry *rte;
+	bool is_reserved_property;
 
 	Assert(!stmt->transformed);
 
@@ -4898,7 +4900,12 @@ transformCreatePropertyIndexStmt(Oid relid, CreatePropertyIndexStmt *stmt,
 				ielem->indexcolname = FigureIndexColname(ielem->expr);
 		}
 
-		ielem->expr = prop_ref_mutator(ielem->expr);
+		is_reserved_property = ConvertReservedColumnRefForIndex(ielem->expr,
+																relid);
+		if (!is_reserved_property)
+		{
+			ielem->expr = prop_ref_mutator(ielem->expr);
+		}
 
 		/* Now do parse transformation of the expression */
 		ielem->expr = transformCypherExpr(pstate, ielem->expr,

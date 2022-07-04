@@ -17,7 +17,8 @@ OBJS= analyze.o gram.o scan.o parser.o \
       parse_enr.o parse_expr.o parse_func.o parse_node.o parse_oper.o \
       parse_param.o parse_relation.o parse_target.o parse_type.o \
       parse_utilcmd.o scansup.o \
-      parse_cypher_expr.o parse_graph.o parse_shortestpath.o
+      parse_cypher_expr.o parse_graph.o parse_shortestpath.o \
+      parse_cypher_utils.o
 
 include $(top_srcdir)/src/backend/common.mk
 

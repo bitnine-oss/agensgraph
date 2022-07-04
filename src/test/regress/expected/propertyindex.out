@@ -320,5 +320,97 @@ CREATE INDEX piv9_index_key1 ON propidx.piv9 (properties);
 DROP PROPERTY INDEX piv9_index_key1;
 ERROR:  "piv9_index_key1" is not property index
 DROP VLABEL piv9;
+DROP GRAPH propidx CASCADE;
+NOTICE:  drop cascades to 8 other objects
+DETAIL:  drop cascades to sequence propidx.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel piv1
+drop cascades to vlabel piv2
+drop cascades to vlabel piv3
+drop cascades to vlabel piv4
+drop cascades to vlabel piv5
+CREATE GRAPH propidx;
+CREATE VLABEL v1;
+CREATE VLABEL v2;
+CREATE PROPERTY INDEX v2_index_excusers ON v2 ((any(excusers in metadata.'conditions'.'users'.'excuserscount' where excusers > 5)));
+\dGi v2*
+                                                                                                      List of property indexes
+  Graph  | LabelName |     IndexName     | Unique |    Owner    |                                                                              Indexdef                                                                              
+---------+-----------+-------------------+--------+-------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ propidx | v2        | v2_index_excusers | f      | regressrole | CREATE PROPERTY INDEX v2_index_excusers ON v2 USING btree ((length([excusers IN metadata.conditions.users.excuserscount WHERE (excusers) > 5::jsonb]) > 0::jsonb))
+(1 row)
+
+SELECT indexdef FROM pg_indexes WHERE tablename = 'v2' ORDER BY indexname;
+                                                                                                      indexdef                                                                                                      
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ CREATE INDEX v2_index_excusers ON propidx.v2 USING btree (((length([excusers IN properties.'metadata'::text.'conditions'::text.'users'::text.'excuserscount'::text WHERE (excusers > (5)::jsonb)]) > (0)::jsonb)))
+ CREATE UNIQUE INDEX v2_pkey ON propidx.v2 USING btree (id)
+(2 rows)
+
+EXPLAIN ( analyze false, verbose true, costs false, buffers false, timing false )
+MATCH (a)-[]->(d1:v2)
+WHERE
+    any(excusers in d1.'metadata'.'conditions'.'users'.'excuserscount' where excusers > 5)
+RETURN d1;
+                                                                                            QUERY PLAN                                                                                             
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Hash Join
+   Output: ROW(d1.id, d1.properties, d1.ctid)::vertex
+   Inner Unique: true
+   Hash Cond: ("<0000000000>"."end" = d1.id)
+   ->  Seq Scan on propidx.ag_edge "<0000000000>"
+         Output: "<0000000000>".id, "<0000000000>".start, "<0000000000>"."end", "<0000000000>".properties
+   ->  Hash
+         Output: d1.id, d1.properties, d1.ctid
+         ->  Bitmap Heap Scan on propidx.v2 d1
+               Output: d1.id, d1.properties, d1.ctid
+               Filter: (length([excusers IN d1.properties.'metadata'::text.'conditions'::text.'users'::text.'excuserscount'::text WHERE (excusers > (5)::jsonb)]) > '0'::jsonb)
+               ->  Bitmap Index Scan on v2_index_excusers
+                     Index Cond: ((length([excusers IN d1.properties.'metadata'::text.'conditions'::text.'users'::text.'excuserscount'::text WHERE (excusers > (5)::jsonb)]) > '0'::jsonb) = true)
+(13 rows)
+
+EXPLAIN ( analyze false, verbose true, costs false, buffers false, timing false )
+MATCH (a)
+OPTIONAL MATCH (a)-[]->(d1:v2)
+WHERE
+    any(excusers in d1.'metadata'.'conditions'.'users'.'excuserscount' where excusers > 5)
+RETURN d1;
+                                                                                                  QUERY PLAN                                                                                                   
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Hash Left Join
+   Output: (ROW(d1.id, d1.properties, d1.ctid)::vertex)
+   Hash Cond: (a.id = "<0000000001>".start)
+   ->  Append
+         ->  Seq Scan on propidx.ag_vertex a
+               Output: a.id
+         ->  Seq Scan on propidx.v1 a_1
+               Output: a_1.id
+         ->  Seq Scan on propidx.v2 a_2
+               Output: a_2.id
+   ->  Hash
+         Output: "<0000000001>".start, (ROW(d1.id, d1.properties, d1.ctid)::vertex)
+         ->  Hash Join
+               Output: "<0000000001>".start, (ROW(d1.id, d1.properties, d1.ctid)::vertex)
+               Inner Unique: true
+               Hash Cond: ("<0000000001>"."end" = d1.id)
+               ->  Seq Scan on propidx.ag_edge "<0000000001>"
+                     Output: "<0000000001>".id, "<0000000001>".start, "<0000000001>"."end", "<0000000001>".properties
+               ->  Hash
+                     Output: d1.id, (ROW(d1.id, d1.properties, d1.ctid)::vertex)
+                     ->  Bitmap Heap Scan on propidx.v2 d1
+                           Output: d1.id, ROW(d1.id, d1.properties, d1.ctid)::vertex
+                           Filter: (length([excusers IN d1.properties.'metadata'::text.'conditions'::text.'users'::text.'excuserscount'::text WHERE (excusers > (5)::jsonb)]) > '0'::jsonb)
+                           ->  Bitmap Index Scan on v2_index_excusers
+                                 Index Cond: ((length([excusers IN d1.properties.'metadata'::text.'conditions'::text.'users'::text.'excuserscount'::text WHERE (excusers > (5)::jsonb)]) > '0'::jsonb) = true)
+(25 rows)
+
 -- teardown
+DROP GRAPH propidx CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to sequence propidx.ag_label_seq
+drop cascades to vlabel ag_vertex
+drop cascades to elabel ag_edge
+drop cascades to vlabel v1
+drop cascades to vlabel v2
 RESET ROLE;

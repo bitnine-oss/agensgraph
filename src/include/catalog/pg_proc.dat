@@ -10601,4 +10601,7 @@
   proargmodes => '{o,o,o,o,o}',
   proargnames => '{insertedvertices,insertededges,deletedvertices,deletededges,updatedproperties}',
   prosrc => 'get_last_graph_write_stats' },
+{ oid => '7247', descr => 'map input to jsonb (cypher)',
+  proname => 'cypher_to_jsonb', provolatile => 'i', prorettype => 'jsonb',
+  proargtypes => 'anyelement', prosrc => 'cypher_to_jsonb' },
 ]
