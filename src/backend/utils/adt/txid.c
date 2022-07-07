@@ -10,7 +10,7 @@
  * via functions such as SubTransGetTopmostTransaction().
  *
  *
- *	Copyright (c) 2003-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2003-2017, PostgreSQL Global Development Group
  *	Author: Jan Wieck, Afilias USA INC.
  *	64-bit txids: Marko Kreen, Skype Technologies
  *
@@ -336,8 +336,8 @@ parse_snapshot(const char *str)
 bad_format:
 	ereport(ERROR,
 			(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-			 errmsg("invalid input syntax for type txid_snapshot: \"%s\"",
-					str_start)));
+			 errmsg("invalid input syntax for type %s: \"%s\"",
+					"txid_snapshot", str_start)));
 	return NULL;				/* keep compiler quiet */
 }
 
@@ -372,6 +372,27 @@ txid_current(PG_FUNCTION_ARGS)
 	load_xid_epoch(&state);
 
 	val = convert_xid(GetTopTransactionId(), &state);
+
+	PG_RETURN_INT64(val);
+}
+
+/*
+ * Same as txid_current() but doesn't assign a new xid if there isn't one
+ * yet.
+ */
+Datum
+txid_current_if_assigned(PG_FUNCTION_ARGS)
+{
+	txid		val;
+	TxidEpoch	state;
+	TransactionId	topxid = GetTopTransactionIdIfAny();
+
+	if (topxid == InvalidTransactionId)
+		PG_RETURN_NULL();
+
+	load_xid_epoch(&state);
+
+	val = convert_xid(topxid, &state);
 
 	PG_RETURN_INT64(val);
 }

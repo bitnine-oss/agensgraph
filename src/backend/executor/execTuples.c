@@ -12,7 +12,7 @@
  *	  This information is needed by routines manipulating tuples
  *	  (getattribute, formtuple, etc.).
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -160,10 +160,7 @@ ExecResetTupleTable(List *tupleTable,	/* tuple table */
 
 	foreach(lc, tupleTable)
 	{
-		TupleTableSlot *slot = (TupleTableSlot *) lfirst(lc);
-
-		/* Sanity checks */
-		Assert(IsA(slot, TupleTableSlot));
+		TupleTableSlot *slot = castNode(TupleTableSlot, lfirst(lc));
 
 		/* Always release resources and reset the slot to empty */
 		ExecClearTuple(slot);

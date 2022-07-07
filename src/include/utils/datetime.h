@@ -6,7 +6,7 @@
  *	   including abstime, reltime, date, and time.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/datetime.h
@@ -345,8 +345,5 @@ extern bool CheckDateTokenTables(void);
 extern TimeZoneAbbrevTable *ConvertTimeZoneAbbrevs(struct tzEntry *abbrevs,
 					   int n);
 extern void InstallTimeZoneAbbrevs(TimeZoneAbbrevTable *tbl);
-
-extern Datum pg_timezone_abbrevs(PG_FUNCTION_ARGS);
-extern Datum pg_timezone_names(PG_FUNCTION_ARGS);
 
 #endif   /* DATETIME_H */

@@ -61,9 +61,7 @@ static void _LoadBlobs(ArchiveHandle *AH, bool drop);
 static void _Clone(ArchiveHandle *AH);
 static void _DeClone(ArchiveHandle *AH);
 
-static char *_MasterStartParallelItem(ArchiveHandle *AH, TocEntry *te, T_Action act);
-static int	_MasterEndParallelItem(ArchiveHandle *AH, TocEntry *te, const char *str, T_Action act);
-char	   *_WorkerJobRestoreCustom(ArchiveHandle *AH, TocEntry *te);
+static int	_WorkerJobRestoreCustom(ArchiveHandle *AH, TocEntry *te);
 
 typedef struct
 {
@@ -133,9 +131,6 @@ InitArchiveFmt_Custom(ArchiveHandle *AH)
 	AH->ClonePtr = _Clone;
 	AH->DeClonePtr = _DeClone;
 
-	AH->MasterStartParallelItemPtr = _MasterStartParallelItem;
-	AH->MasterEndParallelItemPtr = _MasterEndParallelItem;
-
 	/* no parallel dump in the custom archive, only parallel restore */
 	AH->WorkerJobDumpPtr = NULL;
 	AH->WorkerJobRestorePtr = _WorkerJobRestoreCustom;
@@ -203,7 +198,7 @@ InitArchiveFmt_Custom(ArchiveHandle *AH)
  *
  * Optional.
  *
- * Set up extrac format-related TOC data.
+ * Set up extract format-related TOC data.
 */
 static void
 _ArchiveEntry(ArchiveHandle *AH, TocEntry *te)
@@ -808,77 +803,13 @@ _DeClone(ArchiveHandle *AH)
 }
 
 /*
- * This function is executed in the child of a parallel backup for the
- * custom format archive and dumps the actual data.
- */
-char *
-_WorkerJobRestoreCustom(ArchiveHandle *AH, TocEntry *te)
-{
-	/*
-	 * short fixed-size string + some ID so far, this needs to be malloc'ed
-	 * instead of static because we work with threads on windows
-	 */
-	const int	buflen = 64;
-	char	   *buf = (char *) pg_malloc(buflen);
-	ParallelArgs pargs;
-	int			status;
-
-	pargs.AH = AH;
-	pargs.te = te;
-
-	status = parallel_restore(&pargs);
-
-	snprintf(buf, buflen, "OK RESTORE %d %d %d", te->dumpId, status,
-			 status == WORKER_IGNORED_ERRORS ? AH->public.n_errors : 0);
-
-	return buf;
-}
-
-/*
- * This function is executed in the parent process. Depending on the desired
- * action (dump or restore) it creates a string that is understood by the
- * _WorkerJobDump /_WorkerJobRestore functions of the dump format.
- */
-static char *
-_MasterStartParallelItem(ArchiveHandle *AH, TocEntry *te, T_Action act)
-{
-	/*
-	 * A static char is okay here, even on Windows because we call this
-	 * function only from one process (the master).
-	 */
-	static char buf[64];		/* short fixed-size string + number */
-
-	/* no parallel dump in the custom archive format */
-	Assert(act == ACT_RESTORE);
-
-	snprintf(buf, sizeof(buf), "RESTORE %d", te->dumpId);
-
-	return buf;
-}
-
-/*
- * This function is executed in the parent process. It analyzes the response of
- * the _WorkerJobDump / _WorkerJobRestore functions of the dump format.
+ * This function is executed in the child of a parallel restore from a
+ * custom-format archive and restores the actual data for one TOC entry.
  */
 static int
-_MasterEndParallelItem(ArchiveHandle *AH, TocEntry *te, const char *str, T_Action act)
+_WorkerJobRestoreCustom(ArchiveHandle *AH, TocEntry *te)
 {
-	DumpId		dumpId;
-	int			nBytes,
-				status,
-				n_errors;
-
-	/* no parallel dump in the custom archive */
-	Assert(act == ACT_RESTORE);
-
-	sscanf(str, "%d %d %d%n", &dumpId, &status, &n_errors, &nBytes);
-
-	Assert(nBytes == strlen(str));
-	Assert(dumpId == te->dumpId);
-
-	AH->public.n_errors += n_errors;
-
-	return status;
+	return parallel_restore(AH, te);
 }
 
 /*--------------------------------------------------

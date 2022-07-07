@@ -6,7 +6,7 @@
  * and interpreting backend output.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/fe_utils/string_utils.c
@@ -165,6 +165,44 @@ fmtQualifiedId(int remoteVersion, const char *schema, const char *id)
 	destroyPQExpBuffer(lcl_pqexp);
 
 	return id_return->data;
+}
+
+
+/*
+ * Format a Postgres version number (in the PG_VERSION_NUM integer format
+ * returned by PQserverVersion()) as a string.  This exists mainly to
+ * encapsulate knowledge about two-part vs. three-part version numbers.
+ *
+ * For re-entrancy, caller must supply the buffer the string is put in.
+ * Recommended size of the buffer is 32 bytes.
+ *
+ * Returns address of 'buf', as a notational convenience.
+ */
+char *
+formatPGVersionNumber(int version_number, bool include_minor,
+					  char *buf, size_t buflen)
+{
+	if (version_number >= 100000)
+	{
+		/* New two-part style */
+		if (include_minor)
+			snprintf(buf, buflen, "%d.%d", version_number / 10000,
+					 version_number % 10000);
+		else
+			snprintf(buf, buflen, "%d", version_number / 10000);
+	}
+	else
+	{
+		/* Old three-part style */
+		if (include_minor)
+			snprintf(buf, buflen, "%d.%d.%d", version_number / 10000,
+					 (version_number / 100) % 100,
+					 version_number % 100);
+		else
+			snprintf(buf, buflen, "%d.%d", version_number / 10000,
+					 (version_number / 100) % 100);
+	}
+	return buf;
 }
 
 
@@ -380,7 +418,7 @@ appendByteaLiteral(PQExpBuffer buf, const unsigned char *str, size_t length,
 
 /*
  * Append the given string to the shell command being built in the buffer,
- * with suitable shell-style quoting to create exactly one argument.
+ * with shell-style quoting as needed to create exactly one argument.
  *
  * Forbid LF or CR characters, which have scant practical use beyond designing
  * security breaches.  The Windows command shell is unusable as a conduit for
@@ -391,7 +429,21 @@ appendByteaLiteral(PQExpBuffer buf, const unsigned char *str, size_t length,
 void
 appendShellString(PQExpBuffer buf, const char *str)
 {
+#ifdef WIN32
+	int			backslash_run_length = 0;
+#endif
 	const char *p;
+
+	/*
+	 * Don't bother with adding quotes if the string is nonempty and clearly
+	 * contains only safe characters.
+	 */
+	if (*str != '\0' &&
+		strspn(str, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./:") == strlen(str))
+	{
+		appendPQExpBufferStr(buf, str);
+		return;
+	}
 
 #ifndef WIN32
 	appendPQExpBufferChar(buf, '\'');
@@ -412,7 +464,6 @@ appendShellString(PQExpBuffer buf, const char *str)
 	}
 	appendPQExpBufferChar(buf, '\'');
 #else							/* WIN32 */
-	int			backslash_run_length = 0;
 
 	/*
 	 * A Windows system() argument experiences two layers of interpretation.

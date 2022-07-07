@@ -4,7 +4,7 @@
  *	  Search code for postgres btrees.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -1345,10 +1345,10 @@ _bt_steppage(IndexScanDesc scan, ScanDirection dir)
 			CHECK_FOR_INTERRUPTS();
 			/* step right one page */
 			so->currPos.buf = _bt_getbuf(rel, blkno, BT_READ);
-			/* check for deleted page */
 			page = BufferGetPage(so->currPos.buf);
 			TestForOldSnapshot(scan->xs_snapshot, rel, page);
 			opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+			/* check for deleted page */
 			if (!P_IGNORE(opaque))
 			{
 				PredicateLockPage(rel, blkno, scan->xs_snapshot);

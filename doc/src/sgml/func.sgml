@@ -1534,11 +1534,12 @@
        </entry>
        <entry><type>text</type></entry>
        <entry>
-        Remove the longest string containing only the
+        Remove the longest string containing only characters from
         <parameter>characters</parameter> (a space by default) from the
-        start/end/both ends of the <parameter>string</parameter>
+        start, end, or both ends (<literal>both</> is the default)
+        of <parameter>string</parameter>
        </entry>
-       <entry><literal>trim(both 'x' from 'xTomxx')</literal></entry>
+       <entry><literal>trim(both 'xyz' from 'yxTomxx')</literal></entry>
        <entry><literal>Tom</literal></entry>
       </row>
 
@@ -1547,14 +1548,14 @@
         <literal><function>trim(<optional>leading | trailing
         | both</optional> <optional>from</optional>
         <parameter>string</parameter>
-        <optional><parameter>, characters</parameter></optional>
+        <optional>, <parameter>characters</parameter></optional>
         )</function></literal>
        </entry>
        <entry><type>text</type></entry>
        <entry>
-        Non-standard version of <function>trim()</>
+        Non-standard syntax for <function>trim()</>
        </entry>
-       <entry><literal>trim(both from 'xTomxx', 'x')</literal></entry>
+       <entry><literal>trim(both from 'yxTomxx', 'xyz')</literal></entry>
        <entry><literal>Tom</literal></entry>
       </row>
 
@@ -1626,7 +1627,7 @@
         in <parameter>characters</parameter> (a space by default)
         from the start and end of <parameter>string</parameter>
        </entry>
-       <entry><literal>btrim('xyxtrimyyx', 'xy')</literal></entry>
+       <entry><literal>btrim('xyxtrimyyx', 'xyz')</literal></entry>
        <entry><literal>trim</literal></entry>
       </row>
 
@@ -1895,8 +1896,8 @@
         <parameter>characters</parameter> (a space by default) from the start of
         <parameter>string</parameter>
        </entry>
-       <entry><literal>ltrim('zzzytrim', 'xyz')</literal></entry>
-       <entry><literal>trim</literal></entry>
+       <entry><literal>ltrim('zzzytest', 'xyz')</literal></entry>
+       <entry><literal>test</literal></entry>
       </row>
 
       <row>
@@ -2039,18 +2040,35 @@
       <row>
        <entry>
         <indexterm>
+         <primary>regexp_match</primary>
+        </indexterm>
+        <literal><function>regexp_match(<parameter>string</parameter> <type>text</type>, <parameter>pattern</parameter> <type>text</type> [, <parameter>flags</parameter> <type>text</type>])</function></literal>
+       </entry>
+       <entry><type>text[]</type></entry>
+       <entry>
+        Return captured substring(s) resulting from the first match of a POSIX
+        regular expression to the <parameter>string</parameter>. See
+        <xref linkend="functions-posix-regexp"> for more information.
+       </entry>
+       <entry><literal>regexp_match('foobarbequebaz', '(bar)(beque)')</literal></entry>
+       <entry><literal>{bar,beque}</literal></entry>
+      </row>
+
+      <row>
+       <entry>
+        <indexterm>
          <primary>regexp_matches</primary>
         </indexterm>
         <literal><function>regexp_matches(<parameter>string</parameter> <type>text</type>, <parameter>pattern</parameter> <type>text</type> [, <parameter>flags</parameter> <type>text</type>])</function></literal>
        </entry>
        <entry><type>setof text[]</type></entry>
        <entry>
-        Return all captured substrings resulting from matching a POSIX regular
-        expression against the <parameter>string</parameter>. See
+        Return captured substring(s) resulting from matching a POSIX regular
+        expression to the <parameter>string</parameter>. See
         <xref linkend="functions-posix-regexp"> for more information.
        </entry>
-       <entry><literal>regexp_matches('foobarbequebaz', '(bar)(beque)')</literal></entry>
-       <entry><literal>{bar,beque}</literal></entry>
+       <entry><literal>regexp_matches('foobarbequebaz', 'ba.', 'g')</literal></entry>
+       <entry><literal>{bar}</literal><para><literal>{baz}</literal></para> (2 rows)</entry>
       </row>
 
       <row>
@@ -2201,8 +2219,8 @@
         <parameter>characters</parameter> (a space by default) from the end of
         <parameter>string</parameter>
        </entry>
-       <entry><literal>rtrim('trimxxxx', 'x')</literal></entry>
-       <entry><literal>trim</literal></entry>
+       <entry><literal>rtrim('testxxzx', 'xyz')</literal></entry>
+       <entry><literal>test</literal></entry>
       </row>
 
       <row>
@@ -3467,11 +3485,11 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        </entry>
        <entry><type>bytea</type></entry>
        <entry>
-        Remove the longest string containing only the bytes in
+        Remove the longest string containing only bytes appearing in
         <parameter>bytes</parameter> from the start
         and end of <parameter>string</parameter>
        </entry>
-       <entry><literal>trim(E'\\000'::bytea from E'\\000Tom\\000'::bytea)</literal></entry>
+       <entry><literal>trim(E'\\000\\001'::bytea from E'\\000Tom\\001'::bytea)</literal></entry>
        <entry><literal>Tom</literal></entry>
       </row>
      </tbody>
@@ -3510,11 +3528,11 @@ SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
        </entry>
        <entry><type>bytea</type></entry>
        <entry>
-        Remove the longest string consisting only of bytes
-        in <parameter>bytes</parameter> from the start and end of
+        Remove the longest string containing only bytes appearing in
+        <parameter>bytes</parameter> from the start and end of
         <parameter>string</parameter>
       </entry>
-      <entry><literal>btrim(E'\\000trim\\000'::bytea, E'\\000'::bytea)</literal></entry>
+      <entry><literal>btrim(E'\\000trim\\001'::bytea, E'\\000\\001'::bytea)</literal></entry>
       <entry><literal>trim</literal></entry>
      </row>
 
@@ -4113,6 +4131,9 @@ substring('foobar' from '#"o_b#"%' for '#')    <lineannotation>NULL</lineannotat
     <primary>regexp_replace</primary>
    </indexterm>
    <indexterm>
+    <primary>regexp_match</primary>
+   </indexterm>
+   <indexterm>
     <primary>regexp_matches</primary>
    </indexterm>
    <indexterm>
@@ -4272,64 +4293,106 @@ regexp_replace('foobarbaz', 'b(..)', E'X\\1Y', 'g')
    </para>
 
     <para>
-     The <function>regexp_matches</> function returns a text array of
-     all of the captured substrings resulting from matching a POSIX
-     regular expression pattern.  It has the syntax
-     <function>regexp_matches</function>(<replaceable>string</>, <replaceable>pattern</>
-     <optional>, <replaceable>flags</> </optional>).
-     The function can return no rows, one row, or multiple rows (see
-     the <literal>g</> flag below).  If the <replaceable>pattern</>
-     does not match, the function returns no rows.  If the pattern
-     contains no parenthesized subexpressions, then each row
-     returned is a single-element text array containing the substring
-     matching the whole pattern.  If the pattern contains parenthesized
-     subexpressions, the function returns a text array whose
-     <replaceable>n</>'th element is the substring matching the
-     <replaceable>n</>'th parenthesized subexpression of the pattern
-     (not counting <quote>non-capturing</> parentheses; see below for
-     details).
-     The <replaceable>flags</> parameter is an optional text
-     string containing zero or more single-letter flags that change the
-     function's behavior.  Flag <literal>g</> causes the function to find
-     each match in the string, not only the first one, and return a row for
-     each such match.  Supported flags (though
-     not <literal>g</>)
-     are described in <xref linkend="posix-embedded-options-table">.
+     The <function>regexp_match</> function returns a text array of
+     captured substring(s) resulting from the first match of a POSIX
+     regular expression pattern to a string.  It has the syntax
+     <function>regexp_match</function>(<replaceable>string</>,
+     <replaceable>pattern</> <optional>, <replaceable>flags</> </optional>).
+     If there is no match, the result is <literal>NULL</>.
+     If a match is found, and the <replaceable>pattern</> contains no
+     parenthesized subexpressions, then the result is a single-element text
+     array containing the substring matching the whole pattern.
+     If a match is found, and the <replaceable>pattern</> contains
+     parenthesized subexpressions, then the result is a text array
+     whose <replaceable>n</>'th element is the substring matching
+     the <replaceable>n</>'th parenthesized subexpression of
+     the <replaceable>pattern</> (not counting <quote>non-capturing</>
+     parentheses; see below for details).
+     The <replaceable>flags</> parameter is an optional text string
+     containing zero or more single-letter flags that change the function's
+     behavior.  Supported flags are described
+     in <xref linkend="posix-embedded-options-table">.
     </para>
 
    <para>
     Some examples:
 <programlisting>
-SELECT regexp_matches('foobarbequebaz', '(bar)(beque)');
- regexp_matches 
-----------------
- {bar,beque}
+SELECT regexp_match('foobarbequebaz', 'bar.*que');
+ regexp_match
+--------------
+ {barbeque}
 (1 row)
 
+SELECT regexp_match('foobarbequebaz', '(bar)(beque)');
+ regexp_match
+--------------
+ {bar,beque}
+(1 row)
+</programlisting>
+    In the common case where you just want the whole matching substring
+    or <literal>NULL</> for no match, write something like
+<programlisting>
+SELECT (regexp_match('foobarbequebaz', 'bar.*que'))[1];
+ regexp_match
+--------------
+ barbeque
+(1 row)
+</programlisting>
+   </para>
+
+    <para>
+     The <function>regexp_matches</> function returns a set of text arrays
+     of captured substring(s) resulting from matching a POSIX regular
+     expression pattern to a string.  It has the same syntax as
+     <function>regexp_match</function>.
+     This function returns no rows if there is no match, one row if there is
+     a match and the <literal>g</> flag is not given, or <replaceable>N</>
+     rows if there are <replaceable>N</> matches and the <literal>g</> flag
+     is given.  Each returned row is a text array containing the whole
+     matched substring or the substrings matching parenthesized
+     subexpressions of the <replaceable>pattern</>, just as described above
+     for <function>regexp_match</function>.
+     <function>regexp_matches</> accepts all the flags shown
+     in <xref linkend="posix-embedded-options-table">, plus
+     the <literal>g</> flag which commands it to return all matches, not
+     just the first one.
+    </para>
+
+   <para>
+    Some examples:
+<programlisting>
+ SELECT regexp_matches('foo', 'not there');
+ regexp_matches
+----------------
+(0 rows)
+
 SELECT regexp_matches('foobarbequebazilbarfbonk', '(b[^b]+)(b[^b]+)', 'g');
- regexp_matches 
+ regexp_matches
 ----------------
  {bar,beque}
  {bazil,barf}
 (2 rows)
-
-SELECT regexp_matches('foobarbequebaz', 'barbeque');
- regexp_matches 
-----------------
- {barbeque}
-(1 row)
 </programlisting>
    </para>
 
-   <para>
-    It is possible to force <function>regexp_matches()</> to always
-    return one row by using a sub-select;  this is particularly useful
-    in a <literal>SELECT</> target list when you want all rows
-    returned, even non-matching ones:
+   <tip>
+    <para>
+     In most cases <function>regexp_matches()</> should be used with
+     the <literal>g</> flag, since if you only want the first match, it's
+     easier and more efficient to use <function>regexp_match()</>.
+     However, <function>regexp_match()</> only exists
+     in <productname>PostgreSQL</> version 10 and up.  When working in older
+     versions, a common trick is to place a <function>regexp_matches()</>
+     call in a sub-select, for example:
 <programlisting>
 SELECT col1, (SELECT regexp_matches(col2, '(bar)(beque)')) FROM tab;
 </programlisting>
-   </para>
+     This produces a text array if there's a match, or <literal>NULL</> if
+     not, the same as <function>regexp_match()</> would do.  Without the
+     sub-select, this query would produce no output at all for table rows
+     without a match, which is typically not the desired behavior.
+    </para>
+   </tip>
 
     <para>
      The <function>regexp_split_to_table</> function splits a string using a POSIX
@@ -4408,6 +4471,7 @@ SELECT foo FROM regexp_split_to_table('the quick brown fox', E'\\s*') AS foo;
     zero-length matches that occur at the start or end of the string
     or immediately after a previous match.  This is contrary to the strict
     definition of regexp matching that is implemented by
+    <function>regexp_match</> and
     <function>regexp_matches</>, but is usually the most convenient behavior
     in practice.  Other software systems such as Perl use similar definitions.
    </para>
@@ -5482,7 +5546,7 @@ SELECT SUBSTRING('XY1234Z', 'Y*?([0-9]{1,3})');
     into the digits and the parts before and after them.  We might try to
     do that like this:
 <screen>
-SELECT regexp_matches('abc01234xyz', '(.*)(\d+)(.*)');
+SELECT regexp_match('abc01234xyz', '(.*)(\d+)(.*)');
 <lineannotation>Result: </lineannotation><computeroutput>{abc0123,4,xyz}</computeroutput>
 </screen>
     That didn't work: the first <literal>.*</> is greedy so
@@ -5490,14 +5554,14 @@ SELECT regexp_matches('abc01234xyz', '(.*)(\d+)(.*)');
     match at the last possible place, the last digit.  We might try to fix
     that by making it non-greedy:
 <screen>
-SELECT regexp_matches('abc01234xyz', '(.*?)(\d+)(.*)');
+SELECT regexp_match('abc01234xyz', '(.*?)(\d+)(.*)');
 <lineannotation>Result: </lineannotation><computeroutput>{abc,0,""}</computeroutput>
 </screen>
     That didn't work either, because now the RE as a whole is non-greedy
     and so it ends the overall match as soon as possible.  We can get what
     we want by forcing the RE as a whole to be greedy:
 <screen>
-SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
+SELECT regexp_match('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 <lineannotation>Result: </lineannotation><computeroutput>{abc,01234,xyz}</computeroutput>
 </screen>
     Controlling the RE's overall greediness separately from its components'
@@ -5769,6 +5833,17 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
     </para>
    </note>
 
+   <tip>
+    <para>
+     <function>to_timestamp</function> and <function>to_date</function>
+     exist to handle input formats that cannot be converted by
+     simple casting.  For most standard date/time formats, simply casting the
+     source string to the required data type works, and is much easier.
+     Similarly, <function>to_number</> is unnecessary for standard numeric
+     representations.
+    </para>
+   </tip>
+
    <para>
     In a <function>to_char</> output template string, there are certain
     patterns that are recognized and replaced with appropriately-formatted
@@ -5975,7 +6050,7 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
        </row>
        <row>
         <entry><literal>Q</literal></entry>
-        <entry>quarter (ignored by <function>to_date</> and <function>to_timestamp</>)</entry>
+        <entry>quarter</entry>
        </row>
        <row>
         <entry><literal>RM</literal></entry>
@@ -6095,20 +6170,6 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 
      <listitem>
       <para>
-       <function>to_timestamp</function> and <function>to_date</function>
-       exist to handle input formats that cannot be converted by
-       simple casting.  These functions interpret input liberally,
-       with minimal error checking.  While they produce valid output,
-       the conversion can yield unexpected results.  For example,
-       input to these functions is not restricted by normal ranges,
-       thus <literal>to_date('20096040','YYYYMMDD')</literal> returns
-       <literal>2014-01-17</literal> rather than causing an error.
-       Casting does not have this behavior.
-      </para>
-     </listitem>
-
-     <listitem>
-      <para>
        Ordinary text is allowed in <function>to_char</function>
        templates and will be output literally.  You can put a substring
        in double quotes to force it to be interpreted as literal text
@@ -6132,7 +6193,8 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 
      <listitem>
       <para>
-       If the year format specification is less than four digits, e.g.
+       In <function>to_timestamp</function> and <function>to_date</function>,
+       if the year format specification is less than four digits, e.g.
        <literal>YYY</>, and the supplied year is less than four digits,
        the year will be adjusted to be nearest to the year 2020, e.g.
        <literal>95</> becomes 1995.
@@ -6141,8 +6203,9 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 
      <listitem>
       <para>
-       The <literal>YYYY</literal> conversion from string to <type>timestamp</type> or
-       <type>date</type> has a restriction when processing years with more than 4 digits. You must
+       In <function>to_timestamp</function> and <function>to_date</function>,
+       the <literal>YYYY</literal> conversion has a restriction when
+       processing years with more than 4 digits. You must
        use some non-digit character or template after <literal>YYYY</literal>,
        otherwise the year is always interpreted as 4 digits. For example
        (with the year 20000):
@@ -6156,12 +6219,12 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 
      <listitem>
       <para>
-       In conversions from string to <type>timestamp</type> or
-       <type>date</type>, the <literal>CC</literal> (century) field is ignored
+       In <function>to_timestamp</function> and <function>to_date</function>,
+       the <literal>CC</literal> (century) field is accepted but ignored
        if there is a <literal>YYY</literal>, <literal>YYYY</literal> or
        <literal>Y,YYY</literal> field. If <literal>CC</literal> is used with
-       <literal>YY</literal> or <literal>Y</literal> then the year is computed
-       as the year in the specified century.  If the century is
+       <literal>YY</literal> or <literal>Y</literal> then the result is
+       computed as that year in the specified century.  If the century is
        specified but the year is not, the first year of the century
        is assumed.
       </para>
@@ -6169,9 +6232,19 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 
      <listitem>
       <para>
-       An ISO 8601 week-numbering date (as distinct from a Gregorian date)
-       can be specified to <function>to_timestamp</function> and
-       <function>to_date</function> in one of two ways:
+       In <function>to_timestamp</function> and <function>to_date</function>,
+       weekday names or numbers (<literal>DAY</literal>, <literal>D</literal>,
+       and related field types) are accepted but are ignored for purposes of
+       computing the result.  The same is true for quarter
+       (<literal>Q</literal>) fields.
+      </para>
+     </listitem>
+
+     <listitem>
+      <para>
+       In <function>to_timestamp</function> and <function>to_date</function>,
+       an ISO 8601 week-numbering date (as distinct from a Gregorian date)
+       can be specified in one of two ways:
        <itemizedlist>
         <listitem>
          <para>
@@ -6213,23 +6286,24 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
 
      <listitem>
       <para>
-       In a conversion from string to <type>timestamp</type>, millisecond
+       In <function>to_timestamp</function>, millisecond
        (<literal>MS</literal>) or microsecond (<literal>US</literal>)
-       values are used as the
+       fields are used as the
        seconds digits after the decimal point. For example
-       <literal>to_timestamp('12:3', 'SS:MS')</literal> is not 3 milliseconds,
-       but 300, because the conversion counts it as 12 + 0.3 seconds.
-       This means for the format <literal>SS:MS</literal>, the input values
-       <literal>12:3</literal>, <literal>12:30</literal>, and <literal>12:300</literal> specify the
-       same number of milliseconds. To get three milliseconds, one must use
-       <literal>12:003</literal>, which the conversion counts as
+       <literal>to_timestamp('12.3', 'SS.MS')</literal> is not 3 milliseconds,
+       but 300, because the conversion treats it as 12 + 0.3 seconds.
+       So, for the format <literal>SS.MS</literal>, the input values
+       <literal>12.3</literal>, <literal>12.30</literal>,
+       and <literal>12.300</literal> specify the
+       same number of milliseconds. To get three milliseconds, one must write
+       <literal>12.003</literal>, which the conversion treats as
        12 + 0.003 = 12.003 seconds.
       </para>
 
       <para>
        Here is a more
        complex example:
-       <literal>to_timestamp('15:12:02.020.001230', 'HH:MI:SS.MS.US')</literal>
+       <literal>to_timestamp('15:12:02.020.001230', 'HH24:MI:SS.MS.US')</literal>
        is 15 hours, 12 minutes, and 2 seconds + 20 milliseconds +
        1230 microseconds = 2.021230 seconds.
       </para>
@@ -6247,9 +6321,10 @@ SELECT regexp_matches('abc01234xyz', '(?:(.*?)(\d+)(.*)){1,1}');
      <listitem>
       <para>
         <function>to_char(interval)</function> formats <literal>HH</> and
-        <literal>HH12</> as shown on a 12-hour clock, i.e. zero hours
-        and 36 hours output as <literal>12</>, while <literal>HH24</>
-        outputs the full hour value, which can exceed 23 for intervals.
+        <literal>HH12</> as shown on a 12-hour clock, for example zero hours
+        and 36 hours both output as <literal>12</>, while <literal>HH24</>
+        outputs the full hour value, which can exceed 23 in
+        an <type>interval</> value.
       </para>
      </listitem>
 
@@ -8302,12 +8377,12 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
        <row>
         <entry> <literal>#</literal> </entry>
         <entry>Point or box of intersection</entry>
-        <entry><literal>'((1,-1),(-1,1))' # '((1,1),(-1,-1))'</literal></entry>
+        <entry><literal>box '((1,-1),(-1,1))' # box '((1,1),(-2,-2))'</literal></entry>
        </row>
        <row>
         <entry> <literal>#</literal> </entry>
         <entry>Number of points in path or polygon</entry>
-        <entry><literal># '((1,0),(0,1),(-1,0))'</literal></entry>
+        <entry><literal># path '((1,0),(0,1),(-1,0))'</literal></entry>
        </row>
        <row>
         <entry> <literal>@-@</literal> </entry>
@@ -9460,7 +9535,7 @@ CREATE TYPE rainbow AS ENUM ('red', 'orange', 'yellow', 'green', 'blue', 'purple
          <literal><function>ts_filter(<replaceable class="PARAMETER">vector</replaceable> <type>tsvector</>, <replaceable class="PARAMETER">weights</replaceable> <type>"char"[]</>)</function></literal>
         </entry>
         <entry><type>tsvector</type></entry>
-        <entry>Select only elements with given <replaceable class="PARAMETER">weights</replaceable> from <replaceable class="PARAMETER">vector</replaceable></entry>
+        <entry>select only elements with given <replaceable class="PARAMETER">weights</replaceable> from <replaceable class="PARAMETER">vector</replaceable></entry>
         <entry><literal>ts_filter('fat:2,4 cat:3b rat:5A'::tsvector, '{a,b}')</literal></entry>
         <entry><literal>'cat':3B 'rat':5A</literal></entry>
        </row>
@@ -10767,6 +10842,14 @@ table2-mapping
         element from left operand.  Key/value pairs are matched based
         on their key value.</entry>
         <entry><literal>'{"a": "b"}'::jsonb - 'a' </literal></entry>
+       </row>
+       <row>
+        <entry><literal>-</literal></entry>
+        <entry><type>text[]</type></entry>
+        <entry>Delete multiple key/value pairs or <emphasis>string</emphasis>
+        elements from left operand.  Key/value pairs are matched based
+        on their key value.</entry>
+        <entry><literal>'{"a": "b", "c": "d"}'::jsonb - '{a,c}'::text[] </literal></entry>
        </row>
        <row>
         <entry><literal>-</literal></entry>
@@ -13699,9 +13782,6 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
         <primary>percentile</primary>
         <secondary>continuous</secondary>
        </indexterm>
-       <indexterm>
-        <primary>median</primary>
-       </indexterm>
        <function>percentile_cont(<replaceable class="parameter">fraction</replaceable>) WITHIN GROUP (ORDER BY <replaceable class="parameter">sort_expression</replaceable>)</function>
       </entry>
       <entry>
@@ -13737,7 +13817,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>No</entry>
       <entry>
        multiple continuous percentile: returns an array of results matching
-       the shape of the <literal>fractions</literal> parameter, with each
+       the shape of the <replaceable>fractions</replaceable> parameter, with each
        non-null element replaced by the value corresponding to that percentile
       </entry>
      </row>
@@ -13782,7 +13862,7 @@ SELECT xmlagg(x) FROM (SELECT x FROM test ORDER BY y DESC) AS tab;
       <entry>No</entry>
       <entry>
        multiple discrete percentile: returns an array of results matching the
-       shape of the <literal>fractions</literal> parameter, with each non-null
+       shape of the <replaceable>fractions</replaceable> parameter, with each non-null
        element replaced by the input value corresponding to that percentile
       </entry>
      </row>
@@ -15253,7 +15333,7 @@ SELECT * FROM pg_ls_dir('.') WITH ORDINALITY AS t(ls,n);
  pg_snapshots    | 13
  pg_multixact    | 14
  PG_VERSION      | 15
- pg_xlog         | 16
+ pg_wal          | 16
  pg_hba.conf     | 17
  pg_stat_tmp     | 18
  pg_subtrans     | 19
@@ -15835,6 +15915,21 @@ SET search_path TO <replaceable>schema</> <optional>, <replaceable>schema</>, ..
        <entry>does current user have privilege for tablespace</entry>
       </row>
       <row>
+       <entry><literal><function>has_type_privilege</function>(<parameter>user</parameter>,
+                                  <parameter>type</parameter>,
+                                  <parameter>privilege</parameter>)</literal>
+       </entry>
+       <entry><type>boolean</type></entry>
+       <entry>does user have privilege for type</entry>
+      </row>
+      <row>
+       <entry><literal><function>has_type_privilege</function>(<parameter>type</parameter>,
+                                  <parameter>privilege</parameter>)</literal>
+       </entry>
+       <entry><type>boolean</type></entry>
+       <entry>does current user have privilege for type</entry>
+      </row>
+      <row>
        <entry><literal><function>pg_has_role</function>(<parameter>user</parameter>,
                                   <parameter>role</parameter>,
                                   <parameter>privilege</parameter>)</literal>
@@ -15891,6 +15986,9 @@ SET search_path TO <replaceable>schema</> <optional>, <replaceable>schema</>, ..
    </indexterm>
    <indexterm>
     <primary>has_tablespace_privilege</primary>
+   </indexterm>
+   <indexterm>
+    <primary>has_type_privilege</primary>
    </indexterm>
    <indexterm>
     <primary>pg_has_role</primary>
@@ -16044,6 +16142,18 @@ SELECT has_function_privilege('joeuser', 'myfunc(int, text)', 'execute');
     are analogous to <function>has_table_privilege</function>.
     The desired access privilege type must evaluate to
     <literal>CREATE</literal>.
+   </para>
+
+   <para>
+    <function>has_type_privilege</function> checks whether a user
+    can access a type in a particular way.
+    Its argument possibilities
+    are analogous to <function>has_table_privilege</function>.
+    When specifying a type by a text string rather than by OID,
+    the allowed input is the same as for the <type>regtype</> data type
+    (see <xref linkend="datatype-oid">).
+    The desired access privilege type must evaluate to
+    <literal>USAGE</literal>.
    </para>
 
    <para>
@@ -16787,7 +16897,7 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
   <para>
    <function>pg_options_to_table</function> returns the set of storage
    option name/value pairs
-   (<literal>option_name</>/<literal>option_value</>) when passed
+   (<replaceable>option_name</>/<replaceable>option_value</>) when passed
    <structname>pg_class</>.<structfield>reloptions</> or
    <structname>pg_attribute</>.<structfield>attoptions</>.
   </para>
@@ -17057,6 +17167,10 @@ SELECT collation for ('foo' COLLATE "de_DE");
    </indexterm>
 
    <indexterm>
+    <primary>txid_current_if_assigned</primary>
+   </indexterm>
+
+   <indexterm>
     <primary>txid_current_snapshot</primary>
    </indexterm>
 
@@ -17095,6 +17209,11 @@ SELECT collation for ('foo' COLLATE "de_DE");
        <entry><literal><function>txid_current()</function></literal></entry>
        <entry><type>bigint</type></entry>
        <entry>get current transaction ID, assigning a new one if the current transaction does not have one</entry>
+      </row>
+      <row>
+       <entry><literal><function>txid_current_if_assigned()</function></literal></entry>
+       <entry><type>bigint</type></entry>
+       <entry>same as <function>txid_current()</function> but returns null instead of assigning an xid if none is already assigned</entry>
       </row>
       <row>
        <entry><literal><function>txid_current_snapshot()</function></literal></entry>
@@ -18351,7 +18470,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <indexterm>
          <primary>pg_create_physical_replication_slot</primary>
         </indexterm>
-        <literal><function>pg_create_physical_replication_slot(<parameter>slot_name</parameter> <type>name</type> <optional>, <parameter>immediately_reserve</> <type>boolean</> </optional>)</function></literal>
+        <literal><function>pg_create_physical_replication_slot(<parameter>slot_name</parameter> <type>name</type> <optional>, <parameter>immediately_reserve</> <type>boolean</>, <parameter>temporary</> <type>boolean</></optional>)</function></literal>
        </entry>
        <entry>
         (<parameter>slot_name</parameter> <type>name</type>, <parameter>xlog_position</parameter> <type>pg_lsn</type>)
@@ -18364,7 +18483,11 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         the <acronym>LSN</> is reserved on first connection from a streaming
         replication client. Streaming changes from a physical slot is only
         possible with the streaming-replication protocol &mdash;
-        see <xref linkend="protocol-replication">. This function corresponds
+        see <xref linkend="protocol-replication">. The optional third
+        parameter, <parameter>temporary</>, when set to true, specifies that
+        the slot should not be permanently stored to disk and is only meant
+        for use by current session. Temporary slots are also
+        released upon any error. This function corresponds
         to the replication protocol command <literal>CREATE_REPLICATION_SLOT
         ... PHYSICAL</literal>.
        </entry>
@@ -18391,7 +18514,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <indexterm>
          <primary>pg_create_logical_replication_slot</primary>
         </indexterm>
-        <literal><function>pg_create_logical_replication_slot(<parameter>slot_name</parameter> <type>name</type>, <parameter>plugin</parameter> <type>name</type>)</function></literal>
+        <literal><function>pg_create_logical_replication_slot(<parameter>slot_name</parameter> <type>name</type>, <parameter>plugin</parameter> <type>name</type> <optional>, <parameter>temporary</> <type>boolean</></optional>)</function></literal>
        </entry>
        <entry>
         (<parameter>slot_name</parameter> <type>name</type>, <parameter>xlog_position</parameter> <type>pg_lsn</type>)
@@ -18399,7 +18522,11 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
        <entry>
         Creates a new logical (decoding) replication slot named
         <parameter>slot_name</parameter> using the output plugin
-        <parameter>plugin</parameter>.  A call to this function has the same
+        <parameter>plugin</parameter>. The optional third
+        parameter, <parameter>temporary</>, when set to true, specifies that
+        the slot should not be permanently stored to disk and is only meant
+        for use by current session. Temporary slots are also
+        released upon any error. A call to this function has the same
         effect as the replication protocol command
         <literal>CREATE_REPLICATION_SLOT ... LOGICAL</literal>.
        </entry>
@@ -18508,7 +18635,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_replication_origin_drop(<parameter>node_name</parameter> <type>text</type>)</function></literal>
        </entry>
        <entry>
-        void
+        <type>void</>
        </entry>
        <entry>
         Delete a previously created replication origin, including any
@@ -18540,7 +18667,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_replication_origin_session_setup(<parameter>node_name</parameter> <type>text</type>)</function></literal>
        </entry>
        <entry>
-        void
+        <type>void</>
        </entry>
        <entry>
         Mark the current session as replaying from the given
@@ -18558,7 +18685,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_replication_origin_session_reset()</function></literal>
        </entry>
        <entry>
-        void
+        <type>void</>
        </entry>
        <entry>
         Cancel the effects
@@ -18607,7 +18734,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_replication_origin_xact_setup(<parameter>origin_lsn</parameter> <type>pg_lsn</type>, <parameter>origin_timestamp</parameter> <type>timestamptz</type>)</function></literal>
        </entry>
        <entry>
-        void
+        <type>void</>
        </entry>
        <entry>
         Mark the current transaction as replaying a transaction that has
@@ -18626,7 +18753,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
         <literal><function>pg_replication_origin_xact_reset()</function></literal>
        </entry>
        <entry>
-        void
+        <type>void</>
        </entry>
        <entry>
         Cancel the effects of
@@ -18635,14 +18762,14 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
       </row>
 
       <row>
-       <entry>
+       <entry id="pg-replication-origin-advance">
         <indexterm>
          <primary>pg_replication_origin_advance</primary>
         </indexterm>
         <literal>pg_replication_origin_advance<function>(<parameter>node_name</parameter> <type>text</type>, <parameter>pos</parameter> <type>pg_lsn</type>)</function></literal>
        </entry>
        <entry>
-        void
+        <type>void</>
        </entry>
        <entry>
         Set replication progress for the given node to the given
@@ -19071,6 +19198,46 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
     in the database's default tablespace, the tablespace can be specified as 0.
    </para>
 
+   <para>
+    <xref linkend="functions-admin-collation"> lists functions used to manage
+    collations.
+   </para>
+
+   <table id="functions-admin-collation">
+    <title>Collation Management Functions</title>
+    <tgroup cols="3">
+     <thead>
+      <row><entry>Name</entry> <entry>Return Type</entry> <entry>Description</entry></row>
+     </thead>
+
+     <tbody>
+      <row>
+       <entry>
+        <indexterm><primary>pg_import_system_collations</primary></indexterm>
+        <literal><function>pg_import_system_collations(<parameter>if_not_exists</> <type>boolean</>, <parameter>schema</> <type>regnamespace</>)</function></literal>
+       </entry>
+       <entry><type>void</type></entry>
+       <entry>Import operating system collations</entry>
+      </row>
+     </tbody>
+    </tgroup>
+   </table>
+
+   <para>
+    <function>pg_import_system_collations</> populates the system
+    catalog <literal>pg_collation</literal> with collations based on all the
+    locales it finds on the operating system.  This is
+    what <command>initdb</command> uses;
+    see <xref linkend="collation-managing"> for more details.  If additional
+    locales are installed into the operating system later on, this function
+    can be run again to add collations for the new locales.  In that case, the
+    parameter <parameter>if_not_exists</parameter> should be set to true to
+    skip over existing collations.  The <parameter>schema</parameter>
+    parameter would typically be <literal>pg_catalog</literal>, but that is
+    not a requirement.  (Collation objects based on locales that are no longer
+    present on the operating system are never removed by this function.)
+   </para>
+
   </sect2>
 
   <sect2 id="functions-admin-index">
@@ -19102,7 +19269,7 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
      <tbody>
       <row>
        <entry>
-        <literal><function>brin_summarize_new_values(<parameter>index_oid</> <type>regclass</>)</function></literal>
+        <literal><function>brin_summarize_new_values(<parameter>index</> <type>regclass</>)</function></literal>
        </entry>
        <entry><type>integer</type></entry>
        <entry>summarize page ranges not already summarized</entry>
@@ -19119,8 +19286,8 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
    </table>
 
    <para>
-    <function>brin_summarize_new_values</> receives a BRIN index OID as
-    argument and inspects the index to find page ranges in the base table
+    <function>brin_summarize_new_values</> accepts the OID or name of a
+    BRIN index and inspects the index to find page ranges in the base table
     that are not currently summarized by the index; for any such range
     it creates a new summary index tuple by scanning the table pages.
     It returns the number of new page range summaries that were inserted
@@ -19129,12 +19296,12 @@ postgres=# SELECT * FROM pg_xlogfile_name_offset(pg_stop_backup());
 
    <para>
     <function>gin_clean_pending_list</> accepts the OID or name of
-    a GIN index and cleans up the pending list of the specified GIN index
+    a GIN index and cleans up the pending list of the specified index
     by moving entries in it to the main GIN data structure in bulk.
-    It returns the number of pages cleaned up from the pending list.
-    Note that if the argument is a GIN index built with <literal>fastupdate</>
-    option disabled, the cleanup does not happen and the return value is 0
-    because the index doesn't have a pending list.
+    It returns the number of pages removed from the pending list.
+    Note that if the argument is a GIN index built with
+    the <literal>fastupdate</> option disabled, no cleanup happens and the
+    return value is 0, because the index doesn't have a pending list.
     Please see <xref linkend="gin-fast-update"> and <xref linkend="gin-tips">
     for details of the pending list and <literal>fastupdate</> option.
    </para>

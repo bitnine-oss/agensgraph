@@ -3,7 +3,7 @@
  * quote.c
  *	  Functions for quoting identifiers and literals
  *
- * Portions Copyright (c) 2000-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2000-2017, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -107,7 +107,7 @@ quote_literal_cstr(const char *rawstr)
 
 	len = strlen(rawstr);
 	/* We make a worst-case result area; wasting a little space is OK */
-	result = palloc(len * 2 + 3);
+	result = palloc(len * 2 + 3 + 1);
 
 	newlen = quote_literal_internal(result, rawstr, len);
 	result[newlen] = '\0';

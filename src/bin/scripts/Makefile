@@ -2,7 +2,7 @@
 #
 # Makefile for src/bin/scripts
 #
-# Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/bin/scripts/Makefile
@@ -35,7 +35,7 @@ dropuser: dropuser.o common.o | submake-libpq submake-libpgport submake-libpgfeu
 clusterdb: clusterdb.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
 vacuumdb: vacuumdb.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
 reindexdb: reindexdb.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
-pg_isready: pg_isready.o common.o | submake-libpq submake-libpgport
+pg_isready: pg_isready.o common.o | submake-libpq submake-libpgport submake-libpgfeutils
 
 install: all installdirs
 	$(INSTALL_PROGRAM) createdb$(X)   '$(DESTDIR)$(bindir)'/createdb$(X)

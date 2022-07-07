@@ -3,7 +3,7 @@
  * unaccent.c
  *	  Text search unaccent dictionary
  *
- * Copyright (c) 2009-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2009-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/unaccent/unaccent.c
@@ -20,6 +20,7 @@
 #include "tsearch/ts_locale.h"
 #include "tsearch/ts_public.h"
 #include "utils/builtins.h"
+#include "utils/regproc.h"
 
 PG_MODULE_MAGIC;
 

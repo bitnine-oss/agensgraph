@@ -32,7 +32,7 @@
  * happen, it would tie up KnownAssignedXids indefinitely, so we protect
  * ourselves by pruning the array when a valid list of running XIDs arrives.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -105,9 +105,6 @@ static PGXACT *allPgXact;
 static TransactionId *KnownAssignedXids;
 static bool *KnownAssignedXidsValid;
 static TransactionId latestObservedXid = InvalidTransactionId;
-
-/* LWLock tranche for backend locks */
-static LWLockTranche ProcLWLockTranche;
 
 /*
  * If we're in STANDBY_SNAPSHOT_PENDING state, standbySnapshotPendingXmin is
@@ -266,11 +263,7 @@ CreateSharedProcArray(void)
 	}
 
 	/* Register and initialize fields of ProcLWLockTranche */
-	ProcLWLockTranche.name = "proc";
-	ProcLWLockTranche.array_base = (char *) (ProcGlobal->allProcs) +
-		offsetof(PGPROC, backendLock);
-	ProcLWLockTranche.array_stride = sizeof(PGPROC);
-	LWLockRegisterTranche(LWTRANCHE_PROC, &ProcLWLockTranche);
+	LWLockRegisterTranche(LWTRANCHE_PROC, "proc");
 }
 
 /*
@@ -491,7 +484,6 @@ ProcArrayGroupClearXid(PGPROC *proc, TransactionId latestXid)
 	volatile PROC_HDR *procglobal = ProcGlobal;
 	uint32		nextidx;
 	uint32		wakeidx;
-	int			extraWaits = -1;
 
 	/* We should definitely have an XID to clear. */
 	Assert(TransactionIdIsValid(allPgXact[proc->pgprocno].xid));
@@ -518,11 +510,13 @@ ProcArrayGroupClearXid(PGPROC *proc, TransactionId latestXid)
 	 */
 	if (nextidx != INVALID_PGPROCNO)
 	{
+		int			extraWaits = 0;
+
 		/* Sleep until the leader clears our XID. */
 		for (;;)
 		{
 			/* acts as a read barrier */
-			PGSemaphoreLock(&proc->sem);
+			PGSemaphoreLock(proc->sem);
 			if (!proc->procArrayGroupMember)
 				break;
 			extraWaits++;
@@ -532,7 +526,7 @@ ProcArrayGroupClearXid(PGPROC *proc, TransactionId latestXid)
 
 		/* Fix semaphore count for any absorbed wakeups */
 		while (extraWaits-- > 0)
-			PGSemaphoreUnlock(&proc->sem);
+			PGSemaphoreUnlock(proc->sem);
 		return;
 	}
 
@@ -591,7 +585,7 @@ ProcArrayGroupClearXid(PGPROC *proc, TransactionId latestXid)
 		proc->procArrayGroupMember = false;
 
 		if (proc != MyProc)
-			PGSemaphoreUnlock(&proc->sem);
+			PGSemaphoreUnlock(proc->sem);
 	}
 }
 
@@ -2751,6 +2745,38 @@ CountDBBackends(Oid databaseid)
 }
 
 /*
+ * CountDBConnections --- counts database backends ignoring any background
+ *		worker processes
+ */
+int
+CountDBConnections(Oid databaseid)
+{
+	ProcArrayStruct *arrayP = procArray;
+	int			count = 0;
+	int			index;
+
+	LWLockAcquire(ProcArrayLock, LW_SHARED);
+
+	for (index = 0; index < arrayP->numProcs; index++)
+	{
+		int			pgprocno = arrayP->pgprocnos[index];
+		volatile PGPROC *proc = &allProcs[pgprocno];
+
+		if (proc->pid == 0)
+			continue;			/* do not count prepared xacts */
+		if (proc->isBackgroundWorker)
+			continue;			/* do not count background workers */
+		if (!OidIsValid(databaseid) ||
+			proc->databaseId == databaseid)
+			count++;
+	}
+
+	LWLockRelease(ProcArrayLock);
+
+	return count;
+}
+
+/*
  * CancelDBBackends --- cancel backends that are using specified database
  */
 void
@@ -2809,6 +2835,8 @@ CountUserBackends(Oid roleid)
 
 		if (proc->pid == 0)
 			continue;			/* do not count prepared xacts */
+		if (proc->isBackgroundWorker)
+			continue;			/* do not count background workers */
 		if (proc->roleId == roleid)
 			count++;
 	}

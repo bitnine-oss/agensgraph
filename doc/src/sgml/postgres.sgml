@@ -106,6 +106,7 @@
   &textsearch;
   &mvcc;
   &perform;
+  &parallel;
 
  </part>
 
@@ -159,6 +160,7 @@
   &monitoring;
   &diskusage;
   &wal;
+  &logical-replication;
   &regress;
 
  </part>

@@ -3,7 +3,7 @@
  * dirmod.c
  *	  directory handling functions
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	This includes replacement versions of functions that work on
@@ -338,10 +338,10 @@ pgreadlink(const char *path, char *buf, size_t size)
 
 /*
  * Assumes the file exists, so will return false if it doesn't
- * (since a nonexistant file is not a junction)
+ * (since a nonexistent file is not a junction)
  */
 bool
-pgwin32_is_junction(char *path)
+pgwin32_is_junction(const char *path)
 {
 	DWORD		attr = GetFileAttributes(path);
 
@@ -372,7 +372,22 @@ pgwin32_safestat(const char *path, struct stat * buf)
 
 	r = stat(path, buf);
 	if (r < 0)
+	{
+		if (GetLastError() == ERROR_DELETE_PENDING)
+		{
+			/*
+			 * File has been deleted, but is not gone from the filesystem
+			 * yet. This can happen when some process with FILE_SHARE_DELETE
+			 * has it open and it will be fully removed once that handle
+			 * is closed. Meanwhile, we can't open it, so indicate that
+			 * the file just doesn't exist.
+			 */
+			errno = ENOENT;
+			return -1;
+		}
+
 		return r;
+	}
 
 	if (!GetFileAttributesEx(path, GetFileExInfoStandard, &attr))
 	{

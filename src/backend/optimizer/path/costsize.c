@@ -60,7 +60,7 @@
  * values.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -161,6 +161,7 @@ static Selectivity get_foreign_key_join_selectivity(PlannerInfo *root,
 static void set_rel_width(PlannerInfo *root, RelOptInfo *rel);
 static double relation_byte_size(double tuples, int width);
 static double page_size(double tuples, int width);
+static double get_parallel_divisor(Path *path);
 
 
 /*
@@ -238,32 +239,7 @@ cost_seqscan(Path *path, PlannerInfo *root,
 	/* Adjust costing for parallelism, if used. */
 	if (path->parallel_workers > 0)
 	{
-		double		parallel_divisor = path->parallel_workers;
-		double		leader_contribution;
-
-		/*
-		 * Early experience with parallel query suggests that when there is
-		 * only one worker, the leader often makes a very substantial
-		 * contribution to executing the parallel portion of the plan, but as
-		 * more workers are added, it does less and less, because it's busy
-		 * reading tuples from the workers and doing whatever non-parallel
-		 * post-processing is needed.  By the time we reach 4 workers, the
-		 * leader no longer makes a meaningful contribution.  Thus, for now,
-		 * estimate that the leader spends 30% of its time servicing each
-		 * worker, and the remainder executing the parallel plan.
-		 */
-		leader_contribution = 1.0 - (0.3 * path->parallel_workers);
-		if (leader_contribution > 0)
-			parallel_divisor += leader_contribution;
-
-		/*
-		 * In the case of a parallel plan, the row count needs to represent
-		 * the number of tuples processed per worker.  Otherwise, higher-level
-		 * plan nodes that appear below the gather will be costed incorrectly,
-		 * because they'll anticipate receiving more rows than any given copy
-		 * will actually get.
-		 */
-		path->rows = clamp_row_est(path->rows / parallel_divisor);
+		double		parallel_divisor = get_parallel_divisor(path);
 
 		/* The CPU cost is divided among all the workers. */
 		cpu_run_cost /= parallel_divisor;
@@ -274,6 +250,12 @@ cost_seqscan(Path *path, PlannerInfo *root,
 		 * prefetching.  For now, we assume that the disk run cost can't be
 		 * amortized at all.
 		 */
+
+		/*
+		 * In the case of a parallel plan, the row count needs to represent
+		 * the number of tuples processed per worker.
+		 */
+		path->rows = clamp_row_est(path->rows / parallel_divisor);
 	}
 
 	path->startup_cost = startup_cost;
@@ -831,7 +813,6 @@ cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
 	Cost		startup_cost = 0;
 	Cost		run_cost = 0;
 	Cost		indexTotalCost;
-	Selectivity indexSelectivity;
 	QualCost	qpqual_cost;
 	Cost		cpu_per_tuple;
 	Cost		cost_per_page;
@@ -855,53 +836,17 @@ cost_bitmap_heap_scan(Path *path, PlannerInfo *root, RelOptInfo *baserel,
 	if (!enable_bitmapscan)
 		startup_cost += disable_cost;
 
-	/*
-	 * Fetch total cost of obtaining the bitmap, as well as its total
-	 * selectivity.
-	 */
-	cost_bitmap_tree_node(bitmapqual, &indexTotalCost, &indexSelectivity);
+	pages_fetched = compute_bitmap_pages(root, baserel, bitmapqual,
+										 loop_count, &indexTotalCost,
+										 &tuples_fetched);
 
 	startup_cost += indexTotalCost;
+	T = (baserel->pages > 1) ? (double) baserel->pages : 1.0;
 
 	/* Fetch estimated page costs for tablespace containing table. */
 	get_tablespace_page_costs(baserel->reltablespace,
 							  &spc_random_page_cost,
 							  &spc_seq_page_cost);
-
-	/*
-	 * Estimate number of main-table pages fetched.
-	 */
-	tuples_fetched = clamp_row_est(indexSelectivity * baserel->tuples);
-
-	T = (baserel->pages > 1) ? (double) baserel->pages : 1.0;
-
-	if (loop_count > 1)
-	{
-		/*
-		 * For repeated bitmap scans, scale up the number of tuples fetched in
-		 * the Mackert and Lohman formula by the number of scans, so that we
-		 * estimate the number of pages fetched by all the scans. Then
-		 * pro-rate for one scan.
-		 */
-		pages_fetched = index_pages_fetched(tuples_fetched * loop_count,
-											baserel->pages,
-											get_indexpath_pages(bitmapqual),
-											root);
-		pages_fetched /= loop_count;
-	}
-	else
-	{
-		/*
-		 * For a single scan, the number of heap pages that need to be fetched
-		 * is the same as the Mackert and Lohman formula for the case T <= b
-		 * (ie, no re-reads needed).
-		 */
-		pages_fetched = (2.0 * T * tuples_fetched) / (2.0 * T + tuples_fetched);
-	}
-	if (pages_fetched >= T)
-		pages_fetched = T;
-	else
-		pages_fetched = ceil(pages_fetched);
 
 	/*
 	 * For small numbers of pages we should charge spc_random_page_cost
@@ -1589,8 +1534,7 @@ cost_sort(Path *path, PlannerInfo *root,
  * at any given instant holds the next tuple from each stream.  If there
  * are N streams, we need about N*log2(N) tuple comparisons to construct
  * the heap at startup, and then for each output tuple, about log2(N)
- * comparisons to delete the top heap entry and another log2(N) comparisons
- * to insert its successor from the same stream.
+ * comparisons to replace the top entry.
  *
  * (The effective value of N will drop once some of the input streams are
  * exhausted, but it seems unlikely to be worth trying to account for that.)
@@ -1631,7 +1575,7 @@ cost_merge_append(Path *path, PlannerInfo *root,
 	startup_cost += comparison_cost * N * logN;
 
 	/* Per-tuple heap maintenance cost */
-	run_cost += tuples * comparison_cost * 2.0 * logN;
+	run_cost += tuples * comparison_cost * logN;
 
 	/*
 	 * Also charge a small amount (arbitrarily set equal to operator cost) per
@@ -2025,6 +1969,10 @@ final_cost_nestloop(PlannerInfo *root, NestPath *path,
 		path->path.rows = path->path.param_info->ppi_rows;
 	else
 		path->path.rows = path->path.parent->rows;
+
+	/* For partial paths, scale row estimate. */
+	if (path->path.parallel_workers > 0)
+		path->path.rows /= get_parallel_divisor(&path->path);
 
 	/*
 	 * We could include disable_cost in the preliminary estimate, but that
@@ -2444,6 +2392,10 @@ final_cost_mergejoin(PlannerInfo *root, MergePath *path,
 	else
 		path->jpath.path.rows = path->jpath.path.parent->rows;
 
+	/* For partial paths, scale row estimate. */
+	if (path->jpath.path.parallel_workers > 0)
+		path->jpath.path.rows /= get_parallel_divisor(&path->jpath.path);
+
 	/*
 	 * We could include disable_cost in the preliminary estimate, but that
 	 * would amount to optimizing for the case where the join method is
@@ -2822,6 +2774,10 @@ final_cost_hashjoin(PlannerInfo *root, HashPath *path,
 		path->jpath.path.rows = path->jpath.path.param_info->ppi_rows;
 	else
 		path->jpath.path.rows = path->jpath.path.parent->rows;
+
+	/* For partial paths, scale row estimate. */
+	if (path->jpath.path.parallel_workers > 0)
+		path->jpath.path.rows /= get_parallel_divisor(&path->jpath.path);
 
 	/*
 	 * We could include disable_cost in the preliminary estimate, but that
@@ -4098,6 +4054,7 @@ get_foreign_key_join_selectivity(PlannerInfo *root,
 	{
 		ForeignKeyOptInfo *fkinfo = (ForeignKeyOptInfo *) lfirst(lc);
 		bool		ref_is_outer;
+		bool		use_smallest_selectivity = false;
 		List	   *removedlist;
 		ListCell   *cell;
 		ListCell   *prev;
@@ -4218,9 +4175,9 @@ get_foreign_key_join_selectivity(PlannerInfo *root,
 		 * be double-counting the null fraction, and (2) it's not very clear
 		 * how to combine null fractions for multiple referencing columns.
 		 *
-		 * In the first branch of the logic below, null derating is done
-		 * implicitly by relying on clause_selectivity(); in the other two
-		 * paths, we do nothing for now about correcting for nulls.
+		 * In the use_smallest_selectivity code below, null derating is done
+		 * implicitly by relying on clause_selectivity(); in the other cases,
+		 * we do nothing for now about correcting for nulls.
 		 *
 		 * XXX another point here is that if either side of an FK constraint
 		 * is an inheritance parent, we estimate as though the constraint
@@ -4243,28 +4200,41 @@ get_foreign_key_join_selectivity(PlannerInfo *root,
 			 * the smallest per-column selectivity, instead.  (This should
 			 * correspond to the FK column with the most nulls.)
 			 */
-			Selectivity thisfksel = 1.0;
-
-			foreach(cell, removedlist)
-			{
-				RestrictInfo *rinfo = (RestrictInfo *) lfirst(cell);
-				Selectivity csel;
-
-				csel = clause_selectivity(root, (Node *) rinfo,
-										  0, jointype, sjinfo);
-				thisfksel = Min(thisfksel, csel);
-			}
-			fkselec *= thisfksel;
+			use_smallest_selectivity = true;
 		}
 		else if (jointype == JOIN_SEMI || jointype == JOIN_ANTI)
 		{
 			/*
 			 * For JOIN_SEMI and JOIN_ANTI, the selectivity is defined as the
-			 * fraction of LHS rows that have matches.  If the referenced
-			 * table is on the inner side, that means the selectivity is 1.0
-			 * (modulo nulls, which we're ignoring for now).  We already
-			 * covered the other case, so no work here.
+			 * fraction of LHS rows that have matches.  The referenced table
+			 * is on the inner side (we already handled the other case above),
+			 * so the FK implies that every LHS row has a match *in the
+			 * referenced table*.  But any restriction or join clauses below
+			 * here will reduce the number of matches.
 			 */
+			if (bms_membership(inner_relids) == BMS_SINGLETON)
+			{
+				/*
+				 * When the inner side of the semi/anti join is just the
+				 * referenced table, we may take the FK selectivity as equal
+				 * to the selectivity of the table's restriction clauses.
+				 */
+				RelOptInfo *ref_rel = find_base_rel(root, fkinfo->ref_relid);
+				double		ref_tuples = Max(ref_rel->tuples, 1.0);
+
+				fkselec *= ref_rel->rows / ref_tuples;
+			}
+			else
+			{
+				/*
+				 * When the inner side of the semi/anti join is itself a join,
+				 * it's hard to guess what fraction of the referenced table
+				 * will get through the join.  But we still don't want to
+				 * multiply per-column estimates together.  Take the smallest
+				 * per-column selectivity, instead.
+				 */
+				use_smallest_selectivity = true;
+			}
 		}
 		else
 		{
@@ -4277,6 +4247,26 @@ get_foreign_key_join_selectivity(PlannerInfo *root,
 			double		ref_tuples = Max(ref_rel->tuples, 1.0);
 
 			fkselec *= 1.0 / ref_tuples;
+		}
+
+		/*
+		 * Common code for cases where we should use the smallest selectivity
+		 * that would be computed for any one of the FK's clauses.
+		 */
+		if (use_smallest_selectivity)
+		{
+			Selectivity thisfksel = 1.0;
+
+			foreach(cell, removedlist)
+			{
+				RestrictInfo *rinfo = (RestrictInfo *) lfirst(cell);
+				Selectivity csel;
+
+				csel = clause_selectivity(root, (Node *) rinfo,
+										  0, jointype, sjinfo);
+				thisfksel = Min(thisfksel, csel);
+			}
+			fkselec *= thisfksel;
 		}
 	}
 
@@ -4777,4 +4767,98 @@ static double
 page_size(double tuples, int width)
 {
 	return ceil(relation_byte_size(tuples, width) / BLCKSZ);
+}
+
+/*
+ * Estimate the fraction of the work that each worker will do given the
+ * number of workers budgeted for the path.
+ */
+static double
+get_parallel_divisor(Path *path)
+{
+	double		parallel_divisor = path->parallel_workers;
+	double		leader_contribution;
+
+	/*
+	 * Early experience with parallel query suggests that when there is only
+	 * one worker, the leader often makes a very substantial contribution to
+	 * executing the parallel portion of the plan, but as more workers are
+	 * added, it does less and less, because it's busy reading tuples from the
+	 * workers and doing whatever non-parallel post-processing is needed.  By
+	 * the time we reach 4 workers, the leader no longer makes a meaningful
+	 * contribution.  Thus, for now, estimate that the leader spends 30% of
+	 * its time servicing each worker, and the remainder executing the
+	 * parallel plan.
+	 */
+	leader_contribution = 1.0 - (0.3 * path->parallel_workers);
+	if (leader_contribution > 0)
+		parallel_divisor += leader_contribution;
+
+	return parallel_divisor;
+}
+
+/*
+ * compute_bitmap_pages
+ *
+ * compute number of pages fetched from heap in bitmap heap scan.
+ */
+double
+compute_bitmap_pages(PlannerInfo *root, RelOptInfo *baserel, Path *bitmapqual,
+					 int loop_count, Cost *cost, double *tuple)
+{
+	Cost		indexTotalCost;
+	Selectivity indexSelectivity;
+	double		T;
+	double		pages_fetched;
+	double		tuples_fetched;
+
+	/*
+	 * Fetch total cost of obtaining the bitmap, as well as its total
+	 * selectivity.
+	 */
+	cost_bitmap_tree_node(bitmapqual, &indexTotalCost, &indexSelectivity);
+
+	/*
+	 * Estimate number of main-table pages fetched.
+	 */
+	tuples_fetched = clamp_row_est(indexSelectivity * baserel->tuples);
+
+	T = (baserel->pages > 1) ? (double) baserel->pages : 1.0;
+
+	if (loop_count > 1)
+	{
+		/*
+		 * For repeated bitmap scans, scale up the number of tuples fetched in
+		 * the Mackert and Lohman formula by the number of scans, so that we
+		 * estimate the number of pages fetched by all the scans. Then
+		 * pro-rate for one scan.
+		 */
+		pages_fetched = index_pages_fetched(tuples_fetched * loop_count,
+											baserel->pages,
+											get_indexpath_pages(bitmapqual),
+											root);
+		pages_fetched /= loop_count;
+	}
+	else
+	{
+		/*
+		 * For a single scan, the number of heap pages that need to be fetched
+		 * is the same as the Mackert and Lohman formula for the case T <= b
+		 * (ie, no re-reads needed).
+		 */
+		pages_fetched =
+			(2.0 * T * tuples_fetched) / (2.0 * T + tuples_fetched);
+	}
+
+	if (pages_fetched >= T)
+		pages_fetched = T;
+	else
+		pages_fetched = ceil(pages_fetched);
+
+	if (cost)
+		*cost = indexTotalCost;
+	if (tuple)
+		*tuple = tuples_fetched;
+
+	return pages_fetched;
 }

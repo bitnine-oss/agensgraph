@@ -4,7 +4,7 @@
  *	  Declarations for operations on INET datatypes.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/inet.h
@@ -28,10 +28,12 @@ typedef struct
 } inet_struct;
 
 /*
+ * We use these values for the "family" field.
+ *
  * Referencing all of the non-AF_INET types to AF_INET lets us work on
  * machines which may not have the appropriate address family (like
  * inet6 addresses when AF_INET6 isn't present) but doesn't cause a
- * dump/reload requirement.  Existing databases used AF_INET for the family
+ * dump/reload requirement.  Pre-7.4 databases used AF_INET for the family
  * type on disk.
  */
 #define PGSQL_AF_INET	(AF_INET + 0)
@@ -117,25 +119,8 @@ typedef struct macaddr
 /*
  * Support functions in network.c
  */
+extern inet *cidr_set_masklen_internal(const inet *src, int bits);
 extern int	bitncmp(const unsigned char *l, const unsigned char *r, int n);
 extern int	bitncommon(const unsigned char *l, const unsigned char *r, int n);
-
-/*
- * GiST support functions in network_gist.c
- */
-extern Datum inet_gist_fetch(PG_FUNCTION_ARGS);
-extern Datum inet_gist_consistent(PG_FUNCTION_ARGS);
-extern Datum inet_gist_union(PG_FUNCTION_ARGS);
-extern Datum inet_gist_compress(PG_FUNCTION_ARGS);
-extern Datum inet_gist_decompress(PG_FUNCTION_ARGS);
-extern Datum inet_gist_penalty(PG_FUNCTION_ARGS);
-extern Datum inet_gist_picksplit(PG_FUNCTION_ARGS);
-extern Datum inet_gist_same(PG_FUNCTION_ARGS);
-
-/*
- * Estimation functions in network_selfuncs.c
- */
-extern Datum networksel(PG_FUNCTION_ARGS);
-extern Datum networkjoinsel(PG_FUNCTION_ARGS);
 
 #endif   /* INET_H */

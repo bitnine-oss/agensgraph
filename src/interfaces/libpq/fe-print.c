@@ -3,7 +3,7 @@
  * fe-print.c
  *	  functions for pretty-printing query results
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * These functions were formerly part of fe-exec.c, but they
@@ -166,8 +166,9 @@ PQprint(FILE *fout, const PGresult *res, const PQprintOpt *po)
 			screen_size.ws_col = 80;
 #endif
 			pagerenv = getenv("PAGER");
+			/* if PAGER is unset, empty or all-white-space, don't use pager */
 			if (pagerenv != NULL &&
-				pagerenv[0] != '\0' &&
+				strspn(pagerenv, " \t\r\n") != strlen(pagerenv) &&
 				!po->html3 &&
 				((po->expanded &&
 				  nTups * (nFields + 1) >= screen_size.ws_row) ||

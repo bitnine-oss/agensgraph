@@ -42,7 +42,8 @@ if test "$ac_cv_member_struct_tm_tm_zone" = yes; then
 fi
 AC_CACHE_CHECK(for tzname, ac_cv_var_tzname,
 [AC_LINK_IFELSE([AC_LANG_PROGRAM(
-[[#include <time.h>
+[[#include <stdlib.h>
+#include <time.h>
 #ifndef tzname /* For SGI.  */
 extern char *tzname[]; /* RS6000 and others reject char **tzname.  */
 #endif
@@ -184,6 +185,7 @@ AC_DEFUN([PGAC_FUNC_SNPRINTF_LONG_LONG_INT_MODIFIER],
 AC_CACHE_VAL(pgac_cv_snprintf_long_long_int_modifier,
 [for pgac_modifier in 'll' 'q' 'I64'; do
 AC_RUN_IFELSE([AC_LANG_SOURCE([[#include <stdio.h>
+#include <string.h>
 typedef long long int ac_int64;
 #define INT64_FORMAT "%${pgac_modifier}d"
 
@@ -204,8 +206,10 @@ int does_int64_snprintf_work()
     return 0;			/* either multiply or snprintf is busted */
   return 1;
 }
+
+int
 main() {
-  exit(! does_int64_snprintf_work());
+  return (! does_int64_snprintf_work());
 }]])],
 [pgac_cv_snprintf_long_long_int_modifier=$pgac_modifier; break],
 [],
@@ -292,8 +296,8 @@ AC_MSG_RESULT([$pgac_cv_snprintf_size_t_support])
 
 # PGAC_TYPE_LOCALE_T
 # ------------------
-# Check for the locale_t type and find the right header file.  Mac OS
-# X needs xlocale.h; standard is locale.h, but glibc also has an
+# Check for the locale_t type and find the right header file.  macOS
+# needs xlocale.h; standard is locale.h, but glibc also has an
 # xlocale.h file that we should not use.
 #
 AC_DEFUN([PGAC_TYPE_LOCALE_T],

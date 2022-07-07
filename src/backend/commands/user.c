@@ -3,7 +3,7 @@
  * user.c
  *	  Commands for manipulating roles (formerly called users).
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/user.c
@@ -29,7 +29,7 @@
 #include "commands/dbcommands.h"
 #include "commands/seclabel.h"
 #include "commands/user.h"
-#include "libpq/md5.h"
+#include "libpq/crypt.h"
 #include "miscadmin.h"
 #include "storage/lmgr.h"
 #include "utils/acl.h"
@@ -44,7 +44,7 @@ Oid			binary_upgrade_next_pg_authid_oid = InvalidOid;
 
 
 /* GUC parameter */
-extern bool Password_encryption;
+int			Password_encryption = PASSWORD_TYPE_MD5;
 
 /* Hook to check passwords in CreateRole() and AlterRole() */
 check_password_hook_type check_password_hook = NULL;
@@ -69,7 +69,7 @@ have_createrole_privilege(void)
  * CREATE ROLE
  */
 Oid
-CreateRole(CreateRoleStmt *stmt)
+CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 {
 	Relation	pg_authid_rel;
 	TupleDesc	pg_authid_dsc;
@@ -80,8 +80,7 @@ CreateRole(CreateRoleStmt *stmt)
 	ListCell   *item;
 	ListCell   *option;
 	char	   *password = NULL;	/* user password */
-	bool		encrypt_password = Password_encryption; /* encrypt password? */
-	char		encrypted_password[MD5_PASSWD_LEN + 1];
+	int			password_type = Password_encryption;
 	bool		issuper = false;	/* Make the user a superuser? */
 	bool		inherit = true; /* Auto inherit privileges? */
 	bool		createrole = false;		/* Can this user create roles? */
@@ -136,12 +135,13 @@ CreateRole(CreateRoleStmt *stmt)
 			if (dpassword)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			dpassword = defel;
 			if (strcmp(defel->defname, "encryptedPassword") == 0)
-				encrypt_password = true;
+				password_type = PASSWORD_TYPE_MD5;
 			else if (strcmp(defel->defname, "unencryptedPassword") == 0)
-				encrypt_password = false;
+				password_type = PASSWORD_TYPE_PLAINTEXT;
 		}
 		else if (strcmp(defel->defname, "sysid") == 0)
 		{
@@ -153,7 +153,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (dissuper)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			dissuper = defel;
 		}
 		else if (strcmp(defel->defname, "inherit") == 0)
@@ -161,7 +162,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (dinherit)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			dinherit = defel;
 		}
 		else if (strcmp(defel->defname, "createrole") == 0)
@@ -169,7 +171,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (dcreaterole)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			dcreaterole = defel;
 		}
 		else if (strcmp(defel->defname, "createdb") == 0)
@@ -177,7 +180,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (dcreatedb)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			dcreatedb = defel;
 		}
 		else if (strcmp(defel->defname, "canlogin") == 0)
@@ -185,7 +189,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (dcanlogin)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			dcanlogin = defel;
 		}
 		else if (strcmp(defel->defname, "isreplication") == 0)
@@ -193,7 +198,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (disreplication)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			disreplication = defel;
 		}
 		else if (strcmp(defel->defname, "connectionlimit") == 0)
@@ -201,7 +207,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (dconnlimit)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			dconnlimit = defel;
 		}
 		else if (strcmp(defel->defname, "addroleto") == 0)
@@ -209,7 +216,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (daddroleto)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			daddroleto = defel;
 		}
 		else if (strcmp(defel->defname, "rolemembers") == 0)
@@ -217,7 +225,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (drolemembers)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			drolemembers = defel;
 		}
 		else if (strcmp(defel->defname, "adminmembers") == 0)
@@ -225,7 +234,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (dadminmembers)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			dadminmembers = defel;
 		}
 		else if (strcmp(defel->defname, "validUntil") == 0)
@@ -233,7 +243,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (dvalidUntil)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			dvalidUntil = defel;
 		}
 		else if (strcmp(defel->defname, "bypassrls") == 0)
@@ -241,7 +252,8 @@ CreateRole(CreateRoleStmt *stmt)
 			if (dbypassRLS)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			dbypassRLS = defel;
 		}
 		else
@@ -357,7 +369,7 @@ CreateRole(CreateRoleStmt *stmt)
 	if (check_password_hook && password)
 		(*check_password_hook) (stmt->role,
 								password,
-			   isMD5(password) ? PASSWORD_TYPE_MD5 : PASSWORD_TYPE_PLAINTEXT,
+								get_password_type(password),
 								validUntil_datum,
 								validUntil_null);
 
@@ -380,17 +392,12 @@ CreateRole(CreateRoleStmt *stmt)
 
 	if (password)
 	{
-		if (!encrypt_password || isMD5(password))
-			new_record[Anum_pg_authid_rolpassword - 1] =
-				CStringGetTextDatum(password);
-		else
-		{
-			if (!pg_md5_encrypt(password, stmt->role, strlen(stmt->role),
-								encrypted_password))
-				elog(ERROR, "password encryption failed");
-			new_record[Anum_pg_authid_rolpassword - 1] =
-				CStringGetTextDatum(encrypted_password);
-		}
+		/* Encrypt the password to the requested format. */
+		char	   *shadow_pass;
+
+		shadow_pass = encrypt_password(password_type, stmt->role, password);
+		new_record[Anum_pg_authid_rolpassword - 1] =
+			CStringGetTextDatum(shadow_pass);
 	}
 	else
 		new_record_nulls[Anum_pg_authid_rolpassword - 1] = true;
@@ -420,8 +427,7 @@ CreateRole(CreateRoleStmt *stmt)
 	/*
 	 * Insert new record in the pg_authid table
 	 */
-	roleid = simple_heap_insert(pg_authid_rel, tuple);
-	CatalogUpdateIndexes(pg_authid_rel, tuple);
+	roleid = CatalogTupleInsert(pg_authid_rel, tuple);
 
 	/*
 	 * Advance command counter so we can see new record; else tests in
@@ -436,7 +442,7 @@ CreateRole(CreateRoleStmt *stmt)
 	foreach(item, addroleto)
 	{
 		RoleSpec   *oldrole = lfirst(item);
-		HeapTuple	oldroletup = get_rolespec_tuple((Node *) oldrole);
+		HeapTuple	oldroletup = get_rolespec_tuple(oldrole);
 		Oid			oldroleid = HeapTupleGetOid(oldroletup);
 		char	   *oldrolename = NameStr(((Form_pg_authid) GETSTRUCT(oldroletup))->rolname);
 
@@ -492,8 +498,7 @@ AlterRole(AlterRoleStmt *stmt)
 	ListCell   *option;
 	char	   *rolename = NULL;
 	char	   *password = NULL;	/* user password */
-	bool		encrypt_password = Password_encryption; /* encrypt password? */
-	char		encrypted_password[MD5_PASSWD_LEN + 1];
+	int			password_type = Password_encryption;
 	int			issuper = -1;	/* Make the user a superuser? */
 	int			inherit = -1;	/* Auto inherit privileges? */
 	int			createrole = -1;	/* Can this user create roles? */
@@ -537,9 +542,9 @@ AlterRole(AlterRoleStmt *stmt)
 						 errmsg("conflicting or redundant options")));
 			dpassword = defel;
 			if (strcmp(defel->defname, "encryptedPassword") == 0)
-				encrypt_password = true;
+				password_type = PASSWORD_TYPE_MD5;
 			else if (strcmp(defel->defname, "unencryptedPassword") == 0)
-				encrypt_password = false;
+				password_type = PASSWORD_TYPE_PLAINTEXT;
 		}
 		else if (strcmp(defel->defname, "superuser") == 0)
 		{
@@ -732,7 +737,7 @@ AlterRole(AlterRoleStmt *stmt)
 	if (check_password_hook && password)
 		(*check_password_hook) (rolename,
 								password,
-			   isMD5(password) ? PASSWORD_TYPE_MD5 : PASSWORD_TYPE_PLAINTEXT,
+								get_password_type(password),
 								validUntil_datum,
 								validUntil_null);
 
@@ -791,17 +796,12 @@ AlterRole(AlterRoleStmt *stmt)
 	/* password */
 	if (password)
 	{
-		if (!encrypt_password || isMD5(password))
-			new_record[Anum_pg_authid_rolpassword - 1] =
-				CStringGetTextDatum(password);
-		else
-		{
-			if (!pg_md5_encrypt(password, rolename, strlen(rolename),
-								encrypted_password))
-				elog(ERROR, "password encryption failed");
-			new_record[Anum_pg_authid_rolpassword - 1] =
-				CStringGetTextDatum(encrypted_password);
-		}
+		/* Encrypt the password to the requested format. */
+		char	   *shadow_pass;
+
+		shadow_pass = encrypt_password(password_type, rolename, password);
+		new_record[Anum_pg_authid_rolpassword - 1] =
+			CStringGetTextDatum(shadow_pass);
 		new_record_repl[Anum_pg_authid_rolpassword - 1] = true;
 	}
 
@@ -825,10 +825,7 @@ AlterRole(AlterRoleStmt *stmt)
 
 	new_tuple = heap_modify_tuple(tuple, pg_authid_dsc, new_record,
 								  new_record_nulls, new_record_repl);
-	simple_heap_update(pg_authid_rel, &tuple->t_self, new_tuple);
-
-	/* Update indexes */
-	CatalogUpdateIndexes(pg_authid_rel, new_tuple);
+	CatalogTupleUpdate(pg_authid_rel, &tuple->t_self, new_tuple);
 
 	InvokeObjectPostAlterHook(AuthIdRelationId, roleid, 0);
 
@@ -1047,7 +1044,7 @@ DropRole(DropRoleStmt *stmt)
 		/*
 		 * Remove the role from the pg_authid table
 		 */
-		simple_heap_delete(pg_authid_rel, &tuple->t_self);
+		CatalogTupleDelete(pg_authid_rel, &tuple->t_self);
 
 		ReleaseSysCache(tuple);
 
@@ -1067,7 +1064,7 @@ DropRole(DropRoleStmt *stmt)
 
 		while (HeapTupleIsValid(tmp_tuple = systable_getnext(sscan)))
 		{
-			simple_heap_delete(pg_auth_members_rel, &tmp_tuple->t_self);
+			CatalogTupleDelete(pg_auth_members_rel, &tmp_tuple->t_self);
 		}
 
 		systable_endscan(sscan);
@@ -1082,7 +1079,7 @@ DropRole(DropRoleStmt *stmt)
 
 		while (HeapTupleIsValid(tmp_tuple = systable_getnext(sscan)))
 		{
-			simple_heap_delete(pg_auth_members_rel, &tmp_tuple->t_self);
+			CatalogTupleDelete(pg_auth_members_rel, &tmp_tuple->t_self);
 		}
 
 		systable_endscan(sscan);
@@ -1219,7 +1216,7 @@ RenameRole(const char *oldname, const char *newname)
 
 	datum = heap_getattr(oldtuple, Anum_pg_authid_rolpassword, dsc, &isnull);
 
-	if (!isnull && isMD5(TextDatumGetCString(datum)))
+	if (!isnull && get_password_type(TextDatumGetCString(datum)) == PASSWORD_TYPE_MD5)
 	{
 		/* MD5 uses the username as salt, so just clear it on a rename */
 		repl_repl[Anum_pg_authid_rolpassword - 1] = true;
@@ -1230,9 +1227,7 @@ RenameRole(const char *oldname, const char *newname)
 	}
 
 	newtuple = heap_modify_tuple(oldtuple, dsc, repl_val, repl_null, repl_repl);
-	simple_heap_update(rel, &oldtuple->t_self, newtuple);
-
-	CatalogUpdateIndexes(rel, newtuple);
+	CatalogTupleUpdate(rel, &oldtuple->t_self, newtuple);
 
 	InvokeObjectPostAlterHook(AuthIdRelationId, roleid, 0);
 
@@ -1383,7 +1378,7 @@ roleSpecsToIds(List *memberNames)
 
 	foreach(l, memberNames)
 	{
-		Node	   *rolespec = (Node *) lfirst(l);
+		RoleSpec   *rolespec = castNode(RoleSpec, lfirst(l));
 		Oid			roleid;
 
 		roleid = get_rolespec_oid(rolespec, false);
@@ -1480,7 +1475,7 @@ AddRoleMems(const char *rolename, Oid roleid,
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_GRANT_OPERATION),
 					 (errmsg("role \"%s\" is a member of role \"%s\"",
-						rolename, get_rolespec_name((Node *) memberRole)))));
+						rolename, get_rolespec_name(memberRole)))));
 
 		/*
 		 * Check if entry for this role/member already exists; if so, give
@@ -1495,7 +1490,7 @@ AddRoleMems(const char *rolename, Oid roleid,
 		{
 			ereport(NOTICE,
 					(errmsg("role \"%s\" is already a member of role \"%s\"",
-						 get_rolespec_name((Node *) memberRole), rolename)));
+						 get_rolespec_name(memberRole), rolename)));
 			ReleaseSysCache(authmem_tuple);
 			continue;
 		}
@@ -1517,16 +1512,14 @@ AddRoleMems(const char *rolename, Oid roleid,
 			tuple = heap_modify_tuple(authmem_tuple, pg_authmem_dsc,
 									  new_record,
 									  new_record_nulls, new_record_repl);
-			simple_heap_update(pg_authmem_rel, &tuple->t_self, tuple);
-			CatalogUpdateIndexes(pg_authmem_rel, tuple);
+			CatalogTupleUpdate(pg_authmem_rel, &tuple->t_self, tuple);
 			ReleaseSysCache(authmem_tuple);
 		}
 		else
 		{
 			tuple = heap_form_tuple(pg_authmem_dsc,
 									new_record, new_record_nulls);
-			simple_heap_insert(pg_authmem_rel, tuple);
-			CatalogUpdateIndexes(pg_authmem_rel, tuple);
+			CatalogTupleInsert(pg_authmem_rel, tuple);
 		}
 
 		/* CCI after each change, in case there are duplicates in list */
@@ -1606,14 +1599,14 @@ DelRoleMems(const char *rolename, Oid roleid,
 		{
 			ereport(WARNING,
 					(errmsg("role \"%s\" is not a member of role \"%s\"",
-						 get_rolespec_name((Node *) memberRole), rolename)));
+						 get_rolespec_name(memberRole), rolename)));
 			continue;
 		}
 
 		if (!admin_opt)
 		{
 			/* Remove the entry altogether */
-			simple_heap_delete(pg_authmem_rel, &authmem_tuple->t_self);
+			CatalogTupleDelete(pg_authmem_rel, &authmem_tuple->t_self);
 		}
 		else
 		{
@@ -1634,8 +1627,7 @@ DelRoleMems(const char *rolename, Oid roleid,
 			tuple = heap_modify_tuple(authmem_tuple, pg_authmem_dsc,
 									  new_record,
 									  new_record_nulls, new_record_repl);
-			simple_heap_update(pg_authmem_rel, &tuple->t_self, tuple);
-			CatalogUpdateIndexes(pg_authmem_rel, tuple);
+			CatalogTupleUpdate(pg_authmem_rel, &tuple->t_self, tuple);
 		}
 
 		ReleaseSysCache(authmem_tuple);

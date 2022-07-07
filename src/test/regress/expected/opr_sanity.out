@@ -342,8 +342,7 @@ ORDER BY 1;
 ------+--------------
  2293 | cstring_out
  2501 | cstring_send
- 7009 | graph_labid
-(3 rows)
+(2 rows)
 
 -- Likewise, look for functions that return cstring and aren't datatype output
 -- functions nor typmod output functions.
@@ -438,13 +437,9 @@ SELECT p1.oid, p1.proname
 FROM pg_proc as p1 LEFT JOIN pg_description as d
      ON p1.tableoid = d.classoid and p1.oid = d.objoid and d.objsubid = 0
 WHERE d.classoid IS NULL AND p1.oid <= 9999;
- oid  |    proname
-------+---------------
- 7000 | graphid
- 7007 | graphid_labid
- 7008 | graphid_locid
- 7097 | graphid_hash
-(4 rows)
+ oid | proname 
+-----+---------
+(0 rows)
 
 -- List of built-in leakproof functions
 --
@@ -1036,11 +1031,9 @@ WHERE p1.oprcanmerge AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'btree') AND
          amopopr = p1.oid AND amopstrategy = 3);
- oid  | oprname 
-------+---------
- 7136 | =
- 7148 | =
-(2 rows)
+ oid | oprname 
+-----+---------
+(0 rows)
 
 -- And the converse.
 SELECT p1.oid, p1.oprname, p.amopfamily
@@ -1060,11 +1053,9 @@ WHERE p1.oprcanhash AND NOT EXISTS
   (SELECT 1 FROM pg_amop
    WHERE amopmethod = (SELECT oid FROM pg_am WHERE amname = 'hash') AND
          amopopr = p1.oid AND amopstrategy = 1);
- oid  | oprname 
-------+---------
- 7136 | =
- 7148 | =
-(2 rows)
+ oid | oprname 
+-----+---------
+(0 rows)
 
 -- And the converse.
 SELECT p1.oid, p1.oprname, p.amopfamily
@@ -1457,7 +1448,7 @@ WHERE a.aggcombinefn = p.oid AND
      p.prorettype != p.proargtypes[0] OR
      p.prorettype != p.proargtypes[1] OR
      NOT physically_coercible(a.aggtranstype, p.proargtypes[0]));
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1466,7 +1457,7 @@ SELECT a.aggfnoid, p.proname
 FROM pg_aggregate as a, pg_proc as p
 WHERE a.aggcombinefn = p.oid AND
     a.aggtranstype = 'internal'::regtype AND p.proisstrict;
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1478,7 +1469,7 @@ FROM pg_aggregate
 WHERE (aggserialfn != 0 OR aggdeserialfn != 0)
   AND (aggtranstype != 'internal'::regtype OR aggcombinefn = 0 OR
        aggserialfn = 0 OR aggdeserialfn = 0);
- aggfnoid | aggtranstype | aggserialfn | aggdeserialfn
+ aggfnoid | aggtranstype | aggserialfn | aggdeserialfn 
 ----------+--------------+-------------+---------------
 (0 rows)
 
@@ -1491,7 +1482,7 @@ WHERE a.aggserialfn = p.oid AND
     (p.prorettype != 'bytea'::regtype OR p.pronargs != 1 OR
      p.proargtypes[0] != 'internal'::regtype OR
      NOT p.proisstrict);
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1505,7 +1496,7 @@ WHERE a.aggdeserialfn = p.oid AND
      p.proargtypes[0] != 'bytea'::regtype OR
      p.proargtypes[1] != 'internal'::regtype OR
      NOT p.proisstrict);
- aggfnoid | proname
+ aggfnoid | proname 
 ----------+---------
 (0 rows)
 
@@ -1520,7 +1511,7 @@ WHERE
     a.aggfnoid < b.aggfnoid AND a.aggtransfn = b.aggtransfn AND
     (a.aggcombinefn != b.aggcombinefn OR a.aggserialfn != b.aggserialfn
      OR a.aggdeserialfn != b.aggdeserialfn);
- aggfnoid | aggcombinefn | aggserialfn | aggdeserialfn | aggfnoid | aggcombinefn | aggserialfn | aggdeserialfn
+ aggfnoid | aggcombinefn | aggserialfn | aggdeserialfn | aggfnoid | aggcombinefn | aggserialfn | aggdeserialfn 
 ----------+--------------+-------------+---------------+----------+--------------+-------------+---------------
 (0 rows)
 
@@ -1765,16 +1756,11 @@ ORDER BY 1, 2, 3;
         783 |           48 | <@
         783 |           68 | <@
        2742 |            1 | &&
-       2742 |            1 | <
        2742 |            1 | @@
-       2742 |            2 | <=
        2742 |            2 | @>
        2742 |            2 | @@@
        2742 |            3 | <@
-       2742 |            3 | =
        2742 |            4 | =
-       2742 |            4 | >=
-       2742 |            5 | >
        2742 |            7 | @>
        2742 |            9 | ?
        2742 |           10 | ?|
@@ -1833,7 +1819,16 @@ ORDER BY 1, 2, 3;
        4000 |           15 | >
        4000 |           16 | @>
        4000 |           18 | =
-(117 rows)
+       4000 |           19 | <>
+       4000 |           20 | <
+       4000 |           21 | <=
+       4000 |           22 | >
+       4000 |           23 | >=
+       4000 |           24 | <<
+       4000 |           25 | <<=
+       4000 |           26 | >>
+       4000 |           27 | >>=
+(121 rows)
 
 -- Check that all opclass search operators have selectivity estimators.
 -- This is not absolutely required, but it seems a reasonable thing

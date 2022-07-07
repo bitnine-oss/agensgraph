@@ -4,7 +4,7 @@ use Cwd;
 use Config;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 51;
+use Test::More tests => 72;
 
 program_help_ok('pg_basebackup');
 program_version_ok('pg_basebackup');
@@ -40,6 +40,14 @@ $node->command_fails(
 	[ 'pg_basebackup', '-D', "$tempdir/backup" ],
 	'pg_basebackup fails because of WAL configuration');
 
+ok(! -d "$tempdir/backup", 'backup directory was cleaned up');
+
+$node->command_fails(
+	[ 'pg_basebackup', '-D', "$tempdir/backup", '-n' ],
+	'failing run with no-clean option');
+
+ok(-d "$tempdir/backup", 'backup directory was created and left behind');
+
 open CONF, ">>$pgdata/postgresql.conf";
 print CONF "max_replication_slots = 10\n";
 print CONF "max_wal_senders = 10\n";
@@ -47,14 +55,42 @@ print CONF "wal_level = replica\n";
 close CONF;
 $node->restart;
 
-$node->command_ok([ 'pg_basebackup', '-D', "$tempdir/backup" ],
+# Write some files to test that they are not copied.
+foreach my $filename (qw(backup_label tablespace_map postgresql.auto.conf.tmp))
+{
+	open FILE, ">>$pgdata/$filename";
+	print FILE "DONOTCOPY";
+	close FILE;
+}
+
+$node->command_ok([ 'pg_basebackup', '-D', "$tempdir/backup", '-X', 'none' ],
 	'pg_basebackup runs');
 ok(-f "$tempdir/backup/PG_VERSION", 'backup was created');
 
+# Only archive_status directory should be copied in pg_wal/.
 is_deeply(
-	[ sort(slurp_dir("$tempdir/backup/pg_xlog/")) ],
+	[ sort(slurp_dir("$tempdir/backup/pg_wal/")) ],
 	[ sort qw(. .. archive_status) ],
 	'no WAL files copied');
+
+# Contents of these directories should not be copied.
+foreach my $dirname (qw(pg_dynshmem pg_notify pg_replslot pg_serial pg_snapshots pg_stat_tmp pg_subtrans))
+{
+	is_deeply(
+		[ sort(slurp_dir("$tempdir/backup/$dirname/")) ],
+		[ sort qw(. ..) ],
+		"contents of $dirname/ not copied");
+}
+
+# These files should not be copied.
+foreach my $filename (qw(postgresql.auto.conf.tmp postmaster.opts postmaster.pid tablespace_map))
+{
+	ok(! -f "$tempdir/backup/$filename", "$filename not copied");
+}
+
+# Make sure existing backup_label was ignored.
+isnt(slurp_file("$tempdir/backup/backup_label"), 'DONOTCOPY',
+	 'existing backup_label not copied');
 
 $node->command_ok(
 	[   'pg_basebackup', '-D', "$tempdir/backup2", '--xlogdir',
@@ -102,7 +138,17 @@ unlink "$pgdata/$superlongname";
 # skip on Windows.
 SKIP:
 {
-	skip "symlinks not supported on Windows", 10 if ($windows_os);
+	skip "symlinks not supported on Windows", 11 if ($windows_os);
+
+	# Move pg_replslot out of $pgdata and create a symlink to it.
+	$node->stop;
+
+	rename("$pgdata/pg_replslot", "$tempdir/pg_replslot")
+		or BAIL_OUT "could not move $pgdata/pg_replslot";
+	symlink("$tempdir/pg_replslot", "$pgdata/pg_replslot")
+		or BAIL_OUT "could not symlink to $pgdata/pg_replslot";
+
+	$node->start;
 
 	# Create a temporary directory in the system location and symlink it
 	# to our physical temp location.  That way we can use shorter names
@@ -140,6 +186,8 @@ SKIP:
 		"tablespace symlink was updated");
 	closedir $dh;
 
+	ok(-d "$tempdir/backup1/pg_replslot", 'pg_replslot symlink copied as directory');
+
 	mkdir "$tempdir/tbl=spc2";
 	$node->safe_psql('postgres', "DROP TABLE test1;");
 	$node->safe_psql('postgres', "DROP TABLESPACE tblspc1;");
@@ -167,28 +215,38 @@ $node->command_ok([ 'pg_basebackup', '-D', "$tempdir/backupR", '-R' ],
 ok(-f "$tempdir/backupR/recovery.conf", 'recovery.conf was created');
 my $recovery_conf = slurp_file "$tempdir/backupR/recovery.conf";
 
-# using a character class for the final "'" here works around an apparent
-# bug in several version of the Msys DTK perl
 my $port = $node->port;
 like(
 	$recovery_conf,
-	qr/^standby_mode = 'on[']$/m,
+	qr/^standby_mode = 'on'\n/m,
 	'recovery.conf sets standby_mode');
 like(
 	$recovery_conf,
-	qr/^primary_conninfo = '.*port=$port.*'$/m,
+	qr/^primary_conninfo = '.*port=$port.*'\n/m,
 	'recovery.conf sets primary_conninfo');
+
+$node->command_ok([ 'pg_basebackup', '-D', "$tempdir/backupxd" ],
+	'pg_basebackup runs in default xlog mode');
+ok(grep(/^[0-9A-F]{24}$/, slurp_dir("$tempdir/backupxd/pg_wal")),
+	'WAL files copied');
 
 $node->command_ok(
 	[ 'pg_basebackup', '-D', "$tempdir/backupxf", '-X', 'fetch' ],
 	'pg_basebackup -X fetch runs');
-ok(grep(/^[0-9A-F]{24}$/, slurp_dir("$tempdir/backupxf/pg_xlog")),
+ok(grep(/^[0-9A-F]{24}$/, slurp_dir("$tempdir/backupxf/pg_wal")),
 	'WAL files copied');
 $node->command_ok(
 	[ 'pg_basebackup', '-D', "$tempdir/backupxs", '-X', 'stream' ],
 	'pg_basebackup -X stream runs');
-ok(grep(/^[0-9A-F]{24}$/, slurp_dir("$tempdir/backupxf/pg_xlog")),
+ok(grep(/^[0-9A-F]{24}$/, slurp_dir("$tempdir/backupxf/pg_wal")),
 	'WAL files copied');
+$node->command_ok(
+	[ 'pg_basebackup', '-D', "$tempdir/backupxst", '-X', 'stream', '-Ft' ],
+	'pg_basebackup -X stream runs in tar mode');
+ok(-f "$tempdir/backupxst/pg_wal.tar", "tar file was created");
+$node->command_ok(
+	[ 'pg_basebackup', '-D', "$tempdir/backupnoslot", '-X', 'stream', '--no-slot' ],
+	'pg_basebackup -X stream runs with --no-slot');
 
 $node->command_fails(
 	[ 'pg_basebackup', '-D', "$tempdir/fail", '-S', 'slot1' ],
@@ -221,5 +279,5 @@ $node->command_ok(
 	'pg_basebackup with replication slot and -R runs');
 like(
 	slurp_file("$tempdir/backupxs_sl_R/recovery.conf"),
-	qr/^primary_slot_name = 'slot1'$/m,
+	qr/^primary_slot_name = 'slot1'\n/m,
 	'recovery.conf sets primary_slot_name');

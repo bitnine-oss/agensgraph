@@ -4,7 +4,7 @@
  *	   routines for accessing the system catalogs
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -27,6 +27,7 @@
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
+#include "catalog/partition.h"
 #include "catalog/pg_am.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
@@ -53,7 +54,7 @@ get_relation_info_hook_type get_relation_info_hook = NULL;
 
 
 static void get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
-						  Relation relation);
+						  Relation relation, bool inhparent);
 static bool infer_collation_opclass_match(InferenceElem *elem, Relation idxRel,
 							  List *idxExprs);
 static int32 get_rel_data_width(Relation rel, int32 *attr_widths);
@@ -78,6 +79,7 @@ static List *build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
  *	fdwroutine	if it's a foreign table, the FDW function pointers
  *	pages		number of pages
  *	tuples		number of tuples
+ *	rel_parallel_workers user-defined number of parallel workers
  *
  * Also, add information about the relation's foreign keys to root->fkey_list.
  *
@@ -408,7 +410,7 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 	}
 
 	/* Collect info about relation's foreign keys, if relevant */
-	get_relation_foreign_keys(root, rel, relation);
+	get_relation_foreign_keys(root, rel, relation, inhparent);
 
 	heap_close(relation, NoLock);
 
@@ -433,7 +435,7 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
  */
 static void
 get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
-						  Relation relation)
+						  Relation relation, bool inhparent)
 {
 	List	   *rtable = root->parse->rtable;
 	List	   *cachedfkeys;
@@ -446,6 +448,15 @@ get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
 	 */
 	if (rel->reloptkind != RELOPT_BASEREL ||
 		list_length(rtable) < 2)
+		return;
+
+	/*
+	 * If it's the parent of an inheritance tree, ignore its FKs.  We could
+	 * make useful FK-based deductions if we found that all members of the
+	 * inheritance tree have equivalent FK constraints, but detecting that
+	 * would require code that hasn't been written.
+	 */
+	if (inhparent)
 		return;
 
 	/*
@@ -487,6 +498,9 @@ get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
 			/* Ignore if not the correct table */
 			if (rte->rtekind != RTE_RELATION ||
 				rte->relid != cachedfk->confrelid)
+				continue;
+			/* Ignore if it's an inheritance parent; doesn't really match */
+			if (rte->inh)
 				continue;
 			/* Ignore self-referential FKs; we only care about joins */
 			if (rti == rel->relid)
@@ -1127,6 +1141,7 @@ get_relation_constraints(PlannerInfo *root,
 	Index		varno = rel->relid;
 	Relation	relation;
 	TupleConstr *constr;
+	List		*pcqual;
 
 	/*
 	 * We assume the relation has already been safely locked.
@@ -1210,6 +1225,24 @@ get_relation_constraints(PlannerInfo *root,
 				}
 			}
 		}
+	}
+
+	/* Append partition predicates, if any */
+	pcqual = RelationGetPartitionQual(relation);
+	if (pcqual)
+	{
+		/*
+		 * Run each expression through const-simplification and
+		 * canonicalization similar to check constraints.
+		 */
+		pcqual = (List *) eval_const_expressions(root, (Node *) pcqual);
+		pcqual = (List *) canonicalize_qual((Expr *) pcqual);
+
+		/* Fix Vars to have the desired varno */
+		if (varno != 1)
+			ChangeVarNodes((Node *) pcqual, 1, varno, 0);
+
+		result = list_concat(result, pcqual);
 	}
 
 	heap_close(relation, NoLock);

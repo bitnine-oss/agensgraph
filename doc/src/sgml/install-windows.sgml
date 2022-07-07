@@ -51,7 +51,7 @@
   <productname>MinGW-w64</productname>. These tools can also be used to
   cross-compile for 32 bit and 64 bit <productname>Windows</productname>
   targets on other hosts, such as <productname>Linux</productname> and
-  <productname>Darwin</productname>.
+  <productname>macOS</productname>.
   <productname>Cygwin</productname> is not recommended for running a
   production server, and it should only be used for running on
   older versions of <productname>Windows</productname> where
@@ -145,6 +145,14 @@ $ENV{PATH}=$ENV{PATH} . ';c:\some\where\bison\bin';
 </programlisting>
  </para>
 
+ <para>
+  To pass additional command line arguments to the Visual Studio build
+  command (msbuild or vcbuild):
+<programlisting>
+$ENV{MSBFLAGS}="/m";
+</programlisting>
+ </para>
+
  <sect2>
   <title>Requirements</title>
   <para>
@@ -161,7 +169,7 @@ $ENV{PATH}=$ENV{PATH} . ';c:\some\where\bison\bin';
       <productname>Microsoft Windows SDK</productname> it
       is recommended that you upgrade to the latest version (currently
       version 7.1), available for download from
-      <ulink url="http://www.microsoft.com/downloads/"></>.
+      <ulink url="https://www.microsoft.com/download"></>.
      </para>
      <para>
       You must always include the

@@ -37,12 +37,9 @@ sub _new
 	  unless exists $options->{float8byval};
 	die "float8byval not permitted on 32 bit platforms"
 	  if $options->{float8byval} && $bits == 32;
-	if ($options->{xml})
+	if ($options->{xslt} && !$options->{xml})
 	{
-		if (!($options->{xslt} && $options->{iconv}))
-		{
-			die "XML requires both XSLT and ICONV\n";
-		}
+		die "XSLT requires XML\n";
 	}
 	$options->{blocksize} = 8
 	  unless $options->{blocksize};    # undef or 0 means default
@@ -131,12 +128,12 @@ sub GenerateFiles
 		if (/^AC_INIT\(\[PostgreSQL\], \[([^\]]+)\]/)
 		{
 			$self->{strver} = $1;
-			if ($self->{strver} !~ /^(\d+)\.(\d+)(?:\.(\d+))?/)
+			if ($self->{strver} !~ /^(\d+)(?:\.(\d+))?/)
 			{
 				confess "Bad format of version: $self->{strver}\n";
 			}
-			$self->{numver} = sprintf("%d%02d%02d", $1, $2, $3 ? $3 : 0);
-			$self->{majorver} = sprintf("%d.%d", $1, $2);
+			$self->{numver} = sprintf("%d%04d", $1, $2 ? $2 : 0);
+			$self->{majorver} = sprintf("%d", $1);
 		}
 	}
 	close(C);
@@ -271,7 +268,7 @@ s{PG_VERSION_STR "[^"]+"}{__STRINGIFY(x) #x\n#define __STRINGIFY2(z) __STRINGIFY
 	if (IsNewer(
 			'src/backend/utils/fmgrtab.c', 'src/include/catalog/pg_proc.h'))
 	{
-		print "Generating fmgrtab.c and fmgroids.h...\n";
+		print "Generating fmgrtab.c, fmgroids.h, fmgrprotos.h...\n";
 		chdir('src/backend/utils');
 		system(
 "perl -I ../catalog Gen_fmgrtab.pl ../../../src/include/catalog/pg_proc.h");
@@ -283,6 +280,14 @@ s{PG_VERSION_STR "[^"]+"}{__STRINGIFY(x) #x\n#define __STRINGIFY2(z) __STRINGIFY
 	{
 		copyFile('src/backend/utils/fmgroids.h',
 			'src/include/utils/fmgroids.h');
+	}
+
+	if (IsNewer(
+			'src/include/utils/fmgrprotos.h',
+			'src/backend/utils/fmgrprotos.h'))
+	{
+		copyFile('src/backend/utils/fmgrprotos.h',
+			'src/include/utils/fmgrprotos.h');
 	}
 
 	if (IsNewer(
@@ -554,6 +559,11 @@ sub AddProject
 	{
 		$proj->AddIncludeDir($self->{options}->{xslt} . '\include');
 		$proj->AddLibrary($self->{options}->{xslt} . '\lib\libxslt.lib');
+	}
+	if ($self->{options}->{uuid})
+	{
+		$proj->AddIncludeDir($self->{options}->{uuid} . '\include');
+		$proj->AddLibrary($self->{options}->{uuid} . '\lib\uuid.lib');
 	}
 	return $proj;
 }

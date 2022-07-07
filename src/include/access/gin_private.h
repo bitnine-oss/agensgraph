@@ -2,7 +2,7 @@
  * gin_private.h
  *	  header file for postgres inverted index access method implementation.
  *
- *	Copyright (c) 2006-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2006-2017, PostgreSQL Global Development Group
  *
  *	src/include/access/gin_private.h
  *--------------------------------------------------------------------------
@@ -591,7 +591,6 @@ typedef struct ginxlogDeleteListPages
 
 
 /* ginutil.c */
-extern Datum ginhandler(PG_FUNCTION_ARGS);
 extern bytea *ginoptions(Datum reloptions, bool validate);
 extern void initGinState(GinState *state, Relation index);
 extern Buffer GinNewBuffer(Relation index);
@@ -880,9 +879,6 @@ extern void ginFreeScanKeys(GinScanOpaque so);
 /* ginget.c */
 extern int64 gingetbitmap(IndexScanDesc scan, TIDBitmap *tbm);
 
-/* ginfast.c */
-extern Datum gin_clean_pending_list(PG_FUNCTION_ARGS);
-
 /* ginlogic.c */
 extern void ginInitConsistentFunction(GinState *ginstate, GinScanKey key);
 
@@ -919,6 +915,7 @@ typedef struct
 	GinEntryAccumulator *entryallocator;
 	uint32		eas_used;
 	RBTree	   *tree;
+	RBTreeIterator tree_walk;
 } BuildAccumulator;
 
 extern void ginInitBA(BuildAccumulator *accum);

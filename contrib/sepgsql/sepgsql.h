@@ -4,7 +4,7 @@
  *
  * Definitions corresponding to SE-PostgreSQL
  *
- * Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *
  * -------------------------------------------------------------------------
  */
@@ -275,12 +275,6 @@ extern char *sepgsql_get_label(Oid relOid, Oid objOid, int32 subId);
 
 extern void sepgsql_object_relabel(const ObjectAddress *object,
 					   const char *seclabel);
-
-extern Datum sepgsql_getcon(PG_FUNCTION_ARGS);
-extern Datum sepgsql_setcon(PG_FUNCTION_ARGS);
-extern Datum sepgsql_mcstrans_in(PG_FUNCTION_ARGS);
-extern Datum sepgsql_mcstrans_out(PG_FUNCTION_ARGS);
-extern Datum sepgsql_restorecon(PG_FUNCTION_ARGS);
 
 /*
  * dml.c

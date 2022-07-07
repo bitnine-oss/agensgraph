@@ -4,7 +4,7 @@
  *	  routines for handling GIN posting tree pages.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -86,7 +86,7 @@ typedef struct
 	char		action;
 
 	ItemPointerData *modifieditems;
-	int			nmodifieditems;
+	uint16		nmodifieditems;
 
 	/*
 	 * The following fields represent the items in this segment. If 'items' is

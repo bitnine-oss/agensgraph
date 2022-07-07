@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2017, PostgreSQL Global Development Group
  *
  * src/bin/psql/settings.h
  */
@@ -125,6 +125,8 @@ typedef struct _psqlSettings
 	bool		singleline;
 	bool		singlestep;
 	int			fetch_count;
+	int			histsize;
+	int			ignoreeof;
 	PSQL_ECHO	echo;
 	PSQL_ECHO_HIDDEN echo_hidden;
 	PSQL_ERROR_ROLLBACK on_error_rollback;

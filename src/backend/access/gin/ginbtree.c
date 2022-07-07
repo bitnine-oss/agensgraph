@@ -4,7 +4,7 @@
  *	  page utilities routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -348,9 +348,7 @@ ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
 	 */
 	tmpCxt = AllocSetContextCreate(CurrentMemoryContext,
 								   "ginPlaceToPage temporary context",
-								   ALLOCSET_DEFAULT_MINSIZE,
-								   ALLOCSET_DEFAULT_INITSIZE,
-								   ALLOCSET_DEFAULT_MAXSIZE);
+								   ALLOCSET_DEFAULT_SIZES);
 	oldCxt = MemoryContextSwitchTo(tmpCxt);
 
 	if (GinPageIsData(page))

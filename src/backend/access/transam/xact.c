@@ -5,7 +5,7 @@
  *
  * See src/backend/access/transam/README for more information.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -42,9 +42,11 @@
 #include "miscadmin.h"
 #include "pgstat.h"
 #include "replication/logical.h"
+#include "replication/logicallauncher.h"
 #include "replication/origin.h"
 #include "replication/syncrep.h"
 #include "replication/walsender.h"
+#include "storage/condition_variable.h"
 #include "storage/fd.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
@@ -327,7 +329,7 @@ static void AtSubStart_Memory(void);
 static void AtSubStart_ResourceOwner(void);
 
 static void ShowTransactionState(const char *str);
-static void ShowTransactionStateRec(TransactionState state);
+static void ShowTransactionStateRec(const char *str, TransactionState state);
 static const char *BlockStateAsString(TBlockState blockState);
 static const char *TransStateAsString(TransState state);
 
@@ -1018,9 +1020,7 @@ AtStart_Memory(void)
 	TopTransactionContext =
 		AllocSetContextCreate(TopMemoryContext,
 							  "TopTransactionContext",
-							  ALLOCSET_DEFAULT_MINSIZE,
-							  ALLOCSET_DEFAULT_INITSIZE,
-							  ALLOCSET_DEFAULT_MAXSIZE);
+							  ALLOCSET_DEFAULT_SIZES);
 
 	/*
 	 * In a top-level transaction, CurTransactionContext is the same as
@@ -1078,9 +1078,7 @@ AtSubStart_Memory(void)
 	 */
 	CurTransactionContext = AllocSetContextCreate(CurTransactionContext,
 												  "CurTransactionContext",
-												  ALLOCSET_DEFAULT_MINSIZE,
-												  ALLOCSET_DEFAULT_INITSIZE,
-												  ALLOCSET_DEFAULT_MAXSIZE);
+												  ALLOCSET_DEFAULT_SIZES);
 	s->curTransactionContext = CurTransactionContext;
 
 	/* Make the CurTransactionContext active. */
@@ -2138,6 +2136,7 @@ CommitTransaction(void)
 	AtEOXact_HashTables(true);
 	AtEOXact_PgStat(true);
 	AtEOXact_Snapshot(true);
+	AtCommit_ApplyLauncher();
 	pgstat_report_xact_timestamp(0);
 
 	CurrentResourceOwner = NULL;
@@ -2476,6 +2475,9 @@ AbortTransaction(void)
 	/* Reset WAL record construction state */
 	XLogResetInsertion();
 
+	/* Cancel condition variable sleep */
+	ConditionVariableCancelSleep();
+
 	/*
 	 * Also clean up any open wait for lock, since the lock manager will choke
 	 * if we try to wait for another lock before doing this.
@@ -2750,7 +2752,7 @@ CommitTransactionCommand(void)
 			 * These shouldn't happen.  TBLOCK_DEFAULT means the previous
 			 * StartTransactionCommand didn't set the STARTED state
 			 * appropriately, while TBLOCK_PARALLEL_INPROGRESS should be ended
-			 * by EndParallelWorkerTranaction(), not this function.
+			 * by EndParallelWorkerTransaction(), not this function.
 			 */
 		case TBLOCK_DEFAULT:
 		case TBLOCK_PARALLEL_INPROGRESS:
@@ -4948,11 +4950,8 @@ static void
 ShowTransactionState(const char *str)
 {
 	/* skip work if message will definitely not be printed */
-	if (log_min_messages <= DEBUG3 || client_min_messages <= DEBUG3)
-	{
-		elog(DEBUG3, "%s", str);
-		ShowTransactionStateRec(CurrentTransactionState);
-	}
+	if (log_min_messages <= DEBUG5 || client_min_messages <= DEBUG5)
+		ShowTransactionStateRec(str, CurrentTransactionState);
 }
 
 /*
@@ -4960,7 +4959,7 @@ ShowTransactionState(const char *str)
  *		Recursive subroutine for ShowTransactionState
  */
 static void
-ShowTransactionStateRec(TransactionState s)
+ShowTransactionStateRec(const char *str, TransactionState s)
 {
 	StringInfoData buf;
 
@@ -4970,17 +4969,18 @@ ShowTransactionStateRec(TransactionState s)
 	{
 		int			i;
 
-		appendStringInfo(&buf, "%u", s->childXids[0]);
+		appendStringInfo(&buf, ", children: %u", s->childXids[0]);
 		for (i = 1; i < s->nChildXids; i++)
 			appendStringInfo(&buf, " %u", s->childXids[i]);
 	}
 
 	if (s->parent)
-		ShowTransactionStateRec(s->parent);
+		ShowTransactionStateRec(str, s->parent);
 
 	/* use ereport to suppress computation if msg will not be printed */
-	ereport(DEBUG3,
-			(errmsg_internal("name: %s; blockState: %13s; state: %7s, xid/subid/cid: %u/%u/%u%s, nestlvl: %d, children: %s",
+	ereport(DEBUG5,
+			(errmsg_internal("%s(%d) name: %s; blockState: %s; state: %s, xid/subid/cid: %u/%u/%u%s%s",
+							 str, s->nestingLevel,
 							 PointerIsValid(s->name) ? s->name : "unnamed",
 							 BlockStateAsString(s->blockState),
 							 TransStateAsString(s->state),
@@ -4988,7 +4988,7 @@ ShowTransactionStateRec(TransactionState s)
 							 (unsigned int) s->subTransactionId,
 							 (unsigned int) currentCommandId,
 							 currentCommandIdUsed ? " (used)" : "",
-							 s->nestingLevel, buf.data)));
+							 buf.data)));
 
 	pfree(buf.data);
 }
@@ -5236,7 +5236,7 @@ XactLogCommitRecord(TimestampTz commit_time,
 		XLogRegisterData((char *) (&xl_origin), sizeof(xl_xact_origin));
 
 	/* we allow filtering by xacts */
-	XLogIncludeOrigin();
+	XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);
 
 	return XLogInsert(RM_XACT_ID, info);
 }

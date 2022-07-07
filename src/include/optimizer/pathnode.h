@@ -4,7 +4,7 @@
  *	  prototypes for pathnode.c, relnode.c.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/optimizer/pathnode.h
@@ -144,6 +144,10 @@ extern Path *apply_projection_to_path(PlannerInfo *root,
 						 RelOptInfo *rel,
 						 Path *path,
 						 PathTarget *target);
+extern ProjectSetPath *create_set_projection_path(PlannerInfo *root,
+						   RelOptInfo *rel,
+						   Path *subpath,
+						   PathTarget *target);
 extern SortPath *create_sort_path(PlannerInfo *root,
 				 RelOptInfo *rel,
 				 Path *subpath,

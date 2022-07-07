@@ -15,7 +15,7 @@
  * there's hardly any use case for using these without superuser-rights
  * anyway.
  *
- * Copyright (c) 2007-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pageinspect/heapfuncs.c
@@ -24,6 +24,8 @@
  */
 
 #include "postgres.h"
+
+#include "pageinspect.h"
 
 #include "access/htup_details.h"
 #include "funcapi.h"
@@ -279,7 +281,7 @@ heap_page_items(PG_FUNCTION_ARGS)
  *
  * Split raw tuple data taken directly from a page into an array of bytea
  * elements. This routine does a lookup on NULL values and creates array
- * elements accordindly. This is a reimplementation of nocachegetattr()
+ * elements accordingly. This is a reimplementation of nocachegetattr()
  * in heaptuple.c simplified for educational purposes.
  */
 static Datum

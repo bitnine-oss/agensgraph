@@ -14,7 +14,6 @@ $master->append_conf(
 	'postgresql.conf', qq{
 	track_commit_timestamp = on
 	max_wal_senders = 5
-	wal_level = hot_standby
 	});
 $master->start;
 $master->backup($bkplabel);
@@ -55,7 +54,7 @@ $master->restart;
 $master->append_conf('postgresql.conf', 'track_commit_timestamp = off');
 $master->restart;
 
-system_or_bail('pg_ctl', '-w', '-D', $standby->data_dir, 'promote');
+system_or_bail('pg_ctl', '-D', $standby->data_dir, 'promote');
 $standby->poll_query_until('postgres', "SELECT pg_is_in_recovery() <> true");
 
 $standby->safe_psql('postgres', "create table t11()");

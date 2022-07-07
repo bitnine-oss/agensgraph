@@ -1,7 +1,7 @@
 /*
  *	pg_upgrade.h
  *
- *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/pg_upgrade.h
  */
 
@@ -367,10 +367,12 @@ bool		pid_lock_file_exists(const char *datadir);
 
 /* file.c */
 
-const char *copyFile(const char *src, const char *dst);
-const char *linkFile(const char *src, const char *dst);
-const char *rewriteVisibilityMap(const char *fromfile, const char *tofile);
-
+void copyFile(const char *src, const char *dst,
+		 const char *schemaName, const char *relName);
+void linkFile(const char *src, const char *dst,
+		 const char *schemaName, const char *relName);
+void rewriteVisibilityMap(const char *fromfile, const char *tofile,
+					 const char *schemaName, const char *relName);
 void		check_hard_link(void);
 FILE	   *fopen_priv(const char *path, const char *mode);
 
@@ -431,7 +433,6 @@ void		pg_fatal(const char *fmt,...) pg_attribute_printf(1, 2) pg_attribute_noret
 void		end_progress_output(void);
 void		prep_status(const char *fmt,...) pg_attribute_printf(1, 2);
 void		check_ok(void);
-const char *getErrorText(void);
 unsigned int str2uint(const char *str);
 void		pg_putenv(const char *var, const char *val);
 
@@ -441,6 +442,7 @@ void		pg_putenv(const char *var, const char *val);
 void new_9_0_populate_pg_largeobject_metadata(ClusterInfo *cluster,
 										 bool check_mode);
 void		old_9_3_check_for_line_data_type_usage(ClusterInfo *cluster);
+void		old_9_6_check_for_unknown_data_type_usage(ClusterInfo *cluster);
 
 /* parallel.c */
 void parallel_exec_prog(const char *log_file, const char *opt_log_file,

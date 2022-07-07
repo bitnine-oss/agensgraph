@@ -2,7 +2,7 @@
  * execParallel.h
  *		POSTGRES parallel execution interface
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -17,6 +17,7 @@
 #include "nodes/execnodes.h"
 #include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
+#include "utils/dsa.h"
 
 typedef struct SharedExecutorInstrumentation SharedExecutorInstrumentation;
 
@@ -27,6 +28,7 @@ typedef struct ParallelExecutorInfo
 	BufferUsage *buffer_usage;
 	SharedExecutorInstrumentation *instrumentation;
 	shm_mq_handle **tqueue;
+	dsa_area   *area;
 	bool		finished;
 } ParallelExecutorInfo;
 

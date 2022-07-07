@@ -3,7 +3,7 @@
  * pg_depend.c
  *	  routines to support manipulation of the pg_depend relation
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -107,13 +107,11 @@ recordMultipleDependencies(const ObjectAddress *depender,
 
 			tup = heap_form_tuple(dependDesc->rd_att, values, nulls);
 
-			simple_heap_insert(dependDesc, tup);
-
-			/* keep indexes current */
+			/* fetch index info only when we know we need it */
 			if (indstate == NULL)
 				indstate = CatalogOpenIndexes(dependDesc);
 
-			CatalogIndexInsert(indstate, tup);
+			CatalogTupleInsertWithInfo(dependDesc, tup, indstate);
 
 			heap_freetuple(tup);
 		}
@@ -219,7 +217,7 @@ deleteDependencyRecordsFor(Oid classId, Oid objectId,
 		  ((Form_pg_depend) GETSTRUCT(tup))->deptype == DEPENDENCY_EXTENSION)
 			continue;
 
-		simple_heap_delete(depRel, &tup->t_self);
+		CatalogTupleDelete(depRel, &tup->t_self);
 		count++;
 	}
 
@@ -269,7 +267,7 @@ deleteDependencyRecordsForClass(Oid classId, Oid objectId,
 
 		if (depform->refclassid == refclassId && depform->deptype == deptype)
 		{
-			simple_heap_delete(depRel, &tup->t_self);
+			CatalogTupleDelete(depRel, &tup->t_self);
 			count++;
 		}
 	}
@@ -353,7 +351,7 @@ changeDependencyFor(Oid classId, Oid objectId,
 			depform->refobjid == oldRefObjectId)
 		{
 			if (newIsPinned)
-				simple_heap_delete(depRel, &tup->t_self);
+				CatalogTupleDelete(depRel, &tup->t_self);
 			else
 			{
 				/* make a modifiable copy */
@@ -362,8 +360,7 @@ changeDependencyFor(Oid classId, Oid objectId,
 
 				depform->refobjid = newRefObjectId;
 
-				simple_heap_update(depRel, &tup->t_self, tup);
-				CatalogUpdateIndexes(depRel, tup);
+				CatalogTupleUpdate(depRel, &tup->t_self, tup);
 
 				heap_freetuple(tup);
 			}

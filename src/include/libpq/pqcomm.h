@@ -6,7 +6,7 @@
  * NOTE: for historical reasons, this does not correspond to pqcomm.c.
  * pqcomm.c's routines are declared in libpq.h.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/libpq/pqcomm.h
@@ -107,7 +107,7 @@ typedef struct
 
 /* The earliest and latest frontend/backend protocol version supported. */
 
-#define PG_PROTOCOL_EARLIEST	PG_PROTOCOL(1,0)
+#define PG_PROTOCOL_EARLIEST	PG_PROTOCOL(2,0)
 #define PG_PROTOCOL_LATEST		PG_PROTOCOL(3,0)
 
 typedef uint32 ProtocolVersion; /* FE/BE protocol version number */

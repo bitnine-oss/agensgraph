@@ -3,7 +3,7 @@
  * blvacuum.c
  *		Bloom VACUUM functions.
  *
- * Copyright (c) 2016, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/bloom/blvacuum.c
@@ -51,7 +51,7 @@ blbulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,
 	initBloomState(&state, index);
 
 	/*
-	 * Interate over the pages. We don't care about concurrently added pages,
+	 * Iterate over the pages. We don't care about concurrently added pages,
 	 * they can't contain tuples to delete.
 	 */
 	npages = RelationGetNumberOfBlocks(index);

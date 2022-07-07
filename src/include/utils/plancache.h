@@ -5,7 +5,7 @@
  *
  * See plancache.c for comments.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/plancache.h
@@ -17,6 +17,9 @@
 
 #include "access/tupdesc.h"
 #include "nodes/params.h"
+
+/* Forward declaration, to avoid including parsenodes.h here */
+struct RawStmt;
 
 #define CACHEDPLANSOURCE_MAGIC		195726186
 #define CACHEDPLAN_MAGIC			953717834
@@ -76,7 +79,7 @@
 typedef struct CachedPlanSource
 {
 	int			magic;			/* should equal CACHEDPLANSOURCE_MAGIC */
-	Node	   *raw_parse_tree; /* output of raw_parser(), or NULL */
+	struct RawStmt *raw_parse_tree;		/* output of raw_parser(), or NULL */
 	const char *query_string;	/* source text of query */
 	const char *commandTag;		/* command tag (a constant!), or NULL */
 	Oid		   *param_types;	/* array of parameter type OIDs, or NULL */
@@ -126,8 +129,7 @@ typedef struct CachedPlanSource
 typedef struct CachedPlan
 {
 	int			magic;			/* should equal CACHEDPLAN_MAGIC */
-	List	   *stmt_list;		/* list of statement nodes (PlannedStmts and
-								 * bare utility statements) */
+	List	   *stmt_list;		/* list of PlannedStmts */
 	bool		is_oneshot;		/* is it a "oneshot" plan? */
 	bool		is_saved;		/* is CachedPlan in a long-lived context? */
 	bool		is_valid;		/* is the stmt_list currently valid? */
@@ -144,10 +146,10 @@ typedef struct CachedPlan
 extern void InitPlanCache(void);
 extern void ResetPlanCache(void);
 
-extern CachedPlanSource *CreateCachedPlan(Node *raw_parse_tree,
+extern CachedPlanSource *CreateCachedPlan(struct RawStmt *raw_parse_tree,
 				 const char *query_string,
 				 const char *commandTag);
-extern CachedPlanSource *CreateOneShotCachedPlan(Node *raw_parse_tree,
+extern CachedPlanSource *CreateOneShotCachedPlan(struct RawStmt *raw_parse_tree,
 						const char *query_string,
 						const char *commandTag);
 extern void CompleteCachedPlan(CachedPlanSource *plansource,

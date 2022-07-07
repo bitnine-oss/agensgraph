@@ -38,7 +38,7 @@
  * by re-setting the page's page_dirty flag.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/slru.c
@@ -216,9 +216,6 @@ SimpleLruInit(SlruCtl ctl, const char *name, int nslots, int nlsns,
 		Assert(strlen(name) + 1 < SLRU_MAX_NAME_LENGTH);
 		strlcpy(shared->lwlock_tranche_name, name, SLRU_MAX_NAME_LENGTH);
 		shared->lwlock_tranche_id = tranche_id;
-		shared->lwlock_tranche.name = shared->lwlock_tranche_name;
-		shared->lwlock_tranche.array_base = shared->buffer_locks;
-		shared->lwlock_tranche.array_stride = sizeof(LWLockPadded);
 
 		ptr += BUFFERALIGN(offset);
 		for (slotno = 0; slotno < nslots; slotno++)
@@ -237,7 +234,8 @@ SimpleLruInit(SlruCtl ctl, const char *name, int nslots, int nlsns,
 		Assert(found);
 
 	/* Register SLRU tranche in the main tranches array */
-	LWLockRegisterTranche(shared->lwlock_tranche_id, &shared->lwlock_tranche);
+	LWLockRegisterTranche(shared->lwlock_tranche_id,
+						  shared->lwlock_tranche_name);
 
 	/*
 	 * Initialize the unshared control struct, including directory path. We

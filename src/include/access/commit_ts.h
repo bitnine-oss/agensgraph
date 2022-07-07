@@ -3,7 +3,7 @@
  *
  * PostgreSQL commit timestamp manager
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/commit_ts.h
@@ -61,6 +61,14 @@ typedef struct xl_commit_ts_set
 #define SizeOfCommitTsSet	(offsetof(xl_commit_ts_set, mainxid) + \
 							 sizeof(TransactionId))
 
+typedef struct xl_commit_ts_truncate
+{
+	int			pageno;
+	TransactionId oldestXid;
+} xl_commit_ts_truncate;
+
+#define SizeOfCommitTsTruncate	(offsetof(xl_commit_ts_truncate, oldestXid) + \
+								 sizeof(TransactionId))
 
 extern void commit_ts_redo(XLogReaderState *record);
 extern void commit_ts_desc(StringInfo buf, XLogReaderState *record);

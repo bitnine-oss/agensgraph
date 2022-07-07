@@ -7,7 +7,7 @@
  *	 ExecProcNode, or ExecEndNode on its subnodes and do the appropriate
  *	 processing.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -88,6 +88,7 @@
 #include "executor/nodeCustom.h"
 #include "executor/nodeForeignscan.h"
 #include "executor/nodeFunctionscan.h"
+#include "executor/nodeGather.h"
 #include "executor/nodeGroup.h"
 #include "executor/nodeHash.h"
 #include "executor/nodeHashjoin.h"
@@ -101,7 +102,7 @@
 #include "executor/nodeModifyGraph.h"
 #include "executor/nodeModifyTable.h"
 #include "executor/nodeNestloop.h"
-#include "executor/nodeGather.h"
+#include "executor/nodeProjectSet.h"
 #include "executor/nodeRecursiveunion.h"
 #include "executor/nodeResult.h"
 #include "executor/nodeSamplescan.h"
@@ -154,6 +155,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 		case T_Result:
 			result = (PlanState *) ExecInitResult((Result *) node,
 												  estate, eflags);
+			break;
+
+		case T_ProjectSet:
+			result = (PlanState *) ExecInitProjectSet((ProjectSet *) node,
+													  estate, eflags);
 			break;
 
 		case T_ModifyTable:
@@ -396,6 +402,10 @@ ExecProcNode(PlanState *node)
 			 */
 		case T_ResultState:
 			result = ExecResult((ResultState *) node);
+			break;
+
+		case T_ProjectSetState:
+			result = ExecProjectSet((ProjectSetState *) node);
 			break;
 
 		case T_ModifyTableState:
@@ -642,6 +652,10 @@ ExecEndNode(PlanState *node)
 			 */
 		case T_ResultState:
 			ExecEndResult((ResultState *) node);
+			break;
+
+		case T_ProjectSetState:
+			ExecEndProjectSet((ProjectSetState *) node);
 			break;
 
 		case T_ModifyTableState:

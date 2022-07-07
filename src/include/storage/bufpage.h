@@ -4,7 +4,7 @@
  *	  Standard POSTGRES buffer page definitions.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/bufpage.h
@@ -409,12 +409,14 @@ do { \
  */
 #define PAI_OVERWRITE			(1 << 0)
 #define PAI_IS_HEAP				(1 << 1)
-#define PAI_ALLOW_FAR_OFFSET	(1 << 2)
+
+#define PageAddItem(page, item, size, offsetNumber, overwrite, is_heap) \
+	PageAddItemExtended(page, item, size, offsetNumber, \
+						((overwrite) ? PAI_OVERWRITE : 0) | \
+						((is_heap) ? PAI_IS_HEAP : 0))
 
 extern void PageInit(Page page, Size pageSize, Size specialSize);
 extern bool PageIsVerified(Page page, BlockNumber blkno);
-extern OffsetNumber PageAddItem(Page page, Item item, Size size,
-			OffsetNumber offsetNumber, bool overwrite, bool is_heap);
 extern OffsetNumber PageAddItemExtended(Page page, Item item, Size size,
 					OffsetNumber offsetNumber, int flags);
 extern Page PageGetTempPage(Page page);
@@ -427,8 +429,9 @@ extern Size PageGetExactFreeSpace(Page page);
 extern Size PageGetHeapFreeSpace(Page page);
 extern void PageIndexTupleDelete(Page page, OffsetNumber offset);
 extern void PageIndexMultiDelete(Page page, OffsetNumber *itemnos, int nitems);
-extern void PageIndexDeleteNoCompact(Page page, OffsetNumber *itemnos,
-						 int nitems);
+extern void PageIndexTupleDeleteNoCompact(Page page, OffsetNumber offset);
+extern bool PageIndexTupleOverwrite(Page page, OffsetNumber offnum,
+						Item newtup, Size newsize);
 extern char *PageSetChecksumCopy(Page page, BlockNumber blkno);
 extern void PageSetChecksumInplace(Page page, BlockNumber blkno);
 

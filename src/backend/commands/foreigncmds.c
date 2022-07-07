@@ -3,7 +3,7 @@
  * foreigncmds.c
  *	  foreign-data wrapper/server creation/manipulation commands
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -256,8 +256,7 @@ AlterForeignDataWrapperOwner_internal(Relation rel, HeapTuple tup, Oid newOwnerI
 		tup = heap_modify_tuple(tup, RelationGetDescr(rel), repl_val, repl_null,
 								repl_repl);
 
-		simple_heap_update(rel, &tup->t_self, tup);
-		CatalogUpdateIndexes(rel, tup);
+		CatalogTupleUpdate(rel, &tup->t_self, tup);
 
 		/* Update owner dependency reference */
 		changeDependencyOnOwner(ForeignDataWrapperRelationId,
@@ -397,8 +396,7 @@ AlterForeignServerOwner_internal(Relation rel, HeapTuple tup, Oid newOwnerId)
 		tup = heap_modify_tuple(tup, RelationGetDescr(rel), repl_val, repl_null,
 								repl_repl);
 
-		simple_heap_update(rel, &tup->t_self, tup);
-		CatalogUpdateIndexes(rel, tup);
+		CatalogTupleUpdate(rel, &tup->t_self, tup);
 
 		/* Update owner dependency reference */
 		changeDependencyOnOwner(ForeignServerRelationId, HeapTupleGetOid(tup),
@@ -629,8 +627,7 @@ CreateForeignDataWrapper(CreateFdwStmt *stmt)
 
 	tuple = heap_form_tuple(rel->rd_att, values, nulls);
 
-	fdwId = simple_heap_insert(rel, tuple);
-	CatalogUpdateIndexes(rel, tuple);
+	fdwId = CatalogTupleInsert(rel, tuple);
 
 	heap_freetuple(tuple);
 
@@ -786,8 +783,7 @@ AlterForeignDataWrapper(AlterFdwStmt *stmt)
 	tp = heap_modify_tuple(tp, RelationGetDescr(rel),
 						   repl_val, repl_null, repl_repl);
 
-	simple_heap_update(rel, &tp->t_self, tp);
-	CatalogUpdateIndexes(rel, tp);
+	CatalogTupleUpdate(rel, &tp->t_self, tp);
 
 	heap_freetuple(tp);
 
@@ -850,7 +846,7 @@ RemoveForeignDataWrapperById(Oid fdwId)
 	if (!HeapTupleIsValid(tp))
 		elog(ERROR, "cache lookup failed for foreign-data wrapper %u", fdwId);
 
-	simple_heap_delete(rel, &tp->t_self);
+	CatalogTupleDelete(rel, &tp->t_self);
 
 	ReleaseSysCache(tp);
 
@@ -941,9 +937,7 @@ CreateForeignServer(CreateForeignServerStmt *stmt)
 
 	tuple = heap_form_tuple(rel->rd_att, values, nulls);
 
-	srvId = simple_heap_insert(rel, tuple);
-
-	CatalogUpdateIndexes(rel, tuple);
+	srvId = CatalogTupleInsert(rel, tuple);
 
 	heap_freetuple(tuple);
 
@@ -1056,8 +1050,7 @@ AlterForeignServer(AlterForeignServerStmt *stmt)
 	tp = heap_modify_tuple(tp, RelationGetDescr(rel),
 						   repl_val, repl_null, repl_repl);
 
-	simple_heap_update(rel, &tp->t_self, tp);
-	CatalogUpdateIndexes(rel, tp);
+	CatalogTupleUpdate(rel, &tp->t_self, tp);
 
 	InvokeObjectPostAlterHook(ForeignServerRelationId, srvId, 0);
 
@@ -1087,7 +1080,7 @@ RemoveForeignServerById(Oid srvId)
 	if (!HeapTupleIsValid(tp))
 		elog(ERROR, "cache lookup failed for foreign server %u", srvId);
 
-	simple_heap_delete(rel, &tp->t_self);
+	CatalogTupleDelete(rel, &tp->t_self);
 
 	ReleaseSysCache(tp);
 
@@ -1190,9 +1183,7 @@ CreateUserMapping(CreateUserMappingStmt *stmt)
 
 	tuple = heap_form_tuple(rel->rd_att, values, nulls);
 
-	umId = simple_heap_insert(rel, tuple);
-
-	CatalogUpdateIndexes(rel, tuple);
+	umId = CatalogTupleInsert(rel, tuple);
 
 	heap_freetuple(tuple);
 
@@ -1307,8 +1298,7 @@ AlterUserMapping(AlterUserMappingStmt *stmt)
 	tp = heap_modify_tuple(tp, RelationGetDescr(rel),
 						   repl_val, repl_null, repl_repl);
 
-	simple_heap_update(rel, &tp->t_self, tp);
-	CatalogUpdateIndexes(rel, tp);
+	CatalogTupleUpdate(rel, &tp->t_self, tp);
 
 	ObjectAddressSet(address, UserMappingRelationId, umId);
 
@@ -1413,7 +1403,7 @@ RemoveUserMappingById(Oid umId)
 	if (!HeapTupleIsValid(tp))
 		elog(ERROR, "cache lookup failed for user mapping %u", umId);
 
-	simple_heap_delete(rel, &tp->t_self);
+	CatalogTupleDelete(rel, &tp->t_self);
 
 	ReleaseSysCache(tp);
 
@@ -1484,8 +1474,7 @@ CreateForeignTable(CreateForeignTableStmt *stmt, Oid relid)
 
 	tuple = heap_form_tuple(ftrel->rd_att, values, nulls);
 
-	simple_heap_insert(ftrel, tuple);
-	CatalogUpdateIndexes(ftrel, tuple);
+	CatalogTupleInsert(ftrel, tuple);
 
 	heap_freetuple(tuple);
 
@@ -1572,7 +1561,9 @@ ImportForeignSchema(ImportForeignSchemaStmt *stmt)
 		 */
 		foreach(lc2, raw_parsetree_list)
 		{
-			CreateForeignTableStmt *cstmt = lfirst(lc2);
+			RawStmt    *rs = castNode(RawStmt, lfirst(lc2));
+			CreateForeignTableStmt *cstmt = (CreateForeignTableStmt *) rs->stmt;
+			PlannedStmt *pstmt;
 
 			/*
 			 * Because we only allow CreateForeignTableStmt, we can skip parse
@@ -1593,8 +1584,16 @@ ImportForeignSchema(ImportForeignSchemaStmt *stmt)
 			/* Ensure creation schema is the one given in IMPORT statement */
 			cstmt->base.relation->schemaname = pstrdup(stmt->local_schema);
 
+			/* No planning needed, just make a wrapper PlannedStmt */
+			pstmt = makeNode(PlannedStmt);
+			pstmt->commandType = CMD_UTILITY;
+			pstmt->canSetTag = false;
+			pstmt->utilityStmt = (Node *) cstmt;
+			pstmt->stmt_location = rs->stmt_location;
+			pstmt->stmt_len = rs->stmt_len;
+
 			/* Execute statement */
-			ProcessUtility((Node *) cstmt,
+			ProcessUtility(pstmt,
 						   cmd,
 						   PROCESS_UTILITY_SUBCOMMAND, NULL,
 						   None_Receiver, NULL);

@@ -9,7 +9,7 @@
  * shorn of features like subselects, inheritance, aggregates, grouping,
  * and so on.  (Those are the things planner.c deals with.)
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -71,14 +71,13 @@ query_planner(PlannerInfo *root, List *tlist,
 
 		/*
 		 * If query allows parallelism in general, check whether the quals are
-		 * parallel-restricted.  There's currently no real benefit to setting
-		 * this flag correctly because we can't yet reference subplans from
-		 * parallel workers.  But that might change someday, so set this
-		 * correctly anyway.
+		 * parallel-restricted.  (We need not check final_rel->reltarget
+		 * because it's empty at this point.  Anything parallel-restricted in
+		 * the query tlist will be dealt with later.)
 		 */
 		if (root->glob->parallelModeOK)
 			final_rel->consider_parallel =
-				!has_parallel_hazard(parse->jointree->quals, false);
+				is_parallel_safe(root, parse->jointree->quals);
 
 		/* The only path for it is a trivial Result path */
 		add_path(final_rel, (Path *)
@@ -196,7 +195,7 @@ query_planner(PlannerInfo *root, List *tlist,
 	/*
 	 * Now distribute "placeholders" to base rels as needed.  This has to be
 	 * done after join removal because removal could change whether a
-	 * placeholder is evaluatable at a base rel.
+	 * placeholder is evaluable at a base rel.
 	 */
 	add_placeholders_to_base_rels(root);
 

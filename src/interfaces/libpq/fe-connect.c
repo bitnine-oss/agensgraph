@@ -3,7 +3,7 @@
  * fe-connect.c
  *	  functions related to setting up a connection to the backend
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -72,7 +72,7 @@ static int ldapServiceLookup(const char *purl, PQconninfoOption *options,
 				  PQExpBuffer errorMessage);
 #endif
 
-#include "libpq/ip.h"
+#include "common/ip.h"
 #include "mb/pg_wchar.h"
 
 #ifndef FD_CLOEXEC
@@ -107,7 +107,7 @@ static int ldapServiceLookup(const char *purl, PQconninfoOption *options,
 #define DefaultTty		""
 #define DefaultOption	""
 #define DefaultAuthtype		  ""
-#define DefaultPassword		  ""
+#define DefaultTargetSessionAttrs	"any"
 #ifdef USE_SSL
 #define DefaultSSLMode "prefer"
 #else
@@ -183,6 +183,10 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 	{"password", "PGPASSWORD", NULL, NULL,
 		"Database-Password", "*", 20,
 	offsetof(struct pg_conn, pgpass)},
+
+	{"passfile", "PGPASSFILE", NULL, NULL,
+		"Database-Password-File", "", 64,
+	offsetof(struct pg_conn, pgpassfile)},
 
 	{"connect_timeout", "PGCONNECT_TIMEOUT", NULL, NULL,
 		"Connect-timeout", "", 10,		/* strlen(INT32_MAX) == 10 */
@@ -300,6 +304,11 @@ static const internalPQconninfoOption PQconninfoOptions[] = {
 		"Replication", "D", 5,
 	offsetof(struct pg_conn, replication)},
 
+	{"target_session_attrs", "PGTARGETSESSIONATTRS",
+		DefaultTargetSessionAttrs, NULL,
+		"Target-Session-Attrs", "", 11, /* sizeof("read-write") = 11 */
+	offsetof(struct pg_conn, target_session_attrs)},
+
 	/* Terminating entry --- MUST BE LAST */
 	{NULL, NULL, NULL, NULL,
 	NULL, NULL, 0}
@@ -336,6 +345,8 @@ static PGconn *makeEmptyPGconn(void);
 static bool fillPGconn(PGconn *conn, PQconninfoOption *connOptions);
 static void freePGconn(PGconn *conn);
 static void closePGconn(PGconn *conn);
+static void release_all_addrinfo(PGconn *conn);
+static void sendTerminateConn(PGconn *conn);
 static PQconninfoOption *conninfo_init(PQExpBuffer errorMessage);
 static PQconninfoOption *parse_connection_string(const char *conninfo,
 						PQExpBuffer errorMessage, bool use_defaults);
@@ -374,10 +385,9 @@ static int parseServiceFile(const char *serviceFile,
 				 PQExpBuffer errorMessage,
 				 bool *group_found);
 static char *pwdfMatchesString(char *buf, char *token);
-static char *PasswordFromFile(char *hostname, char *port, char *dbname,
-				 char *username);
-static bool getPgPassFilename(char *pgpassfile);
-static void dot_pg_pass_warning(PGconn *conn);
+static char *passwordFromFile(char *hostname, char *port, char *dbname,
+				 char *username, char *pgpassfile);
+static void pgpassfileWarning(PGconn *conn);
 static void default_threadlock(int acquire);
 
 
@@ -771,6 +781,148 @@ static bool
 connectOptions2(PGconn *conn)
 {
 	/*
+	 * Allocate memory for details about each host to which we might possibly
+	 * try to connect.  If pghostaddr is set, we're only going to try to
+	 * connect to that one particular address.  If it's not, we'll use pghost,
+	 * which may contain multiple, comma-separated names.
+	 */
+	conn->nconnhost = 1;
+	conn->whichhost = 0;
+	if ((conn->pghostaddr == NULL || conn->pghostaddr[0] == '\0')
+		&& conn->pghost != NULL)
+	{
+		char   *s;
+
+		for (s = conn->pghost; *s != '\0'; ++s)
+			if (*s == ',')
+				conn->nconnhost++;
+	}
+	conn->connhost = (pg_conn_host *)
+		calloc(conn->nconnhost, sizeof(pg_conn_host));
+	if (conn->connhost == NULL)
+		goto oom_error;
+
+	/*
+	 * We now have one pg_conn_host structure per possible host.  Fill in
+	 * the host details for each one.
+	 */
+	if (conn->pghostaddr != NULL && conn->pghostaddr[0] != '\0')
+	{
+		conn->connhost[0].host = strdup(conn->pghostaddr);
+		if (conn->connhost[0].host == NULL)
+			goto oom_error;
+		conn->connhost[0].type = CHT_HOST_ADDRESS;
+	}
+	else if (conn->pghost != NULL && conn->pghost[0] != '\0')
+	{
+		int		i = 0;
+		char   *s = conn->pghost;
+
+		while (1)
+		{
+			char   *e = s;
+
+			/*
+			 * Search for the end of the current hostname; a comma or
+			 * end-of-string acts as a terminator.
+			 */
+			while (*e != '\0' && *e != ',')
+				++e;
+
+			/* Copy the hostname whose bounds we just identified. */
+			conn->connhost[i].host =
+				(char *) malloc(sizeof(char) * (e - s + 1));
+			if (conn->connhost[i].host == NULL)
+				goto oom_error;
+			memcpy(conn->connhost[i].host, s, e - s);
+			conn->connhost[i].host[e - s] = '\0';
+
+			/* Identify the type of host. */
+			conn->connhost[i].type = CHT_HOST_NAME;
+#ifdef HAVE_UNIX_SOCKETS
+			if (is_absolute_path(conn->connhost[i].host))
+				conn->connhost[i].type = CHT_UNIX_SOCKET;
+#endif
+
+			/* Prepare to find the next host (if any). */
+			if (*e == '\0')
+				break;
+			s = e + 1;
+			i++;
+		}
+	}
+	else
+	{
+#ifdef HAVE_UNIX_SOCKETS
+		conn->connhost[0].host = strdup(DEFAULT_PGSOCKET_DIR);
+		conn->connhost[0].type = CHT_UNIX_SOCKET;
+#else
+		conn->connhost[0].host = strdup(DefaultHost);
+		conn->connhost[0].type = CHT_HOST_NAME;
+#endif
+		if (conn->connhost[0].host == NULL)
+			goto oom_error;
+	}
+
+	/*
+	 * Next, work out the port number corresponding to each host name.
+	 */
+	if (conn->pgport != NULL && conn->pgport[0] != '\0')
+	{
+		int		i = 0;
+		char   *s = conn->pgport;
+		int		nports = 1;
+
+		for (i = 0; i < conn->nconnhost; ++i)
+		{
+			char   *e = s;
+
+			/* Search for the end of the current port number. */
+			while (*e != '\0' && *e != ',')
+				++e;
+
+			/*
+			 * If we found a port number of non-zero length, copy it.
+			 * Otherwise, insert the default port number.
+			 */
+			if (e > s)
+			{
+				conn->connhost[i].port =
+					(char *) malloc(sizeof(char) * (e - s + 1));
+				if (conn->connhost[i].port == NULL)
+					goto oom_error;
+				memcpy(conn->connhost[i].port, s, e - s);
+				conn->connhost[i].port[e - s] = '\0';
+			}
+
+			/*
+			 * Move on to the next port number, unless there are no more.
+			 * (If only one part number is specified, we reuse it for every
+			 * host.)
+			 */
+			if (*e != '\0')
+			{
+				s = e + 1;
+				++nports;
+			}
+		}
+
+		/*
+		 * If multiple ports were specified, there must be exactly as many
+		 * ports as there were hosts.  Otherwise, we do not know how to match
+		 * them up.
+		 */
+		if (nports != 1 && nports != conn->nconnhost)
+		{
+			conn->status = CONNECTION_BAD;
+			printfPQExpBuffer(&conn->errorMessage,
+				libpq_gettext("could not match %d port numbers to %d hosts\n"),
+							  nports, conn->nconnhost);
+			return false;
+		}
+	}
+
+	/*
 	 * If user name was not given, fetch it.  (Most likely, the fetch will
 	 * fail, since the only way we get here is if pg_fe_getauthname() failed
 	 * during conninfo_add_defaults().  But now we want an error message.)
@@ -800,33 +952,48 @@ connectOptions2(PGconn *conn)
 	}
 
 	/*
-	 * Supply default password if none given
+	 * Supply default password if none given.  Note that the password might
+	 * be different for each host/port pair.
 	 */
 	if (conn->pgpass == NULL || conn->pgpass[0] == '\0')
 	{
-		if (conn->pgpass)
-			free(conn->pgpass);
-		conn->pgpass = PasswordFromFile(conn->pghost, conn->pgport,
-										conn->dbName, conn->pguser);
-		if (conn->pgpass == NULL)
-		{
-			conn->pgpass = strdup(DefaultPassword);
-			if (!conn->pgpass)
-				goto oom_error;
-		}
-		else
-			conn->dot_pgpass_used = true;
-	}
+		int		i;
 
-	/*
-	 * Allow unix socket specification in the host name
-	 */
-	if (conn->pghost && is_absolute_path(conn->pghost))
-	{
-		if (conn->pgunixsocket)
-			free(conn->pgunixsocket);
-		conn->pgunixsocket = conn->pghost;
-		conn->pghost = NULL;
+		if (conn->pgpassfile == NULL || conn->pgpassfile[0] == '\0')
+		{
+			/* Identify password file to use; fail if we can't */
+			char		homedir[MAXPGPATH];
+
+			if (!pqGetHomeDirectory(homedir, sizeof(homedir)))
+			{
+				conn->status = CONNECTION_BAD;
+				printfPQExpBuffer(&conn->errorMessage,
+								  libpq_gettext("could not get home directory to locate password file\n"));
+				return false;
+			}
+
+			if (conn->pgpassfile)
+				free(conn->pgpassfile);
+			conn->pgpassfile = malloc(MAXPGPATH);
+			if (!conn->pgpassfile)
+				goto oom_error;
+
+			snprintf(conn->pgpassfile, MAXPGPATH, "%s/%s", homedir, PGPASSFILE);
+		}
+
+		for (i = 0; i < conn->nconnhost; i++)
+		{
+			/* Try to get a password for this host from pgpassfile */
+			conn->connhost[i].password =
+				passwordFromFile(conn->connhost[i].host,
+								 conn->connhost[i].port,
+								 conn->dbName,
+								 conn->pguser,
+								 conn->pgpassfile);
+			/* If we got one, set pgpassfile_used */
+			if (conn->connhost[i].password != NULL)
+				conn->pgpassfile_used = true;
+		}
 	}
 
 	/*
@@ -887,6 +1054,22 @@ connectOptions2(PGconn *conn)
 		conn->client_encoding_initial = strdup(pg_encoding_to_char(pg_get_encoding_from_locale(NULL, true)));
 		if (!conn->client_encoding_initial)
 			goto oom_error;
+	}
+
+	/*
+	 * Validate target_session_attrs option.
+	 */
+	if (conn->target_session_attrs)
+	{
+		if (strcmp(conn->target_session_attrs, "any") != 0
+			&& strcmp(conn->target_session_attrs, "read-write") != 0)
+		{
+			conn->status = CONNECTION_BAD;
+			printfPQExpBuffer(&conn->errorMessage,
+							libpq_gettext("invalid target_session_attrs value: \"%s\"\n"),
+							  conn->target_session_attrs);
+			return false;
+		}
 	}
 
 	/*
@@ -1142,6 +1325,7 @@ connectFailureMessage(PGconn *conn, int errorno)
 	{
 		char		host_addr[NI_MAXHOST];
 		const char *displayed_host;
+		const char *displayed_port;
 		struct sockaddr_storage *addr = &conn->raddr.addr;
 
 		/*
@@ -1171,12 +1355,11 @@ connectFailureMessage(PGconn *conn, int errorno)
 		else
 			strcpy(host_addr, "???");
 
-		if (conn->pghostaddr && conn->pghostaddr[0] != '\0')
-			displayed_host = conn->pghostaddr;
-		else if (conn->pghost && conn->pghost[0] != '\0')
-			displayed_host = conn->pghost;
-		else
-			displayed_host = DefaultHost;
+		/* To which host and port were we actually connecting? */
+		displayed_host = conn->connhost[conn->whichhost].host;
+		displayed_port = conn->connhost[conn->whichhost].port;
+		if (displayed_port == NULL || displayed_port[0] == '\0')
+			displayed_port = DEF_PGPORT_STR;
 
 		/*
 		 * If the user did not supply an IP address using 'hostaddr', and
@@ -1192,7 +1375,7 @@ connectFailureMessage(PGconn *conn, int errorno)
 							  SOCK_STRERROR(errorno, sebuf, sizeof(sebuf)),
 							  displayed_host,
 							  host_addr,
-							  conn->pgport);
+							  displayed_port);
 		else
 			appendPQExpBuffer(&conn->errorMessage,
 							libpq_gettext("could not connect to server: %s\n"
@@ -1200,7 +1383,7 @@ connectFailureMessage(PGconn *conn, int errorno)
 									   "\tTCP/IP connections on port %s?\n"),
 							  SOCK_STRERROR(errorno, sebuf, sizeof(sebuf)),
 							  displayed_host,
-							  conn->pgport);
+							  displayed_port);
 	}
 }
 
@@ -1252,7 +1435,7 @@ setKeepalivesIdle(PGconn *conn)
 	}
 #else
 #ifdef TCP_KEEPALIVE
-	/* Darwin uses TCP_KEEPALIVE rather than TCP_KEEPIDLE */
+	/* macOS uses TCP_KEEPALIVE rather than TCP_KEEPIDLE */
 	if (setsockopt(conn->sock, IPPROTO_TCP, TCP_KEEPALIVE,
 				   (char *) &idle, sizeof(idle)) < 0)
 	{
@@ -1390,12 +1573,9 @@ setKeepalivesWin32(PGconn *conn)
 static int
 connectDBStart(PGconn *conn)
 {
-	int			portnum;
 	char		portstr[MAXPGPATH];
-	struct addrinfo *addrs = NULL;
-	struct addrinfo hint;
-	const char *node;
 	int			ret;
+	int			i;
 
 	if (!conn)
 		return 0;
@@ -1408,83 +1588,86 @@ connectDBStart(PGconn *conn)
 	conn->outCount = 0;
 
 	/*
-	 * Determine the parameters to pass to pg_getaddrinfo_all.
+	 * Look up socket addresses for each possible host using
+	 * pg_getaddrinfo_all.
 	 */
-
-	/* Initialize hint structure */
-	MemSet(&hint, 0, sizeof(hint));
-	hint.ai_socktype = SOCK_STREAM;
-	hint.ai_family = AF_UNSPEC;
-
-	/* Set up port number as a string */
-	if (conn->pgport != NULL && conn->pgport[0] != '\0')
+	for (i = 0; i < conn->nconnhost; ++i)
 	{
-		portnum = atoi(conn->pgport);
-		if (portnum < 1 || portnum > 65535)
-		{
-			appendPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("invalid port number: \"%s\"\n"),
-							  conn->pgport);
-			conn->options_valid = false;
-			goto connect_errReturn;
-		}
-	}
-	else
-		portnum = DEF_PGPORT;
-	snprintf(portstr, sizeof(portstr), "%d", portnum);
+		pg_conn_host *ch = &conn->connhost[i];
+		char	   *node = ch->host;
+		struct addrinfo hint;
+		int			thisport;
 
-	if (conn->pghostaddr != NULL && conn->pghostaddr[0] != '\0')
-	{
-		/* Using pghostaddr avoids a hostname lookup */
-		node = conn->pghostaddr;
+		/* Initialize hint structure */
+		MemSet(&hint, 0, sizeof(hint));
+		hint.ai_socktype = SOCK_STREAM;
 		hint.ai_family = AF_UNSPEC;
-		hint.ai_flags = AI_NUMERICHOST;
-	}
-	else if (conn->pghost != NULL && conn->pghost[0] != '\0')
-	{
-		/* Using pghost, so we have to look-up the hostname */
-		node = conn->pghost;
-		hint.ai_family = AF_UNSPEC;
-	}
-	else
-	{
-#ifdef HAVE_UNIX_SOCKETS
-		/* pghostaddr and pghost are NULL, so use Unix domain socket */
-		node = NULL;
-		hint.ai_family = AF_UNIX;
-		UNIXSOCK_PATH(portstr, portnum, conn->pgunixsocket);
-		if (strlen(portstr) >= UNIXSOCK_PATH_BUFLEN)
-		{
-			appendPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("Unix-domain socket path \"%s\" is too long (maximum %d bytes)\n"),
-							  portstr,
-							  (int) (UNIXSOCK_PATH_BUFLEN - 1));
-			conn->options_valid = false;
-			goto connect_errReturn;
-		}
-#else
-		/* Without Unix sockets, default to localhost instead */
-		node = DefaultHost;
-		hint.ai_family = AF_UNSPEC;
-#endif   /* HAVE_UNIX_SOCKETS */
-	}
 
-	/* Use pg_getaddrinfo_all() to resolve the address */
-	ret = pg_getaddrinfo_all(node, portstr, &hint, &addrs);
-	if (ret || !addrs)
-	{
-		if (node)
-			appendPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("could not translate host name \"%s\" to address: %s\n"),
-							  node, gai_strerror(ret));
+		/* Figure out the port number we're going to use. */
+		if (ch->port == NULL)
+			thisport = DEF_PGPORT;
 		else
-			appendPQExpBuffer(&conn->errorMessage,
-							  libpq_gettext("could not translate Unix-domain socket path \"%s\" to address: %s\n"),
-							  portstr, gai_strerror(ret));
-		if (addrs)
-			pg_freeaddrinfo_all(hint.ai_family, addrs);
-		conn->options_valid = false;
-		goto connect_errReturn;
+		{
+			thisport = atoi(ch->port);
+			if (thisport < 1 || thisport > 65535)
+			{
+				appendPQExpBuffer(&conn->errorMessage,
+							  libpq_gettext("invalid port number: \"%s\"\n"),
+								  ch->port);
+				conn->options_valid = false;
+				goto connect_errReturn;
+			}
+		}
+		snprintf(portstr, sizeof(portstr), "%d", thisport);
+
+		/* Set up for name resolution. */
+		switch (ch->type)
+		{
+			case CHT_HOST_NAME:
+				break;
+			case CHT_HOST_ADDRESS:
+				hint.ai_flags = AI_NUMERICHOST;
+				break;
+			case CHT_UNIX_SOCKET:
+#ifdef HAVE_UNIX_SOCKETS
+				node = NULL;
+				hint.ai_family = AF_UNIX;
+				UNIXSOCK_PATH(portstr, thisport, ch->host);
+				if (strlen(portstr) >= UNIXSOCK_PATH_BUFLEN)
+				{
+					appendPQExpBuffer(&conn->errorMessage,
+									  libpq_gettext("Unix-domain socket path \"%s\" is too long (maximum %d bytes)\n"),
+								  portstr,
+								  (int) (UNIXSOCK_PATH_BUFLEN - 1));
+					conn->options_valid = false;
+					goto connect_errReturn;
+				}
+#else
+				Assert(false);
+#endif
+				break;
+		}
+
+		/* Use pg_getaddrinfo_all() to resolve the address */
+		ret = pg_getaddrinfo_all(node, portstr, &hint, &ch->addrlist);
+		if (ret || !ch->addrlist)
+		{
+			if (node)
+				appendPQExpBuffer(&conn->errorMessage,
+								  libpq_gettext("could not translate host name \"%s\" to address: %s\n"),
+								  node, gai_strerror(ret));
+			else
+				appendPQExpBuffer(&conn->errorMessage,
+								  libpq_gettext("could not translate Unix-domain socket path \"%s\" to address: %s\n"),
+								  portstr, gai_strerror(ret));
+			if (ch->addrlist)
+			{
+				pg_freeaddrinfo_all(hint.ai_family, ch->addrlist);
+				ch->addrlist = NULL;
+			}
+			conn->options_valid = false;
+			goto connect_errReturn;
+		}
 	}
 
 #ifdef USE_SSL
@@ -1498,9 +1681,8 @@ connectDBStart(PGconn *conn)
 	/*
 	 * Set up to try to connect, with protocol 3.0 as the first attempt.
 	 */
-	conn->addrlist = addrs;
-	conn->addr_cur = addrs;
-	conn->addrlist_family = hint.ai_family;
+	conn->whichhost = 0;
+	conn->addr_cur = conn->connhost[0].addrlist;
 	conn->pversion = PG_PROTOCOL(3, 0);
 	conn->send_appname = true;
 	conn->status = CONNECTION_NEEDED;
@@ -1603,6 +1785,39 @@ connectDBComplete(PGconn *conn)
 	}
 }
 
+/*
+ * This subroutine saves conn->errorMessage, which will be restored back by
+ * restoreErrorMessage subroutine.
+ */
+static bool
+saveErrorMessage(PGconn *conn, PQExpBuffer savedMessage)
+{
+	initPQExpBuffer(savedMessage);
+	if (PQExpBufferBroken(savedMessage))
+	{
+		printfPQExpBuffer(&conn->errorMessage,
+						  libpq_gettext("out of memory\n"));
+		return false;
+	}
+
+	appendPQExpBufferStr(savedMessage,
+						 conn->errorMessage.data);
+	resetPQExpBuffer(&conn->errorMessage);
+	return true;
+}
+
+/*
+ * Restores saved error messages back to conn->errorMessage.
+ */
+static void
+restoreErrorMessage(PGconn *conn, PQExpBuffer savedMessage)
+{
+	appendPQExpBufferStr(savedMessage, conn->errorMessage.data);
+	resetPQExpBuffer(&conn->errorMessage);
+	appendPQExpBufferStr(&conn->errorMessage, savedMessage->data);
+	termPQExpBuffer(savedMessage);
+}
+
 /* ----------------
  *		PQconnectPoll
  *
@@ -1636,6 +1851,7 @@ PQconnectPoll(PGconn *conn)
 	PGresult   *res;
 	char		sebuf[256];
 	int			optval;
+	PQExpBufferData savedMessage;
 
 	if (conn == NULL)
 		return PGRES_POLLING_FAILED;
@@ -1679,6 +1895,7 @@ PQconnectPoll(PGconn *conn)
 			/* Special cases: proceed without waiting. */
 		case CONNECTION_SSL_STARTUP:
 		case CONNECTION_NEEDED:
+		case CONNECTION_CHECK_WRITABLE:
 			break;
 
 		default:
@@ -1702,11 +1919,27 @@ keep_going:						/* We will come back to here until there is
 				 * returned by pg_getaddrinfo_all().  conn->addr_cur is the
 				 * next one to try. We fail when we run out of addresses.
 				 */
-				while (conn->addr_cur != NULL)
+				for (;;)
 				{
-					struct addrinfo *addr_cur = conn->addr_cur;
+					struct addrinfo *addr_cur;
+
+					/*
+					 * Advance to next possible host, if we've tried all of
+					 * the addresses for the current host.
+					 */
+					if (conn->addr_cur == NULL)
+					{
+						if (++conn->whichhost >= conn->nconnhost)
+						{
+							conn->whichhost = 0;
+							break;
+						}
+						conn->addr_cur =
+							conn->connhost[conn->whichhost].addrlist;
+					}
 
 					/* Remember current address for possible error msg */
+					addr_cur = conn->addr_cur;
 					memcpy(&conn->raddr.addr, addr_cur->ai_addr,
 						   addr_cur->ai_addrlen);
 					conn->raddr.salen = addr_cur->ai_addrlen;
@@ -1718,7 +1951,8 @@ keep_going:						/* We will come back to here until there is
 						 * ignore socket() failure if we have more addresses
 						 * to try
 						 */
-						if (addr_cur->ai_next != NULL)
+						if (addr_cur->ai_next != NULL ||
+							conn->whichhost + 1 < conn->nconnhost)
 						{
 							conn->addr_cur = addr_cur->ai_next;
 							continue;
@@ -1944,7 +2178,8 @@ keep_going:						/* We will come back to here until there is
 					 * If more addresses remain, keep trying, just as in the
 					 * case where connect() returned failure immediately.
 					 */
-					if (conn->addr_cur->ai_next != NULL)
+					if (conn->addr_cur->ai_next != NULL ||
+						conn->whichhost + 1 < conn->nconnhost)
 					{
 						conn->addr_cur = conn->addr_cur->ai_next;
 						conn->status = CONNECTION_NEEDED;
@@ -2599,11 +2834,6 @@ keep_going:						/* We will come back to here until there is
 					goto error_return;
 				}
 
-				/* We can release the address list now. */
-				pg_freeaddrinfo_all(conn->addrlist_family, conn->addrlist);
-				conn->addrlist = NULL;
-				conn->addr_cur = NULL;
-
 				/* Fire up post-connection housekeeping if needed */
 				if (PG_PROTOCOL_MAJOR(conn->pversion) < 3)
 				{
@@ -2613,7 +2843,39 @@ keep_going:						/* We will come back to here until there is
 					return PGRES_POLLING_WRITING;
 				}
 
-				/* Otherwise, we are open for business! */
+				/*
+				 * If a read-write connection is required, see if we have one.
+				 */
+				if (conn->target_session_attrs != NULL &&
+					strcmp(conn->target_session_attrs, "read-write") == 0)
+				{
+					/*
+					 * We are yet to make a connection. Save all existing error
+					 * messages until we make a successful connection state.
+					 * This is important because PQsendQuery is going to reset
+					 * conn->errorMessage and we will loose error messages
+					 * related to previous hosts we have tried to connect and
+					 * failed.
+					 */
+					if (!saveErrorMessage(conn, &savedMessage))
+						goto error_return;
+
+					conn->status = CONNECTION_OK;
+					if (!PQsendQuery(conn,
+									 "show transaction_read_only"))
+					{
+						restoreErrorMessage(conn, &savedMessage);
+						goto error_return;
+					}
+					conn->status = CONNECTION_CHECK_WRITABLE;
+					restoreErrorMessage(conn, &savedMessage);
+					return PGRES_POLLING_READING;
+				}
+
+				/* We can release the address lists now. */
+				release_all_addrinfo(conn);
+
+				/* We are open for business! */
 				conn->status = CONNECTION_OK;
 				return PGRES_POLLING_OK;
 			}
@@ -2645,9 +2907,125 @@ keep_going:						/* We will come back to here until there is
 					goto error_return;
 			}
 
+			/*
+			 * If a read-write connection is requisted check for same.
+			 */
+			if (conn->target_session_attrs != NULL &&
+				strcmp(conn->target_session_attrs, "read-write") == 0)
+			{
+				if (!saveErrorMessage(conn, &savedMessage))
+					goto error_return;
+
+				conn->status = CONNECTION_OK;
+				if (!PQsendQuery(conn,
+								 "show transaction_read_only"))
+				{
+					restoreErrorMessage(conn, &savedMessage);
+					goto error_return;
+				}
+				conn->status = CONNECTION_CHECK_WRITABLE;
+				restoreErrorMessage(conn, &savedMessage);
+				return PGRES_POLLING_READING;
+			}
+
+			/* We can release the address lists now. */
+			release_all_addrinfo(conn);
+
 			/* We are open for business! */
 			conn->status = CONNECTION_OK;
 			return PGRES_POLLING_OK;
+
+		case CONNECTION_CHECK_WRITABLE:
+			{
+				if (!saveErrorMessage(conn, &savedMessage))
+					goto error_return;
+
+				conn->status = CONNECTION_OK;
+				if (!PQconsumeInput(conn))
+				{
+					restoreErrorMessage(conn, &savedMessage);
+					goto error_return;
+				}
+
+				if (PQisBusy(conn))
+				{
+					conn->status = CONNECTION_CHECK_WRITABLE;
+					restoreErrorMessage(conn, &savedMessage);
+					return PGRES_POLLING_READING;
+				}
+
+				res = PQgetResult(conn);
+				if (res && (PQresultStatus(res) == PGRES_TUPLES_OK) &&
+					PQntuples(res) == 1)
+				{
+					char	   *val;
+
+					val = PQgetvalue(res, 0, 0);
+					if (strncmp(val, "on", 2) == 0)
+					{
+						PQclear(res);
+						restoreErrorMessage(conn, &savedMessage);
+
+						/* Not writable; close connection. */
+						appendPQExpBuffer(&conn->errorMessage,
+								   libpq_gettext("could not make a writable "
+												 "connection to server "
+												 "\"%s:%s\"\n"),
+										conn->connhost[conn->whichhost].host,
+									   conn->connhost[conn->whichhost].port);
+						conn->status = CONNECTION_OK;
+						sendTerminateConn(conn);
+						pqDropConnection(conn, true);
+
+						/* Skip any remaining addresses for this host. */
+						conn->addr_cur = NULL;
+						if (conn->whichhost + 1 < conn->nconnhost)
+						{
+							conn->status = CONNECTION_NEEDED;
+							goto keep_going;
+						}
+
+						/* No more addresses to try. So we fail. */
+						goto error_return;
+					}
+					PQclear(res);
+					termPQExpBuffer(&savedMessage);
+
+					/* We can release the address lists now. */
+					release_all_addrinfo(conn);
+
+					/* We are open for business! */
+					conn->status = CONNECTION_OK;
+					return PGRES_POLLING_OK;
+				}
+
+				/*
+				 * Something went wrong with "show transaction_read_only". We
+				 * should try next addresses.
+				 */
+				if (res)
+					PQclear(res);
+				restoreErrorMessage(conn, &savedMessage);
+				appendPQExpBuffer(&conn->errorMessage,
+				  libpq_gettext("test \"show transaction_read_only\" failed "
+								" on \"%s:%s\" \n"),
+								  conn->connhost[conn->whichhost].host,
+								  conn->connhost[conn->whichhost].port);
+				conn->status = CONNECTION_OK;
+				sendTerminateConn(conn);
+				pqDropConnection(conn, true);
+
+				if (conn->addr_cur->ai_next != NULL ||
+					conn->whichhost + 1 < conn->nconnhost)
+				{
+					conn->addr_cur = conn->addr_cur->ai_next;
+					conn->status = CONNECTION_NEEDED;
+					goto keep_going;
+				}
+
+				/* No more addresses to try. So we fail. */
+				goto error_return;
+			}
 
 		default:
 			appendPQExpBuffer(&conn->errorMessage,
@@ -2661,7 +3039,7 @@ keep_going:						/* We will come back to here until there is
 
 error_return:
 
-	dot_pg_pass_warning(conn);
+	pgpassfileWarning(conn);
 
 	/*
 	 * We used to close the socket at this point, but that makes it awkward
@@ -2792,7 +3170,7 @@ makeEmptyPGconn(void)
 	conn->sock = PGINVALID_SOCKET;
 	conn->auth_req_received = false;
 	conn->password_needed = false;
-	conn->dot_pgpass_used = false;
+	conn->pgpassfile_used = false;
 #ifdef USE_SSL
 	conn->allow_ssl_try = true;
 	conn->wait_ssl_try = false;
@@ -2858,6 +3236,21 @@ freePGconn(PGconn *conn)
 		free(conn->events[i].name);
 	}
 
+	/* clean up pg_conn_host structures */
+	if (conn->connhost != NULL)
+	{
+		for (i = 0; i < conn->nconnhost; ++i)
+		{
+			if (conn->connhost[i].host != NULL)
+				free(conn->connhost[i].host);
+			if (conn->connhost[i].port != NULL)
+				free(conn->connhost[i].port);
+			if (conn->connhost[i].password != NULL)
+				free(conn->connhost[i].password);
+		}
+		free(conn->connhost);
+	}
+
 	if (conn->client_encoding_initial)
 		free(conn->client_encoding_initial);
 	if (conn->events)
@@ -2868,8 +3261,6 @@ freePGconn(PGconn *conn)
 		free(conn->pghostaddr);
 	if (conn->pgport)
 		free(conn->pgport);
-	if (conn->pgunixsocket)
-		free(conn->pgunixsocket);
 	if (conn->pgtty)
 		free(conn->pgtty);
 	if (conn->connect_timeout)
@@ -2888,6 +3279,8 @@ freePGconn(PGconn *conn)
 		free(conn->pguser);
 	if (conn->pgpass)
 		free(conn->pgpass);
+	if (conn->pgpassfile)
+		free(conn->pgpassfile);
 	if (conn->keepalives)
 		free(conn->keepalives);
 	if (conn->keepalives_idle)
@@ -2927,6 +3320,8 @@ freePGconn(PGconn *conn)
 		free(conn->outBuffer);
 	if (conn->rowBuf)
 		free(conn->rowBuf);
+	if (conn->target_session_attrs)
+		free(conn->target_session_attrs);
 	termPQExpBuffer(&conn->errorMessage);
 	termPQExpBuffer(&conn->workBuffer);
 
@@ -2935,6 +3330,58 @@ freePGconn(PGconn *conn)
 #ifdef WIN32
 	WSACleanup();
 #endif
+}
+
+/*
+ * release_all_addrinfo
+ *	 - free addrinfo of all hostconn elements.
+ */
+
+static void
+release_all_addrinfo(PGconn *conn)
+{
+	if (conn->connhost != NULL)
+	{
+		int			i;
+
+		for (i = 0; i < conn->nconnhost; ++i)
+		{
+			int			family = AF_UNSPEC;
+
+#ifdef HAVE_UNIX_SOCKETS
+			if (conn->connhost[i].type == CHT_UNIX_SOCKET)
+				family = AF_UNIX;
+#endif
+
+			pg_freeaddrinfo_all(family,
+								conn->connhost[i].addrlist);
+			conn->connhost[i].addrlist = NULL;
+		}
+	}
+	conn->addr_cur = NULL;
+}
+
+/*
+ * sendTerminateConn
+ *	 - Send a terminate message to backend.
+ */
+static void
+sendTerminateConn(PGconn *conn)
+{
+	/*
+	 * Note that the protocol doesn't allow us to send Terminate messages
+	 * during the startup phase.
+	 */
+	if (conn->sock != PGINVALID_SOCKET && conn->status == CONNECTION_OK)
+	{
+		/*
+		 * Try to send "close connection" message to backend. Ignore any
+		 * error.
+		 */
+		pqPutMsgStart('X', false, conn);
+		pqPutMsgEnd(conn);
+		(void) pqFlush(conn);
+	}
 }
 
 /*
@@ -2951,20 +3398,7 @@ closePGconn(PGconn *conn)
 	PGnotify   *notify;
 	pgParameterStatus *pstatus;
 
-	/*
-	 * Note that the protocol doesn't allow us to send Terminate messages
-	 * during the startup phase.
-	 */
-	if (conn->sock != PGINVALID_SOCKET && conn->status == CONNECTION_OK)
-	{
-		/*
-		 * Try to send "close connection" message to backend. Ignore any
-		 * error.
-		 */
-		pqPutMsgStart('X', false, conn);
-		pqPutMsgEnd(conn);
-		(void) pqFlush(conn);
-	}
+	sendTerminateConn(conn);
 
 	/*
 	 * Must reset the blocking status so a possible reconnect will work.
@@ -2983,9 +3417,8 @@ closePGconn(PGconn *conn)
 	conn->asyncStatus = PGASYNC_IDLE;
 	pqClearAsyncResult(conn);	/* deallocate result */
 	resetPQExpBuffer(&conn->errorMessage);
-	pg_freeaddrinfo_all(conn->addrlist_family, conn->addrlist);
-	conn->addrlist = NULL;
-	conn->addr_cur = NULL;
+	release_all_addrinfo(conn);
+
 	notify = conn->notifyHead;
 	while (notify != NULL)
 	{
@@ -4720,7 +5153,10 @@ conninfo_uri_parse(const char *uri, PQExpBuffer errorMessage,
  * postgresql://[user[:password]@][netloc][:port][/dbname][?param1=value1&...]
  *
  * where "netloc" is a hostname, an IPv4 address, or an IPv6 address surrounded
- * by literal square brackets.
+ * by literal square brackets.  As an extension, we also allow multiple
+ * netloc[:port] specifications, separated by commas:
+ *
+ * postgresql://[user[:password]@][netloc][:port][,...][/dbname][?param1=value1&...]
  *
  * Any of the URI parts might use percent-encoding (%xy).
  */
@@ -4730,12 +5166,23 @@ conninfo_uri_parse_options(PQconninfoOption *options, const char *uri,
 {
 	int			prefix_len;
 	char	   *p;
-	char	   *buf;
+	char	   *buf = NULL;
 	char	   *start;
 	char		prevchar = '\0';
 	char	   *user = NULL;
 	char	   *host = NULL;
 	bool		retval = false;
+	PQExpBufferData	hostbuf;
+	PQExpBufferData	portbuf;
+
+	initPQExpBuffer(&hostbuf);
+	initPQExpBuffer(&portbuf);
+	if (PQExpBufferDataBroken(hostbuf) || PQExpBufferDataBroken(portbuf))
+	{
+		printfPQExpBuffer(errorMessage,
+						  libpq_gettext("out of memory\n"));
+		goto cleanup;
+	}
 
 	/* need a modifiable copy of the input URI */
 	buf = strdup(uri);
@@ -4743,7 +5190,7 @@ conninfo_uri_parse_options(PQconninfoOption *options, const char *uri,
 	{
 		printfPQExpBuffer(errorMessage,
 						  libpq_gettext("out of memory\n"));
-		return false;
+		goto cleanup;
 	}
 	start = buf;
 
@@ -4810,84 +5257,103 @@ conninfo_uri_parse_options(PQconninfoOption *options, const char *uri,
 	}
 
 	/*
-	 * "p" has been incremented past optional URI credential information at
-	 * this point and now points at the "netloc" part of the URI.
-	 *
-	 * Look for IPv6 address.
+	 * There may be multiple netloc[:port] pairs, each separated from the next
+	 * by a comma.  When we initially enter this loop, "p" has been
+	 * incremented past optional URI credential information at this point and
+	 * now points at the "netloc" part of the URI.  On subsequent loop
+	 * iterations, "p" has been incremented past the comma separator and now
+	 * points at the start of the next "netloc".
 	 */
-	if (*p == '[')
+	for (;;)
 	{
-		host = ++p;
-		while (*p && *p != ']')
-			++p;
-		if (!*p)
-		{
-			printfPQExpBuffer(errorMessage,
-							  libpq_gettext("end of string reached when looking for matching \"]\" in IPv6 host address in URI: \"%s\"\n"),
-							  uri);
-			goto cleanup;
-		}
-		if (p == host)
-		{
-			printfPQExpBuffer(errorMessage,
-							  libpq_gettext("IPv6 host address may not be empty in URI: \"%s\"\n"),
-							  uri);
-			goto cleanup;
-		}
-
-		/* Cut off the bracket and advance */
-		*(p++) = '\0';
-
 		/*
-		 * The address may be followed by a port specifier or a slash or a
-		 * query.
+		 * Look for IPv6 address.
 		 */
-		if (*p && *p != ':' && *p != '/' && *p != '?')
+		if (*p == '[')
 		{
-			printfPQExpBuffer(errorMessage,
-							  libpq_gettext("unexpected character \"%c\" at position %d in URI (expected \":\" or \"/\"): \"%s\"\n"),
-							  *p, (int) (p - buf + 1), uri);
-			goto cleanup;
+			host = ++p;
+			while (*p && *p != ']')
+				++p;
+			if (!*p)
+			{
+				printfPQExpBuffer(errorMessage,
+								  libpq_gettext("end of string reached when looking for matching \"]\" in IPv6 host address in URI: \"%s\"\n"),
+								  uri);
+				goto cleanup;
+			}
+			if (p == host)
+			{
+				printfPQExpBuffer(errorMessage,
+								  libpq_gettext("IPv6 host address may not be empty in URI: \"%s\"\n"),
+								  uri);
+				goto cleanup;
+			}
+
+			/* Cut off the bracket and advance */
+			*(p++) = '\0';
+
+			/*
+			 * The address may be followed by a port specifier or a slash or a
+			 * query or a separator comma.
+			 */
+			if (*p && *p != ':' && *p != '/' && *p != '?' && *p != ',')
+			{
+				printfPQExpBuffer(errorMessage,
+								  libpq_gettext("unexpected character \"%c\" at position %d in URI (expected \":\" or \"/\"): \"%s\"\n"),
+								  *p, (int) (p - buf + 1), uri);
+				goto cleanup;
+			}
 		}
-	}
-	else
-	{
-		/* not an IPv6 address: DNS-named or IPv4 netloc */
-		host = p;
+		else
+		{
+			/* not an IPv6 address: DNS-named or IPv4 netloc */
+			host = p;
 
-		/*
-		 * Look for port specifier (colon) or end of host specifier (slash),
-		 * or query (question mark).
-		 */
-		while (*p && *p != ':' && *p != '/' && *p != '?')
-			++p;
-	}
+			/*
+			 * Look for port specifier (colon) or end of host specifier (slash)
+			 * or query (question mark) or host separator (comma).
+			 */
+			while (*p && *p != ':' && *p != '/' && *p != '?' && *p != ',')
+				++p;
+		}
 
-	/* Save the hostname terminator before we null it */
-	prevchar = *p;
-	*p = '\0';
-
-	if (*host &&
-		!conninfo_storeval(options, "host", host,
-						   errorMessage, false, true))
-		goto cleanup;
-
-
-	if (prevchar == ':')
-	{
-		const char *port = ++p; /* advance past host terminator */
-
-		while (*p && *p != '/' && *p != '?')
-			++p;
-
+		/* Save the hostname terminator before we null it */
 		prevchar = *p;
 		*p = '\0';
 
-		if (*port &&
-			!conninfo_storeval(options, "port", port,
-							   errorMessage, false, true))
-			goto cleanup;
+		appendPQExpBufferStr(&hostbuf, host);
+
+		if (prevchar == ':')
+		{
+			const char *port = ++p; /* advance past host terminator */
+
+			while (*p && *p != '/' && *p != '?' && *p != ',')
+				++p;
+
+			prevchar = *p;
+			*p = '\0';
+
+			appendPQExpBufferStr(&portbuf, port);
+		}
+
+		if (prevchar != ',')
+			break;
+		++p;						/* advance past comma separator */
+		appendPQExpBufferStr(&hostbuf, ",");
+		appendPQExpBufferStr(&portbuf, ",");
 	}
+
+	/* Save final values for host and port. */
+	if (PQExpBufferDataBroken(hostbuf) || PQExpBufferDataBroken(portbuf))
+		goto cleanup;
+	if (hostbuf.data[0] &&
+		!conninfo_storeval(options, "host", hostbuf.data,
+						   errorMessage, false, true))
+		goto cleanup;
+	if (portbuf.data[0] &&
+		!conninfo_storeval(options, "port", portbuf.data,
+						   errorMessage, false, true))
+		goto cleanup;
 
 	if (prevchar && prevchar != '?')
 	{
@@ -4923,7 +5389,10 @@ conninfo_uri_parse_options(PQconninfoOption *options, const char *uri,
 	retval = true;
 
 cleanup:
-	free(buf);
+	termPQExpBuffer(&hostbuf);
+	termPQExpBuffer(&portbuf);
+	if (buf)
+		free(buf);
 	return retval;
 }
 
@@ -5342,9 +5811,18 @@ PQuser(const PGconn *conn)
 char *
 PQpass(const PGconn *conn)
 {
+	char   *password = NULL;
+
 	if (!conn)
 		return NULL;
-	return conn->pgpass;
+	if (conn->connhost != NULL)
+		password = conn->connhost[conn->whichhost].password;
+	if (password == NULL)
+		password = conn->pgpass;
+	/* Historically we've returned "" not NULL for no password specified */
+	if (password == NULL)
+		password = "";
+	return password;
 }
 
 char *
@@ -5352,15 +5830,15 @@ PQhost(const PGconn *conn)
 {
 	if (!conn)
 		return NULL;
-	if (conn->pghost != NULL && conn->pghost[0] != '\0')
+	if (conn->connhost != NULL &&
+		conn->connhost[conn->whichhost].type != CHT_HOST_ADDRESS)
+		return conn->connhost[conn->whichhost].host;
+	else if (conn->pghost != NULL && conn->pghost[0] != '\0')
 		return conn->pghost;
 	else
 	{
 #ifdef HAVE_UNIX_SOCKETS
-		if (conn->pgunixsocket != NULL && conn->pgunixsocket[0] != '\0')
-			return conn->pgunixsocket;
-		else
-			return DEFAULT_PGSOCKET_DIR;
+		return DEFAULT_PGSOCKET_DIR;
 #else
 		return DefaultHost;
 #endif
@@ -5372,6 +5850,8 @@ PQport(const PGconn *conn)
 {
 	if (!conn)
 		return NULL;
+	if (conn->connhost != NULL)
+		return conn->connhost[conn->whichhost].port;
 	return conn->pgport;
 }
 
@@ -5481,10 +5961,13 @@ PQbackendPID(const PGconn *conn)
 int
 PQconnectionNeedsPassword(const PGconn *conn)
 {
+	char   *password;
+
 	if (!conn)
 		return false;
+	password = PQpass(conn);
 	if (conn->password_needed &&
-		(conn->pgpass == NULL || conn->pgpass[0] == '\0'))
+		(password == NULL || password[0] == '\0'))
 		return true;
 	else
 		return false;
@@ -5705,10 +6188,10 @@ pwdfMatchesString(char *buf, char *token)
 
 /* Get a password from the password file. Return value is malloc'd. */
 static char *
-PasswordFromFile(char *hostname, char *port, char *dbname, char *username)
+passwordFromFile(char *hostname, char *port, char *dbname,
+				 char *username, char *pgpassfile)
 {
 	FILE	   *fp;
-	char		pgpassfile[MAXPGPATH];
 	struct stat stat_buf;
 
 #define LINELEN NAMEDATALEN*5
@@ -5734,9 +6217,6 @@ PasswordFromFile(char *hostname, char *port, char *dbname, char *username)
 
 	if (port == NULL)
 		port = DEF_PGPORT_STR;
-
-	if (!getPgPassFilename(pgpassfile))
-		return NULL;
 
 	/* If password file cannot be opened, ignore it. */
 	if (stat(pgpassfile, &stat_buf) != 0)
@@ -5783,18 +6263,26 @@ PasswordFromFile(char *hostname, char *port, char *dbname, char *username)
 			break;
 
 		len = strlen(buf);
-		if (len == 0)
-			continue;
 
 		/* Remove trailing newline */
-		if (buf[len - 1] == '\n')
-			buf[len - 1] = 0;
+		if (len > 0 && buf[len - 1] == '\n')
+		{
+			buf[--len] = '\0';
+			/* Handle DOS-style line endings, too, even when not on Windows */
+			if (len > 0 && buf[len - 1] == '\r')
+				buf[--len] = '\0';
+		}
+
+		if (len == 0)
+			continue;
 
 		if ((t = pwdfMatchesString(t, hostname)) == NULL ||
 			(t = pwdfMatchesString(t, port)) == NULL ||
 			(t = pwdfMatchesString(t, dbname)) == NULL ||
 			(t = pwdfMatchesString(t, username)) == NULL)
 			continue;
+
+		/* Found a match. */
 		ret = strdup(t);
 		fclose(fp);
 
@@ -5823,46 +6311,24 @@ PasswordFromFile(char *hostname, char *port, char *dbname, char *username)
 }
 
 
-static bool
-getPgPassFilename(char *pgpassfile)
-{
-	char	   *passfile_env;
-
-	if ((passfile_env = getenv("PGPASSFILE")) != NULL)
-		/* use the literal path from the environment, if set */
-		strlcpy(pgpassfile, passfile_env, MAXPGPATH);
-	else
-	{
-		char		homedir[MAXPGPATH];
-
-		if (!pqGetHomeDirectory(homedir, sizeof(homedir)))
-			return false;
-		snprintf(pgpassfile, MAXPGPATH, "%s/%s", homedir, PGPASSFILE);
-	}
-	return true;
-}
-
 /*
- *	If the connection failed, we should mention if
- *	we got the password from .pgpass in case that
- *	password is wrong.
+ *	If the connection failed due to bad password, we should mention
+ *	if we got the password from the pgpassfile.
  */
 static void
-dot_pg_pass_warning(PGconn *conn)
+pgpassfileWarning(PGconn *conn)
 {
-	/* If it was 'invalid authorization', add .pgpass mention */
+	/* If it was 'invalid authorization', add pgpassfile mention */
 	/* only works with >= 9.0 servers */
-	if (conn->dot_pgpass_used && conn->password_needed && conn->result &&
-		strcmp(PQresultErrorField(conn->result, PG_DIAG_SQLSTATE),
-			   ERRCODE_INVALID_PASSWORD) == 0)
+	if (conn->pgpassfile_used && conn->password_needed && conn->result)
 	{
-		char		pgpassfile[MAXPGPATH];
+		const char *sqlstate = PQresultErrorField(conn->result,
+												  PG_DIAG_SQLSTATE);
 
-		if (!getPgPassFilename(pgpassfile))
-			return;
-		appendPQExpBuffer(&conn->errorMessage,
+		if (sqlstate && strcmp(sqlstate, ERRCODE_INVALID_PASSWORD) == 0)
+			appendPQExpBuffer(&conn->errorMessage,
 					  libpq_gettext("password retrieved from file \"%s\"\n"),
-						  pgpassfile);
+							  conn->pgpassfile);
 	}
 }
 

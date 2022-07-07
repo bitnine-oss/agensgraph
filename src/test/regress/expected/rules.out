@@ -938,7 +938,7 @@ CREATE TABLE shoe_data (
 	shoename   char(10),      -- primary key
 	sh_avail   integer,       -- available # of pairs
 	slcolor    char(10),      -- preferred shoelace color
-	slminlen   float,         -- miminum shoelace length
+	slminlen   float,         -- minimum shoelace length
 	slmaxlen   float,         -- maximum shoelace length
 	slunit     char(8)        -- length unit
 );
@@ -1338,6 +1338,16 @@ pg_group| SELECT pg_authid.rolname AS groname,
           WHERE (pg_auth_members.roleid = pg_authid.oid)) AS grolist
    FROM pg_authid
   WHERE (NOT pg_authid.rolcanlogin);
+pg_hba_file_rules| SELECT a.line_number,
+    a.type,
+    a.database,
+    a.user_name,
+    a.address,
+    a.netmask,
+    a.auth_method,
+    a.options,
+    a.error
+   FROM pg_hba_file_rules() a(line_number, type, database, user_name, address, netmask, auth_method, options, error);
 pg_indexes| SELECT n.nspname AS schemaname,
     c.relname AS tablename,
     i.relname AS indexname,
@@ -1380,6 +1390,10 @@ pg_policies| SELECT n.nspname AS schemaname,
     c.relname AS tablename,
     pol.polname AS policyname,
         CASE
+            WHEN pol.polpermissive THEN 'PERMISSIVE'::text
+            ELSE 'RESTRICTIVE'::text
+        END AS permissive,
+        CASE
             WHEN (pol.polroles = '{0}'::oid[]) THEN (string_to_array('public'::text, ''::text))::name[]
             ELSE ARRAY( SELECT pg_authid.rolname
                FROM pg_authid
@@ -1413,6 +1427,14 @@ pg_prepared_xacts| SELECT p.transaction,
    FROM ((pg_prepared_xact() p(transaction, gid, prepared, ownerid, dbid)
      LEFT JOIN pg_authid u ON ((p.ownerid = u.oid)))
      LEFT JOIN pg_database d ON ((p.dbid = d.oid)));
+pg_publication_tables| SELECT p.pubname,
+    n.nspname AS schemaname,
+    c.relname AS tablename
+   FROM pg_publication p,
+    (pg_class c
+     JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
+  WHERE (c.oid IN ( SELECT pg_get_publication_tables.relid
+           FROM pg_get_publication_tables((p.pubname)::text) pg_get_publication_tables(relid)));
 pg_replication_origin_status| SELECT pg_show_replication_origin_status.local_id,
     pg_show_replication_origin_status.external_id,
     pg_show_replication_origin_status.remote_lsn,
@@ -1423,13 +1445,14 @@ pg_replication_slots| SELECT l.slot_name,
     l.slot_type,
     l.datoid,
     d.datname AS database,
+    l.temporary,
     l.active,
     l.active_pid,
     l.xmin,
     l.catalog_xmin,
     l.restart_lsn,
     l.confirmed_flush_lsn
-   FROM (pg_get_replication_slots() l(slot_name, plugin, slot_type, datoid, active, active_pid, xmin, catalog_xmin, restart_lsn, confirmed_flush_lsn)
+   FROM (pg_get_replication_slots() l(slot_name, plugin, slot_type, datoid, temporary, active, active_pid, xmin, catalog_xmin, restart_lsn, confirmed_flush_lsn)
      LEFT JOIN pg_database d ON ((l.datoid = d.oid)));
 pg_roles| SELECT pg_authid.rolname,
     pg_authid.rolsuper,
@@ -1458,7 +1481,7 @@ pg_seclabels| SELECT l.objoid,
     l.classoid,
     l.objsubid,
         CASE
-            WHEN (rel.relkind = 'r'::"char") THEN 'table'::text
+            WHEN (rel.relkind = ANY (ARRAY['r'::"char", 'P'::"char"])) THEN 'table'::text
             WHEN (rel.relkind = 'v'::"char") THEN 'view'::text
             WHEN (rel.relkind = 'm'::"char") THEN 'materialized view'::text
             WHEN (rel.relkind = 'S'::"char") THEN 'sequence'::text
@@ -1615,6 +1638,20 @@ UNION ALL
     l.label
    FROM (pg_shseclabel l
      JOIN pg_authid rol ON (((l.classoid = rol.tableoid) AND (l.objoid = rol.oid))));
+pg_sequences| SELECT n.nspname AS schemaname,
+    c.relname AS sequencename,
+    pg_get_userbyid(c.relowner) AS sequenceowner,
+    s.seqstart AS start_value,
+    s.seqmin AS min_value,
+    s.seqmax AS max_value,
+    s.seqincrement AS increment_by,
+    s.seqcycle AS cycle,
+    s.seqcache AS cache_size,
+    pg_sequence_last_value((c.oid)::regclass) AS last_value
+   FROM ((pg_sequence s
+     JOIN pg_class c ON ((c.oid = s.seqrelid)))
+     LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
+  WHERE ((NOT pg_is_other_temp_schema(n.oid)) AND (c.relkind = 'S'::"char"));
 pg_settings| SELECT a.name,
     a.setting,
     a.unit,
@@ -1664,10 +1701,9 @@ pg_stat_activity| SELECT s.datid,
     s.backend_xid,
     s.backend_xmin,
     s.query
-   FROM pg_database d,
-    pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn),
-    pg_authid u
-  WHERE ((s.datid = d.oid) AND (s.usesysid = u.oid));
+   FROM ((pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn)
+     LEFT JOIN pg_database d ON ((s.datid = d.oid)))
+     LEFT JOIN pg_authid u ON ((s.usesysid = u.oid)));
 pg_stat_all_indexes| SELECT c.oid AS relid,
     i.oid AS indexrelid,
     n.nspname AS schemaname,
@@ -1776,7 +1812,7 @@ pg_stat_progress_vacuum| SELECT s.pid,
     s.param6 AS max_dead_tuples,
     s.param7 AS num_dead_tuples
    FROM (pg_stat_get_progress_info('VACUUM'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10)
-     JOIN pg_database d ON ((s.datid = d.oid)));
+     LEFT JOIN pg_database d ON ((s.datid = d.oid)));
 pg_stat_replication| SELECT s.pid,
     s.usesysid,
     u.rolname AS usename,
@@ -1793,10 +1829,9 @@ pg_stat_replication| SELECT s.pid,
     w.replay_location,
     w.sync_priority,
     w.sync_state
-   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn),
-    pg_authid u,
-    pg_stat_get_wal_senders() w(pid, state, sent_location, write_location, flush_location, replay_location, sync_priority, sync_state)
-  WHERE ((s.usesysid = u.oid) AND (s.pid = w.pid));
+   FROM ((pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn)
+     JOIN pg_stat_get_wal_senders() w(pid, state, sent_location, write_location, flush_location, replay_location, sync_priority, sync_state) ON ((s.pid = w.pid)))
+     LEFT JOIN pg_authid u ON ((s.usesysid = u.oid)));
 pg_stat_ssl| SELECT s.pid,
     s.ssl,
     s.sslversion AS version,
@@ -1805,6 +1840,16 @@ pg_stat_ssl| SELECT s.pid,
     s.sslcompression AS compression,
     s.sslclientdn AS clientdn
    FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, ssl, sslversion, sslcipher, sslbits, sslcompression, sslclientdn);
+pg_stat_subscription| SELECT su.oid AS subid,
+    su.subname,
+    st.pid,
+    st.received_lsn,
+    st.last_msg_send_time,
+    st.last_msg_receipt_time,
+    st.latest_end_lsn,
+    st.latest_end_time
+   FROM (pg_subscription su
+     LEFT JOIN pg_stat_get_subscription(NULL::oid) st(subid, pid, received_lsn, last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time) ON ((st.subid = su.oid)));
 pg_stat_sys_indexes| SELECT pg_stat_all_indexes.relid,
     pg_stat_all_indexes.indexrelid,
     pg_stat_all_indexes.schemaname,
@@ -2122,7 +2167,7 @@ pg_tables| SELECT n.nspname AS schemaname,
    FROM ((pg_class c
      LEFT JOIN pg_namespace n ON ((n.oid = c.relnamespace)))
      LEFT JOIN pg_tablespace t ON ((t.oid = c.reltablespace)))
-  WHERE (c.relkind = 'r'::"char");
+  WHERE (c.relkind = ANY (ARRAY['r'::"char", 'P'::"char"]));
 pg_timezone_abbrevs| SELECT pg_timezone_abbrevs.abbrev,
     pg_timezone_abbrevs.utc_offset,
     pg_timezone_abbrevs.is_dst
@@ -2155,8 +2200,8 @@ pg_user_mappings| SELECT u.oid AS umid,
             ELSE NULL::text[]
         END AS umoptions
    FROM ((pg_user_mapping u
-     LEFT JOIN pg_authid a ON ((a.oid = u.umuser)))
-     JOIN pg_foreign_server s ON ((u.umserver = s.oid)));
+     JOIN pg_foreign_server s ON ((u.umserver = s.oid)))
+     LEFT JOIN pg_authid a ON ((a.oid = u.umuser)));
 pg_views| SELECT n.nspname AS schemaname,
     c.relname AS viewname,
     pg_get_userbyid(c.relowner) AS viewowner,
@@ -2269,14 +2314,14 @@ pg_settings|pg_settings_u|CREATE RULE pg_settings_u AS
    WHERE (new.name = old.name) DO  SELECT set_config(old.name, new.setting, false) AS set_config;
 rtest_emp|rtest_emp_del|CREATE RULE rtest_emp_del AS
     ON DELETE TO rtest_emp DO  INSERT INTO rtest_emplog (ename, who, action, newsal, oldsal)
-  VALUES (old.ename, "current_user"(), 'fired'::bpchar, '$0.00'::money, old.salary);
+  VALUES (old.ename, CURRENT_USER, 'fired'::bpchar, '$0.00'::money, old.salary);
 rtest_emp|rtest_emp_ins|CREATE RULE rtest_emp_ins AS
     ON INSERT TO rtest_emp DO  INSERT INTO rtest_emplog (ename, who, action, newsal, oldsal)
-  VALUES (new.ename, "current_user"(), 'hired'::bpchar, new.salary, '$0.00'::money);
+  VALUES (new.ename, CURRENT_USER, 'hired'::bpchar, new.salary, '$0.00'::money);
 rtest_emp|rtest_emp_upd|CREATE RULE rtest_emp_upd AS
     ON UPDATE TO rtest_emp
    WHERE (new.salary <> old.salary) DO  INSERT INTO rtest_emplog (ename, who, action, newsal, oldsal)
-  VALUES (new.ename, "current_user"(), 'honored'::bpchar, new.salary, old.salary);
+  VALUES (new.ename, CURRENT_USER, 'honored'::bpchar, new.salary, old.salary);
 rtest_nothn1|rtest_nothn_r1|CREATE RULE rtest_nothn_r1 AS
     ON INSERT TO rtest_nothn1
    WHERE ((new.a >= 10) AND (new.a < 20)) DO INSTEAD NOTHING;
@@ -2709,11 +2754,11 @@ select * from rules_log;
 
 create rule r3 as on delete to rules_src do notify rules_src_deletion;
 \d+ rules_src
-                      Table "public.rules_src"
- Column |  Type   | Modifiers | Storage | Stats target | Description 
---------+---------+-----------+---------+--------------+-------------
- f1     | integer |           | plain   |              | 
- f2     | integer |           | plain   |              | 
+                                 Table "public.rules_src"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ f1     | integer |           |          |         | plain   |              | 
+ f2     | integer |           |          |         | plain   |              | 
 Rules:
     r1 AS
     ON UPDATE TO rules_src DO  INSERT INTO rules_log (f1, f2, tag) VALUES (old.f1,old.f2,'old'::text), (new.f1,new.f2,'new'::text)
@@ -2729,11 +2774,11 @@ Rules:
 create rule r4 as on insert to rules_src do instead insert into rules_log AS trgt SELECT NEW.* RETURNING trgt.f1, trgt.f2;
 create rule r5 as on update to rules_src do instead UPDATE rules_log AS trgt SET tag = 'updated' WHERE trgt.f1 = new.f1;
 \d+ rules_src
-                      Table "public.rules_src"
- Column |  Type   | Modifiers | Storage | Stats target | Description 
---------+---------+-----------+---------+--------------+-------------
- f1     | integer |           | plain   |              | 
- f2     | integer |           | plain   |              | 
+                                 Table "public.rules_src"
+ Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+--------+---------+-----------+----------+---------+---------+--------------+-------------
+ f1     | integer |           |          |         | plain   |              | 
+ f2     | integer |           |          |         | plain   |              | 
 Rules:
     r1 AS
     ON UPDATE TO rules_src DO  INSERT INTO rules_log (f1, f2, tag) VALUES (old.f1,old.f2,'old'::text), (new.f1,new.f2,'new'::text)
@@ -2769,10 +2814,10 @@ SELECT * FROM rule_v1;
 (1 row)
 
 \d+ rule_v1
-                View "public.rule_v1"
- Column |  Type   | Modifiers | Storage | Description 
---------+---------+-----------+---------+-------------
- a      | integer |           | plain   | 
+                           View "public.rule_v1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Description 
+--------+---------+-----------+----------+---------+---------+-------------
+ a      | integer |           |          |         | plain   | 
 View definition:
  SELECT rule_t1.a
    FROM rule_t1;
@@ -2797,22 +2842,22 @@ DROP TABLE rule_t1;
 --
 create view rule_v1 as values(1,2);
 \d+ rule_v1
-                 View "public.rule_v1"
- Column  |  Type   | Modifiers | Storage | Description 
----------+---------+-----------+---------+-------------
- column1 | integer |           | plain   | 
- column2 | integer |           | plain   | 
+                           View "public.rule_v1"
+ Column  |  Type   | Collation | Nullable | Default | Storage | Description 
+---------+---------+-----------+----------+---------+---------+-------------
+ column1 | integer |           |          |         | plain   | 
+ column2 | integer |           |          |         | plain   | 
 View definition:
  VALUES (1,2);
 
 drop view rule_v1;
 create view rule_v1(x) as values(1,2);
 \d+ rule_v1
-                 View "public.rule_v1"
- Column  |  Type   | Modifiers | Storage | Description 
----------+---------+-----------+---------+-------------
- x       | integer |           | plain   | 
- column2 | integer |           | plain   | 
+                           View "public.rule_v1"
+ Column  |  Type   | Collation | Nullable | Default | Storage | Description 
+---------+---------+-----------+----------+---------+---------+-------------
+ x       | integer |           |          |         | plain   | 
+ column2 | integer |           |          |         | plain   | 
 View definition:
  SELECT "*VALUES*".column1 AS x,
     "*VALUES*".column2
@@ -2821,11 +2866,11 @@ View definition:
 drop view rule_v1;
 create view rule_v1(x) as select * from (values(1,2)) v;
 \d+ rule_v1
-                 View "public.rule_v1"
- Column  |  Type   | Modifiers | Storage | Description 
----------+---------+-----------+---------+-------------
- x       | integer |           | plain   | 
- column2 | integer |           | plain   | 
+                           View "public.rule_v1"
+ Column  |  Type   | Collation | Nullable | Default | Storage | Description 
+---------+---------+-----------+----------+---------+---------+-------------
+ x       | integer |           |          |         | plain   | 
+ column2 | integer |           |          |         | plain   | 
 View definition:
  SELECT v.column1 AS x,
     v.column2
@@ -2834,11 +2879,11 @@ View definition:
 drop view rule_v1;
 create view rule_v1(x) as select * from (values(1,2)) v(q,w);
 \d+ rule_v1
-                View "public.rule_v1"
- Column |  Type   | Modifiers | Storage | Description 
---------+---------+-----------+---------+-------------
- x      | integer |           | plain   | 
- w      | integer |           | plain   | 
+                           View "public.rule_v1"
+ Column |  Type   | Collation | Nullable | Default | Storage | Description 
+--------+---------+-----------+----------+---------+---------+-------------
+ x      | integer |           |          |         | plain   | 
+ w      | integer |           |          |         | plain   | 
 View definition:
  SELECT v.q AS x,
     v.w

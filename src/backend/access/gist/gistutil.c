@@ -4,7 +4,7 @@
  *	  utilities routines for the postgres GiST index access method.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -852,7 +852,7 @@ gistproperty(Oid index_oid, int attno,
 			 bool *res, bool *isnull)
 {
 	HeapTuple	tuple;
-	Form_pg_index rd_index;
+	Form_pg_index rd_index PG_USED_FOR_ASSERTS_ONLY;
 	Form_pg_opclass rd_opclass;
 	Datum		datum;
 	bool		disnull;

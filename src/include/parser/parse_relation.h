@@ -4,7 +4,7 @@
  *	  prototypes for parse_relation.c.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/parser/parse_relation.h
@@ -85,7 +85,9 @@ extern RangeTblEntry *addRangeTableEntryForFunction(ParseState *pstate,
 							  bool inFromCl);
 extern RangeTblEntry *addRangeTableEntryForValues(ParseState *pstate,
 							List *exprs,
-							List *collations,
+							List *coltypes,
+							List *coltypmods,
+							List *colcollations,
 							Alias *alias,
 							bool lateral,
 							bool inFromCl);

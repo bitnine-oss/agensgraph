@@ -35,7 +35,7 @@
  * and munge the system catalogs of the new database.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -82,6 +82,7 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/tqual.h"
+#include "utils/varlena.h"
 
 
 /* GUC variables */
@@ -343,9 +344,7 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 
 	tuple = heap_form_tuple(rel->rd_att, values, nulls);
 
-	tablespaceoid = simple_heap_insert(rel, tuple);
-
-	CatalogUpdateIndexes(rel, tuple);
+	tablespaceoid = CatalogTupleInsert(rel, tuple);
 
 	heap_freetuple(tuple);
 
@@ -461,7 +460,7 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 	/*
 	 * Remove the pg_tablespace tuple (this will roll back if we fail below)
 	 */
-	simple_heap_delete(rel, &tuple->t_self);
+	CatalogTupleDelete(rel, &tuple->t_self);
 
 	heap_endscan(scandesc);
 
@@ -970,8 +969,7 @@ RenameTableSpace(const char *oldname, const char *newname)
 	/* OK, update the entry */
 	namestrcpy(&(newform->spcname), newname);
 
-	simple_heap_update(rel, &newtuple->t_self, newtuple);
-	CatalogUpdateIndexes(rel, newtuple);
+	CatalogTupleUpdate(rel, &newtuple->t_self, newtuple);
 
 	InvokeObjectPostAlterHook(TableSpaceRelationId, tspId, 0);
 
@@ -1043,8 +1041,7 @@ AlterTableSpaceOptions(AlterTableSpaceOptionsStmt *stmt)
 								 repl_null, repl_repl);
 
 	/* Update system catalog. */
-	simple_heap_update(rel, &newtuple->t_self, newtuple);
-	CatalogUpdateIndexes(rel, newtuple);
+	CatalogTupleUpdate(rel, &newtuple->t_self, newtuple);
 
 	InvokeObjectPostAlterHook(TableSpaceRelationId, HeapTupleGetOid(tup), 0);
 

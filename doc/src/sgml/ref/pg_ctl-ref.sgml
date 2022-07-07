@@ -31,7 +31,7 @@ PostgreSQL documentation
   <cmdsynopsis>
    <command>pg_ctl</command>
    <arg choice="plain"><option>start</option></arg>
-   <arg choice="opt"><option>-w</option></arg>
+   <arg choice="opt"><option>-W</option></arg>
    <arg choice="opt"><option>-t</option> <replaceable>seconds</replaceable></arg>
    <arg choice="opt"><option>-s</option></arg>
    <arg choice="opt"><option>-D</option> <replaceable>datadir</replaceable></arg>
@@ -60,7 +60,7 @@ PostgreSQL documentation
   <cmdsynopsis>
    <command>pg_ctl</command>
    <arg choice="plain"><option>restart</option></arg>
-   <arg choice="opt"><option>-w</option></arg>
+   <arg choice="opt"><option>-W</option></arg>
    <arg choice="opt"><option>-t</option> <replaceable>seconds</replaceable></arg>
    <arg choice="opt"><option>-s</option></arg>
    <arg choice="opt"><option>-D</option> <replaceable>datadir</replaceable></arg>
@@ -91,6 +91,8 @@ PostgreSQL documentation
   <cmdsynopsis>
    <command>pg_ctl</command>
    <arg choice="plain"><option>promote</option></arg>
+   <arg choice="opt"><option>-W</option></arg>
+   <arg choice="opt"><option>-t</option> <replaceable>seconds</replaceable></arg>
    <arg choice="opt"><option>-s</option></arg>
    <arg choice="opt"><option>-D</option> <replaceable>datadir</replaceable></arg>
   </cmdsynopsis>
@@ -115,7 +117,7 @@ PostgreSQL documentation
        <arg choice="plain"><option>d[emand]</option></arg>
      </group>
    </arg>
-   <arg choice="opt"><option>-w</option></arg>
+   <arg choice="opt"><option>-W</option></arg>
    <arg choice="opt"><option>-t</option> <replaceable>seconds</replaceable></arg>
    <arg choice="opt"><option>-s</option></arg>
    <arg choice="opt"><option>-o</option> <replaceable>options</replaceable></arg>
@@ -261,7 +263,7 @@ PostgreSQL documentation
 
      <varlistentry>
       <term><option>-D <replaceable class="parameter">datadir</replaceable></option></term>
-      <term><option>--pgdata <replaceable class="parameter">datadir</replaceable></option></term>
+      <term><option>--pgdata=<replaceable class="parameter">datadir</replaceable></option></term>
       <listitem>
        <para>
         Specifies the file system location of the database configuration files.  If
@@ -273,7 +275,7 @@ PostgreSQL documentation
 
      <varlistentry>
       <term><option>-l <replaceable class="parameter">filename</replaceable></option></term>
-      <term><option>--log <replaceable class="parameter">filename</replaceable></option></term>
+      <term><option>--log=<replaceable class="parameter">filename</replaceable></option></term>
       <listitem>
        <para>
         Append the server log output to
@@ -286,7 +288,7 @@ PostgreSQL documentation
 
      <varlistentry>
       <term><option>-m <replaceable class="parameter">mode</replaceable></option></term>
-      <term><option>--mode <replaceable class="parameter">mode</replaceable></option></term>
+      <term><option>--mode=<replaceable class="parameter">mode</replaceable></option></term>
       <listitem>
        <para>
         Specifies the shutdown mode.  <replaceable>mode</replaceable>
@@ -299,6 +301,7 @@ PostgreSQL documentation
 
      <varlistentry>
       <term><option>-o <replaceable class="parameter">options</replaceable></option></term>
+      <term><option>--options=<replaceable class="parameter">options</replaceable></option></term>
       <listitem>
        <para>
         Specifies options to be passed directly to the
@@ -314,6 +317,7 @@ PostgreSQL documentation
 
      <varlistentry>
       <term><option>-o <replaceable class="parameter">initdb-options</replaceable></option></term>
+      <term><option>--options=<replaceable class="parameter">initdb-options</replaceable></option></term>
       <listitem>
        <para>
         Specifies options to be passed directly to the
@@ -361,8 +365,8 @@ PostgreSQL documentation
       <term><option>--timeout</option></term>
       <listitem>
        <para>
-        The maximum number of seconds to wait when waiting for startup or
-        shutdown to complete.  Defaults to the value of the
+        The maximum number of seconds to wait when waiting for an operation
+        to complete (see option <option>-w</option>). Defaults to the value of the
         <envar>PGCTLTIMEOUT</> environment variable or, if not set, to 60
         seconds.
        </para>
@@ -381,10 +385,16 @@ PostgreSQL documentation
 
      <varlistentry>
       <term><option>-w</option></term>
+      <term><option>--wait</option></term>
       <listitem>
        <para>
-        Wait for the startup or shutdown to complete.
-        Waiting is the default option for shutdowns, but not startups.
+        Wait for an operation to complete.  This is supported for the
+        modes <literal>start</literal>, <literal>stop</literal>,
+        <literal>restart</literal>, <literal>promote</literal>,
+        and <literal>register</literal>, and is the default for those modes.
+       </para>
+
+       <para>
         When waiting for startup, <command>pg_ctl</command> repeatedly
         attempts to connect to the server.
         When waiting for shutdown, <command>pg_ctl</command> waits for
@@ -398,10 +408,23 @@ PostgreSQL documentation
 
      <varlistentry>
       <term><option>-W</option></term>
+      <term><option>--no-wait</option></term>
       <listitem>
        <para>
-        Do not wait for startup or shutdown to complete.  This is the
-        default for start and restart modes.
+        Do not wait for an operation to complete.  This is the opposite of the
+        option <option>-w</option>.
+       </para>
+
+       <para>
+        If waiting is disabled, the requested action is triggered, but there
+        is no feedback about its success.  In that case, the server log file
+        or an external monitoring system would have to be used to check the
+        progress and success of the operation.
+       </para>
+
+       <para>
+        In prior releases of PostgreSQL, this was the default except for
+        the <literal>stop</literal> mode.
        </para>
       </listitem>
      </varlistentry>
@@ -572,7 +595,7 @@ PostgreSQL documentation
     To start the server, waiting until the server is
     accepting connections:
 <screen>
-<prompt>$</prompt> <userinput>pg_ctl -w start</userinput>
+<prompt>$</prompt> <userinput>pg_ctl start</userinput>
 </screen>
    </para>
 
@@ -594,7 +617,7 @@ PostgreSQL documentation
     The <option>-m</option> option allows control over
     <emphasis>how</emphasis> the server shuts down:
 <screen>
-<prompt>$</prompt> <userinput>pg_ctl stop -m fast</userinput>
+<prompt>$</prompt> <userinput>pg_ctl stop -m smart</userinput>
 </screen></para>
   </refsect2>
 
@@ -616,7 +639,7 @@ PostgreSQL documentation
     To restart the server,
     waiting for it to shut down and restart:
 <screen>
-<prompt>$</prompt> <userinput>pg_ctl -w restart</userinput>
+<prompt>$</prompt> <userinput>pg_ctl restart</userinput>
 </screen>
    </para>
 

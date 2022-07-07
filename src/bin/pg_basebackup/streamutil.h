@@ -2,7 +2,7 @@
  *
  * streamutil.h
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/streamutil.h
@@ -23,7 +23,6 @@ extern char *dbuser;
 extern char *dbport;
 extern char *dbname;
 extern int	dbgetpassword;
-extern char *replication_slot;
 
 /* Connection kept global so we can disconnect easily */
 extern PGconn *conn;

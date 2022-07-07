@@ -2,7 +2,7 @@
 # errcodes.txt
 #      PostgreSQL error codes
 #
-# Copyright (c) 2003-2016, PostgreSQL Global Development Group
+# Copyright (c) 2003-2017, PostgreSQL Global Development Group
 #
 # This list serves as the basis for generating source files containing error
 # codes. It is kept in a common format to make sure all these source files have
@@ -398,6 +398,7 @@ Section: Class 55 - Object Not In Prerequisite State
 55006    E    ERRCODE_OBJECT_IN_USE                                          object_in_use
 55P02    E    ERRCODE_CANT_CHANGE_RUNTIME_PARAM                              cant_change_runtime_param
 55P03    E    ERRCODE_LOCK_NOT_AVAILABLE                                     lock_not_available
+55P04    E    ERRCODE_UNSAFE_NEW_ENUM_VALUE_USAGE                            unsafe_new_enum_value_usage
 
 Section: Class 57 - Operator Intervention
 

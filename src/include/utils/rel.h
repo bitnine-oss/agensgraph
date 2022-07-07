@@ -4,7 +4,7 @@
  *	  POSTGRES relation descriptor (a/k/a relcache entry) definitions.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/rel.h
@@ -18,6 +18,7 @@
 #include "access/xlog.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_index.h"
+#include "catalog/pg_publication.h"
 #include "fmgr.h"
 #include "nodes/bitmapset.h"
 #include "rewrite/prs2lock.h"
@@ -45,6 +46,35 @@ typedef struct LockInfoData
 
 typedef LockInfoData *LockInfo;
 
+/*
+ * Information about the partition key of a relation
+ */
+typedef struct PartitionKeyData
+{
+	char		strategy;		/* partitioning strategy */
+	int16		partnatts;		/* number of columns in the partition key */
+	AttrNumber *partattrs;		/* attribute numbers of columns in the
+								 * partition key */
+	List	   *partexprs;		/* list of expressions in the partitioning
+								 * key, or NIL */
+
+	Oid		   *partopfamily;	/* OIDs of operator families */
+	Oid		   *partopcintype;	/* OIDs of opclass declared input data types */
+	FmgrInfo   *partsupfunc;	/* lookup info for support funcs */
+
+	/* Partitioning collation per attribute */
+	Oid		   *partcollation;
+
+	/* Type information per attribute */
+	Oid		   *parttypid;
+	int32	   *parttypmod;
+	int16	   *parttyplen;
+	bool	   *parttypbyval;
+	char	   *parttypalign;
+	Oid		   *parttypcoll;
+} PartitionKeyData;
+
+typedef struct PartitionKeyData *PartitionKey;
 
 /*
  * Here are the contents of a relation cache entry.
@@ -94,15 +124,25 @@ typedef struct RelationData
 	List	   *rd_fkeylist;	/* list of ForeignKeyCacheInfo (see below) */
 	bool		rd_fkeyvalid;	/* true if list has been computed */
 
+	MemoryContext rd_partkeycxt;	/* private memory cxt for the below */
+	struct PartitionKeyData *rd_partkey;		/* partition key, or NULL */
+	MemoryContext rd_pdcxt;		/* private context for partdesc */
+	struct PartitionDescData *rd_partdesc;		/* partitions, or NULL */
+	List	   *rd_partcheck;	/* partition CHECK quals */
+
 	/* data managed by RelationGetIndexList: */
 	List	   *rd_indexlist;	/* list of OIDs of indexes on relation */
 	Oid			rd_oidindex;	/* OID of unique index on OID, if any */
+	Oid			rd_pkindex;		/* OID of primary key, if any */
 	Oid			rd_replidindex; /* OID of replica identity index, if any */
 
 	/* data managed by RelationGetIndexAttrBitmap: */
 	Bitmapset  *rd_indexattr;	/* identifies columns used in indexes */
 	Bitmapset  *rd_keyattr;		/* cols that can be ref'd by foreign keys */
+	Bitmapset  *rd_pkattr;		/* cols included in primary key */
 	Bitmapset  *rd_idattr;		/* included in replica identity index */
+
+	PublicationActions  *rd_pubactions;	/* publication actions */
 
 	/*
 	 * rd_options is set whenever rd_rel is loaded into the relcache entry.
@@ -270,7 +310,9 @@ typedef struct StdRdOptions
  *		from the pov of logical decoding.  Note multiple eval of argument!
  */
 #define RelationIsUsedAsCatalogTable(relation)	\
-	((relation)->rd_options ?				\
+	((relation)->rd_options && \
+	 ((relation)->rd_rel->relkind == RELKIND_RELATION || \
+	  (relation)->rd_rel->relkind == RELKIND_MATVIEW) ? \
 	 ((StdRdOptions *) (relation)->rd_options)->user_catalog_table : false)
 
 /*
@@ -532,9 +574,64 @@ typedef struct ViewOptions
 	 RelationNeedsWAL(relation) && \
 	 !IsCatalogRelation(relation))
 
+/*
+ * RelationGetPartitionKey
+ *		Returns the PartitionKey of a relation
+ */
+#define RelationGetPartitionKey(relation) ((relation)->rd_partkey)
+
+/*
+ * PartitionKey inquiry functions
+ */
+static inline int
+get_partition_strategy(PartitionKey key)
+{
+	return key->strategy;
+}
+
+static inline int
+get_partition_natts(PartitionKey key)
+{
+	return key->partnatts;
+}
+
+static inline List *
+get_partition_exprs(PartitionKey key)
+{
+	return key->partexprs;
+}
+
+/*
+ * PartitionKey inquiry functions - one column
+ */
+static inline int16
+get_partition_col_attnum(PartitionKey key, int col)
+{
+	return key->partattrs[col];
+}
+
+static inline Oid
+get_partition_col_typid(PartitionKey key, int col)
+{
+	return key->parttypid[col];
+}
+
+static inline int32
+get_partition_col_typmod(PartitionKey key, int col)
+{
+	return key->parttypmod[col];
+}
+
+/*
+ * RelationGetPartitionDesc
+ *		Returns partition descriptor for a relation.
+ */
+#define RelationGetPartitionDesc(relation) ((relation)->rd_partdesc)
+
 /* routines in utils/cache/relcache.c */
 extern void RelationIncrementReferenceCount(Relation rel);
 extern void RelationDecrementReferenceCount(Relation rel);
 extern bool RelationHasUnloggedIndex(Relation rel);
+extern List *RelationGetRepsetList(Relation rel);
 
 #endif   /* REL_H */

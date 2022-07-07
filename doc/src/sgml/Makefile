@@ -106,9 +106,9 @@ draft: postgres.sgml $(ALMOSTALLSGML) stylesheet.dsl
 	$(JADE.html.call) -V draft-mode $<
 	cp $(srcdir)/stylesheet.css html/
 
-html: html-stamp
+oldhtml: oldhtml-stamp
 
-html-stamp: postgres.sgml $(ALLSGML) stylesheet.dsl
+oldhtml-stamp: postgres.sgml $(ALLSGML) stylesheet.dsl
 	$(MAKE) check-tabs
 	$(MKDIR_P) html
 	$(JADE.html.call) -i include-index $<
@@ -258,9 +258,9 @@ ifeq ($(STYLE),website)
 XSLTPROC_HTML_FLAGS += --param website.stylesheet 1
 endif
 
-xslthtml: xslthtml-stamp
+html: html-stamp
 
-xslthtml-stamp: stylesheet.xsl postgres.xml
+html-stamp: stylesheet.xsl postgres.xml
 	$(XMLLINT) --noout --valid postgres.xml
 	$(XSLTPROC) $(XSLTPROCFLAGS) $(XSLTPROC_HTML_FLAGS) $^
 	cp $(srcdir)/stylesheet.css html/
@@ -270,19 +270,15 @@ htmlhelp: stylesheet-hh.xsl postgres.xml
 	$(XMLLINT) --noout --valid postgres.xml
 	$(XSLTPROC) $(XSLTPROCFLAGS) $^
 
-%-A4.fo.tmp: stylesheet-fo.xsl %.xml
+%-A4.fo: stylesheet-fo.xsl %.xml
 	$(XMLLINT) --noout --valid $*.xml
 	$(XSLTPROC) $(XSLTPROCFLAGS) --stringparam paper.type A4 -o $@ $^
 
-%-US.fo.tmp: stylesheet-fo.xsl %.xml
+%-US.fo: stylesheet-fo.xsl %.xml
 	$(XMLLINT) --noout --valid $*.xml
 	$(XSLTPROC) $(XSLTPROCFLAGS) --stringparam paper.type USletter -o $@ $^
 
 FOP = fop
-
-# reformat FO output so that locations of errors are easier to find
-%.fo: %.fo.tmp
-	$(XMLLINT) --format --output $@ $^
 
 .SECONDARY: postgres-A4.fo postgres-US.fo
 
@@ -326,11 +322,7 @@ check: postgres.sgml $(ALMOSTALLSGML) check-tabs
 ## Install
 ##
 
-install: install-html
-
-ifneq ($(PORTNAME), sco)
-install: install-man
-endif
+install: install-html install-man
 
 installdirs:
 	$(MKDIR_P) '$(DESTDIR)$(htmldir)'/html $(addprefix '$(DESTDIR)$(mandir)'/man, 1 3 $(sqlmansectnum))
@@ -408,7 +400,7 @@ clean:
 # index
 	rm -f HTML.index $(GENERATED_SGML)
 # XSLT
-	rm -f postgres.xml postgres.xmltmp htmlhelp.hhp toc.hhc index.hhk *.fo *.fo.tmp
+	rm -f postgres.xml postgres.xmltmp htmlhelp.hhp toc.hhc index.hhk *.fo
 # EPUB
 	rm -f postgres.epub
 # Texinfo

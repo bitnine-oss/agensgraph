@@ -3,7 +3,7 @@
  * parse_oper.c
  *		handle operator things for parser
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -838,6 +838,10 @@ make_op(ParseState *pstate, List *opname, Node *ltree, Node *rtree,
 	/* opcollid and inputcollid will be set by parse_collate.c */
 	result->args = args;
 	result->location = location;
+
+	/* if it returns a set, check that's OK */
+	if (result->opretset)
+		check_srf_call_placement(pstate, location);
 
 	ReleaseSysCache(tup);
 

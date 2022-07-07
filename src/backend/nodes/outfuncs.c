@@ -3,8 +3,7 @@
  * outfuncs.c
  *	  Output functions for Postgres tree nodes.
  *
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -83,7 +82,7 @@
 /* Write a character-string (possibly NULL) field */
 #define WRITE_STRING_FIELD(fldname) \
 	(appendStringInfo(str, " :" CppAsString(fldname) " "), \
-	 _outToken(str, node->fldname))
+	 outToken(str, node->fldname))
 
 /* Write a parse location field (actually same as INT case) */
 #define WRITE_LOCATION_FIELD(fldname) \
@@ -97,21 +96,21 @@
 /* Write a bitmapset field */
 #define WRITE_BITMAPSET_FIELD(fldname) \
 	(appendStringInfo(str, " :" CppAsString(fldname) " "), \
-	 _outBitmapset(str, node->fldname))
+	 outBitmapset(str, node->fldname))
 
 
 #define booltostr(x)  ((x) ? "true" : "false")
 
 
 /*
- * _outToken
+ * outToken
  *	  Convert an ordinary string (eg, an identifier) into a form that
  *	  will be decoded back to a plain token by read.c's functions.
  *
  *	  If a null or empty string is given, it is encoded as "<>".
  */
-static void
-_outToken(StringInfo str, const char *s)
+void
+outToken(StringInfo str, const char *s)
 {
 	if (s == NULL || *s == '\0')
 	{
@@ -140,13 +139,6 @@ _outToken(StringInfo str, const char *s)
 			appendStringInfoChar(str, '\\');
 		appendStringInfoChar(str, *s++);
 	}
-}
-
-/* for use by extensions which define extensible nodes */
-void
-outToken(StringInfo str, const char *s)
-{
-	_outToken(str, s);
 }
 
 static void
@@ -187,13 +179,13 @@ _outList(StringInfo str, const List *node)
 }
 
 /*
- * _outBitmapset -
+ * outBitmapset -
  *	   converts a bitmap set of integers
  *
  * Note: the output format is "(b int int ...)", similar to an integer List.
  */
-static void
-_outBitmapset(StringInfo str, const Bitmapset *bms)
+void
+outBitmapset(StringInfo str, const Bitmapset *bms)
 {
 	int			x;
 
@@ -203,13 +195,6 @@ _outBitmapset(StringInfo str, const Bitmapset *bms)
 	while ((x = bms_next_member(bms, x)) >= 0)
 		appendStringInfo(str, " %d", x);
 	appendStringInfoChar(str, ')');
-}
-
-/* for use by extensions which define extensible nodes */
-void
-outBitmapset(StringInfo str, const Bitmapset *bms)
-{
-	_outBitmapset(str, bms);
 }
 
 /*
@@ -268,13 +253,15 @@ _outPlannedStmt(StringInfo str, const PlannedStmt *node)
 	WRITE_NODE_FIELD(planTree);
 	WRITE_NODE_FIELD(rtable);
 	WRITE_NODE_FIELD(resultRelations);
-	WRITE_NODE_FIELD(utilityStmt);
 	WRITE_NODE_FIELD(subplans);
 	WRITE_BITMAPSET_FIELD(rewindPlanIDs);
 	WRITE_NODE_FIELD(rowMarks);
 	WRITE_NODE_FIELD(relationOids);
 	WRITE_NODE_FIELD(invalItems);
 	WRITE_INT_FIELD(nParamExec);
+	WRITE_NODE_FIELD(utilityStmt);
+	WRITE_LOCATION_FIELD(stmt_location);
+	WRITE_LOCATION_FIELD(stmt_len);
 }
 
 /*
@@ -338,6 +325,14 @@ _outResult(StringInfo str, const Result *node)
 	_outPlanInfo(str, (const Plan *) node);
 
 	WRITE_NODE_FIELD(resconstantqual);
+}
+
+static void
+_outProjectSet(StringInfo str, const ProjectSet *node)
+{
+	WRITE_NODE_TYPE("PROJECTSET");
+
+	_outPlanInfo(str, (const Plan *) node);
 }
 
 static void
@@ -636,7 +631,7 @@ _outCustomScan(StringInfo str, const CustomScan *node)
 	WRITE_BITMAPSET_FIELD(custom_relids);
 	/* CustomName is a key to lookup CustomScanMethods */
 	appendStringInfoString(str, " :methods ");
-	_outToken(str, node->methods->CustomName);
+	outToken(str, node->methods->CustomName);
 }
 
 static void
@@ -975,7 +970,7 @@ _outRangeVar(StringInfo str, const RangeVar *node)
 	 */
 	WRITE_STRING_FIELD(schemaname);
 	WRITE_STRING_FIELD(relname);
-	WRITE_ENUM_FIELD(inhOpt, InhOption);
+	WRITE_BOOL_FIELD(inh);
 	WRITE_CHAR_FIELD(relpersistence);
 	WRITE_NODE_FIELD(alias);
 	WRITE_LOCATION_FIELD(location);
@@ -1218,7 +1213,7 @@ _outBoolExpr(StringInfo str, const BoolExpr *node)
 			break;
 	}
 	appendStringInfoString(str, " :boolop ");
-	_outToken(str, opstr);
+	outToken(str, opstr);
 
 	WRITE_NODE_FIELD(args);
 	WRITE_LOCATION_FIELD(location);
@@ -1447,6 +1442,17 @@ _outMinMaxExpr(StringInfo str, const MinMaxExpr *node)
 }
 
 static void
+_outSQLValueFunction(StringInfo str, const SQLValueFunction *node)
+{
+	WRITE_NODE_TYPE("SQLVALUEFUNCTION");
+
+	WRITE_ENUM_FIELD(op, SQLValueFunctionOp);
+	WRITE_OID_FIELD(type);
+	WRITE_INT_FIELD(typmod);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
 _outXmlExpr(StringInfo str, const XmlExpr *node)
 {
 	WRITE_NODE_TYPE("XMLEXPR");
@@ -1620,14 +1626,14 @@ _outPathInfo(StringInfo str, const Path *node)
 {
 	WRITE_ENUM_FIELD(pathtype, NodeTag);
 	appendStringInfoString(str, " :parent_relids ");
-	_outBitmapset(str, node->parent->relids);
+	outBitmapset(str, node->parent->relids);
 	if (node->pathtarget != node->parent->reltarget)
 		WRITE_NODE_FIELD(pathtarget);
 	appendStringInfoString(str, " :required_outer ");
 	if (node->param_info)
-		_outBitmapset(str, node->param_info->ppi_req_outer);
+		outBitmapset(str, node->param_info->ppi_req_outer);
 	else
-		_outBitmapset(str, NULL);
+		outBitmapset(str, NULL);
 	WRITE_BOOL_FIELD(parallel_aware);
 	WRITE_BOOL_FIELD(parallel_safe);
 	WRITE_INT_FIELD(parallel_workers);
@@ -1751,7 +1757,7 @@ _outCustomPath(StringInfo str, const CustomPath *node)
 	WRITE_NODE_FIELD(custom_paths);
 	WRITE_NODE_FIELD(custom_private);
 	appendStringInfoString(str, " :methods ");
-	_outToken(str, node->methods->CustomName);
+	outToken(str, node->methods->CustomName);
 }
 
 static void
@@ -1828,6 +1834,16 @@ _outProjectionPath(StringInfo str, const ProjectionPath *node)
 
 	WRITE_NODE_FIELD(subpath);
 	WRITE_BOOL_FIELD(dummypp);
+}
+
+static void
+_outProjectSetPath(StringInfo str, const ProjectSetPath *node)
+{
+	WRITE_NODE_TYPE("PROJECTSETPATH");
+
+	_outPathInfo(str, (const Path *) node);
+
+	WRITE_NODE_FIELD(subpath);
 }
 
 static void
@@ -2042,6 +2058,7 @@ _outPlannerGlobal(StringInfo str, const PlannerGlobal *node)
 	WRITE_BOOL_FIELD(dependsOnRole);
 	WRITE_BOOL_FIELD(parallelModeOK);
 	WRITE_BOOL_FIELD(parallelModeNeeded);
+	WRITE_CHAR_FIELD(maxParallelHazard);
 }
 
 static void
@@ -2082,6 +2099,7 @@ _outPlannerInfo(StringInfo str, const PlannerInfo *node)
 	WRITE_FLOAT_FIELD(total_table_pages, "%.0f");
 	WRITE_FLOAT_FIELD(tuple_fraction, "%.4f");
 	WRITE_FLOAT_FIELD(limit_tuples, "%.0f");
+	WRITE_UINT_FIELD(qual_security_level);
 	WRITE_BOOL_FIELD(hasInheritedTarget);
 	WRITE_BOOL_FIELD(hasJoinRTEs);
 	WRITE_BOOL_FIELD(hasLateralRTEs);
@@ -2135,6 +2153,7 @@ _outRelOptInfo(StringInfo str, const RelOptInfo *node)
 	WRITE_BOOL_FIELD(useridiscurrent);
 	/* we don't try to print fdwroutine or fdw_private */
 	WRITE_NODE_FIELD(baserestrictinfo);
+	WRITE_UINT_FIELD(baserestrict_min_security);
 	WRITE_NODE_FIELD(joininfo);
 	WRITE_BOOL_FIELD(has_eclass_joins);
 }
@@ -2218,6 +2237,8 @@ _outEquivalenceClass(StringInfo str, const EquivalenceClass *node)
 	WRITE_BOOL_FIELD(ec_below_outer_join);
 	WRITE_BOOL_FIELD(ec_broken);
 	WRITE_UINT_FIELD(ec_sortref);
+	WRITE_UINT_FIELD(ec_min_security);
+	WRITE_UINT_FIELD(ec_max_security);
 }
 
 static void
@@ -2284,6 +2305,8 @@ _outRestrictInfo(StringInfo str, const RestrictInfo *node)
 	WRITE_BOOL_FIELD(outerjoin_delayed);
 	WRITE_BOOL_FIELD(can_join);
 	WRITE_BOOL_FIELD(pseudoconstant);
+	WRITE_BOOL_FIELD(leakproof);
+	WRITE_UINT_FIELD(security_level);
 	WRITE_BITMAPSET_FIELD(clause_relids);
 	WRITE_BITMAPSET_FIELD(required_relids);
 	WRITE_BITMAPSET_FIELD(outer_relids);
@@ -2417,6 +2440,8 @@ _outCreateStmtInfo(StringInfo str, const CreateStmt *node)
 	WRITE_NODE_FIELD(relation);
 	WRITE_NODE_FIELD(tableElts);
 	WRITE_NODE_FIELD(inhRelations);
+	WRITE_NODE_FIELD(partspec);
+	WRITE_NODE_FIELD(partbound);
 	WRITE_NODE_FIELD(ofTypename);
 	WRITE_NODE_FIELD(constraints);
 	WRITE_NODE_FIELD(options);
@@ -2553,6 +2578,7 @@ _outDefElem(StringInfo str, const DefElem *node)
 	WRITE_STRING_FIELD(defname);
 	WRITE_NODE_FIELD(arg);
 	WRITE_ENUM_FIELD(defaction, DefElemAction);
+	WRITE_LOCATION_FIELD(location);
 }
 
 static void
@@ -2583,6 +2609,16 @@ _outXmlSerialize(StringInfo str, const XmlSerialize *node)
 	WRITE_NODE_FIELD(expr);
 	WRITE_NODE_FIELD(typeName);
 	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outTriggerTransition(StringInfo str, const TriggerTransition *node)
+{
+	WRITE_NODE_TYPE("TRIGGERTRANSITION");
+
+	WRITE_STRING_FIELD(name);
+	WRITE_BOOL_FIELD(isNew);
+	WRITE_BOOL_FIELD(isTable);
 }
 
 static void
@@ -2695,6 +2731,7 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_INT_FIELD(resultRelation);
 	WRITE_BOOL_FIELD(hasAggs);
 	WRITE_BOOL_FIELD(hasWindowFuncs);
+	WRITE_BOOL_FIELD(hasTargetSRFs);
 	WRITE_BOOL_FIELD(hasSubLinks);
 	WRITE_BOOL_FIELD(hasDistinctOn);
 	WRITE_BOOL_FIELD(hasRecursive);
@@ -2718,6 +2755,9 @@ _outQuery(StringInfo str, const Query *node)
 	WRITE_NODE_FIELD(rowMarks);
 	WRITE_NODE_FIELD(setOperations);
 	WRITE_NODE_FIELD(constraintDeps);
+	/* withCheckOptions intentionally omitted, see comment in parsenodes.h */
+	WRITE_LOCATION_FIELD(stmt_location);
+	WRITE_LOCATION_FIELD(stmt_len);
 
 	WRITE_ENUM_FIELD(graph.writeOp, GraphWriteOp);
 	WRITE_BOOL_FIELD(graph.last);
@@ -2865,15 +2905,17 @@ _outRangeTblEntry(StringInfo str, const RangeTblEntry *node)
 			break;
 		case RTE_VALUES:
 			WRITE_NODE_FIELD(values_lists);
-			WRITE_NODE_FIELD(values_collations);
+			WRITE_NODE_FIELD(coltypes);
+			WRITE_NODE_FIELD(coltypmods);
+			WRITE_NODE_FIELD(colcollations);
 			break;
 		case RTE_CTE:
 			WRITE_STRING_FIELD(ctename);
 			WRITE_UINT_FIELD(ctelevelsup);
 			WRITE_BOOL_FIELD(self_reference);
-			WRITE_NODE_FIELD(ctecoltypes);
-			WRITE_NODE_FIELD(ctecoltypmods);
-			WRITE_NODE_FIELD(ctecolcollations);
+			WRITE_NODE_FIELD(coltypes);
+			WRITE_NODE_FIELD(coltypmods);
+			WRITE_NODE_FIELD(colcollations);
 			break;
 		default:
 			elog(ERROR, "unrecognized RTE kind: %d", (int) node->rtekind);
@@ -3016,12 +3058,12 @@ _outValue(StringInfo str, const Value *value)
 		case T_String:
 
 			/*
-			 * We use _outToken to provide escaping of the string's content,
+			 * We use outToken to provide escaping of the string's content,
 			 * but we don't want it to do anything with an empty string.
 			 */
 			appendStringInfoChar(str, '"');
 			if (value->val.str[0] != '\0')
-				_outToken(str, value->val.str);
+				outToken(str, value->val.str);
 			appendStringInfoChar(str, '"');
 			break;
 		case T_BitString:
@@ -3303,6 +3345,47 @@ _outForeignKeyCacheInfo(StringInfo str, const ForeignKeyCacheInfo *node)
 		appendStringInfo(str, " %u", node->conpfeqop[i]);
 }
 
+static void
+_outPartitionSpec(StringInfo str, const PartitionSpec *node)
+{
+	WRITE_NODE_TYPE("PARTITIONBY");
+
+	WRITE_STRING_FIELD(strategy);
+	WRITE_NODE_FIELD(partParams);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outPartitionElem(StringInfo str, const PartitionElem *node)
+{
+	WRITE_NODE_TYPE("PARTITIONELEM");
+
+	WRITE_STRING_FIELD(name);
+	WRITE_NODE_FIELD(expr);
+	WRITE_NODE_FIELD(collation);
+	WRITE_NODE_FIELD(opclass);
+	WRITE_LOCATION_FIELD(location);
+}
+
+static void
+_outPartitionBoundSpec(StringInfo str, const PartitionBoundSpec *node)
+{
+	WRITE_NODE_TYPE("PARTITIONBOUND");
+
+	WRITE_CHAR_FIELD(strategy);
+	WRITE_NODE_FIELD(listdatums);
+	WRITE_NODE_FIELD(lowerdatums);
+	WRITE_NODE_FIELD(upperdatums);
+}
+
+static void
+_outPartitionRangeDatum(StringInfo str, const PartitionRangeDatum *node)
+{
+	WRITE_NODE_TYPE("PARTRANGEDATUM");
+
+	WRITE_BOOL_FIELD(infinite);
+	WRITE_NODE_FIELD(value);
+}
 static void
 _outJsonObject(StringInfo str, const JsonObject *node)
 {
@@ -3594,6 +3677,9 @@ outNode(StringInfo str, const void *obj)
 			case T_Result:
 				_outResult(str, obj);
 				break;
+			case T_ProjectSet:
+				_outProjectSet(str, obj);
+				break;
 			case T_ModifyTable:
 				_outModifyTable(str, obj);
 				break;
@@ -3819,6 +3905,9 @@ outNode(StringInfo str, const void *obj)
 			case T_MinMaxExpr:
 				_outMinMaxExpr(str, obj);
 				break;
+			case T_SQLValueFunction:
+				_outSQLValueFunction(str, obj);
+				break;
 			case T_XmlExpr:
 				_outXmlExpr(str, obj);
 				break;
@@ -3905,6 +3994,9 @@ outNode(StringInfo str, const void *obj)
 				break;
 			case T_ProjectionPath:
 				_outProjectionPath(str, obj);
+				break;
+			case T_ProjectSetPath:
+				_outProjectSetPath(str, obj);
 				break;
 			case T_SortPath:
 				_outSortPath(str, obj);
@@ -4145,6 +4237,21 @@ outNode(StringInfo str, const void *obj)
 			case T_ForeignKeyCacheInfo:
 				_outForeignKeyCacheInfo(str, obj);
 				break;
+			case T_TriggerTransition:
+				_outTriggerTransition(str, obj);
+				break;
+			case T_PartitionSpec:
+				_outPartitionSpec(str, obj);
+				break;
+			case T_PartitionElem:
+				_outPartitionElem(str, obj);
+				break;
+			case T_PartitionBoundSpec:
+				_outPartitionBoundSpec(str, obj);
+				break;
+			case T_PartitionRangeDatum:
+				_outPartitionRangeDatum(str, obj);
+				break;
 
 			case T_JsonObject:
 				_outJsonObject(str, obj);
@@ -4250,5 +4357,20 @@ nodeToString(const void *obj)
 	/* see stringinfo.h for an explanation of this maneuver */
 	initStringInfo(&str);
 	outNode(&str, obj);
+	return str.data;
+}
+
+/*
+ * bmsToString -
+ *	   returns the ascii representation of the Bitmapset as a palloc'd string
+ */
+char *
+bmsToString(const Bitmapset *bms)
+{
+	StringInfoData str;
+
+	/* see stringinfo.h for an explanation of this maneuver */
+	initStringInfo(&str);
+	outBitmapset(&str, bms);
 	return str.data;
 }

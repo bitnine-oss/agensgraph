@@ -3,7 +3,7 @@
  * _int_selfuncs.c
  *	  Functions for selectivity estimation of intarray operators
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,6 +19,7 @@
 #include "catalog/pg_operator.h"
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_type.h"
+#include "utils/builtins.h"
 #include "utils/selfuncs.h"
 #include "utils/syscache.h"
 #include "utils/lsyscache.h"
@@ -31,14 +32,6 @@ PG_FUNCTION_INFO_V1(_int_overlap_joinsel);
 PG_FUNCTION_INFO_V1(_int_contains_joinsel);
 PG_FUNCTION_INFO_V1(_int_contained_joinsel);
 PG_FUNCTION_INFO_V1(_int_matchsel);
-
-Datum		_int_overlap_sel(PG_FUNCTION_ARGS);
-Datum		_int_contains_sel(PG_FUNCTION_ARGS);
-Datum		_int_contained_sel(PG_FUNCTION_ARGS);
-Datum		_int_overlap_joinsel(PG_FUNCTION_ARGS);
-Datum		_int_contains_joinsel(PG_FUNCTION_ARGS);
-Datum		_int_contained_joinsel(PG_FUNCTION_ARGS);
-Datum		_int_matchsel(PG_FUNCTION_ARGS);
 
 
 static Selectivity int_query_opr_selec(ITEM *item, Datum *values, float4 *freqs,

@@ -5,7 +5,7 @@
  * Routines to expose the contents of the control data file via
  * a set of SQL functions.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -34,6 +34,7 @@ pg_control_system(PG_FUNCTION_ARGS)
 	TupleDesc	tupdesc;
 	HeapTuple	htup;
 	ControlFileData *ControlFile;
+	bool		crc_ok;
 
 	/*
 	 * Construct a tuple descriptor for the result row.  This must match this
@@ -51,7 +52,10 @@ pg_control_system(PG_FUNCTION_ARGS)
 	tupdesc = BlessTupleDesc(tupdesc);
 
 	/* read the control file */
-	ControlFile = get_controlfile(DataDir, NULL);
+	ControlFile = get_controlfile(DataDir, NULL, &crc_ok);
+	if (!crc_ok)
+		ereport(ERROR,
+				(errmsg("calculated CRC checksum does not match value stored in file")));
 
 	values[0] = Int32GetDatum(ControlFile->pg_control_version);
 	nulls[0] = false;
@@ -80,6 +84,7 @@ pg_control_checkpoint(PG_FUNCTION_ARGS)
 	ControlFileData *ControlFile;
 	XLogSegNo	segno;
 	char		xlogfilename[MAXFNAMELEN];
+	bool		crc_ok;
 
 	/*
 	 * Construct a tuple descriptor for the result row.  This must match this
@@ -127,7 +132,10 @@ pg_control_checkpoint(PG_FUNCTION_ARGS)
 	tupdesc = BlessTupleDesc(tupdesc);
 
 	/* Read the control file. */
-	ControlFile = get_controlfile(DataDir, NULL);
+	ControlFile = get_controlfile(DataDir, NULL, &crc_ok);
+	if (!crc_ok)
+		ereport(ERROR,
+				(errmsg("calculated CRC checksum does not match value stored in file")));
 
 	/*
 	 * Calculate name of the WAL file containing the latest checkpoint's REDO
@@ -210,6 +218,7 @@ pg_control_recovery(PG_FUNCTION_ARGS)
 	TupleDesc	tupdesc;
 	HeapTuple	htup;
 	ControlFileData *ControlFile;
+	bool		crc_ok;
 
 	/*
 	 * Construct a tuple descriptor for the result row.  This must match this
@@ -229,7 +238,10 @@ pg_control_recovery(PG_FUNCTION_ARGS)
 	tupdesc = BlessTupleDesc(tupdesc);
 
 	/* read the control file */
-	ControlFile = get_controlfile(DataDir, NULL);
+	ControlFile = get_controlfile(DataDir, NULL, &crc_ok);
+	if (!crc_ok)
+		ereport(ERROR,
+				(errmsg("calculated CRC checksum does not match value stored in file")));
 
 	values[0] = LSNGetDatum(ControlFile->minRecoveryPoint);
 	nulls[0] = false;
@@ -259,6 +271,7 @@ pg_control_init(PG_FUNCTION_ARGS)
 	TupleDesc	tupdesc;
 	HeapTuple	htup;
 	ControlFileData *ControlFile;
+	bool		crc_ok;
 
 	/*
 	 * Construct a tuple descriptor for the result row.  This must match this
@@ -294,7 +307,10 @@ pg_control_init(PG_FUNCTION_ARGS)
 	tupdesc = BlessTupleDesc(tupdesc);
 
 	/* read the control file */
-	ControlFile = get_controlfile(DataDir, NULL);
+	ControlFile = get_controlfile(DataDir, NULL, &crc_ok);
+	if (!crc_ok)
+		ereport(ERROR,
+				(errmsg("calculated CRC checksum does not match value stored in file")));
 
 	values[0] = Int32GetDatum(ControlFile->maxAlign);
 	nulls[0] = false;

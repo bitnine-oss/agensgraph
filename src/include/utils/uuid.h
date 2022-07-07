@@ -5,7 +5,7 @@
  *	  to avoid conflicts with any uuid_t type that might be defined by
  *	  the system headers.
  *
- * Copyright (c) 2007-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2017, PostgreSQL Global Development Group
  *
  * src/include/utils/uuid.h
  *
@@ -14,11 +14,13 @@
 #ifndef UUID_H
 #define UUID_H
 
-/* guid size in bytes */
+/* uuid size in bytes */
 #define UUID_LEN 16
 
-/* opaque struct; defined in uuid.c */
-typedef struct pg_uuid_t pg_uuid_t;
+typedef struct pg_uuid_t
+{
+	unsigned char data[UUID_LEN];
+} pg_uuid_t;
 
 /* fmgr interface macros */
 #define UUIDPGetDatum(X)		PointerGetDatum(X)

@@ -3,7 +3,7 @@
  * pathnode.c
  *	  Routines to manipulate pathlists and create path nodes
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1333,7 +1333,7 @@ create_merge_append_path(PlannerInfo *root,
 	cost_merge_append(&pathnode->path, root,
 					  pathkeys, list_length(subpaths),
 					  input_startup_cost, input_total_cost,
-					  rel->tuples);
+					  pathnode->path.rows);
 
 	return pathnode;
 }
@@ -2178,7 +2178,7 @@ create_projection_path(PlannerInfo *root,
 	pathnode->path.parallel_aware = false;
 	pathnode->path.parallel_safe = rel->consider_parallel &&
 		subpath->parallel_safe &&
-		!has_parallel_hazard((Node *) target->exprs, false);
+		is_parallel_safe(root, (Node *) target->exprs);
 	pathnode->path.parallel_workers = subpath->parallel_workers;
 	/* Projection does not change the sort order */
 	pathnode->path.pathkeys = subpath->pathkeys;
@@ -2285,7 +2285,7 @@ apply_projection_to_path(PlannerInfo *root,
 	 * target expressions, then we can't.
 	 */
 	if (IsA(path, GatherPath) &&
-		!has_parallel_hazard((Node *) target->exprs, false))
+		is_parallel_safe(root, (Node *) target->exprs))
 	{
 		GatherPath *gpath = (GatherPath *) path;
 
@@ -2306,7 +2306,7 @@ apply_projection_to_path(PlannerInfo *root,
 								   target);
 	}
 	else if (path->parallel_safe &&
-			 has_parallel_hazard((Node *) target->exprs, false))
+			 !is_parallel_safe(root, (Node *) target->exprs))
 	{
 		/*
 		 * We're inserting a parallel-restricted target list into a path
@@ -2317,6 +2317,72 @@ apply_projection_to_path(PlannerInfo *root,
 	}
 
 	return path;
+}
+
+/*
+ * create_set_projection_path
+ *	  Creates a pathnode that represents performing a projection that
+ *	  includes set-returning functions.
+ *
+ * 'rel' is the parent relation associated with the result
+ * 'subpath' is the path representing the source of data
+ * 'target' is the PathTarget to be computed
+ */
+ProjectSetPath *
+create_set_projection_path(PlannerInfo *root,
+						   RelOptInfo *rel,
+						   Path *subpath,
+						   PathTarget *target)
+{
+	ProjectSetPath *pathnode = makeNode(ProjectSetPath);
+	double		tlist_rows;
+	ListCell   *lc;
+
+	pathnode->path.pathtype = T_ProjectSet;
+	pathnode->path.parent = rel;
+	pathnode->path.pathtarget = target;
+	/* For now, assume we are above any joins, so no parameterization */
+	pathnode->path.param_info = NULL;
+	pathnode->path.parallel_aware = false;
+	pathnode->path.parallel_safe = rel->consider_parallel &&
+		subpath->parallel_safe &&
+		is_parallel_safe(root, (Node *) target->exprs);
+	pathnode->path.parallel_workers = subpath->parallel_workers;
+	/* Projection does not change the sort order XXX? */
+	pathnode->path.pathkeys = subpath->pathkeys;
+
+	pathnode->subpath = subpath;
+
+	/*
+	 * Estimate number of rows produced by SRFs for each row of input; if
+	 * there's more than one in this node, use the maximum.
+	 */
+	tlist_rows = 1;
+	foreach(lc, target->exprs)
+	{
+		Node	   *node = (Node *) lfirst(lc);
+		double		itemrows;
+
+		itemrows = expression_returns_set_rows(node);
+		if (tlist_rows < itemrows)
+			tlist_rows = itemrows;
+	}
+
+	/*
+	 * In addition to the cost of evaluating the tlist, charge cpu_tuple_cost
+	 * per input row, and half of cpu_tuple_cost for each added output row.
+	 * This is slightly bizarre maybe, but it's what 9.6 did; we may revisit
+	 * this estimate later.
+	 */
+	pathnode->path.rows = subpath->rows * tlist_rows;
+	pathnode->path.startup_cost = subpath->startup_cost +
+		target->cost.startup;
+	pathnode->path.total_cost = subpath->total_cost +
+		target->cost.startup +
+		(cpu_tuple_cost + target->cost.per_tuple) * subpath->rows +
+		(pathnode->path.rows - subpath->rows) * cpu_tuple_cost / 2;
+
+	return pathnode;
 }
 
 /*

@@ -16,11 +16,11 @@ EXPLAIN (costs off)
   CREATE MATERIALIZED VIEW mvtest_tm AS SELECT type, sum(amt) AS totamt FROM mvtest_t GROUP BY type WITH NO DATA;
 CREATE MATERIALIZED VIEW mvtest_tm AS SELECT type, sum(amt) AS totamt FROM mvtest_t GROUP BY type WITH NO DATA;
 SELECT relispopulated FROM pg_class WHERE oid = 'mvtest_tm'::regclass;
-SELECT * FROM mvtest_tm;
+SELECT * FROM mvtest_tm ORDER BY type;
 REFRESH MATERIALIZED VIEW mvtest_tm;
 SELECT relispopulated FROM pg_class WHERE oid = 'mvtest_tm'::regclass;
 CREATE UNIQUE INDEX mvtest_tm_type ON mvtest_tm (type);
-SELECT * FROM mvtest_tm;
+SELECT * FROM mvtest_tm ORDER BY type;
 
 -- create various views
 EXPLAIN (costs off)
@@ -92,7 +92,7 @@ SELECT * FROM mvtest_tvvm;
 -- test diemv when the mv does not exist
 DROP MATERIALIZED VIEW IF EXISTS no_such_mv;
 
--- make sure invalid comination of options is prohibited
+-- make sure invalid combination of options is prohibited
 REFRESH MATERIALIZED VIEW CONCURRENTLY mvtest_tvmm WITH NO DATA;
 
 -- no tuple locks on materialized views
@@ -197,6 +197,14 @@ SELECT * FROM mvtest_mv_v_2;
 SELECT * FROM mvtest_mv_v_3;
 SELECT * FROM mvtest_mv_v_4;
 DROP TABLE mvtest_v CASCADE;
+
+-- Check that unknown literals are converted to "text" in CREATE MATVIEW,
+-- so that we don't end up with unknown-type columns.
+CREATE MATERIALIZED VIEW mv_unspecified_types AS
+  SELECT 42 as i, 42.5 as num, 'foo' as u, 'foo'::unknown as u2, null as n;
+\d+ mv_unspecified_types
+SELECT * FROM mv_unspecified_types;
+DROP MATERIALIZED VIEW mv_unspecified_types;
 
 -- make sure that create WITH NO DATA does not plan the query (bug #13907)
 create materialized view mvtest_error as select 1/0 as x;  -- fail

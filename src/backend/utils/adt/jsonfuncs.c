@@ -3,7 +3,7 @@
  * jsonfuncs.c
  *		Functions to process JSON data types.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -34,120 +34,13 @@
 #include "utils/typcache.h"
 
 /* Operations available for setPath */
-#define JB_PATH_NOOP					0x0000
 #define JB_PATH_CREATE					0x0001
 #define JB_PATH_DELETE					0x0002
-#define JB_PATH_INSERT_BEFORE			0x0004
-#define JB_PATH_INSERT_AFTER			0x0008
+#define JB_PATH_REPLACE					0x0004
+#define JB_PATH_INSERT_BEFORE			0x0008
+#define JB_PATH_INSERT_AFTER			0x0010
 #define JB_PATH_CREATE_OR_INSERT \
 	(JB_PATH_INSERT_BEFORE | JB_PATH_INSERT_AFTER | JB_PATH_CREATE)
-
-/* semantic action functions for json_object_keys */
-static void okeys_object_field_start(void *state, char *fname, bool isnull);
-static void okeys_array_start(void *state);
-static void okeys_scalar(void *state, char *token, JsonTokenType tokentype);
-
-/* semantic action functions for json_get* functions */
-static void get_object_start(void *state);
-static void get_object_end(void *state);
-static void get_object_field_start(void *state, char *fname, bool isnull);
-static void get_object_field_end(void *state, char *fname, bool isnull);
-static void get_array_start(void *state);
-static void get_array_end(void *state);
-static void get_array_element_start(void *state, bool isnull);
-static void get_array_element_end(void *state, bool isnull);
-static void get_scalar(void *state, char *token, JsonTokenType tokentype);
-
-/* common worker function for json getter functions */
-static Datum get_path_all(FunctionCallInfo fcinfo, bool as_text);
-static text *get_worker(text *json, char **tpath, int *ipath, int npath,
-		   bool normalize_results);
-static Datum get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text);
-
-/* semantic action functions for json_array_length */
-static void alen_object_start(void *state);
-static void alen_scalar(void *state, char *token, JsonTokenType tokentype);
-static void alen_array_element_start(void *state, bool isnull);
-
-/* common workers for json{b}_each* functions */
-static Datum each_worker(FunctionCallInfo fcinfo, bool as_text);
-static Datum each_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname,
-				  bool as_text);
-
-/* semantic action functions for json_each */
-static void each_object_field_start(void *state, char *fname, bool isnull);
-static void each_object_field_end(void *state, char *fname, bool isnull);
-static void each_array_start(void *state);
-static void each_scalar(void *state, char *token, JsonTokenType tokentype);
-
-/* common workers for json{b}_array_elements_* functions */
-static Datum elements_worker(FunctionCallInfo fcinfo, const char *funcname,
-				bool as_text);
-static Datum elements_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname,
-					  bool as_text);
-
-/* semantic action functions for json_array_elements */
-static void elements_object_start(void *state);
-static void elements_array_element_start(void *state, bool isnull);
-static void elements_array_element_end(void *state, bool isnull);
-static void elements_scalar(void *state, char *token, JsonTokenType tokentype);
-
-/* turn a json object into a hash table */
-static HTAB *get_json_object_as_hash(text *json, const char *funcname);
-
-/* common worker for populate_record and to_record */
-static Datum populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
-					   bool have_record_arg);
-
-/* semantic action functions for get_json_object_as_hash */
-static void hash_object_field_start(void *state, char *fname, bool isnull);
-static void hash_object_field_end(void *state, char *fname, bool isnull);
-static void hash_array_start(void *state);
-static void hash_scalar(void *state, char *token, JsonTokenType tokentype);
-
-/* semantic action functions for populate_recordset */
-static void populate_recordset_object_field_start(void *state, char *fname, bool isnull);
-static void populate_recordset_object_field_end(void *state, char *fname, bool isnull);
-static void populate_recordset_scalar(void *state, char *token, JsonTokenType tokentype);
-static void populate_recordset_object_start(void *state);
-static void populate_recordset_object_end(void *state);
-static void populate_recordset_array_start(void *state);
-static void populate_recordset_array_element_start(void *state, bool isnull);
-
-/* semantic action functions for json_strip_nulls */
-static void sn_object_start(void *state);
-static void sn_object_end(void *state);
-static void sn_array_start(void *state);
-static void sn_array_end(void *state);
-static void sn_object_field_start(void *state, char *fname, bool isnull);
-static void sn_array_element_start(void *state, bool isnull);
-static void sn_scalar(void *state, char *token, JsonTokenType tokentype);
-
-/* worker function for populate_recordset and to_recordset */
-static Datum populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
-						  bool have_record_arg);
-
-/* Worker that takes care of common setup for us */
-static JsonbValue *findJsonbValueFromContainerLen(JsonbContainer *container,
-							   uint32 flags,
-							   char *key,
-							   uint32 keylen);
-
-/* functions supporting jsonb_delete, jsonb_set and jsonb_concat */
-static JsonbValue *IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
-			   JsonbParseState **state);
-static JsonbValue *setPath(JsonbIterator **it, Datum *path_elems,
-		bool *path_nulls, int path_len,
-		JsonbParseState **st, int level, Jsonb *newval,
-		int op_type);
-static void setPathObject(JsonbIterator **it, Datum *path_elems,
-			  bool *path_nulls, int path_len, JsonbParseState **st,
-			  int level,
-			  Jsonb *newval, uint32 npairs, int op_type);
-static void setPathArray(JsonbIterator **it, Datum *path_elems,
-			 bool *path_nulls, int path_len, JsonbParseState **st,
-			 int level, Jsonb *newval, uint32 nelems, int op_type);
-static void addJsonbToParseState(JsonbParseState **jbps, Jsonb *jb);
 
 /* state for json_object_keys */
 typedef struct OkeysState
@@ -267,9 +160,117 @@ typedef struct StripnullState
 	bool		skip_next_null;
 } StripnullState;
 
+/* semantic action functions for json_object_keys */
+static void okeys_object_field_start(void *state, char *fname, bool isnull);
+static void okeys_array_start(void *state);
+static void okeys_scalar(void *state, char *token, JsonTokenType tokentype);
+
+/* semantic action functions for json_get* functions */
+static void get_object_start(void *state);
+static void get_object_end(void *state);
+static void get_object_field_start(void *state, char *fname, bool isnull);
+static void get_object_field_end(void *state, char *fname, bool isnull);
+static void get_array_start(void *state);
+static void get_array_end(void *state);
+static void get_array_element_start(void *state, bool isnull);
+static void get_array_element_end(void *state, bool isnull);
+static void get_scalar(void *state, char *token, JsonTokenType tokentype);
+
+/* common worker function for json getter functions */
+static Datum get_path_all(FunctionCallInfo fcinfo, bool as_text);
+static text *get_worker(text *json, char **tpath, int *ipath, int npath,
+		   bool normalize_results);
+static Datum get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text);
+
+/* semantic action functions for json_array_length */
+static void alen_object_start(void *state);
+static void alen_scalar(void *state, char *token, JsonTokenType tokentype);
+static void alen_array_element_start(void *state, bool isnull);
+
+/* common workers for json{b}_each* functions */
+static Datum each_worker(FunctionCallInfo fcinfo, bool as_text);
+static Datum each_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname,
+				  bool as_text);
+
+/* semantic action functions for json_each */
+static void each_object_field_start(void *state, char *fname, bool isnull);
+static void each_object_field_end(void *state, char *fname, bool isnull);
+static void each_array_start(void *state);
+static void each_scalar(void *state, char *token, JsonTokenType tokentype);
+
+/* common workers for json{b}_array_elements_* functions */
+static Datum elements_worker(FunctionCallInfo fcinfo, const char *funcname,
+				bool as_text);
+static Datum elements_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname,
+					  bool as_text);
+
+/* semantic action functions for json_array_elements */
+static void elements_object_start(void *state);
+static void elements_array_element_start(void *state, bool isnull);
+static void elements_array_element_end(void *state, bool isnull);
+static void elements_scalar(void *state, char *token, JsonTokenType tokentype);
+
+/* turn a json object into a hash table */
+static HTAB *get_json_object_as_hash(text *json, const char *funcname);
+
+/* common worker for populate_record and to_record */
+static Datum populate_record_worker(FunctionCallInfo fcinfo, const char *funcname,
+					   bool have_record_arg);
+
+/* semantic action functions for get_json_object_as_hash */
+static void hash_object_field_start(void *state, char *fname, bool isnull);
+static void hash_object_field_end(void *state, char *fname, bool isnull);
+static void hash_array_start(void *state);
+static void hash_scalar(void *state, char *token, JsonTokenType tokentype);
+
+/* semantic action functions for populate_recordset */
+static void populate_recordset_object_field_start(void *state, char *fname, bool isnull);
+static void populate_recordset_object_field_end(void *state, char *fname, bool isnull);
+static void populate_recordset_scalar(void *state, char *token, JsonTokenType tokentype);
+static void populate_recordset_object_start(void *state);
+static void populate_recordset_object_end(void *state);
+static void populate_recordset_array_start(void *state);
+static void populate_recordset_array_element_start(void *state, bool isnull);
+
+/* semantic action functions for json_strip_nulls */
+static void sn_object_start(void *state);
+static void sn_object_end(void *state);
+static void sn_array_start(void *state);
+static void sn_array_end(void *state);
+static void sn_object_field_start(void *state, char *fname, bool isnull);
+static void sn_array_element_start(void *state, bool isnull);
+static void sn_scalar(void *state, char *token, JsonTokenType tokentype);
+
 /* Turn a jsonb object into a record */
 static void make_row_from_rec_and_jsonb(Jsonb *element,
 							PopulateRecordsetState *state);
+
+/* worker function for populate_recordset and to_recordset */
+static Datum populate_recordset_worker(FunctionCallInfo fcinfo, const char *funcname,
+						  bool have_record_arg);
+
+/* Worker that takes care of common setup for us */
+static JsonbValue *findJsonbValueFromContainerLen(JsonbContainer *container,
+							   uint32 flags,
+							   char *key,
+							   uint32 keylen);
+
+/* functions supporting jsonb_delete, jsonb_set and jsonb_concat */
+static JsonbValue *IteratorConcat(JsonbIterator **it1, JsonbIterator **it2,
+			   JsonbParseState **state);
+static JsonbValue *setPath(JsonbIterator **it, Datum *path_elems,
+		bool *path_nulls, int path_len,
+		JsonbParseState **st, int level, Jsonb *newval,
+		int op_type);
+static void setPathObject(JsonbIterator **it, Datum *path_elems,
+			  bool *path_nulls, int path_len, JsonbParseState **st,
+			  int level,
+			  Jsonb *newval, uint32 npairs, int op_type);
+static void setPathArray(JsonbIterator **it, Datum *path_elems,
+			 bool *path_nulls, int path_len, JsonbParseState **st,
+			 int level, Jsonb *newval, uint32 nelems, int op_type);
+static void addJsonbToParseState(JsonbParseState **jbps, Jsonb *jb);
+
 
 /*
  * SQL function json_object_keys
@@ -1265,10 +1266,10 @@ get_jsonb_path_all(FunctionCallInfo fcinfo, bool as_text)
 				uint32		nelements;
 
 				/* Container must be array, but make sure */
-				if ((container->header & JB_FARRAY) == 0)
+				if (!JsonContainerIsArray(container))
 					elog(ERROR, "not a jsonb array");
 
-				nelements = container->header & JB_CMASK;
+				nelements = JsonContainerSize(container);
 
 				if (-lindex > nelements)
 					PG_RETURN_NULL();
@@ -1503,9 +1504,7 @@ each_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname, bool as_text)
 
 	tmp_cxt = AllocSetContextCreate(CurrentMemoryContext,
 									"jsonb_each temporary cxt",
-									ALLOCSET_DEFAULT_MINSIZE,
-									ALLOCSET_DEFAULT_INITSIZE,
-									ALLOCSET_DEFAULT_MAXSIZE);
+									ALLOCSET_DEFAULT_SIZES);
 
 	it = JsonbIteratorInit(&jb->root);
 
@@ -1641,9 +1640,7 @@ each_worker(FunctionCallInfo fcinfo, bool as_text)
 	state->lex = lex;
 	state->tmp_cxt = AllocSetContextCreate(CurrentMemoryContext,
 										   "json_each temporary cxt",
-										   ALLOCSET_DEFAULT_MINSIZE,
-										   ALLOCSET_DEFAULT_INITSIZE,
-										   ALLOCSET_DEFAULT_MAXSIZE);
+										   ALLOCSET_DEFAULT_SIZES);
 
 	pg_parse_json(lex, sem);
 
@@ -1822,9 +1819,7 @@ elements_worker_jsonb(FunctionCallInfo fcinfo, const char *funcname,
 
 	tmp_cxt = AllocSetContextCreate(CurrentMemoryContext,
 									"jsonb_array_elements temporary cxt",
-									ALLOCSET_DEFAULT_MINSIZE,
-									ALLOCSET_DEFAULT_INITSIZE,
-									ALLOCSET_DEFAULT_MAXSIZE);
+									ALLOCSET_DEFAULT_SIZES);
 
 	it = JsonbIteratorInit(&jb->root);
 
@@ -1962,9 +1957,7 @@ elements_worker(FunctionCallInfo fcinfo, const char *funcname, bool as_text)
 	state->lex = lex;
 	state->tmp_cxt = AllocSetContextCreate(CurrentMemoryContext,
 										 "json_array_elements temporary cxt",
-										   ALLOCSET_DEFAULT_MINSIZE,
-										   ALLOCSET_DEFAULT_INITSIZE,
-										   ALLOCSET_DEFAULT_MAXSIZE);
+										   ALLOCSET_DEFAULT_SIZES);
 
 	pg_parse_json(lex, sem);
 
@@ -3446,6 +3439,92 @@ jsonb_delete(PG_FUNCTION_ARGS)
 }
 
 /*
+ * SQL function jsonb_delete (jsonb, variadic text[])
+ *
+ * return a copy of the jsonb with the indicated items
+ * removed.
+ */
+Datum
+jsonb_delete_array(PG_FUNCTION_ARGS)
+{
+	Jsonb	   *in = PG_GETARG_JSONB(0);
+	ArrayType  *keys = PG_GETARG_ARRAYTYPE_P(1);
+	Datum	   *keys_elems;
+	bool	   *keys_nulls;
+	int			keys_len;
+	JsonbParseState *state = NULL;
+	JsonbIterator *it;
+	JsonbValue	v,
+			   *res = NULL;
+	bool		skipNested = false;
+	JsonbIteratorToken r;
+
+	if (ARR_NDIM(keys) > 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
+				 errmsg("wrong number of array subscripts")));
+
+	if (JB_ROOT_IS_SCALAR(in))
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("cannot delete from scalar")));
+
+	if (JB_ROOT_COUNT(in) == 0)
+		PG_RETURN_JSONB(in);
+
+	deconstruct_array(keys, TEXTOID, -1, false, 'i',
+					  &keys_elems, &keys_nulls, &keys_len);
+
+	if (keys_len == 0)
+		PG_RETURN_JSONB(in);
+
+	it = JsonbIteratorInit(&in->root);
+
+	while ((r = JsonbIteratorNext(&it, &v, skipNested)) != 0)
+	{
+		skipNested = true;
+
+		if ((r == WJB_ELEM || r == WJB_KEY) && v.type == jbvString)
+		{
+			int			i;
+			bool		found = false;
+
+			for (i = 0; i < keys_len; i++)
+			{
+				char	   *keyptr;
+				int			keylen;
+
+				if (keys_nulls[i])
+					continue;
+
+				keyptr = VARDATA_ANY(keys_elems[i]);
+				keylen = VARSIZE_ANY_EXHDR(keys_elems[i]);
+				if (keylen == v.val.string.len &&
+					memcmp(keyptr, v.val.string.val, keylen) == 0)
+				{
+					found = true;
+					break;
+				}
+			}
+			if (found)
+			{
+				/* skip corresponding value as well */
+				if (r == WJB_KEY)
+					JsonbIteratorNext(&it, &v, true);
+
+				continue;
+			}
+		}
+
+		res = pushJsonbValue(&state, r, r < WJB_BEGIN_ARRAY ? &v : NULL);
+	}
+
+	Assert(res != NULL);
+
+	PG_RETURN_JSONB(JsonbValueToJsonb(res));
+}
+
+/*
  * SQL function jsonb_delete (jsonb, int)
  *
  * return a copy of the jsonb with the indicated item
@@ -3553,7 +3632,7 @@ jsonb_set(PG_FUNCTION_ARGS)
 	it = JsonbIteratorInit(&in->root);
 
 	res = setPath(&it, path_elems, path_nulls, path_len, &st,
-				  0, newval, create ? JB_PATH_CREATE : JB_PATH_NOOP);
+				  0, newval, create ? JB_PATH_CREATE : JB_PATH_REPLACE);
 
 	Assert(res != NULL);
 
@@ -3562,7 +3641,7 @@ jsonb_set(PG_FUNCTION_ARGS)
 
 
 /*
- * SQL function jsonb_delete(jsonb, text[])
+ * SQL function jsonb_delete_path(jsonb, text[])
  */
 Datum
 jsonb_delete_path(PG_FUNCTION_ARGS)
@@ -4011,7 +4090,7 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 				if (op_type & (JB_PATH_INSERT_AFTER | JB_PATH_INSERT_BEFORE))
 					(void) pushJsonbValue(st, r, &v);
 
-				if (op_type & JB_PATH_INSERT_AFTER)
+				if (op_type & (JB_PATH_INSERT_AFTER | JB_PATH_REPLACE))
 					addJsonbToParseState(st, newval);
 
 				done = true;
@@ -4043,7 +4122,7 @@ setPathArray(JsonbIterator **it, Datum *path_elems, bool *path_nulls,
 				}
 			}
 
-			if (op_type & JB_PATH_CREATE_OR_INSERT && !done &&
+			if ((op_type & JB_PATH_CREATE_OR_INSERT) && !done &&
 				level == path_len - 1 && i == nelems - 1)
 			{
 				addJsonbToParseState(st, newval);

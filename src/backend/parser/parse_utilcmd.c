@@ -16,8 +16,7 @@
  * a quick copyObject() call before manipulating the query tree.
  *
  *
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	src/backend/parser/parse_utilcmd.c
@@ -52,8 +51,10 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "optimizer/planner.h"
 #include "parser/analyze.h"
 #include "parser/parse_clause.h"
+#include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_expr.h"
 #include "parser/parse_relation.h"
@@ -68,6 +69,7 @@
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
+#include "utils/ruleutils.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
@@ -93,6 +95,8 @@ typedef struct
 	List	   *alist;			/* "after list" of things to do after creating
 								 * the table */
 	IndexStmt  *pkey;			/* PRIMARY KEY index, if any */
+	bool		ispartitioned;	/* true if table is partitioned */
+	Node	   *partbound;		/* transformed FOR VALUES */
 } CreateStmtContext;
 
 /* State shared by transformCreateSchemaStmt and its subroutines */
@@ -135,6 +139,7 @@ static void transformConstraintAttrs(CreateStmtContext *cxt,
 						 List *constraintList);
 static void transformColumnType(CreateStmtContext *cxt, ColumnDef *column);
 static void setSchemaName(char *context_schema, char **stmt_schema_name);
+static void transformAttachPartition(CreateStmtContext *cxt, PartitionCmd *cmd);
 
 /* for agensgraph */
 static List *makeVertexElements(void);
@@ -252,6 +257,7 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	cxt.blist = NIL;
 	cxt.alist = NIL;
 	cxt.pkey = NULL;
+	cxt.ispartitioned = stmt->partspec != NULL;
 
 	/*
 	 * Notice that we allow OIDs here only for plain tables, even though
@@ -270,12 +276,31 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	if (stmt->ofTypename)
 		transformOfType(&cxt, stmt->ofTypename);
 
+	if (stmt->partspec)
+	{
+		int			partnatts = list_length(stmt->partspec->partParams);
+
+		if (stmt->inhRelations && !stmt->partbound)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+			errmsg("cannot create partitioned table as inheritance child")));
+
+		if (partnatts > PARTITION_MAX_KEYS)
+			ereport(ERROR,
+					(errcode(ERRCODE_TOO_MANY_COLUMNS),
+					 errmsg("cannot partition using more than %d columns",
+							PARTITION_MAX_KEYS)));
+
+		if (!pg_strcasecmp(stmt->partspec->strategy, "list") &&
+			partnatts > 1)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+				errmsg("cannot list partition using more than one column")));
+	}
+
 	/*
 	 * Run through each primary element in the table creation clause. Separate
-	 * column defs from constraints, and do preliminary analysis.  We have to
-	 * process column-defining clauses first because it can control the
-	 * presence of columns which are referenced by columns referenced by
-	 * constraints.
+	 * column defs from constraints, and do preliminary analysis.
 	 */
 	foreach(elements, stmt->tableElts)
 	{
@@ -287,17 +312,13 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 				transformColumnDefinition(&cxt, (ColumnDef *) element);
 				break;
 
-			case T_TableLikeClause:
-				if (!like_found)
-				{
-					cxt.hasoids = false;
-					like_found = true;
-				}
-				transformTableLikeClause(&cxt, (TableLikeClause *) element);
+			case T_Constraint:
+				transformTableConstraint(&cxt, (Constraint *) element);
 				break;
 
-			case T_Constraint:
-				/* process later */
+			case T_TableLikeClause:
+				like_found = true;
+				transformTableLikeClause(&cxt, (TableLikeClause *) element);
 				break;
 
 			default:
@@ -307,26 +328,19 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 		}
 	}
 
-	if (like_found)
-	{
-		/*
-		 * To match INHERITS, the existence of any LIKE table with OIDs causes
-		 * the new table to have oids.  For the same reason, WITH/WITHOUT OIDs
-		 * is also ignored with LIKE.  We prepend because the first oid option
-		 * list entry is honored.  Our prepended WITHOUT OIDS clause will be
-		 * overridden if an inherited table has oids.
-		 */
+	/*
+	 * If we had any LIKE tables, they may require creation of an OID column
+	 * even though the command's own WITH clause didn't ask for one (or,
+	 * perhaps, even specifically rejected having one).  Insert a WITH option
+	 * to ensure that happens.  We prepend to the list because the first oid
+	 * option will be honored, and we want to override anything already there.
+	 * (But note that DefineRelation will override this again to add an OID
+	 * column if one appears in an inheritance parent table.)
+	 */
+	if (like_found && cxt.hasoids)
 		stmt->options = lcons(makeDefElem("oids",
-						  (Node *) makeInteger(cxt.hasoids)), stmt->options);
-	}
-
-	foreach(elements, stmt->tableElts)
-	{
-		Node	   *element = lfirst(elements);
-
-		if (nodeTag(element) == T_Constraint)
-			transformTableConstraint(&cxt, (Constraint *) element);
-	}
+										  (Node *) makeInteger(true), -1),
+							  stmt->options);
 
 	/*
 	 * transformIndexConstraints wants cxt.alist to contain only index
@@ -505,7 +519,7 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 								 makeString(cxt->relation->relname),
 								 makeString(column->colname));
 		altseqstmt->options = list_make1(makeDefElem("owned_by",
-													 (Node *) attnamelist));
+												  (Node *) attnamelist, -1));
 
 		cxt->alist = lappend(cxt->alist, altseqstmt);
 
@@ -605,6 +619,12 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 							 errmsg("primary key constraints are not supported on foreign tables"),
 							 parser_errposition(cxt->pstate,
 												constraint->location)));
+				if (cxt->ispartitioned)
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("primary key constraints are not supported on partitioned tables"),
+							 parser_errposition(cxt->pstate,
+												constraint->location)));
 				/* FALL THRU */
 
 			case CONSTR_UNIQUE:
@@ -612,6 +632,12 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("unique constraints are not supported on foreign tables"),
+							 parser_errposition(cxt->pstate,
+												constraint->location)));
+				if (cxt->ispartitioned)
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("unique constraints are not supported on partitioned tables"),
 							 parser_errposition(cxt->pstate,
 												constraint->location)));
 				if (constraint->keys == NIL)
@@ -629,6 +655,12 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("foreign key constraints are not supported on foreign tables"),
+							 parser_errposition(cxt->pstate,
+												constraint->location)));
+				if (cxt->ispartitioned)
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("foreign key constraints are not supported on partitioned tables"),
 							 parser_errposition(cxt->pstate,
 												constraint->location)));
 
@@ -696,6 +728,12 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
 						 errmsg("primary key constraints are not supported on foreign tables"),
 						 parser_errposition(cxt->pstate,
 											constraint->location)));
+			if (cxt->ispartitioned)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("primary key constraints are not supported on partitioned tables"),
+						 parser_errposition(cxt->pstate,
+											constraint->location)));
 			cxt->ixconstraints = lappend(cxt->ixconstraints, constraint);
 			break;
 
@@ -706,6 +744,12 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
 						 errmsg("unique constraints are not supported on foreign tables"),
 						 parser_errposition(cxt->pstate,
 											constraint->location)));
+			if (cxt->ispartitioned)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("unique constraints are not supported on partitioned tables"),
+						 parser_errposition(cxt->pstate,
+											constraint->location)));
 			cxt->ixconstraints = lappend(cxt->ixconstraints, constraint);
 			break;
 
@@ -714,6 +758,12 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("exclusion constraints are not supported on foreign tables"),
+						 parser_errposition(cxt->pstate,
+											constraint->location)));
+			if (cxt->ispartitioned)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("exclusion constraints are not supported on partitioned tables"),
 						 parser_errposition(cxt->pstate,
 											constraint->location)));
 			cxt->ixconstraints = lappend(cxt->ixconstraints, constraint);
@@ -728,6 +778,12 @@ transformTableConstraint(CreateStmtContext *cxt, Constraint *constraint)
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("foreign key constraints are not supported on foreign tables"),
+						 parser_errposition(cxt->pstate,
+											constraint->location)));
+			if (cxt->ispartitioned)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("foreign key constraints are not supported on partitioned tables"),
 						 parser_errposition(cxt->pstate,
 											constraint->location)));
 			cxt->fkconstraints = lappend(cxt->fkconstraints, constraint);
@@ -785,7 +841,8 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 		relation->rd_rel->relkind != RELKIND_VIEW &&
 		relation->rd_rel->relkind != RELKIND_MATVIEW &&
 		relation->rd_rel->relkind != RELKIND_COMPOSITE_TYPE &&
-		relation->rd_rel->relkind != RELKIND_FOREIGN_TABLE)
+		relation->rd_rel->relkind != RELKIND_FOREIGN_TABLE &&
+		relation->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is not a table, view, materialized view, composite type, or foreign table",
@@ -925,7 +982,7 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 	}
 
 	/* We use oids if at least one LIKE'ed table has oids. */
-	cxt->hasoids = cxt->hasoids || relation->rd_rel->relhasoids;
+	cxt->hasoids |= relation->rd_rel->relhasoids;
 
 	/*
 	 * Copy CHECK constraints if requested, being careful to adjust attribute
@@ -1876,7 +1933,8 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 				rel = heap_openrv(inh, AccessShareLock);
 				/* check user requested inheritance from valid relkind */
 				if (rel->rd_rel->relkind != RELKIND_RELATION &&
-					rel->rd_rel->relkind != RELKIND_FOREIGN_TABLE)
+					rel->rd_rel->relkind != RELKIND_FOREIGN_TABLE &&
+					rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 					ereport(ERROR,
 							(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 							 errmsg("inherited relation \"%s\" is not a table or foreign table",
@@ -2128,17 +2186,11 @@ transformIndexStmt(Oid relid, IndexStmt *stmt, const char *queryString)
 
 			/*
 			 * transformExpr() should have already rejected subqueries,
-			 * aggregates, and window functions, based on the EXPR_KIND_ for
-			 * an index expression.
+			 * aggregates, window functions, and SRFs, based on the EXPR_KIND_
+			 * for an index expression.
 			 *
-			 * Also reject expressions returning sets; this is for consistency
-			 * with what transformWhereClause() checks for the predicate.
 			 * DefineIndex() will make more checks.
 			 */
-			if (expression_returns_set(ielem->expr))
-				ereport(ERROR,
-						(errcode(ERRCODE_DATATYPE_MISMATCH),
-						 errmsg("index expression cannot return a set")));
 		}
 	}
 
@@ -2548,6 +2600,8 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	cxt.blist = NIL;
 	cxt.alist = NIL;
 	cxt.pkey = NULL;
+	cxt.ispartitioned = (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
+	cxt.partbound = NULL;
 
 	/*
 	 * The only subtypes that currently require parse transformation handling
@@ -2624,17 +2678,24 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 						def->cooked_default =
 							transformExpr(pstate, def->raw_default,
 										  EXPR_KIND_ALTER_COL_TRANSFORM);
-
-						/* it can't return a set */
-						if (expression_returns_set(def->cooked_default))
-							ereport(ERROR,
-									(errcode(ERRCODE_DATATYPE_MISMATCH),
-									 errmsg("transform expression must not return a set")));
 					}
 
 					newcmds = lappend(newcmds, cmd);
 					break;
 				}
+
+			case AT_AttachPartition:
+				{
+					PartitionCmd *partcmd = (PartitionCmd *) cmd->def;
+
+					transformAttachPartition(&cxt, partcmd);
+
+					/* assign transformed values */
+					partcmd->bound = cxt.partbound;
+				}
+
+				newcmds = lappend(newcmds, cmd);
+				break;
 
 			default:
 				newcmds = lappend(newcmds, cmd);
@@ -2999,6 +3060,240 @@ setSchemaName(char *context_schema, char **stmt_schema_name)
 				 errmsg("CREATE specifies a schema (%s) "
 						"different from the one being created (%s)",
 						*stmt_schema_name, context_schema)));
+}
+
+/*
+ * transformAttachPartition
+ *		Analyze ATTACH PARTITION ... FOR VALUES ...
+ */
+static void
+transformAttachPartition(CreateStmtContext *cxt, PartitionCmd *cmd)
+{
+	Relation	parentRel = cxt->rel;
+
+	/*
+	 * We are going to try to validate the partition bound specification
+	 * against the partition key of rel, so it better have one.
+	 */
+	if (parentRel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+				 errmsg("\"%s\" is not partitioned",
+						RelationGetRelationName(parentRel))));
+
+	/* transform the values */
+	Assert(RelationGetPartitionKey(parentRel) != NULL);
+	cxt->partbound = transformPartitionBound(cxt->pstate, parentRel,
+											 cmd->bound);
+}
+
+/*
+ * transformPartitionBound
+ *
+ * Transform partition bound specification
+ */
+Node *
+transformPartitionBound(ParseState *pstate, Relation parent, Node *bound)
+{
+	PartitionBoundSpec *spec = (PartitionBoundSpec *) bound,
+			   *result_spec;
+	PartitionKey key = RelationGetPartitionKey(parent);
+	char		strategy = get_partition_strategy(key);
+	int			partnatts = get_partition_natts(key);
+	List	   *partexprs = get_partition_exprs(key);
+
+	result_spec = copyObject(spec);
+
+	if (strategy == PARTITION_STRATEGY_LIST)
+	{
+		ListCell   *cell;
+		char	   *colname;
+
+		/* Get the only column's name in case we need to output an error */
+		if (key->partattrs[0] != 0)
+			colname = get_relid_attribute_name(RelationGetRelid(parent),
+											   key->partattrs[0]);
+		else
+			colname = deparse_expression((Node *) linitial(partexprs),
+						 deparse_context_for(RelationGetRelationName(parent),
+											 RelationGetRelid(parent)),
+										 false, false);
+
+		if (spec->strategy != PARTITION_STRATEGY_LIST)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+				  errmsg("invalid bound specification for a list partition"),
+					 parser_errposition(pstate, exprLocation(bound))));
+
+		result_spec->listdatums = NIL;
+		foreach(cell, spec->listdatums)
+		{
+			A_Const    *con = (A_Const *) lfirst(cell);
+			Node	   *value;
+			ListCell   *cell2;
+			bool		duplicate;
+
+			value = (Node *) make_const(pstate, &con->val, con->location);
+			value = coerce_to_target_type(pstate,
+										  value, exprType(value),
+										  get_partition_col_typid(key, 0),
+										  get_partition_col_typmod(key, 0),
+										  COERCION_ASSIGNMENT,
+										  COERCE_IMPLICIT_CAST,
+										  -1);
+
+			if (value == NULL)
+				ereport(ERROR,
+						(errcode(ERRCODE_DATATYPE_MISMATCH),
+						 errmsg("specified value cannot be cast to type \"%s\" of column \"%s\"",
+							 format_type_be(get_partition_col_typid(key, 0)),
+								colname),
+						 parser_errposition(pstate,
+											exprLocation((Node *) con))));
+
+			/* Simplify the expression */
+			value = (Node *) expression_planner((Expr *) value);
+
+			/* Don't add to the result if the value is a duplicate */
+			duplicate = false;
+			foreach(cell2, result_spec->listdatums)
+			{
+				Const	   *value2 = (Const *) lfirst(cell2);
+
+				if (equal(value, value2))
+				{
+					duplicate = true;
+					break;
+				}
+			}
+			if (duplicate)
+				continue;
+
+			result_spec->listdatums = lappend(result_spec->listdatums,
+											  value);
+		}
+	}
+	else if (strategy == PARTITION_STRATEGY_RANGE)
+	{
+		ListCell   *cell1,
+				   *cell2;
+		int			i,
+					j;
+		char	   *colname;
+
+		if (spec->strategy != PARTITION_STRATEGY_RANGE)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+				 errmsg("invalid bound specification for a range partition"),
+					 parser_errposition(pstate, exprLocation(bound))));
+
+		Assert(spec->lowerdatums != NIL && spec->upperdatums != NIL);
+
+		if (list_length(spec->lowerdatums) != partnatts)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+					 errmsg("FROM must specify exactly one value per partitioning column")));
+		if (list_length(spec->upperdatums) != partnatts)
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+					 errmsg("TO must specify exactly one value per partitioning column")));
+
+		i = j = 0;
+		result_spec->lowerdatums = result_spec->upperdatums = NIL;
+		forboth(cell1, spec->lowerdatums, cell2, spec->upperdatums)
+		{
+			PartitionRangeDatum *ldatum,
+					   *rdatum;
+			Node	   *value;
+			A_Const    *lcon = NULL,
+					   *rcon = NULL;
+
+			ldatum = (PartitionRangeDatum *) lfirst(cell1);
+			rdatum = (PartitionRangeDatum *) lfirst(cell2);
+			/* Get the column's name in case we need to output an error */
+			if (key->partattrs[i] != 0)
+				colname = get_relid_attribute_name(RelationGetRelid(parent),
+												   key->partattrs[i]);
+			else
+			{
+				colname = deparse_expression((Node *) list_nth(partexprs, j),
+						 deparse_context_for(RelationGetRelationName(parent),
+											 RelationGetRelid(parent)),
+											 false, false);
+				++j;
+			}
+
+			if (!ldatum->infinite)
+				lcon = (A_Const *) ldatum->value;
+			if (!rdatum->infinite)
+				rcon = (A_Const *) rdatum->value;
+
+			if (lcon)
+			{
+				value = (Node *) make_const(pstate, &lcon->val, lcon->location);
+				if (((Const *) value)->constisnull)
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+							 errmsg("cannot specify NULL in range bound")));
+				value = coerce_to_target_type(pstate,
+											  value, exprType(value),
+											  get_partition_col_typid(key, i),
+											get_partition_col_typmod(key, i),
+											  COERCION_ASSIGNMENT,
+											  COERCE_IMPLICIT_CAST,
+											  -1);
+				if (value == NULL)
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("specified value cannot be cast to type \"%s\" of column \"%s\"",
+							 format_type_be(get_partition_col_typid(key, i)),
+									colname),
+							 parser_errposition(pstate, exprLocation((Node *) ldatum))));
+
+				/* Simplify the expression */
+				value = (Node *) expression_planner((Expr *) value);
+				ldatum->value = value;
+			}
+
+			if (rcon)
+			{
+				value = (Node *) make_const(pstate, &rcon->val, rcon->location);
+				if (((Const *) value)->constisnull)
+					ereport(ERROR,
+							(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+							 errmsg("cannot specify NULL in range bound")));
+				value = coerce_to_target_type(pstate,
+											  value, exprType(value),
+											  get_partition_col_typid(key, i),
+											get_partition_col_typmod(key, i),
+											  COERCION_ASSIGNMENT,
+											  COERCE_IMPLICIT_CAST,
+											  -1);
+				if (value == NULL)
+					ereport(ERROR,
+							(errcode(ERRCODE_DATATYPE_MISMATCH),
+							 errmsg("specified value cannot be cast to type \"%s\" of column \"%s\"",
+							 format_type_be(get_partition_col_typid(key, i)),
+									colname),
+							 parser_errposition(pstate, exprLocation((Node *) rdatum))));
+
+				/* Simplify the expression */
+				value = (Node *) expression_planner((Expr *) value);
+				rdatum->value = value;
+			}
+
+			result_spec->lowerdatums = lappend(result_spec->lowerdatums,
+											   copyObject(ldatum));
+			result_spec->upperdatums = lappend(result_spec->upperdatums,
+											   copyObject(rdatum));
+
+			++i;
+		}
+	}
+	else
+		elog(ERROR, "unexpected partition strategy: %d", (int) strategy);
+
+	return (Node *) result_spec;
 }
 
 

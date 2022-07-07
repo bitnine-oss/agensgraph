@@ -4,7 +4,7 @@
  *	  definitions for query plan nodes
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/plannodes.h
@@ -31,13 +31,18 @@
  *
  * The output of the planner is a Plan tree headed by a PlannedStmt node.
  * PlannedStmt holds the "one time" information needed by the executor.
+ *
+ * For simplicity in APIs, we also wrap utility statements in PlannedStmt
+ * nodes; in such cases, commandType == CMD_UTILITY, the statement itself
+ * is in the utilityStmt field, and the rest of the struct is mostly dummy.
+ * (We do use canSetTag, stmt_location, stmt_len, and possibly queryId.)
  * ----------------
  */
 typedef struct PlannedStmt
 {
 	NodeTag		type;
 
-	CmdType		commandType;	/* select|insert|update|delete */
+	CmdType		commandType;	/* select|insert|update|delete|utility */
 
 	uint32		queryId;		/* query identifier (copied from Query) */
 
@@ -60,8 +65,6 @@ typedef struct PlannedStmt
 	/* rtable indexes of target relations for INSERT/UPDATE/DELETE */
 	List	   *resultRelations;	/* integer list of RT indexes, or NIL */
 
-	Node	   *utilityStmt;	/* non-null if this is DECLARE CURSOR */
-
 	List	   *subplans;		/* Plan trees for SubPlan expressions */
 
 	Bitmapset  *rewindPlanIDs;	/* indices of subplans that require REWIND */
@@ -73,6 +76,12 @@ typedef struct PlannedStmt
 	List	   *invalItems;		/* other dependencies, as PlanInvalItems */
 
 	int			nParamExec;		/* number of PARAM_EXEC Params used */
+
+	Node	   *utilityStmt;	/* non-null if this is utility stmt */
+
+	/* statement location in source string (copied from Query) */
+	int			stmt_location;	/* start location, or -1 if unknown */
+	int			stmt_len;		/* length in bytes; 0 means "rest of string" */
 } PlannedStmt;
 
 /* macro for fetching the Plan associated with a SubPlan node */
@@ -166,6 +175,17 @@ typedef struct Result
 	Plan		plan;
 	Node	   *resconstantqual;
 } Result;
+
+/* ----------------
+ *	 ProjectSet node -
+ *		Apply a projection that includes set-returning functions to the
+ *		output tuples of the outer plan.
+ * ----------------
+ */
+typedef struct ProjectSet
+{
+	Plan		plan;
+} ProjectSet;
 
 /* ----------------
  *	 ModifyTable node -
@@ -562,7 +582,8 @@ struct CustomScanMethods;
 typedef struct CustomScan
 {
 	Scan		scan;
-	uint32		flags;			/* mask of CUSTOMPATH_* flags, see relation.h */
+	uint32		flags;			/* mask of CUSTOMPATH_* flags, see
+								 * nodes/extensible.h */
 	List	   *custom_plans;	/* list of Plan nodes, if any */
 	List	   *custom_exprs;	/* expressions that custom code may evaluate */
 	List	   *custom_private; /* private data for custom code */
@@ -717,7 +738,8 @@ typedef struct Agg
 	AttrNumber *grpColIdx;		/* their indexes in the target list */
 	Oid		   *grpOperators;	/* equality operators to compare with */
 	long		numGroups;		/* estimated number of groups in input */
-	/* Note: the planner only provides numGroups in AGG_HASHED case */
+	Bitmapset  *aggParams;		/* IDs of Params used in Aggref inputs */
+	/* Note: planner provides numGroups & aggParams only in AGG_HASHED case */
 	List	   *groupingSets;	/* grouping sets to use */
 	List	   *chain;			/* chained Agg/Sort nodes */
 } Agg;

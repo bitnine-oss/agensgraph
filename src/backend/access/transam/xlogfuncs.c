@@ -7,7 +7,7 @@
  * This file contains WAL control and information functions.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xlogfuncs.c
@@ -18,7 +18,6 @@
 
 #include "access/htup_details.h"
 #include "access/xlog.h"
-#include "access/xlog_fn.h"
 #include "access/xlog_internal.h"
 #include "access/xlogutils.h"
 #include "catalog/catalog.h"
@@ -128,7 +127,7 @@ pg_start_backup(PG_FUNCTION_ARGS)
  * pg_stop_backup: finish taking an on-line backup dump
  *
  * We write an end-of-backup WAL record, and remove the backup label file
- * created by pg_start_backup, creating a backup history file in pg_xlog
+ * created by pg_start_backup, creating a backup history file in pg_wal
  * instead (whence it will immediately be archived). The backup history file
  * contains the same info found in the label file, plus the backup-end time
  * and WAL location. Before 9.0, the backup-end time was read from the backup
@@ -293,7 +292,7 @@ pg_switch_xlog(PG_FUNCTION_ARGS)
 				 errmsg("recovery is in progress"),
 				 errhint("WAL control functions cannot be executed during recovery.")));
 
-	switchpoint = RequestXLogSwitch();
+	switchpoint = RequestXLogSwitch(false);
 
 	/*
 	 * As a convenience, return the WAL location of the switch record

@@ -20,7 +20,7 @@
  * step 2 ...
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/pg_resetxlog/pg_resetxlog.c
@@ -890,7 +890,7 @@ FindEndOfXLOG(void)
 	newXlogSegNo = ControlFile.checkPointCopy.redo / ControlFile.xlog_seg_size;
 
 	/*
-	 * Scan the pg_xlog directory to find existing WAL segment files. We
+	 * Scan the pg_wal directory to find existing WAL segment files. We
 	 * assume any present have been used; in most scenarios this should be
 	 * conservative, because of xlog.c's attempts to pre-create files.
 	 */

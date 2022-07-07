@@ -3,7 +3,7 @@
  * pg_namespace.c
  *	  routines to support manipulation of the pg_namespace relation
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -76,10 +76,8 @@ NamespaceCreate(const char *nspName, Oid ownerId, bool isTemp)
 
 	tup = heap_form_tuple(tupDesc, values, nulls);
 
-	nspoid = simple_heap_insert(nspdesc, tup);
+	nspoid = CatalogTupleInsert(nspdesc, tup);
 	Assert(OidIsValid(nspoid));
-
-	CatalogUpdateIndexes(nspdesc, tup);
 
 	heap_close(nspdesc, RowExclusiveLock);
 

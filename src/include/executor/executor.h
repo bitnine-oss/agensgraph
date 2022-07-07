@@ -4,7 +4,7 @@
  *	  support for the POSTGRES executor module
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/executor.h
@@ -14,6 +14,7 @@
 #ifndef EXECUTOR_H
 #define EXECUTOR_H
 
+#include "catalog/partition.h"
 #include "executor/execdesc.h"
 #include "nodes/parsenodes.h"
 
@@ -69,8 +70,8 @@
  * now it's just a macro invoking the function pointed to by an ExprState
  * node.  Beware of double evaluation of the ExprState argument!
  */
-#define ExecEvalExpr(expr, econtext, isNull, isDone) \
-	((*(expr)->evalfunc) (expr, econtext, isNull, isDone))
+#define ExecEvalExpr(expr, econtext, isNull) \
+	((*(expr)->evalfunc) (expr, econtext, isNull))
 
 
 /* Hook for plugins to get control in ExecutorStart() */
@@ -140,9 +141,9 @@ extern void execTuplesHashPrepare(int numCols,
 extern TupleHashTable BuildTupleHashTable(int numCols, AttrNumber *keyColIdx,
 					FmgrInfo *eqfunctions,
 					FmgrInfo *hashfunctions,
-					long nbuckets, Size entrysize,
+					long nbuckets, Size additionalsize,
 					MemoryContext tablecxt,
-					MemoryContext tempcxt);
+					MemoryContext tempcxt, bool use_variable_hash_iv);
 extern TupleHashEntry LookupTupleHashEntry(TupleHashTable hashtable,
 					 TupleTableSlot *slot,
 					 bool *isnew);
@@ -188,11 +189,13 @@ extern void CheckValidResultRel(Relation resultRel, CmdType operation);
 extern void InitResultRelInfo(ResultRelInfo *resultRelInfo,
 				  Relation resultRelationDesc,
 				  Index resultRelationIndex,
+				  Relation partition_root,
 				  int instrument_options);
 extern ResultRelInfo *ExecGetTriggerResultRel(EState *estate, Oid relid);
 extern bool ExecContextForcesOids(PlanState *planstate, bool *hasoids);
 extern void ExecConstraints(ResultRelInfo *resultRelInfo,
-				TupleTableSlot *slot, EState *estate);
+				TupleTableSlot *slot, TupleTableSlot *orig_slot,
+				EState *estate);
 extern void ExecWithCheckOptions(WCOKind kind, ResultRelInfo *resultRelInfo,
 					 TupleTableSlot *slot, EState *estate);
 extern LockTupleMode ExecUpdateLockMode(EState *estate, ResultRelInfo *relinfo);
@@ -211,6 +214,16 @@ extern void EvalPlanQualSetPlan(EPQState *epqstate,
 extern void EvalPlanQualSetTuple(EPQState *epqstate, Index rti,
 					 HeapTuple tuple);
 extern HeapTuple EvalPlanQualGetTuple(EPQState *epqstate, Index rti);
+extern void ExecSetupPartitionTupleRouting(Relation rel,
+							   PartitionDispatch **pd,
+							   ResultRelInfo **partitions,
+							   TupleConversionMap ***tup_conv_maps,
+							   TupleTableSlot **partition_tuple_slot,
+							   int *num_parted, int *num_partitions);
+extern int ExecFindPartition(ResultRelInfo *resultRelInfo,
+				  PartitionDispatch *pd,
+				  TupleTableSlot *slot,
+				  EState *estate);
 
 #define EvalPlanQualSetSlot(epqstate, slot)  ((epqstate)->origslot = (slot))
 extern void EvalPlanQualFetchRowMarks(EPQState *epqstate);
@@ -239,15 +252,18 @@ extern Tuplestorestate *ExecMakeTableFunctionResult(ExprState *funcexpr,
 							MemoryContext argContext,
 							TupleDesc expectedDesc,
 							bool randomAccess);
+extern Datum ExecMakeFunctionResultSet(FuncExprState *fcache,
+						  ExprContext *econtext,
+						  bool *isNull,
+						  ExprDoneCond *isDone);
 extern Datum ExecEvalExprSwitchContext(ExprState *expression, ExprContext *econtext,
-						  bool *isNull, ExprDoneCond *isDone);
+						  bool *isNull);
 extern ExprState *ExecInitExpr(Expr *node, PlanState *parent);
 extern ExprState *ExecPrepareExpr(Expr *node, EState *estate);
 extern bool ExecQual(List *qual, ExprContext *econtext, bool resultForNull);
 extern int	ExecTargetListLength(List *targetlist);
 extern int	ExecCleanTargetListLength(List *targetlist);
-extern TupleTableSlot *ExecProject(ProjectionInfo *projInfo,
-			ExprDoneCond *isDone);
+extern TupleTableSlot *ExecProject(ProjectionInfo *projInfo);
 
 /*
  * prototypes from functions in execScan.c
@@ -377,6 +393,23 @@ extern void check_exclusion_constraint(Relation heap, Relation index,
 						   ItemPointer tupleid,
 						   Datum *values, bool *isnull,
 						   EState *estate, bool newIndex);
+
+/*
+ * prototypes from functions in execReplication.c
+ */
+extern bool RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
+							 LockTupleMode lockmode,
+							 TupleTableSlot *searchslot,
+							 TupleTableSlot *outslot);
+extern bool RelationFindReplTupleSeq(Relation rel, LockTupleMode lockmode,
+						 TupleTableSlot *searchslot, TupleTableSlot *outslot);
+
+extern void ExecSimpleRelationInsert(EState *estate, TupleTableSlot *slot);
+extern void ExecSimpleRelationUpdate(EState *estate, EPQState *epqstate,
+						 TupleTableSlot *searchslot, TupleTableSlot *slot);
+extern void ExecSimpleRelationDelete(EState *estate, EPQState *epqstate,
+						 TupleTableSlot *searchslot);
+extern void CheckCmdReplicaIdentity(Relation rel, CmdType cmd);
 
 
 #endif   /* EXECUTOR_H  */

@@ -3,7 +3,7 @@
  * float.c
  *	  Functions for the built-in floating-point types.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -241,8 +241,8 @@ float4in(PG_FUNCTION_ARGS)
 	if (*num == '\0')
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("invalid input syntax for type real: \"%s\"",
-						orig_num)));
+				 errmsg("invalid input syntax for type %s: \"%s\"",
+						"real", orig_num)));
 
 	errno = 0;
 	val = strtod(num, &endptr);
@@ -315,8 +315,8 @@ float4in(PG_FUNCTION_ARGS)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					 errmsg("invalid input syntax for type real: \"%s\"",
-							orig_num)));
+					 errmsg("invalid input syntax for type %s: \"%s\"",
+							"real", orig_num)));
 	}
 #ifdef HAVE_BUGGY_SOLARIS_STRTOD
 	else
@@ -339,8 +339,8 @@ float4in(PG_FUNCTION_ARGS)
 	if (*endptr != '\0')
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("invalid input syntax for type real: \"%s\"",
-						orig_num)));
+				 errmsg("invalid input syntax for type %s: \"%s\"",
+						"real", orig_num)));
 
 	/*
 	 * if we get here, we have a legal double, still need to check to see if

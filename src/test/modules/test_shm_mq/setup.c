@@ -5,7 +5,7 @@
  *		number of background workers for shared memory message queue
  *		testing.
  *
- * Copyright (c) 2013-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_shm_mq/setup.c
@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "miscadmin.h"
+#include "pgstat.h"
 #include "postmaster/bgworker.h"
 #include "storage/procsignal.h"
 #include "storage/shm_toc.h"
@@ -279,7 +280,7 @@ wait_for_workers_to_become_ready(worker_state *wstate,
 		}
 
 		/* Wait to be signalled. */
-		WaitLatch(MyLatch, WL_LATCH_SET, 0);
+		WaitLatch(MyLatch, WL_LATCH_SET, 0, PG_WAIT_EXTENSION);
 
 		/* Reset the latch so we don't spin. */
 		ResetLatch(MyLatch);

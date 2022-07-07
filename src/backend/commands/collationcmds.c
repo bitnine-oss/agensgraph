@@ -3,7 +3,7 @@
  * collationcmds.c
  *	  collation-related commands support code
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,7 +14,6 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/xact.h"
 #include "catalog/dependency.h"
@@ -38,7 +37,7 @@
  * CREATE COLLATION
  */
 ObjectAddress
-DefineCollation(List *names, List *parameters)
+DefineCollation(ParseState *pstate, List *names, List *parameters)
 {
 	char	   *collName;
 	Oid			collNamespace;
@@ -62,7 +61,7 @@ DefineCollation(List *names, List *parameters)
 
 	foreach(pl, parameters)
 	{
-		DefElem    *defel = (DefElem *) lfirst(pl);
+		DefElem    *defel = castNode(DefElem, lfirst(pl));
 		DefElem   **defelp;
 
 		if (pg_strcasecmp(defel->defname, "from") == 0)
@@ -78,7 +77,8 @@ DefineCollation(List *names, List *parameters)
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("collation attribute \"%s\" not recognized",
-							defel->defname)));
+							defel->defname),
+					 parser_errposition(pstate, defel->location)));
 			break;
 		}
 
@@ -136,7 +136,11 @@ DefineCollation(List *names, List *parameters)
 							 GetUserId(),
 							 GetDatabaseEncoding(),
 							 collcollate,
-							 collctype);
+							 collctype,
+							 false);
+
+	if (!OidIsValid(newoid))
+		return InvalidObjectAddress;
 
 	ObjectAddressSet(address, CollationRelationId, newoid);
 
@@ -176,4 +180,168 @@ IsThereCollationInNamespace(const char *collname, Oid nspOid)
 				(errcode(ERRCODE_DUPLICATE_OBJECT),
 				 errmsg("collation \"%s\" already exists in schema \"%s\"",
 						collname, get_namespace_name(nspOid))));
+}
+
+
+/*
+ * "Normalize" a locale name, stripping off encoding tags such as
+ * ".utf8" (e.g., "en_US.utf8" -> "en_US", but "br_FR.iso885915@euro"
+ * -> "br_FR@euro").  Return true if a new, different name was
+ * generated.
+ */
+pg_attribute_unused()
+static bool
+normalize_locale_name(char *new, const char *old)
+{
+	char	   *n = new;
+	const char *o = old;
+	bool		changed = false;
+
+	while (*o)
+	{
+		if (*o == '.')
+		{
+			/* skip over encoding tag such as ".utf8" or ".UTF-8" */
+			o++;
+			while ((*o >= 'A' && *o <= 'Z')
+				   || (*o >= 'a' && *o <= 'z')
+				   || (*o >= '0' && *o <= '9')
+				   || (*o == '-'))
+				o++;
+			changed = true;
+		}
+		else
+			*n++ = *o++;
+	}
+	*n = '\0';
+
+	return changed;
+}
+
+
+Datum
+pg_import_system_collations(PG_FUNCTION_ARGS)
+{
+#if defined(HAVE_LOCALE_T) && !defined(WIN32)
+	bool		if_not_exists = PG_GETARG_BOOL(0);
+	Oid			nspid = PG_GETARG_OID(1);
+
+	FILE	   *locale_a_handle;
+	char		localebuf[NAMEDATALEN]; /* we assume ASCII so this is fine */
+	int			count = 0;
+	List	   *aliaslist = NIL;
+	List	   *localelist = NIL;
+	List	   *enclist = NIL;
+	ListCell   *lca,
+			   *lcl,
+			   *lce;
+#endif
+
+	if (!superuser())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 (errmsg("must be superuser to import system collations"))));
+
+#if defined(HAVE_LOCALE_T) && !defined(WIN32)
+	locale_a_handle = OpenPipeStream("locale -a", "r");
+	if (locale_a_handle == NULL)
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not execute command \"%s\": %m",
+						"locale -a")));
+
+	while (fgets(localebuf, sizeof(localebuf), locale_a_handle))
+	{
+		int			i;
+		size_t		len;
+		int			enc;
+		bool		skip;
+		char		alias[NAMEDATALEN];
+
+		len = strlen(localebuf);
+
+		if (len == 0 || localebuf[len - 1] != '\n')
+		{
+			elog(DEBUG1, "locale name too long, skipped: \"%s\"", localebuf);
+			continue;
+		}
+		localebuf[len - 1] = '\0';
+
+		/*
+		 * Some systems have locale names that don't consist entirely of ASCII
+		 * letters (such as "bokm&aring;l" or "fran&ccedil;ais").  This is
+		 * pretty silly, since we need the locale itself to interpret the
+		 * non-ASCII characters. We can't do much with those, so we filter
+		 * them out.
+		 */
+		skip = false;
+		for (i = 0; i < len; i++)
+		{
+			if (IS_HIGHBIT_SET(localebuf[i]))
+			{
+				skip = true;
+				break;
+			}
+		}
+		if (skip)
+		{
+			elog(DEBUG1, "locale name has non-ASCII characters, skipped: \"%s\"", localebuf);
+			continue;
+		}
+
+		enc = pg_get_encoding_from_locale(localebuf, false);
+		if (enc < 0)
+		{
+			/* error message printed by pg_get_encoding_from_locale() */
+			continue;
+		}
+		if (!PG_VALID_BE_ENCODING(enc))
+			continue;			/* ignore locales for client-only encodings */
+		if (enc == PG_SQL_ASCII)
+			continue;			/* C/POSIX are already in the catalog */
+
+		count++;
+
+		CollationCreate(localebuf, nspid, GetUserId(), enc,
+						localebuf, localebuf, if_not_exists);
+
+		CommandCounterIncrement();
+
+		/*
+		 * Generate aliases such as "en_US" in addition to "en_US.utf8" for
+		 * ease of use.  Note that collation names are unique per encoding
+		 * only, so this doesn't clash with "en_US" for LATIN1, say.
+		 *
+		 * However, it might conflict with a name we'll see later in the
+		 * "locale -a" output.  So save up the aliases and try to add them
+		 * after we've read all the output.
+		 */
+		if (normalize_locale_name(alias, localebuf))
+		{
+			aliaslist = lappend(aliaslist, pstrdup(alias));
+			localelist = lappend(localelist, pstrdup(localebuf));
+			enclist = lappend_int(enclist, enc);
+		}
+	}
+
+	ClosePipeStream(locale_a_handle);
+
+	/* Now try to add any aliases we created */
+	forthree(lca, aliaslist, lcl, localelist, lce, enclist)
+	{
+		char	   *alias = (char *) lfirst(lca);
+		char	   *locale = (char *) lfirst(lcl);
+		int			enc = lfirst_int(lce);
+
+		CollationCreate(alias, nspid, GetUserId(), enc,
+						locale, locale, true);
+		CommandCounterIncrement();
+	}
+
+	if (count == 0)
+		ereport(WARNING,
+				(errmsg("no usable system locales were found")));
+#endif   /* not HAVE_LOCALE_T && not WIN32 */
+
+	PG_RETURN_VOID();
 }

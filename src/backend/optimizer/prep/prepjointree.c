@@ -12,7 +12,7 @@
  *		reduce_outer_joins
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -914,6 +914,7 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	subroot->processed_tlist = NIL;
 	subroot->grouping_map = NULL;
 	subroot->minmax_aggs = NIL;
+	subroot->qual_security_level = 0;
 	subroot->hasInheritedTarget = false;
 	subroot->hasRecursion = false;
 	subroot->wt_param_id = -1;
@@ -1189,9 +1190,12 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	 */
 	parse->hasSubLinks |= subquery->hasSubLinks;
 
+	/* If subquery had any RLS conditions, now main query does too */
+	parse->hasRowSecurity |= subquery->hasRowSecurity;
+
 	/*
-	 * subquery won't be pulled up if it hasAggs or hasWindowFuncs, so no work
-	 * needed on those flags
+	 * subquery won't be pulled up if it hasAggs, hasWindowFuncs, or
+	 * hasTargetSRFs, so no work needed on those flags
 	 */
 
 	/*
@@ -1409,8 +1413,7 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 	 */
 	if (!IsA(subquery, Query) ||
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_GRAPHWRITE) ||
-		subquery->utilityStmt != NULL)
+		 subquery->commandType != CMD_GRAPHWRITE))
 		elog(ERROR, "subquery is bogus");
 
 	if (subquery->commandType == CMD_GRAPHWRITE)
@@ -1425,8 +1428,8 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 		return false;
 
 	/*
-	 * Can't pull up a subquery involving grouping, aggregation, sorting,
-	 * limiting, or WITH.  (XXX WITH could possibly be allowed later)
+	 * Can't pull up a subquery involving grouping, aggregation, SRFs,
+	 * sorting, limiting, or WITH.  (XXX WITH could possibly be allowed later)
 	 *
 	 * We also don't pull up a subquery that has explicit FOR UPDATE/SHARE
 	 * clauses, because pullup would cause the locking to occur semantically
@@ -1436,6 +1439,7 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 	 */
 	if (subquery->hasAggs ||
 		subquery->hasWindowFuncs ||
+		subquery->hasTargetSRFs ||
 		subquery->groupClause ||
 		subquery->groupingSets ||
 		subquery->havingQual ||
@@ -1547,15 +1551,6 @@ is_simple_subquery(Query *subquery, RangeTblEntry *rte,
 				return false;
 		}
 	}
-
-	/*
-	 * Don't pull up a subquery that has any set-returning functions in its
-	 * targetlist.  Otherwise we might well wind up inserting set-returning
-	 * functions into places where they mustn't go, such as quals of higher
-	 * queries.  This also ensures deletion of an empty jointree is valid.
-	 */
-	if (expression_returns_set((Node *) subquery->targetList))
-		return false;
 
 	/*
 	 * Don't pull up a subquery that has any volatile functions in its
@@ -1756,8 +1751,7 @@ is_simple_union_all(Query *subquery)
 	/* Let's just make sure it's a valid subselect ... */
 	if (!IsA(subquery, Query) ||
 		(subquery->commandType != CMD_SELECT &&
-		 subquery->commandType != CMD_GRAPHWRITE) ||
-		subquery->utilityStmt != NULL)
+		 subquery->commandType != CMD_GRAPHWRITE)
 		elog(ERROR, "subquery is bogus");
 
 	/* Is it a set-operation query at all? */

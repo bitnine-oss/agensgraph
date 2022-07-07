@@ -3,7 +3,7 @@
  * allpaths.c
  *	  Routines to find possible search paths for processing a query
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -78,7 +78,6 @@ static void set_plain_rel_size(PlannerInfo *root, RelOptInfo *rel,
 static void create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel);
 static void set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 						  RangeTblEntry *rte);
-static bool function_rte_parallel_ok(RangeTblEntry *rte);
 static void set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel,
 					   RangeTblEntry *rte);
 static void set_tablesample_rel_size(PlannerInfo *root, RelOptInfo *rel,
@@ -127,6 +126,7 @@ static void subquery_push_qual(Query *subquery,
 static void recurse_push_qual(Node *setOp, Query *topquery,
 				  RangeTblEntry *rte, Index rti, Node *qual);
 static void remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel);
+static int	compute_parallel_worker(RelOptInfo *rel, BlockNumber pages);
 
 
 /*
@@ -538,12 +538,11 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 			 */
 			if (rte->tablesample != NULL)
 			{
-				Oid			proparallel = func_parallel(rte->tablesample->tsmhandler);
+				char		proparallel = func_parallel(rte->tablesample->tsmhandler);
 
 				if (proparallel != PROPARALLEL_SAFE)
 					return;
-				if (has_parallel_hazard((Node *) rte->tablesample->args,
-										false))
+				if (!is_parallel_safe(root, (Node *) rte->tablesample->args))
 					return;
 			}
 
@@ -596,16 +595,14 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 
 		case RTE_FUNCTION:
 			/* Check for parallel-restricted functions. */
-			if (!function_rte_parallel_ok(rte))
+			if (!is_parallel_safe(root, (Node *) rte->functions))
 				return;
 			break;
 
 		case RTE_VALUES:
-
-			/*
-			 * The data for a VALUES clause is stored in the plan tree itself,
-			 * so scanning it in a worker is fine.
-			 */
+			/* Check for parallel-restricted functions. */
+			if (!is_parallel_safe(root, (Node *) rte->values_lists))
+				return;
 			break;
 
 		case RTE_CTE:
@@ -629,38 +626,18 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 	 * outer join clauses work correctly.  It would likely break equivalence
 	 * classes, too.
 	 */
-	if (has_parallel_hazard((Node *) rel->baserestrictinfo, false))
+	if (!is_parallel_safe(root, (Node *) rel->baserestrictinfo))
 		return;
 
 	/*
 	 * Likewise, if the relation's outputs are not parallel-safe, give up.
 	 * (Usually, they're just Vars, but sometimes they're not.)
 	 */
-	if (has_parallel_hazard((Node *) rel->reltarget->exprs, false))
+	if (!is_parallel_safe(root, (Node *) rel->reltarget->exprs))
 		return;
 
 	/* We have a winner. */
 	rel->consider_parallel = true;
-}
-
-/*
- * Check whether a function RTE is scanning something parallel-restricted.
- */
-static bool
-function_rte_parallel_ok(RangeTblEntry *rte)
-{
-	ListCell   *lc;
-
-	foreach(lc, rte->functions)
-	{
-		RangeTblFunction *rtfunc = (RangeTblFunction *) lfirst(lc);
-
-		Assert(IsA(rtfunc, RangeTblFunction));
-		if (has_parallel_hazard(rtfunc->funcexpr, false))
-			return false;
-	}
-
-	return true;
 }
 
 /*
@@ -702,49 +679,7 @@ create_plain_partial_paths(PlannerInfo *root, RelOptInfo *rel)
 {
 	int			parallel_workers;
 
-	/*
-	 * If the user has set the parallel_workers reloption, use that; otherwise
-	 * select a default number of workers.
-	 */
-	if (rel->rel_parallel_workers != -1)
-		parallel_workers = rel->rel_parallel_workers;
-	else
-	{
-		int			parallel_threshold;
-
-		/*
-		 * If this relation is too small to be worth a parallel scan, just
-		 * return without doing anything ... unless it's an inheritance child.
-		 * In that case, we want to generate a parallel path here anyway.  It
-		 * might not be worthwhile just for this relation, but when combined
-		 * with all of its inheritance siblings it may well pay off.
-		 */
-		if (rel->pages < (BlockNumber) min_parallel_relation_size &&
-			rel->reloptkind == RELOPT_BASEREL)
-			return;
-
-		/*
-		 * Select the number of workers based on the log of the size of the
-		 * relation.  This probably needs to be a good deal more
-		 * sophisticated, but we need something here for now.  Note that the
-		 * upper limit of the min_parallel_relation_size GUC is chosen to
-		 * prevent overflow here.
-		 */
-		parallel_workers = 1;
-		parallel_threshold = Max(min_parallel_relation_size, 1);
-		while (rel->pages >= (BlockNumber) (parallel_threshold * 3))
-		{
-			parallel_workers++;
-			parallel_threshold *= 3;
-			if (parallel_threshold > INT_MAX / 3)
-				break;			/* avoid overflow */
-		}
-	}
-
-	/*
-	 * In no case use more than max_parallel_workers_per_gather workers.
-	 */
-	parallel_workers = Min(parallel_workers, max_parallel_workers_per_gather);
+	parallel_workers = compute_parallel_worker(rel, rel->pages);
 
 	/* If any limit was set to zero, the user doesn't want a parallel scan. */
 	if (parallel_workers <= 0)
@@ -920,9 +855,11 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 		RangeTblEntry *childRTE;
 		RelOptInfo *childrel;
 		List	   *childquals;
-		Node	   *childqual;
+		Index		cq_min_security;
+		bool		have_const_false_cq;
 		ListCell   *parentvars;
 		ListCell   *childvars;
+		ListCell   *lc;
 
 		/* append_rel_list contains all append rels; ignore others */
 		if (appinfo->parent_relid != parentRTindex)
@@ -945,34 +882,120 @@ set_append_rel_size(PlannerInfo *root, RelOptInfo *rel,
 		 * constraint exclusion; so do that first and then check to see if we
 		 * can disregard this child.
 		 *
-		 * As of 8.4, the child rel's targetlist might contain non-Var
-		 * expressions, which means that substitution into the quals could
-		 * produce opportunities for const-simplification, and perhaps even
-		 * pseudoconstant quals.  To deal with this, we strip the RestrictInfo
-		 * nodes, do the substitution, do const-simplification, and then
-		 * reconstitute the RestrictInfo layer.
+		 * The child rel's targetlist might contain non-Var expressions, which
+		 * means that substitution into the quals could produce opportunities
+		 * for const-simplification, and perhaps even pseudoconstant quals.
+		 * Therefore, transform each RestrictInfo separately to see if it
+		 * reduces to a constant or pseudoconstant.  (We must process them
+		 * separately to keep track of the security level of each qual.)
 		 */
-		childquals = get_all_actual_clauses(rel->baserestrictinfo);
-		childquals = (List *) adjust_appendrel_attrs(root,
-													 (Node *) childquals,
-													 appinfo);
-		childqual = eval_const_expressions(root, (Node *)
-										   make_ands_explicit(childquals));
-		if (childqual && IsA(childqual, Const) &&
-			(((Const *) childqual)->constisnull ||
-			 !DatumGetBool(((Const *) childqual)->constvalue)))
+		childquals = NIL;
+		cq_min_security = UINT_MAX;
+		have_const_false_cq = false;
+		foreach(lc, rel->baserestrictinfo)
+		{
+			RestrictInfo *rinfo = (RestrictInfo *) lfirst(lc);
+			Node	   *childqual;
+			ListCell   *lc2;
+
+			Assert(IsA(rinfo, RestrictInfo));
+			childqual = adjust_appendrel_attrs(root,
+											   (Node *) rinfo->clause,
+											   appinfo);
+			childqual = eval_const_expressions(root, childqual);
+			/* check for flat-out constant */
+			if (childqual && IsA(childqual, Const))
+			{
+				if (((Const *) childqual)->constisnull ||
+					!DatumGetBool(((Const *) childqual)->constvalue))
+				{
+					/* Restriction reduces to constant FALSE or NULL */
+					have_const_false_cq = true;
+					break;
+				}
+				/* Restriction reduces to constant TRUE, so drop it */
+				continue;
+			}
+			/* might have gotten an AND clause, if so flatten it */
+			foreach(lc2, make_ands_implicit((Expr *) childqual))
+			{
+				Node	   *onecq = (Node *) lfirst(lc2);
+				bool		pseudoconstant;
+
+				/* check for pseudoconstant (no Vars or volatile functions) */
+				pseudoconstant =
+					!contain_vars_of_level(onecq, 0) &&
+					!contain_volatile_functions(onecq);
+				if (pseudoconstant)
+				{
+					/* tell createplan.c to check for gating quals */
+					root->hasPseudoConstantQuals = true;
+				}
+				/* reconstitute RestrictInfo with appropriate properties */
+				childquals = lappend(childquals,
+									 make_restrictinfo((Expr *) onecq,
+													   rinfo->is_pushed_down,
+													rinfo->outerjoin_delayed,
+													   pseudoconstant,
+													   rinfo->security_level,
+													   NULL, NULL, NULL));
+				/* track minimum security level among child quals */
+				cq_min_security = Min(cq_min_security, rinfo->security_level);
+			}
+		}
+
+		/*
+		 * In addition to the quals inherited from the parent, we might have
+		 * securityQuals associated with this particular child node.
+		 * (Currently this can only happen in appendrels originating from
+		 * UNION ALL; inheritance child tables don't have their own
+		 * securityQuals, see expand_inherited_rtentry().)	Pull any such
+		 * securityQuals up into the baserestrictinfo for the child.  This is
+		 * similar to process_security_barrier_quals() for the parent rel,
+		 * except that we can't make any general deductions from such quals,
+		 * since they don't hold for the whole appendrel.
+		 */
+		if (childRTE->securityQuals)
+		{
+			Index		security_level = 0;
+
+			foreach(lc, childRTE->securityQuals)
+			{
+				List	   *qualset = (List *) lfirst(lc);
+				ListCell   *lc2;
+
+				foreach(lc2, qualset)
+				{
+					Expr	   *qual = (Expr *) lfirst(lc2);
+
+					/* not likely that we'd see constants here, so no check */
+					childquals = lappend(childquals,
+										 make_restrictinfo(qual,
+														   true, false, false,
+														   security_level,
+														   NULL, NULL, NULL));
+					cq_min_security = Min(cq_min_security, security_level);
+				}
+				security_level++;
+			}
+			Assert(security_level <= root->qual_security_level);
+		}
+
+		/*
+		 * OK, we've got all the baserestrictinfo quals for this child.
+		 */
+		childrel->baserestrictinfo = childquals;
+		childrel->baserestrict_min_security = cq_min_security;
+
+		if (have_const_false_cq)
 		{
 			/*
-			 * Restriction reduces to constant FALSE or constant NULL after
+			 * Some restriction clause reduced to constant FALSE or NULL after
 			 * substitution, so this child need not be scanned.
 			 */
 			set_dummy_rel_pathlist(childrel);
 			continue;
 		}
-		childquals = make_ands_implicit((Expr *) childqual);
-		childquals = make_restrictinfos_from_actual_clauses(root,
-															childquals);
-		childrel->baserestrictinfo = childquals;
 
 		if (relation_excluded_by_constraints(root, childrel, childRTE))
 		{
@@ -1736,6 +1759,7 @@ set_subquery_pathlist(PlannerInfo *root, RelOptInfo *rel,
 			}
 		}
 		rel->baserestrictinfo = upperrestrictlist;
+		/* We don't bother recomputing baserestrict_min_security */
 	}
 
 	pfree(safetyInfo.unsafeColumns);
@@ -2279,6 +2303,12 @@ standard_join_search(PlannerInfo *root, int levels_needed, List *initial_rels)
  * thereby changing the partition contents and thus the window functions'
  * results for rows that remain.
  *
+ * 5. If the subquery contains any set-returning functions in its targetlist,
+ * we cannot push volatile quals into it.  That would push them below the SRFs
+ * and thereby change the number of times they are evaluated.  Also, a
+ * volatile qual could succeed for some SRF output rows and fail for others,
+ * a behavior that cannot occur if it's evaluated before SRF expansion.
+ *
  * In addition, we make several checks on the subquery's output columns to see
  * if it is safe to reference them in pushed-down quals.  If output column k
  * is found to be unsafe to reference, we set safetyInfo->unsafeColumns[k]
@@ -2323,8 +2353,10 @@ subquery_is_pushdown_safe(Query *subquery, Query *topquery,
 	if (subquery->limitOffset != NULL || subquery->limitCount != NULL)
 		return false;
 
-	/* Check points 3 and 4 */
-	if (subquery->distinctClause || subquery->hasWindowFuncs)
+	/* Check points 3, 4, and 5 */
+	if (subquery->distinctClause ||
+		subquery->hasWindowFuncs ||
+		subquery->hasTargetSRFs)
 		safetyInfo->unsafeVolatile = true;
 
 	/*
@@ -2447,7 +2479,8 @@ check_output_expressions(Query *subquery, pushdown_safety_info *safetyInfo)
 			continue;
 
 		/* Functions returning sets are unsafe (point 1) */
-		if (expression_returns_set((Node *) tle->expr))
+		if (subquery->hasTargetSRFs &&
+			expression_returns_set((Node *) tle->expr))
 		{
 			safetyInfo->unsafeColumns[tle->resno] = true;
 			continue;
@@ -2656,46 +2689,6 @@ subquery_push_qual(Query *subquery, RangeTblEntry *rte, Index rti, Node *qual)
 		recurse_push_qual(subquery->setOperations, subquery,
 						  rte, rti, qual);
 	}
-	else if (IsA(qual, CurrentOfExpr))
-	{
-		/*
-		 * This is possible when a WHERE CURRENT OF expression is applied to a
-		 * table with row-level security.  In that case, the subquery should
-		 * contain precisely one rtable entry for the table, and we can safely
-		 * push the expression down into the subquery.  This will cause a TID
-		 * scan subquery plan to be generated allowing the target relation to
-		 * be updated.
-		 *
-		 * Someday we might also be able to use a WHERE CURRENT OF expression
-		 * on a view, but currently the rewriter prevents that, so we should
-		 * never see any other case here, but generate sane error messages in
-		 * case it does somehow happen.
-		 */
-		if (subquery->rtable == NIL)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("WHERE CURRENT OF is not supported on a view with no underlying relation")));
-
-		if (list_length(subquery->rtable) > 1)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("WHERE CURRENT OF is not supported on a view with more than one underlying relation")));
-
-		if (subquery->hasAggs || subquery->groupClause || subquery->groupingSets || subquery->havingQual)
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("WHERE CURRENT OF is not supported on a view with grouping or aggregation")));
-
-		/*
-		 * Adjust the CURRENT OF expression to refer to the underlying table
-		 * in the subquery, and attach it to the subquery's WHERE clause.
-		 */
-		qual = copyObject(qual);
-		((CurrentOfExpr *) qual)->cvarno = 1;
-
-		subquery->jointree->quals =
-			make_and_qual(subquery->jointree->quals, qual);
-	}
 	else
 	{
 		/*
@@ -2724,7 +2717,7 @@ subquery_push_qual(Query *subquery, RangeTblEntry *rte, Index rti, Node *qual)
 				make_and_qual(subquery->jointree->quals, qual);
 
 		/*
-		 * We need not change the subquery's hasAggs or hasSublinks flags,
+		 * We need not change the subquery's hasAggs or hasSubLinks flags,
 		 * since we can't be pushing down any aggregates that weren't there
 		 * before, and we don't push down subselects at all.
 		 */
@@ -2869,7 +2862,8 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 		 * If it contains a set-returning function, we can't remove it since
 		 * that could change the number of rows returned by the subquery.
 		 */
-		if (expression_returns_set(texpr))
+		if (subquery->hasTargetSRFs &&
+			expression_returns_set(texpr))
 			continue;
 
 		/*
@@ -2889,6 +2883,64 @@ remove_unused_subquery_outputs(Query *subquery, RelOptInfo *rel)
 										   exprCollation(texpr));
 	}
 }
+
+/*
+ * Compute the number of parallel workers that should be used to scan a
+ * relation.  "pages" is the number of pages from the relation that we
+ * expect to scan.
+ */
+static int
+compute_parallel_worker(RelOptInfo *rel, BlockNumber pages)
+{
+	int			parallel_workers;
+
+	/*
+	 * If the user has set the parallel_workers reloption, use that; otherwise
+	 * select a default number of workers.
+	 */
+	if (rel->rel_parallel_workers != -1)
+		parallel_workers = rel->rel_parallel_workers;
+	else
+	{
+		int			parallel_threshold;
+
+		/*
+		 * If this relation is too small to be worth a parallel scan, just
+		 * return without doing anything ... unless it's an inheritance child.
+		 * In that case, we want to generate a parallel path here anyway.  It
+		 * might not be worthwhile just for this relation, but when combined
+		 * with all of its inheritance siblings it may well pay off.
+		 */
+		if (pages < (BlockNumber) min_parallel_relation_size &&
+			rel->reloptkind == RELOPT_BASEREL)
+			return 0;
+
+		/*
+		 * Select the number of workers based on the log of the size of the
+		 * relation.  This probably needs to be a good deal more
+		 * sophisticated, but we need something here for now.  Note that the
+		 * upper limit of the min_parallel_relation_size GUC is chosen to
+		 * prevent overflow here.
+		 */
+		parallel_workers = 1;
+		parallel_threshold = Max(min_parallel_relation_size, 1);
+		while (pages >= (BlockNumber) (parallel_threshold * 3))
+		{
+			parallel_workers++;
+			parallel_threshold *= 3;
+			if (parallel_threshold > INT_MAX / 3)
+				break;			/* avoid overflow */
+		}
+	}
+
+	/*
+	 * In no case use more than max_parallel_workers_per_gather workers.
+	 */
+	parallel_workers = Min(parallel_workers, max_parallel_workers_per_gather);
+
+	return parallel_workers;
+}
+
 
 /*****************************************************************************
  *			DEBUG SUPPORT
@@ -3015,6 +3067,10 @@ print_path(PlannerInfo *root, Path *path, int indent)
 		case T_ProjectionPath:
 			ptype = "Projection";
 			subpath = ((ProjectionPath *) path)->subpath;
+			break;
+		case T_ProjectSetPath:
+			ptype = "ProjectSet";
+			subpath = ((ProjectSetPath *) path)->subpath;
 			break;
 		case T_SortPath:
 			ptype = "Sort";

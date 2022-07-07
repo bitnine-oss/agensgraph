@@ -36,12 +36,12 @@
  *
  * As ever, Windows requires its own implementation.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
  * IDENTIFICATION
- *	  src/backend/storage/ipc/dsm.c
+ *	  src/backend/storage/ipc/dsm_impl.c
  *
  *-------------------------------------------------------------------------
  */
@@ -671,6 +671,7 @@ dsm_impl_windows(dsm_op op, dsm_handle handle, Size request_size,
 	{
 		DWORD		size_high;
 		DWORD		size_low;
+		DWORD		errcode;
 
 		/* Shifts >= the width of the type are undefined. */
 #ifdef _WIN64
@@ -680,31 +681,38 @@ dsm_impl_windows(dsm_op op, dsm_handle handle, Size request_size,
 #endif
 		size_low = (DWORD) request_size;
 
+		/* CreateFileMapping might not clear the error code on success */
+		SetLastError(0);
+
 		hmap = CreateFileMapping(INVALID_HANDLE_VALUE,	/* Use the pagefile */
 								 NULL,	/* Default security attrs */
 								 PAGE_READWRITE,		/* Memory is read/write */
 								 size_high,		/* Upper 32 bits of size */
 								 size_low,		/* Lower 32 bits of size */
 								 name);
-		if (!hmap)
-		{
-			_dosmaperr(GetLastError());
-			ereport(elevel,
-					(errcode_for_dynamic_shared_memory(),
-				  errmsg("could not create shared memory segment \"%s\": %m",
-						 name)));
-			return false;
-		}
-		_dosmaperr(GetLastError());
-		if (errno == EEXIST)
+
+		errcode = GetLastError();
+		if (errcode == ERROR_ALREADY_EXISTS || errcode == ERROR_ACCESS_DENIED)
 		{
 			/*
 			 * On Windows, when the segment already exists, a handle for the
 			 * existing segment is returned.  We must close it before
-			 * returning.  We don't do _dosmaperr here, so errno won't be
-			 * modified.
+			 * returning.  However, if the existing segment is created by a
+			 * service, then it returns ERROR_ACCESS_DENIED. We don't do
+			 * _dosmaperr here, so errno won't be modified.
 			 */
-			CloseHandle(hmap);
+			if (hmap)
+				CloseHandle(hmap);
+			return false;
+		}
+
+		if (!hmap)
+		{
+			_dosmaperr(errcode);
+			ereport(elevel,
+					(errcode_for_dynamic_shared_memory(),
+				  errmsg("could not create shared memory segment \"%s\": %m",
+						 name)));
 			return false;
 		}
 	}
@@ -987,8 +995,8 @@ dsm_impl_mmap(dsm_op op, dsm_handle handle, Size request_size,
 #endif
 
 /*
- * Implementation-specific actions that must be performed when a segment
- * is to be preserved until postmaster shutdown.
+ * Implementation-specific actions that must be performed when a segment is to
+ * be preserved even when no backend has it attached.
  *
  * Except on Windows, we don't need to do anything at all.  But since Windows
  * cleans up segments automatically when no references remain, we duplicate
@@ -996,7 +1004,8 @@ dsm_impl_mmap(dsm_op op, dsm_handle handle, Size request_size,
  * do anything to receive the handle; Windows transfers it automatically.
  */
 void
-dsm_impl_pin_segment(dsm_handle handle, void *impl_private)
+dsm_impl_pin_segment(dsm_handle handle, void *impl_private,
+					 void **impl_private_pm_handle)
 {
 	switch (dynamic_shared_memory_type)
 	{
@@ -1018,6 +1027,56 @@ dsm_impl_pin_segment(dsm_handle handle, void *impl_private)
 						  errmsg("could not duplicate handle for \"%s\": %m",
 								 name)));
 				}
+
+				/*
+				 * Here, we remember the handle that we created in the
+				 * postmaster process.  This handle isn't actually usable in
+				 * any process other than the postmaster, but that doesn't
+				 * matter.  We're just holding onto it so that, if the segment
+				 * is unpinned, dsm_impl_unpin_segment can close it.
+				 */
+				*impl_private_pm_handle = hmap;
+				break;
+			}
+#endif
+		default:
+			break;
+	}
+}
+
+/*
+ * Implementation-specific actions that must be performed when a segment is no
+ * longer to be preserved, so that it will be cleaned up when all backends
+ * have detached from it.
+ *
+ * Except on Windows, we don't need to do anything at all.  For Windows, we
+ * close the extra handle that dsm_impl_pin_segment created in the
+ * postmaster's process space.
+ */
+void
+dsm_impl_unpin_segment(dsm_handle handle, void **impl_private)
+{
+	switch (dynamic_shared_memory_type)
+	{
+#ifdef USE_DSM_WINDOWS
+		case DSM_IMPL_WINDOWS:
+			{
+				if (*impl_private &&
+					!DuplicateHandle(PostmasterHandle, *impl_private,
+									 NULL, NULL, 0, FALSE,
+									 DUPLICATE_CLOSE_SOURCE))
+				{
+					char		name[64];
+
+					snprintf(name, 64, "%s.%u", SEGMENT_NAME_PREFIX, handle);
+					_dosmaperr(GetLastError());
+					ereport(ERROR,
+							(errcode_for_dynamic_shared_memory(),
+						  errmsg("could not duplicate handle for \"%s\": %m",
+								 name)));
+				}
+
+				*impl_private = NULL;
 				break;
 			}
 #endif

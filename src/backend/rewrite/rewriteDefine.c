@@ -3,7 +3,7 @@
  * rewriteDefine.c
  *	  routines for defining a rewrite rule
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -124,7 +124,7 @@ InsertRule(char *rulname,
 		tup = heap_modify_tuple(oldtup, RelationGetDescr(pg_rewrite_desc),
 								values, nulls, replaces);
 
-		simple_heap_update(pg_rewrite_desc, &tup->t_self, tup);
+		CatalogTupleUpdate(pg_rewrite_desc, &tup->t_self, tup);
 
 		ReleaseSysCache(oldtup);
 
@@ -135,11 +135,9 @@ InsertRule(char *rulname,
 	{
 		tup = heap_form_tuple(pg_rewrite_desc->rd_att, values, nulls);
 
-		rewriteObjectId = simple_heap_insert(pg_rewrite_desc, tup);
+		rewriteObjectId = CatalogTupleInsert(pg_rewrite_desc, tup);
 	}
 
-	/* Need to update indexes in either case */
-	CatalogUpdateIndexes(pg_rewrite_desc, tup);
 
 	heap_freetuple(tup);
 
@@ -173,7 +171,7 @@ InsertRule(char *rulname,
 	if (event_qual != NULL)
 	{
 		/* Find query containing OLD/NEW rtable entries */
-		Query	   *qry = (Query *) linitial(action);
+		Query	   *qry = castNode(Query, linitial(action));
 
 		qry = getInsertSelectQuery(qry, NULL);
 		recordDependencyOnExpr(&myself, event_qual, qry->rtable,
@@ -261,7 +259,8 @@ DefineQueryRewrite(char *rulename,
 	 */
 	if (event_relation->rd_rel->relkind != RELKIND_RELATION &&
 		event_relation->rd_rel->relkind != RELKIND_MATVIEW &&
-		event_relation->rd_rel->relkind != RELKIND_VIEW)
+		event_relation->rd_rel->relkind != RELKIND_VIEW &&
+		event_relation->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is not a table or view",
@@ -285,7 +284,7 @@ DefineQueryRewrite(char *rulename,
 	 */
 	foreach(l, action)
 	{
-		query = (Query *) lfirst(l);
+		query = castNode(Query, lfirst(l));
 		if (query->resultRelation == 0)
 			continue;
 		/* Don't be fooled by INSERT/SELECT */
@@ -327,10 +326,9 @@ DefineQueryRewrite(char *rulename,
 		/*
 		 * ... the one action must be a SELECT, ...
 		 */
-		query = (Query *) linitial(action);
+		query = castNode(Query, linitial(action));
 		if (!is_instead ||
-			query->commandType != CMD_SELECT ||
-			query->utilityStmt != NULL)
+			query->commandType != CMD_SELECT)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("rules on SELECT must have action INSTEAD SELECT")));
@@ -482,7 +480,7 @@ DefineQueryRewrite(char *rulename,
 
 		foreach(l, action)
 		{
-			query = (Query *) lfirst(l);
+			query = castNode(Query, lfirst(l));
 
 			if (!query->returningList)
 				continue;
@@ -613,8 +611,7 @@ DefineQueryRewrite(char *rulename,
 		classForm->relminmxid = InvalidMultiXactId;
 		classForm->relreplident = REPLICA_IDENTITY_NOTHING;
 
-		simple_heap_update(relationRelation, &classTup->t_self, classTup);
-		CatalogUpdateIndexes(relationRelation, classTup);
+		CatalogTupleUpdate(relationRelation, &classTup->t_self, classTup);
 
 		heap_freetuple(classTup);
 		heap_close(relationRelation, RowExclusiveLock);
@@ -813,7 +810,7 @@ setRuleCheckAsUser_Query(Query *qry, Oid userid)
 	{
 		CommonTableExpr *cte = (CommonTableExpr *) lfirst(l);
 
-		setRuleCheckAsUser_Query((Query *) cte->ctequery, userid);
+		setRuleCheckAsUser_Query(castNode(Query, cte->ctequery), userid);
 	}
 
 	/* If there are sublinks, search for them and process their RTEs */
@@ -866,10 +863,7 @@ EnableDisableRule(Relation rel, const char *rulename,
 	{
 		((Form_pg_rewrite) GETSTRUCT(ruletup))->ev_enabled =
 			CharGetDatum(fires_when);
-		simple_heap_update(pg_rewrite_desc, &ruletup->t_self, ruletup);
-
-		/* keep system catalog indexes current */
-		CatalogUpdateIndexes(pg_rewrite_desc, ruletup);
+		CatalogTupleUpdate(pg_rewrite_desc, &ruletup->t_self, ruletup);
 
 		changed = true;
 	}
@@ -985,10 +979,7 @@ RenameRewriteRule(RangeVar *relation, const char *oldName,
 	/* OK, do the update */
 	namestrcpy(&(ruleform->rulename), newName);
 
-	simple_heap_update(pg_rewrite_desc, &ruletup->t_self, ruletup);
-
-	/* keep system catalog indexes current */
-	CatalogUpdateIndexes(pg_rewrite_desc, ruletup);
+	CatalogTupleUpdate(pg_rewrite_desc, &ruletup->t_self, ruletup);
 
 	heap_freetuple(ruletup);
 	heap_close(pg_rewrite_desc, RowExclusiveLock);

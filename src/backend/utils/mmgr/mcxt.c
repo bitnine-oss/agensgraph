@@ -9,7 +9,7 @@
  * context's MemoryContextMethods struct.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -91,16 +91,13 @@ MemoryContextInit(void)
 	AssertState(TopMemoryContext == NULL);
 
 	/*
-	 * Initialize TopMemoryContext as an AllocSetContext with slow growth rate
-	 * --- we don't really expect much to be allocated in it.
-	 *
-	 * (There is special-case code in MemoryContextCreate() for this call.)
+	 * First, initialize TopMemoryContext, which will hold the MemoryContext
+	 * nodes for all other contexts.  (There is special-case code in
+	 * MemoryContextCreate() to handle this call.)
 	 */
 	TopMemoryContext = AllocSetContextCreate((MemoryContext) NULL,
 											 "TopMemoryContext",
-											 0,
-											 8 * 1024,
-											 8 * 1024);
+											 ALLOCSET_DEFAULT_SIZES);
 
 	/*
 	 * Not having any other place to point CurrentMemoryContext, make it point

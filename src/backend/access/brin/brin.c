@@ -4,7 +4,7 @@
  *
  * See src/backend/access/brin/README for details.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -28,6 +28,7 @@
 #include "pgstat.h"
 #include "storage/bufmgr.h"
 #include "storage/freespace.h"
+#include "utils/builtins.h"
 #include "utils/index_selfuncs.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
@@ -111,6 +112,9 @@ brinhandler(PG_FUNCTION_ARGS)
 	amroutine->amendscan = brinendscan;
 	amroutine->ammarkpos = NULL;
 	amroutine->amrestrpos = NULL;
+	amroutine->amestimateparallelscan = NULL;
+	amroutine->aminitparallelscan = NULL;
+	amroutine->amparallelrescan = NULL;
 
 	PG_RETURN_POINTER(amroutine);
 }
@@ -165,9 +169,7 @@ brininsert(Relation idxRel, Datum *values, bool *nulls,
 			bdesc = brin_build_desc(idxRel);
 			tupcxt = AllocSetContextCreate(CurrentMemoryContext,
 										   "brininsert cxt",
-										   ALLOCSET_DEFAULT_MINSIZE,
-										   ALLOCSET_DEFAULT_INITSIZE,
-										   ALLOCSET_DEFAULT_MAXSIZE);
+										   ALLOCSET_DEFAULT_SIZES);
 			oldcxt = MemoryContextSwitchTo(tupcxt);
 		}
 
@@ -347,9 +349,7 @@ bringetbitmap(IndexScanDesc scan, TIDBitmap *tbm)
 	 */
 	perRangeCxt = AllocSetContextCreate(CurrentMemoryContext,
 										"bringetbitmap cxt",
-										ALLOCSET_DEFAULT_MINSIZE,
-										ALLOCSET_DEFAULT_INITSIZE,
-										ALLOCSET_DEFAULT_MAXSIZE);
+										ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(perRangeCxt);
 
 	/*
@@ -856,9 +856,7 @@ brin_build_desc(Relation rel)
 
 	cxt = AllocSetContextCreate(CurrentMemoryContext,
 								"brin desc cxt",
-								ALLOCSET_SMALL_INITSIZE,
-								ALLOCSET_SMALL_MINSIZE,
-								ALLOCSET_SMALL_MAXSIZE);
+								ALLOCSET_SMALL_SIZES);
 	oldcxt = MemoryContextSwitchTo(cxt);
 	tupdesc = RelationGetDescr(rel);
 
@@ -1169,9 +1167,7 @@ union_tuples(BrinDesc *bdesc, BrinMemTuple *a, BrinTuple *b)
 	/* Use our own memory context to avoid retail pfree */
 	cxt = AllocSetContextCreate(CurrentMemoryContext,
 								"brin union",
-								ALLOCSET_DEFAULT_MINSIZE,
-								ALLOCSET_DEFAULT_INITSIZE,
-								ALLOCSET_DEFAULT_MAXSIZE);
+								ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(cxt);
 	db = brin_deform_tuple(bdesc, b);
 	MemoryContextSwitchTo(oldcxt);

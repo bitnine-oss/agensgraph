@@ -4,7 +4,7 @@
  *	  Definition of (and support for) access control list data structures.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/acl.h
@@ -26,6 +26,7 @@
 
 #include "access/htup.h"
 #include "nodes/parsenodes.h"
+#include "parser/parse_node.h"
 #include "utils/array.h"
 #include "utils/snapshot.h"
 
@@ -198,6 +199,8 @@ typedef enum AclObjectKind
 	ACL_KIND_FOREIGN_SERVER,	/* pg_foreign_server */
 	ACL_KIND_EVENT_TRIGGER,		/* pg_event_trigger */
 	ACL_KIND_EXTENSION,			/* pg_extension */
+	ACL_KIND_PUBLICATION,		/* pg_publication */
+	ACL_KIND_SUBSCRIPTION,		/* pg_subscription */
 	ACL_KIND_GRAPH,				/* ag_graph */
 	ACL_KIND_LABEL,				/* ag_label */
 	MAX_ACL_KIND				/* MUST BE LAST */
@@ -232,10 +235,10 @@ extern bool is_admin_of_role(Oid member, Oid role);
 extern void check_is_member_of_role(Oid member, Oid role);
 extern Oid	get_role_oid(const char *rolename, bool missing_ok);
 extern Oid	get_role_oid_or_public(const char *rolename);
-extern Oid	get_rolespec_oid(const Node *node, bool missing_ok);
-extern void check_rolespec_name(const Node *node, const char *detail_msg);
-extern HeapTuple get_rolespec_tuple(const Node *node);
-extern char *get_rolespec_name(const Node *node);
+extern Oid	get_rolespec_oid(const RoleSpec *role, bool missing_ok);
+extern void check_rolespec_name(const RoleSpec *role, const char *detail_msg);
+extern HeapTuple get_rolespec_tuple(const RoleSpec *role);
+extern char *get_rolespec_name(const RoleSpec *role);
 
 extern void select_best_grantor(Oid roleId, AclMode privileges,
 					const Acl *acl, Oid ownerId,
@@ -244,24 +247,10 @@ extern void select_best_grantor(Oid roleId, AclMode privileges,
 extern void initialize_acl(void);
 
 /*
- * SQL functions (from acl.c)
- */
-extern Datum aclitemin(PG_FUNCTION_ARGS);
-extern Datum aclitemout(PG_FUNCTION_ARGS);
-extern Datum aclinsert(PG_FUNCTION_ARGS);
-extern Datum aclremove(PG_FUNCTION_ARGS);
-extern Datum aclcontains(PG_FUNCTION_ARGS);
-extern Datum makeaclitem(PG_FUNCTION_ARGS);
-extern Datum aclitem_eq(PG_FUNCTION_ARGS);
-extern Datum hash_aclitem(PG_FUNCTION_ARGS);
-extern Datum acldefault_sql(PG_FUNCTION_ARGS);
-extern Datum aclexplode(PG_FUNCTION_ARGS);
-
-/*
  * prototypes for functions in aclchk.c
  */
 extern void ExecuteGrantStmt(GrantStmt *stmt);
-extern void ExecAlterDefaultPrivilegesStmt(AlterDefaultPrivilegesStmt *stmt);
+extern void ExecAlterDefaultPrivilegesStmt(ParseState *pstate, AlterDefaultPrivilegesStmt *stmt);
 
 extern void RemoveRoleFromObjectACL(Oid roleid, Oid classid, Oid objid);
 extern void RemoveDefaultACLById(Oid defaclOid);
@@ -313,6 +302,10 @@ extern void aclcheck_error_col(AclResult aclerr, AclObjectKind objectkind,
 
 extern void aclcheck_error_type(AclResult aclerr, Oid typeOid);
 
+extern void recordExtObjInitPriv(Oid objoid, Oid classoid);
+extern void removeExtObjInitPriv(Oid objoid, Oid classoid);
+
+
 /* ownercheck routines just return true (owner) or false (not) */
 extern bool pg_class_ownercheck(Oid class_oid, Oid roleid);
 extern bool pg_type_ownercheck(Oid type_oid, Oid roleid);
@@ -333,8 +326,11 @@ extern bool pg_foreign_data_wrapper_ownercheck(Oid srv_oid, Oid roleid);
 extern bool pg_foreign_server_ownercheck(Oid srv_oid, Oid roleid);
 extern bool pg_event_trigger_ownercheck(Oid et_oid, Oid roleid);
 extern bool pg_extension_ownercheck(Oid ext_oid, Oid roleid);
+extern bool pg_publication_ownercheck(Oid pub_oid, Oid roleid);
+extern bool pg_subscription_ownercheck(Oid sub_oid, Oid roleid);
 extern bool has_createrole_privilege(Oid roleid);
 extern bool has_bypassrls_privilege(Oid roleid);
+
 extern bool ag_graph_ownercheck(Oid graphid, Oid roleid);
 extern bool ag_label_ownercheck(Oid laboid, Oid roleid);
 

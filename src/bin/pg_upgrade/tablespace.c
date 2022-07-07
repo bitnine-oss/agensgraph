@@ -3,7 +3,7 @@
  *
  *	tablespace functions
  *
- *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/tablespace.c
  */
 
@@ -90,8 +90,8 @@ get_tablespace_paths(void)
 							  os_info.old_tablespaces[tblnum]);
 			else
 				report_status(PG_FATAL,
-						   "cannot stat() tablespace directory \"%s\": %s\n",
-							os_info.old_tablespaces[tblnum], getErrorText());
+						  "could not stat tablespace directory \"%s\": %s\n",
+						   os_info.old_tablespaces[tblnum], strerror(errno));
 		}
 		if (!S_ISDIR(statBuf.st_mode))
 			report_status(PG_FATAL,

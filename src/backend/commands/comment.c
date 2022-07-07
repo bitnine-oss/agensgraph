@@ -4,7 +4,7 @@
  *
  * PostgreSQL object comments utility code.
  *
- * Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/commands/comment.c
@@ -194,12 +194,12 @@ CreateComments(Oid oid, Oid classoid, int32 subid, char *comment)
 		/* Found the old tuple, so delete or update it */
 
 		if (comment == NULL)
-			simple_heap_delete(description, &oldtuple->t_self);
+			CatalogTupleDelete(description, &oldtuple->t_self);
 		else
 		{
 			newtuple = heap_modify_tuple(oldtuple, RelationGetDescr(description), values,
 										 nulls, replaces);
-			simple_heap_update(description, &oldtuple->t_self, newtuple);
+			CatalogTupleUpdate(description, &oldtuple->t_self, newtuple);
 		}
 
 		break;					/* Assume there can be only one match */
@@ -213,15 +213,11 @@ CreateComments(Oid oid, Oid classoid, int32 subid, char *comment)
 	{
 		newtuple = heap_form_tuple(RelationGetDescr(description),
 								   values, nulls);
-		simple_heap_insert(description, newtuple);
+		CatalogTupleInsert(description, newtuple);
 	}
 
-	/* Update indexes, if necessary */
 	if (newtuple != NULL)
-	{
-		CatalogUpdateIndexes(description, newtuple);
 		heap_freetuple(newtuple);
-	}
 
 	/* Done */
 
@@ -288,12 +284,12 @@ CreateSharedComments(Oid oid, Oid classoid, char *comment)
 		/* Found the old tuple, so delete or update it */
 
 		if (comment == NULL)
-			simple_heap_delete(shdescription, &oldtuple->t_self);
+			CatalogTupleDelete(shdescription, &oldtuple->t_self);
 		else
 		{
 			newtuple = heap_modify_tuple(oldtuple, RelationGetDescr(shdescription),
 										 values, nulls, replaces);
-			simple_heap_update(shdescription, &oldtuple->t_self, newtuple);
+			CatalogTupleUpdate(shdescription, &oldtuple->t_self, newtuple);
 		}
 
 		break;					/* Assume there can be only one match */
@@ -307,15 +303,11 @@ CreateSharedComments(Oid oid, Oid classoid, char *comment)
 	{
 		newtuple = heap_form_tuple(RelationGetDescr(shdescription),
 								   values, nulls);
-		simple_heap_insert(shdescription, newtuple);
+		CatalogTupleInsert(shdescription, newtuple);
 	}
 
-	/* Update indexes, if necessary */
 	if (newtuple != NULL)
-	{
-		CatalogUpdateIndexes(shdescription, newtuple);
 		heap_freetuple(newtuple);
-	}
 
 	/* Done */
 
@@ -366,7 +358,7 @@ DeleteComments(Oid oid, Oid classoid, int32 subid)
 							NULL, nkeys, skey);
 
 	while ((oldtuple = systable_getnext(sd)) != NULL)
-		simple_heap_delete(description, &oldtuple->t_self);
+		CatalogTupleDelete(description, &oldtuple->t_self);
 
 	/* Done */
 
@@ -402,7 +394,7 @@ DeleteSharedComments(Oid oid, Oid classoid)
 							NULL, 2, skey);
 
 	while ((oldtuple = systable_getnext(sd)) != NULL)
-		simple_heap_delete(shdescription, &oldtuple->t_self);
+		CatalogTupleDelete(shdescription, &oldtuple->t_self);
 
 	/* Done */
 

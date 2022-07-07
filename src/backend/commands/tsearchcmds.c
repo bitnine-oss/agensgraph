@@ -4,7 +4,7 @@
  *
  *	  Routines for tsearch manipulation commands
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -271,9 +271,7 @@ DefineTSParser(List *names, List *parameters)
 
 	tup = heap_form_tuple(prsRel->rd_att, values, nulls);
 
-	prsOid = simple_heap_insert(prsRel, tup);
-
-	CatalogUpdateIndexes(prsRel, tup);
+	prsOid = CatalogTupleInsert(prsRel, tup);
 
 	address = makeParserDependencies(tup);
 
@@ -303,7 +301,7 @@ RemoveTSParserById(Oid prsId)
 	if (!HeapTupleIsValid(tup))
 		elog(ERROR, "cache lookup failed for text search parser %u", prsId);
 
-	simple_heap_delete(relation, &tup->t_self);
+	CatalogTupleDelete(relation, &tup->t_self);
 
 	ReleaseSysCache(tup);
 
@@ -482,9 +480,7 @@ DefineTSDictionary(List *names, List *parameters)
 
 	tup = heap_form_tuple(dictRel->rd_att, values, nulls);
 
-	dictOid = simple_heap_insert(dictRel, tup);
-
-	CatalogUpdateIndexes(dictRel, tup);
+	dictOid = CatalogTupleInsert(dictRel, tup);
 
 	address = makeDictionaryDependencies(tup);
 
@@ -515,7 +511,7 @@ RemoveTSDictionaryById(Oid dictId)
 		elog(ERROR, "cache lookup failed for text search dictionary %u",
 			 dictId);
 
-	simple_heap_delete(relation, &tup->t_self);
+	CatalogTupleDelete(relation, &tup->t_self);
 
 	ReleaseSysCache(tup);
 
@@ -620,9 +616,7 @@ AlterTSDictionary(AlterTSDictionaryStmt *stmt)
 	newtup = heap_modify_tuple(tup, RelationGetDescr(rel),
 							   repl_val, repl_null, repl_repl);
 
-	simple_heap_update(rel, &newtup->t_self, newtup);
-
-	CatalogUpdateIndexes(rel, newtup);
+	CatalogTupleUpdate(rel, &newtup->t_self, newtup);
 
 	InvokeObjectPostAlterHook(TSDictionaryRelationId, dictId, 0);
 
@@ -806,9 +800,7 @@ DefineTSTemplate(List *names, List *parameters)
 
 	tup = heap_form_tuple(tmplRel->rd_att, values, nulls);
 
-	tmplOid = simple_heap_insert(tmplRel, tup);
-
-	CatalogUpdateIndexes(tmplRel, tup);
+	tmplOid = CatalogTupleInsert(tmplRel, tup);
 
 	address = makeTSTemplateDependencies(tup);
 
@@ -839,7 +831,7 @@ RemoveTSTemplateById(Oid tmplId)
 		elog(ERROR, "cache lookup failed for text search template %u",
 			 tmplId);
 
-	simple_heap_delete(relation, &tup->t_self);
+	CatalogTupleDelete(relation, &tup->t_self);
 
 	ReleaseSysCache(tup);
 
@@ -1066,9 +1058,7 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 
 	tup = heap_form_tuple(cfgRel->rd_att, values, nulls);
 
-	cfgOid = simple_heap_insert(cfgRel, tup);
-
-	CatalogUpdateIndexes(cfgRel, tup);
+	cfgOid = CatalogTupleInsert(cfgRel, tup);
 
 	if (OidIsValid(sourceOid))
 	{
@@ -1106,9 +1096,7 @@ DefineTSConfiguration(List *names, List *parameters, ObjectAddress *copied)
 
 			newmaptup = heap_form_tuple(mapRel->rd_att, mapvalues, mapnulls);
 
-			simple_heap_insert(mapRel, newmaptup);
-
-			CatalogUpdateIndexes(mapRel, newmaptup);
+			CatalogTupleInsert(mapRel, newmaptup);
 
 			heap_freetuple(newmaptup);
 		}
@@ -1151,7 +1139,7 @@ RemoveTSConfigurationById(Oid cfgId)
 		elog(ERROR, "cache lookup failed for text search dictionary %u",
 			 cfgId);
 
-	simple_heap_delete(relCfg, &tup->t_self);
+	CatalogTupleDelete(relCfg, &tup->t_self);
 
 	ReleaseSysCache(tup);
 
@@ -1170,7 +1158,7 @@ RemoveTSConfigurationById(Oid cfgId)
 
 	while (HeapTupleIsValid((tup = systable_getnext(scan))))
 	{
-		simple_heap_delete(relMap, &tup->t_self);
+		CatalogTupleDelete(relMap, &tup->t_self);
 	}
 
 	systable_endscan(scan);
@@ -1215,10 +1203,10 @@ AlterTSConfiguration(AlterTSConfigurationStmt *stmt)
 	/* Update dependencies */
 	makeConfigurationDependencies(tup, true, relMap);
 
-	InvokeObjectPostAlterHook(TSConfigMapRelationId,
+	InvokeObjectPostAlterHook(TSConfigRelationId,
 							  HeapTupleGetOid(tup), 0);
 
-	ObjectAddressSet(address, TSConfigMapRelationId, cfgId);
+	ObjectAddressSet(address, TSConfigRelationId, cfgId);
 
 	heap_close(relMap, RowExclusiveLock);
 
@@ -1329,7 +1317,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 
 			while (HeapTupleIsValid((maptup = systable_getnext(scan))))
 			{
-				simple_heap_delete(relMap, &maptup->t_self);
+				CatalogTupleDelete(relMap, &maptup->t_self);
 			}
 
 			systable_endscan(scan);
@@ -1409,9 +1397,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 				newtup = heap_modify_tuple(maptup,
 										   RelationGetDescr(relMap),
 										   repl_val, repl_null, repl_repl);
-				simple_heap_update(relMap, &newtup->t_self, newtup);
-
-				CatalogUpdateIndexes(relMap, newtup);
+				CatalogTupleUpdate(relMap, &newtup->t_self, newtup);
 			}
 		}
 
@@ -1436,8 +1422,7 @@ MakeConfigurationMapping(AlterTSConfigurationStmt *stmt,
 				values[Anum_pg_ts_config_map_mapdict - 1] = ObjectIdGetDatum(dictIds[j]);
 
 				tup = heap_form_tuple(relMap->rd_att, values, nulls);
-				simple_heap_insert(relMap, tup);
-				CatalogUpdateIndexes(relMap, tup);
+				CatalogTupleInsert(relMap, tup);
 
 				heap_freetuple(tup);
 			}
@@ -1487,7 +1472,7 @@ DropConfigurationMapping(AlterTSConfigurationStmt *stmt,
 
 		while (HeapTupleIsValid((maptup = systable_getnext(scan))))
 		{
-			simple_heap_delete(relMap, &maptup->t_self);
+			CatalogTupleDelete(relMap, &maptup->t_self);
 			found = true;
 		}
 
@@ -1700,7 +1685,7 @@ deserialize_deflist(Datum txt)
 						*wsptr++ = '\0';
 						result = lappend(result,
 										 makeDefElem(pstrdup(workspace),
-								  (Node *) makeString(pstrdup(startvalue))));
+													 (Node *) makeString(pstrdup(startvalue)), -1));
 						state = CS_WAITKEY;
 					}
 				}
@@ -1732,7 +1717,7 @@ deserialize_deflist(Datum txt)
 						*wsptr++ = '\0';
 						result = lappend(result,
 										 makeDefElem(pstrdup(workspace),
-								  (Node *) makeString(pstrdup(startvalue))));
+													 (Node *) makeString(pstrdup(startvalue)), -1));
 						state = CS_WAITKEY;
 					}
 				}
@@ -1747,7 +1732,7 @@ deserialize_deflist(Datum txt)
 					*wsptr++ = '\0';
 					result = lappend(result,
 									 makeDefElem(pstrdup(workspace),
-								  (Node *) makeString(pstrdup(startvalue))));
+												 (Node *) makeString(pstrdup(startvalue)), -1));
 					state = CS_WAITKEY;
 				}
 				else
@@ -1766,7 +1751,7 @@ deserialize_deflist(Datum txt)
 		*wsptr++ = '\0';
 		result = lappend(result,
 						 makeDefElem(pstrdup(workspace),
-								  (Node *) makeString(pstrdup(startvalue))));
+									 (Node *) makeString(pstrdup(startvalue)), -1));
 	}
 	else if (state != CS_WAITKEY)
 		ereport(ERROR,

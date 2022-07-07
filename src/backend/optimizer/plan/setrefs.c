@@ -4,7 +4,7 @@
  *	  Post-processing of a completed plan tree: fix references to subplan
  *	  vars, compute regproc values for operators, etc
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -396,10 +396,9 @@ add_rte_to_flat_rtable(PlannerGlobal *glob, RangeTblEntry *rte)
 	newrte->joinaliasvars = NIL;
 	newrte->functions = NIL;
 	newrte->values_lists = NIL;
-	newrte->values_collations = NIL;
-	newrte->ctecoltypes = NIL;
-	newrte->ctecoltypmods = NIL;
-	newrte->ctecolcollations = NIL;
+	newrte->coltypes = NIL;
+	newrte->coltypmods = NIL;
+	newrte->colcollations = NIL;
 	newrte->securityQuals = NIL;
 
 	glob->finalrtable = lappend(glob->finalrtable, newrte);
@@ -733,6 +732,9 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				splan->resconstantqual =
 					fix_scan_expr(root, splan->resconstantqual, rtoffset);
 			}
+			break;
+		case T_ProjectSet:
+			set_upper_references(root, plan, rtoffset);
 			break;
 		case T_ModifyTable:
 			{
@@ -1830,6 +1832,19 @@ set_dummy_tlist_references(Plan *plan, int rtoffset)
 		Var		   *oldvar = (Var *) tle->expr;
 		Var		   *newvar;
 
+		/*
+		 * As in search_indexed_tlist_for_non_var(), we prefer to keep Consts
+		 * as Consts, not Vars referencing Consts.  Here, there's no speed
+		 * advantage to be had, but it makes EXPLAIN output look cleaner, and
+		 * again it avoids confusing the executor.
+		 */
+		if (IsA(oldvar, Const))
+		{
+			/* just reuse the existing TLE node */
+			output_targetlist = lappend(output_targetlist, tle);
+			continue;
+		}
+
 		newvar = makeVar(OUTER_VAR,
 						 tle->resno,
 						 exprType((Node *) oldvar),
@@ -2016,6 +2031,16 @@ search_indexed_tlist_for_non_var(Node *node,
 								 indexed_tlist *itlist, Index newvarno)
 {
 	TargetEntry *tle;
+
+	/*
+	 * If it's a simple Const, replacing it with a Var is silly, even if there
+	 * happens to be an identical Const below; a Var is more expensive to
+	 * execute than a Const.  What's more, replacing it could confuse some
+	 * places in the executor that expect to see simple Consts for, eg,
+	 * dropped columns.
+	 */
+	if (IsA(node, Const))
+		return NULL;
 
 	tle = tlist_member(node, itlist->tlist);
 	if (tle)

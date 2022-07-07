@@ -2,7 +2,7 @@
  *
  * pg_dumpall.c
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * pg_dumpall forces all pg_dump output to be text, since it also outputs
@@ -480,10 +480,7 @@ main(int argc, char *argv[])
 				dropDBs(conn);
 
 			if (!roles_only && !no_tablespaces)
-			{
-				if (server_version >= 80000)
-					dropTablespaces(conn);
-			}
+				dropTablespaces(conn);
 
 			if (!tablespaces_only)
 				dropRoles(conn);
@@ -505,12 +502,9 @@ main(int argc, char *argv[])
 				dumpGroups(conn);
 		}
 
+		/* Dump tablespaces */
 		if (!roles_only && !no_tablespaces)
-		{
-			/* Dump tablespaces */
-			if (server_version >= 80000)
-				dumpTablespaces(conn);
-		}
+			dumpTablespaces(conn);
 
 		/* Dump CREATE DATABASE commands */
 		if (binary_upgrade || (!globals_only && !roles_only && !tablespaces_only))
@@ -549,6 +543,7 @@ help(void)
 
 	printf(_("\nGeneral options:\n"));
 	printf(_("  -f, --file=FILENAME          output file name\n"));
+	printf(_("  -v, --verbose                verbose mode\n"));
 	printf(_("  -V, --version                output version information, then exit\n"));
 	printf(_("  --lock-wait-timeout=TIMEOUT  fail after waiting TIMEOUT for a table lock\n"));
 	printf(_("  -?, --help                   show this help, then exit\n"));
@@ -886,9 +881,8 @@ dumpRoles(PGconn *conn)
 	 * We do it this way because config settings for roles could mention the
 	 * names of other roles.
 	 */
-	if (server_version >= 70300)
-		for (i = 0; i < PQntuples(res); i++)
-			dumpUserConfig(conn, PQgetvalue(res, i, i_rolname));
+	for (i = 0; i < PQntuples(res); i++)
+		dumpUserConfig(conn, PQgetvalue(res, i, i_rolname));
 
 	PQclear(res);
 
@@ -1204,16 +1198,10 @@ dropDBs(PGconn *conn)
 	PGresult   *res;
 	int			i;
 
-	if (server_version >= 70100)
-		res = executeQuery(conn,
-						   "SELECT datname "
-						   "FROM pg_database d "
-						   "WHERE datallowconn ORDER BY 1");
-	else
-		res = executeQuery(conn,
-						   "SELECT datname "
-						   "FROM pg_database d "
-						   "ORDER BY 1");
+	res = executeQuery(conn,
+					   "SELECT datname "
+					   "FROM pg_database d "
+					   "WHERE datallowconn ORDER BY 1");
 
 	if (PQntuples(res) > 0)
 		fprintf(OPF, "--\n-- Drop databases\n--\n\n");
@@ -1269,12 +1257,10 @@ dumpCreateDB(PGconn *conn)
 	 * We will dump encoding and locale specifications in the CREATE DATABASE
 	 * commands for just those databases with values different from defaults.
 	 *
-	 * We consider template0's encoding and locale (or, pre-7.1, template1's)
-	 * to define the installation default.  Pre-8.4 installations do not have
-	 * per-database locale settings; for them, every database must necessarily
-	 * be using the installation default, so there's no need to do anything
-	 * (which is good, since in very old versions there is no good way to find
-	 * out what the installation locale is anyway...)
+	 * We consider template0's encoding and locale to define the installation
+	 * default.  Pre-8.4 installations do not have per-database locale
+	 * settings; for them, every database must necessarily be using the
+	 * installation default, so there's no need to do anything.
 	 */
 	if (server_version >= 80400)
 		res = executeQuery(conn,
@@ -1282,18 +1268,12 @@ dumpCreateDB(PGconn *conn)
 						   "datcollate, datctype "
 						   "FROM pg_database "
 						   "WHERE datname = 'template0'");
-	else if (server_version >= 70100)
-		res = executeQuery(conn,
-						   "SELECT pg_encoding_to_char(encoding), "
-						   "null::text AS datcollate, null::text AS datctype "
-						   "FROM pg_database "
-						   "WHERE datname = 'template0'");
 	else
 		res = executeQuery(conn,
 						   "SELECT pg_encoding_to_char(encoding), "
 						   "null::text AS datcollate, null::text AS datctype "
 						   "FROM pg_database "
-						   "WHERE datname = 'template1'");
+						   "WHERE datname = 'template0'");
 
 	/* If for some reason the template DB isn't there, treat as unknown */
 	if (PQntuples(res) > 0)
@@ -1328,11 +1308,13 @@ dumpCreateDB(PGconn *conn)
 						   "pg_encoding_to_char(d.encoding), "
 						   "datcollate, datctype, datfrozenxid, datminmxid, "
 						   "datistemplate, "
-						   "(SELECT pg_catalog.array_agg(acl) FROM (SELECT pg_catalog.unnest(coalesce(datacl,pg_catalog.acldefault('d',datdba))) AS acl "
-						   "EXCEPT SELECT pg_catalog.unnest(pg_catalog.acldefault('d',datdba))) as foo)"
+						   "(SELECT pg_catalog.array_agg(acl ORDER BY acl::text COLLATE \"C\") FROM ( "
+						   "  SELECT pg_catalog.unnest(coalesce(datacl,pg_catalog.acldefault('d',datdba))) AS acl "
+						   "  EXCEPT SELECT pg_catalog.unnest(pg_catalog.acldefault('d',datdba))) as datacls)"
 						   "AS datacl, "
-						   "(SELECT pg_catalog.array_agg(acl) FROM (SELECT pg_catalog.unnest(pg_catalog.acldefault('d',datdba)) AS acl "
-						   "EXCEPT SELECT pg_catalog.unnest(coalesce(datacl,pg_catalog.acldefault('d',datdba)))) as foo)"
+						   "(SELECT pg_catalog.array_agg(acl ORDER BY acl::text COLLATE \"C\") FROM ( "
+						   "  SELECT pg_catalog.unnest(pg_catalog.acldefault('d',datdba)) AS acl "
+						   "  EXCEPT SELECT pg_catalog.unnest(coalesce(datacl,pg_catalog.acldefault('d',datdba)))) as rdatacls)"
 						   "AS rdatacl, "
 						   "datconnlimit, "
 						   "(SELECT spcname FROM pg_tablespace t WHERE t.oid = d.dattablespace) AS dattablespace "
@@ -1371,7 +1353,7 @@ dumpCreateDB(PGconn *conn)
 						   "(SELECT spcname FROM pg_tablespace t WHERE t.oid = d.dattablespace) AS dattablespace "
 			  "FROM pg_database d LEFT JOIN pg_authid u ON (datdba = u.oid) "
 						   "WHERE datallowconn ORDER BY 1");
-	else if (server_version >= 80000)
+	else
 		res = executeQuery(conn,
 						   "SELECT datname, "
 						   "coalesce(usename, (select usename from pg_shadow where usesysid=(select datdba from pg_database where datname='template0'))), "
@@ -1382,47 +1364,6 @@ dumpCreateDB(PGconn *conn)
 						   "(SELECT spcname FROM pg_tablespace t WHERE t.oid = d.dattablespace) AS dattablespace "
 		   "FROM pg_database d LEFT JOIN pg_shadow u ON (datdba = usesysid) "
 						   "WHERE datallowconn ORDER BY 1");
-	else if (server_version >= 70300)
-		res = executeQuery(conn,
-						   "SELECT datname, "
-						   "coalesce(usename, (select usename from pg_shadow where usesysid=(select datdba from pg_database where datname='template0'))), "
-						   "pg_encoding_to_char(d.encoding), "
-						   "null::text AS datcollate, null::text AS datctype, datfrozenxid, 0 AS datminmxid, "
-						   "datistemplate, datacl, '' as rdatacl, "
-						   "-1 as datconnlimit, "
-						   "'pg_default' AS dattablespace "
-		   "FROM pg_database d LEFT JOIN pg_shadow u ON (datdba = usesysid) "
-						   "WHERE datallowconn ORDER BY 1");
-	else if (server_version >= 70100)
-		res = executeQuery(conn,
-						   "SELECT datname, "
-						   "coalesce("
-					"(select usename from pg_shadow where usesysid=datdba), "
-						   "(select usename from pg_shadow where usesysid=(select datdba from pg_database where datname='template0'))), "
-						   "pg_encoding_to_char(d.encoding), "
-						   "null::text AS datcollate, null::text AS datctype, 0 AS datfrozenxid, 0 AS datminmxid, "
-						   "datistemplate, '' as datacl, '' as rdatacl, "
-						   "-1 as datconnlimit, "
-						   "'pg_default' AS dattablespace "
-						   "FROM pg_database d "
-						   "WHERE datallowconn ORDER BY 1");
-	else
-	{
-		/*
-		 * Note: 7.0 fails to cope with sub-select in COALESCE, so just deal
-		 * with getting a NULL by not printing any OWNER clause.
-		 */
-		res = executeQuery(conn,
-						   "SELECT datname, "
-					"(select usename from pg_shadow where usesysid=datdba), "
-						   "pg_encoding_to_char(d.encoding), "
-						   "null::text AS datcollate, null::text AS datctype, 0 AS datfrozenxid, 0 AS datminmxid, "
-						   "'f' as datistemplate, "
-						   "'' as datacl, '' as rdatacl, -1 as datconnlimit, "
-						   "'pg_default' AS dattablespace "
-						   "FROM pg_database d "
-						   "ORDER BY 1");
-	}
 
 	for (i = 0; i < PQntuples(res); i++)
 	{
@@ -1541,8 +1482,7 @@ dumpCreateDB(PGconn *conn)
 
 		fprintf(OPF, "%s", buf->data);
 
-		if (server_version >= 70300)
-			dumpDatabaseConfig(conn, dbname);
+		dumpDatabaseConfig(conn, dbname);
 
 		free(fdbname);
 	}
@@ -1738,10 +1678,7 @@ dumpDatabases(PGconn *conn)
 	PGresult   *res;
 	int			i;
 
-	if (server_version >= 70100)
-		res = executeQuery(conn, "SELECT datname FROM pg_database WHERE datallowconn ORDER BY 1");
-	else
-		res = executeQuery(conn, "SELECT datname FROM pg_database ORDER BY 1");
+	res = executeQuery(conn, "SELECT datname FROM pg_database WHERE datallowconn ORDER BY 1");
 
 	for (i = 0; i < PQntuples(res); i++)
 	{
@@ -1884,13 +1821,17 @@ connectDatabase(const char *dbname, const char *connection_string,
 	bool		new_pass;
 	const char *remoteversion_str;
 	int			my_version;
-	static char *password = NULL;
 	const char **keywords = NULL;
 	const char **values = NULL;
 	PQconninfoOption *conn_opts = NULL;
+	static bool have_password = false;
+	static char password[100];
 
-	if (prompt_password == TRI_YES && !password)
-		password = simple_prompt("Password: ", 100, false);
+	if (prompt_password == TRI_YES && !have_password)
+	{
+		simple_prompt("Password: ", password, sizeof(password), false);
+		have_password = true;
+	}
 
 	/*
 	 * Start the connection.  Loop until we have a password if requested by
@@ -1970,7 +1911,7 @@ connectDatabase(const char *dbname, const char *connection_string,
 			values[i] = pguser;
 			i++;
 		}
-		if (password)
+		if (have_password)
 		{
 			keywords[i] = "password";
 			values[i] = password;
@@ -1998,11 +1939,12 @@ connectDatabase(const char *dbname, const char *connection_string,
 
 		if (PQstatus(conn) == CONNECTION_BAD &&
 			PQconnectionNeedsPassword(conn) &&
-			password == NULL &&
+			!have_password &&
 			prompt_password != TRI_NO)
 		{
 			PQfinish(conn);
-			password = simple_prompt("Password: ", 100, false);
+			simple_prompt("Password: ", password, sizeof(password), false);
+			have_password = true;
 			new_pass = true;
 		}
 	} while (new_pass);
@@ -2057,11 +1999,11 @@ connectDatabase(const char *dbname, const char *connection_string,
 	my_version = PG_VERSION_NUM;
 
 	/*
-	 * We allow the server to be back to 7.0, and up to any minor release of
+	 * We allow the server to be back to 8.0, and up to any minor release of
 	 * our own major version.  (See also version check in pg_dump.c.)
 	 */
 	if (my_version != server_version
-		&& (server_version < 70000 ||
+		&& (server_version < 80000 ||
 			(server_version / 100) > (my_version / 100)))
 	{
 		fprintf(stderr, _("server version: %s; %s version: %s\n"),
@@ -2071,11 +2013,9 @@ connectDatabase(const char *dbname, const char *connection_string,
 	}
 
 	/*
-	 * On 7.3 and later, make sure we are not fooled by non-system schemas in
-	 * the search path.
+	 * Make sure we are not fooled by non-system schemas in the search path.
 	 */
-	if (server_version >= 70300)
-		executeCommand(conn, "SET search_path = pg_catalog");
+	executeCommand(conn, "SET search_path = pg_catalog");
 
 	return conn;
 }

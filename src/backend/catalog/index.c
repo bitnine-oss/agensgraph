@@ -3,7 +3,7 @@
  * index.c
  *	  code to create and destroy POSTGRES index relations
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -440,11 +440,28 @@ ConstructTupleDescriptor(Relation heapRelation,
 			keyType = opclassTup->opckeytype;
 		else
 			keyType = amroutine->amkeytype;
+
+		/*
+		 * If keytype is specified as ANYELEMENT, and opcintype is ANYARRAY,
+		 * then the attribute type must be an array (else it'd not have
+		 * matched this opclass); use its element type.
+		 */
+		if (keyType == ANYELEMENTOID && opclassTup->opcintype == ANYARRAYOID)
+		{
+			keyType = get_base_element_type(to->atttypid);
+			if (!OidIsValid(keyType))
+				elog(ERROR, "could not get element type of array type %u",
+					 to->atttypid);
+		}
+
 		ReleaseSysCache(tuple);
 
+		/*
+		 * If a key type different from the heap value is specified, update
+		 * the type-related fields in the index tupdesc.
+		 */
 		if (OidIsValid(keyType) && keyType != to->atttypid)
 		{
-			/* index value and heap value have different types */
 			tuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(keyType));
 			if (!HeapTupleIsValid(tuple))
 				elog(ERROR, "cache lookup failed for type %u", keyType);
@@ -635,10 +652,7 @@ UpdateIndexRelation(Oid indexoid,
 	/*
 	 * insert the tuple into the pg_index catalog
 	 */
-	simple_heap_insert(pg_index, tuple);
-
-	/* update the indexes on pg_index */
-	CatalogUpdateIndexes(pg_index, tuple);
+	CatalogTupleInsert(pg_index, tuple);
 
 	/*
 	 * close the relation and free the tuple
@@ -1029,7 +1043,7 @@ index_create(Relation heapRelation,
 										  (Node *) indexInfo->ii_Expressions,
 											heapRelationId,
 											DEPENDENCY_NORMAL,
-											DEPENDENCY_AUTO);
+											DEPENDENCY_AUTO, false);
 		}
 
 		/* Store dependencies on anything mentioned in predicate */
@@ -1039,7 +1053,7 @@ index_create(Relation heapRelation,
 											(Node *) indexInfo->ii_Predicate,
 											heapRelationId,
 											DEPENDENCY_NORMAL,
-											DEPENDENCY_AUTO);
+											DEPENDENCY_AUTO, false);
 		}
 	}
 	else
@@ -1310,8 +1324,7 @@ index_constraint_create(Relation heapRelation,
 
 		if (dirty)
 		{
-			simple_heap_update(pg_index, &indexTuple->t_self, indexTuple);
-			CatalogUpdateIndexes(pg_index, indexTuple);
+			CatalogTupleUpdate(pg_index, &indexTuple->t_self, indexTuple);
 
 			InvokeObjectPostAlterHookArg(IndexRelationId, indexRelationId, 0,
 										 InvalidOid, is_internal);
@@ -1563,7 +1576,7 @@ index_drop(Oid indexId, bool concurrent)
 
 	hasexprs = !heap_attisnull(tuple, Anum_pg_index_indexprs);
 
-	simple_heap_delete(indexRelation, &tuple->t_self);
+	CatalogTupleDelete(indexRelation, &tuple->t_self);
 
 	ReleaseSysCache(tuple);
 	heap_close(indexRelation, RowExclusiveLock);
@@ -1791,8 +1804,7 @@ FormIndexDatum(IndexInfo *indexInfo,
 				elog(ERROR, "wrong number of index expressions");
 			iDatum = ExecEvalExprSwitchContext((ExprState *) lfirst(indexpr_item),
 											   GetPerTupleExprContext(estate),
-											   &isNull,
-											   NULL);
+											   &isNull);
 			indexpr_item = lnext(indexpr_item);
 		}
 		values[i] = iDatum;
@@ -2090,8 +2102,7 @@ index_build(Relation heapRelation,
 		Assert(!indexForm->indcheckxmin);
 
 		indexForm->indcheckxmin = true;
-		simple_heap_update(pg_index, &indexTuple->t_self, indexTuple);
-		CatalogUpdateIndexes(pg_index, indexTuple);
+		CatalogTupleUpdate(pg_index, &indexTuple->t_self, indexTuple);
 
 		heap_freetuple(indexTuple);
 		heap_close(pg_index, RowExclusiveLock);
@@ -3435,8 +3446,7 @@ reindex_index(Oid indexId, bool skip_constraint_checks, char persistence,
 			indexForm->indisvalid = true;
 			indexForm->indisready = true;
 			indexForm->indislive = true;
-			simple_heap_update(pg_index, &indexTuple->t_self, indexTuple);
-			CatalogUpdateIndexes(pg_index, indexTuple);
+			CatalogTupleUpdate(pg_index, &indexTuple->t_self, indexTuple);
 
 			/*
 			 * Invalidate the relcache for the table, so that after we commit

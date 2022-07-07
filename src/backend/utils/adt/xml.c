@@ -4,7 +4,7 @@
  *	  XML data type support.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/utils/adt/xml.c
@@ -603,7 +603,7 @@ xmlelement(XmlExprState *xmlExpr, ExprContext *econtext)
 		bool		isnull;
 		char	   *str;
 
-		value = ExecEvalExpr(e, econtext, &isnull, NULL);
+		value = ExecEvalExpr(e, econtext, &isnull);
 		if (isnull)
 			str = NULL;
 		else
@@ -620,7 +620,7 @@ xmlelement(XmlExprState *xmlExpr, ExprContext *econtext)
 		bool		isnull;
 		char	   *str;
 
-		value = ExecEvalExpr(e, econtext, &isnull, NULL);
+		value = ExecEvalExpr(e, econtext, &isnull);
 		/* here we can just forget NULL elements immediately */
 		if (!isnull)
 		{
@@ -1455,10 +1455,8 @@ xml_memory_init(void)
 	/* Create memory context if not there already */
 	if (LibxmlContext == NULL)
 		LibxmlContext = AllocSetContextCreate(TopMemoryContext,
-											  "LibxmlContext",
-											  ALLOCSET_DEFAULT_MINSIZE,
-											  ALLOCSET_DEFAULT_INITSIZE,
-											  ALLOCSET_DEFAULT_MAXSIZE);
+											  "Libxml context",
+											  ALLOCSET_DEFAULT_SIZES);
 
 	/* Re-establish the callbacks even if already set */
 	xmlMemSetup(xml_pfree, xml_palloc, xml_repalloc, xml_pstrdup);
@@ -2646,8 +2644,6 @@ schema_to_xml_internal(Oid nspid, const char *xmlschema, bool nulls,
 
 	relid_list = schema_get_xml_visible_tables(nspid);
 
-	SPI_push();
-
 	foreach(cell, relid_list)
 	{
 		Oid			relid = lfirst_oid(cell);
@@ -2660,7 +2656,6 @@ schema_to_xml_internal(Oid nspid, const char *xmlschema, bool nulls,
 		appendStringInfoChar(result, '\n');
 	}
 
-	SPI_pop();
 	SPI_finish();
 
 	xmldata_root_element_end(result, xmlsn);
@@ -2824,8 +2819,6 @@ database_to_xml_internal(const char *xmlschema, bool nulls,
 
 	nspid_list = database_get_xml_visible_schemas();
 
-	SPI_push();
-
 	foreach(cell, nspid_list)
 	{
 		Oid			nspid = lfirst_oid(cell);
@@ -2838,7 +2831,6 @@ database_to_xml_internal(const char *xmlschema, bool nulls,
 		appendStringInfoChar(result, '\n');
 	}
 
-	SPI_pop();
 	SPI_finish();
 
 	xmldata_root_element_end(result, xmlcn);

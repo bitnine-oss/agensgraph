@@ -3,7 +3,7 @@
  * rewriteSupport.c
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -72,10 +72,7 @@ SetRelationRuleStatus(Oid relationId, bool relHasRules)
 		/* Do the update */
 		classForm->relhasrules = relHasRules;
 
-		simple_heap_update(relationRelation, &tuple->t_self, tuple);
-
-		/* Keep the catalog indexes up to date */
-		CatalogUpdateIndexes(relationRelation, tuple);
+		CatalogTupleUpdate(relationRelation, &tuple->t_self, tuple);
 	}
 	else
 	{

@@ -3,7 +3,7 @@
  *
  *	main source file
  *
- *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/pg_upgrade.c
  */
 
@@ -75,6 +75,7 @@ main(int argc, char **argv)
 	char	   *deletion_script_file_name = NULL;
 	bool		live_check = false;
 
+	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_upgrade"));
 	parseCommandLine(argc, argv);
 
 	get_restricted_token(os_info.progname);
@@ -225,7 +226,7 @@ setup(char *argv0, bool *live_check)
 
 	/* get path to pg_upgrade executable */
 	if (find_my_exec(argv0, exec_path) < 0)
-		pg_fatal("Could not get path name to pg_upgrade: %s\n", getErrorText());
+		pg_fatal("%s: could not find own program executable\n", argv0);
 
 	/* Trim off program name and keep just path */
 	*last_dir_separator(exec_path) = '\0';

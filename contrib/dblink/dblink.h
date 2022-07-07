@@ -9,7 +9,7 @@
  * Shridhar Daithankar <shridhar_daithankar@persistent.co.in>
  *
  * contrib/dblink/dblink.h
- * Copyright (c) 2001-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2017, PostgreSQL Global Development Group
  * ALL RIGHTS RESERVED;
  *
  * Permission to use, copy, modify, and distribute this software and its
@@ -35,29 +35,5 @@
 #define DBLINK_H
 
 #include "fmgr.h"
-
-/*
- * External declarations
- */
-extern Datum dblink_connect(PG_FUNCTION_ARGS);
-extern Datum dblink_disconnect(PG_FUNCTION_ARGS);
-extern Datum dblink_open(PG_FUNCTION_ARGS);
-extern Datum dblink_close(PG_FUNCTION_ARGS);
-extern Datum dblink_fetch(PG_FUNCTION_ARGS);
-extern Datum dblink_record(PG_FUNCTION_ARGS);
-extern Datum dblink_send_query(PG_FUNCTION_ARGS);
-extern Datum dblink_get_result(PG_FUNCTION_ARGS);
-extern Datum dblink_get_connections(PG_FUNCTION_ARGS);
-extern Datum dblink_is_busy(PG_FUNCTION_ARGS);
-extern Datum dblink_cancel_query(PG_FUNCTION_ARGS);
-extern Datum dblink_error_message(PG_FUNCTION_ARGS);
-extern Datum dblink_exec(PG_FUNCTION_ARGS);
-extern Datum dblink_get_pkey(PG_FUNCTION_ARGS);
-extern Datum dblink_build_sql_insert(PG_FUNCTION_ARGS);
-extern Datum dblink_build_sql_delete(PG_FUNCTION_ARGS);
-extern Datum dblink_build_sql_update(PG_FUNCTION_ARGS);
-extern Datum dblink_current_query(PG_FUNCTION_ARGS);
-extern Datum dblink_get_notify(PG_FUNCTION_ARGS);
-extern Datum dblink_fdw_validator(PG_FUNCTION_ARGS);
 
 #endif   /* DBLINK_H */

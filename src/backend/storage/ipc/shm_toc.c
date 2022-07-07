@@ -3,7 +3,7 @@
  * shm_toc.c
  *	  shared memory segment table of contents
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/shm_toc.c
@@ -13,7 +13,7 @@
 
 #include "postgres.h"
 
-#include "storage/barrier.h"
+#include "port/atomics.h"
 #include "storage/shm_toc.h"
 #include "storage/spin.h"
 

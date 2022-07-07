@@ -8,7 +8,7 @@
  * pager open/close functions, all that stuff came with it.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/fe_utils/print.c
@@ -2874,10 +2874,18 @@ PageOutput(int lines, const printTableOpt *topt)
 			pagerprog = getenv("PAGER");
 			if (!pagerprog)
 				pagerprog = DEFAULT_PAGER;
+			else
+			{
+				/* if PAGER is empty or all-white-space, don't use pager */
+				if (strspn(pagerprog, " \t\r\n") == strlen(pagerprog))
+					return stdout;
+			}
 			disable_sigpipe_trap();
 			pagerpipe = popen(pagerprog, "w");
 			if (pagerpipe)
 				return pagerpipe;
+			/* if popen fails, silently proceed without pager */
+			restore_sigpipe_trap();
 		}
 	}
 

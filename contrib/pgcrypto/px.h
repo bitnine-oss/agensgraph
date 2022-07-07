@@ -71,7 +71,6 @@ void		px_free(void *p);
 #define PXE_CIPHER_INIT				-8
 #define PXE_HASH_UNUSABLE_FOR_HMAC	-9
 #define PXE_DEV_READ_ERROR			-10
-#define PXE_OSSL_RAND_ERROR			-11
 #define PXE_BUG						-12
 #define PXE_ARGUMENT_ERROR			-13
 #define PXE_UNKNOWN_SALT_ALGO		-14
@@ -88,10 +87,10 @@ void		px_free(void *p);
 #define PXE_PGP_COMPRESSION_ERROR	-105
 #define PXE_PGP_NOT_TEXT			-106
 #define PXE_PGP_UNEXPECTED_PKT		-107
-#define PXE_PGP_NO_BIGNUM			-108
+/* -108 is unused */
 #define PXE_PGP_MATH_FAILED			-109
 #define PXE_PGP_SHORT_ELGAMAL_KEY	-110
-#define PXE_PGP_RSA_UNSUPPORTED		-111
+/* -111 is unused */
 #define PXE_PGP_UNKNOWN_PUBALGO		-112
 #define PXE_PGP_WRONG_KEY			-113
 #define PXE_PGP_MULTIPLE_KEYS		-114
@@ -189,12 +188,7 @@ int			px_find_hmac(const char *name, PX_HMAC **res);
 int			px_find_cipher(const char *name, PX_Cipher **res);
 int			px_find_combo(const char *name, PX_Combo **res);
 
-int			px_get_random_bytes(uint8 *dst, unsigned count);
-int			px_get_pseudo_random_bytes(uint8 *dst, unsigned count);
-int			px_add_entropy(const uint8 *data, unsigned count);
-
-unsigned	px_acquire_system_randomness(uint8 *dst);
-
+void		px_THROW_ERROR(int err) pg_attribute_noreturn();
 const char *px_strerror(int err);
 
 const char *px_resolve_alias(const PX_Alias *aliases, const char *name);

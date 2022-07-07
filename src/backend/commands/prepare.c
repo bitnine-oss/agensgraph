@@ -7,7 +7,7 @@
  * accessed via the extended FE/BE query protocol.
  *
  *
- * Copyright (c) 2002-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/commands/prepare.c
@@ -52,8 +52,10 @@ static Datum build_regtype_array(Oid *param_types, int num_params);
  * Implements the 'PREPARE' utility statement.
  */
 void
-PrepareQuery(PrepareStmt *stmt, const char *queryString)
+PrepareQuery(PrepareStmt *stmt, const char *queryString,
+			 int stmt_location, int stmt_len)
 {
+	RawStmt    *rawstmt;
 	CachedPlanSource *plansource;
 	Oid		   *argtypes = NULL;
 	int			nargs;
@@ -71,10 +73,22 @@ PrepareQuery(PrepareStmt *stmt, const char *queryString)
 				 errmsg("invalid statement name: must not be empty")));
 
 	/*
+	 * Need to wrap the contained statement in a RawStmt node to pass it to
+	 * parse analysis.
+	 *
+	 * Because parse analysis scribbles on the raw querytree, we must make a
+	 * copy to ensure we don't modify the passed-in tree.  FIXME someday.
+	 */
+	rawstmt = makeNode(RawStmt);
+	rawstmt->stmt = (Node *) copyObject(stmt->query);
+	rawstmt->stmt_location = stmt_location;
+	rawstmt->stmt_len = stmt_len;
+
+	/*
 	 * Create the CachedPlanSource before we do parse analysis, since it needs
 	 * to see the unmodified raw parse tree.
 	 */
-	plansource = CreateCachedPlan(stmt->query, queryString,
+	plansource = CreateCachedPlan(rawstmt, queryString,
 								  CreateCommandTag(stmt->query));
 
 	/* Transform list of TypeNames to array of type OIDs */
@@ -108,12 +122,8 @@ PrepareQuery(PrepareStmt *stmt, const char *queryString)
 	 * Analyze the statement using these parameter types (any parameters
 	 * passed in from above us will not be visible to it), allowing
 	 * information about unknown parameters to be deduced from context.
-	 *
-	 * Because parse analysis scribbles on the raw querytree, we must make a
-	 * copy to ensure we don't modify the passed-in tree.  FIXME someday.
 	 */
-	query = parse_analyze_varparams((Node *) copyObject(stmt->query),
-									queryString,
+	query = parse_analyze_varparams(rawstmt, queryString,
 									&argtypes, &nargs);
 
 	/*
@@ -159,7 +169,7 @@ PrepareQuery(PrepareStmt *stmt, const char *queryString)
 					   nargs,
 					   NULL,
 					   NULL,
-					   0,		/* default cursor options */
+					   CURSOR_OPT_PARALLEL_OK,	/* allow parallel mode */
 					   true);	/* fixed result */
 
 	/*
@@ -255,10 +265,8 @@ ExecuteQuery(ExecuteStmt *stmt, IntoClause *intoClause,
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 					 errmsg("prepared statement is not a SELECT")));
-		pstmt = (PlannedStmt *) linitial(plan_list);
-		if (!IsA(pstmt, PlannedStmt) ||
-			pstmt->commandType != CMD_SELECT ||
-			pstmt->utilityStmt != NULL)
+		pstmt = castNode(PlannedStmt, linitial(plan_list));
+		if (pstmt->commandType != CMD_SELECT)
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 					 errmsg("prepared statement is not a SELECT")));
@@ -404,8 +412,7 @@ EvaluateParams(PreparedStatement *pstmt, List *params,
 		prm->pflags = PARAM_FLAG_CONST;
 		prm->value = ExecEvalExprSwitchContext(n,
 											   GetPerTupleExprContext(estate),
-											   &prm->isnull,
-											   NULL);
+											   &prm->isnull);
 
 		i++;
 	}
@@ -662,12 +669,12 @@ ExplainExecuteQuery(ExecuteStmt *execstmt, IntoClause *into, ExplainState *es,
 	/* Explain each query */
 	foreach(p, plan_list)
 	{
-		PlannedStmt *pstmt = (PlannedStmt *) lfirst(p);
+		PlannedStmt *pstmt = castNode(PlannedStmt, lfirst(p));
 
-		if (IsA(pstmt, PlannedStmt))
+		if (pstmt->commandType != CMD_UTILITY)
 			ExplainOnePlan(pstmt, into, es, query_string, paramLI, NULL);
 		else
-			ExplainOneUtility((Node *) pstmt, into, es, query_string, paramLI);
+			ExplainOneUtility(pstmt->utilityStmt, into, es, query_string, paramLI);
 
 		/* No need for CommandCounterIncrement, as ExplainOnePlan did it */
 

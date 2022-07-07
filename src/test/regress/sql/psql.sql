@@ -3,6 +3,24 @@
 -- specific server features
 --
 
+-- \set
+
+-- fail: invalid name
+\set invalid/name foo
+-- fail: invalid value for special variable
+\set AUTOCOMMIT foo
+\set FETCH_COUNT foo
+-- check handling of built-in boolean variable
+\echo :ON_ERROR_ROLLBACK
+\set ON_ERROR_ROLLBACK
+\echo :ON_ERROR_ROLLBACK
+\set ON_ERROR_ROLLBACK foo
+\echo :ON_ERROR_ROLLBACK
+\set ON_ERROR_ROLLBACK on
+\echo :ON_ERROR_ROLLBACK
+\unset ON_ERROR_ROLLBACK
+\echo :ON_ERROR_ROLLBACK
+
 -- \gset
 
 select 10 as test01, 20 as test02, 'Hello' as test03 \gset pref01_
@@ -67,7 +85,7 @@ select 'drop table gexec_test', 'select ''2000-01-01''::date as party_over'
 prepare q as select array_to_string(array_agg(repeat('x',2*n)),E'\n') as "ab
 
 c", array_to_string(array_agg(repeat('y',20-2*n)),E'\n') as "a
-bc" from generate_series(1,10) as n(n) group by n>1 ;
+bc" from generate_series(1,10) as n(n) group by n>1 order by n>1;
 
 \pset linestyle ascii
 

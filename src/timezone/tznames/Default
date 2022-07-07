@@ -68,7 +68,7 @@ ART    America/Argentina/Buenos_Aires  # Argentina Time
 ARST    America/Argentina/Buenos_Aires  # Argentina Summer Time
 BOT    -14400    # Bolivia Time
                  #     (America/La_Paz)
-BRA    -10800    # Brazil Time (not in zic)
+BRA    -10800    # Brazil Time (not in IANA database)
 BRST    -7200 D  # Brasil Summer Time
                  #     (America/Sao_Paulo)
 BRT    -10800    # Brasil Time
@@ -79,7 +79,7 @@ BRT    -10800    # Brasil Time
                  #     (America/Maceio)
                  #     (America/Recife)
                  #     (America/Sao_Paulo)
-COT    -18000    # Columbia Time (not in zic)
+COT    -18000    # Columbia Time (not in IANA database)
 # CONFLICT! CDT is not unique
 # Other timezones:
 #  - CDT: Mexico Central Daylight Time (America)
@@ -166,7 +166,7 @@ EST    -18000    # Eastern Standard Time (America)
                  #     (America/Toronto)
 FNT     -7200    # Fernando de Noronha Time
                  #     (America/Noronha)
-FNST    -3600 D  # Fernando de Noronha Summer Time (not in zic)
+FNST    -3600 D  # Fernando de Noronha Summer Time (not in IANA database)
                  #     (America/Noronha)
 GFT    -10800    # French Guiana Time
                  #     (America/Cayenne)
@@ -199,7 +199,7 @@ NDT     -9000 D  # Newfoundland Daylight Time
                  #     (America/St_Johns)
 NST    -12600    # Newfoundland Standard Time
                  #     (America/St_Johns)
-PET    -18000    # Peru Time (not in zic)
+PET    -18000    # Peru Time (not in IANA database)
 PDT    -25200 D  # Pacific Daylight Time
                  #     (America/Dawson)
                  #     (America/Los_Angeles)
@@ -234,14 +234,9 @@ WGT    -10800    # West Greenland Time
 
 #################### ANTARCTICA ####################
 
-DAVT    Antarctica/Davis  # Davis Time (Antarctica)
-                 #     (Antarctica/Davis)
-DDUT    36000    # Dumont-d'Urville Time (Antarctica)
-                 #     (Antarctica/DumontDUrville)
-                 #     (Antarctica/Palmer)
-                 #     (America/Santiago)
-MAWT    Antarctica/Mawson  # Mawson Time (Antarctica)
-                 #     (Antarctica/Mawson)
+DAVT    Antarctica/Davis  # Davis Time (Antarctica) (obsolete)
+DDUT    36000    # Dumont-d'Urville Time (Antarctica) (obsolete)
+MAWT    Antarctica/Mawson  # Mawson Time (Antarctica) (obsolete)
 
 #################### ASIA ####################
 
@@ -256,27 +251,28 @@ AMST    Asia/Yerevan  # Armenia Summer Time
                  #     (Asia/Yerevan)
 # CONFLICT! AMT is not unique
 # Other timezones:
-#  - AMT: Amazon Time (America)
-AMT     Asia/Yerevan  # Armenia Time
-                 #     (Asia/Yerevan)
+#  - AMT: Armenia Time (Asia)
+AMT    -14400    # Amazon Time
+                 #     (America/Boa_Vista)
+                 #     (America/Campo_Grande)
+                 #     (America/Cuiaba)
+                 #     (America/Manaus)
+                 #     (America/Porto_Velho)
 ANAST   Asia/Anadyr  # Anadyr Summer Time (obsolete)
-ANAT    Asia/Anadyr  # Anadyr Time
-                 #     (Asia/Anadyr)
+ANAT    Asia/Anadyr  # Anadyr Time (obsolete)
 AZST    Asia/Baku  # Azerbaijan Summer Time (obsolete)
-AZT     Asia/Baku  # Azerbaijan Time
-                 #     (Asia/Baku)
+AZT     Asia/Baku  # Azerbaijan Time (obsolete)
 BDT     21600    # Bangladesh Time
                  #     (Asia/Dhaka)
 BNT     28800    # Brunei Darussalam Time
                  #     (Asia/Brunei)
-BORT    28800    # Borneo Time (Indonesia) (not in zic)
+BORT    28800    # Borneo Time (Indonesia) (not in IANA database)
 BTT     21600    # Bhutan Time
                  #     (Asia/Thimphu)
-CCT     28800    # China Coastal Time (not in zic)
+CCT     28800    # China Coastal Time (not in IANA database)
 GEST    Asia/Tbilisi  # Georgia Summer Time (obsolete)
-GET     Asia/Tbilisi  # Georgia Time
-                 #     (Asia/Tbilisi)
-HKT     28800    # Hong Kong Time (not in zic)
+GET     Asia/Tbilisi  # Georgia Time (obsolete)
+HKT     28800    # Hong Kong Time (not in IANA database)
 ICT     25200    # Indochina Time
                  #     (Asia/Bangkok)
                  #     (Asia/Phnom_Penh)
@@ -285,33 +281,29 @@ ICT     25200    # Indochina Time
 IDT     10800 D  # Israel Daylight Time
                  #     (Asia/Jerusalem)
 IRKST   Asia/Irkutsk  # Irkutsk Summer Time (obsolete)
-IRKT    Asia/Irkutsk  # Irkutsk Time
-                 #     (Asia/Irkutsk)
-IRT     12600    # Iran Time (not in zic)
+IRKT    Asia/Irkutsk  # Irkutsk Time (obsolete)
+IRT     12600    # Iran Time (not in IANA database)
 # CONFLICT! IST is not unique
 # Other timezones:
 # - IST: Irish Summer Time (Europe)
 # - IST: Indian Standard Time (Asia)
 IST      7200    # Israel Standard Time
                  #     (Asia/Jerusalem)
-JAYT    32400    # Jayapura Time (Indonesia) (not in zic)
+JAYT    32400    # Jayapura Time (Indonesia) (not in IANA database)
 JST     32400    # Japan Standard Time
                  #     (Asia/Tokyo)
-KDT     36000 D  # Korean Daylight Time (not in zic)
+KDT     36000 D  # Korean Daylight Time (not in IANA database)
 KGST    21600 D  # Kyrgyzstan Summer Time (obsolete)
-KGT     Asia/Bishkek  # Kyrgyzstan Time
-                 #     (Asia/Bishkek)
+KGT     Asia/Bishkek  # Kyrgyzstan Time (obsolete)
 KRAST   Asia/Krasnoyarsk  # Krasnoyarsk Summer Time (obsolete)
-KRAT    Asia/Krasnoyarsk  # Krasnoyarsk Time
-                 #     (Asia/Krasnoyarsk)
+KRAT    Asia/Krasnoyarsk  # Krasnoyarsk Time (obsolete)
 KST     32400    # Korean Standard Time
                  #     (Asia/Seoul)
 LKT     Asia/Colombo  # Lanka Time (obsolete)
 MAGST   Asia/Magadan  # Magadan Summer Time (obsolete)
-MAGT    Asia/Magadan  # Magadan Time
-                 #     (Asia/Magadan)
+MAGT    Asia/Magadan  # Magadan Time (obsolete)
 MMT     23400    # Myanmar Time
-                 #     (Asia/Rangoon)
+                 #     (Asia/Yangon)
 MYT     28800    # Malaysia Time
                  #     (Asia/Kuala_Lumpur)
                  #     (Asia/Kuching)
@@ -320,11 +312,9 @@ NOVT    Asia/Novosibirsk  # Novosibirsk Time (obsolete)
 NPT     20700    # Nepal Time
                  #     (Asia/Katmandu)
 OMSST   Asia/Omsk  # Omsk Summer Time (obsolete)
-OMST    Asia/Omsk  # Omsk Time
-                 #     (Asia/Omsk)
+OMST    Asia/Omsk  # Omsk Time (obsolete)
 PETST   Asia/Kamchatka  # Petropavlovsk-Kamchatski Summer Time (obsolete)
-PETT    Asia/Kamchatka  # Petropavlovsk-Kamchatski Time
-                 #     (Asia/Kamchatka)
+PETT    Asia/Kamchatka  # Petropavlovsk-Kamchatski Time (obsolete)
 PHT     28800    # Philippine Time
                  #     (Asia/Manila)
 PKT     18000    # Pakistan Time
@@ -333,10 +323,8 @@ PKST    21600 D  # Pakistan Summer Time
                  #     (Asia/Karachi)
 SGT     Asia/Singapore  # Singapore Time
                  #     (Asia/Singapore)
-TJT     18000    # Tajikistan Time
-                 #     (Asia/Dushanbe)
-TMT     Asia/Ashgabat  # Turkmenistan Time
-                 #     (Asia/Ashgabat)
+TJT     18000    # Tajikistan Time (obsolete)
+TMT     Asia/Ashgabat  # Turkmenistan Time (obsolete)
 ULAST   32400 D  # Ulan Bator Summer Time
                  #     (Asia/Ulaanbaatar)
 ULAT    Asia/Ulaanbaatar  # Ulan Bator Time
@@ -344,20 +332,15 @@ ULAT    Asia/Ulaanbaatar  # Ulan Bator Time
 UZST    21600 D  # Uzbekistan Summer Time
                  #     (Asia/Samarkand)
                  #     (Asia/Tashkent)
-UZT     18000    # Uzbekistan Time
-                 #     (Asia/Samarkand)
-                 #     (Asia/Tashkent)
+UZT     18000    # Uzbekistan Time (obsolete)
 VLAST   Asia/Vladivostok  # Vladivostok Summer Time (obsolete)
-VLAT    Asia/Vladivostok  # Vladivostok Time
-                 #     (Asia/Vladivostok)
+VLAT    Asia/Vladivostok  # Vladivostok Time (obsolete)
 XJT     21600    # Xinjiang Time
                  #     (Asia/Urumqi)
 YAKST   Asia/Yakutsk  # Yakutsk Summer Time (obsolete)
-YAKT    Asia/Yakutsk  # Yakutsk Time
-                 #     (Asia/Yakutsk)
+YAKT    Asia/Yakutsk  # Yakutsk Time (obsolete)
 YEKST   21600 D  # Yekaterinburg Summer Time (obsolete)
-YEKT    Asia/Yekaterinburg  # Yekaterinburg Time
-                 #     (Asia/Yekaterinburg)
+YEKT    Asia/Yekaterinburg  # Yekaterinburg Time (obsolete)
 
 #################### ATLANTIC ####################
 
@@ -408,7 +391,7 @@ FKT     Atlantic/Stanley  # Falkland Islands Time (obsolete)
 
 #################### AUSTRALIA ####################
 
-ACSST   37800 D  # Australian Central Summer Standard Time (not in zic)
+ACSST   37800 D  # Australian Central Summer Standard Time (not in IANA database)
 ACDT    37800 D  # Australian Central Daylight Time
                  #     (Australia/Adelaide)
                  #     (Australia/Broken_Hill)
@@ -419,7 +402,7 @@ ACST    34200    # Australian Central Standard Time
                  #     (Australia/Darwin)
 ACWST   31500    # Australian Central Western Standard Time
                  #     (Australia/Eucla)
-AESST   39600 D  # Australian Eastern Summer Standard Time (not in zic)
+AESST   39600 D  # Australian Eastern Summer Standard Time (not in IANA database)
 AEDT    39600 D  # Australian Eastern Daylight Time
                  #     (Australia/Brisbane)
                  #     (Australia/Currie)
@@ -434,21 +417,21 @@ AEST    36000    # Australian Eastern Standard Time
                  #     (Australia/Lindeman)
                  #     (Australia/Melbourne)
                  #     (Australia/Sydney)
-AWSST   32400 D  # Australia Western Summer Standard Time (not in zic)
+AWSST   32400 D  # Australia Western Summer Standard Time (not in IANA database)
 AWST    28800    # Australian Western Standard Time
                  #     (Australia/Perth)
-CADT    37800 D  # Central Australia Daylight-Saving Time (not in zic)
-CAST    34200    # Central Australia Standard Time (not in zic)
+CADT    37800 D  # Central Australia Daylight-Saving Time (not in IANA database)
+CAST    34200    # Central Australia Standard Time (not in IANA database)
 LHDT    Australia/Lord_Howe  # Lord Howe Daylight Time
                  #     (Australia/Lord_Howe)
 LHST    37800    # Lord Howe Standard Time
                  #     (Australia/Lord_Howe)
-LIGT    36000    # Melbourne, Australia (not in zic)
-NZT     43200    # New Zealand Time (not in zic)
-SADT    37800 D  # South Australian Daylight-Saving Time (not in zic)
-WADT    28800 D  # West Australian Daylight-Saving Time (not in zic)
-WAST    25200    # West Australian Standard Time (not in zic)
-WDT     32400 D  # West Australian Daylight-Saving Time (not in zic)
+LIGT    36000    # Melbourne, Australia (not in IANA database)
+NZT     43200    # New Zealand Time (not in IANA database)
+SADT    37800 D  # South Australian Daylight-Saving Time (not in IANA database)
+WADT    28800 D  # West Australian Daylight-Saving Time (not in IANA database)
+WAST    25200    # West Australian Standard Time (not in IANA database)
+WDT     32400 D  # West Australian Daylight-Saving Time (not in IANA database)
 
 #################### ETC ####################
 
@@ -472,7 +455,7 @@ GMT         0    # Greenwich Mean Time
                  #     (Europe/London)
 UCT         0    # Universal Coordinated Time
                  #     (Etc/UCT)
-UT          0    # Universal Time (not in zic)
+UT          0    # Universal Time (not in IANA database)
 UTC         0    # Coordinated Universal Time
 Z           0    # Zulu
 ZULU        0    # Zulu
@@ -631,10 +614,10 @@ EETDST  10800 D  # East-Egypt Summertime
 FET     10800    # Further-eastern European Time (obsolete)
                  #     (Europe/Kaliningrad)
                  #     (Europe/Minsk)
-MEST     7200 D  # Middle Europe Summer Time (not in zic)
-MET      3600    # Middle Europe Time (not in zic)
-METDST   7200 D  # Middle Europe Summer Time (not in zic)
-MEZ      3600    # Mitteleuropaeische Zeit (German) (not in zic)
+MEST     7200 D  # Middle Europe Summer Time (not in IANA database)
+MET      3600    # Middle Europe Time (not in IANA database)
+METDST   7200 D  # Middle Europe Summer Time (not in IANA database)
+MEZ      3600    # Mitteleuropaeische Zeit (German) (not in IANA database)
 MSD     14400 D  # Moscow Daylight Time (obsolete)
 MSK     Europe/Moscow  # Moscow Time
                  #     (Europe/Moscow)
@@ -669,8 +652,7 @@ RET     14400    # Reunion Time
                  #     (Indian/Reunion)
 SCT     14400    # Seychelles Time
                  #     (Indian/Mahe)
-TFT     18000    # Kerguelen Time
-                 #     (Indian/Kerguelen)
+TFT     18000    # Kerguelen Time (obsolete)
 
 #################### PACIFIC ####################
 
@@ -708,11 +690,11 @@ MART   -34200    # Marquesas Time
 MHT     43200    # Kwajalein Time
                  #     (Pacific/Kwajalein)
                  #     (Pacific/Majuro)
-MPT     36000    # North Mariana Islands Time (not in zic)
+MPT     36000    # North Mariana Islands Time (not in IANA database)
 # CONFLICT! NFT is not unique
 # Other timezones:
 #  - NFT: Norfolk Time (Pacific)
-NFT    -12600    # Newfoundland Time (not in zic)
+NFT    -12600    # Newfoundland Time (not in IANA database)
 NUT     Pacific/Niue  # Niue Time
                  #     (Pacific/Niue)
 NZDT    46800 D  # New Zealand Daylight Time
@@ -729,13 +711,12 @@ PONT    39600    # Ponape Time (Micronesia)
                  #     (Pacific/Ponape)
 PWT     32400    # Palau Time
                  #     (Pacific/Palau)
-TAHT   -36000    # Tahiti Time (zic says "TAHT", other sources "THAT")
+TAHT   -36000    # Tahiti Time (IANA database says "TAHT", other sources "THAT")
                  #     (Pacific/Tahiti)
 TKT     Pacific/Fakaofo  # Tokelau Time
                  #     (Pacific/Fakaofo)
-TOT     46800    # Tonga Time
-                 #     (Pacific/Tongatapu)
-TRUT    36000    # Truk Time (zic used to say "TRUT", other sources say "TRUK")
+TOT     46800    # Tonga Time (obsolete)
+TRUT    36000    # Truk Time (IANA database used to say "TRUT", other sources say "TRUK")
                  #     (Pacific/Truk)
 TVT     43200    # Tuvalu Time
                  #     (Pacific/Funafuti)
@@ -745,4 +726,4 @@ WAKT    43200    # Wake Time
                  #     (Pacific/Wake)
 WFT     43200    # Wallis and Futuna Time
                  #     (Pacific/Wallis)
-YAPT    36000    # Yap Time (Micronesia) (not in zic)
+YAPT    36000    # Yap Time (Micronesia) (not in IANA database)

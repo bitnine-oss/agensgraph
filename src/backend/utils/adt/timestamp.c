@@ -3,7 +3,7 @@
  * timestamp.c
  *	  Functions for the built-in SQL types "timestamp" and "interval".
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -72,13 +72,13 @@ static Timestamp dt2local(Timestamp dt, int timezone);
 static void AdjustTimestampForTypmod(Timestamp *time, int32 typmod);
 static void AdjustIntervalForTypmod(Interval *interval, int32 typmod);
 static TimestampTz timestamp2timestamptz(Timestamp timestamp);
+static Timestamp timestamptz2timestamp(TimestampTz timestamp);
 
 
 /* common code for timestamptypmodin and timestamptztypmodin */
 static int32
 anytimestamp_typmodin(bool istz, ArrayType *ta)
 {
-	int32		typmod;
 	int32	   *tl;
 	int			n;
 
@@ -93,22 +93,27 @@ anytimestamp_typmodin(bool istz, ArrayType *ta)
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("invalid type modifier")));
 
-	if (*tl < 0)
+	return anytimestamp_typmod_check(istz, tl[0]);
+}
+
+/* exported so parse_expr.c can use it */
+int32
+anytimestamp_typmod_check(bool istz, int32 typmod)
+{
+	if (typmod < 0)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("TIMESTAMP(%d)%s precision must not be negative",
-						*tl, (istz ? " WITH TIME ZONE" : ""))));
-	if (*tl > MAX_TIMESTAMP_PRECISION)
+						typmod, (istz ? " WITH TIME ZONE" : ""))));
+	if (typmod > MAX_TIMESTAMP_PRECISION)
 	{
 		ereport(WARNING,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 		   errmsg("TIMESTAMP(%d)%s precision reduced to maximum allowed, %d",
-				  *tl, (istz ? " WITH TIME ZONE" : ""),
+				  typmod, (istz ? " WITH TIME ZONE" : ""),
 				  MAX_TIMESTAMP_PRECISION)));
 		typmod = MAX_TIMESTAMP_PRECISION;
 	}
-	else
-		typmod = *tl;
 
 	return typmod;
 }
@@ -336,6 +341,10 @@ timestamp_scale(PG_FUNCTION_ARGS)
 	PG_RETURN_TIMESTAMP(result);
 }
 
+/*
+ * AdjustTimestampForTypmod --- round off a timestamp to suit given typmod
+ * Works for either timestamp or timestamptz.
+ */
 static void
 AdjustTimestampForTypmod(Timestamp *time, int32 typmod)
 {
@@ -1241,6 +1250,59 @@ intervaltypmodout(PG_FUNCTION_ARGS)
 	PG_RETURN_CSTRING(res);
 }
 
+/*
+ * Given an interval typmod value, return a code for the least-significant
+ * field that the typmod allows to be nonzero, for instance given
+ * INTERVAL DAY TO HOUR we want to identify "hour".
+ *
+ * The results should be ordered by field significance, which means
+ * we can't use the dt.h macros YEAR etc, because for some odd reason
+ * they aren't ordered that way.  Instead, arbitrarily represent
+ * SECOND = 0, MINUTE = 1, HOUR = 2, DAY = 3, MONTH = 4, YEAR = 5.
+ */
+static int
+intervaltypmodleastfield(int32 typmod)
+{
+	if (typmod < 0)
+		return 0;				/* SECOND */
+
+	switch (INTERVAL_RANGE(typmod))
+	{
+		case INTERVAL_MASK(YEAR):
+			return 5;			/* YEAR */
+		case INTERVAL_MASK(MONTH):
+			return 4;			/* MONTH */
+		case INTERVAL_MASK(DAY):
+			return 3;			/* DAY */
+		case INTERVAL_MASK(HOUR):
+			return 2;			/* HOUR */
+		case INTERVAL_MASK(MINUTE):
+			return 1;			/* MINUTE */
+		case INTERVAL_MASK(SECOND):
+			return 0;			/* SECOND */
+		case INTERVAL_MASK(YEAR) | INTERVAL_MASK(MONTH):
+			return 4;			/* MONTH */
+		case INTERVAL_MASK(DAY) | INTERVAL_MASK(HOUR):
+			return 2;			/* HOUR */
+		case INTERVAL_MASK(DAY) | INTERVAL_MASK(HOUR) | INTERVAL_MASK(MINUTE):
+			return 1;			/* MINUTE */
+		case INTERVAL_MASK(DAY) | INTERVAL_MASK(HOUR) | INTERVAL_MASK(MINUTE) | INTERVAL_MASK(SECOND):
+			return 0;			/* SECOND */
+		case INTERVAL_MASK(HOUR) | INTERVAL_MASK(MINUTE):
+			return 1;			/* MINUTE */
+		case INTERVAL_MASK(HOUR) | INTERVAL_MASK(MINUTE) | INTERVAL_MASK(SECOND):
+			return 0;			/* SECOND */
+		case INTERVAL_MASK(MINUTE) | INTERVAL_MASK(SECOND):
+			return 0;			/* SECOND */
+		case INTERVAL_FULL_RANGE:
+			return 0;			/* SECOND */
+		default:
+			elog(ERROR, "invalid INTERVAL typmod: 0x%x", typmod);
+			break;
+	}
+	return 0;					/* can't get here, but keep compiler quiet */
+}
+
 
 /* interval_transform()
  * Flatten superfluous calls to interval_scale().  The interval typmod is
@@ -1262,39 +1324,39 @@ interval_transform(PG_FUNCTION_ARGS)
 	if (IsA(typmod, Const) &&!((Const *) typmod)->constisnull)
 	{
 		Node	   *source = (Node *) linitial(expr->args);
-		int32		old_typmod = exprTypmod(source);
 		int32		new_typmod = DatumGetInt32(((Const *) typmod)->constvalue);
-		int			old_range;
-		int			old_precis;
-		int			new_range = INTERVAL_RANGE(new_typmod);
-		int			new_precis = INTERVAL_PRECISION(new_typmod);
-		int			new_range_fls;
-		int			old_range_fls;
+		bool		noop;
 
-		if (old_typmod < 0)
-		{
-			old_range = INTERVAL_FULL_RANGE;
-			old_precis = INTERVAL_FULL_PRECISION;
-		}
+		if (new_typmod < 0)
+			noop = true;
 		else
 		{
-			old_range = INTERVAL_RANGE(old_typmod);
-			old_precis = INTERVAL_PRECISION(old_typmod);
-		}
+			int32		old_typmod = exprTypmod(source);
+			int			old_least_field;
+			int			new_least_field;
+			int			old_precis;
+			int			new_precis;
 
-		/*
-		 * Temporally-smaller fields occupy higher positions in the range
-		 * bitmap.  Since only the temporally-smallest bit matters for length
-		 * coercion purposes, we compare the last-set bits in the ranges.
-		 * Precision, which is to say, sub-second precision, only affects
-		 * ranges that include SECOND.
-		 */
-		new_range_fls = fls(new_range);
-		old_range_fls = fls(old_range);
-		if (new_typmod < 0 ||
-			((new_range_fls >= SECOND || new_range_fls >= old_range_fls) &&
-		   (old_range_fls < SECOND || new_precis >= MAX_INTERVAL_PRECISION ||
-			new_precis >= old_precis)))
+			old_least_field = intervaltypmodleastfield(old_typmod);
+			new_least_field = intervaltypmodleastfield(new_typmod);
+			if (old_typmod < 0)
+				old_precis = INTERVAL_FULL_PRECISION;
+			else
+				old_precis = INTERVAL_PRECISION(old_typmod);
+			new_precis = INTERVAL_PRECISION(new_typmod);
+
+			/*
+			 * Cast is a no-op if least field stays the same or decreases
+			 * while precision stays the same or increases.  But precision,
+			 * which is to say, sub-second precision, only affects ranges that
+			 * include SECOND.
+			 */
+			noop = (new_least_field <= old_least_field) &&
+				(old_least_field > 0 /* SECOND */ ||
+				 new_precis >= MAX_INTERVAL_PRECISION ||
+				 new_precis >= old_precis);
+		}
+		if (noop)
 			ret = relabel_to_typmod(source, new_typmod);
 	}
 
@@ -1685,6 +1747,34 @@ IntegerTimestampToTimestampTz(int64 timestamp)
 	return result;
 }
 #endif
+
+/*
+ * GetSQLCurrentTimestamp -- implements CURRENT_TIMESTAMP, CURRENT_TIMESTAMP(n)
+ */
+TimestampTz
+GetSQLCurrentTimestamp(int32 typmod)
+{
+	TimestampTz ts;
+
+	ts = GetCurrentTransactionStartTimestamp();
+	if (typmod >= 0)
+		AdjustTimestampForTypmod(&ts, typmod);
+	return ts;
+}
+
+/*
+ * GetSQLLocalTimestamp -- implements LOCALTIMESTAMP, LOCALTIMESTAMP(n)
+ */
+Timestamp
+GetSQLLocalTimestamp(int32 typmod)
+{
+	Timestamp	ts;
+
+	ts = timestamptz2timestamp(GetCurrentTransactionStartTimestamp());
+	if (typmod >= 0)
+		AdjustTimestampForTypmod(&ts, typmod);
+	return ts;
+}
 
 /*
  * TimestampDifference -- convert the difference between two timestamps
@@ -5112,84 +5202,15 @@ interval_part(PG_FUNCTION_ARGS)
 
 
 /* timestamp_zone_transform()
- * If the zone argument of a timestamp_zone() or timestamptz_zone() call is a
- * plan-time constant denoting a zone equivalent to UTC, the call will always
- * return its second argument unchanged.  Simplify the expression tree
- * accordingly.  Civil time zones almost never qualify, because jurisdictions
- * that follow UTC today have not done so continuously.
+ * The original optimization here caused problems by relabeling Vars that
+ * could be matched to index entries.  It might be possible to resurrect it
+ * at some point by teaching the planner to be less cavalier with RelabelType
+ * nodes, but that will take careful analysis.
  */
 Datum
 timestamp_zone_transform(PG_FUNCTION_ARGS)
 {
-	Node	   *func_node = (Node *) PG_GETARG_POINTER(0);
-	FuncExpr   *expr = (FuncExpr *) func_node;
-	Node	   *ret = NULL;
-	Node	   *zone_node;
-
-	Assert(IsA(expr, FuncExpr));
-	Assert(list_length(expr->args) == 2);
-
-	zone_node = (Node *) linitial(expr->args);
-
-	if (IsA(zone_node, Const) &&!((Const *) zone_node)->constisnull)
-	{
-		text	   *zone = DatumGetTextPP(((Const *) zone_node)->constvalue);
-		char		tzname[TZ_STRLEN_MAX + 1];
-		char	   *lowzone;
-		int			type,
-					abbrev_offset;
-		pg_tz	   *tzp;
-		bool		noop = false;
-
-		/*
-		 * If the timezone is forever UTC+0, the FuncExpr function call is a
-		 * no-op for all possible timestamps.  This passage mirrors code in
-		 * timestamp_zone().
-		 */
-		text_to_cstring_buffer(zone, tzname, sizeof(tzname));
-		lowzone = downcase_truncate_identifier(tzname,
-											   strlen(tzname),
-											   false);
-		type = DecodeTimezoneAbbrev(0, lowzone, &abbrev_offset, &tzp);
-		if (type == TZ || type == DTZ)
-			noop = (abbrev_offset == 0);
-		else if (type == DYNTZ)
-		{
-			/*
-			 * An abbreviation of a single-offset timezone ought not to be
-			 * configured as a DYNTZ, so don't bother checking.
-			 */
-		}
-		else
-		{
-			long		tzname_offset;
-
-			tzp = pg_tzset(tzname);
-			if (tzp && pg_get_timezone_offset(tzp, &tzname_offset))
-				noop = (tzname_offset == 0);
-		}
-
-		if (noop)
-		{
-			Node	   *timestamp = (Node *) lsecond(expr->args);
-
-			/* Strip any existing RelabelType node(s) */
-			while (timestamp && IsA(timestamp, RelabelType))
-				timestamp = (Node *) ((RelabelType *) timestamp)->arg;
-
-			/*
-			 * Replace the FuncExpr with its timestamp argument, relabeled as
-			 * though the function call had computed it.
-			 */
-			ret = (Node *) makeRelabelType((Expr *) timestamp,
-										   exprType(func_node),
-										   exprTypmod(func_node),
-										   exprCollation(func_node),
-										   COERCE_EXPLICIT_CAST);
-		}
-	}
-
-	PG_RETURN_POINTER(ret);
+	PG_RETURN_POINTER(NULL);
 }
 
 /*	timestamp_zone()
@@ -5286,49 +5307,15 @@ timestamp_zone(PG_FUNCTION_ARGS)
 }
 
 /* timestamp_izone_transform()
- * If we deduce at plan time that a particular timestamp_izone() or
- * timestamptz_izone() call can only compute tz=0, the call will always return
- * its second argument unchanged.  Simplify the expression tree accordingly.
+ * The original optimization here caused problems by relabeling Vars that
+ * could be matched to index entries.  It might be possible to resurrect it
+ * at some point by teaching the planner to be less cavalier with RelabelType
+ * nodes, but that will take careful analysis.
  */
 Datum
 timestamp_izone_transform(PG_FUNCTION_ARGS)
 {
-	Node	   *func_node = (Node *) PG_GETARG_POINTER(0);
-	FuncExpr   *expr = (FuncExpr *) func_node;
-	Node	   *ret = NULL;
-	Node	   *zone_node;
-
-	Assert(IsA(expr, FuncExpr));
-	Assert(list_length(expr->args) == 2);
-
-	zone_node = (Node *) linitial(expr->args);
-
-	if (IsA(zone_node, Const) &&!((Const *) zone_node)->constisnull)
-	{
-		Interval   *zone;
-
-		zone = DatumGetIntervalP(((Const *) zone_node)->constvalue);
-		if (zone->month == 0 && zone->day == 0 && zone->time == 0)
-		{
-			Node	   *timestamp = (Node *) lsecond(expr->args);
-
-			/* Strip any existing RelabelType node(s) */
-			while (timestamp && IsA(timestamp, RelabelType))
-				timestamp = (Node *) ((RelabelType *) timestamp)->arg;
-
-			/*
-			 * Replace the FuncExpr with its timestamp argument, relabeled as
-			 * though the function call had computed it.
-			 */
-			ret = (Node *) makeRelabelType((Expr *) timestamp,
-										   exprType(func_node),
-										   exprTypmod(func_node),
-										   exprCollation(func_node),
-										   COERCE_EXPLICIT_CAST);
-		}
-	}
-
-	PG_RETURN_POINTER(ret);
+	PG_RETURN_POINTER(NULL);
 }
 
 /* timestamp_izone()
@@ -5415,6 +5402,13 @@ Datum
 timestamptz_timestamp(PG_FUNCTION_ARGS)
 {
 	TimestampTz timestamp = PG_GETARG_TIMESTAMPTZ(0);
+
+	PG_RETURN_TIMESTAMP(timestamptz2timestamp(timestamp));
+}
+
+static Timestamp
+timestamptz2timestamp(TimestampTz timestamp)
+{
 	Timestamp	result;
 	struct pg_tm tt,
 			   *tm = &tt;
@@ -5434,7 +5428,7 @@ timestamptz_timestamp(PG_FUNCTION_ARGS)
 					(errcode(ERRCODE_DATETIME_VALUE_OUT_OF_RANGE),
 					 errmsg("timestamp out of range")));
 	}
-	PG_RETURN_TIMESTAMP(result);
+	return result;
 }
 
 /* timestamptz_zone()

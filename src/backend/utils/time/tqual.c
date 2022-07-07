@@ -50,7 +50,7 @@
  *	 HeapTupleSatisfiesAny()
  *		  all tuples are visible
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -418,8 +418,8 @@ HeapTupleSatisfiesToast(HeapTuple htup, Snapshot snapshot,
 
 		/*
 		 * An invalid Xmin can be left behind by a speculative insertion that
-		 * is canceled by super-deleting the tuple.  We shouldn't see any of
-		 * those in TOAST tables, but better safe than sorry.
+		 * is canceled by super-deleting the tuple.  This also applies to
+		 * TOAST tuples created during speculative insertion.
 		 */
 		else if (!TransactionIdIsValid(HeapTupleHeaderGetXmin(tuple)))
 			return false;
@@ -1625,7 +1625,7 @@ HeapTupleHeaderIsOnlyLocked(HeapTupleHeader tuple)
 }
 
 /*
- * check whether the transaciont id 'xid' is in the pre-sorted array 'xip'.
+ * check whether the transaction id 'xid' is in the pre-sorted array 'xip'.
  */
 static bool
 TransactionIdInArray(TransactionId xid, TransactionId *xip, Size num)

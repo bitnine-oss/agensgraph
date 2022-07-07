@@ -4,7 +4,7 @@
  *	  POSTGRES tuple descriptor definitions.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/tupdesc.h
@@ -118,6 +118,13 @@ extern void TupleDescInitEntry(TupleDesc desc,
 				   Oid oidtypeid,
 				   int32 typmod,
 				   int attdim);
+
+extern void TupleDescInitBuiltinEntry(TupleDesc desc,
+						  AttrNumber attributeNumber,
+						  const char *attributeName,
+						  Oid oidtypeid,
+						  int32 typmod,
+						  int attdim);
 
 extern void TupleDescInitEntryCollation(TupleDesc desc,
 							AttrNumber attributeNumber,

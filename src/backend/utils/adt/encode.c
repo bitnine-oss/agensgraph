@@ -3,7 +3,7 @@
  * encode.c
  *	  Various data encoding/decoding things.
  *
- * Copyright (c) 2001-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2017, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -439,7 +439,7 @@ esc_decode(const char *src, unsigned srclen, char *dst)
 			 */
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					 errmsg("invalid input syntax for type bytea")));
+					 errmsg("invalid input syntax for type %s", "bytea")));
 		}
 
 		len++;
@@ -504,7 +504,7 @@ esc_dec_len(const char *src, unsigned srclen)
 			 */
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					 errmsg("invalid input syntax for type bytea")));
+					 errmsg("invalid input syntax for type %s", "bytea")));
 		}
 
 		len++;

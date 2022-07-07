@@ -3,7 +3,7 @@
  *
  *	database server functions
  *
- *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/server.c
  */
 
@@ -36,7 +36,7 @@ connectToServer(ClusterInfo *cluster, const char *db_name)
 		if (conn)
 			PQfinish(conn);
 
-		printf("Failure, exiting\n");
+		printf(_("Failure, exiting\n"));
 		exit(1);
 	}
 
@@ -136,7 +136,7 @@ executeQueryOrDie(PGconn *conn, const char *fmt,...)
 			   PQerrorMessage(conn));
 		PQclear(result);
 		PQfinish(conn);
-		printf("Failure, exiting\n");
+		printf(_("Failure, exiting\n"));
 		exit(1);
 	}
 	else
@@ -166,7 +166,7 @@ get_major_server_version(ClusterInfo *cluster)
 
 	if (fscanf(version_fd, "%63s", cluster->major_version_str) == 0 ||
 		sscanf(cluster->major_version_str, "%d.%d", &integer_version,
-			   &fractional_version) != 2)
+			   &fractional_version) < 1)
 		pg_fatal("could not get version from %s\n", cluster->pgdata);
 
 	fclose(version_fd);
@@ -320,7 +320,7 @@ stop_postmaster(bool fast)
 			  "\"%s/pg_ctl\" -w -D \"%s\" -o \"%s\" %s stop",
 			  cluster->bindir, cluster->pgconfig,
 			  cluster->pgopts ? cluster->pgopts : "",
-			  fast ? "-m fast" : "");
+			  fast ? "-m fast" : "-m smart");
 
 	os_info.running_cluster = NULL;
 }

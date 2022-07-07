@@ -3,7 +3,7 @@
  * heapam.c
  *	  heap access method code
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -2324,6 +2324,17 @@ FreeBulkInsertState(BulkInsertState bistate)
 	pfree(bistate);
 }
 
+/*
+ * ReleaseBulkInsertStatePin - release a buffer currently held in bistate
+ */
+void
+ReleaseBulkInsertStatePin(BulkInsertState bistate)
+{
+	if (bistate->current_buf != InvalidBuffer)
+		ReleaseBuffer(bistate->current_buf);
+	bistate->current_buf = InvalidBuffer;
+}
+
 
 /*
  *	heap_insert		- insert tuple into a heap
@@ -2507,7 +2518,7 @@ heap_insert(Relation relation, HeapTuple tup, CommandId cid,
 							heaptup->t_len - SizeofHeapTupleHeader);
 
 		/* filtering by origin on a row level is much more efficient */
-		XLogIncludeOrigin();
+		XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);
 
 		recptr = XLogInsert(RM_HEAP_ID, info);
 
@@ -2846,7 +2857,7 @@ heap_multi_insert(Relation relation, HeapTuple *tuples, int ntuples,
 			XLogRegisterBufData(0, tupledata, totaldatalen);
 
 			/* filtering by origin on a row level is much more efficient */
-			XLogIncludeOrigin();
+			XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);
 
 			recptr = XLogInsert(RM_HEAP2_ID, info);
 
@@ -3308,7 +3319,7 @@ l1:
 		}
 
 		/* filtering by origin on a row level is much more efficient */
-		XLogIncludeOrigin();
+		XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);
 
 		recptr = XLogInsert(RM_HEAP_ID, XLOG_HEAP_DELETE);
 
@@ -3335,7 +3346,7 @@ l1:
 		Assert(!HeapTupleHasExternal(&tp));
 	}
 	else if (HeapTupleHasExternal(&tp))
-		toast_delete(relation, &tp);
+		toast_delete(relation, &tp, false);
 
 	/*
 	 * Mark tuple for invalidation from system caches at next command
@@ -3802,6 +3813,7 @@ l2:
 			ReleaseBuffer(vmbuffer);
 		bms_free(hot_attrs);
 		bms_free(key_attrs);
+		bms_free(id_attrs);
 		return result;
 	}
 
@@ -4268,6 +4280,7 @@ l2:
 
 	bms_free(hot_attrs);
 	bms_free(key_attrs);
+	bms_free(id_attrs);
 
 	return HeapTupleMayBeUpdated;
 }
@@ -5720,6 +5733,17 @@ l4:
 			goto out_locked;
 		}
 
+		/*
+		 * Also check Xmin: if this tuple was created by an aborted
+		 * (sub)transaction, then we already locked the last live one in the
+		 * chain, thus we're done, so return success.
+		 */
+		if (TransactionIdDidAbort(HeapTupleHeaderGetXmin(mytup.t_data)))
+		{
+			UnlockReleaseBuffer(buf);
+			return HeapTupleMayBeUpdated;
+		}
+
 		old_infomask = mytup.t_data->t_infomask;
 		old_infomask2 = mytup.t_data->t_infomask2;
 		xmax = HeapTupleHeaderGetRawXmax(mytup.t_data);
@@ -6022,7 +6046,7 @@ heap_finish_speculative(Relation relation, HeapTuple tuple)
 		XLogBeginInsert();
 
 		/* We want the same filtering on this as on a plain insert */
-		XLogIncludeOrigin();
+		XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);
 
 		XLogRegisterData((char *) &xlrec, SizeOfHeapConfirm);
 		XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
@@ -6057,7 +6081,8 @@ heap_finish_speculative(Relation relation, HeapTuple tuple)
  * could deadlock with each other, which would not be acceptable.
  *
  * This is somewhat redundant with heap_delete, but we prefer to have a
- * dedicated routine with stripped down requirements.
+ * dedicated routine with stripped down requirements.  Note that this is also
+ * used to delete the TOAST tuples created during speculative insertion.
  *
  * This routine does not affect logical decoding as it only looks at
  * confirmation records.
@@ -6101,7 +6126,7 @@ heap_abort_speculative(Relation relation, HeapTuple tuple)
 	 */
 	if (tp.t_data->t_choice.t_heap.t_xmin != xid)
 		elog(ERROR, "attempted to kill a tuple inserted by another transaction");
-	if (!HeapTupleHeaderIsSpeculative(tp.t_data))
+	if (!(IsToastRelation(relation) || HeapTupleHeaderIsSpeculative(tp.t_data)))
 		elog(ERROR, "attempted to kill a non-speculative tuple");
 	Assert(!HeapTupleHeaderIsHeapOnly(tp.t_data));
 
@@ -6171,7 +6196,10 @@ heap_abort_speculative(Relation relation, HeapTuple tuple)
 	LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
 
 	if (HeapTupleHasExternal(&tp))
-		toast_delete(relation, &tp);
+	{
+		Assert(!IsToastRelation(relation));
+		toast_delete(relation, &tp, true);
+	}
 
 	/*
 	 * Never need to mark tuple for invalidation, since catalogs don't support
@@ -7686,7 +7714,7 @@ log_heap_update(Relation reln, Buffer oldbuf,
 	}
 
 	/* filtering by origin on a row level is much more efficient */
-	XLogIncludeOrigin();
+	XLogSetRecordFlags(XLOG_INCLUDE_ORIGIN);
 
 	recptr = XLogInsert(RM_HEAP_ID, info);
 

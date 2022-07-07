@@ -3,7 +3,7 @@
  * arrayfuncs.c
  *	  Support functions for arrays.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -4957,9 +4957,7 @@ initArrayResult(Oid element_type, MemoryContext rcontext, bool subcontext)
 	if (subcontext)
 		arr_context = AllocSetContextCreate(rcontext,
 											"accumArrayResult",
-											ALLOCSET_DEFAULT_MINSIZE,
-											ALLOCSET_DEFAULT_INITSIZE,
-											ALLOCSET_DEFAULT_MAXSIZE);
+											ALLOCSET_DEFAULT_SIZES);
 
 	astate = (ArrayBuildState *)
 		MemoryContextAlloc(arr_context, sizeof(ArrayBuildState));
@@ -5161,9 +5159,7 @@ initArrayResultArr(Oid array_type, Oid element_type, MemoryContext rcontext,
 	if (subcontext)
 		arr_context = AllocSetContextCreate(rcontext,
 											"accumArrayResultArr",
-											ALLOCSET_DEFAULT_MINSIZE,
-											ALLOCSET_DEFAULT_INITSIZE,
-											ALLOCSET_DEFAULT_MAXSIZE);
+											ALLOCSET_DEFAULT_SIZES);
 
 	/* Note we initialize all fields to zero */
 	astate = (ArrayBuildStateArr *)
@@ -5738,17 +5734,11 @@ array_fill_internal(ArrayType *dims, ArrayType *lbs,
 	/*
 	 * Params checks
 	 */
-	if (ARR_NDIM(dims) != 1)
+	if (ARR_NDIM(dims) > 1)
 		ereport(ERROR,
 				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
 				 errmsg("wrong number of array subscripts"),
 				 errdetail("Dimension array must be one dimensional.")));
-
-	if (ARR_LBOUND(dims)[0] != 1)
-		ereport(ERROR,
-				(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-				 errmsg("wrong range of array subscripts"),
-				 errdetail("Lower bound of dimension array must be one.")));
 
 	if (array_contains_nulls(dims))
 		ereport(ERROR,
@@ -5756,7 +5746,7 @@ array_fill_internal(ArrayType *dims, ArrayType *lbs,
 				 errmsg("dimension values cannot be null")));
 
 	dimv = (int *) ARR_DATA_PTR(dims);
-	ndims = ARR_DIMS(dims)[0];
+	ndims = (ARR_NDIM(dims) > 0) ? ARR_DIMS(dims)[0] : 0;
 
 	if (ndims < 0)				/* we do allow zero-dimension arrays */
 		ereport(ERROR,
@@ -5770,24 +5760,18 @@ array_fill_internal(ArrayType *dims, ArrayType *lbs,
 
 	if (lbs != NULL)
 	{
-		if (ARR_NDIM(lbs) != 1)
+		if (ARR_NDIM(lbs) > 1)
 			ereport(ERROR,
 					(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
 					 errmsg("wrong number of array subscripts"),
 					 errdetail("Dimension array must be one dimensional.")));
-
-		if (ARR_LBOUND(lbs)[0] != 1)
-			ereport(ERROR,
-					(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
-					 errmsg("wrong range of array subscripts"),
-				  errdetail("Lower bound of dimension array must be one.")));
 
 		if (array_contains_nulls(lbs))
 			ereport(ERROR,
 					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
 					 errmsg("dimension values cannot be null")));
 
-		if (ARR_DIMS(lbs)[0] != ndims)
+		if (ndims != ((ARR_NDIM(lbs) > 0) ? ARR_DIMS(lbs)[0] : 0))
 			ereport(ERROR,
 					(errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR),
 					 errmsg("wrong number of array subscripts"),
@@ -5805,11 +5789,11 @@ array_fill_internal(ArrayType *dims, ArrayType *lbs,
 		lbsv = deflbs;
 	}
 
-	/* fast track for empty array */
-	if (ndims == 0)
-		return construct_empty_array(elmtype);
-
 	nitems = ArrayGetNItems(ndims, dimv);
+
+	/* fast track for empty array */
+	if (nitems <= 0)
+		return construct_empty_array(elmtype);
 
 	/*
 	 * We arrange to look up info about element type only once per series of

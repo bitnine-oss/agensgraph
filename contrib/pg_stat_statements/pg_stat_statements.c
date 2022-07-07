@@ -48,7 +48,7 @@
  * in the file to be read or written while holding only shared lock.
  *
  *
- * Copyright (c) 2008-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2008-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pg_stat_statements/pg_stat_statements.c
@@ -69,6 +69,7 @@
 #include "parser/analyze.h"
 #include "parser/parsetree.h"
 #include "parser/scanner.h"
+#include "parser/scansup.h"
 #include "pgstat.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
@@ -138,7 +139,7 @@ typedef struct Counters
 {
 	int64		calls;			/* # of times executed */
 	double		total_time;		/* total execution time, in msec */
-	double		min_time;		/* minimim execution time in msec */
+	double		min_time;		/* minimum execution time in msec */
 	double		max_time;		/* maximum execution time in msec */
 	double		mean_time;		/* mean execution time in msec */
 	double		sum_var_time;	/* sum of variances in execution time in msec */
@@ -292,13 +293,14 @@ static void pgss_ExecutorRun(QueryDesc *queryDesc,
 				 uint64 count);
 static void pgss_ExecutorFinish(QueryDesc *queryDesc);
 static void pgss_ExecutorEnd(QueryDesc *queryDesc);
-static void pgss_ProcessUtility(Node *parsetree, const char *queryString,
+static void pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 					ProcessUtilityContext context, ParamListInfo params,
 					DestReceiver *dest, char *completionTag);
 static uint32 pgss_hash_fn(const void *key, Size keysize);
 static int	pgss_match_fn(const void *key1, const void *key2, Size keysize);
-static uint32 pgss_hash_string(const char *str);
+static uint32 pgss_hash_string(const char *str, int len);
 static void pgss_store(const char *query, uint32 queryId,
+		   int query_location, int query_len,
 		   double total_time, uint64 rows,
 		   const BufferUsage *bufusage,
 		   pgssJumbleState *jstate);
@@ -324,8 +326,9 @@ static void JumbleRangeTable(pgssJumbleState *jstate, List *rtable);
 static void JumbleExpr(pgssJumbleState *jstate, Node *node);
 static void RecordConstLocation(pgssJumbleState *jstate, int location);
 static char *generate_normalized_query(pgssJumbleState *jstate, const char *query,
-						  int *query_len_p, int encoding);
-static void fill_in_constant_lengths(pgssJumbleState *jstate, const char *query);
+						  int query_loc, int *query_len_p, int encoding);
+static void fill_in_constant_lengths(pgssJumbleState *jstate, const char *query,
+						 int query_loc);
 static int	comp_location(const void *a, const void *b);
 
 
@@ -822,6 +825,8 @@ pgss_post_parse_analyze(ParseState *pstate, Query *query)
 	if (jstate.clocations_count > 0)
 		pgss_store(pstate->p_sourcetext,
 				   query->queryId,
+				   query->stmt_location,
+				   query->stmt_len,
 				   0,
 				   0,
 				   NULL,
@@ -926,6 +931,8 @@ pgss_ExecutorEnd(QueryDesc *queryDesc)
 
 		pgss_store(queryDesc->sourceText,
 				   queryId,
+				   queryDesc->plannedstmt->stmt_location,
+				   queryDesc->plannedstmt->stmt_len,
 				   queryDesc->totaltime->total * 1000.0,		/* convert to msec */
 				   queryDesc->estate->es_processed,
 				   &queryDesc->totaltime->bufusage,
@@ -942,10 +949,12 @@ pgss_ExecutorEnd(QueryDesc *queryDesc)
  * ProcessUtility hook
  */
 static void
-pgss_ProcessUtility(Node *parsetree, const char *queryString,
+pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 					ProcessUtilityContext context, ParamListInfo params,
 					DestReceiver *dest, char *completionTag)
 {
+	Node	   *parsetree = pstmt->utilityStmt;
+
 	/*
 	 * If it's an EXECUTE statement, we don't track it and don't increment the
 	 * nesting level.  This allows the cycles to be charged to the underlying
@@ -970,7 +979,6 @@ pgss_ProcessUtility(Node *parsetree, const char *queryString,
 		uint64		rows;
 		BufferUsage bufusage_start,
 					bufusage;
-		uint32		queryId;
 
 		bufusage_start = pgBufferUsage;
 		INSTR_TIME_SET_CURRENT(start);
@@ -979,11 +987,11 @@ pgss_ProcessUtility(Node *parsetree, const char *queryString,
 		PG_TRY();
 		{
 			if (prev_ProcessUtility)
-				prev_ProcessUtility(parsetree, queryString,
+				prev_ProcessUtility(pstmt, queryString,
 									context, params,
 									dest, completionTag);
 			else
-				standard_ProcessUtility(parsetree, queryString,
+				standard_ProcessUtility(pstmt, queryString,
 										context, params,
 										dest, completionTag);
 			nested_level--;
@@ -1031,11 +1039,10 @@ pgss_ProcessUtility(Node *parsetree, const char *queryString,
 		bufusage.blk_write_time = pgBufferUsage.blk_write_time;
 		INSTR_TIME_SUBTRACT(bufusage.blk_write_time, bufusage_start.blk_write_time);
 
-		/* For utility statements, we just hash the query string directly */
-		queryId = pgss_hash_string(queryString);
-
 		pgss_store(queryString,
-				   queryId,
+				   0,			/* signal that it's a utility stmt */
+				   pstmt->stmt_location,
+				   pstmt->stmt_len,
 				   INSTR_TIME_GET_MILLISEC(duration),
 				   rows,
 				   &bufusage,
@@ -1044,11 +1051,11 @@ pgss_ProcessUtility(Node *parsetree, const char *queryString,
 	else
 	{
 		if (prev_ProcessUtility)
-			prev_ProcessUtility(parsetree, queryString,
+			prev_ProcessUtility(pstmt, queryString,
 								context, params,
 								dest, completionTag);
 		else
-			standard_ProcessUtility(parsetree, queryString,
+			standard_ProcessUtility(pstmt, queryString,
 									context, params,
 									dest, completionTag);
 	}
@@ -1090,13 +1097,16 @@ pgss_match_fn(const void *key1, const void *key2, Size keysize)
  * utility statements.
  */
 static uint32
-pgss_hash_string(const char *str)
+pgss_hash_string(const char *str, int len)
 {
-	return hash_any((const unsigned char *) str, strlen(str));
+	return hash_any((const unsigned char *) str, len);
 }
 
 /*
  * Store some statistics for a statement.
+ *
+ * If queryId is 0 then this is a utility statement and we should compute
+ * a suitable queryId internally.
  *
  * If jstate is not NULL then we're trying to create an entry for which
  * we have no statistics as yet; we just want to record the normalized
@@ -1104,6 +1114,7 @@ pgss_hash_string(const char *str)
  */
 static void
 pgss_store(const char *query, uint32 queryId,
+		   int query_location, int query_len,
 		   double total_time, uint64 rows,
 		   const BufferUsage *bufusage,
 		   pgssJumbleState *jstate)
@@ -1112,7 +1123,6 @@ pgss_store(const char *query, uint32 queryId,
 	pgssEntry  *entry;
 	char	   *norm_query = NULL;
 	int			encoding = GetDatabaseEncoding();
-	int			query_len;
 
 	Assert(query != NULL);
 
@@ -1120,7 +1130,43 @@ pgss_store(const char *query, uint32 queryId,
 	if (!pgss || !pgss_hash)
 		return;
 
-	query_len = strlen(query);
+	/*
+	 * Confine our attention to the relevant part of the string, if the query
+	 * is a portion of a multi-statement source string.
+	 *
+	 * First apply starting offset, unless it's -1 (unknown).
+	 */
+	if (query_location >= 0)
+	{
+		Assert(query_location <= strlen(query));
+		query += query_location;
+		/* Length of 0 (or -1) means "rest of string" */
+		if (query_len <= 0)
+			query_len = strlen(query);
+		else
+			Assert(query_len <= strlen(query));
+	}
+	else
+	{
+		/* If query location is unknown, distrust query_len as well */
+		query_location = 0;
+		query_len = strlen(query);
+	}
+
+	/*
+	 * Discard leading and trailing whitespace, too.  Use scanner_isspace()
+	 * not libc's isspace(), because we want to match the lexer's behavior.
+	 */
+	while (query_len > 0 && scanner_isspace(query[0]))
+		query++, query_location++, query_len--;
+	while (query_len > 0 && scanner_isspace(query[query_len - 1]))
+		query_len--;
+
+	/*
+	 * For utility statements, we just hash the query string to get an ID.
+	 */
+	if (queryId == 0)
+		queryId = pgss_hash_string(query, query_len);
 
 	/* Set up key for hashtable search */
 	key.userid = GetUserId();
@@ -1151,6 +1197,7 @@ pgss_store(const char *query, uint32 queryId,
 		{
 			LWLockRelease(pgss->lock);
 			norm_query = generate_normalized_query(jstate, query,
+												   query_location,
 												   &query_len,
 												   encoding);
 			LWLockAcquire(pgss->lock, LW_SHARED);
@@ -1770,11 +1817,8 @@ entry_dealloc(void)
 }
 
 /*
- * Given a null-terminated string, allocate a new entry in the external query
- * text file and store the string there.
- *
- * Although we could compute the string length via strlen(), callers already
- * have it handy, so we require them to pass it too.
+ * Given a query string (not necessarily null-terminated), allocate a new
+ * entry in the external query text file and store the string there.
  *
  * If successful, returns true, and stores the new entry's offset in the file
  * into *query_offset.  Also, if gc_count isn't NULL, *gc_count is set to the
@@ -1822,7 +1866,9 @@ qtext_store(const char *query, int query_len,
 	if (lseek(fd, off, SEEK_SET) != off)
 		goto error;
 
-	if (write(fd, query, query_len + 1) != query_len + 1)
+	if (write(fd, query, query_len) != query_len)
+		goto error;
+	if (write(fd, "\0", 1) != 1)
 		goto error;
 
 	CloseTransientFile(fd);
@@ -2336,9 +2382,8 @@ JumbleRangeTable(pgssJumbleState *jstate, List *rtable)
 
 	foreach(lc, rtable)
 	{
-		RangeTblEntry *rte = (RangeTblEntry *) lfirst(lc);
+		RangeTblEntry *rte = castNode(RangeTblEntry, lfirst(lc));
 
-		Assert(IsA(rte, RangeTblEntry));
 		APP_JUMB(rte->rtekind);
 		switch (rte->rtekind)
 		{
@@ -2524,7 +2569,7 @@ JumbleExpr(pgssJumbleState *jstate, Node *node)
 				APP_JUMB(sublink->subLinkType);
 				APP_JUMB(sublink->subLinkId);
 				JumbleExpr(jstate, (Node *) sublink->testexpr);
-				JumbleQuery(jstate, (Query *) sublink->subselect);
+				JumbleQuery(jstate, castNode(Query, sublink->subselect));
 			}
 			break;
 		case T_FieldSelect:
@@ -2590,9 +2635,8 @@ JumbleExpr(pgssJumbleState *jstate, Node *node)
 				JumbleExpr(jstate, (Node *) caseexpr->arg);
 				foreach(temp, caseexpr->args)
 				{
-					CaseWhen   *when = (CaseWhen *) lfirst(temp);
+					CaseWhen   *when = castNode(CaseWhen, lfirst(temp));
 
-					Assert(IsA(when, CaseWhen));
 					JumbleExpr(jstate, (Node *) when->expr);
 					JumbleExpr(jstate, (Node *) when->result);
 				}
@@ -2630,6 +2674,15 @@ JumbleExpr(pgssJumbleState *jstate, Node *node)
 
 				APP_JUMB(mmexpr->op);
 				JumbleExpr(jstate, (Node *) mmexpr->args);
+			}
+			break;
+		case T_SQLValueFunction:
+			{
+				SQLValueFunction *svf = (SQLValueFunction *) node;
+
+				APP_JUMB(svf->op);
+				/* type is fully determined by op */
+				APP_JUMB(svf->typmod);
 			}
 			break;
 		case T_XmlExpr:
@@ -2795,7 +2848,7 @@ JumbleExpr(pgssJumbleState *jstate, Node *node)
 
 				/* we store the string name because RTE_CTE RTEs need it */
 				APP_JUMB_STRING(cte->ctename);
-				JumbleQuery(jstate, (Query *) cte->ctequery);
+				JumbleQuery(jstate, castNode(Query, cte->ctequery));
 			}
 			break;
 		case T_SetOperationStmt:
@@ -2866,6 +2919,11 @@ RecordConstLocation(pgssJumbleState *jstate, int location)
  * just which "equivalent" query is used to create the hashtable entry.
  * We assume this is OK.
  *
+ * If query_loc > 0, then "query" has been advanced by that much compared to
+ * the original string start, so we need to translate the provided locations
+ * to compensate.  (This lets us avoid re-scanning statements before the one
+ * of interest, so it's worth doing.)
+ *
  * *query_len_p contains the input string length, and is updated with
  * the result string length (which cannot be longer) on exit.
  *
@@ -2873,7 +2931,7 @@ RecordConstLocation(pgssJumbleState *jstate, int location)
  */
 static char *
 generate_normalized_query(pgssJumbleState *jstate, const char *query,
-						  int *query_len_p, int encoding)
+						  int query_loc, int *query_len_p, int encoding)
 {
 	char	   *norm_query;
 	int			query_len = *query_len_p;
@@ -2888,7 +2946,7 @@ generate_normalized_query(pgssJumbleState *jstate, const char *query,
 	 * Get constants' lengths (core system only gives us locations).  Note
 	 * this also ensures the items are sorted by location.
 	 */
-	fill_in_constant_lengths(jstate, query);
+	fill_in_constant_lengths(jstate, query, query_loc);
 
 	/* Allocate result buffer */
 	norm_query = palloc(query_len + 1);
@@ -2899,6 +2957,9 @@ generate_normalized_query(pgssJumbleState *jstate, const char *query,
 					tok_len;	/* Length (in bytes) of that tok */
 
 		off = jstate->clocations[i].location;
+		/* Adjust recorded location if we're dealing with partial string */
+		off -= query_loc;
+
 		tok_len = jstate->clocations[i].length;
 
 		if (tok_len < 0)
@@ -2955,12 +3016,18 @@ generate_normalized_query(pgssJumbleState *jstate, const char *query,
  * marked as '-1', so that they are later ignored.  (Actually, we assume the
  * lengths were initialized as -1 to start with, and don't change them here.)
  *
+ * If query_loc > 0, then "query" has been advanced by that much compared to
+ * the original string start, so we need to translate the provided locations
+ * to compensate.  (This lets us avoid re-scanning statements before the one
+ * of interest, so it's worth doing.)
+ *
  * N.B. There is an assumption that a '-' character at a Const location begins
  * a negative numeric constant.  This precludes there ever being another
  * reason for a constant to start with a '-'.
  */
 static void
-fill_in_constant_lengths(pgssJumbleState *jstate, const char *query)
+fill_in_constant_lengths(pgssJumbleState *jstate, const char *query,
+						 int query_loc)
 {
 	pgssLocationLen *locs;
 	core_yyscan_t yyscanner;
@@ -2993,6 +3060,9 @@ fill_in_constant_lengths(pgssJumbleState *jstate, const char *query)
 	{
 		int			loc = locs[i].location;
 		int			tok;
+
+		/* Adjust recorded location if we're dealing with partial string */
+		loc -= query_loc;
 
 		Assert(loc >= 0);
 

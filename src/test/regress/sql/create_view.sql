@@ -224,6 +224,27 @@ SELECT relname, relkind, reloptions FROM pg_class
                      'mysecview3'::regclass, 'mysecview4'::regclass)
        ORDER BY relname;
 
+-- Check that unknown literals are converted to "text" in CREATE VIEW,
+-- so that we don't end up with unknown-type columns.
+
+CREATE VIEW unspecified_types AS
+  SELECT 42 as i, 42.5 as num, 'foo' as u, 'foo'::unknown as u2, null as n;
+\d+ unspecified_types
+SELECT * FROM unspecified_types;
+
+-- This test checks that proper typmods are assigned in a multi-row VALUES
+
+CREATE VIEW tt1 AS
+  SELECT * FROM (
+    VALUES
+       ('abc'::varchar(3), '0123456789', 42, 'abcd'::varchar(4)),
+       ('0123456789', 'abc'::varchar(3), 42.12, 'abc'::varchar(4))
+  ) vv(a,b,c,d);
+\d+ tt1
+SELECT * FROM tt1;
+SELECT a::varchar(3) FROM tt1;
+DROP VIEW tt1;
+
 -- Test view decompilation in the face of relation renaming conflicts
 
 CREATE TABLE tt1 (f1 int, f2 int, f3 text);

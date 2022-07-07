@@ -3,7 +3,7 @@
  * option.c
  *		  FDW option handling for postgres_fdw
  *
- * Portions Copyright (c) 2012-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/option.c
@@ -21,6 +21,7 @@
 #include "commands/defrem.h"
 #include "commands/extension.h"
 #include "utils/builtins.h"
+#include "utils/varlena.h"
 
 
 /*

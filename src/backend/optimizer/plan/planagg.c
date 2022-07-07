@@ -17,7 +17,7 @@
  * scan all the rows anyway.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -101,6 +101,14 @@ preprocess_minmax_aggregates(PlannerInfo *root, List *tlist)
 	 */
 	if (parse->groupClause || list_length(parse->groupingSets) > 1 ||
 		parse->hasWindowFuncs)
+		return;
+
+	/*
+	 * Reject if query contains any CTEs; there's no way to build an indexscan
+	 * on one so we couldn't succeed here.  (If the CTEs are unreferenced,
+	 * that's not true, but it doesn't seem worth expending cycles to check.)
+	 */
+	if (parse->cteList)
 		return;
 
 	/*
@@ -360,7 +368,6 @@ build_minmax_path(PlannerInfo *root, MinMaxAggInfo *mminfo,
 	subroot->plan_params = NIL;
 	subroot->outer_params = NULL;
 	subroot->init_plans = NIL;
-	subroot->cte_plan_ids = NIL;
 
 	subroot->parse = parse = (Query *) copyObject(root->parse);
 	IncrementVarSublevelsUp((Node *) parse, 1, 1);

@@ -59,7 +59,7 @@
  * counter does not fall within the wraparound horizon considering the global
  * minimum value.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/multixact.c
@@ -1570,10 +1570,8 @@ mXactCachePut(MultiXactId multi, int nmembers, MultiXactMember *members)
 		/* The cache only lives as long as the current transaction */
 		debug_elog2(DEBUG2, "CachePut: initializing memory context");
 		MXactContext = AllocSetContextCreate(TopTransactionContext,
-											 "MultiXact Cache Context",
-											 ALLOCSET_SMALL_MINSIZE,
-											 ALLOCSET_SMALL_INITSIZE,
-											 ALLOCSET_SMALL_MAXSIZE);
+											 "MultiXact cache context",
+											 ALLOCSET_SMALL_SIZES);
 	}
 
 	entry = (mXactCacheEnt *)
@@ -2802,7 +2800,7 @@ ReadMultiXactCounts(uint32 *multixacts, MultiXactOffset *members)
  * more aggressive in clamping this value.  That not only causes autovacuum
  * to ramp up, but also makes any manual vacuums the user issues more
  * aggressive.  This happens because vacuum_set_xid_limits() clamps the
- * freeze table and and the minimum freeze age based on the effective
+ * freeze table and the minimum freeze age based on the effective
  * autovacuum_multixact_freeze_max_age this function returns.  In the worst
  * case, we'll claim the freeze_max_age to zero, and every vacuum of any
  * table will try to freeze every multixact.

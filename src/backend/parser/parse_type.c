@@ -3,7 +3,7 @@
  * parse_type.c
  *		handle type operations for parser
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -720,7 +720,7 @@ typeStringToTypeName(const char *str)
 	 */
 	if (list_length(raw_parsetree_list) != 1)
 		goto fail;
-	stmt = (SelectStmt *) linitial(raw_parsetree_list);
+	stmt = (SelectStmt *) castNode(RawStmt, linitial(raw_parsetree_list))->stmt;
 	if (stmt == NULL ||
 		!IsA(stmt, SelectStmt) ||
 		stmt->distinctClause != NIL ||

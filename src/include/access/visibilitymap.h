@@ -4,7 +4,7 @@
  *		visibility map interface
  *
  *
- * Portions Copyright (c) 2007-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2007-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/visibilitymap.h
@@ -26,7 +26,7 @@
 #define VISIBILITYMAP_ALL_VISIBLE	0x01
 #define VISIBILITYMAP_ALL_FROZEN	0x02
 #define VISIBILITYMAP_VALID_BITS	0x03		/* OR of all valid
-												 * visiblitymap flags bits */
+												 * visibilitymap flags bits */
 
 /* Macros for visibilitymap test */
 #define VM_ALL_VISIBLE(r, b, v) \

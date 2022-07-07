@@ -3,7 +3,7 @@
  * win32security.c
  *	  Microsoft Windows Win32 Security Support Functions
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/port/win32security.c
@@ -65,7 +65,7 @@ pgwin32_is_admin(void)
 
 	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_READ, &AccessToken))
 	{
-		log_error("could not open process token: error code %lu\n",
+		log_error(_("could not open process token: error code %lu\n"),
 				  GetLastError());
 		exit(1);
 	}
@@ -86,7 +86,7 @@ pgwin32_is_admin(void)
 								  DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0,
 								  0, &AdministratorsSid))
 	{
-		log_error("could not get SID for Administrators group: error code %lu\n",
+		log_error(_("could not get SID for Administrators group: error code %lu\n"),
 				  GetLastError());
 		exit(1);
 	}
@@ -96,7 +96,7 @@ pgwin32_is_admin(void)
 								  DOMAIN_ALIAS_RID_POWER_USERS, 0, 0, 0, 0, 0,
 								  0, &PowerUsersSid))
 	{
-		log_error("could not get SID for PowerUsers group: error code %lu\n",
+		log_error(_("could not get SID for PowerUsers group: error code %lu\n"),
 				  GetLastError());
 		exit(1);
 	}

@@ -31,17 +31,8 @@ enum gbtree_type
 	gbt_t_bpchar,
 	gbt_t_bytea,
 	gbt_t_bit,
-	gbt_t_inet
+	gbt_t_inet,
+	gbt_t_uuid
 };
-
-
-
-/*
- * Generic btree functions
- */
-
-Datum		gbtreekey_in(PG_FUNCTION_ARGS);
-
-Datum		gbtreekey_out(PG_FUNCTION_ARGS);
 
 #endif

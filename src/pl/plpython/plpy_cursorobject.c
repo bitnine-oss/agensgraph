@@ -116,9 +116,7 @@ PLy_cursor_query(const char *query)
 	cursor->closed = false;
 	cursor->mcxt = AllocSetContextCreate(TopMemoryContext,
 										 "PL/Python cursor context",
-										 ALLOCSET_DEFAULT_MINSIZE,
-										 ALLOCSET_DEFAULT_INITSIZE,
-										 ALLOCSET_DEFAULT_MAXSIZE);
+										 ALLOCSET_DEFAULT_SIZES);
 	PLy_typeinfo_init(&cursor->result, cursor->mcxt);
 
 	oldcontext = CurrentMemoryContext;
@@ -210,9 +208,7 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 	cursor->closed = false;
 	cursor->mcxt = AllocSetContextCreate(TopMemoryContext,
 										 "PL/Python cursor context",
-										 ALLOCSET_DEFAULT_MINSIZE,
-										 ALLOCSET_DEFAULT_INITSIZE,
-										 ALLOCSET_DEFAULT_MAXSIZE);
+										 ALLOCSET_DEFAULT_SIZES);
 	PLy_typeinfo_init(&cursor->result, cursor->mcxt);
 
 	oldcontext = CurrentMemoryContext;
@@ -244,7 +240,8 @@ PLy_cursor_plan(PyObject *ob, PyObject *args)
 					plan->values[j] =
 						plan->args[j].out.d.func(&(plan->args[j].out.d),
 												 -1,
-												 elem);
+												 elem,
+												 false);
 				}
 				PG_CATCH();
 				{
@@ -409,7 +406,7 @@ PLy_cursor_fetch(PyObject *self, PyObject *args)
 	volatile ResourceOwner oldowner;
 	Portal		portal;
 
-	if (!PyArg_ParseTuple(args, "i", &count))
+	if (!PyArg_ParseTuple(args, "i:fetch", &count))
 		return NULL;
 
 	cursor = (PLyCursorObject *) self;

@@ -8,7 +8,7 @@
  * but also length coercion functions.
  *
  *
- * Copyright (c) 2002-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2017, PostgreSQL Global Development Group
  *
  * src/include/catalog/pg_cast.h
  *
@@ -59,7 +59,7 @@ typedef enum CoercionCodes
 
 /*
  * The allowable values for pg_cast.castmethod are specified by this enum.
- * Since castcontext is stored as a "char", we use ASCII codes for human
+ * Since castmethod is stored as a "char", we use ASCII codes for human
  * convenience in reading the table.
  */
 typedef enum CoercionMethod

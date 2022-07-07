@@ -21,7 +21,7 @@
  * The fields are separated by tabs. Lines beginning with # are comments, and
  * are ignored. Empty lines are also ignored.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/timeline.c
@@ -43,7 +43,7 @@
 
 /*
  * Copies all timeline history files with id's between 'begin' and 'end'
- * from archive to pg_xlog.
+ * from archive to pg_wal.
  */
 void
 restoreTimeLineHistoryFiles(TimeLineID begin, TimeLineID end)
@@ -191,7 +191,7 @@ readTimeLineHistory(TimeLineID targetTLI)
 	result = lcons(entry, result);
 
 	/*
-	 * If the history file was fetched from archive, save it in pg_xlog for
+	 * If the history file was fetched from archive, save it in pg_wal for
 	 * future reference.
 	 */
 	if (fromArchive)

@@ -3,7 +3,7 @@
  * twophase.c
  *		Two-phase commit support functions.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -420,6 +420,7 @@ MarkAsPreparing(TransactionId xid, const char *gid,
 	proc->backendId = InvalidBackendId;
 	proc->databaseId = databaseid;
 	proc->roleId = owner;
+	proc->isBackgroundWorker = false;
 	proc->lwWaiting = false;
 	proc->lwWaitMode = 0;
 	proc->waitLock = NULL;
@@ -1646,7 +1647,7 @@ CheckPointTwoPhase(XLogRecPtr redo_horizon)
 	if (log_checkpoints && serialized_xacts > 0)
 		ereport(LOG,
 				(errmsg_plural("%u two-phase state file was written "
-							   "for long-running prepared transactions",
+							   "for a long-running prepared transaction",
 							   "%u two-phase state files were written "
 							   "for long-running prepared transactions",
 							   serialized_xacts,
@@ -1758,8 +1759,9 @@ PrescanPreparedTransactions(TransactionId **xids_p, int *nxids_p)
 			 * need to hold a lock while examining it.  We still acquire the
 			 * lock to modify it, though.
 			 */
-			subxids = (TransactionId *)
-				(buf + MAXALIGN(sizeof(TwoPhaseFileHeader)));
+			subxids = (TransactionId *) (buf +
+								MAXALIGN(sizeof(TwoPhaseFileHeader)) +
+								MAXALIGN(hdr->gidlen));
 			for (i = 0; i < hdr->nsubxacts; i++)
 			{
 				TransactionId subxid = subxids[i];
@@ -1877,8 +1879,9 @@ StandbyRecoverPreparedTransactions(bool overwriteOK)
 			 * Examine subtransaction XIDs ... they should all follow main
 			 * XID.
 			 */
-			subxids = (TransactionId *)
-				(buf + MAXALIGN(sizeof(TwoPhaseFileHeader)));
+			subxids = (TransactionId *) (buf +
+								MAXALIGN(sizeof(TwoPhaseFileHeader)) +
+								MAXALIGN(hdr->gidlen));
 			for (i = 0; i < hdr->nsubxacts; i++)
 			{
 				TransactionId subxid = subxids[i];
@@ -1886,6 +1889,8 @@ StandbyRecoverPreparedTransactions(bool overwriteOK)
 				Assert(TransactionIdFollows(subxid, xid));
 				SubTransSetParent(xid, subxid, overwriteOK);
 			}
+
+			pfree(buf);
 		}
 	}
 	FreeDir(cldir);

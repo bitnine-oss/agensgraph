@@ -2,7 +2,7 @@
  *
  * execIndexing.c
  *	  routines for inserting index tuples and enforcing unique and
- *	  exclusive constraints.
+ *	  exclusion constraints.
  *
  * ExecInsertIndexTuples() is the main entry point.  It's called after
  * inserting a tuple to the heap, and it inserts corresponding index tuples
@@ -95,7 +95,7 @@
  * with the higher XID backs out.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *

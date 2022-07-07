@@ -3,7 +3,7 @@
  * policy.c
  *	  Commands for manipulating policies.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/policy.c
@@ -88,7 +88,7 @@ RangeVarCallbackForPolicy(const RangeVar *rv, Oid relid, Oid oldrelid,
 						rv->relname)));
 
 	/* Relation type MUST be a table. */
-	if (relkind != RELKIND_RELATION)
+	if (relkind != RELKIND_RELATION && relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is not a table", rv->relname)));
@@ -177,7 +177,7 @@ policy_role_list_to_array(List *roles, int *num_roles)
 		}
 		else
 			role_oids[i++] =
-				ObjectIdGetDatum(get_rolespec_oid((Node *) spec, false));
+				ObjectIdGetDatum(get_rolespec_oid(spec, false));
 	}
 
 	return role_oids;
@@ -201,9 +201,7 @@ RelationBuildRowSecurity(Relation relation)
 	 */
 	rscxt = AllocSetContextCreate(CacheMemoryContext,
 								  "row security descriptor",
-								  ALLOCSET_SMALL_MINSIZE,
-								  ALLOCSET_SMALL_INITSIZE,
-								  ALLOCSET_SMALL_MAXSIZE);
+								  ALLOCSET_SMALL_SIZES);
 
 	/*
 	 * Since rscxt lives under CacheMemoryContext, it is long-lived.  Use a
@@ -237,6 +235,7 @@ RelationBuildRowSecurity(Relation relation)
 		{
 			Datum		value_datum;
 			char		cmd_value;
+			bool		permissive_value;
 			Datum		roles_datum;
 			char	   *qual_value;
 			Expr	   *qual_expr;
@@ -258,6 +257,12 @@ RelationBuildRowSecurity(Relation relation)
 									   RelationGetDescr(catalog), &isnull);
 			Assert(!isnull);
 			cmd_value = DatumGetChar(value_datum);
+
+			/* Get policy permissive or restrictive */
+			value_datum = heap_getattr(tuple, Anum_pg_policy_polpermissive,
+									   RelationGetDescr(catalog), &isnull);
+			Assert(!isnull);
+			permissive_value = DatumGetBool(value_datum);
 
 			/* Get policy name */
 			value_datum = heap_getattr(tuple, Anum_pg_policy_polname,
@@ -300,6 +305,7 @@ RelationBuildRowSecurity(Relation relation)
 			policy = palloc0(sizeof(RowSecurityPolicy));
 			policy->policy_name = pstrdup(policy_name_value);
 			policy->polcmd = cmd_value;
+			policy->permissive = permissive_value;
 			policy->roles = DatumGetArrayTypePCopy(roles_datum);
 			policy->qual = copyObject(qual_expr);
 			policy->with_check_qual = copyObject(with_check_qual);
@@ -378,7 +384,8 @@ RemovePolicyById(Oid policy_id)
 	relid = ((Form_pg_policy) GETSTRUCT(tuple))->polrelid;
 
 	rel = heap_open(relid, AccessExclusiveLock);
-	if (rel->rd_rel->relkind != RELKIND_RELATION)
+	if (rel->rd_rel->relkind != RELKIND_RELATION &&
+		rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("\"%s\" is not a table",
@@ -390,7 +397,7 @@ RemovePolicyById(Oid policy_id)
 				 errmsg("permission denied: \"%s\" is a system catalog",
 						RelationGetRelationName(rel))));
 
-	simple_heap_delete(pg_policy_rel, &tuple->t_self);
+	CatalogTupleDelete(pg_policy_rel, &tuple->t_self);
 
 	systable_endscan(sscan);
 
@@ -607,10 +614,7 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 		new_tuple = heap_modify_tuple(tuple,
 									  RelationGetDescr(pg_policy_rel),
 									  values, isnull, replaces);
-		simple_heap_update(pg_policy_rel, &new_tuple->t_self, new_tuple);
-
-		/* Update Catalog Indexes */
-		CatalogUpdateIndexes(pg_policy_rel, new_tuple);
+		CatalogTupleUpdate(pg_policy_rel, &new_tuple->t_self, new_tuple);
 
 		/* Remove all old dependencies. */
 		deleteDependencyRecordsFor(PolicyRelationId, policy_id, false);
@@ -798,6 +802,7 @@ CreatePolicy(CreatePolicyStmt *stmt)
 	values[Anum_pg_policy_polname - 1] = DirectFunctionCall1(namein,
 										 CStringGetDatum(stmt->policy_name));
 	values[Anum_pg_policy_polcmd - 1] = CharGetDatum(polcmd);
+	values[Anum_pg_policy_polpermissive - 1] = BoolGetDatum(stmt->permissive);
 	values[Anum_pg_policy_polroles - 1] = PointerGetDatum(role_ids);
 
 	/* Add qual if present. */
@@ -815,10 +820,7 @@ CreatePolicy(CreatePolicyStmt *stmt)
 	policy_tuple = heap_form_tuple(RelationGetDescr(pg_policy_rel), values,
 								   isnull);
 
-	policy_id = simple_heap_insert(pg_policy_rel, policy_tuple);
-
-	/* Update Indexes */
-	CatalogUpdateIndexes(pg_policy_rel, policy_tuple);
+	policy_id = CatalogTupleInsert(pg_policy_rel, policy_tuple);
 
 	/* Record Dependencies */
 	target.classId = RelationRelationId;
@@ -1142,10 +1144,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	new_tuple = heap_modify_tuple(policy_tuple,
 								  RelationGetDescr(pg_policy_rel),
 								  values, isnull, replaces);
-	simple_heap_update(pg_policy_rel, &new_tuple->t_self, new_tuple);
-
-	/* Update Catalog Indexes */
-	CatalogUpdateIndexes(pg_policy_rel, new_tuple);
+	CatalogTupleUpdate(pg_policy_rel, &new_tuple->t_self, new_tuple);
 
 	/* Update Dependencies. */
 	deleteDependencyRecordsFor(PolicyRelationId, policy_id, false);
@@ -1279,10 +1278,7 @@ rename_policy(RenameStmt *stmt)
 	namestrcpy(&((Form_pg_policy) GETSTRUCT(policy_tuple))->polname,
 			   stmt->newname);
 
-	simple_heap_update(pg_policy_rel, &policy_tuple->t_self, policy_tuple);
-
-	/* keep system catalog indexes current */
-	CatalogUpdateIndexes(pg_policy_rel, policy_tuple);
+	CatalogTupleUpdate(pg_policy_rel, &policy_tuple->t_self, policy_tuple);
 
 	InvokeObjectPostAlterHook(PolicyRelationId,
 							  HeapTupleGetOid(policy_tuple), 0);

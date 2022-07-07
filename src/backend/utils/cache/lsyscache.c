@@ -3,8 +3,7 @@
  * lsyscache.c
  *	  Convenience routines for common queries in the system catalog cache.
  *
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -2834,7 +2833,7 @@ get_attavgwidth(Oid relid, AttrNumber attnum)
  * that have been provided by a stats hook and didn't really come from
  * pg_statistic.
  *
- * statstuple: pg_statistics tuple to be examined.
+ * statstuple: pg_statistic tuple to be examined.
  * atttype: type OID of attribute (can be InvalidOid if values == NULL).
  * atttypmod: typmod of attribute (can be 0 if values == NULL).
  * reqkind: STAKIND code for desired statistics slot kind.

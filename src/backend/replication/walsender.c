@@ -31,7 +31,7 @@
  * and then exit.
  *
  *
- * Portions Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/walsender.c
@@ -43,6 +43,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include "access/printtup.h"
 #include "access/timeline.h"
 #include "access/transam.h"
 #include "access/xact.h"
@@ -66,16 +67,19 @@
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
 #include "replication/walsender_private.h"
+#include "storage/condition_variable.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
+#include "tcop/dest.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/pg_lsn.h"
+#include "utils/portal.h"
 #include "utils/ps_status.h"
 #include "utils/resowner.h"
 #include "utils/timeout.h"
@@ -253,6 +257,7 @@ void
 WalSndErrorCleanup(void)
 {
 	LWLockReleaseAll();
+	ConditionVariableCancelSleep();
 	pgstat_report_wait_end();
 
 	if (sendFile >= 0)
@@ -263,6 +268,8 @@ WalSndErrorCleanup(void)
 
 	if (MyReplicationSlot != NULL)
 		ReplicationSlotRelease();
+
+	ReplicationSlotCleanup();
 
 	replication_active = false;
 	if (walsender_ready_to_stop)
@@ -295,13 +302,15 @@ WalSndShutdown(void)
 static void
 IdentifySystem(void)
 {
-	StringInfoData buf;
 	char		sysid[32];
-	char		tli[11];
 	char		xpos[MAXFNAMELEN];
 	XLogRecPtr	logptr;
 	char	   *dbname = NULL;
-	Size		len;
+	DestReceiver *dest;
+	TupOutputState *tstate;
+	TupleDesc	tupdesc;
+	Datum		values[4];
+	bool		nulls[4];
 
 	/*
 	 * Reply with a result set with one row, four columns. First col is system
@@ -321,8 +330,6 @@ IdentifySystem(void)
 	else
 		logptr = GetFlushRecPtr();
 
-	snprintf(tli, sizeof(tli), "%u", ThisTimeLineID);
-
 	snprintf(xpos, sizeof(xpos), "%X/%X", (uint32) (logptr >> 32), (uint32) logptr);
 
 	if (MyDatabaseId != InvalidOid)
@@ -339,79 +346,42 @@ IdentifySystem(void)
 		MemoryContextSwitchTo(cur);
 	}
 
-	/* Send a RowDescription message */
-	pq_beginmessage(&buf, 'T');
-	pq_sendint(&buf, 4, 2);		/* 4 fields */
+	dest = CreateDestReceiver(DestRemoteSimple);
+	MemSet(nulls, false, sizeof(nulls));
 
-	/* first field */
-	pq_sendstring(&buf, "systemid");	/* col name */
-	pq_sendint(&buf, 0, 4);		/* table oid */
-	pq_sendint(&buf, 0, 2);		/* attnum */
-	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
-	pq_sendint(&buf, -1, 2);	/* typlen */
-	pq_sendint(&buf, 0, 4);		/* typmod */
-	pq_sendint(&buf, 0, 2);		/* format code */
+	/* need a tuple descriptor representing four columns */
+	tupdesc = CreateTemplateTupleDesc(4, false);
+	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 1, "systemid",
+							  TEXTOID, -1, 0);
+	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 2, "timeline",
+							  INT4OID, -1, 0);
+	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 3, "xlogpos",
+							  TEXTOID, -1, 0);
+	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 4, "dbname",
+							  TEXTOID, -1, 0);
 
-	/* second field */
-	pq_sendstring(&buf, "timeline");	/* col name */
-	pq_sendint(&buf, 0, 4);		/* table oid */
-	pq_sendint(&buf, 0, 2);		/* attnum */
-	pq_sendint(&buf, INT4OID, 4);		/* type oid */
-	pq_sendint(&buf, 4, 2);		/* typlen */
-	pq_sendint(&buf, 0, 4);		/* typmod */
-	pq_sendint(&buf, 0, 2);		/* format code */
-
-	/* third field */
-	pq_sendstring(&buf, "xlogpos");		/* col name */
-	pq_sendint(&buf, 0, 4);		/* table oid */
-	pq_sendint(&buf, 0, 2);		/* attnum */
-	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
-	pq_sendint(&buf, -1, 2);	/* typlen */
-	pq_sendint(&buf, 0, 4);		/* typmod */
-	pq_sendint(&buf, 0, 2);		/* format code */
-
-	/* fourth field */
-	pq_sendstring(&buf, "dbname");		/* col name */
-	pq_sendint(&buf, 0, 4);		/* table oid */
-	pq_sendint(&buf, 0, 2);		/* attnum */
-	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
-	pq_sendint(&buf, -1, 2);	/* typlen */
-	pq_sendint(&buf, 0, 4);		/* typmod */
-	pq_sendint(&buf, 0, 2);		/* format code */
-	pq_endmessage(&buf);
-
-	/* Send a DataRow message */
-	pq_beginmessage(&buf, 'D');
-	pq_sendint(&buf, 4, 2);		/* # of columns */
+	/* prepare for projection of tuples */
+	tstate = begin_tup_output_tupdesc(dest, tupdesc);
 
 	/* column 1: system identifier */
-	len = strlen(sysid);
-	pq_sendint(&buf, len, 4);
-	pq_sendbytes(&buf, (char *) &sysid, len);
+	values[0] = CStringGetTextDatum(sysid);
 
 	/* column 2: timeline */
-	len = strlen(tli);
-	pq_sendint(&buf, len, 4);
-	pq_sendbytes(&buf, (char *) tli, len);
+	values[1] = Int32GetDatum(ThisTimeLineID);
 
 	/* column 3: xlog position */
-	len = strlen(xpos);
-	pq_sendint(&buf, len, 4);
-	pq_sendbytes(&buf, (char *) xpos, len);
+	values[2] = CStringGetTextDatum(xpos);
 
 	/* column 4: database name, or NULL if none */
 	if (dbname)
-	{
-		len = strlen(dbname);
-		pq_sendint(&buf, len, 4);
-		pq_sendbytes(&buf, (char *) dbname, len);
-	}
+		values[3] = CStringGetTextDatum(dbname);
 	else
-	{
-		pq_sendint(&buf, -1, 4);
-	}
+		nulls[3] = true;
 
-	pq_endmessage(&buf);
+	/* send it to dest */
+	do_tup_output(tstate, values, nulls);
+
+	end_tup_output(tstate);
 }
 
 
@@ -586,7 +556,7 @@ StartReplication(StartReplicationCmd *cmd)
 			 * segment that contains switchpoint, but on the new timeline, so
 			 * that it doesn't end up with a partial segment. If you ask for a
 			 * too old starting point, you'll get an error later when we fail
-			 * to find the requested WAL segment in pg_xlog.
+			 * to find the requested WAL segment in pg_wal.
 			 *
 			 * XXX: we could be more strict here and only allow a startpoint
 			 * that's older than the switchpoint, if it's still in the same
@@ -688,54 +658,41 @@ StartReplication(StartReplicationCmd *cmd)
 	 */
 	if (sendTimeLineIsHistoric)
 	{
-		char		tli_str[11];
 		char		startpos_str[8 + 1 + 8 + 1];
-		Size		len;
+		DestReceiver *dest;
+		TupOutputState *tstate;
+		TupleDesc	tupdesc;
+		Datum		values[2];
+		bool		nulls[2];
 
-		snprintf(tli_str, sizeof(tli_str), "%u", sendTimeLineNextTLI);
 		snprintf(startpos_str, sizeof(startpos_str), "%X/%X",
 				 (uint32) (sendTimeLineValidUpto >> 32),
 				 (uint32) sendTimeLineValidUpto);
 
-		pq_beginmessage(&buf, 'T');		/* RowDescription */
-		pq_sendint(&buf, 2, 2); /* 2 fields */
-
-		/* Field header */
-		pq_sendstring(&buf, "next_tli");
-		pq_sendint(&buf, 0, 4); /* table oid */
-		pq_sendint(&buf, 0, 2); /* attnum */
+		dest = CreateDestReceiver(DestRemoteSimple);
+		MemSet(nulls, false, sizeof(nulls));
 
 		/*
+		 * Need a tuple descriptor representing two columns.
 		 * int8 may seem like a surprising data type for this, but in theory
 		 * int4 would not be wide enough for this, as TimeLineID is unsigned.
 		 */
-		pq_sendint(&buf, INT8OID, 4);	/* type oid */
-		pq_sendint(&buf, -1, 2);
-		pq_sendint(&buf, 0, 4);
-		pq_sendint(&buf, 0, 2);
+		tupdesc = CreateTemplateTupleDesc(2, false);
+		TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 1, "next_tli",
+								  INT8OID, -1, 0);
+		TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 2, "next_tli_startpos",
+								  TEXTOID, -1, 0);
 
-		pq_sendstring(&buf, "next_tli_startpos");
-		pq_sendint(&buf, 0, 4); /* table oid */
-		pq_sendint(&buf, 0, 2); /* attnum */
-		pq_sendint(&buf, TEXTOID, 4);	/* type oid */
-		pq_sendint(&buf, -1, 2);
-		pq_sendint(&buf, 0, 4);
-		pq_sendint(&buf, 0, 2);
-		pq_endmessage(&buf);
+		/* prepare for projection of tuple */
+		tstate = begin_tup_output_tupdesc(dest, tupdesc);
 
-		/* Data row */
-		pq_beginmessage(&buf, 'D');
-		pq_sendint(&buf, 2, 2); /* number of columns */
+		values[0] = Int64GetDatum((int64) sendTimeLineNextTLI);
+		values[1] = CStringGetTextDatum(startpos_str);
 
-		len = strlen(tli_str);
-		pq_sendint(&buf, len, 4);		/* length */
-		pq_sendbytes(&buf, tli_str, len);
+		/* send it to dest */
+		do_tup_output(tstate, values, nulls);
 
-		len = strlen(startpos_str);
-		pq_sendint(&buf, len, 4);		/* length */
-		pq_sendbytes(&buf, startpos_str, len);
-
-		pq_endmessage(&buf);
+		end_tup_output(tstate);
 	}
 
 	/* Send CommandComplete message */
@@ -783,8 +740,12 @@ CreateReplicationSlot(CreateReplicationSlotCmd *cmd)
 {
 	const char *snapshot_name = NULL;
 	char		xpos[MAXFNAMELEN];
-	StringInfoData buf;
-	Size		len;
+	char	   *slot_name;
+	DestReceiver *dest;
+	TupOutputState *tstate;
+	TupleDesc	tupdesc;
+	Datum		values[4];
+	bool		nulls[4];
 
 	Assert(!MyReplicationSlot);
 
@@ -794,18 +755,22 @@ CreateReplicationSlot(CreateReplicationSlotCmd *cmd)
 
 	if (cmd->kind == REPLICATION_KIND_PHYSICAL)
 	{
-		ReplicationSlotCreate(cmd->slotname, false, RS_PERSISTENT);
+		ReplicationSlotCreate(cmd->slotname, false,
+							  cmd->temporary ? RS_TEMPORARY : RS_PERSISTENT);
 	}
 	else
 	{
 		CheckLogicalDecodingRequirements();
 
 		/*
-		 * Initially create the slot as ephemeral - that allows us to nicely
-		 * handle errors during initialization because it'll get dropped if
-		 * this transaction fails. We'll make it persistent at the end.
+		 * Initially create persistent slot as ephemeral - that allows us to
+		 * nicely handle errors during initialization because it'll get
+		 * dropped if this transaction fails. We'll make it persistent at the
+		 * end. Temporary slots can be created as temporary from beginning as
+		 * they get dropped on error as well.
 		 */
-		ReplicationSlotCreate(cmd->slotname, true, RS_EPHEMERAL);
+		ReplicationSlotCreate(cmd->slotname, true,
+							  cmd->temporary ? RS_TEMPORARY : RS_EPHEMERAL);
 	}
 
 	initStringInfo(&output_message);
@@ -839,101 +804,70 @@ CreateReplicationSlot(CreateReplicationSlotCmd *cmd)
 		/* don't need the decoding context anymore */
 		FreeDecodingContext(ctx);
 
-		ReplicationSlotPersist();
+		if (!cmd->temporary)
+			ReplicationSlotPersist();
 	}
 	else if (cmd->kind == REPLICATION_KIND_PHYSICAL && cmd->reserve_wal)
 	{
 		ReplicationSlotReserveWal();
 
-		/* Write this slot to disk */
 		ReplicationSlotMarkDirty();
-		ReplicationSlotSave();
+
+		/* Write this slot to disk if it's permanent one. */
+		if (!cmd->temporary)
+			ReplicationSlotSave();
 	}
 
 	snprintf(xpos, sizeof(xpos), "%X/%X",
 			 (uint32) (MyReplicationSlot->data.confirmed_flush >> 32),
 			 (uint32) MyReplicationSlot->data.confirmed_flush);
 
-	pq_beginmessage(&buf, 'T');
-	pq_sendint(&buf, 4, 2);		/* 4 fields */
+	dest = CreateDestReceiver(DestRemoteSimple);
+	MemSet(nulls, false, sizeof(nulls));
 
-	/* first field: slot name */
-	pq_sendstring(&buf, "slot_name");	/* col name */
-	pq_sendint(&buf, 0, 4);		/* table oid */
-	pq_sendint(&buf, 0, 2);		/* attnum */
-	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
-	pq_sendint(&buf, -1, 2);	/* typlen */
-	pq_sendint(&buf, 0, 4);		/* typmod */
-	pq_sendint(&buf, 0, 2);		/* format code */
+	/*
+	 * Need a tuple descriptor representing four columns:
+	 * - first field: the slot name
+	 * - second field: LSN at which we became consistent
+	 * - third field: exported snapshot's name
+	 * - fourth field: output plugin
+	 */
+	tupdesc = CreateTemplateTupleDesc(4, false);
+	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 1, "slot_name",
+							  TEXTOID, -1, 0);
+	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 2, "consistent_point",
+							  TEXTOID, -1, 0);
+	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 3, "snapshot_name",
+							  TEXTOID, -1, 0);
+	TupleDescInitBuiltinEntry(tupdesc, (AttrNumber) 4, "output_plugin",
+							  TEXTOID, -1, 0);
 
-	/* second field: LSN at which we became consistent */
-	pq_sendstring(&buf, "consistent_point");	/* col name */
-	pq_sendint(&buf, 0, 4);		/* table oid */
-	pq_sendint(&buf, 0, 2);		/* attnum */
-	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
-	pq_sendint(&buf, -1, 2);	/* typlen */
-	pq_sendint(&buf, 0, 4);		/* typmod */
-	pq_sendint(&buf, 0, 2);		/* format code */
-
-	/* third field: exported snapshot's name */
-	pq_sendstring(&buf, "snapshot_name");		/* col name */
-	pq_sendint(&buf, 0, 4);		/* table oid */
-	pq_sendint(&buf, 0, 2);		/* attnum */
-	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
-	pq_sendint(&buf, -1, 2);	/* typlen */
-	pq_sendint(&buf, 0, 4);		/* typmod */
-	pq_sendint(&buf, 0, 2);		/* format code */
-
-	/* fourth field: output plugin */
-	pq_sendstring(&buf, "output_plugin");		/* col name */
-	pq_sendint(&buf, 0, 4);		/* table oid */
-	pq_sendint(&buf, 0, 2);		/* attnum */
-	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
-	pq_sendint(&buf, -1, 2);	/* typlen */
-	pq_sendint(&buf, 0, 4);		/* typmod */
-	pq_sendint(&buf, 0, 2);		/* format code */
-
-	pq_endmessage(&buf);
-
-	/* Send a DataRow message */
-	pq_beginmessage(&buf, 'D');
-	pq_sendint(&buf, 4, 2);		/* # of columns */
+	/* prepare for projection of tuples */
+	tstate = begin_tup_output_tupdesc(dest, tupdesc);
 
 	/* slot_name */
-	len = strlen(NameStr(MyReplicationSlot->data.name));
-	pq_sendint(&buf, len, 4);	/* col1 len */
-	pq_sendbytes(&buf, NameStr(MyReplicationSlot->data.name), len);
+	slot_name = NameStr(MyReplicationSlot->data.name);
+	values[0] = CStringGetTextDatum(slot_name);
 
 	/* consistent wal location */
-	len = strlen(xpos);
-	pq_sendint(&buf, len, 4);
-	pq_sendbytes(&buf, xpos, len);
+	values[1] = CStringGetTextDatum(xpos);
 
 	/* snapshot name, or NULL if none */
 	if (snapshot_name != NULL)
-	{
-		len = strlen(snapshot_name);
-		pq_sendint(&buf, len, 4);
-		pq_sendbytes(&buf, snapshot_name, len);
-	}
+		values[2] = CStringGetTextDatum(snapshot_name);
 	else
-		pq_sendint(&buf, -1, 4);
+		nulls[2] = true;
 
 	/* plugin, or NULL if none */
 	if (cmd->plugin != NULL)
-	{
-		len = strlen(cmd->plugin);
-		pq_sendint(&buf, len, 4);
-		pq_sendbytes(&buf, cmd->plugin, len);
-	}
+		values[3] = CStringGetTextDatum(cmd->plugin);
 	else
-		pq_sendint(&buf, -1, 4);
+		nulls[3] = true;
 
-	pq_endmessage(&buf);
+	/* send it to dest */
+	do_tup_output(tstate, values, nulls);
+	end_tup_output(tstate);
 
-	/*
-	 * release active status again, START_REPLICATION will reacquire it
-	 */
 	ReplicationSlotRelease();
 }
 
@@ -1146,7 +1080,8 @@ WalSndWriteData(LogicalDecodingContext *ctx, XLogRecPtr lsn, TransactionId xid,
 
 		/* Sleep until something happens or we time out */
 		WaitLatchOrSocket(MyLatch, wakeEvents,
-						  MyProcPort->sock, sleeptime);
+						  MyProcPort->sock, sleeptime,
+						  WAIT_EVENT_WAL_SENDER_WRITE_DATA);
 	}
 
 	/* reactivate latch so WalSndLoop knows to continue */
@@ -1272,7 +1207,8 @@ WalSndWaitForWal(XLogRecPtr loc)
 
 		/* Sleep until something happens or we time out */
 		WaitLatchOrSocket(MyLatch, wakeEvents,
-						  MyProcPort->sock, sleeptime);
+						  MyProcPort->sock, sleeptime,
+						  WAIT_EVENT_WAL_SENDER_WAIT_WAL);
 	}
 
 	/* reactivate latch so WalSndLoop knows to continue */
@@ -1309,9 +1245,7 @@ exec_replication_command(const char *cmd_string)
 
 	cmd_context = AllocSetContextCreate(CurrentMemoryContext,
 										"Replication command context",
-										ALLOCSET_DEFAULT_MINSIZE,
-										ALLOCSET_DEFAULT_INITSIZE,
-										ALLOCSET_DEFAULT_MAXSIZE);
+										ALLOCSET_DEFAULT_SIZES);
 	old_context = MemoryContextSwitchTo(cmd_context);
 
 	replication_scanner_init(cmd_string);
@@ -1355,6 +1289,15 @@ exec_replication_command(const char *cmd_string)
 
 		case T_TimeLineHistoryCmd:
 			SendTimeLineHistory((TimeLineHistoryCmd *) cmd_node);
+			break;
+
+		case T_VariableShowStmt:
+			{
+				DestReceiver *dest = CreateDestReceiver(DestRemoteSimple);
+				VariableShowStmt *n = (VariableShowStmt *) cmd_node;
+
+				GetPGVariable(n->name, dest);
+			}
 			break;
 
 		default:
@@ -1808,6 +1751,9 @@ WalSndLoop(WalSndSendDataCallback send_data)
 	last_reply_timestamp = GetCurrentTimestamp();
 	waiting_for_ping_response = false;
 
+	/* Report to pgstat that this process is a WAL sender */
+	pgstat_report_activity(STATE_RUNNING, "walsender");
+
 	/*
 	 * Loop until we reach the end of this timeline or the client requests to
 	 * stop streaming.
@@ -1923,7 +1869,8 @@ WalSndLoop(WalSndSendDataCallback send_data)
 
 			/* Sleep until something happens or we time out */
 			WaitLatchOrSocket(MyLatch, wakeEvents,
-							  MyProcPort->sock, sleeptime);
+							  MyProcPort->sock, sleeptime,
+							  WAIT_EVENT_WAL_SENDER_MAIN);
 		}
 	}
 	return;
@@ -2054,7 +2001,7 @@ retry:
 			 *
 			 * For example, imagine that this server is currently on timeline
 			 * 5, and we're streaming timeline 4. The switch from timeline 4
-			 * to 5 happened at 0/13002088. In pg_xlog, we have these files:
+			 * to 5 happened at 0/13002088. In pg_wal, we have these files:
 			 *
 			 * ...
 			 * 000000040000000000000012
@@ -2856,12 +2803,20 @@ pg_stat_get_wal_senders(PG_FUNCTION_ARGS)
 
 			/*
 			 * More easily understood version of standby state. This is purely
-			 * informational, not different from priority.
+			 * informational.
+			 *
+			 * In quorum-based sync replication, the role of each standby
+			 * listed in synchronous_standby_names can be changing very
+			 * frequently. Any standbys considered as "sync" at one moment can
+			 * be switched to "potential" ones at the next moment. So, it's
+			 * basically useless to report "sync" or "potential" as their sync
+			 * states. We report just "quorum" for them.
 			 */
 			if (priority == 0)
 				values[7] = CStringGetTextDatum("async");
 			else if (list_member_int(sync_standbys, i))
-				values[7] = CStringGetTextDatum("sync");
+				values[7] = SyncRepConfig->syncrep_method == SYNC_REP_PRIORITY ?
+					CStringGetTextDatum("sync") : CStringGetTextDatum("quorum");
 			else
 				values[7] = CStringGetTextDatum("potential");
 		}

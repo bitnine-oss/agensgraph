@@ -3,7 +3,7 @@
  * pg_collation.c
  *	  routines to support manipulation of the pg_collation relation
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -41,7 +41,8 @@ Oid
 CollationCreate(const char *collname, Oid collnamespace,
 				Oid collowner,
 				int32 collencoding,
-				const char *collcollate, const char *collctype)
+				const char *collcollate, const char *collctype,
+				bool if_not_exists)
 {
 	Relation	rel;
 	TupleDesc	tupDesc;
@@ -72,10 +73,21 @@ CollationCreate(const char *collname, Oid collnamespace,
 							  PointerGetDatum(collname),
 							  Int32GetDatum(collencoding),
 							  ObjectIdGetDatum(collnamespace)))
-		ereport(ERROR,
+	{
+		if (if_not_exists)
+		{
+			ereport(NOTICE,
 				(errcode(ERRCODE_DUPLICATE_OBJECT),
-				 errmsg("collation \"%s\" for encoding \"%s\" already exists",
+				 errmsg("collation \"%s\" for encoding \"%s\" already exists, skipping",
 						collname, pg_encoding_to_char(collencoding))));
+			return InvalidOid;
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("collation \"%s\" for encoding \"%s\" already exists",
+							collname, pg_encoding_to_char(collencoding))));
+	}
 
 	/*
 	 * Also forbid matching an any-encoding entry.  This test of course is not
@@ -86,10 +98,21 @@ CollationCreate(const char *collname, Oid collnamespace,
 							  PointerGetDatum(collname),
 							  Int32GetDatum(-1),
 							  ObjectIdGetDatum(collnamespace)))
-		ereport(ERROR,
+	{
+		if (if_not_exists)
+		{
+			ereport(NOTICE,
+				(errcode(ERRCODE_DUPLICATE_OBJECT),
+				 errmsg("collation \"%s\" already exists, skipping",
+						collname)));
+			return InvalidOid;
+		}
+		else
+			ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_OBJECT),
 				 errmsg("collation \"%s\" already exists",
 						collname)));
+	}
 
 	/* open pg_collation */
 	rel = heap_open(CollationRelationId, RowExclusiveLock);
@@ -111,11 +134,8 @@ CollationCreate(const char *collname, Oid collnamespace,
 	tup = heap_form_tuple(tupDesc, values, nulls);
 
 	/* insert a new tuple */
-	oid = simple_heap_insert(rel, tup);
+	oid = CatalogTupleInsert(rel, tup);
 	Assert(OidIsValid(oid));
-
-	/* update the index if any */
-	CatalogUpdateIndexes(rel, tup);
 
 	/* set up dependencies for the new collation */
 	myself.classId = CollationRelationId;
@@ -171,7 +191,7 @@ RemoveCollationById(Oid collationOid)
 	tuple = systable_getnext(scandesc);
 
 	if (HeapTupleIsValid(tuple))
-		simple_heap_delete(rel, &tuple->t_self);
+		CatalogTupleDelete(rel, &tuple->t_self);
 	else
 		elog(ERROR, "could not find tuple for collation %u", collationOid);
 

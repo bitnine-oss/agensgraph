@@ -3,7 +3,7 @@
  * varlena.c
  *	  Functions for the variable-length built-in types.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -21,8 +21,8 @@
 #include "access/tuptoaster.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
+#include "common/md5.h"
 #include "lib/hyperloglog.h"
-#include "libpq/md5.h"
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
 #include "parser/scansup.h"
@@ -34,6 +34,7 @@
 #include "utils/memutils.h"
 #include "utils/pg_locale.h"
 #include "utils/sortsupport.h"
+#include "utils/varlena.h"
 
 
 /* GUC variable */
@@ -294,7 +295,7 @@ byteain(PG_FUNCTION_ARGS)
 			 */
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					 errmsg("invalid input syntax for type bytea")));
+					 errmsg("invalid input syntax for type %s", "bytea")));
 		}
 	}
 
@@ -335,7 +336,7 @@ byteain(PG_FUNCTION_ARGS)
 			 */
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					 errmsg("invalid input syntax for type bytea")));
+					 errmsg("invalid input syntax for type %s", "bytea")));
 		}
 	}
 
@@ -1844,8 +1845,8 @@ varstr_sortsupport(SortSupport ssup, Oid collid, bool bpchar)
 	 * Even apart from the risk of broken locales, it's possible that there
 	 * are platforms where the use of abbreviated keys should be disabled at
 	 * compile time.  Having only 4 byte datums could make worst-case
-	 * performance drastically more likely, for example.  Moreover, Darwin's
-	 * strxfrm() implementations is known to not effectively concentrate a
+	 * performance drastically more likely, for example.  Moreover, macOS's
+	 * strxfrm() implementation is known to not effectively concentrate a
 	 * significant amount of entropy from the original string in earlier
 	 * transformed blobs.  It's possible that other supported platforms are
 	 * similarly encumbered.  So, if we ever get past disabling this

@@ -1,6 +1,6 @@
 /*-------------------------------------------------------------------------
  *
- * libpq_be.h
+ * libpq-be.h
  *	  This file contains definitions for structures and externs used
  *	  by the postmaster during client authentication.
  *
@@ -8,7 +8,7 @@
  *	  Structs that need to be client-visible are in pqcomm.h.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/libpq/libpq-be.h
@@ -144,7 +144,6 @@ typedef struct Port
 	 * Information that needs to be held during the authentication cycle.
 	 */
 	HbaLine    *hba;
-	char		md5Salt[4];		/* Password salt */
 
 	/*
 	 * Information that really has no business at all being in struct Port,
@@ -192,7 +191,6 @@ typedef struct Port
 #ifdef USE_OPENSSL
 	SSL		   *ssl;
 	X509	   *peer;
-	unsigned long count;
 #endif
 } Port;
 
@@ -201,7 +199,8 @@ typedef struct Port
  * These functions are implemented by the glue code specific to each
  * SSL implementation (e.g. be-secure-openssl.c)
  */
-extern void be_tls_init(void);
+extern int	be_tls_init(bool isServerStart);
+extern void be_tls_destroy(void);
 extern int	be_tls_open_server(Port *port);
 extern void be_tls_close(Port *port);
 extern ssize_t be_tls_read(Port *port, void *ptr, size_t len, int *waitfor);

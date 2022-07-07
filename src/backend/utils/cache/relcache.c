@@ -3,7 +3,7 @@
  * relcache.c
  *	  POSTGRES relation descriptor cache code
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -32,6 +32,7 @@
 
 #include "access/htup_details.h"
 #include "access/multixact.h"
+#include "access/nbtree.h"
 #include "access/reloptions.h"
 #include "access/sysattr.h"
 #include "access/xact.h"
@@ -40,6 +41,7 @@
 #include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "catalog/namespace.h"
+#include "catalog/partition.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_amproc.h"
 #include "catalog/pg_attrdef.h"
@@ -49,9 +51,12 @@
 #include "catalog/pg_database.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_opclass.h"
+#include "catalog/pg_partitioned_table.h"
 #include "catalog/pg_proc.h"
+#include "catalog/pg_publication.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/pg_shseclabel.h"
+#include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_type.h"
@@ -100,6 +105,7 @@ static const FormData_pg_attribute Desc_pg_authid[Natts_pg_authid] = {Schema_pg_
 static const FormData_pg_attribute Desc_pg_auth_members[Natts_pg_auth_members] = {Schema_pg_auth_members};
 static const FormData_pg_attribute Desc_pg_index[Natts_pg_index] = {Schema_pg_index};
 static const FormData_pg_attribute Desc_pg_shseclabel[Natts_pg_shseclabel] = {Schema_pg_shseclabel};
+static const FormData_pg_attribute Desc_pg_subscription[Natts_pg_subscription] = {Schema_pg_subscription};
 
 /*
  *		Hash tables that index the relation cache
@@ -258,6 +264,8 @@ static HeapTuple ScanPgRelation(Oid targetRelId, bool indexOK, bool force_non_hi
 static Relation AllocateRelationDesc(Form_pg_class relp);
 static void RelationParseRelOptions(Relation relation, HeapTuple tuple);
 static void RelationBuildTupleDesc(Relation relation);
+static void RelationBuildPartitionKey(Relation relation);
+static PartitionKey copy_partition_key(PartitionKey fromkey);
 static Relation RelationBuildDesc(Oid targetRelId, bool insertIt);
 static void RelationInitPhysicalAddr(Relation relation);
 static void load_critical_index(Oid indexoid, Oid heapoid);
@@ -278,6 +286,8 @@ static OpClassCacheEnt *LookupOpclassInfo(Oid operatorClassOid,
 				  StrategyNumber numSupport);
 static void RelationCacheInitFileRemoveInDir(const char *tblspcpath);
 static void unlink_initfile(const char *initfilename);
+static bool equalPartitionDescs(PartitionKey key, PartitionDesc partdesc1,
+					PartitionDesc partdesc2);
 
 
 /*
@@ -435,6 +445,7 @@ RelationParseRelOptions(Relation relation, HeapTuple tuple)
 		case RELKIND_INDEX:
 		case RELKIND_VIEW:
 		case RELKIND_MATVIEW:
+		case RELKIND_PARTITIONED_TABLE:
 			break;
 		default:
 			return;
@@ -659,14 +670,11 @@ RelationBuildRuleLock(Relation relation)
 	int			maxlocks;
 
 	/*
-	 * Make the private context.  Parameters are set on the assumption that
-	 * it'll probably not contain much data.
+	 * Make the private context.  Assume it'll not contain much data.
 	 */
 	rulescxt = AllocSetContextCreate(CacheMemoryContext,
 									 RelationGetRelationName(relation),
-									 ALLOCSET_SMALL_MINSIZE,
-									 ALLOCSET_SMALL_INITSIZE,
-									 ALLOCSET_SMALL_MAXSIZE);
+									 ALLOCSET_SMALL_SIZES);
 	relation->rd_rulescxt = rulescxt;
 
 	/*
@@ -799,6 +807,237 @@ RelationBuildRuleLock(Relation relation)
 }
 
 /*
+ * RelationBuildPartitionKey
+ *		Build and attach to relcache partition key data of relation
+ *
+ * Partitioning key data is stored in CacheMemoryContext to ensure it survives
+ * as long as the relcache.  To avoid leaking memory in that context in case
+ * of an error partway through this function, we build the structure in the
+ * working context (which must be short-lived) and copy the completed
+ * structure into the cache memory.
+ *
+ * Also, since the structure being created here is sufficiently complex, we
+ * make a private child context of CacheMemoryContext for each relation that
+ * has associated partition key information.  That means no complicated logic
+ * to free individual elements whenever the relcache entry is flushed - just
+ * delete the context.
+ */
+static void
+RelationBuildPartitionKey(Relation relation)
+{
+	Form_pg_partitioned_table form;
+	HeapTuple	tuple;
+	bool		isnull;
+	int			i;
+	PartitionKey key;
+	AttrNumber *attrs;
+	oidvector  *opclass;
+	oidvector  *collation;
+	ListCell   *partexprs_item;
+	Datum		datum;
+	MemoryContext partkeycxt,
+				oldcxt;
+
+	tuple = SearchSysCache1(PARTRELID,
+							ObjectIdGetDatum(RelationGetRelid(relation)));
+
+	/*
+	 * The following happens when we have created our pg_class entry but not
+	 * the pg_partitioned_table entry yet.
+	 */
+	if (!HeapTupleIsValid(tuple))
+		return;
+
+	key = (PartitionKey) palloc0(sizeof(PartitionKeyData));
+
+	/* Fixed-length attributes */
+	form = (Form_pg_partitioned_table) GETSTRUCT(tuple);
+	key->strategy = form->partstrat;
+	key->partnatts = form->partnatts;
+
+	/*
+	 * We can rely on the first variable-length attribute being mapped to the
+	 * relevant field of the catalog's C struct, because all previous
+	 * attributes are non-nullable and fixed-length.
+	 */
+	attrs = form->partattrs.values;
+
+	/* But use the hard way to retrieve further variable-length attributes */
+	/* Operator class */
+	datum = SysCacheGetAttr(PARTRELID, tuple,
+							Anum_pg_partitioned_table_partclass, &isnull);
+	Assert(!isnull);
+	opclass = (oidvector *) DatumGetPointer(datum);
+
+	/* Collation */
+	datum = SysCacheGetAttr(PARTRELID, tuple,
+							Anum_pg_partitioned_table_partcollation, &isnull);
+	Assert(!isnull);
+	collation = (oidvector *) DatumGetPointer(datum);
+
+	/* Expressions */
+	datum = SysCacheGetAttr(PARTRELID, tuple,
+							Anum_pg_partitioned_table_partexprs, &isnull);
+	if (!isnull)
+	{
+		char	   *exprString;
+		Node	   *expr;
+
+		exprString = TextDatumGetCString(datum);
+		expr = stringToNode(exprString);
+		pfree(exprString);
+
+		/*
+		 * Run the expressions through const-simplification since the planner
+		 * will be comparing them to similarly-processed qual clause operands,
+		 * and may fail to detect valid matches without this step.  We don't
+		 * need to bother with canonicalize_qual() though, because partition
+		 * expressions are not full-fledged qualification clauses.
+		 */
+		expr = eval_const_expressions(NULL, (Node *) expr);
+
+		/* May as well fix opfuncids too */
+		fix_opfuncids((Node *) expr);
+		key->partexprs = (List *) expr;
+	}
+
+	key->partattrs = (AttrNumber *) palloc0(key->partnatts * sizeof(AttrNumber));
+	key->partopfamily = (Oid *) palloc0(key->partnatts * sizeof(Oid));
+	key->partopcintype = (Oid *) palloc0(key->partnatts * sizeof(Oid));
+	key->partsupfunc = (FmgrInfo *) palloc0(key->partnatts * sizeof(FmgrInfo));
+
+	key->partcollation = (Oid *) palloc0(key->partnatts * sizeof(Oid));
+
+	/* Gather type and collation info as well */
+	key->parttypid = (Oid *) palloc0(key->partnatts * sizeof(Oid));
+	key->parttypmod = (int32 *) palloc0(key->partnatts * sizeof(int32));
+	key->parttyplen = (int16 *) palloc0(key->partnatts * sizeof(int16));
+	key->parttypbyval = (bool *) palloc0(key->partnatts * sizeof(bool));
+	key->parttypalign = (char *) palloc0(key->partnatts * sizeof(char));
+	key->parttypcoll = (Oid *) palloc0(key->partnatts * sizeof(Oid));
+
+	/* Copy partattrs and fill other per-attribute info */
+	memcpy(key->partattrs, attrs, key->partnatts * sizeof(int16));
+	partexprs_item = list_head(key->partexprs);
+	for (i = 0; i < key->partnatts; i++)
+	{
+		AttrNumber	attno = key->partattrs[i];
+		HeapTuple	opclasstup;
+		Form_pg_opclass opclassform;
+		Oid			funcid;
+
+		/* Collect opfamily information */
+		opclasstup = SearchSysCache1(CLAOID,
+									 ObjectIdGetDatum(opclass->values[i]));
+		if (!HeapTupleIsValid(opclasstup))
+			elog(ERROR, "cache lookup failed for opclass %u", opclass->values[i]);
+
+		opclassform = (Form_pg_opclass) GETSTRUCT(opclasstup);
+		key->partopfamily[i] = opclassform->opcfamily;
+		key->partopcintype[i] = opclassform->opcintype;
+
+		/*
+		 * A btree support function covers the cases of list and range methods
+		 * currently supported.
+		 */
+		funcid = get_opfamily_proc(opclassform->opcfamily,
+								   opclassform->opcintype,
+								   opclassform->opcintype,
+								   BTORDER_PROC);
+
+		fmgr_info(funcid, &key->partsupfunc[i]);
+
+		/* Collation */
+		key->partcollation[i] = collation->values[i];
+
+		/* Collect type information */
+		if (attno != 0)
+		{
+			key->parttypid[i] = relation->rd_att->attrs[attno - 1]->atttypid;
+			key->parttypmod[i] = relation->rd_att->attrs[attno - 1]->atttypmod;
+			key->parttypcoll[i] = relation->rd_att->attrs[attno - 1]->attcollation;
+		}
+		else
+		{
+			key->parttypid[i] = exprType(lfirst(partexprs_item));
+			key->parttypmod[i] = exprTypmod(lfirst(partexprs_item));
+			key->parttypcoll[i] = exprCollation(lfirst(partexprs_item));
+		}
+		get_typlenbyvalalign(key->parttypid[i],
+							 &key->parttyplen[i],
+							 &key->parttypbyval[i],
+							 &key->parttypalign[i]);
+
+		ReleaseSysCache(opclasstup);
+	}
+
+	ReleaseSysCache(tuple);
+
+	/* Success --- now copy to the cache memory */
+	partkeycxt = AllocSetContextCreate(CacheMemoryContext,
+									   RelationGetRelationName(relation),
+									   ALLOCSET_SMALL_SIZES);
+	relation->rd_partkeycxt = partkeycxt;
+	oldcxt = MemoryContextSwitchTo(relation->rd_partkeycxt);
+	relation->rd_partkey = copy_partition_key(key);
+	MemoryContextSwitchTo(oldcxt);
+}
+
+/*
+ * copy_partition_key
+ *
+ * The copy is allocated in the current memory context.
+ */
+static PartitionKey
+copy_partition_key(PartitionKey fromkey)
+{
+	PartitionKey newkey;
+	int			n;
+
+	newkey = (PartitionKey) palloc(sizeof(PartitionKeyData));
+
+	newkey->strategy = fromkey->strategy;
+	newkey->partnatts = n = fromkey->partnatts;
+
+	newkey->partattrs = (AttrNumber *) palloc(n * sizeof(AttrNumber));
+	memcpy(newkey->partattrs, fromkey->partattrs, n * sizeof(AttrNumber));
+
+	newkey->partexprs = copyObject(fromkey->partexprs);
+
+	newkey->partopfamily = (Oid *) palloc(n * sizeof(Oid));
+	memcpy(newkey->partopfamily, fromkey->partopfamily, n * sizeof(Oid));
+
+	newkey->partopcintype = (Oid *) palloc(n * sizeof(Oid));
+	memcpy(newkey->partopcintype, fromkey->partopcintype, n * sizeof(Oid));
+
+	newkey->partsupfunc = (FmgrInfo *) palloc(n * sizeof(FmgrInfo));
+	memcpy(newkey->partsupfunc, fromkey->partsupfunc, n * sizeof(FmgrInfo));
+
+	newkey->partcollation = (Oid *) palloc(n * sizeof(Oid));
+	memcpy(newkey->partcollation, fromkey->partcollation, n * sizeof(Oid));
+
+	newkey->parttypid = (Oid *) palloc(n * sizeof(Oid));
+	memcpy(newkey->parttypid, fromkey->parttypid, n * sizeof(Oid));
+
+	newkey->parttypmod = (int32 *) palloc(n * sizeof(int32));
+	memcpy(newkey->parttypmod, fromkey->parttypmod, n * sizeof(int32));
+
+	newkey->parttyplen = (int16 *) palloc(n * sizeof(int16));
+	memcpy(newkey->parttyplen, fromkey->parttyplen, n * sizeof(int16));
+
+	newkey->parttypbyval = (bool *) palloc(n * sizeof(bool));
+	memcpy(newkey->parttypbyval, fromkey->parttypbyval, n * sizeof(bool));
+
+	newkey->parttypalign = (char *) palloc(n * sizeof(bool));
+	memcpy(newkey->parttypalign, fromkey->parttypalign, n * sizeof(char));
+
+	newkey->parttypcoll = (Oid *) palloc(n * sizeof(Oid));
+	memcpy(newkey->parttypcoll, fromkey->parttypcoll, n * sizeof(Oid));
+
+	return newkey;
+}
+
+/*
  *		equalRuleLocks
  *
  *		Determine whether two RuleLocks are equivalent
@@ -921,6 +1160,58 @@ equalRSDesc(RowSecurityDesc *rsdesc1, RowSecurityDesc *rsdesc2)
 		if (!equalPolicy(l, r))
 			return false;
 	}
+
+	return true;
+}
+
+/*
+ * equalPartitionDescs
+ *		Compare two partition descriptors for logical equality
+ */
+static bool
+equalPartitionDescs(PartitionKey key, PartitionDesc partdesc1,
+					PartitionDesc partdesc2)
+{
+	int			i;
+
+	if (partdesc1 != NULL)
+	{
+		if (partdesc2 == NULL)
+			return false;
+		if (partdesc1->nparts != partdesc2->nparts)
+			return false;
+
+		Assert(key != NULL || partdesc1->nparts == 0);
+
+		/*
+		 * Same oids? If the partitioning structure did not change, that is,
+		 * no partitions were added or removed to the relation, the oids array
+		 * should still match element-by-element.
+		 */
+		for (i = 0; i < partdesc1->nparts; i++)
+		{
+			if (partdesc1->oids[i] != partdesc2->oids[i])
+				return false;
+		}
+
+		/*
+		 * Now compare partition bound collections.  The logic to iterate over
+		 * the collections is private to partition.c.
+		 */
+		if (partdesc1->boundinfo != NULL)
+		{
+			if (partdesc2->boundinfo == NULL)
+				return false;
+
+			if (!partition_bounds_equal(key, partdesc1->boundinfo,
+										partdesc2->boundinfo))
+				return false;
+		}
+		else if (partdesc2->boundinfo != NULL)
+			return false;
+	}
+	else if (partdesc2 != NULL)
+		return false;
 
 	return true;
 }
@@ -1053,6 +1344,20 @@ RelationBuildDesc(Oid targetRelId, bool insertIt)
 	relation->rd_fkeylist = NIL;
 	relation->rd_fkeyvalid = false;
 
+	/* if a partitioned table, initialize key and partition descriptor info */
+	if (relation->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+	{
+		RelationBuildPartitionKey(relation);
+		RelationBuildPartitionDesc(relation);
+	}
+	else
+	{
+		relation->rd_partkeycxt = NULL;
+		relation->rd_partkey = NULL;
+		relation->rd_partdesc = NULL;
+		relation->rd_pdcxt = NULL;
+	}
+
 	/*
 	 * if it's an index, initialize index-related information
 	 */
@@ -1128,7 +1433,7 @@ RelationInitPhysicalAddr(Relation relation)
 		 * points to the current file since the older file will be gone (or
 		 * truncated). The new file will still contain older rows so lookups
 		 * in them will work correctly. This wouldn't work correctly if
-		 * rewrites were allowed to change the schema in a noncompatible way,
+		 * rewrites were allowed to change the schema in an incompatible way,
 		 * but those are prevented both on catalog tables and on user tables
 		 * declared as additional catalog tables.
 		 */
@@ -1248,15 +1553,10 @@ RelationInitIndexAccessInfo(Relation relation)
 	 * Make the private context to hold index access info.  The reason we need
 	 * a context, and not just a couple of pallocs, is so that we won't leak
 	 * any subsidiary info attached to fmgr lookup records.
-	 *
-	 * Context parameters are set on the assumption that it'll probably not
-	 * contain much data.
 	 */
 	indexcxt = AllocSetContextCreate(CacheMemoryContext,
 									 RelationGetRelationName(relation),
-									 ALLOCSET_SMALL_MINSIZE,
-									 ALLOCSET_SMALL_INITSIZE,
-									 ALLOCSET_SMALL_MAXSIZE);
+									 ALLOCSET_SMALL_SIZES);
 	relation->rd_indexcxt = indexcxt;
 
 	/*
@@ -2039,7 +2339,10 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
 	list_free(relation->rd_indexlist);
 	bms_free(relation->rd_indexattr);
 	bms_free(relation->rd_keyattr);
+	bms_free(relation->rd_pkattr);
 	bms_free(relation->rd_idattr);
+	if (relation->rd_pubactions)
+		pfree(relation->rd_pubactions);
 	if (relation->rd_options)
 		pfree(relation->rd_options);
 	if (relation->rd_indextuple)
@@ -2050,6 +2353,12 @@ RelationDestroyRelation(Relation relation, bool remember_tupdesc)
 		MemoryContextDelete(relation->rd_rulescxt);
 	if (relation->rd_rsdesc)
 		MemoryContextDelete(relation->rd_rsdesc->rscxt);
+	if (relation->rd_partkeycxt)
+		MemoryContextDelete(relation->rd_partkeycxt);
+	if (relation->rd_pdcxt)
+		MemoryContextDelete(relation->rd_pdcxt);
+	if (relation->rd_partcheck)
+		pfree(relation->rd_partcheck);
 	if (relation->rd_fdwroutine)
 		pfree(relation->rd_fdwroutine);
 	pfree(relation);
@@ -2198,11 +2507,12 @@ RelationClearRelation(Relation relation, bool rebuild)
 		 *
 		 * When rebuilding an open relcache entry, we must preserve ref count,
 		 * rd_createSubid/rd_newRelfilenodeSubid, and rd_toastoid state.  Also
-		 * attempt to preserve the pg_class entry (rd_rel), tupledesc, and
-		 * rewrite-rule substructures in place, because various places assume
-		 * that these structures won't move while they are working with an
-		 * open relcache entry.  (Note: the refcount mechanism for tupledescs
-		 * might someday allow us to remove this hack for the tupledesc.)
+		 * attempt to preserve the pg_class entry (rd_rel), tupledesc,
+		 * rewrite-rule, partition key, and partition descriptor substructures
+		 * in place, because various places assume that these structures won't
+		 * move while they are working with an open relcache entry.  (Note:
+		 * the refcount mechanism for tupledescs might someday allow us to
+		 * remove this hack for the tupledesc.)
 		 *
 		 * Note that this process does not touch CurrentResourceOwner; which
 		 * is good because whatever ref counts the entry may have do not
@@ -2213,6 +2523,8 @@ RelationClearRelation(Relation relation, bool rebuild)
 		bool		keep_tupdesc;
 		bool		keep_rules;
 		bool		keep_policies;
+		bool		keep_partkey;
+		bool		keep_partdesc;
 
 		/* Build temporary entry, but don't link it into hashtable */
 		newrel = RelationBuildDesc(save_relid, false);
@@ -2243,6 +2555,10 @@ RelationClearRelation(Relation relation, bool rebuild)
 		keep_tupdesc = equalTupleDescs(relation->rd_att, newrel->rd_att);
 		keep_rules = equalRuleLocks(relation->rd_rules, newrel->rd_rules);
 		keep_policies = equalRSDesc(relation->rd_rsdesc, newrel->rd_rsdesc);
+		keep_partkey = (relation->rd_partkey != NULL);
+		keep_partdesc = equalPartitionDescs(relation->rd_partkey,
+											relation->rd_partdesc,
+											newrel->rd_partdesc);
 
 		/*
 		 * Perform swapping of the relcache entry contents.  Within this
@@ -2297,6 +2613,18 @@ RelationClearRelation(Relation relation, bool rebuild)
 		SWAPFIELD(Oid, rd_toastoid);
 		/* pgstat_info must be preserved */
 		SWAPFIELD(struct PgStat_TableStatus *, pgstat_info);
+		/* partition key must be preserved, if we have one */
+		if (keep_partkey)
+		{
+			SWAPFIELD(PartitionKey, rd_partkey);
+			SWAPFIELD(MemoryContext, rd_partkeycxt);
+		}
+		/* preserve old partdesc if no logical change */
+		if (keep_partdesc)
+		{
+			SWAPFIELD(PartitionDesc, rd_partdesc);
+			SWAPFIELD(MemoryContext, rd_pdcxt);
+		}
 
 #undef SWAPFIELD
 
@@ -2721,6 +3049,7 @@ AtEOXact_cleanup(Relation relation, bool isCommit)
 		list_free(relation->rd_indexlist);
 		relation->rd_indexlist = NIL;
 		relation->rd_oidindex = InvalidOid;
+		relation->rd_pkindex = InvalidOid;
 		relation->rd_replidindex = InvalidOid;
 		relation->rd_indexvalid = 0;
 	}
@@ -2833,6 +3162,7 @@ AtEOSubXact_cleanup(Relation relation, bool isCommit,
 		list_free(relation->rd_indexlist);
 		relation->rd_indexlist = NIL;
 		relation->rd_oidindex = InvalidOid;
+		relation->rd_pkindex = InvalidOid;
 		relation->rd_replidindex = InvalidOid;
 		relation->rd_indexvalid = 0;
 	}
@@ -2991,7 +3321,9 @@ RelationBuildLocalRelation(const char *relname,
 
 	/* system relations and non-table objects don't have one */
 	if (!IsSystemNamespace(relnamespace) &&
-		(relkind == RELKIND_RELATION || relkind == RELKIND_MATVIEW))
+		(relkind == RELKIND_RELATION ||
+		 relkind == RELKIND_MATVIEW ||
+		 relkind == RELKIND_PARTITIONED_TABLE))
 		rel->rd_rel->relreplident = REPLICA_IDENTITY_DEFAULT;
 	else
 		rel->rd_rel->relreplident = REPLICA_IDENTITY_NOTHING;
@@ -3152,8 +3484,7 @@ RelationSetNewRelfilenode(Relation relation, char persistence,
 	classform->relminmxid = minmulti;
 	classform->relpersistence = persistence;
 
-	simple_heap_update(pg_class, &tuple->t_self, tuple);
-	CatalogUpdateIndexes(pg_class, tuple);
+	CatalogTupleUpdate(pg_class, &tuple->t_self, tuple);
 
 	heap_freetuple(tuple);
 
@@ -3264,8 +3595,10 @@ RelationCacheInitializePhase2(void)
 				  false, Natts_pg_auth_members, Desc_pg_auth_members);
 		formrdesc("pg_shseclabel", SharedSecLabelRelation_Rowtype_Id, true,
 				  false, Natts_pg_shseclabel, Desc_pg_shseclabel);
+		formrdesc("pg_subscription", SubscriptionRelation_Rowtype_Id, true,
+				  true, Natts_pg_subscription, Desc_pg_subscription);
 
-#define NUM_CRITICAL_SHARED_RELS	4	/* fix if you change list above */
+#define NUM_CRITICAL_SHARED_RELS	5	/* fix if you change list above */
 	}
 
 	MemoryContextSwitchTo(oldcxt);
@@ -3519,6 +3852,20 @@ RelationCacheInitializePhase3(void)
 			RelationBuildRowSecurity(relation);
 
 			Assert(relation->rd_rsdesc != NULL);
+			restart = true;
+		}
+
+		/*
+		 * Reload partition key and descriptor for a partitioned table.
+		 */
+		if (relation->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		{
+			RelationBuildPartitionKey(relation);
+			Assert(relation->rd_partkey != NULL);
+
+			RelationBuildPartitionDesc(relation);
+			Assert(relation->rd_partdesc != NULL);
+
 			restart = true;
 		}
 
@@ -3980,9 +4327,10 @@ RelationGetFKeyList(Relation relation)
  * it is the pg_class OID of a unique index on OID when the relation has one,
  * and InvalidOid if there is no such index.
  *
- * In exactly the same way, we update rd_replidindex, which is the pg_class
- * OID of an index to be used as the relation's replication identity index,
- * or InvalidOid if there is no such index.
+ * In exactly the same way, we update rd_pkindex, which is the OID of the
+ * relation's primary key index if any, else InvalidOid; and rd_replidindex,
+ * which is the pg_class OID of an index to be used as the relation's
+ * replication identity index, or InvalidOid if there is no such index.
  */
 List *
 RelationGetIndexList(Relation relation)
@@ -4087,6 +4435,7 @@ RelationGetIndexList(Relation relation)
 	oldlist = relation->rd_indexlist;
 	relation->rd_indexlist = list_copy(result);
 	relation->rd_oidindex = oidIndex;
+	relation->rd_pkindex = pkeyIndex;
 	if (replident == REPLICA_IDENTITY_DEFAULT && OidIsValid(pkeyIndex))
 		relation->rd_replidindex = pkeyIndex;
 	else if (replident == REPLICA_IDENTITY_INDEX && OidIsValid(candidateIndex))
@@ -4154,7 +4503,7 @@ insert_ordered_oid(List *list, Oid datum)
  * to ensure that a correct rd_indexattr set has been cached before first
  * calling RelationSetIndexList; else a subsequent inquiry might cause a
  * wrong rd_indexattr set to get computed and cached.  Likewise, we do not
- * touch rd_keyattr or rd_idattr.
+ * touch rd_keyattr, rd_pkattr or rd_idattr.
  */
 void
 RelationSetIndexList(Relation relation, List *indexIds, Oid oidIndex)
@@ -4170,7 +4519,11 @@ RelationSetIndexList(Relation relation, List *indexIds, Oid oidIndex)
 	list_free(relation->rd_indexlist);
 	relation->rd_indexlist = indexIds;
 	relation->rd_oidindex = oidIndex;
-	/* For the moment, assume the target rel hasn't got a replica index */
+	/*
+	 * For the moment, assume the target rel hasn't got a pk or replica
+	 * index. We'll load them on demand in the API that wraps access to them.
+	 */
+	relation->rd_pkindex = InvalidOid;
 	relation->rd_replidindex = InvalidOid;
 	relation->rd_indexvalid = 2;	/* mark list as forced */
 	/* Flag relation as needing eoxact cleanup (to reset the list) */
@@ -4203,6 +4556,27 @@ RelationGetOidIndex(Relation relation)
 	}
 
 	return relation->rd_oidindex;
+}
+
+/*
+ * RelationGetPrimaryKeyIndex -- get OID of the relation's primary key index
+ *
+ * Returns InvalidOid if there is no such index.
+ */
+Oid
+RelationGetPrimaryKeyIndex(Relation relation)
+{
+	List	   *ilist;
+
+	if (relation->rd_indexvalid == 0)
+	{
+		/* RelationGetIndexList does the heavy lifting. */
+		ilist = RelationGetIndexList(relation);
+		list_free(ilist);
+		Assert(relation->rd_indexvalid != 0);
+	}
+
+	return relation->rd_pkindex;
 }
 
 /*
@@ -4274,6 +4648,8 @@ RelationGetIndexExpressions(Relation relation)
 	 * matches without this.  We don't bother with canonicalize_qual, however.
 	 */
 	result = (List *) eval_const_expressions(NULL, (Node *) result);
+
+	result = (List *) canonicalize_qual((Expr *) result);
 
 	/* May as well fix opfuncids too */
 	fix_opfuncids((Node *) result);
@@ -4371,8 +4747,10 @@ RelationGetIndexPredicate(Relation relation)
  * we can include system attributes (e.g., OID) in the bitmap representation.
  *
  * Caller had better hold at least RowExclusiveLock on the target relation
- * to ensure that it has a stable set of indexes.  This also makes it safe
- * (deadlock-free) for us to take locks on the relation's indexes.
+ * to ensure it is safe (deadlock-free) for us to take locks on the relation's
+ * indexes.  Note that since the introduction of CREATE INDEX CONCURRENTLY,
+ * that lock level doesn't guarantee a stable set of indexes, so we have to
+ * be prepared to retry here in case of a change in the set of indexes.
  *
  * The returned result is palloc'd in the caller's memory context and should
  * be bms_free'd when not needed anymore.
@@ -4382,8 +4760,11 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 {
 	Bitmapset  *indexattrs;		/* indexed columns */
 	Bitmapset  *uindexattrs;	/* columns in unique indexes */
+	Bitmapset  *pkindexattrs;	/* columns in the primary index */
 	Bitmapset  *idindexattrs;	/* columns in the replica identity */
 	List	   *indexoidlist;
+	List	   *newindexoidlist;
+	Oid			relpkindex;
 	Oid			relreplindex;
 	ListCell   *l;
 	MemoryContext oldcxt;
@@ -4397,6 +4778,8 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 				return bms_copy(relation->rd_indexattr);
 			case INDEX_ATTR_BITMAP_KEY:
 				return bms_copy(relation->rd_keyattr);
+			case INDEX_ATTR_BITMAP_PRIMARY_KEY:
+				return bms_copy(relation->rd_pkattr);
 			case INDEX_ATTR_BITMAP_IDENTITY_KEY:
 				return bms_copy(relation->rd_idattr);
 			default:
@@ -4409,8 +4792,9 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 		return NULL;
 
 	/*
-	 * Get cached list of index OIDs
+	 * Get cached list of index OIDs. If we have to start over, we do so here.
 	 */
+restart:
 	indexoidlist = RelationGetIndexList(relation);
 
 	/* Fall out if no indexes (but relhasindex was set) */
@@ -4418,12 +4802,13 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 		return NULL;
 
 	/*
-	 * Copy the rd_replidindex value computed by RelationGetIndexList before
-	 * proceeding.  This is needed because a relcache flush could occur inside
-	 * index_open below, resetting the fields managed by RelationGetIndexList.
-	 * (The values we're computing will still be valid, assuming that caller
-	 * has a sufficient lock on the relation.)
+	 * Copy the rd_pkindex and rd_replidindex values computed by
+	 * RelationGetIndexList before proceeding.  This is needed because a
+	 * relcache flush could occur inside index_open below, resetting the
+	 * fields managed by RelationGetIndexList.  We need to do the work with
+	 * stable values of these fields.
 	 */
+	relpkindex = relation->rd_pkindex;
 	relreplindex = relation->rd_replidindex;
 
 	/*
@@ -4438,6 +4823,7 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 	 */
 	indexattrs = NULL;
 	uindexattrs = NULL;
+	pkindexattrs = NULL;
 	idindexattrs = NULL;
 	foreach(l, indexoidlist)
 	{
@@ -4446,6 +4832,7 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 		IndexInfo  *indexInfo;
 		int			i;
 		bool		isKey;		/* candidate key */
+		bool		isPK;		/* primary key */
 		bool		isIDKey;	/* replica identity index */
 
 		indexDesc = index_open(indexOid, AccessShareLock);
@@ -4457,6 +4844,9 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 		isKey = indexInfo->ii_Unique &&
 			indexInfo->ii_Expressions == NIL &&
 			indexInfo->ii_Predicate == NIL;
+
+		/* Is this a primary key? */
+		isPK = (indexOid == relpkindex);
 
 		/* Is this index the configured (or default) replica identity? */
 		isIDKey = (indexOid == relreplindex);
@@ -4475,6 +4865,10 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 					uindexattrs = bms_add_member(uindexattrs,
 							   attrnum - FirstLowInvalidHeapAttributeNumber);
 
+				if (isPK)
+					pkindexattrs = bms_add_member(pkindexattrs,
+							   attrnum - FirstLowInvalidHeapAttributeNumber);
+
 				if (isIDKey)
 					idindexattrs = bms_add_member(idindexattrs,
 							   attrnum - FirstLowInvalidHeapAttributeNumber);
@@ -4490,13 +4884,41 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 		index_close(indexDesc, AccessShareLock);
 	}
 
-	list_free(indexoidlist);
+	/*
+	 * During one of the index_opens in the above loop, we might have received
+	 * a relcache flush event on this relcache entry, which might have been
+	 * signaling a change in the rel's index list.  If so, we'd better start
+	 * over to ensure we deliver up-to-date attribute bitmaps.
+	 */
+	newindexoidlist = RelationGetIndexList(relation);
+	if (equal(indexoidlist, newindexoidlist) &&
+		relpkindex == relation->rd_pkindex &&
+		relreplindex == relation->rd_replidindex)
+	{
+		/* Still the same index set, so proceed */
+		list_free(newindexoidlist);
+		list_free(indexoidlist);
+	}
+	else
+	{
+		/* Gotta do it over ... might as well not leak memory */
+		list_free(newindexoidlist);
+		list_free(indexoidlist);
+		bms_free(uindexattrs);
+		bms_free(pkindexattrs);
+		bms_free(idindexattrs);
+		bms_free(indexattrs);
+
+		goto restart;
+	}
 
 	/* Don't leak the old values of these bitmaps, if any */
 	bms_free(relation->rd_indexattr);
 	relation->rd_indexattr = NULL;
 	bms_free(relation->rd_keyattr);
 	relation->rd_keyattr = NULL;
+	bms_free(relation->rd_pkattr);
+	relation->rd_pkattr = NULL;
 	bms_free(relation->rd_idattr);
 	relation->rd_idattr = NULL;
 
@@ -4509,6 +4931,7 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 	 */
 	oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
 	relation->rd_keyattr = bms_copy(uindexattrs);
+	relation->rd_pkattr = bms_copy(pkindexattrs);
 	relation->rd_idattr = bms_copy(idindexattrs);
 	relation->rd_indexattr = bms_copy(indexattrs);
 	MemoryContextSwitchTo(oldcxt);
@@ -4520,6 +4943,8 @@ RelationGetIndexAttrBitmap(Relation relation, IndexAttrBitmapKind attrKind)
 			return indexattrs;
 		case INDEX_ATTR_BITMAP_KEY:
 			return uindexattrs;
+		case INDEX_ATTR_BITMAP_PRIMARY_KEY:
+			return bms_copy(relation->rd_pkattr);
 		case INDEX_ATTR_BITMAP_IDENTITY_KEY:
 			return idindexattrs;
 		default:
@@ -4652,6 +5077,67 @@ RelationGetExclusionInfo(Relation indexRelation,
 	MemoryContextSwitchTo(oldcxt);
 }
 
+/*
+ * Get publication actions for the given relation.
+ */
+struct PublicationActions *
+GetRelationPublicationActions(Relation relation)
+{
+	List	   *puboids;
+	ListCell   *lc;
+	MemoryContext		oldcxt;
+	PublicationActions *pubactions = palloc0(sizeof(PublicationActions));
+
+	if (relation->rd_pubactions)
+		return memcpy(pubactions, relation->rd_pubactions,
+					  sizeof(PublicationActions));
+
+	/* Fetch the publication membership info. */
+	puboids = GetRelationPublications(RelationGetRelid(relation));
+	puboids = list_concat_unique_oid(puboids, GetAllTablesPublications());
+
+	foreach(lc, puboids)
+	{
+		Oid			pubid = lfirst_oid(lc);
+		HeapTuple	tup;
+		Form_pg_publication pubform;
+
+		tup = SearchSysCache1(PUBLICATIONOID, ObjectIdGetDatum(pubid));
+
+		if (!HeapTupleIsValid(tup))
+			elog(ERROR, "cache lookup failed for publication %u", pubid);
+
+		pubform = (Form_pg_publication) GETSTRUCT(tup);
+
+		pubactions->pubinsert |= pubform->pubinsert;
+		pubactions->pubupdate |= pubform->pubupdate;
+		pubactions->pubdelete |= pubform->pubdelete;
+
+		ReleaseSysCache(tup);
+
+		/*
+		 * If we know everything is replicated, there is no point to check
+		 * for other publications.
+		 */
+		if (pubactions->pubinsert && pubactions->pubupdate &&
+			pubactions->pubdelete)
+			break;
+	}
+
+	if (relation->rd_pubactions)
+	{
+		pfree(relation->rd_pubactions);
+		relation->rd_pubactions = NULL;
+	}
+
+	/* Now save copy of the actions in the relcache entry. */
+	oldcxt = MemoryContextSwitchTo(CacheMemoryContext);
+	relation->rd_pubactions = palloc(sizeof(PublicationActions));
+	memcpy(relation->rd_pubactions, pubactions, sizeof(PublicationActions));
+	MemoryContextSwitchTo(oldcxt);
+
+	return pubactions;
+}
 
 /*
  * Routines to support ereport() reports of relation-related errors
@@ -4948,9 +5434,7 @@ load_relcache_init_file(bool shared)
 			 */
 			indexcxt = AllocSetContextCreate(CacheMemoryContext,
 											 RelationGetRelationName(rel),
-											 ALLOCSET_SMALL_MINSIZE,
-											 ALLOCSET_SMALL_INITSIZE,
-											 ALLOCSET_SMALL_MAXSIZE);
+											 ALLOCSET_SMALL_SIZES);
 			rel->rd_indexcxt = indexcxt;
 
 			/*
@@ -5045,6 +5529,10 @@ load_relcache_init_file(bool shared)
 		rel->rd_rulescxt = NULL;
 		rel->trigdesc = NULL;
 		rel->rd_rsdesc = NULL;
+		rel->rd_partkeycxt = NULL;
+		rel->rd_partkey = NULL;
+		rel->rd_partdesc = NULL;
+		rel->rd_partcheck = NIL;
 		rel->rd_indexprs = NIL;
 		rel->rd_indpred = NIL;
 		rel->rd_exclops = NULL;
@@ -5065,10 +5553,13 @@ load_relcache_init_file(bool shared)
 		rel->rd_fkeyvalid = false;
 		rel->rd_indexlist = NIL;
 		rel->rd_oidindex = InvalidOid;
+		rel->rd_pkindex = InvalidOid;
 		rel->rd_replidindex = InvalidOid;
 		rel->rd_indexattr = NULL;
 		rel->rd_keyattr = NULL;
+		rel->rd_pkattr = NULL;
 		rel->rd_idattr = NULL;
+		rel->rd_pubactions = NULL;
 		rel->rd_createSubid = InvalidSubTransactionId;
 		rel->rd_newRelfilenodeSubid = InvalidSubTransactionId;
 		rel->rd_amcache = NULL;

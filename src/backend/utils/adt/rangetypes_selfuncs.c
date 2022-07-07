@@ -6,7 +6,7 @@
  * Estimates are based on histograms of lower and upper bounds, and the
  * fraction of empty ranges.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -533,7 +533,7 @@ calc_hist_selectivity(TypeCacheEntry *typcache, VariableStatData *vardata,
 			{
 				/*
 				 * Lower bound no longer matters. Just estimate the fraction
-				 * with an upper bound <= const uppert bound
+				 * with an upper bound <= const upper bound
 				 */
 				hist_selec =
 					calc_hist_selectivity_scalar(typcache, &const_upper,

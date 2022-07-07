@@ -4,7 +4,7 @@
  *	  per-process shared memory data structures
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/proc.h
@@ -19,6 +19,7 @@
 #include "storage/latch.h"
 #include "storage/lock.h"
 #include "storage/pg_sema.h"
+#include "storage/proclist_types.h"
 
 /*
  * Each backend advertises up to PGPROC_MAX_CACHED_SUBXIDS TransactionIds
@@ -86,7 +87,7 @@ struct PGPROC
 	SHM_QUEUE	links;			/* list link if process is in a list */
 	PGPROC	  **procgloballist; /* procglobal list that owns this PGPROC */
 
-	PGSemaphoreData sem;		/* ONE semaphore to sleep on */
+	PGSemaphore sem;			/* ONE semaphore to sleep on */
 	int			waitStatus;		/* STATUS_WAITING, STATUS_OK or STATUS_ERROR */
 
 	Latch		procLatch;		/* generic latch for process */
@@ -102,6 +103,8 @@ struct PGPROC
 	Oid			databaseId;		/* OID of database this backend is using */
 	Oid			roleId;			/* OID of role using this backend */
 
+	bool		isBackgroundWorker; /* true if background worker. */
+
 	/*
 	 * While in hot standby mode, shows that a conflict signal has been sent
 	 * for the current transaction. Set/cleared while holding ProcArrayLock,
@@ -112,7 +115,10 @@ struct PGPROC
 	/* Info about LWLock the process is currently waiting for, if any. */
 	bool		lwWaiting;		/* true if waiting for an LW lock */
 	uint8		lwWaitMode;		/* lwlock mode being waited for */
-	dlist_node	lwWaitLink;		/* position in LW lock wait list */
+	proclist_node lwWaitLink;	/* position in LW lock wait list */
+
+	/* Support for condition variables. */
+	proclist_node cvWaitLink;	/* position in CV wait list */
 
 	/* Info about lock the process is currently waiting for, if any. */
 	/* waitLock and waitProcLock are NULL if not currently waiting. */
@@ -243,6 +249,9 @@ extern PROC_HDR *ProcGlobal;
 
 extern PGPROC *PreparedXactProcs;
 
+/* Accessor for PGPROC given a pgprocno. */
+#define GetPGProcByNumber(n) (&ProcGlobal->allProcs[(n)])
+
 /*
  * We set aside some extra PGPROC structures for auxiliary processes,
  * ie things that aren't full-fledged backends but need shmem access.
@@ -287,7 +296,7 @@ extern void CheckDeadLockAlert(void);
 extern bool IsWaitingForLock(void);
 extern void LockErrorCleanup(void);
 
-extern void ProcWaitForSignal(void);
+extern void ProcWaitForSignal(uint32 wait_event_info);
 extern void ProcSendSignal(int pid);
 
 extern void BecomeLockGroupLeader(void);

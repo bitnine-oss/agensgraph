@@ -4,7 +4,7 @@
  *
  *	  Routines for aggregate-manipulation commands
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,7 +22,6 @@
  */
 #include "postgres.h"
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -52,8 +51,7 @@
  * "parameters" is a list of DefElem representing the agg's definition clauses.
  */
 ObjectAddress
-DefineAggregate(List *name, List *args, bool oldstyle, List *parameters,
-				const char *queryString)
+DefineAggregate(ParseState *pstate, List *name, List *args, bool oldstyle, List *parameters)
 {
 	char	   *aggName;
 	Oid			aggNamespace;
@@ -111,13 +109,13 @@ DefineAggregate(List *name, List *args, bool oldstyle, List *parameters,
 			aggKind = AGGKIND_ORDERED_SET;
 		else
 			numDirectArgs = 0;
-		args = (List *) linitial(args);
+		args = castNode(List, linitial(args));
 	}
 
 	/* Examine aggregate's definition clauses */
 	foreach(pl, parameters)
 	{
-		DefElem    *defel = (DefElem *) lfirst(pl);
+		DefElem    *defel = castNode(DefElem, lfirst(pl));
 
 		/*
 		 * sfunc1, stype1, and initcond1 are accepted as obsolete spellings
@@ -287,10 +285,10 @@ DefineAggregate(List *name, List *args, bool oldstyle, List *parameters,
 					 errmsg("basetype is redundant with aggregate input type specification")));
 
 		numArgs = list_length(args);
-		interpret_function_parameter_list(args,
+		interpret_function_parameter_list(pstate,
+										  args,
 										  InvalidOid,
 										  true, /* is an aggregate */
-										  queryString,
 										  &parameterTypes,
 										  &allParameterTypes,
 										  &parameterModes,

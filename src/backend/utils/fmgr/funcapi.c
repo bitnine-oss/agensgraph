@@ -4,7 +4,7 @@
  *	  Utility and convenience functions for fmgr functions that return
  *	  sets and/or composite types.
  *
- * Copyright (c) 2002-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/fmgr/funcapi.c
@@ -24,6 +24,7 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/regproc.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
@@ -73,9 +74,7 @@ init_MultiFuncCall(PG_FUNCTION_ARGS)
 		 */
 		multi_call_ctx = AllocSetContextCreate(fcinfo->flinfo->fn_mcxt,
 											   "SRF multi-call context",
-											   ALLOCSET_SMALL_MINSIZE,
-											   ALLOCSET_SMALL_INITSIZE,
-											   ALLOCSET_SMALL_MAXSIZE);
+											   ALLOCSET_SMALL_SIZES);
 
 		/*
 		 * Allocate suitably long-lived space and zero it
@@ -880,7 +879,7 @@ get_func_arg_info(HeapTuple procTup,
 /*
  * get_func_trftypes
  *
- * Returns a number of transformated types used by function.
+ * Returns the number of transformed types used by function.
  */
 int
 get_func_trftypes(HeapTuple procTup,

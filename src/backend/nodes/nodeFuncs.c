@@ -3,8 +3,7 @@
  * nodeFuncs.c
  *		Various general-purpose manipulations of Node trees
  *
- * Portions Copyright (c) 2016, Bitnine Inc.
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -218,6 +217,9 @@ exprType(const Node *expr)
 			break;
 		case T_MinMaxExpr:
 			type = ((const MinMaxExpr *) expr)->minmaxtype;
+			break;
+		case T_SQLValueFunction:
+			type = ((const SQLValueFunction *) expr)->type;
 			break;
 		case T_XmlExpr:
 			if (((const XmlExpr *) expr)->op == IS_DOCUMENT)
@@ -480,6 +482,8 @@ exprTypmod(const Node *expr)
 				return typmod;
 			}
 			break;
+		case T_SQLValueFunction:
+			return ((const SQLValueFunction *) expr)->typmod;
 		case T_CoerceToDomain:
 			return ((const CoerceToDomain *) expr)->resulttypmod;
 		case T_CoerceToDomainValue:
@@ -719,6 +723,8 @@ expression_returns_set_walker(Node *node, void *context)
 		return false;
 	if (IsA(node, MinMaxExpr))
 		return false;
+	if (IsA(node, SQLValueFunction))
+		return false;
 	if (IsA(node, XmlExpr))
 		return false;
 
@@ -883,6 +889,9 @@ exprCollation(const Node *expr)
 			break;
 		case T_MinMaxExpr:
 			coll = ((const MinMaxExpr *) expr)->minmaxcollid;
+			break;
+		case T_SQLValueFunction:
+			coll = InvalidOid;	/* all cases return non-collatable types */
 			break;
 		case T_XmlExpr:
 
@@ -1091,6 +1100,9 @@ exprSetCollation(Node *expr, Oid collation)
 			break;
 		case T_MinMaxExpr:
 			((MinMaxExpr *) expr)->minmaxcollid = collation;
+			break;
+		case T_SQLValueFunction:
+			Assert(!OidIsValid(collation));		/* no collatable results */
 			break;
 		case T_XmlExpr:
 			Assert((((XmlExpr *) expr)->op == IS_XMLSERIALIZE) ?
@@ -1365,6 +1377,10 @@ exprLocation(const Node *expr)
 			/* GREATEST/LEAST keyword should always be the first thing */
 			loc = ((const MinMaxExpr *) expr)->location;
 			break;
+		case T_SQLValueFunction:
+			/* function keyword should always be the first thing */
+			loc = ((const SQLValueFunction *) expr)->location;
+			break;
 		case T_XmlExpr:
 			{
 				const XmlExpr *xexpr = (const XmlExpr *) expr;
@@ -1536,6 +1552,12 @@ exprLocation(const Node *expr)
 			/* just use nested expr's location */
 			loc = exprLocation((Node *) ((const InferenceElem *) expr)->expr);
 			break;
+		case T_PartitionBoundSpec:
+			loc = ((const PartitionBoundSpec *) expr)->location;
+			break;
+		case T_PartitionRangeDatum:
+			loc = ((const PartitionRangeDatum *) expr)->location;
+			break;
 		default:
 			/* for any other node type it's just unknown... */
 			loc = -1;
@@ -1634,9 +1656,10 @@ set_sa_opfuncid(ScalarArrayOpExpr *opexpr)
  * for themselves, in case additional checks should be made, or because they
  * have special rules about which parts of the tree need to be visited.
  *
- * Note: we ignore MinMaxExpr, XmlExpr, and CoerceToDomain nodes, because they
- * do not contain SQL function OIDs.  However, they can invoke SQL-visible
- * functions, so callers should take thought about how to treat them.
+ * Note: we ignore MinMaxExpr, SQLValueFunction, XmlExpr, and CoerceToDomain
+ * nodes, because they do not contain SQL function OIDs.  However, they can
+ * invoke SQL-visible functions, so callers should take thought about how to
+ * treat them.
  */
 bool
 check_functions_in_node(Node *node, check_function_callback checker,
@@ -1860,6 +1883,7 @@ expression_tree_walker(Node *node,
 		case T_CaseTestExpr:
 		case T_SetToDefault:
 		case T_CurrentOfExpr:
+		case T_SQLValueFunction:
 		case T_RangeTblRef:
 		case T_SortGroupClause:
 			/* primitive node types with no expression subnodes */
@@ -2434,6 +2458,7 @@ expression_tree_mutator(Node *node,
 		case T_CaseTestExpr:
 		case T_SetToDefault:
 		case T_CurrentOfExpr:
+		case T_SQLValueFunction:
 		case T_RangeTblRef:
 		case T_SortGroupClause:
 			return (Node *) copyObject(node);
@@ -3198,6 +3223,7 @@ raw_expression_tree_walker(Node *node,
 	{
 		case T_SetToDefault:
 		case T_CurrentOfExpr:
+		case T_SQLValueFunction:
 		case T_Integer:
 		case T_Float:
 		case T_String:

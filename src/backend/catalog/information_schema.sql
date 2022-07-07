@@ -2,7 +2,7 @@
  * SQL Information Schema
  * as defined in ISO/IEC 9075-11:2011
  *
- * Copyright (c) 2003-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2003-2017, PostgreSQL Global Development Group
  *
  * src/backend/catalog/information_schema.sql
  *
@@ -453,7 +453,7 @@ CREATE VIEW check_constraints AS
       AND a.attnum > 0
       AND NOT a.attisdropped
       AND a.attnotnull
-      AND r.relkind = 'r'
+      AND r.relkind IN ('r', 'P')
       AND pg_has_role(r.relowner, 'USAGE');
 
 GRANT SELECT ON check_constraints TO PUBLIC;
@@ -525,7 +525,7 @@ CREATE VIEW column_domain_usage AS
           AND a.attrelid = c.oid
           AND a.atttypid = t.oid
           AND t.typtype = 'd'
-          AND c.relkind IN ('r', 'v', 'f')
+          AND c.relkind IN ('r', 'v', 'f', 'P')
           AND a.attnum > 0
           AND NOT a.attisdropped
           AND pg_has_role(t.typowner, 'USAGE');
@@ -564,7 +564,7 @@ CREATE VIEW column_privileges AS
                   pr_c.relowner
            FROM (SELECT oid, relname, relnamespace, relowner, (aclexplode(coalesce(relacl, acldefault('r', relowner)))).*
                  FROM pg_class
-                 WHERE relkind IN ('r', 'v', 'f')
+                 WHERE relkind IN ('r', 'v', 'f', 'P')
                 ) pr_c (oid, relname, relnamespace, relowner, grantor, grantee, prtype, grantable),
                 pg_attribute a
            WHERE a.attrelid = pr_c.oid
@@ -586,7 +586,7 @@ CREATE VIEW column_privileges AS
                 ) pr_a (attrelid, attname, grantor, grantee, prtype, grantable),
                 pg_class c
            WHERE pr_a.attrelid = c.oid
-                 AND relkind IN ('r', 'v', 'f')
+                 AND relkind IN ('r', 'v', 'f', 'P')
          ) x,
          pg_namespace nc,
          pg_authid u_grantor,
@@ -629,7 +629,7 @@ CREATE VIEW column_udt_usage AS
     WHERE a.attrelid = c.oid
           AND a.atttypid = t.oid
           AND nc.oid = c.relnamespace
-          AND a.attnum > 0 AND NOT a.attisdropped AND c.relkind in ('r', 'v', 'f')
+          AND a.attnum > 0 AND NOT a.attisdropped AND c.relkind in ('r', 'v', 'f', 'P')
           AND pg_has_role(coalesce(bt.typowner, t.typowner), 'USAGE');
 
 GRANT SELECT ON column_udt_usage TO PUBLIC;
@@ -738,7 +738,7 @@ CREATE VIEW columns AS
            CAST('NEVER' AS character_data) AS is_generated,
            CAST(null AS character_data) AS generation_expression,
 
-           CAST(CASE WHEN c.relkind = 'r' OR
+           CAST(CASE WHEN c.relkind IN ('r', 'P') OR
                           (c.relkind IN ('v', 'f') AND
                            pg_column_is_updatable(c.oid, a.attnum, false))
                 THEN 'YES' ELSE 'NO' END AS yes_or_no) AS is_updatable
@@ -753,7 +753,7 @@ CREATE VIEW columns AS
 
     WHERE (NOT pg_is_other_temp_schema(nc.oid))
 
-          AND a.attnum > 0 AND NOT a.attisdropped AND c.relkind in ('r', 'v', 'f')
+          AND a.attnum > 0 AND NOT a.attisdropped AND c.relkind in ('r', 'v', 'f', 'P')
 
           AND (pg_has_role(c.relowner, 'USAGE')
                OR has_column_privilege(c.oid, a.attnum,
@@ -789,7 +789,7 @@ CREATE VIEW constraint_column_usage AS
             AND d.objid = c.oid
             AND c.connamespace = nc.oid
             AND c.contype = 'c'
-            AND r.relkind = 'r'
+            AND r.relkind IN ('r', 'P')
             AND NOT a.attisdropped
 
         UNION ALL
@@ -805,7 +805,7 @@ CREATE VIEW constraint_column_usage AS
                       ELSE r.oid = c.conrelid AND a.attnum = ANY (c.conkey) END)
             AND NOT a.attisdropped
             AND c.contype IN ('p', 'u', 'f')
-            AND r.relkind = 'r'
+            AND r.relkind IN ('r', 'P')
 
       ) AS x (tblschema, tblname, tblowner, colname, cstrschema, cstrname)
 
@@ -841,7 +841,7 @@ CREATE VIEW constraint_table_usage AS
     WHERE c.connamespace = nc.oid AND r.relnamespace = nr.oid
           AND ( (c.contype = 'f' AND c.confrelid = r.oid)
              OR (c.contype IN ('p', 'u') AND c.conrelid = r.oid) )
-          AND r.relkind = 'r'
+          AND r.relkind IN ('r', 'P')
           AND pg_has_role(r.relowner, 'USAGE');
 
 GRANT SELECT ON constraint_table_usage TO PUBLIC;
@@ -1058,7 +1058,7 @@ CREATE VIEW key_column_usage AS
                 AND r.oid = c.conrelid
                 AND nc.oid = c.connamespace
                 AND c.contype IN ('p', 'u', 'f')
-                AND r.relkind = 'r'
+                AND r.relkind IN ('r', 'P')
                 AND (NOT pg_is_other_temp_schema(nr.oid)) ) AS ss
     WHERE ss.roid = a.attrelid
           AND a.attnum = (ss.x).x
@@ -1535,15 +1535,16 @@ CREATE VIEW sequences AS
            CAST(64 AS cardinal_number) AS numeric_precision,
            CAST(2 AS cardinal_number) AS numeric_precision_radix,
            CAST(0 AS cardinal_number) AS numeric_scale,
-           CAST(p.start_value AS character_data) AS start_value,
-           CAST(p.minimum_value AS character_data) AS minimum_value,
-           CAST(p.maximum_value AS character_data) AS maximum_value,
-           CAST(p.increment AS character_data) AS increment,
-           CAST(CASE WHEN p.cycle_option THEN 'YES' ELSE 'NO' END AS yes_or_no) AS cycle_option
-    FROM pg_namespace nc, pg_class c, LATERAL pg_sequence_parameters(c.oid) p
+           CAST(s.seqstart AS character_data) AS start_value,
+           CAST(s.seqmin AS character_data) AS minimum_value,
+           CAST(s.seqmax AS character_data) AS maximum_value,
+           CAST(s.seqincrement AS character_data) AS increment,
+           CAST(CASE WHEN s.seqcycle THEN 'YES' ELSE 'NO' END AS yes_or_no) AS cycle_option
+    FROM pg_namespace nc, pg_class c, pg_sequence s
     WHERE c.relnamespace = nc.oid
           AND c.relkind = 'S'
           AND (NOT pg_is_other_temp_schema(nc.oid))
+          AND c.oid = s.seqrelid
           AND (pg_has_role(c.relowner, 'USAGE')
                OR has_sequence_privilege(c.oid, 'SELECT, UPDATE, USAGE') );
 
@@ -1773,7 +1774,7 @@ CREATE VIEW table_constraints AS
     WHERE nc.oid = c.connamespace AND nr.oid = r.relnamespace
           AND c.conrelid = r.oid
           AND c.contype NOT IN ('t', 'x')  -- ignore nonstandard constraints
-          AND r.relkind = 'r'
+          AND r.relkind IN ('r', 'P')
           AND (NOT pg_is_other_temp_schema(nr.oid))
           AND (pg_has_role(r.relowner, 'USAGE')
                -- SELECT privilege omitted, per SQL standard
@@ -1803,7 +1804,7 @@ CREATE VIEW table_constraints AS
           AND a.attnotnull
           AND a.attnum > 0
           AND NOT a.attisdropped
-          AND r.relkind = 'r'
+          AND r.relkind IN ('r', 'P')
           AND (NOT pg_is_other_temp_schema(nr.oid))
           AND (pg_has_role(r.relowner, 'USAGE')
                -- SELECT privilege omitted, per SQL standard
@@ -1853,7 +1854,7 @@ CREATE VIEW table_privileges AS
          ) AS grantee (oid, rolname)
 
     WHERE c.relnamespace = nc.oid
-          AND c.relkind IN ('r', 'v')
+          AND c.relkind IN ('r', 'v', 'P')
           AND c.grantee = grantee.oid
           AND c.grantor = u_grantor.oid
           AND c.prtype IN ('INSERT', 'SELECT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER')
@@ -1897,7 +1898,7 @@ CREATE VIEW tables AS
 
            CAST(
              CASE WHEN nc.oid = pg_my_temp_schema() THEN 'LOCAL TEMPORARY'
-                  WHEN c.relkind = 'r' THEN 'BASE TABLE'
+                  WHEN c.relkind IN ('r', 'P') THEN 'BASE TABLE'
                   WHEN c.relkind = 'v' THEN 'VIEW'
                   WHEN c.relkind = 'f' THEN 'FOREIGN TABLE'
                   ELSE null END
@@ -1910,7 +1911,7 @@ CREATE VIEW tables AS
            CAST(nt.nspname AS sql_identifier) AS user_defined_type_schema,
            CAST(t.typname AS sql_identifier) AS user_defined_type_name,
 
-           CAST(CASE WHEN c.relkind = 'r' OR
+           CAST(CASE WHEN c.relkind IN ('r', 'P') OR
                           (c.relkind IN ('v', 'f') AND
                            -- 1 << CMD_INSERT
                            pg_relation_is_updatable(c.oid, false) & 8 = 8)
@@ -1922,7 +1923,7 @@ CREATE VIEW tables AS
     FROM pg_namespace nc JOIN pg_class c ON (nc.oid = c.relnamespace)
            LEFT JOIN (pg_type t JOIN pg_namespace nt ON (t.typnamespace = nt.oid)) ON (c.reloftype = t.oid)
 
-    WHERE c.relkind IN ('r', 'v', 'f')
+    WHERE c.relkind IN ('r', 'v', 'f', 'P')
           AND (NOT pg_is_other_temp_schema(nc.oid))
           AND (pg_has_role(c.relowner, 'USAGE')
                OR has_table_privilege(c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
@@ -2068,7 +2069,7 @@ CREATE VIEW triggers AS
            -- XXX strange hacks follow
            CAST(
              CASE WHEN pg_has_role(c.relowner, 'USAGE')
-               THEN (SELECT m[1] FROM regexp_matches(pg_get_triggerdef(t.oid), E'.{35,} WHEN \\((.+)\\) EXECUTE PROCEDURE') AS rm(m) LIMIT 1)
+               THEN (regexp_match(pg_get_triggerdef(t.oid), E'.{35,} WHEN \\((.+)\\) EXECUTE PROCEDURE'))[1]
                ELSE null END
              AS character_data) AS action_condition,
            CAST(
@@ -2441,7 +2442,7 @@ CREATE VIEW view_column_usage AS
           AND dt.refclassid = 'pg_catalog.pg_class'::regclass
           AND dt.refobjid = t.oid
           AND t.relnamespace = nt.oid
-          AND t.relkind IN ('r', 'v', 'f')
+          AND t.relkind IN ('r', 'v', 'f', 'P')
           AND t.oid = a.attrelid
           AND dt.refobjsubid = a.attnum
           AND pg_has_role(t.relowner, 'USAGE');
@@ -2519,7 +2520,7 @@ CREATE VIEW view_table_usage AS
           AND dt.refclassid = 'pg_catalog.pg_class'::regclass
           AND dt.refobjid = t.oid
           AND t.relnamespace = nt.oid
-          AND t.relkind IN ('r', 'v', 'f')
+          AND t.relkind IN ('r', 'v', 'f', 'P')
           AND pg_has_role(t.relowner, 'USAGE');
 
 GRANT SELECT ON view_table_usage TO PUBLIC;
@@ -2672,7 +2673,7 @@ CREATE VIEW element_types AS
                   a.attnum, a.atttypid, a.attcollation
            FROM pg_class c, pg_attribute a
            WHERE c.oid = a.attrelid
-                 AND c.relkind IN ('r', 'v', 'f', 'c')
+                 AND c.relkind IN ('r', 'v', 'f', 'c', 'P')
                  AND attnum > 0 AND NOT attisdropped
 
            UNION ALL

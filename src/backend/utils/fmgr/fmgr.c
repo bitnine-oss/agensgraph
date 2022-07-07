@@ -3,7 +3,7 @@
  * fmgr.c
  *	  The Postgres function manager.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,7 +19,6 @@
 #include "catalog/pg_language.h"
 #include "catalog/pg_proc.h"
 #include "executor/functions.h"
-#include "executor/spi.h"
 #include "lib/stringinfo.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
@@ -1878,24 +1877,15 @@ OidFunctionCall9Coll(Oid functionId, Oid collation, Datum arg1, Datum arg2,
  * the caller should assume the result is NULL, but we'll call the input
  * function anyway if it's not strict.  So this is almost but not quite
  * the same as FunctionCall3.
- *
- * One important difference from the bare function call is that we will
- * push any active SPI context, allowing SPI-using I/O functions to be
- * called from other SPI functions without extra notation.  This is a hack,
- * but the alternative of expecting all SPI functions to do SPI_push/SPI_pop
- * around I/O calls seems worse.
  */
 Datum
 InputFunctionCall(FmgrInfo *flinfo, char *str, Oid typioparam, int32 typmod)
 {
 	FunctionCallInfoData fcinfo;
 	Datum		result;
-	bool		pushed;
 
 	if (str == NULL && flinfo->fn_strict)
 		return (Datum) 0;		/* just return null result */
-
-	pushed = SPI_push_conditional();
 
 	InitFunctionCallInfoData(fcinfo, flinfo, 3, InvalidOid, NULL, NULL);
 
@@ -1922,8 +1912,6 @@ InputFunctionCall(FmgrInfo *flinfo, char *str, Oid typioparam, int32 typmod)
 				 fcinfo.flinfo->fn_oid);
 	}
 
-	SPI_pop_conditional(pushed);
-
 	return result;
 }
 
@@ -1932,22 +1920,12 @@ InputFunctionCall(FmgrInfo *flinfo, char *str, Oid typioparam, int32 typmod)
  *
  * Do not call this on NULL datums.
  *
- * This is almost just window dressing for FunctionCall1, but it includes
- * SPI context pushing for the same reasons as InputFunctionCall.
+ * This is currently little more than window dressing for FunctionCall1.
  */
 char *
 OutputFunctionCall(FmgrInfo *flinfo, Datum val)
 {
-	char	   *result;
-	bool		pushed;
-
-	pushed = SPI_push_conditional();
-
-	result = DatumGetCString(FunctionCall1(flinfo, val));
-
-	SPI_pop_conditional(pushed);
-
-	return result;
+	return DatumGetCString(FunctionCall1(flinfo, val));
 }
 
 /*
@@ -1956,8 +1934,7 @@ OutputFunctionCall(FmgrInfo *flinfo, Datum val)
  * "buf" may be NULL to indicate we are reading a NULL.  In this case
  * the caller should assume the result is NULL, but we'll call the receive
  * function anyway if it's not strict.  So this is almost but not quite
- * the same as FunctionCall3.  Also, this includes SPI context pushing for
- * the same reasons as InputFunctionCall.
+ * the same as FunctionCall3.
  */
 Datum
 ReceiveFunctionCall(FmgrInfo *flinfo, StringInfo buf,
@@ -1965,12 +1942,9 @@ ReceiveFunctionCall(FmgrInfo *flinfo, StringInfo buf,
 {
 	FunctionCallInfoData fcinfo;
 	Datum		result;
-	bool		pushed;
 
 	if (buf == NULL && flinfo->fn_strict)
 		return (Datum) 0;		/* just return null result */
-
-	pushed = SPI_push_conditional();
 
 	InitFunctionCallInfoData(fcinfo, flinfo, 3, InvalidOid, NULL, NULL);
 
@@ -1997,8 +1971,6 @@ ReceiveFunctionCall(FmgrInfo *flinfo, StringInfo buf,
 				 fcinfo.flinfo->fn_oid);
 	}
 
-	SPI_pop_conditional(pushed);
-
 	return result;
 }
 
@@ -2009,22 +1981,12 @@ ReceiveFunctionCall(FmgrInfo *flinfo, StringInfo buf,
  *
  * This is little more than window dressing for FunctionCall1, but it does
  * guarantee a non-toasted result, which strictly speaking the underlying
- * function doesn't.  Also, this includes SPI context pushing for the same
- * reasons as InputFunctionCall.
+ * function doesn't.
  */
 bytea *
 SendFunctionCall(FmgrInfo *flinfo, Datum val)
 {
-	bytea	   *result;
-	bool		pushed;
-
-	pushed = SPI_push_conditional();
-
-	result = DatumGetByteaP(FunctionCall1(flinfo, val));
-
-	SPI_pop_conditional(pushed);
-
-	return result;
+	return DatumGetByteaP(FunctionCall1(flinfo, val));
 }
 
 /*
@@ -2126,10 +2088,7 @@ fmgr(Oid procedureId,...)
  *
  * int8, float4, and float8 can be passed by value if Datum is wide enough.
  * (For backwards-compatibility reasons, we allow pass-by-ref to be chosen
- * at compile time even if pass-by-val is possible.)  For the float types,
- * we need a support routine even if we are passing by value, because many
- * machines pass int and float function parameters/results differently;
- * so we need to play weird games with unions.
+ * at compile time even if pass-by-val is possible.)
  *
  * Note: there is only one switch controlling the pass-by-value option for
  * both int8 and float8; this is to avoid making things unduly complicated
@@ -2149,77 +2108,29 @@ Int64GetDatum(int64 X)
 }
 #endif   /* USE_FLOAT8_BYVAL */
 
+#ifndef USE_FLOAT4_BYVAL
+
 Datum
 Float4GetDatum(float4 X)
 {
-#ifdef USE_FLOAT4_BYVAL
-	union
-	{
-		float4		value;
-		int32		retval;
-	}			myunion;
-
-	myunion.value = X;
-	return SET_4_BYTES(myunion.retval);
-#else
 	float4	   *retval = (float4 *) palloc(sizeof(float4));
 
 	*retval = X;
 	return PointerGetDatum(retval);
+}
 #endif
-}
 
-#ifdef USE_FLOAT4_BYVAL
-
-float4
-DatumGetFloat4(Datum X)
-{
-	union
-	{
-		int32		value;
-		float4		retval;
-	}			myunion;
-
-	myunion.value = GET_4_BYTES(X);
-	return myunion.retval;
-}
-#endif   /* USE_FLOAT4_BYVAL */
+#ifndef USE_FLOAT8_BYVAL
 
 Datum
 Float8GetDatum(float8 X)
 {
-#ifdef USE_FLOAT8_BYVAL
-	union
-	{
-		float8		value;
-		int64		retval;
-	}			myunion;
-
-	myunion.value = X;
-	return SET_8_BYTES(myunion.retval);
-#else
 	float8	   *retval = (float8 *) palloc(sizeof(float8));
 
 	*retval = X;
 	return PointerGetDatum(retval);
+}
 #endif
-}
-
-#ifdef USE_FLOAT8_BYVAL
-
-float8
-DatumGetFloat8(Datum X)
-{
-	union
-	{
-		int64		value;
-		float8		retval;
-	}			myunion;
-
-	myunion.value = GET_8_BYTES(X);
-	return myunion.retval;
-}
-#endif   /* USE_FLOAT8_BYVAL */
 
 
 /*-------------------------------------------------------------------------
@@ -2506,10 +2417,15 @@ CheckFunctionValidatorAccess(Oid validatorOid, Oid functionOid)
 	Form_pg_language langStruct;
 	AclResult	aclresult;
 
-	/* Get the function's pg_proc entry */
+	/*
+	 * Get the function's pg_proc entry.  Throw a user-facing error for bad
+	 * OID, because validators can be called with user-specified OIDs.
+	 */
 	procTup = SearchSysCache1(PROCOID, ObjectIdGetDatum(functionOid));
 	if (!HeapTupleIsValid(procTup))
-		elog(ERROR, "cache lookup failed for function %u", functionOid);
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_FUNCTION),
+				 errmsg("function with OID %u does not exist", functionOid)));
 	procStruct = (Form_pg_proc) GETSTRUCT(procTup);
 
 	/*

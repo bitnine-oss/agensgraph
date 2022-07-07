@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2017, PostgreSQL Global Development Group
  *
  * src/bin/psql/mainloop.c
  */
@@ -162,7 +162,7 @@ MainLoop(FILE *source)
 				/* This tries to mimic bash's IGNOREEOF feature. */
 				count_eof++;
 
-				if (count_eof < GetVariableNum(pset.vars, "IGNOREEOF", 0, 10, false))
+				if (count_eof < pset.ignoreeof)
 				{
 					if (!pset.quiet)
 						printf(_("Use \"\\q\" to leave %s.\n"), pset.progname);

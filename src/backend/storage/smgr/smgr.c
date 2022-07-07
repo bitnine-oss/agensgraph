@@ -6,7 +6,7 @@
  *	  All file system operations in POSTGRES dispatch through these
  *	  routines.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -174,7 +174,7 @@ smgropen(RelFileNode rnode, BackendId backend)
 
 		/* mark it not open */
 		for (forknum = 0; forknum <= MAX_FORKNUM; forknum++)
-			reln->md_fd[forknum] = NULL;
+			reln->md_num_open_segs[forknum] = 0;
 
 		/* it has no owner yet */
 		add_to_unowned_list(reln);
@@ -379,7 +379,7 @@ smgrcreate(SMgrRelation reln, ForkNumber forknum, bool isRedo)
 	 * Exit quickly in WAL replay mode if we've already opened the file. If
 	 * it's open, it surely must exist.
 	 */
-	if (isRedo && reln->md_fd[forknum] != NULL)
+	if (isRedo && reln->md_num_open_segs[forknum] > 0)
 		return;
 
 	/*

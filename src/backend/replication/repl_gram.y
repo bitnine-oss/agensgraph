@@ -3,7 +3,7 @@
  *
  * repl_gram.y				- Parser for the replication commands
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -61,6 +61,7 @@ Node *replication_parse_result;
 /* Keyword tokens. */
 %token K_BASE_BACKUP
 %token K_IDENTIFY_SYSTEM
+%token K_SHOW
 %token K_START_REPLICATION
 %token K_CREATE_REPLICATION_SLOT
 %token K_DROP_REPLICATION_SLOT
@@ -77,19 +78,20 @@ Node *replication_parse_result;
 %token K_LOGICAL
 %token K_SLOT
 %token K_RESERVE_WAL
+%token K_TEMPORARY
 
 %type <node>	command
 %type <node>	base_backup start_replication start_logical_replication
 				create_replication_slot drop_replication_slot identify_system
-				timeline_history
+				timeline_history show
 %type <list>	base_backup_opt_list
 %type <defelt>	base_backup_opt
 %type <uintval>	opt_timeline
 %type <list>	plugin_options plugin_opt_list
 %type <defelt>	plugin_opt_elem
 %type <node>	plugin_opt_arg
-%type <str>		opt_slot
-%type <boolval>	opt_reserve_wal
+%type <str>		opt_slot var_name
+%type <boolval>	opt_reserve_wal opt_temporary
 
 %%
 
@@ -111,6 +113,7 @@ command:
 			| create_replication_slot
 			| drop_replication_slot
 			| timeline_history
+			| show
 			;
 
 /*
@@ -124,14 +127,29 @@ identify_system:
 			;
 
 /*
+ * SHOW setting
+ */
+show:
+			K_SHOW var_name
+				{
+					VariableShowStmt *n = makeNode(VariableShowStmt);
+					n->name = $2;
+					$$ = (Node *) n;
+				}
+
+var_name:	IDENT	{ $$ = $1; }
+			| var_name '.' IDENT
+				{ $$ = psprintf("%s.%s", $1, $3); }
+		;
+
+/*
  * BASE_BACKUP [LABEL '<label>'] [PROGRESS] [FAST] [WAL] [NOWAIT]
  * [MAX_RATE %d] [TABLESPACE_MAP]
  */
 base_backup:
 			K_BASE_BACKUP base_backup_opt_list
 				{
-					BaseBackupCmd *cmd =
-						(BaseBackupCmd *) makeNode(BaseBackupCmd);
+					BaseBackupCmd *cmd = makeNode(BaseBackupCmd);
 					cmd->options = $2;
 					$$ = (Node *) cmd;
 				}
@@ -148,59 +166,61 @@ base_backup_opt:
 			K_LABEL SCONST
 				{
 				  $$ = makeDefElem("label",
-								   (Node *)makeString($2));
+								   (Node *)makeString($2), -1);
 				}
 			| K_PROGRESS
 				{
 				  $$ = makeDefElem("progress",
-								   (Node *)makeInteger(TRUE));
+								   (Node *)makeInteger(TRUE), -1);
 				}
 			| K_FAST
 				{
 				  $$ = makeDefElem("fast",
-								   (Node *)makeInteger(TRUE));
+								   (Node *)makeInteger(TRUE), -1);
 				}
 			| K_WAL
 				{
 				  $$ = makeDefElem("wal",
-								   (Node *)makeInteger(TRUE));
+								   (Node *)makeInteger(TRUE), -1);
 				}
 			| K_NOWAIT
 				{
 				  $$ = makeDefElem("nowait",
-								   (Node *)makeInteger(TRUE));
+								   (Node *)makeInteger(TRUE), -1);
 				}
 			| K_MAX_RATE UCONST
 				{
 				  $$ = makeDefElem("max_rate",
-								   (Node *)makeInteger($2));
+								   (Node *)makeInteger($2), -1);
 				}
 			| K_TABLESPACE_MAP
 				{
 				  $$ = makeDefElem("tablespace_map",
-								   (Node *)makeInteger(TRUE));
+								   (Node *)makeInteger(TRUE), -1);
 				}
 			;
 
 create_replication_slot:
-			/* CREATE_REPLICATION_SLOT slot PHYSICAL RESERVE_WAL */
-			K_CREATE_REPLICATION_SLOT IDENT K_PHYSICAL opt_reserve_wal
+			/* CREATE_REPLICATION_SLOT slot TEMPORARY PHYSICAL RESERVE_WAL */
+			K_CREATE_REPLICATION_SLOT IDENT opt_temporary K_PHYSICAL opt_reserve_wal
 				{
 					CreateReplicationSlotCmd *cmd;
 					cmd = makeNode(CreateReplicationSlotCmd);
 					cmd->kind = REPLICATION_KIND_PHYSICAL;
 					cmd->slotname = $2;
-					cmd->reserve_wal = $4;
+					cmd->temporary = $3;
+					cmd->reserve_wal = $5;
 					$$ = (Node *) cmd;
 				}
-			/* CREATE_REPLICATION_SLOT slot LOGICAL plugin */
-			| K_CREATE_REPLICATION_SLOT IDENT K_LOGICAL IDENT
+			/* CREATE_REPLICATION_SLOT slot TEMPORARY LOGICAL plugin */
+			| K_CREATE_REPLICATION_SLOT IDENT opt_temporary K_LOGICAL IDENT
 				{
 					CreateReplicationSlotCmd *cmd;
 					cmd = makeNode(CreateReplicationSlotCmd);
 					cmd->kind = REPLICATION_KIND_LOGICAL;
 					cmd->slotname = $2;
-					cmd->plugin = $4;
+					cmd->temporary = $3;
+					cmd->plugin = $5;
 					$$ = (Node *) cmd;
 				}
 			;
@@ -276,6 +296,11 @@ opt_reserve_wal:
 			| /* EMPTY */					{ $$ = false; }
 			;
 
+opt_temporary:
+			K_TEMPORARY						{ $$ = true; }
+			| /* EMPTY */					{ $$ = false; }
+			;
+
 opt_slot:
 			K_SLOT IDENT
 				{ $$ = $2; }
@@ -315,7 +340,7 @@ plugin_opt_list:
 plugin_opt_elem:
 			IDENT plugin_opt_arg
 				{
-					$$ = makeDefElem($1, $2);
+					$$ = makeDefElem($1, $2, -1);
 				}
 		;
 

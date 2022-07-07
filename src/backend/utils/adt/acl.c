@@ -3,7 +3,7 @@
  * acl.c
  *	  Basic access control list data structures manipulation routines.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -36,6 +36,7 @@
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
+#include "utils/varlena.h"
 
 
 typedef struct
@@ -5143,15 +5144,10 @@ get_role_oid_or_public(const char *rolname)
  * case must check the case separately.
  */
 Oid
-get_rolespec_oid(const Node *node, bool missing_ok)
+get_rolespec_oid(const RoleSpec *role, bool missing_ok)
 {
-	RoleSpec   *role;
 	Oid			oid;
 
-	if (!IsA(node, RoleSpec))
-		elog(ERROR, "invalid node type %d", node->type);
-
-	role = (RoleSpec *) node;
 	switch (role->roletype)
 	{
 		case ROLESPEC_CSTRING:
@@ -5186,14 +5182,9 @@ get_rolespec_oid(const Node *node, bool missing_ok)
  * Caller must ReleaseSysCache when done with the result tuple.
  */
 HeapTuple
-get_rolespec_tuple(const Node *node)
+get_rolespec_tuple(const RoleSpec *role)
 {
-	RoleSpec   *role;
 	HeapTuple	tuple;
-
-	role = (RoleSpec *) node;
-	if (!IsA(node, RoleSpec))
-		elog(ERROR, "invalid node type %d", node->type);
 
 	switch (role->roletype)
 	{
@@ -5235,13 +5226,13 @@ get_rolespec_tuple(const Node *node)
  * Given a RoleSpec, returns a palloc'ed copy of the corresponding role's name.
  */
 char *
-get_rolespec_name(const Node *node)
+get_rolespec_name(const RoleSpec *role)
 {
 	HeapTuple	tp;
 	Form_pg_authid authForm;
 	char	   *rolename;
 
-	tp = get_rolespec_tuple(node);
+	tp = get_rolespec_tuple(role);
 	authForm = (Form_pg_authid) GETSTRUCT(tp);
 	rolename = pstrdup(NameStr(authForm->rolname));
 	ReleaseSysCache(tp);
@@ -5257,16 +5248,10 @@ get_rolespec_name(const Node *node)
  * message is provided.
  */
 void
-check_rolespec_name(const Node *node, const char *detail_msg)
+check_rolespec_name(const RoleSpec *role, const char *detail_msg)
 {
-	RoleSpec   *role;
-
-	if (!node)
+	if (!role)
 		return;
-
-	role = (RoleSpec *) node;
-
-	Assert(IsA(node, RoleSpec));
 
 	if (role->roletype != ROLESPEC_CSTRING)
 		return;

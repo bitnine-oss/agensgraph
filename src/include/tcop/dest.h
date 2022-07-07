@@ -57,7 +57,7 @@
  * calls in portal and cursor manipulations.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/tcop/dest.h
@@ -89,6 +89,7 @@ typedef enum
 	DestDebug,					/* results go to debugging output */
 	DestRemote,					/* results sent to frontend process */
 	DestRemoteExecute,			/* sent to frontend, in Execute command */
+	DestRemoteSimple,			/* sent to frontend, w/no catalog access */
 	DestSPI,					/* results sent to SPI manager */
 	DestTuplestore,				/* results sent to Tuplestore */
 	DestIntoRel,				/* results sent to relation (SELECT INTO) */

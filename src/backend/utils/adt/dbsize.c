@@ -2,7 +2,7 @@
  * dbsize.c
  *		Database object size functions, and related inquiries
  *
- * Copyright (c) 2002-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/dbsize.c
@@ -759,13 +759,15 @@ pg_size_bytes(PG_FUNCTION_ARGS)
 	/* Part (4): optional exponent */
 	if (*endptr == 'e' || *endptr == 'E')
 	{
+		long		exponent;
 		char	   *cp;
 
 		/*
 		 * Note we might one day support EB units, so if what follows 'E'
 		 * isn't a number, just treat it all as a unit to be parsed.
 		 */
-		(void) strtol(endptr + 1, &cp, 10);
+		exponent = strtol(endptr + 1, &cp, 10);
+		(void) exponent;		/* Silence -Wunused-result warnings */
 		if (cp > endptr + 1)
 			endptr = cp;
 	}

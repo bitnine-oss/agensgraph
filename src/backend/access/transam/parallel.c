@@ -3,7 +3,7 @@
  * parallel.c
  *	  Infrastructure for launching parallel workers
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -24,6 +24,7 @@
 #include "libpq/pqmq.h"
 #include "miscadmin.h"
 #include "optimizer/planmain.h"
+#include "pgstat.h"
 #include "storage/ipc.h"
 #include "storage/sinval.h"
 #include "storage/spin.h"
@@ -108,7 +109,6 @@ static dlist_head pcxt_list = DLIST_STATIC_INIT(pcxt_list);
 
 /* Private functions. */
 static void HandleParallelMessage(ParallelContext *pcxt, int i, StringInfo msg);
-static void ParallelErrorContext(void *arg);
 static void ParallelExtensionTrampoline(dsm_segment *seg, shm_toc *toc);
 static void ParallelWorkerMain(Datum main_arg);
 static void WaitForParallelWorkersToExit(ParallelContext *pcxt);
@@ -454,7 +454,8 @@ LaunchParallelWorkers(ParallelContext *pcxt)
 	snprintf(worker.bgw_name, BGW_MAXLEN, "parallel worker for PID %d",
 			 MyProcPid);
 	worker.bgw_flags =
-		BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+		BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION
+		| BGWORKER_CLASS_PARALLEL;
 	worker.bgw_start_time = BgWorkerStart_ConsistentState;
 	worker.bgw_restart_time = BGW_NEVER_RESTART;
 	worker.bgw_main = ParallelWorkerMain;
@@ -541,7 +542,8 @@ WaitForParallelWorkersToFinish(ParallelContext *pcxt)
 		if (!anyone_alive)
 			break;
 
-		WaitLatch(&MyProc->procLatch, WL_LATCH_SET, -1);
+		WaitLatch(&MyProc->procLatch, WL_LATCH_SET, -1,
+				  WAIT_EVENT_PARALLEL_FINISH);
 		ResetLatch(&MyProc->procLatch);
 	}
 
@@ -703,6 +705,9 @@ void
 HandleParallelMessages(void)
 {
 	dlist_iter	iter;
+	MemoryContext oldcontext;
+
+	static MemoryContext hpm_context = NULL;
 
 	/*
 	 * This is invoked from ProcessInterrupts(), and since some of the
@@ -713,6 +718,21 @@ HandleParallelMessages(void)
 	 */
 	HOLD_INTERRUPTS();
 
+	/*
+	 * Moreover, CurrentMemoryContext might be pointing almost anywhere.  We
+	 * don't want to risk leaking data into long-lived contexts, so let's do
+	 * our work here in a private context that we can reset on each use.
+	 */
+	if (hpm_context == NULL)	/* first time through? */
+		hpm_context = AllocSetContextCreate(TopMemoryContext,
+											"HandleParallelMessages",
+											ALLOCSET_DEFAULT_SIZES);
+	else
+		MemoryContextReset(hpm_context);
+
+	oldcontext = MemoryContextSwitchTo(hpm_context);
+
+	/* OK to process messages.  Reset the flag saying there are more to do. */
 	ParallelMessagePending = false;
 
 	dlist_foreach(iter, &pcxt_list)
@@ -759,6 +779,11 @@ HandleParallelMessages(void)
 		}
 	}
 
+	MemoryContextSwitchTo(oldcontext);
+
+	/* Might as well clear the context on our way out */
+	MemoryContextReset(hpm_context);
+
 	RESUME_INTERRUPTS();
 }
 
@@ -788,19 +813,7 @@ HandleParallelMessage(ParallelContext *pcxt, int i, StringInfo msg)
 		case 'N':				/* NoticeResponse */
 			{
 				ErrorData	edata;
-				ErrorContextCallback errctx;
 				ErrorContextCallback *save_error_context_stack;
-
-				/*
-				 * Rethrow the error using the error context callbacks that
-				 * were in effect when the context was created, not the
-				 * current ones.
-				 */
-				save_error_context_stack = error_context_stack;
-				errctx.callback = ParallelErrorContext;
-				errctx.arg = NULL;
-				errctx.previous = pcxt->error_context_stack;
-				error_context_stack = &errctx;
 
 				/* Parse ErrorResponse or NoticeResponse. */
 				pq_parse_errornotice(msg, &edata);
@@ -808,10 +821,35 @@ HandleParallelMessage(ParallelContext *pcxt, int i, StringInfo msg)
 				/* Death of a worker isn't enough justification for suicide. */
 				edata.elevel = Min(edata.elevel, ERROR);
 
-				/* Rethrow error or notice. */
+				/*
+				 * If desired, add a context line to show that this is a
+				 * message propagated from a parallel worker.  Otherwise, it
+				 * can sometimes be confusing to understand what actually
+				 * happened.  (We don't do this in FORCE_PARALLEL_REGRESS mode
+				 * because it causes test-result instability depending on
+				 * whether a parallel worker is actually used or not.)
+				 */
+				if (force_parallel_mode != FORCE_PARALLEL_REGRESS)
+				{
+					if (edata.context)
+						edata.context = psprintf("%s\n%s", edata.context,
+												 _("parallel worker"));
+					else
+						edata.context = pstrdup(_("parallel worker"));
+				}
+
+				/*
+				 * Context beyond that should use the error context callbacks
+				 * that were in effect when the ParallelContext was created,
+				 * not the current ones.
+				 */
+				save_error_context_stack = error_context_stack;
+				error_context_stack = pcxt->error_context_stack;
+
+				/* Rethrow error or print notice. */
 				ThrowErrorData(&edata);
 
-				/* Restore previous context. */
+				/* Not an error, so restore previous context stack. */
 				error_context_stack = save_error_context_stack;
 
 				break;
@@ -925,10 +963,8 @@ ParallelWorkerMain(Datum main_arg)
 	Assert(CurrentResourceOwner == NULL);
 	CurrentResourceOwner = ResourceOwnerCreate(NULL, "parallel toplevel");
 	CurrentMemoryContext = AllocSetContextCreate(TopMemoryContext,
-												 "parallel worker",
-												 ALLOCSET_DEFAULT_MINSIZE,
-												 ALLOCSET_DEFAULT_INITSIZE,
-												 ALLOCSET_DEFAULT_MAXSIZE);
+												 "Parallel worker",
+												 ALLOCSET_DEFAULT_SIZES);
 
 	/*
 	 * Now that we have a resource owner, we can attach to the dynamic shared
@@ -1110,18 +1146,6 @@ ParallelExtensionTrampoline(dsm_segment *seg, shm_toc *toc)
 	entrypt = (parallel_worker_main_type)
 		load_external_function(library_name, function_name, true, NULL);
 	entrypt(seg, toc);
-}
-
-/*
- * Give the user a hint that this is a message propagated from a parallel
- * worker.  Otherwise, it can sometimes be confusing to understand what
- * actually happened.
- */
-static void
-ParallelErrorContext(void *arg)
-{
-	if (force_parallel_mode != FORCE_PARALLEL_REGRESS)
-		errcontext("parallel worker");
 }
 
 /*

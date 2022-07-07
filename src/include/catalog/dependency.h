@@ -4,7 +4,7 @@
  *	  Routines to support inter-object dependencies.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/dependency.h
@@ -161,27 +161,31 @@ typedef enum ObjectClass
 	OCLASS_EXTENSION,			/* pg_extension */
 	OCLASS_EVENT_TRIGGER,		/* pg_event_trigger */
 	OCLASS_POLICY,				/* pg_policy */
-	OCLASS_TRANSFORM,			/* pg_transform */
+	OCLASS_PUBLICATION,			/* pg_publication */
+	OCLASS_PUBLICATION_REL,		/* pg_publication_rel */
+	OCLASS_SUBSCRIPTION,		/* pg_subscription */
+	OCLASS_TRANSFORM			/* pg_transform */
 	OCLASS_GRAPH,				/* ag_graph */
 	OCLASS_LABEL				/* ag_label */
 } ObjectClass;
 
 #define LAST_OCLASS		OCLASS_LABEL
 
+/* flag bits for performDeletion/performMultipleDeletions: */
+#define PERFORM_DELETION_INTERNAL			0x0001		/* internal action */
+#define PERFORM_DELETION_CONCURRENTLY		0x0002		/* concurrent drop */
+#define PERFORM_DELETION_QUIETLY			0x0004		/* suppress notices */
+#define PERFORM_DELETION_SKIP_ORIGINAL		0x0008		/* keep original obj */
+#define PERFORM_DELETION_SKIP_EXTENSIONS	0x0010		/* keep extensions */
+
 
 /* in dependency.c */
-
-#define PERFORM_DELETION_INTERNAL			0x0001
-#define PERFORM_DELETION_CONCURRENTLY		0x0002
 
 extern void performDeletion(const ObjectAddress *object,
 				DropBehavior behavior, int flags);
 
 extern void performMultipleDeletions(const ObjectAddresses *objects,
 						 DropBehavior behavior, int flags);
-
-extern void deleteWhatDependsOn(const ObjectAddress *object,
-					bool showNotices);
 
 extern void recordDependencyOnExpr(const ObjectAddress *depender,
 					   Node *expr, List *rtable,
@@ -190,7 +194,8 @@ extern void recordDependencyOnExpr(const ObjectAddress *depender,
 extern void recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 								Node *expr, Oid relId,
 								DependencyType behavior,
-								DependencyType self_behavior);
+								DependencyType self_behavior,
+								bool ignore_self);
 
 extern ObjectClass getObjectClass(const ObjectAddress *object);
 

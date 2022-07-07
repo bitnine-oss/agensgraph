@@ -96,7 +96,7 @@
  * is a convenient point to initialize replication from, which is why we
  * export a snapshot at that point, which *can* be used to read normal data.
  *
- * Copyright (c) 2012-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/snapbuild.c
@@ -289,9 +289,7 @@ AllocateSnapshotBuilder(ReorderBuffer *reorder,
 	/* allocate memory in own context, to have better accountability */
 	context = AllocSetContextCreate(CurrentMemoryContext,
 									"snapshot builder context",
-									ALLOCSET_DEFAULT_MINSIZE,
-									ALLOCSET_DEFAULT_INITSIZE,
-									ALLOCSET_DEFAULT_MAXSIZE);
+									ALLOCSET_DEFAULT_SIZES);
 	oldcontext = MemoryContextSwitchTo(context);
 
 	builder = palloc0(sizeof(SnapBuild));
@@ -616,7 +614,7 @@ SnapBuildGetOrBuildSnapshot(SnapBuild *builder, TransactionId xid)
 	if (builder->snapshot == NULL)
 	{
 		builder->snapshot = SnapBuildBuildSnapshot(builder, xid);
-		/* inrease refcount for the snapshot builder */
+		/* increase refcount for the snapshot builder */
 		SnapBuildSnapIncRefcount(builder->snapshot);
 	}
 
@@ -680,7 +678,7 @@ SnapBuildProcessChange(SnapBuild *builder, TransactionId xid, XLogRecPtr lsn)
 		if (builder->snapshot == NULL)
 		{
 			builder->snapshot = SnapBuildBuildSnapshot(builder, xid);
-			/* inrease refcount for the snapshot builder */
+			/* increase refcount for the snapshot builder */
 			SnapBuildSnapIncRefcount(builder->snapshot);
 		}
 
@@ -913,7 +911,7 @@ SnapBuildEndTxn(SnapBuild *builder, XLogRecPtr lsn, TransactionId xid)
 		{
 			/*
 			 * None of the originally running transaction is running anymore,
-			 * so our incrementaly built snapshot now is consistent.
+			 * so our incrementally built snapshot now is consistent.
 			 */
 			ereport(LOG,
 				  (errmsg("logical decoding found consistent point at %X/%X",

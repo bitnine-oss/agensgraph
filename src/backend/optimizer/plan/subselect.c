@@ -3,7 +3,7 @@
  * subselect.c
  *	  Planning routines for subselects and parameters.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -82,6 +82,7 @@ static Bitmapset *finalize_plan(PlannerInfo *root,
 			  Bitmapset *valid_params,
 			  Bitmapset *scan_params);
 static bool finalize_primnode(Node *node, finalize_primnode_context *context);
+static bool finalize_agg_primnode(Node *node, finalize_primnode_context *context);
 
 
 /*
@@ -1561,7 +1562,7 @@ simplify_EXISTS_query(PlannerInfo *root, Query *query)
 {
 	/*
 	 * We don't try to simplify at all if the query uses set operations,
-	 * aggregates, grouping sets, modifying CTEs, HAVING, OFFSET, or FOR
+	 * aggregates, grouping sets, SRFs, modifying CTEs, HAVING, OFFSET, or FOR
 	 * UPDATE/SHARE; none of these seem likely in normal usage and their
 	 * possible effects are complex.  (Note: we could ignore an "OFFSET 0"
 	 * clause, but that traditionally is used as an optimization fence, so we
@@ -1572,6 +1573,7 @@ simplify_EXISTS_query(PlannerInfo *root, Query *query)
 		query->hasAggs ||
 		query->groupingSets ||
 		query->hasWindowFuncs ||
+		query->hasTargetSRFs ||
 		query->hasModifyingCTE ||
 		query->havingQual ||
 		query->limitOffset ||
@@ -1611,13 +1613,6 @@ simplify_EXISTS_query(PlannerInfo *root, Query *query)
 		/* Whether or not the targetlist is safe, we can drop the LIMIT. */
 		query->limitCount = NULL;
 	}
-
-	/*
-	 * Mustn't throw away the targetlist if it contains set-returning
-	 * functions; those could affect whether zero rows are returned!
-	 */
-	if (expression_returns_set((Node *) query->targetList))
-		return false;
 
 	/*
 	 * Otherwise, we can throw away the targetlist, as well as any GROUP,
@@ -2133,11 +2128,13 @@ SS_identify_outer_params(PlannerInfo *root)
 }
 
 /*
- * SS_charge_for_initplans - account for cost of initplans in Path costs
+ * SS_charge_for_initplans - account for initplans in Path costs & parallelism
  *
  * If any initPlans have been created in the current query level, they will
  * get attached to the Plan tree created from whichever Path we select from
- * the given rel; so increment all the rel's Paths' costs to account for them.
+ * the given rel.  Increment all that rel's Paths' costs to account for them,
+ * and make sure the paths get marked as parallel-unsafe, since we can't
+ * currently transmit initPlans to parallel workers.
  *
  * This is separate from SS_attach_initplans because we might conditionally
  * create more initPlans during create_plan(), depending on which Path we
@@ -2169,7 +2166,7 @@ SS_charge_for_initplans(PlannerInfo *root, RelOptInfo *final_rel)
 	}
 
 	/*
-	 * Now adjust the costs.
+	 * Now adjust the costs and parallel_safe flags.
 	 */
 	foreach(lc, final_rel->pathlist)
 	{
@@ -2177,6 +2174,7 @@ SS_charge_for_initplans(PlannerInfo *root, RelOptInfo *final_rel)
 
 		path->startup_cost += initplan_cost;
 		path->total_cost += initplan_cost;
+		path->parallel_safe = false;
 	}
 
 	/* We needn't do set_cheapest() here, caller will do it */
@@ -2652,6 +2650,29 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 										 locally_added_param);
 			break;
 
+		case T_Agg:
+			{
+				Agg		   *agg = (Agg *) plan;
+
+				/*
+				 * AGG_HASHED plans need to know which Params are referenced
+				 * in aggregate calls.  Do a separate scan to identify them.
+				 */
+				if (agg->aggstrategy == AGG_HASHED)
+				{
+					finalize_primnode_context aggcontext;
+
+					aggcontext.root = root;
+					aggcontext.paramids = NULL;
+					finalize_agg_primnode((Node *) agg->plan.targetlist,
+										  &aggcontext);
+					finalize_agg_primnode((Node *) agg->plan.qual,
+										  &aggcontext);
+					agg->aggParams = aggcontext.paramids;
+				}
+			}
+			break;
+
 		case T_WindowAgg:
 			finalize_primnode(((WindowAgg *) plan)->startOffset,
 							  &context);
@@ -2659,14 +2680,15 @@ finalize_plan(PlannerInfo *root, Plan *plan, Bitmapset *valid_params,
 							  &context);
 			break;
 
+		case T_ProjectSet:
 		case T_Hash:
-		case T_Agg:
 		case T_Material:
 		case T_Sort:
 		case T_Unique:
 		case T_Gather:
 		case T_SetOp:
 		case T_Group:
+			/* no node-type-specific fields need fixing */
 			break;
 
 		case T_ModifyGraph:
@@ -2812,6 +2834,29 @@ finalize_primnode(Node *node, finalize_primnode_context *context)
 		return false;			/* no more to do here */
 	}
 	return expression_tree_walker(node, finalize_primnode,
+								  (void *) context);
+}
+
+/*
+ * finalize_agg_primnode: find all Aggref nodes in the given expression tree,
+ * and add IDs of all PARAM_EXEC params appearing within their aggregated
+ * arguments to the result set.
+ */
+static bool
+finalize_agg_primnode(Node *node, finalize_primnode_context *context)
+{
+	if (node == NULL)
+		return false;
+	if (IsA(node, Aggref))
+	{
+		Aggref	   *agg = (Aggref *) node;
+
+		/* we should not consider the direct arguments, if any */
+		finalize_primnode((Node *) agg->args, context);
+		finalize_primnode((Node *) agg->aggfilter, context);
+		return false;			/* there can't be any Aggrefs below here */
+	}
+	return expression_tree_walker(node, finalize_agg_primnode,
 								  (void *) context);
 }
 

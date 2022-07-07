@@ -11,7 +11,7 @@
  *			- Add a pgstat config column to pg_database, so this
  *			  entire thing can be enabled/disabled on a per db basis.
  *
- *	Copyright (c) 2001-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2001-2017, PostgreSQL Global Development Group
  *
  *	src/backend/postmaster/pgstat.c
  * ----------
@@ -28,6 +28,9 @@
 #include <arpa/inet.h>
 #include <signal.h>
 #include <time.h>
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
+#endif
 
 #include "pgstat.h"
 
@@ -38,7 +41,7 @@
 #include "access/xact.h"
 #include "catalog/pg_database.h"
 #include "catalog/pg_proc.h"
-#include "libpq/ip.h"
+#include "common/ip.h"
 #include "libpq/libpq.h"
 #include "libpq/pqsignal.h"
 #include "mb/pg_wchar.h"
@@ -272,6 +275,11 @@ static HTAB *pgstat_collect_oids(Oid catalogid);
 static PgStat_TableStatus *get_tabstat_entry(Oid rel_id, bool isshared);
 
 static void pgstat_setup_memcxt(void);
+
+static const char *pgstat_get_wait_activity(WaitEventActivity w);
+static const char *pgstat_get_wait_client(WaitEventClient w);
+static const char *pgstat_get_wait_ipc(WaitEventIPC w);
+static const char *pgstat_get_wait_timeout(WaitEventTimeout w);
 
 static void pgstat_setheader(PgStat_MsgHdr *hdr, StatMsgType mtype);
 static void pgstat_send(void *msg, int len);
@@ -2218,7 +2226,12 @@ pgstat_twophase_postcommit(TransactionId xid, uint16 info,
 	pgstat_info->t_counts.t_tuples_updated += rec->tuples_updated;
 	pgstat_info->t_counts.t_tuples_deleted += rec->tuples_deleted;
 	pgstat_info->t_counts.t_truncated = rec->t_truncated;
-
+	if (rec->t_truncated)
+	{
+		/* forget live/dead stats seen by backend thus far */
+		pgstat_info->t_counts.t_delta_live_tuples = 0;
+		pgstat_info->t_counts.t_delta_dead_tuples = 0;
+	}
 	pgstat_info->t_counts.t_delta_live_tuples +=
 		rec->tuples_inserted - rec->tuples_deleted;
 	pgstat_info->t_counts.t_delta_dead_tuples +=
@@ -2398,7 +2411,7 @@ pgstat_fetch_stat_beentry(int beid)
 /* ----------
  * pgstat_fetch_stat_local_beentry() -
  *
- *	Like pgstat_fetch_stat_beentry() but with locally computed addtions (like
+ *	Like pgstat_fetch_stat_beentry() but with locally computed additions (like
  *	xid and xmin values of the backend)
  *
  *	NB: caller is responsible for a check if the user is permitted to see
@@ -3128,29 +3141,40 @@ pgstat_read_current_status(void)
 const char *
 pgstat_get_wait_event_type(uint32 wait_event_info)
 {
-	uint8		classId;
+	uint32		classId;
 	const char *event_type;
 
 	/* report process as not waiting. */
 	if (wait_event_info == 0)
 		return NULL;
 
-	wait_event_info = wait_event_info >> 24;
-	classId = wait_event_info & 0XFF;
+	classId = wait_event_info & 0xFF000000;
 
 	switch (classId)
 	{
-		case WAIT_LWLOCK_NAMED:
-			event_type = "LWLockNamed";
+		case PG_WAIT_LWLOCK:
+			event_type = "LWLock";
 			break;
-		case WAIT_LWLOCK_TRANCHE:
-			event_type = "LWLockTranche";
-			break;
-		case WAIT_LOCK:
+		case PG_WAIT_LOCK:
 			event_type = "Lock";
 			break;
-		case WAIT_BUFFER_PIN:
+		case PG_WAIT_BUFFER_PIN:
 			event_type = "BufferPin";
+			break;
+		case PG_WAIT_ACTIVITY:
+			event_type = "Activity";
+			break;
+		case PG_WAIT_CLIENT:
+			event_type = "Client";
+			break;
+		case PG_WAIT_EXTENSION:
+			event_type = "Extension";
+			break;
+		case PG_WAIT_IPC:
+			event_type = "IPC";
+			break;
+		case PG_WAIT_TIMEOUT:
+			event_type = "Timeout";
 			break;
 		default:
 			event_type = "???";
@@ -3169,7 +3193,7 @@ pgstat_get_wait_event_type(uint32 wait_event_info)
 const char *
 pgstat_get_wait_event(uint32 wait_event_info)
 {
-	uint8		classId;
+	uint32		classId;
 	uint16		eventId;
 	const char *event_name;
 
@@ -3177,25 +3201,232 @@ pgstat_get_wait_event(uint32 wait_event_info)
 	if (wait_event_info == 0)
 		return NULL;
 
-	eventId = wait_event_info & ((1 << 24) - 1);
-	wait_event_info = wait_event_info >> 24;
-	classId = wait_event_info & 0XFF;
+	classId = wait_event_info & 0xFF000000;
+	eventId = wait_event_info & 0x0000FFFF;
 
 	switch (classId)
 	{
-		case WAIT_LWLOCK_NAMED:
-		case WAIT_LWLOCK_TRANCHE:
+		case PG_WAIT_LWLOCK:
 			event_name = GetLWLockIdentifier(classId, eventId);
 			break;
-		case WAIT_LOCK:
+		case PG_WAIT_LOCK:
 			event_name = GetLockNameFromTagType(eventId);
 			break;
-		case WAIT_BUFFER_PIN:
+		case PG_WAIT_BUFFER_PIN:
 			event_name = "BufferPin";
 			break;
+		case PG_WAIT_ACTIVITY:
+			{
+				WaitEventActivity	w = (WaitEventActivity) wait_event_info;
+
+				event_name = pgstat_get_wait_activity(w);
+				break;
+			}
+		case PG_WAIT_CLIENT:
+			{
+				WaitEventClient	w = (WaitEventClient) wait_event_info;
+
+				event_name = pgstat_get_wait_client(w);
+				break;
+			}
+		case PG_WAIT_EXTENSION:
+			event_name = "Extension";
+			break;
+		case PG_WAIT_IPC:
+			{
+				WaitEventIPC	w = (WaitEventIPC) wait_event_info;
+
+				event_name = pgstat_get_wait_ipc(w);
+				break;
+			}
+		case PG_WAIT_TIMEOUT:
+			{
+				WaitEventTimeout	w = (WaitEventTimeout) wait_event_info;
+
+				event_name = pgstat_get_wait_timeout(w);
+				break;
+			}
 		default:
 			event_name = "unknown wait event";
 			break;
+	}
+
+	return event_name;
+}
+
+/* ----------
+ * pgstat_get_wait_activity() -
+ *
+ * Convert WaitEventActivity to string.
+ * ----------
+ */
+static const char *
+pgstat_get_wait_activity(WaitEventActivity w)
+{
+	const char *event_name = "unknown wait event";
+
+	switch (w)
+	{
+		case WAIT_EVENT_ARCHIVER_MAIN:
+			event_name = "ArchiverMain";
+			break;
+		case WAIT_EVENT_AUTOVACUUM_MAIN:
+			event_name = "AutoVacuumMain";
+			break;
+		case WAIT_EVENT_BGWRITER_HIBERNATE:
+			event_name = "BgWriterHibernate";
+			break;
+		case WAIT_EVENT_BGWRITER_MAIN:
+			event_name = "BgWriterMain";
+			break;
+		case WAIT_EVENT_CHECKPOINTER_MAIN:
+			event_name = "CheckpointerMain";
+			break;
+		case WAIT_EVENT_PGSTAT_MAIN:
+			event_name = "PgStatMain";
+			break;
+		case WAIT_EVENT_RECOVERY_WAL_ALL:
+			event_name = "RecoveryWalAll";
+			break;
+		case WAIT_EVENT_RECOVERY_WAL_STREAM:
+			event_name = "RecoveryWalStream";
+			break;
+		case WAIT_EVENT_SYSLOGGER_MAIN:
+			event_name = "SysLoggerMain";
+			break;
+		case WAIT_EVENT_WAL_RECEIVER_MAIN:
+			event_name = "WalReceiverMain";
+			break;
+		case WAIT_EVENT_WAL_SENDER_MAIN:
+			event_name = "WalSenderMain";
+			break;
+		case WAIT_EVENT_WAL_WRITER_MAIN:
+			event_name = "WalWriterMain";
+			break;
+		case WAIT_EVENT_LOGICAL_LAUNCHER_MAIN:
+			event_name = "LogicalLauncherMain";
+			break;
+		case WAIT_EVENT_LOGICAL_APPLY_MAIN:
+			event_name = "LogicalApplyMain";
+			break;
+		/* no default case, so that compiler will warn */
+	}
+
+	return event_name;
+}
+
+/* ----------
+ * pgstat_get_wait_client() -
+ *
+ * Convert WaitEventClient to string.
+ * ----------
+ */
+static const char *
+pgstat_get_wait_client(WaitEventClient w)
+{
+	const char *event_name = "unknown wait event";
+
+	switch (w)
+	{
+		case WAIT_EVENT_CLIENT_READ:
+			event_name = "ClientRead";
+			break;
+		case WAIT_EVENT_CLIENT_WRITE:
+			event_name = "ClientWrite";
+			break;
+		case WAIT_EVENT_SSL_OPEN_SERVER:
+			event_name = "SSLOpenServer";
+			break;
+		case WAIT_EVENT_WAL_RECEIVER_WAIT_START:
+			event_name = "WalReceiverWaitStart";
+			break;
+		case WAIT_EVENT_LIBPQWALRECEIVER_READ:
+			event_name = "LibPQWalReceiverRead";
+			break;
+		case WAIT_EVENT_WAL_SENDER_WAIT_WAL:
+			event_name = "WalSenderWaitForWAL";
+			break;
+		case WAIT_EVENT_WAL_SENDER_WRITE_DATA:
+			event_name = "WalSenderWriteData";
+			break;
+		/* no default case, so that compiler will warn */
+	}
+
+	return event_name;
+}
+
+/* ----------
+ * pgstat_get_wait_ipc() -
+ *
+ * Convert WaitEventIPC to string.
+ * ----------
+ */
+static const char *
+pgstat_get_wait_ipc(WaitEventIPC w)
+{
+	const char *event_name = "unknown wait event";
+
+	switch (w)
+	{
+		case WAIT_EVENT_BGWORKER_SHUTDOWN:
+			event_name = "BgWorkerShutdown";
+			break;
+		case WAIT_EVENT_BGWORKER_STARTUP:
+			event_name = "BgWorkerStartup";
+			break;
+		case WAIT_EVENT_EXECUTE_GATHER:
+			event_name = "ExecuteGather";
+			break;
+		case WAIT_EVENT_MQ_INTERNAL:
+			event_name = "MessageQueueInternal";
+			break;
+		case WAIT_EVENT_MQ_PUT_MESSAGE:
+			event_name = "MessageQueuePutMessage";
+			break;
+		case WAIT_EVENT_MQ_RECEIVE:
+			event_name = "MessageQueueReceive";
+			break;
+		case WAIT_EVENT_MQ_SEND:
+			event_name = "MessageQueueSend";
+			break;
+		case WAIT_EVENT_PARALLEL_FINISH:
+			event_name = "ParallelFinish";
+			break;
+		case WAIT_EVENT_SAFE_SNAPSHOT:
+			event_name = "SafeSnapshot";
+			break;
+		case WAIT_EVENT_SYNC_REP:
+			event_name = "SyncRep";
+			break;
+		/* no default case, so that compiler will warn */
+	}
+
+	return event_name;
+}
+
+/* ----------
+ * pgstat_get_wait_timeout() -
+ *
+ * Convert WaitEventTimeout to string.
+ * ----------
+ */
+static const char *
+pgstat_get_wait_timeout(WaitEventTimeout w)
+{
+	const char *event_name = "unknown wait event";
+
+	switch (w)
+	{
+		case WAIT_EVENT_BASE_BACKUP_THROTTLE:
+			event_name = "BaseBackupThrottle";
+			break;
+		case WAIT_EVENT_PG_SLEEP:
+			event_name = "PgSleep";
+			break;
+		case WAIT_EVENT_RECOVERY_APPLY_DELAY:
+			event_name = "RecoveryApplyDelay";
+			break;
+		/* no default case, so that compiler will warn */
 	}
 
 	return event_name;
@@ -3681,8 +3912,8 @@ PgstatCollectorMain(int argc, char *argv[])
 #ifndef WIN32
 		wr = WaitLatchOrSocket(MyLatch,
 					 WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_SOCKET_READABLE,
-							   pgStatSock,
-							   -1L);
+							   pgStatSock, -1L,
+							   WAIT_EVENT_PGSTAT_MAIN);
 #else
 
 		/*
@@ -3698,7 +3929,8 @@ PgstatCollectorMain(int argc, char *argv[])
 		wr = WaitLatchOrSocket(MyLatch,
 		WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_SOCKET_READABLE | WL_TIMEOUT,
 							   pgStatSock,
-							   2 * 1000L /* msec */ );
+							   2 * 1000L /* msec */,
+							   WAIT_EVENT_PGSTAT_MAIN);
 #endif
 
 		/*
@@ -4792,9 +5024,7 @@ pgstat_setup_memcxt(void)
 	if (!pgStatLocalContext)
 		pgStatLocalContext = AllocSetContextCreate(TopMemoryContext,
 												   "Statistics snapshot",
-												   ALLOCSET_SMALL_MINSIZE,
-												   ALLOCSET_SMALL_INITSIZE,
-												   ALLOCSET_SMALL_MAXSIZE);
+												   ALLOCSET_SMALL_SIZES);
 }
 
 

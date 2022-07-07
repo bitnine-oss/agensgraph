@@ -3,7 +3,7 @@
  * pg_constraint.c
  *	  routines to support manipulation of the pg_constraint relation
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -226,10 +226,7 @@ CreateConstraintEntry(const char *constraintName,
 
 	tup = heap_form_tuple(RelationGetDescr(conDesc), values, nulls);
 
-	conOid = simple_heap_insert(conDesc, tup);
-
-	/* update catalog indexes */
-	CatalogUpdateIndexes(conDesc, tup);
+	conOid = CatalogTupleInsert(conDesc, tup);
 
 	conobject.classId = ConstraintRelationId;
 	conobject.objectId = conOid;
@@ -368,7 +365,7 @@ CreateConstraintEntry(const char *constraintName,
 		 */
 		recordDependencyOnSingleRelExpr(&conobject, conExpr, relId,
 										DEPENDENCY_NORMAL,
-										DEPENDENCY_NORMAL);
+										DEPENDENCY_NORMAL, false);
 	}
 
 	/* Post creation hook for new constraint */
@@ -584,9 +581,7 @@ RemoveConstraintById(Oid conId)
 					 RelationGetRelationName(rel));
 			classForm->relchecks--;
 
-			simple_heap_update(pgrel, &relTup->t_self, relTup);
-
-			CatalogUpdateIndexes(pgrel, relTup);
+			CatalogTupleUpdate(pgrel, &relTup->t_self, relTup);
 
 			heap_freetuple(relTup);
 
@@ -609,7 +604,7 @@ RemoveConstraintById(Oid conId)
 		elog(ERROR, "constraint %u is not of a known type", conId);
 
 	/* Fry the constraint itself */
-	simple_heap_delete(conDesc, &tup->t_self);
+	CatalogTupleDelete(conDesc, &tup->t_self);
 
 	/* Clean up */
 	ReleaseSysCache(tup);
@@ -666,10 +661,7 @@ RenameConstraintById(Oid conId, const char *newname)
 	/* OK, do the rename --- tuple is a copy, so OK to scribble on it */
 	namestrcpy(&(con->conname), newname);
 
-	simple_heap_update(conDesc, &tuple->t_self, tuple);
-
-	/* update the system catalog indexes */
-	CatalogUpdateIndexes(conDesc, tuple);
+	CatalogTupleUpdate(conDesc, &tuple->t_self, tuple);
 
 	InvokeObjectPostAlterHook(ConstraintRelationId, conId, 0);
 
@@ -736,8 +728,7 @@ AlterConstraintNamespaces(Oid ownerId, Oid oldNspId,
 
 			conform->connamespace = newNspId;
 
-			simple_heap_update(conRel, &tup->t_self, tup);
-			CatalogUpdateIndexes(conRel, tup);
+			CatalogTupleUpdate(conRel, &tup->t_self, tup);
 
 			/*
 			 * Note: currently, the constraint will not have its own

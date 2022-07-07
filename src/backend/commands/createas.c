@@ -13,7 +13,7 @@
  * we must return a tuples-processed count in the completionTag.  (We no
  * longer do that for CTAS ... WITH NO DATA, however.)
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -112,7 +112,7 @@ create_ctas_internal(List *attrList, IntoClause *into)
 	 * Create the relation.  (This will error out if there's an existing view,
 	 * so we don't need more code to complain if "replace" is false.)
 	 */
-	intoRelationAddr = DefineRelation(create, relkind, InvalidOid, NULL);
+	intoRelationAddr = DefineRelation(create, relkind, InvalidOid, NULL, NULL);
 
 	/*
 	 * If necessary, create a TOAST table for the target table.  Note that
@@ -224,7 +224,7 @@ ObjectAddress
 ExecCreateTableAs(CreateTableAsStmt *stmt, const char *queryString,
 				  ParamListInfo params, char *completionTag)
 {
-	Query	   *query = (Query *) stmt->query;
+	Query	   *query = castNode(Query, stmt->query);
 	IntoClause *into = stmt->into;
 	bool		is_matview = (into->viewQuery != NULL);
 	DestReceiver *dest;
@@ -261,11 +261,10 @@ ExecCreateTableAs(CreateTableAsStmt *stmt, const char *queryString,
 	 * The contained Query could be a SELECT, or an EXECUTE utility command.
 	 * If the latter, we just pass it off to ExecuteQuery.
 	 */
-	Assert(IsA(query, Query));
 	if (query->commandType == CMD_UTILITY &&
 		IsA(query->utilityStmt, ExecuteStmt))
 	{
-		ExecuteStmt *estmt = (ExecuteStmt *) query->utilityStmt;
+		ExecuteStmt *estmt = castNode(ExecuteStmt, query->utilityStmt);
 
 		Assert(!is_matview);	/* excluded by syntax */
 		ExecuteQuery(estmt, into, queryString, params, dest, completionTag);
@@ -323,10 +322,10 @@ ExecCreateTableAs(CreateTableAsStmt *stmt, const char *queryString,
 			elog(ERROR, "unexpected rewrite result for %s",
 				 is_matview ? "CREATE MATERIALIZED VIEW" :
 				 "CREATE TABLE AS SELECT");
-		query = (Query *) linitial(rewritten);
+		query = castNode(Query, linitial(rewritten));
 		Assert(query->commandType == CMD_SELECT);
 
-		/* plan the query */
+		/* plan the query --- note we disallow parallelism */
 		plan = pg_plan_query(query, 0, params);
 
 		/*

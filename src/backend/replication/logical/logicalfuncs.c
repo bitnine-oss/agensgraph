@@ -6,7 +6,7 @@
  *	   logical replication slots via SQL.
  *
  *
- * Copyright (c) 2012-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logicalfuncs.c
@@ -37,6 +37,7 @@
 #include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/pg_lsn.h"
+#include "utils/regproc.h"
 #include "utils/resowner.h"
 #include "utils/lsyscache.h"
 
@@ -225,7 +226,7 @@ pg_logical_slot_get_changes_guts(FunctionCallInfo fcinfo, bool confirm, bool bin
 			char	   *name = TextDatumGetCString(datum_opts[i]);
 			char	   *opt = TextDatumGetCString(datum_opts[i + 1]);
 
-			options = lappend(options, makeDefElem(name, (Node *) makeString(opt)));
+			options = lappend(options, makeDefElem(name, (Node *) makeString(opt), -1));
 		}
 	}
 
@@ -321,7 +322,22 @@ pg_logical_slot_get_changes_guts(FunctionCallInfo fcinfo, bool confirm, bool bin
 		 * business..)
 		 */
 		if (ctx->reader->EndRecPtr != InvalidXLogRecPtr && confirm)
+		{
 			LogicalConfirmReceivedLocation(ctx->reader->EndRecPtr);
+			/*
+			 * If only the confirmed_flush_lsn has changed the slot won't get
+			 * marked as dirty by the above. Callers on the walsender interface
+			 * are expected to keep track of their own progress and don't need
+			 * it written out. But SQL-interface users cannot specify their own
+			 * start positions and it's harder for them to keep track of their
+			 * progress, so we should make more of an effort to save it for them.
+			 *
+			 * Dirty the slot so it's written out at the next checkpoint. We'll
+			 * still lose its position on crash, as documented, but it's better
+			 * than always losing the position even on clean restart.
+			 */
+			ReplicationSlotMarkDirty();
+		}
 
 		/* free context, call shutdown callback */
 		FreeDecodingContext(ctx);

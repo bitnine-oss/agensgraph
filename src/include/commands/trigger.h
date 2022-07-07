@@ -3,7 +3,7 @@
  * trigger.h
  *	  Declarations for trigger handling.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/trigger.h
@@ -37,6 +37,8 @@ typedef struct TriggerData
 	Trigger    *tg_trigger;
 	Buffer		tg_trigtuplebuf;
 	Buffer		tg_newtuplebuf;
+	Tuplestorestate *tg_oldtable;
+	Tuplestorestate *tg_newtable;
 } TriggerData;
 
 /*
@@ -209,7 +211,5 @@ extern bool RI_Initial_Check(Trigger *trigger,
 #define RI_TRIGGER_NONE 0		/* is not an RI trigger function */
 
 extern int	RI_FKey_trigger_type(Oid tgfoid);
-
-extern Datum pg_trigger_depth(PG_FUNCTION_ARGS);
 
 #endif   /* TRIGGER_H */

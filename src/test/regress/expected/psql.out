@@ -2,6 +2,32 @@
 -- Tests for psql features that aren't closely connected to any
 -- specific server features
 --
+-- \set
+-- fail: invalid name
+\set invalid/name foo
+invalid variable name: "invalid/name"
+-- fail: invalid value for special variable
+\set AUTOCOMMIT foo
+unrecognized value "foo" for "AUTOCOMMIT": boolean expected
+\set FETCH_COUNT foo
+invalid value "foo" for "FETCH_COUNT": integer expected
+-- check handling of built-in boolean variable
+\echo :ON_ERROR_ROLLBACK
+off
+\set ON_ERROR_ROLLBACK
+\echo :ON_ERROR_ROLLBACK
+on
+\set ON_ERROR_ROLLBACK foo
+unrecognized value "foo" for "ON_ERROR_ROLLBACK"
+Available values are: on, off, interactive.
+\echo :ON_ERROR_ROLLBACK
+on
+\set ON_ERROR_ROLLBACK on
+\echo :ON_ERROR_ROLLBACK
+on
+\unset ON_ERROR_ROLLBACK
+\echo :ON_ERROR_ROLLBACK
+off
 -- \gset
 select 10 as test01, 20 as test02, 'Hello' as test03 \gset pref01_
 \echo :pref01_test01 :pref01_test02 :pref01_test03
@@ -9,7 +35,7 @@ select 10 as test01, 20 as test02, 'Hello' as test03 \gset pref01_
 -- should fail: bad variable name
 select 10 as "bad name"
 \gset
-could not set variable "bad name"
+invalid variable name: "bad name"
 -- multiple backslash commands in one line
 select 1 as x, 2 as y \gset pref01_ \\ \echo :pref01_x
 1
@@ -123,7 +149,7 @@ unicode_header_linestyle single
 prepare q as select array_to_string(array_agg(repeat('x',2*n)),E'\n') as "ab
 
 c", array_to_string(array_agg(repeat('y',20-2*n)),E'\n') as "a
-bc" from generate_series(1,10) as n(n) group by n>1 ;
+bc" from generate_series(1,10) as n(n) group by n>1 order by n>1;
 \pset linestyle ascii
 \pset expanded off
 \pset columns 40

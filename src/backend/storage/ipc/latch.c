@@ -25,7 +25,7 @@
  * The Windows implementation uses Windows events that are inherited by
  * all postmaster child processes.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -55,9 +55,10 @@
 #endif
 
 #include "miscadmin.h"
+#include "pgstat.h"
+#include "port/atomics.h"
 #include "portability/instr_time.h"
 #include "postmaster/postmaster.h"
-#include "storage/barrier.h"
 #include "storage/latch.h"
 #include "storage/pmsignal.h"
 #include "storage/shmem.h"
@@ -297,9 +298,11 @@ DisownLatch(volatile Latch *latch)
  * we return all of them in one call, but we will return at least one.
  */
 int
-WaitLatch(volatile Latch *latch, int wakeEvents, long timeout)
+WaitLatch(volatile Latch *latch, int wakeEvents, long timeout,
+		  uint32 wait_event_info)
 {
-	return WaitLatchOrSocket(latch, wakeEvents, PGINVALID_SOCKET, timeout);
+	return WaitLatchOrSocket(latch, wakeEvents, PGINVALID_SOCKET, timeout,
+							 wait_event_info);
 }
 
 /*
@@ -316,7 +319,7 @@ WaitLatch(volatile Latch *latch, int wakeEvents, long timeout)
  */
 int
 WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
-				  long timeout)
+				  long timeout, uint32 wait_event_info)
 {
 	int			ret = 0;
 	int			rc;
@@ -344,7 +347,7 @@ WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
 		AddWaitEventToSet(set, ev, sock, NULL, NULL);
 	}
 
-	rc = WaitEventSetWait(set, timeout, &event, 1);
+	rc = WaitEventSetWait(set, timeout, &event, 1, wait_event_info);
 
 	if (rc == 0)
 		ret |= WL_TIMEOUT;
@@ -640,6 +643,9 @@ AddWaitEventToSet(WaitEventSet *set, uint32 events, pgsocket fd, Latch *latch,
 	event->fd = fd;
 	event->events = events;
 	event->user_data = user_data;
+#ifdef WIN32
+	event->reset = false;
+#endif
 
 	if (events == WL_LATCH_SET)
 	{
@@ -854,7 +860,7 @@ WaitEventAdjustWin32(WaitEventSet *set, WaitEvent *event)
  * reached.  At most nevents occurred events are returned.
  *
  * If timeout = -1, block until an event occurs; if 0, check sockets for
- * readiness, but don't block; if > 0, block for at most timeout miliseconds.
+ * readiness, but don't block; if > 0, block for at most timeout milliseconds.
  *
  * Returns the number of events occurred, or 0 if the timeout was reached.
  *
@@ -863,7 +869,8 @@ WaitEventAdjustWin32(WaitEventSet *set, WaitEvent *event)
  */
 int
 WaitEventSetWait(WaitEventSet *set, long timeout,
-				 WaitEvent *occurred_events, int nevents)
+				 WaitEvent *occurred_events, int nevents,
+				 uint32 wait_event_info)
 {
 	int			returned_events = 0;
 	instr_time	start_time;
@@ -882,6 +889,8 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
 		Assert(timeout >= 0 && timeout <= INT_MAX);
 		cur_timeout = timeout;
 	}
+
+	pgstat_report_wait_start(wait_event_info);
 
 #ifndef WIN32
 	waiting = true;
@@ -959,6 +968,8 @@ WaitEventSetWait(WaitEventSet *set, long timeout,
 #ifndef WIN32
 	waiting = false;
 #endif
+
+	pgstat_report_wait_end();
 
 	return returned_events;
 }
@@ -1381,6 +1392,18 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 	DWORD		rc;
 	WaitEvent  *cur_event;
 
+	/* Reset any wait events that need it */
+	for (cur_event = set->events;
+		 cur_event < (set->events + set->nevents);
+		 cur_event++)
+	{
+		if (cur_event->reset)
+		{
+			WaitEventAdjustWin32(set, cur_event);
+			cur_event->reset = false;
+		}
+	}
+
 	/*
 	 * Sleep.
 	 *
@@ -1464,6 +1487,18 @@ WaitEventSetWaitBlock(WaitEventSet *set, int cur_timeout,
 		{
 			/* data available in socket */
 			occurred_events->events |= WL_SOCKET_READABLE;
+
+			/*------
+			 * WaitForMultipleObjects doesn't guarantee that a read event will
+			 * be returned if the latch is set at the same time.  Even if it
+			 * did, the caller might drop that event expecting it to reoccur
+			 * on next call.  So, we must force the event to be reset if this
+			 * WaitEventSet is used again in order to avoid an indefinite
+			 * hang.  Refer https://msdn.microsoft.com/en-us/library/windows/desktop/ms741576(v=vs.85).aspx
+			 * for the behavior of socket events.
+			 *------
+			 */
+			cur_event->reset = true;
 		}
 		if ((cur_event->events & WL_SOCKET_WRITEABLE) &&
 			(resEvents.lNetworkEvents & FD_WRITE))

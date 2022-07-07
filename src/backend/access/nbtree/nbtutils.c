@@ -3,7 +3,7 @@
  * nbtutils.c
  *	  Utility code for Postgres btree implementation.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -232,10 +232,8 @@ _bt_preprocess_array_keys(IndexScanDesc scan)
 	 */
 	if (so->arrayContext == NULL)
 		so->arrayContext = AllocSetContextCreate(CurrentMemoryContext,
-												 "BTree Array Context",
-												 ALLOCSET_SMALL_MINSIZE,
-												 ALLOCSET_SMALL_INITSIZE,
-												 ALLOCSET_SMALL_MAXSIZE);
+												 "BTree array context",
+												 ALLOCSET_SMALL_SIZES);
 	else
 		MemoryContextReset(so->arrayContext);
 

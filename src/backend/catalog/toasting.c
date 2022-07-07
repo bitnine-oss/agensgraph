@@ -4,7 +4,7 @@
  *	  This file contains routines to support creation of toast tables
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -350,10 +350,7 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid,
 	if (!IsBootstrapProcessingMode())
 	{
 		/* normal case, use a transactional update */
-		simple_heap_update(class_rel, &reltup->t_self, reltup);
-
-		/* Keep catalog indexes current */
-		CatalogUpdateIndexes(class_rel, reltup);
+		CatalogTupleUpdate(class_rel, &reltup->t_self, reltup);
 	}
 	else
 	{

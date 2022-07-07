@@ -156,9 +156,11 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
       <para>
        To make use of this option the server must be built with
        <acronym>SSL</acronym> support. Furthermore,
-       <acronym>SSL</acronym> must be enabled at server start time
+       <acronym>SSL</acronym> must be enabled
        by setting the <xref linkend="guc-ssl"> configuration parameter (see
        <xref linkend="ssl-tcp"> for more information).
+       Otherwise, the <literal>hostssl</literal> record is ignored except for
+       logging a warning that it cannot match any connections.
       </para>
      </listitem>
     </varlistentry>
@@ -595,6 +597,24 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
    re-read the file.
   </para>
 
+  <note>
+   <para>
+    The preceding statement is not true on Microsoft Windows: there, any
+    changes in the <filename>pg_hba.conf</filename> file are immediately
+    applied by subsequent new connections.
+   </para>
+  </note>
+
+  <para>
+   The system view
+   <link linkend="view-pg-hba-file-rules"><structname>pg_hba_file_rules</structname></link>
+   can be helpful for pre-testing changes to the <filename>pg_hba.conf</>
+   file, or for diagnosing problems if loading of the file did not have the
+   desired effects.  Rows in the view with
+   non-null <structfield>error</structfield> fields indicate problems in the
+   corresponding lines of the file.
+  </para>
+ 
   <tip>
    <para>
     To connect to a particular database, a user must not only pass the
@@ -711,7 +731,7 @@ local   db1,db2,@demodbs  all                                   md5
   <para>
    When using an external authentication system such as Ident or GSSAPI,
    the name of the operating system user that initiated the connection
-   might not be the same as the database user that is to be connect as.
+   might not be the same as the database user (role) that is to be used.
    In this case, a user name map can be applied to map the operating system
    user name to a database user.  To use user name mapping, specify
    <literal>map</literal>=<replaceable>map-name</replaceable>
@@ -1306,7 +1326,7 @@ omicron         bryanh                  guest1
     socket parameter, or similar mechanisms.  Currently that includes
     <systemitem class="osname">Linux</>,
     most flavors of <systemitem class="osname">BSD</> including
-    <systemitem class="osname">OS X</>,
+    <systemitem class="osname">macOS</>,
     and <systemitem class="osname">Solaris</systemitem>.
    </para>
 

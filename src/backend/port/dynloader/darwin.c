@@ -1,5 +1,5 @@
 /*
- * Dynamic loading support for Darwin
+ * Dynamic loading support for macOS (Darwin)
  *
  * If dlopen() is available (Darwin 10.3 and later), we just use it.
  * Otherwise we emulate it with the older, now deprecated, NSLinkModule API.
@@ -77,6 +77,9 @@ pg_dlsym(void *handle, char *funcname)
 {
 	NSSymbol symbol;
 	char	   *symname = (char *) malloc(strlen(funcname) + 2);
+
+	if (!symname)
+		return NULL;
 
 	sprintf(symname, "_%s", funcname);
 	if (NSIsSymbolNameDefined(symname))

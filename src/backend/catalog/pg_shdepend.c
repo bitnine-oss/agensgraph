@@ -3,7 +3,7 @@
  * pg_shdepend.c
  *	  routines to support manipulation of the pg_shdepend relation
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -39,6 +39,7 @@
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_shdepend.h"
+#include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_ts_config.h"
 #include "catalog/pg_ts_dict.h"
@@ -53,7 +54,9 @@
 #include "commands/extension.h"
 #include "commands/policy.h"
 #include "commands/proclang.h"
+#include "commands/publicationcmds.h"
 #include "commands/schemacmds.h"
+#include "commands/subscriptioncmds.h"
 #include "commands/tablecmds.h"
 #include "commands/typecmds.h"
 #include "storage/lmgr.h"
@@ -246,7 +249,7 @@ shdepChangeDep(Relation sdepRel,
 	{
 		/* No new entry needed, so just delete existing entry if any */
 		if (oldtup)
-			simple_heap_delete(sdepRel, &oldtup->t_self);
+			CatalogTupleDelete(sdepRel, &oldtup->t_self);
 	}
 	else if (oldtup)
 	{
@@ -257,10 +260,7 @@ shdepChangeDep(Relation sdepRel,
 		shForm->refclassid = refclassid;
 		shForm->refobjid = refobjid;
 
-		simple_heap_update(sdepRel, &oldtup->t_self, oldtup);
-
-		/* keep indexes current */
-		CatalogUpdateIndexes(sdepRel, oldtup);
+		CatalogTupleUpdate(sdepRel, &oldtup->t_self, oldtup);
 	}
 	else
 	{
@@ -284,10 +284,7 @@ shdepChangeDep(Relation sdepRel,
 		 * it's certainly a new tuple
 		 */
 		oldtup = heap_form_tuple(RelationGetDescr(sdepRel), values, nulls);
-		simple_heap_insert(sdepRel, oldtup);
-
-		/* keep indexes current */
-		CatalogUpdateIndexes(sdepRel, oldtup);
+		CatalogTupleInsert(sdepRel, oldtup);
 	}
 
 	if (oldtup)
@@ -756,10 +753,7 @@ copyTemplateDependencies(Oid templateDbId, Oid newDbId)
 		HeapTuple	newtup;
 
 		newtup = heap_modify_tuple(tup, sdepDesc, values, nulls, replace);
-		simple_heap_insert(sdepRel, newtup);
-
-		/* Keep indexes current */
-		CatalogIndexInsert(indstate, newtup);
+		CatalogTupleInsertWithInfo(sdepRel, newtup, indstate);
 
 		heap_freetuple(newtup);
 	}
@@ -801,7 +795,7 @@ dropDatabaseDependencies(Oid databaseId)
 
 	while (HeapTupleIsValid(tup = systable_getnext(scan)))
 	{
-		simple_heap_delete(sdepRel, &tup->t_self);
+		CatalogTupleDelete(sdepRel, &tup->t_self);
 	}
 
 	systable_endscan(scan);
@@ -879,10 +873,7 @@ shdepAddDependency(Relation sdepRel,
 
 	tup = heap_form_tuple(sdepRel->rd_att, values, nulls);
 
-	simple_heap_insert(sdepRel, tup);
-
-	/* keep indexes current */
-	CatalogUpdateIndexes(sdepRel, tup);
+	CatalogTupleInsert(sdepRel, tup);
 
 	/* clean up */
 	heap_freetuple(tup);
@@ -957,7 +948,7 @@ shdepDropDependency(Relation sdepRel,
 			continue;
 
 		/* OK, delete it */
-		simple_heap_delete(sdepRel, &tup->t_self);
+		CatalogTupleDelete(sdepRel, &tup->t_self);
 	}
 
 	systable_endscan(scan);
@@ -1404,6 +1395,14 @@ shdepReassignOwned(List *roleids, Oid newrole)
 
 				case EventTriggerRelationId:
 					AlterEventTriggerOwner_oid(sdepForm->objid, newrole);
+					break;
+
+				case PublicationRelationId:
+					AlterPublicationOwner_oid(sdepForm->objid, newrole);
+					break;
+
+				case SubscriptionRelationId:
+					AlterSubscriptionOwner_oid(sdepForm->objid, newrole);
 					break;
 
 					/* Generic alter owner cases */

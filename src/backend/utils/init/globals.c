@@ -3,7 +3,7 @@
  * globals.c
  *	  global variable declarations
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -38,7 +38,7 @@ volatile uint32 CritSectionCount = 0;
 int			MyProcPid;
 pg_time_t	MyStartTime;
 struct Port *MyProcPort;
-long		MyCancelKey;
+int32		MyCancelKey;
 int			MyPMChildSlot;
 
 /*
@@ -122,6 +122,7 @@ int			replacement_sort_tuples = 150000;
 int			NBuffers = 1000;
 int			MaxConnections = 90;
 int			max_worker_processes = 8;
+int			max_parallel_workers = 8;
 int			MaxBackends = 0;
 
 int			VacuumCostPageHit = 1;		/* GUC parameters for vacuum */

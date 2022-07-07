@@ -3,7 +3,7 @@
  * catcache.c
  *	  System catalog cache for tuples matching a key.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -125,11 +125,6 @@ GetCCHashEqFuncs(Oid keytype, PGFunction *hashfunc, RegProcedure *eqfunc)
 			*hashfunc = hashint2;
 
 			*eqfunc = F_INT2EQ;
-			break;
-		case INT2VECTOROID:
-			*hashfunc = hashint2vector;
-
-			*eqfunc = F_INT2VECTOREQ;
 			break;
 		case INT4OID:
 			*hashfunc = hashint4;
@@ -536,9 +531,7 @@ CreateCacheMemoryContext(void)
 	if (!CacheMemoryContext)
 		CacheMemoryContext = AllocSetContextCreate(TopMemoryContext,
 												   "CacheMemoryContext",
-												   ALLOCSET_DEFAULT_MINSIZE,
-												   ALLOCSET_DEFAULT_INITSIZE,
-												   ALLOCSET_DEFAULT_MAXSIZE);
+												   ALLOCSET_DEFAULT_SIZES);
 }
 
 

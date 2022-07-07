@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2017, PostgreSQL Global Development Group
  *
  * src/bin/psql/common.c
  */
@@ -10,6 +10,7 @@
 
 #include <ctype.h>
 #include <limits.h>
+#include <math.h>
 #include <signal.h>
 #ifndef WIN32
 #include <unistd.h>				/* for write() */
@@ -18,6 +19,7 @@
 #include <win32.h>
 #endif
 
+#include "fe_utils/string_utils.h"
 #include "portability/instr_time.h"
 
 #include "settings.h"
@@ -531,6 +533,57 @@ ClearOrSaveResult(PGresult *result)
 
 
 /*
+ * Print microtiming output.  Always print raw milliseconds; if the interval
+ * is >= 1 second, also break it down into days/hours/minutes/seconds.
+ */
+static void
+PrintTiming(double elapsed_msec)
+{
+	double		seconds;
+	double		minutes;
+	double		hours;
+	double		days;
+
+	if (elapsed_msec < 1000.0)
+	{
+		/* This is the traditional (pre-v10) output format */
+		printf(_("Time: %.3f ms\n"), elapsed_msec);
+		return;
+	}
+
+	/*
+	 * Note: we could print just seconds, in a format like %06.3f, when the
+	 * total is less than 1min.  But that's hard to interpret unless we tack
+	 * on "s" or otherwise annotate it.  Forcing the display to include
+	 * minutes seems like a better solution.
+	 */
+	seconds = elapsed_msec / 1000.0;
+	minutes = floor(seconds / 60.0);
+	seconds -= 60.0 * minutes;
+	if (minutes < 60.0)
+	{
+		printf(_("Time: %.3f ms (%02d:%06.3f)\n"),
+			   elapsed_msec, (int) minutes, seconds);
+		return;
+	}
+
+	hours = floor(minutes / 60.0);
+	minutes -= 60.0 * hours;
+	if (hours < 24.0)
+	{
+		printf(_("Time: %.3f ms (%02d:%02d:%06.3f)\n"),
+			   elapsed_msec, (int) hours, (int) minutes, seconds);
+		return;
+	}
+
+	days = floor(hours / 24.0);
+	hours -= 24.0 * days;
+	printf(_("Time: %.3f ms (%.0f d %02d:%02d:%06.3f)\n"),
+		   elapsed_msec, days, (int) hours, (int) minutes, seconds);
+}
+
+
+/*
  * PSQLexec
  *
  * This is the way to send "backdoor" queries (those not directly entered
@@ -678,7 +731,7 @@ PSQLexecWatch(const char *query, const printQueryOpt *opt)
 
 	/* Possible microtiming output */
 	if (pset.timing)
-		printf(_("Time: %.3f ms\n"), elapsed_msec);
+		PrintTiming(elapsed_msec);
 
 	return 1;
 }
@@ -775,7 +828,7 @@ StoreQueryTuple(const PGresult *result)
 			char	   *varname;
 			char	   *value;
 
-			/* concate prefix and column name */
+			/* concatenate prefix and column name */
 			varname = psprintf("%s%s", pset.gset_prefix, colname);
 
 			if (!PQgetisnull(result, 0, i))
@@ -788,7 +841,6 @@ StoreQueryTuple(const PGresult *result)
 
 			if (!SetVariable(pset.vars, varname, value))
 			{
-				psql_error("could not set variable \"%s\"\n", varname);
 				free(varname);
 				success = false;
 				break;
@@ -1202,8 +1254,11 @@ SendQuery(const char *query)
 	{
 		if (on_error_rollback_warning == false && pset.sversion < 80000)
 		{
-			psql_error("The server (version %d.%d) does not support savepoints for ON_ERROR_ROLLBACK.\n",
-					   pset.sversion / 10000, (pset.sversion / 100) % 100);
+			char		sverbuf[32];
+
+			psql_error("The server (version %s) does not support savepoints for ON_ERROR_ROLLBACK.\n",
+					   formatPGVersionNumber(pset.sversion, false,
+											 sverbuf, sizeof(sverbuf)));
 			on_error_rollback_warning = true;
 		}
 		else
@@ -1328,7 +1383,7 @@ SendQuery(const char *query)
 
 	/* Possible microtiming output */
 	if (pset.timing)
-		printf(_("Time: %.3f ms\n"), elapsed_msec);
+		PrintTiming(elapsed_msec);
 
 	/* check for events that may occur during query execution */
 

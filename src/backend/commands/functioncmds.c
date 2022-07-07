@@ -5,7 +5,7 @@
  *	  Routines for CREATE and DROP FUNCTION commands and CREATE and DROP
  *	  CAST commands.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -167,7 +167,6 @@ compute_return_type(TypeName *returnType, Oid languageOid,
  * parameters: list of FunctionParameter structs
  * languageOid: OID of function language (InvalidOid if it's CREATE AGGREGATE)
  * is_aggregate: needed only to determine error handling
- * queryString: likewise, needed only for error handling
  *
  * Results are stored into output parameters.  parameterTypes must always
  * be created, but the other arrays are set to NULL if not needed.
@@ -177,10 +176,10 @@ compute_return_type(TypeName *returnType, Oid languageOid,
  * else it is set to the OID of the implied result type.
  */
 void
-interpret_function_parameter_list(List *parameters,
+interpret_function_parameter_list(ParseState *pstate,
+								  List *parameters,
 								  Oid languageOid,
 								  bool is_aggregate,
-								  const char *queryString,
 								  oidvector **parameterTypes,
 								  ArrayType **allParameterTypes,
 								  ArrayType **parameterModes,
@@ -201,7 +200,6 @@ interpret_function_parameter_list(List *parameters,
 	bool		have_defaults = false;
 	ListCell   *x;
 	int			i;
-	ParseState *pstate;
 
 	*variadicArgType = InvalidOid;		/* default result */
 	*requiredResultType = InvalidOid;	/* default result */
@@ -211,10 +209,6 @@ interpret_function_parameter_list(List *parameters,
 	paramModes = (Datum *) palloc(parameterCount * sizeof(Datum));
 	paramNames = (Datum *) palloc0(parameterCount * sizeof(Datum));
 	*parameterDefaults = NIL;
-
-	/* may need a pstate for parse analysis of default exprs */
-	pstate = make_parsestate(NULL);
-	pstate->p_sourcetext = queryString;
 
 	/* Scan the list and extract data into work arrays */
 	i = 0;
@@ -413,8 +407,6 @@ interpret_function_parameter_list(List *parameters,
 		i++;
 	}
 
-	free_parsestate(pstate);
-
 	/* Now construct the proper outputs as needed */
 	*parameterTypes = buildoidvector(inTypes, inCount);
 
@@ -458,7 +450,8 @@ interpret_function_parameter_list(List *parameters,
  * SET parameters though --- if you're redundant, the last one wins.)
  */
 static bool
-compute_common_attribute(DefElem *defel,
+compute_common_attribute(ParseState *pstate,
+						 DefElem *defel,
 						 DefElem **volatility_item,
 						 DefElem **strict_item,
 						 DefElem **security_item,
@@ -530,7 +523,8 @@ compute_common_attribute(DefElem *defel,
 duplicate_error:
 	ereport(ERROR,
 			(errcode(ERRCODE_SYNTAX_ERROR),
-			 errmsg("conflicting or redundant options")));
+			 errmsg("conflicting or redundant options"),
+			 parser_errposition(pstate, defel->location)));
 	return false;				/* keep compiler quiet */
 }
 
@@ -584,9 +578,8 @@ update_proconfig_value(ArrayType *a, List *set_items)
 
 	foreach(l, set_items)
 	{
-		VariableSetStmt *sstmt = (VariableSetStmt *) lfirst(l);
+		VariableSetStmt *sstmt = castNode(VariableSetStmt, lfirst(l));
 
-		Assert(IsA(sstmt, VariableSetStmt));
 		if (sstmt->kind == VAR_RESET_ALL)
 			a = NULL;
 		else
@@ -609,7 +602,8 @@ update_proconfig_value(ArrayType *a, List *set_items)
  * attributes.
  */
 static void
-compute_attributes_sql_style(List *options,
+compute_attributes_sql_style(ParseState *pstate,
+							 List *options,
 							 List **as,
 							 char **language,
 							 Node **transform,
@@ -646,7 +640,8 @@ compute_attributes_sql_style(List *options,
 			if (as_item)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			as_item = defel;
 		}
 		else if (strcmp(defel->defname, "language") == 0)
@@ -654,7 +649,8 @@ compute_attributes_sql_style(List *options,
 			if (language_item)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			language_item = defel;
 		}
 		else if (strcmp(defel->defname, "transform") == 0)
@@ -662,7 +658,8 @@ compute_attributes_sql_style(List *options,
 			if (transform_item)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			transform_item = defel;
 		}
 		else if (strcmp(defel->defname, "window") == 0)
@@ -670,10 +667,12 @@ compute_attributes_sql_style(List *options,
 			if (windowfunc_item)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("conflicting or redundant options")));
+						 errmsg("conflicting or redundant options"),
+						 parser_errposition(pstate, defel->location)));
 			windowfunc_item = defel;
 		}
-		else if (compute_common_attribute(defel,
+		else if (compute_common_attribute(pstate,
+										  defel,
 										  &volatility_item,
 										  &strict_item,
 										  &security_item,
@@ -763,7 +762,7 @@ compute_attributes_sql_style(List *options,
  *------------
  */
 static void
-compute_attributes_with_style(List *parameters, bool *isStrict_p, char *volatility_p)
+compute_attributes_with_style(ParseState *pstate, List *parameters, bool *isStrict_p, char *volatility_p)
 {
 	ListCell   *pl;
 
@@ -783,7 +782,8 @@ compute_attributes_with_style(List *parameters, bool *isStrict_p, char *volatili
 			ereport(WARNING,
 					(errcode(ERRCODE_SYNTAX_ERROR),
 					 errmsg("unrecognized function attribute \"%s\" ignored",
-							param->defname)));
+							param->defname),
+					 parser_errposition(pstate, param->location)));
 	}
 }
 
@@ -858,7 +858,7 @@ interpret_AS_clause(Oid languageOid, const char *languageName,
  *	 Execute a CREATE FUNCTION utility statement.
  */
 ObjectAddress
-CreateFunction(CreateFunctionStmt *stmt, const char *queryString)
+CreateFunction(ParseState *pstate, CreateFunctionStmt *stmt)
 {
 	char	   *probin_str;
 	char	   *prosrc_str;
@@ -915,7 +915,8 @@ CreateFunction(CreateFunctionStmt *stmt, const char *queryString)
 	parallel = PROPARALLEL_UNSAFE;
 
 	/* override attributes from explicit list */
-	compute_attributes_sql_style(stmt->options,
+	compute_attributes_sql_style(pstate,
+								 stmt->options,
 								 &as_clause, &language, &transformDefElem,
 								 &isWindowFunc, &volatility,
 								 &isStrict, &security, &isLeakProof,
@@ -969,9 +970,7 @@ CreateFunction(CreateFunctionStmt *stmt, const char *queryString)
 	{
 		ListCell   *lc;
 
-		Assert(IsA(transformDefElem, List));
-
-		foreach(lc, (List *) transformDefElem)
+		foreach(lc, castNode(List, transformDefElem))
 		{
 			Oid			typeid = typenameTypeId(NULL, lfirst(lc));
 			Oid			elt = get_base_element_type(typeid);
@@ -987,10 +986,10 @@ CreateFunction(CreateFunctionStmt *stmt, const char *queryString)
 	 * Convert remaining parameters of CREATE to form wanted by
 	 * ProcedureCreate.
 	 */
-	interpret_function_parameter_list(stmt->parameters,
+	interpret_function_parameter_list(pstate,
+									  stmt->parameters,
 									  languageOid,
 									  false,	/* not an aggregate */
-									  queryString,
 									  &parameterTypes,
 									  &allParameterTypes,
 									  &parameterModes,
@@ -1041,11 +1040,11 @@ CreateFunction(CreateFunctionStmt *stmt, const char *queryString)
 	}
 	else
 	{
-		/* store SQL NULL instead of emtpy array */
+		/* store SQL NULL instead of empty array */
 		trftypes = NULL;
 	}
 
-	compute_attributes_with_style(stmt->withClause, &isStrict, &volatility);
+	compute_attributes_with_style(pstate, stmt->withClause, &isStrict, &volatility);
 
 	interpret_AS_clause(languageOid, language, funcname, as_clause,
 						&prosrc_str, &probin_str);
@@ -1132,7 +1131,7 @@ RemoveFunctionById(Oid funcOid)
 
 	isagg = ((Form_pg_proc) GETSTRUCT(tup))->proisagg;
 
-	simple_heap_delete(relation, &tup->t_self);
+	CatalogTupleDelete(relation, &tup->t_self);
 
 	ReleaseSysCache(tup);
 
@@ -1149,7 +1148,7 @@ RemoveFunctionById(Oid funcOid)
 		if (!HeapTupleIsValid(tup))		/* should not happen */
 			elog(ERROR, "cache lookup failed for pg_aggregate tuple for function %u", funcOid);
 
-		simple_heap_delete(relation, &tup->t_self);
+		CatalogTupleDelete(relation, &tup->t_self);
 
 		ReleaseSysCache(tup);
 
@@ -1163,7 +1162,7 @@ RemoveFunctionById(Oid funcOid)
  * ALTER framework).
  */
 ObjectAddress
-AlterFunction(AlterFunctionStmt *stmt)
+AlterFunction(ParseState *pstate, AlterFunctionStmt *stmt)
 {
 	HeapTuple	tup;
 	Oid			funcOid;
@@ -1208,7 +1207,8 @@ AlterFunction(AlterFunctionStmt *stmt)
 	{
 		DefElem    *defel = (DefElem *) lfirst(l);
 
-		if (compute_common_attribute(defel,
+		if (compute_common_attribute(pstate,
+									 defel,
 									 &volatility_item,
 									 &strict_item,
 									 &security_def_item,
@@ -1292,8 +1292,7 @@ AlterFunction(AlterFunctionStmt *stmt)
 		procForm->proparallel = interpret_func_parallel(parallel_item);
 
 	/* Do the update */
-	simple_heap_update(rel, &tup->t_self, tup);
-	CatalogUpdateIndexes(rel, tup);
+	CatalogTupleUpdate(rel, &tup->t_self, tup);
 
 	InvokeObjectPostAlterHook(ProcedureRelationId, funcOid, 0);
 
@@ -1333,9 +1332,7 @@ SetFunctionReturnType(Oid funcOid, Oid newRetType)
 	procForm->prorettype = newRetType;
 
 	/* update the catalog and its indexes */
-	simple_heap_update(pg_proc_rel, &tup->t_self, tup);
-
-	CatalogUpdateIndexes(pg_proc_rel, tup);
+	CatalogTupleUpdate(pg_proc_rel, &tup->t_self, tup);
 
 	heap_close(pg_proc_rel, RowExclusiveLock);
 }
@@ -1368,9 +1365,7 @@ SetFunctionArgType(Oid funcOid, int argIndex, Oid newArgType)
 	procForm->proargtypes.values[argIndex] = newArgType;
 
 	/* update the catalog and its indexes */
-	simple_heap_update(pg_proc_rel, &tup->t_self, tup);
-
-	CatalogUpdateIndexes(pg_proc_rel, tup);
+	CatalogTupleUpdate(pg_proc_rel, &tup->t_self, tup);
 
 	heap_close(pg_proc_rel, RowExclusiveLock);
 }
@@ -1446,7 +1441,7 @@ CreateCast(CreateCastStmt *stmt)
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("cast will be ignored because the target data type is a domain")));
 
-	/* Detemine the cast method */
+	/* Determine the cast method */
 	if (stmt->func != NULL)
 		castmethod = COERCION_METHOD_FUNCTION;
 	else if (stmt->inout)
@@ -1479,11 +1474,13 @@ CreateCast(CreateCastStmt *stmt)
 		if (nargs > 1 && procstruct->proargtypes.values[1] != INT4OID)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-			errmsg("second argument of cast function must be type integer")));
+				   errmsg("second argument of cast function must be type %s",
+						  "integer")));
 		if (nargs > 2 && procstruct->proargtypes.values[2] != BOOLOID)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-			errmsg("third argument of cast function must be type boolean")));
+					 errmsg("third argument of cast function must be type %s",
+							"boolean")));
 		if (!IsBinaryCoercible(procstruct->prorettype, targettypeid))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
@@ -1654,9 +1651,7 @@ CreateCast(CreateCastStmt *stmt)
 
 	tuple = heap_form_tuple(RelationGetDescr(relation), values, nulls);
 
-	castid = simple_heap_insert(relation, tuple);
-
-	CatalogUpdateIndexes(relation, tuple);
+	castid = CatalogTupleInsert(relation, tuple);
 
 	/* make dependency entries */
 	myself.classId = CastRelationId;
@@ -1740,7 +1735,7 @@ DropCastById(Oid castOid)
 	tuple = systable_getnext(scan);
 	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "could not find tuple for cast %u", castOid);
-	simple_heap_delete(relation, &tuple->t_self);
+	CatalogTupleDelete(relation, &tuple->t_self);
 
 	systable_endscan(scan);
 	heap_close(relation, RowExclusiveLock);
@@ -1773,7 +1768,8 @@ check_transform_function(Form_pg_proc procstruct)
 	if (procstruct->proargtypes.values[0] != INTERNALOID)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-				 errmsg("first argument of transform function must be type \"internal\"")));
+			   errmsg("first argument of transform function must be type %s",
+					  "internal")));
 }
 
 
@@ -1856,7 +1852,8 @@ CreateTransform(CreateTransformStmt *stmt)
 		if (procstruct->prorettype != INTERNALOID)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("return data type of FROM SQL function must be \"internal\"")));
+				   errmsg("return data type of FROM SQL function must be %s",
+						  "internal")));
 		check_transform_function(procstruct);
 		ReleaseSysCache(tuple);
 	}
@@ -1917,7 +1914,7 @@ CreateTransform(CreateTransformStmt *stmt)
 		replaces[Anum_pg_transform_trftosql - 1] = true;
 
 		newtuple = heap_modify_tuple(tuple, RelationGetDescr(relation), values, nulls, replaces);
-		simple_heap_update(relation, &newtuple->t_self, newtuple);
+		CatalogTupleUpdate(relation, &newtuple->t_self, newtuple);
 
 		transformid = HeapTupleGetOid(tuple);
 		ReleaseSysCache(tuple);
@@ -1926,11 +1923,9 @@ CreateTransform(CreateTransformStmt *stmt)
 	else
 	{
 		newtuple = heap_form_tuple(RelationGetDescr(relation), values, nulls);
-		transformid = simple_heap_insert(relation, newtuple);
+		transformid = CatalogTupleInsert(relation, newtuple);
 		is_replace = false;
 	}
-
-	CatalogUpdateIndexes(relation, newtuple);
 
 	if (is_replace)
 		deleteDependencyRecordsFor(TransformRelationId, transformid, true);
@@ -2026,7 +2021,7 @@ DropTransformById(Oid transformOid)
 	tuple = systable_getnext(scan);
 	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "could not find tuple for transform %u", transformOid);
-	simple_heap_delete(relation, &tuple->t_self);
+	CatalogTupleDelete(relation, &tuple->t_self);
 
 	systable_endscan(scan);
 	heap_close(relation, RowExclusiveLock);

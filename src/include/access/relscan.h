@@ -4,7 +4,7 @@
  *	  POSTGRES relation scan descriptor definitions.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/relscan.h
@@ -19,6 +19,7 @@
 #include "access/htup_details.h"
 #include "access/itup.h"
 #include "access/tupdesc.h"
+#include "storage/spin.h"
 
 /*
  * Shared state for parallel heap scan.
@@ -92,6 +93,7 @@ typedef struct IndexScanDescData
 	ScanKey		keyData;		/* array of index qualifier descriptors */
 	ScanKey		orderByData;	/* array of ordering op descriptors */
 	bool		xs_want_itup;	/* caller requests index tuples */
+	bool		xs_temp_snap;	/* unregister snapshot at scan end? */
 
 	/* signaling to index AM about killing index tuples */
 	bool		kill_prior_tuple;		/* last-returned tuple is dead */
@@ -125,7 +127,19 @@ typedef struct IndexScanDescData
 
 	/* state data for traversing HOT chains in index_getnext */
 	bool		xs_continue_hot;	/* T if must keep walking HOT chain */
+
+	/* parallel index scan information, in shared memory */
+	ParallelIndexScanDesc parallel_scan;
 }	IndexScanDescData;
+
+/* Generic structure for parallel scans */
+typedef struct ParallelIndexScanDescData
+{
+	Oid			ps_relid;
+	Oid			ps_indexid;
+	Size		ps_offset;		/* Offset in bytes of am specific structure */
+	char		ps_snapshot_data[FLEXIBLE_ARRAY_MEMBER];
+} ParallelIndexScanDescData;
 
 /* Struct for heap-or-index scans of system tables */
 typedef struct SysScanDescData

@@ -3,7 +3,7 @@
  * lmgr.c
  *	  POSTGRES lock manager code
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -33,7 +33,7 @@
  * constraint violations.  It's theoretically possible that a backend sees a
  * tuple that was speculatively inserted by another backend, but before it has
  * started waiting on the token, the other backend completes its insertion,
- * and then then performs 2^32 unrelated insertions.  And after all that, the
+ * and then performs 2^32 unrelated insertions.  And after all that, the
  * first backend finally calls SpeculativeInsertionLockAcquire(), with the
  * intention of waiting for the first insertion to complete, but ends up
  * waiting for the latest unrelated insertion instead.  Even then, nothing
@@ -268,8 +268,8 @@ UnlockRelation(Relation relation, LOCKMODE lockmode)
 /*
  *		LockHasWaitersRelation
  *
- * This is a functiion to check if someone else is waiting on a
- * lock, we are currently holding.
+ * This is a function to check whether someone else is waiting for a
+ * lock which we are currently holding.
  */
 bool
 LockHasWaitersRelation(Relation relation, LOCKMODE lockmode)

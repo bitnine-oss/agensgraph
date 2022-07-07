@@ -3,7 +3,7 @@
  * atomics.c
  *	   Non-Inline parts of the atomics implementation
  *
- * Portions Copyright (c) 2013-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2013-2017, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -102,6 +102,19 @@ pg_atomic_init_u32_impl(volatile pg_atomic_uint32 *ptr, uint32 val_)
 	SpinLockInit((slock_t *) &ptr->sema);
 #endif
 	ptr->value = val_;
+}
+
+void
+pg_atomic_write_u32_impl(volatile pg_atomic_uint32 *ptr, uint32 val)
+{
+	/*
+	 * One might think that an unlocked write doesn't need to acquire the
+	 * spinlock, but one would be wrong. Even an unlocked write has to cause a
+	 * concurrent pg_atomic_compare_exchange_u32() (et al) to fail.
+	 */
+	SpinLockAcquire((slock_t *) &ptr->sema);
+	ptr->value = val;
+	SpinLockRelease((slock_t *) &ptr->sema);
 }
 
 bool

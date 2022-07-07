@@ -5,7 +5,7 @@
  *
  * Author: Magnus Hagander <magnus@hagander.net>
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/receivelog.c
@@ -16,6 +16,9 @@
 
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
+#endif
 
 /* local includes */
 #include "receivelog.h"
@@ -23,10 +26,11 @@
 
 #include "libpq-fe.h"
 #include "access/xlog_internal.h"
+#include "common/file_utils.h"
 
 
 /* fd and filename for currently open WAL file */
-static int	walfile = -1;
+static Walfile *walfile = NULL;
 static char current_walfile_name[MAXPGPATH] = "";
 static bool reportFlushPosition = false;
 static XLogRecPtr lastFlushPosition = InvalidXLogRecPtr;
@@ -37,8 +41,8 @@ static PGresult *HandleCopyStream(PGconn *conn, StreamCtl *stream,
 				 XLogRecPtr *stoppos);
 static int	CopyStreamPoll(PGconn *conn, long timeout_ms);
 static int	CopyStreamReceive(PGconn *conn, long timeout, char **buffer);
-static bool ProcessKeepaliveMsg(PGconn *conn, char *copybuf, int len,
-					XLogRecPtr blockpos, int64 *last_status);
+static bool ProcessKeepaliveMsg(PGconn *conn, StreamCtl *stream, char *copybuf,
+					int len, XLogRecPtr blockpos, int64 *last_status);
 static bool ProcessXLogDataMsg(PGconn *conn, StreamCtl *stream, char *copybuf, int len,
 				   XLogRecPtr *blockpos);
 static PGresult *HandleEndOfCopyStream(PGconn *conn, StreamCtl *stream, char *copybuf,
@@ -52,33 +56,23 @@ static bool ReadEndOfStreamingResult(PGresult *res, XLogRecPtr *startpos,
 						 uint32 *timeline);
 
 static bool
-mark_file_as_archived(const char *basedir, const char *fname)
+mark_file_as_archived(StreamCtl *stream, const char *fname)
 {
-	int			fd;
+	Walfile    *f;
 	static char tmppath[MAXPGPATH];
 
-	snprintf(tmppath, sizeof(tmppath), "%s/archive_status/%s.done",
-			 basedir, fname);
+	snprintf(tmppath, sizeof(tmppath), "archive_status/%s.done",
+			 fname);
 
-	fd = open(tmppath, O_WRONLY | O_CREAT | PG_BINARY, S_IRUSR | S_IWUSR);
-	if (fd < 0)
+	f = stream->walmethod->open_for_write(tmppath, NULL, 0);
+	if (f == NULL)
 	{
 		fprintf(stderr, _("%s: could not create archive status file \"%s\": %s\n"),
-				progname, tmppath, strerror(errno));
+				progname, tmppath, stream->walmethod->getlasterror());
 		return false;
 	}
 
-	if (fsync(fd) != 0)
-	{
-		fprintf(stderr, _("%s: could not fsync file \"%s\": %s\n"),
-				progname, tmppath, strerror(errno));
-
-		close(fd);
-
-		return false;
-	}
-
-	close(fd);
+	stream->walmethod->close(f, CLOSE_NORMAL);
 
 	return true;
 }
@@ -86,85 +80,91 @@ mark_file_as_archived(const char *basedir, const char *fname)
 /*
  * Open a new WAL file in the specified directory.
  *
- * The file will be padded to 16Mb with zeroes. The base filename (without
- * partial_suffix) is stored in current_walfile_name.
+ * Returns true if OK; on failure, returns false after printing an error msg.
+ * On success, 'walfile' is set to the FD for the file, and the base filename
+ * (without partial_suffix) is stored in 'current_walfile_name'.
+ *
+ * The file will be padded to 16Mb with zeroes.
  */
 static bool
 open_walfile(StreamCtl *stream, XLogRecPtr startpoint)
 {
-	int			f;
+	Walfile    *f;
 	char		fn[MAXPGPATH];
-	struct stat statbuf;
-	char	   *zerobuf;
-	int			bytes;
+	ssize_t		size;
 	XLogSegNo	segno;
 
 	XLByteToSeg(startpoint, segno);
 	XLogFileName(current_walfile_name, stream->timeline, segno);
 
-	snprintf(fn, sizeof(fn), "%s/%s%s", stream->basedir, current_walfile_name,
+	snprintf(fn, sizeof(fn), "%s%s", current_walfile_name,
 			 stream->partial_suffix ? stream->partial_suffix : "");
-	f = open(fn, O_WRONLY | O_CREAT | PG_BINARY, S_IRUSR | S_IWUSR);
-	if (f == -1)
+
+	/*
+	 * When streaming to files, if an existing file exists we verify that it's
+	 * either empty (just created), or a complete XLogSegSize segment (in
+	 * which case it has been created and padded). Anything else indicates a
+	 * corrupt file.
+	 *
+	 * When streaming to tar, no file with this name will exist before, so we
+	 * never have to verify a size.
+	 */
+	if (stream->walmethod->existsfile(fn))
+	{
+		size = stream->walmethod->get_file_size(fn);
+		if (size < 0)
+		{
+			fprintf(stderr,
+			_("%s: could not get size of transaction log file \"%s\": %s\n"),
+					progname, fn, stream->walmethod->getlasterror());
+			return false;
+		}
+		if (size == XLogSegSize)
+		{
+			/* Already padded file. Open it for use */
+			f = stream->walmethod->open_for_write(current_walfile_name, stream->partial_suffix, 0);
+			if (f == NULL)
+			{
+				fprintf(stderr,
+						_("%s: could not open existing transaction log file \"%s\": %s\n"),
+						progname, fn, stream->walmethod->getlasterror());
+				return false;
+			}
+
+			/* fsync file in case of a previous crash */
+			if (!stream->walmethod->sync(f))
+			{
+				stream->walmethod->close(f, CLOSE_UNLINK);
+				return false;
+			}
+
+			walfile = f;
+			return true;
+		}
+		if (size != 0)
+		{
+			/* if write didn't set errno, assume problem is no disk space */
+			if (errno == 0)
+				errno = ENOSPC;
+			fprintf(stderr,
+					_("%s: transaction log file \"%s\" has %d bytes, should be 0 or %d\n"),
+					progname, fn, (int) size, XLogSegSize);
+			return false;
+		}
+		/* File existed and was empty, so fall through and open */
+	}
+
+	/* No file existed, so create one */
+
+	f = stream->walmethod->open_for_write(current_walfile_name, stream->partial_suffix, XLogSegSize);
+	if (f == NULL)
 	{
 		fprintf(stderr,
 				_("%s: could not open transaction log file \"%s\": %s\n"),
-				progname, fn, strerror(errno));
+				progname, fn, stream->walmethod->getlasterror());
 		return false;
 	}
 
-	/*
-	 * Verify that the file is either empty (just created), or a complete
-	 * XLogSegSize segment. Anything in between indicates a corrupt file.
-	 */
-	if (fstat(f, &statbuf) != 0)
-	{
-		fprintf(stderr,
-				_("%s: could not stat transaction log file \"%s\": %s\n"),
-				progname, fn, strerror(errno));
-		close(f);
-		return false;
-	}
-	if (statbuf.st_size == XLogSegSize)
-	{
-		/* File is open and ready to use */
-		walfile = f;
-		return true;
-	}
-	if (statbuf.st_size != 0)
-	{
-		fprintf(stderr,
-				_("%s: transaction log file \"%s\" has %d bytes, should be 0 or %d\n"),
-				progname, fn, (int) statbuf.st_size, XLogSegSize);
-		close(f);
-		return false;
-	}
-
-	/* New, empty, file. So pad it to 16Mb with zeroes */
-	zerobuf = pg_malloc0(XLOG_BLCKSZ);
-	for (bytes = 0; bytes < XLogSegSize; bytes += XLOG_BLCKSZ)
-	{
-		if (write(f, zerobuf, XLOG_BLCKSZ) != XLOG_BLCKSZ)
-		{
-			fprintf(stderr,
-					_("%s: could not pad transaction log file \"%s\": %s\n"),
-					progname, fn, strerror(errno));
-			free(zerobuf);
-			close(f);
-			unlink(fn);
-			return false;
-		}
-	}
-	free(zerobuf);
-
-	if (lseek(f, SEEK_SET, 0) != 0)
-	{
-		fprintf(stderr,
-				_("%s: could not seek to beginning of transaction log file \"%s\": %s\n"),
-				progname, fn, strerror(errno));
-		close(f);
-		return false;
-	}
 	walfile = f;
 	return true;
 }
@@ -178,56 +178,46 @@ static bool
 close_walfile(StreamCtl *stream, XLogRecPtr pos)
 {
 	off_t		currpos;
+	int			r;
 
-	if (walfile == -1)
+	if (walfile == NULL)
 		return true;
 
-	currpos = lseek(walfile, 0, SEEK_CUR);
+	currpos = stream->walmethod->get_current_pos(walfile);
 	if (currpos == -1)
 	{
 		fprintf(stderr,
 			 _("%s: could not determine seek position in file \"%s\": %s\n"),
-				progname, current_walfile_name, strerror(errno));
+		  progname, current_walfile_name, stream->walmethod->getlasterror());
+		stream->walmethod->close(walfile, CLOSE_UNLINK);
+		walfile = NULL;
+
 		return false;
 	}
 
-	if (fsync(walfile) != 0)
+	if (stream->partial_suffix)
 	{
-		fprintf(stderr, _("%s: could not fsync file \"%s\": %s\n"),
-				progname, current_walfile_name, strerror(errno));
-		return false;
-	}
-
-	if (close(walfile) != 0)
-	{
-		fprintf(stderr, _("%s: could not close file \"%s\": %s\n"),
-				progname, current_walfile_name, strerror(errno));
-		walfile = -1;
-		return false;
-	}
-	walfile = -1;
-
-	/*
-	 * If we finished writing a .partial file, rename it into place.
-	 */
-	if (currpos == XLOG_SEG_SIZE && stream->partial_suffix)
-	{
-		char		oldfn[MAXPGPATH];
-		char		newfn[MAXPGPATH];
-
-		snprintf(oldfn, sizeof(oldfn), "%s/%s%s", stream->basedir, current_walfile_name, stream->partial_suffix);
-		snprintf(newfn, sizeof(newfn), "%s/%s", stream->basedir, current_walfile_name);
-		if (rename(oldfn, newfn) != 0)
+		if (currpos == XLOG_SEG_SIZE)
+			r = stream->walmethod->close(walfile, CLOSE_NORMAL);
+		else
 		{
-			fprintf(stderr, _("%s: could not rename file \"%s\": %s\n"),
-					progname, current_walfile_name, strerror(errno));
-			return false;
+			fprintf(stderr,
+					_("%s: not renaming \"%s%s\", segment is not complete\n"),
+					progname, current_walfile_name, stream->partial_suffix);
+			r = stream->walmethod->close(walfile, CLOSE_NO_RENAME);
 		}
 	}
-	else if (stream->partial_suffix)
-		fprintf(stderr,
-				_("%s: not renaming \"%s%s\", segment is not complete\n"),
-				progname, current_walfile_name, stream->partial_suffix);
+	else
+		r = stream->walmethod->close(walfile, CLOSE_NORMAL);
+
+	walfile = NULL;
+
+	if (r != 0)
+	{
+		fprintf(stderr, _("%s: could not close file \"%s\": %s\n"),
+		  progname, current_walfile_name, stream->walmethod->getlasterror());
+		return false;
+	}
 
 	/*
 	 * Mark file as archived if requested by the caller - pg_basebackup needs
@@ -238,7 +228,7 @@ close_walfile(StreamCtl *stream, XLogRecPtr pos)
 	if (currpos == XLOG_SEG_SIZE && stream->mark_done)
 	{
 		/* writes error message if failed */
-		if (!mark_file_as_archived(stream->basedir, current_walfile_name))
+		if (!mark_file_as_archived(stream, current_walfile_name))
 			return false;
 	}
 
@@ -253,9 +243,7 @@ close_walfile(StreamCtl *stream, XLogRecPtr pos)
 static bool
 existsTimeLineHistoryFile(StreamCtl *stream)
 {
-	char		path[MAXPGPATH];
 	char		histfname[MAXFNAMELEN];
-	int			fd;
 
 	/*
 	 * Timeline 1 never has a history file. We treat that as if it existed,
@@ -266,31 +254,15 @@ existsTimeLineHistoryFile(StreamCtl *stream)
 
 	TLHistoryFileName(histfname, stream->timeline);
 
-	snprintf(path, sizeof(path), "%s/%s", stream->basedir, histfname);
-
-	fd = open(path, O_RDONLY | PG_BINARY, 0);
-	if (fd < 0)
-	{
-		if (errno != ENOENT)
-			fprintf(stderr, _("%s: could not open timeline history file \"%s\": %s\n"),
-					progname, path, strerror(errno));
-		return false;
-	}
-	else
-	{
-		close(fd);
-		return true;
-	}
+	return stream->walmethod->existsfile(histfname);
 }
 
 static bool
 writeTimeLineHistoryFile(StreamCtl *stream, char *filename, char *content)
 {
 	int			size = strlen(content);
-	char		path[MAXPGPATH];
-	char		tmppath[MAXPGPATH];
 	char		histfname[MAXFNAMELEN];
-	int			fd;
+	Walfile    *f;
 
 	/*
 	 * Check that the server's idea of how timeline history files should be
@@ -304,62 +276,31 @@ writeTimeLineHistoryFile(StreamCtl *stream, char *filename, char *content)
 		return false;
 	}
 
-	snprintf(path, sizeof(path), "%s/%s", stream->basedir, histfname);
-
-	/*
-	 * Write into a temp file name.
-	 */
-	snprintf(tmppath, MAXPGPATH, "%s.tmp", path);
-
-	unlink(tmppath);
-
-	fd = open(tmppath, O_WRONLY | O_CREAT | PG_BINARY, S_IRUSR | S_IWUSR);
-	if (fd < 0)
+	f = stream->walmethod->open_for_write(histfname, ".tmp", 0);
+	if (f == NULL)
 	{
 		fprintf(stderr, _("%s: could not create timeline history file \"%s\": %s\n"),
-				progname, tmppath, strerror(errno));
+				progname, histfname, stream->walmethod->getlasterror());
 		return false;
 	}
 
-	errno = 0;
-	if ((int) write(fd, content, size) != size)
+	if ((int) stream->walmethod->write(f, content, size) != size)
 	{
-		int			save_errno = errno;
+		fprintf(stderr, _("%s: could not write timeline history file \"%s\": %s\n"),
+				progname, histfname, stream->walmethod->getlasterror());
 
 		/*
 		 * If we fail to make the file, delete it to release disk space
 		 */
-		close(fd);
-		unlink(tmppath);
-		errno = save_errno;
+		stream->walmethod->close(f, CLOSE_UNLINK);
 
-		fprintf(stderr, _("%s: could not write timeline history file \"%s\": %s\n"),
-				progname, tmppath, strerror(errno));
 		return false;
 	}
 
-	if (fsync(fd) != 0)
-	{
-		close(fd);
-		fprintf(stderr, _("%s: could not fsync file \"%s\": %s\n"),
-				progname, tmppath, strerror(errno));
-		return false;
-	}
-
-	if (close(fd) != 0)
+	if (stream->walmethod->close(f, CLOSE_NORMAL) != 0)
 	{
 		fprintf(stderr, _("%s: could not close file \"%s\": %s\n"),
-				progname, tmppath, strerror(errno));
-		return false;
-	}
-
-	/*
-	 * Now move the completed history file into place with its final name.
-	 */
-	if (rename(tmppath, path) < 0)
-	{
-		fprintf(stderr, _("%s: could not rename file \"%s\" to \"%s\": %s\n"),
-				progname, tmppath, path, strerror(errno));
+				progname, histfname, stream->walmethod->getlasterror());
 		return false;
 	}
 
@@ -367,7 +308,7 @@ writeTimeLineHistoryFile(StreamCtl *stream, char *filename, char *content)
 	if (stream->mark_done)
 	{
 		/* writes error message if failed */
-		if (!mark_file_as_archived(stream->basedir, histfname))
+		if (!mark_file_as_archived(stream, histfname))
 			return false;
 	}
 
@@ -503,26 +444,28 @@ ReceiveXlogStream(PGconn *conn, StreamCtl *stream)
 	if (!CheckServerVersionForStreaming(conn))
 		return false;
 
-	if (replication_slot != NULL)
+	/*
+	 * Decide whether we want to report the flush position. If we report
+	 * the flush position, the primary will know what WAL we'll
+	 * possibly re-request, and it can then remove older WAL safely.
+	 * We must always do that when we are using slots.
+	 *
+	 * Reporting the flush position makes one eligible as a synchronous
+	 * replica. People shouldn't include generic names in
+	 * synchronous_standby_names, but we've protected them against it so
+	 * far, so let's continue to do so unless specifically requested.
+	 */
+	if (stream->replication_slot != NULL)
 	{
-		/*
-		 * Report the flush position, so the primary can know what WAL we'll
-		 * possibly re-request, and remove older WAL safely.
-		 *
-		 * We only report it when a slot has explicitly been used, because
-		 * reporting the flush position makes one eligible as a synchronous
-		 * replica. People shouldn't include generic names in
-		 * synchronous_standby_names, but we've protected them against it so
-		 * far, so let's continue to do so in the situations when possible. If
-		 * they've got a slot, though, we need to report the flush position,
-		 * so that the master can remove WAL.
-		 */
 		reportFlushPosition = true;
-		sprintf(slotcmd, "SLOT \"%s\" ", replication_slot);
+		sprintf(slotcmd, "SLOT \"%s\" ", stream->replication_slot);
 	}
 	else
 	{
-		reportFlushPosition = false;
+		if (stream->synchronous)
+			reportFlushPosition = true;
+		else
+			reportFlushPosition = false;
 		slotcmd[0] = 0;
 	}
 
@@ -566,6 +509,24 @@ ReceiveXlogStream(PGconn *conn, StreamCtl *stream)
 	}
 
 	/*
+	 * Create temporary replication slot if one is needed
+	 */
+	if (stream->temp_slot)
+	{
+		snprintf(query, sizeof(query),
+			 "CREATE_REPLICATION_SLOT \"%s\" TEMPORARY PHYSICAL RESERVE_WAL",
+				 stream->replication_slot);
+		res = PQexec(conn, query);
+		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		{
+			fprintf(stderr, _("%s: could not create temporary replication slot \"%s\": %s"),
+					progname, stream->replication_slot, PQerrorMessage(conn));
+			PQclear(res);
+			return false;
+		}
+	}
+
+	/*
 	 * initialize flush position to starting point, it's the caller's
 	 * responsibility that that's sane.
 	 */
@@ -575,7 +536,9 @@ ReceiveXlogStream(PGconn *conn, StreamCtl *stream)
 	{
 		/*
 		 * Fetch the timeline history file for this timeline, if we don't have
-		 * it already.
+		 * it already. When streaming log to tar, this will always return
+		 * false, as we are never streaming into an existing file and
+		 * therefore there can be no pre-existing timeline history file.
 		 */
 		if (!existsTimeLineHistoryFile(stream))
 		{
@@ -734,10 +697,10 @@ ReceiveXlogStream(PGconn *conn, StreamCtl *stream)
 	}
 
 error:
-	if (walfile != -1 && close(walfile) != 0)
+	if (walfile != NULL && stream->walmethod->close(walfile, CLOSE_NO_RENAME) != 0)
 		fprintf(stderr, _("%s: could not close file \"%s\": %s\n"),
-				progname, current_walfile_name, strerror(errno));
-	walfile = -1;
+		  progname, current_walfile_name, stream->walmethod->getlasterror());
+	walfile = NULL;
 	return false;
 }
 
@@ -821,12 +784,12 @@ HandleCopyStream(PGconn *conn, StreamCtl *stream,
 		 * If synchronous option is true, issue sync command as soon as there
 		 * are WAL data which has not been flushed yet.
 		 */
-		if (stream->synchronous && lastFlushPosition < blockpos && walfile != -1)
+		if (stream->synchronous && lastFlushPosition < blockpos && walfile != NULL)
 		{
-			if (fsync(walfile) != 0)
+			if (stream->walmethod->sync(walfile) != 0)
 			{
 				fprintf(stderr, _("%s: could not fsync file \"%s\": %s\n"),
-						progname, current_walfile_name, strerror(errno));
+						progname, current_walfile_name, stream->walmethod->getlasterror());
 				goto error;
 			}
 			lastFlushPosition = blockpos;
@@ -877,7 +840,7 @@ HandleCopyStream(PGconn *conn, StreamCtl *stream,
 			/* Check the message type. */
 			if (copybuf[0] == 'k')
 			{
-				if (!ProcessKeepaliveMsg(conn, copybuf, r, blockpos,
+				if (!ProcessKeepaliveMsg(conn, stream, copybuf, r, blockpos,
 										 &last_status))
 					goto error;
 			}
@@ -1030,7 +993,7 @@ CopyStreamReceive(PGconn *conn, long timeout, char **buffer)
  * Process the keepalive message.
  */
 static bool
-ProcessKeepaliveMsg(PGconn *conn, char *copybuf, int len,
+ProcessKeepaliveMsg(PGconn *conn, StreamCtl *stream, char *copybuf, int len,
 					XLogRecPtr blockpos, int64 *last_status)
 {
 	int			pos;
@@ -1057,7 +1020,7 @@ ProcessKeepaliveMsg(PGconn *conn, char *copybuf, int len,
 	if (replyRequested && still_sending)
 	{
 		if (reportFlushPosition && lastFlushPosition < blockpos &&
-			walfile != -1)
+			walfile != NULL)
 		{
 			/*
 			 * If a valid flush location needs to be reported, flush the
@@ -1066,10 +1029,10 @@ ProcessKeepaliveMsg(PGconn *conn, char *copybuf, int len,
 			 * data has been successfully replicated or not, at the normal
 			 * shutdown of the server.
 			 */
-			if (fsync(walfile) != 0)
+			if (stream->walmethod->sync(walfile) != 0)
 			{
 				fprintf(stderr, _("%s: could not fsync file \"%s\": %s\n"),
-						progname, current_walfile_name, strerror(errno));
+						progname, current_walfile_name, stream->walmethod->getlasterror());
 				return false;
 			}
 			lastFlushPosition = blockpos;
@@ -1127,7 +1090,7 @@ ProcessXLogDataMsg(PGconn *conn, StreamCtl *stream, char *copybuf, int len,
 	 * Verify that the initial location in the stream matches where we think
 	 * we are.
 	 */
-	if (walfile == -1)
+	if (walfile == NULL)
 	{
 		/* No file open yet */
 		if (xlogoff != 0)
@@ -1141,12 +1104,11 @@ ProcessXLogDataMsg(PGconn *conn, StreamCtl *stream, char *copybuf, int len,
 	else
 	{
 		/* More data in existing segment */
-		/* XXX: store seek value don't reseek all the time */
-		if (lseek(walfile, 0, SEEK_CUR) != xlogoff)
+		if (stream->walmethod->get_current_pos(walfile) != xlogoff)
 		{
 			fprintf(stderr,
 					_("%s: got WAL data offset %08x, expected %08x\n"),
-					progname, xlogoff, (int) lseek(walfile, 0, SEEK_CUR));
+					progname, xlogoff, (int) stream->walmethod->get_current_pos(walfile));
 			return false;
 		}
 	}
@@ -1167,7 +1129,7 @@ ProcessXLogDataMsg(PGconn *conn, StreamCtl *stream, char *copybuf, int len,
 		else
 			bytes_to_write = bytes_left;
 
-		if (walfile == -1)
+		if (walfile == NULL)
 		{
 			if (!open_walfile(stream, *blockpos))
 			{
@@ -1176,14 +1138,13 @@ ProcessXLogDataMsg(PGconn *conn, StreamCtl *stream, char *copybuf, int len,
 			}
 		}
 
-		if (write(walfile,
-				  copybuf + hdr_len + bytes_written,
-				  bytes_to_write) != bytes_to_write)
+		if (stream->walmethod->write(walfile, copybuf + hdr_len + bytes_written,
+									 bytes_to_write) != bytes_to_write)
 		{
 			fprintf(stderr,
 				  _("%s: could not write %u bytes to WAL file \"%s\": %s\n"),
 					progname, bytes_to_write, current_walfile_name,
-					strerror(errno));
+					stream->walmethod->getlasterror());
 			return false;
 		}
 

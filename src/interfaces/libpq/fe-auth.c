@@ -3,7 +3,7 @@
  * fe-auth.c
  *	   The front-end (client) authorization routines
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -38,9 +38,9 @@
 #include <pwd.h>
 #endif
 
+#include "common/md5.h"
 #include "libpq-fe.h"
 #include "fe-auth.h"
-#include "libpq/md5.h"
 
 
 #ifdef ENABLE_GSS
@@ -170,8 +170,9 @@ pg_GSS_startup(PGconn *conn)
 				min_stat;
 	int			maxlen;
 	gss_buffer_desc temp_gbuf;
+	char	   *host = PQhost(conn);
 
-	if (!(conn->pghost && conn->pghost[0] != '\0'))
+	if (!(host && host[0] != '\0'))
 	{
 		printfPQExpBuffer(&conn->errorMessage,
 						  libpq_gettext("host name must be specified\n"));
@@ -198,7 +199,7 @@ pg_GSS_startup(PGconn *conn)
 		return STATUS_ERROR;
 	}
 	snprintf(temp_gbuf.value, maxlen, "%s@%s",
-			 conn->krbsrvname, conn->pghost);
+			 conn->krbsrvname, host);
 	temp_gbuf.length = strlen(temp_gbuf.value);
 
 	maj_stat = gss_import_name(&min_stat, &temp_gbuf,
@@ -371,6 +372,7 @@ pg_SSPI_startup(PGconn *conn, int use_negotiate)
 {
 	SECURITY_STATUS r;
 	TimeStamp	expire;
+	char	   *host = PQhost(conn);
 
 	conn->sspictx = NULL;
 
@@ -406,19 +408,19 @@ pg_SSPI_startup(PGconn *conn, int use_negotiate)
 	 * but not more complex. We can skip the @REALM part, because Windows will
 	 * fill that in for us automatically.
 	 */
-	if (!(conn->pghost && conn->pghost[0] != '\0'))
+	if (!(host && host[0] != '\0'))
 	{
 		printfPQExpBuffer(&conn->errorMessage,
 						  libpq_gettext("host name must be specified\n"));
 		return STATUS_ERROR;
 	}
-	conn->sspitarget = malloc(strlen(conn->krbsrvname) + strlen(conn->pghost) + 2);
+	conn->sspitarget = malloc(strlen(conn->krbsrvname) + strlen(host) + 2);
 	if (!conn->sspitarget)
 	{
 		printfPQExpBuffer(&conn->errorMessage, libpq_gettext("out of memory\n"));
 		return STATUS_ERROR;
 	}
-	sprintf(conn->sspitarget, "%s/%s", conn->krbsrvname, conn->pghost);
+	sprintf(conn->sspitarget, "%s/%s", conn->krbsrvname, host);
 
 	/*
 	 * Indicate that we're in SSPI authentication mode to make sure that
@@ -683,20 +685,27 @@ pg_fe_sendauth(AuthRequest areq, PGconn *conn)
 
 		case AUTH_REQ_MD5:
 		case AUTH_REQ_PASSWORD:
-			conn->password_needed = true;
-			if (conn->pgpass == NULL || conn->pgpass[0] == '\0')
 			{
-				printfPQExpBuffer(&conn->errorMessage,
-								  PQnoPasswordSupplied);
-				return STATUS_ERROR;
-			}
-			if (pg_password_sendauth(conn, conn->pgpass, areq) != STATUS_OK)
-			{
-				printfPQExpBuffer(&conn->errorMessage,
+				char	   *password;
+
+				conn->password_needed = true;
+				password = conn->connhost[conn->whichhost].password;
+				if (password == NULL)
+					password = conn->pgpass;
+				if (password == NULL || password[0] == '\0')
+				{
+					printfPQExpBuffer(&conn->errorMessage,
+									  PQnoPasswordSupplied);
+					return STATUS_ERROR;
+				}
+				if (pg_password_sendauth(conn, password, areq) != STATUS_OK)
+				{
+					printfPQExpBuffer(&conn->errorMessage,
 					 "fe_sendauth: error sending password authentication\n");
-				return STATUS_ERROR;
+					return STATUS_ERROR;
+				}
+				break;
 			}
-			break;
 
 		case AUTH_REQ_SCM_CREDS:
 			if (pg_local_sendauth(conn) != STATUS_OK)
@@ -794,7 +803,7 @@ pg_fe_getauthname(PQExpBuffer errorMessage)
  * be sent in cleartext if it is encrypted on the client side.  This is
  * good because it ensures the cleartext password won't end up in logs,
  * pg_stat displays, etc.  We export the function so that clients won't
- * be dependent on low-level details like whether the enceyption is MD5
+ * be dependent on low-level details like whether the encryption is MD5
  * or something else.
  *
  * Arguments are the cleartext password, and the SQL name of the user it

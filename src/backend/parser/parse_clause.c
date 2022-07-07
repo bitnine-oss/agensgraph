@@ -3,7 +3,7 @@
  * parse_clause.c
  *	  handle clauses in parser
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -87,8 +87,7 @@ static int get_matching_location(int sortgroupref,
 static List *resolve_unique_index_expr(ParseState *pstate, InferClause *infer,
 						  Relation heapRel);
 static List *addTargetToGroupList(ParseState *pstate, TargetEntry *tle,
-					 List *grouplist, List *targetlist, int location,
-					 bool resolveUnknown);
+					 List *grouplist, List *targetlist, int location);
 static WindowClause *findWindowClause(List *wclist, const char *name);
 static Node *transformFrameOffset(ParseState *pstate, int frameOptions,
 					 Node *clause);
@@ -224,30 +223,6 @@ setTargetTable(ParseState *pstate, RangeVar *relation,
 		addRTEtoQuery(pstate, rte, true, true, true);
 
 	return rtindex;
-}
-
-/*
- * Simplify InhOption (yes/no/default) into boolean yes/no.
- *
- * The reason we do things this way is that we don't want to examine the
- * SQL_inheritance option flag until parse_analyze() is run.    Otherwise,
- * we'd do the wrong thing with query strings that intermix SET commands
- * with queries.
- */
-bool
-interpretInhOption(InhOption inhOpt)
-{
-	switch (inhOpt)
-	{
-		case INH_NO:
-			return false;
-		case INH_YES:
-			return true;
-		case INH_DEFAULT:
-			return SQL_inheritance;
-	}
-	elog(ERROR, "bogus InhOption value: %d", inhOpt);
-	return false;				/* keep compiler quiet */
 }
 
 /*
@@ -434,8 +409,7 @@ transformTableEntry(ParseState *pstate, RangeVar *r)
 	RangeTblEntry *rte;
 
 	/* We need only build a range table entry */
-	rte = addRangeTableEntry(pstate, r, r->alias,
-							 interpretInhOption(r->inhOpt), true);
+	rte = addRangeTableEntry(pstate, r, r->alias, r->inh, true);
 
 	return rte;
 }
@@ -494,19 +468,19 @@ transformRangeSubselect(ParseState *pstate, RangeSubselect *r)
 	 * Analyze and transform the subquery.
 	 */
 	query = parse_sub_analyze(r->subquery, pstate, NULL,
-							  isLockedRefname(pstate, r->alias->aliasname));
+							  isLockedRefname(pstate, r->alias->aliasname),
+							  true);
 
 	/* Restore state */
 	pstate->p_lateral_active = false;
 	pstate->p_expr_kind = EXPR_KIND_NONE;
 
 	/*
-	 * Check that we got something reasonable.  Many of these conditions are
-	 * impossible given restrictions of the grammar, but check 'em anyway.
+	 * Check that we got a SELECT.  Anything else should be impossible given
+	 * restrictions of the grammar, but check anyway.
 	 */
 	if (!IsA(query, Query) ||
-		query->commandType != CMD_SELECT ||
-		query->utilityStmt != NULL)
+		query->commandType != CMD_SELECT)
 		elog(ERROR, "unexpected non-SELECT command in subquery in FROM");
 
 	/*
@@ -2034,8 +2008,7 @@ transformGroupClauseExpr(List **flatresult, Bitmapset *seen_local,
 	if (!found)
 		*flatresult = addTargetToGroupList(pstate, tle,
 										   *flatresult, *targetlist,
-										   exprLocation(gexpr),
-										   true);
+										   exprLocation(gexpr));
 
 	/*
 	 * _something_ must have assigned us a sortgroupref by now...
@@ -2323,7 +2296,6 @@ transformSortClause(ParseState *pstate,
 					List *orderlist,
 					List **targetlist,
 					ParseExprKind exprKind,
-					bool resolveUnknown,
 					bool useSQL99)
 {
 	List	   *sortlist = NIL;
@@ -2342,8 +2314,7 @@ transformSortClause(ParseState *pstate,
 										   targetlist, exprKind);
 
 		sortlist = addTargetToSortList(pstate, tle,
-									   sortlist, *targetlist, sortby,
-									   resolveUnknown);
+									   sortlist, *targetlist, sortby);
 	}
 
 	return sortlist;
@@ -2405,7 +2376,6 @@ transformWindowDefinitions(ParseState *pstate,
 										  windef->orderClause,
 										  targetlist,
 										  EXPR_KIND_WINDOW_ORDER,
-										  true /* fix unknowns */ ,
 										  true /* force SQL99 rules */ );
 		partitionClause = transformGroupClause(pstate,
 											   windef->partitionClause,
@@ -2576,8 +2546,7 @@ transformDistinctClause(ParseState *pstate,
 			continue;			/* ignore junk */
 		result = addTargetToGroupList(pstate, tle,
 									  result, *targetlist,
-									  exprLocation((Node *) tle->expr),
-									  true);
+									  exprLocation((Node *) tle->expr));
 	}
 
 	/*
@@ -2694,8 +2663,7 @@ transformDistinctOnClause(ParseState *pstate, List *distinctlist,
 					 parser_errposition(pstate, exprLocation(dexpr))));
 		result = addTargetToGroupList(pstate, tle,
 									  result, *targetlist,
-									  exprLocation(dexpr),
-									  true);
+									  exprLocation(dexpr));
 	}
 
 	/*
@@ -2929,17 +2897,11 @@ transformOnConflictArbiter(ParseState *pstate,
  *		list, add it to the end of the list, using the given sort ordering
  *		info.
  *
- * If resolveUnknown is TRUE, convert TLEs of type UNKNOWN to TEXT.  If not,
- * do nothing (which implies the search for a sort operator will fail).
- * pstate should be provided if resolveUnknown is TRUE, but can be NULL
- * otherwise.
- *
  * Returns the updated SortGroupClause list.
  */
 List *
 addTargetToSortList(ParseState *pstate, TargetEntry *tle,
-					List *sortlist, List *targetlist, SortBy *sortby,
-					bool resolveUnknown)
+					List *sortlist, List *targetlist, SortBy *sortby)
 {
 	Oid			restype = exprType((Node *) tle->expr);
 	Oid			sortop;
@@ -2950,7 +2912,7 @@ addTargetToSortList(ParseState *pstate, TargetEntry *tle,
 	ParseCallbackState pcbstate;
 
 	/* if tlist item is an UNKNOWN literal, change it to TEXT */
-	if (restype == UNKNOWNOID && resolveUnknown)
+	if (restype == UNKNOWNOID)
 	{
 		tle->expr = (Expr *) coerce_type(pstate, (Node *) tle->expr,
 										 restype, TEXTOID, -1,
@@ -3078,22 +3040,16 @@ addTargetToSortList(ParseState *pstate, TargetEntry *tle,
  * to a SELECT item that matches the GROUP BY item; it'd be pretty confusing
  * to report such a location.
  *
- * If resolveUnknown is TRUE, convert TLEs of type UNKNOWN to TEXT.  If not,
- * do nothing (which implies the search for an equality operator will fail).
- * pstate should be provided if resolveUnknown is TRUE, but can be NULL
- * otherwise.
- *
  * Returns the updated SortGroupClause list.
  */
 static List *
 addTargetToGroupList(ParseState *pstate, TargetEntry *tle,
-					 List *grouplist, List *targetlist, int location,
-					 bool resolveUnknown)
+					 List *grouplist, List *targetlist, int location)
 {
 	Oid			restype = exprType((Node *) tle->expr);
 
 	/* if tlist item is an UNKNOWN literal, change it to TEXT */
-	if (restype == UNKNOWNOID && resolveUnknown)
+	if (restype == UNKNOWNOID)
 	{
 		tle->expr = (Expr *) coerce_type(pstate, (Node *) tle->expr,
 										 restype, TEXTOID, -1,

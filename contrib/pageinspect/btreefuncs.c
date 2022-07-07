@@ -27,6 +27,8 @@
 
 #include "postgres.h"
 
+#include "pageinspect.h"
+
 #include "access/nbtree.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
@@ -34,6 +36,7 @@
 #include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
+#include "utils/varlena.h"
 
 
 PG_FUNCTION_INFO_V1(bt_metap);

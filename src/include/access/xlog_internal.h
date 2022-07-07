@@ -11,7 +11,7 @@
  * Note: This file must be includable in both frontend and backend contexts,
  * to allow stand-alone tools like pg_receivexlog to deal with WAL files.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/xlog_internal.h
@@ -31,7 +31,7 @@
 /*
  * Each page of XLOG file has a header like this:
  */
-#define XLOG_PAGE_MAGIC 0xD093	/* can be used as WAL version indicator */
+#define XLOG_PAGE_MAGIC 0xD094	/* can be used as WAL version indicator */
 
 typedef struct XLogPageHeaderData
 {
@@ -128,7 +128,7 @@ typedef XLogLongPageHeaderData *XLogLongPageHeader;
 /*
  * The XLog directory and control file (relative to $PGDATA)
  */
-#define XLOGDIR				"pg_xlog"
+#define XLOGDIR				"pg_wal"
 #define XLOG_CONTROL_FILE	"global/pg_control"
 
 /*
@@ -283,8 +283,8 @@ extern const RmgrData RmgrTable[];
 /*
  * Exported to support xlog switching from checkpointer
  */
-extern pg_time_t GetLastSegSwitchTime(void);
-extern XLogRecPtr RequestXLogSwitch(void);
+extern pg_time_t GetLastSegSwitchData(XLogRecPtr *lastSwitchLSN);
+extern XLogRecPtr RequestXLogSwitch(bool mark_uninmportant);
 
 extern void GetOldestRestartPoint(XLogRecPtr *oldrecptr, TimeLineID *oldtli);
 

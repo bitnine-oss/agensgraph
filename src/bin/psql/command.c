@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2016, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2017, PostgreSQL Global Development Group
  *
  * src/bin/psql/command.c
  */
@@ -248,31 +248,37 @@ exec_command(const char *cmd,
 				   *opt2,
 				   *opt3,
 				   *opt4;
-		enum trivalue reuse_previous;
+		enum trivalue reuse_previous = TRI_DEFAULT;
 
 		opt1 = read_connect_arg(scan_state);
 		if (opt1 != NULL && strncmp(opt1, prefix, sizeof(prefix) - 1) == 0)
 		{
-			reuse_previous =
-				ParseVariableBool(opt1 + sizeof(prefix) - 1, prefix) ?
-				TRI_YES : TRI_NO;
+			bool		on_off;
 
-			free(opt1);
-			opt1 = read_connect_arg(scan_state);
+			success = ParseVariableBool(opt1 + sizeof(prefix) - 1,
+										"-reuse-previous",
+										&on_off);
+			if (success)
+			{
+				reuse_previous = on_off ? TRI_YES : TRI_NO;
+				free(opt1);
+				opt1 = read_connect_arg(scan_state);
+			}
 		}
-		else
-			reuse_previous = TRI_DEFAULT;
 
-		opt2 = read_connect_arg(scan_state);
-		opt3 = read_connect_arg(scan_state);
-		opt4 = read_connect_arg(scan_state);
+		if (success)			/* give up if reuse_previous was invalid */
+		{
+			opt2 = read_connect_arg(scan_state);
+			opt3 = read_connect_arg(scan_state);
+			opt4 = read_connect_arg(scan_state);
 
-		success = do_connect(reuse_previous, opt1, opt2, opt3, opt4);
+			success = do_connect(reuse_previous, opt1, opt2, opt3, opt4);
 
+			free(opt2);
+			free(opt3);
+			free(opt4);
+		}
 		free(opt1);
-		free(opt2);
-		free(opt3);
-		free(opt4);
 	}
 
 	/* \cd */
@@ -501,6 +507,22 @@ exec_command(const char *cmd,
 				else
 					success = PSQL_CMD_UNKNOWN;
 				break;
+			case 'R':
+				switch (cmd[2])
+				{
+					case 'p':
+						if (show_verbose)
+							success = describePublications(pattern);
+						else
+							success = listPublications(pattern);
+						break;
+					case 's':
+						success = describeSubscriptions(pattern, show_verbose);
+						break;
+					default:
+						status = PSQL_CMD_UNKNOWN;
+				}
+				break;
 			case 'u':
 				success = describeRoles(pattern, show_verbose, show_system);
 				break;
@@ -656,8 +678,11 @@ exec_command(const char *cmd,
 
 		if (pset.sversion < 80400)
 		{
-			psql_error("The server (version %d.%d) does not support editing function source.\n",
-					   pset.sversion / 10000, (pset.sversion / 100) % 100);
+			char		sverbuf[32];
+
+			psql_error("The server (version %s) does not support editing function source.\n",
+					   formatPGVersionNumber(pset.sversion, false,
+											 sverbuf, sizeof(sverbuf)));
 			status = PSQL_CMD_ERROR;
 		}
 		else if (!query_buf)
@@ -752,8 +777,11 @@ exec_command(const char *cmd,
 
 		if (pset.sversion < 70400)
 		{
-			psql_error("The server (version %d.%d) does not support editing view definitions.\n",
-					   pset.sversion / 10000, (pset.sversion / 100) % 100);
+			char		sverbuf[32];
+
+			psql_error("The server (version %s) does not support editing view definitions.\n",
+					   formatPGVersionNumber(pset.sversion, false,
+											 sverbuf, sizeof(sverbuf)));
 			status = PSQL_CMD_ERROR;
 		}
 		else if (!query_buf)
@@ -1104,11 +1132,11 @@ exec_command(const char *cmd,
 	/* \password -- set user password */
 	else if (strcmp(cmd, "password") == 0)
 	{
-		char	   *pw1;
-		char	   *pw2;
+		char		pw1[100];
+		char		pw2[100];
 
-		pw1 = simple_prompt("Enter new password: ", 100, false);
-		pw2 = simple_prompt("Enter it again: ", 100, false);
+		simple_prompt("Enter new password: ", pw1, sizeof(pw1), false);
+		simple_prompt("Enter it again: ", pw2, sizeof(pw2), false);
 
 		if (strcmp(pw1, pw2) != 0)
 		{
@@ -1154,9 +1182,6 @@ exec_command(const char *cmd,
 			if (opt0)
 				free(opt0);
 		}
-
-		free(pw1);
-		free(pw2);
 	}
 
 	/* \prompt -- prompt and set variable */
@@ -1188,7 +1213,10 @@ exec_command(const char *cmd,
 				opt = arg1;
 
 			if (!pset.inputfile)
-				result = simple_prompt(prompt_text, 4096, true);
+			{
+				result = (char *) pg_malloc(4096);
+				simple_prompt(prompt_text, result, 4096, true);
+			}
 			else
 			{
 				if (prompt_text)
@@ -1197,15 +1225,20 @@ exec_command(const char *cmd,
 					fflush(stdout);
 				}
 				result = gets_fromFile(stdin);
+				if (!result)
+				{
+					psql_error("\\%s: could not read value for variable\n",
+							   cmd);
+					success = false;
+				}
 			}
 
-			if (!SetVariable(pset.vars, opt, result))
-			{
-				psql_error("\\%s: error while setting variable\n", cmd);
+			if (result &&
+				!SetVariable(pset.vars, opt, result))
 				success = false;
-			}
 
-			free(result);
+			if (result)
+				free(result);
 			if (prompt_text)
 				free(prompt_text);
 			free(opt);
@@ -1316,10 +1349,8 @@ exec_command(const char *cmd,
 			}
 
 			if (!SetVariable(pset.vars, opt0, newval))
-			{
-				psql_error("\\%s: error while setting variable\n", cmd);
 				success = false;
-			}
+
 			free(newval);
 		}
 		free(opt0);
@@ -1383,8 +1414,11 @@ exec_command(const char *cmd,
 									  OT_WHOLE_LINE, NULL, true);
 		if (pset.sversion < 80400)
 		{
-			psql_error("The server (version %d.%d) does not support showing function source.\n",
-					   pset.sversion / 10000, (pset.sversion / 100) % 100);
+			char		sverbuf[32];
+
+			psql_error("The server (version %s) does not support showing function source.\n",
+					   formatPGVersionNumber(pset.sversion, false,
+											 sverbuf, sizeof(sverbuf)));
 			status = PSQL_CMD_ERROR;
 		}
 		else if (!func)
@@ -1462,8 +1496,11 @@ exec_command(const char *cmd,
 									  OT_WHOLE_LINE, NULL, true);
 		if (pset.sversion < 70400)
 		{
-			psql_error("The server (version %d.%d) does not support showing view definitions.\n",
-					   pset.sversion / 10000, (pset.sversion / 100) % 100);
+			char		sverbuf[32];
+
+			psql_error("The server (version %s) does not support showing view definitions.\n",
+					   formatPGVersionNumber(pset.sversion, false,
+											 sverbuf, sizeof(sverbuf)));
 			status = PSQL_CMD_ERROR;
 		}
 		else if (!view)
@@ -1549,7 +1586,7 @@ exec_command(const char *cmd,
 												 OT_NORMAL, NULL, false);
 
 		if (opt)
-			pset.timing = ParseVariableBool(opt, "\\timing");
+			success = ParseVariableBool(opt, "\\timing", &pset.timing);
 		else
 			pset.timing = !pset.timing;
 		if (!pset.quiet)
@@ -1574,10 +1611,8 @@ exec_command(const char *cmd,
 			success = false;
 		}
 		else if (!SetVariable(pset.vars, opt, NULL))
-		{
-			psql_error("\\%s: error while setting variable\n", cmd);
 			success = false;
-		}
+
 		free(opt);
 	}
 
@@ -1756,20 +1791,19 @@ exec_command(const char *cmd,
 static char *
 prompt_for_password(const char *username)
 {
-	char	   *result;
+	char		buf[100];
 
 	if (username == NULL)
-		result = simple_prompt("Password: ", 100, false);
+		simple_prompt("Password: ", buf, sizeof(buf), false);
 	else
 	{
 		char	   *prompt_text;
 
 		prompt_text = psprintf(_("Password for user %s: "), username);
-		result = simple_prompt(prompt_text, 100, false);
+		simple_prompt(prompt_text, buf, sizeof(buf), false);
 		free(prompt_text);
 	}
-
-	return result;
+	return pg_strdup(buf);
 }
 
 static bool
@@ -2035,22 +2069,21 @@ connection_warnings(bool in_startup)
 	if (!pset.quiet && !pset.notty)
 	{
 		int			client_ver = PG_VERSION_NUM;
+		char		cverbuf[32];
+		char		sverbuf[32];
 
 		if (pset.sversion != client_ver)
 		{
 			const char *server_version;
-			char		server_ver_str[16];
 
 			/* Try to get full text form, might include "devel" etc */
 			server_version = PQparameterStatus(pset.db, "server_version");
+			/* Otherwise fall back on pset.sversion */
 			if (!server_version)
 			{
-				snprintf(server_ver_str, sizeof(server_ver_str),
-						 "%d.%d.%d",
-						 pset.sversion / 10000,
-						 (pset.sversion / 100) % 100,
-						 pset.sversion % 100);
-				server_version = server_ver_str;
+				formatPGVersionNumber(pset.sversion, true,
+									  sverbuf, sizeof(sverbuf));
+				server_version = sverbuf;
 			}
 
 			printf(_("%s (%s, server %s)\n"),
@@ -2061,10 +2094,13 @@ connection_warnings(bool in_startup)
 			printf("%s (%s)\n", pset.progname, PG_VERSION);
 
 		if (pset.sversion / 100 > client_ver / 100)
-			printf(_("WARNING: %s major version %d.%d, server major version %d.%d.\n"
+			printf(_("WARNING: %s major version %s, server major version %s.\n"
 					 "         Some psql features might not work.\n"),
-				 pset.progname, client_ver / 10000, (client_ver / 100) % 100,
-				   pset.sversion / 10000, (pset.sversion / 100) % 100);
+				   pset.progname,
+				   formatPGVersionNumber(client_ver, false,
+										 cverbuf, sizeof(cverbuf)),
+				   formatPGVersionNumber(pset.sversion, false,
+										 sverbuf, sizeof(sverbuf)));
 
 #ifdef WIN32
 		checkWin32Codepage();
@@ -2577,7 +2613,6 @@ do_pset(const char *param, const char *value, printQueryOpt *popt, bool quiet)
 			psql_error("\\pset: allowed formats are unaligned, aligned, wrapped, html, asciidoc, latex, latex-longtable, troff-ms\n");
 			return false;
 		}
-
 	}
 
 	/* set table line style */
@@ -2596,7 +2631,6 @@ do_pset(const char *param, const char *value, printQueryOpt *popt, bool quiet)
 			psql_error("\\pset: allowed line styles are ascii, old-ascii, unicode\n");
 			return false;
 		}
-
 	}
 
 	/* set unicode border line style */
@@ -2649,7 +2683,6 @@ do_pset(const char *param, const char *value, printQueryOpt *popt, bool quiet)
 	{
 		if (value)
 			popt->topt.border = atoi(value);
-
 	}
 
 	/* set expanded/vertical mode */
@@ -2660,7 +2693,17 @@ do_pset(const char *param, const char *value, printQueryOpt *popt, bool quiet)
 		if (value && pg_strcasecmp(value, "auto") == 0)
 			popt->topt.expanded = 2;
 		else if (value)
-			popt->topt.expanded = ParseVariableBool(value, param);
+		{
+			bool		on_off;
+
+			if (ParseVariableBool(value, NULL, &on_off))
+				popt->topt.expanded = on_off ? 1 : 0;
+			else
+			{
+				PsqlVarEnumError(param, value, "on, off, auto");
+				return false;
+			}
+		}
 		else
 			popt->topt.expanded = !popt->topt.expanded;
 	}
@@ -2669,7 +2712,7 @@ do_pset(const char *param, const char *value, printQueryOpt *popt, bool quiet)
 	else if (strcmp(param, "numericlocale") == 0)
 	{
 		if (value)
-			popt->topt.numericLocale = ParseVariableBool(value, param);
+			return ParseVariableBool(value, param, &popt->topt.numericLocale);
 		else
 			popt->topt.numericLocale = !popt->topt.numericLocale;
 	}
@@ -2724,7 +2767,7 @@ do_pset(const char *param, const char *value, printQueryOpt *popt, bool quiet)
 	else if (strcmp(param, "t") == 0 || strcmp(param, "tuples_only") == 0)
 	{
 		if (value)
-			popt->topt.tuples_only = ParseVariableBool(value, param);
+			return ParseVariableBool(value, param, &popt->topt.tuples_only);
 		else
 			popt->topt.tuples_only = !popt->topt.tuples_only;
 	}
@@ -2756,10 +2799,14 @@ do_pset(const char *param, const char *value, printQueryOpt *popt, bool quiet)
 			popt->topt.pager = 2;
 		else if (value)
 		{
-			if (ParseVariableBool(value, param))
-				popt->topt.pager = 1;
-			else
-				popt->topt.pager = 0;
+			bool		on_off;
+
+			if (!ParseVariableBool(value, NULL, &on_off))
+			{
+				PsqlVarEnumError(param, value, "on, off, always");
+				return false;
+			}
+			popt->topt.pager = on_off ? 1 : 0;
 		}
 		else if (popt->topt.pager == 1)
 			popt->topt.pager = 0;
@@ -2778,7 +2825,7 @@ do_pset(const char *param, const char *value, printQueryOpt *popt, bool quiet)
 	else if (strcmp(param, "footer") == 0)
 	{
 		if (value)
-			popt->topt.default_footer = ParseVariableBool(value, param);
+			return ParseVariableBool(value, param, &popt->topt.default_footer);
 		else
 			popt->topt.default_footer = !popt->topt.default_footer;
 	}

@@ -3,7 +3,7 @@
  * slru.h
  *		Simple LRU buffering for transaction status logfiles
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/slru.h
@@ -104,7 +104,6 @@ typedef struct SlruSharedData
 
 	/* LWLocks */
 	int			lwlock_tranche_id;
-	LWLockTranche lwlock_tranche;
 	char		lwlock_tranche_name[SLRU_MAX_NAME_LENGTH];
 	LWLockPadded *buffer_locks;
 } SlruSharedData;

@@ -11,7 +11,7 @@
  * subplans, which are re-evaluated every time their result is required.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -41,12 +41,10 @@
 
 static Datum ExecSubPlan(SubPlanState *node,
 			ExprContext *econtext,
-			bool *isNull,
-			ExprDoneCond *isDone);
+			bool *isNull);
 static Datum ExecAlternativeSubPlan(AlternativeSubPlanState *node,
 					   ExprContext *econtext,
-					   bool *isNull,
-					   ExprDoneCond *isDone);
+					   bool *isNull);
 static Datum ExecHashSubPlan(SubPlanState *node,
 				ExprContext *econtext,
 				bool *isNull);
@@ -69,15 +67,12 @@ static bool slotNoNulls(TupleTableSlot *slot);
 static Datum
 ExecSubPlan(SubPlanState *node,
 			ExprContext *econtext,
-			bool *isNull,
-			ExprDoneCond *isDone)
+			bool *isNull)
 {
 	SubPlan    *subplan = (SubPlan *) node->xprstate.expr;
 
-	/* Set default values for result flags: non-null, not a set result */
+	/* Set non-null as default */
 	*isNull = false;
-	if (isDone)
-		*isDone = ExprSingleResult;
 
 	/* Sanity checks */
 	if (subplan->subLinkType == CTE_SUBLINK)
@@ -128,7 +123,7 @@ ExecHashSubPlan(SubPlanState *node,
 	 * have to set the econtext to use (hack alert!).
 	 */
 	node->projLeft->pi_exprContext = econtext;
-	slot = ExecProject(node->projLeft, NULL);
+	slot = ExecProject(node->projLeft);
 
 	/*
 	 * Note: because we are typically called in a per-tuple context, we have
@@ -285,8 +280,7 @@ ExecScanSubPlan(SubPlanState *node,
 
 		prm->value = ExecEvalExprSwitchContext((ExprState *) lfirst(pvar),
 											   econtext,
-											   &(prm->isnull),
-											   NULL);
+											   &(prm->isnull));
 		planstate->chgParam = bms_add_member(planstate->chgParam, paramid);
 	}
 
@@ -403,7 +397,7 @@ ExecScanSubPlan(SubPlanState *node,
 		}
 
 		rowresult = ExecEvalExprSwitchContext(node->testexpr, econtext,
-											  &rownull, NULL);
+											  &rownull);
 
 		if (subLinkType == ANY_SUBLINK)
 		{
@@ -508,9 +502,10 @@ buildSubPlanHash(SubPlanState *node, ExprContext *econtext)
 										  node->tab_eq_funcs,
 										  node->tab_hash_funcs,
 										  nbuckets,
-										  sizeof(TupleHashEntryData),
+										  0,
 										  node->hashtablecxt,
-										  node->hashtempcxt);
+										  node->hashtempcxt,
+										  false);
 
 	if (!subplan->unknownEqFalse)
 	{
@@ -527,9 +522,10 @@ buildSubPlanHash(SubPlanState *node, ExprContext *econtext)
 											  node->tab_eq_funcs,
 											  node->tab_hash_funcs,
 											  nbuckets,
-											  sizeof(TupleHashEntryData),
+											  0,
 											  node->hashtablecxt,
-											  node->hashtempcxt);
+											  node->hashtempcxt,
+											  false);
 	}
 
 	/*
@@ -570,7 +566,7 @@ buildSubPlanHash(SubPlanState *node, ExprContext *econtext)
 										  &(prmdata->isnull));
 			col++;
 		}
-		slot = ExecProject(node->projRight, NULL);
+		slot = ExecProject(node->projRight);
 
 		/*
 		 * If result contains any nulls, store separately or not at all.
@@ -626,7 +622,7 @@ findPartialMatch(TupleHashTable hashtable, TupleTableSlot *slot,
 	TupleHashEntry entry;
 
 	InitTupleHashIterator(hashtable, &hashiter);
-	while ((entry = ScanTupleHashTable(&hashiter)) != NULL)
+	while ((entry = ScanTupleHashTable(hashtable, &hashiter)) != NULL)
 	{
 		ExecStoreMinimalTuple(entry->firstTuple, hashtable->tableslot, false);
 		if (!execTuplesUnequal(slot, hashtable->tableslot,
@@ -776,16 +772,12 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 		sstate->hashtablecxt =
 			AllocSetContextCreate(CurrentMemoryContext,
 								  "Subplan HashTable Context",
-								  ALLOCSET_DEFAULT_MINSIZE,
-								  ALLOCSET_DEFAULT_INITSIZE,
-								  ALLOCSET_DEFAULT_MAXSIZE);
+								  ALLOCSET_DEFAULT_SIZES);
 		/* and a small one for the hash tables to use as temp storage */
 		sstate->hashtempcxt =
 			AllocSetContextCreate(CurrentMemoryContext,
 								  "Subplan HashTable Temp Context",
-								  ALLOCSET_SMALL_MINSIZE,
-								  ALLOCSET_SMALL_INITSIZE,
-								  ALLOCSET_SMALL_MAXSIZE);
+								  ALLOCSET_SMALL_SIZES);
 		/* and a short-lived exprcontext for function evaluation */
 		sstate->innerecontext = CreateExprContext(estate);
 		/* Silly little array of column numbers 1..n */
@@ -816,8 +808,7 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 		else if (and_clause((Node *) sstate->testexpr->expr))
 		{
 			/* multiple combining operators */
-			Assert(IsA(sstate->testexpr, BoolExprState));
-			oplist = ((BoolExprState *) sstate->testexpr)->args;
+			oplist = castNode(BoolExprState, sstate->testexpr)->args;
 		}
 		else
 		{
@@ -837,8 +828,8 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 		i = 1;
 		foreach(l, oplist)
 		{
-			FuncExprState *fstate = (FuncExprState *) lfirst(l);
-			OpExpr	   *opexpr = (OpExpr *) fstate->xprstate.expr;
+			FuncExprState *fstate = castNode(FuncExprState, lfirst(l));
+			OpExpr	   *opexpr = castNode(OpExpr, fstate->xprstate.expr);
 			ExprState  *exstate;
 			Expr	   *expr;
 			TargetEntry *tle;
@@ -847,8 +838,6 @@ ExecInitSubPlan(SubPlan *subplan, PlanState *parent)
 			Oid			left_hashfn;
 			Oid			right_hashfn;
 
-			Assert(IsA(fstate, FuncExprState));
-			Assert(IsA(opexpr, OpExpr));
 			Assert(list_length(fstate->args) == 2);
 
 			/* Process lefthand argument */
@@ -987,8 +976,7 @@ ExecSetParamPlan(SubPlanState *node, ExprContext *econtext)
 
 		prm->value = ExecEvalExprSwitchContext((ExprState *) lfirst(pvar),
 											   econtext,
-											   &(prm->isnull),
-											   NULL);
+											   &(prm->isnull));
 		planstate->chgParam = bms_add_member(planstate->chgParam, paramid);
 	}
 
@@ -1224,17 +1212,11 @@ ExecInitAlternativeSubPlan(AlternativeSubPlan *asplan, PlanState *parent)
 static Datum
 ExecAlternativeSubPlan(AlternativeSubPlanState *node,
 					   ExprContext *econtext,
-					   bool *isNull,
-					   ExprDoneCond *isDone)
+					   bool *isNull)
 {
 	/* Just pass control to the active subplan */
-	SubPlanState *activesp = (SubPlanState *) list_nth(node->subplans,
-													   node->active);
+	SubPlanState *activesp = castNode(SubPlanState,
+									  list_nth(node->subplans, node->active));
 
-	Assert(IsA(activesp, SubPlanState));
-
-	return ExecSubPlan(activesp,
-					   econtext,
-					   isNull,
-					   isDone);
+	return ExecSubPlan(activesp, econtext, isNull);
 }

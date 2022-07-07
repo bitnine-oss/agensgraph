@@ -4,7 +4,7 @@
  *	  Routines to attempt to prove logical implications between predicate
  *	  expressions.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1596,7 +1596,7 @@ operator_predicate_proof(Expr *predicate, Node *clause, bool refute_it)
 	/* And execute it. */
 	test_result = ExecEvalExprSwitchContext(test_exprstate,
 											GetPerTupleExprContext(estate),
-											&isNull, NULL);
+											&isNull);
 
 	/* Get back to outer memory context */
 	MemoryContextSwitchTo(oldcontext);

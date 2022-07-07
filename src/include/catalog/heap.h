@@ -4,7 +4,7 @@
  *	  prototypes for functions in backend/catalog/heap.c
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/heap.h
@@ -133,5 +133,16 @@ extern void CheckAttributeType(const char *attname,
 				   Oid atttypid, Oid attcollation,
 				   List *containing_rowtypes,
 				   bool allow_system_table_mods);
+
+/* pg_partitioned_table catalog manipulation functions */
+extern void StorePartitionKey(Relation rel,
+				  char strategy,
+				  int16 partnatts,
+				  AttrNumber *partattrs,
+				  List *partexprs,
+				  Oid *partopclass,
+				  Oid *partcollation);
+extern void RemovePartitionKeyByRelId(Oid relid);
+extern void StorePartitionBound(Relation rel, Relation parent, Node *bound);
 
 #endif   /* HEAP_H */

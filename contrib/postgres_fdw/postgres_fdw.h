@@ -3,7 +3,7 @@
  * postgres_fdw.h
  *		  Foreign-data wrapper for remote PostgreSQL servers
  *
- * Portions Copyright (c) 2012-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2017, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/postgres_fdw.h
@@ -92,6 +92,9 @@ typedef struct PgFdwRelationInfo
 	RelOptInfo *innerrel;
 	JoinType	jointype;
 	List	   *joinclauses;
+
+	/* Grouping information */
+	List	   *grouped_tlist;
 } PgFdwRelationInfo;
 
 /* in postgres_fdw.c */
@@ -155,7 +158,7 @@ extern void deparseAnalyzeSql(StringInfo buf, Relation rel,
 				  List **retrieved_attrs);
 extern void deparseStringLiteral(StringInfo buf, const char *val);
 extern Expr *find_em_expr_for_rel(EquivalenceClass *ec, RelOptInfo *rel);
-extern List *build_tlist_to_deparse(RelOptInfo *foreign_rel);
+extern List *build_tlist_to_deparse(RelOptInfo *foreignrel);
 extern void deparseSelectStmtForRel(StringInfo buf, PlannerInfo *root,
 						RelOptInfo *foreignrel, List *tlist,
 						List *remote_conds, List *pathkeys,

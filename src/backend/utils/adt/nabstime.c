@@ -5,7 +5,7 @@
  *	  Functions for the built-in type "RelativeTime".
  *	  Functions for the built-in type "TimeInterval".
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1547,8 +1547,8 @@ parsetinterval(char *i_string,
 bogus:
 	ereport(ERROR,
 			(errcode(ERRCODE_INVALID_DATETIME_FORMAT),
-			 errmsg("invalid input syntax for type tinterval: \"%s\"",
-					i_string)));
+			 errmsg("invalid input syntax for type %s: \"%s\"",
+					"tinterval", i_string)));
 	*i_start = *i_end = INVALID_ABSTIME;		/* keep compiler quiet */
 }
 

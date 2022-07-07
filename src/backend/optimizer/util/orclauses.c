@@ -3,7 +3,7 @@
  * orclauses.c
  *	  Routines to extract restriction OR clauses from join OR clauses
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -270,6 +270,7 @@ consider_new_or_clause(PlannerInfo *root, RelOptInfo *rel,
 								 true,
 								 false,
 								 false,
+								 join_or_rinfo->security_level,
 								 NULL,
 								 NULL,
 								 NULL);
@@ -296,6 +297,8 @@ consider_new_or_clause(PlannerInfo *root, RelOptInfo *rel,
 	 * OK, add it to the rel's restriction-clause list.
 	 */
 	rel->baserestrictinfo = lappend(rel->baserestrictinfo, or_rinfo);
+	rel->baserestrict_min_security = Min(rel->baserestrict_min_security,
+										 or_rinfo->security_level);
 
 	/*
 	 * Adjust the original join OR clause's cached selectivity to compensate

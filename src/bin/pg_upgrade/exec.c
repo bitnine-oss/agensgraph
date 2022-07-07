@@ -3,7 +3,7 @@
  *
  *	execution functions
  *
- *	Copyright (c) 2010-2016, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2017, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/exec.c
  */
 
@@ -14,7 +14,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 
-static void check_data_dir(const char *pg_data);
+static void check_data_dir(ClusterInfo *cluster);
 static void check_bin_dir(ClusterInfo *cluster);
 static void validate_exec(const char *dir, const char *cmdName);
 
@@ -191,7 +191,7 @@ pid_lock_file_exists(const char *datadir)
 		/* ENOTDIR means we will throw a more useful error later */
 		if (errno != ENOENT && errno != ENOTDIR)
 			pg_fatal("could not open file \"%s\" for reading: %s\n",
-					 path, getErrorText());
+					 path, strerror(errno));
 
 		return false;
 	}
@@ -220,9 +220,9 @@ verify_directories(void)
 		pg_fatal("You must have read and write access in the current directory.\n");
 
 	check_bin_dir(&old_cluster);
-	check_data_dir(old_cluster.pgdata);
+	check_data_dir(&old_cluster);
 	check_bin_dir(&new_cluster);
-	check_data_dir(new_cluster.pgdata);
+	check_data_dir(&new_cluster);
 }
 
 
@@ -253,6 +253,32 @@ win32_check_directory_write_permissions(void)
 
 
 /*
+ * check_single_dir()
+ *
+ *  Check for the presence of a single directory in PGDATA, and fail if
+ * is it missing or not accessible.
+ */
+static void
+check_single_dir(const char *pg_data, const char *subdir)
+{
+	struct stat statBuf;
+	char		subDirName[MAXPGPATH];
+
+	snprintf(subDirName, sizeof(subDirName), "%s%s%s", pg_data,
+			 /* Win32 can't stat() a directory with a trailing slash. */
+			 *subdir ? "/" : "",
+			 subdir);
+
+	if (stat(subDirName, &statBuf) != 0)
+		report_status(PG_FATAL, "check for \"%s\" failed: %s\n",
+					  subDirName, strerror(errno));
+	else if (!S_ISDIR(statBuf.st_mode))
+		report_status(PG_FATAL, "%s is not a directory\n",
+					  subDirName);
+}
+
+
+/*
  * check_data_dir()
  *
  *	This function validates the given cluster directory - we search for a
@@ -262,34 +288,27 @@ win32_check_directory_write_permissions(void)
  *
  */
 static void
-check_data_dir(const char *pg_data)
+check_data_dir(ClusterInfo *cluster)
 {
-	char		subDirName[MAXPGPATH];
-	int			subdirnum;
+	const char *pg_data = cluster->pgdata;
 
-	/* start check with top-most directory */
-	const char *requiredSubdirs[] = {"", "base", "global", "pg_clog",
-		"pg_multixact", "pg_subtrans", "pg_tblspc", "pg_twophase",
-	"pg_xlog"};
+	/* get old and new cluster versions */
+	old_cluster.major_version = get_major_server_version(&old_cluster);
+	new_cluster.major_version = get_major_server_version(&new_cluster);
 
-	for (subdirnum = 0;
-		 subdirnum < sizeof(requiredSubdirs) / sizeof(requiredSubdirs[0]);
-		 ++subdirnum)
-	{
-		struct stat statBuf;
+	check_single_dir(pg_data, "");
+	check_single_dir(pg_data, "base");
+	check_single_dir(pg_data, "global");
+	check_single_dir(pg_data, "pg_multixact");
+	check_single_dir(pg_data, "pg_subtrans");
+	check_single_dir(pg_data, "pg_tblspc");
+	check_single_dir(pg_data, "pg_twophase");
 
-		snprintf(subDirName, sizeof(subDirName), "%s%s%s", pg_data,
-		/* Win32 can't stat() a directory with a trailing slash. */
-				 *requiredSubdirs[subdirnum] ? "/" : "",
-				 requiredSubdirs[subdirnum]);
-
-		if (stat(subDirName, &statBuf) != 0)
-			report_status(PG_FATAL, "check for \"%s\" failed: %s\n",
-						  subDirName, getErrorText());
-		else if (!S_ISDIR(statBuf.st_mode))
-			report_status(PG_FATAL, "%s is not a directory\n",
-						  subDirName);
-	}
+	/* pg_xlog has been renamed to pg_wal in post-10 cluster */
+	if (GET_MAJOR_VERSION(cluster->major_version) < 1000)
+		check_single_dir(pg_data, "pg_xlog");
+	else
+		check_single_dir(pg_data, "pg_wal");
 }
 
 
@@ -309,7 +328,7 @@ check_bin_dir(ClusterInfo *cluster)
 	/* check bindir */
 	if (stat(cluster->bindir, &statBuf) != 0)
 		report_status(PG_FATAL, "check for \"%s\" failed: %s\n",
-					  cluster->bindir, getErrorText());
+					  cluster->bindir, strerror(errno));
 	else if (!S_ISDIR(statBuf.st_mode))
 		report_status(PG_FATAL, "%s is not a directory\n",
 					  cluster->bindir);
@@ -352,7 +371,7 @@ validate_exec(const char *dir, const char *cmdName)
 	 */
 	if (stat(path, &buf) < 0)
 		pg_fatal("check for \"%s\" failed: %s\n",
-				 path, getErrorText());
+				 path, strerror(errno));
 	else if (!S_ISREG(buf.st_mode))
 		pg_fatal("check for \"%s\" failed: not an executable file\n",
 				 path);

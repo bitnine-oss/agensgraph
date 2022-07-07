@@ -3,7 +3,7 @@
  * miscinit.c
  *	  miscellaneous initialization support stuff
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -48,6 +48,7 @@
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
+#include "utils/varlena.h"
 
 
 #define DIRECTORY_LOCK_FILE		"postmaster.pid"
@@ -1334,16 +1335,13 @@ ValidatePgVersion(const char *path)
 	char		full_path[MAXPGPATH];
 	FILE	   *file;
 	int			ret;
-	long		file_major,
-				file_minor;
-	long		my_major = 0,
-				my_minor = 0;
+	long		file_major;
+	long		my_major;
 	char	   *endptr;
-	const char *version_string = PG_VERSION;
+	char		file_version_string[64];
+	const char *my_version_string = PG_VERSION;
 
-	my_major = strtol(version_string, &endptr, 10);
-	if (*endptr == '.')
-		my_minor = strtol(endptr + 1, NULL, 10);
+	my_major = strtol(my_version_string, &endptr, 10);
 
 	snprintf(full_path, sizeof(full_path), "%s/PG_VERSION", path);
 
@@ -1362,8 +1360,11 @@ ValidatePgVersion(const char *path)
 					 errmsg("could not open file \"%s\": %m", full_path)));
 	}
 
-	ret = fscanf(file, "%ld.%ld", &file_major, &file_minor);
-	if (ret != 2)
+	file_version_string[0] = '\0';
+	ret = fscanf(file, "%63s", file_version_string);
+	file_major = strtol(file_version_string, &endptr, 10);
+
+	if (ret != 1 || endptr == file_version_string)
 		ereport(FATAL,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("\"%s\" is not a valid data directory",
@@ -1374,13 +1375,13 @@ ValidatePgVersion(const char *path)
 
 	FreeFile(file);
 
-	if (my_major != file_major || my_minor != file_minor)
+	if (my_major != file_major)
 		ereport(FATAL,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 				 errmsg("database files are incompatible with server"),
-				 errdetail("The data directory was initialized by PostgreSQL version %ld.%ld, "
+				 errdetail("The data directory was initialized by PostgreSQL version %s, "
 						   "which is not compatible with this version %s.",
-						   file_major, file_minor, version_string)));
+						   file_version_string, my_version_string)));
 }
 
 /*-------------------------------------------------------------------------

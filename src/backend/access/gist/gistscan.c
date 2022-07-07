@@ -4,7 +4,7 @@
  *	  routines to manage scans on GiST index relations
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -125,7 +125,7 @@ gistrescan(IndexScanDesc scan, ScanKey key, int nkeys,
 	 * which is created on the second call and reset on later calls.  Thus, in
 	 * the common case where a scan is only rescan'd once, we just put the
 	 * queue in scanCxt and don't pay the overhead of making a second memory
-	 * context.  If we do rescan more than once, the first RBTree is just left
+	 * context.  If we do rescan more than once, the first queue is just left
 	 * for dead until end of scan; this small wastage seems worth the savings
 	 * in the common case.
 	 */
@@ -140,9 +140,7 @@ gistrescan(IndexScanDesc scan, ScanKey key, int nkeys,
 		/* second time through */
 		so->queueCxt = AllocSetContextCreate(so->giststate->scanCxt,
 											 "GiST queue context",
-											 ALLOCSET_DEFAULT_MINSIZE,
-											 ALLOCSET_DEFAULT_INITSIZE,
-											 ALLOCSET_DEFAULT_MAXSIZE);
+											 ALLOCSET_DEFAULT_SIZES);
 		first_time = false;
 	}
 	else
@@ -180,12 +178,10 @@ gistrescan(IndexScanDesc scan, ScanKey key, int nkeys,
 
 		so->pageDataCxt = AllocSetContextCreate(so->giststate->scanCxt,
 												"GiST page data context",
-												ALLOCSET_DEFAULT_MINSIZE,
-												ALLOCSET_DEFAULT_INITSIZE,
-												ALLOCSET_DEFAULT_MAXSIZE);
+												ALLOCSET_DEFAULT_SIZES);
 	}
 
-	/* create new, empty RBTree for search queue */
+	/* create new, empty pairing heap for search queue */
 	oldCxt = MemoryContextSwitchTo(so->queueCxt);
 	so->queue = pairingheap_allocate(pairingheap_GISTSearchItem_cmp, scan);
 	MemoryContextSwitchTo(oldCxt);

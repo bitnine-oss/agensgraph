@@ -4,7 +4,7 @@
  *	 prototypes for functions in catalog/pg_collation.c
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_collation_fn.h
@@ -17,7 +17,8 @@
 extern Oid CollationCreate(const char *collname, Oid collnamespace,
 				Oid collowner,
 				int32 collencoding,
-				const char *collcollate, const char *collctype);
+				const char *collcollate, const char *collctype,
+				bool if_not_exists);
 extern void RemoveCollationById(Oid collationOid);
 
 #endif   /* PG_COLLATION_FN_H */

@@ -3,7 +3,7 @@
  * dfmgr.c
  *	  Dynamic function manager code.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -65,7 +65,7 @@ char	   *Dynamic_library_path;
 
 static void *internal_load_library(const char *libname);
 static void incompatible_module_error(const char *libname,
-						  const Pg_magic_struct *module_magic_data);
+									  const Pg_magic_struct *module_magic_data) pg_attribute_noreturn();
 static void internal_unload_library(const char *libname);
 static bool file_exists(const char *name);
 static char *expand_dynamic_library_name(const char *name);
@@ -300,14 +300,22 @@ incompatible_module_error(const char *libname,
 	 * block might not even have the fields we expect.
 	 */
 	if (magic_data.version != module_magic_data->version)
+	{
+		char		library_version[32];
+
+		if (module_magic_data->version >= 1000)
+			snprintf(library_version, sizeof(library_version), "%d",
+					 module_magic_data->version / 100);
+		else
+			snprintf(library_version, sizeof(library_version), "%d.%d",
+					 module_magic_data->version / 100,
+					 module_magic_data->version % 100);
 		ereport(ERROR,
 				(errmsg("incompatible library \"%s\": version mismatch",
 						libname),
-			  errdetail("Server is version %d.%d, library is version %d.%d.",
-						magic_data.version / 100,
-						magic_data.version % 100,
-						module_magic_data->version / 100,
-						module_magic_data->version % 100)));
+				 errdetail("Server is version %d, library is version %s.",
+						   magic_data.version / 100, library_version)));
+	}
 
 	/*
 	 * Otherwise, spell out which fields don't agree.

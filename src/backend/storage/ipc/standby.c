@@ -7,7 +7,7 @@
  *	AccessExclusiveLocks and starting snapshots for Hot Standby mode.
  *	Plus conflict recovery processing.
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -22,6 +22,7 @@
 #include "access/xlog.h"
 #include "access/xloginsert.h"
 #include "miscadmin.h"
+#include "pgstat.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
@@ -159,6 +160,8 @@ static bool
 WaitExceedsMaxStandbyDelay(void)
 {
 	TimestampTz ltime;
+
+	CHECK_FOR_INTERRUPTS();
 
 	/* Are we past the limit time? */
 	ltime = GetStandbyLimitTime();
@@ -389,7 +392,7 @@ ResolveRecoveryConflictWithLock(LOCKTAG locktag)
 	}
 
 	/* Wait to be signaled by the release of the Relation Lock */
-	ProcWaitForSignal();
+	ProcWaitForSignal(PG_WAIT_LOCK | locktag.locktag_type);
 
 	/*
 	 * Clear any timeout requests established above.  We assume here that the
@@ -469,7 +472,7 @@ ResolveRecoveryConflictWithBufferPin(void)
 	}
 
 	/* Wait to be signaled by UnpinBuffer() */
-	ProcWaitForSignal();
+	ProcWaitForSignal(PG_WAIT_BUFFER_PIN);
 
 	/*
 	 * Clear any timeout requests established above.  We assume here that the
@@ -960,10 +963,11 @@ LogStandbySnapshot(void)
 /*
  * Record an enhanced snapshot of running transactions into WAL.
  *
- * The definitions of RunningTransactionsData and xl_xact_running_xacts
- * are similar. We keep them separate because xl_xact_running_xacts
- * is a contiguous chunk of memory and never exists fully until it is
- * assembled in WAL.
+ * The definitions of RunningTransactionsData and xl_xact_running_xacts are
+ * similar. We keep them separate because xl_xact_running_xacts is a
+ * contiguous chunk of memory and never exists fully until it is assembled in
+ * WAL. The inserted records are marked as not being important for durability,
+ * to avoid triggering superfluous checkpoint / archiving activity.
  */
 static XLogRecPtr
 LogCurrentRunningXacts(RunningTransactions CurrRunningXacts)
@@ -980,6 +984,7 @@ LogCurrentRunningXacts(RunningTransactions CurrRunningXacts)
 
 	/* Header */
 	XLogBeginInsert();
+	XLogSetRecordFlags(XLOG_MARK_UNIMPORTANT);
 	XLogRegisterData((char *) (&xlrec), MinSizeOfXactRunningXacts);
 
 	/* array of TransactionIds */
@@ -1034,6 +1039,7 @@ LogAccessExclusiveLocks(int nlocks, xl_standby_lock *locks)
 	XLogBeginInsert();
 	XLogRegisterData((char *) &xlrec, offsetof(xl_standby_locks, locks));
 	XLogRegisterData((char *) locks, nlocks * sizeof(xl_standby_lock));
+	XLogSetRecordFlags(XLOG_MARK_UNIMPORTANT);
 
 	(void) XLogInsert(RM_STANDBY_ID, XLOG_STANDBY_LOCK);
 }

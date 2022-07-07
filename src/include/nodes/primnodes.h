@@ -7,7 +7,7 @@
  *	  and join trees.
  *
  *
- * Portions Copyright (c) 1996-2016, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2017, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/primnodes.h
@@ -42,13 +42,6 @@ typedef struct Alias
 	List	   *colnames;		/* optional list of column aliases */
 } Alias;
 
-typedef enum InhOption
-{
-	INH_NO,						/* Do NOT scan child tables */
-	INH_YES,					/* DO scan child tables */
-	INH_DEFAULT					/* Use current SQL_inheritance option */
-} InhOption;
-
 /* What to do at commit time for temporary relations */
 typedef enum OnCommitAction
 {
@@ -62,7 +55,7 @@ typedef enum OnCommitAction
  * RangeVar - range variable, used in FROM clauses
  *
  * Also used to represent table names in utility statements; there, the alias
- * field is not used, and inhOpt shows whether to apply the operation
+ * field is not used, and inh tells whether to apply the operation
  * recursively to child tables.  In some contexts it is also useful to carry
  * a TEMP table indication here.
  */
@@ -72,7 +65,7 @@ typedef struct RangeVar
 	char	   *catalogname;	/* the catalog (database) name, or NULL */
 	char	   *schemaname;		/* the schema name, or NULL */
 	char	   *relname;		/* the relation/sequence name */
-	InhOption	inhOpt;			/* expand rel by inheritance? recursively act
+	bool		inh;			/* expand rel by inheritance? recursively act
 								 * on children? */
 	char		relpersistence; /* see RELPERSISTENCE_* in pg_class.h */
 	Alias	   *alias;			/* table alias & optional column aliases */
@@ -1049,6 +1042,45 @@ typedef struct MinMaxExpr
 	List	   *args;			/* the arguments */
 	int			location;		/* token location, or -1 if unknown */
 } MinMaxExpr;
+
+/*
+ * SQLValueFunction - parameterless functions with special grammar productions
+ *
+ * The SQL standard categorizes some of these as <datetime value function>
+ * and others as <general value specification>.  We call 'em SQLValueFunctions
+ * for lack of a better term.  We store type and typmod of the result so that
+ * some code doesn't need to know each function individually, and because
+ * we would need to store typmod anyway for some of the datetime functions.
+ * Note that currently, all variants return non-collating datatypes, so we do
+ * not need a collation field; also, all these functions are stable.
+ */
+typedef enum SQLValueFunctionOp
+{
+	SVFOP_CURRENT_DATE,
+	SVFOP_CURRENT_TIME,
+	SVFOP_CURRENT_TIME_N,
+	SVFOP_CURRENT_TIMESTAMP,
+	SVFOP_CURRENT_TIMESTAMP_N,
+	SVFOP_LOCALTIME,
+	SVFOP_LOCALTIME_N,
+	SVFOP_LOCALTIMESTAMP,
+	SVFOP_LOCALTIMESTAMP_N,
+	SVFOP_CURRENT_ROLE,
+	SVFOP_CURRENT_USER,
+	SVFOP_USER,
+	SVFOP_SESSION_USER,
+	SVFOP_CURRENT_CATALOG,
+	SVFOP_CURRENT_SCHEMA
+} SQLValueFunctionOp;
+
+typedef struct SQLValueFunction
+{
+	Expr		xpr;
+	SQLValueFunctionOp op;		/* which function this is */
+	Oid			type;			/* result type/typmod */
+	int32		typmod;
+	int			location;		/* token location, or -1 if unknown */
+} SQLValueFunction;
 
 /*
  * XmlExpr - various SQL/XML functions requiring special grammar productions
