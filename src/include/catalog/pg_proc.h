@@ -5576,9 +5576,9 @@ DATA(insert OID = 5028 ( satisfies_hash_partition PGNSP PGUID 12 1 0 2276 0 f f 
 DESCR("hash partition CHECK constraint");
 
 /* for agensgraph */
-DATA(insert OID = 7000 ( graphid		PGNSP PGUID 12 1 0 0 0 f f f f t f i 2 0 7002 "23 20" _null_ _null_ _null_ _null_ _null_ graphid _null_ _null_ _null_ ));
+DATA(insert OID = 7000 ( graphid		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 2 0 7002 "23 20" _null_ _null_ _null_ _null_ _null_ graphid _null_ _null_ _null_ ));
 DESCR("make graphid");
-DATA(insert OID = 7003 ( graphid_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i 1 0 7002 "2275" _null_ _null_ _null_ _null_ _null_ graphid_in _null_ _null_ _null_ ));
+DATA(insert OID = 7003 ( graphid_in		PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 7002 "2275" _null_ _null_ _null_ _null_ _null_ graphid_in _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 7004 ( graphid_out	PGNSP PGUID 12 1 0 0 0 f f f f t f i s 1 0 2275 "7002" _null_ _null_ _null_ _null_ _null_ graphid_out _null_ _null_ _null_ ));
 DESCR("I/O");

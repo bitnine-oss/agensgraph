@@ -551,7 +551,7 @@ typedef enum NodeTag
 	T_IndexAmRoutine,			/* in access/amapi.h */
 	T_TsmRoutine,				/* in access/tsmapi.h */
 	T_ForeignKeyCacheInfo,		/* in utils/rel.h */
-	T_CallContext				/* in nodes/parsenodes.h */
+	T_CallContext,				/* in nodes/parsenodes.h */
 
 	/*
 	 * TAGS FOR GRAPH NODES (graphnodes.h)

@@ -2996,9 +2996,9 @@ initialize_data_directory(void)
 
 	setup_schema(cmdfd);
 
-	setup_graph(cmdfd);
+	load_plpgsql(cmdfd);
 
-	load_plpgsql();
+	vacuum_db(cmdfd);
 
 	make_template0(cmdfd);
 

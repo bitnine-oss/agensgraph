@@ -2597,40 +2597,50 @@ show_hash_info(HashState *hashstate, ExplainState *es)
 }
 
 /*
- * Show information on hash buckets/batches.
+ * Show information on hash buckets/batches. ( AgensGraph feature )
  */
 static void
 show_hash2side_info(Hash2SideState *hashstate, ExplainState *es)
 {
-	HashJoinTable hashtable;
+	HashInstrumentation hinstrument = {0};
 
-	Assert(IsA(hashstate, Hash2SideState));
-	hashtable = hashstate->hashtable;
+	/*
+	 * In a parallel query, the leader process may or may not have run the
+	 * hash join, and even if it did it may not have built a hash table due to
+	 * timing (if it started late it might have seen no tuples in the outer
+	 * relation and skipped building the hash table).  Therefore we have to be
+	 * prepared to get instrumentation data from all participants.
+	 */
+	if (hashstate->hashtable)
+		ExecHashGetInstrumentation(&hinstrument, hashstate->hashtable);
 
-	if (hashtable)
+	if (hinstrument.nbatch > 0)
 	{
-		long		spacePeakKb = (hashtable->spacePeak + 1023) / 1024;
+		long		spacePeakKb = (hinstrument.space_peak + 1023) / 1024;
 
 		if (es->format != EXPLAIN_FORMAT_TEXT)
 		{
-			ExplainPropertyLong("Hash Buckets", hashtable->nbuckets, es);
-			ExplainPropertyLong("Original Hash Buckets",
-								hashtable->nbuckets_original, es);
-			ExplainPropertyLong("Hash Batches", hashtable->nbatch, es);
-			ExplainPropertyLong("Original Hash Batches",
-								hashtable->nbatch_original, es);
-			ExplainPropertyLong("Peak Memory Usage", spacePeakKb, es);
+			ExplainPropertyInteger("Hash Buckets",
+								   hinstrument.nbuckets, es);
+			ExplainPropertyInteger("Original Hash Buckets",
+								   hinstrument.nbuckets_original, es);
+			ExplainPropertyInteger("Hash Batches",
+								   hinstrument.nbatch, es);
+			ExplainPropertyInteger("Original Hash Batches",
+								   hinstrument.nbatch_original, es);
+			ExplainPropertyInteger("Peak Memory Usage",
+								   spacePeakKb, es);
 		}
-		else if (hashtable->nbatch_original != hashtable->nbatch ||
-				 hashtable->nbuckets_original != hashtable->nbuckets)
+		else if (hinstrument.nbatch_original != hinstrument.nbatch ||
+				 hinstrument.nbuckets_original != hinstrument.nbuckets)
 		{
 			appendStringInfoSpaces(es->str, es->indent * 2);
 			appendStringInfo(es->str,
 							 "Buckets: %d (originally %d)  Batches: %d (originally %d)  Memory Usage: %ldkB\n",
-							 hashtable->nbuckets,
-							 hashtable->nbuckets_original,
-							 hashtable->nbatch,
-							 hashtable->nbatch_original,
+							 hinstrument.nbuckets,
+							 hinstrument.nbuckets_original,
+							 hinstrument.nbatch,
+							 hinstrument.nbatch_original,
 							 spacePeakKb);
 		}
 		else
@@ -2638,7 +2648,7 @@ show_hash2side_info(Hash2SideState *hashstate, ExplainState *es)
 			appendStringInfoSpaces(es->str, es->indent * 2);
 			appendStringInfo(es->str,
 							 "Buckets: %d  Batches: %d  Memory Usage: %ldkB\n",
-							 hashtable->nbuckets, hashtable->nbatch,
+							 hinstrument.nbuckets, hinstrument.nbatch,
 							 spacePeakKb);
 		}
 	}

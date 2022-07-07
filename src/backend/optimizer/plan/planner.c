@@ -589,7 +589,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 		root->wt_param_id = -1;
 	root->non_recursive_path = NULL;
 
-	root->max_hoop = DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT;
+	root->max_hoop = AG_DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT;
 	root->hasVLEJoinRTE = (parent_root ? parent_root->hasVLEJoinRTE : false);
 
 	/*

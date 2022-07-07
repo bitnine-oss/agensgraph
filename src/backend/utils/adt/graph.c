@@ -27,7 +27,6 @@
 #include "utils/arrayaccess.h"
 #include "utils/builtins.h"
 #include "utils/graph.h"
-#include "utils/int8.h"
 #include "utils/jsonb.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -429,7 +428,7 @@ vertex_out(PG_FUNCTION_ARGS)
 				 errmsg("properties in vertex cannot be NULL")));
 
 	id = DatumGetGraphid(values[Anum_vertex_id - 1]);
-	prop_map = DatumGetJsonb(values[Anum_vertex_properties - 1]);
+	prop_map = DatumGetJsonbP(values[Anum_vertex_properties - 1]);
 
 	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
 
@@ -445,7 +444,7 @@ vertex_out(PG_FUNCTION_ARGS)
 Datum
 _vertex_out(PG_FUNCTION_ARGS)
 {
-	AnyArrayType *vertices = PG_GETARG_ANY_ARRAY(0);
+	AnyArrayType *vertices = PG_GETARG_ANY_ARRAY_P(0);
 	StringInfoData si;
 
 	initStringInfo(&si);
@@ -469,21 +468,21 @@ vertex_label(PG_FUNCTION_ARGS)
 	label = NameStr(my_extra->label);
 
 	jv.type = jbvString;
-	jv.val.string.len = strlen(label);
+	jv.val.string.len = (int) strlen(label);
 	jv.val.string.val = label;
 
-	PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
 }
 
 Datum
 _vertex_length(PG_FUNCTION_ARGS)
 {
-	AnyArrayType *vertices = PG_GETARG_ANY_ARRAY(0);
+	AnyArrayType *vertices = PG_GETARG_ANY_ARRAY_P(0);
 	int			nvertices;
 
 	nvertices = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices));
 
-	PG_RETURN_JSONB(int_to_jsonb(nvertices));
+	PG_RETURN_JSONB_P(int_to_jsonb(nvertices));
 }
 
 static Jsonb *
@@ -593,7 +592,7 @@ edge_out(PG_FUNCTION_ARGS)
 				 errmsg("properties in edge cannot be NULL")));
 
 	id = DatumGetGraphid(values[Anum_edge_id - 1]);
-	prop_map = DatumGetJsonb(values[Anum_edge_properties - 1]);
+	prop_map = DatumGetJsonbP(values[Anum_edge_properties - 1]);
 
 	my_extra = cache_label(fcinfo->flinfo, GraphidGetLabid(id));
 
@@ -613,7 +612,7 @@ edge_out(PG_FUNCTION_ARGS)
 Datum
 _edge_out(PG_FUNCTION_ARGS)
 {
-	AnyArrayType *edges = PG_GETARG_ANY_ARRAY(0);
+	AnyArrayType *edges = PG_GETARG_ANY_ARRAY_P(0);
 	StringInfoData si;
 
 	initStringInfo(&si);
@@ -637,21 +636,21 @@ edge_label(PG_FUNCTION_ARGS)
 	label = NameStr(my_extra->label);
 
 	jv.type = jbvString;
-	jv.val.string.len = strlen(label);
+	jv.val.string.len = (int) strlen(label);
 	jv.val.string.val = label;
 
-	PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
 }
 
 Datum
 _edge_length(PG_FUNCTION_ARGS)
 {
-	AnyArrayType *edges = PG_GETARG_ANY_ARRAY(0);
+	AnyArrayType *edges = PG_GETARG_ANY_ARRAY_P(0);
 	int			nedges;
 
 	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
 
-	PG_RETURN_JSONB(int_to_jsonb(nedges));
+	PG_RETURN_JSONB_P(int_to_jsonb(nedges));
 }
 
 Datum
@@ -823,8 +822,8 @@ graphpath_out(PG_FUNCTION_ARGS)
 
 	getGraphpathArrays(PG_GETARG_DATUM(0), &vertices_datum, &edges_datum);
 
-	vertices = DatumGetAnyArray(vertices_datum);
-	edges = DatumGetAnyArray(edges_datum);
+	vertices = DatumGetAnyArrayP(vertices_datum);
+	edges = DatumGetAnyArrayP(edges_datum);
 
 	nvertices = ArrayGetNItems(AARR_NDIM(vertices), AARR_DIMS(vertices));
 	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
@@ -895,12 +894,12 @@ array_iter_next_(array_iter *it, bool *isnull, int idx, ArrayMetaState *state)
 Datum
 _graphpath_length(PG_FUNCTION_ARGS)
 {
-	AnyArrayType *graphpaths = PG_GETARG_ANY_ARRAY(0);
+	AnyArrayType *graphpaths = PG_GETARG_ANY_ARRAY_P(0);
 	int			ngraphpaths;
 
 	ngraphpaths = ArrayGetNItems(AARR_NDIM(graphpaths), AARR_DIMS(graphpaths));
 
-	PG_RETURN_JSONB(int_to_jsonb(ngraphpaths));
+	PG_RETURN_JSONB_P(int_to_jsonb(ngraphpaths));
 }
 
 Datum
@@ -911,10 +910,10 @@ graphpath_length(PG_FUNCTION_ARGS)
 	int			nedges;
 
 	edges_datum = DirectFunctionCall1(graphpath_edges, PG_GETARG_DATUM(0));
-	edges = DatumGetAnyArray(edges_datum);
+	edges = DatumGetAnyArrayP(edges_datum);
 	nedges = ArrayGetNItems(AARR_NDIM(edges), AARR_DIMS(edges));
 
-	PG_RETURN_JSONB(int_to_jsonb(nedges));
+	PG_RETURN_JSONB_P(int_to_jsonb(nedges));
 }
 
 Datum
@@ -1048,7 +1047,7 @@ vertex_labels(PG_FUNCTION_ARGS)
 
 	my_extra = cache_labels(fcinfo->flinfo, GraphidGetLabid(id));
 
-	PG_RETURN_JSONB(my_extra->labels);
+	PG_RETURN_JSONB_P(my_extra->labels);
 }
 
 static LabelsOutData *
@@ -1122,7 +1121,7 @@ cache_labels(FmgrInfo *flinfo, uint16 labid)
 				JsonbValue	jv;
 
 				jv.type = jbvString;
-				jv.val.string.len = strlen(ancestor_labname);
+				jv.val.string.len = (int) strlen(ancestor_labname);
 				jv.val.string.val = ancestor_labname;
 
 				pushJsonbValue(&jpstate, WJB_ELEM, &jv);
@@ -1514,7 +1513,6 @@ gin_compare_partial_graphid(FunctionCallInfo fcinfo)
 			break;
 		default:
 			elog(ERROR, "unrecognized strategy number: %d", strategy);
-			res = 0;
 	}
 
 	PG_RETURN_INT32(res);

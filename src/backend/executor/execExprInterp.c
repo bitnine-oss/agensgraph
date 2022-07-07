@@ -1856,7 +1856,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			{
 				Jsonb	   *ejb;
 
-				ejb = DatumGetJsonb(*op->d.cypherlistcomp.elemvalue);
+				ejb = DatumGetJsonbP(*op->d.cypherlistcomp.elemvalue);
 				if (JB_ROOT_IS_SCALAR(ejb))
 				{
 					ejv = getIthJsonbValueFromContainer(&ejb->root, 0);
@@ -1881,7 +1881,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			jv = pushJsonbValue(op->d.cypherlistcomp.liststate,
 								WJB_END_ARRAY, NULL);
 
-			*op->resvalue = JsonbGetDatum(JsonbValueToJsonb(jv));
+			*op->resvalue = JsonbPGetDatum(JsonbValueToJsonb(jv));
 			*op->resnull = false;
 
 			EEO_NEXT();
@@ -1895,7 +1895,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 
 			Assert(!*op->d.cypherlistcomp_iter.listnull);
 
-			listjb = DatumGetJsonb(*op->d.cypherlistcomp_iter.listvalue);
+			listjb = DatumGetJsonbP(*op->d.cypherlistcomp_iter.listvalue);
 			if (!JB_ROOT_IS_ARRAY(listjb) || JB_ROOT_IS_SCALAR(listjb))
 				ereport(ERROR,
 						(errcode(ERRCODE_DATATYPE_MISMATCH),
@@ -1920,7 +1920,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			jt = JsonbIteratorNext(ji, &jv, true);
 			if (jt == WJB_ELEM)
 			{
-				*op->resvalue = JsonbGetDatum(JsonbValueToJsonb(&jv));
+				*op->resvalue = JsonbPGetDatum(JsonbValueToJsonb(&jv));
 				*op->resnull = false;
 			}
 			else
@@ -4214,7 +4214,7 @@ ExecEvalCypherTypeCast(ExprState *state, ExprEvalStep *op)
 	if (*op->resnull)
 		return;
 
-	argjb = DatumGetJsonb(*op->resvalue);
+	argjb = DatumGetJsonbP(*op->resvalue);
 
 	fcinfo_data_in = op->d.cyphertypecast.fcinfo_data_in;
 	Assert(fcinfo_data_in != NULL);
@@ -4465,7 +4465,7 @@ ExecEvalCypherMapExpr(ExprState *state, ExprEvalStep *op)
 		}
 		else
 		{
-			Jsonb	   *vjb = DatumGetJsonb(val_values[i]);
+			Jsonb	   *vjb = DatumGetJsonbP(val_values[i]);
 
 			vji = JsonbIteratorInit(&vjb->root);
 
@@ -4537,7 +4537,7 @@ ExecEvalCypherMapExpr(ExprState *state, ExprEvalStep *op)
 
 	jb = pushJsonbValue(&jpstate, WJB_END_OBJECT, NULL);
 
-	*op->resvalue = JsonbGetDatum(JsonbValueToJsonb(jb));
+	*op->resvalue = JsonbPGetDatum(JsonbValueToJsonb(jb));
 	*op->resnull = false;
 }
 
@@ -4566,7 +4566,7 @@ ExecEvalCypherListExpr(ExprState *state, ExprEvalStep *op)
 			continue;
 		}
 
-		ejb = DatumGetJsonb(elemvalues[i]);
+		ejb = DatumGetJsonbP(elemvalues[i]);
 		eji = JsonbIteratorInit(&ejb->root);
 		if (JB_ROOT_IS_SCALAR(ejb))
 		{
@@ -4598,7 +4598,7 @@ ExecEvalCypherListExpr(ExprState *state, ExprEvalStep *op)
 
 	jb = pushJsonbValue(&jpstate, WJB_END_ARRAY, NULL);
 
-	*op->resvalue = JsonbGetDatum(JsonbValueToJsonb(jb));
+	*op->resvalue = JsonbPGetDatum(JsonbValueToJsonb(jb));
 	*op->resnull = false;
 }
 
@@ -4623,7 +4623,7 @@ ExecEvalCypherAccessExpr(ExprState *state, ExprEvalStep *op)
 		return;
 	}
 
-	argjb = DatumGetJsonb(*op->d.cypheraccessexpr.argvalue);
+	argjb = DatumGetJsonbP(*op->d.cypheraccessexpr.argvalue);
 	if (JB_ROOT_IS_SCALAR(argjb))
 	{
 		vjv = getIthJsonbValueFromContainer(&argjb->root, 0);
@@ -4704,7 +4704,7 @@ ExecEvalCypherAccessExpr(ExprState *state, ExprEvalStep *op)
 		return;
 	}
 
-	*op->resvalue = JsonbGetDatum(JsonbValueToJsonb(vjv));
+	*op->resvalue = JsonbPGetDatum(JsonbValueToJsonb(vjv));
 	*op->resnull = false;
 }
 
@@ -4747,7 +4747,7 @@ cypher_access_object(JsonbContainer *container, CypherAccessPathElem *pathelem)
 	}
 	else if (key->type == JSONBOID)
 	{
-		Jsonb	   *jb = DatumGetJsonb(key->value);
+		Jsonb	   *jb = DatumGetJsonbP(key->value);
 
 		if (JB_ROOT_IS_SCALAR(jb))
 		{
@@ -4950,7 +4950,7 @@ cypher_access_index(CypherIndexResult *cidxres, const int nelems)
 		}
 		else
 		{
-			Jsonb	   *jb = DatumGetJsonb(cidxres->value);
+			Jsonb	   *jb = DatumGetJsonbP(cidxres->value);
 
 			if (!JB_ROOT_IS_SCALAR(jb))
 			{

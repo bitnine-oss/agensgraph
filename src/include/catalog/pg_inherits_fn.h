@@ -27,4 +27,7 @@ extern void StoreSingleInheritance(Oid relationId, Oid parentOid,
 					   int32 seqNumber);
 extern bool DeleteInheritsTuple(Oid inhrelid, Oid inhparent);
 
+/* AgensGraph functions */
+List *find_all_ancestors(Oid childrelId, LOCKMODE lockmode);
+
 #endif							/* PG_INHERITS_FN_H */

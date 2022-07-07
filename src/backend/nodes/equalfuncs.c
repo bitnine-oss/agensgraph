@@ -1074,6 +1074,7 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_LOCATION_FIELD(stmt_location);
 	COMPARE_LOCATION_FIELD(stmt_len);
 
+	/* todo: for AgensGraph, needs cleanup */
 	COMPARE_SCALAR_FIELD(dijkstraWeight);
 	COMPARE_SCALAR_FIELD(dijkstraWeightOut);
 	COMPARE_NODE_FIELD(dijkstraEndId);
@@ -1100,14 +1101,6 @@ _equalQuery(const Query *a, const Query *b)
 	COMPARE_NODE_FIELD(graph.pattern);
 	COMPARE_NODE_FIELD(graph.exprs);
 	COMPARE_NODE_FIELD(graph.sets);
-
-	COMPARE_SCALAR_FIELD(dijkstraWeight);
-	COMPARE_SCALAR_FIELD(dijkstraWeightOut);
-	COMPARE_NODE_FIELD(dijkstraEndId);
-	COMPARE_NODE_FIELD(dijkstraEdgeId);
-	COMPARE_NODE_FIELD(dijkstraSource);
-	COMPARE_NODE_FIELD(dijkstraTarget);
-	COMPARE_NODE_FIELD(dijkstraLimit);
 
 	return true;
 }
@@ -2954,7 +2947,6 @@ _equalRoleSpec(const RoleSpec *a, const RoleSpec *b)
 }
 
 static bool
-<<<<<<< HEAD
 _equalCreateGraphStmt(const CreateGraphStmt *a, const CreateGraphStmt *b)
 {
 	COMPARE_STRING_FIELD(graphname);

@@ -15,8 +15,6 @@
 
 #include "postgres.h"
 
-#include "parser/parser.h"
-#include "parser/scansup.h"
 #include "utils/memutils.h"
 
 #include "plpgsql.h"
@@ -135,40 +133,6 @@ plpgsql_ns_lookup(PLpgSQL_nsitem *ns_cur, bool localmode,
 				  const char *name1, const char *name2, const char *name3,
 				  int *names_used)
 {
-	const char *_name1;
-
-	/*
-	 * FIXME: Try to find hard-coded magic variables using downcased
-	 *        identifier. This is buggy and ugly but results minimum code
-	 *        changes.
-	 */
-	if (case_sensitive_ident)
-	{
-		_name1 = downcase_identifier(name1, strlen(name1), false, false);
-		if (!(strcmp(_name1, "sqlstate") == 0 ||
-			  strcmp(_name1, "sqlerrm") == 0 ||
-			  strcmp(_name1, "new") == 0 ||
-			  strcmp(_name1, "old") == 0 ||
-			  strcmp(_name1, "tg_name") == 0 ||
-			  strcmp(_name1, "tg_when") == 0 ||
-			  strcmp(_name1, "tg_level") == 0 ||
-			  strcmp(_name1, "tg_op") == 0 ||
-			  strcmp(_name1, "tg_relid") == 0 ||
-			  strcmp(_name1, "tg_relname") == 0 ||
-			  strcmp(_name1, "tg_table_name") == 0 ||
-			  strcmp(_name1, "tg_table_schema") == 0 ||
-			  strcmp(_name1, "tg_nargs") == 0 ||
-			  strcmp(_name1, "tg_argv") == 0 ||
-			  strcmp(_name1, "tg_event") == 0 ||
-			  strcmp(_name1, "tg_tag") == 0 ||
-			  strcmp(_name1, "found") == 0))
-			_name1 = name1;
-	}
-	else
-	{
-		_name1 = name1;
-	}
-
 	/* Outer loop iterates once per block level in the namespace chain */
 	while (ns_cur != NULL)
 	{
@@ -179,7 +143,7 @@ plpgsql_ns_lookup(PLpgSQL_nsitem *ns_cur, bool localmode,
 			 nsitem->itemtype != PLPGSQL_NSTYPE_LABEL;
 			 nsitem = nsitem->prev)
 		{
-			if (strcmp(nsitem->name, _name1) == 0)
+			if (strcmp(nsitem->name, name1) == 0)
 			{
 				if (name2 == NULL ||
 					nsitem->itemtype != PLPGSQL_NSTYPE_VAR)

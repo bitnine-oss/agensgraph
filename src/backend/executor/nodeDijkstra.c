@@ -290,7 +290,7 @@ compute_limit(DijkstraState *node)
 			if (node->max_n < 1)
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_ROW_COUNT_IN_LIMIT_CLAUSE),
-						 errmsg("LIMIT must be larger than 0")));
+								errmsg("LIMIT must be larger than 0")));
 		}
 	}
 	else
@@ -317,7 +317,7 @@ replace_vertexRow_graphid(TupleDesc tupleDesc, HeapTuple vertexRow,
 	Assert(tupleDesc != NULL);
 	Assert(vertexRow != NULL);
 
-	attribute = tupleDesc->attrs[Anum_vertex_id-1];
+	attribute = TupleDescAttr(tupleDesc, Anum_vertex_id-1);
 
 	/* This function only works for element 1, graphid, by value */
 	Assert(attribute->attbyval);
@@ -446,7 +446,7 @@ ExecDijkstra(PlanState *pstate)
 			if (weight_val < 0.0)
 				ereport(ERROR,
 						(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-						 errmsg("WEIGHT must be larger than 0")));
+								errmsg("WEIGHT must be larger than 0")));
 
 			new_weight = frontier->weight + weight_val;
 
@@ -533,8 +533,8 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	/*
 	 * tuple table initialization
 	 */
-	ExecInitResultTupleSlot(estate, &dstate->ps);
-	dstate->selfTupleSlot = ExecInitExtraTupleSlot(estate);
+	ExecInitResultTupleSlotTL(estate, &dstate->ps);
+	dstate->selfTupleSlot = ExecInitExtraTupleSlot(estate, NULL);
 
 
 	/*
@@ -564,7 +564,6 @@ ExecInitDijkstra(Dijkstra *node, EState *estate, int eflags)
 	/*
 	 * initialize tuple type and projection info
 	 */
-	ExecAssignResultTypeFromTL(&dstate->ps);
 	ExecAssignProjectionInfo(&dstate->ps, NULL);
 
 	ExecSetSlotDescriptor(dstate->selfTupleSlot, ExecGetResultType(outerPlan));

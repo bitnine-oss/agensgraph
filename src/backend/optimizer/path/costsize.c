@@ -1603,8 +1603,8 @@ cost_recursive_union(Path *runion, Path *nrterm, Path *rterm)
 	}
 	else
 	{
-		total_cost += DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT * rterm->total_cost;
-		total_rows += DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT * rterm->rows;
+		total_cost += AG_DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT * rterm->total_cost;
+		total_rows += AG_DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT * rterm->rows;
 	}
 
 	/*

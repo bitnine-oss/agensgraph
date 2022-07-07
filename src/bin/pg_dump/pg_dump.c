@@ -55,6 +55,10 @@
 #include "catalog/pg_type.h"
 #include "libpq/libpq-fs.h"
 
+#include "catalog/pg_namespace.h"
+#include "catalog/ag_label.h"
+#include "catalog/ag_graph.h"
+
 #include "dumputils.h"
 #include "parallel.h"
 #include "pg_backup_db.h"

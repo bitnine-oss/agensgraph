@@ -3659,7 +3659,7 @@ transformCreateGraphStmt(CreateGraphStmt *stmt)
 	labseq->options =
 			list_make2(makeDefElem("maxvalue", (Node *)
 								   makeInteger(GRAPHID_LABID_MAX), -1),
-					   makeDefElem("cycle", (Node *) makeInteger(TRUE), -1));
+					   makeDefElem("cycle", (Node *) makeInteger(true), -1));
 	labseq->ownerId = InvalidOid;
 	labseq->if_not_exists = false;
 
@@ -4432,7 +4432,7 @@ prop_ref_mutator(Node *node)
 		return (Node *) cref;
 	}
 
-	return raw_expression_tree_mutator(node, prop_ref_mutator, NULL);
+	return expression_tree_mutator(node, prop_ref_mutator, NULL);
 }
 
 static ObjectType

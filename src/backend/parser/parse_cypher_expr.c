@@ -505,7 +505,7 @@ transformFields(ParseState *pstate, Node *basenode, List *fields, int location)
 		field = lfirst(lf);
 
 		res = ParseFuncOrColumn(pstate, list_make1(field), list_make1(res),
-								pstate->p_last_srf, NULL, location);
+								pstate->p_last_srf, NULL, false, location);
 		if (res == NULL)
 		{
 			ereport(ERROR,
@@ -556,7 +556,7 @@ filterAccessArg(ParseState *pstate, Node *expr, int location,
 			return ParseFuncOrColumn(pstate,
 									 list_make1(makeString(AG_ELEM_PROP_MAP)),
 									 list_make1(expr), pstate->p_last_srf,
-									 NULL, location);
+									 NULL, false, location);
 		case JSONBOID:
 			return expr;
 
@@ -876,7 +876,7 @@ transformFuncCall(ParseState *pstate, FuncCall *fn)
 	args = preprocess_func_args(pstate, fn);
 
 	return ParseFuncOrColumn(pstate, fn->funcname, args, last_srf, fn,
-							 fn->location);
+							 false, fn->location);
 }
 
 /*
@@ -1570,7 +1570,7 @@ transformIndirection(ParseState *pstate, A_Indirection *indir)
 				break;
 
 			res = ParseFuncOrColumn(pstate, list_make1(i), list_make1(res),
-									last_srf, NULL, location);
+									last_srf, NULL, false, location);
 			if (res == NULL)
 			{
 				ereport(ERROR,
@@ -2080,7 +2080,7 @@ coerce_expr(ParseState *pstate, Node *expr, Oid ityp, Oid otyp, int32 otypmod,
 
 			return ParseFuncOrColumn(pstate,
 									 list_make1(makeString("to_jsonb")),
-									 list_make1(expr), last_srf, NULL, loc);
+									 list_make1(expr), last_srf, NULL, false, loc);
 		}
 	}
 
@@ -2134,7 +2134,7 @@ coerce_unknown_const(ParseState *pstate, Node *expr, Oid ityp, Oid otyp)
 
 		s = DatumGetCString(con->constvalue);
 		datum = stringToJsonb(pstate, s, con->location);
-		j = DatumGetJsonb(datum);
+		j = DatumGetJsonbP(datum);
 		Assert(JB_ROOT_IS_SCALAR(j));
 
 		jv = getIthJsonbValueFromContainer(&j->root, 0);
@@ -2260,6 +2260,7 @@ coerce_all_to_jsonb(ParseState *pstate, Node *expr)
 								 list_make1(makeString("to_jsonb")),
 								 list_make1(expr),
 								 pstate->p_last_srf, NULL,
+								 false,
 								 exprLocation(expr));
 	}
 

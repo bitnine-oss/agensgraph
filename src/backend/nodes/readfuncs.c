@@ -2538,46 +2538,6 @@ _readGraphVertex(void)
 {
 	READ_LOCALS(GraphVertex);
 
-	READ_STRING_FIELD(variable);
-	READ_STRING_FIELD(label);
-	READ_NODE_FIELD(prop_map);
-	READ_NODE_FIELD(es_prop_map);
-	READ_BOOL_FIELD(create);
-
-	READ_DONE();
-}
-
-static GraphEdge *
-_readGraphEdge(void)
-{
-	READ_LOCALS(GraphEdge);
-
-	READ_INT_FIELD(direction);
-	READ_STRING_FIELD(variable);
-	READ_STRING_FIELD(label);
-	READ_NODE_FIELD(prop_map);
-	READ_NODE_FIELD(es_prop_map);
-
-	READ_DONE();
-}
-
-
-static GraphPath *
-_readGraphPath(void)
-{
-	READ_LOCALS(GraphPath);
-
-	READ_STRING_FIELD(variable);
-	READ_NODE_FIELD(chain);
-
-	READ_DONE();
-}
-
-static GraphVertex *
-_readGraphVertex(void)
-{
-	READ_LOCALS(GraphVertex);
-
 	READ_INT_FIELD(resno);
 	READ_BOOL_FIELD(create);
 	READ_OID_FIELD(relid);

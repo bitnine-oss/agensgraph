@@ -494,6 +494,7 @@ static const ObjectPropertyType ObjectProperty[] =
 		OBJECT_STATISTIC_EXT,
 		true
 	},
+	/* for agensgraph */
 	{
 		GraphRelationId,
 		GraphOidIndexId,
@@ -503,7 +504,7 @@ static const ObjectPropertyType ObjectProperty[] =
 		InvalidAttrNumber,
 		InvalidAttrNumber,
 		InvalidAttrNumber,
-		ACL_KIND_GRAPH,
+		OBJECT_GRAPH,
 		true,
 	},
 	{
@@ -515,9 +516,21 @@ static const ObjectPropertyType ObjectProperty[] =
 		InvalidAttrNumber,
 		InvalidAttrNumber,
 		InvalidAttrNumber,
-		ACL_KIND_LABEL,
+		OBJECT_VLABEL,
 		true,
-	}
+	},
+	{
+		LabelRelationId,
+		LabelOidIndexId,
+		LABELOID,
+		LABELNAMEGRAPH,
+		Anum_ag_label_labname,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		InvalidAttrNumber,
+		OBJECT_ELABEL,
+		true,
+	},
 };
 
 /*
@@ -2558,13 +2571,13 @@ check_object_ownership(Oid roleid, ObjectType objtype, ObjectAddress address,
 			break;
 		case OBJECT_GRAPH:
 			if (!ag_graph_ownercheck(address.objectId, roleid))
-				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_GRAPH,
+				aclcheck_error(ACLCHECK_NOT_OWNER, objtype,
 							   strVal((Value *) object));
 			break;
 		case OBJECT_VLABEL:
 		case OBJECT_ELABEL:
 			if (!ag_label_ownercheck(address.objectId, roleid))
-				aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_LABEL,
+				aclcheck_error(ACLCHECK_NOT_OWNER, objtype,
 							   NameListToString(castNode(List, object)));
 			break;
 		default:
@@ -5297,6 +5310,31 @@ strlist_to_textarray(List *list)
 	MemoryContextDelete(memcxt);
 
 	return arr;
+}
+
+ObjectType
+get_relkind_objtype(char relkind)
+{
+	switch (relkind)
+	{
+		case RELKIND_RELATION:
+		case RELKIND_PARTITIONED_TABLE:
+			return OBJECT_TABLE;
+		case RELKIND_INDEX:
+			return OBJECT_INDEX;
+		case RELKIND_SEQUENCE:
+			return OBJECT_SEQUENCE;
+		case RELKIND_VIEW:
+			return OBJECT_VIEW;
+		case RELKIND_MATVIEW:
+			return OBJECT_MATVIEW;
+		case RELKIND_FOREIGN_TABLE:
+			return OBJECT_FOREIGN_TABLE;
+			/* other relkinds are not supported here because they don't map to OBJECT_* values */
+		default:
+			elog(ERROR, "unexpected relkind: %d", relkind);
+			return 0;
+	}
 }
 
 static void

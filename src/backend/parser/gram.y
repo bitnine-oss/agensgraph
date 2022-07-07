@@ -701,7 +701,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 
 /* ordinary key words in alphabetical order */
 %token <keyword> ABORT_P ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER
-	AGGREGATE ALL ALLSHORTESTPATHS ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC
+	AGGREGATE ALL ALLSHORTESTPATHS ALSO ALTER ALWAYS ANALYSE ANALYZE AND ANY ARRAY AS ASC ASSERT
 	ASSERTION ASSIGNMENT ASYMMETRIC AT ATTACH ATTRIBUTE AUTHORIZATION
 
 	BACKWARD BEFORE BEGIN_P BETWEEN BIGINT BINARY BIT
@@ -769,7 +769,7 @@ static List *preserve_downcasing_type_func_namelist(List *namelist);
 	SAVEPOINT SCHEMA SCHEMAS SCROLL SEARCH SECOND_P SECURITY SELECT SEQUENCE SEQUENCES
 	SERIALIZABLE SERVER SESSION SESSION_USER SET SETS SETOF SHARE SHORTESTPATH SHOW
 	SIMILAR SIMPLE SINGLE SIZE_P SKIP SMALLINT SNAPSHOT SOME SQL_P STABLE STANDALONE_P
-	START STARTS STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P SUBSTRING
+	START STARTS STATEMENT STATISTICS STDIN STDOUT STORAGE STRICT_P STRIP_P
 	SUBSCRIPTION SUBSTRING SYMMETRIC SYSID SYSTEM_P
 
 	TABLE TABLES TABLESAMPLE TABLESPACE TEMP TEMPLATE TEMPORARY TEXT_P THEN
@@ -8050,7 +8050,7 @@ createfunc_opt_item:
 				}
 			| LANGUAGE NonReservedWord_or_Sconst
 				{
-					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2), @1));
+					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2)), @1);
 				}
 			| TRANSFORM transform_type_list
 				{
@@ -8343,7 +8343,7 @@ dostmt_opt_item:
 				}
 			| LANGUAGE NonReservedWord_or_Sconst
 				{
-					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2), @1));
+					$$ = makeDefElem("language", (Node *)makeString(preserve_downcasing_ident($2)), @1);
 				}
 		;
 
@@ -9696,14 +9696,6 @@ AlterOwnerStmt: ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec
 					n->newowner = $6;
 					$$ = (Node *)n;
 				}
-			| ALTER GRAPH name OWNER TO RoleSpec
-				{
-					AlterOwnerStmt *n = makeNode(AlterOwnerStmt);
-					n->objectType = OBJECT_GRAPH;
-					n->object = (Node *) makeString($3);
-					n->newowner = $6;
-					$$ = (Node *)n;
-				}
 		;
 
 
@@ -9889,7 +9881,7 @@ AlterSubscriptionStmt:
 					n->kind = ALTER_SUBSCRIPTION_ENABLED;
 					n->subname = $3;
 					n->options = list_make1(makeDefElem("enabled",
-											(Node *)makeInteger(FALSE), @1));
+											(Node *)makeInteger(false), @1));
 					$$ = (Node *)n;
 				}
 		;
@@ -17050,8 +17042,8 @@ cypher_expr_literal:
 			Iconst					{ $$ = makeIntConst($1, @1); }
 			| FCONST				{ $$ = makeFloatConst($1, @1); }
 			| Sconst				{ $$ = makeStringConst($1, @1); }
-			| TRUE_P				{ $$ = makeBoolAConst(TRUE, @1); }
-			| FALSE_P				{ $$ = makeBoolAConst(FALSE, @1); }
+			| TRUE_P				{ $$ = makeBoolAConst(true, @1); }
+			| FALSE_P				{ $$ = makeBoolAConst(false, @1); }
 			| NULL_P				{ $$ = makeNullAConst(@1); }
 			| cypher_expr_map
 			| cypher_expr_list
@@ -17209,7 +17201,7 @@ cypher_expr_func_norm:
 					FuncCall   *n;
 
 					n = makeFuncCall(list_make1(makeString($1)), $4, @1);
-					n->agg_distinct = TRUE;
+					n->agg_distinct = true;
 					$$ = (Node *) n;
 				}
 			| type_function_name '(' '*' ')'
@@ -17217,7 +17209,7 @@ cypher_expr_func_norm:
 					FuncCall   *n;
 
 					n = makeFuncCall(list_make1(makeString($1)), NIL, @1);
-					n->agg_star = TRUE;
+					n->agg_star = true;
 					$$ = (Node *) n;
 				}
 		;

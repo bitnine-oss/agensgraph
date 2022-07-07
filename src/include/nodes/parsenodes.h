@@ -1830,8 +1830,7 @@ typedef enum AlterTableType
 	AT_DetachPartition,			/* DETACH PARTITION */
 	AT_AddIdentity,				/* ADD IDENTITY */
 	AT_SetIdentity,				/* SET identity column options */
-	AT_DropIdentity				/* DROP IDENTITY */
-	AT_DetachPartition,			/* DETACH PARTITION */
+	AT_DropIdentity,			/* DROP IDENTITY */
 
 	AT_DisableIndex				/* DISABLE INDEX for graph labels */
 } AlterTableType;

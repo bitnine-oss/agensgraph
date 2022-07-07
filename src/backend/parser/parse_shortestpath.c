@@ -16,11 +16,8 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/pg_list.h"
-#include "optimizer/var.h"
 #include "parser/analyze.h"
 #include "parser/parse_agg.h"
-#include "parser/parse_clause.h"
-#include "parser/parse_coerce.h"
 #include "parser/parse_collate.h"
 #include "parser/parse_cypher_expr.h"
 #include "parser/parse_expr.h"
@@ -32,8 +29,6 @@
 
 #define SP_COLNAME_VIDS		"vids"
 #define SP_COLNAME_EIDS		"eids"
-#define SP_COLNAME_HOPS		"hops"
-#define SP_COLNAME_VID		"vid"
 
 #define SP_ALIASNAME_START_LEFT  "lstart"
 #define SP_ALIASNAME_START_RIGHT "rstart"
@@ -75,8 +70,7 @@ static RangeTblEntry *makeDijkstraFrom(ParseState *parentParseState,
 									   CypherPath *cpath);
 static RangeTblEntry *makeDijkstraEdgeQuery(ParseState *pstate, CypherPath *cpath);
 static Node *makeDijkstraEdgeUnion(char *elabel_name, char *row_name);
-static Node *makeDijkstraEdge(char *elabel_name, char *row_name,
-							  CypherRel *crel);
+static Node *makeDijkstraEdge(char *elabel_name, char *row_name);
 
 /* parse node */
 static Alias *makeAliasNoDup(char *aliasname, List *colnames);
@@ -431,7 +425,8 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 
 	/* vids */
 	fc = makeFuncCall(list_make1(makeString("shortestpath_graphids")), NIL, -1);
-	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf, fc, -1);
+	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
+							   fc, false, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "vids", false);
@@ -439,7 +434,8 @@ makeShortestPathFrom(ParseState *parentParseState, CypherPath *cpath)
 
 	/* eids */
 	fc = makeFuncCall(list_make1(makeString("shortestpath_rowids")), NIL, -1);
-	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf, fc, -1);
+	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
+							   fc, false, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "eids", false);
@@ -1340,7 +1336,7 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	/* vids */
 	fc = makeFuncCall(list_make1(makeString("dijkstra_vids")), NIL, -1);
 	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
-							   fc, -1);
+							   fc, false, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "vids", false);
@@ -1349,7 +1345,7 @@ makeDijkstraFrom(ParseState *parentParseState, CypherPath *cpath)
 	/* eids */
 	fc = makeFuncCall(list_make1(makeString("dijkstra_eids")), NIL, -1);
 	target = ParseFuncOrColumn(pstate, fc->funcname, NIL, pstate->p_last_srf,
-							   fc, -1);
+							   fc, false, -1);
 	te = makeTargetEntry((Expr *) target,
 						 (AttrNumber) pstate->p_next_resno++,
 						 "eids", false);
@@ -1480,7 +1476,7 @@ makeDijkstraEdgeQuery(ParseState *pstate, CypherPath *cpath)
 	if (crel->direction == CYPHER_REL_DIR_NONE)
 		sub = makeDijkstraEdgeUnion(elabel_name, row_name);
 	else
-		sub = makeDijkstraEdge(elabel_name, row_name, crel);
+		sub = makeDijkstraEdge(elabel_name, row_name);
 
 	alias = makeAliasOptUnique(NULL);
 	qry = parse_sub_analyze((Node *) sub, pstate, NULL,
@@ -1584,7 +1580,7 @@ makeDijkstraEdgeUnion(char *elabel_name, char *row_name)
  * FROM `get_graph_path()`.`elabel_name`
  */
 static Node *
-makeDijkstraEdge(char *elabel_name, char *row_name, CypherRel *crel)
+makeDijkstraEdge(char *elabel_name, char *row_name)
 {
 	SelectStmt *sel;
 	RangeVar   *r;

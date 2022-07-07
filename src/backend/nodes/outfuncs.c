@@ -4592,9 +4592,6 @@ outNode(StringInfo str, const void *obj)
 			case T_GatherMergePath:
 				_outGatherMergePath(str, obj);
 				break;
-			case T_DijkstraPath:
-				_outDijkstraPath(str, obj);
-				break;
 			case T_NestPath:
 				_outNestPath(str, obj);
 				break;

@@ -387,12 +387,6 @@ ExecInitNestLoop(NestLoop *node, EState *estate, int eflags)
 				 (int) node->join.jointype);
 	}
 
-	/*
-	 * initialize tuple type and projection info
-	 */
-	ExecAssignResultTypeFromTL(&nlstate->js.ps);
-	ExecAssignProjectionInfo(&nlstate->js.ps, NULL);
-
 	dlist_init(&nlstate->ctxs_head);
 	nlstate->prev_ctx_node = &nlstate->ctxs_head.head;
 

@@ -1046,7 +1046,7 @@ struct AppendState
 
 	dlist_head  ctxs_head;		/* list of AppendContext */
 	dlist_node *prev_ctx_node;
-} AppendState;
+};
 
 /* ----------------
  *	 MergeAppendState information

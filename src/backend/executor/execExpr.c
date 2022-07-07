@@ -43,7 +43,6 @@
 #include "optimizer/planner.h"
 #include "pgstat.h"
 #include "utils/builtins.h"
-#include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
@@ -79,23 +78,22 @@ static void ExecBuildAggTransCall(ExprState *state, AggState *aggstate,
 								  int transno, int setno, int setoff, bool ishash);
 
 static void ExecInitCypherTypeCast(ExprEvalStep *scratch, CypherTypeCast *tc,
-								   PlanState *parent, ExprState *state);
+								   ExprState *state);
 static void ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
-							  PlanState *parent, ExprState *state);
+							  ExprState *state);
 static void ExecInitCypherList(ExprEvalStep *scratch, CypherListExpr *listexpr,
-							   PlanState *parent, ExprState *state);
+							   ExprState *state);
 static void ExecInitCypherListComp(ExprEvalStep *scratch,
 								   CypherListCompExpr *listcompexpr,
-								   PlanState *parent, ExprState *state);
+								   ExprState *state);
 static bool isIdentity(CypherListCompExpr *listcompexpr);
 static void initExprSaveIter(Expr *node, ExprEvalStep *next_step,
-							 PlanState *parent, ExprState *state,
-							 Datum *resv, bool *resnull);
+							 ExprState *state, Datum *resv,
+							 bool *resnull);
 static void ExecInitCypherAccess(ExprEvalStep *scratch,
 								 CypherAccessExpr *accessexpr,
-								 PlanState *parent, ExprState *state);
-static void initCypherIndex(Expr *node, PlanState *parent, ExprState *state,
-							CypherIndexResult *cidxres);
+								 ExprState *state);
+static void initCypherIndex(Expr *node, ExprState *state, CypherIndexResult *cidxres);
 
 
 /*
@@ -2132,7 +2130,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 			{
 				CypherTypeCast *tc = (CypherTypeCast *) node;
 
-				ExecInitCypherTypeCast(&scratch, tc, parent, state);
+				ExecInitCypherTypeCast(&scratch, tc, state);
 				break;
 			}
 
@@ -2140,7 +2138,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 			{
 				CypherMapExpr *mapexpr = (CypherMapExpr *) node;
 
-				ExecInitCypherMap(&scratch, mapexpr, parent, state);
+				ExecInitCypherMap(&scratch, mapexpr, state);
 				break;
 			}
 
@@ -2148,7 +2146,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 			{
 				CypherListExpr *listexpr = (CypherListExpr *) node;
 
-				ExecInitCypherList(&scratch, listexpr, parent, state);
+				ExecInitCypherList(&scratch, listexpr, state);
 				break;
 			}
 
@@ -2156,7 +2154,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 			{
 				CypherListCompExpr *listcompexpr = (CypherListCompExpr *) node;
 
-				ExecInitCypherListComp(&scratch, listcompexpr, parent, state);
+				ExecInitCypherListComp(&scratch, listcompexpr, state);
 				break;
 			}
 
@@ -2175,7 +2173,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 			{
 				CypherAccessExpr *accessexpr = (CypherAccessExpr *) node;
 
-				ExecInitCypherAccess(&scratch, accessexpr, parent, state);
+				ExecInitCypherAccess(&scratch, accessexpr, state);
 				break;
 			}
 
@@ -3409,7 +3407,7 @@ ExecBuildGroupingEqual(TupleDesc ldesc, TupleDesc rdesc,
 
 static void
 ExecInitCypherTypeCast(ExprEvalStep *scratch, CypherTypeCast *tc,
-					   PlanState *parent, ExprState *state)
+					   ExprState *state)
 {
 	FmgrInfo   *finfo_in;
 	FunctionCallInfo fcinfo_data_in;
@@ -3418,7 +3416,7 @@ ExecInitCypherTypeCast(ExprEvalStep *scratch, CypherTypeCast *tc,
 
 	Assert(exprType((Node *) tc->arg) == JSONBOID);
 
-	ExecInitExprRec(tc->arg, parent, state,
+	ExecInitExprRec(tc->arg, state,
 					scratch->resvalue, scratch->resnull);
 
 	finfo_in = palloc0(sizeof(FmgrInfo));
@@ -3448,7 +3446,7 @@ ExecInitCypherTypeCast(ExprEvalStep *scratch, CypherTypeCast *tc,
 
 static void
 ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
-				  PlanState *parent, ExprState *state)
+				  ExprState *state)
 {
 	int			npairs = list_length(mapexpr->keyvals) / 2;
 	char	  **key_cstrings;
@@ -3486,8 +3484,7 @@ ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
 		key_cstrings[i] = TextDatumGetCString(key->constvalue);
 
 		Assert(exprType((Node *) val) == JSONBOID);
-		ExecInitExprRec(val, parent, state,
-						&val_values[i], &val_nulls[i]);
+		ExecInitExprRec(val, state, &val_values[i], &val_nulls[i]);
 
 		i++;
 	}
@@ -3502,7 +3499,7 @@ ExecInitCypherMap(ExprEvalStep *scratch, CypherMapExpr *mapexpr,
 
 static void
 ExecInitCypherList(ExprEvalStep *scratch, CypherListExpr *listexpr,
-				   PlanState *parent, ExprState *state)
+				   ExprState *state)
 {
 	int			nelems = list_length(listexpr->elems);
 	Datum	   *elemvalues;
@@ -3518,8 +3515,8 @@ ExecInitCypherList(ExprEvalStep *scratch, CypherListExpr *listexpr,
 	{
 		Expr	   *e = (Expr *) lfirst(le);
 
-		ExecInitExprRec(e, parent, state,
-						&elemvalues[i], &elemnulls[i]);
+		ExecInitExprRec(e, state, &elemvalues[i],
+						&elemnulls[i]);
 
 		i++;
 	}
@@ -3533,7 +3530,7 @@ ExecInitCypherList(ExprEvalStep *scratch, CypherListExpr *listexpr,
 
 static void
 ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
-					   PlanState *parent, ExprState *state)
+					   ExprState *state)
 {
 	ExprEvalStep null_step;
 	int			null_stepno;
@@ -3551,8 +3548,8 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 
 	Assert(exprType((Node *) listcompexpr->list) == JSONBOID);
 
-	ExecInitExprRec(listcompexpr->list, parent, state,
-					scratch->resvalue, scratch->resnull);
+	ExecInitExprRec(listcompexpr->list, state, scratch->resvalue,
+					scratch->resnull);
 	if (isIdentity(listcompexpr))
 		return;
 
@@ -3602,7 +3599,7 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 		cond_resvalue = (Datum *) palloc(sizeof(Datum));
 		cond_resnull = (bool *) palloc(sizeof(bool));
 
-		initExprSaveIter(listcompexpr->cond, &next_step, parent, state,
+		initExprSaveIter(listcompexpr->cond, &next_step, state,
 						 cond_resvalue, cond_resnull);
 
 		cond_step.opcode = EEOP_JUMP_IF_NOT_TRUE;
@@ -3613,7 +3610,7 @@ ExecInitCypherListComp(ExprEvalStep *scratch, CypherListCompExpr *listcompexpr,
 	}
 
 	if (listcompexpr->elem != NULL)
-		initExprSaveIter(listcompexpr->elem, &next_step, parent, state,
+		initExprSaveIter(listcompexpr->elem, &next_step, state,
 						 elem_resvalue, elem_resnull);
 
 	elem_step.opcode = EEOP_CYPHERLISTCOMP_ELEM;
@@ -3658,8 +3655,7 @@ isIdentity(CypherListCompExpr *listcompexpr)
 
 static void
 initExprSaveIter(Expr *node, ExprEvalStep *next_step,
-				 PlanState *parent, ExprState *state,
-				 Datum *resv, bool *resnull)
+				 ExprState *state, Datum *resv, bool *resnull)
 {
 	Datum	   *save_iterval;
 	bool	   *save_iternull;
@@ -3669,7 +3665,7 @@ initExprSaveIter(Expr *node, ExprEvalStep *next_step,
 	state->innermost_cypherlistcomp_iterval = next_step->resvalue;
 	state->innermost_cypherlistcomp_iternull = next_step->resnull;
 
-	ExecInitExprRec(node, parent, state, resv, resnull);
+	ExecInitExprRec(node, state, resv, resnull);
 
 	state->innermost_cypherlistcomp_iterval = save_iterval;
 	state->innermost_cypherlistcomp_iternull = save_iternull;
@@ -3677,7 +3673,7 @@ initExprSaveIter(Expr *node, ExprEvalStep *next_step,
 
 static void
 ExecInitCypherAccess(ExprEvalStep *scratch, CypherAccessExpr *accessexpr,
-					 PlanState *parent, ExprState *state)
+					 ExprState *state)
 {
 	Datum	   *argvalue;
 	bool	   *argnull;
@@ -3690,7 +3686,7 @@ ExecInitCypherAccess(ExprEvalStep *scratch, CypherAccessExpr *accessexpr,
 
 	argvalue = (Datum *) palloc(sizeof(Datum));
 	argnull = (bool *) palloc(sizeof(bool));
-	ExecInitExprRec(accessexpr->arg, parent, state, argvalue, argnull);
+	ExecInitExprRec(accessexpr->arg, state, argvalue, argnull);
 
 	pathlen = list_length(accessexpr->path);
 	path = (CypherAccessPathElem *)
@@ -3706,14 +3702,14 @@ ExecInitCypherAccess(ExprEvalStep *scratch, CypherAccessExpr *accessexpr,
 			CypherIndices *cind = (CypherIndices *) node;
 
 			path[i].is_slice = cind->is_slice;
-			initCypherIndex(cind->lidx, parent, state, &path[i].lidx);
-			initCypherIndex(cind->uidx, parent, state, &path[i].uidx);
+			initCypherIndex(cind->lidx, state, &path[i].lidx);
+			initCypherIndex(cind->uidx, state, &path[i].uidx);
 		}
 		else
 		{
 			path[i].is_slice = false;
 			MarkCypherIndexResultInvalid(&path[i].lidx);
-			initCypherIndex((Expr *) node, parent, state, &path[i].uidx);
+			initCypherIndex((Expr *) node, state, &path[i].uidx);
 		}
 
 		i++;
@@ -3728,7 +3724,7 @@ ExecInitCypherAccess(ExprEvalStep *scratch, CypherAccessExpr *accessexpr,
 }
 
 static void
-initCypherIndex(Expr *node, PlanState *parent, ExprState *state,
+initCypherIndex(Expr *node, ExprState *state,
 				CypherIndexResult *cidxres)
 {
 	if (node == NULL)
@@ -3738,6 +3734,6 @@ initCypherIndex(Expr *node, PlanState *parent, ExprState *state,
 	else
 	{
 		cidxres->type = exprType((Node *) node);
-		ExecInitExprRec(node, parent, state, &cidxres->value, &cidxres->isnull);
+		ExecInitExprRec(node, state, &cidxres->value, &cidxres->isnull);
 	}
 }

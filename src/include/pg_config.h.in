@@ -15,6 +15,15 @@
 /* Define if building universal (internal helper macro) */
 #undef AC_APPLE_UNIVERSAL_BUILD
 
+/* AgensGraph compatible version as a string */
+#undef AG_COMP_VERSION
+
+/* AgensGraph Git revisionas a string */
+#undef AG_GIT_REVISION
+
+/* AgensGraph version as a string */
+#undef AG_VERSION
+
 /* The normal alignment of `double', in bytes. */
 #undef ALIGNOF_DOUBLE
 
@@ -771,15 +780,6 @@
 
 /* A string containing the version number, platform, and C compiler */
 #undef PG_VERSION_STR
-
-/* AgensGraph version as a string */
-#undef AG_VERSION
-
-/* AgensGraph compatible version as a string */
-#undef AG_COMP_VERSION
-
-/* AgensGraph Git revision as a string */
-#undef AG_GIT_REVISION
 
 /* Define to 1 to allow profiling output to be saved separately for each
    process. */

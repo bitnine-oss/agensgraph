@@ -31,6 +31,10 @@
 
 #define DEFAULT_EFFECTIVE_CACHE_SIZE  524288	/* measured in pages */
 
+/* for AgensGraph */
+#define AG_DEFAULT_RECURSIVEUNION_RTERM_ITER_CNT 10
+
+
 typedef enum
 {
 	CONSTRAINT_EXCLUSION_OFF,	/* do not use c_e */

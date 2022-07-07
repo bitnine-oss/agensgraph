@@ -27,8 +27,8 @@ static Datum jsonb_num(Jsonb *j, PGFunction f);
 Datum
 jsonb_add(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *l = PG_GETARG_JSONB(0);
-	Jsonb	   *r = PG_GETARG_JSONB(1);
+	Jsonb	   *l = PG_GETARG_JSONB_P(0);
+	Jsonb	   *r = PG_GETARG_JSONB_P(1);
 	JsonbValue *ljv;
 	JsonbValue *rjv;
 	JsonbValue	jv;
@@ -48,7 +48,7 @@ jsonb_add(PG_FUNCTION_ARGS)
 			ereport_op_str("+", l, r);
 
 		j = DirectFunctionCall2(jsonb_concat,
-								JsonbGetDatum(l), JsonbGetDatum(r));
+								JsonbPGetDatum(l), JsonbPGetDatum(r));
 
 		PG_RETURN_DATUM(j);
 	}
@@ -66,10 +66,10 @@ jsonb_add(PG_FUNCTION_ARGS)
 				rjv->val.string.val, rjv->val.string.len);
 
 		jv.type = jbvString;
-		jv.val.string.len = len;
+		jv.val.string.len = (int) len;
 		jv.val.string.val = buf;
 
-		PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+		PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
 	}
 	else if (ljv->type == jbvString && rjv->type == jbvNumeric)
 	{
@@ -85,10 +85,10 @@ jsonb_add(PG_FUNCTION_ARGS)
 		strncpy(buf + ljv->val.string.len, nstr, nlen);
 
 		jv.type = jbvString;
-		jv.val.string.len = len;
+		jv.val.string.len = (int) len;
 		jv.val.string.val = buf;
 
-		PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+		PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
 	}
 	else if (ljv->type == jbvNumeric && rjv->type == jbvString)
 	{
@@ -104,10 +104,10 @@ jsonb_add(PG_FUNCTION_ARGS)
 		strncpy(buf + nlen, rjv->val.string.val, rjv->val.string.len);
 
 		jv.type = jbvString;
-		jv.val.string.len = len;
+		jv.val.string.len = (int) len;
 		jv.val.string.val = buf;
 
-		PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+		PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
 	}
 	else if (ljv->type == jbvNumeric && rjv->type == jbvNumeric)
 	{
@@ -115,7 +115,7 @@ jsonb_add(PG_FUNCTION_ARGS)
 								NumericGetDatum(ljv->val.numeric),
 								NumericGetDatum(rjv->val.numeric));
 
-		PG_RETURN_JSONB(numeric_to_jnumber(DatumGetNumeric(n)));
+		PG_RETURN_JSONB_P(numeric_to_jnumber(DatumGetNumeric(n)));
 	}
 	else
 	{
@@ -128,48 +128,48 @@ jsonb_add(PG_FUNCTION_ARGS)
 Datum
 jsonb_sub(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(jnumber_op(numeric_sub,
-							   PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
+	PG_RETURN_JSONB_P(jnumber_op(numeric_sub,
+								 PG_GETARG_JSONB_P(0), PG_GETARG_JSONB_P(1)));
 }
 
 Datum
 jsonb_mul(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(jnumber_op(numeric_mul,
-							   PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
+	PG_RETURN_JSONB_P(jnumber_op(numeric_mul,
+								 PG_GETARG_JSONB_P(0), PG_GETARG_JSONB_P(1)));
 }
 
 Datum
 jsonb_div(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(jnumber_op(numeric_div,
-							   PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
+	PG_RETURN_JSONB_P(jnumber_op(numeric_div,
+								 PG_GETARG_JSONB_P(0), PG_GETARG_JSONB_P(1)));
 }
 
 Datum
 jsonb_mod(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(jnumber_op(numeric_mod,
-							   PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
+	PG_RETURN_JSONB_P(jnumber_op(numeric_mod,
+								 PG_GETARG_JSONB_P(0), PG_GETARG_JSONB_P(1)));
 }
 
 Datum
 jsonb_pow(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(jnumber_op(numeric_power,
-							   PG_GETARG_JSONB(0), PG_GETARG_JSONB(1)));
+	PG_RETURN_JSONB_P(jnumber_op(numeric_power,
+								 PG_GETARG_JSONB_P(0), PG_GETARG_JSONB_P(1)));
 }
 
 Datum
 jsonb_uplus(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(jnumber_op(numeric_uplus, NULL, PG_GETARG_JSONB(0)));
+	PG_RETURN_JSONB_P(jnumber_op(numeric_uplus, NULL, PG_GETARG_JSONB_P(0)));
 }
 
 Datum
 jsonb_uminus(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_JSONB(jnumber_op(numeric_uminus, NULL, PG_GETARG_JSONB(0)));
+	PG_RETURN_JSONB_P(jnumber_op(numeric_uminus, NULL, PG_GETARG_JSONB_P(0)));
 }
 
 static Jsonb *
@@ -238,24 +238,34 @@ ereport_op(PGFunction f, Jsonb *l, Jsonb *r)
 {
 	const char *op;
 
-	if (f == numeric_add)
+	if (f == numeric_add || f == numeric_uplus)
+	{
 		op = "+";
-	else if (f == numeric_sub)
+	}
+	else if (f == numeric_sub || f == numeric_uminus)
+	{
 		op = "-";
+	}
 	else if (f == numeric_mul)
+	{
 		op = "*";
+	}
 	else if (f == numeric_div)
+	{
 		op = "/";
+	}
 	else if (f == numeric_mod)
+	{
 		op = "%";
+	}
 	else if (f == numeric_power)
+	{
 		op = "^";
-	else if (f == numeric_uplus)
-		op = "+";
-	else if (f == numeric_uminus)
-		op = "-";
+	}
 	else
+	{
 		elog(ERROR, "invalid number operator");
+	}
 
 	ereport_op_str(op, l, r);
 }
@@ -295,25 +305,25 @@ bool_jsonb(PG_FUNCTION_ARGS)
 	jv.type = jbvBool;
 	jv.val.boolean = b;
 
-	PG_RETURN_JSONB(JsonbValueToJsonb(&jv));
+	PG_RETURN_JSONB_P(JsonbValueToJsonb(&jv));
 }
 
 Datum
 jsonb_int8(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB(0), numeric_int8));
+	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB_P(0), numeric_int8));
 }
 
 Datum
 jsonb_int4(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB(0), numeric_int4));
+	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB_P(0), numeric_int4));
 }
 
 Datum
 jsonb_numeric(PG_FUNCTION_ARGS)
 {
-	Jsonb	   *j = PG_GETARG_JSONB(0);
+	Jsonb	   *j = PG_GETARG_JSONB_P(0);
 
 	if (JB_ROOT_IS_SCALAR(j))
 	{
@@ -335,7 +345,7 @@ jsonb_numeric(PG_FUNCTION_ARGS)
 Datum
 jsonb_float8(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB(0), numeric_float8));
+	PG_RETURN_DATUM(jsonb_num(PG_GETARG_JSONB_P(0), numeric_float8));
 }
 
 static Datum
@@ -371,7 +381,6 @@ jsonb_num(Jsonb *j, PGFunction f)
 			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 			 errmsg("%s cannot be converted to %s",
 					JsonbToCString(NULL, &j->root, VARSIZE(j)), type)));
-	return 0;
 }
 
 Datum

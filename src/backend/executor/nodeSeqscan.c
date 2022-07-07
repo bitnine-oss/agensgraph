@@ -28,7 +28,6 @@
 #include "postgres.h"
 
 #include "access/relscan.h"
-#include "catalog/pg_operator.h"
 #include "executor/execdebug.h"
 #include "executor/nodeSeqscan.h"
 #include "optimizer/clauses.h"
@@ -36,6 +35,9 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
+static TupleTableSlot *SeqNext(SeqScanState *node);
+
+/* for agensgraph */
 typedef struct SeqScanContext
 {
 	dlist_node	list;
@@ -43,12 +45,6 @@ typedef struct SeqScanContext
 	HeapScanDesc scanDesc;
 } SeqScanContext;
 
-static void InitScanRelation(SeqScanState *node, EState *estate, int eflags);
-static TupleTableSlot *SeqNext(SeqScanState *node);
-
-static void initScanLabelSkipExpr(SeqScanState *node);
-static ExprState *getScanLabelSkipExpr(SeqScanState *node, Expr *opexpr);
-static bool isGraphidColumn(SeqScanState *node, Node *expr);
 static SeqScanContext *getCurrentContext(SeqScanState *node, bool create);
 
 /* ----------------------------------------------------------------
@@ -154,96 +150,6 @@ ExecSeqScan(PlanState *pstate)
 					(ExecScanRecheckMtd) SeqRecheck);
 }
 
-/* ----------------------------------------------------------------
- *		InitScanRelation
- *
- *		Set up to access the scan relation.
- * ----------------------------------------------------------------
- */
-static void
-InitScanRelation(SeqScanState *node, EState *estate, int eflags)
-{
-	Relation	currentRelation;
-
-	/*
-	 * get the relation object id from the relid'th entry in the range table,
-	 * open that relation and acquire appropriate lock on it.
-	 */
-	currentRelation = ExecOpenScanRelation(estate,
-										   ((SeqScan *) node->ss.ps.plan)->scanrelid,
-										   eflags);
-
-	node->ss.ss_currentRelation = currentRelation;
-
-	/* and report the scan tuple slot's rowtype */
-	ExecAssignScanType(&node->ss, RelationGetDescr(currentRelation));
-}
-
-static void
-initScanLabelSkipExpr(SeqScanState *node)
-{
-	List	   *qual = node->ss.ps.plan->qual;
-	ListCell   *la;
-
-	AssertArg(node->ss.ss_isLabel);
-
-	if (qual == NIL)
-		return;
-
-	/* qual was implicitly-ANDed, so; */
-	foreach(la, qual)
-	{
-		Expr	   *expr = lfirst(la);
-		ExprState  *xstate;
-
-		if (!is_opclause(expr))
-			continue;
-
-		if (((OpExpr *) expr)->opno != OID_GRAPHID_EQ_OP)
-			continue;
-
-		/* expr is of the form `graphid = graphid` */
-
-		xstate = getScanLabelSkipExpr(node, expr);
-		if (xstate == NULL)
-			continue;
-
-		node->ss.ss_labelSkipExpr = xstate;
-		break;
-	}
-}
-
-static ExprState *
-getScanLabelSkipExpr(SeqScanState *node, Expr *opexpr)
-{
-	Node	   *left = get_leftop(opexpr);
-	Node	   *right = get_rightop(opexpr);
-	Node	   *expr;
-
-	if (isGraphidColumn(node, left))
-		expr = right;
-	else if (isGraphidColumn(node, right))
-		expr = left;
-	else
-		return NULL;
-
-	/* Const or Param expected */
-	if (IsA(expr, Const) || IsA(expr, Param))
-		return ExecInitExpr((Expr *) expr, (PlanState *) node);
-
-	return NULL;
-}
-
-static bool
-isGraphidColumn(SeqScanState *node, Node *expr)
-{
-	Var *var = (Var *) expr;
-
-	return (IsA(expr, Var) &&
-			var->varno == ((SeqScan *) node->ss.ps.plan)->scanrelid &&
-			var->varattno == Anum_vertex_id);
-}
-
 
 /* ----------------------------------------------------------------
  *		ExecInitSeqScan
@@ -303,30 +209,6 @@ ExecInitSeqScan(SeqScan *node, EState *estate, int eflags)
 	scanstate->ss.ps.qual =
 		ExecInitQual(node->plan.qual, (PlanState *) scanstate);
 
-	/*
-	 * tuple table initialization
-	 */
-	ExecInitResultTupleSlot(estate, &scanstate->ss.ps);
-	ExecInitScanTupleSlot(estate, &scanstate->ss);
-
-	/*
-	 * initialize scan relation
-	 */
-	InitScanRelation(scanstate, estate, eflags);
-
-	InitScanLabelInfo((ScanState *) scanstate);
-	if (scanstate->ss.ss_isLabel)
-		initScanLabelSkipExpr(scanstate);
-
-	/*
-	 * Initialize result tuple type and projection info.
-	 */
-	ExecAssignResultTypeFromTL(&scanstate->ss.ps);
-	ExecAssignScanProjectionInfo(&scanstate->ss);
-
-	dlist_init(&scanstate->ctxs_head);
-	scanstate->prev_ctx_node = &scanstate->ctxs_head.head;
-
 	return scanstate;
 }
 
@@ -384,6 +266,9 @@ ExecEndSeqScan(SeqScanState *node)
 	}
 	node->prev_ctx_node = &node->ctxs_head.head;
 
+	/*
+	 * close heap scan
+	 */
 	if (scanDesc != NULL)
 		heap_endscan(scanDesc);
 

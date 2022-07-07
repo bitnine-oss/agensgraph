@@ -8975,10 +8975,6 @@ get_rule_expr(Node *node, deparse_context *context,
 			}
 			break;
 
-		case T_TableFunc:
-			get_tablefunc((TableFunc *) node, context, showimplicit);
-			break;
-
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
 			break;
@@ -9671,7 +9667,7 @@ get_const_expr(Const *constval, deparse_context *context, int showtype)
 		case JSONBOID:
 			if (context->cypherexpr)
 			{
-				Jsonb	   *j = DatumGetJsonb(constval->constvalue);
+				Jsonb	   *j = DatumGetJsonbP(constval->constvalue);
 				JsonbIterator *it;
 				bool		first = true;
 				bool		raw_scalar = false;
